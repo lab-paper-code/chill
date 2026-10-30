@@ -6,6 +6,7 @@ import { useChillQuery } from "@/lib/client"
 import type { SchedulerObservationPage } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { campaignGroups, campaignPairs, commitExperimentSelection, comparisonDirection, policyStageGroups, serviceDelta, stageChartData, stagePolicy, alphaText, comparisonRows, decisionIdentity, decisionRange, differentMeasurementRules, difference, evidenceError, experimentRows, formatResult, object, relativeEnergy, resultMetric, stageRate, stageSeconds, type Experiment, type ExperimentRow, type ExperimentStage, type PublishedMetric } from "@/lib/experiments"
+import { campaignConclusion, stageLoadLabel } from "@/lib/experiments"
 import { QueryGate, SourceJSON, SourceExport, StatusBadge } from "@/components/read-region"
 import { Screen, Rows, Row, Empty, Facts } from "@/components/screen"
 import { Button } from "@/components/ui/button"
@@ -95,14 +96,14 @@ function Timeline({run,selected,label,onSelect}:{run:Experiment;selected?:Experi
 function StageCharts({run}:{run:Experiment}) {
   const data=stageChartData(run),names=[...new Set(data.flatMap(point=>Object.keys(point.services)))]
   const {policies,groups}=policyStageGroups(run)
-  const color=(policy:string)=>policy==="CHILL (full)"?"var(--primary)":policy==="정적 비교군 (static)"?"var(--muted-foreground)":"var(--chart-3)"
+  const color=(policy:string)=>policy==="자동 운영"?"var(--primary)":policy==="고정 구성"?"var(--muted-foreground)":"var(--chart-3)"
   const chart=(title:string,unit:string,get:(point:typeof data[number])=>number|null,bar=false,service?:string)=>{
     const points=groups.map(({axis,series})=>Object.fromEntries([["axis",axis],...series.flatMap((point,index)=>{
       const value=point?get(point):null
       return [[`p${index}`,bar||point?.paired?value:null],[`u${index}`,point&&!point.paired?value:null],
         [`s${index}`,service?point?.services[service]?.sloMS??null:null],[`e${index}`,point?.wattError??null],[`paired${index}`,point?.paired??false]]
     })]))
-    const xAxis=<XAxis dataKey="axis" interval="preserveStartEnd" height={30} tick={{fontSize:10}}/>
+    const xAxis=<XAxis dataKey="axis" interval="preserveStartEnd" height={45} tick={{fontSize:10}} tickFormatter={axis=>{const point=data.find(point=>point.axis===axis);return point?stageLoadLabel(point.stage,run):"구간 기록 확인"}}/>
     const yAxis=<YAxis width={54} tick={{fontSize:10}} tickFormatter={value=>formatResult(unit==="%"?Number(value)/100:Number(value),unit).replace(` ${unit}`,"")}/>
     const legend=<Legend wrapperStyle={{fontSize:11}}/>
     const tooltip=<Tooltip formatter={value=>formatResult(typeof value==="number"?(unit==="%"?value/100:value):null,unit)}/>
@@ -112,7 +113,7 @@ function StageCharts({run}:{run:Experiment}) {
         <ResponsiveContainer width="100%" height="100%">{bar?
           <BarChart accessibilityLayer data={points} margin={{left:0,right:8,top:8,bottom:0}}>
             <CartesianGrid vertical={false}/>{xAxis}{yAxis}{tooltip}{legend}
-            {policies.map((policy,index)=><Bar key={policy} dataKey={`p${index}`} name={policy} fill={color(policy)} stroke={color(policy)} strokeDasharray={policy==="정적 비교군 (static)"?"3 2":undefined} isAnimationActive={false}>
+            {policies.map((policy,index)=><Bar key={policy} dataKey={`p${index}`} name={policy} fill={color(policy)} stroke={color(policy)} strokeDasharray={policy==="고정 구성"?"3 2":undefined} isAnimationActive={false}>
               {points.map((point,i)=><Cell key={i} fill={point[`paired${index}`]?color(policy):"var(--background)"}/>)}
               <ErrorBar dataKey={`e${index}`} width={4} stroke="var(--foreground)"/>
             </Bar>)}
@@ -120,9 +121,9 @@ function StageCharts({run}:{run:Experiment}) {
           <LineChart accessibilityLayer data={points} margin={{left:0,right:8,top:8,bottom:0}}>
             <CartesianGrid vertical={false}/>{xAxis}{yAxis}{tooltip}{legend}
             {policies.map((policy,index)=><React.Fragment key={policy}>
-              <Line dataKey={`p${index}`} name={policy} stroke={color(policy)} strokeWidth={2} strokeDasharray={policy==="정적 비교군 (static)"?"4 3":undefined} dot={{r:3}} isAnimationActive={false} connectNulls={false}/>
+              <Line dataKey={`p${index}`} name={policy} stroke={color(policy)} strokeWidth={2} strokeDasharray={policy==="고정 구성"?"4 3":undefined} dot={{r:3}} isAnimationActive={false} connectNulls={false}/>
               <Line dataKey={`u${index}`} name={`${policy} 비대응`} stroke="none" legendType="none" dot={{r:4,fill:"var(--background)",stroke:color(policy),strokeWidth:2}} activeDot={{r:5,fill:"var(--background)",stroke:color(policy)}} isAnimationActive={false} connectNulls={false}/>
-              {service&&<Line dataKey={`s${index}`} name={`${policy} 동결 p95 SLO`} type="stepAfter" stroke={color(policy)} strokeDasharray="2 4" dot={{r:2}} isAnimationActive={false} connectNulls={false}/>}
+              {service&&<Line dataKey={`s${index}`} name={`${policy} 당시 p95 목표`} type="stepAfter" stroke={color(policy)} strokeDasharray="2 4" dot={{r:2}} isAnimationActive={false} connectNulls={false}/>}
             </React.Fragment>)}
           </LineChart>}
         </ResponsiveContainer>
@@ -131,16 +132,16 @@ function StageCharts({run}:{run:Experiment}) {
   }
   return <section aria-label="단계별 부하와 결과" className="min-w-0 space-y-5">
     <h2 className="text-xl font-semibold">정책별 단계 비교</h2>
-    <p className="text-sm text-muted-foreground">전체 E5 단계·반복 suffix가 일치하는 단계만 대응합니다. 비대응은 선을 끊고 속 빈 마커(전력은 빈 막대)로 남깁니다. 같은 req/s는 대응 근거가 아닙니다. 점은 단계 집계이며 실제 시간순·초별 변화가 아닙니다.</p>
+    <p className="text-sm text-muted-foreground">같은 부하 계획과 반복 회차의 결과를 나란히 표시해요. 비교할 기록이 없는 구간은 빈 표시로 남겨요. 점은 구간 전체의 집계이며 초별 변화는 아니에요.</p>
     <div className="grid min-w-0 gap-4 md:grid-cols-2">{chart("평균 보낸 요청률","req/s",point=>point.rate)}{chart("전체 POOL 평균 전력","W",point=>point.watts,true)}</div>
-    <p className="text-xs text-muted-foreground">평균 W = 전체 POOL J / 실제 구간 초. 오차막대는 관측 공백 오차 상한 / 초이며 95% CI가 아닙니다. 서비스 성공률·p95 CI는 게시되지 않아 만들지 않습니다.</p>
+    <p className="text-xs text-muted-foreground">평균 전력은 구간의 전체 에너지를 실제 실행 시간으로 나눈 값이에요. 오차막대는 전력 기록이 비어 있는 동안의 오차 한도예요.</p>
     <div className="grid min-w-0 gap-5 md:grid-cols-2 xl:grid-cols-3">{names.map(name=><article key={name} className="min-w-0 space-y-4 border-t pt-3" aria-label={`${name} 성공률과 p95`}>
       <h3 className="break-words font-semibold">{name}</h3>
       {chart(`${name} 기한·SLO 내 성공률`,"%",point=>point.services[name]?.success??null)}
       {chart(`${name} 성공 응답 p95`,"ms",point=>point.services[name]?.p95??null,false,name)}
     </article>)}</div>
     <p className="text-xs text-muted-foreground">점선 SLO는 해당 단계 KPI에 기록된 p95 목표만 표시합니다. 목표 미기록·다른 percentile은 선을 그리지 않으며 현재 서비스 설정을 소급하지 않습니다.</p>
-    <ul className="space-y-1 text-xs text-muted-foreground" aria-label="비대응 및 결손 이유">{data.filter(point=>!point.paired||Object.values(point.services).some(service=>service.reason)||names.some(name=>!point.services[name])).map((point,index)=><li key={`${point.id}/${index}`} className="break-words">{point.id}: {!point.paired&&point.reason}{names.map(name=>point.services[name]?.reason||!point.services[name]?` / ${name}: ${point.services[name]?.reason??"이 단계에 서비스 기록 없음"}`:"").join("")}</li>)}</ul>
+    <details className="text-xs text-muted-foreground"><summary className="min-h-11 cursor-pointer py-2">비교 불가·누락 사유 원문</summary><ul className="space-y-1">{data.filter(point=>!point.paired||Object.values(point.services).some(service=>service.reason)||names.some(name=>!point.services[name])).map((point,index)=><li key={`${point.id}/${index}`} className="break-words">{point.id}: {!point.paired&&point.reason}{names.map(name=>point.services[name]?.reason||!point.services[name]?` / ${name}: ${point.services[name]?.reason??"이 단계에 서비스 기록 없음"}`:"").join("")}</li>)}</ul></details>
   </section>
 }
 
@@ -148,18 +149,18 @@ function StageSummary({run,onSelect}:{run:Experiment;onSelect:(a:string,b:string
   const points=stageChartData(run)
   return <section aria-label="단계 전체 요약" className="space-y-3">
     <h2 className="text-xl font-semibold">전 단계 결과</h2>
-    <p className="text-sm text-muted-foreground">비대응·중복을 포함한 모든 단계입니다. Δ는 이 행의 정책−정확한 대응 정책이며 서비스 성공률·지연을 평균하지 않습니다.</p>
+    <p className="text-sm text-muted-foreground">모든 단계의 결과예요. 변화량은 같은 부하의 다른 구성과 비교해요. 서비스별 성공률과 지연을 하나의 평균으로 합치지 않아요.</p>
     <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="전 단계 결과와 대응 이유"><table className="w-full min-w-[900px] text-sm">
       <thead><tr>{["단계 / 정책","대응 상태·이유","평균 req/s","전체 POOL J / 평균 W","J / 보낸 요청","전 서비스 성공률 / p95 / Δ"].map(label=><th scope="col" key={label} className="p-3 text-left">{label}</th>)}</tr></thead>
       <tbody>{points.map((point,index)=><tr key={`${point.id}/${index}`} className="border-t">
-        <th scope="row" className="p-3 text-left align-top"><p className="break-words">{point.id}</p><p className="text-xs font-normal">{point.policy}</p>{point.reason!=="동일 단계 식별자 중복"&&<button type="button" className="min-h-11 underline underline-offset-4" onClick={()=>onSelect(point.id,point.counterpart?.id??"")}>단계 자세히</button>}</th>
-        <td className="p-3 align-top"><p>{point.paired?"대응":"비대응"}</p><p className="text-xs">{point.reason}</p>{point.counterpart&&<p className="break-words text-xs">{point.counterpart.id}</p>}</td>
+        <th scope="row" className="p-3 text-left align-top"><p className="break-words">{stageLoadLabel(point.stage,run)}</p><p className="text-xs font-normal">{point.policy}</p><details className="text-xs font-normal"><summary className="cursor-pointer py-2">구간 코드</summary>{point.id}</details>{point.reason!=="동일 단계 식별자 중복"&&<button type="button" className="min-h-11 underline underline-offset-4" onClick={()=>onSelect(point.id,point.counterpart?.id??"")}>단계 자세히</button>}</th>
+        <td className="p-3 align-top"><p>{point.paired?"같은 부하 비교 가능":"비교할 같은 부하 기록 없음"}</p><details className="text-xs"><summary className="cursor-pointer py-2">연결 근거 원문</summary>{point.reason}{point.counterpart&&<p className="break-words">{point.counterpart.id}</p>}</details></td>
         <td className="p-3 text-right align-top tabular-nums">{formatResult(point.rate,"req/s")}</td>
         <td className="p-3 text-right align-top tabular-nums">{formatResult(point.energy,"J")}<br/>{formatResult(point.watts,"W")}{point.counterpart&&<p className="mt-2 text-xs">Δ {difference(point.energy,point.counterpart.kpis.wholePoolJoules,"J")}<br/>{relativeEnergy(point.energy,point.counterpart.kpis.wholePoolJoules)}</p>}</td>
         <td className="p-3 text-right align-top tabular-nums">{formatResult(point.joulesPerRequest,"J/건")}</td>
         <td className="space-y-3 p-3 align-top">{comparisonRows(point.stage,point.counterpart??undefined).map(row=>{
           const service=point.services[row.name]
-          return <div key={row.name}><p className="break-words font-medium">{row.name}</p><p className="tabular-nums">{formatResult(service?.success==null?null:service.success/100,"%")} / {formatResult(service?.p95,"ms")}</p>{service?.reason&&<p className="text-xs">{service.reason}</p>}{point.counterpart&&<p className="text-xs">Δ {serviceDelta(row.a.length===1?row.a[0]:undefined,row.b.length===1?row.b[0]:undefined)}</p>}</div>
+          return <div key={row.name}><p className="break-words font-medium">{row.name}</p><p className="tabular-nums">성공 {formatResult(service?.success==null?null:service.success/100,"%")} / p95 {formatResult(service?.p95,"ms")}</p><p className={service?.p95!=null&&service.sloMS!=null&&service.p95>service.sloMS?"text-destructive font-medium":"text-xs"}>{service?.sloMS==null?"당시 p95 목표 미기록":`목표 ${formatResult(service.sloMS,"ms")} · ${service.p95==null?"지연 미기록":service.p95>service.sloMS?"목표 초과":"목표 이내"}`}</p>{service?.reason&&<details className="text-xs"><summary className="cursor-pointer py-2">누락 사유 원문</summary>{service.reason}</details>}{point.counterpart&&<p className="text-xs">변화 {serviceDelta(row.a.length===1?row.a[0]:undefined,row.b.length===1?row.b[0]:undefined)}</p>}</div>
         })}</td>
       </tr>)}</tbody>
     </table></div>
@@ -177,7 +178,7 @@ function Evidence({stage}:{stage:ExperimentStage}) {
 }
 function Verdict({stage}:{stage:ExperimentStage}) {
   const status=String(stage.kpis.status??"미제공")
-  const label=status.includes("NOT_READY")?"준비되지 않음":status.includes("NOT_EVALUATED")?"미평가":status.includes("DESCRIPTIVE")?"설명형 결과":status==="FAIL"?"게시 판정 실패":"게시 판정"
+  const label=status.includes("NOT_READY")?"준비되지 않음":status.includes("NOT_EVALUATED")?"확인 전":status.includes("DESCRIPTIVE")?"측정 결과":status==="FAIL"?"결과 확인 실패":"결과 확인"
   return <StatusBadge tone={status==="FAIL"?"fail":"info"}>{label}</StatusBadge>
 }
 export function ExperimentsPage() {
@@ -200,19 +201,19 @@ export function ExperimentsPage() {
       return <article key={run.id} className="space-y-3 rounded-lg border p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h2 className="text-lg font-semibold">{title}</h2><p className="break-words text-sm text-muted-foreground">{run.id}</p></div><time className="text-sm tabular-nums" dateTime={run.from}>{new Date(run.from).toLocaleDateString("ko-KR",{timeZone:"Asia/Seoul"})}</time></div>
         <p className="text-sm">{question}</p>
-        <p className="text-sm font-medium">{pair?`CHILL vs 정적 비교군 / 대응 단계 ${pairs.length}쌍`:run.stages.some(stage=>stage.id.startsWith("full-E5-"))?`CHILL 포함 ${run.stages.length}단계 / 대응 정적 비교군 없음`:`단일 실행 / ${run.stages.length}단계 / 비교 정책 미기록`}</p>
-        {pair?<div className="space-y-2 text-sm tabular-nums"><p>첫 대응 단계 {pair.key}의 관측 득실 (캠페인 전체 우열 아님): 전체 POOL 에너지 {relativeEnergy(pair.chill.kpis.wholePoolJoules,pair.control.kpis.wholePoolJoules)}</p>{comparisonRows(pair.chill,pair.control).map(row=><p key={row.name} className="break-words">{row.name}: {serviceDelta(row.a.length===1?row.a[0]:undefined,row.b.length===1?row.b[0]:undefined)}</p>)}</div>:<p className="text-sm">대응 비교군이 없어 실행 내 단계별 결과를 확인합니다.</p>}
-        <Button variant="outline" onClick={()=>select(pair?{a:run.id,as:pair.chill.id,b:run.id,bs:pair.control.id}:{a:run.id,as:run.stages[0]?.id??"",b:"",bs:""})}>{pair?"CHILL vs 비교군 보기":"단계별 결과 보기"}</Button>
+        <p className="text-sm font-medium">{campaignConclusion(run)}</p>
+        <p className="text-sm text-muted-foreground">전 단계의 서비스별 득실은 상세 결과에서 확인하세요.</p>
+        <Button variant="outline" onClick={()=>select(pair?{a:run.id,as:pair.chill.id,b:run.id,bs:pair.control.id}:{a:run.id,as:run.stages[0]?.id??"",b:"",bs:""})}>운영 비교 결론 보기</Button>
       </article>
     })}{!list.data.items.length&&<Empty title="게시된 실험이 없어요"/>}</section>}</QueryGate>:<Button variant="outline" onClick={()=>select({a:"",as:"",b:"",bs:""})}>실험 목록으로</Button>}
-    {a&&<QueryGate query={aq}>{aq.data&&<section className="space-y-3"><h2 className="break-words text-lg font-semibold">{aq.data.id}</h2>{pairs.length>0&&<><p className="text-sm">CHILL(full) vs 정적 비교군(static). 같은 E5 단계 번호와 반복 식별자가 일치하는 쌍입니다.</p><div className="flex flex-wrap gap-2" aria-label="자동 대응 단계">{pairs.map(pair=><Button variant={stage?.id===pair.chill.id?"default":"outline"} key={pair.key} onClick={()=>select({a,as:pair.chill.id,b:a,bs:pair.control.id})}>{pair.key}</Button>)}</div></>}</section>}</QueryGate>}
+    {a&&<QueryGate query={aq}>{aq.data&&<section className="space-y-3 border-l-4 border-primary pl-4"><h2 className="text-xl font-semibold">자동 운영이 고정 구성보다 나았나요?</h2><p className="text-sm font-medium">{campaignConclusion(aq.data)}</p>{pairs.length>0&&<div className="flex flex-wrap gap-2" aria-label="같은 부하 구간">{pairs.map(pair=><Button variant={stage?.id===pair.chill.id?"default":"outline"} key={pair.key} onClick={()=>select({a,as:pair.chill.id,b:a,bs:pair.control.id})}>{stageLoadLabel(pair.chill,aq.data!)} <small>({pair.key})</small></Button>)}</div>}</section>}</QueryGate>}
     <details className="rounded border p-3"><summary className="cursor-pointer py-2 text-sm">다른 기록 직접 비교</summary><QueryGate query={list}>{list.data&&<div className="grid gap-4 md:grid-cols-2">{(["a","b"] as const).map(key=><fieldset key={key} className="grid min-w-0 gap-3 rounded border p-3"><legend className="px-1 font-medium">{key.toUpperCase()} 비교 기록</legend><label className="grid min-w-0 gap-2 text-sm">게시 기록<select aria-label={`${key.toUpperCase()} 게시 기록`} value={key==="a"?a:b} onChange={event=>select({[key]:event.target.value})} className="min-h-11 w-full min-w-0 rounded border bg-background p-2"><option value="">기록 선택</option>{list.data!.items.map(run=><option key={run.id} value={run.id}>{run.id}</option>)}</select></label><label className="grid min-w-0 gap-2 text-sm">단계<select aria-label={`${key.toUpperCase()} 단계`} value={params.get(`${key}s`)??""} onChange={event=>select({[`${key}s`]:event.target.value})} className="min-h-11 w-full min-w-0 rounded border bg-background p-2"><option value="">단계 선택</option>{(key==="a"?aq.data:bq.data)?.stages.map((stage,index)=><option key={`${stage.id}/${index}`} value={stage.id} disabled={(key==="a"?aq.data:bq.data)!.stages.filter(other=>other.id===stage.id).length>1}>{stage.id}{(key==="a"?aq.data:bq.data)!.stages.filter(other=>other.id===stage.id).length>1?" · 중복 식별자 (전 단계 표에서 확인)":""}</option>)}</select></label></fieldset>)}</div>}</QueryGate></details>
     {a&&!stage&&<QueryGate query={aq}>{aq.data&&<p>결과를 볼 A 단계를 선택하세요.</p>}</QueryGate>}{b&&!other&&<QueryGate query={bq}>{bq.data&&<p>비교할 B 단계를 선택하세요.</p>}</QueryGate>}
     {stage&&<section id="experiment-summary" tabIndex={-1} aria-label="결론 요약" className="space-y-3 border-l-4 border-primary pl-4">
-      <h2 className="text-xl font-semibold">{other?"선택 단계의 관측값 비교":"선택 단계의 결과"}</h2>
+      <h2 className="text-xl font-semibold">{other?"선택 구간의 운영 결과 비교":"선택 구간의 결과"}</h2>
       <p className="break-words text-sm font-medium">A {stagePolicy(stage)}: {stage.id}{other&&<> / B {stagePolicy(other)}: {other.id}</>}</p>
       <div className="flex flex-wrap gap-2"><span>A <Verdict stage={stage}/></span>{other&&<span>B <Verdict stage={other}/></span>}</div>
-      <p className="text-sm font-medium">에너지 감소만으로 개선을 뜻하지 않습니다. 성공률과 지연의 변화도 함께 비교하세요. 단일 단계의 관측값이며 통계적 우열 판정이 아닙니다.</p>
+      <p className="text-sm font-medium">에너지가 줄어도 서비스가 느려지거나 성공률이 낮아질 수 있어요. 아래 득실을 함께 확인하세요.</p>
       <p className="text-sm tabular-nums">전체 POOL A {formatResult(stage.kpis.wholePoolJoules,"J")}{other&&<> / B {formatResult(other.kpis.wholePoolJoules,"J")} / A−B {difference(stage.kpis.wholePoolJoules,other.kpis.wholePoolJoules,"J")}<br/>{comparisonDirection(stage.kpis.wholePoolJoules,other.kpis.wholePoolJoules,"J",`${stagePolicy(stage)} (${stage.id})`,`${stagePolicy(other)} (${other.id})`)}</>}</p>
       <ul className="divide-y text-sm">{comparisonRows(stage,other).map(row=>{
         const left=row.a.length===1?row.a[0]:undefined,right=row.b.length===1?row.b[0]:undefined
@@ -225,6 +226,6 @@ export function ExperimentsPage() {
     {stage&&<><Results stage={stage} other={other} a={a} b={b}/><details className="rounded border p-3"><summary className="cursor-pointer py-2 text-sm">기록 당시 판단 근거 조회</summary><Evidence key={`${a}/${stage.id}`} stage={stage}/></details><SourceJSON title="게시 출처" value={{a:aq.data?.sources,b:bq.data?.sources}}/></>}
     {aq.data&&<SourceExport filename="experiment-comparison.json" value={{a:aq.data,aStage:stage?.id??null,b:bq.data??null,bStage:other?.id??null}}/>}
     <p className="text-xs text-muted-foreground">Δ는 반올림 전 원값으로 계산하므로 표시값끼리 뺀 결과와 마지막 자리가 다를 수 있습니다. 표시단위 미만 차이는 방향을 표시하지 않습니다. 원값·복사·내보내기는 원본 정밀도를 유지합니다. 기준 B가 0이어도 절대 차이·%p는 계산하며 상대 %·배율만 계산할 수 없습니다.</p>
-    <p className="text-xs text-muted-foreground">해석 범위: 게시된 단계 집계의 설명형 비교입니다. 서비스 성공률·p95는 평균하지 않고 공유 에너지는 서비스별로 배분하지 않습니다. 평균 요청률은 목표 부하·α와 다르며 예정 세부 단계는 실제 전환 관측이 아닙니다. 미게시 초별 변화·전환 사건은 표시하지 않습니다.</p>
+    <p className="text-xs text-muted-foreground">게시된 구간별 결과를 비교해요. 서비스 성공률·지연은 평균하지 않고 공유 에너지는 서비스별로 나누지 않아요. 실제 전환 기록이 없는 구간의 변화는 표시하지 않아요.</p>
   </Screen>
 }

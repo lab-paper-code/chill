@@ -6,7 +6,7 @@ import { serverConfig } from "./server-config.ts"
 import { parseSchedulerJSON } from "./scheduler.ts"
 import type { DispatchOccupancyMeasurement, OperationCostMeasurement } from "./read-types.ts"
 import { formatMeasurementTime, measurementConditionDiff, measurementReasonSummary } from "./measurements.ts"
-import { formatMeasurementNumber, measurementRequestName, resultRowsCSV, resultRowsLatex } from "./measurements.ts"
+import { formatMeasurementNumber, measurementRequestName, resultRowsCSV } from "./measurements.ts"
 import type { ResultRow } from "./read-types.ts"
 
 test("measurement quantities use fixed unit precision and preserve valid zero and negative CI bounds",()=>{
@@ -38,15 +38,12 @@ test("request identity includes mode, complete path and CPU and only changes suf
   taken.add(`${name}-2`)
   assert.equal(pinned,name)
 })
-test("result exports neutralize formulas and escape LaTeX without altering numeric precision",()=>{
+test("CSV export neutralizes formulas without altering numeric precision",()=>{
   const rows=[{id:"=HYPERLINK(test)",batch:1,condition:{token:"private",dataset:"a_b% & # {x}"},incrementalJoulesPerItem:-0.123456789}] as unknown as ResultRow[]
-  const csv=resultRowsCSV(rows),latex=resultRowsLatex(rows)
+  const csv=resultRowsCSV(rows)
   assert.ok(csv.includes(`"'=HYPERLINK(test)"`))
   assert.ok(csv.includes('"-0.123456789"'))
   assert.ok(!csv.includes("private"))
-  assert.ok(!latex.includes("private"))
-  assert.ok(latex.includes("a\\_b\\% \\& \\# \\{x\\}"))
-  assert.ok(latex.includes("-0.123456789"))
 })
 
 const metadata = {namespace:"research",name:"sample",uid:"uid-1",resourceVersion:"42",creationTimestamp:"2026-10-30T00:00:00Z"}

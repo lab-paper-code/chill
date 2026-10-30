@@ -25,10 +25,6 @@ export function resultRowsCSV(rows:ResultRow[]):string {
   }
   return [keys.map(escape).join(","),...rows.map(row=>keys.map(key=>escape(row[key])).join(","))].join("\r\n")
 }
-export function resultRowsLatex(rows:ResultRow[]):string {
-  const escape=(value:unknown)=>String(value??"").replace(/[\\&%$#_{}~^]/g,character=>({"\\":"\\textbackslash{}","&":"\\&","%":"\\%","$":"\\$","#":"\\#","_":"\\_","{":"\\{","}":"\\}","~":"\\textasciitilde{}","^":"\\textasciicircum{}"}[character]!)).replace(/[\r\n]+/g," ")
-  return ["\\begin{longtable}{lll}","Row & Field & Value \\\\","\\hline",...rows.flatMap((row,index)=>Object.entries(safeSource(row) as Record<string,unknown>).map(([key,value])=>`${index+1} & ${escape(key)} & ${escape(typeof value==="object"?stringifySchedulerJSON(value):value)} \\\\`)),"\\end{longtable}"].join("\n")
-}
 export type ProjectionMeasurementKind = "operation-cost-measurements" | "dispatch-occupancy-measurements"
 export const isProjectionMeasurementKind = (kind:string):kind is ProjectionMeasurementKind => kind === "operation-cost-measurements" || kind === "dispatch-occupancy-measurements"
 export const measurementPath = (kind:ProjectionMeasurementKind, namespace:string, name?:string) => `v1/namespaces/${encodeURIComponent(namespace)}/${kind}${name === undefined ? "" : `/${encodeURIComponent(name)}`}`

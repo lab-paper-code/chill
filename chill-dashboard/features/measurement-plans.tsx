@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
 import { ApiError, useChillMutation, useChillQuery } from "@/lib/client"
 import type { CampaignResult, MeasurementAssessment, MeasurementMutation, MeasurementPlanList, MeasurementPlanSpec, ResultRow } from "@/lib/read-types"
-import { formatMeasurementNumber as number, resultRowsCSV, resultRowsLatex, safeMeasurementReturn } from "@/lib/measurements"
+import { formatMeasurementNumber as number, resultRowsCSV, safeMeasurementReturn } from "@/lib/measurements"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
 import { Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
@@ -24,11 +24,11 @@ export function AssessmentDetails({assessment}:{assessment?:MeasurementAssessmen
   return <section className="space-y-3 border-t pt-4" aria-label="서버 결과 판정">
     <h2 className="font-semibold">결과 확인</h2>
     <div className="flex flex-wrap items-center gap-3"><MeasurementStatus assessment={assessment}/><span className="text-sm">{assessment.checklist?.criteriaMet===true?"기준 충족":assessment.checklist?.criteriaMet===false?"결과 체크리스트 미충족":"결과 체크리스트 확인 불가"}</span></div>
-    {!!assessment.reasons?.length&&<ul className="space-y-2 text-sm">{assessment.reasons.map((reason,index)=><li key={index}><p>{reason.message}</p><p className="text-xs text-muted-foreground">{reason.code}{reason.sourceIds?.length?` / 출처 ${reason.sourceIds.join(", ")}`:""}</p></li>)}</ul>}
+    {!!assessment.reasons?.length&&<ul className="space-y-2 text-sm">{assessment.reasons.map((reason,index)=><li key={index}><p>{reason.message.replace(/\s*\(FixtureOnly\)/g,"")}</p><details className="text-xs text-muted-foreground"><summary className="cursor-pointer py-2">사유 코드·출처 원문</summary>{reason.code}{reason.sourceIds?.length?` / ${reason.sourceIds.join(", ")}`:""}</details></li>)}</ul>}
     {assessment.scope?.schedulerUsed===false&&<p className="text-sm">현재 스케줄러 미사용</p>}
     {assessment.scope?.reused&&<p className="text-sm">재사용 결과예요. 대상 확인 실측과 원본 참조는 별도 행이며 독립 전체 실측으로 합산하지 않아요.</p>}
     {!!assessment.scope?.facts?.length&&<ul className="list-disc pl-5 text-sm">{assessment.scope.facts.map((fact,index)=><li key={index}>{fact}</li>)}</ul>}
-    {!!assessment.checklist?.checks?.length&&<div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>확인 항목</TableHead><TableHead>서버 결과</TableHead><TableHead>사유</TableHead><TableHead>출처</TableHead></TableRow></TableHeader><TableBody>{assessment.checklist.checks.map((check,index)=><TableRow key={index}><TableCell>{check.code}</TableCell><TableCell>{check.result}</TableCell><TableCell className="whitespace-normal">{check.message}</TableCell><TableCell className="whitespace-normal break-all">{check.sourceIds?.join(", ")||"미제공"}</TableCell></TableRow>)}</TableBody></Table></div>}
+    {!!assessment.checklist?.checks?.length&&<details><summary className="min-h-11 cursor-pointer py-2 text-sm">결과 확인 항목 원문</summary><div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>확인 항목</TableHead><TableHead>서버 결과</TableHead><TableHead>사유</TableHead></TableRow></TableHeader><TableBody>{assessment.checklist.checks.map((check,index)=><TableRow key={index}><TableCell>{check.code}</TableCell><TableCell>{check.result}</TableCell><TableCell className="whitespace-normal">{check.message}</TableCell></TableRow>)}</TableBody></Table></div></details>}
     <p className="text-xs text-muted-foreground">사용 가능은 채택 근거와 목표 batch 측정 충족을 뜻해요. 기준 충족은 서버 결과 체크리스트까지 충족한 경우예요. 전력 관측 시각 부재와 노드 벽전력은 이 판정의 실패 기준이 아니에요.</p>
   </section>
 }
@@ -54,25 +54,23 @@ function ResultCondition({condition}:{condition:Record<string,unknown>}) {
 }
 
 export function ResultRows({rows,filename="chill-result-rows.csv"}:{rows:ResultRow[];filename?:string}) {
-  function download(format:"csv"|"tex") {
-    const url=URL.createObjectURL(new Blob([format==="csv"?resultRowsCSV(rows):resultRowsLatex(rows)],{type:format==="csv"?"text/csv;charset=utf-8":"application/x-tex;charset=utf-8"}))
-    const link=document.createElement("a");link.href=url;link.download=filename.replace(/\.csv$/i,"").replace(/[^a-zA-Z0-9._-]/g,"_")+`.${format}`;link.click();URL.revokeObjectURL(url)
+  function download() {
+    const url=URL.createObjectURL(new Blob([resultRowsCSV(rows)],{type:"text/csv;charset=utf-8"}))
+    const link=document.createElement("a");link.href=url;link.download=filename.replace(/[^a-zA-Z0-9._-]/g,"_");link.click();URL.revokeObjectURL(url)
   }
   return <section className="min-w-0 space-y-3" aria-label="결과 행">
-    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">결과 행</h2><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={!rows.length} onClick={()=>download("csv")}>같은 결과 행 CSV</Button><Button variant="outline" disabled={!rows.length} onClick={()=>download("tex")}>같은 결과 행 LaTeX</Button></div></div>
-    {!rows.length?<p className="notice">서버 결과 행이 제공되지 않았어요. 원본 수치로 결과 행을 다시 만들지 않아요.</p>:<div className="overflow-x-auto rounded-lg border"><Table><TableHeader><TableRow>{["종류 / profile","정확 조건 / batch","pooled client p95 / N","유휴 / 부하 전력","총 / 증분 에너지","증분 신뢰구간","반복 / 처리량","전력 출처","근거 / 미제공 사유","서버 판정"].map(label=><TableHead key={label}>{label}</TableHead>)}</TableRow></TableHeader><TableBody>{rows.map((row,index)=><TableRow key={row.id??index}>
-      <TableCell className="align-top whitespace-normal"><p>{row.rowKind==="confirmation"?"대상 확인 실측":row.rowKind==="source-reference"?"원본 프로파일 참조":row.rowKind==="direct"?"직접 실측":row.rowKind??"종류 미제공"}</p><p className="break-all text-xs">profile: {row.profileId||"미제공"}</p><p className="break-all text-xs">source profile: {row.sourceProfileId??"없음"}</p>{row.reuse&&<ExactFields value={row.reuse}/>}</TableCell>
-      <TableCell className="align-top"><p className="mb-2 font-medium">batch {row.batch}</p><ResultCondition condition={row.condition}/></TableCell>
-      <TableCell className="align-top text-right tabular-nums"><p>{number(row.p95Milliseconds,"ms")} ms</p><p>N {number(row.latencySampleCount)}</p></TableCell>
-      <TableCell className="align-top text-right tabular-nums"><p>idle {number(row.idleWatts,"W")} W</p><p>active {number(row.activeWatts,"W")} W</p></TableCell>
-      <TableCell className="align-top text-right tabular-nums"><p>총 {number(row.totalJoulesPerItem,"J/item")} J/건</p><p>증분 {number(row.incrementalJoulesPerItem,"J/item")} J/건</p></TableCell>
-      <TableCell className="align-top text-right tabular-nums">{row.confidence?<><p>{number(row.confidence.lower,"J/item")} ~ {number(row.confidence.upper,"J/item")} J/건</p><p>halfWidth {number(row.confidence.halfWidth,"J/item")}</p><p>level {String(row.confidence.level)}</p></>:"미제공"}</TableCell>
-      <TableCell className="align-top text-right tabular-nums"><p>active n {number(row.activeTrialCount)}</p><p>idle n {number(row.idleTrialCount)}</p><p>완료 item {number(row.completedItems)}</p><p>완료 call {number(row.completedCalls)}</p></TableCell>
-      <TableCell className="align-top"><ExactFields value={row.powerSource}/><p className="mt-2 min-w-48 whitespace-normal text-xs text-muted-foreground">원본 관측 시각이 없으면 관측 시각은 수집 시각이에요. node-wall은 노드 벽전력이며 장치 단독 전력이 아니에요.</p></TableCell>
-      <TableCell className="align-top whitespace-normal"><ExactFields value={row.sources}/><ul className="mt-2 space-y-1 text-xs">{row.missingReasons?.map((reason,i)=><li key={i}>{reason}</li>)}</ul></TableCell>
-      <TableCell className="align-top"><MeasurementStatus assessment={row.assessment}/><ul className="mt-2 min-w-40 space-y-1 whitespace-normal text-xs">{row.assessment?.reasons?.map((reason,i)=><li key={i}>{reason.message} ({reason.code})</li>)}</ul></TableCell>
-    </TableRow>)}</TableBody></Table></div>}
-    <p className="text-xs text-muted-foreground">CSV와 LaTeX는 위 서버 결과 행과 같은 범위이며 원본 정밀도를 유지해요. CI는 증분 J/건에만 적용하며 0폭과 음수 하한도 그대로 표시해요. 개별 CI의 겹침만으로 차이의 유의성을 판단하지 않아요.</p>
+    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">운영 판단 요약</h2><Button variant="outline" disabled={!rows.length} onClick={download}>결과 CSV 내보내기</Button></div>
+    {!rows.length?<p className="notice">서버 결과가 아직 없어요. 측정 완료 후 다시 확인하세요.</p>:<div className="grid min-w-0 gap-3">{rows.map((row,index)=><article key={row.id??index} className="min-w-0 rounded-lg border p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">한 번에 {row.batch}건 처리 · {row.rowKind==="confirmation"?"대상 확인 측정":row.rowKind==="source-reference"?"기존 측정 참조":row.rowKind==="direct"?"직접 측정":"측정 결과"}</h3><MeasurementStatus assessment={row.assessment}/></div>
+      <dl className="mt-3 grid gap-3 sm:grid-cols-3">
+        <div><dt className="text-sm text-muted-foreground">응답 지연 p95 / 목표</dt><dd className="font-semibold tabular-nums">{number(row.p95Milliseconds,"ms")} ms / 목표는 아래 조건 확인</dd></div>
+        <div><dt className="text-sm text-muted-foreground">요청당 에너지 · 총 / 추가 사용</dt><dd className="font-semibold tabular-nums">{number(row.totalJoulesPerItem,"J/item")} / {number(row.incrementalJoulesPerItem,"J/item")} J/건</dd></div>
+        <div><dt className="text-sm text-muted-foreground">평균 전력 · 쉬는 상태 / 실행 중</dt><dd className="font-semibold tabular-nums">{number(row.idleWatts,"W")} / {number(row.activeWatts,"W")} W</dd></div>
+      </dl>
+      <ul className="mt-3 space-y-1 text-sm">{row.assessment?.reasons?.map((reason,i)=><li key={i}>{reason.message.replace(/\s*\(FixtureOnly\)/g,"")}</li>)}</ul>
+      <details className="mt-3"><summary className="min-h-11 cursor-pointer py-2 text-sm underline">측정 조건·표본·출처 원문 펼치기</summary><div className="grid min-w-0 gap-4 sm:grid-cols-2"><ResultCondition condition={row.condition}/><ExactFields value={row}/></div></details>
+    </article>)}</div>}
+    <p className="text-xs text-muted-foreground">CSV는 위 결과와 같은 범위이며 원본 정밀도를 유지해요. 전력은 출처에 따라 장치 단독이 아닌 노드 전체 사용량일 수 있어요.</p>
   </section>
 }
 

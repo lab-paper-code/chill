@@ -22,16 +22,16 @@ export function PreflightAnswer({answer}:{answer:MeasurementPreflight}) {
   const shared=answer.plan?.shared,sizes=shared?.plannedBatchSizes??[],batch=answer.batchPlan
   return <div className="space-y-4">
     {batch&&<><Facts label="실행 범위" items={[
-      ["요청 batch",batch.requestedBatches.join(", ")||"미지정"],
-      ["요청 가능한 batch",batch.requestableBatches.join(", ")||"없음"],
-      ["실제 실행 예정 batch",batch.plannedBatches.join(", ")||"미확정"],
-      ["이미 측정한 batch",batch.measuredBatches.join(", ")||"없음"],
-      ["진행 batch",batch.inProgressBatches.join(", ")||"없음"],
-      ["부족 batch",batch.missingBatches.join(", ")||"없음"],
-      ["부분집합 요청",batch.subsetAllowed?"가능":"경로 선언 범위 고정"],
-      ["조건 대조",batch.conditionMatch==="exact"?"정확 조건 일치":batch.conditionMatch==="planned-only"?"요청 spec만 일치 / 실제 동결 조건 미확인":"확인 불가"],
-      ["적응 탐색 조기 종료",batch.searchMayStopEarly?"가능 / 모든 선택 batch 실행을 보장하지 않아요":"예정 범위 기준"],
-    ]}/>{!!batch.reasons?.length&&<ul className="space-y-2 text-sm">{batch.reasons.map((reason,index)=><li key={index}>{reason.message} ({reason.code})</li>)}</ul>}</>}
+      ["선택한 처리 건수",batch.requestedBatches.join(", ")||"미지정"],
+      ["요청 가능한 처리 건수",batch.requestableBatches.join(", ")||"없음"],
+      ["실행 예정 처리 건수",batch.plannedBatches.join(", ")||"미확정"],
+      ["이미 측정한 처리 건수",batch.measuredBatches.join(", ")||"없음"],
+      ["측정 중인 처리 건수",batch.inProgressBatches.join(", ")||"없음"],
+      ["추가 측정할 처리 건수",batch.missingBatches.join(", ")||"없음"],
+      ["일부 건수만 선택",batch.subsetAllowed?"가능":"등록된 건수를 모두 측정해요"],
+      ["기존 측정과 조건 확인",batch.conditionMatch==="exact"?"실행 조건까지 같아요":batch.conditionMatch==="planned-only"?"요청 조건은 같지만 실제 실행 조건은 아직 확인하지 못했어요":"확인 불가"],
+      ["선택 범위보다 먼저 완료",batch.searchMayStopEarly?"필요한 결과가 모이면 일부 실행 전에 마칠 수 있어요":"예정 범위를 실행해요"],
+    ]}/>{!!batch.reasons?.length&&<ul className="space-y-2 text-sm">{batch.reasons.map((reason,index)=><li key={index}>{reason.message.replace(/\s*\(FixtureOnly\)/g,"")}<details><summary className="cursor-pointer py-2">원문 코드</summary>{reason.code}</details></li>)}</ul>}</>}
     {!answer.resolves||!shared?<p role="alert" className="text-sm text-destructive">{answer.reason??"실행 계획이 제공되지 않았어요."}</p>:<Facts label="이렇게 측정해요" items={[
       ["한 번에 처리할 건수",sizes.length?`${sizes.join(", ")}건`:"경로 선언 범위"],
       ["크기마다 반복",`${answer.campaign.spec.trialsPerBatch}번`],

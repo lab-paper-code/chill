@@ -133,7 +133,7 @@ export function evidenceError(error:{status:number;data:unknown}):string {
 
 // Only the complete published E5 suffix identifies a policy counterpart.
 export function stagePolicy(stage:ExperimentStage):string {
-  return stage.id.startsWith("full-E5-")?"CHILL (full)":stage.id.startsWith("static-E5-")?"정적 비교군 (static)":stage.id
+  return stage.id.startsWith("full-E5-")?"자동 운영":stage.id.startsWith("static-E5-")?"고정 구성":"기타 구성"
 }
 export function stagePairing(run:Experiment,stage:ExperimentStage) {
   const match=/^(full|static)-(E5-.+)$/.exec(stage.id)
@@ -154,8 +154,8 @@ export function campaignPairs(run:Experiment) {
 export function campaignGroups(runs:Experiment[]) {
   return [...runs].sort((a,b)=>Date.parse(b.from)-Date.parse(a.from)).map(run=>{
     const pairs=campaignPairs(run),e5=run.stages.some(stage=>/^(full|static)-E5-/.test(stage.id))
-    return {run,pairs,title:e5?"E5 캠페인":run.id,
-      question:pairs.length?"CHILL은 정적 구성과 비교해 성공률·지연·에너지가 어떻게 다른가?":"부하·운영 구성별 성공률·지연·에너지는 어떠한가?",
+    return {run,pairs,title:e5?"부하별 운영 비교":run.id,
+      question:pairs.length?"자동 운영과 고정 구성의 성공률·지연·에너지 비교":"부하·운영 구성별 성공률·지연·에너지",
     }
   })
 }
@@ -214,4 +214,37 @@ export function policyStageGroups(run:Experiment) {
     }))
     return [{axis,series:policies.map(policy=>candidates.find(point=>point.policy===policy)??null)}]
   })}
+}
+
+export function campaignConclusion(run:Experiment):string {
+  const pairs=campaignPairs(run)
+  if(!pairs.length)return "자동 운영과 고정 구성을 비교할 같은 부하 구간이 없어요."
+  let saved=0,increased=0,better=0,worse=0,missing=0
+  let worstSuccess=0,worstLatency=0,successAt="",latencyAt=""
+  for(const pair of pairs) {
+    const a=finite(pair.chill.kpis.wholePoolJoules),b=finite(pair.control.kpis.wholePoolJoules)
+    if(a===null||b===null)missing++;else if(a<b)saved++;else if(a>b)increased++
+    const services=comparisonRows(pair.chill,pair.control)
+    if(!services.length)missing++
+    if(differentMeasurementRules(pair.chill,pair.control).length||stageSeconds(pair.chill)!==stageSeconds(pair.control))missing++
+    for(const row of services) {
+      if(row.a.length!==1||row.b.length!==1){missing++;continue}
+      const left=row.a[0],right=row.b[0],as=resultMetric(left,"success"),bs=resultMetric(right,"success"),ap=finite(resultMetric(left,"p95").value),bp=finite(resultMetric(right,"p95").value)
+      if(as.key!==bs.key||as.value===null||bs.value===null||ap===null||bp===null){missing++;continue}
+      if(as.value>bs.value||ap<bp)better++
+      if(as.value<bs.value||ap>bp)worse++
+      if(as.value-bs.value<worstSuccess){worstSuccess=as.value-bs.value;successAt=`${row.name} (${stageLoadLabel(pair.chill,run)})`}
+      if(ap-bp>worstLatency){worstLatency=ap-bp;latencyAt=`${row.name} (${stageLoadLabel(pair.chill,run)})`}
+    }
+  }
+  const unpaired=run.stages.length-pairs.length*2
+  const conclusion=worse?"자동 운영이 항상 낫지는 않았어요. 서비스 품질 저하가 있어요.":missing||unpaired?"자동 운영이 더 나은지는 아직 확인이 부족해요.":increased?"서비스 품질 저하는 없지만 에너지가 늘어난 구간이 있어요.":"비교한 구간에서 서비스 품질 저하 없이 에너지를 유지하거나 줄였어요."
+  return `${conclusion} 전체 ${run.stages.length}단계 중 같은 부하 ${pairs.length}쌍 · 에너지 감소 ${saved} / 증가 ${increased}구간 · 서비스 성공률·지연 개선 ${better} / 악화 ${worse}건${worstSuccess<0?` · 최대 성공률 하락 ${(worstSuccess*100).toFixed(2)}%p: ${successAt}`:""}${worstLatency>0?` · 최대 p95 증가 ${formatResult(worstLatency,"ms")}: ${latencyAt}`:""}${missing||unpaired?` · 확인 부족 ${missing}건 / 비교 불가 ${unpaired}단계`:""}`
+}
+
+export function stageLoadLabel(stage:ExperimentStage,run:Experiment):string {
+  const rate=stageRate(stage),rates=[...new Set(run.stages.map(stageRate).filter((value):value is number=>value!==null))].sort((a,b)=>a-b)
+  if(rate===null)return "요청률 미기록"
+  const index=rates.indexOf(rate),level=rates.length<2?"일정":index===0?"낮음":index===rates.length-1?"높음":"중간"
+  return `부하 ${level} · ${formatResult(rate,"req/s")}`
 }

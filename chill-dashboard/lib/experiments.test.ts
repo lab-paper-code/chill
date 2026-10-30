@@ -3,6 +3,7 @@ import test from "node:test"
 import { readFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import { campaignGroups, campaignPairs, commitExperimentSelection, comparisonDirection, experimentSelection, frozenP95SLO, stagePairing, policyStageGroups, serviceDelta, stageChartData, alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
+import { campaignConclusion, stageLoadLabel } from "./experiments.ts"
 import type { SchedulerObservation } from "./read-types.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
@@ -225,7 +226,7 @@ test("R3fix: policies share exact stage axes and normalize shared energy by offe
   const make=(id:string,seconds:number,offered:unknown=10):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:`2026-10-30T00:00:${String(seconds).padStart(2,"0")}Z`,kpis:{wholePoolJoules:100,gapErrorBoundJoules:5,requests:{same:{offered}}}})
   const run={...recorded.publication,stages:[make("full-E5-2",20),make("static-E5-2",10),make("full-E5-3-repeat",10,0)]}
   const points=stageChartData(run)
-  assert.deepEqual(points.map(p=>p.policy),["CHILL (full)","정적 비교군 (static)","CHILL (full)"])
+  assert.deepEqual(points.map(p=>p.policy),["자동 운영","고정 구성","자동 운영"])
   assert.deepEqual(points.map(p=>p.axis),["E5-2","E5-2","E5-3-repeat"])
   assert.equal(points[0].joulesPerRequest,10)
   assert.equal(points[0].watts,5)
@@ -234,7 +235,7 @@ test("R3fix: policies share exact stage axes and normalize shared energy by offe
   assert.equal(points[2].joulesPerRequest,null)
   assert.equal(stageChartData({...run,stages:[make("unknown",10,null)]})[0].joulesPerRequest,null)
   const grouped=policyStageGroups(run)
-  assert.deepEqual(grouped.policies,["CHILL (full)","정적 비교군 (static)"])
+  assert.deepEqual(grouped.policies,["자동 운영","고정 구성"])
   assert.deepEqual(grouped.groups.map(group=>group.axis),["E5-2","E5-3-repeat"])
   assert.equal(grouped.groups[0].series[0]?.watts,5)
   assert.equal(grouped.groups[0].series[1]?.watts,10)
@@ -342,4 +343,12 @@ test("R5: all-service charts and all-stage table are initially rendered, with or
   assert.match(source,/connectNulls=\{false\}/)
   assert.match(source,/dataKey=\{`u\$\{index\}`\}/)
   assert.match(source,/<SourceExport filename="experiment-comparison\.json" value=\{\{a:aq\.data,/)
+})
+
+test("operator conclusion includes every paired stage and reports energy losses alongside gains",()=>{
+  const stage=(id:string,energy:number,from:string):ExperimentStage=>({id,from,to:"2026-10-30T00:01:00Z",kpis:{wholePoolJoules:energy}} as ExperimentStage)
+  const run={stages:[stage("full-E5-1",90,"2026-10-30T00:00:00Z"),stage("static-E5-1",100,"2026-10-30T00:00:00Z"),stage("full-E5-2",120,"2026-10-30T00:00:00Z"),stage("static-E5-2",100,"2026-10-30T00:00:00Z")]} as Experiment
+  assert.match(campaignConclusion(run),/전체 4단계/)
+  assert.match(campaignConclusion(run),/감소 1 \/ 증가 1구간/)
+  assert.equal(stageLoadLabel(run.stages[0],run),"요청률 미기록")
 })
