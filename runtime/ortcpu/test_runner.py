@@ -94,6 +94,7 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "batch": 1,
                 "warmupIterations": 2,
                 "durationSeconds": 1,
+                "durationToleranceSeconds": 0.5,
                 "workloadMode": runner.SUPPORTED_WORKLOAD,
                 "dataset": {
                     "name": "vqav2",
@@ -116,6 +117,7 @@ def valid_idle_request(model_path: Path) -> dict[str, object]:
         "warmupIterations": 0,
         "settlingDurationSeconds": 60,
         "durationSeconds": 30,
+        "durationToleranceSeconds": 0.5,
         "workloadMode": runner.IDLE_WORKLOAD,
     }
     return request

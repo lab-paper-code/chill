@@ -58,13 +58,13 @@ spec:
                 description: AcceptedCountTarget is required independently for each
                   direction.
                 format: int32
-                minimum: 5
+                minimum: 2
                 type: integer
               attemptLimit:
                 description: AttemptLimit bounds retained attempts independently for
                   each direction.
                 format: int32
-                minimum: 5
+                minimum: 2
                 type: integer
               deviceClass:
                 description: DeviceClass names the cluster-scoped DeviceClass.

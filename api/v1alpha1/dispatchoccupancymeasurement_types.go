@@ -13,7 +13,6 @@ import (
 // time a request occupies an instance outside its batch execution, for the
 // Node, power mode, runtime image and model of one measured option.
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="DispatchOccupancyMeasurement spec is immutable"
-// +kubebuilder:validation:XValidation:rule="(has(self.supplyMode) && self.supplyMode == 'closed-loop') || self.durationSeconds >= 60",message="open-loop occupancy duration must be at least 60 seconds"
 type DispatchOccupancyMeasurementSpec struct {
 	// Node names the Kubernetes Node measured.
 	// +kubebuilder:validation:MinLength=1
@@ -38,7 +37,6 @@ type DispatchOccupancyMeasurementSpec struct {
 	// RateFactor applies only to legacy open-loop measurements.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
-	// +kubebuilder:validation:XValidation:rule="double(self) >= 1.2",message="rateFactor must be at least 1.2"
 	RateFactor string `json:"rateFactor,omitempty"`
 
 	// WarmupSeconds are excluded from the start of the window.
@@ -67,6 +65,9 @@ type DispatchOccupancyMeasurementSpec struct {
 	// +optional
 	// +kubebuilder:validation:Enum=closed-loop;poisson
 	SupplyMode string `json:"supplyMode,omitempty"`
+	// Seed selects the load-generator random sequence.
+	// +optional
+	Seed uint64 `json:"seed,omitempty"`
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	RequestLifetimeSeconds int32 `json:"requestLifetimeSeconds,omitempty"`
@@ -123,12 +124,8 @@ func (s DispatchOccupancyMeasurementSpec) ValidateConditions() error {
 		return fmt.Errorf("invalid occupancy window, population or idle bound")
 	}
 	if s.SupplyMode != "closed-loop" {
-		// Legacy open-loop windows retain their independent structural floor.
-		if s.DurationSeconds < 60 {
-			return fmt.Errorf("legacy open-loop occupancy duration must be at least 60 seconds")
-		}
 		factor, err := strconv.ParseFloat(s.RateFactor, 64)
-		if s.SupplyMode != "" && s.SupplyMode != "poisson" || err != nil || math.IsNaN(factor) || math.IsInf(factor, 0) || factor < 1.2 {
+		if s.SupplyMode != "" && s.SupplyMode != "poisson" || err != nil || math.IsNaN(factor) || math.IsInf(factor, 0) || factor <= 1 {
 			return fmt.Errorf("invalid open-loop supply")
 		}
 		return nil

@@ -276,6 +276,7 @@ func projectCurveProtocol(config profilingrun.RunConfig) (profilederivation.Curv
 		WarmupIterations:           config.Measurement.WarmupIterations,
 		SettlingDurationSeconds:    config.Measurement.SettlingDurationSeconds,
 		DurationSeconds:            config.Measurement.DurationSeconds,
+		DurationToleranceSeconds:   config.Measurement.DurationToleranceSeconds,
 		MetricIntervalMilliseconds: config.Metrics.IntervalMilliseconds,
 		MetricTimeoutMilliseconds:  config.Metrics.TimeoutMilliseconds,
 		MetricDurationSeconds:      config.Metrics.DurationSeconds,

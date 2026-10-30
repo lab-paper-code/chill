@@ -364,7 +364,7 @@ profile key, 선택할 campaign과 적용 범위는 설정으로 기록한다.
 firstfloor/backend 조건에 대응하는 native 근거와 batch 1을 포함한 실제 measured·
 initialized batch domain을 사용한다. sparse capability·warmup·affinity·threads·
 GPU UUID·메모리와 service 분포를 원래 raw 조건에 연결한다.
-idle baseline confidence는 `profileConfidenceLevel`로 설정하며 선택 profile과 실제 배정 기록에 보존한다.
+idle baseline과 incremental-energy confidence는 측정 BEO의 `pointPolicy.confidenceLevel`(생략 `"0.95"`)로 선택하며 profile과 실제 배정 기록에 보존한다.
 
 ### 구현된 입력 계약
 
@@ -692,7 +692,6 @@ Pod의 env에 `GOMEMLIMIT=3GiB`와 `GODEBUG=gctrace=1`이 한 번씩 있는지 �
 | `enabled`, `tls.secretName`, `port:8080` | HTTPS ChillServer 활성화, `/etc/chill/tls/tls.crt`와 `tls.key`, `--bind-address` |
 | `namespace`, `actuationNamespace` | `--serving-namespace`, `--actuation-namespace`; 빈 값은 release namespace |
 | `profileNamespaces:[]` | 반복 `--profile-namespace`; 빈 목록은 serving namespace. ChillServer에 namespaced BEO `get/list/create/delete`, ProfilingRun `get`만 부여 |
-| `profileConfidenceLevel:0.95` | `--profile-confidence-level`; measured idle baseline confidence |
 | `resources.limits` cpu `6`, memory `4Gi`, `goMemLimit:3GiB` | env `GOMAXPROCS`는 `limits.cpu`, env `GOMEMLIMIT`는 `goMemLimit`(Go 형식, 필수)이다. `goMemLimit`은 `limits.memory`의 75%로 두고 limit을 바꿀 때 함께 바꾼다 |
 | `goDebug:""` | env `GODEBUG`; 빈 값이면 넣지 않는다. E5의 GC 기록은 `gctrace=1`(GC마다 stderr 한 줄)로 한다 |
 | `queueLimit:1024`, `requestTimeout:30s`, `drainTimeout:2m` | 각각 `--queue-limit`, `--request-timeout`, `--drain-timeout`; SLO timeout 아님 |

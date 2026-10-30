@@ -55,11 +55,11 @@ type PowerModeTransitionCostSpec struct {
 	ServingContainer string `json:"servingContainer"`
 
 	// AcceptedCountTarget is required independently for each direction.
-	// +kubebuilder:validation:Minimum=5
+	// +kubebuilder:validation:Minimum=2
 	AcceptedCountTarget int32 `json:"acceptedCountTarget"`
 
 	// AttemptLimit bounds retained attempts independently for each direction.
-	// +kubebuilder:validation:Minimum=5
+	// +kubebuilder:validation:Minimum=2
 	AttemptLimit int32 `json:"attemptLimit"`
 
 	// SettlingSeconds extends the energy-cost window after fresh serving Ready.

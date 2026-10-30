@@ -52,9 +52,22 @@ func TestCurveDeriverMapsTheEnergyObjectiveDecision(t *testing.T) {
 	}
 	baseline, exists := detail.IdleBaselinesByState[fixture.stateIdentity]
 	if !exists || baseline.PolicyVersion != energyObjectivePointPolicyVersion ||
-		baseline.ConfidenceLevel != energyObjectivePointConfidenceLevel ||
+		baseline.ConfidenceLevel != fixture.policy.ConfidenceLevel ||
 		len(baseline.Trials) != fixture.policy.TrialsPerBatch {
 		t.Fatalf("point policy was not bound to the energy-objective trial count: %+v", baseline)
+	}
+}
+
+func TestCurveDeriverUsesSelectedConfidence(t *testing.T) {
+	fixture := newCurveDeriverFixture(t)
+	fixture.policy.ConfidenceLevel = .8
+	result, err := fixture.deriver.Derive(context.Background(), fixture.plan, fixture.activeRuns, fixture.idleRuns, []int{1, 2}, fixture.policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := result.Detail.(profilederivation.EnergyOptimizationResult).IdleBaselinesByState[fixture.stateIdentity]
+	if baseline.ConfidenceLevel != .8 {
+		t.Fatalf("campaign confidence was not used: %+v", baseline)
 	}
 }
 
@@ -361,7 +374,7 @@ func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
 	fixture := curveDeriverFixture{
 		evidence: evidence, plan: plan,
 		policy: profilederivation.EnergyObjectivePolicy{
-			Version: "quick-energy-v1", TrialsPerBatch: 4,
+			Version: "quick-energy-v1", TrialsPerBatch: 4, ConfidenceLevel: .95,
 		},
 	}
 	for _, batch := range []int{1, 2} {

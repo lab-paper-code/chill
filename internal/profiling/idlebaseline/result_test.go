@@ -45,6 +45,32 @@ func TestResultRoundTripRetainsCompleteAggregateAuthority(t *testing.T) {
 	}
 }
 
+func TestTwoTrialNonzeroVarianceResultRoundTrip(t *testing.T) {
+	trials := resultBaseline(t).Trials[:2]
+	baseline, err := profilederivation.DeriveIdleBaseline(trials, profilederivation.PointPolicy{
+		Version: "idle-point-v1", MinimumTrials: 2, ConfidenceLevel: .8,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := NewResult(resultState(), baseline, resultEvidence(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := result.MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := DecodeResult(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := restored.IdleBaseline()
+	if got.DegreesOfFreedom != 1 || got.MeanWallWattsVariance != .25 || got.ConfidenceLevel != .8 || got.ConfidenceHalfWidth <= 0 {
+		t.Fatalf("two-trial uncertainty lost on reload: %+v", got)
+	}
+}
+
 func TestDecodeResultRejectsRetiredOrInvalidStoredResult(t *testing.T) {
 	baseline := resultBaseline(t)
 	result, err := NewResult(resultState(), baseline, resultEvidence(len(baseline.Trials)))

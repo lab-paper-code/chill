@@ -156,6 +156,44 @@ func TestCatalogNegativeIncrementalEnergyResolution(t *testing.T) {
 	}
 }
 
+func TestCatalogTwoTrialsReloadAndSelectedConfidence(t *testing.T) {
+	for _, confidence := range []string{"", "0.8"} {
+		catalog, source, _, _ := catalogEvidenceFixturePolicy(t, 4096, [6]float64{6, 7, 8, 3, 5, 7}, 2, confidence)
+		view, err := catalog.Refresh(context.Background(), []string{source.Namespace})
+		if err != nil || len(view.Profiles) != 1 || len(view.Insufficiencies) != 0 {
+			t.Fatalf("two nonzero-variance populations failed retained reload: %+v, %v", view, err)
+		}
+		want := .95
+		if confidence != "" {
+			want = .8
+		}
+		profile := view.Profiles[0]
+		if profile.ConfidenceLevel != want || profile.TrialsPerBatch != 2 || profile.IdleBaselineWatts != 4 ||
+			len(profile.Batches[0].DurationNanos) != 4 || profile.Batches[0].EnergyPerInputJoules != 37.5 {
+			t.Fatalf("selected two-trial measurement lost serving values: %+v", profile)
+		}
+	}
+}
+
+func TestCatalogSelectedConfidenceChangesNegativeEnergyDecision(t *testing.T) {
+	// At 95% the wide idle uncertainty includes zero; at 10% it excludes zero.
+	for _, confidence := range []string{"", "0.1"} {
+		catalog, source, _, _ := catalogEvidenceFixturePolicy(t, 4096, [6]float64{3.5, 3.5, 3.5, 3, 4, 5}, 3, confidence)
+		view, err := catalog.Refresh(context.Background(), []string{source.Namespace})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if confidence == "" {
+			if len(view.Profiles) != 1 || !view.Profiles[0].Batches[0].EnergyBelowResolution {
+				t.Fatalf("default CI changed: %+v", view)
+			}
+		} else if len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 ||
+			!strings.Contains(view.Insufficiencies[0].Reason, "10% CI") {
+			t.Fatalf("selected CI did not affect diagnosis: %+v", view)
+		}
+	}
+}
+
 func TestCatalogRejectsRunAffinityChangedFromCampaignSource(t *testing.T) {
 	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
 	run := &edgev1alpha1.ProfilingRun{}
@@ -189,6 +227,10 @@ func catalogEvidenceFixture(t *testing.T, memory uint64) (*Catalog, types.Namesp
 }
 
 func catalogEvidenceFixtureWithPower(t *testing.T, memory uint64, trialWatts [6]float64) (*Catalog, types.NamespacedName, catalogEvidenceObjects, evidencestore.ObjectIdentity) {
+	return catalogEvidenceFixturePolicy(t, memory, trialWatts, 3, "")
+}
+
+func catalogEvidenceFixturePolicy(t *testing.T, memory uint64, trialWatts [6]float64, count int, confidence string) (*Catalog, types.NamespacedName, catalogEvidenceObjects, evidencestore.ObjectIdentity) {
 	t.Helper()
 	payload, err := os.ReadFile("../../profiling/profiler/evidence/testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
@@ -199,11 +241,12 @@ func catalogEvidenceFixtureWithPower(t *testing.T, memory uint64, trialWatts [6]
 		t.Fatal(err)
 	}
 	active.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 32}
+	active.Measurement.DurationToleranceSeconds = .5
 	active.CPU.Policy, active.CPU.Limit = profilingrun.ConfiguredCPUQuotaPolicy, "2"
 	active.CPU.ORTIntraOpThreads = 2
 	active.CPU.AffinityCPUs = []int{0, 1}
 	idle := active
-	idle.Measurement = profilingrun.MeasurementContract{Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
+	idle.Measurement = profilingrun.MeasurementContract{Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, DurationToleranceSeconds: .5,
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode}
 	spec, err := profilerprojection.ProjectCurvePlanSpec("catalog-plan", active, idle, profilederivation.CurveConversionContract{}, []int{1})
 	if err != nil {
@@ -240,7 +283,8 @@ func catalogEvidenceFixtureWithPower(t *testing.T, memory uint64, trialWatts [6]
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31}},
 			IdleProtocol: edgev1alpha1.IdleProtocolSpec{SettlingDurationSeconds: 60, DurationSeconds: 30,
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31}},
-			TrialsPerBatch: 3,
+			TrialsPerBatch: int32(count),
+			PointPolicy:    edgev1alpha1.BatchEnergyOptimizationPointPolicySpec{ConfidenceLevel: confidence},
 		},
 		Status: edgev1alpha1.BatchEnergyOptimizationStatus{
 			Phase: catalogCompletePhase, ObservedGeneration: 1, Outcome: "MinimumFound",
@@ -254,6 +298,9 @@ func catalogEvidenceFixtureWithPower(t *testing.T, memory uint64, trialWatts [6]
 	apiObjects := []client.Object{campaign}
 	completed := make([]batchenergyoptimization.CompletedTrialReference, 0, 6)
 	for index := range 6 {
+		if index%3 >= count {
+			continue
+		}
 		config, watts, mode := active, trialWatts[index], batchenergyoptimization.WorkloadModeActive
 		if index >= 3 {
 			config, mode = idle, batchenergyoptimization.WorkloadModeIdle
@@ -322,7 +369,7 @@ func catalogEvidenceFixtureWithPower(t *testing.T, memory uint64, trialWatts [6]
 	}
 	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&edgev1alpha1.BatchEnergyOptimization{}).WithObjects(apiObjects...).Build()}
-	catalog, err := NewCatalog(store, objects, 1<<20, 0.95)
+	catalog, err := NewCatalog(store, objects, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}

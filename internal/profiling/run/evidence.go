@@ -213,7 +213,7 @@ func validateBoundRuntime(config RunConfig, podUID string, result RuntimeResult)
 	if !slices.Equal(result.Inputs, config.State.Preprocessor.Inputs) {
 		return errors.New("runtime input field evidence does not match the frozen preprocessor inputs")
 	}
-	minimumElapsed := float64(config.Measurement.DurationSeconds) - 0.5
+	minimumElapsed := float64(config.Measurement.DurationSeconds) - config.Measurement.DurationToleranceSeconds
 	if result.MeasurementMode != "duration" || result.InferenceCount < 1 ||
 		result.MeasurementElapsedSeconds < minimumElapsed {
 		return errors.New("runtime measurement evidence is incomplete")

@@ -74,6 +74,7 @@ type ProfilingRunCandidateSpec struct {
 	Preprocessor string `json:"preprocessor"`
 }
 
+// +kubebuilder:validation:XValidation:rule="!has(self.durationToleranceSeconds) || self.durationToleranceSeconds < double(self.durationSeconds)",message="duration tolerance must be less than duration"
 // +kubebuilder:validation:XValidation:rule="self.workloadMode == 'idle-model-loaded' ? self.warmupIterations == 0 && has(self.settlingDurationSeconds) && !has(self.dataset) : !has(self.settlingDurationSeconds) && has(self.dataset)",message="measurement fields must match the selected workloadMode"
 // +kubebuilder:validation:XValidation:rule="!has(self.cpuQuota) || quantity(self.cpuQuota).compareTo(quantity('0')) > 0",message="cpuQuota must be positive"
 // +kubebuilder:validation:XValidation:rule="!has(self.cpuQuota) || quantity(self.cpuQuota).isInteger()",message="cpuQuota must be a whole number of CPU cores"
@@ -105,6 +106,12 @@ type ProfilingRunMeasurementSpec struct {
 
 	// +kubebuilder:validation:Minimum=1
 	DurationSeconds int32 `json:"durationSeconds"`
+
+	// DurationToleranceSeconds bounds measurement-window undershoot.
+	// +optional
+	// +kubebuilder:default=0.5
+	// +kubebuilder:validation:Minimum=0
+	DurationToleranceSeconds *float64 `json:"durationToleranceSeconds,omitempty"`
 
 	// +kubebuilder:validation:Enum=saturated-serial-fixed-batch;idle-model-loaded
 	WorkloadMode string `json:"workloadMode"`

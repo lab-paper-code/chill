@@ -37,6 +37,20 @@ func TestValidateRuntimeRejectsMaterialDrift(t *testing.T) {
 	}
 }
 
+func TestRuntimeDurationToleranceChangesAcceptance(t *testing.T) {
+	config := firstfloorRunConfig()
+	result := firstfloorResult(config)
+	result.MeasurementElapsedSeconds = 29.6
+	config.Measurement.DurationToleranceSeconds = .5
+	if err := ValidateRuntime(config, "pod-uid", result); err != nil {
+		t.Fatal(err)
+	}
+	config.Measurement.DurationToleranceSeconds = .25
+	if err := ValidateRuntime(config, "pod-uid", result); err == nil {
+		t.Fatal("selected duration tolerance did not change evidence acceptance")
+	}
+}
+
 func TestRuntimeEvidenceRejectsRawInputFieldDrift(t *testing.T) {
 	for name, inputs := range map[string][]string{"renamed": {"other"}, "missing": nil, "extra": {"image", "question"}} {
 		t.Run(name, func(t *testing.T) {

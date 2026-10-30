@@ -268,8 +268,9 @@ func TestBuildExecutionJobExtendsOnlyIdleTimingEnvelope(t *testing.T) {
 	prepared := currentPreparedRun(t)
 	prepared.RunConfig.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, WarmupIterations: 0, SettlingDurationSeconds: 60,
-		DurationSeconds: 30,
-		WorkloadMode:    profilingrun.IdleModelLoadedWorkloadMode,
+		DurationSeconds:          30,
+		DurationToleranceSeconds: .5,
+		WorkloadMode:             profilingrun.IdleModelLoadedWorkloadMode,
 	}
 	resolved := resolvedRunForPrepared(t, prepared)
 	job, err := buildExecutionJob(

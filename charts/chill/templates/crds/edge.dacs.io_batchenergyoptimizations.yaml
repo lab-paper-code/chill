@@ -71,6 +71,10 @@ spec:
                     format: int32
                     minimum: 1
                     type: integer
+                  durationToleranceSeconds:
+                    default: 0.5
+                    minimum: 0
+                    type: number
                   metricObservation:
                     description: ProfilingRunMetricObservationSpec contains policy
                       only, never an endpoint.
@@ -106,6 +110,9 @@ spec:
                 - warmupIterations
                 type: object
                 x-kubernetes-validations:
+                - message: duration tolerance must be less than duration
+                  rule: '!has(self.durationToleranceSeconds) || self.durationToleranceSeconds
+                    < double(self.durationSeconds)'
                 - message: metricObservation.durationSeconds must cover durationSeconds
                   rule: self.metricObservation.durationSeconds >= self.durationSeconds
               batchSizes:
@@ -148,6 +155,10 @@ spec:
                     format: int32
                     minimum: 1
                     type: integer
+                  durationToleranceSeconds:
+                    default: 0.5
+                    minimum: 0
+                    type: number
                   metricObservation:
                     description: ProfilingRunMetricObservationSpec contains policy
                       only, never an endpoint.
@@ -182,8 +193,22 @@ spec:
                 - settlingDurationSeconds
                 type: object
                 x-kubernetes-validations:
+                - message: duration tolerance must be less than duration
+                  rule: '!has(self.durationToleranceSeconds) || self.durationToleranceSeconds
+                    < double(self.durationSeconds)'
                 - message: metricObservation.durationSeconds must cover durationSeconds
                   rule: self.metricObservation.durationSeconds >= self.durationSeconds
+              pointPolicy:
+                default: {}
+                description: |-
+                  BatchEnergyOptimizationPointPolicySpec owns the confidence of both idle and
+                  incremental-energy estimates for this measurement.
+                properties:
+                  confidenceLevel:
+                    default: "0.95"
+                    pattern: ^0\.[0-9]*[1-9][0-9]*$
+                    type: string
+                type: object
               retryLimit:
                 description: RetryLimit bounds attempts per batch that did not reach
                   a completed execution. It does not bound completed trials.
@@ -260,7 +285,7 @@ spec:
                   TrialsPerBatch is the number of completed active and idle observations used
                   to compare each batch under the minimum-energy objective.
                 format: int32
-                minimum: 3
+                minimum: 2
                 type: integer
             required:
             - activeProtocol

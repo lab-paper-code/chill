@@ -102,9 +102,33 @@ func TestSummarizeReturnsTypedInsufficientWithoutPartialTable(t *testing.T) {
 	}
 }
 
-func TestSummarizeRequiresAtLeastFiveAcceptedPerDirection(t *testing.T) {
-	_, err := transitioncost.Summarize(testDirections(), 4, nil)
-	assertErrorContains(t, err, "at least five")
+func TestSummarizeRequiresAtLeastTwoAcceptedPerDirection(t *testing.T) {
+	_, err := transitioncost.Summarize(testDirections(), 1, nil)
+	assertErrorContains(t, err, "at least two")
+}
+
+func TestSummarizeAndRestoreTwoAcceptedPerDirection(t *testing.T) {
+	directions := testDirections()
+	var results []transitioncost.FinalizedObservation
+	for directionIndex, direction := range directions {
+		for trial := range 2 {
+			results = append(results, deriveAttempt(t, direction, fmt.Sprintf("d%d-t%d", directionIndex, trial),
+				2+trial, float64(trial), acceptedAttempt, nil))
+		}
+	}
+	table, err := transitioncost.Summarize(directions, 2, results)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := transitioncost.RestoreDirectedTable(table.Record())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range restored.Record().Entries {
+		if entry.AcceptedCount != 2 || entry.TauMilliseconds.SampleStandardDeviation <= 0 {
+			t.Fatalf("two-trial directional uncertainty lost: %+v", entry)
+		}
+	}
 }
 
 func TestSummarizeRejectsThirdOrWrongDirection(t *testing.T) {

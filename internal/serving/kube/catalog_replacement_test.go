@@ -112,7 +112,7 @@ func TestCatalogReplacementMissingOriginalFailsClosed(t *testing.T) {
 	}
 	replacement := &edge.BatchEnergyOptimization{ObjectMeta: metav1.ObjectMeta{Name: "replacement", Namespace: "chill-system", Generation: 1, Annotations: map[string]string{replacesCampaignAnnotation: "missing"}}, Status: edge.BatchEnergyOptimizationStatus{Phase: "Complete", ObservedGeneration: 1}}
 	objects := &catalogTestObjects{}
-	catalog, err := NewCatalog(&Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(replacement).Build()}, objects, 1024, .95)
+	catalog, err := NewCatalog(&Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(replacement).Build()}, objects, 1024)
 	if err != nil {
 		t.Fatal(err)
 	}

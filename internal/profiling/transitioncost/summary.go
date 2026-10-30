@@ -87,7 +87,7 @@ func RestoreDirectedTable(record DirectedTableRecord) (DirectedTable, error) {
 	for index, entry := range restored.Entries {
 		directions[index] = DirectedStatePair{Source: entry.SourceState, Target: entry.TargetState}
 	}
-	if _, err := validateDirections(directions, 5); err != nil {
+	if _, err := validateDirections(directions, 2); err != nil {
 		return DirectedTable{}, fmt.Errorf("validate stored directed table directions: %w", err)
 	}
 	for index, entry := range restored.Entries {
@@ -276,8 +276,8 @@ func validateDirections(directions []DirectedStatePair, acceptedCountTarget int)
 	if len(directions) != len(frozen) {
 		return frozen, errors.New("exactly two directed state pairs are required")
 	}
-	if acceptedCountTarget < 5 {
-		return frozen, errors.New("accepted-count target must be at least five per direction")
+	if acceptedCountTarget < 2 {
+		return frozen, errors.New("accepted-count target must be at least two per direction")
 	}
 	copy(frozen[:], directions)
 	for _, direction := range frozen {
@@ -335,7 +335,7 @@ func validateDirectedEntry(entry DirectedEntry) error {
 	}
 	counts := entry.VerdictCounts
 	if counts.Accepted < 0 || counts.Invalid < 0 || counts.Failed < 0 || counts.Insufficient < 0 ||
-		entry.AttemptCount < 0 || entry.AcceptedCount < 5 || entry.AcceptedCount != counts.Accepted {
+		entry.AttemptCount < 0 || entry.AcceptedCount < 2 || entry.AcceptedCount != counts.Accepted {
 		return errors.New("attempt and verdict counts are inconsistent")
 	}
 	remainingAttempts := entry.AttemptCount

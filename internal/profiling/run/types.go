@@ -178,12 +178,13 @@ type NvidiaLockedGPUClockTarget struct {
 }
 
 type MeasurementContract struct {
-	Batch                   int           `json:"batch"`
-	WarmupIterations        int           `json:"warmupIterations"`
-	SettlingDurationSeconds int           `json:"settlingDurationSeconds,omitempty"`
-	Duration                time.Duration `json:"-"`
-	DurationSeconds         int           `json:"durationSeconds"`
-	WorkloadMode            string        `json:"workloadMode"`
+	Batch                    int           `json:"batch"`
+	WarmupIterations         int           `json:"warmupIterations"`
+	SettlingDurationSeconds  int           `json:"settlingDurationSeconds,omitempty"`
+	Duration                 time.Duration `json:"-"`
+	DurationSeconds          int           `json:"durationSeconds"`
+	DurationToleranceSeconds float64       `json:"durationToleranceSeconds"`
+	WorkloadMode             string        `json:"workloadMode"`
 	// Dataset is present for active measurement only.
 	Dataset *DatasetContract `json:"dataset,omitempty"`
 }

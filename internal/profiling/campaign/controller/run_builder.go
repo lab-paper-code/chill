@@ -61,22 +61,24 @@ func BuildRun(
 	case batchenergyoptimization.WorkloadModeActive:
 		protocol := parent.Spec.ActiveProtocol
 		spec.Measurement = edgev1alpha1.ProfilingRunMeasurementSpec{
-			Batch:            int32(measurement.Batch),
-			WarmupIterations: protocol.WarmupIterations,
-			DurationSeconds:  protocol.DurationSeconds,
-			WorkloadMode:     activeWorkloadMode,
-			Dataset:          protocol.Dataset,
+			Batch:                    int32(measurement.Batch),
+			WarmupIterations:         protocol.WarmupIterations,
+			DurationSeconds:          protocol.DurationSeconds,
+			DurationToleranceSeconds: protocol.DurationToleranceSeconds,
+			WorkloadMode:             activeWorkloadMode,
+			Dataset:                  protocol.Dataset,
 		}
 		spec.MetricObservation = protocol.MetricObservation
 	case batchenergyoptimization.WorkloadModeIdle:
 		protocol := parent.Spec.IdleProtocol
 		settling := protocol.SettlingDurationSeconds
 		spec.Measurement = edgev1alpha1.ProfilingRunMeasurementSpec{
-			Batch:                   int32(measurement.Batch),
-			WarmupIterations:        0,
-			SettlingDurationSeconds: &settling,
-			DurationSeconds:         protocol.DurationSeconds,
-			WorkloadMode:            idleWorkloadMode,
+			Batch:                    int32(measurement.Batch),
+			WarmupIterations:         0,
+			SettlingDurationSeconds:  &settling,
+			DurationSeconds:          protocol.DurationSeconds,
+			DurationToleranceSeconds: protocol.DurationToleranceSeconds,
+			WorkloadMode:             idleWorkloadMode,
 		}
 		spec.MetricObservation = protocol.MetricObservation
 	}

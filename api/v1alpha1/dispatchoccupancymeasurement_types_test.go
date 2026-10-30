@@ -7,6 +7,38 @@ import (
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 )
 
+func TestMeasurementPointConfidenceDefaultAndRange(t *testing.T) {
+	for _, value := range []string{"", "0.95", "0.8"} {
+		got, err := (edge.BatchEnergyOptimizationPointPolicySpec{ConfidenceLevel: value}).Confidence()
+		want := .95
+		if value == "0.8" {
+			want = .8
+		}
+		if err != nil || got != want {
+			t.Fatalf("confidence %q = %g, %v", value, got, err)
+		}
+	}
+	for _, value := range []string{"0", "1", "NaN", "Inf", " 0.95"} {
+		if _, err := (edge.BatchEnergyOptimizationPointPolicySpec{ConfidenceLevel: value}).Confidence(); err == nil {
+			t.Fatalf("invalid confidence accepted: %q", value)
+		}
+	}
+}
+
+func TestOpenLoopOccupancyUsesConfiguredWindowAndRate(t *testing.T) {
+	spec := edge.DispatchOccupancyMeasurementSpec{Batch: 1, Workers: 1, MinimumBatches: 2,
+		MaximumIdleFraction: "0.01", DurationSeconds: 30, RateFactor: "1.01"}
+	if err := spec.ValidateConditions(); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"1", "NaN", "Inf"} {
+		spec.RateFactor = value
+		if spec.ValidateConditions() == nil {
+			t.Fatalf("invalid open-loop rate accepted: %s", value)
+		}
+	}
+}
+
 func TestOccupancyFrozenSupplySizing(t *testing.T) {
 	legacy := edge.DispatchOccupancyMeasurementSpec{
 		Batch: 2, Workers: 12, SupplyMode: "closed-loop", MinimumBatches: 2,

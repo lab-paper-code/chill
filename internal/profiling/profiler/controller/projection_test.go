@@ -34,6 +34,20 @@ func TestProjectRequestMapsOnlyCallerSelectedPolicy(t *testing.T) {
 	}
 }
 
+func TestProjectRequestDurationToleranceDefaultAndSelection(t *testing.T) {
+	run := testRun()
+	request, err := ProjectRequest(run.Spec)
+	if err != nil || request.Preparation.Measurement.DurationToleranceSeconds != .5 {
+		t.Fatalf("omitted tolerance must retain 0.5 seconds: %+v, %v", request, err)
+	}
+	tolerance := .25
+	run.Spec.Measurement.DurationToleranceSeconds = &tolerance
+	request, err = ProjectRequest(run.Spec)
+	if err != nil || request.Preparation.Measurement.DurationToleranceSeconds != tolerance {
+		t.Fatalf("selected tolerance was not frozen: %+v, %v", request, err)
+	}
+}
+
 func TestProjectRequestPreservesIdleSettlingContract(t *testing.T) {
 	run := testRun()
 	settling := int32(60)
@@ -307,6 +321,8 @@ func testRunConfig(t *testing.T) profilingrun.RunConfig {
 	if err := json.Unmarshal(payload, &config); err != nil {
 		t.Fatal(err)
 	}
+	// Historical raw fixture is preserved; this helper builds a current request.
+	config.Measurement.DurationToleranceSeconds = .5
 	return config
 }
 

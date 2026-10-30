@@ -500,7 +500,6 @@ servingEntrypoint:
   terminationGracePeriodSeconds: 194
   sourceInterval: 1s
   profileInterval: 1m
-  profileConfidenceLevel: 0.95
   observationDefinitions: []
   observationOutcomes: []
   maxRequestBytes: 8388608

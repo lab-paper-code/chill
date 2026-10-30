@@ -25,6 +25,10 @@ type RequestedRun struct {
 // ProjectRequest converts desired API state without resolving any cluster or
 // endpoint fact.
 func ProjectRequest(spec edgev1alpha1.ProfilingRunSpec) (RequestedRun, error) {
+	tolerance := 0.5
+	if spec.Measurement.DurationToleranceSeconds != nil {
+		tolerance = *spec.Measurement.DurationToleranceSeconds
+	}
 	request := RequestedRun{
 		Preparation: profiler.PreparationRequest{
 			Candidate: profiler.CandidateSelection{
@@ -39,10 +43,11 @@ func ProjectRequest(spec edgev1alpha1.ProfilingRunSpec) (RequestedRun, error) {
 			TargetNode: spec.TargetNode,
 			CPURequest: spec.CPURequest.String(),
 			Measurement: profilingrun.MeasurementContract{
-				Batch:            int(spec.Measurement.Batch),
-				WarmupIterations: int(spec.Measurement.WarmupIterations),
-				DurationSeconds:  int(spec.Measurement.DurationSeconds),
-				WorkloadMode:     spec.Measurement.WorkloadMode,
+				Batch:                    int(spec.Measurement.Batch),
+				WarmupIterations:         int(spec.Measurement.WarmupIterations),
+				DurationSeconds:          int(spec.Measurement.DurationSeconds),
+				DurationToleranceSeconds: tolerance,
+				WorkloadMode:             spec.Measurement.WorkloadMode,
 			},
 			Metrics: profiler.MetricObservationPolicy{
 				IntervalMilliseconds: int(spec.MetricObservation.IntervalMilliseconds),

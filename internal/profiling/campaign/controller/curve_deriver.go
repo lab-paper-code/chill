@@ -14,10 +14,7 @@ import (
 	profilerprojection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 )
 
-const (
-	energyObjectivePointPolicyVersion   = "energy-objective-point-v1"
-	energyObjectivePointConfidenceLevel = 0.95
-)
+const energyObjectivePointPolicyVersion = "energy-objective-point-v1"
 
 const (
 	energyLocalMinimumOutcome    = "MinimumFound/" + string(profilederivation.EnergySearchLocalMinimum)
@@ -69,7 +66,7 @@ func (d *CurveDeriver) Derive(
 	pointPolicy := profilederivation.PointPolicy{
 		Version:         energyObjectivePointPolicyVersion,
 		MinimumTrials:   policy.TrialsPerBatch,
-		ConfidenceLevel: energyObjectivePointConfidenceLevel,
+		ConfidenceLevel: policy.ConfidenceLevel,
 	}
 
 	passBatches, activeEvidence, err := d.collectActiveTrials(ctx, activeRuns, batches)

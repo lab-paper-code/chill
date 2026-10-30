@@ -127,7 +127,7 @@ func TestCatalogBoundsAndStrictlyDecodesTerminalObjects(t *testing.T) {
 	campaign.Status.Result = &edgev1alpha1.ProfilingRunEvidenceReference{Store: "evidence", Key: "result.json", SchemaVersion: "retired", Size: int64(len(payload))}
 	objects := &catalogTestObjects{payload: payload}
 	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(campaign).Build()}
-	catalog, err := NewCatalog(store, objects, 1024, 0.95)
+	catalog, err := NewCatalog(store, objects, 1024)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestCatalogSkipsIncompleteAndFailedMeasurementWithoutEvidenceReads(t *testi
 				},
 			}
 			objects := &catalogTestObjects{}
-			catalog, err := NewCatalog(&Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(campaign).Build()}, objects, 1024, 0.95)
+			catalog, err := NewCatalog(&Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(campaign).Build()}, objects, 1024)
 			if err != nil {
 				t.Fatal(err)
 			}

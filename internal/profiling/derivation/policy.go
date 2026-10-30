@@ -11,8 +11,8 @@ const (
 )
 
 func validatePointPolicy(policy PointPolicy) error {
-	if policy.Version == "" || policy.MinimumTrials < 3 || !validProbability(policy.ConfidenceLevel) {
-		return errors.New("point policy must use a valid confidence level with at least three trials")
+	if policy.Version == "" || policy.MinimumTrials < 2 || !validProbability(policy.ConfidenceLevel) {
+		return errors.New("point policy must use a valid confidence level with at least two trials")
 	}
 	return nil
 }

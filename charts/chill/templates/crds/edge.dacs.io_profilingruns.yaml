@@ -142,6 +142,12 @@ spec:
                     format: int32
                     minimum: 1
                     type: integer
+                  durationToleranceSeconds:
+                    default: 0.5
+                    description: DurationToleranceSeconds bounds measurement-window
+                      undershoot.
+                    minimum: 0
+                    type: number
                   settlingDurationSeconds:
                     description: |-
                       SettlingDurationSeconds is required only for model-loaded idle. The
@@ -165,6 +171,9 @@ spec:
                 - workloadMode
                 type: object
                 x-kubernetes-validations:
+                - message: duration tolerance must be less than duration
+                  rule: '!has(self.durationToleranceSeconds) || self.durationToleranceSeconds
+                    < double(self.durationSeconds)'
                 - message: measurement fields must match the selected workloadMode
                   rule: 'self.workloadMode == ''idle-model-loaded'' ? self.warmupIterations
                     == 0 && has(self.settlingDurationSeconds) && !has(self.dataset)

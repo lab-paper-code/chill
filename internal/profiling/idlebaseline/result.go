@@ -129,7 +129,7 @@ func validateFinalEvidence(
 	baseline profilederivation.IdleBaseline,
 	accepted FinalEvidence,
 ) error {
-	if accepted == nil || len(accepted) != len(baseline.Trials) || len(accepted) < 3 {
+	if accepted == nil || len(accepted) != len(baseline.Trials) || len(accepted) < 2 {
 		return errors.New("accepted final evidence does not match the idle trial IDs")
 	}
 	for _, trial := range baseline.Trials {

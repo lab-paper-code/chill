@@ -148,12 +148,13 @@ spec:
                 description: RateFactor applies only to legacy open-loop measurements.
                 pattern: ^[0-9]+(\.[0-9]+)?$
                 type: string
-                x-kubernetes-validations:
-                - message: rateFactor must be at least 1.2
-                  rule: double(self) >= 1.2
               requestLifetimeSeconds:
                 format: int32
                 minimum: 1
+                type: integer
+              seed:
+                description: Seed selects the load-generator random sequence.
+                format: int64
                 type: integer
               supplyMode:
                 description: SupplyMode selects fixed outstanding supply without changing
@@ -192,9 +193,6 @@ spec:
             x-kubernetes-validations:
             - message: DispatchOccupancyMeasurement spec is immutable
               rule: self == oldSelf
-            - message: open-loop occupancy duration must be at least 60 seconds
-              rule: (has(self.supplyMode) && self.supplyMode == 'closed-loop') ||
-                self.durationSeconds >= 60
           status:
             properties:
               perRequestNanos:

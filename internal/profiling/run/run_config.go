@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"path"
 	"reflect"
 	"regexp"
@@ -91,6 +92,10 @@ func (i RunConfig) Validate() error {
 	}
 	if i.Measurement.Batch < 1 || i.Measurement.WarmupIterations < 0 || i.Measurement.DurationSeconds < 1 {
 		return errors.New("measurement batch, duration, and warm-up iterations must be valid")
+	}
+	if math.IsNaN(i.Measurement.DurationToleranceSeconds) || math.IsInf(i.Measurement.DurationToleranceSeconds, 0) ||
+		i.Measurement.DurationToleranceSeconds < 0 || i.Measurement.DurationToleranceSeconds >= float64(i.Measurement.DurationSeconds) {
+		return errors.New("measurement duration tolerance must be finite, nonnegative and less than duration")
 	}
 	if err := i.validateMeasurementMode(); err != nil {
 		return err

@@ -93,7 +93,7 @@ func newSchedulerService(ctx context.Context, store *servingkube.Store, kube kub
 		gatewayRequestTimeout: gatewayRequestTimeout,
 		live:                  publisher,
 	}
-	service.catalog, err = servingkube.NewCatalog(store, objects, opts.maxEvidenceBytes, opts.profileConfidenceLevel)
+	service.catalog, err = servingkube.NewCatalog(store, objects, opts.maxEvidenceBytes)
 	if err == nil {
 		service.costs, err = servingkube.NewCostEvidence(store, objects, opts.maxEvidenceBytes)
 	}

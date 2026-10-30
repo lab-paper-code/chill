@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -42,12 +43,11 @@ const replacesCampaignAnnotation = "chill.dacs.io/replaces-batch-energy-optimiza
 // never client roundtrip or backend-call time. Energy uses the existing exact
 // incremental wall-energy/item estimator; memory is measured lifetime peak.
 type Catalog struct {
-	store           *Store
-	objects         evidencestore.LocationReader
-	loader          *profilerevidence.Loader
-	maxObjectBytes  int64
-	confidenceLevel float64
-	current         map[types.NamespacedName]catalogProfile
+	store          *Store
+	objects        evidencestore.LocationReader
+	loader         *profilerevidence.Loader
+	maxObjectBytes int64
+	current        map[types.NamespacedName]catalogProfile
 }
 
 type catalogProfile struct {
@@ -68,19 +68,16 @@ type CatalogView struct {
 	ReuseChecks     []serving.ProfileReuseCheck `json:"reuseChecks,omitempty"`
 }
 
-func NewCatalog(store *Store, objects evidencestore.LocationReader, maxObjectBytes int64, confidenceLevel float64) (*Catalog, error) {
+func NewCatalog(store *Store, objects evidencestore.LocationReader, maxObjectBytes int64) (*Catalog, error) {
 	if store == nil || store.client == nil {
 		return nil, errors.New("native Kubernetes store is required")
-	}
-	if !(confidenceLevel > 0 && confidenceLevel < 1) {
-		return nil, errors.New("profile confidence level must be between zero and one")
 	}
 	loader, err := profilerevidence.NewLoader(objects, maxObjectBytes)
 	if err != nil {
 		return nil, err
 	}
 	return &Catalog{
-		store: store, objects: objects, loader: loader, maxObjectBytes: maxObjectBytes, confidenceLevel: confidenceLevel,
+		store: store, objects: objects, loader: loader, maxObjectBytes: maxObjectBytes,
 		current: make(map[types.NamespacedName]catalogProfile),
 	}, nil
 }
@@ -356,8 +353,12 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 			return serving.Profile{}, nil, err
 		}
 	}
+	confidence, err := campaign.Spec.PointPolicy.Confidence()
+	if err != nil {
+		return serving.Profile{}, nil, err
+	}
 	energyPolicy := profilederivation.PointPolicy{
-		Version: "serving-energy-resolution-v1", MinimumTrials: int(campaign.Spec.TrialsPerBatch), ConfidenceLevel: 0.95,
+		Version: "serving-energy-resolution-v1", MinimumTrials: int(campaign.Spec.TrialsPerBatch), ConfidenceLevel: confidence,
 	}
 	baseline, err := profilederivation.DeriveIdleBaseline(idleTrials, energyPolicy)
 	if err != nil {
@@ -430,7 +431,7 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	profile := serving.Profile{
 		ID: source.String() + "/" + string(campaign.UID), Reference: resultReference,
 		NodeName: state.TargetNode, Condition: condition, Evidence: evidenceReferences,
-		ConfidenceLevel: c.confidenceLevel, IdleBaselineWatts: baseline.ModelLoadedIdleMeanWallWatts,
+		ConfidenceLevel: confidence, IdleBaselineWatts: baseline.ModelLoadedIdleMeanWallWatts,
 		MeasuredAt:     measuredAt,
 		MetricSource:   metricSource,
 		TrialsPerBatch: int(campaign.Spec.TrialsPerBatch),
@@ -468,7 +469,7 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 			upper := point.MeanIncrementalWorkJoulesPerItem + point.Confidence.HalfWidth
 			if upper < 0 {
 				issues = append(issues, CatalogIssue{Source: source, Code: "NegativeIncrementalEnergy",
-					Reason: fmt.Sprintf("batch %d incremental energy %g J/item has 95%% CI [%g, %g] J/item below zero; remeasurement required", batchSize, point.MeanIncrementalWorkJoulesPerItem, lower, upper)})
+					Reason: fmt.Sprintf("batch %d incremental energy %g J/item has %g%% CI [%g, %g] J/item below zero; remeasurement required", batchSize, point.MeanIncrementalWorkJoulesPerItem, confidence*100, lower, upper)})
 				continue
 			}
 			batch.profile.EnergyPerInputJoules = 0
@@ -618,6 +619,7 @@ func validateCatalogRunProtocol(campaign *edgev1alpha1.BatchEnergyOptimization, 
 		if measurement.WarmupIterations != 0 || measurement.SettlingDurationSeconds == nil ||
 			*measurement.SettlingDurationSeconds != protocol.SettlingDurationSeconds ||
 			measurement.DurationSeconds != protocol.DurationSeconds || measurement.Dataset != "" ||
+			ptr.Deref(measurement.DurationToleranceSeconds, .5) != ptr.Deref(protocol.DurationToleranceSeconds, .5) ||
 			run.Spec.MetricObservation != protocol.MetricObservation {
 			return errors.New("idle Run protocol contradicts campaign")
 		}
@@ -625,6 +627,7 @@ func validateCatalogRunProtocol(campaign *edgev1alpha1.BatchEnergyOptimization, 
 		protocol := campaign.Spec.ActiveProtocol
 		if measurement.WorkloadMode != "saturated-serial-fixed-batch" || measurement.SettlingDurationSeconds != nil ||
 			measurement.WarmupIterations != protocol.WarmupIterations || measurement.DurationSeconds != protocol.DurationSeconds ||
+			ptr.Deref(measurement.DurationToleranceSeconds, .5) != ptr.Deref(protocol.DurationToleranceSeconds, .5) ||
 			measurement.Dataset != protocol.Dataset ||
 			run.Spec.MetricObservation != protocol.MetricObservation {
 			return errors.New("active Run protocol contradicts campaign")
@@ -686,6 +689,7 @@ func validateCatalogRunConfig(run *edgev1alpha1.ProfilingRun, config profilingru
 	}
 	if config.Measurement.WarmupIterations != int(measurement.WarmupIterations) ||
 		config.Measurement.DurationSeconds != int(measurement.DurationSeconds) || config.Measurement.SettlingDurationSeconds != settling ||
+		config.Measurement.DurationToleranceSeconds != ptr.Deref(measurement.DurationToleranceSeconds, .5) ||
 		(config.Measurement.Dataset == nil) != (measurement.Dataset == "") || (config.Measurement.Dataset != nil && config.Measurement.Dataset.Name != measurement.Dataset) ||
 		config.Metrics.IntervalMilliseconds != int(run.Spec.MetricObservation.IntervalMilliseconds) ||
 		config.Metrics.TimeoutMilliseconds != int(run.Spec.MetricObservation.TimeoutMilliseconds) ||

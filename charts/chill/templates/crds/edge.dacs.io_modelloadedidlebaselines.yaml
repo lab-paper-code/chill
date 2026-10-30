@@ -64,7 +64,7 @@ spec:
                   measured Runs.
                 format: int32
                 maximum: 100
-                minimum: 3
+                minimum: 2
                 type: integer
               batch:
                 format: int32
@@ -99,7 +99,7 @@ spec:
                     type: string
                   minimumRuns:
                     format: int32
-                    minimum: 3
+                    minimum: 2
                     type: integer
                   version:
                     description: Version identifies the complete point-estimation
@@ -119,6 +119,10 @@ spec:
                     format: int32
                     minimum: 1
                     type: integer
+                  durationToleranceSeconds:
+                    default: 0.5
+                    minimum: 0
+                    type: number
                   metricObservation:
                     description: ProfilingRunMetricObservationSpec contains policy
                       only, never an endpoint.
@@ -153,6 +157,9 @@ spec:
                 - settlingDurationSeconds
                 type: object
                 x-kubernetes-validations:
+                - message: duration tolerance must be less than duration
+                  rule: '!has(self.durationToleranceSeconds) || self.durationToleranceSeconds
+                    < double(self.durationSeconds)'
                 - message: metricObservation.durationSeconds must cover durationSeconds
                   rule: self.metricObservation.durationSeconds >= self.durationSeconds
               state:

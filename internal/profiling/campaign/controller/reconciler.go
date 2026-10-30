@@ -134,7 +134,10 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 		return ctrl.Result{}, err
 	}
 
-	config, policy := projectEnergyObjectivePolicy(parent)
+	config, policy, err := projectEnergyObjectivePolicy(parent)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 	activeRuns, idleRuns, err := completedRuns(parent.Name, snapshot, runs)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -260,12 +263,16 @@ func (r *BatchEnergyOptimizationReconciler) listRuns(
 
 func projectEnergyObjectivePolicy(
 	parent *edgev1alpha1.BatchEnergyOptimization,
-) (batchenergyoptimization.QuickEnergyConfig, profilederivation.EnergyObjectivePolicy) {
+) (batchenergyoptimization.QuickEnergyConfig, profilederivation.EnergyObjectivePolicy, error) {
+	confidence, err := parent.Spec.PointPolicy.Confidence()
+	if err != nil {
+		return batchenergyoptimization.QuickEnergyConfig{}, profilederivation.EnergyObjectivePolicy{}, err
+	}
 	trialsPerBatch := int(parent.Spec.TrialsPerBatch)
 	return batchenergyoptimization.QuickEnergyConfig{TrialsPerBatch: trialsPerBatch},
 		profilederivation.EnergyObjectivePolicy{
-			Version: energyObjectivePolicyVersion, TrialsPerBatch: trialsPerBatch,
-		}
+			Version: energyObjectivePolicyVersion, TrialsPerBatch: trialsPerBatch, ConfidenceLevel: confidence,
+		}, nil
 }
 
 func completedRuns(

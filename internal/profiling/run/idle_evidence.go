@@ -105,7 +105,7 @@ func validateBoundIdleRuntime(config RunConfig, podUID string, result IdleRuntim
 	if settlingCompleted.Sub(settlingStarted) < minimumSettling {
 		return errors.New("idle settling duration is shorter than the RunConfig contract")
 	}
-	minimumElapsed := float64(config.Measurement.DurationSeconds) - 0.5
+	minimumElapsed := float64(config.Measurement.DurationSeconds) - config.Measurement.DurationToleranceSeconds
 	if result.MeasurementElapsedSeconds < minimumElapsed ||
 		measurementEnded.Sub(measurementStarted) < time.Duration(minimumElapsed*float64(time.Second)) {
 		return errors.New("idle measurement duration is shorter than the RunConfig contract")

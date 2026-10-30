@@ -1,6 +1,11 @@
 package v1alpha1
 
 import (
+	"fmt"
+	"math"
+	"regexp"
+	"strconv"
+
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -27,8 +32,12 @@ type BatchEnergyOptimizationSpec struct {
 
 	// TrialsPerBatch is the number of completed active and idle observations used
 	// to compare each batch under the minimum-energy objective.
-	// +kubebuilder:validation:Minimum=3
+	// +kubebuilder:validation:Minimum=2
 	TrialsPerBatch int32 `json:"trialsPerBatch"`
+
+	// +optional
+	// +kubebuilder:default={}
+	PointPolicy BatchEnergyOptimizationPointPolicySpec `json:"pointPolicy,omitempty"`
 
 	// BatchSizes is the measurement-selected sweep for an artifact that does
 	// not declare a finite batch-size set. It must be absent when the selected
@@ -47,6 +56,31 @@ type BatchEnergyOptimizationSpec struct {
 	RetryLimit int32 `json:"retryLimit"`
 }
 
+// BatchEnergyOptimizationPointPolicySpec owns the confidence of both idle and
+// incremental-energy estimates for this measurement.
+type BatchEnergyOptimizationPointPolicySpec struct {
+	// +optional
+	// +kubebuilder:default="0.95"
+	// +kubebuilder:validation:Pattern=`^0\.[0-9]*[1-9][0-9]*$`
+	ConfidenceLevel string `json:"confidenceLevel,omitempty"`
+}
+
+var pointConfidenceDecimal = regexp.MustCompile(`^0\.[0-9]*[1-9][0-9]*$`)
+
+func (p BatchEnergyOptimizationPointPolicySpec) Confidence() (float64, error) {
+	value := p.ConfidenceLevel
+	if value == "" {
+		value = "0.95"
+	}
+	confidence, err := strconv.ParseFloat(value, 64)
+	if err != nil || !pointConfidenceDecimal.MatchString(value) ||
+		math.IsNaN(confidence) || math.IsInf(confidence, 0) || confidence <= 0 || confidence >= 1 {
+		return 0, fmt.Errorf("pointPolicy.confidenceLevel must be a decimal in (0, 1)")
+	}
+	return confidence, nil
+}
+
+// +kubebuilder:validation:XValidation:rule="!has(self.durationToleranceSeconds) || self.durationToleranceSeconds < double(self.durationSeconds)",message="duration tolerance must be less than duration"
 // +kubebuilder:validation:XValidation:rule="self.metricObservation.durationSeconds >= self.durationSeconds",message="metricObservation.durationSeconds must cover durationSeconds"
 type ActiveProtocolSpec struct {
 
@@ -55,6 +89,11 @@ type ActiveProtocolSpec struct {
 
 	// +kubebuilder:validation:Minimum=1
 	DurationSeconds int32 `json:"durationSeconds"`
+
+	// +optional
+	// +kubebuilder:default=0.5
+	// +kubebuilder:validation:Minimum=0
+	DurationToleranceSeconds *float64 `json:"durationToleranceSeconds,omitempty"`
 
 	// Dataset names the cluster-scoped Dataset whose profiling records every
 	// active child Run samples.
@@ -65,6 +104,7 @@ type ActiveProtocolSpec struct {
 	MetricObservation ProfilingRunMetricObservationSpec `json:"metricObservation"`
 }
 
+// +kubebuilder:validation:XValidation:rule="!has(self.durationToleranceSeconds) || self.durationToleranceSeconds < double(self.durationSeconds)",message="duration tolerance must be less than duration"
 // +kubebuilder:validation:XValidation:rule="self.metricObservation.durationSeconds >= self.durationSeconds",message="metricObservation.durationSeconds must cover durationSeconds"
 type IdleProtocolSpec struct {
 
@@ -73,6 +113,11 @@ type IdleProtocolSpec struct {
 
 	// +kubebuilder:validation:Minimum=1
 	DurationSeconds int32 `json:"durationSeconds"`
+
+	// +optional
+	// +kubebuilder:default=0.5
+	// +kubebuilder:validation:Minimum=0
+	DurationToleranceSeconds *float64 `json:"durationToleranceSeconds,omitempty"`
 
 	MetricObservation ProfilingRunMetricObservationSpec `json:"metricObservation"`
 }

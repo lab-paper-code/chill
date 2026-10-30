@@ -19,7 +19,7 @@ type ModelLoadedIdleBaselinePointPolicySpec struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`
 	Version string `json:"version"`
 
-	// +kubebuilder:validation:Minimum=3
+	// +kubebuilder:validation:Minimum=2
 	MinimumRuns int32 `json:"minimumRuns"`
 
 	// ConfidenceLevel is a decimal string in the interval (0, 1).
@@ -54,7 +54,7 @@ type ModelLoadedIdleBaselineSpec struct {
 	PointPolicy ModelLoadedIdleBaselinePointPolicySpec `json:"pointPolicy"`
 
 	// AttemptLimit bounds all terminal child Runs, including measured Runs.
-	// +kubebuilder:validation:Minimum=3
+	// +kubebuilder:validation:Minimum=2
 	// +kubebuilder:validation:Maximum=100
 	AttemptLimit int32 `json:"attemptLimit"`
 }

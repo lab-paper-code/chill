@@ -719,7 +719,7 @@ func loadJob(m *edge.DispatchOccupancyMeasurement, ref serving.NodeReference, pl
 	deadline := int64(seconds) + 120
 	args := []string{"replay", "--endpoint", config.Endpoint, "--token-file", "/var/run/secrets/kubernetes.io/serviceaccount/token",
 		"--ca-file", "/ca/tls.crt", "--workload", plan.workload.Name, "--dataset-dir", "/data", "--fields", strings.Join(plan.fields, ","),
-		"--duration", strconv.FormatFloat(seconds, 'f', 3, 64), "--seed", "0", "--workers", strconv.Itoa(int(m.Spec.Workers))}
+		"--duration", strconv.FormatFloat(seconds, 'f', 3, 64), "--seed", strconv.FormatUint(m.Spec.Seed, 10), "--workers", strconv.Itoa(int(m.Spec.Workers))}
 	if m.Spec.SupplyMode == occupancyClosedLoop {
 		args = append(args, "--arrivals", occupancyClosedLoop, "--request-lifetime", strconv.Itoa(int(m.Spec.RequestLifetimeSeconds)),
 			"--delivery-margin", strconv.FormatFloat(float64(m.Spec.DeliveryMarginMillis)/1000, 'f', 3, 64),

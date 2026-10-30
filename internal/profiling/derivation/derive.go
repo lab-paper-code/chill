@@ -64,7 +64,7 @@ func RestoreIdleBaseline(record IdleBaseline) (IdleBaseline, error) {
 func validateIdleBaseline(baseline IdleBaseline) error {
 	if baseline.StateIdentity == "" || baseline.EnvironmentIdentity == "" ||
 		baseline.MeasurementProtocolIdentity == "" || baseline.PolicyVersion == "" ||
-		len(baseline.Trials) < 3 {
+		len(baseline.Trials) < 2 {
 		return errors.New("idle baseline value or identity is invalid")
 	}
 	if err := validateIdleBaselineSummary(baseline); err != nil {
@@ -227,7 +227,7 @@ func validateEnergyTrialStatistics(
 		math.IsNaN(trial.BaselineMeanWallWattsVariance) ||
 		math.IsInf(trial.BaselineMeanWallWattsVariance, 0) ||
 		trial.BaselineMeanWallWattsVariance != baselineVariance ||
-		trial.BaselineDegreesOfFreedom < 2 || trial.BaselineDegreesOfFreedom != baselineDegreesOfFreedom ||
+		trial.BaselineDegreesOfFreedom < 1 || trial.BaselineDegreesOfFreedom != baselineDegreesOfFreedom ||
 		trial.BaselineConfidenceLevel != confidenceLevel {
 		return errors.New("baseline uncertainty contribution is invalid")
 	}

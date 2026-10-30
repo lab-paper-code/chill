@@ -33,7 +33,7 @@ type quickEnergyMinimization struct {
 // Triton Quick Search. The exact objective is owned by the derivation boundary;
 // the campaign only schedules the measured prefix it requests.
 func NewQuickEnergyMinimization(config QuickEnergyConfig, curve CurveSource) (Method, error) {
-	if config.TrialsPerBatch < 3 {
+	if config.TrialsPerBatch < 2 {
 		return nil, errors.New("quick-energy configuration is outside the supported range")
 	}
 	return &quickEnergyMinimization{config: config, curve: curve}, nil

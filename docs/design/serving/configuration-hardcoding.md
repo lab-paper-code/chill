@@ -80,6 +80,8 @@ Node sample/batch cadence와 transitionObserver.activeDeadlineOverheadSeconds=18
 하한2 지원은 비기본 입력 허용 범위 확대이며 현재도 지원된다는 주장이 아니다. BEO·idle minimum/attempt limit, 전이 target/attempt limit을 함께 맞추고 attemptLimit≥minimum/target을 유지한다. 숨은 <3·<5·자유도<2가 남으면 미완료다. 통계 구조 검증은 필요한 신뢰 경계에서 유지하되 양의 자유도라는 수학적 최소와 정책 목표3/5를 구별한다. 새 근사나 무효 fallback은 없다. 비영분산 active2/idle2의 유도→저장→재로딩→serving까지 수용한다.
 
 종단 수정 위치는 인벤토리에 있다. PCG는 고정한 두 번째 seed word이며 stream selector라고 부르지 않는다. 양측 CI /2, n−1 같은 수식은 설정화하지 않는다.
+구현(슬라이스 2): BEO의 단일 신뢰수준을 campaign 유도·catalog idle/energy CI·`Profile.ConfidenceLevel`에 연결하고 전역 CLI/values/생성자 인자를 삭제했다. protocol의 `durationToleranceSeconds`는 생략 시 0.5초로 Run 준비 경계에서 정규화하고 명시 0도 보존한다. 동결 RunConfig와 curve protocol identity 및 Python 측정 요청에도 실제값을 담는다. 과거 raw fixture는 보존하며 현재 계약을 만드는 테스트 helper에서만 새 값을 선택한다. 하한2는 baseline 자유도1·결과 재로딩·방향별 transition summary까지 적용하며 occupancy seed는 기존 Conditions와 생성기 인자에 함께 남는다. 새 stream이나 decoder fallback은 없다. CRD/chart 사본을 함께 적용하고 구 CLI 플래그를 배포 인자에서 제거해야 한다.
+
 
 ## 6. 하네스: bind에서 한 번 선택
 

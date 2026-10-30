@@ -26,12 +26,11 @@ const (
 	EnergySearchSpaceExhausted EnergySearchCompletionReason = "SearchSpaceExhausted"
 )
 
-// EnergyObjectivePolicy is recorded before the first campaign Run. The objective
-// and search algorithm are versioned constants; only the repeated measurement
-// count is configurable.
+// EnergyObjectivePolicy is selected from the immutable campaign specification.
 type EnergyObjectivePolicy struct {
-	Version        string `json:"version"`
-	TrialsPerBatch int    `json:"trialsPerBatch"`
+	Version         string  `json:"version"`
+	TrialsPerBatch  int     `json:"trialsPerBatch"`
+	ConfidenceLevel float64 `json:"confidenceLevel"`
 }
 
 type BatchEnergyMean struct {
@@ -127,7 +126,7 @@ func DeriveMinimumEnergyBatch(
 }
 
 func validateEnergyObjectivePolicy(policy EnergyObjectivePolicy) error {
-	if policy.Version == "" || policy.TrialsPerBatch < 3 {
+	if policy.Version == "" || policy.TrialsPerBatch < 2 {
 		return errors.New("energy-objective policy is invalid")
 	}
 	return nil

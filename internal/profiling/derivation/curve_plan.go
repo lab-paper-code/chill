@@ -62,6 +62,7 @@ type CurveProtocolContract struct {
 	WarmupIterations           int                   `json:"warmupIterations"`
 	SettlingDurationSeconds    int                   `json:"settlingDurationSeconds"`
 	DurationSeconds            int                   `json:"durationSeconds"`
+	DurationToleranceSeconds   float64               `json:"durationToleranceSeconds"`
 	MetricIntervalMilliseconds int                   `json:"metricIntervalMilliseconds"`
 	MetricTimeoutMilliseconds  int                   `json:"metricTimeoutMilliseconds"`
 	MetricDurationSeconds      int                   `json:"metricDurationSeconds"`

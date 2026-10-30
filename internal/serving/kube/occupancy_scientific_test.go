@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -154,6 +155,20 @@ func TestOccupancyFrozenConditionsAndClosedLoopJob(t *testing.T) {
 	if err := m.Spec.ValidateConditions(); err != nil {
 		t.Fatal(err)
 	}
+	for _, seed := range []uint64{0, 12345} {
+		m.Spec.Seed = seed
+		job := loadJob(m, serving.NodeReference{}, occupancyPlan{workload: &edge.Workload{}, dataset: &edge.Dataset{}}, 1, LoadGeneratorConfig{})
+		args := job.Spec.Template.Spec.Containers[0].Args
+		found := false
+		for i, arg := range args {
+			if arg == "--seed" && i+1 < len(args) && args[i+1] == fmt.Sprint(seed) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("configured seed absent from generator: %v", args)
+		}
+	}
 	t.Run("gateway cap rejected before grant", func(t *testing.T) {
 		exceedsCap := m.DeepCopy()
 		exceedsCap.Spec.RequestLifetimeSeconds, exceedsCap.Spec.DrainSeconds = 130, 131
@@ -229,8 +244,8 @@ func TestOccupancyFrozenConditionsAndClosedLoopJob(t *testing.T) {
 	}
 	legacy := configured
 	legacy.SupplyMode, legacy.RateFactor = "poisson", "1.5"
-	if legacy.ValidateConditions() == nil {
-		t.Fatal("legacy open-loop duration lost its independent 60-second floor")
+	if err := legacy.ValidateConditions(); err != nil {
+		t.Fatalf("positive configured open-loop duration was rejected: %v", err)
 	}
 	legacy.DurationSeconds = 60
 	if err := legacy.ValidateConditions(); err != nil {

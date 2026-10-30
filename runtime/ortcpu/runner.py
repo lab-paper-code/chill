@@ -395,6 +395,7 @@ def validate_request(
         "batch",
         "warmupIterations",
         "durationSeconds",
+        "durationToleranceSeconds",
         "workloadMode",
     }
     require_fields(
@@ -409,6 +410,14 @@ def validate_request(
     require_integer(
         measurement["durationSeconds"], "run_config.measurement.durationSeconds", 1
     )
+    tolerance = measurement["durationToleranceSeconds"]
+    if (
+        isinstance(tolerance, bool)
+        or not isinstance(tolerance, (int, float))
+        or not math.isfinite(tolerance)
+        or not 0 <= tolerance < measurement["durationSeconds"]
+    ):
+        raise ContractError("run_config.measurement.durationToleranceSeconds must be finite, nonnegative and less than duration")
     if not active:
         if (
             measurement["warmupIterations"] != 0
