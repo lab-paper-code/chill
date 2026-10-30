@@ -32,6 +32,7 @@ import os
 from pathlib import Path
 import re
 import selectors
+import signal
 import ssl
 import shlex
 import subprocess

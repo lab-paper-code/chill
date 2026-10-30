@@ -110,6 +110,8 @@ at producer GO after releasing restored routing. Targeted stages require their
 own accepted receipt, not completion of intervening historical rows.
 Targeted E5-3 retains the original campaign's static selection; only the first
 untagged full E5-3 freezes a static baseline at its offered-window boundary.
+Sampler shutdown recognizes intentional SIGTERM after drain; cleanup errors remain
+visible and do not trigger measurement replay.
 
 The existing fingerprint intentionally excludes reservations and owner-only
 non-serving preparations. They are **not** reconstructed. Every dry-run/restore
