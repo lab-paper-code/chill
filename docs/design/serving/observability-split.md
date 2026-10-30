@@ -342,9 +342,13 @@ identity면 `workloadUID`, `definitionID`, `identitySource`는 모두 null이다
 offered가 양수인데 원 archived identity가 없거나 request provenance/parse가 불완전하면
 동일하게 null과 coverage-incomplete 사유를 남긴다. 0부하는 frozen target identity를
 게시할 수 있지만 producer anchor/관측된 요청이 생겼다고 해석하지 않는다.
+반환된 request ID마다 archived HTTP receipt가 있어야 하며 일부 ID만 보존되거나
+client JSONL 파싱 오류가 있어도 identity는 coverage-incomplete이다.
 phase는 E5 `phase.json`, demo는 기존 `phase_path`가 선택한 원본/수집복구 phase를 참조하고
 두 출처 모두 같은 summary.sources 안에 있어야 한다. phase의 part seconds를 각각
 `round(seconds*1e9)`한 누적으로 offset을 만들고 원 시작 시각의 나노초를 보존한다.
+stage 길이는 part seconds의 합과 초 단위로 비교한다. 최종 offset을 stage seconds의
+재반올림 결과와 비교하지 않는다(예: 0.3333333333초×3의 마지막 offset은 999999999ns).
 `missingReasons.identity/alpha/substages/producerAnchor/substageSource`는 각각
 identity 부재·혼합, direct-rate, schedule 부재, anchor 부재, 출처 미게시를 구분한다.
 

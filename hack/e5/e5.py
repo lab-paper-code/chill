@@ -2677,7 +2677,7 @@ def publication_metadata(binding, phase, name, snapshot, identity_source, phase_
                               'from': stamp(base), 'to': stamp(stop), 'source': phase_source})
             base = stop
         duration = (phase.get('stage') or {}).get('seconds')
-        if not positive(duration) or base != round(duration * 1e9):
+        if not positive(duration) or duration != sum(part['seconds'] for part in parts):
             raise ValueError('Frozen parts must cover the producer window')
         reasons['alpha'] = None
         if any(p['alpha'] is None for p in substages):
@@ -2718,6 +2718,12 @@ def self_check_publication_metadata():
         else:
             assert value['substages'][0]['from'] is value['substages'][0]['to'] is None and reasons['producerAnchor']
     assert (bound, phase, snapshot) == original
+    fractional = copy.deepcopy(phase)
+    fractional['stage']['parts'] = [{'id': 'fraction-'+str(i), 'seconds': .3333333333, 'alpha': alpha} for i in range(3)]
+    fractional['stage']['seconds'] = sum(part['seconds'] for part in fractional['stage']['parts'])
+    value, _ = publication_metadata(bound, fractional, names[0], snapshot, source, source)
+    assert value['substages'][-1]['endOffsetNanos'] == 999_999_999
+    assert value['substages'][-1]['to'] == '2026-10-30T00:00:01.123456788Z'
     alias_phase = copy.deepcopy(phase)
     alias_phase['stage'] = {'seconds': 1, 'parts': [{'id': 'one', 'seconds': 1, 'alpha': dict(zip(PRODUCER_ALIASES, (.2, .4, .8)))}]}
     for alias, name in PRODUCER_ALIASES.items():
@@ -2823,18 +2829,23 @@ def publish_experiment(root, identifier, store_config, stages, status, *, bindin
             phase = load(phase_path)
             rows = stage['kpis'].get('requests', stage['kpis'].get('workloads', {}))
             configured = {w['name']: w for w in binding['config'].get('workloads', [])}
-            ids = {}
+            ids, client_errors = {}, {}
             for name in rows:
                 path = stage['_folder']/(name+'-client.jsonl')
-                clients = analysis.Inputs(stage['_folder']).jsonlines(path) if path.exists() else []
+                client_input = analysis.Inputs(stage['_folder'])
+                clients = client_input.jsonlines(path) if path.exists() else []
                 if name in configured and configured[name].get('uid'):
                     ids[configured[name]['uid']] = [row['requestID'] for row in clients if row.get('requestID') and 'scheduledOffsetNs' in row]
+                client_errors[name] = bool(client_input.errors)
             indexes = raw.iter_request_indexes(stage['_folder'], ids, phase['startUTC'], phase['endUTC'], ids, approved_root=root) if ids else {}
             for name, row in rows.items():
                 indexed = indexes.get(configured.get(name, {}).get('uid'), {})
                 metadata, reasons = publication_metadata(binding, phase, name, snapshot, identity_source,
                     sources.get(Path(phase_path).resolve()), indexed.get('identities', ()))
-                if row.get('offered') and (indexed.get('errors') or not indexed.get('identities')):
+                uid = configured.get(name, {}).get('uid')
+                if client_errors[name] or row.get('offered') and (
+                        indexed.get('errors') or not indexed.get('identities')
+                        or not set(ids.get(uid, ())).issubset(indexed.get('receivedAtNS', {}))):
                     metadata.update(workloadUID=None, definitionID=None, identitySource=None)
                     reasons['identity'] = 'Historical KPI population identity coverage incomplete; frozen target is not an observed definition'
                 row.update(metadata)

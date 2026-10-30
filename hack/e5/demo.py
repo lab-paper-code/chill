@@ -2227,6 +2227,31 @@ def self_check():
             assert publish(e5, metadata_binding, publication_root, 'demo-metadata', store_config)['outcome'] == 'Created'
             demo_summary['workloads'][metadata_name]['offered'] = 1
             assert publish(e5, metadata_binding, publication_root, 'demo-missing-identity', store_config)['outcome'] == 'Created'
+        # Every returned request ID needs an archived HTTP identity, not just one per UID.
+        metadata_module = e5.module
+        client_path = demo_folder / (metadata_name + '-client.jsonl')
+        def upload_identity_coverage(argv, **kwargs):
+            manifest = e5.load(argv[argv.index('--manifest') + 1])
+            metric = e5.load(manifest['summary']['localPath'])['stages'][0]['kpis']['workloads'][metadata_name]
+            if coverage_case == 'complete':
+                assert metric['workloadUID'] == 'historical' and metric['identitySource'] is not None
+            else:
+                assert metric['workloadUID'] is metric['definitionID'] is metric['identitySource'] is None
+                assert 'coverage incomplete' in metric['missingReasons']['identity']
+            return SimpleNamespace(returncode=0, stdout='{"outcome":"Created"}', stderr='')
+        for coverage_case in ('partial', 'malformed', 'complete'):
+            client_ids = ['r1'] if coverage_case == 'malformed' else ['r1', 'r2']
+            client_path.write_text(''.join(json.dumps({'requestID': rid, 'scheduledOffsetNs': 0})+'\n' for rid in client_ids)
+                                   + ('{broken\n' if coverage_case == 'malformed' else ''))
+            indexed = {'errors': [], 'identities': [{'workloadUID': 'historical', 'definitionID': 'historical/1/model/2/preprocessor/3'}],
+                       'receivedAtNS': dict.fromkeys(['r1', 'r2'] if coverage_case == 'complete' else ['r1'], 1)}
+            reader = SimpleNamespace(iter_request_indexes=lambda *args, **kwargs: {'historical': indexed})
+            def metadata_modules(name, path):
+                return reader if name == 'publication_requests' else metadata_module(name, path)
+            with patch.object(e5, 'module', side_effect=metadata_modules), \
+                 patch.object(e5.subprocess, 'run', side_effect=upload_identity_coverage), \
+                 patch(__name__ + '.summarize', return_value=[demo_summary]):
+                assert publish(e5, metadata_binding, publication_root, 'demo-identity-'+coverage_case, store_config)['outcome'] == 'Created'
         with patch.object(e5.subprocess, 'run') as upload:
             try:
                 e5.publish_experiment(publication_root, 'campaign-1', store_config, [record], 'PARTIAL')
