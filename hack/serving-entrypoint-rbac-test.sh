@@ -21,7 +21,7 @@ def grants(role, resource, verb):
     return any(resource in r.get("resources", []) and verb in r.get("verbs", []) for r in role.get("rules", []))
 
 console = next(d for d in documents if d.get("kind") == "ClusterRole"
-               and d["metadata"]["name"] == "chill-console-viewer")
+               and d["metadata"]["name"] == "chill-console-preflight-reader")
 for kind in ("modelspecs", "deviceclasses", "preprocessors", "datasets"):
     if not grants(console, kind, "get"):
         sys.exit("console preflight lacks cluster-scope " + kind + " get")
