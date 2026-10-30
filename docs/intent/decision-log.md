@@ -113,3 +113,9 @@
 - E5-5: INVALID_CONFIGURATION(복원이 h=0으로 되돌림). 참고치: MNV 실패 1,059→14,467(h=0에서 4회차와 동급), Smol p95 14,093→3,625(D1 충족). h=.25 유효 재실행 필요.
 - 대시보드 NodePort 31300 제거 완료(ClusterIP, https://155.230.35.213:31104/ 200).
 - 다음: E5-5 h=.25 유효 재실행 1회 + 6회차 raw 결함 추출(PLC 413, Smol E5-7 꼬리, MNV p95 상승, 에너지 귀속).
+
+## 2026-10-31 — 사이클 6 + h 미적용 근본 원인
+
+- E5-5 6b(h=.25 의도): MNV 실패 1,059→11,879, Smol D1 충족(p95 3,749ms), 에너지 −4,588J. 그러나 raw: stage 시작 직전 하네스의 full-settings PUT(S20:5425→5446)이 h를 0으로 되돌림 → **5/6/6b회차 모두 h=0으로 실행**. 근본: 표적 복원이 3회차 pre-settings 전체를 PUT(정책 필드 포함). 수정 `ea47d4ce`: 복원은 토폴로지 제어 키(autonomousWorkloads/excludedNodes/controls)만 pre-state에서, 나머지는 live 정책 유지(self-check 단언).
+- 사이클 6 패널 판정(`local judge-verdict-cycle6`): A EmptyRoute(`ebf7c0bb`,`3f79378d`,`81f1d3df`,`6efea38b`,`4d0377bc`: 무Ready UID 생략·scope 교집합·양수→empty 전이 거절·explicit unroute), B RecoveryDAG(`dc287bd0`,`8ebe8f33`: Terminated 항목 growing 보호 제외·완료 신호로 frozen DAG 전진, 탐색 없음). gate PASS(HEAD 79438382).
+- 7회차: 서버 79438382 + h=.25(첫 유효 적용) E5-3/5/6/7.
