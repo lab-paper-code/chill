@@ -50,6 +50,8 @@ const (
 
 type ObserverConfig struct {
 	Namespace string
+	OnCluster func(serving.ClusterObservation) error
+	SelectClusterPod func(*corev1.Pod) bool
 }
 type ObserverIssue struct {
 	Source string    `json:"source"`
@@ -103,6 +105,7 @@ type Observer struct {
 	// while a refresh holds mu.
 	issueMu           sync.Mutex
 	issues            map[string]ObserverIssue
+	recordedIssues map[string]ObserverIssue
 	ctx               context.Context
 	cancel            context.CancelFunc
 	wg                sync.WaitGroup
@@ -112,11 +115,15 @@ type Observer struct {
 	removingInstances map[string]bool
 	// refreshed is when the last successful refresh finished.
 	refreshed time.Time
+	clusterPods map[types.UID]serving.ClusterPod
 }
 
 func NewObserver(store *Store, kube kubernetes.Interface, runtime *serving.Runtime, native *firstfloor.Client, config ObserverConfig) (*Observer, error) {
 	if store == nil || store.client == nil || kube == nil || runtime == nil || native == nil || config.Namespace == "" {
 		return nil, errors.New("observer requires direct store, Kubernetes/native clients, runtime and selected namespace")
+	}
+	if config.OnCluster != nil && config.SelectClusterPod == nil {
+		return nil, errors.New("cluster observations require a CHILL Pod selector")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Observer{store: store, kube: kube, runtime: runtime, native: native, config: config, sources: map[string]*nativeSource{}, issues: map[string]ObserverIssue{}, movingNodes: map[string]bool{}, removingInstances: map[string]bool{}, ctx: ctx, cancel: cancel}, nil
@@ -146,15 +153,16 @@ func (o *Observer) Issues() []ObserverIssue {
 func (o *Observer) issue(source string, err error) {
 	o.issueMu.Lock()
 	defer o.issueMu.Unlock()
+	now := time.Now().UTC()
 	if err == nil {
 		delete(o.issues, source)
-		return
+	} else {
+		if previous, seen := o.issues[source]; source != "refresh" && (!seen || previous.Reason != err.Error()) {
+			ctrllog.Log.WithName("observer").Error(err, "native source issue", "source", source)
+		}
+		o.issues[source] = ObserverIssue{Source: source, Reason: err.Error(), At: now}
 	}
-	// Each new reason is logged once; the refresh caller logs its own failure.
-	if previous, seen := o.issues[source]; source != "refresh" && (!seen || previous.Reason != err.Error()) {
-		ctrllog.Log.WithName("observer").Error(err, "native source issue", "source", source)
-	}
-	o.issues[source] = ObserverIssue{Source: source, Reason: err.Error(), At: time.Now().UTC()}
+	o.recordIssueLocked(source, now)
 }
 func physicalID(podUID types.UID, containerID string) string {
 	return string(podUID) + "/" + containerID
@@ -199,14 +207,26 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 		return o.refreshFailure(err)
 	}
 	podOptions := metav1.ListOptions{}
-	if o.podWatch != nil {
+	if o.podWatch != nil && o.config.OnCluster == nil {
 		// Restore every old executor on startup/watch restart. Afterwards the
 		// retained-source GET below still proves exact terminal containers.
 		podOptions.FieldSelector = nonTerminalPodSelector
 	}
-	pods, err := o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, podOptions)
+	pods, err := o.kube.CoreV1().Pods(o.clusterWatchNamespace()).List(ctx, podOptions)
 	if err != nil {
 		return o.refreshFailure(err)
+	}
+	o.observeClusterList(pods.Items)
+	if o.config.OnCluster != nil {
+		// Cluster facts include release control Pods outside the serving namespace;
+		// native execution and ownership continue to use only the selected namespace.
+		selected := pods.Items[:0]
+		for _, pod := range pods.Items {
+			if pod.Namespace == o.config.Namespace {
+				selected = append(selected, pod)
+			}
+		}
+		pods.Items = selected
 	}
 	resources, err := o.sourceResources(ctx, pods.Items)
 	if err != nil {
@@ -229,11 +249,12 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 	o.runtime.SetMeasurementNodes(measurement)
 	// Start a native status watch before using this snapshot for execution or cleanup.
 	if o.podWatch == nil {
-		w, e := o.kube.CoreV1().Pods(o.config.Namespace).Watch(o.ctx, metav1.ListOptions{ResourceVersion: pods.ResourceVersion})
+		w, e := o.kube.CoreV1().Pods(o.clusterWatchNamespace()).Watch(o.ctx, metav1.ListOptions{ResourceVersion: pods.ResourceVersion})
 		if e != nil {
 			return o.refreshFailure(e)
 		}
 		o.podWatch = w
+		o.issue("pod-watch", nil)
 		o.wg.Add(1)
 		go o.watchPods(w)
 	}
@@ -279,9 +300,7 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 			if publish {
 				ready = append(ready, instance)
 			}
-			if e := o.publishLedger(ready); e != nil {
-				o.issue("publish", e)
-			}
+			o.issue("publish", o.publishLedger(ready))
 		}()
 	}
 	o.mu.Unlock()
@@ -801,9 +820,7 @@ func (o *Observer) observeTermination(pod *corev1.Pod) {
 				source.stopFollow()
 			}
 		}
-		if err := o.runtime.ConfirmInstanceStopped(id); err != nil {
-			o.issue(id, err)
-		}
+		o.issue(id, o.runtime.ConfirmInstanceStopped(id))
 	}
 }
 func (o *Observer) watchPods(w watch.Interface) {
@@ -824,6 +841,11 @@ func (o *Observer) watchPods(w watch.Interface) {
 			}
 			o.mu.Lock()
 			if pod, ok := event.Object.(*corev1.Pod); ok {
+				o.observeClusterPod(pod, string(event.Type))
+				if pod.Namespace != o.config.Namespace {
+					o.mu.Unlock()
+					continue
+				}
 				if o.sources[string(pod.UID)] == nil {
 					if event.Type == watch.Deleted {
 						o.mu.Unlock()

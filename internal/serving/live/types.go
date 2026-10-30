@@ -148,6 +148,27 @@ type Event struct {
 	Kind     string       `json:"kind"`
 	Decision *Decision    `json:"decision,omitempty"`
 	Action   *ActionEvent `json:"action,omitempty"`
+	Cluster  *ClusterEvent `json:"cluster,omitempty"`
+}
+
+// ClusterEvent is the live event-lane projection of one committed cluster row.
+type ClusterEvent struct {
+	Kind string `json:"kind"`
+	At string `json:"at"`
+	Event string `json:"event"`
+	Pod *ClusterPod `json:"pod,omitempty"`
+	Source string `json:"source,omitempty"`
+	Reason string `json:"reason,omitempty"`
+	PreviousReason string `json:"previousReason,omitempty"`
+}
+
+type ClusterPod struct {
+	Namespace string `json:"namespace,omitempty"`
+	Name string `json:"name,omitempty"`
+	UID string `json:"uid"`
+	Node string `json:"node,omitempty"`
+	Phase string `json:"phase,omitempty"`
+	Ready *string `json:"ready,omitempty"`
 }
 
 type Metric struct {

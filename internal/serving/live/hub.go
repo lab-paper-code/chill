@@ -124,8 +124,9 @@ func (h *Hub) publishStateLocked(at time.Time, delta Delta, event *Event) error 
 	}
 	var e frame
 	if event != nil {
-		if (event.Kind != "decision" || event.Decision == nil || event.Action != nil) &&
-			(event.Kind != "action" || event.Action == nil || event.Decision != nil) {
+		if (event.Kind != "decision" || event.Decision == nil || event.Action != nil || event.Cluster != nil) &&
+			(event.Kind != "action" || event.Action == nil || event.Decision != nil || event.Cluster != nil) &&
+			(event.Kind != "cluster" || event.Cluster == nil || event.Decision != nil || event.Action != nil) {
 			return errors.New("live event requires exactly its declared payload")
 		}
 		e, err = encode("event", h.head+2, atText, event)
