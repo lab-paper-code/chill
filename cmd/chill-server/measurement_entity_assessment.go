@@ -151,7 +151,8 @@ func assessOperationCost(
 			Code: string(cr.Status.Phase), Message: cr.Status.Reason, SourceIDs: []string{string(cr.UID)},
 		})
 	}
-	input.Accepted = len(cr.Spec.Steps) > 0 && len(cr.Status.Steps) == len(cr.Spec.Steps) && len(steps) == len(cr.Status.Steps)
+	input.Accepted = len(cr.Spec.Steps) > 0 && len(cr.Status.Steps) == len(cr.Spec.Steps) &&
+		len(steps) == len(cr.Status.Steps)
 	if cr.Status.Phase == api.MeasurementPhaseInsufficient {
 		input.Problems = append(input.Problems, operatorconsole.MeasurementReason{
 			Code: "OperationEvidenceInsufficient", Message: cr.Status.Reason, SourceIDs: []string{string(cr.UID)},

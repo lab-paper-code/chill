@@ -19,13 +19,20 @@ import (
 )
 
 func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
-	task := api.BatchEnergyOptimization{ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "old", UID: "old-uid", Generation: 1}, Spec: api.BatchEnergyOptimizationSpec{BatchSizes: []int32{1, 2}}, Status: api.BatchEnergyOptimizationStatus{Phase: "Complete", ObservedGeneration: 1}}
+	task := api.BatchEnergyOptimization{
+		ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "old", UID: "old-uid", Generation: 1},
+		Spec:       api.BatchEnergyOptimizationSpec{BatchSizes: []int32{1, 2}},
+		Status:     api.BatchEnergyOptimizationStatus{Phase: "Complete", ObservedGeneration: 1},
+	}
 	view := httpapi.ProfilesView{}
 	if got := assessMeasurementRequest(task, view); got.Evidence.Accepted ||
 		got.DisplayStatus == operatorconsole.MeasurementUsable {
 		t.Fatalf("phase accepted without evidence: %+v", got)
 	}
-	view.Profiles = []serving.Profile{{ID: "allowed/old/old-uid", Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: "result"}, Batches: []serving.BatchProfile{{Batch: 1}}}}
+	view.Profiles = []serving.Profile{{
+		ID: "allowed/old/old-uid", Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: "result"},
+		Batches: []serving.BatchProfile{{Batch: 1}},
+	}}
 	if got := assessMeasurementRequest(task, view); got.Status != operatorconsole.MeasurementPartial ||
 		!got.Evidence.Accepted {
 		t.Fatalf("partial accepted profile: %+v", got)
@@ -44,17 +51,25 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 	if got := assessMeasurementRequest(task, view); !got.Evidence.Accepted {
 		t.Fatal("new failure hid old accepted evidence")
 	}
-	view.Insufficiencies = []servingkube.CatalogIssue{{Source: types.NamespacedName{Namespace: task.Namespace, Name: task.Name}, Code: "InvalidEvidence", Reason: "real validation failure"}}
+	view.Insufficiencies = []servingkube.CatalogIssue{{
+		Source: types.NamespacedName{Namespace: task.Namespace, Name: task.Name},
+		Code: "InvalidEvidence", Reason: "real validation failure",
+	}}
 	if got := assessMeasurementRequest(task, view); got.DisplayStatus != operatorconsole.MeasurementProblem {
 		t.Fatalf("catalog issue ignored: %+v", got)
 	}
 	view.Profiles = nil
 	view.MeasurementFacts = map[string]serving.MeasurementFacts{"retained": {
-		Request:         profilederivation.MeasurementRequestReference{Namespace: task.Namespace, Name: task.Name, UID: string(task.UID)},
+		Request: profilederivation.MeasurementRequestReference{
+			Namespace: task.Namespace, Name: task.Name, UID: string(task.UID),
+		},
 		ResultReference: profilederivation.RawEvidenceIdentity{Store: "evidence", Key: "retained-result"},
 		Batches:         []profilederivation.MeasurementBatchFacts{{Batch: 1}},
 	}}
-	view.Insufficiencies = []servingkube.CatalogIssue{{Source: types.NamespacedName{Namespace: task.Namespace, Name: task.Name}, Code: "ReplacementSelection", Reason: "superseded by newer; original evidence retained"}}
+	view.Insufficiencies = []servingkube.CatalogIssue{{
+		Source: types.NamespacedName{Namespace: task.Namespace, Name: task.Name},
+		Code: "ReplacementSelection", Reason: "superseded by newer; original evidence retained",
+	}}
 	if got := assessMeasurementRequest(task, view); got.DisplayStatus != operatorconsole.MeasurementUsable ||
 		!got.Evidence.Accepted || got.Scope.SchedulerUsed == nil || *got.Scope.SchedulerUsed {
 		t.Fatalf("superseded verified result became problem or scheduler-used: %+v", got)
@@ -74,7 +89,9 @@ func TestOperationAssessmentRequiresStoredAcceptedSteps(t *testing.T) {
 		t.Fatalf("status-only step accepted: %+v", got)
 	}
 	duration, joules := int64(100), 4.0
-	steps := []servingkube.OperationStepProjection{{OperationID: "uid.0.idle", DurationNanos: &duration, WallJoules: &joules}}
+	steps := []servingkube.OperationStepProjection{{
+		OperationID: "uid.0.idle", DurationNanos: &duration, WallJoules: &joules,
+	}}
 	if got := assessOperationCost(cr, steps); got.Status != liveOperationComplete ||
 		!got.Evidence.Accepted || got.Execution.ObservedGeneration != 0 {
 		t.Fatalf("verified operation: %+v", got)
@@ -88,7 +105,18 @@ func TestOperationAssessmentRequiresStoredAcceptedSteps(t *testing.T) {
 
 func TestOccupancyAssessmentReadsExactRecordAndPreservesNegativeD(t *testing.T) {
 	for _, d := range []int64{100, -100} {
-		cr := api.DispatchOccupancyMeasurement{ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "occupancy", UID: "request-uid", Generation: 1}, Spec: api.DispatchOccupancyMeasurementSpec{Node: "node", Batch: 1}, Status: api.DispatchOccupancyMeasurementStatus{Phase: api.MeasurementPhaseComplete, PerRequestNanos: &d, Throughput: "10", Result: &api.ProfilingRunEvidenceReference{Store: "evidence", Key: servingkube.DispatchOccupancyPrefix + "node-uid/request-uid.json"}}}
+		cr := api.DispatchOccupancyMeasurement{
+			ObjectMeta: meta.ObjectMeta{
+				Namespace: "allowed", Name: "occupancy", UID: "request-uid", Generation: 1,
+			},
+			Spec: api.DispatchOccupancyMeasurementSpec{Node: "node", Batch: 1},
+			Status: api.DispatchOccupancyMeasurementStatus{
+				Phase: api.MeasurementPhaseComplete, PerRequestNanos: &d, Throughput: "10",
+				Result: &api.ProfilingRunEvidenceReference{
+					Store: "evidence", Key: servingkube.DispatchOccupancyPrefix + "node-uid/request-uid.json",
+				},
+			},
+		}
 		record := servingkube.DispatchOccupancyRecord{
 			SchemaVersion: servingkube.DispatchOccupancySchema,
 			Node:          serving.NodeReference{Name: "node", UID: "node-uid"}, Batch: 1,
@@ -99,7 +127,10 @@ func TestOccupancyAssessmentReadsExactRecordAndPreservesNegativeD(t *testing.T) 
 			t.Fatal(err)
 		}
 		storage := &operationProjectionStore{payload: raw}
-		service := &measurementService{client: fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(&cr).Build(), objects: storage, opts: options{servingNamespace: "allowed", maxEvidenceBytes: 1 << 20}}
+		service := &measurementService{
+			client:  fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(&cr).Build(),
+			objects: storage, opts: options{servingNamespace: "allowed", maxEvidenceBytes: 1 << 20},
+		}
 		list, err := service.listDispatchOccupancies(context.Background(), "allowed")
 		if err != nil {
 			t.Fatal(err)
