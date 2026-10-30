@@ -1,11 +1,9 @@
 # feeder.py: lane orchestrator. Each node's documents are created in file order, one at a time, after the
 # previous one is terminal (the node queue runs them one at a time anyway, so per-node order is unchanged).
-# Occupancies are uncapped until an occupancy fails writing its record to the evidence store (DNS / S3
-# transport failure); then the cap becomes 4 in flight cluster-wide (persisted in feeder-cap) and the failed
-# occupancy is re-run right away under the next free 9NN name. Restartable: existing terminal CRs are skipped.
-# usage: python3 feeder.py rerun | lanes | phase-a
+# Occupancies obey the persisted feeder-cap limit. Held documents block their lane;
+# failed terminal records stop the campaign. Restartable: successful terminal CRs are skipped.
 # Approved resume: python3 feeder.py --manifest PATH/resume-plan.json --stages 4,5,6
-import argparse, json, os, re, subprocess, sys, time, datetime as dt
+import argparse, json, os, re, subprocess, time, datetime as dt
 from pathlib import Path
 
 CONFIG = json.loads(Path(os.environ["CHILL_EXPERIMENT_CONFIG"]).read_text())
@@ -15,7 +13,6 @@ ST = ENV["statusLog"]
 CAPF = V + '/feeder-cap'
 KIND = {'BatchEnergyOptimization': 'beo', 'ModelLoadedIdleBaseline': 'idlebase', 'OperationCostMeasurement': 'opcost',
         'DispatchOccupancyMeasurement': 'occupancy'}
-STORE_FAIL = re.compile(r'evidence store transport failed|lookup chill-evidence-store|i/o timeout')
 now = lambda: dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 log = None
 def L(*a): log.write(now() + ' ' + ' '.join(map(str, a)) + '\n'); log.flush()
@@ -58,15 +55,9 @@ def terminal(st): return st[0] in ('Complete', 'Failed', 'Insufficient') or st[2
 def occ_inflight():
     o = json.loads(k('get', 'occupancy', '-o', 'json').stdout)['items']
     return sum(1 for x in o if not terminal(((x.get('status') or {}).get('phase') or '', '', (x['metadata'].get('annotations') or {}).get('chill.dacs.io/admission', ''))))
-def rename(d, node):
-    tail = d['metadata']['name'][len(node) + 5:]
-    for n in range(940, 1000):
-        name = f'{node}-{n}-{tail}'
-        if state(d['kind'], name) is None:
-            e = json.loads(json.dumps(d)); e['metadata']['name'] = name; return e
 HOLDF = V + '/feeder-hold.json'
 def held(d):
-    # Hold rules (feeder-hold.json, re-read every pass): skip creating matching documents; the node's queue continues.
+    # Hold rules (feeder-hold.json, re-read every pass): block creation and advancement of matching documents.
     #   drop: regex of names never created; occupancy: regex of held occupancy names;
     #   opcostSmolvlm: hold operation costs with a SmolVLM2 step; beoCuda: hold CUDA BEOs.
     if not os.path.exists(HOLDF): return False
@@ -88,7 +79,7 @@ def previous_names(lines):
         if len(fields) > 3 and fields[1] == 'HELD': held_names.add(fields[3])
     return terminal, held_names
 assert previous_names(('t HELD n later', 't TERMINAL n done')) == ({'done'}, {'later'})
-def run(queues, final, approved=False):
+def run(queues, final):
     pos = {n: 0 for n in queues}
     # A held document has not had its future terminal result reported.
     seen, held_seen = previous_names(open(V + '/feeder.log'))
@@ -103,40 +94,28 @@ def run(queues, final, approved=False):
                     if name not in held_seen:
                         held_seen.add(name); L('HELD', n, name)
                         open(V + '/feeder-held.txt', 'a').write(f'{now()} {n} {kind} {name}\n')
-                    if approved:
-                        busy = True; break
-                    pos[n] += 1; continue
+                    busy = True; break
                 if st is None:
                     # Pausing stops the next creation while existing CRs remain observable.
                     if n in pause:
                         busy = True; break
-                    if approved and not node_released(n):
+                    if not node_released(n):
                         busy = True; break
                     if kind == 'DispatchOccupancyMeasurement' and occ_inflight() >= cap():
                         busy = True; break
                     r = k('create', '-f', '-', inp=json.dumps(d)); L('CREATE', n, name, r.returncode, (r.stdout + r.stderr).strip()[:200])
-                    if approved and r.returncode:
+                    if r.returncode:
                         raise SystemExit(f'cannot create staged CR: {name}: {r.stderr.strip()}')
                     busy = True; break
                 if not terminal(st):
                     busy = True; break
-                if approved and (st[0] in ('Failed', 'Insufficient') or st[2].startswith('Refused')):
+                if st[0] in ('Failed', 'Insufficient') or st[2].startswith('Refused'):
                     raise SystemExit(f'campaign stopped after terminal failure: {name}: {st}')
-                if approved and not node_released(n):
+                if not node_released(n):
                     busy = True; break
                 if name not in seen:
                     seen.add(name); L('TERMINAL', n, name, *st)
                     if kind == 'DispatchOccupancyMeasurement': final[n] = name
-                    if st[0] in ('Failed', 'Insufficient') or st[2].startswith('Refused'):
-                        S(f'LANE {n} {name} {st[0]} {st[1][:160]} {st[2][:60]}')
-                        with open(V + '/control-alerts.jsonl', 'a') as alerts:
-                            alerts.write(json.dumps({'at': now(), 'event': 'measurement terminal failure', 'node': n, 'kind': kind, 'name': name, 'phase': st[0], 'reason': st[1], 'admission': st[2]}) + '\n')
-                        if not (kind == 'DispatchOccupancyMeasurement' and STORE_FAIL.search(st[1])):
-                            raise SystemExit(f'campaign stopped after unexpected terminal failure: {name}')
-                        if kind == 'DispatchOccupancyMeasurement' and STORE_FAIL.search(st[1]):
-                            if cap() > 4:
-                                open(CAPF, 'w').write('4'); S('FEEDER CAP 4: evidence-store DNS/transport failure on record write')
-                            e = rename(d, n); q.insert(pos[n] + 1, e); S(f'FEEDER RERUN {name} as {e["metadata"]["name"]}')
                 pos[n] += 1
             if pos[n] == len(q) and ('done', n) not in seen:
                 seen.add(('done', n)); S(f'LANE DONE {n}')
@@ -145,51 +124,34 @@ def run(queues, final, approved=False):
         time.sleep(30)
 def main():
     global log
-    if sys.argv[1:] and sys.argv[1].startswith('--'):
-        parser = argparse.ArgumentParser(description='Resume approved immutable staged paths through existing per-Node lanes.')
-        parser.add_argument('--manifest', required=True)
-        parser.add_argument('--stages', required=True)
-        parser.add_argument('--check-manifest', action='store_true', help='read-only queue/input check; no PID/log/cluster calls')
-        args = parser.parse_args()
-        queues = manifest_queues(args.manifest, args.stages)
-        if args.check_manifest:
-            assert all(d['kind'] != 'DispatchOccupancyMeasurement' or
-                       d['spec']['supplyMode'] == 'closed-loop' for q in queues.values() for d in q)
-            cost_names = [d['metadata']['name'] for q in queues.values() for d in q if d['kind'] == 'OperationCostMeasurement']
-            assert len(cost_names) == len(set(cost_names)) <= 14
-            hold = json.load(open(HOLDF)) if os.path.exists(HOLDF) else {}
-            assert not any(re.search(hold.get('drop') or '^$', d['metadata']['name'])
-                           for q in queues.values() for d in q)
-            for invalid in ('3,2', '4,7', '7,4', '1,1'):
-                try:
-                    manifest_queues(args.manifest, invalid)
-                except ValueError:
-                    pass
-                else:
-                    raise AssertionError(f'unsafe stage selection admitted: {invalid}')
-            print(json.dumps({n: [d['metadata']['name'] for d in q] for n, q in queues.items()}, indent=2))
-            return
-        log = open(V + '/feeder.log', 'a')
-        open(V + '/feeder.pid', 'w').write(str(os.getpid()) + '\n')
-        S(f'APPROVED FEEDER START manifest={args.manifest} stages={args.stages}')
-        run(queues, {}, approved=True)
-        S('APPROVED FEEDER DONE')
+    parser = argparse.ArgumentParser(description='Resume approved immutable staged paths through existing per-Node lanes.')
+    parser.add_argument('--manifest', required=True)
+    parser.add_argument('--stages', required=True)
+    parser.add_argument('--check-manifest', action='store_true', help='read-only queue/input check; no PID/log/cluster calls')
+    args = parser.parse_args()
+    queues = manifest_queues(args.manifest, args.stages)
+    if args.check_manifest:
+        assert all(d['kind'] != 'DispatchOccupancyMeasurement' or
+                   d['spec']['supplyMode'] == 'closed-loop' for q in queues.values() for d in q)
+        cost_names = [d['metadata']['name'] for q in queues.values() for d in q if d['kind'] == 'OperationCostMeasurement']
+        assert len(cost_names) == len(set(cost_names)) <= 14
+        hold = json.load(open(HOLDF)) if os.path.exists(HOLDF) else {}
+        assert not any(re.search(hold.get('drop') or '^$', d['metadata']['name'])
+                       for q in queues.values() for d in q)
+        for invalid in ('3,2', '4,7', '7,4', '1,1'):
+            try:
+                manifest_queues(args.manifest, invalid)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f'unsafe stage selection admitted: {invalid}')
+        print(json.dumps({n: [d['metadata']['name'] for d in q] for n, q in queues.items()}, indent=2))
         return
     log = open(V + '/feeder.log', 'a')
-    final = {}
     open(V + '/feeder.pid', 'w').write(str(os.getpid()) + '\n')
-    if sys.argv[1] == 'rerun':
-        q = {}
-        for n in ENV['rerunNodes']:
-            d = next(x for x in docs(f'{V}/front/{n}.yaml') if x['kind'] == 'DispatchOccupancyMeasurement' and '-007-' in x['metadata']['name'])
-            d['metadata']['name'] = n + '-007-' + d['metadata']['name'][len(n) + 5:]; q[n] = [rename(d, n)]
-        json.dump(q, open(V + '/front-rerun.json', 'w'))
-        S(f'FRONT RERUN START (8 in parallel, cap {cap()})'); run(q, final); S(f'FRONT RERUN DONE {json.dumps(final)}')
-    else:
-        folder = 'phase-a' if sys.argv[1] == 'phase-a' else 'lanes'
-        files = {n: f'{V}/{folder}/{n}.yaml' for n in ENV['feederNodes']}
-        if folder == 'lanes': files[ENV['nanoNode']] = f"{V}/lanes/{ENV['nanoNode']}.after903.yaml"
-        S(f'LANES FEEDER START (per-node file order, occupancy cap {cap()})'); run({n: docs(f) for n, f in files.items()}, final); S('LANES ALL DONE')
+    S(f'APPROVED FEEDER START manifest={args.manifest} stages={args.stages}')
+    run(queues, {})
+    S('APPROVED FEEDER DONE')
 
 if __name__ == '__main__':
     main()

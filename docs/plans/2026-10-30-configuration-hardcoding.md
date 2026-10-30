@@ -29,11 +29,11 @@
 
 ## 삭제 후보: 승인 아님
 
-현재 E5 실행 경로 밖이지만 외부 runbook·독립 호출·보존 필요를 확인하기 전 삭제하지 않는다(19파일).
+현재 E5 실행 경로 밖이지만 외부 runbook·독립 호출·보존 필요를 확인하기 전 삭제하지 않는다(18파일). 비활성 숫자 탐색 CLI 한 파일은 배치3 승인으로 삭제했다.
 
 - `hack/measure/`: gen.py, capture-progress.py, feeder.py, plan-e5a.py, soak_ledger.py, xcheck.py.
 - `hack/measure/phase-a/measurement-generalization-20261024/`: meter-cadence/capture.py, meter-cadence/analyze.py, cost-shift-approved/recalculate.py, post-d2-25-20261025/prepare.py, cost-budget/arithmetic_check.py.
-- `hack/measure/`: d9c/split.py, d9c/timeline.py, smolcheck/b1stats.py, smolcheck/collect.py, smoke/smoke.py, smoke/send.py. `hack/e5/`: numbers.py, timeline.py.
-- D2 bind_before·conduct_before·analyze_before·sample_cgroups의 독립 main은 E5 helper와 별도 검토한다(19개에 미포함). 파일 전체 삭제 금지, demo.py offline import 회귀·재사용 가능한 example config는 유지한다.
+- `hack/measure/`: d9c/split.py, d9c/timeline.py, smolcheck/b1stats.py, smolcheck/collect.py, smoke/smoke.py, smoke/send.py. `hack/e5/`: timeline.py.
+- D2 bind_before·conduct_before·analyze_before·sample_cgroups의 독립 main은 E5 helper와 별도 검토한다(18개에 미포함). 파일 전체 삭제 금지, demo.py offline import 회귀·재사용 가능한 example config는 유지한다.
 
 source/profile interval은 사용자 결정대로 기동 설정+실제값 기록으로 유지한다. binding의 물리 불변성 저장 장치는 추가하지 않고 완결 후 수정 금지·새 실험 새 binding을 적용한다. 운영 values는 rev74 캡처이며 현 배포값이 아니다.

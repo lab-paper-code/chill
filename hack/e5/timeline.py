@@ -349,18 +349,11 @@ def report(root, compare=(), out=None):
 
 def render(data, out):
     # Latest retained four-panel timeline, generalized to discovered parts/clocks.
-    # The sibling analysis CLI numbers.py must not shadow stdlib numbers in NumPy.
-    import sys
-    previous_path = sys.path[:]
-    try:
-        sys.path[:] = [p for p in sys.path if Path(p).resolve() != Path(__file__).parent]
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
-        import matplotlib.dates as mdates
-        from matplotlib.lines import Line2D
-    finally:
-        sys.path[:] = previous_path
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+    from matplotlib.lines import Line2D
     if not data['snapshots']:
         fig, ax = plt.subplots(figsize=(12, 3))
         ax.axis('off')

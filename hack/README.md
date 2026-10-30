@@ -343,12 +343,18 @@ checks the retained preparation inputs. `hack/e5/e5-wire.py execute` takes
 the approved `--numbers`, `--release` and fresh external `--out` directory;
 its archive, raw-collection and producer helpers live alongside it.
 
+The approved numeric input is supplied externally; the retired exploratory
+numeric-table CLI is removed. Original numeric inputs and published results
+remain immutable. Kappa reads only current single-Workload snapshots.
+
 For measurement preparation, `hack/measure/gen.py --output-dir` takes a fresh
 external directory under the current measurement campaign.
 `hack/measure/phase-a/measurement-generalization-20261024/post-d2-25-20261025/prepare.py`
 takes `--output-dir` and supports `--check` and `--refresh-timing`.
 `hack/measure/feeder.py --manifest /path/to/manifest.json --stages 7
---check-manifest` checks the generated manifest offline. The
+--check-manifest` checks the generated manifest offline. Positional rerun and
+unstaged lane modes are removed; approved holds, terminal checks and Node handback
+still gate each lane. The
 `meter-cadence/analyze.py` helper takes `--input-dir` for retained telemetry
 and `--output-dir` for its external tables.
 

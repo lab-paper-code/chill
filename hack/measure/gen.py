@@ -356,7 +356,6 @@ def generate(output):
     resume = {"authority": AUTHORITY, "executionOwner": "CampaignOps",
         "state": "staged only; hold remains effective; no cluster changes performed",
         "rollouts": 1, "firstfloorRuntimeDigestsFrozen": True,
-        "legacyInputWarning": "Do not use feeder.py phase-a/lanes: those modes intentionally retain original files. Use --manifest and --stages below.",
         "preconditions": ["Main coordinated gates and real local smoke accepted",
             "CampaignOps numbered UTC instruction; fresh queued/active measurement, load Job, action, handback, serving and affected BEO/Run/Job execution counts all zero",
             "one coordinated rollout with CRDs/control/profiler/loadgen/observer and chart config; retain original evidence and root hold"],
@@ -401,9 +400,9 @@ def generate(output):
     resume["feederDiscipline"] = "CampaignOps starts only after preceding acceptance/cleanup and explicit Main instruction. Existing holds/drop3 stay effective; held approved items block their lane, successful terminal plus Node measurement-taint handback is required to advance; Failed/Insufficient/Refused always stop including restarts. Stage7 cannot be combined with pre-D2 stages."
     resume["holdOwnership"] = {
         "path": str(DATA / "feeder-hold.json"), "executionOwner": "CampaignOps",
-        "precondition": "after coordinated rollout and numbered Main instruction; no competing legacy feeder",
+        "precondition": "after coordinated rollout and numbered Main instruction; no competing feeder",
         "representatives": "CampaignOps directly executes the exact single-CR stage1/2/3 creationCommands after Main instruction; existing all-hold remains unchanged. Stage3 additionally requires exactly-once old017 cleanup first.",
-        "remainingAPreD2": "only after representative acceptance, CampaignOps clears existing pause/category holds for the approved staged scope and starts remainingAPreD2FeederCommand; no competing legacy feeder",
+        "remainingAPreD2": "only after representative acceptance, CampaignOps clears existing pause/category holds for the approved staged scope and starts remainingAPreD2FeederCommand; no competing feeder",
         "postD2": "only after D2 acceptance start the separate stage7 command",
         "preserve": "existing drop rule always remains unchanged; no new hold bypass fields",
         "originalHoldEditedByGenerator": False}

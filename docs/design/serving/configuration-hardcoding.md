@@ -5,7 +5,7 @@
 
 ## 1. 경계와 결정
 
-A는 측정·판정 소유자의 기존 입력, B는 실제 환경 입력으로 옮긴다. C는 고정 방법론·프로토콜·패키징 계약, D는 이미 설정된 값이다. 자명한 수식·sentinel·Helm enum까지 이름 붙이지 않는다. 새 설정 서비스·저장소·의존성은 없다. Dashboard UI 재설계는 제외하지만 typed API round-trip은 포함한다. `demo.py`는 offline 회귀가 import하므로 회귀 유지 대상이다. 역사 script와 `numbers.py` 비활성 경로는 제외하며 파일 삭제 승인은 아니다.
+A는 측정·판정 소유자의 기존 입력, B는 실제 환경 입력으로 옮긴다. C는 고정 방법론·프로토콜·패키징 계약, D는 이미 설정된 값이다. 자명한 수식·sentinel·Helm enum까지 이름 붙이지 않는다. 새 설정 서비스·저장소·의존성은 없다. Dashboard UI 재설계는 제외하지만 typed API round-trip은 포함한다. `demo.py`는 offline 회귀가 import하므로 회귀 유지 대상이다. 역사 script는 제외하며 파일 삭제 승인은 아니다. 비활성 숫자 탐색 CLI는 배치3 승인으로 삭제했고 승인된 외부 numeric input과 기존 게시 증거는 보존한다.
 
 ## 2. settings 증거와 실패 해석
 
@@ -96,7 +96,7 @@ closure는 선언 target 목록 길이와 실제 모집단을 비교한다. expe
 
 DELAY_TOLERANCE_NS=10ms는 delayed 표시 방법론 C다. --delay-tolerance나 존재하지 않는 단독 CLI metadata를 신설하지 않는다. 기존 arrivals/seed/workers/delivery/socket/lifetime와 generatorQuality를 동결한다. poll·marker poll·종료 대기·단순 command timeout은 측정·수용 영향 근거가 없으면 C, 기존 안전 예산은 D다. 경로별30/129초·1/2/5초를 합치지 않는다. 삭제할 CHILL host-reader/SSH/crictl 수집은 설정화하지 않는다. client 수집·STOP loop·운영자 장애 주입은 유지한다.
 
-`demo.py` offline 회귀와 실제 E5가 호출한 bind_before SETTINGS/eligibility, Conductor API·publication·producer·삭제, native 요청, analyze stats/quality는 유지한다. 독립 D2 main·옛 수집·numbers.py 비활성 경로는 제외하며 helper 전체를 삭제하지 않는다.
+`demo.py` offline 회귀와 실제 E5가 호출한 bind_before SETTINGS/eligibility, Conductor API·publication·producer·삭제, native 요청, analyze stats/quality는 유지한다. 독립 D2 main·옛 수집 비활성 경로는 제외하며 helper 전체를 삭제하지 않는다.
 
 ### 잔존 하네스의 선택값
 

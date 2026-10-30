@@ -108,24 +108,10 @@ func loadScheduler(name string) (serving.SchedulerSnapshot, serving.SchedulerSet
 	return snapshot, settings, err
 }
 
-// decodeSnapshot reads a snapshot; the legacy instance field workloadUIDs of
-// records taken before the single-Workload model fills workloadUID.
 func decodeSnapshot(raw json.RawMessage) (serving.SchedulerSnapshot, error) {
 	var snapshot serving.SchedulerSnapshot
-	var legacy struct {
-		Instances []struct {
-			WorkloadUIDs []string `json:"workloadUIDs"`
-		} `json:"instances"`
-	}
-	if err := errors.Join(json.Unmarshal(raw, &snapshot), json.Unmarshal(raw, &legacy)); err != nil {
-		return snapshot, err
-	}
-	for i, instance := range legacy.Instances {
-		if len(instance.WorkloadUIDs) > 0 && snapshot.Instances[i].WorkloadUID == "" {
-			snapshot.Instances[i].WorkloadUID = instance.WorkloadUIDs[0]
-		}
-	}
-	return snapshot, nil
+	err := json.Unmarshal(raw, &snapshot)
+	return snapshot, err
 }
 
 // table builds the server capacity table for the autonomous Workloads, prints

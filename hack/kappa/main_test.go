@@ -10,6 +10,16 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
+func TestDecodeSnapshotUsesCurrentWorkloadUID(t *testing.T) {
+	snapshot, err := decodeSnapshot([]byte(`{"instances":[{"id":"current","workloadUID":"w","workloadUIDs":["old"]},{"id":"unbound","workloadUIDs":["old"]}]}`))
+	if err != nil || len(snapshot.Instances) != 2 || snapshot.Instances[0].WorkloadUID != "w" || snapshot.Instances[1].WorkloadUID != "" {
+		t.Fatalf("current snapshot decode: %+v %v", snapshot, err)
+	}
+	if _, err := decodeSnapshot([]byte(`{"instances":[]} {}`)); err == nil {
+		t.Fatal("trailing JSON accepted")
+	}
+}
+
 // Synthetic PLC-like Nodes, margin 1 ms and d 1 ms: the b1 latency is the p99
 // sample + 2 ms, the fastest option per Node counts, and options without d or
 // for another Workload do not. The widest gap with at least half passing and
