@@ -1,96 +1,11 @@
 # 판단 기록 다이어트 (M0)
 
-[채택한 이행 단계](../architecture-rethink/05-recommendation-migration.md)의 M0 설계다. 명세 변경 없이 저장하는 스케줄러
-판단 기록을 줄여 이력 조회 중 ChillServer 메모리와 관측 PVC 증가를 낮춘다. `SCH-30`은 불변 기록의 ID 참조로 충족한다.
-[워크로드별 POOL 4.5절](workload-pools.md#45-적용과-기록)의 저장 profile ID를 전제로 한다.
-
-## 1. 증상과 원인
-
-증상은 판단 기록 1건 ~10MB, 이력 조회 디코드 중 128Mi ChillServer OOM, 관측 PVC 8Gi 포화다
-([01](../architecture-rethink/01-current-premise.md#2-기록-크기)).
-
-`recordDecision`(`cmd/chill-server/scheduler_service.go`)은 제어 주기(10초)마다 `SchedulerObservation{Decision, Snapshot}`
-한 줄을 `scheduler.jsonl`에 쓴다. 후보(최대 128개)마다 전체 `Nodes`와 `Instances`가 들어 있고, snapshot의 `Arrivals`는
-관측 창의 모든 요청을 요청마다 `Definition` 본문과 함께 담는다.
-
-## 2. 현재 기록 구성
-
-실제 타입을 `encoding/json`으로 직렬화한 go test의 결과다. 규모는 노드 8, Workload 3, 후보 128, 후보당 인스턴스 6,
-option 16, profile 6 batch × 200 표본, 60초 창 50 req/s(arrival 3000), 처리 중 요청 20이다.
-
-| 부분 | 크기 | 구성 |
-|---|---|---|
-| profile 본문 | 15.8KB | 표본 1개 약 13B, batch 수 × 표본 수에 비례 |
-| 인스턴스 | 16.4KB | profile ID만 담으면 0.5KB |
-| arrival | 1.6KB | `Definition` 본문 1.4KB 포함 |
-| snapshot | 5.3MB | `Arrivals` 4.9MB, `Options` 263KB, `Instances` 98KB, `Outstanding` 34KB, 나머지 16KB |
-| 후보 | 104KB | `Instances` 98KB |
-| decision | 13.5MB | `Candidates` 13.3MB |
-| 기록 1건 | 18.8MB | 10초 주기에서 시간당 6.8GB |
-
-관측된 10MB는 표본 수나 인스턴스 수가 이보다 적은 경우와 맞는다 `[추론]`. 지배 항은 후보 × 인스턴스와
-arrival × `Definition`이다.
-
-## 3. 저장 형태
-
-`ObservationLog.SchedulerRecord`가 저장 직전에 판단과 snapshot을 다음처럼 투영한다. 메모리의 판단과 live
-`GET /api/v1/scheduler`, `/scheduler/state` 응답은 Dashboard가 쓰는 전체 형태를 그대로 유지한다.
-
-| 대상 | 저장 형태 |
-|---|---|
-| `keep`, `target` | 후보 전체. 인스턴스는 `profileID`만 담는다. target이 keep과 같으면 target은 `{id, keep}`만 담는다 |
-| `capacity` | 판단의 `decision.capacity` 전체(비교 기간, Workload별 κ 합과 판정, 노드 계획) |
-| `evaluationElapsedNanos` | Tick의 capture부터 판단 확정까지의 monotonic 경과 |
-| snapshot | 판단마다 저장한다. `arrivals`는 빼고, 창 경계와 개수는 `search`의 `windowStart`, `windowEnd`, `received`, `accepted`, `computeInputs`, `loads`에 있다 |
-| `outstanding[]` | `definition` 대신 `definitionID`(`Definition.Identity()`). 정의 본문은 snapshot `workloads`에 있다 |
-| snapshot 원값 | 노드와 인스턴스의 `observedAt`, 인스턴스의 `workloadUID`, 동작의 `elapsedNanos`, `routingCredits`를 원값으로 유지한다 |
-
-이력 조회(`GET /api/v1/observations/scheduler`)와 Dashboard 이력, A/B 비교는 같은 route로 이 형태를 읽는다. Dashboard는
-처리 중 요청의 정의를 `definitionID`로 표시한다.
-
-2장과 같은 규모에서 저장 기록 1건은 약 68KB다(`TestSchedulerRecordStoresCompactDecision`). 10초 주기에서 시간당 약
-25MB다.
-
-### 3.1 알려진 한계
-
-- 저장 판단의 replay는 그 판단이 참조한 profile의 측정이 catalog와 evidence store에 남아 있어야 한다.
-- 관측 PVC는 [M1](observability-split.md#5-세그먼트와-보존)의 시간 세그먼트 2시간과 S3가 멈춘 동안의 미업로드분을 담는다.
-- 저장 계약은 미배포 `v1alpha4`의 형태를 이어서 바꾼다([workload-pools 8장](workload-pools.md#8-커밋-단위)).
-
-## 4. 검사
-
-| 대상 | 검사 |
-|---|---|
-| 크기와 왕복 | E1 규모 기록이 135 KiB 이하이고 `capacity`가 그대로 왕복함(`TestSchedulerRecordStoresCompactDecision`) |
-| 이력 읽기 | 저장 기록이 `SchedulerObservationPage`로 읽히고 keep과 target이 전체 본문과 `profileID`를 담음 |
-| snapshot | `arrivals` 없음, `outstanding`의 `definitionID`, 인스턴스의 `workloadUID` |
-| 판단 시간 | Tick 판단의 `evaluationElapsedNanos`가 양수 |
-| Dashboard | `make dashboard-check` |
-
-## 5. E1에서 확인할 값
-
-[workload-pools 9.2절](workload-pools.md#92-실클러스터-e2e) E1의 부하 단계마다 기록한다.
-
-| 값 | 방법 | 목표 |
-|---|---|---|
-| 판단 기록 크기 | evidence store `serving/<windowID>/scheduler.jsonl`의 판단 줄 크기, 단계별 최대 | ≤100KB |
-| ChillServer RSS | `container_memory_working_set_bytes` 최대와 재시작 수 | limit 아래, OOM 재시작 0 |
-| PVC 증가 | kubelet volume stats의 시간당 증가 | 기록, M1 전까지의 `observationStorage` 크기 근거 |
-| Tick p99 | 판단 기록 `evaluationElapsedNanos`의 p99 | 기록(M4 기준선) |
-
-## 6. 검증 기록
-
-E1 재실행(2026-10-19 UTC, rev 35)의 측정 결과다.
-
-| 지표 | 측정 결과 |
-|---|---|
-| 저장 decision record 중앙값 | 185,359 B (약 185 KB), 목표 ≤100 KB; 498건, 2 req/s에서 66.3 MB/h |
-| ChillServer RSS 최대 | 111.4 MiB (512 MiB limit); E1 중 재시작 0회 |
-| 관측 PVC 증가 | soak 2 req/s에서 273 MiB/h (`du -sk`, helper pod) |
-| Tick p99 at 2 req/s | 6,166 ms (6.6 s) |
-| Tick p99 / max at 5 req/s | 22,575 / 22,575 ms (최대 22.6 s) |
-
-## 7. M0 범위 밖
-
-- M1: 요청당 행 하나, snapshot 불변 값의 ID 참조, 시간 단위 gzip 세그먼트와 2시간 로컬 버퍼([관측 분리](observability-split.md)).
-- M4: 계획이 바뀔 때만 쓰는 판단 기록, 분석형 평가기, `kernels` 재설계, live 판단 응답의 후보 축소.
+상태: completed — `SCH-30` 기록 축소; 현행 보존·조회는 [관측 분리](observability-split.md), 계획은 [용량표 계획기](analytic-planner.md)가 권위다.
+- 원인: 후보×인스턴스 및 arrival×Definition 중복으로 E1 규모 합성 기록 18.8 MB(10초 주기 6.8 GB/h), 실제 약10 MB·128 MiB OOM·PVC8Gi 포화.
+- 저장 직전 투영만 적용하며 메모리 판단/live full API는 유지한다. keep/target 인스턴스는 profileID, 동일 target은 `{id,keep}`; capacity와 evaluationElapsedNanos는 보존한다.
+- snapshot은 매 판단 저장하되 arrivals를 빼고 search의 windowStart/windowEnd/received/accepted/computeInputs/loads를 남긴다. outstanding은 definitionID, 본문은 workloads에 둔다.
+- observedAt, workloadUID, action elapsedNanos, routingCredits는 원값을 보존한다. 이력·Dashboard·A/B는 같은 저장 route를 읽는다.
+- 합성 compact 결과 약68 KB(약25 MB/h); `TestSchedulerRecordStoresCompactDecision`의 수용 상한은135 KiB이며 replay에는 참조 profile/catalog/evidence가 필요하다.
+- E1 재실행(2026-10-19 UTC rev35): 498건 중앙185,359 B(목표≤100 KB 미달), 2 req/s 66.3 MB/h, RSS111.4 MiB/limit512 MiB·재시작0, PVC273 MiB/h.
+- 같은 실행 Tick p99: 2 req/s 6,166 ms; 5 req/s p99/max22,575 ms. 이 수치는 M1/M4 이후 성능 보장이 아니다.
+- 로컬은2시간 세그먼트와 미업로드분을 보존한다. 무한 보존·현재 source의 live 수용 완료는 주장하지 않는다.

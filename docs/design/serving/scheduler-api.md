@@ -16,18 +16,18 @@ HTTPS ChillServer는 `--serving-scheduler-configmap=<name>`과
 
 | 구성 필드 | 의미와 실제 근거 |
 |---|---|
-| `settings` | nanosecond duration의 `observationWindowNanos`, `controlIntervalNanos`, `comparisonPeriodNanos`(비교 기간 T의 하한, sample 10분, [용량표 계획기 4장](analytic-planner.md#4-노드-계획과-탐색)), `maxObservationAgeNanos`, 자원 상한 `maxReplicas`, `maxInstances`, `maxCPUs`, `servingMemoryBytes`와 제어 활성 상태 `controls`(`placement`, `resources`, `replicas`, `routing`, `batching`, `power`, `membership`). 구성과 `PUT` 본문은 선언한 필드만 받는다 |
+| `settings` | ns duration의 `observationWindowNanos`, `controlIntervalNanos`, `comparisonPeriodNanos`(keep·모든 후보에 고정한 H, sample10분; 자동연장 없음, [계획기](analytic-planner.md#4-노드-계획과-탐색)), `maxObservationAgeNanos`, 자원 상한 `maxReplicas`, `maxInstances`, `maxCPUs`, `servingMemoryBytes`, 제어 `controls`(`placement`,`resources`,`replicas`,`routing`,`batching`,`power`,`membership`). 미선언 입력은 거절 |
 | `settings.servingMemoryBytes` | 서빙 Pod의 memory request와 limit은 profile의 측정 최대 메모리에 이 값을 더한 것이다. 절반(최대 64 MiB)이 firstfloor `maxQueueBytes`이고, Go의 기본 GOGC 100에서 heap이 대기 요청 바이트의 두 배까지 자라는 것을 나머지 절반이 받는다. 2 미만이면 서빙 준비가 `PreparationUnavailable`이다. sample의 128 MiB는 rasp5 q1(측정 198 MiB)이 포아송 40 req/s에서 대기 요청으로 OOMKilled된 m4 r2 사건의 대기열 64 MiB를 담는다 |
 | `settings.completionMarginMS` | 필수, 유한한 0 이상의 ms. firstfloor 처리 완료에 요청마다 더하는 완료 여유이고 ChillServer가 dispatch 때 요청에 넣는다. sample의 `29`는 m4 r3 포아송 40 req/s 포화에서 잰 m(종단 경과 − (`nativeElapsedMS` − ingress))의 p95 29.2 ms다([용량표 계획기 5장](analytic-planner.md#5-완료-여유-규칙)). E1의 p99 138.23 ms는 요청마다 걸리던 TokenReview 지연이 대부분이었고, 인증 결과 재사용(c829518)과 authz singleflight가 그 지연을 없앴다 |
 | `settings.capacityWindowNanos`, `capacityWindows`, `capacityPassingWindows`, `capacityMinimumRequests` | 필수. 용량표 행의 창 길이(> 0), 요청률마다 재생하는 창 수(≥ 1), 충족 창 수(1 이상 창 수 이하), 창의 최소 요청 수(≥ 1). sample은 60 s, 20, 19, 1,000이다([용량표 계획기](analytic-planner.md#2-용량표)) |
-| `settings.planSearchWorkers` | 필수, 1 이상의 정수. 계획 탐색이 계획 집합을 동시에 평가하는 goroutine 수다. 탐색은 판단 시작부터 `controlIntervalNanos`의 절반 안에 끝나고, 그 시각에 끝나면 판단의 `capacity.search.budgetCut`이 남는다. sample의 3은 ChillServer CPU 한도 6 안의 몫이다. 탐색 3, G 약 220 req/s에서 게이트웨이 약 1.7, 나머지 Tick 작업 약 0.5 core를 더하면 약 0.8 core가 남는다([워크로드 관리 7장](workload-management.md#e5의-chillserver-메모리와-cpu-상한), [용량표 계획기 4장](analytic-planner.md#4-노드-계획과-탐색)). E5에서 G를 다시 잰 뒤 값을 정한다 |
+| `settings.planSearchWorkers` | 필수 정수≥1. 판단시작부터 controlIntervalNanos 절반 예산, 종료시 capacity.search.budgetCut. sample3/서버6CPU에서 G≈220req/s 게이트웨이≈1.7+나머지Tick≈.5core와 합쳐≈.8core 여유였다([자원 상한](workload-management.md#e5의-chillserver-메모리와-cpu-상한),[계획기](analytic-planner.md#4-노드-계획과-탐색)). E5 G 실측 뒤 선택한다 |
 | `settings.autonomousWorkloads` | 자동제어할 Workload UID 목록. decision은 Workload마다 `workloads[]`에 `Disabled`, `MeasurementEvidenceMissing`, `Controlled` 상태와 사유를 남긴다([워크로드별 자동제어](workload-pools.md#31-워크로드별-자동제어)) |
 | `settings.excludedNodes` | 계획에서 뺀 Node 이름 목록(이름마다 하나, 빈 이름 불가, sample은 빈 목록). 그 Node는 측정 POOL Node처럼 그대로 두며 판단의 노드 계획과 snapshot 노드 사유에 `ExcludedNode`로 남는다([용량표 계획기 14장](analytic-planner.md#14-구현-규칙)). Dashboard 운영 설정의 "계획에서 뺀 장비"가 고친다 |
 | `reserved` | Node별 비서빙 전용 예약 CPU IDs와 GPU UUID. quota는 별도 수량 예산. CPU inventory는 node agent가 Node annotation `edge.dacs.io/cpus`에 게시한 online CPU이고, GPU inventory는 그 Node에서 측정한 profile의 GPU UUID다([node agent](../platform/node-agent.md#21-필드별-출처)). inventory 밖의 예약은 Node를 `PlacementInventoryMissing`으로 만든다 |
 | `staticRouting` | 읽기 전용 projection: Workload UID → physical instance ID → nonnegative int32 weight. UID의 빈 map은 명시적 배분 해제이고 UID 부재는 Pod 기본 표시를 따르는 상태다. 선언 변경은 `route`/`unroute`/`release` 작업만 받으며 설정 PUT은 이 필드를 받지 않는다(`SCH-39`) |
 | `staticRoutingValidatedAt` | 읽기 전용 선언 변경 출처. 설정 PUT이 아니라 배분 작업의 검증 시각과 연결한다. 실제 성공 여부는 작업의 ACK와 `actual.routing` readback으로 확인한다 |
 | wall meter | 구성 필드가 없다. Profiler facts `metricSources`(schema `v1alpha6`)의 항목마다 `{id: meterID, node: 그 이름의 live Node와 UID, scope: node-exclusive-wall, source: 전력 부분}`을 만든다. Node가 없는 항목은 meter가 없다 |
-| 전력 요청 | 구성 필드가 없다. Node의 DeviceClass 모드 중 actuator가 `Fixed`가 아니고 Profiler facts의 actuation policy가 있는 모드가 요청 가능 모드다. 전력 동작이 시작할 때 NodeActuation을 새 이름, 그 시각의 `stageRequestedAt`, `maxActuationDurationSeconds` 뒤의 `deadline`으로 만든다([node agent](../platform/node-agent.md#21-필드별-출처)) |
+| 전력 요청 | 별도 구성 필드 없음. DeviceClass의 비Fixed actuator·Profiler actuation policy가 요청 가능 모드를 정한다. 동작 시작에 Node mode label과 requested-at을 같은 optimistic patch로 쓰고 policy 기한 내 success·독립readback을 확인한다([현행 Node 전력 계약](../platform/node-agent.md#3-노드-전력모드-node-label과-generation)). NodeActuation은 제거됨 |
 | `powerObservation` | 기존 sampler의 `Interval/Duration/RequestTimeout/MaxEvents`와 적분 coverage의 `MaximumBoundaryDistance/MinimumCoverage/MaximumGap` |
 
 profile 후보, profile ID별 `PrepareSpec`, 원자 동작 비용과 power mode 비용은 조건마다 최신
@@ -103,55 +103,16 @@ power 조회는 controller가 수락한 ChillServer configuration 하나를 atom
 구성을 고정한다. 긴 refresh·control Tick의 scheduler mutex를 기다리지 않으며, 새 설정은
 controller 적용 성공 뒤에만 게시한다. 거절된 refresh는 이전 설정을 그대로 유지한다.
 
-라이브 채널 메시지 계약 v1은 [Dashboard 설계 §4.3](../dashboard/README.md#43-라이브-채널-메시지-계약-v1)을 따른다.
+라이브 채널 메시지 계약 v1은 [Dashboard 설계 §3](../dashboard/README.md#3-라이브-api-계약-v1)을 따른다.
 
 ## 관측 조회의 일관성·모집단·제외 규칙
 
-ObservationLog 조회는 기존 writer mutex 아래에서 필요한 stream 경로·byte 길이와 window
-상태를 한 번 함께 캡처하고, 파일 읽기·JSON decode·집계는 잠금을 푼 뒤 수행한다.
-완료된 append 뒤의 길이를 고정하므로 새 append·rotation을 현재 조회에 섞거나
-진행 중 record를 잘린 tail로 오인하지 않는다. 실제 read 오류·잘린 원본은 health와
-incomplete 상태에 그대로 남는다. 기존 시작 시 전체 stream 검증·decode pass와 성공한
-scheduler/request/definition append에서 window당 작은 in-memory census를 채우고, 동일 잠금 아래 값과
-검증된 prefix byte 수를 캡처한다. 별도 저장 index나 decoded history cache는 없다.
-실제 파일 길이가 census prefix와 다르거나 census를 신뢰할 수 없으면 해당 prefix
-전체를 보수적으로 읽는다. window metadata 전체는 gap·완전성 판정용으로 유지한다.
-scheduler history는 실제 `SchedulerObservation.At` min/max가 `[from,to)`와 만날 수
-있는 window를 append 순서로 읽고, 사건 시각 envelope로 요청 page만 전체 decode한다.
-다음 일치 record 하나로 continuation을 확인하며 matching-offset cursor 의미를 유지한다.
-window wall time은 append 시각이지 사건 시각의 범위가 아니므로 필터에 쓰지 않는다.
-power는 실제 기록 구간의 겹침(표본 0개 포함), coverage boundary 거리로 확장한 실제
-sample 시각 범위, 모든 nil-policy window, 활성 POOL 인스턴스 전환과 최신 prior baseline의
-후보 window를 합쳐 읽는다. baseline 동률·시각 범위를 가로지르는 window도 보존한다.
-정확한 Node·meter·scope·source와 가장 가까운 유효 표본 선택은 기존 reducer가 담당하며,
-서로 다른 series의 전역 최근접 표본으로 nil-policy window를 제거하지 않는다.
-집계에 필요한 실제 표본, meter, coverage와 활성 POOL 인스턴스만 decode한다.
-capture의 arrivals/load는 receipt 사건의 실제 `ReceivedAt`(없으면 `At`)와 나머지 사건의
-`At` 범위로 request prefix를 선택한다. 선택될 receipt가 있을 수 있는 최초 prefix 뒤는
-`ReceivedAt` 없는 늦은 definition/accepted/outcome 사실도 합치도록 끝까지 유지한다.
-두 조회 모두 전체 definitions와 window metadata를
-보존하고, 오래된 append window·역순 시각·알 수 없는 prefix를 빈 성공으로 바꾸지 않는다.
-definition은 기존 validation/counting pass에서 기록 유무만 보존하며, prefix byte 수가
-일치하고 신뢰되는 빈 stream만 열지 않는다. 사건 시각과 무관하게 모든 nonempty 과거
-definition prefix는 유지한다. 정의 추가·알 수 없는/길이가 바뀐 prefix는 다시 읽으며,
-Runtime의 retained-definition registry를 복제하거나 별도 정의 cache를 만들지 않는다.
-두 작은 projection은 기존 jsoniter 의존성으로 읽되, 건너뛴 subtree의 잘못된
-숫자·문자열·구분자도 표준 JSON 구문 검사로 거절한다. power·coverage의 작은 실제
-측정 block과 선택된 history 원문은 계속 표준 decoder로 읽어 float·정수·duration·
-시각 의미를 보존한다. 큰 decision·profile payload와 원본 기록은 변경하지 않는다.
-각 stream 조회는 window가 바뀌어도 성장한 Scanner buffer 하나를 재사용하고 newline
-경계를 유지한다. 같은 크기의 후속 record마다 fragment·전체 line·window별 큰 buffer를
-새로 할당·복사하지 않는다.
-
-전력 collector의 짧은 기록 구간별 적분 verdict는 원시 기록에 그대로 보존하되,
-조회 구간의 coverage 판정으로 재사용하지 않는다. 조회 경계 밖의 실제 표본은 기록된
-boundary 거리 안에서만 보조하며, 합친 표본의 원래 gap·값·meter identity·보관 완전성과
-조회 구간의 coverage를 검사한다. 조회 중 실제 source 실패와 OOM/재시작 공백은
-누락으로 남기며, 이전 구간의 오래된 표본 때문에 정상적인 닫힌 구간을 무효화하지 않는다.
-닫힌 ObservationLog window의 겹침은 예정 `EndsAt`보다 이른 실제 `ClosedAt`에서 끝난다.
-전력, 활성 POOL 전환과 arrival 조회가 같은 경계를 사용한다. boundary 표본은
-현재 선언의 Node·meter·scope와 source kind/endpoint/metric/labels가 일치한 뒤에만
-선택하며, source가 없거나 바뀐 과거 기록을 현재 meter의 실측으로 재해석하지 않는다.
+현행 시간 세그먼트·catalog·로컬/archive 선택과 요청 reducer는 [관측 분리 §3~6](observability-split.md)이 권위다. 폐기된 window metadata/census/prefix reader 계약은 적용하지 않는다.
+- writer mutex에서 stream fd·길이·시간을 고정하고 읽기/decode/집계는 밖에서 한다. 새 append·rotation을 섞지 않으며 실제 손상/read 오류는 health·incomplete로 남긴다. 별도 저장index·decoded cache는 없다.
+- scheduler page는 `[from,to)` 사건시각을 append 순으로 읽고 다음 일치1건으로 continuation을 확인한다. cursor의 matching-offset 의미를 유지하며 append wall time을 사건시간 필터로 쓰지 않는다.
+- power의 짧은 collector verdict는 조회 coverage의 대체물이 아니다. 실제 sample·원 gap·경계거리·meter/scope/source identity·보관 완전성·조회구간을 검사한다. 경계 밖은 기록된 boundary 거리 안에서만 보조하고 오래된 이전 표본으로 정상 닫힌 구간을 무효화하지 않는다. source 실패·OOM/재시작 공백은 결손이다.
+- source kind/endpoint/metric/labels가 다른 과거 기록을 현재 meter 실측으로 재해석하지 않는다. 누락정의·역순시각·알수없는 원시를 빈성공으로 바꾸거나 legacy window reader로 fallback하지 않는다.
+- JSON projection은 건너뛴 subtree도 구문검사하고 실제 float/정수/duration/시각과 선택원문은 표준decoder 의미를 보존한다. Scanner는 stream별 buffer를 재사용하고 newline 경계를 유지한다.
 
 ## 설정 권한과 적용 기록
 

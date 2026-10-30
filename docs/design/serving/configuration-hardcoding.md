@@ -1,6 +1,6 @@
 # 하드코딩 정리: 설정 소유권과 기록 경로
 
-상태: 2026-10-30. **2차 검토(fusion: 패널 3모델+판정) 반영**. 슬라이스 2~5 구현 및 아래 offline 회귀 완료; 배포·live 측정 수용 완료를 뜻하지 않는다.
+상태: active contract (2026-10-30). 완료된 슬라이스2~5 절차는 제거했다. offline 회귀 완료와 배포·live 측정 수용은 다르며 아래는 설정 소유권·동결의 현행 계약이다.
 [계획](../../plans/2026-10-30-configuration-hardcoding.md) · [인벤토리](../../plans/2026-10-30-configuration-hardcoding-inventory.md) · [ADR 0031](../../adr/0031-configuration-ownership-and-freezing.md)
 
 ## 1. 경계와 결정
@@ -33,19 +33,17 @@ A는 측정·판정 소유자의 기존 입력, B는 실제 환경 입력으로 
 
 기본값을 명시해도 입력 JSON SHA-256 기반 κ 키는 바뀐다. 옛 키 cache miss와 재계산은 의도된 cutover다. archive의 키 없는 조회는 넓게 탐색할 수 있어 초기 재계산 비용을 인계한다. `omitempty`, 옛 입력 분기, dual-key lookup, 새 캐시 복구 장치는 만들지 않는다. 과거 raw fixture는 원본 보존하고 새 계약 테스트 입력과 구별한다. bootstrap raw replay의 fixture loader도 이 구별에 맞춘다. `analytic-planner.md`의 고정 수식·코드 상수 설명도 함께 갱신한다.
 
-필수 소비자: `static_routing.go:162-168`, `hack/kappa/main.go:89-104` 직접 decode와 `:61-63`의 CapacityMinimumRequests=1000 덮어쓰기, `hack/e5/d2/bind_before.py:24-25,278-283`의 SETTINGS/CapacityInput 대조, Dashboard typed settings·round-trip·fixture, SchedulerSettings 구조체 테스트와 샘플 JSON. 각 호출자에서 새 기본값을 발명하지 않는다. `CPO.put`은 읽기 전용 필드를 빼는 경로이지 GET→PUT whitelist가 아니다.
 
 ### 3-2. 신뢰수준은 측정별 단일 정책
 
 `BEO.spec.pointPolicy.confidenceLevel`은 기존 idle 정책과 같은 (0,1) 십진 문자열이며 생략 기본값은 `"0.95"`다. campaign point, serving catalog idle baseline, incremental energy CI에 같은 선택값을 사용한다. 독립 `ModelLoadedIdleBaseline.spec.pointPolicy.confidenceLevel`은 그 측정 CR의 기존 소유권을 유지한다. 전역 CI 하나로 묶는다는 뜻이 아니다. `Profile.ConfidenceLevel`은 실제 유도값을 기록하고 catalog의 `95%% CI` 메시지도 선택값을 출력한다.
 
-`energyConfidenceLevel`·`profileConfidenceLevel` settings는 추가하지 않는다. `--profile-confidence-level`, `servingEntrypoint.profileConfidenceLevel`, 옵션·생성자 인자·템플릿은 삭제하며 별칭·fallback은 없다. 기존 immutable BEO spec과 실행·결과 참조를 재사용하고 별도 snapshot 저장물을 만들지 않는다. 현재 CLI는 metadata에만 남고 baseline과 Aggregate CI가 다르면 정적 경로상 오류 조건이 있으므로 두 CI를 독립 정책으로 연결하지 않는다.
+`energyConfidenceLevel`/`profileConfidenceLevel` 전역 settings·CLI/values 별칭·fallback은 없다. immutable BEO spec/실행·결과 참조가 권위이며 baseline/Aggregate CI를 독립 정책으로 연결하지 않는다.
 
 ### 3-3. 재사용 정책은 요청 annotation
 
 기존 `chill.dacs.io/profile-reuse` JSON의 sourceProfileID·maximumRelativeDifference 옆에 `minimumMeasurementSeconds`(finite >0, 기본30), `minimumTrials`(정수 ≥2, 기본3)를 추가한다. 창은 active와 idle 각각의 최소값이다. `ProfileReuseCheck`에는 선택 최소값과 실제 active/idle 길이·trial 수를 기록한다. 기존 `reusedProfile` 정책 identity에도 두 값을 넣어 annotation 변경이 옛 immutable startup bundle을 재사용하지 않게 한다. 전역 settings 변경으로 기존 요청 정책을 재정의하지 않는다. trials=2 수용은 §5의 종단 하한 정리와 함께 완료한다.
 
-슬라이스3 구현(2026-10-30): settings decode·HTTP/ConfigMap·직접 κ 도구·Dashboard typed 편집과 용량 행까지 연결했다. κ 도구는 입력의 minimumRequests를 보존한다. raw archive fixture는 수정하지 않고 replay loader가 현재 계약의 행 입력/키를 구성한다. 요청별 최소값은 reuse 판정/기록/identity에 연결하며 과거 기록에 없는 필드는 소급 채우지 않는다. 슬라이스5에서 `hack/e5/d2/bind_before.py` SETTINGS/CapacityInput 대조에 새 capacity 필드3개를 연결했다.
 
 ### 3-4. 유지할 설정과 방법론
 
@@ -55,7 +53,7 @@ power 앞뒤 1분 support는 coverage 상한에 맞는 C다. 새 settings나 Dec
 
 기존 `cluster` stream의 `event:"server-start"` 행을 재사용한다. Pod UID/namespace/name은 기존 필드, process 시작 시각은 `run()`의 실제 `started`다. 추가할 측정 관련 값은 `queueLimit`=1024, `sourceIntervalNanos`=1000000000, `profileIntervalNanos`=60000000000뿐이다. 운영 overlay source2초를 선택하면 2000000000을 기록한다. 기존 append 실패→기동 실패를 유지한다. 새 scheduler startup 행은 없고 scheduler 비활성 때도 별도 행을 만들지 않는다.
 
-슬라이스4 구현(2026-10-30): 위 세 필드만 기존 cluster 행에 추가했고 `At`은 실제 process 시작값이다. startup 전용 필드는 포인터/omitempty로 일반 Pod 행·과거 행의 부재를 보존한다. settings PUT의 사전 append 실패·저장/refresh 실패·적용 후 후속 append 실패를 회귀로 구별한다. 후속 append 실패 시에도 적용된 설정을 되돌리지 않으며 별도 startup/refresh 합성 행은 만들지 않는다.
+startup 전용 값은 pointer/omitempty로 일반·과거 행의 부재를 보존한다. 적용 뒤 후속 append 실패가 rollback을 뜻하지 않는다.
 
 request/drain timeout, directory interval, control component scope는 기존 관리·수집 설정 D다. CLI request30/drain120초, Helm129/164초를 통합하지 않는다. 특히 infer handler의 별도129초 때문에 requestTimeout을 모든 handler의 실제 timeout이라고 부르지 않는다.
 
@@ -77,10 +75,7 @@ Node sample/batch cadence와 transitionObserver.activeDeadlineOverheadSeconds=18
 | occupancy.spec.durationSeconds/rateFactor | 길이 양수; open-loop rate finite >1 | 기존60초/1.2 입력·생성값 유지; minimumDurationSeconds/minimumRateFactor 없음. closed-loop에 open-loop 하한 미적용 |
 | occupancy.spec.seed | uint64 | 현재0; 생성기 인자·실행 기록 |
 
-하한2 지원은 비기본 입력 허용 범위 확대이며 현재도 지원된다는 주장이 아니다. BEO·idle minimum/attempt limit, 전이 target/attempt limit을 함께 맞추고 attemptLimit≥minimum/target을 유지한다. 숨은 <3·<5·자유도<2가 남으면 미완료다. 통계 구조 검증은 필요한 신뢰 경계에서 유지하되 양의 자유도라는 수학적 최소와 정책 목표3/5를 구별한다. 새 근사나 무효 fallback은 없다. 비영분산 active2/idle2의 유도→저장→재로딩→serving까지 수용한다.
-
-종단 수정 위치는 인벤토리에 있다. PCG는 고정한 두 번째 seed word이며 stream selector라고 부르지 않는다. 양측 CI /2, n−1 같은 수식은 설정화하지 않는다.
-구현(슬라이스 2): BEO의 단일 신뢰수준을 campaign 유도·catalog idle/energy CI·`Profile.ConfidenceLevel`에 연결하고 전역 CLI/values/생성자 인자를 삭제했다. protocol의 `durationToleranceSeconds`는 생략 시 0.5초로 Run 준비 경계에서 정규화하고 명시 0도 보존한다. 동결 RunConfig와 curve protocol identity 및 Python 측정 요청에도 실제값을 담는다. 과거 raw fixture는 보존하며 현재 계약을 만드는 테스트 helper에서만 새 값을 선택한다. 하한2는 baseline 자유도1·결과 재로딩·방향별 transition summary까지 적용하며 occupancy seed는 기존 Conditions와 생성기 인자에 함께 남는다. 새 stream이나 decoder fallback은 없다. CRD/chart 사본을 함께 적용하고 구 CLI 플래그를 배포 인자에서 제거해야 한다.
+하한2는 BEO/idle minimum·attempt limit, 전이 target/attempt limit, baseline 자유도1·결과 재로딩·serving까지 연결하며 attemptLimit≥minimum/target이다. 비영분산active2/idle2도 기존 통계로 처리하고 정책목표3/5와 수학적 양의자유도를 구분한다. durationTolerance는 Run 준비에서 생략.5초/명시0을 정규화하고 동결RunConfig·curve identity·Python 요청에 남긴다. occupancy seed는 Conditions·생성기 인자가 같으며 PCG 두 번째 word는 고정 seed이지 stream selector가 아니다. 양측CI/2·n−1은 설정화하지 않는다. 과거 raw fixture 보존·현재 helper 입력과 구분, 단일decoder를 유지한다. CRD/chart 사본과 배포 구CLI 제거는 함께 이행한다.
 
 
 ## 6. 하네스: bind에서 한 번 선택
@@ -103,9 +98,9 @@ DELAY_TOLERANCE_NS=10ms는 delayed 표시 방법론 C다. --delay-tolerance나 �
 
 `demo.py` offline 회귀와 실제 E5가 호출한 bind_before SETTINGS/eligibility, Conductor API·publication·producer·삭제, native 요청, analyze stats/quality는 유지한다. 독립 D2 main·옛 수집·numbers.py 비활성 경로는 제외하며 helper 전체를 삭제하지 않는다.
 
-### 슬라이스 5 구현과 기본값
+### 잔존 하네스의 선택값
 
-cutover 후 인벤토리 5의 29행은 모두 잔존(새 제외0)이다. 선행 CHILL 우회 수집12개 후보는 10행 제외, API collector에도 남은 support/hour 범위·trapezoid2행은 C로 재분류했다. 외부 producer의 client-only sampler와 STOP/운영자 주입은 유지한다. 다음은 **실험 config → binding.config**의 선택값이다. `e5-wire.py`의 승인 숫자 입력과 `demo.py`의 spec도 같은 키를 전달한다. 실행 시 환경 파일을 다시 읽어 namespace·seed·정책을 갱신하지 않는다.
+잔존 인벤토리29행은 유지했고 cutover 후보12행은10제외/2C(support/hour·trapezoid)다. 아래 값은 config→binding.config로 한 번 고르며 e5-wire 승인입력/demo spec도 같은 키를 전달한다.
 
 | 키 | 생략 기본값 | 소비자 |
 |---|---|---|
@@ -130,7 +125,7 @@ cutover 후 인벤토리 5의 29행은 모두 잔존(새 제외0)이다. 선행 
 
 `fullSeconds`, `staticSeconds`, `factorSeconds` 및 `check`의 시간/seed 대조는 binding schedule/config에서 유도한다. closure 모집단도 선언 target 목록과 비교한다. 새 closure count·G0 count·delay/poll 키는 없다. 현재 E5→실행 helper는 측정 CR을 생성하지 않으므로 슬라이스2 후속 CI/tolerance/occupancy seed 선택 전달 대상은 없다. 기존 운영 입력 sample은 §7의 완전 문서 선택을 따른다.
 
-회귀: E5 self-check, demo self-check, demo report self-check, collector `_self_check`, load-generator 32개 테스트, `go test ./internal/serving ./internal/serving/kube`를 실행했다. 변경 전 `git show HEAD:hack/e5/e5.py` 임시 사본의 실제 `bind()`와 새 기본 bind를 같은 합성 입력으로 실행해 schedule의 stage/part 시간·rates·offsets·offered, full11700/static10200/factor2100×N, payload/κ/settings를 필드 단위 대조했다. G0 기본 수락/거절과 경로별 literal timeout/poll도 구 코드와 대조했으며 키/hash/바이트 동등성은 관문으로 삼지 않았다. 비기본 stages/fixed arrivals/seed7/runbook 보존과 G0 duration37/alpha.8/CPU.75/PLC p90 raw 분위수 및 native freshness도 offline 검사한다. 실제 운영 입력 전체 bind·E5 실행·클러스터·SSH·배포는 하지 않았다.
+기존 실제 bind와 새 기본 bind의 stage/part 시간·rates·offset·offered/full11700/static10200/factor2100×N/payload/κ/settings를 offline 대조했다. E5/demo/report/collector self-check, load-generator32검사·serving/kube 검사 및 비기본 stage/fixed/seed7/G0(37초/.8/.75)/PLC p90·freshness 회귀가 근거다. 키/hash/바이트 동등성 관문은 없고 운영 전체 bind/E5·클러스터·SSH·배포는 미실행이다.
 
 
 ## 7. B 환경값 연결
@@ -141,43 +136,22 @@ cutover 후 인벤토리 5의 29행은 모두 잔존(새 제외0)이다. 선행 
 
 실제 registry·Node를 가진 운영 샘플은 환경 JSON `samples["<기존 상대 파일 경로>"]`에 완전한 입력 문서로 보관하고 기존 등록/측정 요청 절차에서 선택한다. 정적 YAML의 JSON 참조 자동 해석은 없다. immutable runtime declaration은 image와 inspection 사실을 묶은 문서 전체를 이동한다. 주소만 바꿔 같은 검증 사실처럼 꾸미지 않는다.
 
-슬라이스5 구현: catalog8개·NVIDIA DeviceClass/전이 요청2개·ARM64 runtime declaration1개의 완전한 원본 문서를 외부 `inputs/environment.json` 및 `inputs/environment-212.json`의 `samples`에 보존했다. 정적 sample은 example registry/hardware로 바꾸고 inspection 사실을 일반 이미지에 붙이지 않도록 정적 runtime declaration 전체를 제거했다. 기존 등록 안내가 `jq -e '.samples[$path] // error(...)'`로 문서를 명시 선택한 다음 기존 HTTPS/kubectl 입력으로 전달한다. 자동 YAML 해석·새 등록 서비스는 없다. namespace 생략 기본은 `chill-system`이며 실제 선택은 bind에서 동결된다.
-두 환경 JSON의 11개씩 총22개 sample을 `jq`로 offline 선택하고 누락 키 거절을 검사했다. 정적 YAML20회 파싱과 변경 전 원본22개 문서의 파싱된 필드 비교도 통과했다(image/inspection 포함). 외부 JSON은 기존 private 운영 디렉터리에 있으며 Git 커밋에는 정적 예제와 선택 절차만 포함한다.
+구현은 catalog8·NVIDIA class/전이2·ARM runtime1의 원본 전체를 private `inputs/environment{,-212}.json` samples에 보존했다(총22문서 offline 필드대조/선택,정적YAML20회 파싱). 정적 예제는 example registry/hardware이며 검증 사실을 일반 image에 붙이지 않도록 runtime declaration 전체를 제거했다. `jq -e '.samples[$path] // error(...)'`로 명시선택 후 기존HTTPS/kubectl에 전달하며 자동YAML 해석은 없다. namespace 생략 `chill-system`, 실제선택 bind동결이다.
 
 
-## 8. 구현 슬라이스와 시작 조건
+## 8. 이행 경계
 
-증거 API 승인 배포·1회 전환 리허설·CHILL 우회 수집 제거를 포함한 하네스 cutover·대시보드 브라우저 수용이 기록으로 완료되고, 의존 측정 캠페인이 없을 때 시작한다. rev106 배포 시도는 완료 조건이 아니다. 후속 rev110/결손 기록도 live 확인이나 전체 PASS로 바꾸어 읽지 않는다.
-
-| 순서 | 소유 범위 | 시작/완료 경계 |
-|---|---|---|
-| 1 | 전환 후 인벤토리 재산정·인터페이스 확정 | 위 시작 조건 충족; 삭제된 host/SSH/crictl 경로 제거, 잔존 행 확정 |
-| 2 | 측정 정책 | 1 뒤; 단일 CI·CR 입력·하한2·결과 저장/재로딩/serving 소비 완결 |
-| 3 | serving 용량 settings·요청 reuse | 2의 정책 확정 뒤; typed caller·CapacityInput·캐시·reuse identity 연결 |
-| 4 | 기존 기록 최소 보강 | 3 뒤; cluster/server-start와 settings 실패 의미 정리, 새 stream 없음 |
-| 5 | 잔존 하네스 A/B | 완료: 29행 유지/구현, cutover 후보12행 중 제외10/C유지2 확정; binding→실행→분석 및 단일 환경 이동처 연결, offline 회귀 실행 |
-| 6 | 통합 소유자 단일 검증·인계 | 전체 변경 뒤 한 번 검사; 이 문서 세션은 실행하지 않음 |
-
-C 정리는 관련 변경에 묶고 독립35행 선행 관문으로 만들지 않는다. 같은 파일은 한 소유자, 저장 계약 변경은 캠페인 사이 한 번 모은다.
+증거 API 승인배포·1회리허설·우회수집 제거 하네스cutover·대시보드 브라우저수용 기록과 의존캠페인 없음이 live 시작조건이다. rev106시도/rev110결손을 전체PASS로 읽지 않는다.
+슬라이스2~5는 측정정책→capacity/reuse→기존기록→잔존하네스/환경값을 구현했다. C정리는 관련변경에 묶고 독립35행 관문은 없다. 공유파일·최종Go/API/Helm검증은 통합소유자, 저장변경은 캠페인 사이1회다.
 
 ### 저장 계약
 
 ADR0030에 따라 prefix/version v1alpha5를 유지한다. 새 stream·관측 디렉터리 cutover는 없다. archive/publication #213~#225는 수정·삭제·재게시하지 않는다. 과거 행의 새 필드 부재는 당시 기록되지 않은 사실이며 현재 기본값으로 소급 채우지 않는다. 새 CapacityInput은 새 κ 키를 쓴다. ADR0019의 정리는 읽을 수 없어진 영향 작업용 CR/파생 객체를 열거해 운영자가 수행하며 과학 원시 archive와 구별한다. reader는 단일 버전, 과거 필드 부재의 의미 규칙만 명시한다. dual decoder/migration/alias는 없다.
 
-### 기본값=현재값 증명 (다음 구현 세션의 완료 기준)
+### 기본값과 검증 근거
 
-| 영역 | 변경 전 기준과 비교 |
-|---|---|
-| settings | 현재20/.005/100과 기존 fixture 실제 계산을 생략·명시 기본값 각각과 비교; 새 두 경로끼리만 비교하지 않음 |
-| κ | TestCapacityRowKappaIsFixedAndRepeatable: μ1000·κ959.375·Grid/Bisection/판정 유지. 키 동일성 요구 없음 |
-| CI | 현재 .95 단일 경로의 baseline 평균·분산·자유도·CI·음수 energy 거절/해상도 처리와 실제 계산 비교 |
-| reuse | 현재30초/3회/상대 차이 기본 수락·거절 유지; 비기본 정책의 판정·identity 변화 |
-| CR | 현재 trial3/target5 결과 유지 + 비영분산 active2/idle2 유도→저장→재로딩→serving |
-| 하네스 | 현재 실행 함수 schedule·seed·fallback의 stage/part 시간·rates·offset·offered·full/static/factor 시간·판정 |
-| timeout/poll | 각 경로30/129초·1/2/5초 유지 |
-| 배포 | 승인 overlay 경로·revision·release·namespace를 구현 착수 기록에 지정하고 default/profiler 별도 render의 의미 있는 resource/field delta 비교. values-operating.yaml은 rev74 캡처이지 현재 배포값 아님 |
-
-슬라이스별 검사와 별개로 최종 통합 Go/API/Helm 인계는 통합 소유자가 담당한다. 슬라이스5의 실제 실행 검사는 §6에 기록했다. 바이트/hash 동등성 관문은 없다. live 동일성은 별도 증거 없이는 주장하지 않는다.
+settings 생략/명시20/.005/100은 변경 전 fixture의 μ1000/κ959.375·Grid/Bisection판정과 대조한다(키동일성 아님). CI.95의 평균/분산/자유도/음수거절·해상도, reuse30초/3회/상대차, CRtrial3/target5·active2/idle2, 기존 schedule/seed/fallback, timeout30/129초·poll1/2/5초를 유지한다.
+배포 검증은 승인overlay/revision/release/namespace와 default/profiler render의 의미 있는 resource/field delta를 명시한다. values-operating.yaml은 rev74캡처이지 현재 배포값이 아니며 offline 완료로 live동일성을 주장하지 않는다.
 
 ## 9. 열린 점
 

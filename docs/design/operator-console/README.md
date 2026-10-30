@@ -1,28 +1,13 @@
-# CHILL 운영자 콘솔 설계 및 Use Case
+# CHILL 운영자 콘솔
 
-웹서비스의 제품 요구사항은 [Dashboard SRS](../../spec/dashboard/SRS.md)를 따른다.
-이 디렉터리는 운영 흐름과 구현 단면을 다루는 설계 자료다. 알고리즘과 제어 규칙의
-정의는 `docs/spec/`을 따르며, 원본 명세가 확정하지 않은 고정 모드·트리거·중단
-규칙을 웹서비스의 필수 요구사항으로 취급하지 않는다.
+상태: **active 설계**. 콘솔은 자동 제어의 근거를 검증하고 권한을 부여하며 예외에 안전하게 개입하는 운영 표면이다.
 
-## 문서 구성
-
-| 문서 | 책임 |
+| 문서 | 내용·상태 |
 |---|---|
-| [01-scope-and-principles.md](01-scope-and-principles.md) | 제품 범위, 핵심 개념, 설계 원칙 |
-| [02-operating-model.md](02-operating-model.md) | 시스템 경계, 운영 역할·모드·안전 상태, 명세 층별 책임 |
-| [03-dashboard-and-cli.md](03-dashboard-and-cli.md) | Dashboard와 CLI가 제공할 공통 운영 능력 |
-| [04-use-cases.md](04-use-cases.md) | 운영자의 핵심 판단·승인·개입 흐름 |
-| [05-requirements.md](05-requirements.md) | 기능 및 안전 요구사항의 규범적 목록 |
-| [06-first-delivery-slice.md](06-first-delivery-slice.md) | 현재 구현에서 시작하는 첫 조회·요청·관찰 수직 단면과 의존성 순서 |
+| [운영 의미와 현재 단면](03-dashboard-and-cli.md) | active — 역할·운영 흐름/ID 추적, 현재 measurement/profile CLI 계약, ProfilingRun 조회·요청·증거 계보 경계 |
+| [Dashboard SRS](../../spec/dashboard/SRS.md) | active — 웹 제품 범위·기능·안전·수용 요구사항의 권위 원본 |
+| [Dashboard 구현 설계](../dashboard/README.md) | active — 웹 기술·화면·API 소유권과 구현 준비도 |
+| [시스템 명세](../../spec/README.md) | active — 알고리즘·제어·SLO 관측 규칙의 권위 원본 |
 
-운영 흐름의 설계는 `01 → 02 → 03 → 04 → 05` 순서로 읽는다. 현재 코드에서 시작하는
-첫 구현 경계는 그 다음 `06`에서 확인한다. 첫 단면이 Dashboard SRS의 전체 범위를
-대신하지 않는다.
-
-## 문서 원칙
-
-- 같은 규범적 내용은 한 파일에만 둔다.
-- 알고리즘 용어와 동작 순서는 `docs/spec/`을 권위 있는 원본으로 삼는다.
-- Use Case와 요구사항 ID는 문서 세트 전체에서 유일하게 유지한다.
-- 화면 배치, API 객체·필드, CLI 명령 문법은 여기서 확정하지 않는다.
+규범 목록을 재정의하지 않는다. 명세에 확정되지 않은 Observe/Supervised/Autonomous, T1/T2/T3·D1/D2, 중단 규칙은 설계 의도이지 필수 제품 계약이 아니다.
+Dashboard·CLI는 같은 권한·검증·비동기 결과 의미를 사용하되 각 현재 capability를 사실대로 표시한다. 첫 ProfilingRun 단면은 전체 Dashboard 요구사항이나 별도 BEO CLI 계약을 대체하지 않는다.

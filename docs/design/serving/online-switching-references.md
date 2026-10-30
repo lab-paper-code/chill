@@ -1,75 +1,12 @@
 # 전환 비용을 고려한 온라인 구성 선택: 레퍼런스
 
-미래 부하를 모르는 상태에서 **현재 구성을 유지할지, 전환 비용을 내고 더 유리한
-구성으로 바꿀지** 판단하는 문제의 문헌 안내다. 정책 채택을 확정하는 문서는 아니다.
-요구사항은 [구성 선택과 비용](../../spec/04_configuration_selection.md),
-[전환 실행과 피드백](../../spec/05_transition_control.md)을 따른다.
-
-## 검토 방향
-
-- **우선 검토:** 반복 전환을 다루는 task-system / Work Function Algorithm(WFA) 계열.
-- **비교 기준:** 고정 기간 `H`의 유지·전환 비용을 비교하고 관측 후 재판단하는 정책.
-- **피할 것:** 임의의 누적·초기화 규칙에 기존 알고리즘의 보장을 붙이는 것.
-- 미래 부하 예측기나 확률모형의 도입은 전제하지 않는다. 현재 구현은 판단마다 비교 기간
-  `T = max(horizon, 최장 사슬)`에서 keep과 노드 계획의 에너지를 분석식으로 비교하는 고정 기간
-  재판단 정책이며 누적 상태를 두지 않는다. 판정식, 비교 기간과 전환 중 판정은
-  [용량표 계획기](analytic-planner.md#3-판정과-순서)에 모아 둔다.
-
-## 먼저 읽을 문헌
-
-### 1. 두 상태 WFA — 누적 정책의 직접적인 출발점
-
-Azar, Feige, Nath (2007),
-[On the Work Function Algorithm for Two State Task Systems](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/tr-2007-20.pdf).
-**§2의 모형, §4의 알고리즘과 정리 4.1**부터 읽는다.
-
-- 읽기·쓰기 비용이 다른 데이터 접근 방식 사이의 전환을 다룬다. 전력 전용 이론이 아니다.
-- 현재 상태의 상대적 비용을 누적하고, 잠깐 유리해지면 그만큼 차감한다. 작은 역전마다
-  누적량 전체를 지우지 않는다. 전환 문턱은 양방향 전환 비용의 합이다.
-- 두 상태의 현재 처리 비용을 알고, 방향별 전환비가 고정되며 전환은 즉시 가능한 모형이다.
-  방향별 비용은 서로 달라도 된다. 준비 지연·큐·SLO까지 해결한 결과는 아니다.
-
-### 2. Metrical Task Systems — 여러 상태의 반복 전환
-
-Bubeck, Rabani (2019),
-[Parametrized Metrical Task Systems](https://arxiv.org/pdf/1904.03874).
-**§2의 문제 정의와 정리 1**에서 고전 결과를 확인한다.
-원전은 [Borodin, Linial, Saks (1992)](https://doi.org/10.1145/146585.146588)다.
-
-- 상태별 운영비와 상태 간 이동비를 합쳐, 미래를 모르는 온라인 정책을 평가한다.
-- WFA는 과거 입력을 처리하고 각 상태에서 끝나는 최소 비용을 관리한다.
-- 표준 MTS는 현재 비용 벡터가 공개되고 이동비가 대칭·삼각부등식을 만족하는 metric이다.
-  CHILL의 방향별·상태 의존적 전환에 그 보장을 그대로 옮기지 않는다.
-
-### 3. Ski rental / rent-or-buy — 손익분기 누적의 가장 단순한 모형
-
-Lotker, Patt-Shamir, Rawitz (2008),
-[Rent, Lease or Buy: Randomized Algorithms for Multislope Ski Rental](https://arxiv.org/pdf/0802.2832).
-**§1–2**에서 고전 rent-or-buy와 여러 구매 옵션의 차이를 읽는다.
-
-- 사용 기간을 모를 때, 계속 임대할지 한 번 구매할지 결정한다.
-- 고전 결정적 규칙은 누적 임대료가 구매비에 도달하면 구매하는 것이다.
-- 한 번의 불가역적 구매에 대한 직관을 얻는 용도다. 여러 구성을 반복 전환하는
-  CHILL 전체의 정책이나, 준비 시간이 있는 전환의 문턱을 곧바로 정해주지는 않는다.
-
-## 비교 관점이 필요할 때
-
-| 관점 | 문헌과 읽을 곳 | 확인할 핵심 |
-|---|---|---|
-| 고정 기간 재계획 / MPC | Rawlings, Mayne, Diehl, [Model Predictive Control, 2판](https://sites.engineering.ucsb.edu/~jbraw/mpc/), §2.2·§2.4 | 짧은 `H`는 장기 절감을 놓칠 수 있다. 유지/단일 전환 비교만으로 일반 MPC의 보장을 갖지는 않는다. |
-| 확률적 최적 전환 / real options | Tvedt (2022), [Optimal Entry and Exit Decisions Under Uncertainty and the Impact of Mean Reversion](https://link.springer.com/article/10.1007/s43069-022-00161-9), §1–3 | 유지 영역과 서로 다른 진입·퇴출 문턱을 설명한다. 미래 확률법칙과 할인 등의 가정이 필요하다. |
-
-## CHILL에 적용하기 전 확인할 것
-
-1. **정보:** 프로파일 기반 후보 비용 추정을, 모든 후보의 현재 비용을 정확히 아는
-   고전 모형과 구분한다.
-2. **전환:** 준비 시간, 기존·임시 용량, 큐·진행 중 요청, 실제 전환 진행 상태와
-   취소 가능성을 반영한다. 구성 이름만으로 전체 상태를 표현할 수 있다고 가정하지 않는다.
-3. **목적:** SLO와 실행 가능성을 우선하고, 같은 부하·시간축에서 전환과 Serving의
-   전체 POOL 에너지를 비교한다. 고전 비용 보장이 SLO 보장을 뜻하지는 않는다.
-4. **비교자:** 오프라인 최적해와 비교한다면 미래 정보만 허용하고, 동일한 초기 상태·
-   전환 시간·자원·SLO 제약을 적용한다. 경쟁비는 이 최적해 대비 비용 상한이지 실측 절감률이 아니다.
-
-다음 설계의 산출물은 문헌 추가가 아니라 **관측 입력, 유지/전환 판정식, 전환 중
-재판단 규칙**이다. 위 문헌의 가정과 달라지는 부분을 명시한 뒤 짧은 부하·지속 부하·
-반복 변동에서 에너지와 SLO를 검증한다.
+상태: reference — 아래 문헌은 정책 채택이 아니다. 현행 판정·고정 H는 [용량표 계획기](analytic-planner.md), 요구사항은 [구성 비용](../../spec/04_configuration_selection.md)·[전환 실행](../../spec/05_transition_control.md)이 권위다.
+| 문헌·읽을 곳 | 적용 한계 |
+|---|---|
+| Azar, Feige, Nath (2007), [Two State WFA](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/tr-2007-20.pdf), §2/§4/정리4.1 | 현재 상대비용을 누적·차감하고 문턱은 양방향 고정 전환비 합. 두 상태의 현재 비용을 아는 즉시 전환 모형이며 준비·큐·SLO 보장이 아님 |
+| Bubeck, Rabani (2019), [Parametrized MTS](https://arxiv.org/pdf/1904.03874), §2/정리1; 원전 [Borodin, Linial, Saks (1992)](https://doi.org/10.1145/146585.146588) | WFA는 상태별 과거 최소비용을 관리. 공개된 현재 비용벡터와 대칭·삼각부등식 metric을 전제하므로 방향별·상태의존 CHILL 전환에 보장을 이전하지 않음 |
+| Lotker, Patt-Shamir, Rawitz (2008), [Multislope Ski Rental](https://arxiv.org/pdf/0802.2832), §1–2 | 누적 임대료=구매비 직관은 불가역 구매용; 반복 전환·준비시간 문턱을 직접 정하지 않음 |
+| Rawlings, Mayne, Diehl, [MPC 2판](https://sites.engineering.ucsb.edu/~jbraw/mpc/), §2.2/§2.4; Tvedt (2022), [Entry/Exit](https://link.springer.com/article/10.1007/s43069-022-00161-9), §1–3 | 짧은 H는 장기 절감을 놓칠 수 있음. 유지/단일 전환 비교가 일반 MPC 보장은 아니며 확률적 전환에는 미래법칙·할인 가정이 필요 |
+- 우선 검토는 반복 전환 task-system/WFA; 고정 H 재판단이 비교 기준이다. 임의 누적·초기화에 기존 보장을 붙이거나 미래 부하 예측을 전제하지 않는다.
+- 채택 전 profile 추정과 정확한 현재 비용, 준비/임시 용량/큐/진행/취소를 구분하고 SLO·실행가능성 우선과 동일 시간축 전체 POOL J를 유지한다.
+- 오프라인 최적 비교자는 미래 정보만 추가하며 초기 상태·전환시간·자원·SLO는 같아야 한다. 경쟁비는 실측 절감률이 아니다. 다음 산출물은 관측 입력·유지/전환 식·전환 중 재판단 규칙과 짧은/지속/반복 부하의 검증이다.

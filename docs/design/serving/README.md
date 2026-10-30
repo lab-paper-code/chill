@@ -1,81 +1,28 @@
 # Serving Design
 
-상태: 2026-10-30 **2차 검토(fusion: 패널 3모델+판정) 반영**(설정 정리 설계, 구현 전).
+단일 HTTPS `cmd/chill-server`가 TokenReview/SAR·CRUD·추론과 불변 snapshot/접수 gate/bounded Workload 큐/physical drain·관측을 소유한다. CHILL은 physical instance를 고르고 EdgeMesh는 그 목적지로 전달한다. 노드당 서빙인스턴스1개·인스턴스당 Workload1개이며 실제 실행·측정 근거가 없으면 Ready 추론대상이 아니다.
+원시 JPEG/UTF8 입력은 runner의 전처리 module이 모델 입력으로 바꾼다. firstfloor actor·persistent ORT CPU/CUDA·RKNNLite와 동일경로 profiling을 사용한다. 로컬smoke·qualified hardware/live evidence는 서로 다른 확인수준이다.
 
-## 현재 구현 범위
-
-`cmd/chill-server`는 단일 HTTPS ChillServer다. Kubernetes bearer 신원을
-TokenReview/SAR로 검증하고 모델·Workload CRUD와 추론을 제공한다.
-`internal/serving`은 불변 적용 snapshot, 접수 gate, bounded Workload 큐,
-인스턴스 route·physical drain과 private JSONL 관측을 소유한다.
-모델-only 투명 proxy나 시작 시 고정 노드 테이블은 사용하지 않는다.
-
-firstfloor actor·persistent ORT CPU/CUDA·RKNNLite runner와 같은 실행 경로의 profiling을
-연결했다. 실제 실행·측정 근거가 없는 인스턴스는 Ready 추론 대상으로 취급하지 않는다.
-구현 구조, 로컬 smoke와 qualified hardware evidence는 서로 다른 확인 수준이다.
-Workload는 Preprocessor와 Dataset을 참조하고 원시 표본(JPEG, UTF8)을 받으며, 전처리 module이 runner
-안에서 모델 입력을 만든다. 설계와 검증 기록은 [이기종 워크로드 구현 설계](heterogeneous-workloads.md)에 있다.
-
-## 문서 탐색
-
-| 알고 싶은 것 | 원본 문서 |
+| 파일 | 내용·상태 |
 |---|---|
-| Workload·POOL·입력·CRUD·권한·접수·드레인 | [워크로드 관리](workload-management.md) |
-| 판단 입력, 용량표와 노드 계획 선택, 전환 DAG, 제어 불변식 | [스케줄러 구현 설계](scheduler-implementation.md) |
-| firstfloor typed 요청·IPC·시간·수명·CPU/장치·fixed-batch·baseline·catalog | [실행기와 측정 계약](scheduler-runtime-measurement.md) |
-| scheduler 설정, compact API와 관측 조회 | [설정과 관측 API](scheduler-api.md) |
-| 설정 추가3개·측정별 CI·요청 reuse, 기존 server-start 최소 보강, 증거 API 수용 뒤 구현 순서 | [설정 소유권과 하드코딩 정리](configuration-hardcoding.md) |
-| 원시 표본·전처리기와 데이터셋 catalog·여러 모델 파일 산출물·데이터셋 표본 측정 | [이기종 워크로드 구현 설계](heterogeneous-workloads.md) |
-| 워크로드별 활성 POOL, 측정 POOL, 가용 노드, 워크로드별 자동제어와 완료 여유 | [워크로드별 POOL과 자동제어](workload-pools.md) |
-| 측정 노드의 승인, 거절, 반환, 측정 무효 판정, 전환 비용 runner, ChillServer 클라이언트 `serving-operation` | [측정 admission과 단일 writer (M3)](measurement-admission.md) |
-| 측정 CR 큐, 선언형 operation 비용 순서, 디스패치 점유 포화 측정과 계획기의 d 수집, CPU 할당 거절 | [측정 API](measurement-api.md) |
-| 판단 기록 크기 | [판단 기록 다이어트 (M0)](decision-record-diet.md) |
-| 요청 행, 불변 값의 ID 참조, 시간 세그먼트와 로컬 버퍼, 오프라인 표 산출 | [관측 분리 (M1)](observability-split.md) |
-| option별 SLO 용량표, κ 합 판정, 노드 계획과 이웃 탐색, 비교 기간, 완료 여유 규칙 | [용량표 계획기 (M4)](analytic-planner.md) |
-| option별 SLO 용량 κ, κ 검증, κ 합 계획기의 E1 비교, E5 규모의 계획 탐색 | [인스턴스 용량표 근거](capacity-table-evidence.md) |
-| Pod-bound Service·EdgeMesh 전달·수동 원자 실행·manifest | [인스턴스 전달과 수동 실행](scheduler-operations.md) |
-| 요구사항별 구현 대응과 당시 검증 수준 | [스케줄러 SRS 대조](scheduler-srs-audit.md) |
-| 온라인 전환 문헌·알고리즘 적용 한계 | [온라인 전환 레퍼런스](online-switching-references.md) |
-| 과거 network·local gate·smoke·배포 checkpoint | [실행·배포 이력](scheduler-execution-history.md) |
-| 최신 live evidence·현재 수용 범위와 제약 | [실클러스터 검증 현황](../../plans/2026-10-13-scheduler-live-evidence-campaign.md) |
+| [workload-management](workload-management.md) | active: 입력/CRUD/권한/접수/드레인 |
+| [scheduler-implementation](scheduler-implementation.md) | active: 판단입력·전환DAG·제어불변식 |
+| [scheduler-runtime-measurement](scheduler-runtime-measurement.md) | active: typed요청/IPC/시간/수명/CPU·장치/fixed-batch/catalog |
+| [scheduler-api](scheduler-api.md) | active: strict설정·읽기projection·권한 |
+| [configuration-hardcoding](configuration-hardcoding.md) | active: 설정소유권·동결·하네스 선택값; 구현offline과live수용 구분 |
+| [heterogeneous-workloads](heterogeneous-workloads.md) | active: 원시표본/전처리·데이터셋/다중파일/생성형 |
+| [workload-pools](workload-pools.md) | active: Workload별POOL/자동제어/측정노드/완료여유 |
+| [measurement-admission](measurement-admission.md) | active: 노드승인/거절/반환·단일writer(M3) |
+| [measurement-api](measurement-api.md) | active: operation비용/디스패치점유/재사용·과학판정 |
+| [decision-record-diet](decision-record-diet.md) | completed: M0 결과·저장projection 요약 |
+| [observability-split](observability-split.md) | active: 요청/catalog/시간세그먼트·E5 raw/resources/cluster API(ADR0030) |
+| [analytic-planner](analytic-planner.md) | active: κ/노드계획/탐색/하강창/예비·고정H |
+| [capacity-table-evidence](capacity-table-evidence.md) | completed: κ·탐색 선택의 입력별 근거(현행수식은 계획기) |
+| [scheduler-operations](scheduler-operations.md) | active: Pod-bound Service/수동원자실행 |
+| [scheduler-srs-audit](scheduler-srs-audit.md) | completed: 당시 SRS대조 결과·증거 경계 |
+| [online-switching-references](online-switching-references.md) | active reference: 미채택 문헌과 적용한계 |
+| [scheduler-execution-history](scheduler-execution-history.md) | completed: 배포/checkpoint 결과요약 |
 
-[Workload 시간창 부하 집계 계획](../../plans/serving-windowed-workload-load.md)은
-현재 스케줄러에 통합된 최초 후보의 기록이며 별도 다음 구현 지시가 아니다.
-
-## 요청과 제어의 경계
-
-```mermaid
-flowchart TD
-    A["Workload + 독립 입력 1개"] --> B["권한·입력 검증 / 불변 정의 수락"]
-    B --> C["bounded Workload 유입 큐"]
-    C --> D["ready physical instance 분배"]
-    D --> E["firstfloor UID·정의별 큐 / 공유 selector"]
-    E --> F["persistent runner / 순차 batch 실행"]
-    F --> G["요청별 결과·physical 완료·응답 관측"]
-    H["관측 snapshot / 용량표 κ 합 / 노드 계획 선택"] --> I["policy·route·원자 전환 / 실제 ACK·상태 확인"]
-    I --> D
-```
-
-상자는 별도 서비스·CRD·메시지 브로커를 뜻하지 않는다. 요청 진입은 새 구성 계산이나
-raw evidence 다운로드를 기다리지 않고 현재 준비·physical capacity 안에서 분배한다.
-CHILL이 physical instance를 선택하고 EdgeMesh는 해당 단일 목적지로 운반한다.
-한 Pod는 runner 하나와 순차 실행 하나를 제공하고 Workload 하나를 맡는다. 노드마다 서빙 인스턴스는 하나이고,
-Workload마다 UID, 불변 정의, 개별 SLO, 원래 경과 시간과 물리 점유를 구분한다.
-
-## 요구사항과 증거의 권위
-
-요구사항은 [시스템 명세](../../spec/README.md),
-[라우팅과 배칭](../../spec/03_routing.md),
-[구성 비용](../../spec/04_configuration_selection.md),
-[전환 실행](../../spec/05_transition_control.md),
-[스케줄러 SRS](../../spec/scheduler/SRS.md)와
-[워크로드 SRS](../../spec/workloads/SRS.md)가 원본이다.
-프로세스·필드·경로는 위 구현 문서의 결정이며 명세를 대체하지 않는다.
-요청 지연의 모집단·백분위·no-data 해석은
-[SLO 관측과 집계](../../spec/README.md#slo-관측과-집계)를 따른다.
-
-전체 FULL 통과는 주장하지 않는다. 현재 미완료 근거와 해소된 과거 blocker는
-[실클러스터 검증 현황](../../plans/2026-10-13-scheduler-live-evidence-campaign.md)에서 구분하며,
-과거 배포·synthetic 실행 결과를 현재 hardware 종단 통과로 재사용하지 않는다.
-원시 표본 경로는 runtime image의 CPU runner smoke까지 확인했고 live cluster, Jetson과 RKNN 실행,
-혼합 부하 평가는 [이기종 워크로드 9.1절](heterogeneous-workloads.md#91-검증-기록)의 미검증 범위다.
+- 요구사항 권위: [spec](../../spec/README.md), [scheduler SRS](../../spec/scheduler/SRS.md), [Workload SRS](../../spec/workloads/SRS.md). 설계는 명세를 대체하지 않는다.
+- 현재 수용/미완료는 [실클러스터 검증 현황](../../plans/2026-10-13-scheduler-live-evidence-campaign.md), 원시입력 hardware미검증은 [이기종 설계](heterogeneous-workloads.md)를 따른다. 전체 FULL 통과를 주장하지 않는다.
+- gateway split: removed @e8344b20; T5 live만 유지한다([ADR0029](../../adr/0029-gateway-control-data-plane-split.md)). 아키텍처 B1–B3 전체안의 승인대기는 [대안 요약](../architecture-rethink/README.md)과 구분한다.

@@ -1,661 +1,223 @@
 # 워크로드별 POOL과 자동제어 구현 설계
 
-## 1. 목적과 범위
+## 1. 목적과 결정
 
-[시스템 명세의 노드 POOL과 구성](../../spec/README.md#노드-pool과-구성),
-[측정 POOL](../../spec/00_measurement.md#측정-pool),
-[스케줄러 SRS](../../spec/scheduler/SRS.md)의 `SCH-02`, `SCH-08`, `SCH-09`, `SCH-13`, `SCH-15`, `SCH-21`,
-`SCH-32`, `SCH-33`, `SCH-34`, [워크로드 SRS](../../spec/workloads/SRS.md)의 `WM-25`,
-[Dashboard SRS](../../spec/dashboard/SRS.md)의 `DB-FR-10`, `DB-FR-33`, `DB-FR-34`에 대응하는 구현 계약이다.
-경계 결정은 [ADR 0022](../../adr/0022-workload-pool-membership-boundary.md)에 기록한다.
-측정 POOL의 진입과 반환은 [측정 admission](measurement-admission.md)이 정한다.
-[워크로드 관리](workload-management.md), [스케줄러 구현 설계](scheduler-implementation.md)와
-[이기종 워크로드](heterogeneous-workloads.md)의 공통 계약을 따르고, 본문은 POOL과 자동제어의 계약을 정한다.
-
-### 핵심 결정
+요구사항 원본은 [시스템 명세](../../spec/README.md), [측정 POOL](../../spec/00_measurement.md), [scheduler SRS](../../spec/scheduler/SRS.md) `SCH-02,08,09,13,15,16,21,32,33,34`, `SCH-AC-22,24,25,26`, [Workload SRS](../../spec/workloads/SRS.md) `WM-25`, [Dashboard SRS](../../spec/dashboard/SRS.md) `DB-FR-10,33,34`다.
+[ADR 0022](../../adr/0022-workload-pool-membership-boundary.md)·[측정 admission](measurement-admission.md)·[Workload 관리](workload-management.md)·[scheduler 구현](scheduler-implementation.md)·[이기종 계약](heterogeneous-workloads.md)을 따른다.
 
 | 결정 | 이유 |
 |---|---|
-| 자동제어 스위치는 scheduler 설정 `settings.autonomousWorkloads`(Workload UID 목록) | 결정 기록마다 사용한 설정이 함께 저장되고 기존 설정 API를 그대로 쓴다 |
-| 활성 POOL 소속은 저장하지 않고 CHILL serving 인스턴스에서 도출 | 여러 활성 POOL 소속을 별도 상태 없이 표현하고, 부분 완료도 실제 인스턴스로 드러난다 |
-| 측정 POOL은 taint `chill.dacs.io/measurement:NoSchedule`으로 표시하고 ChillServer가 측정 객체에 따라 관리 | 서빙 계획은 이 노드의 배치, 내림, 제거와 전력 변경을 격리한다 |
-| 전체 POOL은 control-plane이 아닌 모든 Kubernetes Node, node agent가 게시한 online CPU 목록은 배치 가능 조건 | 명세의 전체 워커노드 범위와 가용 노드 전력 집계를 그대로 따른다 |
-| 가용 노드는 비용 비교 없이 늘 가장 낮은 전력모드로 내린다. 가장 낮은 모드는 unloaded baseline 중 전력이 가장 작은 모드 | 후보 선택이 아닌 고정 규칙. DeviceClass에는 모드 순서가 없고, 이 baseline은 에너지 계산에 이미 필요하다 |
-| 후보는 상태가 바뀌는 노드의 차이로 비교하고, 전체 POOL 에너지는 실측으로 보고한다 | `SCH-16`의 공통 항 소거. 바뀌지 않는 노드의 baseline이 없어도 판단이 멈추지 않는다 |
-| 후보와 비용 근거는 완료된 측정 전체에서 조건별 최신 성공으로 도출 | 운영자 채택과 `profileCampaigns`, `preparations`, `costReferences`, `powerCostSources` 선언을 없앤다 |
-| 완료 여유는 `settings.completionMarginMS` 하나, firstfloor에는 요청마다 전달 | 설정 변경이 바로 모든 요청에 적용되고 인스턴스 policy를 다시 쓰지 않는다 |
-| 측정 결과는 노드 Pod 목록과 CHILL 배치 여부를 기록 | 외부 파드의 운영 책임과 CHILL의 자원 예산을 구분한다 |
-| 저장 계약은 작업 단위마다 한 형태를 사용하고 producer와 consumer를 함께 맞춘다 | [ADR 0019](../../adr/0019-durable-stored-contract-compatibility.md)의 단일 reader 원칙 |
+| 자동제어는 settings.autonomousWorkloads UID 목록 | 기존 설정 API/판단 기록 사용, 재등록 UID는 기본 꺼짐 |
+| 활성 POOL은 실제 인스턴스 owner/binding에서 산출 | 별도 label/membership 저장/동작 없이 부분 완료도 실제 상태에 반영 |
+| 측정 POOL은 ChillServer 단일 writer taint | 서빙 배치·제거·전력 변경 격리 |
+| 전체 POOL은 모든 non-control-plane Node | online CPU inventory는 배치 조건일 뿐 전체 전력 집계의 필터 아님 |
+| 가용 Node는 항상 최저 unloaded baseline 모드로 | DeviceClass에 모드 순서가 없고 baseline은 에너지 계산에도 필요 |
+| 바뀌는 Node만 후보 에너지 비교, 전체 POOL은 실측 | SCH-16 공통 항 소거로 무관 Node의 baseline 부재가 판단을 막지 않음 |
+| 완료 측정의 조건별 최신 성공에서 후보/비용 도출 | 운영자 profileCampaigns/preparations/costReferences/powerCostSources 선언 제거 |
+| 완료 여유는 settings.completionMarginMS 하나 | 요청마다 firstfloor 전달, 인스턴스 policy 재작성 없음 |
+| 외부 Pod 목록/CHILL 역할을 측정에 기록 | 외부 운영 책임과 CHILL 배치 예산 분리 |
+| producer/consumer는 한 저장 계약 | [ADR 0019](../../adr/0019-durable-stored-contract-compatibility.md)의 단일 reader |
 
-## 2. 요구사항 대응
-
-| 요구사항 | 설계 |
-|---|---|
-| 시스템 명세 노드 POOL과 구성(활성 POOL, 측정 POOL, 가용 노드, 자동제어) | 3.1, 3.2, 3.3, 3.4, 4 |
-| 시스템 명세 외부 파드, 가용 노드 전력 | 3.4, 3.8 |
-| 시스템 명세 흐름의 측정 POOL 이동과 반환, 00 측정 POOL | 3.3과 측정 admission |
-| `SCH-02`, `SCH-AC-22`, `WM-25` | 3.2, 5 |
-| `SCH-08` | 3.4, 3.5, 4.2 |
-| `SCH-09` | 3.5 |
-| `SCH-13`, `SCH-21`, 03 라우팅의 설정 여유, 04 요청 지연 계산 | 3.6 |
-| `SCH-15`, `SCH-16` | 3.4, 4.3, 4.4 |
-| `SCH-32` | 3.1, 3.6 |
-| `SCH-33`, `SCH-AC-24`, `SCH-AC-25` | 3.1, 3.4, 3.7, 4 |
-| `SCH-34`, `SCH-AC-26` | 3.8(외부 Pod 목록), M3(측정 POOL 이동, 반환, 서빙 노드 거절) |
-| `DB-FR-10`, `DB-FR-33` | 5 |
-| `DB-FR-34` | 3.8과 5(외부 Pod 목록), M3(소속 표시와 거절 사유, 이동과 반환 진행) |
-
-## 3. 표현 선택
+## 3. 표현과 근거
 
 ### 3.1 워크로드별 자동제어
 
-자동제어 스위치는 scheduler의 `settings.autonomousWorkloads`에 담긴 Workload UID 목록이다.
-제어요소별 control 설정은 시스템 전체의 활성 설정으로 유지한다.
-판단 기록은 그 시점의 목록을 보존하고 변경은 기존 `PUT /api/v1/scheduler/settings`를 사용한다.
+`settings.autonomousWorkloads`의 현재 Workload UID만 사용하고 저장 때 존재하지 않는 UID를 제거한다. 이름 재등록은 새 UID로 꺼진 상태다. `PUT /api/v1/scheduler/settings`를 쓰고 판단마다 실제 목록을 보존한다. 제어요소 설정은 시스템 전체 활성 설정, Workload spec은 모델/전처리/데이터셋/SLO 정의다.
 
-같은 이름으로 다시 등록한 Workload는 새 UID이므로 꺼진 상태로 시작한다.
-판단은 현재 Workload에 없는 UID를 무시하고 설정 저장은 그런 UID를 제거한다.
-Workload 정의는 모델 참조와 SLO를 담고 자동제어 상태는 설정에서 관리한다.
+### 활성·측정 POOL
 
-### 3.2 활성 POOL 소속
+W의 활성 POOL은 `InstanceState.OwnerWorkloadUID=W` 또는 binding W인 CHILL serving 인스턴스의 Node 집합이다. prepare/remove가 실제 소속을 바꾸며 별도 membership 동작은 없다(`SCH-AC-22`). 노드당 serving 인스턴스 하나, 같은 모델 Workload도 각각 인스턴스를 두며 조건 동일 profile만 재사용한다. owner/binding 모두 없는 비측정 인스턴스는 다음 판단의 remove로 정리한다.
+측정은 `chill.dacs.io/measurement:NoSchedule`, 값은 노드를 받은 측정이다. ChillServer만 붙이거나 떼며 승인/거절/반환은 [admission](measurement-admission.md)을 따른다.
+profiling Job(worker/idle), transition attempt Job, operation 측정 인스턴스·승인 시 준비한 전환 비용 runner는 `operator:Exists,effect:NoSchedule` toleration을 가진다.
+serving Pod는 nodeName을 써 kube-scheduler 검사를 우회하므로 capture가 측정 Node를 배치/전력/Fixed내림/remove에서 제외하고 실행 직전 prepare/ChangePower도 Node를 다시 읽어 `NodeInMeasurement`로 거절한다. pools API는 측정 소속을 표시한다. operation은 승인 Node만 사용하고 종료 격리 witness Tainted를 보존한다([원자 동작 격리](scheduler-operations.md)).
 
-Workload W의 활성 POOL은 W가 owner(`InstanceState.OwnerWorkloadUID`)이거나 binding으로 연결된 CHILL serving
-인스턴스가 있는 노드 집합이다. 노드의 소속은 그 노드의 인스턴스에서 계산하며 저장하지 않는다.
-전력 집계는 이미 인스턴스로 활성 노드를 정한다(`internal/serving/observation_log_power.go:429-437`).
-[전환 명세](../../spec/05_transition_control.md)의 동작 목록에도 소속 변경 동작은 없다. 노드의 편입과 반환은
-prepare와 remove로 이루어지고, 일부만 완료한 전환은 실제 인스턴스 상태로 바로 드러난다(`SCH-AC-22`).
+### 전체 POOL·가용 노드·전력
 
-prepare와 remove가 실제 인스턴스를 바꾸면 활성 POOL 소속도 함께 바뀐다.
-별도의 POOL label이나 membership 동작은 사용하지 않는다.
-측정 격리는 3.3절의 taint와 admission이 맡는다.
+전체 POOL은 `node-role.kubernetes.io/control-plane` label 없는 모든 Node. capture는 별도 장비 label로 제외하지 않는다. 측정 Node는 fixed, 가용 Node는 측정 밖 Ready·CHILL serving 인스턴스 없음이다. 설정 부족도 Node 사유로 남긴다.
 
-노드마다 서빙 인스턴스는 하나다. 이 조건은 후보 생성에서 확인한다(4.3절).
-owner와 binding이 모두 없는 인스턴스는 어느 활성 POOL에도 속하지 않는다. 측정 POOL 밖의 이런 인스턴스는 다음
-판단의 후보가 remove로 정리한다.
-
-같은 모델의 Workload도 각자 인스턴스를 두고 측정 profile은 실행 조건이 같을 때 재사용한다.
-
-### 3.3 측정 POOL
-
-측정 POOL은 taint `chill.dacs.io/measurement:NoSchedule`이 있는 노드다. ChillServer가 측정 객체에 따라 이 taint를
-붙이고 떼는 유일한 writer이고, taint 값은 노드를 받은 측정이다. 승인, 거절, 반환은
-[측정 admission](measurement-admission.md)이 정한다.
-
-- 측정 Pod는 이 key의 toleration(`operator: Exists`, `effect: NoSchedule`)을 갖는다: profiling Job(measurement-worker,
-  `profiler/controller/execution_job_spec.go:110-136`, idle baseline도 같은 경로), transition attempt Job
-  (`transitioncost/controller/attempt_job.go:123-136`), operation 측정 인스턴스, ChillServer가 승인 때 준비하는 전환 비용
-  runner([측정 admission 2.4절](measurement-admission.md#24-전환-비용-runner)).
-- CHILL serving Pod는 `spec.nodeName`으로 만들어 kube-scheduler의 NoSchedule 검사를 거치지 않는다(`kube/operations.go:403`).
-  그래서 ChillServer가 직접 뺀다. 스케줄러 capture는 이 노드를 배치, 전력 변경, `Fixed` 내림, 제거 대상에 넣지 않고(3.4절),
-  Workload 인스턴스의 prepare와 `ChangePower`(`kube/operations.go:740-769`)는 실행 직전에 Node를 읽어 taint가 있으면
-  `NodeInMeasurement`로 실패한다. pools API는 이 노드를 측정 POOL로 보인다(5장).
-- operation 측정은 ChillServer가 승인한 노드에서만 측정 인스턴스를 준비하고, 격리 witness는 측정 끝의 taint 유무
-  (`Tainted`)를 기록한다([원자 동작 측정의 격리](scheduler-operations.md#원자-동작-측정의-격리)).
-
-### 3.4 전체 POOL, 가용 노드와 전력모드
-
-전체 POOL은 `node-role.kubernetes.io/control-plane` label이 없는 모든 Kubernetes Node다. capture
-(`kube/scheduler.go:531-556`)는 label로 거르지 않고 이 Node 전체를 snapshot에 넣는다. 측정 POOL 노드는 배치,
-전력 변경, 제거 대상이 아닌 고정 노드로 들어간다. 가용 노드는 측정 POOL 밖에서 Ready이고 CHILL serving 인스턴스가
-없는 노드다. 설정이 부족한 노드는 빼지 않고 노드 사유로 남긴다.
-
-| 사유 | 조건 | 판단 |
-|---|---|---|
-| `PlacementInventoryMissing` | online CPU 목록이 없거나 읽을 수 없음, 측정 GPU가 allocatable보다 많음, 예약이 inventory 밖 | 배치 option에서 빠짐. 전력과 에너지는 계속 다룸 |
-| `PlacementBudgetUnavailable` | CHILL이 배치하지 않은 Pod의 GPU 소유를 확인할 수 없거나 그 CPU 요청이 예약을 넘음 | 같음 |
-| `PowerModeUnavailable` | 현재 모드를 모르거나, 요청 가능 모드(DeviceClass의 비고정 모드 중 actuation policy가 있는 모드)가 없거나, 가장 낮은 모드가 요청 가능 모드가 아님 | 현재 모드 유지 |
-| `InstanceUnavailable` | 노드의 CHILL serving 인스턴스의 native나 profile 상태를 읽지 못함 | 그 노드는 배치, 내림, 전력 변경에서 빠지고 다른 노드는 계속 계획한다 |
-
-외부 Pod의 자원 요청은 `NonServing` 예산에 남고 Node의 Ready는 Kubernetes NodeReady를 따른다.
-외부 Pod가 있는 노드도 가용 노드의 전력 집계에 포함하고, 자원 예산 문제는 노드 사유로 표시한다.
-
-가장 낮은 전력모드는 그 노드의 unloaded baseline(State가 빈 `NodeBaseline`) 중 `Watts`가 가장 작은 모드이고,
-같으면 이름순이다. DeviceClass의 `powerModes`는 순서와 전력 값을 갖지 않는다(`api/v1alpha1/deviceclass_types.go:8-42`,
-`internal/deviceclass/powermode.go:11-42`).
-
-가용 노드를 내리는 것은 고정 규칙이고 keep을 포함한 모든 계획의 DAG에 공통으로 들어간다. `Controls.Power`가 켜져 있으면
-모든 노드 계획은 판단 시점의 모든 가용 노드를 시각 0부터 가장 낮은 모드에 둔 공통 상태에서 계산한다. 계속 비어 있는 노드의
-에너지는 가장 낮은 모드의 unloaded baseline이다. 현재 모드가 다르면 DAG는 그 노드의 맨 앞에 power 동작을 두고
-`Action.Fixed=true`로 표시한다. 이 동작은 모든 계획에 같으므로 그 시간과 에너지는 공통 항으로 비교에서 빠진다. 판단에
-target이 없으면 controller는 keep의 `Fixed` 동작만 실행한다. 빈 노드 전환 비용 측정은 이 규칙에 필요하지 않다.
-target이 사용하지 않고 실제 인스턴스도 없는 빈 노드의 공통 절전은 다른 노드의 route와 독립적으로 실행한다.
-실제 사용할 노드에서는 `Fixed` 내림부터 전력 변경과 prepare까지 같은 노드의 순서를 지키고,
-실제 Ready, 소유권, policy ACK와 기존 요청의 인계를 확인한 뒤 분배한다.
-공통 절전의 소비와 전환 중 결과는 전체 POOL 측정에 포함한다.
-
-가용 노드를 활성 POOL로 다시 넣는 노드 계획은 그 전환 비용을 비교에 포함한다. 노드 단위 순서(`schedulerPlan`)에 따라
-`Fixed` 내림 뒤에 power 동작(가장 낮은 모드에서 profile 모드로)과 prepare가 온다. 그 노드는 가장 낮은 모드에서
-출발한 것으로 계산한다. 다시 넣는 비용은 빈 노드에서 측정한 전력모드 전환 비용과 profile 모드에서 측정한 prepare 비용의
-합이다. `schedulerPlan`의 비용 선택은 power 동작에 그 시점의 적재 상태, 곧 빈 상태를 `BeforeState`로 가진 전환 비용(3.5절)을,
-prepare에 노드 전력모드가 같은 비용을 고른다. 빈 노드 전환은
-측정 POOL에서 `serving-operation`의 power 동작으로 측정하고([원자 동작 측정의 격리](scheduler-operations.md#원자-동작-측정의-격리)),
-모드 변경이 노드를 재부팅하는 장비(jetsono)도 같다. 측정 구간은 Node annotation의 적용과 독립 read-back 확인에 settling
-(`settlingDurationSeconds`, E1에서 60 s)을 더한 구간이다. 그래서 적용이 약 1.5 s인 jetsonx 전환도 63.5 s 구간으로
-coverage 검사를 통과해 `Accepted`이고, 비용에는 목표 모드에서 보낸 settling 에너지가 들어간다. 그 비용이 없으면 다시
-넣는 노드 계획은 `MissingOperationCost`로 비교에서 빠진다.
-
-비교 기간은 판단마다 하나인 `T = max(comparisonPeriodNanos, 최장 route 전 사슬 + 최장 route 뒤 remove)`이고 keep과 모든 계획에
-같다([용량표 계획기 4장](analytic-planner.md#4-노드-계획과-탐색)). 사슬은 동작마다 측정 trial의 최대 시간으로 재므로 다시
-넣는 계획의 power, prepare, route 사슬도 T 안에 끝나고, 모든 계획은 power와 prepare의 측정 에너지 전체와 다시 넣은 뒤의
-적재 baseline을 같은 T에서 비교한다. E1에서 측정한 빈 노드 전환은 jetsonx 63.5 s, jetsono 134.5 s, orin-nano 197.1 s이고,
-이런 사슬이 있는 판단의 T는 E1의 비교 기간 하한 60 s보다 길었다.
-
-노드 계획은 차이로 비교한다(`SCH-16`). 비교 집합은 keep 밖의 적격 노드 계획이 있는 노드이고, keep과 target의
-`ExpectedJoules`는 이 집합의 노드만 합한다. 집합 밖 노드(측정 POOL 노드와 계획이 keep뿐인 노드 포함)는 모든 계획에 같아
-소거한다. 결정 기록은 `SchedulerSearch.ComparedNodes`에 이 집합을 남긴다. 노드 계획의 모드에 unloaded baseline이 없으면 그
-계획은 `MissingUnloadedNodeBaseline:<node>:<mode>` 사유로 비교에서 빠진다. 집합 밖 노드의 baseline은 판단에 쓰지 않는다.
-전체 POOL 에너지는 기존 운영 전력 집계(`ObservationLog.OperatingPower`, `cmd/chill-server/scheduler_service.go:399-409`)로
-실측해 보고한다.
-
-### 3.5 후보 도출
-
-`Catalog.Refresh`(`internal/serving/kube/catalog.go:86-128`)는 선택 목록 대신 profile namespace allowlist
-(`measurement_service.go:59-71`)의 모든 BatchEnergyOptimization 중 terminal 성공(`cmd/chill-server/measurements_evidence.go:34-47`)을
-읽는다. 조건별 최신 성공 선택은 기존 `latestConditionProfiles`(`catalog.go:154-181`)를 그대로 쓴다.
-profile의 측정 노드가 그 Workload의 후보 노드가 된다(`kube/scheduler.go:560-585`의 `MatchesProfile`).
-
-`PrepareSpec`은 profile의 측정 inventory와 preparation에서 도출한다.
-bundle 발행과 binding도 profile마다 수행한다.
-한 profile의 실패는 `CatalogIssue`의 `PreparationUnavailable`로 표시하고 다른 profile의 refresh는 계속한다.
-profile ID 집합이 바뀌면 다음 refresh에 적용한다.
-현재 인스턴스가 사용하는 profile의 측정은 삭제 보호 대상이다.
-
-**비용 근거.** prepare/remove 비용, unloaded baseline과 전력모드 전환 비용은 완료된 측정에서 도출한다.
-동일 조건의 최신 성공을 선택하고, 정확 profile/runtime/NodeUID/mode와 적재 상태를 맞춘다.
-profile을 바꾸는 변경에는 영향받는 d, 비용과 baseline의 목록을 함께 남긴다.
-
-| 근거 | 위치와 나열 | 받아들이는 기록 | 조건별 최신 |
-|---|---|---|---|
-| operation 측정(`serving-operation`) | ChillServer store의 고정 prefix `serving/operation-measurements/<Node UID>/<operation ID>.json`. `serving-operation`이 이 규칙으로 key를 만들고 manifest는 key를 받지 않는다 | Verdict `Accepted`, 기존 검사(`kube/cost.go:27-98`) 통과, 기록의 meter(ID, Node, scope, source)가 현재 scheduler 설정 `meters`의 항목과 모두 같음 | 비용은 (Node UID, kind, from, to, 노드 전력모드)마다 `Result.EndedAt`이 가장 늦은 것. power 기록은 측정 전후 모드가 from과 to이고 (Node UID, from, to, 적재 상태)마다 고른다. idle 기록의 baseline은 (Node, 전력모드, State)마다 하나 |
-| 전력모드 전환 비용 | profile namespace allowlist의 PowerModeTransitionCost 중 기존 `loadPowerCost` 조건(`kube/cost_power.go:75-130`)을 통과한 Complete. meter는 scheduler 설정 `meters`에서 같은 Node와 같은 source(`prepared.PowerSource`)를 가진 항목이다 | 같음 | (Node UID, from, to, 적재 상태)마다 받아들인 trial의 완료 시각 중 가장 늦은 값이 큰 측정, 같으면 이름순. 적재 상태는 runner의 profile과 할당을 담은 `BeforeState`(`cost_power.go:195-199`)이고 profile이 모델, 실행 경로, 장비를 정한다 |
-
-두 경우 모두 그 시각을 새 필드 `OperationCost.MeasuredAt`에 담는다. 조건이 다른 비용은 서로 대신하지 않는다. planner의
-비용 선택(`schedulerPlan`의 `selectCosts`)은 prepare와 remove에 노드 전력모드를, 전력모드 변경에 적재 상태(`BeforeState`)를
-열쇠로 쓴다. 맞는 비용이 없으면 그 노드 계획은 `MissingOperationCost`로 비교에서 빠진다.
-
-객체 나열은 `evidencestore.Lister`의 고정 prefix 목록과 S3 `ListObjectsV2` 페이지를 사용한다.
-객체는 불변이므로 identity별로 한 번 읽어 보관하고, 목록에서 사라진 identity는 보관 목록에서 뺀다.
-PowerModeTransitionCost는 UID와 result identity로 같은 규칙을 사용한다.
-
-한 기록이나 측정의 실패는 그 출처의 `CostIssue{Source, Code, Reason}`(`CostEvidenceInvalid`, `MeterUndeclared`)가 되어
-scheduler 상태에 보이고 나머지는 계속 쓴다. Verdict가 Accepted가 아닌 기록(실패한 시도)과 Complete가 아닌 측정은 issue 없이 건너뛴다.
-나열 자체가 실패하면 이전 구성을 유지한다. refresh의 재사용 판단은 비용 identity 집합도 비교한다.
-
-### 3.6 완료 여유
-
-`SchedulerSettings.CompletionMarginMS float64`(`json:"completionMarginMS"`)는 유한한 0 이상의 필수 값이며
-`SchedulerSettings.Validate`(`scheduler.go:249-260`)가 확인한다. 생략과 0을 구분하도록 설정 decode 경계
-(`cmd/chill-server/scheduler_service.go:110-138`, settings PUT `httpapi/scheduler.go:64-143`)는 이 필드를 `*float64`로
-받아 없으면 `completionMarginMS required`로 거절하고, 확인한 값만 `SchedulerSettings`에 넣는다. 요청의 예상 완료는
-firstfloor 처리 완료에 이 값을 더한 시각이다.
-
-- replay: 반환 완료와 만료 계산(`scheduler_replay.go:566-575,829-832,988-1005,1107-1111`)이 instance의
-  `CompletionOverhead` 대신 설정 값을 쓴다.
-- firstfloor는 요청별 `completionMarginMS`를 사용한다.
-  `requestSlack`은 `RemainingSLOMS−completionMarginMS−serviceCost`이며 lifetime 수락도 같은 여유를 한 번 뺀다.
-  senderElapsed는 원래 transport lifetime에서 별도로 차감한다.
-- 완료 여유는 설정 입력이며 관측 overhead나 calibration의 Pending 상태를 요구하지 않는다.
-
-검증은 Serving 관측으로 한다. `ObservationCohort`(`internal/serving/observation_log.go:517-526`)에
-`completionResidualNanos`를 더한다. 완료 요청마다 종단 경과(`RequestEvent.ElapsedNanos`)에서 전달 시점 경과와
-firstfloor 경과(`NativeProgress.NativeElapsedMS`)를 뺀 값이며(`types.go:244-248`), 지연 표본과 같은 자리
-(`observation_log.go:697-699`)에서 모은다. Dashboard Workload 관측은 이 분포와 설정 여유를 함께 보인다.
-
-MNV의 29 ms는 p95 관측에 근거한 값이다.
-D2 뒤 Workload별 선택 SLO 백분위의 완료 잔여를 재고, 단일 m은 그 추정값 중 최댓값으로 정한다.
-PLC/Smol의 최종 SLO와 함께 실제 입력을 고정하며 측정용 relaxed SLO를 자동 채택하지 않는다.
-
-### 3.7 수동 변경 범위
-
-수동 변경 하나는 꺼진 Workload 하나에 적용한다.
-
-- `staticRouting`은 꺼진 Workload UID만 담는 부분 map이다. 생략한 Workload는 현재 분배를 유지한다.
-  켜진 Workload의 항목은 거절하고, 한 Workload의 분배에서 인스턴스를 빼면 그 binding만 해제한다.
-- `serving-operation --execute-config`의 manifest는 꺼진 Workload 하나의 `workloadUID`를 받는다. prepare는 준비한
-  인스턴스의 owner로 그 Workload를 기록한다. remove는 그 Workload가 인스턴스의 유일한 owner이자 binding일 때만
-  허용하고 다른 Workload가 사용하는 인스턴스는 거절한다.
-  그 경우 `staticRouting`으로 해당 Workload의 분배와 binding만 해제한다.
-  진행 중 action 조건과 staticRouting ACK를 확인한다.
-
-### 3.8 외부 파드
-
-NodeActuator는 외부 Pod의 운영을 맡지 않는다.
-스케줄러는 외부 자원 사용을 예산과 사유로 기록하고 측정은 실제 노드 전체의 전력을 기록한다.
-
-CHILL이 배치한 Pod는 label `edge.dacs.io/workload-role`로 구분한다.
-profiling workload observer도 같은 key를 보존한다.
-
-| 생성 경로 | 값 |
+| 사유 | 조건 / 처리 |
 |---|---|
-| serving 인스턴스(`kube/operations.go:403`) | `serving-instance` |
-| transition attempt Job(`transitioncost/controller/attempt_job.go:116-119`) | `transition-observer` |
-| operator 생성 Pod(`internal/operator/{evidencestore/deployment.go,evidencestore/bootstrap_job.go,nodeactuator/daemonset.go,profiler/deployment.go,nodediscovery/daemonset.go}`) | `system` |
-| chart Pod template(`charts/chill/templates/{operator,serving_entrypoint,console,dashboard,predelete_cleanup}.yaml`, selector는 그대로) | `system` |
-| `hack/runtime-declarations.py:142-144`의 probe | `system` |
+| PlacementInventoryMissing | online CPU 없음/불가, 측정 GPU>allocatable, 예약이 inventory 밖 / 배치만 제외, 전력·에너지는 유지 |
+| PlacementBudgetUnavailable | 외부 Pod GPU 소유 불명 또는 CPU 요청>예약 / 같음 |
+| PowerModeUnavailable | 현재 모드 불명, 요청 가능 모드 없음(DeviceClass 비고정+actuation policy), 또는 lowest가 요청 불가 / 현재 유지 |
+| InstanceUnavailable | native/profile 조회 불가 / 해당 Node 배치·내림·전력 제외, 다른 Node 계획 계속 |
 
-측정 결과는 Node의 Pod 목록과 구조화한 `workloadobserver.Pod` 정보를 보존한다.
-Dashboard는 역할 label이 없는 Pod를 CHILL이 배치하지 않은 파드로 표시한다.
-profiling, 전력모드 전환과 operation 측정은 같은 Pod 분류를 사용한다.
-에너지는 노드 전체 meter 값을 사용한다.
+외부 요청은 NonServing 예산, Ready는 Kubernetes NodeReady다. 외부 Pod Node도 가용 전력 집계에 포함한다.
+lowest는 unloaded `NodeBaseline`(State empty)의 최소 Watts, 동률 이름순이다. DeviceClass.powerModes에는 순서/전력이 없다.
+Controls.Power가 켜지면 keep 포함 모든 DAG는 판단 시점 가용 Node를 시각0부터 lowest에 둔 공통 상태로 계산한다. 현재 모드와 다르면 첫 power를 `Action.Fixed=true`로 넣고 공통 시간/에너지는 비교에서 소거한다. target 없으면 keep Fixed만 실행하며 빈 Node 내림 비용 측정은 불필요하다. 빈 Node 공통 절전은 다른 Node route와 독립이나 사용할 Node는 Fixed→power→prepare 순서/실제 Ready·소유권·policy ACK·기존 요청 인계 후 분배한다. 소비·전환 결과는 전체 실측에 포함한다.
+재편입은 lowest→profile mode의 빈 BeforeState power 비용+동일 mode prepare 비용을 비교한다. 재부팅 장비 jetsono도 측정 POOL serving-operation으로 측정하고 annotation 적용/독립 read-back+settlingDurationSeconds(E1 60s) 전체를 잰다. jetsonx 적용≈1.5s도63.5s 창 Accepted이며 settling 에너지를 포함한다. 비용 없으면 `MissingOperationCost`다.
+모든 계획의 공통 비교기간은 `T=max(comparisonPeriodNanos,최장 route전 사슬+최장 route뒤 remove)`, 각 동작은 측정 trial 최대시간이다([용량표 계획기](analytic-planner.md)). E1 빈 전환 jetsonx63.5s/jetsono134.5s/orin-nano197.1s가 있는 판단은 하한60s보다 길었고, power/prepare 전체 에너지+남은 적재 baseline을 같은 T로 비교한다.
+비교 Node는 keep 외 적격 계획이 있는 집합, `SchedulerSearch.ComparedNodes`에 기록하며 keep/target ExpectedJoules도 이 집합만 합한다. 집합 밖(측정/keep-only) 공통 항을 소거한다. 필요한 unloaded baseline 없으면 그 계획만 `MissingUnloadedNodeBaseline:<node>:<mode>`다. 전체 에너지는 ObservationLog.OperatingPower 실측으로 보고한다.
+
+### 최신 profile·비용 도출
+
+Catalog.Refresh는 profile namespace allowlist의 모든 terminal 성공 BEO에서 latestConditionProfiles를 선택한다. 측정 Node가 후보이며 PrepareSpec/bundle/binding은 profile inventory/preparation에서 도출한다. 실패 하나는 CatalogIssue.PreparationUnavailable, 나머지 refresh 계속; ID 집합 변경은 다음 refresh, 현재 사용하는 profile 측정은 삭제 보호다.
+profile 변경은 영향받는 d/비용/baseline 목록을 함께 남긴다. 정확 profile/runtime/NodeUID/mode/적재 상태별 최신 성공을 고르고 다른 조건은 대체하지 않는다.
+
+| 출처 | 수락/최신 조건 |
+|---|---|
+| serving-operation | 고정 `serving/operation-measurements/<Node UID>/<operation ID>.json`(manifest는 key 안 받음). Verdict Accepted+기존 cost 검증+기록 meter(ID,Node,scope,source)=현재 settings.meters 전체 일치. 일반 비용은 NodeUID/kind/from/to/노드mode별 최신 Result.EndedAt. power는 실제 전후 모드=from/to이고 NodeUID/from/to/BeforeState별; idle baseline은 Node/mode/State별 |
+| PowerModeTransitionCost | allowlist Complete+loadPowerCost 검증, 같은 Node/source(prepared.PowerSource)의 현재 meter. NodeUID/from/to/BeforeState(profile/할당)별 받아들인 trial 완료시각의 최대가 최신, 동률 이름순 |
+
+두 출처의 선택 시각을 OperationCost.MeasuredAt에 둔다. planner selectCosts는 prepare/remove에 Node mode, power에 BeforeState를 맞추고 없으면 MissingOperationCost다.
+고정 prefix는 evidencestore.Lister/S3 ListObjectsV2 pagination, 불변 객체 identity당1회 cache, 사라진 identity는 제거; PMTC는 UID+result identity. 실패 기록은 CostIssue{Source,Code,Reason}(CostEvidenceInvalid/MeterUndeclared), 나머지 사용. non-Accepted/non-Complete는 issue 없이 skip, listing 실패는 이전 구성 유지, refresh 재사용도 비용 identity 집합을 비교한다.
+
+### 완료 여유·수동 변경
+
+필수 `SchedulerSettings.CompletionMarginMS float64`/JSON completionMarginMS는 유한≥0. decode는 *float64로 생략/0을 구분하여 생략을 `completionMarginMS required`로 거절한다.
+완료 예상은 native 완료+m. replay는 CompletionOverhead 대신 설정값, firstfloor `requestSlack=RemainingSLOMS−m−serviceCost`, lifetime에도 m을 한 번 뺀다. senderElapsed는 원래 transport lifetime에서 별도로 뺀다. 관측/calibration Pending을 요구하지 않는다.
+`ObservationCohort.completionResidualNanos=종단 ElapsedNanos−전달시점 elapsed−NativeElapsedMS`를 완료 표본에서 수집하고 Dashboard는 설정 m과 분포를 함께 표시한다. MNV29ms는 p95 관측값; D2 뒤 Workload별 최종 SLO percentile residual 추정의 최댓값을 단일 m으로 고른다. relaxed 측정 SLO를 자동 채택하지 않는다.
+수동 변경은 꺼진 Workload 하나: staticRouting은 꺼진 UID만 부분 map, 생략은 현 route 유지, 켜진 UID 거절, target 제외는 그 binding만 해제한다. execute-config manifest는 workloadUID 하나, prepare owner는 그 UID, remove는 유일 owner+binding일 때만 허용한다. 공유 사용은 route/binding만 해제하며 action 조건/staticRouting ACK를 확인한다. 후속 현재 작업 API는 [scheduler API](scheduler-api.md)를 따른다.
+
+### 외부 Pod
+
+NodeActuator는 외부 Pod 운영을 소유하지 않는다. 측정 전력은 노드 전체, scheduler는 예산/사유를 기록한다. label `edge.dacs.io/workload-role`: serving-instance(Serving), transition-observer(transition attempt), system(operator의 store/bootstrap/agent/profiler/discovery 및 chart operator/entrypoint/console/dashboard/predelete, runtime-declarations probe). selector는 바꾸지 않는다.
+profiling observer도 label을 보존하며 profiling/전환/operation은 구조화한 workloadobserver.Pod 목록을 기록한다. Dashboard는 역할 label 없는 Pod를 비CHILL로 표시한다(`SCH-34`,`DB-FR-34`).
 
 ## 4. 스케줄러 판단
 
-### 4.1 입력
+snapshot은 전체 POOL/꺼진 인스턴스까지 포함하고 option은 최신 profile×켜진 Workload다.
 
-snapshot의 노드는 3.4절의 전체 POOL이고 측정 POOL 노드(3.3절)는 고정 노드다. option은 3.5절의 최신 profile과 그 profile에
-맞는 켜진 Workload의 조합이다. 인스턴스는 꺼진 Workload의 것을 포함해 모두 넣는다.
+| SchedulerDecision.Workloads[] 상태(UID,State,Reason) | 처리 |
+|---|---|
+| Disabled | 마지막 구성 유지; owner/binding 인스턴스 Node는 keep뿐 |
+| MeasurementEvidenceMissing | 켜졌으나 option 없음, 해당 Workload만 계획 제외 |
+| Controlled | 켜졌고 option 있음, 계획/SLO 판정 대상 |
 
-### 4.2 Workload 판단 상태
-
-판단마다 Workload별 상태를 `SchedulerDecision.Workloads []SchedulerWorkloadState{UID, State, Reason}`로 기록한다.
-
-| State | 조건 | 판단 |
-|---|---|---|
-| `Disabled` | 자동제어 꺼짐 | 마지막 구성 유지, 인스턴스가 있는 노드는 keep뿐(4.4절) |
-| `MeasurementEvidenceMissing` | 켜졌고 option 없음 | 계획에서 빠지고 다른 Workload의 판단은 계속 |
-| `Controlled` | 켜졌고 option 있음 | 노드 계획과 판정 대상 |
-
-### 4.3 노드 계획 규칙
-
-노드 계획과 판정은 [용량표 계획기 4장](analytic-planner.md#4-노드-계획과-탐색)과 [14장](analytic-planner.md#14-구현-규칙)이
-원본이다. Workload별 규칙은 다음과 같다.
-
-- 계획은 `Controlled` Workload의 인스턴스와 분배만 바꾼다. 꺼진 Workload의 분배는 현재 값을 그대로 둔다.
-- 꺼진 Workload가 owner이거나 꺼진 Workload를 맡은 인스턴스, strict fixed-size baseline 인스턴스가 있는 노드는
-  keep뿐이다(`FixedWorkload`).
-- 노드마다 서빙 인스턴스는 하나다. 같은 ModelSpec을 참조하는 Workload들에도 같다.
-- `Controls.Membership`이 꺼져 있으면 `Controlled` Workload의 option은 그 Workload의 인스턴스가 있는 노드에 한정한다.
-- `Controlled` Workload는 부하가 0이어도 인스턴스가 하나 이상 있어야 최종 충족이다.
-- 3.2절의 연결 없는 인스턴스 정리를 포함한다. 가용 노드를 내리는 동작은 모든 계획의 DAG에 공통 `Fixed` 동작으로
-  들어간다(3.4절).
-- 활성 POOL 사이의 직접 이동은 같은 노드의 remove와 prepare를 한 DAG로 만든다. 노드 단위 순서(`schedulerPlan`)는
-  membership 동작 없이 유지하고, 비용은 각 동작 비용의 합이다.
-- 첫 구성은 현재 인스턴스가 0인 `Controlled` Workload에 대해 option의 배치를 그대로 만든다. 설정 gate에 따라
-  placement, resources, batching, membership control이 켜져 있어야 한다.
-- 수요 λ는 기존 장기 관측과 최근 한 제어 주기의 계산 도착률 중 큰 값에 기존 미완료 기여를 한 번 더한다.
-  두 구간은 실제 관측 범위로 한정하고 용량, 지연, 분배와 요청 에너지가 같은 λ를 쓴다.
-  최근 관측률이 더 큰 Workload는 이미 서빙하는 인스턴스의 제거, 교체와 분배 0을 보호한다.
-  해당 Workload의 확장과 다른 Workload의 변경은 계속하며 진행 중 목표의 유지 규칙을 따른다.
-  두 구간과 관측값, 최종 λ는 [용량표 계획기의 판단 기록](analytic-planner.md#4-노드-계획과-탐색)에서 확인한다.
-
-### 4.4 SLO 판정 대상과 에너지
-
-판정 대상은 `Controlled` Workload 전체다. `Disabled` Workload의 인스턴스가 있는 노드는 keep뿐이므로 계획 동작은 그 노드의
-전력모드와 인스턴스를 바꾸지 않고, 꺼진 Workload의 SLO는 계획의 영향을 받지 않는다. 에너지는 3.4절의 비교 집합 노드를 합한다.
-
-### 4.5 적용과 기록
-
-`Target`이 있으면 적용한다. 결정 기록은
-keep, target, `decision.capacity`와 snapshot을 담고 option은 완료된 측정 수만큼 늘어난다. 저장 기록의 `SchedulerInstance`는 profile 본문 대신
-`profileID`만 담고, profile 본문은 catalog(`GET /api/v1/scheduler/profiles`)에서 조회한다. HTTP 조회의 기존 압축
-(`internal/serving/httpapi/scheduler_presentation.go:17-73`)은 조회 경계에 그대로 둔다. 이 변경은 결정 기록 축소 M0
-([05](../architecture-rethink/05-recommendation-migration.md))의 일부이며, M0의 나머지(snapshot 축소)는
-[판단 기록 다이어트](decision-record-diet.md)가 정한다.
+노드 계획 원본은 [용량표 계획기](analytic-planner.md)다. Controlled만 인스턴스/분배를 바꾸고 Disabled owner/binding 또는 strict fixed-size baseline Node는 `FixedWorkload` keep뿐이다. 노드당 serving1, membership off는 기존 해당 Workload Node만 option이다.
+Controlled는 부하0에도 인스턴스≥1이 최종 충족이며 무연결 인스턴스 정리/공통 Fixed절전을 포함한다. 활성 POOL 직접 이동은 같은 Node remove+prepare DAG/비용합, membership 동작 없음. 첫 구성(인스턴스0)은 option 배치를 쓰며 placement/resources/batching/membership control gate가 켜져야 한다.
+수요 λ는 max(장기관측률,최근1제어주기 계산도착률)+기존 미완료 기여1회. 실제 관측 범위만 쓰고 용량/지연/route/요청 에너지에 같은 λ를 사용한다. 최근률이 큰 Workload는 기존 인스턴스 제거/교체/route0 보호, 확장·다른 변경은 계속한다. 두 구간/관측/최종λ·진행 target 유지 규칙은 planner 기록에 남긴다.
+SLO 판정 대상은 Controlled 전체. Disabled Node는 전력/인스턴스도 불변, 에너지는 비교 Node 집합 합이다. Target이 있으면 적용, 기록은 keep/target/decision.capacity/snapshot. 저장 SchedulerInstance는 profileID만, 본문은 catalog GET에서 제공한다. HTTP 압축은 조회 경계 유지; 결정 축소 M0는 [아키텍처 검토](../architecture-rethink/README.md)·[기록 다이어트](decision-record-diet.md)를 따른다.
 
 ## 5. API와 Dashboard
 
-| 표면 | 계약 | 요구사항 |
-|---|---|---|
-| `GET /api/v1/pools`(`handler.go:95`) | `workloads[]{workload, nodes, instances}`, `measurement[]{node, instances}`, `available[]{node, ready, powerMode, reasons}`, 전체 POOL의 나머지 노드와 사유. 활성 POOL은 runtime 인스턴스, 측정 POOL은 `chill.dacs.io/measurement` taint, 가용 노드는 최신 snapshot에서 만든다. `GET /api/v1/pools/{id}`(`:96`)와 `Runtime.Pools`(`runtime.go:859-919`), `PoolState`(`types.go:217-223`)는 이 형태로 바꾼다 | `DB-FR-10`, `WM-25` |
-| `GET /api/v1/scheduler/state` | `decision.workloads`, 노드 사유, `CostIssue`, 비교 집합 | `DB-FR-33`, `SCH-08` |
-| `PUT /api/v1/scheduler/settings` | `autonomousWorkloads`, `completionMarginMS` | `DB-FR-33`, `SCH-32` |
-| `GET /api/v1/scheduler/profiles` | 도출된 profile과 `CatalogIssue` 조회 | `SCH-08`, `SCH-09` |
-
-Dashboard:
-
-- `chill-dashboard/features/resources.tsx:54-79`, `service-hub.tsx:34`: Workload별 활성 POOL, 측정 POOL, 가용 노드와
-  여러 활성 POOL이 함께 쓰는 노드, 노드 사유.
-- `features/management.tsx:440` Workload 상세: 자동제어 스위치, 판단 상태와 사유, 꺼진 Workload의 마지막 구성 유지와
-  수동 변경 결과, 완료 여유 검증 분포.
-- 설정 화면은 `autonomousWorkloads`와 `completionMarginMS`, 제어요소 설정을 편집한다.
-- 측정 화면은 CHILL이 배치하지 않은 Pod 목록, 측정 POOL 소속과 거절 사유를 표시한다.
-- profile 화면은 도출된 측정 근거와 문제 사유를 조회한다.
-
-## 6. 측정과 증거 책임
-
-대량 측정은 대표 한 건에서 조건 생성, 실행, raw, projection, 계획기 선택과 실물 반환을 확인한 뒤 진행한다.
-profile, runtime 또는 측정 계약을 바꾸는 변경에는 영향받는 d, 비용, loaded/unloaded baseline과
-전력 전환 비용 목록을 함께 작성한다. 운영 묶음 완료와 E5 입력 충족은 각 분모로 보고한다.
-
-조건 생성은 실측 profile/SLO와 승인 계수에서 출발한다.
-N/K/L과 준비/본창/drain/수집 예산, 사용한 계수와 exact profile ID를 Run에 동결한다.
-generator가 계산을 맡고 M5에서 측정 controller로 옮긴다.
-물리 d, signed raw와 max0 정책, 비용 `E±B`와 `B=S+G`, 보고용 10%는
-[측정 API](measurement-api.md)의 계약을 따른다.
-minimumGain은 실제 선택 근거의 B만 signed 상쇄해 전파하며 profile/BEO idle의 통계 CI는 포함하지 않는다.
-
-증거는 조건 생성기, 승인 원문, manifest, profile/runtime/NodeUID/source SHA와 원시 위치를 선별한다.
-`.token`, Secret 스냅샷과 전체 캐시 백업은 저장소와 증거 인덱스에서 제외한다.
-재현 링크는 [handoff](../../handoff.md)의 선별 근거 표와 연결한다.
-
-## 7. 저장 계약
-
-저장 reader는 [ADR 0019](../../adr/0019-durable-stored-contract-compatibility.md)의 단일 계약을 사용한다.
-설정, 관측, operation과 전환 비용의 producer/consumer를 같은 작업 단위에서 맞춘다.
-미기록 B는 unknown으로 표시한다. Timing이 없는 기록에 B=0 근사를 부여하지 않는다.
-원 raw와 값, 판정은 외부 과학 증거에 보존한다.
-
-G2의 [실제 소비자 목록](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/g2-current-consumer-inventory.json)은
-catalog legacy 49개(비용 35, baseline 14)와 E5 노드의 ranking baseline 9개를 확인했다.
-동결된 E5 후보 에너지 입력은 legacy 0개이며 전체 저장 prefix 정리는 별도다.
-ranking9의 불확실성 unknown과 fresh10 입구 조건은 유지한다.
-G2의 ranking9 재측정은 2 roots, 18 steps로 승인됐으며 실제 최저선정의 조건부 직접 전환을 포함한 상한은 4 roots, 22 steps다.
-각 root의 raw, 계획기 소비와 정상 반환을 확인한 뒤 다음 root로 진행한다.
-9개 대체 확인과 검증된 외부 백업의 실제 절대경로 및 개수 대조 보고 뒤 raw 80개 키와 terminal OCM 6개를 정리한다.
-old ranking9는 80개에 포함되며 같은 승인 조건의 대체와 옛 기록 정리는 연속 실행한다.
-strict reader의 로컬 소스 cutover는 수집과 병렬로 완결한다. 새 소스의 검증과 적용은 대체 확인, 검증 백업과 정리 및 Timing 없는 소비 기록 0건 뒤에 진행하고 첫 BEFORE 전에 공통 입력을 동결한다.
-삭제와 reader 제거 완료, 원 raw/status 보존은 [측정 API 저장 계약](measurement-api.md#7-저장-계약-adr-0019)의 실제 근거로 기록한다.
-
-## 8. 최소 D2 범위
-
-| 항목 | 계약과 경계 |
+| 표면 | 계약 |
 |---|---|
-| gateway tail | 관측된 offending holder/work 경계를 보수하며 durability, physical ownership과 HTTP 성공 경계를 보존한다 |
-| G/CPU/κ/Tick | 통합의 cache/transport/payload/search 경로를 실제 병목 증거에 필요한 범위에서 보수하고 BEFORE/AFTER를 보존한다 |
-| lifetime/socket | E5 caller가 SLO, 실제 gateway cap, L, delivery와 socket을 명시한다. L≥SLO, cap≥L, socket>L+delivery와 native 남은 수명을 일치시킨다 |
-| 조건 설정 | warmup 60 s, 본창 360 s, cap 3600 s의 승인값을 한 설정 원천에서 읽고 Run에 동결한다. 실측 preparation 예산을 별도로 두고 generator/API/admission/controller가 같은 입력을 소비한다 |
-| minimumGain | pre-D2 B-only를 적용하며 nominal 평균, 선택 근거 상쇄, 사슬 합성과 keep infeasible 회복을 유지한다 |
-| admission | 요청 수명은 실제 `HandlerConfig.RequestTimeout` 상한과 대조해 초과 CR을 시작 전에 거절한다 |
-| source 검증 | original architecture 경계를 보수하고 production mapping과 negative fixture를 보존한다. repo-local kind의 SCH-AC24/25/26은 조율된 검증 범위다 |
-| 저장 비용 | G2 실제 소비 legacy 목록과 단일 계약 정리는 7절을 따른다 |
+| GET /api/v1/pools[/{id}] | workloads[]{workload,nodes,instances}, measurement[]{node,instances}, available[]{node,ready,powerMode,reasons}, 나머지 전체 Node/사유. 활성은 runtime, 측정은 taint, 가용은 최신 snapshot |
+| GET /api/v1/scheduler/state | decision.workloads/Node 사유/CostIssue/비교 집합 |
+| PUT /api/v1/scheduler/settings | autonomousWorkloads/completionMarginMS/제어요소 |
+| GET /api/v1/scheduler/profiles | 도출 profile/CatalogIssue, 읽기 전용 |
 
-Runtime은 물리 인스턴스의 capacity를 예약한 뒤 소유권 잠금 밖에서 assignment를 저장하고 native 실행을 시작한다.
-final row도 같은 호출자의 잠금 밖에서 저장하며 shutdown은 진행 중인 final 저장의 종료를 기다린다.
-요청 행의 메모리 fold는 디스크 writer 잠금과 분리한다. 완전한 행의 rollback과 저장 실패의 fail-closed 처리를 유지한다.
-동일한 불변 profile pointer의 시간별 catalog 직렬화 생략을 재사용한다.
+Dashboard는 Workload 활성 POOL/측정/가용·공유 표시·노드 사유, Workload 상세 자동제어/판단/Disabled 유지·수동 결과/residual 분포, 설정 편집, 측정의 외부 Pod/소속·거절 사유, profile evidence/문제를 제공한다(`DB-FR-10`,`33`,`34`).
 
-runtime 7종, 기존 자원과 evidence store를 유지한다.
-알려진 원인의 수리를 완료한 뒤 fresh D2 실행 승인을 한 번 받고 최종 D2 rollout을 최대 1회 수행한다.
-같은 부하의 AFTER tail/G가 PLC SLO를 충족하면 진단은 0회다.
-잔여 tail이 PLC SLO를 막을 때만 준비된 유한 진단 제어 rollout을 최대 1회 사용한다.
-진단은 같은 PRIMARY native8과 실제 조건의 420 s 창, 유한 ring/trace 예산과 drop 수를 보존하며 근거 부족은 inconclusive로 남긴다.
+## 6. 측정·저장 책임과 D2 경계
 
-진단은 제어 프로세스의 `--diagnostic-directory`에 새 절대 경로를 명시해 한 번 활성화한다.
-Helm은 `servingEntrypoint.diagnostic.directory/startDelay/traceOffset`을 같은 세 flag에 연결한다.
-기존 `/data` writable mount를 재사용하며 기본 directory는 빈 값이다.
-빈 값은 비활성 경로이며 요청별 clock, ID 변환과 버퍼 할당을 수행하지 않는다.
-`--diagnostic-start-delay`는 listener bind부터 420 s numeric 창까지의 지연이고,
-`--diagnostic-trace-offset`은 그 창 안의 Go trace 시작 위치(0부터390 s)다.
-실행 manifest는 실제 mounted private 디렉터리, listener/readiness와 부하 경계, 두 offset을 연결한다.
-numeric ring은16 MiB/64-byte 고정 이벤트, Go trace 저장 버퍼는32 MiB/30 s다.
-native 반환, mutex의 attempt/acquire/release와 owner/request, reply/Wait/Write/Flush/Response 및
-관측 marshal/write/Sync/query/archive 경계를 실제 잠금 범위에서 기록한다.
-두 캡처가 끝난 뒤 잠금 밖에서0700 디렉터리의0600 `events.bin`, `runtime.trace`, `metadata.json`을 저장하고 버퍼를 해제한다.
-metadata는 overwrite/drop, 원래 offset 범위, trace cap/중단/절단과 실제 파일 오류를 보존한다.
-창 경계와 유실로 연결되지 않은 edge는 inconclusive이며 trace 관측 오버헤드를 원인이나 수정 효과로 단정하지 않는다.
-Go runtime 자체의 trace 버퍼와 캡처 오버헤드는 위 저장 버퍼 예산과 별도로 보고한다.
-source 변경의 검증, kind, build와 offline κ는 측정/load와 겹치지 않게 조율한다.
-통합 source, 검증된 source와 live 배포는 각 실제 SHA와 결과로 구분한다.
-
-CRD 통합, NodeActuation 정리, 일반 이미지 분리, 추가 planner/판정 변경,
-정합 통계 CI와 known bias/d 추정정책 대안, 지속 tracing과 관련 없는 cleanup은 M5 범위다.
-승인된 단계 사이에는 재승인 대기를 두지 않으며 실제 새 조건, 판정과 범위 변경만 승인받는다.
-
+대량 측정은 대표1건의 조건 생성→실행→raw/projection→planner 소비→실물 반환을 확인한 뒤 진행한다. 실측 profile/SLO/승인 계수로 N/K/L·준비/본창/drain/수집 예산·계수·exact profileID를 Run에 동결하며 generator 계산은 M5 controller 이관 대상이다.
+물리 d/signed raw/max0, 비용 E±B/B=S+G/보고용10%는 [측정 API](measurement-api.md) 원본. minimumGain은 선택 근거 B만 signed 상쇄·사슬합성하고 BEO/profile idle 통계 CI는 포함하지 않는다. 미기록 B/Timing 부재는 unknown이지0이 아니다. nominal 평균·keep infeasible 회복은 유지한다.
+조건 생성기·승인 원문·manifest·profile/runtime/NodeUID/source SHA·raw 위치만 선별하여 [handoff](../../handoff.md)에 연결한다. token/Secret snapshot/전체 cache backup은 제외한다. 원 raw/값/판정은 외부 과학 증거에 보존한다.
+G2 [소비자 감사](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/g2-current-consumer-inventory.json): catalog legacy49(비용35/baseline14), E5 ranking9, frozen E5 후보 energy legacy0(전체 prefix 정리와 별개). ranking9 unknown/fresh10 입구를 유지한다.
+ranking9 재측정 승인2roots/18steps, actual lowest 조건부 직접전환 포함 상한4roots/22steps. root마다 raw/소비/반환 후 다음 root. 대체9 확인+검증 외부 backup 절대경로/개수 대조 뒤 raw80keys(old9 포함)/terminal OCM6 정리를 연속 실행한다. strict reader 로컬 cutover는 병렬 완결, 새 source 적용은 대체/backup/정리/Timing 없는 소비0 뒤이며 첫 BEFORE 전 공통 입력 동결. 완료 근거는 [측정 API 저장 계약](measurement-api.md)에 둔다.
+D2는 관측된 gateway tail holder/work, cache/transport/payload/search 병목만 보수하며 durability/physical ownership/HTTP 성공·원 architecture 경계를 유지한다. production mapping/negative fixture, kind SCH-AC24/25/26 범위를 조율한다. runtime7/자원/evidence store 고정, 일반 이미지 분리/CRD통합/NodeActuation정리/추가planner·CI·known bias/d 대안/상시trace/무관cleanup은 M5다.
+요청 lifetime는 실제 HandlerConfig 상한과 admission 시작 전에 대조한다. E5 caller는 SLO/cap/L/delivery/socket 명시, `L≥SLO,cap≥L,socket>L+delivery`, native 남은 수명을 일치시킨다. warmup60s/본창360s/cap3600s 승인값은 한 원천에서 generator/API/admission/controller/Run이 소비하고 실측 preparation 예산을 별도로 둔다.
+Runtime은 physical capacity 예약 후 소유권 잠금 밖 assignment 저장/native 시작, final row도 호출자 잠금 밖 저장, shutdown은 final 종료를 기다린다. 메모리 fold/디스크 writer 잠금 분리, 완전 행 rollback/저장실패 fail-closed, 동일 불변 profile pointer 시간별 catalog 직렬화 생략을 유지한다.
+알려진 수리 뒤 fresh D2 승인1회/최종 rollout≤1회, 동일 AFTER tail/G가 PLC SLO를 만족하면 진단0회, 잔여 tail이 막을 때만 진단 rollout≤1회다. 승인 단계 사이 재승인 대기 없이 새 조건/판정/범위만 승인받는다.
+진단은 실제 PRIMARY native8의420s창: `--diagnostic-directory` 새 절대 private 경로, Helm diagnostic.directory/startDelay/traceOffset→동일 flags, 기존 /data mount. 빈 경로 비활성은 요청별 clock/ID변환/할당0. start-delay는 bind→numeric창, trace-offset은0..390s다.
+numeric ring16MiB/64byte event, Go trace 저장32MiB/30s. native반환·mutex attempt/acquire/release/owner/request·reply/Wait/Write/Flush/Response·관측 marshal/write/Sync/query/archive 실제 잠금 범위를 기록한다. 종료 후 잠금 밖0700 dir/0600 events.bin/runtime.trace/metadata.json 저장·버퍼해제. overwrite/drop·offset·cap/중단/절단/오류와 실제 mount/readiness/load경계를 보존하며 끊긴 edge는 inconclusive, trace overhead와 runtime 자체 buffer는 별도 보고한다. source 검증/kind/build/offlineκ는 load와 겹치지 않고 source/검증/live SHA를 구분한다.
 
 ## 9. 검증 계획
 
-### 9.1 단위와 계약 검사
-
-| 대상 | 검사 |
-|---|---|
-| firstfloor | 원래 lifetime에서 senderElapsed를 차감하고 slack과 native remaining에서 완료 여유 m을 한 번 차감한다 |
-| replay | 완료 시각이 native 완료 + 여유, 관측 여부와 무관하게 Pending 사유 없음 |
-| 소속 도출 | owner, binding, 둘 다 없는 인스턴스의 노드 분류, 같은 노드의 두 Workload 활성 POOL |
-| 전체 POOL | inventory 없는 노드와 전력모드 수단 없는 노드가 사유와 함께 남음, 비교 집합이 상태가 바뀌는 노드만 담고 모든 후보에 같음, 비교 집합 밖 노드의 baseline이 없어도 판단이 진행됨, 비교 집합 노드의 baseline이 없으면 그 후보만 평가 불가 |
-| 후보 | 꺼진 Workload 인스턴스 고정, 최소 인스턴스, 노드마다 서빙 인스턴스 하나, 직접 이동 DAG, 모든 후보가 가용 노드를 가장 낮은 모드에서 출발한 공통 상태로 계산하고 `Fixed` 내림이 그 노드의 다른 동작보다 앞서며 공통 항으로 비교에서 빠짐, target이 없을 때 유지 후보의 `Fixed` 동작만 실행, 다시 넣는 후보의 power 비용이 빈 노드 전환 비용으로 계산되고 그 비용이 없으면 `MissingOperationCost`, 판정 대상 집합 |
-| 도출 profile과 비용 | 같은 조건의 최신 성공 선택, 한 profile이나 비용 기록의 실패가 나머지를 막지 않음, 고정 prefix 나열과 identity별 한 번 읽기, `Accepted`만 받음, 현재 `meters`와 다른 meter의 operation 기록과 meter 없는 전환 비용의 `MeterUndeclared`, operation 비용은 노드 전력모드까지 같은 조건에서 최신, 전환 비용은 적재 상태가 다른 측정을 섞지 않고 trial 완료 시각으로 최신, planner가 같은 열쇠로 고름, 나열 실패 때 이전 구성 유지 |
-| 수동 변경 | 부분 `staticRouting`, 켜진 Workload 항목 거절, 다른 Workload 인스턴스의 remove 거절 |
-| 측정 POOL | taint 노드가 배치, 전력 변경, `Fixed` 내림, 제거 대상에서 빠지고 pools API에 측정 POOL로 보임, 판단 뒤 taint가 붙은 노드에서 Workload prepare와 `ChangePower`가 `NodeInMeasurement`로 실패, 그 노드의 측정 인스턴스가 정리되지 않음, profiling과 transition attempt Job에 toleration, `serving-operation` 측정이 taint 없는 노드를 거절 |
-| Pod 기록 | `edge.dacs.io/workload-role` 유무로 분류, 표의 생성 경로마다 label, transition-cost와 operation 측정의 구조화한 `Pods` |
-| NodeActuator | 외부 Pod가 있어도 Ready까지 진행 |
-| 외부 Pod와 스케줄러 | 외부 GPU Pod나 예약을 넘는 외부 CPU 요청이 있는 노드가 Ready로 남아 `PlacementBudgetUnavailable` 사유와 함께 가장 낮은 모드로 내려가고 에너지에 들어감 |
-| 설정 | `completionMarginMS`가 없는 설정과 settings PUT 거절, 0은 받음 |
+계약 검사는 원래 lifetime−senderElapsed−m1회, native완료+m replay, owner/binding/unowned 소속, 전체 Node/사유·비교집합 공통항, Disabled고정/최소1/Node당1/직접이동, Fixed최저선행·빈재진입비용, 조건별 최신/부분실패/나열실패 유지, 수동route 보호, taint격리·직전거절·toleration/측정runner보호, 역할Pod·외부예산/NodeReady, m누락거부/0수락을 다룬다. 실행 완료/PASS 주장이 아니다.
+E1은 최초 구성/무부하/부하/완료여유(`SCH-AC-24`), E2는 Disabled/근거없음/Controlled 공존(`SCH-AC-25`), E3은 측정격리/Pod/evidence/자연반환(`SCH-AC-26`), E4는 직접이동 DAG/비용/소속(`SCH-AC-22`), E5는 혼합 SLO/비교·전체에너지/residual을 확인한다. live는 [AGENTS](../../../AGENTS.md)의 승인 조건, window/결정/측정 상태/메모리/PVC를 보존한다.
 
 ### 9.2 실클러스터 E2E
 
-[AGENTS.md](../../../AGENTS.md)에 따라 live 변경은 승인 범위와 실제 실행 조건에 맞춰 수행한다.
-각 실행은 관측 window, 결정 기록과 측정 객체 상태, ChillServer 메모리와 관측 PVC 사용량을 보존한다.
+정량 결과의 권위는 [명세 평가 표](../../spec/README.md#실클러스터-검증과-평가)와 [평가 보고서](../../reports/e5-evaluation-20261030.md), 원시 정본이다. 반복된 거대3회차 표 대신 아래 조건/결론/출처를 유지한다. 제어요소12행/rev102 식별력 한계는 [명세 비교](../../spec/README.md#제어요소-비교), 7행 커버리지는 [E5 평가 보고서](../../reports/e5-evaluation-20261030.md)가 원본이다.
 
-| # | 시나리오 | 확인할 결과 |
+#### E5 입력·입구
+
+초기 후보8 Node=genesis2/genesis3/lattepanda/rasp5/orangepi/jetsono/jetsonx/jetson-nano, 제외genesis1(게이트웨이)/orin-nano(DNS 해결 전). 실제 평가는 genesis2 Xid79 제외7 Node다. 노드당1 serving, canonical Workload3은 인스턴스0에서 시작하며 측정용 정리·실제 UID·m을 확인한다.
+MNV=image-classification-tight-slo p95≤1s, PLC=plc-anomaly/Dataset plc-extruder-01-windows, Smol=smolvlm2-vqa/vqav2-val-subset. PLC/Smol 목표는 D2후 d/m/dump의 fastest b1/가장 넓은 지연간격으로 제안, κ>0 Node≥절반/가장느린2 κ0를 p95/p99/계산시간으로 확인 후 동결한다. 실제 평가 SLO는 p95≤1000/36/7034ms(MNV/PLC/Smol)였다.
+`R_w=최종SLO의 Node별최대κ 합`(hack/kappa -mode slo), 단1인스턴스여서 고립 R을 동시 달성 못한다. `rate_w=α_w×s_w×R_w`, 기본 shares MNV0.45/PLC0.1/Smol0.45, 각유한[0,1]/합1(오차≤1e-9), α∈{0.3,0.5,0.7,0.9,1.2}. 혼합 feasible 보장 아님. `1.2Σ(sR)≤0.8G` 검증, G/출처/R/s/α/rate/trace binding 동결, G미정은 경고이지 개시통과 아님/자동clip없음.
+Poisson replay 동시3개, seeds101/202/303/arrival trace/payload ID/profiling·evaluation subset을 사전 고정/paired 재사용한다. 모든 caller는 실제 UID/generation/SLO/cap과 --workload-slo/--gateway-timeout/--request-lifetime/--delivery-margin/--timeout을 명시한다. MNV 예 SLO1/cap129/L2/delivery0.010/socket2.02s; PLC/Smol은 실측으로 고정한다.
+G-check는 고정배치 α1.2 총혼합120s 단1회, 계단/최대G탐색/retry없음. PLC p95≤32ms·전체offered deadline32ms성공≥95%, frozen trace 공급, gateway거절/503/timeout/incomplete0, CS throttle/restart/OOM0, 누락없는 CPU/메모리10s표본·frozen limit미만 모두 필요하다. 실패는 원사유, native/client한계 구분; 통과가 최대G/20%여유 자동인증은 아니며 위부등식 별도다.
+원래 L/senderElapsed를 전달해 `native remaining=L−senderElapsed−m`, SLO/L 분리·m1회. signed d/max(d,0) 둘 다 보존한다. D04/D09/D14/D23/D33의 profile포함95%구간<0은 known systematic profile-vs-serving bias, 원인별 기여 미확정/Accepted와 max0 유지, 보정/d 대안은 M5다([수치](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/smol-systematic-bias-20261024.json), [관측/가설](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/smol-systematic-bias-20261024.txt)).
+입력 보수 rev72/e18ac=exact profile13 prepare/remove26steps+empty10창+native up2=8roots/38steps, fresh empty는 기준8+Jetsono/Jetsonx lowest2. sampling1s/request timeout800ms/max raw gap3s/watchdog2250s/empty300s. loaded idle13/전체19mode 확장은 범위 밖이다.
+legacy ranking9=Jetsono MODE_30W/MODE_50W, Jetsonx MODE_10W_4CORE/MODE_10W_DESKTOP/MODE_15W_2CORE/MODE_15W_4CORE/MODE_20W_2CORE/MODE_20W_4CORE/MODE_20W_6CORE. ranking 참여/uncertainty unknown을 유지하고 실제 lowest/소비empty가 fresh10인지 확인한다. 밖의 소비/예상밖 handback은 입구 중지, ranking filter/자동추가측정/수동mode강제 없음. loaded/profile idle actual ref/시점 별도다.
+입구는 exact profileID/NodeUID/mode/runtime/allocation의 prepare/remove/power, Smol9+D2뒤 CPU8/GPU5/PLC12 d, fresh10/legacy9 한계, 최종SLO/m/L/socket/cap, G/κ/R의 초기·확장·축소·swap witness, terminal/actual execution·action·handback0/readback(원017 비실행 예외)을 확인한다. 대체Accepted 전 legacy CPU8/GPU2는 소비 유지하되 미재인증이다.
+각 witness `B_w=q+max(0,λ−κ_ret)r`, `W_w=B_w/κ_new≤SLO−m`, keep/best nominalJ/signed상쇄B 공개. 둘 다 feasible이면 gain>문턱 전환/동률keep, keep infeasible 회복 유지. 자연swap 없으면 차단부등식, 정량SLO/m/G/κ/R/N·최종controls는 실측 고정이다.
+
+#### D2 실행·관측 경계
+
+rev72 보수/catalog동결→MNV 자율 BEFORE logical initial8/seed1/λ=min(50,0.3Σκ)/660s(준비60+관측600)·복구→exact8 profile/mode/runtime/batch/allocation PRIMARY native8→old loadgen tightMNV seed1 Poisson workers320/L2/delivery0.010/socket2.02,0부터50req/s씩300s(첫60제외), 마지막min(next50,Σκ)→throttle/incomplete/κ도달중지 순서다.
+producer/HTTP/native outstanding/pending/measurement/action/handback0 뒤 frozen Ready IDLE native8만 rollout예외로 보존한다. 수리/새승인 후 D2, startup re-adoption/routeACK·PodUID/containerID/profile/mode/allocation/route동일 확인 후 paired AFTER. physical unknown/mismatch면 paired주장 중단, 과거all-instances0 rollout은 보존증거아님. PRIMARY정리→같은logical8 자율AFTER·복구→d25(CPU8+GPU5+PLC12)/G/m·SLOκRN제안→E5→M5/P11 main·spec이관/main제어image(runtime7고정)/P10이다. U3 D04/D09 소비source교체/옛raw/status보존.
+sourceSHA/digest/dump/UID/자원·MNV자율Tick/no-controlTick/혼합3search를 기록한다. G는 전완료·무throttle 마지막 단계, native/client/capacity 선한계는 bound/원인. gateway CPU=(stagecores−idlecores)/rate, 지연/거절/만료/incomplete와 GatewayOverloaded rejected/error+503을 사유별 보고한다.
+CS/genesis1 edgemesh cgroup1s/restart15s/thermal5s 전후 동일, 실제 server6CPU/4GiB/GOMEMLIMIT3072MiB/gctrace1/timeout129s/drain164s/grace194s·Flush/scraper cadence를 보존한다. query는 단계경계, drain뒤 같은 archive/Prometheus, source별κ는 load없는 동일dump에서 순차다.
+
+#### E5 단계·분모
+
+| 단계 | 시간/부하 | 관측·요구사항 |
 |---|---|---|
-| E1 | mobilenet Workload를 서빙한 적 없는 가용 노드에만 측정 근거가 있는 상태에서 인스턴스 0으로 자동제어를 켬, 잠정 `completionMarginMS`. 부하 0에서 시작해 평가 부하를 보냄 | 그 노드에 인스턴스 하나를 만들고 나머지 가용 노드를 가장 낮은 모드로 둠. 부하에 따라 다시 판단(`SCH-AC-24`). `completionResidualNanos` 분포를 기록하고 그 값으로 `completionMarginMS`를 정해 설정과 sample, [설정과 관측 API](scheduler-api.md)에 반영 |
-| E2 | 꺼진 Workload(수동 인스턴스), 근거 없는 켜진 Workload, 근거 있는 켜진 Workload 공존. 켜진 Workload의 부하를 바꿔 꺼진 Workload 인스턴스가 있는 노드의 전력 변경이 유리한 상황을 만듦 | 꺼진 Workload 인스턴스가 있는 노드는 전력모드와 인스턴스가 그대로이고 결정 기록에 `FixedWorkload`로 남음, `MeasurementEvidenceMissing` 표시, 나머지 판단 계속(`SCH-AC-25`) |
-| E3 | 측정 taint 노드의 BatchEnergyOptimization, 전환 비용과 operation 측정 | 서빙 격리, CHILL 배치 여부를 포함한 Pod 목록, 측정 결과의 후보/비용 연결과 자연 반환을 확인한다(`SCH-AC-26`) |
-| E4 | 활성 POOL 사이 직접 이동이 선택되는 부하 전환 | 한 전환의 DAG와 비용, 단계별 소속(`SCH-AC-22`) |
-| E5 | mobilenet tight, PLC, SmolVLM 혼합 부하, 세 Workload 자동제어, Jetson 포함(아래 단계) | Workload별 SLO 달성, 비교 집합 에너지와 실측 전체 POOL 에너지, `completionResidualNanos`와 설정 여유 비교 |
+| E5-0 | 10분/0 | 첫 인스턴스·나머지lowest·무부하전력, SCH-AC-24 |
+| E5-1 | 30분/모두α0.3 | 일정·동시혼합/분포·결과·에너지·예측/관측, SCH-AC-23, [아키텍처 검토](../architecture-rethink/README.md) |
+| E5-2 | 15분/Smol0.3→0.9,나머지0.3 | burst·소유권재배치·모든SLO/Jetson지연, SCH-AC-21 |
+| E5-3 | 30분/0.5,0.7,0.9 각10분 | 증가·확장·κ_new/B/W/큐, SCH-AC-15 |
+| E5-4 | 15분/1.2 | overload/최대초과량·결과/구성, SCH-AC-16 |
+| E5-5 | 20분/0.3→0.9 각10분 | 급감/재급증·축소/idle/전환J·U2 KEEP/readback, SCH-AC-15 |
+| E5-6 | 60분/0.3 | soak·예측/비교집합/전체에너지·residual |
+| E5-7 | 15분/0.3 | 180s Pod삭제/360s cordon+삭제/600s uncordon, SCH-AC-45 |
+| E5-S | 170분/E5-1..6 동일seed/rate | E5-3끝α0.9의 실제구성/mode/route 고정 비교, SCH-AC-20 |
 
-빠른 수요와 빈 노드 공통 절전의 영향 측정은 E1의 첫 유입, E4의 이동,
-E5-0부터 E5-7 및 E5-S의 구간별 두 관측률, 최종 λ, 보호 용량, 실제 분배 시각과 전력 사슬을 연결한다.
-모든 유효 offered 결과와 전환 포함 전체 POOL 에너지를 유지한다.
-runtime 7종 digest, profile, 측정 입력과 판정 기준은 고정한다.
+full195+static170=365분, 최초 N2(membership-off/replicas-off) E5-2/5 비교70분 포함435분, reset/settling/warmup/drain/flush/추가seed 별도. 실제 control-216 집합12행은 명세를 따른다(최초N2와 구분).
+E5-S는 state snapshot의3UID를 autonomous에서 제거+staticRouting/reason 한 PUT, validatedAt=ConfigMap staticRoutingValidatedAt=operation.settingsValidatedAt을 기록한다. E5-1..6 후3UID복원+staticRouting:{}+reason PUT, 선언삭제는 동작 생성 없이 기존분배를 다음 판단이 이어받아 E5-4로 간다.
+U2 최소는 jetsono MAXN↔MODE_15W/jetsonx MODE_15W_6CORE↔MODE_15W_4CORE/jetson-nano MAXN↔5W, 세 모델CPUq1/B1. [모드 계획](../../plans/2026-10-27-power-mode-coverage.md)의 근거5종 Accepted만 후보; 부족을κ0/강제mode로 바꾸지 않고 KEEP은 차단근거이지 절감성공아님.
+E5-2는 genesis2/3 SmolCUDA OOM제외 유지, 측정 MNV/PLC CUDA 또는 Smol CPU/Jetsono SmolCUDA 비교, CPU유지·GPU승자를 성공조건으로 두지 않는다.
+모든 유효 offered가 분모, 전환/1분창 SLO·완료/실패/만료/drain/censoring/incomplete/표본수를 유지한다. 첫준비→첫routeACK와 차단명령→uncordon후 실제Ready/관측/route복구는 전체분모+별도집단/제외집계도 분모·실패와 병기, 미복구는 단계끝, 사후유리창 선택없음.
+Tick p50/p99·CS CPU/RSS/GC/PVC·edgemesh CPU/memory/throttle/restart, 검색 neighborhood/evaluated/durationNanos/budgetCut/evaluationElapsedNanos를 기록한다. 예산은 controlIntervalNanos/2(10s→5s), tick cgroup cpuacct.usage/cpu.stat nr_throttled/throttled_time차, 검색안/밖의 gateway(종단−native) p99, 1분SLO/검색유무·workers/최종G/TransitionGainWithinUncertainty keep을 연결한다. workers3/G≈220은 선행값이지 최종G아님.
+thermal5s active/latched/unknown, 사전온도bin <60/60–70/70–80/≥80°C, 미관측bin 일반화 제한. placement/resource결합·routing안전/no-op·batching고정B/deadline차·power U2만으로 독립기여를 주장하지 않는다. 사후threshold/seed/집단 선택없음. demo-config capacityR는 최종승인뒤, failure runbook은 운영자 직렬/자동실행없음, preflight는 연구장애증명아님.
 
-**E5 혼합 부하.** 측정 캠페인이 끝나고 모든 Jetson이 가장 낮은 모드로 돌아온 뒤 세 Workload를 함께 자동제어한다. 사람은 부하만 바꾸고 구성은 판단이 정한다.
+#### 결과와 한계
 
-- 노드: E5 노드 여덟(genesis2, genesis3, lattepanda, rasp5, orangepi, jetsono, jetsonx, jetson-nano)과 측정한 전력모드가 후보다. `excludedNodes`는 `genesis1`(ChillServer와 게이트웨이의 Node)과 `orin-nano`(DNS를 고칠 때까지)다. 노드마다 서빙 인스턴스는 하나다(4.3절).
-- Workload는 `image-classification-tight-slo`(p95 1 s), `plc-anomaly`(`plc-extruder-01-windows`), `smolvlm2-vqa`(VQAv2 `vqav2-val-subset`)다.
-  세 canonical Workload는 인스턴스 0에서 자동제어를 시작한다.
-  측정 전용 Workload의 비활성/정리 상태와 실제 UID를 실행 전에 확인하고 실제 완료 여유 설정값을 기록한다.
-- PLC와 SmolVLM SLO는 D2 뒤 실제 d/m과 마지막 scheduler dump로 제안한다.
-  노드별 가장 빠른 option의 b1 지연을 구하고 가장 넓은 지연 간격에서 목표를 고르는 방향을 따른다.
-  κ>0인 노드가 절반 이상이고 가장 느린 두 노드는 κ0인지 p95/p99 표와 계산시간으로 확인한다.
-  최종 percentile/SLO의 숫자는 실측 제안으로 고정한다.
-- 기준 요청률 `R_w`: 최종 Workload SLO의 Node별 최대 적격 κ 합이다(`hack/kappa -mode slo`). **Node당 서빙 인스턴스 하나**이므로 세 고립 R은 동시에 달성할 수 없다. 단계률은 **`rate_w=α_w×s_w×R_w`**, 기본 `poolShares={MNV:0.45,PLC:0.1,Smol:0.45}`이며 각 s는 유한한 [0,1], 합1(오차1e-9 이내)이다. α∈{0.3,0.5,0.7,0.9,1.2}는 POOL 사용률 단계이며 혼합 feasible 보장이 아니다. 설정 검증은 **`1.2×Σ(s_w×R_w)≤0.8×G`**이고 G 입력값·출처 및 R·s·α·최종 rate/trace를 binding에 동결한다. G 미확정이면 명시 경고이며 연구 개시 통과가 아니다. 아래 단계 표의 수치는 R 직접 배수가 아니라 α이며 burst에서는 Smol의 α만 바뀐다.
-- 부하는 `chill-loadgen replay --arrivals poisson`으로 Workload마다 동시에 보낸다.
-  seeds101/202/303 배정, 도착 trace와 payload ID는 사전에 manifest로 고정하고 비교 쌍에서 재사용한다.
-  모든 E5 호출은 실제 Workload UID/generation/SLO와 gateway cap을 캡처하고
-  `--workload-slo`, `--gateway-timeout`, `--request-lifetime`, `--delivery-margin`, `--timeout`을 명시한다.
-  L≥SLO, socket>L+delivery, cap≥L을 확인한다.
-  tight MNV 예는 `--workload-slo 1 --gateway-timeout 129 --request-lifetime 2 --delivery-margin 0.010 --timeout 2.02`다.
-  PLC/Smol 값은 D2 뒤 실측 SLO/m/G/κ/R 입력으로 고정한다.
-  `hack/e5/g-check-config.example.json`으로 고정 배치·α=1.2 총혼합 부하를120초 단1회 확인한다(계단/최대G 탐색/자동재시도 없음).
-  PLC p95≤32ms 및 전체offered 대비32ms deadline성공≥95%, 동결trace 공급, gateway거절/503/timeout/미완료0, cs throttle/restart/OOM0, 누락없는cs CPU/메모리10초표본·동결limit미만을 모두 만족하면 PASS, 아니면 FAIL과원시사유를 남긴다.
-  이 통과점은 최대G나20%여유의 자동인증이 아니다. native/client한계는 gateway실패와 구별하며 G·출처를동결해위부등식을별도검증한다. 자동clip하지 않는다.
-- 원래 L과 senderElapsed를 전달하고 `native remaining=L−senderElapsed−m`으로 계산한다.
-  SLO와 transport L을 구분하고 m은 한 번 차감한다. signed d와 계획기의 `max(d,0)`를 각각 보존한다.
-  D04/D09/D14/D23/D33의 profile 포함 95% 구간은 0 아래인 known systematic profile-versus-serving bias다.
-  E5 해석에 이 한계를 포함하며 원인별 기여는 미확정으로 둔다.
-  [정확 수치와 identity](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/smol-systematic-bias-20261024.json)와
-  [관측/가설 구분](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/smol-systematic-bias-20261024.txt)을 연결한다.
-  signed raw, 원 Accepted와 max0는 유지하고 bias 보정과 d 추정정책 대안은 M5 후보로 둔다.
+진도 d9/34·정확비용69/69·명세시나리오연결7/7은 PASS/완전커버리지 아님. 비용은 2026-10-24T12:49:27.350175648Z [69 option key join](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/cost-coverage-after-055.json)이다. E5-0..7+S 연결은1/2회차 각9/9로 별도분모, G2감사도 별도다.
+수신p95는 성공·executionComplete HTTP final 완료-only, D1은 전체planned(BackendUnavailable/오류/거절/취소/무발행/incomplete 포함) deadline성공/필요rank다. 결과수 모든종류/상위오류를 보존하며 낮은 완료p95를 D1 PASS로 바꾸지 않는다. generator는 매요청 새TLS/keepalive없음으로 입구지연/CPU에 handshake를 포함한다.
+에너지는7관측Node 합(전체구성 meter합과 구분), 동일단계 전환포함 whole/active shared값이지 Workload귀속 아님/반복행합산금지. ±는 공백보간상한, coverage는 gapΣNode/maxgap/maxNode비율, Δ=static−CHILL(양수절감). 표시는 원 tables 소수3자리 반올림/기존판정이다.
+1회차 static S5 gap1.637%>1%로 S5/E5-S총에너지/총Δ UNKNOWN. 대응 CHILL170분 whole1,100,896.456J(raw1100896.4557965863). UNKNOWN을0으로 대체하지 않는다. 2회차는 정본 수치연결, descriptive/연결은 PASS아님.
+7행연결은 일정1/6·증가3(점진감소미평가)·burst2(Smol만)·급감5·혼합1..7·한계4·실패7. 물리network/power와 모든제어실패는 미측정, 회차별 pairedseed1집합/독립반복없음. failure는 UID조건부 Pod삭제(강제/grace0아님)+cordon/uncordon 대리실험이며 완전복구보장아님. targetUID/UTC/응답/격리/대체/ReadyACK/route/실패시 uncordon readback 보존, 실제관찰 제어실패만 주장한다.
+1회차는 수정전 control-213-full,2회차는 rev104 e3f28f23(R1~R6+R4b). 결함카드는 아래 P2-synthesis.md다.2회차는 #222 full0..3/static1..2+#223 static3..6/full4..7 합성, accepted static-replay-restore/fingerprint일치·prepare physicalID재결합이며 연속단일실행아님.
+static 선택은 각회차 E5-3끝에서 독립, MNVκ119.601→91.907req/s로 달라4/5 차이를 동일배치 A/B/수정효과로 단정못한다. 수정후3끝 공급κ91.907<수요≈95.5 원인은 조사중(사이클2). static-selection/comparison 정본을 따른다.
+2회차 failure 대상은 genesis3/lattepanda→jetson-nano/orangepi(원대상 serving없음)였다. #217collector경합/#218예약잔류→R4b/#221디스크/#222로그혼입 중단은 하네스/환경으로 분리·선택결과에 합산안함/제품판정아님.
+3회차는 rev105 5f1dc4f1(R1~R6+R4b+C1+C2)의 fingerprint복원 표적재실행: #225 E5-1/7 tables-3b/comparison-225, #224 E5-5/6 tables-3/comparison-224. 나머지는 미실행/전체회차·독립반복아님. static은2회차재사용/재측정아님. #224 E5-1은하네스release훼손,7은selectorTTL stale snapshot거절로 mutation/후속주입없어 무효, #225만 사용한다.
+E5-6/7 복원은2회차 시작예약1+owner-only3을 제외하여 개선을C1에 귀속못한다. C1근거는5에서 신규예약6개 모두 행내반환·Fixedtick0(이전560), 반환은 archived tick최초소멸, full-E5-5-3/c1-reservation-return.json이다.
+#225 E5-7은 실제주입180.7/360.7/600.1s 활성Pod/exit0이나 Smol은114 RequestTimeout·D1 FAIL26/133(완료p95 1255.905ms)로 용량실패다. 주입실패와 구분하며 물리장애/완전복구를 주장하지 않는다.
+3회차 E5-1 MNV실패67(이전296), E5-5 MNV1059(이전10780)로 줄었으나 Smol5 p95 14092.610ms/D1FAIL300/363은 남았다. Δwhole은3회차1 +8074.368±173.054J/5 −2700.318±15.373J/6 +16477.565±541.077J로 일관 절감이 아니다. 모든 전체 수치/결과수/에너지는 정본에 보존하며 이 문서 갱신은 제품코드/클러스터조작/재측정0이다.
 
-**E5 입력과 입구 조건.** 입력 보수는 rev72/e18ac에서 exact profile 13개의 prepare/remove 26단계,
-empty 10창과 native up 2단계를 합친 8 roots/38 steps다.
-fresh empty는 기준 모드 8개와 Jetsono/Jetsonx의 lowest 2개다.
-Sampling 1 s, 요청 timeout 800 ms, 최대 원 gap 3 s, physical watchdog 2250 s와 empty 300 s를 사용한다.
-loaded idle 13개나 전 19모드 확장은 이 범위에 포함하지 않는다.
-
-남은 legacy empty ranking은 Jetsono MODE_30W/MODE_50W와 Jetsonx
-MODE_10W_4CORE/MODE_10W_DESKTOP/MODE_15W_2CORE/MODE_15W_4CORE/MODE_20W_2CORE/MODE_20W_4CORE/MODE_20W_6CORE의 9개다.
-이 기록은 ranking에 참여하며 불확실성은 unknown이다.
-실제 lowest와 실제 소비되는 empty-mode energy baseline이 fresh10에 속하는지 소비 결과로 확인한다.
-밖의 실제 소비나 예상 밖 handback mode는 보고하고 E5 입구에서 멈춘다.
-ranking filter, 자동 추가 측정이나 수동 mode 강제는 적용하지 않는다.
-loaded baseline과 profile idle의 실제 ref/시점은 별도로 기록한다.
-
-| 입구 | 확인할 근거 |
-|---|---|
-| 정확 비용 | 최종 profile ID/NodeUID/mode/runtime/allocation의 prepare/remove와 필요한 power 비용 연결 |
-| d | Smol9와 D2 뒤 CPU8/GPU5/PLC12의 새 규칙 근거. 실제 대체 Accepted 전 legacy CPU8/GPU2는 미재인증으로 표시하고 소비를 유지한다 |
-| baseline | fresh10 안의 실제 lowest/empty 소비, loaded/profile idle 출처와 legacy9의 unknown 한계 |
-| SLO와 수명 | 최종 Workload percentile/SLO와 m, L/socket/delivery/실제 gateway cap을 실행 전에 고정 |
-| 용량과 전환 | 실제 G/κ/R로 초기/확장/축소/swap witness를 계산하고 모든 Workload의 전환 중 SLO와 자원을 확인 |
-| 실행과 반환 | 필요한 측정의 terminal, actual execution/action/handback 0, 반환 readback과 원본017 비실행 보존 예외 |
-
-각 witness는 `B_w=q+max(0,λ−κ_ret)×r`, `W_w=B_w/κ_new≤SLO−m`,
-keep/best nominal J와 signed 상쇄 B를 공개한다.
-keep과 best가 모두 feasible이면 gain>문턱일 때 전환하고 같으면 keep한다.
-keep infeasible 회복은 유지한다. 자연스러운 swap witness가 없으면 차단 부등식을 보고한다.
-정량 SLO/m/G/κ/R/N과 최종 제어요소 집합은 D2 뒤 실측으로 정한다.
-
-**실행 순서.**
-
-1. rev72 입력 보수를 끝내고 비용/profile/baseline catalog를 동결한다.
-2. MNV만의 자율 BEFORE를 logical initial8, seed1, `λ=min(50,0.3Σκ)`, 660 s(준비 60+관측 600)로 수행하고 복구한다.
-3. 정확한 8 Node의 profile/mode/runtime/batch/allocation을 고정한 PRIMARY native8을 준비한다.
-   동일 old loadgen의 tight MNV, seed1, Poisson workers320, L2 s/delivery0.010 s/socket2.02 s로
-   0부터 50 req/s씩 300 s 단계를 관측한다. 마지막은 `min(next50,Σκ)`이며 첫 60 s를 제외한다.
-   throttle, 미완료 요청 또는 frozen κ 합에 닿으면 단계를 멈추고 부분 근거를 보존한다.
-4. producer, HTTP/native outstanding, pending, measurement, action과 handback 0을 확인한다.
-   사전 고정한 Ready IDLE native8만 rollout 예외로 보존한다. 수리와 새 실행 승인을 확인한 뒤 최종 D2를 진행한다.
-5. startup re-adoption과 route ACK, 실제 PodUID/containerID/profile/mode/allocation/route의 동일성을 확인하고 PRIMARY paired AFTER를 수행한다.
-   보존 실패는 physical-match unknown/mismatch로 보고하고 paired 주장을 중단한다.
-   과거 all-instances0 배포는 이 물리 보존의 실증으로 사용하지 않는다.
-6. PRIMARY AFTER를 정리한 뒤 같은 logical initial8로 자율 AFTER를 수행하고 복구한다.
-7. D2 뒤 d25(CPU8+GPU5+PLC12), G와 m을 측정하고 정량 SLO/κ/R/N을 제안한다.
-   U3 D04/D09의 실제 소비 source 교체와 옛 raw/status를 보존한다.
-8. E5를 수행하고 M5, P11 main/spec 이관, main 제어 image(runtime7 고정), 최종 배포/P10 순서로 진행한다.
-
-각 source의 실제 SHA와 image digest, 입력 dump, UID와 자원을 manifest에 남긴다.
-BEFORE의 MNV 자율 Tick, 고정 경로의 no-control Tick과 최종 혼합3 search를 각각 보고한다.
-G는 모든 요청이 완료되고 throttle이 없는 마지막 단계이며 native/client/capacity가 먼저 한계에 닿으면 bound와 원인을 표시한다.
-요청 경로 CPU는 `(stage cores−idle cores)/rate`로 계산하고 지연, 거절, 만료와 미완료를 함께 보고한다.
-`GatewayOverloaded`는 rejected 관측의 error와 client 503을 함께 대조한다. 같은 503의 다른 사유는 별도로 센다.
-ChillServer와 genesis1 edgemesh의 cgroup은 1 s, restartCount는 15 s, thermal은 5 s 주기로 전후 동일하게 기록한다.
-일반 Flush와 scraper cadence, 실제 server 6 CPU/4 GiB/GOMEMLIMIT3072MiB/gctrace1/timeout129 s/drain164 s/grace194 s를 보존한다.
-단계 중 observation query는 경계에서만 수행하고 drain 뒤 같은 archive/Prometheus 집합을 조회한다.
-최종 동일 scheduler dump의 source별 κ 계산은 측정과 live 부하가 없을 때 순차 수행한다.
-
-**결과 진도.** 새 규칙 d 9/34, 정확 비용 69/69, 평가 시나리오 결과 연결 7/7이다(완전 커버리지/PASS 수 아님).
-정확 비용은 2026-10-24T12:49:27.350175648Z snapshot의 key join으로
-[69 options의 prepare/remove 연결](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/cost-coverage-after-055.json)을 확인한 값이다.
-G2 계약 세대 감사와 E5 실행 결과는 각각 별도다.
-아래 E5 계획 9행의 결과 연결은 두 회차 각각 9/9이다. E5-S 에너지 합은 1회차 UNKNOWN이며 2회차는 정본에 수치가 연결된다.
-7개 명세 평가 시나리오와 9개 E5 계획 행(E5-0~7+S)은 각 분모를 유지한다.
-
-| 단계 | 시간 | 요청률 (mobilenet, PLC, SmolVLM) | 재는 것 | 채우는 칸 | 1회차 단계별 수신 p95·결과 수·D1 | 2회차 단계별 수신 p95·결과 수·D1 | 3회차 단계별 수신 p95·결과 수·D1 (MNV/PLC/Smol) | 1회차 CHILL 전체/활성 POOL·오차·coverage | 2회차 CHILL 전체/활성 POOL·오차·coverage | 3회차 CHILL 전체/활성 POOL·오차·coverage | 1회차 대응 고정 E5-S 전체/활성 POOL·오차·coverage | 2회차 대응 고정 E5-S 전체/활성 POOL·오차·coverage | 3회차 대응 고정 E5-S 전체/활성 POOL·오차·coverage | 1회차 Δ 고정−CHILL 전체 POOL | 2회차 Δ 고정−CHILL 전체 POOL | 3회차 Δ 고정−CHILL 전체 POOL | 1회차 근거(Run ID, 원시 경로) | 2회차 근거(Run ID, 원시 경로) | 3회차 근거(Run ID, 원시 경로) |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| E5-0 시작 | 10분 | 모두 0 | Workload마다 측정 근거가 있는 노드의 첫 인스턴스, 나머지 가용 노드의 가장 낮은 모드, 무부하 전체 POOL 전력 | `SCH-AC-24`(세 Workload) | E5-0: MNV: p95 UNKNOWN ms; 계획 0; 완료 0 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 UNMEASURED (0/0)<br>PLC: p95 UNKNOWN ms; 계획 0; 완료 0 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 UNMEASURED (0/0)<br>Smol: p95 UNKNOWN ms; 계획 0; 완료 0 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 UNMEASURED (0/0) | E5-0: MNV: p95 UNKNOWN ms; 계획 0; 완료 0 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 UNMEASURED (0/0)<br>PLC: p95 UNKNOWN ms; 계획 0; 완료 0 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 UNMEASURED (0/0)<br>Smol: p95 UNKNOWN ms; 계획 0; 완료 0 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 UNMEASURED (0/0) | 3회차 미실행 | E5-0: 53,044.429 / 39,267.728 J; ±0.000 J; gapΣNode=0.000s, max=0.000s, maxNode=0.000% | E5-0: 53,230.508 / 38,535.972 J; ±154.155 J; gapΣNode=2.012s, max=2.012s, maxNode=0.335% | 3회차 미실행 | E5-0: N/A (E5-S 대응 단계 없음) | E5-0: N/A (E5-S 대응 단계 없음) | 3회차 미실행 | E5-0: N/A | E5-0: N/A | 3회차 미실행 | MEASURED_DESCRIPTIVE; Run ID `control-213-full`; 원시 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-213-full`; `tables.txt`, `e5-summary.json` | MEASURED_DESCRIPTIVE; Run ID `control-222-full` (#222+#223 합성, rev104); 원시 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-222-full`; `tables-223.txt`, `e5-summary.json`, `comparison-control-213-223.txt/.json` | 3회차 미실행 |
-| E5-1 일정 | 30분 | 모두 α=0.3 | Workload별 지연 분포와 처리 결과 수(완료, 실패, 거절, 취소, 미완료), 전체 POOL과 활성 POOL 에너지, 창별 예측 백분위와 관측 백분위 | [명세 평가 표](../../spec/README.md#실클러스터-검증과-평가) 일정 부하와 이기종 워크로드 동시 혼합 부하 행, `SCH-AC-23`, [07 검증](../architecture-rethink/07-validation.md) 2번 | E5-1: MNV: p95 395.003 ms; 계획 57,495; 완료 47,268 / 실패 10,225 (BackendUnavailable=9,092; RequestTimeout=1,133) / 거절 0 / 취소 0 / 미완료·불명 2; D1 FAIL (45754/54621)<br>PLC: p95 17.519 ms; 계획 20,605; 완료 20,605 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (20320/19575)<br>Smol: p95 3,280.336 ms; 계획 301; 완료 301 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (301/286) | E5-1: MNV: p95 299.334 ms; 계획 57,495; 완료 57,199 / 실패 296 (BackendUnavailable=272; RequestTimeout=24) / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (55983/54621)<br>PLC: p95 16.278 ms; 계획 20,605; 완료 20,605 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (20381/19575)<br>Smol: p95 2,557.590 ms; 계획 301; 완료 301 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (301/286) | E5-1: MNV: p95 274.882 ms; 계획 57,495; 완료 57,428 / 실패 67 (BackendUnavailable=67) / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (56650/54621)<br>PLC: p95 17.094 ms; 계획 20,605; 완료 20,605 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (20377/19575)<br>Smol: p95 3,276.135 ms; 계획 301; 완료 301 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (301/286) | E5-1: 173,062.740 / 148,610.058 J; ±516.514 J; gapΣNode=37.043s, max=2.999s, maxNode=0.645% | E5-1: 179,783.315 / 160,425.068 J; ±6.261 J; gapΣNode=1.841s, max=1.841s, maxNode=0.102% | E5-1: 176,890.024 / 153,851.839 J; ±13.133 J; gapΣNode=5.263s, max=1.872s, maxNode=0.104% | E5-1: 202,214.814 / 184,924.811 J; ±531.703 J; gapΣNode=46.537s, max=6.537s, maxNode=0.657% | E5-1: 184,964.392 / 168,219.474 J; ±159.922 J; gapΣNode=9.445s, max=2.262s, maxNode=0.126% | E5-1: 184,964.392 / 168,219.474 J; ±159.922 J; gapΣNode=9.445s, max=2.262s, maxNode=0.126% | E5-1: 29,152.074 ±1,048.217 J | E5-1: 5,181.077 ±166.182 J | E5-1: 8,074.368 ±173.054 J | FAIL; Run ID `control-213-full`; 원시 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-213-full`; `tables.txt`, `e5-summary.json` | MEASURED_DESCRIPTIVE; Run ID `control-222-full` (#222+#223 합성, rev104); 원시 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-222-full`; `tables-223.txt`, `e5-summary.json`, `comparison-control-213-223.txt/.json` | #225; Run=`/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-222-full`; `tables-3b.txt`, `comparison-225.txt/.json`; `full-E5-1-3b/` |
-| E5-2 버스트 | 15분 | Smol α=0.3→0.9, 나머지 α=0.3 | 대응 시작 시간, 측정 가능한 GPU 장착 Node의 Workload 소유권 재배치, 전환 중 모든 Workload SLO와 Jetson 모드 변경 지연 | 평가 표 갑작스러운 버스트 행, `SCH-AC-21` | E5-2: MNV: p95 1,721.845 ms; 계획 28,643; 완료 26,689 / 실패 1,954 (BackendUnavailable=1,816; RequestTimeout=138) / 거절 0 / 취소 0 / 미완료·불명 0; D1 FAIL (23818/27211)<br>PLC: p95 16.195 ms; 계획 10,374; 완료 10,374 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (10252/9856)<br>Smol: p95 3,963.959 ms; 계획 337; 완료 337 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (337/321) | E5-2: MNV: p95 236.091 ms; 계획 28,643; 완료 28,643 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (28643/27211)<br>PLC: p95 16.073 ms; 계획 10,374; 완료 10,374 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (10265/9856)<br>Smol: p95 3,416.503 ms; 계획 337; 완료 337 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (337/321) | 3회차 미실행 | E5-2: 98,316.669 / 87,536.871 J; ±35.737 J; gapΣNode=9.731s, max=2.146s, maxNode=0.408% | E5-2: 100,255.448 / 91,732.549 J; ±3.525 J; gapΣNode=1.958s, max=1.958s, maxNode=0.217% | 3회차 미실행 | E5-2: 104,571.577 / 96,191.559 J; ±0.000 J; gapΣNode=0.000s, max=0.000s, maxNode=0.000% | E5-2: 102,597.859 / 94,212.984 J; ±122.848 J; gapΣNode=3.507s, max=1.770s, maxNode=0.197% | 3회차 미실행 | E5-2: 6,254.908 ±35.737 J | E5-2: 2,342.410 ±126.373 J | 3회차 미실행 | FAIL; Run ID `control-213-full`; 원시 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-213-full`; `tables.txt`, `e5-summary.json` | MEASURED_DESCRIPTIVE; Run ID `control-222-full` (#222+#223 합성, rev104); 원시 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-222-full`; `tables-223.txt`, `e5-summary.json`, `comparison-control-213-223.txt/.json` | 3회차 미실행 |
-| E5-3 증가 | 30분 | 모두 α=0.5,0.7,0.9 각10분 | 확장 순서, 전환 구간 SLO, 판단의 `κ_new`, `B`, `W`와 관측 큐 | 평가 표 점진적인 증가와 감소 행(증가), `SCH-AC-15` | E5-3: MNV: p95 1,917.629 ms; 계획 134,156; 완료 115,060 / 실패 19,095 (BackendUnavailable=14,084; RequestTimeout=5,011) / 거절 0 / 취소 0 / 미완료·불명 1; D1 FAIL (102509/127449)<br>PLC: p95 16.128 ms; 계획 48,053; 완료 48,053 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (47202/45651)<br>Smol: p95 12,008.491 ms; 계획 682; 완료 682 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 FAIL (561/648) | E5-3: MNV: p95 1,654.981 ms; 계획 134,156; 완료 120,593 / 실패 13,562 (BackendUnavailable=13,368; RequestTimeout=194) / 거절 0 / 취소 0 / 미완료·불명 1; D1 FAIL (113590/127449)<br>PLC: p95 16.031 ms; 계획 48,053; 완료 48,053 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (47349/45651)<br>Smol: p95 3,257.114 ms; 계획 682; 완료 682 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (682/648) | 3회차 미실행 | E5-3: 211,449.733 / 193,442.322 J; ±516.091 J; gapΣNode=53.626s, max=3.183s, maxNode=0.742% | E5-3: 220,081.631 / 203,078.172 J; ±86.364 J; gapΣNode=10.886s, max=3.006s, maxNode=0.264% | 3회차 미실행 | E5-3: 239,190.398 / 222,443.845 J; ±23.823 J; gapΣNode=2.002s, max=2.002s, maxNode=0.111% | E5-3: 218,442.310 / 201,706.164 J; ±268.924 J; gapΣNode=10.676s, max=2.018s, maxNode=0.206% | 3회차 미실행 | E5-3: 27,740.665 ±539.914 J | E5-3: -1,639.320 ±355.288 J | 3회차 미실행 | FAIL; Run ID `control-213-full`; 원시 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-213-full`; `tables.txt`, `e5-summary.json` | FAIL; Run ID `control-222-full` (#222+#223 합성, rev104); 원시 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-222-full`; `tables-223.txt`, `e5-summary.json`, `comparison-control-213-223.txt/.json` | 3회차 미실행 |
-| E5-S 정적 기준선 | 170분 | E5-1부터 E5-6까지의 요청률과 seed | E5-1부터 E5-6까지와 같은 항목, 고정 구성의 인스턴스와 전력모드 | [명세](../../spec/README.md#실클러스터-검증과-평가)의 정적 배포 비교, `SCH-AC-20` | E5-1 고정: MNV: p95 138.124 ms; 계획 57,495; 완료 57,495 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (57495/54621)<br>PLC: p95 17.245 ms; 계획 20,605; 완료 20,605 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (20346/19575)<br>Smol: p95 3,310.022 ms; 계획 301; 완료 301 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (301/286)<br>E5-2 고정: MNV: p95 137.532 ms; 계획 28,643; 완료 28,643 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (28643/27211)<br>PLC: p95 16.336 ms; 계획 10,374; 완료 10,374 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (10268/9856)<br>Smol: p95 16,208.841 ms; 계획 337; 완료 337 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 FAIL (254/321)<br>E5-3 고정: MNV: p95 132.675 ms; 계획 134,156; 완료 134,156 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (134156/127449)<br>PLC: p95 15.873 ms; 계획 48,053; 완료 48,053 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (47342/45651)<br>Smol: p95 13,027.826 ms; 계획 682; 완료 682 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 FAIL (549/648)<br>E5-4 고정: MNV: p95 1,964.475 ms; 계획 114,558; 완료 95,171 / 실패 19,386 (BackendUnavailable=19,250; RequestTimeout=136) / 거절 0 / 취소 0 / 미완료·불명 1; D1 OVERLOAD_DESCRIPTIVE (75448/108831)<br>PLC: p95 17.663 ms; 계획 41,623; 완료 41,623 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OVERLOAD_DESCRIPTIVE (40705/39542)<br>Smol: p95 74,407.736 ms; 계획 617; 완료 497 / 실패 120 (BackendUnavailable=120) / 거절 0 / 취소 0 / 미완료·불명 0; D1 OVERLOAD_DESCRIPTIVE (58/587)<br>E5-5 고정: MNV: p95 147.741 ms; 계획 76,632; 완료 76,632 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (76632/72801)<br>PLC: p95 16.296 ms; 계획 27,523; 완료 27,523 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (27049/26147)<br>Smol: p95 14,213.074 ms; 계획 382; 완료 382 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 FAIL (300/363)<br>E5-6 고정: MNV: p95 136.058 ms; 계획 114,558; 완료 114,558 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (114558/108831)<br>PLC: p95 16.425 ms; 계획 41,623; 완료 41,623 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (41203/39542)<br>Smol: p95 3,317.283 ms; 계획 617; 완료 617 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (617/587) | E5-1 고정: MNV: p95 142.116 ms; 계획 57,495; 완료 57,495 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (57495/54621)<br>PLC: p95 16.268 ms; 계획 20,605; 완료 20,605 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (20397/19575)<br>Smol: p95 2,108.634 ms; 계획 301; 완료 301 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (301/286)<br>E5-2 고정: MNV: p95 141.463 ms; 계획 28,643; 완료 28,643 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (28643/27211)<br>PLC: p95 16.879 ms; 계획 10,374; 완료 10,374 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (10242/9856)<br>Smol: p95 3,654.120 ms; 계획 337; 완료 337 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (337/321)<br>E5-3 고정: MNV: p95 281.794 ms; 계획 134,156; 완료 123,365 / 실패 10,787 (BackendUnavailable=10,643; RequestTimeout=144) / 거절 0 / 취소 0 / 미완료·불명 4; D1 FAIL (119667/127449)<br>PLC: p95 16.417 ms; 계획 48,053; 완료 48,053 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (47395/45651)<br>Smol: p95 3,292.177 ms; 계획 682; 완료 682 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (682/648)<br>E5-4 고정: MNV: p95 1,970.866 ms; 계획 114,558; 완료 61,326 / 실패 53,218 (BackendUnavailable=52,079; RequestTimeout=1,139) / 거절 0 / 취소 0 / 미완료·불명 14; D1 OVERLOAD_DESCRIPTIVE (46146/108831)<br>PLC: p95 16.138 ms; 계획 41,623; 완료 41,623 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OVERLOAD_DESCRIPTIVE (40922/39542)<br>Smol: p95 6,337.105 ms; 계획 617; 완료 617 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OVERLOAD_DESCRIPTIVE (607/587)<br>E5-5 고정: MNV: p95 1,890.595 ms; 계획 76,632; 완료 65,747 / 실패 10,883 (BackendUnavailable=10,684; RequestTimeout=199) / 거절 0 / 취소 0 / 미완료·불명 2; D1 FAIL (62133/72801)<br>PLC: p95 15.894 ms; 계획 27,523; 완료 27,523 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (27197/26147)<br>Smol: p95 3,620.171 ms; 계획 382; 완료 382 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (382/363)<br>E5-6 고정: MNV: p95 170.689 ms; 계획 114,558; 완료 114,519 / 실패 39 (RequestTimeout=38; BackendUnavailable=1) / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (114519/108831)<br>PLC: p95 16.262 ms; 계획 41,623; 완료 41,623 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (41210/39542)<br>Smol: p95 1,976.317 ms; 계획 617; 완료 617 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (617/587) | 3회차 미실행 | E5-1: 173,062.740 / 148,610.058 J; ±516.514 J; gapΣNode=37.043s, max=2.999s, maxNode=0.645%<br>E5-2: 98,316.669 / 87,536.871 J; ±35.737 J; gapΣNode=9.731s, max=2.146s, maxNode=0.408%<br>E5-3: 211,449.733 / 193,442.322 J; ±516.091 J; gapΣNode=53.626s, max=3.183s, maxNode=0.742%<br>E5-4: 133,012.645 / 124,613.068 J; ±206.141 J; gapΣNode=12.187s, max=2.251s, maxNode=0.673%<br>E5-5: 142,065.495 / 125,443.003 J; ±0.000 J; gapΣNode=0.000s, max=0.000s, maxNode=0.000%<br>E5-6: 342,989.174 / 307,660.371 J; ±328.993 J; gapΣNode=20.693s, max=4.811s, maxNode=0.238% | E5-1: 179,783.315 / 160,425.068 J; ±6.261 J; gapΣNode=1.841s, max=1.841s, maxNode=0.102%<br>E5-2: 100,255.448 / 91,732.549 J; ±3.525 J; gapΣNode=1.958s, max=1.958s, maxNode=0.217%<br>E5-3: 220,081.631 / 203,078.172 J; ±86.364 J; gapΣNode=10.886s, max=3.006s, maxNode=0.264%<br>E5-4: 128,282.988 / 119,920.115 J; ±0.886 J; gapΣNode=1.771s, max=1.771s, maxNode=0.197%<br>E5-5: 139,317.646 / 128,142.974 J; ±755.285 J; gapΣNode=34.949s, max=2.757s, maxNode=0.772%<br>E5-6: 369,924.973 / 336,437.807 J; ±302.348 J; gapΣNode=14.153s, max=2.156s, maxNode=0.111% | 3회차 미실행 | E5-1: 202,214.814 / 184,924.811 J; ±531.703 J; gapΣNode=46.537s, max=6.537s, maxNode=0.657%<br>E5-2: 104,571.577 / 96,191.559 J; ±0.000 J; gapΣNode=0.000s, max=0.000s, maxNode=0.000%<br>E5-3: 239,190.398 / 222,443.845 J; ±23.823 J; gapΣNode=2.002s, max=2.002s, maxNode=0.111%<br>E5-4: 133,396.452 / 125,018.421 J; ±48.755 J; gapΣNode=13.593s, max=2.227s, maxNode=0.704%<br>E5-5: UNKNOWN / UNKNOWN J; ±UNKNOWN J; gapΣNode=77.900s, max=3.511s, maxNode=1.637%<br>E5-6: 405,232.339 / 371,636.855 J; ±67.083 J; gapΣNode=14.787s, max=2.010s, maxNode=0.105% | E5-1: 184,964.392 / 168,219.474 J; ±159.922 J; gapΣNode=9.445s, max=2.262s, maxNode=0.126%<br>E5-2: 102,597.859 / 94,212.984 J; ±122.848 J; gapΣNode=3.507s, max=1.770s, maxNode=0.197%<br>E5-3: 218,442.310 / 201,706.164 J; ±268.924 J; gapΣNode=10.676s, max=2.018s, maxNode=0.206%<br>E5-4: 128,565.990 / 120,191.187 J; ±32.030 J; gapΣNode=7.023s, max=3.008s, maxNode=0.334%<br>E5-5: 139,031.237 / 127,874.805 J; ±15.373 J; gapΣNode=1.767s, max=1.767s, maxNode=0.147%<br>E5-6: 367,778.969 / 334,305.722 J; ±146.063 J; gapΣNode=12.874s, max=3.024s, maxNode=0.133% | 3회차 미실행 | E5-1: 29,152.074 ±1,048.217 J<br>E5-2: 6,254.908 ±35.737 J<br>E5-3: 27,740.665 ±539.914 J<br>E5-4: 383.807 ±254.896 J<br>E5-5: UNKNOWN ±UNKNOWN J<br>E5-6: 62,243.166 ±396.077 J | E5-1: 5,181.077 ±166.182 J<br>E5-2: 2,342.410 ±126.373 J<br>E5-3: -1,639.320 ±355.288 J<br>E5-4: 283.002 ±32.915 J<br>E5-5: -286.409 ±770.658 J<br>E5-6: -2,146.003 ±448.411 J | 3회차 미실행 | INCOMPLETE; Run ID `control-213-full`; 원시 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-213-full`; `tables.txt`, `e5-summary.json` | MEASURED_DESCRIPTIVE; Run ID `control-222-full` (#222+#223 합성, rev104); 원시 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-222-full`; `tables-223.txt`, `e5-summary.json`, `comparison-control-213-223.txt/.json`; `static-selection.json`, `static-replay-restore.json` | 3회차 미실행 |
-| E5-4 한계 | 15분 | 모두 α=1.2 | `Overload` 판단과 최대 초과량 순서, Workload별 실제 지연과 처리 결과, 노드별 인스턴스와 전력모드 | 평가 표 전체 POOL의 한계를 넘는 부하 행, `SCH-AC-16` | E5-4: MNV: p95 1,961.366 ms; 계획 114,558; 완료 101,318 / 실패 13,239 (BackendUnavailable=13,046; RequestTimeout=193) / 거절 0 / 취소 0 / 미완료·불명 1; D1 OVERLOAD_DESCRIPTIVE (77524/108831)<br>PLC: p95 16.410 ms; 계획 41,623; 완료 41,623 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OVERLOAD_DESCRIPTIVE (40728/39542)<br>Smol: p95 74,482.013 ms; 계획 617; 완료 499 / 실패 118 (BackendUnavailable=118) / 거절 0 / 취소 0 / 미완료·불명 0; D1 OVERLOAD_DESCRIPTIVE (55/587) | E5-4: MNV: p95 1,970.691 ms; 계획 114,558; 완료 59,501 / 실패 55,040 (BackendUnavailable=53,719; RequestTimeout=1,320; ResponseDeliveryFailed=1) / 거절 0 / 취소 0 / 미완료·불명 17; D1 OVERLOAD_DESCRIPTIVE (45077/108831)<br>PLC: p95 15.897 ms; 계획 41,623; 완료 41,623 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OVERLOAD_DESCRIPTIVE (40901/39542)<br>Smol: p95 6,308.208 ms; 계획 617; 완료 617 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OVERLOAD_DESCRIPTIVE (609/587) | 3회차 미실행 | E5-4: 133,012.645 / 124,613.068 J; ±206.141 J; gapΣNode=12.187s, max=2.251s, maxNode=0.673% | E5-4: 128,282.988 / 119,920.115 J; ±0.886 J; gapΣNode=1.771s, max=1.771s, maxNode=0.197% | 3회차 미실행 | E5-4: 133,396.452 / 125,018.421 J; ±48.755 J; gapΣNode=13.593s, max=2.227s, maxNode=0.704% | E5-4: 128,565.990 / 120,191.187 J; ±32.030 J; gapΣNode=7.023s, max=3.008s, maxNode=0.334% | 3회차 미실행 | E5-4: 383.807 ±254.896 J | E5-4: 283.002 ±32.915 J | 3회차 미실행 | MEASURED_DESCRIPTIVE; Run ID `control-213-full`; 원시 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-213-full`; `tables.txt`, `e5-summary.json` | MEASURED_DESCRIPTIVE; Run ID `control-222-full` (#222+#223 합성, rev104); 원시 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-222-full`; `tables-223.txt`, `e5-summary.json`, `comparison-control-213-223.txt/.json` | 3회차 미실행 |
-| E5-5 급감과 재급증 | 20분 | 모두 α=0.3 10분, α=0.9 10분 | 축소와 유휴 제거, 반복 전환의 J와 시간, U2 최소안 Jetson 모드 변경/KEEP 근거와 read-back | 평가 표 전환 직후 급감과 재급증 행, `SCH-AC-15`; 점진 감소는 미평가 | E5-5: MNV: p95 286.946 ms; 계획 76,632; 완료 71,169 / 실패 5,463 (BackendUnavailable=4,507; RequestTimeout=956) / 거절 0 / 취소 0 / 미완료·불명 0; D1 FAIL (70317/72801)<br>PLC: p95 16.646 ms; 계획 27,523; 완료 27,523 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (27075/26147)<br>Smol: p95 14,318.976 ms; 계획 382; 완료 382 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 FAIL (300/363) | E5-5: MNV: p95 1,895.488 ms; 계획 76,632; 완료 65,848 / 실패 10,780 (BackendUnavailable=10,636; RequestTimeout=144) / 거절 0 / 취소 0 / 미완료·불명 4; D1 FAIL (62176/72801)<br>PLC: p95 17.674 ms; 계획 27,523; 완료 27,523 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (27078/26147)<br>Smol: p95 3,730.820 ms; 계획 382; 완료 382 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (382/363) | E5-5: MNV: p95 226.188 ms; 계획 76,632; 완료 75,573 / 실패 1,059 (BackendUnavailable=1,026; RequestTimeout=33) / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (75059/72801)<br>PLC: p95 16.189 ms; 계획 27,523; 완료 27,523 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (27142/26147)<br>Smol: p95 14,092.610 ms; 계획 382; 완료 382 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 FAIL (300/363) | E5-5: 142,065.495 / 125,443.003 J; ±0.000 J; gapΣNode=0.000s, max=0.000s, maxNode=0.000% | E5-5: 139,317.646 / 128,142.974 J; ±755.285 J; gapΣNode=34.949s, max=2.757s, maxNode=0.772% | E5-5: 141,731.555 / 130,480.129 J; ±0.000 J; gapΣNode=0.000s, max=0.000s, maxNode=0.000% | E5-5: UNKNOWN / UNKNOWN J; ±UNKNOWN J; gapΣNode=77.900s, max=3.511s, maxNode=1.637% | E5-5: 139,031.237 / 127,874.805 J; ±15.373 J; gapΣNode=1.767s, max=1.767s, maxNode=0.147% | E5-5: 139,031.237 / 127,874.805 J; ±15.373 J; gapΣNode=1.767s, max=1.767s, maxNode=0.147% | E5-5: UNKNOWN ±UNKNOWN J | E5-5: -286.409 ±770.658 J | E5-5: -2,700.318 ±15.373 J | FAIL; Run ID `control-213-full`; 원시 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-213-full`; `tables.txt`, `e5-summary.json` | FAIL; Run ID `control-222-full` (#222+#223 합성, rev104); 원시 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-222-full`; `tables-223.txt`, `e5-summary.json`, `comparison-control-213-223.txt/.json` | #224; Run=`/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-222-full`; `tables-3.txt`, `comparison-224.txt/.json`; `full-E5-5-3/` |
-| E5-6 soak | 60분 | 모두 α=0.3 | 1시간 예측 에너지 합과 비교 집합 실측, 전체 POOL 실측, `completionResidualNanos` 분포와 설정 여유 | 위 표 E5 행, [용량표 계획기](analytic-planner.md#11-확인) 에너지(실측) | E5-6: MNV: p95 394.530 ms; 계획 114,558; 완료 105,294 / 실패 9,264 (BackendUnavailable=8,417; RequestTimeout=847) / 거절 0 / 취소 0 / 미완료·불명 0; D1 FAIL (103903/108831)<br>PLC: p95 15.905 ms; 계획 41,623; 완료 41,623 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (41150/39542)<br>Smol: p95 3,290.431 ms; 계획 617; 완료 617 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (617/587) | E5-6: MNV: p95 147.477 ms; 계획 114,558; 완료 114,558 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (114558/108831)<br>PLC: p95 16.079 ms; 계획 41,623; 완료 41,623 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (41257/39542)<br>Smol: p95 1,916.040 ms; 계획 617; 완료 617 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (617/587) | E5-6: MNV: p95 305.084 ms; 계획 114,558; 완료 114,458 / 실패 100 (BackendUnavailable=93; RequestTimeout=7) / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (114099/108831)<br>PLC: p95 16.952 ms; 계획 41,623; 완료 41,623 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (41226/39542)<br>Smol: p95 1,962.304 ms; 계획 617; 완료 617 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (617/587) | E5-6: 342,989.174 / 307,660.371 J; ±328.993 J; gapΣNode=20.693s, max=4.811s, maxNode=0.238% | E5-6: 369,924.973 / 336,437.807 J; ±302.348 J; gapΣNode=14.153s, max=2.156s, maxNode=0.111% | E5-6: 351,301.405 / 317,219.260 J; ±395.014 J; gapΣNode=39.022s, max=3.994s, maxNode=0.282% | E5-6: 405,232.339 / 371,636.855 J; ±67.083 J; gapΣNode=14.787s, max=2.010s, maxNode=0.105% | E5-6: 367,778.969 / 334,305.722 J; ±146.063 J; gapΣNode=12.874s, max=3.024s, maxNode=0.133% | E5-6: 367,778.969 / 334,305.722 J; ±146.063 J; gapΣNode=12.874s, max=3.024s, maxNode=0.133% | E5-6: 62,243.166 ±396.077 J | E5-6: -2,146.003 ±448.411 J | E5-6: 16,477.565 ±541.077 J | FAIL; Run ID `control-213-full`; 원시 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-213-full`; `tables.txt`, `e5-summary.json` | MEASURED_DESCRIPTIVE; Run ID `control-222-full` (#222+#223 합성, rev104); 원시 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-222-full`; `tables-223.txt`, `e5-summary.json`, `comparison-control-213-223.txt/.json` | #224; Run=`/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-222-full`; `tables-3.txt`, `comparison-224.txt/.json`; `full-E5-6-3/` |
-| E5-7 실패 | 15분 | 모두 α=0.3 | 180초 인스턴스 강제 종료, 360초 Node 하나 cordon+서빙 Pod 삭제, 600초 uncordon; 격리·대체·실제 복구와 실패 동작 원인 | 평가 표 노드·서빙·제어 동작 실패 행, `SCH-AC-45` | E5-7: MNV: p95 401.963 ms; 계획 28,793; 완료 28,793 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (28789/27354)<br>PLC: p95 17.780 ms; 계획 10,310; 완료 10,310 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (10177/9795)<br>Smol: p95 2,971.640 ms; 계획 140; 완료 140 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (140/133) | E5-7: MNV: p95 145.595 ms; 계획 28,793; 완료 28,793 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (28793/27354)<br>PLC: p95 15.668 ms; 계획 10,310; 완료 10,310 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (10219/9795)<br>Smol: p95 1,775.231 ms; 계획 140; 완료 140 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (140/133) | E5-7: MNV: p95 93.983 ms; 계획 28,793; 완료 28,793 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (28793/27354)<br>PLC: p95 16.053 ms; 계획 10,310; 완료 10,310 / 실패 0 / 거절 0 / 취소 0 / 미완료·불명 0; D1 OBSERVED_THRESHOLD_MET (10226/9795)<br>Smol: p95 1,255.905 ms; 계획 140; 완료 26 / 실패 114 (RequestTimeout=114) / 거절 0 / 취소 0 / 미완료·불명 0; D1 FAIL (26/133) | E5-7: 83,877.847 / 75,449.598 J; ±1.948 J; gapΣNode=1.498s, max=1.498s, maxNode=0.166% | E5-7: 91,617.432 / 83,235.477 J; ±132.328 J; gapΣNode=3.695s, max=1.929s, maxNode=0.214% | E5-7: 85,096.635 / 76,740.712 J; ±3.414 J; gapΣNode=2.008s, max=2.008s, maxNode=0.223% | E5-7: N/A (E5-S 대응 단계 없음) | E5-7: N/A (E5-S 대응 단계 없음) | E5-7: N/A (E5-S 대응 단계 없음) | E5-7: N/A | E5-7: N/A | E5-7: N/A | MEASURED_DESCRIPTIVE; Run ID `control-213-full`; 원시 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-213-full`; `tables.txt`, `e5-summary.json` | MEASURED_DESCRIPTIVE; Run ID `control-222-full` (#222+#223 합성, rev104); 원시 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-222-full`; `tables-223.txt`, `e5-summary.json`, `comparison-control-213-223.txt/.json` | #225; Run=`/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-222-full`; `tables-3b.txt`, `comparison-225.txt/.json`; `full-E5-7-3b/` |
-
-제어요소 비교 `control-216`의 12행 표와 rev102 조건·식별력 한계는 [명세의 제어요소 비교](../../spec/README.md#제어요소-비교)에 연결한다(아래 N=2는 최초 계획이며 실행 집합은 해당 표 기준).
-
-**조건**
-
-- genesis2는 하드웨어 결함(Xid 79)으로 제외했으며 서빙 Node는 7개다.
-- 생성기는 요청마다 새 TLS 연결을 열며(keep-alive 없음), 입구 지연과 게이트웨이 CPU에는 핸드셰이크 비용이 포함된다.
-- 수신 p95는 성공·executionComplete HTTP final의 완료-only 분포다. MNV/PLC/Smol SLO는 각각 p95≤1,000/36/7,034 ms다. D1은 BackendUnavailable, 오류·거절·취소·무발행·미완료를 포함한 전체 planned 분모를 유지하며 deadline 성공/필요 rank와 기존 판정을 표시한다.
-- 결과 수는 완료/실패/거절/취소/미완료·불명을 모두 보존한다. 상위 오류 코드는 실패 괄호 안에 표시한다. 수신 p95 표본에 실패를 섞지 않는다.
-- 표의 전체 POOL 에너지는 7개 관측 Node 합으로 전체 구성 meter 합(`power-configured-whole-meter.json`)과 구분한다. 에너지는 전환 포함 동일 단계 공유 전체/활성 POOL 값이며 워크로드별 귀속값이 아니다. 반복 행을 합산하지 않는다. ±는 기존 E5 공백 보간 오차 상한, coverage는 gapΣNode(노드 공백초 합), max(최대 공백), maxNode(최대 노드 공백 비율)이다. Δ=고정−CHILL이며 양수는 CHILL 절감이다.
-- 1회차 E5-S S5의 전력 공백 1.637%>1%로 S5 및 E5-S 에너지 합과 총 차이는 UNKNOWN이다. 대응 CHILL 170분 전체 POOL은 1,100,896.456 J(원시 1100896.4557965863, 소수 셋째 자리 반올림)이며 UNKNOWN을 0으로 대체하지 않는다.
-- 표 수치는 1회차 tables.txt·2회차 tables-223.txt의 소수 셋째 자리 표시를 그대로 옮겼다(반올림 표시); 새 판정 규칙은 적용하지 않는다. MEASURED_DESCRIPTIVE/결과 연결은 PASS나 완전 커버리지를 뜻하지 않는다.
-- E5-3은 증가만 평가했으며 E5-5는 급감·재급증으로 점진 감소는 미평가다. 버스트는 Smol만, 실패 주입은 서빙 손실/cordon 대리 실험만이다. 물리 네트워크·전원 손실과 모든 제어 실패 유형은 미측정이다. 한 paired seed 집합이며 독립 반복은 없다.
-- 1회차 CHILL 결함 후보의 수정은 1회차 결과 확정 뒤이며, 2회차는 위 수정 후 소스를 사용했다. 제어요소 비교는 위 명세 링크의 제한된 조건의 case study이며 모든 요소의 독립 기여를 증명하지 않는다.
-- 1회차는 수정 전 `control-213-full`, 2회차는 수정 후 소스 rev104(`e3f28f23`: R1~R6+R4b)다. 결함 카드 근거는 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/analysis/P2-synthesis.md`다. 이 문서 갱신의 제품 코드 변경은 0이다.
-- 2회차는 #222+#223 합성이다. #222의 full E5-0~3·static E5-1~2에 이어, static E5-3~6·full E5-4~7은 #223에서 factor pre-state 복원 경로로 측정했다. `static-replay-restore.json`의 accepted=true와 fingerprint 일치를 확인했으며 prepare ACK의 물리 ID만 재결합했다. 중단 없는 단일 실행으로 표현하지 않는다.
-- static 기준 배치는 각 회차 E5-3 종료 상태에서 독립적으로 선택되어 MNV 공급 κ가 119.601→91.907 req/s로 달랐다. E5-4·E5-5의 실패·에너지 차이는 이 배치 차이와 함께 해석해야 하며, 수정된 CHILL이 E5-3 종료 시 MNV 공급을 수요 미만(κ 91.907 < 약 95.5 req/s)으로 남긴 원인은 **조사 중**(사이클 2)이다. 근거는 각 회차 `static-selection.json` 및 2회차 `comparison-control-213-223.txt/.json`이다.
-- E5-7 주입은 1회차 실제 형식인 UID 사전조건부 Pod 삭제(강제 삭제·gracePeriodSeconds=0 아님), 180초 삭제·360초 cordon+삭제·600초 uncordon을 재사용했다. 대상은 1회차 genesis3/lattepanda → 2회차 jetson-nano/orangepi로 달랐다(원래 대상에 현재 서빙 Pod 없음). 각 회차 `failure-seven[/ -223]/targets.json` 및 명령·응답·복구 read-back이 근거이며 물리 전원·네트워크 장애나 완전 복구 보장은 아니다.
-- 2회차 중단 이력(#217 collector 경합, #218 예약 잔류→R4b, #221 디스크 압박, #222 로그 혼입)은 하네스/환경 요인으로 구분한다. 중단된 단계는 정본의 선택 결과에 합산하지 않았으며, 하네스/환경 중단을 제품 성능 판정으로 바꾸지 않는다.
-- 2회차 정본은 위 Run의 `tables-223.txt`, `comparison-control-213-223.txt/.json`, `e5-summary.json`이다. 두 회차는 각각 한 paired seed 집합이며 독립 반복 통계나 동일 배치 A/B 실험이 아니다. 이 문서 갱신의 클러스터 조작·재측정은 0이다.
-- **3회차 = 표적 재실행, 시작 상태 복원(fingerprint 일치), 소스 R1~R6+R4b+C1+C2(rev105 `5f1dc4f1`)**. E5-1·E5-7은 #225 `tables-3b.txt`·`comparison-225.txt/.json`, E5-5·E5-6은 #224 `tables-3.txt`·`comparison-224.txt/.json`이 정본이다(위 `control-222-full` Run). 표적 외 행은 3회차 미실행이며 전체 회차나 독립 반복으로 세지 않는다. 수치는 정본의 소수 셋째 자리 표시를 그대로 옮겼다. 고정 E5-S 대응값은 기존 2회차 기준선 재사용이며 3회차 정적 재측정이 아니다.
-- #224 E5-1은 하네스 release 훼손, E5-7은 selector TTL로 첫 주입의 stale snapshot이 거절되어 mutation·후속 주입이 없었으므로 무효다. 두 행은 #225 재실행 값만 사용하며 무효 실행을 제품 성능 판정에 합산하지 않는다.
-- E5-6/7은 2회차 시작 예약 1개+owner-only 3개를 복원에서 제외했다. 따라서 개선을 C1 효과로 귀속하지 않는다. C1 효과 판정 근거는 E5-5 내 신규 예약 6개 전부 행 내 반환 관측, Fixed tick 0(2회차 560 tick)이다. 반환은 관측된 예약이 처음 사라진 archived tick 기준이며 근거는 `full-E5-5-3/c1-reservation-return.json`이다.
-- #225 E5-7 FAIL은 Smol D1(용량)만이다. 주입은 180.7/360.7/600.1s에 활성 Pod 대상으로 실행되어 exit0이며 주입 실패와 구분한다. 완료-only Smol p95가 낮아도 실패 114(RequestTimeout)와 D1 FAIL(26/133)을 배제하지 않는다. 물리 전원·네트워크 장애나 완전 복구 보장은 아니다. 이 문서 갱신의 클러스터 조작·재측정 0, 제품 코드 변경 0.
-
-**7행 커버리지와 실패 주입 계약:** [E5 계획의 커버리지 표](../../plans/2026-10-26-e5-evaluation.md#명세-7행-커버리지와-한계)가 정본이다. 일정=1/6, 증가=3(점진 감소 없음), 버스트=2(Smol만), 급감/재급증=5, 이기종 혼합=1~7, 한계=4, 실패=7이다. 독립 반복은 없으며 완전 커버리지로 주장하지 않는다. E5-7은 기존 kubectl의 Pod 강제 삭제와 cordon/uncordon으로 운영 담당만 직렬 실행한다. cordon은 네트워크 단절이나 기존 Pod 종료가 아니므로 삭제를 함께 사용한 배치 차단 대리 실험으로 보고한다. 대상 UID·명령 UTC·응답·격리·대체 결정·Ready/ACK·route 복구를 보존하고 실패 시에도 uncordon read-back을 남긴다. 제어 실패는 이 주입에서 실제 관찰한 유형에 한정한다.
-
-**U2 전력 모드 장면:** 최소안은 jetsono MAXN↔MODE_15W, jetsonx MODE_15W_6CORE↔MODE_15W_4CORE, jetson-nano MAXN↔5W의 세 모델 CPU q1/B1이다. [모드 커버리지 계획](../../plans/2026-10-27-power-mode-coverage.md)의 근거 5종이 Accepted인 조합만 E5-5 후보로 연결한다. 실측 부족을 κ0으로 바꾸거나 근거 없이 모드를 강제하지 않는다. 비용상 KEEP이면 차단 근거를 남기며 전력 절감 성공으로 세지 않는다.
-
-**E5-2 A.** genesis2/genesis3의 SmolCUDA는 OOM 제외를 유지한다.
-해당 GPU 장착 Node는 측정된 MNV/PLC CUDA 또는 Smol CPU를 후보로 사용하고,
-Jetsono SmolCUDA도 실제 후보로 비교한다. CPU 후보를 유지하며 SmolCUDA 채택이나 GPU 승자를 성공 조건으로 두지 않는다.
-
-**E5-S 정적 기준선.** E5-3 끝에서 구성을 고정해 같은 부하를 다시 보내고, 끝나면 자동제어를 되돌려 E5-4로 간다. 고정 구성은 α=0.9(`rate_w=0.9×s_w×R_w`)에서 판단이 고른 구성, 곧 최대 정상 단계에 맞춘 배치다.
-
-1. 고정: `/api/v1/scheduler/state` snapshot에서 세 Workload의 인스턴스와 routing을 읽어, 세 UID를 `autonomousWorkloads`에서 빼고 그 routing을 `staticRouting`으로 담은 PUT 하나를 `reason`(위 선택 이유)과 함께 보낸다([정적 배치 사용법](scheduler-operations.md#정적-배치-사용법) 2단계). 꺼진 Workload의 인스턴스가 있는 노드는 인스턴스와 전력모드를 그대로 둔다(`FixedWorkload`). PUT 응답의 `validatedAt`, ConfigMap 구성의 `staticRoutingValidatedAt`, `manual-static-routing` 동작의 `operation.settingsValidatedAt`이 같은지 실행 기록에 남긴다.
-2. 부하: E5-1부터 E5-6까지의 요청률을 같은 seed로 차례로 보낸다.
-3. 되돌리기: 세 UID를 `autonomousWorkloads`에 다시 넣고 `"staticRouting": {}`(선언 삭제)와 이유를 담은 PUT 하나를 보낸다. 선언 삭제는 동작을 만들지 않으므로 분배는 그대로이고 다음 판단이 이어받는다. 그 구성에서 E5-4를 시작한다.
-
-- 모든 단계에서 Tick p50/p99, ChillServer CPU/RSS/GC CPU, 관측 PVC 증가와 edgemesh CPU/memory/throttle/restart를 기록한다.
-  `GatewayOverloaded`와 노드당 인스턴스 하나 조건을 확인한다.
-- 계획 탐색과 게이트웨이의 CPU 나눔(탐색 규모의 오프라인 근거는 [용량표 근거 7장](capacity-table-evidence.md#7-계획-탐색)). 판단마다 다음을 남긴다.
-  - 탐색: `decision.capacity.search`(`neighborhood`, `evaluated`, `durationNanos`, `budgetCut`)와 `evaluationElapsedNanos`. 시간 예산은 `controlIntervalNanos`의 절반(제어 주기 10 s에서 5 s)이다
-  - Tick CPU: 판단 시작과 끝 사이 `cgmon.sh` 표본의 ChillServer CPU(cgroup v1 `cpuacct.usage` 차)와 `cpu.stat`의 `nr_throttled`, `throttled_time` 차
-  - 게이트웨이 지연: 요청 기록의 ChillServer 안 시간(`elapsedNanos`에서 firstfloor `nativeElapsedMS`를 뺀 값) p99를 탐색 구간과 그 밖 구간으로 나눠 단계마다
-  - SLO: 1분 구간마다 Workload별 SLO 충족 비율, 그 구간에 탐색이 있었는지
-- `planSearchWorkers`와 시간 예산이 gateway 지연과 SLO에 주는 영향을 실제 G와 CPU 관측으로 보고한다.
-  sample 3과 과거 G 약 220 req/s의 CPU 배분은 선행 근거다.
-  최종 E5 G와 구분하며 `budgetCut`의 수와 선택 구성, `TransitionGainWithinUncertainty` keep 수도 기록한다.
-- 평가 표의 분석 값은 Workload별 지연 분포와 처리 결과, 전환 구간을 포함한 전체 POOL 에너지, 활성 POOL 에너지다. 단계 경계와 seed, 단계별 `R_w`와 G, 사용한 profile과 설정이 실행 기록에 남는다.
-- 평가 분모는 모든 유효 offered 요청이다. 전환을 포함한 정상 단계/하위 단계의 SLO와 1분 관측을 남긴다.
-  완료, 실패, 만료, drain과 censoring, 미완료와 표본 수를 함께 보고한다.
-  thermal은 5 s 주기와 active/latched/unknown, 사전 온도 bin(<60/60–70/70–80/≥80°C)으로 기록하고 미관측 bin의 일반화를 제한한다.
-  E5-S는 E5-3 끝 α=0.9의 실제 구성/모드/route를 고정한다.
-  제어요소 비교는 N=2 권고안(membership-off, replicas-off)이며 각각 하나씩 끄고 같은 E5-2/E5-5 arrival trace와 실제 효과 witness를 보존한다.
-  placement/자원은 배치·profile과 결합, routing은 no-op/안전 전달 경로, batching은 고정 B와 deadline 의미 차이, power는 U2 최소안 장면만 관찰하므로 별도 off 비교에서 제외한다. 전체 제어요소의 독립 기여를 증명하지 않는다.
-  seeds101/202/303, payload ID와 profiling/evaluation 부분집합을 사전에 고정한다.
-  한 paired trace의 case study와 독립 seed 반복을 구분하며 사후 threshold/seed/집단 선택을 하지 않는다.
-  정량 SLO/m/G/κ/R/N과 나머지 평가 threshold는 D2 뒤 실측에 근거해 고정한다.
-- E5 full 195분과 static 170분은 합계 365분이다(E5-S는 실패 주입 제외).
-  제어요소 N=2의 E5-2/E5-5 비교는 70분을 더해 435분이다. reset, settling, warmup, drain, flush와 추가 seed 시간은 별도다.
-  캠페인 중 다중 Workload 시험은 선행 근거로 보존하고 E5 결과 칸은 해당 Run ID가 있을 때 채운다.
-- 첫 준비(부하 시작→첫 분배 ACK) 요청은 전체 offered 분모를 유지하고 별도 집단으로 표시한다. Node 차단 명령 시작→uncordon 뒤 실제 Ready·관측·route 회복 확인 구간도 전체 결과를 유지하며 표시하고, 해당 구간 제외 집계를 분모·실패 수와 함께 병기한다. 미복구는 단계 끝까지다. 사후 유리한 창을 고르지 않는다.
-- 실행 설정 `hack/e5/demo-config.e5.example.json`의 capacityR는 최종 숫자 승인 뒤 채운다. 실패 주입 runbook은 운영자용이며 자동 실행하지 않는다. 짧은 preflight는 E5-0 Ready·혼합 부하·토큰·전력·정리 경로를 검사하며 연구 장애 실증을 대체하지 않는다.
+원시 정본은 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/` 아래 `control-213-full/{tables.txt,e5-summary.json}`, `control-222-full/{tables-223.txt,comparison-control-213-223.txt/.json,e5-summary.json,static-selection.json,static-replay-restore.json,tables-3.txt,tables-3b.txt,comparison-224.txt/.json,comparison-225.txt/.json,full-E5-1-3b/,full-E5-5-3/,full-E5-6-3/,full-E5-7-3b/}`, `analysis/P2-synthesis.md`다. MEASURED_DESCRIPTIVE/FAIL/OVERLOAD_DESCRIPTIVE/UNMEASURED/INCOMPLETE/UNKNOWN의 원판정을 유지한다.
 
 ### 9.3 검증 기록
 
-E1은 2026-10-19 UTC에 수행했다. 첫 실행과 rev 35 재실행 결과를 기록한다.
+E1 2026-10-19 UTC의 최초30s timeout은 Tick133실패/첫구성없음/1660요청성공0/p95 30.08s. rev35 pools-e669615(entrypoint/profiler) 재실행은 maxCandidates32/replays10/m139(초기50), 활성화6s뒤 rasp5 mnv2-rasp5-cpu-q1-ed628c8 CPU[3]/Fixed,24s뒤Ready였다.
 
-| 실행 | 배포와 이미지 | 설정 | 첫 구성 |
+| 부하 | Tick p50/p99/max ms | 요청p95 ms | 1s완료 |
 |---|---|---|---|
-| 첫 실행 (E1 #1) | 2026-10-19 UTC | — | 30 s timeout으로 Tick 133회 실패, 첫 구성 없음, 1,660건 중 성공 0건, p95 30.08 s |
-| 재실행 | 2026-10-19 UTC / rev 35; `chill-serving-entrypoint:pools-e669615`, `chill-profiler:pools-e669615` | `maxCandidates=32`, `replays=10`, `completionMarginMS=139` (초기 50) | 활성화 6 s 뒤 rasp5 `mnv2-rasp5-cpu-q1-ed628c8` 한 인스턴스(CPU [3], Fixed); 24 s 뒤 Ready |
+| 0.633req/s | 913/1749/1749 | 77.5 | 62/62 |
+| 2req/s | 3475/6166/6166 | 140.1 | 300/300 |
+| 5req/s | 7495/22575/22575 | 200.2 | 750/750 |
+| soak2req/s | 4769/6601/6948 | 161.4 | 7139/7199(99.17%) |
+| 전체 | 4574/12655/22575 | 164.5 | 8252/8312(99.28%) |
 
-재실행의 단계별 Tick과 SLO 결과다.
+위 단계 SLO는 충족했다. residual n8312 p50 3.29/p99 138.23/max405.73ms→m139. D-11 query실패로PVC사본계산, API20:10:20–20:35(n1070)/0.633(n62)와일치.1h 비교에너지예측499333J/138.7W,실측495741J/137.7W,whole(control-plane genesis1제외)521589J/144.9W다.
 
-| 부하 | Tick p50 / p99 / max (ms) | 요청 p95 (ms) | 1 s 이내 완료 | SLO |
-|---|---:|---:|---:|---|
-| 0.633 req/s | 913 / 1,749 / 1,749 | 77.5 | 62 / 62 | 충족 |
-| 2 req/s | 3,475 / 6,166 / 6,166 | 140.1 | 300 / 300 | 충족 |
-| 5 req/s | 7,495 / 22,575 / 22,575 | 200.2 | 750 / 750 | 충족 |
-| soak 2 req/s | 4,769 / 6,601 / 6,948 | 161.4 | 7,139 / 7,199 (99.17%) | 충족 |
-| E1 전체 | 4,574 / 12,655 / 22,575 | 164.5 | 8,252 / 8,312 (99.28%) | 충족 |
-
-| 측정 | 결과 |
+| 결함/환경 ID | 관측과 경계 |
 |---|---|
-| `completionResidualNanos` 전체 E1 | p50 3.29 ms / p99 138.23 ms / max 405.73 ms (n=8,312); `completionMarginMS=139` |
-| 잔여 지연 산출 | D-11 쿼리 실패로 PVC 사본에서 계산; API 결과와 20:10:20–20:35 구간(n=1,070) 및 0.633 req/s(n=62)에서 일치 |
-| 비교 집합 에너지 예측 | 499,333 J / 138.7 W (1 h) |
-| 비교 집합 에너지 실측 | 495,741 J / 137.7 W (1 h) |
-| 전체 POOL 에너지 실측 | 521,589 J / 144.9 W (1 h, control-plane genesis1 제외) |
-
-확인한 결함과 환경 제한이다.
-
-| ID | 확인 내용 |
-|---|---|
-| D-1 | 첫 실행의 Tick이 30 s deadline으로 133회 실패해 첫 구성이 없었고 요청 1,660건 중 성공이 없었다. |
-| D-2 | 60 s 이상 settling이 필요한 MLIB 실행에서 runner의 60 s `IdleTimeout`이 연결을 닫았다. |
-| D-3 | PMTC observer의 runner PodIP 연결이 edge tunnel에서 실패했다; Service 경유 관측은 재실행에서 성공했다. |
-| D-4 | PMTC는 `modes[0]` 상태에서 시작해야 하며, 첫 시도는 `SourceStateMismatch`로 실패했다. Admission은 선택 runner 프로파일의 DeviceClass 기준 Node read-back이 `modes[0]`과 다르면 taint·runner Pod 생성 전에 `Refused: RunnerSourceStateMismatch`를 기록한다. |
-| D-5 환경 | orin-nano Pod DNS의 `127.0.0.53` 질의가 거부되어 해당 노드의 serving prepare를 진행하지 못했다. |
-| D-6 환경 | jetson-nano MAXN→5W NodeActuation이 `Applying`에 머물렀고 SSH 연결이 시간 초과됐다. |
-| D-7 | 빈 노드의 `Fixed` 전력 내림에 power cost가 요구됐으며, rev 35 재실행에서는 측정 비용 없이 낮은 모드로 전환했다. |
-| D-8 | `powerRequests`가 고정 이름 NodeActuation을 재사용해 반복 전환에 stale Ready 상태가 남을 수 있어 `e1r-*` 이름을 사용했다. |
-| D-9 | measurement toleration이 없는 ChillServer Pod가 genesis1 taint 상태에서 Pending이었다. |
-| D-10 | 실패한 measurement prepare가 finalizer가 남은 Pod와 ConfigMap을 남겨 수동 정리가 필요했다. |
-| D-11 | workload observation query가 전체 요청 stream을 읽고 범위 필터를 적용해 ChillServer를 2회 OOM-kill했다. |
-| D-12 | jetsono의 MAXN↔MODE_15W 전환이 노드를 재부팅해 적재된 runner가 종료되고 재진입 전력 비용을 얻지 못했다. |
-| D-13 | jetsonx 전환은 약 1.5 s로 meter 약 1 s 간격보다 짧아 PMTC 15회 모두 `PowerWindowInsufficient`였다. |
-| D-14 | serving-operation이 상태 변화가 증명되지 않은 remove를 Accepted로 저장해 CostIssue가 남았다. |
-| D-15 | decision record 중앙값은 185,359 B로 ≤100 KB 목표를 넘었다; candidates 96,890 B, snapshot 70,394 B였다. |
-| D-16 | CPU 500 m 제한에서 Tick p50은 2 req/s 3,475 ms, 5 req/s 7,495 ms였고, 5 req/s 최대는 22,575 ms였다. |
-| D-17 | 요청 하나가 `assigned` 단계일 때 전체 Tick이 Pending이 됐다; soak 37/360회, 5 req/s 3/17회였다. |
+| D-1 | 최초 Tick133 timeout/성공0, 위 최초실행 |
+| D-2 | settling≥60s MLIB에서 runner IdleTimeout60s가 연결종료 |
+| D-3 | PMTC PodIP edge tunnel실패, Service경유 재실행성공 |
+| D-4 | PMTC modes[0] 시작필수/SourceStateMismatch. admission은 profile DeviceClass 기준 readback 불일치시 taint/runner전 Refused:RunnerSourceStateMismatch |
+| D-5 환경 | orin-nano DNS127.0.0.53거절/prepare불가 |
+| D-6 환경 | jetson-nano MAXN→5W Applying잔류/SSHtimeout |
+| D-7 | Fixed절전에 비용요구 결함, rev35는 무비용내림 |
+| D-8 | 고정 NodeActuation이 staleReady 재사용 가능/e1r-* 사용 |
+| D-9 | ChillServer toleration없어 genesis1 taint에서Pending |
+| D-10 | 실패prepare의 finalizer Pod/ConfigMap 수동정리 |
+| D-11 | 전체stream읽기→범위필터 query가 CS2회OOM |
+| D-12 | jetsono MAXN↔15W재부팅/runner종료/재진입비용미확보 |
+| D-13 | jetsonx 전환≈1.5s가 meter≈1s 간격에 비해 짧아 PMTC15회 PowerWindowInsufficient |
+| D-14 | 변화증거없는remove Accepted/CostIssue |
+| D-15 | decision중앙값185359B>100KB목표(candidates96890/snapshot70394) |
+| D-16 | CPU500m에서2req/s Tick3475ms/5req/s7495ms/max22575ms |
+| D-17 | assigned1건이Tick Pending:soak37/360,5req/s3/17 |
 
 ## 10. 결정과 재현 근거
 
-본문의 측정, 최소 이득, legacy와 실행 순서는 다음 승인 자료의 결정을 담는다.
-캐시 자료는 승인 원문과 상세 실행 manifest의 근거로 연결한다.
-
-- [d 결정](/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/d-measurement-decision.md)
-- [D2와 E5 승인](/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/deployment2-e5-proposal-20261024.md)
-- [정확 8 roots/38 steps](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/e5-input-repair-plan.json)
-- [empty19와 legacy9 목록](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/empty-baseline-plan.json)
-- [BEFORE/AFTER와 native8 조건](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/deployment2-before-plan.json)
-- [Smol source 교체와 반환](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/smol-d-followthrough.json)
-- [legacy MNV GPU2 provenance](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/legacy-mnv-gpu2-provenance.json)
+- [d 결정](/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/d-measurement-decision.md), [D2/E5 승인](/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/deployment2-e5-proposal-20261024.md)
+- [8roots/38steps](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/e5-input-repair-plan.json), [empty19/legacy9](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/empty-baseline-plan.json)
+- [BEFORE/AFTER/native8](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/deployment2-before-plan.json), [Smol 교체/반환](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/smol-d-followthrough.json), [legacy GPU2 provenance](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/legacy-mnv-gpu2-provenance.json)

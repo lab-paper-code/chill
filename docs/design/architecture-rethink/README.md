@@ -1,77 +1,38 @@
-# CHILL 아키텍처 재검토 제안 (A → B1·B2·B3)
+# CHILL 아키텍처 재검토 제안 — B1·B2·B3
 
-## 상태
+상태: **proposal, 승인 대기**. B1·B2와 M0–M5는 권고안이며 이 문서만으로 채택·명세 변경을 확정하지 않는다. 현행 계약은 [시스템 명세](../../spec/README.md)와 각 도메인 설계가 권위 원본이다.
+근거 기준: main `99621a6` / `feat/workload-pools` `42a7f98`, 당시 미커밋 workload-pools·ADR 0022 검토. 관측: 판단 ~10MB, ChillServer 128Mi OOM·이력 조회 15분 초과, PVC 8Gi 포화; 원인은 전역 재생×입력 전체 기록×다중 writer이며 10MB·JSONL scan은 명세 요구가 아니다.
 
-**채택.** 사용자가 B1과 B2, 이행 단계 M0–M5를 채택했고 B3는 비교 실험 기준선으로 둔다. 명세 변경은
-[06](06-spec-change-proposals.md)에서 사용자가 승인한 항목만 효력이 있다. 각 단계를 구현할 때 해당 부분을 ADR과
-도메인 설계로 옮긴다.
+## 대안과 보존할 의도
+- **B1**: ms~s router·EDF 배칭과 30–60초(위반 신호 시 조기 호출) 용량 계획 분리. Workload–공유 노드 연결 성분별 계획, 꺼진 Workload 구성 고정·영향 시 SLO 평가; 측정 기반·SLO 우선·전환+Serving 에너지·노드별 유휴분 1회·완료여유·가용 노드 최저 모드는 유지한다. 재생은 삭제하지 않고 용량 계산·상위 K 검증(예: 3×20회)·오프라인 simulator로 남긴다([용량표 계획기](../serving/analytic-planner.md)).
+- **B2**: 판단 알고리즘과 직교하는 노드 의도 단일 writer(ChillServer)와 관측 단일 writer(agent), SSA 소유권·grant generation fencing. `chill.dacs.io/measurement:NoSchedule`로 측정 admission, 서빙 노드 거절·terminal/삭제 시 반환; `spec.nodeName` 경로도 ChillServer가 배제한다. `SCH-34`, `SCH-AC-26`, `DB-FR-34` 의미와 측정 Pod 목록·S3 증거는 유지([측정 admission](../serving/measurement-admission.md)).
+- **B3**: Workload autoscaler + 노드 전력 governor + 분 단위 consolidator(`ΔE(H)>E_trans`)의 비교 기준선(`SCH-32`). 진동·전역 최적 손실 위험으로 주 정책은 권고하지 않으며, 주 정책화는 `SCH-02/15/16` 약화(⑤)가 필요하다.
+- B1 위험은 RPi5·LattePanda·RK3588의 꼬리 지연·열 throttling, SmolVLM2 타일 수 변동과 보수 상한의 과대 프로비저닝이다. shadow 검증 전 재생을 주 평가기로 유지한다. 활성 POOL의 인스턴스 도출과 workload-pools commit 1–5(외부 Pod safety 제거, 완료여유, Workload별 자동제어, 측정 근거 자기 선택, CHILL Pod 기록)는 유지한다.
 
-## 왜 이 문서가 있는가
+## M0–M5 이행안
+| 단계 | 경계·근거 | 명세 변경 |
+|---|---|---|
+| M0 | [판단 기록 다이어트](../serving/decision-record-diet.md): Keep/Target 전체·나머지 요약, profile ID 참조, snapshot arrival 제거·재생 시각 원값과 `evaluationElapsedNanos` 유지. 설계 측정 18.8MB→약70KB, 목표 ≤100KB | 불필요: `SCH-30`의 연결 제공 |
+| M1 | [관측 분리](../serving/observability-split.md): 요청당 wide row, 불변 ID, 시간별 gzip/S3·2시간 버퍼·구간 조회·오프라인 재집계(`SCH-31`) | 불필요 |
+| M2 | [node agent](../platform/node-agent.md): discovery·전력·census DaemonSet 통합, inventory 자동화·수작업 ConfigMap 제거, 실제 전력 적용 로직 유지 | 불필요 |
+| M3 | B2 측정 admission·grant·자동 반환, `serving-operation`은 ChillServer 클라이언트, 전환 비용 runner 자동 생성. M3 전 taint는 운영자가 관리 | 불필요 |
+| M4 | option·SLO별 재생 용량 κ를 사전 계산, Tick은 κ 합·노드 계획·이웃 탐색. 오프라인/shadow 통과 후 전환; 재생·동작 DAG·prepare/route/drain/remove 유지 | ① `SCH-13/14`, ①' 00·04의 지연 평가, ② `SCH-16`, ③ POOL 에너지, ④ `SCH-23` 승인 필요 |
+| M5 | [정리](../platform/cleanup-m5.md): Measurement CRD 통합·NodeActuation 제거(ADR 0019), Go 바이너리/runtime image 분리. Workload·ModelSpec·Dataset·Preprocessor와 firstfloor·runner·S3 유지 | 불필요 |
 
-워크로드별 POOL 설계(branch `feat/workload-pools`의 `docs/design/serving/workload-pools.md`,
-`docs/adr/0022-workload-pool-membership-boundary.md`)를 두 차례(정확성, 과설계) 리뷰한 뒤,
-"현재 요구사항에 묶이지 말고, 요구사항을 바꾸면 훨씬 단순·빠른 구조가 되는지"를 senior
-distributed-systems architect 관점에서 다시 본 결과다. 외부 선례(서빙 논문, Kubernetes 패턴,
-시계열 저장, queueing 모델)를 1차 출처로 확인해 인용했다.
-
-실운영에서 관측된 문제(사용자 보고, ground truth):
-
-- 스케줄러 결정 기록 1건 ~10MB → ChillServer(128Mi) OOM, 이력 조회 15분 초과
-- 관측 PVC 8Gi 가득 참
-- staticRouting/calibration 수동 부트스트랩
-- 노드 소속(annotation, NodeActuation, serving Pod) 주변의 다수 경쟁 조건
-- 다중 CRD·controller 난립
-- Go 소량 변경에도 무거운 runtime image 재빌드
-- 노드별 JSON ConfigMap 수작업 편집
-
-## 한 문단 결론
-
-**B1(두 시간척도 분리: 빠른 데이터 경로 + 분석형 용량 계획기)과 B2(노드 상태 단일 writer +
-native fence + 측정 admission)를 함께 채택하고, B3(완전 분산 autoscaler/governor/consolidator)는
-비교 실험 기준선으로 둔다.** ~10MB 결정 기록은 명세가 요구한 것이 아니라 구현의 선택이므로
-명세 변경 없이 즉시 줄일 수 있다(M0). workload-pools 설계의 commit 1–5는 유지한다. M3 전까지 측정 격리는 운영자가
-붙이고 떼는 taint `chill.dacs.io/measurement`(§3.3)이고, B2(M3)는 같은 taint를 단일 writer가 다루게 한다.
-
-## 의도 보존 메모 (다음 에이전트가 오해하기 쉬운 지점)
-
-1. **B1은 재생(replay)을 없애자는 제안이 아니다.** 재생을 *탐색 루프*에서 빼고, 상위 K개(예: 3개 × 20회)
-   후보의 **검증기**와 오프라인 실험 simulator로 남긴다. `scheduler_replay.go`는 유지 대상이다.
-2. **B1과 B2는 직교한다.** B2(상태 소유·actuation 메커니즘)는 현재 판단 알고리즘(A)과도 조합 가능하며
-   명세 변경이 필요 없다. B1만 명세 변경(①, ①', ②, ③, ④)이 필요하다.
-3. **M0(결정 기록 다이어트)과 M1(관측 분리)은 명세 변경 없이 바로 할 수 있다.** `SCH-30`은 "연결해 제공"이라
-   불변 근거의 ID 참조로 충족된다. 10MB 기록과 JSONL 선형 scan은 명세가 강제한 것이 아니다.
-4. **명세 변경 ②(공통 항 소거, 차이 비교)는 순위를 바꾸지 않는다.** 전체 POOL 총에너지는 *실측으로 보고*하고,
-   *후보 비교*에서만 후보 간 동일 항을 소거한다. 이것으로 ADR 0022/§3.4의 측정 노드 공통 항,
-   가용 노드 내림 `Fixed` 제외 assumption, "영향 없는 노드의 baseline 누락 → 전체 Pending"이 사라진다.
-   ②는 A에도 바로 적용할 수 있다.
-5. **B3는 주 정책으로 권고하지 않는다.** 명세의 "제어요소 기여 비교·다른 연구 정책 대체"용 기준선이다.
-   B3를 주 정책으로 쓰려면 `SCH-02/15/16`을 약화해야 한다(⑤).
-6. **활성 POOL을 인스턴스에서 도출하는 workload-pools §3.2는 B1·B2와 맞으므로 유지한다.**
-7. **B1의 가장 큰 위험은 edge CPU 노드(RPi5, LattePanda, RK3588)의 꼬리 지연·열 throttling과
-   SmolVLM2의 입력 단위 수(타일) 변동이다.** 그래서 shadow 비교(M4)와 실측 검증(07 문서)을 통과해야
-   전환한다. 통과 전에는 재생이 주 평가기다.
-8. 수치 중 측정하지 않은 것은 모두 `[추론]`으로 표시했다. 코드 근거는 파일:줄로, 외부 근거는 링크로 남겼다.
-
-## 출처 기준점 (provenance)
-
-- 코드 근거: `/home/genesis1/ETRI/chill-pools` worktree, branch `feat/workload-pools` @ `42a7f98`.
-  이 commit은 main `99621a6`에 spec 문서만 더한 것이라 **코드 줄 번호는 main과 같다**.
-- 명세 인용: `42a7f98`의 `docs/spec/` (POOL·자동제어 개정 포함). main의 spec에는 이 개정이 아직 없다.
-- 리뷰 대상 설계: 위 worktree의 **미커밋** 파일 `docs/design/serving/workload-pools.md`,
-  `docs/adr/0022-workload-pool-membership-boundary.md`. 절 번호(§3.3, §3.4, §4.5, §7 등)는 이 파일 기준이다.
-- 읽은 명세: `docs/spec/README.md`, `scheduler/SRS.md`, `00_measurement.md`, `03_routing.md`,
-  `04_configuration_selection.md`, `05_transition_control.md`.
-
-## 문서 구성 (읽는 순서)
-
-| 문서 | 내용 |
+②는 동일 노드·구간의 공통 에너지 항만 소거하므로 후보 순위는 같고 A에도 적용 가능하다. 전체 POOL 에너지는 실측 보고하며 영향 없는 baseline 누락으로 전체 Pending을 만들지 않는다. ①·①'은 평균 처리량/분위수 단순 합산 금지를 유지하고 측정 기반 보수 평가를 허용, ④는 actual/replay 대신 actual/평가 모델에 같은 deadlinePolicy(drop/keep/defer, 기본 keep)를 적용한다. `SCH-05/15/17/18/25/26/27/30/31/33/34`, 공유 노드의 같은 등록 모델 제약과 동작별 관측은 유지한다.
+## 검증과 미해결 승인
+수치 문턱은 명세 요구가 아닌 설계 제안이다. 오프라인 target 일치 또는 에너지 차 ≤5%·재생보다 낙관적 SLO 판정 없음, ≥95% 창에서 예측≥실측·에너지 손해 ≤5%, 열 상태별 `l_q(b)` 변동이 SLO 여유 안, 기록 ≤100KB·RSS limit 미만·OOM 0, 측정/prepare 1000회 겹침 0·자동 반환, B3 버스트/급감 진동·에너지 비교가 검증 대상이다. `SCH-AC-24/25/26`은 첫 구성·공존·측정 admission을 확인한다.
+P10은 E5→M5→main 병합→해당 main image 빌드→최종 배포 뒤 source commit·image·release revision을 고정해 판정한다. 병합 전 E5는 최종 배포 검증을 대신하지 않는다. E5는 시작·일정·버스트·증가(0.5/0.7/0.9 `R_w`)·한계·급감/재급증·1시간 soak, 총 요청률≤게이트웨이 한계 G; 원시 요청·판단·열·부하·프로파일·설정·seed와 Tick p50/p99·CPU/RSS·저장 증가를 같은 시간축으로 보존한다. testbed 변경은 사용자 요청이 있을 때만 한다.
+| 미해결 ID | 승인할 내용 |
 |---|---|
-| [01-current-premise.md](01-current-premise.md) | 현재 전제 A: 무엇이 구조적으로 복잡·느리게 만드는가, 코드 근거와 수치 |
-| [02-b1-two-timescale-planner.md](02-b1-two-timescale-planner.md) | B1: 두 시간척도 분리와 분석형 용량 계획기 |
-| [03-b2-single-writer-node-state.md](03-b2-single-writer-node-state.md) | B2: 노드 상태 단일 writer, native fence, 측정 admission |
-| [04-b3-decentralized-baseline.md](04-b3-decentralized-baseline.md) | B3: 완전 분산 구조(기준선 용도) |
-| [05-recommendation-migration.md](05-recommendation-migration.md) | 권고, 단계적 이행 M0–M5, 남는 코드, workload-pools commit과의 관계 |
-| [06-spec-change-proposals.md](06-spec-change-proposals.md) | 바꿀 명세 문장(현재 문장 원문 → 제안), 바꾸지 않는 문장 |
-| [07-validation.md](07-validation.md) | 제안을 확정·기각할 측정 |
-| [08-final-verification.md](08-final-verification.md) | 07 항목, `SCH-AC-24`~`26` kind E2E, E5 SLO와 에너지 판정의 최종 검증 절차 |
-| [references.md](references.md) | 외부 출처 목록과 원문 확인 여부 |
+| D1 | E5-1/3/5/6의 단계 백분위 또는 1분 창 충족률·문턱, 전환 포함 여부 |
+| D2 | PLC·SmolVLM2 SLO 백분위와 L 승인; tight p95 1s는 기존 조건 |
+| D3 | 위 5%·95% 예시 문턱 확정과 재생이 Tick에서 빠진 뒤 비교 기준 해(전수 최소/기준선/예측-실측) |
+| D4 | 예측 충족을 `κ_new≥λ`·`Overload` 없음으로 둘지(판단별 예측 백분위는 없음) |
+| D5 | `budgetCut` 불일치 별도 집계 여부와 낙관성 검증을 실측 비교로 대체할지 |
+| D6 | 열 상태(throttle active/latched/온도)·SLO 여유(`L−(l_q(b)+b×d+m)`)·5초 표본 간격 |
+| D7 | E5 Tick 목표: E1 기준 p99≤100ms·CPU500m을 유지할지; E5 탐색 예산은 제어 주기 절반 |
+| D8 | fake-client `-race -count=1000`을 envtest 대신 인정할지, 실클러스터 agent kill 포함 여부 |
+| D9 | B3 구현/정적 구성·제어요소 끄기/생략 중 기준선과 재실행 단계 |
+| D10 | `SCH-AC-25`를 kind E2E로 닫을지 실클러스터 E2를 별도 수행할지 |
+| D11 | E5-6 세 Workload의 예측-비교 집합 실측 에너지 차 ≤2% 적용 여부 |
