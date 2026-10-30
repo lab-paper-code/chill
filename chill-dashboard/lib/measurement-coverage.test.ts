@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { coverageSelection, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
+import { conditionLabel, deviceLabel, coverageSelection, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 import type { CoverageModel } from "./measurement-coverage.ts"
 import type { InventoryClass, InventoryView, MeasurementPlan, ModelCompatibility, ProfilingRun } from "./read-types.ts"
@@ -70,4 +70,9 @@ test("closing a directly linked cell preserves its matrix and filter context",()
   assert.equal(closed.get("cpu"),"2")
   assert.equal(closed.has("cell"),false)
   assert.equal(closed.has("variant"),false)
+})
+test("condition choices name Node CPU and dataset without dumping frozen JSON",()=>{
+  assert.equal(conditionLabel({nodeUID:"node-uid",metricSource:{nodeName:"jetsono"},cpu:{limit:"4",affinityCPUs:[2,3]},activeProtocol:{dataset:{name:"images",uid:"dataset-uid"}},runtimeImage:"registry/image@sha256:long"}),"Node jetsono / CPU 4 (코어 2,3) / 데이터셋 images")
+  assert.equal(conditionLabel({}),"Node 미지정 / CPU 미지정 / 데이터셋 미지정")
+  assert.equal(deviceLabel("jetson-agx-orin-64g"),"AGX Orin 64g")
 })

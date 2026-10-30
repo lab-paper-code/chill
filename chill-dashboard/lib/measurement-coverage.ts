@@ -2,6 +2,15 @@ import type { ExecutionPath, ModelSpec } from "./domain.ts"
 import type { InventoryClass, InventoryView, MeasurementPlanSpec, ModelCompatibility, ProfilingRun } from "./read-types.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 
+export function deviceLabel(name:string) {
+  return name.replace(/^edge-server-/,"").replace(/^jetson-agx-orin-/,"AGX Orin ").replace(/^jetson-orin-nano-/,"Orin Nano ").replace(/-/g," ")
+}
+export function conditionLabel(condition:Record<string,unknown>) {
+  const cpu=condition.cpu as {request?:string;limit?:string;affinityCPUs?:number[]}|undefined
+  const source=condition.metricSource as {nodeName?:string}|undefined
+  const active=condition.activeProtocol as {dataset?:{name?:string}}|undefined
+  return `Node ${source?.nodeName??condition.nodeUID??"미지정"} / CPU ${cpu?.limit||cpu?.request||"미지정"}${cpu?.affinityCPUs?.length?` (코어 ${cpu.affinityCPUs.join(",")})`:""} / 데이터셋 ${active?.dataset?.name??"미지정"}`
+}
 export function powerModeLabel(name:string,activeWatts:readonly number[]=[]) {
   const watts=activeWatts.filter(Number.isFinite)
   return watts.length?`${name} · 실측 ${Math.min(...watts).toFixed(1)}${Math.min(...watts)!==Math.max(...watts)?`–${Math.max(...watts).toFixed(1)}`:""} W`:`${name} · 전력 미확인`

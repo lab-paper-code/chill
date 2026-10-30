@@ -24,6 +24,12 @@ test("fixed-chill-server relay enforces path, origin, body and credential bounda
   for(const query of ["?batches=2,1","?batches=1,1","?batches=0","?batches=","?node=","?node=a&node=b","?model=x"]) assert.throws(()=>relayPlan("GET",coverage,query,config),/DashboardQueryInvalid/)
   assert.throws(()=>relayPlan("POST",coverage,"",config),/DashboardMethodNotAllowed/)
   assert.equal(relayPlan("POST","v1/namespaces/research/batch-energy-optimizations/preflight".split("/"),"?variantId=exact-condition",config).kind,"query")
+  const runs="v1/namespaces/research/profiling-runs".split("/")
+  const runFilters=new URLSearchParams({model:"m",deviceClass:"d",node:"n",path:"cpu",powerMode:"fixed",cpu:"2",status:"problem",group:JSON.stringify({namespace:"research",measurement:{dataset:"images"}}),parentUID:"parent"})
+  assert.equal(new URL(`https://local${relayPlan("GET",runs,`?${runFilters}`,config).path}`).searchParams.get("status"),"problem")
+  const profiles="v1/scheduler/profiles".split("/")
+  assert.match(relayPlan("GET",profiles,"?model=m&deviceClass=d&profile=exact&offset=25&limit=25",config).path,/profile=exact/)
+  assert.throws(()=>relayPlan("GET",profiles,"?limit=51",config),/DashboardQueryInvalid/)
   assert.equal(relayPlan("PUT", ["v1", "models", "preflight"], "", config).kind, "mutation")
   for (const kind of ["preprocessors", "datasets"]) {
     assert.equal(relayPlan("POST", ["v1", kind], "", config).kind, "mutation")
