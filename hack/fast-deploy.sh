@@ -15,16 +15,17 @@ p.add_argument("--source", required=True)
 p.add_argument("--control", required=True)
 p.add_argument("--images", default="auto")
 p.add_argument("--dry-run", action="store_true")
+p.add_argument("--chart-diff-approved", type=pathlib.Path, help="File containing the exact approved canonical live-to-source chart diff")
 p.add_argument("--self-check", action="store_true", help="Run local selection/deadline regression checks only")
 p.add_argument("--token-safety-margin-seconds", type=float, default=120)
 a = p.parse_args()
 if not re.fullmatch(r"[0-9]+", a.control):
     p.error("--control must contain digits")
-roles = {"server": ("servingEntrypoint", "serving-entrypoint"), "profiler": ("profiler", "profiler"), "dashboard": ("dashboard", "dashboard")}
-dockerfiles = {"server": "chill-server", "profiler": "profiler", "dashboard": "dashboard"}
+roles = {"server": ("servingEntrypoint", "serving-entrypoint"), "profiler": ("profiler", "profiler"), "dashboard": ("dashboard", "dashboard"), "node-agent": ("nodeAgent", "node-agent")}
+dockerfiles = {"server": "chill-server", "profiler": "profiler", "dashboard": "dashboard", "node-agent": "node-agent"}
 selected = a.images.split(",")
 if a.images != "auto" and (len(set(selected)) != len(selected) or any(x not in roles for x in selected)):
-    p.error("--images accepts auto or a comma-separated subset of server,profiler,dashboard; runtime images are forbidden")
+    p.error("--images accepts auto or a comma-separated subset of server,profiler,dashboard,node-agent; runtime images are forbidden")
 root = pathlib.Path.cwd()
 sys.path.insert(0, str(root / "hack/e5"))
 import auth
@@ -52,6 +53,17 @@ def affected(paths, inputs):
          else str(pathlib.PurePosixPath(x).parent) in inputs["directories"] and not x.endswith("_test.go")))]
 def readiness_result(checks, application, remaining):
     return remaining > 0 and all(checks.values()) and application.get("status") == 200 and application.get("exitCode") == 0
+def canonical_objects(raw):
+    objects = [x for x in yaml.safe_load_all(raw) if isinstance(x, dict)]
+    return sorted(objects, key=lambda x: (x["apiVersion"], x["kind"], x["metadata"].get("namespace", "chill-system"), x["metadata"]["name"]))
+def chart_difference(deployed, rendered):
+    return "".join(difflib.unified_diff(
+        (json.dumps(deployed, sort_keys=True, indent=2) + "\n").splitlines(True),
+        (json.dumps(rendered, sort_keys=True, indent=2) + "\n").splitlines(True),
+        fromfile="live", tofile="source-chart"))
+def approve_chart(difference, approval):
+    if difference and (approval is None or approval.read_text() != difference):
+        raise RuntimeError("source chart/live manifest drift; --chart-diff-approved must match chart-diff.txt exactly")
 if a.self_check:
     server = {"files": ["go.mod", "go.sum", "build/docker/chill-server.Dockerfile"], "targets": ["./cmd/chill-server"], "directories": ["cmd/chill-server", "internal/serving"]}
     profiler = {"files": ["go.mod", "go.sum", "build/docker/profiler.Dockerfile"], "targets": ["./cmd/profiler", "./cmd/transition-observer"], "directories": ["cmd/profiler", "cmd/transition-observer", "internal/profiling"]}
@@ -61,6 +73,19 @@ if a.self_check:
     assert not affected(["internal/serving/unrelated/other.go"], server)
     assert affected(["go.mod"], server) and affected(["go.mod"], profiler)
     assert affected(["chill-dashboard/app/page.tsx"], {"files": [], "targets": [], "directories": ["chill-dashboard"]})
+    import yaml
+    assert chart_difference([], []) == ""
+    difference = chart_difference([], [{"kind": "ClusterRole"}])
+    try:
+        approve_chart(difference, None)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("unapproved chart changes accepted")
+    with tempfile.TemporaryDirectory() as temp:
+        approval = pathlib.Path(temp) / "approved.txt"
+        approval.write_text(difference)
+        approve_chart(difference, approval)
     assert not readiness_result({"server": True}, {"status": 0, "exitCode": 7}, 10)
     assert not readiness_result({"server": True}, {"status": 503, "exitCode": 0}, 10)
     assert not readiness_result({"server": True}, {"status": 200, "exitCode": 28}, 10)
@@ -84,7 +109,7 @@ if a.dry_run:
     print("helm get values chill -o json → live-values.json; auto: compare live source diff with these per-image dependency directories; source-diff.json includes matching paths and inputs")
     print("allowed builds:", a.images, "; runtime builds: FORBIDDEN (7 runtime images)")
     print("flock /tmp/chill-heavy.lock; buildx chill-builder linux/amd64 → HTTP registry.insecure=true publication and HTTP digest verification")
-    print("helm template old/new → render-diff + exact image-only object gate → kubectl apply --dry-run=server")
+    print("helm template old/new → canonical chart-diff (exact --chart-diff-approved required for chart changes) + full render-diff + image-only overlay gate → kubectl apply --dry-run=server")
     print("helm upgrade --reset-values -f live-values.json -f overlay.json --wait --timeout 8m")
     print("Pod Ready + restartCount=0 + registry index/platform digest gate AND authenticated GET /api/v1/scheduler/state HTTP 200 (480s total, all queries bounded by remaining deadline); readiness.json; deploy-log.md")
     print("API: CHILL_EXPERIMENT_CONFIG d2.apiBase/caFile/tokenFile, verified TLS + Bearer, no redirects; profiler/dashboard: Pod Ready")
@@ -139,7 +164,7 @@ try:
         raise RuntimeError("CampaignOps CA/token file is missing")
     api_url = origin + "/api/v1/scheduler/state"
     # All possibly selected builds + Helm wait + post-upgrade gate + configured slack.
-    token_seconds = (3 if a.images == "auto" else len(selected)) * 1800 + 510 + 480 + a.token_safety_margin_seconds
+    token_seconds = (len(roles) if a.images == "auto" else len(selected)) * 1800 + 510 + 480 + a.token_safety_margin_seconds
     save("token-preflight.json", auth.check(token_file, token_seconds, endpoint=origin, ca_file=ca_file))
     live = json.loads(run(helm + ["get", "values", "chill", "-o", "json"], "live-values.json"))
     run(helm + ["get", "hooks", "chill"], "live-hooks.yaml")
@@ -150,6 +175,15 @@ try:
     src.mkdir()
     run(["tar", "-xf", archive, "-C", src], "extract.log")
     chart = src / "charts/chill"
+    flags = ["-f", str(out / "live-values.json")]
+    before = run(helm + ["template", "chill", chart, *flags, "--is-upgrade"], "render-before.yaml")
+    live_manifest = (out / "live-manifest.yaml").read_bytes() + b"\n---\n" + (out / "live-hooks.yaml").read_bytes()
+    chart_diff = chart_difference(canonical_objects(live_manifest), canonical_objects(before))
+    (out / "chart-diff.txt").write_text(chart_diff)
+    print(chart_diff, end="", flush=True)
+    approve_chart(chart_diff, a.chart_diff_approved)
+    if a.chart_diff_approved:
+        (out / "chart-diff-approved.txt").write_text(a.chart_diff_approved.read_text())
     changed = {}
     for role in roles:
         old = source(image(live, role))
@@ -163,30 +197,27 @@ try:
     overlay, expected = {}, {}
     registry = "155.230.35.213:5000/chill/"
     for role in selected:
-        key, component = roles[role]  # Only these three hard-coded Dockerfiles can reach buildx.
+        key, component = roles[role]  # Only these hard-coded control Dockerfiles can reach buildx.
         repo = registry + "chill-" + component
         tag = "pools-control-" + a.control + "-" + sha[:12]
         ref = repo + ":" + tag
         metadata = out / (role + "-build.json")
-        run(["/usr/bin/nice", "-n", "19", "/usr/bin/docker", "buildx", "build", "--builder", "chill-builder", "--platform", "linux/amd64", "--label", "org.opencontainers.image.revision=" + sha, "--metadata-file", metadata, "-f", src / ("build/docker/" + dockerfiles[role] + ".Dockerfile"), "--output", "type=image,name=" + ref + ",push=true,registry.insecure=true", src], role + "-build.log", 1800)
+        platforms = "linux/amd64,linux/arm64" if role == "node-agent" else "linux/amd64"
+        run(["/usr/bin/nice", "-n", "19", "/usr/bin/docker", "buildx", "build", "--builder", "chill-builder", "--platform", platforms, "--label", "org.opencontainers.image.revision=" + sha, "--metadata-file", metadata, "-f", src / ("build/docker/" + dockerfiles[role] + ".Dockerfile"), "--output", "type=image,name=" + ref + ",push=true,registry.insecure=true", src], role + "-build.log", 1800)
         digest = json.loads(metadata.read_text())["containerimage.digest"]
         raw = run(["/usr/bin/curl", "--fail", "--silent", "--show-error", "-H", "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json", "http://155.230.35.213:5000/v2/chill/chill-" + component + "/manifests/" + tag], role + "-manifest.json")
         if "sha256:" + hashlib.sha256(raw).hexdigest() != digest:
             raise RuntimeError("registry/build digest mismatch: " + role)
         manifest = json.loads(raw)
-        candidates = [x["digest"] for x in manifest.get("manifests", []) if x.get("platform", {}).get("architecture") == "amd64" and x.get("platform", {}).get("os") == "linux"]
-        expected[role] = {"image": ref, "digest": digest, "platformDigest": candidates[0] if len(candidates) == 1 else digest}
+        candidates = [x["digest"] for x in manifest.get("manifests", []) if x.get("platform", {}).get("architecture") in ("amd64", "arm64") and x.get("platform", {}).get("os") == "linux"]
+        expected[role] = {"image": ref, "digest": digest, "platformDigests": candidates or [digest]}
         overlay[key] = {"image": {"repository": repo, "tag": tag}}
     save("publication.json", {"sourceSHA": sha, "roles": expected, "runtimeBuilds": 0})
     save("overlay.json", overlay)
-    flags = ["-f", str(out / "live-values.json")]
-    before = run(helm + ["template", "chill", chart, *flags, "--is-upgrade"], "render-before.yaml")
     after = run(helm + ["template", "chill", chart, *flags, "-f", str(out / "overlay.json"), "--is-upgrade"], "render-after.yaml")
     def objects(raw):
         return {(x["apiVersion"], x["kind"], x["metadata"].get("namespace", "chill-system"), x["metadata"]["name"]): x for x in yaml.safe_load_all(raw) if isinstance(x, dict)}
-    old, new, deployed = objects(before), objects(after), objects((out / "live-manifest.yaml").read_bytes() + b"\n---\n" + (out / "live-hooks.yaml").read_bytes())
-    if old != deployed:
-        raise RuntimeError("source chart/live manifest drift; inspect render-before and live-manifest")
+    old, new, deployed = objects(before), objects(after), objects(live_manifest)
     approved = copy.deepcopy(old)
     replacements = {image(live, r): expected[r]["image"] for r in selected}
     def replace(value):
@@ -199,9 +230,9 @@ try:
                 value = value.replace(previous, following)
         return value
     approved = replace(approved)
-    delta = [list(k) for k in sorted(old.keys() | new.keys()) if old.get(k) != new.get(k)]
+    delta = [list(k) for k in sorted(deployed.keys() | new.keys()) if deployed.get(k) != new.get(k)]
     save("render-diff.json", delta)
-    (out / "render-diff.txt").write_text("".join(difflib.unified_diff(before.decode().splitlines(True), after.decode().splitlines(True))))
+    (out / "render-diff.txt").write_text("".join(difflib.unified_diff(live_manifest.decode().splitlines(True), after.decode().splitlines(True), fromfile="live", tofile="upgrade")))
     if new != approved or not delta:
         raise RuntimeError("unexpected render differences or no image changes")
     run(kube + ["apply", "--dry-run=server", "-f", out / "render-after.yaml"], "server-dry-run.log")
@@ -216,7 +247,7 @@ try:
         checks = {}
         for role, exp in expected.items():
             containers = [(pod, status) for pod in pods["items"] if not pod["metadata"].get("deletionTimestamp") for status in pod.get("status", {}).get("containerStatuses", []) if status["image"] == exp["image"]]
-            checks[role] = bool(containers) and all(s.get("ready") and s.get("restartCount") == 0 and s.get("imageID", "").endswith((exp["digest"], exp["platformDigest"])) and any(c["type"] == "Ready" and c["status"] == "True" for c in pod.get("status", {}).get("conditions", [])) for pod, s in containers)
+            checks[role] = bool(containers) and all(s.get("ready") and s.get("restartCount") == 0 and s.get("imageID", "").endswith(tuple([exp["digest"], *exp["platformDigests"]])) and any(c["type"] == "Ready" and c["status"] == "True" for c in pod.get("status", {}).get("conditions", [])) for pod, s in containers)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise RuntimeError("readiness/digest/restart/application HTTP 200 gate timed out")
