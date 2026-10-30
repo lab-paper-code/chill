@@ -523,7 +523,8 @@ func TestFailedCleanupAdoptsRegisteredRouteRefreshReceiptAC38(t *testing.T) {
 // Its surviving exact ACK is a return proof, not an unclaimed Pod to remove.
 func TestCanceledPrepareAdoptsRegisteredReadySubsetReceiptAC38(t *testing.T) {
 	const supersededFailure = "superseded-failed"
-	for _, evidence := range []string{"registered", "dynamic-route", "unregistered", "subset-owner-mismatch", staleEvidence, activeSiblingEvidence, policyEvidence, "previous-new", "previous-existing", "previous-node", "previous-container", "previous-pod", "superseded", supersededFailure} {
+	const parentAfterWindow = "parent-after-window"
+	for _, evidence := range []string{"registered", "dynamic-route", "unregistered", "subset-owner-mismatch", staleEvidence, activeSiblingEvidence, policyEvidence, "previous-new", "previous-existing", "previous-node", "previous-container", "previous-pod", "superseded", supersededFailure, parentAfterWindow} {
 		t.Run(evidence, func(t *testing.T) {
 			pod, node, profile, _ := observerSourceFixture()
 			pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: "workload"}}
@@ -602,12 +603,23 @@ func TestCanceledPrepareAdoptsRegisteredReadySubsetReceiptAC38(t *testing.T) {
 				}
 				// Receipt retention must not depend on the action-view window.
 				delete(c.runs, route.action.ID)
+			case parentAfterWindow:
+				parent.reserved = false // Other children can still own unconfirmed effects.
+				observed = ended.Add(3 * time.Minute)
+				state.ObservedAt = observed
+				c.reconcileSnapshot(serving.SchedulerSnapshot{}, ended.Add(2*time.Minute), time.Minute)
+				if c.runs[transitionRunKind+"/"+target.ID] == nil {
+					t.Fatal("action-view expiry erased a still-owned transition baseline")
+				}
 			}
 			c.releaseObservedScopes([]core.Node{*node}, []core.Pod{*pod}, []serving.InstanceState{state}, observed)
 			c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute)
-			wantReleased := evidence == "registered" || evidence == "dynamic-route" || evidence == "previous-existing" || evidence == "superseded" || evidence == supersededFailure
+			wantReleased := evidence == "registered" || evidence == "dynamic-route" || evidence == "previous-existing" || evidence == "superseded" || evidence == supersededFailure || evidence == parentAfterWindow
 			if released := c.authorize(Operation{WorkloadUID: "workload"}) == nil; released != wantReleased {
 				t.Fatalf("%s: reservation released=%t", evidence, released)
+			}
+			if evidence == parentAfterWindow && c.runs[transitionRunKind+"/"+target.ID] != nil {
+				t.Fatal("confirmed owner kept its expired baseline after responsibility returned")
 			}
 			if prepare.result.Status != nativeOperationPartial || prepare.result.Error != context.Canceled.Error() || parent.result.Status != nativeOperationFailed {
 				t.Fatal("known-effect proof rewrote the cancellation receipt")

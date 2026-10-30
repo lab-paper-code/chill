@@ -594,8 +594,15 @@ func (c *SchedulerController) cleanupRouteAllowedLocked(parent *actionRun, opera
 }
 
 func (c *SchedulerController) runReferencedLocked(id string) bool {
+	parent := c.runs[id]
 	for _, run := range c.runs {
-		if (!run.reserved && run.action.Status != nativeOperationRunning) || run.result == nil || run.result.Operation.Target == nil {
+		if !run.reserved && run.action.Status != nativeOperationRunning && run.action.Status != nativeOperationCancel {
+			continue
+		}
+		if parent != nil && parent.action.Kind == transitionRunKind && parent.owner != "" && parent.owner == run.owner {
+			return true
+		}
+		if run.result == nil || run.result.Operation.Target == nil {
 			continue
 		}
 		for _, action := range run.result.Operation.Target.Actions {
