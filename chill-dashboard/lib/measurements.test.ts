@@ -1,10 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { evidenceLocations, isProjectionMeasurementKind, measurementHref, measurementListHref, measurementPath, measurementState, measurementUIDMismatch, occupancyNanos, occupancySupply, occupancyThroughput, operationSteps } from "./measurements.ts"
-import { parseSchedulerJSON, stringifySchedulerJSON } from "./scheduler.ts"
+import { evidenceLocations, isProjectionMeasurementKind, measurementHref, measurementListHref, measurementPath, measurementReason, measurementState, measurementUIDMismatch, occupancyDuration, occupancySupply, occupancyThroughput, operationSteps } from "./measurements.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
-import { safeSource } from "./source-export.ts"
 import type { DispatchOccupancyMeasurement, OperationCostMeasurement } from "./read-types.ts"
 
 const metadata = {namespace:"research",name:"sample",uid:"uid-1",resourceVersion:"42",creationTimestamp:"2026-10-30T00:00:00Z"}
@@ -56,9 +54,9 @@ test("operation result joins retain condition order, missing results and unmatch
 })
 
 test("occupancy preserves missing and zero d, string throughput, unspecified supply and logical location identity", () => {
-  assert.equal(occupancyNanos(occupancy.status.perRequestNanos),"결과 없음")
-  assert.equal(occupancyNanos(0),"0 ns/request")
-  assert.equal(occupancyNanos(9007199254740993n),"9007199254740993 ns/request")
+  assert.equal(occupancyDuration(occupancy.status.perRequestNanos),"결과 없음")
+  assert.equal(occupancyDuration(0),"0ms/request")
+  assert.equal(occupancyDuration(3807875n),"3.81ms/request")
   assert.equal(occupancyThroughput("0.0000012300"),"0.0000012300 req/s")
   assert.equal(occupancyThroughput("0"),"0 req/s")
   for (const value of [undefined,""]) assert.equal(occupancyThroughput(value),"결과 없음")
@@ -68,17 +66,17 @@ test("occupancy preserves missing and zero d, string throughput, unspecified sup
   assert.equal(occupancySupply("new-mode"),"new-mode")
   assert.deepEqual(evidenceLocations([{store:"a",key:"k"},{store:"b",key:"k"},{store:"a",key:"k"}],{store:"b",key:"k"}),[{store:"a",key:"k"},{store:"b",key:"k"}])
   assert.deepEqual(evidenceLocations([]),[])
-  const decoded = parseSchedulerJSON('{"perRequestNanos":9007199254740993,"throughput":"1.2300"}') as {perRequestNanos:bigint;throughput:string}
-  assert.equal(decoded.perRequestNanos,9007199254740993n)
-  assert.equal(occupancyThroughput(decoded.throughput),"1.2300 req/s")
-  const exported = stringifySchedulerJSON(safeSource({kind:occupancy.kind,namespace:metadata.namespace,expectedUID:metadata.uid,queriedAt:metadata.creationTimestamp,units:{perRequestNanos:"ns/request"},source:decoded,authorization:"Bearer secret"}))
-  assert.match(exported,/9007199254740993/)
-  assert.match(exported,/ns\/request/)
-  assert.doesNotMatch(exported,/Bearer secret/)
 })
 
 test("all measurement terminal and unknown phases carry explicit sentences and non-color-only tone semantics", () => {
   assert.deepEqual(["Measuring","Complete","Insufficient","Failed",undefined,"Unknown"].map(phase => measurementState(phase)),[
     {label:"측정 중이에요",tone:"info"},{label:"측정이 끝났어요",tone:"ok"},{label:"판단할 근거가 부족해요",tone:"warn"},{label:"측정을 끝내지 못했어요",tone:"fail"},{label:"측정 상태를 확인할 수 없어요",tone:"idle"},{label:"측정 상태를 확인할 수 없어요",tone:"idle"},
   ])
+})
+
+test("measurement reasons expose the server-provided failure or insufficiency instead of an unknown-code placeholder", () => {
+  for (const reason of ["probe request timed out after 10s", "only 2 batches completed; minimum is 5", "UnknownVerdict"]) {
+    assert.equal(measurementReason(reason),reason)
+  }
+  assert.equal(measurementReason("MissingDataset"),"측정에 쓸 데이터셋이 지정되지 않았어요. 서비스 설정에서 데이터셋을 골라 주세요. (MissingDataset)")
 })

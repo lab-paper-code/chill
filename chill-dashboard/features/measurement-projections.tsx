@@ -4,10 +4,9 @@ import * as React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useSession } from "@/lib/client"
-import type { DispatchOccupancyMeasurement, MeasurementEvidenceLocation, MeasurementProjection, MeasurementProjectionList, OperationCostMeasurement } from "@/lib/read-types"
-import { evidenceLocations, measurementHref, measurementListHref, measurementPath, measurementState, measurementUIDMismatch, occupancyNanos, occupancySupply, occupancyThroughput, operationSteps, type OperationStep, type ProjectionMeasurementKind } from "@/lib/measurements"
+import type { DispatchOccupancyMeasurement, MeasurementEvidenceLocation, MeasurementProjection, MeasurementProjectionList, OperationCostMeasurement, WireInteger } from "@/lib/read-types"
+import { evidenceLocations, measurementHref, measurementListHref, measurementPath, measurementReason, measurementState, measurementUIDMismatch, occupancyDuration, occupancySupply, occupancyThroughput, operationSteps, type OperationStep, type ProjectionMeasurementKind } from "@/lib/measurements"
 import { parseSchedulerJSON } from "@/lib/scheduler"
-import { explain } from "@/lib/labels"
 import { QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/read-region"
 import { Empty, Facts, RowDialog, Rows, Screen } from "@/components/screen"
 import { DataTable, type DataColumn } from "@/components/data-table"
@@ -22,6 +21,9 @@ function measurementTime(value:string|number) {
 function Phase({phase}:{phase?:string}) {
   const state = measurementState(phase)
   return <StatusBadge tone={state.tone}>{state.label}</StatusBadge>
+}
+function OccupancyDuration({value}:{value?:WireInteger}) {
+  return <span className="inline-grid gap-1"><span>{occupancyDuration(value)}</span>{value !== undefined && <span className="text-xs text-muted-foreground">{String(value)} ns/request</span>}</span>
 }
 
 export function ProjectionMeasurementListPage({kind}:{kind:ProjectionMeasurementKind}) {
@@ -38,7 +40,7 @@ export function ProjectionMeasurementListPage({kind}:{kind:ProjectionMeasurement
     ...(kind === "operation-cost-measurements" ? [{key:"steps",label:"단계 기록",value:(item:MeasurementProjection) => item.kind === "OperationCostMeasurement" ? `기록 ${item.status.steps?.length ?? 0} / 계획 ${item.conditions.steps.length}단계` : "종류 확인 필요"}] : [
       {key:"workload",label:"워크로드",value:(item:MeasurementProjection) => item.kind === "DispatchOccupancyMeasurement" ? item.conditions.workload : "종류 확인 필요"},
       {key:"batch",label:"배치",value:(item:MeasurementProjection) => item.kind === "DispatchOccupancyMeasurement" ? `${item.conditions.batch}건/batch` : "종류 확인 필요"},
-      {key:"d",label:"분배 점유시간 d",value:(item:MeasurementProjection) => item.kind === "DispatchOccupancyMeasurement" ? occupancyNanos(item.status.perRequestNanos) : "결과 없음"},
+      {key:"d",label:"분배 점유시간 d",value:(item:MeasurementProjection) => item.kind === "DispatchOccupancyMeasurement" ? <OccupancyDuration value={item.status.perRequestNanos}/> : "결과 없음"},
       {key:"x",label:"지속 완료 처리량 X",value:(item:MeasurementProjection) => item.kind === "DispatchOccupancyMeasurement" ? occupancyThroughput(item.status.throughput) : "결과 없음"},
     ]),
     {key:"created",label:"등록 시각 (KST / UTC)",value:item => measurementTime(item.metadata.creationTimestamp),sortValue:item => item.metadata.creationTimestamp},
@@ -72,8 +74,8 @@ export function ProjectionMeasurementDetail({kind,namespace,name}:{kind:Projecti
     status={other ? <StatusBadge tone="fail">다른 측정</StatusBadge> : data ? <Phase phase={data.status.phase}/> : undefined} lede={other ? "이전 자료로 사용할 수 없어요." : `${name} · ${namespace}`}>
     <QueryGate query={query}>{data && <>
       {!other && <>
+        {data.status.reason && <p className="notice break-words">측정 사유: {measurementReason(data.status.reason)}</p>}
         <Facts label="측정 대상" items={[["측정 종류",data.kind],["Node",data.node],["등록 시각",measurementTime(data.metadata.creationTimestamp)]]}/>
-        {data.status.reason && <p className="notice">{explain(data.status.reason).join(" ")}</p>}
         {data.kind === "OperationCostMeasurement" ? <OperationResult data={data}/> : <OccupancyResult data={data}/>}
       </>}
       <Facts label="원본 CR 식별자" items={[["이름",data.metadata.name],["저장 영역",data.metadata.namespace],["UID",data.metadata.uid],["resourceVersion",data.metadata.resourceVersion],["apiVersion",data.references.cr.apiVersion],["kind",data.references.cr.kind],["참조 저장 영역 / 이름",`${data.references.cr.namespace} / ${data.references.cr.name}`],["참조 UID",data.references.cr.uid]]}/>
@@ -95,7 +97,14 @@ function OperationResult({data}:{data:OperationCostMeasurement}) {
   const columns:DataColumn<OperationStep>[] = [
     {key:"name",label:"단계 이름",value:step => step.name},
     {key:"condition",label:"조건 연결",value:step => step.condition ? stepKinds[step.condition.kind] ?? "확인이 필요해요" : "조건 연결 없음"},
-    {key:"result",label:"저장 결과",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => <li key={index} className="grid gap-1"><StatusBadge tone={result.verdict === "Accepted" ? "ok" : "warn"}>{result.verdict === "Accepted" ? "채택" : "확인이 필요해요"}</StatusBadge><span>key: {result.key || "없음"}</span><span>verdict: {result.verdict || "없음"}</span><Locations locations={result.key ? evidenceLocations(data.references.evidence.filter(location => location.key === result.key)) : []} empty="위치 없음"/></li>)}</ul> : "아직 기록된 결과가 없어요"},
+    {key:"result",label:"저장 결과",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => {
+      const locations = result.key ? evidenceLocations(data.references.evidence.filter(location => location.key === result.key)) : []
+      return <li key={index} className="grid gap-1">
+        <StatusBadge tone={result.verdict === "Accepted" ? "ok" : "warn"}>{result.verdict === "Accepted" ? "채택" : "확인이 필요해요"}</StatusBadge>
+        <span>verdict: {result.verdict || "없음"}</span>
+        {locations.length ? <Locations locations={locations}/> : <><span>key: {result.key || "없음"}</span><p>위치 없음</p></>}
+      </li>
+    })}</ul> : "아직 기록된 결과가 없어요"},
   ]
   return <>
     <p>이 화면은 동작 조건과 저장된 단계 판정을 보여요. 시간과 에너지 원문은 포함하지 않아요.</p>
@@ -115,7 +124,7 @@ function OccupancyResult({data}:{data:DispatchOccupancyMeasurement}) {
   const c = data.conditions, s = data.status
   return <>
     <p>d는 배치 실행 외에 요청 1건이 인스턴스를 점유한 시간이에요. 현재 응답 지연과는 달라요.</p>
-    <Facts label="측정 결과" items={[["요청당 분배 점유시간 d",occupancyNanos(s.perRequestNanos)],["지속 완료 처리량 X",occupancyThroughput(s.throughput)],["결과 전력모드",s.powerMode || "결과 없음"]]}/>
+    <Facts label="측정 결과" items={[["요청당 분배 점유시간 d",<OccupancyDuration key="d" value={s.perRequestNanos}/>],["지속 완료 처리량 X",occupancyThroughput(s.throughput)],["결과 전력모드",s.powerMode || "결과 없음"]]}/>
     <Rows label="자세히"><RowDialog label="측정 조건" title="분배 점유시간 측정 조건" description="예열은 측정 시작에서 제외해요. 참조에 UID가 없어 현재 이름을 기준으로 연결해요.">
       <Facts items={[
         ["워크로드",<Link key="workload" className="underline underline-offset-4" href={`/workloads/${encodeURIComponent(c.workload)}`}>{c.workload} (현재 이름 기준 · UID 없는 참조)</Link>],

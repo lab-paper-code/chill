@@ -137,12 +137,12 @@ UID 차단, 단계 name 연결, d 누락/0, 문자열 X와 논리 위치 중복 
 공통 `MeasurementUnavailable`·`SchedulerUnavailable` 문장은 6.5.5절에 맞춰
 데이터 없음/기능 미지원이 아닌 조회 서비스 연결 확인으로 정정했다.
 
-`lib/measurements.test.ts` 4개, `lib/capacity.test.ts` 4개와 `lib/labels.test.ts`의
+`lib/measurements.test.ts` 5개, `lib/capacity.test.ts` 4개와 `lib/labels.test.ts`의
 추가 회귀는 실제 화면이 호출하는 순수 함수와 기존 relay 경계를 검사한다.
 PowerModeTransitionCost(DB-FR-32), raw Evidence, 생성·재시도·삭제·재계산 API는
 이번 구현에서 추가하지 않았다. SRS의 요구사항·수용 기준은 변경하지 않는다.
 
-### 검사 결과
+### 초기 구현 검사 결과
 
 통합 후 Node 24, `nice -n 19`로 4절 명령을 실행했다.
 
@@ -174,3 +174,22 @@ UI query를 포함하지 않았다. upstream query 차단은 실제 relay 함수
 `next dev`는 실행하지 않았으며 `chill-dashboard/AGENTS.md` 변경은 없었다.
 사용자의 루트 `.gitignore`, `AGENTS.md`, code-intelligence 문서와 `.agents/`는
 수정·커밋·원복하지 않았다.
+
+### 실데이터 리뷰 보완
+
+Main의 읽기 전용 실클러스터 브라우저 확인에서 동작 비용 35개·분배 점유시간 149개
+목록이 정상 조회되었으며 Failed/Insufficient의 실제 사유가 공통 폴백에 가려지는 문제를
+보고했다. Go projection은 두 종류 모두 `status.reason`만 제공하며 conditions의
+reason/message나 status.message는 없음을 재확인했다. 결론 아래 실제 reason 문자열을
+표시하고 등록된 코드일 때만 문장 안내를 덧붙이도록 정정했다.
+
+d는 기존 ms 변환을 재사용해 `3.81ms/request`처럼 읽기 쉽게 주표기하고 정확한
+ns/request를 보조로 유지한다. 단계 표의 중복 key를 제거했고 export 정밀도·비밀 제거의
+중복 검사는 기존 scheduler/source-export 검사에 맡긴다. 용량 Dialog는 제목에 처음
+focus해 상단부터 읽고 닫을 때 원래 행 focus를 복원한다. 이 표기 결정은 설계 6.5절에도 반영했다.
+
+리뷰 보완과 용량 focus/테스트 정리(`b3630301`)를 합친 뒤 Node 24 + `nice -n 19`로
+통합 검사 1회를 실행했다. `tsc --noEmit`, `eslint .`, 전체 테스트 **60개**
+(실패·건너뜀 0), `next build`가 모두 통과했다. 빌드의 `Asta Sans` fallback font
+override 경고 1건은 유지된다. 이 보완에서 실클러스터 실패를 재현하려고 다시 조회하거나
+설정 저장·배포·클러스터 변경을 실행하지 않았다.

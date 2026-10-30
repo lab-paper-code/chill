@@ -1,4 +1,6 @@
 import type { MeasurementEvidenceLocation, OperationCondition, OperationCostMeasurement, OperationStepStatus, WireInteger } from "./read-types.ts"
+import { codeText } from "./labels.ts"
+import { nanosToMilliseconds } from "./scheduler.ts"
 
 export type ProjectionMeasurementKind = "operation-cost-measurements" | "dispatch-occupancy-measurements"
 export const isProjectionMeasurementKind = (kind:string):kind is ProjectionMeasurementKind => kind === "operation-cost-measurements" || kind === "dispatch-occupancy-measurements"
@@ -15,7 +17,8 @@ export function measurementState(phase?:string):{label:string;tone:"info"|"ok"|"
     default: return {label:"측정 상태를 확인할 수 없어요",tone:"idle"}
   }
 }
-export const occupancyNanos = (value?:WireInteger) => value === undefined ? "결과 없음" : `${value} ns/request`
+export const measurementReason = (reason:string) => codeText[reason] ? `${codeText[reason].join(" ")} (${reason})` : reason
+export const occupancyDuration = (value?:WireInteger) => value === undefined ? "결과 없음" : `${Number(nanosToMilliseconds(value)).toLocaleString("ko-KR",{maximumFractionDigits:2})}ms/request`
 export const occupancyThroughput = (value?:string) => value ? `${value} req/s` : "결과 없음"
 export const occupancySupply = (value?:string) => value === "closed-loop" ? "고정 동시 요청" : value === "poisson" ? "포아송 공급" : value || "기록되지 않았어요"
 export function evidenceLocations(evidence:MeasurementEvidenceLocation[], result?:MeasurementEvidenceLocation) {

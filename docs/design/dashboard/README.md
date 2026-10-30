@@ -830,9 +830,13 @@ creationTimestamp 내림차순으로 시작하며 별도 ns를 합쳐 집계하�
 | 공통 표시 | 정확한 소스 필드 | 표시 규칙 |
 |---|---|---|
 | 목록 identity·대상·상태·시각 | `metadata.name`, `metadata.namespace`, `metadata.uid`, `node`, `status.phase`, `metadata.creationTimestamp` | 이름/Node, 상태 문장·기호, UTC/KST 시각. UID는 상세 원본 identity에 표시 |
-| 상세 결론·사유 | `kind`, `status.phase`, `status.reason` | 6.5.5절 상태 문구, 사유는 6.4절 문장 표; 미등록 사유는 공통 문장과 원본 값 |
+| 상세 결론·사유 | `kind`, `status.phase`, `status.reason` | 6.5.5절 상태 문구 바로 아래에 제공된 `status.reason` 원문을 표시. 6.4절 등록 코드이면 문장 안내를 함께 표시하고 미등록 코드·자유 문장은 공통 폴백으로 대체하지 않음 |
 | CR 출처 | `metadata.resourceVersion`; `references.cr.{apiVersion,kind,namespace,name,uid}` | “원본 CR 식별자”. 전체 CR 수신 주장·Kubernetes 직접 링크 없음 |
 | 근거 위치 | `references.evidence[].{store,key}` | 논리 위치 복사/JSON 내보내기. raw HTTP URL·Passport 경로 생성 없음 |
+
+두 projection의 조건에는 reason/message가 없으며 status에도 message는 없다.
+실패·근거 부족의 실제 설명은 제공된 `status.reason` 문자열만 사용한다.
+reason이 없으면 다른 CRD 필드나 HTTP 오류 메시지에서 측정 사유를 추정하지 않는다.
 
 **동작 비용** 목록 보조 필드는 `conditions.steps.length`(계획 단계 수)와
 `status.steps.length`(기록 단계 수, 미제공은 0)이며 “기록 N / 계획 M단계”로 표시한다.
@@ -843,7 +847,7 @@ creationTimestamp 내림차순으로 시작하며 별도 ns를 합쳐 집계하�
 | 단계 이름·종류 | `conditions.steps[].name`, `.kind` | power=전력모드 변경, prepare=준비, idle=유휴, remove=제거 |
 | 단계별 조건 | `.powerMode`, `.batchEnergyOptimization`, `.idleDurationSeconds` | 해당 kind 필드만 표시. 유휴=s; BEO 참조는 같은 namespace의 기존 BEO 상세 링크 |
 | 저장 결과 | `status.steps[].name`, `.key`, `.verdict` | name으로 조건과 연결, 없는 단계는 “아직 기록된 결과가 없어요”. status만의 미매칭 단계도 “조건 연결 없음”으로 보존 |
-| 근거 위치 | `references.evidence[]` | key가 같은 위치만 단계에 연결. key가 없는 결과는 위치 없음; 원문 key·verdict도 원본에 보존 |
+| 근거 위치 | `references.evidence[]` | key가 같은 위치만 단계에 연결하고 그 위치에서 key를 한 번 표시. 연결된 위치가 없을 때만 결과 key와 “위치 없음”을 표시; 원문 key·verdict도 원본에 보존 |
 
 step verdict가 `Accepted`이면 “채택”, 그 밖의 미등록 값은 “확인이 필요해요”와 원본을 보인다.
 `Complete`만으로 모든 단계 채택을 재판정하지 않는다. 시간·J·출발 모드·반복별 판정 사유는
@@ -858,7 +862,7 @@ projection에 없다. “이 화면은 동작 조건과 저장된 단계 판정�
 | 배치·공급 방식·동시 송신자 | `conditions.batch`, `.supplyMode`, `.workers` | 건/batch, closed-loop=고정 동시 요청, poisson=포아송 공급, 미제공=“기록되지 않았어요”; workers=명 |
 | 예열·측정 구간 | `conditions.warmupSeconds`, `.durationSeconds` | s, 예열은 측정 시작에서 제외 |
 | 결과 전력모드 | `status.powerMode` | 없으면 “결과 없음” |
-| 요청당 분배 점유시간 d | `status.perRequestNanos` | ns/request 원값, 보조 ms/request 변환만 허용. 누락=“결과 없음”; 0은 “0 ns/request” |
+| 요청당 분배 점유시간 d | `status.perRequestNanos` | 목록·상세 모두 기존 `nanosToMilliseconds` 변환의 ms/request를 소수 둘째 자리까지 반올림해 주표기(예: `3.81ms/request`), 정확한 ns/request 원값을 바로 아래 보조 표기. 누락=“결과 없음”; 0=`0ms/request`와 `0 ns/request`. 원본 응답·export의 정밀 ns 정수는 변경하지 않음 |
 | 지속 완료 처리량 X | `status.throughput` | 문자열 원값 + req/s, 누락/빈 문자열=“결과 없음”. 브라우저에서 d나 κ 재계산 없음 |
 | 결과 위치 | `status.result.{store,key}`, `references.evidence[]` | 논리 위치 그대로, 중복은 한 번 표시; 빈 evidence=“아직 저장된 근거 위치가 없어요” |
 
@@ -916,7 +920,7 @@ grid/bisection은 별도 표로 응답 순서를 보존한다(rate순 자동 정
 | 초기 로딩 / 신원 없음 | 기존 QueryGate의 “불러오고 있어요.” / “먼저 접속해 주세요.” |
 | 동작 비용 / d 빈 목록 | “아직 등록된 동작 비용 측정이 없어요” / “아직 등록된 분배 점유시간 측정이 없어요”; 저장 영역 선택과 `/measurements` 이동. 미지원 새 측정 제출 버튼 없음 |
 | Measuring / Complete | “측정 중이에요” / “측정이 끝났어요”; 존재하는 기록만 표시, Complete여도 optional 누락은 “결과 없음” |
-| Insufficient / Failed / phase 누락·미등록 | “판단할 근거가 부족해요” / “측정을 끝내지 못했어요” / “측정 상태를 확인할 수 없어요”; 제공 reason과 원본 보기, 없는 진행률·예상시간은 만들지 않음 |
+| Insufficient / Failed / phase 누락·미등록 | “판단할 근거가 부족해요” / “측정을 끝내지 못했어요” / “측정 상태를 확인할 수 없어요”; 제공 `status.reason`을 결론 아래 원문으로 표시하고 원본 보기를 유지. 미등록 사유를 설명 준비 중 폴백으로 숨기지 않으며 없는 진행률·예상시간은 만들지 않음 |
 | 용량 rows 빈 목록 / 필터 결과 없음 | “아직 계산 대상 용량 행이 없어요. 자동제어와 측정 근거를 확인해 주세요.” / “이 워크로드의 용량 행이 없어요”; 필터 해제와 설정 이동 |
 | CapacityPending | “용량을 계산하고 있어요”; κ 없음을 0으로 표시하지 않음. mu·builtAt 기본 0을 완료 값으로 강조하지 않음 |
 | Built / κ=0 | “용량 계산이 끝났어요”; 0 req/s는 실제 0. BatchServiceExceedsSLO는 “가장 짧은 배치 실행에도 완료 여유를 더하면 목표 시간을 넘어요” |
