@@ -93,3 +93,10 @@
 - 사이클 5 추출(카드 `A/cards-r5/`): E5-3 — α=.5 말 정상 ACK된 고κ 구성(jetsonx CUDA+orangepi q4, κ99.6)을 CPU 조합(κ64.3)으로 교체 후 DemandIncreasing/ScaleDownStabilizing이 복귀 차단 → α=.9 포화 실패 36k; E5-5 — CUDA 공급 감소 후 CPU 단독 4분(12:49–12:53) 실패 집중, 예약 잔류 1,353s(신규 Pod ACK로 R4b 제외 + 타 Node 기존 source 증명 receipt 부재 → 반환 불가); E5-7 — D2 복구 확인(Smol 새 dispatch 65s, MNV 9.5s/39s), p95는 복구 공백·큐. jetsonx 편입 자체는 정상 동작(CPU 충돌 0).
 - 구조적 쟁점: (a) 축소 즉시·확장 지연의 **tempo 비대칭**(에너지 목적이 κ 감소 교체를 택하고 stabilizing gate가 복귀를 막음), (b) 예약 반환 증명이 "변경 없는 기존 executor"를 증명할 수단 없음. 둘 다 브리프→패널 게이트.
 - 사이클 5 패널 판정(`local judge-verdict-cycle5`): B ReturnProof(`a3553ccd`,`2516ec0c`: admission baseline+단조 mayTouch, untouched proof) → A Tempo(`855dbe9c`: `scaleDownHeadroomFraction` 기본 0, UID별 증명된 회복의 timing 예외; growing/partial 분리). D1 staged handoff(`4b2b4bb0`,`6c268842`) 포함. gate PASS. **rev121 배포 + 5회차 표적(E5-3/5/7)**, h=.25는 이번 라운드 live ConfigMap 값(binding 기록; 배포 안전값 아님 — 대조 실험값).
+
+## 2026-10-31 — 5회차 표적(rev124 서버 2516ec0c, h=.25) 결과 + 외부 개입
+
+- E5-3(유효): MNV 실패 3회차 13,563 → 4회차 44,291 → **5회차 9,511**(p95 1,655→1,964→1,496ms), 에너지 Δ5−3 −6,836J(CHILL 소비 증가 방향·headroom 비용), D1 FAIL 유지. 사이클 5(ReturnProof+Tempo headroom)가 4회차 회귀를 되돌리고 3회차보다 개선.
+- E5-5: INVALID_HARNESS(상위 명령 3600s clamp 종료) + **타 세션이 측정 중 rev125(소스 27b32273, main 아님) 재배포** → API 거부·수집 누락. E5-7 미실행(live 소스 불일치). producer 3개·serving 잔류 — 정리 필요.
+- 운영 결정 필요(사용자): 두 세션 동시 클러스터 조작 금지 — 배포·측정 권한 단일화.
+- 경로: `control-222-full/full-E5-{3,5}-5/`, `tables-5.txt`, `comparison-5-vs-{3,4}.*`, `O/deployB/control-246-20261030/targeted-r5/report-244.txt`.
