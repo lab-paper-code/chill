@@ -651,3 +651,9 @@
 - rev106(f8bc1eae) → operator 재빌드 rev107(f0c210fb; 옛 operator가 새 resourceCAFile 필드 strict 거부, ConfigMap watch는 이미 존재→annotation 생략) → chart URL rev108(6bd91502) → agent validator rev109(5f4e7a95) → host cgroupfs 탐색+hybrid v1 rev110(d01ff310). 리허설: 옛/API KPI 완전 동일(#213 재판정 동일); CPU 몫 live 2.5%·수신 7.3%·raw 1.1%·대시보드 조회 16.8%; agent 1s 표본 rasp5 0.24%·nano 4.5% of core. 결손: jetsonx identity, orin-nano(POOL 외) 수집 0 — E5 뒤 과제.
 - 관측: preflight finish에서 또 예약 잔류(prepare partial `client rate limiter Wait: context canceled`, Pod Ready·unclaimed, 보상 흔적 없음) → **kube client rate limiter가 반복 근본**; 사이클 3 P1 후보(limiter 설정/호출 폭주 + R4b 미발동 이유).
 - 다음: 하네스 전환(§2 표·영수증 삭제) ∥ 대시보드 브라우저 수용(S1/S2, 측정 창 밖).
+
+## 2026-10-30 — 하네스 전환·브라우저 수용 완료, rev111 대기
+
+- 하네스 전환 `d39c9576`(API-only; runtime cap `requestTimeout`·`podName` 읽기 전용 노출; power reducer settings/state 입력, pinned `observation-power-source-d39c9576`), RBAC `f75596f6`(collector 가공 GET, 쓰기는 operator 토큰). #213 API 재판정 동일. 계획 §4 완료.
+- 대시보드 수용 `f573f5ae`: PASS 6/FAIL 2/미확인 5 — FAIL 2는 #213이 publication된 적 없음(실험 목록 부재). 조치: #213~#225 게시(첫 게시, 새 §0 형식; 재게시 아님)를 rev111 뒤 수행 → FAIL 2 재확인. 미확인 5는 빈 클러스터(라이브 값)·fixture off → 다음 측정 창에서.
+- 다음 승인 배포 rev111: chart RBAC(collector GET)+서버(settings requestTimeout, podName) 이미지.
