@@ -389,256 +389,214 @@ raw power·prepare payload/비밀을 HTTP에 복사하지 않는다.
 미리 정렬한 index에 결과를 기록해 이름 순서를 보존한다. 각 CR의 단계 읽기는 원래 순서이며,
 어느 projection이든 실패하면 요청 전체가 오류로 끝나고 나머지 읽기에는 취소가 전달된다.
 
-## 13. 연구 커버리지 읽기 projection (U1)
+## 13. 측정 커버리지 읽기 projection (U1)
 
-**2026-10-30 설계, 구현 전.** [5차 계획](../../plans/2026-10-31-dashboard-research-redesign.md)과
-[Dashboard §9](../dashboard/README.md#9-연구-중심-측정실험-5차-재설계)가 소비한다.
-§12의 정적 resolver·owner·보존 통계 계약을 재사용하며 **CRD/spec/status, result/raw,
-frozen bundle, publication, catalog 채택·admission·통계 추정 정책은 바꾸지 않는다.**
-아래 schema는 새 HTTP 읽기 DTO이지 새로운 영속 저장 schema가 아니다.
+**2026-10-30 교차 모델 검토 반영, 구현 전.** [5차 계획](../../plans/2026-10-31-dashboard-measurement-redesign.md)과
+[Dashboard §9](../dashboard/README.md#9-운영-중심-측정실험-5차-재설계)가 소비한다.
+사용자는 엣지 클러스터 운영 담당자다. 화면은 ‘스케줄러가 쓸 수 있는가, 운영에 쓰기 전에 무엇이 부족한가’를 답한다.
+§12의 resolver·owner·보존 통계·단일 writer를 재사용한다. CRD/spec/status/result/raw/frozen bundle/
+publication·catalog 채택·admission·통계 추정 정책은 변경하지 않는다. 새 필드는 HTTP/메모리 projection이다.
 
-### 13.1 소유권과 데이터 흐름
+### 13.1 소유권과 중복 I/O 제거
 
-집계의 소유자는 **ChillServer**다. 이유는 `cmd/chill-server/profiles.go:profilesView`가
-이미 채택 catalog의 메모리 snapshot을 갖고, `measurementService`가 namespace 정책·BEO·
-동작 비용·점유 측정을 소유하기 때문이다. Console에 catalog/스케줄러를 다시 만들지 않는다.
-Console은 현재와 같이 inventory·Run·정적 호환성·retained result/statistics의 소유자로 남는다.
+집계는 **ChillServer**, 정적 호환성/개별 보존 결과 조회는 **Console** 소유다.
+`profilesView`의 atomic catalog snapshot과 기존 namespaced measurement reader를 조합한다.
+Console에 스케줄러/catalog를 새로 만들거나 ChillServer가 채택 profile 전체를 Console `/result`로 크롤링하지 않는다.
 
 ```text
-브라우저 GET 1회 → same-origin BFF → ChillServer 인증/SAR → coverage snapshot
-                                                        ↑ 읽기 전용 조합
-  현재 catalog snapshot + namespaced 측정 CR/Run metadata + inventory identity
-  Console의 기존 호환성 resolver 결과 + 정확 result의 retained statistics/품질 요약
+브라우저 GET 1회 → BFF → ChillServer 인증 + URL/namespace SAR → coverage snapshot
+  ↑ catalog가 이미 읽은 verified trial의 measurementFacts / resultRows
+  ↑ namespace BEO·Run metadata / inventory / Console의 정적 지원 snapshot
+catalog 밖 단건 상세만 → 기존 Console /result → retained loader·같은 통계 helper
 ```
 
-- `cmd/chill-server`가 composition root에서 기존 Kube reader/`profilesView`/measurement
-  읽기와 고정 private Console HTTP client를 연결한다. Console URL은 기존 고정 origin 검증·
-  무 redirect·응답 크기 제한을 쓴다. 내부 HTTP self-loop/public bearer 재전송은 없다.
-- 정적 지원은 Console의 기존 `model-compatibility-matrix`와 B1 resolver만 사용한다.
-  같은 model/path/class/대표 Node/선언 버전의 판정을 mode마다 반복 계산하지 않는다.
-  현재 전체 행렬의 순차 resolver 반복은 독립 조합 최대 8개 동시 실행으로 바꾸고 기존 취소·
-  fact-source 해석을 유지한다. 브라우저 architecture/backend 추측표는 없다.
-- Run은 namespace 전체 LIST 한 번의 snapshot을 UID로 index한다. 공개 API page마다 동일
-  전체 LIST를 반복하지 않는다. owner는 §12.2와 같은 정확 controller UID 조건이다.
-- 공통 DTO와 순수 표시용 판정은 `internal/operatorconsole/measurement_research*.go`에 둔다.
-  이미 ChillServer가 operatorconsole 타입을 읽는 방향을 재사용한다. Go transport에 통계나
-  controller 의존성을 넣지 않고 composition-root callback으로 조립한다.
-- Console `cmd/console/measurement_statistics.go`의 retained loader →
-  `profiler/projection` → `DeriveIdleBaseline`/`VerifyCurvePlan`/`DeriveCurve`를 그대로 쓴다.
-  검증된 trial에 이미 있는 wall J/item·idle W·관측창·timestamp 품질의 좁은 summary를
-  기존 result 응답의 `researchFacts` 형제로 추가한다. raw/vector/로그를 coverage 응답에 싣지 않는다.
-  이 summary는 사실이며 catalog 사용 가능 여부를 Console이 새로 결정하지 않는다.
-- 모든 측정 화면은 아래 집계의 `entities`/`cells` assessment를 참조한다. 기존 목록·단건의
-  raw phase/conditions는 보존하지만 UI 대표 상태로 직접 번역하지 않는다. result의 새 facts도
-  클라이언트가 상태로 재판정하지 않는다. U1의 동일 reducer가 서버에서 assessment를 만든다.
+- `internal/serving/kube/catalog.go:readProfile`은 이미 result/curve-plan/active·idle raw를 읽는다.
+  **그 로딩 안에서** 기존 DeriveIdleBaseline/Aggregate/통합 client percentile helper를 재사용해
+  batch별 CI/p95/W/총·증분 J/반복·품질을 한 번 산출한다. 원시 vector는 산출 후 버리고 복사·재다운로드하지 않는다.
+  기존 `catalogBatch.add`가 client vector를 버리기 전에 pooled client p95를 산출해야 하며 native duration으로 대체하지 않는다.
+- `CatalogView`의 메모리 sidecar `measurementFacts`(profile/result identity key)에 보존하고
+  `ProfilesView` snapshot과 함께 publish한다. immutable NativeBundle/CR/result JSON에는 새 필드를 쓰지 않는다.
+  현재 catalog에 없는 superseded·scope 밖 단건은 기존 Console result GET에서 같은 helper로 계산한다.
+  이 단건 비용을 전체 coverage 준비의 선행 조건으로 만들지 않는다.
+- catalog 제공 경계에 **마지막 source 확인 성공 시각·마지막 오류·revision**을 추가한다.
+  정상 무변경 refresh의 조기 반환도 성공 확인 시각을 갱신하고 실패는 마지막 성공 시각을 유지한다.
+  atomic pointer를 지금 읽은 시각이나 configVersion만으로 fresh를 선언하지 않는다.
+- Console 호환성 행렬은 한 호출 안에서 inventory LIST 객체를 seed한 **Get memo reader**를 사용한다.
+  model/class/Node/ConfigMap의 고유 identity별 Get을 한 번만 수행하고 fact-source ConfigMap은 한 번만 strict 파싱한다.
+  기존 selector/`selectExecutionDeclaration`/modelcompat 판정과 취소를 유지하며 **8개 동시 resolver 안은 삭제**한다.
+  대표뿐 아니라 해당 inventory의 모든 실제 Node 판정을 같은 입력 snapshot에서 계산해 두므로
+  `node` 선택 GET에 새 resolver I/O가 없다. 입력 UID/RV가 달라지면 다시 계산하며 heartbeat를 지원 변경으로 과장하지 않는다.
+  기존 공개 matrix의 `rows`는 대표 Node 의미를 유지한다. 같은 응답의 새 `nodeRows[]`는
+  B1 응답 shape로 model/path/class/실제 Node 각각의 판정을 제공하며 coverage만 이를 index한다.
+- `cmd/console`에 `--kube-api-qps`, `--kube-api-burst`를 추가하고 양수·유한 범위를 검증해 REST config에 적용한다.
+  기본값은 기존 ChillServer와 같은 200/400, 배포에서는 실제 설정과 API-server 부하를 기록한다.
+  높은 QPS는 memo/단일 파싱의 대체가 아니며 기본 client QPS에 대한 패널 간 다른 추정을 성능 근거로 쓰지 않는다.
+- Run은 namespace LIST 한 번에서 UID/owner index를 만든다. 공개 page마다 전체 LIST를 반복하지 않는다.
+  owner는 §12.2의 정확 controller UID 규칙이다. operation/occupancy 전체 evidence scan은 coverage에 넣지 않는다.
+- 순수 공통 판정/DTO는 `internal/operatorconsole/measurement_coverage*.go`에 둔다.
+  `internal/serving/httpapi`는 operatorconsole을 직접 import하지 않는다. `cmd/chill-server` adapter가
+  공통 판정을 transport DTO에 연결한다. 기존 package 방향과 `.go-arch-lint.yml`은 변경할 필요가 없다.
+  기존 목록·단건에도 동일 reducer의 assessment를 전달하므로 단건 조회가 전체 coverage grant/준비에 종속되지 않는다.
 
-### 13.2 경로·권한·범위
+### 13.2 경로·필터·RBAC
 
 `GET /api/v1/namespaces/{namespace}/measurement-coverage`
 
-기본은 해당 namespace의 전체 커버리지/상태 index다. 선택 query는
-`model`, `deviceClass`, `node`, `path`, `powerMode`, `cpu`, `batches`다.
-이름은 현재 inventory의 정확 이름, cpu는 양의 정수 요청 개수(affinity 동일성의 대체 아님),
-batches는 중복 없는 오름차순 양의 정수 CSV다. 각 query는 최대 한 번이며 unknown/빈/중복/
-유효하지 않은 조합은 400 `InvalidCoverageQuery`다. batch는 기존 측정 spec의 허용 범위로 검증한다.
-선택 query는 namespace base snapshot의 읽기 projection이며 새 raw scan/cache entry를 만들지 않는다.
-`batches`는 명시적 **목표 집합**이며 지원되지 않는 batch를 지원으로 승격하지 않는다.
-목표가 없으면 현재 정확 variant의 실제 요청 집합을 쓰고 scope를 `requested`로 표시한다.
-미요청 CPU/dataset/image의 무한 조합이나 모델별 임의 최대 batch를 분모로 만들지 않는다.
+서버 query는 **`batches`, `node`만** 허용한다. batches는 중복 없는 오름차순 양의 정수 CSV,
+node는 현재 inventory의 정확 이름이다. 각 query는 한 번, 빈/중복/unknown key·범위 오류는
+400 `InvalidCoverageQuery`다. model/class/path/mode/status/CPU 검색은 클라이언트 표시 필터와 URL 상태다.
+선택 query는 namespace base snapshot의 가벼운 projection이며 raw scan을 시작하지 않는다.
+node별 지원 입력이 아직 없으면 Unknown과 사유를 반환하고 대표 Node 지원을 복제하지 않는다.
+목표 batches는 실제 요청/지원 집합과 별개다. 생략하면 `goalBasis:"requested"`, 명시하면 `"explicit"`이다.
+무한 CPU/dataset/image 조합이나 임의 모델 최대 batch를 분모로 만들지 않는다.
 
-ChillServer는 기존 TokenReview와 실제 호출자 SAR를 cache를 읽기 **전에** 수행한다.
-non-resource grant는 정확 namespace 경로의
-`get /chill/api/v1/namespaces/{namespace}/measurement-coverage`다.
-이 endpoint는 inventory·namespaced 측정 상태·해당 namespace로 제한한 catalog·보존 통계
-요약을 묶는 별도 읽기 권한이다. RBAC에 명시적으로 부여하며 다른 GET grant에서 자동 유추하지 않는다.
-서비스 계정으로 읽은 source 사실은 사용자 권한을 대체하지 않는다.
-기존 `measurementService.namespace` 허용 namespace 정책도 적용한다.
-다른 namespace profile/reuse source의 수치·식별자는 grant 없이 노출하지 않는다.
-허용 namespace의 대상 reuse 행과 그 허용 범위의 출처만 표시한다.
+cache 접근 전 기존 TokenReview와 정확
+`get /chill/api/v1/namespaces/{namespace}/measurement-coverage` URL SAR를 수행한다.
+이 grant는 inventory와 해당 namespace의 catalog/측정 요약을 읽는 명시적 권한이며 다른 URL grant에서 유추하지 않는다.
+또한 기존 `h.authorizer.AuthorizeResource`로 **같은 namespace의 `edge.dacs.io/v1alpha1`
+`batchenergyoptimizations` list와 `profilingruns` list**를 검사한다. 단순 URL ClusterRole만으로 namespaced Role을 우회하지 않는다.
+`measurementService.namespace` 허용 범위도 유지한다. 다른 namespace reuse 원본은 별도 권한 없이 노출하지 않는다.
 
-| 상황 | HTTP/응답 |
+| 상황 | 응답 |
 |---|---|
-| 토큰 없음/무효 | 401, cache 데이터 0개 |
-| SAR 또는 namespace 접근 거부 | 403, cache 데이터 0개 |
-| TokenReview/SAR 장애 | 503 `AuthorizationUnavailable`, 이전 cache도 반환하지 않음 |
-| 입력 오류 | 400, 조용히 기본 필터로 대체하지 않음 |
-| 초기 snapshot 미준비 | 503 `CoverageWarming`, `Retry-After: 2`; 2초 이상 요청을 붙들지 않음 |
-| 이미 있던 snapshot의 일부 source 갱신 실패 | 200 `completeness:"partial"`, 아래 source 오류와 영향 범위 명시 |
-| identity/필수 inventory 전체를 사용할 수 없고 허용 stale snapshot도 없음 | 503 `CoverageUnavailable` |
+| 토큰 없음/무효 | 401, cache 데이터 없음 |
+| URL/namespace resource SAR 거부 | 403, cache 데이터 없음 |
+| 인증/SAR 서비스 장애 | 503 `AuthorizationUnavailable`, 오래된 데이터도 제공하지 않음 |
+| 초기 필수 입력 없음 | 503 `CoverageWarming`, `Retry-After: 2`; 빠른 오류를 사용 가능 응답으로 세지 않음 |
+| 일부 source 갱신 실패 | 200 partial, source 오류/영향 범위·마지막 기준 시각 보존 |
+| 유효 stale 범위 밖 필수 입력 없음 | 503 `CoverageUnavailable` |
 
-응답은 `Cache-Control: no-store`다. BFF/브라우저 HTTP·디스크 cache와 서버 내부 계산 cache는 다르다.
-새 route는 ChillServer handler·BFF allowlist·entrypoint viewer RBAC에 정확 GET만 추가한다.
-write 권한·wildcard POST·raw export 권한은 추가하지 않는다.
+HTTP `Cache-Control: no-store`, BFF allowlist에 정확 GET 및 응답 `Retry-After` 전달을 추가한다.
+write wildcard/자동 재요청/raw export 권한은 추가하지 않는다.
 
 ### 13.3 응답 schema
 
-필드는 아래처럼 camelCase를 사용하며 모든 시각은 RFC3339Nano UTC다.
-`null` 수치는 `missingReasons`에 이유가 있고 관측 0과 다르다. 유한한 수치만 number로 보낸다.
-ns 정수는 기존 lossless decoder 경로를 유지한다. ID는 서버가 만든 불투명 표시용 키이며 저장 key/URL이 아니다.
+시각 공개 필드는 **`dataAsOf`와 `freshness`만** 둔다. dataAsOf는 필요한 source들의 마지막
+성공 확인 시각 중 가장 오래된 값(RFC3339Nano UTC), freshness는 `fresh`/`stale`이다.
+source별 마지막 확인 시각은 내부 snapshot에서 보존하고 HTTP에는 version/오류만 보낸다.
+atomic 다중 source snapshot이라고 주장하지 않는다. null은 이유 있는 미제공이며 관측 0이 아니다.
 
 | 필드 | shape / 의미 |
 |---|---|
-| `schemaVersion` | `"measurement-coverage.v1"`; HTTP DTO 버전, durable schema 아님 |
-| `snapshotId`, `assessmentVersion` | namespace snapshot revision, `"research-checklist.v1"` |
-| `dataAsOf`, `readStartedAt`, `readCompletedAt`, `servedAt` | 공통 입력 기준(가장 오래된 필수 source 시각), 조회 시작/완료, 제공 시각. atomic snapshot이라고 주장하지 않음 |
-| `freshness` | `"fresh"` / `"stale"`; `refreshing:boolean`, `nextRefreshAt` |
-| `completeness` | `"complete"` / `"partial"`; 필수 page/identity 전체 여부. null을 빈 목록으로 바꾸지 않음 |
-| `scope` | `{namespace,supportBasis:"representative-node-static",goalBasis:"requested"\|"explicit",targetBatches:[]}`와 선택 필터 |
-| `sources[]` | `{kind,readAt,resourceVersions,complete,error:{code,message,retryable}\|null}`. inventory/compatibility/catalog/BEO/Run/researchFacts/operation/occupancy 구별 |
-| `summary` | `supportedCellCount`, `completeCellCount`, `paperEligibleCellCount`, `unknownSupportCount`, `unsupportedCellCount`, `countsByStatus`, `requestCount`, `runCount`, `profileCount`, `failedCellCount`, `currentFailedRequestCount`, `historicalFailedRequestCount`. 미확정 수는 null |
-| `groups[]` | 모델×class `{model:{name,uid},deviceClass:{name,uid},cellIds:[],complete,supported,unknownSupport}`. inventory 이름순 장치 열 고정 |
-| `cells[]` | 아래 Cell. 후보 단위는 model UID × class UID × path × mode. 정확 variant/Node/batch는 자식에서 분리 |
-| `entities` | `{requests,runs,profiles,operationCosts,dispatchOccupancies}`. 각각 `{uid,id,assessment,cellIds}` 배열. profile은 실제 opaque profile ID, CR은 namespace/name/UID. list/detail 동일 lookup |
-| `nextActions[]` | `{kind,cellId,entityId,reasonCode,message}`. 미해결 실패/부족 batch/근거 확인 필요만, 최대 각 3건. 새 추천 점수·자동 재요청 없음 |
+| `schemaVersion`, `snapshotId`, `assessmentVersion` | `"measurement-coverage.v1"`, namespace revision, `"result-checklist.v1"` |
+| `dataAsOf`, `freshness`, `completeness` | 기준 시각, fresh/stale, complete/partial |
+| `scope` | `{namespace,supportBasis:"representative-node-static"\|"selected-node-static",goalBasis:"requested"\|"explicit",targetBatches:[]}` |
+| `sources[]` | `{kind,resourceVersions,complete,error:{code,message,retryable}\|null}`. inventory/compatibility/catalog/BEO/Run 구별 |
+| `summary` | supportedCellCount, completeCellCount, criteriaMetCellCount, reusedCellCount, unknownSupportCount, unsupportedCellCount, countsByDisplayStatus, requestCount, runCount, profileCount, failedCellCount, currentFailedRequestCount, historicalFailedRequestCount. 미확정 수 null |
+| `groups[]` | 모델×class `{model:{name,uid},deviceClass:{name,uid},cellIds:[],complete,supported,unknownSupport}`. 장치 열 이름순 고정 |
+| `cells[]` | 아래 Cell |
+| `entities` | requests/profiles의 `{uid,id,assessment,cellIds}`. runs는 **`{uid,status,label,cellIds}`만**; checks/원문/log 없음 |
+| `nextActions[]` | `{kind,cellId,variantId,entityId,reasonCode,message}`. 미해결 실패/부족 batch/근거 확인만 각 최대 3건 |
 
-**Cell**
+operationCosts/dispatchOccupancies는 coverage index에서 제외한다. 기존 각각의 list/detail response에
+동일 reducer assessment를 붙인다. 이들 source 실패가 BEO coverage를 막지 않아야 한다.
+Run 상세도 기존 허용 조회 경로에서 assessment를 얻을 수 있어야 하며 aggregate grant를 강제하지 않는다.
+runs의 status는 서버의 화면 displayStatus이며 label도 서버 값이다. 원본 phase/세부 사유는 기존 단건에서 읽는다.
+catalog 내부 메모리 facts 타입은 기존 serving 경계에 두고 cmd adapter에서 공통 HTTP DTO로 변환한다.
+catalog/kube가 operatorconsole transport를 import하도록 package 예외를 추가하지 않는다.
 
-| 필드 | shape / 규칙 |
-|---|---|
-| `id`, `model`, `deviceClass`, `path`, `powerMode` | 실제 이름과 UID, mode 원문. mode 없는 class에 가짜 mode를 만들지 않음 |
-| `support` | `{verdict:"Compatible"\|"Incompatible"\|"Unknown",representativeNode:{name,uid}\|null,reasons:[]}`. 선택 Node가 다르면 해당 Node의 기존 B1 판정을 사용하고 대표 판정을 복제하지 않음 |
-| `assessment` | 공통 ResearchAssessment. 셀 요약 범위, 원본 실행 phase와 독립 |
-| `batchProgress` | `{basis,target:[],measured:[],eligible:[],missing:[],inProgress:[],unknown:[]}`. 중복/미확인 조건은 완료에 가산하지 않음 |
-| `representative` | `{variantId,batch,incrementalJoulesPerItem,p95Milliseconds}` 또는 null. 같은 정확 조건의 실제 측정 배치 중 최저 평균, 최적성 보장 아님 |
-| `variants[]` | frozen model/class/Node UID·image·artifact/path·preprocessor/dataset UID·CPU/quota/affinity·protocol·metricSource가 같은 정확 조건. `{id,condition,assessment,batchProgress,paperRows,requestIds,runIds,profileIds}` |
-| `failureSummary` | `{code,message,exitCode,batch,requestId,runId,followUpId,relation}` 또는 null. 메시지 최대 160자, 줄바꿈/전체 JSON/토큰 없음. relation은 `verified-follow-up`/`related-candidate`/`none` |
-| `history` | 정확 관련 요청 identity와 순서·원본 상태·서버 판정만. 과거 실패 삭제 없음. 긴 로그는 기존 상세 GET |
+**Cell**: model UID × class UID × path × mode다. 각 이름/UID와 `support`, `assessment`,
+`variantCount`, `variants`, nullable `batchProgress`/`representative`, `failureSummary`, `history`를 갖는다.
+support는 `{verdict:"Compatible"|"Incompatible"|"Unknown",node:{name,uid}|null,reasons:[]}`다.
+variant는 frozen Node/image/artifact/path/dataset/preprocessor UID·CPU/quota/affinity/protocol/metricSource까지
+같은 조건의 `{id,condition,assessment,batchProgress,resultRows,requestIds,runIds,profileIds}`다.
+`batchProgress={basis,target,measured,criteriaMet,missing,inProgress,unknown}`이며 각 집합은 batch 정수 배열이다.
+**variant가 2개 이상이면 Cell.batchProgress와 representative는 null**, ‘조건 k개’만 표시한다.
+합집합/교집합으로 가짜 완성 조건을 만들지 않는다. variant 선택 후에만 그 batch/대표값을 보인다.
+대표값은 `{variantId,batch,incrementalJoulesPerItem,p95Milliseconds}`로 같은 실제 batch에 한정한다.
+failureSummary는 정확 request/Run identity·batch·code·exitCode·최대 160자 한 줄 원인·후속 relation만,
+긴 diff/log는 기존 상세에 둔다. 정확 후속만 verified-follow-up, 유사 조건은 related-candidate다.
 
-정확 조건 identity를 입증할 수 없으면 variant를 합치지 않고 `conditionIncomplete` reason을 남긴다.
-class 일부 Node 완료는 Node 진척으로 따로 보인다. 서버 검증된 대상 reuse만 해당 Node 완료로 센다.
-과거 실패 뒤 정확 후속 유효 결과가 있으면 셀 대표는 완료 가능하지만 실패 요청 자체는 계속 실패다.
-후속 이름 접미사/비슷한 조건만으로 해결됨을 만들지 않는다.
+### 13.4 단일 판정과 화면 상태
 
-### 13.4 단일 상태 어휘와 판정 순서
+`MeasurementAssessment={status,displayStatus,label,reasons,execution,evidence,checklist,scope}`다.
+execution은 원문 phase/generation/observedGeneration, evidence는 available/accepted와 사유,
+checklist는 `{criteriaMet:true|false|null,version:"result-checklist.v1",checks:[{code,result,message,sourceIds}]}`다.
+check result는 pass/warn/fail/unknown이다. **서버가 displayStatus와 label까지 제공**하며 UI는 다시 매핑하지 않는다.
 
-`ResearchAssessment = {status,label,reasons:[],execution,evidence,paper,assessedAt,scope}`.
-`status`는 아래 enum 하나, `label`은 아래 한국어 그대로다.
-`execution`은 `{phase,reason,generation,observedGeneration}` 원문 사실,
-`evidence`는 `{available,accepted,reasons}`, `paper`는
-`{eligible:true|false|null,checklistVersion,checks:[{code,result:"pass"|"warn"|"fail"|"unknown",message,sourceIds}]}`다.
-누락 generation/알 수 없는 phase를 성공·진행으로 추정하지 않는다.
+| 세부 status | 화면 displayStatus / label | 판정 |
+|---|---|---|
+| `complete` | `usable` / **사용 가능** | 채택된 정확 근거와 해당 목표 batch 측정 충족. 실행 phase=Complete만으로 만들지 않음 |
+| `criteria_met` | `usable` / **사용 가능** | complete이며 아래 결과 체크리스트도 충족. 상세 사유 행에 **기준 충족** 표시 |
+| `partial` | `insufficient` / **부족** | 목표 batch/선택 Node 일부 부족. 실제 부족 집합 명시 |
+| `warning` | `problem` / **문제** | 실제 catalog 기각·근거 파손/누락·현재 선언 충돌·음수/비유한 d 등 해결할 문제 |
+| `failed` | `problem` / **문제** | 사용 결과 없이 명시적 실행 실패. 사유 행은 ‘실행 실패’와 실제 원인 |
+| `running` | `running` / **진행** | 사용 결과 없이 현재 generation의 실행/대기가 명시됨 |
+| `unmeasured` | `unmeasured` / **미측정** | 지원 Compatible·필수 목록 완전·해당 시도 없음 |
+| `unsupported` | `unsupported` / **지원 안 함** | resolver가 입증한 불일치이며 사용 근거 없음 |
+| `unknown` | `unknown` / **확인 불가** | 필수 source/identity/phase 불명. 기존 검증 결과는 지우지 않고 미확인 범위만 남김 |
 
-아래 순서는 **같은 평가 범위** 안에서 적용한다. 개별 실패 요청과 후속 결과를 포함한 셀은 범위가
-다르므로 상태가 달라도 모순이 아니다. UI는 범위와 `최근 시도 실패/재측정 진행` 보조 사실을 함께 쓴다.
+화면의 기본 상태는 **사용 가능/부족/문제/진행/미측정 5개**, 지원 안 함·확인 불가는 별도다.
+9개 세부 상태를 별도 배지 벽으로 노출하지 않고 사유 행/용어 도움말 한 곳에서 설명한다.
+superseded와 notInCatalogScope는 정상 측정 결과의 `complete`+보조 사실이며 ‘현재 스케줄러 미사용’을 명시한다.
+실제 rejected/깨진 근거와 혼동하지 않는다. 완료 수 complete+criteria_met, 기준 충족 수는 부분집합,
+재사용 완료 수는 따로 표시한다. 이전 유효 결과 뒤 새 실패는 기존 complete를 유지하고 최근 시도 실패를 병기한다.
+실패 요청 자체는 failed, 후속 포함 셀은 다른 범위임을 명시한다. idle 3회를 active 3회로 세지 않는다.
+여러 자식은 실제 문제→부족→전부 기준 충족→전부 complete 순으로 요약하고, 판정 불가 자식은
+미확인 수/범위를 보존한다. 단순 통계 미제공이 채택 결과 완료를 지우지 않는다.
 
-| status / label | 판정 |
-|---|---|
-| `unknown` / **확인 불가** | 필수 source 실패·불완전 목록·identity 모순·알 수 없는 phase로 범위 판정 불가. 지원 Unknown만으로 이미 검증된 과거 결과를 없애지는 않으며 support는 별도 Unknown으로 남김 |
-| `unsupported` / **지원 안 함** | resolver의 명시 Incompatible이며 해당 범위의 사용 근거 없음. 저장 근거와 현재 선언이 충돌하면 아래 경고 |
-| `warning` / **경고** | 저장 근거/현재 선언 충돌, Complete이나 미채택/불수용/깨진 근거, 유효 결과 뒤 새 실패, 음수·변환 불가 d, 논문 필수 근거의 실제 결손 등 해결할 품질 이유 있음 |
-| `partial` / **부분** | 품질 오류 없이 정확 목표 batch 또는 현재 선택 Node 집합 중 일부만 측정. 부족 batch/Node를 반드시 열거 |
-| `paper_eligible` / **논문 적격** | 아래 체크리스트 모두 pass, 해당 목표 범위 완료. API/화면에 체크리스트 범위 표기 |
-| `complete` / **완료** | 해당 범위 실행·수용 근거/목표 충족. 논문 검토 미완료는 paper.eligible=null이며 검토 미완료 사유 병기. 실행 phase=Complete만으로 이 상태를 만들지 않음 |
-| `running` / **진행** | 위 사용 결과가 없고 현재 generation의 비종결 실행·대기가 명시됨. 이전 실패는 이력 |
-| `failed` / **실패** | 위 사용 결과가 없고 현재 범위의 실행 실패 명시. 실패 요청의 idle 성공을 active 반복 통과로 세지 않음 |
-| `unmeasured` / **미측정** | 필수 목록 완전·지원 Compatible이며 정확 범위에 시도/결과 없음. 지원 Unknown인 빈 조합은 unknown |
+**결과 체크리스트 v1**: 정확 조건/lineage, 목표 batch 충족, 독립 active/shared idle 각각
+`max(3,동결 MinimumTrials)` 반복, 유한한 기존 CI/level(0폭 허용), pooled client p95·N>1,
+모든 사용 trial의 동결 전력창/표본/gap/실패 정책 통과, 실제 전력 출처를 확인한다.
+미조회 체크는 unknown이지 pass가 아니다. checklist 미충족 자체를 모두 warning으로 승격하지 않는다.
+**sourceTimestampAbsent와 node-wall은 complete/criteria_met 어느 쪽의 판정 게이트도 아니다.**
+전력원 바로 옆에 ‘관측 시각은 수집 시각’, ‘노드 벽전력이며 장치 단독 전력 아님’ 고정 각주를 둔다.
+미관측 발열/격리를 정상으로 꾸미지 않는다. reuse 행은 complete일 수 있으나 criteria_met는 아니다.
+원본 CI 중첩만으로 유의성을 판단하지 않으며 새 검정/품질 gate를 만들지 않는다.
 
-최상위 `unknown`은 판정에 필요한 사실의 장애이며 단순 통계 warmup은 완료 근거를 지우지 않는다.
-통계 warmup 중 `complete`와 paper=null, 실제 원근거 부재 확인 뒤 `warning`을 구별한다.
-여러 자식이 섞인 셀은 미확정 자식이 있으면 unknown, 해결할 경고가 있으면 warning,
-일부만 유효하면 partial, 전부 적격이면 paper_eligible, 전부 수용이면 complete 순이다.
-전부 미완료면 running > failed > unmeasured를 쓰되 각 상태 수를 보존한다.
-미지원 자식은 지원 분모에서 제외하고 support Unknown 수는 별도로 보인다.
-완료 수는 complete+paper_eligible, 논문 적격 수는 그 부분집합이다. warning/partial을 완료율에 몰래 더하지 않는다.
-동작 비용/점유 측정은 자신의 scope에서 같은 enum을 쓰며 batch/논문 행이 적용되지 않으면 paper=null이다.
-원본 판정 `Accepted`/`Insufficient`/`Complete`는 상세 원문에서 계속 읽을 수 있다.
+### 13.5 결과 행·measurementFacts·요청 검사
 
-**논문 적격 체크리스트 v1**은 새 과학적 채택 정책이 아닌 읽기용 최소 확인이다.
-정확 조건·원시 lineage 확인, 목표 batch 충족, 독립 active와 공유 idle를 분리한
-반복 수 각각 `max(3,동결 pointPolicy.MinimumTrials)` 충족, 유한한 기존 CI/level(0폭 허용),
-통합 client p95와 호출 N>1, 모든 사용 trial의 유효 전력창·표본/실패·gap 정책 통과,
-원본 source timestamp 존재, 실제 전력원/Node/계측 범위 명시가 필수다.
-데이터셋·전처리·CPU·runtime metadata도 정확 참조로 확인해야 한다.
-현재 settings를 과거 기준으로 소급하지 않는다.
-노드 전체 계측은 명시적으로 **노드 전체 측정 표 행**에 적격일 수 있지만 모듈 전력/격리 인증은 아니다.
-미관측 격리·발열을 정상으로 표시하지 않는다. timestamp 부재/필수 품질 결손은 warning,
-아직 읽지 않은 항목은 unknown check다. 단일 대표 Passport로 전체 trial을 통과시키지 않는다.
-CI가 겹친다는 것만으로 근거를 기각하거나 통계 유의성 검정을 새로 만들지 않는다.
+`ResultRow/resultRows[]`는 정확 variant × batch 한 행이다. 조건(model/class/Node UID·mode/path/
+image/backend·batch·CPU/quota/affinity·dataset/preprocessor UID·protocol), p95Milliseconds,
+latencySampleCount, idleWatts, activeWatts, totalJoulesPerItem, incrementalJoulesPerItem,
+confidence, activeTrialCount, idleTrialCount, completedItems, completedCalls, powerSource,
+assessment, sources, missingReasons를 포함한다.
+catalog가 이미 로드한 verified trial의 동일 shared-idle derivation·산술 평균/pooled client percentile을 사용한다.
+CI는 증분 J/item에만 적용하고 평균±halfWidth의 음수 하한/0폭을 보존한다.
+총 J/item은 EnergyTrial.ActiveWindowWallJoulesPerItem 평균, active W는 같은 trial 유효 적분/실제 창 평균이다.
+서로 다른 회차 처리량으로 W를 나누거나 idle W를 총 J에 단순 더하지 않는다.
+재사용은 **대상 confirmation 독립 실측 행 + sourceProfile 참조 행** 두 종류로 구분하고
+각각 rowKind/Node/profile/source/reuse 상대 차이를 둔다. 원본 에너지와 대상 W를 섞은 총 J는 null이다.
+두 행이 대상의 독립 전체 실측인 것처럼 내보내지 않는다.
 
-### 13.5 논문 표 행과 계산 범위
+catalog 밖 단건 Console `/result`는 기존 result/statistics를 유지하고 nullable
+`measurementFacts`와 `measurementFactsReason`을 형제로 제공한다.
+facts는 `{request,resultReference,condition,pointPolicy,batches:[ResultRow의 사실 필드]}`다.
+NoPublishedResult/RetainedEvidenceMissing/StatisticsNotRecorded와 실제 권한·transport·identity 오류를 구별한다.
+채택 profile 상세는 coverage/catalog의 같은 resultRows를 재사용하고 Console 중복 로드를 하지 않는다.
+raw/vector/log/Secret은 응답에 넣지 않는다. 기존 8MiB 한도는 유지하며 넘는 자료를 몰래 잘라 정상으로 표시하지 않는다.
 
-`paperRows[]`는 정확 variant × batch 한 행이다. API가 제공한 행을 CSV/LaTeX로 옮기며
-클라이언트는 포맷 외 수치·상태를 유도하지 않는다.
+기존 preflight 응답에 표시용 `batchPlan`을 추가한다:
+`{variantId,conditionMatch,requestedBatches,requestableBatches,plannedBatches,measuredBatches,inProgressBatches,
+missingBatches,subsetAllowed,searchMayStopEarly,reasons}`.
+conditionMatch는 exact/planned-only/unknown이다. frozen image/조건 미확정은 exact로 승격하지 않는다.
+셀에서 variantId를 전달하고 입력을 그대로 유지할 때만 그 missing을 초깃값으로 쓴다.
+CPU/dataset/protocol 등 변경·선언 UID 변경은 이전 자동 제외/검사를 무효화한다.
+검사에서 서버가 최신 요청 spec/정확 profile을 대조하고 planned-only 중복은 별도 사실로 보인다.
+`declaredBatchSizes` 경로는 부분집합 지정 불가: UI batch 칩 읽기 전용, 기존 batchSizes 생략 계약 유지,
+‘요청 가능 범위’와 ‘실제 실행 예정 범위’, 중복 가능성·조기 종료 가능성을 펼쳐 확인받는다.
+subsetAllowed인 경로에만 **‘부족 배치만 요청’**을 쓴다. 모든 batch 실제 실행을 보장하지 않는다.
+지원 Unknown은 이유 코드별 담당 행동(선언 누락이면 관리자 설정 확인)을 제공한다.
+이름 suffix는 검사 통과 때 고정하고 응답 미확인 후 자동 재생성/재제출하지 않는다.
 
-| 필드 | 의미/근거 |
-|---|---|
-| `condition` | model/class/Node name·UID, powerMode, executionPath/runtime image·backend, batch, CPU request/quota/affinity, dataset/preprocessor UID, protocol, measuredAt, reuse provenance |
-| `p95Milliseconds`, `latencySampleCount` | §12.3의 같은 active batch client 호출 pooled p95·호출 표본 N. native service time/한 회차 p95와 구별 |
-| `idleWatts` | 같은 frozen 상태의 `DeriveIdleBaseline.ModelLoadedIdleMeanWallWatts` |
-| `activeWatts` | 정확 active trial별 유효 벽전력 적분/실제 창 초의 산술 평균. trial 수와 평균 방식 명시 |
-| `totalJoulesPerItem` | 같은 active trial의 `EnergyTrial.ActiveWindowWallJoulesPerItem` 산술 평균 |
-| `incrementalJoulesPerItem` | 같은 trial의 기존 평균 증분 J/item. 평균 부하 W/pooled 처리량으로 새로 근사하지 않음 |
-| `confidence` | §12.3 PointConfidence, **증분 J/item** 대상만. lower/upper=mean±halfWidth, 음수 하한/0폭 보존 |
-| `activeTrialCount`, `idleTrialCount`, `completedItems`, `completedCalls` | 각각 독립 반복/공유 baseline 반복/실제 완료 item/실제 호출. 서로 대체 금지 |
-| `powerSource` | metric name·meter identity·Node UID·scope=`node-wall`/실제 기록 범위·sourceTimestampAbsent·표본/최대 gap 요약. 미기록 scope는 unknown |
-| `assessment`, `sources`, `missingReasons` | 동일 서버 판정, 실제 사용 `{store,key,size}` 참조, null 필드별 이유 |
+### 13.6 cache·신선도·성능 수용
 
-총 J와 증분 J의 차이에 유휴 W만 단순 더하지 않는다. 실제 active 시간/item과 같은 baseline이어야 한다.
-재사용 profile은 원본 서비스/에너지와 대상 확인 벽전력의 출처를 섞지 않고 원본/대상 행을 구별한다.
-하나의 동일 물리 관측으로 위 필드를 구성할 수 없으면 혼합 총 J 행을 만들지 않고 이유 있는 null이다.
-retained raw 없음·통계 미기록·권한/transport 오류는 §12.3대로 구분한다.
-동작 비용 전체 Node J와 batch J/item은 다른 단위이며 논문 행에 합산하지 않는다.
+namespace별 프로세스 메모리 base snapshot 한 개, atomic 교체, namespace당 갱신 한 번만 둔다.
+진입/명시 갱신에서 30초 fresh TTL을 적용하고 stale 최대 5분, 별도 DB/Console crawler/worker pool은 없다.
+지원 snapshot은 입력 identity/RV가 바뀔 때만 재계산한다. catalog는 기존 refresh 흐름과 성공 확인 시각을 쓴다.
+동일 서버 namespace TTL 안의 여러 탭은 한 갱신을 공유하고 브라우저 **30초 polling은 하지 않는다**.
+재진입/명시적 갱신만 GET한다. 최초 GET이 warming이면 Retry-After 후 한 번의 완료 확인을 허용하되
+지속 warming은 오류와 명시 재시도이며 숨은 무기한 polling으로 바꾸지 않는다.
+source 실패는 partial/stale와 기존 dataAsOf를 유지한다. 지원 실패면 분모 null,
+목록 불완전이면 미측정 수 null, catalog 오래됨이면 현재 사용 판정을 stale로 표시한다.
+단건 비용/점유 장애가 무관한 coverage를 막지 않는다. 인증 변경/401/403 후 이전 cache 표시 금지다.
 
-### 13.6 cache·부분 실패·응답 목표
-
-- namespace별 **프로세스 메모리 snapshot 한 개**를 둔다. Redis/DB/새 publisher는 없다.
-  완전한 입력을 index한 뒤 불변 DTO를 atomic 교체한다. catalog refresh/Tick 잠금을 오래 잡지 않는다.
-- 시작 시 허용 profile namespace를 background prewarm한다. 기본 30초 fresh TTL,
-  stale 허용 최대 5분이다. 만료 GET은 마지막 정상 snapshot을 즉시 제공하고 namespace당
-  refresh 한 번만 시작한다. cold GET은 warmup을 시작/합류하되 2초 전 warming 응답을 끝낸다.
-  새 상태가 이전 것과 섞이지 않게 `snapshotId`를 한 응답 전체에 적용한다.
-- immutable statistics/facts는 정확 result reference `{store,key,size}`와 CR UID·동결
-  조건 identity로 재사용한다. 변경 CR/Run RV·catalog configVersion·inventory/선언 UID/RV를
-  다시 대조한다. 삭제/identity 변경은 즉시 다음 snapshot에서 제외한다.
-  오래된 immutable cache는 현재 snapshot이 참조하는 항목으로 제한한다. token을 cache key에 넣지 않는다.
-- background raw/Console 작업 동시 상한 4, 객체별 기존 64MiB/시간·취소 제한을 유지한다.
-  **GET 경로에서 78 profile × 전체 Passport/raw를 동기 fan-out하지 않는다.**
-  미리 계산 중인 facts는 paper=null로 반환하고 상태를 정상으로 꾸미지 않는다.
-  선택한 기존 result GET의 facts가 준비되면 동일 cache의 다음 snapshot으로 반영한다.
-- 한 source 갱신 실패 시 이전 정상 snapshot을 새 `dataAsOf`로 포장하지 않는다.
-  실패 source·scope·last success를 보존해 partial/stale로 표시한다.
-  지원 source가 없으면 분모 null, 요청 source가 불완전하면 미측정/실패 수 null,
-  facts만 실패하면 기존 측정 근거는 유지하되 해당 paper 판단은 unknown/경고로 제한한다.
-  stale 통계와 새 조건을 결합하지 않는다. 5분을 넘으면 해당 source 값은 판정에서 제외한다.
-- browser Query cache는 인증 epoch 안 메모리로만 유지한다. 마지막 정상 snapshot을 즉시
-  렌더링하고 재진입/명시적 갱신/진행 중일 때의 가시 탭 30초 갱신만 수행한다.
-  401/403 이후 cache 표시 금지. 403을 미측정/0건으로 바꾸지 않는다.
-- 목표는 **prewarm 완료 후 최초 방문과 재방문 성공 200의 p95 <2초**(브라우저 BFF 포함).
-  3모델/8class/88BEO/1,155Run/78profile, 동시 사용자 1·5, fresh/stale/재시작을
-  구분해 측정한다. cold warming 503은 성공 측정에서 제외하되 별도 횟수·준비시간을 보고한다.
-  실제 행렬 7.690초/Run 1행 3.861초의 현행 경로를 요청 중 그대로 호출하면 수용 실패다.
-  dashboard cutover 전에 prewarm 완료·필수 source complete를 확인한다.
-  인증 비용·내부 집계·BFF 시간을 각각 기록하며 2초 목표는 아직 측정된 성과가 아니다.
-
-### 13.7 Console researchFacts 형제 필드
-
-기존 `.../batch-energy-optimizations/{name}/result`의 result/statistics는 그대로다.
-새 `researchFacts`는 null 또는 다음 객체, `researchFactsReason`은 null 또는
-§12.3의 `NoPublishedResult`/`RetainedEvidenceMissing`/`StatisticsNotRecorded`다.
-store 권한/transport/깨진 identity 오류를 이 문자열로 숨기지 않는다.
-
-```text
-researchFacts:
-  request: {namespace,name,uid}
-  resultReference: {store,key,size}
-  condition: <13.5의 정확 frozen condition>
-  pointPolicy: {version,minimumTrials,confidenceLevel}
-  batches:
-    - batch
-      idleWatts, activeWatts, totalJoulesPerItem, incrementalJoulesPerItem
-      confidence, p95Milliseconds, latencySampleCount
-      activeTrialCount, idleTrialCount, completedItems, completedCalls
-      powerSource
-      checks: [{code,result,message,sourceIds}]
-      sources: [{store,key,size}]
-      missingReasons: {<field>: <reason code>}
-```
-
-이 객체의 checks는 loader/동결 정책이 이미 확인한 사실의 요약이며 새 catalog 판정이 아니다.
-모든 사용 trial에서 확인하지 못한 quality 항목은 `unknown`, 적용 안 되는 항목은 이유와 함께
-명시하고 pass로 꾸미지 않는다. BEO outcome/현재 catalog와 조합하는 대표 assessment는
-ChillServer의 공통 reducer 한 곳에서만 만든다. result facts와 catalog의 정확 참조가 다르면
-과거 논문 행으로는 보여도 현재 사용 근거로 합치지 않는다.
-원본 string/명칭은 안전한 텍스트만, 로그·raw vector·Secret은 제외한다.
-합계 response는 기존 BFF 8MiB 한도 안이어야 한다. 한도 초과는 503 `CoverageTooLarge`로
-명시하고 일부 entities를 몰래 잘라 정상 snapshot으로 표시하지 않는다.
+수용 데이터는 3모델/8class/88BEO/1,155Run/78profile, 동시 사용자 1·5다.
+**① 성공 GET p95 <2초 ② 로그인/경로 진입부터 첫 사용 가능한 커버리지까지 p95 <2초
+③ 채택 조건 선택부터 결과 행·기준 판정 완료까지 p95 <2초**를 각각 기록한다.
+cold process 시작→첫 사용 가능한 커버리지·채택 행 판정 완료는 **30초 이내** 목표로 별도 수용한다.
+warming/partial 비율과 최장 지속시간을 보고하며 정상 source의 안정 운영에서는 warming/partial이 남으면 실패다.
+빠른 503/unknown/장기 미판정 200을 성공으로 세지 않는다. catalog 밖 단건은 기존 10초 조회 한도와
+미제공 이유를 별도 측정하며 전체 준비를 기다리게 하지 않는다.
+서버 catalog 시작/갱신·Kube GET 수·ConfigMap 파싱 수·인증·BFF·집계 CPU/I/O와 serving 제어 지연을 함께 기록한다.
+이 시간은 설계 목표이며 달성 관측이 아니다. 기존 행렬 7.690초/Run 1행 3.861초를 그대로 재사용하면 수용 실패다.
