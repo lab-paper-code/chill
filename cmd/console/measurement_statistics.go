@@ -162,23 +162,66 @@ func readMeasurementStatistics(
 	if len(active) == 0 || len(idle) == 0 {
 		return nil, errStatisticsNotRecorded
 	}
-	rows, err := deriveMeasurementStatistics(cr, plan, active, idle)
+	curve, err := deriveMeasurementCurve(cr, plan, active, idle)
 	if err != nil {
 		return nil, err
 	}
+	factBatches := curve.MeasurementBatches()
 	statistics := &operatorconsole.BatchEnergyOptimizationStatistics{
 		Batches: []operatorconsole.BatchEnergyOptimizationBatchStatistics{},
+		MeasurementFacts: &derivation.MeasurementFacts{
+			Request: derivation.MeasurementRequestReference{Namespace: cr.Namespace, Name: cr.Name, UID: string(cr.UID)},
+			ResultReference: derivation.RawEvidenceIdentity{Store: cr.Status.Result.Store, Key: cr.Status.Result.Key, Size: cr.Status.Result.Size},
+			Condition: shared, PointPolicy: derivation.PointPolicy{Version: "energy-objective-point-v1", MinimumTrials: int(cr.Spec.TrialsPerBatch), ConfidenceLevel: factBatches[0].Confidence.Level},
+			Batches: factBatches,
+		},
 	}
-	for _, row := range rows {
+	for _, row := range factBatches {
 		statistics.Batches = append(
 			statistics.Batches,
 			operatorconsole.BatchEnergyOptimizationBatchStatistics{
-				Batch: row.Batch, IncrementalWorkJoulesPerItem: row.IncrementalWorkJoulesPerItem,
-				ActiveTrialCount: row.ActiveTrialCount, IdleTrialCount: row.IdleTrialCount, Confidence: row.Confidence,
-				LatencySampleCount: row.LatencySampleCount, LatencyP95Milliseconds: row.LatencyP95Milliseconds,
+				Batch: row.Batch, IncrementalWorkJoulesPerItem: *row.IncrementalJoulesPerItem,
+				ActiveTrialCount: row.ActiveTrialCount, IdleTrialCount: row.IdleTrialCount, Confidence: *row.Confidence,
+				LatencySampleCount: row.LatencySampleCount, LatencyP95Milliseconds: *row.P95Milliseconds,
 				Sources: append(slices.Clone(idleSources), activeSources[row.Batch]...),
 			},
 		)
+	}
+	for i := range statistics.MeasurementFacts.Batches {
+		row := &statistics.MeasurementFacts.Batches[i]
+		for _, source := range append(slices.Clone(idleSources), activeSources[row.Batch]...) {
+			row.Sources = append(row.Sources, derivation.RawEvidenceIdentity{Store: source.Store, Key: source.Key, Size: source.Size})
+		}
+		for _, verified := range active {
+			execution, raw, err := verified.Records()
+			if err != nil {
+				return nil, err
+			}
+			if execution.RunConfig.Measurement.Batch != row.Batch {
+				continue
+			}
+			start, end, err := raw.Runtime.MeasurementWindow()
+			if err != nil {
+				return nil, err
+			}
+			row.PowerSource = projection.MeasurementPowerSource(raw.Metrics.Source)
+			quality := projection.MeasurementQuality(execution.RunConfig, raw.Metrics, start, end, shared.ActiveProtocol)
+			quality.TrialID = execution.Terminal.Pod.UID
+			row.Quality = append(row.Quality, quality)
+		}
+		for _, verified := range idle {
+			execution, raw, err := verified.Records()
+			if err != nil {
+				return nil, err
+			}
+			start, end, err := raw.Runtime.MeasurementWindow()
+			if err != nil {
+				return nil, err
+			}
+			quality := projection.MeasurementQuality(execution.RunConfig, raw.Metrics, start, end, shared.IdleProtocol)
+			quality.TrialID = execution.Terminal.Pod.UID
+			row.Quality = append(row.Quality, quality)
+		}
 	}
 	return statistics, ctx.Err()
 }
@@ -306,43 +349,43 @@ func validateStatisticsRunConfig(run *api.ProfilingRun, config runconfig.RunConf
 	return nil
 }
 
-func deriveMeasurementStatistics(
+func deriveMeasurementCurve(
 	cr *api.BatchEnergyOptimization,
 	plan derivation.CurvePlan,
 	active []evidence.VerifiedEvidence,
 	idle []evidence.VerifiedIdleEvidence,
-) ([]derivation.BatchStatistics, error) {
+) (derivation.Curve, error) {
 	var err error
 	var verifiedState derivation.VerifiedCurveState
 	batches := make(map[int][]derivation.Trial)
 	for _, verified := range active {
 		projected, err := projection.ProjectVerifiedCurveState(plan, verified, idle[0])
 		if err != nil {
-			return nil, err
+			return derivation.Curve{}, err
 		}
 		verifiedState = projected
 		trial, err := projection.Trial(verified)
 		if err != nil {
-			return nil, err
+			return derivation.Curve{}, err
 		}
 		if len(trial.LatencyMilliseconds) == 0 {
-			return nil, errStatisticsNotRecorded
+			return derivation.Curve{}, errStatisticsNotRecorded
 		}
 		batches[trial.Batch] = append(batches[trial.Batch], trial)
 	}
 	idleTrials := make([]derivation.IdleTrial, len(idle))
 	for i, verified := range idle {
 		if _, err := projection.ProjectVerifiedCurveState(plan, active[0], verified); err != nil {
-			return nil, err
+			return derivation.Curve{}, err
 		}
 		idleTrials[i], err = projection.IdleTrial(verified, idle[0])
 		if err != nil {
-			return nil, err
+			return derivation.Curve{}, err
 		}
 	}
 	confidence, err := cr.Spec.PointPolicy.Confidence()
 	if err != nil {
-		return nil, err
+		return derivation.Curve{}, err
 	}
 	policy := derivation.PointPolicy{
 		Version:         "energy-objective-point-v1",
@@ -351,11 +394,11 @@ func deriveMeasurementStatistics(
 	}
 	baseline, err := derivation.DeriveIdleBaseline(idleTrials, policy)
 	if err != nil {
-		return nil, err
+		return derivation.Curve{}, err
 	}
 	verifiedPlan, err := derivation.VerifyCurvePlan(plan, verifiedState)
 	if err != nil {
-		return nil, err
+		return derivation.Curve{}, err
 	}
 	pass := derivation.Pass{Role: derivation.PassSearch}
 	for _, batch := range plan.PlannedBatchSizes() {
@@ -370,9 +413,9 @@ func deriveMeasurementStatistics(
 		policy,
 	)
 	if err != nil {
-		return nil, err
+		return derivation.Curve{}, err
 	}
-	return curve.Statistics(), nil
+	return curve, nil
 }
 
 func validateStatisticsRunProtocol(

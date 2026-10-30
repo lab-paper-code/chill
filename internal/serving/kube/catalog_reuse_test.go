@@ -94,6 +94,31 @@ func TestProfileReuseMaterializesTargetIdentityAndRetainsConfirmation(t *testing
 	}
 }
 
+func TestProfileReuseKeepsIndependentMeasurementFacts(t *testing.T) {
+	source, target := reuseProfilesFixture(t)
+	sourceTotal, targetTotal := 10.0, 90.0
+	view, err := applyProfileReuse(CatalogView{
+		Profiles: []serving.Profile{source, target},
+		MeasurementFacts: map[string]serving.MeasurementFacts{
+			source.ID: {Condition: source.Condition, Batches: []profilederivation.MeasurementBatchFacts{{Batch: 1, TotalJoulesPerItem: &sourceTotal}}},
+			target.ID: {Condition: target.Condition, Batches: []profilederivation.MeasurementBatchFacts{{Batch: 1, TotalJoulesPerItem: &targetTotal}}},
+		},
+	}, map[string]string{target.ID: `{"sourceProfileID":"` + source.ID + `","maximumRelativeDifference":0.05}`})
+	if err != nil || len(view.Profiles) != 2 {
+		t.Fatalf("reuse=%+v error=%v", view, err)
+	}
+	derived := view.Profiles[1]
+	if derived.Reuse == nil || view.MeasurementFacts[derived.ID].Condition.NodeUID != target.Condition.NodeUID ||
+		*view.MeasurementFacts[derived.ID].Batches[0].TotalJoulesPerItem != targetTotal ||
+		*view.MeasurementFacts[source.ID].Batches[0].TotalJoulesPerItem != sourceTotal {
+		t.Fatalf("source and confirmation measurements mixed: %+v", view.MeasurementFacts)
+	}
+	*view.MeasurementFacts[derived.ID].Batches[0].TotalJoulesPerItem = 999
+	if targetTotal != 90 {
+		t.Fatal("reused sidecar aliases independent confirmation")
+	}
+}
+
 func TestProfileReuseRejectsUnconfirmedConditionsAndDifferences(t *testing.T) {
 	for _, test := range []struct {
 		name   string

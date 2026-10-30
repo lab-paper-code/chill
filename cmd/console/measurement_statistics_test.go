@@ -98,6 +98,17 @@ func TestMeasurementStatisticsRetainedReferencesOnly(t *testing.T) {
 		len(row.Sources) != 9 {
 		t.Fatalf("wrong independent trials/pooled samples/CI/sources: %+v", row)
 	}
+	facts := statistics.MeasurementFacts
+	if facts == nil || facts.Request.UID != string(cr.UID) || len(facts.Batches) != 1 {
+		t.Fatalf("retained measurement facts missing: %+v", facts)
+	}
+	measured := facts.Batches[0]
+	if measured.P95Milliseconds == nil || *measured.P95Milliseconds != row.LatencyP95Milliseconds ||
+		measured.Confidence == nil || measured.Confidence.Level != row.Confidence.Level ||
+		measured.ActiveTrialCount != 2 || measured.IdleTrialCount != 2 || len(measured.Quality) != 4 ||
+		measured.TotalJoulesPerItem == nil || measured.ActiveWatts == nil || measured.IdleWatts == nil {
+		t.Fatalf("facts diverged from retained statistics: %+v", measured)
+	}
 	if len(objects.reads) != 9 {
 		t.Fatalf("unreferenced/excluded evidence read: %v", objects.reads)
 	}
@@ -113,6 +124,9 @@ func TestMeasurementStatisticsRetainedReferencesOnly(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if view.MeasurementFacts == nil || view.MeasurementFactsReason != nil || len(view.ResultRows) != 1 {
+		t.Fatalf("result omitted measurement facts siblings/rows: %+v", view)
 	}
 	if _, err := json.Marshal(view); err != nil {
 		t.Fatal(err)
@@ -263,6 +277,28 @@ func TestMeasurementStatisticsNotRecorded(t *testing.T) {
 	)
 	if err != nil || got != nil || reason == nil || *reason != "StatisticsNotRecorded" {
 		t.Fatalf("unrecorded statistics=%+v reason=%v err=%v", got, reason, err)
+	}
+}
+
+func TestMeasurementFactsExcludeFailedIdleTrials(t *testing.T) {
+	cr, record, objects, reader, loader := statisticsFixture(t)
+	spec := record.Spec()
+	spec.ExcludedTrials = append(spec.ExcludedTrials, campaign.ExcludedTrialReference{
+		Run: campaign.RunReference{Namespace: cr.Namespace, Name: "failed-idle", UID: "failed-idle"},
+		Measurement: campaign.ResultMeasurement{WorkloadMode: campaign.WorkloadModeIdle, Batch: 1},
+		Attempt: 2, Reasons: []string{"Failed"},
+	})
+	record, err := campaign.NewResultRecord(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statistics, reason, err := newMeasurementStatistics(reader, objects, loader)(context.Background(), cr, record)
+	if err != nil || reason != nil || statistics == nil || statistics.MeasurementFacts == nil {
+		t.Fatalf("statistics=%+v reason=%v error=%v", statistics, reason, err)
+	}
+	row := statistics.MeasurementFacts.Batches[0]
+	if row.ActiveTrialCount != 2 || row.IdleTrialCount != 2 || len(row.Quality) != 4 || len(objects.reads) != 9 {
+		t.Fatalf("excluded failed idle became an independent repetition or extra raw read: %+v reads=%v", row, objects.reads)
 	}
 }
 

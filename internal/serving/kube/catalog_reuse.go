@@ -79,7 +79,13 @@ func applyProfileReuse(view CatalogView, requests map[string]string) (CatalogVie
 				check.Reason = err.Error()
 			} else {
 				check.Outcome = measurementAccepted
-				view.Profiles = append(view.Profiles, reusedProfile(source, target, check))
+				reused := reusedProfile(source, target, check)
+				view.Profiles = append(view.Profiles, reused)
+				// Keep confirmation measurements independent from the referenced
+				// source. Never synthesize total energy from the mixed serving row.
+				if facts, found := view.MeasurementFacts[target.ID]; found {
+					view.MeasurementFacts[reused.ID] = cloneMeasurementFacts(facts)
+				}
 			}
 		}
 		view.ReuseChecks = append(view.ReuseChecks, check)

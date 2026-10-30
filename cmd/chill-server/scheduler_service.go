@@ -64,6 +64,7 @@ type schedulerService struct {
 	resourceVersion, sources string
 	configuration            atomic.Pointer[schedulerConfiguration]
 	profiles                 atomic.Pointer[httpapi.ProfilesView]
+	catalogRead              atomic.Pointer[httpapi.ProfilesView]
 	ctx                      context.Context
 	cancel                   context.CancelFunc
 	powerCancel              context.CancelFunc
@@ -215,6 +216,12 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+	if err = o.retainProfileReuseChecks(ctx, &view); err != nil {
+		return err
+	}
+	// Coverage consumes verified measurement facts independently of operation
+	// costs and scheduler preparation/adoption. No raw evidence is read here.
+	o.catalogRead.Store(&httpapi.ProfilesView{ConfigVersion: cm.ResourceVersion, CatalogView: view})
 	costs, err := o.costs.Refresh(ctx, namespaces, config.Meters, view.Profiles)
 	if err != nil {
 		return err
@@ -245,9 +252,6 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	signature := strings.Join(sources, "\x00")
 	if o.controller != nil && cm.ResourceVersion == o.resourceVersion && signature == o.sources {
 		return nil
-	}
-	if err = o.retainProfileReuseChecks(ctx, &view); err != nil {
-		return err
 	}
 	preparations, issues := o.preparations(ctx, config, view.Profiles)
 	view.Insufficiencies = append(view.Insufficiencies, issues...)
@@ -289,6 +293,24 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	o.sources = signature
 	o.restartPower(config)
 	return nil
+}
+
+func (o *schedulerService) measurementCatalogView(_ context.Context) (httpapi.ProfilesView, error) {
+	published := o.catalogRead.Load()
+	if published == nil {
+		return httpapi.ProfilesView{}, &serving.Error{Code: "CoverageWarming", Message: "measurement catalog is not available"}
+	}
+	view := *published
+	checked, sourceError, revision := o.catalog.SourceStatus()
+	if revision == view.Revision {
+		view.SourceCheckedAt, view.SourceError = checked, sourceError
+	} else {
+		view.SourceError = "CatalogPublicationPending"
+		if sourceError != "" {
+			view.SourceError = sourceError
+		}
+	}
+	return view, nil
 }
 
 // profilerFacts reads the configured actuation policies and derives the wall

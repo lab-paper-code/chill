@@ -1,7 +1,9 @@
 package operatorconsole
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -20,6 +22,8 @@ type BatchEnergyOptimizationResultSnapshot struct {
 	Result           batchenergyoptimization.ResultRecord
 	Statistics       *BatchEnergyOptimizationStatistics
 	StatisticsReason *string
+	MeasurementFacts *profilederivation.MeasurementFacts
+	MeasurementFactsReason *string
 }
 
 const BatchEnergyOptimizationResultAPIVersion = "console.chill.dacs.io/v1alpha1"
@@ -34,6 +38,10 @@ type BatchEnergyOptimizationResult struct {
 	Result           *BatchEnergyOptimizationResultRecord  `json:"result"`
 	Statistics       *BatchEnergyOptimizationStatistics    `json:"statistics"`
 	StatisticsReason *string                               `json:"statisticsReason"`
+	MeasurementFacts *profilederivation.MeasurementFacts `json:"measurementFacts"`
+	MeasurementFactsReason *string `json:"measurementFactsReason"`
+	Assessment MeasurementAssessment `json:"assessment"`
+	ResultRows []ResultRow `json:"resultRows"`
 }
 
 type BatchEnergyOptimizationResultCampaign struct {
@@ -61,6 +69,7 @@ type BatchEnergyOptimizationResultRecord struct {
 // BatchEnergyOptimizationStatistics is computed only while reading retained evidence.
 type BatchEnergyOptimizationStatistics struct {
 	Batches []BatchEnergyOptimizationBatchStatistics `json:"batches"`
+	MeasurementFacts *profilederivation.MeasurementFacts `json:"-"`
 }
 
 type BatchEnergyOptimizationBatchStatistics struct {
@@ -82,9 +91,21 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 	var result *BatchEnergyOptimizationResultRecord
 	campaign := snapshot.Campaign.DeepCopy()
 	statistics, reason := snapshot.Statistics, snapshot.StatisticsReason
+	facts, factsReason := snapshot.MeasurementFacts, snapshot.MeasurementFactsReason
+	if facts == nil && statistics != nil {
+		facts = statistics.MeasurementFacts
+	}
+	if facts == nil && factsReason == nil {
+		factsReason = reason
+		if factsReason == nil {
+			missing := "StatisticsNotRecorded"
+			factsReason = &missing
+		}
+	}
 	if campaign.Status.Result == nil {
 		missing := "NoPublishedResult"
 		statistics, reason = nil, &missing
+		facts, factsReason = nil, &missing
 	}
 	if campaign.Status.Result != nil {
 		schemaVersion := snapshot.Result.SchemaVersion()
@@ -96,6 +117,39 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 		}
 		result = &BatchEnergyOptimizationResultRecord{
 			SchemaVersion: schemaVersion, ResultRecordSpec: snapshot.Result.Spec(),
+		}
+	}
+	accepted := result != nil && campaign.Status.Phase == "Complete"
+	reused := campaign.Annotations["chill.dacs.io/profile-reuse"] != ""
+	rows := []ResultRow{}
+	if facts != nil {
+		rows = MeasurementResultRows(*facts, campaign.Namespace+"/"+campaign.Name+"/"+string(campaign.UID), reused, false)
+	}
+	if reused {
+		var reference struct {
+			SourceProfileID string `json:"sourceProfileID"`
+			MaximumRelativeDifference float64 `json:"maximumRelativeDifference"`
+		}
+		if err := json.Unmarshal([]byte(campaign.Annotations["chill.dacs.io/profile-reuse"]), &reference); err == nil && reference.SourceProfileID != "" {
+			confirmations := len(rows)
+			for i := range confirmations {
+				rows[i].SourceProfileID = &reference.SourceProfileID
+				rows[i].Reuse = reference
+				rows = append(rows, ResultRow{
+					ID: fmt.Sprintf("%s/source-reference/%d", reference.SourceProfileID, rows[i].Batch),
+					RowKind: "source-reference", ProfileID: reference.SourceProfileID,
+					SourceProfileID: &reference.SourceProfileID, Batch: rows[i].Batch, Reuse: reference,
+					Condition: map[string]string{"sourceProfileId": reference.SourceProfileID},
+					Assessment: AssessMeasurement(MeasurementAssessmentInput{Reused: true}),
+					Sources: []string{reference.SourceProfileID}, MissingReasons: []string{"SourceProfileFactsNotLoaded"},
+				})
+			}
+		}
+	}
+	var children []MeasurementAssessment
+	if accepted && facts != nil {
+		for _, batch := range facts.Batches {
+			children = append(children, AssessMeasurementBatch(batch, facts.PointPolicy.MinimumTrials, reused, false))
 		}
 	}
 	return BatchEnergyOptimizationResult{
@@ -112,5 +166,12 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 			StoredResult:    storedResult,
 		},
 		Result: result, Statistics: statistics, StatisticsReason: reason,
+		MeasurementFacts: facts, MeasurementFactsReason: factsReason,
+		ResultRows: rows,
+		Assessment: AssessMeasurement(MeasurementAssessmentInput{
+			Execution: &MeasurementExecution{Phase: campaign.Status.Phase, Generation: campaign.Generation, ObservedGeneration: campaign.Status.ObservedGeneration},
+			Available: result != nil, Accepted: accepted,
+			Reused: reused, Attempted: true, SourcesComplete: true, Children: children,
+		}),
 	}, nil
 }

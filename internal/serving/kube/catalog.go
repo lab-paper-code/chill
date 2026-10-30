@@ -3,6 +3,7 @@ package kube
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"math"
 	"reflect"
 	"slices"
+	"strings"
+	"sync"
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -48,12 +51,17 @@ type Catalog struct {
 	loader         *profilerevidence.Loader
 	maxObjectBytes int64
 	current        map[types.NamespacedName]catalogProfile
+	sourceMu sync.RWMutex
+	sourceCheckedAt time.Time
+	sourceError string
+	revision string
 }
 
 type catalogProfile struct {
 	uid     types.UID
 	version string
 	profile serving.Profile
+	facts   serving.MeasurementFacts
 }
 
 type CatalogIssue struct {
@@ -66,6 +74,10 @@ type CatalogView struct {
 	Profiles        []serving.Profile           `json:"profiles"`
 	Insufficiencies []CatalogIssue              `json:"insufficiencies"`
 	ReuseChecks     []serving.ProfileReuseCheck `json:"reuseChecks,omitempty"`
+	MeasurementFacts map[string]serving.MeasurementFacts `json:"measurementFacts"`
+	SourceCheckedAt time.Time `json:"-"`
+	SourceError string `json:"-"`
+	Revision string `json:"-"`
 }
 
 func NewCatalog(store *Store, objects evidencestore.LocationReader, maxObjectBytes int64) (*Catalog, error) {
@@ -85,8 +97,18 @@ func NewCatalog(store *Store, objects evidencestore.LocationReader, maxObjectByt
 // Refresh reads every Complete campaign in namespaces. A bad source cannot
 // contribute a partial profile; other sources remain usable. Cancellation
 // returns no view, so callers cannot publish a partial refresh.
-func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (CatalogView, error) {
-	view := CatalogView{Profiles: []serving.Profile{}, Insufficiencies: []CatalogIssue{}}
+func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view CatalogView, err error) {
+	defer func() {
+		c.sourceMu.Lock()
+		defer c.sourceMu.Unlock()
+		if err != nil {
+			c.sourceError = err.Error()
+			return
+		}
+		c.sourceCheckedAt, c.sourceError, c.revision = view.SourceCheckedAt, "", view.Revision
+	}()
+	view = CatalogView{Profiles: []serving.Profile{}, Insufficiencies: []CatalogIssue{}, MeasurementFacts: map[string]serving.MeasurementFacts{}}
+	var revisions []string
 	seen := map[types.NamespacedName]struct{}{}
 	reuseRequests := map[string]string{}
 	for _, namespace := range namespaces {
@@ -97,6 +119,7 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (CatalogView
 		excluded := replacementCampaignSelection(campaigns.Items)
 		for i := range campaigns.Items {
 			campaign := &campaigns.Items[i]
+			revisions = append(revisions, campaign.Namespace+"/"+campaign.Name+"/"+string(campaign.UID)+"/"+campaign.ResourceVersion)
 			if campaign.DeletionTimestamp != nil || campaign.Status.Phase != catalogCompletePhase || campaign.Status.ObservedGeneration != campaign.Generation {
 				continue
 			}
@@ -124,6 +147,7 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (CatalogView
 			view.Insufficiencies = append(view.Insufficiencies, issues...)
 			if len(profile.Batches) > 0 {
 				view.Profiles = append(view.Profiles, profile)
+				view.MeasurementFacts[profile.ID] = cloneMeasurementFacts(c.current[source].facts)
 				if request, found := campaign.Annotations[profileReuseAnnotation]; found {
 					reuseRequests[profile.ID] = request
 				}
@@ -135,12 +159,21 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (CatalogView
 			delete(c.current, source)
 		}
 	}
-	var err error
 	view, err = applyProfileReuse(view, reuseRequests)
 	if err != nil {
 		return CatalogView{}, err
 	}
+	slices.Sort(revisions)
+	view.Revision = fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(revisions, "\x00"))))
+	view.SourceCheckedAt = time.Now().UTC()
 	return view, nil
+}
+
+// SourceStatus reports the last real source check, not the snapshot read time.
+func (c *Catalog) SourceStatus() (time.Time, string, string) {
+	c.sourceMu.RLock()
+	defer c.sourceMu.RUnlock()
+	return c.sourceCheckedAt, c.sourceError, c.revision
 }
 
 // A replacement is one new coherent campaign, never a splice of selected old
@@ -286,6 +319,8 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	active := make([]profilerevidence.VerifiedEvidence, 0, len(resultSpec.CompletedTrials))
 	idle := make([]profilerevidence.VerifiedIdleEvidence, 0, len(resultSpec.CompletedTrials))
 	evidenceReferences := []evidencestore.ObjectIdentity{planReference}
+	activeSources := map[int][]evidencestore.ObjectIdentity{}
+	idleSources := []evidencestore.ObjectIdentity{planReference}
 	seenRuns := make(map[types.NamespacedName]struct{}, len(resultSpec.CompletedTrials))
 	seenRaw := make(map[evidencestore.ObjectLocation]struct{}, len(resultSpec.CompletedTrials))
 	seenPods := make(map[string]struct{}, len(resultSpec.CompletedTrials))
@@ -337,6 +372,12 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 		}
 		seenPods[execution.Terminal.Pod.UID] = struct{}{}
 		evidenceReferences = append(evidenceReferences, identity, execution.RawMeasurement)
+		if reference.Measurement.WorkloadMode == batchenergyoptimization.WorkloadModeIdle {
+			idleSources = append(idleSources, identity, execution.RawMeasurement)
+		} else {
+			batch := reference.Measurement.Batch
+			activeSources[batch] = append(activeSources[batch], identity, execution.RawMeasurement)
+		}
 	}
 	if len(active) == 0 || len(idle) == 0 {
 		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: "completed active and model-loaded idle raw trials are required"}}, nil
@@ -406,6 +447,9 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 		if err := batch.add(trial, energy, raw.Runtime.MemoryBytes); err != nil {
 			return serving.Profile{}, nil, err
 		}
+		quality := profilerprojection.MeasurementQuality(raw.RunConfig, raw.Metrics, trial.WindowStart, trial.WindowEnd, condition.ActiveProtocol)
+		quality.TrialID = trial.TrialID
+		batch.quality = append(batch.quality, quality)
 	}
 	if runtimeMetadata != nil {
 		for _, verified := range idle {
@@ -436,6 +480,11 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 		MetricSource:   metricSource,
 		TrialsPerBatch: int(campaign.Spec.TrialsPerBatch),
 	}
+	facts := serving.MeasurementFacts{
+		Request: profilederivation.MeasurementRequestReference{Namespace: campaign.Namespace, Name: campaign.Name, UID: string(campaign.UID)},
+		ResultReference: profilederivation.RawEvidenceIdentity{Store: resultReference.Store, Key: resultReference.Key, Size: resultReference.Size},
+		Condition: condition, PointPolicy: energyPolicy, Batches: []profilederivation.MeasurementBatchFacts{},
+	}
 	if runtimeMetadata != nil {
 		profile.RuntimeMetadata = &runtimeMetadata.Runtime
 		if profile.RuntimeDelivery, err = json.Marshal(delivery); err != nil {
@@ -460,11 +509,11 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 			continue
 		}
 		batch.profile.EnergyPerInputJoules = batch.energySum / float64(batch.trials)
+		point, err := profilederivation.Aggregate(batch.energyTrials, energyPolicy)
+		if err != nil {
+			return serving.Profile{}, nil, fmt.Errorf("derive measured energy confidence for batch %d: %w", batchSize, err)
+		}
 		if batch.profile.EnergyPerInputJoules < 0 {
-			point, err := profilederivation.Aggregate(batch.energyTrials, energyPolicy)
-			if err != nil {
-				return serving.Profile{}, nil, fmt.Errorf("derive measured energy confidence for batch %d: %w", batchSize, err)
-			}
 			lower := point.MeanIncrementalWorkJoulesPerItem - point.Confidence.HalfWidth
 			upper := point.MeanIncrementalWorkJoulesPerItem + point.Confidence.HalfWidth
 			if upper < 0 {
@@ -476,6 +525,26 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 			batch.profile.EnergyBelowResolution = true
 		}
 		profile.Batches = append(profile.Batches, batch.profile)
+		row := profilederivation.MeasurementPointFacts(point, baseline, batch.clientLatencies, batch.completedItems, batch.completedCalls)
+		row.PowerSource = profilerprojection.MeasurementPowerSource(metricSource)
+		row.Quality = append(row.Quality, batch.quality...)
+		for _, verified := range idle {
+			execution, raw, err := verified.Records()
+			if err != nil {
+				return serving.Profile{}, nil, err
+			}
+			windowStart, windowEnd, err := raw.Runtime.MeasurementWindow()
+			if err != nil {
+				return serving.Profile{}, nil, err
+			}
+			quality := profilerprojection.MeasurementQuality(raw.RunConfig, raw.Metrics, windowStart, windowEnd, condition.IdleProtocol)
+			quality.TrialID = execution.Terminal.Pod.UID
+			row.Quality = append(row.Quality, quality)
+		}
+		for _, reference := range append(slices.Clone(idleSources), activeSources[batchSize]...) {
+			row.Sources = append(row.Sources, profilederivation.RawEvidenceIdentity{Store: reference.Store, Key: reference.Key, Size: reference.Size})
+		}
+		facts.Batches = append(facts.Batches, row)
 		profile.Batches[len(profile.Batches)-1].MeanWallWatts = batch.wallPowerSum / float64(batch.trials)
 	}
 	if len(issues) != 0 {
@@ -485,7 +554,7 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: "firstfloor requires exact measured batch 1 and initialized measured sizes within selected maxBatchSize"}}, nil
 	}
 	c.current[source] = catalogProfile{
-		uid: campaign.UID, version: campaign.ResourceVersion, profile: cloneCatalogProfile(profile),
+		uid: campaign.UID, version: campaign.ResourceVersion, profile: cloneCatalogProfile(profile), facts: cloneMeasurementFacts(facts),
 	}
 	return profile, issues, nil
 }
@@ -540,6 +609,10 @@ type catalogBatch struct {
 	energyTrials  []profilederivation.EnergyTrial
 	missingMemory bool
 	wallPowerSum  float64
+	clientLatencies []float64
+	completedItems int
+	completedCalls int
+	quality []profilederivation.MeasurementTrialQuality
 }
 
 func (b *catalogBatch) add(trial profilederivation.Trial, energy profilederivation.EnergyTrial, memoryBytes uint64) error {
@@ -559,6 +632,9 @@ func (b *catalogBatch) add(trial profilederivation.Trial, energy profilederivati
 		b.profile.DurationNanos = append(b.profile.DurationNanos, nanos)
 	}
 	b.trials++
+	b.clientLatencies = append(b.clientLatencies, trial.LatencyMilliseconds...)
+	b.completedItems += trial.CompletedItems
+	b.completedCalls += trial.CompletedCalls
 	b.energySum += energy.IncrementalWorkJoulesPerItem
 	// Confidence needs only trial sufficient statistics, not another sample copy.
 	energy.NativeSamples, energy.ClientLatencyMilliseconds = nil, nil
