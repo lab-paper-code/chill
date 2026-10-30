@@ -80,8 +80,8 @@ export function relayPlan(method: string, segments: string[], search: string, co
   const allowed = compact ? ["view"] : []
   if (query === "coverage") allowed.push("batches","node")
   if (query === "preflight") allowed.push("variantId")
-  if (query === "profiles") allowed.push("limit","offset","model","deviceClass","profile")
-  if (query === "runs") allowed.push("model","deviceClass","node","path","powerMode","cpu","status","group","parentUID")
+  if (query === "profiles") allowed.push("limit","offset","model","deviceClass","profile","q","node","powerMode","path","cpu","status","sort","order")
+  if (query === "runs") allowed.push("model","deviceClass","node","path","powerMode","cpu","status","group","parentUID","sort","order")
   allowed.push(...(query === "compatibility" ? ["modelSpec", "executionPath", "deviceClass", "node"] : query === "observations" ? ["from", "to", "limit", "cursor", "definition", "outcome"] : query === "load" ? ["from", "to"] : query === "schedulerHistory" ? ["from", "to", "limit", "cursor"] : query === "page" ? ["limit", "offset", "q"] : query === "runs" ? ["limit", "offset", "q", "condition"] : query === "dryRun" ? ["dryRun"] : query === "uid" ? ["uid"] : []))
   for (const key of new Set(params.keys())) {
     const values = params.getAll(key)
@@ -90,6 +90,11 @@ export function relayPlan(method: string, segments: string[], search: string, co
       if (["limit", "offset", "cursor"].includes(key)) {
         const max = key === "limit" ? (query === "profiles"?50:config.maxPageSize) : key === "offset" ? 1000000 : Number.MAX_SAFE_INTEGER
         if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) > max || (key === "limit" && Number(value) < 1)) throw new RelayFailure("DashboardQueryInvalid", 400)
+      } else if (key === "sort") {
+        const keys = query === "profiles" ? ["model","deviceClass","node","powerMode","path","cpu","created","status"] : ["name","created","model","powerMode","status"]
+        if (!keys.includes(value)) throw new RelayFailure("DashboardQueryInvalid", 400)
+      } else if (key === "order") {
+        if (value !== "asc" && value !== "desc") throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (key === "batches") {
         const batches=value.split(",").map(Number)
         if (!/^[1-9]\d*(,[1-9]\d*)*$/.test(value) || batches.some((n,i)=>!Number.isSafeInteger(n)||(i>0&&n<=batches[i-1]))) throw new RelayFailure("DashboardQueryInvalid",400)
@@ -102,6 +107,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
       } else if (Buffer.byteLength(value) > (key === "group" ? 16384 : key === "outcome" ? 64 : 256) || (key !== "q" && !value)) throw new RelayFailure("DashboardQueryInvalid", 400)
     }
   }
+  if (params.has("order") && !params.has("sort")) throw new RelayFailure("DashboardQueryInvalid", 400)
   if (query === "uid" && !params.get("uid")) throw new RelayFailure("DashboardQueryInvalid", 400)
   if (query === "compatibility" && allowed.some(key => !params.get(key))) throw new RelayFailure("DashboardQueryInvalid", 400)
   if (["page", "profiles", "runs", "observations", "schedulerHistory"].includes(query) && !params.has("limit")) params.set("limit", String(query==="profiles"?Math.min(50,config.pageSize):config.pageSize))

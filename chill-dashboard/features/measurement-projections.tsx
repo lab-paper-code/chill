@@ -4,45 +4,52 @@ import * as React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useSession } from "@/lib/client"
-import type { DispatchOccupancyMeasurement, MeasurementEvidenceLocation, MeasurementProjection, MeasurementProjectionList, OperationCostMeasurement, WireInteger } from "@/lib/read-types"
-import { formatMeasurementNumber, formatMeasurementTime, evidenceLocations, measurementHref, measurementListHref, measurementPath, measurementUIDMismatch, occupancySupply, operationSteps, type OperationStep, type ProjectionMeasurementKind } from "@/lib/measurements"
+import type { DispatchOccupancyMeasurement, MeasurementEvidenceLocation, MeasurementProjection, MeasurementProjectionList, OperationCostMeasurement } from "@/lib/read-types"
+import { formatMeasurementTime, evidenceLocations, measurementHref, measurementListHref, measurementPath, measurementUIDMismatch, occupancyDuration, occupancyThroughput, occupancySupply, operationDuration, operationWallEnergy, operationTotals, operationSteps, type OperationTotals, type OperationStep, type ProjectionMeasurementKind } from "@/lib/measurements"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
-import { Empty, Facts, RowDialog, Rows, Screen } from "@/components/screen"
+import { Facts, RowDialog, Rows, Screen } from "@/components/screen"
 import { DataTable, type DataColumn } from "@/components/data-table"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { MeasurementNavigation, MeasurementStatus } from "@/components/measurement-navigation"
 import { AssessmentDetails, ResultRows } from "@/features/measurement-plans"
+import { MeasurementFilters } from "@/features/measurement-coverage"
 
 const measurementTitles = {"operation-cost-measurements":"동작 비용 측정","dispatch-occupancy-measurements":"분배 점유시간 측정"}
 const measurementTime = formatMeasurementTime
-const duration = (value?:WireInteger|null) => value==null?"미제공":`${(Number(value)/1e9).toLocaleString("ko-KR",{maximumFractionDigits:3})}초`
+type ProjectionRow=MeasurementProjection & {totals:OperationTotals|undefined}
 
 export function ProjectionMeasurementListPage({kind}:{kind:ProjectionMeasurementKind}) {
   const params = useSearchParams(), {config} = useSession()
   const [namespaceOpen,setNamespaceOpen] = React.useState(false)
   const namespace = params.get("namespace") ?? config.namespace, path = measurementPath(kind,namespace), title = measurementTitles[kind]
   const query = useChillQuery<MeasurementProjectionList>(path,{decoder:parseSchedulerJSON})
-  const items = [...(query.data?.items ?? [])].sort((a,b) => b.metadata.creationTimestamp.localeCompare(a.metadata.creationTimestamp))
-  const columns:DataColumn<MeasurementProjection>[] = [
+  const all:ProjectionRow[] = (query.data?.items??[]).map(item=>({...item,totals:item.kind==="OperationCostMeasurement"?operationTotals(item):undefined}))
+  const axes=[{key:"node",label:"Node",values:all.map(item=>item.node)},...(kind==="dispatch-occupancy-measurements"?[{key:"workload",label:"워크로드",values:all.flatMap(item=>item.kind==="DispatchOccupancyMeasurement"?[item.conditions.workload]:[])}]:[])]
+  const items=all.filter(item=>(!params.get("q")||item.metadata.name.toLocaleLowerCase().includes(params.get("q")!.toLocaleLowerCase()))&&(!params.get("status")||item.assessment?.displayStatus===params.get("status"))&&(!params.get("node")||item.node===params.get("node"))&&(!params.get("workload")||(item.kind==="DispatchOccupancyMeasurement"&&item.conditions.workload===params.get("workload"))))
+  const columns:DataColumn<ProjectionRow>[] = [
     {key:"name",label:"이름",value:item => <Link className="underline underline-offset-4" href={measurementHref(kind,item.metadata)}>{item.metadata.name}</Link>,sortValue:item => item.metadata.name},
     {key:"node",label:"Node",value:item => item.node,sortValue:item => item.node},
     {key:"phase",label:"서버 판정",value:item => <MeasurementStatus assessment={item.assessment}/>,sortValue:item => item.assessment?.label??""},
-    ...(kind === "operation-cost-measurements" ? [{key:"steps",label:"단계 기록",value:(item:MeasurementProjection) => item.kind === "OperationCostMeasurement" ? `기록 ${item.status.steps?.length ?? 0} / 계획 ${item.conditions.steps.length}단계` : "종류 확인 필요"}] : [
-      {key:"workload",label:"워크로드",value:(item:MeasurementProjection) => item.kind === "DispatchOccupancyMeasurement" ? item.conditions.workload : "종류 확인 필요"},
-      {key:"batch",label:"배치",value:(item:MeasurementProjection) => item.kind === "DispatchOccupancyMeasurement" ? `${item.conditions.batch}건/batch` : "종류 확인 필요"},
-      {key:"d",label:"분배 점유시간 d",value:(item:MeasurementProjection) => item.kind === "DispatchOccupancyMeasurement" ? duration(item.status.perRequestNanos) : "결과 없음"},
-      {key:"x",label:"지속 완료 처리량 X",value:(item:MeasurementProjection) => item.kind === "DispatchOccupancyMeasurement" ? `${item.status.throughput??"미제공"} req/s` : "결과 없음"},
+    ...(kind === "operation-cost-measurements" ? [
+      {key:"duration",label:"실측 총 시간 (s)",sortValue:(item:ProjectionRow)=>item.totals?.durationNanos??undefined,value:(item:ProjectionRow)=>item.totals?.durationNanos===null?"잘못된 시간 기록 · 확인 필요":operationDuration(item.totals?.durationNanos,"s")},
+      {key:"energy",label:"수용된 총 벽에너지 (J)",sortValue:(item:ProjectionRow)=>item.totals?.wallJoules??undefined,value:(item:ProjectionRow)=>item.totals?.wallJoules===null?"잘못된 에너지 기록 · 확인 필요":operationWallEnergy(item.totals?.wallJoules)},
+      {key:"steps",label:"단계 기록",sortValue:(item:ProjectionRow)=>item.kind==="OperationCostMeasurement"?item.status.steps?.length??0:undefined,value:(item:ProjectionRow) => item.kind === "OperationCostMeasurement" ? `기록 ${item.status.steps?.length ?? 0} / 계획 ${item.conditions.steps.length}단계` : "종류 확인 필요"},
+    ] : [
+      {key:"workload",label:"워크로드",sortValue:(item:ProjectionRow)=>item.kind==="DispatchOccupancyMeasurement"?item.conditions.workload:undefined,value:(item:ProjectionRow) => item.kind === "DispatchOccupancyMeasurement" ? item.conditions.workload : "종류 확인 필요"},
+      {key:"batch",label:"배치",sortValue:(item:ProjectionRow)=>item.kind==="DispatchOccupancyMeasurement"?item.conditions.batch:undefined,value:(item:ProjectionRow) => item.kind === "DispatchOccupancyMeasurement" ? `${item.conditions.batch}건/batch` : "종류 확인 필요"},
+      {key:"d",label:"분배 점유시간 d (ms/요청)",sortValue:(item:ProjectionRow)=>{if(item.kind!=="DispatchOccupancyMeasurement")return undefined;const value=item.status.perRequestNanos;return value!=null&&(typeof value==="bigint"||Number.isSafeInteger(value))&&value>=0?value:undefined},value:(item:ProjectionRow) => item.kind === "DispatchOccupancyMeasurement" ? occupancyDuration(item.status.perRequestNanos) : "결과 없음"},
+      {key:"x",label:"지속 완료 처리량 X (req/s)",sortValue:(item:ProjectionRow)=>item.kind==="DispatchOccupancyMeasurement"&&item.status.throughput&&/ req\/s$/.test(occupancyThroughput(item.status.throughput))?Number(item.status.throughput):undefined,value:(item:ProjectionRow) => item.kind === "DispatchOccupancyMeasurement" ? occupancyThroughput(item.status.throughput) : "결과 없음"},
     ]),
     {key:"created",label:"등록 시각 (KST)",value:item => <time title={item.metadata.creationTimestamp}>{measurementTime(item.metadata.creationTimestamp)}</time>,sortValue:item => item.metadata.creationTimestamp},
   ]
-  return <Screen width="data" actionPlacement="header" title={title} lede="이 저장 영역의 측정 조건과 기록된 결과를 조회해요. 새 측정을 제출하지 않아요.">
+  return <Screen width="data" actionPlacement="header" title={title} lede="이 저장 영역의 측정 조건과 기록된 결과를 조회해요. 새 측정을 제출하지 않아요." action={<RowDialog open={namespaceOpen} onOpenChange={setNamespaceOpen} label="저장 영역" value={namespace} title="저장 영역 선택"><NamespaceForm key={namespace} kind={kind} namespace={namespace} done={() => setNamespaceOpen(false)}/></RowDialog>}>
     <MeasurementNavigation active={kind} namespace={namespace}/>
-    <Rows><RowDialog open={namespaceOpen} onOpenChange={setNamespaceOpen} label="저장 영역" value={namespace} title="저장 영역 선택"><NamespaceForm key={namespace} kind={kind} namespace={namespace} done={() => setNamespaceOpen(false)}/></RowDialog></Rows>
+    <MeasurementFilters axes={axes}/>
     <QueryGate query={query}>{query.data && <>
-      <p className="text-sm text-muted-foreground">이 저장 영역에서 받은 {items.length}개</p>
-      {items.length ? <DataTable key={`${kind}/${namespace}`} data={items} columns={columns}/> : <Empty title={`아직 등록된 ${title}이 없어요`}><p>저장 영역을 확인하거나 측정 화면으로 돌아가 주세요.</p><Link className="underline" href={`/measurements?namespace=${encodeURIComponent(namespace)}`}>측정으로 돌아가기</Link></Empty>}
+      <p className="text-sm text-muted-foreground">이 저장 영역에서 받은 {all.length}개</p>
+      <DataTable key={`${kind}/${namespace}/${params}`} searchable={false} data={items} columns={columns}/>
       <p className="text-sm text-muted-foreground">마지막 조회 · {measurementTime(query.dataUpdatedAt)}</p>
       <Rows><RowDialog label="원본 자료" title={`${title} 목록 원본`} description="안전한 projection 응답이에요. 전체 CR이나 raw Evidence가 아니에요.">
         <SourceExport filename={`chill-${kind}.json`} value={{kind,namespace,queriedAt:new Date(query.dataUpdatedAt).toISOString(),source:query.data}}/><SourceJSON inline value={query.data}/>
@@ -69,7 +76,6 @@ export function ProjectionMeasurementDetail({kind,namespace,name}:{kind:Projecti
       {!other && <>
         <AssessmentDetails assessment={data.assessment}/>
         {!!data.resultRows?.length&&<ResultRows rows={data.resultRows} filename={`chill-${kind}-${name}.csv`}/>}
-        {data.status.reason && <div className="notice break-words"><p>원본 사유: {data.status.reason}</p></div>}
         <Facts label="측정 대상" items={[["측정 종류",data.kind],["Node",data.node],["등록 시각",measurementTime(data.metadata.creationTimestamp)]]}/>
         {data.kind === "OperationCostMeasurement" ? <OperationResult data={data}/> : <OccupancyResult data={data}/>}
       </>}
@@ -89,22 +95,21 @@ function BEOReference({namespace,name}:{namespace:string;name:string}) {
   return <Link className="underline underline-offset-4" href={`/measurements/batch-energy-optimizations/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`}>{name} (현재 이름 기준 / UID 없는 참조)</Link>
 }
 function OperationResult({data}:{data:OperationCostMeasurement}) {
+  const totals=operationTotals(data)
   const columns:DataColumn<OperationStep>[] = [
     {key:"name",label:"단계 이름",value:step => <span>{step.condition ? stepKinds[step.condition.kind] ?? "동작" : "동작"}<details><summary className="min-h-6 cursor-pointer text-xs">단계 코드</summary>{step.name}</details></span>},
     {key:"condition",label:"조건 연결",value:step => step.condition ? stepKinds[step.condition.kind] ?? "확인이 필요해요" : "조건 연결 없음"},
-    {key:"duration",label:"실측 시간",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => <li key={index}>{duration(result.durationNanos)}</li>)}</ul> : "미제공"},
-    {key:"energy",label:"수용된 전체 Node 벽에너지",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => <li key={index}>{formatMeasurementNumber(result.wallJoules,"J")} J</li>)}</ul> : "미제공"},
+    {key:"duration",label:"실측 시간",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => <li key={index}>{operationDuration(result.durationNanos,"s")}</li>)}</ul> : "미제공"},
+    {key:"energy",label:"수용된 전체 Node 벽에너지",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => <li key={index}>{result.verdict==="Accepted"?operationWallEnergy(result.wallJoules):"수용된 에너지 없음"}</li>)}</ul> : "미제공"},
     {key:"result",label:"저장 결과",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => {
       const locations = result.key ? evidenceLocations(data.references.evidence.filter(location => location.key === result.key)) : []
       return <li key={index} className="grid gap-1">
-        <p>원본 verdict: {result.verdict||"미제공"}</p>
-        <span className="break-words">사유: {result.reason||"기록 없음"}</span>
-        <details><summary className="min-h-11 cursor-pointer py-2">근거 위치</summary><p>판정 원문: {result.verdict || "없음"}</p><p className="break-all">동작 ID: {result.operationID || "기록 없음"}</p>{locations.length ? <Locations locations={locations}/> : <p className="break-all">key: {result.key || "없음"} (위치 없음)</p>}</details>
+        <details><summary className="min-h-11 cursor-pointer py-2">단계 원본 기록</summary><p>판정 원문: {result.verdict || "없음"}</p><p className="break-words">원본 사유: {result.reason||"기록 없음"}</p><p className="break-all">동작 ID: {result.operationID || "기록 없음"}</p>{locations.length ? <Locations locations={locations}/> : <p className="break-all">key: {result.key || "없음"} (위치 없음)</p>}</details>
       </li>
     })}</ul> : "아직 기록된 결과가 없어요"},
   ]
   return <>
-    <p className="notice">모델 교체 {data.status.steps?.length&&data.status.steps.every(step=>step.durationNanos!=null)?duration(data.status.steps.reduce((total,step)=>total+Number(step.durationNanos),0)):"시간 미제공"} · {data.status.steps?.length&&data.status.steps.every(step=>step.wallJoules!=null)?`${formatMeasurementNumber(data.status.steps.reduce((total,step)=>total+Number(step.wallJoules),0),"J")} J`:"에너지 미제공"} (기록된 단계 합계 · 노드 전체 벽전력 기준). 계획 유휴 시간과 실제 동작 시간은 별도예요.</p>
+    <p className="notice">실측 총 시간 {totals.durationNanos===null?"잘못된 시간 기록 · 확인 필요":operationDuration(totals.durationNanos,"s")} · 수용된 총 벽에너지 {totals.wallJoules===null?"잘못된 에너지 기록 · 확인 필요":operationWallEnergy(totals.wallJoules)}. 계획 전체 단계가 기록된 경우에만 합계를 표시해요. 에너지는 모든 단계가 수용된 경우에만 합산해요.</p>
     <p className="text-sm text-muted-foreground">기록 {data.status.steps?.length ?? 0} / 계획 {data.conditions.steps.length}단계. 완료 상태만으로 단계 채택을 재판정하지 않아요.</p>
     <DataTable data={operationSteps(data)} columns={columns}/>
     <Rows label="자세히"><RowDialog label="순서 있는 동작 조건" title="순서 있는 동작 조건" description="조건에 기록된 순서예요. 단계별로 해당 동작의 조건만 표시해요.">
@@ -121,7 +126,7 @@ function OccupancyResult({data}:{data:DispatchOccupancyMeasurement}) {
   const c = data.conditions, s = data.status
   return <>
     <p>d는 배치 실행 외에 요청 1건이 인스턴스를 점유한 시간이에요. 현재 응답 지연과는 달라요.</p>
-    <Facts label="측정 결과" items={[["요청당 분배 점유시간 d",duration(s.perRequestNanos)],["지속 완료 처리량 X",`${s.throughput??"미제공"} req/s`],["결과 전력모드",s.powerMode || "결과 없음"]]}/>
+    <Facts label="측정 결과" items={[["요청당 분배 점유시간 d",occupancyDuration(s.perRequestNanos)],["지속 완료 처리량 X",occupancyThroughput(s.throughput)],["결과 전력모드",s.powerMode || "결과 없음"]]}/>
     <Rows label="자세히"><RowDialog label="측정 조건" title="분배 점유시간 측정 조건" description="예열은 측정 시작에서 제외해요. 참조에 UID가 없어 현재 이름을 기준으로 연결해요.">
       <Facts items={[
         ["워크로드",<Link key="workload" className="underline underline-offset-4" href={`/workloads/${encodeURIComponent(c.workload)}`}>{c.workload} (현재 이름 기준 / UID 없는 참조)</Link>],

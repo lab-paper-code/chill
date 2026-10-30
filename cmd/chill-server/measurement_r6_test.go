@@ -64,7 +64,7 @@ func TestR6MissingOccupancyEvidenceDoesNotHideWholeList(t *testing.T) {
 	}
 }
 
-func TestR6FailureSummaryUsesOwnedRuntimeLog(t *testing.T) {
+func TestR6FailureSummaryClassifiesOwnedRuntimeLog(t *testing.T) {
 	controller := true
 	task := api.BatchEnergyOptimization{
 		ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "request", UID: "request-uid", Generation: 1},
@@ -95,7 +95,13 @@ func TestR6FailureSummaryUsesOwnedRuntimeLog(t *testing.T) {
 	}
 	assessment := assessMeasurementRequest(task, httpapi.ProfilesView{})
 	failures := operatorconsole.MeasurementRequestFailures(task, coverageOwnedRuns(base)[string(task.UID)], assessment)
-	cell := operatorconsole.MeasurementCoverageCell{FailureSummary: failures}
+	projection := coverageProjection{
+		base: base, owners: coverageOwnedRuns(base),
+		indices: map[string]int{coverageCellID("", "", "", ""): 0},
+		out: operatorconsole.MeasurementCoverageResponse{Cells: []operatorconsole.MeasurementCoverageCell{{}}},
+	}
+	projection.addRequest(task)
+	cell := projection.out.Cells[0]
 	snapshot := operatorconsole.BatchEnergyOptimizationResultSnapshot{Campaign: task, FailedRuns: []api.ProfilingRun{run}}
 	detail, err := operatorconsole.BuildBatchEnergyOptimizationResult(snapshot)
 	if err != nil || detail.Assessment.DisplayStatus != operatorconsole.MeasurementProblem ||
@@ -114,7 +120,27 @@ func TestR6FailureSummaryUsesOwnedRuntimeLog(t *testing.T) {
 	}
 	last := cell.FailureSummary[len(cell.FailureSummary)-1]
 	if last.RunID != string(run.UID) || last.ExitCode == nil || *last.ExitCode != 4 ||
-		!strings.Contains(last.Message, "metric observation failed") || strings.Contains(last.Message, "\n") {
+		last.Code != "PowerObservationTimeout" || last.Label != "전력 관측 시간 초과" ||
+		last.Message != "제한 시간 안에 전력 관측을 완료하지 못했습니다." {
 		t.Fatalf("lost runtime cause: %+v", last)
+	}
+	service := &measurementService{client: fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(&run).Build()}
+	list, err := service.assessList(context.Background(), base.requests)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("request list assessment = %s, %v", list, err)
+	}
+	var listAssessment operatorconsole.MeasurementAssessment
+	if err := json.Unmarshal(list[0], &listAssessment); err != nil {
+		t.Fatal(err)
+	}
+	for _, summary := range [][]operatorconsole.MeasurementFailure{
+		failures, projection.out.Entities.Requests[0].FailureSummary,
+		listAssessment.FailureSummary, detail.Assessment.FailureSummary,
+		operatorconsole.AssessProfilingRun(run).FailureSummary,
+	} {
+		if len(summary) != 1 || summary[0].Code != last.Code || summary[0].Label != last.Label ||
+			summary[0].Message != last.Message || summary[0].RunID != last.RunID {
+			t.Fatalf("failure classification differs across projections: %+v; want %+v", summary, last)
+		}
 	}
 }

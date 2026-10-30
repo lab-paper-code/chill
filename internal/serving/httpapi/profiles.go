@@ -1,13 +1,16 @@
 package httpapi
 
 import (
+	"cmp"
 	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // ProfilesView is the catalog the scheduler derived from completed measurements:
@@ -18,6 +21,7 @@ type ProfilesView struct {
 	Preparations map[string]servingkube.PrepareSpec `json:"preparations"`
 	Page         *ProfilePage                       `json:"page,omitempty"`
 	Filters      ProfileFilters                     `json:"filters"`
+	DisplayStatus func(serving.Profile) string `json:"-"`
 }
 
 type ProfilePage struct {
@@ -30,6 +34,11 @@ type ProfilePage struct {
 type ProfileFilters struct {
 	Models        []string `json:"models"`
 	DeviceClasses []string `json:"deviceClasses"`
+	Nodes         []string `json:"nodes"`
+	PowerModes    []string `json:"powerModes"`
+	Paths         []string `json:"paths"`
+	CPUs          []string `json:"cpus"`
+	Statuses      []string `json:"statuses"`
 }
 
 const profileLimitQuery = "limit"
@@ -54,32 +63,84 @@ func pageProfiles(view ProfilesView, values url.Values) (ProfilesView, error) {
 			} else {
 				offset = n
 			}
-		case "model", "deviceClass", "profile":
+		case "model", "deviceClass", "profile", "q", "node", "powerMode", "path", "cpu", "status":
+		case "sort":
+			switch value[0] {
+			case "model", "deviceClass", "node", "powerMode", "path", "cpu", "created", "status":
+			default:
+				return ProfilesView{}, &serving.Error{Code: "InvalidQuery", Message: "unknown profile sort"}
+			}
+		case "order":
+			if value[0] != "asc" && value[0] != "desc" {
+				return ProfilesView{}, &serving.Error{Code: "InvalidQuery", Message: "invalid profile order"}
+			}
 		default:
 			return ProfilesView{}, &serving.Error{Code: "InvalidQuery", Message: "unknown profile query"}
 		}
 	}
+	if values.Has("order") && !values.Has("sort") {
+		return ProfilesView{}, &serving.Error{Code: "InvalidQuery", Message: "profile order requires sort"}
+	}
 	selected := make([]serving.Profile, 0, len(view.Profiles))
-	models, classes := map[string]bool{}, map[string]bool{}
-	view.Filters = ProfileFilters{Models: []string{}, DeviceClasses: []string{}}
+	options := map[string]map[string]bool{}
+	for _, key := range []string{"model", "deviceClass", "node", "powerMode", "path", "cpu", "status"} {
+		options[key] = map[string]bool{}
+	}
+	statuses := map[string]string{}
+	cpus := map[string]resource.Quantity{}
 	for _, profile := range view.Profiles {
-		model, class := profile.Condition.LogicalModel, profile.Condition.DeviceClass
-		models[model], classes[class] = true, true
-		if (values.Get("model") == "" || values.Get("model") == model) &&
-			(values.Get("deviceClass") == "" || values.Get("deviceClass") == class) &&
-			(values.Get("profile") == "" || values.Get("profile") == profile.ID) {
+		if values.Get("sort") == "cpu" {
+			quantity, err := resource.ParseQuantity(profile.Condition.CPU.Request)
+			if err != nil {
+				return ProfilesView{}, &serving.Error{Code: "InvalidQuery", Message: "profile CPU quantity unavailable"}
+			}
+			cpus[profile.ID] = quantity
+		}
+		if view.DisplayStatus != nil {
+			statuses[profile.ID] = view.DisplayStatus(profile)
+		}
+		matches := values.Get("profile") == "" || values.Get("profile") == profile.ID
+		searchable := profile.ID
+		for _, key := range []string{"model", "deviceClass", "node", "powerMode", "path", "cpu", "status"} {
+			value := profileField(profile, statuses[profile.ID], key)
+			options[key][value] = true
+			matches = matches && (values.Get(key) == "" || values.Get(key) == value)
+			searchable += "\n" + value
+		}
+		if matches && strings.Contains(strings.ToLower(searchable), strings.ToLower(values.Get("q"))) {
 			selected = append(selected, profile)
 		}
 	}
-	for model := range models {
-		view.Filters.Models = append(view.Filters.Models, model)
+	view.Filters = ProfileFilters{}
+	for key, target := range map[string]*[]string{
+		"model": &view.Filters.Models, "deviceClass": &view.Filters.DeviceClasses,
+		"node": &view.Filters.Nodes, "powerMode": &view.Filters.PowerModes,
+		"path": &view.Filters.Paths, "cpu": &view.Filters.CPUs, "status": &view.Filters.Statuses,
+	} {
+		*target = make([]string, 0, len(options[key]))
+		for value := range options[key] {
+			if value != "" {
+				*target = append(*target, value)
+			}
+		}
+		sort.Strings(*target)
 	}
-	for class := range classes {
-		view.Filters.DeviceClasses = append(view.Filters.DeviceClasses, class)
-	}
-	sort.Strings(view.Filters.Models)
-	sort.Strings(view.Filters.DeviceClasses)
-	sort.Slice(selected, func(i, j int) bool { return selected[i].ID < selected[j].ID })
+	sort.Slice(selected, func(i, j int) bool {
+		a, b := selected[i], selected[j]
+		result := 0
+		if values.Get("sort") == "created" {
+			result = a.MeasuredAt.Compare(b.MeasuredAt)
+		} else if values.Get("sort") == "cpu" {
+			left, right := cpus[a.ID], cpus[b.ID]
+			result = left.Cmp(right)
+		} else if key := values.Get("sort"); key != "" {
+			result = strings.Compare(profileField(a, statuses[a.ID], key), profileField(b, statuses[b.ID], key))
+		}
+		if values.Get("order") == "desc" {
+			result = -result
+		}
+		return cmp.Or(result, strings.Compare(a.ID, b.ID)) < 0
+	})
 	start := min(offset, len(selected))
 	end := min(start+limit, len(selected))
 	view.Page = &ProfilePage{Offset: offset, Limit: limit, Total: len(selected)}
@@ -88,6 +149,26 @@ func pageProfiles(view ProfilesView, values url.Values) (ProfilesView, error) {
 	}
 	view.Profiles = selected[start:end]
 	return view, nil
+}
+
+func profileField(profile serving.Profile, status, key string) string {
+	switch key {
+	case "model":
+		return profile.Condition.LogicalModel
+	case "deviceClass":
+		return profile.Condition.DeviceClass
+	case "node":
+		return profile.NodeName
+	case "powerMode":
+		return profile.Condition.PowerMode
+	case "path":
+		return profile.Condition.Artifact.ExecutionPath
+	case "cpu":
+		return profile.Condition.CPU.Request
+	case "status":
+		return status
+	}
+	return ""
 }
 
 func (h *Handler) schedulerProfiles(w http.ResponseWriter, r *http.Request) {

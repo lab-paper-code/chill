@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
@@ -67,5 +68,54 @@ func TestRunFiltersApplyToEntireSnapshotBeforePagination(t *testing.T) {
 	selected.Spec.TargetNode = "different"
 	if matchesRunFilters(selected, map[string]string{"group": canonical}) {
 		t.Fatal("different frozen node merged into group")
+	}
+}
+
+func TestRunSortPrecedesPaginationAndRejectsInvalidQueries(t *testing.T) {
+	snapshot := operatorconsole.ProfilingRunsSnapshot{Namespace: "ns"}
+	for _, name := range []string{"z", "b", "a"} {
+		value, seconds := "a", int64(1)
+		if name == "z" {
+			value, seconds = "z", 2
+		}
+		run := api.ProfilingRun{ObjectMeta: meta.ObjectMeta{Namespace: "ns", Name: name, CreationTimestamp: meta.NewTime(time.Unix(seconds, 0))}}
+		run.Spec.Candidate.ModelSpec, run.Spec.Candidate.PowerMode = value, value
+		snapshot.Runs = append(snapshot.Runs, run)
+	}
+	calls := 0
+	handler := NewQueryHandler(QueryReaders{ProfilingRuns: func(context.Context, string) (operatorconsole.ProfilingRunsSnapshot, error) {
+		calls++
+		return snapshot, nil
+	}})
+	for _, key := range []string{"name", "created", "model", "powerMode", "status"} {
+		for _, order := range []string{"asc", "desc"} {
+			want := "b"
+			if order == "desc" && key != "status" && key != "name" {
+				want = "a"
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/ns/profiling-runs?sort="+key+"&order="+order+"&limit=1&offset=1", nil))
+			var got struct {
+				operatorconsole.ProfilingRunsView
+				Page queryPage `json:"page"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != http.StatusOK || got.Page.Total != 3 || len(got.Runs) != 1 || got.Runs[0].Name != want {
+				t.Fatalf("%s %s: %d %s", key, order, response.Code, response.Body.String())
+			}
+		}
+	}
+	before := calls
+	for _, query := range []string{"sort=unknown", "sort=", "sort=node", "sort=name&sort=name", "sort=name&order=DESC", "sort=name&order=", "sort=name&order=asc&order=desc", "order=asc"} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/ns/profiling-runs?"+query, nil))
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("invalid sort accepted: %s: %d", query, response.Code)
+		}
+	}
+	if calls != before || snapshot.Runs[0].Name != "z" {
+		t.Fatal("invalid queries read the cluster or sorting mutated the source")
 	}
 }

@@ -1,7 +1,10 @@
 package readapi
 
 import (
+	"cmp"
 	"encoding/json"
+	"slices"
+	"strings"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
@@ -56,4 +59,36 @@ func matchesRunFilters(run api.ProfilingRun, filters map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func sortRuns(runs []api.ProfilingRun, q listQuery) {
+	if q.sort == "" {
+		return
+	}
+	// Project status once, rather than rebuilding assessments in the comparator.
+	statuses := map[string]string{}
+	if q.sort == "status" {
+		for _, run := range runs {
+			statuses[run.Name] = operatorconsole.AssessProfilingRun(run).DisplayStatus
+		}
+	}
+	slices.SortFunc(runs, func(a, b api.ProfilingRun) int {
+		var result int
+		switch q.sort {
+		case "name":
+			result = strings.Compare(a.Name, b.Name)
+		case "created":
+			result = a.CreationTimestamp.Time.Compare(b.CreationTimestamp.Time)
+		case "model":
+			result = strings.Compare(a.Spec.Candidate.ModelSpec, b.Spec.Candidate.ModelSpec)
+		case "powerMode":
+			result = strings.Compare(a.Spec.Candidate.PowerMode, b.Spec.Candidate.PowerMode)
+		case "status":
+			result = strings.Compare(statuses[a.Name], statuses[b.Name])
+		}
+		if q.order == "desc" {
+			result = -result
+		}
+		return cmp.Or(result, strings.Compare(a.Namespace, b.Namespace), strings.Compare(a.Name, b.Name), cmp.Compare(a.UID, b.UID))
+	})
 }

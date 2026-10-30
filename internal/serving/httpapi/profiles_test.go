@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
 )
@@ -35,5 +36,51 @@ func TestProfilePagingFiltersBeforeSlicingWithoutMutatingCatalog(t *testing.T) {
 		if _, err := pageProfiles(view, values); err == nil {
 			t.Fatalf("invalid query accepted: %v", values)
 		}
+	}
+}
+
+func TestProfileSortAndEveryFilterPrecedePagination(t *testing.T) {
+	view := ProfilesView{DisplayStatus: func(profile serving.Profile) string {
+		if profile.ID == "z" {
+			return "usable"
+		}
+		return "problem"
+	}}
+	for _, id := range []string{"z", "b", "a"} {
+		value, cpu, seconds := "a", "2", int64(1)
+		if id == "z" {
+			value, cpu, seconds = "z", "10", 2
+		}
+		p := serving.Profile{ID: id, NodeName: value, MeasuredAt: time.Unix(seconds, 0)}
+		p.Condition.LogicalModel, p.Condition.DeviceClass = value, value
+		p.Condition.PowerMode, p.Condition.Artifact.ExecutionPath, p.Condition.CPU.Request = value, value, cpu
+		view.Profiles = append(view.Profiles, p)
+	}
+	for _, key := range []string{"model", "deviceClass", "node", "powerMode", "path", "cpu", "created", "status"} {
+		for _, order := range []string{"asc", "desc"} {
+			want := "b"
+			if order == "desc" {
+				want = "a"
+			}
+			got, err := pageProfiles(view, url.Values{"sort": {key}, "order": {order}, "limit": {"1"}, "offset": {"1"}})
+			if err != nil || len(got.Profiles) != 1 || got.Profiles[0].ID != want || got.Page.Total != 3 {
+				t.Fatalf("%s %s: %+v %v", key, order, got, err)
+			}
+		}
+	}
+	for key, value := range map[string]string{"q": "z", "model": "z", "deviceClass": "z", "node": "z", "powerMode": "z", "path": "z", "cpu": "10", "status": "usable"} {
+		got, err := pageProfiles(view, url.Values{key: {value}, "limit": {"1"}})
+		if err != nil || len(got.Profiles) != 1 || got.Profiles[0].ID != "z" || got.Page.Total != 1 || len(got.Filters.Nodes) != 2 || len(got.Filters.Statuses) != 2 {
+			t.Fatalf("%s global filter: %+v %v", key, got, err)
+		}
+	}
+	for _, query := range []string{"sort=unknown", "sort=", "sort=class", "sort=model&sort=model", "sort=model&order=DESC", "sort=model&order=", "sort=model&order=asc&order=desc", "order=asc"} {
+		values, _ := url.ParseQuery(query)
+		if _, err := pageProfiles(view, values); err == nil {
+			t.Fatalf("invalid sort accepted: %s", query)
+		}
+	}
+	if view.Profiles[0].ID != "z" {
+		t.Fatal("sort mutated shared catalog")
 	}
 }

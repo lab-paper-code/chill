@@ -302,37 +302,7 @@ func (o *measurementService) decorateProfiles(ctx context.Context, view httpapi.
 	}
 	profiles := make([]profileProjection, 0, len(view.Profiles))
 	for _, profile := range view.Profiles {
-		used := true
-		input := operatorconsole.MeasurementAssessmentInput{
-			Accepted: true, Available: true, Reused: profile.Reuse != nil, SchedulerUsed: &used,
-			Facts: []string{
-				"Catalog profile: " + profile.ID,
-				"Retained result: " + profile.Reference.Store + "/" + profile.Reference.Key,
-			},
-		}
-		rows := []operatorconsole.ResultRow{}
-		if facts, found := view.MeasurementFacts[profile.ID]; found {
-			kind := "direct"
-			if profile.Reuse != nil {
-				kind = operatorconsole.ResultRowConfirmation
-			}
-			for _, batch := range facts.Batches {
-				row := coverageResultRow(profile, facts, batch, kind)
-				if profile.Reuse != nil {
-					sourceID := profile.Reuse.SourceProfileID
-					row.SourceProfileID, row.Reuse = &sourceID, profile.Reuse
-				}
-				rows = append(rows, row)
-				input.Checks = append(input.Checks, row.Assessment.Checklist.Checks...)
-				input.Problems = append(input.Problems, row.Assessment.Reasons...)
-			}
-		}
-		if len(rows) == 0 {
-			input.Checks = []operatorconsole.MeasurementCheck{{
-				Code: "MeasurementFactsUnavailable", Result: operatorconsole.MeasurementUnknown,
-				Message: "Reporting facts are unavailable in this catalog snapshot", SourceIDs: []string{profile.ID},
-			}}
-		}
+		assessment, rows := assessCatalogProfile(view, profile)
 		if profile.Reuse != nil {
 			sourceID := profile.Reuse.SourceProfileID
 			targetNamespace := strings.SplitN(profile.Reuse.ConfirmationProfileID, "/", 2)[0]
@@ -351,7 +321,7 @@ func (o *measurementService) decorateProfiles(ctx context.Context, view httpapi.
 			}
 		}
 		projected := profileProjection{
-			Profile: profile, Assessment: operatorconsole.AssessMeasurement(input), ResultRows: rows,
+			Profile: profile, Assessment: assessment, ResultRows: rows,
 			Batches: make([]batchSummary, 0, len(profile.Batches)),
 		}
 		for _, batch := range profile.Batches {
@@ -369,4 +339,39 @@ func (o *measurementService) decorateProfiles(ctx context.Context, view httpapi.
 		Filters         httpapi.ProfileFilters      `json:"filters"`
 		Profiles        []profileProjection         `json:"profiles"`
 	}{view.ConfigVersion, view.Insufficiencies, view.ReuseChecks, view.Page, view.Filters, profiles})
+}
+
+func assessCatalogProfile(view httpapi.ProfilesView, profile serving.Profile) (operatorconsole.MeasurementAssessment, []operatorconsole.ResultRow) {
+	used := true
+	input := operatorconsole.MeasurementAssessmentInput{
+		Accepted: true, Available: true, Reused: profile.Reuse != nil, SchedulerUsed: &used,
+		Facts: []string{
+			"Catalog profile: " + profile.ID,
+			"Retained result: " + profile.Reference.Store + "/" + profile.Reference.Key,
+		},
+	}
+	rows := []operatorconsole.ResultRow{}
+	if facts, found := view.MeasurementFacts[profile.ID]; found {
+		kind := "direct"
+		if profile.Reuse != nil {
+			kind = operatorconsole.ResultRowConfirmation
+		}
+		for _, batch := range facts.Batches {
+			row := coverageResultRow(profile, facts, batch, kind)
+			if profile.Reuse != nil {
+				sourceID := profile.Reuse.SourceProfileID
+				row.SourceProfileID, row.Reuse = &sourceID, profile.Reuse
+			}
+			rows = append(rows, row)
+			input.Checks = append(input.Checks, row.Assessment.Checklist.Checks...)
+			input.Problems = append(input.Problems, row.Assessment.Reasons...)
+		}
+	}
+	if len(rows) == 0 {
+		input.Checks = []operatorconsole.MeasurementCheck{{
+			Code: "MeasurementFactsUnavailable", Result: operatorconsole.MeasurementUnknown,
+			Message: "Reporting facts are unavailable in this catalog snapshot", SourceIDs: []string{profile.ID},
+		}}
+	}
+	return operatorconsole.AssessMeasurement(input), rows
 }

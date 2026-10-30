@@ -30,6 +30,15 @@ test("fixed-chill-server relay enforces path, origin, body and credential bounda
   const profiles="v1/scheduler/profiles".split("/")
   assert.match(relayPlan("GET",profiles,"?model=m&deviceClass=d&profile=exact&offset=25&limit=25",config).path,/profile=exact/)
   assert.throws(()=>relayPlan("GET",profiles,"?limit=51",config),/DashboardQueryInvalid/)
+  for (const [route, keys] of [[runs, ["name","created","model","powerMode","status"]], [profiles, ["model","deviceClass","node","powerMode","path","cpu","created","status"]]] as const) {
+    for (const sort of keys) {
+      for (const order of ["asc", "desc"]) assert.match(relayPlan("GET",route,`?sort=${sort}&order=${order}`,config).path,new RegExp(`sort=${sort}&order=${order}`))
+    }
+    for (const query of ["?sort=unknown","?sort=","?sort=model&sort=model","?sort=model&order=DESC","?sort=model&order=","?sort=model&order=asc&order=desc","?order=asc"]) {
+      assert.throws(()=>relayPlan("GET",route,query,config),/DashboardQueryInvalid/)
+    }
+  }
+  assert.match(relayPlan("GET",profiles,"?q=model&node=n&powerMode=fixed&path=cpu&cpu=2&status=usable",config).path,/status=usable/)
   assert.equal(relayPlan("PUT", ["v1", "models", "preflight"], "", config).kind, "mutation")
   for (const kind of ["preprocessors", "datasets"]) {
     assert.equal(relayPlan("POST", ["v1", kind], "", config).kind, "mutation")

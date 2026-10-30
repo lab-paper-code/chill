@@ -14,6 +14,7 @@ type MeasurementAssessment struct {
 }
 type MeasurementReason struct {
 	Code      string   `json:"code"`
+	Label     string   `json:"label,omitempty"`
 	Message   string   `json:"message"`
 	SourceIDs []string `json:"sourceIds"`
 }

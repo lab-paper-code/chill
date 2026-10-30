@@ -17,6 +17,7 @@ import (
 	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
+	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	core "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -25,6 +26,37 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 )
+
+func TestProfileListStatusMatchesDecoratedAssessmentWithoutClusterReads(t *testing.T) {
+	view := httpapi.ProfilesView{}
+	view.Profiles = []serving.Profile{{ID: "missing-facts"}, {ID: "reused", Reuse: &serving.ProfileReuseCheck{}}}
+	scheduler := &schedulerService{}
+	scheduler.profiles.Store(&view)
+	listed, err := scheduler.profilesView(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := (&measurementService{}).decorateProfiles(context.Background(), listed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decorated struct {
+		Profiles []struct {
+			ID string `json:"id"`
+			Assessment struct {
+				DisplayStatus string `json:"displayStatus"`
+			} `json:"assessment"`
+		} `json:"profiles"`
+	}
+	if err := json.Unmarshal(raw, &decorated); err != nil {
+		t.Fatal(err)
+	}
+	for index, profile := range decorated.Profiles {
+		if status := listed.DisplayStatus(listed.Profiles[index]); status != profile.Assessment.DisplayStatus || status == "" {
+			t.Fatalf("%s list status %q differs from assessment %q", profile.ID, status, profile.Assessment.DisplayStatus)
+		}
+	}
+}
 
 func measuredAdoptionProfile() serving.Profile {
 	return serving.Profile{

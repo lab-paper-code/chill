@@ -33,7 +33,12 @@ func (o *schedulerService) profilesView(context.Context) (httpapi.ProfilesView, 
 	if view == nil {
 		return httpapi.ProfilesView{}, errors.New("scheduler catalog is not loaded")
 	}
-	return *view, nil
+	result := *view
+	result.DisplayStatus = func(profile serving.Profile) string {
+		assessment, _ := assessCatalogProfile(*view, profile)
+		return assessment.DisplayStatus
+	}
+	return result, nil
 }
 
 // preparations builds one PrepareSpec per profile. A profile that cannot be

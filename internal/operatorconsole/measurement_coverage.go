@@ -97,6 +97,7 @@ type MeasurementFailure struct {
 	RunName      string `json:"runName"`
 	Batch        *int   `json:"batch"`
 	Code         string `json:"code"`
+	Label        string `json:"label"`
 	ExitCode     *int   `json:"exitCode"`
 	Message      string `json:"message"`
 	Relation     string `json:"relation"`

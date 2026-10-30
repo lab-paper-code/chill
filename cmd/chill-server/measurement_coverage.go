@@ -27,6 +27,7 @@ type measurementCoverageEntry struct {
 	attempted   bool
 	err         error
 	lastAttempt time.Time
+	refreshed   chan struct{}
 }
 type measurementCoverageBase struct {
 	inventory     operatorconsole.InventoryView
@@ -61,6 +62,7 @@ func (o *measurementService) coverage(
 	if !fresh && !entry.refreshing && refreshDue {
 		entry.refreshing = true
 		entry.lastAttempt = time.Now()
+		entry.refreshed = make(chan struct{})
 		go func(previous *measurementCoverageBase) {
 			refreshCtx, cancel := context.WithTimeout(context.Background(), o.opts.requestTimeout)
 			defer cancel()
@@ -68,6 +70,7 @@ func (o *measurementService) coverage(
 			cache.mu.Lock()
 			defer cache.mu.Unlock()
 			entry.refreshing = false
+			close(entry.refreshed)
 			entry.attempted = true
 			entry.err = err
 			if updated != nil {
@@ -75,8 +78,21 @@ func (o *measurementService) coverage(
 			}
 		}(base)
 	}
-	attempted, lastErr := entry.attempted, entry.err
+	attempted, lastErr, refreshed, refreshing := entry.attempted, entry.err, entry.refreshed, entry.refreshing
 	cache.mu.Unlock()
+	// Once the stale allowance is exhausted, finish the in-flight refresh before
+	// rejecting. The first request after an idle period must not fail merely
+	// because it is the request that starts source refresh.
+	if base != nil && time.Since(base.oldest()) > 5*time.Minute && refreshing {
+		select {
+		case <-refreshed:
+			cache.mu.Lock()
+			base, lastErr = entry.base, entry.err
+			cache.mu.Unlock()
+		case <-ctx.Done():
+			return nil, &serving.Error{Code: "CoverageUnavailable", Message: "측정 커버리지 입력 갱신을 완료하지 못했습니다"}
+		}
+	}
 	if base == nil {
 		code := "CoverageWarming"
 		if attempted && lastErr != nil {

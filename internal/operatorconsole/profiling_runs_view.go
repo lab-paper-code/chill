@@ -5,6 +5,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 )
 
 // ProfilingRunsSnapshot is one namespaced or all-namespaces LIST response. An
@@ -82,6 +83,7 @@ func BuildProfilingRuns(snapshot ProfilingRunsSnapshot) ProfilingRunsView {
 func AssessProfilingRun(run edgev1alpha1.ProfilingRun) MeasurementAssessment {
 	execution := &MeasurementExecution{Generation: run.Generation, ObservedGeneration: run.Status.ObservedGeneration}
 	input := MeasurementAssessmentInput{Execution: execution, Attempted: true}
+	evidenceInvalid := false
 	if ref := run.Status.Evidence; ref != nil && ref.Store != "" && ref.Key != "" {
 		input.Available = true
 		input.Facts = append(input.Facts, "Retained evidence: "+ref.Store+"/"+ref.Key)
@@ -103,15 +105,34 @@ func AssessProfilingRun(run edgev1alpha1.ProfilingRun) MeasurementAssessment {
 			case condition.Status == metav1.ConditionFalse:
 				execution.Phase = "Failed"
 			}
-			if condition.Status == metav1.ConditionFalse {
-				input.Reasons = append(input.Reasons, MeasurementReason{Code: condition.Reason, Message: condition.Message, SourceIDs: []string{string(run.UID)}})
-			}
 		case edgev1alpha1.ProfilingRunConditionEvidenceVerified:
 			input.Accepted = input.Available && condition.Status == metav1.ConditionTrue && run.Status.ObservedGeneration == run.Generation
 			if condition.Status == metav1.ConditionFalse && condition.Reason == "EvidenceInvalid" {
-				input.Problems = append(input.Problems, MeasurementReason{Code: condition.Reason, Message: condition.Message, SourceIDs: []string{string(run.UID)}})
+				evidenceInvalid = true
 			}
 		}
 	}
-	return AssessMeasurement(input)
+	if execution.Phase == "Failed" || evidenceInvalid {
+		reason := classifyMeasurementFailure(run.Status.RuntimeTermination, run.Status.Conditions, run.Generation, run.Spec.Candidate.ExecutionPath)
+		reason.SourceIDs = []string{string(run.UID)}
+		if evidenceInvalid {
+			input.Problems = append(input.Problems, reason)
+		} else {
+			input.Reasons = append(input.Reasons, reason)
+		}
+	}
+	assessment := AssessMeasurement(input)
+	if assessment.DisplayStatus == MeasurementProblem {
+		reason := assessment.Reasons[len(assessment.Reasons)-1]
+		failure := MeasurementFailure{
+			RunID: string(run.UID), RunNamespace: run.Namespace, RunName: run.Name,
+			Batch: ptr.To(int(run.Spec.Measurement.Batch)), Relation: "unresolved",
+			Code: reason.Code, Label: reason.Label, Message: reason.Message,
+		}
+		if termination := run.Status.RuntimeTermination; termination != nil {
+			failure.ExitCode = ptr.To(int(termination.ExitCode))
+		}
+		assessment.FailureSummary = []MeasurementFailure{failure}
+	}
+	return assessment
 }

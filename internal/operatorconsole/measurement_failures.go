@@ -6,10 +6,16 @@ import (
 	"strings"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
-	"k8s.io/utils/ptr"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-var runtimeLogANSI = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
+var (
+	runtimeLogANSI = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
+	gpuMemoryFailure = regexp.MustCompile(`cuda[^\n]*(out of memory|out_of_memory)|cublas_status_alloc_failed|cudnn_status_alloc_failed|gpu out of memory`)
+	powerObservationTimeout = regexp.MustCompile(`(?m)(metric observation|metric result|metric[- ]observer|power observation|observe power)[^\n]*(timeout|timed out|deadline exceeded)|(timeout|timed out|deadline exceeded)[^\n]*(metric observation|metric result|metric[- ]observer|power observation|observe power)`)
+	imagePullFailure = regexp.MustCompile(`imagepullbackoff|errimagepull|image pull failed|failed to pull image|failed to pull and unpack image`)
+	runtimeExecutionFailure = regexp.MustCompile(`runtimefailed|runtime failed|runtime container failed|runtimeerror:|execute firstfloor measurement:|segmentation fault|illegal instruction`)
+)
 
 // MeasurementRequestFailures joins only exact native controller owners.
 func MeasurementRequestFailures(task api.BatchEnergyOptimization, runs []api.ProfilingRun, assessment MeasurementAssessment) []MeasurementFailure {
@@ -40,58 +46,50 @@ func MeasurementRequestFailures(task api.BatchEnergyOptimization, runs []api.Pro
 		if runAssessment.DisplayStatus != MeasurementProblem {
 			continue
 		}
-		failure := MeasurementFailure{
-			RequestID: requestID, RunID: string(run.UID), RunNamespace: run.Namespace, RunName: run.Name,
-			Batch: ptr.To(int(run.Spec.Measurement.Batch)), Relation: "unresolved", Code: "RunFailed",
-		}
-		for _, reason := range runAssessment.Reasons {
-			failure.Code, failure.Message = reason.Code, shortFailureMessage(reason.Message)
-		}
-		if termination := run.Status.RuntimeTermination; termination != nil {
-			failure.ExitCode = ptr.To(int(termination.ExitCode))
-			if message := runtimeFailureLine(termination.LogTail); message != "" {
-				failure.Message = message
-			}
-		}
+		failure := runAssessment.FailureSummary[0]
+		failure.RequestID = requestID
 		failures = append(failures, failure)
 	}
 	if len(failures) == 0 && assessment.DisplayStatus == MeasurementProblem {
-		message := task.Status.Outcome
-		for _, condition := range task.Status.Conditions {
-			if condition.Message != "" {
-				message = condition.Message
-			}
-		}
+		reason := classifyMeasurementFailure(nil, task.Status.Conditions, task.Generation, task.Spec.State.Candidate.ExecutionPath)
 		failures = append(failures, MeasurementFailure{
-			RequestID: requestID, Code: task.Status.Outcome, Message: shortFailureMessage(message), Relation: "unresolved",
+			RequestID: requestID, Code: reason.Code, Label: reason.Label, Message: reason.Message, Relation: "unresolved",
 		})
 	}
 	return failures
 }
 
-func runtimeFailureLine(log string) string {
-	lines := strings.Split(runtimeLogANSI.ReplaceAllString(log, ""), "\n")
-	for _, line := range lines {
-		lower := strings.ToLower(line)
-		for _, marker := range []string{"error", "failed", "out of memory", "oomkilled", "timed out", "timeout", "deadline exceeded"} {
-			if strings.Contains(lower, marker) {
-				return shortFailureMessage(line)
-			}
+// classifyMeasurementFailure applies ordered evidence rules, never returning raw
+// condition messages or logs. Specific causes win over generic runtime exits.
+func classifyMeasurementFailure(termination *api.ProfilingRunRuntimeTermination, conditions []metav1.Condition, generation int64, executionPath string) MeasurementReason {
+	var evidence strings.Builder
+	if termination != nil {
+		evidence.WriteString(termination.LogTail)
+	}
+	for _, condition := range conditions {
+		if condition.ObservedGeneration != generation || condition.Status != metav1.ConditionFalse {
+			continue
 		}
+		evidence.WriteByte('\n')
+		evidence.WriteString(condition.Reason)
+		evidence.WriteByte(' ')
+		evidence.WriteString(condition.Message)
 	}
-	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.TrimSpace(lines[i]) != "" {
-			return shortFailureMessage(lines[i])
-		}
+	detail := strings.ToLower(runtimeLogANSI.ReplaceAllString(evidence.String(), ""))
+	arenaAllocationFailed := strings.Contains(detail, "bfcarena") && strings.Contains(detail, "failed to allocate memory for requested buffer")
+	switch {
+	case gpuMemoryFailure.MatchString(detail) || arenaAllocationFailed && strings.HasPrefix(executionPath, "firstfloor-ort-cuda-"):
+		return MeasurementReason{Code: "GPUMemoryExhausted", Label: "GPU 메모리 부족", Message: "GPU 메모리가 부족해 측정을 완료하지 못했습니다."}
+	case termination != nil && termination.ExitCode == 137 || strings.Contains(detail, "oomkilled") ||
+		arenaAllocationFailed && strings.HasPrefix(executionPath, "firstfloor-ort-cpu-"):
+		return MeasurementReason{Code: "HostOOM", Label: "호스트 메모리 부족", Message: "호스트 메모리 부족으로 측정 실행이 종료되었습니다."}
+	case powerObservationTimeout.MatchString(detail):
+		return MeasurementReason{Code: "PowerObservationTimeout", Label: "전력 관측 시간 초과", Message: "제한 시간 안에 전력 관측을 완료하지 못했습니다."}
+	case imagePullFailure.MatchString(detail):
+		return MeasurementReason{Code: "ImagePullFailed", Label: "이미지 가져오기 실패", Message: "실행 이미지를 가져오지 못해 측정을 시작하지 못했습니다."}
+	case termination != nil && termination.ExitCode != 0 || runtimeExecutionFailure.MatchString(detail):
+		return MeasurementReason{Code: "RuntimeFailed", Label: "실행 오류", Message: "실행 오류로 측정을 완료하지 못했습니다."}
+	default:
+		return MeasurementReason{Code: "Other", Label: "기타 오류", Message: "측정을 완료하지 못했습니다. 실행 상세에서 상태를 확인해 주세요."}
 	}
-	return ""
-}
-
-func shortFailureMessage(message string) string {
-	message = strings.Join(strings.Fields(message), " ")
-	runes := []rune(message)
-	if len(runes) > 160 {
-		return string(runes[:160])
-	}
-	return message
 }

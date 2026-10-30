@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -33,6 +34,7 @@ type queryPage struct {
 type listQuery struct {
 	limit, offset     int
 	search, condition string
+	sort, order       string
 	filters           map[string]string
 }
 
@@ -69,6 +71,16 @@ func parseListQuery(r *http.Request, runs bool) (listQuery, bool) {
 				return q, false
 			}
 			q.search = strings.ToLower(value[0])
+		case "sort":
+			if !runs || !slices.Contains([]string{"name", "created", "model", "powerMode", "status"}, value[0]) {
+				return q, false
+			}
+			q.sort = value[0]
+		case "order":
+			if !runs || (value[0] != "asc" && value[0] != "desc") {
+				return q, false
+			}
+			q.order = value[0]
 		case "condition":
 			kind, status, ok := strings.Cut(value[0], "=")
 			if !runs || !ok || kind == "" || len(value[0]) > 128 ||
@@ -93,6 +105,9 @@ func parseListQuery(r *http.Request, runs bool) (listQuery, bool) {
 		default:
 			return q, false
 		}
+	}
+	if q.order != "" && q.sort == "" {
+		return q, false
 	}
 	return q, true
 }
@@ -212,6 +227,7 @@ func NewQueryHandler(readers QueryReaders) http.Handler {
 				selected = append(selected, run)
 			}
 		}
+		sortRuns(selected, q)
 		start, end, page := pageBounds(len(selected), q)
 		snapshot.Namespace, snapshot.Runs = namespace, selected[start:end]
 		writeJSON(w, struct {
