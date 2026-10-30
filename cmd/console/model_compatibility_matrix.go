@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	consolekube "github.com/lab-paper-code/chill/internal/operatorconsole/kube"
@@ -108,6 +109,7 @@ func newModelCompatibilityMatrixQuery(reader client.Reader, opts options) func(c
 		nextRevision := memo.revision()
 		if revision == nextRevision {
 			// A successful source check is not a change in static support.
+			cached.ReadAt = inventory.ReadAt.Format(time.RFC3339Nano)
 			return cached, nil
 		}
 		query, err := newModelCompatibilityQuery(memo, opts)
