@@ -79,7 +79,7 @@ func summarizeScheduler(state *servingkube.SchedulerControllerState) schedulerSu
 		result.Instances = append(result.Instances, schedulerSummaryInstance{instance.ID, instance.TargetID, instance.Node, instance.OwnerWorkloadUID, instance.WorkloadUID, profileID, instance.Ready, instance.Routable, instance.Reasons})
 	}
 	for _, action := range state.Actions {
-		if action.Status != "planned" && action.Status != "running" {
+		if action.Status != "starting" && action.Status != "running" {
 			continue
 		}
 		result.Actions = append(result.Actions, schedulerSummaryAction{action.ID, action.Kind, action.Status, action.Node, action.Instance, action.DependsOn, action.Elapsed, action.ExpectedSeconds, action.ExpectedSource})

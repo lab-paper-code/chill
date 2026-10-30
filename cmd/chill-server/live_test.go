@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -223,7 +224,8 @@ func TestLiveDecisionReservationsAndNodeAvailability(t *testing.T) {
 	frame := nextProjection(t, sub)
 	if frame.Type != liveTestDelta || frame.Nodes[0].Ready || !frame.Nodes[0].Measurement ||
 		!reflect.DeepEqual(frame.Nodes[0].Reasons, snapshot.Nodes[0].Reasons) ||
-		len(frame.Reservations) != 1 || frame.Reservations[0].Reason != "미확인" ||
+		len(frame.Reservations) != 1 || frame.Reservations[0].Reason != "" ||
+		frame.Reservations[0].Explanation != "이전 변경이 장치와 서비스 자원을 예약하고 있어요. 실행과 자원 반환 확인이 끝날 때까지 다른 변경에서 사용하지 않아요." ||
 		!reflect.DeepEqual(frame.Reservations[0].WorkloadUIDs, []string{"a", "b"}) ||
 		frame.Decision == nil || frame.Workloads == nil {
 		t.Fatalf("decision facts were lost or split: %+v", frame)
@@ -313,5 +315,50 @@ func TestLiveClusterIssueEventHasNoEmptyDelta(t *testing.T) {
 			frame.Cluster.Reason != row.Reason || frame.Cluster.PreviousReason != row.PreviousReason {
 			t.Fatalf("issue facts changed or empty delta was emitted: %+v", frame)
 		}
+	}
+}
+
+func TestLiveDecisionExplainsReservedKeepWithoutInventingRecovery(t *testing.T) {
+	d := serving.SchedulerDecision{Status: "Keep", Reasons: []string{"ReservedScope:plan-a", "UnknownCode:detail"}}
+	got := liveDecisionExplanation(d)
+	if !strings.Contains(got, "새 변경을 선택하지 않았어요") || !strings.Contains(got, "이전 변경") ||
+		!strings.Contains(got, "UnknownCode:detail") || strings.Contains(got, "복구") {
+		t.Fatalf("reserved Keep lost its meaning or original unknown reason: %q", got)
+	}
+	if got := liveReservationExplanation(serving.SchedulerReservation{RouteOnly: map[string][]string{"w": {"i"}}}); !strings.Contains(got, "정리") {
+		t.Fatalf("cleanup reservation lost its known purpose: %q", got)
+	}
+	if got := liveReservationExplanation(serving.SchedulerReservation{Reason: "unregistered:error"}); !strings.Contains(got, "unregistered:error") {
+		t.Fatalf("unknown reservation reason was invented or hidden: %q", got)
+	}
+}
+
+func TestLiveRequestRejectionsRemainFailedResponseFacts(t *testing.T) {
+	at := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	p := projectionPublisher(at)
+	defer p.hub.Close()
+	sub, err := p.hub.Subscribe(0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	_ = nextProjection(t, sub)
+	p.request(serving.RequestEvent{WorkloadUID: "w", Kind: "received", At: at})
+	p.request(serving.RequestEvent{WorkloadUID: "w", Kind: "response_finished", At: at, Outcome: "rejected"})
+	if err := p.metrics.Flush(at.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	frame, err := sub.Next(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got live.MetricsFrame
+	if err := json.Unmarshal(frame, &got); err != nil {
+		t.Fatal(err)
+	}
+	if row := got.Workloads["w"]; row.Received != 1 || row.Failed != 1 || row.Completed != 0 {
+		t.Fatalf("rejected response disappeared from judgment facts: %+v", row)
 	}
 }

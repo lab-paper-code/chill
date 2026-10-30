@@ -7,6 +7,7 @@ import { useChillQuery } from "@/lib/client"
 import { workloadRoleLabel, type NodeRef, type OperationResult, type OperationState, type Routing, type SchedulerAction, type SchedulerActionObservation, type SchedulerControllerState, type SchedulerObservationPage, type SchedulerOperation } from "@/lib/read-types"
 import { nanosToMilliseconds, parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import { readSchedulerRecord, schedulerRecordMatches, schedulerRecordParams, schedulerRecordPath, type SchedulerRecordRef } from "@/lib/scheduler-history"
+import { isLiveActionActive } from "@/lib/live"
 import { safeSource } from "@/lib/source-export"
 import { QueryGate, SourceExport, SourceJSON, StatusBadge, statusLabel } from "@/components/read-region"
 import { Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
@@ -140,7 +141,7 @@ function CurrentSummary({row,rows}:{row:CurrentRow;rows:CurrentRow[]}) {
 
 function CurrentList() {
   const query=useChillQuery<SchedulerControllerState>("v1/scheduler/state",{decoder:parseSchedulerJSON})
-  const rows=currentRows(query.data),actions=rows.filter(row=>row.action),results=rows.filter(row=>row.result)
+  const rows=currentRows(query.data),actions=rows.filter(row=>row.action&&isLiveActionActive(row)),results=rows.filter(row=>row.result)
   return <Screen back={["/scheduler","운영 판단"]} title={!query.data?"변경 진행":actions.length?`진행 중인 변경이 ${actions.length}건 있어요`:"진행 중인 변경이 없어요"} lede="동작과 실행 결과를 따로 보여줘요. 목표나 설정 저장만으로 실제 변경이 끝났다고 보지 않아요.">
     <QueryGate query={query}>{query.data&&<>
       {actions.length>0&&<Rows label="지금 동작">{actions.map((row,index)=><Row key={`${row.id}/${row.node.uid}/${index}`} href={currentLink(row)} label={kindLabel(row.kind)} hint={`${actionNodeName(row.node)}${row.action?.from||row.action?.to?` · ${row.action.from||"제공 없음"} → ${row.action.to||"제공 없음"}`:""}`} value={<Badge status={row.status}/>}/>)}</Rows>}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test, type TestContext } from "node:test"
-import { applyLiveMessage, connectLive, initialLiveState, liveActionKey, parseLiveMessage, type LiveMetric, type LiveSnapshot, type LiveState } from "./live.ts"
+import { applyLiveMessage, connectLive, initialLiveState, isLiveActionActive, liveActionKey, parseLiveMessage, type LiveMetric, type LiveSnapshot, type LiveState } from "./live.ts"
 import { fixtureMessages } from "./live-fixture.ts"
 
 const at="2026-10-30T12:00:00.123456789Z"
@@ -9,10 +9,10 @@ const node={uid:"node-a",name:"Node A"}
 const workload={uid:"pool-a",name:"Pool A",model:"generic",definitionID:"definition-a",slo:{percentile:95,targetLatencyNanos:800_000_000},autonomous:true,admission:true,pending:2,readiness:{ready:true,reason:"Ready",observedAt:at}}
 const instance={id:"instance-a",node,ownerWorkloadUID:"pool-a",profileID:"profile-a",ready:true,stopped:false,routable:{"pool-a":true,"pool-b":true},running:{"pool-a":2,"pool-b":1},waiting:{"pool-a":3,"pool-b":0},observedAt:at}
 const action={id:"action-a",kind:"prepare",node,workloadUID:"pool-a",status:"running",startedAt:at,expectedSeconds:null,expectedSource:null}
-const reservation={owner:"action-a",nodes:[node],workloadUIDs:["pool-a"],podUIDs:[],instances:["instance-a"],reason:"미확인"}
+const reservation={owner:"action-a",nodes:[node],workloadUIDs:["pool-a"],podUIDs:[],instances:["instance-a"],reason:"",explanation:"이전 변경이 자원을 예약하고 있어요."}
 const metric:LiveMetric={received:4,completed:2,failed:1,withinSLO:1,latencySamples:3,p50ms:15,p95ms:40,p99ms:60}
 function snapshot(seq=0,changes:Partial<LiveSnapshot>={},stamp=at) {
-  return {type:"snapshot",seq,at:stamp,workloads:[workload],nodes:[{...node,powerMode:"default",ready:false,measurement:true,reasons:["MeasurementInProgress"],observedAt:at}],instances:[instance],routing:{"pool-a":{"instance-a":1},"pool-b":{"instance-a":1}},decision:{at,state:"TransitionInProgress",reason:"prepare"},actions:[action],reservations:[reservation],...changes}
+  return {type:"snapshot",seq,at:stamp,workloads:[workload],nodes:[{...node,powerMode:"default",ready:false,measurement:true,reasons:["MeasurementInProgress"],observedAt:at}],instances:[instance],routing:{"pool-a":{"instance-a":1},"pool-b":{"instance-a":1}},decision:{at,state:"TransitionInProgress",reason:"prepare",explanation:"인스턴스를 준비하고 있어요."},actions:[action],reservations:[reservation],...changes}
 }
 function metrics(seq:number,second:number,changes:Record<string,unknown>={}) {
   return {type:"metrics",seq,at:time(second+1),bucketAt:time(second),workloads:{"pool-a":metric},nodes:{"node-a":{watts:null,observedAt:null}},pool:{wholeWatts:null,activeWatts:null},...changes}
@@ -22,6 +22,12 @@ function apply(state:LiveState,input:unknown,receivedAt=1234) {
   assert.ok(message,"test frame must satisfy the live DTO")
   return applyLiveMessage(state,message,receivedAt)
 }
+
+test("active changes exclude terminal history and not-yet-started plans on both screens",()=>{
+  for (const status of ["starting","running"]) assert.equal(isLiveActionActive({status}),true)
+  for (const status of ["planned","complete","failed","partial","cancel"]) assert.equal(isLiveActionActive({status}),false)
+  assert.equal(isLiveActionActive({status:"running",completedAt:at}),false)
+})
 
 test("parser accepts the server DTO and only normalizes nullable Go collections",()=>{
   const message=parseLiveMessage(snapshot(0,{instances:[{...instance,routable:null,running:null,waiting:null} as unknown as typeof instance],reservations:[{...reservation,workloadUIDs:null,podUIDs:null,instances:null} as unknown as typeof reservation]}))
@@ -199,10 +205,10 @@ class FakeSocket {
   message(value:unknown) { this.onmessage?.({data:JSON.stringify(value)}) }
   close(code=1000) { this.closed=true;this.onclose?.({code}) }
 }
-function browser(t:TestContext,initial=initialLiveState()) {
+function browser(t:TestContext,initial=initialLiveState(),visibility="visible") {
   const descriptors=new Map(["WebSocket","document","location"].map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]))
   const document=new EventTarget() as EventTarget & {visibilityState:string}
-  document.visibilityState="visible"
+  document.visibilityState=visibility
   Object.defineProperty(globalThis,"WebSocket",{configurable:true,value:FakeSocket})
   Object.defineProperty(globalThis,"document",{configurable:true,value:document})
   Object.defineProperty(globalThis,"location",{configurable:true,value:{href:"https://dashboard.example/pools/pool-a?open=inst:a"}})
@@ -281,11 +287,12 @@ for (const code of [4401,4403]) test(`auth close ${code} hides data and stops re
 
 test("hidden tabs close without polling, visible tabs resume, and reconnect delay stays bounded",t=>{
   t.mock.method(Math,"random",()=>0)
-  const {document}=browser(t,apply(initialLiveState(),snapshot(8)))
+  const {document,store}=browser(t,apply(initialLiveState(),snapshot(8)))
   const first=FakeSocket.sockets[0]
   first.open();first.message(hello(8))
   document.visibilityState="hidden";document.dispatchEvent(new Event("visibilitychange"))
   assert.equal(first.closed,true)
+  assert.equal(store.state.status,"paused-hidden")
   t.mock.timers.tick(120_000)
   assert.equal(FakeSocket.sockets.length,1)
   document.visibilityState="visible";document.dispatchEvent(new Event("visibilitychange"))
@@ -302,6 +309,12 @@ test("hidden tabs close without polling, visible tabs resume, and reconnect dela
     assert.equal(FakeSocket.sockets.length,count+1)
     socket=FakeSocket.sockets.at(-1)!
   }
+})
+
+test("an initially hidden tab is paused rather than disconnected or connecting",t=>{
+  const {store}=browser(t,initialLiveState(),"hidden")
+  assert.equal(store.state.status,"paused-hidden")
+  assert.equal(FakeSocket.sockets.length,0)
 })
 
 test("malformed payload closes the connection before data can enter the cache",t=>{

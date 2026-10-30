@@ -318,7 +318,7 @@ func TestProjectionCollectionsCopyOwnershipAndReplaceReservations(t *testing.T) 
 	nodes := []Node{{UID: "node", Ready: false, Measurement: true, Reasons: []string{"Unavailable"}, ObservedAt: &at}}
 	instances := []Instance{{ID: "shared", Waiting: map[string]int{"a": 2, "b": 1}}}
 	reservations := []Reservation{{Owner: "operation", Nodes: []NodeRef{{UID: "node"}},
-		WorkloadUIDs: []string{"a", "b"}, PodUIDs: []string{"pod"}, Instances: []string{"shared"}, Reason: "미확인"}}
+		WorkloadUIDs: []string{"a", "b"}, PodUIDs: []string{"pod"}, Instances: []string{"shared"}, Explanation: "이전 변경이 자원을 예약하고 있어요."}}
 	if err := hub.Publish(testAt, Delta{Nodes: &nodes, Instances: &instances, Reservations: &reservations}, nil); err != nil {
 		t.Fatal(err)
 	}

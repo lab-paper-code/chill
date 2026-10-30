@@ -210,18 +210,80 @@ func (p *livePublisher) decision(d serving.SchedulerDecision, snapshot serving.S
 		for _, n := range r.Nodes {
 			nodes = append(nodes, liveNode(n))
 		}
-		reason := r.Reason
-		if reason == "" {
-			reason = "미확인"
-		}
 		reservations = append(reservations, live.Reservation{Owner: r.Owner, Nodes: nodes,
-			WorkloadUIDs: r.WorkloadUIDs, PodUIDs: r.PodUIDs, Instances: r.Instances, Reason: reason})
+			WorkloadUIDs: r.WorkloadUIDs, PodUIDs: r.PodUIDs, Instances: r.Instances,
+			Reason: r.Reason, Explanation: liveReservationExplanation(r)})
 	}
 	slices.SortFunc(reservations, func(a, b live.Reservation) int { return strings.Compare(a.Owner, b.Owner) })
-	decision := &live.Decision{At: liveAt(d.At), State: d.Status, Reason: strings.Join(d.Reasons, "; ")}
+	decision := &live.Decision{At: liveAt(d.At), State: d.Status, Reason: strings.Join(d.Reasons, "; "),
+		Explanation: liveDecisionExplanation(d)}
 	workloads := p.workloadRows()
 	p.publish(d.At, live.Delta{Workloads: &workloads, Nodes: &nodes, Reservations: &reservations,
 		Decision: &decision}, &live.Event{Kind: "decision", Decision: decision})
+}
+
+func liveReasonExplanation(reason string) string {
+	code, _, _ := strings.Cut(reason, ":")
+	switch code {
+	case "ReservedScope":
+		return "이전 변경이 자원을 예약하고 있어 해당 서비스의 새 변경은 선택하지 않아요."
+	case "PartialObservationWindow":
+		return "유입 관측 시간이 아직 부족해 다음 관측을 기다려요."
+	case "BootstrapCapacityPending", "CapacityPending":
+		return "서비스 처리 용량 계산을 기다려요."
+	case "NoPlanMeetsSLO", "EvaluatedCandidatesExceedSLOWithinReportedSearchBounds":
+		return "검토한 구성으로는 서비스 응답 목표를 충족하지 못해요."
+	case "MissingOperationCost":
+		return "변경 소요 시간과 전력 근거가 없어 해당 변경을 선택하지 않아요."
+	case "HeldAfterOverload":
+		return "부하 증가에 대비해 준비한 인스턴스를 관측 기간 동안 유지해요."
+	case "DemandIncreasing":
+		return "최근 유입이 늘어 처리 용량을 줄이지 않아요."
+	case "ReplacementUnpaid":
+		return "교체에 든 비용을 회수하지 못해 현재 인스턴스를 유지해요."
+	case "ReplacementDwell":
+		return "인스턴스 교체 뒤 최소 유지 시간을 기다려요."
+	case "TransitionGainWithinUncertainty":
+		return "예상 절감량이 오차 범위 안이어서 현재 구성을 유지해요."
+	case "IdleInstanceRemoved":
+		return "관측 기간 동안 요청이 배분되지 않은 인스턴스를 정리해요."
+	case "ObservedOperationExecutionError", "PreparationFailed":
+		return "변경 실행 오류가 기록되어 확인이 필요해요."
+	default:
+		return "제공된 사유: " + reason
+	}
+}
+
+func liveDecisionExplanation(d serving.SchedulerDecision) string {
+	parts := make([]string, 0, len(d.Reasons)+1)
+	switch d.Status {
+	case "Keep":
+		parts = append(parts, "이번 판단에서는 새 변경을 선택하지 않았어요. 이전에 시작한 변경은 계속될 수 있어요.")
+	case "Pending":
+		parts = append(parts, "운영 판단에 필요한 관측을 기다려요.")
+	case "Overload":
+		parts = append(parts, "예상 부하가 서비스 응답 목표를 넘어 확인이 필요해요.")
+	default:
+		parts = append(parts, "최근 판단 상태: "+d.Status+".")
+	}
+	for _, reason := range d.Reasons {
+		explanation := liveReasonExplanation(reason)
+		if !slices.Contains(parts, explanation) {
+			parts = append(parts, explanation)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func liveReservationExplanation(r serving.SchedulerReservation) string {
+	explanation := "이전 변경이 장치와 서비스 자원을 예약하고 있어요. 실행과 자원 반환 확인이 끝날 때까지 다른 변경에서 사용하지 않아요."
+	if len(r.RouteOnly) > 0 {
+		explanation = "이전 변경의 인스턴스 정리를 위해 자원을 예약하고 있어요. 준비된 인스턴스 사이의 요청 배분만 바꿀 수 있어요."
+	}
+	if r.Reason != "" {
+		explanation += " " + liveReasonExplanation(r.Reason)
+	}
+	return explanation
 }
 func (p *livePublisher) action(r servingkube.OperationResult) {
 	p.mu.Lock()

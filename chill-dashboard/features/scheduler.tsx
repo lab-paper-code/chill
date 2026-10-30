@@ -8,6 +8,7 @@ import { conditionRows } from "@/features/scheduler-profiles"
 import type { LoadWindow, OperatingPower, SchedulerAllocation, SchedulerCandidate, SchedulerDecision, SchedulerDefinition, SchedulerEstimate, SchedulerInstance, SchedulerNode, SchedulerSnapshot, SchedulerView, WireInteger } from "@/lib/read-types"
 import { nanosToMilliseconds, parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import { capacityPath } from "@/lib/capacity"
+import { isLiveActionActive } from "@/lib/live"
 import { excludedNodes } from "@/features/scheduler-settings"
 import { safeSource } from "@/lib/source-export"
 import { gapNotice, localDateTime, utcDateTime } from "@/lib/date-time"
@@ -139,7 +140,7 @@ export function SchedulerPage() {
       <Row href="/operations/flow" label="운영 흐름 보드" hint="수신, 실행과 구성 변경의 실시간 흐름"/>
       <Row href="/scheduler/estimates" label="서비스별 응답 목표 예상" value={now?.estimates.length?`초과 ${now.exceeding} / ${now.estimates.length}`:undefined}/>
       <Row href="/scheduler/load" label="실제 부하" hint="구간마다 받은 요청과 처리"/>
-      <Row href="/transitions" label="변경 진행" value={view?`${view.state.actions?.length??0}건`:undefined}/>
+      <Row href="/transitions" label="변경 진행" value={view?`${view.state.actions?.filter(isLiveActionActive).length??0}건`:undefined}/>
       <Row href="/scheduler/profiles" label="측정 프로파일" hint="운영 판단이 쓰는 측정 결과"/>
       <Row href="/scheduler/capacity" label="인스턴스 용량 계산 근거" hint="조건별 κ와 탐색 판정, 현재 설정 대조"/>
       <Row href="/resources" label="장비"/>

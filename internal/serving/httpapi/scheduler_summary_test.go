@@ -52,6 +52,18 @@ func TestSchedulerSummaryWhitelist(t *testing.T) {
 	}
 }
 
+func TestSchedulerSummaryCountsOnlyExecutingChanges(t *testing.T) {
+	state := servingkube.SchedulerControllerState{Actions: []serving.Action{
+		{ID: "plan", Status: "planned"}, {ID: "start", Status: "starting"},
+		{ID: "run", Status: "running"}, {ID: "done", Status: "complete"},
+		{ID: "error", Status: "failed"}, {ID: "cancel", Status: "cancel"},
+	}}
+	got := summarizeScheduler(&state).Actions
+	if len(got) != 2 || got[0].ID != "start" || got[1].ID != "run" {
+		t.Fatalf("plans or terminal history counted as executing changes: %+v", got)
+	}
+}
+
 func TestSchedulerSummaryViewValidation(t *testing.T) {
 	for _, tc := range []struct {
 		path  string

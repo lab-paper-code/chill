@@ -73,12 +73,14 @@ type Reservation struct {
 	PodUIDs      []string  `json:"podUIDs"`
 	Instances    []string  `json:"instances"`
 	Reason       string    `json:"reason"`
+	Explanation  string    `json:"explanation"`
 }
 
 type Decision struct {
-	At     string `json:"at"`
-	State  string `json:"state"`
-	Reason string `json:"reason"`
+	At          string `json:"at"`
+	State       string `json:"state"`
+	Reason      string `json:"reason"`
+	Explanation string `json:"explanation"`
 }
 
 type ExpectedSource struct {

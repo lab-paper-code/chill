@@ -8,12 +8,12 @@ export type LiveInstance = {
   id:string;node:{uid:string;name:string};ownerWorkloadUID:string;profileID:string;ready:boolean;stopped:boolean
   routable:Record<string,boolean>;running:Record<string,number>;waiting:Record<string,number>;observedAt:string
 }
-export type LiveDecision = {at:string;state:string;reason:string}
+export type LiveDecision = {at:string;state:string;reason:string;explanation:string}
 export type LiveAction = {
   id:string;kind:string;node:{uid:string;name:string};workloadUID:string;status:string;startedAt:string;completedAt?:string
   expectedSeconds:number|null;expectedSource:{costID:string;reference:unknown;statistic:"mean";trialCount:number}|null
 }
-export type LiveReservation = {owner:string;nodes:{uid:string;name:string}[];workloadUIDs:string[];podUIDs:string[];instances:string[];reason:string}
+export type LiveReservation = {owner:string;nodes:{uid:string;name:string}[];workloadUIDs:string[];podUIDs:string[];instances:string[];reason:string;explanation:string}
 export type LiveMetric = {received:number;completed:number;failed:number;withinSLO:number;latencySamples:number;p50ms:number|null;p95ms:number|null;p99ms:number|null}
 export type LiveGap = {from:string;to:string;scope:string;reason:string}
 type Envelope = {seq:number;at:string}
@@ -71,8 +71,10 @@ function instance(value:unknown):LiveInstance {
   const row=object(value);keys(row,["id","node","ownerWorkloadUID","profileID","ready","stopped","routable","running","waiting","observedAt"])
   return {id:text(row.id),node:nodeRef(row.node),ownerWorkloadUID:text(row.ownerWorkloadUID),profileID:text(row.profileID),ready:boolean(row.ready),stopped:boolean(row.stopped),routable:map(row.routable === null ? {} : row.routable,boolean),running:map(row.running === null ? {} : row.running,count),waiting:map(row.waiting === null ? {} : row.waiting,count),observedAt:timestamp(row.observedAt)}
 }
-function decision(value:unknown):LiveDecision { const row=object(value);keys(row,["at","state","reason"]);return {at:timestamp(row.at),state:text(row.state),reason:text(row.reason)} }
+function decision(value:unknown):LiveDecision { const row=object(value);keys(row,["at","state","reason","explanation"]);return {at:timestamp(row.at),state:text(row.state),reason:text(row.reason),explanation:text(row.explanation)} }
 export function liveActionKey(row:LiveAction):string { return JSON.stringify([row.id,row.node.uid,row.startedAt]) }
+/** Shared by the live board and operating menu: history and plans are not executing changes. */
+export function isLiveActionActive(row:{status:string;completedAt?:string}):boolean { return !row.completedAt && (row.status === "starting" || row.status === "running") }
 function action(value:unknown,event=false):LiveAction {
   const row=object(value);keys(row,["id","kind","node","workloadUID","status","startedAt","completedAt","expectedSeconds","expectedSource",...(event ? ["phase","result"] : [])])
   let expectedSource:LiveAction["expectedSource"]=null
@@ -85,8 +87,8 @@ function action(value:unknown,event=false):LiveAction {
   return {id:text(row.id),kind:text(row.kind),node:nodeRef(row.node),workloadUID:text(row.workloadUID),status:text(row.status),startedAt:timestamp(row.startedAt),...(row.completedAt === undefined ? {} : {completedAt:timestamp(row.completedAt)}),expectedSeconds:nullable(row.expectedSeconds,number),expectedSource}
 }
 function reservation(value:unknown):LiveReservation {
-  const row=object(value);keys(row,["owner","nodes","workloadUIDs","podUIDs","instances","reason"])
-  return {owner:text(row.owner),nodes:array(row.nodes,nodeRef),workloadUIDs:array(row.workloadUIDs === null ? [] : row.workloadUIDs,text),podUIDs:array(row.podUIDs === null ? [] : row.podUIDs,text),instances:array(row.instances === null ? [] : row.instances,text),reason:text(row.reason)}
+  const row=object(value);keys(row,["owner","nodes","workloadUIDs","podUIDs","instances","reason","explanation"])
+  return {owner:text(row.owner),nodes:array(row.nodes,nodeRef),workloadUIDs:array(row.workloadUIDs === null ? [] : row.workloadUIDs,text),podUIDs:array(row.podUIDs === null ? [] : row.podUIDs,text),instances:array(row.instances === null ? [] : row.instances,text),reason:text(row.reason),explanation:text(row.explanation)}
 }
 function metric(value:unknown):LiveMetric {
   const row=object(value);keys(row,["received","completed","failed","withinSLO","latencySamples","p50ms","p95ms","p99ms"])
@@ -301,11 +303,11 @@ export function connectLive(token:string,read:()=>LiveState,update:(change:(stat
     }
   }
   function visibility() {
-    if (document.visibilityState === "hidden") { clearTimers();detach();if (!blocked) status("disconnected") }
+    if (document.visibilityState === "hidden") { clearTimers();detach();if (!blocked) status("paused-hidden") }
     else if (!closed && !blocked) open()
   }
   document.addEventListener("visibilitychange",visibility)
-  open()
+  visibility()
   return {
     reconnect:()=>{if (!closed && !["unauthorized","forbidden"].includes(read().status)) {blocked=false;attempt=0;open()}},
     close:()=>{closed=true;clearTimers();detach();document.removeEventListener("visibilitychange",visibility)}
