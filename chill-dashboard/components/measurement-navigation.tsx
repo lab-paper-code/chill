@@ -14,5 +14,5 @@ export const measurementStates = {usable:"사용 가능",insufficient:"부족",p
 const symbols = {usable:"✓",insufficient:"△",problem:"×",running:"◷",unmeasured:"○",unknown:"?",unsupported:"—"}
 export function MeasurementStatus({assessment}:{assessment?:MeasurementAssessment|null}) {
   const status=assessment?.displayStatus??"unknown"
-  return <span className={`measurement-status status-${status}`}><span aria-hidden="true">{symbols[status]} </span>{measurementStates[status]}</span>
+  return <span className={`measurement-status status-${status}`}><span aria-hidden="true">{symbols[status]} </span>{assessment?.label??measurementStates[status]}</span>
 }
