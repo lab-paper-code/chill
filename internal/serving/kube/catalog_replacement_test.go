@@ -13,6 +13,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+const replacementSuffix = "-replacement"
+
 func TestReplacementSelectionPreservesOriginalsAndExactTrialPolicy(t *testing.T) {
 	for _, name := range []string{"jetsono-012-smolvlm-fp32-q4-maxn", "orangepi-017-plc-cpu-q4"} {
 		t.Run(name, func(t *testing.T) {
@@ -20,7 +22,7 @@ func TestReplacementSelectionPreservesOriginalsAndExactTrialPolicy(t *testing.T)
 			original.Spec.State.TargetNode = "node"
 			before := original.DeepCopy()
 			replacement := *original.DeepCopy()
-			replacement.Name += "-replacement"
+			replacement.Name += replacementSuffix
 			replacement.Annotations = map[string]string{replacesCampaignAnnotation: original.Name}
 			replacement.Spec.ActiveProtocol.MetricObservation.DurationSeconds = 1800
 			items := []edge.BatchEnergyOptimization{original, replacement}
