@@ -45,6 +45,8 @@ A는 측정·판정 소유자의 기존 입력, B는 실제 환경 입력으로 
 
 기존 `chill.dacs.io/profile-reuse` JSON의 sourceProfileID·maximumRelativeDifference 옆에 `minimumMeasurementSeconds`(finite >0, 기본30), `minimumTrials`(정수 ≥2, 기본3)를 추가한다. 창은 active와 idle 각각의 최소값이다. `ProfileReuseCheck`에는 선택 최소값과 실제 active/idle 길이·trial 수를 기록한다. 기존 `reusedProfile` 정책 identity에도 두 값을 넣어 annotation 변경이 옛 immutable startup bundle을 재사용하지 않게 한다. 전역 settings 변경으로 기존 요청 정책을 재정의하지 않는다. trials=2 수용은 §5의 종단 하한 정리와 함께 완료한다.
 
+슬라이스3 구현(2026-10-30): settings decode·HTTP/ConfigMap·직접 κ 도구·Dashboard typed 편집과 용량 행까지 연결했다. κ 도구는 입력의 minimumRequests를 보존한다. raw archive fixture는 수정하지 않고 replay loader가 현재 계약의 행 입력/키를 구성한다. 요청별 최소값은 reuse 판정/기록/identity에 연결하며 과거 기록에 없는 필드는 소급 채우지 않는다. `hack/e5/d2/bind_before.py` SETTINGS/CapacityInput 대조는 하네스 소유자 후속이다.
+
 ### 3-4. 유지할 설정과 방법론
 
 power 앞뒤 1분 support는 coverage 상한에 맞는 C다. 새 settings나 Decision 필드는 없다. `powerObservation.sampling/coverage`와 읽기 전용 meters는 기존 소유자 그대로다. source/profile interval은 기동 설정이다.
@@ -52,6 +54,8 @@ power 앞뒤 1분 support는 coverage 상한에 맞는 C다. 새 settings나 Dec
 ## 4. 기존 기동 기록 최소 보강
 
 기존 `cluster` stream의 `event:"server-start"` 행을 재사용한다. Pod UID/namespace/name은 기존 필드, process 시작 시각은 `run()`의 실제 `started`다. 추가할 측정 관련 값은 `queueLimit`=1024, `sourceIntervalNanos`=1000000000, `profileIntervalNanos`=60000000000뿐이다. 운영 overlay source2초를 선택하면 2000000000을 기록한다. 기존 append 실패→기동 실패를 유지한다. 새 scheduler startup 행은 없고 scheduler 비활성 때도 별도 행을 만들지 않는다.
+
+슬라이스4 구현(2026-10-30): 위 세 필드만 기존 cluster 행에 추가했고 `At`은 실제 process 시작값이다. startup 전용 필드는 포인터/omitempty로 일반 Pod 행·과거 행의 부재를 보존한다. settings PUT의 사전 append 실패·저장/refresh 실패·적용 후 후속 append 실패를 회귀로 구별한다. 후속 append 실패 시에도 적용된 설정을 되돌리지 않으며 별도 startup/refresh 합성 행은 만들지 않는다.
 
 request/drain timeout, directory interval, control component scope는 기존 관리·수집 설정 D다. CLI request30/drain120초, Helm129/164초를 통합하지 않는다. 특히 infer handler의 별도129초 때문에 requestTimeout을 모든 handler의 실제 timeout이라고 부르지 않는다.
 

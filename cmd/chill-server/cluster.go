@@ -17,9 +17,10 @@ func recordCluster(log *serving.ObservationLog, publisher *livePublisher, row se
 	return nil
 }
 
-func serverStartCluster(podUID, namespace, name string) serving.ClusterObservation {
+func serverStartCluster(podUID, namespace, name string, started time.Time, opts options) serving.ClusterObservation {
 	return serving.ClusterObservation{
-		Kind: "pod", At: time.Now().UTC(), Event: "server-start",
+		Kind: "pod", At: started, Event: "server-start",
+		QueueLimit: &opts.queueLimit, SourceInterval: &opts.sourceInterval, ProfileInterval: &opts.profileInterval,
 		Pod: &serving.ClusterPod{UID: podUID, Namespace: namespace, Name: name},
 	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"testing"
 	"time"
 
@@ -30,7 +31,11 @@ func TestClusterPublishesOnlyCommittedRows(t *testing.T) {
 	if _, err = sub.Next(ctx); err != nil {
 		t.Fatal(err)
 	}
-	row := serverStartCluster("self-uid", "system", "server")
+	started := time.Unix(123, 456).UTC()
+	row := serverStartCluster("self-uid", "system", "server", started, options{queueLimit: 1024, sourceInterval: 2 * time.Second, profileInterval: time.Minute})
+	if row.At != started || row.QueueLimit == nil || *row.QueueLimit != 1024 || row.SourceInterval == nil || *row.SourceInterval != 2*time.Second || row.ProfileInterval == nil || *row.ProfileInterval != time.Minute {
+		t.Fatalf("startup selection lost: %+v", row)
+	}
 	if err = recordCluster(log, p, row); err != nil {
 		t.Fatal(err)
 	}
@@ -59,5 +64,25 @@ func TestClusterPublishesOnlyCommittedRows(t *testing.T) {
 	defer stop()
 	if frame, err = sub.Next(short); err == nil {
 		t.Fatalf("uncommitted row emitted: %s", frame)
+	}
+}
+
+func TestServerStartFreezesSelectedMeasurementConfiguration(t *testing.T) {
+	for _, args := range [][]string{nil, {"--queue-limit=27", "--source-interval=2s", "--profile-interval=3m"}} {
+		var opts options
+		flags := flag.NewFlagSet("server-start", flag.ContinueOnError)
+		opts.bindFlags(flags)
+		if err := flags.Parse(args); err != nil {
+			t.Fatal(err)
+		}
+		started := time.Now().UTC()
+		row := serverStartCluster("uid", "namespace", "server", started, opts)
+		wantQueue, wantSource, wantProfile := 1024, time.Second, time.Minute
+		if len(args) > 0 {
+			wantQueue, wantSource, wantProfile = 27, 2*time.Second, 3*time.Minute
+		}
+		if row.At != started || *row.QueueLimit != wantQueue || *row.SourceInterval != wantSource || *row.ProfileInterval != wantProfile {
+			t.Fatalf("startup record did not freeze selected config: %+v", row)
+		}
 	}
 }

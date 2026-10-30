@@ -15,6 +15,10 @@ type ClusterObservation struct {
 	Source         string      `json:"source,omitempty"`
 	Reason         string      `json:"reason,omitempty"`
 	PreviousReason string      `json:"previousReason,omitempty"`
+	// Startup-only fields stay absent in historical and ordinary Pod rows.
+	QueueLimit      *int           `json:"queueLimit,omitempty"`
+	SourceInterval  *time.Duration `json:"sourceIntervalNanos,omitempty"`
+	ProfileInterval *time.Duration `json:"profileIntervalNanos,omitempty"`
 }
 
 type ClusterPod struct {

@@ -90,7 +90,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 			retErr = errors.Join(retErr, fmt.Errorf("close serving observations: %w", err))
 		}
 	}()
-	if err := recordCluster(observationLog, publisher, serverStartCluster(podUID, podNamespace, podName)); err != nil {
+	if err := recordCluster(observationLog, publisher, serverStartCluster(podUID, podNamespace, podName, started, opts)); err != nil {
 		return fmt.Errorf("record server Pod identity: %w", err)
 	}
 	selectedPod := func(pod *corev1.Pod) bool {

@@ -163,6 +163,8 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		applied := time.Now().UTC()
 		change.AppliedAt = &applied
 	}
+	// HTTP failure after refresh does not imply rollback: the selected policy
+	// may already be active even when its completion record cannot be appended.
 	recordErr := h.observationLog.SchedulerRecord(serving.SchedulerObservation{At: time.Now().UTC(), Settings: &change})
 	if err = errors.Join(err, recordErr); err != nil {
 		sendError(w, err)
