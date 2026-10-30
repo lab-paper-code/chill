@@ -157,8 +157,8 @@ System/Inventory/Run 목록은 limit 1..200, offset 0..1,000,000·bounded q; Run
 
 | 공통 표시 | 정확한 소스 필드 | 표시 규칙 |
 |---|---|---|
-| 목록 identity·대상·상태·시각 | `metadata.name`, `metadata.namespace`, `metadata.uid`, `node`, `status.phase`, `metadata.creationTimestamp` | 이름/Node, 상태 문장·기호, UTC/KST 시각. UID는 상세 원본 identity에 표시 |
-| 상세 결론·사유 | `kind`, `status.phase`, `status.reason` | 결론 아래 제공된 `status.reason` 원문 표시. `lib/labels.ts` 등록 코드는 문장 안내를 함께 표시하고 미등록 코드·자유 문장은 공통 폴백으로 대체하지 않음 |
+| 목록 identity·대상·상태·시각 | `metadata.name`, `metadata.namespace`, `metadata.uid`, `node`, `status.phase`, `metadata.creationTimestamp` | 이름/Node, 상태 문장·기호, KST 시각(UTC tooltip). UID는 상세 원본 identity에 표시 |
+| 상세 결론·사유 | `kind`, `status.phase`, `status.reason` | 한국어 요약을 주표기하고 제공된 reason 원문을 펼침 안에 보존. 임의 원인을 확정하지 않음 |
 | CR 출처 | `metadata.resourceVersion`; `references.cr.{apiVersion,kind,namespace,name,uid}` | “원본 CR 식별자”. 전체 CR 수신 주장·Kubernetes 직접 링크 없음 |
 | 근거 위치 | `references.evidence[].{store,key}` | 논리 위치 복사/JSON 내보내기. raw HTTP URL·Passport 경로 생성 없음 |
 
@@ -175,8 +175,8 @@ System/Inventory/Run 목록은 limit 1..200, offset 0..1,000,000·bounded q; Run
 | 배치·공급 방식·동시 송신자 | `conditions.batch`, `.supplyMode`, `.workers` | 건/batch, closed-loop=고정 동시 요청, poisson=포아송 공급, 미제공=“기록되지 않았어요”; workers=명 |
 | 예열·측정 구간 | `conditions.warmupSeconds`, `.durationSeconds` | s, 예열은 측정 시작에서 제외 |
 | 결과 전력모드 | `status.powerMode` | 없으면 “결과 없음” |
-| 요청당 분배 점유시간 d | `status.perRequestNanos` | 목록·상세 모두 기존 `nanosToMilliseconds` 변환의 ms/request를 소수 둘째 자리까지 반올림해 주표기(예: `3.81ms/request`), 정확한 ns/request 원값을 바로 아래 보조 표기. 누락=“결과 없음”; 0=`0ms/request`와 `0 ns/request`. 원본 응답·export의 정밀 ns 정수는 변경하지 않음 |
-| 지속 완료 처리량 X | `status.throughput` | 문자열 원값 + req/s, 누락/빈 문자열=“결과 없음”. 브라우저에서 d나 κ 재계산 없음 |
+| 요청당 분배 점유시간 d | `status.perRequestNanos` | 기존 nanosToMilliseconds 변환 후 3자리 유효숫자 ms/request 주표기. 정확 ns는 원본/내보내기만. 누락과 0 구별 |
+| 지속 완료 처리량 X | `status.throughput` | 수치 검증 후 3자리 유효숫자 + req/s. 원 문자열은 원본 보존. 누락/빈 문자열=“결과 없음”. d나 κ 재계산 없음 |
 | 결과 위치 | `status.result.{store,key}`, `references.evidence[]` | 논리 위치 그대로, 중복은 한 번 표시; 빈 evidence=“아직 저장된 근거 위치가 없어요” |
 
 | 구역 | 정확한 필드 | 표시 단위·의미 |
@@ -390,17 +390,21 @@ MAXN     | 완료, 최저 J/배치    | 완료, 최저 J/배치     | Node/정�
 해당 모델×장치의 전력모드(행) × 실행 경로(열)를 연다. 상세 셀 키는 `(model UID, path name, class UID, powerMode name)`이다.
 모드 없는 class에 가짜 fixed를 만들지 않는다. 삭제된 모델/class의 과거 시도는 ‘현재 선언 밖 이력’으로 별도 보존한다.
 
-전체 선언 후보 수는 `Σmodel |executionPaths| × Σclass |powerModes|`다. 유효 후보 분모는
-명시적 지원 불일치를 제외하며 실행 지원 확정이나 연구 목표 완료율을 뜻하지 않는다.
-지원 안 함은 기본 숨김(토글), 집계는 필터 범위의 7상태를 구분한다.
-측정 홈 상단은 동일 분모의 커버리지 %와 최근 실험 결론 진입을 제공하며 홈에는 이 요약 링크만 둔다.
-1440px에서 두 표는 가로 스크롤 없이, 모바일 개요는 장치 선택으로 열을 줄인다.
-UI UX Pro Max `Loading Indicators` 권고를 채택: inventory·요청·프로파일·전체 회차가 모두 성공적으로
-조회될 때까지 `aria-busy`와 고정 높이 안내만 표시하고 중간 상태/카운터는 노출하지 않는다.
+전체 선언 후보 수는 `Σmodel |executionPaths| × Σclass |powerModes|`다. R3 분모는
+`/model-compatibility-matrix`의 **Compatible** 조합만 센다. Incompatible과 Unknown은 제외하고
+지원 미확인 수를 별도 표시한다. 행렬 조회 실패/미배포 시 비율은 ‘미확정’이며 선언 분모로 대체하지 않는다.
+장치 열은 inventory 이름순으로 고정하며 지원 안 함 토글은 셀/상세 경로 노출만 바꾼다.
+필터는 기본 접힘, 답인 행렬을 먼저 보인다. 홈 운영 보드 위에도 동일 분모의 연구 진척 띠와 최근
+실험의 에너지·성공률·p95 절충 요약 링크를 둔다. 390px에서는 표시 장치를 선택한다.
+UI UX Pro Max `Heatmap / Intensity`의 수치·기호 병기 규칙을 채택했다: 기존 primary 색 농도
+4단계(0%, 1–49%, 50–74%, 75–100%)와 완료/지원 조합 수를 함께 써 색만으로 해석하지 않는다.
+로딩은 장치·모델, 요청, 결과, 전체 회차(읽은 수/전체 수), 실행 지원의 5단계로 표시한다.
+독립 GET은 병렬 시작하고 도착한 선언/측정 모드 개요를 먼저 표시하되 최종 카운터는 전체 회차 완료 전 숨긴다.
 
 | 원본 GET (`/api/v1` 이하) | 조인 필드와 역할 | 범위/오류 규칙 |
 |---|---|---|
 | `/inventory` | `models[].{name,uid,spec}`, `classes[].{name,uid,architecture,accelerator,powerModes,nodes}` | classPage/modelPage 각각 nextOffset 끝까지, UID로 중복 제거. resourceVersion 세 종류와 readAt 보존 |
+| `/model-compatibility-matrix` | 전체 model/path/class의 대표 Node 정적 판정. 모델/class UID·resourceVersion과 Node UID를 대조 | 화면당 GET 1회, power mode 공용. Unknown/입력 identity 불일치는 분모 제외. Node 필터가 대표와 다르면 미확인 |
 | `/namespaces/{ns}/batch-energy-optimizations` | `metadata.{namespace,name,uid,creationTimestamp}`, `spec.state.candidate.{modelSpec,deviceClass,executionPath,powerMode}`, `.targetNode`, CPU/protocol, `status.{phase,outcome,conditions,result}` | namespace 명시. 목록에 있는 요청의 phase이지 채택 품질이 아님 |
 | `/scheduler/profiles` | `profiles[].condition.{logicalModel,deviceClass,nodeUID,powerMode,artifact.executionPath,...}`, `id`, `reference`, `batches`, `measuredAt`, `reuse` | 현재 사용 가능한 증거. profile id 문자열을 추측 파싱해 요청 UID를 만들지 않음 |
 | 같은 응답 `insufficiencies[]` | `source.{Namespace,Name}`, `code`, `reason`를 BEO namespace/name과 연결 | `ReplacementSelection`은 대체된 이력이며 다른 유효 profile을 무효화하지 않음. 연결 불가 issue는 ‘연결 안 된 경고’로 보존 |
@@ -412,21 +416,19 @@ UID·CPU/affinity·protocol·runtime backend가 다르면 합쳐 정상 완료 �
 BEO 요청 spec만으로 확인할 수 없는 frozen 항목은 ‘조건 일부 미확인’으로 둔다.
 같은 class의 미측정 Node를 다른 Node profile로 채우지 않는다. `reuse`로 서버가 검증한 대상 Node만 재사용으로 표시한다.
 Node 필터가 없으면 class의 현재 Node 각각을 평가해 ‘완료 Node C/N’을 표시한다.
-일부 Node만 완료면 대표는 품질 경고(일부 측정)이고, 다른 Node를 완료로 칠하지 않는다.
+일부 Node 또는 요청 배치만 완료면 ‘부분 완료’이며 수치 품질 경고와 분리한다.
 CPU·dataset·이미지의 아직 요청되지 않은 무한 조합을 가상 분모로 만들지 않는다.
 여기서 variant 집합은 실제 BEO/Run/profile에 나타난 조건이며, 후보 셀 수와 variant 수는 별도다.
 
-**정적 지원 판정은 증거 상태와 분리한다.** 선택 셀의 model/path/class/Node에 한정해
-`GET /model-compatibility`를 Node별 직렬 조회하고 전력모드 사이 Query cache를 공유한다.
-`Compatible`·`Incompatible`·`Unknown`은 선택 패널의 현재 지원 확인으로만 표시한다.
-선택 때문에 같은 경로의 다른 전력모드 상태가 변하던 원인은 지원 조회 결과를 행렬 판정에
-다시 주입한 것이었다. 행렬은 선택과 독립된 선언/측정 목록으로 계산한다.
-현재 inventory UID와 응답 입력 UID/selection이 다르면 연결하지 않는다. 조회 시각은 따로 표시한다.
-실제 실행·Ready·전력모드 적격성·측정 완료·admission 성공을 보장하지 않는다.
-미조회/구형 서버에서는 artifact/class의 명시 architecture 비교와 ‘선언상 후보 · 실제 runtime
-지원 미확인’을 유지한다. accelerator/backend 이름별 브라우저 추측표는 제거했다.
-현재 정적 지원과 저장된 실행/근거 상태는 독립이며 Unknown/조회 오류가 이미 확인된 실패나
-완료를 덮지 않는다. 최종 측정 요청은 기존 dry-run/preflight를 그대로 통과해야 한다.
+**정적 지원 판정은 증거 상태와 분리한다.** 행렬 GET은 class별 이름순 첫 Node를 대표로
+B1 resolver를 재사용하며 대표 정적 판정만 분모에 반영한다. class 전체 Node 지원 보증은 아니다.
+선택 패널은 기존 `GET /model-compatibility`로 실제 선택 Node들을 별도 확인한다.
+선택 조회 결과를 행렬에 주입하지 않으므로 셀을 열거나 해당 조회가 실패해도 이웃 칸은 바뀌지 않는다.
+선언상 후보(artifact/class architecture)와 정적 실행 지원, 측정 상태를 각각 표시한다.
+대표와 다른 Node 필터, UID/선언 resourceVersion 불일치, 미조회는 지원 미확인이다.
+Node resourceVersion은 heartbeat로 달라질 수 있어 UID를 대조하며 원문 버전은 보존한다.
+브라우저 backend 추측표나 구형 서버용 선언 분모 fallback은 없다.
+실제 실행·Ready·전력모드 적격성·측정 완료·admission 성공은 보장하지 않으며 기존 preflight를 유지한다.
 
 **대표 상태는 아래 순서대로 계산하며 보조 사실을 지우지 않는다.**
 먼저 필수 목록 조회의 완전성과 identity 모순을 확인한다. 정적 불일치인데 해당 셀에 현재 증거가 있으면
@@ -436,17 +438,20 @@ CPU·dataset·이미지의 아직 요청되지 않은 무한 조합을 가상 �
 | 셀 상태 | 구체적인 판정 규칙 | 셀/패널에 남길 보조 사실 |
 |---|---|---|
 | **확인 불가** | 필요한 inventory/BEO/profiles 조회 실패·권한 거부·일부 page, identity 미확인, 선언 모순 또는 정적 판정 입력 불명 | 실패 API/조회 범위·readAt, 알려진 결과는 별도 표시. 403을 미측정/지원 안 함으로 바꾸지 않음 |
-| **지원 안 함** | artifact/class의 명시 architecture 불일치이고 측정 이력이 없음 | 사유와 양쪽 선언값, 해칭. 요청 CTA 비활성. 서버의 선택 조건 지원 판정은 패널에서 별도로 표시 |
+| **지원 안 함** | B1 행렬의 Incompatible 판정이고 측정 이력이 없음 | 대표 Node와 이유, 해칭. 측정 상태·선택 Node 지원과 구분 |
 | **품질 경고** | 사용 가능한 variant와 경고/미완료 variant가 섞임, Complete인데 연결 profile 없음, source insufficiency, 완료 Run의 검증·근거 누락, 실제 조회한 근거의 오류/404·수치 이상 | 실제로 조회한 해당 셀만 경고 cache에 기록해 개요에도 반영. 지원 확인 기능의 404는 측정 품질과 분리 |
+| **부분 완료** | 정확히 연결한 profile의 측정 배치가 요청 집합보다 적거나 class 일부 Node만 측정 | 배치 측정 n/m, 다른 Node 미측정. 수치 품질 경고와 별도 |
 | **측정 완료** | 현재 catalog가 exact variant의 profile을 제공하고 그 범위에 알려진 미해결 경고가 없음 | 에너지 측정 완료이며 CI·지연·반복·계측 품질의 논문용 검토는 별도 |
 | **진행 중** | 유효 profile/품질 경고가 없고 BEO `phase=Measuring` 또는 현재 generation Run `ExecutionComplete=Unknown` 등 명시된 비종결 진행 상태 | 이전 실패/대기 사유. 알 수 없는 phase를 진행으로 추측하지 않음 |
 | **실패** | 위 상태가 없고 BEO `phase=Failed` 또는 현재 Run `ExecutionComplete=False`가 명시됨 | reason/message와 후속 결과 링크. 실행 성공 뒤 검증 불충분은 품질 경고로 분리하고 원본 상태 유지 |
 | **미측정** | 선언상 후보이고 필요한 전 범위 목록에 해당 키의 BEO/profile/Run 이력이 없음. Run 전 범위 확인 전에는 ‘이력 확인 중’, 실패 시 확인 불가 | **‘측정 이력 없음 · 실행 지원 미확인’**. 정적 일치만으로 지원됨이라고 쓰지 않음 |
 위 규칙에 들지 않는 알 수 없는 phase·condition 조합의 기본값은 확인 불가다.
-전체 회차 조회 중에는 로딩만 표시한다. 조회 오류를 미측정으로 해석하거나 중간 수치를 확정 집계하지 않는다.
+전체 회차 조회 중에는 진행과 먼저 도착한 개요를 표시한다. 확정 카운터나 미측정 판정은 보류한다.
 
 과거 실패만 있고 후속 유효 profile이 있으면 대표는 완료, 보조는 ‘실패 이력·재측정됨’이다.
 유효 profile 뒤의 새 실패는 이전 증거를 지우지 않고 ‘사용 가능 결과 있음 · 최근 시도 실패’ 품질 경고다.
+실패 요약은 ‘실패 상태 N칸 / 현재 조건 실패 요청 M건 / 전체 이력 실패 요청 K건’으로 단위를
+명시한다. M/K는 요청 목록과 같은 `status.phase=Failed`이며 재측정 성공 이력도 빼지 않는다.
 완료 뒤 진행 중 요청은 ‘완료 · 재측정 진행’으로 병기한다. 경고가 없는 완료를 유지할 수 있는
 과거 이력과 현재 사용 조건의 경고를 구별한다. 조회하지 않은 Run 상태를 정상이라고 가정하지 않으며
 초기 완료는 ‘catalog 근거 기준’임을 명시하고 상세에서 새 경고가 발견되면 같은 cache의 판정을 갱신한다.
@@ -459,7 +464,7 @@ model/class/path/mode/targetNode/preprocessor/dataset/CPU request/quota/affinity
 이때 자동 ‘해결됨’/실패 숨김/완료율 가산을 하지 않는다. 이름 접두사/195→195b로 자동 연결하지 않는다.
 
 **셀 값·필터·패널.** 모델/class/Node/path/mode/status/CPU/배치 필터와 이름 검색을 URL에 보존한다.
-셀은 상태와 실제 배치 범위·측정 집합 내 최저 J/건만 간결하게 표시한다.
+셀은 상태, 최저값의 배치, 실제 측정 배치 집합과 요청 대비 수, 반복 수, CPU를 표시한다.
 최저값은 최적 조건 추천이 아니며 정확 조건별 수치는 패널에서 구별한다.
 미측정/실패 셀에는 ‘이 조건으로 측정 요청’을 바로 제공한다. 요청 수와 회차 수는 패널에서 구분한다.
 패널은 Node/조건 선택 → 배치 표·에너지 곡선(제공된 오차만) → 실패/제외/후속 이력 →
@@ -473,14 +478,14 @@ GET 확인: `u2-o-15w-m-beo-195/result`는 200, 정확 active 회차의
 
 **클라이언트 집계와 상한.** 현재 88 BEO/78 profiles는 Map 조인으로 충분하다.
 inventory·BEO·profiles는 독립 Query cache, 새로 고침 취소/인증 변경 cache 초기화는 기존 계약을 쓴다.
-Run 전체 페이지는 첫 미측정 확정/선택 이력에서 지연 조회하고 동일 namespace cache로 재사용한다.
+Run 전체 페이지는 진입 시 다른 목록과 병렬 조회하고 동일 namespace cache로 재사용한다.
 1155 Run/200은 최대 여섯 페이지 규모다. 개별 셀마다 전체 목록을 다시 받지 않으며 모든 Passport를 fan-out하지 않는다.
 선택 Result와 정확 참조 Run Passport만 요청한다. 자동 retry/focus refetch를 새로 켜지 않는다.
 목록을 주기적으로 통째 재집계하는 새 polling을 추가하지 않고 기존 수동 갱신과 명시된 진행 갱신만 쓴다.
 
 F4는 [측정 API §12](../serving/measurement-api.md#12-대시보드-측정-api-보강-계약-b0-2026-10-30)의
 호환성 GET와 기존 응답의 optional owner/statistics/비용 필드를 소비한다.
-별도 coverage endpoint·지원 registry·통계 알고리즘·전체 셀 통계 fan-out은 추가하지 않는다.
+정적 지원 행렬 GET 외 별도 coverage 집계 endpoint·지원 registry·통계 알고리즘·전체 셀 통계 fan-out은 추가하지 않는다.
 
 ### 8.4 요청 prefill과 목록·그룹
 
@@ -537,7 +542,7 @@ owner 기록이 없는 과거 요청은 이름으로 추정하지 않고 요청 
 UI/UX Pro Max `error message actionable`의 Error Messages 규칙을 채택하여 오류를 `role=alert`로 알린다.
 요청 목록은 모델/장치·Node/경로·전력모드/배치·상태·생성일 5열로 묶고 개별 축 정렬은 별도 선택으로 유지한다.
 상태는 완료/측정 중/실패로 짧게 구분하고 완료의 근거 주의는 목록에서 한 번만 안내한다.
-측정 상세·회차·비용 화면에서도 측정 서브 내비를 유지하며 삭제 진입부터 위험색 버튼과 영구 삭제 설명을 쓴다.
+측정 화면의 7개 필 탭은 label 있는 단일 native select로 축소한다. breadcrumb가 있는 화면은 중복 뒤로 링크를 숨긴다. 삭제는 별도 ‘위험 영역’에 둔다.
 
 | 표시할 값 | 실제 제공 필드 / 정직한 대안 |
 |---|---|
@@ -554,12 +559,20 @@ UI/UX Pro Max `error message actionable`의 Error Messages 규칙을 채택하�
 통계 원근거 기록 없음, CI·통합 p95 기록 없음이며 권한/transport 오류와 구별한다.
 커버리지는 선택 Result만 읽고 catalog 표에는 같은 store/key 결과 참조인 경우만 통계를 연결한다.
 
-소수 둘째 자리 고정 대신 3~4 유효숫자(에너지 기본 4)를 쓰되 0.09261/0.08682 J처럼 차이가 보이게 한다.
+공통 `lib/measurements.ts`가 3자리 유효숫자, ns→ms/s, Asia/Seoul KST 주표기를 소유한다. UTC와 정확 원값은 tooltip·원본 자료에 보존한다.
 회차 지연은 ms, 전력 W, 에너지 J/건. 반복 수와 **지연 표본 수 N은 다른 수**다.
-CI를 제공하는 원본만 신뢰 수준과 종류를 표시한다. CI 겹침만으로 ‘유의하지 않음’/유의함을 판정하지 않는다.
+CI를 제공하는 원본만 신뢰 수준과 종류를 표시한다. 배치 막대에 CI 오차막대를 함께 그리며 겹치면 ‘이 근거만으로 차이 주장 불가’를 표시한다. 이는 유의성 검정 결과가 아니다.
 단일 배치면 ‘배치 1 측정 결과 · 다른 배치와 비교하지 않았어요’,
 여러 배치면 ‘측정한 배치 {…} 중 에너지 평균이 가장 낮은 배치’다.
 지연 표본 count=1은 ‘꼬리 지연을 판단하기에 표본이 부족해요’이며 반복 1회와 혼동하지 않는다.
+
+**3차 설문 R3 결정.** 헤드라인은 전체 배치의 평균이 아니라 ‘측정 배치 중 최저 에너지 (배치 n)’다. 명시 요청 배치 대비 결과 누락은 녹색 완료 대신 ‘부분 완료 n/m’이다.
+‘논문 사용 전 확인’ 한 곳에 반복 수·CI·요청 배치 충족·전력 계측 표본/최대 간격·노드 전체 전력·원본 timestamp를 모은다. 계측 항목은 정확 UID의 대표 부하 Passport 1건만 추가 조회하고 대표 범위/누락을 명시한다.
+후속 결과의 동일 조건 판정은 표시용 조건 diff와 같은 필드 집합을 쓴다. CPU·배치·반복·protocol 등의 차이를 `이전 → 이후`로 표시하고 이름으로 연결하지 않는다.
+동작 비용·분배 점유·프로파일은 한국어 실패 요약과 사유 원문 펼침을 분리하고, S3 store/key와 CR 식별자는 ‘근거 위치’/원본 펼침 안에 둔다. M5 서비스는 모델별로 그룹화한다.
+표는 aria-sort와 24px 이상 링크(모바일 44px)를 제공하고 명시 label/id를 사용한다.
+도구 근거: ui-ux-pro-max `"confidence interval" --domain chart`의 ‘이름 있는 불확실성 범위와 수치 대안’ 원칙을 채택했다. 결과는 시계열 예측용이므로 차트 종류는 미채택, 기존 배치 막대와 CI 수치 표를 유지한다.
+
 
 **실패 Passport의 원인과 처리.** `kube/evidence_passport_query.go:61-76`은
 Run의 `status.evidence=nil`에서 `verified evidence is not available`을 반환하고,
