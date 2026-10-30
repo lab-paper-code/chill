@@ -591,10 +591,12 @@ func TestCatalogAcceptsHistoricalRunConfigWithoutDurationTolerance(t *testing.T)
 	config.CPU.ORTIntraOpThreads = 2
 	config.CPU.AffinityCPUs = []int{0, 1}
 	config.Measurement.DurationToleranceSeconds = 0
-	run.Spec.Measurement.DurationToleranceSeconds = nil
+	defaulted := .5
+	run.Spec.Measurement.DurationToleranceSeconds = &defaulted // CRD default applied on read
 	if err := validateCatalogRunConfig(run, config); err != nil && strings.Contains(err.Error(), "Run protocol") {
 		t.Fatalf("historical zero tolerance rejected: %v", err)
 	}
+	config.Measurement.DurationToleranceSeconds = .5
 	explicit := .3
 	run.Spec.Measurement.DurationToleranceSeconds = &explicit
 	if err := validateCatalogRunConfig(run, config); err == nil || !strings.Contains(err.Error(), "Run protocol") {
