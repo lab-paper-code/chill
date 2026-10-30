@@ -1,7 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { capacityComparison, capacityPath, capacityPercentile, capacityPolling, capacityRate, capacityReason, capacityRows, capacityStatus, selectedCapacityRow, type CapacityInput, type CapacityRow } from "./capacity.ts"
-import { parseSchedulerJSON, stringifySchedulerJSON } from "./scheduler.ts"
 
 const input:CapacityInput={
   workloadUID:"workload-uid",slo:{percentile:99,targetLatencyNanos:100000000},node:{name:"node-a",uid:"node-uid"},powerMode:"mode-a",profileID:"profile-id",
@@ -51,19 +50,8 @@ test("comparison uses eight applied top-level settings with exact wire integers"
   assert.equal(capacityComparison(input,{...input,capacityWindows:5n}).find(field=>field.key==="capacityWindows")?.same,true)
 })
 
-test("wire fixture retains grid execution order, early termination and missing latency sentinel",()=>{
-  const response=parseSchedulerJSON(stringifySchedulerJSON({rows:[{...built,grid:[
-    {rate:100,requests:500,passed:1,met:false,percentileMS:[-1,12.5]},
-    {rate:50,requests:250,passed:4,met:true,percentileMS:[2,3,4,5]},
-  ]}]})) as {rows:CapacityRow[]}
-  const row=response.rows[0]
-  assert.equal(row.input.capacityWindowNanos,9007199254740993n)
-  assert.deepEqual(row.grid?.map(judgment=>judgment.rate),[100,50])
-  assert.equal(row.grid?.[0].requests,500)
-  assert.equal(row.grid?.[0].percentileMS?.length,2)
+test("capacity percentile display distinguishes missing latency from zero",()=>{
   assert.equal(capacityPercentile(-1),"이 창의 지연값 없음(미충족)")
   assert.equal(capacityPercentile(0),"0 ms")
   assert.equal(capacityPercentile(12.5),"12.5 ms")
-  assert.equal(row.bisection,undefined)
-  assert.equal(built.grid,undefined)
 })

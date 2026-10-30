@@ -58,6 +58,7 @@ export function SchedulerCapacityPage() {
   const settings=useChillQuery<SchedulerSettings>("v1/scheduler/settings",{decoder:parseSchedulerJSON})
   const workload=params.get("workload")??"",key=params.get("row")??"",all=query.data?.rows??[],rows=capacityRows(all,workload),selected=selectedCapacityRow(rows,key)
   const opener=React.useRef<HTMLElement|null>(null),launchers=React.useRef(new Map<string,HTMLButtonElement>()),closingKey=React.useRef(key)
+  const dialogTitle=React.useRef<HTMLHeadingElement|null>(null)
   const [filterOpen,setFilterOpen]=React.useState(false)
   const workloads=Array.from(new Set(all.map(row=>row.input.workloadUID)))
   const exportValue={source:"v1/scheduler/capacity",workload,rowKey:key,capacityReadAt:query.dataUpdatedAt,settingsReadAt:settings.dataUpdatedAt,response:query.data,settings:settings.error?undefined:settings.data}
@@ -79,8 +80,8 @@ export function SchedulerCapacityPage() {
       <Rows><RowDialog label="자료 내보내기" title="현재 용량 응답 내보내기"><SourceExport value={exportValue} filename="chill-scheduler-capacity.json"/><SourceJSON inline value={query.data}/></RowDialog></Rows>
     </>}</QueryGate>
     <Dialog open={params.has("row")} onOpenChange={open=>{if(!open){closingKey.current=key;router.replace(capacityPath(workload),{scroll:false})}}}>
-      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-5xl" onCloseAutoFocus={event=>{event.preventDefault();const launcher=launchers.current.get(closingKey.current);if(launcher?.isConnected)launcher.focus();else if(opener.current?.isConnected)opener.current.focus();else{const heading=document.querySelector<HTMLElement>(".screen-head h1");if(heading){heading.tabIndex=-1;heading.focus()}}}}>
-        <DialogHeader><DialogTitle>용량 행의 계산 근거</DialogTitle><DialogDescription>선택한 key의 현재 제공 여부를 확인해요. 다른 행으로 대체하지 않아요.</DialogDescription></DialogHeader>
+      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-5xl" onOpenAutoFocus={event=>{event.preventDefault();dialogTitle.current?.focus()}} onCloseAutoFocus={event=>{event.preventDefault();const launcher=launchers.current.get(closingKey.current);if(launcher?.isConnected)launcher.focus();else if(opener.current?.isConnected)opener.current.focus();else{const heading=document.querySelector<HTMLElement>(".screen-head h1");if(heading){heading.tabIndex=-1;heading.focus()}}}}>
+        <DialogHeader><DialogTitle ref={dialogTitle} tabIndex={-1}>용량 행의 계산 근거</DialogTitle><DialogDescription>선택한 key의 현재 제공 여부를 확인해요. 다른 행으로 대체하지 않아요.</DialogDescription></DialogHeader>
         <QueryGate query={query}>{query.data&&(selected?<><CapacityDetails row={selected} settings={settings} capacityAt={query.dataUpdatedAt}/><SourceExport value={exportValue} filename="chill-capacity-row.json"/></>:<Empty title="이 용량 행을 찾을 수 없어요. 현재 계산 대상에서 빠졌을 수 있어요."><Rows><Row href={capacityPath()} label="전체 용량 목록 보기"/></Rows></Empty>)}</QueryGate>
       </DialogContent>
     </Dialog>
