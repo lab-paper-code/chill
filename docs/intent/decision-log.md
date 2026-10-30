@@ -633,3 +633,8 @@
 
 - 보고서 `960d5308`(docs/reports/e5-evaluation-20261030.md). 과제1 `94a32e9a`(CloudCore는 외부 Helm release; 라이브 nodeName은 Helm manifest와 drift → 수동 절차·승인 경계 기록; 디스크 규칙·PodGC 권고). 과제2 `e8344b20`(분리 코드 28파일 −6,095줄, T5 live 보존, arch 65/65). 리뷰 배포 가능, clean lint/test/arch/helm PASS. Docker build cache prune → 여유 375G.
 - 과제3 착수: evidence API §0 publication 계약.
+
+## 2026-10-30 — 과제3 코드 완료(배포 전)
+
+- evidence API: §0 `8c6bef14`, 문서 `e699801c`, 구현 cluster `c355e3cd`/resources `2d18dcee`/raw+meters+통합 `85a9cab3`, gate 수정 `94a7a4d4`, e5 self-check 순서 `0a0c6f6c`/`13cf431f`, 리뷰 P2(cgroup 호스트 mount 해석) `a01adb12`. clean lint/test/arch/helm PASS, push.
+- 미완(계획 §4): 배포(RBAC `/raw`·node-agent 수신 + 대시보드 계획 §4를 한 번의 승인 배포로), 하네스 전환(§2 표)과 리허설 1회 — 과제4 S1/S2 뒤 사용자 승인 배포에서 함께.
