@@ -143,7 +143,7 @@ func assessOperationCost(
 	cr api.OperationCostMeasurement, steps []servingkube.OperationStepProjection,
 ) operatorconsole.MeasurementAssessment {
 	input := operatorconsole.MeasurementAssessmentInput{
-		Execution: &operatorconsole.MeasurementExecution{Phase: string(cr.Status.Phase), Generation: cr.Generation},
+		Execution:        &operatorconsole.MeasurementExecution{Phase: string(cr.Status.Phase), Generation: cr.Generation},
 		ExecutionCurrent: true, Attempted: true,
 	}
 	if cr.Status.Reason != "" {
@@ -182,7 +182,7 @@ func (o *measurementService) projectDispatchOccupancy(
 ) (httpapi.MeasurementProjection, error) {
 	projection := httpapi.ProjectDispatchOccupancyMeasurement(cr)
 	input := operatorconsole.MeasurementAssessmentInput{
-		Execution: &operatorconsole.MeasurementExecution{Phase: string(cr.Status.Phase), Generation: cr.Generation},
+		Execution:        &operatorconsole.MeasurementExecution{Phase: string(cr.Status.Phase), Generation: cr.Generation},
 		ExecutionCurrent: true, Attempted: true,
 		Facts: []string{"DispatchOccupancyMeasurement has immutable spec and no observedGeneration status field"},
 	}
@@ -227,8 +227,8 @@ func (o *measurementService) projectDispatchOccupancy(
 		}
 		if record.PerRequestNanos < 0 || math.IsNaN(record.Throughput) || math.IsInf(record.Throughput, 0) {
 			input.Problems = append(input.Problems, operatorconsole.MeasurementReason{
-				Code: "OccupancyValueProblem",
-				Message: "Signed negative d or nonfinite throughput requires review; stored values and verdict are unchanged",
+				Code:      "OccupancyValueProblem",
+				Message:   "Signed negative d or nonfinite throughput requires review; stored values and verdict are unchanged",
 				SourceIDs: []string{ref.Key},
 			})
 		}

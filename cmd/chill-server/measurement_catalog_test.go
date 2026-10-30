@@ -138,7 +138,7 @@ func newMeasurementCatalogSourceServer(t *testing.T, sourceFailed *atomic.Bool) 
 			}
 			body = api.BatchEnergyOptimizationList{
 				TypeMeta: meta.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "BatchEnergyOptimizationList"},
-				Items: []api.BatchEnergyOptimization{},
+				Items:    []api.BatchEnergyOptimization{},
 			}
 		default:
 			http.NotFound(w, r)

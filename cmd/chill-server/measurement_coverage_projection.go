@@ -31,33 +31,85 @@ func coverageReason(code, message string) operatorconsole.MeasurementReason {
 	return operatorconsole.MeasurementReason{Code: code, Message: message, SourceIDs: []string{}}
 }
 
-func buildMeasurementCoverage(base *measurementCoverageBase, namespace string, query httpapi.MeasurementCoverageQuery) operatorconsole.MeasurementCoverageResponse {
+type coverageProjection struct {
+	base      *measurementCoverageBase
+	namespace string
+	query     httpapi.MeasurementCoverageQuery
+	out       operatorconsole.MeasurementCoverageResponse
+	indices   map[string]int
+	owners    map[string][]api.ProfilingRun
+	profiles  map[string][]serving.Profile
+	adopted   map[string]bool
+}
+
+func buildMeasurementCoverage(
+	base *measurementCoverageBase, namespace string, query httpapi.MeasurementCoverageQuery,
+) operatorconsole.MeasurementCoverageResponse {
+	p := coverageProjection{base: base, namespace: namespace, query: query}
+	p.initialize()
+	p.addSources()
+	p.addCells()
+	p.indexEvidence()
+	for _, task := range base.requests.Items {
+		p.addRequest(task)
+	}
+	p.addRuns()
+	for i := range p.out.Cells {
+		p.assessCell(&p.out.Cells[i])
+	}
+	coverageSummarize(&p.out, base)
+	return p.out
+}
+
+func (p *coverageProjection) initialize() {
 	basis, supportBasis := "requested", "representative-node-static"
-	if len(query.Batches) > 0 {
+	if len(p.query.Batches) > 0 {
 		basis = "explicit"
 	}
-	if query.Node != "" {
+	if p.query.Node != "" {
 		supportBasis = "selected-node-static"
 	}
-	out := operatorconsole.MeasurementCoverageResponse{SchemaVersion: "measurement-coverage.v1", AssessmentVersion: "result-checklist.v1", SnapshotID: namespace + "/" + base.catalog.Revision + "/" + base.requests.ResourceVersion + "/" + base.runs.ResourceVersion, DataAsOf: base.oldest().UTC().Format(time.RFC3339Nano), Freshness: "fresh", Completeness: "complete",
-		Scope: operatorconsole.MeasurementCoverageScope{Namespace: namespace, SupportBasis: supportBasis, GoalBasis: basis, TargetBatches: append([]int{}, query.Batches...)}, Sources: []operatorconsole.MeasurementCoverageSource{}, Groups: []operatorconsole.MeasurementCoverageGroup{}, Cells: []operatorconsole.MeasurementCoverageCell{}, NextActions: []operatorconsole.MeasurementNextAction{},
-		Entities: operatorconsole.MeasurementCoverageEntities{Requests: []operatorconsole.MeasurementEntity{}, Profiles: []operatorconsole.MeasurementEntity{}, Runs: []operatorconsole.MeasurementRunEntity{}}}
-	if time.Since(base.oldest()) > 30*time.Second || len(base.failures) > 0 {
-		out.Freshness = "stale"
+	p.out = operatorconsole.MeasurementCoverageResponse{
+		SchemaVersion: "measurement-coverage.v1", AssessmentVersion: "result-checklist.v1",
+		SnapshotID: p.namespace + "/" + p.base.catalog.Revision + "/" +
+			p.base.requests.ResourceVersion + "/" + p.base.runs.ResourceVersion,
+		DataAsOf:  p.base.oldest().UTC().Format(time.RFC3339Nano),
+		Freshness: "fresh", Completeness: operatorconsole.MeasurementComplete,
+		Scope: operatorconsole.MeasurementCoverageScope{
+			Namespace: p.namespace, SupportBasis: supportBasis, GoalBasis: basis,
+			TargetBatches: append([]int{}, p.query.Batches...),
+		},
+		Sources: []operatorconsole.MeasurementCoverageSource{}, Groups: []operatorconsole.MeasurementCoverageGroup{},
+		Cells: []operatorconsole.MeasurementCoverageCell{}, NextActions: []operatorconsole.MeasurementNextAction{},
+		Entities: operatorconsole.MeasurementCoverageEntities{
+			Requests: []operatorconsole.MeasurementEntity{}, Profiles: []operatorconsole.MeasurementEntity{},
+			Runs: []operatorconsole.MeasurementRunEntity{},
+		},
 	}
+	if time.Since(p.base.oldest()) > 30*time.Second || len(p.base.failures) > 0 {
+		p.out.Freshness = "stale"
+	}
+}
+
+func (p *coverageProjection) addSources() {
 	for _, kind := range []string{"inventory", "compatibility", "catalog", "BEO", "Run"} {
-		source := operatorconsole.MeasurementCoverageSource{Kind: kind, ResourceVersions: []string{}, Complete: true}
+		source := operatorconsole.MeasurementCoverageSource{
+			Kind: kind, ResourceVersions: []string{}, Complete: true,
+		}
 		switch kind {
 		case "inventory":
-			source.ResourceVersions = []string{base.inventory.ModelSpecsResourceVersion, base.inventory.DeviceClassesResourceVersion, base.inventory.NodesResourceVersion}
+			source.ResourceVersions = []string{
+				p.base.inventory.ModelSpecsResourceVersion, p.base.inventory.DeviceClassesResourceVersion,
+				p.base.inventory.NodesResourceVersion,
+			}
 		case "catalog":
-			source.ResourceVersions = []string{base.catalog.Revision}
+			source.ResourceVersions = []string{p.base.catalog.Revision}
 		case "BEO":
-			source.ResourceVersions = []string{base.requests.ResourceVersion}
+			source.ResourceVersions = []string{p.base.requests.ResourceVersion}
 		case "Run":
-			source.ResourceVersions = []string{base.runs.ResourceVersion}
+			source.ResourceVersions = []string{p.base.runs.ResourceVersion}
 		case "compatibility":
-			for _, row := range base.compatibility.NodeRows {
+			for _, row := range p.base.compatibility.NodeRows {
 				if row.Inputs.RuntimeDeclaration != nil {
 					source.ResourceVersions = append(source.ResourceVersions, row.Inputs.RuntimeDeclaration.ResourceVersion)
 				}
@@ -65,290 +117,415 @@ func buildMeasurementCoverage(base *measurementCoverageBase, namespace string, q
 			slices.Sort(source.ResourceVersions)
 			source.ResourceVersions = slices.Compact(source.ResourceVersions)
 		}
-		if err := base.failures[kind]; err != nil {
+		if p.base.failures[kind] != nil {
 			source.Complete = false
-			source.Error = &operatorconsole.MeasurementCoverageSourceError{Code: "SourceUnavailable", Message: "입력 갱신 실패: " + kind, Retryable: true}
-			out.Completeness = "partial"
+			source.Error = &operatorconsole.MeasurementCoverageSourceError{
+				Code: "SourceUnavailable", Message: "입력 갱신 실패: " + kind, Retryable: true,
+			}
+			p.out.Completeness = operatorconsole.MeasurementPartial
 		}
-		out.Sources = append(out.Sources, source)
+		p.out.Sources = append(p.out.Sources, source)
 	}
+}
+
+func (p *coverageProjection) supportIndex() map[string]operatorconsole.ModelCompatibilityView {
 	support := map[string]operatorconsole.ModelCompatibilityView{}
-	rows := base.compatibility.Rows
-	if query.Node != "" {
-		rows = base.compatibility.NodeRows
+	rows := p.base.compatibility.Rows
+	if p.query.Node != "" {
+		rows = p.base.compatibility.NodeRows
 	}
 	for _, row := range rows {
-		if query.Node == "" || row.Selection.Node == query.Node {
-			support[strings.Join([]string{row.Selection.ModelSpec, row.Selection.DeviceClass, row.Selection.ExecutionPath}, "/")] = row
+		if p.query.Node == "" || row.Selection.Node == p.query.Node {
+			key := strings.Join([]string{
+				row.Selection.ModelSpec, row.Selection.DeviceClass, row.Selection.ExecutionPath,
+			}, "/")
+			support[key] = row
 		}
 	}
-	classes := append([]operatorconsole.InventoryClassView{}, base.inventory.Classes...)
+	return support
+}
+
+func (p *coverageProjection) addCells() {
+	support := p.supportIndex()
+	classes := append([]operatorconsole.InventoryClassView{}, p.base.inventory.Classes...)
 	slices.SortFunc(classes, func(a, b operatorconsole.InventoryClassView) int { return strings.Compare(a.Name, b.Name) })
-	models := append([]operatorconsole.InventoryModelView{}, base.inventory.Models...)
+	models := append([]operatorconsole.InventoryModelView{}, p.base.inventory.Models...)
 	slices.SortFunc(models, func(a, b operatorconsole.InventoryModelView) int { return strings.Compare(a.Name, b.Name) })
-	indices := map[string]int{}
+	p.indices = map[string]int{}
 	for _, model := range models {
 		for _, class := range classes {
-			if query.Node != "" && !slices.ContainsFunc(class.Nodes, func(node operatorconsole.InventoryNodeView) bool { return node.Name == query.Node }) {
+			matches := slices.ContainsFunc(class.Nodes, func(node operatorconsole.InventoryNodeView) bool {
+				return node.Name == p.query.Node
+			})
+			if p.query.Node != "" && !matches {
 				continue
 			}
-			group := operatorconsole.MeasurementCoverageGroup{Model: operatorconsole.MeasurementIdentity{Name: model.Name, UID: model.UID}, DeviceClass: operatorconsole.MeasurementIdentity{Name: class.Name, UID: class.UID}, CellIDs: []string{}, Supported: ptr.To(0)}
+			group := operatorconsole.MeasurementCoverageGroup{
+				Model:       operatorconsole.MeasurementIdentity{Name: model.Name, UID: model.UID},
+				DeviceClass: operatorconsole.MeasurementIdentity{Name: class.Name, UID: class.UID},
+				CellIDs:     []string{}, Supported: ptr.To(0),
+			}
 			for _, path := range model.Spec.ExecutionPaths {
 				for _, mode := range class.PowerModes {
-					id := coverageCellID(model.Name, class.Name, path.Name, mode.Name)
-					cell := operatorconsole.MeasurementCoverageCell{ID: id, Model: group.Model, DeviceClass: group.DeviceClass, ExecutionPath: path.Name, PowerMode: mode.Name, Variants: []operatorconsole.MeasurementCoverageVariant{}, FailureSummary: []operatorconsole.MeasurementFailure{}, History: []operatorconsole.MeasurementHistory{}, Support: operatorconsole.MeasurementSupport{Verdict: "Unknown", Reasons: []operatorconsole.ModelCompatibilityReason{}}}
-					if row, found := support[strings.Join([]string{model.Name, class.Name, path.Name}, "/")]; found {
-						cell.Support.Verdict = row.Verdict
-						cell.Support.Reasons = row.Reasons
-						if row.Inputs.Node.Name != "" {
-							cell.Support.Node = &operatorconsole.MeasurementIdentity{Name: row.Inputs.Node.Name, UID: row.Inputs.Node.UID}
-						}
-					} else {
-						cell.Support.Reasons = append(cell.Support.Reasons, operatorconsole.ModelCompatibilityReason{Kind: "Unknown", Code: "SupportInputMissing", Message: "선택 Node의 지원 입력을 확인할 수 없습니다"})
-					}
-					indices[id] = len(out.Cells)
-					out.Cells = append(out.Cells, cell)
-					group.CellIDs = append(group.CellIDs, id)
+					cell := coverageNewCell(group, path.Name, mode.Name, support)
+					p.indices[cell.ID] = len(p.out.Cells)
+					p.out.Cells = append(p.out.Cells, cell)
+					group.CellIDs = append(group.CellIDs, cell.ID)
 				}
 			}
-			out.Groups = append(out.Groups, group)
+			p.out.Groups = append(p.out.Groups, group)
 		}
 	}
-	// Owner UID is the only run-to-request join; labels are not ownership proof.
+}
+
+func coverageNewCell(
+	group operatorconsole.MeasurementCoverageGroup, path, mode string,
+	support map[string]operatorconsole.ModelCompatibilityView,
+) operatorconsole.MeasurementCoverageCell {
+	cell := operatorconsole.MeasurementCoverageCell{
+		ID:    coverageCellID(group.Model.Name, group.DeviceClass.Name, path, mode),
+		Model: group.Model, DeviceClass: group.DeviceClass, ExecutionPath: path, PowerMode: mode,
+		Variants: []operatorconsole.MeasurementCoverageVariant{}, FailureSummary: []operatorconsole.MeasurementFailure{},
+		History: []operatorconsole.MeasurementHistory{},
+		Support: operatorconsole.MeasurementSupport{Verdict: operatorconsole.MeasurementSupportUnknown, Reasons: []operatorconsole.ModelCompatibilityReason{}},
+	}
+	row, found := support[strings.Join([]string{group.Model.Name, group.DeviceClass.Name, path}, "/")]
+	if !found {
+		cell.Support.Reasons = append(cell.Support.Reasons, operatorconsole.ModelCompatibilityReason{
+			Kind: operatorconsole.MeasurementSupportUnknown, Code: "SupportInputMissing", Message: "선택 Node의 지원 입력을 확인할 수 없습니다",
+		})
+		return cell
+	}
+	cell.Support.Verdict, cell.Support.Reasons = row.Verdict, row.Reasons
+	if row.Inputs.Node.Name != "" {
+		cell.Support.Node = &operatorconsole.MeasurementIdentity{Name: row.Inputs.Node.Name, UID: row.Inputs.Node.UID}
+	}
+	return cell
+}
+
+func (p *coverageProjection) indexEvidence() {
+	p.owners = coverageOwnedRuns(p.base)
+	p.profiles = map[string][]serving.Profile{}
+	p.adopted = map[string]bool{}
+	for _, profile := range p.base.catalog.Profiles {
+		if facts, ok := p.base.catalog.MeasurementFacts[profile.ID]; ok {
+			id := facts.Request.Namespace + "/" + facts.Request.Name + "/" + facts.Request.UID
+			p.profiles[id] = append(p.profiles[id], profile)
+		}
+		p.adopted[profile.ID] = p.base.adopted == nil || p.base.adopted[profile.ID]
+	}
+	// Verified superseded facts remain measurable, not currently adopted inputs.
+	ids := make([]string, 0, len(p.base.catalog.MeasurementFacts))
+	for id := range p.base.catalog.MeasurementFacts {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		facts := p.base.catalog.MeasurementFacts[id]
+		requestID := facts.Request.Namespace + "/" + facts.Request.Name + "/" + facts.Request.UID
+		if facts.Request.Namespace != p.namespace || len(p.profiles[requestID]) > 0 {
+			continue
+		}
+		p.profiles[requestID] = []serving.Profile{{
+			ID: id, Condition: facts.Condition, NodeName: facts.Condition.MetricSource.NodeName,
+		}}
+	}
+}
+
+func coverageOwnedRuns(base *measurementCoverageBase) map[string][]api.ProfilingRun {
 	owners := map[string][]api.ProfilingRun{}
-	nativeRequests := map[string]api.BatchEnergyOptimization{}
+	requests := map[string]api.BatchEnergyOptimization{}
 	for _, task := range base.requests.Items {
-		nativeRequests[string(task.UID)] = task
+		requests[string(task.UID)] = task
 	}
 	for _, run := range base.runs.Items {
 		for _, owner := range run.OwnerReferences {
-			task, exists := nativeRequests[string(owner.UID)]
-			if exists && run.Namespace == task.Namespace && owner.Name == task.Name && owner.Controller != nil && *owner.Controller && owner.APIVersion == api.GroupVersion.String() && owner.Kind == "BatchEnergyOptimization" {
+			task, exists := requests[string(owner.UID)]
+			if !exists || run.Namespace != task.Namespace || owner.Name != task.Name {
+				continue
+			}
+			if owner.Controller == nil || !*owner.Controller || owner.APIVersion != api.GroupVersion.String() {
+				continue
+			}
+			if owner.Kind == "BatchEnergyOptimization" {
 				owners[string(owner.UID)] = append(owners[string(owner.UID)], run)
 				break
 			}
 		}
 	}
-	profileByRequest := map[string][]serving.Profile{}
-	for _, profile := range base.catalog.Profiles {
-		if facts, ok := base.catalog.MeasurementFacts[profile.ID]; ok {
-			profileByRequest[facts.Request.Namespace+"/"+facts.Request.Name+"/"+facts.Request.UID] = append(profileByRequest[facts.Request.Namespace+"/"+facts.Request.Name+"/"+facts.Request.UID], profile)
+	return owners
+}
+
+func (p *coverageProjection) addRequest(task api.BatchEnergyOptimization) {
+	if p.query.Node != "" && task.Spec.State.TargetNode != p.query.Node {
+		return
+	}
+	candidate := task.Spec.State.Candidate
+	id := coverageCellID(candidate.ModelSpec, candidate.DeviceClass, candidate.ExecutionPath, candidate.PowerMode)
+	index, exists := p.indices[id]
+	requestID := coverageRequestID(task)
+	assessment := assessMeasurementRequest(task, p.base.catalog)
+	if assessment.Evidence.Accepted {
+		used := false
+		for _, profile := range p.profiles[requestID] {
+			used = used || p.adopted[profile.ID]
+		}
+		assessment.Scope.SchedulerUsed = &used
+		if !used {
+			assessment.Scope.Facts = append(assessment.Scope.Facts, "현재 스케줄러 미사용")
 		}
 	}
-	adopted := map[string]bool{}
-	for _, profile := range base.catalog.Profiles {
-		adopted[profile.ID] = base.adopted == nil || base.adopted[profile.ID]
+	cellIDs := []string{}
+	if exists {
+		cellIDs = append(cellIDs, id)
 	}
-	// Facts from normally superseded profiles remain valid measurements, but
-	// are not presented as currently selected scheduler inputs.
-	factIDs := make([]string, 0, len(base.catalog.MeasurementFacts))
-	for id := range base.catalog.MeasurementFacts {
-		factIDs = append(factIDs, id)
+	p.out.Entities.Requests = append(p.out.Entities.Requests, operatorconsole.MeasurementEntity{
+		UID: string(task.UID), ID: requestID, Assessment: assessment, CellIDs: cellIDs,
+	})
+	if !exists {
+		return
 	}
-	slices.Sort(factIDs)
-	for _, id := range factIDs {
-		facts := base.catalog.MeasurementFacts[id]
-		requestID := facts.Request.Namespace + "/" + facts.Request.Name + "/" + facts.Request.UID
-		if facts.Request.Namespace != namespace || len(profileByRequest[requestID]) > 0 {
+	cell := &p.out.Cells[index]
+	cell.History = append(cell.History, operatorconsole.MeasurementHistory{
+		RequestID: requestID, Status: assessment.Status,
+	})
+	if len(p.profiles[requestID]) == 0 {
+		p.addPlannedVariant(cell, task, assessment)
+	}
+	for _, profile := range p.profiles[requestID] {
+		p.addProfile(cell, task, profile)
+	}
+	p.addFailures(cell, task, assessment)
+}
+
+func (p *coverageProjection) addPlannedVariant(
+	cell *operatorconsole.MeasurementCoverageCell, task api.BatchEnergyOptimization,
+	assessment operatorconsole.MeasurementAssessment,
+) {
+	variant := coverageFindVariant(cell, operatorconsole.MeasurementVariantID(task.Spec), task.Spec, p.out.Scope.GoalBasis)
+	variant.RequestIDs = append(variant.RequestIDs, coverageRequestID(task))
+	if variant.Assessment.Status == "" || assessment.DisplayStatus == operatorconsole.MeasurementProblem ||
+		assessment.Status == operatorconsole.MeasurementRunning {
+		variant.Assessment = assessment
+	}
+	variant.Assessment.Reasons = append(variant.Assessment.Reasons, coverageReason(
+		"PlannedConditionUnconfirmed", "요청 spec만 확인했으며 동결 실행 조건의 중복 여부는 검사에서 확인해야 합니다",
+	))
+	targets := make([]int, 0, len(task.Spec.BatchSizes))
+	for _, batch := range task.Spec.BatchSizes {
+		targets = append(targets, int(batch))
+	}
+	variant.BatchProgress.Target = coverageBatches(append(variant.BatchProgress.Target, targets...))
+	for _, run := range p.owners[string(task.UID)] {
+		variant.RunIDs = append(variant.RunIDs, string(run.UID))
+	}
+}
+
+func (p *coverageProjection) addProfile(
+	cell *operatorconsole.MeasurementCoverageCell, task api.BatchEnergyOptimization, profile serving.Profile,
+) {
+	facts := p.base.catalog.MeasurementFacts[profile.ID]
+	variant := coverageFindVariant(cell, operatorconsole.MeasurementVariantID(facts.Condition),
+		facts.Condition, p.out.Scope.GoalBasis)
+	variant.RequestIDs = append(variant.RequestIDs, coverageRequestID(task))
+	variant.ProfileIDs = append(variant.ProfileIDs, profile.ID)
+	variant.BatchProgress.Target = coverageBatches(append(
+		variant.BatchProgress.Target, facts.Condition.PlannedBatchSizes...,
+	))
+	for _, run := range p.owners[string(task.UID)] {
+		variant.RunIDs = append(variant.RunIDs, string(run.UID))
+	}
+	for _, batch := range facts.Batches {
+		row := coverageResultRow(profile, facts, batch, "direct")
+		row.Assessment.Scope.SchedulerUsed = ptr.To(p.adopted[profile.ID])
+		if !p.adopted[profile.ID] {
+			row.Assessment.Scope.Facts = append(row.Assessment.Scope.Facts, "현재 스케줄러 미사용")
+		}
+		if profile.Reuse != nil {
+			row.RowKind = operatorconsole.ResultRowConfirmation
+			row.SourceProfileID = ptr.To(profile.Reuse.SourceProfileID)
+			row.Reuse = profile.Reuse
+		}
+		variant.ResultRows = append(variant.ResultRows, row)
+		variant.BatchProgress.Measured = append(variant.BatchProgress.Measured, batch.Batch)
+		if row.Assessment.Status == operatorconsole.MeasurementCriteriaMet {
+			variant.BatchProgress.CriteriaMet = append(variant.BatchProgress.CriteriaMet, batch.Batch)
+		}
+	}
+	p.addReuseSource(variant, profile)
+	used := p.adopted[profile.ID]
+	assessment := operatorconsole.AssessMeasurement(operatorconsole.MeasurementAssessmentInput{
+		Accepted: true, Available: true, Reused: profile.Reuse != nil, SchedulerUsed: &used,
+	})
+	p.out.Entities.Profiles = append(p.out.Entities.Profiles, operatorconsole.MeasurementEntity{
+		UID: facts.Request.UID, ID: profile.ID, Assessment: assessment, CellIDs: []string{cell.ID},
+	})
+}
+
+func (p *coverageProjection) addReuseSource(variant *operatorconsole.MeasurementCoverageVariant, profile serving.Profile) {
+	if profile.Reuse == nil {
+		return
+	}
+	source, ok := p.base.catalog.MeasurementFacts[profile.Reuse.SourceProfileID]
+	if !ok || source.Request.Namespace != p.namespace {
+		return
+	}
+	for _, batch := range source.Batches {
+		row := coverageResultRow(profile, source, batch, operatorconsole.ResultRowSourceReference)
+		row.ProfileID = profile.Reuse.SourceProfileID
+		row.SourceProfileID = ptr.To(profile.Reuse.SourceProfileID)
+		row.TotalJoulesPerItem = nil
+		row.Reuse = profile.Reuse
+		variant.ResultRows = append(variant.ResultRows, row)
+	}
+}
+
+func (p *coverageProjection) addFailures(
+	cell *operatorconsole.MeasurementCoverageCell, task api.BatchEnergyOptimization,
+	assessment operatorconsole.MeasurementAssessment,
+) {
+	requestID := coverageRequestID(task)
+	if assessment.DisplayStatus == operatorconsole.MeasurementProblem {
+		cell.FailureSummary = append(cell.FailureSummary, operatorconsole.MeasurementFailure{
+			RequestID: requestID, Code: task.Status.Outcome, Message: coverageFailureMessage(task), Relation: "unresolved",
+		})
+	}
+	for _, run := range p.owners[string(task.UID)] {
+		assessment := operatorconsole.AssessProfilingRun(run)
+		if assessment.DisplayStatus != operatorconsole.MeasurementProblem {
 			continue
 		}
-		profileByRequest[requestID] = []serving.Profile{{ID: id, Condition: facts.Condition, NodeName: facts.Condition.MetricSource.NodeName}}
+		failure := operatorconsole.MeasurementFailure{
+			RequestID: requestID, RunID: string(run.UID), Batch: ptr.To(int(run.Spec.Measurement.Batch)), Relation: "unresolved",
+		}
+		for _, reason := range assessment.Reasons {
+			failure.Code = reason.Code
+			failure.Message = coverageShortMessage(reason.Message)
+		}
+		if run.Status.RuntimeTermination != nil {
+			failure.ExitCode = ptr.To(int(run.Status.RuntimeTermination.ExitCode))
+		}
+		cell.FailureSummary = append(cell.FailureSummary, failure)
 	}
-	for _, task := range base.requests.Items {
-		if query.Node != "" && task.Spec.State.TargetNode != query.Node {
-			continue
-		}
-		candidate := task.Spec.State.Candidate
-		id := coverageCellID(candidate.ModelSpec, candidate.DeviceClass, candidate.ExecutionPath, candidate.PowerMode)
-		index, exists := indices[id]
-		requestID := coverageRequestID(task)
-		assessment := assessMeasurementRequest(task, base.catalog)
-		if assessment.Evidence.Accepted {
-			used := false
-			for _, profile := range profileByRequest[requestID] {
-				used = used || adopted[profile.ID]
-			}
-			assessment.Scope.SchedulerUsed = &used
-			if !used {
-				assessment.Scope.Facts = append(assessment.Scope.Facts, "현재 스케줄러 미사용")
-			}
-		}
-		cellIDs := []string{}
-		if exists {
-			cellIDs = append(cellIDs, id)
-		}
-		out.Entities.Requests = append(out.Entities.Requests, operatorconsole.MeasurementEntity{UID: string(task.UID), ID: requestID, Assessment: assessment, CellIDs: cellIDs})
-		if !exists {
-			continue
-		}
-		cell := &out.Cells[index]
-		cell.History = append(cell.History, operatorconsole.MeasurementHistory{RequestID: requestID, Status: assessment.Status})
-		profileList := profileByRequest[requestID]
-		if len(profileList) == 0 {
-			variantID := operatorconsole.MeasurementVariantID(task.Spec)
-			variant := coverageFindVariant(cell, variantID, task.Spec, basis)
-			variant.RequestIDs = append(variant.RequestIDs, requestID)
-			if variant.Assessment.Status == "" || assessment.DisplayStatus == "problem" || assessment.Status == "running" {
-				variant.Assessment = assessment
-			}
-			variant.Assessment.Reasons = append(variant.Assessment.Reasons, coverageReason("PlannedConditionUnconfirmed", "요청 spec만 확인했으며 동결 실행 조건의 중복 여부는 검사에서 확인해야 합니다"))
-			targets := []int{}
-			for _, batch := range task.Spec.BatchSizes {
-				targets = append(targets, int(batch))
-			}
-			variant.BatchProgress.Target = coverageBatches(append(variant.BatchProgress.Target, targets...))
-			// A request spec is planned-only. It does not prove a frozen measured variant.
-			for _, run := range owners[string(task.UID)] {
-				variant.RunIDs = append(variant.RunIDs, string(run.UID))
-			}
-		}
-		for _, profile := range profileList {
-			facts := base.catalog.MeasurementFacts[profile.ID]
-			variantID := operatorconsole.MeasurementVariantID(facts.Condition)
-			variant := coverageFindVariant(cell, variantID, facts.Condition, basis)
-			variant.RequestIDs = append(variant.RequestIDs, requestID)
-			variant.ProfileIDs = append(variant.ProfileIDs, profile.ID)
-			variant.BatchProgress.Target = coverageBatches(append(variant.BatchProgress.Target, facts.Condition.PlannedBatchSizes...))
-			for _, run := range owners[string(task.UID)] {
-				variant.RunIDs = append(variant.RunIDs, string(run.UID))
-			}
-			for _, batch := range facts.Batches {
-				row := coverageResultRow(profile, facts, batch, "direct")
-				row.Assessment.Scope.SchedulerUsed = ptr.To(adopted[profile.ID])
-				if !adopted[profile.ID] {
-					row.Assessment.Scope.Facts = append(row.Assessment.Scope.Facts, "현재 스케줄러 미사용")
-				}
-				if profile.Reuse != nil {
-					row.RowKind = "confirmation"
-					row.SourceProfileID = ptr.To(profile.Reuse.SourceProfileID)
-					row.Reuse = profile.Reuse
-				}
-				variant.ResultRows = append(variant.ResultRows, row)
-				variant.BatchProgress.Measured = append(variant.BatchProgress.Measured, batch.Batch)
-				if row.Assessment.Status == "criteria_met" {
-					variant.BatchProgress.CriteriaMet = append(variant.BatchProgress.CriteriaMet, batch.Batch)
-				}
-			}
-			if profile.Reuse != nil {
-				if source, ok := base.catalog.MeasurementFacts[profile.Reuse.SourceProfileID]; ok && source.Request.Namespace == namespace {
-					for _, batch := range source.Batches {
-						row := coverageResultRow(profile, source, batch, "source-reference")
-						row.ProfileID = profile.Reuse.SourceProfileID
-						row.SourceProfileID = ptr.To(profile.Reuse.SourceProfileID)
-						row.TotalJoulesPerItem = nil
-						row.Reuse = profile.Reuse
-						variant.ResultRows = append(variant.ResultRows, row)
-					}
-				}
-			}
-			used := adopted[profile.ID]
-			profileAssessment := operatorconsole.AssessMeasurement(operatorconsole.MeasurementAssessmentInput{Accepted: true, Available: true, Reused: profile.Reuse != nil, SchedulerUsed: &used})
-			out.Entities.Profiles = append(out.Entities.Profiles, operatorconsole.MeasurementEntity{UID: facts.Request.UID, ID: profile.ID, Assessment: profileAssessment, CellIDs: []string{id}})
-		}
-		if assessment.DisplayStatus == "problem" {
-			cell.FailureSummary = append(cell.FailureSummary, operatorconsole.MeasurementFailure{RequestID: requestID, Code: task.Status.Outcome, Message: coverageFailureMessage(task), Relation: "unresolved"})
-		}
-		for _, run := range owners[string(task.UID)] {
-			runAssessment := operatorconsole.AssessProfilingRun(run)
-			if runAssessment.DisplayStatus == "problem" {
-				failure := operatorconsole.MeasurementFailure{RequestID: requestID, RunID: string(run.UID), Batch: ptr.To(int(run.Spec.Measurement.Batch)), Relation: "unresolved"}
-				for _, reason := range runAssessment.Reasons {
-					failure.Code = reason.Code
-					failure.Message = coverageShortMessage(reason.Message)
-				}
-				if run.Status.RuntimeTermination != nil {
-					failure.ExitCode = ptr.To(int(run.Status.RuntimeTermination.ExitCode))
-				}
-				cell.FailureSummary = append(cell.FailureSummary, failure)
-			}
-		}
-	}
-	for _, run := range base.runs.Items {
-		if query.Node != "" && run.Spec.TargetNode != query.Node {
+}
+
+func (p *coverageProjection) addRuns() {
+	for _, run := range p.base.runs.Items {
+		if p.query.Node != "" && run.Spec.TargetNode != p.query.Node {
 			continue
 		}
 		candidate := run.Spec.Candidate
 		id := coverageCellID(candidate.ModelSpec, candidate.DeviceClass, candidate.ExecutionPath, candidate.PowerMode)
 		cellIDs := []string{}
-		if _, exists := indices[id]; exists {
+		if _, exists := p.indices[id]; exists {
 			cellIDs = append(cellIDs, id)
 		}
 		assessment := operatorconsole.AssessProfilingRun(run)
-		out.Entities.Runs = append(out.Entities.Runs, operatorconsole.MeasurementRunEntity{UID: string(run.UID), Status: assessment.DisplayStatus, Label: assessment.Label, CellIDs: cellIDs})
+		p.out.Entities.Runs = append(p.out.Entities.Runs, operatorconsole.MeasurementRunEntity{
+			UID: string(run.UID), Status: assessment.DisplayStatus, Label: assessment.Label, CellIDs: cellIDs,
+		})
 	}
-	for i := range out.Cells {
-		cell := &out.Cells[i]
-		children := []operatorconsole.MeasurementAssessment{}
-		for j := range cell.Variants {
-			variant := &cell.Variants[j]
-			progress := &variant.BatchProgress
-			if len(query.Batches) > 0 {
-				progress.Target = append([]int{}, query.Batches...)
-			}
-			progress.Target = coverageBatches(progress.Target)
-			progress.Measured = coverageBatches(progress.Measured)
-			progress.CriteriaMet = coverageBatches(progress.CriteriaMet)
-			progress.InProgress = coverageBatches(progress.InProgress)
-			for _, batch := range progress.Target {
-				if !coverageContains(progress.Measured, batch) {
-					if len(variant.ProfileIDs) == 0 {
-						progress.Unknown = append(progress.Unknown, batch)
-					} else {
-						progress.Missing = append(progress.Missing, batch)
-					}
-				}
-			}
-			if len(variant.ProfileIDs) > 0 {
-				checks := []operatorconsole.MeasurementAssessment{}
-				for _, row := range variant.ResultRows {
-					if row.RowKind != "source-reference" && coverageContains(progress.Target, row.Batch) {
-						checks = append(checks, row.Assessment)
-					}
-				}
-				used, reused := false, false
-				for _, id := range variant.ProfileIDs {
-					used = used || adopted[id]
-				}
-				for _, row := range variant.ResultRows {
-					reused = reused || row.RowKind == "confirmation"
-				}
-				variant.Assessment = operatorconsole.AssessMeasurement(operatorconsole.MeasurementAssessmentInput{Accepted: true, Available: true, Reused: reused, SchedulerUsed: &used, MissingBatches: progress.Missing})
-				if len(progress.Missing) == 0 && len(checks) > 0 {
-					variant.Assessment = operatorconsole.AssessMeasurement(operatorconsole.MeasurementAssessmentInput{Children: checks, Accepted: true, Available: true, Reused: reused, SchedulerUsed: &used})
-				}
-			}
-			children = append(children, variant.Assessment)
-		}
-		cell.VariantCount = len(cell.Variants)
-		if len(cell.Variants) == 1 {
-			cell.BatchProgress = &cell.Variants[0].BatchProgress
-			for _, row := range cell.Variants[0].ResultRows {
-				if row.RowKind != "source-reference" {
-					cell.Representative = &operatorconsole.MeasurementRepresentative{VariantID: cell.Variants[0].ID, Batch: row.Batch, IncrementalJoulesPerItem: row.IncrementalJoulesPerItem, P95Milliseconds: row.P95Milliseconds}
-					break
-				}
-			}
-		}
-		cell.Assessment = operatorconsole.AssessMeasurement(operatorconsole.MeasurementAssessmentInput{Children: children, Support: cell.Support.Verdict, SourcesComplete: base.failures["BEO"] == nil && base.failures["Run"] == nil, Attempted: len(cell.History) > 0})
-		if cell.Support.Verdict == "Incompatible" && cell.Assessment.Evidence.Accepted {
-			cell.Assessment = operatorconsole.AssessMeasurement(operatorconsole.MeasurementAssessmentInput{Accepted: true, Available: true, Problems: []operatorconsole.MeasurementReason{coverageReason("CurrentDeclarationConflict", "보존 측정과 현재 지원 선언이 일치하지 않습니다")}})
-		}
-	}
-	coverageSummarize(&out, base)
-	return out
 }
 
-func coverageFindVariant(cell *operatorconsole.MeasurementCoverageCell, id string, condition any, basis string) *operatorconsole.MeasurementCoverageVariant {
+func (p *coverageProjection) assessCell(cell *operatorconsole.MeasurementCoverageCell) {
+	children := make([]operatorconsole.MeasurementAssessment, 0, len(cell.Variants))
+	for i := range cell.Variants {
+		p.assessVariant(&cell.Variants[i])
+		children = append(children, cell.Variants[i].Assessment)
+	}
+	cell.VariantCount = len(cell.Variants)
+	if len(cell.Variants) == 1 {
+		variant := &cell.Variants[0]
+		cell.BatchProgress = &variant.BatchProgress
+		for _, row := range variant.ResultRows {
+			if row.RowKind == operatorconsole.ResultRowSourceReference {
+				continue
+			}
+			cell.Representative = &operatorconsole.MeasurementRepresentative{
+				VariantID: variant.ID, Batch: row.Batch, IncrementalJoulesPerItem: row.IncrementalJoulesPerItem,
+				P95Milliseconds: row.P95Milliseconds,
+			}
+			break
+		}
+	}
+	cell.Assessment = operatorconsole.AssessMeasurement(operatorconsole.MeasurementAssessmentInput{
+		Children: children, Support: cell.Support.Verdict, Attempted: len(cell.History) > 0,
+		SourcesComplete: p.base.failures["BEO"] == nil && p.base.failures["Run"] == nil,
+	})
+	if cell.Support.Verdict == operatorconsole.MeasurementSupportIncompatible && cell.Assessment.Evidence.Accepted {
+		cell.Assessment = operatorconsole.AssessMeasurement(operatorconsole.MeasurementAssessmentInput{
+			Accepted: true, Available: true, Problems: []operatorconsole.MeasurementReason{
+				coverageReason("CurrentDeclarationConflict", "보존 측정과 현재 지원 선언이 일치하지 않습니다"),
+			},
+		})
+	}
+}
+
+func (p *coverageProjection) assessVariant(variant *operatorconsole.MeasurementCoverageVariant) {
+	progress := &variant.BatchProgress
+	if len(p.query.Batches) > 0 {
+		progress.Target = append([]int{}, p.query.Batches...)
+	}
+	progress.Target = coverageBatches(progress.Target)
+	progress.Measured = coverageBatches(progress.Measured)
+	progress.CriteriaMet = coverageBatches(progress.CriteriaMet)
+	progress.InProgress = coverageBatches(progress.InProgress)
+	for _, batch := range progress.Target {
+		if coverageContains(progress.Measured, batch) {
+			continue
+		}
+		if len(variant.ProfileIDs) == 0 {
+			progress.Unknown = append(progress.Unknown, batch)
+		} else {
+			progress.Missing = append(progress.Missing, batch)
+		}
+	}
+	if len(variant.ProfileIDs) == 0 {
+		return
+	}
+	checks := []operatorconsole.MeasurementAssessment{}
+	used, reused := false, false
+	for _, id := range variant.ProfileIDs {
+		used = used || p.adopted[id]
+	}
+	for _, row := range variant.ResultRows {
+		if row.RowKind != operatorconsole.ResultRowSourceReference && coverageContains(progress.Target, row.Batch) {
+			checks = append(checks, row.Assessment)
+		}
+		reused = reused || row.RowKind == operatorconsole.ResultRowConfirmation
+	}
+	input := operatorconsole.MeasurementAssessmentInput{
+		Accepted: true, Available: true, Reused: reused, SchedulerUsed: &used, MissingBatches: progress.Missing,
+	}
+	if len(progress.Missing) == 0 && len(checks) > 0 {
+		input.Children = checks
+	}
+	variant.Assessment = operatorconsole.AssessMeasurement(input)
+}
+
+func coverageFindVariant(
+	cell *operatorconsole.MeasurementCoverageCell, id string, condition any, basis string,
+) *operatorconsole.MeasurementCoverageVariant {
 	for i := range cell.Variants {
 		if cell.Variants[i].ID == id {
 			return &cell.Variants[i]
 		}
 	}
-	cell.Variants = append(cell.Variants, operatorconsole.MeasurementCoverageVariant{ID: id, Condition: condition, ResultRows: []operatorconsole.ResultRow{}, RequestIDs: []string{}, RunIDs: []string{}, ProfileIDs: []string{}, BatchProgress: operatorconsole.MeasurementBatchProgress{Basis: basis, Target: []int{}, Measured: []int{}, CriteriaMet: []int{}, Missing: []int{}, InProgress: []int{}, Unknown: []int{}}})
+	cell.Variants = append(cell.Variants, operatorconsole.MeasurementCoverageVariant{
+		ID: id, Condition: condition, ResultRows: []operatorconsole.ResultRow{}, RequestIDs: []string{},
+		RunIDs: []string{}, ProfileIDs: []string{},
+		BatchProgress: operatorconsole.MeasurementBatchProgress{
+			Basis: basis, Target: []int{}, Measured: []int{}, CriteriaMet: []int{}, Missing: []int{},
+			InProgress: []int{}, Unknown: []int{},
+		},
+	})
 	return &cell.Variants[len(cell.Variants)-1]
 }
 
-func coverageResultRow(profile serving.Profile, facts profilederivation.MeasurementFacts, batch profilederivation.MeasurementBatchFacts, kind string) operatorconsole.ResultRow {
+func coverageResultRow(
+	profile serving.Profile, facts profilederivation.MeasurementFacts,
+	batch profilederivation.MeasurementBatchFacts, kind string,
+) operatorconsole.ResultRow {
 	row := operatorconsole.MeasurementResultRow(facts, batch, profile.ID, profile.Reuse != nil, true)
 	row.RowKind = kind
 	row.ID = fmt.Sprintf("%s/%s/%d", profile.ID, kind, batch.Batch)
@@ -361,12 +538,7 @@ func coverageFailureMessage(task api.BatchEnergyOptimization) string {
 			message = condition.Message
 		}
 	}
-	message = strings.Join(strings.Fields(message), " ")
-	runes := []rune(message)
-	if len(runes) > 160 {
-		message = string(runes[:160])
-	}
-	return message
+	return coverageShortMessage(message)
 }
 func coverageShortMessage(message string) string {
 	message = strings.Join(strings.Fields(message), " ")

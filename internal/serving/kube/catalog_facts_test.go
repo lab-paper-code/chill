@@ -79,9 +79,9 @@ func assertCatalogMeasurementBatchFacts(t *testing.T, row profilederivation.Meas
 		t.Fatalf("raw-derived repetition/call counts changed: %+v", row)
 	}
 	for _, quantity := range []struct {
-		name string
+		name  string
 		value *float64
-		want float64
+		want  float64
 	}{
 		{"client p95", row.P95Milliseconds, 2},
 		{"idle W", row.IdleWatts, 4},

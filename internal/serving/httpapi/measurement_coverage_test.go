@@ -41,7 +41,7 @@ func TestMeasurementCoverageGrantsBeforeCache(t *testing.T) {
 			resources := []string{}
 			kube.PrependReactor("create", "subjectaccessreviews", func(action ktesting.Action) (bool, runtime.Object, error) {
 				review := action.(ktesting.CreateAction).GetObject().(*authorization.SubjectAccessReview)
-				allowed := true
+				var allowed bool
 				if resource := review.Spec.ResourceAttributes; resource != nil {
 					resources = append(resources, resource.Resource)
 					if resource.Namespace != "allowed" || resource.Verb != "list" || resource.Group != "edge.dacs.io" || resource.Version != "v1alpha1" {
@@ -49,7 +49,8 @@ func TestMeasurementCoverageGrantsBeforeCache(t *testing.T) {
 					}
 					allowed = deny != resource.Resource
 				} else {
-					if review.Spec.NonResourceAttributes.Path != "/chill/api/v1/namespaces/allowed/measurement-coverage" || review.Spec.NonResourceAttributes.Verb != "get" {
+					if review.Spec.NonResourceAttributes.Path != "/chill/api/v1/namespaces/allowed/measurement-coverage" ||
+						review.Spec.NonResourceAttributes.Verb != measurementGetVerb {
 						t.Fatalf("wrong URL grant: %+v", review.Spec.NonResourceAttributes)
 					}
 					allowed = deny != "url"

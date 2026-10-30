@@ -6,6 +6,26 @@ import (
 	"encoding/json"
 )
 
+const (
+	MeasurementComplete            = "complete"
+	MeasurementCriteriaMet         = "criteria_met"
+	MeasurementPartial             = "partial"
+	MeasurementWarning             = "warning"
+	MeasurementFailed              = "failed"
+	MeasurementRunning             = "running"
+	MeasurementUnmeasured          = "unmeasured"
+	MeasurementUnsupported         = "unsupported"
+	MeasurementUnknown             = "unknown"
+	MeasurementUsable              = "usable"
+	MeasurementProblem             = "problem"
+	MeasurementInsufficient        = "insufficient"
+	ResultRowConfirmation          = "confirmation"
+	ResultRowSourceReference       = "source-reference"
+	MeasurementSupportCompatible   = "Compatible"
+	MeasurementSupportIncompatible = "Incompatible"
+	MeasurementSupportUnknown      = "Unknown"
+)
+
 type MeasurementIdentity struct {
 	Name string `json:"name"`
 	UID  string `json:"uid"`

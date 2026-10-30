@@ -64,7 +64,7 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 func TestOperationAssessmentRequiresStoredAcceptedSteps(t *testing.T) {
 	cr := api.OperationCostMeasurement{
 		ObjectMeta: meta.ObjectMeta{Generation: 1},
-		Spec: api.OperationCostMeasurementSpec{Steps: []api.OperationCostStep{{Name: "idle"}}},
+		Spec:       api.OperationCostMeasurementSpec{Steps: []api.OperationCostStep{{Name: "idle"}}},
 		Status: api.OperationCostMeasurementStatus{
 			Phase: api.MeasurementPhaseComplete,
 			Steps: []api.OperationCostStepStatus{{Name: "idle", Key: "stored", Verdict: measurementVerdictAccepted}},
@@ -91,7 +91,7 @@ func TestOccupancyAssessmentReadsExactRecordAndPreservesNegativeD(t *testing.T) 
 		cr := api.DispatchOccupancyMeasurement{ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "occupancy", UID: "request-uid", Generation: 1}, Spec: api.DispatchOccupancyMeasurementSpec{Node: "node", Batch: 1}, Status: api.DispatchOccupancyMeasurementStatus{Phase: api.MeasurementPhaseComplete, PerRequestNanos: &d, Throughput: "10", Result: &api.ProfilingRunEvidenceReference{Store: "evidence", Key: servingkube.DispatchOccupancyPrefix + "node-uid/request-uid.json"}}}
 		record := servingkube.DispatchOccupancyRecord{
 			SchemaVersion: servingkube.DispatchOccupancySchema,
-			Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Batch: 1,
+			Node:          serving.NodeReference{Name: "node", UID: "node-uid"}, Batch: 1,
 			PerRequestNanos: d, Throughput: 10, Conditions: cr.Spec, Verdict: measurementVerdictAccepted,
 		}
 		raw, err := json.Marshal(record)

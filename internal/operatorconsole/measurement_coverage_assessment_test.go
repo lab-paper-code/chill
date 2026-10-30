@@ -11,16 +11,16 @@ func TestMeasurementAssessmentEvidenceAndExecution(t *testing.T) {
 		input  MeasurementAssessmentInput
 		status string
 	}{
-		{"Complete phase is not evidence", MeasurementAssessmentInput{Execution: &MeasurementExecution{Phase: "Complete", Generation: 2, ObservedGeneration: 2}, Attempted: true}, "unknown"},
-		{"old generation failure", MeasurementAssessmentInput{Execution: &MeasurementExecution{Phase: "Failed", Generation: 2, ObservedGeneration: 1}}, "unknown"},
-		{"real failure", MeasurementAssessmentInput{Execution: &MeasurementExecution{Phase: "Failed", Generation: 2, ObservedGeneration: 2}}, "failed"},
-		{"accepted behind failure", MeasurementAssessmentInput{Accepted: true, Available: true, Execution: &MeasurementExecution{Phase: "Failed", Generation: 2, ObservedGeneration: 2}}, "complete"},
-		{"missing goals", MeasurementAssessmentInput{Accepted: true, Available: true, MissingBatches: []int{2}}, "partial"},
-		{"reporting absent", MeasurementAssessmentInput{Accepted: true, Checks: []MeasurementCheck{{Code: "CI", Result: "unknown"}}}, "complete"},
-		{"reuse not criteria", MeasurementAssessmentInput{Accepted: true, Reused: true, Checks: []MeasurementCheck{{Code: "CI", Result: "pass"}}}, "complete"},
-		{"actual broken evidence", MeasurementAssessmentInput{Accepted: true, Problems: []MeasurementReason{{Code: "InvalidEvidence"}}}, "warning"},
-		{"empty compatible", MeasurementAssessmentInput{Support: "Compatible", SourcesComplete: true}, "unmeasured"},
-		{"incomplete list", MeasurementAssessmentInput{Support: "Compatible"}, "unknown"},
+		{"Complete phase is not evidence", MeasurementAssessmentInput{Execution: &MeasurementExecution{Phase: "Complete", Generation: 2, ObservedGeneration: 2}, Attempted: true}, MeasurementUnknown},
+		{"old generation failure", MeasurementAssessmentInput{Execution: &MeasurementExecution{Phase: "Failed", Generation: 2, ObservedGeneration: 1}}, MeasurementUnknown},
+		{"real failure", MeasurementAssessmentInput{Execution: &MeasurementExecution{Phase: "Failed", Generation: 2, ObservedGeneration: 2}}, MeasurementFailed},
+		{"accepted behind failure", MeasurementAssessmentInput{Accepted: true, Available: true, Execution: &MeasurementExecution{Phase: "Failed", Generation: 2, ObservedGeneration: 2}}, MeasurementComplete},
+		{"missing goals", MeasurementAssessmentInput{Accepted: true, Available: true, MissingBatches: []int{2}}, MeasurementPartial},
+		{"reporting absent", MeasurementAssessmentInput{Accepted: true, Checks: []MeasurementCheck{{Code: "CI", Result: MeasurementUnknown}}}, MeasurementComplete},
+		{"reuse not criteria", MeasurementAssessmentInput{Accepted: true, Reused: true, Checks: []MeasurementCheck{{Code: "CI", Result: "pass"}}}, MeasurementComplete},
+		{"actual broken evidence", MeasurementAssessmentInput{Accepted: true, Problems: []MeasurementReason{{Code: "InvalidEvidence"}}}, MeasurementWarning},
+		{"empty compatible", MeasurementAssessmentInput{Support: "Compatible", SourcesComplete: true}, MeasurementUnmeasured},
+		{"incomplete list", MeasurementAssessmentInput{Support: "Compatible"}, MeasurementUnknown},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got := AssessMeasurement(test.input)
@@ -34,11 +34,11 @@ func TestMeasurementAssessmentEvidenceAndExecution(t *testing.T) {
 func TestMeasurementChecklistPreservesZeroAndTimestampFootnote(t *testing.T) {
 	zero, yes := 0.0, true
 	batch := profilederivation.MeasurementBatchFacts{Batch: 1, P95Milliseconds: &zero, LatencySampleCount: 2, IncrementalJoulesPerItem: &zero, Confidence: &profilederivation.PointConfidence{Level: .95, HalfWidth: 0}, ActiveTrialCount: 3, IdleTrialCount: 3, PowerSource: profilederivation.MeasurementPowerSource{Kind: "node-wall", NodeName: "node"}, Sources: []profilederivation.RawEvidenceIdentity{{Store: "evidence", Key: "raw"}}, Quality: []profilederivation.MeasurementTrialQuality{{SourceTimestampAbsent: true, PolicyPassed: &yes}}}
-	if got := AssessMeasurementBatch(batch, 3, false, true); got.Status != "criteria_met" {
+	if got := AssessMeasurementBatch(batch, 3, false, true); got.Status != MeasurementCriteriaMet {
 		t.Fatalf("timestamp/node-wall/zero must not fail: %#v", got)
 	}
 	batch.ActiveTrialCount = 2
-	if got := AssessMeasurementBatch(batch, 3, false, true); got.Status != "complete" {
+	if got := AssessMeasurementBatch(batch, 3, false, true); got.Status != MeasurementComplete {
 		t.Fatalf("idle trials cannot fill active count: %#v", got)
 	}
 	batch.ActiveTrialCount = 3

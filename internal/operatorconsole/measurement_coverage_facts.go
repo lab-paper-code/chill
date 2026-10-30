@@ -8,7 +8,7 @@ import (
 func AssessMeasurementBatch(facts profilederivation.MeasurementBatchFacts, minimumTrials int, reused, used bool) MeasurementAssessment {
 	minimumTrials = max(3, minimumTrials)
 	check := func(code string, pass bool, message string) MeasurementCheck {
-		result := "unknown"
+		result := MeasurementUnknown
 		if pass {
 			result = "pass"
 		}

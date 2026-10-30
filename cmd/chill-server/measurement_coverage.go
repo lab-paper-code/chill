@@ -39,7 +39,9 @@ type measurementCoverageBase struct {
 	failures      map[string]error
 }
 
-func (o *measurementService) coverage(ctx context.Context, namespace string, query httpapi.MeasurementCoverageQuery) (json.RawMessage, error) {
+func (o *measurementService) coverage(
+	ctx context.Context, namespace string, query httpapi.MeasurementCoverageQuery,
+) (json.RawMessage, error) {
 	if err := o.namespace(namespace); err != nil {
 		return nil, err
 	}
@@ -114,7 +116,7 @@ func (b *measurementCoverageBase) oldest() time.Time {
 	return oldest
 }
 
-func (o *measurementService) readConsoleCoverage(ctx context.Context, path string, target any) error {
+func (o *measurementService) readConsoleCoverage(ctx context.Context, path string, target any) (retErr error) {
 	if o.console == nil {
 		return errors.New("Console is unavailable")
 	}
@@ -128,7 +130,7 @@ func (o *measurementService) readConsoleCoverage(ctx context.Context, path strin
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func() { retErr = errors.Join(retErr, response.Body.Close()) }()
 	if response.StatusCode != http.StatusOK {
 		return errors.New("Console coverage source is unavailable")
 	}
@@ -142,7 +144,9 @@ func (o *measurementService) readConsoleCoverage(ctx context.Context, path strin
 	return json.Unmarshal(raw, target)
 }
 
-func (o *measurementService) readCoverage(ctx context.Context, namespace string, previous *measurementCoverageBase) (*measurementCoverageBase, error) {
+func (o *measurementService) readCoverage(
+	ctx context.Context, namespace string, previous *measurementCoverageBase,
+) (*measurementCoverageBase, error) {
 	next := &measurementCoverageBase{checked: map[string]time.Time{}, failures: map[string]error{}}
 	if previous != nil {
 		*next = *previous
