@@ -119,7 +119,7 @@ metadata:
     app.kubernetes.io/component: dashboard
     {{- include "chill.labels" . | nindent 4 }}
 spec:
-  type: ClusterIP
+  type: {{ .Values.dashboard.service.type }}
   selector:
     app.kubernetes.io/name: {{ include "chill.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}
@@ -128,6 +128,9 @@ spec:
     - name: http
       port: {{ .Values.dashboard.port }}
       targetPort: http
+{{- if and (eq .Values.dashboard.service.type "NodePort") .Values.dashboard.service.nodePort }}
+      nodePort: {{ .Values.dashboard.service.nodePort }}
+{{- end }}
 {{- if .Values.dashboard.ingress.enabled }}
 ---
 apiVersion: networking.k8s.io/v1

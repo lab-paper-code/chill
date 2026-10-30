@@ -567,6 +567,10 @@ dashboard:
     tag: ""
     pullPolicy: IfNotPresent
   port: 3000
+  service:
+    # ClusterIP or NodePort. nodePort is used only for NodePort (empty = allocated).
+    type: ClusterIP
+    nodePort: ""
   # Empty uses the enabled serving entrypoint's HTTPS Service.
   baseURL: ""
   namespace: ""
