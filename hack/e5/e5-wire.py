@@ -41,7 +41,7 @@ print(json.dumps({'profiling':profile,'evaluation':evaluation,'cliFlags':flags,'
 def template(op, workload, image, probe=False):
     """Same dataset-specific source loadJob recipe as serving/kube/occupancy.go:698-729."""
     w=op['workloads'][workload]; data={'name':'data','mountPath':'/data'}
-    return {'apiVersion':'batch/v1','kind':'Job','metadata':{'namespace':'chill-system'},'spec':{'backoffLimit':0,'template':{'metadata':{},'spec':{'restartPolicy':'Never','nodeName':e5.E5['producerNode'],'serviceAccountName':'chill-load-generator','initContainers':[{'name':'dataset','image':w['datasetImage'],'command':['sh','-ec','cp -R "$1"/. /data/','--',w['datasetImagePath']+('' if probe else '/evaluation')],'volumeMounts':[data],'resources':{}}],'containers':[{'name':'load','image':image,'volumeMounts':[data,{'name':'ca','mountPath':'/ca','readOnly':True}],'resources':{}}],'volumes':[{'name':'data','emptyDir':{}},{'name':'ca','projected':{'sources':[{'secret':{'name':'chill-dashboard-tls','items':[{'key':'tls.crt','path':'tls.crt'}]}}]}}]}}}}
+    return {'apiVersion':'batch/v1','kind':'Job','metadata':{'namespace':op.get('namespace',e5.ENVIRONMENT['d2'].get('namespace','chill-system'))},'spec':{'backoffLimit':0,'template':{'metadata':{},'spec':{'restartPolicy':'Never','nodeName':e5.E5['producerNode'],'serviceAccountName':'chill-load-generator','initContainers':[{'name':'dataset','image':w['datasetImage'],'command':['sh','-ec','cp -R "$1"/. /data/','--',w['datasetImagePath']+('' if probe else '/evaluation')],'volumeMounts':[data],'resources':{}}],'containers':[{'name':'load','image':image,'volumeMounts':[data,{'name':'ca','mountPath':'/ca','readOnly':True}],'resources':{}}],'volumes':[{'name':'data','emptyDir':{}},{'name':'ca','projected':{'sources':[{'secret':{'name':'chill-dashboard-tls','items':[{'key':'tls.crt','path':'tls.crt'}]}}]}}]}}}}
 
 
 class Prepare:
@@ -54,9 +54,11 @@ class Prepare:
         e5.need(self.n,['approval','g0Evidence','mSeconds','N','burstLowSeconds','timeboxes','smokeSeconds','workloads','kappaSeconds'],'Approved phase6 numbers')
         if e5.approval_sources(self.n['approval']) != self.sources:raise ValueError('Approved numeric component sources differ from release')
         e5.need(self.n['timeboxes'],e5.REQUIRED['timeboxes'],'Actual finite timeboxes')
-        self.n['failureSelectSnapshotTTLSeconds']=e5.failure_select_snapshot_ttl(self.n)
-        if not all(e5.positive(self.n[k]) for k in ('smokeSeconds','kappaSeconds')) or not 0<self.n['burstLowSeconds']<900 or type(self.n['mSeconds']) not in (int,float) or not math.isfinite(self.n['mSeconds']) or self.n['mSeconds']<0:raise ValueError('Invalid approved numerical scope')
-        if any(not e5.positive(v) for v in self.n['timeboxes'].values()) or self.n['timeboxes']['setupSeconds']+3600+self.n['timeboxes']['drainSeconds']+self.n['timeboxes']['flushSeconds']>4200:raise ValueError('Timeboxes do not fit existing finite collector')
+        e5.freeze_harness_config(self.n)
+        self.op['namespace']=self.n['namespace']
+        stages=e5.configured_stage_specs(self.n)
+        if not all(e5.positive(self.n[k]) for k in ('smokeSeconds','kappaSeconds')) or not 0<self.n['burstLowSeconds']<self.n['burstLowMaximumSeconds'] or type(self.n['mSeconds']) not in (int,float) or not math.isfinite(self.n['mSeconds']) or self.n['mSeconds']<0:raise ValueError('Invalid approved numerical scope')
+        if any(self.n['timeboxes']['setupSeconds']+sum(seconds for label,seconds,_ in stages if label==row['id'] or label.startswith(row['id']+'-'))+self.n['timeboxes']['drainSeconds']+self.n['timeboxes']['flushSeconds']>self.n['collection']['maximumDurationSeconds'] for row in self.n['stages']):raise ValueError('Timeboxes do not fit selected finite collector')
         if self.release.get('numbersPath')!=str(a.numbers):raise ValueError('Frozen release must name the actual approved numeric input file')
         if self.out.exists() and any(self.out.iterdir()):raise ValueError('Preparation output is not fresh; retain prior attempt, no overwrite/retry')
         if Path(self.release['bindingPath']).exists():raise ValueError('Frozen binding already exists')
@@ -64,7 +66,6 @@ class Prepare:
         self.factor_names=self.op['factorOrder'][:self.n['N']]
         for name in e5.WORKLOADS:
             values=self.n['workloads'][name];e5.need(values,['slo','R','deliverySeconds','socketSeconds','workers'],name)
-            if name==e5.WORKLOADS[0] and values['slo']!={'percentile':95,'targetLatencyNanos':1000000000}:raise ValueError('Canonical tight MNV remains p95 1s')
             if not 0<values['slo']['percentile']<=100 or not e5.positive(values['slo']['targetLatencyNanos']) or not all(e5.positive(values[k]) for k in ('R','deliverySeconds','socketSeconds','workers')) or type(values['workers']) is not int:raise ValueError('Invalid approved Workload numerical bindings')
             lifetime=values.get('lifetimeSeconds')
             if lifetime is not None and (not e5.positive(lifetime) or lifetime<values['slo']['targetLatencyNanos']/1e9 or values['socketSeconds']<=lifetime+values['deliverySeconds']):raise ValueError('Invalid explicit lifetime/SLO/socket tuple')
@@ -104,9 +105,10 @@ class Prepare:
             x=self.images[key]
             e5.require_component_source({'sourceSHA':x['sourceCommit']},self.sources[key],key)
             if x['publish']['exitCode']!=0 or '@sha256:' not in x['immutableImage']: raise ValueError('Actual control/producer component publication incomplete')
-        self.tb=self.n['timeboxes']; self.k=e5.ENVIRONMENT['d2']['kubectl']+['-n','chill-system']
+        self.tb=self.n['timeboxes']; self.k=e5.ENVIRONMENT['d2']['kubectl']+['-n',self.n['namespace']]
         old=e5.module('e5d2connect',e5.D2/'conduct_before.py'); self.http=urllib.request.build_opener(old.NoRedirect(),urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=self.op['caFile'])))
         old.K=self.k;self.io=object.__new__(old.Conductor);self.io.out=self.out;self.io.source=self.sha
+        self.io.config=self.n
         self.io.journal=self.out/'dataset-commands.jsonl';self.io.journal_lock=e5.threading.Lock()
         self.io.a=argparse.Namespace(phase='e5-dataset-preparation',command=self.a.command);self.io.phase_out=self.out
     def api(self,method,path,body=None,headers=None,accepted=(200,)):
@@ -242,6 +244,10 @@ class Prepare:
         c['inputs']['powerObservation']=str(self.out/'power-observation.json')
         c['inputs']['evaluationPayload']=str(self.out/'evaluation-payload.json')
         c['collection']={k:self.op['collection'][k] for k in ('hosts','powerExecutable','powerReceipt')}
+        for key in ('namespace','stages','seeds','arrivals','producerResources','producerShards','failureInjectionRunbook','tokenSafetyMarginSeconds','burstLowMaximumSeconds'):
+            if key in self.n:c[key]=self.n[key]
+        c['collection'].update(self.n['collection'])
+        c['inputs'].update(self.n['inputs'])
         producer_hosts=[host for host in e5.load(c['collection']['hosts']) if host['node']==e5.E5['producerNode']]
         e5.save(self.out/'producer-hosts.json',producer_hosts);c['collection']['hosts']=str(self.out/'producer-hosts.json')
         e5.save(c['inputs']['powerObservation'],{'schedulerSettings':{'powerObservation':e5.power_observation(c)}})

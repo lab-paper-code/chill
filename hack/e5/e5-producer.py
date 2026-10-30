@@ -103,7 +103,7 @@ def main():
         base = 0
         for segment in binding['segments']:
             if segment['rate'] > 0:
-                offsets.extend(base+x for x in cli.arrival_offsets_ns('poisson', segment['rate'], segment['seconds'], kw['seed']))
+                offsets.extend(base+x for x in cli.arrival_offsets_ns(kw['arrivals'], segment['rate'], segment['seconds'], kw['seed']))
             base += round(segment['seconds']*1e9)
         encoded = json.dumps(offsets, separators=(',', ':')).encode()
         if hashlib.sha256(encoded).hexdigest() != binding['arrivalSHA256'] or len(offsets) != binding['offered']:

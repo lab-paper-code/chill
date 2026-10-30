@@ -228,6 +228,13 @@ CampaignOps owns testbed mutations and image publication.
 
 Set `CHILL_EXPERIMENT_CONFIG` to an absolute external JSON file before invoking
 these tools. Its top-level objects are `paths`, `d2`, `e5` and `measure`.
+Optional `samples` holds complete environment-specific registration/measurement
+documents keyed by their existing repository-relative sample paths; select them
+explicitly using the [sample procedures](../config/samples/README.md#environment-specific-inputs).
+E5 binds `d2.namespace` (default `chill-system`) and the selected experiment
+policies into `binding.config`; later execution/analysis consumes that binding.
+The [configuration ownership table](../docs/design/serving/configuration-hardcoding.md#슬라이스-5-구현과-기본값)
+lists the stage/arrival/G0/timebox keys and their unchanged defaults.
 `paths.repository` identifies this checkout; `paths.ops`, `paths.campaign` and
 `paths.d2State` identify external operational state and retained evidence.
 Each tool reads its section for machine identities, endpoints, credential-file

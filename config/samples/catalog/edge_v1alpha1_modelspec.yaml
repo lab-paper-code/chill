@@ -1,5 +1,5 @@
 # Use metadata.name and spec as serving management API input, not kubectl apply.
-# Images pin the pushed carrier digests (README.md).
+# Example registry locations; select the environment document for registration (README.md).
 apiVersion: edge.dacs.io/v1alpha1
 kind: ModelSpec
 metadata:
@@ -9,21 +9,21 @@ spec:
   - name: canonical-onnx-arm64
     format: onnx
     source:
-      image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:a6a670b244d5d93987160f62e52da97a09fdcb731ded67c1123e614276aee406"
+      image: "registry.example.invalid/chill/chill-mobilenet-v2-050-artifact@sha256:a6a670b244d5d93987160f62e52da97a09fdcb731ded67c1123e614276aee406"
       architecture: arm64
       files:
       - /artifact/mobilenet-v2-050.onnx
   - name: canonical-onnx-amd64
     format: onnx
     source:
-      image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:a6a670b244d5d93987160f62e52da97a09fdcb731ded67c1123e614276aee406"
+      image: "registry.example.invalid/chill/chill-mobilenet-v2-050-artifact@sha256:a6a670b244d5d93987160f62e52da97a09fdcb731ded67c1123e614276aee406"
       architecture: amd64
       files:
       - /artifact/mobilenet-v2-050.onnx
   - name: mobilenet-v2-050-rk3588
     format: rknn
     source:
-      image: "155.230.35.213:5000/chill/chill-mobilenet-v2-050-rknn-artifact@sha256:c9eb4abc86b376f43c419cd01782bc3709fd14d8452a4953ea8f396fd3b702a5"
+      image: "registry.example.invalid/chill/chill-mobilenet-v2-050-rknn-artifact@sha256:c9eb4abc86b376f43c419cd01782bc3709fd14d8452a4953ea8f396fd3b702a5"
       architecture: arm64
       files:
       - /artifact/mobilenet-v2-050-rk3588.rknn

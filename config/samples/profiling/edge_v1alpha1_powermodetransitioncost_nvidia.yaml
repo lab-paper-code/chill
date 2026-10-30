@@ -1,21 +1,22 @@
 # CampaignOps only. First retain an admitted GPU_1500 CUDA runner profile and
 # Complete exact-state model-loaded-idle baselines for BOTH GPU_1500/GPU_900.
 # Submit in the serving namespace; measurement admission creates the real
-# runner and the uniquely named Service below. Preserve runtime-7 image digest.
+# runner and the uniquely named Service below. Select the environment document
+# for the actual Node, class and runner (../README.md).
 apiVersion: edge.dacs.io/v1alpha1
 kind: PowerModeTransitionCost
 metadata:
-  name: u3-genesis2-gpu-1500-900
+  name: example-nvidia-gpu-1500-900
   namespace: chill-system
 spec:
-  targetNode: genesis2
-  deviceClass: edge-server-rtx-2080-ti-64g
+  targetNode: example-transition-node
+  deviceClass: example-nvidia-device-class
   modelSpec: mobilenet-v2-050
   executionPath: firstfloor-ort-cuda-amd64
   modes:
     - powerMode: GPU_1500
     - powerMode: GPU_900
-  servingService: chill-u3-genesis2-clock-runner
+  servingService: example-serving
   servingContainer: firstfloor
   acceptedCountTarget: 5
   attemptLimit: 8

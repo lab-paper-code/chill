@@ -1,13 +1,14 @@
+# Example hardware only; select the complete environment document (../README.md).
 apiVersion: edge.dacs.io/v1alpha1
 kind: DeviceClass
 metadata:
-  name: edge-server-rtx-2080-ti-64g
+  name: example-nvidia-device-class
 spec:
   nodeSelector:
-    edge.dacs.io/device-class: edge-server-rtx-2080-ti-64g
+    edge.dacs.io/device-class: example-nvidia-device-class
   architecture: amd64
-  memory: 64Gi
-  accelerator: nvidia-geforce-rtx-2080-ti
+  memory: 8Gi
+  accelerator: example-nvidia-gpu
   powerModes:
     - name: fixed
       actuator: {kind: Fixed}

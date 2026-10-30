@@ -64,12 +64,16 @@ docker run --rm --platform linux/ARCH --entrypoint sh \
   verify /artifact/model.onnx
 ```
 
-For mobilenet, stage the context from the existing `arm64` carrier and rebuild
-it as `155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact`:
+To stage an existing carrier, select its complete environment ModelSpec and
+use the image of the intended artifact; do not copy a testbed address from a
+structural example:
 
 ```sh
-id=$(docker create --platform linux/arm64 \
-  155.230.35.213:5000/chill/chill-mobilenet-v2-050-artifact@sha256:1174f5266a0a4f8b968f2a8745671cb2546934373766797b256fe97d38088721)
+set -e
+Image=$(jq -er --arg path config/samples/catalog/edge_v1alpha1_modelspec.yaml \
+  '.samples[$path].spec.artifacts[] | select(.name == "canonical-onnx-arm64") | .source.image' \
+  "${CHILL_EXPERIMENT_CONFIG:?external environment JSON required}")
+id=$(docker create --platform linux/arm64 "$Image")
 mkdir -p /tmp/chill-model-carrier/artifact
 docker cp "$id:/artifact/mobilenet-v2-050.onnx" /tmp/chill-model-carrier/artifact/
 docker rm "$id"
@@ -95,7 +99,8 @@ canonical ONNX graph without renaming inputs and builds without quantization.
 The RKNN sample declares `input` / `FP32` with batch-free dimensions
 `[224, 224, 3]`, which RKNN delivery and the runner check before loading.
 The `mobilenet-imagenet` Preprocessor defines the raw inputs of both paths.
-Use [the ModelSpec sample](edge_v1alpha1_modelspec.yaml) as the final manifest.
+Use [the ModelSpec sample](edge_v1alpha1_modelspec.yaml) for structure; store the
+complete operational document in the environment JSON's `samples` entry.
 
 ## Validate and register
 
@@ -109,18 +114,31 @@ kubectl apply --dry-run=server \
   -f config/samples/catalog/edge_v1alpha1_modelspec.yaml
 ```
 
-Register through HTTPS ChillServer instead. With `yq` v4 and `jq`, extract only the
-accepted API fields from the existing manifest:
+Register through HTTPS ChillServer instead. With `jq`, select the complete
+environment document by its existing repository-relative path and extract only
+the accepted API fields. Selection must succeed before starting the request:
 
 ```sh
-yq -o=json '.' config/samples/catalog/edge_v1alpha1_modelspec.yaml |
-  jq '{name: .metadata.name, spec: .spec}' |
+set -e
+Sample=config/samples/catalog/edge_v1alpha1_modelspec.yaml
+Request=$(jq -e --arg path "$Sample" \
+  '(.samples[$path] // error("environment sample missing: " + $path)) |
+   {name: .metadata.name, spec: .spec}' \
+  "${CHILL_EXPERIMENT_CONFIG:?external environment JSON required}")
+printf '%s\n' "$Request" |
   curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
     -H 'Content-Type: application/json' --data-binary @- \
     "$CHILL_SERVER/api/v1/models"
 curl --cacert "$CHILL_SERVER_CA" -H "Authorization: Bearer $TOKEN" \
   "$CHILL_SERVER/api/v1/models/mobilenet-v2-050"
 ```
+
+For a newly prepared manifest, the existing
+`yq -o=json '.' "$Manifest" | jq '{name: .metadata.name, spec: .spec}'`
+conversion still supplies the same request body. The checked-in
+`registry.example.invalid` locations are illustrative, not published-image
+or inspection evidence. Environment selection never rewrites image references
+inside YAML.
 
 POST returns `201`. PUT accepts `{"spec": ...}` and DELETE has no body; both
 require the queried ModelSpec `metadata.resourceVersion` in `If-Match`.
@@ -140,8 +158,13 @@ artifact that is not being deleted. The samples are
 [vqav2-val-subset Dataset](edge_v1alpha1_dataset.yaml).
 
 ```sh
-yq -o=json '.' config/samples/catalog/edge_v1alpha1_preprocessor_smolvlm2-vqa.yaml |
-  jq '{name: .metadata.name, spec: .spec}' |
+set -e
+Sample=config/samples/catalog/edge_v1alpha1_preprocessor_smolvlm2-vqa.yaml
+Request=$(jq -e --arg path "$Sample" \
+  '(.samples[$path] // error("environment sample missing: " + $path)) |
+   {name: .metadata.name, spec: .spec}' \
+  "${CHILL_EXPERIMENT_CONFIG:?external environment JSON required}")
+printf '%s\n' "$Request" |
   curl --cacert "$OWNER_CA" -H "Authorization: Bearer $TOKEN" \
     -H 'Content-Type: application/json' --data-binary @- \
     "$OWNER/api/v1/preprocessors"
@@ -165,8 +188,9 @@ measured batch size.
 ## Preprocessor, SmolVLM model and dataset carriers
 
 Every carrier uses the carrier Dockerfile above. Stage the build context, build,
-and push; the samples pin the pushed image index digests, so a rebuilt carrier
-replaces its digest in the sample. Each Preprocessor declares one artifact per
+and push; the environment documents pin the pushed image index digests, so a
+rebuilt carrier replaces its digest in that complete document. Each Preprocessor
+declares one artifact per
 target model artifact, so the `arm64` and `amd64` ONNX artifacts each name the
 same multi-arch carrier. A
 preprocessor directory holds the `preprocessor.py` module that the firstfloor
@@ -198,8 +222,8 @@ docker buildx build \
 ```
 
 Build the other contexts the same way for `linux/amd64,linux/arm64`; every
-sample carrier except the RKNN model is multi-arch, so the samples use image
-index digests.
+sample carrier except the RKNN model is multi-arch, so the environment
+documents use image index digests.
 
 The SmolVLM2 model carrier holds the artifacts `onnx-fp32-arm64` and
 `onnx-fp32-amd64` of the

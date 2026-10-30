@@ -1,5 +1,5 @@
 # Use metadata.name and spec as serving management API input, not kubectl apply.
-# Images pin the pushed multi-arch carrier index digest (README.md).
+# Example registry locations; select the environment document for registration (README.md).
 apiVersion: edge.dacs.io/v1alpha1
 kind: ModelSpec
 metadata:
@@ -9,14 +9,14 @@ spec:
   - name: onnx-fp32-arm64
     format: onnx
     source:
-      image: "155.230.35.213:5000/chill/chill-plc-lstm-ae-onnx@sha256:bf4f2a90aa4589df06b3879ada3ab7f9d90e4bc35d2337b70666d802967095a2"
+      image: "registry.example.invalid/chill/chill-plc-lstm-ae-onnx@sha256:bf4f2a90aa4589df06b3879ada3ab7f9d90e4bc35d2337b70666d802967095a2"
       architecture: arm64
       files:
       - /artifact/plc-lstm-ae.onnx
   - name: onnx-fp32-amd64
     format: onnx
     source:
-      image: "155.230.35.213:5000/chill/chill-plc-lstm-ae-onnx@sha256:bf4f2a90aa4589df06b3879ada3ab7f9d90e4bc35d2337b70666d802967095a2"
+      image: "registry.example.invalid/chill/chill-plc-lstm-ae-onnx@sha256:bf4f2a90aa4589df06b3879ada3ab7f9d90e4bc35d2337b70666d802967095a2"
       architecture: amd64
       files:
       - /artifact/plc-lstm-ae.onnx

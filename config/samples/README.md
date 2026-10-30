@@ -23,6 +23,28 @@ Convert `metadata.name` and `spec` from the sample to JSON and submit them to
 [registration guide](catalog/README.md#validate-and-register).
 Do not give manager credentials direct ModelSpec or Workload write access.
 
+## Environment-specific inputs
+
+Checked-in samples are structural examples, not the testbed's registry or Node
+inventory. The external JSON selected by `CHILL_EXPERIMENT_CONFIG` owns complete
+operational documents under `samples["<repository-relative sample path>"]`.
+The keys retain the existing paths, including
+`config/samples/firstfloor/ortcpu-arm64-runtime-declaration.json`; that declaration
+is no longer a checked-in file. There is no YAML reference or automatic
+environment substitution.
+
+Select the complete document before using the existing registration or
+measurement procedure. For example, the catalog registration guide selects
+`config/samples/catalog/edge_v1alpha1_modelspec.yaml`, then submits its
+`metadata.name` and `spec` to the same HTTPS API. A missing entry is an error,
+not a fallback to an example registry or Node.
+
+The environment holds all eight ModelSpec/Preprocessor/Dataset catalog documents,
+the NVIDIA DeviceClass and transition-cost request, and the ARM64 runtime
+declaration. When preparing a different environment, populate every document
+you intend to submit with its actual immutable images and hardware facts.
+Do not transplant inspection claims to a different runtime image.
+
 ## ModelSpec structure
 
 ```text
@@ -60,23 +82,50 @@ kubectl apply -f config/samples/profiling/edge_v1alpha1_modelloadedidlebaseline.
 kubectl apply -f config/samples/profiling/edge_v1alpha1_powermodetransitioncost.yaml
 ```
 
-For discrete RTX 2080 Ti clock modes, the manual class sample is
-`manual/edge_v1alpha1_deviceclass_nvidia.yaml`; do not apply it alongside a
-Helm-owned class of the same name. The CampaignOps-only pair-cost sample is
-`profiling/edge_v1alpha1_powermodetransitioncost_nvidia.yaml`. It requires an
-admitted GPU_1500 CUDA profile, exact-state idle baselines for both modes, and
-the separate NVIDIA node-agent operand. Follow
-[Plan 6 GPU clock](../../docs/design/profiling/plans/06-execution-support-expansion.md#gpu-clock);
-these samples do not authorize host changes or prove live clock support.
+For discrete NVIDIA clock modes, the structural manual class sample is
+`manual/edge_v1alpha1_deviceclass_nvidia.yaml`; do not apply a manual class
+alongside a Helm-owned class of the same name. The CampaignOps-only pair-cost
+sample is `profiling/edge_v1alpha1_powermodetransitioncost_nvidia.yaml`. Select
+the actual environment documents, rather than applying these example files:
+
+```sh
+set -e
+Sample=config/samples/manual/edge_v1alpha1_deviceclass_nvidia.yaml
+Document=$(jq -e --arg path "$Sample" \
+  '.samples[$path] // error("environment sample missing: " + $path)' \
+  "${CHILL_EXPERIMENT_CONFIG:?external environment JSON required}")
+printf '%s\n' "$Document" | kubectl apply -f -
+# Separately, only after the measurement prerequisites below are satisfied:
+Sample=config/samples/profiling/edge_v1alpha1_powermodetransitioncost_nvidia.yaml
+Document=$(jq -e --arg path "$Sample" \
+  '.samples[$path] // error("environment sample missing: " + $path)' \
+  "$CHILL_EXPERIMENT_CONFIG")
+printf '%s\n' "$Document" | kubectl apply -f -
+```
+
+The transition request requires an admitted GPU_1500 CUDA profile, exact-state
+idle baselines for both modes, and the separate NVIDIA node-agent operand.
+Follow [Plan 6 GPU clock](../../docs/design/profiling/plans/06-execution-support-expansion.md#gpu-clock);
+selection does not authorize host changes or prove live clock support. Use a
+fresh request name and serving Service for a new campaign; never reapply an
+immutable completed or failed measurement as a new attempt.
 
 ## Firstfloor runtime declaration
 
-[`firstfloor/ortcpu-arm64-runtime-declaration.json`](firstfloor/ortcpu-arm64-runtime-declaration.json)
-retains exact-image inspection output from the native ARM64 ORT CPU image on
-`rasp5`. The same image's persistent worker/runner also completed real fixed-K
-inference. It declares supplied runtime facts, not a measured execution profile.
+The environment entry at
+`samples["config/samples/firstfloor/ortcpu-arm64-runtime-declaration.json"]`
+retains the complete exact-image ARM64 ORT CPU inspection output. Its image,
+architecture, packages and verification claim move together; it is supplied
+runtime fact, not a measured execution profile. There is deliberately no
+generic declaration that claims the same inspection for another image.
 
-Use its JSON producer output as `runtime.payload` in a
+```sh
+jq -e --arg path config/samples/firstfloor/ortcpu-arm64-runtime-declaration.json \
+  '.samples[$path] // error("environment sample missing: " + $path)' \
+  "${CHILL_EXPERIMENT_CONFIG:?external environment JSON required}"
+```
+
+Use this complete JSON producer output as `runtime.payload` in a
 `profiling.executionDeclarations` entry for a matching ARM64 DeviceClass. Merge
 the entry into the existing declaration list; do not replace unrelated entries.
 The fact-source envelope and Helm renderer use

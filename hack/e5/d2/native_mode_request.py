@@ -6,6 +6,7 @@ One fresh UID/RV-tested request, no mutation retry or scientific measurement.
 import argparse
 import datetime as dt
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -57,12 +58,14 @@ def main():
         p.error('Main exact native-mode technical release required')
     name=release['node']['name'];uid=release['node']['uid'];mode=release['targetMode']
     maximum=release.get('maxActuationSeconds')
-    if maximum!=900:p.error('Bind actual existing900s native actuation policy; do not invent another watchdog')
+    if type(maximum) not in (int,float) or not math.isfinite(maximum) or maximum<=0:
+        p.error('maxActuationSeconds must be positive and finite')
+    namespace=release.get('namespace',CONFIG['d2'].get('namespace','chill-system'))
     try:
         # These read-only guards precede a native request and never overlap load.
-        jobs=k(['-n','chill-system','get','jobs','-o','json'])
+        jobs=k(['-n',namespace,'get','jobs','-o','json'])
         if any(x.get('status',{}).get('active',0) for x in jobs['items']):raise RuntimeError('Active producer/measurement Job exists')
-        pods=k(['-n','chill-system','get','pods','--field-selector','spec.nodeName='+name,'-o','json'])
+        pods=k(['-n',namespace,'get','pods','--field-selector','spec.nodeName='+name,'-o','json'])
         active=[x for x in pods['items'] if not x['metadata'].get('deletionTimestamp') and x.get('status',{}).get('phase') not in ('Succeeded','Failed') and any(c.get('name')=='firstfloor' for c in x['spec'].get('containers',[]))]
         if active:raise RuntimeError('Target native serving instances remain; mode realization requires drained empty node')
         node=k(['get','node',name,'-o','json']);save(a.out/'node-fresh-before.json',node)
@@ -92,9 +95,34 @@ def main():
                     save(a.out/'result.json',dict(at=now(),status='native-ready',node={'name':name,'uid':uid},targetMode=mode,requestedAt=stamp,transition=transition,mutations=1,hostNvpmodelCalls=0,automaticRetries=0))
                     return 0
                 time.sleep(5)
-        raise RuntimeError('Native request did not reach matching generation/ReadyAt/NodeReady within900s')
+        raise RuntimeError('Native request did not reach matching generation/ReadyAt/NodeReady within '+str(maximum)+'s')
     except Exception as e:
         save(a.out/'STOP.json',dict(at=now(),node={'name':name,'uid':uid},targetMode=mode,error=str(e),instruction='Stop node lane; preserve actual native outcome/handback and ask Main. No retry, host power command or speculative rollback.'))
         print(str(e),file=sys.stderr);return 2
+
+def self_check():
+    """Exercise release validation and namespace guards without cluster requests."""
+    import tempfile
+    from unittest.mock import patch
+    with tempfile.TemporaryDirectory() as tmp:
+        root=Path(tmp);release=root/'release.json';out=root/'out'
+        value=dict(executor='CampaignOps',command='node-native-mode',mainInstructionUTC=now(),
+                   node=dict(name='node',uid='uid'),targetMode='mode',namespace='frozen-test',maxActuationSeconds=37.5)
+        calls=[]
+        def kubectl(argv):
+            calls.append(argv)
+            return {'metadata':{'uid':'uid'}} if argv[:2]==['get','node'] else {'items':[]}
+        with patch.object(sys,'argv',['native_mode_request.py','--release',str(release),'--out',str(out)]), \
+             patch.dict(globals(),k=kubectl,settled=lambda *args:(True,{})):
+            save(release,value)
+            assert main()==0
+            assert calls[:2]==[['-n','frozen-test','get','jobs','-o','json'],
+                               ['-n','frozen-test','get','pods','--field-selector','spec.nodeName=node','-o','json']]
+            for invalid in (0,-1,True,float('nan'),float('inf')):
+                save(release,dict(value,maxActuationSeconds=invalid))
+                try:main()
+                except SystemExit as error:assert error.code==2
+                else:raise AssertionError('Invalid actuation limit accepted')
+
 
 if __name__=='__main__':sys.exit(main())

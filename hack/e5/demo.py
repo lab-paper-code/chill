@@ -122,6 +122,10 @@ def schedule(config, e5):
     from chill_loadgen import cli
     ANALYSIS.generator_quality_config(config)
     e5.freeze_producer_config(dict(config))
+    e5.freeze_arrivals(config)
+    g0 = config.setdefault('g0Evidence', {'status': 'UNKNOWN'})
+    for key, value in (('durationSeconds', 120), ('alpha', 1.2), ('maximumCPUFraction', 1)):
+        g0.setdefault(key, value)
     if 'staticPlacement' in config and type(config['staticPlacement']) is not bool:
         raise ValueError('staticPlacement must be a boolean')
     allowed_archives = {'power', 'power-drain-inclusive'}
@@ -133,12 +137,12 @@ def schedule(config, e5):
     shares = e5.pool_shares(config)
     share_by_alias = {'mobilenet': shares['MNV'], 'smolvlm2': shares['Smol'], 'plc': shares['PLC']}
     bootstrap = config.get('g0Bootstrap', False)
-    if type(bootstrap) is not bool or (bootstrap and (len(config['stages']) != 1 or config['stages'][0].get('id') != 'G-check' or config['stages'][0].get('seconds') != 120 or config['stages'][0].get('alpha') != 1.2)):
-        raise ValueError('g0Bootstrap is only the explicit one-shot 120s alpha=1.2 G-check')
+    if type(bootstrap) is not bool or (bootstrap and (len(config['stages']) != 1 or config['stages'][0].get('id') != 'G-check' or config['stages'][0].get('seconds') != g0['durationSeconds'] or config['stages'][0].get('alpha') != g0['alpha'])):
+        raise ValueError('g0Bootstrap is only the selected one-shot G-check')
     if capacity is not None:
         gate = {'status': 'UNKNOWN', 'sources': {}} if bootstrap else e5.g0_evidence_gate(
             config, sum(capacity[name] * share_by_alias[name] for name in ALIASES), required=False,
-            expected_rates={ALIASES[name]: 1.2 * capacity[name] * share_by_alias[name] for name in ALIASES},
+            expected_rates={ALIASES[name]: g0['alpha'] * capacity[name] * share_by_alias[name] for name in ALIASES},
             plc_slo=config.get('measurementSLO', {}).get('plc'))
         config['g0Gate'] = gate
     for source in [config] + config.get('stages', []):
@@ -202,9 +206,9 @@ def schedule(config, e5):
             for part in parts:
                 rate = part['rates'][name]
                 if rate:
-                    offsets.extend(base + x for x in cli.arrival_offsets_ns('poisson', rate, part['seconds'], e5.SEEDS[name]))
+                    offsets.extend(base + x for x in cli.arrival_offsets_ns(config['arrivals'][name], rate, part['seconds'], config['seeds'][name]))
                 base += round(part['seconds'] * 1e9)
-            stage['traces'][name] = {'seed': e5.SEEDS[name], 'offsetsNS': offsets, 'offered': len(offsets), 'arrivalSHA256': hashlib.sha256(json.dumps(offsets, separators=(',', ':')).encode()).hexdigest()}
+            stage['traces'][name] = {'seed': config['seeds'][name], 'offsetsNS': offsets, 'offered': len(offsets), 'arrivalSHA256': hashlib.sha256(json.dumps(offsets, separators=(',', ':')).encode()).hexdigest()}
         stages.append(stage)
     if not config.get('staticPlacement') and any(stages[0]['rates'].values()):
         raise ValueError('First stage must be zero-load autonomous bootstrap')
@@ -327,7 +331,7 @@ def assemble(e5, args, spec):
     args.out.mkdir(parents=True)
     d = e5.module('demo_capture', HERE / 'd2/conduct_before.py')
     d.BASE, d.CA, d.TOKEN = op['endpoint'], Path(op['caFile']), Path(op['tokenFile'])
-    d.K = e5.ENVIRONMENT['d2']['kubectl'] + ['-n', 'chill-system']
+    d.K = e5.ENVIRONMENT['d2']['kubectl'] + ['-n', e5.ENVIRONMENT['d2'].get('namespace', 'chill-system')]
     io = object.__new__(d.Conductor)
     io.a = argparse.Namespace(command='demo-prepare', phase='demo-prepare')
     io.out = io.phase_out = args.out
@@ -436,6 +440,11 @@ def prepare(e5, args):
         raise RuntimeError('No implicit preparation overwrite; use a fresh output directory')
     args.config = args.config.resolve()
     spec = e5.load(args.config)
+    if spec.get('e5Config'):
+        base = e5.load(spec['e5Config'])
+        for key in ('seeds', 'arrivals'):
+            if key in base:
+                spec.setdefault(key, copy.deepcopy(base[key]))
     stages = schedule(spec, e5)
     if spec.get('preflight'):
         if spec.get('staticPlacement') or len(stages) != 2 or not stages[0].get('readyGate') or len(stages[1]['parts']) != 1 or stages[1]['seconds'] != 60 or stages[1]['rates'] != {ALIASES['mobilenet']: 20, ALIASES['smolvlm2']: .3, ALIASES['plc']: 40}:
@@ -447,10 +456,18 @@ def prepare(e5, args):
     e5.token_preflight(token_config, stages)
     config_path = Path(spec['e5Config']).resolve() if spec.get('e5Config') else assemble(e5, args, spec)
     c = e5.load(config_path)
-    for key in ('producerResources', 'producerShards'):
+    for key in ('producerResources', 'producerShards', 'seeds', 'arrivals', 'failureSelectSnapshotTTLSeconds', 'burstLowMaximumSeconds', 'g0Evidence', 'failureInjectionRunbook'):
         if key in spec:
             c[key] = copy.deepcopy(spec[key])
-    e5.freeze_producer_config(c)
+    for key in ('collection', 'inputs'):
+        c.setdefault(key, {}).update(copy.deepcopy(spec.get(key, {})))
+    e5.freeze_harness_config(c)
+    c['stages'] = copy.deepcopy(spec['stages'])
+    if 'failureInjectionRunbook' not in c:
+        c['failureInjectionRunbook'] = copy.deepcopy(e5.load(HERE/'demo-config.e5.example.json')['failureInjectionRunbook'])
+    for stage in stages:
+        if stage['id'] == 'E5-7':
+            stage['failureInjectionRunbook'] = copy.deepcopy(c['failureInjectionRunbook'])
     if 'generatorQuality' in spec:
         c['generatorQuality'] = ANALYSIS.generator_quality_config(spec)
     else:
@@ -468,8 +485,8 @@ def prepare(e5, args):
     c['tokenLifetime'] = e5.token_preflight(c, stages)
     if len(c['workloads']) != 3 or {w['name'] for w in c['workloads']} != set(ALIASES.values()):
         raise ValueError('Existing three canonical workload definitions required')
-    if any(c['timeboxes']['setupSeconds'] + s['seconds'] + c['timeboxes']['drainSeconds'] + c['timeboxes']['flushSeconds'] > 4200 for s in stages):
-        raise ValueError('Stage exceeds existing finite collector duration limit')
+    if any(c['timeboxes']['setupSeconds'] + s['seconds'] + c['timeboxes']['drainSeconds'] + c['timeboxes']['flushSeconds'] > c['collection']['maximumDurationSeconds'] for s in stages):
+        raise ValueError('Stage exceeds selected finite collector duration limit')
     wire = e5.module('demo_floor_binding', HERE / 'e5-wire.py')
     manager = object.__new__(wire.Prepare)
     manager.op, manager.out, manager.tb = c, args.out, c['timeboxes']
@@ -1139,7 +1156,7 @@ def self_check():
         cpo.out.mkdir()
         cpo.a = SimpleNamespace(mode='smoke', command='smoke', stage='E0', row_tag='')
         cpo.c = {'workloads': workloads, 'smoke': stages[0], 'generatorQuality': {'latenessToleranceNS': 50_000_000, 'maxExceedingFraction': 0}}
-        e5.freeze_producer_config(cpo.c)
+        e5.freeze_harness_config(cpo.c)
         cpo.b = {'schema': 'demo-e5-binding.v1', 'config': cpo.c, 'schedule': stages, 'sources': {}, 'payload': {w['name']: [] for w in workloads}}
         cpo.tb = dict.fromkeys(('setupSeconds', 'barrierSeconds', 'drainSeconds', 'apiSeconds', 'settleSeconds', 'collectSeconds'), 3)
         cpo.tb['flushSeconds'] = .001

@@ -22,7 +22,8 @@ SLO = {'percentile': 95, 'targetLatencyNanos': 1000000000}
 NAMES = tuple(CONFIG['d2']['nodes'])
 BEFORE_SHA = 'e18ac391d4353e5abba03558b163312f2a7b629b'
 SETTINGS = ('completionMarginMS', 'capacityWindowNanos', 'capacityWindows',
-            'capacityPassingWindows', 'capacityMinimumRequests')
+            'capacityPassingWindows', 'capacityMinimumRequests',
+            'capacityGridSteps', 'capacityBisectionWidth', 'capacityTailSamples')
 SOURCES = ('internal/serving/capacity.go:31-111',
            'internal/serving/scheduler_replay.go:311-439',
            'internal/serving/kube/scheduler.go:563-579',

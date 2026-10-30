@@ -32,13 +32,14 @@ REPOBIN = D2['repoBin']
 BASE = D2['apiBase']
 CA = Path(D2['caFile'])
 TOKEN = Path(D2['tokenFile'])
-K = D2['kubectl'] + ['-n', 'chill-system']
+K = D2['kubectl'] + ['-n', D2.get('namespace','chill-system')]
 ENV = dict(os.environ, LOCALBIN=REPOBIN, PATH=REPOBIN+':'+os.environ.get('PATH',''))
 TEMPLATE = Path(D2['jobTemplate'])
 UID = D2['workloadUID']
 NAME = D2['workloadName']
 POLICY_ANNOTATION = 'edge.dacs.io/serving-policy'
 epoch = runpy.run_path(str(ROOT/'analyze_before.py'), run_name='d2_time_rules')['epoch']
+NATIVE_RULES = runpy.run_path(str(ROOT/'native_mode_request.py'),run_name='d2_native_mode_rules')
 
 # Delegate to the exact installed CLI. One diagnostic-free metadata envelope is
 # emitted before replay; neither payload bytes nor credentials are printed.
@@ -120,8 +121,11 @@ def save(path, value):
     path.write_text(json.dumps(value,indent=2,allow_nan=False)+'\n')
 
 
-def control_alert_decision(row, actuation_evidence=(), bound_nodes=()):
+def control_alert_decision(row, actuation_evidence=(), bound_nodes=(), *, timeboxes=None):
     """Read the existing monitor wire format; never blanket-ignore Node boots."""
+    timeboxes=timeboxes or {}
+    allowance=timeboxes.get('nativeFutureAllowanceSeconds',15)
+    maximum=timeboxes.get('maxActuationSeconds',900)
     signals=[str(row.get('event',''))]
     reasons=row.get('reasons',[])
     signals.extend(str(x) for x in (reasons if isinstance(reasons,list) else [reasons]))
@@ -159,8 +163,7 @@ def control_alert_decision(row, actuation_evidence=(), bound_nodes=()):
             target=operation.get('powerMode');generation=proof.get('actual',{}).get('generation')
             valid=proof.get('status')=='complete' and not proof.get('error') and proof.get('actual',{}).get('node')==node and proof.get('actual',{}).get('powerMode')==target
         elif proof.get('kind')=='node-power-safety-observation':
-            import runpy
-            rules=runpy.run_path(str(Path(__file__).with_name('native_mode_request.py')),run_name='d2_native_mode_rules')
+            rules=NATIVE_RULES
             raw=proof['node'];meta=raw['metadata'];labels=meta.get('labels',{});annotations=meta.get('annotations',{})
             node={'name':meta['name'],'uid':meta['uid']}
             observed=stamp(proof.get('observedAtUTC'));authorized=stamp(proof.get('authorizedSinceUTC'))
@@ -170,7 +173,7 @@ def control_alert_decision(row, actuation_evidence=(), bound_nodes=()):
                 generation=int(annotations[rules['GENERATION']])
             except (KeyError,ValueError,TypeError):
                 return {'classification':'fatal-mode-transition-mismatch','stop':True,'meaning':'Native transition/generation is unreadable'}
-            fresh=at is not None and observed is not None and authorized is not None and start is not None and authorized<=start<=at<=observed+15 and 0<=observed-start<=915
+            fresh=at is not None and observed is not None and authorized is not None and start is not None and authorized<=start<=at<=observed+allowance and 0<=observed-start<=maximum+allowance
             same=node.get('name')==row.get('node') and bound.get(node.get('name'))==node.get('uid') and target and transition.get('powerMode')==target and transition.get('requestedAt')==annotations.get(rules['REQUESTED'])
             if not fresh or not same or generation<0 or transition.get('failure') or labels.get(rules['STATE'])=='failed':
                 return {'classification':'fatal-mode-transition-mismatch','stop':True,'meaning':'No fresh authorized same-Node native request/transition; an old request cannot excuse a new restart'}
@@ -181,7 +184,7 @@ def control_alert_decision(row, actuation_evidence=(), bound_nodes=()):
             except (RuntimeError,ValueError,KeyError,TypeError) as error:
                 return dict(detail,classification='fatal-mode-transition-mismatch',stop=True,error=str(error))
             ready_at=stamp(transition.get('readyAt'))
-            if labels.get(rules['STATE'])=='success' and ready_at is not None and start<=ready_at and abs(at-ready_at)<=15 and ready_at<=observed+15:
+            if labels.get(rules['STATE'])=='success' and ready_at is not None and start<=ready_at and abs(at-ready_at)<=allowance and ready_at<=observed+allowance:
                 return dict(detail,classification='approved-node-actuation-boot' if ready else 'approved-node-actuation-in-progress',stop=False,requiresPostDrainCompletion=not ready,meaning='Actual generation-matched native success plus fresh restart-time correlation; Node Ready is separately recorded. Native ReadyAt is a coarse safety freshness fence, never a request-latency measurement; unusable clocks fail closed.')
             return dict(detail,classification='fatal-unconfirmed-node-restart',stop=True,meaning='Explicit fresh native apply/Ready correlation unavailable; stop now, not at end of soak')
         elif proof.get('status')=='native-ready' and proof.get('mutations')==1:
@@ -189,7 +192,7 @@ def control_alert_decision(row, actuation_evidence=(), bound_nodes=()):
             target=proof.get('targetMode');transition=proof.get('transition',{});generation=transition.get('generation')
             valid=transition.get('powerMode')==target and transition.get('requestedAt')==proof.get('requestedAt') and bool(transition.get('readyAt')) and isinstance(generation,int) and generation>0
         else:continue
-        if node.get('name')!=row.get('node') or at is None or start is None or end is None or not start<=at<=end+15:
+        if node.get('name')!=row.get('node') or at is None or start is None or end is None or not start<=at<=end+allowance:
             continue
         if not valid or not target or bound.get(node.get('name'))!=node.get('uid'):
             return {'classification':'fatal-mode-transition-mismatch','stop':True}
@@ -198,8 +201,24 @@ def control_alert_decision(row, actuation_evidence=(), bound_nodes=()):
         return {'classification':'unconfirmed-node-actuation-candidate','stop':True,'requiresImmediateNativeCorrelation':True,'meaning':'Immediately notify CPO/Main and correlate existing Kubernetes native request/transition/Ready. Autonomous+bound Node alone never allows continuation.'}
     return {'classification':'fatal-unexpected-restart','stop':True,'meaning':'No actual matching same-Node mode proof; no global Jetson exemption.'}
 
-def resolve_control_alert(row, actuation_evidence, bound_nodes, *, authorized_since=None, node_reader=None, report_candidate=None):
-    decision=control_alert_decision(row,actuation_evidence,bound_nodes)
+def self_check():
+    """Check nondefault native freshness bounds using a pending native request."""
+    rules=NATIVE_RULES
+    start='2026-10-30T00:00:00+00:00'
+    node={'metadata':{'name':'node','uid':'uid','labels':{rules['LABEL']:'mode',rules['STATE']:'pending'},
+                     'annotations':{rules['REQUESTED']:start,rules['GENERATION']:'1',
+                                    rules['TRANSITION']:json.dumps(dict(powerMode='mode',requestedAt=start,applyStartedAt=start))}}}
+    proof=dict(kind='node-power-safety-observation',node=node,authorizedSinceUTC=start,
+               observedAtUTC='2026-10-30T00:00:40+00:00')
+    row=dict(event='restart',component='node-agent',container='node-agent',node='node',at='2026-10-30T00:00:42+00:00')
+    bound=[dict(name='node',uid='uid')]
+    assert not control_alert_decision(row,[proof],bound,timeboxes=dict(maxActuationSeconds=38,nativeFutureAllowanceSeconds=2))['stop']
+    assert control_alert_decision(row,[proof],bound,timeboxes=dict(maxActuationSeconds=37,nativeFutureAllowanceSeconds=2))['stop']
+    assert control_alert_decision(dict(row,at='2026-10-30T00:00:43+00:00'),[proof],bound,timeboxes=dict(maxActuationSeconds=38,nativeFutureAllowanceSeconds=2))['stop']
+
+
+def resolve_control_alert(row, actuation_evidence, bound_nodes, *, authorized_since=None, node_reader=None, report_candidate=None, timeboxes=None):
+    decision=control_alert_decision(row,actuation_evidence,bound_nodes,timeboxes=timeboxes)
     if decision['classification']!='unconfirmed-node-actuation-candidate':return decision
     if report_candidate is not None:report_candidate(row,decision)
     else:print('CONTROL_RESTART_IMMEDIATE_CPO_MAIN '+json.dumps(dict(row=row,decision=decision)),file=sys.stderr,flush=True)
@@ -207,7 +226,7 @@ def resolve_control_alert(row, actuation_evidence, bound_nodes, *, authorized_si
     try:node=node_reader(row['node'])
     except Exception as error:return dict(classification='fatal-native-safety-query-failure',stop=True,error=str(error))
     observation=dict(kind='node-power-safety-observation',node=node,authorizedSinceUTC=authorized_since,observedAtUTC=now())
-    result=control_alert_decision(row,[*actuation_evidence,observation],bound_nodes)
+    result=control_alert_decision(row,[*actuation_evidence,observation],bound_nodes,timeboxes=timeboxes)
     result['nodeSafetyObservation']=observation
     return result
 
@@ -262,8 +281,9 @@ class Conductor:
         return value
 
     def k(self, argv, stdin=None, timeout=129):
-        begun=now();r=subprocess.run(K+argv,input=stdin,text=True,capture_output=True,timeout=timeout,env=ENV)
-        self.record(dict(kind='kubectl',argv=K+argv,startUTC=begun,exitCode=r.returncode))
+        command=D2['kubectl']+['-n',getattr(self,'config',{}).get('namespace',D2.get('namespace','chill-system'))]+argv
+        begun=now();r=subprocess.run(command,input=stdin,text=True,capture_output=True,timeout=timeout,env=ENV)
+        self.record(dict(kind='kubectl',argv=command,startUTC=begun,exitCode=r.returncode))
         if r.returncode:
             raise RuntimeError('kubectl failed: '+r.stderr[:600])
         return json.loads(r.stdout) if r.stdout.strip() else None
@@ -766,7 +786,7 @@ class Conductor:
         raise RuntimeError('Finite10000-page capture cap reached; no silent partial completion')
 
     def job(self, label, rate, duration):
-        job=load(TEMPLATE);job['metadata']={'name':'d2-before-'+label,'namespace':'chill-system','labels':{'chill.dacs.io/d2-before':self.a.phase}}
+        job=load(TEMPLATE);job['metadata']={'name':'d2-before-'+label,'namespace':getattr(self,'config',{}).get('namespace',D2.get('namespace','chill-system')),'labels':{'chill.dacs.io/d2-before':self.a.phase}}
         spec=job['spec'];spec.pop('selector',None);spec.pop('manualSelector',None)
         spec['template']['metadata']={'labels':{'chill.dacs.io/d2-before':self.a.phase}}
         pod=spec['template']['spec'];container=pod['containers'][0]
@@ -789,7 +809,8 @@ class Conductor:
         if actual['metadata']['uid']!=uid:raise RuntimeError('Owned Job UID changed; refuse deletion')
         options=dict(apiVersion='v1',kind='DeleteOptions',propagationPolicy='Foreground',preconditions=dict(uid=uid,resourceVersion=actual['metadata']['resourceVersion']))
         save(self.phase_out/('delete-'+name+'-options.json'),options)
-        uri='/apis/batch/v1/namespaces/chill-system/jobs/'+urllib.parse.quote(name,safe='')
+        namespace=getattr(self,'config',{}).get('namespace',D2.get('namespace','chill-system'))
+        uri='/apis/batch/v1/namespaces/'+urllib.parse.quote(namespace,safe='')+'/jobs/'+urllib.parse.quote(name,safe='')
         # Raw DELETE returns the real API JSON; ordinary kubectl delete supports
         # only text/name output and does not itself check resourceVersion.
         result=self.k(['delete','--raw',uri,'-f','-'],stdin=json.dumps(options),timeout=75)

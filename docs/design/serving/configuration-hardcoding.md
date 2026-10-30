@@ -1,6 +1,6 @@
 # 하드코딩 정리: 설정 소유권과 기록 경로
 
-상태: 구현 전 설계(2026-10-30). **2차 검토(fusion: 패널 3모델+판정) 반영**. 구현·측정 완료가 아니다.
+상태: 2026-10-30. **2차 검토(fusion: 패널 3모델+판정) 반영**. 슬라이스 2~5 구현 및 아래 offline 회귀 완료; 배포·live 측정 수용 완료를 뜻하지 않는다.
 [계획](../../plans/2026-10-30-configuration-hardcoding.md) · [인벤토리](../../plans/2026-10-30-configuration-hardcoding-inventory.md) · [ADR 0031](../../adr/0031-configuration-ownership-and-freezing.md)
 
 ## 1. 경계와 결정
@@ -45,7 +45,7 @@ A는 측정·판정 소유자의 기존 입력, B는 실제 환경 입력으로 
 
 기존 `chill.dacs.io/profile-reuse` JSON의 sourceProfileID·maximumRelativeDifference 옆에 `minimumMeasurementSeconds`(finite >0, 기본30), `minimumTrials`(정수 ≥2, 기본3)를 추가한다. 창은 active와 idle 각각의 최소값이다. `ProfileReuseCheck`에는 선택 최소값과 실제 active/idle 길이·trial 수를 기록한다. 기존 `reusedProfile` 정책 identity에도 두 값을 넣어 annotation 변경이 옛 immutable startup bundle을 재사용하지 않게 한다. 전역 settings 변경으로 기존 요청 정책을 재정의하지 않는다. trials=2 수용은 §5의 종단 하한 정리와 함께 완료한다.
 
-슬라이스3 구현(2026-10-30): settings decode·HTTP/ConfigMap·직접 κ 도구·Dashboard typed 편집과 용량 행까지 연결했다. κ 도구는 입력의 minimumRequests를 보존한다. raw archive fixture는 수정하지 않고 replay loader가 현재 계약의 행 입력/키를 구성한다. 요청별 최소값은 reuse 판정/기록/identity에 연결하며 과거 기록에 없는 필드는 소급 채우지 않는다. `hack/e5/d2/bind_before.py` SETTINGS/CapacityInput 대조는 하네스 소유자 후속이다.
+슬라이스3 구현(2026-10-30): settings decode·HTTP/ConfigMap·직접 κ 도구·Dashboard typed 편집과 용량 행까지 연결했다. κ 도구는 입력의 minimumRequests를 보존한다. raw archive fixture는 수정하지 않고 replay loader가 현재 계약의 행 입력/키를 구성한다. 요청별 최소값은 reuse 판정/기록/identity에 연결하며 과거 기록에 없는 필드는 소급 채우지 않는다. 슬라이스5에서 `hack/e5/d2/bind_before.py` SETTINGS/CapacityInput 대조에 새 capacity 필드3개를 연결했다.
 
 ### 3-4. 유지할 설정과 방법론
 
@@ -103,6 +103,36 @@ DELAY_TOLERANCE_NS=10ms는 delayed 표시 방법론 C다. --delay-tolerance나 �
 
 `demo.py` offline 회귀와 실제 E5가 호출한 bind_before SETTINGS/eligibility, Conductor API·publication·producer·삭제, native 요청, analyze stats/quality는 유지한다. 독립 D2 main·옛 수집·numbers.py 비활성 경로는 제외하며 helper 전체를 삭제하지 않는다.
 
+### 슬라이스 5 구현과 기본값
+
+cutover 후 인벤토리 5의 29행은 모두 잔존(새 제외0)이다. 선행 CHILL 우회 수집12개 후보는 10행 제외, API collector에도 남은 support/hour 범위·trapezoid2행은 C로 재분류했다. 외부 producer의 client-only sampler와 STOP/운영자 주입은 유지한다. 다음은 **실험 config → binding.config**의 선택값이다. `e5-wire.py`의 승인 숫자 입력과 `demo.py`의 spec도 같은 키를 전달한다. 실행 시 환경 파일을 다시 읽어 namespace·seed·정책을 갱신하지 않는다.
+
+| 키 | 생략 기본값 | 소비자 |
+|---|---|---|
+| stages[].id/seconds/alpha/parts | 기존 `normative_stage_specs(burstLowSeconds)`의 8개 E5 row/12개 part: 600,1800,900,1800,900,1200,3600,900초; 기존 α 그대로 | bind → 연속 part trace/producer → judge; 명시 part ID 보존. demo의 필수 stages는 기존대로 |
+| seeds | canonical MNV101/PLC202/Smol303 | bind trace·smoke·workload.seed·Job 이름/인자·check |
+| arrivals | canonical workload별 poisson | bind trace·workload.arrivals·producer의 모든 segment; fixed도 허용 |
+| g0Evidence.durationSeconds / alpha / maximumCPUFraction | 120 / 1.2 / 1 | one-shot G-check schedule·rates·엄격한 CPU fraction 상한 검증; demo bootstrap도 선택 duration/alpha 소비 |
+| workloads[].slo.percentile | 기존 필수 Workload SLO 입력, 별도 덮어쓰기 없음(현재 PLC95) | G0는 client requestID로 조인한 raw `elapsedNanos`의 nearest-rank 선택 분위수, judge도 선택 SLO 소비 |
+| inputs.maximumIdleNanosPerRequest | 1000000 ns/request | d25 closure 검증, `d25Acceptance` → 분석 eligibility |
+| burstLowMaximumSeconds / collection.maximumDurationSeconds | 900 / 4200초 | burst 입력·각 schedule row의 setup+seconds+drain+flush 검사; 최장3600초 리터럴 제거 |
+| timeboxes.maxActuationSeconds / nativeCallerSeconds / nativeFutureAllowanceSeconds | 900 / 960 / 15초 | native release/호출 timeout·alert freshness(900+15 유도), caller>actuation |
+| producerResources / producerShards | cpu2,memory1Gi / MNV3,PLC1,Smol1 | producer requests/limits·process 분할 |
+| poolShares | MNV.45,PLC.1,Smol.45 | workload별 intended/actual rate |
+| failureSelectSnapshotTTLSeconds | 15초 | 장애 선택 snapshot age/expiry |
+| tokenSafetyMarginSeconds | 60초 | bind·각 실행 token lifetime 사전 점검 |
+| timeboxes.finishResetWaitSeconds / powerDownSeconds / factorAckWaitSeconds | 600 / 1800 / 120초 | zero-state reset 대기·reset HTTP 총 예산·복원 ACK |
+| timeboxes.apiSeconds | 기존 E5 필수 입력 유지; 일반 정규화 fallback30초 | 각 경로 API 예산; 승인129초를30초로 바꾸지 않음 |
+| collection.energyCoverage | maxGapFraction=.01,maxSingleGapSeconds=30 | 에너지 row gap 수용 |
+| generatorQuality | latenessToleranceNS=50000000,maxExceedingFraction=.01 | 실제 issuance/품질 수용 |
+| failureInjectionRunbook | 누락 때만 기존 example 문서 | 선택 문서를 config와 E5-7 row에 보존, 운영자 주입/분석 |
+| workloads[].workers/deliverySeconds/socketSeconds/lifetimeSeconds | 기존 필수 workers/delivery/socket 유지; lifetime 생략 None | 기존 CLI 인자로 동결·재생; None은 request-lifetime 인자 미전달, CLI fallback 유지 |
+
+`fullSeconds`, `staticSeconds`, `factorSeconds` 및 `check`의 시간/seed 대조는 binding schedule/config에서 유도한다. closure 모집단도 선언 target 목록과 비교한다. 새 closure count·G0 count·delay/poll 키는 없다. 현재 E5→실행 helper는 측정 CR을 생성하지 않으므로 슬라이스2 후속 CI/tolerance/occupancy seed 선택 전달 대상은 없다. 기존 운영 입력 sample은 §7의 완전 문서 선택을 따른다.
+
+회귀: E5 self-check, demo self-check, demo report self-check, collector `_self_check`, load-generator 32개 테스트, `go test ./internal/serving ./internal/serving/kube`를 실행했다. 변경 전 `git show HEAD:hack/e5/e5.py` 임시 사본의 실제 `bind()`와 새 기본 bind를 같은 합성 입력으로 실행해 schedule의 stage/part 시간·rates·offsets·offered, full11700/static10200/factor2100×N, payload/κ/settings를 필드 단위 대조했다. G0 기본 수락/거절과 경로별 literal timeout/poll도 구 코드와 대조했으며 키/hash/바이트 동등성은 관문으로 삼지 않았다. 비기본 stages/fixed arrivals/seed7/runbook 보존과 G0 duration37/alpha.8/CPU.75/PLC p90 raw 분위수 및 native freshness도 offline 검사한다. 실제 운영 입력 전체 bind·E5 실행·클러스터·SSH·배포는 하지 않았다.
+
+
 ## 7. B 환경값 연결
 
 실제 registry·Node/runner·외부 endpoint와 잔존 실행 namespace만 B다. 이미 values에 있는 repository·region·장비 catalog·signature·mode·clock은 D다. /proc·/sys·SA token·내부 TLS/data/evidence mount는 C 또는 기존 D, 내부8080/9000과 이미지 UID/GID65532는 패키징 C다. example-*·repo-relative echo·artifact 내부 경로는 예제/산출물 계약으로 유지한다. 기본 values를 비우지 않는다. 현재 testbed discovery profile과 chart fail 조건을 별도 재설계하지 않는다.
@@ -110,6 +140,10 @@ DELAY_TOLERANCE_NS=10ms는 delayed 표시 방법론 C다. --delay-tolerance나 �
 각 행의 이동처는 하나다. 배포값은 기존 해당 Helm values 키, 잔존 E5/helper namespace는 `CHILL_EXPERIMENT_CONFIG.d2.namespace`→bind 시 `binding.config.namespace`다. `e5.py:1316,1519`, `e5-wire.py:105`를 포함한다. 역사 조회2533 등은 cutover 뒤 잔존 여부로 제외한다.
 
 실제 registry·Node를 가진 운영 샘플은 환경 JSON `samples["<기존 상대 파일 경로>"]`에 완전한 입력 문서로 보관하고 기존 등록/측정 요청 절차에서 선택한다. 정적 YAML의 JSON 참조 자동 해석은 없다. immutable runtime declaration은 image와 inspection 사실을 묶은 문서 전체를 이동한다. 주소만 바꿔 같은 검증 사실처럼 꾸미지 않는다.
+
+슬라이스5 구현: catalog8개·NVIDIA DeviceClass/전이 요청2개·ARM64 runtime declaration1개의 완전한 원본 문서를 외부 `inputs/environment.json` 및 `inputs/environment-212.json`의 `samples`에 보존했다. 정적 sample은 example registry/hardware로 바꾸고 inspection 사실을 일반 이미지에 붙이지 않도록 정적 runtime declaration 전체를 제거했다. 기존 등록 안내가 `jq -e '.samples[$path] // error(...)'`로 문서를 명시 선택한 다음 기존 HTTPS/kubectl 입력으로 전달한다. 자동 YAML 해석·새 등록 서비스는 없다. namespace 생략 기본은 `chill-system`이며 실제 선택은 bind에서 동결된다.
+두 환경 JSON의 11개씩 총22개 sample을 `jq`로 offline 선택하고 누락 키 거절을 검사했다. 정적 YAML20회 파싱과 변경 전 원본22개 문서의 파싱된 필드 비교도 통과했다(image/inspection 포함). 외부 JSON은 기존 private 운영 디렉터리에 있으며 Git 커밋에는 정적 예제와 선택 절차만 포함한다.
+
 
 ## 8. 구현 슬라이스와 시작 조건
 
@@ -121,7 +155,7 @@ DELAY_TOLERANCE_NS=10ms는 delayed 표시 방법론 C다. --delay-tolerance나 �
 | 2 | 측정 정책 | 1 뒤; 단일 CI·CR 입력·하한2·결과 저장/재로딩/serving 소비 완결 |
 | 3 | serving 용량 settings·요청 reuse | 2의 정책 확정 뒤; typed caller·CapacityInput·캐시·reuse identity 연결 |
 | 4 | 기존 기록 최소 보강 | 3 뒤; cluster/server-start와 settings 실패 의미 정리, 새 stream 없음 |
-| 5 | 잔존 하네스 A/B | 2~4 계약 확정 뒤; binding→실행→분석과 단일 환경 이동처 완결 |
+| 5 | 잔존 하네스 A/B | 완료: 29행 유지/구현, cutover 후보12행 중 제외10/C유지2 확정; binding→실행→분석 및 단일 환경 이동처 연결, offline 회귀 실행 |
 | 6 | 통합 소유자 단일 검증·인계 | 전체 변경 뒤 한 번 검사; 이 문서 세션은 실행하지 않음 |
 
 C 정리는 관련 변경에 묶고 독립35행 선행 관문으로 만들지 않는다. 같은 파일은 한 소유자, 저장 계약 변경은 캠페인 사이 한 번 모은다.
@@ -143,7 +177,7 @@ ADR0030에 따라 prefix/version v1alpha5를 유지한다. 새 stream·관측 �
 | timeout/poll | 각 경로30/129초·1/2/5초 유지 |
 | 배포 | 승인 overlay 경로·revision·release·namespace를 구현 착수 기록에 지정하고 default/profiler 별도 render의 의미 있는 resource/field delta 비교. values-operating.yaml은 rev74 캡처이지 현재 배포값 아님 |
 
-Go/API/Helm 및 helper offline 회귀는 통합 소유자가 마지막에 한 번 수행한다. 바이트/hash 동등성 관문은 없다. live 동일성은 별도 증거 없이는 주장하지 않는다.
+슬라이스별 검사와 별개로 최종 통합 Go/API/Helm 인계는 통합 소유자가 담당한다. 슬라이스5의 실제 실행 검사는 §6에 기록했다. 바이트/hash 동등성 관문은 없다. live 동일성은 별도 증거 없이는 주장하지 않는다.
 
 ## 9. 열린 점
 
