@@ -72,7 +72,7 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 				serving.SchedulerSettings
 				StaticRouting  json.RawMessage                `json:"staticRouting,omitempty"`
 				Meters         []servingkube.MeterDeclaration `json:"meters"`
-				RequestTimeout time.Duration                 `json:"requestTimeout"` // Runtime --request-timeout, in nanoseconds; read-only.
+				RequestTimeout time.Duration                  `json:"requestTimeout"` // Runtime --request-timeout, in nanoseconds; read-only.
 			}{h.config.Scheduler.Settings(), config["staticRouting"], meters, h.config.RequestTimeout})
 		case strings.HasSuffix(r.URL.Path, "/state"):
 			sendJSON(w, http.StatusOK, h.config.Scheduler.State())

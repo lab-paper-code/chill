@@ -38,6 +38,7 @@ func schedulerSettingsForTest() serving.SchedulerSettings {
 		MaxObservationAge: time.Second, MaxReplicas: 1,
 		ReplacementDwell:       17 * time.Second,
 		ScaleDownStabilization: 120 * time.Second, TransitionReserveFraction: .25,
+		CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 1}
 }
 
@@ -428,7 +429,7 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 		Scheduler: controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler", SchedulerConfigKey: "scheduler.json",
 		SchedulerLock: &sync.Mutex{}, MaxRequestBytes: 1 << 20, RefreshScheduler: func(context.Context) error { return nil },
 		SchedulerMeters: func() []servingkube.MeterDeclaration { return meters },
-		RequestTimeout: 73125 * time.Millisecond,
+		RequestTimeout:  73125 * time.Millisecond,
 	}}
 	put := func(extra string) *httptest.ResponseRecorder {
 		body := strings.TrimSuffix(string(settingsRaw), "}") + extra + "}"
@@ -463,7 +464,7 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 	var shown struct {
 		StaticRouting  map[string]map[string]int      `json:"staticRouting"`
 		Meters         []servingkube.MeterDeclaration `json:"meters"`
-		RequestTimeout time.Duration                 `json:"requestTimeout"`
+		RequestTimeout time.Duration                  `json:"requestTimeout"`
 	}
 	if err := json.Unmarshal(got.Body.Bytes(), &shown); err != nil || got.Code != http.StatusOK || !reflect.DeepEqual(shown.StaticRouting, declared) {
 		t.Fatalf("GET settings lost the stored declaration: status=%d body=%s", got.Code, got.Body)
