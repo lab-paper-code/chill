@@ -653,6 +653,12 @@ source 실패는 partial/stale와 기존 dataAsOf를 유지한다. 지원 실패
 유지하며 partial/stale로 보인다. Run LIST는 한 번의 namespace 갱신에서 UID/owner index로
 사용하고 공개 page별 전수 LIST를 하지 않는다. 동작 비용/점유 source는 집계에 접근하지 않는다.
 
+5분을 넘긴 snapshot을 읽은 요청은 namespace의 동일 in-flight 갱신 완료를 기다린 뒤
+새 snapshot으로 응답한다. 갱신 시작 직후 오래된 지역 변수만 보고 503을 반환하지 않는다.
+5분 이내는 갱신 중 `freshness:stale`로 즉시 제공하고, 5분 초과 입력은 갱신 실패·시간 초과
+또는 성공 후에도 실제 source 확인 시각이 유효하지 않은 경우 503으로 남긴다.
+query의 batches/Node는 cache key가 아니라 같은 namespace snapshot의 projection이다.
+
 수용 데이터는 3모델/8class/88BEO/1,155Run/78profile, 동시 사용자 1·5다.
 **① 성공 GET p95 <2초 ② 로그인/경로 진입부터 첫 사용 가능한 커버리지까지 p95 <2초
 ③ 채택 조건 선택부터 결과 행·기준 판정 완료까지 p95 <2초**를 각각 기록한다.
@@ -662,3 +668,50 @@ warming/partial 비율과 최장 지속시간을 보고하며 정상 source의 �
 미제공 이유를 별도 측정하며 전체 준비를 기다리게 하지 않는다.
 서버 catalog 시작/갱신·Kube GET 수·ConfigMap 파싱 수·인증·BFF·집계 CPU/I/O와 serving 제어 지연을 함께 기록한다.
 이 시간은 설계 목표이며 달성 관측이 아니다. 기존 행렬 7.690초/Run 1행 3.861초를 그대로 재사용하면 수용 실패다.
+
+### 13.7 7차 실패 분류·요청 채움·목록 계약 (2026-10-31)
+
+`MeasurementFailure`와 `MeasurementReason`은 `code`, 한국어 `label`, 안전한 고정 한국어
+`message`를 제공한다. 요청·coverage.failureSummary·Run assessment는 **같은 서버 함수**를
+사용한다. 클라이언트는 로그를 다시 분류하지 않는다. 현재 generation의 False 조건과
+보존 runtime termination의 종료 코드/로그만 근거로 쓰며 ANSI를 제거하고 대소문자를 무시한다.
+첫 일치 규칙이 우선한다. exit 137만으로 GPU 원인을 확정하지 않는다.
+
+| 우선순위 | code / label | 결정적 근거 |
+|---|---|---|
+| 1 | `GPUMemoryExhausted` / GPU 메모리 부족 | CUDA OOM, GPU OOM, cuBLAS/cuDNN allocation failure, 또는 명시된 CUDA 실행 경로 + BFCArena의 `Failed to allocate memory for requested buffer` |
+| 2 | `HostOOM` / 호스트 메모리 부족 | runtime 종료 137, OOMKilled, 또는 명시된 CPU 실행 경로 + 위 BFCArena 할당 실패 |
+| 3 | `PowerObservationTimeout` / 전력 관측 시간 초과 | 같은 줄에 metric observation/result, metric-observer, power observation/observe power와 timeout/timed out/deadline exceeded |
+| 4 | `ImagePullFailed` / 이미지 가져오기 실패 | ImagePullBackOff, ErrImagePull, image pull failed, failed to pull (and unpack) image |
+| 5 | `RuntimeFailed` / 실행 오류 | 보존된 nonzero runtime exit 또는 명시 runtime failed/RuntimeError/segmentation fault/illegal instruction 등 |
+| 6 | `Other` / 기타 오류 | 위 결정적 근거 없음. 일반 allocator 문구만으로 GPU 원인을 추측하지 않음 |
+
+원문 로그와 조건은 상세의 명시적인 원문 펼치기에만 둔다. 분류와 기존 Run UID/namespace/name,
+batch/종료 코드/owner 연결은 함께 보존한다. 후속·유사 조건 관계를 분류 코드로 바꾸지 않는다.
+
+측정 요청 URL은 `/measurements/new?namespace=...&model=...&deviceClass=...&node=...&powerMode=...&path=...&batches=1,2,4`다.
+model/deviceClass/path/powerMode는 카탈로그의 정확 이름이고 node는 선택 이름이다. batches는
+양의 정수 CSV를 중복 제거·오름차순으로 해석하며 malformed·중복 query key는 오류다.
+variantId와 안전한 상대 returnTo는 선택 사항이다. variant가 없는 미측정 칸도 이 계약으로 요청한다.
+서버에 공통 protocol 기본값 API/설정은 현재 없다. 따라서 같은 모델/class/선택 Node/mode/path의
+최신 BEO spec, 없으면 같은 조건 catalog profile의 보존 protocol을 출처와 함께 사용한다.
+같은 조건 근거도 없으면 같은 모델의 최근 Complete BEO, 그 다음 같은 실행 경로의 최근
+Complete BEO에서 **장치와 독립적인 protocol·dataset만** 가져오고 이름과 원본 장치를 표시한다.
+다른 장치의 CPU 수·batch는 복사하지 않으며 CPU affinity·코어 번호는 자동 복사하지 않는다.
+catalog가 보존하지 않는 재시도 정책, 위 순서의 근거가 없는 protocol은 미제공으로 두고 직접
+입력을 요구한다. 반복 3회·CPU 1개는 기존 화면 기본값으로 구분한다.
+조건 변경은 protocol·dataset·CPU·선택 batches를 초기화하지 않으며,
+서버 사전 검사와 exact 자동 제외만 무효화한다. 실제 제출은 사용자 동작이다.
+
+요청·회차·프로파일·동작 비용·분배 점유 목록은 필터를 표 위, 정렬을 열 머리글,
+페이지 크기(10/25/50)·이전/다음을 표 아래에 둔다. 서버 회차/프로파일 목록은 **필터·정렬 후**
+page를 계산하며 현재 page만 클라이언트 정렬하는 기능은 없다.
+Run sort는 name/created/model/powerMode/status, profile sort는
+model/deviceClass/node/powerMode/path/cpu/created/status, order는 asc/desc다.
+같은 정렬값은 identity로 결정한다. profile의 q 및 Node/mode/path/CPU/status 필터도 전체에 적용한다.
+
+동작 비용 목록 총 시간은 계획한 각 단계의 실제 duration이 정확히 하나씩 있을 때만 합하며,
+총 벽에너지는 모든 단계가 Accepted이고 각 wallJoules가 있을 때만 합한다.
+부분 결과는 전체 합계로 올리지 않고 미제공으로 둔다. 유휴를 포함한 전체 순서임을 표시한다.
+점유 목록 d는 ms, 처리량은 req/s이며 결측에는 단위를 붙인 가짜 수치를 만들지 않는다.
+음수 duration/점유·비유한 값은 값 오류, 결측은 미제공, 관측 0은 0으로 구별한다.

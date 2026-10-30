@@ -45,14 +45,14 @@ export function occupancyDuration(value?:unknown) {
   if (value < 0) return "품질 경고: 점유시간이 음수로 기록됐어요"
   return `${formatMeasurementNumber(Number(nanosToMilliseconds(value)),"ms")}ms/request`
 }
-export function operationDuration(value?:unknown) {
+export function operationDuration(value?:unknown,unit:"ms"|"s"="ms") {
   if (value === undefined || value === null) return "실측 시간 기록 없음"
-  if ((typeof value !== "number" && typeof value !== "bigint") || (typeof value === "number" && !Number.isSafeInteger(value))) return `${String(value)} ns · 품질 경고·사용 확인 필요`
-  return `${formatMeasurementDuration(value)}${value < 0 ? " · 품질 경고·사용 확인 필요" : ""}`
+  if ((typeof value !== "number" && typeof value !== "bigint") || (typeof value === "number" && !Number.isSafeInteger(value)) || value < 0) return "품질 경고: 실측 시간이 올바르지 않아요"
+  return unit==="s"?`${(Number(nanosToMilliseconds(value))/1000).toLocaleString("ko-KR",{maximumFractionDigits:9})} s`:formatMeasurementDuration(value)
 }
 export function operationWallEnergy(value?:unknown) {
   if (value === undefined || value === null) return "수용된 에너지 없음"
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? `${formatMeasurementNumber(value,"J")} J` : "품질 경고·사용 확인 필요"
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? `${significant(value)} J` : "품질 경고·사용 확인 필요"
 }
 export const occupancyThroughput = (value?:string) => !value ? "결과 없음" : !/^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value) || !Number.isFinite(Number(value)) || Number(value) < 0 ? "품질 경고·사용 확인 필요" : `${significant(Number(value))} req/s`
 export const significant = (value:number) => Number.isFinite(value) ? value.toLocaleString("ko-KR",{maximumSignificantDigits:3}) : `${String(value)} · 품질 경고`
@@ -96,6 +96,25 @@ export function operationSteps(data:OperationCostMeasurement):OperationStep[] {
   ]
 }
 
+export type OperationTotals={durationNanos:bigint|null|undefined;wallJoules:number|null|undefined}
+// A total needs exactly one result for every planned step; never label a partial sum as complete.
+export function operationTotals(data:OperationCostMeasurement):OperationTotals {
+  const planned=data.conditions.steps,recorded=data.status.steps??[]
+  if (!planned.length || planned.some(step=>!recorded.some(result=>result.name===step.name))) return {durationNanos:undefined,wallJoules:undefined}
+  if (recorded.length!==planned.length || planned.some(step=>recorded.filter(result=>result.name===step.name).length!==1)) return {durationNanos:null,wallJoules:null}
+  let durationNanos:bigint|null|undefined=0n,wallJoules:number|null|undefined=0
+  for (const step of recorded) {
+    const duration=step.durationNanos,energy=step.wallJoules
+    if (duration==null) {if(durationNanos!==null)durationNanos=undefined}
+    else if ((typeof duration!=="number"&&typeof duration!=="bigint") || (typeof duration==="number"&&!Number.isSafeInteger(duration)) || duration<0) durationNanos=null
+    else if (durationNanos!==undefined&&durationNanos!==null) durationNanos+=BigInt(duration)
+    if (step.verdict!=="Accepted" || energy==null) {if(wallJoules!==null)wallJoules=undefined}
+    else if (typeof energy!=="number" || !Number.isFinite(energy) || energy<0) wallJoules=null
+    else if (wallJoules!==undefined&&wallJoules!==null) {wallJoules+=energy;if(!Number.isFinite(wallJoules))wallJoules=null}
+  }
+  return {durationNanos,wallJoules}
+}
+
 // Some Run status fields are JSON-encoded strings; decode only structured values.
 export function runStatusObject(value:unknown):Record<string,unknown>|undefined {
   if (typeof value === "string") { try { value=JSON.parse(value) } catch { return undefined } }
@@ -104,11 +123,7 @@ export function runStatusObject(value:unknown):Record<string,unknown>|undefined 
 export const cleanRunLog=(value:unknown)=>typeof value==="string"?value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g,""):""
 export function runFailure(run:ProfilingRun) {
   const termination=runStatusObject(run.status.runtimeTermination),log=cleanRunLog(termination?.logTail)
-  const condition=run.status.conditions?.find(c=>c.type==="ExecutionComplete"&&c.observedGeneration===run.generation&&c.status==="False")
-  const text=[log,condition?.message,condition?.reason].filter(Boolean).join("\n")
-  const memory=/out of memory|failed to allocate memory|CUDA.*alloc|OOMKilled/i.test(text)
-  const timeout=/timed? ?out|deadline exceeded/i.test(text)
-  const excerpt=memory?text.match(/(?:failed to allocate memory|out of memory|OOMKilled|CUDA.*alloc)[^\n]*/i)?.[0]:text.split("\n").find(line=>/error|failed|timed? ?out|deadline exceeded/i.test(line))??condition?.message??condition?.reason
-  return {title:memory?"메모리 할당 실패":timeout?"실행 제한 시간 초과":"회차 실행 실패",excerpt:excerpt?.trim().slice(0,240),exitCode:termination?.exitCode,log,
-    next:memory?"해당 장비의 메모리와 함께 실행 중인 작업을 확인하고, 배치 크기나 실행 경로를 조정하세요.":timeout?"장비와 실행 로그를 확인하고 측정 시간·준비 시간을 검토하세요.":"아래 종료 상태와 로그를 확인하고 측정 조건을 수정하세요."}
+  const failure=run.assessment?.failureSummary?.[0]
+  const next:Record<string,string>={GPUMemoryExhausted:"GPU 메모리와 함께 실행 중인 작업을 확인하고 실행 경로를 검토하세요.",HostOOM:"Node 메모리와 함께 실행 중인 작업을 확인하세요.",PowerObservationTimeout:"전력 계측기와 관측 대기 한도를 확인하세요.",ImagePullFailed:"실행 이미지 주소와 가져오기 권한을 확인하세요.",RuntimeFailed:"회차의 실행 환경과 측정 조건을 확인하세요."}
+  return {title:failure?.label??"실패 분류 미제공",excerpt:failure?.message??"서버의 실패 분류가 제공되지 않았어요. 원본 상태를 확인하세요.",exitCode:failure?.exitCode??termination?.exitCode,log,next:next[failure?.code??""]??"원본 실행 상태를 확인하고 담당자에게 문의하세요."}
 }

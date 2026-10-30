@@ -159,9 +159,11 @@ export function MeasurementDetail({namespace,name}:{namespace:string;name:string
     <QueryGate query={lookup}>{lookup.data&&!run&&<div className="space-y-3"><p>이 조회 페이지에서 정확한 namespace/name/UID의 회차를 찾지 못했어요. 같은 이름의 다른 회차로 대체하지 않아요.</p>{lookup.data.page?.nextOffset!==undefined&&<Button variant="outline" onClick={()=>setOffset(lookup.data!.page!.nextOffset!)}>다음 조회 페이지에서 찾기</Button>}</div>}{run&&<>
       <AssessmentDetails assessment={run.assessment}/>
       {failed&&<section role="alert" className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 space-y-2"><h2 className="font-semibold text-destructive">{failure?.title}</h2><p className="text-sm break-words">{failure?.excerpt??"상세 원인 미제공"}{failure?.exitCode!==undefined?` (종료 코드 ${String(failure.exitCode)})`:""}</p><p className="text-sm">{failure?.next}</p></section>}
-      <Facts label="원본 실행 조건" items={["ExecutionComplete","EvidenceVerified"].map(type=>{const c=currentRunCondition(run,type);return [type,c?`${c.status} / ${c.reason??""}${c.message?`: ${c.message}`:""}`:"상태 미확인"] as [string,React.ReactNode]})}/>
-      <Facts label="실행 작업" items={statusFacts(run.status.job)}/><Facts label="실제 실행 환경" items={statusFacts(run.status.actualExecution)}/>
-      <section className="grid gap-2"><h2>실행 로그</h2>{failure?.log?<pre className="source-json">{failure.log}</pre>:<p>종료 로그 미제공</p>}</section>
+      <details><summary className="min-h-11 cursor-pointer py-2 text-sm">실행 조건·환경·로그 원문</summary>
+        <Facts label="원본 실행 조건" items={["ExecutionComplete","EvidenceVerified"].map(type=>{const c=currentRunCondition(run,type);return [type,c?`${c.status} / ${c.reason??""}${c.message?`: ${c.message}`:""}`:"상태 미확인"] as [string,React.ReactNode]})}/>
+        <Facts label="실행 작업" items={statusFacts(run.status.job)}/><Facts label="실제 실행 환경" items={statusFacts(run.status.actualExecution)}/>
+        <section className="grid gap-2"><h2>실행 로그</h2>{failure?.log?<pre className="source-json">{failure.log}</pre>:<p>종료 로그 미제공</p>}</section>
+      </details>
       {noEvidence?<p className="notice">실행 실패로 검증 근거가 생성되지 않았어요.</p>:passport.error?<div className="notice"><p>검증 근거를 불러오지 못했어요. {passport.error.status===404?"보관된 근거가 없거나 아직 게시되지 않았어요.":"연결 상태를 확인하고 다시 조회하세요."}</p><Button variant="outline" onClick={()=>void passport.refetch()}>근거 다시 조회</Button></div>:!data?<p>검증 근거 확인 중</p>:other?<p role="alert">같은 이름의 다른 회차 근거예요. 이 회차의 결과로 사용할 수 없어요.</p>:<PassportSummary data={data}/>}
       <Rows>{data&&!other&&!!data.measurement.runtime.nativeSamples?.length&&<RowDialog label="배치 실행 기록" title="배치 실행 기록"><DataTable data={data.measurement.runtime.nativeSamples} columns={sampleColumns}/></RowDialog>}<RowDialog label="원본 자료" title="측정 원본 자료"><SourceExport value={{run,passport:other?undefined:data}} filename={`chill-passport-${name}.json`}/><SourceJSON inline value={{run,passport:other?undefined:data}}/></RowDialog></Rows>
     </>}</QueryGate>

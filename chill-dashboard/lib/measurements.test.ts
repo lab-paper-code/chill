@@ -9,6 +9,7 @@ import type { DispatchOccupancyMeasurement, OperationCostMeasurement } from "./r
 import { formatMeasurementTime, measurementConditionDiff, measurementReasonSummary } from "./measurements.ts"
 import { formatMeasurementNumber, measurementRequestName, resultRowsCSV } from "./measurements.ts"
 import type { ResultRow } from "./read-types.ts"
+import { operationTotals } from "./measurements.ts"
 
 test("measurement quantities use fixed unit precision and preserve valid zero and negative CI bounds",()=>{
   assert.equal(formatMeasurementNumber(0,"W"),"0.0")
@@ -128,11 +129,30 @@ test("operation actual duration and accepted wall energy preserve zero, missing 
   assert.equal(wire.status.phase,"Failed")
   assert.equal(operationDuration(result.durationNanos),"9,223,372,036,854.78 ms")
   assert.equal(operationWallEnergy(result.wallJoules),"수용된 에너지 없음")
-  assert.equal(operationDuration(-3807875n),"-3.81 ms · 품질 경고·사용 확인 필요")
+  assert.match(operationDuration(-3807875n),/품질 경고/)
+  assert.doesNotMatch(operationDuration(-3807875n),/-3|ms/)
   for (const value of [Number.MAX_SAFE_INTEGER + 1,1.5,NaN,Infinity,"100"]) assert.match(operationDuration(value),/품질 경고/)
   for (const value of [-1,NaN,Infinity,"0"]) assert.match(operationWallEnergy(value),/품질 경고/)
-  assert.equal(operationWallEnergy(2.75),"3 J")
+  assert.equal(operationWallEnergy(2.75),"2.75 J")
   assert.equal(operationDuration(operationSteps(operation)[2].results[0]?.durationNanos),"실측 시간 기록 없음")
+})
+
+test("operation totals require the complete plan, accepted energy, and nonnegative quantities",()=>{
+  const complete:OperationCostMeasurement={...operation,status:{phase:"Complete",steps:operation.conditions.steps.map(step=>({name:step.name,key:step.name,verdict:"Accepted",durationNanos:1_500_000_000n,wallJoules:2}))}}
+  assert.deepEqual(operationTotals(complete),{durationNanos:6_000_000_000n,wallJoules:8})
+  assert.equal(operationDuration(operationTotals(complete).durationNanos,"s"),"6 s")
+  assert.equal(operationDuration(1n,"s"),"0.000000001 s")
+  assert.equal(operationWallEnergy(0.0001),"0.0001 J")
+  const replace=(patch:Partial<NonNullable<OperationCostMeasurement["status"]["steps"]>[number]>)=>({...complete,status:{...complete.status,steps:complete.status.steps!.map((step,index)=>index?step:{...step,...patch})}})
+  assert.deepEqual(operationTotals({...complete,status:{steps:complete.status.steps!.slice(1)}}),{durationNanos:undefined,wallJoules:undefined})
+  assert.deepEqual(operationTotals(replace({durationNanos:null,wallJoules:null})),{durationNanos:undefined,wallJoules:undefined})
+  assert.deepEqual(operationTotals(replace({durationNanos:-1n,wallJoules:-1})),{durationNanos:null,wallJoules:null})
+  assert.equal(operationTotals(replace({durationNanos:NaN})).durationNanos,null)
+  assert.equal(operationTotals(replace({wallJoules:Infinity})).wallJoules,null)
+  assert.equal(operationTotals(replace({verdict:"Rejected"})).wallJoules,undefined)
+  const zero={...complete,status:{steps:complete.status.steps!.map(step=>({...step,durationNanos:0n,wallJoules:0}))}}
+  assert.deepEqual(operationTotals(zero),{durationNanos:0n,wallJoules:0})
+  assert.deepEqual(operationTotals({...complete,status:{steps:[...complete.status.steps!,complete.status.steps![0]]}}),{durationNanos:null,wallJoules:null})
 })
 
 test("occupancy preserves missing and zero d, string throughput, unspecified supply and logical location identity", () => {
@@ -175,16 +195,18 @@ test("run identity requires exact names and expected UID, not q partial matches"
   assert.equal(exactRun(rows,"n","run","old"),undefined)
 })
 
-test("run status decodes JSON fields and failure summary uses recorded memory errors",()=>{
+test("run status decodes JSON fields while failure summary uses only server classification",()=>{
   assert.deepEqual(runStatusObject('{"exitCode":3,"logTail":"error"}'),{exitCode:3,logTail:"error"})
   for(const value of ["broken","null","[]",null,42]) assert.equal(runStatusObject(value),undefined)
-  const run={namespace:"n",name:"r",uid:"u",resourceVersion:"1",generation:1,creationTimestamp:"",spec:{},status:{runtimeTermination:JSON.stringify({exitCode:3,logTail:"\u001b[31mFailed to allocate memory for requested buffer\u001b[0m"})}}
+  const run={namespace:"n",name:"r",uid:"u",resourceVersion:"1",generation:1,creationTimestamp:"",spec:{},status:{runtimeTermination:JSON.stringify({exitCode:3,logTail:"\u001b[31mFailed to allocate memory for requested buffer\u001b[0m"})},assessment:{failureSummary:[{code:"GPUMemoryExhausted",label:"GPU 메모리 부족",message:"GPU 메모리가 부족해 측정을 완료하지 못했습니다.",exitCode:3}]}} as unknown as Parameters<typeof runFailure>[0]
   const failure=runFailure(run)
-  assert.equal(failure.title,"메모리 할당 실패")
+  assert.equal(failure.title,"GPU 메모리 부족")
   assert.equal(failure.exitCode,3)
-  assert.equal(failure.excerpt,"Failed to allocate memory for requested buffer")
+  assert.equal(failure.excerpt,"GPU 메모리가 부족해 측정을 완료하지 못했습니다.")
   assert.match(failure.next,/메모리/)
   assert.doesNotMatch(failure.log,/\u001b/)
+  assert.equal(runFailure({...run,assessment:undefined}).title,"실패 분류 미제공")
+  assert.doesNotMatch(runFailure({...run,assessment:undefined}).excerpt,/Failed to allocate/)
 })
 
 test("measurement timestamps retain the explicit timezone",()=>{

@@ -21,15 +21,14 @@ type ResultBody = {completedTrials?:{run:{namespace:string;name:string;uid:strin
 
 export function AssessmentDetails({assessment}:{assessment?:MeasurementAssessment|null}) {
   if (!assessment) return <p className="notice">서버 판정이 제공되지 않았어요. 실행 상태만으로 사용 가능 여부를 추정하지 않아요.</p>
-  return <section className="space-y-3 border-t pt-4" aria-label="서버 결과 판정">
-    <h2 className="font-semibold">결과 확인</h2>
-    <div className="flex flex-wrap items-center gap-3"><MeasurementStatus assessment={assessment}/><span className="text-sm">{assessment.checklist?.criteriaMet===true?"기준 충족":assessment.checklist?.criteriaMet===false?"결과 체크리스트 미충족":"결과 체크리스트 확인 불가"}</span></div>
-    {!!assessment.reasons?.length&&<ul className="space-y-2 text-sm">{assessment.reasons.map((reason,index)=><li key={index}><p>{reason.message.replace(/\s*\(FixtureOnly\)/g,"")}</p><details className="text-xs text-muted-foreground"><summary className="cursor-pointer py-2">사유 코드·출처 원문</summary>{reason.code}{reason.sourceIds?.length?` / ${reason.sourceIds.join(", ")}`:""}</details></li>)}</ul>}
-    {assessment.scope?.schedulerUsed===false&&<p className="text-sm">현재 스케줄러 미사용</p>}
-    {assessment.scope?.reused&&<p className="text-sm">재사용 결과예요. 대상 확인 실측과 원본 참조는 별도 행이며 독립 전체 실측으로 합산하지 않아요.</p>}
-    {!!assessment.scope?.facts?.length&&<ul className="list-disc pl-5 text-sm">{assessment.scope.facts.map((fact,index)=><li key={index}>{fact}</li>)}</ul>}
-    {!!assessment.checklist?.checks?.length&&<details><summary className="min-h-11 cursor-pointer py-2 text-sm">결과 확인 항목 원문</summary><div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>확인 항목</TableHead><TableHead>서버 결과</TableHead><TableHead>사유</TableHead></TableRow></TableHeader><TableBody>{assessment.checklist.checks.map((check,index)=><TableRow key={index}><TableCell>{check.code}</TableCell><TableCell>{check.result}</TableCell><TableCell className="whitespace-normal">{check.message}</TableCell></TableRow>)}</TableBody></Table></div></details>}
-    <p className="text-xs text-muted-foreground">사용 가능은 채택 근거와 목표 batch 측정 충족을 뜻해요. 기준 충족은 서버 결과 체크리스트까지 충족한 경우예요. 전력 관측 시각 부재와 노드 벽전력은 이 판정의 실패 기준이 아니에요.</p>
+  return <section className="space-y-3 border-t pt-4" aria-label="신뢰 근거">
+    <h2 className="font-semibold">판정 근거</h2>
+    {assessment.scope?.schedulerUsed===false&&<p className="text-sm">현재 스케줄러에서 사용하지 않는 결과예요.</p>}
+    {assessment.scope?.reused&&<p className="text-sm">다른 Node의 측정을 참조한 결과예요. 대상 확인 측정과 원본 참조는 독립 반복으로 합산하지 않아요.</p>}
+    {!!assessment.checklist?.checks?.length&&<details><summary className="min-h-11 cursor-pointer py-2 text-sm">서버 확인 항목과 사유 보기</summary>
+      {!!assessment.reasons?.length&&<ul className="space-y-2 text-sm">{[...new Map(assessment.reasons.map(reason=>[`${reason.code}/${reason.message}`,reason])).values()].map((reason,index)=><li key={index}>{reason.label&&<strong>{reason.label}: </strong>}{reason.message.replace(/\s*\(FixtureOnly\)/g,"")}</li>)}</ul>}
+      <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>확인 항목</TableHead><TableHead>서버 결과</TableHead><TableHead>사유</TableHead></TableRow></TableHeader><TableBody>{assessment.checklist.checks.map((check,index)=><TableRow key={index}><TableCell>{check.code}</TableCell><TableCell>{check.result}</TableCell><TableCell className="whitespace-normal">{check.message}</TableCell></TableRow>)}</TableBody></Table></div>
+    </details>}
   </section>
 }
 
@@ -61,20 +60,18 @@ export function ResultRows({rows,filename="chill-result-rows.csv",emptyMessage="
   return <section className="min-w-0 space-y-3" aria-label="결과 행">
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">운영 판단 요약</h2><Button variant="outline" disabled={!rows.length} onClick={download}>결과 CSV 내보내기</Button></div>
     {!rows.length?<p className="notice">{emptyMessage}</p>:<div className="grid min-w-0 gap-3">{rows.map((row,index)=><article key={row.id??index} className="min-w-0 rounded-lg border p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">한 번에 {row.batch}건 처리 · {row.rowKind==="confirmation"?"대상 확인 측정":row.rowKind==="source-reference"?"기존 측정 참조":row.rowKind==="direct"?"직접 측정":"측정 결과"}</h3><MeasurementStatus assessment={row.assessment}/></div>
-      <p className="mt-2 break-words text-sm tabular-nums">신뢰 근거: {row.confidence&&row.incrementalJoulesPerItem!==null&&row.incrementalJoulesPerItem!==0?`${number(row.confidence.level*100)}% CI ±${number(100*row.confidence.halfWidth/Math.abs(row.incrementalJoulesPerItem))}%`:"상대 CI 미제공"} · 노드 벽전력 출처: {row.powerSource?Object.entries(row.powerSource).filter(([key])=>["kind","nodeName","metric","endpoint","scope"].includes(key)).map(([key,value])=>`${key}: ${String(value)}`).join(" / ")||"출처 상세 참조":"미제공"} (장치 단독 전력 아님)</p>
-      <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">모델·데이터셋 용도 일치 여부는 검증되지 않았어요. 아래 측정 조건의 모델과 데이터셋을 확인한 뒤 운영에 사용하세요.</p>
-      {!!row.missingReasons?.length&&<p className="mt-2 text-sm text-destructive">{row.missingReasons.join(" · ")}</p>}
+      <h3 className="font-semibold">한 번에 {row.batch}건 처리 · {row.rowKind==="confirmation"?"대상 확인 측정":row.rowKind==="source-reference"?"기존 측정 참조":row.rowKind==="direct"?"직접 측정":"측정 결과"}</h3>
+      <p className="mt-2 break-words text-sm tabular-nums">신뢰 근거: 실행 {number(row.activeTrialCount)}회 / 유휴 {number(row.idleTrialCount)}회 · 추가 에너지 {row.confidence&&row.incrementalJoulesPerItem!==null&&row.incrementalJoulesPerItem!==0?`${number(row.confidence.level*100)}% CI ±${number(100*row.confidence.halfWidth/Math.abs(row.incrementalJoulesPerItem))}%`:"오차 미제공"} · 지연 표본 {number(row.latencySampleCount)}개 · {row.powerSource?String(row.powerSource.kind??row.powerSource.metric??"출처 상세 참조"):"전력 출처 미제공"} (Node 전체 벽전력)</p>
+      <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">데이터셋: {String((row.condition.activeProtocol as {dataset?:{name?:string}}|undefined)?.dataset?.name??row.condition.dataset??"미제공")} · 모델 용도와의 일치 여부는 미검증이에요.</p>
+      {!!row.missingReasons?.length&&<p className="mt-2 text-sm text-muted-foreground">일부 수치의 근거가 제공되지 않았어요. 상세 사유 {row.missingReasons.length}개는 원문에서 확인하세요.</p>}
       <dl className="mt-3 grid gap-3 sm:grid-cols-3">
-        <div><dt className="text-sm text-muted-foreground">응답 지연 p95 / SLO 목표</dt><dd className="font-semibold tabular-nums">{number(row.p95Milliseconds,"ms")} ms</dd><dd className="text-xs text-muted-foreground">이 측정 결과에는 SLO 목표가 제공되지 않아 목표 대비 판단은 할 수 없어요.</dd></div>
+        <div><dt className="text-sm text-muted-foreground">응답 지연 p95</dt><dd className="font-semibold tabular-nums">{number(row.p95Milliseconds,"ms")} ms</dd></div>
         <div><dt className="text-sm text-muted-foreground">요청당 에너지 · 총 / 추가 사용</dt><dd className="font-semibold tabular-nums">{number(row.totalJoulesPerItem,"J/item")} / {number(row.incrementalJoulesPerItem,"J/item")} J/건</dd></div>
         <div><dt className="text-sm text-muted-foreground">평균 전력 · 쉬는 상태 / 실행 중</dt><dd className="font-semibold tabular-nums">{number(row.idleWatts,"W")} / {number(row.activeWatts,"W")} W</dd></div>
       </dl>
-      <p className="mt-3 text-sm tabular-nums">독립 반복: 실행 {number(row.activeTrialCount)}회 / 쉬는 상태 {number(row.idleTrialCount)}회 · 지연 표본 {number(row.latencySampleCount)}개</p>
-      <ul className="mt-3 space-y-1 text-sm">{row.assessment?.reasons?.map((reason,i)=><li key={i}>{reason.message.replace(/\s*\(FixtureOnly\)/g,"")}</li>)}</ul>
       <details className="mt-3"><summary className="min-h-11 cursor-pointer py-2 text-sm underline">측정 조건·표본·출처 원문 펼치기</summary><div className="grid min-w-0 gap-4 sm:grid-cols-2"><ResultCondition condition={row.condition}/><ExactFields value={row}/></div></details>
     </article>)}</div>}
-    <p className="text-xs text-muted-foreground">CSV는 위 결과와 같은 범위이며 원본 정밀도를 유지해요. 전력은 출처에 따라 장치 단독이 아닌 노드 전체 사용량일 수 있어요.</p>
+    <p className="text-xs text-muted-foreground">SLO 목표는 미제공으로 목표 대비 판단은 할 수 없어요. CSV는 같은 범위의 원본 정밀도를 유지하며 전력은 장치 단독이 아닌 Node 전체 사용량일 수 있어요.</p>
   </section>
 }
 
