@@ -83,7 +83,8 @@ func TestConsoleCompatibilityRouteUsesProductionResolver(t *testing.T) {
 		t.Fatalf("LIST seeds were refetched or facts were not memoized: %+v", reader.gets)
 	}
 	unchanged := readCompatibilityMatrix(t, handler)
-	if unchanged.ReadAt < matrix.ReadAt || unchanged.NodeRows[0].ReadAt != matrix.NodeRows[0].ReadAt || reader.gets[factKey] != 2 {
+	if unchanged.ReadAt < matrix.ReadAt || unchanged.NodeRows[0].ReadAt != matrix.NodeRows[0].ReadAt ||
+		reader.gets[factKey] != 2 {
 		t.Fatalf("unchanged source was recomputed or refetched: %+v / %+v", matrix, unchanged)
 	}
 	// A replacement Node must invalidate support even if names are unchanged.
@@ -122,7 +123,9 @@ type countingCompatibilityReader struct {
 	gets map[string]int
 }
 
-func (r *countingCompatibilityReader) Get(ctx context.Context, key client.ObjectKey, object client.Object, opts ...client.GetOption) error {
+func (r *countingCompatibilityReader) Get(
+	ctx context.Context, key client.ObjectKey, object client.Object, opts ...client.GetOption,
+) error {
 	r.gets[fmt.Sprintf("%T:%s", object, key)]++
 	return r.Reader.Get(ctx, key, object, opts...)
 }

@@ -54,7 +54,8 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 }
 
 func (o options) validate() error {
-	if o.kubeAPIQPS <= 0 || math.IsNaN(o.kubeAPIQPS) || math.IsInf(o.kubeAPIQPS, 0) || o.kubeAPIQPS > math.MaxFloat32 || float32(o.kubeAPIQPS) == 0 {
+	if o.kubeAPIQPS <= 0 || math.IsNaN(o.kubeAPIQPS) || math.IsInf(o.kubeAPIQPS, 0) ||
+		o.kubeAPIQPS > math.MaxFloat32 || float32(o.kubeAPIQPS) == 0 {
 		return errors.New("Kubernetes API QPS must be positive and finite in float32 range")
 	}
 	if o.kubeAPIBurst <= 0 {

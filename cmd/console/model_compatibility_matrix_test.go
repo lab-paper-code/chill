@@ -17,8 +17,15 @@ func TestCompatibilityMemoReadsEachUniqueObjectOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", UID: "node-uid", ResourceVersion: "1"}}
-	config := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "system", Name: "facts", UID: "facts-uid", ResourceVersion: "2"}, Data: map[string]string{"facts": "source"}}
-	reader := &countingCompatibilityReader{Reader: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node, config).Build(), gets: make(map[string]int)}
+	config := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "system", Name: "facts", UID: "facts-uid", ResourceVersion: "2",
+		}, Data: map[string]string{"facts": "source"},
+	}
+	reader := &countingCompatibilityReader{
+		Reader: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node, config).Build(),
+		gets:   make(map[string]int),
+	}
 	memo := &compatibilityMemoReader{Reader: reader, objects: make(map[compatibilityMemoKey]compatibilityMemoValue)}
 	ctx := context.Background()
 	if err := memo.List(ctx, &corev1.NodeList{}); err != nil {
@@ -30,7 +37,8 @@ func TestCompatibilityMemoReadsEachUniqueObjectOnce(t *testing.T) {
 			t.Fatalf("seeded Node = %+v, %v", gotNode, err)
 		}
 		gotConfig := &corev1.ConfigMap{}
-		if err := memo.Get(ctx, client.ObjectKey{Namespace: "system", Name: "facts"}, gotConfig); err != nil || gotConfig.Data["facts"] != "source" {
+		err := memo.Get(ctx, client.ObjectKey{Namespace: "system", Name: "facts"}, gotConfig)
+		if err != nil || gotConfig.Data["facts"] != "source" {
 			t.Fatalf("memo facts = %+v, %v", gotConfig, err)
 		}
 	}
