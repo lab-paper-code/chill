@@ -20,7 +20,7 @@ func TestCoverageProblemWithoutFailedRequestHasNextAction(t *testing.T) {
 		ID: "conflict",
 		Assessment: operatorconsole.MeasurementAssessment{
 			DisplayStatus: operatorconsole.MeasurementProblem,
-			Reasons:       []operatorconsole.MeasurementReason{{
+			Reasons: []operatorconsole.MeasurementReason{{
 				Code: "CurrentDeclarationConflict", Message: "현재 선언과 측정이 다릅니다",
 			}},
 		},
