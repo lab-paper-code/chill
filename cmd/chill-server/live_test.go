@@ -325,10 +325,12 @@ func TestLiveDecisionExplainsReservedKeepWithoutInventingRecovery(t *testing.T) 
 		!strings.Contains(got, "UnknownCode:detail") || strings.Contains(got, "복구") {
 		t.Fatalf("reserved Keep lost its meaning or original unknown reason: %q", got)
 	}
-	if got := liveReservationExplanation(serving.SchedulerReservation{RouteOnly: map[string][]string{"w": {"i"}}}); !strings.Contains(got, "정리") {
+	reservation := serving.SchedulerReservation{RouteOnly: map[string][]string{"w": {"i"}}}
+	if got := liveReservationExplanation(reservation); !strings.Contains(got, "정리") {
 		t.Fatalf("cleanup reservation lost its known purpose: %q", got)
 	}
-	if got := liveReservationExplanation(serving.SchedulerReservation{Reason: "unregistered:error"}); !strings.Contains(got, "unregistered:error") {
+	reservation = serving.SchedulerReservation{Reason: "unregistered:error"}
+	if got := liveReservationExplanation(reservation); !strings.Contains(got, "unregistered:error") {
 		t.Fatalf("unknown reservation reason was invented or hidden: %q", got)
 	}
 }
