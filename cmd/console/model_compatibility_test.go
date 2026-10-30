@@ -73,17 +73,7 @@ func TestConsoleCompatibilityRouteUsesProductionResolver(t *testing.T) {
 		t.Fatalf("unwired/invented compatibility: %d %s", response.Code, response.Body.String())
 	}
 	reader.gets = make(map[string]int)
-	readMatrix := func() operatorconsole.ModelCompatibilityMatrixView {
-		t.Helper()
-		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/model-compatibility-matrix", nil))
-		var matrix operatorconsole.ModelCompatibilityMatrixView
-		if err := json.Unmarshal(response.Body.Bytes(), &matrix); err != nil || response.Code != 200 {
-			t.Fatalf("matrix: %d %s (%v)", response.Code, response.Body.String(), err)
-		}
-		return matrix
-	}
-	matrix := readMatrix()
+	matrix := readCompatibilityMatrix(t, handler)
 	if len(matrix.Rows) != 1 || len(matrix.NodeRows) != 2 || matrix.Rows[0].Selection.Node != "node" ||
 		matrix.NodeRows[1].Selection.Node != "z-node" || matrix.NodeRows[1].Inputs.Node.UID != "z-node-uid" {
 		t.Fatalf("representative/Node rows: %+v", matrix)
@@ -92,7 +82,7 @@ func TestConsoleCompatibilityRouteUsesProductionResolver(t *testing.T) {
 	if len(reader.gets) != 1 || reader.gets[factKey] != 1 {
 		t.Fatalf("LIST seeds were refetched or facts were not memoized: %+v", reader.gets)
 	}
-	unchanged := readMatrix()
+	unchanged := readCompatibilityMatrix(t, handler)
 	if unchanged.ReadAt < matrix.ReadAt || unchanged.NodeRows[0].ReadAt != matrix.NodeRows[0].ReadAt || reader.gets[factKey] != 2 {
 		t.Fatalf("unchanged source was recomputed or refetched: %+v / %+v", matrix, unchanged)
 	}
@@ -104,7 +94,7 @@ func TestConsoleCompatibilityRouteUsesProductionResolver(t *testing.T) {
 	if err := base.Create(context.Background(), otherNode); err != nil {
 		t.Fatal(err)
 	}
-	changed := readMatrix()
+	changed := readCompatibilityMatrix(t, handler)
 	if changed.NodeRows[1].Inputs.Node.UID != "replacement-node" || reader.gets[factKey] != 3 {
 		t.Fatalf("replacement reused stale inputs: %+v, gets=%+v", changed, reader.gets)
 	}
@@ -114,6 +104,17 @@ func TestConsoleCompatibilityRouteUsesProductionResolver(t *testing.T) {
 	if _, err := query(ctx); err != context.Canceled {
 		t.Fatalf("cancelled matrix = %v", err)
 	}
+}
+
+func readCompatibilityMatrix(t *testing.T, handler http.Handler) operatorconsole.ModelCompatibilityMatrixView {
+	t.Helper()
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/model-compatibility-matrix", nil))
+	var matrix operatorconsole.ModelCompatibilityMatrixView
+	if err := json.Unmarshal(response.Body.Bytes(), &matrix); err != nil || response.Code != http.StatusOK {
+		t.Fatalf("matrix: %d %s (%v)", response.Code, response.Body.String(), err)
+	}
+	return matrix
 }
 
 type countingCompatibilityReader struct {
