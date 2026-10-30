@@ -100,3 +100,5 @@
 - E5-5: INVALID_HARNESS(상위 명령 3600s clamp 종료) + **타 세션이 측정 중 rev125(소스 27b32273, main 아님) 재배포** → API 거부·수집 누락. E5-7 미실행(live 소스 불일치). producer 3개·serving 잔류 — 정리 필요.
 - 운영 결정 필요(사용자): 두 세션 동시 클러스터 조작 금지 — 배포·측정 권한 단일화.
 - 경로: `control-222-full/full-E5-{3,5}-5/`, `tables-5.txt`, `comparison-5-vs-{3,4}.*`, `O/deployB/control-246-20261030/targeted-r5/report-244.txt`.
+- 에너지 카드(`cards-r5/energy-01.md`, verify 146/146): 5회차 E5-3은 **−6,836J(vs 2회차 재사용 E5-3) 및 고정 대비 +5,197J 절감**과 실패 −4,052 동시 달성(부호 교정: 앞선 "−6,836J 소비 증가" 기술은 오류). **단, 5회차 tick의 `scaleDownHeadroomFraction=0`** — 표적 복원이 3회차 binding settings를 동결해 PUT h=.25가 적용되지 않음 → 5회차 개선은 ReturnProof+회복 timing 예외+D1의 효과이며 h 효과는 미측정. 다음 라운드는 binding settings에 h 명시.
+- 에너지 구조 후보: ① zero-route 준비 인스턴스 장기 잔류(2회차 E5-6 3 Node × 3,600s, Node wall 57.6kJ 노출; E5-5 1,085s), ② 빈 Node(jetsonx) 모드 하향 미실행(E5-6 1시간 9.3W), ③ 전환 비용 회수기간, ④ h frontier. 정적 기준선 κ 119.6→91.9가 2회차 Δ 변화의 70.6%(−20.7kJ) 혼입.
