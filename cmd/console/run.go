@@ -147,6 +147,7 @@ func newCampaignPreflightQuery(
 		return nil, fmt.Errorf("construct curve-plan projector: %w", err)
 	}
 	preflights, err := consolekube.NewKubernetesBatchEnergyOptimizationPreflightQuery(
+		reader,
 		func(ctx context.Context, campaign *edgev1alpha1.BatchEnergyOptimization) (profilederivation.CurvePlan, error) {
 			// Preflight reads the plan but cannot act on the projected transition.
 			plan, _, err := projector.Project(ctx, campaign)
