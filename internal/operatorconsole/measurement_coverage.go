@@ -91,13 +91,15 @@ type MeasurementRepresentative struct {
 	P95Milliseconds          *float64 `json:"p95Milliseconds"`
 }
 type MeasurementFailure struct {
-	RequestID string `json:"requestId"`
-	RunID     string `json:"runId"`
-	Batch     *int   `json:"batch"`
-	Code      string `json:"code"`
-	ExitCode  *int   `json:"exitCode"`
-	Message   string `json:"message"`
-	Relation  string `json:"relation"`
+	RequestID    string `json:"requestId"`
+	RunID        string `json:"runId"`
+	RunNamespace string `json:"runNamespace"`
+	RunName      string `json:"runName"`
+	Batch        *int   `json:"batch"`
+	Code         string `json:"code"`
+	ExitCode     *int   `json:"exitCode"`
+	Message      string `json:"message"`
+	Relation     string `json:"relation"`
 }
 type MeasurementHistory struct {
 	RequestID string `json:"requestId"`
@@ -159,12 +161,13 @@ type MeasurementCoverageGroup struct {
 	UnknownSupport int                 `json:"unknownSupport"`
 }
 type MeasurementEntity struct {
-	UID     string   `json:"uid"`
-	ID      string   `json:"id"`
-	Status  string   `json:"status"`
-	Label   string   `json:"label"`
-	CellIDs []string `json:"cellIds"`
-	Failed  bool     `json:"-"`
+	UID            string               `json:"uid"`
+	ID             string               `json:"id"`
+	Status         string               `json:"status"`
+	Label          string               `json:"label"`
+	CellIDs        []string             `json:"cellIds"`
+	Failed         bool                 `json:"-"`
+	FailureSummary []MeasurementFailure `json:"failureSummary,omitempty"`
 }
 type MeasurementRunEntity struct {
 	UID     string   `json:"uid"`

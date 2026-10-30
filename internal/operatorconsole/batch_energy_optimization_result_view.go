@@ -24,6 +24,7 @@ type BatchEnergyOptimizationResultSnapshot struct {
 	StatisticsReason       *string
 	MeasurementFacts       *profilederivation.MeasurementFacts
 	MeasurementFactsReason *string
+	FailedRuns             []edgev1alpha1.ProfilingRun
 }
 
 const BatchEnergyOptimizationResultAPIVersion = "console.chill.dacs.io/v1alpha1"
@@ -104,6 +105,9 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 	}
 	if campaign.Status.Result == nil {
 		missing := "NoPublishedResult"
+		if campaign.Status.Phase == "Failed" {
+			missing = "RequestFailed"
+		}
 		statistics, reason = nil, &missing
 		facts, factsReason = nil, &missing
 	}
@@ -152,7 +156,7 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 			children = append(children, AssessMeasurementBatch(batch, facts.PointPolicy.MinimumTrials, reused, false))
 		}
 	}
-	return BatchEnergyOptimizationResult{
+	view := BatchEnergyOptimizationResult{
 		APIVersion: BatchEnergyOptimizationResultAPIVersion,
 		Kind:       "BatchEnergyOptimizationResult",
 		ReadAt:     snapshot.ReadAt.UTC(),
@@ -173,5 +177,7 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 			Available: result != nil, Accepted: accepted,
 			Reused: reused, Attempted: true, SourcesComplete: true, Children: children,
 		}),
-	}, nil
+	}
+	view.Assessment.FailureSummary = MeasurementRequestFailures(*campaign, snapshot.FailedRuns, view.Assessment)
+	return view, nil
 }

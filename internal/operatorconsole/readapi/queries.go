@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -32,10 +33,11 @@ type queryPage struct {
 type listQuery struct {
 	limit, offset     int
 	search, condition string
+	filters           map[string]string
 }
 
 func parseListQuery(r *http.Request, runs bool) (listQuery, bool) {
-	q := listQuery{limit: 50}
+	q := listQuery{limit: 50, filters: map[string]string{}}
 	if len(r.URL.RawQuery) > 4096 {
 		return q, false
 	}
@@ -74,6 +76,18 @@ func parseListQuery(r *http.Request, runs bool) (listQuery, bool) {
 				return q, false
 			}
 			q.condition = value[0]
+		case "model", "deviceClass", "node", "path", "powerMode", "cpu", "status", "parentUID", "group":
+			if !runs || len(value[0]) > 2048 {
+				return q, false
+			}
+			q.filters[key] = value[0]
+			if key == "group" && value[0] != "" {
+				group, valid := canonicalRunGroup(value[0])
+				if !valid {
+					return q, false
+				}
+				q.filters[key] = group
+			}
 		default:
 			return q, false
 		}
@@ -189,9 +203,10 @@ func NewQueryHandler(readers QueryReaders) http.Handler {
 			writeError(w, queryStatus(err), "ProfilingRunsUnavailable")
 			return
 		}
-		selected := snapshot.Runs[:0]
+		selected := make([]api.ProfilingRun, 0, len(snapshot.Runs))
 		for _, run := range snapshot.Runs {
-			if run.Namespace == namespace && strings.Contains(strings.ToLower(run.Name), q.search) && matchesCondition(run.Status.Conditions, q.condition) {
+			if run.Namespace == namespace && strings.Contains(strings.ToLower(run.Name), q.search) &&
+				matchesCondition(run.Status.Conditions, q.condition) && matchesRunFilters(run, q.filters) {
 				selected = append(selected, run)
 			}
 		}

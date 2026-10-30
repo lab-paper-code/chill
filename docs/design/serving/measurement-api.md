@@ -514,6 +514,29 @@ variant는 frozen Node/image/artifact/path/dataset/preprocessor UID·CPU/quota/a
 failureSummary는 정확 request/Run identity·batch·code·exitCode·최대 160자 한 줄 원인·후속 relation만,
 긴 diff/log는 기존 상세에 둔다. 정확 후속만 verified-follow-up, 유사 조건은 related-candidate다.
 
+6차 보정: Run UID는 `runId`, 직접 상세 링크는 `runNamespace`/`runName`과 함께 사용한다.
+정확 controller 소유 회차만 최신순으로 결합하며 runtime 종료 로그의 오류 한 줄(최대 160자)과
+exitCode를 셀·요청 entity·요청 목록 assessment·Console 요청 상세 assessment의 `failureSummary`에 제공한다.
+실패 요청의 미게시 결과 사유는 `RequestFailed`이며 대기 상태로 해석하지 않는다.
+
+`GET /api/v1/scheduler/profiles`는 `limit`(기본 25, 최대 50), `offset`, 정확 이름
+`model`/`deviceClass`, 정확 ID `profile`을 서버에서 먼저 적용하고 `page`와 전체 선택지
+`filters:{models,deviceClasses}`를 반환한다. `resultRows`/assessment/동결 조건/출처는 유지하되
+원시 `durationNanos`, 내부 `measurementFacts` 전체 맵, `preparations`는 공개 응답에서 제외한다.
+스케줄러 메모리·원본 표본은 변경하지 않는다. 프로파일 선택은 페이지와 별도 `profile` 조회로 가능하다.
+회차 목록도 q/condition 외 model/deviceClass/node/path/powerMode/cpu/status/parentUID/group을
+전체 snapshot에 적용한 뒤 페이지를 나눈다. group은 batch를 제외한 기존 조건 JSON의 의미 비교다.
+
+분배 점유는 한 보존 파일의 누락·해석 실패가 목록 전체 503이 되지 않는다.
+해당 행·단건을 `OccupancyEvidenceMissing`/`OccupancyEvidenceUnavailable`/`OccupancyEvidenceInvalid`
+문제로 명시하고 채택 여부는 false로 유지하며 원본 native 수치·위치를 보존한다.
+실제 6차 조사에서 과거 Complete 두 건의 S3 GET `NoSuchKey`(404)가 전체 목록 503을 유발했고,
+최근 보존된 단건은 200이었다. 누락 파일을 재생성하거나 상태를 성공으로 덮어쓰지 않는다.
+
+Console 사전 검사의 cluster-scope 권한은 기존 ModelSpec/DeviceClass/Node GET에
+Preprocessor/Dataset **GET만** 보충한다. namespaced fact-source ConfigMap과 BEO 목록 권한은
+기존 범위를 재사용하며 쓰기·새 list 권한은 추가하지 않는다.
+
 ### 13.4 단일 판정과 화면 상태
 
 `MeasurementAssessment={status,displayStatus,label,reasons,execution,evidence,checklist,scope}`다.

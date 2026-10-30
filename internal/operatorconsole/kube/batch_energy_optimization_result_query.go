@@ -59,9 +59,16 @@ func (q *KubernetesBatchEnergyOptimizationResultQuery) Read(
 	if err := q.reader.Get(ctx, key, campaign); err != nil {
 		return operatorconsole.BatchEnergyOptimizationResultSnapshot{}, fmt.Errorf("get BatchEnergyOptimization %s: %w", key, err)
 	}
+	var failedRuns edgev1alpha1.ProfilingRunList
+	if campaign.Status.Phase == "Failed" {
+		if err := q.reader.List(ctx, &failedRuns, client.InNamespace(namespace)); err != nil {
+			return operatorconsole.BatchEnergyOptimizationResultSnapshot{}, fmt.Errorf("list failed request Runs: %w", err)
+		}
+	}
 	if campaign.Status.Result == nil {
 		return operatorconsole.BatchEnergyOptimizationResultSnapshot{
 			ReadAt: q.now().UTC(), Campaign: *campaign.DeepCopy(),
+			FailedRuns: failedRuns.Items,
 		}, nil
 	}
 	identity, err := terminalResultIdentity(campaign.Status.Result)
@@ -78,6 +85,7 @@ func (q *KubernetesBatchEnergyOptimizationResultQuery) Read(
 	}
 	snapshot := operatorconsole.BatchEnergyOptimizationResultSnapshot{
 		ReadAt: q.now().UTC(), Campaign: *campaign.DeepCopy(), Result: record,
+		FailedRuns: failedRuns.Items,
 	}
 	if q.statistics != nil {
 		snapshot.Statistics, snapshot.StatisticsReason, err = q.statistics(ctx, campaign, record)

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -15,6 +16,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const measurementVerdictAccepted = "Accepted"
@@ -31,10 +33,19 @@ func (o *measurementService) assessList(
 			view = *snapshot
 		}
 	}
+	base := &measurementCoverageBase{requests: list}
+	if len(list.Items) > 0 {
+		if err := o.client.List(ctx, &base.runs, client.InNamespace(list.Items[0].Namespace)); err != nil {
+			return nil, err
+		}
+	}
+	owners := coverageOwnedRuns(base)
 	assessments := make([]json.RawMessage, len(list.Items))
 	for i, task := range list.Items {
 		var err error
-		assessments[i], err = json.Marshal(assessMeasurementRequest(task, view))
+		assessment := assessMeasurementRequest(task, view)
+		assessment.FailureSummary = operatorconsole.MeasurementRequestFailures(task, owners[string(task.UID)], assessment)
+		assessments[i], err = json.Marshal(assessment)
 		if err != nil {
 			return nil, err
 		}
@@ -206,11 +217,23 @@ func (o *measurementService) projectDispatchOccupancy(
 	if ref := cr.Status.Result; ref != nil && ref.Key != "" {
 		raw, err := o.readDeletionEvidence(ctx, evidencestore.ObjectLocation{Store: ref.Store, Key: ref.Key}, false)
 		if err != nil {
-			return httpapi.MeasurementProjection{}, err
+			code, message := "OccupancyEvidenceUnavailable", "분배 점유 근거를 읽지 못했습니다. 저장소 연결과 읽기 권한을 확인하세요."
+			if errors.Is(err, evidencestore.ErrNotFound) {
+				code, message = "OccupancyEvidenceMissing", "분배 점유 근거 파일이 없습니다. 원래 결과 위치와 보존 상태를 확인하세요."
+			}
+			input.Problems = append(input.Problems, operatorconsole.MeasurementReason{
+				Code: code, Message: message, SourceIDs: []string{ref.Key},
+			})
+			projection.Assessment, err = json.Marshal(operatorconsole.AssessMeasurement(input))
+			return projection, err
 		}
 		var record servingkube.DispatchOccupancyRecord
 		if err := json.Unmarshal(raw, &record); err != nil {
-			return httpapi.MeasurementProjection{}, err
+			input.Problems = append(input.Problems, operatorconsole.MeasurementReason{
+				Code: "OccupancyEvidenceInvalid", Message: "분배 점유 근거 파일을 해석하지 못했습니다. 보존된 원본을 확인하세요.", SourceIDs: []string{ref.Key},
+			})
+			projection.Assessment, err = json.Marshal(operatorconsole.AssessMeasurement(input))
+			return projection, err
 		}
 		input.Available = true
 		input.Facts = append(input.Facts, "Retained occupancy: "+ref.Store+"/"+ref.Key)
@@ -264,8 +287,16 @@ func (o *measurementService) decorateProfiles(ctx context.Context, view httpapi.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	type batchSummary struct {
+		Batch                 int     `json:"batch"`
+		EnergyPerInputJoules  float64 `json:"energyPerInputJoules"`
+		EnergyBelowResolution bool    `json:"energyBelowResolution,omitempty"`
+		MemoryBytes           uint64  `json:"memoryBytes"`
+		MeanWallWatts         float64 `json:"meanWallWatts,omitempty"`
+	}
 	type profileProjection struct {
 		serving.Profile
+		Batches    []batchSummary                        `json:"batches"`
 		Assessment operatorconsole.MeasurementAssessment `json:"assessment"`
 		ResultRows []operatorconsole.ResultRow           `json:"resultRows"`
 	}
@@ -319,10 +350,22 @@ func (o *measurementService) decorateProfiles(ctx context.Context, view httpapi.
 				}
 			}
 		}
-		profiles = append(profiles, profileProjection{profile, operatorconsole.AssessMeasurement(input), rows})
+		projected := profileProjection{
+			Profile: profile, Assessment: operatorconsole.AssessMeasurement(input), ResultRows: rows,
+		}
+		for _, batch := range profile.Batches {
+			projected.Batches = append(projected.Batches, batchSummary{
+				batch.Batch, batch.EnergyPerInputJoules, batch.EnergyBelowResolution, batch.MemoryBytes, batch.MeanWallWatts,
+			})
+		}
+		profiles = append(profiles, projected)
 	}
 	return json.Marshal(struct {
-		httpapi.ProfilesView
-		Profiles []profileProjection `json:"profiles"`
-	}{view, profiles})
+		ConfigVersion   string                      `json:"configVersion"`
+		Insufficiencies []servingkube.CatalogIssue  `json:"insufficiencies"`
+		ReuseChecks     []serving.ProfileReuseCheck `json:"reuseChecks,omitempty"`
+		Page            *httpapi.ProfilePage        `json:"page,omitempty"`
+		Filters         httpapi.ProfileFilters      `json:"filters"`
+		Profiles        []profileProjection         `json:"profiles"`
+	}{view.ConfigVersion, view.Insufficiencies, view.ReuseChecks, view.Page, view.Filters, profiles})
 }

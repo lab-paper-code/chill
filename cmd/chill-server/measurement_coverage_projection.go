@@ -268,6 +268,7 @@ func (p *coverageProjection) addRequest(task api.BatchEnergyOptimization) {
 	index, exists := p.indices[id]
 	requestID := coverageRequestID(task)
 	assessment := assessMeasurementRequest(task, p.base.catalog)
+	failures := operatorconsole.MeasurementRequestFailures(task, p.owners[string(task.UID)], assessment)
 	if assessment.Evidence.Accepted {
 		used := false
 		for _, profile := range p.profiles[requestID] {
@@ -285,6 +286,7 @@ func (p *coverageProjection) addRequest(task api.BatchEnergyOptimization) {
 	p.out.Entities.Requests = append(p.out.Entities.Requests, operatorconsole.MeasurementEntity{
 		UID: string(task.UID), ID: requestID, Status: assessment.DisplayStatus, Label: assessment.Label,
 		CellIDs: cellIDs, Failed: assessment.Status == operatorconsole.MeasurementFailed,
+		FailureSummary: failures,
 	})
 	if !exists {
 		return
@@ -299,7 +301,7 @@ func (p *coverageProjection) addRequest(task api.BatchEnergyOptimization) {
 	for _, profile := range p.profiles[requestID] {
 		p.addProfile(cell, task, profile)
 	}
-	p.addFailures(cell, task, assessment)
+	cell.FailureSummary = append(cell.FailureSummary, failures...)
 }
 
 func (p *coverageProjection) addPlannedVariant(
@@ -384,35 +386,6 @@ func (p *coverageProjection) addReuseSource(
 		row.TotalJoulesPerItem = nil
 		row.Reuse = profile.Reuse
 		variant.ResultRows = append(variant.ResultRows, row)
-	}
-}
-
-func (p *coverageProjection) addFailures(
-	cell *operatorconsole.MeasurementCoverageCell, task api.BatchEnergyOptimization,
-	assessment operatorconsole.MeasurementAssessment,
-) {
-	requestID := coverageRequestID(task)
-	if assessment.DisplayStatus == operatorconsole.MeasurementProblem {
-		cell.FailureSummary = append(cell.FailureSummary, operatorconsole.MeasurementFailure{
-			RequestID: requestID, Code: task.Status.Outcome, Message: coverageFailureMessage(task), Relation: "unresolved",
-		})
-	}
-	for _, run := range p.owners[string(task.UID)] {
-		assessment := operatorconsole.AssessProfilingRun(run)
-		if assessment.DisplayStatus != operatorconsole.MeasurementProblem {
-			continue
-		}
-		failure := operatorconsole.MeasurementFailure{
-			RequestID: requestID, RunID: string(run.UID), Batch: ptr.To(int(run.Spec.Measurement.Batch)), Relation: "unresolved",
-		}
-		for _, reason := range assessment.Reasons {
-			failure.Code = reason.Code
-			failure.Message = coverageShortMessage(reason.Message)
-		}
-		if run.Status.RuntimeTermination != nil {
-			failure.ExitCode = ptr.To(int(run.Status.RuntimeTermination.ExitCode))
-		}
-		cell.FailureSummary = append(cell.FailureSummary, failure)
 	}
 }
 
@@ -539,21 +512,4 @@ func coverageResultRow(
 	row.RowKind = kind
 	row.ID = fmt.Sprintf("%s/%s/%d", profile.ID, kind, batch.Batch)
 	return row
-}
-func coverageFailureMessage(task api.BatchEnergyOptimization) string {
-	message := task.Status.Outcome
-	for _, condition := range task.Status.Conditions {
-		if condition.Message != "" {
-			message = condition.Message
-		}
-	}
-	return coverageShortMessage(message)
-}
-func coverageShortMessage(message string) string {
-	message = strings.Join(strings.Fields(message), " ")
-	runes := []rune(message)
-	if len(runes) > 160 {
-		return string(runes[:160])
-	}
-	return message
 }

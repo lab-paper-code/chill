@@ -17,6 +17,14 @@ rules:
     verbs:
       - get
       - list
+  # Curve-plan preflight resolves these cluster-scoped candidate inputs by name.
+  - apiGroups:
+      - edge.dacs.io
+    resources:
+      - preprocessors
+      - datasets
+    verbs:
+      - get
   - apiGroups:
       - ""
     resources:

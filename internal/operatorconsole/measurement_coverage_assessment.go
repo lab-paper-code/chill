@@ -2,14 +2,15 @@ package operatorconsole
 
 // MeasurementAssessment is a read projection, never a stored execution verdict.
 type MeasurementAssessment struct {
-	Status        string                `json:"status"`
-	DisplayStatus string                `json:"displayStatus"`
-	Label         string                `json:"label"`
-	Reasons       []MeasurementReason   `json:"reasons"`
-	Execution     *MeasurementExecution `json:"execution"`
-	Evidence      MeasurementEvidence   `json:"evidence"`
-	Checklist     MeasurementChecklist  `json:"checklist"`
-	Scope         MeasurementScope      `json:"scope"`
+	Status         string                `json:"status"`
+	DisplayStatus  string                `json:"displayStatus"`
+	Label          string                `json:"label"`
+	Reasons        []MeasurementReason   `json:"reasons"`
+	Execution      *MeasurementExecution `json:"execution"`
+	Evidence       MeasurementEvidence   `json:"evidence"`
+	Checklist      MeasurementChecklist  `json:"checklist"`
+	Scope          MeasurementScope      `json:"scope"`
+	FailureSummary []MeasurementFailure  `json:"failureSummary,omitempty"`
 }
 type MeasurementReason struct {
 	Code      string   `json:"code"`
