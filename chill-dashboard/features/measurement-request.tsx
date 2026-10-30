@@ -10,7 +10,7 @@ import { PreflightAnswer, preflightConclusion } from "@/features/read-pages"
 import { powerModeText } from "@/features/resources"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import type { ExecutionPath, ModelList, ModelResource, WorkloadView } from "@/lib/domain"
+import type { DatasetResource, PreprocessorResource, ExecutionPath, ModelList, ModelResource, WorkloadView } from "@/lib/domain"
 import type { InventoryClass, InventoryNode, MeasurementMutation, MeasurementPlan, MeasurementPlanList, MeasurementPlanSpec, MeasurementPreflight, MeasurementVariant } from "@/lib/read-types"
 import { resolveMeasurementPrefill, serverCompatibility, staticCompatibility, type MeasurementPrefill } from "@/lib/measurement-coverage"
 import { useCoverageInventory, useModelCompatibility, useMeasurementCoverage } from "@/features/measurement-coverage"
@@ -41,7 +41,7 @@ const advancedFields: [key: NumberKey, label: string, min: number][] = [
 type Protocol = { values: Advanced; from: string | null }
 // model, preprocessor and dataset come from the chosen Workload's spec refs (or a copied plan); the API takes catalog names.
 type Draft = { workload: string; model: string; preprocessor: string; dataset: string; deviceClass: string; node: string; path: string; powerMode: string; batchSizes: number[]; trials: number | null; cpu: string | null; protocol: Protocol | null; name: string | null }
-type Context = { models: ModelResource[]; workloads: WorkloadView[]; classes: InventoryClass[]; plans: MeasurementPlan[]; prefill?:boolean }
+type Context = { models: ModelResource[]; workloads: WorkloadView[]; classes: InventoryClass[]; plans: MeasurementPlan[]; preprocessors: PreprocessorResource[]; datasets: DatasetResource[]; prefill?:boolean }
 
 const emptyDraft: Draft = { workload: "", model: "", preprocessor: "", dataset: "", deviceClass: "", node: "", path: "", powerMode: "", batchSizes: [], trials: null, cpu: null, protocol: null, name: null }
 const blankAdvanced: Advanced = { warmup: NaN, activeDuration: NaN, activeWindow: NaN, activeInterval: NaN, activeTimeout: NaN, settling: NaN, idleDuration: NaN, idleWindow: NaN, idleInterval: NaN, idleTimeout: NaN, retryLimit: NaN, affinity: "" }
@@ -78,26 +78,19 @@ function pathReason(model: ModelResource, path: ExecutionPath, cls: InventoryCla
 const detailHref = (namespace: string, name: string, uid?: string) => `/measurements/batch-energy-optimizations/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${uid ? `?uid=${encodeURIComponent(uid)}` : ""}`
 function failure(error: ApiError) {
   const data = (error.data && typeof error.data === "object" ? error.data : {}) as { code?: string; message?: string }
-  return { code: data.code, message: data.message || "서버가 이유를 알려 주지 않았어요." }
+  return { code: data.code, message: data.message || (typeof error.body === "string" && error.body.trim() ? error.body : error.status === 403 ? "접근이 거부됐어요. 대시보드 접속 주소(Origin)와 요청 권한을 확인하세요." : "응답에 원인이 없어요. 연결과 서버 로그를 확인하세요.") }
 }
 
 // Everything the steps read: current selections resolved against real data, plus the copied protocol.
-// Newest earlier plan for the same model, device class and execution path.
-function sameCondition(plans: MeasurementPlan[], model: string, deviceClass: string, path: string) {
-  return [...plans].sort((a, b) => b.metadata.creationTimestamp.localeCompare(a.metadata.creationTimestamp))
-    .find(p => p.spec.state.candidate.modelSpec === model && p.spec.state.candidate.deviceClass === deviceClass && p.spec.state.candidate.executionPath === path)
-}
-function view(d: Draft, { models, classes, plans, prefill }: Context) {
+function view(d: Draft, { models, classes, plans }: Context) {
   const model = models.find(m => m.metadata.name === d.model)
   const cls = classes.find(c => c.name === d.deviceClass)
   const node = cls?.nodes.find(n => n.name === d.node)
   const path = model?.spec.executionPaths.find(p => p.name === d.path)
   const artifact = path && model?.spec.artifacts.find(a => a.name === path.artifact)
-  const newest = [...plans].sort((a, b) => b.metadata.creationTimestamp.localeCompare(a.metadata.creationTimestamp))
-  const template = prefill ? undefined : sameCondition(plans, d.model, d.deviceClass, d.path) ?? newest[0]
-  const protocol: Protocol = d.protocol ?? { values: template ? copyAdvanced(template.spec) : blankAdvanced, from: template?.metadata.name ?? null }
-  const trials = d.trials ?? (prefill ? NaN : template?.spec.trialsPerBatch ?? 3)
-  const cpu = d.cpu ?? (prefill ? "" : template?.spec.cpuQuota ?? "1")
+  const protocol: Protocol = d.protocol ?? { values: blankAdvanced, from: null }
+  const trials = d.trials ?? 3
+  const cpu = d.cpu ?? "1"
   const powerMode = cls?.powerModes.length === 1 ? cls.powerModes[0].name : d.powerMode
   const declared = artifact?.derivation?.declaredBatchSizes?.length ? artifact.derivation.declaredBatchSizes : null
   const max = path?.runtime.settings?.firstfloor?.maxBatchSize
@@ -165,10 +158,13 @@ function Pick({ label, name, value, set, options }: { label: string; name: strin
     <span className="row-main"><span className="row-text">{option.label}</span>{(option.disabled || option.hint) && <span className="row-hint">{option.disabled || option.hint}</span>}</span>
   </label></li>)}</ul></fieldset>
 }
-function AdvancedFields({ value, set }: { value: Advanced; set: (value: Advanced) => void }) {
+function AdvancedFields({ value, set, showErrors }: { value: Advanced; set: (value: Advanced) => void; showErrors:boolean }) {
   return <div className="grid gap-4 sm:grid-cols-2">
-    {advancedFields.map(([key, label, min]) => <label htmlFor={`measurement-${key}`} key={key} className="grid gap-2 text-sm">{label}<Input id={`measurement-${key}`} type="number" inputMode="numeric" min={min} max={key === "retryLimit" ? 10 : 2147483647} step={1} value={Number.isNaN(value[key]) ? "" : value[key]} onChange={event => set({ ...value, [key]: event.target.valueAsNumber })} /></label>)}
-    <label htmlFor="measurement-affinity" className="grid gap-2 text-sm sm:col-span-2">사용할 CPU 코어 번호 · 비워 두면 정하지 않아요<Input id="measurement-affinity" inputMode="numeric" placeholder="예: 3 또는 2, 3" value={value.affinity} onChange={event => set({ ...value, affinity: event.target.value })} /></label>
+    {advancedFields.map(([key, label, min]) => {
+      const issue=!Number.isInteger(value[key])||value[key]<min||value[key]>(key==="retryLimit"?10:2147483647)?`${min} 이상의 정수를 입력하세요.`:key==="activeTimeout"&&value.activeTimeout>=value.activeInterval||key==="idleTimeout"&&value.idleTimeout>=value.idleInterval?"기록 간격보다 짧게 입력하세요.":key==="activeWindow"&&value.activeWindow<value.activeDuration||key==="idleWindow"&&value.idleWindow<value.idleDuration?"측정 시간 이상으로 입력하세요.":""
+      return <label htmlFor={`measurement-${key}`} key={key} className="grid gap-2 text-sm">{label}<Input id={`measurement-${key}`} aria-invalid={showErrors&&!!issue} aria-describedby={showErrors&&issue?`measurement-${key}-error`:undefined} type="number" inputMode="numeric" min={min} max={key === "retryLimit" ? 10 : 2147483647} step={1} value={Number.isNaN(value[key]) ? "" : value[key]} onChange={event => set({ ...value, [key]: event.target.valueAsNumber })} />{showErrors&&issue&&<span id={`measurement-${key}-error`} className="text-destructive">{issue}</span>}</label>
+    })}
+    <label htmlFor="measurement-affinity" className="grid gap-2 text-sm sm:col-span-2">사용할 CPU 코어 번호 · 비워 두면 정하지 않아요<Input id="measurement-affinity" aria-invalid={showErrors&&!parseAffinity(value.affinity)} inputMode="numeric" placeholder="예: 3 또는 2, 3" value={value.affinity} onChange={event => set({ ...value, affinity: event.target.value })} />{showErrors&&!parseAffinity(value.affinity)&&<span className="text-destructive">0 이상의 코어 번호를 쉼표로 나눠 입력하세요.</span>}</label>
   </div>
 }
 
@@ -178,17 +174,19 @@ export function MeasurementRequestPage() {
   const plans = useChillQuery<MeasurementPlanList>(`v1/namespaces/${encodeURIComponent(config.namespace)}/batch-energy-optimizations`)
   const models = useChillQuery<ModelList>("v1/models")
   const workloads = useChillQuery<WorkloadView[]>("v1/workloads")
+  const preprocessors = useChillQuery<{items:PreprocessorResource[]}>("v1/preprocessors")
+  const datasets = useChillQuery<{items:DatasetResource[]}>("v1/datasets")
   const inventory = useCoverageInventory()
   const coverage=useMeasurementCoverage(config.namespace,!!params.get("variantId"))
   if(params.get("variantId")&&!coverage.data&&!coverage.error)return <Screen title="측정 요청" lede="선택 조건과 부족 배치를 확인하고 있어요."/>
-  if (!plans.data || !models.data || !workloads.data || !inventory.data) return <Screen back={back} title="측정 요청" lede="고를 수 있는 서비스와 장비를 확인하고 있어요.">
+  if (!plans.data || !models.data || !workloads.data || !inventory.data || !preprocessors.data || !datasets.data) return <Screen back={back} title="측정 요청" lede="고를 수 있는 서비스와 장비를 확인하고 있어요.">
     <MeasurementNavigation namespace={config.namespace}/>
-    <QueryGate query={plans}><QueryGate query={models}><QueryGate query={workloads}><QueryGate query={inventory}>{null}</QueryGate></QueryGate></QueryGate></QueryGate>
+    <QueryGate query={plans}><QueryGate query={models}><QueryGate query={workloads}><QueryGate query={inventory}><QueryGate query={preprocessors}><QueryGate query={datasets}>{null}</QueryGate></QueryGate></QueryGate></QueryGate></QueryGate></QueryGate>
   </Screen>
   const prefill = resolveMeasurementPrefill(new URLSearchParams(params), config.namespace, inventory.data)
   const source = from ? plans.data.items?.find(plan=>plan.metadata.name===from) : undefined
   if (from && (!source || ((prefill.values.fromUID || prefill.values.uid) && source.metadata.uid!==(prefill.values.fromUID || prefill.values.uid)))) prefill.errors.push("복사 원본의 namespace/UID를 확인할 수 없어요")
-  const context: Context = { models: models.data.items, workloads: workloads.data, classes: inventory.data.classes, plans: plans.data.items ?? [], prefill:prefill.active }
+  const context: Context = { models: models.data.items, workloads: workloads.data, classes: inventory.data.classes, plans: plans.data.items ?? [], preprocessors:preprocessors.data?.items??[], datasets:datasets.data?.items??[], prefill:prefill.active }
   const selected=coverage.data?.cells.flatMap(cell=>cell.variants).find(variant=>variant.id===params.get("variantId"))
   return <Funnel key={params.toString()} namespace={config.namespace} from={from} context={context} prefill={prefill} selected={selected} refetchPlans={plans.refetch} checking={plans.isFetching} />
 }
@@ -254,30 +252,32 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
     {variantId&&!selected&&<p role="status" className="notice">전달된 조건을 확인할 수 없어 부족 배치를 자동 제외하지 않았습니다. 직접 조건을 지정하고 중복 범위를 검사하세요.</p>}
     <fieldset disabled={unknown||pending||send.isPending} className="space-y-8 disabled:opacity-60">
       <section className="grid gap-5 border-t pt-5 md:grid-cols-2" aria-label="측정 대상">
-        <label className="grid content-start gap-2 text-sm">모델<select className="min-h-11 w-full rounded border bg-background p-2" value={d.model} onChange={event=>update({model:event.target.value,workload:"",path:"",batchSizes:[],preprocessor:"",dataset:""})}><option value="">모델 선택</option>{context.models.map(model=><option key={model.metadata.uid} value={model.metadata.name}>{model.metadata.name}</option>)}</select></label>
+        <label className="grid content-start gap-2 text-sm">모델<select aria-invalid={!!error&&!v.model} className="min-h-11 w-full rounded border bg-background p-2" value={d.model} onChange={event=>update({model:event.target.value,workload:"",path:"",batchSizes:[],preprocessor:"",dataset:""})}><option value="">모델 선택</option>{context.models.map(model=><option key={model.metadata.uid} value={model.metadata.name}>{model.metadata.name}</option>)}</select>{error&&!v.model&&<span className="text-destructive">모델을 선택하세요.</span>}</label>
         <div className="space-y-3"><label className="grid gap-2 text-sm">서비스 조건 채우기 (선택)<select className="min-h-11 rounded-md border bg-background px-3" value={d.workload} onChange={event=>{
           const workload=context.workloads.find(item=>item.desired.metadata.name===event.target.value)
           if(!workload){update({workload:""});return}
           const spec=workload.desired.spec,changed=spec.modelRef.name!==d.model
           update({workload:workload.desired.metadata.name,model:spec.modelRef.name,preprocessor:spec.preprocessorRef.name,dataset:spec.datasetRef?.name??"",...(changed?{path:"",batchSizes:[]}: {})})
         }}><option value="">직접 조건 지정</option>{context.workloads.filter(workload=>!d.model||workload.desired.spec.modelRef.name===d.model).map(workload=><option key={workload.desired.metadata.uid} value={workload.desired.metadata.name}>{workload.desired.metadata.name}</option>)}</select></label>
-        <label className="grid gap-2 text-sm">전처리기 (등록 이름)<Input value={d.preprocessor} onChange={event=>update({preprocessor:event.target.value})}/></label><label className="grid gap-2 text-sm">데이터셋 (등록 이름)<Input value={d.dataset} onChange={event=>update({dataset:event.target.value})}/></label><p className="text-sm text-muted-foreground">여러 데이터셋·전처리기 조합은 자동 추정하지 않습니다. 등록 이름은 검사에서 확인합니다.</p></div>
+        <label className="grid gap-2 text-sm">전처리기<select className="min-h-11 rounded border bg-background p-2" value={d.preprocessor} onChange={event=>update({preprocessor:event.target.value})}><option value="">전처리기 선택</option>{context.preprocessors.map(item=><option key={item.metadata.uid} value={item.metadata.name}>{item.metadata.name}</option>)}</select>{error&&!d.preprocessor&&<span className="text-destructive">등록된 전처리기를 선택하세요.</span>}</label><label className="grid gap-2 text-sm">데이터셋<select className="min-h-11 rounded border bg-background p-2" value={d.dataset} onChange={event=>update({dataset:event.target.value})}><option value="">데이터셋 선택</option>{context.datasets.map(item=><option key={item.metadata.uid} value={item.metadata.name}>{item.metadata.name}</option>)}</select>{error&&!d.dataset&&<span className="text-destructive">등록된 데이터셋을 선택하세요.</span>}</label><p className="text-sm text-muted-foreground">카탈로그 등록값만 표시합니다. 모델과 데이터셋의 용도가 같은지 확인하세요.</p></div>
       </section>
       <section className="grid gap-5 border-t pt-5 md:grid-cols-2" aria-label="장치와 실행 조건">
         <div className="space-y-4"><Pick label="장치 종류" name="device-class" value={d.deviceClass} set={deviceClass=>{const cls=context.classes.find(item=>item.name===deviceClass);update({deviceClass,node:cls?.nodes.find(node=>!nodeReason(node))?.name??"",powerMode:"",path:""})}} options={context.classes.map(cls=>({value:cls.name,label:cls.name,hint:`사용 가능 장비 ${cls.nodes.filter(node=>!nodeReason(node)).length}대`,disabled:cls.nodes.some(node=>!nodeReason(node))?undefined:"지금 사용할 수 있는 장비가 없어요"}))}/>{v.cls&&<details><summary className="min-h-11 cursor-pointer py-2 text-sm">실행 장비 선택 · {d.node||"미선택"}</summary><Pick label="실행 장비" name="node" value={d.node} set={node=>update({node})} options={v.cls.nodes.map(node=>({value:node.name,label:node.name,disabled:nodeReason(node)}))}/></details>}</div>
         <div className="space-y-4"><Pick label="실행 경로" name="path" value={d.path} set={path=>update({path,batchSizes:[]})} options={(v.model?.spec.executionPaths??[]).filter(path=>!v.cls||!pathReason(v.model!,path,v.cls)).map(path=>({value:path.name,label:path.name,hint:`${path.runtime.family} / ${path.runtime.backend}`}))}/>
           {(!v.model||!v.cls)?<p className="text-sm text-muted-foreground">모델과 장치 종류를 먼저 선택하면 실행 방식을 고를 수 있어요.</p>:!v.model.spec.executionPaths.some(path=>!pathReason(v.model!,path,v.cls!))&&<p role="status" className="notice">이 장치에서 사용할 실행 방식이 없어요. 다른 장치 종류를 선택하거나 모델의 실행 방식 등록을 확인하세요.</p>}
           {v.model&&v.cls&&v.model.spec.executionPaths.some(path=>pathReason(v.model!,path,v.cls!))&&<details><summary className="min-h-11 cursor-pointer py-2">지원 안 되는 경로와 이유</summary>{v.model.spec.executionPaths.filter(path=>pathReason(v.model!,path,v.cls!)).map(path=><p key={path.name}>{path.name}: {pathReason(v.model!,path,v.cls!)}</p>)}</details>}
+          {error&&(v.problem("device")||v.problem("run"))&&<p role="alert" className="text-sm text-destructive">{v.problem("device")||v.problem("run")}</p>}
           {v.cls&&<Pick label="전력 모드" name="mode" value={v.powerMode} set={powerMode=>update({powerMode})} options={v.cls.powerModes.map(mode=>({value:mode.name,label:mode.name,hint:powerModeText(mode.actuator)}))}/>}
           {verdict&&<div className="space-y-2 text-sm"><p>{support.isFetching?"호환성 확인 중":verdict.reason}</p>{verdict.state==="unknown"&&<><p>지원 미확인: 장치 선언·runtime 지원을 담당자가 확인해야 합니다.</p><label className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={showUnknown} onChange={event=>setShowUnknown(event.target.checked)}/>미확인 조합을 명시적으로 검사</label></>}</div>}
         </div>
       </section>
       <section className="grid gap-4 border-t pt-5 md:grid-cols-2" aria-label="목표 배치와 반복">
         <fieldset className="space-y-3"><legend className="font-semibold">한 번에 처리할 건수</legend><div className="flex flex-wrap gap-2">{(v.declared??chips).map(batch=><label key={batch} className="inline-flex min-h-11 items-center gap-2 rounded-full border px-4"><input type="checkbox" disabled={!!v.declared} checked={!!v.declared||d.batchSizes.includes(batch)} onChange={event=>update({batchSizes:event.target.checked?[...d.batchSizes,batch].sort((a,b)=>a-b):d.batchSizes.filter(item=>item!==batch)})}/>{batch}건</label>)}</div><p className="text-sm text-muted-foreground">{v.declared?"모델에 등록된 처리 건수를 모두 측정해요. 일부만 선택할 수 없어요.":conditionKept?"같은 조건에서 아직 측정하지 않은 건수를 채웠어요. 검사에서 최신 상태를 확인해요.":"CPU·데이터셋·측정 방식이 같은 기존 결과가 있는지 검사해요."}</p></fieldset>
-        <div className="space-y-4"><label className="grid gap-2 text-sm">배치별 반복 횟수<Input type="number" min={3} value={Number.isFinite(v.trials)?v.trials:""} onChange={event=>update({trials:event.target.valueAsNumber})}/></label><label className="grid gap-2 text-sm">CPU 개수<Input value={v.cpu} onChange={event=>update({cpu:event.target.value})}/></label></div>
+        <div className="space-y-4"><label className="grid gap-2 text-sm">배치별 반복 횟수<Input aria-invalid={!!error&&(!Number.isInteger(v.trials)||v.trials<3)} type="number" min={3} value={Number.isFinite(v.trials)?v.trials:""} onChange={event=>update({trials:event.target.valueAsNumber})}/>{error&&(!Number.isInteger(v.trials)||v.trials<3)&&<span className="text-destructive">3 이상의 정수를 입력하세요.</span>}</label><label className="grid gap-2 text-sm">CPU 개수<Input aria-invalid={!!error&&!/^[1-9]\d*$/.test(v.cpu)} value={v.cpu} onChange={event=>update({cpu:event.target.value})}/>{error&&!/^[1-9]\d*$/.test(v.cpu)&&<span className="text-destructive">1 이상의 정수를 입력하세요.</span>}</label></div>
+        {error&&v.problem("size")&&<p role="alert" className="text-sm text-destructive">{v.problem("size")}</p>}
       </section>
-      <section className="space-y-4 border-t pt-5" aria-label="실제 측정 기본값"><h2 className="font-semibold">측정 방식과 실제 기본값</h2><p className="text-sm">복사 출처: {v.protocol.from??"직접 지정"} / 반복·CPU 기본값: {d.trials===null||d.cpu===null?"최근 요청 또는 반복 3회·CPU 1개":"직접 지정"}</p><AdvancedFields value={v.protocol.values} set={values=>update({protocol:{values,from:null}})}/></section>
-      <label className="grid gap-2 border-t pt-5 text-sm">요청 이름 (검사한 이름 고정)<Input value={v.name} maxLength={200} onChange={event=>update({name:event.target.value})}/></label>
+      <section className="space-y-4 border-t pt-5" aria-label="실제 측정 기본값"><h2 className="font-semibold">측정 방식과 실제 기본값</h2><p className="text-sm">복사 출처: {v.protocol.from??"없음 · 측정 방식 직접 지정"} / 반복·CPU: {d.trials===null||d.cpu===null?"화면 기본값 반복 3회·CPU 1개 (다른 요청에서 복사하지 않음)":"선택한 조건"}{from&&` / 요청 복사 원본: ${from}`}</p><p className="text-sm text-muted-foreground">빈 측정 방식은 직접 입력하거나 기존 요청의 ‘조건을 복사해 새 이름으로 요청’을 선택하세요. CPU 코어 번호는 명시 복사 때만 가져옵니다.</p><AdvancedFields showErrors={!!error} value={v.protocol.values} set={values=>update({protocol:{values,from:null}})}/></section>
+      <label className="grid gap-2 border-t pt-5 text-sm">요청 이름 (검사한 이름 고정)<Input aria-invalid={!!error&&!!v.problem("name")} value={v.name} maxLength={200} onChange={event=>update({name:event.target.value})}/>{error&&v.problem("name")&&<span className="text-destructive">{v.problem("name")}</span>}</label>
     </fieldset>
     {verdict?.state==="unknown"&&!showUnknown&&<p className="text-sm text-muted-foreground">미확인 조합은 위 동의 항목을 선택한 뒤 검사하세요.</p>}
     {answer&&<section className="space-y-4 border-t pt-5"><h2 className="font-semibold">{preflightConclusion(answer)}</h2><PreflightAnswer answer={answer}/></section>}

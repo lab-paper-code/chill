@@ -18,6 +18,19 @@ test("measurement quantities use fixed unit precision and preserve valid zero an
   assert.equal(formatMeasurementNumber(1234.5,"J"),"1,235")
   assert.equal(formatMeasurementNumber(null,"W"),"미제공")
 })
+test("operation and result views keep failure, source and missing measurements visible",()=>{
+  const request=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
+  const detail=readFileSync(new URL("../features/measurement-plans.tsx",import.meta.url),"utf8")
+  const charts=readFileSync(new URL("../features/experiments.tsx",import.meta.url),"utf8")
+  assert.ok(!request.includes("sameCondition("))
+  assert.ok(!request.includes("newest[0]"))
+  assert.ok(request.includes('useChillQuery<{items:DatasetResource[]}>("v1/datasets")'))
+  assert.ok(detail.includes('campaign.phase==="Failed"'))
+  assert.ok(!detail.includes("측정 완료 후 다시 확인하세요"))
+  assert.ok(charts.includes('aria-label={`${title} 단계별 선 차트`}'))
+  assert.ok(charts.includes("결측:"))
+  assert.ok(charts.includes("index+1"))
+})
 test("CSV retains row identity, source references and exact numbers while escaping every cell",()=>{
   const rows=[{id:'row"1',rowKind:"source-reference",batch:1,sourceProfileId:"source",condition:{dataset:"a,b\nc"},p95Milliseconds:0.123456789,incrementalJoulesPerItem:0,confidence:{lower:-1,upper:1,halfWidth:1,level:0.95},reuse:{source:"origin"}}] as unknown as ResultRow[]
   const csv=resultRowsCSV(rows)

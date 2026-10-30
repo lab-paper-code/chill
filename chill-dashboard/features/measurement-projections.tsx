@@ -17,7 +17,7 @@ import { AssessmentDetails, ResultRows } from "@/features/measurement-plans"
 
 const measurementTitles = {"operation-cost-measurements":"동작 비용 측정","dispatch-occupancy-measurements":"분배 점유시간 측정"}
 const measurementTime = formatMeasurementTime
-const duration = (value?:WireInteger|null) => value==null?"미제공":`${String(value)} ns`
+const duration = (value?:WireInteger|null) => value==null?"미제공":`${(Number(value)/1e9).toLocaleString("ko-KR",{maximumFractionDigits:3})}초`
 
 export function ProjectionMeasurementListPage({kind}:{kind:ProjectionMeasurementKind}) {
   const params = useSearchParams(), {config} = useSession()
@@ -84,13 +84,13 @@ export function ProjectionMeasurementDetail({kind,namespace,name}:{kind:Projecti
   </Screen>
 }
 
-const stepKinds:Record<string,string> = {power:"전력모드 변경",prepare:"준비",idle:"유휴",remove:"제거"}
+const stepKinds:Record<string,string> = {power:"전력 모드 변경",prepare:"모델 준비",idle:"쉬는 상태 유지",remove:"모델 제거"}
 function BEOReference({namespace,name}:{namespace:string;name:string}) {
   return <Link className="underline underline-offset-4" href={`/measurements/batch-energy-optimizations/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`}>{name} (현재 이름 기준 / UID 없는 참조)</Link>
 }
 function OperationResult({data}:{data:OperationCostMeasurement}) {
   const columns:DataColumn<OperationStep>[] = [
-    {key:"name",label:"단계 이름",value:step => step.name},
+    {key:"name",label:"단계 이름",value:step => <span>{step.condition ? stepKinds[step.condition.kind] ?? "동작" : "동작"}<details><summary className="min-h-6 cursor-pointer text-xs">단계 코드</summary>{step.name}</details></span>},
     {key:"condition",label:"조건 연결",value:step => step.condition ? stepKinds[step.condition.kind] ?? "확인이 필요해요" : "조건 연결 없음"},
     {key:"duration",label:"실측 시간",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => <li key={index}>{duration(result.durationNanos)}</li>)}</ul> : "미제공"},
     {key:"energy",label:"수용된 전체 Node 벽에너지",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => <li key={index}>{formatMeasurementNumber(result.wallJoules,"J")} J</li>)}</ul> : "미제공"},
@@ -104,7 +104,7 @@ function OperationResult({data}:{data:OperationCostMeasurement}) {
     })}</ul> : "아직 기록된 결과가 없어요"},
   ]
   return <>
-    <p className="notice">실측 시간: {data.status.steps?.some(step=>step.durationNanos!==undefined&&step.durationNanos!==null)?"기록된 단계별 값 제공":"기록 없음"}. 수용된 전체 장비 에너지: {data.status.steps?.some(step=>step.wallJoules!==undefined&&step.wallJoules!==null)?"기록된 단계별 값 제공":"기록 없음"}. 계획 유휴 시간과 실제 동작 시간은 별도예요.</p>
+    <p className="notice">모델 교체 {data.status.steps?.length&&data.status.steps.every(step=>step.durationNanos!=null)?duration(data.status.steps.reduce((total,step)=>total+Number(step.durationNanos),0)):"시간 미제공"} · {data.status.steps?.length&&data.status.steps.every(step=>step.wallJoules!=null)?`${formatMeasurementNumber(data.status.steps.reduce((total,step)=>total+Number(step.wallJoules),0),"J")} J`:"에너지 미제공"} (기록된 단계 합계 · 노드 전체 벽전력 기준). 계획 유휴 시간과 실제 동작 시간은 별도예요.</p>
     <p className="text-sm text-muted-foreground">기록 {data.status.steps?.length ?? 0} / 계획 {data.conditions.steps.length}단계. 완료 상태만으로 단계 채택을 재판정하지 않아요.</p>
     <DataTable data={operationSteps(data)} columns={columns}/>
     <Rows label="자세히"><RowDialog label="순서 있는 동작 조건" title="순서 있는 동작 조건" description="조건에 기록된 순서예요. 단계별로 해당 동작의 조건만 표시해요.">

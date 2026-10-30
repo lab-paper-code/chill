@@ -103,7 +103,7 @@ function StageCharts({run}:{run:Experiment}) {
       return [[`p${index}`,bar||point?.paired?value:null],[`u${index}`,point&&!point.paired?value:null],
         [`s${index}`,service?point?.services[service]?.sloMS??null:null],[`e${index}`,point?.wattError??null],[`paired${index}`,point?.paired??false]]
     })]))
-    const xAxis=<XAxis dataKey="axis" interval="preserveStartEnd" height={45} tick={{fontSize:10}} tickFormatter={axis=>{const point=data.find(point=>point.axis===axis);return point?stageLoadLabel(point.stage,run):"구간 기록 확인"}}/>
+    const xAxis=<XAxis dataKey="axis" interval={0} height={55} tick={{fontSize:10}} tickFormatter={(axis,index)=>{const point=data.find(point=>point.axis===axis);return `${index+1}. ${point?formatResult(point.rate,"req/s"):"결측"}`}}/>
     const yAxis=<YAxis width={54} tick={{fontSize:10}} tickFormatter={value=>formatResult(unit==="%"?Number(value)/100:Number(value),unit).replace(` ${unit}`,"")}/>
     const legend=<Legend wrapperStyle={{fontSize:11}}/>
     const tooltip=<Tooltip formatter={value=>formatResult(typeof value==="number"?(unit==="%"?value/100:value):null,unit)}/>
@@ -111,14 +111,14 @@ function StageCharts({run}:{run:Experiment}) {
       <figcaption className="text-sm font-medium">{title} ({unit})</figcaption>
       <div className="h-[180px] w-full" role="img" aria-label={`${title} · 단계 집계 · 비대응은 속 빈 마커`}>
         <ResponsiveContainer width="100%" height="100%">{bar?
-          <BarChart accessibilityLayer data={points} margin={{left:0,right:8,top:8,bottom:0}}>
+          <BarChart accessibilityLayer aria-label={`${title} 단계별 막대 차트`} data={points} margin={{left:0,right:8,top:8,bottom:0}}>
             <CartesianGrid vertical={false}/>{xAxis}{yAxis}{tooltip}{legend}
             {policies.map((policy,index)=><Bar key={policy} dataKey={`p${index}`} name={policy} fill={color(policy)} stroke={color(policy)} strokeDasharray={policy==="고정 구성"?"3 2":undefined} isAnimationActive={false}>
               {points.map((point,i)=><Cell key={i} fill={point[`paired${index}`]?color(policy):"var(--background)"}/>)}
               <ErrorBar dataKey={`e${index}`} width={4} stroke="var(--foreground)"/>
             </Bar>)}
           </BarChart>:
-          <LineChart accessibilityLayer data={points} margin={{left:0,right:8,top:8,bottom:0}}>
+          <LineChart accessibilityLayer aria-label={`${title} 단계별 선 차트`} data={points} margin={{left:0,right:8,top:8,bottom:0}}>
             <CartesianGrid vertical={false}/>{xAxis}{yAxis}{tooltip}{legend}
             {policies.map((policy,index)=><React.Fragment key={policy}>
               <Line dataKey={`p${index}`} name={policy} stroke={color(policy)} strokeWidth={2} strokeDasharray={policy==="고정 구성"?"4 3":undefined} dot={{r:3}} isAnimationActive={false} connectNulls={false}/>
@@ -128,6 +128,7 @@ function StageCharts({run}:{run:Experiment}) {
           </LineChart>}
         </ResponsiveContainer>
       </div>
+      {points.some(point=>policies.some((_,index)=>point[`p${index}`]==null&&point[`u${index}`]==null))&&<p className="text-xs text-muted-foreground">결측: {points.flatMap((point,index)=>policies.filter((_,policyIndex)=>point[`p${policyIndex}`]==null&&point[`u${policyIndex}`]==null).map(policy=>`${index+1}단계 ${policy}`)).join(", ")}. 선을 연결하거나 0으로 대체하지 않습니다.</p>}
     </figure>
   }
   return <section aria-label="단계별 부하와 결과" className="min-w-0 space-y-5">
@@ -137,8 +138,8 @@ function StageCharts({run}:{run:Experiment}) {
     <p className="text-xs text-muted-foreground">평균 전력은 구간의 전체 에너지를 실제 실행 시간으로 나눈 값이에요. 오차막대는 전력 기록이 비어 있는 동안의 오차 한도예요.</p>
     <div className="grid min-w-0 gap-5 md:grid-cols-2 xl:grid-cols-3">{names.map(name=><article key={name} className="min-w-0 space-y-4 border-t pt-3" aria-label={`${name} 성공률과 p95`}>
       <h3 className="break-words font-semibold">{name}</h3>
-      {chart(`${name} 기한·SLO 내 성공률`,"%",point=>point.services[name]?.success??null)}
-      {chart(`${name} 성공 응답 p95`,"ms",point=>point.services[name]?.p95??null,false,name)}
+      {chart("기한·SLO 내 성공률","%",point=>point.services[name]?.success??null)}
+      {chart("성공 응답 p95","ms",point=>point.services[name]?.p95??null,false,name)}
     </article>)}</div>
     <p className="text-xs text-muted-foreground">점선 SLO는 해당 단계 KPI에 기록된 p95 목표만 표시합니다. 목표 미기록·다른 percentile은 선을 그리지 않으며 현재 서비스 설정을 소급하지 않습니다.</p>
     <details className="text-xs text-muted-foreground"><summary className="min-h-11 cursor-pointer py-2">비교 불가·누락 사유 원문</summary><ul className="space-y-1">{data.filter(point=>!point.paired||Object.values(point.services).some(service=>service.reason)||names.some(name=>!point.services[name])).map((point,index)=><li key={`${point.id}/${index}`} className="break-words">{point.id}: {!point.paired&&point.reason}{names.map(name=>point.services[name]?.reason||!point.services[name]?` / ${name}: ${point.services[name]?.reason??"이 단계에 서비스 기록 없음"}`:"").join("")}</li>)}</ul></details>
@@ -156,7 +157,7 @@ function StageSummary({run,onSelect}:{run:Experiment;onSelect:(a:string,b:string
         <th scope="row" className="p-3 text-left align-top"><p className="break-words">{stageLoadLabel(point.stage,run)}</p><p className="text-xs font-normal">{point.policy}</p><details className="text-xs font-normal"><summary className="cursor-pointer py-2">구간 코드</summary>{point.id}</details>{point.reason!=="동일 단계 식별자 중복"&&<button type="button" className="min-h-11 underline underline-offset-4" onClick={()=>onSelect(point.id,point.counterpart?.id??"")}>단계 자세히</button>}</th>
         <td className="p-3 align-top"><p>{point.paired?"같은 부하 비교 가능":"비교할 같은 부하 기록 없음"}</p><details className="text-xs"><summary className="cursor-pointer py-2">연결 근거 원문</summary>{point.reason}{point.counterpart&&<p className="break-words">{point.counterpart.id}</p>}</details></td>
         <td className="p-3 text-right align-top tabular-nums">{formatResult(point.rate,"req/s")}</td>
-        <td className="p-3 text-right align-top tabular-nums">{formatResult(point.energy,"J")}<br/>{formatResult(point.watts,"W")}{point.counterpart&&<p className="mt-2 text-xs">Δ {difference(point.energy,point.counterpart.kpis.wholePoolJoules,"J")}<br/>{relativeEnergy(point.energy,point.counterpart.kpis.wholePoolJoules)}</p>}</td>
+        <td className="p-3 text-right align-top tabular-nums">{formatResult(point.energy,"J")}<br/>{formatResult(point.watts,"W")}{point.counterpart&&<p className={`mt-2 text-xs ${point.energy!=null&&point.counterpart.kpis.wholePoolJoules!=null?(point.energy<Number(point.counterpart.kpis.wholePoolJoules)?"text-green-700 dark:text-green-400":point.energy>Number(point.counterpart.kpis.wholePoolJoules)?"text-destructive":""):""}`}>Δ {difference(point.energy,point.counterpart.kpis.wholePoolJoules,"J")}<br/>{relativeEnergy(point.energy,point.counterpart.kpis.wholePoolJoules)}</p>}</td>
         <td className="p-3 text-right align-top tabular-nums">{formatResult(point.joulesPerRequest,"J/건")}</td>
         <td className="space-y-3 p-3 align-top">{comparisonRows(point.stage,point.counterpart??undefined).map(row=>{
           const service=point.services[row.name]

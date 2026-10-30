@@ -153,8 +153,8 @@ export function campaignPairs(run:Experiment) {
 }
 export function campaignGroups(runs:Experiment[]) {
   return [...runs].sort((a,b)=>Date.parse(b.from)-Date.parse(a.from)).map(run=>{
-    const pairs=campaignPairs(run),e5=run.stages.some(stage=>/^(full|static)-E5-/.test(stage.id))
-    return {run,pairs,title:e5?"부하별 운영 비교":run.id,
+    const pairs=campaignPairs(run)
+    return {run,pairs,title:run.id,
       question:pairs.length?"자동 운영과 고정 구성의 성공률·지연·에너지 비교":"부하·운영 구성별 성공률·지연·에너지",
     }
   })

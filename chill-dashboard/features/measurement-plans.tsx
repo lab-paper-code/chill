@@ -53,15 +53,18 @@ function ResultCondition({condition}:{condition:Record<string,unknown>}) {
   </div>
 }
 
-export function ResultRows({rows,filename="chill-result-rows.csv"}:{rows:ResultRow[];filename?:string}) {
+export function ResultRows({rows,filename="chill-result-rows.csv",emptyMessage="저장된 결과가 없어요. 요청 상태와 실패 원인을 확인하세요."}:{rows:ResultRow[];filename?:string;emptyMessage?:string}) {
   function download() {
     const url=URL.createObjectURL(new Blob([resultRowsCSV(rows)],{type:"text/csv;charset=utf-8"}))
     const link=document.createElement("a");link.href=url;link.download=filename.replace(/[^a-zA-Z0-9._-]/g,"_");link.click();URL.revokeObjectURL(url)
   }
   return <section className="min-w-0 space-y-3" aria-label="결과 행">
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">운영 판단 요약</h2><Button variant="outline" disabled={!rows.length} onClick={download}>결과 CSV 내보내기</Button></div>
-    {!rows.length?<p className="notice">서버 결과가 아직 없어요. 측정 완료 후 다시 확인하세요.</p>:<div className="grid min-w-0 gap-3">{rows.map((row,index)=><article key={row.id??index} className="min-w-0 rounded-lg border p-4">
+    {!rows.length?<p className="notice">{emptyMessage}</p>:<div className="grid min-w-0 gap-3">{rows.map((row,index)=><article key={row.id??index} className="min-w-0 rounded-lg border p-4">
       <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">한 번에 {row.batch}건 처리 · {row.rowKind==="confirmation"?"대상 확인 측정":row.rowKind==="source-reference"?"기존 측정 참조":row.rowKind==="direct"?"직접 측정":"측정 결과"}</h3><MeasurementStatus assessment={row.assessment}/></div>
+      <p className="mt-2 break-words text-sm tabular-nums">신뢰 근거: {row.confidence&&row.incrementalJoulesPerItem!==null&&row.incrementalJoulesPerItem!==0?`${number(row.confidence.level*100)}% CI ±${number(100*row.confidence.halfWidth/Math.abs(row.incrementalJoulesPerItem))}%`:"상대 CI 미제공"} · 노드 벽전력 출처: {row.powerSource?Object.entries(row.powerSource).filter(([key])=>["kind","nodeName","metric","endpoint","scope"].includes(key)).map(([key,value])=>`${key}: ${String(value)}`).join(" / ")||"출처 상세 참조":"미제공"} (장치 단독 전력 아님)</p>
+      <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">모델·데이터셋 용도 일치 여부는 검증되지 않았어요. 아래 측정 조건의 모델과 데이터셋을 확인한 뒤 운영에 사용하세요.</p>
+      {!!row.missingReasons?.length&&<p className="mt-2 text-sm text-destructive">{row.missingReasons.join(" · ")}</p>}
       <dl className="mt-3 grid gap-3 sm:grid-cols-3">
         <div><dt className="text-sm text-muted-foreground">응답 지연 p95 / SLO 목표</dt><dd className="font-semibold tabular-nums">{number(row.p95Milliseconds,"ms")} ms</dd><dd className="text-xs text-muted-foreground">이 측정 결과에는 SLO 목표가 제공되지 않아 목표 대비 판단은 할 수 없어요.</dd></div>
         <div><dt className="text-sm text-muted-foreground">요청당 에너지 · 총 / 추가 사용</dt><dd className="font-semibold tabular-nums">{number(row.totalJoulesPerItem,"J/item")} / {number(row.incrementalJoulesPerItem,"J/item")} J/건</dd></div>
@@ -88,7 +91,8 @@ export function MeasurementPlanPage({namespace,name}:{namespace:string;name:stri
     action={<Button variant="outline" disabled={query.isFetching} onClick={()=>void query.refetch()}>갱신</Button>}>
     <MeasurementNavigation active="requests" namespace={namespace}/>
     <QueryGate query={query}>{campaign&&spec&&!other&&<>
-      <ResultRows rows={data?.resultRows??[]} filename={`chill-measurement-${name}.csv`}/>
+      {campaign.phase==="Failed"&&<section role="alert" className="notice text-destructive"><p>측정 실패: {data?.assessment?.failureSummary?.map(failure=>failure.message).join(" · ")||data?.assessment?.reasons?.map(reason=>reason.message).join(" · ")||"서버 실패 원인을 확인하세요. 아래 연결된 회차에서 실패 근거를 볼 수 있어요."}</p>{data?.assessment?.failureSummary?.map(failure=>failure.runName&&<Link key={failure.runId} className="inline-flex min-h-11 items-center underline" href={`/measurements/profiling-runs/${encodeURIComponent(failure.runNamespace)}/${encodeURIComponent(failure.runName)}?${new URLSearchParams({uid:failure.runId.split("/").at(-1)??"",returnTo:planHref(namespace,name,campaign.uid)})}`}>{failure.runName} 실패 회차 보기{failure.exitCode!=null?` · 종료 코드 ${failure.exitCode}`:""}</Link>)}</section>}
+      <ResultRows rows={data?.resultRows??[]} filename={`chill-measurement-${name}.csv`} emptyMessage={campaign.phase==="Failed"?"요청이 실패해 사용할 결과가 없어요. 실패 원인을 수정한 뒤 새 요청을 만드세요.":campaign.phase==="Complete"?"측정은 종료됐지만 저장된 결과가 없어요. 결과 판정과 회차 근거를 확인하세요.":"아직 측정 결과가 없어요. 현재 요청 상태와 연결된 회차를 확인하세요."}/>
       <AssessmentDetails assessment={data?.assessment}/>
       <Facts label="요청 조건" items={[["모델",spec.state.candidate.modelSpec],["장치 종류",spec.state.candidate.deviceClass],["실행 장비",spec.state.targetNode],["전력 모드",spec.state.candidate.powerMode],["실행 방식",spec.state.candidate.executionPath],["목표 처리 건수",spec.batchSizes?.join(", ")??"등록된 처리 범위"],["CPU 사용 한도",spec.cpuQuota??"제한 없음"],["사용할 CPU 코어",spec.cpuAffinity?.join(", ")??"미지정"],["데이터셋",spec.activeProtocol.dataset??"미제공"],["건수별 반복",`${spec.trialsPerBatch}회`],["실행 중 측정",`${spec.activeProtocol.durationSeconds??"미제공"}초`],["예열",`${spec.activeProtocol.warmupIterations??"미제공"}회`],["쉬는 상태 측정",`${spec.idleProtocol.durationSeconds??"미제공"}초`],["실행 상태",campaign.phase==="Measuring"?"측정 중":campaign.phase==="Complete"?"측정 완료":campaign.phase==="Failed"?"측정 실패":"상태 확인 필요"]]}/>
       <Rows label="회차와 원본">
