@@ -18,10 +18,10 @@ import (
 type ProfilesView struct {
 	ConfigVersion string `json:"configVersion"`
 	servingkube.CatalogView
-	Preparations map[string]servingkube.PrepareSpec `json:"preparations"`
-	Page         *ProfilePage                       `json:"page,omitempty"`
-	Filters      ProfileFilters                     `json:"filters"`
-	DisplayStatus func(serving.Profile) string `json:"-"`
+	Preparations  map[string]servingkube.PrepareSpec `json:"preparations"`
+	Page          *ProfilePage                       `json:"page,omitempty"`
+	Filters       ProfileFilters                     `json:"filters"`
+	DisplayStatus func(serving.Profile) string       `json:"-"`
 }
 
 type ProfilePage struct {
@@ -41,20 +41,25 @@ type ProfileFilters struct {
 	Statuses      []string `json:"statuses"`
 }
 
-const profileLimitQuery = "limit"
+const (
+	profileLimitQuery = "limit"
+	profileModelQuery = "model"
+	queryNode         = "node"
+	profileOrderDesc  = "desc"
+)
 
-func pageProfiles(view ProfilesView, values url.Values) (ProfilesView, error) {
+func parseProfileQuery(values url.Values) (int, int, error) {
 	limit, offset := 25, 0
 	for key, value := range values {
 		if len(value) != 1 || len(value[0]) > 512 {
-			return ProfilesView{}, &serving.Error{Code: "InvalidQuery", Message: "invalid profile query"}
+			return 0, 0, &serving.Error{Code: "InvalidQuery", Message: "invalid profile query"}
 		}
 		switch key {
 		case profileLimitQuery, "offset":
 			n, err := strconv.Atoi(value[0])
 			if err != nil || (key == profileLimitQuery && (n < 1 || n > 50)) ||
 				(key == "offset" && (n < 0 || n > 1000000)) {
-				return ProfilesView{}, &serving.Error{
+				return 0, 0, &serving.Error{
 					Code: "InvalidQuery", Message: "profile limit must be 1–50 and offset 0–1000000",
 				}
 			}
@@ -63,27 +68,37 @@ func pageProfiles(view ProfilesView, values url.Values) (ProfilesView, error) {
 			} else {
 				offset = n
 			}
-		case "model", "deviceClass", "profile", "q", "node", "powerMode", "path", "cpu", "status":
+		case profileModelQuery, "deviceClass", "profile", "q", queryNode, "powerMode", "path", "cpu", "status":
 		case "sort":
 			switch value[0] {
-			case "model", "deviceClass", "node", "powerMode", "path", "cpu", "created", "status":
+			case profileModelQuery, "deviceClass", queryNode, "powerMode", "path", "cpu", "created", "status":
 			default:
-				return ProfilesView{}, &serving.Error{Code: "InvalidQuery", Message: "unknown profile sort"}
+				return 0, 0, &serving.Error{Code: "InvalidQuery", Message: "unknown profile sort"}
 			}
 		case "order":
-			if value[0] != "asc" && value[0] != "desc" {
-				return ProfilesView{}, &serving.Error{Code: "InvalidQuery", Message: "invalid profile order"}
+			if value[0] != "asc" && value[0] != profileOrderDesc {
+				return 0, 0, &serving.Error{Code: "InvalidQuery", Message: "invalid profile order"}
 			}
 		default:
-			return ProfilesView{}, &serving.Error{Code: "InvalidQuery", Message: "unknown profile query"}
+			return 0, 0, &serving.Error{Code: "InvalidQuery", Message: "unknown profile query"}
 		}
 	}
 	if values.Has("order") && !values.Has("sort") {
-		return ProfilesView{}, &serving.Error{Code: "InvalidQuery", Message: "profile order requires sort"}
+		return 0, 0, &serving.Error{Code: "InvalidQuery", Message: "profile order requires sort"}
+	}
+	return limit, offset, nil
+}
+
+func pageProfiles(view ProfilesView, values url.Values) (ProfilesView, error) {
+	limit, offset, err := parseProfileQuery(values)
+	if err != nil {
+		return ProfilesView{}, err
 	}
 	selected := make([]serving.Profile, 0, len(view.Profiles))
 	options := map[string]map[string]bool{}
-	for _, key := range []string{"model", "deviceClass", "node", "powerMode", "path", "cpu", "status"} {
+	for _, key := range []string{
+		profileModelQuery, "deviceClass", queryNode, "powerMode", "path", "cpu", "status",
+	} {
 		options[key] = map[string]bool{}
 	}
 	statuses := map[string]string{}
@@ -101,7 +116,9 @@ func pageProfiles(view ProfilesView, values url.Values) (ProfilesView, error) {
 		}
 		matches := values.Get("profile") == "" || values.Get("profile") == profile.ID
 		searchable := profile.ID
-		for _, key := range []string{"model", "deviceClass", "node", "powerMode", "path", "cpu", "status"} {
+		for _, key := range []string{
+			profileModelQuery, "deviceClass", queryNode, "powerMode", "path", "cpu", "status",
+		} {
 			value := profileField(profile, statuses[profile.ID], key)
 			options[key][value] = true
 			matches = matches && (values.Get(key) == "" || values.Get(key) == value)
@@ -113,8 +130,8 @@ func pageProfiles(view ProfilesView, values url.Values) (ProfilesView, error) {
 	}
 	view.Filters = ProfileFilters{}
 	for key, target := range map[string]*[]string{
-		"model": &view.Filters.Models, "deviceClass": &view.Filters.DeviceClasses,
-		"node": &view.Filters.Nodes, "powerMode": &view.Filters.PowerModes,
+		profileModelQuery: &view.Filters.Models, "deviceClass": &view.Filters.DeviceClasses,
+		queryNode: &view.Filters.Nodes, "powerMode": &view.Filters.PowerModes,
 		"path": &view.Filters.Paths, "cpu": &view.Filters.CPUs, "status": &view.Filters.Statuses,
 	} {
 		*target = make([]string, 0, len(options[key]))
@@ -136,7 +153,7 @@ func pageProfiles(view ProfilesView, values url.Values) (ProfilesView, error) {
 		} else if key := values.Get("sort"); key != "" {
 			result = strings.Compare(profileField(a, statuses[a.ID], key), profileField(b, statuses[b.ID], key))
 		}
-		if values.Get("order") == "desc" {
+		if values.Get("order") == profileOrderDesc {
 			result = -result
 		}
 		return cmp.Or(result, strings.Compare(a.ID, b.ID)) < 0
@@ -153,11 +170,11 @@ func pageProfiles(view ProfilesView, values url.Values) (ProfilesView, error) {
 
 func profileField(profile serving.Profile, status, key string) string {
 	switch key {
-	case "model":
+	case profileModelQuery:
 		return profile.Condition.LogicalModel
 	case "deviceClass":
 		return profile.Condition.DeviceClass
-	case "node":
+	case queryNode:
 		return profile.NodeName
 	case "powerMode":
 		return profile.Condition.PowerMode

@@ -98,7 +98,7 @@ func TestR6FailureSummaryClassifiesOwnedRuntimeLog(t *testing.T) {
 	projection := coverageProjection{
 		base: base, owners: coverageOwnedRuns(base),
 		indices: map[string]int{coverageCellID("", "", "", ""): 0},
-		out: operatorconsole.MeasurementCoverageResponse{Cells: []operatorconsole.MeasurementCoverageCell{{}}},
+		out:     operatorconsole.MeasurementCoverageResponse{Cells: []operatorconsole.MeasurementCoverageCell{{}}},
 	}
 	projection.addRequest(task)
 	cell := projection.out.Cells[0]
@@ -124,7 +124,9 @@ func TestR6FailureSummaryClassifiesOwnedRuntimeLog(t *testing.T) {
 		last.Message != "제한 시간 안에 전력 관측을 완료하지 못했습니다." {
 		t.Fatalf("lost runtime cause: %+v", last)
 	}
-	service := &measurementService{client: fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(&run).Build()}
+	service := &measurementService{
+		client: fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(&run).Build(),
+	}
 	list, err := service.assessList(context.Background(), base.requests)
 	if err != nil || len(list) != 1 {
 		t.Fatalf("request list assessment = %s, %v", list, err)

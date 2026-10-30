@@ -28,10 +28,10 @@ func parseMeasurementCoverageQuery(values url.Values) (MeasurementCoverageQuery,
 		Message: "batches는 중복 없는 오름차순 양의 정수, node는 정확한 이름이어야 합니다",
 	}
 	for key, items := range values {
-		if (key != "batches" && key != "node") || len(items) != 1 || items[0] == "" {
+		if (key != "batches" && key != queryNode) || len(items) != 1 || items[0] == "" {
 			return query, invalid
 		}
-		if key == "node" {
+		if key == queryNode {
 			if len(validation.IsDNS1123Subdomain(items[0])) != 0 {
 				return query, invalid
 			}

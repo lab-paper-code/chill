@@ -1,5 +1,7 @@
 package operatorconsole
 
+const measurementExecutionFailed = "Failed"
+
 // MeasurementAssessment is a read projection, never a stored execution verdict.
 type MeasurementAssessment struct {
 	Status         string                `json:"status"`
@@ -160,7 +162,7 @@ func assessSingleMeasurement(out *MeasurementAssessment, in MeasurementAssessmen
 	}
 	if in.Execution != nil && (in.ExecutionCurrent || in.Execution.Generation == in.Execution.ObservedGeneration) {
 		switch in.Execution.Phase {
-		case "Failed":
+		case measurementExecutionFailed:
 			out.Status = MeasurementFailed
 			return
 		case "Pending", "Granted", "Running", "Measuring", "Waiting":

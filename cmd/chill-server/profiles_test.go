@@ -42,7 +42,7 @@ func TestProfileListStatusMatchesDecoratedAssessmentWithoutClusterReads(t *testi
 	}
 	var decorated struct {
 		Profiles []struct {
-			ID string `json:"id"`
+			ID         string `json:"id"`
 			Assessment struct {
 				DisplayStatus string `json:"displayStatus"`
 			} `json:"assessment"`
@@ -52,7 +52,8 @@ func TestProfileListStatusMatchesDecoratedAssessmentWithoutClusterReads(t *testi
 		t.Fatal(err)
 	}
 	for index, profile := range decorated.Profiles {
-		if status := listed.DisplayStatus(listed.Profiles[index]); status != profile.Assessment.DisplayStatus || status == "" {
+		status := listed.DisplayStatus(listed.Profiles[index])
+		if status != profile.Assessment.DisplayStatus || status == "" {
 			t.Fatalf("%s list status %q differs from assessment %q", profile.ID, status, profile.Assessment.DisplayStatus)
 		}
 	}

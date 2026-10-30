@@ -341,7 +341,9 @@ func (o *measurementService) decorateProfiles(ctx context.Context, view httpapi.
 	}{view.ConfigVersion, view.Insufficiencies, view.ReuseChecks, view.Page, view.Filters, profiles})
 }
 
-func assessCatalogProfile(view httpapi.ProfilesView, profile serving.Profile) (operatorconsole.MeasurementAssessment, []operatorconsole.ResultRow) {
+func assessCatalogProfile(
+	view httpapi.ProfilesView, profile serving.Profile,
+) (operatorconsole.MeasurementAssessment, []operatorconsole.ResultRow) {
 	used := true
 	input := operatorconsole.MeasurementAssessmentInput{
 		Accepted: true, Available: true, Reused: profile.Reuse != nil, SchedulerUsed: &used,

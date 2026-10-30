@@ -38,7 +38,11 @@ type listQuery struct {
 	filters           map[string]string
 }
 
-const queryNode = "node"
+const (
+	queryNode      = "node"
+	queryRunStatus = "status"
+	queryOrderDesc = "desc"
+)
 
 func parseListQuery(r *http.Request, runs bool) (listQuery, bool) {
 	q := listQuery{limit: 50, filters: map[string]string{}}
@@ -72,44 +76,54 @@ func parseListQuery(r *http.Request, runs bool) (listQuery, bool) {
 			}
 			q.search = strings.ToLower(value[0])
 		case "sort":
-			if !runs || !slices.Contains([]string{"name", "created", "model", "powerMode", "status"}, value[0]) {
+			if !runs || !slices.Contains([]string{"name", "created", "model", "powerMode", queryRunStatus}, value[0]) {
 				return q, false
 			}
 			q.sort = value[0]
 		case "order":
-			if !runs || (value[0] != "asc" && value[0] != "desc") {
+			if !runs || (value[0] != "asc" && value[0] != queryOrderDesc) {
 				return q, false
 			}
 			q.order = value[0]
-		case "condition":
-			kind, status, ok := strings.Cut(value[0], "=")
-			if !runs || !ok || kind == "" || len(value[0]) > 128 ||
-				(status != string(metav1.ConditionTrue) &&
-					status != string(metav1.ConditionFalse) &&
-					status != string(metav1.ConditionUnknown)) {
-				return q, false
-			}
-			q.condition = value[0]
-		case "model", "deviceClass", queryNode, "path", "powerMode", "cpu", "status", "parentUID", "group":
-			if !runs || len(value[0]) > 2048 {
-				return q, false
-			}
-			q.filters[key] = value[0]
-			if key == "group" && value[0] != "" {
-				group, valid := canonicalRunGroup(value[0])
-				if !valid {
-					return q, false
-				}
-				q.filters[key] = group
-			}
 		default:
-			return q, false
+			if !runs || !q.parseRunFilter(key, value[0]) {
+				return q, false
+			}
 		}
 	}
 	if q.order != "" && q.sort == "" {
 		return q, false
 	}
 	return q, true
+}
+
+func (q *listQuery) parseRunFilter(key, value string) bool {
+	switch key {
+	case "condition":
+		kind, status, ok := strings.Cut(value, "=")
+		if !ok || kind == "" || len(value) > 128 ||
+			(status != string(metav1.ConditionTrue) &&
+				status != string(metav1.ConditionFalse) &&
+				status != string(metav1.ConditionUnknown)) {
+			return false
+		}
+		q.condition = value
+	case "model", "deviceClass", queryNode, "path", "powerMode", "cpu", queryRunStatus, "parentUID", "group":
+		if len(value) > 2048 {
+			return false
+		}
+		if key == "group" && value != "" {
+			var valid bool
+			value, valid = canonicalRunGroup(value)
+			if !valid {
+				return false
+			}
+		}
+		q.filters[key] = value
+	default:
+		return false
+	}
+	return true
 }
 
 func pageBounds(total int, q listQuery) (int, int, queryPage) {

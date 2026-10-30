@@ -103,7 +103,7 @@ func AssessProfilingRun(run edgev1alpha1.ProfilingRun) MeasurementAssessment {
 			case condition.Reason == "JobPending":
 				execution.Phase = "Pending"
 			case condition.Status == metav1.ConditionFalse:
-				execution.Phase = "Failed"
+				execution.Phase = measurementExecutionFailed
 			}
 		case edgev1alpha1.ProfilingRunConditionEvidenceVerified:
 			input.Accepted = input.Available && condition.Status == metav1.ConditionTrue && run.Status.ObservedGeneration == run.Generation
@@ -112,7 +112,7 @@ func AssessProfilingRun(run edgev1alpha1.ProfilingRun) MeasurementAssessment {
 			}
 		}
 	}
-	if execution.Phase == "Failed" || evidenceInvalid {
+	if execution.Phase == measurementExecutionFailed || evidenceInvalid {
 		reason := classifyMeasurementFailure(run.Status.RuntimeTermination, run.Status.Conditions, run.Generation, run.Spec.Candidate.ExecutionPath)
 		reason.SourceIDs = []string{string(run.UID)}
 		if evidenceInvalid {

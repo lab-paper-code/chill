@@ -32,7 +32,8 @@ func matchesRunFilters(run api.ProfilingRun, filters map[string]string) bool {
 			return false
 		}
 	}
-	if filters["status"] != "" && operatorconsole.AssessProfilingRun(run).DisplayStatus != filters["status"] {
+	if filters[queryRunStatus] != "" &&
+		operatorconsole.AssessProfilingRun(run).DisplayStatus != filters[queryRunStatus] {
 		return false
 	}
 	if uid := filters["parentUID"]; uid != "" {
@@ -67,7 +68,7 @@ func sortRuns(runs []api.ProfilingRun, q listQuery) {
 	}
 	// Project status once, rather than rebuilding assessments in the comparator.
 	statuses := map[string]string{}
-	if q.sort == "status" {
+	if q.sort == queryRunStatus {
 		for _, run := range runs {
 			statuses[run.Name] = operatorconsole.AssessProfilingRun(run).DisplayStatus
 		}
@@ -83,10 +84,10 @@ func sortRuns(runs []api.ProfilingRun, q listQuery) {
 			result = strings.Compare(a.Spec.Candidate.ModelSpec, b.Spec.Candidate.ModelSpec)
 		case "powerMode":
 			result = strings.Compare(a.Spec.Candidate.PowerMode, b.Spec.Candidate.PowerMode)
-		case "status":
+		case queryRunStatus:
 			result = strings.Compare(statuses[a.Name], statuses[b.Name])
 		}
-		if q.order == "desc" {
+		if q.order == queryOrderDesc {
 			result = -result
 		}
 		return cmp.Or(result, strings.Compare(a.Namespace, b.Namespace), strings.Compare(a.Name, b.Name), cmp.Compare(a.UID, b.UID))

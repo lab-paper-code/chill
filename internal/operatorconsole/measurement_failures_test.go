@@ -12,19 +12,19 @@ import (
 
 func TestMeasurementFailureClassificationIsSharedAndSafe(t *testing.T) {
 	categories := map[string][2]string{
-		"GPUMemoryExhausted": {"GPU 메모리 부족", "GPU 메모리가 부족해 측정을 완료하지 못했습니다."},
-		"HostOOM": {"호스트 메모리 부족", "호스트 메모리 부족으로 측정 실행이 종료되었습니다."},
+		"GPUMemoryExhausted":      {"GPU 메모리 부족", "GPU 메모리가 부족해 측정을 완료하지 못했습니다."},
+		"HostOOM":                 {"호스트 메모리 부족", "호스트 메모리 부족으로 측정 실행이 종료되었습니다."},
 		"PowerObservationTimeout": {"전력 관측 시간 초과", "제한 시간 안에 전력 관측을 완료하지 못했습니다."},
-		"ImagePullFailed": {"이미지 가져오기 실패", "실행 이미지를 가져오지 못해 측정을 시작하지 못했습니다."},
-		"RuntimeFailed": {"실행 오류", "실행 오류로 측정을 완료하지 못했습니다."},
-		"Other": {"기타 오류", "측정을 완료하지 못했습니다. 실행 상세에서 상태를 확인해 주세요."},
+		"ImagePullFailed":         {"이미지 가져오기 실패", "실행 이미지를 가져오지 못해 측정을 시작하지 못했습니다."},
+		"RuntimeFailed":           {"실행 오류", "실행 오류로 측정을 완료하지 못했습니다."},
+		"Other":                   {"기타 오류", "측정을 완료하지 못했습니다. 실행 상세에서 상태를 확인해 주세요."},
 	}
 	for _, test := range []struct {
-		name string
-		exit *int32
-		log string
-		message string
-		code string
+		name          string
+		exit          *int32
+		log           string
+		message       string
+		code          string
 		executionPath string
 	}{
 		{name: "CUDA OOM beats host exit", exit: ptr.To(int32(137)), log: "\x1b[31mCUDA out of memory\x1b[0m", code: "GPUMemoryExhausted"},
@@ -57,7 +57,7 @@ func TestMeasurementFailureClassificationIsSharedAndSafe(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			task := api.BatchEnergyOptimization{
 				ObjectMeta: metav1.ObjectMeta{Namespace: "allowed", Name: "request", UID: "request-uid", Generation: 1},
-				Status: api.BatchEnergyOptimizationStatus{Phase: "Failed", ObservedGeneration: 1},
+				Status:     api.BatchEnergyOptimizationStatus{Phase: "Failed", ObservedGeneration: 1},
 			}
 			run := api.ProfilingRun{
 				ObjectMeta: metav1.ObjectMeta{

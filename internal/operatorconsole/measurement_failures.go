@@ -10,10 +10,10 @@ import (
 )
 
 var (
-	runtimeLogANSI = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
-	gpuMemoryFailure = regexp.MustCompile(`cuda[^\n]*(out of memory|out_of_memory)|cublas_status_alloc_failed|cudnn_status_alloc_failed|gpu out of memory`)
+	runtimeLogANSI          = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
+	gpuMemoryFailure        = regexp.MustCompile(`cuda[^\n]*(out of memory|out_of_memory)|cublas_status_alloc_failed|cudnn_status_alloc_failed|gpu out of memory`)
 	powerObservationTimeout = regexp.MustCompile(`(?m)(metric observation|metric result|metric[- ]observer|power observation|observe power)[^\n]*(timeout|timed out|deadline exceeded)|(timeout|timed out|deadline exceeded)[^\n]*(metric observation|metric result|metric[- ]observer|power observation|observe power)`)
-	imagePullFailure = regexp.MustCompile(`imagepullbackoff|errimagepull|image pull failed|failed to pull image|failed to pull and unpack image`)
+	imagePullFailure        = regexp.MustCompile(`imagepullbackoff|errimagepull|image pull failed|failed to pull image|failed to pull and unpack image`)
 	runtimeExecutionFailure = regexp.MustCompile(`runtimefailed|runtime failed|runtime container failed|runtimeerror:|execute firstfloor measurement:|segmentation fault|illegal instruction`)
 )
 

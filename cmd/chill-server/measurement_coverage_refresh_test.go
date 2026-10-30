@@ -28,15 +28,25 @@ func TestCoverageExpiredSnapshotWaitsForActiveRefresh(t *testing.T) {
 				base.checked[kind] = time.Now().Add(-6 * time.Minute)
 			}
 			entry := &measurementCoverageEntry{base: base, refreshing: true, refreshed: make(chan struct{})}
-			service := &measurementService{opts: options{servingNamespace: coverageSizeNamespace, maxRequestBytes: 8 << 20}, coverageCache: measurementCoverageCache{namespaces: map[string]*measurementCoverageEntry{coverageSizeNamespace: entry}}}
+			service := &measurementService{
+				opts: options{servingNamespace: coverageSizeNamespace, maxRequestBytes: 8 << 20},
+				coverageCache: measurementCoverageCache{
+					namespaces: map[string]*measurementCoverageEntry{coverageSizeNamespace: entry},
+				},
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			waiting := make(chan struct{})
 			result := make(chan error, 1)
 			go func() {
-				payload, err := service.coverage(coverageWaitContext{Context: ctx, waiting: waiting}, coverageSizeNamespace, httpapi.MeasurementCoverageQuery{Batches: []int{1, 4}})
+				payload, err := service.coverage(
+					coverageWaitContext{Context: ctx, waiting: waiting}, coverageSizeNamespace,
+					httpapi.MeasurementCoverageQuery{Batches: []int{1, 4}},
+				)
 				if err == nil {
-					var view struct{ Freshness string `json:"freshness"` }
+					var view struct {
+						Freshness string `json:"freshness"`
+					}
 					err = json.Unmarshal(payload, &view)
 					if err == nil && view.Freshness != "fresh" {
 						err = errors.New("refresh success returned expired snapshot")
@@ -73,12 +83,19 @@ func TestCoverageWithinStaleWindowReturnsWhileRefreshing(t *testing.T) {
 		base.checked[kind] = time.Now().Add(-time.Minute)
 	}
 	entry := &measurementCoverageEntry{base: base, refreshing: true, refreshed: make(chan struct{})}
-	service := &measurementService{opts: options{servingNamespace: coverageSizeNamespace, maxRequestBytes: 8 << 20}, coverageCache: measurementCoverageCache{namespaces: map[string]*measurementCoverageEntry{coverageSizeNamespace: entry}}}
+	service := &measurementService{
+		opts: options{servingNamespace: coverageSizeNamespace, maxRequestBytes: 8 << 20},
+		coverageCache: measurementCoverageCache{
+			namespaces: map[string]*measurementCoverageEntry{coverageSizeNamespace: entry},
+		},
+	}
 	payload, err := service.coverage(context.Background(), coverageSizeNamespace, httpapi.MeasurementCoverageQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var view struct{ Freshness string `json:"freshness"` }
+	var view struct {
+		Freshness string `json:"freshness"`
+	}
 	if err := json.Unmarshal(payload, &view); err != nil || view.Freshness != "stale" {
 		t.Fatalf("in-flight refresh hid usable stale snapshot: %s, %v", payload, err)
 	}
