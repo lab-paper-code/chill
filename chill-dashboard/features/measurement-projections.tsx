@@ -44,7 +44,7 @@ export function ProjectionMeasurementListPage({kind}:{kind:ProjectionMeasurement
     ]),
     {key:"created",label:"등록 시각 (KST)",value:item => <time title={item.metadata.creationTimestamp}>{measurementTime(item.metadata.creationTimestamp)}</time>,sortValue:item => item.metadata.creationTimestamp},
   ]
-  return <Screen width="data" actionPlacement="header" title={title} lede="이 저장 영역의 측정 조건과 기록된 결과를 조회해요. 새 측정을 제출하지 않아요." action={<RowDialog open={namespaceOpen} onOpenChange={setNamespaceOpen} label="저장 영역" value={namespace} title="저장 영역 선택"><NamespaceForm key={namespace} kind={kind} namespace={namespace} done={() => setNamespaceOpen(false)}/></RowDialog>}>
+  return <Screen width="data" actionPlacement="header" title={title} lede="이 저장 영역의 측정 조건과 기록된 결과를 조회해요. 새 측정을 제출하지 않아요." action={<Rows><RowDialog open={namespaceOpen} onOpenChange={setNamespaceOpen} label="저장 영역" value={namespace} title="저장 영역 선택"><NamespaceForm key={namespace} kind={kind} namespace={namespace} done={() => setNamespaceOpen(false)}/></RowDialog></Rows>}>
     <MeasurementNavigation active={kind} namespace={namespace}/>
     <MeasurementFilters axes={axes}/>
     <QueryGate query={query}>{query.data && <>
