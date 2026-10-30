@@ -42,11 +42,19 @@ type ProfileFilters struct {
 }
 
 const (
-	profileLimitQuery = "limit"
-	profileModelQuery = "model"
-	profileCPUQuery   = "cpu"
-	queryNode         = "node"
-	profileOrderDesc  = "desc"
+	profileLimitQuery       = "limit"
+	profileModelQuery       = "model"
+	profileCPUQuery         = "cpu"
+	queryNode               = "node"
+	profileOrderDesc        = "desc"
+	profilePathQuery        = "path"
+	profileStatusQuery      = "status"
+	profileDeviceClassQuery = "deviceClass"
+	profilePowerModeQuery   = "powerMode"
+	profileSortQuery        = "sort"
+	profileOrderQuery       = "order"
+	profileCreatedQuery     = "created"
+	profileOffsetQuery      = "offset"
 )
 
 func parseProfileQuery(values url.Values) (int, int, error) {
@@ -56,10 +64,10 @@ func parseProfileQuery(values url.Values) (int, int, error) {
 			return 0, 0, &serving.Error{Code: "InvalidQuery", Message: "invalid profile query"}
 		}
 		switch key {
-		case profileLimitQuery, "offset":
+		case profileLimitQuery, profileOffsetQuery:
 			n, err := strconv.Atoi(value[0])
 			if err != nil || (key == profileLimitQuery && (n < 1 || n > 50)) ||
-				(key == "offset" && (n < 0 || n > 1000000)) {
+				(key == profileOffsetQuery && (n < 0 || n > 1000000)) {
 				return 0, 0, &serving.Error{
 					Code: "InvalidQuery", Message: "profile limit must be 1–50 and offset 0–1000000",
 				}
@@ -69,14 +77,14 @@ func parseProfileQuery(values url.Values) (int, int, error) {
 			} else {
 				offset = n
 			}
-		case profileModelQuery, "deviceClass", "profile", "q", queryNode, "powerMode", "path", profileCPUQuery, "status":
-		case "sort":
+		case profileModelQuery, profileDeviceClassQuery, "profile", "q", queryNode, profilePowerModeQuery, profilePathQuery, profileCPUQuery, profileStatusQuery:
+		case profileSortQuery:
 			switch value[0] {
-			case profileModelQuery, "deviceClass", queryNode, "powerMode", "path", profileCPUQuery, "created", "status":
+			case profileModelQuery, profileDeviceClassQuery, queryNode, profilePowerModeQuery, profilePathQuery, profileCPUQuery, profileCreatedQuery, profileStatusQuery:
 			default:
 				return 0, 0, &serving.Error{Code: "InvalidQuery", Message: "unknown profile sort"}
 			}
-		case "order":
+		case profileOrderQuery:
 			if value[0] != "asc" && value[0] != profileOrderDesc {
 				return 0, 0, &serving.Error{Code: "InvalidQuery", Message: "invalid profile order"}
 			}
@@ -84,7 +92,7 @@ func parseProfileQuery(values url.Values) (int, int, error) {
 			return 0, 0, &serving.Error{Code: "InvalidQuery", Message: "unknown profile query"}
 		}
 	}
-	if values.Has("order") && !values.Has("sort") {
+	if values.Has(profileOrderQuery) && !values.Has(profileSortQuery) {
 		return 0, 0, &serving.Error{Code: "InvalidQuery", Message: "profile order requires sort"}
 	}
 	return limit, offset, nil
@@ -98,14 +106,14 @@ func pageProfiles(view ProfilesView, values url.Values) (ProfilesView, error) {
 	selected := make([]serving.Profile, 0, len(view.Profiles))
 	options := map[string]map[string]bool{}
 	for _, key := range []string{
-		profileModelQuery, "deviceClass", queryNode, "powerMode", "path", profileCPUQuery, "status",
+		profileModelQuery, profileDeviceClassQuery, queryNode, profilePowerModeQuery, profilePathQuery, profileCPUQuery, profileStatusQuery,
 	} {
 		options[key] = map[string]bool{}
 	}
 	statuses := map[string]string{}
 	cpus := map[string]resource.Quantity{}
 	for _, profile := range view.Profiles {
-		if values.Get("sort") == profileCPUQuery {
+		if values.Get(profileSortQuery) == profileCPUQuery {
 			quantity, err := resource.ParseQuantity(profile.Condition.CPU.Request)
 			if err != nil {
 				return ProfilesView{}, &serving.Error{Code: "InvalidQuery", Message: "profile CPU quantity unavailable"}
@@ -118,7 +126,7 @@ func pageProfiles(view ProfilesView, values url.Values) (ProfilesView, error) {
 		matches := values.Get("profile") == "" || values.Get("profile") == profile.ID
 		searchable := profile.ID
 		for _, key := range []string{
-			profileModelQuery, "deviceClass", queryNode, "powerMode", "path", profileCPUQuery, "status",
+			profileModelQuery, profileDeviceClassQuery, queryNode, profilePowerModeQuery, profilePathQuery, profileCPUQuery, profileStatusQuery,
 		} {
 			value := profileField(profile, statuses[profile.ID], key)
 			options[key][value] = true
@@ -131,9 +139,9 @@ func pageProfiles(view ProfilesView, values url.Values) (ProfilesView, error) {
 	}
 	view.Filters = ProfileFilters{}
 	for key, target := range map[string]*[]string{
-		profileModelQuery: &view.Filters.Models, "deviceClass": &view.Filters.DeviceClasses,
-		queryNode: &view.Filters.Nodes, "powerMode": &view.Filters.PowerModes,
-		"path": &view.Filters.Paths, profileCPUQuery: &view.Filters.CPUs, "status": &view.Filters.Statuses,
+		profileModelQuery: &view.Filters.Models, profileDeviceClassQuery: &view.Filters.DeviceClasses,
+		queryNode: &view.Filters.Nodes, profilePowerModeQuery: &view.Filters.PowerModes,
+		profilePathQuery: &view.Filters.Paths, profileCPUQuery: &view.Filters.CPUs, profileStatusQuery: &view.Filters.Statuses,
 	} {
 		*target = make([]string, 0, len(options[key]))
 		for value := range options[key] {
@@ -146,15 +154,15 @@ func pageProfiles(view ProfilesView, values url.Values) (ProfilesView, error) {
 	sort.Slice(selected, func(i, j int) bool {
 		a, b := selected[i], selected[j]
 		result := 0
-		if values.Get("sort") == "created" {
+		if values.Get(profileSortQuery) == profileCreatedQuery {
 			result = a.MeasuredAt.Compare(b.MeasuredAt)
-		} else if values.Get("sort") == profileCPUQuery {
+		} else if values.Get(profileSortQuery) == profileCPUQuery {
 			left, right := cpus[a.ID], cpus[b.ID]
 			result = left.Cmp(right)
-		} else if key := values.Get("sort"); key != "" {
+		} else if key := values.Get(profileSortQuery); key != "" {
 			result = strings.Compare(profileField(a, statuses[a.ID], key), profileField(b, statuses[b.ID], key))
 		}
-		if values.Get("order") == profileOrderDesc {
+		if values.Get(profileOrderQuery) == profileOrderDesc {
 			result = -result
 		}
 		return cmp.Or(result, strings.Compare(a.ID, b.ID)) < 0
@@ -173,17 +181,17 @@ func profileField(profile serving.Profile, status, key string) string {
 	switch key {
 	case profileModelQuery:
 		return profile.Condition.LogicalModel
-	case "deviceClass":
+	case profileDeviceClassQuery:
 		return profile.Condition.DeviceClass
 	case queryNode:
 		return profile.NodeName
-	case "powerMode":
+	case profilePowerModeQuery:
 		return profile.Condition.PowerMode
-	case "path":
+	case profilePathQuery:
 		return profile.Condition.Artifact.ExecutionPath
 	case profileCPUQuery:
 		return profile.Condition.CPU.Request
-	case "status":
+	case profileStatusQuery:
 		return status
 	}
 	return ""
