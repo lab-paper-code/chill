@@ -121,9 +121,9 @@ test("scheduler consumer routes enforce exact methods and bounded observation qu
     assert.throws(() => plan(method, "v1/scheduler/operations"), { message: "DashboardMethodNotAllowed", status: 405 })
   }
   assert.throws(() => plan("POST", "v1/scheduler/operations", "?dryRun=All"), /DashboardQueryInvalid/)
-  assert.deepEqual(plan("GET", "v1/scheduler/profiles"), { path: "/api/v1/scheduler/profiles", kind: "query", timeoutMs: config.queryTimeoutMs, bodyAllowed: false })
+  assert.deepEqual(plan("GET", "v1/scheduler/profiles"), { path: "/api/v1/scheduler/profiles?limit=7", kind: "query", timeoutMs: config.queryTimeoutMs, bodyAllowed: false })
   for (const method of ["POST", "PUT", "DELETE", "PATCH"]) assert.throws(() => plan(method, "v1/scheduler/profiles"), /DashboardMethodNotAllowed/)
-  assert.throws(() => plan("GET", "v1/scheduler/profiles", "?limit=1"), /DashboardQueryInvalid/)
+  assert.equal(plan("GET", "v1/scheduler/profiles", "?limit=1").path,"/api/v1/scheduler/profiles?limit=1")
   const tasks = "v1/namespaces/chill-system/batch-energy-optimizations"
   assert.deepEqual(plan("GET", tasks), { path: `/api/${tasks}`, kind: "query", timeoutMs: config.queryTimeoutMs, bodyAllowed: false })
   assert.deepEqual(plan("POST", tasks), { path: `/api/${tasks}`, kind: "mutation", timeoutMs: config.mutationTimeoutMs, bodyAllowed: true })
