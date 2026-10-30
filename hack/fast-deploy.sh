@@ -22,11 +22,11 @@ p.add_argument("--token-safety-margin-seconds", type=float, default=120)
 a = p.parse_args()
 if not re.fullmatch(r"[0-9]+", a.control):
     p.error("--control must contain digits")
-roles = {"server": ("servingEntrypoint", "serving-entrypoint"), "profiler": ("profiler", "profiler"), "dashboard": ("dashboard", "dashboard"), "node-agent": ("nodeAgent", "node-agent"), "operator": ("operator", "operator")}
-dockerfiles = {"server": "chill-server", "profiler": "profiler", "dashboard": "dashboard", "node-agent": "node-agent", "operator": "operator"}
+roles = {"server": ("servingEntrypoint", "serving-entrypoint"), "profiler": ("profiler", "profiler"), "dashboard": ("dashboard", "dashboard"), "node-agent": ("nodeAgent", "node-agent"), "operator": ("operator", "operator"), "console": ("console", "console")}
+dockerfiles = {"server": "chill-server", "profiler": "profiler", "dashboard": "dashboard", "node-agent": "node-agent", "operator": "operator", "console": "console"}
 selected = a.images.split(",")
 if a.images != "auto" and (len(set(selected)) != len(selected) or any(x not in roles for x in selected)):
-    p.error("--images accepts auto or a comma-separated subset of server,profiler,dashboard,node-agent,operator; runtime images are forbidden")
+    p.error("--images accepts auto or a comma-separated subset of server,profiler,dashboard,node-agent,operator,console; runtime images are forbidden")
 root = pathlib.Path.cwd()
 sys.path.insert(0, str(root / "hack/e5"))
 import auth
