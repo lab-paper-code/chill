@@ -70,3 +70,7 @@
 남은 post-E5 작업은 [로드맵](../plans/2026-10-26-remaining-roadmap.md), Dashboard 재생·브라우저 미확인은 [라이브 무대](../plans/2026-10-26-dashboard-live-stage.md), 설정 ?10/삭제 미승인은 [하드코딩 요약](../plans/2026-10-30-configuration-hardcoding.md)으로 모은다.
 
 원시: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/`의 checkpoints.md·결정/제안 원문과 같은 루트 `audit-20261024/`, `campaign/v2/`, `perf/`, `deployB/`. 원시 immutable 상태·실패·결손을 현재 기본값이나 후속 성공으로 덮어쓰지 않는다.
+
+## 2026-10-30 — 스케줄러 성능 최적화 사이클 착수(사용자 위임)
+
+- 사용자 결정: 갭 G1(증가 구간 MNV 공급: rate-limiter 근본 원인 → 빈 Node MNV 프로파일링) → G2(Smol 전환 꼬리) → G3(에너지 Δ) → G4(factor 재실험) 순. **배포·표적 재실행·프로파일링 캠페인은 사전 승인("모두 알아서 승인, 조치 후 보고")**, 방법 제한 없음. 불변: runtime 7 이미지, 측정 재시도 금지, raw 행 판정, 증거 조작 금지, 디스크 guard.
