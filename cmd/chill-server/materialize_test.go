@@ -109,3 +109,18 @@ func TestChillServerRejectsInvalidKubernetesBudget(t *testing.T) {
 		})
 	}
 }
+
+func TestChillServerKubernetesBudgetDefaults(t *testing.T) {
+	var opts options
+	flags := flag.NewFlagSet("chill-server", flag.ContinueOnError)
+	opts.bindFlags(flags)
+	if opts.kubeAPIQPS != 200 || opts.kubeAPIBurst != 400 {
+		t.Fatalf("Kubernetes budget defaults: qps=%g burst=%d", opts.kubeAPIQPS, opts.kubeAPIBurst)
+	}
+	if err := flags.Parse([]string{"--kube-api-qps=75", "--kube-api-burst=150"}); err != nil {
+		t.Fatal(err)
+	}
+	if opts.kubeAPIQPS != 75 || opts.kubeAPIBurst != 150 {
+		t.Fatal("configured Kubernetes budget was not applied")
+	}
+}

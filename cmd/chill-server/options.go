@@ -117,9 +117,9 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 	f.StringVar(&o.kube.APIServer, "kube-api-server", "", "Explicit Kubernetes API endpoint; otherwise in-cluster.")
 	f.StringVar(&o.kube.TokenFile, "kube-token-file", "", "Kubernetes service-account token file.")
 	f.StringVar(&o.kube.CAFile, "kube-ca-file", "", "Kubernetes API CA file.")
-	f.Float64Var(&o.kubeAPIQPS, "kube-api-qps", 50,
+	f.Float64Var(&o.kubeAPIQPS, "kube-api-qps", 200,
 		"Request rate of each ChillServer Kubernetes client (control, HTTP boundary); must be finite and positive.")
-	f.IntVar(&o.kubeAPIBurst, "kube-api-burst", 100, "Burst of each ChillServer Kubernetes client; must be positive.")
+	f.IntVar(&o.kubeAPIBurst, "kube-api-burst", 400, "Burst of each ChillServer Kubernetes client; must be positive.")
 	f.IntVar(&o.queueLimit, "queue-limit", 1024, "Per-Workload ingress waiting limit.")
 	f.IntVar(&o.maxQueryEvents, "max-query-events", 1000, "Maximum raw observation events per query page.")
 	f.Int64Var(&o.maxRequestBytes, "max-request-bytes", 8<<20, "Maximum management or inference body bytes.")

@@ -196,11 +196,11 @@ POOL 전환은 신규 인스턴스 실제 준비/연결 후 route 편입, 제외
 | observationDefinitions/Outcomes `[]` | 반복 `--observation-definition,--observation-outcome` 기본 필터 |
 | storage size1Gi/class null/directory `/data`/retention2h | 유지 private RWO PVC; null default class, 빈 문자열 no class; `--observation-directory,--observation-retention`. cutover는 새 경로, 이전 raw 보존 |
 | kubeAPI apiServer/tokenFile/caFile | 명시 `--kube-api-server,--kube-token-file,--kube-ca-file`; 기본 in-cluster |
-| kubeAPI qps50/burst100 | 항상 `--kube-api-qps,--kube-api-burst`, 시작 때 양수/유한 float32 검증 |
+| kubeAPI qps200/burst400 | 항상 `--kube-api-qps,--kube-api-burst`, 시작 때 양수/유한 float32 검증 |
 | grace150s | drainTimeout+HTTP 종료 여유보다 커야 함 |
 
 chart가 Go env를 소유한다. 기존 수동 `GOMEMLIMIT=3072MiB,GODEBUG=gctrace=1`은 upgrade 전에 제거하고 overlay `goDebug:gctrace=1`로 이관하여 Pod에 `3GiB/gctrace=1`이 각각 한 번만 남게 한다.
-client 생성 전 rest.Config budget 적용. 제어 typed clientset(observer/scheduler/측정), HTTP typed clientset(TokenReview/SAR/설정 ConfigMap), uncached Store는 별도 limiter이므로50QPS는 프로세스 총합 상한이 아니다. 기본50/100은 후보 budget이지 최적값/APF 보장이 아니다.
+client 생성 전 rest.Config budget 적용. 제어 typed clientset(observer/scheduler/측정), HTTP typed clientset(TokenReview/SAR/설정 ConfigMap), uncached Store는 별도 limiter이므로200QPS는 프로세스 총합 상한이 아니다. 기본200/400은 #232~234 배포에 기록된 설정과 일치시키며 최적값/APF 보장이나 취소 해결책으로 해석하지 않는다. 실제 `context canceled`는 autonomy-off에서도 발생하며 [G1b 진단](scheduler-operations.md#g1b-취소와-client-limiter-진단--sch-51-sch-ac-38)을 따른다.
 M4 24.7req/s에서 요청당2 review가50QPS를 채워 접수≈25req/s, validated p95 2,591ms, scheduler API읽기≈1.3s/Tick15–19s였다. d9≈220req/s·대기1,600에서 만료마다 중복 review가 수십 초 제어 호출을 막아30s기한 초과, 전 Node batch≈140s정지. 실제8req/s의5/10 limiter에서도 TokenReview≈5s 대기했다. 위 cache/분리와 실제 두 budget flag를 실험 manifest에 고정하며 [실클러스터 기록](../../plans/2026-10-13-scheduler-live-evidence-campaign-05-closed-loop.md)에 실패·미해명 공백을 구분한다.
 caller 권한은 SA와 별개: unbound `FULLNAME-serving-manager` ClusterRole은 허용 namespace의 정확 `/chill/api/v1/namespaces/NS/batch-energy-optimizations[/*]` get/post/delete, namespace Role은 BEO get/list/create/delete다. 선택 caller에 각각 binding한다. scheduler 편집은 unbound `FULLNAME-scheduler-editor`의 `/chill/api/v1/scheduler/settings` PUT+serving namespace 지정 ConfigMap update 모두 필요하다. profiles GET은 read-only. TokenReview 후 `/chill` nonresource SAR+native resource SAR, Dashboard SA/전체 사용자 자동 binding 없음.
 측정 삭제는 UID+If-Match RV, 귀속 S3 원본/결과 영구 삭제이며 공유/현재 참조 보호·S3/native 부분 실패를 드러낸다. ChillServer만 전체 namespace BEO/Run/MLIB/PMTC list로 참조 검사, 허용 profiling namespace Job get/list·Pod list로 owned Run Job UID/owner/terminal/실제 Pod 및 Job 생성 전 실패의 부재를 확인한다. caller Job/Pod·범위 밖 child 변경/삭제 권한은 추가하지 않는다.
