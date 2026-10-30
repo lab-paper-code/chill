@@ -19,12 +19,12 @@ import (
 
 type compatibilityMemoKey struct {
 	typeOf reflect.Type
-	name client.ObjectKey
+	name   client.ObjectKey
 }
 
 type compatibilityMemoValue struct {
 	object client.Object
-	err error
+	err    error
 }
 
 // One sequential matrix evaluation owns this reader. Inventory LIST objects

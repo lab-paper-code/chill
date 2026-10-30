@@ -112,7 +112,7 @@ func projectMeasurementList(list api.BatchEnergyOptimizationList, assessments []
 	return struct {
 		meta.TypeMeta `json:",inline"`
 		meta.ListMeta `json:"metadata,omitempty"`
-		Items []item `json:"items"`
+		Items         []item `json:"items"`
 	}{list.TypeMeta, list.ListMeta, items}
 }
 

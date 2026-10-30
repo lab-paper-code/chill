@@ -17,7 +17,7 @@ import (
 // cluster: the projection is what is being asked about, so the object travels
 // in rather than being fetched by name.
 type KubernetesBatchEnergyOptimizationPreflightQuery struct {
-	reader client.Reader
+	reader    client.Reader
 	projector func(context.Context, *edgev1alpha1.BatchEnergyOptimization) (profilederivation.CurvePlan, error)
 	now       func() time.Time
 }

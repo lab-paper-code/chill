@@ -29,18 +29,18 @@ func TestCompatibilityMatrixSharesPowerModesAndPreservesUnknown(t *testing.T) {
 	handler := NewQueryHandler(QueryReaders{
 		ModelCompatibilityMatrix: func(ctx context.Context) (operatorconsole.ModelCompatibilityMatrixView, error) {
 			return consolekube.BuildModelCompatibilityMatrix(ctx, inventory, func(_ context.Context, selection operatorconsole.ModelCompatibilitySelection) (operatorconsole.ModelCompatibilitySnapshot, error) {
-			calls++
-			if selection.ExecutionPath == "npu" {
-				return operatorconsole.ModelCompatibilitySnapshot{}, errors.New("secret lookup detail")
-			}
-			return operatorconsole.ModelCompatibilitySnapshot{ReadAt: inventory.ReadAt, Selection: selection, Verdict: "Compatible"}, nil
+				calls++
+				if selection.ExecutionPath == "npu" {
+					return operatorconsole.ModelCompatibilitySnapshot{}, errors.New("secret lookup detail")
+				}
+				return operatorconsole.ModelCompatibilitySnapshot{ReadAt: inventory.ReadAt, Selection: selection, Verdict: "Compatible"}, nil
 			})
 		},
 	})
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/model-compatibility-matrix", nil))
 	var body struct {
-		Rows []operatorconsole.ModelCompatibilityView `json:"rows"`
+		Rows     []operatorconsole.ModelCompatibilityView `json:"rows"`
 		NodeRows []operatorconsole.ModelCompatibilityView `json:"nodeRows"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {

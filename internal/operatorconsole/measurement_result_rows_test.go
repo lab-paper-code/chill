@@ -15,8 +15,8 @@ func TestMeasurementResultRowPreservesSignedConfidenceZeroAndUnknown(t *testing.
 		IdleWatts: &zero, ActiveWatts: &zero, TotalJoulesPerItem: &zero, IncrementalJoulesPerItem: &mean,
 		Confidence: &profilederivation.PointConfidence{Level: .8, HalfWidth: width}, ActiveTrialCount: 3, IdleTrialCount: 3,
 		PowerSource: profilederivation.MeasurementPowerSource{Kind: "edge-metrics", NodeName: "node"},
-		Sources: []profilederivation.RawEvidenceIdentity{{Store: "store", Key: "raw", Size: 1}},
-		Quality: []profilederivation.MeasurementTrialQuality{{PolicyPassed: &passed, SourceTimestampAbsent: true}},
+		Sources:     []profilederivation.RawEvidenceIdentity{{Store: "store", Key: "raw", Size: 1}},
+		Quality:     []profilederivation.MeasurementTrialQuality{{PolicyPassed: &passed, SourceTimestampAbsent: true}},
 	}
 	row := MeasurementResultRow(facts, batch, "profile", false, true)
 	if row.Confidence == nil || row.Confidence.Lower != -3 || row.Confidence.Upper != 1 || row.Confidence.Level != .8 ||
@@ -66,7 +66,7 @@ func TestRetainedResultSeparatesReuseConfirmationAndSourceReference(t *testing.T
 	total := 90.0
 	facts := &profilederivation.MeasurementFacts{
 		Condition: profilederivation.CurvePlanSpec{NodeUID: "confirmation-node"},
-		Batches: []profilederivation.MeasurementBatchFacts{{Batch: 1, TotalJoulesPerItem: &total}},
+		Batches:   []profilederivation.MeasurementBatchFacts{{Batch: 1, TotalJoulesPerItem: &total}},
 	}
 	view, err := BuildBatchEnergyOptimizationResult(BatchEnergyOptimizationResultSnapshot{Campaign: *campaign, Result: record, MeasurementFacts: facts})
 	if err != nil || len(view.ResultRows) != 2 {

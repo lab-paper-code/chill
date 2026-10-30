@@ -52,8 +52,8 @@ func (q *KubernetesModelCompatibilityQuery) Read(
 func BuildModelCompatibilityMatrix(ctx context.Context, inventory operatorconsole.InventorySnapshot, resolve func(context.Context, operatorconsole.ModelCompatibilitySelection) (operatorconsole.ModelCompatibilitySnapshot, error)) (operatorconsole.ModelCompatibilityMatrixView, error) {
 	matrix := operatorconsole.ModelCompatibilityMatrixView{
 		ReadAt: inventory.ReadAt.Format(time.RFC3339Nano),
-		Scope: "name-sorted representative Node per DeviceClass; static support only",
-		Rows: []operatorconsole.ModelCompatibilityView{}, NodeRows: []operatorconsole.ModelCompatibilityView{},
+		Scope:  "name-sorted representative Node per DeviceClass; static support only",
+		Rows:   []operatorconsole.ModelCompatibilityView{}, NodeRows: []operatorconsole.ModelCompatibilityView{},
 	}
 	for _, model := range inventory.Models {
 		for _, path := range model.Spec.ExecutionPaths {
@@ -62,7 +62,7 @@ func BuildModelCompatibilityMatrix(ctx context.Context, inventory operatorconsol
 				base := operatorconsole.ModelCompatibilitySnapshot{
 					ReadAt: inventory.ReadAt, Selection: selection, Verdict: "Unknown",
 					Inputs: operatorconsole.ModelCompatibilityInputs{
-						ModelSpec: operatorconsole.ModelCompatibilityObjectInput{Name: model.Name, UID: string(model.UID), ResourceVersion: model.ResourceVersion},
+						ModelSpec:   operatorconsole.ModelCompatibilityObjectInput{Name: model.Name, UID: string(model.UID), ResourceVersion: model.ResourceVersion},
 						DeviceClass: operatorconsole.ModelCompatibilityObjectInput{Name: class.Name, UID: string(class.UID), ResourceVersion: class.ResourceVersion},
 					},
 				}

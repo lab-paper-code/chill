@@ -46,15 +46,15 @@ const replacesCampaignAnnotation = "chill.dacs.io/replaces-batch-energy-optimiza
 // never client roundtrip or backend-call time. Energy uses the existing exact
 // incremental wall-energy/item estimator; memory is measured lifetime peak.
 type Catalog struct {
-	store          *Store
-	objects        evidencestore.LocationReader
-	loader         *profilerevidence.Loader
-	maxObjectBytes int64
-	current        map[types.NamespacedName]catalogProfile
-	sourceMu sync.RWMutex
+	store           *Store
+	objects         evidencestore.LocationReader
+	loader          *profilerevidence.Loader
+	maxObjectBytes  int64
+	current         map[types.NamespacedName]catalogProfile
+	sourceMu        sync.RWMutex
 	sourceCheckedAt time.Time
-	sourceError string
-	revision string
+	sourceError     string
+	revision        string
 }
 
 type catalogProfile struct {
@@ -71,13 +71,13 @@ type CatalogIssue struct {
 }
 
 type CatalogView struct {
-	Profiles        []serving.Profile           `json:"profiles"`
-	Insufficiencies []CatalogIssue              `json:"insufficiencies"`
-	ReuseChecks     []serving.ProfileReuseCheck `json:"reuseChecks,omitempty"`
+	Profiles         []serving.Profile                   `json:"profiles"`
+	Insufficiencies  []CatalogIssue                      `json:"insufficiencies"`
+	ReuseChecks      []serving.ProfileReuseCheck         `json:"reuseChecks,omitempty"`
 	MeasurementFacts map[string]serving.MeasurementFacts `json:"measurementFacts"`
-	SourceCheckedAt time.Time `json:"-"`
-	SourceError string `json:"-"`
-	Revision string `json:"-"`
+	SourceCheckedAt  time.Time                           `json:"-"`
+	SourceError      string                              `json:"-"`
+	Revision         string                              `json:"-"`
 }
 
 func NewCatalog(store *Store, objects evidencestore.LocationReader, maxObjectBytes int64) (*Catalog, error) {
@@ -481,9 +481,9 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 		TrialsPerBatch: int(campaign.Spec.TrialsPerBatch),
 	}
 	facts := serving.MeasurementFacts{
-		Request: profilederivation.MeasurementRequestReference{Namespace: campaign.Namespace, Name: campaign.Name, UID: string(campaign.UID)},
+		Request:         profilederivation.MeasurementRequestReference{Namespace: campaign.Namespace, Name: campaign.Name, UID: string(campaign.UID)},
 		ResultReference: profilederivation.RawEvidenceIdentity{Store: resultReference.Store, Key: resultReference.Key, Size: resultReference.Size},
-		Condition: condition, PointPolicy: energyPolicy, Batches: []profilederivation.MeasurementBatchFacts{},
+		Condition:       condition, PointPolicy: energyPolicy, Batches: []profilederivation.MeasurementBatchFacts{},
 	}
 	if runtimeMetadata != nil {
 		profile.RuntimeMetadata = &runtimeMetadata.Runtime
@@ -603,16 +603,16 @@ func cloneCatalogProfile(profile serving.Profile) serving.Profile {
 }
 
 type catalogBatch struct {
-	profile       serving.BatchProfile
-	trials        int
-	energySum     float64
-	energyTrials  []profilederivation.EnergyTrial
-	missingMemory bool
-	wallPowerSum  float64
+	profile         serving.BatchProfile
+	trials          int
+	energySum       float64
+	energyTrials    []profilederivation.EnergyTrial
+	missingMemory   bool
+	wallPowerSum    float64
 	clientLatencies []float64
-	completedItems int
-	completedCalls int
-	quality []profilederivation.MeasurementTrialQuality
+	completedItems  int
+	completedCalls  int
+	quality         []profilederivation.MeasurementTrialQuality
 }
 
 func (b *catalogBatch) add(trial profilederivation.Trial, energy profilederivation.EnergyTrial, memoryBytes uint64) error {

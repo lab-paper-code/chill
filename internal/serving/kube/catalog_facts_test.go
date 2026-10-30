@@ -12,7 +12,7 @@ import (
 
 type countedCatalogObjects struct {
 	objects catalogEvidenceObjects
-	reads int
+	reads   int
 }
 
 func (c *countedCatalogObjects) OpenLocation(ctx context.Context, location evidencestore.ObjectLocation) (io.ReadCloser, error) {

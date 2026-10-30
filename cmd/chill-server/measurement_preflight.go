@@ -10,10 +10,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/lab-paper-code/chill/internal/operatorconsole"
-	"github.com/lab-paper-code/chill/internal/evidencestore"
-	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/operatorconsole"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
 // enrichPreflightResponse uses the published catalog, never retained-result crawling.

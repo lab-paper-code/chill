@@ -284,9 +284,9 @@ func TestMeasurementFactsExcludeFailedIdleTrials(t *testing.T) {
 	cr, record, objects, reader, loader := statisticsFixture(t)
 	spec := record.Spec()
 	spec.ExcludedTrials = append(spec.ExcludedTrials, campaign.ExcludedTrialReference{
-		Run: campaign.RunReference{Namespace: cr.Namespace, Name: "failed-idle", UID: "failed-idle"},
+		Run:         campaign.RunReference{Namespace: cr.Namespace, Name: "failed-idle", UID: "failed-idle"},
 		Measurement: campaign.ResultMeasurement{WorkloadMode: campaign.WorkloadModeIdle, Batch: 1},
-		Attempt: 2, Reasons: []string{"Failed"},
+		Attempt:     2, Reasons: []string{"Failed"},
 	})
 	record, err := campaign.NewResultRecord(spec)
 	if err != nil {

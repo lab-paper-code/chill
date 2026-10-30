@@ -31,12 +31,12 @@ type CandidateResolverOptions struct {
 // the active measurement's Dataset, and the trusted installation-time
 // execution declaration.
 type KubernetesCandidateResolver struct {
-	reader  client.Reader
-	options CandidateResolverOptions
-	declarationMu sync.Mutex
+	reader              client.Reader
+	options             CandidateResolverOptions
+	declarationMu       sync.Mutex
 	declarationIdentity string
-	declarations []resolvedExecutionDeclaration
-	declarationErr error
+	declarations        []resolvedExecutionDeclaration
+	declarationErr      error
 }
 
 var _ profiler.CandidateResolver = (*KubernetesCandidateResolver)(nil)

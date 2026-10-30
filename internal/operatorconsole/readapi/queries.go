@@ -15,10 +15,10 @@ import (
 // QueryReaders reuse the same read-through snapshots as the standalone CLI.
 // A missing optional query is unavailable, never an empty successful listing.
 type QueryReaders struct {
-	Systems            func(context.Context) (operatorconsole.SystemSnapshot, error)
-	Inventory          func(context.Context) (operatorconsole.InventorySnapshot, error)
-	ProfilingRuns      func(context.Context, string) (operatorconsole.ProfilingRunsSnapshot, error)
-	ModelCompatibility func(context.Context, operatorconsole.ModelCompatibilitySelection) (operatorconsole.ModelCompatibilitySnapshot, error)
+	Systems                  func(context.Context) (operatorconsole.SystemSnapshot, error)
+	Inventory                func(context.Context) (operatorconsole.InventorySnapshot, error)
+	ProfilingRuns            func(context.Context, string) (operatorconsole.ProfilingRunsSnapshot, error)
+	ModelCompatibility       func(context.Context, operatorconsole.ModelCompatibilitySelection) (operatorconsole.ModelCompatibilitySnapshot, error)
 	ModelCompatibilityMatrix func(context.Context) (operatorconsole.ModelCompatibilityMatrixView, error)
 }
 

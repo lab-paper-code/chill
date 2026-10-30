@@ -32,13 +32,13 @@ import (
 // The measurement service removes only source-proven, unreferenced measurement
 // evidence before requesting native deletion. Native GC/finalizers stay native.
 type measurementService struct {
-	client    client.Client
-	scheduler *schedulerService
-	kube      kubernetes.Interface
-	objects   measurementObjects
-	opts      options
-	console   *url.URL
-	http      *http.Client
+	client        client.Client
+	scheduler     *schedulerService
+	kube          kubernetes.Interface
+	objects       measurementObjects
+	opts          options
+	console       *url.URL
+	http          *http.Client
 	coverageCache measurementCoverageCache
 }
 

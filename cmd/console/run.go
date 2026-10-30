@@ -186,9 +186,9 @@ func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
 		return nil, err
 	}
 	queries := readapi.NewQueryHandler(readapi.QueryReaders{
-		Systems:            systems.Read,
-		Inventory:          inventory.Read,
-		ModelCompatibility: compatibility.Read,
+		Systems:                  systems.Read,
+		Inventory:                inventory.Read,
+		ModelCompatibility:       compatibility.Read,
 		ModelCompatibilityMatrix: newModelCompatibilityMatrixQuery(reader, opts),
 		ProfilingRuns: func(ctx context.Context, namespace string) (operatorconsole.ProfilingRunsSnapshot, error) {
 			query, err := consolekube.NewKubernetesProfilingRunsQuery(reader, namespace)

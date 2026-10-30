@@ -8,8 +8,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/url"
 	"net/http"
+	"net/url"
 	"strings"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"

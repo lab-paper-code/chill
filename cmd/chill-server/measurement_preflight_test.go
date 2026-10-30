@@ -19,10 +19,10 @@ import (
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
+	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
-	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -32,7 +32,7 @@ func TestPreflightEnrichmentUsesExactCatalogAndCurrentSourceSpec(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			request := &api.BatchEnergyOptimization{
 				ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "source", UID: "uid"},
-				Spec: api.BatchEnergyOptimizationSpec{BatchSizes: []int32{1, 2, 4}},
+				Spec:       api.BatchEnergyOptimizationSpec{BatchSizes: []int32{1, 2, 4}},
 			}
 			proposed := *request.DeepCopy()
 			proposed.Name = "new-request"
@@ -66,7 +66,7 @@ func TestPreflightEnrichmentUsesExactCatalogAndCurrentSourceSpec(t *testing.T) {
 			}
 			scheduler.profiles.Store(&httpapi.ProfilesView{CatalogView: servingkube.CatalogView{Profiles: profiles}})
 			service := &measurementService{
-				client: fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(request).Build(),
+				client:    fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(request).Build(),
 				scheduler: scheduler, opts: options{servingNamespace: "allowed", storeName: "evidence", maxEvidenceBytes: 1 << 20},
 			}
 			if active && mode != "active missing plan" {
@@ -180,12 +180,12 @@ func measurementPreflightTestPlan(t *testing.T) derivation.CurvePlan {
 	plan, err := derivation.NewCurvePlan(derivation.CurvePlanSpec{
 		Name: "source", LogicalModel: "model", DeviceClass: "class", NodeUID: "node-uid",
 		RuntimeFamily: "rknnlite", Backend: "not-applicable", RuntimeImage: image, PowerMode: "fixed",
-		CPU: derivation.CurveCPUContract{Policy: "allocatable", PolicyVersion: "v1", Request: "7", Limit: "8"},
-		MetricSource: derivation.CurveMetricSourceContract{SourceKind: "prometheus", NodeName: "node", Endpoint: "http://metrics", PowerMetric: "power_watts"},
+		CPU:            derivation.CurveCPUContract{Policy: "allocatable", PolicyVersion: "v1", Request: "7", Limit: "8"},
+		MetricSource:   derivation.CurveMetricSourceContract{SourceKind: "prometheus", NodeName: "node", Endpoint: "http://metrics", PowerMetric: "power_watts"},
 		ActiveProtocol: active, IdleProtocol: idle,
-		Conversion: derivation.CurveConversionContract{TargetPlatform: "rk3588", Tool: "rknn-toolkit2", ToolVersion: "2.3.2"},
-		Artifact: derivation.CurveArtifactContract{ExecutionPath: "rknnlite", Name: "artifact", Files: []string{"/artifact/model.rknn"}, Image: image},
-		Preprocessor: derivation.CurvePreprocessorContract{Name: "preprocessor", Image: image, Architecture: "arm64", Path: "/artifact/preprocessor", Inputs: []string{"image"}, Outputs: []string{"label"}},
+		Conversion:        derivation.CurveConversionContract{TargetPlatform: "rk3588", Tool: "rknn-toolkit2", ToolVersion: "2.3.2"},
+		Artifact:          derivation.CurveArtifactContract{ExecutionPath: "rknnlite", Name: "artifact", Files: []string{"/artifact/model.rknn"}, Image: image},
+		Preprocessor:      derivation.CurvePreprocessorContract{Name: "preprocessor", Image: image, Architecture: "arm64", Path: "/artifact/preprocessor", Inputs: []string{"image"}, Outputs: []string{"label"}},
 		PlannedBatchSizes: []int{1, 2, 4},
 	})
 	if err != nil {

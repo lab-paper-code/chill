@@ -36,7 +36,7 @@ type EvidencePassport struct {
 	Run         EvidencePassportRun         `json:"run"`
 	Evidence    EvidencePassportLineage     `json:"evidence"`
 	Measurement EvidencePassportMeasurement `json:"measurement"`
-	Assessment  MeasurementAssessment           `json:"assessment"`
+	Assessment  MeasurementAssessment       `json:"assessment"`
 }
 
 type EvidencePassportRun struct {

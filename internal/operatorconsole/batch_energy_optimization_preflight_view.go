@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"slices"
+	"strings"
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -17,45 +17,45 @@ import (
 // not resolve is the answer rather than a failed read, so the reason travels
 // beside the plan instead of replacing it.
 type BatchEnergyOptimizationPreflightSnapshot struct {
-	ReadAt   time.Time
-	Campaign edgev1alpha1.BatchEnergyOptimization
-	Plan     profilederivation.CurvePlan
-	Reason   string
-	VariantID string
-	Requests []BatchEnergyOptimizationPreflightRequest
+	ReadAt           time.Time
+	Campaign         edgev1alpha1.BatchEnergyOptimization
+	Plan             profilederivation.CurvePlan
+	Reason           string
+	VariantID        string
+	Requests         []BatchEnergyOptimizationPreflightRequest
 	RequestsComplete bool
-	ExactEvidence []MeasurementPreflightEvidence
+	ExactEvidence    []MeasurementPreflightEvidence
 }
 
 type BatchEnergyOptimizationPreflightRequest struct {
 	Campaign edgev1alpha1.BatchEnergyOptimization
-	Plan profilederivation.CurvePlan
+	Plan     profilederivation.CurvePlan
 }
 
 // MeasurementPreflightEvidence comes from the verified catalog or a UID-bound frozen plan.
 type MeasurementPreflightEvidence struct {
-	Condition profilederivation.CurvePlanSpec
-	Batches []int
+	Condition  profilederivation.CurvePlanSpec
+	Batches    []int
 	InProgress bool
 }
 
 type MeasurementBatchPlanReason struct {
-	Code string `json:"code"`
+	Code    string `json:"code"`
 	Message string `json:"message"`
 }
 
 type MeasurementBatchPlan struct {
-	VariantID *string `json:"variantId"`
-	ConditionMatch string `json:"conditionMatch"`
-	RequestedBatches []int `json:"requestedBatches"`
-	RequestableBatches []int `json:"requestableBatches"`
-	PlannedBatches []int `json:"plannedBatches"`
-	MeasuredBatches []int `json:"measuredBatches"`
-	InProgressBatches []int `json:"inProgressBatches"`
-	MissingBatches []int `json:"missingBatches"`
-	SubsetAllowed bool `json:"subsetAllowed"`
-	SearchMayStopEarly bool `json:"searchMayStopEarly"`
-	Reasons []MeasurementBatchPlanReason `json:"reasons"`
+	VariantID          *string                      `json:"variantId"`
+	ConditionMatch     string                       `json:"conditionMatch"`
+	RequestedBatches   []int                        `json:"requestedBatches"`
+	RequestableBatches []int                        `json:"requestableBatches"`
+	PlannedBatches     []int                        `json:"plannedBatches"`
+	MeasuredBatches    []int                        `json:"measuredBatches"`
+	InProgressBatches  []int                        `json:"inProgressBatches"`
+	MissingBatches     []int                        `json:"missingBatches"`
+	SubsetAllowed      bool                         `json:"subsetAllowed"`
+	SearchMayStopEarly bool                         `json:"searchMayStopEarly"`
+	Reasons            []MeasurementBatchPlanReason `json:"reasons"`
 }
 
 const BatchEnergyOptimizationPreflightAPIVersion = "console.chill.dacs.io/v1alpha1"
@@ -72,7 +72,7 @@ type BatchEnergyOptimizationPreflight struct {
 	Resolves   bool                                     `json:"resolves"`
 	Reason     string                                   `json:"reason,omitempty"`
 	Plan       json.RawMessage                          `json:"plan,omitempty"`
-	BatchPlan MeasurementBatchPlan `json:"batchPlan"`
+	BatchPlan  MeasurementBatchPlan                     `json:"batchPlan"`
 }
 
 type BatchEnergyOptimizationPreflightCampaign struct {
@@ -111,9 +111,9 @@ func BuildBatchEnergyOptimizationPreflight(
 			Name:      campaign.Name,
 			Spec:      campaign.Spec,
 		},
-		Resolves: resolved,
-		Reason:   snapshot.Reason,
-		Plan:     plan,
+		Resolves:  resolved,
+		Reason:    snapshot.Reason,
+		Plan:      plan,
 		BatchPlan: BuildMeasurementBatchPlan(snapshot),
 	}, nil
 }

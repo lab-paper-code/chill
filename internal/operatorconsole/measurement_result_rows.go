@@ -35,7 +35,7 @@ func MeasurementResultRow(facts profilederivation.MeasurementFacts, batch profil
 	}
 	if batch.Confidence != nil && batch.IncrementalJoulesPerItem != nil {
 		ci, mean := batch.Confidence, *batch.IncrementalJoulesPerItem
-		row.Confidence = &MeasurementConfidence{Level: ci.Level, Lower: mean-ci.HalfWidth, Upper: mean+ci.HalfWidth, HalfWidth: ci.HalfWidth}
+		row.Confidence = &MeasurementConfidence{Level: ci.Level, Lower: mean - ci.HalfWidth, Upper: mean + ci.HalfWidth, HalfWidth: ci.HalfWidth}
 	}
 	return row
 }

@@ -39,10 +39,10 @@ type HandlerConfig struct {
 	SchedulerMeters                                            func() []servingkube.MeterDeclaration
 	ReceiveResources                                           func(context.Context, serving.ResourceBatch) ([]serving.ResourceTarget, error)
 	Profiles                                                   func(context.Context) (ProfilesView, error)
-	DecorateProfiles func(context.Context, ProfilesView) (json.RawMessage, error)
+	DecorateProfiles                                           func(context.Context, ProfilesView) (json.RawMessage, error)
 	ListMeasurements                                           func(context.Context, string) (api.BatchEnergyOptimizationList, error)
-	AssessMeasurements func(context.Context, api.BatchEnergyOptimizationList) ([]json.RawMessage, error)
-	MeasurementCoverage func(context.Context, string, MeasurementCoverageQuery) (json.RawMessage, error)
+	AssessMeasurements                                         func(context.Context, api.BatchEnergyOptimizationList) ([]json.RawMessage, error)
+	MeasurementCoverage                                        func(context.Context, string, MeasurementCoverageQuery) (json.RawMessage, error)
 	SubmitMeasurement                                          func(context.Context, api.BatchEnergyOptimization, bool) (MeasurementMutationResult, error)
 	DeleteMeasurement                                          func(context.Context, string, string, string, string) (MeasurementMutationResult, error)
 	OperatingPower                                             func(context.Context, time.Time, time.Time, int) (serving.OperatingPowerWindow, error)

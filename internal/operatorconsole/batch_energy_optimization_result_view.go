@@ -17,12 +17,12 @@ import (
 // with the immutable terminal result it references. It is a read-time
 // projection, not a second persisted copy of either source.
 type BatchEnergyOptimizationResultSnapshot struct {
-	ReadAt           time.Time
-	Campaign         edgev1alpha1.BatchEnergyOptimization
-	Result           batchenergyoptimization.ResultRecord
-	Statistics       *BatchEnergyOptimizationStatistics
-	StatisticsReason *string
-	MeasurementFacts *profilederivation.MeasurementFacts
+	ReadAt                 time.Time
+	Campaign               edgev1alpha1.BatchEnergyOptimization
+	Result                 batchenergyoptimization.ResultRecord
+	Statistics             *BatchEnergyOptimizationStatistics
+	StatisticsReason       *string
+	MeasurementFacts       *profilederivation.MeasurementFacts
 	MeasurementFactsReason *string
 }
 
@@ -31,17 +31,17 @@ const BatchEnergyOptimizationResultAPIVersion = "console.chill.dacs.io/v1alpha1"
 // BatchEnergyOptimizationResult exposes actual campaign progress and failure,
 // with the sealed result only after the campaign publishes its reference.
 type BatchEnergyOptimizationResult struct {
-	APIVersion       string                                `json:"apiVersion"`
-	Kind             string                                `json:"kind"`
-	ReadAt           time.Time                             `json:"readAt"`
-	Campaign         BatchEnergyOptimizationResultCampaign `json:"campaign"`
-	Result           *BatchEnergyOptimizationResultRecord  `json:"result"`
-	Statistics       *BatchEnergyOptimizationStatistics    `json:"statistics"`
-	StatisticsReason *string                               `json:"statisticsReason"`
-	MeasurementFacts *profilederivation.MeasurementFacts `json:"measurementFacts"`
-	MeasurementFactsReason *string `json:"measurementFactsReason"`
-	Assessment MeasurementAssessment `json:"assessment"`
-	ResultRows []ResultRow `json:"resultRows"`
+	APIVersion             string                                `json:"apiVersion"`
+	Kind                   string                                `json:"kind"`
+	ReadAt                 time.Time                             `json:"readAt"`
+	Campaign               BatchEnergyOptimizationResultCampaign `json:"campaign"`
+	Result                 *BatchEnergyOptimizationResultRecord  `json:"result"`
+	Statistics             *BatchEnergyOptimizationStatistics    `json:"statistics"`
+	StatisticsReason       *string                               `json:"statisticsReason"`
+	MeasurementFacts       *profilederivation.MeasurementFacts   `json:"measurementFacts"`
+	MeasurementFactsReason *string                               `json:"measurementFactsReason"`
+	Assessment             MeasurementAssessment                 `json:"assessment"`
+	ResultRows             []ResultRow                           `json:"resultRows"`
 }
 
 type BatchEnergyOptimizationResultCampaign struct {
@@ -68,8 +68,8 @@ type BatchEnergyOptimizationResultRecord struct {
 
 // BatchEnergyOptimizationStatistics is computed only while reading retained evidence.
 type BatchEnergyOptimizationStatistics struct {
-	Batches []BatchEnergyOptimizationBatchStatistics `json:"batches"`
-	MeasurementFacts *profilederivation.MeasurementFacts `json:"-"`
+	Batches          []BatchEnergyOptimizationBatchStatistics `json:"batches"`
+	MeasurementFacts *profilederivation.MeasurementFacts      `json:"-"`
 }
 
 type BatchEnergyOptimizationBatchStatistics struct {
@@ -127,7 +127,7 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 	}
 	if reused {
 		var reference struct {
-			SourceProfileID string `json:"sourceProfileID"`
+			SourceProfileID           string  `json:"sourceProfileID"`
 			MaximumRelativeDifference float64 `json:"maximumRelativeDifference"`
 		}
 		if err := json.Unmarshal([]byte(campaign.Annotations["chill.dacs.io/profile-reuse"]), &reference); err == nil && reference.SourceProfileID != "" {
@@ -136,12 +136,12 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 				rows[i].SourceProfileID = &reference.SourceProfileID
 				rows[i].Reuse = reference
 				rows = append(rows, ResultRow{
-					ID: fmt.Sprintf("%s/source-reference/%d", reference.SourceProfileID, rows[i].Batch),
+					ID:      fmt.Sprintf("%s/source-reference/%d", reference.SourceProfileID, rows[i].Batch),
 					RowKind: "source-reference", ProfileID: reference.SourceProfileID,
 					SourceProfileID: &reference.SourceProfileID, Batch: rows[i].Batch, Reuse: reference,
-					Condition: map[string]string{"sourceProfileId": reference.SourceProfileID},
+					Condition:  map[string]string{"sourceProfileId": reference.SourceProfileID},
 					Assessment: AssessMeasurement(MeasurementAssessmentInput{Reused: true}),
-					Sources: []string{reference.SourceProfileID}, MissingReasons: []string{"SourceProfileFactsNotLoaded"},
+					Sources:    []string{reference.SourceProfileID}, MissingReasons: []string{"SourceProfileFactsNotLoaded"},
 				})
 			}
 		}

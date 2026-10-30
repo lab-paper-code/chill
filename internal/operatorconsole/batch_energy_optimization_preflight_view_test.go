@@ -3,8 +3,8 @@ package operatorconsole
 import (
 	"bytes"
 	"encoding/json"
-	"strings"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -162,10 +162,10 @@ func TestPreflightBatchPlanExactEvidenceAndChangedConditions(t *testing.T) {
 	}
 	id := MeasurementVariantID(spec)
 	for name, change := range map[string]func(*profilederivation.CurvePlanSpec){
-		"exact": func(*profilederivation.CurvePlanSpec) {},
-		"CPU": func(s *profilederivation.CurvePlanSpec) { s.CPU.Request = "6" },
-		"dataset UID": func(s *profilederivation.CurvePlanSpec) { s.ActiveProtocol.Dataset.UID = "new-uid" },
-		"protocol": func(s *profilederivation.CurvePlanSpec) { s.ActiveProtocol.WarmupIterations++ },
+		"exact":         func(*profilederivation.CurvePlanSpec) {},
+		"CPU":           func(s *profilederivation.CurvePlanSpec) { s.CPU.Request = "6" },
+		"dataset UID":   func(s *profilederivation.CurvePlanSpec) { s.ActiveProtocol.Dataset.UID = "new-uid" },
+		"protocol":      func(s *profilederivation.CurvePlanSpec) { s.ActiveProtocol.WarmupIterations++ },
 		"metric source": func(s *profilederivation.CurvePlanSpec) { s.MetricSource.Endpoint = "http://new-metrics" },
 		"mutable image": func(s *profilederivation.CurvePlanSpec) { s.RuntimeImage = "registry.example/image:tag" },
 	} {
@@ -178,7 +178,7 @@ func TestPreflightBatchPlanExactEvidenceAndChangedConditions(t *testing.T) {
 			}
 			view, err := BuildBatchEnergyOptimizationPreflight(BatchEnergyOptimizationPreflightSnapshot{
 				Plan: plan, VariantID: id, RequestsComplete: true,
-				Campaign: edgev1alpha1.BatchEnergyOptimization{Spec: edgev1alpha1.BatchEnergyOptimizationSpec{BatchSizes: []int32{1, 2, 4}}},
+				Campaign:      edgev1alpha1.BatchEnergyOptimization{Spec: edgev1alpha1.BatchEnergyOptimizationSpec{BatchSizes: []int32{1, 2, 4}}},
 				ExactEvidence: []MeasurementPreflightEvidence{{Condition: original.Shared(), Batches: []int{1, 1}}},
 			})
 			if err != nil {

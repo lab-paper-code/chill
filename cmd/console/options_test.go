@@ -23,14 +23,14 @@ func TestOptionsValidate(t *testing.T) {
 		t.Fatalf("valid options rejected: %v", err)
 	}
 	for name, mutate := range map[string]func(*options){
-		"zero QPS":                        func(o *options) { o.kubeAPIQPS = 0 },
-		"negative QPS":                    func(o *options) { o.kubeAPIQPS = -1 },
-		"NaN QPS":                         func(o *options) { o.kubeAPIQPS = math.NaN() },
-		"infinite QPS":                    func(o *options) { o.kubeAPIQPS = math.Inf(1) },
-		"overflow QPS":                    func(o *options) { o.kubeAPIQPS = math.MaxFloat64 },
-		"underflow QPS":                   func(o *options) { o.kubeAPIQPS = math.SmallestNonzeroFloat64 },
-		"zero burst":                      func(o *options) { o.kubeAPIBurst = 0 },
-		"negative burst":                  func(o *options) { o.kubeAPIBurst = -1 },
+		"zero QPS":                         func(o *options) { o.kubeAPIQPS = 0 },
+		"negative QPS":                     func(o *options) { o.kubeAPIQPS = -1 },
+		"NaN QPS":                          func(o *options) { o.kubeAPIQPS = math.NaN() },
+		"infinite QPS":                     func(o *options) { o.kubeAPIQPS = math.Inf(1) },
+		"overflow QPS":                     func(o *options) { o.kubeAPIQPS = math.MaxFloat64 },
+		"underflow QPS":                    func(o *options) { o.kubeAPIQPS = math.SmallestNonzeroFloat64 },
+		"zero burst":                       func(o *options) { o.kubeAPIBurst = 0 },
+		"negative burst":                   func(o *options) { o.kubeAPIBurst = -1 },
 		"blank bind address":               func(o *options) { o.bindAddress = " " },
 		"relative temp dir":                func(o *options) { o.tempDir = "relative" },
 		"padded temp dir":                  func(o *options) { o.tempDir = " /tmp/evidence" },
