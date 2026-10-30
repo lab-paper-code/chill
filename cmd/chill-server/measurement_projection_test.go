@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +21,7 @@ import (
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -83,6 +87,8 @@ func TestMeasurementProjectionNativeListsDetailsAndNamespace(t *testing.T) {
 }
 
 type operationProjectionStore struct {
+	mu      sync.Mutex
+	open    func(context.Context, evidencestore.ObjectLocation) (io.ReadCloser, error)
 	payload []byte
 	err     error
 	reads   []evidencestore.ObjectLocation
@@ -92,7 +98,12 @@ func (s *operationProjectionStore) OpenLocation(
 	ctx context.Context,
 	location evidencestore.ObjectLocation,
 ) (io.ReadCloser, error) {
+	s.mu.Lock()
 	s.reads = append(s.reads, location)
+	s.mu.Unlock()
+	if s.open != nil {
+		return s.open(ctx, location)
+	}
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -242,5 +253,87 @@ func TestMeasurementOperationProjectionEvidenceErrorsDoNotBecomeNull(t *testing.
 				t.Fatalf("lost store error: list=%v get=%v", listErr, getErr)
 			}
 		})
+	}
+}
+
+func TestMeasurementOperationProjectionParallelReadsPreserveOrder(t *testing.T) {
+	service, storage := operationProjectionService(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var source api.OperationCostMeasurement
+	if err := service.client.Get(ctx, types.NamespacedName{Namespace: "allowed", Name: "cost"}, &source); err != nil {
+		t.Fatal(err)
+	}
+	var record servingkube.OperationMeasurement
+	if err := json.Unmarshal(storage.payload, &record); err != nil {
+		t.Fatal(err)
+	}
+	const count = 10
+	objects := make([]client.Object, 0, count)
+	payloads := make(map[string][]byte, count)
+	firstKey, lastKey := "", ""
+	for i := range count {
+		cr := source.DeepCopy()
+		cr.Name = fmt.Sprintf("measurement-%02d", i)
+		cr.UID = types.UID(cr.Name)
+		cr.ResourceVersion = ""
+		operation := record.Request.Operation
+		operation.ID = cr.Name + ".0.prepare"
+		record.Request.Operation, record.Result.Operation = operation, operation
+		key := servingkube.OperationMeasurementKey(operation)
+		cr.Status.Steps[0].Key = key
+		payload, err := json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payloads[key] = payload
+		objects = append(objects, cr)
+		if i == 0 {
+			firstKey = key
+		}
+		lastKey = key
+	}
+	service.client = fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(objects...).Build()
+	releaseFirst := make(chan struct{})
+	firstStarted := make(chan struct{})
+	var active, maximum atomic.Int32
+	storage.open = func(ctx context.Context, location evidencestore.ObjectLocation) (io.ReadCloser, error) {
+		running := active.Add(1)
+		defer active.Add(-1)
+		for current := maximum.Load(); running > current; current = maximum.Load() {
+			if maximum.CompareAndSwap(current, running) {
+				break
+			}
+		}
+		if location.Key == firstKey {
+			close(firstStarted)
+			select {
+			case <-releaseFirst:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		} else {
+			select {
+			case <-firstStarted:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		if location.Key == lastKey {
+			close(releaseFirst)
+		}
+		return io.NopCloser(bytes.NewReader(payloads[location.Key])), nil
+	}
+	list, err := service.listOperationCosts(ctx, "allowed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != count || len(storage.reads) != count || maximum.Load() < 2 || maximum.Load() > 8 {
+		t.Fatalf("unexpected list/read/concurrency counts: %d/%d/%d", len(list.Items), len(storage.reads), maximum.Load())
+	}
+	for i, item := range list.Items {
+		if want := fmt.Sprintf("measurement-%02d", i); item.Metadata.Name != want {
+			t.Fatalf("completion order leaked into list index %d: got %s, want %s", i, item.Metadata.Name, want)
+		}
 	}
 }

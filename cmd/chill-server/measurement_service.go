@@ -18,6 +18,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"golang.org/x/sync/errgroup"
 	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -107,12 +108,20 @@ func (o *measurementService) listOperationCosts(
 		return result, err
 	}
 	sort.Slice(list.Items, func(i, j int) bool { return list.Items[i].Name < list.Items[j].Name })
-	for _, cr := range list.Items {
-		projection, err := o.projectOperationCost(ctx, cr)
-		if err != nil {
-			return httpapi.MeasurementProjectionList{}, err
-		}
-		result.Items = append(result.Items, projection)
+	result.Items = make([]httpapi.MeasurementProjection, len(list.Items))
+	group, readCtx := errgroup.WithContext(ctx)
+	group.SetLimit(8)
+	for i, cr := range list.Items {
+		group.Go(func() error {
+			projection, err := o.projectOperationCost(readCtx, cr)
+			if err == nil {
+				result.Items[i] = projection
+			}
+			return err
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return httpapi.MeasurementProjectionList{}, err
 	}
 	return result, nil
 }

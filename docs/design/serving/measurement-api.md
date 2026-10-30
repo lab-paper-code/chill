@@ -375,3 +375,6 @@ raw power·prepare payload/비밀을 HTTP에 복사하지 않는다.
 기존 accepted cost/idle validator를 해당 분기에만 적용한다. list와 detail은 같은 loader를
 사용하며 `maxEvidenceBytes`로 객체별 읽기를 제한한다. phase와 verdict는 CR 원문 그대로이고
 실패 기록의 actual interval은 보여 주되 accepted 에너지로 승격하지 않는다.
+목록은 기존 `errgroup`의 `SetLimit(8)`로 CR별 projection을 최대 8개 동시 실행하고,
+미리 정렬한 index에 결과를 기록해 이름 순서를 보존한다. 각 CR의 단계 읽기는 원래 순서이며,
+어느 projection이든 실패하면 요청 전체가 오류로 끝나고 나머지 읽기에는 취소가 전달된다.
