@@ -73,7 +73,7 @@ func TestFailedPrepareCompensatesOnlyOwnUnclaimedPodAC38(t *testing.T) {
 // A subset's Before.Native is not the requested ACK of a sibling's new
 // preparation. Historical evidence must not bypass R4b retirement/absence.
 func TestUnacknowledgedPrepareCannotBorrowPreviousRoutePolicyAC38(t *testing.T) {
-	c, api, child, parent := failedPrepareCompensationFixture(t, "unclaimed")
+	c, api, child, parent := failedPrepareCompensationFixture(t, "canceled")
 	actual := *schedulerPhysicalState(c.state.Snapshot.Instances[1].ID, c.runtime.Instances())
 	wanted := child.result.Operation.Prepare.Instance
 	target := &serving.SchedulerCandidate{ID: parent.owner + "-ready-unacknowledged",
@@ -117,7 +117,7 @@ func TestUnacknowledgedPrepareCannotBorrowPreviousRoutePolicyAC38(t *testing.T) 
 	if len(fresh.Reservations) != 0 || c.authorize(Operation{WorkloadUID: wanted.WorkloadUID}) != nil {
 		t.Fatal("fresh Pod absence did not return the compensated reservation")
 	}
-	if child.result.Status != nativeOperationFailed || parent.result.Status != nativeOperationFailed {
+	if child.result.Status != nativeOperationPartial || child.result.Error != context.Canceled.Error() || parent.result.Status != nativeOperationFailed {
 		t.Fatal("compensation rewrote failed receipts")
 	}
 }
