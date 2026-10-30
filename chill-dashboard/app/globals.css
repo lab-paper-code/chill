@@ -186,16 +186,24 @@
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
 }
 
-/* One screen, one function: a narrow centered column read top to bottom. */
+/* Narrow forms and wide, aligned research data share the same visual language. */
 .screen { display: flex; flex-direction: column; gap: 1.75rem; width: 100%; max-width: 42rem; margin-inline: auto; padding: 1.75rem 1.25rem 3rem; min-width: 0; }
+.screen-data { max-width: 80rem; }
+.screen-breadcrumbs { display: flex; flex-wrap: wrap; gap: .35rem; font-size: .875rem; color: var(--muted-foreground); }
+.screen-breadcrumbs li { display: inline-flex; align-items: center; gap: .35rem; min-width: 0; }
+.screen-breadcrumbs svg { width: .9rem; height: .9rem; flex: none; }
+.screen-breadcrumbs [aria-current="page"] { color: var(--foreground); }
 .screen-back, main .screen-back { display: inline-flex; align-items: center; gap: .15rem; align-self: flex-start; margin-left: -.35rem; margin-bottom: -.75rem; color: var(--muted-foreground); text-decoration: none; font-size: .9375rem; font-weight: 500; }
 .screen-back:hover { color: var(--foreground); }
 .screen-back svg { width: 1.15rem; height: 1.15rem; }
-.screen-head { display: grid; justify-items: start; gap: .5rem; }
+.screen-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 1rem; min-width: 0; }
+.screen-heading { display: grid; justify-items: start; gap: .5rem; min-width: 0; flex: 1 1 20rem; }
 .screen-head h1 { font-size: 1.625rem; font-weight: 700; letter-spacing: -.03em; line-height: 1.3; }
-.screen-head p { color: var(--muted-foreground); line-height: 1.6; }
-.screen-action { position: sticky; bottom: 0; z-index: 5; display: grid; gap: .5rem; margin-top: auto; padding: 1.25rem 0 1rem; background: linear-gradient(to bottom, transparent, var(--background) 1.25rem); }
+.screen-head p { color: var(--muted-foreground); line-height: 1.6; max-width: 75ch; }
+.screen-header-action { display: flex; flex-wrap: wrap; gap: .5rem; }
+.screen-action { display: grid; gap: .5rem; margin-top: auto; padding: 1.25rem 0 1rem; }
 .screen-action > button, .screen-action > a, .screen-action button { min-height: 3.25rem; font-size: 1rem; font-weight: 600; border-radius: .9rem; }
+.figure-value, .row-value, .facts-list dd, .energy-row dd, .screen td, .screen time, .tabular-nums { font-variant-numeric: tabular-nums; }
 .figure { display: grid; gap: .25rem; }
 .figure-label { font-size: .9375rem; color: var(--muted-foreground); }
 .figure-value { font-size: 2.25rem; font-weight: 700; letter-spacing: -.035em; line-height: 1.15; }
