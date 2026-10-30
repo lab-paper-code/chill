@@ -1,0 +1,214 @@
+{
+  "schemaVersion": "serving-experiment.v1alpha1",
+  "id": "demo-20261026-2",
+  "from": "2026-10-25T23:22:55.467000+00:00",
+  "to": "2026-10-26T00:00:26.131669+00:00",
+  "status": "OPERATIONAL_DEMO_COMPLETE",
+  "stages": [
+    {
+      "id": "E0",
+      "from": "2026-10-25T23:22:55.467000+00:00",
+      "to": "2026-10-25T23:27:47.456850+00:00",
+      "kpis": {
+        "status": "DRAINED_NOT_EVALUATED",
+        "visibility": "PRIVATE_OPERATIONAL_ONLY",
+        "workloads": {
+          "image-classification-tight-slo": {
+            "rate": 0,
+            "offered": 0,
+            "clientRows": 0,
+            "missingClientRows": 0,
+            "httpSuccess": 0,
+            "successFraction": null,
+            "successNumerator": 0,
+            "successDenominator": 0,
+            "withinSLONumerator": 0,
+            "withinSLODenominator": 0,
+            "latencyMS": {
+              "samples": 0,
+              "mean": null,
+              "p50": null,
+              "p95": null,
+              "p99": null,
+              "max": null
+            },
+            "latencyScope": "Client HTTP round trip of successful responses, not server execution latency",
+            "sloMS": 1000.0,
+            "sloPercentile": 95,
+            "withinSLOFraction": null,
+            "transitionFailures": 0,
+            "transitionFailureMeaning": "Failed/unsent client requests overlapping observed placement-change brackets or elapsed scheduler actions; null if scheduler/client coverage incomplete",
+            "schedulerSLO": {
+              "percentile": 95,
+              "targetLatencyNanos": 1000000000
+            },
+            "measurementSLO": {
+              "percentile": 95,
+              "targetLatencyNanos": 1000000000
+            },
+            "population": "Frozen offered arrivals; latency is successful client HTTP round trips only",
+            "missingReasons": {
+              "successFraction": "No offered requests",
+              "withinSLOFraction": "No offered requests",
+              "latencyMS": "No successful client responses",
+              "transitionFailures": null
+            }
+          },
+          "plc-anomaly": {
+            "rate": 0,
+            "offered": 0,
+            "clientRows": 0,
+            "missingClientRows": 0,
+            "httpSuccess": 0,
+            "successFraction": null,
+            "successNumerator": 0,
+            "successDenominator": 0,
+            "withinSLONumerator": 0,
+            "withinSLODenominator": 0,
+            "latencyMS": {
+              "samples": 0,
+              "mean": null,
+              "p50": null,
+              "p95": null,
+              "p99": null,
+              "max": null
+            },
+            "latencyScope": "Client HTTP round trip of successful responses, not server execution latency",
+            "sloMS": 50.0,
+            "sloPercentile": 95,
+            "withinSLOFraction": null,
+            "transitionFailures": 0,
+            "transitionFailureMeaning": "Failed/unsent client requests overlapping observed placement-change brackets or elapsed scheduler actions; null if scheduler/client coverage incomplete",
+            "schedulerSLO": {
+              "percentile": 95,
+              "targetLatencyNanos": 50000000
+            },
+            "measurementSLO": {
+              "percentile": 95,
+              "targetLatencyNanos": 50000000
+            },
+            "population": "Frozen offered arrivals; latency is successful client HTTP round trips only",
+            "missingReasons": {
+              "successFraction": "No offered requests",
+              "withinSLOFraction": "No offered requests",
+              "latencyMS": "No successful client responses",
+              "transitionFailures": null
+            }
+          },
+          "smolvlm2-vqa": {
+            "rate": 0,
+            "offered": 0,
+            "clientRows": 0,
+            "missingClientRows": 0,
+            "httpSuccess": 0,
+            "successFraction": null,
+            "successNumerator": 0,
+            "successDenominator": 0,
+            "withinSLONumerator": 0,
+            "withinSLODenominator": 0,
+            "latencyMS": {
+              "samples": 0,
+              "mean": null,
+              "p50": null,
+              "p95": null,
+              "p99": null,
+              "max": null
+            },
+            "latencyScope": "Client HTTP round trip of successful responses, not server execution latency",
+            "sloMS": 60000.0,
+            "sloPercentile": 99,
+            "withinSLOFraction": null,
+            "transitionFailures": 0,
+            "transitionFailureMeaning": "Failed/unsent client requests overlapping observed placement-change brackets or elapsed scheduler actions; null if scheduler/client coverage incomplete",
+            "schedulerSLO": {
+              "percentile": 99,
+              "targetLatencyNanos": 60000000000
+            },
+            "measurementSLO": {
+              "percentile": 99,
+              "targetLatencyNanos": 60000000000
+            },
+            "population": "Frozen offered arrivals; latency is successful client HTTP round trips only",
+            "missingReasons": {
+              "successFraction": "No offered requests",
+              "withinSLOFraction": "No offered requests",
+              "latencyMS": "No successful client responses",
+              "transitionFailures": null
+            }
+          }
+        },
+        "judgmentCounts": {
+          "DRAINED_NOT_EVALUATED": 1
+        },
+        "wholePoolJoules": 42740.16807144991,
+        "activePoolJoules": 282.7698835730054,
+        "drainInclusiveWholePoolJoules": 42821.34753423408,
+        "energyPopulation": "Shared whole/active pool; never attributed to individual workloads",
+        "gapFromPreviousOfferedWindowSeconds": null,
+        "missingReasons": {
+          "energy": null,
+          "drainInclusiveEnergy": null,
+          "gap": "First offered window",
+          "schedulerSettings": null
+        },
+        "limitations": [
+          "No offered demo requests during per-stage drain/collection/setup; failures in this gap are not measurable by these producers",
+          "Operational demo only; no E5 scientific PASS or workload-attributed energy",
+          "E5 R/kappa capacity binding and G clipping",
+          "10800-second normative schedule and factor baselines",
+          "phase6 scientific approvals/D1/D6/D9 judgment gates",
+          "image/source publication and profiling-vs-evaluation metadata Jobs; existing pinned images/datasets reused",
+          "existing scheduler SLO mutation: existing definitions retained; missing canonical definitions created from recipe plus configured SLO"
+        ],
+        "schedulerSettings": {
+          "observationWindowNanos": 60000000000,
+          "controlIntervalNanos": 10000000000,
+          "comparisonPeriodNanos": 600000000000,
+          "maxObservationAgeNanos": 5000000000,
+          "bootstrapCapacityWaitNanos": 600000000000,
+          "maxReplicas": 8,
+          "maxInstances": 16,
+          "maxCPUs": 256,
+          "servingMemoryBytes": 134217728,
+          "completionMarginMS": 29,
+          "autonomousWorkloads": [],
+          "minimumDemand": {
+            "0f657f41-431d-4d5c-8807-60c90a544e64": 20,
+            "c5332f12-505d-4320-9e6e-c270f150acdb": 40,
+            "70294c53-75fc-44fa-8443-21e82237435a": 0.3
+          },
+          "excludedNodes": [
+            "genesis1",
+            "orin-nano"
+          ],
+          "capacityWindowNanos": 60000000000,
+          "capacityWindows": 20,
+          "capacityPassingWindows": 19,
+          "capacityMinimumRequests": 1000,
+          "planSearchWorkers": 3,
+          "controls": {
+            "placement": true,
+            "resources": true,
+            "replicas": true,
+            "routing": true,
+            "batching": true,
+            "power": true,
+            "membership": true
+          }
+        },
+        "readyGate": {
+          "maximumSeconds": 720,
+          "observedUTC": "2026-10-25T23:27:46.130386+00:00",
+          "timedOut": false,
+          "missingWorkloadUIDs": []
+        }
+      }
+    }
+  ],
+  "sources": [
+    {
+      "store": "chill-evidence-store",
+      "key": "serving/experiments.v1alpha1/demo-20261026-2/raw/smoke-A/archive-collection.json"
+    }
+  ]
+}

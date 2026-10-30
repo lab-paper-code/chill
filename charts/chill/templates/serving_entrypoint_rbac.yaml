@@ -247,6 +247,8 @@ rules:
     verbs: [get, post, put, delete]
   - nonResourceURLs: ["/chill/api/v1/pools", "/chill/api/v1/pools/*", "/chill/api/v1/observations/workloads/*", "/chill/api/v1/observations/load", "/chill/api/v1/observations/scheduler", "/chill/api/v1/observations/power"]
     verbs: [get]
+  - nonResourceURLs: ["/chill/api/v1/experiments", "/chill/api/v1/experiments/*"]
+    verbs: [get]
   - nonResourceURLs: ["/chill/api/v1/systems", "/chill/api/v1/inventory"]
     verbs: [get]
   - nonResourceURLs: ["/chill/api/v1/scheduler", "/chill/api/v1/scheduler/settings", "/chill/api/v1/scheduler/state", "/chill/api/v1/scheduler/profiles", "/chill/api/v1/scheduler/capacity"]
@@ -257,6 +259,10 @@ rules:
       - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations/*" $namespace | quote }}
       - {{ printf "/chill/api/v1/namespaces/%s/profiling-runs" $namespace | quote }}
       - {{ printf "/chill/api/v1/namespaces/%s/profiling-runs/*" $namespace | quote }}
+      - {{ printf "/chill/api/v1/namespaces/%s/operation-cost-measurements" $namespace | quote }}
+      - {{ printf "/chill/api/v1/namespaces/%s/operation-cost-measurements/*" $namespace | quote }}
+      - {{ printf "/chill/api/v1/namespaces/%s/dispatch-occupancy-measurements" $namespace | quote }}
+      - {{ printf "/chill/api/v1/namespaces/%s/dispatch-occupancy-measurements/*" $namespace | quote }}
     verbs: [get]
   - nonResourceURLs:
       - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations" $namespace | quote }}
@@ -280,6 +286,9 @@ rules:
   - apiGroups: [edge.dacs.io]
     resources: [batchenergyoptimizations]
     verbs: [get, list, create, delete]
+  - apiGroups: [edge.dacs.io]
+    resources: [operationcostmeasurements, dispatchoccupancymeasurements]
+    verbs: [get, list]
 {{- end }}
 ---
 # Raw request IDs are available only to separately bound experiment collectors,

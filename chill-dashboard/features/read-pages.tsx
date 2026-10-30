@@ -1,7 +1,6 @@
 "use client"
 
 import * as React from "react"
-import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useChillMutation, useSession } from "@/lib/client"
 import type { RunsView, ProfilingRun, Passport, NativeSample, MeasurementPreflight } from "@/lib/read-types"
@@ -264,8 +263,3 @@ export function MeasurementDetail({kind,namespace,name}:{kind:string;namespace:s
   return <Screen back={back} status={<StatusBadge tone="idle">연결 준비 중</StatusBadge>} title="이 자료는 아직 볼 수 없어요" lede="이 자료 종류는 연결을 준비하고 있어요."/>
 }
 
-export function ExperimentsPage() {
-  return <Screen back={["/records","기록"]} status={<StatusBadge tone="idle">연결 준비 중</StatusBadge>} title="실험 기능은 아직 준비 중이에요"
-    lede="지금은 판단 기록 두 개를 골라 조건과 예상, 실제 결과를 나란히 볼 수 있어요. 실험 실행이나 성공 판정을 대신하지는 않아요."
-    action={<Button asChild><Link href="/scheduler/history">판단 기록에서 두 기록 고르기</Link></Button>}/>
-}
