@@ -2369,6 +2369,16 @@ def summarize(binding, root, tag=None):
     save(root/'e5-summary.json',result); return result
 
 
+def publication_measurements(binding, power):
+    """Record the current collector's semantics, without a comparability gate."""
+    config=binding['config']
+    coverage=power.get('energyCoverage')
+    policy=coverage['policy'] if coverage else module('e5publication_energy',HERE/'e5-archive.py').energy_policy(config.get('collection',{}))
+    return {'energyCoverage':coverage,'gapErrorBoundJoules':power.get('gapErrorBoundJoules'),
+        'measurementRules':{'harnessRepositoryCommit':config.get('harnessRepositoryCommit'),
+            'energyCoverage':policy,'evidenceSource':'host-s3','gcMeaning':'gctrace-cycles'}}
+
+
 def publish_experiment(root, identifier, store_config, stages, status):
     """Publish PRIVATE raw inputs first, then one immutable serving summary.
 
@@ -2417,6 +2427,7 @@ def publish_experiment(root, identifier, store_config, stages, status):
 
 def publish_campaign(binding, root, identifier, store_config):
     result=summarize(binding,root);stages=[]
+    bound=load_binding(binding)
     folders={Path(path) for path in result['rowDirectories'].values()} if result['compositeRun'] else root.iterdir()
     for folder in sorted(folders):
         if not folder.is_dir() or not (folder/'phase.json').exists():continue
@@ -2434,6 +2445,7 @@ def publish_campaign(binding, root, identifier, store_config):
             requests[name]['missingReasons']={'deadlineSuccessFraction':'No offered arrivals' if not value['offered'] else None,'completedLatencyNS':'No successful execution-complete gateway responses' if not value.get('completedLatencyNS',{}).get('samples') else None,'completionResidualNS':'No complete native/dispatched residual observations' if not value.get('completionResidualNS',{}).get('samples') else None}
         power=judgment.get('power') or {}
         kpis={'status':judgment['status'],'visibility':'PRIVATE_OPERATIONAL_ONLY','requests':requests,'judgmentCounts':dict(Counter(value['D1'] for value in judgment['requests'].values())),'wholePoolJoules':power.get('wholePoolJoules') if power.get('complete') else None,'activePoolJoules':power.get('activePoolJoules') if power.get('complete') else None,'energyPopulation':'Whole/active shared pool during offered [from,to); not attributed per workload','limitations':result['limitations'],'missingReasons':{'energy':None if power.get('complete') else 'Actual whole/active power coverage incomplete','judgment':None if judgment['status']!='NOT_READY' else 'Required evidence incomplete; actual reasons retained in raw judgment'}}
+        kpis.update(publication_measurements(bound,power))
         kpis['schedulerSettings']=result['schedulerSettings']
         kpis['missingReasons']['schedulerSettings']=None if result['schedulerSettings'] is not None else 'Binding does not contain frozen scheduler settings'
         stages.append({'id':folder.name,'from':phase['startUTC'],'to':phase['endUTC'],'kpis':kpis,'_folder':folder})

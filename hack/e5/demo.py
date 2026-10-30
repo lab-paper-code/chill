@@ -773,6 +773,7 @@ def summarize(e5, binding, out, destination=None, *, judge=False):
         if 'power-drain-inclusive' in missing_archives:
             drain_power = {}
         summary = {'stage': stage['id'], 'status': phase['status'], 'startUTC': phase['startUTC'], 'endUTC': phase['endUTC'], 'drainedUTC': phase.get('drainedUTC'), 'gapFromPreviousOfferedWindowSeconds': gap, 'gapMeaning': 'No offered demo requests during per-stage drain/collection/setup; failures in this gap are not measurable by these producers', 'placementChanges': changes, 'actions': actions, 'transitionWindowsEpoch': windows, 'schedulerCapture': provenance, 'energyJ': power.get('wholePoolJoules') if power.get('complete') else None, 'activeEnergyJ': power.get('activePoolJoules') if power.get('complete') else None, 'drainInclusiveEnergyJ': drain_power.get('wholePoolJoules') if drain_power.get('complete') else None, 'energyScope': 'Shared whole/active pool; never attributed to individual workloads', 'workloads': {}}
+        summary.update(energyCoverage=power.get('energyCoverage'), gapErrorBoundJoules=power.get('gapErrorBoundJoules'))
         summary['collectionRecovery'] = phase.get('collectionRecovery')
         summary['missingArchives'] = missing_archives
         summary['demoRequestDrain'] = phase.get('demoRequestDrain')
@@ -923,6 +924,7 @@ def publish(e5, binding, out, identifier, store_config):
                                   'drainInclusiveEnergy': 'Actual drain-inclusive power coverage incomplete' if summary['drainInclusiveEnergyJ'] is None else None,
                                   'gap': 'First offered window' if summary['gapFromPreviousOfferedWindowSeconds'] is None else None},
                 'limitations': [summary['gapMeaning'], 'Operational demo only; no E5 scientific PASS or workload-attributed energy', *binding['config'].get('demoSkipped', [])]}
+        kpis.update(e5.publication_measurements(binding, summary))
         kpis['schedulerSettings'] = binding.get('schedulerSettings')
         for key in ('readyGate', 'startBarrier'):
             if key in summary:
@@ -1139,7 +1141,7 @@ def self_check():
         cpo = object.__new__(e5.CPO)
         cpo.out = root / 'run'
         cpo.out.mkdir()
-        cpo.a = SimpleNamespace(mode='smoke', command='smoke', stage='E0')
+        cpo.a = SimpleNamespace(mode='smoke', command='smoke', stage='E0', row_tag='')
         cpo.c = {'workloads': workloads, 'smoke': stages[0], 'generatorQuality': {'latenessToleranceNS': 50_000_000, 'maxExceedingFraction': 0}}
         e5.freeze_producer_config(cpo.c)
         cpo.b = {'schema': 'demo-e5-binding.v1', 'config': cpo.c, 'schedule': stages, 'sources': {}, 'payload': {w['name']: [] for w in workloads}}
@@ -1323,9 +1325,13 @@ def self_check():
             (folder / 'fixture-cgroup.jsonl').write_text('\n'.join(map(json.dumps, rows)) + '\n')
             return []
         cpo.sampler = sampler
+        cpo.b['config']['harnessRepositoryCommit'] = 'a' * 40
+        publication_coverage = {'policy': {'maxGapFraction': .01, 'maxSingleGapSeconds': 30},
+                                'nodeGapSecondsSum': 1, 'maximumGapSeconds': 1, 'maximumNodeGapFraction': .001}
         def collect(folder, phase=None):
             e5.save(folder / 'collected.json', {'status': 'CAPTURED_NOT_EVALUATED'})
-            e5.save(folder / 'power.json', {'complete': True, 'wholePoolJoules': 10, 'activePoolJoules': 5})
+            e5.save(folder / 'power.json', {'complete': True, 'wholePoolJoules': 10, 'activePoolJoules': 5,
+                                          'energyCoverage': publication_coverage, 'gapErrorBoundJoules': 2})
             e5.save(folder / 'power-drain-inclusive.json', {'complete': True, 'wholePoolJoules': 11})
         cpo.collect = collect
         original_module = e5.module
@@ -1382,7 +1388,7 @@ def self_check():
             with patch.object(cpo, 'out', normative_out), \
                  patch.object(cpo, 'b', dict(cpo.b, schema='e5-binding.v1')), \
                  patch.object(cpo, 'c', dict(cpo.c)), \
-                 patch.object(cpo, 'a', SimpleNamespace(mode='smoke', command='smoke', stage=stages[0]['id'])), \
+                 patch.object(cpo, 'a', SimpleNamespace(mode='smoke', command='smoke', stage=stages[0]['id'], row_tag='')), \
                  patch.dict(snapshot, copy.deepcopy(snapshot), clear=True), \
                  patch.object(e5.time, 'sleep', no_quiet_sleep):
                 run_stage(cpo, stages[0])
@@ -1405,6 +1411,12 @@ def self_check():
         with patch.object(e5, 'publish_experiment', return_value={'outcome': 'fixture'}) as publication:
             assert publish(e5, cpo.b, cpo.out, 'fixture-fidelity', root / 'store.json')['outcome'] == 'fixture'
         published_stages = publication.call_args.args[3]
+        expected_rules = {'harnessRepositoryCommit': 'a' * 40, 'energyCoverage': publication_coverage['policy'],
+                          'evidenceSource': 'host-s3', 'gcMeaning': 'gctrace-cycles'}
+        for stage in published_stages:
+            assert stage['kpis']['energyCoverage'] == publication_coverage
+            assert stage['kpis']['gapErrorBoundJoules'] == 2
+            assert stage['kpis']['measurementRules'] == expected_rules
         for name, metric in summaries[-1]['workloads'].items():
             published = published_stages[-1]['kpis']['workloads'][name]
             assert published['issuanceFidelity'] == metric['issuanceFidelity']
@@ -1872,6 +1884,7 @@ def self_check():
         assert len(capture_removed) == 3 and all(row['stopped'] for row in capture_phase['ownedProducerStops'])
         assert len(capture_phase['cleanupErrors']) == 3
         unknown = object.__new__(e5.CPO)
+        unknown.a = SimpleNamespace(row_tag='')
         unknown.out = root / 'unknown-cleanup'
         record = unknown.out / 'phase'
         record.mkdir(parents=True)
@@ -1998,6 +2011,7 @@ def self_check():
         # Active owner keep: reservations may clear before the running action.
         for label, clears_at, reset_error in (('idle', 0, None), ('clear', 25, None), ('timeout', None, None), ('failed', 0, 'result'), ('conflict', 0, '409'), ('stale', 2, None), ('snapshot-action', 2, None), ('normative-clear', 2, None), ('normative-timeout', None, None), ('late-state', 2, None)):
             cleanup = object.__new__(e5.CPO)
+            cleanup.a = SimpleNamespace(row_tag='')
             cleanup.b = {'schema': 'e5-binding.v1' if label.startswith('normative') else 'demo-e5-binding.v1'}
             cleanup.out = root / ('cleanup-wait-' + label)
             cleanup.out.mkdir()
@@ -2066,6 +2080,7 @@ def self_check():
                 else:
                     raise AssertionError('Invalid finishResetWaitSeconds accepted')
         reset = object.__new__(e5.CPO)
+        reset.a = SimpleNamespace(row_tag='')
         reset.b = {'schema': 'e5-binding.v1'}
         reset.out = root / 'reset'
         reset.out.mkdir()
@@ -2112,7 +2127,9 @@ def self_check():
         publication_root = root / 'publication-test'
         evidence = publication_root / 'stage'
         evidence.mkdir(parents=True)
-        (evidence / 'phase.json').write_text('{"actual":"raw"}')
+        e5.save(evidence / 'phase.json', {'startUTC': '2026-10-25T00:00:00Z', 'endUTC': '2026-10-25T00:01:00Z'})
+        e5.save(evidence / 'judgment.json', {'status': 'NOT_READY', 'requests': {},
+                'power': {'complete': False, 'energyCoverage': publication_coverage, 'gapErrorBoundJoules': None}})
         (evidence / 'zero-client.jsonl').write_text('')
         store_config = root / 'store.json'
         store_config.write_text(json.dumps({'logicalStore': 'private-evidence'}))
@@ -2123,13 +2140,19 @@ def self_check():
             summary = e5.load(manifest['summary']['localPath'])
             assert summary['schemaVersion'] == 'serving-experiment.v1alpha1'
             assert summary['stages'][0]['kpis']['wholePoolJoules'] is None
+            assert summary['stages'][0]['kpis']['energyCoverage'] == publication_coverage
+            assert summary['stages'][0]['kpis']['gapErrorBoundJoules'] is None
+            assert summary['stages'][0]['kpis']['measurementRules'] == expected_rules
             assert summary['sources'] == [{key: obj[key] for key in ('store', 'key')} for obj in manifest['objects']]
             assert all(Path(obj['localPath']).stat().st_size > 0 for obj in manifest['objects'])
             assert all(source['key'].startswith('serving/experiments.v1alpha1/campaign-1/raw/') for source in summary['sources'])
             assert e5.load(manifest['objects'][-1]['localPath'])['emptyFiles'] == ['stage/zero-client.jsonl']
             return SimpleNamespace(returncode=0, stdout='{"outcome":"Created"}', stderr='')
-        with patch.object(e5.subprocess, 'run', side_effect=upload_fixture):
-            assert e5.publish_experiment(publication_root, 'campaign-1', store_config, [record], 'PARTIAL')['outcome'] == 'Created'
+        campaign_result = {'compositeRun': None, 'limitations': [], 'schedulerSettings': None, 'status': 'NOT_READY'}
+        with patch.object(e5.subprocess, 'run', side_effect=upload_fixture), \
+             patch.object(e5, 'summarize', return_value=campaign_result), \
+             patch.object(e5, 'load_binding', return_value=cpo.b):
+            assert e5.publish_campaign(root / 'fixture-binding.json', publication_root, 'campaign-1', store_config)['outcome'] == 'Created'
         with patch.object(e5.subprocess, 'run') as upload:
             try:
                 e5.publish_experiment(publication_root, 'campaign-1', store_config, [record], 'PARTIAL')
@@ -2198,7 +2221,7 @@ def self_check():
         campaign = object.__new__(e5.CPO)
         campaign.out = root / 'measurement-campaign'
         campaign.out.mkdir()
-        campaign.a = SimpleNamespace(binding=frozen_path,release=root/'fixture-release.json')
+        campaign.a = SimpleNamespace(binding=frozen_path,release=root/'fixture-release.json',row_tag='')
         campaign.c = {'factors':[]}
         campaign.start = lambda:None
         campaign.run = lambda:campaign_rows.append((campaign.a.mode,campaign.a.stage))

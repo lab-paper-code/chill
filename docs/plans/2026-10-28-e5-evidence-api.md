@@ -2,13 +2,17 @@
 
 적용은 E5(#213) 결과 표 기입 뒤다. 그때까지 `hack/e5`와 `load-generator`는 동결한다. 예외는 0장 publication 계약이다.
 
-## 0. publication 계약 (#213 게시 전, 가장 먼저)
+## 0. publication 계약 (다음 새 게시부터 적용)
 
-publication(`hack/e5/e5.py:1721-1787`)은 결과 표와 대시보드 S1이 함께 읽는 **불변** 기록이다. 게시한 뒤에는 고칠 수 없으므로, #213 게시 전에 하네스 동결을 잠깐 풀고 이것부터 고친다. 형식은 이 계획이 맡는다.
+publication(`hack/e5/e5.py`의 `publish_campaign`·`publish_experiment`, `hack/e5/demo.py`의 `publish`)은 결과 표와 대시보드 S1이 함께 읽는 **불변** 기록이다. 이미 게시한 #213~#225는 수정·재게시하지 않으며, 아래 형식은 다음 새 게시부터 적용한다.
 
 - `kpis`에 `energyCoverage`, `gapErrorBoundJoules`를 추가한다. 공백 보간 규칙(`198150d6`)이 만든 값이다.
 - 실행마다 측정 규칙 식별자를 넣는다. 항목은 하네스 SHA, `energyCoverage` 정책, 증거 출처(`host-s3` / `api`), GC 지표 의미(`gctrace-cycles` / `runtime-metrics-delta`)다. #213은 옛 수집, 다음 E5부터는 API 수집이라 같은 이름의 값도 의미가 다를 수 있다.
 - 식별자는 기록만 한다. 비교 가능 여부를 판정하는 관문은 만들지 않는다.
+
+설계·적용 커밋: 본 커밋(`feat(e5): record publication measurement rules and energy coverage`)에서 단계별 `kpis.energyCoverage`·`gapErrorBoundJoules`는 계산 결과를 그대로, `kpis.measurementRules`는 바인딩의 `harnessRepositoryCommit`(없는 옛 바인딩은 `null`)·실제 coverage 정책(없으면 바인딩 정책)·현재 수집의 `evidenceSource=host-s3`·`gcMeaning=gctrace-cycles`를 기록하며, API 전환 시 두 의미를 `api`·`runtime-metrics-delta`로 바꾸고 비교 관문은 추가하지 않는다.
+
+S1 호환성 확인: 현재 `chill-dashboard/features/read-pages.tsx`의 `ExperimentsPage`는 준비 중 화면으로 publication을 읽지 않으므로 타입 변경은 없다. S1 reader 구현 시 위 필드는 선택 필드로 읽고, 기존 게시의 누락은 그대로 표시한다(소급 보완 금지).
 
 ## 1. 범위
 
