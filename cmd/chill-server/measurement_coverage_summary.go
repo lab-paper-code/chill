@@ -132,7 +132,7 @@ func countCoverageFailedRequests(
 	cells map[string]operatorconsole.MeasurementCoverageCell,
 ) {
 	for _, request := range requests {
-		if request.Assessment.Status != operatorconsole.MeasurementFailed {
+		if !request.Failed {
 			continue
 		}
 		resolved := false

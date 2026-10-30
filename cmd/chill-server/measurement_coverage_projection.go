@@ -58,6 +58,7 @@ func buildMeasurementCoverage(
 		p.assessCell(&p.out.Cells[i])
 	}
 	coverageSummarize(&p.out, base)
+	compactCoverageResponse(&p.out)
 	return p.out
 }
 
@@ -282,7 +283,8 @@ func (p *coverageProjection) addRequest(task api.BatchEnergyOptimization) {
 		cellIDs = append(cellIDs, id)
 	}
 	p.out.Entities.Requests = append(p.out.Entities.Requests, operatorconsole.MeasurementEntity{
-		UID: string(task.UID), ID: requestID, Assessment: assessment, CellIDs: cellIDs,
+		UID: string(task.UID), ID: requestID, Status: assessment.DisplayStatus, Label: assessment.Label,
+		CellIDs: cellIDs, Failed: assessment.Status == operatorconsole.MeasurementFailed,
 	})
 	if !exists {
 		return
@@ -360,7 +362,8 @@ func (p *coverageProjection) addProfile(
 		Accepted: true, Available: true, Reused: profile.Reuse != nil, SchedulerUsed: &used,
 	})
 	p.out.Entities.Profiles = append(p.out.Entities.Profiles, operatorconsole.MeasurementEntity{
-		UID: facts.Request.UID, ID: profile.ID, Assessment: assessment, CellIDs: []string{cell.ID},
+		UID: facts.Request.UID, ID: profile.ID, Status: assessment.DisplayStatus, Label: assessment.Label,
+		CellIDs: []string{cell.ID},
 	})
 }
 
@@ -494,7 +497,9 @@ func (p *coverageProjection) assessVariant(variant *operatorconsole.MeasurementC
 	}
 	for _, row := range variant.ResultRows {
 		if row.RowKind != operatorconsole.ResultRowSourceReference && coverageContains(progress.Target, row.Batch) {
-			checks = append(checks, row.Assessment)
+			assessment := row.Assessment
+			assessment.Checklist.Checks = nil
+			checks = append(checks, assessment)
 		}
 		reused = reused || row.RowKind == operatorconsole.ResultRowConfirmation
 	}

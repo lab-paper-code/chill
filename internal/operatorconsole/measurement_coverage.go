@@ -159,10 +159,12 @@ type MeasurementCoverageGroup struct {
 	UnknownSupport int                 `json:"unknownSupport"`
 }
 type MeasurementEntity struct {
-	UID        string                `json:"uid"`
-	ID         string                `json:"id"`
-	Assessment MeasurementAssessment `json:"assessment"`
-	CellIDs    []string              `json:"cellIds"`
+	UID     string   `json:"uid"`
+	ID      string   `json:"id"`
+	Status  string   `json:"status"`
+	Label   string   `json:"label"`
+	CellIDs []string `json:"cellIds"`
+	Failed  bool     `json:"-"`
 }
 type MeasurementRunEntity struct {
 	UID     string   `json:"uid"`

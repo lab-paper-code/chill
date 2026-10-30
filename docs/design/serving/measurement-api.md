@@ -530,6 +530,8 @@ coverage 전용이며 기존 단건 assessment의 체크리스트 정책을 바�
 모든 variant의 condition과 resultRows 전체를 보존하며 행·variant를 잘라 용량을 맞추지 않는다.
 scheduler compact 읽기의 `$ref` 복원은 top-level Profile dictionary 전용이다.
 coverage는 위 variant 체크리스트 중복 제거를 사용하며 별도 `$ref` parser가 필요하지 않다.
+직렬화 회귀는 1,200회차·90요청·80프로파일·240결과 행의 실제 projection을 만들고
+8MiB 응답 한도의 절반인 **4MiB 미만**과 모든 entity/행/수치/출처의 보존을 함께 검사한다.
 
 | 세부 status | 화면 displayStatus / label | 판정 |
 |---|---|---|
