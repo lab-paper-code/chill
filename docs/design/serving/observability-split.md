@@ -285,3 +285,66 @@ Main 사전 승인 #230의 `d01ff310` multiarch agent를 rev110으로 배포한 
 #226 단일 리허설은 E0 Ready3/3, MIX 60초(MNV/PLC/Smol offered 1177/2385/12·HTTP 성공100%)와 두 창의 전력 완결을 확인했다. 같은 원시를 host-s3/API로 각각 줄인 D1·지연·전력 J는 완전 동일했고, #213 E5-2도 API 보관본 재판정이 원판정 FAIL·동일 KPI였다(최초 오프라인 provenance 누락은 보존 후 Main 승인으로 교정). 다만 finish는 잔류 owner `plan-d46bdffb3060` 예약1로 600초 timeout되어 **운영 preflight FAIL을 그대로 보존**했다. 신규 Ready Pod라는 known-effect와 prepare partial/context canceled·현재 보상 action 부재를 기록한 뒤 Main 승인 takeover reset 1회로 instances0/reservations0·설정복귀·Job 정리를 완료했으며 측정 재시도는 0회다.
 
 MIX의 resources 컨테이너 표본 1600건은 cluster의 Node/Pod UID/containerID와 전부 연결되고 counter 타입/단위 오류0이었다. 1초 표본을 켠 discovery agent 전체 cgroup CPU는 rasp5(v2) 0.002370 core(1core의 0.2370%), jetson-nano(v1) 0.045047 core(4.5047%)였으며 이는 추가분의 인과 추정이 아닌 전체 agent 비용이다. 측정 창 밖 60초 CPU profile(총10.98 CPU초)에서 라이브 경로 0.27초/2.459%, node-agent 수신0.80초/7.286%, raw 전송0.12초/1.093%, 대시보드 조회1.85초/16.849%의 서버 CPU 몫을 기록했다. 공통 GC/TLS/auth 등은 나누지 않았고 100Hz 표본의 미검출을 비용0으로 해석하지 않는다. 근거·실패 원형·정확 비교·원시/profile은 `O/campaign/v2/d-20261027/control-226-rehearsal/`에 보존한다. 하네스 cutover와 브라우저 수용은 이번 작업에서 수행하지 않았다.
+
+## 18. 실험 부하 단계·기록 당시 identity 공개 (B0/B3, 2026-10-30)
+
+**설계 확정·구현 전.** [B0 계획](../../plans/2026-10-30-dashboard-api-gaps.md),
+[catalog SRS PC-12~13](../../spec/catalog/SRS.md#9-측정-커버리지-조회-api)에서 추적한다.
+`GET /api/v1/experiments[/{id}]`는 이미 `stages[].kpis`를 opaque JSON으로 그대로 전달한다
+(`internal/serving/httpapi/experiments.go:19-39`, `cmd/chill-server/experiment_service.go:89-122`).
+조회 때 raw를 스캔하거나 현재 Workload로 보충하지 않는다. envelope/schema/prefix·KPI 모집단·판정은 유지한다.
+
+### 18.1 생성 사실과 노출 누락의 구분
+
+- E5는 frozen binding의 workload UID/generation·definitionID, schedule parts의 α·seconds,
+  phase의 workload별 실제 producer start를 이미 기록한다. `e5.py:2662-2671`의 게시 allowlist가
+  이 metadata를 버린다. `judgment.requests[name].substages`는 α map을 담지만 경계 시각은 없으므로
+  그대로 복사하는 것만으로 충분하지 않다.
+- Demo는 captured scheduler/canonical snapshot과 config의 UID/generation, schedule parts와
+  producer-relative 창을 보존한다. `demo.py:911-948`의 게시 workload 행에는 identity/α가 없다.
+  direct `rates` 입력에는 α가 애초에 없으며 역산하지 않는다.
+- 이미 기록된 자료는 **미래 publication에서만 projection**한다. 새로운 계측·관측 stream,
+  live identity 조회나 별도 provenance 저장소는 필요하지 않다. 원시에도 없는 항목은 끝내 ‘기록 없음’이다.
+
+### 18.2 두 publisher 공통 metadata
+
+기존 `stages[].kpis.requests[<기록 당시 이름>]`(E5)와
+`stages[].kpis.workloads[<기록 당시 이름>]`(demo)에 같은 아래 필드를 추가한다.
+두 통계 shape 자체를 합치거나 기존 ms/ns 단위를 바꾸지 않는다.
+
+| 필드 | 의미·단위·부재 |
+|---|---|
+| `workloadUID` | 해당 모집단의 기록 당시 UID, string 또는 null. 혼합/불명확하면 한 UID를 골라 붙이지 않음 |
+| `definitionID` | 실제 저장된 definition identity, string 또는 null. 현재 객체의 generation/RV로 만들지 않음. demo는 captured definition/definitions의 기존 identity 조립 규칙만 재사용 |
+| `identitySource` | 기존 published historical snapshot/definition의 `{store,key}` 또는 null. summary.sources에 포함된 참조여야 하며 로컬 경로를 store key로 꾸미지 않음 |
+| `substages` | 한 part인 경우도 포함한 frozen schedule의 순서 있는 배열, schedule 자체가 미기록이면 null |
+| `substages[].id` | 동결된 part ID. 문자열에서 조건/비교군/α를 추론하지 않음 |
+| `substages[].alpha` | 이 workload에 해당하는 단일 dimensionless number, finite ≥0, 또는 null. E5는 canonical-name map, demo는 기존 ALIASES로 alias를 정확히 대응. direct rates는 null |
+| `substages[].startOffsetNanos`, `endOffsetNanos` | workload producer 시작 기준 예정 `[start,end)`의 정수 ns. 기존 part seconds의 누적·round 규칙 재사용 |
+| `substages[].from`, `to` | **해당 workload의 기록된 실제 producer 시작+예정 offset**인 RFC3339 UTC 시각, anchor 없으면 각각 null. 0부하로 producer 미기동이면 다른 workload의 시작으로 채우지 않음 |
+| `substages[].source` | 해당 frozen parts/starts를 담은 published phase의 `{store,key}` 또는 null. summary.sources에 포함 |
+
+기존 `missingReasons`에 identity 미기록/혼합, α 직접 설정 안 함/과거 미게시,
+producer anchor 부재를 구분해 남긴다. `from/to`의 의미는 **실제 producer 시작에 고정한
+예정 단계 구간이지 관측된 전환 사건이 아님**을 게시 limitations에 명시한다.
+stage 전체 `[from,to)`는 producer별 창을 대신하지 않는다. offered/기간은 관측 평균 요청률이며
+α의 대용이 아니다. 여러 definition이 섞인 모집단이면 UID/definitionID의 모호함을 유지한다.
+
+### 18.3 검증·저장·배포 경계
+
+binding/schedule 검증과 publication 조립 경계에서 α finite/범위, 이름 대응, offset 순서·길이,
+producer anchor와 provenance 참조를 한 번 확인한다. 기존 uploader/Go reader는 envelope·안전한
+object reference·유한 payload만 검증하며 opaque KPI의 hash/바이트 재검증 gate는 추가하지 않는다.
+
+신규 optional KPI metadata는 캠페인 사이 **한 번에 두 publisher에 cutover**한다.
+`serving-experiment.v1alpha1`, `serving/experiments.v1alpha1/`, observation `v1alpha5`를 유지한다.
+기존 reader는 optional KPI를 이미 허용하므로 새 버전/dual decoder가 필요 없다.
+원시 자료·기존 publication(#213~#225 포함)은 수정/재게시하지 않으며 기존 experiment ID도 재사용하지 않는다.
+과거 응답의 필드 부재는 ‘α 미제공’, ‘기록 당시 identity 미기록’이다.
+새 metadata를 얻으려고 과거 summary를 GET 때 다시 계산하거나 새로운 실험으로 위장하지 않는다.
+이는 ADR 0019/0030/0031의 기존 원칙 적용이며 별도 ADR 0032는 필요하지 않다.
+
+필요물은 새 **harness/publisher revision**, 해당 revision으로 동결한 신규 publication 입력·새 ID,
+F4 소비자다. metadata 전달만을 위한 ChillServer/Console/agent/runtime 이미지·CRD 배포는 없다.
+publication 검증은 기존 Python self-check/recorded-data 검사와 Go opaque pass-through 회귀를 확장한다.
+raw export·대시보드 과거 조회는 §17/ADR0030대로 E5 측정 창 밖에서 수행한다.

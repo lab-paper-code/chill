@@ -224,3 +224,133 @@ CampaignOps 한 명만 클러스터를 변경한다. 아래는 **실증 성공 �
 - 배포 SHA·양쪽 BEO UID/annotation/result/raw·profiles(reuseChecks/행/preparations)·snapshot option/row·실제 Pod/native UUID·성공/거절 사유·반환을 원시 디렉터리에 저장해 U2 표에 연결한다. 짧은 확인 시간은 독립 전체 측정 한 건 절감과 구분해 보고한다.
 
 회귀 범위는 허용 경계/설정 변경·기종/image/자원 불일치·source 무효화/최신 선택·batch/전력 결측·대상 UUID·양쪽 독립성·planner option·확인 BEO의 비용/occupancy 파생 행 해석 및 실제 preparation 연결이다.
+
+## 12. 대시보드 측정 API 보강 계약 (B0, 2026-10-30)
+
+**설계 확정·구현 전.** [B0 계획](../../plans/2026-10-30-dashboard-api-gaps.md)의 B1/B2가
+이 절을 구현한다. 화면 계약은 [Dashboard §8](../dashboard/README.md#8-측정실험-ux와-커버리지-2026-10-30),
+요구사항은 [catalog SRS §9](../../spec/catalog/SRS.md#9-측정-커버리지-조회-api)다.
+기존 CR, raw/result JSON과 검증·admission 판정은 바꾸지 않는다.
+
+### 12.1 B1 — 권위 있는 정적 runtime 호환성
+
+`GET /api/v1/model-compatibility?modelSpec=<name>&executionPath=<name>&deviceClass=<name>&node=<name>`
+한 건을 읽는다. 네 query는 각각 정확히 한 번 필수이며 추가/중복 query, 빈 값·잘못된 이름은 400이다.
+Console query 경계가 이름/참조·Node의 class selector membership과 사실 입력의 구조·의미를 검증한다.
+ModelSpec/DeviceClass/Node 미존재는 404, 권한 거부는 403, 사실 조회 실패는 503이다.
+누락·모순된 runtime 선언은 성공 응답의 `Unknown`이며 빈 지원 목록이나 `Incompatible`로 숨기지 않는다.
+
+응답은 `{readAt,selection,inputs,verdict,reasons}`다.
+
+| 필드 | 계약 |
+|---|---|
+| `readAt` | RFC3339Nano UTC 조회 시각. 여러 Kubernetes GET을 atomic snapshot으로 주장하지 않음 |
+| `selection` | query의 `modelSpec,executionPath,deviceClass,node` 원문 이름 |
+| `inputs.modelSpec`, `inputs.deviceClass`, `inputs.node` | 각각 `{name,uid,resourceVersion}` |
+| `inputs.runtimeDeclaration` | `{namespace,name,uid,resourceVersion,key,image}` 또는 null. 선택 실패 시 image를 꾸미지 않음 |
+| `verdict` | 기존 `modelcompat`의 `Compatible`, `Incompatible`, `Unknown` |
+| `reasons[]` | `{kind,code,message}`. 기존 `Conflict`/`Unknown`·reason code 재사용. artifact supply architecture 불일치는 `ArtifactArchitectureMismatch`; 선언 부재/모호함은 `RuntimeDeclarationMissing`/`RuntimeDeclarationAmbiguous` |
+
+`candidate_resolver.go`와 `execution_facts.go`의 **동일 trusted fact-source, class/Node scope,
+strict declaration 해석** 및 `modelcompat.Evaluate`를 재사용한다. 필요한 읽기 부분만 기존 kube
+adapter에서 공유하고 Console에는 composition-root callback으로 연결한다. Console/serving이
+profiler controller를 import하거나 별도 runtime 지원 registry·backend 이름 추측표를 만들지 않는다.
+실행 선언 선택은 기존의 유일한 해당 class/Node/family/backend 규칙을 유지한다. 후보 없음은
+Unknown이다. 기존 resolver가 선택한 선언의 명시적 충돌과 artifact architecture 충돌만 Incompatible이다.
+같은 class의 여러 Node 판정은 각각 조회하며 Node-bound GPU 선언을 class 전체로 확장하지 않는다.
+
+이 판정은 **현재 선언에 근거한 정적 runtime 지원**이다. 실제 runtime probe, 현재 Node Ready,
+전력모드/online CPU 적격성, 전처리·데이터셋 호환성, 측정 완료나 admission 성공은 아니다.
+power mode가 다른 열은 같은 정적 결과를 재사용할 수 있지만 별도 eligibility를 합성하지 않는다.
+화면은 Compatible을 ‘정적 실행 지원 확인’, Incompatible을 ‘지원 안 함 — 이유’,
+Unknown을 ‘지원 확인 불가 — 이유’로 쓰며 증거 상태와 독립 표시한다.
+최종 측정 요청은 기존 dry-run/preflight/admission을 그대로 통과해야 한다.
+
+### 12.2 B1 — 실패 BEO와 소유 Run의 공개 연결
+
+기존 `GET /api/v1/namespaces/{namespace}/profiling-runs`의 `runs[]`에
+`ownerReferences:[]`(Kubernetes `metav1.OwnerReference` 원형)와 `labels:{}`를 추가한다.
+labels는 기존 `edge.dacs.io/batch-energy-optimization`, `edge.dacs.io/workload-mode`,
+`edge.dacs.io/batch`, `edge.dacs.io/attempt` 네 key만 투영한다.
+없는 값은 만들어 넣지 않는다. ownerReferences가 없으면 빈 배열이다.
+추가 저장·CRD·owner 재작성은 없다.
+
+소유 판정은 같은 namespace에서 `controller=true`, `apiVersion=edge.dacs.io/v1alpha1`,
+`kind=BatchEnergyOptimization`, **BEO UID가 정확히 일치**할 때만 한다. 이름/label만으로
+소유를 확정하지 않는다. 원래 `spec.measurement.batch/workloadMode`와 attempt label을 표시하며
+정수 ≥1이 아닌/없는 attempt는 ‘회차 기록 없음’이다. label 해석은 API projection 경계에서
+소유를 판정하는 새 gate가 아니며 원문을 보존한다. parent가 삭제되거나 같은 이름 다른 UID면
+옛 UID의 owner 사실만 보여 준다. 전체 목록 page 확인 전 ‘소유 회차 없음’을 확정하지 않는다.
+
+실패 BEO result 응답의 `result:null`은 그대로다. finalized evidence가 없는 Run도 목록의
+spec/status/owner를 읽을 수 있고 Passport 성공은 소유 연결의 전제 조건이 아니다.
+Run별 조건·attempt를 묶을 뿐 active/idle/배치를 통틀어 새로운 1..N 회차를 만들지 않는다.
+
+### 12.3 B2 — 저장 원시에서 읽는 배치 CI·통합 p95
+
+`GET .../batch-energy-optimizations/{name}/result`의 기존 `campaign/result`는 그대로 두고
+형제 필드 `statistics`와 `statisticsReason`을 추가한다. **sealed `result.detail`을 확장하거나
+다시 쓰지 않는다.** CI는 기존 유도 과정에 존재하고 latency vector는 raw에 저장돼 있으므로
+생성 경로 변경보다 현재 보존 자료의 읽기 projection을 택한다. result.detail에 통계가 없다는
+것만으로 재측정을 요구하지 않는다.
+
+`statistics`는 `{batches:[...]}` 또는 null이며 batch 행은 다음과 같다.
+
+| 필드 | 의미·단위 |
+|---|---|
+| `batch` | 실제 completed active trial의 batch 크기 |
+| `incrementalWorkJoulesPerItem` | 기존 `DeriveCurve`의 독립 active trial별 J/item 추정치 산술 평균. 선택 결과의 평균과 다른 새 목적함수 아님 |
+| `activeTrialCount`, `idleTrialCount` | 해당 point에 쓰인 독립 active Run 수와 공유 model-loaded idle Run 수 |
+| `confidence` | 기존 `PointConfidence` 그대로: `estimatorVersion,method,level,varianceOfMean,effectiveDegreesOfFreedom,halfWidth`. halfWidth는 J/item, variance는 (J/item)². 유효 자유도 부재는 기존 omitempty 의미 유지 |
+| `latencySampleCount` | 동일 batch의 완료된 client 추론 호출 latency vector 원소 수. item 수·Run 수와 다름 |
+| `latencyP95Milliseconds` | 해당 batch의 모든 active trial **client 호출 지연 표본을 합친** Gonum empirical 0.95 분위, ms. batch 1건 호출 시간이며 batch로 나누지 않음 |
+| `sources[]` | 실제 사용한 기존 `{store,key,size}` 원시/실행/curve-plan 식별자. raw 다운로드 URL이 아님 |
+
+CI는 기존 shared-idle variance와 Welch–Satterthwaite/Gonum Student-t 계산을 그대로 사용한다.
+양측 구간은 평균±halfWidth다. 하한을 0으로 자르지 않고 variance=0/halfWidth=0은 유효 관측이다.
+`level`은 이 BEO의 기존 pointPolicy confidence 해석값이며 전역 settings나 표시용 95%를 덮어쓰지 않는다.
+서로 다른 batch/조건, excluded trial, 재사용 확인 trial을 섞지 않는다. trial별 p95 평균이나
+기존 point의 ‘trial p99 중 최댓값’을 p95로 이름만 바꾸지 않는다.
+
+Console composition root의 읽기 callback은 **저장된 result.completedTrials와 curvePlan만**
+따라 기존 verified evidence loader → `profiler/projection` → `DeriveIdleBaseline`,
+`VerifyCurvePlan`, `DeriveCurve`를 재사용한다. `statistics.go`의 percentile을 사용하는
+좁은 summary 함수를 같은 derivation package에 둔다. 새 통계 구현·quality gate·검색 재실행,
+현재 catalog 최신 profile 선택, CR status/result mutation은 없다.
+Console transport가 profiler controller를 import하지 않으며 기존 port/callback 조립 패턴을 따른다.
+
+검증은 저장 자료가 verified 타입으로 들어오는 경계 한 번이다. result의 Run namespace/name/UID,
+owner UID·completed reference, plan의 정확 조건과 raw lineage를 기존 검증기로 연결하고 downstream은
+그 타입을 소비한다. 새 digest 재계산·문자열 hash 검사·바이트 동일성 gate를 넣지 않는다.
+실제 다운로드의 기존 유한 크기 제한은 유지하되 payload 재인코딩을 identity 판정에 쓰지 않는다.
+요청 취소/기존 timeout을 지키며 목록·커버리지 전체에 통계를 일괄 로드하지 않는다.
+
+| 상황 | 응답·표시 |
+|---|---|
+| result reference 없음 | `statistics:null`, `statisticsReason:"NoPublishedResult"`; 기존 result:null 유지 |
+| 정상 참조지만 보존 raw/Run이 실제 없음 | `statistics:null`, `statisticsReason:"RetainedEvidenceMissing"`; sealed 결과는 읽히며 ‘통계 원근거 기록 없음’ |
+| 이 측정 방법에 client latency/통계 입력이 애초에 없음 | `statistics:null`, `statisticsReason:"StatisticsNotRecorded"`; ‘CI·통합 p95 기록 없음’ |
+| 통계 제공 | statisticsReason은 null. 통계가 없는 것을 숫자 0으로 치환하지 않음 |
+| 권한·transport/store 실패·깨진 객체·UID/조건 모순 | 기존 오류 전달(403/502/503 등 해당 경계). 기록 없음으로 숨기지 않음 |
+
+### 12.4 B2 — OperationCost 실측 시간·J
+
+기존 list/detail `GET /api/v1/namespaces/{namespace}/operation-cost-measurements[/{name}]`의
+`status.steps[]`에 `operationID`, `durationNanos`, `wallJoules`, `reason`을 추가한다.
+durationNanos는 nullable 정수 ns(브라우저는 lossless 정수 처리), wallJoules는 nullable number J다.
+기존 name/key/verdict, CR 전체 phase/reason, references.evidence는 그대로다.
+`durationNanos=record.result.endedAt−startedAt`이며 유효한 실제 양 끝 시각이 없으면 null이다.
+planned idleDurationSeconds·watchdog/관측 창 길이를 실측 시간으로 대체하지 않는다.
+wallJoules는 저장된 수용된 **전체 Node 벽에너지**이며 증분 J/item이 아니다.
+불수용·실패·isolation 미확인에서 기록된 수용 에너지가 없으면 null, 실측 0 J는 0이다.
+실패에 실제 시간이 있으면 시간만 제공할 수 있다. 미실행 후속 단계 status 행은 만들지 않는다.
+
+ChillServer measurement service가 CR의 **정확 step key만** 기존 evidence store에서 읽는다.
+전체 prefix/latest 비용을 선택하는 `CostEvidence.Refresh`는 실패 이력을 버리므로 재사용하지 않는다.
+기존 `serving/kube` operation record decoder/identity 검증을 좁게 재사용하여 CR UID로 만든
+operation ID·step kind·Node·request/result identity·실제 창을 한 경계에서 확인하고 안전한 DTO를
+`measurement_projections.go`에 전달한다. accepted cost와 idle baseline의 기존 분기를 유지하고,
+failed/insufficient history에 Accepted의 완결 조건을 잘못 강제하지 않는다.
+raw power·prepare payload/비밀을 HTTP에 복사하지 않는다.
+참조 key가 있는데 객체를 못 읽거나 깨졌으면 evidence 오류이지 null/‘미측정’이 아니다.
+개별 단계 Accepted를 전체 순서 Complete로 승격하지 않는다.

@@ -141,3 +141,51 @@
 정확한 추가 CR 필드·단위·범위·기본값 및 binding 키는
 [설정 설계 §5~6](../../design/serving/configuration-hardcoding.md#5-측정-cr와-불변-실행)을 따른다.
 2026-10-30: PC-04~06, PR-05 추가. 구현·측정 수용 완료 기록은 아니다.
+
+## 9. 측정 커버리지 조회 API
+
+2026-10-30 **B0 설계 확정, B1~B3/F4 구현·배포 전**.
+화면 요구는 [Dashboard SRS](../dashboard/SRS.md) DB-FR-56~65를 유지하며,
+아래 요구는 그 화면이 소비할 서버/게시자 사실의 소유권을 정한다.
+
+- `PC-07` 모델 실행 경로×DeviceClass×구체 Node의 현재 trusted runtime 선언에 근거한 정적
+  호환성, 입력 UID/resourceVersion·출처, 판정 사유를 읽기 전용 API로 제공해야 한다.
+  Compatible/Incompatible/Unknown을 구분하고 누락·모호한 선언이나 조회 실패를 미지원으로
+  바꾸지 않아야 한다. 같은 기종이라는 이유로 Node-bound 선언을 모든 Node로 확대하지 않는다.
+  정적 호환성은 전처리/데이터셋·모드/CPU admission·현재 준비 상태·측정 완료를 보장하지 않는다.
+- `PC-08` finalized result가 없는 실패 BEO에서도 기존 Run의 controller owner apiVersion/kind/name/UID와
+  기록된 batch/workload mode/attempt를 공개 조회로 연결할 수 있어야 한다. 같은 namespace와
+  정확 BEO UID로 소유를 판정하며 이름 유사성·label만으로 소유를 확정하거나 회차를 재번호하지 않는다.
+  owner/attempt 부재와 전체 page 미조회는 기록 없음/확인 중으로 구분한다. Passport는 전제가 아니다.
+- `PC-09` 보존된 BEO completed active/idle trial과 frozen curve plan에서 배치별 증분 J/item 평균,
+  독립 active/idle Run 수, 기존 공유 idle 불확실성을 포함한 CI의 실제 level/half-width·추정 방법,
+  출처를 제공해야 한다. 기존 유도/Student-t 구현과 해당 BEO의 정책을 재사용하고 signed 평균/CI를
+  보존한다. 통계를 추가하려고 sealed result/detail·raw를 수정하거나 현재 catalog 값으로 바꾸지 않는다.
+- `PC-10` 같은 batch/정확 조건의 완료된 client 추론 호출 latency 원시를 합친 p95(ms)와 표본 수를
+  제공해야 한다. trial별 분위 평균·최대 p99·다른 batch/조건 합치기·batch로 나눈 시간을 통합 p95로
+  표시하지 않는다. 원근거 부재와 읽기 오류·무효 근거를 구분하고 미제공을 0으로 만들지 않는다.
+- `PC-11` OperationCostMeasurement list/detail은 CR이 가리킨 정확 단계의 실제 operation identity,
+  실제 시간(ns)·전체 Node 벽에너지(J)·원 판정과 사유·출처를 제공해야 한다.
+  수용된 0과 미관측/null, 실패 단계의 실제 시간과 에너지 수용을 구별하고 계획 idle 시간·최신 다른
+  operation의 값으로 채우지 않는다. 개별 단계 수용은 전체 순서 성공이 아니다.
+- `PC-12` 실험 게시자는 기록된 frozen schedule에서 workload별 α(무차원)와 예정 substage offset,
+  기록된 해당 producer 시작에 고정한 시각·출처를 게시해야 한다. 두 기존 publisher shape에 같은
+  metadata 의미를 적용한다. 직접 rate만 설정한 실험/미기록 α는 null이며 offered/기간·stage ID로
+  역산하지 않는다. 예정 구간과 실제 관측 사건을 구분하고 0부하의 시작 anchor 부재를 보존한다.
+- `PC-13` 실험 게시자는 KPI 모집단의 기록 당시 workload UID·definition identity와 그 출처를
+  보존된 binding/definition/snapshot에서 투영해야 한다. 혼합/미기록 identity는 미확인 사유를 남기며
+  현재 같은 이름의 Workload로 채우지 않는다. 기존 publication/관측 archive는 소급 수정·재게시하지 않는다.
+
+| 수용 시나리오 | 확인 결과 | 요구사항 |
+|---|---|---|
+| trusted runtime 충돌·누락·중복, 같은 class의 Node-bound GPU | 명시 충돌만 미지원, 부재/모호함은 Unknown; 정확 Node 출처와 조회 오류 유지, POST/preflight는 여전히 별도 | PC-07 |
+| 실패 BEO result:null·동명 다른 UID·Run owner 없음·attempt 부재·여러 page | UID 일치 owner만 소유 회차이며 원 batch/mode/attempt 유지; Passport 없어도 조회, 미기록/조회 미완료 구분 | PC-08 |
+| 비영분산/영분산·다른 CI level·음수 하한·길이 다른 trial latency vector | 기존 CI 수학 유지, 통합 p95는 합친 호출 표본의 값, Run/호출/item 수 구분, 원근거 없으면 기록 없음 | PC-09, PC-10 |
+| accepted 0 J·failed duration·idle·미실행 후속·잘못된 step/UID/key·store 실패 | 정확 단계 시간/J만 제공; null/0/오류와 순서 phase 보존, 계획 시간/다른 최신 비용 대입 없음 | PC-11 |
+| 두 publisher의 서로 다른 workload α·alias·직접 rate·한/여러 part·producer 시작 시차 | α는 workload별 값, 예정 offset과 해당 실제 시작 anchor 구분, 0부하 무anchor·direct-rate null 사유 보존 | PC-12 |
+| 기록 뒤 Workload 재생성·한 모집단에 여러 definition·과거 summary | 기록 당시 identity/혼합 사유 유지, 옛 응답은 미기록; 현재 UID/기본값 대입·과거 publication 재쓰기 없음 | PC-13 |
+
+API 필드·null·경계 검증은 [측정 API §12](../../design/serving/measurement-api.md#12-대시보드-측정-api-보강-계약-b0-2026-10-30)와
+[관측 설계 §18](../../design/serving/observability-split.md#18-실험-부하-단계기록-당시-identity-공개-b0b3-2026-10-30),
+순서·소유권·회귀·배포는 [B0 계획](../../plans/2026-10-30-dashboard-api-gaps.md)을 따른다.
+ADR 0019/0030/0031을 유지하며 새 측정 lifecycle·지원 registry·다중 버전 reader·해시/바이트 gate는 추가하지 않는다.
