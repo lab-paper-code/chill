@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"math"
 	"reflect"
 	"slices"
 	"strconv"
@@ -534,9 +533,8 @@ func (r PreparationRequest) Validate() error {
 		r.Measurement.DurationSeconds < 1 {
 		return errors.New("measurement batch, duration, and warm-up iterations must be valid")
 	}
-	if math.IsNaN(r.Measurement.DurationToleranceSeconds) || math.IsInf(r.Measurement.DurationToleranceSeconds, 0) ||
-		r.Measurement.DurationToleranceSeconds < 0 || r.Measurement.DurationToleranceSeconds >= float64(r.Measurement.DurationSeconds) {
-		return errors.New("measurement duration tolerance must be finite, nonnegative and less than duration")
+	if err := r.Measurement.ValidateDurationTolerance(); err != nil {
+		return err
 	}
 	workloadMode := r.Measurement.WorkloadMode
 	if strings.TrimSpace(workloadMode) == "" || strings.TrimSpace(workloadMode) != workloadMode {

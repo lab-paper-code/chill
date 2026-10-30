@@ -93,9 +93,8 @@ func (i RunConfig) Validate() error {
 	if i.Measurement.Batch < 1 || i.Measurement.WarmupIterations < 0 || i.Measurement.DurationSeconds < 1 {
 		return errors.New("measurement batch, duration, and warm-up iterations must be valid")
 	}
-	if math.IsNaN(i.Measurement.DurationToleranceSeconds) || math.IsInf(i.Measurement.DurationToleranceSeconds, 0) ||
-		i.Measurement.DurationToleranceSeconds < 0 || i.Measurement.DurationToleranceSeconds >= float64(i.Measurement.DurationSeconds) {
-		return errors.New("measurement duration tolerance must be finite, nonnegative and less than duration")
+	if err := i.Measurement.ValidateDurationTolerance(); err != nil {
+		return err
 	}
 	if err := i.validateMeasurementMode(); err != nil {
 		return err
@@ -104,6 +103,14 @@ func (i RunConfig) Validate() error {
 		i.Metrics.TimeoutMilliseconds >= i.Metrics.IntervalMilliseconds ||
 		i.Metrics.DurationSeconds < i.Measurement.DurationSeconds {
 		return errors.New("invalid or under-covering metric observation request")
+	}
+	return nil
+}
+
+func (m MeasurementContract) ValidateDurationTolerance() error {
+	if math.IsNaN(m.DurationToleranceSeconds) || math.IsInf(m.DurationToleranceSeconds, 0) ||
+		m.DurationToleranceSeconds < 0 || m.DurationToleranceSeconds >= float64(m.DurationSeconds) {
+		return errors.New("measurement duration tolerance must be finite, nonnegative and less than duration")
 	}
 	return nil
 }
