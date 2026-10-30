@@ -1,5 +1,7 @@
 # 노드 전력 제어 SRS
 
+상태: 2026-10-30 **2차 검토(fusion: 패널 3모델+판정) 반영**(설정 절, 구현 전).
+
 ## U3. NVIDIA discrete GPU 클럭
 
 일반 전력 모드의 제어 범위는 [구성 선택](../04_configuration_selection.md)을 따른다. 이 절은 [ADR 0015](../../adr/0015-node-power-actuation-boundary.md)의 NVIDIA 호스트 어댑터 계약이다.
@@ -22,14 +24,14 @@
 
 ## 설정 소유권과 관측 정책 기록
 
-- `PA-NV-06` registry·Node·호스트 경로·포트·실행 UID/GID·장비 catalog 같은 환경 고유값은 환경별 values/JSON에서 공급한다. 기본 chart·실행 코드·샘플의 특정 클러스터 binding을 제거하되 환경 overlay를 적용하면 현재 배포의 값과 보안 동작을 유지해야 한다. 프로토콜 버전·RBAC vocabulary·안전 한계는 환경 knob로 바꾸지 않는다.
-- `PA-NV-07` Node 자원 관측의 실제 sampleInterval/batchInterval은 기존 배포 설정에 두며 각 resource 전송 및 기존 resources 기록에서 선택값과 Node/실행 출처를 추적할 수 있어야 한다. 서버 기동 설정을 Node agent의 실제값으로 대신하지 않는다. command timeout 같은 기존 안전 envelope는 유지한다.
+- `PA-NV-06` 실제 registry·Node/runner·외부 endpoint·잔존 실행 namespace만 B다. 기존 values의 repository·region·장비 catalog·signature·mode·clock은 D로 유지한다. 내부 mount/port8080·9000/UID65532와 예제·artifact 경로는 패키징/예제 계약으로 둔다. 기본 values는 비우지 않는다. 배포값은 기존 해당 Helm 키 하나, 잔존 helper namespace는 환경 JSON d2.namespace→binding.config.namespace, 운영 샘플은 samples["<기존 상대 경로>"]의 완전한 문서로 이동한다. immutable runtime declaration은 image와 inspection 사실 전체를 이동하며 주소만 치환하지 않는다.
+- `PA-NV-07` 기존 Node sampleInterval/batchInterval 배포 설정과 원시 sampledAt/receivedAt을 유지한다. 새 ResourceBatch/resources cadence payload 요구는 삭제한다(기존 설정 D·strict decoder 계약 유지). 두 시각만으로 선택 주기와 실패 누락을 구별한다고 주장하지 않는다. cadence 출처는 기존 배포 설정이며 command timeout·Job overhead/deadline도 기존 설정을 유지한다.
 
 | 수용 시나리오 | 결과 | 요구사항 |
 |---|---|---|
-| 현재 환경 overlay 적용 | port/path/UID/GID와 Service·Pod·mount·endpoint 연결이 현재값과 일치, 기본/샘플에는 사설 IP·실Node·registry binding 없음 | PA-NV-06 |
-| 다른 명시 환경 입력·필수 binding 누락 | 다른 환경값이 실제 생성자/소비자에 전달됨; 누락은 명시 오류이며 가짜 환경 fallback 없음 | PA-NV-06 |
-| sample1s/batch10s와 다른 유효 주기로 Node 자원 수집 | 실제 선택 cadence와 Node identity가 기존 resources 행에 남음, 새 stream 없음 | PA-NV-07 |
+| 승인 overlay 경로·revision·release·namespace를 지정해 비교 | default/profiler 별도 render의 의미 있는 delta 확인. values-operating.yaml rev74를 현재 배포값으로 부르지 않음; 기본 testbed profile 유지 | PA-NV-06 |
+| 실제 운영 샘플/namespace 선택 | 기존 요청 절차가 환경 JSON 완전 문서를 선택하며 정적 YAML 참조 자동 해석 없음. 실행 중 환경 파일 재조회 없음 | PA-NV-06 |
+| 기존 sample1s/batch10s 및 다른 선택 cadence | 기존 배포 설정과 관측 시각/Node identity 유지. 새 payload 필드나 완전 cadence provenance 주장은 없음 | PA-NV-07 |
 
 2026-10-30: PA-NV-06~07 추가. 상세 경계는
 [설정 소유권 설계](../../design/serving/configuration-hardcoding.md)를 따른다.

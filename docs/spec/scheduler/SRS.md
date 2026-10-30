@@ -1,5 +1,7 @@
 # CHILL 스케줄러 SRS
 
+상태: 2026-10-30 **2차 검토(fusion: 패널 3모델+판정) 반영**(§9, 구현 전).
+
 ## 1. 목적과 범위
 
 이 문서는 CHILL 스케줄러의 판단 근거, 선택 결과, 실행 계층과의 책임 경계,
@@ -481,9 +483,9 @@ evidence API 작업의 활성 수용 기준이 아니다. 미배선 구현(`e947
 아래 기본값은 새 정책이 아니라 현재 리터럴을 옮긴 값이다. 아직 구현·검증 완료를 뜻하지 않는다.
 
 - `SCH-71` 운영 중 조정할 serving 정책은 기존 settings API에서 조회·변경한다. 아래 필드를 생략하면 현재 기본값을 채우고 응답·판단에는 실제 선택값을 남긴다. 유효 범위의 비기본값도 실제 소비해야 하며 하나의 값만 허용하는 필드는 두지 않는다.
-- `SCH-72` 초기 settings와 외부 ConfigMap에서 새로 수락한 설정, API 변경의 시도·실제 적용 결과를 기존 scheduler stream에 기록한다. actor·시각·before/after·적용/오류·설정 출처와 서버 실행 identity를 구분하여 당시 판단의 설정을 해석할 수 있어야 한다. 요청된 값이나 사전 행만으로 적용 성공을 주장하지 않는다.
-- `SCH-73` 배포 시점 requestTimeout·drainTimeout·sourceInterval·profileInterval·directoryInterval·queueLimit·controlComponents는 기존 flags/values에 두고 서버가 실제 적용한 값을 프로세스 기동당 scheduler startup 한 행으로 남긴다. CLI·Helm·운영 overlay의 서로 다른 기본값을 통합하지 않는다. 기록 실패 시 요청 수락 전에 기동 실패한다.
-- `SCH-74` 설정 변경은 그 설정에 의존하는 catalog 유도·용량 입력/캐시·재사용 판정·전력 경계 선택까지 전달한다. 한 판단에서 서로 다른 적용 snapshot을 섞지 않는다. 설정의 구조·의미는 입력 경계에서 검증하고 하위 계층에서 중복 검증하거나 새 바이트/해시 비교 관문을 만들지 않는다.
+- `SCH-72` 판단 적용값의 권위는 기존 Decision.Settings다. PUT 사전/후속 행을 유지하고 초기·외부 설정은 실제 사용 Decision으로 해석한다. 첫 판단 전 모든 적용 이벤트 복원·refresh 합성 행·초기 before=after 행·별도 provenance 저장소는 요구하지 않는다. 출처는 실제 보존 참조/binding 범위만 주장한다.
+- `SCH-73` 기존 cluster stream의 server-start를 재사용한다. 기존 Pod UID/namespace/name과 run()의 실제 started를 쓰고 queueLimit·sourceIntervalNanos·profileIntervalNanos만 보강한다. 기존 append 실패→기동 실패를 유지한다. 별도 scheduler startup 행은 없다. request/drain timeout·directory interval·control scope는 기존 설정 유지다.
+- `SCH-74` 추가 용량 설정은 CapacityInput·용량 행·모든 typed 소비자에 전달하며 판단 snapshot을 섞지 않는다. CI는 BEO 측정 정책, reuse는 요청 annotation, power1분은 C다. 입력 경계에서 구조·의미를 검증하며 새 바이트/hash 관문은 없다.
 
 ### 9.1 추가 settings 필드
 
@@ -492,41 +494,36 @@ evidence API 작업의 활성 수용 기준이 아니다. 미배선 구현(`e947
 | capacityGridSteps | κ 부하 격자 구간 수 | 정수 ≥1 | 20 |
 | capacityBisectionWidth | μ 대비 이분 종료 폭 | finite (0,1] | 0.005 |
 | capacityTailSamples | SLO 분위 위 꼬리 표본 목표 수 | 정수 ≥1 | 100 |
-| energyConfidenceLevel | serving 증분 energy 신뢰수준 | finite (0,1) | 0.95 |
-| profileConfidenceLevel | serving idle baseline 신뢰수준 | finite (0,1) | 0.95 |
-| reuseMeasurementDurationNanos | 재사용 확인 active/idle 각각의 최소 창, ns | 정수 >0 | 30000000000 |
-| reuseMinimumTrials | 재사용 확인 최소 trial 수 | 정수 ≥2 | 3 |
-| powerSupportWindowNanos | 전력 경계 앞/뒤 원시 support 탐색 창, ns | 정수 >0 | 60000000000 |
 
-정수는 기존 Go/JSON 필드 표현 범위 안이어야 한다. 신뢰수준 두 필드는 독립이다.
-profileConfidenceLevel의 기존 CLI/values 경로는 제거하고 모든 settings 소비자를 같은 변경에 옮긴다.
+추가 필드는 위 3개뿐이며 기존 settings는 유지한다. 정수는 Go 필드 표현 범위 안이다. capacityGridSteps는 전체 격자 순회·격자율, capacityBisectionWidth는 width×μ 종료 조건, capacityTailSamples는 ceil(tailSamples/(1−p/100)) 계산에 쓰며 p=100 현재 분기는 유지한다. 세 값 모두 CapacityInput→용량 행에 동결한다.
+기본값도 새 κ 키를 만들므로 cache miss·재계산은 의도된 결과다. 옛 키 우회·omitempty·dual lookup은 없다. CI CLI/values/생성자 경로는 삭제하고 측정별 단일 정책을 사용한다.
 source/profile interval은 API 조정 후보였지만 이 작업에서는 기동값으로 유지한다.
 기존 powerObservation.sampling/coverage·읽기 전용 meters는 settings로 중복 이동하지 않는다.
 
 ### 9.2 수용 시나리오
 
 #### SCH-AC-56 — 기본값과 실제 정책 소비
-- Given: 새 필드가 생략된 기존 설정 입력과 같은 의미의 명시 기본값 입력이 있다.
-- When: 두 입력으로 설정을 수락하고 용량·catalog·재사용·power 경계 선택을 계산한다.
-- Then: GET·Decision·기록의 실제값은 표와 같고 기존 계산 입력과 수용 결과를 유지한다. 다른 유효값도 소비하며 신뢰수준 두 경로를 혼동하지 않는다. 범위 밖·NaN/Inf는 적용 전에 거절한다. 바이트/해시 동일성은 수용 관문이 아니다.
+- Given: 변경 전20/.005/100 리터럴·fixture와 새 생략/명시 기본값 입력이 있다.
+- When: 각각 실제 용량 계산을 수행하고 비기본값·범위 오류를 전달한다.
+- Then: 새 두 경로끼리만 비교하지 않고 변경 전 μ1000/κ959.375·Grid/Bisection/판정을 유지한다. GET/Decision/기록은 실제값이며 유효 다른 값도 소비한다. 범위 밖·NaN/Inf는 적용 전 거절한다. 키 동일성·바이트/hash 비교는 요구하지 않는다.
 - 요구사항: SCH-71, SCH-74.
 
 #### SCH-AC-57 — 변경 시도와 적용을 구분한 기록
-- Given: 기존 settings와 해당 ConfigMap identity, 정상 변경·충돌·append 실패·refresh 실패 조건이 있다.
-- When: PUT 및 외부 ConfigMap 변경 수락, 서버 초기화를 수행한다.
-- Then: PUT 사전 기록 실패는 설정을 바꾸지 않고, 사전 행만 있는 변경을 성공으로 보지 않는다. 성공/오류 후속 행과 초기/외부 적용 행으로 실제 적용값·출처가 해석된다. 성공한 변경은 모든 의존 계산에 전달되고 낡은 κ 캐시를 재사용하지 않는다. 기존 actor 및 validatedAt/appliedAt 의미를 유지한다.
+- Given: 정상 변경·사전/후속 append 실패·refresh 실패·외부 설정 갱신이 있다.
+- When: 기존 PUT 순서와 refresh/판단을 수행한다.
+- Then: 사전 append 실패는 변경 전 중단한다. 저장 성공/refresh 실패는 요청·적용 불일치 가능, refresh 성공/후속 append 실패의 HTTP 오류는 미적용을 뜻하지 않는다. 이후 적용은 Decision.Settings로 해석하고 증거가 부족하면 미확인이다. 초기/외부 합성 행이나 과거 UID/RV를 꾸미지 않는다.
 - 요구사항: SCH-72, SCH-74.
 
 #### SCH-AC-58 — 실제 기동값과 재시작
-- Given: CLI request30s/drain120s, Helm request129s/drain164s 및 운영 source2s를 각각 선택한다.
-- When: 서버를 기동·재시작하고 startup append 실패도 주입한다.
-- Then: 각 실행에서 실제값과 Pod UID/시작시각을 담은 scheduler startup 행이 한 번씩 나온다. scheduler가 비활성일 때도 기록한다. token/credential을 기록하지 않고 기록 실패 실행은 요청을 수락하지 않는다. 새 stream은 없다.
+- Given: queue1024/source1초/profile60초와 운영 source2초를 각각 선택한다.
+- When: 서버 기동·재시작과 기존 server-start append 실패를 다룬다.
+- Then: 기존 cluster/server-start에 실제값과 기존 Pod identity/실제 started가 남고 실패 시 기동을 거부한다. 새 stream·scheduler startup 행은 없다. requestTimeout을 모든 handler 실제값으로 해석하지 않으며 infer129초 분기를 유지한다.
 - 요구사항: SCH-73.
 
 #### SCH-AC-59 — 저장 계약과 전체 소비자 cutover
-- Given: API/typed client/하네스 GET→PUT, scheduler raw/export/가공 reader와 기존 저장 객체가 있다.
-- When: 진행 중 캠페인이 없는 시점에 정책·행 변경을 한 번 반영한다.
-- Then: 소비자는 새 필드와 startup 행을 해석하고 기존 설정을 누락시켜 되돌리지 않는다. 다중 버전 reader·옛 CLI 별칭 없이 새 단일 계약을 사용하며 영향을 받는 구형 객체는 운영자가 정리한다.
+- Given: static_routing·hack/kappa 직접 decode, bind_before.SETTINGS, Dashboard typed round-trip/fixture, 구조체 테스트·샘플과 bootstrap raw replay가 있다.
+- When: 승인된 증거 API 배포·리허설·하네스 cutover·브라우저 수용 완료 뒤 캠페인 사이 한 번 cutover한다.
+- Then: 생략 defaulting은 SchedulerSettingsInput에 모으고 모든 소비자가 새3필드를 보존한다. v1alpha5·archive/publication #213~#225는 보존한다. 과거 필드 부재는 미기록이지 현재 기본값이 아니다. 단일 reader를 유지하고 영향 작업용 CR/파생 객체만 운영자가 열거·정리한다. 과학 원시 삭제·migration·alias는 없다.
 - 요구사항: SCH-71~74; ADR 0019, ADR 0031.
 
 구현 설계는 [설정 소유권과 기록](../../design/serving/configuration-hardcoding.md)이다.

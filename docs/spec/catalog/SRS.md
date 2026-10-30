@@ -1,5 +1,7 @@
 # 데이터셋과 전처리 관리 SRS
 
+상태: 2026-10-30 **2차 검토(fusion: 패널 3모델+판정) 반영**(§8, 구현 전).
+
 ## 1. 목적과 범위
 
 이 문서는 CHILL 워크로드가 참조하는 전처리와 데이터셋의 등록, 조회, 수정, 삭제와
@@ -123,18 +125,18 @@
 
 ## 8. 측정 정책의 선택과 동결
 
-- `PC-04` 측정 길이 수용 오차·신뢰수준·최소 trial·occupancy 실험 하한/seed처럼 결과와 수용을 바꾸는 값은 기존 측정 CR spec으로 선택한다. 기본값은 현재값으로 유지하고 선택값과 출처를 불변 Run/attempt 입력 및 집계 결과에 연결한다. 부모의 나중 설정 변경으로 진행 중 실행을 재정의하지 않는다.
-- `PC-05` 이미 있는 minimumRuns·trialsPerBatch·acceptedCountTarget은 재사용한다. 설정 밖의 추가 floor를 숨겨 강제하지 않으며 통계 primitive의 실제 지원 정의역 밖에서는 명시 오류를 낸다. 값 하나만 받는 새 정책 필드와 조용한 근사는 금지한다.
-- `PC-06` E5 하네스 정책은 실험 config가 소유한다. bind에서 실제 적용 기본값을 모두 채운 config·출처·scheduler 설정·schedule/seed를 binding에 기록하고 실행·분석은 그 binding을 사용한다. 같은 실험의 완결 binding은 수정하지 않고 새 선택은 새 binding으로 만든다. serving API로 하네스 정책을 바꾸지 않는다.
-- `PR-05` 재사용 확인의 최소 active/idle 창과 trial 수는 SCH-71의 settings로 선택한다. 확인 기록은 선택 당시 최소값과 실제 측정량을 함께 제공하며 기존 상대 차이·조건 일치 검사는 유지한다.
+- `PC-04` 길이 오차는 ProfilingRun.spec.measurement.durationToleranceSeconds(현재0.5초, finite ≥0·duration 미만)로 BEO active/idle 및 독립 idle protocol에서 전달한다. BEO.spec.pointPolicy.confidenceLevel은 (0,1) 십진 문자열, 생략 "0.95"이며 campaign point·serving baseline·incremental energy CI가 같은 선택값을 쓴다. 독립 idle CR의 기존 CI 소유권은 유지한다. Profile.ConfidenceLevel과 CI 메시지도 실제값이다. 기존 immutable spec·실행/결과 참조를 재사용하고 중복 snapshot은 없다.
+- `PC-05` BEO는 기존 trialsPerBatch, 독립 idle은 pointPolicy.minimumRuns, 전이는 acceptedCountTarget을 재사용한다. 새 BEO minimumRuns는 없다. 하한2는 비기본 허용 범위 확대이며 minimum/target·attempt limit을 함께 맞추고 attemptLimit≥minimum/target을 유지한다. 숨은 <3/<5/자유도<2가 남으면 미완료다. 현재 실험 trial3/target5는 유지하며 필수 입력을 admission default로 오해하지 않는다. occupancy는 기존 durationSeconds 양수·open-loop rateFactor finite >1을 쓰고 현재60초/1.2를 유지한다. 별도 하한 필드는 없고 seed(uint64, 현재0)만 추가한다. closed-loop에 open-loop 하한을 강제하지 않는다.
+- `PC-06` 하네스는 증거 API cutover 후 잔존 실험 정책만 bind에서 effective config로 동결한다. 기존 stages id/seconds/alpha/parts·workload seed/arrivals·generatorQuality·선택 runbook을 실행/분석이 소비한다. 10ms delayed와 단순 poll/timeout은 새 knob로 만들지 않는다. G0 stageCount·expectedClosureCount는 없고 실제 선택 percentile은 요청 지연 원시에서 계산한다. client 수집·STOP loop·운영자 장애 주입은 유지한다.
+- `PR-05` 기존 profile-reuse annotation에서 minimumMeasurementSeconds(finite >0, 생략30)·minimumTrials(정수 ≥2, 생략3)를 선택한다. active/idle 각각의 최소 창이며 ProfileReuseCheck에 선택값과 실제 길이/trial을 기록한다. reusedProfile 정책 identity에도 두 값을 포함한다. 기존 sourceProfileID·maximumRelativeDifference와 조건 검사를 유지하며 전역 settings로 재정의하지 않는다.
 
 | 수용 시나리오 | 확인 결과 | 요구사항 |
 |---|---|---|
 | 기본 측정 정책: tolerance0.5s/CI0.95/min3/전이target5/occupancy60s·1.2·seed0 | 현재 수용 결과 유지, CR→불변 실행 입력→집계가 같은 실제값·출처를 가짐 | PC-04, PC-05 |
-| 유효한 다른 tolerance/CI/minimumRuns/target/seed와 경계 밖 입력 | 유효값은 실제 측정·수용에 쓰고 잘못된 범위·관계는 경계에서 거절, hidden floor나 단일값 gate 없음 | PC-04, PC-05 |
+| 비기본 tolerance/CI/trials/target/seed와 경계 입력 | 비영분산 active2/idle2 유도→저장→재로딩→serving까지 완료; 기존 기본 결과 유지. baseline 평균·분산·자유도·CI·음수 energy 거절/해상도 처리를 변경 전 .95 계산과 비교 | PC-04, PC-05 |
 | bind 후 환경 config를 변경하고 실행/분석 | 선택값은 기존 binding 그대로이며 실행 중 config 재조회로 바뀌지 않음; 새 bind만 새 조건을 선택 | PC-06 |
-| 기본 E5 config와 기본값 생략 config를 bind | effective config에 모든 기본값이 있고 schedule·offered수·수용 결과 의미 동일, 바이트/hash 비교 관문 없음 | PC-06 |
-| 재사용 확인 최소 창/trials를 유효한 다른 값으로 변경 | 선택값과 실제값으로 수락/거절, 원본/대상 증거·차이·조건 검사는 그대로 | PR-05 |
+| 기존 실행 함수와 새 생략/명시 기본 config | stage/part 시간·rates·offset·offered·full/static/factor·판정을 변경 전과 비교. check의11700/10200/21900/seed 집합도 binding 유도. example만 정답으로 삼지 않음 | PC-06 |
+| annotation 최소 창/trials 변경 | 기본30초/3회 수락·거절 유지, 비기본 정책이 실제 판정·identity에 반영. trials2는 통계 하한 종단 정리 뒤 수용 | PR-05 |
 
 정확한 추가 CR 필드·단위·범위·기본값 및 binding 키는
 [설정 설계 §5~6](../../design/serving/configuration-hardcoding.md#5-측정-cr와-불변-실행)을 따른다.

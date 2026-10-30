@@ -1,6 +1,7 @@
 # 하드코딩 정리 계획
 
 2026-10-30 · **문서 단계 완료 기준**: 이 계획 → 인벤토리 → spec → SRS → 설계/ADR를 연결하고 문서만 커밋한다. 구현·배포·측정은 하지 않는다.
+상태: **2차 검토(fusion: 패널 3모델+판정) 반영**. 구현 전 문서다.
 
 ## 목표와 결정
 
@@ -10,12 +11,12 @@ C(프로토콜·안전·고정 방법론)는 상수로, 이름 없는 C는 의�
 
 | 값의 집 | 결정과 이유 |
 |---|---|
-| 운영 중 조정할 serving A | 기존 SchedulerSettings GET/PUT. κ 탐색·신뢰수준·재사용·전력 경계의 8필드. 현재 settings 변경 행과 판단 snapshot을 재사용 |
-| 배포 시 serving A-미동결 | request/drain timeout, source/profile/directory interval 등은 flags/values 유지. 기존 scheduler stream에 실제 기동값1행을 기록해 숨은 선택을 없앰 |
-| profiler/측정 A | 기존 측정 CR spec과 frozen Run/attempt. 이미 있는 minimumRuns·target 등은 재사용하며 숨은 floor 제거 |
-| 하네스 A | 실험 config의 effective default를 bind에서 확정해 binding.config에 보존. 서버 settings와 섞지 않음 |
-| B | values-operating.yaml/환경 JSON. 기본 values·샘플·스크립트에서 특정 registry/IP/Node/path를 제거하고 실제 생성자까지 연결 |
-| 표시용 분위수·chart bin·live window | C/D로 재분류. 저장 원시·수용 판정을 바꾸지 않으므로 이동하지 않음 |
+| 운영 중 조정할 serving A | 기존 SchedulerSettings에 capacityGridSteps·capacityBisectionWidth·capacityTailSamples **3개 추가**. 기존 필드 유지 |
+| 측정 신뢰수준 | BEO 측정별 단일 confidenceLevel 정책. 기존 독립 idle CR 소유권 유지. profileConfidenceLevel CLI/values/생성자 경로 삭제 |
+| 재사용 확인 | 기존 profile-reuse annotation에 minimumMeasurementSeconds·minimumTrials; 확인 결과와 정책 identity에 동결 |
+| 기동 기록 | 기존 cluster/server-start에 queueLimit·sourceIntervalNanos·profileIntervalNanos만 보강. 새 scheduler startup/초기 가짜 변경 행 없음 |
+| profiler/측정 A | 기존 CR 입력 재사용, 하한2 종단 지원. 기본 trial3/전이target5는 유지 |
+| 하네스·환경 | cutover 후 잔존 실험 정책만 binding에 동결. 실제 환경 결합만 B; 이미 있는 values·패키징·예제 계약 유지 |
 
 근거: AGENTS.md Configured behavior/Verification boundaries, ADR0019, 기존
 `internal/serving/httpapi/scheduler.go:140-170`의 settings 사전/적용 행,
@@ -27,38 +28,40 @@ PUT 기록만으로 시작값이나 외부 ConfigMap 변경까지 완전하다�
 ## 범위와 조사 집계
 
 현재 실행 경로의 internal/cmd/api/charts/load-generator, E5와 실제 호출 helper만 바꾼다.
-config/samples는 B 제거에 필요한 만큼 포함한다. 일회성·역사 측정 script와 별도 Dashboard 구현,
-개발 도구·Makefile 일반화는 제외한다. E5가 import하는 D2 파일도 **호출된 함수만** 대상이다.
+config/samples는 실제 B 제거만 포함한다. 일회성·역사 script·개발 도구 일반화는 제외한다.
+Dashboard UI 재설계는 제외하지만 API typed round-trip은 포함한다. E5가 import하는 D2 파일은 호출 함수만 대상이다.
 E5→helper 호출 근거와 제외되는 D2 main은 [설계 §6](../design/serving/configuration-hardcoding.md#6-하네스-bind에서-한-번-선택)에 있다.
 
 입력은 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/hardcoding-20261030/`의
 `go.md`82행, `harness.md`175행, `chart.md`133행, 합계390행이다(숫자 토큰 수 아님).
-[인벤토리](2026-10-30-configuration-hardcoding-inventory.md)는 이동/기록140행만 나열한다:
-A41, A-미동결29, B35, C-이름없음35. D79/C23은 원분류 개수만 유지한다.
-재분류16행(C13, D3)을 합치면 최종 C36/D82다. 범위 제외122행, 열린 ?10행이다.
+[인벤토리](2026-10-30-configuration-hardcoding-inventory.md)는 기존140행을 재분류하고 누락3행을 더한143행이다.
+표 집계는 A26/A-미동결17/B5/C51/D32/제외12, 이동·기록 대상은 **48행**이다.
+원 유지·재분류 포함 현재 범위는 A26/A-미동결17/B5/C87/D114/전환제외12, 기존 제외122·열린?10은 별도다. 원390행 대응과 슬라이스별 집계는 인벤토리에 보존한다.
 같은 값의 Go/Chart 표현은 별도 조사 행이므로 정책 필드 개수와 같지 않다.
 
 ## 구현 순서와 완료 기준
 
-1. **C-이름없음 상수화**(35행): 동작·입출력·오류 불변. 의미가 같은 계약만 공유한다.
-2. **B 환경 결합 제거**(35행): 운영 overlay를 주면 기존 port/path/user/catalog로 연결되고 기본·샘플에는 실클러스터 binding이 없다.
-3. **serving settings 확장**(9행/8필드): GET/PUT·typed 소비자·ConfigMap·판단·catalog/κ 캐시까지 연결. 옛 confidence CLI/values 경로는 삭제한다.
-4. **기동·기존 설정 기록**(12행): 실제 기동값 scheduler1행, 초기/외부 settings 적용 기록, Node cadence는 기존 resources 행에 기록. 새 stream 없음.
-5. **측정 CR/frozen 입력**(9행): 기본0.5s/.95/3/5/60s/1.2/seed0의 수용 결과 유지, 비기본값도 끝까지 전달·동결한다.
-6. **하네스 config**(40행): 모든 실제 fallback을 bind에서 채우고 실행/분석은 binding만 읽는다. 기본 schedule·offered·판정 의미 유지.
+**시작 조건:** 증거 API 승인 배포·1회 전환 리허설·CHILL 우회 수집 제거를 포함한 하네스 cutover·대시보드 브라우저 수용이 기록으로 완료되고 의존 측정 캠페인이 없어야 한다. rev106 배포 시도는 완료가 아니다. rev110/결손 운영 기록도 전체 수용 PASS나 이번 live 확인으로 읽지 않는다.
+
+1. **전환 후 재산정·인터페이스 확정**: 삭제된 host/SSH/crictl 경로 제외, 잔존 행 확정.
+2. **측정 정책**: 단일 CI·CR 입력·하한2·결과 저장/재로딩/serving 소비 완결.
+3. **serving 용량 settings·요청 reuse**: 모든 typed caller·CapacityInput·κ 캐시·정책 identity 연결.
+4. **기존 기록 최소 보강**: cluster/server-start와 settings 실패 의미 정리.
+5. **잔존 하네스 A/B**: binding에서 실행·분석까지 연결. C 정리는 관련 변경에 묶는다.
+6. **통합 소유자 단일 검증·인계**: 모두 완료한 뒤 한 번 검사.
 
 파일 영역·병렬 가능 경계·인터페이스·각 slice의 회귀는
-[설계 §8](../design/serving/configuration-hardcoding.md#8-구현-슬라이스와-병렬-경계)에 있다.
+[설계 §8](../design/serving/configuration-hardcoding.md#8-구현-슬라이스와-시작-조건)에 있다.
 독립 slice는 병렬 가능하지만 같은 파일은 단일 소유자가 맡는다.
 구현 완료는 인벤토리의 모든 대상 전달/소비/기록과 SRS 수용 조건을 만족해야 한다.
 기본값 회귀는 구조·계산·수용 결과 비교이며 바이트/hash 동등성 관문은 금지한다.
 
-저장 계약은 캠페인 사이 한 번 모아 바꾼다. 구형 객체는 운영자가 정리하고 다중 버전 reader·alias·shim은 만들지 않는다.
+저장 계약은 캠페인 사이 한 번 모아 바꾼다. ADR0030의 v1alpha5와 archive/publication #213~#225는 보존한다. 과거 새 필드 부재는 미기록 사실이며 현재 기본값으로 소급 채우지 않는다. ADR0019 정리는 읽을 수 없어진 영향 작업용 CR/파생 객체만 열거해 운영자가 수행한다. 과학 원시를 삭제하지 않고 dual reader·migration·alias·shim은 없다. 새 CapacityInput은 기본값이어도 새 κ 키로 재계산한다.
 검증은 경계에서 한 번, 새 의존성·전역 설정 계층은 없다.
 다음 구현 소유자가 마지막에 AGENTS.md의 해당 Go/API/Helm 검사 및 helper의 기존 offline 회귀를 한 번 실행한다.
 이번 문서 단계에서는 build/test/make/docker/kubectl/SSH를 실행하지 않는다.
 
-## 삭제 후보 (20개 파일; 삭제 승인 아님)
+## 삭제 후보 (19개 파일; 삭제 승인 아님)
 
 다음은 현재 E5 실행 경로 밖의 역사/독립 진입점이다. 다른 운영자가 독립 호출할 가능성은
 이 문서만으로 배제하지 않는다. **이번 리팩토링에서 고치거나 삭제하지 않는다**.
@@ -83,19 +86,18 @@ A41, A-미동결29, B35, C-이름없음35. D79/C23은 원분류 개수만 유지
 | 15 | hack/measure/smolcheck/collect.py |
 | 16 | hack/measure/smoke/smoke.py |
 | 17 | hack/measure/smoke/send.py |
-| 18 | hack/e5/demo.py |
-| 19 | hack/e5/numbers.py |
-| 20 | hack/e5/timeline.py |
+| 18 | hack/e5/numbers.py |
+| 19 | hack/e5/timeline.py |
 
 D2 `bind_before`의 독립 main·SLO/계단 계획, `conduct_before`의 독립 load/main,
 `analyze_before`의 독립 p95/throttle verdict, `sample_cgroups`의 독립 main은
-같은 파일의 실제 E5 helper와 분리해서 삭제 가능성을 검토한다(위20개 파일 수에는 미포함).
+같은 파일의 실제 E5 helper와 분리해서 삭제 가능성을 검토한다(위19개 파일 수에는 미포함).
 helper 파일 전체 삭제는 금지한다. example config는 실험 입력으로 재사용 가능한지 확인 전 삭제하지 않는다.
 
 ## 열린 점
 
 아래 원분류 ?10행은 현재 동작을 유지한다. 근거 없이 A/B/C로 바꾸어 구현하지 않는다.
-명시된 A/B/C-이름없음140행은 이것들과 독립적으로 완성할 수 있다.
+이동·기록48행과는 분리한다. cutover 후 슬라이스1에서 실제 잔존을 다시 확정한다.
 
 | 원본 | 남은 결정 |
 |---|---|
@@ -113,6 +115,13 @@ helper 파일 전체 삭제는 금지한다. example config는 실험 입력으�
 반론: source/profile interval을 API로 바꿀 수 있다는 조사 의견은 있다. 하지만 사용자 결정대로
 기동 설정+실제값 기록으로 둔다. binding은 일반 JSON 파일이라 물리적 불변성을 보장하지 않는다.
 별도 새 저장 장치를 만들지 않고 완결 binding 수정 금지·새 실험 새 binding 계약을 적용한다.
+
+## 기본값 증명과 저장 증거
+
+기본값 생략과 명시값끼리만 비교하지 않는다. 변경 전 리터럴·fixture·실행 함수를 기준으로 실제 계산을 대조한다. κ는 μ1000/κ959.375와 Grid/Bisection/판정, CI는 평균·분산·자유도·음수 energy 처리, reuse는30초/3회 기본 수락·거절과 비기본 identity, 하한2는 비영분산 active2/idle2 종단을 확인한다. 하네스는 stage/part 시간·rate·offset·offered·full/static/factor·판정을 비교한다. 경로별30/129초·1/2/5초를 합치지 않는다.
+배포 비교의 승인 overlay 경로·revision·release·namespace는 구현 착수 기록에 지정한다. values-operating.yaml은 rev74 캡처이지 현재 배포값이 아니다. default/profiler 별도 render의 의미 있는 delta를 비교하며 live 동일성은 별도 증거가 필요하다. 세부 표와 전체 소비자는 설계 §3·§8을 따른다.
+settings의 권위는 Decision.Settings다. PUT 사전 append 실패는 변경 전 중단, 저장 후 refresh 실패는 요청/적용 불일치 가능, refresh 후 후속 append 실패의 HTTP 오류는 미적용을 뜻하지 않는다. 증거가 부족하면 미확인이다. 초기·외부 설정은 실제 사용 Decision으로 해석하며 초기/refresh 합성 행·별도 provenance 저장소는 없다.
+`demo.py`는 offline 회귀 import 대상이라 수정 금지 목록에서 제외하고 회귀를 유지한다.
 
 ## 문서 추적
 
