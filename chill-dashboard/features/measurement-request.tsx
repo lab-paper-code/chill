@@ -78,7 +78,7 @@ function pathReason(model: ModelResource, path: ExecutionPath, cls: InventoryCla
 const detailHref = (namespace: string, name: string, uid?: string) => `/measurements/batch-energy-optimizations/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${uid ? `?uid=${encodeURIComponent(uid)}` : ""}`
 function failure(error: ApiError) {
   const data = (error.data && typeof error.data === "object" ? error.data : {}) as { code?: string; message?: string }
-  return { code: data.code, message: data.message || (typeof error.body === "string" && error.body.trim() ? error.body : error.status === 403 ? "접근이 거부됐어요. 대시보드 접속 주소(Origin)와 요청 권한을 확인하세요." : "응답에 원인이 없어요. 연결과 서버 로그를 확인하세요.") }
+  return { code: data.code, message: data.message || (data.code==="DashboardOriginDenied"?"현재 대시보드 접속 주소(Origin)가 허용되지 않아 검사가 차단됐어요. 관리자에게 허용 주소 설정을 요청하세요.":error.status === 403 ? "검사 권한이 거부됐어요. 현재 계정의 요청 권한을 확인하세요." : typeof error.body === "string" && error.body.trim() ? error.body : "응답에 원인이 없어요. 연결과 서버 로그를 확인하세요.") }
 }
 
 // Everything the steps read: current selections resolved against real data, plus the copied protocol.
