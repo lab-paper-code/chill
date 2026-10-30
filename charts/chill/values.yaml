@@ -809,6 +809,7 @@ nodeAgent:
   # Base discovery agent only; endpoint defaults to this release's private ChillServer.
   # Keep genesis1 in nodeSelector/excludeNodeNames coverage; /proc and /sys below stay read-only.
   resourceObservation:
+    # Override for edge Nodes without cluster Service DNS; preserve HTTPS/CA verification.
     url: ""
     caFile: /etc/chill/resources-ca/tls.crt
     tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token

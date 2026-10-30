@@ -196,8 +196,8 @@ try:
         changed[role] = {"from": old, "buildInputs": inputs, "paths": affected(paths, inputs)}
     selected = [r for r in (roles if a.images == "auto" else selected) if changed[r]["paths"]]
     save("source-diff.json", changed)
-    if not selected:
-        raise RuntimeError("no changed control images; no upgrade performed")
+    if not selected and not chart_diff:
+        raise RuntimeError("no changed control images or approved chart changes; no upgrade performed")
     overlay, expected = {}, {}
     registry = "155.230.35.213:5000/chill/"
     for role in selected:

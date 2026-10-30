@@ -526,3 +526,5 @@ append 실패는 기존 ObservationLog health·호출 오류/로그로 노출하
 ### 17.8 운영 배포 결정 (#226/#227, 2026-10-30)
 
 rev106은 새 서버·대시보드·node-agent 이미지와 config를 게시했으나, 기존 operator `pools-control-188-e3431ff391a7`가 `resourceCAFile`을 strict unmarshal에서 거부하여 소유 DaemonSet을 갱신하지 못했다. ConfigMap watch는 이미 `internal/operator/nodeagent/setup.go`에 있고 실제 reconcile 오류도 반복 관측했으므로 checksum annotation·재시작·ChillSystem touch를 추가하지 않는다. Main 승인 #227에서 새 schema·mount를 아는 operator를 정식 Helm upgrade로 배포하고, rev106의 나머지 이미지 digest는 유지한다. 이후 모든 Node의 새 agent digest/Ready와 API200을 확인한 뒤에만 1회 리허설을 시작한다. 실패 원형은 `O/deployB/control-226-20261030/`, 별도 조회 API200·operator strict 오류와 리허설 증거는 `O/campaign/v2/d-20261027/control-226-rehearsal/`에 보존한다.
+
+rev107 뒤 새 agent는 전 Node Ready였지만 edge의 Service DNS가 NXDOMAIN을 반환했고 기본 URL의 `/chill` prefix도 실제 HTTP handler와 달랐다. Main 승인 #228은 기본 handler 경로를 `/api/v1/internal/observations/resources`로 바로잡고, 기존 `nodeAgent.resourceObservation.url` values에 CA SAN으로 검증되는 `https://155.230.35.213:31104/api/v1/internal/observations/resources`를 명시한다. chart-only Helm upgrade라 rev106/107 이미지 digest를 재빌드하지 않는다. 전송 실패 구간은 resources 결손으로 남기며 소급 표본·TLS 우회·자동 측정 재시도는 하지 않는다.

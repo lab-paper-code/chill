@@ -17,6 +17,7 @@ hack/fast-deploy.sh upgrade --source <commit> --control <NNN>
 # 전용 raw 수집 SA는 기본 off; --values overlay로 servingEntrypoint.evidenceCollector.enabled=true
 # 명시 --values도 chart diff의 정확일치 승인 범위에 포함되며 원본을 보존한다(SCH-67).
 # node-agent config schema가 달라지면 DS 소유 operator도 같은 승인 묶음에서 배포한다.
+# 승인된 chart diff가 있으면 이미지 변경0도 허용(이미지 재빌드 없는 values/RBAC 전환).
 # 로컬 회귀 확인: 이미지별 변경 경로 선택 및 HTTP 200/남은 deadline gate
 hack/fast-deploy.sh upgrade --source HEAD --control 0 --self-check
 ```
