@@ -6,6 +6,7 @@
 *.dylib
 bin/*
 .codegraph/
+graphify-out/
 Dockerfile.cross
 .kube/
 

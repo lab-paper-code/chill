@@ -54,6 +54,19 @@ Use the cheapest authoritative evidence for the claim being made.
 - Describe controller-runtime event delivery as `framework-derived`; do not
   invent a direct Go call from setup code to `Reconcile`.
 
+## Graphify in OMP
+
+- The project skill is `.agents/skills/graphify/`; invoke `/skill:graphify .`
+  after restarting OMP following installation. The `graphify-pi` guard is
+  registered as an OMP plugin.
+- When `graphify-out/graph.json` exists, use `graphify query "<question>"` for
+  initial codebase discovery; check freshness and confirm findings with the
+  authorities above. Graphify does not replace `gopls`, source, or tests.
+- Refresh locally without an API key using `graphify extract . --code-only`.
+  Keep generated indexes and views in the ignored `graphify-out/` directory.
+- See [Graphify setup](docs/design/code-intelligence/README.md#optional-graphify-setup)
+  for the pinned installation, report generation, and bounded HTML view.
+
 ## Efficient change workflow
 
 1. Locate the smallest relevant surface with `rg`, `gopls`, and direct reads.

@@ -147,6 +147,34 @@ Therefore:
 Installation, privacy controls, local commands, and rollback are in
 [codegraph.md](codegraph.md).
 
+### Optional Graphify setup
+
+Graphify is another local discovery aid, not a replacement for the evidence
+rules above. Install the recorded version and register its project skill and
+OMP guard:
+
+```sh
+uv tool install --python 3.12 graphifyy==0.9.97
+graphify install --project --platform agents
+omp plugin install "$(graphify pi guard path)"
+```
+
+Restart OMP to discover `/skill:graphify`. For local-only code extraction,
+reports without model-generated labels, and a bounded HTML view:
+
+```sh
+graphify extract . --code-only --max-workers 4
+graphify cluster-only . --no-label --no-viz
+graphify export html --node-limit 5000
+graphify query "serving" --budget 1000
+```
+
+The ignored `graphify-out/` directory contains the full `graph.json`,
+`GRAPH_REPORT.md`, and the bounded `graph.html` view. Code-only extraction
+does not analyze document semantics or require an API key; unsupported files
+and missing optional parsers are reported by the extractor. Keep indexes local.
+
+
 ## Deployment topology contract
 
 KubeDiagrams converts the repository's validated Helm renders into portable
