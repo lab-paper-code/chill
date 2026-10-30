@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useSearchParams } from "next/navigation"
 import { useQueryClient, type QueryClient } from "@tanstack/react-query"
 import { useChillQuery, useChillMutation, useSession, ApiError, type ChillMutationInput, type RelayResponse } from "@/lib/client"
 import type { OperationResult, Routing, SchedulerSettings, SchedulerSettingsChange, SchedulerControllerState, SchedulerObservationPage, WireInteger } from "@/lib/read-types"
@@ -13,7 +14,7 @@ import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
 type NumericKey = Exclude<keyof SchedulerSettings,"controls"|"autonomousWorkloads"|"excludedNodes"|"minimumDemand"|"staticRouting"|"staticRoutingValidatedAt"|"meters"|"requestTimeout">
-type Field = {key:NumericKey;label:string;help:string;group:"cycle"|"limit"|"advanced";unit?:string}
+type Field = {key:NumericKey;label:string;help:string;group:"cycle"|"limit"|"capacity"|"advanced";unit?:string}
 const fields: Field[] = [
   {key:"observationWindowNanos",label:"부하를 살펴볼 구간",help:"판단할 때 최근 요청 부하를 이만큼 살펴봐요.",group:"cycle"},
   {key:"controlIntervalNanos",label:"운영 판단 주기",help:"이 간격마다 새로 판단해요.",group:"cycle"},
@@ -22,18 +23,18 @@ const fields: Field[] = [
   {key:"scaleDownStabilizationNanos",label:"하강 안정화 기간",help:"이 기간의 최대 유효 수요가 현재 준비된 공급보다 작아야 축소와 에너지 교체를 허용해요. 후보도 최대 수요를 감당해야 해요. 완전한 관측 창이 필요하며, 0도 현재 수요·공급 검사는 유지해요.",group:"cycle"},
   {key:"transitionReserveFraction",label:"전환 예비 비율",help:"전환 중 실제 준비된 용량으로 수요와 예비를 감당해요. 0은 별도 예비 없음, 범위는 0~1이에요.",group:"cycle"},
   {key:"maxObservationAgeNanos",label:"관측을 쓸 수 있는 시간",help:"이보다 오래된 관측은 판단에 쓰지 않아요.",group:"cycle"},
-  {key:"completionMarginMS",label:"완료 여유",help:"실행이 끝난 뒤 응답까지 요청마다 이만큼 더해 예상 완료 시각을 계산해요.",group:"cycle",unit:"ms"},
+  {key:"completionMarginMS",label:"완료 여유",help:"실행이 끝난 뒤 응답까지 요청마다 이만큼 더해 예상 완료 시각을 계산해요.",group:"capacity",unit:"ms"},
   {key:"servingMemoryBytes",label:"서비스 실행 메모리",help:"측정한 모델 메모리에 인스턴스마다 더하는 메모리예요. 절반을 대기 요청에 써요. 노드 자원은 배포 설정에서 관리해요.",group:"limit"},
   {key:"maxReplicas",label:"복제 수 상한",help:"서비스 복제 수를 이만큼까지 살펴봐요.",group:"limit",unit:"개"},
   {key:"maxInstances",label:"인스턴스 수 상한",help:"인스턴스 수를 이만큼까지 살펴봐요.",group:"limit",unit:"개"},
   {key:"maxCPUs",label:"CPU 수 상한",help:"CPU 수를 이만큼까지 살펴봐요.",group:"limit",unit:"개"},
-  {key:"capacityWindowNanos",label:"용량 계산 창 길이",help:"용량을 계산할 때 창마다 적어도 이 시간만큼의 요청을 재생해요.",group:"advanced"},
-  {key:"capacityWindows",label:"용량 계산 창 수",help:"요청률마다 이만큼의 독립 창을 재생해요.",group:"advanced",unit:"개"},
-  {key:"capacityPassingWindows",label:"용량 충족 창 수",help:"이만큼의 창이 SLO를 지키면 그 요청률을 감당한다고 봐요. 창 수 이하로 정해요.",group:"advanced",unit:"개"},
-  {key:"capacityMinimumRequests",label:"용량 계산 최소 요청 수",help:"창마다 적어도 이만큼의 요청을 재생해요.",group:"advanced",unit:"건"},
-  {key:"capacityGridSteps",label:"용량 계산 격자 수",help:"최대 처리율을 이만큼 나누어 모든 요청률을 판정해요. 1 이상이에요.",group:"advanced",unit:"개"},
-  {key:"capacityBisectionWidth",label:"용량 이분 탐색 폭",help:"최대 처리율에 대한 탐색 종료 폭이에요. 0 초과 1 이하예요.",group:"advanced"},
-  {key:"capacityTailSamples",label:"용량 꼬리 표본 수",help:"SLO 백분위 위에 확보할 창별 표본 수예요. 1 이상이에요.",group:"advanced",unit:"개"},
+  {key:"capacityWindowNanos",label:"용량 계산 창 길이",help:"용량을 계산할 때 창마다 적어도 이 시간만큼의 요청을 재생해요.",group:"capacity"},
+  {key:"capacityWindows",label:"용량 계산 창 수",help:"요청률마다 이만큼의 독립 창을 재생해요.",group:"capacity",unit:"개"},
+  {key:"capacityPassingWindows",label:"용량 충족 창 수",help:"이만큼의 창이 SLO를 지키면 그 요청률을 감당한다고 봐요. 창 수 이하로 정해요.",group:"capacity",unit:"개"},
+  {key:"capacityMinimumRequests",label:"용량 계산 최소 요청 수",help:"창마다 적어도 이만큼의 요청을 재생해요.",group:"capacity",unit:"건"},
+  {key:"capacityGridSteps",label:"용량 계산 격자 수",help:"최대 처리율을 이만큼 나누어 모든 요청률을 판정해요. 1 이상이에요.",group:"capacity",unit:"개"},
+  {key:"capacityBisectionWidth",label:"용량 이분 탐색 폭",help:"최대 처리율에 대한 탐색 종료 폭이에요. 0 초과 1 이하예요.",group:"capacity"},
+  {key:"capacityTailSamples",label:"용량 꼬리 표본 수",help:"SLO 백분위 위에 확보할 창별 표본 수예요. 1 이상이에요.",group:"capacity",unit:"개"},
   {key:"planSearchWorkers",label:"구성 탐색 동시 계산 수",help:"운영 판단이 구성 후보를 동시에 이만큼 계산해요. 탐색은 판단 주기의 절반 안에 끝나요.",group:"advanced",unit:"개"},
 ]
 const controls: {key:keyof SchedulerSettings["controls"];label:string}[] = [
@@ -128,6 +129,7 @@ function RoutingEdit({initial,disabled,apply}:{initial?:Routing;disabled:boolean
 
 
 export function SchedulerSettingsPage() {
+  const params=useSearchParams(),capacitySection=React.useRef<HTMLDivElement|null>(null)
   const settings=useChillQuery<SchedulerSettings>("v1/scheduler/settings",{decoder:parseSchedulerJSON,poll:true})
   const state=useChillQuery<SchedulerControllerState>("v1/scheduler/state",{decoder:parseSchedulerJSON})
   const [baseline,setBaseline]=React.useState<SchedulerSettings|null>(null),[draft,setDraft]=React.useState<SchedulerSettings|null>(null)
@@ -149,6 +151,8 @@ export function SchedulerSettingsPage() {
   const serverError=mutation.error?.data&&typeof mutation.error.data==="object"?mutation.error.data as {field?:string;message?:string;code?:string}:undefined
   const count=baseline&&draft?changedRows(baseline,draft).length:0
   const shown=count?draft:settings.data
+  const capacityReady=params.get("section")==="capacity"&&!!shown
+  React.useEffect(()=>{if(capacityReady)capacitySection.current?.focus()},[capacityReady])
   // Explicit routing operations open in the same detail view as the transitions list.
   const routing=state.data?.results?.filter(item=>["route","unroute","release"].includes(item.operation.kind)).reduce<OperationResult|undefined>((latest,item)=>!latest||Date.parse(item.startedAt)>Date.parse(latest.startedAt)?item:latest,undefined)
   const back:[string,string]=["/settings","설정"]
@@ -270,6 +274,9 @@ export function SchedulerSettingsPage() {
       </Rows>
       <Rows label="자동 조정 항목">{controls.map(control=><EditRow key={control.key} label={control.label} help={`운영 판단에서 ${control.label}도 함께 조정해요.`} value={onOff(shown.controls[control.key])} changed={!!count&&baseline!.controls[control.key]!==shown.controls[control.key]}
         initial={shown.controls[control.key]} save={value=>edit(base=>({...base,controls:{...base.controls,[control.key]:value as boolean}}))} disabled={blocked}/>)}</Rows>
+      <div id="capacity" ref={capacitySection} tabIndex={-1} className="rounded focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring">
+        <Rows label="용량 설정">{group("capacity")}<Row href="/scheduler/capacity" label="인스턴스 용량 계산 근거" hint="행에 사용한 값과 현재 적용값, 격자·이분탐색 판정"/></Rows>
+      </div>
       <Rows label="고급">{group("advanced")}</Rows>
       <Rows>
         <Row href="/changes?scope=scheduler" label="최근 변경 기록" hint="누가 언제 운영 설정을 바꿨는지"/>
