@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { readFileSync } from "node:fs"
 import { runFailure, runStatusObject, exactRun, safeMeasurementReturn, significant, evidenceLocations, isProjectionMeasurementKind, measurementHref, measurementListHref, measurementPath, measurementReason, measurementUIDMismatch, occupancyDuration, occupancySupply, occupancyThroughput, operationDuration, operationWallEnergy, operationSteps } from "./measurements.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
@@ -180,4 +181,17 @@ test("retry condition diff includes CPU and protocol changes while summaries ret
   assert.deepEqual(measurementConditionDiff(spec,{...spec,cpuQuota:"2",activeProtocol:{...spec.activeProtocol,durationSeconds:20}}),["CPU: 1 → 2","부하 durationSeconds: 10 → 20"])
   assert.match(measurementReasonSummary("context deadline exceeded"),/시간.*초과/)
   assert.match(measurementReasonSummary("cost requires exactly one proven primitive state effect"),/단일 상태 변경/)
+})
+
+test("operator result cards keep decision metrics visible and request submission below inspection",()=>{
+  const results=readFileSync(new URL("../features/measurement-plans.tsx",import.meta.url),"utf8")
+  const request=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
+  const resultCards=results.slice(results.indexOf("export function ResultRows"),results.indexOf("export function MeasurementPlanPage"))
+  assert.match(resultCards,/sm:grid-cols-3/)
+  assert.match(resultCards,/p95Milliseconds/)
+  assert.match(resultCards,/totalJoulesPerItem/)
+  assert.match(resultCards,/activeWatts/)
+  assert.doesNotMatch(resultCards,/LaTeX|min-w-\[|<Table/)
+  assert.ok(request.indexOf('onClick={submit}')>request.indexOf('<PreflightAnswer answer={answer}/>'))
+  assert.match(request,/label="장치 종류"/)
 })
