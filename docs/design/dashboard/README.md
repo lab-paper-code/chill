@@ -23,7 +23,7 @@
 
 | 항목 | 현행 계약 |
 |---|---|
-| 신원 | 기존 Kubernetes bearer를 탭 메모리에만 보관, 새로고침 후 재입력. BFF는 원본 Authorization 전달. ChillServer TokenReview + 정확한 verb/path SAR, 검증된 username/UID만 actor로 기록. |
+| 신원 | 기존 Kubernetes bearer를 탭 메모리와 승인된 sessionStorage에 보관한다. 새로고침 복원·로그아웃·401 처리는 §9.6. BFF는 원본 Authorization 전달. ChillServer TokenReview + 정확한 verb/path SAR, 검증된 username/UID만 actor로 기록. |
 | 권한 | 401 누락/무효, 403 실제 SAR 거부, 503 review 통신·권한·evaluation 오류. non-resource path는 `/chill` 접두사. Console private leg의 서버 identity는 사용자 SAR를 대체하지 않음. |
 | HTTP 제한 | method/path allowlist; Authorization·If-Match·Content-Type·추론 timeout·필요 CHILL identity header만 전달. 요청/완전한 응답 각각 8 MiB, 응답 header 16 KiB. 상태·요청 ID·Workload UID 보존, no-store. |
 | 초기 웹 설정 | page 50/최대 200, 기본 구간 1시간/최대 24시간, 갱신 5초, 조회 timeout 10초/변경 60초. 추론은 사용자 timeout과 서버 상한 및 중계 여유 사용. WS 연결 수명에 HTTP 한도를 재사용하지 않음. |
@@ -88,7 +88,7 @@ runtime workload readiness의 읽기 시각만 바뀐 것은 상태 변화로 �
 |---|---|
 | delta | instances/actions identity별 행 전체 upsert 후 removed. workloads/nodes/routing/reservations는 키 존재 시 전체 대체, 생략 유지·빈 값 비우기. decision:null은 제거. 상태 권위는 snapshot/delta, event는 이력; 관련 delta 뒤 event, cluster는 event만. 같은 capture/판단은 한 delta, 동일 상태/callback 중복 생략. |
 | identity | decision.at 원본; actionKey=JSON 튜플 `[id,node.uid,startedAt]`. 삭제 정의도 시간축 사전에 보존. ready·routable·routing·native running·waiting·actions는 독립 사실이며 AssignedUnknown은 실행 증거 아님. |
-| first auth | 정확한 `/api/live`, 동일 CHILL_PUBLIC_ORIGIN(미설정 시 검증한 HTTPS Host); query/subprotocol/누락·다른 Origin 거부, 임의 forwarded 불신. 5초 내 ≤16 KiB 첫 `{type:"auth",token}`. 상류에 Bearer 변환, URL/cookie/log/영속 저장 금지. |
+| first auth | 정확한 `/api/live`, 동일 CHILL_PUBLIC_ORIGIN(미설정 시 검증한 HTTPS Host); query/subprotocol/누락·다른 Origin 거부, 임의 forwarded 불신. 5초 내 ≤16 KiB 첫 `{type:"auth",token}`. 상류에 Bearer 변환, URL/cookie/log/디스크 영속 저장 금지. 승인된 탭 sessionStorage는 §9.6만 허용. |
 | 상류 권한 | Upgrade 전 TokenReview와 `get /chill/api/v1/live` SAR, 성공 전 데이터 0개. HTTP 401/403/503→4401/4403/1013, 첫 auth 오류=4401·인증 뒤 계약 오류=1002. 4401/4403 자동 재시도 없음. 전역 feed 권한을 단일 workload 권한에서 확대하지 않음. |
 | 수명 | handshake 10초·socket write 5초, 일반 HTTP timeout/deadline 전 정확한 live 분기. 상류 성공 hello→resume→snapshot/재개; head capture+구독 등록은 한 잠금. 조기 resume 한 건만 보관. 양 끝 종료/logout/shutdown은 socket/구독/timer 해제. |
 | resume | `{type:"resume",from,at}`; from=0은 baseline(at 생략), 나머지는 보존 `(seq,at)` 일치만 재개. 범위 밖·미래·재시작 불일치면 snapshot. hello는 checkpoint 전진 없음, baseline 뒤 중복 버림·last+1 초과는 미적용 후 재동기화. |
@@ -253,10 +253,10 @@ ID 정본은 Dashboard SRS다. U는 기존 구현 단위, T는 라이브/재생 
 | DB-FR-45~49 | 이 문서 운영자 측정 근거와 폐기 route | T4/T6 | 운영자 조회와 폐기 화면 |
 | DB-FR-53~54 | 이 문서 동작 비용/분배 점유시간 목록·상세, 실제 투영과 UID·출처 보존 | API coverage 계획 | 동작 비용의 실제 API와 원본 identity, 분배 점유시간의 조건과 누락 결과 |
 | DB-FR-55 | 이 문서 `/scheduler/capacity`의 전체 입력·판정과 독립 settings 대조 | API coverage 계획 | 용량 입력과 계산 판정 및 현재 설정 대조 |
-| DB-FR-56~60 | §8.2~8.4의 선언 후보 행렬·목록·조건별 회차와 최소 요청 prefill, 기존 GET 조인 | S1 | 선언 후보 커버리지와 조회 범위, 조건 목록과 회차 연결, 미리 채운 요청과 중복 안내 |
-| DB-FR-61~63 | §8.5의 숫자·실패/근거 분리·d 포맷과 비용 미제공 안내 | S2 | 상세 수치의 범위와 품질, 실패 회차와 후속 측정 |
-| DB-FR-64~65 | §8.6의 게시 shape·동명 설명형 비교·단계 레인 | S3 | 실험의 결론·동명 비교와 단계 |
-| DB-UX-05~06 | §8.1~8.2·8.7의 data Screen·tabular 숫자·breadcrumb/returnTo | S2(공용), S1/S3(적용) | 데이터 폭·탐색과 재설문 |
+| DB-FR-56~60 | §9.2~9.4와 측정 API §13의 서버 집계·정확 상태·한 화면 요청 | U1/U2/U3 | 연구 홈, 커버리지, 조건 목록과 부족 batch 요청 |
+| DB-FR-61~63 | §9.4의 논문 표 행·서버 상태·실패/후속·d/비용 | U1/U3 | 논문용 범위 판단, 실패 원인, 동일 판정 소비 |
+| DB-FR-64~65 | §9.5의 전 서비스/비대응 단계·부호·정밀도 | U3 | 실험의 전체 득실과 단계 의미 |
+| DB-UX-05~06 | §9.1~9.3·9.6의 data Screen·탭·제목·인증/URL 복원 | U2(공용), U3(적용) | 데이터 폭·탐색·새로고침과 SUS ≥70 재설문 |
 
 ## 7. 남은 연결과 수용 경계
 
@@ -271,9 +271,9 @@ ID 정본은 Dashboard SRS다. U는 기존 구현 단위, T는 라이브/재생 
 
 ## 8. 측정·실험 UX와 커버리지 (2026-10-30)
 
-상태는 **코드 연결·격리 GET 확인 완료, 배포·재설문 전**이다. [계획](../../plans/2026-10-30-dashboard-measurement-ux.md)의
-설문·GET 관측과 [SRS](../../spec/dashboard/SRS.md) DB-FR-56~65, DB-UX-05~06을 구현한다.
-이번 변경은 측정·실험 영역과 공용 데이터 폭만 다룬다. 홈의 라이브 보드·사이드바·로그인 정체성은 유지한다.
+**대체된 설계 이력.** 이 절은 1~4차 구현 당시의 결정·검증 기록이다. 현재 화면·집계·요청·인증
+설계의 정본은 **§9**이며, 충돌 시 §9와 [5차 계획](../../plans/2026-10-31-dashboard-research-redesign.md)을 따른다.
+특히 클라이언트 전수 집계·select 내비·운영 홈 유지·7단계 요청·평균 SUS 68 기준은 폐기한다.
 
 ### 8.1 시각 방향: 계획 → 브리프 재검토 → 확정
 
@@ -745,3 +745,220 @@ coverage와 request prefill을 여는 전체 과정의 compatibility GET는 각 
 `f4-fixture-experiment-{substages,alpha-comparison}.png`다. 브라우저 탭과 로컬 서비스는 종료하고
 자기 사본 `/tmp/uxf4`는 삭제했다. 토큰·원시 export·쓰기 요청·서버 설정 변경은 없다.
 운영 B1/B2 배포와 B3 신규 publication·세 페르소나 재설문은 수행하지 않았으며 별도 승인 수용이다.
+
+## 9. 연구 중심 측정·실험 5차 재설계
+
+2026-10-30 설계, 구현 전. [계획](../../plans/2026-10-31-dashboard-research-redesign.md)은
+조사 근거·세 슬라이스의 파일 소유권·수용 기준을, [측정 API §13](../serving/measurement-api.md#13-연구-커버리지-읽기-projection-u1)은
+응답·상태·읽기 cache를 소유한다. SRS DB-FR-56~65의 새 정본이다.
+이 절이 §8의 화면 결정을 대체하지만 저장 원형·owner UID·통계·과학적 해석 제한은 유지한다.
+
+### 9.1 디자인 계획 → 브리프 재검토
+
+**1차 계획.** 사용자에게 필요한 것은 요청 객체 관리가 아니라 논문 표의 조건과 공백이다.
+연구 홈에서 현재 범위·실험 득실·다음 행동을 읽고, 측정에서는 계측표의 빈 batch를 채운다.
+수평 정렬된 표와 넓은 근거 한 행을 주인공으로 삼는다. 좌측은 조건, 우측은 수치/단위다.
+제목 28px/700, 절 제목 18px/600, 본문 16px/1.6, 데이터 14px/1.5,
+보조 12~13px의 Asta Sans를 유지한다. 수치·날짜는 tabular-nums/오른쪽 정렬,
+원본 ID/JSON만 기존 monospace다. 간격은 8/12/16/24/32px, 설명 폭 65~80ch다.
+
+| 기존 토큰 / 밝은 모드 기준 hex | 역할 |
+|---|---|
+| sidebar `#E3EAF0` | CHILL 크롬/계측 작업면 연결 |
+| foreground `#0F2230` | 조건·제목·주요 수치 |
+| primary/chart-1 `#0D6A8C` | 선택·focus·요청과 CHILL 계열 |
+| ok `#17784A` | 수용 완료·적격. 원본 실행 Complete만으로 녹색 금지 |
+| heat/chart-4 `#B5530B` | 경고/검토 필요 |
+| fail/destructive `#B42318` | 실행 실패/위험 동작 |
+
+새 hex를 컴포넌트에 박지 않고 기존 semantic CSS 변수와 dark 대응값을 참조한다.
+기존 background/card/border도 유지한다. 색만으로 판정하지 않으며 상태 문구·기호·패턴을 병기한다.
+
+**브리프 대비 2차 재검토.** 단순 KPI 카드 3개와 더 큰 운영 보드를 배치하면 또 일반 운영 대시보드가 된다.
+이를 버리고 홈은 범위 요약 한 줄, 실험 득실 표, 다음 행동/커버리지의 평평한 두 열로 바꿨다.
+현재 좁은 우측 패널에 숫자를 더 넣는 안도 버렸다. 선택 조건의 논문 표 행이 먼저 읽히도록
+패널을 28~36rem로 넓히거나 전체 폭으로 교체한다. 기존 색/서체를 바꿔 새로워 보이게 하지 않는다.
+가장 특징적인 요소는 **누락 batch가 드러나는 계측표 하나**다. 그라데이션·장식 번호·대형 숫자 카드·
+중첩 박스는 추가하지 않는다. 사용자 요청에 따라 홈과 내비 구조 자체를 바꾸는 결정이다.
+
+실행한 ui-ux-pro-max 검색과 적용(설계일 기준, 결과를 검증한 범위만):
+
+| 검색 | 결과 적합성·채택 |
+|---|---|
+| `research data dashboard --design-system --density 8` | Data-Dense Dashboard의 데이터 밀도·keyboard/focus/대비 원칙만 채택. Enterprise Gateway/Contact Sales·새 색/Fira 폰트는 부적합하여 미채택. `research analytics dashboard`로 재검색해도 같음 |
+| `tabs vs dropdown navigation --domain ux` → `navigation hierarchy active` | 최초는 hover/sticky 중심이라 좁혀 재검색. Active State·Heading Hierarchy를 채택. 6개 링크 탭 자체는 R4 관찰에 따른 설계 결정 |
+| `stale while revalidate loading --domain ux` → `loading feedback` | Loading Indicators·안정적인 skeleton/aria-busy 채택. 서버 SWR 정책은 검색 결과가 아니라 API 설계 |
+| `wizard reduce steps --domain ux` → `multi step form` | 최초 0건, 재검색 Progress Indicators·Submit Feedback·Form Labels 채택. 한 편집 화면 결정은 M5 과업 근거 |
+| `small multiples --domain chart` → `multiple series comparison` | 최초 0건, 재검색은 radar/time trend로 small multiples와 직접 맞지 않음. 비색상 계열 구분/원값 표만 채택; 소형 다중 차트는 사용자 요구와 R4 근거 |
+| `session persistence --domain ux` → `state preservation` | 최초 0건, 재검색 Deep Linking/Active State만 적합. sessionStorage 보안 정책은 사용자 승인/SRS에 근거하며 검색의 추천으로 주장하지 않음 |
+
+### 9.2 IA·제목·레이아웃 규칙
+
+전역 메뉴: 연구 홈 `/`, 측정 `/measurements`, 실험 `/experiments`, 서비스 `/workloads`,
+운영 `/scheduler`(보조 링크 `/operations/flow`), 기록, 설정.
+운영 흐름 보드는 기존 기능/라이브 의미를 유지한 채 `/operations/flow`로 옮기고 홈에서 제거한다.
+라이브 연결이 끊겨도 연구 홈의 coverage·게시 실험을 읽을 수 있다.
+
+| 측정 링크 탭(고정 순서) | 경로 / 역할 |
+|---|---|
+| 커버리지 | `/measurements` 기본, 기존 `/measurements/coverage?...`도 동일 화면·필터 유지 |
+| 요청 | `/measurements/requests` 실행 계획과 진행/실패 |
+| 회차 | `/measurements/runs` 실제 반복 실행 |
+| 프로파일 | `/scheduler/profiles` 수용된 정확 측정 조건 |
+| 동작 비용 | `/measurements/operation-cost-measurements` 올리기/내리기/유휴/모드 전환의 실측 시간·전체 Node J |
+| 분배 점유 | `/measurements/dispatch-occupancy-measurements` batch 실행 외 요청당 점유 d와 지속 처리량 X |
+
+탭은 링크 내비 `nav`와 `aria-current=page`다. route 이동인데 ARIA tabpanel로 가장하지 않는다.
+모바일은 두 줄의 3열 링크로 여섯 개를 모두 보이게 한다. select나 가로 스크롤 끝에 숨기지 않는다.
+계획 검사는 요청의 보조 동작 `/measurements/check`이며 요청 탭을 활성화한다.
+회차는 측정 소속 하나이며 기록에는 같은 목록을 복제하지 않는다.
+
+- H1은 화면마다 한 번. shell은 접속/유틸리티만 두며 현재 화면 제목을 중복 표기하지 않는다.
+- 탭 목록 화면은 breadcrumb 없음. 상세는 `측정 > 요청 > 항목` 또는 `측정 > 회차 > 항목`,
+  실험 상세는 `실험 > 이름`. 상태는 제목 위 눈썹 라벨이 아니라 제목 옆/근거 행의 사실이다.
+- breadcrumb와 ‘뒤로’ 링크를 동시에 쌓지 않는다. returnTo는 기존 same-origin 허용 경로에
+  `/measurements/requests`, `/operations/flow`를 포함하고 `//host`/scheme/제어문자는 거부한다.
+- 카드 중첩 깊이 **0**: section은 제목+간격+구분선으로, 표는 표의 border로 표현한다.
+  독립 Sheet/Dialog의 외곽 컨테이너는 가능하지만 내부 섹션마다 또 rounded card를 두지 않는다.
+  폼 fieldset도 border 없는 범례/간격을 기본으로 한다.
+- 조건은 이름/값 dl 또는 표로, 실패 이유는 한 문장으로 쓴다. `A · B · C` 메타 나열·
+  반복 면책문·내부 condition 문자열은 제거하고 공통 용어 도움말 한 곳과 원본 펼침으로 옮긴다.
+- data Screen 가용 폭을 쓰며 1440px 개요 표에 페이지 가로 스크롤이 없다.
+  표/Sheet 폭에 min-width:0, 긴 ID는 안전한 줄바꿈, CTA는 문서 흐름의 상단이다.
+
+### 9.3 연구 홈·커버리지 와이어프레임
+
+```text
+연구 현황                                                        [갱신]
+완료 C/N | 논문 적격 P | 지원 미확인 U     YYYY-MM-DD HH:MM 기준
+──────────────────────────────────────────────────────────────────────
+최근 비교: 실험 이름 / 단계 설명 또는 설명 미기록 / 평균 req/s
+POOL 에너지 Δ     이미지 성공 Δ / p95 Δ     PLC Δ     VQA Δ
+CHILL − 정적. 선택 단계 관측이며 통계적 우열이 아님.      [실험 전체 보기]
+──────────────────────────────────────────────────────────────────────
+다음 할 일                         모델 × 장치 커버리지 요약 [열기]
+실패 원인 [확인]                   모델         Orin    Xavier    RPi
+부족 배치 [추가 측정]               MobileNet    C/N     C/N       C/N
+원근거 누락 [검토]                 PLC          C/N     C/N       C/N
+```
+
+홈은 최신 게시가 비교 불가이면 그 사실을 남기고 최근 비교 가능한 기록을 별도로 고른다.
+캠페인 전체를 한 단계의 이득으로 포장하지 않고 모든 서비스 손실도 읽히게 한다.
+nextActions는 서버 원인과 정확 링크만 쓰며 무조건 재측정을 권하지 않는다.
+
+```text
+측정                                                        [새 측정 요청]
+[커버리지] [요청] [회차] [프로파일] [동작 비용] [분배 점유]
+지원 확인 범위 C/N   논문 적격 P   지원 미확인 U    기준 시각 / 갱신 상태
+[모델] [장치] [상태] [조건 더 보기]    목표 batch: 1,2,4,8,16 (명시 시)
+모델 × 장치 개요: 조건 완료 C/N, 부족/실패/미확인 수
+────────────────────────────────────────────────────────────────────────
+선택: MobileNet / Orin                 논문 표 행 (같은 정확 variant/배치)
+모드   CPU              CUDA          조건 / p95 / idle W / active W
+MAXN   완료 B1,2        완료 B1..16    총 J/건 / 증분 J/건 / CI / n / 전력원
+15W    부분 B1          미측정         [CSV 복사] [LaTeX 복사]
+30W    미측정           미측정         경고/누락/논문 적격 근거
+50W    미측정           미측정         [부족 배치만 요청]
+                                      이력 / 원본 [펼침]
+```
+
+숫자는 실측 화면의 현재값을 예시로 고정하지 않고 서버 응답으로 채운다.
+목표 batch가 없는 기본 화면은 ‘요청 범위’이며 B1 하나의 완료를 표준 1~16 스윕 완료라고 쓰지 않는다.
+목표는 URL `batches`의 명시 선택으로 공유한다. 새 목표 저장소/프리셋 관리 UI는 만들지 않는다.
+셀 대표값은 같은 variant/batch의 증분 J와 p95를 한 쌍으로 표시한다.
+최저 에너지를 최적 batch라고 부르지 않는다. 여러 variant는 개수와 선택기를 보여 합성 수치를 만들지 않는다.
+지원 안 함은 기본 숨기되 장치 열 순서는 고정한다. Unknown은 남겨 이유와 분모 제외를 보인다.
+
+1280px 이상은 표와 28~36rem 패널, 그보다 좁으면 선택 상세를 전체 폭 작업면으로 교체한다.
+390px에서는 장치 하나를 고르고 모델/모드/경로별 평평한 세로 행으로 읽는다.
+논문 행은 같은 화면 Sheet에 세로 dl로 표시한다. 닫으면 셀 focus 복원, Escape와 명시 닫기 제공.
+Sheet 안에 Sheet를 겹쳐 열지 않고 원본은 단일 대화상자 또는 기존 상세 페이지로 연결한다.
+
+### 9.4 서버 상태·수치·요청
+
+상태의 정본은 API §13.4의 9개 단어
+**완료 / 논문 적격 / 부분 / 경고 / 실패 / 진행 / 미측정 / 지원 안 함 / 확인 불가**다.
+`assessmentFor(kind,uid)`는 서버 index lookup만, `ResearchStatus`는 받은 label/reasons만 그린다.
+목록·상세·회차·프로파일·비용·점유 화면에서 별도 Complete→완료 번역, active 반복 추정,
+논문 체크 재판정을 제거한다. 원본 phase와 ‘실패 요청/후속 결과 포함 셀’의 범위는 함께 명시한다.
+
+논문 표 행은 API §13.5 그대로다. 증분 CI만 그 단위에 표시하며 n(active/idle 반복)과
+N(client 호출)을 나눈다. 총 J/건·유휴/부하 W·노드 전체 metric/출처를 숫자 가까이에 둔다.
+CSV/LaTeX에는 조건·단위·기준 시각·결손 사유·출처/재사용 범위를 포함하고 토큰/로그는 없다.
+기존 `safeSource`의 비밀정보 제거를 재사용하고 CSV quoting/수식 시작 문자 처리와
+LaTeX 특수문자 escape는 작은 직렬화 함수로 제공한다. 새 export 라이브러리는 도입하지 않는다.
+음수/비유한 d는 서버 경고를 보여 주고 원값은 원본/내보내기에만 보존한다.
+실제 0 J/d와 null을 구별하며 계획 시간을 실측 시간으로 바꾸지 않는다.
+
+요청은 **한 편집 화면 + 같은 화면 검사 결과/명시 제출**이다. 모델·장치·mode·batch를 먼저
+고르고 path/Node/CPU/입력 조건을 확인한다. 서비스는 preprocessor/dataset 프리셋으로 낮춘다.
+Compatible 경로만 기본 노출, Incompatible 숨김, Unknown은 ‘지원 확인 필요’ 보조 목록이다.
+사용자 검사 전 자동 POST는 없다. 명시 검사에서 기존 preflight의 정적 확인이 성공해야 검토/제출한다.
+지원 확인과 admission 성공은 다르다.
+
+정확 조건 목표 batch 중 이미 수용/진행 중인 것은 기본에서 제외하고 부족 batch만 선택한다.
+CPU/affinity/dataset/image/protocol 미확인이면 중복 확정하지 않는다.
+명시 재측정은 원래 결과를 보존한 새 immutable 요청이다.
+반복·active/idle 시간·warmup/settling·계측 주기/timeout의 실제 값과 복사 출처를 항상 요약한다.
+이름은 모델/Node/mode/path/CPU/날짜의 길이 제한된 자동 이름, 전체 조건 표는 별도다.
+검사 실패 원인·권한/통신/입력 오류와 다음 행동은 접지 않은 본문이며 입력/수정 focus를 유지한다.
+조건 변경 시 이전 검사 무효화, 응답 미확인 자동 재제출 금지다.
+
+요청 목록의 상태 열은 짧은 상태와 후속 링크만, 실패 열은 정확 owner Run의 실제 원인 한 줄이다.
+JSON diff는 상세의 전/후 표로 이동한다. 상세 원인 미기록은 그대로 쓰고 OOM·timeout을 꾸미지 않는다.
+모바일 목록은 border 없는 행 단위 두 단 배치로 모델/상태/조건/원인을 먼저 읽는다.
+
+### 9.5 실험
+
+캠페인 목록/홈/상세는 동일 방향 `CHILL − 정적`(직접 선택은 A−B)을 쓴다.
+선택 단계의 에너지 득실과 모든 서비스의 기한 내 성공률·성공 응답 p95 득실이 함께 보인다.
+공유 에너지를 서비스별로 배분/합산하지 않는다.
+
+전 단계 요약표에는 비대응 단계도 처음부터 포함한다. 한쪽 없음·중복·suffix 불일치의 이유와
+실제 stage ID/기간·관측 평균 req/s를 보인다. 같은 req/s만으로 `E5-3`과 `E5-3-223`을 합치지 않는다.
+실제 동결 설명이 없으면 ‘단계 설명 미기록’, α가 없으면 ‘α 미제공’이다.
+게시된 계획과 실제 관측/순서를 구별한다. 비동시 A/B의 시간대 교란을 설명하고 인과로 단정하지 않는다.
+
+서비스마다 성공률/p95 두 차트를 가진 small multiples를 기본 전부 표시한다.
+데스크톱 3열/중간 2열/모바일 1열, 단계 축과 정책 색·선/마커는 공유한다.
+성공률 0~100% 공통 축, p95는 서비스별 일관 범위/명시 단위, 게시된 SLO만 기준선이다.
+부하와 전체 POOL W는 서비스 grid 위의 공통 차트로 한 번만 둔다.
+원본 수치 표와 키보드 대안을 제공하며 실제 시간순 레인은 별도 접힘이다.
+집계점 사이를 초별 데이터로 보간하지 않는다.
+
+계산은 원값, 표시는 같은 행의 A/B/Δ에 같은 소수 자릿수다.
+기본 3유효숫자에서 산술이 어긋나 보이면 해당 행에 필요한 자릿수를 최대 6자리까지 함께 늘린다.
+그 아래 차이는 `<표시 단위`와 방향을 표시한다. 모든 근삿값은 `≈`, ‘차이는 원값 기준’을
+표 머리에 한 번 표시한다. 정확값 보기/복사에서 원본 정밀도와 실제 Δ를 보존한다.
+성공률은 %p, 상대 에너지는 %, ms/J는 원단위 차이다. 기준 0/누락은 계산 불가다.
+색과 함께 에너지/지연 감소·성공률 손실이라는 문구를 표시한다.
+
+### 9.6 토큰과 데이터 수명
+
+DB-SEC-03 개정에 따라 bearer는 탭 메모리와 sessionStorage에만 둔다.
+system/namespace별 버전 key를 사용하고 서버 설정 확인/hydration 뒤 복원한다.
+sessionStorage 읽기/쓰기 실패는 메모리 전용과 유지 불가 안내로 처리하며 localStorage로 fallback하지 않는다.
+쿼리 응답/원시를 storage에 저장하거나 token을 URL·cookie·로그·내보내기에 넣지 않는다.
+새 독립 탭은 재로그인하며 외부 창은 noopener다. 탭 복제/브라우저 세션 복원은 storage를
+복제·복원할 수 있어 탭 닫기를 서버 세션 폐기/안전 삭제 보장으로 표현하지 않는다.
+
+logout·신원 변경·401/4401은 storage 삭제→요청 취소→QueryClient 교체/비움→socket 종료의
+동일 epoch 전환이다. 늦은 응답/예전 WS가 새 신원의 cache를 채우지 못하게 한다.
+403/4403은 권한 오류이며 전체 token 만료가 아니다. 503/1013도 장애로 유지한다.
+인증 실패 후 내부 목적 URL을 보존해 재로그인 뒤 같은 조건으로 돌아간다. 변경은 자동 재제출하지 않는다.
+접속 관리의 로그아웃 버튼을 유지하고 로그인 설명은 ‘이 탭에서 새로고침해도 유지’로 바꾼다.
+sessionStorage는 XSS 방어가 아니므로 안전한 텍스트 렌더링과 기존 보안 header 정책을 유지한다.
+
+### 9.7 구현·수용 경계
+
+U1(Go 집계/RBAC), U2(IA/홈/coverage/토큰·공유 route/type/CSS), U3(상태 소비/요청/측정/실험)를
+[계획 §7](../../plans/2026-10-31-dashboard-research-redesign.md#7-세-구현-슬라이스와-파일-소유권)의
+파일 소유권대로 병렬 구현한다. route/type/CSS/기존 coverage 파일의 목록 이동은 단일 소유자를 지킨다.
+브라우저 전수 집계·상태 재판정·7단계·서비스 단일 차트 등 폐기 코드는 cutover 때 제거한다.
+새 라이브러리·새 저장소·기존 실험 재게시·원시 재측정은 이 설계의 선행 조건이 아니다.
+
+통합 담당자가 모두 합친 뒤 한 번 Go/dashboard 검사·브라우저 수용을 수행한다.
+API 성공 응답 p95 <2초, 390~1440px/키보드/focus/44px 타깃, storage/401/403 회귀와
+평균 SUS **≥70**, M1·M3·M5·E1 세 페르소나 전원 성공이 최종 기준이다.
+미달이면 재설계·구현·배포·재설문을 반복한다. 문서 완성·정적 검사·낮아진 클릭 수만으로 수용하지 않는다.
+Main의 타 모델 교차 검토 질문 5개는 계획 §9에 있으며 아직 패널 검토/새 설문을 수행했다고 주장하지 않는다.
