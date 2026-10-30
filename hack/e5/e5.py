@@ -2635,7 +2635,7 @@ def main():
         print('NOT_READY: '+str(exc),file=sys.stderr); return 2
 
 
-# This local check must not require an operational environment or cluster binding.
+# Local check: needs CHILL_EXPERIMENT_CONFIG (module constants) but no cluster binding or network.
 if __name__=='__main__' and sys.argv[1:]==['self-check']:
     self_check()
     sys.exit(0)

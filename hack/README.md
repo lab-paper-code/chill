@@ -496,3 +496,6 @@ null and an explicit missing reason; their immutable records are not rewritten.
 `python3 hack/e5/demo.py --help` and `--self-check` work without environment
 configuration. The latter runs the real CPO producer stage loop against local
 pipes and mocked API/kubectl, with no cluster access, image builds or full tests.
+
+`python3 hack/e5/e5.py self-check` needs `CHILL_EXPERIMENT_CONFIG` pointing at an
+environment JSON (module constants) but makes no cluster or network calls.
