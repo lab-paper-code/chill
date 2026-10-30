@@ -1,6 +1,7 @@
 package deviceclass
 
 import (
+	"cmp"
 	"fmt"
 	"math"
 	"regexp"
@@ -39,7 +40,7 @@ const (
 
 func inferredArchitecture(node *corev1.Node) string {
 	labels := node.GetLabels()
-	return firstNonEmpty(
+	return cmp.Or(
 		node.Status.NodeInfo.Architecture,
 		labels[corev1.LabelArchStable],
 		labels[nodeArchBetaLabelKey],
@@ -49,7 +50,7 @@ func inferredArchitecture(node *corev1.Node) string {
 
 func inferredClassName(node *corev1.Node) string {
 	labels := node.GetLabels()
-	base := firstNonEmpty(
+	base := cmp.Or(
 		labels[chillmeta.DeviceModel],
 		labels[compatJetsonModelLabelKey],
 		labels[chillmeta.DeviceFamily],
@@ -95,7 +96,7 @@ func memorySuffix(memory resource.Quantity) string {
 }
 
 func inferredAccelerator(labels map[string]string) string {
-	if value := firstNonEmpty(labels[chillmeta.Accelerator], labels[compatAcceleratorLabelKey]); value != "" {
+	if value := cmp.Or(labels[chillmeta.Accelerator], labels[compatAcceleratorLabelKey]); value != "" {
 		return value
 	}
 	if labels[nvidiaGPUPresentLabelKey] == labelValueTrue || labels[nvidiaGPUCountLabelKey] != "" {
@@ -108,7 +109,7 @@ func inferredAccelerator(labels map[string]string) string {
 }
 
 func deviceFamily(labels map[string]string) string {
-	return firstNonEmpty(labels[chillmeta.DeviceFamily], labels[compatDeviceFamilyLabelKey])
+	return cmp.Or(labels[chillmeta.DeviceFamily], labels[compatDeviceFamilyLabelKey])
 }
 
 var dns1123Cleanup = regexp.MustCompile(`[^a-z0-9.-]+`)
@@ -124,13 +125,4 @@ func sanitizeDNS1123(value string) string {
 		out = strings.Trim(out[:validation.DNS1123SubdomainMaxLength], "-.")
 	}
 	return out
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }

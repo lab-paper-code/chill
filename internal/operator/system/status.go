@@ -194,20 +194,20 @@ func profilerAvailableCondition(observed Observation) metav1.Condition {
 			Message: statusMessage(observed.ProfilerError.Error(), "failed to observe Profiler Deployment"),
 		}
 	}
-	if observed.ProfilerDeployment == nil {
+	return deploymentAvailableCondition(observed.ProfilerDeployment, observed.ProfilerDeploymentName, "Profiler", "Profiler")
+}
+
+func deploymentAvailableCondition(deployment *appsv1.Deployment, name, component, reasonPrefix string) metav1.Condition {
+	if deployment == nil {
 		return metav1.Condition{
-			Status:  metav1.ConditionFalse,
-			Reason:  reasonProfilerMissing,
-			Message: fmt.Sprintf("Profiler Deployment %q is missing", observed.ProfilerDeploymentName),
+			Status: metav1.ConditionFalse, Reason: reasonPrefix + "Missing",
+			Message: fmt.Sprintf("%s Deployment %q is missing", component, name),
 		}
 	}
-
-	deployment := observed.ProfilerDeployment
 	if condition := deploymentFailureCondition(deployment); condition != nil {
 		return metav1.Condition{
-			Status:  metav1.ConditionFalse,
-			Reason:  reasonProfilerDegraded,
-			Message: statusMessage(condition.Message, fmt.Sprintf("Profiler Deployment %q is degraded", deployment.Name)),
+			Status: metav1.ConditionFalse, Reason: reasonPrefix + "Degraded",
+			Message: statusMessage(condition.Message, fmt.Sprintf("%s Deployment %q is degraded", component, deployment.Name)),
 		}
 	}
 	desired := int32(1)
@@ -218,15 +218,13 @@ func profilerAvailableCondition(observed Observation) metav1.Condition {
 		deployment.Status.UpdatedReplicas < desired ||
 		deployment.Status.AvailableReplicas < desired {
 		return metav1.Condition{
-			Status:  metav1.ConditionFalse,
-			Reason:  reasonProfilerProgressing,
-			Message: fmt.Sprintf("Profiler Deployment %q is progressing", deployment.Name),
+			Status: metav1.ConditionFalse, Reason: reasonPrefix + "Progressing",
+			Message: fmt.Sprintf("%s Deployment %q is progressing", component, deployment.Name),
 		}
 	}
 	return metav1.Condition{
-		Status:  metav1.ConditionTrue,
-		Reason:  reasonProfilerReady,
-		Message: fmt.Sprintf("Profiler Deployment %q is available", deployment.Name),
+		Status: metav1.ConditionTrue, Reason: reasonPrefix + "Ready",
+		Message: fmt.Sprintf("%s Deployment %q is available", component, deployment.Name),
 	}
 }
 
@@ -238,34 +236,8 @@ func evidenceStoreAvailableCondition(observed Observation) metav1.Condition {
 			Message: statusMessage(observed.EvidenceStoreError.Error(), "failed to observe Evidence Store"),
 		}
 	}
-	if observed.EvidenceStoreDeployment == nil {
-		return metav1.Condition{
-			Status:  metav1.ConditionFalse,
-			Reason:  reasonEvidenceStoreMissing,
-			Message: fmt.Sprintf("Evidence Store Deployment %q is missing", observed.EvidenceStoreDeploymentName),
-		}
-	}
-
-	deployment := observed.EvidenceStoreDeployment
-	if condition := deploymentFailureCondition(deployment); condition != nil {
-		return metav1.Condition{
-			Status:  metav1.ConditionFalse,
-			Reason:  reasonEvidenceStoreDegraded,
-			Message: statusMessage(condition.Message, fmt.Sprintf("Evidence Store Deployment %q is degraded", deployment.Name)),
-		}
-	}
-	desired := int32(1)
-	if deployment.Spec.Replicas != nil {
-		desired = *deployment.Spec.Replicas
-	}
-	if deployment.Status.ObservedGeneration < deployment.Generation ||
-		deployment.Status.UpdatedReplicas < desired ||
-		deployment.Status.AvailableReplicas < desired {
-		return metav1.Condition{
-			Status:  metav1.ConditionFalse,
-			Reason:  reasonEvidenceStoreProgressing,
-			Message: fmt.Sprintf("Evidence Store Deployment %q is progressing", deployment.Name),
-		}
+	if condition := deploymentAvailableCondition(observed.EvidenceStoreDeployment, observed.EvidenceStoreDeploymentName, "Evidence Store", "EvidenceStore"); condition.Status != metav1.ConditionTrue {
+		return condition
 	}
 
 	job := observed.EvidenceStoreBootstrapJob
@@ -293,7 +265,7 @@ func evidenceStoreAvailableCondition(observed Observation) metav1.Condition {
 	return metav1.Condition{
 		Status:  metav1.ConditionTrue,
 		Reason:  reasonEvidenceStoreReady,
-		Message: fmt.Sprintf("Evidence Store Deployment %q is available and bootstrap succeeded", deployment.Name),
+		Message: fmt.Sprintf("Evidence Store Deployment %q is available and bootstrap succeeded", observed.EvidenceStoreDeployment.Name),
 	}
 }
 

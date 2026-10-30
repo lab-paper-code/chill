@@ -6,6 +6,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/metadata"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -136,7 +137,7 @@ func TestDiscoverRequiresFallbackPowerModesWhenCatalogOptional(t *testing.T) {
 	}
 }
 
-func TestSpecEqualUsesQuantitySemanticEquality(t *testing.T) {
+func TestDeviceClassSpecUsesQuantitySemanticEquality(t *testing.T) {
 	a := edgev1alpha1.DeviceClassSpec{
 		NodeSelector: map[string]string{metadata.DeviceClass: "class-a"},
 		Architecture: "arm64",
@@ -154,8 +155,8 @@ func TestSpecEqualUsesQuantitySemanticEquality(t *testing.T) {
 		}},
 	}
 
-	if !SpecEqual(a, b) {
-		t.Fatal("SpecEqual() = false, want true")
+	if !apiequality.Semantic.DeepEqual(a, b) {
+		t.Fatal("Semantic.DeepEqual() = false, want true")
 	}
 }
 

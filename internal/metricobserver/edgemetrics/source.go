@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net/http"
 	"strconv"
@@ -57,7 +58,7 @@ func New(identity metricobserver.SourceIdentity, client *http.Client) (*Source, 
 		return nil, errors.New("HTTP client is required")
 	}
 	metrics := *identity.ThermalMetrics
-	identity.MetricLabels = cloneMetricLabels(identity.MetricLabels)
+	identity.MetricLabels = maps.Clone(identity.MetricLabels)
 	identity.ThermalMetrics = &metrics
 	return &Source{identity: identity, client: client}, nil
 }
@@ -83,7 +84,7 @@ func NewPowerSeries(identity metricobserver.SourceIdentity, client *http.Client)
 	if client == nil {
 		return nil, errors.New("HTTP client is required")
 	}
-	identity.MetricLabels = cloneMetricLabels(identity.MetricLabels)
+	identity.MetricLabels = maps.Clone(identity.MetricLabels)
 	return &Source{identity: identity, client: client}, nil
 }
 
@@ -110,17 +111,6 @@ func validateExactPowerLabels(labels map[string]string) error {
 		}
 	}
 	return nil
-}
-
-func cloneMetricLabels(labels map[string]string) map[string]string {
-	if labels == nil {
-		return nil
-	}
-	cloned := make(map[string]string, len(labels))
-	for name, value := range labels {
-		cloned[name] = value
-	}
-	return cloned
 }
 
 func validateMetricIdentity(power string, thermal metricobserver.ThermalMetricIdentity) error {
@@ -152,7 +142,7 @@ func validateMetricIdentity(power string, thermal metricobserver.ThermalMetricId
 // Identity returns an owned copy of the source and typed metric identities.
 func (s *Source) Identity() metricobserver.SourceIdentity {
 	identity := s.identity
-	identity.MetricLabels = cloneMetricLabels(s.identity.MetricLabels)
+	identity.MetricLabels = maps.Clone(s.identity.MetricLabels)
 	if s.identity.ThermalMetrics != nil {
 		metrics := *s.identity.ThermalMetrics
 		identity.ThermalMetrics = &metrics

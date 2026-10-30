@@ -155,7 +155,7 @@ type VerifiedCandidateReport struct {
 func (r VerifiedCandidateReport) Record() CandidateReport {
 	result := r.report
 	result.ArtifactSupply.Files = slices.Clone(r.report.ArtifactSupply.Files)
-	result.DeviceClassFacts.NodeSelector = cloneStringMap(r.report.DeviceClassFacts.NodeSelector)
+	result.DeviceClassFacts.NodeSelector = maps.Clone(r.report.DeviceClassFacts.NodeSelector)
 	result.DeviceClassFacts.PowerModes = append([]string(nil), r.report.DeviceClassFacts.PowerModes...)
 	result.Reasons = append([]CandidateReportReason(nil), r.report.Reasons...)
 	result.RuntimePackages = append([]CandidateReportRuntimePackage(nil), r.report.RuntimePackages...)
@@ -172,17 +172,6 @@ func (r VerifiedCandidateReport) Record() CandidateReport {
 		access.SupplementalGroups = append([]int64(nil), r.report.RuntimeAccess.SupplementalGroups...)
 		access.Resources = maps.Clone(r.report.RuntimeAccess.Resources)
 		result.RuntimeAccess = &access
-	}
-	return result
-}
-
-func cloneStringMap(source map[string]string) map[string]string {
-	if source == nil {
-		return nil
-	}
-	result := make(map[string]string, len(source))
-	for key, value := range source {
-		result[key] = value
 	}
 	return result
 }

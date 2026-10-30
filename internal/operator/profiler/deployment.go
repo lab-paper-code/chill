@@ -83,7 +83,7 @@ func profilerArgs(options Options, config Config) []string {
 	args := []string{
 		"--system-name=" + options.SystemName,
 		"--metrics-bind-address=" + config.MetricsBindAddress,
-		"--health-probe-bind-address=" + healthProbeAddress(config.HealthProbePort),
+		"--health-probe-bind-address=" + fmt.Sprintf(":%d", config.HealthProbePort),
 		"--leader-election-id=" + config.LeaderElectionID,
 		fmt.Sprintf("--failed-job-retention-seconds=%d", config.FailedJobRetentionSeconds),
 		"--fact-source-config-map=" + config.FactSource.ConfigMapName,

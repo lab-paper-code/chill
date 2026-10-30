@@ -2,7 +2,6 @@ package profiler
 
 import (
 	"errors"
-	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -124,8 +123,4 @@ func (c Config) Validate() error {
 		return errors.New(strings.Join(problems, "; "))
 	}
 	return nil
-}
-
-func healthProbeAddress(port int32) string {
-	return fmt.Sprintf(":%d", port)
 }

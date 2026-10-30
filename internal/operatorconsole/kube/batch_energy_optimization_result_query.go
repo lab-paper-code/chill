@@ -15,26 +15,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// ResultObjectReader mirrors the Evidence Store's exact-identity reader. Its
-// implementation is supplied at the composition root, as
-// VerifiedEvidenceLoader is.
-type ResultObjectReader interface {
-	Open(context.Context, evidencestore.ObjectIdentity) (io.ReadCloser, error)
-}
-
 // KubernetesBatchEnergyOptimizationResultQuery exact-reads a BatchEnergyOptimization and
 // follows only its status result reference. The record decoder owns schema
 // acceptance, so this query bounds the read and projects the sealed result
 // without interpreting the measurement method that produced it.
 type KubernetesBatchEnergyOptimizationResultQuery struct {
 	reader  client.Reader
-	objects ResultObjectReader
+	objects evidencestore.Reader
 	now     func() time.Time
 }
 
 func NewKubernetesBatchEnergyOptimizationResultQuery(
 	reader client.Reader,
-	objects ResultObjectReader,
+	objects evidencestore.Reader,
 ) (*KubernetesBatchEnergyOptimizationResultQuery, error) {
 	if reader == nil || objects == nil {
 		return nil, errors.New("Kubernetes BatchEnergyOptimization reader and result object reader are required")

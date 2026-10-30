@@ -12,7 +12,7 @@ import (
 
 // CurvePlanProjector resolves the immutable plan one campaign selects. The
 // Console declares only the port it needs and the composition root supplies
-// the implementation, as it does for ResultObjectReader, so a read surface
+// the implementation, as it does for the Evidence Store reader, so a read surface
 // never depends on the controller that owns the projection.
 type CurvePlanProjector interface {
 	Project(context.Context, *edgev1alpha1.BatchEnergyOptimization) (profilederivation.CurvePlan, error)

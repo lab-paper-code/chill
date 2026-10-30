@@ -3,6 +3,7 @@ package edgemetrics
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -32,7 +33,7 @@ func TestNewRequiresCompositeIdentityAndOwnsIt(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			candidate := valid
-			labels := cloneMetricLabels(valid.MetricLabels)
+			labels := maps.Clone(valid.MetricLabels)
 			thermal := *valid.ThermalMetrics
 			candidate.MetricLabels = labels
 			candidate.ThermalMetrics = &thermal

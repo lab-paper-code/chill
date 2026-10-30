@@ -54,7 +54,7 @@ func buildExecutionJob(
 	if run.Namespace == "" || run.Name == "" || run.UID == "" {
 		return nil, errors.New("ProfilingRun namespace, name, and UID are required")
 	}
-	if err := validateEvidenceStoreBinding(binding); err != nil {
+	if err := binding.Validate(); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(options.WorkloadObserverServiceAccountName) == "" {
@@ -372,8 +372,4 @@ func secretEnv(name, secretName, key string) corev1.EnvVar {
 	return corev1.EnvVar{Name: name, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
 		LocalObjectReference: corev1.LocalObjectReference{Name: secretName}, Key: key,
 	}}}
-}
-
-func validateEvidenceStoreBinding(binding EvidenceStoreBinding) error {
-	return binding.Validate()
 }

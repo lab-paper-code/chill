@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -54,7 +55,7 @@ func (r *DeviceDiscoveryReconciler) ensureDeviceClass(ctx context.Context, syste
 
 	original := existing.DeepCopy()
 	ownership.EnsureSystemLabel(existing, system.Name)
-	if !deviceclass.SpecEqual(existing.Spec, discovered.Spec) {
+	if !apiequality.Semantic.DeepEqual(existing.Spec, discovered.Spec) {
 		existing.Spec = discovered.Spec
 	}
 	if err := controllerutil.SetControllerReference(system, existing, r.Scheme); err != nil {

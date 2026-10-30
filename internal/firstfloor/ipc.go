@@ -80,14 +80,11 @@ func unframe(b []byte, n int) ([][]byte, error) {
 }
 
 type Runner struct {
-	command    *exec.Cmd
 	input      io.WriteCloser
 	output     io.ReadCloser
 	cancel     context.CancelFunc
 	exited     chan struct{}
-	waitErr    error
 	timeout    time.Duration
-	batchSizes []int
 	metadata   RuntimeMetadata
 	generative bool
 	closeOnce  sync.Once
@@ -116,8 +113,8 @@ func StartRunner(ctx context.Context, cfg *Config) (*Runner, error) {
 		cancel()
 		return nil, err
 	}
-	r := &Runner{command: command, input: input, output: output, cancel: cancel, exited: make(chan struct{}), timeout: time.Duration(cfg.RunnerTimeoutMS) * time.Millisecond, batchSizes: cfg.BatchSizes, generative: cfg.MaxNewTokens > 0}
-	go func() { r.waitErr = command.Wait(); close(r.exited) }()
+	r := &Runner{input: input, output: output, cancel: cancel, exited: make(chan struct{}), timeout: time.Duration(cfg.RunnerTimeoutMS) * time.Millisecond, generative: cfg.MaxNewTokens > 0}
+	go func() { _ = command.Wait(); close(r.exited) }()
 	if err = childOutput.Close(); err != nil {
 		r.Close()
 		return nil, fmt.Errorf("close parent runner output descriptor: %w", err)

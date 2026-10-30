@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -144,16 +145,9 @@ func applyTransition(kind workloadobserver.EventKind, pod workloadobserver.Pod, 
 }
 
 func canonicalStrings(values []string) []string {
-	set := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		set[value] = struct{}{}
-	}
-	result := make([]string, 0, len(set))
-	for value := range set {
-		result = append(result, value)
-	}
-	sort.Strings(result)
-	return result
+	result := append([]string{}, values...)
+	slices.Sort(result)
+	return slices.Compact(result)
 }
 
 func orderedPods(active map[string]workloadobserver.Pod) []workloadobserver.Pod {

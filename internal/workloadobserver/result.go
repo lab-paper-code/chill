@@ -178,7 +178,7 @@ func applyEvents(active map[string]Pod, events []Event, started, ended time.Time
 			}
 			active[event.Pod.UID] = event.Pod
 		case EventUpdated:
-			if !exists || !samePodIdentity(current, event.Pod) {
+			if !exists || !SamePod(current, event.Pod) {
 				return fmt.Errorf("workload Pod %q updated without matching active identity", event.Pod.UID)
 			}
 			if err := validatePod(event.Pod, true); err != nil {
@@ -186,7 +186,7 @@ func applyEvents(active map[string]Pod, events []Event, started, ended time.Time
 			}
 			active[event.Pod.UID] = event.Pod
 		case EventExited:
-			if !exists || !samePodIdentity(current, event.Pod) {
+			if !exists || !SamePod(current, event.Pod) {
 				return fmt.Errorf("workload Pod %q exited without matching active identity", event.Pod.UID)
 			}
 			if err := validatePod(event.Pod, false); err != nil {
@@ -239,10 +239,6 @@ func activePods(active map[string]Pod) []Pod {
 	}
 	sort.Slice(pods, func(i, j int) bool { return podKey(pods[i]) < podKey(pods[j]) })
 	return pods
-}
-
-func samePodIdentity(left, right Pod) bool {
-	return left.Namespace == right.Namespace && left.Name == right.Name && left.UID == right.UID
 }
 
 func podKey(pod Pod) string {

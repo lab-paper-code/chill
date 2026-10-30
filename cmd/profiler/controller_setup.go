@@ -290,14 +290,10 @@ func setupTransitionCostController(
 	return nil
 }
 
-type currentEvidenceStoreResolver interface {
-	Resolve(context.Context) (profilercontroller.EvidenceStoreBinding, error)
-}
-
 type currentEvidenceStore struct {
 	reader    client.Reader
 	namespace string
-	resolver  currentEvidenceStoreResolver
+	resolver  profilercontroller.EvidenceStoreBindingResolver
 	factory   profilercontroller.EvidenceObjectStoreFactory
 }
 
