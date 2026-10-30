@@ -901,6 +901,8 @@ Compatible 기본, Incompatible 숨긴 이유 목록, Unknown은 선언/설정 �
 조건 변경 시 무효화·응답 미확인 시 같은 이름 조회·자동 제출/재제출 금지다.
 실패 목록은 실제 owner 원인 한 줄/후속 링크만, JSON diff는 상세 전/후 표다.
 
+구현 채택 근거(2026-10-30): U3는 ui-ux-pro-max의 **Focusable Error Summary / Error Messages** 권고에 따라 한 편집면 상단의 키보드 초점 가능한 오류 요약과 접지 않은 HTTP·사유·조치를 사용한다. U2는 Navigation/Keyboard Navigation 권고와 frontend-design에 따라 6개 보이는 링크 탭, Asta Sans/기존 semantic 색, 단일 H1·구분선 계측표, 768px 이상 표 아래 상세를 채택했다.
+
 ### 9.5 실험·수치
 
 목록/개요는 모든 대응 단계 에너지 Δ와 서비스별 최악 단계를 보여 cherry-pick을 피한다.

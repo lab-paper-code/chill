@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { readFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
-import { campaignGroups, campaignPairs, commitExperimentSelection, experimentSelection, policyStageGroups, serviceDelta, stageChartData, alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
+import { campaignGroups, campaignPairs, commitExperimentSelection, comparisonDirection, experimentSelection, frozenP95SLO, stagePairing, policyStageGroups, serviceDelta, stageChartData, alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
 import type { SchedulerObservation } from "./read-types.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
@@ -115,13 +115,13 @@ test("S3: publisher units, ratios, differences and invalid values stay explicit"
   assert.equal(ratio(.5,0,0),null)
   assert.equal(ratio(undefined,5,4),null)
   assert.equal(formatResult(.7957909383424646,"%"),"79.58 %")
-  assert.equal(formatResult(.09261,"J"),"0.0926 J")
+  assert.equal(formatResult(.09261,"J"),"0 J")
   assert.equal(formatResult(-1,"ms"),"미제공")
   assert.equal(formatResult(NaN,"J"),"미제공")
   assert.equal(formatResult(Infinity,"ms"),"미제공")
   assert.equal(difference(.8,.7,"%"),"+10.00 %p")
-  assert.equal(difference(12,15,"ms"),"-3 ms")
-  assert.equal(difference(.80000001,.8,"%"),"+0.00 %p · 표시 정밀도 미만")
+  assert.equal(difference(12,15,"ms"),"-3.00 ms")
+  assert.equal(difference(.80000001,.8,"%"),"0.01 %p 미만 · 방향 없음")
   assert.equal(difference(.8,.7,"%",false),"계산 불가")
   assert.equal(relativeEnergy(1,0),"계산 불가")
   assert.equal(relativeEnergy(90,100),"-10.00 %")
@@ -239,11 +239,107 @@ test("R3fix: policies share exact stage axes and normalize shared energy by offe
   assert.equal(grouped.groups[0].series[0]?.watts,5)
   assert.equal(grouped.groups[0].series[1]?.watts,10)
   assert.equal(grouped.groups[1].series[1],null)
-  assert.equal(policyStageGroups({...run,stages:[run.stages[0],run.stages[0]]}).groups[0].series[0],null)
+  const duplicateGroups=policyStageGroups({...run,stages:[run.stages[0],run.stages[0]]}).groups
+  assert.equal(duplicateGroups.length,2)
+  assert.ok(duplicateGroups.every(group=>group.series[0]?.paired===false))
   const duplicates={...run.stages[0],kpis:{wholePoolJoules:100,requests:{same:{offered:10}},workloads:{same:{offered:10}}}}
   assert.equal(stageChartData({...run,stages:[duplicates]})[0].joulesPerRequest,null)
   const left=experimentRows({...stage,kpis:{requests:{same:{deadlineSuccessFraction:.9737,successDenominator:100,completedLatencyNS:{p95:299300000}}}}})[0]
   const right=experimentRows({...stage,kpis:{requests:{same:{deadlineSuccessFraction:1,successDenominator:100,completedLatencyNS:{p95:142100000}}}}})[0]
-  assert.match(serviceDelta(left,right),/성공 -2.63 %p; p95 \+157 ms \(×2.11\)/)
+  assert.match(serviceDelta(left,right),/성공 -2.63 %p; p95 \+157.20 ms \(×2.11\)/)
   assert.match(serviceDelta(undefined,right),/계산 불가/)
+})
+
+test("R5: fixed unit decimals preserve zeros and original numeric export precision",()=>{
+  for(const [value,unit,expected] of [
+    [12.6,"J","13 J"],[12,"건","12 건"],[0,"J","0 J"],[12,"W","12.0 W"],
+    [0,"W","0.0 W"],[.5,"%","50.00 %"],[0,"%","0.00 %"],[2,"%p","2.00 %p"],
+    [2,"ms","2.00 ms"],[.01234567,"J/건","0.0123 J/건"],[0,"J/item","0.0000 J/item"],
+  ] as const)assert.equal(formatResult(value,unit),expected)
+  assert.equal(formatResult(9007199254740993n,"건"),"9007199254740993 건")
+  const original=parseSchedulerJSON('{"wholePoolJoules":173062.73965024325,"offered":9007199254740993}')
+  const before=publishedText(original)
+  formatResult(object(original).wholePoolJoules,"J")
+  formatResult(object(original).offered,"건")
+  assert.equal(publishedText(original),before)
+  assert.match(before,/173062\.73965024325/)
+  assert.match(before,/9007199254740993/)
+})
+
+test("R5: zero B allows absolute differences and percentage points, not relative percent or multiplier",()=>{
+  assert.equal(difference(12.3,0,"J"),"+12 J")
+  assert.equal(difference(.25,0,"%"),"+25.00 %p")
+  assert.equal(difference(0,0,"ms"),"0.00 ms")
+  assert.equal(relativeEnergy(12,0),"계산 불가")
+  assert.equal(relativeEnergy(0,0),"계산 불가")
+  const row=(p95:number)=>experimentRows({...stage,kpis:{requests:{same:{deadlineSuccessFraction:0,successDenominator:10,completedLatencyNS:{p95}}}}})[0]
+  assert.match(serviceDelta(row(1000000),row(0)),/p95 \+1.00 ms \(배율 계산 불가 · B=0\)/)
+})
+
+test("R5: every nonzero subunit delta is directionless even when rounding would show one display unit",()=>{
+  for(const [a,b,unit,expected] of [
+    [10.9,10,"J","1 J 미만 · 방향 없음"],[10,10.9,"J","1 J 미만 · 방향 없음"],
+    [1.099,1,"W","0.1 W 미만 · 방향 없음"],[1,1.099,"W","0.1 W 미만 · 방향 없음"],
+    [.009,0,"ms","0.01 ms 미만 · 방향 없음"],[0,.009,"ms","0.01 ms 미만 · 방향 없음"],
+    [.00009,0,"%","0.01 %p 미만 · 방향 없음"],[0,.00009,"%","0.01 %p 미만 · 방향 없음"],
+    [.00009,0,"J/건","0.0001 J/건 미만 · 방향 없음"],
+  ] as const) {
+    assert.equal(difference(a,b,unit),expected)
+    assert.equal(comparisonDirection(a,b,unit,"A","B"),"표시단위 미만 · 방향 없음")
+  }
+  assert.equal(relativeEnergy(100.009,100),"0.01 % 미만 · 방향 없음")
+  assert.equal(relativeEnergy(100,100.009),"0.01 % 미만 · 방향 없음")
+  // Calculating before rounding is observable: displayed endpoints differ by 0.02 ms.
+  assert.equal(formatResult(1.016,"ms"),"1.02 ms")
+  assert.equal(formatResult(1.004,"ms"),"1.00 ms")
+  assert.equal(difference(1.016,1.004,"ms"),"+0.01 ms")
+})
+
+test("R5: direct A/B direction names the actual policy in both orders without claiming an advantage",()=>{
+  assert.equal(comparisonDirection(90,100,"J","정적 비교군","CHILL"),"정적 비교군 값이 CHILL 값보다 낮음")
+  assert.equal(comparisonDirection(100,90,"J","CHILL","정적 비교군"),"CHILL 값이 정적 비교군 값보다 높음")
+  assert.equal(comparisonDirection(.9,.8,"%","정적 비교군","CHILL"),"정적 비교군 값이 CHILL 값보다 높음")
+  assert.equal(comparisonDirection(12,12,"ms","고정 정책","수동 정책"),"고정 정책 / 수동 정책: 같음")
+  assert.equal(comparisonDirection(undefined,12,"ms","A","B"),"비교 불가")
+})
+
+test("R5: unpaired suffixes, duplicate stages and unknown policies remain visible without rate-based pairing",()=>{
+  const make=(id:string):ExperimentStage=>({...stage,id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:00:10Z",kpis:{wholePoolJoules:100,requests:{same:{offered:100}}}})
+  const stages=[make("full-E5-1-a"),make("static-E5-1-b"),make("full-E5-2"),make("static-E5-2"),make("full-E5-3"),make("full-E5-3"),make("static-E5-3"),make("manual")]
+  const run={...recorded.publication,stages}
+  assert.ok(stages.every(stage=>stageRate(stage)===10))
+  assert.deepEqual(campaignPairs(run).map(pair=>pair.key),["E5-2"])
+  assert.match(stagePairing(run,stages[0]).reason,/static-E5-1-a 없음/)
+  assert.match(stagePairing(run,stages[1]).reason,/full-E5-1-b 없음/)
+  assert.equal(stagePairing(run,stages[4]).reason,"동일 단계 식별자 중복")
+  assert.equal(stagePairing(run,stages[7]).paired,false)
+  const points=stageChartData(run)
+  assert.equal(points.length,stages.length)
+  assert.equal(points.filter(point=>point.paired).length,2)
+  const grouped=policyStageGroups(run).groups.flatMap(group=>group.series.filter(point=>point!==null))
+  assert.equal(grouped.length,stages.length)
+  assert.equal(grouped.filter(point=>point.reason==="동일 단계 식별자 중복").length,3)
+})
+
+test("R5: p95 SLO comes only from each frozen stage KPI and never from another percentile or live settings",()=>{
+  const row=(original:Record<string,unknown>)=>experimentRows({...stage,kpis:{workloads:{same:original}}})[0]
+  assert.equal(frozenP95SLO(row({measurementSLO:{percentile:95,targetLatencyNanos:123456789}})),123.456789)
+  assert.equal(frozenP95SLO(row({sloPercentile:95,sloMS:50})),50)
+  assert.equal(frozenP95SLO(row({measurementSLO:{percentile:99,targetLatencyNanos:1000000}})),null)
+  assert.equal(frozenP95SLO(row({schedulerSLO:{percentile:95,targetLatencyNanos:1000000}})),null)
+  assert.equal(frozenP95SLO(row({})),null)
+})
+
+test("R5: all-service charts and all-stage table are initially rendered, with original source exports retained",()=>{
+  const source=readFileSync(new URL("../features/experiments.tsx",import.meta.url),"utf8")
+  assert.doesNotMatch(source,/차트로 볼 서비스|자세히 볼 서비스|const \[chosen|const \[selected|연구|논문/)
+  assert.match(source,/md:grid-cols-2 xl:grid-cols-3/)
+  assert.match(source,/h-\[180px\]/)
+  assert.match(source,/names\.map\(name=><article/)
+  assert.match(source,/<tbody>\{rows\.map\(row=><ServiceRows/)
+  assert.match(source,/aq\.data&&<><StageSummary/)
+  assert.doesNotMatch(source,/pairs\.length>0&&<StageSummary/)
+  assert.match(source,/connectNulls=\{false\}/)
+  assert.match(source,/dataKey=\{`u\$\{index\}`\}/)
+  assert.match(source,/<SourceExport filename="experiment-comparison\.json" value=\{\{a:aq\.data,/)
 })

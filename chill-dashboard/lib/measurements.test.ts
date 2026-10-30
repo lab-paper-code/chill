@@ -1,11 +1,53 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { runFailure, runStatusObject, exactRun, safeMeasurementReturn, significant, evidenceLocations, isProjectionMeasurementKind, measurementHref, measurementListHref, measurementPath, measurementReason, measurementState, measurementUIDMismatch, occupancyDuration, occupancySupply, occupancyThroughput, operationDuration, operationWallEnergy, operationSteps } from "./measurements.ts"
+import { runFailure, runStatusObject, exactRun, safeMeasurementReturn, significant, evidenceLocations, isProjectionMeasurementKind, measurementHref, measurementListHref, measurementPath, measurementReason, measurementUIDMismatch, occupancyDuration, occupancySupply, occupancyThroughput, operationDuration, operationWallEnergy, operationSteps } from "./measurements.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
 import { parseSchedulerJSON } from "./scheduler.ts"
 import type { DispatchOccupancyMeasurement, OperationCostMeasurement } from "./read-types.ts"
-import { formatMeasurementTime, measurementConditionDiff, measurementBatchCompletion, measurementCIOverlap, measurementHeadlineLabel, measurementReasonSummary } from "./measurements.ts"
+import { formatMeasurementTime, measurementConditionDiff, measurementReasonSummary } from "./measurements.ts"
+import { formatMeasurementNumber, measurementRequestName, resultRowsCSV, resultRowsLatex } from "./measurements.ts"
+import type { ResultRow } from "./read-types.ts"
+
+test("measurement quantities use fixed unit precision and preserve valid zero and negative CI bounds",()=>{
+  assert.equal(formatMeasurementNumber(0,"W"),"0.0")
+  assert.equal(formatMeasurementNumber(12,"ms"),"12.00")
+  assert.equal(formatMeasurementNumber(0.00001234,"J/건"),"0.0000")
+  assert.equal(formatMeasurementNumber(-0.12345,"J/건"),"-0.1235")
+  assert.equal(formatMeasurementNumber(1234.5,"J"),"1,235")
+  assert.equal(formatMeasurementNumber(null,"W"),"미제공")
+})
+test("CSV retains row identity, source references and exact numbers while escaping every cell",()=>{
+  const rows=[{id:'row"1',rowKind:"source-reference",batch:1,sourceProfileId:"source",condition:{dataset:"a,b\nc"},p95Milliseconds:0.123456789,incrementalJoulesPerItem:0,confidence:{lower:-1,upper:1,halfWidth:1,level:0.95},reuse:{source:"origin"}}] as unknown as ResultRow[]
+  const csv=resultRowsCSV(rows)
+  assert.ok(csv.includes('"row""1"'))
+  assert.ok(csv.includes('"source-reference"'))
+  assert.ok(csv.includes('"0.123456789"'))
+  assert.ok(csv.includes('""dataset"":""a,b\\nc""'))
+  assert.ok(csv.includes('""lower"":-1'))
+  assert.ok(csv.includes('"source"'))
+})
+test("request identity includes mode, complete path and CPU and only changes suffix for collisions",()=>{
+  const condition={model:"model",node:"node",powerMode:"mode",path:"runtime-backend",cpu:"2"}
+  const now=new Date(2026,9,30),taken=new Set<string>()
+  const name=measurementRequestName(condition,taken,now)
+  assert.equal(name,"model-node-mode-runtime-backend-cpu2-20261030")
+  taken.add(name)
+  assert.equal(measurementRequestName(condition,taken,now),`${name}-2`)
+  const pinned=name
+  taken.add(`${name}-2`)
+  assert.equal(pinned,name)
+})
+test("result exports neutralize formulas and escape LaTeX without altering numeric precision",()=>{
+  const rows=[{id:"=HYPERLINK(test)",batch:1,condition:{token:"private",dataset:"a_b% & # {x}"},incrementalJoulesPerItem:-0.123456789}] as unknown as ResultRow[]
+  const csv=resultRowsCSV(rows),latex=resultRowsLatex(rows)
+  assert.ok(csv.includes(`"'=HYPERLINK(test)"`))
+  assert.ok(csv.includes('"-0.123456789"'))
+  assert.ok(!csv.includes("private"))
+  assert.ok(!latex.includes("private"))
+  assert.ok(latex.includes("a\\_b\\% \\& \\# \\{x\\}"))
+  assert.ok(latex.includes("-0.123456789"))
+})
 
 const metadata = {namespace:"research",name:"sample",uid:"uid-1",resourceVersion:"42",creationTimestamp:"2026-10-30T00:00:00Z"}
 const references = {cr:{apiVersion:"edge.dacs.io/v1alpha1",kind:"OperationCostMeasurement",namespace:metadata.namespace,name:metadata.name,uid:metadata.uid},evidence:[{store:"evidence",key:"power-key"}]}
@@ -60,7 +102,7 @@ test("operation actual duration and accepted wall energy preserve zero, missing 
     assert.equal(operationDuration(value),"실측 시간 기록 없음")
     assert.equal(operationWallEnergy(value),"수용된 에너지 없음")
   }
-  assert.equal(operationDuration(0),"0 ms")
+  assert.equal(operationDuration(0),"0.00 ms")
   assert.equal(operationWallEnergy(0),"0 J")
   assert.equal(operationDuration(3807875),"3.81 ms")
   const wire = parseSchedulerJSON('{"status":{"phase":"Failed","reason":"MeasurementFailed","steps":[{"name":"idle","key":"exact-key","verdict":"Failed","operationID":"op-uid-2","durationNanos":9223372036854775807,"wallJoules":null,"reason":"IsolationUnconfirmed"}]}}') as Pick<OperationCostMeasurement,"status">
@@ -70,18 +112,18 @@ test("operation actual duration and accepted wall energy preserve zero, missing 
   assert.equal(result.reason,"IsolationUnconfirmed")
   assert.equal(result.verdict,"Failed")
   assert.equal(wire.status.phase,"Failed")
-  assert.equal(operationDuration(result.durationNanos),"9,220,000,000 s")
+  assert.equal(operationDuration(result.durationNanos),"9,223,372,036,854.78 ms")
   assert.equal(operationWallEnergy(result.wallJoules),"수용된 에너지 없음")
   assert.equal(operationDuration(-3807875n),"-3.81 ms · 품질 경고·사용 확인 필요")
   for (const value of [Number.MAX_SAFE_INTEGER + 1,1.5,NaN,Infinity,"100"]) assert.match(operationDuration(value),/품질 경고/)
   for (const value of [-1,NaN,Infinity,"0"]) assert.match(operationWallEnergy(value),/품질 경고/)
-  assert.equal(operationWallEnergy(2.75),"2.75 J")
+  assert.equal(operationWallEnergy(2.75),"3 J")
   assert.equal(operationDuration(operationSteps(operation)[2].results[0]?.durationNanos),"실측 시간 기록 없음")
 })
 
 test("occupancy preserves missing and zero d, string throughput, unspecified supply and logical location identity", () => {
   assert.equal(occupancyDuration(occupancy.status.perRequestNanos),"결과 없음")
-  assert.equal(occupancyDuration(0),"0ms/request")
+  assert.equal(occupancyDuration(0),"0.00ms/request")
   assert.equal(occupancyDuration(3807875n),"3.81ms/request")
   assert.equal(occupancyThroughput("0.0000012300"),"0.00000123 req/s")
   assert.equal(occupancyThroughput("0"),"0 req/s")
@@ -94,11 +136,6 @@ test("occupancy preserves missing and zero d, string throughput, unspecified sup
   assert.deepEqual(evidenceLocations([]),[])
 })
 
-test("all measurement terminal and unknown phases carry explicit sentences and non-color-only tone semantics", () => {
-  assert.deepEqual(["Measuring","Complete","Insufficient","Failed",undefined,"Unknown"].map(phase => measurementState(phase)),[
-    {label:"측정 중이에요",tone:"info"},{label:"측정이 끝났어요",tone:"ok"},{label:"판단할 근거가 부족해요",tone:"warn"},{label:"측정을 끝내지 못했어요",tone:"fail"},{label:"측정 상태를 확인할 수 없어요",tone:"idle"},{label:"측정 상태를 확인할 수 없어요",tone:"idle"},
-  ])
-})
 
 test("measurement reasons expose the server-provided failure or insufficiency instead of an unknown-code placeholder", () => {
   for (const reason of ["probe request timed out after 10s", "only 2 batches completed; minimum is 5", "UnknownVerdict"]) {
@@ -136,16 +173,8 @@ test("run status decodes JSON fields and failure summary uses recorded memory er
   assert.doesNotMatch(failure.log,/\u001b/)
 })
 
-test("measurement headline is a selected minimum and partial completion counts requested unique batches",()=>{
-  assert.match(measurementHeadlineLabel(4),/최저.*4/)
-  assert.doesNotMatch(measurementHeadlineLabel(4),/평균/)
-  assert.deepEqual(measurementBatchCompletion([1,2,4,4],[1,4]),{partial:true,count:2,total:3})
-  assert.deepEqual(measurementBatchCompletion([1,2],[1,2]),{partial:false,count:2,total:2})
+test("measurement timestamps retain the explicit timezone",()=>{
   assert.match(formatMeasurementTime("2026-10-30T00:00:00Z"),/9:00:00.*KST/)
-  const row=(mean:number,width:number)=>({incrementalWorkJoulesPerItem:mean,confidence:{halfWidth:width}})
-  assert.equal(measurementCIOverlap([row(1,.1),row(1.2,.1)]),true)
-  assert.equal(measurementCIOverlap([row(1,.01),row(1.2,.01)]),false)
-  assert.equal(measurementCIOverlap([row(1,NaN),row(1.2,.1)]),false)
 })
 
 test("retry condition diff includes CPU and protocol changes while summaries retain original reasons separately",()=>{

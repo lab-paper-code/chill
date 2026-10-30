@@ -4,23 +4,23 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useState, type ReactNode } from "react"
 import { useChillMutation, useChillQuery, useSession, type ApiError } from "@/lib/client"
-import { QueryGate, SourceJSON, StatusBadge } from "@/components/read-region"
-import { Empty, Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
+import { QueryGate, SourceJSON } from "@/components/read-region"
+import { RowDialog, Rows, Screen } from "@/components/screen"
 import { PreflightAnswer, preflightConclusion } from "@/features/read-pages"
 import { powerModeText } from "@/features/resources"
-import { codeText } from "@/lib/labels"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { ExecutionPath, ModelList, ModelResource, WorkloadView } from "@/lib/domain"
-import type { InventoryClass, InventoryNode, MeasurementMutation, MeasurementPlan, MeasurementPlanList, MeasurementPlanSpec, MeasurementPreflight } from "@/lib/read-types"
-import { resolveMeasurementPrefill, serverCompatibility, staticCompatibility, planVariant, type MeasurementPrefill } from "@/lib/measurement-coverage"
-import { MeasurementNavigation, useCoverageInventory, useModelCompatibility } from "@/features/measurement-coverage"
+import type { InventoryClass, InventoryNode, MeasurementMutation, MeasurementPlan, MeasurementPlanList, MeasurementPlanSpec, MeasurementPreflight, MeasurementVariant } from "@/lib/read-types"
+import { resolveMeasurementPrefill, serverCompatibility, staticCompatibility, type MeasurementPrefill } from "@/lib/measurement-coverage"
+import { useCoverageInventory, useModelCompatibility, useMeasurementCoverage } from "@/features/measurement-coverage"
+import { MeasurementNavigation } from "@/components/measurement-navigation"
+import { measurementRequestName } from "@/lib/measurements"
 
 const back: [string, string] = ["/measurements", "측정"]
 const steps = ["workload", "device", "run", "size", "advanced", "name", "review"] as const
 type Step = typeof steps[number]
 const batchChoices = [1, 2, 4, 8, 16]
-const cpuChoices = ["1", "2", "4"]
 const dns1123 = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/
 
 type Advanced = { warmup: number; activeDuration: number; activeWindow: number; activeInterval: number; activeTimeout: number; settling: number; idleDuration: number; idleWindow: number; idleInterval: number; idleTimeout: number; retryLimit: number; affinity: string }
@@ -75,15 +75,6 @@ function pathReason(model: ModelResource, path: ExecutionPath, cls: InventoryCla
   const verdict = staticCompatibility(model, path, cls)
   return verdict.state === "unsupported" ? verdict.reason : ""
 }
-const sanitize = (text: string) => text.toLowerCase().replace(/[^a-z0-9.-]+/g, "-").replace(/[-.]*\.[-.]*/g, ".").replace(/-+/g, "-").slice(0, 200).replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "")
-function suggest(d: Draft, taken: Set<string>) {
-  const now = new Date()
-  const day = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`
-  const base = sanitize(`${d.model}-${d.node}-${d.path.split("-")[0]}-${day}`)
-  let name = base
-  for (let i = 2; taken.has(name); i++) name = sanitize(`${base.slice(0, 190)}-${i}`)
-  return name
-}
 const detailHref = (namespace: string, name: string, uid?: string) => `/measurements/batch-energy-optimizations/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${uid ? `?uid=${encodeURIComponent(uid)}` : ""}`
 function failure(error: ApiError) {
   const data = (error.data && typeof error.data === "object" ? error.data : {}) as { code?: string; message?: string }
@@ -111,7 +102,7 @@ function view(d: Draft, { models, classes, plans, prefill }: Context) {
   const declared = artifact?.derivation?.declaredBatchSizes?.length ? artifact.derivation.declaredBatchSizes : null
   const max = path?.runtime.settings?.firstfloor?.maxBatchSize
   const taken = new Set(plans.map(p => p.metadata.name))
-  const name = d.name ?? (model && node && path ? suggest(d, taken) : "")
+  const name = d.name ?? (model && node && path ? measurementRequestName({...d,powerMode,cpu}, taken) : "")
   const affinity = parseAffinity(protocol.values.affinity) ?? []
   function problem(step: Step): string {
     switch (step) {
@@ -180,15 +171,6 @@ function AdvancedFields({ value, set }: { value: Advanced; set: (value: Advanced
     <label htmlFor="measurement-affinity" className="grid gap-2 text-sm sm:col-span-2">사용할 CPU 코어 번호 · 비워 두면 정하지 않아요<Input id="measurement-affinity" inputMode="numeric" placeholder="예: 3 또는 2, 3" value={value.affinity} onChange={event => set({ ...value, affinity: event.target.value })} /></label>
   </div>
 }
-function AdvancedForm({ initial, save }: { initial: Advanced; save: (value: Advanced) => void }) {
-  const [values, setValues] = useState(initial)
-  const [error, setError] = useState("")
-  return <form className="grid gap-4" onSubmit={event => { event.preventDefault(); const issue = advancedProblem(values); if (issue) setError(issue); else save(values) }}>
-    <AdvancedFields value={values} set={setValues} />
-    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-    <Button type="submit">이 방식으로 재기</Button>
-  </form>
-}
 
 export function MeasurementRequestPage() {
   const { config } = useSession(), params = useSearchParams()
@@ -197,6 +179,8 @@ export function MeasurementRequestPage() {
   const models = useChillQuery<ModelList>("v1/models")
   const workloads = useChillQuery<WorkloadView[]>("v1/workloads")
   const inventory = useCoverageInventory()
+  const coverage=useMeasurementCoverage(config.namespace,!!params.get("variantId"))
+  if(params.get("variantId")&&!coverage.data&&!coverage.error)return <Screen title="측정 요청" lede="선택 조건과 부족 배치를 확인하고 있어요."/>
   if (!plans.data || !models.data || !workloads.data || !inventory.data) return <Screen back={back} title="측정 요청" lede="고를 수 있는 서비스와 장비를 확인하고 있어요.">
     <MeasurementNavigation namespace={config.namespace}/>
     <QueryGate query={plans}><QueryGate query={models}><QueryGate query={workloads}><QueryGate query={inventory}>{null}</QueryGate></QueryGate></QueryGate></QueryGate>
@@ -205,188 +189,98 @@ export function MeasurementRequestPage() {
   const source = from ? plans.data.items?.find(plan=>plan.metadata.name===from) : undefined
   if (from && (!source || ((prefill.values.fromUID || prefill.values.uid) && source.metadata.uid!==(prefill.values.fromUID || prefill.values.uid)))) prefill.errors.push("복사 원본의 namespace/UID를 확인할 수 없어요")
   const context: Context = { models: models.data.items, workloads: workloads.data, classes: inventory.data.classes, plans: plans.data.items ?? [], prefill:prefill.active }
-  return <Funnel key={params.toString()} namespace={config.namespace} from={from} context={context} prefill={prefill} more={false} refetchPlans={plans.refetch} checking={plans.isFetching} />
+  const selected=coverage.data?.cells.flatMap(cell=>cell.variants).find(variant=>variant.id===params.get("variantId"))
+  return <Funnel key={params.toString()} namespace={config.namespace} from={from} context={context} prefill={prefill} selected={selected} refetchPlans={plans.refetch} checking={plans.isFetching} />
 }
 
-function Funnel({ namespace, from, context, prefill, more, refetchPlans, checking }: { namespace: string; from: string | null; context: Context; prefill:MeasurementPrefill; more: boolean; refetchPlans: () => Promise<{ error: ApiError | null }>; checking: boolean }) {
-  const router = useRouter()
+function Funnel({ namespace, from, context, prefill, selected, refetchPlans, checking }: { namespace: string; from: string | null; context: Context; prefill:MeasurementPrefill; selected?:MeasurementVariant; refetchPlans: () => Promise<{ error: ApiError | null }>; checking: boolean }) {
+  const router = useRouter(), params=useSearchParams()
   const dry = useChillMutation(), pre = useChillMutation(), send = useChillMutation()
-  const [start] = useState(() => prefill.active ? {draft:{...emptyDraft,model:prefill.values.model,deviceClass:prefill.values.deviceClass,node:prefill.node,path:prefill.values.path,powerMode:prefill.values.powerMode},index:0,error:"",copied:false} : begin(from, context))
-  const [d, setD] = useState(start.draft)
-  const [index, setIndex] = useState(start.index)
-  const [error, setError] = useState(start.error)
-  const [unknown, setUnknown] = useState(false)
-  const [check, setCheck] = useState<"" | "done" | "failed">("")
-  const [advancedOpen, setAdvancedOpen] = useState(false)
-  const v = view(d, context)
-  const support=useModelCompatibility(d.model,v.path?.name??"",v.cls?.name??"",v.cls?.nodes.filter(node=>node.name===d.node)??[],v.model?.metadata.uid,v.cls?.uid)
-  const supportVerdict=v.model&&v.path&&v.cls?serverCompatibility(staticCompatibility(v.model,v.path,v.cls),support.data??[]):undefined
-  const blocked = prefill.errors.length > 0
-  const history = context.plans.filter(plan => {
-    const c=plan.spec.state.candidate
-    return c.modelSpec===d.model && c.deviceClass===d.deviceClass && c.executionPath===d.path && c.powerMode===v.powerMode && plan.spec.state.targetNode===d.node
+  const variantId=params.get("variantId")??""
+  const source=selected&&context.plans.find(plan=>selected.requestIds.includes(`${namespace}/${plan.metadata.name}/${plan.metadata.uid}`))
+  const exactVariant=!!source&&typeof selected?.condition.runtimeImage==="string"&&typeof selected.condition.nodeUID==="string"
+  const [d, setD] = useState<Draft>(() => {
+    if(source) {
+      const copied=begin(source.metadata.name,context).draft
+      return {...copied,batchSizes:exactVariant?selected?.batchProgress.missing??[]:selected?.batchProgress.target??copied.batchSizes,name:null}
+    }
+    const batches=(params.get("batches")??"").split(",").map(Number).filter(batch=>Number.isInteger(batch)&&batch>0)
+    return prefill.active ? {...emptyDraft,model:prefill.values.model,deviceClass:prefill.values.deviceClass,node:prefill.node,path:prefill.values.path,powerMode:prefill.values.powerMode,batchSizes:batches} : {...begin(from,context).draft,...(!from&&batches.length?{batchSizes:batches}:{})}
   })
-  const step = steps[index]
-  const listPath = `v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`
-  const update = (patch: Partial<Draft>) => { setD(current => ({ ...current, ...patch })); setError("") }
-
-  function go(next: number) {
-    if (blocked) return
-    setError(""); dry.reset(); pre.reset(); send.reset(); setIndex(next)
-    if (steps[next] !== "review") return
-    // Pin the suggested name so a later list refresh can never change what gets sent.
-    const pinned = { ...d, name: v.name }
-    setD(pinned)
-    verify(pinned)
+  const [error,setError]=useState(""),[unknown,setUnknown]=useState(false),[checked,setChecked]=useState(false)
+  const [conditionKept,setConditionKept]=useState(exactVariant)
+  const [showUnknown,setShowUnknown]=useState(false)
+  const v=view(d,context), listPath=`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`
+  const support=useModelCompatibility(d.model,d.path,d.deviceClass,v.cls?.nodes.filter(node=>node.name===d.node)??[],v.model?.metadata.uid,v.cls?.uid)
+  const verdict=v.model&&v.path&&v.cls?serverCompatibility(staticCompatibility(v.model,v.path,v.cls),support.data??[]):undefined
+  const answer=pre.data?.data as MeasurementPreflight|undefined
+  const admitted=dry.isSuccess&&(dry.data?.data as MeasurementMutation|null)?.request==="NOT_SUBMITTED"
+  const passed=admitted&&answer?.resolves===true
+  const pending=dry.isPending||pre.isPending
+  const update=(patch:Partial<Draft>)=>{
+    const changed=Object.keys(patch).some(key=>key!=="name"&&key!=="batchSizes")
+    setD(current=>({...current,...patch,...(changed&&conditionKept?{batchSizes:selected?.batchProgress.target??[]}:{}),name:"name" in patch?patch.name??null:null}))
+    setError("");dry.reset();pre.reset();send.reset()
+    if(changed)setConditionKept(false)
   }
-  function conflict() {
-    go(steps.indexOf("name"))
-    setError("같은 이름의 측정이 이미 있어요. 다른 이름을 정해 주세요.")
-    void refetchPlans()
-  }
-  // Server dry-run checks admission; ChillServer preflight resolves the plan. Both must pass before submit.
-  function verify(draft = d) {
-    if (blocked) return
-    const body = manifest(draft, context, namespace)
-    dry.mutate({ path: `${listPath}?dryRun=All`, method: "POST", body }, { onError: e => { if (e.status === 409) conflict() } })
-    pre.mutate({ path: `${listPath}/preflight`, method: "POST", body })
+  function verify() {
+    const issue=steps.filter(step=>step!=="review").map(step=>v.problem(step)).find(Boolean)
+    if(issue){setError(issue);document.getElementById("measurement-errors")?.focus();return}
+    if(verdict?.state==="unsupported"){setError(verdict.reason);return}
+    if(verdict?.state==="unknown"&&!showUnknown){setError("지원 미확인 조합을 검사하려면 명시 검사 항목을 선택하세요.");return}
+    // Keep the checked identity through success, transport uncertainty and manual identity lookup.
+    const pinned={...d,name:v.name};setD(pinned);setError("")
+    const body=manifest(pinned,context,namespace)
+    dry.mutate({path:`${listPath}?dryRun=All`,method:"POST",body})
+    pre.mutate({path:`${listPath}/preflight${variantId&&conditionKept?`?${new URLSearchParams({variantId})}`:""}`,method:"POST",body})
   }
   function submit() {
-    if (blocked) return
-    send.mutate({ path: listPath, method: "POST", body: manifest(d, context, namespace) }, {
-      onSuccess: response => {
-        const task = (response.data as MeasurementMutation | null)?.task
-        router.replace(detailHref(task?.metadata.namespace ?? namespace, task?.metadata.name ?? v.name, task?.metadata.uid))
-      },
-      // MeasurementAuditIncomplete means "may have been accepted": same as a lost response, never resent automatically.
-      onError: e => { if (e.status === 409) conflict(); else if (e.unknownOutcome || e.status === 0 || failure(e).code === "MeasurementAuditIncomplete") setUnknown(true) },
+    if(!passed||unknown)return
+    send.mutate({path:listPath,method:"POST",body:manifest(d,context,namespace)},{
+      onSuccess:response=>{const task=(response.data as MeasurementMutation|null)?.task;router.replace(detailHref(task?.metadata.namespace??namespace,task?.metadata.name??v.name,task?.metadata.uid))},
+      onError:e=>{if(e.unknownOutcome||e.status===0||failure(e).code==="MeasurementAuditIncomplete")setUnknown(true)},
     })
   }
-  function next() {
-    const issue = step==="run"&&supportVerdict?.state==="unsupported"?supportVerdict.reason:v.problem(step)
-    if (issue) setError(issue)
-    else go(index + 1)
-  }
-
-  if (unknown) {
-    const found = check === "done" ? context.plans.find(p => p.metadata.name === v.name) : undefined
-    return <Screen back={back} status={<StatusBadge tone="warn">결과 미확인</StatusBadge>} title="요청 결과를 확인하지 못했어요"
-      lede={check === "failed" ? "목록을 불러오지 못했어요. 잠시 뒤 다시 확인해 주세요." : found ? "요청이 접수돼 있어요. 아래에서 열어 보세요." : check === "done" ? "아직 목록에 없어요. 잠시 뒤 다시 확인해 주세요." : "접수됐을 수도 있어요. 자동으로 다시 보내지 않으니, 먼저 접수됐는지 확인해 주세요."}
-      action={<Button className="w-full" disabled={checking} onClick={() => void refetchPlans().then(result => setCheck(result.error ? "failed" : "done"))}>{checking ? "확인하고 있어요" : "요청이 접수됐는지 확인하기"}</Button>}>
-      <MeasurementNavigation namespace={namespace}/>
-      <Rows>
-        {found && <Row href={detailHref(found.metadata.namespace, found.metadata.name, found.metadata.uid)} label="접수된 측정 보기" value={found.metadata.name} />}
-        {check === "done" && !found && <Row label="작성한 내용으로 돌아가기" hint="조건을 다시 확인한 뒤 직접 요청할 수 있어요" onClick={() => { setUnknown(false); setCheck(""); go(steps.indexOf("review")) }} />}
-        {send.error && <RowDialog label="받은 응답 보기" title="받은 응답"><SourceJSON inline value={{ status: send.error.status, body: send.error.data ?? send.error.body }} /></RowDialog>}
-      </Rows>
-    </Screen>
-  }
-
-  const answer = pre.data?.data as MeasurementPreflight | undefined
-  const admitted = dry.isSuccess && (dry.data?.data as MeasurementMutation | null)?.request === "NOT_SUBMITTED"
-  const passed = admitted && answer?.resolves === true
-  const unresolved = answer?.resolves === false
-  const pending = dry.isPending || pre.isPending
-  const denied = dry.error?.status === 403 || pre.error?.status === 403 || send.error?.status === 403
-  const rejected = !!dry.error && dry.error.status >= 400 && dry.error.status < 500
-  const unchecked = (!!dry.error && !rejected) || (dry.isSuccess && !admitted) || !!pre.error || (pre.isSuccess && !answer)
-  const sizes = v.declared ?? d.batchSizes
-  const titles: Record<Step, string> = {
-    workload: "어떤 서비스의 조건으로 잴까요?", device: "어느 장비에서 잴까요?", run: "어떻게 실행할까요?", size: "한 번에 몇 건씩, 몇 번씩 잴까요?",
-    advanced: v.protocol.from ? "이전 측정과 같은 방식으로 재요" : "어떤 방식으로 잴까요?", name: "이름을 정해 주세요",
-    review: denied ? "측정을 요청할 권한이 없어요" : send.error ? "측정을 요청하지 못했어요" : pending ? "요청할 수 있는지 확인하고 있어요" : unresolved ? preflightConclusion(answer!) : rejected ? "이대로는 요청할 수 없어요" : unchecked ? "요청할 수 있는지 확인하지 못했어요" : answer ? preflightConclusion(answer) : "이대로 측정을 요청할까요?",
-  }
-  const ledes: Record<Step, string> = {
-    workload: "서비스가 쓰는 모델, 전처리기, 데이터셋으로 재요.",
-    device: more ? "장비 종류가 많아 앞쪽 일부만 보여요. 준비된 노드만 고를 수 있어요." : "준비된 노드만 고를 수 있어요.",
-    run: "이 장비에서 돌릴 수 있는 방식만 고를 수 있어요.",
-    size: "크기마다 정한 횟수만큼 재서 전력을 가장 적게 쓰는 크기를 찾아요.",
-    advanced: v.protocol.from ? "바꾸고 싶을 때만 열어 보세요." : "처음 하는 측정이라 재는 방식을 정해 주세요.",
-    name: start.copied ? "기존 측정 조건을 그대로 가져왔어요. 이름만 새로 정하면 돼요." : "추천한 이름을 그대로 써도 돼요. 이 이름으로 결과를 찾아요.",
-    review: denied ? "권한이 있는 계정으로 다시 접속해 주세요. 작성한 내용은 그대로 있어요." : send.error ? `${failure(send.error).message} 작성한 내용은 그대로 있어요.` : pending ? "실제로 요청하지는 않아요." : unresolved ? "이전 단계에서 조건을 고쳐 주세요. 아직 요청하지 않았어요." : rejected ? `${failure(dry.error!).message} 이전 단계에서 고쳐 주세요.` : unchecked ? "잠시 뒤 다시 확인해 주세요. 아직 요청하지 않았어요." : "미리 확인을 통과했어요. 아직 요청하지 않았어요.",
-  }
-  const badge = step !== "review" ? null : pending ? <StatusBadge tone="info">확인 중</StatusBadge> : passed && !send.error ? <StatusBadge tone="ok">확인 통과</StatusBadge> : <StatusBadge tone="fail">요청 불가</StatusBadge>
-  const chips = [...new Set([...batchChoices.filter(b => !v.max || b <= v.max), ...d.batchSizes])].sort((a, b) => a - b)
-  const primary = step !== "review" ? <Button className="flex-[2]" disabled={blocked} onClick={next}>다음</Button>
-    : unchecked ? <Button className="flex-[2]" disabled={pending} onClick={() => verify()}>다시 확인하기</Button>
-    : <Button className="flex-[2]" disabled={blocked || !passed || denied || send.isPending} onClick={submit}>{send.isPending ? "요청하고 있어요" : "측정 요청하기"}</Button>
-
-  return <Screen back={[prefill.returnTo,"상위 측정"]} breadcrumbs={[{href:prefill.returnTo,label:"측정"},{label:"새 요청"}]} status={<span className="flex items-center gap-2 text-sm text-muted-foreground">{index + 1} / {steps.length}{badge}</span>} title={titles[step]} lede={ledes[step]}
-    action={<div className="flex gap-3">{index > 0 && <Button variant="outline" className="flex-1" disabled={send.isPending} onClick={() => go(index - 1)}>이전</Button>}{primary}</div>}>
-    <MeasurementNavigation namespace={namespace}/>
-    {prefill.active&&<p className="text-sm text-muted-foreground">모델과 장치 조건을 채웠어요. 서비스·데이터셋·CPU·반복·측정 방식도 확인하세요.</p>}
-    {supportVerdict&&<section className="space-y-1 rounded-lg border p-3 text-sm" aria-label="선택 조합 정적 호환성"><p>{support.isFetching?"실행 지원 확인 중":supportVerdict.reason}</p><p className="text-xs text-muted-foreground">장비 선언 기준이며, 마지막 단계에서 실제 요청 조건을 검사해요.</p></section>}
-    {blocked&&<div role="alert" className="notice"><h2>미리 채운 조건을 확인해 주세요</h2>{prefill.errors.map(issue=><p key={issue}>{issue}</p>)}<SourceJSON value={prefill.values} title="전달된 원값"/><Button variant="outline" onClick={()=>router.replace(`/measurements/new?${new URLSearchParams({returnTo:prefill.returnTo})}`)}>초깃값 지우고 직접 선택</Button></div>}
-    {step === "workload" && (context.workloads.length
-      ? <>
-        {[...new Set(context.workloads.map(w=>w.desired.spec.modelRef.name))].map(modelName=><details key={modelName} open={d.model===modelName} className="rounded-lg border"><summary className="min-h-11 cursor-pointer px-4 py-3 font-medium">{modelName} <span className="text-sm font-normal text-muted-foreground">서비스 {context.workloads.filter(w=>w.desired.spec.modelRef.name===modelName).length}개</span></summary><Pick label="장치별 서비스 선택" name="workload" value={d.workload} set={workload => {
-          const spec = context.workloads.find(w => w.desired.metadata.name === workload)!.desired.spec
-          const changed=!!d.model&&d.model!==spec.modelRef.name
-          update({ workload, model: spec.modelRef.name, preprocessor: spec.preprocessorRef.name, dataset: spec.datasetRef?.name ?? "", ...(changed?{path:"",powerMode:"",batchSizes:[]}: {}) })
-          if(changed) setError(`선택한 서비스가 모델을 ${d.model}에서 ${spec.modelRef.name}로 바꿨어요. 실행 경로와 전력모드를 다시 골라 주세요.`)
-        }} options={context.workloads.filter(w=>w.desired.spec.modelRef.name===modelName).map(({ desired: w }) => {
-          const model = context.models.find(m => m.metadata.name === w.spec.modelRef.name)
-          return { value: w.metadata.name, label: w.metadata.name, hint: `${w.spec.modelRef.name} · ${w.spec.preprocessorRef.name} · ${w.spec.datasetRef?.name ?? "데이터셋 없음"}`,
-            disabled: !model ? "모델을 찾지 못했어요" : !model.spec.executionPaths.length ? "실행 방식이 없어서 잴 수 없어요" : w.spec.datasetRef ? "" : "데이터셋이 없어서 잴 수 없어요" }
-        })} /></details>)}
-        {d.model && <Facts items={[["모델", d.model], ["전처리기", d.preprocessor || "없음"], ["데이터셋", d.dataset || "없음"]]} />}
-      </>
-      : <Empty title="잴 수 있는 서비스가 없어요"><Button asChild variant="outline"><Link href="/workloads/new">서비스 추가</Link></Button></Empty>)}
-    {step === "device" && (context.classes.some(c => c.nodes.length)
-      ? context.classes.filter(c => c.nodes.length).map(c => {
-        const fits = !v.model || v.model.spec.executionPaths.some(p => !pathReason(v.model!, p, c))
-        return <Pick key={c.name} label={`${c.name} · ${c.accelerator ?? "가속기 없음"} · 메모리 ${c.memory}`} name="node" value={d.deviceClass === c.name ? d.node : ""} set={node => update({ deviceClass: c.name, node })}
-          options={c.nodes.map(n => ({ value: n.name, label: n.name, disabled: fits ? nodeReason(n) : "이 모델을 실행할 수 없는 장비예요" }))} />
-      })
-      : <Empty title="고를 수 있는 장비가 없어요"><Button asChild variant="outline"><Link href="/resources">장비 보기</Link></Button></Empty>)}
-    {step === "run" && <>
-      <Pick label="실행 방식" name="path" value={d.path} set={path => update({ path, batchSizes: d.batchSizes.length ? d.batchSizes : context.prefill ? [] : sameCondition(context.plans, d.model, d.deviceClass, path)?.spec.batchSizes ?? [] })} options={(v.model?.spec.executionPaths ?? []).map(p => ({ value: p.name, label: p.name, hint: `${codeText[p.runtime.family]?.[0] ?? p.runtime.family} · ${codeText[p.runtime.backend]?.[0] ?? p.runtime.backend} · 실제 runtime 지원 미확인`, disabled: v.cls ? pathReason(v.model!, p, v.cls) : "" }))} />
-      {v.cls && v.cls.powerModes.length > 0 && <Pick label="전력 모드" name="power" value={v.powerMode} set={powerMode => update({ powerMode })} options={v.cls.powerModes.map(m => ({ value: m.name, label: m.name, hint: powerModeText(m.actuator) }))} />}
-    </>}
-    {step === "size" && <div className="grid gap-6">
-      {v.declared
-        ? <Facts items={[["한 번에 처리할 건수", `${v.declared.join(", ")}건 · 모델 파일에 정해져 있어요`]]} />
-        : <fieldset className="grid gap-3"><legend className="rows-label">한 번에 처리할 건수 · 여러 개 고를 수 있어요</legend>
-          <div className="flex flex-wrap gap-2">{chips.map(b => <label key={b} className="cursor-pointer rounded-full border px-4 py-2 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary has-[:checked]:text-primary-foreground has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring">
-            <input type="checkbox" className="sr-only" checked={d.batchSizes.includes(b)} onChange={event => update({ batchSizes: event.target.checked ? [...d.batchSizes, b].sort((x, y) => x - y) : d.batchSizes.filter(x => x !== b) })} />{b}건
-          </label>)}</div>
-          {v.max && <p className="text-sm text-muted-foreground">이 실행 방식은 한 번에 {v.max}건까지 처리해요.</p>}
-        </fieldset>}
-      <label className="grid gap-2 text-sm">크기마다 반복할 횟수 · 3번 이상<Input type="number" inputMode="numeric" min={3} step={1} value={Number.isNaN(v.trials) ? "" : v.trials} onChange={event => update({ trials: event.target.valueAsNumber })} /></label>
-      <Pick label="CPU 개수" name="cpu" value={v.cpu} set={cpu => update({ cpu })} options={[...new Set([...cpuChoices, v.cpu])].map(c => ({ value: c, label: `${c}개` }))} />
-    </div>}
-    {step === "advanced" && (v.protocol.from || context.plans.length
-      ? <Rows><RowDialog open={advancedOpen} onOpenChange={setAdvancedOpen} label="세부 측정 방식" hint={v.protocol.from ? `복사한 측정: ${v.protocol.from}` : "직접 정한 방식"} value={`측정 ${v.protocol.values.activeDuration}초 · 쉬는 상태 ${v.protocol.values.idleDuration}초`} title="세부 측정 방식" description="측정 시간, 전력 기록, 다시 시도 횟수와 CPU 코어를 정해요.">
-        <AdvancedForm initial={v.protocol.values} save={values => { update({ protocol: { values, from: null } }); setAdvancedOpen(false) }} />
-      </RowDialog></Rows>
-      : <AdvancedFields value={v.protocol.values} set={values => update({ protocol: { values, from: null } })} />)}
-    {step === "name" && <>
-      <label className="grid gap-2 text-sm">측정 이름<Input value={v.name} maxLength={200} autoComplete="off" spellCheck={false} onChange={event => update({ name: event.target.value })} /></label>
-      {v.taken.has(v.name) && !error && <p role="status" className="text-sm text-muted-foreground">같은 이름의 측정이 이미 있어요.</p>}
-    </>}
-    {step === "review" && <>
-      {answer && <PreflightAnswer answer={answer} />}
-      <Facts items={[
-        ["모델", d.model],
-        ["전처리기", d.preprocessor],
-        ["데이터셋", d.dataset],
-        ["장비", `${d.node} · ${d.deviceClass}`],
-        ["실행 방식", `${d.path} · 전력 모드 ${v.powerMode}`],
-        ["크기별 반복", `한 번에 ${sizes.join(", ")}건씩 · 크기마다 ${v.trials}번`],
-        ["CPU", `${v.cpu}개${v.affinity.length ? ` · 코어 ${v.affinity.join(", ")}` : ""}`],
-        ["측정 방식", v.protocol.from ? "이전 측정과 같아요" : "직접 정했어요"],
-        ["예상 회차 수", `최대 ${(sizes.length + 1) * v.trials}회`],
-        ["이름", v.name],
-      ]} />
-      <Rows>
-        <RowDialog label="보낼 내용 보기" title="보낼 내용"><SourceJSON inline value={manifest(d, context, namespace)} /></RowDialog>
-        {dry.error && <RowDialog label="확인 결과 자세히" title="미리 확인한 결과"><SourceJSON inline value={{ status: dry.error.status, body: dry.error.data ?? dry.error.body }} /></RowDialog>}
-        {(answer || pre.error) && <RowDialog label="측정 계획 원본" title="ChillServer가 확인한 측정 계획"><SourceJSON inline value={answer ?? { status: pre.error!.status, body: pre.error!.data ?? pre.error!.body }} /></RowDialog>}
-        {send.error && <RowDialog label="받은 응답 보기" title="받은 응답"><SourceJSON inline value={{ status: send.error.status, body: send.error.data ?? send.error.body }} /></RowDialog>}
-      </Rows>
-      {start.copied&&<p className="text-sm text-muted-foreground">immutable 원본을 수정하지 않고 새 이름으로 요청해요. 현재 선언에서 Node·모드·데이터셋·CPU·protocol을 다시 확인했는지 검토해 주세요.</p>}
-    </>}
-    {(step==="run"||step==="review")&&history.length>0&&<Rows label="기존 측정 · 중복 요청 전 확인">{history.map(plan=><Row key={plan.metadata.uid} href={detailHref(plan.metadata.namespace,plan.metadata.name,plan.metadata.uid)} label={`${plan.status?.phase??"미확인"} · ${plan.metadata.name}`} hint={`${planVariant(plan.spec)===planVariant(manifest(d,context,namespace).spec)?"같은 요청 조건 · 동결 identity 일부 미확인":"관련 후보 · CPU/데이터셋/protocol 등 차이 있음"}`} />)}</Rows>}
-    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+  const chips=[...new Set([...batchChoices.filter(batch=>!v.max||batch<=v.max),...d.batchSizes])].sort((a,b)=>a-b)
+  const blocked=prefill.errors.length>0
+  const found=checked?context.plans.find(plan=>plan.metadata.name===v.name):undefined
+  return <Screen width="data" title="측정 요청" lede="모델·장치·목표 배치를 정하고 실제 실행 범위를 검사하세요. 서비스는 조건을 채우는 선택 항목입니다." actionPlacement="header" action={<div className="flex flex-wrap gap-2"><Button variant="outline" disabled={blocked||pending||unknown} onClick={verify}>{pending?"검사 중":"요청 범위 검사"}</Button><Button disabled={!passed||blocked||send.isPending||unknown} onClick={submit}>측정 요청하기</Button></div>}>
+    <MeasurementNavigation active="requests" namespace={namespace}/>
+    <div id="measurement-errors" tabIndex={-1} role={error||blocked?"alert":undefined} className="space-y-2">
+      {prefill.errors.map(issue=><p key={issue} className="text-destructive">{issue}</p>)}{error&&<p className="text-destructive">{error}</p>}
+      {[dry.error,pre.error,send.error].filter((item):item is ApiError=>!!item).map((item,index)=><p key={index} className="text-destructive">HTTP {item.status} / {failure(item).code??"응답 코드 없음"}: {failure(item).message} 조건·권한·연결을 확인한 뒤 직접 다시 검사하세요.</p>)}
+    </div>
+    {unknown&&<section role="alert" className="notice space-y-3"><h2>접수 결과 미확인 — 같은 이름으로 확인하세요</h2><p>{v.name}: 자동 재제출과 이름 변경을 막았습니다.</p><Button disabled={checking} onClick={()=>void refetchPlans().then(result=>{setChecked(!result.error);if(result.error)setError("목록 조회 실패: 다시 확인하세요.")})}>같은 이름의 접수 기록 조회</Button>{found?<Link className="underline" href={detailHref(namespace,found.metadata.name,found.metadata.uid)}>접수된 요청 열기</Link>:checked&&<p>아직 목록에서 확인되지 않았어요. 자동 재제출하지 않습니다.</p>}</section>}
+    {variantId&&!selected&&<p role="status" className="notice">전달된 조건을 확인할 수 없어 부족 배치를 자동 제외하지 않았습니다. 직접 조건을 지정하고 중복 범위를 검사하세요.</p>}
+    <fieldset disabled={unknown||pending||send.isPending} className="space-y-8 disabled:opacity-60">
+      <section className="grid gap-5 border-t pt-5 md:grid-cols-2" aria-label="측정 대상">
+        <Pick label="모델" name="model" value={d.model} set={model=>update({model,workload:"",path:"",batchSizes:[],preprocessor:"",dataset:""})} options={context.models.map(model=>({value:model.metadata.name,label:model.metadata.name}))}/>
+        <div className="space-y-3"><label className="grid gap-2 text-sm">서비스 조건 채우기 (선택)<select className="min-h-11 rounded-md border bg-background px-3" value={d.workload} onChange={event=>{
+          const workload=context.workloads.find(item=>item.desired.metadata.name===event.target.value)
+          if(!workload){update({workload:""});return}
+          const spec=workload.desired.spec,changed=spec.modelRef.name!==d.model
+          update({workload:workload.desired.metadata.name,model:spec.modelRef.name,preprocessor:spec.preprocessorRef.name,dataset:spec.datasetRef?.name??"",...(changed?{path:"",batchSizes:[]}: {})})
+        }}><option value="">직접 조건 지정</option>{context.workloads.filter(workload=>!d.model||workload.desired.spec.modelRef.name===d.model).map(workload=><option key={workload.desired.metadata.uid} value={workload.desired.metadata.name}>{workload.desired.metadata.name}</option>)}</select></label>
+        <label className="grid gap-2 text-sm">전처리기 (등록 이름)<Input value={d.preprocessor} onChange={event=>update({preprocessor:event.target.value})}/></label><label className="grid gap-2 text-sm">데이터셋 (등록 이름)<Input value={d.dataset} onChange={event=>update({dataset:event.target.value})}/></label><p className="text-sm text-muted-foreground">여러 데이터셋·전처리기 조합은 자동 추정하지 않습니다. 등록 이름은 검사에서 확인합니다.</p></div>
+      </section>
+      <section className="grid gap-5 border-t pt-5 md:grid-cols-2" aria-label="장치와 실행 조건">
+        <div className="space-y-4">{context.classes.filter(cls=>cls.nodes.length).map(cls=><Pick key={cls.name} label={cls.name} name="node" value={d.deviceClass===cls.name?d.node:""} set={node=>update({deviceClass:cls.name,node,powerMode:""})} options={cls.nodes.map(node=>({value:node.name,label:node.name,disabled:nodeReason(node)}))}/>)}</div>
+        <div className="space-y-4"><Pick label="실행 경로" name="path" value={d.path} set={path=>update({path,batchSizes:[]})} options={(v.model?.spec.executionPaths??[]).filter(path=>!v.cls||!pathReason(v.model!,path,v.cls)).map(path=>({value:path.name,label:path.name,hint:`${path.runtime.family} / ${path.runtime.backend}`}))}/>
+          {v.model&&v.cls&&v.model.spec.executionPaths.some(path=>pathReason(v.model!,path,v.cls!))&&<details><summary className="min-h-11 cursor-pointer py-2">지원 안 되는 경로와 이유</summary>{v.model.spec.executionPaths.filter(path=>pathReason(v.model!,path,v.cls!)).map(path=><p key={path.name}>{path.name}: {pathReason(v.model!,path,v.cls!)}</p>)}</details>}
+          {v.cls&&<Pick label="전력 모드" name="mode" value={v.powerMode} set={powerMode=>update({powerMode})} options={v.cls.powerModes.map(mode=>({value:mode.name,label:mode.name,hint:powerModeText(mode.actuator)}))}/>}
+          {verdict&&<div className="space-y-2 text-sm"><p>{support.isFetching?"호환성 확인 중":verdict.reason}</p>{verdict.state==="unknown"&&<><p>지원 미확인: 장치 선언·runtime 지원을 담당자가 확인해야 합니다.</p><label className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={showUnknown} onChange={event=>setShowUnknown(event.target.checked)}/>미확인 조합을 명시적으로 검사</label></>}</div>}
+        </div>
+      </section>
+      <section className="grid gap-4 border-t pt-5 md:grid-cols-2" aria-label="목표 배치와 반복">
+        <fieldset className="space-y-3"><legend className="font-semibold">목표 배치</legend><div className="flex flex-wrap gap-2">{(v.declared??chips).map(batch=><label key={batch} className="inline-flex min-h-11 items-center gap-2 rounded-full border px-4"><input type="checkbox" disabled={!!v.declared} checked={!!v.declared||d.batchSizes.includes(batch)} onChange={event=>update({batchSizes:event.target.checked?[...d.batchSizes,batch].sort((a,b)=>a-b):d.batchSizes.filter(item=>item!==batch)})}/>{batch}</label>)}</div><p className="text-sm text-muted-foreground">{v.declared?"모델 산출물의 선언 범위입니다. 부분집합을 요청하지 않습니다.":conditionKept?"선택한 정확 조건의 부족 배치를 채웠습니다. 검사에서 최신 상태를 대조합니다.":"중복 미확인: CPU·데이터셋·측정 방식이 같은지 검사에서 대조합니다."}</p></fieldset>
+        <div className="space-y-4"><label className="grid gap-2 text-sm">배치별 반복 횟수<Input type="number" min={3} value={Number.isFinite(v.trials)?v.trials:""} onChange={event=>update({trials:event.target.valueAsNumber})}/></label><label className="grid gap-2 text-sm">CPU 개수<Input value={v.cpu} onChange={event=>update({cpu:event.target.value})}/></label></div>
+      </section>
+      <section className="space-y-4 border-t pt-5" aria-label="실제 측정 기본값"><h2 className="font-semibold">측정 방식과 실제 기본값</h2><p className="text-sm">복사 출처: {v.protocol.from??"직접 지정"} / 반복·CPU 기본값: {d.trials===null||d.cpu===null?"최근 요청 또는 반복 3회·CPU 1개":"직접 지정"}</p><AdvancedFields value={v.protocol.values} set={values=>update({protocol:{values,from:null}})}/></section>
+      <label className="grid gap-2 border-t pt-5 text-sm">요청 이름 (검사한 이름 고정)<Input value={v.name} maxLength={200} onChange={event=>update({name:event.target.value})}/></label>
+    </fieldset>
+    {verdict?.state==="unknown"&&!showUnknown&&<p className="text-sm text-muted-foreground">미확인 조합은 위 동의 항목을 선택한 뒤 검사하세요.</p>}
+    {answer&&<section className="space-y-4 border-t pt-5"><h2 className="font-semibold">{preflightConclusion(answer)}</h2><PreflightAnswer answer={answer}/></section>}
+    <p className="text-sm text-muted-foreground">{passed?"검사 통과. 아직 제출하지 않았습니다. 입력을 바꾸면 검사가 무효화됩니다.":"검사는 dryRun/preflight만 실행하며 측정을 생성하지 않습니다."} 모든 선택 배치의 실행을 보장하지 않으며 탐색이 일찍 끝날 수 있습니다.</p>
+    <Rows><RowDialog label="보낼 요청 원본" title="측정 요청"><SourceJSON inline value={manifest(d,context,namespace)}/></RowDialog>{(answer||pre.error)&&<RowDialog label="검사 원본" title="검사 원본"><SourceJSON inline value={answer??pre.error?.data}/></RowDialog>}</Rows>
   </Screen>
 }

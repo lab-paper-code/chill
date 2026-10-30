@@ -1,22 +1,40 @@
-import type { MeasurementEvidenceLocation, MeasurementPlanSpec, OperationCondition, OperationCostMeasurement, OperationStepStatus, ProfilingRun } from "./read-types.ts"
+import type { MeasurementEvidenceLocation, MeasurementPlanSpec, OperationCondition, OperationCostMeasurement, OperationStepStatus, ProfilingRun, ResultRow } from "./read-types.ts"
 import { codeText } from "./labels.ts"
-import { nanosToMilliseconds } from "./scheduler.ts"
+import { nanosToMilliseconds, stringifySchedulerJSON } from "./scheduler.ts"
+import { safeSource } from "./source-export.ts"
 
+export function measurementRequestName(condition:{model:string;node:string;powerMode:string;path:string;cpu:string|null},taken:Set<string>,now=new Date()):string {
+  const day=`${now.getFullYear()}${String(now.getMonth()+1).padStart(2,"0")}${String(now.getDate()).padStart(2,"0")}`
+  const clean=(text:string)=>text.toLowerCase().replace(/[^a-z0-9.-]+/g,"-").replace(/[-.]*\.[-.]*/g,".").replace(/-+/g,"-").slice(0,200).replace(/^[^a-z0-9]+|[^a-z0-9]+$/g,"")
+  const base=clean(`${condition.model}-${condition.node}-${condition.powerMode}-${condition.path}-cpu${condition.cpu??"1"}-${day}`)
+  let name=base
+  for(let suffix=2;taken.has(name);suffix++)name=clean(`${base.slice(0,190)}-${suffix}`)
+  return name
+}
+export function formatMeasurementNumber(value:unknown, unit=""):string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "미제공"
+  const digits = unit === "J/건" || unit === "J/item" ? 4 : unit === "W" ? 1 : ["ms", "%", "%p"].includes(unit) ? 2 : 0
+  return value.toLocaleString("ko-KR", {minimumFractionDigits:digits,maximumFractionDigits:digits})
+}
+export function resultRowsCSV(rows:ResultRow[]):string {
+  const keys = ["id","rowKind","profileId","sourceProfileId","batch","condition","p95Milliseconds","latencySampleCount","idleWatts","activeWatts","totalJoulesPerItem","incrementalJoulesPerItem","confidence","activeTrialCount","idleTrialCount","completedItems","completedCalls","powerSource","assessment","sources","missingReasons","reuse"] as const
+  const escape = (value:unknown) => {
+    let text=value == null ? "" : typeof value === "object" ? stringifySchedulerJSON(safeSource(value)) : String(safeSource(value))
+    if(typeof value==="string"&&/^[\s]*[=+\-@]/.test(text))text=`'${text}`
+    return `"${text.replaceAll('"','""')}"`
+  }
+  return [keys.map(escape).join(","),...rows.map(row=>keys.map(key=>escape(row[key])).join(","))].join("\r\n")
+}
+export function resultRowsLatex(rows:ResultRow[]):string {
+  const escape=(value:unknown)=>String(value??"").replace(/[\\&%$#_{}~^]/g,character=>({"\\":"\\textbackslash{}","&":"\\&","%":"\\%","$":"\\$","#":"\\#","_":"\\_","{":"\\{","}":"\\}","~":"\\textasciitilde{}","^":"\\textasciicircum{}"}[character]!)).replace(/[\r\n]+/g," ")
+  return ["\\begin{longtable}{lll}","Row & Field & Value \\\\","\\hline",...rows.flatMap((row,index)=>Object.entries(safeSource(row) as Record<string,unknown>).map(([key,value])=>`${index+1} & ${escape(key)} & ${escape(typeof value==="object"?stringifySchedulerJSON(value):value)} \\\\`)),"\\end{longtable}"].join("\n")
+}
 export type ProjectionMeasurementKind = "operation-cost-measurements" | "dispatch-occupancy-measurements"
 export const isProjectionMeasurementKind = (kind:string):kind is ProjectionMeasurementKind => kind === "operation-cost-measurements" || kind === "dispatch-occupancy-measurements"
 export const measurementPath = (kind:ProjectionMeasurementKind, namespace:string, name?:string) => `v1/namespaces/${encodeURIComponent(namespace)}/${kind}${name === undefined ? "" : `/${encodeURIComponent(name)}`}`
 export const measurementListHref = (kind:ProjectionMeasurementKind, namespace:string) => `/measurements/${kind}?namespace=${encodeURIComponent(namespace)}`
 export const measurementHref = (kind:ProjectionMeasurementKind, metadata:{namespace:string;name:string;uid:string}) => `/measurements/${kind}/${encodeURIComponent(metadata.namespace)}/${encodeURIComponent(metadata.name)}?uid=${encodeURIComponent(metadata.uid)}`
 export const measurementUIDMismatch = (uid:string, expectedUID:string|null) => !!expectedUID && uid !== expectedUID
-export function measurementState(phase?:string):{label:string;tone:"info"|"ok"|"warn"|"fail"|"idle"} {
-  switch (phase) {
-    case "Measuring": return {label:"측정 중이에요",tone:"info"}
-    case "Complete": return {label:"측정이 끝났어요",tone:"ok"}
-    case "Insufficient": return {label:"판단할 근거가 부족해요",tone:"warn"}
-    case "Failed": return {label:"측정을 끝내지 못했어요",tone:"fail"}
-    default: return {label:"측정 상태를 확인할 수 없어요",tone:"idle"}
-  }
-}
 export const measurementReason = (reason:string) => codeText[reason] ? `${codeText[reason].join(" ")} (${reason})` : reason
 export function measurementReasonSummary(reason:string) {
   if(codeText[reason]) return codeText[reason].join(" ")
@@ -29,7 +47,7 @@ export function occupancyDuration(value?:unknown) {
   if (value === undefined) return "결과 없음"
   if ((typeof value !== "number" && typeof value !== "bigint") || (typeof value === "number" && (!Number.isFinite(value) || !Number.isSafeInteger(value)))) return "품질 경고: 점유시간을 변환할 수 없어요"
   if (value < 0) return "품질 경고: 점유시간이 음수로 기록됐어요"
-  return `${significant(Number(nanosToMilliseconds(value)))}ms/request`
+  return `${formatMeasurementNumber(Number(nanosToMilliseconds(value)),"ms")}ms/request`
 }
 export function operationDuration(value?:unknown) {
   if (value === undefined || value === null) return "실측 시간 기록 없음"
@@ -38,26 +56,17 @@ export function operationDuration(value?:unknown) {
 }
 export function operationWallEnergy(value?:unknown) {
   if (value === undefined || value === null) return "수용된 에너지 없음"
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? `${significant(value)} J` : "품질 경고·사용 확인 필요"
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? `${formatMeasurementNumber(value,"J")} J` : "품질 경고·사용 확인 필요"
 }
 export const occupancyThroughput = (value?:string) => !value ? "결과 없음" : !/^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value) || !Number.isFinite(Number(value)) || Number(value) < 0 ? "품질 경고·사용 확인 필요" : `${significant(Number(value))} req/s`
 export const significant = (value:number) => Number.isFinite(value) ? value.toLocaleString("ko-KR",{maximumSignificantDigits:3}) : `${String(value)} · 품질 경고`
 export function formatMeasurementDuration(value:number|bigint) {
   const milliseconds=Number(nanosToMilliseconds(value))
-  return milliseconds>=1000||milliseconds<=-1000 ? `${significant(milliseconds/1000)} s` : `${significant(milliseconds)} ms`
+  return `${formatMeasurementNumber(milliseconds,"ms")} ms`
 }
 export function formatMeasurementTime(value:string|number) {
   const date=new Date(value)
   return Number.isFinite(date.getTime()) ? `${date.toLocaleString("ko-KR",{timeZone:"Asia/Seoul",dateStyle:"medium",timeStyle:"medium"})} KST` : "시각 없음"
-}
-export const measurementHeadlineLabel = (batch?:number) => batch===undefined ? "측정 배치 중 최저 에너지" : `측정 배치 중 최저 에너지 (배치 ${batch})`
-export function measurementBatchCompletion(requested:number[]|undefined, measured:number[]) {
-  const complete=new Set(measured), total=new Set(requested??measured)
-  const count=[...total].filter(batch=>complete.has(batch)).length
-  return {partial:count<total.size,count,total:total.size}
-}
-export function measurementCIOverlap(rows:{incrementalWorkJoulesPerItem:number;confidence:{halfWidth:number}}[]) {
-  return rows.some((a,index)=>rows.slice(index+1).some(b=>Number.isFinite(a.confidence.halfWidth)&&Number.isFinite(b.confidence.halfWidth)&&a.confidence.halfWidth>=0&&b.confidence.halfWidth>=0&&Math.abs(a.incrementalWorkJoulesPerItem-b.incrementalWorkJoulesPerItem)<=a.confidence.halfWidth+b.confidence.halfWidth))
 }
 export function measurementConditionDiff(before:MeasurementPlanSpec,after:MeasurementPlanSpec) {
   const fields: [string,unknown,unknown][]=[

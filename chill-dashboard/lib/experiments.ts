@@ -1,6 +1,6 @@
 import type { SchedulerObservation } from "./read-types.ts"
 import { stringifySchedulerJSON } from "./scheduler.ts"
-import { significant } from "./measurements.ts"
+import { formatMeasurementNumber } from "./measurements.ts"
 
 export type Published = Record<string, unknown>
 export type ExperimentStage = {id:string;from:string;to:string;kpis:Published}
@@ -64,23 +64,32 @@ export function comparisonRows(a:ExperimentStage,b?:ExperimentStage) {
   return [...new Set([...left,...right].map(row=>row.name))].map(name=>({name,a:left.filter(row=>row.name===name),b:right.filter(row=>row.name===name)}))
 }
 export function formatResult(value:unknown,unit=""):string {
+  if(typeof value==="bigint"&&value>=0n&&(!unit||unit==="건"))return `${value}${unit?` ${unit}`:""}`
   const n=finite(value)
   if(n===null)return "미제공"
-  if(unit==="%")return `${(n*100).toFixed(2)} %`
-  return `${significant(n)}${unit?` ${unit}`:""}`
+  return `${formatMeasurementNumber(unit==="%"?n*100:n,unit)}${unit?` ${unit}`:""}`
 }
+const displayStep=(unit:string)=>unit==="W" ? 0.1 : unit==="J/건"||unit==="J/item" ? 0.0001 : ["%","%p","ms"].includes(unit) ? 0.01 : 1
 export function difference(a:unknown,b:unknown,unit:string,comparable=true):string {
   const left=finite(a),right=finite(b)
   if(!comparable||left===null||right===null)return "계산 불가"
-  const delta=left-right,scaled=unit==="%"?delta*100:delta
-  const text=unit==="%"?scaled.toFixed(2):significant(scaled)
-  return `${scaled>0?"+":""}${text} ${unit==="%"?"%p":unit}${delta!==0&&Number(text.replaceAll(",",""))===0?" · 표시 정밀도 미만":""}`
+  const delta=left-right,scaled=unit==="%"?delta*100:delta,label=unit==="%"?"%p":unit
+  if(scaled!==0&&Math.abs(scaled)<displayStep(label))return `${displayStep(label)} ${label} 미만 · 방향 없음`
+  return `${scaled>0?"+":""}${formatMeasurementNumber(scaled,label)}${label?` ${label}`:""}`
+}
+export function comparisonDirection(a:unknown,b:unknown,unit:string,aName:string,bName:string):string {
+  const left=finite(a),right=finite(b)
+  if(left===null||right===null)return "비교 불가"
+  const delta=(left-right)*(unit==="%"?100:1)
+  if(delta!==0&&Math.abs(delta)<displayStep(unit))return "표시단위 미만 · 방향 없음"
+  return delta===0?`${aName} / ${bName}: 같음`:`${aName} 값이 ${bName} 값보다 ${delta<0?"낮음":"높음"}`
 }
 export function relativeEnergy(a:unknown,b:unknown):string {
   const left=finite(a),right=finite(b)
   if(left===null||right===null||right===0)return "계산 불가"
   const change=100*(left-right)/right
-  return `${change>0?"+":""}${change.toFixed(2)} %${change!==0&&Number(change.toFixed(2))===0?" · 표시 정밀도 미만":""}`
+  if(change!==0&&Math.abs(change)<.01)return "0.01 % 미만 · 방향 없음"
+  return `${change>0?"+":""}${formatMeasurementNumber(change,"%")} %`
 }
 export function stageSeconds(stage:ExperimentStage):number|null {
   const seconds=(Date.parse(stage.to)-Date.parse(stage.from))/1000
@@ -122,12 +131,24 @@ export function evidenceError(error:{status:number;data:unknown}):string {
   return error.status===504||code==="RequestTimeout"||code==="DashboardRelayTimeout"?"조회 시간 초과":"근거 조회 실패"
 }
 
-// These campaign prefixes are the E5 protocol's published policy labels, not a
-// claim that the two runs have identical frozen conditions.
+// Only the complete published E5 suffix identifies a policy counterpart.
+export function stagePolicy(stage:ExperimentStage):string {
+  return stage.id.startsWith("full-E5-")?"CHILL (full)":stage.id.startsWith("static-E5-")?"정적 비교군 (static)":stage.id
+}
+export function stagePairing(run:Experiment,stage:ExperimentStage) {
+  const match=/^(full|static)-(E5-.+)$/.exec(stage.id)
+  if(!match)return {paired:false,counterpart:null,reason:"대응 정책·단계 식별자 미기록"}
+  const own=run.stages.filter(other=>other.id===stage.id)
+  const expected=`${match[1]==="full"?"static":"full"}-${match[2]}`
+  const candidates=run.stages.filter(other=>other.id===expected)
+  if(own.length>1||candidates.length>1)return {paired:false,counterpart:null,reason:"동일 단계 식별자 중복"}
+  if(!candidates.length)return {paired:false,counterpart:null,reason:`정확한 대응 단계 ${expected} 없음 · 다른 suffix·동일 req/s로 대응하지 않음`}
+  return {paired:true,counterpart:candidates[0],reason:"전체 E5 단계·반복 suffix 일치"}
+}
 export function campaignPairs(run:Experiment) {
   return run.stages.filter(stage=>stage.id.startsWith("full-E5-")).flatMap(chill=>{
-    const suffix=chill.id.slice(5),controls=run.stages.filter(stage=>stage.id===`static-${suffix}`)
-    return controls.length===1&&run.stages.filter(stage=>stage.id===chill.id).length===1?[{key:suffix,chill,control:controls[0]}]:[]
+    const pairing=stagePairing(run,chill)
+    return pairing.counterpart?[{key:chill.id.slice(5),chill,control:pairing.counterpart}]:[]
   })
 }
 export function campaignGroups(runs:Experiment[]) {
@@ -150,17 +171,26 @@ export function experimentSelection(search:string,values:Record<string,string>):
 export function commitExperimentSelection(location:Pick<Location,"search">,history:Pick<History,"replaceState">,values:Record<string,string>) {
   history.replaceState(null,"",`/experiments?${experimentSelection(location.search,values)}`)
 }
+export function frozenP95SLO(row:ExperimentRow):number|null {
+  const measurement=object(row.original.measurementSLO)
+  if(measurement.percentile===95) {
+    const nanos=finite(measurement.targetLatencyNanos)
+    return nanos===null?null:nanos/1e6
+  }
+  return row.original.sloPercentile===95?finite(row.original.sloMS):null
+}
 export function stageChartData(run:Experiment) {
   return [...run.stages].sort((a,b)=>Date.parse(a.from)-Date.parse(b.from)).map((stage,index)=>{
-    const rows=experimentRows(stage),services:Record<string,{success:number|null;p95:number|null}>={}
+    const rows=experimentRows(stage),services:Record<string,{success:number|null;p95:number|null;sloMS:number|null;reason:string}>={}
     const match=/^(full|static)-(E5-.+)$/.exec(stage.id),seconds=stageSeconds(stage),rate=stageRate(stage)
-    const energy=finite(stage.kpis.wholePoolJoules),bound=finite(stage.kpis.gapErrorBoundJoules)
+    const energy=finite(stage.kpis.wholePoolJoules),bound=finite(stage.kpis.gapErrorBoundJoules),pairing=stagePairing(run,stage)
     for(const row of rows) {
       const unique=rows.filter(other=>other.name===row.name).length===1
-      const success=unique?finite(resultMetric(row,"success").value):null
-      services[row.name]={success:success===null?null:success*100,p95:unique?finite(resultMetric(row,"p95").value):null}
+      const success=unique?finite(resultMetric(row,"success").value):null,p95=unique?finite(resultMetric(row,"p95").value):null
+      services[row.name]={success:success===null?null:success*100,p95,sloMS:unique?frozenP95SLO(row):null,
+        reason:!unique?"동명 서비스 KPI 중복":success===null||p95===null?publishedText(row.missingReasons)||"성공률 또는 p95 미제공":""}
     }
-    return {id:stage.id,step:index+1,axis:match?.[2]??stage.id,policy:match?.[1]==="full"?"CHILL (full)":match?.[1]==="static"?"정적 비교군 (static)":"정책 미기록",rate,energy,
+    return {id:stage.id,stage,step:index+1,axis:match?.[2]??stage.id,policy:stagePolicy(stage),...pairing,rate,energy,
       watts:energy!==null&&seconds!==null?energy/seconds:null,
       wattError:bound!==null&&seconds!==null?bound/seconds:null,
       joulesPerRequest:energy!==null&&rate!==null&&rate>0&&seconds!==null?energy/(rate*seconds):null,services}
@@ -170,15 +200,18 @@ export function stageChartData(run:Experiment) {
 export function serviceDelta(a:ExperimentRow|undefined,b:ExperimentRow|undefined) {
   const left=a?resultMetric(a,"success"):null,right=b?resultMetric(b,"success"):null
   const ap=a?finite(resultMetric(a,"p95").value):null,bp=b?finite(resultMetric(b,"p95").value):null
-  return `성공 ${difference(left?.value,right?.value,"%",left?.key===right?.key)}; p95 ${difference(ap,bp,"ms")}${ap!==null&&bp!==null&&bp>0?` (×${(ap/bp).toFixed(2)})`:""}`
+  return `성공 ${difference(left?.value,right?.value,"%",left?.key===right?.key)}; p95 ${difference(ap,bp,"ms")}${ap!==null&&bp!==null?bp===0?" (배율 계산 불가 · B=0)":` (×${(ap/bp).toFixed(2)})`:""}`
 }
 
 export function policyStageGroups(run:Experiment) {
   const points=stageChartData(run)
-  const policies=["CHILL (full)","정적 비교군 (static)","정책 미기록"].filter(policy=>points.some(point=>point.policy===policy))
+  const policies=[...new Set(points.map(point=>point.policy))]
   const axes=[...new Set(points.map(point=>point.axis))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}))
-  return {policies,groups:axes.map(axis=>({axis,series:policies.map(policy=>{
-    const matches=points.filter(point=>point.axis===axis&&point.policy===policy)
-    return matches.length===1?matches[0]:null
-  })}))}
+  return {policies,groups:axes.flatMap(axis=>{
+    const candidates=points.filter(point=>point.axis===axis)
+    if(candidates.some(point=>point.reason==="동일 단계 식별자 중복"))return candidates.map((point,index)=>({
+      axis:`${axis} · 중복 ${index+1}`,series:policies.map(policy=>policy===point.policy?point:null),
+    }))
+    return [{axis,series:policies.map(policy=>candidates.find(point=>point.policy===policy)??null)}]
+  })}
 }
