@@ -422,7 +422,8 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 	kube := fake.NewSimpleClientset(&core.ConfigMap{
 		ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "scheduler", ResourceVersion: "1"},
 		Data: map[string]string{"scheduler.json": `{"settings":` + string(settingsRaw) +
-			`,"staticRouting":{"old-uid":{"physical":1}},"staticRoutingValidatedAt":"2026-10-01T00:00:00Z"}`},
+			`,"staticRouting":{"old-uid":{"physical":1}},"staticRoutingValidatedAt":"2026-10-01T00:00:00Z"` +
+			`,"powerObservation":{"coverage":{"MaximumGap":2000000000,"MaximumBoundaryDistance":3000000000,"MinimumCoverage":0.99}}}`},
 	})
 	kube.PrependReactor("create", "tokenreviews", func(ktesting.Action) (bool, runtime.Object, error) {
 		return true, &authenticationv1.TokenReview{Status: authenticationv1.TokenReviewStatus{
@@ -472,6 +473,7 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 		{`,"meters":null`, "body"},
 		{`,"requestTimeout":73125000000`, "body"},
 		{`,"requestTimeout":null`, "body"},
+		{`,"powerObservation":{}`, "body"},
 	} {
 		response := put(rejected.extra)
 		var failure serving.Error
@@ -485,12 +487,16 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 	got := httptest.NewRecorder()
 	handler.scheduler(got, request)
 	var shown struct {
-		StaticRouting  map[string]map[string]int      `json:"staticRouting"`
-		Meters         []servingkube.MeterDeclaration `json:"meters"`
-		RequestTimeout time.Duration                  `json:"requestTimeout"`
+		StaticRouting    map[string]map[string]int      `json:"staticRouting"`
+		PowerObservation map[string]map[string]float64  `json:"powerObservation"`
+		Meters           []servingkube.MeterDeclaration `json:"meters"`
+		RequestTimeout   time.Duration                  `json:"requestTimeout"`
 	}
 	if err := json.Unmarshal(got.Body.Bytes(), &shown); err != nil || got.Code != http.StatusOK || !reflect.DeepEqual(shown.StaticRouting, declared) {
 		t.Fatalf("GET settings lost the stored declaration: status=%d body=%s", got.Code, got.Body)
+	}
+	if shown.PowerObservation["coverage"]["MinimumCoverage"] != 0.99 {
+		t.Fatalf("GET settings lost the stored operating-power policy: %s", got.Body)
 	}
 	if !reflect.DeepEqual(shown.Meters, meters) {
 		t.Fatalf("GET settings did not use accepted meter projection: %+v", shown.Meters)
