@@ -1,5 +1,6 @@
 import type { SchedulerObservation } from "./read-types.ts"
 import { stringifySchedulerJSON } from "./scheduler.ts"
+import { significant } from "./measurements.ts"
 
 export type Published = Record<string, unknown>
 export type ExperimentStage = {id:string;from:string;to:string;kpis:Published}
@@ -66,13 +67,13 @@ export function formatResult(value:unknown,unit=""):string {
   const n=finite(value)
   if(n===null)return "미제공"
   if(unit==="%")return `${(n*100).toFixed(2)} %`
-  return `${Number(n.toPrecision(4)).toLocaleString("en-US",{maximumSignificantDigits:4})}${unit?` ${unit}`:""}`
+  return `${significant(n)}${unit?` ${unit}`:""}`
 }
 export function difference(a:unknown,b:unknown,unit:string,comparable=true):string {
   const left=finite(a),right=finite(b)
   if(!comparable||left===null||right===null)return "계산 불가"
   const delta=left-right,scaled=unit==="%"?delta*100:delta
-  const text=unit==="%"?scaled.toFixed(2):Number(scaled.toPrecision(4)).toLocaleString("en-US",{maximumSignificantDigits:4})
+  const text=unit==="%"?scaled.toFixed(2):significant(scaled)
   return `${scaled>0?"+":""}${text} ${unit==="%"?"%p":unit}${delta!==0&&Number(text.replaceAll(",",""))===0?" · 표시 정밀도 미만":""}`
 }
 export function relativeEnergy(a:unknown,b:unknown):string {
@@ -152,11 +153,32 @@ export function commitExperimentSelection(location:Pick<Location,"search">,histo
 export function stageChartData(run:Experiment) {
   return [...run.stages].sort((a,b)=>Date.parse(a.from)-Date.parse(b.from)).map((stage,index)=>{
     const rows=experimentRows(stage),services:Record<string,{success:number|null;p95:number|null}>={}
+    const match=/^(full|static)-(E5-.+)$/.exec(stage.id),seconds=stageSeconds(stage),rate=stageRate(stage)
+    const energy=finite(stage.kpis.wholePoolJoules),bound=finite(stage.kpis.gapErrorBoundJoules)
     for(const row of rows) {
       const unique=rows.filter(other=>other.name===row.name).length===1
       const success=unique?finite(resultMetric(row,"success").value):null
       services[row.name]={success:success===null?null:success*100,p95:unique?finite(resultMetric(row,"p95").value):null}
     }
-    return {id:stage.id,step:index+1,rate:stageRate(stage),energy:finite(stage.kpis.wholePoolJoules),services}
+    return {id:stage.id,step:index+1,axis:match?.[2]??stage.id,policy:match?.[1]==="full"?"CHILL (full)":match?.[1]==="static"?"정적 비교군 (static)":"정책 미기록",rate,energy,
+      watts:energy!==null&&seconds!==null?energy/seconds:null,
+      wattError:bound!==null&&seconds!==null?bound/seconds:null,
+      joulesPerRequest:energy!==null&&rate!==null&&rate>0&&seconds!==null?energy/(rate*seconds):null,services}
   })
+}
+
+export function serviceDelta(a:ExperimentRow|undefined,b:ExperimentRow|undefined) {
+  const left=a?resultMetric(a,"success"):null,right=b?resultMetric(b,"success"):null
+  const ap=a?finite(resultMetric(a,"p95").value):null,bp=b?finite(resultMetric(b,"p95").value):null
+  return `성공 ${difference(left?.value,right?.value,"%",left?.key===right?.key)}; p95 ${difference(ap,bp,"ms")}${ap!==null&&bp!==null&&bp>0?` (×${(ap/bp).toFixed(2)})`:""}`
+}
+
+export function policyStageGroups(run:Experiment) {
+  const points=stageChartData(run)
+  const policies=["CHILL (full)","정적 비교군 (static)","정책 미기록"].filter(policy=>points.some(point=>point.policy===policy))
+  const axes=[...new Set(points.map(point=>point.axis))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}))
+  return {policies,groups:axes.map(axis=>({axis,series:policies.map(policy=>{
+    const matches=points.filter(point=>point.axis===axis&&point.policy===policy)
+    return matches.length===1?matches[0]:null
+  })}))}
 }

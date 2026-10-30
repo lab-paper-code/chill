@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { readFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
-import { campaignGroups, campaignPairs, commitExperimentSelection, experimentSelection, stageChartData, alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
+import { campaignGroups, campaignPairs, commitExperimentSelection, experimentSelection, policyStageGroups, serviceDelta, stageChartData, alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
 import type { SchedulerObservation } from "./read-types.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
@@ -115,7 +115,7 @@ test("S3: publisher units, ratios, differences and invalid values stay explicit"
   assert.equal(ratio(.5,0,0),null)
   assert.equal(ratio(undefined,5,4),null)
   assert.equal(formatResult(.7957909383424646,"%"),"79.58 %")
-  assert.equal(formatResult(.09261,"J"),"0.09261 J")
+  assert.equal(formatResult(.09261,"J"),"0.0926 J")
   assert.equal(formatResult(-1,"ms"),"미제공")
   assert.equal(formatResult(NaN,"J"),"미제공")
   assert.equal(formatResult(Infinity,"ms"),"미제공")
@@ -219,4 +219,31 @@ test("R3: chart points retain per-service success and p95 without averaging or i
   assert.equal(missing.energy,0)
   assert.equal(missing.services.same.p95,null)
   assert.equal(missing.services.same.success,null)
+})
+
+test("R3fix: policies share exact stage axes and normalize shared energy by offered requests and actual duration",()=>{
+  const make=(id:string,seconds:number,offered:unknown=10):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:`2026-10-30T00:00:${String(seconds).padStart(2,"0")}Z`,kpis:{wholePoolJoules:100,gapErrorBoundJoules:5,requests:{same:{offered}}}})
+  const run={...recorded.publication,stages:[make("full-E5-2",20),make("static-E5-2",10),make("full-E5-3-repeat",10,0)]}
+  const points=stageChartData(run)
+  assert.deepEqual(points.map(p=>p.policy),["CHILL (full)","정적 비교군 (static)","CHILL (full)"])
+  assert.deepEqual(points.map(p=>p.axis),["E5-2","E5-2","E5-3-repeat"])
+  assert.equal(points[0].joulesPerRequest,10)
+  assert.equal(points[0].watts,5)
+  assert.equal(points[0].wattError,.25)
+  assert.equal(points[1].watts,10)
+  assert.equal(points[2].joulesPerRequest,null)
+  assert.equal(stageChartData({...run,stages:[make("unknown",10,null)]})[0].joulesPerRequest,null)
+  const grouped=policyStageGroups(run)
+  assert.deepEqual(grouped.policies,["CHILL (full)","정적 비교군 (static)"])
+  assert.deepEqual(grouped.groups.map(group=>group.axis),["E5-2","E5-3-repeat"])
+  assert.equal(grouped.groups[0].series[0]?.watts,5)
+  assert.equal(grouped.groups[0].series[1]?.watts,10)
+  assert.equal(grouped.groups[1].series[1],null)
+  assert.equal(policyStageGroups({...run,stages:[run.stages[0],run.stages[0]]}).groups[0].series[0],null)
+  const duplicates={...run.stages[0],kpis:{wholePoolJoules:100,requests:{same:{offered:10}},workloads:{same:{offered:10}}}}
+  assert.equal(stageChartData({...run,stages:[duplicates]})[0].joulesPerRequest,null)
+  const left=experimentRows({...stage,kpis:{requests:{same:{deadlineSuccessFraction:.9737,successDenominator:100,completedLatencyNS:{p95:299300000}}}}})[0]
+  const right=experimentRows({...stage,kpis:{requests:{same:{deadlineSuccessFraction:1,successDenominator:100,completedLatencyNS:{p95:142100000}}}}})[0]
+  assert.match(serviceDelta(left,right),/성공 -2.63 %p; p95 \+157 ms \(×2.11\)/)
+  assert.match(serviceDelta(undefined,right),/계산 불가/)
 })
