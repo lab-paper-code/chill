@@ -63,10 +63,11 @@ export function ResultRows({rows,filename="chill-result-rows.csv"}:{rows:ResultR
     {!rows.length?<p className="notice">서버 결과가 아직 없어요. 측정 완료 후 다시 확인하세요.</p>:<div className="grid min-w-0 gap-3">{rows.map((row,index)=><article key={row.id??index} className="min-w-0 rounded-lg border p-4">
       <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">한 번에 {row.batch}건 처리 · {row.rowKind==="confirmation"?"대상 확인 측정":row.rowKind==="source-reference"?"기존 측정 참조":row.rowKind==="direct"?"직접 측정":"측정 결과"}</h3><MeasurementStatus assessment={row.assessment}/></div>
       <dl className="mt-3 grid gap-3 sm:grid-cols-3">
-        <div><dt className="text-sm text-muted-foreground">응답 지연 p95 / 목표</dt><dd className="font-semibold tabular-nums">{number(row.p95Milliseconds,"ms")} ms / 목표는 아래 조건 확인</dd></div>
+        <div><dt className="text-sm text-muted-foreground">응답 지연 p95 / SLO 목표</dt><dd className="font-semibold tabular-nums">{number(row.p95Milliseconds,"ms")} ms</dd><dd className="text-xs text-muted-foreground">이 측정 결과에는 SLO 목표가 제공되지 않아 목표 대비 판단은 할 수 없어요.</dd></div>
         <div><dt className="text-sm text-muted-foreground">요청당 에너지 · 총 / 추가 사용</dt><dd className="font-semibold tabular-nums">{number(row.totalJoulesPerItem,"J/item")} / {number(row.incrementalJoulesPerItem,"J/item")} J/건</dd></div>
         <div><dt className="text-sm text-muted-foreground">평균 전력 · 쉬는 상태 / 실행 중</dt><dd className="font-semibold tabular-nums">{number(row.idleWatts,"W")} / {number(row.activeWatts,"W")} W</dd></div>
       </dl>
+      <p className="mt-3 text-sm tabular-nums">독립 반복: 실행 {number(row.activeTrialCount)}회 / 쉬는 상태 {number(row.idleTrialCount)}회 · 지연 표본 {number(row.latencySampleCount)}개</p>
       <ul className="mt-3 space-y-1 text-sm">{row.assessment?.reasons?.map((reason,i)=><li key={i}>{reason.message.replace(/\s*\(FixtureOnly\)/g,"")}</li>)}</ul>
       <details className="mt-3"><summary className="min-h-11 cursor-pointer py-2 text-sm underline">측정 조건·표본·출처 원문 펼치기</summary><div className="grid min-w-0 gap-4 sm:grid-cols-2"><ResultCondition condition={row.condition}/><ExactFields value={row}/></div></details>
     </article>)}</div>}

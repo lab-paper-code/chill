@@ -36,6 +36,8 @@ export function PreflightAnswer({answer}:{answer:MeasurementPreflight}) {
       ["한 번에 처리할 건수",sizes.length?`${sizes.join(", ")}건`:"경로 선언 범위"],
       ["크기마다 반복",`${answer.campaign.spec.trialsPerBatch}번`],
       ["한 회차 측정 구간",`예열 ${String(shared.activeProtocol.warmupIterations)}번 뒤 ${String(shared.activeProtocol.durationSeconds)}초`],
+      ["예상 총 소요 시간", "서버가 전체 예상 시간을 제공하지 않았어요. 예열·장비 준비·반복 횟수에 따라 달라져요."],
+      ["서빙 영향", "서버가 영향 범위를 제공하지 않았어요. 요청 전 실행 장비와 CPU 사용 범위를 확인하세요."],
     ]}/>}
   </div>
 }

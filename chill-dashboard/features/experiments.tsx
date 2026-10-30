@@ -67,13 +67,13 @@ function Energy({stage,other}:{stage:ExperimentStage;other?:ExperimentStage}) {
 function Results({stage,other,a,b}:{stage:ExperimentStage;other?:ExperimentStage;a:string;b:string}) {
   const rows=comparisonRows(stage,other)
   return <section id="experiment-results" tabIndex={-1} className="space-y-4 scroll-mt-4 focus-visible:outline-2 focus-visible:outline-primary" aria-label="단계 결과 표">
-    <h2 className="text-xl font-semibold">{other?"서비스별 A/B 관측값":"서비스별 측정 결과"}</h2>
+    <h2 className="text-xl font-semibold">{other?"서비스별 운영 결과 비교":"서비스별 측정 결과"}</h2>
     <p className="text-sm text-muted-foreground">성공률은 기한·SLO를 충족한 요청 / 보낸 요청, p95는 성공 응답의 지연입니다.</p>
-    {!other&&<p className="text-xs text-muted-foreground">비교군을 고르면 관측 차이가 표시됩니다.</p>}
+    {!other&&<p className="text-xs text-muted-foreground">비교할 구성을 고르면 결과 차이가 표시돼요.</p>}
     <p className="text-xs text-muted-foreground md:hidden">표를 좌우로 이동하면 B와 A−B 마지막 열까지 볼 수 있어요.</p>
     <div className="overflow-x-auto rounded-lg border" tabIndex={0} role="region" aria-label="서비스별 A/B 비교표">
-      <table className="w-full min-w-[700px] text-sm"><caption className="sr-only">기록 당시 서비스명 기준의 설명형 비교</caption>
-        <thead className="bg-muted/60"><tr><th scope="col" className="w-1/4 p-3 text-left">서비스 / 지표</th><th scope="col" className="p-3 text-left break-all">A · {a}<p className="font-normal">{stage.id}</p></th>{other&&<><th scope="col" className="p-3 text-left break-all">B · {b}<p className="font-normal">{other.id}</p></th><th scope="col" className="p-3 text-left">관측 차이 A−B</th></>}</tr></thead>
+      <table className="w-full min-w-[700px] text-sm"><caption className="sr-only">기록 당시 서비스명 기준의 운영 결과 비교</caption>
+        <thead className="bg-muted/60"><tr><th scope="col" className="w-1/4 p-3 text-left">서비스 / 지표</th><th scope="col" className="p-3 text-left break-all">A · {stagePolicy(stage)}<details className="font-normal text-xs"><summary className="cursor-pointer py-2">기록·구간 코드</summary>{a} / {stage.id}</details></th>{other&&<><th scope="col" className="p-3 text-left break-all">B · {stagePolicy(other)}<details className="font-normal text-xs"><summary className="cursor-pointer py-2">기록·구간 코드</summary>{b} / {other.id}</details></th><th scope="col" className="p-3 text-left">결과 차이 A−B</th></>}</tr></thead>
         <tbody>{rows.map(row=><ServiceRows key={`${a}/${stage.id}/${b}/${other?.id}/${row.name}`} name={row.name} left={row.a} right={row.b} compare={!!other} aName={`${stagePolicy(stage)} (${stage.id})`} bName={other?`${stagePolicy(other)} (${other.id})`:"B"}/>)}</tbody>
       </table>
     </div>
