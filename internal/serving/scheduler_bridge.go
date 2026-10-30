@@ -83,6 +83,18 @@ func (p *capacityPlanner) bridgeSchedule(choice []int) (*schedulerBridgeSchedule
 		goal:   SchedulerCandidate{Nodes: slices.Clone(p.keep.Nodes), Routing: p.keep.Routing},
 		before: map[string]bool{}, ends: map[string]float64{}, blocked: map[string]string{}, retiring: map[string]bool{},
 		unavailable: map[string]bool{}, prepares: map[string]string{}, routing: map[string]map[string]int32{}}
+	final, reason := b.initialize()
+	if reason != "" {
+		return nil, reason
+	}
+	if reason = b.physicalBudget(); reason != "" {
+		return nil, reason
+	}
+	return b.compile(final)
+}
+
+func (b *schedulerBridgeCompiler) initialize() (string, string) {
+	p, choice := b.p, b.choice
 	for uid, weights := range p.keep.Routing {
 		b.routing[uid] = maps.Clone(weights)
 	}
@@ -93,7 +105,7 @@ func (p *capacityPlanner) bridgeSchedule(choice []int) (*schedulerBridgeSchedule
 		plan := p.plans[n][j]
 		projected, known := b.goal.Nodes[n].AtMode(plan.mode)
 		if !known {
-			return nil, NodePlacementInventoryMissing
+			return "", NodePlacementInventoryMissing
 		}
 		b.goal.Nodes[n] = projected
 		b.goal.Instances = append(b.goal.Instances, plan.instances...)
@@ -124,7 +136,7 @@ func (p *capacityPlanner) bridgeSchedule(choice []int) (*schedulerBridgeSchedule
 		}
 	}
 	if final == "" {
-		return nil, schedulerRoutedStopsFirst
+		return "", schedulerRoutedStopsFirst
 	}
 	visit(final)
 	for _, a := range b.out.actions {
@@ -138,15 +150,20 @@ func (p *capacityPlanner) bridgeSchedule(choice []int) (*schedulerBridgeSchedule
 		}
 		uid := source.WorkloadUID
 		if _, controlled := p.index[uid]; !controlled {
-			return nil, schedulerRoutedStopsFirst
+			return "", schedulerRoutedStopsFirst
 		}
 		for other, weights := range p.keep.Routing {
 			if other != uid && weights[a.Instance] > 0 {
-				return nil, schedulerRoutedStopsFirst
+				return "", schedulerRoutedStopsFirst
 			}
 		}
 		b.blocked[a.ID] = uid
 	}
+	return final, ""
+}
+
+func (b *schedulerBridgeCompiler) physicalBudget() string {
+	p := b.p
 	// A preparation still occupies a physical slot until exact removal. Bound
 	// the peak conservatively, without borrowing unobserved future retirement.
 	counts := map[string]int{}
@@ -165,13 +182,18 @@ func (p *capacityPlanner) bridgeSchedule(choice []int) (*schedulerBridgeSchedule
 		uncreated += schedulerUncreatedReservations(p.snapshot, node.Node)
 	}
 	if len(p.snapshot.Instances)+len(b.prepares)+uncreated > p.settings.MaxInstances {
-		return nil, schedulerPlanInfeasibleResources
+		return schedulerPlanInfeasibleResources
 	}
 	for uid, count := range counts {
 		if _, controlled := p.index[uid]; controlled && count > p.settings.MaxReplicas {
-			return nil, schedulerPlanInfeasibleResources
+			return schedulerPlanInfeasibleResources
 		}
 	}
+	return ""
+}
+
+func (b *schedulerBridgeCompiler) compile(final string) (*schedulerBridgeSchedule, string) {
+	p, choice := b.p, b.choice
 	for len(b.blocked) > 0 {
 		b.resolve()
 		advanced := false
@@ -262,6 +284,71 @@ func (b *schedulerBridgeCompiler) resolve() {
 
 func (b *schedulerBridgeCompiler) handoff(w capacityWorkload) bool {
 	uid := w.d.UID
+	available, items := b.peers(uid)
+	kappa := 0.0
+	for _, item := range items {
+		kappa += item.kappa
+	}
+	if kappa <= 0 {
+		return false
+	}
+	at, deps := 0.0, []string{}
+	if b.previous != "" {
+		at, deps = b.ends[b.previous], append(deps, b.previous)
+	}
+	for _, item := range items {
+		if prepare := b.prepares[item.id]; prepare != "" {
+			deps, at = appendUnique(deps, prepare), max(at, b.ends[prepare])
+		}
+	}
+	demand, _ := b.p.reductionDemand(w, b.choice)
+	before, served := b.p.bridgeFlow(uid, demand.rate, b.routing[uid], b.out.instances)
+	backlog := float64(w.queued) + max(0, demand.rate-served)*at
+	if demand.slack <= 0 || kappa < demand.rate || backlog/kappa > demand.slack ||
+		b.p.settings.TransitionReserveFraction > 0 && (before < demand.rate*(1+b.p.settings.TransitionReserveFraction) || kappa < demand.rate*(1+b.p.settings.TransitionReserveFraction)) {
+		return false
+	}
+	weights, _, ok := capacityWeights(demand.rate, backlog/demand.slack, items)
+	if !ok {
+		return false
+	}
+	stage := SchedulerCandidate{Nodes: b.goal.Nodes, Routing: map[string]map[string]int32{}}
+	for other, route := range b.routing {
+		stage.Routing[other] = maps.Clone(route)
+	}
+	stage.Routing[uid] = map[string]int32{}
+	for k, item := range items {
+		if weights[k] > 0 {
+			stage.Routing[uid][item.id] = weights[k]
+		}
+	}
+	deps, at, ok = b.stageDependencies(stage, available, deps, at)
+	if !ok {
+		return false
+	}
+	for _, i := range available {
+		stage.Instances = append(stage.Instances, i)
+	}
+	slices.SortFunc(stage.Instances, func(a, c SchedulerInstance) int { return cmp.Compare(a.ID, c.ID) })
+	sum := sha256.Sum256([]byte(schedulerConfigKey(stage)))
+	stage.ID = "bridge-" + hex.EncodeToString(sum[:6])
+	slices.Sort(deps)
+	action := Action{ID: stage.ID, Kind: schedulerActionRoute, From: schedulerBridgeRoute, To: schedulerConfigKey(stage), DependsOn: deps, Status: schedulerActionPlanned, RouteTarget: &stage}
+	for k := range b.out.actions {
+		if b.blocked[b.out.actions[k].ID] == uid {
+			b.out.actions[k].DependsOn = appendUnique(slices.Clone(b.out.actions[k].DependsOn), action.ID)
+			delete(b.blocked, b.out.actions[k].ID)
+		}
+	}
+	final := slices.IndexFunc(b.out.actions, func(a Action) bool { return a.Kind == schedulerActionRoute && a.RouteTarget == nil })
+	b.out.actions = slices.Insert(b.out.actions, final, action)
+	b.before[action.ID], b.ends[action.ID] = true, at
+	b.routing, b.previous = stage.Routing, action.ID
+	b.out.stages = append(b.out.stages, SchedulerBridgeStage{Action: action.ID, UID: uid, At: time.Duration(at * 1e9), Demand: demand.rate, Backlog: backlog, PredictedKappa: kappa, WaitSeconds: backlog / kappa, Reserve: b.p.settings.TransitionReserveFraction})
+	return true
+}
+
+func (b *schedulerBridgeCompiler) peers(uid string) (map[string]SchedulerInstance, []capacityItem) {
 	available, peers := map[string]SchedulerInstance{}, map[NodeReference]SchedulerInstance{}
 	for _, i := range b.p.snapshot.Instances {
 		if i.Ready && !i.Stopped && !i.Terminated && !b.unavailable[i.ID] {
@@ -313,43 +400,10 @@ func (b *schedulerBridgeCompiler) handoff(w capacityWorkload) bool {
 		}
 	}
 	slices.SortFunc(items, func(a, c capacityItem) int { return cmp.Compare(a.id, c.id) })
-	kappa := 0.0
-	for _, item := range items {
-		kappa += item.kappa
-	}
-	if kappa <= 0 {
-		return false
-	}
-	at, deps := 0.0, []string{}
-	if b.previous != "" {
-		at, deps = b.ends[b.previous], append(deps, b.previous)
-	}
-	for _, item := range items {
-		if prepare := b.prepares[item.id]; prepare != "" {
-			deps, at = appendUnique(deps, prepare), max(at, b.ends[prepare])
-		}
-	}
-	demand, _ := b.p.reductionDemand(w, b.choice)
-	before, served := b.p.bridgeFlow(uid, demand.rate, b.routing[uid], b.out.instances)
-	backlog := float64(w.queued) + max(0, demand.rate-served)*at
-	if demand.slack <= 0 || kappa < demand.rate || backlog/kappa > demand.slack ||
-		b.p.settings.TransitionReserveFraction > 0 && (before < demand.rate*(1+b.p.settings.TransitionReserveFraction) || kappa < demand.rate*(1+b.p.settings.TransitionReserveFraction)) {
-		return false
-	}
-	weights, _, ok := capacityWeights(demand.rate, backlog/demand.slack, items)
-	if !ok {
-		return false
-	}
-	stage := SchedulerCandidate{Nodes: b.goal.Nodes, Routing: map[string]map[string]int32{}}
-	for other, route := range b.routing {
-		stage.Routing[other] = maps.Clone(route)
-	}
-	stage.Routing[uid] = map[string]int32{}
-	for k, item := range items {
-		if weights[k] > 0 {
-			stage.Routing[uid][item.id] = weights[k]
-		}
-	}
+	return available, items
+}
+
+func (b *schedulerBridgeCompiler) stageDependencies(stage SchedulerCandidate, available map[string]SchedulerInstance, deps []string, at float64) ([]string, float64, bool) {
 	nodes := map[NodeReference]string{}
 	for other, route := range stage.Routing {
 		if _, controlled := b.p.index[other]; !controlled {
@@ -361,7 +415,7 @@ func (b *schedulerBridgeCompiler) handoff(w capacityWorkload) bool {
 			}
 			i, ready := available[id]
 			if !ready || nodes[i.Node] != "" && nodes[i.Node] != other {
-				return false
+				return nil, 0, false
 			}
 			nodes[i.Node] = other
 			if prepare := b.prepares[id]; prepare != "" {
@@ -369,26 +423,7 @@ func (b *schedulerBridgeCompiler) handoff(w capacityWorkload) bool {
 			}
 		}
 	}
-	for _, i := range available {
-		stage.Instances = append(stage.Instances, i)
-	}
-	slices.SortFunc(stage.Instances, func(a, c SchedulerInstance) int { return cmp.Compare(a.ID, c.ID) })
-	sum := sha256.Sum256([]byte(schedulerConfigKey(stage)))
-	stage.ID = "bridge-" + hex.EncodeToString(sum[:6])
-	slices.Sort(deps)
-	action := Action{ID: stage.ID, Kind: schedulerActionRoute, From: schedulerBridgeRoute, To: schedulerConfigKey(stage), DependsOn: deps, Status: schedulerActionPlanned, RouteTarget: &stage}
-	for k := range b.out.actions {
-		if b.blocked[b.out.actions[k].ID] == uid {
-			b.out.actions[k].DependsOn = appendUnique(slices.Clone(b.out.actions[k].DependsOn), action.ID)
-			delete(b.blocked, b.out.actions[k].ID)
-		}
-	}
-	final := slices.IndexFunc(b.out.actions, func(a Action) bool { return a.Kind == schedulerActionRoute && a.RouteTarget == nil })
-	b.out.actions = slices.Insert(b.out.actions, final, action)
-	b.before[action.ID], b.ends[action.ID] = true, at
-	b.routing, b.previous = stage.Routing, action.ID
-	b.out.stages = append(b.out.stages, SchedulerBridgeStage{Action: action.ID, UID: uid, At: time.Duration(at * 1e9), Demand: demand.rate, Backlog: backlog, PredictedKappa: kappa, WaitSeconds: backlog / kappa, Reserve: b.p.settings.TransitionReserveFraction})
-	return true
+	return deps, at, true
 }
 
 func (p *capacityPlanner) bridgeFlow(uid string, rate float64, routing map[string]int32, instances map[string]SchedulerInstance) (float64, float64) {
@@ -447,4 +482,25 @@ func (p *capacityPlanner) bridgeRequestJoules(b *schedulerBridgeSchedule, w capa
 		}
 	}
 	return joules + power(weights)*(route-at) + w.rate*finalMean*(p.period-route)
+}
+
+func (b *schedulerBridgeSchedule) nodeJoules(plan *capacityPlan, n int, r, t float64) float64 {
+	joules := plan.energy(r, t)
+	if b != nil && !plan.keep {
+		joules += (plan.before - plan.mid) * b.delays[n]
+	}
+	return joules
+}
+
+func (b *schedulerBridgeSchedule) actionsFor(snapshot SchedulerSnapshot, target SchedulerCandidate) []Action {
+	if b == nil {
+		return schedulerPlan(snapshot, target)
+	}
+	actions := slices.Clone(b.actions)
+	for k := range actions {
+		if actions[k].Kind == schedulerActionRoute && actions[k].RouteTarget == nil {
+			actions[k].To = schedulerConfigKey(target)
+		}
+	}
+	return actions
 }

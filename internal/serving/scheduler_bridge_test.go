@@ -125,15 +125,15 @@ func TestCapacityBridgeQueuedIngressReplayAC45(t *testing.T) {
 }
 
 func TestCapacityBridgePreservesSupplyReserveAndPhysicalLimitsAC45(t *testing.T) {
-	for _, constraint := range []string{"capacity", "physical slots", "replicas", "reserve", "routing disabled", "missing bridge cost"} {
+	for _, constraint := range []string{"steady bridge supply", "physical slots", "bridge replica budget", "reserve", "routing disabled", "missing bridge cost"} {
 		t.Run(constraint, func(t *testing.T) {
 			s, snap, rows, _, bridge := capacityBridgeFixture(t)
 			switch constraint {
-			case "capacity":
+			case "steady bridge supply":
 				s.MinimumDemand["w2"] = 101
 			case "physical slots":
 				s.MaxInstances = 3
-			case "replicas":
+			case "bridge replica budget":
 				s.MaxReplicas = 1
 			case "reserve":
 				s.TransitionReserveFraction = .1

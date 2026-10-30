@@ -1410,21 +1410,24 @@ type capacityResult struct {
 // instances up to κ_ret at their current weights, the overflow
 // max(0, λ − κ_ret)·r and [r, T] by the target fill y.
 func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
-	t := p.period
 	bridge, bridgeReason := p.bridgeSchedule(choice)
 	if bridge != nil {
 		r = bridge.route
 	}
-	res := capacityResult{choice: choice, route: r, keep: true}
-	res.bridge, res.exclusion = bridge, bridgeReason
 	if bridgeReason != "" {
-		res.keep, res.worst = false, math.Inf(1)
+		res := capacityResult{choice: choice, route: r, bridge: bridge, exclusion: bridgeReason, worst: math.Inf(1)}
 		res.excesses = make([]float64, len(p.ws))
 		for w := range res.excesses {
 			res.excesses[w] = math.Inf(1)
 		}
 		return res
 	}
+	return p.evaluateAtRoute(choice, r, bridge)
+}
+
+func (p *capacityPlanner) evaluateAtRoute(choice []int, r float64, bridge *schedulerBridgeSchedule) capacityResult {
+	t := p.period
+	res := capacityResult{choice: choice, route: r, keep: true, bridge: bridge}
 	keys := make([]string, len(choice))
 	items, retained := make([][]capacityItem, len(p.ws)), make([][]capacityItem, len(p.ws))
 	present := make([]bool, len(p.ws))
@@ -1433,10 +1436,7 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 		res.keep = res.keep && plan.keep
 		keys[n] = p.snapshot.Nodes[n].Node.UID + "=" + plan.record.Key
 		if p.compared[n] {
-			res.joules += plan.energy(r, t)
-			if bridge != nil && !plan.keep {
-				res.joules += (plan.before - plan.mid) * bridge.delays[n]
-			}
+			res.joules += bridge.nodeJoules(plan, n, r, t)
 		}
 		for w := range p.ws {
 			items[w] = append(items[w], plan.items[w]...)
@@ -1989,16 +1989,9 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	}
 	sum := sha256.Sum256([]byte(best.key + fmt.Sprint(target.Routing)))
 	target.ID = "plan-" + hex.EncodeToString(sum[:6])
+	target.Actions = best.bridge.actionsFor(p.snapshot, target)
 	if best.bridge != nil {
-		target.Actions = slices.Clone(best.bridge.actions)
-		for k := range target.Actions {
-			if target.Actions[k].Kind == schedulerActionRoute && target.Actions[k].RouteTarget == nil {
-				target.Actions[k].To = schedulerConfigKey(target)
-			}
-		}
 		record.BridgeStages = best.bridge.stages
-	} else {
-		target.Actions = schedulerPlan(p.snapshot, target)
 	}
 	decision.Target, decision.Status = &target, target.Status
 	return decision

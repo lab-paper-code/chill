@@ -921,6 +921,7 @@ func schedulerPrimeReplayCredits(t *testing.T, ctx context.Context, r *Runtime, 
 	if err := r.ApplySchedulerTarget(previous); err != nil {
 		t.Fatal(err)
 	}
+	replay.applied = previous
 	for _, d := range replay.snap.Workloads {
 		schedulerActualRoute(t, ctx, r, d, input)
 	}

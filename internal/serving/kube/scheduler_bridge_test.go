@@ -7,7 +7,11 @@ import (
 )
 
 func TestBridgeStopRequiresCurrentNativeACKAC45(t *testing.T) {
-	for _, proof := range []string{"complete", "independent UID route changed", "planned", "running", "failed", "readiness drift", "policy drift", "wrong owner UID"} {
+	const (
+		bridgePlanned           = "planned"
+		independentRouteChanged = "independent UID route changed"
+	)
+	for _, proof := range []string{nativeOperationComplete, independentRouteChanged, bridgePlanned, nativeOperationRunning, nativeOperationFailed, "readiness drift", "policy drift", "wrong owner UID"} {
 		t.Run(proof, func(t *testing.T) {
 			controller, target, physical := acknowledgedHandoffFixture(t)
 			stage := *controller.runs["acknowledged-route"].result.Operation.Target
@@ -24,11 +28,11 @@ func TestBridgeStopRequiresCurrentNativeACKAC45(t *testing.T) {
 			future.ID, future.Ready = "future-not-prepared", false
 			target.Instances = []serving.SchedulerInstance{future}
 			target.Routing = map[string]map[string]int32{future.WorkloadUID: {future.ID: 1}}
-			if proof == "independent UID route changed" {
+			if proof == independentRouteChanged {
 				stage.Routing["independent-uid"] = map[string]int32{"not-this-handoff": 1}
 			}
 			switch proof {
-			case "planned", "running", "failed":
+			case bridgePlanned, nativeOperationRunning, nativeOperationFailed:
 				controller.runs[ack.ID].action.Status = proof
 			case "readiness drift":
 				physical.State.Native.Ready = false
@@ -37,7 +41,7 @@ func TestBridgeStopRequiresCurrentNativeACKAC45(t *testing.T) {
 			case "wrong owner UID":
 				controller.runs[ack.ID].result.Operation.WorkloadUIDs = []string{"not-this-owner"}
 			}
-			if got := controller.dependenciesReady(stop, target); got != (proof == "complete" || proof == "independent UID route changed") {
+			if got := controller.dependenciesReady(stop, target); got != (proof == nativeOperationComplete || proof == independentRouteChanged) {
 				t.Fatalf("bridge ACK proof %s allowed stop=%t", proof, got)
 			}
 		})
