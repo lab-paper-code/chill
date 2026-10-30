@@ -15,7 +15,7 @@ export function LiveProvider({children}:{children:React.ReactNode}) {
   const {token,epoch,config,signals}=useSession()
   const queryClient=useQueryClient()
   const pathname=usePathname(),search=useSearchParams()
-  const active=pathname === "/" || pathname === "/pools" || pathname.startsWith("/pools/")
+  const active=pathname === "/operations/flow" || pathname === "/pools" || pathname.startsWith("/pools/")
   const requested=search.get("fixture")
   const scene=config.liveFixture && requested && ["empty","first","expand","shrink"].includes(requested) ? requested : null
   const {data:state}=useQuery<LiveState>({queryKey:liveKey,enabled:false,initialData:initialLiveState,staleTime:Infinity,gcTime:Infinity})
@@ -26,7 +26,7 @@ export function LiveProvider({children}:{children:React.ReactNode}) {
     if (!active || !token) return
     const abort=new AbortController()
     signals.add(abort)
-    const update=(change:(state:LiveState)=>LiveState)=>queryClient.setQueryData<LiveState>(liveKey,state=>change(state ?? initialLiveState()))
+    const update=(change:(state:LiveState)=>LiveState)=>{queryClient.setQueryData<LiveState>(liveKey,state=>change(state ?? initialLiveState()));if(queryClient.getQueryData<LiveState>(liveKey)?.status==="unauthorized")window.dispatchEvent(new Event("chill-unauthorized"))}
     const read=()=>queryClient.getQueryData<LiveState>(liveKey) ?? initialLiveState()
     queryClient.setQueryData(liveKey,initialLiveState())
     let connection:LiveConnection

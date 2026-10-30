@@ -299,3 +299,42 @@ fieldset:disabled { opacity: .65; }
   .energy-row { grid-template-columns: 1fr auto; gap: .4rem .75rem; }
   .energy-track { grid-column: 1 / -1; grid-row: 2; }
 }
+
+/* Operator measurement surfaces: one page title, ruled tables, no nested cards. */
+.measurement-tabs { display:flex; flex-wrap:wrap; border-bottom:1px solid var(--border); gap:.25rem 1rem; }
+.measurement-tabs a { display:flex; align-items:center; min-height:44px; border-bottom:3px solid transparent; padding:.35rem .25rem; color:var(--muted-foreground); }
+.measurement-tabs a[aria-current="page"] { color:var(--primary); border-color:var(--primary); font-weight:700; }
+.coverage-summary { display:flex; flex-wrap:wrap; align-items:baseline; gap:.75rem 1.5rem; padding:1rem 0; border-block:1px solid var(--border); font-variant-numeric:tabular-nums; }
+.coverage-summary strong { font-size:1.5rem; }
+.coverage-summary p { flex-basis:100%; color:var(--muted-foreground); font-size:.875rem; }
+.coverage-targets { display:flex; flex-wrap:wrap; gap:.5rem; }
+.coverage-targets legend { margin-bottom:.5rem; font-weight:600; }
+.coverage-legend { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem 1rem; }
+.coverage-legend button { min-height:44px; border-bottom:2px solid transparent; }
+.coverage-legend button[aria-pressed="true"] { border-color:var(--primary); color:var(--primary); }
+.coverage-table-wrap { max-width:100%; overflow:auto; }
+.coverage-table { width:100%; border-collapse:collapse; font-size:.875rem; font-variant-numeric:tabular-nums; }
+.coverage-table caption { text-align:left; color:var(--muted-foreground); padding:.5rem 0; }
+.coverage-table th,.coverage-table td { text-align:left; padding:.75rem; border-bottom:1px solid var(--border); overflow-wrap:anywhere; }
+.coverage-table th { font-weight:600; background:var(--muted); }
+.coverage-table button { min-height:44px; min-width:44px; text-align:left; text-decoration:underline; text-underline-offset:4px; color:var(--primary); }
+.coverage-detail { min-width:0; display:grid; gap:1rem; border-top:1px solid var(--border); padding-top:1.25rem; }
+.coverage-detail h2 { font-size:1.125rem; font-weight:650; overflow-wrap:anywhere; }
+.coverage-detail select { display:block; width:100%; min-height:44px; border:1px solid var(--border); border-radius:.375rem; padding:.5rem; background:var(--background); }
+.coverage-detail a:not([data-slot="button"]),.overview-columns a { color:var(--primary); text-decoration:underline; text-underline-offset:4px; }
+.coverage-message { display:grid; gap:1rem; border-left:3px solid var(--heat); padding:1rem; overflow-wrap:anywhere; }
+.measurement-status { display:inline-flex; align-items:center; min-height:28px; width:fit-content; padding:.1rem .5rem; border:1px solid currentColor; border-radius:.25rem; font-size:.8125rem; white-space:nowrap; }
+.status-usable { color:var(--ok); background:var(--ok-soft); }
+.status-problem { color:var(--fail); background:var(--fail-soft); }
+.status-insufficient,.status-running { color:var(--primary); background:var(--info-soft); }
+.status-unknown,.status-unmeasured,.status-unsupported { color:var(--muted-foreground); }
+.overview-columns { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:2rem; }
+.overview-stages { display:grid; grid-template-columns:repeat(auto-fit,minmax(10rem,1fr)); gap:1rem; }
+.overview-stages>div { border-left:3px solid var(--primary); padding-left:.75rem; }
+.screen details>summary { min-height:44px; cursor:pointer; padding:.6rem 0; }
+@media(max-width:767px) { .overview-columns { grid-template-columns:1fr; } .coverage-table { min-width:36rem; } .screen-data { padding-inline:1rem; } }
+.coverage-targets button,.coverage-detail button,.screen-header-action button { min-height:44px; min-width:44px; }
+.coverage-matrix { table-layout:fixed; min-width:0; }
+.coverage-matrix th:first-child { width:20%; }
+@media(max-width:767px) { .coverage-matrix th:first-child { width:40%; } }
+@media(max-width:767px) { .measurement-tabs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.25rem; } .measurement-tabs a { justify-content:center; } }

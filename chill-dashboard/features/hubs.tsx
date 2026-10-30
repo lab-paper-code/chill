@@ -16,10 +16,6 @@ export function RecordsPage() {
       <Row href="/scheduler/power" label="전력 기록" hint="노드별 측정 전력" />
       <Row href="/changes?scope=scheduler" label="운영 설정 변경 이력" hint="누가 언제 운영 설정을 바꿨는지" />
     </Rows>
-    <Rows label="측정">
-      <Row href="/measurements/runs" label="개별 측정 회차" hint="회차 하나하나의 결과와 근거" />
-      <Row href="/experiments" label="실험" hint="실험 결과 비교" />
-    </Rows>
   </Screen>
 }
 

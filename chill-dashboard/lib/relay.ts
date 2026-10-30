@@ -42,7 +42,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   if (!segments.length || segments.some(part => part.length > 253 || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(part))) throw new RelayFailure("DashboardRouteNotAllowed", 404)
   const route = segments.join("/")
   let methods: string[] = []
-  let query: "none" | "page" | "runs" | "observations" | "load" | "schedulerHistory" | "dryRun" | "uid" | "compatibility" = "none"
+  let query: "none" | "page" | "runs" | "observations" | "load" | "schedulerHistory" | "dryRun" | "uid" | "compatibility" | "coverage" | "preflight" = "none"
   let kind: RelayPlan["kind"] = "query"
   if (/^v1\/(models|workloads|preprocessors|datasets)$/.test(route)) methods = ["GET", "POST"]
   else if (/^v1\/(models|workloads|preprocessors|datasets)\/[^/]+$/.test(route)) methods = ["GET", "PUT", "DELETE"]
@@ -62,9 +62,10 @@ export function relayPlan(method: string, segments: string[], search: string, co
   else if (route === "v1/scheduler/operations") methods = ["POST"]
   else if (route === "v1/scheduler/profiles") methods = ["GET"]
   else if (/^v1\/(systems|inventory)$/.test(route)) { methods = ["GET"]; query = "page" }
+  else if (/^v1\/namespaces\/[^/]+\/measurement-coverage$/.test(route)) { methods = ["GET"]; query = "coverage" }
   else if (/^v1\/namespaces\/[^/]+\/profiling-runs$/.test(route)) { methods = ["GET"]; query = "runs" }
   else if (/^v1\/namespaces\/[^/]+\/profiling-runs\/[^/]+\/evidence-passport$/.test(route) || /^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/[^/]+\/result$/.test(route)) methods = ["GET"]
-  else if (/^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/preflight$/.test(route)) methods = ["POST"] // Read-only producer; query lifetime and no unknown mutation outcome.
+  else if (/^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/preflight$/.test(route)) { methods = ["POST"]; query = "preflight" }
   else if (/^v1\/namespaces\/[^/]+\/batch-energy-optimizations$/.test(route)) { methods = ["GET", "POST"]; if (method === "POST") query = "dryRun" }
   else if (/^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/[^/]+$/.test(route)) { methods = ["DELETE"]; query = "uid" }
   if (!methods.length) throw new RelayFailure("DashboardRouteNotAllowed", 404)
@@ -77,6 +78,8 @@ export function relayPlan(method: string, segments: string[], search: string, co
   // ChillServer compact reads keep every evidence object once and share repeats by $ref; parseSchedulerJSON restores them.
   const compact = method === "GET" && (query === "schedulerHistory" || route === "v1/scheduler" || route === "v1/scheduler/state")
   const allowed = compact ? ["view"] : []
+  if (query === "coverage") allowed.push("batches","node")
+  if (query === "preflight") allowed.push("variantId")
   allowed.push(...(query === "compatibility" ? ["modelSpec", "executionPath", "deviceClass", "node"] : query === "observations" ? ["from", "to", "limit", "cursor", "definition", "outcome"] : query === "load" ? ["from", "to"] : query === "schedulerHistory" ? ["from", "to", "limit", "cursor"] : query === "page" ? ["limit", "offset", "q"] : query === "runs" ? ["limit", "offset", "q", "condition"] : query === "dryRun" ? ["dryRun"] : query === "uid" ? ["uid"] : []))
   for (const key of new Set(params.keys())) {
     const values = params.getAll(key)
@@ -85,6 +88,9 @@ export function relayPlan(method: string, segments: string[], search: string, co
       if (["limit", "offset", "cursor"].includes(key)) {
         const max = key === "limit" ? config.maxPageSize : key === "offset" ? 1000000 : Number.MAX_SAFE_INTEGER
         if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) > max || (key === "limit" && Number(value) < 1)) throw new RelayFailure("DashboardQueryInvalid", 400)
+      } else if (key === "batches") {
+        const batches=value.split(",").map(Number)
+        if (!/^[1-9]\d*(,[1-9]\d*)*$/.test(value) || batches.some((n,i)=>!Number.isSafeInteger(n)||(i>0&&n<=batches[i-1]))) throw new RelayFailure("DashboardQueryInvalid",400)
       } else if (key === "condition") {
         if (Buffer.byteLength(value) > 128 || !/^[^=]+=(True|False|Unknown)$/.test(value)) throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (key === "view") {
@@ -213,7 +219,7 @@ export async function relay(request: Request, segments: string[]): Promise<Respo
     sent = true
     const result = await upstream(config.chillServer, plan.path, request.method, headers, body, config.maxRequestBytes, controller.signal)
     const responseHeaders = new Headers({ "Cache-Control": "no-store", "X-Chill-Relay-Timing": (performance.now() - started).toFixed(1) })
-    for (const name of ["content-type", "content-encoding", "x-chill-request-id", "x-chill-workload-uid", "if-match"]) {
+    for (const name of ["content-type", "content-encoding", "x-chill-request-id", "x-chill-workload-uid", "if-match", "retry-after"]) {
       const value = result.headers[name]
       if (typeof value === "string") responseHeaders.set(name, value)
     }

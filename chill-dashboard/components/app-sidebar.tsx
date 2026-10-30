@@ -7,13 +7,14 @@ import { BrainCircuit, FlaskConical, Gauge, History, Layers, SlidersHorizontal }
 import { Sidebar, SidebarContent, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
 import { BrandMark } from "@/components/brand"
 
-// Six sections; every screen belongs to exactly one, by path prefix.
+// Every screen belongs to exactly one section by its longest path prefix.
 export const navigation = [
-  {title:"홈",url:"/",icon:Gauge,prefixes:[] as string[]},
-  {title:"서비스",url:"/workloads",icon:Layers,prefixes:["/workloads"]},
-  {title:"운영",url:"/scheduler",icon:BrainCircuit,prefixes:["/scheduler","/transitions","/resources","/pools"]},
+  {title:"개요",url:"/",icon:Gauge,prefixes:[] as string[]},
   {title:"측정",url:"/measurements",icon:FlaskConical,prefixes:["/measurements","/scheduler/profiles"]},
-  {title:"기록",url:"/records",icon:History,prefixes:["/records","/observations","/changes","/scheduler/history","/scheduler/power","/scheduler/compare","/experiments"]},
+  {title:"실험",url:"/experiments",icon:FlaskConical,prefixes:["/experiments"]},
+  {title:"서비스",url:"/workloads",icon:Layers,prefixes:["/workloads"]},
+  {title:"운영",url:"/scheduler",icon:BrainCircuit,prefixes:["/operations","/scheduler","/transitions","/resources","/pools"]},
+  {title:"기록",url:"/records",icon:History,prefixes:["/records","/observations","/changes","/scheduler/history","/scheduler/power","/scheduler/compare"]},
   {title:"설정",url:"/settings",icon:SlidersHorizontal,prefixes:["/settings","/models","/preprocessors","/datasets","/configuration"]},
 ]
 const under = (prefix:string, pathname:string) => pathname === prefix || pathname.startsWith(`${prefix}/`)

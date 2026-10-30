@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { QueryClient, QueryClientProvider, useMutation, useQueries, useQuery } from "@tanstack/react-query"
+import { MutationCache, QueryCache, QueryClient, QueryClientProvider, useMutation, useQueries, useQuery } from "@tanstack/react-query"
 import { useRouter } from "next/navigation"
 import type { PublicConfig } from "@/lib/server-config"
 import { Button } from "@/components/ui/button"
@@ -11,6 +11,7 @@ import { BrandMark, FinField } from "@/components/brand"
 import { KeyRound } from "lucide-react"
 import type { ObservationResult } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
+import { readTabToken, storeTabToken } from "@/lib/session-token"
 
 export type RelayResponse = { status: number; body: string; data: unknown; requestID: string | null; workloadUID: string | null; relayTiming: string | null; browserRTT: number }
 export class ApiError extends Error {
@@ -26,10 +27,13 @@ export function useSession() {
   if (!session) throw new Error("Dashboard session is unavailable")
   return session
 }
+function clearUnauthorized(error:Error) {
+  if(error instanceof ApiError&&error.status===401)window.dispatchEvent(new Event("chill-unauthorized"))
+}
 
 export function SessionProvider({children}: {children:React.ReactNode}) {
   const router = useRouter()
-  const [client,setClient] = React.useState(() => new QueryClient({defaultOptions:{queries:{retry:false,refetchOnWindowFocus:false,refetchOnReconnect:false},mutations:{retry:false}}}))
+  const [client,setClient] = React.useState(() => new QueryClient({queryCache:new QueryCache({onError:clearUnauthorized}),mutationCache:new MutationCache({onError:clearUnauthorized}),defaultOptions:{queries:{retry:false,refetchOnWindowFocus:false,refetchOnReconnect:false},mutations:{retry:false}}}))
   const [signals] = React.useState(() => new Set<AbortController>())
   const [token,setToken] = React.useState("")
   const [epoch,setEpoch] = React.useState(0)
@@ -37,15 +41,28 @@ export function SessionProvider({children}: {children:React.ReactNode}) {
   const [accountOpen,setAccountOpen] = React.useState(false)
   const [config,setConfig] = React.useState<PublicConfig | null>(null)
   const [configError,setConfigError] = React.useState("")
+  const [hydrated,setHydrated] = React.useState(false)
+  const [storageAvailable,setStorageAvailable] = React.useState(true)
+  React.useEffect(()=>{
+    // New windows opened by this application never inherit an opener.
+    const removeOpener=(event:MouseEvent)=>{const link=event.target instanceof Element?event.target.closest("a[target='_blank']"):null;if(link)link.setAttribute("rel","noopener noreferrer")}
+    document.addEventListener("click",removeOpener,true)
+    document.addEventListener("auxclick",removeOpener,true)
+    return()=>{document.removeEventListener("click",removeOpener,true);document.removeEventListener("auxclick",removeOpener,true)}
+  },[])
   React.useEffect(() => {
     const abort = new AbortController()
     fetch("/api/config",{cache:"no-store",signal:abort.signal}).then(async response => {
       if (!response.ok) throw new Error(`웹 설정 HTTP ${response.status}`)
-      setConfig(await response.json() as PublicConfig)
+      const next=await response.json() as PublicConfig
+      setConfig(next)
+      try {setToken(readTabToken(window.sessionStorage,next.systemName));setStorageAvailable(storeTabToken(window.sessionStorage,next.systemName,readTabToken(window.sessionStorage,next.systemName)))} catch {setStorageAvailable(false)}
+      setHydrated(true)
     }).catch(error => {if (!abort.signal.aborted) setConfigError(error instanceof Error ? error.message : "웹 설정 조회 실패")})
     return () => abort.abort()
   },[])
-  async function changeIdentity(next:string) {
+  const changeIdentity = React.useCallback(async(next:string) => {
+    if(config)try{setStorageAvailable(storeTabToken(window.sessionStorage,config.systemName,next))}catch{setStorageAvailable(false)}
     signals.forEach(controller => controller.abort())
     signals.clear()
     await client.cancelQueries()
@@ -61,22 +78,23 @@ export function SessionProvider({children}: {children:React.ReactNode}) {
       }
     }
     // Detached old observers cannot repopulate the replacement identity's cache.
-    setClient(new QueryClient({defaultOptions:client.getDefaultOptions()}))
+    setClient(new QueryClient({queryCache:new QueryCache({onError:clearUnauthorized}),mutationCache:new MutationCache({onError:clearUnauthorized}),defaultOptions:client.getDefaultOptions()}))
     setDraft("")
     setAccountOpen(false)
     setToken(next)
     setEpoch(value => value+1)
-  }
+  },[client,config,router,signals,token])
+  React.useEffect(()=>{const invalid=()=>{void changeIdentity("")};window.addEventListener("chill-unauthorized",invalid);return()=>window.removeEventListener("chill-unauthorized",invalid)},[changeIdentity])
   const signInForm = <form onSubmit={event => {event.preventDefault(); void changeIdentity(draft.trim())}} className="grid gap-4">
     <label className="grid gap-2 text-sm font-medium" htmlFor="bearer-token">접속 토큰
       <Input id="bearer-token" type="password" autoComplete="off" spellCheck={false} value={draft} onChange={event => setDraft(event.target.value)} placeholder="관리자에게 받은 토큰을 붙여 넣으세요" required />
     </label>
     <Button type="submit" size="lg" disabled={!config || !draft.trim()}><KeyRound />{token ? "접속 정보 바꾸기" : "시작하기"}</Button>
-    <p className="text-sm text-muted-foreground">접속 정보는 이 탭에서만 사용해요. 새로고침하면 다시 입력해야 해요.</p>
+    <p className="text-sm text-muted-foreground">{storageAvailable?"토큰은 이 시스템의 이 탭에 저장되어 새로고침 후에도 사용됩니다. 탭 복제·브라우저 복원 시 복사될 수 있습니다.":"브라우저 저장을 사용할 수 없어 메모리에서만 사용합니다. 새로고침하면 다시 입력하세요."} 토큰 삭제는 다른 탭이나 토큰 자체를 폐기하지 않습니다.</p>
   </form>
   // Signed out shows only the sign-in screen; the shell appears after sign-in.
   return <QueryClientProvider client={client}>
-    {!token ? <div className="login">
+    {!hydrated&&!configError?<main className="screen" role="status">접속 설정 확인 중</main>:!token ? <div className="login">
       <section className="login-brand" aria-label="CHILL 소개">
         <span className="flex items-center gap-2.5 text-lg font-bold"><BrandMark className="size-7 text-[#5fc2e8]" />CHILL</span>
         <div className="relative grid gap-4"><h1>응답 목표를 지키면서 에너지를 덜 쓰는 구성을 찾아요</h1><p>모델과 서비스를 등록하고, 실행 그룹의 실제 구성과 운영 판단이 예상한 에너지를 한곳에서 확인하세요.</p></div>
@@ -100,7 +118,7 @@ export function AccountControl() {
     <DialogTrigger asChild><Button variant="outline" size="sm" className="gap-2 rounded-full"><span className="size-2 rounded-full bg-ok" aria-hidden="true" /><span className="max-w-40 truncate">{config.systemName}</span><span className="hidden text-muted-foreground sm:inline">{config.namespace}</span><span className="sr-only">접속 관리</span></Button></DialogTrigger>
     <DialogContent><DialogHeader><DialogTitle>접속 관리</DialogTitle><DialogDescription>다른 접속 정보로 바꾸거나 안전하게 나갈 수 있어요.</DialogDescription></DialogHeader>
       <dl className="grid grid-cols-2 gap-x-4 rounded-lg bg-muted p-3 text-sm"><div><dt>대상</dt><dd>{config.systemName}</dd></div><div><dt>namespace</dt><dd>{config.namespace}</dd></div></dl>
-      {account.form}<Button variant="outline" onClick={account.signOut}>로그아웃</Button>
+      {account.form}<Button variant="outline" onClick={account.signOut}>이 탭에서 토큰 지우기</Button>
     </DialogContent>
   </Dialog>
 }

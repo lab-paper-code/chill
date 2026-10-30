@@ -748,7 +748,7 @@ coverage와 request prefill을 여는 전체 과정의 compatibility GET는 각 
 
 ## 9. 운영 중심 측정·실험 5차 재설계
 
-2026-10-30 교차 모델 검토 반영, 구현 전.
+2026-10-30 교차 모델 검토와 U1/U2/U3 코드 반영. 클러스터 배포·성능 측정·운영 담당자 재설문 수용 전이다.
 [계획](../../plans/2026-10-31-dashboard-measurement-redesign.md)은 근거·파일 소유권·수용을,
 [측정 API §13](../serving/measurement-api.md#13-측정-커버리지-읽기-projection-u1)은 DTO·단일 판정·신선도를 소유한다.
 이 절이 §8의 화면 결정을 대체한다. 대상 사용자는 **엣지 클러스터 운영 담당자**이며

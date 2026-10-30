@@ -7,7 +7,7 @@ import { MeasurementCheckPage, MeasurementDetail } from "@/features/read-pages"
 import { MeasurementRunsPage, MeasurementGroupPage } from "@/features/measurement-runs"
 import { ExperimentsPage } from "@/features/experiments"
 import { ResourcesPage, PoolsPage } from "@/features/resources"
-import { LivePoolPage } from "@/features/live-board"
+import { LiveBoardPage, LivePoolPage } from "@/features/live-board"
 import { SchedulerPage, SchedulerCandidatesPage, SchedulerEstimatesPage, SchedulerLoadPage } from "@/features/scheduler"
 import { SchedulerSettingsPage } from "@/features/scheduler-settings"
 import { SchedulerHistoryPage } from "@/features/scheduler-history"
@@ -16,7 +16,8 @@ import { SchedulerPowerPage, SchedulerComparePage } from "@/features/scheduler-e
 import { RecordsPage, SettingsPage } from "@/features/hubs"
 import { SchedulerProfilesPage } from "@/features/scheduler-profiles"
 import { MeasurementPlanPage } from "@/features/measurement-plans"
-import { MeasurementPlansPage, MeasurementCoveragePage } from "@/features/measurement-coverage"
+import { MeasurementCoveragePage } from "@/features/measurement-coverage"
+import { MeasurementRequestsPage } from "@/features/measurement-requests"
 import { MeasurementRequestPage } from "@/features/measurement-request"
 import { ProjectionMeasurementListPage, ProjectionMeasurementDetail, UnsupportedTransitionMeasurement } from "@/features/measurement-projections"
 import { isProjectionMeasurementKind } from "@/lib/measurements"
@@ -53,7 +54,9 @@ export default async function Page({params,searchParams}:{params:Promise<{route:
   else if (head === "resources" && route.length === 1) page = <ResourcesPage />
   else if (head === "pools" && route.length === 1) page = <PoolsPage />
   else if (head === "pools" && route.length === 2) page = <LivePoolPage id={name} />
-  else if (head === "measurements" && route.length === 1) page = <MeasurementPlansPage />
+  else if (head === "operations" && name === "flow" && route.length === 2) page = <LiveBoardPage />
+  else if (head === "measurements" && route.length === 1) page = <MeasurementCoveragePage />
+  else if (head === "measurements" && name === "requests" && route.length === 2) page = <MeasurementRequestsPage />
   else if (head === "measurements" && route.length === 2 && name === "coverage") page = <MeasurementCoveragePage />
   else if (head === "measurements" && route.length === 2 && name === "runs") page = <MeasurementRunsPage />
   else if (head === "measurements" && route.length === 2 && name === "new") page = <MeasurementRequestPage />

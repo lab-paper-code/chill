@@ -136,6 +136,7 @@ export function SchedulerPage() {
       {reasons.length>0&&<Rows><RowDialog label="판단 이유" hint={reasons[0]} value={reasons.length>1?`${reasons.length}가지`:undefined} title="판단 이유"><ul className="list-inside list-disc">{reasons.map((reason,index)=><li key={index}>{reason}</li>)}</ul><SourceJSON inline title="원래 사유 코드 보기" value={now.decision.reasons}/></RowDialog></Rows>}
     </>}</QueryGate>
     <Rows label="자세히">
+      <Row href="/operations/flow" label="운영 흐름 보드" hint="수신, 실행과 구성 변경의 실시간 흐름"/>
       <Row href="/scheduler/estimates" label="서비스별 응답 목표 예상" value={now?.estimates.length?`초과 ${now.exceeding} / ${now.estimates.length}`:undefined}/>
       <Row href="/scheduler/load" label="실제 부하" hint="구간마다 받은 요청과 처리"/>
       <Row href="/transitions" label="변경 진행" value={view?`${view.state.actions?.length??0}건`:undefined}/>

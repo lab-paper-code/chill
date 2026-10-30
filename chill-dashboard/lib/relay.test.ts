@@ -19,6 +19,11 @@ test("fixed-chill-server relay enforces path, origin, body and credential bounda
   }
 
   assert.equal(relayPlan("POST", "v1/namespaces/research/batch-energy-optimizations/preflight".split("/"), "", config).kind, "query")
+  const coverage="v1/namespaces/research/measurement-coverage".split("/")
+  assert.equal(relayPlan("GET",coverage,"?batches=1,2,4&node=node-a",config).kind,"query")
+  for(const query of ["?batches=2,1","?batches=1,1","?batches=0","?batches=","?node=","?node=a&node=b","?model=x"]) assert.throws(()=>relayPlan("GET",coverage,query,config),/DashboardQueryInvalid/)
+  assert.throws(()=>relayPlan("POST",coverage,"",config),/DashboardMethodNotAllowed/)
+  assert.equal(relayPlan("POST","v1/namespaces/research/batch-energy-optimizations/preflight".split("/"),"?variantId=exact-condition",config).kind,"query")
   assert.equal(relayPlan("PUT", ["v1", "models", "preflight"], "", config).kind, "mutation")
   for (const kind of ["preprocessors", "datasets"]) {
     assert.equal(relayPlan("POST", ["v1", kind], "", config).kind, "mutation")
