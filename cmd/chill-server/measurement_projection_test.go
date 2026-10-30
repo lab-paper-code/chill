@@ -64,6 +64,9 @@ func TestMeasurementProjectionNativeListsDetailsAndNamespace(t *testing.T) {
 				detail.References.CR.Namespace != "allowed" {
 				t.Fatalf("detail=%+v err=%v", detail, err)
 			}
+			if string(list.Items[0].Assessment) != string(detail.Assessment) || len(detail.Assessment) == 0 {
+				t.Fatal("list/detail assessment diverged or was omitted")
+			}
 			if _, err = tc.get(ctx, "allowed", "absent"); !apierrors.IsNotFound(err) {
 				t.Fatalf("expected native not found: %v", err)
 			}

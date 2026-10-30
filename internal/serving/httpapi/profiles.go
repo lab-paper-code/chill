@@ -29,6 +29,15 @@ func (h *Handler) schedulerProfiles(w http.ResponseWriter, r *http.Request) {
 		sendError(w, err)
 		return
 	}
+	if h.config.DecorateProfiles != nil {
+		projected, err := h.config.DecorateProfiles(r.Context(), view)
+		if err != nil {
+			sendError(w, err)
+			return
+		}
+		sendJSON(w, http.StatusOK, projected)
+		return
+	}
 	sendJSON(w, http.StatusOK, view)
 }
 

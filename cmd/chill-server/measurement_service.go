@@ -39,6 +39,7 @@ type measurementService struct {
 	opts      options
 	console   *url.URL
 	http      *http.Client
+	coverageCache measurementCoverageCache
 }
 
 type measurementObjects interface {
@@ -153,7 +154,9 @@ func (o *measurementService) projectOperationCost(
 	if err != nil {
 		return httpapi.MeasurementProjection{}, err
 	}
-	return httpapi.ProjectOperationCostMeasurement(cr, o.opts.storeName, steps), nil
+	projection := httpapi.ProjectOperationCostMeasurement(cr, o.opts.storeName, steps)
+	projection.Assessment, err = json.Marshal(assessOperationCost(cr, steps))
+	return projection, err
 }
 
 func (o *measurementService) listDispatchOccupancies(
@@ -169,7 +172,11 @@ func (o *measurementService) listDispatchOccupancies(
 	}
 	sort.Slice(list.Items, func(i, j int) bool { return list.Items[i].Name < list.Items[j].Name })
 	for _, cr := range list.Items {
-		result.Items = append(result.Items, httpapi.ProjectDispatchOccupancyMeasurement(cr))
+		projection, err := o.projectDispatchOccupancy(ctx, cr)
+		if err != nil {
+			return httpapi.MeasurementProjectionList{}, err
+		}
+		result.Items = append(result.Items, projection)
 	}
 	return result, nil
 }
@@ -184,7 +191,7 @@ func (o *measurementService) getDispatchOccupancy(
 	if err := o.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &cr); err != nil {
 		return httpapi.MeasurementProjection{}, err
 	}
-	return httpapi.ProjectDispatchOccupancyMeasurement(cr), nil
+	return o.projectDispatchOccupancy(ctx, cr)
 }
 
 func (o *measurementService) preflight(ctx context.Context, task *api.BatchEnergyOptimization) error {

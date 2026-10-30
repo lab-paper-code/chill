@@ -102,3 +102,31 @@ func TestBuildProfilingRunsDoesNotInventMissingOwnerOrLabels(t *testing.T) {
 		t.Fatalf("missing metadata contract: %s, %v", body, err)
 	}
 }
+
+func TestProfilingRunAssessmentRequiresCurrentVerifiedEvidence(t *testing.T) {
+	run := edgev1alpha1.ProfilingRun{
+		ObjectMeta: metav1.ObjectMeta{UID: "run", Generation: 2},
+		Status: edgev1alpha1.ProfilingRunStatus{ObservedGeneration: 2,
+			Conditions: []metav1.Condition{{Type: edgev1alpha1.ProfilingRunConditionExecutionComplete, Status: metav1.ConditionTrue, ObservedGeneration: 2}},
+		},
+	}
+	if got := AssessProfilingRun(run); got.Evidence.Accepted || got.DisplayStatus == "usable" {
+		t.Fatalf("Job success became accepted evidence: %+v", got)
+	}
+	run.Status.Evidence = &edgev1alpha1.ProfilingRunEvidenceReference{Store: "evidence", Key: "execution.json"}
+	run.Status.Conditions = append(run.Status.Conditions, metav1.Condition{Type: edgev1alpha1.ProfilingRunConditionEvidenceVerified, Status: metav1.ConditionTrue, ObservedGeneration: 2})
+	got := BuildProfilingRuns(ProfilingRunsSnapshot{Runs: []edgev1alpha1.ProfilingRun{run}}).Runs[0].Assessment
+	if got.Status != "complete" || !got.Evidence.Accepted || got.Execution.Generation != 2 || got.Execution.ObservedGeneration != 2 {
+		t.Fatalf("verified run: %+v", got)
+	}
+	run.Status.ObservedGeneration = 1
+	if got := AssessProfilingRun(run); got.Evidence.Accepted || got.DisplayStatus == "usable" {
+		t.Fatalf("stale verification accepted: %+v", got)
+	}
+	run.Status.ObservedGeneration = 2
+	run.Status.Evidence = nil
+	run.Status.Conditions = []metav1.Condition{{Type: edgev1alpha1.ProfilingRunConditionExecutionComplete, Status: metav1.ConditionFalse, Reason: "JobFailed", ObservedGeneration: 2}}
+	if got := AssessProfilingRun(run); got.Status != "failed" {
+		t.Fatalf("failed run: %+v", got)
+	}
+}

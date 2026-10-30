@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -22,6 +23,7 @@ type MeasurementProjection struct {
 	Conditions any                             `json:"conditions"`
 	Status     any                             `json:"status"`
 	References MeasurementProjectionReferences `json:"references"`
+	Assessment json.RawMessage                 `json:"assessment"`
 }
 type MeasurementProjectionMetadata struct {
 	Namespace         string    `json:"namespace"`

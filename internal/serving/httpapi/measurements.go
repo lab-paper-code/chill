@@ -64,7 +64,20 @@ func (h *Handler) measurements(w http.ResponseWriter, r *http.Request) {
 		if h.config.ListMeasurements == nil {
 			err = measurementUnavailable()
 		} else {
-			value, err = h.config.ListMeasurements(r.Context(), namespace)
+			var list api.BatchEnergyOptimizationList
+			list, err = h.config.ListMeasurements(r.Context(), namespace)
+			value = list
+			if err == nil && h.config.AssessMeasurements != nil {
+				var assessments []json.RawMessage
+				assessments, err = h.config.AssessMeasurements(r.Context(), list)
+				if err == nil {
+					if len(assessments) != len(list.Items) {
+						err = measurementUnavailable()
+					} else {
+						value = projectMeasurementList(list, assessments)
+					}
+				}
+			}
 		}
 	case http.MethodPost:
 		value, audit, err = h.submitMeasurement(w, r)
@@ -83,6 +96,24 @@ func (h *Handler) measurements(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sendJSON(w, status, value)
+}
+
+// Keep the native Kubernetes list and each complete CR intact; assessment is
+// only an additional read-projection field.
+func projectMeasurementList(list api.BatchEnergyOptimizationList, assessments []json.RawMessage) any {
+	type item struct {
+		api.BatchEnergyOptimization
+		Assessment json.RawMessage `json:"assessment"`
+	}
+	items := make([]item, len(list.Items))
+	for i := range list.Items {
+		items[i] = item{list.Items[i], assessments[i]}
+	}
+	return struct {
+		meta.TypeMeta `json:",inline"`
+		meta.ListMeta `json:"metadata,omitempty"`
+		Items []item `json:"items"`
+	}{list.TypeMeta, list.ListMeta, items}
 }
 
 func (h *Handler) submitMeasurement(

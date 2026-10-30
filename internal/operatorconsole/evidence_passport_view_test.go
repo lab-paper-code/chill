@@ -74,6 +74,9 @@ func TestBuildEvidencePassportProjectsBoundedMeasuredFacts(t *testing.T) {
 		got.Run.Name != run.Name || got.Evidence.Raw.Key != rawObjectKey {
 		t.Fatalf("passport identity = %#v", got)
 	}
+	if !reflect.DeepEqual(got.Assessment, AssessProfilingRun(*run)) {
+		t.Fatalf("passport assessment diverged from Run list: %+v", got.Assessment)
+	}
 	runtime := got.Measurement.Runtime
 	if runtime.CompletedCalls != 3 || runtime.CompletedItems != 12 || runtime.Latency.Count != 3 ||
 		runtime.ThroughputItems != 2000 || runtime.Latency.Mean != 2 || runtime.Latency.P50 != 2 ||

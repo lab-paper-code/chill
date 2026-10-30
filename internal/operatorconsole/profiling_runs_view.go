@@ -39,6 +39,7 @@ type ProfilingRunView struct {
 	Labels            map[string]string               `json:"labels"`
 	Spec              edgev1alpha1.ProfilingRunSpec   `json:"spec"`
 	Status            edgev1alpha1.ProfilingRunStatus `json:"status"`
+	Assessment        MeasurementAssessment           `json:"assessment"`
 }
 
 // BuildProfilingRuns projects one snapshot onto the wire model every Console
@@ -70,7 +71,47 @@ func BuildProfilingRuns(snapshot ProfilingRunsSnapshot) ProfilingRunsView {
 			CreationTimestamp: run.CreationTimestamp.UTC().Format(time.RFC3339),
 			OwnerReferences:   owners, Labels: labels,
 			Spec: run.Spec, Status: run.Status,
+			Assessment: AssessProfilingRun(run),
 		})
 	}
 	return view
+}
+
+// AssessProfilingRun uses the recorded execution and independent verification
+// conditions. A successful Job alone is not accepted measurement evidence.
+func AssessProfilingRun(run edgev1alpha1.ProfilingRun) MeasurementAssessment {
+	execution := &MeasurementExecution{Generation: run.Generation, ObservedGeneration: run.Status.ObservedGeneration}
+	input := MeasurementAssessmentInput{Execution: execution, Attempted: true}
+	if ref := run.Status.Evidence; ref != nil && ref.Store != "" && ref.Key != "" {
+		input.Available = true
+		input.Facts = append(input.Facts, "Retained evidence: "+ref.Store+"/"+ref.Key)
+	}
+	for _, condition := range run.Status.Conditions {
+		if condition.ObservedGeneration != run.Generation {
+			continue
+		}
+		switch condition.Type {
+		case edgev1alpha1.ProfilingRunConditionExecutionComplete:
+			execution.Phase = condition.Reason
+			switch {
+			case condition.Status == metav1.ConditionTrue:
+				execution.Phase = "Complete"
+			case condition.Reason == "JobRunning":
+				execution.Phase = "Running"
+			case condition.Reason == "JobPending":
+				execution.Phase = "Pending"
+			case condition.Status == metav1.ConditionFalse:
+				execution.Phase = "Failed"
+			}
+			if condition.Status == metav1.ConditionFalse {
+				input.Reasons = append(input.Reasons, MeasurementReason{Code: condition.Reason, Message: condition.Message, SourceIDs: []string{string(run.UID)}})
+			}
+		case edgev1alpha1.ProfilingRunConditionEvidenceVerified:
+			input.Accepted = input.Available && condition.Status == metav1.ConditionTrue && run.Status.ObservedGeneration == run.Generation
+			if condition.Status == metav1.ConditionFalse && condition.Reason == "EvidenceInvalid" {
+				input.Problems = append(input.Problems, MeasurementReason{Code: condition.Reason, Message: condition.Message, SourceIDs: []string{string(run.UID)}})
+			}
+		}
+	}
+	return AssessMeasurement(input)
 }

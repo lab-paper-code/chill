@@ -36,6 +36,7 @@ type EvidencePassport struct {
 	Run         EvidencePassportRun         `json:"run"`
 	Evidence    EvidencePassportLineage     `json:"evidence"`
 	Measurement EvidencePassportMeasurement `json:"measurement"`
+	Assessment  MeasurementAssessment           `json:"assessment"`
 }
 
 type EvidencePassportRun struct {
@@ -189,6 +190,7 @@ func BuildEvidencePassport(snapshot EvidencePassportSnapshot) (EvidencePassport,
 		APIVersion: EvidencePassportAPIVersion,
 		Kind:       "EvidencePassport",
 		ReadAt:     snapshot.ReadAt.UTC(),
+		Assessment: AssessProfilingRun(snapshot.Run),
 		Run: EvidencePassportRun{
 			Namespace: run.Namespace, Name: run.Name, UID: string(run.UID),
 			ResourceVersion: run.ResourceVersion, Generation: run.Generation, Spec: run.Spec,
