@@ -139,14 +139,15 @@ Each deletion record requires `kind`, actual `atUTC`, `exitCode`, `podUID`,
 `nodeUID`, `commandRef`, `responseRef`. The first command reference records
 `argv` (or `deleteArgv`); the cordon-delete reference records `deleteArgv` plus
 the actual cordon command/result. At recommended 600s the operator uncordons the
-second selected Node and records the third `uncordon` event and actual recovery
-readbacks using the existing evidence format.
+second selected Node and records the third `uncordon` event. Recovery evidence
+comes from the preserved `scheduler` and `cluster` API rows, not operator readbacks.
 
 The selector intersects the latest fresh scheduler state's **routing weight > 0**
 with **instanceAssignments > 0 in the immediately preceding observation window**
-and a current Ready serving Pod/Node UID. The first selection requires candidates
-on two distinct Nodes; the second excludes the first Node. The receipt includes
-weight, assigned count, Pod/Node UIDs, window bounds and captured source paths.
+and the current scheduler state's Ready serving instance, Pod name/UID and Node
+reference. The first selection requires candidates on two distinct Nodes; the
+second excludes the first Node. The record includes weight, assigned count,
+Pod/Node UIDs, window bounds and captured API source paths.
 Deletes use raw Kubernetes `DeleteOptions` with UID-only preconditions and no
 grace-period override, matching the first actual run. Missing candidates, stale
 state or read failure writes `status: INVALID`, emits no injection command and
@@ -313,15 +314,25 @@ separately approved baseline-preparation path, not cleanup sequencing.
 records and bounded local fixtures; the component-throttle smoke writes to
 `d2.smokeOutput`.
 
-E5 seeds the host sampler from a fresh stage-entry Pod query and its current
-container statuses, never a retained `pre-pods.json` ID. A missing PID/process
-cgroup emits a `cgroup` row with `pidAbsent: true` and null counters; it does not
-stop the stage or wait for telemetry coverage before producer release. The next
-1s sample re-resolves disappeared/replaced containers through the existing CRI
-inventory (healthy inventory refresh remains 15s). Judgment reports
-`pidAbsentSamples` and incomplete coverage without zero-fill or cross-restart
-counter deltas. Offline regression:
-`nice -n 19 python3 hack/e5/d2/smoke_cgroup_lifecycle.py`.
+E5 collects CHILL facts only through authenticated APIs using the collector
+service-account token at `paths.ops/.token-collector`. After drain, resource-batch
+support and the next closed-minute boundary, the raw exporter supplies
+`definitions`, `requests`, `management`, `scheduler`, `catalog`, `resources` and
+`cluster`; the collector builds `raw-source-index.json`. Settings `meters` and
+state Node references feed the unchanged power integration, without ConfigMap,
+S3, host filesystem or Kubernetes evidence reads.
+
+The external producer-only `client` cgroup sampler retains stage-entry identity,
+start readiness and post-end counter release. STOP monitoring and operator E5-7
+commands remain unchanged. Missing counters remain unknown, not zero. Capture
+receipts (`capture-identity`, `s3-hour-list-*`, `upload.log`, `collector-status`,
+`*-collector.stderr`) are no longer produced or judged.
+
+Reports identify GC as `runtime-metrics-delta` (window cumulative CPU/cycle
+difference, not a gctrace cycle distribution), and E5-7 recovery as
+`scheduler`/`cluster` evidence. D1, latency and energy formulas are unchanged.
+Never export raw observations or query historical dashboard data during an E5
+measurement window. Historical publications are not rewritten.
 
 `hack/e5/e5.py check-preparation --out /path/to/external/preparation.json`
 checks the retained preparation inputs. `hack/e5/e5-wire.py execute` takes

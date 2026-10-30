@@ -91,6 +91,8 @@ S1 호환성 확인: 현재 `chill-dashboard/features/read-pages.tsx`의 `Experi
 - 같은 변경에서 settings를 GET해서 고친 뒤 PUT하는 클라이언트 두 곳이 `meters`를 빼고 보내도록 고친다. 고치지 않으면 서버가 모르는 필드로 거부한다.
   - 하네스 `CPO.put`
   - 대시보드 `putSchedulerSettings`
+- Settings GET의 `requestTimeout`은 실제 서버 `--request-timeout` 값을 `HandlerConfig.RequestTimeout`에서 직접 읽은 **나노초 정수**다(기본 30초는 `30000000000`). 저장되는 scheduler 정책이 아니며 PUT은 이 필드를 거부한다. 위 두 클라이언트는 `meters`와 함께 `requestTimeout`도 제거하고 PUT한다.
+- Scheduler instance의 읽기 전용 `podName`(`omitempty`)은 kube snapshot builder가 `podUID`로 대조한 실제 Pod 이름이다. 하네스는 측정 중 별도 raw Kubernetes 조회 없이 이 이름과 기존 `podUID`로 실패 주입 대상을 고른다.
 
 ## 4. 순서
 
@@ -103,7 +105,7 @@ S1 호환성 확인: 현재 `chill-dashboard/features/read-pages.tsx`의 `Experi
 | 구현 2 | `resources` |
 | 구현 3 | `cluster`와 라이브 callback |
 | 배포 | RBAC(`/raw`, node-agent 수신)와 대시보드 계획 4장 항목을 **한 번의 승인 배포**로 묶는다 |
-| 하네스 전환 | 2장 표대로 교체하고 영수증 파일을 삭제한다. `client` 수집과 STOP 루프는 남긴다 |
+| 하네스 전환 완료 | 2장 표대로 원시 API·`resources`·`cluster`·settings `meters`로 전환하고 영수증 생성/판정을 삭제했다. `client` 수집·STOP 루프·E5-7 운영자 명령 유지. GC=`runtime-metrics-delta`, recovery=`scheduler`·`cluster`를 보고서에 기록한다 |
 | 확인 | 아래 리허설 1회 |
 
 구현 1·2·3은 병렬로 해도 된다.
@@ -114,6 +116,15 @@ S1 호환성 확인: 현재 `chill-dashboard/features/read-pages.tsx`의 `Experi
 - `resources`는 식별자·단위·결손만 확인한다.
 - 측정 대상 ChillServer에 더해지는 CPU 몫을 기록한다. 대상은 라이브 hub, node-agent 수신, 원시 내보내기, 대시보드 조회다.
 - 확인이 끝나면 옛 경로를 삭제한다. 이 비교는 전환 때 1회이며, 상시 검증 관문으로 남기지 않는다.
+
+2026-10-30 전환 회귀: E5·demo·report self-check 3종, `make test-loadgen`,
+power/httpapi/kube 패키지 테스트와 대시보드 Node 24 typecheck 통과.
+기존 #213 API 1시간(`20261028T02`, 경계 지원 `20261028T01`)을 같은
+원시/외부 client 입력으로 재판정해 D1·지연·전력 J 동일을 확인했다.
+전환 전 시간의 `resources`·`cluster` 부재는 보존된 API inventory로 확인했다.
+증거는 외부 `campaign/v2/harness-cutover-20261030/`에 두고 기존 게시물은
+변경하지 않는다. 이 소스의 `requestTimeout`·`podName` 추가는 다음 서버
+재빌드에 포함하며, 이 회귀 중 라이브 rev110과 빈 클러스터는 변경하지 않았다.
 
 ## 5. 완료 기준
 

@@ -206,22 +206,20 @@ def failure_select_snapshot_ttl(config):
     return seconds
 
 
-def serving_failure_targets(state, load_window, pods, nodes, uids, excluded_nodes=()):
-    """Intersect latest positive routes with preceding-window assignments and live Pod identity."""
+def serving_failure_targets(state, load_window, uids, excluded_nodes=()):
+    """Intersect API-ready physical identities, positive routes and window assignments."""
     snapshot=state['snapshot']; candidates=[]
     assignments={w['uid']:w.get('instanceAssignments',{}) for w in load_window['workloads']}
-    live_nodes={n['metadata']['name']:n['metadata']['uid'] for n in nodes}
+    live_nodes={n['node']['name']:n['node']['uid'] for n in snapshot['nodes'] if n.get('ready')}
     for instance in instance_rows(snapshot['instances']):
         uid=instance.get('workloadUID'); node=instance['node']
         weight=(snapshot.get('routing',{}).get(uid) or {}).get(instance['id'],0)
         assigned=assignments.get(uid,{}).get(instance['id'],0)
         if uid not in uids or instance.get('ownerWorkloadUID')!=uid or not instance.get('ready') or instance.get('stopped') or weight<=0 or assigned<=0 or node['uid'] in excluded_nodes:
             continue
-        matches=[p for p in pods if p['metadata']['uid']==instance.get('podUID') and p['spec'].get('nodeName')==node['name'] and not p['metadata'].get('deletionTimestamp') and p.get('status',{}).get('phase')=='Running' and any(c.get('type')=='Ready' and c.get('status')=='True' for c in p.get('status',{}).get('conditions',[]))]
-        if len(matches)!=1 or live_nodes.get(node['name'])!=node['uid']:continue
-        pod=matches[0]
+        if not instance.get('podUID') or not instance.get('podName') or live_nodes.get(node['name'])!=node['uid']:continue
         candidates.append({'instanceID':instance['id'],'workloadUID':uid,'routingWeight':weight,'assigned':assigned,
-                           'podName':pod['metadata']['name'],'podUID':pod['metadata']['uid'],
+                           'podName':instance['podName'],'podUID':instance['podUID'],
                            'nodeName':node['name'],'nodeUID':node['uid'],
                            'snapshotAt':snapshot['at'],'windowFrom':load_window['from'],'windowTo':load_window['to']})
     return sorted(candidates,key=lambda item:(item['nodeName'],item['podName'],item['instanceID']))
@@ -242,10 +240,10 @@ def validate_failure_events(evidence, start_utc, end_utc, epoch=None):
         for event,selection in zip(events[:2],selections):
             if selection.get('status')!='SELECTED' or any(event.get(key)!=selection.get(key) for key in ('kind','podUID','nodeUID')) or selection.get('routingWeight',0)<=0 or selection.get('assigned',0)<=0:
                 raise ValueError('INVALID: command target differs from positive route/assigned selection')
-            candidates=serving_failure_targets(load(selection['stateRef']),load(selection['loadRef']),load(selection['podsRef'])['items'],load(selection['nodesRef'])['items'],selection['allowedWorkloadUIDs'])
+            candidates=serving_failure_targets(load(selection['stateRef']),load(selection['loadRef']),selection['allowedWorkloadUIDs'])
             keys=('instanceID','workloadUID','routingWeight','assigned','podName','podUID','nodeName','nodeUID','snapshotAt','windowFrom','windowTo')
             if not any(all(candidate[key]==selection[key] for key in keys) for candidate in candidates):
-                raise ValueError('INVALID: selection is not supported by captured scheduler/window/Pod/Node evidence')
+                raise ValueError('INVALID: selection is not supported by captured scheduler state/window evidence')
             selected=epoch(selection['selectedAtUTC']);at=epoch(event['atUTC']);snapshot_at=epoch(selection['snapshotAt'])
             if any(value is None for value in (selected,at,snapshot_at)) or not snapshot_at<=selected<=at<=snapshot_at+selection['maximumAgeSeconds'] or epoch(selection['windowTo'])!=snapshot_at:
                 raise ValueError('INVALID: selection expired before operator injection')
@@ -267,15 +265,7 @@ def validate_failure_events(evidence, start_utc, end_utc, epoch=None):
             raise ValueError('E5-7 operator command identity/timestamp/result incomplete')
     if events[1]['nodeUID'] != events[2]['nodeUID']:
         raise ValueError('E5-7 cordon/uncordon Node identity differs')
-    if 'recovery' in evidence:
-        recovery = evidence['recovery']
-        if not isinstance(recovery, dict) or not isinstance(recovery.get('atUTC'), str):
-            raise ValueError('E5-7 supplied recovery identity/timestamp incomplete')
-        at = dt.datetime.fromisoformat(recovery['atUTC'].replace('Z', '+00:00')).timestamp()
-        uncordon_at = dt.datetime.fromisoformat(events[2]['atUTC'].replace('Z', '+00:00')).timestamp()
-        if recovery.get('nodeUID') != events[2]['nodeUID'] or not start <= uncordon_at <= at <= end:
-            raise ValueError('E5-7 recovery must match the Node and occur within the stage after uncordon')
-    # Failed commands and absent recovery are observations, not missing measurements.
+    # Recovery comes only from the API scheduler/cluster streams, never operator readbacks.
 
 
 def d25_acceptance(cr, raw):
@@ -416,29 +406,12 @@ def self_check():
          'podUID':'pod','commandRef':'command','responseRef':'response'}
         for offset,kind,at in [(180,'delete-serving-pod','2026-10-28T00:03:00Z'),
                               (360,'cordon-delete','2026-10-28T00:06:00Z'),
-                              (600,'uncordon','2026-10-28T00:10:00Z')]],
-        'recovery':dict.fromkeys(('schedulableRef','readyRef','observationRef','routeRef'),'readback')}
-    evidence['recovery'].update(nodeUID='node',atUTC='2026-10-28T00:11:00Z')
+                              (600,'uncordon','2026-10-28T00:10:00Z')]]}
     validate_failure_events(evidence,'2026-10-28T00:00:00Z','2026-10-28T00:15:00Z')
     failed = copy.deepcopy(evidence)
     failed['events'][2]['exitCode'] = 1
-    failed.pop('recovery')
     failed['events'][0]['atUTC'] = '2026-10-28T00:02:59Z'
     validate_failure_events(failed,'2026-10-28T00:00:00Z','2026-10-28T00:15:00Z')
-    partial = copy.deepcopy(failed)
-    partial['recovery'] = {'nodeUID':'node','atUTC':'2026-10-28T00:11:00Z','readyRef':'readback'}
-    validate_failure_events(partial,'2026-10-28T00:00:00Z','2026-10-28T00:15:00Z')
-    for recovery in ({'nodeUID':'other','atUTC':'2026-10-28T00:11:00Z'},
-                     {'nodeUID':'node','atUTC':'2026-10-27T23:59:59Z'},
-                     {'nodeUID':'node','atUTC':'2026-10-28T00:09:59Z'},
-                     {'nodeUID':'node','atUTC':'2026-10-28T00:15:01Z'},
-                     {'nodeUID':'node'}):
-        try:
-            validate_failure_events(dict(evidence,recovery=recovery),'2026-10-28T00:00:00Z','2026-10-28T00:15:00Z')
-        except ValueError:
-            pass
-        else:
-            raise AssertionError('Mismatched/out-of-stage recovery accepted')
     identity = [{'recordID':'evaluation'}]
     assert profiling_evaluation_separation({},identity)['status'] == 'UNKNOWN'
     assert profiling_evaluation_separation({'profilingRecordIDs':['profiling']},identity)['status'] == 'DISJOINT_RECORD_IDS'
@@ -677,11 +650,11 @@ def self_check_failure_selection(analysis):
             root=Path(temporary);folder=root/'full-E5-7-3b';folder.mkdir()
             ns['save'](root/'full-E5-7-3b-restore.json',{'rowTag':'3b','accepted':True})
             ns['save'](folder/'phase.json',{'status':'RUNNING','startUTC':'2026-10-30T00:00:00+00:00','stage':{'seconds':900}})
-            instances=[{'id':'i'+str(n),'podUID':'p'+str(n),'workloadUID':'w','ownerWorkloadUID':'w','ready':True,'node':{'name':'n'+str(n),'uid':'n'+str(n)}} for n in range(2)]
+            instances=[{'id':'i'+str(n),'podUID':'p'+str(n),'podName':'pod'+str(n),'workloadUID':'w','ownerWorkloadUID':'w','ready':True,'node':{'name':'n'+str(n),'uid':'n'+str(n)}} for n in range(2)]
             if bad=='same-node':instances[1]['node']=instances[0]['node']
-            pods=[{'metadata':{'uid':i['podUID'],'name':i['podUID']},'spec':{'nodeName':i['node']['name']},'status':{'phase':'Running','conditions':[{'type':'Ready','status':'True'}]}} for i in instances]
-            nodes=[{'metadata':{'name':'n'+str(n),'uid':'n'+str(n)}} for n in range(2)]
-            state={'snapshot':{'at':'2026-10-30T00:02:00+00:00' if bad=='stale' else at,'instances':instances,'routing':{'w':{'i0':1,'i1':0 if bad=='zero-weight' else 1}}}}
+            if bad=='missing-pod':instances[1].pop('podUID')
+            nodes=[{'node':{'name':'n'+str(n),'uid':'n'+str(n)},'ready':True} for n in range(2)]
+            state={'snapshot':{'at':'2026-10-30T00:02:00+00:00' if bad=='stale' else at,'nodes':nodes,'instances':instances,'routing':{'w':{'i0':1,'i1':0 if bad=='zero-weight' else 1}}}}
             window={'from':'2026-10-30T00:02:00+00:00','to':at,'workloads':[{'uid':'w','instanceAssignments':{'i0':2,'i1':0 if bad=='zero-assigned' else 3}}]}
             if bad=='nano':
                 state['snapshot']['at']='2026-10-30T00:02:59.123456789Z';window['to']=state['snapshot']['at']
@@ -692,8 +665,7 @@ def self_check_failure_selection(analysis):
             runner.out=root;runner.uids=['w'];runner.tb={'apiSeconds':1}
             runner.c={'failureSelectSnapshotTTLSeconds':20} if bad=='custom-ttl' else {}
             def kubernetes(argv,**kwargs):
-                assert argv[0]=='get','Selection attempted cluster mutation'
-                return {'items':(pods[:1] if bad=='missing-pod' else pods) if argv[1]=='pods' else nodes}
+                raise AssertionError('API-only selection attempted kubectl access')
             runner.io=SimpleNamespace(k=kubernetes)
             runner.d=SimpleNamespace(epoch=analysis.epoch)
             runner.state=lambda:state;runner.settings=lambda:{'observationWindowNanos':60_000_000_000,'maxObservationAgeNanos':5_000_000_000}
@@ -748,18 +720,19 @@ def self_check_client_jsonl(analysis):
     final={'outcome':'completed','executionComplete':True,'elapsedNanos':100,'receivedAt':at}
     indexed={'fixture-uid':{'summary':{'outcomes':{'completed':1}},'finals':{'fixture-response':final},
                             'receivedAtNS':{},'errors':[],'sources':[]}}
-    raw=SimpleNamespace(scheduler_events=lambda folder:([],{'complete':True}),
+    raw=SimpleNamespace(scheduler_events=lambda folder:([],{'complete':True,'errors':[]}),
+                        stream_events=lambda folder,kind:([],{'complete':True,'errors':[],'sources':[]}),
                         iter_request_indexes=lambda *args,**kwargs:indexed)
     with tempfile.TemporaryDirectory(prefix='e5-client-jsonl-') as temporary:
         folder=Path(temporary)
         stage={'id':'E5-1','seconds':1,'traces':{'fixture':{'offered':1,'offsetsNS':[0]}},'parts':[]}
         config={'workloads':[{'name':'fixture','uid':'fixture-uid','slo':{'percentile':95,'targetLatencyNanos':1000}}],
                 'mSeconds':0,'inputs':{'scheduler':str(folder/'scheduler.json')},
-                'collection':{'archiveRefs':str(folder/'archives.json')},
+                'collection':{},
                 'generatorQuality':{'latenessToleranceNS':50_000_000,'maxExceedingFraction':.01}}
         phase={'stage':stage,'startUTC':at,'endUTC':'2026-10-29T00:00:01Z',
                'drainedUTC':'2026-10-29T00:00:02Z','starts':{'fixture':{'monotonicNS':100}},'status':'DRAINED_NOT_EVALUATED'}
-        payloads={'phase.json':phase,'scheduler.json':{'snapshot':{'options':[]}},'archives.json':{},
+        payloads={'phase.json':phase,'scheduler.json':{'snapshot':{'options':[]}},
                   'power.json':{'complete':True,'wholePoolJoules':1,'activePoolJoules':1},
                   'power-drain-inclusive.json':{'complete':True,'wholePoolJoules':1,'activePoolJoules':1}}
         for name,value in payloads.items():(folder/name).write_text(json.dumps(value))
@@ -779,8 +752,38 @@ def self_check_client_jsonl(analysis):
         first=result['coverage']['firstMalformedLine']
         assert first['line']==2 and first['content']=='Traceback (most recent call last):'
         assert path.read_text()==source and (folder/'judgment.json').exists()
-        assert result['sources'][str(folder/'cgmon.log')]['present'] is False
-    print('PASS E5 trailing traceback retained; aggregation completes with malformedLines=1; missing counters remain unknown; offline only')
+        assert str(folder/'cgmon.log') not in result['sources']
+        resources=[]
+        for second in (0,2):
+            stamp='2026-10-29T00:00:0'+str(second)+'Z'
+            resources.extend([
+                {'row':{'kind':'server','at':stamp,'podUID':'server','processStartedAt':at,'gcCPUSeconds':second/2,'gcCycles':second},'sourceRef':{'line':second+1}},
+                {'row':{'kind':'node','node':{'name':'n','uid':'nu'},'receivedAt':stamp,'samples':[{'sampledAt':stamp,'containers':[{'podUID':'server','containerID':'c','cgroupVersion':2,'cpuUsageNanos':second*1e9,'throttledNanos':second,'throttledPeriods':second,'memoryCurrentBytes':10}],'thermal':[{'sensor':'/sensor','milliCelsius':65000}]}]},'sourceRef':{'line':second+2}}])
+        rows,thermal=resource_telemetry(resources,[],[])
+        assert rows[0]['nrThrottled']==0 and rows[1]['memoryBytes']==10 and thermal[0]['bin']=='60-70'
+        native=copy.deepcopy(resources[1]);native['row']['samples'][0]['containers'][0]['podUID']='native'
+        native_rows,_=resource_telemetry([native],[],[{'snapshot':{'instances':[{'id':'native/c','podUID':'native'}]}}])
+        assert native_rows[0]['role']=='native'
+        assert resource_telemetry([native],[],[])[0][0]['role']=='unknown'
+        counters=[{'kind':'cgroup','role':role,'at':'2026-10-29T00:00:0'+str(second)+'Z','containerID':role,'cpuUsageNanos':second*1e9,'nrThrottled':second,'throttledNanos':second} for role in ('client','server') for second in (0,2)]
+        (folder/'fixture-cgroup.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in counters))
+        first,last=analysis.epoch(at),analysis.epoch('2026-10-29T00:00:02Z')
+        telemetry=analysis.telemetry(analysis.Inputs(folder),first,last,resource_rows=rows)
+        assert telemetry['roles']['server']['identities']==telemetry['roles']['client']['identities']==1
+        gc=runtime_gc(resources,first,last,analysis)
+        assert gc['complete'] and gc['cpuSecondsDelta']==1 and gc['cyclesDelta']==2
+        reset=copy.deepcopy(resources);reset[2]['row']['gcCPUSeconds']=-1
+        assert runtime_gc(reset,first,last,analysis)['cpuSecondsDelta'] is None
+        assert runtime_gc(resources,first,last+1,analysis)['complete'] is False
+        snapshot={'at':'2026-10-29T00:00:02Z','nodes':[{'node':{'name':'n','uid':'nu'},'ready':True}],
+            'instances':[{'id':'i','podUID':'p','node':{'name':'n','uid':'nu'},'workloadUID':'w','ready':True}],'routing':{'w':{'i':1}}}
+        pod={'row':{'kind':'pod','event':'changed','at':at,'pod':{'uid':'p','node':'n','ready':'True'}},'sourceRef':{'line':9}}
+        commands=[{}, {}, {'nodeUID':'nu','atUTC':at}]
+        recovery=failure_api_recovery(commands,[{'snapshot':snapshot,'_rawRefs':[{'line':8}]}],[pod],last,analysis)
+        assert recovery['status']=='OBSERVED' and recovery['observation']['clusterRef']=={'line':9}
+        pod['row']['event']='deleted'
+        assert failure_api_recovery(commands,[{'snapshot':snapshot}],[pod],last,analysis)['status']=='UNMEASURED'
+    print('PASS E5 trailing stderr coverage; API resource counters plus client-only local cgroups; cumulative GC delta/reset/brackets and scheduler+cluster recovery; offline only')
 
 
 
@@ -808,26 +811,13 @@ WORKLOADS = ['image-classification-tight-slo', 'plc-anomaly', 'smolvlm2-vqa']
 SEEDS = dict(zip(WORKLOADS, [101, 202, 303]))
 REQUIRED = {
  'approval': ['sources', 'controlImageDigest', 'runtimeDigests'],
- 'inputs': ['scheduler', 'capacity', 'capacityScheduler', 'ranking', 'nodes', 'pods', 'd25', 'costs', 'bias', 'gateway', 'producer', 'powerObservation', 'evaluationPayload'],
+ 'inputs': ['scheduler', 'capacity', 'capacityScheduler', 'ranking', 'd25', 'costs', 'bias', 'gateway', 'producer', 'powerObservation', 'evaluationPayload'],
  'numerical': ['g0Evidence', 'mSeconds', 'N', 'burstLowSeconds', 'timeboxes', 'smokeSeconds'],
  'workload': ['name', 'uid', 'generation', 'slo', 'R', 'deliverySeconds', 'socketSeconds', 'gatewayCapSeconds', 'workers', 'datasetDir', 'fields', 'jobTemplate', 'producerEndpoint', 'producerTokenFile', 'producerCAFile', 'producerDatasetDir'],
- 'collection': ['hosts', 'archiveRefs', 'observationDirectory', 'serverContainer', 'schedulerConfigMap', 'serverHostReadArgv', 'metricSourcesConfigMap', 'metricSourcesKey', 'powerExecutable', 'powerReceipt'],
+ 'collection': ['hosts', 'powerExecutable', 'powerReceipt'],
  'factor': ['name', 'controls', 'witness'],
  'timeboxes': ['setupSeconds', 'barrierSeconds', 'drainSeconds', 'flushSeconds', 'collectSeconds', 'apiSeconds', 'settleSeconds'],
 }
-HOST_USAGE = r'''
-import datetime as dt, json, pathlib, subprocess, sys
-directory=sys.argv[1]
-def command(argv):
-    p=subprocess.run(argv,capture_output=True,text=True,timeout=20,check=True)
-    return json.loads(p.stdout)
-found=[x for x in command(['/usr/bin/crictl','ps','-o','json'])['containers'] if x.get('metadata',{}).get('name')=='serving-entrypoint' and x.get('labels',{}).get('io.kubernetes.pod.namespace')=='chill-system']
-if len(found)!=1: raise RuntimeError('Exact host server container ambiguous')
-c=found[0];pid=command(['/usr/bin/crictl','inspect',c['id']])['info']['pid']
-if not directory.startswith('/') or '..' in pathlib.Path(directory).parts: raise ValueError('Absolute captured observation directory required')
-root=pathlib.Path('/proc')/str(pid)/'root'/directory.lstrip('/')/'v1alpha5'
-print(json.dumps({'at':dt.datetime.now(dt.timezone.utc).isoformat(),'containerID':c['id'],'podUID':c.get('labels',{}).get('io.kubernetes.pod.uid'),'directory':directory,'bytes':sum(p.stat().st_size for p in root.rglob('*') if p.is_file())}))
-'''
 
 
 def module(name, path):
@@ -1110,14 +1100,15 @@ def full_restore_dry_run(binding,root,pre_state,row,tag):
     save(path,result);print(json.dumps({'resultPath':str(path),**result},ensure_ascii=False,indent=2))
 
 def power_observation(c, *, frozen=False):
-    """Bind from captured policy only; runtime CPO still checks actual ConfigMap."""
+    """Read the server-accepted operating-power policy through CHILL settings."""
     if frozen:
         policy = load(c['inputs']['powerObservation'])['schedulerSettings']['powerObservation']
     else:
-        command = ENVIRONMENT['d2']['kubectl'] + ['-n', 'chill-system', 'get', 'configmap', c['collection']['schedulerConfigMap'], '-o', 'json']
-        result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=c['timeboxes']['apiSeconds'])
-        config = json.loads(json.loads(result.stdout)['data']['scheduler.json'])
-        policy = config['powerObservation']
+        request = urllib.request.Request(c['endpoint']+'/api/v1/scheduler/settings', headers={'Authorization':'Bearer '+(OPS/'.token-collector').read_text().strip()})
+        auth = module('e5_power_auth', HERE/'auth.py')
+        opener = urllib.request.build_opener(auth.NoRedirect(), urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=c['caFile'])))
+        with opener.open(request, timeout=c['timeboxes']['apiSeconds']) as response:
+            policy = json.load(response)['powerObservation']
     coverage = policy['coverage']
     if not all(positive(coverage[k]) for k in ('MaximumGap', 'MaximumBoundaryDistance', 'MinimumCoverage')) or coverage['MinimumCoverage'] > 1:
         raise ValueError('Explicit finite operating power coverage required')
@@ -1137,8 +1128,6 @@ def bind(path):
     if not positive(c['smokeSeconds']) or type(c['mSeconds']) not in (int,float) or not math.isfinite(c['mSeconds']) or c['mSeconds']<0 or not 0 < c['burstLowSeconds'] < 900: raise ValueError('Actual m/smoke and 0<burstLowSeconds<900 required')
     if any(not positive(v) for v in c['timeboxes'].values()) or c['timeboxes']['setupSeconds']+3600+c['timeboxes']['drainSeconds']+c['timeboxes']['flushSeconds'] > 4200: raise ValueError('Finite collector-compatible timeboxes required (sum<=4200s)')
     if type(c['N']) is not int or c['N'] < 1 or c['N'] != len(c['factors']): raise ValueError('N must equal a nonempty preselected witnessed factor set; absent witness is NOT_READY')
-    host_read=c['collection']['serverHostReadArgv']
-    if not isinstance(host_read,list) or not host_read or not Path(host_read[0]).is_absolute() or host_read[-1]!='-': raise ValueError('Actual approved server-host privileged Python stdin reader argv required')
     refs = {k: ref(v) for k, v in c['inputs'].items()}
     refs['inputConfig'] = ref(path)
     for name in ('e5.py','auth.py','e5-wire.py','e5-producer.py','e5-raw.py','e5-archive.py'): refs['package-'+name]=ref(HERE/name)
@@ -1170,7 +1159,6 @@ def bind(path):
     require_component_source(producer_receipt,component_sources['loadgen'],'loadgen')
     refs['producer-deployment'] = ref(producer_receipt['deploymentReceipt'])
     native = module('d2eligibility', D2/'bind_before.py')
-    knodes = load(c['inputs']['nodes'])['items']
     if settings['completionMarginMS']/1000 != c['mSeconds']: raise ValueError('m must equal actual scheduler completionMarginMS')
     if sorted(settings['excludedNodes']) != sorted(E5['excludedNodes']): raise ValueError('Approved seven-node/genesis2 hardware-exclusion scope required')
     if len(c['workloads']) != 3 or {w['name'] for w in c['workloads']} != set(WORKLOADS): raise ValueError('Exactly three canonical workloads required')
@@ -1215,8 +1203,7 @@ def bind(path):
                 expected = {'node': instance['node'], 'profileID': profile['id'], 'powerMode': profile['condition']['powerMode'], 'allocation': instance['allocation'], **{key: settings[key] for key in native.SETTINGS}}
                 if any(inp.get(key) != value for key, value in expected.items()): continue
                 node = next(n for n in snap['nodes'] if n['node'] == instance['node'])
-                kube = next(n for n in knodes if n['metadata']['uid'] == instance['node']['uid'])
-                actual_reasons=native.eligibility(instance,profile,node,kube,settings,inp['maxBatch'])
+                actual_reasons=native.eligibility(instance,profile,node,None,settings,inp['maxBatch'])
                 if profile['condition']['runtimeImage'].rsplit('sha256:',1)[-1] not in c['approval']['runtimeDigests']:actual_reasons.append('RuntimeOutsideFrozen7')
                 reasons.extend(actual_reasons)
                 matches.append(instance)
@@ -1249,9 +1236,7 @@ def bind(path):
         if f['name'] not in ('membership-off', 'replicas-off') and not f.get('approvedDirection'): raise ValueError('Additional factor needs explicit approved direction')
         if set(f['controls']) != set(settings['controls']) or not any(f['controls'][k] != settings['controls'][k] for k in f['controls']): raise ValueError('Factor must change actual source controls')
         refs['witness-'+f['name']] = ref(f['witness'])
-    for k in ('hosts', 'archiveRefs'): refs[k] = ref(c['collection'][k])
-    archive = load(c['collection']['archiveRefs'])
-    if not archive or any(not x.get('key') or not x.get('localPath') for x in archive): raise ValueError('Exact approved archive source key/local path bindings required')
+    refs['hosts'] = ref(c['collection']['hosts'])
     stages = normative_stage_specs(c['burstLowSeconds'])
     c['failureInjectionRunbook'] = copy.deepcopy(load(HERE/'demo-config.e5.example.json')['failureInjectionRunbook'])
     refs['failureRunbook'] = ref(HERE/'demo-config.e5.example.json')
@@ -1313,10 +1298,10 @@ class CPO:
         self.io.a=argparse.Namespace(phase='e5-'+a.mode+'-'+a.stage,command=a.command)
         self.io.phase_out=self.out
         # Existing authenticated client and kubectl contracts, bound to actual phase6 configuration.
-        d.BASE = self.c['endpoint']; d.CA = Path(self.c['caFile']); d.TOKEN = Path(self.c['tokenFile']); d.K = ENVIRONMENT['d2']['kubectl']+['-n','chill-system']
+        d.BASE = self.c['endpoint']; d.CA = Path(self.c['caFile']); d.TOKEN = OPS/'.token-collector'; d.K = ENVIRONMENT['d2']['kubectl']+['-n','chill-system']
         self.io.ctx = ssl.create_default_context(cafile=self.c['caFile']); self.io.http = urllib.request.build_opener(d.NoRedirect(), urllib.request.HTTPSHandler(context=self.io.ctx))
         self.uids = [w['uid'] for w in self.c['workloads']]; self.tb = self.c['timeboxes']; self.ws = {w['name']: w for w in self.c['workloads']}
-        self.bound_nodes=[{'name':node['metadata']['name'],'uid':node['metadata']['uid']} for node in load(self.c['inputs']['nodes'])['items'] if node['metadata']['name'] in NODES]
+        self.bound_nodes=[row['node'] for row in self.state()['snapshot']['nodes'] if row['node']['name'] in NODES]
         marker=self.out/('native-mode-authorization'+('-'+a.row_tag if a.row_tag else '')+'.json')
         self.native_mode_authorized_since=load(marker)['authorizedSinceUTC'] if marker.exists() else None
         self.native_evidence=[]
@@ -1345,6 +1330,7 @@ class CPO:
         settings = copy.deepcopy(settings); settings.pop('staticRouting',None); settings.pop('staticRoutingValidatedAt',None)
         settings.pop('powerObservation', None)
         settings.pop('meters', None)
+        settings.pop('requestTimeout', None)
         return self.api('PUT','/api/v1/scheduler/settings',settings)
     def start_barrier_observation(self,state,deadline,observed):
         snapshot=state['snapshot']; reservations=snapshot.get('reservations') or []
@@ -1378,17 +1364,8 @@ class CPO:
             for identifier,weight in snapshot.get('routing',{}).get(uid,{}).items():
                 instance=by_id.get(identifier)
                 if weight>0 and (not instance or instance.get('ownerWorkloadUID')!=uid or instance.get('workloadUID')!=uid):raise RuntimeError('Active route requires exact canonical owner plus served UID; prepared owner-only semantics are never a load-ready exemption')
-        save(folder/(prefix+'-pods.json'),self.io.k(['get','pods','-A','-o','json']))
-        save(folder/(prefix+'-nodes.json'),self.io.k(['get','nodes','-o','json']))
-        pods=self.io.k(['get','pods','-l','app.kubernetes.io/component=serving-entrypoint','-o','json'])['items']
-        if len(pods)!=1: raise RuntimeError('Actual server Pod ambiguous')
-        statuses=[x for x in pods[0].get('status',{}).get('containerStatuses',[]) if x['name']==self.c['collection']['serverContainer']]
-        expected_digest=self.c['approval']['controlImageDigest'].rsplit('sha256:',1)[-1]
-        if len(statuses)!=1 or statuses[0].get('imageID','').rsplit('sha256:',1)[-1]!=expected_digest or not statuses[0].get('ready'): raise RuntimeError('Actual ready control image differs from final D2 receipt')
-        argv=self.c['collection']['serverHostReadArgv']+[self.c['collection']['observationDirectory']]
-        r=subprocess.run(argv,input=HOST_USAGE,capture_output=True,text=True,timeout=self.tb['apiSeconds'])
-        save(folder/(prefix+'-pvc-usage.json'),{'stdout':r.stdout,'stderr':r.stderr,'exitCode':r.returncode,'scope':'Actual host /proc/container-pid/root observation directory only'})
-        if r.returncode: raise RuntimeError('PVC raw usage unavailable')
+        # Pod identity, image digests and observation-directory bytes are recorded
+        # by cluster/resources and collected after drain, never via Kubernetes/host reads.
     def authorize_native_modes(self):
         self.native_mode_authorized_since=now()
         save(self.out/('native-mode-authorization'+('-'+self.a.row_tag if self.a.row_tag else '')+'.json'),{'authorizedSinceUTC':self.native_mode_authorized_since,'release':str(self.a.release),'meaning':'Actual pre-enable authorization fence; not a settings/native success ACK'})
@@ -1494,14 +1471,21 @@ class CPO:
                 with (folder/'node-actuation-boot-alerts.jsonl').open('a') as out:out.write(json.dumps({'row':row,'decision':decision})+'\n')
         return new_offset
     def sampler(self, folder, seconds):
-        sample=module('d2sample',D2/'sample_cgroups.py'); source=sample.REMOTE.replace("pod.startswith('d2-before-')", "pod.startswith('e5-')")
-        # Resolve stage-entry Pod status now, never container IDs retained at a prior boundary.
-        pods=self.io.k(['get','pods','-A','-o','json'],timeout=self.tb['apiSeconds'])['items']
+        sample=module('d2sample',D2/'sample_cgroups.py')
+        source=sample.REMOTE
+        roles=source.index("                if ns=='chill-system' and name=='serving-entrypoint':")
+        role_end=source.index("                if role is None: continue",roles)
+        source=source[:roles]+"                if ns=='chill-system' and name=='load' and pod.startswith('e5-'): role='client'\n"+source[role_end:]
+        thermal=source.index('    if began>=next_thermal:')
+        source=source[:thermal]+source[source.index('    time.sleep(',thermal):]
+        # Only external producers are discoverable by this sampler.
+        pods=self.io.k(['get','pods','-l','chill.dacs.io/e5='+self.a.mode,'-o','json'],timeout=self.tb['apiSeconds'])['items']
         children=[]
         for h in load(self.c['collection']['hosts']):
+            if h['node'] != E5['producerNode']: continue
             argv=[sys.executable,'-u','-'] if h.get('local') else h['ssh']
-            if not h.get('local') and argv[-3:] != ['python3','-u','-']: raise RuntimeError('Verified existing SSH python sampler argv required')
-            output=(folder/(h['node']+'-cgroup.jsonl')).open('w'); error=(folder/(h['node']+'-collector.stderr')).open('w')
+            if not h.get('local') and argv[-3:] != ['python3','-u','-']: raise RuntimeError('Verified existing producer SSH python sampler argv required')
+            output=(folder/(h['node']+'-cgroup.jsonl')).open('w'); error=open(os.devnull,'w')
             current=[{'id':status.get('containerID','').split('://')[-1],
                       'metadata':{'name':status['name'],'attempt':status.get('restartCount')},
                       'labels':{'io.kubernetes.pod.namespace':pod['metadata']['namespace'],
@@ -1705,7 +1689,7 @@ class CPO:
                             if observed.get('kind')=='collector-error': raise RuntimeError('Prestart telemetry collector error')
                             if observed.get('kind')=='cgroup' and observed.get('pidAbsent'): unavailable.add((observed['role'],observed.get('pod')))
                             if observed.get('kind')=='cgroup' and all(observed.get(k) is not None for k in ('cpuUsageNanos','nrThrottled','throttledNanos')): coverage[(observed['role'],observed.get('pod'))]+=1
-                    if not all(any(role==r and count>=2 for (role,pod),count in coverage.items()) or any(role==r for role,pod in unavailable) for r in ('server','edgemesh')) or not all(coverage[('client',pod['metadata']['name'])]>=2 or ('client',pod['metadata']['name']) in unavailable for pod in pods.values()): continue
+                    if not all(coverage[('client',pod['metadata']['name'])]>=2 or ('client',pod['metadata']['name']) in unavailable for pod in pods.values()): continue
                     for name,pod in pods.items():
                         current=self.io.k(['get','pod',pod['metadata']['name'],'-o','json'],timeout=self.tb['apiSeconds'])
                         self.io.assert_producer_startable(folder/('startup-'+name),current,pod,barrier_seconds=self.tb['barrierSeconds'])
@@ -1763,13 +1747,11 @@ class CPO:
             self.boundary(folder,'post')
             phase['schedulerBoundaryObservations']['end']=scheduler_boundary_observation(load(folder/'post-state.json'))
             phase['status']='DRAINED_NOT_EVALUATED'; save(folder/'phase.json',phase)
-            collector_status=[]
             for sampler,output,error in children:
                 intentional=sampler.poll() is None
                 if intentional:sampler.terminate()
                 code=sampler.wait(timeout=15);output.flush();error.flush()
-                collector_status.append({'output':output.name,'stderr':error.name,'exitCode':code,'intentionalStopAfterActualDrain':intentional})
-            save(folder/'collector-status.json',collector_status)
+                if code not in (0,-signal.SIGTERM): raise RuntimeError('Producer cgroup sampler failed')
             time.sleep(self.tb['flushSeconds'])
             self.collect(folder)
         except Exception as e:
@@ -1852,14 +1834,7 @@ class CPO:
             allowed=set(missing)|set(measurement_failures)
             if not errors or any(error.split(': ',1)[0] not in allowed for error in errors) or not load(folder/'raw-source-index.json').get('complete'):
                 raise RuntimeError('Required exact-hour archive/current capture incomplete; preserve private index and stop')
-        for suffix in ('control-alerts.jsonl','cgmon.log','upload.log'):
-            path=CAMPAIGN/suffix
-            if path.exists(): (folder/suffix).write_bytes(path.read_bytes())
-        pods=self.io.k(['get','pods','-l','app.kubernetes.io/component=serving-entrypoint','-o','json'])['items']
-        if len(pods)!=1: raise RuntimeError('Actual server logs ambiguous')
-        r=subprocess.run(self.d.K+['logs',pods[0]['metadata']['name'],'-c',self.c['collection']['serverContainer'],'--since-time='+start,'--timestamps=true'],capture_output=True,text=True,timeout=self.tb['apiSeconds']); (folder/'server.log').write_text(r.stdout)
-        if r.returncode: raise RuntimeError('Server GC/Tick log capture failed')
-        manifest={'schema':'e5-private-collection.v1','visibility':'PRIVATE_OPERATIONAL_ONLY; exclude original raw and sensitive configuration from git/public evidence indexes','at':now(),'status':'CAPTURED_NOT_EVALUATED','raw':[],'observationCapture':str(folder/'raw-source-index.json'),'archiveRequired':load(self.c['collection']['archiveRefs']),'bindingSources':self.b['sources'],'physicalIdentities':'pre/post Pods, Node UID, containerID/imageID, profile/runtime/allocation, full scheduler events','cadence':{'cgroupSeconds':1,'restartSeconds':15,'thermalSeconds':5},'streams':['definitions','requests','management','scheduler','catalog']}
+        manifest={'schema':'e5-private-collection.v1','visibility':'PRIVATE_OPERATIONAL_ONLY; exclude original raw and sensitive configuration from git/public evidence indexes','at':now(),'status':'CAPTURED_NOT_EVALUATED','raw':[],'observationCapture':str(folder/'raw-source-index.json'),'bindingSources':self.b['sources'],'physicalIdentities':'API resources and cluster, state Node references, full scheduler events','streams':['definitions','requests','management','scheduler','catalog','resources','cluster']}
         if missing:
             manifest.update(status='CAPTURED_WITH_MISSING_ARCHIVES',missingArchives=missing,archiveStatus=captured['status'])
         if measurement_failures:
@@ -1881,21 +1856,19 @@ class CPO:
         prefix=folder/('failure-'+kind)
         try:
             maximum_age=failure_select_snapshot_ttl(self.c)
-            pods=self.io.k(['get','pods','-o','json'],timeout=self.tb['apiSeconds'])
-            nodes=self.io.k(['get','nodes','-o','json'],timeout=self.tb['apiSeconds'])
             settings=self.settings();state=self.state();snapshot=state['snapshot']
             end=dt.datetime.fromtimestamp(self.d.epoch(snapshot['at']),dt.timezone.utc)
             start=end-dt.timedelta(seconds=settings['observationWindowNanos']/1e9)
             window=self.api('GET','/api/v1/observations/load?'+urllib.parse.urlencode({'from':start.isoformat(),'to':snapshot['at']}))
             sources={}
-            for label,body in (('state',state),('load',window),('pods',pods),('nodes',nodes)):
+            for label,body in (('state',state),('load',window)):
                 source=Path(str(prefix)+'-'+label+'.json');save(source,body);sources[label+'Ref']=str(source)
             selected_at=now();at=dt.datetime.fromisoformat(selected_at.replace('Z','+00:00'))
             if not 0<=(at-end).total_seconds()<=maximum_age:raise ValueError('Latest scheduler snapshot is stale; injection cancelled')
             phase_start=dt.datetime.fromisoformat(phase['startUTC'].replace('Z','+00:00'))
             if not phase_start<=at<phase_start+dt.timedelta(seconds=phase['stage']['seconds']):raise ValueError('Outside actual offered window; injection cancelled')
             excluded=[selection['nodeUID'] for selection in selections]
-            candidates=serving_failure_targets(state,window,pods['items'],nodes['items'],self.uids,excluded)
+            candidates=serving_failure_targets(state,window,self.uids,excluded)
             if len({target['nodeUID'] for target in candidates})<(1 if selections else 2):
                 raise ValueError('No positive-route/assigned serving Pods on two distinct Nodes; injection cancelled')
             target=candidates[0]
@@ -1909,7 +1882,7 @@ class CPO:
                           operatorArgv=commands,operatorCommands=[shlex.join(command) for command in commands],**sources)
             selections.append(target);save(path,evidence)
             print(json.dumps({'resultPath':str(path),'selection':target,'clusterMutations':0,
-                              'operatorRequirement':'Execute immediately, before expiresAtUTC; record actual atUTC/exitCode/podUID/nodeUID/commandRef/responseRef in events. For cordon-delete commandRef must record deleteArgv plus actual cordon command/result. Uncordon same Node at recommended 600s; retain actual recovery readbacks.'},ensure_ascii=False,indent=2))
+                              'operatorRequirement':'Execute immediately, before expiresAtUTC; record actual atUTC/exitCode/podUID/nodeUID/commandRef/responseRef in events. For cordon-delete commandRef must record deleteArgv plus actual cordon command/result. Uncordon same Node at recommended 600s; recovery comes from scheduler and cluster API records.'},ensure_ascii=False,indent=2))
         except Exception as error:
             evidence.update(status='INVALID',reason=str(error),invalidAtUTC=now())
             save(path,evidence)
@@ -2089,14 +2062,102 @@ def reported_power(power):
     return value
 
 
+def resource_telemetry(resources, clusters, scheduler):
+    """Map API identities/units to the shared cumulative-counter reducer."""
+    containers={}
+    server_pods={item['row'].get('podUID') for item in resources if item['row'].get('kind')=='server'}
+    native_ids={instance['id'] for event in scheduler for instance in instance_rows((event.get('snapshot') or {}).get('instances') or []) if instance.get('podUID') and instance.get('id','').startswith(instance['podUID']+'/')}
+    for item in clusters:
+        row=item['row']; pod=row.get('pod') or {}
+        if row.get('event')=='server-start':server_pods.add(pod.get('uid'))
+        for container in pod.get('containers') or []:
+            containers[(pod.get('uid'),container.get('containerID'))]=container.get('name')
+    cgroups=[]; thermals=[]
+    for item in resources:
+        row=item['row']
+        if row.get('kind')!='node':continue
+        node=row.get('node') or {}
+        for sample in row.get('samples') or []:
+            common={'at':sample.get('sampledAt'),'node':node.get('name'),'nodeUID':node.get('uid'),
+                    'receivedAt':row.get('receivedAt'),'sourceRef':item['sourceRef']}
+            for container in sample.get('containers') or []:
+                name=containers.get((container.get('podUID'),container.get('containerID')))
+                identity=(container.get('podUID') or '')+'/'+(container.get('containerID') or '')
+                identified=bool(node.get('uid') and container.get('podUID') and container.get('containerID'))
+                role='unknown' if not identified else 'server' if container['podUID'] in server_pods else 'native' if identity in native_ids else 'edgemesh' if name=='edgemesh' else 'unknown'
+                cgroups.append({**container,**common,'kind':'cgroup','role':role,
+                                'nrThrottled':container.get('throttledPeriods'),'memoryBytes':container.get('memoryCurrentBytes')})
+            for sensor in sample.get('thermal') or []:
+                value=sensor.get('milliCelsius'); temperature=value/1000 if value is not None else None
+                thermals.append({**common,'zone':{'path':sensor.get('sensor'),'millidegreesC':value},
+                    'bin':'unknown' if temperature is None else '<60' if temperature<60 else '60-70' if temperature<70 else '70-80' if temperature<80 else '>=80',
+                    'active':None,'latched':None})
+    return cgroups,thermals
+
+
+def runtime_gc(resources, start, end, d):
+    """Keep process generations separate; cumulative counters are not cycle distributions."""
+    grouped=defaultdict(list)
+    for item in resources:
+        row=item['row']; at=d.epoch(row.get('at'))
+        if row.get('kind')=='server' and at is not None:
+            grouped[(row.get('podUID'),row.get('processStartedAt'))].append((at,item))
+    series=[]
+    for (pod,process),items in grouped.items():
+        items.sort(key=lambda item:item[0])
+        if items[-1][0]<start or items[0][0]>end:continue
+        before=[item for item in items if item[0]<=start];after=[item for item in items if item[0]>=end]
+        left=before[-1] if before else items[0];right=after[0] if after else items[-1]
+        selected=[item for at,item in items if left[0]<=at<=right[0]]
+        deltas={};resets=[]
+        for key in ('gcCPUSeconds','gcCycles'):
+            values=[d.number(item['row'].get(key)) for item in selected]
+            reset=any(a is not None and b is not None and b<a for a,b in zip(values,values[1:]))
+            if reset:resets.append(key)
+            deltas[key]=values[-1]-values[0] if len(values)>1 and all(value is not None for value in values) and not reset else None
+        series.append({'podUID':pod,'processStartedAt':process,'firstEpoch':left[0],'lastEpoch':right[0],
+            'bracketsWindow':bool(pod and process and before and after),'boundaryOverhangSeconds':{'before':max(0,start-left[0]),'after':max(0,right[0]-end)},
+            'cpuSecondsDelta':deltas['gcCPUSeconds'],'cyclesDelta':deltas['gcCycles'],'counterResets':resets,'records':selected})
+    complete=len(series)==1 and series[0]['bracketsWindow'] and all(series[0][key] is not None for key in ('cpuSecondsDelta','cyclesDelta'))
+    return {'meaning':'runtime-metrics-delta','complete':complete,'cpuSecondsDelta':series[0]['cpuSecondsDelta'] if complete else None,
+        'cyclesDelta':series[0]['cyclesDelta'] if complete else None,'capturedTotalCPUMS':series[0]['cpuSecondsDelta']*1000 if complete else None,'series':series,
+        'scope':'Window cumulative runtime/metrics delta between nearest real boundary samples; overhang retained, no interpolation. Process restarts/resets and missing brackets remain unknown; no GC-cycle distribution.'}
+
+
+def failure_api_recovery(commands, scheduler, clusters, end, d):
+    """Require a ready positive route and matching recorded Ready Pod after uncordon."""
+    node_uid=commands[2]['nodeUID'];uncordon=d.epoch(commands[2]['atUTC'])
+    candidates=[]
+    for event in scheduler:
+        snapshot=event.get('snapshot') or {};at=d.epoch(snapshot.get('at'))
+        if at is None or not uncordon<=at<=end:continue
+        ready_nodes=[node for node in snapshot.get('nodes') or [] if (node.get('node') or {}).get('uid')==node_uid and node.get('ready')]
+        if not ready_nodes:continue
+        for instance in instance_rows(snapshot.get('instances') or []):
+            uid=instance.get('workloadUID')
+            if (instance.get('node') or {}).get('uid')!=node_uid or not instance.get('ready') or instance.get('stopped') or not uid or (snapshot.get('routing',{}).get(uid) or {}).get(instance.get('id'),0)<=0:continue
+            pods=[item for item in clusters if (item['row'].get('pod') or {}).get('uid')==instance.get('podUID') and d.epoch(item['row'].get('at')) is not None and d.epoch(item['row']['at'])<=at]
+            latest=max(pods,key=lambda item:d.epoch(item['row']['at'])) if pods else None
+            pod=(latest['row'].get('pod') or {}) if latest else {}
+            if latest and latest['row'].get('event')!='deleted' and not pod.get('deletionTimestamp') and pod.get('ready')=='True' and pod.get('node')==ready_nodes[0]['node']['name']:
+                candidates.append({'atUTC':snapshot['at'],'nodeUID':node_uid,'instance':instance,'pod':pod,
+                                   'schedulerRefs':event.get('_rawRefs',[]),'clusterRef':latest['sourceRef']})
+    observed=min(candidates,key=lambda item:d.epoch(item['atUTC'])) if candidates else None
+    return {'status':'OBSERVED' if observed else 'UNMEASURED','observation':observed,
+        'evidenceSource':['scheduler','cluster'],'meaning':'CHILL-recorded ready Node, ready Pod and positive serving route after operator uncordon; cordon/schedulability itself is not recorded. No operator readback or inferred physical recovery.'}
+
+
 def judge(binding, folder):
     b=load_binding(binding); c=b['config']; phase=load(folder/'phase.json'); st=phase['stage']; d=module('d2analyze',D2/'analyze_before.py'); inp=d.Inputs(folder); unknown=[]; results={}
     raw=module('e5raw',HERE/'e5-raw.py'); events,paging=raw.scheduler_events(folder)
     events=[e for e in events if d.epoch(e.get('at')) is not None and d.epoch(phase['startUTC'])<=d.epoch(e['at'])<=d.epoch(phase['drainedUTC'])]
+    resources,resource_capture=raw.stream_events(folder,'resources')
+    clusters,cluster_capture=raw.stream_events(folder,'cluster')
+    resource_rows,thermals=resource_telemetry(resources,clusters,events)
+    for name,capture in (('scheduler',paging),('resources',resource_capture),('cluster',cluster_capture)):
+        unknown.extend(name+': '+str(error) for error in capture['errors'])
     sched=d.scheduler_summary(events); searches=[]; final_indexes={}
-    tick_cpu=[]; samples=[]
-    for path in folder.glob('*-cgroup.jsonl'):
-        samples.extend(r for r in inp.jsonlines(path) if r.get('kind')=='cgroup' and r.get('role')=='server')
+    tick_cpu=[]; samples=[row for row in resource_rows if row.get('role')=='server']
     for e in events:
         decision=e.get('decision') or {}; at=d.epoch(e.get('at')); elapsed=d.number(decision.get('evaluationElapsedNanos'))
         at=d.epoch(decision.get('at'))
@@ -2105,8 +2166,8 @@ def judge(binding, folder):
             if (decision.get('capacity') or {}).get('search'): searches.append((at,finish))
             prior=[r for r in samples if d.epoch(r['at']) is not None and d.epoch(r['at'])<=at]
             after=[r for r in samples if d.epoch(r['at']) is not None and d.epoch(r['at'])>=finish]
-            left=max(prior,key=lambda r:r['at']) if prior else None; right=min(after,key=lambda r:r['at']) if after else None
-            same=left and right and left.get('containerID')==right.get('containerID')
+            left=max(prior,key=lambda r:d.epoch(r['at'])) if prior else None; right=min(after,key=lambda r:d.epoch(r['at'])) if after else None
+            same=left and right and all(left.get(key)==right.get(key) and left.get(key) for key in ('nodeUID','podUID','containerID')) and left.get('cpuUsageNanos') is not None and right.get('cpuUsageNanos') is not None and right['cpuUsageNanos']>=left['cpuUsageNanos']
             tick_cpu.append({'at':decision.get('at'),'evaluationElapsedNS':elapsed,'bracketingStart':left,'bracketingEnd':right,'cpuUsageDeltaNS':right['cpuUsageNanos']-left['cpuUsageNanos'] if same and left.get('cpuUsageNanos') is not None and right.get('cpuUsageNanos') is not None else None,'meaning':'1s sample brackets nominal Tick start through evaluation duration; includes outside-Tick CPU. Raw counter/reset identity retained; not exclusive search CPU.'})
     starts=[]; prefix_ends=[]; furthest=-math.inf
     for lo,hi in sorted(searches):
@@ -2170,7 +2231,7 @@ def judge(binding, folder):
             if offsets and quality!='VALID':sub[-1]['D1']='INVALID_GENERATOR' if quality=='INVALID_GENERATOR' else 'UNKNOWN'
             sub[-1]['unfinishedOrUnsent']+=sum(not finals.get(x.get('requestID')) for x in selected)
         results[w['name']]['substages']=sub
-    start,end=d.epoch(phase['startUTC']),d.epoch(phase['endUTC']); cg=d.telemetry(inp,start,end)
+    start,end=d.epoch(phase['startUTC']),d.epoch(phase['endUTC']); cg=d.telemetry(inp,start,end,resource_rows=resource_rows)
     stored_power={'power':inp.json(folder/'power.json'),'powerDrainInclusive':inp.json(folder/'power-drain-inclusive.json')}
     available={name:value for name,value in stored_power.items() if value and value.get('from') and value.get('to')}
     energy=module('e5energy',HERE/'e5-archive.py').e5_power_windows(folder,c['collection'],available) if available else {}
@@ -2182,18 +2243,6 @@ def judge(binding, folder):
     if not power or not power.get('complete') or power.get('wholePoolJoules') is None or power.get('activePoolJoules') is None: unknown.append('Whole/active POOL transition-inclusive power incomplete')
     tail_power=reported_power(energy.get('powerDrainInclusive',stored_power['powerDrainInclusive']))
     if not tail_power or not tail_power.get('complete') or tail_power.get('wholePoolJoules') is None or tail_power.get('activePoolJoules') is None: unknown.append('Actual transition/request/action drain-inclusive energy incomplete')
-    boot_events=[]
-    notices=folder/'node-actuation-boot-alerts.jsonl'
-    if notices.exists():
-        boot_events=inp.jsonlines(notices)
-    collector_status=inp.json(folder/'collector-status.json')
-    thermals=[]
-    for p in folder.glob('*-cgroup.jsonl'):
-        for row in inp.jsonlines(p):
-            if row.get('kind')=='thermal':
-                for z in row['zones']:
-                    t=z.get('millidegreesC'); temp=t/1000 if t is not None else None
-                    thermals.append({'at':row['at'],'node':row['node'],'zone':z,'bin':'unknown' if temp is None else '<60' if temp<60 else '60-70' if temp<70 else '70-80' if temp<80 else '>=80','active':row.get('activeThrottle'),'latched':row.get('latchedThrottle')})
     profile_dump=load(c['inputs']['scheduler']); profile_snap=profile_dump['state']['snapshot'] if 'state' in profile_dump else profile_dump['snapshot']; profiles={}
     for option in profile_snap['options']:
         profile=option['instance']['profile']
@@ -2221,7 +2270,6 @@ def judge(binding, folder):
         values=sorted(measured['durationNanos']) if measured else []; index=max(0,math.ceil(len(values)*w['slo']['percentile']/100)-1); reference=values[index] if values else None
         observed=sorted(x[0] for x in items); quantile=observed[max(0,math.ceil(len(observed)*w['slo']['percentile']/100)-1)]
         thermal_slack.append({'workload':name,'profileID':pid,'batch':batch,'sensorPath':zone,'sampledPriorBin':bin_name,'profileQuantileNS':reference,'observedNativeServiceQuantileNS':quantile,'profileTimingDeltaNS':quantile-reference if reference is not None else None,'serviceOnlySLOSlackNS':w['slo']['targetLatencyNanos']-c['mSeconds']*1e9-quantile,'samples':len(items),'sampledThermalAgeSeconds':d.stats([x[1] for x in items]),'rawSources':results[name]['pages']['sources'],'meaning':'Separate descriptive view for each real sensor path; never sum sensor-group sample counts. Prior sampled zone temperature/age retained; no temperature causality or end-to-end feasibility claim.'})
-    archive_observations=inp.json(Path(c['collection']['archiveRefs']))
     failure_capture = None
     if st['id']=='E5-7':
         try:
@@ -2233,13 +2281,14 @@ def judge(binding, folder):
             for event in evidence['events']:
                 references.extend(ref(event[key]) for key in ('commandRef','responseRef'))
             for selection in evidence.get('selections',[]):
-                references.extend(ref(selection[key]) for key in ('stateRef','loadRef','podsRef','nodesRef','deleteOptionsRef'))
-            recovery = evidence.get('recovery') or {}
-            references.extend(ref(recovery[key]) for key in ('schedulableRef','readyRef','observationRef','routeRef') if recovery.get(key))
-            failure_capture = {'status':'CAPTURED','events':evidence['events'],'selections':evidence.get('selections'),'recovery':recovery or None,'sources':references,
-                               'meaning':'Actual operator command outcomes and captured target-selection evidence; failed commands and unrecovered state retained. Serving loss/cordon proxy, not physical power/network loss; recovery is not inferred.'}
+                references.extend(ref(selection[key]) for key in ('stateRef','loadRef','deleteOptionsRef'))
+            recovery=failure_api_recovery(evidence['events'],events,clusters,end,d)
+            failure_capture = {'status':'CAPTURED','events':evidence['events'],'selections':evidence.get('selections'),'recovery':recovery,'sources':references,
+                               'recoverySources':{'scheduler':paging,'cluster':cluster_capture},
+                               'meaning':'Actual operator commands and API target selection; recovery is CHILL scheduler/cluster evidence, not operator readback. Failed commands and unrecovered state retained. Serving loss/cordon proxy, not physical power/network loss.'}
         except (OSError,ValueError,KeyError,TypeError) as exc:
             failure_capture={'status':'INVALID' if str(exc).startswith('INVALID:') else 'UNMEASURED','reason':str(exc),'sourcePath':str(folder/'failure-events.json')}
+            failure_capture['recoverySources']={'scheduler':paging,'cluster':cluster_capture}
     result={'schema':'e5-judgment.v1','visibility':'PRIVATE_OPERATIONAL_ONLY; raw references/configuration excluded from public indexes','at':now(),'status':'NOT_READY' if unknown else 'FAIL' if any(r['D1']=='FAIL' for r in results.values()) else 'MEASURED_DESCRIPTIVE','notReadyReasons':unknown,'requests':results,'Tick':sched,'cgroups':cg,'power':power,'thermal':thermals,'D6':'Observed thermal bins only; unknown active/latched remains unknown, profile slack must use bound source samples','rawErrors':inp.errors,'sources':inp.sources,'limitations':b['limitations'],'accounting':{'specScenarioDenominator':7,'planRowDenominator':9,'failureScenario':failure_capture['status'] if failure_capture else 'NOT_EXERCISED_IN_THIS_ROW'}}
     malformed=[error for error in inp.errors if error.get('line') is not None and Path(error['path']).name in {w['name']+'-client.jsonl' for w in c['workloads']}]
     result['coverage']={'malformedLines':len(malformed),'firstMalformedLine':malformed[0] if malformed else None}
@@ -2256,27 +2305,21 @@ def judge(binding, folder):
         result['scientificResults']='UNMEASURED; operational smoke never fills E5 rows'
         if result['status']=='MEASURED_DESCRIPTIVE': result['status']='OPERATIONAL_SMOKE_COMPLETE'
     result['TickCPUBrackets']=tick_cpu
-    result['nativeAgentRestartObservations']=boot_events
+    result['clusterObservations']={'records':clusters,'capture':cluster_capture,'meaning':'API Pod identity, readiness, restart/termination/imageID and observer issue transitions; server logs and kubectl receipts are not judgment inputs.'}
     result['canonicalFirstInstances']=bootstrap
     result['D6ProfileSlack']=thermal_slack
     result['searchWindows']={'intervals':searches,'meaning':'Nominal source decision.at through monotonic evaluationElapsed mapped onto wall time; clock/capture offset is retained as uncertainty, not exact CPU attribution'}
-    gc_cpu=[]; gc_records=[]
-    if (folder/'server.log').exists():
-        for line in (folder/'server.log').read_text().splitlines():
-            at=d.epoch(line.split(' ',1)[0])
-            match=re.search(r'ms clock, (.*?) ms cpu,',line)
-            if match and at is not None and start<=at<=end:
-                values=[float(x) for x in re.findall(r'\d+(?:\.\d+)?',match.group(1))]
-                gc_cpu.append(sum(values)); gc_records.append(line)
-    result['GC']={'records':gc_records,'cpuMS':d.stats(gc_cpu),'capturedTotalCPUMS':sum(gc_cpu) if gc_cpu else None,'scope':'GC log emission timestamps within actual offered window; a boundary-straddling GC is not phase-attributed','meaning':'Preserved gctrace=1 phase CPU terms only; absent events remain unknown, not zero. Operational smoke need not force a GC.'}
+    result['GC']=runtime_gc(resources,start,end,d)
     decisions=[x['decision'] for x in sched['records']]
     result['intendedOverload']={'requested':st['id']=='E5-4','sourceOverloadDecisionObserved':any(w.get('state')=='Overload' for decision in decisions for w in decision.get('workloads',[])),'actualUnsent':sum(r['unsentAtWindowEnd'] for r in results.values()),'meaning':'Report actual source judgment and unissued offered arrivals explicitly; intended alpha=1.2 (rate=alpha*share*R) is not proof that all overload reached the gateway.'}
     result['searchBudget']={'budgetCutDecisions':sum(bool(((x.get('capacity') or {}).get('search') or {}).get('budgetCut')) for x in decisions),'gainWithinUncertaintyDecisions':sum('TransitionGainWithinUncertainty' in json.dumps(x) for x in decisions),'rawSearch':[(x.get('capacity') or {}).get('search') for x in decisions]}
-    result['PVCUsage']={key:inp.json(folder/(key+'-pvc-usage.json')) for key in ('pre','post')}
+    result['observationDirectoryUsage']={'records':[item for item in resources if item['row'].get('directoryObservedAt') or any(error.get('field')=='observationDirectoryBytes' for error in item['row'].get('errors') or [])],
+                                         'meaning':'Server-observed directory bytes at directoryObservedAt, sampled once per minute; not whole PVC usage.'}
     result['powerDrainInclusive']=tail_power
     result['schedulerCapture']=paging
-    result['collectorStatus']=collector_status
-    result['archiveObservations']=archive_observations
+    result['resourceCapture']=resource_capture
+    result['resourceObservations']=resources
+    result['resourceRoleScope']='Server: all node-agent sampled containers in the process-identified server Pod (current chart has one); native: exact scheduler physical podUID/containerID. Other or missing identities stay separate/unknown. SampledAt is the Node clock and receivedAt the server clock; neither is corrected.'
     result['phaseStatus']=phase['status']
     result['phaseError']=phase.get('error')
     result['schedulerBoundaryObservations']=phase.get('schedulerBoundaryObservations')
@@ -2380,7 +2423,7 @@ def publication_measurements(binding, power):
     policy=coverage['policy'] if coverage else module('e5publication_energy',HERE/'e5-archive.py').energy_policy(config.get('collection',{}))
     return {'energyCoverage':coverage,'gapErrorBoundJoules':power.get('gapErrorBoundJoules'),
         'measurementRules':{'harnessRepositoryCommit':config.get('harnessRepositoryCommit'),
-            'energyCoverage':policy,'evidenceSource':'host-s3','gcMeaning':'gctrace-cycles'}}
+            'energyCoverage':policy,'evidenceSource':'api','gcMeaning':'runtime-metrics-delta'}}
 
 
 def publish_experiment(root, identifier, store_config, stages, status):
@@ -2480,7 +2523,7 @@ def check_preparation():
     else:raise AssertionError('Non-phase6 actual plan unexpectedly accepted as a complete E5 binding')
     reader=module('e5recordedraw',HERE/'e5-raw.py');events,provenance=reader.scheduler_events(CAMPAIGN)
     assert not provenance['complete'] and provenance['errors'] and not events
-    collector=module('e5recordedarchive',HERE/'e5-archive.py');ast.parse(collector.HOST_READER);ast.parse(HOST_USAGE)
+    collector=module('e5recordedarchive',HERE/'e5-archive.py');collector._self_check()
     assert list(inspect.signature(collector.collect).parameters)==['folder','phase','collection','io','timeout_seconds']
     schema=subprocess.run([sys.executable,'-B',str(HERE/'e5-wire.py'),'schema'],capture_output=True,text=True,timeout=5)
     assert schema.returncode==0;required= json.loads(schema.stdout)
@@ -2515,36 +2558,32 @@ def check_recorded(source_sha):
         result['sourceIdentities']={'historicalBefore':phase['sourceSha'],'existingReducer':source_sha}
         if reuse:
             if load(out/'phase.json')!=phase or result['inputs']['beforePhase']!=prior['inputs']['beforePhase'] or result['inputs']['beforePostState']!=prior['inputs']['beforePostState'] or result['inputs']['beforeBinding']!=prior['inputs']['beforeBinding']:raise ValueError('Actual frozen phase/binding changed; no substitute capture')
-        else:save(out/'phase.json',phase);save(out/'pre-nodes.json',load(before['inputs']['nodes']['path']))
+        else:save(out/'phase.json',phase);save(out/'pre-state.json',load(phase_dir/'pre-state.json'))
         resource.setrlimit(resource.RLIMIT_FSIZE,(cfg['maxArtifactFileBytes'],cfg['maxArtifactFileBytes']))
         d=module('e5affectedconduct',D2/'conduct_before.py')
         if reuse:
             for source in index['sources']:
                 actual=ref(source['path'])
-                if any(actual[key]!=source[key] for key in ('path','bytes','sha256')):raise ValueError('Captured raw identity changed; no live/S3 repeat')
-            facts=load(out/'metric-sources-provenance.json')['value']
-            actual_facts=ref(facts['path'])
-            if any(actual_facts[key]!=facts[key] for key in ('path','bytes','sha256')):raise ValueError('Captured metric-source identity changed')
+                if any(actual[key]!=source[key] for key in ('path','bytes','sha256')):raise ValueError('Captured raw identity changed; no API recapture')
+            facts=prior['inputs']['settings']
+            actual_facts=ref(out/'pre-settings.json')
+            if any(actual_facts[key]!=facts[key] for key in ('path','bytes','sha256')):raise ValueError('Captured settings identity changed')
             archive=module('e5affectedarchive',HERE/'e5-archive.py');scope,configured=archive._scope(out)
             reduction=archive._reduce(out,phase,cfg['powerExecutable'],time.monotonic()+cfg['timeoutSeconds']-40,scope,configured)
             captured={'status':'NOT_READY' if reduction['errors'] else 'CAPTURED_NOT_EVALUATED','errors':reduction['errors'],'sourceIndex':ref(out/'raw-source-index.json'),'originalCollection':ref(out/'archive-collection.json'),'powerReduction':ref(out/'power-reduction.json'),'liveOrS3Recapture':False}
             save(out/'archive-consumer-retry.json',captured)
         else:
-            d.K=ENVIRONMENT['d2']['kubectl']+['-n','chill-system']
+            d.BASE=op['endpoint'];d.CA=Path(op['caFile']);d.TOKEN=OPS/'.token-collector'
             io=object.__new__(d.Conductor);io.journal_lock=threading.Lock();io.journal=out/'commands.jsonl';io.a=argparse.Namespace(phase='e5-affected-historical-input-check');io.source=source_sha
-            pods=io.k(['get','pods','-l','app.kubernetes.io/component=serving-entrypoint','-o','json'],timeout=20)['items']
-            if len(pods)!=1:raise ValueError('Exact current raw-serving container required')
-            container=next(c for c in pods[0]['spec']['containers'] if c['name']=='serving-entrypoint');flags={x.split('=',1)[0]:x.split('=',1)[1] for x in container['args'] if '=' in x}
-            collection={**op['collection'],'observationDirectory':flags['--observation-directory'],'metricSourcesConfigMap':flags['--profiler-facts-configmap'],'metricSourcesKey':flags['--metric-sources-key'],'powerExecutable':cfg['powerExecutable']}
-            usage=subprocess.run(collection['serverHostReadArgv']+[collection['observationDirectory']],input=HOST_USAGE,capture_output=True,text=True,timeout=30)
-            if usage.returncode:raise RuntimeError('Actual retained-byte preflight failed')
-            size=json.loads(usage.stdout);save(out/'retained-byte-preflight.json',size)
-            if size['bytes']>cfg['maxRetainedBytes']:raise ValueError('Actual retained input exceeds smoke byte bound; no truncated success')
+            io.http=urllib.request.build_opener(d.NoRedirect(),urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=op['caFile'])))
+            settings=io.api('GET','/api/v1/scheduler/settings',timeout=cfg['timeoutSeconds']-40)
+            save(out/'pre-settings.json',settings);result['inputs']['settings']=ref(out/'pre-settings.json');save(result_path,result)
+            collection={'powerExecutable':cfg['powerExecutable']}
             captured=module('e5affectedarchive',HERE/'e5-archive.py').collect(out,phase,collection,io,cfg['timeoutSeconds']-40)
         if captured['status']!='CAPTURED_NOT_EVALUATED':raise ValueError('Actual archive/current/reducer incomplete; retain NOT_READY manifest')
         collected_bytes=sum(p.stat().st_size for p in out.rglob('*') if p.is_file())
         if collected_bytes>cfg['maxCollectedBytes']:raise ValueError('Collected actual input exceeds smoke byte bound; no subset substituted')
-        evidence=load(cfg['nativeSafetyEvidence']);proof=load(evidence['nativeHelperResult']);nodes=load(out/'pre-nodes.json')['items'];bound=[{'name':n['metadata']['name'],'uid':n['metadata']['uid']} for n in nodes if n['metadata']['name'] in NODES]
+        evidence=load(cfg['nativeSafetyEvidence']);proof=load(evidence['nativeHelperResult']);bound=state_node_references(load(out/'pre-state.json'),NODES)
         alerts=[]
         for line in (CAMPAIGN/'control-alerts.jsonl').read_text().splitlines():
             row=json.loads(line)

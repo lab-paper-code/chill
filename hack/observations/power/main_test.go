@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -61,53 +62,30 @@ func TestPowerMatchesServerOperatingPower(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// The run's Profiler metric sources and Nodes name the meter set.
+	// Accepted settings meters and actual state references name the same meter set.
 	files := t.TempDir()
-	sourcesFile, nodesFile := filepath.Join(files, "metric-sources.yaml"), filepath.Join(files, "nodes.json")
-	if err := os.WriteFile(sourcesFile, []byte(`schemaVersion: chill.dacs.io/profiler-metric-sources.v1alpha6
-sources:
-  - node: node
-    meterID: wall
-    kind: edge-metrics
-    endpoint: http://meter:18766/prometheus?hostname=node
-    powerMetric: wall_watts
-    metricLabels:
-      hostname: node
-    thermalEndpoint: http://thermal:9102/metrics
-    thermalMetrics:
-      observationAvailable: t_available
-      active: t_active
-      cpuCoreThrottleEvents: t_core
-      cpuPackageThrottleEvents: t_package
-      latched: t_latched
-      maximumTemperatureCelsius: t_max
-  - node: absent
-    meterID: other
-    kind: edge-metrics
-    endpoint: http://meter:18766/prometheus?hostname=absent
-    powerMetric: wall_watts
-    metricLabels:
-      hostname: absent
-    thermalEndpoint: http://thermal:9102/metrics
-    thermalMetrics:
-      observationAvailable: t_available
-      active: t_active
-      cpuCoreThrottleEvents: t_core
-      cpuPackageThrottleEvents: t_package
-      latched: t_latched
-      maximumTemperatureCelsius: t_max
-`), 0600); err != nil {
+	settingsFile, stateFile := filepath.Join(files, "settings.json"), filepath.Join(files, "state.json")
+	settings, err := json.Marshal(map[string]any{"meters": []map[string]any{
+		{"id": "wall", "node": node, "scope": "node-exclusive-wall", "source": source},
+		{"id": "other", "node": serving.NodeReference{Name: "absent", UID: "absent-uid"}, "scope": "node-exclusive-wall", "source": source},
+	}})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(nodesFile, []byte(`{"items":[{"metadata":{"name":"node","uid":"node-uid"}}]}`), 0600); err != nil {
+	if err := os.WriteFile(settingsFile, settings, 0600); err != nil {
 		t.Fatal(err)
 	}
-	meters, err := derivedMeters(sourcesFile, nodesFile)
+	if err := os.WriteFile(stateFile, []byte(`{"snapshot":{"nodes":[{"node":{"name":"node","uid":"node-uid"}}]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	meters, err := derivedMeters(settingsFile, stateFile, "node")
 	if err != nil || len(meters) != 1 || meters[0].Meter != "wall" || meters[0].Node != node || !reflect.DeepEqual(meters[0].Source, source) {
 		t.Fatalf("derived meters = %+v, %v", meters, err)
 	}
-	if err != nil {
-		t.Fatal(err)
+	for _, names := range []string{"absent", "node,node", "node,"} {
+		if _, err := derivedMeters(settingsFile, stateFile, names); err == nil {
+			t.Fatalf("invalid Node selection accepted: %q", names)
+		}
 	}
 	want, err := log.OperatingPower(context.Background(), from, to, meters, 1000)
 	if err != nil || want.WholePoolJoules == nil || want.ActivePoolJoules == nil {
@@ -120,7 +98,7 @@ sources:
 	if _, err := run(t.TempDir(), meters, from, to, 0); err == nil {
 		t.Fatal("missing boundary hours accepted")
 	}
-	// fetch.sh brings the neighbor hours; an hour without records is empty.
+	// The collector brings neighbor hours; an hour without records is empty.
 	for _, at := range []time.Time{from.Add(-time.Minute), to.Add(time.Minute)} {
 		name := filepath.Join(obs, at.UTC().Format("20060102T15"), "scheduler.jsonl.gz")
 		if _, err := os.Stat(name); err != nil {

@@ -7,6 +7,7 @@ import argparse
 import copy
 import datetime as dt
 import importlib.util
+import gzip
 import json
 import math
 import os
@@ -46,6 +47,7 @@ def template(op, workload, image, probe=False):
 class Prepare:
     def __init__(self,a):
         self.a=a; self.n=e5.load(a.numbers); self.release=e5.load(a.release); self.op=e5.load(e5.OPERATIONAL_RECIPE); self.out=a.out
+        self.op['tokenFile']=str(e5.OPS/'.token-collector')
         if e5.CAMPAIGN.resolve() not in self.out.resolve().parents:raise ValueError('Preparation output must remain below the external campaign directory')
         if self.release.get('executor')!='CampaignOps' or self.release.get('command')!='e5-execute' or not self.release.get('mainInstructionUTC'): raise ValueError('One actual Main/CPO frozen e5-execute release required')
         self.sources=e5.approval_sources(self.release)
@@ -121,21 +123,47 @@ class Prepare:
         r=subprocess.run(self.k+args,input=json.dumps(body) if body is not None else None,text=True,capture_output=True,timeout=self.tb['apiSeconds'])
         if r.returncode:raise RuntimeError('Actual kubectl failed: '+r.stderr[:500])
         return json.loads(r.stdout) if r.stdout.strip() else None
+    def controller(self,declared=None):
+        """Resolve the newest closed cluster Pod facts; never inspect CHILL via kubectl."""
+        deadline=time.monotonic()+self.tb['setupSeconds']
+        wait=60-time.time()%60
+        if wait>=self.tb['setupSeconds']:raise RuntimeError('Setup deadline cannot include the next closed observation minute')
+        time.sleep(wait)
+        archive=e5.module('e5_wire_archive',HERE/'e5-archive.py');self.io.http=self.http
+        hour=dt.datetime.now(dt.timezone.utc).replace(minute=0,second=0,microsecond=0);seen=set()
+        while time.monotonic()<deadline:
+            key=hour.strftime('%Y%m%dT%H')
+            index,status=self.api('GET','/api/v1/observations/raw?hour='+key,accepted=(200,404))
+            if status==200 and any(kind['kind']=='cluster' and kind['available'] for kind in index['kinds']):
+                target=self.out/('cluster-'+key+'.jsonl.gz')
+                archive._download(self.out,self.io,'/api/v1/observations/raw/'+key+'/cluster',target,deadline)
+                with gzip.open(target,'rt') as source:rows=[json.loads(line) for line in source if line.strip()]
+                candidates=[]
+                for row in sorted(rows,key=lambda row:row['at'],reverse=True):
+                    pod=row.get('pod')
+                    if not pod or pod['uid'] in seen:continue
+                    seen.add(pod['uid'])
+                    if row['event']=='deleted' or pod.get('deletionTimestamp'):continue
+                    if any(container['name']=='serving-entrypoint' for container in pod.get('containers',[])):candidates.append(pod)
+                if candidates:
+                    if len(candidates)!=1:raise RuntimeError('API cluster controller identity ambiguous')
+                    pod=candidates[0];container=next(c for c in pod['containers'] if c['name']=='serving-entrypoint')
+                    image_id=container.get('imageID','')
+                    allowed=({declared['indexDigest']}|{p['manifestDigest'] for p in declared.get('platforms',{}).values()}) if declared is not None else None
+                    if pod.get('ready')!='True' or container.get('terminated') or 'sha256:' not in image_id or (allowed is not None and 'sha256:'+image_id.rsplit('sha256:',1)[-1] not in allowed):raise RuntimeError('API cluster controller is not Ready on the required image')
+                    e5.save(self.out/'controller.json',{'pod':pod,'source':e5.ref(target),'capturedUTC':e5.now()})
+                    return pod,container
+            hour-=dt.timedelta(hours=1)
+        raise RuntimeError('API cluster controller identity absent within setup deadline')
     def safety(self):
         s,_=self.api('GET','/api/v1/scheduler/state'); snap=s['snapshot']
         if snap.get('instances') or snap.get('outstanding') or snap.get('reservations') or any(x.get('status') in ('running','cancel') for x in s.get('actions',[])):raise RuntimeError('Fresh global serving/action drain required before canonical registration/binding')
         jobs=self.kubectl(['get','jobs','-o','json'])['items']
         if any(not j.get('spec',{}).get('suspend') and not any(c.get('type') in ('Complete','Failed') and c.get('status')=='True' for c in j.get('status',{}).get('conditions',[])) for j in jobs):raise RuntimeError('Measurement/producer still active; no binding calculation or smoke')
-        actual_pods=self.kubectl(['get','pods','-A','-o','json'])['items']
-        servers=[p for p in actual_pods if p['metadata'].get('labels',{}).get('app.kubernetes.io/component')=='serving-entrypoint']
-        if len(servers)!=1:raise RuntimeError('Actual final D2 controller identity missing')
-        status=next(x for x in servers[0]['status']['containerStatuses'] if x['name']=='serving-entrypoint')
-        declared=self.images['server'];allowed={declared['indexDigest']}|{p['manifestDigest'] for p in declared.get('platforms',{}).values()}
-        if 'sha256:'+status['imageID'].rsplit('sha256:',1)[-1] not in allowed or not status['ready']:raise RuntimeError('Actual deployed controller is not the sealed final source publication')
-        control=next(c for c in servers[0]['spec']['containers'] if c['name']=='serving-entrypoint')
-        cap=next(x.split('=',1)[1] for x in control['args'] if x.startswith('--request-timeout='))
-        if not cap.endswith('s') or any(self.n['workloads'][name].get('lifetimeSeconds') is not None and self.n['workloads'][name]['lifetimeSeconds']>float(cap[:-1]) for name in e5.WORKLOADS):raise ValueError('Approved explicit lifetime exceeds actual HandlerConfig cap')
-        if any(any(c.get('name')=='firstfloor' and c.get('state',{}).get('running') for c in p.get('status',{}).get('containerStatuses',[])) for p in actual_pods):raise RuntimeError('Actual native process still running despite empty scheduler snapshot')
+        self.control_pod,self.control_container=self.controller(self.images['server'])
+        settings,_=self.api('GET','/api/v1/scheduler/settings')
+        self.cap=settings['requestTimeout']/1e9
+        if not e5.positive(self.cap) or any(self.n['workloads'][name].get('lifetimeSeconds') is not None and self.n['workloads'][name]['lifetimeSeconds']>self.cap for name in e5.WORKLOADS):raise ValueError('Approved explicit lifetime exceeds actual API HandlerConfig cap')
         e5.d25_gate(self.pub['d25'],snap)
         return s
     def canonical(self):
@@ -181,7 +209,8 @@ class Prepare:
     def run(self):
         self.safety(); snapshot=self.canonical(); settings=snapshot['settings']
         if settings.get('autonomousWorkloads'):raise RuntimeError('Canonical registration must not enable autonomous control')
-        settings.pop('staticRouting',None);settings.pop('staticRoutingValidatedAt',None);settings['completionMarginMS']=self.n['mSeconds']*1000;settings['excludedNodes']=e5.E5['excludedNodes']
+        for key in ('staticRouting','staticRoutingValidatedAt','meters','requestTimeout'):settings.pop(key,None)
+        settings['completionMarginMS']=self.n['mSeconds']*1000;settings['excludedNodes']=e5.E5['excludedNodes']
         self.api('PUT','/api/v1/scheduler/settings',settings)
         deadline=time.monotonic()+self.tb['settleSeconds']
         while time.monotonic()<deadline:
@@ -190,23 +219,9 @@ class Prepare:
             time.sleep(1)
         else:raise RuntimeError('Actual approved margin settings did not apply')
         e5.save(self.out/'scheduler.json',snapshot);settings=snapshot['settings']
-        nodes=self.kubectl(['get','nodes','-o','json']);pods=self.kubectl(['get','pods','-A','-o','json']);e5.save(self.out/'nodes.json',nodes);e5.save(self.out/'pods.json',pods)
-        servers=[p for p in pods['items'] if p['metadata'].get('labels',{}).get('app.kubernetes.io/component')=='serving-entrypoint']
-        if len(servers)!=1:raise RuntimeError('Actual final server Pod ambiguous')
-        container=next(c for c in servers[0]['spec']['containers'] if c['name']=='serving-entrypoint');flags={x.split('=',1)[0]:x.split('=',1)[1] for x in container['args'] if '=' in x}
-        debug=next((env.get('value','') for env in container.get('env',[]) if env['name']=='GODEBUG'),'')
-        if dict(item.split('=',1) for item in debug.split(',') if '=' in item).get('gctrace')!='1':raise RuntimeError('Actual preserved D2 gctrace=1 startup condition absent; no live monitoring toggle or fabricated GC CPU')
-        if flags['--profiler-facts-namespace']!='chill-system' or flags['--serving-scheduler-config-key']!='scheduler.json':raise RuntimeError('Fresh facts namespace/scheduler key differs from approved actual operational contract')
         server_image=self.images['server']['immutableImage'];image=self.images['loadgen']['immutableImage']
-        status=next(x for x in servers[0]['status']['containerStatuses'] if x['name']=='serving-entrypoint')
-        allowed={self.images['server']['indexDigest']}|{p['manifestDigest'] for p in self.images['server'].get('platforms',{}).values()}
-        if 'sha256:'+status['imageID'].rsplit('sha256:',1)[-1] not in allowed or not status['ready']:raise RuntimeError('Actual deployment differs from final-source publication')
-        cap=flags['--request-timeout']
-        if not cap.endswith('s'):raise RuntimeError('Unrecognized actual request-timeout duration; do not guess')
-        actual_control=status['imageID']
-        e5.save(self.out/'gateway.json',{'requestTimeoutSeconds':float(cap[:-1]),'sourceSHA':self.sha,'controlImageDigest':actual_control,'publicationIndexImage':server_image,'capturedUTC':e5.now(),'actualPod':servers[0]['metadata']})
-        self.op['collection']['observationDirectory']=flags['--observation-directory'];self.op['collection']['schedulerConfigMap']=flags['--serving-scheduler-configmap']
-        self.op['collection']['metricSourcesConfigMap']=flags['--profiler-facts-configmap'];self.op['collection']['metricSourcesKey']=flags['--metric-sources-key']
+        cap=self.cap;actual_control=self.control_container['imageID']
+        e5.save(self.out/'gateway.json',{'requestTimeoutSeconds':cap,'sourceSHA':self.sha,'controlImageDigest':actual_control,'publicationIndexImage':server_image,'capturedUTC':e5.now(),'actualPod':self.control_pod,'controllerEvidence':e5.ref(self.out/'controller.json')})
         dataset={}
         for name in (e5.WORKLOADS[2],e5.WORKLOADS[1]):dataset[self.op['workloads'][name]['datasetRef']]=self.dataset(name,image)
         actual_flags=dataset['vqav2-val-subset']['cliFlags']
@@ -220,15 +235,14 @@ class Prepare:
         c['poolShares'] = e5.pool_shares(self.n)
         c['approval']={**self.n['approval'],'sources':self.sources,'controlImageDigest':actual_control,'runtimeDigests':e5.load(PLAN)['frozenRuntimeSha256']}
         c['inputs']={k:self.pub[k] for k in ('d25','ranking','costs','bias')}
-        c['inputs'].update({k:str(self.out/(k+'.json')) for k in ('scheduler','capacity','nodes','pods','gateway','producer')})
+        c['inputs'].update({k:str(self.out/(k+'.json')) for k in ('scheduler','capacity','gateway','producer')})
         c['inputs']['capacityScheduler']=str(self.out/'scheduler.json')
         c['inputs']['powerObservation']=str(self.out/'power-observation.json')
         c['inputs']['evaluationPayload']=str(self.out/'evaluation-payload.json')
-        c['collection']={**self.op['collection'],'archiveRefs':str(self.out/'required-raw-refs.json')}
+        c['collection']={k:self.op['collection'][k] for k in ('hosts','powerExecutable','powerReceipt')}
+        producer_hosts=[host for host in e5.load(c['collection']['hosts']) if host['node']==e5.E5['producerNode']]
+        e5.save(self.out/'producer-hosts.json',producer_hosts);c['collection']['hosts']=str(self.out/'producer-hosts.json')
         e5.save(c['inputs']['powerObservation'],{'schedulerSettings':{'powerObservation':e5.power_observation(c)}})
-        archive=[{'key':self.pub[k],'localPath':self.pub[k]} for k in ('ranking','costs','bias')]
-        archive.extend({'key':self.n['g0Evidence'][k],'localPath':self.n['g0Evidence'][k]} for k in ('verdict','binding'))
-        e5.save(self.out/'required-raw-refs.json',archive)
         c['workloads']=[]
         sys.path.insert(0,str(e5.REPO/'load-generator/src'));from chill_loadgen import cli
         producer=e5.module('e5prod_identity',HERE/'e5-producer.py')
@@ -239,7 +253,7 @@ class Prepare:
             payload[name]=filtered
             if producer.identity(cli.load_records(Path(w['datasetDir']),w['fields']))!=filtered:raise RuntimeError('Recorded host evaluation differs from actual pinned carrier')
             job=template(self.op,name,image);path=self.out/('producer-template-'+name+'.json');e5.save(path,job)
-            c['workloads'].append({**n,'name':name,'uid':actual['uid'],'generation':actual['generation'],'slo':actual['slo'],'datasetDir':w['datasetDir'],'fields':w['fields'],'profilingRecordIDs':[x['recordID'] for x in observed['profiling']],'jobTemplate':str(path),'gatewayCapSeconds':float(cap[:-1]),'producerEndpoint':self.op['producer']['endpoint'],'producerTokenFile':self.op['producer']['tokenFile'],'producerCAFile':self.op['producer']['caFile'],'producerDatasetDir':self.op['producer']['datasetDir']})
+            c['workloads'].append({**n,'name':name,'uid':actual['uid'],'generation':actual['generation'],'slo':actual['slo'],'datasetDir':w['datasetDir'],'fields':w['fields'],'profilingRecordIDs':[x['recordID'] for x in observed['profiling']],'jobTemplate':str(path),'gatewayCapSeconds':cap,'producerEndpoint':self.op['producer']['endpoint'],'producerTokenFile':self.op['producer']['tokenFile'],'producerCAFile':self.op['producer']['caFile'],'producerDatasetDir':self.op['producer']['datasetDir']})
         e5.save(c['inputs']['evaluationPayload'],{'payload':payload})
         baseline=snapshot['settings']['controls'];c['factors']=[]
         for name in self.factor_names:
@@ -252,9 +266,33 @@ class Prepare:
         e5.save(destination,binding);return destination
 
 
+def self_check_controller():
+    """Offline cluster projection regression; no cluster reads or sleeps."""
+    import tempfile
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    with tempfile.TemporaryDirectory() as temp:
+        prepared=object.__new__(Prepare);prepared.out=Path(temp);prepared.tb={'setupSeconds':120}
+        prepared.io=SimpleNamespace();prepared.http=object()
+        pod={'uid':'server','ready':'True','containers':[{'name':'serving-entrypoint','imageID':'sha256:actual'}]}
+        old={'uid':'deleted-server','ready':'True','containers':[{'name':'serving-entrypoint','imageID':'sha256:old'}]}
+        pages=[[{'at':'2026-10-30T03:00:00Z','event':'deleted','pod':old}],
+               [{'at':'2026-10-30T02:00:00Z','event':'observed','pod':old},
+                {'at':'2026-10-30T02:01:00Z','event':'observed','pod':pod}]]
+        def download(folder,io,path,target,deadline):
+            with gzip.open(target,'wt') as output:
+                for row in pages.pop(0):output.write(json.dumps(row)+'\n')
+        prepared.api=lambda *args,**kwargs:({'kinds':[{'kind':'cluster','available':True}]},200)
+        with patch.object(time,'sleep'),patch.object(e5,'module',return_value=SimpleNamespace(_download=download)):
+            actual,container=prepared.controller({'indexDigest':'sha256:actual'})
+        assert actual==pod and container['imageID']=='sha256:actual' and not pages
+
+
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('command',choices=['schema','prepare','execute']);p.add_argument('--numbers',type=Path);p.add_argument('--release',type=Path);p.add_argument('--out',type=Path);a=p.parse_args()
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('command',choices=['schema','self-check','prepare','execute']);p.add_argument('--numbers',type=Path);p.add_argument('--release',type=Path);p.add_argument('--out',type=Path);a=p.parse_args()
     try:
+        if a.command=='self-check':
+            self_check_controller();return 0
         if a.command=='schema':
             print(json.dumps({'numbers':['g0Evidence','mSeconds','N','burstLowSeconds','smokeSeconds','kappaSeconds','timeboxes','workloads','approval'],'g0Evidence':{'runID':'actual G0 verdict directory name','verdict':'absolute recorded g0-verdict.json path; gateway criteria are judged directly, aggregate and Smol SLO verdicts are reference only','binding':'absolute same-run run/binding.json path (120s alpha=1.2 G-check)','csCPULimitCores':'explicit frozen positive ChillServer CPU limit; recorded peak/limit must be <1'},'workloadNumbers':['slo.percentile','slo.targetLatencyNanos','R','deliverySeconds','socketSeconds','workers'],'optionalWorkloadNumbers':['lifetimeSeconds'],'timeboxes':e5.REQUIRED['timeboxes'],'approval':['sources'],'factorSelection':'N selects the frozen operational recipe factorOrder prefix; source/reset witnesses are already bound there, observed effect remains unmeasured','release':['executor=CampaignOps','command=e5-execute','mainInstructionUTC','sources','numbersPath','bindingPath'],'sources':{'server':'full Git SHA matching AFTER and server publication','loadgen':'full Git SHA matching loadgen publication sourceCommit','power':'full Git SHA or pinned repository-relative binary path matching actual power build receipt'},'autoInputs':str(PLAN)+'.e5InputPublication','operationalRecipe':str(e5.OPERATIONAL_RECIPE),'scientificResults':'UNMEASURED'},indent=2));return 0
         if any(x is None for x in (a.numbers,a.release,a.out)):raise ValueError('--numbers, --release and --out required for CPO preparation/execution')

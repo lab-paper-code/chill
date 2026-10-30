@@ -310,6 +310,7 @@ def assemble(e5, args, spec):
         raise RuntimeError('Live preparation requires a fresh output directory; retain partial captures')
     recipe_path = Path(spec.get('operationalRecipe', e5.OPERATIONAL_RECIPE)).resolve()
     op = e5.load(recipe_path)
+    op['tokenFile'] = str(e5.OPS / '.token-collector')
     e5.need(spec, ['controlSourceSHA', 'sources', 'timeboxes', 'measurementSLO'], 'demo config')
     component_sources = e5.approval_sources(spec)
     e5.need(spec['timeboxes'], e5.REQUIRED['timeboxes'], 'timeboxes')
@@ -335,27 +336,18 @@ def assemble(e5, args, spec):
     io.http = e5.urllib.request.build_opener(d.NoRedirect(), e5.urllib.request.HTTPSHandler(context=io.ctx))
     timeout = spec['timeboxes']['apiSeconds']
     scheduler = io.api('GET', '/api/v1/scheduler', timeout=timeout)
-    nodes = io.k(['get', 'nodes', '-o', 'json'], timeout=timeout)
-    pods = io.k(['get', 'pods', '-A', '-o', 'json'], timeout=timeout)
     e5.save(args.out / 'scheduler-before-register.json', scheduler)
-    for name, value in [('nodes', nodes), ('pods', pods)]:
-        e5.save(args.out / (name + '.json'), value)
-    servers = [p for p in pods['items'] if p['metadata'].get('namespace') == 'chill-system' and p['metadata'].get('labels', {}).get('app.kubernetes.io/component') == 'serving-entrypoint']
-    if len(servers) != 1:
-        raise RuntimeError('Actual serving-entrypoint Pod is ambiguous')
-    container = next(c for c in servers[0]['spec']['containers'] if c['name'] == op['collection']['serverContainer'])
-    status = next(c for c in servers[0]['status']['containerStatuses'] if c['name'] == container['name'])
-    if not status.get('ready') or 'sha256:' not in status.get('imageID', ''):
-        raise RuntimeError('Actual Ready serving image digest required')
-    flags = dict(arg.split('=', 1) for arg in container['args'] if arg.startswith('--') and '=' in arg)
-    cap = flags['--request-timeout']
-    if not cap.endswith('s') or not e5.positive(float(cap[:-1])):
-        raise ValueError('Actual positive server request-timeout in seconds required')
+    settings = io.api('GET', '/api/v1/scheduler/settings', timeout=timeout)
+    e5.save(args.out / 'settings-before-register.json', settings)
+    cap = settings['requestTimeout'] / 1e9
+    if not e5.positive(cap):
+        raise ValueError('Actual positive API requestTimeout in nanoseconds required')
     prototype = io.job('demo-timing', 0, 1)['spec']['template']['spec']['containers'][0]['args']
     timing = {flag: prototype[prototype.index(flag) + 1] for flag in ('--workers', '--delivery-margin', '--timeout')}
     wire = e5.module('demo_templates', HERE / 'e5-wire.py')
     registration = object.__new__(wire.Prepare)
     registration.op, registration.out, registration.tb, registration.http = op, args.out, spec['timeboxes'], io.http
+    registration.io = io
     by_name = {w['name']: w for w in scheduler['state']['snapshot']['workloads']}
     registration.n = {'workloads': {name: {'slo': spec['measurementSLO'][next(alias for alias, canonical in ALIASES.items() if canonical == name)]} for name in e5.WORKLOADS}}
     def registration_api(method, path, body=None, headers=None, accepted=(200,)):
@@ -365,6 +357,7 @@ def assemble(e5, args, spec):
         io.record({'kind': 'canonical-management', 'method': method, 'path': path, 'status': status_code})
         return result, status_code
     registration.api = registration_api
+    _, status = registration.controller()
     if spec.get('staticPlacement'):
         if any(name not in by_name for name in e5.WORKLOADS):
             raise RuntimeError('Static placement requires existing canonical definitions')
@@ -375,14 +368,12 @@ def assemble(e5, args, spec):
     for name in e5.WORKLOADS:
         actual, _ = registration.api('GET', '/api/v1/workloads/' + name)
         e5.save(args.out / ('canonical-' + name + '.json'), actual)
-    collection = {**op['collection'], 'powerExecutable': e5.E5['powerExecutable'], 'powerReceipt': e5.E5['powerReceipt']}
-    for key, flag in [('observationDirectory', '--observation-directory'), ('schedulerConfigMap', '--serving-scheduler-configmap'), ('metricSourcesConfigMap', '--profiler-facts-configmap'), ('metricSourcesKey', '--metric-sources-key')]:
-        collection[key] = flags.get(flag, collection[key])
-    archive_path = args.out / 'required-raw-refs.json'
-    e5.save(archive_path, [{'key': 'demo-live-' + name, 'localPath': str(args.out / (name + '.json'))} for name in ('scheduler', 'nodes', 'pods')])
-    collection['archiveRefs'] = str(archive_path)
+    collection = {'hosts': op['collection']['hosts'], 'powerExecutable': e5.E5['powerExecutable'], 'powerReceipt': e5.E5['powerReceipt']}
+    producer_hosts = [host for host in e5.load(collection['hosts']) if host['node'] == e5.E5['producerNode']]
+    e5.save(args.out / 'producer-hosts.json', producer_hosts)
+    collection['hosts'] = str(args.out / 'producer-hosts.json')
     c = {key: op[key] for key in ('endpoint', 'caFile', 'tokenFile', 'kubeContext')}
-    c.update(approval={'sources': component_sources, 'controlImageDigest': status['imageID']}, inputs={'nodes': str(args.out / 'nodes.json'), 'scheduler': str(args.out / 'scheduler.json')}, timeboxes=spec['timeboxes'], collection=collection, workloads=[], canonicalDefinitionsReused=reused)
+    c.update(approval={'sources': component_sources, 'controlImageDigest': status['imageID']}, inputs={'scheduler': str(args.out / 'scheduler.json')}, timeboxes=spec['timeboxes'], collection=collection, workloads=[], canonicalDefinitionsReused=reused)
     for name in e5.WORKLOADS:
         actual = [w for w in scheduler['state']['snapshot']['workloads'] if w['name'] == name]
         if len(actual) != 1:
@@ -396,11 +387,11 @@ def assemble(e5, args, spec):
         if any(not e5.positive(requested[key]) for key in ('workers', 'deliverySeconds', 'socketSeconds')) or type(requested['workers']) is not int:
             raise ValueError('Positive configured request timings and integer workers required')
         lifetime = requested.get('lifetimeSeconds')
-        if lifetime is not None and (not e5.positive(lifetime) or lifetime < actual['slo']['targetLatencyNanos'] / 1e9 or lifetime > float(cap[:-1]) or requested['socketSeconds'] <= lifetime + requested['deliverySeconds']):
+        if lifetime is not None and (not e5.positive(lifetime) or lifetime < actual['slo']['targetLatencyNanos'] / 1e9 or lifetime > cap or requested['socketSeconds'] <= lifetime + requested['deliverySeconds']):
             raise ValueError('Explicit lifetime must cover SLO, fit gateway cap and socket budget')
-        c['workloads'].append({**{key: actual[key] for key in ('name', 'uid', 'generation', 'slo')}, 'datasetDir': recipe['datasetDir'], 'fields': recipe['fields'], 'jobTemplate': str(template), 'producerEndpoint': op['producer']['endpoint'], 'producerTokenFile': op['producer']['tokenFile'], 'producerCAFile': op['producer']['caFile'], 'producerDatasetDir': op['producer']['datasetDir'], **requested, 'gatewayCapSeconds': float(cap[:-1])})
+        c['workloads'].append({**{key: actual[key] for key in ('name', 'uid', 'generation', 'slo')}, 'datasetDir': recipe['datasetDir'], 'fields': recipe['fields'], 'jobTemplate': str(template), 'producerEndpoint': op['producer']['endpoint'], 'producerTokenFile': op['producer']['tokenFile'], 'producerCAFile': op['producer']['caFile'], 'producerDatasetDir': op['producer']['datasetDir'], **requested, 'gatewayCapSeconds': cap})
     c['demoSkipped'] = ['E5 R/kappa capacity binding and strict G0 research gate', '11700-second normative schedule and factor baselines', 'phase6 scientific approvals/D1/D6/D9 judgment gates', 'image/source publication and profiling-vs-evaluation metadata Jobs; existing pinned images/datasets reused']
-    c['demoProvenance'] = {'recipe': str(recipe_path), 'sources': 'Explicit Main-provided component identities; no loadgen/power identity inferred from server or image bytes', 'controlSourceSHA': 'Main-provided helm-revision source claim resolved in git and checked against sources.server, not inferred from image bytes', 'controlImageDigest': 'Live Ready Pod containerStatus.imageID', 'requestTiming': 'D2 Conductor.job socket/worker baseline plus explicit requestTiming overrides; absent lifetime omits client deadline header', 'measurementSLO': spec['measurementSLO']}
+    c['demoProvenance'] = {'recipe': str(recipe_path), 'sources': 'Explicit Main-provided component identities; no loadgen/power identity inferred from server or image bytes', 'controlSourceSHA': 'Main-provided helm-revision source claim resolved in git and checked against sources.server, not inferred from image bytes', 'controlImageDigest': 'Raw API cluster Ready Pod container imageID', 'requestTiming': 'API settings requestTimeout gateway cap; D2 Conductor.job socket/worker baseline plus explicit requestTiming overrides; absent lifetime omits client deadline header', 'measurementSLO': spec['measurementSLO']}
     config_path = args.out / 'demo-e5-config.json'
     e5.save(config_path, c)
     return config_path
@@ -1026,8 +1017,11 @@ def self_check():
                 expected_methods = ['PUT', 'GET'] if timed_out else ['PUT']
                 assert settings_calls == [(method, '/api/v1/scheduler/settings', max(30, seconds)) for method in expected_methods]
         fixture_power = {'sampling': {'Interval': 750000000, 'Duration': 5000000000, 'RequestTimeout': 700000000, 'MaxEvents': 9}, 'coverage': {'MaximumGap': 3000000000, 'MaximumBoundaryDistance': 1000000000, 'MinimumCoverage': .75}}
-        config = {'collection': {'schedulerConfigMap': 'fixture'}, 'timeboxes': {'apiSeconds': 1}}
-        with patch.object(e5.subprocess, 'run', return_value=SimpleNamespace(stdout=json.dumps({'data': {'scheduler.json': json.dumps({'powerObservation': fixture_power})}}))):
+        config = {'endpoint': 'https://fixture.invalid', 'caFile': '/fixture/ca', 'timeboxes': {'apiSeconds': 1}}
+        (e5.OPS / '.token-collector').write_text('offline-fixture')
+        response = __import__('io').StringIO(json.dumps({'powerObservation': fixture_power}))
+        opener = SimpleNamespace(open=lambda request, timeout: response)
+        with patch.object(e5.ssl, 'create_default_context'), patch.object(e5.urllib.request, 'build_opener', return_value=opener):
             assert e5.power_observation(config) == fixture_power
         e5.power_observation = lambda c: copy.deepcopy(fixture_power)
         template = root / 'job.json'
@@ -1412,7 +1406,7 @@ def self_check():
             assert publish(e5, cpo.b, cpo.out, 'fixture-fidelity', root / 'store.json')['outcome'] == 'fixture'
         published_stages = publication.call_args.args[3]
         expected_rules = {'harnessRepositoryCommit': 'a' * 40, 'energyCoverage': publication_coverage['policy'],
-                          'evidenceSource': 'host-s3', 'gcMeaning': 'gctrace-cycles'}
+                          'evidenceSource': 'api', 'gcMeaning': 'runtime-metrics-delta'}
         for stage in published_stages:
             assert stage['kpis']['energyCoverage'] == publication_coverage
             assert stage['kpis']['gapErrorBoundJoules'] == 2
@@ -1487,8 +1481,6 @@ def self_check():
             assert policy['arrivalSHA256'] == stages[-1]['traces'][name]['arrivalSHA256']
         assert '| low |' in (cpo.out / 'summary.md').read_text()
         # Real collection gate: only explicit power gaps advance, never raw/request failures.
-        archive_refs = root / 'archive-refs.json'
-        e5.save(archive_refs, [])
         for label, allowed, errors, raw_complete, succeeds in (
                 ('strict', [], ['power: timeout'], True, False),
                 ('partial', ['power'], ['power: timeout', 'power-drain-inclusive: timeout'], True, False),
@@ -1507,7 +1499,7 @@ def self_check():
             e5.save(folder / 'archive-collection.json', captured)
             e5.save(folder / 'raw-source-index.json', {'complete': raw_complete})
             stage = dict(stages[1], tolerateArchive=allowed)
-            probe = SimpleNamespace(out=probe_out, c={'smoke': stage, 'collection': {'archiveRefs': str(archive_refs), 'serverContainer': 'server'}}, b={'schema': 'demo-e5-binding.v1', 'sources': {}, 'schedule': [stage, stages[2]]}, tb={'collectSeconds': 1, 'apiSeconds': 1}, d=SimpleNamespace(K=['fixture'], load=e5.load), io=SimpleNamespace(k=lambda *args: {'items': [{'metadata': {'name': 'server'}}]}))
+            probe = SimpleNamespace(out=probe_out, c={'smoke': stage, 'collection': {}}, b={'schema': 'demo-e5-binding.v1', 'sources': {}, 'schedule': [stage, stages[2]]}, tb={'collectSeconds': 1, 'apiSeconds': 1}, d=SimpleNamespace(K=['fixture'], load=e5.load), io=SimpleNamespace())
             probe.collect = lambda folder, phase=None: e5.CPO.collect(probe, folder, phase)
             with patch.object(e5, 'module', return_value=SimpleNamespace(collect=lambda *args: captured)), patch.object(e5.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout='logs')):
                 try:
@@ -1903,14 +1895,16 @@ def self_check():
         environment.write_text(json.dumps(fixture_env))
         e5.E5.update(fixture_env['e5'])
         e5.ENVIRONMENT['d2'].update(fixture_env['d2'])
-        op = {'endpoint': 'https://fixture.invalid', 'caFile': temp, 'tokenFile': temp, 'kubeContext': 'fixture', 'collection': {'serverContainer': 'serving-entrypoint', 'observationDirectory': '/fixture', 'schedulerConfigMap': 'fixture', 'metricSourcesConfigMap': 'fixture', 'metricSourcesKey': 'fixture'}, 'producer': {'endpoint': 'https://fixture.invalid', 'tokenFile': temp, 'caFile': temp, 'datasetDir': '/data'}, 'workloads': {w['name']: {'datasetDir': temp, 'fields': ['input'], 'datasetImage': 'fixture@sha256:fixture', 'datasetImagePath': '/fixture'} for w in workloads}}
+        op = {'endpoint': 'https://fixture.invalid', 'caFile': temp, 'tokenFile': temp, 'kubeContext': 'fixture', 'producer': {'endpoint': 'https://fixture.invalid', 'tokenFile': temp, 'caFile': temp, 'datasetDir': '/data'}, 'workloads': {w['name']: {'datasetDir': temp, 'fields': ['input'], 'datasetImage': 'fixture@sha256:fixture', 'datasetImagePath': '/fixture'} for w in workloads}}
+        host_path = root / 'producer-hosts-fixture.json'
+        host_path.write_text(json.dumps([{'node': 'fixture', 'local': True}]))
+        op['collection'] = {'hosts': str(host_path)}
         for recipe_workload in op['workloads'].values():
             recipe_workload.update(modelRef='fixture-model', preprocessorRef='fixture-preprocessor', datasetRef='fixture-dataset')
         recipe = root / 'recipe.json'
         recipe.write_text(json.dumps(op))
         fixture_sources = {'server': e5.subprocess.check_output(['git', '-C', str(e5.REPO), 'rev-parse', '--verify', 'HEAD^{commit}'], text=True).strip(), 'loadgen': '1' * 40, 'power': 'bin/fixture-power'}
         source_spec = {'operationalRecipe': str(recipe), 'controlSourceSHA': 'HEAD', 'sources': fixture_sources, 'timeboxes': cpo.tb, 'measurementSLO': {alias: copy.deepcopy(workloads[0]['slo']) for alias in ALIASES}}
-        server = {'metadata': {'namespace': 'chill-system', 'labels': {'app.kubernetes.io/component': 'serving-entrypoint'}}, 'spec': {'containers': [{'name': 'serving-entrypoint', 'args': ['--request-timeout=70s']}]}, 'status': {'containerStatuses': [{'name': 'serving-entrypoint', 'ready': True, 'imageID': 'fixture@sha256:fixture'}]}}
         registration_snapshot = copy.deepcopy(snapshot)
         registration_snapshot['workloads'] = [copy.deepcopy(workloads[0])]
         base_spec = {key: {'name': 'fixture-' + kind} for key, kind in [('modelRef', 'model'), ('preprocessorRef', 'preprocessor'), ('datasetRef', 'dataset')]}
@@ -1940,7 +1934,10 @@ def self_check():
             assert method == 'GET'
             return (copy.deepcopy(registered[name]), 200) if name in registered else ({'error': 'NotFound'}, 404)
         def api_fixture(self, method, path, **kwargs):
-            assert method == 'GET' and path == '/api/v1/scheduler'
+            assert method == 'GET'
+            if path == '/api/v1/scheduler/settings':
+                return {**settings, 'requestTimeout': 70_000_000_000}
+            assert path == '/api/v1/scheduler'
             return {'state': {'snapshot': copy.deepcopy(registration_snapshot)}, 'settings': settings}
         def modules_for_assembly(name, path):
             if name == 'demo_capture':
@@ -1948,8 +1945,9 @@ def self_check():
             loaded = original_module(name, path)
             if name in ('demo_templates', 'demo_definition_cleanup'):
                 loaded.Prepare.api = management_fixture
+                loaded.Prepare.controller = lambda self: ({'uid': 'controller'}, {'name': 'serving-entrypoint', 'imageID': 'fixture@sha256:fixture'})
             return loaded
-        with patch.dict(os.environ, {'CHILL_EXPERIMENT_CONFIG': str(environment)}), patch.object(e5, 'module', modules_for_assembly), patch.object(e5.ssl, 'create_default_context', return_value=None), patch.object(d.Conductor, 'api', api_fixture), patch.object(d.Conductor, 'k', lambda self, argv, **kw: {'items': [] if argv[1] == 'nodes' else [server]}), patch.object(d.Conductor, 'job', return_value={'spec': {'template': {'spec': {'containers': [{'args': ['--workers', '320', '--request-lifetime', '2', '--delivery-margin', '.010', '--timeout', '2.02']}]}}}}):
+        with patch.dict(os.environ, {'CHILL_EXPERIMENT_CONFIG': str(environment)}), patch.object(e5, 'module', modules_for_assembly), patch.object(e5.ssl, 'create_default_context', return_value=None), patch.object(d.Conductor, 'api', api_fixture), patch.object(d.Conductor, 'k', side_effect=AssertionError('CHILL preparation must not read Kubernetes')), patch.object(d.Conductor, 'job', return_value={'spec': {'template': {'spec': {'containers': [{'args': ['--workers', '320', '--request-lifetime', '2', '--delivery-margin', '.010', '--timeout', '2.02']}]}}}}):
             try:
                 assemble(e5, SimpleNamespace(out=root / 'mismatched-source'), dict(source_spec, sources=dict(fixture_sources, server='0' * 40)))
             except ValueError as error:
@@ -2201,7 +2199,7 @@ def self_check():
         e5.save(coverage_folder / 'power.json', gap_power)
         captured_gap = {'status':'NOT_READY','errors':['power: Actual power window incomplete: ["maximum sample gap exceeds policy"]']}
         coverage_probe = SimpleNamespace(out=coverage_root,
-            c={'collection':{'archiveRefs':str(archive_refs),'serverContainer':'server'}},
+            c={'collection':{}},
             b={'schema':'e5-binding.v1','sources':{}},tb={'collectSeconds':1,'apiSeconds':1},
             d=SimpleNamespace(K=['fixture']),io=SimpleNamespace(k=lambda *args:{'items':[{'metadata':{'name':'server'}}]}))
         with patch.object(e5,'module',return_value=SimpleNamespace(collect=lambda *args:captured_gap)), \

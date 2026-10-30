@@ -109,12 +109,15 @@ def eligibility(instance, profile, node, kube, settings, batch):
     reasons = []
     if node['node'] != instance['node'] or condition['nodeUID'] != instance['node']['uid']:
         reasons.append('ProfileConditionNodeUIDMismatch')
-    if kube['metadata']['uid'] != instance['node']['uid']:
-        reasons.append('CurrentNodeUIDMismatch')
-    if kube['metadata'].get('deletionTimestamp') or kube['spec'].get('unschedulable'):
-        reasons.append('KubernetesNodeDeletingOrUnschedulable')
-    ready = [c for c in kube.get('status', {}).get('conditions', []) if c.get('type') == 'Ready']
-    if not node['ready'] or len(ready) != 1 or ready[0].get('status') != 'True':
+    if kube is not None:
+        if kube['metadata']['uid'] != instance['node']['uid']:
+            reasons.append('CurrentNodeUIDMismatch')
+        if kube['metadata'].get('deletionTimestamp') or kube['spec'].get('unschedulable'):
+            reasons.append('KubernetesNodeDeletingOrUnschedulable')
+        ready = [c for c in kube.get('status', {}).get('conditions', []) if c.get('type') == 'Ready']
+        if len(ready) != 1 or ready[0].get('status') != 'True':
+            reasons.append('NodeUnavailable')
+    if not node['ready']:
         reasons.append('NodeUnavailable')
     if node.get('measurement'):
         reasons.append('MeasurementNode')

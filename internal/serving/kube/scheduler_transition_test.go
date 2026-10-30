@@ -1539,7 +1539,7 @@ func TestCapturePreservesEveryExecutorlessPodUIDAC37(t *testing.T) {
 			t.Fatalf("executorless Pod %s disappeared from snapshot: %+v", name, snapshot.Instances)
 		}
 		instance := snapshot.Instances[index]
-		if instance.ID != "" || instance.TargetID != name+"-slot" || instance.OwnerWorkloadUID == "" ||
+		if instance.ID != "" || instance.PodName != name || instance.TargetID != name+"-slot" || instance.OwnerWorkloadUID == "" ||
 			instance.Node.Name != "a" || instance.Allocation.CPUCount != 1 || instance.Ready {
 			t.Fatalf("executorless physical facts changed: %+v", instance)
 		}

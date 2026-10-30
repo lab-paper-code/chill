@@ -283,16 +283,19 @@ def scheduler_summary(rows):
             'records': interpreted, 'events': list(unique.values())}
 
 
-def telemetry(inputs, start, end):
+def telemetry(inputs, start, end, resource_rows=None):
+    """Reduce cumulative API rows plus local clients, or standalone D2 local files."""
     by, restart = defaultdict(list), defaultdict(list)
     aliases = {'cs': 'server', 'em': 'edgemesh'}
-    paths = [inputs.root / 'cgmon.log'] + sorted(inputs.root.glob('*cgroup*.jsonl'))
+    paths = ([inputs.root / 'cgmon.log'] if resource_rows is None else []) + sorted(inputs.root.glob('*cgroup*.jsonl'))
     unparsed, metadata = [], []
     for path in dict.fromkeys(paths):
         for index, line in inputs.lines(path):
             if line.lstrip().startswith('{'):
                 try:
                     row = json.loads(line)
+                    if resource_rows is not None and row.get('role') != 'client':
+                        continue
                     if row.get('kind') not in (None, 'cgroup'):
                         metadata.append({'path': str(path), 'line': index, 'record': row})
                         continue
@@ -305,6 +308,8 @@ def telemetry(inputs, start, end):
                     by[(role, identity, 'cumulative')].append({**row, '_t': at, '_format': 'cumulative'})
                 except (ValueError, AttributeError, TypeError) as exc:
                     unparsed.append({'path': str(path), 'line': index, 'text': line, 'error': str(exc)})
+                continue
+            if resource_rows is not None:
                 continue
             at = epoch(line.split(' ', 1)[0])
             if at is None:
@@ -323,6 +328,13 @@ def telemetry(inputs, start, end):
                     'memoryBytes': number(mem) * 1048576 if number(mem) is not None else None})
             if not found:
                 unparsed.append({'path': str(path), 'line': index, 'text': line})
+    for row in resource_rows or []:
+        at = epoch(row.get('at'))
+        if at is None:
+            unparsed.append({'sourceRef': row.get('sourceRef'), 'error': 'missing/invalid resource sampledAt'})
+            continue
+        identity = '/'.join(str(row.get(key, '')) for key in ('nodeUID', 'podUID', 'containerID'))
+        by[(row.get('role', 'unknown'), identity, 'cumulative')].append({**row, '_t': at, '_format': 'cumulative'})
     all_series = []
     for (role, identity, source_format), samples in by.items():
         samples = sorted({json.dumps(r, sort_keys=True): r for r in samples}.values(), key=lambda r: r['_t'])

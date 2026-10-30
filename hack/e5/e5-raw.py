@@ -55,8 +55,8 @@ def _error(errors, message, ref=None):
 
 
 def _observed_absences(root, index, streams, available, errors):
-    """Accept omitted empty streams only from the collector's real inventories."""
-    observed, proofs = {}, {}
+    """Read API collector absence facts, without host/S3 collection receipts."""
+    observed = {}
     entries = index.get('absentStreams', [])
     if not isinstance(entries, list):
         _error(errors, 'absentStreams is not a list')
@@ -77,42 +77,14 @@ def _observed_absences(root, index, streams, available, errors):
             if (hour, stream) in available:
                 raise ValueError('stream declared both present and absent')
             if (hour, 'scheduler') not in available:
-                raise ValueError('absence proof lacks an actual scheduler source for its hour')
+                raise ValueError('stream absence lacks an actual scheduler source for its hour')
             if entry.get('reason') != 'source-hour-has-no-stream-segments':
                 raise ValueError('observed absence lacks source-grounded reason')
-            raw_path = Path(entry['proof'])
-            path = raw_path.resolve()
-            if not raw_path.is_absolute() or root not in path.parents:
-                raise ValueError('absence proof must be an absolute file inside this archive')
-            if path not in proofs:
-                proofs[path] = json.loads(path.read_text(encoding='utf-8'))
-            proof = proofs[path]
-            if not isinstance(proof, dict):
-                raise ValueError('absence inventory is not an object')
-            if entry.get('origin') == 'host-retained':
-                segments = proof.get('segments')
-                if hour not in proof.get('retainedHours', []) or proof.get('errors') != []:
-                    raise ValueError('retained-hour absence inventory is incomplete or reports errors')
-                if not isinstance(segments, list) or any(not isinstance(s, dict) or not isinstance(s.get('path'), str) for s in segments):
-                    raise ValueError('retained absence proof lacks a valid complete segment inventory')
-                if any(s['path'].startswith(hour + '/' + stream + '.') for s in segments):
-                    raise ValueError('retained inventory contains the purportedly absent stream')
-            elif entry.get('origin') == 's3':
-                prefix = 'serving/observations.v1alpha5/' + hour + '/'
-                response = proof.get('response')
-                if proof.get('prefix') != prefix or not isinstance(response, dict) or response.get('IsTruncated') is not False:
-                    raise ValueError('S3 absence inventory is not a complete exact-hour listing')
-                objects = response.get('Contents', [])
-                if not isinstance(objects, list) or any(not isinstance(obj, dict) or not isinstance(obj.get('Key'), str) or not obj['Key'].startswith(prefix) for obj in objects):
-                    raise ValueError('S3 absence proof has invalid object inventory')
-                keys = {obj['Key'] for obj in objects}
-                if prefix + 'scheduler.jsonl.gz' not in keys or prefix + stream + '.jsonl.gz' in keys:
-                    raise ValueError('S3 listing does not prove stream absence alongside scheduler')
-            else:
-                raise ValueError('unknown absence inventory origin')
+            if entry.get('origin') != 'api':
+                raise ValueError('stream absence must come from the raw export API')
             observed[(hour, stream)] = dict(entry)
         except (KeyError, TypeError, OSError, ValueError) as exc:
-            _error(errors, 'invalid observed stream absence: ' + str(exc), {'hour': entry.get('hour'), 'stream': stream, 'proof': entry.get('proof')})
+            _error(errors, 'invalid observed stream absence: ' + str(exc), {'hour': entry.get('hour'), 'stream': stream})
     return observed
 
 
@@ -180,7 +152,7 @@ def _manifest(root, streams):
     for hour in sorted(set(hours)):
         for stream in sorted(streams | {'scheduler'}):
             if (hour, stream) not in available and (hour, stream) not in absent:
-                _error(errors, 'missing required ' + stream + ' hourly stream or authenticated absence proof', {'hour': hour})
+                _error(errors, 'missing required ' + stream + ' hourly stream or API-observed absence', {'hour': hour})
     index['_observedAbsences'] = list(absent.values())
     sources = [source for source in sources if source['stream'] in streams]
     if not sources and not absent:
@@ -194,11 +166,11 @@ def _reject_constant(value):
 
 def _rows(sources, errors):
     for source in sources:
-        ref = {'path': source['path']}
+        ref = {key: source[key] for key in ('path', 'hour', 'stream')}
         try:
             with gzip.open(source['path'], 'rt', encoding='utf-8') as handle:
                 for number, text in enumerate(handle, 1):
-                    ref = {'path': source['path'], 'line': number}
+                    ref = {**{key: source[key] for key in ('path', 'hour', 'stream')}, 'line': number}
                     try:
                         row = json.loads(text, parse_constant=_reject_constant)
                         if not isinstance(row, dict):
@@ -450,6 +422,19 @@ def _catalog_refs(value):
     elif isinstance(value, list):
         for item in value:
             yield from _catalog_refs(item)
+
+
+def stream_events(folder, kind, *, approved_root=None):
+    """Return every original stream row with its one-based immutable source ref."""
+    if kind not in ('requests', 'management', 'scheduler', 'catalog', 'resources', 'cluster'):
+        raise ValueError('Unknown raw observation stream')
+    root = _root(folder, approved_root)
+    index, sources, errors = _manifest(root, {kind})
+    rows = [{'row': row, 'sourceRef': ref} for _, row, ref in _rows(sources, errors)]
+    return rows, {'classification': _PRIVATE, 'complete': not errors,
+                  'sources': sources, 'errors': errors, 'rawRows': {kind: len(rows)},
+                  'requestPopulation': index.get('requestPopulation'),
+                  'observedAbsences': index.get('_observedAbsences', [])}
 
 
 def scheduler_events(folder, *, approved_root=None):

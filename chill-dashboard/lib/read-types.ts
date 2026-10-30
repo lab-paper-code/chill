@@ -49,6 +49,8 @@ export type SchedulerSettings = {
   staticRouting?:Routing
   // Accepted power declarations, read-only; never sent back in settings PUT.
   meters?:{id:string;node:NodeRef;scope:string;source:PowerSource}[]
+  // Runtime --request-timeout in nanoseconds, read-only; only GET settings carries it.
+  requestTimeout?:WireInteger
 }
 export type SchedulerDefinition = {name:string;uid:string;generation:WireInteger;model:{name:string;uid:string;generation:WireInteger;paths:unknown[]|null};slo:{percentile:number;targetLatencyNanos:WireInteger}}
 export type SchedulerAllocation = {cpus:number[]|null;gpuUUID?:string;memoryBytes:WireInteger;threads:number;cpuCount:number;cpuReserved:boolean}

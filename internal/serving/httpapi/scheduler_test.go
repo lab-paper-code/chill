@@ -428,6 +428,7 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 		Scheduler: controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler", SchedulerConfigKey: "scheduler.json",
 		SchedulerLock: &sync.Mutex{}, MaxRequestBytes: 1 << 20, RefreshScheduler: func(context.Context) error { return nil },
 		SchedulerMeters: func() []servingkube.MeterDeclaration { return meters },
+		RequestTimeout: 73125 * time.Millisecond,
 	}}
 	put := func(extra string) *httptest.ResponseRecorder {
 		body := strings.TrimSuffix(string(settingsRaw), "}") + extra + "}"
@@ -445,6 +446,8 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 		{`,"staticRoutingValidatedAt":"2026-10-01T00:00:00Z"`, "staticRoutingValidatedAt"},
 		{`,"meters":[]`, "body"},
 		{`,"meters":null`, "body"},
+		{`,"requestTimeout":73125000000`, "body"},
+		{`,"requestTimeout":null`, "body"},
 	} {
 		response := put(rejected.extra)
 		var failure serving.Error
@@ -458,14 +461,18 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 	got := httptest.NewRecorder()
 	handler.scheduler(got, request)
 	var shown struct {
-		StaticRouting map[string]map[string]int      `json:"staticRouting"`
-		Meters        []servingkube.MeterDeclaration `json:"meters"`
+		StaticRouting  map[string]map[string]int      `json:"staticRouting"`
+		Meters         []servingkube.MeterDeclaration `json:"meters"`
+		RequestTimeout time.Duration                 `json:"requestTimeout"`
 	}
 	if err := json.Unmarshal(got.Body.Bytes(), &shown); err != nil || got.Code != http.StatusOK || !reflect.DeepEqual(shown.StaticRouting, declared) {
 		t.Fatalf("GET settings lost the stored declaration: status=%d body=%s", got.Code, got.Body)
 	}
 	if !reflect.DeepEqual(shown.Meters, meters) {
 		t.Fatalf("GET settings did not use accepted meter projection: %+v", shown.Meters)
+	}
+	if shown.RequestTimeout != handler.config.RequestTimeout || !strings.Contains(got.Body.String(), `"requestTimeout":73125000000`) {
+		t.Fatalf("GET settings did not expose runtime timeout in nanoseconds: %s", got.Body)
 	}
 	handler.config.SchedulerMeters = nil
 	empty := httptest.NewRecorder()

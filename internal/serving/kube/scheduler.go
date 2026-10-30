@@ -808,6 +808,7 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 			if string(pod.UID) != uid {
 				continue
 			}
+			instance.PodName = pod.Name
 			for _, container := range pod.Spec.Containers {
 				if container.Name == firstfloorContainerName {
 					instance.Allocation.CPUCount = int(container.Resources.Requests.Cpu().Value())
