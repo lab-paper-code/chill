@@ -105,3 +105,11 @@
 - 에너지 브리프(`local brief-BriefEnergy`): ① E5-6 zero-route 잔류는 361 tick 전부 ReservedScope/ReservedNode(owned UID Fixed) → idle 회수 차단 = 예약 잔류 계열(사이클 5 ReturnProof가 대상); ② jetsonx 빈 Node는 실측 baseline상 MODE_20W_2CORE가 이미 최저라 하향 후보 없음 → 더 낮은 모드 idle baseline 측정이 선행(코드 아님). 사이클 4 코드 변경 없음; E5-6 재실행으로 ReturnProof 효과 확인 예정.
 - 사용자 결정(2026-10-31): **배포·측정 권한은 이 세션(ops 에이전트)으로 단일화**. 다른 세션은 커밋만, 배포는 요청 경유. 조치: 잔류 정리 → main `2516ec0c` 복귀(rev126) → E5-5/E5-7(h=.25를 binding settings에 명시)·E5-6 재실행.
 - 사용자 요청(2026-10-31): 대시보드 HTTP NodePort 31300 제거(라이브 보드 WebSocket Origin 검사 https 강제 → 403 "연결 끊김"; HTTP Origin 허용은 토큰 평문 노출이라 불가). 조치: live values `dashboard.service.type=ClusterIP`, nodePort 제거(차트만, 이미지 불변), 측정 창 밖에서 적용. 안내 URL https://155.230.35.213:31104/ 통일.
+
+## 2026-10-31 — 6회차 표적(rev127 서버 2516ec0c, h=.25) 결과
+
+- E5-7(유효): Smol 실패 114→**2**(D2 복구 작동), p95 1,256→5,671ms(FAIL 유지); MNV p95 94→199ms; Δ6−3 에너지 +6,667J.
+- E5-6(유효): MNV 실패 100→**0**, p95 305→196ms; **PLC 실패 0→413**(신규 회귀, 추출 필요); Smol p95 1,962→2,963ms; 에너지 +7,758J(3회차 351.3kJ→359.1kJ, 고정 367.8kJ 대비 여전히 절감 +8.7kJ) — headroom 비용.
+- E5-5: INVALID_CONFIGURATION(복원이 h=0으로 되돌림). 참고치: MNV 실패 1,059→14,467(h=0에서 4회차와 동급), Smol p95 14,093→3,625(D1 충족). h=.25 유효 재실행 필요.
+- 대시보드 NodePort 31300 제거 완료(ClusterIP, https://155.230.35.213:31104/ 200).
+- 다음: E5-5 h=.25 유효 재실행 1회 + 6회차 raw 결함 추출(PLC 413, Smol E5-7 꼬리, MNV p95 상승, 에너지 귀속).
