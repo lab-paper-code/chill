@@ -53,6 +53,12 @@ owner·Node/UID/실물 범위·고정 이유를 action/operation에 연결한다
 제거는 native drain+actual container 종료 뒤 자기 Pod-owned Service를 RV/UID precondition으로 삭제하고 finalizer/config를 해제한다. cleanup은 namespace/name/Pod owner만 확인하므로 자기 Service selector/proxy label drift가 종료 Pod 정리를 막지 않는다. 다른 Pod Service는 삭제하지 않으며 owner reference GC/Workload cleanup도 같은 수명이다.
 source finalizer는 immutable UID 포함 strategic-merge primitive-list delta로 자기 항목만 추가/해제한다. 다른 finalizer와 unrelated kubelet status/RV는 보존하며 UID 변경/API 실제 metadata 오류는 반환한다. exact UID/container 종료·Pod 종료 proof는 유지한다. EdgeMesh 설정/타 Workload는 변경하지 않는다. ChillServer Role은 Service GET/DELETE 기본, scheduler/native operation 활성 시 CREATE 추가다.
 
+#### G2 소실과 관측 신선도 경계 — SCH-26, SCH-49~50, AC-45
+
+`control-222-full/full-E5-7-3b/obs/20261029T23/scheduler.jsonl.gz:6767,6788`은 Smol 삭제 뒤 `UnconfirmedInstance`에서 exact 종료가 반영된 `stopped=true`로 바뀌지만 마지막 native 성공 시각은 `23:50:45.632241365Z`에 머무는 경로다. `:6788`의 `UnknownOrStaleInstance`는 전역 Pending을 만들어 대체 후보 탐색 전에 반환하며, 다음 날 `obs/20261030T00/scheduler.jsonl.gz:504`에도 지속된다.
+논리적 신규 유입 정지와 kubelet의 exact UID/container 종료는 같은 증거가 아니다. 실물 장부는 실제 제거까지 allocation/owner를 보존하되 종료한 실행기에 새 native 성공 관측을 요구해서는 안 된다. 미확인 실물의 해당 Node 봉쇄·부재 추론 금지와 새 목적지 Ready/양수 policy ACK는 유지한다. R5의 양수 목적지만 ACK하는 경로는 목표 선택 뒤의 실행 경계이므로 그 앞의 Pending을 해소하지 않는다. 원시 카드와 검증 quote는 외부 `analysis/cards-r4/smol-recovery-01.*`이며, 로컬 수정은 배포·실측 복구 성공을 뜻하지 않는다.
+`InstanceState`/scheduler snapshot의 `Terminated`는 exact physical ID의 단조 tombstone이다. 논리 `Stopped`와 구별하며 observer의 해당 container 종료 증거만 설정한다. outstanding 병합·늦은 Ready probe도 terminal을 되돌리지 못하고 `Terminated ⇒ !Ready, κ=0`이다. live-native freshness만 면제하며 옛 positive route/slot을 재사용하지 않는다. Pod 부재·예약 반환·할당 해제는 여전히 별도 실제 cleanup proof가 필요하고 `RetirePod`도 logical stop만으로 완료하지 않는다. TTL·새 설정값·관측자의 임의 삭제는 추가하지 않는다.
+
 ### G1b 취소와 client limiter 진단 — SCH-51, SCH-AC-38
 
 `Refresh`/`RefreshWithin`은 공유 관측 직렬화에 들어온 뒤 caller context를 먼저 검사한다. lock 대기 중 취소된 caller는 cached success나 canceled Kubernetes read를 실행하지 않으며 다른 Ready executor를 `refreshFailure`로 내리지 않는다. 진행 중 실제 probe/read 오류의 fail-closed·freshness 경계는 유지한다.

@@ -581,6 +581,9 @@ func TestPreparedSlotCompletionExpiresWhenActualInstanceRemoved(t *testing.T) {
 	if err := observer.runtime.ConfirmInstanceStopped(instance.State.ID); err != nil {
 		t.Fatal(err)
 	}
+	if controller.actionEffectPresent(serving.SchedulerSnapshot{}, run) {
+		t.Fatal("terminal executor retained a successful prepare effect")
+	}
 	if err := observer.runtime.RetirePod("pod"); err != nil {
 		t.Fatal(err)
 	}
@@ -828,5 +831,25 @@ func TestSchedulerRouteIgnoresUnusedCommonLowering(t *testing.T) {
 	controller.runs[prepare.ID].action.Status = nativeOperationComplete
 	if !controller.dependenciesReady(route, target) || controller.runs["idle-lowering"].action.Status != nativeOperationRunning {
 		t.Fatal("unused lowering blocked a prepared target's route or stopped running")
+	}
+}
+
+func TestSchedulerCapturePreservesTerminalLedgerWithoutReadFailureAC45(t *testing.T) {
+	controller := schedulerCaptureClockController(t, func(observer *Observer) {
+		for _, state := range observer.runtime.Instances() {
+			if err := observer.runtime.ConfirmInstanceStopped(state.ID); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	snapshot, err := controller.capture(context.Background(), time.Now(), controller.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Instances) != 1 || !snapshot.Instances[0].Terminated || snapshot.Instances[0].Ready || !snapshot.Instances[0].Stopped {
+		t.Fatalf("capture lost exact terminal fact: %+v", snapshot.Instances)
+	}
+	if slices.Contains(snapshot.Nodes[0].Reasons, serving.NodeInstanceUnavailable) || len(snapshot.Instances[0].Allocation.CPUs) == 0 {
+		t.Fatalf("terminal occupancy became an unknown read or disappeared: %+v", snapshot)
 	}
 }

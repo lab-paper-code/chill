@@ -784,13 +784,13 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 		}
 		servingUIDs[uid] = true
 		instance := serving.SchedulerInstance{ID: state.ID, TargetID: state.TargetID, OwnerWorkloadUID: state.OwnerWorkloadUID,
-			Node: state.Node, Profile: profileByID[state.Profile], Allocation: state.Allocation, Ready: state.Ready,
-			Stopped: state.Stopped, ObservedAt: state.ObservedAt, Routable: state.Routable, Weight: 1}
+			Node: state.Node, Profile: profileByID[state.Profile], Allocation: state.Allocation, Ready: state.Ready && !state.Terminated,
+			Stopped: state.Stopped, Terminated: state.Terminated, ObservedAt: state.ObservedAt, Routable: state.Routable, Weight: 1}
 		instance.PodUID = state.PodUID
 		if state.Reason != "" {
 			instance.Reasons = []string{state.Reason}
 		}
-		if state.Native == nil || !state.Ready {
+		if !state.Terminated && (state.Native == nil || !state.Ready) {
 			sn.Reasons = appendReason(sn.Reasons, serving.NodeInstanceUnavailable)
 			instance.Ready = false
 		}
@@ -1211,7 +1211,7 @@ func (c *SchedulerController) runContext(action serving.Action, config Scheduler
 
 func (c *SchedulerController) dependenciesReady(action serving.Action, target serving.SchedulerCandidate) bool {
 	if action.Node.UID != "" && slices.ContainsFunc(c.state.Snapshot.Instances, func(instance serving.SchedulerInstance) bool {
-		return instance.Node == action.Node && !instance.Ready && !instance.Stopped
+		return instance.Node == action.Node && !instance.Ready && !instance.Stopped && !instance.Terminated
 	}) {
 		return false
 	}
@@ -1326,7 +1326,7 @@ func (c *SchedulerController) actionEffectPresent(snapshot serving.SchedulerSnap
 			return false
 		}
 		for _, i := range physical {
-			if (i.ID == a.Instance || i.TargetID == a.Instance) && i.Node == a.Node && i.Profile == p.Instance.Profile.ID && i.Native != nil && i.Native.Ready {
+			if (i.ID == a.Instance || i.TargetID == a.Instance) && !i.Terminated && i.Node == a.Node && i.Profile == p.Instance.Profile.ID && i.Native != nil && i.Native.Ready {
 				return true
 			}
 		}
@@ -1438,7 +1438,7 @@ func schedulerPhysicalState(id string, physical []serving.InstanceState) *servin
 	}
 	var state *serving.InstanceState
 	for index := range physical {
-		if physical[index].TargetID == id {
+		if physical[index].TargetID == id && !physical[index].Terminated {
 			if state != nil {
 				return nil
 			}
@@ -1449,15 +1449,15 @@ func schedulerPhysicalState(id string, physical []serving.InstanceState) *servin
 }
 
 func schedulerTargetReady(wanted serving.SchedulerInstance, snapshot serving.SchedulerSnapshot, physical []serving.InstanceState, requirePolicy bool) bool {
-	if wanted.Profile == nil {
+	if wanted.Terminated || wanted.Profile == nil {
 		return false
 	}
 	state := schedulerPhysicalState(wanted.ID, physical)
-	if state == nil || !state.Ready || state.Stopped || state.Native == nil || !state.Native.Ready {
+	if state == nil || !state.Ready || state.Stopped || state.Terminated || state.Native == nil || !state.Native.Ready {
 		return false
 	}
 	captured := slices.ContainsFunc(snapshot.Instances, func(actual serving.SchedulerInstance) bool {
-		return actual.ID == state.ID && actual.Ready && !actual.Stopped && actual.Node == wanted.Node &&
+		return actual.ID == state.ID && actual.Ready && !actual.Stopped && !actual.Terminated && actual.Node == wanted.Node &&
 			serving.SchedulerInstanceState(actual) == serving.SchedulerInstanceState(wanted)
 	})
 	if !captured || state.Native.Metadata.ProfileID != wanted.Profile.ID || state.Native.Metadata.MaxQueueRequests != wanted.Capacity {

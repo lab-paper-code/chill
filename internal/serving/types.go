@@ -256,11 +256,14 @@ type InstanceState struct {
 	Profile          string              `json:"profile"`
 	Ready            bool                `json:"ready"`
 	Stopped          bool                `json:"stopped"`
-	Routable         map[string]bool     `json:"routable"`
-	Reason           string              `json:"reason,omitempty"`
-	Workloads        []WorkloadReference `json:"workloads"`
-	Waiting          map[string]int      `json:"waiting"`
-	Running          map[string]int      `json:"running"`
+	// Terminated is exact container termination, not logical admission-stop.
+	// It remains true for this physical ID until actual Pod retirement.
+	Terminated bool                `json:"terminated,omitempty"`
+	Routable   map[string]bool     `json:"routable"`
+	Reason     string              `json:"reason,omitempty"`
+	Workloads  []WorkloadReference `json:"workloads"`
+	Waiting    map[string]int      `json:"waiting"`
+	Running    map[string]int      `json:"running"`
 	// AssignedUnknown has been dispatched but lacks a native phase observation.
 	// It is not reported as actual backend waiting or running.
 	AssignedUnknown map[string]int    `json:"assignedUnknown"`

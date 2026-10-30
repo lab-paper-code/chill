@@ -283,8 +283,8 @@ func TestRouteRequiresPolicyACKOnlyForPositiveDestinationsAC38(t *testing.T) {
 			slices.SortFunc(pods.Items, func(a, b core.Pod) int { return strings.Compare(a.Name, b.Name) })
 			pod := pods.Items[test.dead].DeepCopy()
 			if test.dead == 0 {
-				target.Instances[0].Ready, target.Instances[0].Stopped = false, true
-				pod.Status.ContainerStatuses[0].State = core.ContainerState{Terminated: &core.ContainerStateTerminated{ExitCode: 1}}
+				target.Instances[0].Ready, target.Instances[0].Stopped, target.Instances[0].Terminated = false, true, true
+				pod.Status.ContainerStatuses[0].State = core.ContainerState{Terminated: &core.ContainerStateTerminated{ExitCode: 1, ContainerID: pod.Status.ContainerStatuses[0].ContainerID}}
 				if _, err := operations.kube.CoreV1().Pods(pod.Namespace).UpdateStatus(ctx, pod, meta.UpdateOptions{}); err != nil {
 					t.Fatal(err)
 				}

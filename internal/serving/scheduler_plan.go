@@ -445,6 +445,9 @@ func (p *schedulerPlanState) routeEffectPresent() bool {
 		return false
 	}
 	for _, wanted := range p.target.Instances {
+		if wanted.Terminated && p.target.Routing[wanted.WorkloadUID][wanted.ID] <= 0 {
+			continue // Retained occupancy is not a positive destination ACK.
+		}
 		if !slices.ContainsFunc(p.snap.Instances, func(actual SchedulerInstance) bool {
 			return schedulerSnapshotTargetMatches(actual, wanted) ||
 				!actual.Ready && !actual.Stopped && schedulerSamePhysicalTarget(actual, wanted)
@@ -456,7 +459,7 @@ func (p *schedulerPlanState) routeEffectPresent() bool {
 }
 
 func schedulerSnapshotTargetMatches(actual, wanted SchedulerInstance) bool {
-	if actual.Profile == nil || wanted.Profile == nil || !actual.Ready || actual.Stopped ||
+	if actual.Profile == nil || wanted.Profile == nil || !actual.Ready || actual.Stopped || actual.Terminated || wanted.Terminated ||
 		actual.ID != wanted.ID || actual.Node != wanted.Node ||
 		schedulerState(actual) != schedulerState(wanted) {
 		return false
@@ -488,7 +491,7 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 				continue
 			}
 			if slices.ContainsFunc(p.snap.Instances, func(i SchedulerInstance) bool {
-				return i.Node == n.Node && !i.Ready && !i.Stopped
+				return i.Node == n.Node && !i.Ready && !i.Stopped && !i.Terminated
 			}) {
 				p.reasons = appendUnique(p.reasons, fmt.Sprintf("%s:%s:%s", NodeInstanceUnavailable, n.Node.Name, n.Node.UID))
 				continue
@@ -544,11 +547,11 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 
 func (p *schedulerPlanState) prepareTargets(c SchedulerCandidate) {
 	for _, wanted := range c.Instances {
-		if schedulerReservedNode(p.snap, wanted.Node) {
+		if wanted.Terminated || schedulerReservedNode(p.snap, wanted.Node) {
 			continue
 		}
 		if slices.ContainsFunc(p.snap.Instances, func(actual SchedulerInstance) bool {
-			return actual.Node == wanted.Node && !actual.Ready && !actual.Stopped
+			return actual.Node == wanted.Node && !actual.Ready && !actual.Stopped && !actual.Terminated
 		}) {
 			p.reasons = appendUnique(p.reasons, fmt.Sprintf("%s:%s:%s", NodeInstanceUnavailable, wanted.Node.Name, wanted.Node.UID))
 			continue
@@ -587,7 +590,8 @@ func (p *schedulerPlanState) runningPreparation(wanted SchedulerInstance) string
 }
 
 func schedulerSamePhysicalTarget(actual, wanted SchedulerInstance) bool {
-	return (actual.ID == wanted.ID || (actual.TargetID != "" && actual.TargetID == wanted.ID)) &&
+	return actual.Terminated == wanted.Terminated && (!actual.Terminated || actual.ID == wanted.ID) &&
+		(actual.ID == wanted.ID || (actual.TargetID != "" && actual.TargetID == wanted.ID)) &&
 		actual.Node == wanted.Node && schedulerState(actual) == schedulerState(wanted)
 }
 
@@ -704,7 +708,7 @@ func schedulerFixedReason(snapshot SchedulerSnapshot, uid string) string {
 		}
 	}
 	for _, instance := range snapshot.Instances {
-		if (instance.WorkloadUID == uid || instance.OwnerWorkloadUID == uid) && !instance.Ready && !instance.Stopped {
+		if (instance.WorkloadUID == uid || instance.OwnerWorkloadUID == uid) && !instance.Ready && !instance.Stopped && !instance.Terminated {
 			if slices.ContainsFunc(snapshot.Reservations, func(r SchedulerReservation) bool {
 				return len(r.RouteOnly[uid]) > 0 && r.Target != nil &&
 					slices.ContainsFunc(r.Target.Actions, func(a Action) bool {

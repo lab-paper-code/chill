@@ -425,7 +425,9 @@ func (o *Observer) publishLedger(probed []serving.ReadyInstance) error {
 		instance.State.TargetID = pod.Annotations[ServingSlotAnnotation]
 		instance.OwnerWorkloadUID = string(source.ownerUID)
 		instance.State.OwnerWorkloadUID = string(source.ownerUID)
-		instance.State.Stopped = source.stopped
+		instance.State.Terminated = source.terminated[source.containerID] || source.containerID == "" && source.stopped
+		instance.State.Stopped = source.stopped || instance.State.Terminated
+		instance.State.Ready = instance.State.Ready && !instance.State.Terminated
 		if source.containerID != "" {
 			instance.State.ID = physicalID(source.uid, source.containerID)
 		}
@@ -461,6 +463,7 @@ func (o *Observer) publishLedger(probed []serving.ReadyInstance) error {
 			previous.State.PodUID = string(source.uid)
 			previous.State.Ready = false
 			previous.State.Stopped = source.terminated[containerID]
+			previous.State.Terminated = source.terminated[containerID]
 			instances = append(instances, previous)
 		}
 	}

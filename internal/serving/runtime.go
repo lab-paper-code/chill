@@ -395,7 +395,7 @@ func (r *Runtime) chooseLocked(route inputRoute) *routeEntry {
 		defer r.mu.mark(DiagnosticChoose, DiagnosticEnd)
 	}
 	for index, entry := range route.entries {
-		route.available[index] = entry.instance.State.Ready && !entry.instance.State.Stopped && entry.instance.outstanding < entry.instance.Capacity
+		route.available[index] = entry.instance.State.Ready && !entry.instance.State.Stopped && !entry.instance.State.Terminated && entry.instance.outstanding < entry.instance.Capacity
 	}
 	index := SmoothWeightedRoute(route.weights, route.current, route.available)
 	if index < 0 {
@@ -610,6 +610,7 @@ func (r *Runtime) ConfirmInstanceStopped(instance string) (err error) {
 	if i := r.instances[instance]; i != nil {
 		i.State.Ready = false
 		i.State.Stopped = true
+		i.State.Terminated = true
 		i.State.Reason = "InstanceStopped"
 	}
 	for _, c := range r.calls {
@@ -849,6 +850,9 @@ func validateReadyInstances(instances []ReadyInstance) error {
 		if candidate.State.Ready && (candidate.Profile == nil || candidate.Capacity <= 0 || candidate.Execute == nil) {
 			return failure("InvalidDistribution", "ready instance needs verified profile, bounds and execution")
 		}
+		if candidate.State.Terminated && candidate.State.Ready {
+			return failure("InvalidDistribution", "terminated executor cannot be ready")
+		}
 		key := instanceInventoryKey(candidate.State)
 		if seen[key] {
 			return failure("InvalidDistribution", "instance appears twice")
@@ -873,6 +877,12 @@ func (r *Runtime) installInstancesLocked(instances []ReadyInstance) {
 			i = &runtimeInstance{bindings: map[string]bool{}}
 			r.instances[key] = i
 		}
+		// Exact termination is irreversible for a physical ID, including late
+		// successful probes and the outstanding-call merge paths below.
+		candidate.State.Terminated = candidate.State.Terminated || i.State.Terminated
+		candidate.State.Stopped = candidate.State.Stopped || i.State.Stopped || candidate.State.Terminated
+		candidate.State.Ready = candidate.State.Ready && !candidate.State.Terminated
+		i.State.Terminated, i.State.Stopped = candidate.State.Terminated, candidate.State.Stopped
 		if i.outstanding > 0 && !candidate.State.Ready {
 			i.State.Ready = false
 			i.State.Reason = candidate.State.Reason
@@ -886,7 +896,6 @@ func (r *Runtime) installInstancesLocked(instances []ReadyInstance) {
 			continue
 		}
 		i.podRouting = maps.Clone(candidate.Routing)
-		candidate.State.Stopped = candidate.State.Stopped || i.State.Stopped
 		if r.routingControlled && i.Routing != nil {
 			candidate.Routing = r.mergeControlledRoutingLocked(i.Routing, candidate.Routing)
 		}
@@ -914,8 +923,8 @@ func (r *Runtime) RetirePod(uid string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, instance := range r.instances {
-		if instance.State.PodUID == uid && (!instance.State.Stopped || instance.outstanding != 0) {
-			return failure("TerminationUnconfirmed", "Pod executor is not stopped and drained")
+		if instance.State.PodUID == uid && (!instance.State.Terminated || instance.outstanding != 0) {
+			return failure("TerminationUnconfirmed", "Pod executor is not terminated and drained")
 		}
 	}
 	for key, instance := range r.instances {
@@ -1033,7 +1042,7 @@ func (r *Runtime) rebuildWorkloadRoutesLocked() {
 		for _, i := range r.instances {
 			actual := profilePath(w.definition, i.Profile)
 			weight := r.routeWeightLocked(uid, i)
-			if !i.State.Ready || i.State.Stopped || weight == 0 || actual == nil || (i.OwnerWorkloadUID != "" && i.OwnerWorkloadUID != uid) {
+			if !i.State.Ready || i.State.Stopped || i.State.Terminated || weight == 0 || actual == nil || (i.OwnerWorkloadUID != "" && i.OwnerWorkloadUID != uid) {
 				continue
 			}
 			i.bindings[uid] = true

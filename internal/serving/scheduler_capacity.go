@@ -499,7 +499,7 @@ func capacityMinimumRate(settings SchedulerSettings, search SchedulerSearch, arr
 
 // held reports an instance prepared under Overload still inside its hold.
 func (p *capacityPlanner) held(i SchedulerInstance) bool {
-	return i.HeldUntil != nil && i.HeldUntil.After(p.snapshot.At)
+	return !i.Terminated && i.HeldUntil != nil && i.HeldUntil.After(p.snapshot.At)
 }
 
 // idle reports an instance unrouted for at least one observation window once
@@ -682,11 +682,12 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 		return plans
 	}
 	currentKey := planKey(current)
+	hasTerminal := slices.ContainsFunc(current, func(i SchedulerInstance) bool { return i.Terminated })
 	allocations := append([]SchedulerAllocation{node.Reserved}, node.NonServing...)
 	var walk func(j int, chosen []capacityChoice)
 	walk = func(j int, chosen []capacityChoice) {
 		if j == len(names) {
-			if plan := p.plan(n, m0, current, chosen); plan != nil && (plan.record.Key != currentKey || plan.mode != m0) {
+			if plan := p.plan(n, m0, current, chosen); plan != nil && (plan.record.Key != currentKey || plan.mode != m0 || hasTerminal) {
 				plans = append(plans, plan)
 			}
 			return
@@ -778,7 +779,8 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 			// firstfloor policy: the route applies them without a restart, since
 			// the Pod initializes every measured batch. An unrouted one needs its
 			// prepared slot or owner as proof.
-			if !used[old.ID] && mode == node.PowerMode && old.FixedBatchSize == 0 && schedulerState(old) == schedulerState(i) &&
+			if !used[old.ID] && !old.Terminated &&
+				mode == node.PowerMode && old.FixedBatchSize == 0 && schedulerState(old) == schedulerState(i) &&
 				old.Capacity == i.Capacity && schedulerOwnerAllows(old.OwnerWorkloadUID, uid) &&
 				(old.WorkloadUID == uid || old.WorkloadUID == "" && old.Ready && !old.Stopped && (old.TargetID != "" || old.OwnerWorkloadUID == uid)) {
 				used[old.ID] = true
@@ -887,7 +889,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 			}
 		}
 		hasCurrent := slices.ContainsFunc(current, func(old SchedulerInstance) bool {
-			return old.WorkloadUID == ws.d.UID || old.OwnerWorkloadUID == ws.d.UID
+			return !old.Terminated && (old.WorkloadUID == ws.d.UID || old.OwnerWorkloadUID == ws.d.UID)
 		})
 		slow := hasCurrent && (affected || policy && plan.record.Kappa[ws.d.UID] <= oldKappa)
 		if slow {
@@ -930,7 +932,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 // with its profile and batch limit; without one the instance counts no capacity.
 func (p *capacityPlanner) currentKappa(i SchedulerInstance) (float64, string) {
 	w, ok := p.index[i.WorkloadUID]
-	if i.Profile == nil || !ok {
+	if i.Terminated || i.Profile == nil || !ok {
 		return 0, ""
 	}
 	v, ok := p.variants[fmt.Sprint(i.Profile.ID, "/", i.MaxBatch)]
@@ -958,7 +960,7 @@ func (p *capacityPlanner) annotate(plan *capacityPlan, chosen map[string]capacit
 			continue
 		}
 		w, ok := p.index[i.WorkloadUID]
-		if !ok || plan.keep && i.Stopped {
+		if !ok || i.Terminated || plan.keep && i.Stopped {
 			plan.others++
 			continue
 		}
@@ -1217,7 +1219,7 @@ func SchedulerReadyExpansion(settings SchedulerSettings, snapshot SchedulerSnaps
 	knew, kret := 0.0, 0.0
 	for _, group := range [][]SchedulerInstance{current, added} {
 		for _, i := range group {
-			if i.Profile == nil || i.WorkloadUID != uid || i.Node.UID == "" || nodes[i.Node] {
+			if i.Terminated || i.Profile == nil || i.WorkloadUID != uid || i.Node.UID == "" || nodes[i.Node] {
 				return nil, false
 			}
 			nodes[i.Node] = true

@@ -191,7 +191,7 @@ func (r *Runtime) resolveSchedulerRoutingLocked(candidate SchedulerCandidate, ui
 			targets[uid][actual.State.ID] = weight
 			continue
 		}
-		if actual == nil || !actual.State.Ready || actual.Profile == nil || wanted.Profile == nil || actual.Profile.ID != wanted.Profile.ID || actual.State.Node != wanted.Node {
+		if actual == nil || !actual.State.Ready || actual.State.Terminated || wanted.Terminated || actual.Profile == nil || wanted.Profile == nil || actual.Profile.ID != wanted.Profile.ID || actual.State.Node != wanted.Node {
 			return nil, failure("TargetNotReady", "target %q lacks matching actual readiness", wanted.ID)
 		}
 		workload := r.workloads[uid]
@@ -254,7 +254,7 @@ func (r *Runtime) schedulerSlotLocked(id string) (*runtimeInstance, error) {
 	}
 	var actual *runtimeInstance
 	for _, instance := range r.instances {
-		if instance.State.TargetID != id {
+		if instance.State.TargetID != id || instance.State.Terminated {
 			continue
 		}
 		if actual != nil {
@@ -295,7 +295,7 @@ func (r *Runtime) retainAcceptedRoutesLocked(targets map[string]map[string]int32
 }
 
 func (r *Runtime) instanceServesCallLocked(instance *runtimeInstance, call *Call) bool {
-	if instance == nil || !instance.State.Ready || instance.State.Stopped || (instance.OwnerWorkloadUID != "" && instance.OwnerWorkloadUID != call.receipt.UID) {
+	if instance == nil || !instance.State.Ready || instance.State.Stopped || instance.State.Terminated || (instance.OwnerWorkloadUID != "" && instance.OwnerWorkloadUID != call.receipt.UID) {
 		return false
 	}
 	return profilePath(call.definition, instance.Profile) != nil

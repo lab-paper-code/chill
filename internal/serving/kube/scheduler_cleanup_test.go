@@ -137,6 +137,9 @@ func assertCleanupCompletion(t *testing.T, c *SchedulerController, goal serving.
 	if drained, err := c.runtime.DetachInstance(old.ID); err != nil || !drained {
 		t.Fatalf("old source drain: %v %v", drained, err)
 	}
+	if err := c.runtime.ConfirmInstanceStopped(old.ID); err != nil {
+		t.Fatal(err)
+	}
 	if err := c.runtime.RetirePod(old.PodUID); err != nil {
 		t.Fatal(err)
 	}

@@ -157,20 +157,22 @@ type SchedulerInstance struct {
 	Profile   *Profile `json:"profile,omitempty"`
 	ProfileID string   `json:"profileID,omitempty"`
 	// WorkloadUID is the one Workload the instance serves; empty when unrouted.
-	WorkloadUID    string              `json:"workloadUID"`
-	Allocation     SchedulerAllocation `json:"allocation"`
-	Ready          bool                `json:"ready"`
-	Stopped        bool                `json:"stopped"`
-	Routable       map[string]bool     `json:"routable"`
-	Reasons        []string            `json:"reasons,omitempty"`
-	Capacity       int                 `json:"capacity"`
-	Weight         int32               `json:"weight"`
-	MaxBatch       int                 `json:"maxBatch"`
-	FixedBatchSize int                 `json:"fixedBatchSize,omitempty"` // Strict baseline B; autonomous control never moves it.
-	MaxWait        time.Duration       `json:"maxWaitNanos"`
-	ObservedAt     time.Time           `json:"observedAt"`
-	IdleMeter      string              `json:"idleMeter"`
-	IdleScope      string              `json:"idleScope"`
+	WorkloadUID string              `json:"workloadUID"`
+	Allocation  SchedulerAllocation `json:"allocation"`
+	Ready       bool                `json:"ready"`
+	Stopped     bool                `json:"stopped"`
+	// Terminated retains exact physical termination without erasing occupancy.
+	Terminated     bool            `json:"terminated,omitempty"`
+	Routable       map[string]bool `json:"routable"`
+	Reasons        []string        `json:"reasons,omitempty"`
+	Capacity       int             `json:"capacity"`
+	Weight         int32           `json:"weight"`
+	MaxBatch       int             `json:"maxBatch"`
+	FixedBatchSize int             `json:"fixedBatchSize,omitempty"` // Strict baseline B; autonomous control never moves it.
+	MaxWait        time.Duration   `json:"maxWaitNanos"`
+	ObservedAt     time.Time       `json:"observedAt"`
+	IdleMeter      string          `json:"idleMeter"`
+	IdleScope      string          `json:"idleScope"`
 	// UnroutedSince is when the instance last lost every positive route weight
 	// (nil while routed); after one observation window unrouted it is removed.
 	UnroutedSince *time.Time `json:"unroutedSince,omitempty"`

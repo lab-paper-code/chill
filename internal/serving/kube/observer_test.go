@@ -471,7 +471,7 @@ func TestObserverFilteredRefreshPreservesExactRetainedTermination(t *testing.T) 
 		for _, proof := range []string{"exact", "replacement Pod", "other container"} {
 			t.Run(fmt.Sprintf("watching=%v/%s", watching, proof), func(t *testing.T) {
 				pod, _, _, _ := observerSourceFixture()
-				source := &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: pod.Status.ContainerStatuses[0].ContainerID}
+				source := &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: pod.Status.ContainerStatuses[0].ContainerID, podState: pod.DeepCopy()}
 				pod.Labels = nil
 				pod.Status.Phase = corev1.PodSucceeded
 				status := &pod.Status.ContainerStatuses[0]
@@ -504,8 +504,52 @@ func TestObserverFilteredRefreshPreservesExactRetainedTermination(t *testing.T) 
 				if source.stopped != (proof == "exact") {
 					t.Fatalf("retained physical executor termination = %v with %s", source.stopped, proof)
 				}
+				confirmed := false
+				for _, state := range observer.runtime.Instances() {
+					if state.PodUID == string(source.uid) {
+						confirmed = state.Terminated
+						if state.Terminated && (state.Ready || !state.Stopped) {
+							t.Fatal("terminal physical ledger remained executable")
+						}
+					}
+				}
+				if confirmed != (proof == "exact") {
+					t.Fatalf("ledger terminal proof = %v with %s", confirmed, proof)
+				}
 			})
 		}
+	}
+}
+
+func TestObserverTerminalFactIsPerContainerAC45(t *testing.T) {
+	pod, _, _, _ := observerSourceFixture()
+	current := pod.Status.ContainerStatuses[0].ContainerID
+	previous := "containerd://previous"
+	pod.Status.Phase = corev1.PodFailed
+	pod.Status.ContainerStatuses[0].State = corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ContainerID: current}}
+	observer := newTestObserver(t)
+	source := &nativeSource{uid: pod.UID, containerID: current, podState: pod,
+		terminated: map[string]bool{previous: false},
+		previous: map[string]serving.ReadyInstance{
+			previous: {State: serving.InstanceState{ID: physicalID(pod.UID, previous)}},
+		}}
+	observer.sources[string(pod.UID)] = source
+	observer.observeTermination(pod)
+	if source.stopped {
+		t.Fatal("one container's termination proved the entire Pod stopped")
+	}
+	if err := observer.publishLedger(nil); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, state := range observer.runtime.Instances() {
+		seen[state.ID] = state.Terminated
+		if state.Terminated && (state.Ready || !state.Stopped) {
+			t.Fatal("terminated container remained executable")
+		}
+	}
+	if !seen[physicalID(pod.UID, current)] || seen[physicalID(pod.UID, previous)] {
+		t.Fatalf("terminal proof crossed physical identities: %v", seen)
 	}
 }
 
