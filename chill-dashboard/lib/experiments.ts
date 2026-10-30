@@ -120,3 +120,43 @@ export function evidenceError(error:{status:number;data:unknown}):string {
   const code=object(error.data).code
   return error.status===504||code==="RequestTimeout"||code==="DashboardRelayTimeout"?"조회 시간 초과":"근거 조회 실패"
 }
+
+// These campaign prefixes are the E5 protocol's published policy labels, not a
+// claim that the two runs have identical frozen conditions.
+export function campaignPairs(run:Experiment) {
+  return run.stages.filter(stage=>stage.id.startsWith("full-E5-")).flatMap(chill=>{
+    const suffix=chill.id.slice(5),controls=run.stages.filter(stage=>stage.id===`static-${suffix}`)
+    return controls.length===1&&run.stages.filter(stage=>stage.id===chill.id).length===1?[{key:suffix,chill,control:controls[0]}]:[]
+  })
+}
+export function campaignGroups(runs:Experiment[]) {
+  return [...runs].sort((a,b)=>Date.parse(b.from)-Date.parse(a.from)).map(run=>{
+    const pairs=campaignPairs(run),e5=run.stages.some(stage=>/^(full|static)-E5-/.test(stage.id))
+    return {run,pairs,title:e5?"E5 캠페인":run.id,
+      question:pairs.length?"CHILL은 정적 구성과 비교해 성공률·지연·에너지가 어떻게 다른가?":"부하·운영 구성별 성공률·지연·에너지는 어떠한가?",
+    }
+  })
+}
+export function experimentSelection(search:string,values:Record<string,string>):URLSearchParams {
+  const next=new URLSearchParams(search)
+  for(const [key,value] of Object.entries(values)) {
+    if(value)next.set(key,value);else next.delete(key)
+    if((key==="a"||key==="b")&&!Object.hasOwn(values,`${key}s`))next.delete(`${key}s`)
+  }
+  for(const field of ["at","decision","record","evidence","evidenceCursor"])next.delete(field)
+  return next
+}
+export function commitExperimentSelection(location:Pick<Location,"search">,history:Pick<History,"replaceState">,values:Record<string,string>) {
+  history.replaceState(null,"",`/experiments?${experimentSelection(location.search,values)}`)
+}
+export function stageChartData(run:Experiment) {
+  return [...run.stages].sort((a,b)=>Date.parse(a.from)-Date.parse(b.from)).map((stage,index)=>{
+    const rows=experimentRows(stage),services:Record<string,{success:number|null;p95:number|null}>={}
+    for(const row of rows) {
+      const unique=rows.filter(other=>other.name===row.name).length===1
+      const success=unique?finite(resultMetric(row,"success").value):null
+      services[row.name]={success:success===null?null:success*100,p95:unique?finite(resultMetric(row,"p95").value):null}
+    }
+    return {id:stage.id,step:index+1,rate:stageRate(stage),energy:finite(stage.kpis.wholePoolJoules),services}
+  })
+}

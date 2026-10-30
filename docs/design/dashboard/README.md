@@ -371,23 +371,18 @@ frontend-design의 두 단계 검토 결과, 동일 카드·그라데이션·장
 ```
 
 ```text
-기록 > 실험
-A 실행[ ] 단계[ ]       B 실행[ ] 단계[ ]        비교 범위·제한
+기록 > 실험 목록: 이름 / 날짜 / 연구 질문 / 비교 정책 / 첫 대응 단계의 관측 차이
+캠페인 선택 → CHILL(full-E5-*) ↔ 정적 비교군(static-E5-*) 자동 대응 단계
 결론: 서비스별 기한 내 성공률 / 성공 응답 p95 / 공유 POOL J와 차이
-동명 기록 설명형 비교 (UID/정의 같음·다름·미제공을 감추지 않음)
-단계 [1 구간] [2 구간 선택] [3 구간] ...  ← 길이/순서는 게시 시간 기준
-부하 α: 제공값 또는 미제공 / 관측 offered·평균 req/s (α와 구분)
-단계별 결과: 성공률 / p95 / 전체·활성 POOL J / 게시 상태
-서비스명 | 지표              | A           | B           | Δ A-B
-         | 기한 내 성공률(%)  | 분자/분모   | 분자/분모   | %p
-         | 성공 응답 p95(ms) | 표본 수     | 표본 수     | ms
-공유 POOL 전체/활성 에너지(J): 별도 행, 서비스 행 합산 금지
-조건/규칙 차이·출처·결손 / 원본 펼침 / 선택 단계의 판단 근거
+조건 검토: 측정 규칙·구간 길이 차이와 미기록 항목
+단계: 실제 시간 비례 구간 막대 + 번호·전체 단계명·기간·평균 req/s 목록
+같은 단계 번호 축: 평균 req/s / 공유 에너지 막대 / 서비스별 성공률·p95 점
+수치·분모·출처 자세히 [기본 접힘] / 당시 판단 근거 [기본 접힘]
 ```
 
-상단 비교 선택은 실행 목록 아래로 밀리지 않는다. 단계 클릭은 URL·선택 결과와 결과 제목 focus를 즉시 갱신한다.
-모바일 실험 표는 서비스별 ‘지표/A/B/차이’ 작은 표로 나눠 열을 숨기지 않는다.
-숫자 KPI 카드 3개를 의미 없이 반복하지 않고 서비스 비교 표와 에너지 한 줄이 결론을 담당한다.
+목록에서 한 번 선택하면 대응 단계와 요약이 열린다. 직접 A/B 비교는 보조 펼침이다.
+단계 클릭은 URL·선택 결과와 요약 제목 focus를 즉시 갱신하며, 목록으로 이동은 상단에 유지한다.
+원시 필드·식별 정보·세부 계획은 기본 접힘이고 모바일에서도 전체 단계명과 번호를 읽는다.
 
 ### 8.3 커버리지 데이터와 셀 판정
 
@@ -532,6 +527,16 @@ namespace + controller=true + apiVersion=edge.dacs.io/v1alpha1 + kind=BatchEnerg
 
 ### 8.5 측정 상세·실패·품질
 
+**2차 설문 R2 결정(2026-10-30).** 기존 청록색/서체 토큰을 유지하며 전력모드 칩만 강조한다.
+상세 상단에 모델·장치 종류·Node·전력모드·실행 경로·배치·CPU·데이터셋을 항상 노출한다.
+실패는 정확 owner로 연결된 최신 실패 회차의 로그 발췌·종료 코드·다음 행동을 최상단 alert로 요약하며,
+owner 기록이 없는 과거 요청은 이름으로 추정하지 않고 요청 자체의 사유만 표시한다.
+`runtimeTermination`/Job/실제 실행의 JSON 문자열은 객체로 해석하고 사실 목록으로 표시한다.
+UI/UX Pro Max `error message actionable`의 Error Messages 규칙을 채택하여 오류를 `role=alert`로 알린다.
+요청 목록은 모델/장치·Node/경로·전력모드/배치·상태·생성일 5열로 묶고 개별 축 정렬은 별도 선택으로 유지한다.
+상태는 완료/측정 중/실패로 짧게 구분하고 완료의 근거 주의는 목록에서 한 번만 안내한다.
+측정 상세·회차·비용 화면에서도 측정 서브 내비를 유지하며 삭제 진입부터 위험색 버튼과 영구 삭제 설명을 쓴다.
+
 | 표시할 값 | 실제 제공 필드 / 정직한 대안 |
 |---|---|
 | 배치별 증분 에너지 | BEO `result.detail.incrementalWorkByBatch[].{batch,incrementalWorkJoulesPerItem}`, bestBatch, measuredBatchSizes. 평균만 제공 |
@@ -584,7 +589,8 @@ UI `lib/scheduler.ts:nanosToMilliseconds`의 음수 remainder 문자열은 잘�
 덮어 표시하되 원래 phase와 원값을 보존한다. 음수를 몰래 0으로 바꾸지 않는다.
 누락은 결과 없음, 정상적인 0은 0으로 남긴다. throughput은 유한한 0 이상 문자열인지 표시용 확인만 하며
 d/X를 브라우저에서 재계산하지 않는다. 정상 여부가 불명확한 문자열을 0으로 대체하지 않는다.
-운영 consumer의 음수 clamp와 raw 측정은 다른 계약이며 UI는 raw 값을 표시한다.
+운영 consumer의 음수 clamp와 raw 측정은 다른 계약이다. 음수 d는 숫자 대신 품질 경고와 이유를
+표시하고 원값은 원본 자료/내보내기에 보존한다.
 
 **동작 비용.** optional step operationID/durationNanos/wallJoules/reason을 표시한다.
 durationNanos는 lossless JSON 정수로 읽어 실제 ms와 원래 ns를 함께 보존한다. 실제 0 J는 0이며
@@ -631,8 +637,10 @@ B=0/값 없음/지표 의미가 다르면 상대 차이는 계산 불가다. 원
 energyPopulation/energyCoverage/missingReasons.energy를 사용한다.
 오차 bound는 **관측 공백 오차 상한**이지 95% CI가 아니다. 공유 POOL J는 서비스별로 나누거나 더하지 않는다.
 실행 구간 길이/부하가 다르면 총 J가 낮다는 것만으로 효율 개선이라고 하지 않는다.
-CHILL/비교군이라는 명칭은 게시된 frozen 조건으로 확인되는 경우만 부제에 사용한다.
-`full-`/`static-`라는 ID 접두사만으로 정적군/제어 켜짐을 확정하지 않는다.
+2차 설문의 명시적 E5 명명 계약을 적용한다: `full-E5-*`는 CHILL, `static-E5-*`는 정적 비교군.
+같은 게시 기록 안에서 접두사를 제외한 전체 suffix가 정확히 일치하고 양쪽이 유일할 때만
+자동 짝짓는다. 반복 suffix 불일치·중복·한쪽 부재는 임의 대응하지 않는다. 다른 접두사는 정책 미기록이다.
+이 정책 라벨은 frozen 조건의 동일성이나 통제 성공을 인증하지 않는다.
 
 단계 레인은 실제 `[from,to)` 순서/폭으로 그리고 클릭하면 해당 단계 KPI와 근거 범위를 함께 바꾼다.
 두 publisher의 optional workloadUID/definitionID/identitySource와 substages를 타임라인 펼침 및
@@ -655,6 +663,14 @@ Breadcrumb는 `측정 > 커버리지/요청 목록 > 측정 > 회차`, `기록 >
 유효한 기본 breadcrumb를 쓴다. `/scheduler/profiles`는 기존 경로를 유지하되 sidebar의 측정으로 소속을 맞춘다.
 
 | 소유자 | 파일 소유권과 공유 계약 |
+
+2차 개선은 막대 내부의 잘린 라벨을 제거하고 전체 라벨 목록을 시간 비례 막대와 분리했다.
+단계 번호 축의 평균 요청률·에너지 및 서비스별 성공률/p95를 같은 순서로 정렬한다.
+추세를 초별 곡선으로 만들지 않고 점과 막대로 표시하며, 접근 가능한 수치 표를 함께 둔다.
+UI UX Pro Max `small multiples line chart` 결과의 직접 라벨·수치 표 원칙을 채택하되,
+게시 데이터가 단계 집계이므로 연속선 대신 점을 사용한다. 기존 색·서체·컴포넌트를 재사용한다.
+선택 URL은 Next의 native history 연동으로 동기 갱신하며 각 동작이 최신 location.search를
+읽는다. A/B 연속 선택은 이전 렌더의 searchParams 스냅샷으로 서로 덮어쓰지 않는다.
 |---|---|
 | S1 | 새 `features/measurement-coverage.tsx`(coverage와 `MeasurementPlansPage`), `features/measurement-runs.tsx`(`MeasurementRunsPage/MeasurementGroupPage`), `lib/measurement-coverage.ts`+test. 기존 request/scheduler-profiles, **read-types.ts와 catch-all page.tsx 독점** |
 | S2 | 기존 measurement-plans(상세만)/read-pages(Run 상세·PreflightAnswer)/measurement-projections, measurements.ts+test, **scheduler.ts의 nanosToMilliseconds와 scheduler.test.ts**, Screen/sidebar/globals.css 독점 |

@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input"
 import type { ExecutionPath, ModelList, ModelResource, WorkloadView } from "@/lib/domain"
 import type { InventoryClass, InventoryNode, MeasurementMutation, MeasurementPlan, MeasurementPlanList, MeasurementPlanSpec, MeasurementPreflight } from "@/lib/read-types"
 import { resolveMeasurementPrefill, serverCompatibility, staticCompatibility, planVariant, type MeasurementPrefill } from "@/lib/measurement-coverage"
-import { useCoverageInventory, useModelCompatibility } from "@/features/measurement-coverage"
+import { MeasurementNavigation, useCoverageInventory, useModelCompatibility } from "@/features/measurement-coverage"
 
 const back: [string, string] = ["/measurements", "측정"]
 const steps = ["workload", "device", "run", "size", "advanced", "name", "review"] as const
@@ -198,6 +198,7 @@ export function MeasurementRequestPage() {
   const workloads = useChillQuery<WorkloadView[]>("v1/workloads")
   const inventory = useCoverageInventory()
   if (!plans.data || !models.data || !workloads.data || !inventory.data) return <Screen back={back} title="측정 요청" lede="고를 수 있는 서비스와 장비를 확인하고 있어요.">
+    <MeasurementNavigation namespace={config.namespace}/>
     <QueryGate query={plans}><QueryGate query={models}><QueryGate query={workloads}><QueryGate query={inventory}>{null}</QueryGate></QueryGate></QueryGate></QueryGate>
   </Screen>
   const prefill = resolveMeasurementPrefill(new URLSearchParams(params), config.namespace, inventory.data)
@@ -272,6 +273,7 @@ function Funnel({ namespace, from, context, prefill, more, refetchPlans, checkin
     return <Screen back={back} status={<StatusBadge tone="warn">결과 미확인</StatusBadge>} title="요청 결과를 확인하지 못했어요"
       lede={check === "failed" ? "목록을 불러오지 못했어요. 잠시 뒤 다시 확인해 주세요." : found ? "요청이 접수돼 있어요. 아래에서 열어 보세요." : check === "done" ? "아직 목록에 없어요. 잠시 뒤 다시 확인해 주세요." : "접수됐을 수도 있어요. 자동으로 다시 보내지 않으니, 먼저 접수됐는지 확인해 주세요."}
       action={<Button className="w-full" disabled={checking} onClick={() => void refetchPlans().then(result => setCheck(result.error ? "failed" : "done"))}>{checking ? "확인하고 있어요" : "요청이 접수됐는지 확인하기"}</Button>}>
+      <MeasurementNavigation namespace={namespace}/>
       <Rows>
         {found && <Row href={detailHref(found.metadata.namespace, found.metadata.name, found.metadata.uid)} label="접수된 측정 보기" value={found.metadata.name} />}
         {check === "done" && !found && <Row label="작성한 내용으로 돌아가기" hint="조건을 다시 확인한 뒤 직접 요청할 수 있어요" onClick={() => { setUnknown(false); setCheck(""); go(steps.indexOf("review")) }} />}
@@ -311,8 +313,9 @@ function Funnel({ namespace, from, context, prefill, more, refetchPlans, checkin
 
   return <Screen back={[prefill.returnTo,"상위 측정"]} breadcrumbs={[{href:prefill.returnTo,label:"측정"},{label:"새 요청"}]} status={<span className="flex items-center gap-2 text-sm text-muted-foreground">{index + 1} / {steps.length}{badge}</span>} title={titles[step]} lede={ledes[step]}
     action={<div className="flex gap-3">{index > 0 && <Button variant="outline" className="flex-1" disabled={send.isPending} onClick={() => go(index - 1)}>이전</Button>}{primary}</div>}>
-    {prefill.active&&<p className="text-sm text-muted-foreground">조합 초깃값만 채웠어요. 서비스·데이터셋·CPU·반복·protocol은 직접 선택해 주세요. 아직 제출하거나 사전 검사하지 않았어요.</p>}
-    {supportVerdict&&<section className="space-y-1 rounded-lg border p-3 text-sm" aria-label="선택 조합 정적 호환성"><p>{support.isFetching?"정적 실행 지원 확인 중":supportVerdict.reason}</p><p className="text-xs text-muted-foreground">선택한 모델·경로·Node의 현재 선언이에요. 실제 실행·측정 완료·Ready·전력모드 적격성·admission은 별도이며 최종 사전 검사를 대신하지 않아요.</p></section>}
+    <MeasurementNavigation namespace={namespace}/>
+    {prefill.active&&<p className="text-sm text-muted-foreground">모델과 장치 조건을 채웠어요. 서비스·데이터셋·CPU·반복·측정 방식도 확인하세요.</p>}
+    {supportVerdict&&<section className="space-y-1 rounded-lg border p-3 text-sm" aria-label="선택 조합 정적 호환성"><p>{support.isFetching?"실행 지원 확인 중":supportVerdict.reason}</p><p className="text-xs text-muted-foreground">장비 선언 기준이며, 마지막 단계에서 실제 요청 조건을 검사해요.</p></section>}
     {blocked&&<div role="alert" className="notice"><h2>미리 채운 조건을 확인해 주세요</h2>{prefill.errors.map(issue=><p key={issue}>{issue}</p>)}<SourceJSON value={prefill.values} title="전달된 원값"/><Button variant="outline" onClick={()=>router.replace(`/measurements/new?${new URLSearchParams({returnTo:prefill.returnTo})}`)}>초깃값 지우고 직접 선택</Button></div>}
     {step === "workload" && (context.workloads.length
       ? <>

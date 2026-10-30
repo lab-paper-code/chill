@@ -6,8 +6,8 @@ import { useSearchParams } from "next/navigation"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { ApiError, useChillMutation, useChillQuery, useSession } from "@/lib/client"
 import type { CampaignResult, MeasurementMutation, MeasurementPlanList, MeasurementPlanSpec, Passport, ProfilesView } from "@/lib/read-types"
-import { safeMeasurementReturn, significant } from "@/lib/measurements"
-import { batchStatisticsText, planVariant, profileForPlan, relatedPlans, statisticsMissing } from "@/lib/measurement-coverage"
+import { runFailure, safeMeasurementReturn, significant } from "@/lib/measurements"
+import { batchStatisticsText, ownedRuns, planVariant, profileForPlan, relatedPlans } from "@/lib/measurement-coverage"
 import { DataTable } from "@/components/data-table"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/read-region"
@@ -15,7 +15,7 @@ import { Facts, Figure, Row, RowDialog, Rows, Screen } from "@/components/screen
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { explain } from "@/lib/labels"
-import { OwnedRunLinks, Statistics, useAllMeasurementRuns } from "@/features/measurement-coverage"
+import { MeasurementNavigation, OwnedRunLinks, Statistics, useAllMeasurementRuns } from "@/features/measurement-coverage"
 
 const plansPath = (namespace:string) => `v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`
 export const planHref = (namespace:string, name:string, uid?:string) => `/measurements/batch-energy-optimizations/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${uid ? `?uid=${encodeURIComponent(uid)}` : ""}`
@@ -24,10 +24,7 @@ const plannedTrials = (spec:MeasurementPlanSpec) => spec.batchSizes?.length ? (s
 // A failed condition's reason as [sentence, next action]; the raw reason stays in 원본.
 function planCause(plan:{conditions?:{type:string;status:string;reason?:string}[]}) {
   const failed = plan.conditions?.find(condition => condition.status === "False")
-  return failed?.reason ? explain(failed.reason) : undefined
-}
-function condition(spec:MeasurementPlanSpec) {
-  return `${spec.state.targetNode} · ${spec.state.candidate.executionPath}${spec.cpuQuota ? ` · CPU ${spec.cpuQuota}개` : ""}`
+  return failed?.reason==="RetryLimitExhausted"?["재시도 한도에 도달했어요","연결된 실패 회차의 종료 기록을 확인하세요. 연결 기록이 없으면 원본 자료의 실패 사유를 확인하세요."]:failed?.reason ? explain(failed.reason) : undefined
 }
 
 
@@ -49,6 +46,8 @@ export function MeasurementPlanPage({namespace, name}:{namespace:string;name:str
   const related=original?relatedPlans(original,plans.data?.items??[]).filter(item=>!item.sameRequestedCondition):[]
   const other = !!campaign && !!expectedUID && campaign.uid !== expectedUID
   const runs=useAllMeasurementRuns(namespace,!!campaign&&!other&&campaign.phase==="Failed")
+  const failedRun=campaign?ownedRuns(runs.data?.runs??[],{namespace,uid:campaign.uid}).filter(run=>run.status.conditions?.some(c=>c.type==="ExecutionComplete"&&c.observedGeneration===run.generation&&c.status==="False")).sort((a,b)=>b.creationTimestamp.localeCompare(a.creationTimestamp))[0]:undefined
+  const failure=failedRun?runFailure(failedRun):undefined
   const back:[string,string] = [safeMeasurementReturn(params.get("returnTo")), "측정으로 돌아가기"]
   if (deleted) return <Screen back={back} status={<StatusBadge tone="ok">삭제됨</StatusBadge>} title="측정을 지웠어요"
     lede={`${name} · 결과와 근거 파일 ${deleted.deletedEvidence?.length ?? 0}개를 함께 지웠어요.`} action={<Button asChild><Link href="/measurements">측정 목록으로</Link></Button>}>
@@ -67,23 +66,25 @@ export function MeasurementPlanPage({namespace, name}:{namespace:string;name:str
     blocked={phase === "Measuring" ? "진행 중인 측정은 지울 수 없어요. 끝난 뒤에 지워 주세요." : undefined} onDeleted={setDeleted}/></Rows>
   const scale = Math.max(...(detail?.incrementalWorkByBatch ?? []).map(item => item.incrementalWorkJoulesPerItem), 0)
   return <Screen width="data" actionPlacement="header" breadcrumbs={[{href:"/measurements",label:"측정"},{href:back[0],label:"상위 목록"},{label:name}]} back={back} status={badge} title={title}
-    lede={spec && !other ? `${spec.state.candidate.modelSpec} · ${condition(spec)}` : name}
-    action={campaign && !other && phase === "Failed" ? <div className="flex flex-wrap gap-2">{successor&&<Button asChild><Link href={planHref(namespace,successor.metadata.name,successor.metadata.uid)}>후속 측정 결과 보기</Link></Button>}<Button variant={successor?"outline":"default"} asChild><Link href={`/measurements/new?${new URLSearchParams({from:name,fromNamespace:namespace,fromUID:campaign.uid})}`}>조건을 복사해 새 이름으로 요청</Link></Button></div> : undefined}>
+    lede={name}
+    action={campaign && !other && phase === "Failed" ? <div className="flex flex-wrap gap-2">{successor&&<Button asChild><Link href={planHref(namespace,successor.metadata.name,successor.metadata.uid)}>후속 측정 결과 보기</Link></Button>}<Button variant="outline" asChild><Link href={`/measurements/new?${new URLSearchParams({from:name,fromNamespace:namespace,fromUID:campaign.uid})}`}>조건을 복사해 새 이름으로 요청</Link></Button></div> : undefined}>
+    <MeasurementNavigation namespace={namespace}/>
     <QueryGate query={query}>{campaign && spec && !other && <>
       {phase === "Measuring" && <Figure label="지금까지 잰 회차" value={campaign.completedTrials ?? 0} unit={planned ? `/ 최대 ${planned}번` : "번"} note="회차마다 끝나면 자동으로 갱신돼요."/>}
-      {phase === "Failed" && <div className="notice"><p>{campaign.conditions?.some(c=>c.reason==="RetryLimitExhausted")?"재시도 한도에 도달했어요 · 상세 원인 미제공":cause?.[0]??"측정을 끝내지 못했어요."} 완료 회차 {campaign.completedTrials ?? 0}개.</p>{campaign.conditions?.map((c,i)=><p key={i}>{c.type}: {c.status} · {c.reason} · {c.message}</p>)}{successor?<p>재측정됨 · 요청 조건이 같은 더 늦은 측정의 catalog 결과가 있어요. 자동 대체를 뜻하지 않아요.</p>:<p>조건을 복사해 새 이름으로 요청할 수 있어요. 기존 요청을 수정하거나 즉시 제출하지 않아요.</p>}</div>}
+      {phase === "Failed" && <section role="alert" className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 space-y-2"><h2 className="font-semibold text-destructive">{failure?.title??cause?.[0]??"측정을 끝내지 못했어요"}</h2><p className="break-words text-sm">{failure?.excerpt??(runs.isPending?"실패 회차의 종료 기록을 확인하고 있어요.":campaign.conditions?.find(c=>c.status==="False")?.message??"상세 원인이 제공되지 않았어요.")}{failure?.exitCode!==undefined?` (종료 코드 ${String(failure.exitCode)})`:""}</p><p className="text-sm">{failure?.next??cause?.[1]??"아래 실패 회차에서 종료 기록을 확인하세요."}</p>{failedRun&&<Link className="text-sm underline" href={`/measurements/profiling-runs/${encodeURIComponent(namespace)}/${encodeURIComponent(failedRun.name)}?${new URLSearchParams({uid:failedRun.uid,returnTo:planHref(namespace,name,campaign.uid)})}`}>실패 회차와 전체 로그 보기</Link>}{successor&&<p className="text-sm">같은 요청 조건의 후속 측정 결과가 있어요.</p>}</section>}
+      <dl aria-label="측정 조건 요약" className="flex flex-wrap gap-2">{[["모델",spec.state.candidate.modelSpec],["장치 종류",spec.state.candidate.deviceClass],["Node",spec.state.targetNode],["전력모드",spec.state.candidate.powerMode],["실행 경로",spec.state.candidate.executionPath],["배치",spec.batchSizes?.join(", ")??"자동"],["CPU",spec.cpuQuota??"제한 없음"],["데이터셋",spec.activeProtocol.dataset??"미제공"]].map(([label,value])=><div key={label} className={`min-w-0 max-w-full rounded-md border px-3 py-2 text-sm ${label==="전력모드"?"border-primary/40 bg-[var(--info-soft)]":""}`}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="break-words font-medium">{value}</dd></div>)}</dl>
       {phase==="Failed"&&related.length>0&&<Rows label="관련 후보 · 요청 조건이 달라 후속 유효 결과로 단정하지 않아요">{related.map(({plan})=><Row key={plan.metadata.uid} href={planHref(namespace,plan.metadata.name,plan.metadata.uid)} label={plan.metadata.name} hint={`${plan.status?.phase??"상태 미제공"} · CPU ${plan.spec.cpuQuota??"미제공"} · dataset ${plan.spec.activeProtocol.dataset??"미제공"} · 측정 ${plan.spec.activeProtocol.durationSeconds??"미제공"} s`}/>)}</Rows>}
-      {phase === "Complete" && detail?.minimumIncrementalWorkJoulesPerItem !== undefined && <Figure label="요청 1건에 더 드는 에너지 평균" value={significant(detail.minimumIncrementalWorkJoulesPerItem)} unit="J/건" note={data?.statistics?.batches.find(row=>row.batch===detail.bestBatch)?batchStatisticsText(data.statistics.batches.find(row=>row.batch===detail.bestBatch)!).ci:statisticsMissing(data?.statisticsReason)}/>}
+      {phase === "Complete" && detail?.minimumIncrementalWorkJoulesPerItem !== undefined && <Figure label="요청 1건에 더 드는 에너지 평균" value={significant(detail.minimumIncrementalWorkJoulesPerItem)} unit="J/건" note={data?.statistics?.batches.find(row=>row.batch===detail.bestBatch)?batchStatisticsText(data.statistics.batches.find(row=>row.batch===detail.bestBatch)!).ci:"에너지 신뢰구간(CI) 미제공"}/>}
       {phase === "Complete" && !!detail?.incrementalWorkByBatch?.length && <section className="rows-group" aria-label="크기별 에너지"><h2 className="rows-label">크기별 요청 1건에 더 드는 에너지</h2>
         <dl className="energy-rows">{detail.incrementalWorkByBatch.map(item => <div key={item.batch} className="energy-row"><dt>한 번에 {item.batch}건</dt>
           <div className="energy-track" aria-hidden="true"><div className="energy-fill" data-hot={item.batch !== detail.bestBatch} style={{width:`${scale ? Math.max(item.incrementalWorkJoulesPerItem / scale * 100, 2) : 0}%`}}/></div>
           <dd className="tabular-nums">{significant(item.incrementalWorkJoulesPerItem)} J/건</dd></div>)}</dl>
-        <p className="px-1 text-sm text-muted-foreground">유휴 상태 전력을 뺀, 요청 처리로 늘어난 에너지예요. 지금 운영 중 소비와는 달라요.</p></section>}
-      {data&&<Statistics data={data}/>}
+        <p className="px-1 text-sm text-muted-foreground">유휴 전력을 제외한 요청 처리의 증분 에너지예요.</p></section>}
+      {data?.statistics&&phase==="Complete"&&<Statistics data={data}/>}
       {!!result?.completedTrials?.length&&!data?.statistics&&<ActiveLatency trials={result.completedTrials}/>}
-      {!!detail&&<Facts label="반복과 범위" items={[["반복",`${detail.trialsPerBatch??"미제공"}회/배치 · 지연 호출 표본 수 N과 달라요`],["측정한 배치",detail.incrementalWorkByBatch?.map(item=>item.batch).join(", ")??"미제공"],["에너지 오차",data?.statistics?"서버의 독립 trial CI · 음수 하한/0폭 유지 · 유휴 W CI가 아니에요":statisticsMissing(data?.statisticsReason)]]}/>}
-      {phase==="Failed"&&<section className="space-y-3"><h2 className="font-semibold">소유 Run · controller UID 정확 일치</h2><QueryGate query={runs}>{runs.data&&!runs.error?<OwnedRunLinks runs={runs.data.runs} parent={{namespace,uid:campaign.uid}} returnTo={planHref(namespace,name,campaign.uid)}/>:<p>Run 전 범위 조회 전 · 소유 회차 없음으로 단정하지 않아요.</p>}</QueryGate></section>}
-      <Facts label="측정 정책·검증 범위" items={[["active 구간",`${spec.activeProtocol.durationSeconds??"미제공"} s · 예열 ${spec.activeProtocol.warmupIterations??"미제공"}회`],["idle 구간",`${spec.idleProtocol.durationSeconds??"미제공"} s`],["데이터셋",spec.activeProtocol.dataset??"미제공"],["검증 상태",campaign.conditions?.map(c=>`${c.type}=${c.status} (${c.reason??"사유 미제공"})`).join(" · ")||"미제공"],["해석 범위","이 요청의 측정 조건에 한정 · 논문 적격 인증 아님"]]}/>
+      {!!detail&&<Facts label="반복과 범위" items={[["반복",`${detail.trialsPerBatch??"미제공"}회/배치`],["측정한 배치",detail.incrementalWorkByBatch?.map(item=>item.batch).join(", ")??"미제공"]]}/>}
+      {phase==="Failed"&&<section className="space-y-3"><h2 className="font-semibold">이 요청이 만든 회차</h2><QueryGate query={runs}>{runs.data&&!runs.error?<OwnedRunLinks runs={runs.data.runs} parent={{namespace,uid:campaign.uid}} returnTo={planHref(namespace,name,campaign.uid)}/>:<p>회차 기록을 확인하고 있어요.</p>}</QueryGate></section>}
+      <Facts label="측정 방식" items={[["부하 측정",`${spec.activeProtocol.durationSeconds??"미제공"}초 (예열 ${spec.activeProtocol.warmupIterations??"미제공"}회)`],["유휴 기준",`${spec.idleProtocol.durationSeconds??"미제공"}초`]]}/>
       <Rows label="자세히">
         <RowDialog label="측정 조건" title="측정 조건" value={`${spec.batchSizes?.length ? spec.batchSizes.join("·") + "건" : "자동"} · ${spec.trialsPerBatch}번씩`}>
           <Facts items={[["모델", spec.state.candidate.modelSpec], ["장비", `${spec.state.targetNode} · ${spec.state.candidate.deviceClass}`], ["실행 방식", spec.state.candidate.executionPath], ["전력 모드", spec.state.candidate.powerMode],
@@ -98,6 +99,7 @@ export function MeasurementPlanPage({namespace, name}:{namespace:string;name:str
         {phase !== "Complete" && <Row href={`/measurements/runs?${new URLSearchParams({namespace,q:name,parent:name,parentUID:campaign.uid,returnTo:planHref(namespace,name,campaign.uid)})}`} label="지금까지의 회차" hint="부모 측정의 정확한 저장 참조와 연결된 회차"/>}
         <RowDialog label="원본 자료" title="측정 원본 자료"><SourceExport value={{namespace, name, expectedUID, source:data}} filename={`chill-measurement-${name}.json`}/><SourceJSON inline value={data}/></RowDialog>
       </Rows>
+      <details className="text-sm text-muted-foreground"><summary className="cursor-pointer py-2">해석 주의</summary><p>결과는 위 측정 조건의 범위에 한정돼요. 논문에 사용하기 전 반복 수, 신뢰구간, 지연 표본과 회차 근거를 함께 검토하세요.</p></details>
       {manage}
     </>}</QueryGate>
   </Screen>
@@ -117,9 +119,9 @@ function ActiveLatency({trials}:{trials:NonNullable<ResultBody["completedTrials"
           const index=next++,trial=active[index]
           try {
             const response=await fetch(`/api/chill/v1/namespaces/${encodeURIComponent(trial.run.namespace)}/profiling-runs/${encodeURIComponent(trial.run.name)}/evidence-passport`,{headers:{Authorization:`Bearer ${token}`},signal:abort.signal})
-            if(!response.ok)throw new Error(`HTTP ${response.status}`)
+            if(!response.ok)throw new Error(response.status===404?"보관된 지연 근거 없음":"지연 근거 조회 실패")
             const passport=await response.json() as Passport
-            if(passport.run.uid!==trial.run.uid||passport.run.namespace!==trial.run.namespace||passport.run.name!==trial.run.name)throw new Error("회차 identity 불일치")
+            if(passport.run.uid!==trial.run.uid||passport.run.namespace!==trial.run.namespace||passport.run.name!==trial.run.name)throw new Error("다른 회차의 근거")
             rows[index]={batch:trial.measurement.batch,run:trial.run.name,p95:passport.measurement.runtime.latencyMilliseconds.p95,count:passport.measurement.runtime.latencyMilliseconds.count}
           } catch(error) {if(abort.signal.aborted)throw error;rows[index]={batch:trial.measurement.batch,run:trial.run.name,error:error instanceof Error?error.message:"근거 조회 실패"}}
         }
@@ -155,7 +157,7 @@ function DeleteMeasurement({namespace, name, uid, version, trials, blocked, onDe
   const error = mutation.error && !unknown ? mutation.error : null
   const code = error?.data && typeof error.data === "object" && "code" in error.data ? String(error.data.code) : undefined
   return <>
-    <Row onClick={() => setOpen(true)} label="측정 삭제" hint={blocked ?? "결과와 근거 파일까지 영구히 지워요"}/>
+    <li className="p-4"><div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/40 p-4"><div><p className="font-semibold text-destructive">측정과 근거 영구 삭제</p><p className="text-sm text-muted-foreground">{blocked??"결과와 모든 회차 근거를 삭제하며 되돌릴 수 없어요."}</p></div><Button variant="destructive" onClick={()=>setOpen(true)} disabled={!!blocked}>측정 삭제</Button></div></li>
     {unknown && <li className="p-4"><div role="alert" className="notice"><p>삭제가 끝났는지 확인하지 못했어요. 일부 근거 파일만 지워졌을 수도 있어요. 다시 지우기 전에 지금 상태를 확인해 주세요.</p>
       {list.data ? <p>{remaining ? (remaining.metadata.uid === uid ? "측정이 아직 남아 있어요. 화면을 새로 열어 최신 상태로 다시 시도해 주세요." : "같은 이름의 다른 측정이 있어요.") : "측정이 목록에서 사라졌어요. 삭제됐어요."}</p>
         : <Button variant="outline" onClick={() => void list.refetch()}>지금 상태 확인하기</Button>}</div></li>}

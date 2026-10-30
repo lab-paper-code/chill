@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { exactRun, safeMeasurementReturn, significant, evidenceLocations, isProjectionMeasurementKind, measurementHref, measurementListHref, measurementPath, measurementReason, measurementState, measurementUIDMismatch, occupancyDuration, occupancySupply, occupancyThroughput, operationDuration, operationWallEnergy, operationSteps } from "./measurements.ts"
+import { runFailure, runStatusObject, exactRun, safeMeasurementReturn, significant, evidenceLocations, isProjectionMeasurementKind, measurementHref, measurementListHref, measurementPath, measurementReason, measurementState, measurementUIDMismatch, occupancyDuration, occupancySupply, occupancyThroughput, operationDuration, operationWallEnergy, operationSteps } from "./measurements.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
 import { parseSchedulerJSON } from "./scheduler.ts"
@@ -107,7 +107,7 @@ test("measurement reasons expose the server-provided failure or insufficiency in
 })
 
 test("raw occupancy negatives and invalid values warn without replacing zero or precision",()=>{
-  assert.equal(occupancyDuration(-3807875n),"-3.81ms/request · 품질 경고·사용 확인 필요")
+  for(const value of [-3807875n,-5720000,-1n]) { assert.match(occupancyDuration(value),/품질 경고.*음수/); assert.doesNotMatch(occupancyDuration(value),/-5|-3|ms\/request/) }
   for(const value of [NaN,Infinity,-Infinity,"NaN","broken",null]) assert.match(occupancyDuration(value),/품질 경고/)
   for(const value of ["NaN","Infinity","-1","broken"," "]) assert.match(occupancyThroughput(value),/품질 경고/)
   assert.equal(significant(0.09261),"0.09261")
@@ -121,4 +121,16 @@ test("run identity requires exact names and expected UID, not q partial matches"
   const rows=[{...base,name:"run-2"},base,{...base,namespace:"other"}]
   assert.equal(exactRun(rows,"n","run","u"),base)
   assert.equal(exactRun(rows,"n","run","old"),undefined)
+})
+
+test("run status decodes JSON fields and failure summary uses recorded memory errors",()=>{
+  assert.deepEqual(runStatusObject('{"exitCode":3,"logTail":"error"}'),{exitCode:3,logTail:"error"})
+  for(const value of ["broken","null","[]",null,42]) assert.equal(runStatusObject(value),undefined)
+  const run={namespace:"n",name:"r",uid:"u",resourceVersion:"1",generation:1,creationTimestamp:"",spec:{},status:{runtimeTermination:JSON.stringify({exitCode:3,logTail:"\u001b[31mFailed to allocate memory for requested buffer\u001b[0m"})}}
+  const failure=runFailure(run)
+  assert.equal(failure.title,"메모리 할당 실패")
+  assert.equal(failure.exitCode,3)
+  assert.equal(failure.excerpt,"Failed to allocate memory for requested buffer")
+  assert.match(failure.next,/메모리/)
+  assert.doesNotMatch(failure.log,/\u001b/)
 })

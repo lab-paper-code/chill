@@ -20,8 +20,9 @@ export function measurementState(phase?:string):{label:string;tone:"info"|"ok"|"
 export const measurementReason = (reason:string) => codeText[reason] ? `${codeText[reason].join(" ")} (${reason})` : reason
 export function occupancyDuration(value?:unknown) {
   if (value === undefined) return "결과 없음"
-  if ((typeof value !== "number" && typeof value !== "bigint") || (typeof value === "number" && (!Number.isFinite(value) || !Number.isInteger(value)))) return `${String(value)} · 품질 경고·사용 확인 필요`
-  return `${Number(nanosToMilliseconds(value)).toLocaleString("ko-KR",{maximumFractionDigits:2})}ms/request${value < 0 ? " · 품질 경고·사용 확인 필요" : ""}`
+  if ((typeof value !== "number" && typeof value !== "bigint") || (typeof value === "number" && (!Number.isFinite(value) || !Number.isSafeInteger(value)))) return "품질 경고: 점유시간을 변환할 수 없어요"
+  if (value < 0) return "품질 경고: 점유시간이 음수로 기록됐어요"
+  return `${Number(nanosToMilliseconds(value)).toLocaleString("ko-KR",{maximumFractionDigits:2})}ms/request`
 }
 export function operationDuration(value?:unknown) {
   if (value === undefined || value === null) return "실측 시간 기록 없음"
@@ -54,4 +55,21 @@ export function operationSteps(data:OperationCostMeasurement):OperationStep[] {
     ...planned.map(condition => ({name:condition.name,condition,results:recorded.filter(result => result.name === condition.name)})),
     ...recorded.filter(result => !planned.some(condition => condition.name === result.name)).map(result => ({name:result.name,condition:undefined,results:[result]})),
   ]
+}
+
+// Some Run status fields are JSON-encoded strings; decode only structured values.
+export function runStatusObject(value:unknown):Record<string,unknown>|undefined {
+  if (typeof value === "string") { try { value=JSON.parse(value) } catch { return undefined } }
+  return value!==null&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:undefined
+}
+export const cleanRunLog=(value:unknown)=>typeof value==="string"?value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g,""):""
+export function runFailure(run:ProfilingRun) {
+  const termination=runStatusObject(run.status.runtimeTermination),log=cleanRunLog(termination?.logTail)
+  const condition=run.status.conditions?.find(c=>c.type==="ExecutionComplete"&&c.observedGeneration===run.generation&&c.status==="False")
+  const text=[log,condition?.message,condition?.reason].filter(Boolean).join("\n")
+  const memory=/out of memory|failed to allocate memory|CUDA.*alloc|OOMKilled/i.test(text)
+  const timeout=/timed? ?out|deadline exceeded/i.test(text)
+  const excerpt=memory?text.match(/(?:failed to allocate memory|out of memory|OOMKilled|CUDA.*alloc)[^\n]*/i)?.[0]:text.split("\n").find(line=>/error|failed|timed? ?out|deadline exceeded/i.test(line))??condition?.message??condition?.reason
+  return {title:memory?"메모리 할당 실패":timeout?"실행 제한 시간 초과":"회차 실행 실패",excerpt:excerpt?.trim().slice(0,240),exitCode:termination?.exitCode,log,
+    next:memory?"해당 장비의 메모리와 함께 실행 중인 작업을 확인하고, 배치 크기나 실행 경로를 조정하세요.":timeout?"장비와 실행 로그를 확인하고 측정 시간·준비 시간을 검토하세요.":"아래 종료 상태와 로그를 확인하고 측정 조건을 수정하세요."}
 }

@@ -12,6 +12,7 @@ import { Empty, Facts, RowDialog, Rows, Screen } from "@/components/screen"
 import { DataTable, type DataColumn } from "@/components/data-table"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { MeasurementNavigation } from "@/features/measurement-coverage"
 
 const measurementTitles = {"operation-cost-measurements":"동작 비용 측정","dispatch-occupancy-measurements":"분배 점유시간 측정"}
 function measurementTime(value:string|number) {
@@ -23,7 +24,7 @@ function Phase({phase,quality=false}:{phase?:string;quality?:boolean}) {
   return <span className="grid gap-1"><StatusBadge tone={quality?"warn":state.tone}>{quality?"품질 경고·사용 확인 필요":state.label}</StatusBadge>{quality&&<small>원본 상태: {phase??"미제공"}</small>}</span>
 }
 function OccupancyDuration({value}:{value?:WireInteger}) {
-  return <span className="inline-grid gap-1"><span>{occupancyDuration(value)}</span>{value !== undefined && <span className="text-xs text-muted-foreground">{String(value)} ns/request</span>}</span>
+  return <span>{occupancyDuration(value)}</span>
 }
 
 export function ProjectionMeasurementListPage({kind}:{kind:ProjectionMeasurementKind}) {
@@ -46,6 +47,7 @@ export function ProjectionMeasurementListPage({kind}:{kind:ProjectionMeasurement
     {key:"created",label:"등록 시각 (KST / UTC)",value:item => measurementTime(item.metadata.creationTimestamp),sortValue:item => item.metadata.creationTimestamp},
   ]
   return <Screen width="data" actionPlacement="header" back={[`/measurements?namespace=${encodeURIComponent(namespace)}`,"측정"]} title={title} lede="이 저장 영역의 측정 조건과 기록된 결과를 조회해요. 새 측정을 제출하지 않아요.">
+    <MeasurementNavigation namespace={namespace}/>
     <Rows><RowDialog open={namespaceOpen} onOpenChange={setNamespaceOpen} label="저장 영역" value={namespace} title="저장 영역 선택"><NamespaceForm key={namespace} kind={kind} namespace={namespace} done={() => setNamespaceOpen(false)}/></RowDialog></Rows>
     <QueryGate query={query}>{query.data && <>
       <p className="text-sm text-muted-foreground">이 저장 영역에서 받은 {items.length}개</p>
@@ -72,6 +74,7 @@ export function ProjectionMeasurementDetail({kind,namespace,name}:{kind:Projecti
   const data = query.data, other = !!data && measurementUIDMismatch(data.metadata.uid,expectedUID), title = measurementTitles[kind]
   return <Screen width="data" actionPlacement="header" back={[measurementListHref(kind,namespace),title]} title={other ? "같은 이름으로 다시 등록된 다른 측정이에요" : data ? measurementState(data.status.phase).label : title}
     status={other ? <StatusBadge tone="fail">다른 측정</StatusBadge> : data ? <Phase phase={data.status.phase} quality={data.kind==="DispatchOccupancyMeasurement"&&(occupancyDuration(data.status.perRequestNanos)+occupancyThroughput(data.status.throughput)).includes("품질 경고")}/> : undefined} lede={other ? "이전 자료로 사용할 수 없어요." : `${name} · ${namespace}`}>
+    <MeasurementNavigation namespace={namespace}/>
     <QueryGate query={query}>{data && <>
       {!other && <>
         {data.status.reason && <p className="notice break-words">측정 사유: {measurementReason(data.status.reason)}</p>}
@@ -111,7 +114,7 @@ function OperationResult({data}:{data:OperationCostMeasurement}) {
     })}</ul> : "아직 기록된 결과가 없어요"},
   ]
   return <>
-    <p className="notice">실측 시간은 실제 동작 구간이며 계획 유휴 시간·관측 창과 달라요. 수용된 에너지는 전체 Node 벽에너지 J이며 증분 J/item이 아니에요. 값이 없으면 0으로 대신하지 않아요.</p>
+    <p className="notice">실측 시간: {data.status.steps?.some(step=>step.durationNanos!==undefined&&step.durationNanos!==null)?"기록된 단계별 값 제공":"기록 없음"}. 수용된 전체 장비 에너지: {data.status.steps?.some(step=>step.wallJoules!==undefined&&step.wallJoules!==null)?"기록된 단계별 값 제공":"기록 없음"}. 계획 유휴 시간과 실제 동작 시간은 별도예요.</p>
     <p className="text-sm text-muted-foreground">기록 {data.status.steps?.length ?? 0} / 계획 {data.conditions.steps.length}단계 · 완료 상태만으로 단계 채택을 재판정하지 않아요.</p>
     <DataTable data={operationSteps(data)} columns={columns}/>
     <Rows label="자세히"><RowDialog label="순서 있는 동작 조건" title="순서 있는 동작 조건" description="조건에 기록된 순서예요. 단계별로 해당 동작의 조건만 표시해요.">

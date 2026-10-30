@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { readFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
-import { alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
+import { campaignGroups, campaignPairs, commitExperimentSelection, experimentSelection, stageChartData, alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
 import type { SchedulerObservation } from "./read-types.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
@@ -181,4 +181,42 @@ test("F4: null/missing alpha and mixed identities never borrow legacy identity, 
   for(const original of [stage,demo.stages[0]]) {
     assert.ok(experimentRows(original).every(row=>row.substages===null&&row.identitySource===undefined))
   }
+})
+
+test("R3: rapid A/B selections preserve the preceding URL selection and clear only dependent stages",()=>{
+  const location=new URL("https://dashboard.invalid/experiments?a=old&as=old-stage&b=old-b&bs=keep&at=stale")
+  const history={replaceState(_data:unknown,_unused:string,url?:string|URL|null){location.href=new URL(String(url),location).href}}
+  commitExperimentSelection(location,history,{a:"new"})
+  commitExperimentSelection(location,history,{b:"new-b"})
+  const selected=location.searchParams
+  assert.equal(selected.get("a"),"new")
+  assert.equal(selected.get("b"),"new-b")
+  assert.equal(selected.has("as"),false)
+  assert.equal(selected.has("bs"),false)
+  assert.equal(selected.has("at"),false)
+  assert.equal(experimentSelection("a=one&as=chosen&b=two&bs=keep",{as:"next"}).get("bs"),"keep")
+})
+
+test("R3: campaign grouping and exact CHILL/static pairs never cross publications or select ambiguous stages",()=>{
+  const full={...stage,id:"full-E5-1"},staticStage={...stage,id:"static-E5-1"}
+  const run={...recorded.publication,stages:[full,{...full,id:"full-E5-2"},staticStage,{...staticStage,id:"static-E5-3"}]}
+  assert.deepEqual(campaignPairs(run).map(pair=>[pair.chill.id,pair.control.id]),[["full-E5-1","static-E5-1"]])
+  assert.equal(campaignPairs({...run,stages:[full,full,staticStage]}).length,0)
+  const groups=campaignGroups([run,demo])
+  assert.equal(groups.length,2)
+  assert.equal(groups.find(group=>group.run.id===run.id)!.pairs.length,1)
+  assert.equal(groups.find(group=>group.run.id===demo.id)!.pairs.length,0)
+})
+
+test("R3: chart points retain per-service success and p95 without averaging or inventing missing values",()=>{
+  const data=stageChartData(recorded.publication)
+  assert.equal(data.length,recorded.publication.stages.length)
+  assert.equal(data[0].rate,stageRate(stage))
+  const row=experimentRows(stage)[0]
+  assert.equal(data[0].services[row.name].p95,resultMetric(row,"p95").value)
+  assert.equal(data[0].services[row.name].success,Number(resultMetric(row,"success").value)*100)
+  const missing=stageChartData({...recorded.publication,stages:[{...stage,kpis:{wholePoolJoules:0,requests:{same:{offered:0}}}}]})[0]
+  assert.equal(missing.energy,0)
+  assert.equal(missing.services.same.p95,null)
+  assert.equal(missing.services.same.success,null)
 })

@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation"
 import { useQuery } from "@tanstack/react-query"
 import { ApiError, useChillQuery, useChillMutation, useSession } from "@/lib/client"
 import type { RunsView, ProfilingRun, Passport, NativeSample, MeasurementPreflight } from "@/lib/read-types"
-import { exactRun, safeMeasurementReturn, significant } from "@/lib/measurements"
+import { runFailure, runStatusObject, exactRun, safeMeasurementReturn, significant } from "@/lib/measurements"
 import { currentRunCondition } from "@/lib/measurement-coverage"
 import { codeText } from "@/lib/labels"
 import { QueryGate, SourceJSON, SourceExport, StatusBadge } from "@/components/read-region"
@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { DataTable, type DataColumn } from "@/components/data-table"
 
+import { MeasurementNavigation } from "@/features/measurement-coverage"
 
 // /measurements/new review and /measurements/check share this conclusion and plan summary; the raw plan stays in 원본.
 export const preflightConclusion=(answer:MeasurementPreflight)=>answer.resolves?"이 조건으로 측정할 수 있어요":"이 조건으로는 측정할 수 없어요"
@@ -36,6 +37,7 @@ export function MeasurementCheckPage() {
   const answer=mutation.data?.data as MeasurementPreflight|undefined
   if(mutation.data&&answer)return <Screen back={back} status={<StatusBadge tone={answer.resolves?"ok":"fail"}>{answer.resolves?"측정 가능":"측정 불가"}</StatusBadge>} title={preflightConclusion(answer)} lede="조건만 확인했어요. 측정을 접수하지는 않았어요."
     action={<Button variant="outline" onClick={()=>{mutation.reset();setStep(0)}}>다른 계획 확인하기</Button>}>
+    <MeasurementNavigation namespace={config.namespace}/>
     <PreflightAnswer answer={answer}/>
     <Rows><RowDialog label="원본 보기" title="조건 확인 원본"><SourceJSON inline title="조건 확인 원본" value={{status:mutation.data.status,source:answer}}/></RowDialog></Rows>
   </Screen>
@@ -55,6 +57,7 @@ export function MeasurementCheckPage() {
     title={["어느 저장 영역의 계획인가요?","확인할 측정 계획을 넣어 주세요","이 계획의 조건을 확인할까요?"][step]}
     lede={["기존 계획의 조건만 검사해요. 측정을 등록하거나 실행하지 않아요.","계획 파일을 고르거나 JSON을 붙여 넣어요.","조건만 검사하고 측정은 시작하지 않아요."][step]}
     action={<div className="flex gap-2">{step>0&&<Button variant="outline" onClick={()=>{setError("");mutation.reset();setStep(step-1)}}>이전</Button>}<Button className="flex-1" disabled={mutation.isPending} onClick={next}>{step===2?"조건 확인하기":"다음"}</Button></div>}>
+    <MeasurementNavigation namespace={config.namespace}/>
     {step===0&&<label className="grid gap-1.5">저장 영역<Input value={namespace} onChange={event=>setNamespace(event.target.value)} required/></label>}
     {step===1&&<div className="grid gap-4">
       <label className="grid gap-1.5">계획 파일<Input type="file" accept="application/json,.json" onChange={async event=>{const file=event.currentTarget.files?.[0];if(file)setSource(await file.text())}}/></label>
@@ -149,13 +152,16 @@ export function MeasurementDetail({namespace,name}:{namespace:string;name:string
   const noEvidence=failed&&!run?.status.evidence
   const passport=useChillQuery<Passport>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs/${encodeURIComponent(name)}/evidence-passport`,{enabled:!!run&&!noEvidence})
   const data=passport.data,other=!!data&&data.run.uid!==run?.uid
-  const termination=run?.status.runtimeTermination as {exitCode?:number;logTail?:string}|undefined
+  const failure=run?runFailure(run):undefined
+  const statusFacts=(value:unknown):[string,React.ReactNode][]=>{const object=runStatusObject(value);return object?Object.entries(object).map(([key,value])=>[({namespace:"저장 영역",name:"이름",uid:"식별자",nodeName:"실행 Node",podName:"실행 Pod",phase:"진행 상태",provider:"실행 제공자",architecture:"아키텍처",family:"런타임",version:"버전"} as Record<string,string>)[key]??key,typeof value==="object"?<SourceJSON key={key} value={value} title="세부 기록"/>:String(value)]):[["기록",value===undefined?"미제공":String(value)]]}
   return <Screen width="data" actionPlacement="header" back={[back,"측정으로 돌아가기"]} breadcrumbs={[{href:"/measurements",label:"측정"},{href:back,label:"상위 측정"},{label:name}]} title={failed?"이 회차의 실행이 실패했어요":`${name} 측정 결과`} lede={data&&!other?measuredWhat(data):"실행 상태와 검증 근거는 별개예요."}>
+    <MeasurementNavigation namespace={namespace}/>
     <QueryGate query={lookup}>{lookup.data===null&&<p>전체 목록에서 정확한 namespace/name/UID의 회차를 찾지 못했어요. 같은 이름의 다른 회차로 대체하지 않아요.</p>}{run&&<>
-      <Facts label="실행·검증 상태" items={["ExecutionComplete","EvidenceVerified"].map(type=>{const c=currentRunCondition(run,type);return [type,c?`${c.status} · ${c.reason ?? ""} · ${c.message ?? ""}`:"현재 generation의 상태 미확인"] as [string,React.ReactNode]})}/>
-      <Facts label="종료·실제 실행" items={[["종료 코드",termination?.exitCode??"미제공"],["Job",run.status.job?JSON.stringify(run.status.job):"미제공"],["실제 실행",run.status.actualExecution?JSON.stringify(run.status.actualExecution):"미제공"]]}/>
-      <section className="grid gap-2"><h2>실행 로그</h2>{termination?.logTail?<pre className="source-json">{termination.logTail}</pre>:<p>로그 미제공 · OOM이나 timeout을 추측하지 않아요.</p>}</section>
-      {noEvidence?<p className="notice">검증 근거가 생성되지 않았어요. 실행 실패 사유는 위 원문을 확인해 주세요.</p>:passport.error?<div className="notice"><p>근거 조회 실패 · {passport.error.message} · {JSON.stringify(passport.error.data)}</p><Button variant="outline" onClick={()=>void passport.refetch()}>근거 다시 조회</Button></div>:!data?<p>검증 근거 확인 중</p>:other?<p role="alert">같은 이름의 다른 회차 근거예요. 이 회차의 결과로 사용할 수 없어요.</p>:<PassportSummary data={data}/>}
+      {failed&&<section role="alert" className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 space-y-2"><h2 className="font-semibold text-destructive">{failure?.title}</h2><p className="text-sm break-words">{failure?.excerpt??"상세 원인 미제공"}{failure?.exitCode!==undefined?` (종료 코드 ${String(failure.exitCode)})`:""}</p><p className="text-sm">{failure?.next}</p></section>}
+      <Facts label="실행·검증 상태" items={["ExecutionComplete","EvidenceVerified"].map(type=>{const c=currentRunCondition(run,type);return [type==="ExecutionComplete"?"회차 실행":"근거 검증",c?`${c.status==="True"?"완료":c.status==="False"?"실패":"확인 중"} — ${c.reason?plain(c.reason):""}${c.message?`: ${c.message}`:""}`:"상태 미확인"] as [string,React.ReactNode]})}/>
+      <Facts label="실행 작업" items={statusFacts(run.status.job)}/><Facts label="실제 실행 환경" items={statusFacts(run.status.actualExecution)}/>
+      <section className="grid gap-2"><h2>실행 로그</h2>{failure?.log?<pre className="source-json">{failure.log}</pre>:<p>종료 로그 미제공</p>}</section>
+      {noEvidence?<p className="notice">실행 실패로 검증 근거가 생성되지 않았어요.</p>:passport.error?<div className="notice"><p>검증 근거를 불러오지 못했어요. {passport.error.status===404?"보관된 근거가 없거나 아직 게시되지 않았어요.":"연결 상태를 확인하고 다시 조회하세요."}</p><Button variant="outline" onClick={()=>void passport.refetch()}>근거 다시 조회</Button></div>:!data?<p>검증 근거 확인 중</p>:other?<p role="alert">같은 이름의 다른 회차 근거예요. 이 회차의 결과로 사용할 수 없어요.</p>:<PassportSummary data={data}/>}
       <Rows>{data&&!other&&!!data.measurement.runtime.nativeSamples?.length&&<RowDialog label="배치 실행 기록" title="배치 실행 기록"><DataTable data={data.measurement.runtime.nativeSamples} columns={sampleColumns}/></RowDialog>}<RowDialog label="원본 자료" title="측정 원본 자료"><SourceExport value={{run,passport:other?undefined:data}} filename={`chill-passport-${name}.json`}/><SourceJSON inline value={{run,passport:other?undefined:data}}/></RowDialog></Rows>
     </>}</QueryGate>
   </Screen>
