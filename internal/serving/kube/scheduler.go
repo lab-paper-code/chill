@@ -94,6 +94,7 @@ type actionRun struct {
 	mayTouch             map[string]bool
 	proofParent          *actionRun
 	replacements         []serving.SchedulerReplacement
+	admittedControls     serving.SchedulerControls
 }
 type SchedulerController struct {
 	mu         sync.Mutex
@@ -117,6 +118,7 @@ type SchedulerController struct {
 	ctx                   context.Context
 	cancel                context.CancelFunc
 	wg                    sync.WaitGroup
+	completions           chan struct{}
 	// powerTargets holds, by "<Node UID>/<mode>", the maximum actuation
 	// duration of each mode the last capture found requestable.
 	powerTargets map[string]time.Duration
@@ -141,6 +143,7 @@ func NewSchedulerController(store *Store, kube kubernetes.Interface, runtime *se
 	measurement := *operations
 	measurement.config.Measurement = true
 	c := &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, measurement: &measurement, observationLog: observationLog, config: config, runs: map[string]*actionRun{}, ctx: ctx, cancel: cancel}
+	c.completions = make(chan struct{}, 1)
 	observer.scheduler = c
 	c.measureStep = c.measureOperation
 	c.capacity = serving.NewCapacityTable(goruntime.GOMAXPROCS(0), func(row serving.CapacityRow) error {
@@ -930,16 +933,7 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.launchFailedPreparationCleanupLocked(config)
-	parents := []*actionRun{}
-	for _, run := range c.runs {
-		if run.action.Kind == transitionRunKind && run.action.Status == nativeOperationRunning {
-			parents = append(parents, run)
-		}
-	}
-	slices.SortFunc(parents, func(a, b *actionRun) int { return strings.Compare(a.owner, b.owner) })
-	for _, parent := range parents {
-		c.launchTargetLocked(*parent.result.Operation.Target, config)
-	}
+	parents := c.launchRunningParentsLocked(config, false)
 	if len(target.Actions) == 0 {
 		return
 	}
@@ -966,6 +960,7 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 		before.Instances = append(before.Instances, serving.InstanceState{ID: instance.ID, PodUID: instance.PodUID, Node: instance.Node})
 	}
 	parent := &actionRun{owner: target.ID, action: serving.Action{ID: id, Kind: transitionRunKind, Status: nativeOperationRunning}, result: &OperationResult{Operation: operation, Before: before, Status: nativeOperationRunning, StartedAt: started}, started: started}
+	parent.admittedControls = config.Settings.Controls
 	// Freeze only physical same-Node/Workload replacements, not route-only
 	// policy changes or added capacity. Completion is observed in reconcileSnapshot.
 	for _, next := range target.Instances {
@@ -1089,6 +1084,10 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 				run.action.Elapsed = result.EndedAt.Sub(result.StartedAt)
 				c.state.Results = append(c.state.Results, result)
 				c.mu.Unlock()
+				select {
+				case c.completions <- struct{}{}:
+				default:
+				}
 			}(operation, run)
 		}
 	}

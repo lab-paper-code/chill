@@ -189,6 +189,13 @@ func appendUnique(xs []string, more ...string) []string {
 	}
 	return xs
 }
+// SchedulerContinuationReasons validates fresh physical evidence without
+// evaluating candidates or admitting a new scheduler decision.
+func SchedulerContinuationReasons(settings SchedulerSettings, snapshot SchedulerSnapshot) []string {
+	reasons := append(slices.Clone(snapshot.Reasons), schedulerValidateSnapshot(settings, snapshot)...)
+	return appendUnique(reasons, schedulerValidateResources(settings, snapshot.Nodes, snapshot.Instances)...)
+}
+
 func schedulerValidateSnapshot(settings SchedulerSettings, snapshot SchedulerSnapshot) []string {
 	reasons := schedulerValidateObservationTimes(&snapshot, settings.MaxObservationAge)
 	if len(snapshot.Nodes) == 0 {

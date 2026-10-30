@@ -507,11 +507,31 @@ func (o *schedulerService) Start() {
 			}
 			cancel()
 			timer := time.NewTimer(max(time.Until(started.Add(o.controller.Settings().ControlInterval)), 0))
-			select {
-			case <-o.ctx.Done():
-				timer.Stop()
-				return
-			case <-timer.C:
+			waiting := true
+			for waiting {
+				// Give the periodic deadline priority over a burst of completions.
+				select {
+				case <-timer.C:
+					waiting = false
+					continue
+				default:
+				}
+				select {
+				case <-o.ctx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+					waiting = false
+				case <-o.controller.Completions():
+					callCtx, cancel := context.WithTimeout(o.ctx, o.opts.requestTimeout)
+					o.lock.Lock()
+					err := o.controller.Continue(callCtx, time.Now().UTC())
+					o.lock.Unlock()
+					cancel()
+					if err != nil {
+						ctrl.Log.Error(err, "continue authorized scheduler transition")
+					}
+				}
 			}
 		}
 	}()

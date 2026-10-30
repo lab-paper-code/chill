@@ -218,7 +218,9 @@ func (p *capacityPlanner) timingReason(w capacityWorkload, slow, recovered, sati
 			return schedulerDemandIncreasing
 		}
 		for id, weight := range p.keep.Routing[w.d.UID] {
-			if weight > 0 && routes[id] <= 0 {
+			if weight > 0 && routes[id] <= 0 && !slices.ContainsFunc(p.snapshot.Instances, func(i SchedulerInstance) bool {
+				return i.ID == id && i.Terminated
+			}) {
 				return schedulerDemandIncreasing
 			}
 		}

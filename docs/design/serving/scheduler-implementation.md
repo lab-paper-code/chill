@@ -92,6 +92,8 @@ profile idle/meter는 같은 Node·node-exclusive-wall·source kind/NodeName/end
 native 교환이 완료 proof 없이 502/504/취소로 끝나고 native progress가 전혀 없으면, 교환 종료 뒤 시작한 state read에서 요청 부재를 확인하여 `backend_finished/NativeRequestAbsent`로 끝낸다(m4 r6의 drain 영구 대기 근거). routing map만으로 handoff하지 않고 completed route의 Ready/profile/allocation/native ACK와 새 typed completion proof/actual routing이 모두 같아야 stop 의존성을 재사용한다. 첫 handoff/변경 target은 원래 route 완료를 기다린다.
 break-before-make의 빈 routing/bindings 중 의도는 frozen `Operation.Target`의 UID cohort/replicas/weights에서 읽되 actual 점유/ownership/Ready는 현재 snapshot만 쓴다. observed TargetID의 physical slot을 중복 prepare하지 않고 frozen target/proof를 덮거나 복원하지 않는다. prepare timeout은 cost trial 최대+관측 창 하나이며 `failed/ActionDeadlineExceeded` 뒤 원격 효과 불명 예약은 유지한다.
 
+**완료 기반 전진 (Cycle 6 / SCH-20·26·50).** action의 결과와 기록 실패 상태를 저장한 뒤 버퍼1 non-blocking 완료 신호를 보낸다. 서비스는 주기 timer와 별도 case에서 `Continue`를 실행하며 기존 주기 deadline을 재설정하지 않는다. `Continue`는 Tick/설정 변경과 같은 직렬화 경계에서 capture·동일 freshness/resource 검증·owner/effect reconciliation·running parent launch만 재사용한다. EvaluateScheduler·capacity search·신규 admission/decision 발행은 하지 않는다. 관측/기록 실패·취소 parent·실패/partial 결과는 후속 허가가 아니며 중복 신호와 late ACK도 기존 exact effect/owner proof를 우회하지 않는다. 현재 controls가 admission 시점과 다르거나 UID 자동제어가 해제된 parent는 완료 경로에서 전진하지 않는다. 완료마다 관측 I/O는 늘지만 전체 탐색을 반복하지 않고, 실제 cold prepare 시간·자원 반환·ACK-before-live-stop·peak/reserve/ReturnProof는 그대로 남는다.
+
 #### 중간 배분
 
 `intermediateActions/readySubset`은 최종 route 의존성이 남아도 같은 owner의 자식 route를 실행한다(`34b9a40d` 유지). snapshot/native Ready·미정지·routable인 old 공급이 있고 target 일부가 미준비면 **old 보존+검증된 독립 Node 순증**만 허용한다. `snapshotNodeHasPositiveRoute`는 모든 UID를 보아 양수 serving Node를 순증에서 제외한다.
