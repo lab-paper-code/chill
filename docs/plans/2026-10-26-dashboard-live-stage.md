@@ -162,3 +162,67 @@ PASS의 관찰 범위를 아래에 명시하며, 빈 클러스터에서 만들 �
 첫 수동 WebSocket probe는 양수 `from`에 필요한 `at`를 빠뜨렸으므로 제품 실패 근거에서 제외했다
 (`websocket-outside-resume.json`). 유효한 재개 요청의 결과는 별도 파일로 보존했다.
 이번 문서 기록 외에 FAIL 수정·fixture 활성화·새 게시·실험 실행은 하지 않았다.
+
+### 첫 게시 후 FAIL 2 재확인 — 2026-10-30, rev114
+
+위 rev110 기록은 당시 관찰로 보존한다. 두 FAIL의 원인은 #213을 포함한 실제 E5 결과가
+게시된 적 없었던 것이다. 이번에는 기존 게시물의 재게시·수정 없이 **첫 게시**를 완료했다.
+게시 영수증은 `O/campaign/v2/dashboard-acceptance-20261030/first-publication-receipts.json`,
+최종 수용 결과는 같은 디렉터리의 `publication-recheck-results.json`에 있다.
+
+#### 게시 범위와 실제 측정 규칙
+
+| 첫 게시 ID | 단계 수 | 정본과 범위 |
+|---|---:|---|
+| `control-213-first-20261030` | 14 | `d-20261027/control-213-full/{tables.txt,e5-summary.json}`의 full 8행·static 6행 |
+| `control-216-first-20261030` | 14 | `control-216-rev102-factors/{tables.txt,e5-summary.json}`의 factor 12행과 당시 full 대조 2행 |
+| `control-222-223-first-20261030` | 14 | `control-222-full/tables-223.txt`의 **2회차 #222+#223 합성**; full 8행·static 6행 |
+| `control-222-r3-first-20261030` | 4 | 최종 `control-222-full/{tables-3b.txt,e5-summary.json}`에서 채택한 **3회차 표적 재실행**; #224 E5-5/6과 #225 E5-1/7. 시작 상태 복원, 소스 R1~R6+R4b+C1+C2 조건이며 무효 #224 E5-1/7은 제외 |
+
+모두 `Created` 영수증을 받았다. 원본 수치·FAIL·NOT_READY·결손을 유지했으며,
+게시·화면 수용 PASS를 과학적 기준 PASS로 바꾸지 않았다. 기존 하네스의
+`hack/e5/e5.py::publish_experiment` → immutable Go/S3 bridge를 사용했다.
+`publish` CLI의 재집계를 실행하지 않고 보존된 판단의 게시용 KPI를 투영했으므로
+`summarize`·`judge`·`collect` 재실행과 정본 덮어쓰기는 없다.
+
+각 단계의 `measurementRules.harnessRepositoryCommit`은 제품 이미지나 binding의 낡은 SHA가 아니라
+**그 행을 실행한 실제 archive SHA**다. 모든 행의 `evidenceSource=host-s3`,
+`gcMeaning=gctrace-cycles`이며, `energyCoverage`와 `gapErrorBoundJoules`도 원본 값을 보존했다.
+2·3회차에는 `campaignRound`와 위 조건을 `condition`으로 함께 기록했다.
+
+| 게시물 내 행 | 실제 archive SHA |
+|---|---|
+| #213 전체 및 #216의 당시 full 대조 2행 | `158e106c1b5f5bacff3e1106f97a7a465abbc888` |
+| #216에 보존된 #215 membership-off 2행 | `59533ecae944527485c9ae04bbbea21fdbdc3273` |
+| #216의 나머지 factor 10행 | `f84cb28268033990a62d819d7617ec4e5cc11bf6` |
+| 2회차 #222 기초 6행 | `d45fe66e6f52ca6398fafd55adab73a8f6616812` |
+| 2회차 #223 재개 8행 | `b5ad74d955bdbda36784a338623f40c19d55fc57` |
+| 3회차 #224 E5-5/6 | `5f1dc4f10a43924a204361072cd82ee8e73b3bf8` |
+| 3회차 #225 E5-1/7 | `22fa643997dd96682b27784d40d8c4ba29deba5e` |
+
+중단된 최초 `control-213-full` attempt와 quota 초과로 실패한
+`control-216-rev102-factors` attempt는 summary 미게시 상태로 원형 보존했고 같은 ID로 재시도하지 않았다.
+후자는 S3 `403 QuotaExceeded` 영수증을 보존한 뒤, Main의 PVC 128Gi 확장·재개 승인 후 새 ID로 게시했다.
+기존 immutable 기록·미완료 raw를 수정하거나 삭제하지 않았다.
+기존 demo 2건은 게시 전후 응답 SHA-256이 동일하다.
+
+#### 실제 브라우저 재확인
+
+Chromium에서 **`http://155.230.35.213:31300/experiments`**를 기존 `dashboard-user`
+(`system:serviceaccount:chill-system:chill-dashboard-user`)로 열었다.
+최종 API 영수증 시각은 **06:37:46 UTC**다. 대기 중 Main이 별도 배포한 실제 수용 대상은
+**rev114**, 서버 `pools-control-234-502e4ed86542`, 대시보드 `pools-control-232-30e3a6d690c8`다
+(`O/deployB/control-234-20261030/{upgrade.log,post-values.json}`).
+이 게시·재확인 작업의 부하 생성·클러스터 변경은 **각 0**이며 evidence-store 업로드와 조회만 했다.
+토큰·Authorization 헤더는 증거에 저장하지 않았다.
+
+| 재확인 기준 | 결과 | 실제 관찰 | 증거 파일 |
+|---|---|---|---|
+| S1-1 단계 표·비교·출처·분모·결손 | **PASS** | #213 `full-E5-1` 실제 단계 표에서 MNV 기한 안 성공 `45754/57495`, 값 `0.7957909383424646`, 원본 필드 출처를 펼쳤다. `static-E5-5`와 비교하면 불완전 에너지는 0이 아닌 빈칸이고 `Actual whole/active power coverage incomplete` 사유가 남는다. | `24-control213-stage-provenance.{png,txt}`, `26-control213-comparison-missing.{png,txt}`, `27-first-publication-list.{png,txt}` |
+| S1-2 #213 에너지 ± 상한·규칙 차이 | **PASS** | 전체 POOL **173062.73965024325 ± 516.5136059839 J**, 활성 POOL **148610.0577813059 ± 516.5136059839 J**를 표시한다. 3회차 `full-E5-1-3b`와 비교하면 숫자를 가리지 않고 **측정 규칙 다름**과 `harnessRepositoryCommit, campaignRound, condition`을 표시하며 실제 SHA·host-s3·gctrace-cycles도 열린다. | `25-control213-energy-bound.{png,txt}`, `28-control213-r3-rule-difference.{png,txt}`, `29-measurement-rule-identities.{png,txt}`, `30-control213-r3-energy-values.{png,txt}` |
+
+`final-publication-api-receipts.json`은 실제 호출자 권한으로 새 게시물 **4/4 HTTP 200**,
+게시용 정본 KPI와 응답 **46/46 일치**, 기존 demo 2건 digest 불변을 기록한다.
+기존 FAIL 2건은 해소되어 종합은 **PASS 8 / FAIL 0 / 미확인 5**다.
+이번에는 위 두 기준만 다시 수용했으며, 기존 미확인 5건을 통과로 바꾸지 않았다.
+따라서 전체 S1/S2 수용 완료 선언은 여전히 아니다.
