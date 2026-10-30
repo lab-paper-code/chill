@@ -624,3 +624,7 @@
 - E5-1(#225, 복원 일치): p95 MNV 275ms(2회차 299). E5-5(#224): C1 검증(신규 예약 6/6 행 내 반환, Fixed 0), error 10,636→1,026, p95 1.9s→226ms. E5-7(#225, 활성 Pod 주입 180.7/360.7/600.1s): MNV p95 94ms, 격리 CAPTURED; FAIL은 Smol D1(용량). E5-6(#224): 305ms(시작 조건 다름, C1 귀속 금지).
 - 하네스 결함 2건 수정(release 훼손 `7d4e812c`, selector TTL `46ec78be`, 태그 일반화 `22fa6439`). 제품 rev105 `5f1dc4f1`.
 - E5 뒤 할 일 누적: C3 빈 Node MNV 측정, kubeedge nodeName/디스크/PodGC, rate limiter, summarize 메모리, E5-7 자동 주입, TLS keep-alive, R6 factor 재실험, U9 대시보드, U11 G2 배선.
+
+## 2026-10-30 — 사용자 결정: 결과 확정(C) + E5 뒤 과제(B) 순서
+
+1. kubeedge CloudCore nodeName → Helm nodeSelector, genesis1 디스크 점유 조사·보존 규칙. 2. 게이트웨이 분리 미사용 코드(e947cd5e, internal/serving/gateway 등) 정리 — 53af158a "다음 재빌드 전 정리"가 rev104/105에서 누락; U11 G2 배선 안 함(ADR 0029 Deferred). 3. docs/plans/2026-10-28-e5-evidence-api.md 0장 publication 계약부터. 4. docs/plans/2026-10-26-dashboard-live-stage.md S1→S2.
