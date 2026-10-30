@@ -1412,16 +1412,6 @@ func (s *observationScanner) scan(source io.Reader, size int64, visit func([]byt
 	}
 }
 
-// jsoniter's skipped-number fast path is not a complete syntax validator.
-// Keep the standard syntax boundary without materializing ignored payloads.
-func observationJSONSyntaxError(raw []byte) error {
-	if json.Valid(raw) {
-		return nil
-	}
-	var invalid json.RawMessage
-	return json.Unmarshal(raw, &invalid)
-}
-
 func (l *ObservationLog) syncFileLocked(file *os.File) error {
 	l.mu.mark(DiagnosticFileSync, DiagnosticBegin)
 	err := file.Sync()

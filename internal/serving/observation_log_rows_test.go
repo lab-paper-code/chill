@@ -16,7 +16,7 @@ func mergeRequestRowTwoPass(rows map[string]*RequestRow, raw []byte, keep func(*
 		return err
 	}
 	if !keep(&envelope) || envelope.Kind != requestRowFinal && rows[envelope.RequestID] != nil {
-		return observationJSONSyntaxError(raw)
+		return nil
 	}
 	row := &RequestRow{}
 	if err := json.Unmarshal(raw, row); err != nil {

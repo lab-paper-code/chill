@@ -201,44 +201,6 @@ func (h *Hub) changedLocked(d Delta) bool {
 	return false
 }
 
-// Replace publishes a full projection, including removals of absent identities.
-func (h *Hub) Replace(at time.Time, state Snapshot) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if state.Workloads == nil {
-		state.Workloads = []Workload{}
-	}
-	if state.Nodes == nil {
-		state.Nodes = []Node{}
-	}
-	if state.Instances == nil {
-		state.Instances = []Instance{}
-	}
-	if state.Actions == nil {
-		state.Actions = []Action{}
-	}
-	if state.Routing == nil {
-		state.Routing = Routing{}
-	}
-	if state.Reservations == nil {
-		state.Reservations = []Reservation{}
-	}
-	removed := &Removed{}
-	for _, old := range h.state.Instances {
-		if !slices.ContainsFunc(state.Instances, func(row Instance) bool { return row.ID == old.ID }) {
-			removed.Instances = append(removed.Instances, old.ID)
-		}
-	}
-	for _, old := range h.state.Actions {
-		if !slices.ContainsFunc(state.Actions, func(row Action) bool { return row.Key() == old.Key() }) {
-			removed.Actions = append(removed.Actions, old.Key())
-		}
-	}
-	return h.publishStateLocked(at, Delta{Workloads: &state.Workloads, Nodes: &state.Nodes,
-		Instances: &state.Instances, Routing: &state.Routing, Decision: &state.Decision,
-		Actions: &state.Actions, Reservations: &state.Reservations, Removed: removed}, nil)
-}
-
 func (h *Hub) PublishMetrics(at time.Time, metrics MetricsFrame) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()

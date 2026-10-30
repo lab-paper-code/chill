@@ -104,6 +104,7 @@ power 조회는 controller가 수락한 ChillServer configuration 하나를 atom
 controller 적용 성공 뒤에만 게시한다. 거절된 refresh는 이전 설정을 그대로 유지한다.
 
 라이브 채널 메시지 계약 v1은 [Dashboard 설계 §3](../dashboard/README.md#3-라이브-api-계약-v1)을 따른다.
+라이브 Hub는 `Publish`의 Delta와 명시적 Removed로만 상태 변경을 발행하며 전체 교체 API는 없다. Dashboard tooltip은 dot indicator와 기본 label/value만 표시한다.
 
 ## 관측 조회의 일관성·모집단·제외 규칙
 
@@ -112,7 +113,7 @@ controller 적용 성공 뒤에만 게시한다. 거절된 refresh는 이전 설
 - scheduler page는 `[from,to)` 사건시각을 append 순으로 읽고 다음 일치1건으로 continuation을 확인한다. cursor의 matching-offset 의미를 유지하며 append wall time을 사건시간 필터로 쓰지 않는다.
 - power의 짧은 collector verdict는 조회 coverage의 대체물이 아니다. 실제 sample·원 gap·경계거리·meter/scope/source identity·보관 완전성·조회구간을 검사한다. 경계 밖은 기록된 boundary 거리 안에서만 보조하고 오래된 이전 표본으로 정상 닫힌 구간을 무효화하지 않는다. source 실패·OOM/재시작 공백은 결손이다.
 - source kind/endpoint/metric/labels가 다른 과거 기록을 현재 meter 실측으로 재해석하지 않는다. 누락정의·역순시각·알수없는 원시를 빈성공으로 바꾸거나 legacy window reader로 fallback하지 않는다.
-- JSON projection은 건너뛴 subtree도 구문검사하고 실제 float/정수/duration/시각과 선택원문은 표준decoder 의미를 보존한다. Scanner는 stream별 buffer를 재사용하고 newline 경계를 유지한다.
+- JSON projection은 `encoding/json.Unmarshal` 한 경계에서 건너뛴 subtree까지 구문검사하고 실제 float/정수/duration/시각과 선택원문은 표준decoder 의미를 보존한다. 별도 구문 검증 pass는 없다. Scanner는 stream별 buffer를 재사용하고 newline 경계를 유지한다.
 
 ## 설정 권한과 적용 기록
 

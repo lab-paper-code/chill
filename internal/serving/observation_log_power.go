@@ -9,8 +9,6 @@ import (
 	"sort"
 	"time"
 
-	jsoniter "github.com/json-iterator/go"
-
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
 )
@@ -91,10 +89,7 @@ func OperatingPowerRecord(raw []byte, catalog *ObservationCatalog) (*SchedulerOb
 			} `json:"instances"`
 		} `json:"snapshot"`
 	}
-	if err := observationJSONSyntaxError(raw); err != nil {
-		return nil, err
-	}
-	if err := jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal(raw, &projection); err != nil {
+	if err := json.Unmarshal(raw, &projection); err != nil {
 		return nil, err
 	}
 	event := &SchedulerObservation{At: projection.At}

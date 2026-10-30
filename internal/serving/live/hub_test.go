@@ -126,14 +126,14 @@ func TestDeltaReplacementUpsertRemovalAndInputOwnership(t *testing.T) {
 	if message.Type != "delta" || message.Decision != nil {
 		t.Fatalf("decision clear: %+v", message)
 	}
-	if err := hub.Replace(testAt, Snapshot{}); err != nil {
+	if err := hub.Publish(testAt, Delta{Removed: &Removed{Instances: []string{"a", "b"}, Actions: []string{actions[1].Key()}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := sub.Resume(0, ""); err != nil {
 		t.Fatal(err)
 	}
 	if message := nextEnvelope(t, sub); len(message.Instances) != 0 || len(message.Actions) != 0 {
-		t.Fatalf("full replacement left identities: %+v", message)
+		t.Fatalf("explicit removal left identities: %+v", message)
 	}
 }
 
@@ -340,13 +340,14 @@ func TestProjectionCollectionsCopyOwnershipAndReplaceReservations(t *testing.T) 
 		frame.Reservations[0].Instances[0] != "shared" {
 		t.Fatalf("producer retained mutable ownership: %+v", frame)
 	}
-	if err := hub.Replace(testAt, Snapshot{}); err != nil {
+	emptyReservations := []Reservation{}
+	if err := hub.Publish(testAt, Delta{Reservations: &emptyReservations, Removed: &Removed{Instances: []string{"shared"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := sub.Resume(0, ""); err != nil {
 		t.Fatal(err)
 	}
 	if frame = nextEnvelope(t, sub); frame.Reservations == nil || len(frame.Reservations) != 0 {
-		t.Fatalf("full replace failed to clear reservations: %+v", frame)
+		t.Fatalf("delta failed to clear reservations: %+v", frame)
 	}
 }

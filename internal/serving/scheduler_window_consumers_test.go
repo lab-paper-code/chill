@@ -1,31 +1,27 @@
 package serving
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
 	"time"
 )
 
-func TestDecodeSchedulerLineOmitsHistoricalTimerEvidence(t *testing.T) {
-	for _, evidence := range []string{
-		`{"baselineRate":110,"previousRate":20,"rate":20,"downSince":"2026-10-26T00:00:00Z","elapsedNanos":300000000000,"allowed":true,"reason":"ScaleDownStabilized"}`,
-		`{"rate":20,"allowed":true}`,
-		`null`,
-	} {
-		raw := []byte(`{"decision":{"capacity":{"workloads":[{"uid":"w","scaleDown":` + evidence + `}]}},"snapshot":{"scaleDown":{"w":` + evidence + `},"emptyNodeScaleDownAllowed":true}}`)
-		original := bytes.Clone(raw)
-		event, err := DecodeSchedulerLine(raw, nil)
+func TestDecodeSchedulerLineRequiresMaximumDemandFields(t *testing.T) {
+	for _, field := range []string{"windowMax", "windowNanos", "supply"} {
+		evidence := map[string]any{"windowMax": 0, "windowNanos": 0, "supply": 0}
+		delete(evidence, field)
+		raw, err := json.Marshal(evidence)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if event.Decision.Capacity.Workloads[0].ScaleDown != nil || len(event.Snapshot.ScaleDown) != 0 || event.Snapshot.EmptyNodeScaleDownAllowed {
-			t.Fatalf("historical timer became window evidence: %+v %+v", event.Decision.Capacity.Workloads[0], event.Snapshot)
-		}
-		encoded, err := json.Marshal(event)
-		if err != nil || bytes.Contains(encoded, []byte(`"scaleDown"`)) || !bytes.Equal(raw, original) {
-			t.Fatalf("typed omission changed raw evidence or retained timer: %s %v", encoded, err)
+		for _, line := range []string{
+			`{"decision":{"capacity":{"workloads":[{"uid":"w","scaleDown":` + string(raw) + `}]}}}`,
+			`{"snapshot":{"scaleDown":{"w":` + string(raw) + `}}}`,
+		} {
+			if _, err := DecodeSchedulerLine([]byte(line), nil); err == nil {
+				t.Fatalf("scaleDown without %s accepted: %s", field, line)
+			}
 		}
 	}
 }

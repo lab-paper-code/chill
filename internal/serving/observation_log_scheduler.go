@@ -7,8 +7,6 @@ import (
 	"sort"
 	"time"
 
-	jsoniter "github.com/json-iterator/go"
-
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
@@ -239,69 +237,22 @@ func (c *ObservationCatalog) body(kind, key string, at time.Time, value any) err
 	return json.Unmarshal(found.Body, value)
 }
 
-// decodeWindowEvidence accepts only the maximum-demand record shape. Historical
-// timer evidence stays in the raw archive, not in current typed observations.
-func decodeWindowEvidence(raw json.RawMessage) (*SchedulerDownState, error) {
-	state := &SchedulerDownState{}
-	shape := struct {
-		*SchedulerDownState
+// UnmarshalJSON enforces the current maximum-demand evidence boundary.
+func (s *SchedulerDownState) UnmarshalJSON(raw []byte) error {
+	type state SchedulerDownState
+	record := struct {
+		*state
 		WindowMax   *float64       `json:"windowMax"`
 		WindowNanos *time.Duration `json:"windowNanos"`
 		Supply      *float64       `json:"supply"`
-	}{SchedulerDownState: state}
-	if err := json.Unmarshal(raw, &shape); err != nil {
-		return nil, err
-	}
-	if shape.WindowMax == nil || shape.WindowNanos == nil || shape.Supply == nil {
-		return nil, nil
-	}
-	state.WindowMax, state.WindowNanos, state.Supply = *shape.WindowMax, *shape.WindowNanos, *shape.Supply
-	return state, nil
-}
-
-func (w *SchedulerCapacityWorkload) UnmarshalJSON(raw []byte) error {
-	type workload SchedulerCapacityWorkload
-	record := struct {
-		*workload
-		ScaleDown json.RawMessage `json:"scaleDown"`
-	}{workload: (*workload)(w)}
+	}{state: (*state)(s)}
 	if err := json.Unmarshal(raw, &record); err != nil {
 		return err
 	}
-	w.ScaleDown = nil
-	if len(record.ScaleDown) == 0 {
-		return nil
+	if record.WindowMax == nil || record.WindowNanos == nil || record.Supply == nil {
+		return failure("IncompleteObservation", "scaleDown requires windowMax, windowNanos and supply")
 	}
-	var err error
-	w.ScaleDown, err = decodeWindowEvidence(record.ScaleDown)
-	return err
-}
-
-func (s *SchedulerSnapshot) UnmarshalJSON(raw []byte) error {
-	type snapshot SchedulerSnapshot
-	record := struct {
-		*snapshot
-		ScaleDown map[string]json.RawMessage `json:"scaleDown"`
-	}{snapshot: (*snapshot)(s)}
-	if err := json.Unmarshal(raw, &record); err != nil {
-		return err
-	}
-	s.ScaleDown = nil
-	for uid, evidence := range record.ScaleDown {
-		state, err := decodeWindowEvidence(evidence)
-		if err != nil {
-			return err
-		}
-		if state != nil {
-			if s.ScaleDown == nil {
-				s.ScaleDown = map[string]SchedulerDownState{}
-			}
-			s.ScaleDown[uid] = *state
-		}
-	}
-	if len(record.ScaleDown) != len(s.ScaleDown) {
-		s.EmptyNodeScaleDownAllowed = false
-	}
+	s.WindowMax, s.WindowNanos, s.Supply = *record.WindowMax, *record.WindowNanos, *record.Supply
 	return nil
 }
 
@@ -490,21 +441,18 @@ func (l *ObservationLog) SchedulerObservationPage(ctx context.Context, from, to 
 		var envelope struct {
 			At time.Time `json:"at"`
 		}
-		if err := jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal(raw, &envelope); err != nil {
+		if err := json.Unmarshal(raw, &envelope); err != nil {
 			return err
 		}
 		if !observationInInterval(envelope.At, from, to) {
-			return observationJSONSyntaxError(raw)
+			return nil
 		}
 		matched++
 		if matched <= offset {
-			return observationJSONSyntaxError(raw)
+			return nil
 		}
 		if len(records) == limit {
 			next = offset + len(records)
-			if err := observationJSONSyntaxError(raw); err != nil {
-				return err
-			}
 			return errObservationStop
 		}
 		if err := l.readCatalog(read, read.scanningHour); err != nil {
