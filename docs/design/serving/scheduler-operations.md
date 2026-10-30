@@ -12,6 +12,10 @@ final prepare/power/drain 의존성을 유지하되 매 tick 실제 snapshot/nat
 중간 route도 `Operations.ApplyTarget`의 measured profile/native ACK·owner/현재 UID·atomic runtime 분배를 거치며 accepted 계약/drain을 지킨다. 다른 prepare/power/drain/slow 박자를 기다리지 않고 같은 owner 예약 안에서 실행한다. 부분 용량이 전체 SLO를 보장하는 것은 아니다.
 ID `<목표 ID>-ready-<부분집합 hash>`, `Action.from=ready-subset`, action/operation start/end·frozen `operation.target`·before/actual routing을 기록하고 campaign Run에도 보존한다. 후속 subset이 대체하며 final target/DAG 완료나 전역 판단 대기 근거가 아니다. owner handoff/제거 의무와 예약 밖 탐색은 유지한다.
 
+Cycle 6 / SCH-20, SCH-AC-38: 무Ready UID는 중간 target에서 생략한다. frozen mutation scope는 parent 허가 UID ∩ 실제 route/policy 변경 UID이며 non-nil empty는 launch하지 않는다(nil은 전체). 일반 route·resize·bridge·직접 runtime apply는 **선언된 양수 분배→empty/all-zero**를 거절한다. 선언은 소실한 physical ID도 보존하며 현재 Ready/dispatch projection과 구별한다. empty→empty는 override/seed 무변경이고 신규 serving ACK가 아니다. 명시적 unroute만 철수 인가를 전달하며 release는 Pod seed로 복귀한다; stop/drain/remove의 accepted 요청·실물 lifecycle은 유지한다.
+ApplyTarget preflight와 runtime mutex 내부 commit은 같은 전이 검사를 사용한다. 양수 목적지는 기존 exact identity/Ready/native policy ACK를 재검증하며 refresh 뒤 Ready 상실도 거절한다. annotation persistence 실패는 성공 ACK가 아니며 메모리/Kubernetes 분산 원자성을 주장하지 않는다. keep-last-good는 일시 NotReady 뒤 회복 경로를 보존할 뿐 물리 장애 중 공급을 만들지 않는다.
+
+
 ## Where a request branches
 
 EdgeMesh is a DaemonSet proxy: the client's node iptables intercepts and chooses an endpoint, not a shared global point. An external consumer enters the cluster at one entry point. A shared Service would delegate selection to EdgeMesh without weights; a direct Pod address cannot resolve across the tunnel. CHILL chooses the physical instance and EdgeMesh transports it.

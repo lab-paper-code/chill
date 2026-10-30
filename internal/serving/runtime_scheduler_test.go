@@ -462,7 +462,7 @@ func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *t
 
 func assertSchedulerRetainedIngress(t *testing.T, r *Runtime, uid string, observedAt time.Time) {
 	t.Helper()
-	if err := r.ApplySchedulerTarget(SchedulerCandidate{Routing: map[string]map[string]int32{uid: {}}}); err != nil {
+	if err := r.ApplySchedulerUnrouteTarget(SchedulerCandidate{Routing: map[string]map[string]int32{uid: {}}}, []string{uid}); err != nil {
 		t.Fatal(err)
 	}
 	if r.Instances()[0].Routable[uid] {
@@ -648,7 +648,7 @@ func TestControlledRoutingKeepsExplicitlyUnroutedWorkloadQueuedAfterInstanceRedi
 	if err = r.InstallInstances([]ReadyInstance{instance}); err != nil {
 		t.Fatal(err)
 	}
-	if err = r.ApplySchedulerTarget(SchedulerCandidate{Routing: map[string]map[string]int32{d.UID: {}}}); err != nil {
+	if err = r.ApplySchedulerUnrouteTarget(SchedulerCandidate{Routing: map[string]map[string]int32{d.UID: {}}}, []string{d.UID}); err != nil {
 		t.Fatal(err)
 	}
 	next := *d
@@ -656,7 +656,7 @@ func TestControlledRoutingKeepsExplicitlyUnroutedWorkloadQueuedAfterInstanceRedi
 	if err = r.Publish(&next); err != nil {
 		t.Fatal(err)
 	}
-	if err = r.ApplySchedulerTarget(SchedulerCandidate{Routing: map[string]map[string]int32{d.UID: {}, next.UID: nil}}); err != nil {
+	if err = r.ApplySchedulerUnrouteTarget(SchedulerCandidate{Routing: map[string]map[string]int32{d.UID: {}, next.UID: nil}}, []string{d.UID, next.UID}); err != nil {
 		t.Fatal(err)
 	}
 	instance.Routing = map[string]int32{d.UID: 1, next.UID: 1}
@@ -706,7 +706,7 @@ func TestControlledRoutingExecutesSeededWorkloadAbsentFromAppliedDistribution(t 
 	if err = r.Publish(d); err != nil {
 		t.Fatal(err)
 	}
-	if err = r.ApplySchedulerTarget(SchedulerCandidate{Routing: map[string]map[string]int32{d.UID: {}}}); err != nil {
+	if err = r.ApplySchedulerUnrouteTarget(SchedulerCandidate{Routing: map[string]map[string]int32{d.UID: {}}}, []string{d.UID}); err != nil {
 		t.Fatal(err)
 	}
 	measured := *d

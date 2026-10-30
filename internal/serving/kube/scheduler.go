@@ -1026,6 +1026,16 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 			operation := scheduledOperation(action, selectedTarget, config, c.powerTargets, c.state.Snapshot.Workloads)
 			if action.Kind == operationRoute {
 				operation.WorkloadUIDs = c.targetWorkloadsLocked(target)
+				if selectedTarget != &target {
+					changed := changedWorkloads(*selectedTarget, c.state.Snapshot)
+					allowed := operation.WorkloadUIDs
+					operation.WorkloadUIDs = slices.DeleteFunc(changed, func(uid string) bool {
+						return allowed != nil && !slices.Contains(allowed, uid)
+					})
+				}
+				if operation.WorkloadUIDs != nil && len(operation.WorkloadUIDs) == 0 {
+					continue
+				}
 				operation.Target = controlledTarget(operation)
 			}
 			action.Status = nativeOperationRunning
@@ -1165,6 +1175,9 @@ func (c *SchedulerController) readySubset(target serving.SchedulerCandidate, row
 					}
 				}
 			}
+		}
+		if len(selected) == 0 {
+			continue
 		}
 		partial.Routing[uid] = map[string]int32{}
 		var total, cumulative, assigned int64
@@ -1431,11 +1444,13 @@ func (c *SchedulerController) routingTargetPresent(target *serving.SchedulerCand
 		return false
 	}
 	actual, _ := c.runtime.SchedulerRouting()
+	positive := false
 	for uid, weights := range target.Routing {
 		if len(actual[uid]) != len(weights) {
 			return false
 		}
 		for id, weight := range weights {
+			positive = positive || weight > 0
 			state := schedulerPhysicalState(id, physical)
 			if state == nil {
 				return false
@@ -1459,7 +1474,7 @@ func (c *SchedulerController) routingTargetPresent(target *serving.SchedulerCand
 			return false
 		}
 	}
-	return true
+	return positive
 }
 
 func schedulerPhysicalState(id string, physical []serving.InstanceState) *serving.InstanceState {

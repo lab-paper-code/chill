@@ -139,7 +139,7 @@ func TestUnboundRuntimeAndSchedulerCaptureRetainVerifiedOwnerAndSlotFacts(t *tes
 	}
 	empty := target
 	empty.Routing = map[string]map[string]int32{uid: {}}
-	if err := controller.runtime.ApplySchedulerTarget(empty); err != nil {
+	if err := controller.runtime.ApplySchedulerUnrouteTarget(empty, []string{uid}); err != nil {
 		t.Fatal(err)
 	}
 	var unbound *serving.InstanceState
@@ -746,7 +746,7 @@ func TestReadySubsetBootstrapRoutesBeforeIndependentPreparationsAndPowerFinish(t
 	controller.state.Snapshot.Instances = []serving.SchedulerInstance{a, b}
 	controller.state.Snapshot.Workloads = controller.runtime.SchedulerInputs(time.Now).Workloads
 	controller.state.Snapshot.Routing = map[string]map[string]int32{uid: {}}
-	if err := controller.runtime.ApplySchedulerTarget(serving.SchedulerCandidate{Routing: controller.state.Snapshot.Routing}); err != nil {
+	if err := controller.runtime.ApplySchedulerUnrouteTarget(serving.SchedulerCandidate{Routing: controller.state.Snapshot.Routing}, []string{uid}); err != nil {
 		t.Fatal(err)
 	}
 	// b has just completed preparation; c/d and the independent power change
@@ -1656,5 +1656,56 @@ func TestTwoTempoPreservesServingRouteOnPreparationClock(t *testing.T) {
 		if _, launched := controller.runs[finalRouteActionID]; launched {
 			t.Fatal("full route ignored pending power")
 		}
+	}
+}
+
+func TestReadySubsetMixedUIDPreservesNotReadyDeclarationE56(t *testing.T) {
+	c, target, physical := acknowledgedHandoffFixture(t)
+	first := target.Instances[0]
+	definition := *c.runtime.SchedulerInputs(time.Now).Workloads[0]
+	definition.UID, definition.Name = "independent-uid", "independent"
+	if err := c.runtime.Publish(&definition); err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.ID, second.WorkloadUID = "independent-physical", definition.UID
+	other := physical
+	other.State.ID = second.ID
+	other.Routing = map[string]int32{}
+	physical.State.Ready = false
+	if err := c.runtime.InstallInstances([]serving.ReadyInstance{physical, other}); err != nil {
+		t.Fatal(err)
+	}
+	c.state.Snapshot.Instances = []serving.SchedulerInstance{first, second}
+	c.state.Snapshot.Instances[0].Ready = false
+	c.state.Snapshot.Routing, _ = c.runtime.SchedulerRouting()
+	target.Instances = []serving.SchedulerInstance{first, second}
+	target.Routing = map[string]map[string]int32{first.WorkloadUID: {first.ID: 1000}, second.WorkloadUID: {second.ID: 1000}}
+	target.Actions = nil
+	partial := c.readySubset(target, nil)
+	if partial == nil {
+		t.Fatal("independent Ready UID made no progress")
+	}
+	if _, present := partial.Routing[first.WorkloadUID]; present {
+		t.Fatal("NotReady UID was frozen as a withdrawal")
+	}
+	scope := changedWorkloads(*partial, c.state.Snapshot)
+	if !reflect.DeepEqual(scope, []string{second.WorkloadUID}) {
+		t.Fatalf("partial scope includes unchanged/NotReady UID: %v", scope)
+	}
+	// Physical recovery occurs after freezing the partial action, before commit.
+	physical.State.Ready = true
+	if err := c.runtime.InstallInstances([]serving.ReadyInstance{physical, other}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.runtime.ApplySchedulerWorkloadsTarget(*partial, scope); err != nil {
+		t.Fatal(err)
+	}
+	route, _ := c.runtime.SchedulerRouting()
+	if route[first.WorkloadUID][first.ID] != 1 || route[second.WorkloadUID][second.ID] != 1000 {
+		t.Fatalf("partial commit overwrote recovered declaration: %v", route)
+	}
+	if c.routingTargetPresent(&serving.SchedulerCandidate{Routing: map[string]map[string]int32{definition.UID: {}}}, c.state.Snapshot, c.runtime.Instances(), true) {
+		t.Fatal("empty route was promoted to a serving ACK")
 	}
 }

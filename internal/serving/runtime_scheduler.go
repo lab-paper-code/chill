@@ -76,7 +76,7 @@ func (r *Runtime) routeWeightLocked(uid string, instance *runtimeInstance) int32
 func (r *Runtime) ApplySchedulerTarget(candidate SchedulerCandidate) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.applySchedulerTargetLocked(candidate, false, nil)
+	return r.applySchedulerTargetLocked(candidate, false, nil, false)
 }
 
 // ApplySchedulerWorkloadsTarget leaves every other UID's override (including
@@ -92,7 +92,7 @@ func (r *Runtime) ApplySchedulerWorkloadsTarget(candidate SchedulerCandidate, ui
 	if len(uids) == 0 {
 		return nil
 	}
-	return r.applySchedulerTargetLocked(candidate, false, uids)
+	return r.applySchedulerTargetLocked(candidate, false, uids, false)
 }
 
 // ValidateSchedulerWorkloadsTarget validates only mutations in uids; declarations
@@ -100,15 +100,45 @@ func (r *Runtime) ApplySchedulerWorkloadsTarget(candidate SchedulerCandidate, ui
 func (r *Runtime) ValidateSchedulerWorkloadsTarget(candidate SchedulerCandidate, uids []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.applySchedulerTargetLocked(candidate, true, uids)
+	return r.applySchedulerTargetLocked(candidate, true, uids, false)
 }
 
-func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, validateOnly bool, uids []string) error {
-	targets, err := r.resolveSchedulerRoutingLocked(candidate, uids)
+// ApplySchedulerUnrouteTarget explicitly withdraws the authorized UID scope.
+func (r *Runtime) ApplySchedulerUnrouteTarget(candidate SchedulerCandidate, uids []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.applySchedulerTargetLocked(candidate, false, uids, true)
+}
+
+// ValidateSchedulerUnrouteTarget checks explicit withdrawal without changing routes.
+func (r *Runtime) ValidateSchedulerUnrouteTarget(candidate SchedulerCandidate, uids []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.applySchedulerTargetLocked(candidate, true, uids, true)
+}
+
+func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, validateOnly bool, uids []string, unroute bool) error {
+	if uids != nil && len(uids) == 0 {
+		return nil
+	}
+	targets, err := r.resolveSchedulerRoutingLocked(candidate, uids, unroute)
 	if err != nil {
 		return err
 	}
 	if validateOnly {
+		return nil
+	}
+	// Empty ordinary declarations are no-ops, not new controlled overrides.
+	if !unroute {
+		active := []string{}
+		for uid, distribution := range targets {
+			if (uids == nil || slices.Contains(uids, uid)) && positiveRouting(distribution) {
+				active = append(active, uid)
+			}
+		}
+		uids = active
+	}
+	if uids != nil && len(uids) == 0 {
 		return nil
 	}
 	// The declared distribution is each instance's static seed, as its Pod records it.
@@ -163,8 +193,8 @@ func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, valid
 }
 
 // Resolve logical slots once for both validation and actual application.
-func (r *Runtime) resolveSchedulerRoutingLocked(candidate SchedulerCandidate, uids []string) (map[string]map[string]int32, error) {
-	if err := r.validateSchedulerRoutingLocked(candidate, uids); err != nil {
+func (r *Runtime) resolveSchedulerRoutingLocked(candidate SchedulerCandidate, uids []string, unroute bool) (map[string]map[string]int32, error) {
+	if err := r.validateSchedulerRoutingLocked(candidate, uids, unroute); err != nil {
 		return nil, err
 	}
 	targets := make(map[string]map[string]int32, len(candidate.Routing))
@@ -218,7 +248,12 @@ func (r *Runtime) resolveSchedulerRoutingLocked(candidate SchedulerCandidate, ui
 }
 
 // Validate logical route declarations before resolving their physical runners.
-func (r *Runtime) validateSchedulerRoutingLocked(candidate SchedulerCandidate, uids []string) error {
+func (r *Runtime) validateSchedulerRoutingLocked(candidate SchedulerCandidate, uids []string, unroute bool) error {
+	for _, uid := range uids {
+		if uid == "" || r.workloads[uid] == nil || r.workloads[uid].detached {
+			return failure("DefinitionChanged", "workload %q is not current", uid)
+		}
+	}
 	for uid, workload := range r.workloads {
 		if _, present := candidate.Routing[uid]; !workload.detached && !present && (uids == nil || slices.Contains(uids, uid)) {
 			return failure("InvalidDistribution", "target lacks distribution for workload %q", uid)
@@ -228,6 +263,21 @@ func (r *Runtime) validateSchedulerRoutingLocked(candidate SchedulerCandidate, u
 		workload := r.workloads[uid]
 		if workload == nil || workload.detached {
 			return failure("DefinitionChanged", "target has stale workload %q", uid)
+		}
+		if !unroute && (uids == nil || slices.Contains(uids, uid)) && !positiveRouting(distribution) {
+			// Controlled declarations retain even vanished physical IDs. Observed
+			// readiness and SchedulerRouting's live-instance projection cannot
+			// decide whether this change withdraws a previously declared route.
+			before, controlled := r.routeTargets[uid]
+			positive := r.routingControlled && controlled && positiveRouting(before)
+			if !r.routingControlled || !controlled {
+				for _, instance := range r.instances {
+					positive = positive || instance.Routing[uid] > 0
+				}
+			}
+			if positive {
+				return failure("InvalidDistribution", "ordinary route cannot withdraw workload %q; use explicit unroute", uid)
+			}
 		}
 		for id, weight := range distribution {
 			if weight < 0 {
@@ -246,6 +296,15 @@ func (r *Runtime) validateSchedulerRoutingLocked(candidate SchedulerCandidate, u
 		}
 	}
 	return nil
+}
+
+func positiveRouting(weights map[string]int32) bool {
+	for _, weight := range weights {
+		if weight > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Runtime) schedulerSlotLocked(id string) (*runtimeInstance, error) {

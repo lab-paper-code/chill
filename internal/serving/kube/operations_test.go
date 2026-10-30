@@ -347,7 +347,7 @@ func TestScopedRouteDoesNotPersistManualPodDefaults(t *testing.T) {
 	}
 	stopped := target
 	stopped.Routing = map[string]map[string]int32{uid: {}}
-	if err := operations.runtime.ApplySchedulerWorkloadsTarget(stopped, []string{uid}); err != nil {
+	if err := operations.runtime.ApplySchedulerUnrouteTarget(stopped, []string{uid}); err != nil {
 		t.Fatal(err)
 	}
 	// An explicitly empty scope is not the legacy all-UID scope.
@@ -449,7 +449,7 @@ func TestReassignedInstancePersistsOnlyItsDeclaredWorkload(t *testing.T) {
 			<-started // the second request stays queued behind the capacity of one
 			moved := serving.SchedulerCandidate{ID: "move", Instances: []serving.SchedulerInstance{{ID: id, Node: ref, Profile: &profile, WorkloadUID: second.Applied.UID}},
 				Routing: map[string]map[string]int32{first.Applied.UID: {}, second.Applied.UID: {id: 1}}}
-			if err = m.runtime.ApplySchedulerTarget(moved); err != nil {
+			if err = m.runtime.ApplySchedulerUnrouteTarget(moved, nil); err != nil {
 				t.Fatal(err)
 			}
 			// A refresh that listed the Pod before the patch reinstalls the old annotation.
@@ -587,5 +587,31 @@ func TestCaptureRecordsNodePodsWithWorkloadRole(t *testing.T) {
 	}
 	if !reflect.DeepEqual(state.Pods, want) {
 		t.Fatalf("Pods = %+v", state.Pods)
+	}
+}
+
+func TestRouteAndBridgeRejectEmptyBeforePolicyOrSeedMutation(t *testing.T) {
+	for _, kind := range []string{operationRoute, operationResize} {
+		for _, allZero := range []bool{false, true} {
+			operations, target, pods := routeAcknowledgmentFixture(t)
+			uid := target.Instances[0].WorkloadUID
+			weights := map[string]int32{}
+			if allZero {
+				for _, instance := range target.Instances {
+					weights[instance.ID] = 0
+				}
+			}
+			target.Routing = map[string]map[string]int32{uid: weights}
+			before, _ := operations.runtime.SchedulerRouting()
+			seeds := podRoutingAnnotations(context.Background(), t, operations, pods)
+			result := OperationResult{Operation: Operation{Kind: kind, Target: &target, WorkloadUIDs: []string{uid}}}
+			if err := operations.ApplyTarget(context.Background(), target, &result); err == nil {
+				t.Fatal("empty/all-zero route or bridge/resize passed preflight")
+			}
+			after, _ := operations.runtime.SchedulerRouting()
+			if !reflect.DeepEqual(before, after) || !slices.Equal(seeds, podRoutingAnnotations(context.Background(), t, operations, pods)) || len(result.Steps) != 0 {
+				t.Fatal("rejected empty distribution mutated runtime, seeds, or policy")
+			}
+		}
 	}
 }

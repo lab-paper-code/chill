@@ -143,7 +143,7 @@ func TestRouteOnlyHandoffRetainsEveryUIDEffectProof(t *testing.T) {
 				lostUID, lostRoute = aUID, aRoute
 			}
 			empty := serving.SchedulerCandidate{Routing: map[string]map[string]int32{lostUID: {}}}
-			if err := c.runtime.ApplySchedulerWorkloadsTarget(empty, []string{lostUID}); err != nil {
+			if err := c.runtime.ApplySchedulerUnrouteTarget(empty, []string{lostUID}); err != nil {
 				t.Fatal(err)
 			}
 			c.state.Snapshot.Routing, _ = c.runtime.SchedulerRouting()

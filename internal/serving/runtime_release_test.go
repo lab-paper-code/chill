@@ -14,7 +14,7 @@ func TestReleaseSchedulerRoutingFollowsNewReadySeed(t *testing.T) {
 	other := original
 	other.WorkloadUID = "w2"
 	blocked := SchedulerCandidate{Instances: []SchedulerInstance{other}, Routing: map[string]map[string]int32{"w1": {}, "w2": {other.ID: 7}}}
-	if err := r.ApplySchedulerTarget(blocked); err != nil {
+	if err := r.ApplySchedulerUnrouteTarget(blocked, nil); err != nil {
 		t.Fatal(err)
 	}
 	if r.Instances()[0].Routable["w1"] || !r.Instances()[0].Routable["w2"] {
@@ -102,5 +102,75 @@ func TestManualRoutingPreservesReleasedUID(t *testing.T) {
 	}
 	if err := r.ApplySchedulerWorkloadsTarget(target, []string{""}); err == nil {
 		t.Fatal("empty manual routing UID accepted")
+	}
+}
+
+func TestOrdinaryRouteCannotWithdrawDeclaredDistribution(t *testing.T) {
+	for _, zero := range []bool{false, true} {
+		r, instance, _ := routingRuntime(t, map[string]int32{"w1": 2, "w2": 3})
+		r.EnableSchedulerRouting()
+		instance.WorkloadUID = "w1"
+		weights := map[string]int32{}
+		if zero {
+			weights[instance.ID] = 0
+		}
+		target := SchedulerCandidate{Instances: []SchedulerInstance{instance}, Routing: map[string]map[string]int32{"w1": weights}}
+		before, _ := r.SchedulerRouting()
+		if err := r.ValidateSchedulerWorkloadsTarget(target, []string{"w1"}); err == nil {
+			t.Fatal("empty/all-zero ordinary route passed preflight")
+		}
+		if err := r.ApplySchedulerWorkloadsTarget(target, []string{"w1"}); err == nil {
+			t.Fatal("empty/all-zero ordinary route committed")
+		}
+		after, _ := r.SchedulerRouting()
+		if !reflect.DeepEqual(before, after) {
+			t.Fatalf("rejected route mutated declaration: %v", after)
+		}
+		if err := r.ApplySchedulerWorkloadsTarget(target, []string{}); err != nil {
+			t.Fatalf("empty scope is not all UIDs: %v", err)
+		}
+		if err := r.ApplySchedulerUnrouteTarget(target, []string{"w1"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.ReleaseSchedulerRouting("w1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestEmptyOrdinaryRouteDoesNotCaptureReleasedUID(t *testing.T) {
+	r, _, _ := routingRuntime(t, map[string]int32{"w2": 3})
+	if err := r.ApplySchedulerWorkloadsTarget(SchedulerCandidate{Routing: map[string]map[string]int32{"w1": {}}}, []string{"w1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := r.routeTargets["w1"]; present {
+		t.Fatal("empty no-op created an override")
+	}
+}
+
+func TestRouteCommitRechecksReadyAfterPreflight(t *testing.T) {
+	r, instance, _ := routingRuntime(t, map[string]int32{"w1": 2, "w2": 3})
+	r.EnableSchedulerRouting()
+	instance.WorkloadUID = "w1"
+	target := SchedulerCandidate{Instances: []SchedulerInstance{instance}, Routing: map[string]map[string]int32{"w1": {instance.ID: 7}}}
+	if err := r.ValidateSchedulerWorkloadsTarget(target, []string{"w1"}); err != nil {
+		t.Fatal(err)
+	}
+	// A matching native ACK cannot authorize a destination that lost Ready.
+	r.mu.Lock()
+	r.instances[instance.ID].State.Ready = false
+	r.mu.Unlock()
+	if err := r.ApplySchedulerWorkloadsTarget(target, []string{"w1"}); err == nil {
+		t.Fatal("Ready loss between preflight and commit was accepted")
+	}
+	r.mu.Lock()
+	if r.routeTargets["w1"][instance.ID] != 2 {
+		t.Fatal("failed commit changed declared distribution")
+	}
+	delete(r.instances, instance.ID)
+	r.mu.Unlock()
+	empty := SchedulerCandidate{Routing: map[string]map[string]int32{"w1": {}}}
+	if err := r.ApplySchedulerWorkloadsTarget(empty, []string{"w1"}); err == nil {
+		t.Fatal("vanished physical ID erased the positive before-state")
 	}
 }

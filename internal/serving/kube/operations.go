@@ -967,8 +967,36 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 	if result.Operation.WorkloadUID != "" {
 		uids = []string{result.Operation.WorkloadUID}
 	}
-	if err := o.runtime.ValidateSchedulerWorkloadsTarget(target, uids); err != nil {
+	if uids != nil && len(uids) == 0 {
+		return nil
+	}
+	validate := o.runtime.ValidateSchedulerWorkloadsTarget
+	if result.Operation.Kind == operationUnroute {
+		validate = o.runtime.ValidateSchedulerUnrouteTarget
+	}
+	if err := validate(target, uids); err != nil {
 		return err
+	}
+	if result.Operation.Kind != operationUnroute {
+		active := []string{}
+		for uid, weights := range target.Routing {
+			if uids != nil && !slices.Contains(uids, uid) {
+				continue
+			}
+			for _, weight := range weights {
+				if weight > 0 {
+					active = append(active, uid)
+					break
+				}
+			}
+		}
+		uids = active
+		if len(uids) == 0 {
+			return nil
+		}
+		if result.Operation.WorkloadUID == "" {
+			result.Operation.WorkloadUIDs = uids
+		}
 	}
 	result.Before.Routing, _ = o.runtime.SchedulerRouting()
 	if result.Before.Native == nil {
@@ -1003,7 +1031,9 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 		return err
 	}
 	var applyErr error
-	if uids != nil {
+	if result.Operation.Kind == operationUnroute {
+		applyErr = o.runtime.ApplySchedulerUnrouteTarget(target, uids)
+	} else if uids != nil {
 		applyErr = o.runtime.ApplySchedulerWorkloadsTarget(target, uids)
 	} else {
 		applyErr = o.runtime.ApplySchedulerTarget(target)

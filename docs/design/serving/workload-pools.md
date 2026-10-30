@@ -27,6 +27,7 @@
 ### 활성·측정 POOL
 
 W의 활성 POOL은 `InstanceState.OwnerWorkloadUID=W` 또는 binding W인 CHILL serving 인스턴스의 Node 집합이다. prepare/remove가 실제 소속을 바꾸며 별도 membership 동작은 없다(`SCH-AC-22`). 노드당 serving 인스턴스 하나, 같은 모델 Workload도 각각 인스턴스를 두며 조건 동일 profile만 재사용한다. owner/binding 모두 없는 비측정 인스턴스는 다음 판단의 remove로 정리한다.
+Cycle 6의 UID별 keep-last-good는 무Ready 관측을 철수 선언으로 바꾸지 않는 제어 안전성이다. headroom/transition reserve/MaxReplicas는 최소 복제나 N+1 장애 가용성을 보장하지 않는다. 이번 변경은 단일 replica energy-down을 금지하거나 redundancy 설정을 새로 도입하지 않으며, 물리 NotReady 동안의 요청 성공을 보장하지 않는다.
 측정은 `chill.dacs.io/measurement:NoSchedule`, 값은 노드를 받은 측정이다. ChillServer만 붙이거나 떼며 승인/거절/반환은 [admission](measurement-admission.md)을 따른다.
 profiling Job(worker/idle), transition attempt Job, operation 측정 인스턴스·승인 시 준비한 전환 비용 runner는 `operator:Exists,effect:NoSchedule` toleration을 가진다.
 serving Pod는 nodeName을 써 kube-scheduler 검사를 우회하므로 capture가 측정 Node를 배치/전력/Fixed내림/remove에서 제외하고 실행 직전 prepare/ChangePower도 Node를 다시 읽어 `NodeInMeasurement`로 거절한다. pools API는 측정 소속을 표시한다. operation은 승인 Node만 사용하고 종료 격리 witness Tainted를 보존한다([원자 동작 격리](scheduler-operations.md)).

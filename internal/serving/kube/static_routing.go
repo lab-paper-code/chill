@@ -60,7 +60,11 @@ func (c *SchedulerController) manualRoutingOperationLocked(ctx context.Context, 
 	if err = c.validateManualRoutingNodes(ctx, request, snapshot, weights); err != nil {
 		return Operation{}, err
 	}
-	if err = c.runtime.ValidateSchedulerWorkloadsTarget(target, []string{request.WorkloadUID}); err != nil {
+	validate := c.runtime.ValidateSchedulerWorkloadsTarget
+	if request.Kind == operationUnroute || request.Kind == operationRelease {
+		validate = c.runtime.ValidateSchedulerUnrouteTarget
+	}
+	if err = validate(target, []string{request.WorkloadUID}); err != nil {
 		return Operation{}, refused("OperationConflict", err.Error())
 	}
 	if request.Kind != operationRelease {
