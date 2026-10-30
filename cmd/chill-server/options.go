@@ -41,12 +41,27 @@ type options struct {
 	pprofAddress                                                           string
 	pprofMutexFraction                                                     int
 	pprofBlockRate                                                         time.Duration
+	resourceMaxSamples, resourceMaxContainers, resourceMaxThermal, resourceMaxErrors int
+	resourceRelease string
+	resourceControlComponents []string
+	resourceDirectoryInterval time.Duration
 
 	// loadGenerator runs the load Job of dispatch-occupancy measurements.
 	loadGenerator servingkube.LoadGeneratorConfig
 }
 
 func (o *options) bindFlags(f *flag.FlagSet) {
+	f.IntVar(&o.resourceMaxSamples, "resource-max-samples", 0, "Maximum samples per resource batch; required from deployment config.")
+	f.IntVar(&o.resourceMaxContainers, "resource-max-containers", 0, "Maximum containers per resource sample.")
+	f.IntVar(&o.resourceMaxThermal, "resource-max-thermal", 0, "Maximum thermal sensors per resource sample.")
+	f.IntVar(&o.resourceMaxErrors, "resource-max-errors", 0, "Maximum errors per resource sample/container.")
+	f.StringVar(&o.resourceRelease, "resource-release", "", "Exact release label of CHILL control Pods.")
+	f.Func("resource-control-component", "Allowed CHILL control component; repeatable.", func(value string) error {
+		if len(validation.IsDNS1123Label(value)) != 0 { return fmt.Errorf("invalid resource control component %q", value) }
+		o.resourceControlComponents = append(o.resourceControlComponents, value)
+		return nil
+	})
+	f.DurationVar(&o.resourceDirectoryInterval, "resource-directory-interval", 0, "Observation directory byte sampling interval.")
 	f.StringVar(&o.checkDeploymentManifest, "check-deployment-config", "",
 		"Validate rendered deployment scheduler ConfigMaps offline and exit.")
 	f.StringVar(&o.schedulerConfigMapFile, "scheduler-configmap-file", "",
@@ -196,6 +211,9 @@ func (o options) validate() error {
 	}
 	if err := o.validateFacts(); err != nil {
 		return err
+	}
+	if o.resourceMaxSamples <= 0 || o.resourceMaxContainers <= 0 || o.resourceMaxThermal <= 0 || o.resourceMaxErrors <= 0 || o.resourceDirectoryInterval <= 0 || o.resourceRelease == "" || len(o.resourceControlComponents) == 0 {
+		return errors.New("positive resource bounds/directory interval and explicit release/control components are required")
 	}
 	return o.validateKubernetesAPIBudget()
 }

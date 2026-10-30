@@ -512,7 +512,8 @@ append 실패는 기존 ObservationLog health·호출 오류/로그로 노출하
 |---|---|
 | 닫힌 분만 export·정의 torn tail 제외·fd 확보 뒤 archive 삭제·기존 #213 prefix 조회·과거 두 stream 부재·404/409/store 오류/취소/긴 전송·root/wildcard RBAC 분리 | SCH-AC-52 |
 | cgroup v1/v2 실제 mount/identity 탐색·counter 단위·미지원 값·Node 시계 차이·전송 실패 무재전송·Pod 권한 없음·container 교체·GC process reset·분별 directory bytes | SCH-AC-53 |
+| resources 구현 커밋: `SCH-68` 자원 수집·수신·누적 기록(이 행을 추가한 커밋). 공통 등록·ticker·배포 설정은 구현 1 통합 커밋; 테스트 파일은 각 생산자 인접 `resources_test.go` | 코드 이행, 배포·환경 실측 수용과 구분 |
 | 초기 baseline/자기 Pod UID·Pod/컨테이너 상태 변화·issue 발생/변경/해소·동일 반복 억제·append 실패 시 live 미발행·저장 성공 후 동일 callback | SCH-AC-54 |
 | accepted meters projection·GET 후 CPO/대시보드 PUT에서 제외·직접 meters PUT 거절·기존 읽기 전용 필드 경계 유지 | SCH-AC-55 |
 
-구현 2에서 **한 번 확인할 환경 사실**은 (a) 비root 기본 agent가 필요한 cgroup 파일을 읽을 수 있는지, (b) edge Node에서 서버 내부 TLS endpoint까지 닿는지, (c) 작은 Node의 1초 표본 오버헤드다. 확인 전 비root 가능·네트워크 도달·허용 오버헤드를 기정사실로 쓰지 않는다. 실패 시 수집을 가짜 0으로 통과시키거나 actuation 특권을 통째로 넘기지 않고 필요한 읽기 권한/배포 조건과 실측 비용을 명시한다. 최종 완료는 CHILL 사실의 API 단일 출처와 네 수용 시나리오·리허설 증거이며, 문서·코드 이행·배포·실험 수용은 서로 구분한다.
+구현 2의 **배포 시 1회 확인**할 환경 사실은 (a) 비root 기본 agent가 필요한 cgroup 파일을 읽을 수 있는지, (b) edge Node에서 서버 내부 TLS endpoint까지 닿는지, (c) 작은 Node의 1초 표본 오버헤드다. 이번 코드 이행에서는 클러스터 접근·배포·실측을 수행하지 않는다. 확인 전 비root 가능·네트워크 도달·허용 오버헤드를 기정사실로 쓰지 않는다. 실패 시 수집을 가짜 0으로 통과시키거나 actuation 특권을 통째로 넘기지 않고 필요한 읽기 권한/배포 조건과 실측 비용을 명시한다. 최종 완료는 CHILL 사실의 API 단일 출처와 네 수용 시나리오·리허설 증거이며, 문서·코드 이행·배포·실험 수용은 서로 구분한다.

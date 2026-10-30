@@ -54,6 +54,9 @@ type DiscoveryConfig struct {
 	SecurityContext        *corev1.SecurityContext        `json:"securityContext,omitempty"`
 	HostPaths              []ReadOnlyHostPath             `json:"hostPaths,omitempty"`
 	UpdateStrategy         appsv1.DaemonSetUpdateStrategy `json:"updateStrategy"`
+	ResourceObservation string `json:"resourceObservation,omitempty"`
+	ResourceCASecret string `json:"resourceCASecret,omitempty"`
+	ResourceCAFile string `json:"resourceCAFile,omitempty"`
 }
 
 // ReadOnlyHostPath is a host directory mounted read-only under hostRoot.
@@ -172,6 +175,9 @@ func (c Config) Validate(requireActuation bool) error {
 
 func (c DiscoveryConfig) problems() []string {
 	var problems []string
+	if c.ResourceObservation != "" && (c.ResourceCASecret == "" || !path.IsAbs(c.ResourceCAFile)) {
+		problems = append(problems, "resource observation requires a CA Secret and absolute CA file")
+	}
 	for name, value := range map[string]string{
 		"discovery.serviceAccountName": c.ServiceAccountName, "discovery.hostRoot": c.HostRoot,
 		"discovery.interval": c.Interval, "discovery.signatureFile": c.SignatureFile,

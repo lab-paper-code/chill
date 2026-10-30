@@ -49,6 +49,7 @@ func buildAgentDaemonSet(options Options, config Config) *appsv1.DaemonSet {
 				"--host-root=" + discovery.HostRoot,
 				"--interval=" + discovery.Interval,
 				"--signature-file=" + discovery.SignatureFile,
+				"--resources-config=" + discovery.ResourceObservation,
 			}, kubeAPIArgs(config)...),
 			Env: append(nodeIdentityEnvironment(),
 				corev1.EnvVar{Name: "CHILL_SYSTEM_NAME", Value: options.SystemName}),
@@ -270,6 +271,9 @@ func discoveryVolumeMounts(config DiscoveryConfig) []corev1.VolumeMount {
 	mounts := []corev1.VolumeMount{{
 		Name: signatureVolumeName, MountPath: path.Dir(config.SignatureFile), ReadOnly: true,
 	}}
+	if config.ResourceObservation != "" {
+		mounts = append(mounts, corev1.VolumeMount{Name:"resources-ca", MountPath:path.Dir(config.ResourceCAFile), ReadOnly:true})
+	}
 	for _, hostPath := range config.HostPaths {
 		mounts = append(mounts, corev1.VolumeMount{
 			Name: hostPath.Name, MountPath: path.Join(config.HostRoot, hostPath.MountPath), ReadOnly: true,
@@ -286,6 +290,9 @@ func discoveryVolumes(config DiscoveryConfig) []corev1.Volume {
 			Items:                []corev1.KeyToPath{{Key: config.SignatureConfigMapKey, Path: path.Base(config.SignatureFile)}},
 		}},
 	}}
+	if config.ResourceObservation != "" {
+		volumes = append(volumes, corev1.Volume{Name:"resources-ca", VolumeSource:corev1.VolumeSource{Secret:&corev1.SecretVolumeSource{SecretName:config.ResourceCASecret, Items:[]corev1.KeyToPath{{Key:"tls.crt",Path:path.Base(config.ResourceCAFile)}}}}})
+	}
 	for _, hostPath := range config.HostPaths {
 		volumes = append(volumes, corev1.Volume{
 			Name: hostPath.Name,

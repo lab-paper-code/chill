@@ -38,6 +38,7 @@ type options struct {
 	kubeAPICAFile    string
 	metricsAddr      string
 	probeAddr        string
+	resourcesConfig string
 }
 
 func (o *options) bindFlags(flags *flag.FlagSet) {
@@ -77,6 +78,7 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 	)
 	flags.StringVar(&o.metricsAddr, "metrics-bind-address", "0", "Metrics endpoint bind address, or 0 to disable.")
 	flags.StringVar(&o.probeAddr, "health-probe-bind-address", ":8081", "Health probe bind address.")
+	flags.StringVar(&o.resourcesConfig, "resources-config", "", "Resource collection JSON configuration; empty disables collection.")
 }
 
 func (o options) validateActuation() error {

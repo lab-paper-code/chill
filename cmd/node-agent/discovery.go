@@ -42,6 +42,13 @@ func runDiscovery(opts options) {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if opts.resourcesConfig != "" && !opts.once {
+		go func() {
+			if err := runResourceAgent(ctx, clientset, opts); err != nil {
+				log.Printf("resource collection stopped: %v", err)
+			}
+		}()
+	}
 	for {
 		if ctx.Err() != nil {
 			return
