@@ -58,7 +58,7 @@ func (o *measurementService) enrichPreflightResponse(response *http.Response) er
 		batchPlan.Reasons = append(batchPlan.Reasons, activeReasons...)
 		if !catalogConfirmed {
 			batchPlan.Reasons = append(batchPlan.Reasons, operatorconsole.MeasurementBatchPlanReason{
-				Code: "CatalogUnconfirmed",
+				Code:    "CatalogUnconfirmed",
 				Message: "The current adopted catalog is unavailable; no measured batch exclusions are confirmed.",
 			})
 		}

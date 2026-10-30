@@ -53,7 +53,7 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 	}
 	view.Insufficiencies = []servingkube.CatalogIssue{{
 		Source: types.NamespacedName{Namespace: task.Namespace, Name: task.Name},
-		Code: "InvalidEvidence", Reason: "real validation failure",
+		Code:   "InvalidEvidence", Reason: "real validation failure",
 	}}
 	if got := assessMeasurementRequest(task, view); got.DisplayStatus != operatorconsole.MeasurementProblem {
 		t.Fatalf("catalog issue ignored: %+v", got)
@@ -68,7 +68,7 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 	}}
 	view.Insufficiencies = []servingkube.CatalogIssue{{
 		Source: types.NamespacedName{Namespace: task.Namespace, Name: task.Name},
-		Code: "ReplacementSelection", Reason: "superseded by newer; original evidence retained",
+		Code:   "ReplacementSelection", Reason: "superseded by newer; original evidence retained",
 	}}
 	if got := assessMeasurementRequest(task, view); got.DisplayStatus != operatorconsole.MeasurementUsable ||
 		!got.Evidence.Accepted || got.Scope.SchedulerUsed == nil || *got.Scope.SchedulerUsed {

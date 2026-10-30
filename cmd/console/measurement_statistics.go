@@ -170,7 +170,7 @@ func readMeasurementStatistics(
 	statistics := &operatorconsole.BatchEnergyOptimizationStatistics{
 		Batches: []operatorconsole.BatchEnergyOptimizationBatchStatistics{},
 		MeasurementFacts: &derivation.MeasurementFacts{
-			Request:         derivation.MeasurementRequestReference{Namespace: cr.Namespace, Name: cr.Name, UID: string(cr.UID)},
+			Request: derivation.MeasurementRequestReference{Namespace: cr.Namespace, Name: cr.Name, UID: string(cr.UID)},
 			ResultReference: derivation.RawEvidenceIdentity{
 				Store: cr.Status.Result.Store, Key: cr.Status.Result.Key, Size: cr.Status.Result.Size,
 			},

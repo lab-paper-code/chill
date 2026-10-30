@@ -68,7 +68,9 @@ func AssessMeasurement(in MeasurementAssessmentInput) MeasurementAssessment {
 		Status: MeasurementUnknown, Reasons: append([]MeasurementReason{}, in.Reasons...), Execution: in.Execution,
 		Evidence:  MeasurementEvidence{Available: in.Available, Accepted: in.Accepted, Reasons: []string{}},
 		Checklist: MeasurementChecklist{Version: "result-checklist.v1", Checks: append([]MeasurementCheck{}, in.Checks...)},
-		Scope:     MeasurementScope{SchedulerUsed: in.SchedulerUsed, Reused: in.Reused, Facts: append([]string{}, in.Facts...)},
+		Scope: MeasurementScope{
+			SchedulerUsed: in.SchedulerUsed, Reused: in.Reused, Facts: append([]string{}, in.Facts...),
+		},
 	}
 	if len(in.Children) > 0 {
 		assessMeasurementChildren(&out, in.Children)

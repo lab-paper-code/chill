@@ -215,7 +215,7 @@ func measurementPreflightTestPlan(t *testing.T) derivation.CurvePlan {
 	plan, err := derivation.NewCurvePlan(derivation.CurvePlanSpec{
 		Name: "source", LogicalModel: "model", DeviceClass: "class", NodeUID: "node-uid",
 		RuntimeFamily: "rknnlite", Backend: "not-applicable", RuntimeImage: image, PowerMode: "fixed",
-		CPU:            derivation.CurveCPUContract{Policy: "allocatable", PolicyVersion: "v1", Request: "7", Limit: "8"},
+		CPU: derivation.CurveCPUContract{Policy: "allocatable", PolicyVersion: "v1", Request: "7", Limit: "8"},
 		MetricSource: derivation.CurveMetricSourceContract{
 			SourceKind: "prometheus", NodeName: "node", Endpoint: "http://metrics", PowerMetric: "power_watts",
 		},

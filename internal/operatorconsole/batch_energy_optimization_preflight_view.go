@@ -193,7 +193,7 @@ func BuildMeasurementBatchPlan(snapshot BatchEnergyOptimizationPreflightSnapshot
 	}
 	if !immutable {
 		result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{
-			Code: "ImmutableImagesUnconfirmed",
+			Code:    "ImmutableImagesUnconfirmed",
 			Message: "Image references are not all immutable digests; projected conditions are planned-only.",
 		})
 	}

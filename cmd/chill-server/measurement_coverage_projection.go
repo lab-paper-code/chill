@@ -187,7 +187,9 @@ func coverageNewCell(
 		Model: group.Model, DeviceClass: group.DeviceClass, ExecutionPath: path, PowerMode: mode,
 		Variants: []operatorconsole.MeasurementCoverageVariant{}, FailureSummary: []operatorconsole.MeasurementFailure{},
 		History: []operatorconsole.MeasurementHistory{},
-		Support: operatorconsole.MeasurementSupport{Verdict: operatorconsole.MeasurementSupportUnknown, Reasons: []operatorconsole.ModelCompatibilityReason{}},
+		Support: operatorconsole.MeasurementSupport{
+			Verdict: operatorconsole.MeasurementSupportUnknown, Reasons: []operatorconsole.ModelCompatibilityReason{},
+		},
 	}
 	row, found := support[strings.Join([]string{group.Model.Name, group.DeviceClass.Name, path}, "/")]
 	if !found {
@@ -362,7 +364,9 @@ func (p *coverageProjection) addProfile(
 	})
 }
 
-func (p *coverageProjection) addReuseSource(variant *operatorconsole.MeasurementCoverageVariant, profile serving.Profile) {
+func (p *coverageProjection) addReuseSource(
+	variant *operatorconsole.MeasurementCoverageVariant, profile serving.Profile,
+) {
 	if profile.Reuse == nil {
 		return
 	}

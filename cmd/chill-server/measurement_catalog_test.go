@@ -75,7 +75,7 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 		catalog: catalog, costs: costs,
 		kube: fake.NewSimpleClientset(&core.ConfigMap{
 			ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "scheduler", ResourceVersion: "new"},
-			Data: map[string]string{"config": string(raw)},
+			Data:       map[string]string{"config": string(raw)},
 		}),
 		opts: options{
 			servingNamespace: "serving", schedulerConfigMap: "scheduler",
