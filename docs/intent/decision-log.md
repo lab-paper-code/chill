@@ -645,3 +645,9 @@
 - 배포 대기 묶음(사용자 승인 1회): 서버 이미지(evidence API+live projection, 소스 5691204f), node-agent 이미지(resources), 대시보드 이미지, chart RBAC(/raw, node-agent 수신, S1 권한, live). 배포 후: 증거 API 리허설 1회(옛/새 수집 동일 KPI, CPU 몫), 하네스 전환(§2 표), 대시보드 브라우저 수용(S1/S2), 환경 사실 3개 확인.
 - 사용자 승인(2026-10-30): rev106 묶음 배포(서버·node-agent·대시보드 이미지 + chart RBAC) → 증거 API 리허설 → 하네스 전환 → 대시보드 브라우저 수용.
 - rev106 node-agent 미갱신(operator가 nodeAgent ConfigMap 변경을 재조정 트리거로 안 받음 [추정]) → 사용자: 1회성 재시작 금지, Helm checksum/config annotation(또는 ConfigMap watch) 표준 해법 커밋 후 같은 control 226 재적용; 리허설에서 node-agent 확인 3개(비root cgroup v1/v2, edge→서버 도달, rasp5/nano 1s 표본 CPU 몫) 기록.
+
+## 2026-10-30 — rev106~110 배포·리허설 완료
+
+- rev106(f8bc1eae) → operator 재빌드 rev107(f0c210fb; 옛 operator가 새 resourceCAFile 필드 strict 거부, ConfigMap watch는 이미 존재→annotation 생략) → chart URL rev108(6bd91502) → agent validator rev109(5f4e7a95) → host cgroupfs 탐색+hybrid v1 rev110(d01ff310). 리허설: 옛/API KPI 완전 동일(#213 재판정 동일); CPU 몫 live 2.5%·수신 7.3%·raw 1.1%·대시보드 조회 16.8%; agent 1s 표본 rasp5 0.24%·nano 4.5% of core. 결손: jetsonx identity, orin-nano(POOL 외) 수집 0 — E5 뒤 과제.
+- 관측: preflight finish에서 또 예약 잔류(prepare partial `client rate limiter Wait: context canceled`, Pod Ready·unclaimed, 보상 흔적 없음) → **kube client rate limiter가 반복 근본**; 사이클 3 P1 후보(limiter 설정/호출 폭주 + R4b 미발동 이유).
+- 다음: 하네스 전환(§2 표·영수증 삭제) ∥ 대시보드 브라우저 수용(S1/S2, 측정 창 밖).
