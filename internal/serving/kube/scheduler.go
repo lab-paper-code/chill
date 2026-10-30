@@ -1020,10 +1020,7 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 			}
 			operation := scheduledOperation(action, selectedTarget, config, c.powerTargets, c.state.Snapshot.Workloads)
 			if action.Kind == operationRoute {
-				operation.WorkloadUIDs = c.targetWorkloadsLocked(target)
-				if selectedTarget != &target {
-					operation.WorkloadUIDs = changedWorkloadScope(*selectedTarget, c.state.Snapshot, operation.WorkloadUIDs)
-				}
+				operation.WorkloadUIDs = c.routeOperationScopeLocked(target, *selectedTarget, selectedTarget != &target)
 				if operation.WorkloadUIDs != nil && len(operation.WorkloadUIDs) == 0 {
 					continue
 				}

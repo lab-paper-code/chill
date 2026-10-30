@@ -77,8 +77,12 @@ func (c *SchedulerController) targetWorkloadsLocked(target serving.SchedulerCand
 	return changedWorkloads(target, c.state.Snapshot)
 }
 
-func changedWorkloadScope(target serving.SchedulerCandidate, snapshot serving.SchedulerSnapshot, allowed []string) []string {
-	return slices.DeleteFunc(changedWorkloads(target, snapshot), func(uid string) bool {
+func (c *SchedulerController) routeOperationScopeLocked(parent, selected serving.SchedulerCandidate, intermediate bool) []string {
+	allowed := c.targetWorkloadsLocked(parent)
+	if !intermediate {
+		return allowed
+	}
+	return slices.DeleteFunc(changedWorkloads(selected, c.state.Snapshot), func(uid string) bool {
 		return allowed != nil && !slices.Contains(allowed, uid)
 	})
 }
