@@ -2,7 +2,7 @@
 
 ## 결과 요약 — completed
 - 결정: derived RKNN artifact의 finite declared batch set은 conversion constraint다. symbolic-batch canonical ONNX는 `BatchEnergyOptimization.spec.batchSizes`가 measurement choice를 소유한다. 정확히 하나만 사용하며 둘을 merge하지 않는다. batch sizes는 positive/unique/strictly increasing이고 sparse set도 허용한다.
-- artifact input/preprocessor 현행 계약은 [heterogeneous workloads](../../serving/heterogeneous-workloads.md#5-프로파일링)을 따른다. missing input declaration은 `ArtifactInputContractMissingError`이며 controller가 artifact를 열어 probe/infer/default하지 않는다. 데이터형은 runtime/loaded-artifact 검증의 소유다.
+- artifact input/preprocessor 현행 계약은 [heterogeneous workloads](../../serving/heterogeneous-workloads.md)을 따른다. missing input declaration은 `ArtifactInputContractMissingError`이며 controller가 artifact를 열어 probe/infer/default하지 않는다. 데이터형은 runtime/loaded-artifact 검증의 소유다.
 - 첫 reconcile에 선택 set/ordered input을 immutable `curve-plan.json`의 `PlannedBatchSizes`로 기록한다. 이후 stored plan이 권위이며 current facts로 재투영하지 않는다. artifact source는 `TargetPlatform/Tool/ToolVersion`, canonical campaign source는 세 값을 빈 값으로 구별한다.
 - 한 artifact는 한 execution state key/loaded-idle baseline을 가지며 idle은 첫 planned batch를 사용하고 inference하지 않는다. runtime의 selected batch 거부는 ordinary trial failure다. 현행 소진 outcome은 [Plan 7](07-batch-energy-optimization-control-path.md)의 `MinimumFound/SearchSpaceExhausted`이며 saturation 주장이 아니다.
 - 실측 근거: `mobilenet-v2-050.onnx` input `input=["batch",3,224,224]`, output `output=["batch",1000]`, float32. RKNN-Toolkit2 2.3.2 artifact `mobilenet-v2-050-rk3588-dynamic-b1-2-4-8-16.rknn`은 16,238,707 bytes, SHA-256 `74328e5c931720e6ffc3ee5d0a1c6f3d71b40f84a730d8e7f36d8bbe8bd22f50`다.
