@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
-	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
+	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
@@ -34,14 +34,23 @@ type measurementService struct {
 	client    client.Client
 	scheduler *schedulerService
 	kube      kubernetes.Interface
-	objects   *stores3.Store
+	objects   measurementObjects
 	opts      options
 	console   *url.URL
 	http      *http.Client
 }
 
+type measurementObjects interface {
+	evidencestore.LocationReader
+	Delete(context.Context, evidencestore.ObjectLocation) error
+}
+
 func newMeasurementService(
-	native client.Client, kube kubernetes.Interface, scheduler *schedulerService, objects *stores3.Store, opts options,
+	native client.Client,
+	kube kubernetes.Interface,
+	scheduler *schedulerService,
+	objects measurementObjects,
+	opts options,
 ) (*measurementService, error) {
 	origin, err := privateOrigin(opts.consoleURL)
 	if err != nil {
@@ -99,7 +108,11 @@ func (o *measurementService) listOperationCosts(
 	}
 	sort.Slice(list.Items, func(i, j int) bool { return list.Items[i].Name < list.Items[j].Name })
 	for _, cr := range list.Items {
-		result.Items = append(result.Items, httpapi.ProjectOperationCostMeasurement(cr, o.opts.storeName))
+		projection, err := o.projectOperationCost(ctx, cr)
+		if err != nil {
+			return httpapi.MeasurementProjectionList{}, err
+		}
+		result.Items = append(result.Items, projection)
 	}
 	return result, nil
 }
@@ -114,7 +127,24 @@ func (o *measurementService) getOperationCost(
 	if err := o.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &cr); err != nil {
 		return httpapi.MeasurementProjection{}, err
 	}
-	return httpapi.ProjectOperationCostMeasurement(cr, o.opts.storeName), nil
+	return o.projectOperationCost(ctx, cr)
+}
+
+func (o *measurementService) projectOperationCost(
+	ctx context.Context,
+	cr api.OperationCostMeasurement,
+) (httpapi.MeasurementProjection, error) {
+	steps, err := servingkube.LoadOperationCostSteps(
+		ctx,
+		cr,
+		o.objects,
+		o.opts.storeName,
+		o.opts.maxEvidenceBytes,
+	)
+	if err != nil {
+		return httpapi.MeasurementProjection{}, err
+	}
+	return httpapi.ProjectOperationCostMeasurement(cr, o.opts.storeName, steps), nil
 }
 
 func (o *measurementService) listDispatchOccupancies(

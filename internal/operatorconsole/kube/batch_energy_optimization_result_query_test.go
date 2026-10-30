@@ -327,3 +327,61 @@ func campaignResultFixture(t *testing.T) (
 	}
 	return campaign, identity, record, payload
 }
+
+func TestBatchEnergyOptimizationStatisticsCallback(t *testing.T) {
+	cr, _, record, payload := campaignResultFixture(t)
+	want := &operatorconsole.BatchEnergyOptimizationStatistics{Batches: []operatorconsole.BatchEnergyOptimizationBatchStatistics{{Batch: 1}}}
+	dependencyErr := errors.New("statistics store denied")
+	for _, test := range []struct {
+		name      string
+		published bool
+		err       error
+	}{
+		{name: "published", published: true},
+		{name: "unpublished"},
+		{name: "dependency failure", published: true, err: dependencyErr},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			campaign := cr.DeepCopy()
+			if !test.published {
+				campaign.Status.Result = nil
+			}
+			calls := 0
+			query, err := NewKubernetesBatchEnergyOptimizationResultQuery(
+				fake.NewClientBuilder().WithScheme(inventoryScheme(t)).WithObjects(campaign).Build(),
+				&recordingObjectReader{payload: payload},
+				func(ctx context.Context, got *edgev1alpha1.BatchEnergyOptimization, sealed batchenergyoptimization.ResultRecord) (*operatorconsole.BatchEnergyOptimizationStatistics, *string, error) {
+					calls++
+					if got.UID != campaign.UID || !reflect.DeepEqual(sealed.Spec(), record.Spec()) {
+						t.Fatal("callback input changed")
+					}
+					return want, nil, test.err
+				},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := query.Read(context.Background(), campaign.Namespace, campaign.Name)
+			if !errors.Is(err, test.err) {
+				t.Fatalf("Read error=%v", err)
+			}
+			if test.err != nil {
+				return
+			}
+			view, err := operatorconsole.BuildBatchEnergyOptimizationResult(snapshot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.published {
+				if calls != 1 || view.Statistics != want || view.StatisticsReason != nil {
+					t.Fatal("statistics not projected")
+				}
+			} else if calls != 0 || view.Statistics != nil || view.StatisticsReason == nil || *view.StatisticsReason != "NoPublishedResult" {
+				t.Fatalf("unpublished statistics=%+v calls=%d", view, calls)
+			}
+			if _, err := json.Marshal(view); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

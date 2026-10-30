@@ -60,9 +60,13 @@ type operationStatus struct {
 	Steps  []operationStepStatus `json:"steps,omitempty"`
 }
 type operationStepStatus struct {
-	Name    string `json:"name"`
-	Key     string `json:"key"`
-	Verdict string `json:"verdict"`
+	Name          string   `json:"name"`
+	Key           string   `json:"key"`
+	Verdict       string   `json:"verdict"`
+	OperationID   string   `json:"operationID"`
+	DurationNanos *int64   `json:"durationNanos"`
+	WallJoules    *float64 `json:"wallJoules"`
+	Reason        string   `json:"reason"`
 }
 type occupancyConditions struct {
 	Workload                string `json:"workload"`
@@ -90,15 +94,19 @@ func measurementProjection(kind, node string, m meta.ObjectMeta) MeasurementProj
 }
 
 // ProjectOperationCostMeasurement retains only recorded step keys; it never invents evidence.
-func ProjectOperationCostMeasurement(cr api.OperationCostMeasurement, store string) MeasurementProjection {
+func ProjectOperationCostMeasurement(cr api.OperationCostMeasurement, store string, steps []servingkube.OperationStepProjection) MeasurementProjection {
 	p := measurementProjection("OperationCostMeasurement", cr.Spec.Node, cr.ObjectMeta)
 	conditions := operationConditions{Steps: make([]operationCondition, len(cr.Spec.Steps))}
 	for i, s := range cr.Spec.Steps {
 		conditions.Steps[i] = operationCondition{s.Name, s.Kind, s.PowerMode, s.BatchEnergyOptimization, s.IdleDurationSeconds}
 	}
 	status := operationStatus{Phase: cr.Status.Phase, Reason: cr.Status.Reason}
-	for _, s := range cr.Status.Steps {
-		status.Steps = append(status.Steps, operationStepStatus{s.Name, s.Key, s.Verdict})
+	for i, s := range cr.Status.Steps {
+		step := steps[i]
+		status.Steps = append(status.Steps, operationStepStatus{
+			Name: s.Name, Key: s.Key, Verdict: s.Verdict, OperationID: step.OperationID,
+			DurationNanos: step.DurationNanos, WallJoules: step.WallJoules, Reason: step.Reason,
+		})
 		if s.Key != "" {
 			p.References.Evidence = append(p.References.Evidence, MeasurementEvidenceLocation{Store: store, Key: s.Key})
 		}

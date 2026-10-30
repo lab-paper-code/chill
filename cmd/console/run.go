@@ -40,20 +40,7 @@ func newEvidencePassportQuery(
 	reader client.Reader,
 	opts options,
 ) (*consolekube.KubernetesEvidencePassportQuery, error) {
-	loader, err := evidencekube.NewRetainedLoader(
-		reader,
-		func(binding storekube.Binding, credentials storekube.Credentials) (evidencestore.LocationReader, error) {
-			return evidences3.New(evidences3.Config{
-				LogicalStore:    binding.Store,
-				Bucket:          binding.Bucket,
-				Endpoint:        binding.Endpoint,
-				Region:          binding.Region,
-				AccessKeyID:     credentials.AccessKeyID,
-				SecretAccessKey: credentials.SecretAccessKey,
-				TempDir:         opts.tempDir,
-			})
-		},
-	)
+	loader, err := newRetainedEvidenceLoader(reader, opts)
 	if err != nil {
 		return nil, fmt.Errorf("construct retained evidence loader: %w", err)
 	}
@@ -81,12 +68,16 @@ func newCampaignResultQuery(
 	if err != nil {
 		return nil, fmt.Errorf("construct Evidence Store resolver: %w", err)
 	}
+	objects := campaignResultObjectReader{
+		reader: reader, resolver: resolver,
+		namespace: opts.namespace, tempDir: opts.tempDir,
+	}
+	loader, err := newRetainedEvidenceLoader(reader, opts)
+	if err != nil {
+		return nil, fmt.Errorf("construct statistics retained evidence loader: %w", err)
+	}
 	results, err := consolekube.NewKubernetesBatchEnergyOptimizationResultQuery(
-		reader,
-		campaignResultObjectReader{
-			reader: reader, resolver: resolver,
-			namespace: opts.namespace, tempDir: opts.tempDir,
-		},
+		reader, objects, newMeasurementStatistics(reader, objects, loader),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("construct batch-energy-optimization result query: %w", err)

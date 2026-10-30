@@ -221,3 +221,32 @@ GET 실패/성공 경로 확인→F4 측정 소비 배포. B3는 캠페인 사�
   Profiler 쪽은 위 두 Profiler 옵션 추가). 기본 chart는 gateway 비활성이라 해당 role이 없다.
 - 배포 필요: Console·ChillServer 이미지와 narrow grant 차트. 배포·클러스터 변경·실데이터 GET,
   새 측정·publication·Dashboard 수정은 수행하지 않았다.
+
+## 10. B2 구현 기록 (2026-10-30)
+
+- PC-09~10: 기존 BEO result GET에 형제 `statistics`/`statisticsReason`을 추가했다.
+  Console composition root가 저장된 completed references/curve-plan만 읽고, retained loader의
+  동결 store binding·원시 검증, 기존 projection/idle/curve derivation을 재사용한다.
+  `Curve.Statistics()`는 기존 mean/PointConfidence를 복사하고 batch별 client 호출 표본을
+  합쳐 Gonum empirical p95를 구한다. Run·호출·item 수를 섞지 않고 공유 idle와 batch별
+  active의 실제 원시/execution·plan 식별자만 sources에 포함한다.
+- PC-11: OperationCost list/detail은 같은 exact-key loader를 사용한다.
+  status.steps의 CR UID/index/name/kind·Node·request/result/key를 읽기 경계에서 확인하고
+  operationID, nullable 실제 durationNanos/wallJoules, 원 reason만 안전한 DTO로 전달한다.
+  accepted zero J, failed의 실제 시간만 있는 기록, insufficient/isolation, idle 분기를 구분하며
+  CR phase/verdict·기존 references와 미실행 후속 단계 부재를 보존한다.
+- 저장 계약·sealed result/detail·campaign/result/raw writer·관측 행 변경은 없다.
+  기존 endpoint를 사용하므로 새 route/RBAC grant·CRD·새 production package·허용 package
+  경계 변경도 없다. Console `run.go`와 ChillServer measurement service 배선까지 연결했다.
+- 검증: pinned gopls 정의/참조와 scoped `go list`로 기존 유도/loader·package edge를 확인했다.
+  `nice -n 19 env GOMAXPROCS=2 go test`의 derivation, serving/kube, serving/httpapi가 통과했고,
+  최종 배선의 cmd/console, cmd/chill-server, operatorconsole 세 패키지가 통과했다.
+  operation loader 후속 lint 리팩터링은 `go test ./internal/serving/kube -run TestLoadOperationCostSteps -count=1`로 통과했다.
+  해당 여덟 package surface의 `bin/golangci-lint run` 최종 검사가 통과했다.
+  초기 Console fixture의 cgroup memory/Secret key 누락, complexity/줄 길이·중복 문자열 lint는
+  원인을 수정한 뒤 통과했다. 추가 dependency는 없으며 Go 줄 formatter는 일회 도구로만 사용했다.
+- 회귀는 비기본 confidence/shared-idle/영분산·signed 하한, unequal trial vector의 pooled p95,
+  exact completed lineage·owner/조건 모순, raw/Run 부재와 권한/store/손상 오류, 유한 읽기·취소,
+  원 result 불변·JSON serialization, 비용의 부분 완료/실패/idle·실제 시간·0 J를 포함한다.
+- 배포 필요: Console 및 ChillServer 이미지. 배포·클러스터 변경·실데이터 GET·재측정·새 publication·
+  Dashboard 변경은 실행하지 않았다. 전체 `make lint test`는 최종 통합 담당이 한 번 실행한다.

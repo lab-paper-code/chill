@@ -9,10 +9,60 @@ import (
 	"gonum.org/v1/gonum/stat/distuv"
 )
 
+// BatchStatistics projects an already-derived point without changing its estimator.
+type BatchStatistics struct {
+	Batch                        int             `json:"batch"`
+	IncrementalWorkJoulesPerItem float64         `json:"incrementalWorkJoulesPerItem"`
+	ActiveTrialCount             int             `json:"activeTrialCount"`
+	IdleTrialCount               int             `json:"idleTrialCount"`
+	Confidence                   PointConfidence `json:"confidence"`
+	LatencySampleCount           int             `json:"latencySampleCount"`
+	LatencyP95Milliseconds       float64         `json:"latencyP95Milliseconds"`
+}
+
+// Statistics copies point estimates and pools the client call latency samples
+// within each batch. The curve's evidence has already passed derivation.
+func (c Curve) Statistics() []BatchStatistics {
+	pointCount := 0
+	for _, pass := range c.passes {
+		pointCount += len(pass.points)
+	}
+	idleTrialCount := 0
+	for _, baseline := range c.baselines {
+		idleTrialCount += len(baseline.Trials)
+	}
+	result := make([]BatchStatistics, 0, pointCount)
+	for _, pass := range c.passes {
+		for _, point := range pass.points {
+			sampleCount := 0
+			for _, trial := range point.Trials {
+				sampleCount += len(trial.ClientLatencyMilliseconds)
+			}
+			latencies := make([]float64, 0, sampleCount)
+			for _, trial := range point.Trials {
+				latencies = append(latencies, trial.ClientLatencyMilliseconds...)
+			}
+			result = append(result, BatchStatistics{
+				Batch:                        point.Batch,
+				IncrementalWorkJoulesPerItem: point.MeanIncrementalWorkJoulesPerItem,
+				ActiveTrialCount:             len(point.Trials),
+				IdleTrialCount:               idleTrialCount,
+				Confidence:                   clonePointConfidence(point.Confidence),
+				LatencySampleCount:           sampleCount,
+				LatencyP95Milliseconds:       percentileInPlace(latencies, 0.95),
+			})
+		}
+	}
+	return result
+}
+
 func percentile(values []float64, quantile float64) float64 {
-	ordered := append([]float64(nil), values...)
-	sort.Float64s(ordered)
-	return stat.Quantile(quantile, stat.Empirical, ordered, nil)
+	return percentileInPlace(append([]float64(nil), values...), quantile)
+}
+
+func percentileInPlace(values []float64, quantile float64) float64 {
+	sort.Float64s(values)
+	return stat.Quantile(quantile, stat.Empirical, values, nil)
 }
 
 func studentTCritical(confidenceLevel, degreesOfFreedom float64) float64 {

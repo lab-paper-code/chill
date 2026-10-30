@@ -50,13 +50,31 @@ func TestMeasurementProjectionWhitelistAndOriginalReferences(t *testing.T) {
 	}
 	idle := int32(7)
 	operation := api.OperationCostMeasurement{ObjectMeta: metadata, Spec: api.OperationCostMeasurementSpec{Node: "node", Steps: []api.OperationCostStep{{Name: "idle", Kind: api.OperationCostStepIdle, IdleDurationSeconds: &idle}}}, Status: api.OperationCostMeasurementStatus{Phase: api.MeasurementPhaseFailed, Steps: []api.OperationCostStepStatus{{Name: "idle", Key: "saved-key", Verdict: "Rejected"}, {Name: "pending"}}}}
-	p := ProjectOperationCostMeasurement(operation, "configured-store")
+	duration, zero := int64(123456789), 0.0
+	p := ProjectOperationCostMeasurement(operation, "configured-store", []servingkube.OperationStepProjection{
+		{OperationID: "original-uid.0.idle", DurationNanos: &duration, WallJoules: &zero, Reason: "recorded-reason"},
+		{},
+	})
 	if len(p.References.Evidence) != 1 || p.References.Evidence[0].Key != "saved-key" || p.References.Evidence[0].Store != "configured-store" {
 		t.Fatalf("invented or lost evidence: %+v", p)
 	}
 	conditions := p.Conditions.(operationConditions)
 	if *conditions.Steps[0].IdleDurationSeconds != idle {
 		t.Fatal("condition changed")
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{`"operationID":"original-uid.0.idle"`, `"durationNanos":123456789`, `"wallJoules":0`, `"reason":"recorded-reason"`, `"durationNanos":null`, `"wallJoules":null`, `"phase":"Failed"`, `"verdict":"Rejected"`} {
+		if !strings.Contains(string(raw), required) {
+			t.Fatalf("lost operation status %s: %s", required, raw)
+		}
+	}
+	for _, forbidden := range []string{"stateObservations", "sampling", "prepare", "annotations", "secret"} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("operation projection leaked %s: %s", forbidden, raw)
+		}
 	}
 }
 

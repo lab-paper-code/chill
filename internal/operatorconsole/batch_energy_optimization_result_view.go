@@ -7,6 +7,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -14,9 +15,11 @@ import (
 // with the immutable terminal result it references. It is a read-time
 // projection, not a second persisted copy of either source.
 type BatchEnergyOptimizationResultSnapshot struct {
-	ReadAt   time.Time
-	Campaign edgev1alpha1.BatchEnergyOptimization
-	Result   batchenergyoptimization.ResultRecord
+	ReadAt           time.Time
+	Campaign         edgev1alpha1.BatchEnergyOptimization
+	Result           batchenergyoptimization.ResultRecord
+	Statistics       *BatchEnergyOptimizationStatistics
+	StatisticsReason *string
 }
 
 const BatchEnergyOptimizationResultAPIVersion = "console.chill.dacs.io/v1alpha1"
@@ -24,11 +27,13 @@ const BatchEnergyOptimizationResultAPIVersion = "console.chill.dacs.io/v1alpha1"
 // BatchEnergyOptimizationResult exposes actual campaign progress and failure,
 // with the sealed result only after the campaign publishes its reference.
 type BatchEnergyOptimizationResult struct {
-	APIVersion string                                `json:"apiVersion"`
-	Kind       string                                `json:"kind"`
-	ReadAt     time.Time                             `json:"readAt"`
-	Campaign   BatchEnergyOptimizationResultCampaign `json:"campaign"`
-	Result     *BatchEnergyOptimizationResultRecord  `json:"result"`
+	APIVersion       string                                `json:"apiVersion"`
+	Kind             string                                `json:"kind"`
+	ReadAt           time.Time                             `json:"readAt"`
+	Campaign         BatchEnergyOptimizationResultCampaign `json:"campaign"`
+	Result           *BatchEnergyOptimizationResultRecord  `json:"result"`
+	Statistics       *BatchEnergyOptimizationStatistics    `json:"statistics"`
+	StatisticsReason *string                               `json:"statisticsReason"`
 }
 
 type BatchEnergyOptimizationResultCampaign struct {
@@ -53,6 +58,22 @@ type BatchEnergyOptimizationResultRecord struct {
 	batchenergyoptimization.ResultRecordSpec
 }
 
+// BatchEnergyOptimizationStatistics is computed only while reading retained evidence.
+type BatchEnergyOptimizationStatistics struct {
+	Batches []BatchEnergyOptimizationBatchStatistics `json:"batches"`
+}
+
+type BatchEnergyOptimizationBatchStatistics struct {
+	Batch                        int                               `json:"batch"`
+	IncrementalWorkJoulesPerItem float64                           `json:"incrementalWorkJoulesPerItem"`
+	ActiveTrialCount             int                               `json:"activeTrialCount"`
+	IdleTrialCount               int                               `json:"idleTrialCount"`
+	Confidence                   profilederivation.PointConfidence `json:"confidence"`
+	LatencySampleCount           int                               `json:"latencySampleCount"`
+	LatencyP95Milliseconds       float64                           `json:"latencyP95Milliseconds"`
+	Sources                      []evidencestore.ObjectIdentity    `json:"sources"`
+}
+
 func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSnapshot) (BatchEnergyOptimizationResult, error) {
 	if snapshot.Campaign.Status.Result == nil && snapshot.Result.SchemaVersion() != "" {
 		return BatchEnergyOptimizationResult{}, errors.New("batch-energy-optimization snapshot has no stored result reference")
@@ -60,6 +81,11 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 	var storedResult *evidencestore.ObjectIdentity
 	var result *BatchEnergyOptimizationResultRecord
 	campaign := snapshot.Campaign.DeepCopy()
+	statistics, reason := snapshot.Statistics, snapshot.StatisticsReason
+	if campaign.Status.Result == nil {
+		missing := "NoPublishedResult"
+		statistics, reason = nil, &missing
+	}
 	if campaign.Status.Result != nil {
 		schemaVersion := snapshot.Result.SchemaVersion()
 		if schemaVersion == "" {
@@ -85,6 +111,6 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 			Conditions:      append([]metav1.Condition(nil), campaign.Status.Conditions...),
 			StoredResult:    storedResult,
 		},
-		Result: result,
+		Result: result, Statistics: statistics, StatisticsReason: reason,
 	}, nil
 }
