@@ -32,6 +32,8 @@ type ProfileFilters struct {
 	DeviceClasses []string `json:"deviceClasses"`
 }
 
+const profileLimitQuery = "limit"
+
 func pageProfiles(view ProfilesView, values url.Values) (ProfilesView, error) {
 	limit, offset := 25, 0
 	for key, value := range values {
@@ -39,15 +41,15 @@ func pageProfiles(view ProfilesView, values url.Values) (ProfilesView, error) {
 			return ProfilesView{}, &serving.Error{Code: "InvalidQuery", Message: "invalid profile query"}
 		}
 		switch key {
-		case "limit", "offset":
+		case profileLimitQuery, "offset":
 			n, err := strconv.Atoi(value[0])
-			if err != nil || (key == "limit" && (n < 1 || n > 50)) ||
+			if err != nil || (key == profileLimitQuery && (n < 1 || n > 50)) ||
 				(key == "offset" && (n < 0 || n > 1000000)) {
 				return ProfilesView{}, &serving.Error{
 					Code: "InvalidQuery", Message: "profile limit must be 1–50 and offset 0–1000000",
 				}
 			}
-			if key == "limit" {
+			if key == profileLimitQuery {
 				limit = n
 			} else {
 				offset = n

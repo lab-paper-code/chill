@@ -105,7 +105,7 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 	}
 	if campaign.Status.Result == nil {
 		missing := "NoPublishedResult"
-		if campaign.Status.Phase == "Failed" {
+		if campaign.Status.Phase == string(edgev1alpha1.MeasurementPhaseFailed) {
 			missing = "RequestFailed"
 		}
 		statistics, reason = nil, &missing

@@ -23,7 +23,7 @@ func matchesRunFilters(run api.ProfilingRun, filters map[string]string) bool {
 		cpu = run.Spec.Measurement.CPUQuota.String()
 	}
 	values := map[string]string{"model": candidate.ModelSpec, "deviceClass": candidate.DeviceClass,
-		"node": run.Spec.TargetNode, "path": candidate.ExecutionPath, "powerMode": candidate.PowerMode, "cpu": cpu}
+		queryNode: run.Spec.TargetNode, "path": candidate.ExecutionPath, "powerMode": candidate.PowerMode, "cpu": cpu}
 	for key, value := range values {
 		if filters[key] != "" && filters[key] != value {
 			return false

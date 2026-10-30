@@ -60,7 +60,7 @@ func (q *KubernetesBatchEnergyOptimizationResultQuery) Read(
 		return operatorconsole.BatchEnergyOptimizationResultSnapshot{}, fmt.Errorf("get BatchEnergyOptimization %s: %w", key, err)
 	}
 	var failedRuns edgev1alpha1.ProfilingRunList
-	if campaign.Status.Phase == "Failed" {
+	if campaign.Status.Phase == string(edgev1alpha1.MeasurementPhaseFailed) {
 		if err := q.reader.List(ctx, &failedRuns, client.InNamespace(namespace)); err != nil {
 			return operatorconsole.BatchEnergyOptimizationResultSnapshot{}, fmt.Errorf("list failed request Runs: %w", err)
 		}

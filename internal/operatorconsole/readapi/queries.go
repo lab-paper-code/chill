@@ -36,6 +36,8 @@ type listQuery struct {
 	filters           map[string]string
 }
 
+const queryNode = "node"
+
 func parseListQuery(r *http.Request, runs bool) (listQuery, bool) {
 	q := listQuery{limit: 50, filters: map[string]string{}}
 	if len(r.URL.RawQuery) > 4096 {
@@ -76,7 +78,7 @@ func parseListQuery(r *http.Request, runs bool) (listQuery, bool) {
 				return q, false
 			}
 			q.condition = value[0]
-		case "model", "deviceClass", "node", "path", "powerMode", "cpu", "status", "parentUID", "group":
+		case "model", "deviceClass", queryNode, "path", "powerMode", "cpu", "status", "parentUID", "group":
 			if !runs || len(value[0]) > 2048 {
 				return q, false
 			}
