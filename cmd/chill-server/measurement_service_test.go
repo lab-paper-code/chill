@@ -187,7 +187,7 @@ func TestMeasurementDeleteFencesIdentityAndNativeFinalizerLifecycle(t *testing.T
 			ctx := context.Background()
 			task := terminalDeletionTask()
 			if mode == "active measurement" {
-				task.Status.Phase = "Measuring"
+				task.Status.Phase = measurementPhaseMeasuring
 			}
 			if mode == measurementFinalizerTest {
 				task.Finalizers = []string{"external/finalizer"}

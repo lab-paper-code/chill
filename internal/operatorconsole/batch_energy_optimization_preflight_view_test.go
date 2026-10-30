@@ -188,12 +188,12 @@ func TestPreflightBatchPlanExactEvidenceAndChangedConditions(t *testing.T) {
 			if !got.SubsetAllowed || !got.SearchMayStopEarly {
 				t.Fatalf("batch selection flags = %#v", got)
 			}
-			if name == "exact" {
-				if got.ConditionMatch != "exact" || got.VariantID == nil || *got.VariantID != id ||
+			if name == MeasurementConditionExact {
+				if got.ConditionMatch != MeasurementConditionExact || got.VariantID == nil || *got.VariantID != id ||
 					!reflect.DeepEqual(got.MeasuredBatches, []int{1}) || !reflect.DeepEqual(got.MissingBatches, []int{2, 4}) {
 					t.Fatalf("exact batch plan = %#v", got)
 				}
-			} else if got.ConditionMatch == "exact" || got.VariantID != nil || len(got.MeasuredBatches) != 0 ||
+			} else if got.ConditionMatch == MeasurementConditionExact || got.VariantID != nil || len(got.MeasuredBatches) != 0 ||
 				!reflect.DeepEqual(got.MissingBatches, []int{1, 2, 4}) {
 				t.Fatalf("changed condition retained old mapping: %#v", got)
 			}

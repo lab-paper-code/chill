@@ -3,12 +3,12 @@ package kube
 import (
 	"context"
 	"errors"
-	"reflect"
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -66,7 +66,7 @@ func (q *KubernetesBatchEnergyOptimizationPreflightQuery) Read(
 		request := &requests.Items[i]
 		current, proposed := request.Spec, campaign.Spec
 		current.BatchSizes, proposed.BatchSizes = nil, nil
-		if !reflect.DeepEqual(current, proposed) {
+		if !apiequality.Semantic.DeepEqual(current, proposed) {
 			continue
 		}
 		projected, err := q.projector(ctx, request)

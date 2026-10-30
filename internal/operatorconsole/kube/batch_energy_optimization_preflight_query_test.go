@@ -11,6 +11,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -153,6 +154,35 @@ func TestPreflightQueryBuildReportsCurrentRequestsAsPlannedOnly(t *testing.T) {
 	if !found {
 		t.Fatal("planned-only overlap was not reported")
 	}
+}
+
+func TestPreflightQueryMatchesEquivalentCPUQuantityRepresentations(t *testing.T) {
+	campaign := batchEnergyOptimizationPreflightQueryCampaign()
+	campaign.Spec.State.CPURequest = resource.MustParse("1")
+	pending := campaign.DeepCopy()
+	pending.Name = "equivalent-cpu"
+	pending.Spec.State.CPURequest = resource.MustParse("1000m")
+	query, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(
+		fake.NewClientBuilder().WithScheme(inventoryScheme(t)).WithObjects(pending).Build(),
+		(&recordingCurvePlanProjector{plan: batchEnergyOptimizationPreflightQueryPlan(t)}).Project,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := query.Read(context.Background(), campaign)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := operatorconsole.BuildBatchEnergyOptimizationPreflight(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, reason := range view.BatchPlan.Reasons {
+		if reason.Code == "PlannedRequestOverlap" {
+			return
+		}
+	}
+	t.Fatal("equivalent Kubernetes CPU quantities lost the current planned request")
 }
 
 type recordingCurvePlanProjector struct {

@@ -60,6 +60,8 @@ type MeasurementBatchPlan struct {
 
 const BatchEnergyOptimizationPreflightAPIVersion = "console.chill.dacs.io/v1alpha1"
 
+const MeasurementConditionExact = "exact"
+
 // BatchEnergyOptimizationPreflight is the bounded read model for one campaign that has
 // not been applied. The plan is republished as the canonical JSON the campaign
 // would have recorded, so what a preflight shows and what a campaign records
@@ -145,7 +147,7 @@ func BuildMeasurementBatchPlan(snapshot BatchEnergyOptimizationPreflightSnapshot
 	immutable := measurementPreflightImagesPinned(condition)
 	for _, evidence := range snapshot.ExactEvidence {
 		if immutable && MeasurementVariantID(evidence.Condition) == id {
-			result.ConditionMatch = "exact"
+			result.ConditionMatch = MeasurementConditionExact
 			for _, batch := range evidence.Batches {
 				if slices.Contains(result.PlannedBatches, batch) {
 					if evidence.InProgress {
@@ -157,7 +159,7 @@ func BuildMeasurementBatchPlan(snapshot BatchEnergyOptimizationPreflightSnapshot
 			}
 		}
 	}
-	if result.ConditionMatch == "exact" {
+	if result.ConditionMatch == MeasurementConditionExact {
 		if snapshot.VariantID == "" {
 			result.VariantID = &id
 		}
@@ -171,7 +173,7 @@ func BuildMeasurementBatchPlan(snapshot BatchEnergyOptimizationPreflightSnapshot
 		return slices.Contains(result.MeasuredBatches, batch)
 	})
 	if snapshot.VariantID != "" {
-		if snapshot.VariantID == id && result.ConditionMatch == "exact" {
+		if snapshot.VariantID == id && result.ConditionMatch == MeasurementConditionExact {
 			result.VariantID = &id
 		} else {
 			result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{"VariantConditionChanged", "The selected variant is not confirmed for the current frozen condition; previous batch exclusions are invalid."})

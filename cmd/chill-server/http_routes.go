@@ -44,6 +44,10 @@ func composeChillServer(serving http.Handler, authorizer *servingkube.Authorizer
 	if err != nil {
 		return nil, err
 	}
+	var measurement *measurementService
+	if len(measurements) != 0 {
+		measurement = measurements[0]
+	}
 	var console http.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		consoleError(w, http.StatusServiceUnavailable, "ConsoleUnavailable")
 	})
@@ -67,10 +71,8 @@ func composeChillServer(serving http.Handler, authorizer *servingkube.Authorizer
 			ModifyResponse: func(response *http.Response) error {
 				response.Header.Set("Cache-Control", "no-store")
 				response.Header.Del("Set-Cookie")
-				if response.StatusCode == http.StatusOK && response.Request.Method == http.MethodPost &&
-					strings.HasSuffix(response.Request.URL.Path, "/batch-energy-optimizations/preflight") &&
-					len(measurements) != 0 && measurements[0] != nil {
-					return measurements[0].enrichPreflightResponse(response)
+				if measurement != nil && response.StatusCode == http.StatusOK && isMeasurementPreflight(response.Request) {
+					return measurement.enrichPreflightResponse(response)
 				}
 				return nil
 			},
@@ -94,33 +96,12 @@ func composeChillServer(serving http.Handler, authorizer *servingkube.Authorizer
 		}
 		principal, err := authorizer.Authorize(ctx, token, r.Method, r.URL.Path)
 		if err != nil {
-			status, code := http.StatusServiceUnavailable, "AuthorizationUnavailable"
-			if errors.Is(err, servingkube.ErrUnauthenticated) {
-				status, code = http.StatusUnauthorized, "Unauthenticated"
-			}
-			if errors.Is(err, servingkube.ErrForbidden) {
-				status, code = http.StatusForbidden, "Forbidden"
-			}
-			consoleError(w, status, code)
+			consoleAuthorizationError(w, err)
 			return
 		}
-		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/batch-energy-optimizations/preflight") &&
-			len(measurements) != 0 && measurements[0] != nil {
-			namespace := r.PathValue("namespace")
-			err := measurements[0].namespace(namespace)
-			if err == nil {
-				err = authorizer.AuthorizeResource(ctx, principal, authorizationv1.ResourceAttributes{
-					Namespace: namespace, Verb: "list", Group: "edge.dacs.io", Version: "v1alpha1", Resource: "batchenergyoptimizations",
-				})
-			}
-			if err != nil {
-				status, code := http.StatusServiceUnavailable, "AuthorizationUnavailable"
-				if errors.Is(err, servingkube.ErrForbidden) {
-					status, code = http.StatusForbidden, "Forbidden"
-				}
-				consoleError(w, status, code)
-				return
-			}
+		if err := authorizePreflightList(ctx, r, measurement, authorizer, principal); err != nil {
+			consoleAuthorizationError(w, err)
+			return
 		}
 		deadline, _ := ctx.Deadline()
 		controller := http.NewResponseController(w)
@@ -176,4 +157,37 @@ func composeChillServer(serving http.Handler, authorizer *servingkube.Authorizer
 		}
 		mux.ServeHTTP(w, r)
 	}), nil
+}
+
+func isMeasurementPreflight(request *http.Request) bool {
+	return request.Method == http.MethodPost &&
+		strings.HasSuffix(request.URL.Path, "/batch-energy-optimizations/preflight")
+}
+
+func authorizePreflightList(
+	ctx context.Context, request *http.Request, measurement *measurementService,
+	authorizer *servingkube.Authorizer, principal servingkube.Principal,
+) error {
+	if measurement == nil || !isMeasurementPreflight(request) {
+		return nil
+	}
+	namespace := request.PathValue("namespace")
+	if err := measurement.namespace(namespace); err != nil {
+		return err
+	}
+	return authorizer.AuthorizeResource(ctx, principal, authorizationv1.ResourceAttributes{
+		Namespace: namespace, Verb: "list", Group: "edge.dacs.io", Version: "v1alpha1",
+		Resource: "batchenergyoptimizations",
+	})
+}
+
+func consoleAuthorizationError(writer http.ResponseWriter, err error) {
+	status, code := http.StatusServiceUnavailable, "AuthorizationUnavailable"
+	if errors.Is(err, servingkube.ErrUnauthenticated) {
+		status, code = http.StatusUnauthorized, "Unauthenticated"
+	}
+	if errors.Is(err, servingkube.ErrForbidden) {
+		status, code = http.StatusForbidden, "Forbidden"
+	}
+	consoleError(writer, status, code)
 }

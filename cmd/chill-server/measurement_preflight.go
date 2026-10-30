@@ -2,11 +2,11 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
-	"reflect"
 	"strconv"
 	"strings"
 
@@ -14,7 +14,10 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 )
+
+const measurementPhaseMeasuring = "Measuring"
 
 // enrichPreflightResponse uses the published catalog, never retained-result crawling.
 func (o *measurementService) enrichPreflightResponse(response *http.Response) error {
@@ -43,67 +46,13 @@ func (o *measurementService) enrichPreflightResponse(response *http.Response) er
 			Plan: plan, Campaign: api.BatchEnergyOptimization{Spec: view.Campaign.Spec},
 			VariantID: response.Request.URL.Query().Get("variantId"), RequestsComplete: listErr == nil,
 		}
-		catalogConfirmed := false
-		if o.scheduler != nil {
-			catalog, err := o.scheduler.profilesView(response.Request.Context())
-			if err == nil {
-				catalogConfirmed = true
-				for _, profile := range catalog.Profiles {
-					if !strings.HasPrefix(profile.ID, view.Campaign.Namespace+"/") {
-						continue
-					}
-					source := strings.Split(profile.ID, "/")
-					matchedSpec := false
-					for _, request := range requests.Items {
-						if len(source) < 3 || request.Name != source[1] || string(request.UID) != source[2] {
-							continue
-						}
-						matchedSpec = samePreflightSpec(request.Spec, view.Campaign.Spec)
-					}
-					if !matchedSpec {
-						continue
-					}
-					batches := make([]int, 0, len(profile.Batches))
-					for _, batch := range profile.Batches {
-						batches = append(batches, batch.Batch)
-					}
-					snapshot.ExactEvidence = append(snapshot.ExactEvidence, operatorconsole.MeasurementPreflightEvidence{
-						Condition: profile.Condition, Batches: batches,
-					})
-				}
-			}
-		}
-		activeReasons := []operatorconsole.MeasurementBatchPlanReason{}
-		for _, request := range requests.Items {
-			if !samePreflightSpec(request.Spec, view.Campaign.Spec) || request.Status.Phase != "Measuring" {
-				continue
-			}
-			unconfirmed := func() {
-				activeReasons = append(activeReasons, operatorconsole.MeasurementBatchPlanReason{
-					Code: "InProgressIdentityUnconfirmed", Message: "Request " + request.Name + " is active but its current-generation frozen identity is not confirmed; it remains planned-only.",
-				})
-			}
-			if request.UID == "" || request.Generation < 1 || request.Status.ObservedGeneration != request.Generation ||
-				o.objects == nil || o.opts.maxEvidenceBytes < 1 {
-				unconfirmed()
-				continue
-			}
-			raw, err := o.readDeletionEvidence(response.Request.Context(), evidencestore.ObjectLocation{
-				Store: o.opts.storeName, Key: "batch-energy-optimizations/" + string(request.UID) + "/curve-plan.json",
-			}, true)
-			if err != nil || len(raw) == 0 {
-				unconfirmed()
-				continue
-			}
-			frozen, err := profilederivation.DecodeCurvePlan(raw)
-			if err != nil || frozen.Shared().Name != request.Name {
-				unconfirmed()
-				continue
-			}
-			snapshot.ExactEvidence = append(snapshot.ExactEvidence, operatorconsole.MeasurementPreflightEvidence{
-				Condition: frozen.Shared(), Batches: frozen.PlannedBatchSizes(), InProgress: true,
-			})
-		}
+		catalogEvidence, catalogConfirmed := o.preflightCatalogEvidence(
+			response.Request.Context(), view.Campaign.Namespace, view.Campaign.Spec, requests.Items,
+		)
+		activeEvidence, activeReasons := o.preflightActiveEvidence(
+			response.Request.Context(), view.Campaign.Spec, requests.Items,
+		)
+		snapshot.ExactEvidence = append(catalogEvidence, activeEvidence...)
 		batchPlan := operatorconsole.BuildMeasurementBatchPlan(snapshot)
 		batchPlan.Reasons = append(batchPlan.Reasons, activeReasons...)
 		if !catalogConfirmed {
@@ -130,5 +79,91 @@ func (o *measurementService) enrichPreflightResponse(response *http.Response) er
 
 func samePreflightSpec(current, proposed api.BatchEnergyOptimizationSpec) bool {
 	current.BatchSizes, proposed.BatchSizes = nil, nil
-	return reflect.DeepEqual(current, proposed)
+	return apiequality.Semantic.DeepEqual(current, proposed)
+}
+
+func (o *measurementService) preflightCatalogEvidence(
+	ctx context.Context, namespace string, proposed api.BatchEnergyOptimizationSpec,
+	requests []api.BatchEnergyOptimization,
+) ([]operatorconsole.MeasurementPreflightEvidence, bool) {
+	if o.scheduler == nil {
+		return nil, false
+	}
+	catalog, err := o.scheduler.profilesView(ctx)
+	if err != nil {
+		return nil, false
+	}
+	evidence := []operatorconsole.MeasurementPreflightEvidence{}
+	for _, profile := range catalog.Profiles {
+		if !strings.HasPrefix(profile.ID, namespace+"/") {
+			continue
+		}
+		source := strings.Split(profile.ID, "/")
+		matchedSpec := false
+		for _, request := range requests {
+			if len(source) < 3 || request.Name != source[1] || string(request.UID) != source[2] {
+				continue
+			}
+			matchedSpec = samePreflightSpec(request.Spec, proposed)
+		}
+		if !matchedSpec {
+			continue
+		}
+		batches := make([]int, 0, len(profile.Batches))
+		for _, batch := range profile.Batches {
+			batches = append(batches, batch.Batch)
+		}
+		evidence = append(evidence, operatorconsole.MeasurementPreflightEvidence{
+			Condition: profile.Condition, Batches: batches,
+		})
+	}
+	return evidence, true
+}
+
+func (o *measurementService) preflightActiveEvidence(
+	ctx context.Context, proposed api.BatchEnergyOptimizationSpec, requests []api.BatchEnergyOptimization,
+) ([]operatorconsole.MeasurementPreflightEvidence, []operatorconsole.MeasurementBatchPlanReason) {
+	evidence := []operatorconsole.MeasurementPreflightEvidence{}
+	reasons := []operatorconsole.MeasurementBatchPlanReason{}
+	for _, request := range requests {
+		if !samePreflightSpec(request.Spec, proposed) || request.Status.Phase != measurementPhaseMeasuring {
+			continue
+		}
+		frozen, err := o.preflightFrozenPlan(ctx, request)
+		if err != nil {
+			reasons = append(reasons, operatorconsole.MeasurementBatchPlanReason{
+				Code: "InProgressIdentityUnconfirmed",
+				Message: "Request " + request.Name +
+					" is active but its current-generation frozen identity is not confirmed; it remains planned-only.",
+			})
+			continue
+		}
+		evidence = append(evidence, operatorconsole.MeasurementPreflightEvidence{
+			Condition: frozen.Shared(), Batches: frozen.PlannedBatchSizes(), InProgress: true,
+		})
+	}
+	return evidence, reasons
+}
+
+func (o *measurementService) preflightFrozenPlan(
+	ctx context.Context, request api.BatchEnergyOptimization,
+) (profilederivation.CurvePlan, error) {
+	if request.UID == "" || request.Generation < 1 || request.Status.ObservedGeneration != request.Generation ||
+		o.objects == nil || o.opts.maxEvidenceBytes < 1 {
+		return profilederivation.CurvePlan{}, errors.New("current-generation frozen plan is unavailable")
+	}
+	raw, err := o.readDeletionEvidence(ctx, evidencestore.ObjectLocation{
+		Store: o.opts.storeName, Key: "batch-energy-optimizations/" + string(request.UID) + "/curve-plan.json",
+	}, true)
+	if err != nil {
+		return profilederivation.CurvePlan{}, err
+	}
+	frozen, err := profilederivation.DecodeCurvePlan(raw)
+	if err != nil {
+		return profilederivation.CurvePlan{}, err
+	}
+	if frozen.Shared().Name != request.Name {
+		return profilederivation.CurvePlan{}, errors.New("frozen plan does not belong to the current request")
+	}
+	return frozen, nil
 }

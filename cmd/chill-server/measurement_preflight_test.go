@@ -28,7 +28,7 @@ import (
 
 func TestPreflightEnrichmentUsesExactCatalogAndCurrentSourceSpec(t *testing.T) {
 	plan := measurementPreflightTestPlan(t)
-	for _, mode := range []string{"exact", "changed spec", "recreated request", "other namespace", "active exact", "active stale", "active missing plan"} {
+	for _, mode := range []string{operatorconsole.MeasurementConditionExact, "changed spec", "recreated request", "other namespace", "active exact", "active stale", "active missing plan"} {
 		t.Run(mode, func(t *testing.T) {
 			request := &api.BatchEnergyOptimization{
 				ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "source", UID: "uid"},
@@ -54,7 +54,7 @@ func TestPreflightEnrichmentUsesExactCatalogAndCurrentSourceSpec(t *testing.T) {
 			}
 			active := strings.HasPrefix(mode, "active ")
 			if active {
-				request.Generation, request.Status.ObservedGeneration, request.Status.Phase = 1, 1, "Measuring"
+				request.Generation, request.Status.ObservedGeneration, request.Status.Phase = 1, 1, measurementPhaseMeasuring
 				if mode == "active stale" {
 					request.Status.ObservedGeneration = 0
 				}
@@ -88,22 +88,26 @@ func TestPreflightEnrichmentUsesExactCatalogAndCurrentSourceSpec(t *testing.T) {
 			if err := service.enrichPreflightResponse(response); err != nil {
 				t.Fatal(err)
 			}
-			defer response.Body.Close()
+			t.Cleanup(func() {
+				if err := response.Body.Close(); err != nil {
+					t.Error(err)
+				}
+			})
 			if err := json.NewDecoder(response.Body).Decode(&view); err != nil {
 				t.Fatal(err)
 			}
-			if mode == "exact" {
-				if view.BatchPlan.ConditionMatch != "exact" || view.BatchPlan.VariantID == nil ||
+			if mode == operatorconsole.MeasurementConditionExact {
+				if view.BatchPlan.ConditionMatch != operatorconsole.MeasurementConditionExact || view.BatchPlan.VariantID == nil ||
 					!reflect.DeepEqual(view.BatchPlan.MeasuredBatches, []int{1}) || !reflect.DeepEqual(view.BatchPlan.MissingBatches, []int{2, 4}) {
 					t.Fatalf("exact catalog facts lost: %#v", view.BatchPlan)
 				}
 			} else if mode == "active exact" {
-				if view.BatchPlan.ConditionMatch != "exact" || view.BatchPlan.VariantID == nil ||
+				if view.BatchPlan.ConditionMatch != operatorconsole.MeasurementConditionExact || view.BatchPlan.VariantID == nil ||
 					!reflect.DeepEqual(view.BatchPlan.InProgressBatches, []int{1, 2, 4}) ||
 					len(view.BatchPlan.MeasuredBatches) != 0 || len(view.BatchPlan.MissingBatches) != 0 {
 					t.Fatalf("frozen in-progress plan lost: %#v", view.BatchPlan)
 				}
-			} else if view.BatchPlan.ConditionMatch == "exact" || view.BatchPlan.VariantID != nil || len(view.BatchPlan.MeasuredBatches) != 0 || len(view.BatchPlan.InProgressBatches) != 0 {
+			} else if view.BatchPlan.ConditionMatch == operatorconsole.MeasurementConditionExact || view.BatchPlan.VariantID != nil || len(view.BatchPlan.MeasuredBatches) != 0 || len(view.BatchPlan.InProgressBatches) != 0 {
 				t.Fatalf("unconfirmed lineage became exact: %#v", view.BatchPlan)
 			}
 		})

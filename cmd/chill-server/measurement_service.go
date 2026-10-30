@@ -282,7 +282,7 @@ func (o *measurementService) delete(
 		resource := schema.GroupResource{Group: api.GroupVersion.Group, Resource: "batchenergyoptimizations"}
 		return result, apierrors.NewConflict(resource, name, errors.New("native UID or resourceVersion changed"))
 	}
-	if task.Status.Phase == "Measuring" {
+	if task.Status.Phase == measurementPhaseMeasuring {
 		return result, &serving.Error{Code: "MeasurementInUse", Message: "an active measurement cannot be deleted"}
 	}
 	pods, err := o.kube.CoreV1().Pods(o.opts.servingNamespace).List(ctx, meta.ListOptions{})
