@@ -577,7 +577,7 @@ servingEntrypoint:
     directory: /data/pools-61c6eb8
     # SCH-42 archive 조회와 E5 S3 fallback 사용; 로컬 버퍼는 기본 2h로 복원.
     retention: 2h
-    size: 32Gi
+    size: 128Gi
     storageClassName: rook-cephfs
   scheduler:
     configMap: serving-scheduler
