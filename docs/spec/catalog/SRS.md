@@ -120,3 +120,22 @@
 | 대상 GPU UUID만 원본과 다름 | 대상의 실측 UUID로 준비·실물 검증하고 원본 UUID를 target 자원에 사용하지 않음 | PR-03..04 |
 
 저장·판정과 genesis2→genesis3 운영 절차는 [측정 API §11](../../design/serving/measurement-api.md#11-같은-기종-node-프로파일-재사용--pr-0104)에 정의한다.
+
+## 8. 측정 정책의 선택과 동결
+
+- `PC-04` 측정 길이 수용 오차·신뢰수준·최소 trial·occupancy 실험 하한/seed처럼 결과와 수용을 바꾸는 값은 기존 측정 CR spec으로 선택한다. 기본값은 현재값으로 유지하고 선택값과 출처를 불변 Run/attempt 입력 및 집계 결과에 연결한다. 부모의 나중 설정 변경으로 진행 중 실행을 재정의하지 않는다.
+- `PC-05` 이미 있는 minimumRuns·trialsPerBatch·acceptedCountTarget은 재사용한다. 설정 밖의 추가 floor를 숨겨 강제하지 않으며 통계 primitive의 실제 지원 정의역 밖에서는 명시 오류를 낸다. 값 하나만 받는 새 정책 필드와 조용한 근사는 금지한다.
+- `PC-06` E5 하네스 정책은 실험 config가 소유한다. bind에서 실제 적용 기본값을 모두 채운 config·출처·scheduler 설정·schedule/seed를 binding에 기록하고 실행·분석은 그 binding을 사용한다. 같은 실험의 완결 binding은 수정하지 않고 새 선택은 새 binding으로 만든다. serving API로 하네스 정책을 바꾸지 않는다.
+- `PR-05` 재사용 확인의 최소 active/idle 창과 trial 수는 SCH-71의 settings로 선택한다. 확인 기록은 선택 당시 최소값과 실제 측정량을 함께 제공하며 기존 상대 차이·조건 일치 검사는 유지한다.
+
+| 수용 시나리오 | 확인 결과 | 요구사항 |
+|---|---|---|
+| 기본 측정 정책: tolerance0.5s/CI0.95/min3/전이target5/occupancy60s·1.2·seed0 | 현재 수용 결과 유지, CR→불변 실행 입력→집계가 같은 실제값·출처를 가짐 | PC-04, PC-05 |
+| 유효한 다른 tolerance/CI/minimumRuns/target/seed와 경계 밖 입력 | 유효값은 실제 측정·수용에 쓰고 잘못된 범위·관계는 경계에서 거절, hidden floor나 단일값 gate 없음 | PC-04, PC-05 |
+| bind 후 환경 config를 변경하고 실행/분석 | 선택값은 기존 binding 그대로이며 실행 중 config 재조회로 바뀌지 않음; 새 bind만 새 조건을 선택 | PC-06 |
+| 기본 E5 config와 기본값 생략 config를 bind | effective config에 모든 기본값이 있고 schedule·offered수·수용 결과 의미 동일, 바이트/hash 비교 관문 없음 | PC-06 |
+| 재사용 확인 최소 창/trials를 유효한 다른 값으로 변경 | 선택값과 실제값으로 수락/거절, 원본/대상 증거·차이·조건 검사는 그대로 | PR-05 |
+
+정확한 추가 CR 필드·단위·범위·기본값 및 binding 키는
+[설정 설계 §5~6](../../design/serving/configuration-hardcoding.md#5-측정-cr와-불변-실행)을 따른다.
+2026-10-30: PC-04~06, PR-05 추가. 구현·측정 수용 완료 기록은 아니다.

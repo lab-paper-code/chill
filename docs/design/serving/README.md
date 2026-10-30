@@ -22,6 +22,7 @@ Workload는 Preprocessor와 Dataset을 참조하고 원시 표본(JPEG, UTF8)을
 | 판단 입력, 용량표와 노드 계획 선택, 전환 DAG, 제어 불변식 | [스케줄러 구현 설계](scheduler-implementation.md) |
 | firstfloor typed 요청·IPC·시간·수명·CPU/장치·fixed-batch·baseline·catalog | [실행기와 측정 계약](scheduler-runtime-measurement.md) |
 | scheduler 설정, compact API와 관측 조회 | [설정과 관측 API](scheduler-api.md) |
+| 하드코딩 분류, 설정 소유자·동결, 기동 실제값 기록과 구현 슬라이스 | [설정 소유권과 하드코딩 정리](configuration-hardcoding.md) |
 | 원시 표본·전처리기와 데이터셋 catalog·여러 모델 파일 산출물·데이터셋 표본 측정 | [이기종 워크로드 구현 설계](heterogeneous-workloads.md) |
 | 워크로드별 활성 POOL, 측정 POOL, 가용 노드, 워크로드별 자동제어와 완료 여유 | [워크로드별 POOL과 자동제어](workload-pools.md) |
 | 측정 노드의 승인, 거절, 반환, 측정 무효 판정, 전환 비용 runner, ChillServer 클라이언트 `serving-operation` | [측정 admission과 단일 writer (M3)](measurement-admission.md) |

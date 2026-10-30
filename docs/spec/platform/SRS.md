@@ -19,3 +19,17 @@
 | 적용 후 1500 대신 300 조회 | 성공 금지, 이전 선언 모드 복원 또는 기본 정책 reset, 복원 실패도 보존 | PA-NV-02,03 |
 | agent 재시작·호스트 재부팅 | 재시작은 적용 0회, 재부팅은 새 bootID와 실제 MHz 기록; 암묵 재적용 금지 | PA-NV-04 |
 | genesis2 한 대 운영 실증 | 배포 digest, 전·후 조회, 전환·복원 Node 기록 및 1500↔900 비용 CR 보존 | PA-NV-05 |
+
+## 설정 소유권과 관측 정책 기록
+
+- `PA-NV-06` registry·Node·호스트 경로·포트·실행 UID/GID·장비 catalog 같은 환경 고유값은 환경별 values/JSON에서 공급한다. 기본 chart·실행 코드·샘플의 특정 클러스터 binding을 제거하되 환경 overlay를 적용하면 현재 배포의 값과 보안 동작을 유지해야 한다. 프로토콜 버전·RBAC vocabulary·안전 한계는 환경 knob로 바꾸지 않는다.
+- `PA-NV-07` Node 자원 관측의 실제 sampleInterval/batchInterval은 기존 배포 설정에 두며 각 resource 전송 및 기존 resources 기록에서 선택값과 Node/실행 출처를 추적할 수 있어야 한다. 서버 기동 설정을 Node agent의 실제값으로 대신하지 않는다. command timeout 같은 기존 안전 envelope는 유지한다.
+
+| 수용 시나리오 | 결과 | 요구사항 |
+|---|---|---|
+| 현재 환경 overlay 적용 | port/path/UID/GID와 Service·Pod·mount·endpoint 연결이 현재값과 일치, 기본/샘플에는 사설 IP·실Node·registry binding 없음 | PA-NV-06 |
+| 다른 명시 환경 입력·필수 binding 누락 | 다른 환경값이 실제 생성자/소비자에 전달됨; 누락은 명시 오류이며 가짜 환경 fallback 없음 | PA-NV-06 |
+| sample1s/batch10s와 다른 유효 주기로 Node 자원 수집 | 실제 선택 cadence와 Node identity가 기존 resources 행에 남음, 새 stream 없음 | PA-NV-07 |
+
+2026-10-30: PA-NV-06~07 추가. 상세 경계는
+[설정 소유권 설계](../../design/serving/configuration-hardcoding.md)를 따른다.
