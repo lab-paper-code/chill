@@ -522,3 +522,7 @@ append 실패는 기존 ObservationLog health·호출 오류/로그로 노출하
 통합 gate 보정 후 `make lint LOCALBIN=/home/genesis1/ETRI/chill/bin`과 `go test -p 1 ./cmd/chill-server ./internal/serving ./internal/serving/httpapi ./internal/serving/kube ./cmd/node-agent`가 PASS했다(`flock /tmp/chill-gotest.lock`, `nice -n 19`, `GOMAXPROCS=2`). lint에서 드러난 자원 수신·옵션 검증 복잡도는 기존 검증을 보존한 함수 분리로 낮췄다. 이는 코드 gate 결과이며 배포·실측 수용을 대신하지 않는다.
 
 구현 2의 **배포 시 1회 확인**할 환경 사실은 (a) 비root 기본 agent가 필요한 cgroup 파일을 읽을 수 있는지, (b) edge Node에서 서버 내부 TLS endpoint까지 닿는지, (c) 작은 Node의 1초 표본 오버헤드다. 이번 코드 이행에서는 클러스터 접근·배포·실측을 수행하지 않는다. 확인 전 비root 가능·네트워크 도달·허용 오버헤드를 기정사실로 쓰지 않는다. 실패 시 수집을 가짜 0으로 통과시키거나 actuation 특권을 통째로 넘기지 않고 필요한 읽기 권한/배포 조건과 실측 비용을 명시한다. 최종 완료는 CHILL 사실의 API 단일 출처와 네 수용 시나리오·리허설 증거이며, 문서·코드 이행·배포·실험 수용은 서로 구분한다.
+
+### 17.8 운영 배포 결정 (#226/#227, 2026-10-30)
+
+rev106은 새 서버·대시보드·node-agent 이미지와 config를 게시했으나, 기존 operator `pools-control-188-e3431ff391a7`가 `resourceCAFile`을 strict unmarshal에서 거부하여 소유 DaemonSet을 갱신하지 못했다. ConfigMap watch는 이미 `internal/operator/nodeagent/setup.go`에 있고 실제 reconcile 오류도 반복 관측했으므로 checksum annotation·재시작·ChillSystem touch를 추가하지 않는다. Main 승인 #227에서 새 schema·mount를 아는 operator를 정식 Helm upgrade로 배포하고, rev106의 나머지 이미지 digest는 유지한다. 이후 모든 Node의 새 agent digest/Ready와 API200을 확인한 뒤에만 1회 리허설을 시작한다. 실패 원형은 `O/deployB/control-226-20261030/`, 별도 조회 API200·operator strict 오류와 리허설 증거는 `O/campaign/v2/d-20261027/control-226-rehearsal/`에 보존한다.
