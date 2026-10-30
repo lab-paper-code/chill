@@ -485,6 +485,8 @@ func TestPrepareTimeoutFailsGoal(t *testing.T) {
 	goal := serving.SchedulerCandidate{ID: "plan-dc6ebf670833", Actions: []serving.Action{prepare, sibling}}
 	controller := &SchedulerController{ctx: ctx, runs: map[string]*actionRun{sibling.ID: {action: sibling, started: time.Now(),
 		result: &OperationResult{Operation: Operation{ID: sibling.ID, Kind: sibling.Kind, Target: &goal}, Status: nativeOperationRunning}}}}
+	baseline := serving.SchedulerInstance{ID: "baseline-pod/containerd://baseline", PodUID: "baseline-pod", Node: prepare.Node, Ready: true}
+	controller.state.Snapshot.Instances = []serving.SchedulerInstance{baseline}
 	config := SchedulerControllerConfig{Settings: serving.SchedulerSettings{ObservationWindow: time.Millisecond}, OnAction: func(result OperationResult) error {
 		if result.Status != nativeOperationFailed {
 			time.Sleep(20 * time.Millisecond)
@@ -494,6 +496,15 @@ func TestPrepareTimeoutFailsGoal(t *testing.T) {
 	}}
 	controller.launch(goal, config)
 	controller.wg.Wait()
+	parent := controller.runs[transitionRunKind+"/"+goal.ID]
+	if len(parent.result.Before.Instances) != 1 || parent.result.Before.Instances[0].ID != baseline.ID ||
+		parent.result.Before.Instances[0].PodUID != baseline.PodUID || parent.result.Before.Instances[0].Node != baseline.Node {
+		t.Fatal("parent authorization did not freeze the exact preexisting executor")
+	}
+	controller.state.Snapshot.Instances[0].ID += restartedContainerSuffix
+	if parent.result.Before.Instances[0].ID != baseline.ID {
+		t.Fatal("parent baseline aliases the mutable observation")
+	}
 	run := controller.runs[prepare.ID]
 	if run.action.Status != nativeOperationFailed || !strings.HasPrefix(run.action.Reason, serving.ActionDeadlineExceeded) {
 		t.Fatalf("timed out prepare: status %q reason %q", run.action.Status, run.action.Reason)

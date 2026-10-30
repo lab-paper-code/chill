@@ -90,7 +90,7 @@ type actionRun struct {
 	inheritedReservation bool
 	cleanup              bool
 	cleanupRoutes        map[string]*actionRun
-	readyRoutes          map[string]*actionRun
+	routeReceipts        map[string]*actionRun
 	replacements         []serving.SchedulerReplacement
 }
 type SchedulerController struct {
@@ -959,7 +959,11 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 		}
 	}
 	started := time.Now()
-	parent := &actionRun{owner: target.ID, action: serving.Action{ID: id, Kind: transitionRunKind, Status: nativeOperationRunning}, result: &OperationResult{Operation: operation, Status: nativeOperationRunning, StartedAt: started}, started: started}
+	before := OperationState{At: started.UTC(), Instances: make([]serving.InstanceState, 0, len(c.state.Snapshot.Instances))}
+	for _, instance := range c.state.Snapshot.Instances {
+		before.Instances = append(before.Instances, serving.InstanceState{ID: instance.ID, PodUID: instance.PodUID, Node: instance.Node})
+	}
+	parent := &actionRun{owner: target.ID, action: serving.Action{ID: id, Kind: transitionRunKind, Status: nativeOperationRunning}, result: &OperationResult{Operation: operation, Before: before, Status: nativeOperationRunning, StartedAt: started}, started: started}
 	// Freeze only physical same-Node/Workload replacements, not route-only
 	// policy changes or added capacity. Completion is observed in reconcileSnapshot.
 	for _, next := range target.Instances {

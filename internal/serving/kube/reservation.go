@@ -137,16 +137,12 @@ func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Op
 	run.inheritedReservation = len(inherited) > 0
 	run.scope, run.reserved = scope, true
 	c.runs[id] = run
-	if operation.Kind == operationRoute && run.action.From == readySubsetRoute {
+	if operation.Kind == operationRoute {
 		if parent := c.runs[transitionRunKind+"/"+run.owner]; parent != nil && parent.owner == run.owner {
-			if parent.readyRoutes == nil {
-				parent.readyRoutes = map[string]*actionRun{}
+			if parent.routeReceipts == nil {
+				parent.routeReceipts = map[string]*actionRun{}
 			}
-			for uid := range operation.Target.Routing {
-				if operation.controlsWorkload(uid) {
-					parent.readyRoutes[uid] = run
-				}
-			}
+			parent.routeReceipts[id] = run
 		}
 	}
 	if cleanupOwner != nil {
@@ -230,18 +226,23 @@ func (c *SchedulerController) releaseObservedScopes(nodes []core.Node, pods []co
 	}
 }
 
-// Terminal preparations share only their frozen parent's terminal receipts.
-// Owner strings alone do not establish DAG membership or physical identity.
+// Terminal owner members share authorized receipts, never an owner's name
+// alone. The owner's pre-effect baseline bounds every previous-policy proof.
 func (c *SchedulerController) knownOwnerEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.InstanceState) bool {
-	if run.owner == "" || (run.action.Kind != transitionRunKind && run.action.Kind != operationPrepare) {
-		return knownEffectConfirmed(run, pod, physical, run.result.EndedAt)
-	}
-	parent := run
-	if run.action.Kind == operationPrepare {
+	var parent *actionRun
+	switch run.action.Kind {
+	case transitionRunKind:
+		parent = run
+	case operationPrepare:
 		parent = c.frozenPreparationParent(run)
+	case operationRoute:
+		parent = c.runs[transitionRunKind+"/"+run.owner]
+		if parent != nil && parent.routeReceipts[run.action.ID] != run {
+			parent = nil
+		}
 	}
 	if parent == nil {
-		return knownEffectConfirmed(run, pod, physical, run.result.EndedAt)
+		return knownEffectConfirmed(run, pod, physical, run.result.EndedAt, true)
 	}
 	if parent.result == nil || parent.result.Operation.Target == nil ||
 		parent.action.Status == nativeOperationRunning || parent.action.Status == nativeOperationCancel {
@@ -256,26 +257,29 @@ func (c *SchedulerController) knownOwnerEffectConfirmed(run *actionRun, pod *cor
 	if parent.result.EndedAt.After(after) {
 		after = parent.result.EndedAt
 	}
-	if knownEffectConfirmed(run, pod, physical, after) {
+	preexisting := false
+	if status := firstfloorStatus(pod); status != nil {
+		id := physicalID(pod.UID, status.ContainerID)
+		if current := schedulerPhysicalState(id, physical); current != nil {
+			preexisting = slices.ContainsFunc(parent.result.Before.Instances, func(state serving.InstanceState) bool {
+				return state.ID == id && state.PodUID == string(pod.UID) && state.Node == current.Node
+			})
+		}
+	}
+	if knownEffectConfirmed(run, pod, physical, after, preexisting) {
 		return true
 	}
 	for _, action := range parent.result.Operation.Target.Actions {
 		child := c.runs[action.ID]
-		if child != nil && child.owner == parent.owner && actionEquivalent(action, child.action) && knownEffectConfirmed(child, pod, physical, after) {
+		if child != nil && child.owner == parent.owner && actionEquivalent(action, child.action) && knownEffectConfirmed(child, pod, physical, after, preexisting) {
 			return true
 		}
 	}
-	// Ready-subset routes are authorized by this parent while preparing, not
-	// members of its original DAG. Their exact ACKs also survive goal failure.
-	for _, route := range parent.readyRoutes {
-		if route != nil && route.owner == parent.owner && knownEffectConfirmed(route, pod, physical, after) {
-			return true
-		}
-	}
-	// Cleanup refreshes are explicitly adopted by reserveRun after handoff;
-	// they are not part of the original frozen goal's action list.
-	for _, refresh := range parent.cleanupRoutes {
-		if refresh != nil && refresh.owner == parent.owner && knownEffectConfirmed(refresh, pod, physical, after) {
+	// Every route is registered at authorization, independent of its planner
+	// phase. A sibling's unchanged previous policy proves only preexisting
+	// executors, never a newly prepared source that still needs compensation.
+	for _, route := range parent.routeReceipts {
+		if route != nil && route.owner == parent.owner && knownEffectConfirmed(route, pod, physical, after, preexisting) {
 			return true
 		}
 	}
@@ -295,7 +299,7 @@ func (c *SchedulerController) frozenPreparationParent(run *actionRun) *actionRun
 }
 
 //nolint:gocyclo // Keep exact-executor and known-policy proof together at the reservation release boundary.
-func knownEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.InstanceState, after time.Time) bool {
+func knownEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.InstanceState, after time.Time, allowPrevious bool) bool {
 	if run.result == nil || run.action.Status == nativeOperationRunning || run.action.Status == nativeOperationCancel || !sameRunningContainer(pod, pod) {
 		return false
 	}
@@ -338,7 +342,7 @@ func knownEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.Inst
 	// An unchanged previous policy is a confirmed state, not a successful
 	// application of the requested declaration. Do not invent an ACK for it.
 	before, known := run.result.Before.Native[id]
-	if !known || actual.ProfileID != before.Metadata.ProfileID || actual.DecisionID != before.Metadata.DecisionID {
+	if !allowPrevious || !known || actual.ProfileID != before.Metadata.ProfileID || actual.DecisionID != before.Metadata.DecisionID {
 		return false
 	}
 	previous, current := before.Metadata.Policy, actual.Policy

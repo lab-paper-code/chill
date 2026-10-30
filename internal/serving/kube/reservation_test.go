@@ -232,6 +232,7 @@ func TestPartialAutonomousOwnerAdoptsOnlyFreshKnownEffectsAC38(t *testing.T) {
 				switch evidence {
 				case previousEvidence:
 					state.Native.Metadata = previous
+					parent.result.Before.Instances = []serving.InstanceState{{ID: id, PodUID: string(pod.UID), Node: ref}}
 				case staleEvidence:
 					state.ObservedAt = ended
 				case "parent-stale":
@@ -476,8 +477,9 @@ func TestFailedCleanupAdoptsRegisteredRouteRefreshReceiptAC38(t *testing.T) {
 				result: &OperationResult{Operation: Operation{Kind: operationRoute, WorkloadUID: "workload", Target: refreshTarget},
 					Status: nativeOperationComplete, EndedAt: ended}}
 			parent := &actionRun{owner: target.ID, reserved: true, scope: scope, cleanup: true, cleanupRoutes: map[string]*actionRun{"workload": refresh},
-				action: serving.Action{Kind: transitionRunKind, Status: nativeOperationFailed},
-				result: &OperationResult{Operation: Operation{Kind: transitionRunKind, Target: target}, Status: nativeOperationFailed, EndedAt: ended.Add(time.Second), Error: "cleanup failed"}}
+				routeReceipts: map[string]*actionRun{"workload": refresh},
+				action:        serving.Action{Kind: transitionRunKind, Status: nativeOperationFailed},
+				result:        &OperationResult{Operation: Operation{Kind: transitionRunKind, Target: target}, Status: nativeOperationFailed, EndedAt: ended.Add(time.Second), Error: "cleanup failed"}}
 			parent.scope.Nodes = append([]serving.NodeReference{ref}, cleanupScope.Nodes...)
 			c := &SchedulerController{runs: map[string]*actionRun{"parent": parent, routeAction.ID: handoff, removeAction.ID: cleanup, "refresh": refresh}}
 			state := serving.InstanceState{ID: id, PodUID: string(pod.UID), Node: ref, Ready: true, ObservedAt: observed,
@@ -485,7 +487,7 @@ func TestFailedCleanupAdoptsRegisteredRouteRefreshReceiptAC38(t *testing.T) {
 					Policy: native.Policy{ProfileID: profile.ID, DecisionID: refreshTarget.ID, MaxBatchSize: wanted.MaxBatch}}}}
 			switch evidence {
 			case "unregistered":
-				parent.cleanupRoutes = nil
+				parent.routeReceipts = nil
 			case staleEvidence:
 				state.ObservedAt = parent.result.EndedAt
 			case "active":
@@ -520,7 +522,8 @@ func TestFailedCleanupAdoptsRegisteredRouteRefreshReceiptAC38(t *testing.T) {
 // #226: autonomy-off cancels prepare after a Ready-subset route completed.
 // Its surviving exact ACK is a return proof, not an unclaimed Pod to remove.
 func TestCanceledPrepareAdoptsRegisteredReadySubsetReceiptAC38(t *testing.T) {
-	for _, evidence := range []string{"registered", "unregistered", "subset-owner-mismatch", staleEvidence, activeSiblingEvidence, policyEvidence} {
+	const supersededFailure = "superseded-failed"
+	for _, evidence := range []string{"registered", "dynamic-route", "unregistered", "subset-owner-mismatch", staleEvidence, activeSiblingEvidence, policyEvidence, "previous-new", "previous-existing", "previous-node", "previous-container", "previous-pod", "superseded", supersededFailure} {
 		t.Run(evidence, func(t *testing.T) {
 			pod, node, profile, _ := observerSourceFixture()
 			pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: "workload"}}
@@ -545,11 +548,13 @@ func TestCanceledPrepareAdoptsRegisteredReadySubsetReceiptAC38(t *testing.T) {
 				action: serving.Action{ID: subset.ID, Kind: operationRoute, From: readySubsetRoute, Status: nativeOperationComplete},
 				result: &OperationResult{Operation: operation, Status: nativeOperationComplete, EndedAt: ended}}
 			c := &SchedulerController{runs: map[string]*actionRun{transitionRunKind + "/" + target.ID: parent, prepare.action.ID: prepare}}
-			if evidence == "unregistered" {
+			if evidence == "dynamic-route" {
 				route.action.From = ""
 			}
-			if !c.reserveRun(route.action.ID, route, operation) {
-				t.Fatal("same-owner subset was not admitted")
+			if evidence == "unregistered" {
+				c.runs[route.action.ID] = route
+			} else if !c.reserveRun(route.action.ID, route, operation) {
+				t.Fatal("same-owner route was not admitted")
 			}
 			state := serving.InstanceState{ID: id, PodUID: string(pod.UID), Node: ref, Ready: true, ObservedAt: observed,
 				Native: &native.State{Ready: true, Metadata: native.Metadata{ProfileID: profile.ID, DecisionID: subset.ID,
@@ -563,10 +568,45 @@ func TestCanceledPrepareAdoptsRegisteredReadySubsetReceiptAC38(t *testing.T) {
 				route.action.Status = nativeOperationRunning
 			case policyEvidence:
 				state.Native.Metadata.Policy.MaxBatchSize++
+			case "previous-new", "previous-existing", "previous-node", "previous-container", "previous-pod":
+				state.Native.Metadata.DecisionID = previousEvidence
+				state.Native.Metadata.Policy.DecisionID = previousEvidence
+				route.result.Before.Native = map[string]native.State{id: *state.Native}
+				if evidence != "previous-new" {
+					baseline := serving.InstanceState{ID: id, PodUID: string(pod.UID), Node: ref}
+					switch evidence {
+					case "previous-node":
+						baseline.Node.UID = testReplacementUID
+					case "previous-container":
+						baseline.ID += restartedContainerSuffix
+					case "previous-pod":
+						baseline.PodUID = testReplacementUID
+					}
+					parent.result.Before.Instances = []serving.InstanceState{baseline}
+				}
+			case "superseded", supersededFailure:
+				other := wanted
+				other.ID = "other-executor"
+				next := &serving.SchedulerCandidate{ID: "next-subset", Instances: []serving.SchedulerInstance{other},
+					Routing: map[string]map[string]int32{"workload": {other.ID: 1000}}}
+				nextOperation := Operation{Kind: operationRoute, Target: next, WorkloadUIDs: []string{"workload"}}
+				nextRun := &actionRun{owner: parent.owner, scope: scope,
+					action: serving.Action{ID: next.ID, Kind: operationRoute, From: readySubsetRoute, Status: nativeOperationComplete},
+					result: &OperationResult{Operation: nextOperation, Status: nativeOperationComplete, EndedAt: ended,
+						Before: OperationState{Native: map[string]native.State{id: *state.Native}}}}
+				if evidence == supersededFailure {
+					nextRun.action.Status, nextRun.result.Status = nativeOperationFailed, nativeOperationFailed
+				}
+				if !c.reserveRun(next.ID, nextRun, nextOperation) {
+					t.Fatal("successive subset was not admitted")
+				}
+				// Receipt retention must not depend on the action-view window.
+				delete(c.runs, route.action.ID)
 			}
 			c.releaseObservedScopes([]core.Node{*node}, []core.Pod{*pod}, []serving.InstanceState{state}, observed)
 			c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute)
-			if released := c.authorize(Operation{WorkloadUID: "workload"}) == nil; released != (evidence == "registered") {
+			wantReleased := evidence == "registered" || evidence == "dynamic-route" || evidence == "previous-existing" || evidence == "superseded" || evidence == supersededFailure
+			if released := c.authorize(Operation{WorkloadUID: "workload"}) == nil; released != wantReleased {
 				t.Fatalf("%s: reservation released=%t", evidence, released)
 			}
 			if prepare.result.Status != nativeOperationPartial || prepare.result.Error != context.Canceled.Error() || parent.result.Status != nativeOperationFailed {

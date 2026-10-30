@@ -70,6 +70,58 @@ func TestFailedPrepareCompensatesOnlyOwnUnclaimedPodAC38(t *testing.T) {
 	}
 }
 
+// A subset's Before.Native is not the requested ACK of a sibling's new
+// preparation. Historical evidence must not bypass R4b retirement/absence.
+func TestUnacknowledgedPrepareCannotBorrowPreviousRoutePolicyAC38(t *testing.T) {
+	c, api, child, parent := failedPrepareCompensationFixture(t, "unclaimed")
+	actual := *schedulerPhysicalState(c.state.Snapshot.Instances[1].ID, c.runtime.Instances())
+	wanted := child.result.Operation.Prepare.Instance
+	target := &serving.SchedulerCandidate{ID: parent.owner + "-ready-unacknowledged",
+		Instances: []serving.SchedulerInstance{wanted},
+		Routing:   map[string]map[string]int32{wanted.WorkloadUID: {actual.ID: 1000}}}
+	operation := Operation{Kind: operationRoute, Target: target, WorkloadUIDs: []string{wanted.WorkloadUID}}
+	route := &actionRun{owner: parent.owner, scope: child.scope,
+		action: serving.Action{ID: target.ID, Kind: operationRoute, From: readySubsetRoute, Status: nativeOperationComplete},
+		result: &OperationResult{Operation: operation, Status: nativeOperationComplete, EndedAt: child.result.EndedAt,
+			Before: OperationState{Native: map[string]native.State{actual.ID: *actual.Native}}}}
+	for _, state := range c.runtime.Instances() {
+		if state.Native != nil {
+			route.result.Before.Native[state.ID] = *state.Native
+		}
+		if state.ID != actual.ID {
+			parent.result.Before.Instances = append(parent.result.Before.Instances, serving.InstanceState{ID: state.ID, PodUID: state.PodUID, Node: state.Node})
+		}
+	}
+	if !c.reserveRun(route.action.ID, route, operation) {
+		t.Fatal("subset was not authorized under the parent")
+	}
+	fresh, err := c.capture(c.ctx, time.Now(), c.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, _ = c.reconcileSnapshot(fresh, fresh.At, c.config.Settings.ObservationWindow)
+	if !parent.reserved || !child.reserved || c.authorize(Operation{WorkloadUID: wanted.WorkloadUID}) == nil {
+		t.Fatal("a sibling's previous policy released an unacknowledged new source")
+	}
+	c.state.Snapshot = fresh
+	c.launch(serving.SchedulerCandidate{}, c.config)
+	c.wg.Wait()
+	if api.deleteCalls != 1 || !parent.reserved || !child.reserved {
+		t.Fatal("R4b did not retire once while retaining the physical-return obligation")
+	}
+	fresh, err = c.capture(c.ctx, time.Now(), c.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, _ = c.reconcileSnapshot(fresh, fresh.At, c.config.Settings.ObservationWindow)
+	if len(fresh.Reservations) != 0 || c.authorize(Operation{WorkloadUID: wanted.WorkloadUID}) != nil {
+		t.Fatal("fresh Pod absence did not return the compensated reservation")
+	}
+	if child.result.Status != nativeOperationFailed || parent.result.Status != nativeOperationFailed {
+		t.Fatal("compensation rewrote failed receipts")
+	}
+}
+
 func failedPrepareCompensationFixture(t *testing.T, evidence string) (*SchedulerController, *resetAPI, *actionRun, *actionRun) {
 	t.Helper()
 	c, prepared := tickReadySubsetController(t, func(index int, state *native.State) {
