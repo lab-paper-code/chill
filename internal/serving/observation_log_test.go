@@ -301,7 +301,9 @@ func TestObservationArchiveRetriesFailedHour(t *testing.T) {
 	if err := observationLog.Flush(ctx); err != nil {
 		t.Fatal(err)
 	}
-	for _, stream := range observationStreams {
+	// Hours written before resources/cluster were introduced remain archivable.
+	writtenStreams := []string{observationRequestStream, observationSchedulerStream, observationManagementStream, observationCatalogStream}
+	for _, stream := range writtenStreams {
 		var want []string
 		for _, minute := range []string{"00", "01"} {
 			data, err := os.ReadFile(filepath.Join(hour, stream+"."+minute+".jsonl"))
@@ -328,10 +330,19 @@ func TestObservationArchiveRetriesFailedHour(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(observationLog.root, "20261020T11")); err != nil {
 		t.Fatalf("the previous hour was deleted: %v", err)
 	}
-	for _, stream := range observationStreams {
+	for _, stream := range writtenStreams {
 		key := observationArchivePrefix + "20261020T10/" + stream + ".jsonl.gz"
 		if archive.puts[key] != 2 {
 			t.Fatalf("%s sent %d times, want 2", stream, archive.puts[key])
+		}
+	}
+	for _, stream := range []string{observationResourcesStream, observationClusterStream} {
+		key := observationArchivePrefix + "20261020T10/" + stream + ".jsonl.gz"
+		if archive.puts[key] != 0 {
+			t.Fatalf("absent %s stream was uploaded", stream)
+		}
+		if _, err := os.Stat(filepath.Join(archive.directory, key)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("absent %s stream archive exists: %v", stream, err)
 		}
 	}
 }
@@ -767,7 +778,7 @@ func TestAssignmentAppendFailureRevertsAssignment(t *testing.T) {
 	}
 	_, err = call.Wait(context.Background())
 	var domain *Error
-	if !errors.As(err, &domain) || domain.Code != "ObservationUnavailable" || call.assignment != nil ||
+	if !errors.As(err, &domain) || domain.Code != observationUnavailableCode || call.assignment != nil ||
 		r.instances[i.ID].outstanding != 0 || r.observationError == nil {
 		t.Fatalf("failed assigned row kept the assignment: %v %+v", err, call.assignment)
 	}

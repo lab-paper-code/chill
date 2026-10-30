@@ -101,7 +101,9 @@ func run(ctx context.Context, opts options) (retErr error) {
 		return resourcePodSelected(pod, namespace, opts.resourceRelease, opts.resourceControlComponents) ||
 			resourcePodSelected(pod, namespace, opts.resourceSystem, opts.resourceControlComponents)
 	}
-	process := newProcessResources(observationLog, opts.observationDirectory, podUID, started, opts.resourceDirectoryInterval)
+	process := newProcessResources(
+		observationLog, opts.observationDirectory, podUID, started, opts.resourceDirectoryInterval,
+	)
 	publisher.recordResources = process.record
 	// Backend lifetime belongs to ChillServer, not SIGTERM or an HTTP caller.
 	backendCtx, cancelBackend := context.WithCancel(context.Background())
@@ -120,8 +122,8 @@ func run(ctx context.Context, opts options) (retErr error) {
 	transport.MaxIdleConns, transport.MaxIdleConnsPerHost, transport.IdleConnTimeout = 0, 256, 30*time.Second
 	native := &firstfloor.Client{HTTPClient: &http.Client{Transport: transport}, Diagnostics: recorder}
 	observer, err := servingkube.NewObserver(store, kube, execution, native, servingkube.ObserverConfig{
-		Namespace: opts.servingNamespace,
-		OnCluster: func(row serving.ClusterObservation) error { return recordCluster(observationLog, publisher, row) },
+		Namespace:        opts.servingNamespace,
+		OnCluster:        func(row serving.ClusterObservation) error { return recordCluster(observationLog, publisher, row) },
 		SelectClusterPod: selectedPod,
 	})
 	if err != nil {

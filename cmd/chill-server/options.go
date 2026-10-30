@@ -15,54 +15,58 @@ import (
 )
 
 type options struct {
-	bindAddress, servingNamespace, tlsCert, tlsKey, observationDirectory   string
-	storeName, storeEndpoint, storeBucket, storeRegion                     string
-	consoleURL, dashboardURL                                               string
-	storeCredentialsSecret                                                 string
-	kube                                                                   kubeconfig.Options
-	kubeAPIQPS                                                             float64
-	kubeAPIBurst                                                           int
-	queueLimit, maxQueryEvents                                             int
-	maxRequestBytes, maxEvidenceBytes                                      int64
-	profileConfidenceLevel                                                 float64
-	requestTimeout, drainTimeout, sourceInterval, profileInterval          time.Duration
-	operationTimeout                                                       time.Duration
-	observationRetention                                                   time.Duration
-	profileNamespaces                                                      []string
-	definitions, outcomes                                                  []string
-	materializeProfile                                                     bool
-	profileObjectKey, profileOutput                                        string
-	profileObjectSize                                                      int64
-	schedulerConfigMap, schedulerConfigKey                                 string
-	factsNamespace, factsConfigMap, actuationPoliciesKey, metricSourcesKey string
-	diagnosticDirectory                                                    string
-	checkDeploymentManifest, schedulerConfigMapFile                        string
-	diagnosticStartDelay, diagnosticTraceOffset                            time.Duration
-	pprofAddress                                                           string
-	pprofMutexFraction                                                     int
-	pprofBlockRate                                                         time.Duration
+	bindAddress, servingNamespace, tlsCert, tlsKey, observationDirectory             string
+	storeName, storeEndpoint, storeBucket, storeRegion                               string
+	consoleURL, dashboardURL                                                         string
+	storeCredentialsSecret                                                           string
+	kube                                                                             kubeconfig.Options
+	kubeAPIQPS                                                                       float64
+	kubeAPIBurst                                                                     int
+	queueLimit, maxQueryEvents                                                       int
+	maxRequestBytes, maxEvidenceBytes                                                int64
+	profileConfidenceLevel                                                           float64
+	requestTimeout, drainTimeout, sourceInterval, profileInterval                    time.Duration
+	operationTimeout                                                                 time.Duration
+	observationRetention                                                             time.Duration
+	profileNamespaces                                                                []string
+	definitions, outcomes                                                            []string
+	materializeProfile                                                               bool
+	profileObjectKey, profileOutput                                                  string
+	profileObjectSize                                                                int64
+	schedulerConfigMap, schedulerConfigKey                                           string
+	factsNamespace, factsConfigMap, actuationPoliciesKey, metricSourcesKey           string
+	diagnosticDirectory                                                              string
+	checkDeploymentManifest, schedulerConfigMapFile                                  string
+	diagnosticStartDelay, diagnosticTraceOffset                                      time.Duration
+	pprofAddress                                                                     string
+	pprofMutexFraction                                                               int
+	pprofBlockRate                                                                   time.Duration
 	resourceMaxSamples, resourceMaxContainers, resourceMaxThermal, resourceMaxErrors int
-	resourceRelease, resourceSystem string
-	resourceControlComponents []string
-	resourceDirectoryInterval time.Duration
+	resourceRelease, resourceSystem                                                  string
+	resourceControlComponents                                                        []string
+	resourceDirectoryInterval                                                        time.Duration
 
 	// loadGenerator runs the load Job of dispatch-occupancy measurements.
 	loadGenerator servingkube.LoadGeneratorConfig
 }
 
 func (o *options) bindFlags(f *flag.FlagSet) {
-	f.IntVar(&o.resourceMaxSamples, "resource-max-samples", 0, "Maximum samples per resource batch; required from deployment config.")
+	f.IntVar(&o.resourceMaxSamples, "resource-max-samples", 0,
+		"Maximum samples per resource batch; required from deployment config.")
 	f.IntVar(&o.resourceMaxContainers, "resource-max-containers", 0, "Maximum containers per resource sample.")
 	f.IntVar(&o.resourceMaxThermal, "resource-max-thermal", 0, "Maximum thermal sensors per resource sample.")
 	f.IntVar(&o.resourceMaxErrors, "resource-max-errors", 0, "Maximum errors per resource sample/container.")
 	f.StringVar(&o.resourceRelease, "resource-release", "", "Exact release label of CHILL control Pods.")
 	f.StringVar(&o.resourceSystem, "resource-system", "", "Exact ChillSystem identity of operator-managed control Pods.")
 	f.Func("resource-control-component", "Allowed CHILL control component; repeatable.", func(value string) error {
-		if len(validation.IsDNS1123Label(value)) != 0 { return fmt.Errorf("invalid resource control component %q", value) }
+		if len(validation.IsDNS1123Label(value)) != 0 {
+			return fmt.Errorf("invalid resource control component %q", value)
+		}
 		o.resourceControlComponents = append(o.resourceControlComponents, value)
 		return nil
 	})
-	f.DurationVar(&o.resourceDirectoryInterval, "resource-directory-interval", 0, "Observation directory byte sampling interval.")
+	f.DurationVar(&o.resourceDirectoryInterval, "resource-directory-interval", 0,
+		"Observation directory byte sampling interval.")
 	f.StringVar(&o.checkDeploymentManifest, "check-deployment-config", "",
 		"Validate rendered deployment scheduler ConfigMaps offline and exit.")
 	f.StringVar(&o.schedulerConfigMapFile, "scheduler-configmap-file", "",
@@ -213,10 +217,21 @@ func (o options) validate() error {
 	if err := o.validateFacts(); err != nil {
 		return err
 	}
-	if o.resourceMaxSamples <= 0 || o.resourceMaxContainers <= 0 || o.resourceMaxThermal <= 0 || o.resourceMaxErrors <= 0 || o.resourceDirectoryInterval <= 0 || o.resourceRelease == "" || o.resourceSystem == "" || len(o.resourceControlComponents) == 0 {
-		return errors.New("positive resource bounds/directory interval and explicit release/system/control components are required")
+	if err := o.validateResources(); err != nil {
+		return err
 	}
 	return o.validateKubernetesAPIBudget()
+}
+
+func (o options) validateResources() error {
+	if o.resourceMaxSamples <= 0 || o.resourceMaxContainers <= 0 || o.resourceMaxThermal <= 0 ||
+		o.resourceMaxErrors <= 0 || o.resourceDirectoryInterval <= 0 || o.resourceRelease == "" ||
+		o.resourceSystem == "" || len(o.resourceControlComponents) == 0 {
+		return errors.New(
+			"positive resource bounds/directory interval and explicit release/system/control components are required",
+		)
+	}
+	return nil
 }
 
 func isCleanAbsolutePath(path string) bool {

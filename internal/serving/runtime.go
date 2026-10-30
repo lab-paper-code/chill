@@ -214,7 +214,7 @@ func (r *Runtime) Receive(name string, at time.Time) (Receipt, error) {
 	}
 	c := &Call{receipt: receipt}
 	if err := r.event(c, phaseReceived, "", ""); err != nil {
-		return receipt, failure("ObservationUnavailable", "cannot persist request receipt")
+		return receipt, failure(observationUnavailableCode, "cannot persist request receipt")
 	}
 	if receipt.UID == "" {
 		return receipt, failure("WorkloadNotFound", "workload %q is not registered", name)
@@ -248,7 +248,7 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 	}
 	validatedAt := time.Now()
 	if err := r.config.ObservationLog.RequestEvent(RequestEvent{RequestID: receipt.ID, WorkloadName: receipt.Name, WorkloadUID: receipt.UID, Definition: d.Identity(), Kind: "validated", At: validatedAt.UTC(), ReceivedAt: receipt.ReceivedAt, ElapsedNanos: validatedAt.Sub(receipt.ReceivedAt).Nanoseconds(), SLO: &d.SLO, LifetimeNanos: lifetime}); err != nil {
-		return nil, failure("ObservationUnavailable", "cannot persist validated compute demand")
+		return nil, failure(observationUnavailableCode, "cannot persist validated compute demand")
 	}
 	r.mu.LockRequest(receipt.ID)
 	defer r.mu.Unlock()
@@ -263,7 +263,7 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 		return nil, failure(w.reason, "new requests are stopped: %s", w.reason)
 	}
 	if r.observationError != nil {
-		return nil, failure("ObservationUnavailable", "request observation log is unavailable")
+		return nil, failure(observationUnavailableCode, "request observation log is unavailable")
 	}
 	if w.definition.Identity() != d.Identity() {
 		return nil, failure("DefinitionChanged", "applied definition changed before acceptance")
@@ -282,7 +282,7 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 	}
 	c := &Call{runtime: r, receipt: receipt, definition: w.definition, identity: w.identity, input: input, reply: make(chan callResult, 1)}
 	if err := r.event(c, phaseAccepted, "", ""); err != nil {
-		return nil, failure("ObservationUnavailable", "cannot persist request acceptance")
+		return nil, failure(observationUnavailableCode, "cannot persist request acceptance")
 	}
 	w.calls[receipt.ID] = c
 	r.calls[receipt.ID] = c
@@ -451,7 +451,7 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 	var err error
 	if persistErr != nil {
 		result.Finished = true // No native exchange began or can still execute.
-		err = failure("ObservationUnavailable", "cannot persist assignment")
+		err = failure(observationUnavailableCode, "cannot persist assignment")
 	} else if c.backendContext.Err() != nil {
 		result.Finished = true
 		err = failure("RequestCanceled", "caller canceled before native dispatch")
@@ -501,11 +501,11 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 	if result.Finished && !c.backendDone {
 		c.backendDone = true
 		if eventErr := r.eventAt(c, "backend_finished", "", "", finishedAt); eventErr != nil {
-			err = failure("ObservationUnavailable", "cannot persist native completion")
+			err = failure(observationUnavailableCode, "cannot persist native completion")
 		}
 	}
 	if eventErr := r.eventAt(c, eventBackendExchangeFinished, outcome, code, finishedAt); eventErr != nil {
-		err = failure("ObservationUnavailable", "cannot persist backend exchange outcome")
+		err = failure(observationUnavailableCode, "cannot persist backend exchange outcome")
 	}
 	r.releaseLocked(c)
 	if c.reply != nil {
@@ -724,7 +724,7 @@ func (r *Runtime) OpenAdmission(uid string) error {
 		return failure("WorkloadNotFound", "registration is not applied")
 	}
 	if r.observationError != nil {
-		return failure("ObservationUnavailable", "request observation log is unavailable")
+		return failure(observationUnavailableCode, "request observation log is unavailable")
 	}
 	w.stopped = false
 	w.reason = ""
@@ -1077,7 +1077,7 @@ func (r *Runtime) workloadStateLocked(w *runtimeWorkload) WorkloadState {
 	if !w.stopped {
 		switch {
 		case r.observationError != nil:
-			state.Reason = "ObservationUnavailable"
+			state.Reason = observationUnavailableCode
 		case w.definition.Dataset == nil:
 			state.Reason = "MissingDataset"
 		case !evidence:

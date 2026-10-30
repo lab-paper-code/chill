@@ -14,36 +14,41 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
 
+const (
+	observationUnavailableCode = "ObservationUnavailable"
+	rawHourOpen                = "open"
+)
+
 type RawSegment struct {
 	Minute string `json:"minute"`
-	Bytes int64 `json:"bytes"`
+	Bytes  int64  `json:"bytes"`
 }
 
 type RawArchive struct {
 	Store string `json:"store"`
-	Key string `json:"key"`
-	Bytes int64 `json:"bytes"`
+	Key   string `json:"key"`
+	Bytes int64  `json:"bytes"`
 }
 
 type RawKind struct {
-	Kind string `json:"kind"`
-	Available bool `json:"available"`
-	Segments []RawSegment `json:"segments"`
-	Archive *RawArchive `json:"archive"`
+	Kind      string       `json:"kind"`
+	Available bool         `json:"available"`
+	Segments  []RawSegment `json:"segments"`
+	Archive   *RawArchive  `json:"archive"`
 }
 
 type RawHourIndex struct {
-	Hour string `json:"hour"`
-	At time.Time `json:"at"`
-	Status string `json:"status"`
-	Kinds []RawKind `json:"kinds"`
+	Hour   string    `json:"hour"`
+	At     time.Time `json:"at"`
+	Status string    `json:"status"`
+	Kinds  []RawKind `json:"kinds"`
 }
 
 // RawObservation owns a fixed byte range. The caller must close Reader.
 type RawObservation struct {
-	Reader io.ReadCloser
+	Reader      io.ReadCloser
 	ContentType string
-	Bytes int64
+	Bytes       int64
 }
 
 func rawHour(hour string) (time.Time, error) {
@@ -59,51 +64,79 @@ func rawHour(hour string) (time.Time, error) {
 func (l *ObservationLog) captureRaw(ctx context.Context, hour time.Time, streams []string) (*observationRead, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if err := ctx.Err(); err != nil { return nil, err }
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	read := &observationRead{ctx: ctx, now: l.now().UTC(), files: map[string][]observationOpenFile{}, localHours: map[time.Time]bool{}}
 	info, err := os.Stat(filepath.Join(l.root, observationHour(hour)))
-	if err != nil && !errors.Is(err, os.ErrNotExist) { return nil, err }
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	if hour.Equal(read.now.Truncate(time.Hour)) || err == nil && info.IsDir() {
 		read.localHours[hour] = true
 		for _, stream := range streams {
 			segments, err := l.hourFiles(hour, stream)
-			if err != nil { read.close(); return nil, err }
+			if err != nil {
+				read.close()
+				return nil, err
+			}
 			for _, segment := range segments {
-				if !segment.at.Before(read.now.Truncate(time.Minute)) { continue }
-				if err := ctx.Err(); err != nil { read.close(); return nil, err }
-				if err := l.openReadFile(read, stream, segment); err != nil { read.close(); return nil, err }
+				if !segment.at.Before(read.now.Truncate(time.Minute)) {
+					continue
+				}
+				if err := ctx.Err(); err != nil {
+					read.close()
+					return nil, err
+				}
+				if err := l.openReadFile(read, stream, segment); err != nil {
+					read.close()
+					return nil, err
+				}
 			}
 		}
 	}
-	if err := ctx.Err(); err != nil { read.close(); return nil, err }
+	if err := ctx.Err(); err != nil {
+		read.close()
+		return nil, err
+	}
 	return read, nil
 }
 
 func (l *ObservationLog) rawObjects(read *observationRead, hour time.Time) (map[string]map[time.Time]evidencestore.ObjectIdentity, error) {
 	read.archive, _ = l.config.Writer.(ObservationArchive)
 	objects, err := l.archiveSources(read, map[string][2]time.Time{observationRequestStream: {hour, hour}})
-	if err == nil { err = read.ctx.Err() }
+	if err == nil {
+		err = read.ctx.Err()
+	}
 	return objects, err
 }
 
 // RawHour lists original closed segments, or archive locations, never both.
 func (l *ObservationLog) RawHour(ctx context.Context, hour string) (RawHourIndex, error) {
 	at, err := rawHour(hour)
-	if err != nil { return RawHourIndex{}, err }
+	if err != nil {
+		return RawHourIndex{}, err
+	}
 	streams := slices.Clone(observationStreams)
 	slices.Sort(streams)
 	read, err := l.captureRaw(ctx, at, streams)
-	if err != nil { return RawHourIndex{}, err }
+	if err != nil {
+		return RawHourIndex{}, err
+	}
 	defer read.close()
 	result := RawHourIndex{Hour: hour, At: read.now, Status: "archived", Kinds: make([]RawKind, 0, len(streams))}
 	var objects map[string]map[time.Time]evidencestore.ObjectIdentity
 	local := read.localHours[at]
 	if local {
 		result.Status = "closed-local"
-		if at.Equal(read.now.Truncate(time.Hour)) { result.Status = "open" }
+		if at.Equal(read.now.Truncate(time.Hour)) {
+			result.Status = rawHourOpen
+		}
 	} else {
 		objects, err = l.rawObjects(read, at)
-		if err != nil { return RawHourIndex{}, err }
+		if err != nil {
+			return RawHourIndex{}, err
+		}
 	}
 	available := false
 	for _, stream := range streams {
@@ -119,24 +152,36 @@ func (l *ObservationLog) RawHour(ctx context.Context, hour string) (RawHourIndex
 		available = available || kind.Available
 		result.Kinds = append(result.Kinds, kind)
 	}
-	if !local && !available { return RawHourIndex{}, failure("ObservationUnavailable", "observation hour is unavailable") }
-	if err := ctx.Err(); err != nil { return RawHourIndex{}, err }
+	if !local && !available {
+		return RawHourIndex{}, failure(observationUnavailableCode, "observation hour is unavailable")
+	}
+	if err := ctx.Err(); err != nil {
+		return RawHourIndex{}, err
+	}
 	return result, nil
 }
 
 // OpenRaw returns unchanged JSONL bytes locally, or unchanged stored gzip bytes.
 func (l *ObservationLog) OpenRaw(ctx context.Context, hour, kind string) (RawObservation, error) {
 	at, err := rawHour(hour)
-	if err != nil { return RawObservation{}, err }
-	if !slices.Contains(observationStreams, kind) { return RawObservation{}, failure("InvalidQuery", "unsupported observation kind") }
+	if err != nil {
+		return RawObservation{}, err
+	}
+	if !slices.Contains(observationStreams, kind) {
+		return RawObservation{}, failure("InvalidQuery", "unsupported observation kind")
+	}
 	read, err := l.captureRaw(ctx, at, []string{kind})
-	if err != nil { return RawObservation{}, err }
+	if err != nil {
+		return RawObservation{}, err
+	}
 	if read.localHours[at] {
 		files := read.files[kind]
 		if len(files) == 0 {
 			read.close()
-			if at.Equal(read.now.Truncate(time.Hour)) { return RawObservation{}, failure("ObservationNotReady", "no closed minute is ready") }
-			return RawObservation{}, failure("ObservationUnavailable", "observation stream is unavailable")
+			if at.Equal(read.now.Truncate(time.Hour)) {
+				return RawObservation{}, failure("ObservationNotReady", "no closed minute is ready")
+			}
+			return RawObservation{}, failure(observationUnavailableCode, "observation stream is unavailable")
 		}
 		readers := make([]io.Reader, 0, len(files))
 		closers := make([]io.Closer, 0, len(files))
@@ -149,11 +194,17 @@ func (l *ObservationLog) OpenRaw(ctx context.Context, hour, kind string) (RawObs
 		return newRawObservation(ctx, io.MultiReader(readers...), closers, "application/x-ndjson", size), nil
 	}
 	objects, err := l.rawObjects(read, at)
-	if err != nil { return RawObservation{}, err }
+	if err != nil {
+		return RawObservation{}, err
+	}
 	object, ok := objects[kind][at]
-	if !ok { return RawObservation{}, failure("ObservationUnavailable", "observation stream is unavailable") }
+	if !ok {
+		return RawObservation{}, failure(observationUnavailableCode, "observation stream is unavailable")
+	}
 	body, err := read.archive.Open(ctx, object)
-	if err != nil { return RawObservation{}, err }
+	if err != nil {
+		return RawObservation{}, err
+	}
 	return newRawObservation(ctx, io.LimitReader(body, object.Size), []io.Closer{body}, "application/gzip", object.Size), nil
 }
 
@@ -161,19 +212,32 @@ func (l *ObservationLog) OpenRaw(ctx context.Context, hour, kind string) (RawObs
 func (l *ObservationLog) OpenRawDefinitions(ctx context.Context) (RawObservation, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if err := ctx.Err(); err != nil { return RawObservation{}, err }
+	if err := ctx.Err(); err != nil {
+		return RawObservation{}, err
+	}
 	file, err := os.Open(filepath.Join(l.root, observationDefinitionsFile))
-	if err != nil { return RawObservation{}, err }
+	if err != nil {
+		return RawObservation{}, err
+	}
 	info, err := file.Stat()
-	if err != nil { return RawObservation{}, errors.Join(err, file.Close()) }
+	if err != nil {
+		return RawObservation{}, errors.Join(err, file.Close())
+	}
 	end := info.Size()
 	var buffer [4096]byte
 	for end > 0 {
-		if err := ctx.Err(); err != nil { return RawObservation{}, errors.Join(err, file.Close()) }
+		if err := ctx.Err(); err != nil {
+			return RawObservation{}, errors.Join(err, file.Close())
+		}
 		start := max(int64(0), end-int64(len(buffer)))
 		n, err := file.ReadAt(buffer[:end-start], start)
-		if err != nil { return RawObservation{}, errors.Join(err, file.Close()) }
-		if last := bytes.LastIndexByte(buffer[:n], '\n'); last >= 0 { end = start+int64(last)+1; break }
+		if err != nil {
+			return RawObservation{}, errors.Join(err, file.Close())
+		}
+		if last := bytes.LastIndexByte(buffer[:n], '\n'); last >= 0 {
+			end = start + int64(last) + 1
+			break
+		}
 		end = start
 	}
 	return newRawObservation(ctx, io.NewSectionReader(file, 0, end), []io.Closer{file}, "application/x-ndjson", end), nil
@@ -182,19 +246,23 @@ func (l *ObservationLog) OpenRawDefinitions(ctx context.Context) (RawObservation
 type rawObservationReader struct {
 	io.Reader
 	closers []io.Closer
-	stop func() bool
-	once sync.Once
-	err error
+	stop    func() bool
+	once    sync.Once
+	err     error
 }
 
 func newRawObservation(ctx context.Context, source io.Reader, closers []io.Closer, contentType string, size int64) RawObservation {
 	reader := &rawObservationReader{Reader: observationContextReader{ctx: ctx, source: source}, closers: closers}
-	reader.stop = context.AfterFunc(ctx, func() { reader.close() })
+	reader.stop = context.AfterFunc(ctx, func() { _ = reader.close() })
 	return RawObservation{Reader: reader, ContentType: contentType, Bytes: size}
 }
 
 func (r *rawObservationReader) close() error {
-	r.once.Do(func() { for _, closer := range r.closers { r.err = errors.Join(r.err, closer.Close()) } })
+	r.once.Do(func() {
+		for _, closer := range r.closers {
+			r.err = errors.Join(r.err, closer.Close())
+		}
+	})
 	return r.err
 }
 

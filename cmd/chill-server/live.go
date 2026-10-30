@@ -19,16 +19,16 @@ import (
 // livePublisher projects committed callback arguments. It never polls REST or
 // rereads the controller from a decision/action callback.
 type livePublisher struct {
-	hub            *live.Hub
-	metrics        *live.Metrics
-	mu             sync.Mutex
-	registered     map[string]live.Workload
-	autonomous     []string
-	instances      map[string]bool
-	actions        []live.Action
-	meters, active []string
-	powerKnown     bool
-	changed        chan struct{}
+	hub             *live.Hub
+	metrics         *live.Metrics
+	mu              sync.Mutex
+	registered      map[string]live.Workload
+	autonomous      []string
+	instances       map[string]bool
+	actions         []live.Action
+	meters, active  []string
+	powerKnown      bool
+	changed         chan struct{}
 	recordResources func(time.Time) error
 }
 

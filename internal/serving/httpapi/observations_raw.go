@@ -14,23 +14,40 @@ import (
 const rawObservationsPath = "/api/v1/observations/raw"
 
 func (h *Handler) rawObservations(w http.ResponseWriter, r *http.Request) {
-	if err := h.authorize(r); err != nil { sendError(w, err); return }
+	if err := h.authorize(r); err != nil {
+		sendError(w, err)
+		return
+	}
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	invalid := func() { sendError(w, &serving.Error{Code: "InvalidQuery", Message: "a raw hour query, hour/kind path, or definitions path without extra parameters is required"}) }
-	if r.URL.RawPath != "" { invalid(); return }
+	invalid := func() {
+		sendError(w, &serving.Error{Code: "InvalidQuery", Message: "a raw hour query, hour/kind path, or definitions path without extra parameters is required"})
+	}
+	if r.URL.RawPath != "" {
+		invalid()
+		return
+	}
 	if r.URL.Path == rawObservationsPath {
 		query, err := url.ParseQuery(r.URL.RawQuery)
-		if err != nil || len(query) != 1 || len(query["hour"]) != 1 { invalid(); return }
+		if err != nil || len(query) != 1 || len(query["hour"]) != 1 {
+			invalid()
+			return
+		}
 		index, err := h.observationLog.RawHour(r.Context(), query.Get("hour"))
-		if err != nil { rawObservationError(w, err); return }
+		if err != nil {
+			rawObservationError(w, err)
+			return
+		}
 		sendJSON(w, http.StatusOK, index)
 		return
 	}
-	if r.URL.RawQuery != "" || r.URL.ForceQuery { invalid(); return }
+	if r.URL.RawQuery != "" || r.URL.ForceQuery {
+		invalid()
+		return
+	}
 	var raw serving.RawObservation
 	var err error
 	path := strings.TrimPrefix(r.URL.Path, rawObservationsPath+"/")
@@ -38,12 +55,21 @@ func (h *Handler) rawObservations(w http.ResponseWriter, r *http.Request) {
 		raw, err = h.observationLog.OpenRawDefinitions(r.Context())
 	} else {
 		parts := strings.Split(path, "/")
-		if len(parts) != 2 { invalid(); return }
+		if len(parts) != 2 {
+			invalid()
+			return
+		}
 		raw, err = h.observationLog.OpenRaw(r.Context(), parts[0], parts[1])
 	}
-	if err != nil { rawObservationError(w, err); return }
-	defer raw.Reader.Close()
-	if err := r.Context().Err(); err != nil { sendError(w, contextRequestError(err)); return }
+	if err != nil {
+		rawObservationError(w, err)
+		return
+	}
+	defer func() { _ = raw.Reader.Close() }()
+	if err := r.Context().Err(); err != nil {
+		sendError(w, contextRequestError(err))
+		return
+	}
 	w.Header().Set("Content-Type", raw.ContentType)
 	w.Header().Set("Content-Length", strconv.FormatInt(raw.Bytes, 10))
 	w.Header().Set("Cache-Control", "no-store")

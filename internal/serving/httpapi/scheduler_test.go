@@ -458,8 +458,8 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 	got := httptest.NewRecorder()
 	handler.scheduler(got, request)
 	var shown struct {
-		StaticRouting map[string]map[string]int `json:"staticRouting"`
-		Meters []servingkube.MeterDeclaration `json:"meters"`
+		StaticRouting map[string]map[string]int      `json:"staticRouting"`
+		Meters        []servingkube.MeterDeclaration `json:"meters"`
 	}
 	if err := json.Unmarshal(got.Body.Bytes(), &shown); err != nil || got.Code != http.StatusOK || !reflect.DeepEqual(shown.StaticRouting, declared) {
 		t.Fatalf("GET settings lost the stored declaration: status=%d body=%s", got.Code, got.Body)

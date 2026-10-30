@@ -100,10 +100,10 @@ func TestProfileReuseRejectsUnconfirmedConditionsAndDifferences(t *testing.T) {
 		mutate func(*serving.Profile, *serving.Profile)
 	}{
 		{"device-family", func(_, p *serving.Profile) { p.Condition.DeviceClass += "-different" }},
-		{"runtime-image", func(_, p *serving.Profile) { p.Condition.RuntimeImage += "changed" }},
+		{"runtime-image", func(_, p *serving.Profile) { p.Condition.RuntimeImage += "-other-image" }},
 		{"cpu-affinity", func(_, p *serving.Profile) { p.Condition.CPU.AffinityCPUs = []int{99} }},
 		{"power-mode", func(_, p *serving.Profile) { p.Condition.PowerMode = "different" }},
-		{"runner-version", func(_, p *serving.Profile) { p.RuntimeMetadata.RuntimeVersion += "changed" }},
+		{"runner-version", func(_, p *serving.Profile) { p.RuntimeMetadata.RuntimeVersion += "-other-version" }},
 		{"short-window", func(_, p *serving.Profile) { p.Condition.ActiveProtocol.DurationSeconds = 29 }},
 		{"too-few-trials", func(_, p *serving.Profile) { p.TrialsPerBatch = 2 }},
 		{"missing-batch", func(s, p *serving.Profile) {

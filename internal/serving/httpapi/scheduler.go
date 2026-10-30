@@ -70,8 +70,8 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 			}
 			sendJSON(w, http.StatusOK, struct {
 				serving.SchedulerSettings
-				StaticRouting json.RawMessage `json:"staticRouting,omitempty"`
-				Meters []servingkube.MeterDeclaration `json:"meters"`
+				StaticRouting json.RawMessage                `json:"staticRouting,omitempty"`
+				Meters        []servingkube.MeterDeclaration `json:"meters"`
 			}{h.config.Scheduler.Settings(), config["staticRouting"], meters})
 		case strings.HasSuffix(r.URL.Path, "/state"):
 			sendJSON(w, http.StatusOK, h.config.Scheduler.State())

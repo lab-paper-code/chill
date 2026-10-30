@@ -54,9 +54,9 @@ type DiscoveryConfig struct {
 	SecurityContext        *corev1.SecurityContext        `json:"securityContext,omitempty"`
 	HostPaths              []ReadOnlyHostPath             `json:"hostPaths,omitempty"`
 	UpdateStrategy         appsv1.DaemonSetUpdateStrategy `json:"updateStrategy"`
-	ResourceObservation string `json:"resourceObservation,omitempty"`
-	ResourceCASecret string `json:"resourceCASecret,omitempty"`
-	ResourceCAFile string `json:"resourceCAFile,omitempty"`
+	ResourceObservation    string                         `json:"resourceObservation,omitempty"`
+	ResourceCASecret       string                         `json:"resourceCASecret,omitempty"`
+	ResourceCAFile         string                         `json:"resourceCAFile,omitempty"`
 }
 
 // ReadOnlyHostPath is a host directory mounted read-only under hostRoot.
@@ -124,8 +124,14 @@ func (c ActuationConfig) forKind(kind string) ActuationConfig {
 // unit directories: the packaged one read-only, the local one writable for the
 // drop-in.
 var bootOrderingHostPaths = []HostPathMount{
-	{Name: "host-systemd-etc", HostPath: "/etc/systemd/system", MountPath: jetson.HostSystemdEtcDir, Type: corev1.HostPathDirectory},
-	{Name: "host-systemd-lib", HostPath: "/lib/systemd/system", MountPath: jetson.HostSystemdLibDir, Type: corev1.HostPathDirectory, ReadOnly: true},
+	{
+		Name: "host-systemd-etc", HostPath: "/etc/systemd/system",
+		MountPath: jetson.HostSystemdEtcDir, Type: corev1.HostPathDirectory,
+	},
+	{
+		Name: "host-systemd-lib", HostPath: "/lib/systemd/system",
+		MountPath: jetson.HostSystemdLibDir, Type: corev1.HostPathDirectory, ReadOnly: true,
+	},
 }
 
 // podHostPaths is every host path the actuation Pod mounts.
@@ -280,7 +286,8 @@ func (c ActuationConfig) validateHostAdapters() error {
 		security.ReadOnlyRootFilesystem == nil || !*security.ReadOnlyRootFilesystem || security.Capabilities == nil ||
 		len(security.Capabilities.Add) != 1 || security.Capabilities.Add[0] != rebootCapability ||
 		!slices.Contains(security.Capabilities.Drop, corev1.Capability("ALL")) {
-		return errors.New("jetsonNVPModel requires non-privileged, no-escalation, read-only-rootfs security dropping all capabilities and adding only SYS_BOOT")
+		return errors.New("jetsonNVPModel requires non-privileged, no-escalation, " +
+			"read-only-rootfs security dropping all capabilities and adding only SYS_BOOT")
 	}
 	return nil
 }
@@ -337,7 +344,8 @@ func validateHostPaths(hostPaths []HostPathMount) error {
 		if !path.IsAbs(hostPath.HostPath) || path.Clean(hostPath.HostPath) != hostPath.HostPath || hostPath.HostPath == "/" {
 			return fmt.Errorf("host path %q must be a clean absolute path narrower than root", hostPath.HostPath)
 		}
-		if !path.IsAbs(hostPath.MountPath) || path.Clean(hostPath.MountPath) != hostPath.MountPath || hostPath.MountPath == "/" {
+		if !path.IsAbs(hostPath.MountPath) || path.Clean(hostPath.MountPath) != hostPath.MountPath ||
+			hostPath.MountPath == "/" {
 			return fmt.Errorf("mount path %q must be a clean absolute path narrower than root", hostPath.MountPath)
 		}
 		if hostPath.Type != corev1.HostPathFile && hostPath.Type != corev1.HostPathDirectory {

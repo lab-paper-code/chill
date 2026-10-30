@@ -272,7 +272,7 @@ func discoveryVolumeMounts(config DiscoveryConfig) []corev1.VolumeMount {
 		Name: signatureVolumeName, MountPath: path.Dir(config.SignatureFile), ReadOnly: true,
 	}}
 	if config.ResourceObservation != "" {
-		mounts = append(mounts, corev1.VolumeMount{Name:"resources-ca", MountPath:path.Dir(config.ResourceCAFile), ReadOnly:true})
+		mounts = append(mounts, corev1.VolumeMount{Name: "resources-ca", MountPath: path.Dir(config.ResourceCAFile), ReadOnly: true})
 	}
 	for _, hostPath := range config.HostPaths {
 		mounts = append(mounts, corev1.VolumeMount{
@@ -291,7 +291,7 @@ func discoveryVolumes(config DiscoveryConfig) []corev1.Volume {
 		}},
 	}}
 	if config.ResourceObservation != "" {
-		volumes = append(volumes, corev1.Volume{Name:"resources-ca", VolumeSource:corev1.VolumeSource{Secret:&corev1.SecretVolumeSource{SecretName:config.ResourceCASecret, Items:[]corev1.KeyToPath{{Key:"tls.crt",Path:path.Base(config.ResourceCAFile)}}}}})
+		volumes = append(volumes, corev1.Volume{Name: "resources-ca", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: config.ResourceCASecret, Items: []corev1.KeyToPath{{Key: "tls.crt", Path: path.Base(config.ResourceCAFile)}}}}})
 	}
 	for _, hostPath := range config.HostPaths {
 		volumes = append(volumes, corev1.Volume{

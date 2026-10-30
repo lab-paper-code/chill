@@ -49,8 +49,8 @@ const (
 )
 
 type ObserverConfig struct {
-	Namespace string
-	OnCluster func(serving.ClusterObservation) error
+	Namespace        string
+	OnCluster        func(serving.ClusterObservation) error
 	SelectClusterPod func(*corev1.Pod) bool
 }
 type ObserverIssue struct {
@@ -105,7 +105,7 @@ type Observer struct {
 	// while a refresh holds mu.
 	issueMu           sync.Mutex
 	issues            map[string]ObserverIssue
-	recordedIssues map[string]ObserverIssue
+	recordedIssues    map[string]ObserverIssue
 	ctx               context.Context
 	cancel            context.CancelFunc
 	wg                sync.WaitGroup
@@ -114,7 +114,7 @@ type Observer struct {
 	movingNodes       map[string]bool
 	removingInstances map[string]bool
 	// refreshed is when the last successful refresh finished.
-	refreshed time.Time
+	refreshed   time.Time
 	clusterPods map[types.UID]serving.ClusterPod
 }
 

@@ -20,7 +20,10 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-const requestTimeoutCode = "RequestTimeout"
+const (
+	requestTimeoutCode  = "RequestTimeout"
+	requestCanceledCode = "RequestCanceled"
+)
 
 type HandlerConfig struct {
 	MaxRequestBytes int64
@@ -521,7 +524,7 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 		switch errorCode(err) {
 		case requestTimeoutCode, "SLODeadlineDrop":
 			outcome = "timeout"
-		case "RequestCanceled":
+		case requestCanceledCode:
 			outcome = "canceled"
 		case "PreprocessFailed":
 			outcome = "preprocess_failed"
@@ -614,7 +617,7 @@ func contextRequestError(err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return &serving.Error{Code: requestTimeoutCode, Message: "explicit request lifetime reached"}
 	}
-	return &serving.Error{Code: "RequestCanceled", Message: "caller canceled the request"}
+	return &serving.Error{Code: requestCanceledCode, Message: "caller canceled the request"}
 }
 
 func (h *Handler) observations(w http.ResponseWriter, r *http.Request) {
@@ -667,7 +670,7 @@ func errorCode(err error) string {
 	case errors.Is(err, context.DeadlineExceeded):
 		return requestTimeoutCode
 	case errors.Is(err, context.Canceled):
-		return "RequestCanceled"
+		return requestCanceledCode
 	case errors.Is(err, servingkube.ErrUnauthenticated):
 		return "Unauthenticated"
 	case errors.Is(err, servingkube.ErrForbidden):
@@ -701,7 +704,7 @@ func writeError(w http.ResponseWriter, err error) error {
 		status = http.StatusTooManyRequests
 	case requestTimeoutCode:
 		status = http.StatusGatewayTimeout
-	case "RequestCanceled", "SLODeadlineDrop":
+	case requestCanceledCode, "SLODeadlineDrop":
 		status = http.StatusRequestTimeout
 	case "PreprocessFailed":
 		status = http.StatusUnprocessableEntity
