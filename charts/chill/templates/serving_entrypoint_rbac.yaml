@@ -288,6 +288,9 @@ rules:
     resources: [batchenergyoptimizations]
     verbs: [get, list, create, delete]
   - apiGroups: [edge.dacs.io]
+    resources: [profilingruns]
+    verbs: [get, list]
+  - apiGroups: [edge.dacs.io]
     resources: [operationcostmeasurements, dispatchoccupancymeasurements]
     verbs: [get, list]
 {{- end }}
