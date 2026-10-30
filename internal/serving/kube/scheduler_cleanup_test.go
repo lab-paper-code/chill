@@ -103,14 +103,7 @@ func TestCleanupKeepsPhysicalOwnershipButAllowsSerializedReadyRoutesAC38(t *test
 		if !c.reserveRun(refresh.ID, run, op) || run.owner != parent.owner {
 			t.Fatal("Ready route refresh did not inherit cleanup owner")
 		}
-		if parent.returnObserved {
-			t.Fatal("adopted route retained an earlier return proof")
-		}
-		for _, instance := range parent.result.Before.Instances {
-			if !parent.mayTouch[instance.ID] {
-				t.Fatalf("adopted route omitted baseline executor %s, including excluded sources", instance.ID)
-			}
-		}
+		assertAdoptedRouteDirty(t, parent)
 		if c.reserveRun("concurrent-route", &actionRun{owner: "another"}, op) {
 			t.Fatal("cleanup policy ACKs overlapped")
 		}
@@ -159,5 +152,17 @@ func assertCleanupCompletion(t *testing.T, c *SchedulerController, goal serving.
 	snapshot, lost = c.reconcileSnapshot(snapshot, now.Add(50*time.Second), time.Minute)
 	if len(lost) != 0 || parent.action.Status != nativeOperationComplete || len(snapshot.Reservations) != 0 {
 		t.Fatalf("cleanup did not release only after all duties: %+v %+v", lost, snapshot.Reservations)
+	}
+}
+
+func assertAdoptedRouteDirty(t *testing.T, parent *actionRun) {
+	t.Helper()
+	if parent.returnObserved {
+		t.Fatal("adopted route retained an earlier return proof")
+	}
+	for _, instance := range parent.result.Before.Instances {
+		if !parent.mayTouch[instance.ID] {
+			t.Fatalf("adopted route omitted baseline executor %s, including excluded sources", instance.ID)
+		}
 	}
 }

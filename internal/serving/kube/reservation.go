@@ -146,19 +146,7 @@ func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Op
 			run.proofParent = parent
 		}
 	}
-	if operation.Kind != transitionRunKind {
-		if parent := c.returnProofParent(run); parent != nil {
-			parent.returnObserved = false
-			if parent.mayTouch == nil {
-				parent.mayTouch = map[string]bool{}
-			}
-			for _, state := range parent.result.Before.Instances {
-				if operationMayTouch(operation, scope, state) {
-					parent.mayTouch[state.ID] = true
-				}
-			}
-		}
-	}
+	c.registerMayTouchLocked(run, operation, scope)
 	if cleanupOwner != nil {
 		if cleanupOwner.cleanupRoutes == nil {
 			cleanupOwner.cleanupRoutes = map[string]*actionRun{}
@@ -170,6 +158,25 @@ func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Op
 		}
 	}
 	return true
+}
+
+func (c *SchedulerController) registerMayTouchLocked(run *actionRun, operation Operation, scope resourceScope) {
+	if operation.Kind == transitionRunKind {
+		return
+	}
+	parent := c.returnProofParent(run)
+	if parent == nil {
+		return
+	}
+	parent.returnObserved = false
+	if parent.mayTouch == nil {
+		parent.mayTouch = map[string]bool{}
+	}
+	for _, state := range parent.result.Before.Instances {
+		if operationMayTouch(operation, scope, state) {
+			parent.mayTouch[state.ID] = true
+		}
+	}
 }
 
 // Effect scope follows executeOperation: local actions write only their Node;
@@ -320,19 +327,9 @@ func (c *SchedulerController) knownOwnerEffectConfirmed(run *actionRun, pod *cor
 			after = sibling.result.EndedAt
 		}
 	}
-	preexisting := false
-	if status := firstfloorStatus(pod); status != nil {
-		id := physicalID(pod.UID, status.ContainerID)
-		if current := schedulerPhysicalState(id, physical); current != nil {
-			preexisting = slices.ContainsFunc(parent.result.Before.Instances, func(state serving.InstanceState) bool {
-				return state.ID == id && state.PodUID == string(pod.UID) && state.Node == current.Node
-			})
-			if preexisting && !parent.mayTouch[id] && sameRunningContainer(pod, pod) &&
-				current.Node.Name == pod.Spec.NodeName && current.Ready && !current.Stopped &&
-				current.Native != nil && current.Native.Ready && after.Before(current.ObservedAt) {
-				return true
-			}
-		}
+	preexisting, untouched := untouchedExecutorProof(parent, pod, physical, after)
+	if untouched {
+		return true
 	}
 	if knownEffectConfirmed(run, pod, physical, after, preexisting) {
 		return true
@@ -352,6 +349,27 @@ func (c *SchedulerController) knownOwnerEffectConfirmed(run *actionRun, pod *cor
 		}
 	}
 	return false
+}
+
+// Return policy-receipt exemption separately from admission identity: a dirty
+// executor may still use an authorized receipt's unchanged previous policy.
+func untouchedExecutorProof(parent *actionRun, pod *core.Pod, physical []serving.InstanceState, after time.Time) (preexisting, untouched bool) {
+	status := firstfloorStatus(pod)
+	if status == nil {
+		return false, false
+	}
+	id := physicalID(pod.UID, status.ContainerID)
+	current := schedulerPhysicalState(id, physical)
+	if current == nil {
+		return false, false
+	}
+	preexisting = slices.ContainsFunc(parent.result.Before.Instances, func(state serving.InstanceState) bool {
+		return state.ID == id && state.PodUID == string(pod.UID) && state.Node == current.Node
+	})
+	untouched = preexisting && !parent.mayTouch[id] && sameRunningContainer(pod, pod) &&
+		current.Node.Name == pod.Spec.NodeName && current.Ready && !current.Stopped &&
+		current.Native != nil && current.Native.Ready && after.Before(current.ObservedAt)
+	return preexisting, untouched
 }
 
 func (c *SchedulerController) frozenActionParent(run *actionRun) *actionRun {
