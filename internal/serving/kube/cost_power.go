@@ -1,7 +1,6 @@
 package kube
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -44,15 +43,7 @@ func boundedCostRead(ctx context.Context, reader evidencestore.Reader, ref evide
 
 // decodeCostJSON reads one stored evidence object; consumers validate their required fields.
 func decodeCostJSON(raw []byte, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return errors.New("trailing cost JSON")
-	}
-	return nil
+	return json.Unmarshal(raw, target)
 }
 
 // loadPowerCost verifies one Complete measurement; the caller binds its meter.

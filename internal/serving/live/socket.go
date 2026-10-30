@@ -16,16 +16,6 @@ const (
 
 var ErrProtocol = errors.New("invalid live protocol message")
 
-// Encode exposes the same envelope and frame bound to trusted internal server
-// channels without adding any browser-side publishing capability.
-func Encode(kind string, seq uint64, at time.Time, payload any) ([]byte, error) {
-	if seq > MaxSeq {
-		return nil, ErrSeqExhausted
-	}
-	f, err := encode(kind, seq, timestamp(at), payload)
-	return f.data, err
-}
-
 // Write bounds a single socket write, not the lifetime of a live connection.
 func Write(ctx context.Context, conn *websocket.Conn, data []byte) error {
 	if len(data) > MaxFrameBytes {

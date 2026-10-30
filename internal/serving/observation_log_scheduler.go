@@ -472,11 +472,6 @@ func requestArrival(row *RequestRow, definitions map[string]*Definition) Schedul
 	}
 }
 
-func (l *ObservationLog) SchedulerArrivals(ctx context.Context, from, to time.Time) ([]SchedulerArrival, error) {
-	window, err := l.LoadWindow(ctx, from, to)
-	return window.Arrivals, err
-}
-
 // SchedulerObservationPage decodes full payloads only for page entries and
 // stops at the next matching event. Cursor offsets apply to the selected
 // records in append order.

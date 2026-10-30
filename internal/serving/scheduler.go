@@ -552,14 +552,6 @@ func SmoothWeightedRoute(weights []int32, current []int64, available []bool) int
 }
 
 func schedulerFinite(x float64) bool { return !math.IsNaN(x) && !math.IsInf(x, 0) }
-func schedulerHas(xs []string, x string) bool {
-	for _, v := range xs {
-		if v == x {
-			return true
-		}
-	}
-	return false
-}
 func schedulerState(i SchedulerInstance) string {
 	cpus := append([]int(nil), i.Allocation.CPUs...)
 	sort.Ints(cpus)

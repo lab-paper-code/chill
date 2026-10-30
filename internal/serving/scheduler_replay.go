@@ -183,7 +183,7 @@ func SchedulerFixedBatchAutonomy(snapshot SchedulerSnapshot, autonomous []string
 }
 func appendUnique(xs []string, more ...string) []string {
 	for _, s := range more {
-		if !schedulerHas(xs, s) {
+		if !slices.Contains(xs, s) {
 			xs = append(xs, s)
 		}
 	}
@@ -293,7 +293,7 @@ func schedulerValidateResources(settings SchedulerSettings, nodes []SchedulerNod
 			hosted = true
 			// Retained occupancy is not an executable candidate. Its missing
 			// native evidence fixes this Node, but must not reject other Nodes.
-			if !i.Ready && schedulerHas(n.Reasons, NodeInstanceUnavailable) {
+			if !i.Ready && slices.Contains(n.Reasons, NodeInstanceUnavailable) {
 				allocations = append(allocations, i.Allocation)
 				continue
 			}
@@ -437,7 +437,7 @@ func ValidateNodeBudget(n SchedulerNode, allocations []SchedulerAllocation, reas
 			}
 		}
 		if a.GPUUUID != "" {
-			if !schedulerHas(n.GPUUUIDs, a.GPUUUID) || gpu[a.GPUUUID] {
+			if !slices.Contains(n.GPUUUIDs, a.GPUUUID) || gpu[a.GPUUUID] {
 				reasons = appendUnique(reasons, "ExclusiveGPUInfeasible:"+n.Node.UID)
 			}
 			gpu[a.GPUUUID] = true

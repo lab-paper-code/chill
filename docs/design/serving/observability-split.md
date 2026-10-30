@@ -66,16 +66,16 @@ GOMEMLIMIT3072MiB/limit4Gi 유지(rev96 확인). 관측 heap최대880MiB와 soft
 | 조회 | 범위·모집단 |
 |---|---|
 | Query(`/observations/workloads/{uid}`) | requests는 from 분~최신(늦은 final 포함), management는[from,to], 열린 행. 모집단은[from,to)에 접수된 요청 |
-| LoadWindow/SchedulerArrivals | requests from 분~최신+열린 행; receivedAt+오프셋이 구간 안인 단계 수, 처리 중도 도착 포함 |
+| LoadWindow | requests from 분~최신+열린 행; receivedAt+오프셋이 구간 안인 단계 수, 처리 중도 도착 포함 |
 | OperatingPower | scheduler[from−1분,to+1분], 기준 snapshot은 from부터 거꾸로 첫 snapshot 분까지; maximumBoundaryDistance≤1분, meter catalog coverage 사용 |
 | SchedulerObservationPage | scheduler[from,to], 기존 limit에서 종료 |
-파일 이름을 색인으로 envelope 먼저 decode하고 필요한 본문만 읽으며 참조는 해당 시간 catalog로 푼다. archive 이후 실제 없는 범위만 gapUntil/coverage gaps이고 power complete=false를 유지한다. SchedulerHistoryWindow는 현재 없고 도착 경로는 SchedulerArrivals→LoadWindow다. Tick60s는1~2분 파일·5req/s<1MB(이전3.3~6.7MB); 메모리는 선택 요청 수 비례, 기본2h/5req/s는36k행≈47MB다.
+파일 이름을 색인으로 envelope 먼저 decode하고 필요한 본문만 읽으며 참조는 해당 시간 catalog로 푼다. archive 이후 실제 없는 범위만 gapUntil/coverage gaps이고 power complete=false를 유지한다. SchedulerHistoryWindow는 현재 없고 도착 경로는 LoadWindow의 Arrivals다. Tick60s는1~2분 파일·5req/s<1MB(이전3.3~6.7MB); 메모리는 선택 요청 수 비례, 기본2h/5req/s는36k행≈47MB다.
 ### 6.2 투명한 로컬·archive 읽기 (`SCH-42`)
 ObservationArchive=기존 evidencestore.Reader+Lister와 CapacityRecords의 readArchivedStream gzip scanner를 재사용한다. 같은 v1alpha5 prefix/네 stream, cmd/chill-server의 objects를 쓰며 새 저장 형식·TSDB·옛 reader는 없다.
 capture가 mu 아래 로컬 시간/fd/크기를 확보→잠금 밖 List로 필요한 UTC 시간 선택→오름차순 scan한다. **시간 디렉터리 단위 로컬 우선**, 없는 시간만 archive+그 catalog를 읽고 로컬 stream 부재를 archive로 보충하지 않는다. fd 확보 뒤 삭제도 중복/누락을 만들지 않는다. requestID final>open>assigned로 archive assigned/늦은 로컬 final을 병합하고 scheduler/management/power는 같은 시간을 두 소스로 더하지 않는다. page는 합친 시간순 append에 offset/limit, errObservationStop은 archive에서도 정상 종료다.
 기존 본문/필터/nextCursor에 `coverage:{from,to,sources:[{from,to,stream,source}],gaps:[{from,to,stream,reason}]}` 추가: RFC3339Nano, source=local|archive(archive는store/key), from/to는 확보 외곽·전무하면null, 내부 gap은gaps, gapUntil은 실제 선두 공백만이다.
 빈 stream은 archive 객체를 안 쓰므로 필요한 시간/stream 부재는 StreamUnavailable이며 0건 단정/새 manifest는 없다. catalog 누락·gzip/JSON 오류·List/Open 실패는 조회 오류다. power 경계/기준 snapshot 부재는 기존 complete=false/이유, 읽기 전용 오류는 쓰기 readyz를 내리지 않는다.
-Query/LoadWindow/SchedulerArrivals/SchedulerObservationPage/OperatingPower/ScanOccupancyRows는 첫 인자 context.Context를 받고 HTTP RequestTimeout/취소 또는 controller capture ctx를 List/Open/scan까지 전달한다. 네트워크는 mu 밖, 기존 limit 유지, 최근 창이 로컬에 모두 있으면 archive 호출은 없다. workload는 정의 병합 후 aggregate/page, load는 단계별 집계, scheduler full/compact는 catalog 복원+coverage, power는 더 오래된 archive 기준 snapshot/catalog까지 역탐색하고 기존 ReduceOperatingPower를 쓴다.
+Query/LoadWindow/SchedulerObservationPage/OperatingPower/ScanOccupancyRows는 첫 인자 context.Context를 받고 HTTP RequestTimeout/취소 또는 controller capture ctx를 List/Open/scan까지 전달한다. 네트워크는 mu 밖, 기존 limit 유지, 최근 창이 로컬에 모두 있으면 archive 호출은 없다. workload는 정의 병합 후 aggregate/page, load는 단계별 집계, scheduler full/compact는 catalog 복원+coverage, power는 더 오래된 archive 기준 snapshot/catalog까지 역탐색하고 기존 ReduceOperatingPower를 쓴다.
 검사 경계: 로컬/archive 동시 존재·삭제 전후 동일 수/단계/page/J와 출처, late-final 1회 집계, 페이지·삭제 UID·power 앞뒤 표본/오래된 snapshot·내부 누락·store 오류/취소/gzip 종료·조회 중 삭제다.
 ### 6.3 측정 CR 두 종류의 읽기 projection (API B1, `SCH-44`, `DB-FR-45`)
 GET `/api/v1/namespaces/{namespace}/operation-cost-measurements[/{name}]`, `.../dispatch-occupancy-measurements[/{name}]`: 목록 `{items:[projection]}` 이름순/빈[], 상세 projection/없으면404. whitelist=`{kind,metadata:{namespace,name,uid,resourceVersion,creationTimestamp},node,conditions,status,references}`. cost status=`{phase,reason,steps:[{name,key,verdict}]}`, occupancy=`{phase,reason,powerMode,perRequestNanos,throughput,result}`; 실패/미완료/결과 없음은 그대로,0 대체 없음.

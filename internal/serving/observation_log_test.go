@@ -752,7 +752,7 @@ func TestLoadWindowCountsAssignedAndFinalRequestOnce(t *testing.T) {
 		load.Workloads[0].Accepted != 1 || load.Workloads[0].Assigned != 1 || load.Workloads[0].Completed != 1 || load.Workloads[0].Instances["i1"] != 1 {
 		t.Fatalf("load counted a request twice: %+v %v", load, err)
 	}
-	arrivals, err := observationLog.SchedulerArrivals(context.Background(), received, received.Add(time.Second))
+	arrivals := load.Arrivals
 	if err != nil || len(arrivals) != 1 || !arrivals[0].Accepted || !arrivals[0].Compute || arrivals[0].Outcome != outcomeCompleted {
 		t.Fatalf("arrivals: %+v %v", arrivals, err)
 	}

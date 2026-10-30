@@ -248,7 +248,7 @@ func schedulerBootstrap(ctx context.Context, settings SchedulerSettings, snapsho
 				continue
 			}
 			for w, workload := range p.ws {
-				if !schedulerHas(option.CompatibleUIDs, workload.d.UID) || !schedulerProfileMatches(workload.d, i.Profile) || !p.controlAllows(w, i, nil) {
+				if !slices.Contains(option.CompatibleUIDs, workload.d.UID) || !schedulerProfileMatches(workload.d, i.Profile) || !p.controlAllows(w, i, nil) {
 					continue
 				}
 				key := NewCapacityInput(settings, snapshot.DispatchOccupancy, option, workload.d).Key()
@@ -662,7 +662,7 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 			continue
 		}
 		for w := range p.ws {
-			if !schedulerHas(o.CompatibleUIDs, p.ws[w].d.UID) || !schedulerProfileMatches(p.ws[w].d, i.Profile) || !p.controlAllows(w, i, current) {
+			if !slices.Contains(o.CompatibleUIDs, p.ws[w].d.UID) || !schedulerProfileMatches(p.ws[w].d, i.Profile) || !p.controlAllows(w, i, current) {
 				continue
 			}
 			c := capacityChoice{option: o, w: w}
@@ -866,7 +866,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		return old.WorkloadUID == "" && old.OwnerWorkloadUID == "" && (!used[old.ID] || mode != node.PowerMode)
 	}) {
 		plan.record.Tempo = schedulerTempoSlow
-		if !schedulerEmptySlowAllowed(p.snapshot) {
+		if !p.snapshot.EmptyNodeScaleDownAllowed {
 			plan.record.Reason = schedulerScaleDownStabilizing
 			return plan
 		}
@@ -897,7 +897,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 				plan.record.Reason = schedulerDemandIncreasing
 				return plan
 			}
-			if !schedulerSlowAllowed(p.snapshot, ws.d.UID) {
+			if !p.snapshot.ScaleDown[ws.d.UID].Allowed {
 				plan.record.Reason = schedulerScaleDownStabilizing
 				return plan
 			}
@@ -1963,7 +1963,7 @@ func (p *capacityPlanner) idleRemovable(i SchedulerInstance, plan *capacityPlan,
 	if uid == "" {
 		uid = i.OwnerWorkloadUID
 	}
-	if uid == "" && !schedulerEmptySlowAllowed(p.snapshot) || uid != "" && !schedulerSlowAllowed(p.snapshot, uid) {
+	if uid == "" && !p.snapshot.EmptyNodeScaleDownAllowed || uid != "" && !p.snapshot.ScaleDown[uid].Allowed {
 		return false
 	}
 	// An instance owned by nobody and routed by no Workload serves nobody.

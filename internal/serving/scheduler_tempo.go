@@ -130,13 +130,6 @@ func (t *SchedulerTempo) Observe(settings SchedulerSettings, s *SchedulerSnapsho
 	t.settings.MinimumDemand = maps.Clone(settings.MinimumDemand)
 }
 
-func schedulerSlowAllowed(s SchedulerSnapshot, uid string) bool {
-	return s.ScaleDown[uid].Allowed
-}
-func schedulerEmptySlowAllowed(s SchedulerSnapshot) bool {
-	return s.EmptyNodeScaleDownAllowed
-}
-
 // schedulerDownCapacity preserves evidence on returns before plan search.
 func schedulerDownCapacity(settings SchedulerSettings, snapshot SchedulerSnapshot) *SchedulerCapacity {
 	if len(snapshot.ScaleDown) == 0 {

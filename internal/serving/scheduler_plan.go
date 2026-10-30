@@ -21,7 +21,7 @@ func schedulerWorkloadStates(settings SchedulerSettings, snapshot SchedulerSnaps
 		switch {
 		case !slices.Contains(settings.AutonomousWorkloads, d.UID):
 			state.State, state.Reason = WorkloadDisabled, "AutonomousControlOff"
-		case !slices.ContainsFunc(snapshot.Options, func(o SchedulerOption) bool { return schedulerHas(o.CompatibleUIDs, d.UID) }):
+		case !slices.ContainsFunc(snapshot.Options, func(o SchedulerOption) bool { return slices.Contains(o.CompatibleUIDs, d.UID) }):
 			state.State, state.Reason = WorkloadMeasurementEvidenceMissing, "NoCompletedMeasurementMatches"
 		}
 		states = append(states, state)
@@ -397,7 +397,7 @@ func (p *schedulerPlanState) addRunningPrerequisites(action *Action) {
 			continue
 		}
 		sameNode := action.Node.UID != "" && old.Node == action.Node
-		if sameNode && !schedulerHas(action.DependsOn, old.ID) {
+		if sameNode && !slices.Contains(action.DependsOn, old.ID) {
 			action.DependsOn = append(action.DependsOn, old.ID)
 		}
 	}

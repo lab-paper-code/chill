@@ -181,7 +181,7 @@ func TestObservationArchiveLateFinalAndLocalFastPath(t *testing.T) {
 	at := observationTestHour.Add(time.Second)
 	clock.set(at)
 	assignObservationRequest(t, log, "late", at)
-	if _, err := log.SchedulerArrivals(ctx, at, at.Add(time.Second)); err != nil || archive.lists != 0 || archive.opens != 0 {
+	if _, err := log.LoadWindow(ctx, at, at.Add(time.Second)); err != nil || archive.lists != 0 || archive.opens != 0 {
 		t.Fatalf("recent local arrivals touched archive: %v lists=%d opens=%d", err, archive.lists, archive.opens)
 	}
 	clock.set(observationTestHour.Add(time.Hour))
@@ -388,11 +388,10 @@ func TestObservationQueriesHonorPreCancelledContext(t *testing.T) {
 	from, to := observationTestHour, observationTestHour.Add(time.Minute)
 	_, queryErr := log.Query(ctx, archiveTestUID, from, to, nil, nil, 0, "")
 	_, loadErr := log.LoadWindow(ctx, from, to)
-	_, arrivalsErr := log.SchedulerArrivals(ctx, from, to)
 	_, _, _, _, pageErr := log.SchedulerObservationPage(ctx, from, to, 10, 0)
 	_, powerErr := log.OperatingPower(ctx, from, to, nil, 10)
 	_, occupancyErr := log.ScanOccupancyRows(ctx, archiveTestUID, "node", from, to, func(RequestRow) {})
-	for _, err := range []error{queryErr, loadErr, arrivalsErr, pageErr, powerErr, occupancyErr} {
+	for _, err := range []error{queryErr, loadErr, pageErr, powerErr, occupancyErr} {
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("query ignored cancellation: %v", err)
 		}

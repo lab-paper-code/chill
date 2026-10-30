@@ -5,6 +5,7 @@ import (
 	"maps"
 	"math"
 	"slices"
+	"strings"
 )
 
 // StaticRoutingTarget selects only current physical, measured, ready instances.
@@ -86,13 +87,7 @@ func StaticRoutingTarget(snapshot SchedulerSnapshot, routing map[string]map[stri
 		target.Instances = append(target.Instances, instance)
 	}
 	slices.SortFunc(target.Instances, func(a, b SchedulerInstance) int {
-		if a.ID < b.ID {
-			return -1
-		}
-		if a.ID > b.ID {
-			return 1
-		}
-		return 0
+		return strings.Compare(a.ID, b.ID)
 	})
 	return target, nil
 }

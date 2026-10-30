@@ -256,13 +256,7 @@ func (c *SchedulerController) actionsLocked(now time.Time) []serving.Action {
 		result = append(result, a)
 	}
 	slices.SortFunc(result, func(a, b serving.Action) int {
-		if a.ID < b.ID {
-			return -1
-		}
-		if a.ID > b.ID {
-			return 1
-		}
-		return 0
+		return strings.Compare(a.ID, b.ID)
 	})
 	return result
 }
@@ -583,11 +577,11 @@ func (c *SchedulerController) failTargetLocked(snapshot serving.SchedulerSnapsho
 }
 
 func (c *SchedulerController) capture(ctx context.Context, now time.Time, config SchedulerControllerConfig) (serving.SchedulerSnapshot, error) {
-	arrivals, err := c.observationLog.SchedulerArrivals(ctx, now.Add(-config.Settings.ObservationWindow), now)
+	window, err := c.observationLog.LoadWindow(ctx, now.Add(-config.Settings.ObservationWindow), now)
 	if err != nil {
 		return serving.SchedulerSnapshot{}, err
 	}
-	s := serving.SchedulerSnapshot{ObservationEnd: now, ObservedSince: c.observationLog.Started(), Arrivals: arrivals, Costs: config.Costs, Baselines: config.Baselines,
+	s := serving.SchedulerSnapshot{ObservationEnd: now, ObservedSince: c.observationLog.Started(), Arrivals: window.Arrivals, Costs: config.Costs, Baselines: config.Baselines,
 		DispatchOccupancy: config.DispatchOccupancy}
 	// Historical reads must finish before refreshing authoritative live sources.
 	if err = c.observer.Refresh(ctx); err != nil {

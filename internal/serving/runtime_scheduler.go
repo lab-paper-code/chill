@@ -95,14 +95,6 @@ func (r *Runtime) ApplySchedulerWorkloadsTarget(candidate SchedulerCandidate, ui
 	return r.applySchedulerTargetLocked(candidate, false, uids)
 }
 
-// ValidateSchedulerTarget checks the same current UID, ownership and readiness
-// fence without changing policy or routing.
-func (r *Runtime) ValidateSchedulerTarget(candidate SchedulerCandidate) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.applySchedulerTargetLocked(candidate, true, nil)
-}
-
 // ValidateSchedulerWorkloadsTarget validates only mutations in uids; declarations
 // supplied for other UIDs must equal their currently applied distributions.
 func (r *Runtime) ValidateSchedulerWorkloadsTarget(candidate SchedulerCandidate, uids []string) error {
