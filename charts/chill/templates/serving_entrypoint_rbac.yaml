@@ -302,6 +302,17 @@ metadata:
 rules:
   - nonResourceURLs: ["/chill/api/v1/observations/raw", "/chill/api/v1/observations/raw/*"]
     verbs: [get]
+  - nonResourceURLs:
+      - "/chill/api/v1/scheduler"
+      - "/chill/api/v1/scheduler/settings"
+      - "/chill/api/v1/scheduler/state"
+      - "/chill/api/v1/scheduler/profiles"
+      - "/chill/api/v1/scheduler/capacity"
+      - "/chill/api/v1/observations/*"
+      - "/chill/api/v1/pools"
+      - "/chill/api/v1/workloads"
+      - "/chill/api/v1/workloads/*"
+    verbs: [get]
 {{- if .Values.servingEntrypoint.evidenceCollector.enabled }}
 ---
 # SCH-67: a dedicated experiment identity, never the dashboard/BFF account.

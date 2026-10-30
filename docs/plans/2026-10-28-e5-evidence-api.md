@@ -125,6 +125,11 @@ power/httpapi/kube 패키지 테스트와 대시보드 Node 24 typecheck 통과.
 증거는 외부 `campaign/v2/harness-cutover-20261030/`에 두고 기존 게시물은
 변경하지 않는다. 이 소스의 `requestTimeout`·`podName` 추가는 다음 서버
 재빌드에 포함하며, 이 회귀 중 라이브 rev110과 빈 클러스터는 변경하지 않았다.
+collector SA의 rev110 원시 전용 Role은 settings GET을 403으로 거부한다.
+가공 GET 권한만 더한 chart 변경은 다음 승인 배포(rev111) 대상이며 라이브에
+적용하지 않았다. binding은 증거 GET용 `collectorTokenFile`과 승인된 쓰기용
+기존 operator `tokenFile` 경로를 각각 기록한다. collector에 쓰기 권한을
+추가하지 않는다.
 
 ## 5. 완료 기준
 

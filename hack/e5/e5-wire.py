@@ -47,7 +47,7 @@ def template(op, workload, image, probe=False):
 class Prepare:
     def __init__(self,a):
         self.a=a; self.n=e5.load(a.numbers); self.release=e5.load(a.release); self.op=e5.load(e5.OPERATIONAL_RECIPE); self.out=a.out
-        self.op['tokenFile']=str(e5.OPS/'.token-collector')
+        self.op['collectorTokenFile']=str(e5.OPS/'.token-collector')
         if e5.CAMPAIGN.resolve() not in self.out.resolve().parents:raise ValueError('Preparation output must remain below the external campaign directory')
         if self.release.get('executor')!='CampaignOps' or self.release.get('command')!='e5-execute' or not self.release.get('mainInstructionUTC'): raise ValueError('One actual Main/CPO frozen e5-execute release required')
         self.sources=e5.approval_sources(self.release)
@@ -110,7 +110,8 @@ class Prepare:
         self.io.journal=self.out/'dataset-commands.jsonl';self.io.journal_lock=e5.threading.Lock()
         self.io.a=argparse.Namespace(phase='e5-dataset-preparation',command=self.a.command);self.io.phase_out=self.out
     def api(self,method,path,body=None,headers=None,accepted=(200,)):
-        h={'Authorization':'Bearer '+Path(self.op['tokenFile']).read_text().strip(),**(headers or {})}
+        token = self.op['collectorTokenFile'] if method == 'GET' else self.op['tokenFile']
+        h={'Authorization':'Bearer '+Path(token).read_text().strip(),**(headers or {})}
         if body is not None:h['Content-Type']='application/json'
         request=urllib.request.Request(self.op['endpoint']+path,data=json.dumps(body).encode() if body is not None else None,headers=h,method=method)
         try:
@@ -231,6 +232,7 @@ class Prepare:
         e5.save(self.out/'kappa-execution.json',{'at':e5.now(),'sourceSHA':self.sha,'argv':argv,'exitCode':r.returncode,'meaning':'Actual registered canonical UID/generation/SLO inputs; no hypothetical live UID'})
         if r.returncode:raise RuntimeError('Final actual-UID kappa calculation failed')
         c={**{k:self.op[k] for k in ('endpoint','caFile','tokenFile','kubeContext')},**{k:self.n[k] for k in ('g0Evidence','mSeconds','N','burstLowSeconds','timeboxes','smokeSeconds')}}
+        c['collectorTokenFile']=self.op['collectorTokenFile']
         c['failureSelectSnapshotTTLSeconds']=self.n['failureSelectSnapshotTTLSeconds']
         c['poolShares'] = e5.pool_shares(self.n)
         c['approval']={**self.n['approval'],'sources':self.sources,'controlImageDigest':actual_control,'runtimeDigests':e5.load(PLAN)['frozenRuntimeSha256']}

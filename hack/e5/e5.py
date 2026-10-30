@@ -312,12 +312,35 @@ def profiling_evaluation_separation(workload, payload):
 
 def self_check():
     settings = {'maxCPUs': 3, 'staticRouting': {}, 'staticRoutingValidatedAt': 'read-only',
-                'powerObservation': {}, 'meters': [{'id': 'accepted-meter'}]}
+                'powerObservation': {}, 'meters': [{'id': 'accepted-meter'}], 'requestTimeout': 30_000_000_000}
     writer = object.__new__(CPO)
     writer.api = lambda method, path, body: (method, path, body)
     method, path, body = writer.put(settings)
     assert (method, path, body) == ('PUT', '/api/v1/scheduler/settings', {'maxCPUs': 3})
     assert 'meters' in settings and 'staticRouting' in settings
+    import io
+    import tempfile
+    from types import SimpleNamespace
+    with tempfile.TemporaryDirectory(prefix='e5-credentials-') as temporary:
+        operator=Path(temporary)/'operator';collector=Path(temporary)/'collector'
+        operator.write_text('operator-fixture');collector.write_text('collector-fixture')
+        connection=module('e5_credential_check',D2/'conduct_before.py')
+        connection.BASE='https://fixture.invalid';connection.TOKEN=operator
+        client=object.__new__(connection.Conductor)
+        client.collector_token_file=collector;client.record=lambda record:None
+        wire=module('e5_wire_credential_check',HERE/'e5-wire.py')
+        prepare=object.__new__(wire.Prepare)
+        prepare.op={'endpoint':connection.BASE,'tokenFile':str(operator),'collectorTokenFile':str(collector)}
+        prepare.tb={'apiSeconds':1}
+        for method in ('GET','PUT','POST'):
+            expected='Bearer '+('collector-fixture' if method=='GET' else 'operator-fixture')
+            def opened(request,timeout):
+                assert request.get_header('Authorization')==expected
+                response=io.BytesIO(b'{}');response.status=200
+                return response
+            client.http=prepare.http=SimpleNamespace(open=opened)
+            assert client.api(method,'/api/v1/scheduler/settings')=={}
+            assert prepare.api(method,'/api/v1/scheduler/settings')==({},200)
     spec=importlib.util.spec_from_file_location('e5_check_analysis',HERE/'d2/analyze_before.py')
     analysis=importlib.util.module_from_spec(spec);spec.loader.exec_module(analysis)
     rows=[{'requestIndex':0,'scheduledOffsetNs':0,'scheduledMonotonicNS':100,'sentMonotonicNS':60_000_100,'finishedMonotonicNS':61_000_100,'latencyMs':1,'serviceLatencyMs':1}]
@@ -1122,6 +1145,7 @@ def bind(path):
     freeze_producer_config(c)
     module('e5_quality', D2/'analyze_before.py').generator_quality_config(c)
     need(c, ['approval', 'inputs', 'g0Evidence', 'mSeconds', 'N', 'burstLowSeconds', 'timeboxes', 'smokeSeconds', 'workloads', 'collection', 'factors', 'endpoint', 'caFile', 'tokenFile', 'kubeContext'], 'phase6')
+    c['collectorTokenFile']=str(OPS/'.token-collector')
     need(c['approval'], REQUIRED['approval'], 'approval'); need(c['inputs'], REQUIRED['inputs'], 'inputs'); need(c['collection'], REQUIRED['collection'], 'collection'); need(c['timeboxes'], REQUIRED['timeboxes'], 'timeboxes')
     c['collection']['energyCoverage']=module('e5energy_policy',HERE/'e5-archive.py').energy_policy(c['collection'])
     component_sources = approval_sources(c['approval'])
@@ -1298,7 +1322,8 @@ class CPO:
         self.io.a=argparse.Namespace(phase='e5-'+a.mode+'-'+a.stage,command=a.command)
         self.io.phase_out=self.out
         # Existing authenticated client and kubectl contracts, bound to actual phase6 configuration.
-        d.BASE = self.c['endpoint']; d.CA = Path(self.c['caFile']); d.TOKEN = OPS/'.token-collector'; d.K = ENVIRONMENT['d2']['kubectl']+['-n','chill-system']
+        d.BASE = self.c['endpoint']; d.CA = Path(self.c['caFile']); d.TOKEN = Path(self.c['tokenFile']); d.K = ENVIRONMENT['d2']['kubectl']+['-n','chill-system']
+        self.io.collector_token_file=OPS/'.token-collector'
         self.io.ctx = ssl.create_default_context(cafile=self.c['caFile']); self.io.http = urllib.request.build_opener(d.NoRedirect(), urllib.request.HTTPSHandler(context=self.io.ctx))
         self.uids = [w['uid'] for w in self.c['workloads']]; self.tb = self.c['timeboxes']; self.ws = {w['name']: w for w in self.c['workloads']}
         self.bound_nodes=[row['node'] for row in self.state()['snapshot']['nodes'] if row['node']['name'] in NODES]

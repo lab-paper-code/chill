@@ -244,7 +244,8 @@ class Conductor:
             with self.journal.open('a') as f: f.write(json.dumps(dict(at=now(),phase=self.a.phase,sourceSha=self.source,**value))+'\n')
 
     def api(self, method, path, body=None, timeout=129):
-        headers={'Authorization':'Bearer '+TOKEN.read_text().strip()}
+        token = getattr(self, 'collector_token_file', TOKEN) if method == 'GET' else TOKEN
+        headers={'Authorization':'Bearer '+Path(token).read_text().strip()}
         if body is not None: headers['Content-Type']='application/json'
         request=urllib.request.Request(BASE+path,data=json.dumps(body).encode() if body is not None else None,headers=headers,method=method)
         begun=now()

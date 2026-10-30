@@ -321,6 +321,10 @@ support and the next closed-minute boundary, the raw exporter supplies
 `cluster`; the collector builds `raw-source-index.json`. Settings `meters` and
 state Node references feed the unchanged power integration, without ConfigMap,
 S3, host filesystem or Kubernetes evidence reads.
+Bindings record `collectorTokenFile` for evidence GETs and the existing
+`tokenFile` for approved operator PUT/POST actions; collector RBAC grants no
+writes. The additional collector processed-GET permissions, `requestTimeout`
+and `podName` require the next approved deployment, not a live RBAC patch.
 
 The external producer-only `client` cgroup sampler retains stage-entry identity,
 start readiness and post-end counter release. STOP monitoring and operator E5-7

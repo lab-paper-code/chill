@@ -310,7 +310,7 @@ def assemble(e5, args, spec):
         raise RuntimeError('Live preparation requires a fresh output directory; retain partial captures')
     recipe_path = Path(spec.get('operationalRecipe', e5.OPERATIONAL_RECIPE)).resolve()
     op = e5.load(recipe_path)
-    op['tokenFile'] = str(e5.OPS / '.token-collector')
+    op['collectorTokenFile'] = str(e5.OPS / '.token-collector')
     e5.need(spec, ['controlSourceSHA', 'sources', 'timeboxes', 'measurementSLO'], 'demo config')
     component_sources = e5.approval_sources(spec)
     e5.need(spec['timeboxes'], e5.REQUIRED['timeboxes'], 'timeboxes')
@@ -331,6 +331,7 @@ def assemble(e5, args, spec):
     io = object.__new__(d.Conductor)
     io.a = argparse.Namespace(command='demo-prepare', phase='demo-prepare')
     io.out = io.phase_out = args.out
+    io.collector_token_file = Path(op['collectorTokenFile'])
     io.source, io.journal, io.journal_lock = source, args.out / 'prepare-commands.jsonl', e5.threading.Lock()
     io.ctx = e5.ssl.create_default_context(cafile=op['caFile'])
     io.http = e5.urllib.request.build_opener(d.NoRedirect(), e5.urllib.request.HTTPSHandler(context=io.ctx))
@@ -373,6 +374,7 @@ def assemble(e5, args, spec):
     e5.save(args.out / 'producer-hosts.json', producer_hosts)
     collection['hosts'] = str(args.out / 'producer-hosts.json')
     c = {key: op[key] for key in ('endpoint', 'caFile', 'tokenFile', 'kubeContext')}
+    c['collectorTokenFile'] = op['collectorTokenFile']
     c.update(approval={'sources': component_sources, 'controlImageDigest': status['imageID']}, inputs={'scheduler': str(args.out / 'scheduler.json')}, timeboxes=spec['timeboxes'], collection=collection, workloads=[], canonicalDefinitionsReused=reused)
     for name in e5.WORKLOADS:
         actual = [w for w in scheduler['state']['snapshot']['workloads'] if w['name'] == name]
