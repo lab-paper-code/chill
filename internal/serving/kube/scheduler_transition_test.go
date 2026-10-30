@@ -564,7 +564,7 @@ func TestReadySubsetPreservesE53ServingSnapshotSCH20AC38(t *testing.T) {
 			case "bootstrap":
 				old.Routing = map[string]map[string]int32{uid: {}}
 				controller.state.Snapshot.Routing = old.Routing
-				if err := controller.runtime.ApplySchedulerTarget(old); err != nil {
+				if err := controller.runtime.ApplySchedulerUnrouteTarget(old, []string{uid}); err != nil {
 					t.Fatal(err)
 				}
 				want = map[string]map[string]int32{uid: {ids[0]: 1000}}
