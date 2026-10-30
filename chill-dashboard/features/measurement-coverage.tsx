@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useRef } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { ApiError, useSession } from "@/lib/client"
-import { coverageSelection, coveragePathVisible, coverageWatts, coverageModes, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, deviceLabel, conditionLabel, type CompatibilityRead } from "@/lib/measurement-coverage"
+import { coverageSelection, coveragePathVisible, coverageWatts, coverageModes, coverageVariant, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, deviceLabel, conditionLabel, type CompatibilityRead } from "@/lib/measurement-coverage"
 import type { BatchProgress, InventoryView, ModelCompatibility, MeasurementCoverageResponse, MeasurementCoverageCell, MeasurementFailure, ResultRow } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { MeasurementNavigation, MeasurementStatus } from "@/components/measurement-navigation"
@@ -176,7 +176,7 @@ function TrustLine({row}:{row:ResultRow|undefined}) {
 }
 function CoverageDetail({cell,namespace,close,visible}:{cell:MeasurementCoverageCell;namespace:string;close:()=>void;visible:boolean}) {
   const params=useSearchParams(),router=useRouter(),panel=useRef<HTMLDivElement>(null)
-  const variant=cell.variants.find(variant=>variant.id===params.get("variant"))??cell.variants.find(variant=>variant.id===coverageRepresentative(cell)?.variantId)??cell.variants[0]
+  const variant=coverageVariant(cell,params.get("variant")??undefined)
   const progress=variant?.batchProgress??coverageProgress(cell),rows=variant?.resultRows??[],returnTo=`/measurements?${params}`
   useEffect(()=>{panel.current?.focus({preventScroll:true});if(window.matchMedia("(max-width: 767px)").matches)panel.current?.scrollIntoView({block:"start"})},[cell.id])
   function choose(id:string){const next=new URLSearchParams(params.toString());next.set("variant",id);router.replace(`?${next}`,{scroll:false})}
@@ -188,8 +188,9 @@ function CoverageDetail({cell,namespace,close,visible}:{cell:MeasurementCoverage
     <Button asChild><Link href={coverageRequestHref(cell,namespace,returnTo,variant?.id,params.get("batches")?.split(",").map(Number)??[])}>이 조건으로 측정 요청</Link></Button>
     <p className="text-sm">조건과 부족 배치를 채운 요청 화면을 엽니다. 자동으로 제출하지 않습니다.</p>
     {cell.variantCount>1&&<label className="grid gap-2">측정 조건 {cell.variantCount}개<select value={variant?.id??""} onChange={event=>choose(event.target.value)}>{cell.variants.map(item=><option key={item.id} value={item.id}>{conditionLabel(item.condition)} / {String(item.condition.name??item.id.slice(-8))}</option>)}</select></label>}
+    {cell.variantCount>1&&<p className="text-sm text-muted-foreground">칸 상태는 전체 조건 기준입니다. 아래 배치와 수치는 선택한 조건 기준이며 서로 다른 조건의 결과를 합치지 않습니다.</p>}
     {variant&&<p className="text-sm">{conditionLabel(variant.condition)}</p>}
-    <BatchBar progress={progress}/><p>부족 배치: {progress?.missing.join(" · ")||"없음 또는 목표 미지정"}</p>
+    <BatchBar progress={progress}/><p>선택 조건 목표: {progress?.target.join(" · ")||"미지정"} / 부족 배치: {progress?progress.missing.join(" · ")||"없음":"미확인"}</p>
     {cell.failureSummary.length>0&&<section><h3>실패 회차</h3>{[...new Map(cell.failureSummary.map(failure=>[failure.runId||`${failure.requestId}/${failure.code}`,failure])).values()].map((failure,index)=><p key={index} className="coverage-failure"><strong>{failure.label??"기타"}</strong>{failure.runName&&<Link href={failureHref(failure,namespace,returnTo)}>{failure.runName} 회차 확인</Link>}<span>{failure.message}</span></p>)}</section>}
     {rows.length>0&&<section><h3>배치별 결과</h3><div className="overflow-x-auto"><table className="coverage-results"><thead><tr><th>배치</th><th>p95 ms</th><th>총 J/건</th><th>추가 J/건</th></tr></thead><tbody>{rows.map(row=><tr key={row.id}><th scope="row">{row.batch}</th><td>{number(row.p95Milliseconds,"ms")}</td><td>{number(row.totalJoulesPerItem,"J/건")}</td><td>{number(row.incrementalJoulesPerItem,"J/건")}</td></tr>)}</tbody></table></div><p className="text-sm">현재 스케줄러 {variant?.assessment.scope.schedulerUsed===true?"사용":variant?.assessment.scope.schedulerUsed===false?"미사용":"사용 여부 미확인"}</p></section>}
     <details><summary>신뢰 근거·조건·원문</summary><p>실행 지원: {cell.support.verdict==="Compatible"?"확인":cell.support.verdict==="Incompatible"?"지원 안 함":"확인 불가"}</p><ul>{(variant?.assessment??cell.assessment).checklist.checks.map(check=><li key={check.code}>{check.message} ({check.result})</li>)}</ul><pre className="whitespace-pre-wrap break-all text-xs">{JSON.stringify({condition:variant?.condition,rows,support:cell.support,history:cell.history},null,2)}</pre></details>

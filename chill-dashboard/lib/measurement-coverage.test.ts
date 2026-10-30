@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { conditionLabel, deviceLabel, coverageSelection, coveragePathVisible, coverageModes, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
+import { conditionLabel, deviceLabel, coverageSelection, coveragePathVisible, coverageModes, coverageVariant, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 import type { CoverageModel } from "./measurement-coverage.ts"
 import type { InventoryClass, InventoryView, MeasurementCoverageCell, MeasurementPlan, ModelCompatibility, ProfilingRun, ResultRow } from "./read-types.ts"
@@ -89,9 +89,11 @@ test("coverage hides architecture conflicts only, never declarations or measured
 test("batch slots preserve separate evidence, running, missing and unknown states",()=>{
   assert.deepEqual([1,2,4,8,16].map(batch=>coverageBatchState(cell.batchProgress,batch)),["complete","measured","running","missing","outside"])
   assert.equal(coverageBatchState(null,1),"unknown")
-  const first={id:"first",condition:{},assessment:cell.assessment,batchProgress:cell.batchProgress!,resultRows:[],requestIds:[],runIds:[],profileIds:[]}
-  const second={...first,id:"second",batchProgress:{...first.batchProgress,measured:[8],missing:[1,2,4]}}
-  assert.equal(coverageProgress({...cell,batchProgress:null,variants:[first,second],representative:{variantId:"second",batch:8,incrementalJoulesPerItem:1,p95Milliseconds:2}}),second.batchProgress)
+  const first={id:"first",condition:{},assessment:{...cell.assessment,displayStatus:"usable" as const},batchProgress:cell.batchProgress!,resultRows:[],requestIds:[],runIds:[],profileIds:[]}
+  const second={...first,id:"second",assessment:cell.assessment,batchProgress:{...first.batchProgress,measured:[8],missing:[1,2,4]}}
+  const multiple={...cell,batchProgress:null,variants:[first,second],representative:{variantId:"first",batch:1,incrementalJoulesPerItem:1,p95Milliseconds:2}}
+  assert.equal(coverageProgress(multiple),second.batchProgress)
+  assert.equal(coverageVariant(multiple,"first"),first)
 })
 test("coverage requests work for unmeasured cells without exact variants and preserve return filters",()=>{
   const href=new URL(coverageRequestHref(cell,"ns","/measurements?cell=cell&status=unmeasured"),"http://local")

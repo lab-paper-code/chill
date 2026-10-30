@@ -44,16 +44,18 @@ export function coverageModes(cells:MeasurementCoverageCell[]) {
     return (left.length?Math.min(...left):Infinity)-(right.length?Math.min(...right):Infinity)||a.localeCompare(b)
   })
 }
+export function coverageVariant(cell:MeasurementCoverageCell,id?:string) {
+  return cell.variants.find(variant=>variant.id===id)
+    ??cell.variants.find(variant=>variant.assessment.displayStatus===cell.assessment.displayStatus)
+    ??cell.variants.find(variant=>variant.id===cell.representative?.variantId)
+    ??cell.variants[0]
+}
 export function coverageRepresentative(cell:MeasurementCoverageCell):MeasurementCoverageCell["representative"] {
-  if(cell.representative?.batch===1)return cell.representative
-  for(const variant of cell.variants) {
-    const row=variant.resultRows.find(row=>row.batch===1)
-    if(row)return {variantId:variant.id,batch:row.batch,incrementalJoulesPerItem:row.incrementalJoulesPerItem,p95Milliseconds:row.p95Milliseconds}
-  }
-  return cell.representative
+  const variant=coverageVariant(cell),row=variant?.resultRows.find(row=>row.batch===1)??variant?.resultRows[0]
+  return variant&&row?{variantId:variant.id,batch:row.batch,incrementalJoulesPerItem:row.incrementalJoulesPerItem,p95Milliseconds:row.p95Milliseconds}:null
 }
 export function coverageProgress(cell:MeasurementCoverageCell) {
-  return cell.batchProgress??cell.variants.find(variant=>variant.id===coverageRepresentative(cell)?.variantId)?.batchProgress??cell.variants[0]?.batchProgress??null
+  return cell.batchProgress??coverageVariant(cell)?.batchProgress??null
 }
 export function coverageBatchState(progress:BatchProgress|null,batch:number) {
   if(!progress)return "unknown"

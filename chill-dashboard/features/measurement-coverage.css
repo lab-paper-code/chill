@@ -35,6 +35,7 @@
 .batch-unknown,.batch-outside { color:var(--muted-foreground); }
 .coverage-inspector { position:sticky; top:1rem; max-height:72vh; overflow:auto; border-left:3px solid var(--primary); background:var(--background); min-width:0; scrollbar-gutter:stable; }
 .coverage-selected,.coverage-inspector-empty { display:grid; gap:.85rem; padding:1rem; overflow-wrap:anywhere; font-size:.875rem; }
+.coverage-selected { scroll-margin-top:5rem; }
 .coverage-inspector h2 { font-size:1.125rem; font-weight:700; }
 .coverage-selected header { display:flex; gap:.5rem; align-items:center; justify-content:space-between; }
 .coverage-selected h3 { font-weight:650; margin-bottom:.5rem; }
