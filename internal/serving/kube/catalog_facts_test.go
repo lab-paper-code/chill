@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -49,16 +50,7 @@ func TestCatalogMeasurementFactsReuseLoadedRaw(t *testing.T) {
 		t.Fatal(facts)
 	}
 	row := facts.Batches[0]
-	if row.P95Milliseconds == nil || *row.P95Milliseconds != 2 || row.LatencySampleCount != 6 ||
-		row.ActiveTrialCount != 3 || row.IdleTrialCount != 3 || row.CompletedItems != 6 || row.CompletedCalls != 6 ||
-		row.IdleWatts == nil || *row.IdleWatts != 4 || row.ActiveWatts == nil || *row.ActiveWatts != 6 ||
-		row.TotalJoulesPerItem == nil || *row.TotalJoulesPerItem != 90 || row.IncrementalJoulesPerItem == nil || *row.IncrementalJoulesPerItem != 30 ||
-		row.Confidence == nil || row.Confidence.HalfWidth != 0 || row.Confidence.Level != .95 || len(row.Quality) != 6 || len(row.Sources) != 13 {
-		t.Fatalf("raw-derived facts changed: %+v", row)
-	}
-	if row.PowerSource.Kind == "" || !row.Quality[0].SourceTimestampAbsent || row.Quality[0].PolicyPassed != nil {
-		t.Fatalf("source/capture facts invented a quality policy: %+v", row)
-	}
+	assertCatalogMeasurementBatchFacts(t, row)
 	*row.P95Milliseconds = 999
 	facts.Condition.CPU.AffinityCPUs[0] = 999
 	second, err := catalog.Refresh(ctx, []string{source.Namespace})
@@ -80,16 +72,51 @@ func TestCatalogMeasurementFactsReuseLoadedRaw(t *testing.T) {
 	catalog.store.client = original
 }
 
+func assertCatalogMeasurementBatchFacts(t *testing.T, row profilederivation.MeasurementBatchFacts) {
+	t.Helper()
+	if row.LatencySampleCount != 6 || row.ActiveTrialCount != 3 || row.IdleTrialCount != 3 ||
+		row.CompletedItems != 6 || row.CompletedCalls != 6 {
+		t.Fatalf("raw-derived repetition/call counts changed: %+v", row)
+	}
+	for _, quantity := range []struct {
+		name string
+		value *float64
+		want float64
+	}{
+		{"client p95", row.P95Milliseconds, 2},
+		{"idle W", row.IdleWatts, 4},
+		{"active W", row.ActiveWatts, 6},
+		{"total J/item", row.TotalJoulesPerItem, 90},
+		{"incremental J/item", row.IncrementalJoulesPerItem, 30},
+	} {
+		if quantity.value == nil || *quantity.value != quantity.want {
+			t.Errorf("%s = %v, want %g", quantity.name, quantity.value, quantity.want)
+		}
+	}
+	if row.Confidence == nil || row.Confidence.HalfWidth != 0 || row.Confidence.Level != .95 ||
+		len(row.Quality) != 6 || len(row.Sources) != 13 {
+		t.Fatalf("raw-derived confidence/capture lineage changed: %+v", row)
+	}
+	if row.PowerSource.Kind == "" || !row.Quality[0].SourceTimestampAbsent || row.Quality[0].PolicyPassed != nil {
+		t.Fatalf("source/capture facts invented a quality policy: %+v", row)
+	}
+}
+
 func TestCatalogMeasurementFactsPreserveObservedZero(t *testing.T) {
-	catalog, source, _, _ := catalogEvidenceFixtureWithPower(t, 4096, [6]float64{})
+	// The stored estimator requires positive wall energy; equal positive active
+	// and idle power gives a valid observed zero incremental energy and CI.
+	catalog, source, _, _ := catalogEvidenceFixtureWithPower(t, 4096, [6]float64{4, 4, 4, 4, 4, 4})
 	view, err := catalog.Refresh(context.Background(), []string{source.Namespace})
 	if err != nil || len(view.Profiles) != 1 {
 		t.Fatalf("zero-power catalog=%+v error=%v", view, err)
 	}
 	row := view.MeasurementFacts[view.Profiles[0].ID].Batches[0]
-	for _, value := range []*float64{row.IdleWatts, row.ActiveWatts, row.TotalJoulesPerItem, row.IncrementalJoulesPerItem} {
-		if value == nil || *value != 0 {
-			t.Fatalf("observed zero became absent: %+v", row)
-		}
+	if row.IncrementalJoulesPerItem == nil || *row.IncrementalJoulesPerItem != 0 ||
+		row.Confidence == nil || row.Confidence.HalfWidth != 0 {
+		t.Fatalf("observed zero incremental energy/CI became absent: %+v", row)
+	}
+	if row.IdleWatts == nil || *row.IdleWatts != 4 || row.ActiveWatts == nil || *row.ActiveWatts != 4 ||
+		row.TotalJoulesPerItem == nil || *row.TotalJoulesPerItem != 60 {
+		t.Fatalf("zero incremental energy changed positive wall measurement facts: %+v", row)
 	}
 }

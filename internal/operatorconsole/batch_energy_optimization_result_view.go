@@ -137,7 +137,7 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 				rows[i].Reuse = reference
 				rows = append(rows, ResultRow{
 					ID:      fmt.Sprintf("%s/source-reference/%d", reference.SourceProfileID, rows[i].Batch),
-					RowKind: "source-reference", ProfileID: reference.SourceProfileID,
+					RowKind: ResultRowSourceReference, ProfileID: reference.SourceProfileID,
 					SourceProfileID: &reference.SourceProfileID, Batch: rows[i].Batch, Reuse: reference,
 					Condition:  map[string]string{"sourceProfileId": reference.SourceProfileID},
 					Assessment: AssessMeasurement(MeasurementAssessmentInput{Reused: true}),

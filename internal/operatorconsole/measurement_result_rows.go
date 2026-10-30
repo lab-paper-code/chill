@@ -18,7 +18,7 @@ func MeasurementResultRows(facts profilederivation.MeasurementFacts, profileID s
 func MeasurementResultRow(facts profilederivation.MeasurementFacts, batch profilederivation.MeasurementBatchFacts, profileID string, reused, used bool) ResultRow {
 	kind := "direct"
 	if reused {
-		kind = "confirmation"
+		kind = ResultRowConfirmation
 	}
 	row := ResultRow{
 		ID: fmt.Sprintf("%s/%s/%d", profileID, kind, batch.Batch), RowKind: kind, ProfileID: profileID,

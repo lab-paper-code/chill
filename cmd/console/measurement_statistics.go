@@ -187,43 +187,64 @@ func readMeasurementStatistics(
 			},
 		)
 	}
-	for i := range statistics.MeasurementFacts.Batches {
-		row := &statistics.MeasurementFacts.Batches[i]
+	if err := addRetainedMeasurementCaptureFacts(
+		statistics.MeasurementFacts, active, idle, activeSources, idleSources,
+	); err != nil {
+		return nil, err
+	}
+	return statistics, ctx.Err()
+}
+
+func addRetainedMeasurementCaptureFacts(
+	facts *derivation.MeasurementFacts,
+	active []evidence.VerifiedEvidence,
+	idle []evidence.VerifiedIdleEvidence,
+	activeSources map[int][]evidencestore.ObjectIdentity,
+	idleSources []evidencestore.ObjectIdentity,
+) error {
+	for i := range facts.Batches {
+		row := &facts.Batches[i]
 		for _, source := range append(slices.Clone(idleSources), activeSources[row.Batch]...) {
-			row.Sources = append(row.Sources, derivation.RawEvidenceIdentity{Store: source.Store, Key: source.Key, Size: source.Size})
+			row.Sources = append(row.Sources, derivation.RawEvidenceIdentity{
+				Store: source.Store, Key: source.Key, Size: source.Size,
+			})
 		}
 		for _, verified := range active {
 			execution, raw, err := verified.Records()
 			if err != nil {
-				return nil, err
+				return err
 			}
 			if execution.RunConfig.Measurement.Batch != row.Batch {
 				continue
 			}
 			start, end, err := raw.Runtime.MeasurementWindow()
 			if err != nil {
-				return nil, err
+				return err
 			}
 			row.PowerSource = projection.MeasurementPowerSource(raw.Metrics.Source)
-			quality := projection.MeasurementQuality(execution.RunConfig, raw.Metrics, start, end, shared.ActiveProtocol)
+			quality := projection.MeasurementQuality(
+				execution.RunConfig, raw.Metrics, start, end, facts.Condition.ActiveProtocol,
+			)
 			quality.TrialID = execution.Terminal.Pod.UID
 			row.Quality = append(row.Quality, quality)
 		}
 		for _, verified := range idle {
 			execution, raw, err := verified.Records()
 			if err != nil {
-				return nil, err
+				return err
 			}
 			start, end, err := raw.Runtime.MeasurementWindow()
 			if err != nil {
-				return nil, err
+				return err
 			}
-			quality := projection.MeasurementQuality(execution.RunConfig, raw.Metrics, start, end, shared.IdleProtocol)
+			quality := projection.MeasurementQuality(
+				execution.RunConfig, raw.Metrics, start, end, facts.Condition.IdleProtocol,
+			)
 			quality.TrialID = execution.Terminal.Pod.UID
 			row.Quality = append(row.Quality, quality)
 		}
 	}
-	return statistics, ctx.Err()
+	return nil
 }
 
 func statisticsObjectIdentity(ref campaign.StoredObjectReference) evidencestore.ObjectIdentity {

@@ -98,17 +98,7 @@ func TestMeasurementStatisticsRetainedReferencesOnly(t *testing.T) {
 		len(row.Sources) != 9 {
 		t.Fatalf("wrong independent trials/pooled samples/CI/sources: %+v", row)
 	}
-	facts := statistics.MeasurementFacts
-	if facts == nil || facts.Request.UID != string(cr.UID) || len(facts.Batches) != 1 {
-		t.Fatalf("retained measurement facts missing: %+v", facts)
-	}
-	measured := facts.Batches[0]
-	if measured.P95Milliseconds == nil || *measured.P95Milliseconds != row.LatencyP95Milliseconds ||
-		measured.Confidence == nil || measured.Confidence.Level != row.Confidence.Level ||
-		measured.ActiveTrialCount != 2 || measured.IdleTrialCount != 2 || len(measured.Quality) != 4 ||
-		measured.TotalJoulesPerItem == nil || measured.ActiveWatts == nil || measured.IdleWatts == nil {
-		t.Fatalf("facts diverged from retained statistics: %+v", measured)
-	}
+	assertRetainedMeasurementFacts(t, statistics, string(cr.UID))
 	if len(objects.reads) != 9 {
 		t.Fatalf("unreferenced/excluded evidence read: %v", objects.reads)
 	}
@@ -133,6 +123,25 @@ func TestMeasurementStatisticsRetainedReferencesOnly(t *testing.T) {
 	}
 	if !reflect.DeepEqual(view.Result.ResultRecordSpec, before) {
 		t.Fatal("sealed detail projection changed")
+	}
+}
+
+func assertRetainedMeasurementFacts(
+	t *testing.T,
+	statistics *operatorconsole.BatchEnergyOptimizationStatistics,
+	requestUID string,
+) {
+	t.Helper()
+	facts := statistics.MeasurementFacts
+	if facts == nil || facts.Request.UID != requestUID || len(facts.Batches) != 1 {
+		t.Fatalf("retained measurement facts missing: %+v", facts)
+	}
+	measured, row := facts.Batches[0], statistics.Batches[0]
+	if measured.P95Milliseconds == nil || *measured.P95Milliseconds != row.LatencyP95Milliseconds ||
+		measured.Confidence == nil || measured.Confidence.Level != row.Confidence.Level ||
+		measured.ActiveTrialCount != 2 || measured.IdleTrialCount != 2 || len(measured.Quality) != 4 ||
+		measured.TotalJoulesPerItem == nil || measured.ActiveWatts == nil || measured.IdleWatts == nil {
+		t.Fatalf("facts diverged from retained statistics: %+v", measured)
 	}
 }
 

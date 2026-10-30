@@ -41,32 +41,7 @@ func (*unavailableCatalogCosts) List(context.Context, string) ([]evidencestore.O
 
 func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T) {
 	var sourceFailed atomic.Bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		var body any
-		switch r.URL.Path {
-		case "/api":
-			body = meta.APIVersions{Versions: []string{"v1"}}
-		case "/apis":
-			version := meta.GroupVersionForDiscovery{GroupVersion: api.GroupVersion.String(), Version: api.GroupVersion.Version}
-			body = meta.APIGroupList{Groups: []meta.APIGroup{{Name: api.GroupVersion.Group, Versions: []meta.GroupVersionForDiscovery{version}, PreferredVersion: version}}}
-		case "/apis/" + api.GroupVersion.String():
-			body = meta.APIResourceList{GroupVersion: api.GroupVersion.String(), APIResources: []meta.APIResource{{Name: "batchenergyoptimizations", Kind: "BatchEnergyOptimization", Namespaced: true, Verbs: meta.Verbs{"get", "list"}}}}
-		case "/apis/" + api.GroupVersion.String() + "/namespaces/serving/batchenergyoptimizations":
-			if sourceFailed.Load() {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				_ = json.NewEncoder(w).Encode(meta.Status{Status: "Failure", Reason: meta.StatusReasonServiceUnavailable, Message: "catalog source unavailable", Code: http.StatusServiceUnavailable})
-				return
-			}
-			body = api.BatchEnergyOptimizationList{TypeMeta: meta.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "BatchEnergyOptimizationList"}, Items: []api.BatchEnergyOptimization{}}
-		default:
-			http.NotFound(w, r)
-			return
-		}
-		if err := json.NewEncoder(w).Encode(body); err != nil {
-			t.Error(err)
-		}
-	}))
+	server := newMeasurementCatalogSourceServer(t, &sourceFailed)
 	defer server.Close()
 	scheme := runtime.NewScheme()
 	if err := api.AddToScheme(scheme); err != nil {
@@ -127,4 +102,50 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 	if err != nil || stale.SourceError == "" || stale.SourceCheckedAt != second.SourceCheckedAt || stale.Revision != second.Revision || service.profiles.Load() != adopted || objects.rawReads.Load() != 0 {
 		t.Fatalf("failed refresh changed retained catalog check/facts/adoption: %+v error=%v reads=%d", stale, err, objects.rawReads.Load())
 	}
+}
+
+func newMeasurementCatalogSourceServer(t *testing.T, sourceFailed *atomic.Bool) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body any
+		switch r.URL.Path {
+		case "/api":
+			body = meta.APIVersions{Versions: []string{"v1"}}
+		case "/apis":
+			version := meta.GroupVersionForDiscovery{
+				GroupVersion: api.GroupVersion.String(), Version: api.GroupVersion.Version,
+			}
+			body = meta.APIGroupList{Groups: []meta.APIGroup{{
+				Name: api.GroupVersion.Group, Versions: []meta.GroupVersionForDiscovery{version}, PreferredVersion: version,
+			}}}
+		case "/apis/" + api.GroupVersion.String():
+			body = meta.APIResourceList{
+				GroupVersion: api.GroupVersion.String(),
+				APIResources: []meta.APIResource{{
+					Name: "batchenergyoptimizations", Kind: "BatchEnergyOptimization", Namespaced: true,
+					Verbs: meta.Verbs{"get", "list"},
+				}},
+			}
+		case "/apis/" + api.GroupVersion.String() + "/namespaces/serving/batchenergyoptimizations":
+			if sourceFailed.Load() {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_ = json.NewEncoder(w).Encode(meta.Status{
+					Status: "Failure", Reason: meta.StatusReasonServiceUnavailable,
+					Message: "catalog source unavailable", Code: http.StatusServiceUnavailable,
+				})
+				return
+			}
+			body = api.BatchEnergyOptimizationList{
+				TypeMeta: meta.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "BatchEnergyOptimizationList"},
+				Items: []api.BatchEnergyOptimization{},
+			}
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(body); err != nil {
+			t.Error(err)
+		}
+	}))
 }

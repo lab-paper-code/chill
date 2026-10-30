@@ -20,18 +20,18 @@ func TestMeasurementResultRowPreservesSignedConfidenceZeroAndUnknown(t *testing.
 	}
 	row := MeasurementResultRow(facts, batch, "profile", false, true)
 	if row.Confidence == nil || row.Confidence.Lower != -3 || row.Confidence.Upper != 1 || row.Confidence.Level != .8 ||
-		row.TotalJoulesPerItem == nil || *row.TotalJoulesPerItem != 0 || row.Assessment.Status != "criteria_met" || row.MissingReasons == nil {
+		row.TotalJoulesPerItem == nil || *row.TotalJoulesPerItem != 0 || row.Assessment.Status != MeasurementCriteriaMet || row.MissingReasons == nil {
 		t.Fatalf("signed CI/zero/timestamp reporting changed: %+v", row)
 	}
 	batch.Confidence.HalfWidth = 0
-	if row := MeasurementResultRow(facts, batch, "profile", false, true); row.Confidence.Lower != -1 || row.Assessment.Status != "criteria_met" {
+	if row := MeasurementResultRow(facts, batch, "profile", false, true); row.Confidence.Lower != -1 || row.Assessment.Status != MeasurementCriteriaMet {
 		t.Fatalf("zero-width CI was not retained: %+v", row)
 	}
 	batch.ActiveTrialCount = 2
-	if row := MeasurementResultRow(facts, batch, "profile", false, true); row.Assessment.Status != "complete" {
+	if row := MeasurementResultRow(facts, batch, "profile", false, true); row.Assessment.Status != MeasurementComplete {
 		t.Fatalf("idle repetitions counted as independent active trials: %+v", row)
 	}
-	if row := MeasurementResultRow(facts, batch, "profile", true, true); row.RowKind != "confirmation" || row.Assessment.Status != "complete" {
+	if row := MeasurementResultRow(facts, batch, "profile", true, true); row.RowKind != ResultRowConfirmation || row.Assessment.Status != MeasurementComplete {
 		t.Fatalf("confirmation presented as full independent result: %+v", row)
 	}
 	missing := MeasurementResultRow(facts, profilederivation.MeasurementBatchFacts{Batch: 1}, "profile", false, false)
@@ -73,9 +73,9 @@ func TestRetainedResultSeparatesReuseConfirmationAndSourceReference(t *testing.T
 		t.Fatalf("reuse rows=%+v error=%v", view.ResultRows, err)
 	}
 	confirmation, source := view.ResultRows[0], view.ResultRows[1]
-	if confirmation.RowKind != "confirmation" || confirmation.TotalJoulesPerItem == nil || *confirmation.TotalJoulesPerItem != total ||
-		source.RowKind != "source-reference" || source.ProfileID != "namespace/source/source-uid" || source.TotalJoulesPerItem != nil ||
-		source.ActiveWatts != nil || source.Confidence != nil || source.Assessment.Status != "unknown" {
+	if confirmation.RowKind != ResultRowConfirmation || confirmation.TotalJoulesPerItem == nil || *confirmation.TotalJoulesPerItem != total ||
+		source.RowKind != ResultRowSourceReference || source.ProfileID != "namespace/source/source-uid" || source.TotalJoulesPerItem != nil ||
+		source.ActiveWatts != nil || source.Confidence != nil || source.Assessment.Status != MeasurementUnknown {
 		t.Fatalf("independent confirmation/source reference mixed: %+v", view.ResultRows)
 	}
 	condition, ok := source.Condition.(map[string]string)
