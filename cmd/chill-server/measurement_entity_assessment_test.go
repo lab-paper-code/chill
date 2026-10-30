@@ -21,27 +21,31 @@ import (
 func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 	task := api.BatchEnergyOptimization{ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "old", UID: "old-uid", Generation: 1}, Spec: api.BatchEnergyOptimizationSpec{BatchSizes: []int32{1, 2}}, Status: api.BatchEnergyOptimizationStatus{Phase: "Complete", ObservedGeneration: 1}}
 	view := httpapi.ProfilesView{}
-	if got := assessMeasurementRequest(task, view); got.Evidence.Accepted || got.DisplayStatus == "usable" {
+	if got := assessMeasurementRequest(task, view); got.Evidence.Accepted ||
+		got.DisplayStatus == operatorconsole.MeasurementUsable {
 		t.Fatalf("phase accepted without evidence: %+v", got)
 	}
 	view.Profiles = []serving.Profile{{ID: "allowed/old/old-uid", Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: "result"}, Batches: []serving.BatchProfile{{Batch: 1}}}}
-	if got := assessMeasurementRequest(task, view); got.Status != "partial" || !got.Evidence.Accepted {
+	if got := assessMeasurementRequest(task, view); got.Status != operatorconsole.MeasurementPartial ||
+		!got.Evidence.Accepted {
 		t.Fatalf("partial accepted profile: %+v", got)
 	}
 	task.Spec.BatchSizes = []int32{1}
-	if got := assessMeasurementRequest(task, view); got.Status != "complete" || got.Scope.SchedulerUsed == nil || !*got.Scope.SchedulerUsed {
+	if got := assessMeasurementRequest(task, view); got.Status != liveOperationComplete ||
+		got.Scope.SchedulerUsed == nil || !*got.Scope.SchedulerUsed {
 		t.Fatalf("published evidence: %+v", got)
 	}
 	newer := task
-	newer.Name, newer.UID, newer.Status.Phase = "newer", "newer-uid", "Failed"
-	if got := assessMeasurementRequest(newer, view); got.Status != "failed" || got.Evidence.Accepted {
+	newer.Name, newer.UID, newer.Status.Phase = "newer", "newer-uid", measurementPhaseFailed
+	if got := assessMeasurementRequest(newer, view); got.Status != operatorconsole.MeasurementFailed ||
+		got.Evidence.Accepted {
 		t.Fatalf("new request borrowed old evidence: %+v", got)
 	}
 	if got := assessMeasurementRequest(task, view); !got.Evidence.Accepted {
 		t.Fatal("new failure hid old accepted evidence")
 	}
 	view.Insufficiencies = []servingkube.CatalogIssue{{Source: types.NamespacedName{Namespace: task.Namespace, Name: task.Name}, Code: "InvalidEvidence", Reason: "real validation failure"}}
-	if got := assessMeasurementRequest(task, view); got.DisplayStatus != "problem" {
+	if got := assessMeasurementRequest(task, view); got.DisplayStatus != operatorconsole.MeasurementProblem {
 		t.Fatalf("catalog issue ignored: %+v", got)
 	}
 	view.Profiles = nil
@@ -51,24 +55,33 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 		Batches:         []profilederivation.MeasurementBatchFacts{{Batch: 1}},
 	}}
 	view.Insufficiencies = []servingkube.CatalogIssue{{Source: types.NamespacedName{Namespace: task.Namespace, Name: task.Name}, Code: "ReplacementSelection", Reason: "superseded by newer; original evidence retained"}}
-	if got := assessMeasurementRequest(task, view); got.DisplayStatus != "usable" || !got.Evidence.Accepted || got.Scope.SchedulerUsed == nil || *got.Scope.SchedulerUsed {
+	if got := assessMeasurementRequest(task, view); got.DisplayStatus != operatorconsole.MeasurementUsable ||
+		!got.Evidence.Accepted || got.Scope.SchedulerUsed == nil || *got.Scope.SchedulerUsed {
 		t.Fatalf("superseded verified result became problem or scheduler-used: %+v", got)
 	}
 }
 
 func TestOperationAssessmentRequiresStoredAcceptedSteps(t *testing.T) {
-	cr := api.OperationCostMeasurement{ObjectMeta: meta.ObjectMeta{Generation: 1}, Spec: api.OperationCostMeasurementSpec{Steps: []api.OperationCostStep{{Name: "idle"}}}, Status: api.OperationCostMeasurementStatus{Phase: api.MeasurementPhaseComplete, Steps: []api.OperationCostStepStatus{{Name: "idle", Key: "stored", Verdict: "Accepted"}}}}
+	cr := api.OperationCostMeasurement{
+		ObjectMeta: meta.ObjectMeta{Generation: 1},
+		Spec: api.OperationCostMeasurementSpec{Steps: []api.OperationCostStep{{Name: "idle"}}},
+		Status: api.OperationCostMeasurementStatus{
+			Phase: api.MeasurementPhaseComplete,
+			Steps: []api.OperationCostStepStatus{{Name: "idle", Key: "stored", Verdict: measurementVerdictAccepted}},
+		},
+	}
 	if got := assessOperationCost(cr, []servingkube.OperationStepProjection{{}}); got.Evidence.Accepted {
 		t.Fatalf("status-only step accepted: %+v", got)
 	}
 	duration, joules := int64(100), 4.0
 	steps := []servingkube.OperationStepProjection{{OperationID: "uid.0.idle", DurationNanos: &duration, WallJoules: &joules}}
-	if got := assessOperationCost(cr, steps); got.Status != "complete" || !got.Evidence.Accepted || got.Execution.ObservedGeneration != 0 {
+	if got := assessOperationCost(cr, steps); got.Status != liveOperationComplete ||
+		!got.Evidence.Accepted || got.Execution.ObservedGeneration != 0 {
 		t.Fatalf("verified operation: %+v", got)
 	}
 	cr.Status.Phase = api.MeasurementPhaseFailed
-	cr.Status.Steps[0].Verdict = "Failed"
-	if got := assessOperationCost(cr, steps); got.Status != "failed" || got.Evidence.Accepted {
+	cr.Status.Steps[0].Verdict = measurementPhaseFailed
+	if got := assessOperationCost(cr, steps); got.Status != operatorconsole.MeasurementFailed || got.Evidence.Accepted {
 		t.Fatalf("failed operation: %+v", got)
 	}
 }
@@ -76,7 +89,11 @@ func TestOperationAssessmentRequiresStoredAcceptedSteps(t *testing.T) {
 func TestOccupancyAssessmentReadsExactRecordAndPreservesNegativeD(t *testing.T) {
 	for _, d := range []int64{100, -100} {
 		cr := api.DispatchOccupancyMeasurement{ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "occupancy", UID: "request-uid", Generation: 1}, Spec: api.DispatchOccupancyMeasurementSpec{Node: "node", Batch: 1}, Status: api.DispatchOccupancyMeasurementStatus{Phase: api.MeasurementPhaseComplete, PerRequestNanos: &d, Throughput: "10", Result: &api.ProfilingRunEvidenceReference{Store: "evidence", Key: servingkube.DispatchOccupancyPrefix + "node-uid/request-uid.json"}}}
-		record := servingkube.DispatchOccupancyRecord{SchemaVersion: servingkube.DispatchOccupancySchema, Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Batch: 1, PerRequestNanos: d, Throughput: 10, Conditions: cr.Spec, Verdict: "Accepted"}
+		record := servingkube.DispatchOccupancyRecord{
+			SchemaVersion: servingkube.DispatchOccupancySchema,
+			Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Batch: 1,
+			PerRequestNanos: d, Throughput: 10, Conditions: cr.Spec, Verdict: measurementVerdictAccepted,
+		}
 		raw, err := json.Marshal(record)
 		if err != nil {
 			t.Fatal(err)
@@ -98,9 +115,9 @@ func TestOccupancyAssessmentReadsExactRecordAndPreservesNegativeD(t *testing.T) 
 		if err := json.Unmarshal(detail.Assessment, &assessment); err != nil {
 			t.Fatal(err)
 		}
-		want := "complete"
+		want := liveOperationComplete
 		if d < 0 {
-			want = "warning"
+			want = operatorconsole.MeasurementWarning
 		}
 		if assessment.Status != want || !assessment.Evidence.Accepted {
 			t.Fatalf("d=%d assessment=%+v", d, assessment)
@@ -141,14 +158,21 @@ func TestProfilesDecorationPreservesWireFieldsWithoutInventingRows(t *testing.T)
 	if err := json.Unmarshal(raw, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.ConfigVersion != "rv" || len(result.Profiles) != 1 || result.Profiles[0].ID != "profile" || result.Profiles[0].ResultRows == nil || len(result.Profiles[0].ResultRows) != 0 || result.Profiles[0].Assessment.Status != "complete" || len(result.Profiles[0].Assessment.Checklist.Checks) != 1 || result.Profiles[0].Assessment.Checklist.Checks[0].Result != "unknown" {
+	if result.ConfigVersion != "rv" || len(result.Profiles) != 1 || result.Profiles[0].ID != "profile" ||
+		result.Profiles[0].ResultRows == nil || len(result.Profiles[0].ResultRows) != 0 ||
+		result.Profiles[0].Assessment.Status != liveOperationComplete ||
+		len(result.Profiles[0].Assessment.Checklist.Checks) != 1 ||
+		result.Profiles[0].Assessment.Checklist.Checks[0].Result != operatorconsole.MeasurementUnknown {
 		t.Fatalf("decorated profile: %s", raw)
 	}
 }
 
 func TestProfilesReuseRowsKeepBothActualPopulations(t *testing.T) {
 	targetJ, sourceJ := 3.0, 7.0
-	reuse := &serving.ProfileReuseCheck{SourceProfileID: "allowed/source/uid", ConfirmationProfileID: "allowed/target/uid", Outcome: "Accepted"}
+	reuse := &serving.ProfileReuseCheck{
+		SourceProfileID: "allowed/source/uid", ConfirmationProfileID: "allowed/target/uid",
+		Outcome: measurementVerdictAccepted,
+	}
 	view := httpapi.ProfilesView{}
 	view.Profiles = []serving.Profile{{ID: "derived", Reuse: reuse}}
 	view.MeasurementFacts = map[string]serving.MeasurementFacts{
@@ -169,7 +193,11 @@ func TestProfilesReuseRowsKeepBothActualPopulations(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows := got.Profiles[0].ResultRows
-	if len(rows) != 2 || rows[0].RowKind != "confirmation" || rows[1].RowKind != "source-reference" || *rows[0].TotalJoulesPerItem != targetJ || *rows[1].TotalJoulesPerItem != sourceJ || rows[0].SourceProfileID == nil || *rows[0].SourceProfileID != reuse.SourceProfileID || rows[0].Reuse == nil || got.Profiles[0].Assessment.Status == "criteria_met" {
+	if len(rows) != 2 || rows[0].RowKind != operatorconsole.ResultRowConfirmation ||
+		rows[1].RowKind != operatorconsole.ResultRowSourceReference ||
+		*rows[0].TotalJoulesPerItem != targetJ || *rows[1].TotalJoulesPerItem != sourceJ ||
+		rows[0].SourceProfileID == nil || *rows[0].SourceProfileID != reuse.SourceProfileID ||
+		rows[0].Reuse == nil || got.Profiles[0].Assessment.Status == operatorconsole.MeasurementCriteriaMet {
 		t.Fatalf("reuse populations mixed: %s", raw)
 	}
 }

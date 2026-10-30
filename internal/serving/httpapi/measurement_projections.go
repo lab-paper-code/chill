@@ -13,7 +13,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
-const measurementGetVerb = "get"
+const (
+	measurementGetVerb  = "get"
+	measurementListVerb = "list"
+)
 
 // MeasurementProjection exposes only safe measurement conditions and saved evidence identities.
 type MeasurementProjection struct {
@@ -149,7 +152,7 @@ func (h *Handler) measurementProjectionRead(w http.ResponseWriter, r *http.Reque
 		sendError(w, &serving.Error{Code: "InvalidInput", Message: "valid measurement namespace and name are required"})
 		return
 	}
-	verb := "list"
+	verb := measurementListVerb
 	if name != "" {
 		verb = measurementGetVerb
 	}
