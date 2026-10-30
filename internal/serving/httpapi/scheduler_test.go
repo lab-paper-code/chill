@@ -38,7 +38,6 @@ func schedulerSettingsForTest() serving.SchedulerSettings {
 		MaxObservationAge: time.Second, MaxReplicas: 1,
 		ReplacementDwell:       17 * time.Second,
 		ScaleDownStabilization: 120 * time.Second, TransitionReserveFraction: .25,
-		CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 1}
 }
 
