@@ -62,31 +62,7 @@ func TestPowerMatchesServerOperatingPower(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Accepted settings meters and actual state references name the same meter set.
-	files := t.TempDir()
-	settingsFile, stateFile := filepath.Join(files, "settings.json"), filepath.Join(files, "state.json")
-	settings, err := json.Marshal(map[string]any{"meters": []map[string]any{
-		{"id": "wall", "node": node, "scope": "node-exclusive-wall", "source": source},
-		{"id": "other", "node": serving.NodeReference{Name: "absent", UID: "absent-uid"}, "scope": "node-exclusive-wall", "source": source},
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(settingsFile, settings, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(stateFile, []byte(`{"snapshot":{"nodes":[{"node":{"name":"node","uid":"node-uid"}}]}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	meters, err := derivedMeters(settingsFile, stateFile, "node")
-	if err != nil || len(meters) != 1 || meters[0].Meter != "wall" || meters[0].Node != node || !reflect.DeepEqual(meters[0].Source, source) {
-		t.Fatalf("derived meters = %+v, %v", meters, err)
-	}
-	for _, names := range []string{"absent", "node,node", "node,"} {
-		if _, err := derivedMeters(settingsFile, stateFile, names); err == nil {
-			t.Fatalf("invalid Node selection accepted: %q", names)
-		}
-	}
+	meters := derivedTestMeters(t, node, source)
 	want, err := log.OperatingPower(context.Background(), from, to, meters, 1000)
 	if err != nil || want.WholePoolJoules == nil || want.ActivePoolJoules == nil {
 		t.Fatalf("server: %+v %v", want, err)
@@ -123,6 +99,36 @@ func TestPowerMatchesServerOperatingPower(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(original, got) {
 		t.Fatalf("override mutated recorded policy: %+v, %v", original, err)
 	}
+}
+
+func derivedTestMeters(t *testing.T, node serving.NodeReference, source metricobserver.SourceIdentity) []serving.OperatingPowerMeter {
+	t.Helper()
+	// Accepted settings meters and actual state references name the same meter set.
+	files := t.TempDir()
+	settingsFile, stateFile := filepath.Join(files, "settings.json"), filepath.Join(files, "state.json")
+	settings, err := json.Marshal(map[string]any{"meters": []map[string]any{
+		{"id": "wall", "node": node, "scope": "node-exclusive-wall", "source": source},
+		{"id": "other", "node": serving.NodeReference{Name: "absent", UID: "absent-uid"}, "scope": "node-exclusive-wall", "source": source},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsFile, settings, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateFile, []byte(`{"snapshot":{"nodes":[{"node":{"name":"node","uid":"node-uid"}}]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	meters, err := derivedMeters(settingsFile, stateFile, "node")
+	if err != nil || len(meters) != 1 || meters[0].Meter != "wall" || meters[0].Node != node || !reflect.DeepEqual(meters[0].Source, source) {
+		t.Fatalf("derived meters = %+v, %v", meters, err)
+	}
+	for _, names := range []string{"absent", "node,node", "node,"} {
+		if _, err := derivedMeters(settingsFile, stateFile, names); err == nil {
+			t.Fatalf("invalid Node selection accepted: %q", names)
+		}
+	}
+	return meters
 }
 
 func writeGzip(t *testing.T, name string, data []byte) {
