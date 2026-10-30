@@ -35,6 +35,10 @@ SCH-37, DB-INT-07~08, DB-NFR-07, DB-FR-35~49를 이 절들에서 추적한다.
 지원하지 않는 측정 종류의 일반 `연결 준비 중` 페이지는 제거한다(DB-FR-49).
 지원하는 API만 명시적으로 연결하고, 데이터 없음과 기능 미지원은 해당 영역에서 구분한다.
 화면의 개발 상태를 CHILL의 실제 운영 상태로 표시하지 않는다.
+2026-10-30 API 누락 보완의 **설계만** 6.5절과
+[구현 계획](../../plans/2026-10-30-dashboard-api-coverage.md)에 추가했다(DB-FR-53~55).
+동작 비용·분배 점유시간 목록/단건 및 용량 행은 서버와 relay에 이미 있으며 화면은 미연결이다.
+이 설계는 아래 T5/T6 이력과 별도이며 구현 완료나 실클러스터 검증을 뜻하지 않는다.
 전체 SRS의 기능 수용은 각 ChillServer 조회를 연결한 뒤 실제 흐름으로 검증한다.
 
 기존 `/scheduler`, `/scheduler/candidates`, `/scheduler/load`의 판단, 후보와 부하 표시는
@@ -431,6 +435,8 @@ relay 허용 목록은 `chill-dashboard/lib/relay.ts:47-104`다.
 | `GET, POST /namespaces/{namespace}/batch-energy-optimizations`, `DELETE .../{name}` | 측정 목록, `dryRun=All` 검증과 접수, `uid`와 `If-Match`의 영구 삭제 | 측정 목록, 요청과 삭제에 재사용한다. |
 | `GET /scheduler`, `GET /scheduler/settings`, `GET /scheduler/state`, `PUT /scheduler/settings` | 현재 설정, 실제 snapshot과 판단, 동작과 결과, 전체 설정 적용 및 행위자 관측 기록 | 고정 BFF 경로에 연결한다. 버전 조건과 dry-run 계약은 ChillServer 조회 대기다. |
 | `GET, POST /scheduler/profiles`, `DELETE /scheduler/profiles/{namespace}/{name}` | 채택 프로파일과 조건, 채택 결과와 `configVersion` | 측정 화면의 채택과 해제, `/scheduler/profiles` 목록에 재사용한다. |
+| `GET /namespaces/{namespace}/operation-cost-measurements[/{name}]`, 같은 형태의 `dispatch-occupancy-measurements` | `{items:MeasurementProjection[]}` 또는 단건 안전한 projection. 원본 spec 전체가 아니다. | relay GET 허용됨. 6.5절의 두 측정 화면으로 연결한다. |
+| `GET /scheduler/capacity` | `{rows:CapacityRow[]}`. 자동제어 워크로드가 필요로 하는 행과 입력, κ 및 탐색 판정 | relay GET 허용됨, query 없음. 6.5절 용량 근거 화면과 현재 settings 대조에 연결한다. |
 | `GET /observations/load` | 명시적 구간의 수신, 접수, 배정과 완료 사건 수 및 사건률 | from/to를 필수로 전달한다. 완료는 수신 cohort와 별개의 사건 집계다. |
 | `GET /observations/scheduler` | 판단, snapshot, 설정 변경, action과 전력 관측의 보관 중인 append-order 페이지 | from/to, bounded limit와 cursor를 사용한다. 응답은 페이지 항목과 nextCursor로 구성된다. relay는 이 경로와 `GET /scheduler`, `/scheduler/state`, `/scheduler/profiles`를 ChillServer `view=compact`로 읽고, 화면 파싱 전에 공유된 `profile`과 `completionMeasurement` `$ref`를 응답 dictionary로 복원해 full 응답과 같은 값을 쓴다. 응답 상한은 그대로다. |
 | `GET /observations/power` | 명시적 구간의 전체 및 활성 POOL joules와 평균 W, 노드별 값, `complete`, `reasons`, 로컬 보존보다 앞선 구간의 `gapUntil`(`internal/serving/httpapi/power.go:10-32`) | `/scheduler/power`의 실행 그룹 전체 전력에 연결했다(`chill-dashboard/features/scheduler.tsx:251-267`). |
@@ -475,7 +481,7 @@ SRS 8절의 "ChillServer가 제공할 조회"는 아래 셋이다. 각 기능은
 |---|---|---|---|
 | DB-FR-13 | 측정 결과마다 실제 backend와 실행 장치. 기존 Evidence Passport의 `EvidencePassportRuntime`(`internal/operatorconsole/evidence_passport_view.go:66-83`)에 검증된 `RuntimeResult.Backend`(`internal/profiling/run/evidence.go:35`)와 firstfloor 장치 필드를 함께 투영한다. 장치 근거 값은 firstfloor `RuntimeMetadata`의 `device`, `providers`, `gpuUUID`, `rknn`이다(`internal/firstfloor/types.go:136-155`). | `/measurements/profiling-runs/[namespace]/[name]`의 `실행 backend`와 `실행 장치` 행. 응답의 backend, provider, device를 직접 쉬운 말(예: CPU에서 ONNX 실행, CUDA GPU, NPU)로 표시하고 원본은 원본 보기에 둔다. | backend나 장치 기록이 빈 측정은 "이 측정에는 실행 backend와 장치 기록이 비어 있어요"를 보인다. |
 | DB-FR-30 | 실행 경로 × DeviceClass 호환 판정 `Compatible`, `Incompatible`, `Unknown`과 사유 코드(`internal/modelcompat/types.go:10-37`). 현재 Inventory는 선언만 반환하고 판정은 `internal/modelcompat` 내부에 있다(`internal/operatorconsole/inventory_view.go:70-72`). | `/workloads/[name]/coverage`: 실행 경로별 DeviceClass 측정 가능 여부와 사유. 서비스 화면의 `측정 가능 범위` 행에서 들어간다. 측정 요청의 장비 단계는 고를 수 없는 장비에 같은 사유를 표시한다. | 판정이 빈 서비스는 "아직 판정한 장비가 없어요"를 보인다. |
-| DB-FR-32 | PowerModeTransitionCost 원본: 출발과 도착 전력모드, 방향별 반복의 소요 시간과 J, 관측 구간, 측정 상태, 반복별 검증 판정과 사유, 경계 불확실성, 전환 중 Serving 지속 여부, 원본 참조 | 운영자 `측정 근거`의 `/measurements/transition-costs` 목록과 `/measurements/transition-costs/[namespace]/[name]` 상세. 근거 패널의 `OperationCost.reference`에서 진입한다. | 기록이 빈 목록은 "아직 잰 전환 비용이 없어요. 판단에 쓴 전환 비용은 후보 상세에서 볼 수 있어요"를 보인다. |
+| DB-FR-32 | PowerModeTransitionCost 원본: 출발과 도착 전력모드, 방향별 반복의 소요 시간과 J, 관측 구간, 측정 상태, 반복별 검증 판정과 사유, 경계 불확실성, 전환 중 Serving 지속 여부, 원본 참조 | 조회 API가 생긴 뒤 `/measurements/transition-costs`와 `/measurements/transition-costs/[namespace]/[name]`에서 제공한다. | API 미제공. 6.5절 동작 비용과는 다른 대상이며 그 응답으로 대체하지 않는다. |
 
 route, 진입 행과 빈 상태는 해당 G 단위가 한 commit에서 추가한다. 조회가 생기기 전까지 Dashboard 코드는 그대로다.
 
@@ -679,7 +685,7 @@ phaseRunning과 일치시킨다. `assignedUnknown`은 실행 증거가 아니다
 | `/pools`, `/resources` | `/pools/[uid]`는 이미 워크로드 UID의 활성 POOL 페이지(`app/[...route]/page.tsx:48` → `features/resources.tsx:PoolPage`(:85-103), REST `v1/pools/{uid}` 수동 폴링 옵션)이므로 같은 route를 레벨 1 live 페이지로 대체하고 인스턴스·Node는 펼침 카드(레벨 2)로 둔다; `/pools`(:47, `PoolsPage`)는 `/`로 보냄. 선언 인벤토리 고급 조회는 운영자 |
 | `/scheduler`, candidates/estimates/load, `/transitions` | 현재 판단 띠, 근거 패널, 시간축 작업 레인으로 합침 |
 | 판단 history/compare/power, observations/changes | 시간축, 재생 비교, 요청 상세 및 운영자 원본 기록으로 합침 |
-| scheduler/profiles와 측정 목록/회차 | 운영자 `측정 근거` 한 화면; BEO, 전환 비용, 분배 점유시간(d)은 지원 종류를 명시 |
+| scheduler/profiles와 측정 목록/회차 | 운영자 `측정 근거` 한 화면; BEO, 동작 비용, 분배 점유시간(d)은 지원 종류를 명시(6.5절). 전력모드 쌍 원본은 API 대기(5.3절) |
 | 모델/전처리기/데이터셋, workload 등록·편집 | 운영자 카탈로그에 유지; 원래 권한·충돌·참조 보호·UID 검사 유지 |
 | `/configuration`, 측정 요청 | 운영자에 유지; `/measurements/check`는 요청 검토의 고급 사전 확인으로 합침 |
 | `/workloads/[name]/infer` | 워크로드 패널의 “직접 요청해 보기”; 원래 infer API와 수명 계약 유지 |
@@ -699,9 +705,11 @@ phaseRunning과 일치시킨다. `assignedUnknown`은 실행 증거가 아니다
 매칭되지 않으면 “기록 없음”이지 최신 state로의 fallback이 아니며, 새 판단이 와도 선택은 바뀌지 않는다.
 이 방식은 `chill-dashboard/lib/scheduler-history.ts:schedulerRecordRef/readSchedulerRecord/
 schedulerRecordPath/schedulerRecordMatches`(:3-31)의 at 기반 identity를 그대로 사용한다.
-`GET scheduler/capacity`는 원래 후보 identity/조건을 보존해 보조 근거를 읽는다.
-`relayPlan`에 이 정확한 GET/허용 query를 추가한다. 이름/모델은 해당 records의
-definitions/snapshot.workloads, 요청별 모델은 exact definitionID로 해석하며 못 찾으면 UID를 병기한다(DB-FR-43).
+`GET scheduler/capacity`는 이미 relay에 허용된 query 없는 현재 행 조회다(6.5절).
+과거 판단의 행 key가 현재 응답에 없으면 “이 용량 행을 찾을 수 없어요”로 표시하며
+다른 행으로 대체하지 않는다. 과거 판단의 원래 근거는 위 기록에서 유지한다.
+이름/모델은 해당 records의 definitions/snapshot.workloads, 요청별 모델은 exact
+definitionID로 해석하며 못 찾으면 UID를 병기한다(DB-FR-43).
 
 ### 6.2 안내형 입력
 
@@ -755,6 +763,200 @@ export const explain = (code: string) => codeText[code] ?? ["새 상태의 설�
 - 상태 배지의 짧은 단어(`Ready`, `Waiting` 등)는 `components/read-region.tsx`의 `statusLabel`에 그대로 둔다. CamelCase 사유의 문장은 `explain`에서 가져온다.
 - HTTP 상태만 있는 오류(본문에 code가 없는 401, 403, 404, 409, 429, 502, 503, 504)는 `read-region.tsx`의 상태별 문장을 계속 쓴다.
 - `measurement-plans.tsx`의 `failureLabels`와 `outcomeLabels`, `read-pages.tsx`의 `providers` 표는 이 모듈로 옮긴다. 측정 결과는 저장된 원본 값(`MinimumFound/LocalMinimum` 등)을 그대로 키로 쓴다. `CurvePlanResolutionFailed`의 문장은 ChillServer가 계속 다시 시도한다는 뜻을 담는다.
+
+### 6.5 측정 API와 용량 행 연결 설계 (2026-10-30, 구현 전)
+
+대상은 DB-FR-45, DB-FR-53~55다. 새 최상위 내비게이션은 추가하지 않는다.
+`/measurements`의 `더 보기`에 **동작 비용 측정**, **분배 점유시간 측정**을,
+`/configuration`의 용량 설정 구역과 기존 scheduler 근거 진입점에 **용량 계산 근거**를 둔다.
+`hubs.tsx`의 기존 측정 묶음을 유지하는 동안에도 같은 하위 경로를 재사용한다.
+폐기된 `/records`, `/settings` 링크 모음을 새로 만들거나 부활시키지 않는다.
+
+#### 6.5.1 실제 계약과 '전환 비용' 정정
+
+두 CRD는 **동일 대상이 아니다**.
+`api/v1alpha1/operationcostmeasurement_types.go`는 한 Node의 순서 있는
+`power/prepare/idle/remove` 동작 측정이고 `power`는 빈 Node의 목표 전력모드를 지정한다.
+`powermodetransitioncost_types.go`는 serving 중인 모델·경로와 서로 다른 두 모드를
+고정해 양방향 반복, 방향별 시도·채택 수와 Serving 생존을 관측하는 별도 계약이다.
+OperationCostMeasurement의 투영에는 모드 쌍, 방향별 반복 시간·J, 경계 불확실성,
+Serving 지속 여부가 없으므로 DB-FR-32 완료 증거로 사용할 수 없다.
+
+`EvidenceLookup`의 `power-mode-transition-costs` / “전환 비용” 선택지는
+`operation-cost-measurements` / **동작 비용 측정**으로 바로잡고
+`dispatch-occupancy-measurements` / **분배 점유시간 측정**을 추가한다.
+이름을 바꾸는 것이지 기존 PowerModeTransitionCost 기록을 변환하는 것이 아니다.
+옛 `/measurements/power-mode-transition-costs/[namespace]/[name]` 직접 링크는
+“전력모드 쌍의 전환 비용 원본은 아직 조회 API가 없어요. 동작 비용 측정과는 다른 자료예요.”
+및 `/measurements` 이동만 제공한다. 원래 identity를 다른 API에 보내거나 자동 redirect하지 않는다.
+그 외 미지원 kind는 `notFound()`이며 일반 “연결 준비 중” 분기는 제거한다.
+
+#### 6.5.2 경로, 조회와 재사용
+
+아래 API는 모두 GET이며 body와 **API query가 없다**. UI query를 upstream으로 보내지 않는다.
+브라우저는 `/api/chill/v1/...`, BFF는 같은 suffix의 `/api/v1/...`를 호출한다.
+현재 `relayPlan`이 세 경로를 이미 허용하므로 새 허용목록·query·backend는 필요 없다.
+
+| 화면 | URL와 UI query | 호출 API(`/api/v1` 하위) | 뒤로가기 |
+|---|---|---|---|
+| 동작 비용 목록/상세 | `/measurements/operation-cost-measurements?namespace=<ns>` / `/measurements/operation-cost-measurements/[namespace]/[name]?uid=<uid>` | `/namespaces/{ns}/operation-cost-measurements` / `.../{name}` | 목록→`/measurements?namespace=<ns>`; 상세→같은 ns 목록 |
+| 분배 점유시간 목록/상세 | `/measurements/dispatch-occupancy-measurements?namespace=<ns>` / `/measurements/dispatch-occupancy-measurements/[namespace]/[name]?uid=<uid>` | `/namespaces/{ns}/dispatch-occupancy-measurements` / `.../{name}` | 목록→`/measurements?namespace=<ns>`; 상세→같은 ns 목록 |
+| 용량 계산 목록과 행 Dialog | `/scheduler/capacity?workload=<uid>&row=<key>` (두 query 선택) | `/scheduler/capacity`; 별도 `/scheduler/settings` | `/configuration?section=capacity`; Dialog 닫기/뒤로가기→row 제거·선택 행 focus |
+
+측정 목록은 namespace 미지정 시 세션 `config.namespace`, 상세는 경로 namespace를 쓴다.
+저장 영역 선택 후 URL을 갱신하고 행은 응답의 `metadata.namespace/name/uid`로 링크한다.
+uid는 응답 `metadata.uid` 비교 전용이다. 불일치는 Passport와 같은
+“같은 이름으로 다시 등록된 다른 측정이에요” / “이전 자료로 사용할 수 없어요.”이며
+조건·결과 요약을 숨기고 원본 identity와 목록 이동만 제공한다. uid 미지정은 현재 객체 조회다.
+세그먼트는 기존 encode/decode 패턴을 사용한다.
+
+기존 `read-pages.tsx:MeasurementDetail` Passport의 읽는 순서(결론→결과→조건→원본)와
+scheduler의 표→행 Dialog 패턴을 재사용한다. `Screen`, `Facts`, `Rows`, `RowDialog`,
+`DataTable`, `QueryGate`, `SourceJSON`, `SourceExport`, `useChillQuery`와
+`lib/read-types.ts`의 wire 타입·정밀 정수 처리를 사용한다. 읽기 전용이므로 mutation은 추가하지 않는다.
+조건은 Dialog로 점진 공개하며 별도 전역 store·공통 화면 factory는 만들지 않는다.
+목록 API는 `{items:[...]}`, 상세는 아래 projection 그 자체다. 페이지 정보가 없으므로
+전체 응답을 받은 뒤 기존 표의 클라이언트 정렬/페이지 나누기만 사용한다.
+서버 limit/offset/q나 날짜 필터를 발명하지 않고 “이 저장 영역에서 받은 N개”로 범위를 표시한다.
+creationTimestamp 내림차순으로 시작하며 별도 ns를 합쳐 집계하지 않는다.
+
+#### 6.5.3 측정 화면의 표시 필드
+
+근거 소스는 `internal/serving/httpapi/measurement_projections.go`
+(`MeasurementProjection`, operation/occupancy conditions/status)이며
+`measurements.go:MeasurementEvidenceLocation`의 wire 위치는 `{store,key}`다.
+일반 CR의 `spec`, annotations, 원시 측정 배열을 읽는 계약이 아니다.
+
+| 공통 표시 | 정확한 소스 필드 | 표시 규칙 |
+|---|---|---|
+| 목록 identity·대상·상태·시각 | `metadata.name`, `metadata.namespace`, `metadata.uid`, `node`, `status.phase`, `metadata.creationTimestamp` | 이름/Node, 상태 문장·기호, UTC/KST 시각. UID는 상세 원본 identity에 표시 |
+| 상세 결론·사유 | `kind`, `status.phase`, `status.reason` | 6.5.5절 상태 문구, 사유는 6.4절 문장 표; 미등록 사유는 공통 문장과 원본 값 |
+| CR 출처 | `metadata.resourceVersion`; `references.cr.{apiVersion,kind,namespace,name,uid}` | “원본 CR 식별자”. 전체 CR 수신 주장·Kubernetes 직접 링크 없음 |
+| 근거 위치 | `references.evidence[].{store,key}` | 논리 위치 복사/JSON 내보내기. raw HTTP URL·Passport 경로 생성 없음 |
+
+**동작 비용** 목록 보조 필드는 `conditions.steps.length`(계획 단계 수)와
+`status.steps.length`(기록 단계 수, 미제공은 0)이며 “기록 N / 계획 M단계”로 표시한다.
+채택 건수나 성공률로 표현하지 않는다. 상세에는 다음 표를 조건 순서대로 둔다.
+
+| 표시 | 소스 필드 | 단위·연결 |
+|---|---|---|
+| 단계 이름·종류 | `conditions.steps[].name`, `.kind` | power=전력모드 변경, prepare=준비, idle=유휴, remove=제거 |
+| 단계별 조건 | `.powerMode`, `.batchEnergyOptimization`, `.idleDurationSeconds` | 해당 kind 필드만 표시. 유휴=s; BEO 참조는 같은 namespace의 기존 BEO 상세 링크 |
+| 저장 결과 | `status.steps[].name`, `.key`, `.verdict` | name으로 조건과 연결, 없는 단계는 “아직 기록된 결과가 없어요”. status만의 미매칭 단계도 “조건 연결 없음”으로 보존 |
+| 근거 위치 | `references.evidence[]` | key가 같은 위치만 단계에 연결. key가 없는 결과는 위치 없음; 원문 key·verdict도 원본에 보존 |
+
+step verdict가 `Accepted`이면 “채택”, 그 밖의 미등록 값은 “확인이 필요해요”와 원본을 보인다.
+`Complete`만으로 모든 단계 채택을 재판정하지 않는다. 시간·J·출발 모드·반복별 판정 사유는
+projection에 없다. “이 화면은 동작 조건과 저장된 단계 판정을 보여요. 시간과 에너지 원문은 포함하지 않아요.”로 안내한다.
+
+**분배 점유시간** 목록 보조 필드는 `conditions.workload`, `conditions.batch`,
+`status.perRequestNanos`, `status.throughput`이고 상세에는 다음 필드를 전부 둔다.
+
+| 표시 | 소스 필드 | 단위·누락 규칙 |
+|---|---|---|
+| 워크로드·측정 프로파일 참조 | `conditions.workload`, `conditions.batchEnergyOptimization` | 각각 기존 workload 상세, 같은 ns BEO 상세 연결. UID 없는 참조는 현재 이름 기준임을 명시 |
+| 배치·공급 방식·동시 송신자 | `conditions.batch`, `.supplyMode`, `.workers` | 건/batch, closed-loop=고정 동시 요청, poisson=포아송 공급, 미제공=“기록되지 않았어요”; workers=명 |
+| 예열·측정 구간 | `conditions.warmupSeconds`, `.durationSeconds` | s, 예열은 측정 시작에서 제외 |
+| 결과 전력모드 | `status.powerMode` | 없으면 “결과 없음” |
+| 요청당 분배 점유시간 d | `status.perRequestNanos` | ns/request 원값, 보조 ms/request 변환만 허용. 누락=“결과 없음”; 0은 “0 ns/request” |
+| 지속 완료 처리량 X | `status.throughput` | 문자열 원값 + req/s, 누락/빈 문자열=“결과 없음”. 브라우저에서 d나 κ 재계산 없음 |
+| 결과 위치 | `status.result.{store,key}`, `references.evidence[]` | 논리 위치 그대로, 중복은 한 번 표시; 빈 evidence=“아직 저장된 근거 위치가 없어요” |
+
+CRD의 `rateFactor`, `minimumBatches`, `maximumIdleFraction`, frozen `conditions.inputsJSON`,
+runtime image 등은 이 투영에 없으므로 추가 조회나 추정 없이 표시 대상에서 뺀다.
+“d는 배치 실행 외에 요청 1건이 인스턴스를 점유한 시간이에요. 현재 응답 지연과는 달라요.”로 안내한다.
+
+#### 6.5.4 용량(κ) 화면
+
+실제 handler는 `scheduler.go`의 settings 조회와 **`httpapi/profiles.go:schedulerCapacity`**다.
+응답 `{rows:[CapacityRow]}`는 현재 자동제어 워크로드의 계산 대상이며 전체 역사 목록이 아니다.
+`internal/serving/capacity.go`가 입력·행·grid/bisection의 권위 소스다.
+상단 문장은 “인스턴스 하나가 이 조건에서 SLO를 만족하도록 계산한 요청률이에요.
+실제 유입이나 지금의 SLO 관측은 아니에요.”다.
+
+목록 열은 `input.workloadUID`, `input.node.name`, `input.powerMode`, `input.profileID`,
+`input.maxBatch`, `status`/`reason`, `kappa`(req/s), `builtAt`와 `previous`다.
+row key는 `key`이며 행 선택은 `?row=<key>`를 열고 `workload`는 받은 행에만 적용하는 UID 필터다.
+일치하는 행이 없으면 다른 행을 자동 선택하지 않는다. 이름을 모르더라도 UID 자체로 표시한다.
+Dialog는 **결과→입력→현재 설정 대조→탐색 판정→원본** 순서다.
+
+| 구역 | 정확한 필드 | 표시 단위·의미 |
+|---|---|---|
+| 결과 | `key`, `status`, `reason`, `mu`, `kappa`, `minimumServiceNanos`, `builtAt`, `elapsedNanos`, `previous` | μ·κ=req/s(μ는 처리량 상한, κ는 계산 용량); minimumServiceNanos=ns; elapsedNanos=ns와 보조 ms; builtAt=UTC/KST, zero 시각은 “계산 시각 없음”. optional 누락은 “값 없음” |
+| 대상·SLO | `input.workloadUID`, `input.slo.percentile`, `input.slo.targetLatencyNanos`, `input.node.{name,uid}`, `input.powerMode`, `input.profileID` | percentile=백분위 p(0~100), 목표=ns와 보조 ms, identity 보존 |
+| 실행 자원 | `input.allocation.{cpus,gpuUUID,memoryBytes,threads,cpuCount,cpuReserved}`, `input.maxBatch` | cpus=코어 ID 목록, GPU UUID, memoryBytes=bytes, threads/cpuCount=개, cpuReserved=예약 여부, maxBatch=건/batch; null/빈 목록 보존 |
+| 완료 여유·계산 구간 | `input.completionMarginMS`, `input.capacityWindowNanos`, `input.capacityWindows`, `input.capacityPassingWindows`, `input.capacityMinimumRequests` | ms, ns(보조 s), 창 개수, 필요한 합격 창 개수, 창당 최소 요청 수 |
+| 탐색 입력 | `input.capacityGridSteps`, `input.capacityBisectionWidth`, `input.capacityTailSamples` | 격자 분할 수; μ에 대한 이분탐색 폭 비율(무차원); 백분위 위 꼬리 목표 표본 수(개). 달성 정밀도로 표현하지 않음 |
+| d와 출처 | `input.dispatchOccupancy.{node.name,node.uid,powerMode,runtimeImage,model,perRequestNanos,source}` | d=ns/request, source는 측정 기록 식별 문자열 그대로. 누락=“분배 점유시간 근거가 없어요”. namespace/name 추정 파싱·링크 생성 없음 |
+| 탐색 판정 표 | `grid[]`, `bisection[]` 각각의 `rate`, `requests`, `passed`, `met`, `percentileMS[]` | 실행 순번, req/s, **창당** 요청 수, 합격 창 수, 서버의 충족/미충족, 검사한 창별 SLO 백분위 지연(ms, 완료 여유 포함) |
+
+grid/bisection은 별도 표로 응답 순서를 보존한다(rate순 자동 정렬 금지).
+`passed`는 `input.capacityPassingWindows`와 나란히, `percentileMS.length`는 실제
+판정한 창 수로 표시한다. 조기 종료할 수 있으므로 `requests`를 총 요청 수,
+`passed / capacityWindows`를 전체 창 실측 성공률로 바꾸지 않는다.
+`percentileMS[]`의 -1은 “이 창의 지연값 없음(미충족)”이며 -1 ms 지연으로 그리지 않는다.
+배열 미제공·빈 값은 “기록된 격자 판정이 없어요” / “이분탐색 기록이 없어요”다.
+κ=0의 빠른 종료(`BatchServiceExceedsSLO`)나 이분탐색이 필요 없던 행에서도 정상이다.
+
+현재 설정 대조는 독립 `GET /scheduler/settings` 응답 **최상위**의
+`completionMarginMS`, `capacityWindowNanos`, `capacityWindows`, `capacityPassingWindows`,
+`capacityMinimumRequests`, `capacityGridSteps`, `capacityBisectionWidth`, `capacityTailSamples`를
+같은 이름의 `row.input`과 **행에 사용한 값 / 현재 적용값 / 같음·다름** 세 열로 표시한다.
+두 조회 시각은 별도 표시하며 ns 정수는 기존 정밀 정수 처리로 비교한다.
+편집 초안은 현재 적용값이 아니다. 설정 경쟁으로 다를 수 있으므로 “다름”을 오류로 판정하지 않는다.
+“설정에서 확인하기”는 `/configuration?section=capacity`로 연결해 기존 설정 구역을 열고 focus한다.
+설정 저장·재계산 버튼·새 비교 실행 API는 추가하지 않는다.
+세 신규 입력 변경 시 key가 달라지며 없어진 key는 현재 행으로 대체하지 않는다.
+과거 판단 링크도 저장 기록을 수정하지 않고 현재 제공 여부만 확인한다(6.1절).
+
+#### 6.5.5 상태별 문구와 갱신
+
+| 조건 | 문구와 동작 |
+|---|---|
+| 초기 로딩 / 신원 없음 | 기존 QueryGate의 “불러오고 있어요.” / “먼저 접속해 주세요.” |
+| 동작 비용 / d 빈 목록 | “아직 등록된 동작 비용 측정이 없어요” / “아직 등록된 분배 점유시간 측정이 없어요”; 저장 영역 선택과 `/measurements` 이동. 미지원 새 측정 제출 버튼 없음 |
+| Measuring / Complete | “측정 중이에요” / “측정이 끝났어요”; 존재하는 기록만 표시, Complete여도 optional 누락은 “결과 없음” |
+| Insufficient / Failed / phase 누락·미등록 | “판단할 근거가 부족해요” / “측정을 끝내지 못했어요” / “측정 상태를 확인할 수 없어요”; 제공 reason과 원본 보기, 없는 진행률·예상시간은 만들지 않음 |
+| 용량 rows 빈 목록 / 필터 결과 없음 | “아직 계산 대상 용량 행이 없어요. 자동제어와 측정 근거를 확인해 주세요.” / “이 워크로드의 용량 행이 없어요”; 필터 해제와 설정 이동 |
+| CapacityPending | “용량을 계산하고 있어요”; κ 없음을 0으로 표시하지 않음. mu·builtAt 기본 0을 완료 값으로 강조하지 않음 |
+| Built / κ=0 | “용량 계산이 끝났어요”; 0 req/s는 실제 0. BatchServiceExceedsSLO는 “가장 짧은 배치 실행에도 완료 여유를 더하면 목표 시간을 넘어요” |
+| CapacityRejected / κ 누락 | “이 조건의 용량을 사용할 수 없어요” / “용량 값이 없어요”; MissingDispatchOccupancy는 “분배 점유시간 근거가 없어요”와 d 목록 탐색, NonMonotone은 “요청률을 높였는데 다시 통과한 구간이 있어 용량을 정하지 않았어요”; 다른 사유는 6.4절 규칙 |
+| previous=true | status와 별개 “이전 계산 결과 · 다시 계산 중”; 원래 builtAt·입력 유지, 최신 완료로 표현하지 않음 |
+| row key 없음 | “이 용량 행을 찾을 수 없어요. 현재 계산 대상에서 빠졌을 수 있어요.”; 전체 목록 이동, 최신 행 fallback 없음 |
+| 401 / 403 / 404 | “접속 정보를 다시 확인해 주세요.” / “이 정보를 볼 권한이 없어요.” / “항목을 찾을 수 없어요.”; 401/403 캐시 payload 숨김, 404는 빈 목록과 다름 |
+| 503·MeasurementUnavailable/SchedulerUnavailable | “지금은 정보를 확인할 수 없어요.”와 “측정/스케줄러 조회 서비스 연결을 확인해 주세요.”; 미지원·데이터 없음으로 바꾸지 않음 |
+| 502 / 504 / 기타 실패 | 기존 “연결하지 못했어요.” / “응답이 늦어지고 있어요.” / “정보를 불러오지 못했어요.”; 다시 불러오기·원본 code 보존 |
+| settings만 실패 | “현재 설정과 대조하지 못했어요”; 그 QueryGate만 오류·재조회, 성공한 행·입력·판정 유지 |
+
+6.4절의 알려진 서버 code 문장이 있으면 HTTP-only 문구보다 우선한다.
+마지막 조회 시각은 Query dataUpdatedAt이며 측정·계산 시각으로 바꾸지 않는다.
+7절 retry/focus/reconnect 정책을 쓴다. 측정은 phase가 Measuring일 때,
+용량은 CapacityPending 또는 previous인 행이 있을 때만 화면이 보이는 동안 기존 주기로 갱신한다.
+terminal·미확인 phase는 수동 새로고침, 오류 자동 재시도 없음, 이동 시 취소다.
+열린 용량 행 key는 갱신해도 바뀌지 않으며 사라지면 key 없음 문구를 보인다.
+SourceExport는 응답과 kind/ns/name/expectedUID 또는 row key/필터/각 조회 시각을 보존하고
+비밀정보를 제거한다. projection 내보내기이며 전체 CR·raw Evidence export가 아니다.
+
+#### 6.5.6 채택한 UI 판단 근거와 수용 검사
+
+기존 6.1절(한 화면 한 계층·점진 공개), 7절(독립 Query·접근성·가로 스크롤)이 우선한다.
+2026-10-30 `ui-ux-pro-max` 조회 중 채택한 규칙만 다음과 같다.
+
+- `data table dense dashboard --domain ux` → Responsive/Table Handling: 좁은 표는 기존 가로 스크롤 안에 두어 본문 레이아웃을 넘치지 않게 한다.
+- `empty state error --domain ux` → Feedback/Empty States: 빈 목록에 저장 영역 확인·상위 목록 이동을 제공한다.
+- 같은 조회 → Accessibility/Error Messages: 오류는 기존 QueryGate의 `role=alert`로 알리고 색만으로 전달하지 않는다.
+- `error loading --stack nextjs` → Routing/Handle loading states: 경로 전환 로딩은 기존 catch-all Suspense, API 로딩은 QueryGate로 유지한다(새 수동 상태·loading 구조 없음).
+
+`nextjs --stack nextjs`는 0건이어서 마지막 구체 질의로 재조회했다.
+설치된 Next 문서 `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/loading.md`도
+경로 로딩과 공유 레이아웃 유지의 근거다. 새 스타일·색·카드 체계는 도입하지 않는다.
+구현 fixture는 SRS 9절 세 시나리오의 모든 상태를 포함한다.
+측정 두 종류의 GET 목록/단건·query 미전달, UID 차단, 조건·결과·원본 연결,
+d 누락/0·문자열 X·미지정 supplyMode, projection 외 필드 미표시를 확인한다.
+용량은 전체 입력·현재 설정 대조, grid/bisection 순서·조기 종료·-1,
+κ 누락/0·거부·previous·없는 key, settings만 실패한 상태를 확인한다.
+세 화면 모두 새로고침·공유·뒤로가기, 키보드 Dialog focus 복원과 좁은 표·오류 알림을 확인한다.
+실 API·브라우저 확인과 native 검사 명령은 API coverage 계획의 완료 기준을 따른다.
 
 ## 7. 관측, 상태와 화면 안전
 
@@ -949,6 +1151,8 @@ raw 및 내보내기는 ChillServer의 제한된 page 또는 stream을 사용한
 | DB-FR-35~39, DB-FR-50~52 | 6.1절 띠·정보 트리·흐름 보드(엣지 출처 표)·POOL 레인·4레인·선택 당시 근거 | T6 | 라이브 무대의 연속 흐름 |
 | DB-FR-40~44 | 7.2절 재생·분모·비교·정의·불변 결과와 archive | T4/T6 | 재생 결과의 모집단과 에너지 |
 | DB-FR-45~49 | 6.1절 운영자 측정 근거와 폐기 route | T4/T6 | 운영자 조회와 폐기 화면 |
+| DB-FR-53~54 | 6.5절 동작 비용/분배 점유시간 목록·상세, 실제 투영과 UID·출처 보존 | API coverage 계획 | 동작 비용의 실제 API와 원본 identity, 분배 점유시간의 조건과 누락 결과 |
+| DB-FR-55 | 6.5절 `/scheduler/capacity`의 전체 입력·판정과 독립 settings 대조 | API coverage 계획 | 용량 입력과 계산 판정 및 현재 설정 대조 |
 
 ### 9.2 구현 순서와 작업 단위
 

@@ -189,6 +189,17 @@ CHILL 설치, 업그레이드와 제거는 Helm 또는 GitOps의 배포 경로�
   측정 거절 사유를 보여야 한다. 측정 중 노드의 측정 POOL 이동과 반환 진행, 측정 결과에 기록된
   CHILL이 배치하지 않은 파드 목록을 표시해야 한다.
 
+- `DB-FR-53` 동작 비용 측정(`OperationCostMeasurement`)을 전력모드 쌍의 양방향 반복
+  측정(`PowerModeTransitionCost`, DB-FR-32)과 구분해야 한다. 현재 제공되는 동작 비용
+  목록과 상세에서 Node, 순서 있는 동작 조건, 단계별 저장 key와 판정, 진행과 사유,
+  CR identity 및 Evidence 위치를 조회해야 한다. 제공되지 않는 시간·에너지와
+  전력모드 쌍을 추정하지 않아야 한다. 자료 종류는 실제 API 이름과 일치해야 한다.
+- `DB-FR-54` 분배 점유시간(`DispatchOccupancyMeasurement`)의 목록과 상세에서
+  워크로드, Node, 측정 프로파일 참조, 배치, 공급 방식, 예열·측정 초와 worker 수,
+  진행과 사유, 결과의 전력모드, 요청당 점유시간 d(ns/request), 지속 완료 처리량
+  X(req/s) 및 Evidence 위치를 조회해야 한다. 누락 결과와 0인 결과를 구분하고,
+  지정하지 않은 공급 방식을 임의로 정하지 않아야 한다.
+
 ### 5.6 구성 판단과 운영 설정
 
 - `DB-FR-15` 실제 현재 구성, 비교 후보와 선택 목표를 구분해야 한다. 판단 결과의 제공 여부와 적용 조건을 표시해야 한다.
@@ -202,6 +213,13 @@ CHILL 설치, 업그레이드와 제거는 Helm 또는 GitOps의 배포 경로�
   수행해야 한다. 비교 실험의 정적 구성 및 제어요소 비활성화는 자동 제어와 구분하고,
   선택 근거와 설정을 실행 기록에 연결해야 한다. 설정 기반 요청 분배는 워크로드별 인스턴스
   분배 비율의 선언과 실제 반영 결과를 나란히 표시하고, 반영 대기와 실패 이유를 표시해야 한다.
+- `DB-FR-55` 스케줄러가 제공하는 용량 행의 입력과 결과를 조회해야 한다. 행 key,
+  워크로드 UID, SLO, Node identity, 전력모드, 프로파일, 자원 할당, 최대 배치,
+  완료 여유, 계산 구간과 반복·합격·최소 요청 수 및 `capacityGridSteps`,
+  `capacityBisectionWidth`, `capacityTailSamples`를 표시해야 한다. 입력의 분배
+  점유시간 출처, μ와 κ(req/s), 계산 시각·소요시간, 이전 계산 여부 및 grid/bisection
+  판정을 연결해야 한다. 계산 대기·거부·κ 없음·κ=0을 구분하고, 행에 고정된
+  설정과 현재 운영 설정을 대조하되 현재 설정으로 과거 입력이나 판정을 덮지 않아야 한다.
 
 ### 5.7 전환과 장애 감독
 
@@ -236,8 +254,9 @@ CHILL 설치, 업그레이드와 제거는 Helm 또는 GitOps의 배포 경로�
   등록 건의 UID와 적용 정의를 유지해 같은 이름으로 재등록한 워크로드의 기록과 구분해야 한다.
 - `DB-FR-44` ChillServer의 실험 결과 조회로 실험 ID, 단계 경계, 단계별 결과와
   고정된 출처를 가진 불변 기록을 읽어야 한다. 로컬 보존 범위를 벗어난 구간도 근거 저장소 조회로 재생하고, 원본이 없는 구간은 관측 공백으로 표시해야 한다.
-- `DB-FR-45` 전환 비용과 분배 점유시간(d) 측정 CR의 목록과 상세를 ChillServer에서
-  조회해야 한다. 측정 조건, 진행, 성공과 실패 및 결과 요약을 원본 CR과 측정 근거에 연결해야 한다.
+- `DB-FR-45` 동작 비용과 분배 점유시간(d) 측정 CR의 목록과 상세를 ChillServer에서
+  조회해야 한다. 측정 조건, 진행, 성공과 실패 및 제공되는 결과 요약을 원본 CR identity와
+  측정 근거 위치에 연결해야 한다(DB-FR-53~54). 전력모드 쌍의 원시 전환 기록은 DB-FR-32다.
 
 ### 5.9 라이브 무대와 근거
 
@@ -353,8 +372,10 @@ CHILL 설치, 업그레이드와 제거는 Helm 또는 GitOps의 배포 경로�
 | DB-FR-35~39, DB-FR-50~52 | 라이브 무대의 맨 위 띠, POOL 카드, 인스턴스·Node·예약, 공통 시간축 및 판단 근거라는 재설계 요구; 한 화면 과밀을 줄이고 계층(드릴다운)·POOL 묶음·CHILL 구조 그림 위 실시간 흐름으로 보여 달라는 사용자 리뷰(decision-log 2026-10-28) |
 | DB-FR-40~42, DB-FR-44 | 단계별 재생과 비교, 성공률 모집단 구분 및 공유 에너지 합산 금지라는 재설계 요구; 근거 저장소 조회 결정(D2) |
 | DB-FR-43 | 삭제 후에도 워크로드 이름을 유지하는 사용자 요구; 기존 표시 보완 구현 `7a1d78cb` |
-| DB-FR-45 | 전환 비용과 분배 점유시간(d) 측정 CR의 진행과 결과를 조회하는 사용자 요구 |
+| DB-FR-45 | 동작 비용과 분배 점유시간(d) 측정 CR의 진행과 결과를 조회하는 사용자 요구 |
 | DB-FR-46~49 (폐기) | 링크 모음, 준비 중 화면과 미지원 측정 일반 분기를 제거하되 실제 기능은 새 흐름에 유지하는 재설계 결정 |
+| DB-FR-53~54 | `internal/serving/httpapi/measurement_projections.go`의 안전한 목록·단건 투영과 두 CRD. PowerModeTransitionCost와 OperationCostMeasurement는 서로 다른 측정 계약이다. |
+| DB-FR-55 | `internal/serving/capacity.go`의 CapacityInput/CapacityRow/CapacityJudgment와 `internal/serving/httpapi/profiles.go`의 용량 조회, 현재 설정 대조 요구 |
 
 ## 9. 수용 검증 시나리오
 
@@ -423,10 +444,56 @@ CHILL 설치, 업그레이드와 제거는 Helm 또는 GitOps의 배포 경로�
 
 요구사항: DB-FR-45~49.
 
-- **Given** 전환 비용과 분배 점유시간(d) 측정 CR의 진행 및 결과가 제공된다.
+- **Given** 동작 비용과 분배 점유시간(d) 측정 CR의 진행 및 결과가 제공된다.
 - **When** 운영자 영역에서 두 종류의 측정 목록과 상세를 조회하고 기본 탐색 경로를 따른다.
 - **Then** 조건, 진행, 성공과 실패 및 결과 요약이 원본 근거와 연결된다.
 - **Then** `/records`, `/settings` 링크 모음, `/experiments` 준비 중 화면과 `/measurements/:kind/...` 일반 준비 중 분기가 노출되지 않고 지원 기능은 새 흐름에서 접근된다.
+
+### 동작 비용의 실제 API와 원본 identity
+
+요구사항: DB-FR-45, DB-FR-49, DB-FR-53, DB-OP-05, DB-NFR-01~03.
+
+- **Given** power/prepare/idle/remove 조건과 일부 단계의 저장 key·판정이 있는 동작 비용,
+  빈 목록, 실패·근거 부족 결과 및 같은 이름의 다른 UID가 제공된다.
+- **When** `/measurements`에서 동작 비용 목록을 열고
+  `/measurements/operation-cost-measurements/[namespace]/[name]?uid=<uid>`를 공유·새로고침한다.
+- **Then** 순서 있는 조건과 저장된 단계 결과를 이름으로 연결하고 미기록 단계는
+  “아직 기록된 결과가 없어요”로 표시한다. 저장 위치는 `{store,key}` 그대로 보존하고
+  HTTP 다운로드 주소나 Passport 링크를 만들어 내지 않는다.
+- **Then** 다른 UID는 “같은 이름으로 다시 등록된 다른 측정이에요”로 차단한다.
+  빈 목록은 “아직 등록된 동작 비용 측정이 없어요”, 403은 권한 오류로 구분한다.
+  자료 찾기에 미지원 `power-mode-transition-costs` 선택지가 없고, 해당 옛 URL은
+  미지원 안내와 실제 목록 이동만 제공하며 다른 측정으로 자동 대체하지 않는다.
+
+### 분배 점유시간의 조건과 누락 결과
+
+요구사항: DB-FR-45, DB-FR-54, DB-OP-05, DB-NFR-01~03.
+
+- **Given** Measuring/Complete/Insufficient/Failed, 공급 방식 미지정, `perRequestNanos`
+  누락과 0, 문자열 처리량 및 결과 참조가 있는 분배 점유시간 응답이 있다.
+- **When** `/measurements/dispatch-occupancy-measurements?namespace=<ns>`에서
+  `/measurements/dispatch-occupancy-measurements/[namespace]/[name]?uid=<uid>`를 연다.
+- **Then** 실제 조건과 진행·사유를 표시하고 d는 ns/request, X는 req/s로 표시한다.
+  0은 0으로, 누락은 “결과 없음”, 공급 방식 미지정은 “기록되지 않았어요”로 보인다.
+  CRD에만 있고 API가 투영하지 않은 필드를 화면의 값으로 만들지 않는다.
+- **Then** 빈 목록·404·401/403·503·timeout을 구분하고 다른 UID의 결과를 이전 근거로
+  사용하지 않는다. 키보드로 상세·원본을 열고 닫으면 선택한 행으로 focus가 돌아온다.
+
+### 용량 입력과 계산 판정 및 현재 설정 대조
+
+요구사항: DB-FR-16~17, DB-FR-55, DB-OP-05, DB-NFR-01~03.
+
+- **Given** Built(양수 및 κ=0), CapacityPending, CapacityRejected(점유시간 누락 및
+  NonMonotone), previous=true와 κ 누락 행, 현재 설정과 다른 세 탐색 입력이 있다.
+- **When** `/scheduler/capacity?row=<key>`를 새로고침하고 입력, grid, bisection,
+  현재 설정 대조를 열며 `/configuration?section=capacity`로 이동한다.
+- **Then** key가 일치하는 행만 열리고 모든 CapacityInput 필드와 서버 판정이 보인다.
+  grid와 bisection의 실행 순서, rate, requests, passed, met와 percentileMS를 표시하며
+  조기 종료한 구간을 전체 구간 합격률로 바꾸지 않고 -1을 음의 지연으로 그리지 않는다.
+- **Then** 과거 입력과 현재 설정을 별도 열로 보이며 세 필드 변경 시 다른 key의 행으로
+  식별된다. previous는 “이전 계산 결과 · 다시 계산 중”, 없는 key는 “이 용량 행을
+  찾을 수 없어요”로 표시하고 최신 행으로 대체하지 않는다. 설정 조회만 실패해도
+  용량 행은 유지되며 κ가 실제 부하·처리량 또는 현재 SLO 충족 관측으로 표현되지 않는다.
 
 ## 10. 구현 설계의 산출물
 
@@ -446,3 +513,4 @@ CHILL 설치, 업그레이드와 제거는 Helm 또는 GitOps의 배포 경로�
 |---|---|
 | 2026-10-25 | DB-FR-03 변경; DB-INT-07~08, DB-NFR-07, DB-FR-35~45 추가; DB-FR-46~49 폐기 이력 기록. 근거 저장소 조회로 기록을 재생하는 D2와 WebSocket 연결 직후 첫 메시지로 인증하는 D3를 반영하고 관련 수용 시나리오를 추가했다. |
 | 2026-10-28 | 사용자 리뷰 반영: DB-FR-50(계층·드릴다운), DB-FR-51(구조 그림 위 실시간 흐름), DB-FR-52(POOL 묶음) 추가. DB-FR-36~39를 계층별로 재배치(카드 3개 고정과 Node×워크로드 격자 삭제, 지표 의미·예약·근거 고정 규칙은 유지). |
+| 2026-10-30 | DB-FR-53~55와 세 수용 시나리오 추가. DB-FR-45의 동작 비용과 DB-FR-32의 전력모드 쌍 측정을 구분하고 실제 측정 투영과 용량 계산 입력·판정·현재 설정 대조를 명시했다. |
