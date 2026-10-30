@@ -76,3 +76,11 @@
 - 사용자 결정: 갭 G1(증가 구간 MNV 공급: rate-limiter 근본 원인 → 빈 Node MNV 프로파일링) → G2(Smol 전환 꼬리) → G3(에너지 Δ) → G4(factor 재실험) 순. **배포·표적 재실행·프로파일링 캠페인은 사전 승인("모두 알아서 승인, 조치 후 보고")**, 방법 제한 없음. 불변: runtime 7 이미지, 측정 재시도 금지, raw 행 판정, 증거 조작 금지, 디스크 guard.
 - 사용자 지침(설계 원칙): 단편 패치(A→A') 금지. 큰 그림에서 구조적 원인을 찾아 쉽고 가볍고 널리 알려진 패턴을 응용해 근본적으로 해결. 각 수정은 구조적 원인·적용 패턴·tradeoff와 재발 방지 invariant를 카드에 기록.
 - 사용자 지침(검증): 해결 방향은 구현 전 타사 모델 패널(fusion: 3 패널 독립 + 판정자) 리뷰를 거쳐 확정. 워크플로우 2단계(본질·설계)와 3단계(구현) 사이에 "설계 브리프 → 패널 리뷰 → 방향 확정" 게이트 추가.
+
+## 2026-10-30 — 최적화 사이클 1~3 1차 결과(rev118)
+
+- 패널 판정(`.fusion` 기록, local judge-verdict-cycle123): 브리프2(jetsonx 모드 투영) → 브리프1(예약 증명 경계) → 브리프3(D2 terminal tombstone → D1 staged handoff, veto 삭제 금지).
+- 커밋: `d788bd11`(AtMode 정규화·모든 가상 writer 통일), `cde9e4de`/`03193e1e`/`bdce22f0`(owner baseline·route receipt·P1), `532f3240`(Terminated exact tombstone), 선행 `8e54818b`/`1e63512b`. 사이클 1 결론: rate limiter는 E5 원인 아님(E5-3/5 raw limiter 0행; rehearsal 취소는 autonomy-off 정상 취소).
+- rev118(서버 532f3240): jetsonx MNV7·PLC6 rows CapacityRejected→Built, **R MNV 235.89→300.61, Smol 1.285→1.651**(PLC 불변). genesis3 GPU_1500 occupancy 1회 Accepted(6.578ms/req) → MNV b1~b8 κ≈68~72 Built. 두 번째 replay R(302.6/316.4/0.83)은 genesis3가 GPU_1500 상태에서 찍힌 snapshot 영향 — fixed 복귀 후 재replay 필요(수치 채택 금지).
+- 운영 주의: 다른 세션이 rev117(소스 04053ec) 배포함 — 두 세션 동시 클러스터 조작 위험. 증거 디렉터리 충돌로 일부 배포 증거 덮어쓰기(control-236, 재구성 기록).
+- 다음: 4회차 표적 재실행(E5-3/E5-5/E5-7, 3회차와 동일 rate·seed) → 비교; D1 커밋 후 재배포·재실행.
