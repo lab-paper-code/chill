@@ -23,10 +23,6 @@ const (
 	CapacityNoOccupancy       = "MissingDispatchOccupancy"
 	CapacityRowBuiltEvent     = "capacity-row-built"
 	CapacityServiceExceedsSLO = "BatchServiceExceedsSLO"
-
-	capacityGridSteps      = 20    // grid rates 0.05k mu, k = 1..20
-	capacityBisectionWidth = 0.005 // of mu
-	capacityTailSamples    = 100   // samples above the SLO percentile in each window
 )
 
 // CapacityInput names everything a row's kappa depends on; its hash is the row key.
@@ -43,6 +39,9 @@ type CapacityInput struct {
 	Windows            int                 `json:"capacityWindows"`
 	PassingWindows     int                 `json:"capacityPassingWindows"`
 	MinimumRequests    int                 `json:"capacityMinimumRequests"`
+	GridSteps          int                 `json:"capacityGridSteps"`
+	BisectionWidth     float64             `json:"capacityBisectionWidth"`
+	TailSamples        int                 `json:"capacityTailSamples"`
 	// DispatchOccupancy is the measurement for the option's Node, power mode,
 	// runtime image and model; without one the row has no kappa.
 	DispatchOccupancy *DispatchOccupancy `json:"dispatchOccupancy,omitempty"`
@@ -103,6 +102,7 @@ func NewCapacityInput(settings SchedulerSettings, occupancy []DispatchOccupancy,
 		Allocation: i.Allocation, MaxBatch: i.MaxBatch, CompletionMarginMS: settings.CompletionMarginMS,
 		Window: settings.CapacityWindow, Windows: settings.CapacityWindows, PassingWindows: settings.CapacityPassingWindows,
 		MinimumRequests: settings.CapacityMinimumRequests, DispatchOccupancy: dispatchOccupancy(occupancy, o.Instance),
+		GridSteps: settings.CapacityGridSteps, BisectionWidth: settings.CapacityBisectionWidth, TailSamples: settings.CapacityTailSamples,
 	}
 }
 
@@ -175,14 +175,12 @@ func BuildCapacityRow(ctx context.Context, settings SchedulerSettings, occupancy
 	return row, nil
 }
 
-// build judges every grid rate 0.05k mu. Met rates followed by missed rates
-// give kappa: the last met grid rate bisected toward the next one to 0.5% of
-// mu (0 when 0.05 mu misses, mu when every rate is met). A met rate after a
-// missed one rejects the row as NonMonotone without kappa.
+// build judges every configured grid rate before bisecting the last passing
+// interval to the selected fraction of mu. A pass after a miss rejects the row.
 func (b *capacityBuilder) build(ctx context.Context, row *CapacityRow) error {
 	met := 0
-	for k := 1; k <= capacityGridSteps; k++ {
-		j, err := b.judge(ctx, capacityGridStep(k, row.Mu))
+	for k := 1; k <= b.settings.CapacityGridSteps; k++ {
+		j, err := b.judge(ctx, b.gridStep(k, row.Mu))
 		if err != nil {
 			return err
 		}
@@ -196,11 +194,14 @@ func (b *capacityBuilder) build(ctx context.Context, row *CapacityRow) error {
 	if row.Status != "" {
 		return nil
 	}
-	kappa := capacityGridStep(met, row.Mu)
-	if met > 0 && met < capacityGridSteps {
-		hi := capacityGridStep(met+1, row.Mu)
-		for hi-kappa > capacityBisectionWidth*row.Mu {
+	kappa := b.gridStep(met, row.Mu)
+	if met > 0 && met < b.settings.CapacityGridSteps {
+		hi := b.gridStep(met+1, row.Mu)
+		for hi-kappa > b.settings.CapacityBisectionWidth*row.Mu {
 			mid := (kappa + hi) / 2
+			if mid == kappa || mid == hi {
+				break // The selected width is below floating-point resolution.
+			}
 			j, err := b.judge(ctx, mid)
 			if err != nil {
 				return err
@@ -217,14 +218,16 @@ func (b *capacityBuilder) build(ctx context.Context, row *CapacityRow) error {
 	return nil
 }
 
-func capacityGridStep(k int, mu float64) float64 { return float64(k) / capacityGridSteps * mu }
+func (b *capacityBuilder) gridStep(k int, mu float64) float64 {
+	return float64(k) / float64(b.settings.CapacityGridSteps) * mu
+}
 
-// requests is the window population: MinimumRequests, capacityTailSamples
+// requests is the window population: MinimumRequests, CapacityTailSamples
 // above the SLO percentile, and at least CapacityWindow of arrivals.
 func (b *capacityBuilder) requests(lambda float64) int {
 	n := max(b.settings.CapacityMinimumRequests, int(math.Ceil(lambda*b.settings.CapacityWindow.Seconds())))
 	if b.percentile < 100 {
-		n = max(n, int(math.Ceil(capacityTailSamples/(1-b.percentile/100))))
+		n = max(n, int(math.Ceil(float64(b.settings.CapacityTailSamples)/(1-b.percentile/100))))
 	}
 	return n
 }

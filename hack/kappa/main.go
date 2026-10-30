@@ -59,7 +59,7 @@ func main() {
 			settings.CompletionMarginMS = *margin
 		}
 		settings.CapacityWindow = time.Duration(*window * 1e9)
-		settings.CapacityWindows, settings.CapacityPassingWindows, settings.CapacityMinimumRequests = *windows, *passing, 1000
+		settings.CapacityWindows, settings.CapacityPassingWindows = *windows, *passing
 		settings.PlanSearchWorkers = *workers
 		settings.AutonomousWorkloads = nil
 		for _, w := range snapshot.Workloads {
@@ -88,7 +88,7 @@ func main() {
 
 func loadScheduler(name string) (serving.SchedulerSnapshot, serving.SchedulerSettings, error) {
 	var dump struct {
-		Settings serving.SchedulerSettings `json:"settings"`
+		Settings serving.SchedulerSettingsInput `json:"settings"`
 		State    struct {
 			Snapshot json.RawMessage `json:"snapshot"`
 		} `json:"state"`
@@ -98,10 +98,14 @@ func loadScheduler(name string) (serving.SchedulerSnapshot, serving.SchedulerSet
 		err = json.Unmarshal(data, &dump)
 	}
 	if err != nil {
-		return serving.SchedulerSnapshot{}, dump.Settings, err
+		return serving.SchedulerSnapshot{}, serving.SchedulerSettings{}, err
+	}
+	settings, err := dump.Settings.Settings()
+	if err != nil {
+		return serving.SchedulerSnapshot{}, settings, err
 	}
 	snapshot, err := decodeSnapshot(dump.State.Snapshot)
-	return snapshot, dump.Settings, err
+	return snapshot, settings, err
 }
 
 // decodeSnapshot reads a snapshot; the legacy instance field workloadUIDs of

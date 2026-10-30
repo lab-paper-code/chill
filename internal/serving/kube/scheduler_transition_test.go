@@ -952,6 +952,7 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State)) (
 		config: SchedulerControllerConfig{Settings: serving.SchedulerSettings{
 			ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 			MaxObservationAge: time.Minute, MaxReplicas: 3, MaxInstances: 3, MaxCPUs: 4,
+			CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 			CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
 			AutonomousWorkloads: []string{d.UID},
 		}},

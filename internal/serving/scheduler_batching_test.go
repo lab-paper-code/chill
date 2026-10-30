@@ -61,18 +61,30 @@ func TestBatchingOffSnapshotReplay(t *testing.T) {
 		}
 	}
 	var cases []struct {
-		ID       string            `json:"id"`
-		Snapshot SchedulerSnapshot `json:"snapshot"`
-		Settings SchedulerSettings `json:"settings"`
+		ID       string                 `json:"id"`
+		Snapshot SchedulerSnapshot      `json:"snapshot"`
+		Settings SchedulerSettingsInput `json:"settings"`
 	}
 	var rows []CapacityRow
 	load("inputs.json", &cases)
 	load("capacity.json", &rows)
 	for _, c := range cases {
 		t.Run(c.ID, func(t *testing.T) {
-			s, snap := c.Settings, c.Snapshot
+			s, err := c.Settings.Settings()
+			if err != nil {
+				t.Fatal(err)
+			}
+			snap := c.Snapshot
+			// Raw captures remain unchanged; these rows belong to this replay's
+			// current-contract input, not the archived keys.
+			currentRows := slices.Clone(rows)
+			for index := range currentRows {
+				in := &currentRows[index].Input
+				in.GridSteps, in.BisectionWidth, in.TailSamples = s.CapacityGridSteps, s.CapacityBisectionWidth, s.CapacityTailSamples
+				currentRows[index].Key = in.Key()
+			}
 			s.Controls = SchedulerControls{true, true, true, true, false, true, true}
-			p := capacityPlannerForTest(t, s, snap, rows)
+			p := capacityPlannerForTest(t, s, snap, currentRows)
 			before, after, compatible := 0, 0, 0
 			caps := map[int]bool{}
 			count := func(options []SchedulerOption, old bool) {
@@ -100,7 +112,7 @@ func TestBatchingOffSnapshotReplay(t *testing.T) {
 			if after <= before {
 				t.Fatalf("fixed policy variants not restored: before=%d after=%d", before, after)
 			}
-			d, err := EvaluateScheduler(context.Background(), s, snap, rows)
+			d, err := EvaluateScheduler(context.Background(), s, snap, currentRows)
 			if err != nil {
 				t.Fatal(err)
 			}

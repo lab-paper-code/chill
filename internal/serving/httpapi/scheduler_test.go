@@ -38,6 +38,7 @@ func schedulerSettingsForTest() serving.SchedulerSettings {
 		MaxObservationAge: time.Second, MaxReplicas: 1,
 		ReplacementDwell:       17 * time.Second,
 		ScaleDownStabilization: 120 * time.Second, TransitionReserveFraction: .25,
+		CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 1}
 }
 
@@ -120,12 +121,14 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 	for _, tc := range []struct {
 		name, omit                                                                                             string
 		resourceAllowed, updateFailure, observationLogFailure, invalidSettings, refreshFailure, missingRefresh bool
+		completionAppendFailure                                                                                bool
 		autonomous, stored                                                                                     []string
 		want                                                                                                   int
 	}{
 		{name: "persist and apply", resourceAllowed: true, want: http.StatusOK},
 		{name: "resource denial", want: http.StatusForbidden},
 		{name: "write failure", resourceAllowed: true, updateFailure: true, want: http.StatusServiceUnavailable},
+		{name: "completion append failure does not roll back", resourceAllowed: true, completionAppendFailure: true, want: http.StatusServiceUnavailable},
 		{
 			name: "journal failure prevents write", resourceAllowed: true,
 			observationLogFailure: true, want: http.StatusServiceUnavailable,
@@ -149,6 +152,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 			before := schedulerSettingsForTest()
 			after := before
 			after.MaxCPUs++
+			after.CapacityGridSteps, after.CapacityBisectionWidth, after.CapacityTailSamples = 7, .02, 12
 			// PUT stores only autonomous UIDs of current Workloads.
 			after.AutonomousWorkloads = tc.autonomous
 			stored := after
@@ -227,7 +231,13 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 					if err := json.Unmarshal([]byte(cm.Data["scheduler.json"]), &configuration); err != nil {
 						return err
 					}
-					return controller.SetConfiguration(servingkube.SchedulerControllerConfig{Settings: configuration.Settings})
+					if err := controller.SetConfiguration(servingkube.SchedulerControllerConfig{Settings: configuration.Settings}); err != nil {
+						return err
+					}
+					if tc.completionAppendFailure {
+						return observationLog.Close(ctx)
+					}
+					return nil
 				}
 			}
 			raw, err := json.Marshal(after)
@@ -247,6 +257,13 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 				t.Fatal(err)
 			}
 			if response.Code != http.StatusOK {
+				if tc.completionAppendFailure {
+					assertSchedulerSettingsUnapplied(t, persisted, controller, after, after)
+					if updates != 1 || refreshes != 1 {
+						t.Fatal("completion failure changed apply sequence")
+					}
+					return
+				}
 				wantDesired := before
 				if tc.refreshFailure {
 					wantDesired = after

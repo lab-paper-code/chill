@@ -169,6 +169,8 @@ type ProfileReuseCheck struct {
 	SourceNode                  NodeReference                 `json:"sourceNode"`
 	TargetNode                  NodeReference                 `json:"targetNode"`
 	MaximumRelativeDifference   float64                       `json:"maximumRelativeDifference"`
+	MinimumMeasurementSeconds   float64                       `json:"minimumMeasurementSeconds"`
+	MinimumTrials               int                           `json:"minimumTrials"`
 	ConfirmationActiveSeconds   int                           `json:"confirmationActiveSeconds"`
 	ConfirmationIdleSeconds     int                           `json:"confirmationIdleSeconds"`
 	ConfirmationTrialsPerBatch  int                           `json:"confirmationTrialsPerBatch"`

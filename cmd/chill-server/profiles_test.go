@@ -278,6 +278,7 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 		ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 		MaxObservationAge: time.Second, MaxReplicas: 1,
 		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
+		CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 		CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 2,
 	}
 	// The native store is unreachable, so listing completed measurements fails.
@@ -301,7 +302,7 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 		}
 	})
 	objects := &stores3.Store{}
-	catalog, err := servingkube.NewCatalog(store, objects, 1024, 0.95)
+	catalog, err := servingkube.NewCatalog(store, objects, 1024)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,6 +450,7 @@ func schedulerTestConfiguration() schedulerConfiguration {
 			ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 			MaxObservationAge: time.Second, MaxReplicas: 1,
 			MaxInstances: 5, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
+			CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 			CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 2,
 		},
 		Reserved: map[string]serving.SchedulerAllocation{"rpi": {CPUs: []int{0}}},
@@ -521,7 +523,7 @@ func schedulerTestService(t *testing.T, config schedulerConfiguration) *schedule
 		t.Fatal(err)
 	}
 	objects := &stores3.Store{}
-	catalog, err := servingkube.NewCatalog(store, objects, 1024, 0.95)
+	catalog, err := servingkube.NewCatalog(store, objects, 1024)
 	if err != nil {
 		t.Fatal(err)
 	}

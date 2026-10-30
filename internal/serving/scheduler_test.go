@@ -28,6 +28,7 @@ const (
 func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	at := time.Unix(100, 0)
 	s := SchedulerSettings{ObservationWindow: 100 * time.Millisecond, ControlInterval: time.Second, ComparisonPeriod: 100 * time.Millisecond, MaxObservationAge: time.Second, MaxReplicas: 2, MaxInstances: 4, MaxCPUs: 4, AutonomousWorkloads: []string{"w1"}, CapacityWindow: time.Second, CapacityWindows: 3, CapacityPassingWindows: 2, CapacityMinimumRequests: 50, PlanSearchWorkers: 2, Controls: SchedulerControls{Placement: true, Resources: true, Replicas: true, Routing: true, Batching: true, Power: true, Membership: true}}
+	s.CapacityGridSteps, s.CapacityBisectionWidth, s.CapacityTailSamples = 20, .005, 100
 	node := SchedulerNode{Node: NodeReference{Name: "node1", UID: "n1"}, PowerMode: "fixed", Ready: true, CPUs: []int{0, 1, 2, 3}, ModeCPUs: map[string][]int{"fixed": {0, 1, 2, 3}, schedulerTestEcoMode: {0, 1, 2, 3}}, MemoryBytes: 10000, ObservedAt: at}
 	image := "registry/model@sha256:" + strings.Repeat("a", 64)
 	settings := &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 100}

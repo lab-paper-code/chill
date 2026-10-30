@@ -39,6 +39,7 @@ export type SchedulerSettings = {
   maxReplicas:WireInteger; maxInstances:WireInteger; maxCPUs:WireInteger; servingMemoryBytes:WireInteger
   completionMarginMS:number
   capacityWindowNanos:WireInteger; capacityWindows:WireInteger; capacityPassingWindows:WireInteger; capacityMinimumRequests:WireInteger
+  capacityGridSteps:WireInteger; capacityBisectionWidth:number; capacityTailSamples:WireInteger
   planSearchWorkers:WireInteger
   autonomousWorkloads:string[]|null
   minimumDemand?:Record<string,number>

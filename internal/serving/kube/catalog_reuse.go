@@ -22,6 +22,8 @@ const profileReuseRejected = "Rejected"
 type profileReuseRequest struct {
 	SourceProfileID           string  `json:"sourceProfileID"`
 	MaximumRelativeDifference float64 `json:"maximumRelativeDifference"`
+	MinimumMeasurementSeconds float64 `json:"minimumMeasurementSeconds"`
+	MinimumTrials             int     `json:"minimumTrials"`
 }
 
 // Confirmations are never independently eligible. Resolve only direct, latest
@@ -59,6 +61,8 @@ func applyProfileReuse(view CatalogView, requests map[string]string) (CatalogVie
 			SourceNode:                 serving.NodeReference{Name: source.NodeName, UID: source.Condition.NodeUID},
 			TargetNode:                 serving.NodeReference{Name: target.NodeName, UID: target.Condition.NodeUID},
 			MaximumRelativeDifference:  request.MaximumRelativeDifference,
+			MinimumMeasurementSeconds:  request.MinimumMeasurementSeconds,
+			MinimumTrials:              request.MinimumTrials,
 			ConfirmationActiveSeconds:  target.Condition.ActiveProtocol.DurationSeconds,
 			ConfirmationIdleSeconds:    target.Condition.IdleProtocol.DurationSeconds,
 			ConfirmationTrialsPerBatch: target.TrialsPerBatch,
@@ -96,7 +100,7 @@ func applyProfileReuse(view CatalogView, requests map[string]string) (CatalogVie
 }
 
 func decodeProfileReuseRequest(raw string) (profileReuseRequest, error) {
-	var request profileReuseRequest
+	request := profileReuseRequest{MinimumMeasurementSeconds: 30, MinimumTrials: 3}
 	decoder := json.NewDecoder(strings.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
@@ -107,6 +111,9 @@ func decodeProfileReuseRequest(raw string) (profileReuseRequest, error) {
 	}
 	if request.SourceProfileID == "" || !(request.MaximumRelativeDifference > 0 && request.MaximumRelativeDifference < 1) {
 		return profileReuseRequest{}, errors.New("sourceProfileID and finite maximumRelativeDifference in (0,1) required")
+	}
+	if math.IsNaN(request.MinimumMeasurementSeconds) || math.IsInf(request.MinimumMeasurementSeconds, 0) || request.MinimumMeasurementSeconds <= 0 || request.MinimumTrials < 2 {
+		return profileReuseRequest{}, errors.New("minimumMeasurementSeconds must be finite and positive; minimumTrials must be at least 2")
 	}
 	return request, nil
 }
@@ -135,8 +142,8 @@ func compareReuseProfiles(source, target serving.Profile, check *serving.Profile
 		!reflect.DeepEqual(reuseCondition(source.Condition), reuseCondition(target.Condition)) {
 		return errors.New("reuse device class, immutable images, resource allocation or execution condition mismatch")
 	}
-	if target.Condition.ActiveProtocol.DurationSeconds < 30 || target.Condition.IdleProtocol.DurationSeconds < 30 || target.TrialsPerBatch < 3 {
-		return errors.New("confirmation requires active/idle windows >=30 seconds and >=3 trials")
+	if float64(target.Condition.ActiveProtocol.DurationSeconds) < check.MinimumMeasurementSeconds || float64(target.Condition.IdleProtocol.DurationSeconds) < check.MinimumMeasurementSeconds || target.TrialsPerBatch < check.MinimumTrials {
+		return fmt.Errorf("confirmation requires active/idle windows >=%g seconds and >=%d trials", check.MinimumMeasurementSeconds, check.MinimumTrials)
 	}
 	sourceRuntime, targetRuntime := *source.RuntimeMetadata, *target.RuntimeMetadata
 	sourceRuntime.GPUUUID, targetRuntime.GPUUUID = "", ""
@@ -195,7 +202,7 @@ func reusedProfile(source, target serving.Profile, check serving.ProfileReuseChe
 	profile = cloneCatalogProfile(profile)
 	// Annotations can change; never overwrite an immutable startup bundle
 	// when the pinned source or confirmation policy changes.
-	policy := fmt.Sprintf("%s\x00%g", check.SourceProfileID, check.MaximumRelativeDifference)
+	policy := fmt.Sprintf("%s\x00%g\x00%g\x00%d", check.SourceProfileID, check.MaximumRelativeDifference, check.MinimumMeasurementSeconds, check.MinimumTrials)
 	profile.ID += fmt.Sprintf("/reuse-%x", sha256.Sum256([]byte(policy)))
 	check.Batches = slices.Clone(check.Batches)
 	if check.IdlePowerRelativeDifference != nil {

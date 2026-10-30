@@ -33,6 +33,8 @@ Tick은 κ 합, 노드 계획과 두 출발점의 이웃 탐색으로 구성을 
 **설정.** `capacityWindowNanos` 60 s, `capacityWindows` 20, `capacityPassingWindows` 19, `capacityMinimumRequests` 1,000. 60 s 창이 필요한 근거: 요청 수 창만 쓰면 빠른 option(genesis2 cuda, 2,000 요청이 14 s)의 κ가 μ에 붙어 relaxed 1.2κ에서 20/20 충족이었고, 60 s 창에서는 0/20이다. 20개 중 19개 기준이 필요한 근거: 창 하나로 정한 κ는 1.0κ에서 6~12/20만 충족했다.
 
 추가 설정의 범위는 capacityGridSteps·capacityTailSamples 정수≥1(Go 표현 범위), capacityBisectionWidth finite (0,1]다. 옛 κ 키 유지용 분기·dual lookup은 없다. 기본 결과 μ1000/κ959.375와 Grid/Bisection 판정은 변경 전 fixture와 대조한다.
+`SchedulerSettingsInput`이 생략값 20/.005/100을 한 번 채우고 ConfigMap·HTTP·직접 κ 도구가 같은 경계를 사용한다. 실제 선택값은 Decision.Settings와 CapacityInput에 기록한다. 부동소수점 해상도보다 작은 폭에서는 중점이 더 이상 이동하지 않을 때 종료한다.
+
 
 **디스패치 점유.** d는 firstfloor 인스턴스가 요청 하나마다 profile 실행시간 밖에서 더 점유되는 시간이다. 포화한 인스턴스 하나가 배치 b로 낸 지속 처리율 X에서 `d = 1/X − (배치 b의 profile 평균 실행시간)/b`다. d에는 배치 사이 actor 시간(결과 전달, 다음 배치 선택, runner 호출 준비)과 같은 Pod CPU를 쓰는 요청 수신과 응답 처리로 늘어난 runner 실행시간이 함께 들어간다. rasp5 q1(m4 r3 Q2, 15:46~15:51)은 b1로 26.88 req/s, 요청당 37.20 ms였다. Q2 행 전체에서 실측 `serviceMS` 평균은 약 34.5 ms, 실행 기록 사이 간격은 평균 약 3.1 ms다. profile b1 평균은 27.79 ms라 d = 9.41 ms다.
 - 기준은 profile 평균이다. 측정한 고정 batch의 `B/(profileMean+B×signed d)`는 X와 같다.

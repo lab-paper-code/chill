@@ -71,6 +71,18 @@ func loadRev76Fixture(t *testing.T) rev76Fixture {
 	if err = json.Unmarshal(data, &f); err != nil {
 		t.Fatal(err)
 	}
+	// Preserve the captured raw document; construct current-contract replay
+	// inputs explicitly rather than treating old row keys as current keys.
+	margin := f.Settings.CompletionMarginMS
+	f.Settings, err = (SchedulerSettingsInput{SchedulerSettings: f.Settings, CompletionMarginMS: &margin, BootstrapCapacityWait: &f.Settings.BootstrapCapacityWait, ScaleDownStabilization: &f.Settings.ScaleDownStabilization, ReplacementDwell: &f.Settings.ReplacementDwell}).Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range f.Rows {
+		row := &f.Rows[index]
+		row.Input.GridSteps, row.Input.BisectionWidth, row.Input.TailSamples = f.Settings.CapacityGridSteps, f.Settings.CapacityBisectionWidth, f.Settings.CapacityTailSamples
+		row.Key = row.Input.Key()
+	}
 	profiles := map[string]*Profile{}
 	for _, profile := range f.Profiles {
 		profiles[profile.ID] = profile

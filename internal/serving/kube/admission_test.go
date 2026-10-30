@@ -125,6 +125,7 @@ func newAdmissionController(t *testing.T, kube kubernetes.Interface) (*Scheduler
 		SchedulerControllerConfig{
 			Settings: serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 				MaxObservationAge: time.Second, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1,
+				CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 				CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 4},
 			MeasurementNamespaces: []string{"chill-system"},
 		})
@@ -377,7 +378,7 @@ func TestEvidenceReadersCountInvalidMeasurements(t *testing.T) {
 			Result: &edge.ProfilingRunEvidenceReference{Store: "store", Key: "power/result.json", Size: 1}}}
 	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(campaign, transition).Build()}
 	catalogObjects := &catalogTestObjects{}
-	catalog, err := NewCatalog(store, catalogObjects, 1024, 0.95)
+	catalog, err := NewCatalog(store, catalogObjects, 1024)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -31,6 +31,9 @@ const fields: Field[] = [
   {key:"capacityWindows",label:"용량 계산 창 수",help:"요청률마다 이만큼의 독립 창을 재생해요.",group:"advanced",unit:"개"},
   {key:"capacityPassingWindows",label:"용량 충족 창 수",help:"이만큼의 창이 SLO를 지키면 그 요청률을 감당한다고 봐요. 창 수 이하로 정해요.",group:"advanced",unit:"개"},
   {key:"capacityMinimumRequests",label:"용량 계산 최소 요청 수",help:"창마다 적어도 이만큼의 요청을 재생해요.",group:"advanced",unit:"건"},
+  {key:"capacityGridSteps",label:"용량 계산 격자 수",help:"최대 처리율을 이만큼 나누어 모든 요청률을 판정해요. 1 이상이에요.",group:"advanced",unit:"개"},
+  {key:"capacityBisectionWidth",label:"용량 이분 탐색 폭",help:"최대 처리율에 대한 탐색 종료 폭이에요. 0 초과 1 이하예요.",group:"advanced"},
+  {key:"capacityTailSamples",label:"용량 꼬리 표본 수",help:"SLO 백분위 위에 확보할 창별 표본 수예요. 1 이상이에요.",group:"advanced",unit:"개"},
   {key:"planSearchWorkers",label:"구성 탐색 동시 계산 수",help:"운영 판단이 구성 후보를 동시에 이만큼 계산해요. 탐색은 판단 주기의 절반 안에 끝나요.",group:"advanced",unit:"개"},
 ]
 const controls: {key:keyof SchedulerSettings["controls"];label:string}[] = [
@@ -55,6 +58,7 @@ const nodeList = (text:string) => {
 const mib = (bytes:WireInteger|string) => `약 ${(Number(bytes)/1048576).toLocaleString("ko-KR",{maximumFractionDigits:3})}MiB`
 const time = (at:string) => new Date(at).toLocaleString("ko-KR")
 function plain(field:Field,value:WireInteger):string {
+  if(value==null)return "기록 없음"
   if(field.key==="servingMemoryBytes")return mib(value)
   if(!field.key.endsWith("Nanos"))return `${value}${field.unit??""}`
   const nanos=BigInt(value)
@@ -251,7 +255,8 @@ export function SchedulerSettingsPage() {
     range={field.key==="scaleDownStabilizationNanos"||field.key==="replacementDwellNanos"?"0 이상의 밀리초, 소수점 아래 6자리까지":field.key==="transitionReserveFraction"?"0 ~ 1 사이 유한한 수":field.key.endsWith("Nanos")?"0보다 큰 밀리초, 소수점 아래 6자리까지":field.key==="completionMarginMS"?"0 이상의 밀리초":field.key==="servingMemoryBytes"?"0 ~ 18446744073709551615 사이 바이트 수":"1 이상의 정수"}
     save={value=>{
       // Same validation as the wire: ms with ≤6 decimals → nanos, nonnegative margin ms, uint64 memory bytes, positive int64 otherwise.
-      const text=value as string,parsed=field.key.endsWith("Nanos")?millisecondsToNanos(text,field.key==="scaleDownStabilizationNanos"||field.key==="replacementDwellNanos"?0n:1n):field.key==="transitionReserveFraction"?reserveFraction(text):field.key==="completionMarginMS"?marginMilliseconds(text):field.key==="servingMemoryBytes"?wireInteger(text,0n,18446744073709551615n):wireInteger(text,1n,9223372036854775807n)
+      const text=value as string,parsed=field.key.endsWith("Nanos")?millisecondsToNanos(text,field.key==="scaleDownStabilizationNanos"||field.key==="replacementDwellNanos"?0n:1n):field.key==="transitionReserveFraction"||field.key==="capacityBisectionWidth"?reserveFraction(text):field.key==="completionMarginMS"?marginMilliseconds(text):field.key==="servingMemoryBytes"?wireInteger(text,0n,18446744073709551615n):wireInteger(text,1n,9223372036854775807n)
+      if(field.key==="capacityBisectionWidth"&&(Number(parsed)<=0||Number(parsed)>1))throw new Error("0 초과 1 이하의 유한한 값을 적어 주세요.")
       edit(base=>({...base,[field.key]:parsed}))
     }} disabled={blocked}/>)
   return <Screen back={back} title="운영 설정"

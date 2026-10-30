@@ -159,11 +159,12 @@ func (c *SchedulerController) persistManualConfiguration(ctx context.Context, op
 	if document == nil {
 		return errors.New("scheduler configuration must be an object")
 	}
-	var settings serving.SchedulerSettings
-	if err = json.Unmarshal(document["settings"], &settings); err != nil {
+	var input serving.SchedulerSettingsInput
+	if err = json.Unmarshal(document["settings"], &input); err != nil {
 		return err
 	}
-	if err = settings.Validate(); err != nil {
+	settings, err := input.Settings()
+	if err != nil {
 		return err
 	}
 	var routing map[string]map[string]int

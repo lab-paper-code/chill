@@ -50,7 +50,7 @@ func reuseProfilesFixture(t *testing.T) (serving.Profile, serving.Profile) {
 
 func reuseView(t *testing.T, source, target serving.Profile, maximum float64) CatalogView {
 	t.Helper()
-	request, err := json.Marshal(profileReuseRequest{SourceProfileID: source.ID, MaximumRelativeDifference: maximum})
+	request, err := json.Marshal(map[string]any{"sourceProfileID": source.ID, "maximumRelativeDifference": maximum})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,5 +309,52 @@ func TestProfileReuseOccupancyResolvesConfirmationBeforeBatchJudgment(t *testing
 	// resolver instead of waiting forever for the absent direct profile ID.
 	if got := harness.admission(measurement); got != "Refused: BatchUnmeasured 3" {
 		t.Fatalf("occupancy did not resolve the confirmation profile: %q", got)
+	}
+}
+
+func TestProfileReuseSelectedMinimumsAndIdentity(t *testing.T) {
+	source, target := reuseProfilesFixture(t)
+	apply := func(seconds float64, trials int) CatalogView {
+		t.Helper()
+		raw, err := json.Marshal(profileReuseRequest{SourceProfileID: source.ID, MaximumRelativeDifference: .05, MinimumMeasurementSeconds: seconds, MinimumTrials: trials})
+		if err != nil {
+			t.Fatal(err)
+		}
+		view, err := applyProfileReuse(CatalogView{Profiles: []serving.Profile{source, target}}, map[string]string{target.ID: string(raw)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return view
+	}
+	defaults := reuseView(t, source, target, .05)
+	if defaults.ReuseChecks[0].MinimumMeasurementSeconds != 30 || defaults.ReuseChecks[0].MinimumTrials != 3 {
+		t.Fatal("omitted minimums changed")
+	}
+	selected := apply(30, 3)
+	if selected.Profiles[1].ID != defaults.Profiles[1].ID {
+		t.Fatal("explicit defaults differ")
+	}
+	for _, view := range []CatalogView{apply(29, 3), apply(30, 2)} {
+		if view.ReuseChecks[0].Outcome != measurementAccepted || view.Profiles[1].ID == defaults.Profiles[1].ID {
+			t.Fatal("policy change did not change identity")
+		}
+	}
+	target.Condition.ActiveProtocol.DurationSeconds = 20
+	target.Condition.IdleProtocol.DurationSeconds = 20
+	target.TrialsPerBatch = 2
+	if view := reuseView(t, source, target, .05); view.ReuseChecks[0].Outcome == measurementAccepted {
+		t.Fatal("historical minimum accepted short confirmation")
+	}
+	if view := apply(20, 2); view.ReuseChecks[0].Outcome != measurementAccepted || view.ReuseChecks[0].ConfirmationTrialsPerBatch != 2 || view.ReuseChecks[0].ConfirmationActiveSeconds != 20 || view.ReuseChecks[0].ConfirmationIdleSeconds != 20 {
+		t.Fatalf("selected minimums not applied: %+v", view)
+	}
+	for _, raw := range []string{
+		`{"sourceProfileID":"source","maximumRelativeDifference":0.05,"minimumMeasurementSeconds":0}`,
+		`{"sourceProfileID":"source","maximumRelativeDifference":0.05,"minimumTrials":1}`,
+		`{"sourceProfileID":"source","maximumRelativeDifference":0.05,"minimumTrials":2.5}`,
+	} {
+		if _, err := decodeProfileReuseRequest(raw); err == nil {
+			t.Fatal("invalid minimum accepted")
+		}
 	}
 }

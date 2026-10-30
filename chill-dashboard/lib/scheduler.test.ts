@@ -24,8 +24,12 @@ test("duration conversion preserves nanoseconds and rejects nonpositive or overf
 })
 
 test("review detects control or exact integer changes across numeric representations", () => {
-  const current:SchedulerSettings={observationWindowNanos:1,controlIntervalNanos:1,comparisonPeriodNanos:1,replacementDwellNanos:600000000000,maxObservationAgeNanos:1,bootstrapCapacityWaitNanos:600000000000,scaleDownStabilizationNanos:300000000000,transitionReserveFraction:0,servingMemoryBytes:18446744073709551615n,maxReplicas:1,maxInstances:1,maxCPUs:1,completionMarginMS:0,capacityWindowNanos:1,capacityWindows:1,capacityPassingWindows:1,capacityMinimumRequests:1,planSearchWorkers:1,autonomousWorkloads:[],excludedNodes:["rasp5"],controls:{placement:false,resources:false,replicas:false,routing:false,batching:false,power:false,membership:false}}
+  const current:SchedulerSettings={capacityGridSteps:20,capacityBisectionWidth:.005,capacityTailSamples:100,observationWindowNanos:1,controlIntervalNanos:1,comparisonPeriodNanos:1,replacementDwellNanos:600000000000,maxObservationAgeNanos:1,bootstrapCapacityWaitNanos:600000000000,scaleDownStabilizationNanos:300000000000,transitionReserveFraction:0,servingMemoryBytes:18446744073709551615n,maxReplicas:1,maxInstances:1,maxCPUs:1,completionMarginMS:0,capacityWindowNanos:1,capacityWindows:1,capacityPassingWindows:1,capacityMinimumRequests:1,planSearchWorkers:1,autonomousWorkloads:[],excludedNodes:["rasp5"],controls:{placement:false,resources:false,replicas:false,routing:false,batching:false,power:false,membership:false}}
   assert.equal(settingsEqual(current,{...current,controlIntervalNanos:1n,controls:{...current.controls}}),true)
+  for(const key of ["capacityGridSteps","capacityBisectionWidth","capacityTailSamples"] as const) {
+    assert.equal(settingsEqual(current,{...current,[key]:1}),false)
+    assert.equal((parseSchedulerJSON(stringifySchedulerJSON(current)) as SchedulerSettings)[key],current[key])
+  }
   assert.equal(settingsEqual(current,{...current,bootstrapCapacityWaitNanos:0}),false)
   assert.equal(settingsEqual(current,{...current,scaleDownStabilizationNanos:120000000000}),false)
   assert.equal(settingsEqual(current,{...current,replacementDwellNanos:17000000000}),false)

@@ -45,6 +45,9 @@ type SchedulerSettings struct {
 	CapacityWindows         int           `json:"capacityWindows"`
 	CapacityPassingWindows  int           `json:"capacityPassingWindows"`
 	CapacityMinimumRequests int           `json:"capacityMinimumRequests"`
+	CapacityGridSteps       int           `json:"capacityGridSteps"`
+	CapacityBisectionWidth  float64       `json:"capacityBisectionWidth"`
+	CapacityTailSamples     int           `json:"capacityTailSamples"`
 	// PlanSearchWorkers bounds the goroutines that evaluate plan sets at once;
 	// the search itself ends within half of ControlInterval.
 	PlanSearchWorkers int               `json:"planSearchWorkers"`
@@ -454,6 +457,9 @@ func (s SchedulerSettings) Validate() error {
 	if s.CapacityWindow <= 0 || s.CapacityWindows < 1 || s.CapacityPassingWindows < 1 || s.CapacityPassingWindows > s.CapacityWindows || s.CapacityMinimumRequests < 1 {
 		return fmt.Errorf("capacity settings need capacityWindowNanos > 0, capacityWindows >= 1, 1 <= capacityPassingWindows <= capacityWindows and capacityMinimumRequests >= 1")
 	}
+	if s.CapacityGridSteps < 1 || s.CapacityTailSamples < 1 || !schedulerFinite(s.CapacityBisectionWidth) || s.CapacityBisectionWidth <= 0 || s.CapacityBisectionWidth > 1 {
+		return fmt.Errorf("capacityGridSteps and capacityTailSamples must be positive; capacityBisectionWidth must be finite in (0,1]")
+	}
 	if s.PlanSearchWorkers < 1 {
 		return fmt.Errorf("planSearchWorkers must be at least 1")
 	}
@@ -479,6 +485,9 @@ type SchedulerSettingsInput struct {
 	BootstrapCapacityWait  *time.Duration `json:"bootstrapCapacityWaitNanos"`
 	ScaleDownStabilization *time.Duration `json:"scaleDownStabilizationNanos"`
 	ReplacementDwell       *time.Duration `json:"replacementDwellNanos"`
+	CapacityGridSteps      *int           `json:"capacityGridSteps"`
+	CapacityBisectionWidth *float64       `json:"capacityBisectionWidth"`
+	CapacityTailSamples    *int           `json:"capacityTailSamples"`
 }
 
 // Settings returns validated settings carrying the supplied margin.
@@ -487,6 +496,16 @@ func (in SchedulerSettingsInput) Settings() (SchedulerSettings, error) {
 		return SchedulerSettings{}, fmt.Errorf("completionMarginMS required")
 	}
 	settings := in.SchedulerSettings
+	settings.CapacityGridSteps, settings.CapacityBisectionWidth, settings.CapacityTailSamples = 20, 0.005, 100
+	if in.CapacityGridSteps != nil {
+		settings.CapacityGridSteps = *in.CapacityGridSteps
+	}
+	if in.CapacityBisectionWidth != nil {
+		settings.CapacityBisectionWidth = *in.CapacityBisectionWidth
+	}
+	if in.CapacityTailSamples != nil {
+		settings.CapacityTailSamples = *in.CapacityTailSamples
+	}
 	settings.CompletionMarginMS = *in.CompletionMarginMS
 	settings.BootstrapCapacityWait = 10 * time.Minute
 	if in.BootstrapCapacityWait != nil {

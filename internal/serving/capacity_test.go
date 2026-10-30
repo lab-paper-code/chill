@@ -92,7 +92,7 @@ func TestCapacityServiceLowerBound(t *testing.T) {
 				if row.Status != CapacityBuilt || row.Kappa == nil || *row.Kappa != 0 || row.Reason != CapacityServiceExceedsSLO || row.MinimumServiceNanos != 3.1e6 || len(row.Grid) != 0 || len(row.Bisection) != 0 || row.BuiltAt.IsZero() || row.Elapsed <= 0 {
 					t.Fatalf("missing analytical zero and evidence: %+v", row)
 				}
-			} else if row.Reason == CapacityServiceExceedsSLO || len(row.Grid) != capacityGridSteps {
+			} else if row.Reason == CapacityServiceExceedsSLO || len(row.Grid) != s.CapacityGridSteps {
 				t.Fatalf("a potentially fitting batch must replay: %+v", row)
 			}
 		})
@@ -485,5 +485,51 @@ func TestCapacityRecordsReturnLatestRowPerKey(t *testing.T) {
 	rows, err := observationLog.CapacityRecords(context.Background(), []string{"a", "c"})
 	if err != nil || len(rows) != 1 || rows["a"].Mu != 3 {
 		t.Fatalf("latest recorded row per asked key: %+v %v", rows, err)
+	}
+}
+
+func TestCapacityConfiguredNumerics(t *testing.T) {
+	s, snap := capacityFixture()
+	margin := s.CompletionMarginMS
+	omitted, err := (SchedulerSettingsInput{SchedulerSettings: s, CompletionMarginMS: &margin}).Settings()
+	if err != nil || omitted.CapacityGridSteps != 20 || omitted.CapacityBisectionWidth != .005 || omitted.CapacityTailSamples != 100 {
+		t.Fatalf("historical defaults: %+v %v", omitted, err)
+	}
+	explicit, err := (SchedulerSettingsInput{SchedulerSettings: s, CompletionMarginMS: &margin, CapacityGridSteps: &s.CapacityGridSteps, CapacityBisectionWidth: &s.CapacityBisectionWidth, CapacityTailSamples: &s.CapacityTailSamples}).Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := capacityBuildForTest(t, omitted, snap), capacityBuildForTest(t, explicit, snap)
+	if *a.Kappa != capacityFixtureKappa || !reflect.DeepEqual(a.Grid, b.Grid) || !reflect.DeepEqual(a.Bisection, b.Bisection) {
+		t.Fatal("default calculation changed")
+	}
+	for _, change := range []func(*SchedulerSettings){
+		func(s *SchedulerSettings) { s.CapacityGridSteps = 4 },
+		func(s *SchedulerSettings) { s.CapacityBisectionWidth = .05 },
+		func(s *SchedulerSettings) { s.CapacityTailSamples = 10 },
+	} {
+		selected := s
+		change(&selected)
+		row := capacityBuildForTest(t, selected, snap)
+		if row.Key == a.Key || reflect.DeepEqual(row.Grid, a.Grid) && reflect.DeepEqual(row.Bisection, a.Bisection) {
+			t.Fatal("selected value did not change row calculation")
+		}
+		if row.Input.GridSteps != selected.CapacityGridSteps || row.Input.BisectionWidth != selected.CapacityBisectionWidth || row.Input.TailSamples != selected.CapacityTailSamples {
+			t.Fatal("row lost selected policy")
+		}
+	}
+	for _, change := range []func(*SchedulerSettings){
+		func(s *SchedulerSettings) { s.CapacityGridSteps = 0 },
+		func(s *SchedulerSettings) { s.CapacityTailSamples = 0 },
+		func(s *SchedulerSettings) { s.CapacityBisectionWidth = 0 },
+		func(s *SchedulerSettings) { s.CapacityBisectionWidth = 1.01 },
+		func(s *SchedulerSettings) { s.CapacityBisectionWidth = math.NaN() },
+		func(s *SchedulerSettings) { s.CapacityBisectionWidth = math.Inf(1) },
+	} {
+		invalid := s
+		change(&invalid)
+		if invalid.Validate() == nil {
+			t.Fatal("invalid numerical policy accepted")
+		}
 	}
 }
