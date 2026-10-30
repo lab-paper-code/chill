@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -197,7 +198,11 @@ func TestRouteRetainsOnlyExactNativeAcknowledgmentsAcrossSequentialFailures(t *t
 					t.Fatal(err)
 				}
 			}
-			result, err := operations.Execute(ctx, Operation{ID: target.ID, Kind: operationRoute, Target: &target})
+			kind := operationRoute
+			if test.unavailable < 0 {
+				kind = operationUnroute
+			}
+			result, err := operations.Execute(ctx, Operation{ID: target.ID, Kind: kind, Target: &target})
 			if (err != nil) != (test.unavailable >= 0) || result.Status != test.wantStatus {
 				t.Fatalf("route status=%s error=%v, want %s", result.Status, err, test.wantStatus)
 			}
@@ -329,7 +334,7 @@ func TestRoutePersistsAppliedDistributionOnPods(t *testing.T) {
 	if got := podRoutingAnnotations(ctx, t, operations, pods); !slices.Equal(got, []string{routed, routed}) {
 		t.Fatalf("persisted routing %v, want the frozen distribution %s", got, routed)
 	}
-	if _, err := operations.Execute(ctx, Operation{ID: target.ID, Kind: operationRoute, Target: &target}); err != nil {
+	if _, err := operations.Execute(ctx, Operation{ID: target.ID, Kind: operationUnroute, Target: &target}); err != nil {
 		t.Fatal(err)
 	}
 	if got := podRoutingAnnotations(ctx, t, operations, pods); !slices.Equal(got, []string{`{}`, `{}`}) {
@@ -613,5 +618,40 @@ func TestRouteAndBridgeRejectEmptyBeforePolicyOrSeedMutation(t *testing.T) {
 				t.Fatal("rejected empty distribution mutated runtime, seeds, or policy")
 			}
 		}
+	}
+}
+
+type routingPersistenceFailureClient struct {
+	client.Client
+}
+
+func (c routingPersistenceFailureClient) Patch(ctx context.Context, object client.Object, patch client.Patch, opts ...client.PatchOption) error {
+	if pod, ok := object.(*core.Pod); ok {
+		before := &core.Pod{}
+		if err := c.Get(ctx, client.ObjectKeyFromObject(pod), before); err != nil {
+			return err
+		}
+		if before.Annotations[ServingRoutingAnnotation] != pod.Annotations[ServingRoutingAnnotation] {
+			return errors.New("injected routing persistence failure")
+		}
+	}
+	return c.Client.Patch(ctx, object, patch, opts...)
+}
+
+func TestUnroutePersistenceFailureIsNotSuccessfulACK(t *testing.T) {
+	operations, target, pods := routeAcknowledgmentFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := operations.persistRouting(ctx, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	seeds := podRoutingAnnotations(ctx, t, operations, pods)
+	operations.store.client = routingPersistenceFailureClient{operations.store.client}
+	result, err := operations.Execute(ctx, Operation{ID: target.ID, Kind: operationUnroute, Target: &target})
+	if err == nil || result.Status == nativeOperationComplete || !strings.Contains(err.Error(), "injected routing persistence failure") {
+		t.Fatalf("persistence failure promoted to ACK: status=%s err=%v", result.Status, err)
+	}
+	if !slices.Equal(seeds, podRoutingAnnotations(ctx, t, operations, pods)) {
+		t.Fatal("failed persistence changed Pod seeds")
 	}
 }
