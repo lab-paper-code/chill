@@ -1,6 +1,8 @@
-# 관측 분리 (M1)
+# 관측 분리와 E5 증거 API
 
 [채택한 이행 단계](../architecture-rethink/05-recommendation-migration.md)의 M1 설계와 2026-10-25 T4 조회 확장 설계다. ChillServer는 관측을 기록하고 로컬 버퍼 또는 evidence store의 시간 세그먼트에서 조회에 답한다. 측정 표의 오프라인 산출도 같은 세그먼트를 쓴다(spec README "SLO 관측과 집계"). [M0](decision-record-diet.md)를 전제로 하며, T4의 요구사항 원본은 [scheduler SRS](../../spec/scheduler/SRS.md)의 `SCH-42~47`이다. 6장의 조회 확장은 코드에 반영하며, 배포·클러스터 검증 완료를 뜻하지 않는다.
+
+2026-10-30 E5 증거 API 계약은 [17장](#17-e5-증거-api-2026-10-30)이다(SCH-67~70, SCH-AC-52~55, [ADR 0030](../../adr/0030-observation-evidence-api-streams.md)). 앞의 M1/T4 이행 기록은 보존한다. E5에서는 기존 `v1alpha5`를 유지하며, 9장의 과거 버전 삭제 절차나 7장·15장의 호스트/S3 직접 회수 절차를 새 수집 경로로 사용하지 않는다. 이 문서 변경은 코드·배포·리허설을 수행하지 않는다.
 
 ## 1. 측정한 문제
 
@@ -383,3 +385,134 @@ READY 전에 최초 Pod 조회와 알려진 컨테이너의 follow 시작·현�
 1. requestMu 아래 snapshot/closing 표식을 얻고 해제한 뒤 marshal한다. writer mutex 아래에서 closed·현재 row/참조를 다시 확인하고 catalog reference→request row를 같은 commit-time hour에 append한다. JSON 완료 순서가 아니라 기존 writer mutex의 append 순서로 직렬화하며 assignment append 성공 전 native 시작을 허용하지 않는다.
 2. final append 실패는 열린 closing row를 유지해 Flush가 재시도한다. 그 사이 같은 request에 phase가 접혔다면 현재 pointer 비교를 유지해 더 최신 row를 삭제하지 않는다. 동일 final의 Runtime/Flush 경쟁·close·hour 전환과 catalog-first 계약을 함께 보존해야 한다.
 3. Flush는 이미 writer mutex를 잡고 `closeRowLocked`를 부르므로 helper 안에서 잠깐 unlock만 하는 수정으로는 충분하지 않다. 이 재시도 경로와 모든 assigned/final/native caller를 함께 이행하고, 기존 diagnostic marshal mark를 lock 밖 span에 맞춘다. 약50줄을 넘는 cutover나 순서 보장 변경은 별도 설계·회귀 검사로 다루며 이번 작은 생산자 수정에 섞지 않는다.
+
+## 17. E5 증거 API (2026-10-30)
+
+[계획 §1~6](../../plans/2026-10-28-e5-evidence-api.md)의 문서 단계다. 원본 요구는 [Serving 관측](../../spec/00_measurement.md#측정의-단위), [scheduler SRS](../../spec/scheduler/SRS.md)의 SCH-67~70 / SCH-AC-52~55다. 아래 API·DTO·파일명은 **구현할 계약**이며 현 소스에 이미 있다는 뜻이 아니다. 기존 `ObservationLog`, `ObservationArchive`/Reader/Lister, 로컬 우선 시간 선택, `append`/archive/health, TokenReview/SAR, live hub를 재사용한다. 별도 저장소·TSDB·broker·다중 버전 reader·router 파라미터를 만들지 않는다.
+
+### 17.1 범위와 수집 경계
+
+하네스가 아는 CHILL 내부 사실은 CHILL API에서만 얻는다. CHILL 대상 sudo/crictl, `/proc` 직접 읽기, SSH cgroup 수집, S3 다운로드, kubectl readback, observer 로그 복사를 cutover 때 제거한다. `raw-source-index.json`은 판정 입력으로 유지하며 API 수집기가 만든다. 원시 전송·과거 조회는 측정 대상 서버의 CPU/I/O를 쓰므로 **E5 측정 창 밖**에서 실행한다. 라이브 보기만 창 안에서 허용한다(운영 규칙, 앱의 새 강제 관문은 없음).
+
+| 사실 | 단일 출처와 제외 경계 |
+|---|---|
+| 요청·판단·정의·관리 원시 | 아래 raw API. 대시보드용 `/observations/workloads`, `/scheduler` 가공 조회는 유지 |
+| CHILL 컨테이너 CPU/throttle/메모리·thermal | `resources`. `client` 컨테이너 표본·시작 관문·생산자 해제는 외부 장비라 유지 |
+| GC·관측 디렉터리 바이트 | 서버 in-process `resources`. gctrace 강제 요구·pre/post PVC host 수집 제거 |
+| Pod 신원/상태·제어 image digest·observer 오류 | `cluster`. E5-7 사후 readback은 `scheduler`와 `cluster`; 운영자 파일에는 장애 주입 명령만 남김 |
+| Node 참조·POOL Node 목록 | 기존 state/scheduler의 Node 이름·UID. 합성 NodeList나 새 Node/cordon stream 없음 |
+| 전력계↔Node 선언 | settings `meters`; 전력 정책은 기존 `powerObservation`. 실제 전력은 기존 edge-metrics API 유지 |
+| 수집 영수증 | capture-identity, s3-hour-list-*, upload.log, collector-status, *-collector.stderr와 이를 읽는 판정 코드 삭제 |
+| 운영 안전 | `control-alerts` STOP 루프, 생성기 품질 관문, Job 조작과 E5-7 운영자 kubectl 명령은 그대로 유지 |
+
+판정 수식과 기존 publication은 바꾸지 않는다. GC는 사이클 분포가 아니라 창 안 누적 차, E5-7 recovery는 운영자 readback이 아니라 scheduler/cluster 출처임을 새 보고서에 명시한다. 다음 새 publication의 `measurementRules`에 `evidenceSource=api`, `gcMeaning=runtime-metrics-delta`를 기록한다. #213~#225를 수정·재게시하거나 비교 가능성 판정 관문을 추가하지 않는다.
+
+### 17.2 원시 내보내기 (`SCH-67`)
+
+`hour`는 UTC의 안전한 단일 경로 요소 `YYYYMMDDTHH`다. 누락·중복 hour, 잘못된 시각, 허용되지 않은 kind, 추가 경로/쿼리·경로 이탈은 400으로 거절한다. 파일명·store/key를 요청 입력으로 받지 않는다. kind는 `requests`, `scheduler`, `catalog`, `management`, `resources`, `cluster` 여섯 개뿐이다.
+
+| 요청 | 응답 계약 |
+|---|---|
+| `GET /api/v1/observations/raw?hour=<hour>` | JSON `{hour,at,status,kinds:[{kind,available,segments:[{minute,bytes}],archive:null 또는 {store,key,bytes}}]}`. `at`은 목록을 잡은 서버 시각, `minute`는 `00`~`59`. 로컬 segments는 닫힌 분만, 분/종류 오름차순이다. archive 출처면 segments는 빈 배열이며 저장된 gzip 객체 위치·크기를 싣는다. 토큰·호스트 경로·자격증명 URL은 노출하지 않는다 |
+| `GET /api/v1/observations/raw/{hour}/{kind}` | 로컬 시간은 요청 시작 시 확정한 닫힌 분 파일을 분 순으로 이어 원래 JSONL 바이트를 전송(`application/x-ndjson`). 로컬에 없는 과거 시간은 해당 stream의 보관된 gzip 바이트를 그대로 전송(`application/gzip`). gzip에는 `Content-Encoding: gzip`을 붙이지 않아 HTTP client가 자동 해제하지 않게 한다. 둘 다 `Cache-Control: no-store`; 즉석 gzip/해제·JSON decode/re-encode·필터·집계 없음 |
+| `GET /api/v1/observations/raw/definitions` | 루트 `v1alpha5/definitions.jsonl`을 요청 시작 시 확정한 마지막 개행까지 원래 JSONL로 전송. 마지막 미완결 행 제외. 시간별 catalog의 대체물이 아니며 빈 완결 기록은 길이 0 |
+
+시간 상태는 다음처럼 source와 진행을 구분한다. `open`은 현재 UTC 시간으로 닫힌 분이 일부 있어도 open이다. `closed-local`은 지난 시간이고 로컬 디렉터리가 남은 상태다. `archived`는 로컬이 없고 기존 prefix에 보관본이 있는 시간이다. 업로드됐어도 로컬이 남으면 로컬이 우선이다. 기본 보존 `2h`와 archive 성공 전 삭제 금지·미완료 assigned pin을 그대로 지키므로 경과 2시간만으로 archive 사용을 강제하지 않는다.
+
+- 로컬 선택은 기존 시간 디렉터리 단위 우선순위다. 파일이 없는 stream만 archive에서 보충하지 않는다. 같은 시간을 두 소스에서 합치지 않는다.
+- `mu` 아래에서 시간·현재 분 경계·선택한 fd·길이를 잡고 잠금 밖에서 한정된 길이만 복사한다. 원본 fd가 열렸으면 archive 삭제와 충돌하지 않는다. 현재 열린 분은 파일 크기나 개행 유무와 관계없이 제외한다. 목록과 다운로드는 각각 독립 snapshot이며 목록 시각을 고정하는 서버 영속 receipt/manifest나 재시도 세션은 만들지 않는다.
+- `definitions`도 mutex 아래에서 fd와 마지막 완결 행 끝을 확보하고 이후 append를 전송에 섞지 않는다. 기존 시작 시 torn-tail 복구와 append rollback을 유지한다.
+- 시간 자체가 양쪽에 없거나 선택한 stream이 없으면 404(`ObservationUnavailable`), 현재 시간에 아직 내보낼 닫힌 분이 없으면 409(`ObservationNotReady`)다. 목록의 kind별 `available=false`는 부재이지 0건의 관측을 뜻하지 않는다. 열린 시간의 빈 segments도 수집 완료가 아니다.
+- 새 stream은 [ADR 0030](../../adr/0030-observation-evidence-api-streams.md)대로 같은 prefix에 추가한다. 배포 이전 resources/cluster 부재는 결손이 아니며 #213의 기존 네 stream 조회를 막지 않는다. 적용 이후 필요한 stream의 부재는 소비자가 수집 적용 구간·실제 표본 시각으로 결손을 드러낸다. 새 stream 여섯 개의 존재를 모든 시간의 필수 조건으로 삼지 않는다.
+- archive List/Open 오류는 5xx, 처리 마감은 기존 timeout 오류다. 읽기 오류를 빈 200/404로 바꾸지 않는다. 전송 시작 뒤 실패는 응답을 중단하며 JSON 오류를 JSONL/gzip 뒤에 덧붙이지 않는다. 알려진 길이는 Content-Length로 제공해 조기 종료가 드러나게 한다. 하네스는 HTTP 완료·JSONL 개행/구조·gzip 종료 오류를 검사하고 불완전 수집을 성공으로 판정하지 않는다. digest/바이트 대조 관문은 만들지 않는다.
+
+**마감:** `httpapi.Handler.ServeHTTP`의 `longOperation` 선택을 확장하여 raw 목록/전송/definitions 및 가공 `GET /api/v1/observations/scheduler`에 기존 `OperationTimeout`을 처리 상한으로 적용한다. 별도 무제한 timeout이나 원시 전용 서버를 만들지 않는다. Request context의 처리 마감·취소는 로컬 복사와 archive List/Open/read까지 전달한다. 쓰기 마감은 기존 방식 `처리 deadline + RequestTimeout`으로 별도 설정한다. 추가 쓰기 시간은 오류 전달 여유이며 처리/read context를 연장하지 않는다. archive 네트워크와 대용량 복사는 ObservationLog mutex 밖이다. 기존 가공 조회의 catalog 해석·페이지·coverage는 유지한다.
+
+**권한:** 기존 `Handler.authorize` → `kube.Authorizer`의 Bearer TokenReview/SAR를 통과한다. SAR path는 기존처럼 `/chill`을 실제 요청 경로 앞에 붙인다. 따라서 하네스 전용 ClusterRole의 `nonResourceURLs`에는 **`/chill/api/v1/observations/raw`와 `/chill/api/v1/observations/raw/*` 둘 다**, verb `get`을 넣는다. 아래표의 `/raw`, `/raw/*`는 이 전체 경로의 축약이다. 루트 목록은 wildcard 하나로 보호/허용되지 않는다. Dashboard/BFF·일반 serving-manager·공개 앞단의 allowlist에는 raw를 추가하지 않으며 토큰을 공유하지 않는다. 앞단 비노출과 별개로 서버 직접 호출도 SAR로 거절한다.
+
+### 17.3 자원 기록 (`SCH-68`)
+
+**수집 위치:** 기존 기본 discovery node-agent에 채집을 붙인다. actuation DaemonSet은 쓰지 않는다. 모든 대상 Node(genesis1 포함)에 기본 agent가 있어야 하고 현재 exclude/selector가 서버 Node를 빼지 않는지 배포 때 확인한다. 서버 컨테이너도 genesis1 agent가 밖에서 잰다. 서버가 자기 cgroup을 읽으면 GC/잠금 정지 때 자기 측정도 멈추므로 그 경로는 없다.
+
+**Pod 권한 없는 대상 발견:** 서버는 기존 Kubernetes 읽기 권한으로 CHILL 서빙 인스턴스와 제어 Pod의 현재 Node·Pod UID·containerID를 고른다. 범위는 해당 ChillSystem 소유 서빙 Pod와 릴리스의 CHILL 제어 Pod이며 load-generator/client·다른 tenant 컨테이너는 제외한다. node-agent에는 Pod get/list/watch를 추가하지 않는다. 내부 POST 응답의 `targets`가 해당 Node의 정확한 `{podUID,containerID}` 집합을 다음 묶음에 공급한다. 첫 POST는 `samples:[]`로 대상만 얻으며 이 handshake 자체는 resources 행을 만들지 않는다. 새 Pod를 알기 전 구간은 소급 수집하지 않는다.
+
+agent는 호스트 `/proc/<pid>/cgroup`, mount 정보와 읽기 전용 `/sys`를 사용해 받은 identity에 해당하는 실제 cgroup과 v1 controller/v2 mount를 찾는다. systemd/cgroupfs 경로 문자열을 정해 놓고 맞추지 않는다. 경로가 확인된 실물만 읽으며 같은 Pod 이름/slot을 containerID 대신 쓰지 않는다. Pod 종료·재시작·image 판정은 하지 않는다(cluster 소유).
+
+**전송 경계:** `POST /api/v1/internal/observations/resources` 한 개, 요청 `{node:{name,uid},samples:[{sampledAt,containers:[...],thermal:[...]}]}`, 응답 `{targets:[{podUID,containerID}]}`다. 서버는 요청 크기를 기존 MaxRequestBytes로 제한하고 Node identity·배열 크기·시각·counter/온도 형식과 target membership을 경계에서 검증한다. 컨테이너 교체 중 이미 채집한 표본은 서버가 그 agent에 직전 응답으로 공급한 identity에 속하면 허용한다. 새 UID를 옛 UID로 바꿔 연결하지 않는다. 응답 후 다음 묶음은 새 targets를 사용한다. 서버 재시작으로 이전 targets를 확인할 수 없으면 묶음을 거절하고 agent가 다음 빈 handshake로 재동기화한다. 과거 표본 재전송은 하지 않는다.
+
+- TLS 서버 신뢰 CA·고정 내부 URL·projected SA token 파일을 기본 agent 설정으로 전달한다. 토큰 rotation을 읽고 검증을 끄지 않는다. 기존 TokenReview/SAR를 재사용하고 agent SA에 정확한 `/chill/api/v1/internal/observations/resources`의 `post`만 추가한다. raw GET·settings PUT·Pod 권한은 주지 않는다. HTTP 헤더나 본문의 username을 신뢰하지 않는다. 공유 DaemonSet SA는 Node별 암호학적 신원을 증명하지 않으므로 본문 Node를 TokenReview가 보증한 것으로 표시하지 않는다.
+- 표본 주기 기본 `1s`, 묶음 주기 기본 `10s`를 수집 설정으로 제공하고 실행 조건에 고정한다. Node당 한 POST/한 resources 행에 묶음 표본을 넣는다. 주기마다 새 묶음을 보내며 요청은 유한 timeout을 갖는다. **실패 묶음은 버리고 재전송·spool·backoff queue를 만들지 않는다.** 실패 후 다음 주기는 새 표본/handshake만 보낸다.
+- 비어 있지 않은 묶음은 서버 append 성공일 때만 200과 다음 targets를 보낸다. 빈 handshake는 append 없이 targets를 반환한다. append 실패는 기존 log health와 오류 응답으로 드러낸다. 응답만 유실되어도 같은 묶음을 다시 보내지 않는다. 수신 순서로 기록하며 Node 표본 시각으로 저장 분을 역선택하지 않는다.
+
+**저장 행:** 여섯 stream은 동일 ObservationLog writer를 쓰며 다음 새 resources 행은 `<write-hour>/resources.<write-minute>.jsonl`에 들어간다. Node 묶음은 `kind:"node"` 한 행이고 서버 누적값은 별도 `kind:"server"`다.
+
+| 행/필드 | 의미·단위 |
+|---|---|
+| node: `node`, `receivedAt`, `samples[]` | Node 이름/UID, 서버 수신 UTC 시각, 원래 묶음. 각 `sampledAt`은 Node 시계 RFC3339Nano. 두 시각을 남기되 시계 보정 없음 |
+| samples의 `containers[]`: `podUID`, `containerID`, `cgroupVersion` | 샘플 대상 실물 identity. containerID는 runtime 접두어를 포함한 원래 식별자, cgroupVersion은 1 또는 2 |
+| `cpuUsageNanos`, `throttledNanos`, `periods`, `throttledPeriods` | cgroup 누적 counter. v1/v2 원 단위를 각각 ns/횟수로 명시 변환하며 CPU core 사용률로 미리 집계하지 않음 |
+| `memoryCurrentBytes`, `memoryPeakBytes` | cgroup 현재/최고 사용 bytes. 지원하지 않거나 읽지 못한 값은 필드 부재와 해당 `errors` 사유; peak를 current로 대체하지 않음 |
+| `thermal[]:{sensor,milliCelsius}`, `errors[]` | host sensor의 실제 식별(thermal zone 이름/경로와 type), 원래 온도 단위를 milli°C로 맞춤. 센서 없음/읽기 실패를 0°C로 만들지 않음. 부분 채집 실패는 대상·필드·이유로 남김 |
+| server: `at`, `podUID`, `processStartedAt`, `gcCPUSeconds`, `gcCycles` | 서버 시각·Pod UID·프로세스 시작 시각, `/cpu/classes/gc/total:cpu-seconds`와 `/gc/cycles/total:gc-cycles` 누적값. 재시작을 가로질러 빼지 않음 |
+| server: `observationDirectoryBytes`, `directoryObservedAt` | 분 1회 관측 디렉터리 전체 regular file 논리 크기 합(bytes, 루트 definitions 포함). PVC capacity/allocated blocks/압축 archive 크기와 다르며 `/tmp` scratch는 제외. 측정한 tick에만 싣고 매초 복제하지 않음. stat 실패는 값 대신 이유 |
+
+서버 누적값은 기존 live/runtime **1초 ticker**에 붙이고 다른 1초 loop를 만들지 않는다. 분 단위 디렉터리 순회는 writer mutex 밖에서 수행하며 동시 append/삭제가 있는 시점 관측이라는 의미를 유지한다. `processStartedAt`과 Pod UID로 창 안 누적 차를 구하고 gcCycles 감소를 임의 0으로 보정하지 않는다. 원 gctrace 로그와 지표 이름/의미가 같다고 주장하지 않는다.
+
+하네스 수집 가능 시점은 drain 후 **측정 창 끝 + 묶음 주기 + 다음 분 경계** 이후다. resources 행은 서버 수신 시각의 분에 쓰이므로 이 여유와 늦게 받은 묶음의 실제 수신 시각을 함께 고려해 원시를 받는다. 관측 시계 차이는 두 시각으로 사후 확인하며 새 동기화 프로토콜은 없다.
+
+### 17.4 클러스터 기록과 라이브 callback (`SCH-69`)
+
+기존 server-side Pod LIST/WATCH와 observer issue 변경 지점을 사용한다. 서빙 Pod뿐 아니라 CHILL 제어 Pod도 포함하고 terminal Pod를 제외하는 기존 서빙 조회만으로 전체 기록을 대신하지 않는다. 초기 LIST는 `observed` baseline이며 생성 사건을 보았다고 꾸미지 않는다. 이후 add/change/delete와 상태 변화를 기록한다. 읽기 오류·watch 단절을 Pod 삭제로 합성하지 않는다. server 시작에는 Downward API로 받은 자기 Pod UID를 `server-start` 한 행으로 먼저 남긴다.
+
+| cluster 행 | 필수 내용 |
+|---|---|
+| `{kind:"pod",at,event,pod:{...}}` | `event`는 `observed`, `created`, `changed`, `deleted`, `server-start` 중 하나. Pod namespace/name/UID, Node 참조, creationTimestamp·deletionTimestamp, phase·Ready 상태, init/일반 container별 name·containerID·imageID·restartCount·현재/직전 terminated reason/exitCode/시각. 아직 없는 필드는 미확정으로 남김. image tag를 imageID/digest로 대신하지 않음 |
+| `{kind:"issue",at,event,source,reason,...}` | `event`는 `raised`, `changed`, `resolved` 중 하나. 기존 ObserverIssue의 정확한 source identity(Pod UID/containerID를 포함한 source면 유지), 이유, 감지 서버 시각. changed는 이전 이유도, resolved는 해소한 이전 이유도 남김 |
+
+issue의 동일 source/이유 반복은 발생 시각을 매 refresh 갱신하며 새 사건으로 쌓지 않는다. 없던 issue→raised, 이유 변경→changed, 실제 성공 확인→resolved다. source 읽기에 실패한 상태를 임의 해소하지 않는다. 기록 hook 자체의 오류를 다시 issue hook으로 넣는 재귀 경로도 만들지 않는다.
+
+**공유 인터페이스:** core에 `ClusterObservation` DTO와 `(*ObservationLog).ClusterRecord(ClusterObservation) error`를 둔다. `kube.ObserverConfig.OnCluster func(serving.ClusterObservation) error`로 Pod·issue 사실을 composition root에 넘긴다. 그 root의 `recordCluster`는 **ClusterRecord 성공 → livePublisher.cluster(같은 행)** 순서이며 기존 `schedulerService.recordDecision/recordAction`과 같다. core는 live DTO나 kube 타입을 import하지 않는다. callback에서 observer/controller를 다시 조회하지 않는다.
+
+append 실패는 기존 ObservationLog health·호출 오류/로그로 노출하고 라이브를 발행하지 않는다. 관측의 실제 상태 메모와 마지막 기록된 projection을 구분하여 실패한 append를 기록 완료로 표시하지 않는다. 다음 정상 관측에서 확인된 상태를 기록할 수 있으나 별도 영속 outbox·재전송 큐·누락 사건 복구를 약속하지 않는다. 초기 baseline이 과거 이벤트 이력의 완전성을 보장하지도 않는다. hub 발행 실패 때문에 이미 저장된 행을 재append하지 않는다.
+
+라이브 wire event 형태·화면은 [대시보드 계획 §3~4](../../plans/2026-10-26-dashboard-live-stage.md#3-s2-라이브-무대) 소유다. 이 슬라이스는 전달 지점과 DTO 투영만 연결한다. Node의 기존 scheduler 기록, live seq/resync/heartbeat·인증은 재사용하고 resources 원시 전체를 브라우저에 보내거나 raw 권한을 대시보드에 주지 않는다.
+
+### 17.5 읽기 전용 settings `meters` (`SCH-70`)
+
+`GET /api/v1/scheduler/settings`에 `meters:[]`를 추가한다. 값은 scheduler service가 metric-sources와 실제 Node 이름/UID로 **수락한 configuration snapshot**의 `[]MeterDeclaration`이다. 항목은 기존 `{id,node:{name,uid},scope,source}`를 그대로 투영하고 선언이 없으면 빈 배열이다. source는 수락한 전력 출처 선언(kind/nodeName/endpoint/metric/metricLabels)이지 토큰·비밀 설정이나 실시간 표본이 아니다. API가 ConfigMap의 원문을 별도로 읽어 두 번째 선언 원본을 만들지 않는다.
+
+- `HandlerConfig.SchedulerMeters func() []servingkube.MeterDeclaration`를 root에서 accepted configuration 조회에 연결한다. settings GET에서만 읽기 projection에 붙이고 `SchedulerSettingsInput`, scheduler 저장 ConfigMap, settings mutation 본문에는 넣지 않는다. 기존 `powerObservation` 경계는 바꾸지 않는다.
+- `meters`가 든 PUT은 기존 strict unknown-field 거절로 실패시킨다. 서버가 조용히 버리거나 쓰기 별칭으로 수락하지 않는다.
+- 같은 구현 1에서 `hack/e5/e5.py:CPO.put`, `chill-dashboard/features/scheduler-settings.tsx:putSchedulerSettings`가 GET 결과에서 `meters`를 제거한 뒤 PUT하도록 고친다. 기존 staticRouting/staticRoutingValidatedAt 제거와 CPO의 powerObservation 처리도 보존한다. 대시보드 read type에는 읽기 전용 선언을 추가한다.
+- 기존 `hack/e5/d2/conduct_before.py`는 과거 before 실행 기록 도구이며 신규 API 수집·설정 쓰기 경로로 재활성화하지 않는다. 클라이언트 두 곳을 고치지 않은 채 GET 확장만 배포하지 않는다.
+
+### 17.6 병렬 구현 3개: 파일 영역과 인터페이스
+
+이 표는 세 슬라이스의 **소유권 계약**이다. 신규 파일명은 구현 시 만들 위치이며 이 문서 단계에서 코드/패키지를 만들지 않는다. 두 생산자는 기존 core package 안의 별도 파일을 쓰므로 새 production package·허용 의존성 추가가 필요 없다. 공통 파일은 구현 1의 통합 소유자가 요청된 wiring만 적용한다. 구현 2/3은 해당 patch 지점을 전달하고 공통 파일을 동시에 편집하지 않는다. 구현 1→2→3의 직렬 기능 의존성이나 중간 dummy/stub은 없다.
+
+| 슬라이스 | 독점 파일/패키지 영역 | 제공·소비 인터페이스 | 공통 파일 통합 요청 |
+|---|---|---|---|
+| **1. 원시 내보내기 + meters** | `internal/serving/observation_log_raw.go`(신규), `httpapi/observations_raw.go`(신규), 기존 `httpapi/scheduler.go`, `httpapi/operations.go`, `cmd/chill-server/scheduler_service.go`, `hack/e5/e5.py:CPO.put`, `chill-dashboard/features/scheduler-settings.tsx`·`lib/read-types.ts`, 각 인접 focused test | core `RawHour(ctx,hour) (RawHourIndex,error)`, `OpenRaw(ctx,hour,kind) (RawObservation,error)`, `OpenRawDefinitions(ctx) (RawObservation,error)`. RawObservation은 `{Reader io.ReadCloser,ContentType,Bytes}`이며 fd/객체 수명은 caller가 Close. 실제 export 함수는 ObservationLog method다. HandlerConfig.SchedulerMeters는 17.5 계약 | `observation_log.go` stream 상수/등록에 resources·cluster 두 개 추가. `httpapi/handler.go`에 raw route·공유 deadline 선택·callback config 등록. `server.go`/`live.go`에 다른 두 슬라이스의 생성/종료·ticker/callback wiring 통합 |
+| **2. resources** | `internal/serving/observation_log_resources.go`(행 DTO·append, 신규), `httpapi/resources.go`(수신, 신규), `cmd/chill-server/resources.go`(대상 선정·process/디렉터리 관측, 신규), `cmd/node-agent/resources.go`(수집·전송, 신규), 기존 `cmd/node-agent/{discovery,options}.go`, `internal/nodeprobe`의 관련 host 조회 파일, `internal/operator/nodeagent`의 config/DaemonSet, `charts/chill/templates/{node_agent_config,node_agent_rbac}.yaml`, 필요한 values, 인접 test | `ResourcesRecord(ResourceObservation) error`는 ObservationLog method. HTTP 수신 DTO는 17.3의 request/reply. HandlerConfig `ReceiveResources func(context.Context,serving.ResourceBatch) ([]serving.ResourceTarget,error)`를 root에 연결: 현재/직전 발급 target 검증→서버 receivedAt 부여→비어 있지 않은 묶음 append→다음 targets 반환. 이 callback이 대상 발급 메모도 소유한다. collector는 typed ResourceObservation만 append하고 raw API를 호출하지 않음 | `handler.go`에 POST 등록/수신 callback, `server.go`에 ReceiveResources·프로세스 관측 연결, 기존 live/runtime ticker에 1초 GC·분별 디렉터리 hook. 공유 설정 option 추가가 필요하면 구현 1 통합 소유자에게 필드/인자를 넘김 |
+| **3. cluster + live callback** | `internal/serving/observation_log_cluster.go`(행 DTO·append, 신규), `internal/serving/kube/observer_cluster.go`(Pod/issue hook, 신규), 기존 `kube/observer.go`의 ObserverConfig·issue 전이, `cmd/chill-server/cluster.go`(기록 후 projection, 신규), `internal/serving/live/types.go`의 대시보드 합의 event DTO, 인접 test | `ClusterRecord(ClusterObservation) error`, `ObserverConfig.OnCluster func(ClusterObservation) error`. `recordCluster`→append 성공→publisher.cluster 순서. target 선정은 resources가 소유하고 cluster의 저장 성공을 자원 채집의 전제로 삼지 않음 | `server.go`에서 observer callback·자기 Pod UID/시작 기록 연결, `live.go`에 cluster projection hook. Downward API UID 전달·제어 Pod 조회 범위의 배포 변경은 구현 1 통합 소유자에게 요청 |
+
+모든 위 `observation_log_*.go` 경로는 `internal/serving/` 기준, `httpapi/`는 `internal/serving/httpapi/`, `kube/`는 `internal/serving/kube/` 기준이다. 리소스/클러스터 행 DTO는 각 생산자 슬라이스만 정의하며 구현 1은 stream 이름만 등록한다. 중복 schema 파일·generic event bus·단일 구현 interface를 만들지 않는다. 기존 잠금·append rollback·health를 이용하고 raw reader가 producer를 import하거나 기다리지 않는다.
+
+권한/배포 공통 변경(`charts/chill/templates/serving_entrypoint_rbac.yaml`, serving Pod UID env, 라이브·S1 권한, 서버·대시보드·node-agent 이미지)은 통합 소유자 한 명이 맡는다. raw 권한은 하네스 전용, 수신 POST 권한은 기본 agent 전용이다. 일반 serving-manager의 `/observations/*`, `/api/v1/*` 같은 광범위 권한이 raw나 내부 수신 POST까지 열지 않도록 관련 grant를 가공/관리 경로별로 좁힌다. 실제 승인 배포 전에 RBAC를 확인하며 단순히 새 narrow role을 추가했다고 기존 wildcard 허용이 사라지는 것은 아니다.
+
+### 17.7 이행·수용·미확인 경계
+
+1. **문서:** spec → SCH-67~70 / SCH-AC-52~55 → 이 설계와 ADR 0030. 이번 변경은 이 단계만 수행한다.
+2. **구현:** 위 3개를 병렬로 붙이고 통합 소유자가 shared wiring·stream 등록·권한 경계를 완성한다. `e947cd5e` 미사용 분리 코드를 정리한 단일 ChillServer 소스를 전제로 하며 gateway 재개는 하지 않는다.
+3. **승인 배포 1회:** raw RBAC·node-agent 내부 POST 권한 및 [대시보드 계획 §4](../../plans/2026-10-26-dashboard-live-stage.md#4-증거-api와의-경계)의 라이브 RBAC·S1 권한·서버/대시보드 이미지 변경을 묶는다. node-agent 수집 설정·mount/보안·genesis1 포함과 edge→server TLS 도달도 이 단위에서 확인한다.
+4. **하네스 cutover:** 17.1의 대체/유지 표대로 수집과 판정 입력을 한 번에 옮긴다. 중복 영수증 파일과 이를 읽는 판정 코드·옛 CHILL 우회 수집을 제거하되 client·STOP·운영자 장애 주입은 보존한다.
+5. **전환 리허설 단 1회:** 같은 리허설에서 옛 수집과 새 수집을 함께 돌리고 #213 보관본 1시간도 API로 받아 판정한다. D1·지연·전력 J가 같아야 한다. resources는 식별자·단위·결손을 확인하고 GC 의미 변경은 별도 표시한다. ChillServer CPU에서 라이브 hub·node-agent 수신·raw 전송·대시보드 조회가 더하는 몫을 기록한다. 끝나면 옛 경로를 삭제하며 이 비교를 상시 검증 관문으로 남기지 않는다.
+
+| 구현 시 남길 최소 검사 | 연결 수용 기준 |
+|---|---|
+| 닫힌 분만 export·정의 torn tail 제외·fd 확보 뒤 archive 삭제·기존 #213 prefix 조회·과거 두 stream 부재·404/409/store 오류/취소/긴 전송·root/wildcard RBAC 분리 | SCH-AC-52 |
+| cgroup v1/v2 실제 mount/identity 탐색·counter 단위·미지원 값·Node 시계 차이·전송 실패 무재전송·Pod 권한 없음·container 교체·GC process reset·분별 directory bytes | SCH-AC-53 |
+| 초기 baseline/자기 Pod UID·Pod/컨테이너 상태 변화·issue 발생/변경/해소·동일 반복 억제·append 실패 시 live 미발행·저장 성공 후 동일 callback | SCH-AC-54 |
+| accepted meters projection·GET 후 CPO/대시보드 PUT에서 제외·직접 meters PUT 거절·기존 읽기 전용 필드 경계 유지 | SCH-AC-55 |
+
+구현 2에서 **한 번 확인할 환경 사실**은 (a) 비root 기본 agent가 필요한 cgroup 파일을 읽을 수 있는지, (b) edge Node에서 서버 내부 TLS endpoint까지 닿는지, (c) 작은 Node의 1초 표본 오버헤드다. 확인 전 비root 가능·네트워크 도달·허용 오버헤드를 기정사실로 쓰지 않는다. 실패 시 수집을 가짜 0으로 통과시키거나 actuation 특권을 통째로 넘기지 않고 필요한 읽기 권한/배포 조건과 실측 비용을 명시한다. 최종 완료는 CHILL 사실의 API 단일 출처와 네 수용 시나리오·리허설 증거이며, 문서·코드 이행·배포·실험 수용은 서로 구분한다.
