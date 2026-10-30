@@ -189,9 +189,14 @@ func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	compatibility, err := newModelCompatibilityQuery(reader, opts)
+	if err != nil {
+		return nil, err
+	}
 	queries := readapi.NewQueryHandler(readapi.QueryReaders{
-		Systems:   systems.Read,
-		Inventory: inventory.Read,
+		Systems:            systems.Read,
+		Inventory:          inventory.Read,
+		ModelCompatibility: compatibility.Read,
 		ProfilingRuns: func(ctx context.Context, namespace string) (operatorconsole.ProfilingRunsSnapshot, error) {
 			query, err := consolekube.NewKubernetesProfilingRunsQuery(reader, namespace)
 			if err != nil {
@@ -207,6 +212,7 @@ func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/systems", queries)
 	mux.Handle("GET /api/v1/inventory", queries)
+	mux.Handle("GET /api/v1/model-compatibility", queries)
 	mux.Handle("GET /api/v1/namespaces/{namespace}/profiling-runs", queries)
 	mux.Handle("/", handler)
 	return mux, nil

@@ -239,6 +239,10 @@ CampaignOps 한 명만 클러스터를 변경한다. 아래는 **실증 성공 �
 Console query 경계가 이름/참조·Node의 class selector membership과 사실 입력의 구조·의미를 검증한다.
 ModelSpec/DeviceClass/Node 미존재는 404, 권한 거부는 403, 사실 조회 실패는 503이다.
 누락·모순된 runtime 선언은 성공 응답의 `Unknown`이며 빈 지원 목록이나 `Incompatible`로 숨기지 않는다.
+설정된 fact-source ConfigMap/키 자체의 부재도 선언 부재로 `Unknown`이다.
+strict 선언 해석 실패·불완전한 RKNN 설치 계약은 `RuntimeDeclarationInvalid`로 반환한다.
+선택되지 않은 path와 class selector에 속하지 않는 Node 조합은 400이며, API identity가 깨진
+저장 객체·권한 외 API 읽기 오류는 판정으로 위장하지 않고 503이다.
 
 응답은 `{readAt,selection,inputs,verdict,reasons}`다.
 
@@ -249,7 +253,7 @@ ModelSpec/DeviceClass/Node 미존재는 404, 권한 거부는 403, 사실 조회
 | `inputs.modelSpec`, `inputs.deviceClass`, `inputs.node` | 각각 `{name,uid,resourceVersion}` |
 | `inputs.runtimeDeclaration` | `{namespace,name,uid,resourceVersion,key,image}` 또는 null. 선택 실패 시 image를 꾸미지 않음 |
 | `verdict` | 기존 `modelcompat`의 `Compatible`, `Incompatible`, `Unknown` |
-| `reasons[]` | `{kind,code,message}`. 기존 `Conflict`/`Unknown`·reason code 재사용. artifact supply architecture 불일치는 `ArtifactArchitectureMismatch`; 선언 부재/모호함은 `RuntimeDeclarationMissing`/`RuntimeDeclarationAmbiguous` |
+| `reasons[]` | `{kind,code,message}`. 기존 `Conflict`/`Unknown`·reason code 재사용. artifact supply architecture 불일치는 `ArtifactArchitectureMismatch`; 선언 부재/모호함/무효는 `RuntimeDeclarationMissing`/`RuntimeDeclarationAmbiguous`/`RuntimeDeclarationInvalid`. Compatible이면 빈 배열 |
 
 `candidate_resolver.go`와 `execution_facts.go`의 **동일 trusted fact-source, class/Node scope,
 strict declaration 해석** 및 `modelcompat.Evaluate`를 재사용한다. 필요한 읽기 부분만 기존 kube
@@ -265,6 +269,11 @@ power mode가 다른 열은 같은 정적 결과를 재사용할 수 있지만 �
 화면은 Compatible을 ‘정적 실행 지원 확인’, Incompatible을 ‘지원 안 함 — 이유’,
 Unknown을 ‘지원 확인 불가 — 이유’로 쓰며 증거 상태와 독립 표시한다.
 최종 측정 요청은 기존 dry-run/preflight/admission을 그대로 통과해야 한다.
+
+구현: Console query callback은 기존 `KubernetesCandidateResolver.ResolveModelCompatibility`를
+연결한다. Profiler preflight와 동일 selector/strict decoder/정적 비교 및 RKNN 선언 요건을
+공유하며, 기존 preflight의 성공·거절 흐름은 바꾸지 않는다. public proxy의 정확
+`/chill/api/v1/model-compatibility` GET grant만 추가하며 기존 Console fact-source 읽기 권한을 쓴다.
 
 ### 12.2 B1 — 실패 BEO와 소유 Run의 공개 연결
 
@@ -325,6 +334,13 @@ owner UID·completed reference, plan의 정확 조건과 raw lineage를 기존 �
 실제 다운로드의 기존 유한 크기 제한은 유지하되 payload 재인코딩을 identity 판정에 쓰지 않는다.
 요청 취소/기존 timeout을 지키며 목록·커버리지 전체에 통계를 일괄 로드하지 않는다.
 
+구현(2026-10-30): `cmd/console/measurement_statistics.go`가 retained loader의 동결 store
+binding과 기존 Run/원시 검증을 사용한다. `Curve.Statistics()`는 같은 empirical percentile
+구현을 재사용하며 공유 idle와 해당 batch의 active 원시·execution, curve-plan만 `sources`에 넣는다.
+curve-plan 단일 객체와 retained evidence 객체는 각각 64 MiB로 읽기를 제한한다. 현재 Secret/권한
+조회 실패는 원근거 미기록으로 바꾸지 않는다. 공개 경로는 기존 result GET과 ChillServer 프록시를
+그대로 사용하므로 새 route·RBAC grant는 없다.
+
 | 상황 | 응답·표시 |
 |---|---|
 | result reference 없음 | `statistics:null`, `statisticsReason:"NoPublishedResult"`; 기존 result:null 유지 |
@@ -354,3 +370,8 @@ failed/insufficient history에 Accepted의 완결 조건을 잘못 강제하지 
 raw power·prepare payload/비밀을 HTTP에 복사하지 않는다.
 참조 key가 있는데 객체를 못 읽거나 깨졌으면 evidence 오류이지 null/‘미측정’이 아니다.
 개별 단계 Accepted를 전체 순서 Complete로 승격하지 않는다.
+
+구현(2026-10-30): `LoadOperationCostSteps`가 저장된 status 순서/이름과 exact key를 읽고,
+기존 accepted cost/idle validator를 해당 분기에만 적용한다. list와 detail은 같은 loader를
+사용하며 `maxEvidenceBytes`로 객체별 읽기를 제한한다. phase와 verdict는 CR 원문 그대로이고
+실패 기록의 actual interval은 보여 주되 accepted 에너지로 승격하지 않는다.

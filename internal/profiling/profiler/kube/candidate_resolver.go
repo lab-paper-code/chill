@@ -107,28 +107,11 @@ func (r *KubernetesCandidateResolver) ResolveCandidate(
 	if err != nil {
 		return profiler.ResolvedCandidate{}, err
 	}
-	if modelPath.Runtime.Family == profilingrun.FirstfloorRuntimeFamily &&
-		modelPath.Runtime.Backend == profilingrun.FirstfloorRKNNLiteBackend {
-		if declaration.Host == nil || declaration.Host.Platform == nil || declaration.Access == nil ||
-			len(declaration.Runtime.Packages) != 1 || declaration.Runtime.Packages[0].Name != rknnLitePackage {
-			return profiler.ResolvedCandidate{}, errors.New("RKNNLite requires declared host, platform, runtime access, and rknn-toolkit-lite2 package")
-		}
+	if err := validateSelectedRuntime(modelPath, declaration); err != nil {
+		return profiler.ResolvedCandidate{}, err
 	}
 
-	result := modelcompat.Evaluate(modelcompat.Input{
-		Artifact: modelcompat.ArtifactRequirement{Format: artifact.Format},
-		Path: modelcompat.ExecutionPathRequirement{
-			RuntimeFamily: modelPath.Runtime.Family,
-			Backend:       modelPath.Runtime.Backend,
-		},
-		DeviceClass: modelcompat.DeviceClassInfo{Architecture: deviceClass.Spec.Architecture},
-		Runtime: &modelcompat.RuntimeDeclaration{
-			Trusted:      true,
-			Architecture: declaration.Runtime.Architecture,
-			Family:       declaration.Runtime.Runtime.Family,
-			Backends:     append([]string(nil), declaration.Runtime.Runtime.Backends...),
-		},
-	})
+	result := evaluateStaticCandidate(modelPath, artifact, deviceClass, declaration)
 	if result.Verdict != modelcompat.VerdictCompatible {
 		return profiler.ResolvedCandidate{}, fmt.Errorf(
 			"static candidate verdict is %s: %s", result.Verdict, compatibilityReasonCodes(result),
@@ -231,6 +214,37 @@ func validateCandidateSelection(selection profiler.CandidateSelection) error {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return fmt.Errorf("candidate %s is required without surrounding whitespace", name)
 		}
+	}
+	return nil
+}
+
+// evaluateStaticCandidate is shared by preflight and the read-only support
+// query. Admission's additional dataset, mode and host checks remain separate.
+func evaluateStaticCandidate(
+	modelPath edgev1alpha1.ModelExecutionPath,
+	artifact edgev1alpha1.ModelArtifact,
+	deviceClass *edgev1alpha1.DeviceClass,
+	declaration resolvedExecutionDeclaration,
+) modelcompat.Result {
+	return modelcompat.Evaluate(modelcompat.Input{
+		Artifact: modelcompat.ArtifactRequirement{Format: artifact.Format},
+		Path: modelcompat.ExecutionPathRequirement{
+			RuntimeFamily: modelPath.Runtime.Family, Backend: modelPath.Runtime.Backend,
+		},
+		DeviceClass: modelcompat.DeviceClassInfo{Architecture: deviceClass.Spec.Architecture},
+		Runtime: &modelcompat.RuntimeDeclaration{
+			Trusted: true, Architecture: declaration.Runtime.Architecture,
+			Family: declaration.Runtime.Runtime.Family, Backends: declaration.Runtime.Runtime.Backends,
+		},
+	})
+}
+
+func validateSelectedRuntime(path edgev1alpha1.ModelExecutionPath, declaration resolvedExecutionDeclaration) error {
+	if path.Runtime.Family == profilingrun.FirstfloorRuntimeFamily &&
+		path.Runtime.Backend == profilingrun.FirstfloorRKNNLiteBackend &&
+		(declaration.Host == nil || declaration.Host.Platform == nil || declaration.Access == nil ||
+			len(declaration.Runtime.Packages) != 1 || declaration.Runtime.Packages[0].Name != rknnLitePackage) {
+		return errors.New("RKNNLite requires declared host, platform, runtime access, and rknn-toolkit-lite2 package")
 	}
 	return nil
 }

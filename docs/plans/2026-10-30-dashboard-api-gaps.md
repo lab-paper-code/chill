@@ -1,6 +1,6 @@
 # 측정 커버리지·실험 대시보드 API 한계 해소 — B0
 
-- 날짜: 2026-10-30. **B0 설계 확정; B1~B3 구현·배포, F4 소비·수용 전**.
+- 날짜: 2026-10-30. **B0 설계 확정. 슬라이스 구현 기록은 §9 이하; 배포·F4 소비 수용은 별도**.
 - 사용자 요청: 백엔드 조치도 워크플로우 의존성을 고려하여 대시보드 작업 사이에 넣는다.
 - 화면 출발점: [측정 UX 계획](2026-10-30-dashboard-measurement-ux.md),
   [Dashboard 설계 §8](../design/dashboard/README.md#8-측정실험-ux와-커버리지-2026-10-30),
@@ -187,3 +187,37 @@ GET 실패/성공 경로 확인→F4 측정 소비 배포. B3는 캠페인 사�
 - 미실행: 코드 테스트·lint·build·formatter·Helm render·CRD 생성·배포·측정·새 publication·브라우저/SUS.
   문서 단계이고 코드 변경이 없으므로 구현 검증은 위 슬라이스 통합 소유자의 다음 단계다.
 - 기존 worktree의 Dashboard 구현 변경은 보존하고 이 문서 네 경로만 커밋한다.
+
+## 9. B1 구현 기록 (2026-10-30)
+
+- PC-07: 정확 model/path/class/Node GET를 Console query→composition-root callback→기존
+  CandidateResolver fact-source에 연결했다. 기존 strict selector/decoder, modelcompat 비교와 RKNN
+  선언 요건을 preflight와 공유한다. static support에 power mode/Ready/admission 판정을 섞지 않는다.
+- PC-08: 기존 Run 목록에 ownerReferences 원형·네 labels 원문을 공개한다. 빈 owner는 `[]`,
+  labels는 `{}`다. attempt를 파싱/복원하거나 owner를 이름으로 합성하지 않는다.
+  실패 BEO의 `result:null`, Run spec/status와 page 계약은 그대로다.
+- 경계 해석을 §12.1에 명시했다: 설정된 ConfigMap/키 부재는 Unknown/Missing,
+  strict 선언 오류·불완전 RKNN 설치 계약은 Unknown/Invalid, 선택되지 않은 path·class 밖 Node는
+  400이다. 저장 API identity 오류·읽기 장애는 503이며 권한 거부 403/선택 객체 미존재 404와 구분한다.
+- public proxy route와 정확 `/chill/api/v1/model-compatibility` GET grant를 함께 연결했다.
+  Console는 기존 ModelSpec/DeviceClass/Node·fact-source 읽기 권한을 그대로 사용한다.
+  CRD·저장 schema·result writer·관측 행·controller lifecycle·package 허용 경계 변경은 없다.
+- 검증: pinned gopls 정의/참조로 기존 declaration selector 호출을 확인했다.
+  `nice -n 19 env GOMAXPROCS=2`의 focused `go test`에서 operatorconsole 세 패키지,
+  profiler/kube, cmd/chill-server가 통과했다. 같은 명령의 cmd/console 전체는 당시 B2 statistics
+  fixture의 cgroup memory 누락으로 실패해 B2 담당에게 전달했다.
+  B1·기존 proxy/auth 회귀만 고른 `-run 'Test(ModelCompatibility|ConsoleCompatibility|BuildProfilingRuns|ConsoleChillServer|DashboardGatewayCannot)'`
+  focused 검사는 위 여섯 패키지 모두 통과했다.
+- 관련 lint: operatorconsole 세 패키지·profiler/kube 통과. cmd 공용 lint의 B1 진단(줄 길이,
+  테스트 문자열 중복)은 수정했고, 함께 나온 B2 진단 및 최종 cmd 공용 lint는 B2 통합 담당이 처리한다.
+  전체 `make lint test`는 최종 통합 담당의 1회 검사로 남긴다.
+- `make helm-lint helm-template` 기본 profile 통과(30개, 유효 17/skip 13),
+  `HELM_SET='--set profiler.enabled=true --set profiler.transitionObserver.observerNodeName=observer-node'`
+  별도 profile 통과(45개, 유효 32/skip 13). 처음 HELM_SET에서 `--set`을 빠뜨린 호출,
+  observerNodeName을 빠뜨린 호출은 실패했고 위 명시 입력으로 바로잡았다.
+  Console/ChillServer를 켠 두 추가 offline render에서도 정확 GET grant만 존재함을 확인했다
+  (release chill, namespace chill-system, values.yaml 기본값과
+  `console.enabled=true,servingEntrypoint.enabled=true,servingEntrypoint.tls.secretName=render-only-tls,evidenceStore.connection.bucket=render-only-evidence`;
+  Profiler 쪽은 위 두 Profiler 옵션 추가). 기본 chart는 gateway 비활성이라 해당 role이 없다.
+- 배포 필요: Console·ChillServer 이미지와 narrow grant 차트. 배포·클러스터 변경·실데이터 GET,
+  새 측정·publication·Dashboard 수정은 수행하지 않았다.

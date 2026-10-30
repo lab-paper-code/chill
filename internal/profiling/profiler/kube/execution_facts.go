@@ -122,6 +122,17 @@ type resolvedExecutionDeclaration struct {
 	MetricObserverImage string
 }
 
+// declarationSelectionError keeps preflight's original diagnostic while the
+// read-only compatibility query distinguishes missing and ambiguous facts.
+type declarationSelectionError struct {
+	code string
+	err  error
+}
+
+func (e *declarationSelectionError) Error() string { return e.err.Error() }
+
+func (e *declarationSelectionError) Unwrap() error { return e.err }
+
 // selectExecutionDeclaration returns the one declaration for deviceClass and
 // the runtime family/backend that applies to node: a Node-bound declaration
 // only on its Node, a class-level one on every Node of the class.
@@ -138,7 +149,9 @@ func selectExecutionDeclaration(
 	}
 	raw, exists := configMap.Data[configMapKey]
 	if !exists || strings.TrimSpace(raw) == "" {
-		return resolvedExecutionDeclaration{}, fmt.Errorf("Profiler fact-source ConfigMap missing key %q", configMapKey)
+		return resolvedExecutionDeclaration{}, &declarationSelectionError{
+			code: "RuntimeDeclarationMissing", err: fmt.Errorf("Profiler fact-source ConfigMap missing key %q", configMapKey),
+		}
 	}
 	documentBytes, err := readSingleYAMLDocument([]byte(raw))
 	if err != nil {
@@ -156,7 +169,9 @@ func selectExecutionDeclaration(
 		return resolvedExecutionDeclaration{}, errors.New("metric-observer image is required without surrounding whitespace")
 	}
 	if len(document.Declarations) == 0 {
-		return resolvedExecutionDeclaration{}, errors.New("Profiler execution facts require at least one declaration")
+		return resolvedExecutionDeclaration{}, &declarationSelectionError{
+			code: "RuntimeDeclarationMissing", err: errors.New("Profiler execution facts require at least one declaration"),
+		}
 	}
 
 	seen := make(map[string]struct{}, len(document.Declarations))
@@ -171,26 +186,22 @@ func selectExecutionDeclaration(
 		identity := declaration.DeviceClass + "\x00" + declaration.Node + "\x00" + declaration.Runtime.Runtime.Family +
 			"\x00" + strings.Join(backends, "\x00")
 		if _, duplicate := seen[identity]; duplicate {
-			return resolvedExecutionDeclaration{}, fmt.Errorf(
-				"duplicate execution declaration for %s/%s/%s/%s",
-				declaration.DeviceClass,
-				declaration.Node,
-				declaration.Runtime.Runtime.Family,
-				strings.Join(backends, ","),
-			)
+			return resolvedExecutionDeclaration{}, &declarationSelectionError{
+				code: "RuntimeDeclarationAmbiguous",
+				err: fmt.Errorf("duplicate execution declaration for %s/%s/%s/%s",
+					declaration.DeviceClass, declaration.Node, declaration.Runtime.Runtime.Family, strings.Join(backends, ",")),
+			}
 		}
 		seen[identity] = struct{}{}
 		if declaration.DeviceClass == deviceClass && (declaration.Node == "" || declaration.Node == node) &&
 			declaration.Runtime.Runtime.Family == runtimeFamily &&
 			slices.Contains(declaration.Runtime.Runtime.Backends, runtimeBackend) {
 			if selected != nil {
-				return resolvedExecutionDeclaration{}, fmt.Errorf(
-					"multiple trusted execution declarations for %s on %s/%s/%s",
-					node,
-					deviceClass,
-					runtimeFamily,
-					runtimeBackend,
-				)
+				return resolvedExecutionDeclaration{}, &declarationSelectionError{
+					code: "RuntimeDeclarationAmbiguous",
+					err: fmt.Errorf("multiple trusted execution declarations for %s on %s/%s/%s",
+						node, deviceClass, runtimeFamily, runtimeBackend),
+				}
 			}
 			copy := declaration
 			copy.Runtime.Runtime.Backends = append([]string(nil), declaration.Runtime.Runtime.Backends...)
@@ -202,13 +213,11 @@ func selectExecutionDeclaration(
 		}
 	}
 	if selected == nil {
-		return resolvedExecutionDeclaration{}, fmt.Errorf(
-			"no trusted execution declaration for %s on %s/%s/%s",
-			node,
-			deviceClass,
-			runtimeFamily,
-			runtimeBackend,
-		)
+		return resolvedExecutionDeclaration{}, &declarationSelectionError{
+			code: "RuntimeDeclarationMissing",
+			err: fmt.Errorf("no trusted execution declaration for %s on %s/%s/%s",
+				node, deviceClass, runtimeFamily, runtimeBackend),
+		}
 	}
 	return *selected, nil
 }

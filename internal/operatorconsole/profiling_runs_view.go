@@ -4,6 +4,7 @@ import (
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // ProfilingRunsSnapshot is one namespaced or all-namespaces LIST response. An
@@ -34,6 +35,8 @@ type ProfilingRunView struct {
 	ResourceVersion   string                          `json:"resourceVersion"`
 	Generation        int64                           `json:"generation"`
 	CreationTimestamp string                          `json:"creationTimestamp"`
+	OwnerReferences   []metav1.OwnerReference         `json:"ownerReferences"`
+	Labels            map[string]string               `json:"labels"`
 	Spec              edgev1alpha1.ProfilingRunSpec   `json:"spec"`
 	Status            edgev1alpha1.ProfilingRunStatus `json:"status"`
 }
@@ -48,11 +51,25 @@ func BuildProfilingRuns(snapshot ProfilingRunsSnapshot) ProfilingRunsView {
 		Runs: make([]ProfilingRunView, 0, len(snapshot.Runs)),
 	}
 	for _, run := range snapshot.Runs {
+		owners := make([]metav1.OwnerReference, len(run.OwnerReferences))
+		for index := range run.OwnerReferences {
+			run.OwnerReferences[index].DeepCopyInto(&owners[index])
+		}
+		labels := make(map[string]string)
+		for _, key := range []string{
+			"edge.dacs.io/batch-energy-optimization", "edge.dacs.io/workload-mode",
+			"edge.dacs.io/batch", "edge.dacs.io/attempt",
+		} {
+			if value, exists := run.Labels[key]; exists {
+				labels[key] = value
+			}
+		}
 		view.Runs = append(view.Runs, ProfilingRunView{
 			Namespace: run.Namespace, Name: run.Name, UID: string(run.UID),
 			ResourceVersion: run.ResourceVersion, Generation: run.Generation,
 			CreationTimestamp: run.CreationTimestamp.UTC().Format(time.RFC3339),
-			Spec:              run.Spec, Status: run.Status,
+			OwnerReferences:   owners, Labels: labels,
+			Spec: run.Spec, Status: run.Status,
 		})
 	}
 	return view

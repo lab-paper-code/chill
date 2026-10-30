@@ -116,6 +116,7 @@ func composeChillServer(serving http.Handler, authorizer *servingkube.Authorizer
 	for _, route := range []string{
 		"GET /api/v1/systems",
 		"GET /api/v1/inventory",
+		"GET /api/v1/model-compatibility",
 		"GET /api/v1/namespaces/{namespace}/profiling-runs",
 		"GET /api/v1/namespaces/{namespace}/profiling-runs/{name}/evidence-passport",
 		"GET /api/v1/namespaces/{namespace}/batch-energy-optimizations/{name}/result",

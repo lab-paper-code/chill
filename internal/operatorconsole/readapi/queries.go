@@ -15,9 +15,10 @@ import (
 // QueryReaders reuse the same read-through snapshots as the standalone CLI.
 // A missing optional query is unavailable, never an empty successful listing.
 type QueryReaders struct {
-	Systems       func(context.Context) (operatorconsole.SystemSnapshot, error)
-	Inventory     func(context.Context) (operatorconsole.InventorySnapshot, error)
-	ProfilingRuns func(context.Context, string) (operatorconsole.ProfilingRunsSnapshot, error)
+	Systems            func(context.Context) (operatorconsole.SystemSnapshot, error)
+	Inventory          func(context.Context) (operatorconsole.InventorySnapshot, error)
+	ProfilingRuns      func(context.Context, string) (operatorconsole.ProfilingRunsSnapshot, error)
+	ModelCompatibility func(context.Context, operatorconsole.ModelCompatibilitySelection) (operatorconsole.ModelCompatibilitySnapshot, error)
 }
 
 type queryPage struct {
@@ -102,6 +103,7 @@ func matchesCondition(conditions []metav1.Condition, filter string) bool {
 // NewQueryHandler exposes existing pure projections; deployment owns auth.
 func NewQueryHandler(readers QueryReaders) http.Handler {
 	mux := http.NewServeMux()
+	RegisterModelCompatibilityQuery(mux, readers.ModelCompatibility)
 	mux.HandleFunc("GET /api/v1/systems", func(w http.ResponseWriter, r *http.Request) {
 		q, valid := parseListQuery(r, false)
 		if !valid {
