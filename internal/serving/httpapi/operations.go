@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
@@ -10,10 +11,11 @@ import (
 
 const manualOperationsPath = "/api/v1/scheduler/operations"
 
-// longOperation reports a route that runs a physical operation to its end and
-// is bounded by OperationTimeout.
+// longOperation bounds operations and historical observation I/O by OperationTimeout.
 func longOperation(r *http.Request) bool {
-	return r.Method == http.MethodPost && r.URL.Path == manualOperationsPath
+	return r.Method == http.MethodPost && r.URL.Path == manualOperationsPath ||
+		r.Method == http.MethodGet && (r.URL.Path == "/api/v1/observations/scheduler" ||
+			r.URL.Path == rawObservationsPath || strings.HasPrefix(r.URL.Path, rawObservationsPath+"/"))
 }
 
 // operations runs a manual operation for a caller allowed to change the

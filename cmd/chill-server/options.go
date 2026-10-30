@@ -42,7 +42,7 @@ type options struct {
 	pprofMutexFraction                                                     int
 	pprofBlockRate                                                         time.Duration
 	resourceMaxSamples, resourceMaxContainers, resourceMaxThermal, resourceMaxErrors int
-	resourceRelease string
+	resourceRelease, resourceSystem string
 	resourceControlComponents []string
 	resourceDirectoryInterval time.Duration
 
@@ -56,6 +56,7 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 	f.IntVar(&o.resourceMaxThermal, "resource-max-thermal", 0, "Maximum thermal sensors per resource sample.")
 	f.IntVar(&o.resourceMaxErrors, "resource-max-errors", 0, "Maximum errors per resource sample/container.")
 	f.StringVar(&o.resourceRelease, "resource-release", "", "Exact release label of CHILL control Pods.")
+	f.StringVar(&o.resourceSystem, "resource-system", "", "Exact ChillSystem identity of operator-managed control Pods.")
 	f.Func("resource-control-component", "Allowed CHILL control component; repeatable.", func(value string) error {
 		if len(validation.IsDNS1123Label(value)) != 0 { return fmt.Errorf("invalid resource control component %q", value) }
 		o.resourceControlComponents = append(o.resourceControlComponents, value)
@@ -122,7 +123,7 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 	f.Int64Var(&o.maxEvidenceBytes, "max-evidence-bytes", 64<<20, "Maximum bytes per profiling evidence object.")
 	f.DurationVar(&o.requestTimeout, "request-timeout", 30*time.Second, "Read/operation and delivery bound; not SLO.")
 	f.DurationVar(&o.operationTimeout, "operation-timeout", 30*time.Minute,
-		"Bound of one manual operation.")
+		"Processing bound of one manual operation or historical observation read.")
 	f.DurationVar(&o.drainTimeout, "drain-timeout", 2*time.Minute, "Management and process shutdown drain bound.")
 	f.DurationVar(&o.sourceInterval, "source-interval", time.Second, "Current instance and management refresh interval.")
 	f.DurationVar(&o.profileInterval, "profile-interval", time.Minute, "Selected profiling evidence refresh interval.")
@@ -212,8 +213,8 @@ func (o options) validate() error {
 	if err := o.validateFacts(); err != nil {
 		return err
 	}
-	if o.resourceMaxSamples <= 0 || o.resourceMaxContainers <= 0 || o.resourceMaxThermal <= 0 || o.resourceMaxErrors <= 0 || o.resourceDirectoryInterval <= 0 || o.resourceRelease == "" || len(o.resourceControlComponents) == 0 {
-		return errors.New("positive resource bounds/directory interval and explicit release/control components are required")
+	if o.resourceMaxSamples <= 0 || o.resourceMaxContainers <= 0 || o.resourceMaxThermal <= 0 || o.resourceMaxErrors <= 0 || o.resourceDirectoryInterval <= 0 || o.resourceRelease == "" || o.resourceSystem == "" || len(o.resourceControlComponents) == 0 {
+		return errors.New("positive resource bounds/directory interval and explicit release/system/control components are required")
 	}
 	return o.validateKubernetesAPIBudget()
 }

@@ -388,7 +388,7 @@ func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *test
 	}
 }
 
-func TestSchedulerSettingsStaticRoutingIsReadOnly(t *testing.T) {
+func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 	settings := schedulerSettingsForTest()
 	settingsRaw, err := json.Marshal(settings)
 	if err != nil {
@@ -423,9 +423,11 @@ func TestSchedulerSettingsStaticRoutingIsReadOnly(t *testing.T) {
 		}
 	})
 	controller, execution := settingsControllerForTest(t, kube, observationLog, settings)
+	meters := []servingkube.MeterDeclaration{{ID: "accepted-meter", Node: serving.NodeReference{Name: "accepted-node", UID: "accepted-uid"}, Scope: "node-exclusive-wall"}}
 	handler := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, runtime: execution, observationLog: observationLog, config: HandlerConfig{
 		Scheduler: controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler", SchedulerConfigKey: "scheduler.json",
 		SchedulerLock: &sync.Mutex{}, MaxRequestBytes: 1 << 20, RefreshScheduler: func(context.Context) error { return nil },
+		SchedulerMeters: func() []servingkube.MeterDeclaration { return meters },
 	}}
 	put := func(extra string) *httptest.ResponseRecorder {
 		body := strings.TrimSuffix(string(settingsRaw), "}") + extra + "}"
@@ -441,6 +443,8 @@ func TestSchedulerSettingsStaticRoutingIsReadOnly(t *testing.T) {
 		{`,"staticRouting":{"old-uid":{"physical":1}}`, "staticRouting"},
 		{`,"staticRoutingValidatedAt":null`, "staticRoutingValidatedAt"},
 		{`,"staticRoutingValidatedAt":"2026-10-01T00:00:00Z"`, "staticRoutingValidatedAt"},
+		{`,"meters":[]`, "body"},
+		{`,"meters":null`, "body"},
 	} {
 		response := put(rejected.extra)
 		var failure serving.Error
@@ -455,9 +459,19 @@ func TestSchedulerSettingsStaticRoutingIsReadOnly(t *testing.T) {
 	handler.scheduler(got, request)
 	var shown struct {
 		StaticRouting map[string]map[string]int `json:"staticRouting"`
+		Meters []servingkube.MeterDeclaration `json:"meters"`
 	}
 	if err := json.Unmarshal(got.Body.Bytes(), &shown); err != nil || got.Code != http.StatusOK || !reflect.DeepEqual(shown.StaticRouting, declared) {
 		t.Fatalf("GET settings lost the stored declaration: status=%d body=%s", got.Code, got.Body)
+	}
+	if !reflect.DeepEqual(shown.Meters, meters) {
+		t.Fatalf("GET settings did not use accepted meter projection: %+v", shown.Meters)
+	}
+	handler.config.SchedulerMeters = nil
+	empty := httptest.NewRecorder()
+	handler.scheduler(empty, request)
+	if !strings.Contains(empty.Body.String(), `"meters":[]`) {
+		t.Fatalf("absent declarations must be an empty array: %s", empty.Body)
 	}
 	response := put("")
 	if response.Code != http.StatusOK || updates != 1 {

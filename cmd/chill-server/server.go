@@ -16,6 +16,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -25,6 +26,11 @@ import (
 func run(ctx context.Context, opts options) (retErr error) {
 	if opts.materializeProfile {
 		return materializeProfile(ctx, opts)
+	}
+	started := time.Now().UTC()
+	podUID, podNamespace, podName := os.Getenv("POD_UID"), os.Getenv("POD_NAMESPACE"), os.Getenv("POD_NAME")
+	if podUID == "" || podNamespace == "" || podName == "" {
+		return errors.New("POD_UID, POD_NAMESPACE and POD_NAME Downward API identity are required")
 	}
 	config, err := kubeconfig.BuildConfig(opts.kube)
 	if err != nil {
@@ -84,6 +90,19 @@ func run(ctx context.Context, opts options) (retErr error) {
 			retErr = errors.Join(retErr, fmt.Errorf("close serving observations: %w", err))
 		}
 	}()
+	if err := recordCluster(observationLog, publisher, serverStartCluster(podUID, podNamespace, podName)); err != nil {
+		return fmt.Errorf("record server Pod identity: %w", err)
+	}
+	selectedPod := func(pod *corev1.Pod) bool {
+		namespace := podNamespace
+		if pod.Labels["app.kubernetes.io/component"] == "serving-instance" {
+			namespace = opts.servingNamespace
+		}
+		return resourcePodSelected(pod, namespace, opts.resourceRelease, opts.resourceControlComponents) ||
+			resourcePodSelected(pod, namespace, opts.resourceSystem, opts.resourceControlComponents)
+	}
+	process := newProcessResources(observationLog, opts.observationDirectory, podUID, started, opts.resourceDirectoryInterval)
+	publisher.recordResources = process.record
 	// Backend lifetime belongs to ChillServer, not SIGTERM or an HTTP caller.
 	backendCtx, cancelBackend := context.WithCancel(context.Background())
 	defer cancelBackend()
@@ -102,6 +121,8 @@ func run(ctx context.Context, opts options) (retErr error) {
 	native := &firstfloor.Client{HTTPClient: &http.Client{Transport: transport}, Diagnostics: recorder}
 	observer, err := servingkube.NewObserver(store, kube, execution, native, servingkube.ObserverConfig{
 		Namespace: opts.servingNamespace,
+		OnCluster: func(row serving.ClusterObservation) error { return recordCluster(observationLog, publisher, row) },
+		SelectClusterPod: selectedPod,
 	})
 	if err != nil {
 		return err
@@ -116,6 +137,11 @@ func run(ctx context.Context, opts options) (retErr error) {
 		MaxRequestBytes: opts.maxRequestBytes, RequestTimeout: opts.requestTimeout, OperationTimeout: opts.operationTimeout,
 		MaxQueryEvents: opts.maxQueryEvents,
 		Live:           publisher.hub,
+		ReceiveResources: (&resourceReceiver{
+			kube: kube, log: observationLog, namespace: corev1.NamespaceAll, selectPod: selectedPod,
+			maxSamples: opts.resourceMaxSamples, maxContainers: opts.resourceMaxContainers,
+			maxThermal: opts.resourceMaxThermal, maxErrors: opts.resourceMaxErrors,
+		}).receive,
 	}
 	scheduler, err := newSchedulerService(
 		ctx, store, kube, execution, observer, objects, observationLog, opts,
@@ -205,6 +231,7 @@ func initializeServing(ctx context.Context, opts *options,
 		handlerConfig.SchedulerNamespace = opts.servingNamespace
 		handlerConfig.SchedulerLock = &scheduler.lock
 		handlerConfig.RefreshScheduler = scheduler.refreshLocked
+		handlerConfig.SchedulerMeters = scheduler.schedulerMeters
 		handlerConfig.OperatingPower = scheduler.operatingPower
 		handlerConfig.Profiles = scheduler.profilesView
 	}

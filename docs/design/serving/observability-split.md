@@ -388,7 +388,7 @@ READY 전에 최초 Pod 조회와 알려진 컨테이너의 follow 시작·현�
 
 ## 17. E5 증거 API (2026-10-30)
 
-[계획 §1~6](../../plans/2026-10-28-e5-evidence-api.md)의 문서 단계다. 원본 요구는 [Serving 관측](../../spec/00_measurement.md#측정의-단위), [scheduler SRS](../../spec/scheduler/SRS.md)의 SCH-67~70 / SCH-AC-52~55다. 아래 API·DTO·파일명은 **구현할 계약**이며 현 소스에 이미 있다는 뜻이 아니다. 기존 `ObservationLog`, `ObservationArchive`/Reader/Lister, 로컬 우선 시간 선택, `append`/archive/health, TokenReview/SAR, live hub를 재사용한다. 별도 저장소·TSDB·broker·다중 버전 reader·router 파라미터를 만들지 않는다.
+[계획 §1~6](../../plans/2026-10-28-e5-evidence-api.md)의 구현 계약이다. 원본 요구는 [Serving 관측](../../spec/00_measurement.md#측정의-단위), [scheduler SRS](../../spec/scheduler/SRS.md)의 SCH-67~70 / SCH-AC-52~55다. 코드 이행과 실제 배포·실험 수용은 구분하며 구현 커밋은 17.7에 남긴다. 기존 `ObservationLog`, `ObservationArchive`/Reader/Lister, 로컬 우선 시간 선택, `append`/archive/health, TokenReview/SAR, live hub를 재사용한다. 별도 저장소·TSDB·broker·다중 버전 reader·router 파라미터를 만들지 않는다.
 
 ### 17.1 범위와 수집 경계
 
@@ -502,7 +502,7 @@ append 실패는 기존 ObservationLog health·호출 오류/로그로 노출하
 
 ### 17.7 이행·수용·미확인 경계
 
-1. **문서:** spec → SCH-67~70 / SCH-AC-52~55 → 이 설계와 ADR 0030. 이번 변경은 이 단계만 수행한다.
+1. **문서:** spec → SCH-67~70 / SCH-AC-52~55 → 이 설계와 ADR 0030(`e699801c` 문서 계약).
 2. **구현:** 위 3개를 병렬로 붙이고 통합 소유자가 shared wiring·stream 등록·권한 경계를 완성한다. `e947cd5e` 미사용 분리 코드를 정리한 단일 ChillServer 소스를 전제로 하며 gateway 재개는 하지 않는다.
 3. **승인 배포 1회:** raw RBAC·node-agent 내부 POST 권한 및 [대시보드 계획 §4](../../plans/2026-10-26-dashboard-live-stage.md#4-증거-api와의-경계)의 라이브 RBAC·S1 권한·서버/대시보드 이미지 변경을 묶는다. node-agent 수집 설정·mount/보안·genesis1 포함과 edge→server TLS 도달도 이 단위에서 확인한다.
 4. **하네스 cutover:** 17.1의 대체/유지 표대로 수집과 판정 입력을 한 번에 옮긴다. 중복 영수증 파일과 이를 읽는 판정 코드·옛 CHILL 우회 수집을 제거하되 client·STOP·운영자 장애 주입은 보존한다.
@@ -515,5 +515,7 @@ append 실패는 기존 ObservationLog health·호출 오류/로그로 노출하
 | resources 구현 커밋: `SCH-68` 자원 수집·수신·누적 기록(이 행을 추가한 커밋). 공통 등록·ticker·배포 설정은 구현 1 통합 커밋; 테스트 파일은 각 생산자 인접 `resources_test.go` | 코드 이행, 배포·환경 실측 수용과 구분 |
 | 초기 baseline/자기 Pod UID·Pod/컨테이너 상태 변화·issue 발생/변경/해소·동일 반복 억제·append 실패 시 live 미발행·저장 성공 후 동일 callback | SCH-AC-54 |
 | accepted meters projection·GET 후 CPO/대시보드 PUT에서 제외·직접 meters PUT 거절·기존 읽기 전용 필드 경계 유지 | SCH-AC-55 |
+| 원시 내보내기·meters 구현 커밋: 이 행을 추가한 `feat(serving): expose raw evidence and accepted meters (SCH-67 SCH-70)` 커밋. `observation_log_raw.go`·`httpapi/observations_raw.go`, 원래 prefix/버전의 두 stream 등록, raw/scheduler 처리·쓰기 마감, accepted meters와 두 PUT client를 연결. focused 검사는 `observation_log_raw_test.go`·`httpapi/observations_raw_test.go`·settings/service 인접 test·`e5.py self-check`에 추가했으며 worker는 실행하지 않음 | SCH-AC-52·55 코드 이행, 실제 #213 조회·배포·리허설 수용과 구분 |
+| 공통 통합 구현 커밋: 위 원시 내보내기 커밋에서 resources 수신·기존 live 1초 ticker·cluster callback/자기 Pod UID를 root에 연결. `resourceObservation` bounds·주기·release/system/control scope는 Helm values/flags, TLS URL/CA/token은 기본 discovery agent config로 전달. raw는 별도 `evidence-collector` ClusterRole(`/raw`와 `/raw/*`), 수신 POST는 기본 agent SA에만 부여하며 둘 다 일반 manager/BFF에 추가하지 않음 | SCH-AC-53·54 공통 wiring; 클러스터 접근·배포 0 |
 
 구현 2의 **배포 시 1회 확인**할 환경 사실은 (a) 비root 기본 agent가 필요한 cgroup 파일을 읽을 수 있는지, (b) edge Node에서 서버 내부 TLS endpoint까지 닿는지, (c) 작은 Node의 1초 표본 오버헤드다. 이번 코드 이행에서는 클러스터 접근·배포·실측을 수행하지 않는다. 확인 전 비root 가능·네트워크 도달·허용 오버헤드를 기정사실로 쓰지 않는다. 실패 시 수집을 가짜 0으로 통과시키거나 actuation 특권을 통째로 넘기지 않고 필요한 읽기 권한/배포 조건과 실측 비용을 명시한다. 최종 완료는 CHILL 사실의 API 단일 출처와 네 수용 시나리오·리허설 증거이며, 문서·코드 이행·배포·실험 수용은 서로 구분한다.

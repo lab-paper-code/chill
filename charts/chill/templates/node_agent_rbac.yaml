@@ -20,6 +20,11 @@ rules:
     resources: ["nodes"]
     # patch publishes discovery and online-CPU metadata.
     verbs: ["get", "patch"]
+  {{- if .Values.servingEntrypoint.enabled }}
+  # The base agent can submit resource batches, never read Pods or raw evidence.
+  - nonResourceURLs: ["/chill/api/v1/internal/observations/resources"]
+    verbs: [post]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

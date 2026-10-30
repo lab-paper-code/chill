@@ -490,6 +490,8 @@ servingEntrypoint:
   queueLimit: 1024
   # Approved all-profile lifetime/drain maxima; 30s remains for HTTP shutdown.
   requestTimeout: 129s
+  # Long operations and historical/raw evidence reads have a separate processing bound.
+  operationTimeout: 30m
   drainTimeout: 164s
   # Must exceed drainTimeout plus HTTP shutdown overhead.
   terminationGracePeriodSeconds: 194
@@ -501,6 +503,14 @@ servingEntrypoint:
   maxRequestBytes: 8388608
   maxEvidenceBytes: 67108864
   maxQueryEvents: 1000
+  resourceObservation:
+    maxSamples: 32
+    maxContainers: 256
+    maxThermal: 256
+    maxErrors: 256
+    directoryInterval: 1m
+    # Exact Helm release/component scope; workload clients and unrelated tenants are excluded.
+    controlComponents: [operator, profiler, evidence-store, serving-entrypoint, node-agent, node-agent-actuation, dashboard, operator-console, metric-observer, workload-observer, transition-observer]
   # One finite capture in a fresh private child of the existing writable mount.
   diagnostic:
     directory: ""
@@ -793,6 +803,16 @@ nodeAgent:
   interval: 10s
   hostRoot: /host
   signatureFile: /etc/chill/node-agent/signatures.yaml
+  # Base discovery agent only; endpoint defaults to this release's private ChillServer.
+  # Keep genesis1 in nodeSelector/excludeNodeNames coverage; /proc and /sys below stay read-only.
+  resourceObservation:
+    url: ""
+    caFile: /etc/chill/resources-ca/tls.crt
+    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    sampleInterval: 1s
+    batchInterval: 10s
+    requestTimeout: 5s
+    maxResponseBytes: 1048576
   kubernetesClient:
     apiServer: ""
     discoverFromDefaultEndpoint: true

@@ -248,4 +248,7 @@ func TestRejectedSchedulerRefreshPreservesPublishedConfiguration(t *testing.T) {
 	if service.configuration.Load() != accepted || service.resourceVersion != "accepted" {
 		t.Fatal("rejected refresh changed the published configuration")
 	}
+	if got := service.schedulerMeters(); len(got) != 1 || got[0].ID != "accepted-meter" {
+		t.Fatalf("settings projected a rejected meter declaration: %+v", got)
+	}
 }

@@ -110,6 +110,17 @@ spec:
             - {{ printf "--store-credentials-secret=%s" $credentialsSecret | quote }}
             - {{ printf "--queue-limit=%s" (.Values.servingEntrypoint.queueLimit | toJson) | quote }}
             - {{ printf "--request-timeout=%s" .Values.servingEntrypoint.requestTimeout | quote }}
+            - {{ printf "--operation-timeout=%s" .Values.servingEntrypoint.operationTimeout | quote }}
+            - {{ printf "--resource-release=%s" .Release.Name | quote }}
+            - {{ printf "--resource-system=%s" (include "chill.systemName" .) | quote }}
+            - {{ printf "--resource-max-samples=%v" .Values.servingEntrypoint.resourceObservation.maxSamples | quote }}
+            - {{ printf "--resource-max-containers=%v" .Values.servingEntrypoint.resourceObservation.maxContainers | quote }}
+            - {{ printf "--resource-max-thermal=%v" .Values.servingEntrypoint.resourceObservation.maxThermal | quote }}
+            - {{ printf "--resource-max-errors=%v" .Values.servingEntrypoint.resourceObservation.maxErrors | quote }}
+            - {{ printf "--resource-directory-interval=%s" .Values.servingEntrypoint.resourceObservation.directoryInterval | quote }}
+            {{- range .Values.servingEntrypoint.resourceObservation.controlComponents }}
+            - {{ printf "--resource-control-component=%s" . | quote }}
+            {{- end }}
             - {{ printf "--drain-timeout=%s" .Values.servingEntrypoint.drainTimeout | quote }}
             - {{ printf "--source-interval=%s" .Values.servingEntrypoint.sourceInterval | quote }}
             - {{ printf "--profile-interval=%s" .Values.servingEntrypoint.profileInterval | quote }}
@@ -143,6 +154,18 @@ spec:
             - {{ printf "--load-generator-endpoint=https://%s.%s.svc:%v" $name .Release.Namespace .Values.servingEntrypoint.port | quote }}
             - {{ printf "--load-generator-ca-secret=%s" .Values.servingEntrypoint.tls.secretName | quote }}
           env:
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: NODE_NAME
               valueFrom:
                 fieldRef:

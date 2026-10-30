@@ -321,6 +321,13 @@ def profiling_evaluation_separation(workload, payload):
 
 
 def self_check():
+    settings = {'maxCPUs': 3, 'staticRouting': {}, 'staticRoutingValidatedAt': 'read-only',
+                'powerObservation': {}, 'meters': [{'id': 'accepted-meter'}]}
+    writer = object.__new__(CPO)
+    writer.api = lambda method, path, body: (method, path, body)
+    method, path, body = writer.put(settings)
+    assert (method, path, body) == ('PUT', '/api/v1/scheduler/settings', {'maxCPUs': 3})
+    assert 'meters' in settings and 'staticRouting' in settings
     spec=importlib.util.spec_from_file_location('e5_check_analysis',HERE/'d2/analyze_before.py')
     analysis=importlib.util.module_from_spec(spec);spec.loader.exec_module(analysis)
     rows=[{'requestIndex':0,'scheduledOffsetNs':0,'scheduledMonotonicNS':100,'sentMonotonicNS':60_000_100,'finishedMonotonicNS':61_000_100,'latencyMs':1,'serviceLatencyMs':1}]
@@ -1341,6 +1348,7 @@ class CPO:
     def put(self, settings):
         settings = copy.deepcopy(settings); settings.pop('staticRouting',None); settings.pop('staticRoutingValidatedAt',None)
         settings.pop('powerObservation', None)
+        settings.pop('meters', None)
         return self.api('PUT','/api/v1/scheduler/settings',settings)
     def start_barrier_observation(self,state,deadline,observed):
         snapshot=state['snapshot']; reservations=snapshot.get('reservations') or []

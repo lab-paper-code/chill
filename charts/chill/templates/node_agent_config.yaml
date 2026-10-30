@@ -25,6 +25,13 @@ data:
       signatureConfigMapName: {{ include "chill.nodeAgentSignatureCatalogName" . | quote }}
       signatureConfigMapKey: {{ include "chill.nodeAgentSignatureKey" . | quote }}
       hostNetwork: {{ .Values.nodeAgent.hostNetwork }}
+      {{- if .Values.servingEntrypoint.enabled }}
+      {{- $resourceConfig := deepCopy .Values.nodeAgent.resourceObservation }}
+      {{- $_ := set $resourceConfig "url" (default (printf "https://%s.%s.svc:%v/chill/api/v1/internal/observations/resources" (include "chill.servingEntrypointName" .) .Release.Namespace .Values.servingEntrypoint.port) $resourceConfig.url) }}
+      resourceObservation: {{ $resourceConfig | toJson | quote }}
+      resourceCASecret: {{ .Values.servingEntrypoint.tls.secretName | quote }}
+      resourceCAFile: {{ $resourceConfig.caFile | quote }}
+      {{- end }}
       nodeSelector:
 {{- toYaml $nodeSelector | nindent 8 }}
       excludeNodeNames:

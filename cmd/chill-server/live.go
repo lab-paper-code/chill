@@ -29,6 +29,7 @@ type livePublisher struct {
 	meters, active []string
 	powerKnown     bool
 	changed        chan struct{}
+	recordResources func(time.Time) error
 }
 
 func newLivePublisher(ctx context.Context) *livePublisher {
@@ -71,7 +72,12 @@ func (p *livePublisher) startRuntime(ctx context.Context, runtime *serving.Runti
 				return
 			case <-p.changed:
 				dirty = true
-			case <-ticker.C:
+			case at := <-ticker.C:
+				if p.recordResources != nil {
+					if err := p.recordResources(at.UTC()); err != nil {
+						ctrl.Log.Error(err, "record server resource observations")
+					}
+				}
 				if dirty {
 					p.runtime(runtime)
 					dirty = false

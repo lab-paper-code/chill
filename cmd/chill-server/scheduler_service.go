@@ -334,6 +334,15 @@ func (o *schedulerService) profilerFacts(
 	return policies, cm.ResourceVersion, nil
 }
 
+// schedulerMeters projects only the complete configuration accepted by refresh.
+func (o *schedulerService) schedulerMeters() []servingkube.MeterDeclaration {
+	config := o.configuration.Load()
+	if config == nil {
+		return nil
+	}
+	return config.Meters
+}
+
 func (o *schedulerService) operatingPower(
 	ctx context.Context, from, to time.Time, limit int,
 ) (serving.OperatingPowerWindow, error) {

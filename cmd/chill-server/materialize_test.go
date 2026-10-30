@@ -95,6 +95,10 @@ func TestChillServerRejectsInvalidKubernetesBudget(t *testing.T) {
 			base := []string{
 				"--serving-namespace=serving", "--tls-cert=/cert", "--tls-key=/key",
 				"--observation-directory=/observations",
+				"--resource-max-samples=32", "--resource-max-containers=256",
+				"--resource-max-thermal=256", "--resource-max-errors=256",
+				"--resource-release=chill", "--resource-system=chill",
+				"--resource-control-component=serving-entrypoint", "--resource-directory-interval=1m",
 			}
 			if err := flags.Parse(append(base, args...)); err != nil {
 				t.Fatal(err)

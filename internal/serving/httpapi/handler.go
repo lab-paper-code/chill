@@ -33,6 +33,8 @@ type HandlerConfig struct {
 	SchedulerConfigMap, SchedulerConfigKey, SchedulerNamespace string
 	SchedulerLock                                              *sync.Mutex
 	RefreshScheduler                                           func(context.Context) error
+	SchedulerMeters                                            func() []servingkube.MeterDeclaration
+	ReceiveResources                                           func(context.Context, serving.ResourceBatch) ([]serving.ResourceTarget, error)
 	Profiles                                                   func(context.Context) (ProfilesView, error)
 	ListMeasurements                                           func(context.Context, string) (api.BatchEnergyOptimizationList, error)
 	SubmitMeasurement                                          func(context.Context, api.BatchEnergyOptimization, bool) (MeasurementMutationResult, error)
@@ -115,6 +117,7 @@ func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authoriz
 	h.mux.HandleFunc("DELETE /api/v1/namespaces/{namespace}/batch-energy-optimizations/{name}", h.measurements)
 	h.mux.HandleFunc("GET /api/v1/observations/load", h.schedulerObservations)
 	h.mux.HandleFunc("GET /api/v1/observations/scheduler", h.schedulerObservations)
+	h.mux.HandleFunc("POST /api/v1/internal/observations/resources", h.resources)
 	h.mux.HandleFunc("GET /api/v1/observations/power", h.operatingPower)
 	h.mux.HandleFunc("GET /api/v1/experiments", h.experiments)
 	h.mux.HandleFunc("GET /api/v1/experiments/{id}", h.experiments)
@@ -151,6 +154,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeDeadline := deadline.Add(h.config.RequestTimeout)
 	if err := controller.SetWriteDeadline(writeDeadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
 		sendError(w, err)
+		return
+	}
+	// Raw paths are validated before ServeMux can clean/redirect unsafe paths.
+	if r.URL.Path == rawObservationsPath || strings.HasPrefix(r.URL.Path, rawObservationsPath+"/") {
+		h.rawObservations(w, r.WithContext(ctx))
 		return
 	}
 	h.mux.ServeHTTP(w, r.WithContext(ctx))
@@ -656,6 +664,10 @@ func errorCode(err error) string {
 		return domain.Code
 	}
 	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return requestTimeoutCode
+	case errors.Is(err, context.Canceled):
+		return "RequestCanceled"
 	case errors.Is(err, servingkube.ErrUnauthenticated):
 		return "Unauthenticated"
 	case errors.Is(err, servingkube.ErrForbidden):
@@ -683,7 +695,7 @@ func writeError(w http.ResponseWriter, err error) error {
 		status = http.StatusNotFound
 	case "InvalidBody", "InvalidInput", "InvalidWorkload", "InvalidModel", "InvalidModelReference", "InvalidPreprocessorReference", "InvalidDatasetReference", "IncompatibleDataset", "InvalidPreprocessor", "InvalidDataset", "InvalidQuery", "InvalidRequestTimeout", "ResourceVersionRequired", "MeasurementPreflightRejected":
 		status = http.StatusBadRequest
-	case "AlreadyExists", "ModelReferenced", "ModelArtifactReferenced", "PreprocessorReferenced", "DatasetReferenced", "ModelDeleting", "PreprocessorDeleting", "DatasetDeleting", "ResourceVersionConflict", "OperationConflict", "NodeBusy", "NodeServing", "NodeMissing", "RegistrationConflict", "CatalogIdentityConflict", "DefinitionChanged", "WorkloadChanged", "MeasurementInUse":
+	case "ObservationNotReady", "AlreadyExists", "ModelReferenced", "ModelArtifactReferenced", "PreprocessorReferenced", "DatasetReferenced", "ModelDeleting", "PreprocessorDeleting", "DatasetDeleting", "ResourceVersionConflict", "OperationConflict", "NodeBusy", "NodeServing", "NodeMissing", "RegistrationConflict", "CatalogIdentityConflict", "DefinitionChanged", "WorkloadChanged", "MeasurementInUse":
 		status = http.StatusConflict
 	case "QueueFull":
 		status = http.StatusTooManyRequests

@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
-type NumericKey = Exclude<keyof SchedulerSettings,"controls"|"autonomousWorkloads"|"excludedNodes"|"minimumDemand"|"staticRouting"|"staticRoutingValidatedAt">
+type NumericKey = Exclude<keyof SchedulerSettings,"controls"|"autonomousWorkloads"|"excludedNodes"|"minimumDemand"|"staticRouting"|"staticRoutingValidatedAt"|"meters">
 type Field = {key:NumericKey;label:string;help:string;group:"cycle"|"limit"|"advanced";unit?:string}
 const fields: Field[] = [
   {key:"observationWindowNanos",label:"부하를 살펴볼 구간",help:"판단할 때 최근 요청 부하를 이만큼 살펴봐요.",group:"cycle"},
@@ -76,9 +76,9 @@ export function SettingsSummary({settings}:{settings:SchedulerSettings}) {
   return <Facts items={[["자동 제어 서비스",autonomous(settings)],["계획에서 뺀 장비",excludedNodes(settings)],...fields.map(field=>[field.label,plain(field,settings[field.key])] as [string,string]),...controls.map(control=>[control.label,onOff(settings.controls[control.key])] as [string,string])]}/>
 }
 
-// The one settings write: routing projections are read-only. Shared with the Workload screen.
+// The one settings write: routing and meter projections are read-only. Shared with the Workload screen.
 export async function putSchedulerSettings(mutate:(input:ChillMutationInput)=>Promise<RelayResponse>,client:QueryClient,settings:SchedulerSettings) {
-  const body:SchedulerSettings&{staticRoutingValidatedAt?:string}={...settings};delete body.staticRouting;delete body.staticRoutingValidatedAt
+  const body:SchedulerSettings&{staticRoutingValidatedAt?:string}={...settings};delete body.staticRouting;delete body.staticRoutingValidatedAt;delete body.meters
   const response=await mutate({path:"v1/scheduler/settings",method:"PUT",body:stringifySchedulerJSON(body)})
   const applied=parseSchedulerJSON(response.body) as SchedulerSettingsChange
   await client.invalidateQueries({predicate:query=>typeof query.queryKey[1]==="string"&&(query.queryKey[1].startsWith("v1/scheduler")||query.queryKey[1].startsWith("v1/observations/scheduler"))})
