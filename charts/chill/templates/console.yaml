@@ -90,8 +90,8 @@ subjects:
     namespace: {{ .Release.Namespace }}
 {{- end }}
 ---
-# Resolving a campaign intent reads its model catalog, device class, and target
-# Node; all three authorities are cluster-scoped.
+# Resolving a campaign intent reads cluster-scoped model, device class,
+# preprocessor, dataset, and target Node inputs.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -101,7 +101,7 @@ metadata:
     {{- $labels | nindent 4 }}
 rules:
   - apiGroups: ["edge.dacs.io"]
-    resources: ["modelspecs", "deviceclasses"]
+    resources: ["modelspecs", "deviceclasses", "preprocessors", "datasets"]
     verbs: ["get"]
   - apiGroups: [""]
     resources: ["nodes"]
