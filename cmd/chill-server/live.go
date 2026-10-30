@@ -15,6 +15,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
+const liveOperationComplete = "complete"
+
 // livePublisher projects committed callback arguments. It never polls REST or
 // rereads the controller from a decision/action callback.
 type livePublisher struct {
@@ -133,7 +135,9 @@ func (p *livePublisher) runtime(runtime *serving.Runtime) {
 	p.runtimeProjection(states, physical, routing)
 }
 
-func (p *livePublisher) runtimeProjection(states []serving.WorkloadState, physical []serving.InstanceState, routing map[string]map[string]int32) {
+func (p *livePublisher) runtimeProjection(
+	states []serving.WorkloadState, physical []serving.InstanceState, routing map[string]map[string]int32,
+) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, state := range states {
@@ -181,7 +185,9 @@ func (p *livePublisher) runtimeProjection(states []serving.WorkloadState, physic
 		}
 	}
 	workloads := p.workloadRows()
-	p.publish(time.Now().UTC(), live.Delta{Workloads: &workloads, Instances: &rows, Routing: &routes, Removed: removed}, nil)
+	p.publish(time.Now().UTC(), live.Delta{
+		Workloads: &workloads, Instances: &rows, Routing: &routes, Removed: removed,
+	}, nil)
 }
 func (p *livePublisher) decision(d serving.SchedulerDecision, snapshot serving.SchedulerSnapshot) {
 	p.mu.Lock()
@@ -238,7 +244,7 @@ func (p *livePublisher) action(r servingkube.OperationResult) {
 		at := liveAt(r.EndedAt)
 		a.CompletedAt = &at
 		phase = "completed"
-		if r.Status != "complete" {
+		if r.Status != liveOperationComplete {
 			phase = "failed"
 		}
 	}

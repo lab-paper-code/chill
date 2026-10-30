@@ -45,7 +45,7 @@ func TestClusterPublishesOnlyCommittedRows(t *testing.T) {
 	if err = json.Unmarshal(frame, &event); err != nil {
 		t.Fatal(err)
 	}
-	if event.Type != "event" || event.Kind != "cluster" || event.Cluster == nil ||
+	if event.Type != liveTestEvent || event.Kind != "cluster" || event.Cluster == nil ||
 		event.Cluster.Event != "server-start" || event.Cluster.Pod.UID != "self-uid" {
 		t.Fatalf("wrong committed projection: %s", frame)
 	}

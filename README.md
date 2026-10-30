@@ -41,6 +41,10 @@ make test
 make helm-lint helm-template
 ```
 
+Keep live projection code and tests lint-clean by naming repeated protocol/status
+and mutation-test literals and wrapping long function signatures; these cleanups
+must preserve wire values and runtime behavior rather than suppress lint rules.
+
 `make manifests` also syncs generated CRDs into the Helm chart.
 
 `make helm-template` and Helm install validate the rendered ChillServer scheduler

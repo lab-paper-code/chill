@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+const testMutated = "mutated"
+
 var testAt = time.Date(2026, 10, 25, 12, 0, 0, 123, time.UTC)
 
 type testEnvelope struct {
@@ -105,7 +107,7 @@ func TestDeltaReplacementUpsertRemovalAndInputOwnership(t *testing.T) {
 	if err := hub.Publish(testAt.Add(time.Second), Delta{Workloads: &workloads, Instances: &instances, Decision: &decision, Removed: &Removed{Actions: []string{actions[0].Key()}}}, event); err != nil {
 		t.Fatal(err)
 	}
-	decision.State = "mutated"
+	decision.State = testMutated
 	instances[0].Running["one"] = 88
 	sub, err := hub.Subscribe(0, "")
 	if err != nil {
@@ -320,12 +322,12 @@ func TestProjectionCollectionsCopyOwnershipAndReplaceReservations(t *testing.T) 
 	if err := hub.Publish(testAt, Delta{Nodes: &nodes, Instances: &instances, Reservations: &reservations}, nil); err != nil {
 		t.Fatal(err)
 	}
-	nodes[0].Reasons[0], at = "mutated", "mutated"
+	nodes[0].Reasons[0], at = testMutated, testMutated
 	instances[0].Waiting["a"] = 99
-	reservations[0].Nodes[0].UID = "mutated"
-	reservations[0].WorkloadUIDs[0] = "mutated"
-	reservations[0].PodUIDs[0] = "mutated"
-	reservations[0].Instances[0] = "mutated"
+	reservations[0].Nodes[0].UID = testMutated
+	reservations[0].WorkloadUIDs[0] = testMutated
+	reservations[0].PodUIDs[0] = testMutated
+	reservations[0].Instances[0] = testMutated
 	sub, err := hub.Subscribe(0, "")
 	if err != nil {
 		t.Fatal(err)

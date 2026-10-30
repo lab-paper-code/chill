@@ -12,6 +12,11 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving/live"
 )
 
+const (
+	liveTestEvent = "event"
+	liveTestDelta = "delta"
+)
+
 func TestLiveOnlyPublishesRecordedDecisionAndActionIdentity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -149,7 +154,7 @@ func TestLiveRuntimeProjectionIndependentFacts(t *testing.T) {
 	}
 	p.runtimeProjection(states, physical, routing)
 	frame := nextProjection(t, sub)
-	if frame.Type != "delta" || frame.Seq != baseline.Seq+1 ||
+	if frame.Type != liveTestDelta || frame.Seq != baseline.Seq+1 ||
 		len(frame.Workloads) != 2 || len(frame.Instances) != len(physical) ||
 		frame.Workloads[0].Pending != 3 || frame.Workloads[1].Pending != 1 {
 		t.Fatalf("runtime capture was split or pending was lost: %+v", frame)
@@ -185,7 +190,7 @@ func TestLiveRuntimeProjectionIndependentFacts(t *testing.T) {
 	noProjection(t, sub)
 	p.runtimeProjection(states, nil, nil)
 	frame = nextProjection(t, sub)
-	if frame.Type != "delta" || len(frame.Instances) != 0 || frame.Removed == nil ||
+	if frame.Type != liveTestDelta || len(frame.Instances) != 0 || frame.Removed == nil ||
 		len(frame.Removed.Instances) != len(physical) || len(frame.Routing) != 0 {
 		t.Fatalf("physical absence did not remove all identities atomically: %+v", frame)
 	}
@@ -216,7 +221,7 @@ func TestLiveDecisionReservationsAndNodeAvailability(t *testing.T) {
 	decision := serving.SchedulerDecision{At: at, Status: "TransitionInProgress"}
 	p.decision(decision, snapshot)
 	frame := nextProjection(t, sub)
-	if frame.Type != "delta" || frame.Nodes[0].Ready || !frame.Nodes[0].Measurement ||
+	if frame.Type != liveTestDelta || frame.Nodes[0].Ready || !frame.Nodes[0].Measurement ||
 		!reflect.DeepEqual(frame.Nodes[0].Reasons, snapshot.Nodes[0].Reasons) ||
 		len(frame.Reservations) != 1 || frame.Reservations[0].Reason != "미확인" ||
 		!reflect.DeepEqual(frame.Reservations[0].WorkloadUIDs, []string{"a", "b"}) ||
@@ -245,7 +250,7 @@ func TestLiveDecisionReservationsAndNodeAvailability(t *testing.T) {
 			}
 		}
 	}
-	if event := nextProjection(t, sub); event.Type != "event" || event.Kind != "decision" {
+	if event := nextProjection(t, sub); event.Type != liveTestEvent || event.Kind != "decision" {
 		t.Fatalf("decision event missing: %+v", event)
 	}
 	p.decision(decision, snapshot)
@@ -259,7 +264,7 @@ func TestLiveDecisionReservationsAndNodeAvailability(t *testing.T) {
 	_ = nextProjection(t, sub)
 	p.action(result)
 	noProjection(t, sub)
-	result.Status, result.EndedAt = "complete", at.Add(time.Second)
+	result.Status, result.EndedAt = liveOperationComplete, at.Add(time.Second)
 	p.action(result)
 	_ = nextProjection(t, sub)
 	_ = nextProjection(t, sub)
@@ -301,7 +306,7 @@ func TestLiveClusterIssueEventHasNoEmptyDelta(t *testing.T) {
 	} {
 		p.cluster(row)
 		frame := nextProjection(t, sub)
-		if frame.Type != "event" || frame.Seq != baseline.Seq+uint64(index)+1 ||
+		if frame.Type != liveTestEvent || frame.Seq != baseline.Seq+uint64(index)+1 ||
 			frame.Kind != "cluster" || frame.Cluster == nil ||
 			frame.Cluster.Kind != row.Kind || frame.Cluster.At != liveAt(row.At) ||
 			frame.Cluster.Event != row.Event || frame.Cluster.Source != row.Source ||
