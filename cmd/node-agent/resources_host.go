@@ -22,6 +22,12 @@ func SampleResources(root string, targets []serving.ResourceTarget, at time.Time
 	if err != nil {
 		sample.Errors = append(sample.Errors, resourceError("host", "proc", err))
 	}
+	// Target processes may mount only their own cgroup subtree. Resolve their
+	// cgroup records against the host init process's mount namespace instead.
+	mounts, mountErr := os.ReadFile(filepath.Join(root, "proc/1/mountinfo"))
+	if mountErr != nil {
+		sample.Errors = append(sample.Errors, resourceError("host", "mountinfo", mountErr))
+	}
 	sample.Containers = make([]serving.ContainerResources, len(targets))
 	found := make([]bool, len(targets))
 	for i, target := range targets {
@@ -36,19 +42,14 @@ func SampleResources(root string, targets []serving.ResourceTarget, at time.Time
 		if err != nil {
 			continue
 		}
-		var mounts []byte
+		if mountErr != nil {
+			continue
+		}
 		for i, target := range targets {
 			if found[i] || !matchesResourceIdentity(string(cg), target) {
 				continue
 			}
 			row := &sample.Containers[i]
-			if mounts == nil {
-				mounts, err = os.ReadFile(filepath.Join(base, "mountinfo"))
-				if err != nil {
-					row.Errors = append(row.Errors, resourceError(target.ContainerID, "mountinfo", err))
-					continue
-				}
-			}
 			paths, version := resourceCgroupPaths(root, string(cg), string(mounts))
 			if version == 0 {
 				continue
@@ -135,7 +136,11 @@ func resourceCgroupPaths(root, records, mounts string) (map[string]string, int) 
 			continue
 		}
 		left, right := strings.Fields(before), strings.Fields(after)
-		if len(left) < 5 || len(right) < 3 || (right[0] != "cgroup" && right[0] != "cgroup2") {
+		if len(left) < 5 || len(right) < 3 {
+			continue
+		}
+		v1 := right[0] == "cgroup"
+		if !v1 && right[0] != "cgroup2" {
 			continue
 		}
 		mountRoot, mountPoint := unescapeMount(left[3]), unescapeMount(left[4])
@@ -146,18 +151,22 @@ func resourceCgroupPaths(root, records, mounts string) (map[string]string, int) 
 			}
 			v2 := right[0] == "cgroup2" && fields[0] == "0" && fields[1] == ""
 			controllers := strings.Split(fields[1], ",")
-			if !v2 && right[0] != "cgroup" {
+			if !v2 && !v1 {
 				continue
 			}
 			rel, err := filepath.Rel(mountRoot, fields[2])
 			if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
 				continue
 			}
-			// Only read the host /sys mounts, not arbitrary process-provided paths.
+			// These are host init mount records, never target-process mounts.
 			if mountPoint != "/sys" && !strings.HasPrefix(mountPoint, "/sys/") {
 				continue
 			}
 			path := filepath.Join(root, mountPoint, rel)
+			info, err := os.Stat(path)
+			if err != nil || !info.IsDir() {
+				continue
+			}
 			if v2 {
 				paths["unified"] = path
 				version = 2

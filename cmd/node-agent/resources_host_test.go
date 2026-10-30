@@ -18,13 +18,13 @@ func TestResourceCgroupVersionsAndMissingPeak(t *testing.T) {
 			group := "/arbitrary/podaa-bb/deadbeef"
 			if version == 2 {
 				writeHostFile(t, root, "proc/77/cgroup", "0::"+group+"\n")
-				writeHostFile(t, root, "proc/77/mountinfo", "30 20 0:1 / /sys/custom rw - cgroup2 cgroup rw\n")
+				writeHostFile(t, root, "proc/1/mountinfo", "30 20 0:1 / /sys/custom rw - cgroup2 cgroup rw\n")
 				writeHostFile(t, root, "sys/custom"+group+"/cpu.stat",
 					"usage_usec 7\nthrottled_usec 3\nnr_periods 5\nnr_throttled 2\n")
 				writeHostFile(t, root, "sys/custom"+group+"/memory.current", "13\n")
 			} else {
 				writeHostFile(t, root, "proc/77/cgroup", "2:cpu,cpuacct:"+group+"\n3:memory:"+group+"\n")
-				writeHostFile(t, root, "proc/77/mountinfo",
+				writeHostFile(t, root, "proc/1/mountinfo",
 					"30 20 0:1 / /sys/unusual/cpu rw - cgroup cgroup rw,cpu,cpuacct\n"+
 						"31 20 0:2 / /sys/unusual/memory rw - cgroup cgroup rw,memory\n")
 				writeHostFile(t, root, "sys/unusual/cpu"+group+"/cpuacct.usage", "7000\n")
@@ -54,6 +54,48 @@ func TestResourceCgroupVersionsAndMissingPeak(t *testing.T) {
 	}
 	if !matchesResourceIdentity("0::/kubepods-burstable-podaa_bb.slice/cri-containerd-deadbeef.scope\n", target) {
 		t.Fatal("systemd identity not discovered")
+	}
+}
+
+// SCH-AC-53: a target's subtree mount must never alias host root counters.
+func TestResourceCgroupTargetSubtreeMount(t *testing.T) {
+	target := serving.ResourceTarget{PodUID: "aa-bb", ContainerID: "containerd://deadbeef"}
+	group := "/arbitrary/podaa-bb/deadbeef"
+	for _, present := range []bool{false, true} {
+		name := "missing-host-directory"
+		if present {
+			name = "present-host-directory"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeHostFile(t, root, "proc/77/cgroup", "0::"+group+"\n")
+			writeHostFile(t, root, "proc/77/mountinfo",
+				"30 20 0:1 "+group+" /sys/fs/cgroup rw - cgroup2 cgroup rw\n")
+			writeHostFile(t, root, "proc/1/mountinfo",
+				"30 20 0:1 / /sys/fs/cgroup rw - cgroup2 cgroup rw\n")
+			writeHostFile(t, root, "sys/fs/cgroup/cpu.stat",
+				"usage_usec 999\nthrottled_usec 999\nnr_periods 999\nnr_throttled 999\n")
+			if present {
+				writeHostFile(t, root, "sys/fs/cgroup"+group+"/cpu.stat",
+					"usage_usec 7\nthrottled_usec 3\nnr_periods 5\nnr_throttled 2\n")
+			}
+			sample := SampleResources(root, []serving.ResourceTarget{target}, time.Now().UTC())
+			if !present {
+				if len(sample.Containers) != 0 {
+					t.Fatalf("missing host cgroup accepted host root counters: %+v", sample.Containers)
+				}
+				for _, failure := range sample.Errors {
+					if failure.Target == target.PodUID+"/"+target.ContainerID && failure.Field == "cgroup" {
+						return
+					}
+				}
+				t.Fatalf("missing host cgroup not reported: %+v", sample.Errors)
+			}
+			if len(sample.Containers) != 1 || sample.Containers[0].CPUUsageNanos == nil ||
+				*sample.Containers[0].CPUUsageNanos != 7000 {
+				t.Fatalf("target subtree misattributed: %+v", sample.Containers)
+			}
+		})
 	}
 }
 
