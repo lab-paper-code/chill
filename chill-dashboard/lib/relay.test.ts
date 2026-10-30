@@ -103,6 +103,13 @@ test("scheduler consumer routes enforce exact methods and bounded observation qu
     path: "/api/v1/scheduler/settings", kind: "mutation", timeoutMs: config.mutationTimeoutMs, bodyAllowed: true,
   })
   assert.throws(() => plan("PUT", "v1/scheduler/settings", "?from=now"), /DashboardQueryInvalid/)
+  assert.deepEqual(plan("POST", "v1/scheduler/operations"), {
+    path: "/api/v1/scheduler/operations", kind: "mutation", timeoutMs: config.mutationTimeoutMs, bodyAllowed: true,
+  })
+  for (const method of ["GET", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]) {
+    assert.throws(() => plan(method, "v1/scheduler/operations"), { message: "DashboardMethodNotAllowed", status: 405 })
+  }
+  assert.throws(() => plan("POST", "v1/scheduler/operations", "?dryRun=All"), /DashboardQueryInvalid/)
   assert.deepEqual(plan("GET", "v1/scheduler/profiles"), { path: "/api/v1/scheduler/profiles", kind: "query", timeoutMs: config.queryTimeoutMs, bodyAllowed: false })
   for (const method of ["POST", "PUT", "DELETE", "PATCH"]) assert.throws(() => plan(method, "v1/scheduler/profiles"), /DashboardMethodNotAllowed/)
   assert.throws(() => plan("GET", "v1/scheduler/profiles", "?limit=1"), /DashboardQueryInvalid/)

@@ -57,6 +57,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   else if (/^v1\/namespaces\/[^/]+\/(operation-cost-measurements|dispatch-occupancy-measurements)(?:\/[^/]+)?$/.test(route)) methods = ["GET"]
   else if (route === "v1/scheduler" || route === "v1/scheduler/state") methods = ["GET"]
   else if (route === "v1/scheduler/settings") methods = ["GET", "PUT"]
+  else if (route === "v1/scheduler/operations") methods = ["POST"]
   else if (route === "v1/scheduler/profiles") methods = ["GET"]
   else if (/^v1\/(systems|inventory)$/.test(route)) { methods = ["GET"]; query = "page" }
   else if (/^v1\/namespaces\/[^/]+\/profiling-runs$/.test(route)) { methods = ["GET"]; query = "runs" }

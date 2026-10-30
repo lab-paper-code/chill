@@ -45,8 +45,8 @@ Inference relay lifetime is `CHILL_INFER_TIMEOUT_MS + CHILL_QUERY_TIMEOUT_MS` (d
 ### Scheduler API and caller permissions
 
 The BFF exposes GET `v1/scheduler`, `v1/scheduler/settings`, `v1/scheduler/state`,
-PUT `v1/scheduler/settings`, GET `v1/observations/load` and GET
-`v1/observations/scheduler`. Both observation routes require explicit RFC3339Nano
+PUT `v1/scheduler/settings`, POST `v1/scheduler/operations`, GET
+`v1/observations/load` and GET `v1/observations/scheduler`. Both observation routes require explicit RFC3339Nano
 `from` and `to`; load has no paging input. Scheduler history accepts bounded
 `limit` and nonnegative `cursor` in retained append order, not a total count.
 The relay reads GET `v1/scheduler`, `/state`, `/profiles` and scheduler history
@@ -55,15 +55,19 @@ restores the shared `profile` `$ref`s into the full
 response before any screen reads it; a missing reference is an error.
 Settings PUT sends the Settings object itself; ObservationLog and ConfigMap
 storage remain authoritative. There is no version precondition or dry-run.
+Manual operations accept only POST with no query parameters and use
+`CHILL_MUTATION_TIMEOUT_MS`. The JSON request and upstream status/body pass through
+unchanged; operation results (including failed/partial statuses) remain distinct
+from API errors and relay failures with `unknownOutcome`.
 
 Use an existing administrator-approved account, not the Dashboard ServiceAccount.
 `chill-serving-manager` grants the exact scheduler GET paths and observation
-reads. The unbound `chill-scheduler-editor` ClusterRole grants only the settings
-PUT path. When `servingEntrypoint.scheduler.configMap` is selected, a same-name
-unbound Role in the serving namespace grants `update` of that named ConfigMap
-only. An administrator explicitly binds the read ClusterRole, editor ClusterRole
-and named ConfigMap Role to the chosen account. A settings PUT needs both editor
-grants; a path grant alone cannot update the ConfigMap.
+reads. The unbound `chill-scheduler-editor` ClusterRole grants the settings
+PUT and manual operations POST paths. When `servingEntrypoint.scheduler.configMap`
+is selected, a same-name unbound Role in the serving namespace grants `update`
+of that named ConfigMap only. An administrator explicitly binds the read
+ClusterRole, editor ClusterRole and named ConfigMap Role to the chosen account.
+Both writes need both editor grants; a path grant alone cannot update the ConfigMap.
 For a ServiceAccount, obtain a short-lived token with
 `kubectl -n <account-namespace> create token <existing-account> --duration=1h`
 after the administrator has confirmed its bindings. Tokens expire and are kept
