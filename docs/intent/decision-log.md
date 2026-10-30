@@ -659,3 +659,7 @@
 - 다음 승인 배포 rev111: chart RBAC(collector GET)+서버(settings requestTimeout, podName) 이미지.
 - 사용자 승인: 대시보드 NodePort 상시 공개(values `dashboard.service.type=NodePort`, nodePort 31300; chart `a7ba73cd`) — rev111에 묶음(collector GET RBAC, settings requestTimeout/podName).
 - 사용자(조언 세션): 하드코딩 정리 7커밋(58348057…30e3a6d6) 완료·gate PASS → push. rev111 재배포에 포함: CRD 5종 적용, 이미지 재빌드, overlay `servingEntrypoint.profileConfidenceLevel` 삭제(CLI 옵션 제거), κ 1회 재계산 정상.
+
+## 2026-10-30 — rev112 profiles 0 원인과 수정
+
+- 사용자 리팩터(58348057)가 `validateCatalogRunConfig`에 `DurationToleranceSeconds` 비교 추가 → 필드 이전 완료 Run의 stored RunConfig(0) vs CR 기본값(.5) 불일치로 **모든 기존 프로파일 InvalidEvidence** → options 0·κ rows 0. ADR 0019(저장 계약 변경 금지) 위반 형태. 수정 `75127da9`: 저장 0 && spec nil이면 일치로 간주(명시 spec 값과 불일치는 계속 거부), fail-before/pass-after 회귀. rev113 서버 재배포.
