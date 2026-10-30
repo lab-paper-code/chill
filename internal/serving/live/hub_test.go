@@ -156,7 +156,7 @@ func TestRetentionAndSafeSequenceBounds(t *testing.T) {
 	tooOld.Close()
 	hub.head = MaxSeq - 1
 	decision := &Decision{}
-	if err := hub.Publish(testAt, Delta{}, &Event{Kind: "decision", Decision: decision}); !errors.Is(err, ErrSeqExhausted) {
+	if err := hub.Publish(testAt, Delta{Decision: &decision}, &Event{Kind: "decision", Decision: decision}); !errors.Is(err, ErrSeqExhausted) {
 		t.Fatalf("atomic seq reserve: %v", err)
 	}
 	if hub.head != MaxSeq-1 {
@@ -174,7 +174,8 @@ func TestFrameRingBytesAndOversizedSnapshot(t *testing.T) {
 	hub := New(testAt)
 	defer hub.Close()
 	row := []Workload{{UID: "one", Name: strings.Repeat("x", 700<<10)}}
-	for range 20 {
+	for i := range 20 {
+		row[0].UID = string(rune('a' + i))
 		if err := hub.Publish(testAt, Delta{Workloads: &row}, nil); err != nil {
 			t.Fatal(err)
 		}
@@ -305,5 +306,45 @@ func TestHubRunShutdownReleasesSubscribers(t *testing.T) {
 	}
 	if _, err := hub.Subscribe(0, ""); !errors.Is(err, ErrClosed) {
 		t.Fatalf("closed hub accepted subscriber: %v", err)
+	}
+}
+
+func TestProjectionCollectionsCopyOwnershipAndReplaceReservations(t *testing.T) {
+	hub := New(testAt)
+	defer hub.Close()
+	at := timestamp(testAt)
+	nodes := []Node{{UID: "node", Ready: false, Measurement: true, Reasons: []string{"Unavailable"}, ObservedAt: &at}}
+	instances := []Instance{{ID: "shared", Waiting: map[string]int{"a": 2, "b": 1}}}
+	reservations := []Reservation{{Owner: "operation", Nodes: []NodeRef{{UID: "node"}},
+		WorkloadUIDs: []string{"a", "b"}, PodUIDs: []string{"pod"}, Instances: []string{"shared"}, Reason: "미확인"}}
+	if err := hub.Publish(testAt, Delta{Nodes: &nodes, Instances: &instances, Reservations: &reservations}, nil); err != nil {
+		t.Fatal(err)
+	}
+	nodes[0].Reasons[0], at = "mutated", "mutated"
+	instances[0].Waiting["a"] = 99
+	reservations[0].Nodes[0].UID = "mutated"
+	reservations[0].WorkloadUIDs[0] = "mutated"
+	reservations[0].PodUIDs[0] = "mutated"
+	reservations[0].Instances[0] = "mutated"
+	sub, err := hub.Subscribe(0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	frame := nextEnvelope(t, sub)
+	if frame.Nodes[0].Reasons[0] != "Unavailable" || *frame.Nodes[0].ObservedAt != timestamp(testAt) ||
+		frame.Instances[0].Waiting["a"] != 2 || frame.Reservations[0].Nodes[0].UID != "node" ||
+		frame.Reservations[0].WorkloadUIDs[0] != "a" || frame.Reservations[0].PodUIDs[0] != "pod" ||
+		frame.Reservations[0].Instances[0] != "shared" {
+		t.Fatalf("producer retained mutable ownership: %+v", frame)
+	}
+	if err := hub.Replace(testAt, Snapshot{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sub.Resume(0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if frame = nextEnvelope(t, sub); frame.Reservations == nil || len(frame.Reservations) != 0 {
+		t.Fatalf("full replace failed to clear reservations: %+v", frame)
 	}
 }

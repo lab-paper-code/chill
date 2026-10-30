@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"reflect"
 	"slices"
 	"sync"
 	"time"
@@ -40,7 +41,8 @@ type Hub struct {
 
 func New(now time.Time) *Hub {
 	return &Hub{
-		state:  Snapshot{Workloads: []Workload{}, Nodes: []Node{}, Instances: []Instance{}, Routing: Routing{}, Actions: []Action{}},
+		state: Snapshot{Workloads: []Workload{}, Nodes: []Node{}, Instances: []Instance{},
+			Routing: Routing{}, Actions: []Action{}, Reservations: []Reservation{}},
 		headAt: timestamp(now), subs: make(map[*Subscription]struct{}), done: make(chan struct{}),
 	}
 }
@@ -110,7 +112,20 @@ func (h *Hub) publishStateLocked(at time.Time, delta Delta, event *Event) error 
 	if h.closed {
 		return ErrClosed
 	}
-	n := uint64(1)
+	if event != nil &&
+		(event.Kind != "decision" || event.Decision == nil || event.Action != nil || event.Cluster != nil) &&
+		(event.Kind != "action" || event.Action == nil || event.Decision != nil || event.Cluster != nil) &&
+		(event.Kind != "cluster" || event.Cluster == nil || event.Decision != nil || event.Action != nil) {
+		return errors.New("live event requires exactly its declared payload")
+	}
+	changed := h.changedLocked(delta)
+	if !changed && (event == nil || event.Kind != "cluster") {
+		return nil
+	}
+	n := uint64(0)
+	if changed {
+		n++
+	}
 	if event != nil {
 		n++
 	}
@@ -118,28 +133,72 @@ func (h *Hub) publishStateLocked(at time.Time, delta Delta, event *Event) error 
 		return ErrSeqExhausted
 	}
 	atText := timestamp(at)
-	d, err := encode("delta", h.head+1, atText, delta)
-	if err != nil {
-		return err
-	}
-	var e frame
-	if event != nil {
-		if (event.Kind != "decision" || event.Decision == nil || event.Action != nil || event.Cluster != nil) &&
-			(event.Kind != "action" || event.Action == nil || event.Decision != nil || event.Cluster != nil) &&
-			(event.Kind != "cluster" || event.Cluster == nil || event.Decision != nil || event.Action != nil) {
-			return errors.New("live event requires exactly its declared payload")
-		}
-		e, err = encode("event", h.head+2, atText, event)
+	var d, e frame
+	var err error
+	if changed {
+		d, err = encode("delta", h.head+1, atText, delta)
 		if err != nil {
 			return err
 		}
 	}
-	h.applyLocked(delta)
-	h.appendLocked(d)
+	if event != nil {
+		e, err = encode("event", h.head+n, atText, event)
+		if err != nil {
+			return err
+		}
+	}
+	if changed {
+		h.applyLocked(delta)
+		h.appendLocked(d)
+	}
 	if event != nil {
 		h.appendLocked(e)
 	}
 	return nil
+}
+
+func (h *Hub) changedLocked(d Delta) bool {
+	// Runtime's readiness timestamp is the capture time, not a state change.
+	if d.Workloads != nil && !slices.EqualFunc(h.state.Workloads, *d.Workloads, func(a, b Workload) bool {
+		b.Readiness.ObservedAt = a.Readiness.ObservedAt
+		return reflect.DeepEqual(a, b)
+	}) ||
+		d.Nodes != nil && !reflect.DeepEqual(h.state.Nodes, *d.Nodes) ||
+		d.Routing != nil && !reflect.DeepEqual(h.state.Routing, *d.Routing) ||
+		d.Decision != nil && !reflect.DeepEqual(h.state.Decision, *d.Decision) ||
+		d.Reservations != nil && !reflect.DeepEqual(h.state.Reservations, *d.Reservations) {
+		return true
+	}
+	if d.Instances != nil {
+		for _, row := range *d.Instances {
+			i := slices.IndexFunc(h.state.Instances, func(old Instance) bool { return old.ID == row.ID })
+			if i < 0 || !reflect.DeepEqual(h.state.Instances[i], row) {
+				return true
+			}
+		}
+	}
+	if d.Actions != nil {
+		for _, row := range *d.Actions {
+			key := row.Key()
+			i := slices.IndexFunc(h.state.Actions, func(old Action) bool { return old.Key() == key })
+			if i < 0 || !reflect.DeepEqual(h.state.Actions[i], row) {
+				return true
+			}
+		}
+	}
+	if d.Removed != nil {
+		for _, row := range h.state.Instances {
+			if slices.Contains(d.Removed.Instances, row.ID) {
+				return true
+			}
+		}
+		for _, row := range h.state.Actions {
+			if slices.Contains(d.Removed.Actions, row.Key()) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Replace publishes a full projection, including removals of absent identities.
@@ -161,6 +220,9 @@ func (h *Hub) Replace(at time.Time, state Snapshot) error {
 	if state.Routing == nil {
 		state.Routing = Routing{}
 	}
+	if state.Reservations == nil {
+		state.Reservations = []Reservation{}
+	}
 	removed := &Removed{}
 	for _, old := range h.state.Instances {
 		if !slices.ContainsFunc(state.Instances, func(row Instance) bool { return row.ID == old.ID }) {
@@ -174,7 +236,7 @@ func (h *Hub) Replace(at time.Time, state Snapshot) error {
 	}
 	return h.publishStateLocked(at, Delta{Workloads: &state.Workloads, Nodes: &state.Nodes,
 		Instances: &state.Instances, Routing: &state.Routing, Decision: &state.Decision,
-		Actions: &state.Actions, Removed: removed}, nil)
+		Actions: &state.Actions, Reservations: &state.Reservations, Removed: removed}, nil)
 }
 
 func (h *Hub) PublishMetrics(at time.Time, metrics MetricsFrame) error {
@@ -433,14 +495,6 @@ func copied[T any](value *T) *T {
 	return &v
 }
 
-func cloneDecision(value *Decision) *Decision {
-	v := copied(value)
-	if v != nil {
-		v.RecordRef = copied(v.RecordRef)
-	}
-	return v
-}
-
 func cloneAction(value Action) Action {
 	value.CompletedAt = copied(value.CompletedAt)
 	value.ExpectedSeconds = copied(value.ExpectedSeconds)
@@ -462,8 +516,19 @@ func (h *Hub) applyLocked(delta Delta) {
 	if delta.Nodes != nil {
 		h.state.Nodes = make([]Node, len(*delta.Nodes))
 		for i, row := range *delta.Nodes {
-			row.TargetPowerMode, row.Watts, row.ObservedAt = copied(row.TargetPowerMode), copied(row.Watts), copied(row.ObservedAt)
+			row.ObservedAt = copied(row.ObservedAt)
+			row.Reasons = slices.Clone(row.Reasons)
 			h.state.Nodes[i] = row
+		}
+	}
+	if delta.Reservations != nil {
+		h.state.Reservations = make([]Reservation, len(*delta.Reservations))
+		for i, row := range *delta.Reservations {
+			row.Nodes = slices.Clone(row.Nodes)
+			row.WorkloadUIDs = slices.Clone(row.WorkloadUIDs)
+			row.PodUIDs = slices.Clone(row.PodUIDs)
+			row.Instances = slices.Clone(row.Instances)
+			h.state.Reservations[i] = row
 		}
 	}
 	if delta.Routing != nil {
@@ -473,11 +538,11 @@ func (h *Hub) applyLocked(delta Delta) {
 		}
 	}
 	if delta.Decision != nil {
-		h.state.Decision = cloneDecision(*delta.Decision)
+		h.state.Decision = copied(*delta.Decision)
 	}
 	if delta.Instances != nil {
 		for _, row := range *delta.Instances {
-			row.Routable, row.Running = maps.Clone(row.Routable), maps.Clone(row.Running)
+			row.Routable, row.Running, row.Waiting = maps.Clone(row.Routable), maps.Clone(row.Running), maps.Clone(row.Waiting)
 			index := slices.IndexFunc(h.state.Instances, func(old Instance) bool { return old.ID == row.ID })
 			if index < 0 {
 				h.state.Instances = append(h.state.Instances, row)

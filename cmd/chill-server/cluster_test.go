@@ -34,9 +34,6 @@ func TestClusterPublishesOnlyCommittedRows(t *testing.T) {
 	if err = recordCluster(log, p, row); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = sub.Next(ctx); err != nil {
-		t.Fatal(err)
-	} // delta
 	frame, err := sub.Next(ctx)
 	if err != nil {
 		t.Fatal(err)

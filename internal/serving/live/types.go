@@ -34,6 +34,7 @@ type Workload struct {
 	SLO          SLO       `json:"slo"`
 	Autonomous   bool      `json:"autonomous"`
 	Admission    bool      `json:"admission"`
+	Pending      int       `json:"pending"`
 	Readiness    Readiness `json:"readiness"`
 }
 
@@ -43,42 +44,41 @@ type NodeRef struct {
 }
 
 type Node struct {
-	UID             string   `json:"uid"`
-	Name            string   `json:"name"`
-	PowerMode       string   `json:"powerMode"`
-	TargetPowerMode *string  `json:"targetPowerMode,omitempty"`
-	Watts           *float64 `json:"watts"`
-	ObservedAt      *string  `json:"observedAt"`
+	UID         string   `json:"uid"`
+	Name        string   `json:"name"`
+	PowerMode   string   `json:"powerMode"`
+	Ready       bool     `json:"ready"`
+	Measurement bool     `json:"measurement"`
+	Reasons     []string `json:"reasons,omitempty"`
+	ObservedAt  *string  `json:"observedAt"`
 }
 
 type Instance struct {
 	ID               string          `json:"id"`
 	Node             NodeRef         `json:"node"`
-	WorkloadUID      string          `json:"workloadUID"`
 	OwnerWorkloadUID string          `json:"ownerWorkloadUID"`
 	ProfileID        string          `json:"profileID"`
 	Ready            bool            `json:"ready"`
 	Stopped          bool            `json:"stopped"`
-	State            string          `json:"state"`
 	Routable         map[string]bool `json:"routable"`
 	Running          map[string]int  `json:"running"`
+	Waiting          map[string]int  `json:"waiting"`
 	ObservedAt       string          `json:"observedAt"`
 }
 
-type RecordRef struct {
-	From   string `json:"from"`
-	To     string `json:"to"`
-	Offset int64  `json:"offset"`
-	Kind   string `json:"kind"`
-	At     string `json:"at"`
-	ID     string `json:"id"`
+type Reservation struct {
+	Owner        string    `json:"owner"`
+	Nodes        []NodeRef `json:"nodes"`
+	WorkloadUIDs []string  `json:"workloadUIDs"`
+	PodUIDs      []string  `json:"podUIDs"`
+	Instances    []string  `json:"instances"`
+	Reason       string    `json:"reason"`
 }
 
 type Decision struct {
-	At        string     `json:"at"`
-	RecordRef *RecordRef `json:"recordRef"`
-	State     string     `json:"state"`
-	Reason    string     `json:"reason"`
+	At     string `json:"at"`
+	State  string `json:"state"`
+	Reason string `json:"reason"`
 }
 
 type ExpectedSource struct {
@@ -119,12 +119,13 @@ type ActionEvent struct {
 type Routing map[string]map[string]float64
 
 type Snapshot struct {
-	Workloads []Workload `json:"workloads"`
-	Nodes     []Node     `json:"nodes"`
-	Instances []Instance `json:"instances"`
-	Routing   Routing    `json:"routing"`
-	Decision  *Decision  `json:"decision"`
-	Actions   []Action   `json:"actions"`
+	Workloads    []Workload    `json:"workloads"`
+	Nodes        []Node        `json:"nodes"`
+	Instances    []Instance    `json:"instances"`
+	Routing      Routing       `json:"routing"`
+	Decision     *Decision     `json:"decision"`
+	Actions      []Action      `json:"actions"`
+	Reservations []Reservation `json:"reservations"`
 }
 
 type Removed struct {
@@ -135,13 +136,14 @@ type Removed struct {
 // Pointers distinguish omitted collections from an explicitly empty collection.
 // Decision points to a nullable value: &nil clears the current decision.
 type Delta struct {
-	Workloads *[]Workload `json:"workloads,omitempty"`
-	Nodes     *[]Node     `json:"nodes,omitempty"`
-	Instances *[]Instance `json:"instances,omitempty"`
-	Routing   *Routing    `json:"routing,omitempty"`
-	Decision  **Decision  `json:"decision,omitempty"`
-	Actions   *[]Action   `json:"actions,omitempty"`
-	Removed   *Removed    `json:"removed,omitempty"`
+	Workloads    *[]Workload    `json:"workloads,omitempty"`
+	Nodes        *[]Node        `json:"nodes,omitempty"`
+	Instances    *[]Instance    `json:"instances,omitempty"`
+	Routing      *Routing       `json:"routing,omitempty"`
+	Decision     **Decision     `json:"decision,omitempty"`
+	Actions      *[]Action      `json:"actions,omitempty"`
+	Reservations *[]Reservation `json:"reservations,omitempty"`
+	Removed      *Removed       `json:"removed,omitempty"`
 }
 
 type Event struct {

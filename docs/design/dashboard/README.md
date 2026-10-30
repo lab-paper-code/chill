@@ -252,7 +252,7 @@ update만 허용한다. 사용자 변경 권한은 관리자가 binding한 계�
 | `hello` | `protocol:"chill-live/1"`, `serverAt`, `retainFrom`(재개 가능한 최소 seq, 빈 버퍼면 head+1) | 상류 인증 성공 후 한 번 |
 | `snapshot` | `workloads`, `nodes`, `instances`, `routing`, `decision`, `actions`, `reservations` 전체 | 최초 접속, 재동기화 |
 | `delta` | snapshot 키의 부분집합; `removed?:{instances?:[id],actions?:[actionKey]}` | 상태 변화 |
-| `event` | `kind:"decision"`와 `decision`, 또는 `kind:"action"`와 `action` | 판단과 작업 시작·종결 |
+| `event` | `kind:"decision"`와 `decision`, `kind:"action"`와 `action`, 또는 `kind:"cluster"`와 `cluster` | 판단, 작업 시작·종결, 기록된 Pod·observer issue 사건 |
 | `metrics` | `bucketAt`(UTC 초 시작), `workloads:{uid:Metric}`, `nodes:{uid:{watts:number|null,observedAt:string|null}}`, `pool:{wholeWatts:number|null,activeWatts:number|null}`, `gaps?:[{from,to,scope,reason}]` | 매초, 같은 버킷 수정 시 전체 대체 |
 | `heartbeat` | `serverAt` | 5초 |
 
@@ -261,35 +261,44 @@ snapshot의 작은 DTO는 다음과 같다. 아래 `?`는 생략 가능, `null`�
 - `workloads[]:{uid,name,model,definitionID:string|null,slo:{percentile,targetLatencyNanos},autonomous,admission,pending,readiness:{ready,reason,observedAt}}`. `pending`은 배정 전 유입 큐 길이(runtime `WorkloadState.Pending`).
   적용 정의가 있으면 그 이름/모델/SLO를, 아직 없으면 등록 정의를 표시하고 definitionID는
   null, admission/readiness.ready는 false다. 동일 이름의 새 UID와 합치지 않는다.
-- `nodes[]:{uid,name,powerMode,ready,measurement?,reasons?,observedAt}`. 전력 W는 `metrics` 프레임에만 있다.
-- `instances[]:{id,node:{uid,name},ownerWorkloadUID,profileID,ready,stopped,state,routable:{uid:boolean},running:{uid:number},waiting:{uid:number},observedAt}`.
-  `state`는 `preparing|serving|draining|removing`이다. `serving`은 수명주기 상태이지 실제
-  실행 증거가 아니다. `routable`은 SCH-36의 유효 배분, `running`은 native 실행 단계 관측이다.
+- `nodes[]:{uid,name,powerMode,ready,measurement,reasons?,observedAt}`. 전력 W는 `metrics` 프레임에만 있다.
+- `instances[]:{id,node:{uid,name},ownerWorkloadUID,profileID,ready,stopped,routable:{uid:boolean},running:{uid:number},waiting:{uid:number},observedAt}`.
+  단일 `workloadUID`와 binding 수로 추정한 `state`는 없다. 준비(`ready`), 배분 가능 여부(`routable`),
+  실제 배분(`routing`), native 실행(`running`)과 작업(`actions`)은 독립 사실이다.
+  `waiting`은 배정 뒤 native queued/deferred이며 `AssignedUnknown`을 포함하지 않는다.
 - `routing:{workloadUID:{instanceID:weight}}`는 실제 배분이다. 선언과 목표는 근거 REST에서
   별도로 읽는다. `decision:null|{at,state,reason}`에서 큰 후보·프로파일은 제외한다.
   판단 identity는 원본 RFC3339Nano `decision.at`이다. `SchedulerDecision`에 없는 id 필드를
   새 원본 식별자로 가정하지 않는다. 근거 조회는 3장의 `decision.at` 구간 조회다(6.1절).
 - `reservations[]:{owner,nodes:[{uid,name}],workloadUIDs:[uid],podUIDs:[uid],instances:[id],reason}`는
-  판단 snapshot의 `SchedulerReservation`(`internal/serving/scheduler.go:314-322`)에서 `target`을 뺀 것이다.
+  판단 snapshot의 `SchedulerReservation`(`internal/serving/scheduler.go`)에서 `target`·`routeOnly`를 뺀 것이다.
+  reason 미제공은 `"미확인"`이며, 빈 배열이 예약 해제를 나타낸다. 작업 종결로 해제를 추정하지 않는다.
 - `actions[]:{id,kind,node:{uid,name},workloadUID,status,startedAt,completedAt?,expectedSeconds:number|null,expectedSource:{costID,reference,statistic:"mean",trialCount}|null}`.
   identity인 `actionKey`는 JSON 튜플 `[id,node.uid,startedAt]`이다. 이벤트의 `action`에는
   `phase:"started|completed|failed"`와 작은 `result?:{status,error?}`가 추가된다.
   `starting/running`만 진행 중이며 `complete/failed/partial`은 종결이다(`OperationResult.Status`,
   `internal/serving/kube/operations.go:344-348`). `partial`은 `phase:"failed"`로 보내되 원본 status를 유지한다. 예상 시간·출처는
   [T4 관측 설계](../serving/observability-split.md)를 따른다.
+- `cluster:{kind:"pod"|"issue",at,event,pod?:{namespace?,name?,uid,node?,phase?,ready?:string},source?,reason?,previousReason?}`.
+  원본 `ClusterObservation`의 작은 projection이다. Pod의 ready는 원본 condition 문자열이며 boolean으로 재판정하지 않는다.
+  `event.kind="cluster"`는 기록 성공 뒤에만 발행하고, 상태 변화가 없으면 앞에 빈 delta를 붙이지 않는다.
+
+한 runtime capture의 `workloads/instances/routing/removed`와 한 판단의
+`workloads/nodes/reservations/decision`은 각각 한 delta다. 동일 상태의 재발행과 동일 판단·작업 callback은 생략한다.
+runtime workload readiness의 읽기 시각만 바뀐 것은 상태 변화로 세지 않는다.
 - `Metric:{received,completed,failed,withinSLO,latencySamples,p50ms:number|null,p95ms:number|null,p99ms:number|null}`.
   모든 count는 0 이상의 정수다. 관측 가능한 각 UID는 무유입 초에도 0 count로 보내고,
   계측 불가 구간은 0을 만들지 않고 `gaps`로 보낸다. 의미와 분모는 4.4절을 따른다.
 
-위 계약 중 `reservations`, `workloads[].pending`, `instances[].waiting`, `nodes[].ready/measurement/reasons`는 계획 3장 선행 수정으로
-들어오고, 같은 수정이 현재 코드(`internal/serving/live/types.go`)의 `decision.recordRef`, `instances[].workloadUID`,
-`nodes[].targetPowerMode/watts`를 삭제한다. 수정 전 프레임에서 앞단은 이 필드들을 무시하고 해당 자리를 비운다.
+S2 서버 선행 수정은 위 DTO를 투영한다(`internal/serving/live/types.go`, `cmd/chill-server/live.go`).
+`decision.recordRef`, `instances[].workloadUID/state`, `nodes[].targetPowerMode/watts`는 제거됐다.
+이는 코드 계약이며 승인 배포·실제 WebSocket 수용 완료를 뜻하지 않는다.
 
 `delta.instances/actions`는 identity별 **행 전체 upsert** 후 `removed`를 적용한다.
 `workloads/nodes/routing/reservations`는 키가 있으면 해당 컬렉션 **전체 대체**이며 생략은 유지,
 빈 배열/맵은 비우기다. `decision:null`은 판단 제거다. 삭제된 정의는 현재 목록에서
 사라져도 시간축의 정의 사전에는 남긴다. `event`는 사건 이력이며 현재 상태의 권위는
-snapshot/delta다. 생산자는 관련 delta 뒤 event를 발행한다.
+snapshot/delta다. 생산자는 상태 변화가 있으면 관련 delta 뒤 event를 발행하며, cluster 사건은 event만 발행한다.
 
 클라이언트 메시지는 아래 둘뿐이다. auth에는 seq가 없다.
 
@@ -586,15 +595,16 @@ flowchart LR
 | 엣지 | 표시 값 | 라이브 DTO 출처 |
 |---|---|---|
 | E1 클라이언트→접수 | 수신 req/s(레인별, 보드 합계) | `metrics.workloads[uid].received` |
-| E2 접수→POOL 유입 큐 | 접수 가능 여부, 유입 큐 길이(배정 전) | `workloads[].admission`; 큐 길이는 **현재 미제공 → 계획 3장 선행 수정 `workloads[].pending`**(runtime `WorkloadState.Pending`, `internal/serving/runtime.go:1160`). 들어오기 전엔 표시 안 함. 수신−종결 차를 대기로 쓰지 않고, E3 인스턴스 `waiting`과 더하지 않는다 |
-| E3 큐→인스턴스 | 인스턴스별 분배 비율, 인스턴스 native 대기 수, 실제 처리 수 | `routing[uid][instanceID]`, `instances[].routable[uid]`, `instances[].running[uid]`; 대기 수는 **현재 미제공 → 계획 3장 선행 수정 `instances[].waiting[uid]`**(runtime `Waiting`: 분배된 뒤 native queued/deferred, `AssignedUnknown`과 구분, `runtime.go:1217-1228`). 들어오기 전엔 표시 안 함 |
+| E2 접수→POOL 유입 큐 | 접수 가능 여부, 유입 큐 길이(배정 전) | `workloads[].admission/pending` ← 같은 runtime `Current()`의 `WorkloadState.Admission/Pending`. 수신−종결 차로 대신하지 않고 E3 `waiting`과 더하지 않는다 |
+| E3 큐→인스턴스 | 인스턴스별 분배 비율, 인스턴스 native 대기 수, 실제 처리 수 | `routing[uid][instanceID]`, `instances[].routable[uid]/running[uid]/waiting[uid]` ← 같은 runtime `Current()`의 유효 routing과 `InstanceState`. `waiting`은 배정 뒤 native queued/deferred이며 `AssignedUnknown`과 구분한다 |
 | E4 인스턴스→응답 | 종결 N, 성공률, SLO 안 비율, p95 | `metrics.workloads[uid].completed/failed/withinSLO/p95ms`. 인스턴스별 종결은 **미제공 → 표시 안 함**(워크로드 단위만) |
 | E5 Node 전력 | Node W, 전력모드; 보드 합계 | `metrics.nodes[uid].watts`, `nodes[].powerMode`; `metrics.pool.wholeWatts/activeWatts` |
 | C1 관측→판단 | 마지막 판단 시각·state·reason; 판단 사건에 1회 강조 | `decision.at/state/reason`; `event.kind="decision"` |
 | C2 판단→작업 | 진행 중 작업 수와 kind 목록, 예상 시간·출처; 시작·종결 사건에 1회 강조 | `actions[]`(`starting/running`만 진행), `expectedSeconds/expectedSource`; `event.kind="action"`의 `phase`. kind는 위 9종 외에 측정 run `operation-cost-measurement`·`dispatch-occupancy-measurement`·`measurement-handback`(`startNodeRun`, 종결 사건만)도 오며 모두 kind 문자열 그대로 표시한다 |
-| C3 작업→예약 장부 | 예약 수, owner, 범위, 잔류 사유 | **현재 미제공 → 계획 3장 선행 수정 `reservations[]:{owner,nodes[],workloadUIDs[],podUIDs[],instances[],reason}`**. 들어오기 전엔 “예약 미제공”으로 표시 |
+| C3 작업→예약 장부 | 예약 수, owner, 범위, 잔류 사유 | `reservations[].owner/nodes/workloadUIDs/podUIDs/instances/reason` ← 기록된 판단 snapshot의 `Reservations`. 판단 주기마다 배열 전체 대체; 빈 배열은 해제, reason 미제공은 “미확인”. 작업 종료는 해제 근거가 아니다 |
 | C4 작업→Node·인스턴스 | 해당 Node·인스턴스 칸에 진행 배지(kind) | `actions[].node.uid`, `actions[].workloadUID` |
-| Node 사용 가능 | Node 칸 흐림과 사유 | **현재 미제공 → 계획 3장 선행 수정 `nodes[].ready/measurement/reasons`** |
+| Node 사용 가능 | Node 칸 흐림과 사유 | `nodes[].ready/measurement/reasons` ← 기록된 판단 snapshot의 `SchedulerNode`. 화면에서 새 가용성을 판정하지 않는다 |
+| 장애 사건 | Pod 변화·observer issue 발생/해소·이전 사유 | `event.kind="cluster"`의 `cluster.kind/at/event/pod/source/reason/previousReason` ← 기록 성공한 `ClusterObservation` |
 | 공백 | 해당 엣지·레인 빗금과 사유 | `metrics.gaps[].scope/reason`; socket 끊김은 띠 |
 
 판단 전에는 `nodes`가 빌 수 있다(Node는 판단 callback에서만 채워진다). 그때 POOL 레인에는 인스턴스의
@@ -605,8 +615,8 @@ flowchart LR
 
 레인은 현재 `workloads[]`의 UID마다 하나다(목록 순서는 이름, 같은 이름은 UID). 모델명·샘플 필드로
 분기하지 않는다. 레인 안 인스턴스는 `routable[uid]`가 true이거나 `running[uid]>0`이거나
-`ownerWorkloadUID==uid`인 것이며, 여러 UID에 해당하면 각 레인에 모두 나타난다(계획 3장: `Instance.WorkloadUID`
-단일 귀속 삭제). 인스턴스는 Node별로 모은다. 인스턴스 기호는 그 레인의 uid에 대해 위에서 처음 맞는 것이다:
+`ownerWorkloadUID==uid`인 것이며, 여러 UID에 해당하면 각 레인에 모두 나타난다.
+단일 귀속 `Instance.WorkloadUID`는 제공하지 않는다. 인스턴스는 Node별로 모은다. 인스턴스 기호는 그 레인의 uid에 대해 위에서 처음 맞는 것이다:
 × 제거(`stopped`) → ◌ 분배 해제 뒤 잔여 실행(`!routable[uid] && running[uid]>0`) → ● 실제 처리(`routable[uid] && running[uid]>0`)
 → ◐ 분배 중·처리 대기(`routable[uid] && running[uid]==0`) → ○ 준비됨·미분배(`ready && !routable[uid]`) → ◇ 준비 중(`!ready`).
 `routable`은 runtime이 ready·!stopped·weight>0을 모두 요구하므로(`internal/serving/runtime.go:1208-1210`) weight를 따로 보지 않는다.

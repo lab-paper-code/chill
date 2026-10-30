@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -104,19 +103,21 @@ func (p *livePublisher) workload(view servingkube.WorkloadView, removed bool) {
 			})
 		}
 		row.Autonomous = slices.Contains(p.autonomous, uid)
+		row.Pending = p.registered[uid].Pending
 		p.registered[uid] = row
 	}
-	p.publishWorkloads(time.Now().UTC())
+	rows := p.workloadRows()
+	p.publish(time.Now().UTC(), live.Delta{Workloads: &rows}, nil)
 }
 func liveWorkload(state serving.WorkloadState) live.Workload {
 	d := state.Applied
 	id := d.Identity()
 	return live.Workload{UID: d.UID, Name: d.Name, Model: d.Model.Name, DefinitionID: &id,
 		SLO:       live.SLO{Percentile: d.SLO.Percentile, TargetLatencyNanos: int64(d.SLO.TargetLatency)},
-		Admission: state.Admission,
+		Admission: state.Admission, Pending: state.Pending,
 		Readiness: live.Readiness{Ready: state.Reason == "Ready", Reason: state.Reason, ObservedAt: liveAt(state.ObservedAt)}}
 }
-func (p *livePublisher) publishWorkloads(at time.Time) {
+func (p *livePublisher) workloadRows() []live.Workload {
 	rows := make([]live.Workload, 0, len(p.registered))
 	uids := make([]string, 0, len(p.registered))
 	for uid, row := range p.registered {
@@ -125,10 +126,14 @@ func (p *livePublisher) publishWorkloads(at time.Time) {
 	}
 	slices.SortFunc(rows, func(a, b live.Workload) int { return strings.Compare(a.UID, b.UID) })
 	p.metrics.SetWorkloads(uids)
-	p.publish(at, live.Delta{Workloads: &rows}, nil)
+	return rows
 }
 func (p *livePublisher) runtime(runtime *serving.Runtime) {
 	states, physical, routing := runtime.Current()
+	p.runtimeProjection(states, physical, routing)
+}
+
+func (p *livePublisher) runtimeProjection(states []serving.WorkloadState, physical []serving.InstanceState, routing map[string]map[string]int32) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, state := range states {
@@ -136,7 +141,6 @@ func (p *livePublisher) runtime(runtime *serving.Runtime) {
 		row.Autonomous = slices.Contains(p.autonomous, row.UID)
 		p.registered[row.UID] = row
 	}
-	p.publishWorkloads(time.Now().UTC())
 	rows := make([]live.Instance, 0, len(physical))
 	present := map[string]bool{}
 	active := map[string]bool{}
@@ -144,27 +148,14 @@ func (p *livePublisher) runtime(runtime *serving.Runtime) {
 	for _, i := range physical {
 		present[i.ID] = true
 		routable[i.ID] = i.Routable
-		state := "preparing"
-		uid := i.OwnerWorkloadUID
-		if len(i.Workloads) > 0 {
-			uid = i.Workloads[0].UID
-		}
-		if i.Ready {
-			state = "serving"
-		}
-		if len(i.Workloads) == 0 && i.Ready {
-			state = "draining"
-		}
-		if i.Stopped {
-			state = "removing"
-		}
 		if i.OwnerWorkloadUID != "" || len(i.Workloads) > 0 {
 			active[i.Node.UID] = true
 		}
 		rows = append(rows, live.Instance{
-			ID: i.ID, Node: liveNode(i.Node), WorkloadUID: uid, OwnerWorkloadUID: i.OwnerWorkloadUID,
-			ProfileID: i.Profile, Ready: i.Ready, Stopped: i.Stopped, State: state,
-			Routable: maps.Clone(i.Routable), Running: maps.Clone(i.Running), ObservedAt: liveAt(i.ObservedAt)})
+			ID: i.ID, Node: liveNode(i.Node), OwnerWorkloadUID: i.OwnerWorkloadUID,
+			ProfileID: i.Profile, Ready: i.Ready, Stopped: i.Stopped,
+			Routable: i.Routable, Running: i.Running,
+			Waiting: i.Waiting, ObservedAt: liveAt(i.ObservedAt)})
 	}
 	removed := &live.Removed{}
 	for id := range p.instances {
@@ -173,6 +164,8 @@ func (p *livePublisher) runtime(runtime *serving.Runtime) {
 		}
 	}
 	p.instances = present
+	slices.Sort(removed.Instances)
+	slices.SortFunc(rows, func(a, b live.Instance) int { return strings.Compare(a.ID, b.ID) })
 	p.active = p.active[:0]
 	for uid := range active {
 		p.active = append(p.active, uid)
@@ -187,7 +180,8 @@ func (p *livePublisher) runtime(runtime *serving.Runtime) {
 			}
 		}
 	}
-	p.publish(time.Now().UTC(), live.Delta{Instances: &rows, Routing: &routes, Removed: removed}, nil)
+	workloads := p.workloadRows()
+	p.publish(time.Now().UTC(), live.Delta{Workloads: &workloads, Instances: &rows, Routing: &routes, Removed: removed}, nil)
 }
 func (p *livePublisher) decision(d serving.SchedulerDecision, snapshot serving.SchedulerSnapshot) {
 	p.mu.Lock()
@@ -197,14 +191,31 @@ func (p *livePublisher) decision(d serving.SchedulerDecision, snapshot serving.S
 		row.Autonomous = slices.Contains(p.autonomous, uid)
 		p.registered[uid] = row
 	}
-	p.publishWorkloads(d.At)
 	nodes := make([]live.Node, 0, len(snapshot.Nodes))
 	for _, n := range snapshot.Nodes {
 		at := liveAt(n.ObservedAt)
-		nodes = append(nodes, live.Node{UID: n.Node.UID, Name: n.Node.Name, PowerMode: n.PowerMode, ObservedAt: &at})
+		nodes = append(nodes, live.Node{UID: n.Node.UID, Name: n.Node.Name, PowerMode: n.PowerMode,
+			Ready: n.Ready, Measurement: n.Measurement, Reasons: n.Reasons, ObservedAt: &at})
 	}
+	slices.SortFunc(nodes, func(a, b live.Node) int { return strings.Compare(a.UID, b.UID) })
+	reservations := make([]live.Reservation, 0, len(snapshot.Reservations))
+	for _, r := range snapshot.Reservations {
+		nodes := make([]live.NodeRef, 0, len(r.Nodes))
+		for _, n := range r.Nodes {
+			nodes = append(nodes, liveNode(n))
+		}
+		reason := r.Reason
+		if reason == "" {
+			reason = "미확인"
+		}
+		reservations = append(reservations, live.Reservation{Owner: r.Owner, Nodes: nodes,
+			WorkloadUIDs: r.WorkloadUIDs, PodUIDs: r.PodUIDs, Instances: r.Instances, Reason: reason})
+	}
+	slices.SortFunc(reservations, func(a, b live.Reservation) int { return strings.Compare(a.Owner, b.Owner) })
 	decision := &live.Decision{At: liveAt(d.At), State: d.Status, Reason: strings.Join(d.Reasons, "; ")}
-	p.publish(d.At, live.Delta{Nodes: &nodes, Decision: &decision}, &live.Event{Kind: "decision", Decision: decision})
+	workloads := p.workloadRows()
+	p.publish(d.At, live.Delta{Workloads: &workloads, Nodes: &nodes, Reservations: &reservations,
+		Decision: &decision}, &live.Event{Kind: "decision", Decision: decision})
 }
 func (p *livePublisher) action(r servingkube.OperationResult) {
 	p.mu.Lock()
