@@ -77,6 +77,28 @@ func (c *SchedulerController) targetWorkloadsLocked(target serving.SchedulerCand
 	return changedWorkloads(target, c.state.Snapshot)
 }
 
+func changedWorkloadScope(target serving.SchedulerCandidate, snapshot serving.SchedulerSnapshot, allowed []string) []string {
+	return slices.DeleteFunc(changedWorkloads(target, snapshot), func(uid string) bool {
+		return allowed != nil && !slices.Contains(allowed, uid)
+	})
+}
+
+func positiveWorkloadScope(target serving.SchedulerCandidate, allowed []string) []string {
+	active := []string{}
+	for uid, weights := range target.Routing {
+		if allowed != nil && !slices.Contains(allowed, uid) {
+			continue
+		}
+		for _, weight := range weights {
+			if weight > 0 {
+				active = append(active, uid)
+				break
+			}
+		}
+	}
+	return active
+}
+
 // Split the global choice at existing cleanup ownership boundaries. A Ready
 // refresh must not wait for another UID's preparation, or acquire its lifecycle.
 func (c *SchedulerController) cleanupTargetsLocked(target serving.SchedulerCandidate, parents []*actionRun) (serving.SchedulerCandidate, []serving.SchedulerCandidate) {

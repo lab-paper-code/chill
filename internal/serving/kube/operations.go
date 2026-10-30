@@ -978,19 +978,7 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 		return err
 	}
 	if result.Operation.Kind != operationUnroute {
-		active := []string{}
-		for uid, weights := range target.Routing {
-			if uids != nil && !slices.Contains(uids, uid) {
-				continue
-			}
-			for _, weight := range weights {
-				if weight > 0 {
-					active = append(active, uid)
-					break
-				}
-			}
-		}
-		uids = active
+		uids = positiveWorkloadScope(target, uids)
 		if len(uids) == 0 {
 			return nil
 		}

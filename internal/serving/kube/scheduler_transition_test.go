@@ -1663,7 +1663,7 @@ func TestReadySubsetMixedUIDPreservesNotReadyDeclarationE56(t *testing.T) {
 	c, target, physical := acknowledgedHandoffFixture(t)
 	first := target.Instances[0]
 	definition := *c.runtime.SchedulerInputs(time.Now).Workloads[0]
-	definition.UID, definition.Name = "independent-uid", "independent"
+	definition.UID, definition.Name = "e56-independent-uid", "independent"
 	if err := c.runtime.Publish(&definition); err != nil {
 		t.Fatal(err)
 	}

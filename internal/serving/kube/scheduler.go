@@ -1022,11 +1022,7 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 			if action.Kind == operationRoute {
 				operation.WorkloadUIDs = c.targetWorkloadsLocked(target)
 				if selectedTarget != &target {
-					changed := changedWorkloads(*selectedTarget, c.state.Snapshot)
-					allowed := operation.WorkloadUIDs
-					operation.WorkloadUIDs = slices.DeleteFunc(changed, func(uid string) bool {
-						return allowed != nil && !slices.Contains(allowed, uid)
-					})
+					operation.WorkloadUIDs = changedWorkloadScope(*selectedTarget, c.state.Snapshot, operation.WorkloadUIDs)
 				}
 				if operation.WorkloadUIDs != nil && len(operation.WorkloadUIDs) == 0 {
 					continue
