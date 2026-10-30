@@ -623,8 +623,12 @@ def self_check_factor():
     node={'name':'node','uid':'node-uid'}
     targets=[{'id':str(cap),'node':node,'profile':{'id':str(cap)},'allocation':{'cpu':1},'maxBatch':1,'maxWaitNanos':0,'workloadUID':'workload'} for cap in (2,32)]
     baseline={'instances':targets,'nodes':[{'node':node,'powerMode':'paired-mode'}],'routing':{'workload':{'2':.5,'32':.5}}}
-    ns={'NODES':['node'],'copy':copy,'load':lambda _: {'snapshot':baseline},'need':lambda *args:None,'now':lambda:'now','positive':lambda x:type(x) in (int,float) and math.isfinite(x) and x>0}
+    ns={'NODES':['node'],'copy':copy,'load':lambda _: {'snapshot':baseline},'need':lambda *args:None,'now':lambda:'now','positive':lambda x:type(x) in (int,float) and math.isfinite(x) and x>0,'RESTORED_SETTINGS_KEYS':RESTORED_SETTINGS_KEYS}
     exec(compile(ast.fix_missing_locations(ast.Module(body=selected,type_ignores=[])),__file__,'exec'),ns)
+    ns['load']=lambda _: {'snapshot':baseline,'settings':{'autonomousWorkloads':['workload'],'controls':{'membership':True}}}
+    merged=ns['baseline_settings'](Path('pre-state.json'),{'autonomousWorkloads':[],'scaleDownHeadroomFraction':.25,'controls':{'membership':False}})
+    assert merged['scaleDownHeadroomFraction']==.25 and merged['autonomousWorkloads']==['workload'] and merged['controls']=={'membership':True}, 'restoration must keep live policy and restore only topology control'
+    ns['load']=lambda _: {'snapshot':baseline}
     for bad in (None,'owner-served','cap-delay','stale-delay','missing-delay','wrong-cap','foreign-served','foreign-after','stale','node','allocation','maxWaitNanos','static-good','static-drift','full-good','full-drift'):
         runner=ns['CPO']();requests=[];prepared=[];receipts={};clock=[0];polls=[0]
         ns['time']=SimpleNamespace(monotonic=lambda:clock[0],sleep=lambda seconds:clock.__setitem__(0,clock[0]+seconds))
@@ -1169,9 +1173,21 @@ def paired_baseline(path, uids):
     return desired
 
 
-def baseline_settings(path):
+# Restoration restores the scheduler's topology control, not its policy: a frozen pre-state
+# cannot know policy fields introduced later (e.g. scaleDownHeadroomFraction), so writing it
+# back whole silently reverts the live policy. Only these keys come from the pre-state.
+RESTORED_SETTINGS_KEYS=('autonomousWorkloads','excludedNodes','controls')
+
+
+def baseline_settings(path, current=None):
     record=load(path)
-    return copy.deepcopy(record['settings'] if 'settings' in record else load(path.with_name('pre-settings.json')))
+    pre=copy.deepcopy(record['settings'] if 'settings' in record else load(path.with_name('pre-settings.json')))
+    if current is None:
+        return pre
+    merged=copy.deepcopy(current)
+    for key in RESTORED_SETTINGS_KEYS:
+        if key in pre: merged[key]=copy.deepcopy(pre[key])
+    return merged
 
 
 def restoration_exclusions(path,uids):
@@ -2092,7 +2108,7 @@ class CPO:
         if not positive(ack_wait):raise ValueError('factorAckWaitSeconds must be finite and greater than zero')
         desired=paired_baseline(self.a.pre_state or row_folder(self.out,'full',self.a.stage)/'pre-state.json',self.uids)
         if static and desired!=load(self.out/'static-selection.json')['fingerprint']:raise RuntimeError('Restoration input differs from original frozen selection')
-        restore_settings=baseline_settings(self.a.pre_state) if static or full else None
+        restore_settings=baseline_settings(self.a.pre_state,self.settings()) if static or full else None
         if full and set(restore_settings.get('autonomousWorkloads',[]))!=set(self.uids):raise ValueError('Original full pre-settings must enable canonical autonomy')
         if static or full:
             self.check_power_observation()
