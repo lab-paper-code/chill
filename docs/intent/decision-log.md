@@ -657,3 +657,4 @@
 - 하네스 전환 `d39c9576`(API-only; runtime cap `requestTimeout`·`podName` 읽기 전용 노출; power reducer settings/state 입력, pinned `observation-power-source-d39c9576`), RBAC `f75596f6`(collector 가공 GET, 쓰기는 operator 토큰). #213 API 재판정 동일. 계획 §4 완료.
 - 대시보드 수용 `f573f5ae`: PASS 6/FAIL 2/미확인 5 — FAIL 2는 #213이 publication된 적 없음(실험 목록 부재). 조치: #213~#225 게시(첫 게시, 새 §0 형식; 재게시 아님)를 rev111 뒤 수행 → FAIL 2 재확인. 미확인 5는 빈 클러스터(라이브 값)·fixture off → 다음 측정 창에서.
 - 다음 승인 배포 rev111: chart RBAC(collector GET)+서버(settings requestTimeout, podName) 이미지.
+- 사용자 승인: 대시보드 NodePort 상시 공개(values `dashboard.service.type=NodePort`, nodePort 31300; chart `a7ba73cd`) — rev111에 묶음(collector GET RBAC, settings requestTimeout/podName).
