@@ -492,13 +492,13 @@ atomic 다중 source snapshot이라고 주장하지 않는다. null은 이유 �
 | `summary` | supportedCellCount, completeCellCount, criteriaMetCellCount, reusedCellCount, unknownSupportCount, unsupportedCellCount, countsByDisplayStatus, requestCount, runCount, profileCount, failedCellCount, currentFailedRequestCount, historicalFailedRequestCount. 미확정 수 null |
 | `groups[]` | 모델×class `{model:{name,uid},deviceClass:{name,uid},cellIds:[],complete,supported,unknownSupport}`. 장치 열 이름순 고정 |
 | `cells[]` | 아래 Cell |
-| `entities` | requests/profiles의 `{uid,id,assessment,cellIds}`. runs는 **`{uid,status,label,cellIds}`만**; checks/원문/log 없음 |
+| `entities` | requests/profiles는 `{uid,id,status,label,cellIds}`, runs는 `{uid,status,label,cellIds}`인 scalar 화면 요약만 제공한다. assessment/checks/resultRows/원문/log 없음 |
 | `nextActions[]` | `{kind,cellId,variantId,entityId,reasonCode,message}`. 미해결 실패/부족 batch/근거 확인만 각 최대 3건 |
 
 operationCosts/dispatchOccupancies는 coverage index에서 제외한다. 기존 각각의 list/detail response에
 동일 reducer assessment를 붙인다. 이들 source 실패가 BEO coverage를 막지 않아야 한다.
 Run 상세도 기존 허용 조회 경로에서 assessment를 얻을 수 있어야 하며 aggregate grant를 강제하지 않는다.
-runs의 status는 서버의 화면 displayStatus이며 label도 서버 값이다. 원본 phase/세부 사유는 기존 단건에서 읽는다.
+모든 entities의 status는 서버의 화면 displayStatus이며 label도 서버 값이다. 원본 phase/세부 사유는 기존 단건에서 읽는다.
 catalog 내부 메모리 facts 타입은 기존 serving 경계에 두고 cmd adapter에서 공통 HTTP DTO로 변환한다.
 catalog/kube가 operatorconsole transport를 import하도록 package 예외를 추가하지 않는다.
 
@@ -520,6 +520,16 @@ failureSummary는 정확 request/Run identity·batch·code·exitCode·최대 160
 execution은 원문 phase/generation/observedGeneration, evidence는 available/accepted와 사유,
 checklist는 `{criteriaMet:true|false|null,version:"result-checklist.v1",checks:[{code,result,message,sourceIds}]}`다.
 check result는 pass/warn/fail/unknown이다. **서버가 displayStatus와 label까지 제공**하며 UI는 다시 매핑하지 않는다.
+
+coverage 응답에서는 **variant.assessment.checklist.checks에만** 전체 체크리스트를 한 번 둔다.
+동일 `(code,result,message)` 항목은 variant 안에서 합치고 `sourceIds`는 해당 항목에 기여한
+정확한 `ResultRow.id` 집합이다. 원본 기록은 해당 `resultRows[].sources`로 찾아간다.
+Cell과 ResultRow의 assessment는 status/displayStatus/label, execution/evidence, reasons/scope와
+checklist의 criteriaMet/version을 유지하되 `checks:[]`로 요약한다. 이 compact projection은
+coverage 전용이며 기존 단건 assessment의 체크리스트 정책을 바꾸지 않는다.
+모든 variant의 condition과 resultRows 전체를 보존하며 행·variant를 잘라 용량을 맞추지 않는다.
+scheduler compact 읽기의 `$ref` 복원은 top-level Profile dictionary 전용이다.
+coverage는 위 variant 체크리스트 중복 제거를 사용하며 별도 `$ref` parser가 필요하지 않다.
 
 | 세부 status | 화면 displayStatus / label | 판정 |
 |---|---|---|
