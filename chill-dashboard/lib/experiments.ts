@@ -1,4 +1,4 @@
-import type { SchedulerObservation } from "./read-types.ts"
+import type { SchedulerObservation, SchedulerObservationPage } from "./read-types.ts"
 import { stringifySchedulerJSON } from "./scheduler.ts"
 import { formatMeasurementNumber } from "./measurements.ts"
 
@@ -142,13 +142,32 @@ export function stagePairing(run:Experiment,stage:ExperimentStage) {
   const expected=`${match[1]==="full"?"static":"full"}-${match[2]}`
   const candidates=run.stages.filter(other=>other.id===expected)
   if(own.length>1||candidates.length>1)return {paired:false,counterpart:null,reason:"동일 단계 식별자 중복"}
-  if(!candidates.length)return {paired:false,counterpart:null,reason:`정확한 대응 단계 ${expected} 없음 · 다른 suffix·동일 req/s로 대응하지 않음`}
+  if(!candidates.length)return {paired:false,counterpart:null,reason:`정확한 대응 단계 ${expected} 없음`}
   return {paired:true,counterpart:candidates[0],reason:"전체 E5 단계·반복 suffix 일치"}
+}
+// A load comparison is descriptive, not an exact repeated-stage pairing.
+function sameLoad(a:ExperimentStage,b:ExperimentStage):boolean {
+  const rows=comparisonRows(a,b)
+  return !!rows.length&&rows.every(row=>{
+    if(row.a.length!==1||row.b.length!==1)return false
+    const left=finite(row.a[0].original.offered),right=finite(row.b[0].original.offered),as=stageSeconds(a),bs=stageSeconds(b)
+    if(left===null||right===null||as===null||bs===null)return false
+    const ar=left/as,br=right/bs
+    return ar===br||Math.abs(ar-br)/Math.max(ar,br)<=.01
+  })
+}
+export function stageComparison(run:Experiment,stage:ExperimentStage) {
+  const exact=stagePairing(run,stage)
+  if(exact.paired||exact.reason==="동일 단계 식별자 중복"||stagePolicy(stage)==="기타 구성")return {...exact,basis:"단계 대응"}
+  const candidates=(own:ExperimentStage)=>run.stages.filter(other=>stagePolicy(other)!=="기타 구성"&&stagePolicy(other)!==stagePolicy(own)&&!stagePairing(run,other).paired&&stagePairing(run,other).reason!=="동일 단계 식별자 중복"&&sameLoad(own,other))
+  const matches=candidates(stage)
+  if(matches.length!==1||candidates(matches[0]).length!==1)return {...exact,basis:"비교 없음",reason:`${exact.reason} · 같은 부하 후보 ${matches.length}개${matches.length?" (유일한 양방향 연결 아님)":""}`}
+  return {paired:false,counterpart:matches[0],basis:"같은 부하 비교",reason:"단계 코드는 다름 · 모든 서비스의 평균 보낸 요청률 차이 1% 이내 · 양쪽 유일 후보. 실행 조건·길이·측정 규칙이 같은지는 별도 확인"}
 }
 export function campaignPairs(run:Experiment) {
   return run.stages.filter(stage=>stage.id.startsWith("full-E5-")).flatMap(chill=>{
-    const pairing=stagePairing(run,chill)
-    return pairing.counterpart?[{key:chill.id.slice(5),chill,control:pairing.counterpart}]:[]
+    const pairing=stageComparison(run,chill)
+    return pairing.counterpart?[{key:chill.id.slice(5),chill,control:pairing.counterpart,basis:pairing.basis,reason:pairing.reason}]:[]
   })
 }
 export function campaignGroups(runs:Experiment[]) {
@@ -182,15 +201,16 @@ export function frozenP95SLO(row:ExperimentRow):number|null {
 export function stageChartData(run:Experiment) {
   return [...run.stages].sort((a,b)=>Date.parse(a.from)-Date.parse(b.from)).map((stage,index)=>{
     const rows=experimentRows(stage),services:Record<string,{success:number|null;p95:number|null;sloMS:number|null;reason:string}>={}
-    const match=/^(full|static)-(E5-.+)$/.exec(stage.id),seconds=stageSeconds(stage),rate=stageRate(stage)
-    const energy=finite(stage.kpis.wholePoolJoules),bound=finite(stage.kpis.gapErrorBoundJoules),pairing=stagePairing(run,stage)
+    const seconds=stageSeconds(stage),rate=stageRate(stage)
+    const energy=finite(stage.kpis.wholePoolJoules),bound=finite(stage.kpis.gapErrorBoundJoules),pairing=stageComparison(run,stage)
     for(const row of rows) {
       const unique=rows.filter(other=>other.name===row.name).length===1
       const success=unique?finite(resultMetric(row,"success").value):null,p95=unique?finite(resultMetric(row,"p95").value):null
       services[row.name]={success:success===null?null:success*100,p95,sloMS:unique?frozenP95SLO(row):null,
         reason:!unique?"동명 서비스 KPI 중복":success===null||p95===null?publishedText(row.missingReasons)||"성공률 또는 p95 미제공":""}
     }
-    return {id:stage.id,stage,step:index+1,axis:match?.[2]??stage.id,policy:stagePolicy(stage),...pairing,rate,energy,
+    const axisStage=pairing.counterpart&&stagePolicy(stage)==="고정 구성"?pairing.counterpart:stage
+    return {id:stage.id,stage,step:index+1,axis:axisStage.id.replace(/^(full|static)-/,""),policy:stagePolicy(stage),...pairing,rate,energy,
       watts:energy!==null&&seconds!==null?energy/seconds:null,
       wattError:bound!==null&&seconds!==null?bound/seconds:null,
       joulesPerRequest:energy!==null&&rate!==null&&rate>0&&seconds!==null?energy/(rate*seconds):null,services}
@@ -214,6 +234,29 @@ export function policyStageGroups(run:Experiment) {
     }))
     return [{axis,series:policies.map(policy=>candidates.find(point=>point.policy===policy)??null)}]
   })}
+}
+
+export function campaignTradeoffs(run:Experiment) {
+  const comparisons=campaignPairs(run).map(pair=>({...pair,
+    energyDelta:finite(pair.chill.kpis.wholePoolJoules)!==null&&finite(pair.control.kpis.wholePoolJoules)!==null?Number(pair.chill.kpis.wholePoolJoules)-Number(pair.control.kpis.wholePoolJoules):null,
+    services:comparisonRows(pair.chill,pair.control).map(row=>{
+      const a=row.a.length===1?row.a[0]:undefined,b=row.b.length===1?row.b[0]:undefined
+      const am=a?resultMetric(a,"success"):null,bm=b?resultMetric(b,"success"):null
+      const av=finite(am?.value),bv=finite(bm?.value),ap=a?finite(resultMetric(a,"p95").value):null,bp=b?finite(resultMetric(b,"p95").value):null
+      return {name:row.name,a,b,successDelta:am?.key===bm?.key&&av!==null&&bv!==null?(av-bv)*100:null,p95Ratio:ap!==null&&bp!==null&&bp>0?ap/bp:null,p95Delta:ap!==null&&bp!==null?ap-bp:null}
+    }),
+  }))
+  const worstSuccess=Math.min(0,...comparisons.flatMap(row=>row.services.map(service=>service.successDelta??0)))
+  const worstP95=Math.max(0,...comparisons.flatMap(row=>row.services.map(service=>service.p95Delta??0)))
+  return comparisons.map(row=>({...row,services:row.services.map(service=>({...service,worstSuccess:worstSuccess<0&&service.successDelta===worstSuccess,worstP95:worstP95>0&&service.p95Delta===worstP95}))}))
+}
+
+export function stageHistoryLink(stage:ExperimentStage):string {
+  return `/scheduler/history?${new URLSearchParams({from:stage.from,to:stage.to,limit:"100"})}`
+}
+export function stageActivity(page:SchedulerObservationPage) {
+  const events=page.events??[],decisions=events.filter(event=>event.decision),actions=events.filter(event=>event.action)
+  return {decisions:decisions.length,actions:actions.length,partial:!!page.nextCursor||!!page.gapUntil,statuses:[...new Set(decisions.map(event=>event.decision!.status))],kinds:[...new Set(actions.map(event=>event.action!.kind))]}
 }
 
 export function campaignConclusion(run:Experiment):string {

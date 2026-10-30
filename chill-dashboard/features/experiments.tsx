@@ -1,16 +1,15 @@
 "use client"
 
 import * as React from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import Link from "next/link"
+import { useSearchParams } from "next/navigation"
 import { useChillQuery } from "@/lib/client"
 import type { SchedulerObservationPage } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
-import { campaignGroups, campaignPairs, commitExperimentSelection, comparisonDirection, policyStageGroups, serviceDelta, stageChartData, stagePolicy, alphaText, comparisonRows, decisionIdentity, decisionRange, differentMeasurementRules, difference, evidenceError, experimentRows, formatResult, object, relativeEnergy, resultMetric, stageRate, stageSeconds, type Experiment, type ExperimentRow, type ExperimentStage, type PublishedMetric } from "@/lib/experiments"
-import { campaignConclusion, stageLoadLabel } from "@/lib/experiments"
+import { campaignGroups, campaignPairs, campaignTradeoffs, stageActivity, stageHistoryLink, commitExperimentSelection, comparisonDirection, policyStageGroups, serviceDelta, stageChartData, stagePolicy, alphaText, comparisonRows, differentMeasurementRules, difference, evidenceError, experimentRows, formatResult, relativeEnergy, resultMetric, stageRate, stageSeconds, campaignConclusion, stageLoadLabel, type Experiment, type ExperimentRow, type ExperimentStage, type PublishedMetric } from "@/lib/experiments"
 import { QueryGate, SourceJSON, SourceExport, StatusBadge } from "@/components/read-region"
-import { Screen, Rows, Row, Empty, Facts } from "@/components/screen"
+import { Screen, Empty } from "@/components/screen"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Bar, BarChart, CartesianGrid, Cell, ErrorBar, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 
 // Published nested objects are readable facts, never JSON strings in the result table.
@@ -103,8 +102,8 @@ function StageCharts({run}:{run:Experiment}) {
       return [[`p${index}`,bar||point?.paired?value:null],[`u${index}`,point&&!point.paired?value:null],
         [`s${index}`,service?point?.services[service]?.sloMS??null:null],[`e${index}`,point?.wattError??null],[`paired${index}`,point?.paired??false]]
     })]))
-    const xAxis=<XAxis dataKey="axis" interval={0} height={55} tick={{fontSize:10}} tickFormatter={(axis,index)=>{const point=data.find(point=>point.axis===axis);return `${index+1}. ${point?formatResult(point.rate,"req/s"):"결측"}`}}/>
-    const yAxis=<YAxis width={54} tick={{fontSize:10}} tickFormatter={value=>formatResult(unit==="%"?Number(value)/100:Number(value),unit).replace(` ${unit}`,"")}/>
+    const xAxis=<XAxis dataKey="axis" interval={0} height={65} angle={-35} textAnchor="end" tick={{fontSize:11,fill:"var(--foreground)"}} tickFormatter={(_,index)=>String(index+1)}/>
+    const yAxis=<YAxis width={54} domain={unit==="%"?[0,100]:undefined} tick={{fontSize:11,fill:"var(--foreground)"}} tickFormatter={value=>formatResult(unit==="%"?Number(value)/100:Number(value),unit).replace(` ${unit}`,"")}/>
     const legend=<Legend wrapperStyle={{fontSize:11}}/>
     const tooltip=<Tooltip formatter={value=>formatResult(typeof value==="number"?(unit==="%"?value/100:value):null,unit)}/>
     return <figure className="min-w-0 space-y-2" key={title}>
@@ -133,7 +132,8 @@ function StageCharts({run}:{run:Experiment}) {
   }
   return <section aria-label="단계별 부하와 결과" className="min-w-0 space-y-5">
     <h2 className="text-xl font-semibold">정책별 단계 비교</h2>
-    <p className="text-sm text-muted-foreground">같은 부하 계획과 반복 회차의 결과를 나란히 표시해요. 비교할 기록이 없는 구간은 빈 표시로 남겨요. 점은 구간 전체의 집계이며 초별 변화는 아니에요.</p>
+    <p className="text-sm text-muted-foreground">가로축은 아래 구간 번호예요. 같은 단계 또는 같은 부하 비교를 나란히 표시해요. 단계 코드가 다른 비교는 속 빈 마커이며 관측값의 차이이지 전환의 인과 효과는 아니에요.</p>
+    <ol className="flex flex-wrap gap-x-5 gap-y-2 text-sm" aria-label="차트 구간 범례">{groups.map(({axis,series},index)=><li key={axis}><strong>{index+1}.</strong> {formatResult(series.find(Boolean)?.rate,"req/s")} <span className="text-muted-foreground">({axis})</span></li>)}</ol>
     <div className="grid min-w-0 gap-4 md:grid-cols-2">{chart("평균 보낸 요청률","req/s",point=>point.rate)}{chart("전체 POOL 평균 전력","W",point=>point.watts,true)}</div>
     <p className="text-xs text-muted-foreground">평균 전력은 구간의 전체 에너지를 실제 실행 시간으로 나눈 값이에요. 오차막대는 전력 기록이 비어 있는 동안의 오차 한도예요.</p>
     <div className="grid min-w-0 gap-5 md:grid-cols-2 xl:grid-cols-3">{names.map(name=><article key={name} className="min-w-0 space-y-4 border-t pt-3" aria-label={`${name} 성공률과 p95`}>
@@ -152,10 +152,10 @@ function StageSummary({run,onSelect}:{run:Experiment;onSelect:(a:string,b:string
     <h2 className="text-xl font-semibold">전 단계 결과</h2>
     <p className="text-sm text-muted-foreground">모든 단계의 결과예요. 변화량은 같은 부하의 다른 구성과 비교해요. 서비스별 성공률과 지연을 하나의 평균으로 합치지 않아요.</p>
     <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="전 단계 결과와 대응 이유"><table className="w-full min-w-[900px] text-sm">
-      <thead><tr>{["단계 / 정책","대응 상태·이유","평균 req/s","전체 POOL J / 평균 W","J / 보낸 요청","전 서비스 성공률 / p95 / Δ"].map(label=><th scope="col" key={label} className="p-3 text-left">{label}</th>)}</tr></thead>
+      <thead><tr>{["단계 / 정책","대응 상태·이유","평균 req/s","전체 POOL J / 평균 W","J / 보낸 요청","전 서비스 성공률 / p95 / Δ","CHILL이 한 일"].map(label=><th scope="col" key={label} className="p-3 text-left">{label}</th>)}</tr></thead>
       <tbody>{points.map((point,index)=><tr key={`${point.id}/${index}`} className="border-t">
         <th scope="row" className="p-3 text-left align-top"><p className="break-words">{stageLoadLabel(point.stage,run)}</p><p className="text-xs font-normal">{point.policy}</p><details className="text-xs font-normal"><summary className="cursor-pointer py-2">구간 코드</summary>{point.id}</details>{point.reason!=="동일 단계 식별자 중복"&&<button type="button" className="min-h-11 underline underline-offset-4" onClick={()=>onSelect(point.id,point.counterpart?.id??"")}>단계 자세히</button>}</th>
-        <td className="p-3 align-top"><p>{point.paired?"같은 부하 비교 가능":"비교할 같은 부하 기록 없음"}</p><details className="text-xs"><summary className="cursor-pointer py-2">연결 근거 원문</summary>{point.reason}{point.counterpart&&<p className="break-words">{point.counterpart.id}</p>}</details></td>
+        <td className="p-3 align-top"><p>{point.counterpart?point.basis:"비교할 같은 부하 기록 없음"}</p><details className="text-xs"><summary className="cursor-pointer py-2">연결 근거 원문</summary>{point.reason}{point.counterpart&&<p className="break-words">{point.counterpart.id}</p>}</details></td>
         <td className="p-3 text-right align-top tabular-nums">{formatResult(point.rate,"req/s")}</td>
         <td className="p-3 text-right align-top tabular-nums">{formatResult(point.energy,"J")}<br/>{formatResult(point.watts,"W")}{point.counterpart&&<p className={`mt-2 text-xs ${point.energy!=null&&point.counterpart.kpis.wholePoolJoules!=null?(point.energy<Number(point.counterpart.kpis.wholePoolJoules)?"text-green-700 dark:text-green-400":point.energy>Number(point.counterpart.kpis.wholePoolJoules)?"text-destructive":""):""}`}>Δ {difference(point.energy,point.counterpart.kpis.wholePoolJoules,"J")}<br/>{relativeEnergy(point.energy,point.counterpart.kpis.wholePoolJoules)}</p>}</td>
         <td className="p-3 text-right align-top tabular-nums">{formatResult(point.joulesPerRequest,"J/건")}</td>
@@ -163,19 +163,39 @@ function StageSummary({run,onSelect}:{run:Experiment;onSelect:(a:string,b:string
           const service=point.services[row.name]
           return <div key={row.name}><p className="break-words font-medium">{row.name}</p><p className="tabular-nums">성공 {formatResult(service?.success==null?null:service.success/100,"%")} / p95 {formatResult(service?.p95,"ms")}</p><p className={service?.p95!=null&&service.sloMS!=null&&service.p95>service.sloMS?"text-destructive font-medium":"text-xs"}>{service?.sloMS==null?"당시 p95 목표 미기록":`목표 ${formatResult(service.sloMS,"ms")} · ${service.p95==null?"지연 미기록":service.p95>service.sloMS?"목표 초과":"목표 이내"}`}</p>{service?.reason&&<details className="text-xs"><summary className="cursor-pointer py-2">누락 사유 원문</summary>{service.reason}</details>}{point.counterpart&&<p className="text-xs">변화 {serviceDelta(row.a.length===1?row.a[0]:undefined,row.b.length===1?row.b[0]:undefined)}</p>}</div>
         })}</td>
+        <td className="p-3 align-top"><Link prefetch={false} href={stageHistoryLink(point.stage)} className="inline-flex min-h-11 items-center underline underline-offset-4">이 구간 판단·전환 기록</Link></td>
       </tr>)}</tbody>
     </table></div>
   </section>
 }
 function Evidence({stage}:{stage:ExperimentStage}) {
-  const params=useSearchParams(),router=useRouter(),[draft,setDraft]=React.useState(params.get("at")??"")
-  const at=params.get("at")??"",identity=params.get("decision"),cursor=params.get("evidenceCursor")??""
-  const range=at?decisionRange(at):params.get("evidence")==="stage"?{from:stage.from,to:stage.to}:null
-  const query=useChillQuery<SchedulerObservationPage>(`v1/observations/scheduler?${new URLSearchParams({...range,limit:"20",...(cursor?{cursor}:{})})}`,{enabled:!!range,decoder:parseSchedulerJSON})
-  const events=(query.data?.events??[]).map((event,index)=>({event,offset:String(Number(cursor||"0")+index)})).filter(({event})=>event.decision&&(!at||decisionRange(event.decision.at)?.from===decisionRange(at)?.from))
-  const selected=events.filter(({event,offset})=>decisionIdentity(event)===identity&&offset===params.get("record"))
-  function choose(values:Record<string,string>) {const next=new URLSearchParams(params.toString());for(const key of ["at","decision","record","evidenceCursor","evidence"])next.delete(key);for(const [key,value] of Object.entries(values))next.set(key,value);router.replace(`/experiments?${next}`,{scroll:false})}
-  return <section className="space-y-4" aria-label="판단 근거"><h2 className="text-xl font-semibold">A 기록 당시 판단 근거</h2><p className="break-all text-sm text-muted-foreground">선택 단계 {stage.from} ~ {stage.to}. 최신 판단으로 대체하지 않아요.</p><Button variant="outline" onClick={()=>choose({evidence:"stage"})}>단계 판단 기록 찾기</Button><form className="flex flex-wrap items-end gap-2" onSubmit={event=>{event.preventDefault();if(decisionRange(draft))choose({at:draft})}}><label className="grid min-w-0 flex-1 gap-2 text-sm">decision.at (RFC3339Nano)<Input value={draft} onChange={event=>setDraft(event.target.value)} required/></label><Button type="submit" disabled={!decisionRange(draft)}>근거 조회</Button></form>{range&&<p className="break-all text-xs text-muted-foreground">출처 /observations/scheduler · {range.from} ≤ at &lt; {range.to} · cursor {cursor||"0"}</p>}{query.isFetching&&range&&<p role="status">보관 근거 조회 중</p>}{query.error&&<div role="alert"><p>{evidenceError(query.error)}</p><SourceJSON value={query.error.data}/></div>}{query.data&&!query.error&&<>{!events.length&&!query.data.nextCursor&&<p role="status">기록 없음</p>}{events.length>0&&<Rows label="단계 판단 목록">{events.map(({event,offset})=><Row key={offset} label={`${event.decision!.status} · 유지 ${event.decision!.keep?.id??""} · 목표 ${event.decision!.target?.id??""}`} hint={`${event.decision!.at} · 원본 행 ${offset}`} onClick={()=>choose(at?{at,decision:decisionIdentity(event),record:offset,...(cursor?{evidenceCursor:cursor}:{})}:{at:event.decision!.at})}/>)}</Rows>}{selected.length===1&&<><Facts items={[["고정 decision.at",selected[0].event.decision!.at],["판단 identity",identity??""],["원본 행",selected[0].offset],["게시된 판단",selected[0].event.decision!.status]]}/><SourceJSON title="선택한 보관 근거" value={selected[0].event}/></>}{identity&&!selected.length&&<p role="status">이 페이지에 고른 판단 기록 없음</p>}<SourceJSON title="조회 coverage·출처·결손" value={object(query.data).coverage}/>{query.data.nextCursor&&<Button variant="outline" onClick={()=>choose({...at?{at}:{evidence:"stage"},evidenceCursor:query.data!.nextCursor!})}>다음 근거 기록</Button>}{cursor&&<Button variant="outline" onClick={()=>choose(at?{at}:{evidence:"stage"})}>첫 근거 기록</Button>}</>}</section>
+  const query=useChillQuery<SchedulerObservationPage>(`v1/observations/scheduler?${new URLSearchParams({from:stage.from,to:stage.to,limit:"100"})}`,{decoder:parseSchedulerJSON})
+  const activity=query.data?stageActivity(query.data):null
+  return <section className="space-y-2 rounded border p-4" aria-label={`${stage.id} CHILL이 한 일`}>
+    <h3 className="font-semibold">{stagePolicy(stage)} · CHILL이 한 일</h3>
+    <p className="break-words text-sm">{stage.id}: {stage.from} ~ {stage.to}</p>
+    {query.isFetching&&<p role="status">이 구간의 판단·전환 기록을 찾고 있어요.</p>}
+    {query.error&&<p role="status">{evidenceError(query.error)}. 기록 화면에서 같은 구간을 다시 조회하세요.</p>}
+    {activity&&!query.error&&<><p className="text-sm font-medium">{activity.partial?"가져온 첫 페이지":"조회된 구간"}: 판단 {activity.decisions}개 / 전환 사건 {activity.actions}개{activity.partial&&" · 전체 건수 아님"}</p><p className="text-sm">{activity.statuses.length?`판단 상태: ${activity.statuses.join(", ")}`:"판단 기록 없음"}{activity.kinds.length?` / 전환 종류: ${activity.kinds.join(", ")}`:" / 전환 기록 없음"}</p>{query.data?.gapUntil&&<p className="text-sm">보관 공백 있음. 기록 없음은 동작하지 않았다는 뜻이 아니에요.</p>}</>}
+    <Link prefetch={false} href={stageHistoryLink(stage)} className="inline-flex min-h-11 items-center text-sm font-medium underline underline-offset-4">이 구간 판단·전환 기록 열기</Link>
+    <p className="text-xs text-muted-foreground">출처: 스케줄러 관측 API. 최신 기록으로 대체하지 않으며 결과 변화의 원인으로 단정하지 않아요.</p>
+  </section>
+}
+
+function Tradeoffs({run,onSelect}:{run:Experiment;onSelect:(a:string,b:string)=>void}) {
+  const rows=campaignTradeoffs(run).sort((a,b)=>Number(b.services.some(service=>service.worstSuccess||service.worstP95))-Number(a.services.some(service=>service.worstSuccess||service.worstP95)))
+  const chip=(text:string,tone:"gain"|"loss"|"neutral")=><span className={`inline-block rounded border px-2 py-1 text-sm ${tone==="gain"?"border-ok/40 text-ok":tone==="loss"?"border-destructive/40 text-destructive":"border-border text-foreground"}`}>{tone==="gain"?"득 · ":tone==="loss"?"실 · ":""}{text}</span>
+  return <section id="experiment-tradeoffs" tabIndex={-1} className="space-y-3 scroll-mt-4" aria-label="구간별 득실 결론">
+    <h2 className="text-xl font-semibold">자동 운영으로 얻은 것과 잃은 것</h2>
+    <p className="text-sm">자동 운영 − 고정 구성. 에너지 절감만으로 더 낫다고 판단하지 않아요. 가장 큰 성공률 하락·p95 증가 구간도 포함해요.</p>
+    {!rows.length&&<p>비교할 같은 부하 구간이 없어요. 아래 전 단계 결과에서 개별 값을 확인하세요.</p>}
+    <ul className="grid gap-x-8 md:grid-cols-2">{rows.map(row=><li key={row.key} className="space-y-3 border-b py-4">
+      <div className="flex flex-wrap items-center justify-between gap-2"><button type="button" className="min-h-11 text-left font-semibold underline underline-offset-4" onClick={()=>onSelect(row.chill.id,row.control.id)}>{stageLoadLabel(row.chill,run)} <span className="text-sm font-normal">({row.key})</span></button><span className="text-sm">{row.basis}</span></div>
+      <div className="flex flex-wrap gap-2">{chip(`에너지 Δ ${difference(row.chill.kpis.wholePoolJoules,row.control.kpis.wholePoolJoules,"J")} (${relativeEnergy(row.chill.kpis.wholePoolJoules,row.control.kpis.wholePoolJoules)})`,row.energyDelta===null?"neutral":row.energyDelta<0?"gain":row.energyDelta>0?"loss":"neutral")}</div>
+      <ul className="space-y-2">{row.services.map(service=><li key={service.name} className="space-y-1"><p className="break-words text-sm font-medium">{service.name}{service.worstSuccess&&" · 최대 성공률 하락"}{service.worstP95&&" · 최대 p95 증가"}</p><div className="flex flex-wrap gap-2">{chip(`성공률 Δ ${difference(service.a?resultMetric(service.a,"success").value:null,service.b?resultMetric(service.b,"success").value:null,"%",service.successDelta!==null)}`,service.successDelta===null?"neutral":service.successDelta<-.01?"loss":service.successDelta>.01?"gain":"neutral")}{chip(`p95 ${service.p95Ratio===null?"배율 계산 불가":`×${service.p95Ratio.toFixed(2)}`} (${difference(service.a?resultMetric(service.a,"p95").value:null,service.b?resultMetric(service.b,"p95").value:null,"ms")})`,service.p95Delta===null?"neutral":service.p95Delta>.01?"loss":service.p95Delta<-.01?"gain":"neutral")}</div></li>)}</ul>
+      <details className="text-sm"><summary className="min-h-11 cursor-pointer py-2">비교 근거·주의점</summary><p>{row.reason}</p><p className="break-words">{row.chill.id} ↔ {row.control.id}</p><p>관측 요청률 {formatResult(stageRate(row.chill),"req/s")} / {formatResult(stageRate(row.control),"req/s")}. 에너지는 각 실제 구간의 합계예요.</p><Rules a={row.chill} b={row.control}/></details>
+    </li>)}</ul>
+  </section>
 }
 function Verdict({stage}:{stage:ExperimentStage}) {
   const status=String(stage.kpis.status??"미제공")
@@ -187,13 +207,12 @@ export function ExperimentsPage() {
   const a=params.get("a")??"",b=params.get("b")??""
   const aq=useChillQuery<Experiment>(`v1/experiments/${encodeURIComponent(a)}`,{enabled:!!a,decoder:parseSchedulerJSON}),bq=useChillQuery<Experiment>(`v1/experiments/${encodeURIComponent(b)}`,{enabled:!!b,decoder:parseSchedulerJSON})
   const stage=aq.data?.stages.find(stage=>stage.id===params.get("as")),other=bq.data?.stages.find(stage=>stage.id===params.get("bs"))
-  const pairs=aq.data?campaignPairs(aq.data):[]
-  const focusSummary=React.useRef(false)
-  React.useEffect(()=>{if(focusSummary.current&&stage){document.getElementById("experiment-summary")?.focus();focusSummary.current=false}},[stage,other,params])
+  const focusSummary=React.useRef("")
+  React.useEffect(()=>{if(focusSummary.current&&stage){document.getElementById(focusSummary.current)?.focus();focusSummary.current=""}},[stage,other,params])
   function select(values:Record<string,string>) {
     // Read the synchronous URL, not the previous render's search params: two
     // rapid select changes must compose before React has rendered.
-    focusSummary.current=!!values.as
+    focusSummary.current=values.as?(a?"experiment-summary":"experiment-tradeoffs"):""
     commitExperimentSelection(window.location,window.history,values)
   }
   return <Screen width="data" breadcrumbs={[{label:"실험"}]} title={a?"실험 결과 비교":"실험 목록"} lede="실험 기록의 전 단계와 전 서비스 결과를 보고, 정확히 대응하는 정책 단계 또는 직접 고른 A/B를 비교합니다.">
@@ -207,24 +226,19 @@ export function ExperimentsPage() {
         <Button variant="outline" onClick={()=>select(pair?{a:run.id,as:pair.chill.id,b:run.id,bs:pair.control.id}:{a:run.id,as:run.stages[0]?.id??"",b:"",bs:""})}>운영 비교 결론 보기</Button>
       </article>
     })}{!list.data.items.length&&<Empty title="게시된 실험이 없어요"/>}</section>}</QueryGate>:<Button variant="outline" onClick={()=>select({a:"",as:"",b:"",bs:""})}>실험 목록으로</Button>}
-    {a&&<QueryGate query={aq}>{aq.data&&<section className="space-y-3 border-l-4 border-primary pl-4"><h2 className="text-xl font-semibold">자동 운영이 고정 구성보다 나았나요?</h2><p className="text-sm font-medium">{campaignConclusion(aq.data)}</p>{pairs.length>0&&<div className="flex flex-wrap gap-2" aria-label="같은 부하 구간">{pairs.map(pair=><Button variant={stage?.id===pair.chill.id?"default":"outline"} key={pair.key} onClick={()=>select({a,as:pair.chill.id,b:a,bs:pair.control.id})}>{stageLoadLabel(pair.chill,aq.data!)} <small>({pair.key})</small></Button>)}</div>}</section>}</QueryGate>}
+    {a&&<QueryGate query={aq}>{aq.data&&<Tradeoffs run={aq.data} onSelect={(as,bs)=>select({a,as,b:a,bs})}/>}</QueryGate>}
     <details className="rounded border p-3"><summary className="cursor-pointer py-2 text-sm">다른 기록 직접 비교</summary><QueryGate query={list}>{list.data&&<div className="grid gap-4 md:grid-cols-2">{(["a","b"] as const).map(key=><fieldset key={key} className="grid min-w-0 gap-3 rounded border p-3"><legend className="px-1 font-medium">{key.toUpperCase()} 비교 기록</legend><label className="grid min-w-0 gap-2 text-sm">게시 기록<select aria-label={`${key.toUpperCase()} 게시 기록`} value={key==="a"?a:b} onChange={event=>select({[key]:event.target.value})} className="min-h-11 w-full min-w-0 rounded border bg-background p-2"><option value="">기록 선택</option>{list.data!.items.map(run=><option key={run.id} value={run.id}>{run.id}</option>)}</select></label><label className="grid min-w-0 gap-2 text-sm">단계<select aria-label={`${key.toUpperCase()} 단계`} value={params.get(`${key}s`)??""} onChange={event=>select({[`${key}s`]:event.target.value})} className="min-h-11 w-full min-w-0 rounded border bg-background p-2"><option value="">단계 선택</option>{(key==="a"?aq.data:bq.data)?.stages.map((stage,index)=><option key={`${stage.id}/${index}`} value={stage.id} disabled={(key==="a"?aq.data:bq.data)!.stages.filter(other=>other.id===stage.id).length>1}>{stage.id}{(key==="a"?aq.data:bq.data)!.stages.filter(other=>other.id===stage.id).length>1?" · 중복 식별자 (전 단계 표에서 확인)":""}</option>)}</select></label></fieldset>)}</div>}</QueryGate></details>
     {a&&!stage&&<QueryGate query={aq}>{aq.data&&<p>결과를 볼 A 단계를 선택하세요.</p>}</QueryGate>}{b&&!other&&<QueryGate query={bq}>{bq.data&&<p>비교할 B 단계를 선택하세요.</p>}</QueryGate>}
     {stage&&<section id="experiment-summary" tabIndex={-1} aria-label="결론 요약" className="space-y-3 border-l-4 border-primary pl-4">
       <h2 className="text-xl font-semibold">{other?"선택 구간의 운영 결과 비교":"선택 구간의 결과"}</h2>
       <p className="break-words text-sm font-medium">A {stagePolicy(stage)}: {stage.id}{other&&<> / B {stagePolicy(other)}: {other.id}</>}</p>
       <div className="flex flex-wrap gap-2"><span>A <Verdict stage={stage}/></span>{other&&<span>B <Verdict stage={other}/></span>}</div>
-      <p className="text-sm font-medium">에너지가 줄어도 서비스가 느려지거나 성공률이 낮아질 수 있어요. 아래 득실을 함께 확인하세요.</p>
-      <p className="text-sm tabular-nums">전체 POOL A {formatResult(stage.kpis.wholePoolJoules,"J")}{other&&<> / B {formatResult(other.kpis.wholePoolJoules,"J")} / A−B {difference(stage.kpis.wholePoolJoules,other.kpis.wholePoolJoules,"J")}<br/>{comparisonDirection(stage.kpis.wholePoolJoules,other.kpis.wholePoolJoules,"J",`${stagePolicy(stage)} (${stage.id})`,`${stagePolicy(other)} (${other.id})`)}</>}</p>
-      <ul className="divide-y text-sm">{comparisonRows(stage,other).map(row=>{
-        const left=row.a.length===1?row.a[0]:undefined,right=row.b.length===1?row.b[0]:undefined
-        return <li key={row.name} className="grid gap-1 py-2 sm:grid-cols-[minmax(0,1fr)_2fr]"><span className="break-words font-medium">{row.name}</span><span className="tabular-nums">기한·SLO 내 성공 A {left?formatResult(resultMetric(left,"success").value,"%"):"미제공"}{other&&<> / B {right?formatResult(resultMetric(right,"success").value,"%"):"미제공"}</>}<br/>성공 응답 p95 A {left?formatResult(resultMetric(left,"p95").value,"ms"):"미제공"}{other&&<> / B {right?formatResult(resultMetric(right,"p95").value,"ms"):"미제공"}<br/><strong>A−B: {serviceDelta(left,right)}</strong><br/>성공: {left&&right&&resultMetric(left,"success").key===resultMetric(right,"success").key?comparisonDirection(resultMetric(left,"success").value,resultMetric(right,"success").value,"%",`${stagePolicy(stage)} (${stage.id})`,`${stagePolicy(other)} (${other.id})`):"동일 정의 비교 불가"}<br/>p95: {comparisonDirection(left?resultMetric(left,"p95").value:null,right?resultMetric(right,"p95").value:null,"ms",`${stagePolicy(stage)} (${stage.id})`,`${stagePolicy(other)} (${other.id})`)}</>}</span></li>
-      })}</ul>
       {other&&<details><summary className="cursor-pointer py-3 text-sm">실행 조건과 측정 규칙 검토</summary><Rules a={stage} b={other}/></details>}
+      <div className="grid gap-3 md:grid-cols-2"><Evidence key={`${a}/${stage.id}`} stage={stage}/>{other&&<Evidence key={`${b}/${other.id}`} stage={other}/>}</div>
     </section>}
-    {aq.data&&<><StageSummary run={aq.data} onSelect={(as,bs)=>select({a,as,b:bs?a:"",bs})}/><StageCharts run={aq.data}/><details className="rounded border p-3"><summary className="cursor-pointer py-3 text-sm">실제 실행 순서와 단계 구간 (시간순 레인)</summary><Timeline run={aq.data} selected={stage} label="A" onSelect={id=>select({as:id})}/></details></>}
-    {bq.data&&b!==a&&<><StageSummary run={bq.data} onSelect={(bs)=>select({bs})}/><StageCharts run={bq.data}/><details className="rounded border p-3"><summary className="cursor-pointer py-3 text-sm">B 실제 실행 순서와 단계 구간 (시간순 레인)</summary><Timeline run={bq.data} selected={other} label="B" onSelect={id=>select({bs:id})}/></details></>}
-    {stage&&<><Results stage={stage} other={other} a={a} b={b}/><details className="rounded border p-3"><summary className="cursor-pointer py-2 text-sm">기록 당시 판단 근거 조회</summary><Evidence key={`${a}/${stage.id}`} stage={stage}/></details><SourceJSON title="게시 출처" value={{a:aq.data?.sources,b:bq.data?.sources}}/></>}
+    {aq.data&&<><StageCharts run={aq.data}/><StageSummary run={aq.data} onSelect={(as,bs)=>select({a,as,b:bs?a:"",bs})}/><details className="rounded border p-3"><summary className="cursor-pointer py-3 text-sm">실제 실행 순서와 단계 구간 (시간순 레인)</summary><Timeline run={aq.data} selected={stage} label="A" onSelect={id=>select({as:id})}/></details></>}
+    {bq.data&&b!==a&&<><StageCharts run={bq.data}/><StageSummary run={bq.data} onSelect={(bs)=>select({bs})}/><details className="rounded border p-3"><summary className="cursor-pointer py-3 text-sm">B 실제 실행 순서와 단계 구간 (시간순 레인)</summary><Timeline run={bq.data} selected={other} label="B" onSelect={id=>select({bs:id})}/></details></>}
+    {stage&&<><Results stage={stage} other={other} a={a} b={b}/><SourceJSON title="게시 출처" value={{a:aq.data?.sources,b:bq.data?.sources}}/></>}
     {aq.data&&<SourceExport filename="experiment-comparison.json" value={{a:aq.data,aStage:stage?.id??null,b:bq.data??null,bStage:other?.id??null}}/>}
     <p className="text-xs text-muted-foreground">Δ는 반올림 전 원값으로 계산하므로 표시값끼리 뺀 결과와 마지막 자리가 다를 수 있습니다. 표시단위 미만 차이는 방향을 표시하지 않습니다. 원값·복사·내보내기는 원본 정밀도를 유지합니다. 기준 B가 0이어도 절대 차이·%p는 계산하며 상대 %·배율만 계산할 수 없습니다.</p>
     <p className="text-xs text-muted-foreground">게시된 구간별 결과를 비교해요. 서비스 성공률·지연은 평균하지 않고 공유 에너지는 서비스별로 나누지 않아요. 실제 전환 기록이 없는 구간의 변화는 표시하지 않아요.</p>

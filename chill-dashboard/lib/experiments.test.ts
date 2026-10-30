@@ -3,7 +3,7 @@ import test from "node:test"
 import { readFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import { campaignGroups, campaignPairs, commitExperimentSelection, comparisonDirection, experimentSelection, frozenP95SLO, stagePairing, policyStageGroups, serviceDelta, stageChartData, alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
-import { campaignConclusion, stageLoadLabel } from "./experiments.ts"
+import { campaignConclusion, campaignTradeoffs, stageComparison, stageHistoryLink, stageActivity, stageLoadLabel } from "./experiments.ts"
 import type { SchedulerObservation } from "./read-types.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
@@ -75,7 +75,8 @@ test("S1-4: archive judgment lookup pins nanosecond decision.at plus identity, n
   const plan=relayPlan("GET",["v1","observations","scheduler"],`?${new URLSearchParams({...range,limit:"20"})}`,config)
   assert.match(plan.path,/365665918Z/);assert.match(plan.path,/365665919Z/)
   const source=readFileSync(new URL("../features/experiments.tsx",import.meta.url),"utf8")
-  assert.match(source,/기록 없음/);assert.match(source,/decisionIdentity\(event\)===identity&&offset===params.get\("record"\)/)
+  assert.match(source,/stageHistoryLink\(stage\)/)
+  assert.doesNotMatch(source,/RFC3339Nano|<Input/)
   assert.doesNotMatch(source,/observations\/raw|v1\/scheduler\/state/)
 })
 
@@ -198,14 +199,14 @@ test("R3: rapid A/B selections preserve the preceding URL selection and clear on
   assert.equal(experimentSelection("a=one&as=chosen&b=two&bs=keep",{as:"next"}).get("bs"),"keep")
 })
 
-test("R3: campaign grouping and exact CHILL/static pairs never cross publications or select ambiguous stages",()=>{
+test("R7: campaign grouping uses exact stages first and unique same-load comparisons second",()=>{
   const full={...stage,id:"full-E5-1"},staticStage={...stage,id:"static-E5-1"}
   const run={...recorded.publication,stages:[full,{...full,id:"full-E5-2"},staticStage,{...staticStage,id:"static-E5-3"}]}
-  assert.deepEqual(campaignPairs(run).map(pair=>[pair.chill.id,pair.control.id]),[["full-E5-1","static-E5-1"]])
+  assert.deepEqual(campaignPairs(run).map(pair=>[pair.chill.id,pair.control.id]),[["full-E5-1","static-E5-1"],["full-E5-2","static-E5-3"]])
   assert.equal(campaignPairs({...run,stages:[full,full,staticStage]}).length,0)
   const groups=campaignGroups([run,demo])
   assert.equal(groups.length,2)
-  assert.equal(groups.find(group=>group.run.id===run.id)!.pairs.length,1)
+  assert.equal(groups.find(group=>group.run.id===run.id)!.pairs.length,2)
   assert.equal(groups.find(group=>group.run.id===demo.id)!.pairs.length,0)
   assert.ok(groups.every(group=>group.title===group.run.id),"each card identifies its publication instead of repeating a generic title")
 })
@@ -339,7 +340,7 @@ test("R5: all-service charts and all-stage table are initially rendered, with or
   assert.match(source,/h-\[180px\]/)
   assert.match(source,/names\.map\(name=><article/)
   assert.match(source,/<tbody>\{rows\.map\(row=><ServiceRows/)
-  assert.match(source,/aq\.data&&<><StageSummary/)
+  assert.match(source,/aq\.data&&<><StageCharts/)
   assert.doesNotMatch(source,/pairs\.length>0&&<StageSummary/)
   assert.match(source,/connectNulls=\{false\}/)
   assert.match(source,/dataKey=\{`u\$\{index\}`\}/)
@@ -360,4 +361,38 @@ test("operator conclusion names the worst service loss and does not treat missin
   assert.match(campaignConclusion(run),/최대 성공률 하락 -10.00%p: camera/)
   assert.match(campaignConclusion(run),/최대 p95 증가 10.00 ms: camera/)
   assert.match(campaignConclusion({...run,stages:[make("full-E5-1",null,20),run.stages[1]]}),/확인이 부족/)
+})
+
+test("R7: suffix-mismatched high load remains in gains/losses, worst quality loss and shared chart axis",()=>{
+  const make=(id:string,success:number,p95:number,offered=6120):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",kpis:{wholePoolJoules:id.startsWith("full")?90:100,requests:{camera:{offered,deadlineSuccessFraction:success,successDenominator:offered,completedLatencyNS:{p95:p95*1e6}}}}})
+  const high=make("full-E5-3",.847,1655),fixed=make("static-E5-3-223",.892,282)
+  const run={...recorded.publication,stages:[make("full-E5-1",.99,10,600),make("static-E5-1",1,9,600),high,fixed]}
+  const comparison=stageComparison(run,high)
+  assert.equal(comparison.basis,"같은 부하 비교")
+  assert.equal(comparison.paired,false)
+  assert.equal(comparison.counterpart,fixed)
+  const row=campaignTradeoffs(run).find(row=>row.chill===high)!
+  assert.equal(row.energyDelta,-10)
+  assert.ok(Math.abs(row.services[0].successDelta!-(-4.5))<1e-10)
+  assert.equal(row.services[0].p95Ratio,1655/282)
+  assert.equal(row.services[0].worstSuccess,true)
+  assert.equal(row.services[0].worstP95,true)
+  assert.match(campaignConclusion(run),/102 req\/s/)
+  assert.equal(policyStageGroups(run).groups.length,2)
+  // A nearly identical actual duration is not a different load plan.
+  assert.equal(stageComparison({...run,stages:[high,{...fixed,to:"2026-10-30T00:01:00.005Z"}]},high).counterpart?.id,fixed.id)
+  assert.equal(stageComparison({...run,stages:[high,fixed,{...fixed,id:"static-E5-4"}]},high).counterpart,null)
+  assert.equal(stageComparison({...run,stages:[high,{...fixed,kpis:{requests:{other:{offered:6120}}}}]},high).counterpart,null)
+  assert.equal(stageComparison({...run,stages:[high,{...fixed,kpis:{requests:{camera:{offered:7000}}}}]},high).counterpart,null)
+})
+
+test("R7: stage record links retain the exact range and activity counts never claim a partial page is complete",()=>{
+  const params=new URL(stageHistoryLink(stage),"https://dashboard.invalid").searchParams
+  assert.equal(params.get("from"),stage.from)
+  assert.equal(params.get("to"),stage.to)
+  assert.equal(params.get("limit"),"100")
+  const page={from:stage.from,to:stage.to,events:[recorded.decision,{at:stage.from,action:{id:"a",kind:"prepare",node:{name:"node",uid:"node-uid"},phase:"Started",startedAt:stage.from}}],nextCursor:"100"}
+  assert.deepEqual(stageActivity(page),{decisions:1,actions:1,partial:true,statuses:[recorded.decision.decision!.status],kinds:["prepare"]})
+  assert.equal(stageActivity({...page,nextCursor:undefined,gapUntil:stage.to}).partial,true)
+  assert.deepEqual(stageActivity({from:stage.from,to:stage.to,events:null}),{decisions:0,actions:0,partial:false,statuses:[],kinds:[]})
 })
