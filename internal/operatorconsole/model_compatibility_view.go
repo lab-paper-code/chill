@@ -53,6 +53,13 @@ type ModelCompatibilityView struct {
 	Reasons   []ModelCompatibilityReason  `json:"reasons"`
 }
 
+type ModelCompatibilityMatrixView struct {
+	ReadAt   string                   `json:"readAt"`
+	Scope    string                   `json:"scope"`
+	Rows     []ModelCompatibilityView `json:"rows"`
+	NodeRows []ModelCompatibilityView `json:"nodeRows"`
+}
+
 func BuildModelCompatibility(snapshot ModelCompatibilitySnapshot) ModelCompatibilityView {
 	reasons := snapshot.Reasons
 	if reasons == nil {

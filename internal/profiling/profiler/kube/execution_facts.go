@@ -120,6 +120,7 @@ type resolvedExecutionDeclaration struct {
 	Host                *hostExecutionContract
 	Access              *runtimeAccessContract
 	MetricObserverImage string
+	parseErr            error
 }
 
 // declarationSelectionError keeps preflight's original diagnostic while the
@@ -144,55 +145,77 @@ func selectExecutionDeclaration(
 	runtimeFamily string,
 	runtimeBackend string,
 ) (resolvedExecutionDeclaration, error) {
+	declarations, err := parseExecutionDeclarations(configMap, configMapKey)
+	if err != nil {
+		return resolvedExecutionDeclaration{}, err
+	}
+	return selectParsedExecutionDeclaration(declarations, deviceClass, node, runtimeFamily, runtimeBackend)
+}
+
+func parseExecutionDeclarations(configMap *corev1.ConfigMap, configMapKey string) ([]resolvedExecutionDeclaration, error) {
 	if configMap.UID == "" || configMap.ResourceVersion == "" {
-		return resolvedExecutionDeclaration{}, errors.New("Profiler fact-source ConfigMap has incomplete API identity")
+		return nil, errors.New("Profiler fact-source ConfigMap has incomplete API identity")
 	}
 	raw, exists := configMap.Data[configMapKey]
 	if !exists || strings.TrimSpace(raw) == "" {
-		return resolvedExecutionDeclaration{}, &declarationSelectionError{
+		return nil, &declarationSelectionError{
 			code: "RuntimeDeclarationMissing", err: fmt.Errorf("Profiler fact-source ConfigMap missing key %q", configMapKey),
 		}
 	}
 	documentBytes, err := readSingleYAMLDocument([]byte(raw))
 	if err != nil {
-		return resolvedExecutionDeclaration{}, fmt.Errorf("decode Profiler execution facts: %w", err)
+		return nil, fmt.Errorf("decode Profiler execution facts: %w", err)
 	}
 	var document executionFactsDocument
 	if err := yaml.UnmarshalStrict(documentBytes, &document); err != nil {
-		return resolvedExecutionDeclaration{}, fmt.Errorf("decode Profiler execution facts: %w", err)
+		return nil, fmt.Errorf("decode Profiler execution facts: %w", err)
 	}
 	if document.SchemaVersion != executionFactsSchema {
-		return resolvedExecutionDeclaration{}, fmt.Errorf("unsupported Profiler execution facts schema %q", document.SchemaVersion)
+		return nil, fmt.Errorf("unsupported Profiler execution facts schema %q", document.SchemaVersion)
 	}
 	if strings.TrimSpace(document.MetricObserverImage) == "" ||
 		strings.TrimSpace(document.MetricObserverImage) != document.MetricObserverImage {
-		return resolvedExecutionDeclaration{}, errors.New("metric-observer image is required without surrounding whitespace")
+		return nil, errors.New("metric-observer image is required without surrounding whitespace")
 	}
 	if len(document.Declarations) == 0 {
-		return resolvedExecutionDeclaration{}, &declarationSelectionError{
+		return nil, &declarationSelectionError{
 			code: "RuntimeDeclarationMissing", err: errors.New("Profiler execution facts require at least one declaration"),
 		}
 	}
 
 	seen := make(map[string]struct{}, len(document.Declarations))
-	var selected *resolvedExecutionDeclaration
+	declarations := make([]resolvedExecutionDeclaration, 0, len(document.Declarations))
 	for index := range document.Declarations {
 		declaration, err := validateExecutionDeclaration(document.Declarations[index])
 		if err != nil {
-			return resolvedExecutionDeclaration{}, fmt.Errorf("validate execution declaration %d: %w", index, err)
+			declarations = append(declarations, resolvedExecutionDeclaration{parseErr: fmt.Errorf("validate execution declaration %d: %w", index, err)})
+			break
 		}
 		backends := append([]string(nil), declaration.Runtime.Runtime.Backends...)
 		slices.Sort(backends)
 		identity := declaration.DeviceClass + "\x00" + declaration.Node + "\x00" + declaration.Runtime.Runtime.Family +
 			"\x00" + strings.Join(backends, "\x00")
 		if _, duplicate := seen[identity]; duplicate {
-			return resolvedExecutionDeclaration{}, &declarationSelectionError{
+			declarations = append(declarations, resolvedExecutionDeclaration{parseErr: &declarationSelectionError{
 				code: "RuntimeDeclarationAmbiguous",
 				err: fmt.Errorf("duplicate execution declaration for %s/%s/%s/%s",
 					declaration.DeviceClass, declaration.Node, declaration.Runtime.Runtime.Family, strings.Join(backends, ",")),
-			}
+			}})
+			break
 		}
 		seen[identity] = struct{}{}
+		declaration.MetricObserverImage = document.MetricObserverImage
+		declarations = append(declarations, declaration)
+	}
+	return declarations, nil
+}
+
+func selectParsedExecutionDeclaration(declarations []resolvedExecutionDeclaration, deviceClass, node, runtimeFamily, runtimeBackend string) (resolvedExecutionDeclaration, error) {
+	var selected *resolvedExecutionDeclaration
+	for _, declaration := range declarations {
+		if declaration.parseErr != nil {
+			return resolvedExecutionDeclaration{}, declaration.parseErr
+		}
 		if declaration.DeviceClass == deviceClass && (declaration.Node == "" || declaration.Node == node) &&
 			declaration.Runtime.Runtime.Family == runtimeFamily &&
 			slices.Contains(declaration.Runtime.Runtime.Backends, runtimeBackend) {
@@ -208,7 +231,6 @@ func selectExecutionDeclaration(
 			copy.Runtime.Packages = append([]runtimePackage(nil), declaration.Runtime.Packages...)
 			copy.Host = cloneHostExecutionContract(declaration.Host)
 			copy.Access = cloneRuntimeAccessContract(declaration.Access)
-			copy.MetricObserverImage = document.MetricObserverImage
 			selected = &copy
 		}
 	}

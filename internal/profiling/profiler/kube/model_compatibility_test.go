@@ -202,3 +202,32 @@ func TestModelCompatibilityRejectsMalformedStoredAuthorities(t *testing.T) {
 		})
 	}
 }
+
+func TestCompatibilityStrictFactsAreParsedOncePerSourceIdentity(t *testing.T) {
+	objects := validCandidateObjects()
+	config := objects[2].(*corev1.ConfigMap)
+	resolver := newCandidateResolver(t, objects...)
+	selectFacts := func() (resolvedExecutionDeclaration, error) {
+		return resolver.selectCompatibilityDeclaration(config, "execution-facts.yaml", compatibilitySelection().DeviceClass, compatibilitySelection().Node, "firstfloor", "ort-cpu")
+	}
+	if _, err := selectFacts(); err != nil {
+		t.Fatal(err)
+	}
+	// The exact same API object is already decoded, including nested payloads.
+	config.Data["execution-facts.yaml"] = validExecutionFacts() + "unexpected: true\n"
+	if _, err := selectFacts(); err != nil {
+		t.Fatalf("same identity was decoded again: %v", err)
+	}
+	config.ResourceVersion = "changed"
+	if _, err := selectFacts(); err == nil {
+		t.Fatal("changed resource version did not strictly decode facts")
+	}
+	config.Data["execution-facts.yaml"] = validExecutionFacts()
+	if _, err := selectFacts(); err == nil {
+		t.Fatal("invalid facts were decoded again for the same identity")
+	}
+	config.UID = "replacement"
+	if _, err := selectFacts(); err != nil {
+		t.Fatalf("replacement identity did not decode facts: %v", err)
+	}
+}

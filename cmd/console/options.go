@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 )
@@ -18,10 +19,14 @@ type options struct {
 	metricSourcesKey       string
 	workloadObservationKey string
 	actuationPoliciesKey   string
+	kubeAPIQPS             float64
+	kubeAPIBurst           int
 }
 
 func (o *options) bindFlags(flags *flag.FlagSet) {
 	flags.StringVar(&o.bindAddress, "bind-address", ":8080", "Address for the CHILL Console read API.")
+	flags.Float64Var(&o.kubeAPIQPS, "kube-api-qps", 200, "Kubernetes API client QPS.")
+	flags.IntVar(&o.kubeAPIBurst, "kube-api-burst", 400, "Kubernetes API client burst.")
 	flags.StringVar(
 		&o.tempDir, "evidence-temp-dir", "/var/run/chill/evidence",
 		"Directory for bounded Evidence Store reads.",
@@ -49,6 +54,12 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 }
 
 func (o options) validate() error {
+	if o.kubeAPIQPS <= 0 || math.IsNaN(o.kubeAPIQPS) || math.IsInf(o.kubeAPIQPS, 0) || o.kubeAPIQPS > math.MaxFloat32 || float32(o.kubeAPIQPS) == 0 {
+		return errors.New("Kubernetes API QPS must be positive and finite in float32 range")
+	}
+	if o.kubeAPIBurst <= 0 {
+		return errors.New("Kubernetes API burst must be positive")
+	}
 	if strings.TrimSpace(o.bindAddress) == "" || strings.TrimSpace(o.bindAddress) != o.bindAddress {
 		return errors.New("bind address is required without surrounding whitespace")
 	}

@@ -255,6 +255,7 @@ rules:
     verbs: [get]
   {{- range $namespace := $profileNamespaces | uniq | sortAlpha }}
   - nonResourceURLs:
+      - {{ printf "/chill/api/v1/namespaces/%s/measurement-coverage" $namespace | quote }}
       - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations" $namespace | quote }}
       - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations/*" $namespace | quote }}
       - {{ printf "/chill/api/v1/namespaces/%s/profiling-runs" $namespace | quote }}

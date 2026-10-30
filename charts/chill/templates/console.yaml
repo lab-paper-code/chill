@@ -178,6 +178,8 @@ spec:
           imagePullPolicy: {{ .Values.console.image.pullPolicy }}
           args:
             - {{ printf "--bind-address=:%v" .Values.console.port | quote }}
+            - {{ printf "--kube-api-qps=%v" .Values.console.kubeAPIQPS | quote }}
+            - {{ printf "--kube-api-burst=%v" .Values.console.kubeAPIBurst | quote }}
             - {{ printf "--system-name=%s" (include "chill.systemName" .) | quote }}
             # The Console starts without the Profiler so preflight can explain
             # an absent fact source instead of making startup depend on it.

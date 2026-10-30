@@ -13,6 +13,7 @@ rules:
       - deviceclasses
       - modelspecs
       - profilingruns
+      - batchenergyoptimizations
     verbs:
       - get
       - list
@@ -29,5 +30,9 @@ rules:
       - services/proxy
     resourceNames:
       - {{ printf "%s:http" (include "chill.consoleName" .) }}
+    verbs:
+      - get
+  - nonResourceURLs:
+      - {{ printf "/chill/api/v1/namespaces/%s/measurement-coverage" .Release.Namespace | quote }}
     verbs:
       - get

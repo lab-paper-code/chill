@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/modelcatalog"
@@ -32,6 +33,10 @@ type CandidateResolverOptions struct {
 type KubernetesCandidateResolver struct {
 	reader  client.Reader
 	options CandidateResolverOptions
+	declarationMu sync.Mutex
+	declarationIdentity string
+	declarations []resolvedExecutionDeclaration
+	declarationErr error
 }
 
 var _ profiler.CandidateResolver = (*KubernetesCandidateResolver)(nil)

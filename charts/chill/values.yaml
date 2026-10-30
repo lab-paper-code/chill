@@ -430,6 +430,9 @@ console:
     tag: ""
     pullPolicy: IfNotPresent
   port: 8080
+  # Console memoizes matrix reads; these are client rate limits, not concurrency.
+  kubeAPIQPS: 200
+  kubeAPIBurst: 400
   nodeSelector: {}
   affinity: {}
   tolerations: []

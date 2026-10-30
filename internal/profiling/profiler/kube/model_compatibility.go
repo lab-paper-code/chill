@@ -97,7 +97,7 @@ func (r *KubernetesCandidateResolver) ResolveModelCompatibility(
 	if err := validateObjectIdentity("ConfigMap", configMap.Name, configMap.UID, configMap.ResourceVersion); err != nil {
 		return ModelCompatibility{}, err
 	}
-	declaration, err := selectExecutionDeclaration(configMap, r.options.ConfigMapKey,
+	declaration, err := r.selectCompatibilityDeclaration(configMap, r.options.ConfigMapKey,
 		selection.DeviceClass, selection.Node, modelPath.Runtime.Family, modelPath.Runtime.Backend)
 	if err == nil {
 		err = validateSelectedRuntime(modelPath, declaration)
@@ -130,4 +130,20 @@ func (r *KubernetesCandidateResolver) ResolveModelCompatibility(
 				artifact.Source.Architecture, deviceClass.Spec.Architecture)})
 	}
 	return view, nil
+}
+
+// A resolver reuses strictly decoded facts only while the source API identity
+// is unchanged. Selection and model-specific checks still run for each Node.
+func (r *KubernetesCandidateResolver) selectCompatibilityDeclaration(configMap *corev1.ConfigMap, key, class, node, family, backend string) (resolvedExecutionDeclaration, error) {
+	r.declarationMu.Lock()
+	defer r.declarationMu.Unlock()
+	identity := configMap.Namespace + "\x00" + configMap.Name + "\x00" + string(configMap.UID) + "\x00" + configMap.ResourceVersion + "\x00" + key
+	if r.declarationIdentity != identity {
+		r.declarations, r.declarationErr = parseExecutionDeclarations(configMap, key)
+		r.declarationIdentity = identity
+	}
+	if r.declarationErr != nil {
+		return resolvedExecutionDeclaration{}, r.declarationErr
+	}
+	return selectParsedExecutionDeclaration(r.declarations, class, node, family, backend)
 }

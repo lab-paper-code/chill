@@ -31,7 +31,9 @@ func main() {
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(edgev1alpha1.AddToScheme(scheme))
-	reader, err := client.New(ctrl.GetConfigOrDie(), client.Options{Scheme: scheme})
+	config := ctrl.GetConfigOrDie()
+	config.QPS, config.Burst = float32(opts.kubeAPIQPS), opts.kubeAPIBurst
+	reader, err := client.New(config, client.Options{Scheme: scheme})
 	if err != nil {
 		log.Error(err, "construct Kubernetes reader")
 		os.Exit(1)

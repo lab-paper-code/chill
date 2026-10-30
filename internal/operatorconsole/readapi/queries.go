@@ -19,6 +19,7 @@ type QueryReaders struct {
 	Inventory          func(context.Context) (operatorconsole.InventorySnapshot, error)
 	ProfilingRuns      func(context.Context, string) (operatorconsole.ProfilingRunsSnapshot, error)
 	ModelCompatibility func(context.Context, operatorconsole.ModelCompatibilitySelection) (operatorconsole.ModelCompatibilitySnapshot, error)
+	ModelCompatibilityMatrix func(context.Context) (operatorconsole.ModelCompatibilityMatrixView, error)
 }
 
 type queryPage struct {

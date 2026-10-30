@@ -431,6 +431,9 @@ catalog 밖 단건 상세만 → 기존 Console /result → retained loader·같
 - `cmd/console`에 `--kube-api-qps`, `--kube-api-burst`를 추가하고 양수·유한 범위를 검증해 REST config에 적용한다.
   기본값은 기존 ChillServer와 같은 200/400, 배포에서는 실제 설정과 API-server 부하를 기록한다.
   높은 QPS는 memo/단일 파싱의 대체가 아니며 기본 client QPS에 대한 패널 간 다른 추정을 성능 근거로 쓰지 않는다.
+  구현 설정은 Helm `console.kubeAPIQPS`/`console.kubeAPIBurst`에 노출한다. 행렬 composition root는
+  inventory LIST seed와 fact-source GET의 UID/RV 집합이 같으면 기존 `rows`/`nodeRows`를 재사용한다.
+  성공 조회 시각만 바뀐 경우 지원 판정을 재계산하지 않는다. 성능·배포 수용은 §13.6의 별도 실측 대상이다.
 - Run은 namespace LIST 한 번에서 UID/owner index를 만든다. 공개 page마다 전체 LIST를 반복하지 않는다.
   owner는 §12.2의 정확 controller UID 규칙이다. operation/occupancy 전체 evidence scan은 coverage에 넣지 않는다.
 - 순수 공통 판정/DTO는 `internal/operatorconsole/measurement_coverage*.go`에 둔다.

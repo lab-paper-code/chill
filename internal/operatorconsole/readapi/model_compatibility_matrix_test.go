@@ -12,6 +12,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/deviceclass"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
+	consolekube "github.com/lab-paper-code/chill/internal/operatorconsole/kube"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -26,28 +27,27 @@ func TestCompatibilityMatrixSharesPowerModesAndPreservesUnknown(t *testing.T) {
 	}
 	calls := 0
 	handler := NewQueryHandler(QueryReaders{
-		Inventory: func(context.Context) (operatorconsole.InventorySnapshot, error) { return inventory, nil },
-		ModelCompatibility: func(_ context.Context, selection operatorconsole.ModelCompatibilitySelection) (operatorconsole.ModelCompatibilitySnapshot, error) {
+		ModelCompatibilityMatrix: func(ctx context.Context) (operatorconsole.ModelCompatibilityMatrixView, error) {
+			return consolekube.BuildModelCompatibilityMatrix(ctx, inventory, func(_ context.Context, selection operatorconsole.ModelCompatibilitySelection) (operatorconsole.ModelCompatibilitySnapshot, error) {
 			calls++
-			if selection.Node != "a-node" {
-				t.Fatalf("representative = %q", selection.Node)
-			}
 			if selection.ExecutionPath == "npu" {
 				return operatorconsole.ModelCompatibilitySnapshot{}, errors.New("secret lookup detail")
 			}
 			return operatorconsole.ModelCompatibilitySnapshot{ReadAt: inventory.ReadAt, Selection: selection, Verdict: "Compatible"}, nil
+			})
 		},
 	})
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/model-compatibility-matrix", nil))
 	var body struct {
 		Rows []operatorconsole.ModelCompatibilityView `json:"rows"`
+		NodeRows []operatorconsole.ModelCompatibilityView `json:"nodeRows"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if response.Code != 200 || calls != 2 || len(body.Rows) != 4 {
-		t.Fatalf("status=%d calls=%d rows=%d", response.Code, calls, len(body.Rows))
+	if response.Code != 200 || calls != 4 || len(body.Rows) != 4 || len(body.NodeRows) != 4 {
+		t.Fatalf("status=%d calls=%d rows=%d nodeRows=%d", response.Code, calls, len(body.Rows), len(body.NodeRows))
 	}
 	if body.Rows[0].Verdict != "Compatible" ||
 		body.Rows[1].Verdict != compatibilityUnknown || body.Rows[2].Verdict != compatibilityUnknown {
@@ -55,6 +55,9 @@ func TestCompatibilityMatrixSharesPowerModesAndPreservesUnknown(t *testing.T) {
 	}
 	if body.Rows[2].Reasons[0].Code != "CompatibilityReadFailed" {
 		t.Fatalf("failure not preserved: %+v", body.Rows[2])
+	}
+	if body.Rows[0].Selection.Node != "a-node" || body.NodeRows[0].Selection.Node != "z-node" || body.NodeRows[1].Selection.Node != "a-node" {
+		t.Fatalf("representative/actual Node rows: %+v / %+v", body.Rows, body.NodeRows)
 	}
 	if response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("matrix must not be cached")
