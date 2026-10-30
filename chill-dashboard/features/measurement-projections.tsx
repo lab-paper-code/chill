@@ -18,9 +18,9 @@ function measurementTime(value:string|number) {
   const date = new Date(value)
   return Number.isFinite(date.getTime()) ? `${date.toLocaleString("ko-KR",{timeZone:"Asia/Seoul",dateStyle:"medium",timeStyle:"medium"})} KST · ${date.toISOString()} UTC` : "시각 없음"
 }
-function Phase({phase}:{phase?:string}) {
+function Phase({phase,quality=false}:{phase?:string;quality?:boolean}) {
   const state = measurementState(phase)
-  return <StatusBadge tone={state.tone}>{state.label}</StatusBadge>
+  return <span className="grid gap-1"><StatusBadge tone={quality?"warn":state.tone}>{quality?"품질 경고·사용 확인 필요":state.label}</StatusBadge>{quality&&<small>원본 상태: {phase??"미제공"}</small>}</span>
 }
 function OccupancyDuration({value}:{value?:WireInteger}) {
   return <span className="inline-grid gap-1"><span>{occupancyDuration(value)}</span>{value !== undefined && <span className="text-xs text-muted-foreground">{String(value)} ns/request</span>}</span>
@@ -36,7 +36,7 @@ export function ProjectionMeasurementListPage({kind}:{kind:ProjectionMeasurement
   const columns:DataColumn<MeasurementProjection>[] = [
     {key:"name",label:"이름",value:item => <Link className="underline underline-offset-4" href={measurementHref(kind,item.metadata)}>{item.metadata.name}</Link>,sortValue:item => item.metadata.name},
     {key:"node",label:"Node",value:item => item.node,sortValue:item => item.node},
-    {key:"phase",label:"측정 상태",value:item => <Phase phase={item.status.phase}/>,sortValue:item => item.status.phase ?? ""},
+    {key:"phase",label:"측정 상태",value:item => <Phase phase={item.status.phase} quality={item.kind==="DispatchOccupancyMeasurement"&&(occupancyDuration(item.status.perRequestNanos)+occupancyThroughput(item.status.throughput)).includes("품질 경고")}/>,sortValue:item => item.status.phase ?? ""},
     ...(kind === "operation-cost-measurements" ? [{key:"steps",label:"단계 기록",value:(item:MeasurementProjection) => item.kind === "OperationCostMeasurement" ? `기록 ${item.status.steps?.length ?? 0} / 계획 ${item.conditions.steps.length}단계` : "종류 확인 필요"}] : [
       {key:"workload",label:"워크로드",value:(item:MeasurementProjection) => item.kind === "DispatchOccupancyMeasurement" ? item.conditions.workload : "종류 확인 필요"},
       {key:"batch",label:"배치",value:(item:MeasurementProjection) => item.kind === "DispatchOccupancyMeasurement" ? `${item.conditions.batch}건/batch` : "종류 확인 필요"},
@@ -45,7 +45,7 @@ export function ProjectionMeasurementListPage({kind}:{kind:ProjectionMeasurement
     ]),
     {key:"created",label:"등록 시각 (KST / UTC)",value:item => measurementTime(item.metadata.creationTimestamp),sortValue:item => item.metadata.creationTimestamp},
   ]
-  return <Screen back={[`/measurements?namespace=${encodeURIComponent(namespace)}`,"측정"]} title={title} lede="이 저장 영역의 측정 조건과 기록된 결과를 조회해요. 새 측정을 제출하지 않아요.">
+  return <Screen width="data" actionPlacement="header" back={[`/measurements?namespace=${encodeURIComponent(namespace)}`,"측정"]} title={title} lede="이 저장 영역의 측정 조건과 기록된 결과를 조회해요. 새 측정을 제출하지 않아요.">
     <Rows><RowDialog open={namespaceOpen} onOpenChange={setNamespaceOpen} label="저장 영역" value={namespace} title="저장 영역 선택"><NamespaceForm key={namespace} kind={kind} namespace={namespace} done={() => setNamespaceOpen(false)}/></RowDialog></Rows>
     <QueryGate query={query}>{query.data && <>
       <p className="text-sm text-muted-foreground">이 저장 영역에서 받은 {items.length}개</p>
@@ -70,8 +70,8 @@ export function ProjectionMeasurementDetail({kind,namespace,name}:{kind:Projecti
   const probe = useChillQuery<MeasurementProjection>(path,{decoder:parseSchedulerJSON})
   const query = useChillQuery<MeasurementProjection>(path,{decoder:parseSchedulerJSON,poll:!probe.error && probe.data?.status.phase === "Measuring" && !measurementUIDMismatch(probe.data.metadata.uid,expectedUID)})
   const data = query.data, other = !!data && measurementUIDMismatch(data.metadata.uid,expectedUID), title = measurementTitles[kind]
-  return <Screen back={[measurementListHref(kind,namespace),title]} title={other ? "같은 이름으로 다시 등록된 다른 측정이에요" : data ? measurementState(data.status.phase).label : title}
-    status={other ? <StatusBadge tone="fail">다른 측정</StatusBadge> : data ? <Phase phase={data.status.phase}/> : undefined} lede={other ? "이전 자료로 사용할 수 없어요." : `${name} · ${namespace}`}>
+  return <Screen width="data" actionPlacement="header" back={[measurementListHref(kind,namespace),title]} title={other ? "같은 이름으로 다시 등록된 다른 측정이에요" : data ? measurementState(data.status.phase).label : title}
+    status={other ? <StatusBadge tone="fail">다른 측정</StatusBadge> : data ? <Phase phase={data.status.phase} quality={data.kind==="DispatchOccupancyMeasurement"&&(occupancyDuration(data.status.perRequestNanos)+occupancyThroughput(data.status.throughput)).includes("품질 경고")}/> : undefined} lede={other ? "이전 자료로 사용할 수 없어요." : `${name} · ${namespace}`}>
     <QueryGate query={query}>{data && <>
       {!other && <>
         {data.status.reason && <p className="notice break-words">측정 사유: {measurementReason(data.status.reason)}</p>}
@@ -97,6 +97,8 @@ function OperationResult({data}:{data:OperationCostMeasurement}) {
   const columns:DataColumn<OperationStep>[] = [
     {key:"name",label:"단계 이름",value:step => step.name},
     {key:"condition",label:"조건 연결",value:step => step.condition ? stepKinds[step.condition.kind] ?? "확인이 필요해요" : "조건 연결 없음"},
+    {key:"duration",label:"실측 시간",value:() => "미제공"},
+    {key:"energy",label:"실측 에너지",value:() => "미제공"},
     {key:"result",label:"저장 결과",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => {
       const locations = result.key ? evidenceLocations(data.references.evidence.filter(location => location.key === result.key)) : []
       return <li key={index} className="grid gap-1">
@@ -107,7 +109,7 @@ function OperationResult({data}:{data:OperationCostMeasurement}) {
     })}</ul> : "아직 기록된 결과가 없어요"},
   ]
   return <>
-    <p>이 화면은 동작 조건과 저장된 단계 판정을 보여요. 시간과 에너지 원문은 포함하지 않아요.</p>
+    <p className="notice">시간·에너지 수치는 현재 API에 포함되지 않아요. 아래 표는 단계별 저장 판정이며 실측 비용이 아니에요.</p>
     <p className="text-sm text-muted-foreground">기록 {data.status.steps?.length ?? 0} / 계획 {data.conditions.steps.length}단계 · 완료 상태만으로 단계 채택을 재판정하지 않아요.</p>
     <DataTable data={operationSteps(data)} columns={columns}/>
     <Rows label="자세히"><RowDialog label="순서 있는 동작 조건" title="순서 있는 동작 조건" description="조건에 기록된 순서예요. 단계별로 해당 동작의 조건만 표시해요.">
@@ -115,7 +117,7 @@ function OperationResult({data}:{data:OperationCostMeasurement}) {
         ["동작 종류",stepKinds[step.kind] ?? "확인이 필요해요"],
         ...(step.kind === "power" ? [["목표 전력모드",step.powerMode ?? "기록되지 않았어요"] as [string,React.ReactNode]] : []),
         ...(step.kind === "prepare" || step.kind === "remove" ? [["측정 프로파일 참조",step.batchEnergyOptimization ? <BEOReference namespace={data.metadata.namespace} name={step.batchEnergyOptimization}/> : "기록되지 않았어요"] as [string,React.ReactNode]] : []),
-        ...(step.kind === "idle" ? [["유휴 시간",step.idleDurationSeconds === undefined ? "기록되지 않았어요" : `${step.idleDurationSeconds} s`] as [string,React.ReactNode]] : []),
+        ...(step.kind === "idle" ? [["계획 유휴 시간 (실측 아님)",step.idleDurationSeconds === undefined ? "기록되지 않았어요" : `${step.idleDurationSeconds} s`] as [string,React.ReactNode]] : []),
       ]}/></li>)}</ol>
     </RowDialog><RowDialog label="근거 위치" title="논리 근거 위치" description="store와 key는 논리 위치예요. HTTP 다운로드 주소가 아니에요."><Locations locations={evidenceLocations(data.references.evidence)}/></RowDialog></Rows>
   </>

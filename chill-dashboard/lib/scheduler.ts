@@ -50,9 +50,9 @@ export function millisecondsToNanos(text: string, minimum = 1n): bigint {
   return value
 }
 export function nanosToMilliseconds(value: number | bigint): string {
-  const nanos = BigInt(value)
+  const raw = BigInt(value), nanos = raw < 0n ? -raw : raw
   const fraction = (nanos % 1000000n).toString().padStart(6, "0").replace(/0+$/, "")
-  return `${nanos / 1000000n}${fraction ? `.${fraction}` : ""}`
+  return `${raw < 0n ? "-" : ""}${nanos / 1000000n}${fraction ? `.${fraction}` : ""}`
 }
 export function wireInteger(text: string, minimum: bigint, maximum: bigint): bigint {
   if (!/^-?\d+$/.test(text)) throw new Error("정수로 입력합니다.")

@@ -1,133 +1,19 @@
 "use client"
 
 import * as React from "react"
-import { useRouter, useSearchParams } from "next/navigation"
-import { useChillQuery, useChillMutation, useSession } from "@/lib/client"
+import { useSearchParams } from "next/navigation"
+import { useQuery } from "@tanstack/react-query"
+import { ApiError, useChillQuery, useChillMutation, useSession } from "@/lib/client"
 import type { RunsView, ProfilingRun, Passport, NativeSample, MeasurementPreflight } from "@/lib/read-types"
+import { exactRun, safeMeasurementReturn, significant } from "@/lib/measurements"
+import { currentRunCondition } from "@/lib/measurement-coverage"
 import { codeText } from "@/lib/labels"
 import { QueryGate, SourceJSON, SourceExport, StatusBadge } from "@/components/read-region"
-import { Screen, Rows, Row, RowDialog, Facts, Empty } from "@/components/screen"
+import { Screen, Rows, RowDialog, Facts } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { DataTable, type DataColumn } from "@/components/data-table"
 
-const runFilters:[string,string][]=[["","전체"],["ExecutionComplete=True","실행 완료"],["ExecutionComplete=False","실행 미완료"],["ExecutionComplete=Unknown","실행 확인 중"],["EvidenceVerified=True","근거 검증 완료"],["EvidenceVerified=False","근거 미검증"],["EvidenceVerified=Unknown","근거 확인 중"]]
-function runCandidate(row:ProfilingRun,key:string) {
-  const candidate=row.spec.candidate
-  return candidate&&typeof candidate==="object"&&key in candidate?String((candidate as Record<string,unknown>)[key]):"정보 없음"
-}
-type RunListSpec = {targetNode?:string;measurement?:{batch?:number;cpuQuota?:string;workloadMode?:string}}
-const listSpec=(row:ProfilingRun)=>row.spec as RunListSpec
-// Only problems are worth a badge; a verified run is the normal case.
-function runProblem(row:ProfilingRun):"failed"|"unverified"|"pending"|null {
-  const evidence=row.status.conditions?.find(item=>item.type==="EvidenceVerified")?.status
-  const execution=row.status.conditions?.find(item=>item.type==="ExecutionComplete")?.status
-  return evidence==="True"?null:execution==="False"?"failed":execution==="True"?"unverified":"pending"
-}
-const problemBadge={failed:<StatusBadge tone="fail">실행 실패</StatusBadge>,unverified:<StatusBadge tone="warn">근거 미검증</StatusBadge>,pending:<StatusBadge tone="info">진행 중</StatusBadge>}
-function problemSummary(rows:ProfilingRun[]) {
-  const failed=rows.filter(row=>runProblem(row)==="failed").length,other=rows.filter(row=>runProblem(row)&&runProblem(row)!=="failed").length
-  return failed?<StatusBadge tone="fail">실패 {failed}건</StatusBadge>:other?<StatusBadge tone="warn">확인 필요 {other}건</StatusBadge>:null
-}
-const day=(at:string)=>new Date(at).toLocaleDateString("ko-KR",{month:"long",day:"numeric"})
-const groupKey=(row:ProfilingRun)=>[runCandidate(row,"modelSpec"),listSpec(row).targetNode??"정보 없음",runCandidate(row,"executionPath")] as const
-
-// The list groups runs by what was measured: model, node and execution path.
-function useRunList() {
-  const {config}=useSession(),params=useSearchParams()
-  const namespace=params.get("namespace")??config.namespace
-  const allowed=new URLSearchParams();["q","offset","condition"].forEach(key=>{const value=params.get(key);if(value!==null)allowed.set(key,value)});allowed.set("limit",String(config.maxPageSize))
-  return {namespace,allowed,query:useChillQuery<RunsView>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs?${allowed}`)}
-}
-
-export function MeasurementRunsPage() {
-  const params=useSearchParams(),router=useRouter(),[filterOpen,setFilterOpen]=React.useState(false)
-  const {namespace,allowed,query}=useRunList()
-  const data=query.data,page=data?.page,runs=data?.runs??[],condition=params.get("condition")??""
-  function go(offset:number) {
-    const next=new URLSearchParams(params.toString());next.set("offset",String(offset));router.replace(`/measurements/runs?${next}`)
-  }
-  const groups=new Map<string,ProfilingRun[]>()
-  for(const row of runs){const key=JSON.stringify(groupKey(row));groups.set(key,[...(groups.get(key)??[]),row])}
-  const models=[...new Set(runs.map(row=>runCandidate(row,"modelSpec")))].sort()
-  const total=page?.total??runs.length,failed=runs.filter(row=>runProblem(row)==="failed").length
-  const shared=new URLSearchParams(allowed);shared.delete("limit");shared.set("namespace",namespace)
-  return <Screen back={["/measurements","측정"]} status={failed?<StatusBadge tone="fail">실패 {failed}건</StatusBadge>:undefined}
-    title={!data?"개별 측정 회차":total?`개별 측정 회차 ${total.toLocaleString("ko-KR")}건이 있어요`:"조건에 맞는 측정이 없어요"}
-    lede={data&&runs.length?`모델 ${models.length}개를 장비와 실행 방식 ${groups.size}가지로 쟀어요.`:"모델을 장비에서 실행해 잰 결과와 근거예요."}>
-    <QueryGate query={query}>{data&&<>
-      {models.map(model=><Rows key={model} label={model}>{[...groups].filter(([key])=>JSON.parse(key)[0]===model).sort(([a],[b])=>a.localeCompare(b)).map(([key,rows])=>{
-        const [, node, path]=JSON.parse(key) as string[]
-        const dates=rows.map(row=>row.creationTimestamp).sort(),first=day(dates[0]),last=day(dates[dates.length-1])
-        const href=`/measurements/group?${new URLSearchParams([...shared,["model",model],["node",node],["path",path]])}`
-        return <Row key={key} href={href} label={`${node} · ${path}`} hint={`${rows.length}번 측정 · ${first===last?first:`${first} – ${last}`}`} value={problemSummary(rows)}/>
-      })}</Rows>)}
-      {!runs.length&&<Empty title="조건에 맞는 측정이 없어요"/>}
-      {page&&(page.offset>0||page.nextOffset!==undefined)&&<div className="grid gap-2"><p className="text-sm text-muted-foreground">한 번에 {page.limit}건씩 묶어 보여줘요. 지금은 {page.offset+1}–{page.offset+runs.length}번째예요.</p><div className="flex gap-2"><Button variant="outline" disabled={page.offset===0} onClick={()=>go(Math.max(0,page.offset-page.limit))}>이전 측정</Button><Button variant="outline" disabled={page.nextOffset===undefined} onClick={()=>go(page.nextOffset??0)}>다음 측정</Button></div></div>}
-    </>}</QueryGate>
-    <Rows label="더 하기">
-      <RowDialog open={filterOpen} onOpenChange={setFilterOpen} label="찾기 조건" value={[params.get("q"),condition&&(runFilters.find(([value])=>value===condition)?.[1]??"이전 상세 조건")].filter(Boolean).join(" · ")||"전체"} title="찾기 조건" description="이름과 상태로 측정을 찾아요.">
-        <RunFilterForm done={()=>setFilterOpen(false)}/>
-      </RowDialog>
-      <RowDialog label="이전 측정 직접 찾기" hint="정확한 등록 이름을 알 때" title="이전 측정 직접 찾기" description="측정 종류와 원본 참조를 알 때 사용하세요. 동작 비용과 분배 점유시간은 측정 화면의 더 보기에서도 찾을 수 있어요."><EvidenceLookup/></RowDialog>
-      <Row href="/measurements/check" label="측정 계획 확인" hint="기존 계획의 조건만 검사해요"/>
-      {data&&<RowDialog label="자료 내보내기" title="자료 내보내기" description="지금 보이는 측정 목록을 파일로 받아요."><SourceExport value={{conditions:{namespace,...Object.fromEntries(allowed)},source:data}} filename="chill-profiling-runs.json"/><SourceJSON inline value={data}/></RowDialog>}
-    </Rows>
-  </Screen>
-}
-
-// One measured condition: the individual runs, split into loaded and idle-baseline runs.
-export function MeasurementGroupPage() {
-  const params=useSearchParams(),{query}=useRunList()
-  const model=params.get("model")??"",node=params.get("node")??"",path=params.get("path")??""
-  const back=new URLSearchParams(params.toString());["model","node","path"].forEach(key=>back.delete(key))
-  const rows=(query.data?.runs??[]).filter(row=>{const [m,n,p]=groupKey(row);return m===model&&n===node&&p===path})
-    .sort((a,b)=>(listSpec(a).measurement?.batch??0)-(listSpec(b).measurement?.batch??0)||Number(listSpec(a).measurement?.cpuQuota??0)-Number(listSpec(b).measurement?.cpuQuota??0)||a.creationTimestamp.localeCompare(b.creationTimestamp))
-  const idle=(row:ProfilingRun)=>listSpec(row).measurement?.workloadMode==="idle-model-loaded"
-  const section=(label:string,items:ProfilingRun[])=>items.length>0&&<Rows label={label}>{items.map(row=>{
-    const m=listSpec(row).measurement,same=items.filter(other=>listSpec(other).measurement?.batch===m?.batch&&listSpec(other).measurement?.cpuQuota===m?.cpuQuota)
-    return <Row key={row.uid} href={`/measurements/profiling-runs/${encodeURIComponent(row.namespace)}/${encodeURIComponent(row.name)}?uid=${encodeURIComponent(row.uid)}`}
-      label={[m?.batch!==undefined&&!idle(row)?`한 번에 ${m.batch}건`:null,m?.cpuQuota?`CPU ${m.cpuQuota}개`:null].filter(Boolean).join(" · ")||row.name}
-      hint={`${same.indexOf(row)+1}회차 · ${new Date(row.creationTimestamp).toLocaleString("ko-KR",{month:"long",day:"numeric",hour:"2-digit",minute:"2-digit"})}`}
-      value={(()=>{const problem=runProblem(row);return problem?problemBadge[problem]:null})()}/>
-  })}</Rows>
-  return <Screen back={[`/measurements/runs?${back}`,"개별 측정 회차"]} status={problemSummary(rows)??undefined}
-    title={query.data?rows.length?`${node}에서 ${path}로 ${rows.length}번 쟀어요`:"이 조건의 측정을 찾지 못했어요":"측정 결과"} lede={model}>
-    <QueryGate query={query}>
-      {section("부하를 걸고 잰 측정",rows.filter(row=>!idle(row)))}
-      {section("모델만 올려두고 잰 기준 전력",rows.filter(idle))}
-      {query.data?.page?.nextOffset!==undefined&&<p className="text-sm text-muted-foreground">측정이 많아 일부만 불러왔어요. 측정 결과 목록에서 다음 측정을 넘겨 보세요.</p>}
-    </QueryGate>
-  </Screen>
-}
-
-// Mounted only while its dialog is open, so it always starts from the submitted URL.
-function RunFilterForm({done}:{done:()=>void}) {
-  const params=useSearchParams(),router=useRouter()
-  const [q,setQ]=React.useState(params.get("q")??""),[condition,setCondition]=React.useState(params.get("condition")??"")
-  const choices=runFilters.some(([value])=>value===condition)?runFilters:[...runFilters,[condition,"이전 상세 조건"] as [string,string]]
-  return <form className="grid gap-5" onSubmit={event=>{
-    event.preventDefault()
-    const next=new URLSearchParams(params.toString());next.set("q",q);next.delete("limit");next.set("offset","0");if(condition)next.set("condition",condition);else next.delete("condition")
-    router.replace(`/measurements/runs?${next}`);done()
-  }}>
-    <label className="grid gap-1.5">이름<Input value={q} onChange={event=>setQ(event.target.value)} maxLength={256}/></label>
-    <fieldset className="grid gap-2"><legend className="mb-1">상태</legend>{choices.map(([value,label])=><label key={value} className="flex items-center gap-2"><input type="radio" name="condition" checked={condition===value} onChange={()=>setCondition(value)}/>{label}</label>)}</fieldset>
-    <Button type="submit">이 조건으로 찾기</Button>
-  </form>
-}
-
-function EvidenceLookup() {
-  const {config}=useSession();const router=useRouter()
-  const [kind,setKind]=React.useState("profiling-runs"),[namespace,setNamespace]=React.useState(config.namespace),[name,setName]=React.useState(""),[uid,setUID]=React.useState("")
-  return <form className="grid gap-4" onSubmit={event=>{event.preventDefault();router.push(`/measurements/${kind}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${uid?`?uid=${encodeURIComponent(uid)}`:""}`)}}>
-    <fieldset className="grid gap-2"><legend className="mb-1">자료 종류</legend>{[["profiling-runs","측정 근거"],["batch-energy-optimizations","측정 계획 결과"],["operation-cost-measurements","동작 비용 측정"],["dispatch-occupancy-measurements","분배 점유시간 측정"]].map(([value,label])=><label key={value} className="flex items-center gap-2"><input type="radio" name="kind" checked={kind===value} onChange={()=>setKind(value)}/>{label}</label>)}</fieldset>
-    <label className="grid gap-1.5">저장 영역<Input value={namespace} onChange={event=>setNamespace(event.target.value)} required/></label>
-    <label className="grid gap-1.5">등록 이름<Input value={name} onChange={event=>setName(event.target.value)} required/></label>
-    <label className="grid gap-1.5">원본 UID (선택)<Input value={uid} onChange={event=>setUID(event.target.value)}/></label>
-    <Button type="submit">자료 열기</Button>
-  </form>
-}
 
 // /measurements/new review and /measurements/check share this conclusion and plan summary; the raw plan stays in 원본.
 export const preflightConclusion=(answer:MeasurementPreflight)=>answer.resolves?"이 조건으로 측정할 수 있어요":"이 조건으로는 측정할 수 없어요"
@@ -182,20 +68,20 @@ export function MeasurementCheckPage() {
 
 // Fields the passport carries but the shared read type leaves open.
 type RunSpec = {candidate?:{modelSpec?:string;preprocessor?:string;deviceClass?:string;executionPath?:string;powerMode?:string};targetNode?:string;measurement?:{cpuQuota?:string;cpuAffinity?:number[];durationSeconds?:number;dataset?:string}}
-type Thermal = {samples?:number;activeSamples?:number;latchedSamples?:number;maximumTemperatureCelsius?:{maximum?:number};issues?:number}
+type Thermal = {observationAvailableSamples?:number;activeSamples?:number;latchedSamples?:number;maximumTemperatureCelsius?:{maximum?:number};issues?:unknown}
 type Coresidence = {continuous?:boolean;initialActivePods?:number;finalActivePods?:number;materialEvents?:number;coResidents?:{namespace:string;name:string;chillPlaced:boolean}[]}
-const num=(value:number,digits=1)=>value.toLocaleString("ko-KR",{maximumFractionDigits:digits})
+const num=significant
 const plain=(code:string)=>codeText[code]?.[0]??code
-const conditionTrue=(data:Passport,type:string)=>data.run.conditions?.find(condition=>condition.type===type)?.status==="True"
+const conditionTrue=(data:Passport,type:string)=>data.run.conditions?.find(condition=>condition.type===type&&condition.observedGeneration===data.run.generation)?.status==="True"
 const verified=(data:Passport)=>conditionTrue(data,"ExecutionComplete")&&conditionTrue(data,"EvidenceVerified")
 // One row per profile batch execution; stage spans are the batch's, recordIDs and units are per request.
 const sampleColumns:DataColumn<NativeSample>[]=[
   {key:"batch",label:"배치",value:row=>`${String(row.batchID)} · ${row.batchSize}건`,sortValue:row=>row.batchSize},
   {key:"records",label:"데이터셋 기록",value:row=>row.recordIDs?.join(", ")||"없음"},
   {key:"units",label:"단위 수",value:row=>row.units?.join(", ")||"없음"},
-  {key:"stages",label:"전처리 / 추론 / 후처리 ms",value:row=>`${num(row.preprocessMs,2)} / ${num(row.backendCallMs,2)} / ${num(row.postprocessMs,2)}`,sortValue:row=>row.backendCallMs},
-  {key:"firstToken",label:"첫 토큰 ms",value:row=>row.firstTokenMs===undefined?"생성형 아님":num(row.firstTokenMs,2)},
-  {key:"service",label:"runner 교환 / 요청 ms",value:row=>`${num(row.runnerServiceMs,2)} / ${num(row.nativeRequestMs,2)}`,sortValue:row=>row.nativeRequestMs},
+  {key:"stages",label:"전처리 / 추론 / 후처리 ms",value:row=>`${num(row.preprocessMs)} / ${num(row.backendCallMs)} / ${num(row.postprocessMs)}`,sortValue:row=>row.backendCallMs},
+  {key:"firstToken",label:"첫 토큰 ms",value:row=>row.firstTokenMs===undefined?"생성형 아님":num(row.firstTokenMs)},
+  {key:"service",label:"runner 교환 / 요청 ms",value:row=>`${num(row.runnerServiceMs)} / ${num(row.nativeRequestMs)}`,sortValue:row=>row.nativeRequestMs},
 ]
 function measuredWhat(data:Passport) {
   const spec=data.run.spec as RunSpec, r=data.measurement.runtime
@@ -211,15 +97,18 @@ function PassportSummary({data}:{data:Passport}) {
   return <>
     <Facts label="처리 성능" items={[
       ["처리량",`초당 ${num(r.throughputItemsPerSecond)}건`],
-      ["응답 시간 (절반)",`${num(l.p50)}ms 이하`],
-      ["응답 시간 (95%)",`${num(l.p95)}ms 이하`],
-      ["응답 시간 (99%)",`${num(l.p99)}ms 이하`],
+      ["p50",`${num(l.p50)} ms`],
+      ["p95",`${num(l.p95)} ms`],
+      ["p99",`${num(l.p99)} ms`],
+      ["지연 표본 수 N",`${l.count}개${l.count <= 1 ? " · 꼬리 지연을 판단하기에 표본이 부족해요" : ""}`],
       ["처리한 요청",`${r.completedCalls.toLocaleString("ko-KR")}건 · 한 번에 ${r.batch}건씩`],
     ]}/>
     <Facts label="전력 (노드 전체)" items={[
       ["평균",p.watts?`${num(p.watts.mean)} W`:"값 없음"],
       ["가장 낮을 때 – 높을 때",p.watts?`${num(p.watts.minimum)} – ${num(p.watts.maximum)} W`:"값 없음"],
       ["계측",`${p.source.nodeName ?? "노드"} 전원 계측기 · ${p.samples}번 측정${p.failures?`, ${p.failures}번 실패`:""}`],
+      ["최대 표본 간격",`${num(p.maximumSampleGapSeconds)} s`],
+      ["원본 시각",p.sourceTimestampAbsent?"원본 timestamp 없음 · 품질 확인 필요":"원본 timestamp 제공"],
     ]}/>
     <p className="-mt-4 px-1 text-sm text-muted-foreground">{pods?.initialActivePods!==undefined?`같은 노드에서 함께 돌던 Pod ${pods.initialActivePods}개를 포함한 값이에요. `:""}지금 운영 중 소비와는 달라요.</p>
     <Facts label="측정 조건" items={[
@@ -232,7 +121,8 @@ function PassportSummary({data}:{data:Passport}) {
     ]}/>
     <Facts label="믿을 수 있는지" items={[
       ["실행과 근거",verified(data)?<StatusBadge tone="ok">검증 완료</StatusBadge>:<StatusBadge tone="warn">확인 필요</StatusBadge>],
-      ["발열",thermal?throttled?`성능 제한이 ${throttled}번 걸렸어요`:`성능 제한 없음${thermal.maximumTemperatureCelsius?.maximum!==undefined?` · 최고 ${thermal.maximumTemperatureCelsius.maximum}°C`:""}`:"관측 없음"],
+      ["발열",thermal?.observationAvailableSamples ? throttled?`성능 제한이 ${throttled}번 걸렸어요`:`관측 ${thermal.observationAvailableSamples}개 · 제한 관측 ${throttled}개`:"관측 없음 · 정상 여부 미확인"],
+      ["발열 품질",thermal?.issues?JSON.stringify(thermal.issues):"제공된 issue 없음 · 미관측 정상 판정 아님"],
       ["다른 작업",pods?podsChanged?"측정 중 같은 노드의 Pod가 바뀌었어요":"측정 중 같은 노드의 Pod 변화가 없었어요":"관측 없음"],
       ["CHILL이 배치하지 않은 Pod",pods?pods.coResidents?.filter(pod=>!pod.chillPlaced).map(pod=>`${pod.namespace}/${pod.name}`).join(", ")||"없음":"관측 없음"],
     ]}/>
@@ -240,23 +130,34 @@ function PassportSummary({data}:{data:Passport}) {
 }
 
 export function MeasurementDetail({namespace,name}:{namespace:string;name:string}) {
-  const expectedUID=useSearchParams().get("uid")
-  const passport=useChillQuery<Passport>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs/${encodeURIComponent(name)}/evidence-passport`)
-  const back:[string,string]=[`/measurements/runs?namespace=${encodeURIComponent(namespace)}`,"개별 측정 회차"]
-  const data=passport.data,other=!!data&&!!expectedUID&&data.run.uid!==expectedUID
-    return <Screen back={back} status={other?<StatusBadge tone="fail">다른 측정</StatusBadge>:data?<StatusBadge tone={verified(data)?"ok":"warn"}>{verified(data)?"검증된 측정":"검증 확인 필요"}</StatusBadge>:undefined}
-      title={!data?`${name} 측정 결과`:other?"같은 이름으로 다시 등록된 다른 측정이에요":`요청 1건을 평균 ${num(data.measurement.runtime.latencyMilliseconds.mean)}ms에 처리했어요`}
-      lede={other?"이전 자료로 사용할 수 없어요.":data?measuredWhat(data):name}>
-      <QueryGate query={passport}>{data&&!other&&<PassportSummary data={data}/>}
-        {data&&<Rows>
-          {!!data.measurement.runtime.nativeSamples?.length&&<RowDialog label="배치 실행 기록" hint="데이터셋 기록, 단위 수, 단계 시간" value={`${data.measurement.runtime.nativeSamples.length}번`} title="배치 실행 기록" description="배치 단계 시간은 같은 배치의 요청이 함께 써요. 단위 수는 분석용 관측값이에요.">
-            <DataTable data={data.measurement.runtime.nativeSamples} columns={sampleColumns}/>
-          </RowDialog>}
-          <RowDialog label="원본 자료" hint="실행 조건, 검증, 지연, 전력의 원래 값" title="측정 원본 자료" description="측정 전력은 현재 운영 소비가 아니에요.">
-          <SourceExport value={{conditions:{kind:"profiling-runs",namespace,name,expectedUID},source:data}} filename={`chill-passport-${name}.json`}/>
-          <SourceJSON inline title="실행 조건·검증·지연·전력 원본" value={data}/>
-        </RowDialog></Rows>}
-      </QueryGate>
-    </Screen>
+  const params=useSearchParams(), expectedUID=params.get("uid"), {token,signals}=useSession()
+  const back=safeMeasurementReturn(params.get("returnTo"),`/measurements/runs?namespace=${encodeURIComponent(namespace)}`)
+  const lookup=useQuery<ProfilingRun|null,ApiError>({queryKey:["chill","exact-run",namespace,name,expectedUID],enabled:!!token,retry:false,queryFn:async({signal})=>{
+    const abort=new AbortController();signals.add(abort)
+    const cancel=()=>abort.abort();signal.addEventListener("abort",cancel)
+    try {
+      const rows:ProfilingRun[]=[];let offset:number|undefined=0
+      do {
+        const response=await fetch(`/api/chill/v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs?${new URLSearchParams({q:name,limit:"200",offset:String(offset)})}`,{headers:{Authorization:`Bearer ${token}`},signal:abort.signal})
+        const data=await response.json();if(!response.ok)throw new ApiError(response.status,"",data)
+        const page=data as RunsView;rows.push(...page.runs);offset=page.page?.nextOffset
+      } while(offset!==undefined)
+      return exactRun(rows,namespace,name,expectedUID)??null
+    } finally { signals.delete(abort);signal.removeEventListener("abort",cancel) }
+  }})
+  const run=lookup.data, failed=!!run&&currentRunCondition(run,"ExecutionComplete")?.status==="False"
+  const noEvidence=failed&&!run?.status.evidence
+  const passport=useChillQuery<Passport>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs/${encodeURIComponent(name)}/evidence-passport`,{enabled:!!run&&!noEvidence})
+  const data=passport.data,other=!!data&&data.run.uid!==run?.uid
+  const termination=run?.status.runtimeTermination as {exitCode?:number;logTail?:string}|undefined
+  return <Screen width="data" actionPlacement="header" back={[back,"측정으로 돌아가기"]} breadcrumbs={[{href:"/measurements",label:"측정"},{href:back,label:"상위 측정"},{label:name}]} title={failed?"이 회차의 실행이 실패했어요":`${name} 측정 결과`} lede={data&&!other?measuredWhat(data):"실행 상태와 검증 근거는 별개예요."}>
+    <QueryGate query={lookup}>{lookup.data===null&&<p>전체 목록에서 정확한 namespace/name/UID의 회차를 찾지 못했어요. 같은 이름의 다른 회차로 대체하지 않아요.</p>}{run&&<>
+      <Facts label="실행·검증 상태" items={["ExecutionComplete","EvidenceVerified"].map(type=>{const c=currentRunCondition(run,type);return [type,c?`${c.status} · ${c.reason ?? ""} · ${c.message ?? ""}`:"현재 generation의 상태 미확인"] as [string,React.ReactNode]})}/>
+      <Facts label="종료·실제 실행" items={[["종료 코드",termination?.exitCode??"미제공"],["Job",run.status.job?JSON.stringify(run.status.job):"미제공"],["실제 실행",run.status.actualExecution?JSON.stringify(run.status.actualExecution):"미제공"]]}/>
+      <section className="grid gap-2"><h2>실행 로그</h2>{termination?.logTail?<pre className="source-json">{termination.logTail}</pre>:<p>로그 미제공 · OOM이나 timeout을 추측하지 않아요.</p>}</section>
+      {noEvidence?<p className="notice">검증 근거가 생성되지 않았어요. 실행 실패 사유는 위 원문을 확인해 주세요.</p>:passport.error?<div className="notice"><p>근거 조회 실패 · {passport.error.message} · {JSON.stringify(passport.error.data)}</p><Button variant="outline" onClick={()=>void passport.refetch()}>근거 다시 조회</Button></div>:!data?<p>검증 근거 확인 중</p>:other?<p role="alert">같은 이름의 다른 회차 근거예요. 이 회차의 결과로 사용할 수 없어요.</p>:<PassportSummary data={data}/>}
+      <Rows>{data&&!other&&!!data.measurement.runtime.nativeSamples?.length&&<RowDialog label="배치 실행 기록" title="배치 실행 기록"><DataTable data={data.measurement.runtime.nativeSamples} columns={sampleColumns}/></RowDialog>}<RowDialog label="원본 자료" title="측정 원본 자료"><SourceExport value={{run,passport:other?undefined:data}} filename={`chill-passport-${name}.json`}/><SourceJSON inline value={{run,passport:other?undefined:data}}/></RowDialog></Rows>
+    </>}</QueryGate>
+  </Screen>
 }
 

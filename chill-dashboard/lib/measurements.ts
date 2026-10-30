@@ -1,4 +1,4 @@
-import type { MeasurementEvidenceLocation, OperationCondition, OperationCostMeasurement, OperationStepStatus, WireInteger } from "./read-types.ts"
+import type { MeasurementEvidenceLocation, OperationCondition, OperationCostMeasurement, OperationStepStatus, ProfilingRun } from "./read-types.ts"
 import { codeText } from "./labels.ts"
 import { nanosToMilliseconds } from "./scheduler.ts"
 
@@ -18,8 +18,21 @@ export function measurementState(phase?:string):{label:string;tone:"info"|"ok"|"
   }
 }
 export const measurementReason = (reason:string) => codeText[reason] ? `${codeText[reason].join(" ")} (${reason})` : reason
-export const occupancyDuration = (value?:WireInteger) => value === undefined ? "결과 없음" : `${Number(nanosToMilliseconds(value)).toLocaleString("ko-KR",{maximumFractionDigits:2})}ms/request`
-export const occupancyThroughput = (value?:string) => value ? `${value} req/s` : "결과 없음"
+export function occupancyDuration(value?:unknown) {
+  if (value === undefined) return "결과 없음"
+  if ((typeof value !== "number" && typeof value !== "bigint") || (typeof value === "number" && (!Number.isFinite(value) || !Number.isInteger(value)))) return `${String(value)} · 품질 경고·사용 확인 필요`
+  return `${Number(nanosToMilliseconds(value)).toLocaleString("ko-KR",{maximumFractionDigits:2})}ms/request${value < 0 ? " · 품질 경고·사용 확인 필요" : ""}`
+}
+export const occupancyThroughput = (value?:string) => !value ? "결과 없음" : `${value} req/s${!/^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value) || !Number.isFinite(Number(value)) || Number(value) < 0 ? " · 품질 경고·사용 확인 필요" : ""}`
+export const significant = (value:number) => Number.isFinite(value) ? Number(value.toPrecision(4)).toLocaleString("ko-KR",{maximumSignificantDigits:4}) : `${String(value)} · 품질 경고`
+export function safeMeasurementReturn(value:string|null, fallback="/measurements") {
+  if (!value || !value.startsWith("/") || value.startsWith("//") || /[\\\u0000-\u001f\u007f]/.test(value)) return fallback
+  try {
+    const url = new URL(value,"https://dashboard.invalid")
+    return url.origin === "https://dashboard.invalid" && (/^\/measurements(?:\/|$)/.test(url.pathname) || url.pathname === "/scheduler/profiles" || /^\/experiments(?:\/|$)/.test(url.pathname)) ? value : fallback
+  } catch { return fallback }
+}
+export const exactRun = (rows:ProfilingRun[],namespace:string,name:string,uid:string|null) => rows.find(run=>run.namespace===namespace&&run.name===name&&(!uid||run.uid===uid))
 export const occupancySupply = (value?:string) => value === "closed-loop" ? "고정 동시 요청" : value === "poisson" ? "포아송 공급" : value || "기록되지 않았어요"
 export function evidenceLocations(evidence:MeasurementEvidenceLocation[], result?:MeasurementEvidenceLocation) {
   return [...evidence,...(result ? [result] : [])].filter((location,index,all) => all.findIndex(other => other.store === location.store && other.key === location.key) === index)

@@ -62,3 +62,10 @@ test("window demand evidence keeps exact duration and omitted history stays abse
   const historical = parseSchedulerJSON('{"uid":"w"}') as {scaleDown?:SchedulerDownState}
   assert.equal(historical.scaleDown,undefined)
 })
+
+test("negative nanoseconds preserve sign and exact fractional precision",()=>{
+  assert.equal(nanosToMilliseconds(-1n),"-0.000001")
+  assert.equal(nanosToMilliseconds(-3807875n),"-3.807875")
+  assert.equal(nanosToMilliseconds(-1000000n),"-1")
+  assert.equal(nanosToMilliseconds(-9223372036854775808n),"-9223372036854.775808")
+})

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { evidenceLocations, isProjectionMeasurementKind, measurementHref, measurementListHref, measurementPath, measurementReason, measurementState, measurementUIDMismatch, occupancyDuration, occupancySupply, occupancyThroughput, operationSteps } from "./measurements.ts"
+import { exactRun, safeMeasurementReturn, significant, evidenceLocations, isProjectionMeasurementKind, measurementHref, measurementListHref, measurementPath, measurementReason, measurementState, measurementUIDMismatch, occupancyDuration, occupancySupply, occupancyThroughput, operationSteps } from "./measurements.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
 import type { DispatchOccupancyMeasurement, OperationCostMeasurement } from "./read-types.ts"
@@ -79,4 +79,21 @@ test("measurement reasons expose the server-provided failure or insufficiency in
     assert.equal(measurementReason(reason),reason)
   }
   assert.equal(measurementReason("MissingDataset"),"측정에 쓸 데이터셋이 지정되지 않았어요. 서비스 설정에서 데이터셋을 골라 주세요. (MissingDataset)")
+})
+
+test("raw occupancy negatives and invalid values warn without replacing zero or precision",()=>{
+  assert.equal(occupancyDuration(-3807875n),"-3.81ms/request · 품질 경고·사용 확인 필요")
+  for(const value of [NaN,Infinity,-Infinity,"NaN","broken",null]) assert.match(occupancyDuration(value),/품질 경고/)
+  for(const value of ["NaN","Infinity","-1","broken"," "]) assert.match(occupancyThroughput(value),/품질 경고/)
+  assert.equal(significant(0.09261),"0.09261")
+  assert.equal(significant(0.08682),"0.08682")
+  for(const value of ["//evil.test","https://evil.test","/settings","/measurements\\evil","\n/measurements"])assert.equal(safeMeasurementReturn(value),"/measurements")
+  assert.equal(safeMeasurementReturn("/measurements?model=x&page=2"),"/measurements?model=x&page=2")
+})
+
+test("run identity requires exact names and expected UID, not q partial matches",()=>{
+  const base={namespace:"n",name:"run",uid:"u",resourceVersion:"1",generation:1,creationTimestamp:"",spec:{},status:{}}
+  const rows=[{...base,name:"run-2"},base,{...base,namespace:"other"}]
+  assert.equal(exactRun(rows,"n","run","u"),base)
+  assert.equal(exactRun(rows,"n","run","old"),undefined)
 })
