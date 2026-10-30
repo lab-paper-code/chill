@@ -1843,7 +1843,7 @@ class CPO:
                             drained.add(name);phase.setdefault('producerDrained',{})[name]=row;save(folder/'phase.json',phase)
                         if row.get('e5Event')=='window-end':
                             window_ended.add(name)
-                            if self.a.mode=='full' and st['id']=='E5-3' and len(window_ended)==len(jobs):
+                            if self.a.mode=='full' and st['id']=='E5-3' and not targeted and len(window_ended)==len(jobs):
                                 phase['selectedAtBoundaryUTC']=now(); save(folder/'phase.json',phase); self.freeze(at_boundary=True)
                 if jobs and len(phase['starts'])==len(jobs) and phase['endUTC'] is None:
                     phase['startUTC']=min(x['at'] for x in phase['starts'].values())
