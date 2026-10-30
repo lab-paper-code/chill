@@ -628,3 +628,8 @@
 ## 2026-10-30 — 사용자 결정: 결과 확정(C) + E5 뒤 과제(B) 순서
 
 1. kubeedge CloudCore nodeName → Helm nodeSelector, genesis1 디스크 점유 조사·보존 규칙. 2. 게이트웨이 분리 미사용 코드(e947cd5e, internal/serving/gateway 등) 정리 — 53af158a "다음 재빌드 전 정리"가 rev104/105에서 누락; U11 G2 배선 안 함(ADR 0029 Deferred). 3. docs/plans/2026-10-28-e5-evidence-api.md 0장 publication 계약부터. 4. docs/plans/2026-10-26-dashboard-live-stage.md S1→S2.
+
+## 2026-10-30 — E5 뒤 과제 1·2 완료, 보고서 확정
+
+- 보고서 `960d5308`(docs/reports/e5-evaluation-20261030.md). 과제1 `94a32e9a`(CloudCore는 외부 Helm release; 라이브 nodeName은 Helm manifest와 drift → 수동 절차·승인 경계 기록; 디스크 규칙·PodGC 권고). 과제2 `e8344b20`(분리 코드 28파일 −6,095줄, T5 live 보존, arch 65/65). 리뷰 배포 가능, clean lint/test/arch/helm PASS. Docker build cache prune → 여유 375G.
+- 과제3 착수: evidence API §0 publication 계약.
