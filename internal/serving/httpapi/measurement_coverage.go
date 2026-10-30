@@ -23,7 +23,10 @@ type MeasurementCoverageQuery struct {
 
 func parseMeasurementCoverageQuery(values url.Values) (MeasurementCoverageQuery, error) {
 	query := MeasurementCoverageQuery{Batches: []int{}}
-	invalid := &serving.Error{Code: "InvalidCoverageQuery", Message: "batches는 중복 없는 오름차순 양의 정수, node는 정확한 이름이어야 합니다"}
+	invalid := &serving.Error{
+		Code:    "InvalidCoverageQuery",
+		Message: "batches는 중복 없는 오름차순 양의 정수, node는 정확한 이름이어야 합니다",
+	}
 	for key, items := range values {
 		if (key != "batches" && key != "node") || len(items) != 1 || items[0] == "" {
 			return query, invalid
@@ -56,19 +59,26 @@ func (h *Handler) measurementCoverage(w http.ResponseWriter, r *http.Request) {
 	}
 	namespace := r.PathValue("namespace")
 	if len(validation.IsDNS1123Label(namespace)) != 0 {
-		sendError(w, &serving.Error{Code: "InvalidCoverageQuery", Message: "유효한 namespace가 필요합니다"})
+		sendError(w, &serving.Error{
+			Code: "InvalidCoverageQuery", Message: "유효한 namespace가 필요합니다",
+		})
 		return
 	}
 	principal := servingkube.PrincipalFromContext(r.Context())
 	for _, resource := range []string{"batchenergyoptimizations", "profilingruns"} {
-		if err := h.authorizer.AuthorizeResource(r.Context(), principal, authorizationv1.ResourceAttributes{Namespace: namespace, Verb: "list", Group: api.GroupVersion.Group, Version: api.GroupVersion.Version, Resource: resource}); err != nil {
+		if err := h.authorizer.AuthorizeResource(r.Context(), principal, authorizationv1.ResourceAttributes{
+			Namespace: namespace, Verb: "list", Group: api.GroupVersion.Group,
+			Version: api.GroupVersion.Version, Resource: resource,
+		}); err != nil {
 			sendError(w, err)
 			return
 		}
 	}
 	values, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
-		sendError(w, &serving.Error{Code: "InvalidCoverageQuery", Message: "유효한 query가 필요합니다"})
+		sendError(w, &serving.Error{
+			Code: "InvalidCoverageQuery", Message: "유효한 query가 필요합니다",
+		})
 		return
 	}
 	query, err := parseMeasurementCoverageQuery(values)

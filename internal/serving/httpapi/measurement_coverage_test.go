@@ -18,7 +18,10 @@ import (
 )
 
 func TestMeasurementCoverageStrictQuery(t *testing.T) {
-	for _, raw := range []string{"batches=2,1", "batches=1,1", "batches=0", "batches=01", "batches=", "node=", "node=a&node=b", "model=a", "batches=2147483648"} {
+	for _, raw := range []string{
+		"batches=2,1", "batches=1,1", "batches=0", "batches=01", "batches=",
+		"node=", "node=a&node=b", "model=a", "batches=2147483648",
+	} {
 		values, _ := url.ParseQuery(raw)
 		if _, err := parseMeasurementCoverageQuery(values); err == nil {
 			t.Errorf("accepted %s", raw)
@@ -36,7 +39,9 @@ func TestMeasurementCoverageGrantsBeforeCache(t *testing.T) {
 		t.Run(deny, func(t *testing.T) {
 			kube := fake.NewSimpleClientset()
 			kube.PrependReactor("create", "tokenreviews", func(ktesting.Action) (bool, runtime.Object, error) {
-				return true, &authentication.TokenReview{Status: authentication.TokenReviewStatus{Authenticated: true, User: authentication.UserInfo{Username: "caller"}}}, nil
+				return true, &authentication.TokenReview{Status: authentication.TokenReviewStatus{
+					Authenticated: true, User: authentication.UserInfo{Username: "caller"},
+				}}, nil
 			})
 			resources := []string{}
 			kube.PrependReactor("create", "subjectaccessreviews", func(action ktesting.Action) (bool, runtime.Object, error) {
@@ -44,7 +49,8 @@ func TestMeasurementCoverageGrantsBeforeCache(t *testing.T) {
 				var allowed bool
 				if resource := review.Spec.ResourceAttributes; resource != nil {
 					resources = append(resources, resource.Resource)
-					if resource.Namespace != "allowed" || resource.Verb != "list" || resource.Group != "edge.dacs.io" || resource.Version != "v1alpha1" {
+					if resource.Namespace != "allowed" || resource.Verb != "list" ||
+						resource.Group != "edge.dacs.io" || resource.Version != "v1alpha1" {
 						t.Fatalf("wrong namespace grant: %+v", resource)
 					}
 					allowed = deny != resource.Resource
@@ -55,13 +61,22 @@ func TestMeasurementCoverageGrantsBeforeCache(t *testing.T) {
 					}
 					allowed = deny != "url"
 				}
-				return true, &authorization.SubjectAccessReview{Status: authorization.SubjectAccessReviewStatus{Allowed: allowed}}, nil
+				return true, &authorization.SubjectAccessReview{
+					Status: authorization.SubjectAccessReviewStatus{Allowed: allowed},
+				}, nil
 			})
 			calls := 0
-			h := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, config: HandlerConfig{MeasurementCoverage: func(context.Context, string, MeasurementCoverageQuery) (json.RawMessage, error) {
-				calls++
-				return nil, &serving.Error{Code: "CoverageWarming", Message: "warming"}
-			}}}
+			h := &Handler{
+				authorizer: &servingkube.Authorizer{Client: kube},
+				config: HandlerConfig{
+					MeasurementCoverage: func(
+						context.Context, string, MeasurementCoverageQuery,
+					) (json.RawMessage, error) {
+						calls++
+						return nil, &serving.Error{Code: "CoverageWarming", Message: "warming"}
+					},
+				},
+			}
 			request := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/allowed/measurement-coverage", nil)
 			request.Header.Set("Authorization", "Bearer caller-token")
 			request.SetPathValue("namespace", "allowed")
@@ -72,7 +87,9 @@ func TestMeasurementCoverageGrantsBeforeCache(t *testing.T) {
 					t.Fatalf("cache accessed after denied grant: %d %d", response.Code, calls)
 				}
 			} else {
-				if response.Code != http.StatusServiceUnavailable || calls != 1 || response.Header().Get("Retry-After") != "2" || response.Header().Get("Cache-Control") != "no-store" || len(resources) != 2 {
+				if response.Code != http.StatusServiceUnavailable || calls != 1 ||
+					response.Header().Get("Retry-After") != "2" ||
+					response.Header().Get("Cache-Control") != "no-store" || len(resources) != 2 {
 					t.Fatalf("warming contract: %d %v %v", response.Code, response.Header(), resources)
 				}
 			}
