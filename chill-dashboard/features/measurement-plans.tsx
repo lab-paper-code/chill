@@ -6,8 +6,8 @@ import { useSearchParams } from "next/navigation"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { ApiError, useChillMutation, useChillQuery, useSession } from "@/lib/client"
 import type { CampaignResult, MeasurementMutation, MeasurementPlanList, MeasurementPlanSpec, Passport, ProfilesView } from "@/lib/read-types"
-import { runFailure, safeMeasurementReturn, significant } from "@/lib/measurements"
-import { batchStatisticsText, ownedRuns, planVariant, profileForPlan, relatedPlans } from "@/lib/measurement-coverage"
+import { measurementConditionDiff, measurementBatchCompletion, measurementCIOverlap, measurementHeadlineLabel, runFailure, safeMeasurementReturn, significant } from "@/lib/measurements"
+import { batchStatisticsText, ownedRuns, profileForPlan, relatedPlans } from "@/lib/measurement-coverage"
 import { DataTable } from "@/components/data-table"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/read-region"
@@ -42,7 +42,7 @@ export function MeasurementPlanPage({namespace, name}:{namespace:string;name:str
   const plans=useChillQuery<MeasurementPlanList>(plansPath(namespace),{enabled:campaign?.phase==="Failed"})
   const profiles=useChillQuery<ProfilesView>("v1/scheduler/profiles",{enabled:campaign?.phase==="Failed"})
   const original=plans.data?.items?.find(plan=>plan.metadata.uid===campaign?.uid)
-  const successor=original ? plans.data?.items?.filter(plan=>plan.metadata.uid!==original.metadata.uid&&plan.metadata.creationTimestamp>original.metadata.creationTimestamp&&planVariant(plan.spec)===planVariant(original.spec)&&profileForPlan(plan,profiles.data?.profiles??[]).length).sort((a,b)=>b.metadata.creationTimestamp.localeCompare(a.metadata.creationTimestamp))[0] : undefined
+  const successor=original ? plans.data?.items?.filter(plan=>plan.metadata.uid!==original.metadata.uid&&plan.metadata.creationTimestamp>original.metadata.creationTimestamp&&measurementConditionDiff(original.spec,plan.spec).length===0&&profileForPlan(plan,profiles.data?.profiles??[]).length).sort((a,b)=>b.metadata.creationTimestamp.localeCompare(a.metadata.creationTimestamp))[0] : undefined
   const related=original?relatedPlans(original,plans.data?.items??[]).filter(item=>!item.sameRequestedCondition):[]
   const other = !!campaign && !!expectedUID && campaign.uid !== expectedUID
   const runs=useAllMeasurementRuns(namespace,!!campaign&&!other&&campaign.phase==="Failed")
@@ -56,15 +56,16 @@ export function MeasurementPlanPage({namespace, name}:{namespace:string;name:str
   const phase = campaign?.phase, cause = campaign ? planCause(campaign) : undefined
   const result = (data?.result ?? null) as ResultBody | null, detail = result?.detail
   const planned = spec ? plannedTrials(spec) : undefined
+  const completion=measurementBatchCompletion(spec?.batchSizes,detail?.incrementalWorkByBatch?.map(row=>row.batch)??[])
   const title = !campaign ? name : other ? "같은 이름으로 다시 등록된 다른 측정이에요"
     : phase === "Measuring" ? "측정하고 있어요"
     : phase === "Failed" ? "측정을 끝내지 못했어요"
     : detail?.bestBatch !== undefined ? (detail.incrementalWorkByBatch?.length===1 ? `배치 ${detail.bestBatch} 측정 결과 · 다른 배치와 비교하지 않았어요` : `측정한 배치 중 에너지 평균이 가장 낮은 배치 ${detail.bestBatch}`) : "측정이 끝났어요"
   const badge = !campaign ? undefined : other ? <StatusBadge tone="fail">다른 측정</StatusBadge>
-    : phase === "Measuring" ? <StatusBadge tone="info">측정 중</StatusBadge> : phase === "Failed" ? <StatusBadge tone="fail">실패</StatusBadge> : <StatusBadge tone="ok">완료</StatusBadge>
-  const manage = campaign && <Rows label="관리"><DeleteMeasurement namespace={namespace} name={name} uid={campaign.uid} version={campaign.resourceVersion} trials={campaign.completedTrials ?? 0}
+    : phase === "Measuring" ? <StatusBadge tone="info">측정 중</StatusBadge> : phase === "Failed" ? <StatusBadge tone="fail">실패</StatusBadge> : completion.partial ? <StatusBadge tone="warn">부분 완료 {completion.count}/{completion.total}</StatusBadge> : <StatusBadge tone="ok">완료</StatusBadge>
+  const manage = campaign && <Rows label="위험 영역"><DeleteMeasurement namespace={namespace} name={name} uid={campaign.uid} version={campaign.resourceVersion} trials={campaign.completedTrials ?? 0}
     blocked={phase === "Measuring" ? "진행 중인 측정은 지울 수 없어요. 끝난 뒤에 지워 주세요." : undefined} onDeleted={setDeleted}/></Rows>
-  const scale = Math.max(...(detail?.incrementalWorkByBatch ?? []).map(item => item.incrementalWorkJoulesPerItem), 0)
+  const scale = Math.max(...(detail?.incrementalWorkByBatch ?? []).map(item => item.incrementalWorkJoulesPerItem+(data?.statistics?.batches.find(row=>row.batch===item.batch)?.confidence.halfWidth??0)), 0)
   return <Screen width="data" actionPlacement="header" breadcrumbs={[{href:"/measurements",label:"측정"},{href:back[0],label:"상위 목록"},{label:name}]} back={back} status={badge} title={title}
     lede={name}
     action={campaign && !other && phase === "Failed" ? <div className="flex flex-wrap gap-2">{successor&&<Button asChild><Link href={planHref(namespace,successor.metadata.name,successor.metadata.uid)}>후속 측정 결과 보기</Link></Button>}<Button variant="outline" asChild><Link href={`/measurements/new?${new URLSearchParams({from:name,fromNamespace:namespace,fromUID:campaign.uid})}`}>조건을 복사해 새 이름으로 요청</Link></Button></div> : undefined}>
@@ -73,13 +74,15 @@ export function MeasurementPlanPage({namespace, name}:{namespace:string;name:str
       {phase === "Measuring" && <Figure label="지금까지 잰 회차" value={campaign.completedTrials ?? 0} unit={planned ? `/ 최대 ${planned}번` : "번"} note="회차마다 끝나면 자동으로 갱신돼요."/>}
       {phase === "Failed" && <section role="alert" className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 space-y-2"><h2 className="font-semibold text-destructive">{failure?.title??cause?.[0]??"측정을 끝내지 못했어요"}</h2><p className="break-words text-sm">{failure?.excerpt??(runs.isPending?"실패 회차의 종료 기록을 확인하고 있어요.":campaign.conditions?.find(c=>c.status==="False")?.message??"상세 원인이 제공되지 않았어요.")}{failure?.exitCode!==undefined?` (종료 코드 ${String(failure.exitCode)})`:""}</p><p className="text-sm">{failure?.next??cause?.[1]??"아래 실패 회차에서 종료 기록을 확인하세요."}</p>{failedRun&&<Link className="text-sm underline" href={`/measurements/profiling-runs/${encodeURIComponent(namespace)}/${encodeURIComponent(failedRun.name)}?${new URLSearchParams({uid:failedRun.uid,returnTo:planHref(namespace,name,campaign.uid)})}`}>실패 회차와 전체 로그 보기</Link>}{successor&&<p className="text-sm">같은 요청 조건의 후속 측정 결과가 있어요.</p>}</section>}
       <dl aria-label="측정 조건 요약" className="flex flex-wrap gap-2">{[["모델",spec.state.candidate.modelSpec],["장치 종류",spec.state.candidate.deviceClass],["Node",spec.state.targetNode],["전력모드",spec.state.candidate.powerMode],["실행 경로",spec.state.candidate.executionPath],["배치",spec.batchSizes?.join(", ")??"자동"],["CPU",spec.cpuQuota??"제한 없음"],["데이터셋",spec.activeProtocol.dataset??"미제공"]].map(([label,value])=><div key={label} className={`min-w-0 max-w-full rounded-md border px-3 py-2 text-sm ${label==="전력모드"?"border-primary/40 bg-[var(--info-soft)]":""}`}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="break-words font-medium">{value}</dd></div>)}</dl>
-      {phase==="Failed"&&related.length>0&&<Rows label="관련 후보 · 요청 조건이 달라 후속 유효 결과로 단정하지 않아요">{related.map(({plan})=><Row key={plan.metadata.uid} href={planHref(namespace,plan.metadata.name,plan.metadata.uid)} label={plan.metadata.name} hint={`${plan.status?.phase??"상태 미제공"} · CPU ${plan.spec.cpuQuota??"미제공"} · dataset ${plan.spec.activeProtocol.dataset??"미제공"} · 측정 ${plan.spec.activeProtocol.durationSeconds??"미제공"} s`}/>)}</Rows>}
-      {phase === "Complete" && detail?.minimumIncrementalWorkJoulesPerItem !== undefined && <Figure label="요청 1건에 더 드는 에너지 평균" value={significant(detail.minimumIncrementalWorkJoulesPerItem)} unit="J/건" note={data?.statistics?.batches.find(row=>row.batch===detail.bestBatch)?batchStatisticsText(data.statistics.batches.find(row=>row.batch===detail.bestBatch)!).ci:"에너지 신뢰구간(CI) 미제공"}/>}
+      {phase==="Failed"&&related.length>0&&<Rows label="관련 측정과 실제 조건 차이">{related.map(({plan})=><Row key={plan.metadata.uid} href={planHref(namespace,plan.metadata.name,plan.metadata.uid)} label={plan.metadata.name} hint={`${plan.status?.phase??"상태 미제공"} — ${measurementConditionDiff(spec,plan.spec).join("; ")||"동일 조건"}`}/>)}</Rows>}
+      {phase === "Complete" && detail?.minimumIncrementalWorkJoulesPerItem !== undefined && <Figure label={measurementHeadlineLabel(detail.bestBatch)} value={significant(detail.minimumIncrementalWorkJoulesPerItem)} unit="J/건" note={data?.statistics?.batches.find(row=>row.batch===detail.bestBatch)?batchStatisticsText(data.statistics.batches.find(row=>row.batch===detail.bestBatch)!).ci:"에너지 신뢰구간(CI) 미제공"}/>}
       {phase === "Complete" && !!detail?.incrementalWorkByBatch?.length && <section className="rows-group" aria-label="크기별 에너지"><h2 className="rows-label">크기별 요청 1건에 더 드는 에너지</h2>
         <dl className="energy-rows">{detail.incrementalWorkByBatch.map(item => <div key={item.batch} className="energy-row"><dt>한 번에 {item.batch}건</dt>
-          <div className="energy-track" aria-hidden="true"><div className="energy-fill" data-hot={item.batch !== detail.bestBatch} style={{width:`${scale ? Math.max(item.incrementalWorkJoulesPerItem / scale * 100, 2) : 0}%`}}/></div>
+          <div className="energy-track relative" aria-hidden="true"><div className="energy-fill" data-hot={item.batch !== detail.bestBatch} style={{width:`${scale ? Math.max(item.incrementalWorkJoulesPerItem / scale * 100, 2) : 0}%`}}/>{(()=>{const ci=data?.statistics?.batches.find(row=>row.batch===item.batch)?.confidence.halfWidth;return ci!==undefined&&Number.isFinite(ci)&&ci>=0&&scale>0?<span className="absolute top-1/2 h-3 -translate-y-1/2 border-x-2 border-y border-foreground" style={{left:`${Math.max(0,(item.incrementalWorkJoulesPerItem-ci)/scale*100)}%`,width:`${Math.min(100,(item.incrementalWorkJoulesPerItem+ci)/scale*100)-Math.max(0,(item.incrementalWorkJoulesPerItem-ci)/scale*100)}%`}}/>:null})()}</div>
           <dd className="tabular-nums">{significant(item.incrementalWorkJoulesPerItem)} J/건</dd></div>)}</dl>
         <p className="px-1 text-sm text-muted-foreground">유휴 전력을 제외한 요청 처리의 증분 에너지예요.</p></section>}
+      {measurementCIOverlap(data?.statistics?.batches??[])&&<p role="note" className="notice">신뢰구간이 겹치는 배치가 있어요. 이 근거만으로 배치 간 차이를 주장할 수 없어요.</p>}
+      <PaperChecklist data={data!} spec={spec} detail={detail} trials={result?.completedTrials??[]}/>
       {data?.statistics&&phase==="Complete"&&<Statistics data={data}/>}
       {!!result?.completedTrials?.length&&!data?.statistics&&<ActiveLatency trials={result.completedTrials}/>}
       {!!detail&&<Facts label="반복과 범위" items={[["반복",`${detail.trialsPerBatch??"미제공"}회/배치`],["측정한 배치",detail.incrementalWorkByBatch?.map(item=>item.batch).join(", ")??"미제공"]]}/>}
@@ -99,10 +102,24 @@ export function MeasurementPlanPage({namespace, name}:{namespace:string;name:str
         {phase !== "Complete" && <Row href={`/measurements/runs?${new URLSearchParams({namespace,q:name,parent:name,parentUID:campaign.uid,returnTo:planHref(namespace,name,campaign.uid)})}`} label="지금까지의 회차" hint="부모 측정의 정확한 저장 참조와 연결된 회차"/>}
         <RowDialog label="원본 자료" title="측정 원본 자료"><SourceExport value={{namespace, name, expectedUID, source:data}} filename={`chill-measurement-${name}.json`}/><SourceJSON inline value={data}/></RowDialog>
       </Rows>
-      <details className="text-sm text-muted-foreground"><summary className="cursor-pointer py-2">해석 주의</summary><p>결과는 위 측정 조건의 범위에 한정돼요. 논문에 사용하기 전 반복 수, 신뢰구간, 지연 표본과 회차 근거를 함께 검토하세요.</p></details>
       {manage}
     </>}</QueryGate>
   </Screen>
+}
+
+function PaperChecklist({data,spec,detail,trials}:{data:CampaignResult;spec:MeasurementPlanSpec;detail?:ResultDetail;trials:NonNullable<ResultBody["completedTrials"]>}) {
+  const trial=trials.find(row=>row.measurement.workloadMode==="active")
+  const query=useChillQuery<Passport>(`v1/namespaces/${encodeURIComponent(trial?.run.namespace??"-")}/profiling-runs/${encodeURIComponent(trial?.run.name??"-")}/evidence-passport`,{enabled:!!trial,decoder:parseSchedulerJSON})
+  const passport=query.data?.run.uid===trial?.run.uid?query.data:undefined,power=passport?.measurement.power
+  const completion=measurementBatchCompletion(spec.batchSizes,detail?.incrementalWorkByBatch?.map(row=>row.batch)??[])
+  return <section className="space-y-3 border-t pt-4" aria-label="논문 적격 체크리스트"><h2 className="font-semibold">논문 사용 전 확인</h2><ul className="grid gap-2 text-sm">
+    <li>{(detail?.trialsPerBatch??spec.trialsPerBatch)>=3?"통과":"부족"}: 배치별 반복 {detail?.trialsPerBatch??spec.trialsPerBatch}회 (최소 3회)</li>
+    <li>{data.statistics?.batches.length?"제공":"부족"}: 배치별 신뢰구간 {measurementCIOverlap(data.statistics?.batches??[])?"— 겹침이 있어 차이 주장 불가":""}</li>
+    <li>{completion.partial?"부족":"통과"}: 요청 배치 {completion.count}/{completion.total} 측정</li>
+    <li>{power?`확인: 전력 표본 ${power.samples}개, 최대 계측 간격 ${significant(power.maximumSampleGapSeconds)} s`:"확인 필요: 계측 주기 근거 "+(query.isPending?"조회 중":"미제공")}</li>
+    <li>{power?`주의: ${power.source.nodeName??spec.state.targetNode} 노드 전체 전력 (${power.source.metric}) — 다른 작업 소비가 포함될 수 있어요.`:"확인 필요: 노드 전체 전력 여부 미제공"}</li>
+    <li>{power?(power.sourceTimestampAbsent?"부족: 원본 timestamp 없음":"통과: 원본 timestamp 제공"):"확인 필요: 원본 timestamp 유무 미제공"}</li>
+  </ul>{trial&&<Link className="inline-flex min-h-11 items-center text-sm underline" href={`/measurements/profiling-runs/${encodeURIComponent(trial.run.namespace)}/${encodeURIComponent(trial.run.name)}?uid=${encodeURIComponent(trial.run.uid)}`}>대표 부하 회차의 계측 근거 보기</Link>}<p className="text-sm text-muted-foreground">계측 항목은 대표 부하 회차 한 건 기준입니다. 논문에 사용하기 전 나머지 회차의 근거도 확인하세요.</p></section>
 }
 
 function ActiveLatency({trials}:{trials:NonNullable<ResultBody["completedTrials"]>}) {

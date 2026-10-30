@@ -1,4 +1,4 @@
-import type { MeasurementEvidenceLocation, OperationCondition, OperationCostMeasurement, OperationStepStatus, ProfilingRun } from "./read-types.ts"
+import type { MeasurementEvidenceLocation, MeasurementPlanSpec, OperationCondition, OperationCostMeasurement, OperationStepStatus, ProfilingRun } from "./read-types.ts"
 import { codeText } from "./labels.ts"
 import { nanosToMilliseconds } from "./scheduler.ts"
 
@@ -18,23 +18,57 @@ export function measurementState(phase?:string):{label:string;tone:"info"|"ok"|"
   }
 }
 export const measurementReason = (reason:string) => codeText[reason] ? `${codeText[reason].join(" ")} (${reason})` : reason
+export function measurementReasonSummary(reason:string) {
+  if(codeText[reason]) return codeText[reason].join(" ")
+  if(/exactly one proven primitive state effect/i.test(reason)) return "단일 상태 변경으로 확인되지 않아 비용을 채택하지 못했어요. 준비·제거 단계의 측정 근거를 확인하세요."
+  if(/timeout|timed out|deadline exceeded/i.test(reason)) return "측정 결과를 기다리는 시간이 초과됐어요. 장비 상태와 측정 대기 시간을 확인하세요."
+  if(/memory|OOM/i.test(reason)) return "측정에 필요한 메모리를 확보하지 못했어요. 배치 크기와 장비 메모리를 확인하세요."
+  return /[가-힣]/.test(reason)?reason:"측정 근거가 채택되지 않았어요. 아래 원문에서 상세 사유를 확인하세요."
+}
 export function occupancyDuration(value?:unknown) {
   if (value === undefined) return "결과 없음"
   if ((typeof value !== "number" && typeof value !== "bigint") || (typeof value === "number" && (!Number.isFinite(value) || !Number.isSafeInteger(value)))) return "품질 경고: 점유시간을 변환할 수 없어요"
   if (value < 0) return "품질 경고: 점유시간이 음수로 기록됐어요"
-  return `${Number(nanosToMilliseconds(value)).toLocaleString("ko-KR",{maximumFractionDigits:2})}ms/request`
+  return `${significant(Number(nanosToMilliseconds(value)))}ms/request`
 }
 export function operationDuration(value?:unknown) {
   if (value === undefined || value === null) return "실측 시간 기록 없음"
   if ((typeof value !== "number" && typeof value !== "bigint") || (typeof value === "number" && !Number.isSafeInteger(value))) return `${String(value)} ns · 품질 경고·사용 확인 필요`
-  return `${nanosToMilliseconds(value)} ms (${String(value)} ns)${value < 0 ? " · 품질 경고·사용 확인 필요" : ""}`
+  return `${formatMeasurementDuration(value)}${value < 0 ? " · 품질 경고·사용 확인 필요" : ""}`
 }
 export function operationWallEnergy(value?:unknown) {
   if (value === undefined || value === null) return "수용된 에너지 없음"
-  return `${String(value)} J${typeof value !== "number" || !Number.isFinite(value) || value < 0 ? " · 품질 경고·사용 확인 필요" : ""}`
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? `${significant(value)} J` : "품질 경고·사용 확인 필요"
 }
-export const occupancyThroughput = (value?:string) => !value ? "결과 없음" : `${value} req/s${!/^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value) || !Number.isFinite(Number(value)) || Number(value) < 0 ? " · 품질 경고·사용 확인 필요" : ""}`
-export const significant = (value:number) => Number.isFinite(value) ? Number(value.toPrecision(4)).toLocaleString("ko-KR",{maximumSignificantDigits:4}) : `${String(value)} · 품질 경고`
+export const occupancyThroughput = (value?:string) => !value ? "결과 없음" : !/^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value) || !Number.isFinite(Number(value)) || Number(value) < 0 ? "품질 경고·사용 확인 필요" : `${significant(Number(value))} req/s`
+export const significant = (value:number) => Number.isFinite(value) ? value.toLocaleString("ko-KR",{maximumSignificantDigits:3}) : `${String(value)} · 품질 경고`
+export function formatMeasurementDuration(value:number|bigint) {
+  const milliseconds=Number(nanosToMilliseconds(value))
+  return milliseconds>=1000||milliseconds<=-1000 ? `${significant(milliseconds/1000)} s` : `${significant(milliseconds)} ms`
+}
+export function formatMeasurementTime(value:string|number) {
+  const date=new Date(value)
+  return Number.isFinite(date.getTime()) ? `${date.toLocaleString("ko-KR",{timeZone:"Asia/Seoul",dateStyle:"medium",timeStyle:"medium"})} KST` : "시각 없음"
+}
+export const measurementHeadlineLabel = (batch?:number) => batch===undefined ? "측정 배치 중 최저 에너지" : `측정 배치 중 최저 에너지 (배치 ${batch})`
+export function measurementBatchCompletion(requested:number[]|undefined, measured:number[]) {
+  const complete=new Set(measured), total=new Set(requested??measured)
+  const count=[...total].filter(batch=>complete.has(batch)).length
+  return {partial:count<total.size,count,total:total.size}
+}
+export function measurementCIOverlap(rows:{incrementalWorkJoulesPerItem:number;confidence:{halfWidth:number}}[]) {
+  return rows.some((a,index)=>rows.slice(index+1).some(b=>Number.isFinite(a.confidence.halfWidth)&&Number.isFinite(b.confidence.halfWidth)&&a.confidence.halfWidth>=0&&b.confidence.halfWidth>=0&&Math.abs(a.incrementalWorkJoulesPerItem-b.incrementalWorkJoulesPerItem)<=a.confidence.halfWidth+b.confidence.halfWidth))
+}
+export function measurementConditionDiff(before:MeasurementPlanSpec,after:MeasurementPlanSpec) {
+  const fields: [string,unknown,unknown][]=[
+    ["CPU",before.cpuQuota,after.cpuQuota],["CPU 코어",before.cpuAffinity,after.cpuAffinity],["배치",before.batchSizes,after.batchSizes],["반복",before.trialsPerBatch,after.trialsPerBatch],["재시도 한도",before.retryLimit,after.retryLimit],
+    ...Object.keys({...before.state,...after.state}).filter(key=>key!=="candidate").map(key=>[key,(before.state as unknown as Record<string,unknown>)[key],(after.state as unknown as Record<string,unknown>)[key]] as [string,unknown,unknown]),
+    ...Object.keys({...before.state.candidate,...after.state.candidate}).map(key=>[key,(before.state.candidate as unknown as Record<string,unknown>)[key],(after.state.candidate as unknown as Record<string,unknown>)[key]] as [string,unknown,unknown]),
+    ...(["activeProtocol","idleProtocol"] as const).flatMap(protocol=>Object.keys({...before[protocol],...after[protocol]}).map(key=>[`${protocol==="activeProtocol"?"부하":"유휴"} ${key}`,(before[protocol] as Record<string,unknown>)[key],(after[protocol] as Record<string,unknown>)[key]] as [string,unknown,unknown])),
+  ]
+  const display=(value:unknown)=>value===undefined?"미지정":typeof value==="object"?JSON.stringify(value):String(value)
+  return fields.filter(([,a,b])=>JSON.stringify(a)!==JSON.stringify(b)).map(([label,a,b])=>`${label}: ${display(a)} → ${display(b)}`)
+}
 export function safeMeasurementReturn(value:string|null, fallback="/measurements") {
   if (!value || !value.startsWith("/") || value.startsWith("//") || /[\\\u0000-\u001f\u007f]/.test(value)) return fallback
   try {

@@ -5,6 +5,7 @@ import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
 import { parseSchedulerJSON } from "./scheduler.ts"
 import type { DispatchOccupancyMeasurement, OperationCostMeasurement } from "./read-types.ts"
+import { formatMeasurementTime, measurementConditionDiff, measurementBatchCompletion, measurementCIOverlap, measurementHeadlineLabel, measurementReasonSummary } from "./measurements.ts"
 
 const metadata = {namespace:"research",name:"sample",uid:"uid-1",resourceVersion:"42",creationTimestamp:"2026-10-30T00:00:00Z"}
 const references = {cr:{apiVersion:"edge.dacs.io/v1alpha1",kind:"OperationCostMeasurement",namespace:metadata.namespace,name:metadata.name,uid:metadata.uid},evidence:[{store:"evidence",key:"power-key"}]}
@@ -59,9 +60,9 @@ test("operation actual duration and accepted wall energy preserve zero, missing 
     assert.equal(operationDuration(value),"실측 시간 기록 없음")
     assert.equal(operationWallEnergy(value),"수용된 에너지 없음")
   }
-  assert.equal(operationDuration(0),"0 ms (0 ns)")
+  assert.equal(operationDuration(0),"0 ms")
   assert.equal(operationWallEnergy(0),"0 J")
-  assert.equal(operationDuration(3807875),"3.807875 ms (3807875 ns)")
+  assert.equal(operationDuration(3807875),"3.81 ms")
   const wire = parseSchedulerJSON('{"status":{"phase":"Failed","reason":"MeasurementFailed","steps":[{"name":"idle","key":"exact-key","verdict":"Failed","operationID":"op-uid-2","durationNanos":9223372036854775807,"wallJoules":null,"reason":"IsolationUnconfirmed"}]}}') as Pick<OperationCostMeasurement,"status">
   const rows = operationSteps({...operation,...wire})
   const result = rows[2].results[0]
@@ -69,9 +70,9 @@ test("operation actual duration and accepted wall energy preserve zero, missing 
   assert.equal(result.reason,"IsolationUnconfirmed")
   assert.equal(result.verdict,"Failed")
   assert.equal(wire.status.phase,"Failed")
-  assert.equal(operationDuration(result.durationNanos),"9223372036854.775807 ms (9223372036854775807 ns)")
+  assert.equal(operationDuration(result.durationNanos),"9,220,000,000 s")
   assert.equal(operationWallEnergy(result.wallJoules),"수용된 에너지 없음")
-  assert.equal(operationDuration(-3807875n),"-3.807875 ms (-3807875 ns) · 품질 경고·사용 확인 필요")
+  assert.equal(operationDuration(-3807875n),"-3.81 ms · 품질 경고·사용 확인 필요")
   for (const value of [Number.MAX_SAFE_INTEGER + 1,1.5,NaN,Infinity,"100"]) assert.match(operationDuration(value),/품질 경고/)
   for (const value of [-1,NaN,Infinity,"0"]) assert.match(operationWallEnergy(value),/품질 경고/)
   assert.equal(operationWallEnergy(2.75),"2.75 J")
@@ -82,7 +83,7 @@ test("occupancy preserves missing and zero d, string throughput, unspecified sup
   assert.equal(occupancyDuration(occupancy.status.perRequestNanos),"결과 없음")
   assert.equal(occupancyDuration(0),"0ms/request")
   assert.equal(occupancyDuration(3807875n),"3.81ms/request")
-  assert.equal(occupancyThroughput("0.0000012300"),"0.0000012300 req/s")
+  assert.equal(occupancyThroughput("0.0000012300"),"0.00000123 req/s")
   assert.equal(occupancyThroughput("0"),"0 req/s")
   for (const value of [undefined,""]) assert.equal(occupancyThroughput(value),"결과 없음")
   assert.equal(occupancySupply(occupancy.conditions.supplyMode),"기록되지 않았어요")
@@ -110,8 +111,8 @@ test("raw occupancy negatives and invalid values warn without replacing zero or 
   for(const value of [-3807875n,-5720000,-1n]) { assert.match(occupancyDuration(value),/품질 경고.*음수/); assert.doesNotMatch(occupancyDuration(value),/-5|-3|ms\/request/) }
   for(const value of [NaN,Infinity,-Infinity,"NaN","broken",null]) assert.match(occupancyDuration(value),/품질 경고/)
   for(const value of ["NaN","Infinity","-1","broken"," "]) assert.match(occupancyThroughput(value),/품질 경고/)
-  assert.equal(significant(0.09261),"0.09261")
-  assert.equal(significant(0.08682),"0.08682")
+  assert.equal(significant(0.09261),"0.0926")
+  assert.equal(significant(0.08682),"0.0868")
   for(const value of ["//evil.test","https://evil.test","/settings","/measurements\\evil","\n/measurements"])assert.equal(safeMeasurementReturn(value),"/measurements")
   assert.equal(safeMeasurementReturn("/measurements?model=x&page=2"),"/measurements?model=x&page=2")
 })
@@ -133,4 +134,24 @@ test("run status decodes JSON fields and failure summary uses recorded memory er
   assert.equal(failure.excerpt,"Failed to allocate memory for requested buffer")
   assert.match(failure.next,/메모리/)
   assert.doesNotMatch(failure.log,/\u001b/)
+})
+
+test("measurement headline is a selected minimum and partial completion counts requested unique batches",()=>{
+  assert.match(measurementHeadlineLabel(4),/최저.*4/)
+  assert.doesNotMatch(measurementHeadlineLabel(4),/평균/)
+  assert.deepEqual(measurementBatchCompletion([1,2,4,4],[1,4]),{partial:true,count:2,total:3})
+  assert.deepEqual(measurementBatchCompletion([1,2],[1,2]),{partial:false,count:2,total:2})
+  assert.match(formatMeasurementTime("2026-10-30T00:00:00Z"),/9:00:00.*KST/)
+  const row=(mean:number,width:number)=>({incrementalWorkJoulesPerItem:mean,confidence:{halfWidth:width}})
+  assert.equal(measurementCIOverlap([row(1,.1),row(1.2,.1)]),true)
+  assert.equal(measurementCIOverlap([row(1,.01),row(1.2,.01)]),false)
+  assert.equal(measurementCIOverlap([row(1,NaN),row(1.2,.1)]),false)
+})
+
+test("retry condition diff includes CPU and protocol changes while summaries retain original reasons separately",()=>{
+  const spec={state:{candidate:{modelSpec:"m",preprocessor:"p",deviceClass:"d",executionPath:"cpu",powerMode:"MAXN"},targetNode:"n",cpuRequest:"1"},cpuQuota:"1",trialsPerBatch:3,batchSizes:[1,2],retryLimit:1,activeProtocol:{durationSeconds:10,dataset:"set"},idleProtocol:{durationSeconds:10}}
+  assert.deepEqual(measurementConditionDiff(spec,spec),[])
+  assert.deepEqual(measurementConditionDiff(spec,{...spec,cpuQuota:"2",activeProtocol:{...spec.activeProtocol,durationSeconds:20}}),["CPU: 1 → 2","부하 durationSeconds: 10 → 20"])
+  assert.match(measurementReasonSummary("context deadline exceeded"),/시간.*초과/)
+  assert.match(measurementReasonSummary("cost requires exactly one proven primitive state effect"),/단일 상태 변경/)
 })

@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation"
 import { useQuery } from "@tanstack/react-query"
 import { ApiError, useChillQuery, useChillMutation, useSession } from "@/lib/client"
 import type { RunsView, ProfilingRun, Passport, NativeSample, MeasurementPreflight } from "@/lib/read-types"
-import { runFailure, runStatusObject, exactRun, safeMeasurementReturn, significant } from "@/lib/measurements"
+import { formatMeasurementTime, runFailure, runStatusObject, exactRun, safeMeasurementReturn, significant } from "@/lib/measurements"
 import { currentRunCondition } from "@/lib/measurement-coverage"
 import { codeText } from "@/lib/labels"
 import { QueryGate, SourceJSON, SourceExport, StatusBadge } from "@/components/read-region"
@@ -88,7 +88,7 @@ const sampleColumns:DataColumn<NativeSample>[]=[
 ]
 function measuredWhat(data:Passport) {
   const spec=data.run.spec as RunSpec, r=data.measurement.runtime
-  const at=new Date(r.measurementStartedAt).toLocaleString("ko-KR",{dateStyle:"medium",timeStyle:"short"})
+  const at=formatMeasurementTime(r.measurementStartedAt)
   return [spec.candidate?.modelSpec, spec.targetNode ?? data.measurement.power.source.nodeName, plain(r.provider), `${at}에 ${num(r.elapsedSeconds)}초 동안`].filter(Boolean).join(" · ")
 }
 // One measurement, read top to bottom: how fast, how much power, under what conditions, and whether to trust it.

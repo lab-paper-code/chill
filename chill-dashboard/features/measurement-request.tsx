@@ -176,8 +176,8 @@ function Pick({ label, name, value, set, options }: { label: string; name: strin
 }
 function AdvancedFields({ value, set }: { value: Advanced; set: (value: Advanced) => void }) {
   return <div className="grid gap-4 sm:grid-cols-2">
-    {advancedFields.map(([key, label, min]) => <label key={key} className="grid gap-2 text-sm">{label}<Input type="number" inputMode="numeric" min={min} max={key === "retryLimit" ? 10 : 2147483647} step={1} value={Number.isNaN(value[key]) ? "" : value[key]} onChange={event => set({ ...value, [key]: event.target.valueAsNumber })} /></label>)}
-    <label className="grid gap-2 text-sm sm:col-span-2">사용할 CPU 코어 번호 · 비워 두면 정하지 않아요<Input inputMode="numeric" placeholder="예: 3 또는 2, 3" value={value.affinity} onChange={event => set({ ...value, affinity: event.target.value })} /></label>
+    {advancedFields.map(([key, label, min]) => <label htmlFor={`measurement-${key}`} key={key} className="grid gap-2 text-sm">{label}<Input id={`measurement-${key}`} type="number" inputMode="numeric" min={min} max={key === "retryLimit" ? 10 : 2147483647} step={1} value={Number.isNaN(value[key]) ? "" : value[key]} onChange={event => set({ ...value, [key]: event.target.valueAsNumber })} /></label>)}
+    <label htmlFor="measurement-affinity" className="grid gap-2 text-sm sm:col-span-2">사용할 CPU 코어 번호 · 비워 두면 정하지 않아요<Input id="measurement-affinity" inputMode="numeric" placeholder="예: 3 또는 2, 3" value={value.affinity} onChange={event => set({ ...value, affinity: event.target.value })} /></label>
   </div>
 }
 function AdvancedForm({ initial, save }: { initial: Advanced; save: (value: Advanced) => void }) {
@@ -319,16 +319,16 @@ function Funnel({ namespace, from, context, prefill, more, refetchPlans, checkin
     {blocked&&<div role="alert" className="notice"><h2>미리 채운 조건을 확인해 주세요</h2>{prefill.errors.map(issue=><p key={issue}>{issue}</p>)}<SourceJSON value={prefill.values} title="전달된 원값"/><Button variant="outline" onClick={()=>router.replace(`/measurements/new?${new URLSearchParams({returnTo:prefill.returnTo})}`)}>초깃값 지우고 직접 선택</Button></div>}
     {step === "workload" && (context.workloads.length
       ? <>
-        <Pick label="서비스" name="workload" value={d.workload} set={workload => {
+        {[...new Set(context.workloads.map(w=>w.desired.spec.modelRef.name))].map(modelName=><details key={modelName} open={d.model===modelName} className="rounded-lg border"><summary className="min-h-11 cursor-pointer px-4 py-3 font-medium">{modelName} <span className="text-sm font-normal text-muted-foreground">서비스 {context.workloads.filter(w=>w.desired.spec.modelRef.name===modelName).length}개</span></summary><Pick label="장치별 서비스 선택" name="workload" value={d.workload} set={workload => {
           const spec = context.workloads.find(w => w.desired.metadata.name === workload)!.desired.spec
           const changed=!!d.model&&d.model!==spec.modelRef.name
           update({ workload, model: spec.modelRef.name, preprocessor: spec.preprocessorRef.name, dataset: spec.datasetRef?.name ?? "", ...(changed?{path:"",powerMode:"",batchSizes:[]}: {}) })
           if(changed) setError(`선택한 서비스가 모델을 ${d.model}에서 ${spec.modelRef.name}로 바꿨어요. 실행 경로와 전력모드를 다시 골라 주세요.`)
-        }} options={[...context.workloads].sort((a,b)=>Number(b.desired.spec.modelRef.name===prefill.values.model)-Number(a.desired.spec.modelRef.name===prefill.values.model)).map(({ desired: w }) => {
+        }} options={context.workloads.filter(w=>w.desired.spec.modelRef.name===modelName).map(({ desired: w }) => {
           const model = context.models.find(m => m.metadata.name === w.spec.modelRef.name)
           return { value: w.metadata.name, label: w.metadata.name, hint: `${w.spec.modelRef.name} · ${w.spec.preprocessorRef.name} · ${w.spec.datasetRef?.name ?? "데이터셋 없음"}`,
             disabled: !model ? "모델을 찾지 못했어요" : !model.spec.executionPaths.length ? "실행 방식이 없어서 잴 수 없어요" : w.spec.datasetRef ? "" : "데이터셋이 없어서 잴 수 없어요" }
-        })} />
+        })} /></details>)}
         {d.model && <Facts items={[["모델", d.model], ["전처리기", d.preprocessor || "없음"], ["데이터셋", d.dataset || "없음"]]} />}
       </>
       : <Empty title="잴 수 있는 서비스가 없어요"><Button asChild variant="outline"><Link href="/workloads/new">서비스 추가</Link></Button></Empty>)}

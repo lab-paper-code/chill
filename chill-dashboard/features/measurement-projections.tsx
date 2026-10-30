@@ -5,7 +5,7 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useSession } from "@/lib/client"
 import type { DispatchOccupancyMeasurement, MeasurementEvidenceLocation, MeasurementProjection, MeasurementProjectionList, OperationCostMeasurement, WireInteger } from "@/lib/read-types"
-import { evidenceLocations, measurementHref, measurementListHref, measurementPath, measurementReason, measurementState, measurementUIDMismatch, occupancyDuration, occupancySupply, occupancyThroughput, operationDuration, operationWallEnergy, operationSteps, type OperationStep, type ProjectionMeasurementKind } from "@/lib/measurements"
+import { measurementReasonSummary, formatMeasurementTime, evidenceLocations, measurementHref, measurementListHref, measurementPath, measurementState, measurementUIDMismatch, occupancyDuration, occupancySupply, occupancyThroughput, operationDuration, operationWallEnergy, operationSteps, type OperationStep, type ProjectionMeasurementKind } from "@/lib/measurements"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/read-region"
 import { Empty, Facts, RowDialog, Rows, Screen } from "@/components/screen"
@@ -15,10 +15,7 @@ import { Input } from "@/components/ui/input"
 import { MeasurementNavigation } from "@/features/measurement-coverage"
 
 const measurementTitles = {"operation-cost-measurements":"동작 비용 측정","dispatch-occupancy-measurements":"분배 점유시간 측정"}
-function measurementTime(value:string|number) {
-  const date = new Date(value)
-  return Number.isFinite(date.getTime()) ? `${date.toLocaleString("ko-KR",{timeZone:"Asia/Seoul",dateStyle:"medium",timeStyle:"medium"})} KST · ${date.toISOString()} UTC` : "시각 없음"
-}
+const measurementTime = formatMeasurementTime
 function Phase({phase,quality=false}:{phase?:string;quality?:boolean}) {
   const state = measurementState(phase)
   return <span className="grid gap-1"><StatusBadge tone={quality?"warn":state.tone}>{quality?"품질 경고·사용 확인 필요":state.label}</StatusBadge>{quality&&<small>원본 상태: {phase??"미제공"}</small>}</span>
@@ -44,7 +41,7 @@ export function ProjectionMeasurementListPage({kind}:{kind:ProjectionMeasurement
       {key:"d",label:"분배 점유시간 d",value:(item:MeasurementProjection) => item.kind === "DispatchOccupancyMeasurement" ? <OccupancyDuration value={item.status.perRequestNanos}/> : "결과 없음"},
       {key:"x",label:"지속 완료 처리량 X",value:(item:MeasurementProjection) => item.kind === "DispatchOccupancyMeasurement" ? occupancyThroughput(item.status.throughput) : "결과 없음"},
     ]),
-    {key:"created",label:"등록 시각 (KST / UTC)",value:item => measurementTime(item.metadata.creationTimestamp),sortValue:item => item.metadata.creationTimestamp},
+    {key:"created",label:"등록 시각 (KST)",value:item => <time title={item.metadata.creationTimestamp}>{measurementTime(item.metadata.creationTimestamp)}</time>,sortValue:item => item.metadata.creationTimestamp},
   ]
   return <Screen width="data" actionPlacement="header" back={[`/measurements?namespace=${encodeURIComponent(namespace)}`,"측정"]} title={title} lede="이 저장 영역의 측정 조건과 기록된 결과를 조회해요. 새 측정을 제출하지 않아요.">
     <MeasurementNavigation namespace={namespace}/>
@@ -72,16 +69,16 @@ export function ProjectionMeasurementDetail({kind,namespace,name}:{kind:Projecti
   const probe = useChillQuery<MeasurementProjection>(path,{decoder:parseSchedulerJSON})
   const query = useChillQuery<MeasurementProjection>(path,{decoder:parseSchedulerJSON,poll:!probe.error && probe.data?.status.phase === "Measuring" && !measurementUIDMismatch(probe.data.metadata.uid,expectedUID)})
   const data = query.data, other = !!data && measurementUIDMismatch(data.metadata.uid,expectedUID), title = measurementTitles[kind]
-  return <Screen width="data" actionPlacement="header" back={[measurementListHref(kind,namespace),title]} title={other ? "같은 이름으로 다시 등록된 다른 측정이에요" : data ? measurementState(data.status.phase).label : title}
+  return <Screen width="data" actionPlacement="header" back={[measurementListHref(kind,namespace),title]} title={other ? "같은 이름으로 다시 등록된 다른 측정이에요" : title}
     status={other ? <StatusBadge tone="fail">다른 측정</StatusBadge> : data ? <Phase phase={data.status.phase} quality={data.kind==="DispatchOccupancyMeasurement"&&(occupancyDuration(data.status.perRequestNanos)+occupancyThroughput(data.status.throughput)).includes("품질 경고")}/> : undefined} lede={other ? "이전 자료로 사용할 수 없어요." : `${name} · ${namespace}`}>
     <MeasurementNavigation namespace={namespace}/>
     <QueryGate query={query}>{data && <>
       {!other && <>
-        {data.status.reason && <p className="notice break-words">측정 사유: {measurementReason(data.status.reason)}</p>}
+        {data.status.reason && <div className="notice break-words"><p>측정 사유: {measurementReasonSummary(data.status.reason)}</p><details><summary className="min-h-11 cursor-pointer py-2">사유 원문</summary><p>{data.status.reason}</p></details></div>}
         <Facts label="측정 대상" items={[["측정 종류",data.kind],["Node",data.node],["등록 시각",measurementTime(data.metadata.creationTimestamp)]]}/>
         {data.kind === "OperationCostMeasurement" ? <OperationResult data={data}/> : <OccupancyResult data={data}/>}
       </>}
-      <Facts label="원본 CR 식별자" items={[["이름",data.metadata.name],["저장 영역",data.metadata.namespace],["UID",data.metadata.uid],["resourceVersion",data.metadata.resourceVersion],["apiVersion",data.references.cr.apiVersion],["kind",data.references.cr.kind],["참조 저장 영역 / 이름",`${data.references.cr.namespace} / ${data.references.cr.name}`],["참조 UID",data.references.cr.uid]]}/>
+      <details><summary className="min-h-11 cursor-pointer py-2 text-sm">원본 CR 식별자</summary><Facts items={[["이름",data.metadata.name],["저장 영역",data.metadata.namespace],["UID",data.metadata.uid],["resourceVersion",data.metadata.resourceVersion],["apiVersion",data.references.cr.apiVersion],["kind",data.references.cr.kind],["참조 저장 영역 / 이름",`${data.references.cr.namespace} / ${data.references.cr.name}`],["참조 UID",data.references.cr.uid]]}/></details>
       {!other && <Rows label="원본"><RowDialog label="원본 자료" title={`${title} 원본`} description="조건과 저장된 결과의 안전한 projection이에요. 전체 CR이나 raw Evidence가 아니에요.">
         <SourceExport filename={`chill-${kind}-${name}.json`} value={{kind,namespace,name,expectedUID,queriedAt:new Date(query.dataUpdatedAt).toISOString(),units:{perRequestNanos:"ns/request",throughput:"req/s",durationSeconds:"s",durationNanos:"ns",wallJoules:"J (whole-node-wall)"},source:data}}/>
         <SourceJSON inline value={data}/>
@@ -106,10 +103,8 @@ function OperationResult({data}:{data:OperationCostMeasurement}) {
       const locations = result.key ? evidenceLocations(data.references.evidence.filter(location => location.key === result.key)) : []
       return <li key={index} className="grid gap-1">
         <StatusBadge tone={result.verdict === "Accepted" ? "ok" : "warn"}>{result.verdict === "Accepted" ? "채택" : "확인이 필요해요"}</StatusBadge>
-        <span>verdict: {result.verdict || "없음"}</span>
-        <span>동작 ID: {result.operationID || "기록 없음"}</span>
-        <span className="break-words">사유: {result.reason ? measurementReason(result.reason) : "기록 없음"}</span>
-        {locations.length ? <Locations locations={locations}/> : <><span>key: {result.key || "없음"}</span><p>위치 없음</p></>}
+        <span className="break-words">사유: {result.reason ? measurementReasonSummary(result.reason) : "기록 없음"}</span>{result.reason&&<details><summary className="min-h-11 cursor-pointer py-2">사유 원문</summary><p className="break-words">{result.reason}</p></details>}
+        <details><summary className="min-h-11 cursor-pointer py-2">근거 위치</summary><p>판정 원문: {result.verdict || "없음"}</p><p className="break-all">동작 ID: {result.operationID || "기록 없음"}</p>{locations.length ? <Locations locations={locations}/> : <p className="break-all">key: {result.key || "없음"} (위치 없음)</p>}</details>
       </li>
     })}</ul> : "아직 기록된 결과가 없어요"},
   ]
