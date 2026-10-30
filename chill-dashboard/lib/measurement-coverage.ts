@@ -28,7 +28,11 @@ export function coverageSelection(search:string,cell:{id:string;model:{uid:strin
 }
 
 // Only an architecture conflict proves that a path cannot run on this device.
-export function coveragePathVisible(cell:MeasurementCoverageCell) {
+export function coveragePathVisible(cell:MeasurementCoverageCell,inventory?:InventoryView) {
+  const model=inventory?.models.find(model=>model.uid===cell.model.uid) as CoverageModel|undefined
+  const cls=inventory?.classes.find(cls=>cls.uid===cell.deviceClass.uid)
+  const path=model?.spec.executionPaths.find(path=>path.name===cell.executionPath)
+  if(model&&path&&cls&&staticCompatibility(model,path,cls).state==="unsupported")return false
   return !cell.support.reasons.some(reason=>reason.code==="ArtifactArchitectureMismatch")
 }
 export function coverageWatts(cells:MeasurementCoverageCell[]) {

@@ -83,6 +83,8 @@ test("coverage hides architecture conflicts only, never declarations or measured
   assert.equal(coveragePathVisible(cell),true)
   assert.equal(coveragePathVisible({...cell,support:{...cell.support,verdict:"Incompatible",reasons:[{code:"RuntimeUnsupported",message:"runtime 미지원"}]}}),true)
   assert.equal(coveragePathVisible({...cell,support:{...cell.support,reasons:[{code:"ArtifactArchitectureMismatch",message:"아키텍처 불일치"}]}}),false)
+  assert.equal(coveragePathVisible(cell,inventory),true)
+  assert.equal(coveragePathVisible(cell,{...inventory,classes:[{...cls,architecture:"amd64"}]}),false)
 })
 test("batch slots preserve separate evidence, running, missing and unknown states",()=>{
   assert.deepEqual([1,2,4,8,16].map(batch=>coverageBatchState(cell.batchProgress,batch)),["complete","measured","running","missing","outside"])

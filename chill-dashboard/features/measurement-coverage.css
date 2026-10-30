@@ -1,7 +1,10 @@
+.screen:has(> .coverage-workspace) { gap:1rem; }
+.coverage-mobile-model { display:none; }
 .coverage-models { display:flex; flex-wrap:wrap; gap:.5rem; border-bottom:1px solid var(--border); }
 .coverage-models button { min-height:44px; padding:.6rem .9rem; border-bottom:3px solid transparent; text-align:left; overflow-wrap:anywhere; }
 .coverage-models button[aria-current="page"] { color:var(--primary); border-color:var(--primary); font-weight:700; background:var(--muted); }
-.coverage-toolbar { display:grid; gap:.75rem; }
+.coverage-toolbar { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:.75rem; }
+.coverage-toolbar > details[open] { grid-column:1 / -1; }
 .coverage-key { color:var(--muted-foreground); font-size:.8125rem; line-height:1.6; max-width:85ch; }
 .coverage-workspace { display:grid; grid-template-columns:minmax(0,1fr) minmax(300px,350px); gap:1rem; align-items:start; min-width:0; }
 .coverage-pivot { min-width:0; max-height:72vh; overflow:auto; border:1px solid var(--border); border-radius:.5rem; scrollbar-gutter:stable; }
@@ -63,8 +66,12 @@
  .coverage-cell { min-height:110px; border-color:var(--border); }
  .coverage-inspector { order:-1; position:static; max-height:none; width:100%; scroll-margin-top:1rem; }
  .coverage-inspector:has(.coverage-inspector-empty) { display:none; }
- .coverage-models { display:grid; grid-template-columns:1fr; }
- .coverage-models button { border-left:3px solid transparent; border-bottom:0; }
- .coverage-models button[aria-current="page"] { border-left-color:var(--primary); }
+ .coverage-models { display:none; }
+ .coverage-mobile-model { display:grid; gap:.4rem; font-size:.875rem; }
+ .coverage-mobile-model select { min-width:0; width:100%; border:1px solid var(--border); border-radius:.375rem; background:var(--background); padding:.5rem; }
+ .screen:has(> .coverage-workspace) .screen-head { display:grid; grid-template-columns:minmax(0,1fr) auto; }
+ .screen:has(> .coverage-workspace) .coverage-summary { gap:.4rem .75rem; padding:.75rem 0; }
+ .screen:has(> .coverage-workspace) .coverage-summary strong { font-size:1.125rem; }
+ .coverage-toolbar { grid-template-columns:1fr; gap:.25rem; }
  .coverage-actions li { display:grid; }
 }

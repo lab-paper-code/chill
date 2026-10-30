@@ -93,13 +93,14 @@ export function CoverageError({error,retry}:{error:ApiError|null;retry:()=>void}
 export function MeasurementCoveragePage() {
   const params=useSearchParams(),router=useRouter(),{config}=useSession(),namespace=params.get("namespace")??config.namespace
   const query=useMeasurementCoverage(namespace),data=query.data,trigger=useRef<HTMLButtonElement|null>(null)
+  const inventory=useCoverageInventory()
   const selected=data?.cells.find(cell=>cell.id===params.get("cell"))
   const models=[...new Map((data?.cells??[]).map(cell=>[cell.model.uid,cell.model])).values()].sort((a,b)=>a.name.localeCompare(b.name))
   const model=params.get("model")??selected?.model.name??models[0]?.name
   function update(key:string,value:string) {const next=new URLSearchParams(params.toString());if(value)next.set(key,value);else next.delete(key);router.replace(`?${next}`,{scroll:false})}
   function close(){router.replace(`?${coverageSelection(params.toString(),selected,false)}`,{scroll:false});trigger.current?.focus()}
   function select(cell:MeasurementCoverageCell,button:HTMLButtonElement){trigger.current=button;const next=coverageSelection(params.toString(),cell,true);next.set("model",cell.model.name);router.replace(`?${next}`,{scroll:false})}
-  const cells=(data?.cells??[]).filter(cell=>coveragePathVisible(cell)&&cell.model.name===model&&
+  const cells=(data?.cells??[]).filter(cell=>coveragePathVisible(cell,inventory.data)&&cell.model.name===model&&
     (!params.get("deviceClass")||cell.deviceClass.name===params.get("deviceClass"))&&
     (!params.get("status")||cell.assessment.displayStatus===params.get("status"))&&
     (!params.get("path")||cell.executionPath===params.get("path"))&&
@@ -109,14 +110,15 @@ export function MeasurementCoveragePage() {
   const classes=[...new Map(cells.map(cell=>[cell.deviceClass.uid,cell.deviceClass])).values()].sort((a,b)=>a.name.localeCompare(b.name))
   const batches=[...new Set([1,2,4,8,16,32,...(data?.scope.targetBatches??[])])].sort((a,b)=>a-b)
   const targets=params.get("batches")?.split(",").map(Number)??[]
-  return <Screen title="측정 커버리지" lede="모델을 고른 뒤 장치별 전력모드와 실행 경로를 비교하세요. 칸을 누르면 근거와 측정 요청을 열 수 있습니다." width="data" actionPlacement="header" action={<Button variant="outline" disabled={query.isFetching} onClick={()=>void query.refetch()}>갱신</Button>}>
+  return <Screen title="측정 커버리지" lede="모델별 측정 현황과 부족 배치를 확인하세요." width="data" actionPlacement="header" action={<Button variant="outline" disabled={query.isFetching} onClick={()=>void query.refetch()}>갱신</Button>}>
     <MeasurementNavigation active="coverage" namespace={namespace}/>
     {!data?<CoverageError error={query.isFetching?null:query.error} retry={()=>void query.refetch()}/>:<>
       <CoverageSummary data={data}/>
       <nav className="coverage-models" aria-label="모델 선택">{models.map(item=><button key={item.uid} aria-current={item.name===model?"page":undefined} onClick={()=>update("model",item.name)}>{item.name}</button>)}</nav>
+      <label className="coverage-mobile-model">모델<select value={model??""} onChange={event=>update("model",event.target.value)}>{models.map(item=><option key={item.uid} value={item.name}>{item.name}</option>)}</select></label>
       <div className="coverage-toolbar">
         <fieldset className="coverage-targets"><legend>목표 배치</legend><Button variant={!targets.length?"default":"outline"} onClick={()=>update("batches","")}>요청 범위</Button>{batches.map(batch=><Button key={batch} variant={targets.includes(batch)?"default":"outline"} aria-pressed={targets.includes(batch)} onClick={()=>update("batches",(targets.includes(batch)?targets.filter(value=>value!==batch):[...targets,batch]).sort((a,b)=>a-b).join(","))}>{batch}</Button>)}</fieldset>
-        <details><summary>표시 필터</summary><MeasurementFilters axes={[{key:"deviceClass",label:"장치",values:data.cells.map(cell=>cell.deviceClass.name)},{key:"path",label:"실행 경로",values:data.cells.filter(cell=>cell.model.name===model&&coveragePathVisible(cell)).map(cell=>cell.executionPath)},{key:"powerMode",label:"전력모드",values:data.cells.map(cell=>cell.powerMode)}]}/><div className="grid gap-3 sm:grid-cols-2"><label>Node<Input value={params.get("node")??""} onChange={event=>update("node",event.target.value)}/></label><label>CPU quota<Input value={params.get("cpu")??""} onChange={event=>update("cpu",event.target.value)}/></label></div></details>
+        <details><summary>표시 필터</summary><MeasurementFilters axes={[{key:"deviceClass",label:"장치",values:data.cells.map(cell=>cell.deviceClass.name)},{key:"path",label:"실행 경로",values:data.cells.filter(cell=>cell.model.name===model&&coveragePathVisible(cell,inventory.data)).map(cell=>cell.executionPath)},{key:"powerMode",label:"전력모드",values:data.cells.map(cell=>cell.powerMode)}]}/><div className="grid gap-3 sm:grid-cols-2"><label>Node<Input value={params.get("node")??""} onChange={event=>update("node",event.target.value)}/></label><label>CPU quota<Input value={params.get("cpu")??""} onChange={event=>update("cpu",event.target.value)}/></label></div></details>
       </div>
       <p className="coverage-key">배치 칸: ■ 기준 충족 / ▧ 측정됨 / ◷ 진행 / □ 부족 / ? 미확인 / — 목표 밖. 아키텍처 불가만 숨기며 실행 지원 미확인은 흐린 칸으로 남깁니다.</p>
       <div className="coverage-workspace">
@@ -141,7 +143,7 @@ export function MeasurementCoveragePage() {
 const batchSymbols={complete:"■",measured:"▧",running:"◷",missing:"□",unknown:"?",outside:"—"}
 function BatchBar({progress}:{progress:BatchProgress|null}) {
   const batches=[...new Set([1,2,4,8,16,32,...(progress?.target??[])])].sort((a,b)=>a-b)
-  return <span className="coverage-batch-bar" aria-label="배치별 측정 현황">{batches.map(batch=>{const state=coverageBatchState(progress,batch);return <span key={batch} className={`batch-${state}`} title={`배치 ${batch}: ${{complete:"기준 충족",measured:"측정됨",running:"진행",missing:"부족",unknown:"미확인",outside:"목표 밖"}[state]}`}><b aria-hidden="true">{batchSymbols[state]}</b>{batch}</span>})}</span>
+  return <span className="coverage-batch-bar" aria-label="배치별 측정 현황">{batches.map(batch=>{const state=coverageBatchState(progress,batch),label=`배치 ${batch}: ${{complete:"기준 충족",measured:"측정됨",running:"진행",missing:"부족",unknown:"미확인",outside:"목표 밖"}[state]}`;return <span key={batch} className={`batch-${state}`} title={label} aria-label={label}><b aria-hidden="true">{batchSymbols[state]}</b>{batch}</span>})}</span>
 }
 function CoverageCell({cell,selected,select}:{cell:MeasurementCoverageCell;selected:boolean;select:(cell:MeasurementCoverageCell,button:HTMLButtonElement)=>void}) {
   const representative=coverageRepresentative(cell)
@@ -176,11 +178,11 @@ function CoverageDetail({cell,namespace,close,visible}:{cell:MeasurementCoverage
   const params=useSearchParams(),router=useRouter(),panel=useRef<HTMLDivElement>(null)
   const variant=cell.variants.find(variant=>variant.id===params.get("variant"))??cell.variants.find(variant=>variant.id===coverageRepresentative(cell)?.variantId)??cell.variants[0]
   const progress=variant?.batchProgress??coverageProgress(cell),rows=variant?.resultRows??[],returnTo=`/measurements?${params}`
-  useEffect(()=>{if(window.matchMedia("(max-width: 767px)").matches)panel.current?.scrollIntoView({block:"start"})},[cell.id])
+  useEffect(()=>{panel.current?.focus({preventScroll:true});if(window.matchMedia("(max-width: 767px)").matches)panel.current?.scrollIntoView({block:"start"})},[cell.id])
   function choose(id:string){const next=new URLSearchParams(params.toString());next.set("variant",id);router.replace(`?${next}`,{scroll:false})}
-  return <div id="coverage-selected-condition" ref={panel} className="coverage-selected">
+  return <div id="coverage-selected-condition" ref={panel} tabIndex={-1} role="region" aria-label={`${deviceLabel(cell.deviceClass.name)} ${cell.powerMode} ${cell.executionPath} 상세`} className="coverage-selected">
     <header><h2>{deviceLabel(cell.deviceClass.name)}</h2><Button variant="outline" onClick={close}>닫기</Button></header>
-    <p className="font-semibold break-words">{cell.model.name}</p><p>{powerModeLabel(cell.powerMode,coverageWatts([cell]))}<br/>{cell.executionPath}</p>
+    <p className="font-semibold break-words">{cell.model.name}</p><p>선택 경로: {powerModeLabel(cell.powerMode,coverageWatts([cell]))}<br/>{cell.executionPath}</p>
     {!visible&&<p className="text-muted-foreground">이 조건은 현재 탭·필터 밖에 있습니다. 선택은 유지됩니다.</p>}
     <MeasurementStatus assessment={cell.assessment}/><TrustLine row={rows.find(row=>row.batch===1)??rows[0]}/>
     <Button asChild><Link href={coverageRequestHref(cell,namespace,returnTo,variant?.id,params.get("batches")?.split(",").map(Number)??[])}>이 조건으로 측정 요청</Link></Button>
