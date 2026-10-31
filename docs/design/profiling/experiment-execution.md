@@ -5,8 +5,8 @@
 
 ## 1. 범위와 하지 않는 것
 
-`edge.dacs.io/v1alpha1`, namespaced `EvaluationRun`은 E5 질문·조건·순서·비교 관계를 선언하고 실행 기록을 연결한다.
-기존 `cmd/profiler` manager에 EvaluationRun reconciler를 추가한다. ChillServer는 시험 대상이며 실행기를 넣지 않는다.
+`edge.dacs.io/v1alpha1`의 release namespace에 새 CR 세 개를 둔다. `LoadScenario`는 공유 부하 정의, `EvaluationRun`은 질문·조립·비교·단일 풀 세션, `EvaluationStage`는 원자 측정 한 행이다.
+기존 `cmd/profiler` manager에 EvaluationRun·EvaluationStage reconciler를 추가한다. ChillServer는 시험 대상이며 실행기를 넣지 않는다.
 현재 profiler는 Run/BEO/Baseline/PowerModeTransitionCost를 등록한다(`cmd/profiler/controller_setup.go:43–58`).
 **현재 OperationCost·DispatchOccupancy 실행은 ChillServer의 `SchedulerController.Admit` 안에 있다**(`internal/serving/kube/admission.go:114–116,249–259`).
 EvaluationRun의 profiler 배치는 이 현황을 일반화한 것이 아니라 측정 주체와 시험 대상의 생명주기를 분리하는 결정이다.
@@ -21,23 +21,28 @@ Katib는 탐색, Tekton은 CI가 주목적이고 Argo는 현재 고정 순서보
 ## 2. 구성요소와 소유
 
 ```mermaid
-flowchart LR
-  E[EvaluationRun CR] --> P[profiler: 측정 주체\n순서·Job 채택·상태]
-  P -->|생성·관측| H[단발 하네스 Jobs\nfactor / stage / judge / cleanup / finish / 표·게시]
-  H -->|공개 설정·복원 API| C[ChillServer: 시험 대상]
-  H -->|생성·GO·로그·종료 관측| L[기존 load-generator Jobs]
-  P -->|Kubernetes API: 선언된 장애 주입| K[시험 대상 Pod / Node]
-  H -->|Kubernetes API: 전력모드 label 요청| K
-  L -->|infer 요청| C
-  C -->|raw observation API| H
-  P -->|실행 기록| S[(Evidence Store)]
-  H -->|단계 증거·판정·표·불변 게시| S
-  S -->|게시물만 조회| C
-  C -->|실험 조회 API| D[Dashboard]
+flowchart TD
+  U[사용자] --> L[LoadScenario: 불변 공유 부하]
+  U --> E[EvaluationRun: 질문·조립·풀 세션]
+  E -->|controller ownerReference / 순차 생성| S[EvaluationStage: 원자 측정 행]
+  E -.->|name + UID / prepare snapshot| L
+  S -.->|name + UID / snapshot 사용| L
+  E --> G[prepare / finish / publish Jobs]
+  E --> W[실행 PVC / immutable input·config CM]
+  S --> J[factor / stage / judge / cleanup Jobs]
+  S --> P[producer Jobs]
+  S -->|typed 주입 / UID 제한 API| K[시험 대상 Pod / Node]
+  J -->|공개 API| C[ChillServer: 시험 대상]
+  P -->|infer| C
+  J --> B[(불변 단계 증거 / StartState)]
+  G --> B
+  B --> F[최종 게시: EvaluationRun UID]
+  F --> C
+  C --> D[Dashboard]
 ```
 
 그림은 논리적 연결이며 기본/Profiler Helm profile의 결합 배포도나 live 상태 증명이 아니다.
-controller는 순서·결정적 Job 채택·compact status와 선언된 장애 주입만 소유한다. 단계 프로토콜·실시간 부하 관측·계산은 기존 하네스가 소유한다.
+부모 controller는 풀·순서·자식 채택·끝 정리·게시, 자식 controller는 단계 Job·producer·주입·compact status를 소유한다. 단계 프로토콜·실시간 부하 관측·계산은 기존 하네스가 소유한다.
 하네스는 `hack/e5` Python과 기존 prebuilt power reducer·publish bridge를 담은 **새 이미지**다. runtime 7 이미지에 속하지 않는다.
 이미지 digest와 harness source SHA를 동결하고 Job 안에서 빌드·git archive·토큰 발급을 하지 않는다.
 부하는 기존 workload별 `batch/v1` Job 형태를 쓰며 `backoffLimit: 0`, `restartPolicy: Never`를 유지한다.
@@ -45,36 +50,46 @@ controller는 순서·결정적 Job 채택·compact status와 선언된 장애 �
 이 설정만으로 Pod 단일 실행·exactly-once를 보장하지 않는다. 선택한 정확한 producer Pod UID에만 GO를 보내며 중복/교체 Pod와 불변 저장 충돌을 성공으로 숨기지 않는다.
 Job 성공만으로 증거 완료를 선언하지 않는다.
 
-## 3. EvaluationRun spec
+## 3. 객체별 spec과 값 타입
 
-아래는 새 필드 설계다. 기존 round JSON을 그대로 CR에 넣거나 로컬 경로를 유지하는 계약이 아니다.
-`spec` 전체에 ProfilingRun과 같은 CEL `self == oldSelf`를 둔다. 실행 전 수정도 거절하며 정정은 새 CR이다.
-생성 경계에서 필수 구조·수치 범위·단계 ID 유일성·비교/주입 참조의 의미를 한 번 검증한다. 하위 소비자가 같은 검증을 반복하지 않는다.
-실제 신원·가용성 관측은 준비 단계의 책임이다. 한 값만 허용하는 policy 필드나 사용자 지정 실행 명령은 만들지 않는다.
+세 CR 모두 spec 전체에 CEL `self == oldSelf`를 둔다. 실행 전 수정도 거절하며 정정은 새 CR이다.
+생성 경계에서 필수 구조·수치 범위·ID 유일성·비교/주입 참조를 한 번 검증한다. 실제 신원·가용성은 prepare에서 관측한다.
+`PinnedRef`는 Workload만 `{name,uid,generation}`, 불변 CR은 `{name,uid}`다. 기존 cluster-scoped Workload 외 cross-namespace 참조는 없다.
+공유 카탈로그/입력에 consumer ownerReference를 두지 않는다. LoadScenario에는 status도 없다.
 
-| 새 spec 필드 | 내용 | 실제 round/binding 입력 대응 |
+| 객체 | spec 필드 | 내용·기존 입력 대응 |
 |---|---|---|
-| `question` | 답할 질문과 평가 목적 | 현재 외부 실험 설명; 새 명시 필드 |
-| `target.components[]` | 구성요소 이름, 배포 리소스 참조, 기대 image digest·source SHA | `sourceSHA`, `release`, 배포 receipt의 구성요소별 신원 |
-| `harness` | 하네스 이미지 digest·source SHA | `harnessSHA`; 기존 frozen harness 디렉터리 대체 |
-| `loadGenerator` | 이미지·source 신원, 자원·shard·도착 분포·barrier 설정 | binding의 producer 신원·설정 |
-| `powerMeasurement` | 장비 신원·대상 Node UID·계열 선택·측정 설정 | binding의 meter/collection 설정; 접속 비밀 제외 |
-| `workloads[]` | 이름·UID·generation, 적용 SLO(`percentile`·`targetLatencyNanos`) | binding의 workloads·동결 SLO; 별도 단위 필드 없음 |
-| `control` | scheduler 설정과 제어요소 스위치 | `h` → `scaleDownHeadroomFraction`, 선택 `minimumDemand` UID→비음수 값 |
-| `inputs` | trace·seed·κ 등 `{store,key,size}` 불변 참조 | `rateBasis`/seed → `rateBasisRef`·`traceRefs`·`seedRef`; `kappa.reuseRows` → `kappaRef` |
-| `stages[]` | 순서 있는 ID, 모드(자율/고정/제어요소 비활성), 시나리오, 길이, 설정·`startState` | `rows`, binding schedule/factors; `restoreOriginTag` → 증거 참조 또는 앞 단계 결과 참조; `rowTag`는 표시용 label |
-| `comparisons[]` | 양쪽 stage ID 또는 과거 실행 UID·stage·결과 참조, 비교 이유 | `compareTags`/`compareOrigins` → 명시적 비교 관계; tag로 경로 추측 금지 |
-| `failureInjection[]` | stage ID, 기준 시각·offset, 대상 선택 규칙, 동작/선행 주입 참조 | `failureInjection:true`·bound runbook → 구체 계획(§7) |
-| `judgment` | SLO·생성기 품질·에너지/전력 완전성의 적용 설정 | binding 판정 정책·collection 조건; 공식 변경 없음. 규칙 선택자는 두지 않고 하네스가 실제 규칙 신원을 결과에 기록 |
-| `evidenceStore` | 입력과 별도로 실행 증거를 쓸 logical store | `run`/`evidence` 로컬 경로 대체; 키 규칙은 §8 |
+| LoadScenario | `workloads[]` | Workload 이름·UID·generation의 유일 정본. SLO는 그 generation의 적용 정의에서 얻음 |
+| LoadScenario | `parts[]` | ID·durationSeconds·workload별 `rates` 또는 `alpha`(배타). 길이/부하는 stage에서 override 불가 |
+| LoadScenario | `arrivalDistribution`, `traceRefs`, `seedRef`, `payloadManifestRef` | 고정 부하·입력 증거 `{store,key,size}`. Dataset은 Workload.datasetRef가 고정하므로 별도 dataset 참조 없음 |
+| LoadScenario | `rateBasisRef`, `kappaRef` | alpha 해석 시 필수인 고정 기준·κ 증거 |
+| EvaluationRun | `question`, `target` | 질문·목적; 구성요소별 리소스 참조·기대 image digest·source SHA |
+| EvaluationRun | `harness` | 이미지 digest·source SHA. 과학 신원으로 **spec에만** 두며 운영 ConfigMap에는 없음 |
+| EvaluationRun | `loadGenerator`, `powerMeasurement` | 생성기 이미지·source·자원·shards·barrier; 장비 신원·Node UID·계열·sampling |
+| EvaluationRun | `control` | 공통 기본 ControlSettings: named switches·scaleDownHeadroomFraction·minimumDemand |
+| EvaluationRun | `judgment`, `evidenceStore` | 생성기 품질(lateness 등)·에너지 coverage; 실행 증거 logical store. **SLO 복사본 없음** |
+| EvaluationRun | `stages[]`, `comparisons[]` | 순서 있는 StageTemplate; 양쪽 stageID 또는 historical runUID/stageID/resultRef와 비교 이유 |
+| EvaluationStage | `stageID`, `row`, `mode`, `loadScenarioRef` | 사용자 ID, 기존 E5 행 라벨(`scenario` 아님), autonomous/fixed/controls-disabled, 불변 부하 참조 |
+| EvaluationStage | 완성 `control`·실행 맥락 | target/harness/generator/power/judgment/store와 동결 운영 CM·snapshot 참조 |
+| EvaluationStage | `startState.evidenceRef`, `failureInjection[]` | 해석 완료 시작 증거와 typed 주입 계획. `evaluationRef` 없이 controller ownerReference가 부모 정본 |
 
-`startState`는 외부 불변 `evidenceRef` 또는 같은 실행의 앞선 `stageResultRef` 중 하나다. 뒤 단계/자기 참조는 생성 경계에서 거절한다.
-예를 들어 E5-3 창 끝에서 동결한 static 선택을 다음 단계가 참조한다(`hack/e5/e5.py:1647–1653,2158–2159`). 실제 결과 key/size는 생산 뒤 status/증거에 기록하며 spec을 바꾸지 않는다.
+| 값 타입(별도 CR 아님) | 계약 |
+|---|---|
+| StageTemplate | id·row·mode·loadScenarioRef·선택 control·startState·failureInjection; 부모 spec의 조립 입력 |
+| ControlSettings / TargetIdentity / Judgment / Generator / PowerMeasurement | 제어·대상·판정·생성기·장비 타입 경계이며 독립 status/수명 없음 |
+| FaultInjectionPlan / Record | 자식 spec의 불변 계획 / status의 compact 실행 기록; 상세는 불변 증거 |
+| StartState / StageResult | conditional-create 불변 증거. state+settings·생산 run/stage UID·관측 시각·출력 참조 보존 |
+
+builder 한 곳에서 부모 공통 값과 template을 합성한다. template control이 있으면 완성 설정으로 대체하며 숨은 부분 merge는 없다.
+`startState`의 외부 evidenceRef 또는 앞선 stageID/output 중 하나를 받고, 자기/뒤 참조는 거절한다.
+부모는 앞 단계 output을 실제 store/key/size로 해석한 뒤 완성 자식을 생성한다. 생성 뒤 자식 spec은 바꾸지 않는다.
+동일 LoadScenario UID는 동일 선언 부하다. “같은 부하” 주장은 generator 설정도 같아야 하며 실제 발행·성공은 별도 단계 증거로 판단한다.
+SLO·서버 버전·스위치는 LoadScenario에 넣지 않는다. Workload generation 불일치를 현재 값으로 치환하지 않는다.
 
 `environment*.json`의 토큰·CA·endpoint·host path는 spec 밖이다. release namespace의 고정 ConfigMap `chill-evaluation-config`와 Secret·Job 전달 binding으로 주입한다.
 `binding`의 과학적 조건은 위 필드·불변 입력으로 옮기고 `control` 번호·로컬 실행 폴더는 신원으로 쓰지 않는다.
 `preparationStatus`/`scoreboardInputs` 같은 운영 보조 파일을 필수 실행 계약으로 승격하지 않는다.
-대기/정리 상한·Job 실행 예산·수집 크기/용량 한계·하네스 image digest/source SHA·SA/Secret 이름·SSH 접속값·StorageClass/PVC 크기·API URL 등 운영 값은 **ConfigMap `chill-evaluation-config`**에서 선택한다.
+대기/정리 상한·Job 실행 예산·수집 크기/용량 한계·SA/Secret 이름·SSH 접속값·StorageClass/PVC 크기·API URL 등 운영 값은 **ConfigMap `chill-evaluation-config`**에서 선택한다.
 controller가 실험 시작 시 직접 GET하여 실제값과 ConfigMap 이름·UID·resourceVersion을 `status.frozenConfig`와 실행 증거에 동결한다. operator·profiler flag는 변경하지 않는다.
 [ADR 0031](../../adr/0031-configuration-ownership-and-freezing.md)에 따라 실행 중 재조회로 값을 바꾸지 않는다. 프로토콜 상수는 policy knob로 만들지 않는다.
 
@@ -82,10 +97,10 @@ controller가 실험 시작 시 직접 GET하여 실제값과 ConfigMap 이름·
 
 `status.observedGeneration`과 type-keyed `[]metav1.Condition`(`listType=map`, `listMapKey=type`)을 둔다.
 각 condition은 `status`, `reason`, `message`, `observedGeneration`, `lastTransitionTime`을 쓴다.
-현재 stage/절차, 시작·종료 시각, 기대·관측 신원, 생성 Job/Pod의 이름·UID, 점유 실험 UID, 잔류 예약, 증거 참조만 status에 둔다.
-raw·로그 본문·접속 비밀은 넣지 않는다. 단계별 결과·reason·시각·참조의 정본은 stage별 `procedures[]`이며 최종 이력은 불변 실행 증거로 보존한다.
-실험 단위 `startedAt`와 현재 Job 참조로 점유를 나타낸다. 운영자 해제 annotation의 원 값·처리 시각·확인 증거 참조도 status에 남긴다(§6).
-완료 condition은 아래 다섯 개만 둔다. 미실행은 `Unknown/NotStarted`다. 증거 완료는 별도 condition 대신 검증된 최종 증거 참조로 표현한다.
+부모 status에는 frozenConfig·workspace(PVC name/UID)·currentStage·childRefs(name/UID)·전역 절차·시각·잔류·release 기록을 둔다.
+자식 status에는 Job/Pod name·UID, goRef, injection 기록, outputs/resultRef·잔류와 `procedures[]`를 둔다. **단계 procedures 정본은 자식**이며 부모에 본문을 복제하지 않는다.
+raw·로그 본문·접속 비밀은 넣지 않는다. 부모 startedAt가 점유를 나타내며 운영자 해제 annotation 원 값·처리 시각·증거도 부모에 남긴다.
+부모 condition은 아래 다섯 개다. 미실행은 `Unknown/NotStarted`, 증거 완료는 검증된 참조로 표현한다.
 
 | Condition | True의 뜻 | False 또는 대기 reason 예 |
 |---|---|---|
@@ -95,6 +110,8 @@ raw·로그 본문·접속 비밀은 넣지 않는다. 단계별 결과·reason�
 | `CleanupComplete` | 원래 제어 설정 복구·자기 자원 반환 확인 | `ReturnTimeout`, `ResetWaitTimeout`, `ResidualState`, `OwnedJobNotFound`, `ObservationUnavailable` |
 | `Published` | 최종 게시 저장 완료 | `EvidenceStoreFailed`, `PublicationFailed`, `PublicationConflict` |
 
+자식 condition은 `ExecutionComplete`, `MeasurementPassed`, `StageCleanupComplete` 세 개뿐이다. 마지막은 해당 단계 producer 정리 확인이며 원 설정 복구·풀 반환을 뜻하지 않는다.
+부모 MeasurementPassed는 자식 원 판정을 집계한다: INVALID 하나라도 있으면 INVALID, 아니면 NOT_EVALUATED가 있으면 Unknown/NOT_EVALUATED, 아니면 FAIL 하나라도 있으면 FAIL, 모두 PASS면 PASS다.
 세 완료 축은 `ExecutionComplete`, `MeasurementPassed`와 원 판정값(`PASS/FAIL/INVALID/NOT_EVALUATED` 등), `CleanupComplete`다.
 SLO FAIL은 판정 완료된 측정 불합격이고, 수집기 종료·JSON 읽기 실패는 수행 오류다. 작업 완료·Job 성공을 PASS로 바꾸지 않는다.
 절차별 reason은 준비의 `MissingInput/FrozenInputInvalid/TargetUnavailable/IdentityMismatch/EvidenceNotVisible/CollectorFailed`, 복원의 `RestoreFailed/ResetWaitTimeout/RemoteEffectUnknown`, 부하의 `ExecutionLost/IdentityMismatch`, drain의 `DrainTimeout/ObservationUnavailable`, 수집·판정의 `EvidenceUnreadable/EvidenceCapacityInsufficient/EvidenceStoreFailed/JudgmentFailed`로 원 오류와 연결한다.
@@ -103,8 +120,8 @@ Job NotFound는 정확한 UID·조회 사실을 보존한다. 다른 UID를 삭�
 
 ## 5. 단계별 동작과 기존 하네스 연결
 
-각 `stages[]`는 준비 → 복원 → 부하 → drain → 수집 → 판정 → 단계 정리 순서다. 단, 부하·drain·수집은 기존 `e5.py stage` **한 Job 안에서** 이어진다.
-controller는 `hack/e5/evaluation.py` adapter를 UID·stage·절차로 결정한 이름의 단발 Job으로 내보낸다. adapter는 기존 `e5.py` 계산·단계 함수를 재사용하며 `Round` 클래스를 통째 import하지 않는다.
+부모 prepare는 실행당 한 번이다. 각 EvaluationStage는 복원 → 부하 → drain → 수집 → 판정 → 단계 정리이며 부하·drain·수집은 기존 `e5.py stage` **한 Job 안에서** 이어진다.
+자식이 factor/stage/judge/cleanup·producer Job을 소유하고 **Job ownerRef는 Stage UID**다(Pod는 Job 소유). prepare/finish/publish Job·PVC·input/config CM은 EvaluationRun 소유다. adapter는 기존 함수를 재사용하며 `Round`를 통째 import하지 않는다.
 아래 공개 API 열은 **Job 안의 e5.py가 사용하는 인터페이스**다. controller가 부하 로그·GO·drain 프로토콜을 직접 소유하지 않는다.
 줄 번호는 설계 시점 소스다. 기존 운영 attempt의 `*.command.json`은 의미 비교 근거이며 새 argv 계약은 아래 §5.1이다.
 
@@ -126,7 +143,7 @@ controller는 `hack/e5/evaluation.py` adapter를 UID·stage·절차로 결정한
 기존 `CPO.run` 예외의 자동 설정 복구(`hack/e5/e5.py:2003–2014`)는 Job 실행 경로에서 끈다. 오류 뒤 자동 reset·uncordon·후속 측정은 하지 않는다.
 작업 폴더는 실행별 RWX PVC(`rook-cephfs`)의 `/work/campaign/run`이며 기존 증거 저장 PVC를 재사용하지 않는다.
 하네스 Job은 실행별 RWX 작업 PVC의 같은 경로에서 앞 절차 산출을 이어받는다. 각 절차 종료 시 그 절차의 새 산출·시점 스냅샷을 `experiments/<UID>/...`에 conditional create로 저장하고 검증된 작은 결과 참조를 기록한다. 가변 phase/commands 파일은 절차별 다른 key로 보존하며 덮어쓰지 않는다. PVC 손실은 자동 재측정/새 Job 복원을 허용하지 않고 ExecutionLost/증거 실패로 남긴다.
-PVC는 가변 작업 상태, store는 불변 증거 정본이다. 반환 미확인 동안 finalizer가 Job/PVC GC를 막으며 증거 업로드 실패 시 PVC를 보존한다.
+PVC는 가변 작업 상태, store는 불변 증거 정본이다. controller는 반환 미확인 동안 Job/PVC를 의도적으로 정리하지 않으며 증거 업로드 실패 시 PVC를 보존한다. GC 지원 범위는 §6과 같다.
 controller와 Job의 단계 증거는 `experiments/<UID>/stages/<stageID>/...`에 `ImmutableWriter`로 저장한다. 기존 publish bridge는 중간 저장/전달에 쓰지 않는다.
 부하 Job은 재시작과 무관하게 sampler·GO·drain·수집을 계속한다. 주입용 GO 시각은 한 번 쓰는 진행 증거로 노출하고 실제 producer별 시작과 구분한다.
 실행 중 genesis1 producer cgroup 표본은 사전 GO 검사·종료 counter·판정에 필요하며 현재 SSH + sudo crictl을 쓴다(`hack/e5/e5.py:1717–1741,1919–1938`).
@@ -136,36 +153,41 @@ node-agent는 producer Pod를 대상으로 선택하지 않고 공개 raw에도 
 
 ### 5.1 하네스 Job 계약
 
-- argv: `python3 /opt/e5/hack/e5/evaluation.py <prepare|factor|stage|judge|cleanup-jobs|finish|publish> --run /work/campaign/run --spec /spec/spec.json [--stage <stageID>]`. stage 인자는 factor/stage/judge/cleanup-jobs에 필수, prepare/finish/publish에는 금지다. spec.json은 spec만, execution.json은 UID/generation, config.json은 동결 운영값이며 `/spec`은 immutable ConfigMap RO, `/work`는 실행 PVC RW다.
-- 결과 JSON: `{schemaVersion:"evaluation-step.v1alpha1",runUID,generation,stageID?,step,execution:{status,reason},measurement:{verdict,reason}?,cleanup:{status,reason}?,startedAt,finishedAt,artifacts:[{store,key,size}]}`. 로컬 `results/prepare.json`, `results/stages/<id>/<step>.json`, `results/{finish,publish}.json`은 편의 사본이며 store의 절차별 `result.json`을 독립 load한다. 큰 judgment 본문은 result/status 밖의 artifact다.
+- argv: `python3 /opt/e5/hack/e5/evaluation.py <prepare|factor|stage|judge|cleanup-jobs|finish|publish> --run /work/campaign/run --spec /spec/spec.json [--stage <stageID>]`. stage 인자는 factor/stage/judge/cleanup-jobs에만 필수다. spec.json은 해당 소유자 spec(단계는 완성 StageSpec), execution.json은 부모/자식 UID·generation과 snapshot 연결, config.json은 동결 운영값이다. `/spec`은 immutable CM RO, `/work`는 실행 PVC RW다.
+- 결과 JSON: `{schemaVersion:"evaluation-step.v1alpha1",runUID,generation,stageUID?,stageID?,step,execution:{status,reason},measurement:{verdict,reason}?,cleanup:{status,reason}?,startedAt,finishedAt,artifacts:[{store,key,size}]}`. 로컬 `results/prepare.json`, `results/stages/<id>/<step>.json`, `results/{finish,publish}.json`은 편의 사본이며 store result를 독립 load한다. 큰 judgment는 artifact다.
 - exit code: **0**=절차·필수 불변 업로드 완료(PASS 아님), **1**=수행/입력/관측/업로드 오류 또는 효과 불명, **2**=명시 측정 INVALID 등 판정 완료(result 있음). Job 성공/실패나 exit 2만으로 MeasurementPassed를 정하지 않으며 신호·Pod 교체·Job retry로 자동 재실행하지 않는다.
-- Job 이름: `eval-<UID full lowercase without hyphens>-s<zero-based ordinal 3digits>-<prepare|factor|stage|judge|cleanup|finish|publish>`(≤63자, global 절차 ordinal=000, cleanup argv는 cleanup-jobs). 불변 label 3개는 `edge.dacs.io/evaluation-run-uid`, `edge.dacs.io/evaluation-stage`(stageID 또는 run), `edge.dacs.io/evaluation-step`이며 `edge.dacs.io/workload-role=system`도 붙인다. owner UID·동결 args/image/SA/PVC/spec/config를 확인해 채택한다.
+- Job 이름: 부모는 `eval-<runUID lowercase without hyphens>-<prepare|finish|publish>`, 자식은 `eval-<stageUID lowercase without hyphens>-<factor|stage|judge|cleanup>`(≤63자, cleanup argv는 cleanup-jobs). producer도 Stage UID+workload ordinal로 결정한다. labels는 `edge.dacs.io/evaluation-run-uid`, `edge.dacs.io/evaluation-stage`(stageID 또는 run), `edge.dacs.io/evaluation-step`, `edge.dacs.io/workload-role=system`이며 단계에는 stage UID도 기록한다. 소유자 UID·동결 args/image/SA/PVC/spec/config 확인 후 채택한다.
 - SA: `chill-evaluation-action`은 prepare/factor/stage/cleanup/finish, `chill-evaluation-publish`는 judge/publish(automount=false)에 사용한다. stage만 SSH Secret을 mount하며 모든 Job은 backoffLimit=0, parallelism/completions=1, restartPolicy=Never, bounded activeDeadlineSeconds다.
-- store key: `experiments/<UID>/preparation/...`, `experiments/<UID>/stages/<stageID>/<step>/...`, `experiments/<UID>/finish/...`, `experiments/<UID>/injections/<id>/...`; 가변 파일은 절차별 snapshot key에 쓰고 작은 `result.json`을 마지막에 쓴다. stage GO는 `experiments/<UID>/stages/<id>/go.json`에 한 번, 주입 응답은 `experiments/<UID>/injections/<id>/result.json`에 쓴다. 충돌은 동일 바이트 회복 없이 실패다. 최종 bridge는 `serving/experiments.v1alpha1/<UID>/{execution.json,evidence-index.json,summary.json}`만 쓰며 summary가 마지막이다.
+- store key: `experiments/<runUID>/preparation/...`, `/stages/<stageID>/<step>/...`, `/finish/...`. 단계 GO는 `/stages/<stageID>/go.json`, 주입 응답은 `/stages/<stageID>/injections/<id>/result.json`이다. **child UID는 경로에 넣지 않고 result에 기록**한다. 가변 파일은 절차별 snapshot key, 작은 result는 마지막 쓰기이며 충돌은 실패다. 최종 bridge는 `serving/experiments.v1alpha1/<runUID>/{execution.json,evidence-index.json,summary.json}`만 쓰며 summary가 마지막이다.
 
 ## 6. 상호 배제와 재시작
 
 **전제: profiler leader election을 켠다.** 바이너리 `--leader-elect` 기본은 false(`cmd/profiler/options.go:98`)지만 Helm `profiler.leaderElection`은 이미 true다(`charts/chill/values.yaml:74`).
-leader election이 꺼지면 **EvaluationRun reconciler만 등록하지 않는다**. 기존 Run 등 다른 controller의 기동을 막지 않는다. 같은 풀은 기존 election ID를 사용하며 별도 실험 Lease는 없다.
-풀 배제 근거는 leader election + 단일 worker + **캐시 아닌 최신 EvaluationRun 목록 읽기**다(`cmd/profiler/main.go:52–57`의 캐시 제외 선례). 메모리 큐를 점유 장부로 쓰지 않는다.
+leader election이 꺼지면 **EvaluationRun·EvaluationStage reconciler를 등록하지 않는다**. 기존 controller 기동은 막지 않는다. 같은 풀은 기존 election ID를 쓰며 별도 실험 Lease는 없다.
+풀 점유·finish·release·게시는 **부모만** 소유한다. 풀 배제 근거는 leader election + 단일 worker + **캐시 아닌 최신 EvaluationRun 목록**이며 메모리 큐는 점유 장부가 아니다.
 실험 시작 때만 resourceVersion 조건부 status 갱신으로 `startedAt`·점유를 한 번 기록한다. 충돌·결과 불명확이면 목록을 다시 읽는다. **명령별 선점 장부는 두지 않으며 이 갱신을 풀 전체 fencing이라고 부르지 않는다.**
 실행 중이거나 반환 미확인 실행이 있으면 다음을 시작하지 않는다. 대기는 생성 시각 오름차순, 동률만 이름·UID로 고정한다. 점유 UID와 `PoolBusy`를 표시하며 우선순위·재정렬은 없다.
 leader election은 퇴임 leader의 늦은 명령을 차단하는 fencing이 아니다. 이 한계를 유지하며 leader 획득·관측 실패·프로세스 종료를 반환으로 보지 않는다.
 기존 ChillServer admission/예약이 실제 물리 자원을 소유한다. 실행 직렬화가 이를 대신하거나 강제로 해제하지 않는다.
 
 재개는 기존 profiler의 결정적 Job 이름 **Get / Create의 AlreadyExists 채택** 패턴을 쓴다(`internal/profiling/profiler/controller/execution_job.go:61–97`).
-owner EvaluationRun UID·단계/절차 label·동결 실행 설정을 확인해 같은 Job을 채택한다. 생성 응답 소실/아직 status UID 미기록만으로 새 이름의 Job을 만들거나 곧바로 실행 불명이라 단정하지 않는다.
+부모는 결정적 자식 이름·controller owner UID·완성 spec을 확인해 생성 응답 소실을 채택한다. 기록 child UID 소실/교체는 ExecutionLost이며 재측정 자식을 만들지 않는다. Job도 해당 부모/Stage owner UID·절차 label·동결 설정을 확인해 채택한다.
 기록한 Job이 없어졌으면 `ExecutionLost`로 끝내며 대체 Job을 만들지 않는다(`internal/profiling/profiler/controller/run_reconciler.go:91–98`). 기존 Job/증거가 확정한 경계에서만 다음 절차로 간다.
 이미 시작한 stage Job은 기존 producer를 관측한다. Job/Pod 교체·부분 GO·GO 응답 소실·응답 없는 reset/prepare 등 효과가 불확실하면 중단하고 원 사유·잔류 신원·할당·소유·예약·마지막 관측을 보존한다([ADR 0023](../../adr/0023-resource-ledger.md)).
 관측 재조회/Job 채택과 측정 재시도는 다르다. 자동 재측정·자동 물리 복구는 없다. Job 실패 시 후속 stage를 시작하지 않는다.
 정리 상한 초과는 실패이며 점유를 유지하지만 이미 확보한 측정 결과·정리 실패의 최종 게시는 허용한다.
-삭제 요청도 점유를 우회하지 못하도록 EvaluationRun finalizer를 유지한다. ownerReference/GC는 반환 확인 전 진행 중 Job을 지우는 경로로 쓰지 않는다.
+부모는 실행 중 자식이 있으면 다음 자식/finish를 내보내지 않는다. StageCleanupComplete·Job 종료·부모 삭제 요청은 풀 반환이 아니다.
+외부 효과(Job 생성·주입) 직전 자식은 **APIReader(비캐시)**로 부모를 읽어 풀 점유 중이며 자신이 기록된 active child인지 확인한다. fencing 보장이라고 주장하지 않는다.
+단독 Stage는 금지다. controller EvaluationRun owner가 없거나 부모가 다른 child UID를 기록하면 terminal `ParentRequired`; 부모가 아직 자신의 UID를 미기록했으면 생성 응답 소실을 고려해 requeue 대기한다.
+부모 deletionTimestamp 이후 새 자식은 만들지 않고 진행 중 자식은 단계 정리 경계까지 진행한다. 자식은 이를 위한 점유·active child 확인을 계속한다.
+**background 삭제만 지원**한다. foreground/orphan 삭제로 Job이 사라지면 ExecutionLost·잔류를 기록하며 finalizer가 Job 보존을 보장한다고 주장하지 않는다.
+부모 finalizer는 풀 반환·전역 보존, 자식 finalizer는 단계 증거·잔류 기록만 맡는다. 서로의 삭제 완료를 기다리는 순환은 금지하며 TTL 자동 GC도 쓰지 않는다.
 운영자는 잔류 정리·풀 반환뿐 아니라 이전 발행 주체/진행 중 명령이 더 이상 작용하지 않음을 확인한 뒤 metadata의 `edge.dacs.io/evaluation-release` annotation으로 해제를 요청한다.
 annotation에는 사유·시각·확인 증거 참조를 담는다. controller가 실제 반환을 관측하고 원 요청·처리 시각·증거를 status에 기록한 뒤 점유를 해제한다. spec은 불변이며 CleanupComplete 실패/측정 결과를 성공으로 고치지 않는다.
 
 ## 7. 장애 주입
 
-spec의 주입 기준은 **stage Job이 producer GO를 보낸 직후 기록한 GO 시각**(`hack/e5/e5.py:1976`)과 `offsetSeconds`다. drain 뒤 확정하는 producer 최소 start(`:1988`)로 기준을 바꾸지 않는다.
+주입은 **EvaluationStage spec의 FaultInjectionPlan**과 **status의 FaultInjectionRecord**다. 자식 controller가 수행한다. 기준은 stage Job의 producer GO 직후 별도 보존한 GO 시각과 offsetSeconds이며 drain 뒤 producer 최소 start로 바꾸지 않는다.
 허용 지연 창·snapshot 유효 기간은 `chill-evaluation-config`에서 선택해 실행 시작 시 동결한다. 예정 시각·발송·응답·효과 관측 시각과 개별 producer start를 구분하며 정확한 순간의 효과를 보장하지 않는다.
 재시작/관측 지연으로 허용 창을 놓쳤으면 늦게 수행하지 않고 `INVALID/InjectionInvalid`로 남긴다. full/micro의 과거 offset을 controller 상수로 넣지 않는다.
 직전 GET `/api/v1/scheduler/state`와 같은 관측 창의 `/api/v1/observations/load`를 근거로 선택한다.
@@ -180,6 +202,8 @@ uncordon은 앞선 주입의 같은 Node에만 적용한다. 실제 요청 metho
 
 [Evidence Store](components/evidence-store.md)의 logical store/opaque key/size와 conditional-create, bounded 독립 읽기를 재사용한다.
 trace·seed·외부 시작 상태는 내용이 고정된 입력 객체다. 앞 단계에서 만든 시작 상태도 생산 시 불변 저장한다. 현재 설정·동명 새 Workload로 대체하지 않는다.
+prepare에서 LoadScenario·카탈로그를 **한 번만** name+UID(Workload는 generation도) 확인·해석한다. LoadScenario spec snapshot과 적용 Workload 정의(ModelSpec·Preprocessor·Dataset 신원·SLO)를 conditional-create 증거와 immutable CM에 보존한다.
+자식은 이 snapshot만 사용한다. 실행 중 LoadScenario 삭제 보호 장치는 필요 없으며 같은 이름 재생성도 기존 snapshot을 바꾸지 않는다.
 실행 증거의 store는 spec에서 고정하고 키는 생성 시 부여된 불변 UID로 `experiments/<UID>/...`가 된다. 별도 configurable prefix 필드는 없다.
 따라서 생성 시 실행 증거 위치가 결정되며 실제 key/size·저장 완료는 status에만 기록한다. 정의 스냅샷·명령/응답·시각·client/raw·판정·표·최종 실행 기록을 연결한다.
 입력과 실행 기록은 `ImmutableWriter.PutImmutable`의 conditional create로 보존하며 단계 저장과 최종 게시 경로를 구분한다. receipt만으로 저장 완료라 하지 않고 결과 loader 경계에서 크기 제한·schema·실험 UID/참조 연결을 한 번 확인한다.
@@ -188,13 +212,13 @@ CR 삭제가 증거 삭제로 이어지지 않는다. 저장 실패는 해당 `p
 
 게시 정본은 [관측 설계 §6.4](../serving/observability-split.md#64-실험-불변-요약-조회-api-b2-sch-45)다.
 게시 ID는 **EvaluationRun UID**다. 사용자 지정 `publicationID`는 두지 않는다. 최종 표·게시 Job만 bridge로 `serving/experiments.v1alpha1/<UID>/summary.json`을 마지막 PutImmutable로 쓴다.
-기존 wire 타입 `ExperimentSummary`와 schemaVersion은 유지하고 선택 필드 **`definition` = EvaluationRun spec 스냅샷만** 추가한다(단계 모드·명시적 비교 관계·SLO 포함).
-기대 신원은 spec에 있으나 실제 관측 신원·동결 운영 설정·완료 축은 definition에 섞지 않는다. 기존 `status`·`stages[].kpis`의 상태/판정 projection과 최종 실행 기록의 CR UID/generation·실제값·증거를 연결한다.
+기존 wire 타입 `ExperimentSummary`와 schemaVersion은 유지하고 선택 object `definition`에 **EvaluationRun spec + 해석된 LoadScenario spec snapshot**을 싣는다. 서버는 내용을 해석하지 않는다.
+실제 자식 spec/UID·동결 운영값·관측 신원·완료 축은 execution/evidence-index에 연결한다. SLO는 적용 Workload snapshot 증거에서 읽으며 spec에 복제하지 않는다.
 단계 증거는 이미 `experiments/<UID>/...`에 저장되어 있다. bridge는 이를 다시 쓰지 않고, 그 참조를 담은 작은 게시용 실행/증거 목록 객체와 summary만 게시 prefix에 쓴다. 기존 `sources`는 이 게시 객체를 가리킨다.
 현재 bridge는 manifest의 sources를 같은 게시 prefix 안으로 제한하므로(`hack/e5/publish/main.go:106–128`) 이 경계는 유지한다. 중간 증거 writer와 최종 게시 bridge를 혼동하지 않는다.
 `Published`는 게시 후 controller가 기록하므로 게시물에 자기 자신의 게시 완료를 선행 주장하지 않는다. 게시 충돌·정정은 새 EvaluationRun(새 UID)이 필요하며 덮어쓰기/동일 바이트 비교로 회복하지 않는다.
 ChillServer는 지금처럼 objects Reader/Lister로 게시물만 읽고 기존 `/api/v1/experiments[/{id}]`로 제공한다. EvaluationRun CR을 읽는 새 권한·의존·캠페인 API는 추가하지 않는다.
-**대시보드는 완료된 게시만 조회**한다. 진행 중/미게시 STOP의 정의·status는 `kubectl get evaluationruns.edge.dacs.io`로 조회한다. 정리 실패 게시도 세 축을 그대로 표시하며 미게시 실행을 완료 목록에 넣지 않는다.
+**대시보드는 완료된 게시만 조회**한다. 진행 중/미게시 STOP은 `kubectl get evaluationruns,evaluationstages,loadscenarios`로 조회한다. 정리 실패도 세 축을 표시하며 미게시 실행을 완료 목록에 넣지 않는다.
 대시보드는 `definition`의 정책·비교 관계와 정의/결과의 적용 SLO를 읽는다([DB-FR-66](../../spec/dashboard/SRS.md)).
 `stagePolicy`/`stagePairing`/`stageComparison`과 요청률 유사성 기반 추측을 삭제하고 `campaignPairs`/`policyStageGroups` 등 소비자를 명시적 관계로 바꾼다.
 이 변경으로 과거 게시의 정책/비교 화면은 **미기록**으로 바뀌는 가시적 변화가 생긴다. 같은 reader가 `definition` 부재로 읽으며 별도 과거 reader·재게시·단계 ID/평균률 추측은 없다.
@@ -204,21 +228,21 @@ ChillServer는 지금처럼 objects Reader/Lister로 게시물만 읽고 기존 
 
 | 주체 | 필요한 추가/재사용 권한 | 금지·범위 |
 |---|---|---|
-| profiler | namespace의 evaluationruns get/list/watch, status patch, finalizers update; 하네스 Jobs create/get/list/watch/delete | CR spec·Deployment/이미지 교체 권한 없음 |
+| 사용자 / profiler | 사용자는 LoadScenario·EvaluationRun create/read, EvaluationStage read만; profiler는 세 CR get/list/watch, EvaluationStage create, 실행 두 CR status patch/finalizers update, 하네스 Jobs create/get/list/watch/delete | 사용자 evaluationstages create 금지; profiler는 CR spec·Deployment/이미지 교체 권한 없음 |
 | profiler | Deployment/Pod get/list/watch, 선언 주입용 pods delete·Nodes get/patch | release namespace Pod UID precondition, Node UID·`spec.unschedulable` 한정 |
 | profiler | 기존 leader election Lease 권한, `chill-evaluation-config` GET·immutable spec/config ConfigMap create/get·실행 PVC create/get/list/watch·Secret 전달 | 시작 시 직접 GET·동결, operator·profiler flag 변경 없음; 별도 실험 Lease 없음; Secret 본문은 status/증거 비노출 |
 | 단계 하네스 Job | 기존 loadgen Jobs create/get/list/watch/delete, Pod get/list/watch/logs·pods/exec create, ChillServer settings/state/operations·raw GET 인증 | stage producer 생성/GO/정리·API 수집 주체; 정확한 UID·namespace만 |
 | 복원 하네스 Job | Nodes get/patch: 기존 전력모드 요청 label·generation 관련 annotation | `chill.dacs.io/power-mode` 경로 재사용(`hack/e5/e5.py:2175,2252–2257`); host 전력 명령 금지 |
 | stage Job의 cgroup sampler | genesis1 SSH/sudo crictl용 Secret `chill-evaluation-producer-ssh`(`ssh-privatekey`, `known_hosts`)·실행 권한 | node-agent 대체 불가 확인(§12); producer cgroup 범위만, 관측 raw host 수집과 구분 |
 | 판정·표·게시 Job | 입력/실행 증거 read·immutable write·최종 게시 쓰기 | 계산 Job에는 Kubernetes mutation·관측 archive 직접 수집·DeleteObject 권한 없음 |
-| loadgen Job / 조회자 | 기존 infer·dataset / EvaluationRun get/list/watch·기존 게시 조회 인가 | ChillServer SA에는 EvaluationRun 읽기 추가 없음 |
+| loadgen Job / 조회자 | 기존 infer·dataset / 세 CR get/list/watch·기존 게시 조회 인가 | ChillServer SA에는 세 CR 읽기 추가 없음 |
 
 Node 필드/label 범위는 RBAC 자체가 아니라 코드에서 제한한다. 기존 profiler Jobs/Lease/Secret 권한(`charts/chill/templates/profiler_rbac.yaml:72–125`)은 재사용하고 Job 역할별 ServiceAccount·Secret 전달을 분리한다.
 
 ## 10. 전환 계획
 
 1. 현재 측정은 `round.py`로 유지한다. 이 설계 작성으로 실행 경로·배포·클러스터를 바꾸지 않는다.
-2. 의존 캠페인이 끝난 뒤 EvaluationRun CRD/controller·다섯 condition·결정적 단계 Job 채택, leader election 등록 전제와 하네스 이미지를 구현한다. 기존 Python 단계 의미를 유지하되 오류 시 자동 설정 복구는 끈다.
+2. 의존 캠페인이 끝난 뒤 3 CRD·부모/자식 controller·부모 5/자식 3 conditions·결정적 자식/Job 채택, leader election 전제와 하네스 이미지를 구현한다. 기존 Python 단계 의미를 유지하되 오류 시 자동 설정 복구는 끈다.
    `ExperimentSummary.definition` 선택 필드와 publisher(`hack/e5/publish/main.go`)·서버(`cmd/chill-server/experiment_service.go`)·대시보드 변경을 한 전환 커밋에 묶고, 배포는 reader → publisher 순서로 한다.
 3. 기존 원시·동결 입력으로 **오프라인 judge 결과의 의미 동일성**을 확인한 뒤 **controller 경로 1회**를 실행한다. 기존 `*.command.json`과 새 Job argv/단계 증거·모집단·적용 SLO·품질·전력 coverage·정리 경계를 대조한다.
    byte/digest 일치 관문이나 자동 재측정은 아니다. 기존 증거로 비교할 수 없는 제어 경계만 배타적 운영 창에서 legacy/new 순차 1회씩 비교하며 같은 풀 동시 실행은 금지한다.
@@ -231,23 +255,27 @@ Node 필드/label 범위는 RBAC 자체가 아니라 코드에서 제한한다. 
 
 | SRS | 충족 설계 |
 |---|---|
-| EXP-01 | §3 전체 spec CEL 불변·생성 경계 검증·새 CR 정정 |
-| EXP-02 | §3 신원/장비/워크로드/trace/seed·외부 또는 앞 단계 시작 상태·비교/주입 |
-| EXP-03 | §3 `chill-evaluation-config` 직접 GET·status/증거 동결, §4 실제 설정 기록 |
+| EXP-01 | §3 세 CR spec CEL 불변·값 타입·PinnedRef·생성 경계 검증 |
+| EXP-02 | §3 부모 정의·LoadScenario 부하·시작 상태·비교, §8 prepare 1회 해석·snapshot |
+| EXP-03 | §3 운영 ConfigMap 동결(harness 제외)·§4 부모 frozenConfig/자식 실제 설정 |
 | EXP-04 | §1–2·5 기존 단계 명령 Job·공개 API/Node 요청·배포 없음; cgroup 주체는 §12 |
 | EXP-05 | §5 기대/관측 신원 불일치 시 부하 미시작·새 검증 관문 없음 |
-| EXP-06 | §6 leader election·단일 worker·캐시 아닌 목록·생성 순서·반환 미확인 점유; 늦은 명령 한계 명시 |
-| EXP-07 | §5 기존 stage 안의 부하→drain→수집·factor 스위치·단계/최종 정리 구분 |
-| EXP-08 | §4·6 Job Get/AlreadyExists 채택·ExecutionLost·기존 부하 관측만·불확실 효과 중단 |
-| EXP-09 | §4 다섯 condition 안의 작업/측정/정리 세 축·원 판정값, §8 실행 기록 연결 |
+| EXP-06 | §6 부모만 점유·최신 목록·active child/APIReader·ParentRequired·반환 미확인 점유 |
+| EXP-07 | §5 자식 소유 부하→drain→수집·factor·단계 정리 / 부모 끝 정리 |
+| EXP-08 | §4·6 자식/Job 채택·UID 소실 ExecutionLost·불확실 효과 중단·background 삭제 |
+| EXP-09 | §4 부모 5/자식 3 conditions·자식 procedures 정본·부모 측정 판정 집계 |
 | EXP-10 | §2·5 기존 하네스 단계/판정/reducer·실제 규칙/설정·§10 오프라인 의미 비교 |
 | EXP-11 | §5 끝 1회 복구·반환 대기, §6 잔류 예약·운영자 annotation 해제·정리 실패 게시 |
-| EXP-12 | §3·7 GO 기준·동결 허용 창·선택/명령 증거·놓친 주입 무효 |
-| EXP-13 | §3·8 생성 시 위치 고정·conditional create/최종 bridge 분리·검증 참조·삭제 권한 미부여 |
-| EXP-14 | §8 UID 기반 최종 게시·definition=spec·새 CR 정정·과거 불변 |
+| EXP-12 | §3·7 Stage typed plan/status record·GO 기준·동결 창·선택/명령 증거 |
+| EXP-13 | §3·8 runUID/stageID 경로·snapshot·conditional create·삭제 권한 미부여 |
+| EXP-14 | §8 Run UID 게시·definition=부모 spec+해석 부하 snapshot·실제 자식은 execution·과거 불변 |
 | EXP-15 | §8·10 완료 게시 Dashboard/진행 중 kubectl·명시적 관계/SLO·reader 우선·과거 미기록 |
 
 ## 12. 결정(2026-10-31)
 
 - **패널 7항 — cgroup 표본 주체 확정:** node-agent는 producer Pod를 대상으로 선택하지 않으며 공개 raw에도 해당 producer UID 표본이 없어 genesis1 producer의 실시간 cgroup 표본을 대체할 수 없다. stage Job이 SSH Secret `chill-evaluation-producer-ssh`의 `ssh-privatekey`·`known_hosts`로 기존 sampler를 실행한다. SSH host/user/port/host-key alias는 운영 ConfigMap에서 동결하며 host trust·접속·비대화 sudo 권한은 명시 provisioning 입력이다. Secret/host trust가 없으면 준비 단계 `MissingInput`으로 끝내고 hostPath·암묵 host key 복사·표본 없는 판정 통과는 허용하지 않는다.
 - **패널 10항 — kind 이름:** Katib `experiments.kubeflow.org`와 혼동을 피하려고 kind `EvaluationRun`/`evaluationruns.edge.dacs.io`로 확정한다. 파일명·기존 게시/API 이름은 유지한다.
+- **하위 모델 분해(2026-10-31):** LoadScenario는 공유 불변 부하, EvaluationRun은 조립·비교·풀 세션·끝 정리·게시, EvaluationStage는 원자 행·Job/producer·주입·단계 증거를 소유한다. micro도 1단계 EvaluationRun이며 단독 Stage는 허용하지 않는다. 값 타입과 불변 증거로 나머지를 표현하며 §3–8의 경계를 정본으로 한다.
+- 기각: FaultInjection CR/controller — GO·잔류와 수명이 같으므로 Stage plan/record로 충분하다.
+- 기각: ControlProfile·Target·Judgment·Instrument CR — 독립 운영 생명주기 근거가 없어 값 타입으로 둔다.
+- 기각: Snapshot/StageResult·Factor/Micro/AB·PoolSession·범용 DAG CR — 불변 증거·기존 3 CR 조립·단일 부모 점유로 충분하다.
