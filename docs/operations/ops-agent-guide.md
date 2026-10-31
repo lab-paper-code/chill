@@ -156,3 +156,8 @@ containerd는 20.11 GiB, kubelet 디렉터리는 0.01 GiB, `/var/log`는 1.32 Gi
 | `/var/log/{pods,journal}`, `/var/lib/{kubelet,etcd,rook}`, 영속 volume | 로그는 사고 구간을 아카이브한 뒤 승인된 logrotate/journal retention으로만 줄인다. kubelet Pod/volume, etcd, Ceph/registry/DB 데이터는 **캐시 아님**; 수동 `rm` 금지. 종료 Pod API 삭제와 실제 로그·컨테이너/이미지 디스크 회수는 별개다. |
 
 정리 전후 같은 파일시스템의 `df -B1`·`df -i`와 대상 `du`를 기록한다. 열린 채 삭제된 파일·예약 블록·mount·측정 중 변경 때문에 `du`와 `df`는 일치하지 않을 수 있다. 차이가 크면 `sudo lsof +L1`과 mount 경계를 조회하여 원인을 확인하지, 차이를 “삭제 가능한 캐시”로 환산하지 않는다. **≥400 GiB 회복 및 DiskPressure=False 안정화**를 확인하고 나서 새 작업을 시작한다.
+
+## Shelly 노드 전원 복구 경로 (2026-11-01)
+- rasp5=`shellyplugsg3-e4b063ddacc0`, jetson-nano=`shellyplusplugs-80646fd66914`; `~/ETRI/research/edge-metrics/charts/edge-metrics/values-shelly-gateway.yaml:26–31`의 매핑과 `exporter/API.md:560–562`의 노드별 전용 1:1 플러그 기록을 먼저 확인한다.
+- 플러그들은 NAT `155.230.34.160`에서 genesis1(`155.230.35.213`)의 gateway `18765`로 outbound WebSocket 연결하며, HTTP `18766`은 `/devices`·`/prometheus?hostname=...` 조회만 제공한다. 제어 API·직접 RPC 주소는 확인되지 않아 이번에는 전원 조작·gateway 수정 없이 중단했다.
+- 재투입은 직접 제어 경로 확보 후 GetStatus로 ID·전력을 대조하고 off→10초→on 순서로만 수행한다. 전후 응답은 운영 루트의 `deployB/node-recovery-20261101/`에 보존하고 최대 10분간 Node Ready·rasp5 unreachable taint 자동 해제·Nano actuator Ready를 확인한다.
