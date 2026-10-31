@@ -8,7 +8,7 @@ import { runInNewContext } from "node:vm"
 import { createElement } from "react"
 import type { ComponentType, ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { transpileModule, ModuleKind, JsxEmit } from "typescript"
+import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as requestHelpers from "./measurement-request.ts"
 import * as coverageHelpers from "./measurement-coverage.ts"
 import * as measurementHelpers from "./measurements.ts"
@@ -133,7 +133,7 @@ test("changing a preprocessor clears only inherited datasets, preserving deliber
 
 function renderRequest(props:Record<string,unknown>={},query="",error="") {
   const source=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
-  const compiled=transpileModule(`${source}\nexport { Funnel };`,{compilerOptions:{module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const compiled=transpileModule(`${source}\nexport { Funnel };`,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
   const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
   const modules:Record<string,unknown>={
