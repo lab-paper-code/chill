@@ -364,4 +364,19 @@ test("rendered board leads with fixed device rows and keeps idle services in a d
   const unplaced=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
   assert.match(unplaced,/>측정 근거 없음</)
   assert.ok(unplaced.indexOf(">미배치</th>")<unplaced.indexOf(">보드 밖 노드"))
+  snapshot.instances=[{...instance,node:{uid:"not-in-snapshot",name:"마지막 관측 장치"},ownerWorkloadUID:"service-0",routable:{"service-0":true},running:{"service-0":1},waiting:{}}]
+  const unknownDevice=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
+  snapshot.instances[0].node={uid:"n",name:"장치"}
+  sample.workloads["service-0"]={...zero,failed:1}
+  const zeroFailure=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
+  sample.workloads["service-0"]=zero
+  snapshot.workloads[0].pending=1
+  const zeroQueued=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
+  assert.deepEqual({
+    unknownDeviceService:unknownDevice.includes(">서비스-0</button>"),
+    unknownDeviceRow:unknownDevice.includes(">장치 미확인</th>"),
+    notUnplaced:!unknownDevice.includes(">미배치</th>"),
+    zeroFailure:/title="요청 실패">이상<\/td>/.test(zeroFailure),
+    zeroQueued:/title="대기 있음">주의<\/td>/.test(zeroQueued),
+  },{unknownDeviceService:true,unknownDeviceRow:true,notUnplaced:true,zeroFailure:true,zeroQueued:true})
 })
