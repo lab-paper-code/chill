@@ -169,7 +169,9 @@ export function comparisonValidity(a:ExperimentStage,b:ExperimentStage) {
   }
   const ruleKeys=differentMeasurementRules(a,b)
   const rulesMissing=!Object.keys(object(a.kpis.measurementRules)).length||!Object.keys(object(b.kpis.measurementRules)).length
+  const loadUnknown=!rows.length||rows.some(row=>row.a.length!==1||row.b.length!==1||finite(row.a[0].original.offered)===null||finite(row.b[0].original.offered)===null)||left===null||right===null
   return {
+    conditions:{load:loadUnknown?"미확인":sameLoad(a,b)?"같음":"다름",identity:changed?"다름":unknown||!rows.length?"미확인":"같음",rules:rulesMissing?"미확인":ruleKeys.length?"다름":"같음"},
     load:sameLoad(a,b)?"서비스별 평균 요청률 · 차이 1% 이내":"서비스별 평균 요청률 · 다르거나 미확인",
     duration:`구간 길이 ${left===null||right===null?"미제공":sameDisplayedDuration(a,b)?"같음":"다름"} · A ${formatResult(left,"s")} / B ${formatResult(right,"s")}`,
     rules:`측정 규칙 ${rulesMissing?"미기록 항목 있음":ruleKeys.length?"차이 있음":"기록된 항목 차이 없음"}${ruleKeys.length?` · 다른 항목: ${ruleKeys.join(", ")}`:""}`,
@@ -324,6 +326,11 @@ export function experimentHeatmap(run:Experiment):ExperimentHeatmapRow[] {
       services:comparison?.services??[]}
   })
 }
+export function experimentDifference(value:number|null,baseline=0,higherIsBetter=false) {
+  const delta=value===null?null:value-baseline
+  const small=delta!==null&&delta!==0&&Math.abs(delta)<.01
+  return {text:value===null?"—":small?"0.01 미만":formatMeasurementNumber(value,"%"),tone:delta===null||small||delta===0?"bg-muted/50 text-muted-foreground":(delta>0)===higherIsBetter?"bg-ok/10 text-ok":"bg-destructive/10 text-destructive"}
+}
 
 export function experimentChartData(run:Experiment,service:string) {
   return experimentHeatmap(run).map((row,index)=>{
@@ -345,13 +352,6 @@ export function stageActivity(page:SchedulerObservationPage) {
   return {decisions:decisions.length,actions:actions.length,partial:!!page.nextCursor||!!page.gapUntil,statuses:[...new Set(decisions.map(event=>event.decision!.status))],kinds:[...new Set(actions.map(event=>event.action!.kind))]}
 }
 
-export function campaignConclusion(run:Experiment):string {
-  const rows=campaignTradeoffs(run)
-  if(!rows.length)return "비교 불가"
-  if(rows.some(row=>row.services.some(service=>(service.successDelta??0)<0||(service.p95Delta??0)>0)))return "서비스 품질 악화 관측"
-  if(run.stages.length!==rows.length*2||rows.some(row=>comparisonValidity(row.chill,row.control).limited||row.energyDelta===null||!row.services.length||row.services.some(service=>service.successDelta===null||service.p95Delta===null)))return "비교 근거 부족"
-  return rows.some(row=>row.energyDelta!>0)?"품질 저하 없음 · 에너지 증가 관측":"품질 저하 없음 · 에너지 동일·감소"
-}
 export const experimentPath=(id:string)=>`v1/experiments/${encodeURIComponent(id)}`
 export const stageEvidencePath=(stage:ExperimentStage)=>`v1/observations/scheduler?${new URLSearchParams({from:stage.from,to:stage.to,limit:"100"})}`
 export function selectedExperimentStage(run:Experiment|undefined,id:string,stageID:string|null):ExperimentStage|undefined {

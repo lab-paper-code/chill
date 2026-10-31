@@ -23,3 +23,9 @@ test("projection reasons remain available even when no checklist was provided an
   assert.equal(assessmentReasons({...assessment,reasons,checklist:{...assessment.checklist,checks:[]}}).length,1)
   assert.match(assessmentReasons({...assessment,reasons})[0],/[가-힣]/)
 })
+test("R11: incomplete power sources preserve failed and unknown source checks",()=>{
+  for(const result of ["fail","unknown"] as const) {
+    const checks=measurementEvidenceChecks({...assessment,checklist:{...assessment.checklist,checks:[{code:"PowerSource",result,message:"source",sourceIds:[]}]}})
+    assert.ok(checks.some(check=>check.value===(result==="fail"?"불일치":"미확인")))
+  }
+})

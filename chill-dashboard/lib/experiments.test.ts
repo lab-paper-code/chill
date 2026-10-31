@@ -6,6 +6,17 @@ import { campaignGroups, campaignPairs, commitExperimentSelection, comparisonDir
 import { campaignScoreboard, campaignTradeoffs, policyChartStyle, stageComparison, stageHistoryLink, stageActivity, stageLoadLabel } from "./experiments.ts"
 import { publishedVerdict, selectedExperimentStage, experimentPath, stageEvidencePath, experimentHeatmap, experimentChartData, durationMismatch } from "./experiments.ts"
 import { comparisonValidity } from "./experiments.ts"
+import { experimentDifference } from "./experiments.ts"
+test("R11: sub-display deltas are neutral in both overview and intervals",()=>{
+  for(const [value,baseline] of [[-.004,0],[1.004,1]]) {
+    assert.equal(experimentDifference(value,baseline).text,"0.01 미만")
+    assert.match(experimentDifference(value,baseline).tone,/text-muted-foreground/)
+  }
+})
+test("R11: closing a shared interval removes all stage selection parameters",()=>{
+  const params=experimentSelection("?a=run&as=full-E5-1&b=run&bs=static-E5-1",{as:"",b:"",bs:""})
+  assert.equal(params.toString(),"a=run")
+})
 import type { SchedulerObservation } from "./read-types.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
@@ -502,6 +513,7 @@ test("R10: comparison limits retain missing rules, unequal durations, uncertain 
   assert.match(comparisonValidity(a,b).identity,/같은 등록·정의/)
   assert.match(comparisonValidity(a,b).rules,/차이 없음/)
   assert.equal(comparisonValidity(a,b).limited,false)
+  assert.deepEqual(comparisonValidity(a,b).conditions,{load:"같음",identity:"같음",rules:"같음"})
   assert.equal(comparisonValidity(a,{...b,kpis:{}}).limited,true)
   const uncertain={...b,to:"2026-10-30T00:02:00Z",kpis:{requests:{camera:{offered:600}}}}
   const limits=comparisonValidity(a,uncertain)

@@ -8,6 +8,7 @@ import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, T
 import { useChillQuery } from "@/lib/client"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { campaignGroups, campaignScoreboard, commitExperimentSelection, experimentChartData, experimentHeatmap, experimentPath, experimentRows, resultMetric, stageHistoryLink, stagePolicy, stageRate, stageSeconds, type Experiment, type ExperimentHeatmapRow } from "@/lib/experiments"
+import { comparisonValidity, experimentDifference, selectedExperimentStage } from "@/lib/experiments"
 import { formatMeasurementNumber } from "@/lib/measurements"
 import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
 import { Empty, Screen } from "@/components/screen"
@@ -15,12 +16,12 @@ import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 
 const number=(value:unknown,unit="")=>typeof value==="bigint"?String(value):typeof value==="number"&&Number.isFinite(value)?formatMeasurementNumber(value,unit):"—"
-const tone=(value:number|null,baseline=0,higherIsBetter=false)=>value===null||value===baseline?"bg-muted/50 text-muted-foreground":(value>baseline)===higherIsBetter?"bg-ok/10 text-ok":"bg-destructive/10 text-destructive"
+const tone=(value:number|null,baseline=0,higherIsBetter=false)=>experimentDifference(value,baseline,higherIsBetter).tone
 
 function Conclusion({run}:{run:Experiment}) {
   const {summary}=campaignScoreboard(run)
   return <dl className="flex flex-wrap gap-2 text-xs tabular-nums" aria-label="실험 결론">
-    {[{label:"에너지 Δ (%)",value:summary.energyPercent,baseline:0,higher:false,unit:"%"},{label:"최악 성공률 Δ (%p)",value:summary.successDelta,baseline:0,higher:true,unit:"%p"},{label:"최악 p95 (배)",value:summary.p95Ratio,baseline:1,higher:false,unit:"ms"}].map(item=><div key={item.label} className={`flex items-center gap-2 rounded border px-3 py-2 ${tone(item.value,item.baseline,item.higher)}`}><dt>{item.label}</dt><dd className="font-semibold">{number(item.value,item.unit)}</dd></div>)}
+    {[{label:"에너지 Δ (%)",value:summary.energyPercent,baseline:0,higher:false},{label:"최악 성공률 Δ (%p)",value:summary.successDelta,baseline:0,higher:true},{label:"최악 p95 (배)",value:summary.p95Ratio,baseline:1,higher:false}].map(item=><div key={item.label} className={`flex items-center gap-2 rounded border px-3 py-2 ${tone(item.value,item.baseline,item.higher)}`}><dt>{item.label}</dt><dd className="font-semibold">{experimentDifference(item.value,item.baseline,item.higher).text}</dd></div>)}
   </dl>
 }
 
@@ -31,6 +32,7 @@ function IntervalDrawer({run,row,service,onClose}:{run:Experiment;row:Experiment
     <SheetHeader><SheetTitle>{row?.id}</SheetTitle></SheetHeader>
     {row&&<div className="space-y-5 px-4 pb-6">
       <div className="overflow-x-auto"><table className="w-full text-xs tabular-nums"><thead><tr>{["정책","시작 (UTC)","종료 (UTC)"].map(label=><th key={label} className="p-2 text-left">{label}</th>)}</tr></thead><tbody>{stages.map(stage=><tr key={stage.id} className="border-t"><th className="p-2 text-left font-normal">{stagePolicy(stage)}</th><td className="p-2">{stage.from}</td><td className="p-2">{stage.to}</td></tr>)}</tbody></table></div>
+      {row.other&&<table aria-label="비교 조건" className="w-full text-sm"><thead><tr>{["부하","서비스 식별자·정의","측정 규칙"].map(label=><th key={label} className="p-2 text-left">{label}</th>)}</tr></thead><tbody><tr>{Object.entries(comparisonValidity(row.stage,row.other).conditions).map(([key,value])=><td key={key} className="border-t p-2">{value}</td>)}</tr></tbody></table>}
       <div className="overflow-x-auto"><table className="w-full text-sm tabular-nums"><thead><tr>{["정책","요청률 (req/s)","길이 (s)","에너지 (J)","평균 전력 (W)"].map(label=><th key={label} className="p-2 text-right first:text-left">{label}</th>)}</tr></thead><tbody>{stages.map(stage=>{const seconds=stageSeconds(stage),energy=stage.kpis.wholePoolJoules;return <tr key={stage.id} className="border-t"><th className="p-2 text-left font-normal">{stagePolicy(stage)}</th><td className="p-2 text-right">{number(stageRate(stage),"req/s")}</td><td className="p-2 text-right">{number(seconds,"s")}</td><td className="p-2 text-right">{number(energy,"J")}</td><td className="p-2 text-right">{number(typeof energy==="number"&&seconds?energy/seconds:null,"W")}</td></tr>})}</tbody></table></div>
       <div className="overflow-x-auto"><table className="w-full text-sm tabular-nums"><thead><tr>{["서비스","정책","성공률 (%)","p95 (ms)","요청 N","p95 N"].map(label=><th key={label} className="p-2 text-right first:text-left">{label}</th>)}</tr></thead><tbody>{names.flatMap(name=>stages.map(stage=>{
         const candidates=experimentRows(stage).filter(item=>item.name===name),item=candidates.length===1?candidates[0]:undefined
@@ -48,11 +50,11 @@ function ExperimentDetail({run}:{run:Experiment}) {
   const rows=React.useMemo(()=>experimentHeatmap(run),[run])
   const names=React.useMemo(()=>[...new Set(run.stages.flatMap(stage=>experimentRows(stage).map(row=>row.name)))],[run])
   const [service,setService]=React.useState("")
-  const [selected,setSelected]=React.useState<{key:string;service:string}|null>(null)
+  const params=useSearchParams()
+  const selected=selectedExperimentStage(run,params.get("a")??"",params.get("as"))
   const chart=React.useMemo(()=>experimentChartData(run,service),[run,service])
-  const row=rows.find(row=>row.key===selected?.key)
+  const row=rows.find(row=>row.stage===selected&&(!row.other||params.get("b")===run.id&&params.get("bs")===row.other.id))
   function open(row:ExperimentHeatmapRow,name="") {
-    setSelected({key:row.key,service:name})
     if(name)setService(name)
     commitExperimentSelection(window.location,window.history,{a:run.id,as:row.id,b:row.other?run.id:"",bs:row.other?.id??""})
   }
@@ -61,10 +63,10 @@ function ExperimentDetail({run}:{run:Experiment}) {
       <table className="w-full text-sm tabular-nums">
         <thead className="bg-muted/50"><tr><th scope="col" rowSpan={2} className="p-3 text-left">구간</th><th scope="col" rowSpan={2} className="p-3 text-right">부하<br/>req/s</th><th scope="col" rowSpan={2} className="p-3 text-right">에너지 Δ<br/>%</th>{names.map(name=><th key={name} scope="colgroup" colSpan={2} className="max-w-56 break-words border-l p-2 text-center font-medium">{name}</th>)}</tr><tr>{names.flatMap(name=>[<th key={`${name}/success`} scope="col" className="border-l px-2 py-2 text-right text-xs">성공률 Δ %p</th>,<th key={`${name}/p95`} scope="col" className="px-2 py-2 text-right text-xs">p95 배율</th>])}</tr></thead>
         <tbody>{rows.map((row,index)=><tr key={row.key} className={`border-t ${row.other?"":"bg-muted text-muted-foreground"}`}>
-          <th scope="row" className="whitespace-nowrap p-1 text-left font-medium"><button type="button" className="flex min-h-10 w-full items-center gap-2 rounded px-2 text-left focus-visible:outline-2 focus-visible:outline-primary" onClick={()=>open(row)} title={row.id}>{String(index+1).padStart(2,"0")}{!row.other&&<span title={row.reason}><TriangleAlert aria-label="비교 불가" className="size-4"/></span>}{row.durationDifferent&&<span title="구간 길이 차이 ±1% 초과"><TriangleAlert aria-label="구간 길이 차이" className="size-4 text-heat"/></span>}</button></th>
+          <th scope="row" className="whitespace-nowrap p-1 text-left font-medium"><button type="button" className="flex min-h-10 w-full items-center gap-2 rounded px-2 text-left focus-visible:outline-2 focus-visible:outline-primary" onClick={()=>open(row)} title={row.id}>{String(index+1).padStart(2,"0")}{!row.other&&<span title={row.reason}><TriangleAlert aria-label="비교 불가" className="size-4"/></span>}{row.other&&comparisonValidity(row.stage,row.other).limited&&<TriangleAlert aria-label="비교 제한" className="size-4 text-heat"/>}</button></th>
           <td className="p-1 text-right"><button className="min-h-10 w-full rounded px-2 text-right focus-visible:outline-2 focus-visible:outline-primary" onClick={()=>open(row)}>{number(row.rate,"req/s")}</button></td>
-          <td className="p-1"><button className={`min-h-10 w-full rounded px-2 text-right font-semibold focus-visible:outline-2 focus-visible:outline-primary ${tone(row.energyPercent)}`} onClick={()=>open(row)}>{number(row.energyPercent,"%")}</button></td>
-          {names.flatMap(name=>{const item=row.services.find(item=>item.name===name);return [<td key={`${name}/success`} className="border-l p-1"><button className={`min-h-10 w-full rounded px-2 text-right font-semibold focus-visible:outline-2 focus-visible:outline-primary ${tone(item?.successDelta??null,0,true)}`} onClick={()=>open(row,name)} aria-label={`${name} 성공률 상세`}>{number(item?.successDelta,"%p")}</button></td>,<td key={`${name}/p95`} className="p-1"><button className={`min-h-10 w-full rounded px-2 text-right font-semibold focus-visible:outline-2 focus-visible:outline-primary ${tone(item?.p95Ratio??null,1)}`} onClick={()=>open(row,name)} aria-label={`${name} p95 상세`}>{number(item?.p95Ratio,"ms")}</button></td>]})}
+          <td className="p-1"><button className={`min-h-10 w-full rounded px-2 text-right font-semibold focus-visible:outline-2 focus-visible:outline-primary ${tone(row.energyPercent)}`} onClick={()=>open(row)}>{experimentDifference(row.energyPercent).text}</button></td>
+          {names.flatMap(name=>{const item=row.services.find(item=>item.name===name);return [<td key={`${name}/success`} className="border-l p-1"><button className={`min-h-10 w-full rounded px-2 text-right font-semibold focus-visible:outline-2 focus-visible:outline-primary ${tone(item?.successDelta??null,0,true)}`} onClick={()=>open(row,name)} aria-label={`${name} 성공률 상세`}>{experimentDifference(item?.successDelta??null,0,true).text}</button></td>,<td key={`${name}/p95`} className="p-1"><button className={`min-h-10 w-full rounded px-2 text-right font-semibold focus-visible:outline-2 focus-visible:outline-primary ${tone(item?.p95Ratio??null,1)}`} onClick={()=>open(row,name)} aria-label={`${name} p95 상세`}>{experimentDifference(item?.p95Ratio??null,1).text}</button></td>]})}
         </tr>)}</tbody>
       </table>
     </section>
@@ -78,7 +80,7 @@ function ExperimentDetail({run}:{run:Experiment}) {
         </ComposedChart></ResponsiveContainer>
       </div>
     </section>
-    <IntervalDrawer run={run} row={row} service={selected?.service??""} onClose={()=>setSelected(null)}/>
+    <IntervalDrawer run={run} row={row} service={service} onClose={()=>commitExperimentSelection(window.location,window.history,{as:"",b:"",bs:""})}/>
   </>
 }
 
