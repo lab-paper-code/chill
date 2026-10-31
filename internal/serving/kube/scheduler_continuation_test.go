@@ -2,9 +2,12 @@ package kube
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
@@ -12,7 +15,17 @@ import (
 func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
 	for _, scenario := range []string{"complete", "duplicate-completion", "cancel-owner", "controls-off", "uid-off", "freshness", "capture-failed", "late-ack", "partial"} {
 		t.Run(scenario, func(t *testing.T) {
-			c, prepared := tickReadySubsetController(t, nil)
+			ackPending, releaseACK := make(chan struct{}), make(chan struct{})
+			var armed atomic.Bool
+			var once sync.Once
+			c, prepared := tickReadySubsetController(t, func(_ int, _ *native.State) {
+				if scenario == "late-ack" && armed.Load() {
+					once.Do(func() {
+						close(ackPending)
+						<-releaseACK
+					})
+				}
+			})
 			prepared.Store(true)
 			c.completions = make(chan struct{}, 1)
 			c.config.Settings.Controls.Routing = true
@@ -33,9 +46,22 @@ func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
 			parent := c.runs[transitionRunKind+"/"+goal.ID]
 			parent.admittedControls = c.config.Settings.Controls
 			c.state.Snapshot = snapshot
+			armed.Store(true)
 			c.mu.Lock()
 			c.launchRunningParentsLocked(c.config, true)
 			c.mu.Unlock()
+			if scenario == "late-ack" {
+				select {
+				case <-ackPending:
+				case <-ctx.Done():
+					close(releaseACK)
+					t.Fatal("native ACK did not reach the response boundary")
+				}
+				c.mu.Lock()
+				parent.action.Status = nativeOperationCancel
+				c.mu.Unlock()
+				close(releaseACK)
+			}
 			select {
 			case <-c.Completions():
 			case <-ctx.Done():
@@ -47,7 +73,7 @@ func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
 				t.Fatalf("first route: %+v", first)
 			}
 			switch scenario {
-			case "cancel-owner", "late-ack":
+			case "cancel-owner":
 				parent.action.Status = nativeOperationCancel
 			case "controls-off":
 				c.config.Settings.Controls.Routing = false
