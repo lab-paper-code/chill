@@ -8,7 +8,7 @@ import { workloadRoleLabel, type NodeRef, type OperationResult, type OperationSt
 import { nanosToMilliseconds, parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import { readSchedulerRecord, schedulerRecordMatches, schedulerRecordParams, schedulerRecordPath, type SchedulerRecordRef } from "@/lib/scheduler-history"
 import { useLive } from "@/lib/use-live"
-import { actionProgress, actionOrigin, displayTime, elapsed, duration, scopeSnapshot } from "@/lib/live-display"
+import { changeListStatus, actionProgress, actionOrigin, displayTime, elapsed, duration, scopeSnapshot } from "@/lib/live-display"
 import { safeSource } from "@/lib/source-export"
 import { QueryGate, SourceExport, SourceJSON, StatusBadge, statusLabel } from "@/components/read-region"
 import { Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
@@ -142,12 +142,12 @@ function CurrentSummary({row,rows}:{row:CurrentRow;rows:CurrentRow[]}) {
 
 function CurrentList() {
   const query=useChillQuery<SchedulerControllerState>("v1/scheduler/state",{decoder:parseSchedulerJSON}),live=useLive(),params=useSearchParams(),uid=params.get("uid")??undefined,[now,setNow]=React.useState(()=>Date.now())
-  React.useEffect(()=>{const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer)},[])
-  const snapshot=live.state.snapshot?scopeSnapshot(live.state.snapshot,uid):null,actions=snapshot?.actions.filter(action=>actionProgress(action,now)!=="terminal")??[],delayed=actions.filter(action=>actionProgress(action,now)==="delayed").length
+  React.useEffect(()=>{const update=()=>setNow(Date.now()),timer=setInterval(update,1000);document.addEventListener("visibilitychange",update);return()=>{clearInterval(timer);document.removeEventListener("visibilitychange",update)}},[])
+  const snapshot=live.state.snapshot?scopeSnapshot(live.state.snapshot,uid):null,actions=snapshot?.actions.filter(action=>actionProgress(action,now)!=="terminal")??[],summary=changeListStatus({...live.state,snapshot},now)
   const results=currentRows(query.data).filter(row=>row.result&&(!uid||row.result.operation.workloadUID===uid||row.result.operation.workloadUIDs?.includes(uid)))
-  return <Screen back={["/operations/flow","운영 흐름 보드"]} title={snapshot?`변경 진행 ${actions.length-delayed}건 / 정체 ${delayed}건`:"변경 관측을 기다려요"} lede="보드와 동일한 실시간 작업 원본이에요. 예상 대비 지연은 종결 기록 미확인이며 실패를 뜻하지 않아요.">
-    {!snapshot&&<p role="status">연결 상태: {live.status}. 연결 전에는 진행 없음을 단정하지 않아요.</p>}
-    {snapshot&&<Rows label={uid?"이 서비스의 변경":"현재 변경"}>{actions.length?actions.map(action=>{const delayed=actionProgress(action,now)==="delayed",search=new URLSearchParams({open:`action:${JSON.stringify([action.id,action.node.uid,action.startedAt])}`,...(params.get("fixture")?{fixture:params.get("fixture")!}:{})});return <Row key={JSON.stringify([action.id,action.node.uid,action.startedAt])} href={`/operations/flow?${search}`} label={`${kindLabel(action.kind)} / ${snapshot.workloads.find(row=>row.uid===action.workloadUID)?.name??"공유 구성"}`} hint={`${actionOrigin(action)} / ${actionNodeName(action.node)} / ${displayTime(action.startedAt,"KST")} 시작 / ${elapsed(action.startedAt,now).replace(" 전"," 경과")} / 예상 ${action.expectedSeconds==null?"미제공":duration(action.expectedSeconds)}`} value={delayed?"예상 대비 지연 · 종결 미확인":"진행 중"}/> }):<p>진행·정체 변경이 없어요.</p>}</Rows>}
+  return <Screen back={["/operations/flow","운영 흐름 보드"]} title={summary.title} lede="보드와 동일한 실시간 작업 원본이에요. 예상 대비 지연은 종결 기록 미확인이며 실패를 뜻하지 않아요.">
+    {!summary.fresh&&<p role="status">현재 상태 미확인. 마지막 관측 {displayTime(live.state.lastObservedAt,"KST")||"미수신"}. <button type="button" className="underline underline-offset-4" onClick={live.reconnect}>다시 연결</button></p>}
+    {snapshot&&<Rows label={summary.fresh?(uid?"이 서비스의 변경":"현재 변경"):"마지막 관측의 변경"}>{actions.length?actions.map(action=>{const delayed=actionProgress(action,now)==="delayed",search=new URLSearchParams({open:`action:${JSON.stringify([action.id,action.node.uid,action.startedAt])}`,...(params.get("fixture")?{fixture:params.get("fixture")!}:{})});return <Row key={JSON.stringify([action.id,action.node.uid,action.startedAt])} href={`/operations/flow?${search}`} label={`${kindLabel(action.kind)} / ${snapshot.workloads.find(row=>row.uid===action.workloadUID)?.name??"공유 구성"}`} hint={`${actionOrigin(action)} / ${actionNodeName(action.node)} / ${displayTime(action.startedAt,"KST")} 시작 / ${elapsed(action.startedAt,now).replace(" 전"," 경과")} / 예상 ${action.expectedSeconds==null?"미제공":duration(action.expectedSeconds)}`} value={`${summary.fresh?"":"마지막 관측 · "}${delayed?"예상 대비 지연 · 종결 미확인":"진행 중"}`}/> }):<p>{summary.emptyLabel}</p>}</Rows>}
     <QueryGate query={query}>{results.length>0&&<Rows label="컨트롤러 실행 결과">{results.map((row,index)=><Row key={`${row.id}/${row.node.uid}/${row.result!.startedAt}/${index}`} href={currentLink(row)} label={kindLabel(row.kind)} hint={`${actionNodeName(row.node)} · ${when(row.result!.startedAt)} 시작`} value={<Badge status={row.status}/>}/>)}</Rows>}</QueryGate>
     <Rows label="더 보기"><Row href="/transitions?view=history" label="변경 기록" hint="클러스터 전체의 과거 동작·결과"/></Rows>
   </Screen>

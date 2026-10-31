@@ -60,10 +60,11 @@ export function liveFresh(state:LiveState,now:number):boolean {
 }
 export function changeListStatus(state:LiveState,now:number) {
   const actions=state.snapshot?.actions.filter(action=>actionProgress(action,now)!=="terminal")??[],delayed=actions.filter(action=>actionProgress(action,now)==="delayed").length
-  return {fresh:liveFresh(state,now),title:state.snapshot?`변경 진행 ${actions.length-delayed}건 / 정체 ${delayed}건`:"변경 관측을 기다려요",emptyLabel:"진행·정체 변경이 없어요."}
+  const fresh=liveFresh(state,now)
+  return {fresh,title:!state.snapshot?"변경 관측을 기다려요":fresh?`변경 진행 ${actions.length-delayed}건 / 정체 ${delayed}건`:`현재 상태 미확인 · 마지막 관측 ${displayTime(state.lastObservedAt,"KST")||"미수신"}`,emptyLabel:fresh?"진행·정체 변경이 없어요.":"마지막 관측에는 진행·정체 변경이 없었어요. 현재 상태는 미확인이에요."}
 }
 export function serviceTrafficState(metric:LiveMetric|undefined):string {
-  return metric?.received?"활동 중":"무유입"
+  return !metric?"관측 대기":metric.received===0?"무유입":"활동 중"
 }
 export function scopeSnapshot(snapshot:LiveSnapshot,uid?:string):LiveSnapshot {
   if(!uid)return snapshot
