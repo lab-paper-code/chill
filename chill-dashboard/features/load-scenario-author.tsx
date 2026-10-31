@@ -70,6 +70,7 @@ function LoadEditor({source,editing,onSaved}:{source?:LoadScenario;editing:boole
       setUID(saved.uid);setReplacementLost(false);setMessage(`저장됨 · ${saved.uid}`);setAnswer(null);await onSaved()
     } catch(error) {
       setMessage(failure(error))
+      if(error instanceof ApiError&&error.status===403){setAnswer(null);return}
       if(error instanceof ApiError&&error.status===409) {
         const latest=await detail.refetch();await onSaved()
         if(!latest.error&&latest.data&&latest.data.inUse?.length){setInUse(latest.data.inUse);setMessage("사용 중")}

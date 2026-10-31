@@ -82,3 +82,11 @@ test("removing a Workload clears only its declared load maps",()=>{
   assert.deepEqual(next,{workloads:[{name:"b"}],arrivalDistribution:{b:"poisson"},traceRefs:{b:{key:"b"}},parts:[{rates:{b:2},future:true}],future:{a:"keep"}})
   assert.equal(spec.workloads.length,2)
 })
+
+test("colliding Workload rename is rejected atomically before a later valid rename",()=>{
+  const spec={workloads:[{name:"a",uid:"a"},{name:"b",uid:"b"}],arrivalDistribution:{a:"poisson-a",b:"poisson-b"},traceRefs:{a:{key:"a"},b:{key:"b"}},parts:[{rates:{a:1,b:2}},{alpha:{a:3,b:4}}]}
+  const rejected=renameLoadWorkload(spec,0,"b")
+  assert.deepEqual(rejected,spec)
+  const renamed=renameLoadWorkload(rejected,0,"c")
+  assert.deepEqual(renamed,{workloads:[{name:"c",uid:"a"},{name:"b",uid:"b"}],arrivalDistribution:{c:"poisson-a",b:"poisson-b"},traceRefs:{c:{key:"a"},b:{key:"b"}},parts:[{rates:{c:1,b:2}},{alpha:{c:3,b:4}}]})
+})

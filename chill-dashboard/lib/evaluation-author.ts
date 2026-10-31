@@ -49,13 +49,14 @@ export function adoptWorkloads(spec:Spec,changes:WorkloadChange[],selected:strin
 export const canDeleteLoad=(item:LoadScenario)=>Array.isArray(item.inUse)&&item.inUse.length===0&&!!item.uid
 export const canCreateLoad=evaluationCanSubmit
 export function renameLoadWorkload(spec:Spec,index:number,name:string):Spec {
-  const before=String(records(spec.workloads)[index]?.name??"")
-  let next=patchSpec(spec,["workloads",index,"name"],name)
-  if(before===name)return next
+  const workloads=records(spec.workloads),before=String(workloads[index]?.name??"")
+  if(before===name)return spec
   const paths:(string|number)[][]=[["arrivalDistribution"],["traceRefs"],...records(spec.parts).flatMap((_,i)=>[["parts",i,"rates"],["parts",i,"alpha"]])]
+  if(workloads.some((workload,i)=>i!==index&&workload.name===name)||paths.some(path=>Object.hasOwn(object(specValue(spec,path)),name)))return spec
+  let next=patchSpec(spec,["workloads",index,"name"],name)
   for(const path of paths) {
     const map=object(specValue(next,path))
-    if(Object.hasOwn(map,before)&&!Object.hasOwn(map,name)) {
+    if(Object.hasOwn(map,before)) {
       next=patchSpec(next,[...path,name],map[before])
       next=patchSpec(next,[...path,before],undefined)
     }

@@ -1,0 +1,95 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+import { readFileSync } from "node:fs"
+import { createRequire } from "node:module"
+import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
+import { setImmediate } from "node:timers/promises"
+import * as author from "./evaluation-author.ts"
+import * as request from "./evaluation-request.ts"
+import * as scheduler from "./scheduler.ts"
+
+type Tree={type:unknown;props:Record<string,unknown>}
+const require=createRequire(import.meta.url)
+function elements(node:unknown):Tree[] {
+  if(Array.isArray(node))return node.flatMap(elements)
+  if(!node||typeof node!=="object"||!("props" in node))return []
+  const element=node as Tree
+  return [element,...elements(element.props.children)]
+}
+function hookRunner() {
+  const values:unknown[]=[]
+  let cursor=0
+  return {
+    react:{useState(initial:unknown) {
+      const index=cursor++
+      if(!Object.hasOwn(values,index))values[index]=typeof initial==="function"?initial():initial
+      return [values[index],(next:unknown)=>{values[index]=typeof next==="function"?next(values[index]):next}]
+    }},
+    render(Component:(props:Record<string,unknown>)=>unknown,props:Record<string,unknown>={}) {cursor=0;return Component(props)},
+  }
+}
+function load(path:string,modules:Record<string,unknown>):Record<string,(props:Record<string,unknown>)=>unknown> {
+  const source=readFileSync(new URL(path,import.meta.url),"utf8")
+  const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const exports={}
+  new Function("require","exports",compiled)((name:string)=>Object.hasOwn(modules,name)?modules[name]:name.startsWith("@/")?{}:require(name),exports)
+  return exports
+}
+const containers={Dialog:"dialog",DialogContent:"div",DialogHeader:"header",DialogTitle:"h2",DialogDescription:"p"}
+const primitives={"next/link":{default:"a"},"@/components/screen":{Screen:"main"},"@/components/read-region":{QueryGate:"div"},"@/components/ui/button":{Button:"button"},"@/components/ui/input":{Input:"input"},"@/components/ui/dialog":containers,"@/lib/evaluation-author":author,"@/lib/evaluation-request":request,"@/lib/scheduler":scheduler}
+test("load PUT denial preserves operator permission status and keeps the draft editable",async()=>{
+  class ApiError extends Error {
+    status:number
+    body:string
+    data:unknown
+    constructor(status:number,body:string,data:unknown){super(`HTTP ${status}`);this.status=status;this.body=body;this.data=data}
+  }
+  const source={name:"load",uid:"original",spec:{future:"draft"},inUse:[]}
+  let gets=0
+  const client={ApiError,useChillMutation:()=>({isPending:false,mutateAsync:async(input:{path:string;method:string})=>{
+    if(input.path.endsWith("/preflight"))return {data:{checks:[{id:"server",passed:true}]}}
+    throw new ApiError(403,"Forbidden",null)
+  }}),useChillQuery:(path:string)=>({data:path==="v1/evaluations/load-scenarios"?{items:[source]}:undefined,refetch:async()=>{gets++;return {data:source,error:null}}})}
+  const parent=hookRunner(),child=hookRunner()
+  const modules={...primitives,react:parent.react,"@/lib/client":client,"@/features/evaluation-author":{AuthorSelect:"select",AuthorField:"input",AuthorJSON:"textarea",AuthorHelp:"help",EvidencePicker:"select"}}
+  const {LoadScenarioPage}=load("../features/load-scenario-author.tsx",modules)
+  const edit=elements(parent.render(LoadScenarioPage)).find(element=>element.type==="button"&&element.props.children==="수정")!
+  ;(edit.props.onClick as ()=>void)()
+  const editor=elements(parent.render(LoadScenarioPage)).find(element=>element.props.editing===true&&typeof element.props.onSaved==="function")!
+  // The child shares the module's mocked React bindings, but has an independent hook state.
+  modules.react.useState=child.react.useState
+  const Component=editor.type as (props:Record<string,unknown>)=>unknown
+  let tree=child.render(Component,editor.props)
+  ;(elements(tree).find(element=>element.type==="button"&&element.props.children==="사전점검")!.props.onClick as ()=>void)()
+  await setImmediate()
+  tree=child.render(Component,editor.props)
+  const save=elements(tree).find(element=>element.type==="button"&&element.props.children==="수정")!
+  assert.equal(save.props.disabled,false)
+  ;(save.props.onClick as ()=>void)()
+  await setImmediate()
+  tree=child.render(Component,editor.props)
+  assert.equal(elements(tree).find(element=>element.type==="output")?.props.children,"권한 없음(평가 운영자)")
+  assert.equal(elements(tree).find(element=>element.type==="fieldset")?.props.disabled,false)
+  assert.equal(gets,0,"a definitive denial is not an unknown replacement outcome")
+})
+
+test("invalid stage control JSON prevents stage removal and reordering until repaired",()=>{
+  const runner=hookRunner()
+  const modules={...primitives,react:runner.react,"@/lib/client":{useChillQuery:()=>({data:{items:[]}})},"@/features/evaluation-request":{}}
+  const {EvaluationSpecEditor}=load("../features/evaluation-author.tsx",modules)
+  const validity:boolean[]=[]
+  const props={spec:{stages:[{id:"a",control:{}},{id:"b",control:{}}]},onChange:()=>{},onValidityChange:(valid:boolean)=>validity.push(valid)}
+  let tree=runner.render(EvaluationSpecEditor,props)
+  const control=elements(tree).find(element=>Array.isArray(element.props.path)&&element.props.path.join("/")==="stages/0/control"&&typeof element.props.onValidityChange==="function")!
+  ;(control.props.onValidityChange as (valid:boolean)=>void)(false)
+  tree=runner.render(EvaluationSpecEditor,props)
+  const destructive=elements(tree).filter(element=>element.type==="button"&&["단계 삭제","앞으로 이동"].includes(String(element.props.children)))
+  assert.equal(destructive.length,4)
+  assert.ok(destructive.every(element=>element.props.disabled===true))
+  assert.equal(validity.at(-1),false)
+  const invalidControl=elements(tree).find(element=>Array.isArray(element.props.path)&&element.props.path.join("/")==="stages/0/control"&&typeof element.props.onValidityChange==="function")!
+  ;(invalidControl.props.onValidityChange as (valid:boolean)=>void)(true)
+  tree=runner.render(EvaluationSpecEditor,props)
+  assert.ok(elements(tree).filter(element=>element.type==="button"&&element.props.children==="단계 삭제").every(element=>!element.props.disabled))
+  assert.equal(validity.at(-1),true)
+})
