@@ -183,7 +183,7 @@ test("request Funnel renders the undeclared-batch branch without a stale conditi
 
 test("unmeasured request leaves a surplus-field-only dataset unselected and required",()=>{
   const context={models:[{metadata:{name:"opaque-id",uid:"model"},spec:{artifacts:[],executionPaths:[{name:"cpu",artifact:"onnx",runtime:{family:"firstfloor",backend:"ort-cpu"}}]}}],workloads:[],classes:[],plans:[],profiles:[],preprocessors:[{metadata:{name:"image-pre",uid:"pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:"opaque-id",artifact:"onnx"}}]}}],datasets:[{metadata:{name:"vqa",uid:"data"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512},{name:"question",format:"UTF8",maxBytes:512}]}}]}
-  const html=renderRequest({context,prefill:{active:true,values:{model:"opaque-id",path:"cpu"},node:"",errors:[],returnTo:"/measurements"}})
+  const html=renderRequest({context,prefill:{active:true,values:{model:"opaque-id",path:"cpu",deviceClass:"",powerMode:""},node:"",errors:[],returnTo:"/measurements"}})
   assert.match(html,/데이터셋<select required=""/)
   assert.match(html,/<option value="" selected="">데이터셋 선택<\/option>/)
   assert.doesNotMatch(html,/<option value="vqa" selected=""/)
