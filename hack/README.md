@@ -466,25 +466,20 @@ Node's CPU allocation or affinity. Catalog contracts resolve preprocessor/data.
 Three independent sessions, one warmup iteration, all declared artifact batches
 (omit `spec.batchSizes`), or the configured powers-of-two planner batch set
 bounded by runtime maximum when undeclared are used.
-All models use `ceil(max(fixedActiveSeconds, minCallsPerTrial * secondsPerCall))`
-active seconds per independent trial (defaults 30 seconds and three calls).
-One BEO uses the maximum required window across its batches. Idle duration is
-the inherited fixed window, or config `idleSeconds` (10 seconds) when absent.
-There are no sample-count targets or window caps. Reports state:
-“셀별 정밀도(CI)는 측정 후 기록하며 목표치가 아님”.
-`secondsPerCall` is retained active-window time divided by completed physical
-calls, conservatively taking the slowest same-model/device measurement at that
-or a larger batch, or the slowest other device when none exists.
-The configured Smol SLO rule reads the applied `smolvlm2-vqa` workload's target
-latency, retaining its UID/generation and source definition. Only a measured
-batch-1 timing from the same model, device class **and execution path** may
-mark `sloInfeasibleByEstimate: true` when its time is at least the SLO. Another
-device, path, or larger batch cannot establish this estimate. Such cells use
-only batch 1 and the same fixed-window rule; no second measurement phase exists.
-The estimated κ=0 is a planning classification to confirm, not a measured
-result. Feeder manifest cell records carry the boolean marker; BEOs retain it
-as the string annotation `chill.dacs.io/sloInfeasibleByEstimate`. An incompatible
-artifact-declared batch set is rejected rather than sending an invalid subset.
+Every model and included batch uses the same config `windowSeconds` active
+window (default 60 seconds), independently repeated three times. Start with
+the full planner batch set, then retain a batch only if its same-model/class
+measured time allows `floor(windowSeconds / secondsPerCall) >= minCallsInWindow`
+(default two calls). The conservative time is the slowest measurement of that
+exact batch on the same device class, including client overhead. Without such
+a timing the batch remains included; another device's timing never excludes it.
+`excluded-batches.json` records “창 안 유의미 추론 불가”; if no batches survive,
+`excluded-cells.json` records the cell and no BEO is emitted. A partially
+filtered artifact-declared set also excludes the cell rather than violating the
+server's indivisible declaration contract. There is no SLO-based shortcut,
+second phase, sample-count target, dynamic window extension, or window cap.
+Idle uses the inherited fixed window or config `idleSeconds` (10 seconds).
+Reports state: “셀별 정밀도(CI)는 측정 후 기록하며 목표치가 아님”.
 Estimates include active windows, three shared-idle windows and their settling
 time, plus the configured 20-second overhead per active or idle run. Variable
 load/warmup/polling time is not included. MNV/PLC precede Smol, with power modes
