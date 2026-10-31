@@ -39,6 +39,7 @@ function harness(search:string,respond:(path:string)=>unknown) {
   const params=new URLSearchParams(search),pushes:string[]=[],replacements:string[]=[],paths:string[]=[]
   const modules={
     react:{useRef:(value:unknown)=>({current:value}),useState:(value:unknown)=>[value,()=>{}]},
+    "lucide-react":{TriangleAlert:()=>null},
     "next/link":{default:"a"},
     "next/navigation":{useSearchParams:()=>params,useRouter:()=>({push:(value:string)=>pushes.push(value),replace:(value:string)=>replacements.push(value)})},
     "@/lib/client":{useSession:()=>({config:{namespace:"system"}}),useChillQuery:(path:string)=>{paths.push(path);return {data:respond(path),error:null,isPending:false,isFetching:false,dataUpdatedAt:1,refetch:()=>{}}}},
@@ -163,7 +164,8 @@ test("selected occupancy keeps valid zero distinct from absence and places origi
     const content=elements(tree).find(element=>typeof element.type==="function"&&element.props.data===occupancy)!
     const selected=(content.type as Component)(content.props)
     const children=elements(selected)
-    const core=children.find(element=>typeof element.type==="function"&&element.props.data===occupancy)!
+    const core=children.find(element=>typeof element.type==="function"&&element.props.data===occupancy&&elements((element.type as Component)(element.props)).some(child=>child.type==="table"&&child.props["aria-label"]==="분배 처리시간 결과"))!
+    assert.ok(core)
     const values=(core.type as Component)(core.props)
     const cells=elements(values).filter(element=>element.type==="td")
     assert.equal(text(cells[0]),recorded?"0.00":"미제공")

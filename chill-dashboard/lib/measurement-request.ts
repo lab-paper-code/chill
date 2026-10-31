@@ -1,5 +1,6 @@
 import type { DatasetResource, DatasetSpec, PreprocessorResource, PreprocessorSpec } from "./domain.ts"
 import type { Condition, MeasurementCoverageCell, MeasurementPlan, MeasurementPlanSpec, ProfilesView } from "./read-types.ts"
+import { safeMeasurementReturn } from "./measurements.ts"
 
 export type RequestCondition = { model:string; deviceClass:string; node:string; path:string; powerMode:string }
 export type RequestDefaults = { spec:MeasurementPlanSpec; source:string; exact:boolean }
@@ -7,8 +8,9 @@ export type RequestDefaults = { spec:MeasurementPlanSpec; source:string; exact:b
 export function requestHref(namespace:string,name:string,uid?:string) {
   return `/measurements/requests/${encodeURIComponent(name)}?${new URLSearchParams({namespace,...(uid?{uid}:{})})}`
 }
-export function requestRunHref(namespace:string,name:string,uid?:string,parent?:{name:string;uid:string}) {
-  const query=new URLSearchParams({namespace,...(uid?{uid}:{}),...(parent?{requestUID:parent.uid}:{run:name})})
+export function requestRunHref(namespace:string,name:string,uid?:string,parent?:{name:string;uid:string},returnTo?:string) {
+  const back=parent?requestHref(namespace,parent.name,parent.uid):`/measurements/requests?${new URLSearchParams({namespace,view:"runs"})}`
+  const query=new URLSearchParams({namespace,...(uid?{uid}:{}),...(parent?{requestUID:parent.uid}:{run:name}),returnTo:safeMeasurementReturn(returnTo??null,back)})
   return parent?`/measurements/requests/${encodeURIComponent(parent.name)}/runs/${encodeURIComponent(name)}?${query}`:`/measurements/requests?${query}`
 }
 export function requestExecutionStatus(phase?:string) {

@@ -14,8 +14,8 @@ import { Screen } from "@/components/screen"
 import { DataTable, useServerTable } from "@/components/data-table"
 import { Button } from "@/components/ui/button"
 
-const columns = (parent?:{name:string;uid:string}) => [
-  {key:"name",label:"회차",sortValue:(run:ProfilingRun)=>run.name,value:(run:ProfilingRun)=>{const owner=parent??run.ownerReferences?.find(owner=>owner.controller&&owner.kind==="BatchEnergyOptimization");return <Link className="break-all text-primary underline" href={requestRunHref(run.namespace,run.name,run.uid,owner)}>{run.name}</Link>}},
+const columns = (parent?:{name:string;uid:string},returnTo?:string) => [
+  {key:"name",label:"회차",sortValue:(run:ProfilingRun)=>run.name,value:(run:ProfilingRun)=>{const owner=parent??run.ownerReferences?.find(owner=>owner.controller&&owner.kind==="BatchEnergyOptimization");return <Link className="break-all text-primary underline" href={requestRunHref(run.namespace,run.name,run.uid,owner,returnTo)}>{run.name}</Link>}},
   {key:"created",label:"생성 (KST)",sortValue:(run:ProfilingRun)=>run.creationTimestamp,value:(run:ProfilingRun)=><time title={run.creationTimestamp}>{formatMeasurementTime(run.creationTimestamp)}</time>},
   {key:"model",label:"모델 / 장치 / Node",value:(run:ProfilingRun)=>{const s=runSpec(run);return <><p>{s.candidate?.modelSpec??"미제공"}</p><p>{s.candidate?.deviceClass??"미제공"}</p><p>{s.targetNode??"미제공"}</p></>}},
   {key:"condition",label:"전력모드 / 경로 / 부하",value:(run:ProfilingRun)=>{const s=runSpec(run);return <><p>{s.candidate?.powerMode??"미제공"}</p><p>{s.candidate?.executionPath??"미제공"}</p><p>{s.measurement?.workloadMode==="active"?"실행":s.measurement?.workloadMode==="idle"?"유휴":s.measurement?.workloadMode??"미제공"}</p></>}},
@@ -28,9 +28,10 @@ const columns = (parent?:{name:string;uid:string}) => [
 
 export function MeasurementChildRuns({namespace,parent}:{namespace:string;parent:{name:string;uid:string}}) {
   const table=useServerTable()
+  const params=useSearchParams(),returnTo=`${requestHref(namespace,parent.name,parent.uid)}&${new URLSearchParams({returnTo:params.get("returnTo")??""})}`
   const search=new URLSearchParams(table.query);search.set("parentUID",parent.uid)
   const query=useChillQuery<RunsView>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs?${search}`)
-  return <QueryGate query={query}><DataTable data={query.data?.runs??[]} columns={columns(parent)} searchable={false} server={{...table,total:query.data?.page?.total??0,busy:query.isFetching}}/></QueryGate>
+  return <QueryGate query={query}><DataTable data={query.data?.runs??[]} columns={columns(parent,returnTo)} searchable={false} server={{...table,total:query.data?.page?.total??0,busy:query.isFetching}}/></QueryGate>
 }
 
 export function MeasurementRunsPage() {
@@ -43,7 +44,7 @@ export function MeasurementRunsPage() {
     <MeasurementNavigation active="requests" namespace={namespace}/>
     <div className="flex min-h-11 items-center gap-4"><Link className="underline" href={`/measurements/requests?${new URLSearchParams({namespace})}`}>요청 목록</Link><h2 className="font-semibold">전체 회차 검색</h2></div>
     <MeasurementFilters editable axes={[["model","모델"],["deviceClass","장치 종류"],["node","Node"],["path","실행 경로"],["powerMode","전력모드"],["cpu","CPU quota"]].map(([key,label])=>({key,label,values:runs.flatMap(run=>{const s=runSpec(run);const value=({model:s.candidate?.modelSpec,deviceClass:s.candidate?.deviceClass,node:s.targetNode,path:s.candidate?.executionPath,powerMode:s.candidate?.powerMode,cpu:s.measurement?.cpuQuota} as Record<string,string|undefined>)[key];return value?[value]:[]})}))}/>
-    <QueryGate query={query}><DataTable searchable={false} data={runs} server={{...tableState,total:query.data?.page?.total??0,busy:query.isFetching}} columns={columns()}/></QueryGate>
+    <QueryGate query={query}><DataTable searchable={false} data={runs} server={{...tableState,total:query.data?.page?.total??0,busy:query.isFetching}} columns={columns(undefined,`/measurements/requests?${params}`)}/></QueryGate>
     <SourceExport value={query.data} filename="chill-measurement-runs.json"/><SourceJSON value={query.data} title="현재 페이지 회차 원본"/>
   </Screen>
 }

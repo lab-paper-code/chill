@@ -63,9 +63,6 @@ export function coverageModes(cells:MeasurementCoverageCell[]) {
     return (left.length?Math.min(...left):Infinity)-(right.length?Math.min(...right):Infinity)||a.localeCompare(b)
   })
 }
-export function coverageEmptyModes(cells:MeasurementCoverageCell[]) {
-  return coverageModes(cells).filter(mode=>cells.filter(cell=>cell.powerMode===mode).every(cell=>!coverageProgress(cell)?.measured.length&&!cell.variants.some(variant=>variant.resultRows.length)))
-}
 export function coverageVariant(cell:MeasurementCoverageCell,id?:string) {
   return cell.variants.find(variant=>variant.id===id)
     ??cell.variants.find(variant=>!variant.assessment.reasons.some(reason=>reason.code==="PreviousRuntime")&&variant.assessment.displayStatus===cell.assessment.displayStatus)
@@ -136,11 +133,6 @@ export function coverageFailureHref(failure:MeasurementFailure,namespace:string,
   if(failure.runName)return `/measurements/requests?${new URLSearchParams({namespace:failure.runNamespace||namespace,run:failure.runName,uid:failure.runId.split("/").at(-1)??"",returnTo})}`
   const [requestNamespace,requestName,uid]=failure.requestId.split("/")
   return `/measurements/requests/${encodeURIComponent(requestName)}?${new URLSearchParams({namespace:requestNamespace||namespace,uid:uid??"",returnTo})}`
-}
-export function coverageStatusCounts(cells:MeasurementCoverageCell[]) {
-  const counts:Record<MeasurementDisplayStatus,number>={usable:0,review:0,insufficient:0,problem:0,running:0,unmeasured:0,unknown:0,unsupported:0}
-  for(const cell of cells)counts[coverageMeasurementStatus(cell)]++
-  return counts
 }
 export function coverageRequestHref(cell:MeasurementCoverageCell,namespace:string,returnTo:string,variantId?:string,targetBatches:number[]=[]) {
   const variant=cell.variants.find(variant=>variant.id===variantId),condition=variant?.condition

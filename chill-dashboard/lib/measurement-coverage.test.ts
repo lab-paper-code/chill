@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { coverageQuality, coverageQualityReasons, coverageMeasurementStatus, coverageFailureHref, coverageProfileQuery, coverageStatusCounts, coverageUsageAssessment, coverageFilterVisible, coverageEmptyModes, measurementAge, conditionLabel, deviceLabel, coverageSelection, coveragePathVisible, coverageModes, coverageVariant, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
+import { coverageQuality, coverageQualityReasons, coverageMeasurementStatus, coverageFailureHref, coverageProfileQuery, coverageUsageAssessment, coverageFilterVisible, measurementAge, conditionLabel, deviceLabel, coverageSelection, coveragePathVisible, coverageModes, coverageVariant, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 import { requestBatches, requestTargetBatches } from "./measurement-request.ts"
 import type { CoverageModel } from "./measurement-coverage.ts"
@@ -180,15 +180,6 @@ test("profile time lookup uses the server's fifty-row page contract",()=>{
   assert.equal(query.get("model"),cell.model.name)
   assert.equal(query.get("powerMode"),"MAXN")
 })
-test("visible status totals use one denominator and include review and unknown support",()=>{
-  const cells=[cell,{...cell,id:"review",assessment:{...cell.assessment,displayStatus:"review" as const}},
-    {...cell,id:"usable",assessment:{...cell.assessment,displayStatus:"usable" as const},batchProgress:{...cell.batchProgress!,measured:cell.batchProgress!.target}}]
-  const counts=coverageStatusCounts(cells)
-  assert.equal(Object.values(counts).reduce((a,b)=>a+b,0),cells.length)
-  assert.equal(counts.review,1)
-  assert.equal(counts.usable,1)
-  assert.equal(counts.unmeasured,1)
-})
 
 test("quality reasons come from variant checks, count each cell once and never infer an absent threshold",()=>{
   const assessment={...cell.assessment,checklist:{...cell.assessment.checklist,criteriaMet:false,checks:[{code:"FrozenPowerWindowPolicy",result:"unknown" as const,message:"raw",sourceIds:[]}]}}
@@ -227,33 +218,32 @@ test("unsupported status and reason drilldown retain the combinations hidden by 
   assert.equal(coverageFilterVisible(unsupported,inventory,""),false)
   assert.equal(coverageMeasurementStatus(unsupported),"unsupported")
 })
-test("empty modes use measured evidence, and request usage shares exact condition facts",()=>{
-  assert.deepEqual(coverageEmptyModes([cell,{...cell,powerMode:"15W",batchProgress:{...cell.batchProgress!,measured:[]}}]),["15W"])
+test("request usage shares exact condition facts",()=>{
   const used={...cell,assessment:{...cell.assessment,scope:{...cell.assessment.scope,schedulerUsed:true}}}
   assert.equal(coverageUsageAssessment([used],plan.spec),used.assessment)
   assert.equal(coverageUsageAssessment([used],{...plan.spec,state:{...plan.spec.state,targetNode:"other"}}),undefined)
 })
 
 
-function renderCoverage(query="",extraCells:MeasurementCoverageCell[]=[]) {
+function renderCoverage(query="",extraCells:MeasurementCoverageCell[]=[],freshness:"fresh"|"stale"="fresh",isFetching=false) {
   const source=readFileSync(new URL("../features/measurement-coverage.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
   const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
   const unsupported={...cell,id:"unsupported",executionPath:"other",support:{...cell.support,verdict:"Incompatible",reasons:[{code:"RuntimeUnsupported",message:"미지원"}]}}
-  const data={cells:[cell,{...cell,id:"empty",powerMode:"15W",batchProgress:{...cell.batchProgress!,measured:[]}},unsupported,...extraCells],scope:{targetBatches:[1,2,4,8]},nextActions:[],sources:[]}
+  const data={dataAsOf:"2026-10-30T03:04:05Z",freshness,cells:[cell,{...cell,id:"empty",powerMode:"15W",batchProgress:{...cell.batchProgress!,measured:[]}},unsupported,...extraCells],scope:{targetBatches:[1,2,4,8]},nextActions:[],sources:[]}
   const modules:Record<string,unknown>={
     "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
     "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams(query)},
-    "@tanstack/react-query":{useQuery:({queryKey}:{queryKey:string[]})=>({data:queryKey[1]==="coverage-inventory"?inventory:data})},
-    "@/lib/client":{useSession:()=>({config:{namespace:"ns"}})},
+    "@tanstack/react-query":{useQuery:({queryKey}:{queryKey:string[]})=>({data:queryKey[1]==="coverage-inventory"?inventory:queryKey[1]==="model-compatibility"?[]:queryKey[1]==="coverage-profile-times"?{profiles:[]}:data,error:null,isFetching,refetch:()=>{}})},
+    "@/lib/client":{useSession:()=>({config:{namespace:"ns"}}),useChillQuery:()=>({data:{runs:[]},error:null})},
     "@/lib/measurement-coverage":coverageHelpers,
     "@/lib/measurement-assessment":assessmentHelpers,
     "@/lib/measurements":measurementHelpers,
     "@/lib/scheduler":{},
-    "@/components/measurement-navigation":{MeasurementNavigation:()=>null},
-    "@/components/screen":{Screen:container},
-    "@/components/ui/button":{Button:container},
+    "@/components/measurement-navigation":{MeasurementNavigation:()=>null,MeasurementEvidenceChecks:()=>null},
+    "@/components/screen":{Screen:({children,action}:{children?:ReactNode;action?:ReactNode})=>createElement("main",null,createElement("header",null,action),children)},
+    "@/components/ui/button":{Button:({children,disabled}:{children?:ReactNode;disabled?:boolean})=>createElement("button",{disabled},children)},
     "@/components/ui/input":{Input:()=>null},
     "@/components/ui/sheet":{Sheet:container,SheetContent:container,SheetHeader:container,SheetTitle:container},
     "./measurement-coverage.css":{},
@@ -261,7 +251,7 @@ function renderCoverage(query="",extraCells:MeasurementCoverageCell[]=[]) {
   runInNewContext(compiled,{exports,require:(name:string)=>name in modules?modules[name]:require(name),URLSearchParams})
   return renderToStaticMarkup(createElement(exports.MeasurementCoveragePage as ComponentType))
 }
-test("M1–M2 coverage renders separate denominators and all unmeasured modes as text",()=>{
+test("M1–M2 unsupported cells stay visible but only supported cells contribute denominators",()=>{
   const html=renderCoverage()
   assert.equal((html.match(/data-coverage-cell=/g)??[]).length,3)
   assert.match(html,/15W/)
@@ -270,9 +260,44 @@ test("M1–M2 coverage renders separate denominators and all unmeasured modes as
   assert.match(html,/조합 측정 \/ 전체/)
   assert.match(html,/배치 측정 \/ 목표/)
   assert.equal((html.match(/품질 판정: 판정 불가/g)??[]).length,1)
-  assert.match(html,/<td>2\/3<\/td><td>4\/12<\/td>/)
+  assert.match(html,/<td>1\/2<\/td><td>2\/8<\/td>/)
+  assert.doesNotMatch(html,/<td>2\/3<\/td><td>4\/12<\/td>/)
   const unsupported=renderCoverage("status=unsupported&supportReason=RuntimeUnsupported")
   assert.equal((unsupported.match(/data-coverage-cell=/g)??[]).length,1)
+})
+
+test("coverage header shows server observation time, freshness and refresh status",()=>{
+  const html=renderCoverage()
+  const header=html.match(/<dl[^>]*aria-label="범위 기준"[^>]*>.*?<\/dl>/)?.[0]
+  assert.ok(header)
+  assert.match(header,/기준 시각 KST/)
+  assert.ok(header.includes(measurementHelpers.formatMeasurementTime("2026-10-30T03:04:05Z")))
+  assert.match(header,/신선도/)
+  assert.match(header,/최신/)
+  assert.match(header,/조회 갱신/)
+  assert.match(header,/완료/)
+  assert.match(html,/<button[^>]*>갱신<\/button>/)
+  const stale=renderCoverage("",[],"stale").match(/<dl[^>]*aria-label="범위 기준"[^>]*>.*?<\/dl>/)?.[0]
+  assert.ok(stale)
+  assert.match(stale,/오래된 관측/)
+  const refreshing=renderCoverage("",[],"stale",true)
+  assert.match(refreshing.match(/<dl[^>]*aria-label="범위 기준"[^>]*>.*?<\/dl>/)?.[0]??"",/조회 중/)
+  assert.match(refreshing,/<button[^>]*disabled=""[^>]*>갱신<\/button>/)
+})
+
+test("empty failed and unsupported selected results do not claim to be unmeasured",()=>{
+  const failed:MeasurementCoverageCell={...cell,id:"failed-empty",batchProgress:{...cell.batchProgress!,measured:[]},assessment:{...cell.assessment,status:"failed",displayStatus:"problem",label:"문제"},failureSummary:[{requestId:"ns/failed/request-uid",runId:"",runNamespace:"",runName:"",batch:null,code:"Other",exitCode:null,message:"실행 전 실패",relation:"unresolved"}]}
+  for(const [id,label] of [["failed-empty","문제"],["unsupported","지원 안 함"]]) {
+    const html=renderCoverage(`cell=${id}`,[failed])
+    const selected=html.slice(html.indexOf('id="coverage-selected-condition"'))
+    assert.match(selected,new RegExp(`<td>${label}<\\/td>`))
+    const results=selected.match(/<section><h3>배치별 결과<\/h3>.*?<\/section>/)?.[0]
+    assert.ok(results)
+    assert.match(results,/미기록/)
+    assert.doesNotMatch(results,/미측정/)
+  }
+  const unmeasured=renderCoverage("cell=empty").split('id="coverage-selected-condition"')[1]
+  assert.match(unmeasured.match(/<section><h3>배치별 결과<\/h3>.*?<\/section>/)?.[0]??"",/미측정/)
 })
 
 test("M3 existing used results and failed requests coexist in scope counts",()=>{

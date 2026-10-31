@@ -281,6 +281,17 @@ test("canonical request and child round links preserve namespaces and immutable 
   assert.equal(orphan.searchParams.get("run"),"orphan")
 })
 
+test("child round links retain parent identity or the filtered search return context",()=>{
+  const parent=requestHref("ns","parent","parent-uid")
+  const child=new URL(requestRunHref("ns","round","round-uid",{name:"parent",uid:"parent-uid"}),"https://dashboard.invalid")
+  assert.equal(child.searchParams.get("returnTo"),parent)
+  const filtered="/measurements/requests?namespace=ns&view=runs&model=model&page=3"
+  const search=new URL(requestRunHref("ns","round","round-uid",undefined,filtered),"https://dashboard.invalid")
+  assert.equal(search.searchParams.get("returnTo"),filtered)
+  const unsafe=new URL(requestRunHref("ns","round","round-uid",undefined,"https://outside.invalid"),"https://dashboard.invalid")
+  assert.equal(unsafe.searchParams.get("returnTo"),"/measurements/requests?namespace=ns&view=runs")
+})
+
 test("creation stages keep target, conditions and check submission distinct",()=>{
   const target=renderRequest()
   assert.match(target,/aria-label="요청 단계"/)

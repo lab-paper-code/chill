@@ -9,7 +9,7 @@ import type { CampaignResult, MeasurementAssessment, MeasurementMutation, Measur
 import { formatMeasurementNumber as number, measurementCheckText, resultRowsCSV, safeMeasurementReturn } from "@/lib/measurements"
 import { assessmentReasons } from "@/lib/measurement-assessment"
 import { coverageUsageAssessment } from "@/lib/measurement-coverage"
-import { requestExecutionStatus, requestFailureFacts, requestRunHref, requestUsedResults } from "@/lib/measurement-request"
+import { requestExecutionStatus, requestFailureFacts, requestHref, requestRunHref, requestUsedResults } from "@/lib/measurement-request"
 import { useMeasurementCoverage } from "@/features/measurement-coverage"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
@@ -97,6 +97,7 @@ export function MeasurementPlanDetails({namespace,name}:{namespace:string;name:s
   const linkedRuns=[...new Map([...(data?.assessment?.failureSummary??[]).filter(failure=>failure.runName).map(failure=>({namespace:failure.runNamespace||namespace,name:failure.runName,uid:failure.runId.split("/").at(-1)??""})),...(result?.excludedTrials??[]).map(trial=>trial.run)].map(run=>[`${run.namespace}/${run.name}/${run.uid}`,run])).values()]
   const used=spec?requestUsedResults(coverage.data?.cells??[],spec):[]
   const resultQuery=spec?new URLSearchParams({namespace,kind:"throughput",model:spec.state.candidate.modelSpec,deviceClass:spec.state.candidate.deviceClass,node:spec.state.targetNode,path:spec.state.candidate.executionPath,powerMode:spec.state.candidate.powerMode}):new URLSearchParams()
+  const returnTo=`${requestHref(namespace,name,campaign?.uid)}&${new URLSearchParams({returnTo:params.get("returnTo")??""})}`
   return <>
     <Button variant="outline" disabled={query.isFetching} onClick={()=>void query.refetch()}>갱신</Button>
     {other&&<p role="alert" className="notice">측정 식별자 불일치</p>}
@@ -107,7 +108,7 @@ export function MeasurementPlanDetails({namespace,name}:{namespace:string;name:s
         <h2 className="font-semibold text-destructive">실패 근거</h2>
         <table aria-label="실패 원인·연결 회차" className="w-full text-left text-sm"><tbody>
           {requestFailureFacts(campaign.conditions).map(([label,value],index)=><tr key={index} className="border-b"><th scope="row" className="w-28 py-2 align-top font-medium">{label}</th><td className="break-words py-2">{value}</td></tr>)}
-          <tr><th scope="row" className="py-2 align-top font-medium">연결 회차</th><td>{linkedRuns.length?linkedRuns.map(run=><Link key={run.uid||run.name} className="flex min-h-11 items-center break-all underline" href={requestRunHref(run.namespace,run.name,run.uid,{name,uid:campaign.uid})}>{run.name}</Link>):<a className="inline-flex min-h-11 items-center underline" href="#request-child-runs">회차 검색</a>}</td></tr>
+          <tr><th scope="row" className="py-2 align-top font-medium">연결 회차</th><td>{linkedRuns.length?linkedRuns.map(run=><Link key={run.uid||run.name} className="flex min-h-11 items-center break-all underline" href={requestRunHref(run.namespace,run.name,run.uid,{name,uid:campaign.uid},returnTo)}>{run.name}</Link>):<a className="inline-flex min-h-11 items-center underline" href="#request-child-runs">회차 검색</a>}</td></tr>
           {data?.assessment?.failureSummary?.map((failure,index)=><React.Fragment key={index}><tr><th scope="row" className="py-2 align-top font-medium">분류</th><td>{failure.code==="Other"?campaign.conditions?.find(condition=>condition.reason)?.reason||failure.code:failure.label??failure.code}</td></tr><tr><th scope="row" className="py-2 align-top font-medium">서버 상세</th><td className="break-words">{failure.message||"미제공"}</td></tr><tr><th scope="row" className="py-2 align-top font-medium">종료 코드</th><td className="text-right tabular-nums">{failure.exitCode??"미제공"}</td></tr></React.Fragment>)}
         </tbody></table>
       </section>}
