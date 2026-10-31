@@ -453,6 +453,35 @@ still gate each lane. The
 `meter-cadence/analyze.py` helper takes `--input-dir` for retained telemetry
 and `--output-dir` for its external tables.
 
+`hack/measure/gen.py --coverage --output-dir /tmp/coverage-plan-out --preflight`
+reads live coverage/catalog/inventory and retains the inputs and frozen
+`hack/measure/coverage-plan.json` alongside BEO lane manifests; it never creates
+cluster resources. Compatible unmeasured and TargetBatchMissing insufficient
+cells are planned; unknown support and cells without an eligible Node are listed
+separately. The config excludes genesis1/orin-nano (testbed) and genesis2
+(hardware failure), so RTX2080Ti cells use genesis3.
+Protocol inheritance follows the dashboard's exact request → exact profile →
+latest successful same-model → same-path order, without transferring another
+Node's CPU allocation or affinity. Catalog contracts resolve preprocessor/data.
+Three independent sessions, one warmup iteration, all declared artifact batches
+(omit `spec.batchSizes`), or every runtime batch size when undeclared are used.
+Per-session active time is `ceil(max(minSeconds, n * secondsPerCall / 3))`,
+subject to the configured ceiling; capped plans explicitly do not promise n.
+`secondsPerCall` is retained active-window time divided by completed physical
+calls, conservatively taking the slowest same-model/device measurement at that
+or a larger batch, or the slowest other device when none exists.
+Estimates sum active windows and the configured 20-second overhead per active
+or shared-idle run; idle/settling windows and variable load/warmup/polling time
+are **not** included. MNV/PLC run before Smol, with power modes grouped within
+each priority tier. Check the existing feeder format without executing it:
+`hack/measure/feeder.py --manifest /tmp/coverage-plan-out/resume-plan.json
+--stages 1,2 --check-manifest`. `gen.py --coverage --self-check` is offline.
+Optional preflight checks one sample per model. Its audited route calls
+`client.Reader` and the pure curve-plan projector, discarding transitions
+(`internal/operatorconsole/kube/batch_energy_optimization_preflight_query.go`,
+`cmd/console/run.go`); server enrichment only reads catalog/evidence. It does
+not submit a BEO or execute an actuator.
+
 `hack/measure/smoke/smoke.py NODE OUTDIR WL=PROFILE:DATASET` retains prepare,
 route and cleanup-reset requests/results in an external output directory.
 A failed or partial reset propagates as an error and triggers no further

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Stage the approved 2026-10-24 conditions; never apply CRs or regenerate history.
+"""Stage approved conditions or a live coverage-driven BEO plan; never apply CRs.
 
-Run: python3 gen.py [--output-dir PATH]
-Requires the already-installed scipy for the approved Student-t planning rule.
-Run --self-check only during the coordinated gate pass. Outputs are JSON/YAML,
-including the explicit resume plan; feeder-hold.json is never changed.
+Coverage: CHILL_EXPERIMENT_CONFIG=/absolute/environment.json python3
+hack/measure/gen.py --coverage --output-dir /tmp/coverage-plan-out --preflight
+The frozen coverage-plan.json accompanies all outputs. --coverage --self-check
+is offline. Feeder input is resume-plan.json (--stages 1,2); generation and the
+optional read-only preflight do not submit measurements.
+Legacy approved derivations still require the already-installed scipy.
 """
 import argparse
 import copy
@@ -12,6 +14,10 @@ import hashlib
 import json
 import math
 import os
+import ssl
+import urllib.error
+import urllib.request
+from collections import Counter, defaultdict
 from decimal import Decimal
 from pathlib import Path
 
@@ -410,6 +416,371 @@ def generate(output):
     return conditions
 
 
+def coverage_api(path, body=None):
+    """Only GET and the audited read-only preflight POST are available here."""
+    namespace = "/api/v1/namespaces/" + NS
+    if body is not None and path != namespace + "/batch-energy-optimizations/preflight":
+        raise ValueError("only read-only preflight POST is allowed")
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+    d2 = CONFIG["d2"]
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=d2["caFile"])),
+        NoRedirect())
+    request = urllib.request.Request(
+        d2["apiBase"].rstrip("/") + path,
+        data=None if body is None else json.dumps(body).encode(),
+        headers={"Authorization": "Bearer " + Path(d2["tokenFile"]).read_text().strip(),
+                 "Content-Type": "application/json"})
+    with opener.open(request, timeout=120) as response:
+        return json.load(response)
+
+
+def coverage_targets(coverage, policy):
+    targets, unknown = [], []
+    if coverage["completeness"] != "complete":
+        raise ValueError("incomplete coverage cannot define a complete plan")
+    for cell in coverage["cells"]:
+        verdict, assessment = cell["support"]["verdict"], cell["assessment"]
+        if verdict == policy["unknownVerdict"]:
+            unknown.append(cell)
+        elif verdict == policy["supportedVerdict"] and (
+                assessment["displayStatus"] == policy["unmeasuredStatus"] or
+                assessment["displayStatus"] == policy["insufficientStatus"] and
+                any(r["code"] == policy["missingBatchReason"] for r in assessment["reasons"])):
+            targets.append(cell)
+    return targets, unknown
+
+
+def coverage_defaults(cell, node, plans, profiles):
+    """Same precedence as requestDefaults; never transfer another node's CPU."""
+    model, device, path, mode = (cell["model"]["name"], cell["deviceClass"]["name"],
+                                 cell["executionPath"], cell["powerMode"])
+    newest = sorted(plans, key=lambda p: p["metadata"]["name"])
+    newest.sort(key=lambda p: p["metadata"]["creationTimestamp"], reverse=True)
+    def exact(candidate, target):
+        return (candidate["modelSpec"], candidate["deviceClass"], target,
+                candidate["executionPath"], candidate["powerMode"]) == (model, device, node, path, mode)
+    for plan in newest:
+        if exact(plan["spec"]["state"]["candidate"], plan["spec"]["state"]["targetNode"]):
+            spec = copy.deepcopy(plan["spec"])
+            spec.pop("cpuAffinity", None)
+            return spec, "request:" + plan["metadata"]["name"]
+    matches = [p for p in profiles if
+               (p["condition"]["logicalModel"], p["condition"]["deviceClass"], p["nodeName"],
+                p["condition"]["artifact"]["executionPath"], p["condition"]["powerMode"]) ==
+               (model, device, node, path, mode)]
+    matches.sort(key=lambda p: p["id"])
+    matches.sort(key=lambda p: p["measuredAt"], reverse=True)
+    successful = [p for p in newest if p.get("status", {}).get("phase") == "Complete"]
+    source = next((p for p in successful if p["spec"]["state"]["candidate"]["modelSpec"] == model), None)
+    if source is None:
+        source = next((p for p in successful if p["spec"]["state"]["candidate"]["executionPath"] == path), None)
+    if matches:
+        profile = matches[0]
+        c = profile["condition"]
+        spec = {"state": {"candidate": {"preprocessor": c["preprocessor"]["name"]},
+                          "cpuRequest": c["cpu"]["request"]},
+                "cpuQuota": c["cpu"]["limit"]}
+        for field in ("activeProtocol", "idleProtocol"):
+            protocol = c[field]
+            spec[field] = {key: protocol[key] for key in
+                           ("warmupIterations", "settlingDurationSeconds", "durationSeconds")
+                           if key in protocol}
+            if field == "activeProtocol":
+                spec[field].pop("settlingDurationSeconds", None)
+                spec[field]["dataset"] = protocol["dataset"]["name"]
+            spec[field]["metricObservation"] = {
+                "intervalMilliseconds": protocol["metricIntervalMilliseconds"],
+                "timeoutMilliseconds": protocol["metricTimeoutMilliseconds"],
+                "durationSeconds": protocol["metricDurationSeconds"]}
+        if source is None:
+            raise ValueError("no inherited retryLimit for " + cell["id"])
+        spec["retryLimit"] = source["spec"]["retryLimit"]
+        return spec, "profile:" + profile["id"]
+    if source is None:
+        raise ValueError("no inherited protocol for " + cell["id"])
+    spec = copy.deepcopy(source["spec"])
+    for field in ("cpuQuota", "cpuAffinity", "batchSizes"):
+        spec.pop(field, None)
+    spec["state"].pop("cpuRequest", None)
+    if source["spec"]["state"]["candidate"]["modelSpec"] != model:
+        spec["state"]["candidate"].pop("preprocessor", None)
+        spec["activeProtocol"].pop("dataset", None)
+    return spec, "request:" + source["metadata"]["name"]
+
+
+def coverage_batches(model, path):
+    execution = next(p for p in model["spec"]["executionPaths"] if p["name"] == path)
+    artifact = next(a for a in model["spec"]["artifacts"] if a["name"] == execution["artifact"])
+    declared = artifact.get("derivation", {}).get("declaredBatchSizes", [])
+    batches = sorted(declared) if declared else list(range(
+        1, execution["runtime"]["settings"]["firstfloor"]["maxBatchSize"] + 1))
+    if not batches or any(type(b) is not int or b < 1 for b in batches) or len(set(batches)) != len(batches):
+        raise ValueError("invalid artifact batch set")
+    return batches, bool(declared), artifact["name"]
+
+
+def coverage_inputs(spec, model, artifact, preprocessors, datasets):
+    candidates = [p for p in preprocessors if any(
+        a["target"]["model"] == model and a["target"]["artifact"] == artifact
+        for a in p["spec"]["artifacts"])]
+    pre = next((p for p in candidates if p["metadata"]["name"] ==
+                spec["state"]["candidate"].get("preprocessor")), None)
+    if pre is None and len(candidates) == 1:
+        pre = candidates[0]
+    if pre is None:
+        raise ValueError("no unambiguous compatible preprocessor for " + model + "/" + artifact)
+    compatible = []
+    for dataset in datasets:
+        fields = {f["name"]: f for f in dataset["spec"]["fields"]}
+        if all(f["name"] in fields and fields[f["name"]]["format"] == f["format"] and
+               fields[f["name"]]["maxBytes"] <= f["maxBytes"] for f in pre["spec"]["input"]["fields"]):
+            compatible.append(dataset["metadata"]["name"])
+    dataset = spec["activeProtocol"].get("dataset")
+    if dataset not in compatible:
+        if len(compatible) != 1:
+            raise ValueError("no unambiguous compatible dataset for " + model)
+        dataset = compatible[0]
+    spec["state"]["candidate"]["preprocessor"] = pre["metadata"]["name"]
+    spec["activeProtocol"]["dataset"] = dataset
+
+
+def coverage_timings(results):
+    timings = []
+    for result in results:
+        facts = result.get("measurementFacts")
+        if not facts:
+            continue
+        condition = facts["condition"]
+        for batch in facts["batches"]:
+            active = [q for q in batch["quality"] if q["workloadMode"] == "saturated-serial-fixed-batch"]
+            calls = batch.get("completedCalls", 0)
+            seconds = sum(q["windowSeconds"] for q in active)
+            if calls > 0 and active and math.isfinite(seconds) and seconds > 0:
+                timings.append({"model": condition["logicalModel"], "deviceClass": condition["deviceClass"],
+                                "batch": batch["batch"], "secondsPerCall": seconds / calls,
+                                "source": facts["request"]["name"]})
+    return timings
+
+
+def coverage_seconds(cell, batches, timings, policy):
+    model, device = cell["model"]["name"], cell["deviceClass"]["name"]
+    budget = policy["models"][model]
+    model_rows = [r for r in timings if r["model"] == model]
+    sizing = []
+    for batch in batches:
+        # An unmeasured intermediate batch uses a measured larger batch, never a
+        # faster smaller one. Missing device/batch evidence uses the slowest device.
+        local = [r for r in model_rows if r["deviceClass"] == device and r["batch"] >= batch]
+        rows = local or [r for r in model_rows if r["batch"] >= batch]
+        if not rows:
+            raise ValueError(f"no conservative measured timing for {cell['id']} batch {batch}")
+        source = max(rows, key=lambda r: r["secondsPerCall"])
+        n = budget["n"]
+        for override in policy["sampleOverrides"]:
+            if (override["model"] == model and override["deviceClass"] == device and
+                    override.get("batch", batch) == batch):
+                n = override["n"]
+        required = max(budget["minSeconds"], n * source["secondsPerCall"] / policy["sessions"])
+        sizing.append({"batch": batch, "n": n, "secondsPerCall": source["secondsPerCall"],
+                       "timingSource": source, "fallbackDevice": not bool(local),
+                       "requiredSeconds": math.ceil(required)})
+    required = max(r["requiredSeconds"] for r in sizing)
+    return min(required, budget["maxSeconds"]), required > budget["maxSeconds"], sizing
+
+
+def generate_coverage(output, policy_path, preflight=False):
+    output = output.resolve()
+    policy = load(policy_path)
+    if policy["sessions"] != 3 or policy["warmupIterations"] != 1:
+        raise ValueError("coverage requires three independent sessions and one warmup iteration")
+    for budget in policy["models"].values():
+        if (any(type(budget[k]) is not int or budget[k] < 1 for k in ("n", "minSeconds", "maxSeconds")) or
+                budget["maxSeconds"] < budget["minSeconds"]):
+            raise ValueError("invalid sample/window budget")
+    namespace = "/api/v1/namespaces/" + NS
+    inputs = {}
+    for name, path in (
+            ("coverage", namespace + "/measurement-coverage"),
+            ("plans", namespace + "/batch-energy-optimizations"),
+            ("profiles", "/api/v1/scheduler/profiles"), ("inventory", "/api/v1/inventory"),
+            ("models", "/api/v1/models"), ("preprocessors", "/api/v1/preprocessors"),
+            ("datasets", "/api/v1/datasets")):
+        inputs[name] = coverage_api(path)
+        write_json(output / "inputs" / (name + ".json"), inputs[name])
+    write_json(output / "coverage-plan.json", policy)
+    targets, unknown = coverage_targets(inputs["coverage"], policy)
+    results = []
+    for profile in inputs["profiles"]["profiles"]:
+        name = profile["id"].split("/")[1]
+        result = coverage_api(namespace + "/batch-energy-optimizations/" + name + "/result")
+        results.append(result)
+        write_json(output / "inputs" / "results" / (name + ".json"), result)
+    timings = coverage_timings(results)
+    write_json(output / "timings.json", timings)
+    classes = {c["name"]: c for c in inputs["inventory"]["classes"]}
+    models = {m["metadata"]["name"]: m for m in inputs["models"]["items"]}
+    lanes, rows, no_node = defaultdict(list), [], []
+    plan_hash = hashlib.sha256(json.dumps(
+        [policy, inputs["coverage"]["snapshotId"]], sort_keys=True).encode()).hexdigest()[:12]
+    for cell in targets:
+        model, device = cell["model"]["name"], cell["deviceClass"]["name"]
+        eligible = sorted(n["name"] for n in classes[device]["nodes"] if
+                          n["name"] not in policy["excludedNodes"] and
+                          n["ready"] == "True" and not n["schedulingDisabled"])
+        if not eligible:
+            no_node.append({"cellId": cell["id"], "reason": "노드 없음",
+                            "nodes": classes[device]["nodes"]})
+            continue
+        node = eligible[0]
+        spec, inherited = coverage_defaults(cell, node, inputs["plans"]["items"], inputs["profiles"]["profiles"])
+        spec["state"]["targetNode"] = node
+        spec["state"].setdefault("cpuRequest", policy["cpuRequest"])
+        spec.setdefault("cpuQuota", spec["state"]["cpuRequest"])
+        spec["state"]["candidate"].update(modelSpec=model, deviceClass=device,
+                                         executionPath=cell["executionPath"], powerMode=cell["powerMode"])
+        batches, declared, artifact = coverage_batches(models[model], cell["executionPath"])
+        spec.pop("batchSizes", None)
+        if not declared:
+            spec["batchSizes"] = batches
+        coverage_inputs(spec, model, artifact, inputs["preprocessors"]["items"], inputs["datasets"]["items"])
+        seconds, capped, sizing = coverage_seconds(cell, batches, timings, policy)
+        active = spec["activeProtocol"]
+        padding = max(0, active["metricObservation"]["durationSeconds"] - active["durationSeconds"])
+        active.update(durationSeconds=seconds, warmupIterations=policy["warmupIterations"])
+        active["metricObservation"]["durationSeconds"] = seconds + padding
+        spec["trialsPerBatch"] = policy["sessions"]
+        name = "coverage-" + plan_hash + "-" + hashlib.sha256(cell["id"].encode()).hexdigest()[:12]
+        doc = {"apiVersion": "edge.dacs.io/v1alpha1", "kind": "BatchEnergyOptimization",
+               "metadata": {"name": name, "namespace": NS}, "spec": spec}
+        priority = policy["models"][model]["priority"]
+        row = {"cellId": cell["id"], "name": name, "model": model, "node": node, "priority": priority,
+               "powerMode": cell["powerMode"], "inheritedProtocol": inherited, "batches": batches,
+               "activeSecondsPerSession": seconds, "capped": capped, "sizing": sizing,
+               "activeSeconds": seconds * len(batches) * policy["sessions"],
+               "runCount": (len(batches) + 1) * policy["sessions"]}
+        row["estimatedSeconds"] = row["activeSeconds"] + row["runCount"] * policy["runOverheadSeconds"]
+        rows.append(row)
+        lanes[node].append((row, doc))
+    sequence = []
+    priorities = sorted({r["priority"] for r in rows})
+    for stage, priority in enumerate(priorities, 1):
+        paths = []
+        for node, lane in sorted(lanes.items()):
+            ordered = sorted([(r, d) for r, d in lane if r["priority"] == priority],
+                             key=lambda pair: (pair[0]["powerMode"], pair[0]["model"], pair[0]["cellId"]))
+            if ordered:
+                path = output / "lanes" / f"{node}-stage{stage}.yaml"
+                write_docs(path, [d for _, d in ordered])
+                paths.append(str(path))
+        sequence.append({"stage": stage, "priority": priority, "paths": paths})
+    summary = {"targetCellCount": len(targets), "manifestCellCount": len(rows),
+               "cellsByModel": dict(Counter(r["model"] for r in rows)), "noNodeCellCount": len(no_node),
+               "unknownSupportCount": len(unknown), "cappedCellCount": sum(r["capped"] for r in rows),
+               "estimateMeaning": "active sum + 20s/run planning overhead (active and shared idle runs); excludes idle windows, settling, warmup/load variation and feeder polling",
+               "lanes": {node: {"cellCount": len(lane),
+                                  "activeSeconds": sum(r["activeSeconds"] for r, _ in lane),
+                                  "runCount": sum(r["runCount"] for r, _ in lane),
+                                  "estimatedSeconds": sum(r["estimatedSeconds"] for r, _ in lane)}
+                         for node, lane in sorted(lanes.items())}}
+    write_json(output / "unknown-support.json", unknown)
+    write_json(output / "no-node.json", no_node)
+    write_json(output / "cells.json", rows)
+    write_json(output / "resume-plan.json", {"schemaVersion": "coverage-feeder-plan.v1", "sequence": sequence})
+    if preflight:
+        # Audited read-only: readapi/handler.go -> kube preflight query (client.Reader)
+        # -> cmd/console/run.go projector.Project; projected transitions are discarded.
+        # chill-server enrichment only lists requests and reads catalog/evidence.
+        checks = []
+        for model in sorted(summary["cellsByModel"]):
+            doc = next(d for lane in lanes.values() for r, d in lane if r["model"] == model)
+            try:
+                answer = coverage_api(namespace + "/batch-energy-optimizations/preflight", doc)
+                checks.append({"name": doc["metadata"]["name"], "model": model, "response": answer})
+            except urllib.error.HTTPError as error:
+                checks.append({"name": doc["metadata"]["name"], "model": model,
+                               "httpStatus": error.code, "error": error.read().decode()})
+        write_json(output / "preflight.json", checks)
+        summary["preflight"] = [{"model": r["model"], "resolves": r.get("response", {}).get("resolves"),
+                                 "reason": r.get("response", {}).get("reason") or r.get("error")}
+                                for r in checks]
+    write_json(output / "summary.json", summary)
+    print(json.dumps(summary, indent=2, ensure_ascii=False))
+    for cell in unknown:
+        print("unknown-support: " + cell["id"])
+    for cell in no_node:
+        print("노드 없음: " + cell["cellId"])
+
+
+def coverage_self_check():
+    policy = load(HERE / "coverage-plan.json")
+    model = "mobilenet-v2-050"
+    cell = {"id": "cell", "model": {"name": model}, "deviceClass": {"name": "device"},
+            "executionPath": "path", "powerMode": "mode", "support": {"verdict": "Compatible"},
+            "assessment": {"displayStatus": "unmeasured", "reasons": []}}
+    partial = copy.deepcopy(cell)
+    partial["assessment"] = {"displayStatus": "insufficient", "reasons": [{"code": "TargetBatchMissing"}]}
+    unknown = copy.deepcopy(cell)
+    unknown["support"]["verdict"] = "Unknown"
+    unsupported = copy.deepcopy(cell)
+    unsupported["support"]["verdict"] = "Incompatible"
+    other = copy.deepcopy(partial)
+    other["assessment"]["reasons"] = [{"code": "Unrelated"}]
+    assert coverage_targets({"completeness": "complete", "cells": [cell, partial, unknown, unsupported, other]},
+                            policy) == ([cell, partial], [unknown])
+    plan = {"metadata": {"name": "old", "creationTimestamp": "2026-01-01"},
+            "status": {"phase": "Complete"},
+            "spec": {"state": {"targetNode": "node", "cpuRequest": "4", "candidate": {
+                "modelSpec": model, "deviceClass": "device", "executionPath": "path",
+                "powerMode": "mode", "preprocessor": "pre"}},
+                "activeProtocol": {"durationSeconds": 10, "dataset": "dataset"},
+                "idleProtocol": {"durationSeconds": 10}, "cpuQuota": "4", "cpuAffinity": [3],
+                "batchSizes": [1], "retryLimit": 1}}
+    newer = copy.deepcopy(plan)
+    newer["metadata"] = {"name": "new", "creationTimestamp": "2026-02-01"}
+    spec, source = coverage_defaults(cell, "node", [plan, newer], [])
+    assert source == "request:new" and spec["cpuQuota"] == "4" and "cpuAffinity" not in spec
+    spec, source = coverage_defaults(cell, "different-node", [plan, newer], [])
+    assert source == "request:new" and "cpuQuota" not in spec and "cpuRequest" not in spec["state"]
+    assert "batchSizes" not in spec and spec["activeProtocol"]["dataset"] == "dataset"
+    assert "cpuAffinity" in plan["spec"]  # inheritance never mutates retained requests
+    profile = {"id": "profile", "nodeName": "node", "measuredAt": "2026-03-01", "condition": {
+        "logicalModel": model, "deviceClass": "device", "artifact": {"executionPath": "path"},
+        "powerMode": "mode", "preprocessor": {"name": "pre"}, "cpu": {"request": "2", "limit": "2"}}}
+    for field in ("activeProtocol", "idleProtocol"):
+        profile["condition"][field] = {"durationSeconds": 10, "warmupIterations": 2,
+                                      "settlingDurationSeconds": 2, "dataset": {"name": "dataset"},
+                                      "metricIntervalMilliseconds": 1000, "metricTimeoutMilliseconds": 500,
+                                      "metricDurationSeconds": 12}
+    different = copy.deepcopy(plan)
+    different["spec"]["state"]["targetNode"] = "other"
+    spec, source = coverage_defaults(cell, "node", [different], [profile])
+    assert source == "profile:profile" and spec["cpuQuota"] == "2" and spec["retryLimit"] == 1
+    assert "settlingDurationSeconds" not in spec["activeProtocol"]
+    catalog = {"spec": {"executionPaths": [{"name": "path", "artifact": "artifact", "runtime": {
+        "settings": {"firstfloor": {"maxBatchSize": 4}}}}],
+        "artifacts": [{"name": "artifact", "derivation": {"declaredBatchSizes": [4, 1, 2]}}]}}
+    assert coverage_batches(catalog, "path") == ([1, 2, 4], True, "artifact")
+    catalog["spec"]["artifacts"][0].pop("derivation")
+    assert coverage_batches(catalog, "path") == ([1, 2, 3, 4], False, "artifact")
+    timings = [{"model": model, "deviceClass": device, "batch": batch, "secondsPerCall": seconds,
+                "source": device} for device, batch, seconds in [("device", 1, .1), ("device", 4, .4),
+                                                                ("slow", 16, 10)]]
+    seconds, capped, sizing = coverage_seconds(cell, [1, 3, 16], timings, policy)
+    assert seconds == 600 and capped and sizing[-1]["fallbackDevice"]
+    assert sizing[1]["secondsPerCall"] == .4 and sizing[-1]["secondsPerCall"] == 10
+    assert coverage_seconds(cell, [1], timings[:1], policy)[0] == 42
+    facts = {"condition": {"logicalModel": model, "deviceClass": "device"}, "request": {"name": "source"},
+             "batches": [{"batch": 1, "completedCalls": 100, "quality": [
+                 {"workloadMode": "saturated-serial-fixed-batch", "windowSeconds": 10},
+                 {"workloadMode": "idle-model-loaded", "windowSeconds": 500}]}]}
+    assert coverage_timings([{"measurementFacts": facts}])[0]["secondsPerCall"] == .1
+    assert coverage_timings([{"measurementFacts": None}]) == []
+    print("coverage selection, inheritance, batch contracts, timing fallback and caps checked")
+
+
 def self_check():
     """Small runnable derivation regression, reserved for the coordinated gate."""
     inp = load(EVIDENCE / "d-method/d-inputs-and-calculations.json")
@@ -472,8 +843,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--self-check", action="store_true")
+    parser.add_argument("--coverage", action="store_true", help="generate read-only live coverage plan")
+    parser.add_argument("--plan-config", type=Path, default=HERE / "coverage-plan.json")
+    parser.add_argument("--preflight", action="store_true", help="read-only preflight, one sample per model")
     args = parser.parse_args()
-    if args.self_check:
+    if args.preflight and not args.coverage:
+        parser.error("--preflight requires --coverage")
+    if args.coverage:
+        if args.self_check:
+            coverage_self_check()
+        else:
+            generate_coverage(args.output_dir, args.plan_config, args.preflight)
+    elif args.self_check:
         self_check()
     else:
         generate(args.output_dir)

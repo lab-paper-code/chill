@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "coverage-plan.v1",
+  "source": "profiling-icc.md:39; planning estimates, not precision guarantees",
+  "budgetMeaning": "minSeconds and maxSeconds are per independent active session; initial total active floors 125/135/5700 seconds are divided across three sessions and rounded up. MNV/PLC 600-second ceilings are explicit planning limits; Smol ceiling is 9.6 hours divided by three.",
+  "sessions": 3,
+  "warmupIterations": 1,
+  "runOverheadSeconds": 20,
+  "cpuRequest": "1",
+  "excludedNodes": ["genesis1", "genesis2", "orin-nano"],
+  "excludedNodeReasons": {
+    "genesis1": "testbed exclusion",
+    "genesis2": "hardware failure",
+    "orin-nano": "testbed exclusion"
+  },
+  "supportedVerdict": "Compatible",
+  "unknownVerdict": "Unknown",
+  "unmeasuredStatus": "unmeasured",
+  "insufficientStatus": "insufficient",
+  "missingBatchReason": "TargetBatchMissing",
+  "models": {
+    "mobilenet-v2-050": {"n": 700, "minSeconds": 42, "maxSeconds": 600, "priority": 0},
+    "plc-lstm-ae": {"n": 4300, "minSeconds": 45, "maxSeconds": 600, "priority": 0},
+    "smolvlm2-500m-video-instruct": {"n": 650, "minSeconds": 1900, "maxSeconds": 11520, "priority": 1}
+  },
+  "sampleOverrides": [
+    {"model": "mobilenet-v2-050", "deviceClass": "jetson-agx-orin-64g", "n": 3700},
+    {"model": "plc-lstm-ae", "deviceClass": "edge-server-rtx-2080-ti-64g", "batch": 1, "n": 9200},
+    {"model": "plc-lstm-ae", "deviceClass": "raspberry-pi-5-8g", "batch": 1, "n": 9200},
+    {"model": "smolvlm2-500m-video-instruct", "deviceClass": "edge-server-rtx-2080-ti-64g", "batch": 2, "n": 1340}
+  ]
+}
