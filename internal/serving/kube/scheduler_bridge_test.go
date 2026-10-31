@@ -165,3 +165,56 @@ func TestSkippedBridgeChainConsumesExistingACKSCH51(t *testing.T) {
 		})
 	}
 }
+
+func TestSkippedBridgeChainPreservesTerminalUIDSCH51(t *testing.T) {
+	for _, receipt := range []bool{true, false} {
+		t.Run(map[bool]string{true: "acknowledged", false: "no-ack"}[receipt], func(t *testing.T) {
+			c, goal, _ := acknowledgedHandoffFixture(t)
+			c.ctx = context.Background()
+			c.operations = &Operations{runtime: c.runtime}
+			stage := *c.runs["acknowledged-route"].result.Operation.Target
+			stage.ID = "w2-handoff"
+			w2 := stage.Instances[0]
+			terminal := w2
+			terminal.ID, terminal.WorkloadUID, terminal.Ready, terminal.Terminated = "terminal-w1", "w1", false, true
+			stage.Instances = append(stage.Instances, terminal)
+			stage.Routing = map[string]map[string]int32{w2.WorkloadUID: {w2.ID: 1000}, "w1": {terminal.ID: 1}}
+			ack := c.runs["acknowledged-route"].result.Operation.Target
+			ack.Routing = map[string]map[string]int32{w2.WorkloadUID: {w2.ID: 1000}}
+			if err := c.runtime.ApplySchedulerTarget(*ack); err != nil {
+				t.Fatal(err)
+			}
+			c.state.Snapshot.Instances = append(c.state.Snapshot.Instances, terminal)
+			c.state.Snapshot.Routing = stage.Routing
+			recovered := terminal
+			recovered.ID, recovered.Ready, recovered.Terminated = "recovered-w1", true, false
+			next := stage
+			next.ID = "w1-handoff"
+			next.Instances = []serving.SchedulerInstance{w2, recovered}
+			next.Routing = map[string]map[string]int32{w2.WorkloadUID: {w2.ID: 1000}, "w1": {recovered.ID: 1}}
+			c.state.Snapshot.Instances = append(c.state.Snapshot.Instances, recovered)
+			first := serving.Action{ID: "skip-w2", Kind: operationRoute, RouteTarget: &stage}
+			second := serving.Action{ID: "restore-w1", Kind: operationRoute, RouteTarget: &next, DependsOn: []string{first.ID}}
+			stop := serving.Action{ID: "old-w2-stop", Kind: operationStop, Instance: w2.ID, DependsOn: []string{first.ID}, Status: nativeOperationComplete}
+			goal.Instances, goal.Routing, goal.Actions = next.Instances, next.Routing, []serving.Action{first, stop, second}
+			if !receipt {
+				delete(c.runs, "acknowledged-route")
+			}
+			installTestTransition(c, &goal)
+			// The owner also controls W2, whose handoff has already completed.
+			c.runs[transitionRunKind+"/"+goal.ID].result.Operation.WorkloadUIDs = []string{"w1", w2.WorkloadUID}
+			c.launchTargetLocked(goal, SchedulerControllerConfig{})
+			c.wg.Wait()
+			if c.runs[first.ID] != nil || !c.runs[transitionRunKind+"/"+goal.ID].noEffectRoutes[first.ID] {
+				t.Fatal("first bridge was not skipped")
+			}
+			run := c.runs[second.ID]
+			if (run != nil) != receipt {
+				t.Fatalf("W1 bridge launch=%t, W2 ACK=%t", run != nil, receipt)
+			}
+			if receipt && (run.result.EndedAt.IsZero() || run.result.Error == "") {
+				t.Fatal("expected real operation execution to reject the fixture's unregistered W1 workload")
+			}
+		})
+	}
+}

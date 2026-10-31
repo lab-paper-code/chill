@@ -1310,6 +1310,18 @@ func (c *SchedulerController) dependenciesComplete(action serving.Action, plan s
 				return false
 			}
 			uids = []string{uid}
+		} else if route >= 0 && plan.Actions[route].RouteTarget != nil {
+			var handoffUIDs []string
+			for _, dependent := range plan.Actions {
+				if dependent.Kind == operationStop && slices.Contains(dependent.DependsOn, dep) {
+					if uid := handoffSourceUID(*plan.Actions[route].RouteTarget, dependent.Instance); uid != "" {
+						handoffUIDs = append(handoffUIDs, uid)
+					}
+				}
+			}
+			if len(handoffUIDs) > 0 {
+				uids = handoffUIDs
+			}
 		}
 		if action.Kind != operationStop && action.Kind != operationRoute || route < 0 ||
 			!c.completedHandoffPresent(*cmp.Or(plan.Actions[route].RouteTarget, &plan), uids) {
