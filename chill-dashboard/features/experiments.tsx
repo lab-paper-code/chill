@@ -29,7 +29,7 @@ function IntervalDrawer({run,runs,row,service,onClose}:{run:Experiment;runs:Expe
     <SheetHeader><SheetTitle title={reason}>{row&&stageLabel(row.stage,row.leftRun)}</SheetTitle></SheetHeader>
     {row&&<div className="space-y-5 px-4 pb-6">
       {stages.filter(({owner})=>owner.id!==run.id).map(({owner})=><Link key={owner.id} prefetch={false} className="block text-sm underline" href={`/experiments?${new URLSearchParams({a:owner.id})}`}>{owner.definition?.run.name??owner.id}</Link>)}
-      <ExperimentLimits run={run} runs={runs} detail/>
+      <ExperimentLimits run={run} runs={runs}/>
       <section className="space-y-2" aria-label="구간 판단·전환 사건"><h3 className="text-sm font-semibold">{stageLabel(row.stage,row.leftRun)} · 판단·전환</h3><SchedulerIntervalEvents from={row.stage.from} to={row.stage.to}/></section>
       <div className="overflow-x-auto"><table className="w-full text-xs tabular-nums"><thead><tr>{["단계 / 행 / 모드","시작 (UTC)","종료 (UTC)"].map(label=><th key={label} className="p-2 text-left">{label}</th>)}</tr></thead><tbody>{stages.map(({stage,owner})=><tr key={`${owner.id}/${stage.id}`} className="border-t"><th className="p-2 text-left font-normal">{stageLabel(stage,owner)}</th><td className="p-2">{stage.from}</td><td className="p-2">{stage.to}</td></tr>)}</tbody></table></div>
       {stages.map(({stage,owner})=><section key={`${owner.id}/${stage.id}`} className="space-y-2" aria-label={`${stage.id} 판정·주입`}><h3 className="text-sm font-semibold">{stageLabel(stage,owner)}</h3><ExperimentOutcome run={owner} stage={stage}/><ExperimentInjections run={owner} stage={stage}/></section>)}

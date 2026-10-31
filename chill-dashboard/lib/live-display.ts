@@ -1,4 +1,5 @@
 import { compareAt, isLiveActionActive, type LiveAction, type LiveDecision, type LiveEvent, type LiveInstance, type LiveMetric, type LiveMetrics, type LiveSnapshot, type LiveState, type LiveWorkload } from "./live.ts"
+import { STATUS_AXES, type StatusValue } from "./status.ts"
 
 export const instanceSymbols = [
   ["×", "제거"], ["◌", "분배 해제 뒤 잔여 실행"], ["●", "실제 처리"],
@@ -130,16 +131,23 @@ export function minuteMetrics(metrics:LiveMetrics[],uid:string,end:number):LiveM
   return metrics.filter(row=>Date.parse(row.bucketAt)>=windowEnd-60000&&Date.parse(row.bucketAt)<windowEnd).flatMap(row=>row.workloads[uid]?[row.workloads[uid]]:[])
 }
 export function boardVerdict(rows:ServiceRow[],fresh:boolean,ongoingGap:boolean,changes=0,delayed=0) {
-  if(ongoingGap||!fresh)return {label:"이상",tone:"danger",reason:"관측 공백 진행"}
-  const anomaly=rows.find(row=>row.status.tone==="danger")
-  if(anomaly)return {label:"이상",tone:"danger",reason:anomaly.status.reason}
-  if(delayed>0)return {label:"주의",tone:"warning",reason:"예상 대비 지연"}
-  if(changes>0)return {label:"주의",tone:"warning",reason:"변경 중"}
-  const caution=rows.find(row=>row.status.tone==="warning")
-  if(caution)return {label:"주의",tone:"warning",reason:caution.status.reason}
-  if(rows.some(row=>row.status.label==="정상"))return {label:"정상",tone:"healthy",reason:"SLO 충족"}
-  if(rows.length&&rows.every(row=>row.metric?.received===0))return {label:"정상 · 무부하",tone:"healthy",reason:"유입 없음"}
-  return {label:"주의",tone:"warning",reason:"서비스 관측 대기"}
+  const observation:StatusValue={axis:STATUS_AXES.observation,
+    label:ongoingGap?"관측 공백":fresh?"최신":"오래된 관측",
+    tone:ongoingGap||!fresh?"warn":"ok",
+    reason:ongoingGap?"관측 공백 진행":fresh?undefined:"관측 신선도 부족"}
+  const impact=()=>{
+    if(!fresh)return {label:"미확인",tone:"unknown",reason:"현재 서비스 영향 미확인"}
+    const anomaly=rows.find(row=>row.status.tone==="danger")
+    if(anomaly)return {label:"이상",tone:"danger",reason:anomaly.status.reason}
+    if(delayed>0)return {label:"주의",tone:"warning",reason:"예상 대비 지연"}
+    if(changes>0)return {label:"주의",tone:"warning",reason:"변경 중"}
+    const caution=rows.find(row=>row.status.tone==="warning")
+    if(caution)return {label:"주의",tone:"warning",reason:caution.status.reason}
+    if(rows.some(row=>row.status.label==="정상"))return {label:"정상",tone:"healthy",reason:"SLO 충족"}
+    if(rows.length&&rows.every(row=>row.metric?.received===0))return {label:"정상 · 무부하",tone:"healthy",reason:"유입 없음"}
+    return {label:"주의",tone:"warning",reason:"서비스 관측 대기"}
+  }
+  return {axis:STATUS_AXES.serviceImpact,...impact(),observation}
 }
 export function decisionReason(reason:string|null|undefined,automation:boolean[]):string {
   return automation.length>0&&automation.every(enabled=>!enabled)?"자동제어 대상 없음":liveReason(reason)

@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Button } from "@/components/ui/button"
 import { safeSource } from "@/lib/source-export"
 import { stringifySchedulerJSON } from "@/lib/scheduler"
-import { explain } from "@/lib/labels"
+import { explain, statusLabel } from "@/lib/labels"
 import { Braces, CircleCheck, CircleDashed, CircleX, Download, Info, RefreshCw, TriangleAlert } from "lucide-react"
 
 export type Tone = "ok" | "warn" | "fail" | "info" | "idle"
@@ -30,23 +30,6 @@ const errorLabels: Record<number, string> = {
   404: "항목을 찾을 수 없어요.", 409: "다른 변경이 있어 다시 확인해야 해요.",
   429: "요청이 많아요. 잠시 후 다시 시도해 주세요.",
   502: "연결하지 못했어요.", 503: "지금은 정보를 확인할 수 없어요.", 504: "응답이 늦어지고 있어요.",
-}
-export function statusLabel(value?: string): string {
-  const labels: Record<string, string> = {
-    Ready: "사용 가능", Waiting: "준비 중", Preparing: "실행 준비 중", Changing: "변경 중", Deleting: "삭제 중", Degraded: "확인 필요",
-    MissingEvidence: "측정 결과가 필요해요", MissingDataset: "데이터셋이 필요해요", MissingRuntime: "실행 환경이 필요해요",
-    NativeNotReady: "실행 준비 중", Registration: "등록", Update: "수정", Delete: "삭제", ModelUpdate: "모델 변경", PreprocessorUpdate: "전처리기 변경",
-    Accepted: "접수됨", Applying: "적용 중", Applied: "적용됨", Draining: "기존 요청 마무리 중",
-    Completed: "완료", Failed: "실패", True: "정상", False: "확인 필요", Unknown: "확인 중",
-    completed: "완료", error: "오류", rejected: "거절", timeout: "시간 초과",
-    canceled: "취소", incomplete: "처리 중", delivery_failed: "응답 전달 실패",
-    pending: "배정 대기", assigned: "배정됨", queued: "실행 대기", running: "실행 중", returning: "응답 보내는 중",
-    deferred: "목표 시간을 넘겨 뒤로 미뤄짐",
-    AppliedSnapshotUnavailable: "적용 결과 확인 대기",
-    Running: "실행 중", Pending: "대기 중", Succeeded: "완료", Complete: "완료", Planned: "계획됨",
-  }
-  // Internal codes (CamelCase or "Code: detail") never reach the main screen; the raw value stays in 자세히.
-  return !value ? "정보 없음" : labels[value] ?? (/^[A-Z][A-Za-z]+(:|$)/.test(value) ? "확인이 필요해요" : value)
 }
 export function DetailsDialog({ label, title, children, description, icon }: {
   label: string; title: string; children: React.ReactNode; description?: string; icon?: React.ReactNode

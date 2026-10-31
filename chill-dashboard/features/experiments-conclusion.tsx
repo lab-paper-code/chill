@@ -2,7 +2,6 @@
 
 import { ApiError, useChillQueries } from "@/lib/client"
 import { Button } from "@/components/ui/button"
-import { TriangleAlert } from "lucide-react"
 import { campaignScoreboard, decodeExperiment, definitionComparisonReason, experimentDifference, experimentOutcome, experimentPath, historicalPublicationIDs, injectionRows, type Experiment, type ExperimentStage } from "@/lib/experiments"
 import { formatMeasurementNumber } from "@/lib/measurements"
 
@@ -37,22 +36,20 @@ export function ExperimentJudgment({run,runs=[run]}:{run:Experiment;runs?:Experi
   return <div className="flex items-center gap-2" title={reason}><strong aria-label="실험 판정" className={`text-xl font-semibold ${word==="SLO 악화"?"text-destructive":["결과 부족","비교 없음","미기록","대상 게시 없음"].includes(word)?"text-muted-foreground":"text-primary"}`}>{word}</strong>{reference&&<span className="rounded border border-heat/50 px-1.5 py-0.5 text-xs text-muted-foreground">참고</span>}</div>
 }
 
-export function ExperimentLimits({run,runs=[run],detail=false}:{run:Experiment;runs?:Experiment[];detail?:boolean}) {
+export function ExperimentLimits({run,runs=[run]}:{run:Experiment;runs?:Experiment[]}) {
   const {coverageCounts:c}=campaignScoreboard(run,runs)
   if(!run.definition&&run.comparisons===undefined)return null
   const reasons=[["규칙 다름",c.ruleDifferences],["규칙 미기록",c.ruleMissing],["정의 미기록",c.identityUnknown],["정의 다름",c.identityDifferences],["부하 다름",c.loadDifferences],["부하 미기록",c.loadUnknown],["길이 다름·미확인",c.durationDifferences],["대응 없음",c.unpaired]] as const
   const limited=reasons.filter(([,count])=>count>0)
   if(!limited.length)return null
-  const table=<table aria-label="비교 제한 원인" className="w-auto text-left text-xs font-normal tabular-nums"><thead><tr><th scope="col" className="pr-3 font-normal">제한 원인</th><th scope="col" className="text-right font-normal">구간 수</th></tr></thead><tbody>{limited.map(([label,count])=><tr key={label}><th scope="row" className="pr-3 font-normal">{label}</th><td className="text-right">{count}</td></tr>)}</tbody></table>
-  if(detail)return table
-  return <div className="group relative w-fit text-muted-foreground" tabIndex={0} aria-label={`제한 ${c.limited+c.unpaired}구간`}><span className="inline-flex items-center gap-1 whitespace-nowrap text-xs"><TriangleAlert className="size-3" aria-hidden="true"/>{c.limited+c.unpaired}</span><div role="tooltip" className="invisible absolute bottom-full left-0 z-30 mb-1 w-max rounded border bg-popover p-3 text-popover-foreground shadow-sm group-hover:visible group-focus-within:visible">{table}</div></div>
+  return <table aria-label="비교 제한 원인" className="w-full table-fixed text-left text-xs font-normal"><thead><tr><th scope="col" className="pr-3 font-normal">제한 원인</th><th scope="col" className="text-right font-normal">구간 수 (개)</th></tr></thead><tbody>{limited.map(([label,count])=><tr key={label}><th scope="row" className="break-words pr-3 font-normal">{label}</th><td className="text-right tabular-nums">{count}</td></tr>)}</tbody></table>
 }
 
 export function ExperimentCoverage({run,runs=[run]}:{run:Experiment;runs?:Experiment[]}) {
-  const {coverageCounts:c}=campaignScoreboard(run,runs),total=c.matched+c.limited+c.unpaired
+  const {coverageCounts:c}=campaignScoreboard(run,runs)
   if(!run.definition&&run.comparisons===undefined)return null
-  const groups=[{label:"일치",count:c.matched,tone:"bg-primary"},{label:"참고",count:c.limited,tone:"bg-heat"},{label:"대응 없음",count:c.unpaired,tone:"bg-muted-foreground/35"}]
-  return <div className="flex h-2 w-full min-w-24 overflow-hidden rounded-sm bg-muted" role="img" aria-label={groups.map(group=>`${group.label} ${group.count}`).join(" · ")} title={groups.map(group=>`${group.label} ${group.count}`).join(" · ")}>{groups.filter(group=>group.count>0).map(group=><span key={group.label} className={group.tone} style={{width:`${100*group.count/total}%`}}/>)}</div>
+  const groups=[["일치",c.matched],["참고",c.limited],["대응 없음",c.unpaired]] as const
+  return <table aria-label="비교 구간 수" className="w-full table-fixed text-left text-xs"><thead><tr><th scope="col" className="font-normal">비교 상태</th><th scope="col" className="text-right font-normal">구간 수 (개)</th></tr></thead><tbody>{groups.map(([label,count])=><tr key={label}><th scope="row" className="break-words font-normal">{label}</th><td className="text-right tabular-nums">{count}</td></tr>)}</tbody></table>
 }
 
 export function ExperimentConclusion({run,runs=[run]}:{run:Experiment;runs?:Experiment[]}) {
@@ -64,5 +61,5 @@ export function ExperimentConclusion({run,runs=[run]}:{run:Experiment;runs?:Expe
 }
 
 export function ExperimentComparisonLegend() {
-  return <span className="text-xs text-muted-foreground" title="일치: 게시 정의의 부하 시나리오 UID·부하 생성기와 서비스 식별자·정의, 측정 규칙, 표시 구간 길이가 같음. 참고: 조건이 다르거나 미기록. 구간 막대는 일치·참고·대응 없음 순. 제한 원인은 중복될 수 있어요.">Δ 왼쪽−오른쪽 / p95 왼쪽÷오른쪽</span>
+  return <span className="text-xs text-muted-foreground" title="일치: 게시 정의의 부하 시나리오 UID·부하 생성기와 서비스 식별자·정의, 측정 규칙, 표시 구간 길이가 같음. 참고: 조건이 다르거나 미기록. 제한 원인은 중복될 수 있어요.">Δ 왼쪽−오른쪽 / p95 왼쪽÷오른쪽</span>
 }

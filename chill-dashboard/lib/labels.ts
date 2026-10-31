@@ -202,3 +202,25 @@ export const codeText: Record<string, Guide | Label> = { ...labels, ...guides }
 // A code outside the table gets the common sentence; the caller keeps the raw code in its 원본 view.
 export const explain = (code: string): readonly [string, string?] =>
   codeText[code] ?? ["새 상태의 설명이 준비 중이에요.", "원본 보기에서 자세한 내용을 확인해 주세요."]
+
+const statusWords: Record<string, string> = {
+    Ready: "사용 가능", Waiting: "준비 중", Preparing: "실행 준비 중", Changing: "변경 중", Deleting: "삭제 중", Degraded: "확인 필요",
+    MissingEvidence: "측정 결과가 필요해요", MissingDataset: "데이터셋이 필요해요", MissingRuntime: "실행 환경이 필요해요",
+    NativeNotReady: "실행 준비 중", Registration: "등록", Update: "수정", Delete: "삭제", ModelUpdate: "모델 변경", PreprocessorUpdate: "전처리기 변경",
+    Accepted: "접수됨", Applying: "적용 중", Applied: "적용됨", Draining: "기존 요청 마무리 중",
+    Completed: "완료", Failed: "실패", True: "정상", False: "확인 필요", Unknown: "확인 중",
+    completed: "완료", error: "오류", rejected: "거절", timeout: "시간 초과",
+    canceled: "취소", incomplete: "처리 중", delivery_failed: "응답 전달 실패",
+    pending: "배정 대기", assigned: "배정됨", queued: "실행 대기", running: "실행 중", returning: "응답 보내는 중",
+    deferred: "목표 시간을 넘겨 뒤로 미뤄짐",
+    AppliedSnapshotUnavailable: "적용 결과 확인 대기",
+    Running: "실행 중", Pending: "대기 중", Succeeded: "완료", Complete: "완료", Planned: "계획됨",
+    Forbidden: "권한 없음", Unauthenticated: "권한 없음", AuthorizationUnavailable: "미확인",
+    AppliedStateUnconfirmed: "미확인", IdentityUnavailable: "미확인",
+    SchedulerUnavailable: "조회 실패", MeasurementUnavailable: "조회 실패", DashboardRelayUnavailable: "조회 실패",
+}
+
+export function statusLabel(value?: string): string {
+  // Internal codes (CamelCase or "Code: detail") never reach the main screen; the raw value stays in 자세히.
+  return !value ? "정보 없음" : statusWords[value] ?? (/^[A-Z][A-Za-z]+(:|$)/.test(value) ? "확인이 필요해요" : value)
+}
