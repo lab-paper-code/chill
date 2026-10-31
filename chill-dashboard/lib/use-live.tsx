@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { usePathname, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
 import { useSession } from "@/lib/client"
 import { applyLiveMessage, connectLive, initialLiveState, parseLiveMessage, type LiveConnection, type LiveState } from "@/lib/live"
 import { fixtureMessages } from "@/lib/live-fixture"
@@ -14,8 +14,7 @@ const liveKey=["chill-live"] as const
 export function LiveProvider({children}:{children:React.ReactNode}) {
   const {token,epoch,config,signals}=useSession()
   const queryClient=useQueryClient()
-  const pathname=usePathname(),search=useSearchParams()
-  const active=pathname === "/operations/flow" || pathname === "/pools" || pathname.startsWith("/pools/") || pathname === "/transitions"
+  const search=useSearchParams()
   const requested=search.get("fixture")
   const scene=config.liveFixture && requested && ["empty","first","expand","shrink"].includes(requested) ? requested : null
   const {data:state}=useQuery<LiveState>({queryKey:liveKey,enabled:false,initialData:initialLiveState,staleTime:Infinity,gcTime:Infinity})
@@ -23,7 +22,7 @@ export function LiveProvider({children}:{children:React.ReactNode}) {
   const reconnect=React.useCallback(()=>control.current?.reconnect(),[])
 
   React.useEffect(()=>{
-    if (!active || !token) return
+    if (!token) return
     const abort=new AbortController()
     signals.add(abort)
     const update=(change:(state:LiveState)=>LiveState)=>{queryClient.setQueryData<LiveState>(liveKey,state=>change(state ?? initialLiveState()));if(queryClient.getQueryData<LiveState>(liveKey)?.status==="unauthorized")window.dispatchEvent(new Event("chill-unauthorized"))}
@@ -54,7 +53,7 @@ export function LiveProvider({children}:{children:React.ReactNode}) {
       abort.abort()
       signals.delete(abort)
     }
-  },[active,scene,token,epoch,signals,queryClient])
+  },[scene,token,epoch,signals,queryClient])
 
   const value=React.useMemo(()=>({state,status:state.status,reconnect}),[state,reconnect])
   return <LiveContext.Provider value={value}>{children}</LiveContext.Provider>

@@ -6,6 +6,15 @@ import type { SchedulerObservation } from "./read-types.ts"
 const from="2026-10-13T02:00:00.123456789Z",to="2026-10-13T03:00:00.987654321Z"
 const event:SchedulerObservation={at:"2026-10-13T02:30:00.000000001Z",action:{id:"same-action",kind:"route",node:{name:"node",uid:"uid-a"},phase:"starting",startedAt:"2026-10-13T02:29:59.123456789Z"}}
 
+test("filtered latest-first rows retain original append offset for evidence lookup",()=>{
+  const ref=schedulerRecordRef({...event,offset:"9007199254740993"},from,to,"0")
+  assert.equal(ref.offset,"9007199254740993")
+  const query=new URLSearchParams(schedulerRecordPath(ref).split("?")[1])
+  assert.equal(query.get("cursor"),ref.offset)
+  assert.equal(query.has("order"),false)
+  assert.equal(query.has("filter"),false)
+  assert.equal(query.has("uid"),false)
+})
 test("selected journal restoration retains exact window and refuses same-ID replacement",()=>{
   const ref=schedulerRecordRef(event,from,to,"9007199254740993")
   assert.deepEqual(readSchedulerRecord(schedulerRecordParams(ref,"a"),"a"),ref)

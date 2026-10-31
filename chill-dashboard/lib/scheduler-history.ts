@@ -9,7 +9,7 @@ export function schedulerHistoryKindMatches(filter:string,kind:string):boolean {
 export function schedulerRecordRef(event:SchedulerObservation,from:string,to:string,offset:string):SchedulerRecordRef {
   const kind=event.decision?"decision":event.snapshot?"snapshot":event.settings?"settings":event.action?"action":event.power?"power":"other"
   const id=event.action?.id??event.node?.uid??event.settings?.actorUID??event.decision?.at??event.snapshot?.at??""
-  return {from,to,offset,kind,at:event.at,id,...(event.action?{node:event.action.node.uid,startedAt:event.action.startedAt}:{})}
+  return {from,to,offset:String(event.offset??offset),kind,at:event.at,id,...(event.action?{node:event.action.node.uid,startedAt:event.action.startedAt}:{})}
 }
 
 export function schedulerRecordParams(ref:SchedulerRecordRef,prefix=""):URLSearchParams {

@@ -97,10 +97,6 @@ export function servicePriority(workload:LiveWorkload,metric:LiveMetric|undefine
 export function currentObservation(fresh:boolean,terminals:number|undefined):boolean {
   return fresh&&terminals!=null
 }
-export function quietReason(fresh:boolean,terminals:number|undefined,received:number|undefined,changes:number):string {
-  if(!currentObservation(fresh,terminals))return "현재 상태 미확인. 마지막 관측 기준 수치이며 현재 동작을 단정하지 않아요."
-  return changes?"변경을 진행하고 있어요.":received===0?"새 요청 없이 현재 구성을 유지하고 있어요.":"요청을 처리하며 현재 구성을 유지하고 있어요."
-}
 export function minuteMetrics(metrics:LiveMetrics[],uid:string,end:number):LiveMetric[] {
   const windowEnd=Math.floor(end/1000)*1000
   return metrics.filter(row=>Date.parse(row.bucketAt)>=windowEnd-60000&&Date.parse(row.bucketAt)<windowEnd).flatMap(row=>row.workloads[uid]?[row.workloads[uid]]:[])
@@ -108,8 +104,8 @@ export function minuteMetrics(metrics:LiveMetrics[],uid:string,end:number):LiveM
 export function boardVerdict({fresh,terminals,failed,sloMisses,queued,changes,delayed,serving,off,total,admissionBlocked,received=0,declared=serving,unserved=0}:{fresh:boolean;terminals:number|undefined;failed:number|undefined;sloMisses:number;queued:number;changes:number;delayed:number;serving:number;off:number;total:number;admissionBlocked:boolean;received?:number;declared?:number;unserved?:number}) {
   if (!currentObservation(fresh,terminals)) return {label:"데이터 끊김",tone:"unknown",reason:"최신 관측을 기다려요. 마지막 수치를 현재 상태로 판단하지 마세요"}
   if ((failed??0)>0 || admissionBlocked || unserved>0 || (!serving&&(received>0||queued>0))) return {label:"이상: 요청 처리 확인 필요",tone:"danger",reason:`실패 ${failed??0}건 / 유입 있으나 서빙 없음 ${unserved}개 / 접수 거절 ${admissionBlocked?"있음":"없음"}. 서비스 상세에서 확인하세요`}
-  if (!serving && total>0 && off===total && declared===0 && received===0 && queued===0 && changes===0 && delayed===0) return {label:"정상: 계획된 정지",tone:"healthy",reason:`자동제어 꺼짐 ${off}/${total} / 선언 인스턴스 0 / 유입 0. 요청 처리 없이 대기 중이에요`}
-  if (!serving) return {label:"이상: 서빙 준비 확인",tone:"warning",reason:`서빙 인스턴스 0 / 선언 ${declared}개 / 자동제어 꺼짐 ${off}/${total}. 계획된 정지 조건과 다르므로 구성·변경을 확인하세요`}
+  if (!serving && total>0 && off===total && declared===0 && received===0 && queued===0 && changes===0 && delayed===0) return {label:`정지 중(자동제어 꺼짐 ${off}/${total})`,tone:"unknown",reason:"설정상 모든 서비스의 자동제어가 꺼져 있어요. 정지 의도·책임자·복구 시점은 제공되지 않았어요"}
+  if (!serving) return {label:"이상: 서빙 준비 확인",tone:"warning",reason:`서빙 인스턴스 0 / 선언 ${declared}개 / 자동제어 꺼짐 ${off}/${total}. 구성·진행 중 변경을 확인하세요`}
   if (sloMisses>0) return {label:"SLO 위반",tone:"danger",reason:`목표 미달 서비스 ${sloMisses}개를 확인하세요`}
   if (delayed>0) return {label:"정체",tone:"danger",reason:`예상 대비 지연 ${delayed}건. 종결 미확인으로 실제 상태 확인이 필요해요`}
   if (changes>0) return {label:"진행",tone:"warning",reason:`구성 변경 ${changes}건이 진행 중이에요`}
@@ -162,11 +158,11 @@ export function sloLatency(workload:LiveWorkload,metric:LiveMetric|undefined):nu
 export function retainedEvents(events:LiveEvent[],now:number,keep=false):LiveEvent[] {
   return events.filter(event=>Date.parse(event.at)<=now&&(keep||event.kind!=="decision"||event.decision.state!=="Keep")).slice(-30)
 }
-export function idleGroups(workloads:LiveWorkload[]) {
-  const groups=new Map<string,{model:string;workloads:LiveWorkload[]}>()
-  for(const workload of workloads) {
-    const group=groups.get(workload.model)??{model:workload.model,workloads:[]}
-    group.workloads.push(workload);groups.set(workload.model,group)
-  }
-  return [...groups.values()].sort((a,b)=>a.model.localeCompare(b.model))
+
+export function incidentFlow(events:LiveEvent[],gaps:LiveState["gaps"],now:number,keep=false) {
+  const incidents=[
+    ...mergeKeepEvents(retainedEvents(events,now,keep)).map(row=>({kind:"event" as const,at:row.event.at,key:`event:${row.event.seq}`,...row})),
+    ...gaps.filter(gap=>Date.parse(gap.from)<=now).map(gap=>({kind:"gap" as const,at:gap.from,key:`gap:${gap.scope}:${gap.from}:${gap.reason}`,gap})),
+  ]
+  return incidents.sort((a,b)=>Date.parse(b.at)-Date.parse(a.at)).slice(0,30)
 }

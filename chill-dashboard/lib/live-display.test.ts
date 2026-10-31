@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { LiveAction, LiveInstance, LiveMetric, LiveMetrics, LiveSnapshot, LiveWorkload } from "./live.ts"
 import { changeListStatus, serviceTrafficState, actionProgress, actionOrigin, scopeSnapshot, scopeEvents, recentEvents, liveFresh, belongsToPool, displayNumber, duration, elapsed, instanceSymbol, isStale, ratio, receivedLabel, routingShare, terminalCount, workloadLabel, workloadQueue, servicePriority, mergeKeepEvents, trendSegments, boardVerdict, decisionText } from "./live-display.ts"
-import { idleGroups, retainedEvents, sloLatency, minuteMetrics, quietReason, incidentFlow } from "./live-display.ts"
+import { retainedEvents, sloLatency, minuteMetrics, incidentFlow } from "./live-display.ts"
 
 const at="2026-10-30T12:00:00.123456789Z",now=Date.parse(at)
 const instance:LiveInstance={id:"shared",node:{uid:"n",name:"Node"},ownerWorkloadUID:"a",profileID:"p",ready:true,stopped:false,routable:{a:true,b:true},running:{a:1,b:0},waiting:{a:0,b:2},observedAt:at}
@@ -158,13 +158,15 @@ test("missing metrics are awaiting observation, never observed zero traffic",()=
   assert.equal(serviceTrafficState(metric),"활동 중")
 })
 
-test("planned stop is normal only with no declared instances, demand, or autonomous services",()=>{
+test("stopped automation is neutral and never asserts a planned intention",()=>{
   const input={fresh:true,terminals:0,failed:0,sloMisses:0,queued:0,changes:0,delayed:0,serving:0,off:2,total:2,admissionBlocked:false,received:0,declared:0,unserved:0}
-  assert.equal(boardVerdict(input).label,"정상: 계획된 정지")
+  assert.equal(boardVerdict(input).label,"정지 중(자동제어 꺼짐 2/2)")
+  assert.equal(boardVerdict(input).tone,"unknown")
+  assert.match(boardVerdict(input).reason,/책임자·복구 시점은 제공되지/)
   assert.match(boardVerdict({...input,received:1,unserved:1}).label,/^이상:/)
   assert.match(boardVerdict({...input,failed:1}).label,/^이상:/)
-  assert.notEqual(boardVerdict({...input,declared:1}).label,"정상: 계획된 정지")
-  assert.notEqual(boardVerdict({...input,off:1}).label,"정상: 계획된 정지")
+  assert.notEqual(boardVerdict({...input,declared:1}).label,"정지 중(자동제어 꺼짐 2/2)")
+  assert.notEqual(boardVerdict({...input,off:1}).label,"정지 중(자동제어 꺼짐 2/2)")
 })
 
 test("latency uses the exact SLO percentile and retained events outlive the new-event window",()=>{
@@ -178,12 +180,6 @@ test("latency uses the exact SLO percentile and retained events outlive the new-
   assert.equal(retainedEvents([...Array(35)].map((_,seq)=>({...event,seq})),now).length,30)
   assert.equal(retainedEvents([{...event,decision:{...event.decision,state:"Keep"}}],now).length,0)
 })
-test("idle services group by model independently of service names",()=>{
-  const groups=idleGroups([{...workload,name:"edge-model"},{...workload,uid:"b",name:"other-node-model"}])
-  assert.equal(groups.length,1)
-  assert.equal(groups[0].model,workload.model)
-  assert.equal(groups[0].workloads.length,2)
-})
 
 test("minute summary includes exactly sixty completed second buckets at aligned and fractional clocks",()=>{
   const end=Date.parse("2026-10-30T12:01:00Z")
@@ -193,11 +189,4 @@ test("minute summary includes exactly sixty completed second buckets at aligned 
     assert.equal(selected.length,60)
     assert.equal(selected.reduce((sum,row)=>sum+row.received,0),540)
   }
-})
-test("quiet explanation does not assert current activity before metrics or after disconnect",()=>{
-  assert.match(quietReason(true,undefined,undefined,0),/현재 상태 미확인/)
-  assert.match(quietReason(false,4,9,0),/현재 상태 미확인/)
-  assert.match(quietReason(false,0,0,0),/마지막 관측 기준/)
-  assert.match(quietReason(true,0,0,0),/새 요청 없이/)
-  assert.match(quietReason(true,4,9,0),/요청을 처리하며/)
 })

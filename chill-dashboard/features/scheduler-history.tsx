@@ -38,6 +38,7 @@ export function useSchedulerHistory():SchedulerHistoryQuery {
   if(previousAddress!==address){setPreviousAddress(address);setDraft(submitted);setLimit(Number(params.get("limit")??config.pageSize))}
   React.useEffect(()=>{if(!params.has("from")||!params.has("to")){const next=new URLSearchParams(params.toString());if(!next.has("from"))next.set("from",entry.from);if(!next.has("to"))next.set("to",entry.to);router.replace(`${pathname}?${next}`)}},[entry,params,pathname,router])
   const request=new URLSearchParams({...submitted,limit:params.get("limit")??String(config.pageSize)});if(params.has("cursor"))request.set("cursor",params.get("cursor")!)
+  for(const key of ["order","filter","uid"])if(params.has(key))request.set(key,params.get(key)!)
   const query=useChillQuery<SchedulerObservationPage>(`v1/observations/scheduler?${request}`,{decoder:parseSchedulerJSON})
   const rows=(query.data?.events??[]).map((event,index)=>({event,ref:schedulerRecordRef(event,submitted.from,submitted.to,(BigInt(cursor)+BigInt(index)).toString())}))
   function apply(){
@@ -124,15 +125,15 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
   return <Screen back={["/records","기록"]} title={title} lede={settingsOnly?"누가 언제 운영 설정을 바꿨는지 보여드려요.":"기록을 열어 비교할 판단 두 개(A, B)를 고를 수 있어요."}
     action={!settingsOnly&&(a||b)?<><p className="text-sm text-muted-foreground">A {a?when(a.at):"아직 고르지 않았어요"} · B {b?when(b.at):"아직 고르지 않았어요"}</p>{a&&b?<Button asChild><Link href={`/scheduler/compare?${compare}`}>두 기록 비교하기</Link></Button>:<Button disabled>두 기록 비교하기</Button>}</>:undefined}>
     <HistoryControls history={history}>
-      {!settingsOnly&&<RowDialog open={filterOpen} onOpenChange={setFilterOpen} label="기록 종류" value={historyFilters[filter]??"이전 조건"} title="기록 종류" description="불러온 기록 중에서 골라 보여드려요. 판단·전환 기록은 운영 판단과 변경 동작만 포함해요. 전력 측정은 제외하며, 다음 기록에도 같은 필터를 유지해요.">
-        <fieldset className="grid gap-2">{Object.entries(historyFilters).map(([key,label])=><label key={key} className="flex min-h-11 items-center gap-2"><input type="radio" name="kind" checked={filter===key} onChange={()=>{const next=new URLSearchParams(params.toString());next.set("filter",key);router.replace(`${pathname}?${next}`);setFilterOpen(false)}}/>{label}</label>)}</fieldset>
+      {!settingsOnly&&<RowDialog open={filterOpen} onOpenChange={setFilterOpen} label="기록 종류" value={historyFilters[filter]??"이전 조건"} title="기록 종류" description="서버에서 해당 종류만 조회해요. 판단·전환 기록은 운영 판단과 변경 동작만 포함하며 전력 측정은 제외해요. 다음 기록에도 같은 조건을 유지해요.">
+        <fieldset className="grid gap-2">{Object.entries(historyFilters).map(([key,label])=><label key={key} className="flex min-h-11 items-center gap-2"><input type="radio" name="kind" checked={filter===key} onChange={()=>{const next=schedulerPageParams(new URLSearchParams(params.toString()));next.set("filter",key);router.replace(`${pathname}?${next}`);setFilterOpen(false)}}/>{label}</label>)}</fieldset>
       </RowDialog>}
       {history.query.data&&<RowDialog label="자료 내보내기" title="자료 내보내기" description="지금 불러온 기록을 파일로 받아요. 기간 전체 집계는 아니에요.">
         <SourceExport value={{conditions:{...history.submitted,cursor:history.cursor,limit:params.get("limit")??history.limit,filter},source:history.query.data}} filename="chill-scheduler-current-page.json"/>
       </RowDialog>}
     </HistoryControls>
     <QueryGate query={history.query}>{loaded&&<>
-      {filter==="decision-action"&&<p className="text-sm text-muted-foreground">지금 가져온 기록 중 운영 판단과 변경 동작만 표시해요. 전력 측정은 제외해요. 이 페이지에 없으면 다음 기록에도 확인해 주세요. 기간 전체 건수는 아니에요.</p>}
+      <p className="text-sm text-muted-foreground">{params.get("order")==="desc"?"최신 사건부터 표시해요.":"기록 저장 순서로 표시해요."} {params.get("uid")?"선택 서비스 UID와 연결된 판단·변경·구성만 조회해요.":""} {filter==="decision-action"?"운영 판단과 변경 동작만 조회하며 전력 측정을 제외해요.":""} 기간 전체 건수는 아니에요.</p>
       {rows.length?<Rows label="기록">{rows.map(row=>{
         const ev=row.event,mark=[same(a,row)&&"A",same(b,row)&&"B"].filter(Boolean).join(" · ")
         return <Row key={row.ref.offset} label={ev.decision?judgmentLabels[ev.decision.status]??statusLabel(ev.decision.status):ev.action?actionKinds[ev.action.kind]??kinds.action:kinds[row.ref.kind]??kinds.other}
