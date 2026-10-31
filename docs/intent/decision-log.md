@@ -361,3 +361,4 @@
 
 - 기준: 대시보드 측정 커버리지(`/api/v1/namespaces/chill-system/measurement-coverage`, measurement-coverage.v1). 셀 = (모델, 장치 클래스, 실행 경로, 전력 모드). 17:29Z 기준 지원 셀 162(지원 여부 미확인 67), usable 21(13%), insufficient 14, problem 5, unmeasured 126. 누적 run 1,155개, profile 79개(profile당 약 15 run).
 - 방향: 셀마다 본질 수치(배치별 서비스 시간 분포와 p95, 요청당 증분 J, 유휴 W, d)를 checklist(result-checklist.v1) 기준을 만족하는 최소 측정으로 얻음. 장치·모드·모델당 Pod 하나, 정밀도 기준 종료, 노드 병렬. 바텀업 순서: (1) 기존 run의 시간 분해(준비 오버헤드 vs 측정 창) (2) checklist 기준에서 나오는 최소 표본·시간 (3) 설계 브리프 → 패널 (4) 구현 → 리뷰 → 셀 몇 개로 실측 비교.
+- 동등성 브리프(`local://brief-equiv.md`)는 변형당 1.5~3시간(10 trial × 10,000 표본)으로 과도함. 결정: 동등성 기록·신원 분리 경로(저장 계약 변경, ADR 0019 부담)는 보류함. 대신 **빠른 프로파일링 하나로** runtime 변경 후 재측정과 커버리지 채우기를 함께 해결함. 1단계: 프로파일링 시간 분해와 checklist 최소량 분석(ProfilingAnatomy).
