@@ -376,3 +376,10 @@
 - unknown-support 67셀은 전부 RuntimeDeclarationMissing(CUDA-amd64 21, RKNN 25, CUDA-arm64·rnn·vlm 각 7). 측정이 아니라 선언 생성 운영 단계로 해결할 문제.
 - unmeasured 126셀(MNV 34/PLC 34/Smol 58, Xavier 56·Orin Nano 28): 현재 방식이면 약 102 node-h(최장 lane 44 h). 본질 최소는 core 약 5.8 node-h(Xavier 병목 2.6 h)에 d를 셀당 약 7분 추가. 절감처: Smol 고정 active 창(99~600 s → 약 10 s+, 약 96%), 셀당 Pod·모델 기동 9회 → 1회, 이미 측정된 셀에 쓰던 run을 빈 셀로 재배분. checklist에는 CI 폭·표본 목표가 없어서 3 trial이면 형식상 통과함.
 - 바텀업 순서: (1) power-window 판정 기록(기존 powerObservation.coverage 정책 재사용) (2) runtime declaration 생성 (3) 빠른 프로파일링 프로토콜(본질 창, 셀당 한 세션, 빈 셀 우선, 장치 클래스별 lane 병렬) 브리프 → 패널.
+
+## 2026-10-31 — 빠른 프로파일링 패널 판정과 순서
+
+- 패널 2인: 단일 세션(trial=세션 내 시간 block)은 MLPerf·SPECpower·Google Benchmark 관행과 맞지만, 프로세스 간 분산을 잃는 크기는 미확인. 기존 독립 3-trial run의 raw로 ICC를 먼저 계산해야 함. 순차 정지(α 분배)보다 MLPerf식 "최소 시간·개수 충족 후 한 번 판정"과 pilot 기반 고정 n이 더 단순하고 표준적임.
+- 결정적 발견(패널 1): coverage는 계획된 batch 전체를 요구하는데 quick-energy는 local-min에서 멈춤(LocalMinimum 43/88) → 지금 방식으로는 셀의 약 절반이 insufficient로 끝남.
+- 순서(계약 변경 없음, 즉시): (1) quick-energy v2 전체 batch sweep (2) Smol 창 max(10 s, n·s_b)와 warmup 1(BEO 파라미터, n은 config에 동결) (3) 빈 셀 우선·노드별 lane·runtime declaration 생성(운영) (4) 기존 run raw로 ICC·CV 오프라인 분석. 효과 추정 126셀 약 102 → 23 node-h [추정].
+- E5 종료 뒤 cutover 1회: power 정책 동결과 PolicyPassed, 그리고 (4)가 허락하면 세션 프로토콜까지 한 번에. 새 profiling ADR 필요.
