@@ -101,7 +101,9 @@ func replaySupply(s serving.SchedulerSettings, snap serving.SchedulerSnapshot, r
 			continue
 		}
 		in := serving.NewCapacityInput(s, snap.DispatchOccupancy, serving.SchedulerOption{Instance: i}, d)
-		kappa += planningKappa(in, rows)
+		if k, _, reason := serving.CapacityPlanningKappa(in, rows); reason == "" {
+			kappa += k
+		}
 	}
 	return kappa
 }
