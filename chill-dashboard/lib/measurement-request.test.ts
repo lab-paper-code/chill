@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { requestBatches, requestDefaults, requestInputs, requestInitialBatches } from "./measurement-request.ts"
+import { requestBatches, requestDefaults, requestInputs, requestInitialBatches, requestTargetBatches, requestConditionChanges, requestPreflightReason } from "./measurement-request.ts"
 import type { MeasurementPlan, ProfilesView } from "./read-types.ts"
 
 const condition={model:"model & one",deviceClass:"device",node:"node",path:"cuda",powerMode:"MAXN"}
@@ -68,4 +68,43 @@ test("unmeasured model prefill resolves its registered preprocessor and a compat
   const subset=requestInputs("model","onnx","","vqa",context as Parameters<typeof requestInputs>[4])
   assert.equal(subset.preprocessor,"pre")
   assert.match(subset.warning,/추가 필드/)
+})
+
+test("automatic inputs never inherit a VQA superset for an image-only contract",()=>{
+  const context={preprocessors:[{metadata:{name:"image-pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:"opaque-id",artifact:"onnx"}}]}}],datasets:[{metadata:{name:"vqa"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:1024},{name:"question",format:"UTF8",maxBytes:512}]}}]} as Parameters<typeof requestInputs>[4]
+  assert.equal(requestInputs("opaque-id","onnx","","",context).dataset,"")
+  assert.match(requestInputs("opaque-id","onnx","","",context).warning,/image.*JPEG.*데이터셋/)
+  assert.equal(requestInputs("opaque-id","onnx","image-pre","vqa",context,{preprocessor:true,dataset:true}).dataset,"")
+  assert.equal(requestInputs("opaque-id","onnx","image-pre","vqa",context).dataset,"vqa")
+  const compatible={metadata:{name:"images"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512}]}}
+  const full={...context,datasets:[...context.datasets,compatible]} as Parameters<typeof requestInputs>[4]
+  assert.equal(requestInputs("opaque-id","onnx","image-pre","vqa",full,{preprocessor:true,dataset:true}).dataset,"images")
+  assert.equal(requestInputs("opaque-id","onnx","image-pre","vqa",full).dataset,"vqa")
+  assert.equal(requestInputs("other-model","onnx","image-pre","vqa",full,{preprocessor:true,dataset:true}).preprocessor,"")
+})
+
+test("frozen condition explanation lists only observed changed fields, not missing facts",()=>{
+  const before={nodeUID:"old",cpu:{limit:"2",affinityCPUs:[1,2]},activeProtocol:{dataset:{name:"vqa"}},runtimeImage:"same",preprocessor:{name:"image"}}
+  const after={nodeUID:"new",cpu:{limit:"2",affinityCPUs:[3,4]},activeProtocol:{dataset:{name:"images"}},runtimeImage:"same"}
+  const changes=requestConditionChanges(before,after)
+  assert.deepEqual(changes.map(change=>change.field),["nodeUID","cpu.affinityCPUs","activeProtocol.dataset.name"])
+  assert.deepEqual(changes[1],{field:"cpu.affinityCPUs",label:"CPU 코어 고정",before:"[1,2]",after:"[3,4]"})
+  assert.deepEqual(requestConditionChanges(before,undefined),[])
+  assert.match(requestPreflightReason({code:"VariantConditionChanged",message:"English warning"}),/기존.*제외.*확인/)
+  assert.match(requestPreflightReason({code:"ImmutableImagesUnconfirmed",message:"English warning"}),/이미지.*확인/)
+  assert.equal(requestPreflightReason({code:"FutureReason",message:"서버 상세"}),"서버 상세")
+})
+
+test("request batch selection preserves explicit URL scope and previous target without inventing batches",()=>{
+  assert.deepEqual(requestTargetBatches(new URLSearchParams("batches=8,2"),[1,2,4,8],4),[2,8])
+  assert.deepEqual(requestTargetBatches(new URLSearchParams("batches="),[1]),[])
+  assert.deepEqual(requestTargetBatches(new URLSearchParams(),[1]),[1])
+  assert.deepEqual(requestTargetBatches(new URLSearchParams(),[]),[])
+  assert.deepEqual(requestTargetBatches(new URLSearchParams(),undefined,2),[1,2])
+})
+
+test("changing a preprocessor clears only inherited datasets, preserving deliberate mismatched selections",()=>{
+  const context={preprocessors:[{metadata:{name:"image-pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:"model",artifact:"onnx"}}]}}],datasets:[{metadata:{name:"vqa"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512},{name:"question",format:"UTF8",maxBytes:512}]}}]} as Parameters<typeof requestInputs>[4]
+  assert.equal(requestInputs("model","onnx","image-pre","vqa",context,{dataset:true}).dataset,"")
+  assert.equal(requestInputs("model","onnx","image-pre","vqa",context,{dataset:false}).dataset,"vqa")
 })

@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useSession } from "@/lib/client"
 import type { DispatchOccupancyMeasurement, MeasurementEvidenceLocation, MeasurementProjection, MeasurementProjectionList, OperationCostMeasurement } from "@/lib/read-types"
 import { formatMeasurementTime, evidenceLocations, measurementHref, measurementListHref, measurementPath, measurementUIDMismatch, occupancyDuration, occupancyThroughput, occupancySupply, operationDuration, operationWallEnergy, operationTotals, operationSteps, type OperationTotals, type OperationStep, type ProjectionMeasurementKind } from "@/lib/measurements"
-import { operationStageLabel, operationStageLabels, largestOperationStages } from "@/lib/operation-cost"
+import { operationStageLabel, operationStageLabels, largestOperationStages, operationDirection, operationModel, operationMetadata, type OperationMetadata } from "@/lib/operation-cost"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
 import { Facts, RowDialog, Rows, Screen } from "@/components/screen"
@@ -19,14 +19,14 @@ import { MeasurementFilters } from "@/features/measurement-coverage"
 
 const measurementTitles = {"operation-cost-measurements":"동작 비용 측정","dispatch-occupancy-measurements":"분배 점유시간 측정"}
 const measurementTime = formatMeasurementTime
-type ProjectionRow=MeasurementProjection & {totals:OperationTotals|undefined}
+type ProjectionRow=MeasurementProjection & {totals:OperationTotals|undefined;targets:OperationMetadata|undefined}
 
 export function ProjectionMeasurementListPage({kind}:{kind:ProjectionMeasurementKind}) {
   const params = useSearchParams(), {config} = useSession()
   const [namespaceOpen,setNamespaceOpen] = React.useState(false)
   const namespace = params.get("namespace") ?? config.namespace, path = measurementPath(kind,namespace), title = measurementTitles[kind]
   const query = useChillQuery<MeasurementProjectionList>(path,{decoder:parseSchedulerJSON})
-  const all:ProjectionRow[] = (query.data?.items??[]).map(item=>({...item,totals:item.kind==="OperationCostMeasurement"?operationTotals(item):undefined}))
+  const all:ProjectionRow[] = (query.data?.items??[]).map(item=>({...item,totals:item.kind==="OperationCostMeasurement"?operationTotals(item):undefined,targets:item.kind==="OperationCostMeasurement"?operationMetadata(operationSteps(item)):undefined}))
   const axes=[{key:"node",label:"Node",values:all.map(item=>item.node)},...(kind==="dispatch-occupancy-measurements"?[{key:"workload",label:"워크로드",values:all.flatMap(item=>item.kind==="DispatchOccupancyMeasurement"?[item.conditions.workload]:[])}]:[])]
   const items=all.filter(item=>(!params.get("q")||item.metadata.name.toLocaleLowerCase().includes(params.get("q")!.toLocaleLowerCase()))&&(!params.get("status")||item.assessment?.displayStatus===params.get("status"))&&(!params.get("node")||item.node===params.get("node"))&&(!params.get("workload")||(item.kind==="DispatchOccupancyMeasurement"&&item.conditions.workload===params.get("workload"))))
   const columns:DataColumn<ProjectionRow>[] = [
@@ -34,6 +34,8 @@ export function ProjectionMeasurementListPage({kind}:{kind:ProjectionMeasurement
     {key:"node",label:"Node",value:item => item.node,sortValue:item => item.node},
     {key:"phase",label:"서버 판정",value:item => <MeasurementStatus assessment={item.assessment}/>,sortValue:item => item.assessment?.label??""},
     ...(kind === "operation-cost-measurements" ? [
+      {key:"direction",label:"전환 방향",value:(item:ProjectionRow)=><ul className="grid min-w-40 gap-2 whitespace-normal">{item.targets?.directions.map((direction,index)=><li key={index}>{direction}</li>)}</ul>},
+      {key:"model",label:"모델",value:(item:ProjectionRow)=><ul className="grid min-w-32 gap-2 whitespace-normal">{item.targets?.models.map((model,index)=><li key={index}>{model}</li>)}</ul>},
       {key:"duration",label:"전체 시나리오 시간 (유휴 포함)",sortValue:(item:ProjectionRow)=>item.totals?.durationNanos??undefined,value:(item:ProjectionRow)=>item.totals?.durationNanos===null?"잘못된 시간 기록 · 확인 필요":operationDuration(item.totals?.durationNanos,"s",1)},
       {key:"energy",label:"전체 장비 에너지 (J, 유휴 포함)",sortValue:(item:ProjectionRow)=>item.totals?.wallJoules??undefined,value:(item:ProjectionRow)=>item.totals?.wallJoules===null?"잘못된 에너지 기록 · 확인 필요":operationWallEnergy(item.totals?.wallJoules,1)},
       {key:"steps",label:"단계별 시간·에너지",value:(item:ProjectionRow) => item.kind === "OperationCostMeasurement" ? <OperationSummary data={item}/> : "종류 확인 필요"},
@@ -50,6 +52,7 @@ export function ProjectionMeasurementListPage({kind}:{kind:ProjectionMeasurement
     <MeasurementFilters axes={axes}/>
     <QueryGate query={query}>{query.data && <>
       <p className="text-sm text-muted-foreground">이 저장 영역에서 받은 {all.length}개</p>
+      {kind==="operation-cost-measurements"&&<p className="text-sm text-muted-foreground">전환 방향·모델은 저장된 동작 기록 기준이에요. 모르는 값은 이름이나 현재 설정에서 추정하지 않아요. 전체 시간·에너지는 유휴를 포함한 시나리오 합계이며 순수 전환 비용이나 요청당 추가 에너지가 아니에요.</p>}
       <DataTable key={`${kind}/${namespace}/${params}`} searchable={false} data={items} columns={columns}/>
       <p className="text-sm text-muted-foreground">마지막 조회 · {measurementTime(query.dataUpdatedAt)}</p>
       <Rows><RowDialog label="원본 자료" title={`${title} 목록 원본`} description="안전한 projection 응답이에요. 전체 CR이나 raw Evidence가 아니에요.">
@@ -98,14 +101,14 @@ function OperationSummary({data}:{data:OperationCostMeasurement}) {
   const steps=operationSteps(data),largest=largestOperationStages(steps)
   return <div className="grid min-w-56 gap-3 whitespace-normal break-words">
     <p className="font-medium">최장 시간: {largest.duration.map(step=>`${steps.indexOf(step)+1}. ${operationStageLabel(step)} ${operationDuration(step.results[0].durationNanos,"s",1)}`).join(", ")||"비교할 기록 없음"} · 최대 에너지: {largest.energy.map(step=>`${steps.indexOf(step)+1}. ${operationStageLabel(step)} ${operationWallEnergy(step.results[0].wallJoules,1)}`).join(", ")||"비교할 기록 없음"}</p>
-    <ol className="grid list-decimal gap-2 pl-5">{steps.map((step,index)=><li key={index}>{operationStageLabel(step)} · {step.results.length?step.results.map((result,i)=><span key={i} className="block">{operationDuration(result.durationNanos,"s",1)} / {result.verdict==="Accepted"?operationWallEnergy(result.wallJoules,1):"채택된 에너지 없음"}</span>):"실측 미기록"}<OperationTarget step={step}/></li>)}</ol>
+    <details><summary className="min-h-11 cursor-pointer py-2 text-sm">단계별 시간·에너지 {steps.length}개 펼치기</summary><ol className="grid list-decimal gap-2 pl-5">{steps.map((step,index)=><li key={index}>{operationStageLabel(step)} · {step.results.length?step.results.map((result,i)=><span key={i} className="block">{operationDuration(result.durationNanos,"s",1)} / {result.verdict==="Accepted"?operationWallEnergy(result.wallJoules,1):"채택된 에너지 없음"}</span>):"실측 미기록"}<OperationTarget step={step}/></li>)}</ol></details>
     <p className="text-xs text-muted-foreground">기록 {data.status.steps?.length??0} / 계획 {data.conditions.steps.length}단계. 최대값은 단일 결과가 있는 단계끼리 비교해요.</p>
   </div>
 }
 function OperationTarget({step}:{step:OperationStep}) {
   const condition=step.condition
-  if(condition?.kind==="power")return <p className="text-xs text-muted-foreground">전환 방향 미기록 · 계획 목표: {condition.powerMode||"미기록"}</p>
-  if(condition?.kind==="prepare"||condition?.kind==="remove")return <p className="text-xs text-muted-foreground">모델 미기록 · 측정 프로파일: {condition.batchEnergyOptimization||"미기록"}</p>
+  if(condition?.kind==="power")return <p className="text-xs text-muted-foreground">{operationDirection(step)} · 계획 목표: {condition.powerMode||"미기록"}</p>
+  if(condition?.kind==="prepare"||condition?.kind==="remove")return <p className="text-xs text-muted-foreground">{operationModel(step)} · 측정 프로파일: {condition.batchEnergyOptimization||"미기록"}</p>
   return null
 }
 function OperationResult({data}:{data:OperationCostMeasurement}) {

@@ -70,9 +70,9 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 		Source: types.NamespacedName{Namespace: task.Namespace, Name: task.Name},
 		Code:   "ReplacementSelection", Reason: "superseded by newer; original evidence retained",
 	}}
-	if got := assessMeasurementRequest(task, view); got.DisplayStatus != operatorconsole.MeasurementUsable ||
+	if got := assessMeasurementRequest(task, view); got.DisplayStatus != operatorconsole.MeasurementReview ||
 		!got.Evidence.Accepted || got.Scope.SchedulerUsed == nil || *got.Scope.SchedulerUsed {
-		t.Fatalf("superseded verified result became problem or scheduler-used: %+v", got)
+		t.Fatalf("superseded verified result lost review or became scheduler-used: %+v", got)
 	}
 }
 

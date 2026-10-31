@@ -171,12 +171,14 @@ export function campaignPairs(run:Experiment) {
   })
 }
 export function campaignGroups(runs:Experiment[]) {
-  return [...runs].sort((a,b)=>Date.parse(b.from)-Date.parse(a.from)).map(run=>{
+  return runs.map(run=>{
     const pairs=campaignPairs(run)
+    const reasons=[...new Set(run.stages.map(stage=>stageComparison(run,stage)).filter(pair=>!pair.counterpart).map(pair=>pair.reason))]
     return {run,pairs,title:run.id,
       question:pairs.length?"자동 운영과 고정 구성의 성공률·지연·에너지 비교":"부하·운영 구성별 성공률·지연·에너지",
+      comparisonReason:pairs.length?`같은 부하 비교 ${pairs.length}쌍`:reasons.join(" / ")||"게시된 단계 없음",
     }
-  })
+  }).sort((a,b)=>Number(!!b.pairs.length)-Number(!!a.pairs.length)||Date.parse(b.run.from)-Date.parse(a.run.from))
 }
 export function experimentSelection(search:string,values:Record<string,string>):URLSearchParams {
   const next=new URLSearchParams(search)
@@ -312,6 +314,25 @@ export function campaignConclusion(run:Experiment):string {
   const unpaired=run.stages.length-pairs.length*2
   const conclusion=worse?"자동 운영이 항상 낫지는 않았어요. 서비스 품질 저하가 있어요.":missing||unpaired?"자동 운영이 더 나은지는 아직 확인이 부족해요.":increased?"서비스 품질 저하는 없지만 에너지가 늘어난 구간이 있어요.":"비교한 구간에서 서비스 품질 저하 없이 에너지를 유지하거나 줄였어요."
   return `${conclusion} 전체 ${run.stages.length}단계 중 같은 부하 ${pairs.length}쌍 · 에너지 감소 ${saved} / 증가 ${increased}구간 · 서비스 성공률·지연 개선 ${better} / 악화 ${worse}건${worstSuccess<0?` · 최대 성공률 하락 ${(worstSuccess*100).toFixed(2)}%p: ${successAt}`:""}${worstLatency>0?` · 최대 p95 증가 ${formatResult(worstLatency,"ms")}: ${latencyAt}`:""}${missing||unpaired?` · 확인 부족 ${missing}건 / 비교 불가 ${unpaired}단계`:""}`
+}
+
+export function campaignHeadline(run:Experiment):string {
+  const pairs=campaignPairs(run),energies=pairs.filter(pair=>finite(pair.chill.kpis.wholePoolJoules)!==null&&finite(pair.control.kpis.wholePoolJoules)!==null)
+  const conclusion=campaignConclusion(run).split(" 전체 ")[0]
+  if(!energies.length)return `${conclusion}${pairs.length?" 순 에너지 미제공.":""}`
+  const a=energies.reduce((sum,pair)=>sum+Number(pair.chill.kpis.wholePoolJoules),0),b=energies.reduce((sum,pair)=>sum+Number(pair.control.kpis.wholePoolJoules),0)
+  return `${conclusion} 순 에너지 ${difference(a,b,"J")} (${relativeEnergy(a,b)}) · 에너지 제공 ${energies.length}/${pairs.length}쌍.`
+}
+export const experimentPath=(id:string)=>`v1/experiments/${encodeURIComponent(id)}`
+export const stageEvidencePath=(stage:ExperimentStage)=>`v1/observations/scheduler?${new URLSearchParams({from:stage.from,to:stage.to,limit:"100"})}`
+export function selectedExperimentStage(run:Experiment|undefined,id:string,stageID:string|null):ExperimentStage|undefined {
+  if(!id||run?.id!==id)return undefined
+  const stages=run.stages.filter(stage=>stage.id===stageID)
+  return stages.length===1?stages[0]:undefined
+}
+export function publishedVerdict(stage:ExperimentStage):string {
+  const status=String(stage.kpis.status??"미제공")
+  return status==="FAIL"?"요청 목표 미달":status.includes("NOT_READY")?"판정 근거 부족":status.includes("NOT_EVALUATED")?"아직 판정하지 않음":status.includes("DESCRIPTIVE")?"게시된 관측 결과":status
 }
 
 export function stageLoadLabel(stage:ExperimentStage,run:Experiment):string {

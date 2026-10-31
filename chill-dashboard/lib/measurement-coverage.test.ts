@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { measurementAge, conditionLabel, deviceLabel, coverageSelection, coveragePathVisible, coverageModes, coverageVariant, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
+import { coverageFailureHref, coverageProfileQuery, coverageStatusCounts, measurementAge, conditionLabel, deviceLabel, coverageSelection, coveragePathVisible, coverageModes, coverageVariant, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 import { requestBatches, requestInitialBatches } from "./measurement-request.ts"
 import type { CoverageModel } from "./measurement-coverage.ts"
@@ -140,4 +140,30 @@ test("measurement age is based on recorded timestamp and never invents missing o
   assert.equal(measurementAge("2026-10-27T12:00:00Z",now),"4일 전")
   assert.equal(measurementAge("",now),"시각 미기록")
   assert.equal(measurementAge("2026-11-01T12:00:00Z",now),"시각 확인 필요")
+})
+
+test("request-only failures open the exact request rather than an empty run filter",()=>{
+  const failure={requestId:"ns/request name/owner-uid",runId:"",runNamespace:"",runName:"",batch:null,code:"Other",exitCode:null,message:"실행 전 실패",relation:"unresolved"}
+  const href=new URL(coverageFailureHref(failure,"fallback","/measurements?cell=one"),"http://local")
+  assert.equal(href.pathname,"/measurements/batch-energy-optimizations/ns/request%20name")
+  assert.equal(href.searchParams.get("uid"),"owner-uid")
+  assert.equal(href.searchParams.has("status"),false)
+  const runHref=new URL(coverageFailureHref({...failure,runId:"ns/run/run-uid",runNamespace:"ns",runName:"run"},"fallback","/measurements"),"http://local")
+  assert.equal(runHref.pathname,"/measurements/profiling-runs/ns/run")
+  assert.equal(runHref.searchParams.get("uid"),"run-uid")
+})
+test("profile time lookup uses the server's fifty-row page contract",()=>{
+  const query=coverageProfileQuery(cell)
+  assert.equal(query.get("limit"),"50")
+  assert.equal(query.get("model"),cell.model.name)
+  assert.equal(query.get("powerMode"),"MAXN")
+})
+test("visible status totals use one denominator and include review and unknown support",()=>{
+  const cells=[cell,{...cell,id:"review",assessment:{...cell.assessment,displayStatus:"review" as const}},
+    {...cell,id:"usable",assessment:{...cell.assessment,displayStatus:"usable" as const}}]
+  const counts=coverageStatusCounts(cells)
+  assert.equal(Object.values(counts).reduce((a,b)=>a+b,0),cells.length)
+  assert.equal(counts.review,1)
+  assert.equal(counts.usable,1)
+  assert.equal(counts.unmeasured,1)
 })

@@ -18,6 +18,9 @@ type OperationStepProjection struct {
 	DurationNanos *int64
 	WallJoules    *float64
 	Reason        string
+	FromPowerMode string
+	ToPowerMode   string
+	Model         string
 }
 
 // LoadOperationCostSteps reads recorded steps, not latest accepted costs. Failed
@@ -91,6 +94,10 @@ func projectOperationStep(cr edge.OperationCostMeasurement, index int, store str
 		return OperationStepProjection{}, errors.New("operation request/result identity mismatch")
 	}
 	p := OperationStepProjection{OperationID: id, Reason: record.Reason}
+	p.FromPowerMode, p.ToPowerMode = result.Before.PowerMode, result.Actual.PowerMode
+	if operation.Prepare != nil && operation.Prepare.Instance.Profile != nil {
+		p.Model = operation.Prepare.Instance.Profile.Condition.LogicalModel
+	}
 	if !result.StartedAt.IsZero() && !result.EndedAt.IsZero() && result.EndedAt.After(result.StartedAt) {
 		duration := result.EndedAt.Sub(result.StartedAt).Nanoseconds()
 		p.DurationNanos = &duration

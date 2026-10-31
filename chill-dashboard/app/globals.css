@@ -326,7 +326,7 @@ fieldset:disabled { opacity: .65; }
 .measurement-status { display:inline-flex; align-items:center; min-height:28px; width:fit-content; padding:.1rem .5rem; border:1px solid currentColor; border-radius:.25rem; font-size:.8125rem; white-space:nowrap; }
 .status-usable { color:var(--ok); background:var(--ok-soft); }
 .status-problem { color:var(--fail); background:var(--fail-soft); }
-.status-insufficient { color:var(--heat); background:var(--heat-soft); }
+.status-insufficient,.status-review { color:var(--heat); background:var(--heat-soft); }
 .status-running { color:var(--primary); background:var(--info-soft); }
 .status-unknown,.status-unmeasured,.status-unsupported { color:var(--muted-foreground); }
 .overview-columns { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:2rem; }

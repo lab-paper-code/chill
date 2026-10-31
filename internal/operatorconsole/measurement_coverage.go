@@ -17,6 +17,7 @@ const (
 	MeasurementUnsupported         = "unsupported"
 	MeasurementUnknown             = "unknown"
 	MeasurementUsable              = "usable"
+	MeasurementReview              = "review"
 	MeasurementProblem             = "problem"
 	MeasurementInsufficient        = "insufficient"
 	ResultRowConfirmation          = "confirmation"

@@ -28,10 +28,10 @@ func TestMeasurementResultRowPreservesSignedConfidenceZeroAndUnknown(t *testing.
 		t.Fatalf("zero-width CI was not retained: %+v", row)
 	}
 	batch.ActiveTrialCount = 2
-	if row := MeasurementResultRow(facts, batch, "profile", false, true); row.Assessment.Status != MeasurementComplete {
+	if row := MeasurementResultRow(facts, batch, "profile", false, true); row.Assessment.Status != MeasurementReview {
 		t.Fatalf("idle repetitions counted as independent active trials: %+v", row)
 	}
-	if row := MeasurementResultRow(facts, batch, "profile", true, true); row.RowKind != ResultRowConfirmation || row.Assessment.Status != MeasurementComplete {
+	if row := MeasurementResultRow(facts, batch, "profile", true, true); row.RowKind != ResultRowConfirmation || row.Assessment.Status != MeasurementReview {
 		t.Fatalf("confirmation presented as full independent result: %+v", row)
 	}
 	missing := MeasurementResultRow(facts, profilederivation.MeasurementBatchFacts{Batch: 1}, "profile", false, false)

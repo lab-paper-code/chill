@@ -42,6 +42,19 @@ func coverageVariantChecklist(variant *operatorconsole.MeasurementCoverageVarian
 	type checkIdentity struct{ code, result, message string }
 	checks := []operatorconsole.MeasurementCheck{}
 	indices := map[checkIdentity]int{}
+	for _, check := range variant.Assessment.Checklist.Checks {
+		if check.Code == "DatasetInputContract" {
+			check.SourceIDs = []string{}
+			for _, row := range variant.ResultRows {
+				if row.RowKind != operatorconsole.ResultRowSourceReference && coverageContains(variant.BatchProgress.Target, row.Batch) {
+					check.SourceIDs = append(check.SourceIDs, row.ID)
+				}
+			}
+			indices[checkIdentity{check.Code, check.Result, check.Message}] = len(checks)
+			checks = append(checks, check)
+			break
+		}
+	}
 	for _, row := range variant.ResultRows {
 		if row.RowKind == operatorconsole.ResultRowSourceReference ||
 			!coverageContains(variant.BatchProgress.Target, row.Batch) {

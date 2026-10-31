@@ -3,18 +3,20 @@
 .coverage-models { display:flex; flex-wrap:wrap; gap:.5rem; border-bottom:1px solid var(--border); }
 .coverage-models button { min-height:44px; padding:.6rem .9rem; border-bottom:3px solid transparent; text-align:left; overflow-wrap:anywhere; }
 .coverage-models button[aria-current="page"] { color:var(--primary); border-color:var(--primary); font-weight:700; background:var(--muted); }
-.coverage-toolbar { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:.75rem; }
+.screen:has(> .coverage-workspace) .coverage-summary { gap:.4rem .9rem; padding:.4rem 0; font-size:.8125rem; border:0; }
+.screen:has(> .coverage-workspace) .coverage-summary strong { font-size:.875rem; }
+.coverage-summary > details { font-size:.8125rem; margin-left:auto; }
+.coverage-summary > details[open] { flex-basis:100%; }
+.coverage-summary summary { min-height:28px; cursor:pointer; }
+.coverage-summary details p { margin-top:.5rem; }
+.coverage-toolbar { display:grid; grid-template-columns:minmax(180px,280px) minmax(0,1fr); align-items:end; gap:.75rem; }
 .coverage-toolbar > details[open] { grid-column:1 / -1; }
-.coverage-key { color:var(--muted-foreground); font-size:.8125rem; line-height:1.6; max-width:85ch; }
 .coverage-workspace { display:grid; grid-template-columns:minmax(0,1fr) minmax(300px,350px); gap:1rem; align-items:start; min-width:0; }
 .coverage-pivot { min-width:0; border:1px solid var(--border); border-radius:.5rem; }
 .coverage-device { min-width:0; }
 .coverage-device { scroll-margin-top:6rem; }
 .coverage-device > summary { cursor:pointer; min-height:52px; background:var(--muted); padding-left:.75rem; }
 .coverage-device > summary h2 { display:inline-block; background:transparent; }
-.coverage-device-index { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:.5rem; }
-.coverage-device-index a { padding:.65rem; border:1px solid var(--border); border-radius:.375rem; min-height:44px; overflow-wrap:anywhere; font-size:.8125rem; }
-.coverage-device-index small { color:var(--muted-foreground); }
 .coverage-device + .coverage-device { border-top:3px solid var(--border); }
 .coverage-device h2 { padding:.8rem 1rem; font-weight:700; background:var(--muted); color:var(--foreground); font-size:1rem; }
 .coverage-device h2 small { font-weight:400; font-size:.8125rem; margin-left:.5rem; }
@@ -41,7 +43,7 @@
 .batch-running { color:var(--primary); }
 .batch-missing { color:var(--heat); border-style:dashed!important; }
 .batch-unknown,.batch-outside { color:var(--muted-foreground); }
-.coverage-inspector { position:sticky; top:1rem; max-height:72vh; overflow:auto; border-left:3px solid var(--primary); background:var(--background); min-width:0; scrollbar-gutter:stable; }
+.coverage-inspector { position:sticky; top:5rem; max-height:calc(100vh - 6rem); overflow:auto; border-left:3px solid var(--primary); background:var(--background); min-width:0; scrollbar-gutter:stable; }
 .coverage-selected,.coverage-inspector-empty { display:grid; gap:.85rem; padding:1rem; overflow-wrap:anywhere; font-size:.875rem; }
 .coverage-selected { scroll-margin-top:5rem; }
 .coverage-inspector h2 { font-size:1.125rem; font-weight:700; }
@@ -80,8 +82,6 @@
  .coverage-mobile-model { display:grid; gap:.4rem; font-size:.875rem; }
  .coverage-mobile-model select { min-width:0; width:100%; border:1px solid var(--border); border-radius:.375rem; background:var(--background); padding:.5rem; }
  .screen:has(> .coverage-workspace) .screen-head { display:grid; grid-template-columns:minmax(0,1fr) auto; }
- .screen:has(> .coverage-workspace) .coverage-summary { gap:.4rem .75rem; padding:.75rem 0; }
- .screen:has(> .coverage-workspace) .coverage-summary strong { font-size:1.125rem; }
  .coverage-toolbar { grid-template-columns:1fr; gap:.25rem; }
  .coverage-actions li { display:grid; }
 }

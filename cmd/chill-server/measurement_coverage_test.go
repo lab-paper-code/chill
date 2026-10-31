@@ -150,3 +150,60 @@ func TestCoverageFreshNamespaceSharedByFiveCallers(t *testing.T) {
 		t.Fatal("query projection mutated base snapshot")
 	}
 }
+
+func TestCoverageKeepsReviewChecksAcrossVariantAndCell(t *testing.T) {
+	used := true
+	row := operatorconsole.ResultRow{
+		Batch: 1,
+		Assessment: operatorconsole.AssessMeasurement(operatorconsole.MeasurementAssessmentInput{
+			Accepted: true, Available: true, SchedulerUsed: &used,
+			Checks: []operatorconsole.MeasurementCheck{{
+				Code: "DatasetInputContract", Result: "fail", Message: "입력 계약 불일치",
+			}},
+		}),
+	}
+	cell := operatorconsole.MeasurementCoverageCell{Variants: []operatorconsole.MeasurementCoverageVariant{{
+		ProfileIDs: []string{"profile"}, ResultRows: []operatorconsole.ResultRow{row},
+		BatchProgress: operatorconsole.MeasurementBatchProgress{Target: []int{1}, Measured: []int{1}},
+	}}}
+	p := coverageProjection{base: &measurementCoverageBase{}, adopted: map[string]bool{"profile": true}}
+	p.assessCell(&cell)
+	if cell.Assessment.DisplayStatus != "review" || len(cell.Assessment.Checklist.Checks) != 1 ||
+		cell.Variants[0].Assessment.DisplayStatus != "review" {
+		t.Fatalf("accepted measurement lost review across aggregation: %+v", cell)
+	}
+}
+
+func TestCoverageDatasetContractOnlyFailsProvenMismatch(t *testing.T) {
+	base := &measurementCoverageBase{}
+	base.datasets.Items = []api.Dataset{{
+		ObjectMeta: meta.ObjectMeta{Name: "records", UID: "data-uid"},
+		Spec: api.DatasetSpec{Fields: []api.RawField{{Name: "image", Format: "JPEG", MaxBytes: 1024}}},
+	}}
+	base.preprocessors.Items = []api.Preprocessor{{
+		ObjectMeta: meta.ObjectMeta{Name: "pre"},
+		Spec: api.PreprocessorSpec{
+			Input: api.RawInputContract{Fields: []api.RawField{{Name: "image", Format: "JPEG", MaxBytes: 2048}}},
+			Artifacts: []api.PreprocessorArtifact{{
+				Target: api.PreprocessorTarget{Model: "model", Artifact: "onnx"},
+				Source: api.PreprocessorArtifactSource{Image: "pre-image", Path: "/pre"},
+			}},
+		},
+	}}
+	condition := profilederivation.CurvePlanSpec{
+		LogicalModel: "model", Artifact: profilederivation.CurveArtifactContract{Name: "onnx"},
+		Preprocessor: profilederivation.CurvePreprocessorContract{Name: "pre", Image: "pre-image", Path: "/pre"},
+		ActiveProtocol: profilederivation.CurveProtocolContract{Dataset: &profilederivation.CurveDatasetContract{Name: "records", UID: "data-uid"}},
+	}
+	if check := coverageDatasetCheck(base, condition); check.Result != "pass" {
+		t.Fatalf("compatible declared fields must pass: %+v", check)
+	}
+	base.datasets.Items[0].Spec.Fields[0].Format = "UTF8"
+	if check := coverageDatasetCheck(base, condition); check.Result != "fail" {
+		t.Fatalf("known field mismatch must fail: %+v", check)
+	}
+	condition.ActiveProtocol.Dataset.UID = "replaced-data"
+	if check := coverageDatasetCheck(base, condition); check.Result != "unknown" {
+		t.Fatalf("changed identity must not invent mismatch: %+v", check)
+	}
+}

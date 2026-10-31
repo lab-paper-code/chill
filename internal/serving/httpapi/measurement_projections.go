@@ -72,6 +72,9 @@ type operationStepStatus struct {
 	DurationNanos *int64   `json:"durationNanos"`
 	WallJoules    *float64 `json:"wallJoules"`
 	Reason        string   `json:"reason"`
+	FromPowerMode string   `json:"fromPowerMode,omitempty"`
+	ToPowerMode   string   `json:"toPowerMode,omitempty"`
+	Model         string   `json:"model,omitempty"`
 }
 type occupancyConditions struct {
 	Workload                string `json:"workload"`
@@ -111,6 +114,7 @@ func ProjectOperationCostMeasurement(cr api.OperationCostMeasurement, store stri
 		status.Steps = append(status.Steps, operationStepStatus{
 			Name: s.Name, Key: s.Key, Verdict: s.Verdict, OperationID: step.OperationID,
 			DurationNanos: step.DurationNanos, WallJoules: step.WallJoules, Reason: step.Reason,
+			FromPowerMode: step.FromPowerMode, ToPowerMode: step.ToPowerMode, Model: step.Model,
 		})
 		if s.Key != "" {
 			p.References.Evidence = append(p.References.Evidence, MeasurementEvidenceLocation{Store: store, Key: s.Key})

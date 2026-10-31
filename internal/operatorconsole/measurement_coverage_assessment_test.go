@@ -68,7 +68,7 @@ func TestMeasurementChecklistPreservesZeroAndTimestampFootnote(t *testing.T) {
 		t.Fatalf("timestamp/node-wall/zero must not fail: %#v", got)
 	}
 	batch.ActiveTrialCount = 2
-	if got := AssessMeasurementBatch(batch, 3, false, true); got.Status != MeasurementComplete {
+	if got := AssessMeasurementBatch(batch, 3, false, true); got.Status != "review" {
 		t.Fatalf("idle trials cannot fill active count: %#v", got)
 	}
 	batch.ActiveTrialCount = 3
@@ -76,6 +76,31 @@ func TestMeasurementChecklistPreservesZeroAndTimestampFootnote(t *testing.T) {
 	got := AssessMeasurementBatch(batch, 3, false, true)
 	if got.Checklist.CriteriaMet == nil || *got.Checklist.CriteriaMet {
 		t.Fatalf("unknown frozen policy must not pass: %#v", got)
+	}
+}
+
+func TestAcceptedEvidenceNeedsOneReviewStatusWhenChecksFail(t *testing.T) {
+	used := true
+	child := AssessMeasurement(MeasurementAssessmentInput{
+		Accepted: true, Available: true, SchedulerUsed: &used,
+		Checks: []MeasurementCheck{{Code: "DatasetInputContract", Result: "fail", Message: "모델·데이터셋 입력 계약 불일치"}},
+	})
+	parent := AssessMeasurement(MeasurementAssessmentInput{Children: []MeasurementAssessment{child}})
+	for _, got := range []MeasurementAssessment{child, parent} {
+		if got.DisplayStatus != "review" || got.Label != "검토 필요" || !got.Evidence.Accepted ||
+			got.Scope.SchedulerUsed == nil || !*got.Scope.SchedulerUsed {
+			t.Fatalf("review must retain accepted evidence and scheduler fact: %+v", got)
+		}
+	}
+}
+
+func TestUnknownInputContractKeepsUsableStatus(t *testing.T) {
+	got := AssessMeasurement(MeasurementAssessmentInput{
+		Accepted: true, Available: true,
+		Checks: []MeasurementCheck{{Code: "DatasetInputContract", Result: "unknown", Message: "입력 계약 검증 기록 없음"}},
+	})
+	if got.DisplayStatus != MeasurementUsable || got.Label != "사용 가능" || !got.Evidence.Accepted {
+		t.Fatalf("unknown contract must remain a neutral note: %+v", got)
 	}
 }
 

@@ -255,6 +255,18 @@ func coverageSizeAssertVariant(
 ) {
 	t.Helper()
 	expected := map[coverageSizeCheckKey][]string{}
+	if len(variant.BatchProgress.Missing) == 0 {
+		if condition, ok := variant.Condition.(profilederivation.CurvePlanSpec); ok {
+			check := coverageDatasetCheck(base, condition)
+			ids := []string{}
+			for _, row := range variant.ResultRows {
+				if row.RowKind != operatorconsole.ResultRowSourceReference && coverageContains(variant.BatchProgress.Target, row.Batch) {
+					ids = append(ids, row.ID)
+				}
+			}
+			expected[coverageSizeCheckKey{check.Code, check.Result, check.Message}] = ids
+		}
+	}
 	for _, row := range variant.ResultRows {
 		if seen[row.ID] {
 			t.Fatalf("duplicate row %s", row.ID)

@@ -38,14 +38,50 @@ export function requestInitialBatches(batches:number[],max?:number) {
   return [...new Set(batches.length?batches:[1,2,4].filter(batch=>!max||batch<=max))].sort((a,b)=>a-b)
 }
 
+export function requestTargetBatches(params:URLSearchParams,previousTarget?:number[],max?:number) {
+  return params.has("batches")?requestBatches(params).values:previousTarget!==undefined?[...previousTarget]:requestInitialBatches([],max)
+}
+
 // Catalog contracts, not names, select the preprocessor and dataset.
-export function requestInputs(model:string,artifact:string,preprocessor:string,dataset:string,context:{preprocessors:PreprocessorResource[];datasets:DatasetResource[]}) {
+export function requestInputs(model:string,artifact:string,preprocessor:string,dataset:string,context:{preprocessors:PreprocessorResource[];datasets:DatasetResource[]},inherited:{preprocessor?:boolean;dataset?:boolean}={}) {
   const candidates=context.preprocessors.filter(item=>item.spec.artifacts.some(entry=>entry.target.model===model&&(!artifact||entry.target.artifact===artifact)))
-  const pre=context.preprocessors.find(item=>item.metadata.name===preprocessor)??(candidates.length===1?candidates[0]:undefined)
+  const explicit=context.preprocessors.find(item=>item.metadata.name===preprocessor)
+  const pre=explicit&&(!inherited.preprocessor||candidates.includes(explicit))?explicit:candidates.length===1?candidates[0]:undefined
   const compatible=(item:DatasetResource)=>!!pre&&pre.spec.input.fields.every(field=>item.spec.fields.some(input=>input.name===field.name&&input.format===field.format&&input.maxBytes<=field.maxBytes))
-  const datasets=context.datasets.filter(compatible)
-  const exact=datasets.filter(item=>item.spec.fields.length===pre?.spec.input.fields.length)
-  const selected=context.datasets.find(item=>item.metadata.name===dataset)??(exact.length===1?exact[0]:datasets.length===1?datasets[0]:undefined)
-  const warning=selected&&!compatible(selected)?"데이터셋 입력 계약이 전처리기와 일치하지 않습니다.":selected&&selected.spec.fields.length!==pre?.spec.input.fields.length?"데이터셋에 추가 필드가 있습니다. 모델·데이터셋 용도 일치를 검토하세요.":""
+  const exact=(item:DatasetResource)=>compatible(item)&&item.spec.fields.length===pre?.spec.input.fields.length
+  const datasets=context.datasets.filter(exact)
+  const explicitDataset=context.datasets.find(item=>item.metadata.name===dataset)
+  const selected=explicitDataset&&(!inherited.dataset||exact(explicitDataset))?explicitDataset:datasets.length===1?datasets[0]:undefined
+  const contract=pre?.spec.input.fields.map(field=>`${field.name} (${field.format}, 최대 ${field.maxBytes} B)`).join(", ")
+  const warning=!pre?"모델·실행 경로에 연결된 전처리기의 입력 계약을 확인할 수 없어요. 카탈로그에서 전처리기 연결을 확인하고 직접 선택하세요.":!candidates.includes(pre)?"선택한 전처리기가 이 모델·실행 경로에 연결되어 있지 않아요. 카탈로그 연결을 확인하세요.":selected&&!compatible(selected)?"데이터셋 입력 계약이 전처리기와 일치하지 않습니다.":selected&&!exact(selected)?"데이터셋에 추가 필드가 있습니다. 모델·데이터셋 용도 일치를 검토하세요.":!selected?datasets.length>1?`입력 계약 ${contract}에 맞는 데이터셋이 여러 개예요. 사용할 데이터셋을 직접 선택하세요.`:`입력 계약 ${contract}에 정확히 맞는 등록 데이터셋이 없어요. 이 필드만 포함하는 데이터셋을 등록한 뒤 선택하세요.`:""
   return {preprocessor:pre?.metadata.name??"",dataset:selected?.metadata.name??"",warning}
+}
+
+// Compare retained facts only: absent fields are unknown, not proof of a change.
+export function requestConditionChanges(previous:Record<string,unknown>,current:Record<string,unknown>|undefined) {
+  const changes:{field:string;label:string;before:string;after:string}[]=[]
+  const labels:Record<string,string>={nodeUID:"Node UID","cpu.affinityCPUs":"CPU 코어 고정","cpu.request":"CPU 요청량","cpu.limit":"CPU 상한",runtimeImage:"실행 이미지",powerMode:"전력 모드","artifact.executionPath":"실행 경로","activeProtocol.dataset.name":"데이터셋","preprocessor.name":"전처리기"}
+  function compare(before:Record<string,unknown>,after:Record<string,unknown>,prefix="") {
+    for(const [key,value] of Object.entries(before)) {
+      if(key==="name"&&!prefix||key==="plannedBatchSizes"&&!prefix||value===undefined||value===null||after[key]===undefined||after[key]===null)continue
+      const field=prefix?`${prefix}.${key}`:key,next=after[key]
+      if(typeof value==="object"&&!Array.isArray(value)&&typeof next==="object"&&!Array.isArray(next))compare(value as Record<string,unknown>,next as Record<string,unknown>,field)
+      else if(JSON.stringify(value)!==JSON.stringify(next))changes.push({field,label:labels[field]??field,before:typeof value==="string"?value:JSON.stringify(value),after:typeof next==="string"?next:JSON.stringify(next)})
+    }
+  }
+  if(current)compare(previous,current)
+  return changes
+}
+
+export function requestPreflightReason(reason:{code:string;message:string}) {
+  const messages:Record<string,string>={
+    VariantConditionChanged:"기존 결과와 현재 동결 실행 조건의 일치를 확인하지 못해 기존 배치 제외를 적용하지 않았어요. 기존 결과가 삭제되거나 미측정으로 바뀐 것은 아니며, 이 요청에서의 재사용만 확인되지 않았어요.",
+    ImmutableImagesUnconfirmed:"실행·모델·전처리기 이미지의 불변 식별자를 모두 확인하지 못했어요. 현재는 요청 조건만 확인되어 기존 결과 재사용을 확정할 수 없어요.",
+    DeclarationUIDsNotRetained:"보관된 동결 식별자는 일치하지만 당시 모델·장치 종류·전처리기 선언 UID가 남아 있지 않아요.",
+    DeclaredBatchSizes:"모델 파일에 처리 건수 집합이 지정되어 있어 일부 건수만 선택할 수 없어요.",
+    PlannedRequestOverlap:"같은 요청 조건으로 계획된 기존 요청이 있어요. 계획의 중복만으로 실제 실행이나 측정 완료를 확인할 수는 없어요.",
+    RequestListUnconfirmed:"진행 중인 요청 목록을 확인하지 못했어요. 측정 중 배치가 비어 있어도 겹치는 대기 요청이 없다고 확정할 수는 없어요.",
+    PlanUnresolved:"실행 계획을 확정하지 못해 기존 결과의 재사용과 추가 측정 범위를 확인할 수 없어요.",
+  }
+  return messages[reason.code]??reason.message.replace(/\s*\(FixtureOnly\)/g,"")
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { largestOperationStages, operationStageLabel, operationStageLabels } from "./operation-cost.ts"
+import { largestOperationStages, operationStageLabel, operationStageLabels, operationDirection, operationModel, operationMetadata } from "./operation-cost.ts"
 import { operationDuration, operationWallEnergy, type OperationStep } from "./measurements.ts"
 
 test("operation cost display bounds precision without changing missing and invalid values",()=>{
@@ -27,4 +27,26 @@ test("stage summaries and planned conditions share the same operation labels",()
   for(const kind of ["power","prepare","idle","remove"]) {
     assert.equal(operationStageLabel({name:kind,condition:{name:kind,kind},results:[]} as OperationStep),operationStageLabels[kind])
   }
+})
+
+test("R9: cost columns use recorded transitions and frozen models, never infer them from record names or current catalog",()=>{
+  const step:OperationStep={name:"MAXN-to-15W-mobilenet",condition:{name:"power",kind:"power",powerMode:"planned"},results:[{name:"power",key:"saved",verdict:"Accepted",fromPowerMode:"MAXN",toPowerMode:"MODE_15W",model:"frozen-model"}]}
+  assert.equal(operationDirection(step),"MAXN → MODE_15W")
+  assert.equal(operationModel(step),"frozen-model")
+  assert.equal(operationDirection({...step,results:[]}),"출발 모드 미기록 → 계획 목표 planned")
+  assert.equal(operationModel({...step,results:[]}),"모델 미기록")
+  assert.equal(operationDirection({...step,condition:undefined,results:[{...step.results[0],fromPowerMode:undefined}]}),"출발 모드 미기록 → MODE_15W")
+  assert.equal(operationDirection({...step,condition:undefined,results:[]}),"전환 방향 미기록")
+  assert.equal(operationModel({...step,results:[step.results[0],{...step.results[0],model:"another"}]}),"frozen-model / another")
+  assert.equal(operationDirection({...step,results:[step.results[0],{...step.results[0],fromPowerMode:"MODE_30W"}]}),"MAXN → MODE_15W / MODE_30W → MODE_15W")
+})
+
+test("R9: list metadata preserves recorded unknown-step targets and keeps profile references distinct from model names",()=>{
+  const steps:OperationStep[]=[
+    {name:"power",condition:{name:"power",kind:"power",powerMode:"MAXN"},results:[]},
+    {name:"prepare",condition:{name:"prepare",kind:"prepare",batchEnergyOptimization:"profile-ref"},results:[]},
+    {name:"unmatched",condition:undefined,results:[{name:"unmatched",key:"saved",verdict:"Insufficient",fromPowerMode:"MAXN",toPowerMode:"MODE_15W",model:"historical"}]},
+  ]
+  assert.deepEqual(operationMetadata(steps),{directions:["출발 모드 미기록 → 계획 목표 MAXN","MAXN → MODE_15W"],models:["모델 준비: 모델 미기록 (프로파일 참조 profile-ref)","동작 종류 미기록: historical"]})
+  assert.deepEqual(operationMetadata([]),{directions:["전환 동작 미기록"],models:["모델 대상 미기록"]})
 })

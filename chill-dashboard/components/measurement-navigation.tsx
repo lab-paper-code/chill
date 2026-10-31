@@ -10,8 +10,8 @@ export function MeasurementNavigation({active,namespace}:{active?:string;namespa
   const ns=namespace??params.get("namespace")
   return <nav aria-label="측정" className="measurement-tabs">{tabs.map(([key,href,label])=>{const selected=active?active===key:pathname===href||(key==="coverage"&&pathname==="/measurements/coverage");return <Link key={key} href={`${href}${ns?`?${new URLSearchParams({namespace:ns})}`:""}`} aria-current={selected?"page":undefined}>{label}</Link>})}</nav>
 }
-export const measurementStates = {usable:"사용 가능",insufficient:"부족",problem:"문제",running:"진행",unmeasured:"미측정",unknown:"확인 불가",unsupported:"지원 안 함"} as const
-const symbols = {usable:"✓",insufficient:"△",problem:"×",running:"◷",unmeasured:"○",unknown:"?",unsupported:"—"}
+export const measurementStates = {usable:"사용 가능",review:"검토 필요",insufficient:"부족",problem:"문제",running:"진행",unmeasured:"미측정",unknown:"확인 불가",unsupported:"지원 안 함"} as const
+const symbols = {usable:"✓",review:"△",insufficient:"△",problem:"×",running:"◷",unmeasured:"○",unknown:"?",unsupported:"—"}
 export function MeasurementStatus({assessment}:{assessment?:MeasurementAssessment|null}) {
   const status=assessment?.displayStatus??"unknown"
   return <span className={`measurement-status status-${status}`}><span aria-hidden="true">{symbols[status]} </span>{assessment?.label??measurementStates[status]}</span>

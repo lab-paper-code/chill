@@ -8,6 +8,7 @@ import (
 	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/modelcatalog"
 	"github.com/lab-paper-code/chill/internal/operatorconsole"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -93,7 +94,7 @@ func (p *coverageProjection) initialize() {
 }
 
 func (p *coverageProjection) addSources() {
-	for _, kind := range []string{"inventory", "compatibility", "catalog", "BEO", "Run"} {
+	for _, kind := range []string{"inventory", "compatibility", "catalog", "BEO", "Run", "input-contract"} {
 		source := operatorconsole.MeasurementCoverageSource{
 			Kind: kind, ResourceVersions: []string{}, Complete: true,
 		}
@@ -105,6 +106,8 @@ func (p *coverageProjection) addSources() {
 			}
 		case "catalog":
 			source.ResourceVersions = []string{p.base.catalog.Revision}
+		case "input-contract":
+			source.ResourceVersions = []string{p.base.datasets.ResourceVersion, p.base.preprocessors.ResourceVersion}
 		case "BEO":
 			source.ResourceVersions = []string{p.base.requests.ResourceVersion}
 		case "Run":
@@ -471,7 +474,6 @@ func (p *coverageProjection) assessVariant(variant *operatorconsole.MeasurementC
 	for _, row := range variant.ResultRows {
 		if row.RowKind != operatorconsole.ResultRowSourceReference && coverageContains(progress.Target, row.Batch) {
 			assessment := row.Assessment
-			assessment.Checklist.Checks = nil
 			checks = append(checks, assessment)
 		}
 		reused = reused || row.RowKind == operatorconsole.ResultRowConfirmation
@@ -481,6 +483,11 @@ func (p *coverageProjection) assessVariant(variant *operatorconsole.MeasurementC
 	}
 	if len(progress.Missing) == 0 && len(checks) > 0 {
 		input.Children = checks
+		if condition, ok := variant.Condition.(profilederivation.CurvePlanSpec); ok {
+			input.Children = append(input.Children, operatorconsole.AssessMeasurement(operatorconsole.MeasurementAssessmentInput{
+				Accepted: true, Available: true, Checks: []operatorconsole.MeasurementCheck{coverageDatasetCheck(p.base, condition)},
+			}))
+		}
 	}
 	variant.Assessment = operatorconsole.AssessMeasurement(input)
 }
@@ -512,4 +519,38 @@ func coverageResultRow(
 	row.RowKind = kind
 	row.ID = fmt.Sprintf("%s/%s/%d", profile.ID, kind, batch.Batch)
 	return row
+}
+
+func coverageDatasetCheck(base *measurementCoverageBase, condition profilederivation.CurvePlanSpec) operatorconsole.MeasurementCheck {
+	check := operatorconsole.MeasurementCheck{
+		Code: "DatasetInputContract", Result: "unknown",
+		Message: "입력 계약 검증 기록 없음: 현재 카탈로그와 동결 조건의 연결을 확인하지 못했습니다",
+		SourceIDs: []string{},
+	}
+	if base.failures["input-contract"] != nil || condition.ActiveProtocol.Dataset == nil {
+		return check
+	}
+	for _, dataset := range base.datasets.Items {
+		if dataset.Name != condition.ActiveProtocol.Dataset.Name || string(dataset.UID) != condition.ActiveProtocol.Dataset.UID {
+			continue
+		}
+		for _, pre := range base.preprocessors.Items {
+			if pre.Name != condition.Preprocessor.Name || len(pre.Spec.Input.Fields) == 0 {
+				continue
+			}
+			artifact, found := modelcatalog.PreprocessorArtifact(&pre, condition.LogicalModel, condition.Artifact.Name)
+			if !found || artifact.Source.Image != condition.Preprocessor.Image || artifact.Source.Path != condition.Preprocessor.Path {
+				continue
+			}
+			if mismatched := modelcatalog.Compatible(&dataset, &pre); len(mismatched) > 0 {
+				check.Result = "fail"
+				check.Message = "현재 카탈로그의 모델·데이터셋 입력 필드 불일치: " + strings.Join(mismatched, ", ")
+			} else {
+				check.Result = "pass"
+				check.Message = "현재 카탈로그의 모델·데이터셋 입력 필드 일치 · 데이터 용도 승인은 별도"
+			}
+			return check
+		}
+	}
+	return check
 }

@@ -48,7 +48,7 @@ type MeasurementScope struct {
 }
 
 // MeasurementAssessmentInput separates execution, accepted evidence and reporting
-// checks. Missing reporting statistics never invalidate an accepted result.
+// checks. Review changes the read verdict, not stored acceptance or scheduler use.
 type MeasurementAssessmentInput struct {
 	Execution        *MeasurementExecution
 	ExecutionCurrent bool
@@ -99,7 +99,7 @@ func AssessMeasurement(in MeasurementAssessmentInput) MeasurementAssessment {
 }
 
 func assessMeasurementChildren(out *MeasurementAssessment, children []MeasurementAssessment) {
-	counts := struct{ complete, criteria, partial, problem, running, unknown int }{}
+	counts := struct{ complete, criteria, partial, review, problem, running, unknown int }{}
 	for _, child := range children {
 		out.Reasons = append(out.Reasons, child.Reasons...)
 		out.Checklist.Checks = append(out.Checklist.Checks, child.Checklist.Checks...)
@@ -121,6 +121,8 @@ func assessMeasurementChildren(out *MeasurementAssessment, children []Measuremen
 			counts.criteria++
 		case MeasurementPartial:
 			counts.partial++
+		case MeasurementReview:
+			counts.review++
 		case MeasurementWarning, MeasurementFailed:
 			counts.problem++
 		case MeasurementUnknown:
@@ -136,6 +138,8 @@ func assessMeasurementChildren(out *MeasurementAssessment, children []Measuremen
 		out.Status = MeasurementWarning
 	case counts.partial > 0:
 		out.Status = MeasurementPartial
+	case counts.review > 0:
+		out.Status = MeasurementReview
 	case criteria:
 		out.Status = MeasurementCriteriaMet
 	case complete:
@@ -180,7 +184,7 @@ func assessSingleMeasurement(out *MeasurementAssessment, in MeasurementAssessmen
 
 func assessAcceptedMeasurement(out *MeasurementAssessment, in MeasurementAssessmentInput) {
 	out.Status = MeasurementComplete
-	if in.Reused || len(in.Checks) == 0 {
+	if len(in.Checks) == 0 {
 		return
 	}
 	met := true
@@ -188,9 +192,12 @@ func assessAcceptedMeasurement(out *MeasurementAssessment, in MeasurementAssessm
 		if check.Result != "pass" {
 			met = false
 		}
+		if check.Result == "fail" {
+			out.Status = MeasurementReview
+		}
 	}
 	out.Checklist.CriteriaMet = &met
-	if met {
+	if met && !in.Reused {
 		out.Status = MeasurementCriteriaMet
 	}
 }
@@ -199,6 +206,8 @@ func measurementDisplay(status string) (string, string) {
 	switch status {
 	case MeasurementCriteriaMet, MeasurementComplete:
 		return MeasurementUsable, "사용 가능"
+	case MeasurementReview:
+		return MeasurementReview, "검토 필요"
 	case MeasurementPartial:
 		return MeasurementInsufficient, "부족"
 	case MeasurementWarning, MeasurementFailed:

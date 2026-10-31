@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import { campaignGroups, campaignPairs, commitExperimentSelection, comparisonDirection, experimentSelection, frozenP95SLO, stagePairing, policyStageGroups, serviceDelta, stageChartData, alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
 import { campaignConclusion, campaignScoreboard, campaignTradeoffs, policyChartStyle, stageComparison, stageHistoryLink, stageActivity, stageLoadLabel } from "./experiments.ts"
+import { campaignHeadline, publishedVerdict, selectedExperimentStage, experimentPath, stageEvidencePath } from "./experiments.ts"
 import type { SchedulerObservation } from "./read-types.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
@@ -444,4 +445,45 @@ test("R8: policy markers distinguish square fixed from circle automatic without 
   assert.equal(stageChartData(run)[0].services.camera.success,null)
   assert.equal(stageChartData(run)[0].services.camera.p95,null)
   assert.equal(policyStageGroups(run).groups[0].series[0]?.services.camera.p95,null)
+})
+
+test("R9: comparable campaigns precede newer incomparable records and expose the missing counterpart reason",()=>{
+  const paired={...recorded.publication,id:"paired",from:"2026-10-29T00:00:00Z",stages:[{...stage,id:"full-E5-1"},{...stage,id:"static-E5-1"}]}
+  const unpaired={...paired,id:"unpaired",from:"2026-10-31T00:00:00Z",stages:[{...stage,id:"full-E5-1"}]}
+  const groups=campaignGroups([unpaired,paired])
+  assert.deepEqual(groups.map(group=>group.run.id),["paired","unpaired"])
+  assert.match(groups[1].comparisonReason,/static-E5-1/)
+  assert.equal(groups[0].comparisonReason,"같은 부하 비교 1쌍")
+})
+
+test("R9: published FAIL means a failed request target, never a failed result query",()=>{
+  assert.equal(publishedVerdict({...stage,kpis:{...stage.kpis,status:"FAIL"}}),"요청 목표 미달")
+  assert.equal(publishedVerdict({...stage,kpis:{status:"NOT_READY"}}),"판정 근거 부족")
+  assert.equal(publishedVerdict({...stage,kpis:{status:"NEW_STATUS"}}),"NEW_STATUS")
+  const run={...recorded.publication,id:"current",stages:[{...stage,id:"selected"}]}
+  assert.equal(selectedExperimentStage(run,"current","selected"),run.stages[0])
+  assert.equal(selectedExperimentStage(run,"previous","selected"),undefined)
+  assert.equal(selectedExperimentStage({...run,stages:[...run.stages,...run.stages]},"current","selected"),undefined)
+  assert.equal(selectedExperimentStage(undefined,"current","selected"),undefined)
+})
+
+test("R9: selected published results use the experiment endpoint without stage filters; evidence uses only supported range filters",()=>{
+  const config=serverConfig({CHILL_BASE_URL:"https://fixture.invalid",CHILL_NAMESPACE:"ops",CHILL_SYSTEM_NAME:"fixture"})
+  assert.equal(experimentPath("control-222-223-first-20261030"),"v1/experiments/control-222-223-first-20261030")
+  const result=relayPlan("GET",experimentPath(recorded.publication.id).split("/"),"",config)
+  assert.equal(result.kind,"query")
+  const evidence=new URL(stageEvidencePath(stage),"https://fixture.invalid/")
+  assert.deepEqual([...evidence.searchParams.keys()],["from","to","limit"])
+  assert.equal(evidence.searchParams.get("from"),stage.from)
+  assert.equal(evidence.searchParams.get("to"),stage.to)
+  assert.equal(relayPlan("GET",evidence.pathname.slice(1).split("/"),evidence.search,config).kind,"query")
+  assert.throws(()=>relayPlan("GET",experimentPath(recorded.publication.id).split("/"),"?stage=E5-3",config),/DashboardQueryInvalid/)
+})
+
+test("R9: headline keeps net energy scoped to available pairs and never claims superiority with quality losses",()=>{
+  const make=(id:string,joules:number|null,success:number):ExperimentStage=>({...stage,id,kpis:{wholePoolJoules:joules,requests:{camera:{offered:10,deadlineSuccessFraction:success,completedLatencyNS:{p95:1000000}}}}})
+  const run={...recorded.publication,stages:[make("full-E5-1",90,.8),make("static-E5-1",100,.9),make("full-E5-2",null,1),make("static-E5-2",100,1)]}
+  assert.match(campaignHeadline(run),/항상 낫지는/)
+  assert.match(campaignHeadline(run),/순 에너지 -10 J.*-10.00 %.*1\/2쌍/)
+  assert.match(campaignHeadline({...run,stages:[]}),/같은 부하 구간이 없어요/)
 })

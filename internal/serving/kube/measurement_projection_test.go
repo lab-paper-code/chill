@@ -11,6 +11,7 @@ import (
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/serving"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -222,5 +223,26 @@ func TestLoadOperationCostStepsPropagatesIOAndCancellation(t *testing.T) {
 	steps, err = LoadOperationCostSteps(context.Background(), cr, nil, "", 0)
 	if err != nil || len(steps) != 1 || steps[0].DurationNanos != nil || steps[0].WallJoules != nil {
 		t.Fatalf("absent reference invented evidence: %+v, %v", steps, err)
+	}
+}
+
+func TestOperationProjectionRetainsOnlyRecordedDirectionAndModel(t *testing.T) {
+	cr, record := projectionRecord(t)
+	record.Verdict, cr.Status.Steps[0].Verdict = measurementInsufficient, measurementInsufficient
+	record.Result.Before.PowerMode, record.Result.Actual.PowerMode = "MAXN", "MODE_15W"
+	record.Request.Operation.Prepare = &PrepareSpec{Instance: serving.SchedulerInstance{Profile: &serving.Profile{}}}
+	record.Request.Operation.Prepare.Instance.Profile.Condition.LogicalModel = "frozen-model"
+	got, err := projectOperationStep(cr, 0, "store", record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.FromPowerMode != "MAXN" || got.ToPowerMode != "MODE_15W" || got.Model != "frozen-model" || got.WallJoules != nil {
+		t.Fatalf("lost recorded metadata or invented accepted energy: %+v", got)
+	}
+	record.Request.Operation.Prepare = nil
+	record.Result = OperationResult{}
+	got, err = projectOperationStep(cr, 0, "store", record)
+	if err != nil || got.FromPowerMode != "" || got.ToPowerMode != "" || got.Model != "" {
+		t.Fatalf("missing metadata inferred from plan or name: %+v, %v", got, err)
 	}
 }

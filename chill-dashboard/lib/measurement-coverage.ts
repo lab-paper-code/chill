@@ -1,5 +1,5 @@
 import type { ExecutionPath, ModelSpec } from "./domain.ts"
-import type { BatchProgress, InventoryClass, InventoryView, MeasurementCoverageCell, MeasurementPlanSpec, ModelCompatibility, ProfilingRun } from "./read-types.ts"
+import type { BatchProgress, InventoryClass, InventoryView, MeasurementCoverageCell, MeasurementDisplayStatus, MeasurementFailure, MeasurementPlanSpec, ModelCompatibility, ProfilingRun } from "./read-types.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 
 export function deviceLabel(name:string) {
@@ -71,6 +71,20 @@ export function coverageBatchState(progress:BatchProgress|null,batch:number) {
   if(progress.missing.includes(batch))return "missing"
   if(progress.unknown.includes(batch))return "unknown"
   return progress.target.includes(batch)?"missing":"outside"
+}
+
+export function coverageProfileQuery(cell:MeasurementCoverageCell) {
+  return new URLSearchParams({model:cell.model.name,deviceClass:cell.deviceClass.name,path:cell.executionPath,powerMode:cell.powerMode,limit:"50"})
+}
+export function coverageFailureHref(failure:MeasurementFailure,namespace:string,returnTo:string) {
+  if(failure.runName)return `/measurements/profiling-runs/${encodeURIComponent(failure.runNamespace||namespace)}/${encodeURIComponent(failure.runName)}?${new URLSearchParams({uid:failure.runId.split("/").at(-1)??"",returnTo})}`
+  const [requestNamespace,requestName,uid]=failure.requestId.split("/")
+  return `/measurements/batch-energy-optimizations/${encodeURIComponent(requestNamespace||namespace)}/${encodeURIComponent(requestName)}?${new URLSearchParams({uid:uid??"",returnTo})}`
+}
+export function coverageStatusCounts(cells:MeasurementCoverageCell[]) {
+  const counts:Record<MeasurementDisplayStatus,number>={usable:0,review:0,insufficient:0,problem:0,running:0,unmeasured:0,unknown:0,unsupported:0}
+  for(const cell of cells)counts[cell.assessment.displayStatus]++
+  return counts
 }
 export function coverageRequestHref(cell:MeasurementCoverageCell,namespace:string,returnTo:string,variantId?:string,targetBatches:number[]=[]) {
   const variant=cell.variants.find(variant=>variant.id===variantId),condition=variant?.condition

@@ -35,6 +35,8 @@ type measurementCoverageBase struct {
 	requests      api.BatchEnergyOptimizationList
 	runs          api.ProfilingRunList
 	catalog       httpapi.ProfilesView
+	datasets      api.DatasetList
+	preprocessors api.PreprocessorList
 	adopted       map[string]bool
 	checked       map[string]time.Time
 	failures      map[string]error
@@ -178,7 +180,7 @@ func (o *measurementService) readCoverage(
 		err  error
 		at   time.Time
 	}
-	results := make(chan sourceResult, 5)
+	results := make(chan sourceResult, 6)
 	go func() {
 		var value operatorconsole.InventoryView
 		err := o.readConsoleCoverage(ctx, "/api/v1/inventory", &value)
@@ -212,6 +214,18 @@ func (o *measurementService) readCoverage(
 		results <- sourceResult{"Run", err, time.Now().UTC()}
 	}()
 	go func() {
+		var datasets api.DatasetList
+		var preprocessors api.PreprocessorList
+		err := o.client.List(ctx, &datasets)
+		if err == nil {
+			err = o.client.List(ctx, &preprocessors)
+		}
+		if err == nil {
+			next.datasets, next.preprocessors = datasets, preprocessors
+		}
+		results <- sourceResult{"input-contract", err, time.Now().UTC()}
+	}()
+	go func() {
 		value, err := o.scheduler.measurementCatalogView(ctx)
 		at := value.SourceCheckedAt
 		if err == nil && at.IsZero() {
@@ -232,7 +246,7 @@ func (o *measurementService) readCoverage(
 		results <- sourceResult{"catalog", err, at}
 	}()
 	var failures []error
-	for range 5 {
+	for range 6 {
 		result := <-results
 		if result.err != nil {
 			next.failures[result.kind] = result.err

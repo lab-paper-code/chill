@@ -488,7 +488,7 @@ atomic 다중 source snapshot이라고 주장하지 않는다. null은 이유 �
 | `schemaVersion`, `snapshotId`, `assessmentVersion` | `"measurement-coverage.v1"`, namespace revision, `"result-checklist.v1"` |
 | `dataAsOf`, `freshness`, `completeness` | 기준 시각, fresh/stale, complete/partial |
 | `scope` | `{namespace,supportBasis:"representative-node-static"\|"selected-node-static",goalBasis:"requested"\|"explicit",targetBatches:[]}` |
-| `sources[]` | `{kind,resourceVersions,complete,error:{code,message,retryable}\|null}`. inventory/compatibility/catalog/BEO/Run 구별 |
+| `sources[]` | `{kind,resourceVersions,complete,error:{code,message,retryable}\|null}`. inventory/compatibility/catalog/BEO/Run/input-contract 구별 |
 | `summary` | supportedCellCount, completeCellCount, criteriaMetCellCount, reusedCellCount, unknownSupportCount, unsupportedCellCount, countsByDisplayStatus, requestCount, runCount, profileCount, failedCellCount, currentFailedRequestCount, historicalFailedRequestCount. 미확정 수 null |
 | `groups[]` | 모델×class `{model:{name,uid},deviceClass:{name,uid},cellIds:[],complete,supported,unknownSupport}`. 장치 열 이름순 고정 |
 | `cells[]` | 아래 Cell |
@@ -560,6 +560,7 @@ coverage는 위 variant 체크리스트 중복 제거를 사용하며 별도 `$r
 |---|---|---|
 | `complete` | `usable` / **사용 가능** | 채택된 정확 근거와 해당 목표 batch 측정 충족. 실행 phase=Complete만으로 만들지 않음 |
 | `criteria_met` | `usable` / **사용 가능** | complete이며 아래 결과 체크리스트도 충족. 상세 사유 행에 **기준 충족** 표시 |
+| `review` | `review` / **검토 필요** | 채택 근거는 있으나 판정 가능한 입력 계약·품질 체크에 fail이 있음. unknown만으로 만들지 않음 |
 | `partial` | `insufficient` / **부족** | 목표 batch/선택 Node 일부 부족. 실제 부족 집합 명시 |
 | `warning` | `problem` / **문제** | 실제 catalog 기각·근거 파손/누락·현재 선언 충돌·음수/비유한 d 등 해결할 문제 |
 | `failed` | `problem` / **문제** | 사용 결과 없이 명시적 실행 실패. 사유 행은 ‘실행 실패’와 실제 원인 |
@@ -568,19 +569,21 @@ coverage는 위 variant 체크리스트 중복 제거를 사용하며 별도 `$r
 | `unsupported` | `unsupported` / **지원 안 함** | resolver가 입증한 불일치이며 사용 근거 없음 |
 | `unknown` | `unknown` / **확인 불가** | 필수 source/identity/phase 불명. 기존 검증 결과는 지우지 않고 미확인 범위만 남김 |
 
-화면의 기본 상태는 **사용 가능/부족/문제/진행/미측정 5개**, 지원 안 함·확인 불가는 별도다.
-9개 세부 상태를 별도 배지 벽으로 노출하지 않고 사유 행/용어 도움말 한 곳에서 설명한다.
+화면의 기본 상태는 **사용 가능/검토 필요/부족/문제/진행/미측정**, 지원 안 함·확인 불가는 별도다.
+세부 실행 상태는 별도 배지 벽으로 노출하지 않고 사유 행/용어 도움말 한 곳에서 설명한다.
 superseded와 notInCatalogScope는 정상 측정 결과의 `complete`+보조 사실이며 ‘현재 스케줄러 미사용’을 명시한다.
 실제 rejected/깨진 근거와 혼동하지 않는다. 완료 수 complete+criteria_met, 기준 충족 수는 부분집합,
 재사용 완료 수는 따로 표시한다. 이전 유효 결과 뒤 새 실패는 기존 complete를 유지하고 최근 시도 실패를 병기한다.
 실패 요청 자체는 failed, 후속 포함 셀은 다른 범위임을 명시한다. idle 3회를 active 3회로 세지 않는다.
-여러 자식은 실제 문제→부족→전부 기준 충족→전부 complete 순으로 요약하고, 판정 불가 자식은
-미확인 수/범위를 보존한다. 단순 통계 미제공이 채택 결과 완료를 지우지 않는다.
+여러 자식은 실제 문제→부족→검토 필요→전부 기준 충족→전부 complete 순으로 요약하고, 판정 불가 자식은
+미확인 수/범위를 보존한다. unknown 통계·시각 부재만으로 채택 결과의 상태를 내리지 않는다.
 
 **결과 체크리스트 v1**: 정확 조건/lineage, 목표 batch 충족, 독립 active/shared idle 각각
 `max(3,동결 MinimumTrials)` 반복, 유한한 기존 CI/level(0폭 허용), pooled client p95·N>1,
 모든 사용 trial의 동결 전력창/표본/gap/실패 정책 통과, 실제 전력 출처를 확인한다.
-미조회 체크는 unknown이지 pass가 아니다. checklist 미충족 자체를 모두 warning으로 승격하지 않는다.
+미조회 체크는 unknown이지 pass가 아니다. fail은 review이며 unknown/warn만으로 상태를 내리지 않는다.
+`DatasetInputContract`는 현재 Dataset UID·동결 전처리기 이미지/경로·모델 산출물 연결이 확인될 때
+기존 raw 필드 호환성(이름·형식·상한)을 대조한다. 추가 필드나 데이터셋 이름으로 용도 불일치를 추정하지 않는다.
 **sourceTimestampAbsent와 node-wall은 complete/criteria_met 어느 쪽의 판정 게이트도 아니다.**
 전력원 바로 옆에 ‘관측 시각은 수집 시각’, ‘노드 벽전력이며 장치 단독 전력 아님’ 고정 각주를 둔다.
 미관측 발열/격리를 정상으로 꾸미지 않는다. reuse 행은 complete일 수 있으나 criteria_met는 아니다.
