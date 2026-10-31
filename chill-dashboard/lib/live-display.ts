@@ -1,4 +1,4 @@
-import { isLiveActionActive, type LiveAction, type LiveDecision, type LiveEvent, type LiveInstance, type LiveMetric, type LiveSnapshot, type LiveState, type LiveWorkload } from "./live.ts"
+import { isLiveActionActive, type LiveAction, type LiveDecision, type LiveEvent, type LiveInstance, type LiveMetric, type LiveMetrics, type LiveSnapshot, type LiveState, type LiveWorkload } from "./live.ts"
 
 export const instanceSymbols = [
   ["×", "제거"], ["◌", "분배 해제 뒤 잔여 실행"], ["●", "실제 처리"],
@@ -94,8 +94,19 @@ export function servicePriority(workload:LiveWorkload,metric:LiveMetric|undefine
   if (!metric || metric.received>0 || (terminalCount(metric)??0)>0) return 4
   return 5
 }
+export function currentObservation(fresh:boolean,terminals:number|undefined):boolean {
+  return fresh&&terminals!=null
+}
+export function quietReason(fresh:boolean,terminals:number|undefined,received:number|undefined,changes:number):string {
+  if(!currentObservation(fresh,terminals))return "현재 상태 미확인. 마지막 관측 기준 수치이며 현재 동작을 단정하지 않아요."
+  return changes?"변경을 진행하고 있어요.":received===0?"새 요청 없이 현재 구성을 유지하고 있어요.":"요청을 처리하며 현재 구성을 유지하고 있어요."
+}
+export function minuteMetrics(metrics:LiveMetrics[],uid:string,end:number):LiveMetric[] {
+  const windowEnd=Math.floor(end/1000)*1000
+  return metrics.filter(row=>Date.parse(row.bucketAt)>=windowEnd-60000&&Date.parse(row.bucketAt)<windowEnd).flatMap(row=>row.workloads[uid]?[row.workloads[uid]]:[])
+}
 export function boardVerdict({fresh,terminals,failed,sloMisses,queued,changes,delayed,serving,off,total,admissionBlocked,received=0,declared=serving,unserved=0}:{fresh:boolean;terminals:number|undefined;failed:number|undefined;sloMisses:number;queued:number;changes:number;delayed:number;serving:number;off:number;total:number;admissionBlocked:boolean;received?:number;declared?:number;unserved?:number}) {
-  if (!fresh || terminals==null) return {label:"데이터 끊김",tone:"unknown",reason:"최신 관측을 기다려요. 마지막 수치를 현재 상태로 판단하지 마세요"}
+  if (!currentObservation(fresh,terminals)) return {label:"데이터 끊김",tone:"unknown",reason:"최신 관측을 기다려요. 마지막 수치를 현재 상태로 판단하지 마세요"}
   if ((failed??0)>0 || admissionBlocked || unserved>0 || (!serving&&(received>0||queued>0))) return {label:"이상: 요청 처리 확인 필요",tone:"danger",reason:`실패 ${failed??0}건 / 유입 있으나 서빙 없음 ${unserved}개 / 접수 거절 ${admissionBlocked?"있음":"없음"}. 서비스 상세에서 확인하세요`}
   if (!serving && total>0 && off===total && declared===0 && received===0 && queued===0 && changes===0 && delayed===0) return {label:"정상: 계획된 정지",tone:"healthy",reason:`자동제어 꺼짐 ${off}/${total} / 선언 인스턴스 0 / 유입 0. 요청 처리 없이 대기 중이에요`}
   if (!serving) return {label:"이상: 서빙 준비 확인",tone:"warning",reason:`서빙 인스턴스 0 / 선언 ${declared}개 / 자동제어 꺼짐 ${off}/${total}. 계획된 정지 조건과 다르므로 구성·변경을 확인하세요`}

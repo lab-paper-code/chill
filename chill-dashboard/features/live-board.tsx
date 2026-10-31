@@ -11,7 +11,7 @@ import { decisionRange, evidenceError } from "@/lib/experiments"
 import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import { safeSource } from "@/lib/source-export"
 import { serviceTrafficState, actionProgress, actionOrigin, duration, liveFresh, scopeSnapshot, scopeEvents, recentEvents, belongsToPool, boardVerdict, decisionText, displayNumber, displayTime, elapsed, instanceSymbol, mergeKeepEvents, routingShare, serviceDevices, servicePriority, sloTargetMissed, terminalCount, trendSegments, workloadQueue } from "@/lib/live-display"
-import { idleGroups, retainedEvents, sloLatency } from "@/lib/live-display"
+import { idleGroups, retainedEvents, sloLatency, minuteMetrics, quietReason } from "@/lib/live-display"
 import { actionKinds, actionNodeName, actionStatuses, CandidateDetails } from "./scheduler"
 import "./live-board.css"
 
@@ -29,7 +29,7 @@ function Source({value,label="원본 정보"}:{value:unknown;label?:string}) {
   return <details className="live-source"><summary>{label}</summary><pre>{raw(value)}</pre></details>
 }
 function MinuteSummary({state,workload,end}:{state:LiveState;workload:LiveWorkload;end:number}) {
-  const rows=state.metrics.filter(row=>Date.parse(row.bucketAt)>end-60000&&Date.parse(row.bucketAt)<=end).flatMap(row=>row.workloads[workload.uid]?[row.workloads[workload.uid]]:[])
+  const rows=minuteMetrics(state.metrics,workload.uid,end)
   const received=rows.reduce((sum,row)=>sum+row.received,0),completed=rows.reduce((sum,row)=>sum+row.completed,0),n=rows.reduce((sum,row)=>sum+row.completed+row.failed,0),values=rows.map(row=>sloLatency(workload,row)).filter((value):value is number=>value!=null)
   return <small>최근 1분 ({rows.length}/60초 관측): 수신 {rows.length?number(received):"미관측"} / 성공 {percent(rows.length?completed:undefined,rows.length?n:undefined)} / p{workload.slo.percentile} {values.length?`${number(Math.min(...values),"",1)}~${number(Math.max(...values)," ms",1)}`:"표본 없음"} (초별 범위, 합산 분위수 아님)</small>
 }
@@ -159,7 +159,7 @@ function LiveStage({uid}:{uid?:string}) {
   return <div className={`live-stage ${uid?"live-pool-page":""}`}><header className="live-heading"><div><nav aria-label="운영 경로"><Link href="/scheduler">운영 요약</Link><span aria-hidden="true">/</span>{uid?<Link href={`/operations/flow${fixture?`?${new URLSearchParams({fixture})}`:""}`}>운영 흐름 보드</Link>:<span>운영 흐름 보드</span>}</nav><h1 ref={heading} tabIndex={-1}>{uid?workload?.name??"서비스 상세":"운영 흐름 보드"}</h1></div><span className="live-new-events">최근 30초 새 사건 <strong>{important}</strong>건</span></header>
     <StateStrip state={state} status={live.status} reconnect={live.reconnect} now={clock} zone={zone} paused={paused} togglePause={()=>setFrozen(paused?null:{state:live.state,now,epoch,fixture})}/>
     <section className={`live-verdict live-tone-${verdict.tone}`} aria-label={uid?"이 서비스 판정":"전체 서비스 판정"}><div className="live-verdict-title"><strong>{verdict.label}</strong><span>{verdict.reason}</span></div><Facts items={[["유입",number(received," req/s")],["SLO 안",percent(withinSLO,n)],["대기",snapshot?queued:"—"],["진행 / 정체",snapshot?`${changes} / ${delayed}건`:"—"],["예약",snapshot?`${snapshot.reservations.length}건`:"—"]]}/><div className="live-latest-decision"><span>{uid?"범위":"최근 판단"}</span>{uid?<p>이 서비스의 지표·변경·예약·사건만 표시해요.</p>:decision?<button type="button" onClick={event=>select("at",decision.at,event.currentTarget)}>{decisionText(decision)} ›</button>:<p>판단 관측 대기</p>}</div></section>
-    {snapshot&&<p className="live-table-note">왜 조용한가: 자동제어 꺼짐 {snapshot.workloads.filter(row=>!row.autonomous).length}/{snapshot.workloads.length}개 / 마지막 1초 유입 {number(received)} / 진행·정체 {changes+delayed}건. {changes+delayed?"변경을 진행하고 있어요.":received===0?"새 요청 없이 현재 구성을 유지하고 있어요.":"요청을 처리하며 현재 구성을 유지하고 있어요."}</p>}
+    {snapshot&&<p className="live-table-note">왜 조용한가: 자동제어 꺼짐 {snapshot.workloads.filter(row=>!row.autonomous).length}/{snapshot.workloads.length}개 / 마지막 1초 유입 {number(received)} / 진행·정체 {changes+delayed}건. {quietReason(fresh&&!requestGap,n,received,changes+delayed)}</p>}
     <GapList state={state} zone={zone} uid={uid}/>
     <p className="live-table-note"><Link href="/scheduler/history">접속 이전 사건은 서버 사건 기록에서 확인</Link></p>
     {snapshot&&<section className="live-node-strip" aria-label="장치별 현재 상태">{snapshot.nodes.map(node=><button type="button" key={node.uid} onClick={event=>select("open",`node:${node.uid}`,event.currentTarget)}><strong>{node.name}</strong><span>{node.ready?"준비됨":"사용 불가"} / {node.powerMode||"전력모드 미확인"}</span><span>선언 {snapshot.instances.filter(row=>row.node.uid===node.uid).length}개 / {number(metrics?.nodes[node.uid]?.watts," W",1)}</span></button>)}</section>}

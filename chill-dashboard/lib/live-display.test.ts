@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import type { LiveAction, LiveInstance, LiveMetric, LiveSnapshot, LiveWorkload } from "./live.ts"
+import type { LiveAction, LiveInstance, LiveMetric, LiveMetrics, LiveSnapshot, LiveWorkload } from "./live.ts"
 import { changeListStatus, serviceTrafficState, actionProgress, actionOrigin, scopeSnapshot, scopeEvents, recentEvents, liveFresh, belongsToPool, displayNumber, duration, elapsed, instanceSymbol, isStale, ratio, receivedLabel, routingShare, terminalCount, workloadLabel, workloadQueue, servicePriority, mergeKeepEvents, trendSegments, boardVerdict, decisionText } from "./live-display.ts"
-import { idleGroups, retainedEvents, sloLatency } from "./live-display.ts"
+import { idleGroups, retainedEvents, sloLatency, minuteMetrics, quietReason } from "./live-display.ts"
 
 const at="2026-10-30T12:00:00.123456789Z",now=Date.parse(at)
 const instance:LiveInstance={id:"shared",node:{uid:"n",name:"Node"},ownerWorkloadUID:"a",profileID:"p",ready:true,stopped:false,routable:{a:true,b:true},running:{a:1,b:0},waiting:{a:0,b:2},observedAt:at}
@@ -175,4 +175,21 @@ test("idle services group by model independently of service names",()=>{
   assert.equal(groups.length,1)
   assert.equal(groups[0].model,workload.model)
   assert.equal(groups[0].workloads.length,2)
+})
+
+test("minute summary includes exactly sixty completed second buckets at aligned and fractional clocks",()=>{
+  const end=Date.parse("2026-10-30T12:01:00Z")
+  const rows=Array.from({length:62},(_,i)=>({bucketAt:new Date(end-61000+i*1000).toISOString(),workloads:{a:metric}} as LiveMetrics))
+  for(const clock of [end,end+750]) {
+    const selected=minuteMetrics(rows,"a",clock)
+    assert.equal(selected.length,60)
+    assert.equal(selected.reduce((sum,row)=>sum+row.received,0),540)
+  }
+})
+test("quiet explanation does not assert current activity before metrics or after disconnect",()=>{
+  assert.match(quietReason(true,undefined,undefined,0),/현재 상태 미확인/)
+  assert.match(quietReason(false,4,9,0),/현재 상태 미확인/)
+  assert.match(quietReason(false,0,0,0),/마지막 관측 기준/)
+  assert.match(quietReason(true,0,0,0),/새 요청 없이/)
+  assert.match(quietReason(true,4,9,0),/요청을 처리하며/)
 })
