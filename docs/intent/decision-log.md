@@ -407,3 +407,9 @@
 - 2026-10-31 19:26Z — control-281 예정 배포는 게이트 실패로 **미실행**. 소스 `5342588b066e9f5c7af99439a316eeef32dd4b3f`(`deploy-202610311922-noksafe`, κsafe 3커밋 제외; 7842e35c·ed908c9a 포함), 리플레이(기준 7415185b, v2 입력) PASS, dashboard 222/0.
 - clean Go lint FAIL: evaluationstage_types.go:59 goconst(`uncordon`), evaluationrun_types.go:334/405 gocyclo(32/39), evaluationrun_types_test.go:120 gofmt. 타 세션 변경이므로 수정하지 않았으며 test/arch/helm 및 배포·Pod 확인은 실행하지 않음.
 - 2026-10-31 19:33Z — control-281 재시도: 소스 `6d5aef3941ef551d5b89f3e1f12ee24215700307`(κsafe 제외, lint 수정 6aeef74d 포함), 리플레이(기준 7415185b)·clean lint/test/arch/helm·dashboard 222/0 모두 PASS. fast-deploy는 EvaluationRun/EvaluationStage/LoadScenario CRD 추가에 따른 source chart/live manifest drift를 감지해 변경 전 중단; 승인 없이 우회하지 않음. 증거: `deployB/control-281-20261031/chart-diff.txt`, 배포 완료 시각 없음.
+
+## 2026-10-31 — control-282 배포(새 CRD 포함, 사용자 승인)
+
+- 19:36Z control-282: server와 dashboard를 `6d5aef39`로 배포(main HEAD에서 κsafe 3커밋만 뺀 배포 브랜치. 6aeef74d·ed908c9a·7842e35c 포함). 게이트: 리플레이 PASS(기준 7415185b), clean lint/test/arch/helm PASS, dashboard 222/0. 두 Pod 모두 restart 0, dashboard 200.
+- 차트에 조언 세션의 새 CRD 3종(EvaluationRun, EvaluationStage, LoadScenario)이 추가됨. fast-deploy가 chart diff 승인을 요구해 control-281에서 멈췄고, 사용자 승인 후 diff(추가만 3,120줄, 삭제 0)를 `O/deployB/approvals/chart-diff-6d5aef39-evaluation-crds.txt`로 승인해 적용. CRD 3종 생성 확인.
+- 이전 profiler 배포 작업(bg_103, 7415185b 기준)은 lock 대기 중이었고 control-280을 만들지 않음 → 취소. live 차트와 같은 6d5aef39로 profiler 재배포(control-283) 진행.
