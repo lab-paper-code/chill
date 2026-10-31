@@ -716,6 +716,10 @@ spec:
               finishedAt:
                 format: date-time
                 type: string
+              goAt:
+                description: GoAt is recorded once from validated GO evidence.
+                format: date-time
+                type: string
               goRef:
                 description: EvaluationEvidenceReference identifies immutable evidence,
                   never an endpoint.

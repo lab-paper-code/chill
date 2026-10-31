@@ -240,6 +240,30 @@ func TestMissedInjectionWindowInvalid(t *testing.T) {
 		t.Fatal("late effect issued")
 	}
 }
+
+func TestGOTimeRecordedOnce(t *testing.T) {
+	parent := fixtureRun("a")
+	startRun(parent)
+	r, store := fixtureRuntime(t, parent)
+	stage := fixtureStage(t, &r, parent)
+	key := evidenceKey(parent.UID, scope(stage.Spec.StageID)+"/go.json")
+	store.put(key, map[string]any{
+		"runUID": parent.UID, "stageUID": stage.UID, "stageID": stage.Spec.StageID, "goUTC": fixtureTime,
+	})
+	if err := r.injections(context.Background(), parent, stage); !errors.Is(err, errInjectionUpdated) {
+		t.Fatal(err)
+	}
+	if stage.Status.GoAt == nil || !stage.Status.GoAt.Time.Equal(fixtureTime) {
+		t.Fatalf("GO time not recorded: %v", stage.Status.GoAt)
+	}
+	store.put(key, map[string]any{"goUTC": fixtureTime.Add(time.Minute)})
+	if err := r.injections(context.Background(), parent, stage); err != nil {
+		t.Fatal(err)
+	}
+	if !stage.Status.GoAt.Time.Equal(fixtureTime) {
+		t.Fatal("GO time overwritten")
+	}
+}
 func TestCleanupFailureReleasePreservesFailure(t *testing.T) {
 	parent := fixtureRun("a")
 	startRun(parent)

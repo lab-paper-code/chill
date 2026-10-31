@@ -1334,6 +1334,10 @@ func (in *EvaluationStageStatus) DeepCopyInto(out *EvaluationStageStatus) {
 		*out = new(EvaluationEvidenceReference)
 		**out = **in
 	}
+	if in.GoAt != nil {
+		in, out := &in.GoAt, &out.GoAt
+		*out = (*in).DeepCopy()
+	}
 	if in.InjectionRecords != nil {
 		in, out := &in.InjectionRecords, &out.InjectionRecords
 		*out = make([]FaultInjectionRecord, len(*in))

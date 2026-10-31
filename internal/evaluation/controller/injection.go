@@ -143,6 +143,9 @@ func (r *Runtime) injections(ctx context.Context, parent *api.EvaluationRun, sta
 		}
 		before := stage.DeepCopy()
 		stage.Status.GoRef = reference
+		if stage.Status.GoAt == nil {
+			stage.Status.GoAt = goEvidence.GoUTC.DeepCopy()
+		}
 		stage.Status.ProducerRefs = goEvidence.ProducerRefs
 		if err := r.patchStatus(ctx, stage, before); err != nil {
 			return err

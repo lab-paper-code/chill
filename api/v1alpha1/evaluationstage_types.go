@@ -208,6 +208,9 @@ type EvaluationStageStatus struct {
 	ProducerRefs []EvaluationProducerReference `json:"producerRefs,omitempty"`
 	// +optional
 	GoRef *EvaluationEvidenceReference `json:"goRef,omitempty"`
+	// GoAt is recorded once from validated GO evidence.
+	// +optional
+	GoAt *metav1.Time `json:"goAt,omitempty"`
 	// +optional
 	// +listType=map
 	// +listMapKey=id
