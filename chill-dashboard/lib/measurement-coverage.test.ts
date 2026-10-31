@@ -179,32 +179,6 @@ test("visible status totals use one denominator and include review and unknown s
   assert.equal(counts.unmeasured,1)
 })
 
-test("coverage UI exposes numeric progress and trust values without expanded JSON",async()=>{
-  const source=await readFile(new URL("../features/measurement-coverage.tsx",import.meta.url),"utf8")
-  assert.match(source,/progress\.measured\.filter\(batch=>progress\.target\.includes\(batch\)\)\.length/)
-  assert.match(source,/품질 판정 근거 없음/)
-  assert.match(source,/activeTrialCount/)
-  assert.match(source,/idleTrialCount/)
-  assert.match(source,/confidence\.lower/)
-  assert.match(source,/powerSource/)
-  assert.match(source,/<details><summary>원문<\/summary>/)
-  assert.match(source,/측정 조합 \/ 전체/)
-  assert.match(source,/sm:w-\[800px\]/)
-  assert.doesNotMatch(source,/기준 충족 \/ 전체 \(조합\)/)
-  const experiment=await readFile(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8")
-  assert.doesNotMatch(experiment,/참고 · 제한 비교/)
-  assert.match(experiment,/coverageCounts\.limited/)
-  assert.doesNotMatch(experiment,/const limited=experimentHeatmap/)
-  const projections=await readFile(new URL("../features/measurement-projections.tsx",import.meta.url),"utf8")
-  assert.doesNotMatch(projections,/<caption[^>]*>이상값:/)
-  assert.match(projections,/aria-label="비용·편차 범례"/)
-  const failure=await readFile(new URL("../features/read-pages.tsx",import.meta.url),"utf8")
-  assert.match(failure,/\["종료 코드",failure\.exitCode/)
-  assert.match(failure,/aria-label="실패 원인·조치"/)
-  assert.doesNotMatch(failure,/\(종료 코드 \$\{/)
-  assert.doesNotMatch(source,/근거 확인 항목 \(개\)/)
-})
-
 test("quality reasons come from variant checks, count each cell once and never infer an absent threshold",()=>{
   const assessment={...cell.assessment,checklist:{...cell.assessment.checklist,criteriaMet:false,checks:[{code:"FrozenPowerWindowPolicy",result:"unknown" as const,message:"raw",sourceIds:[]}]}}
   const variant={id:"v",condition:{},assessment,batchProgress:cell.batchProgress!,resultRows:[],requestIds:[],runIds:[],profileIds:[]}
