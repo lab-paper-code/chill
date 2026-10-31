@@ -29,10 +29,9 @@ rules:
   - apiGroups: [edge.dacs.io]
     resources: [loadscenarios, workloads, evaluationstages]
     verbs: [get, list, watch]
-  - apiGroups: [""]
-    resources: [configmaps]
-    resourceNames: [{{ .Values.servingEntrypoint.scheduler.configMap | default "serving-scheduler" | quote }}]
-    verbs: [get, update]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
