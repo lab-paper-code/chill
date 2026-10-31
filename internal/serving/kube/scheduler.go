@@ -1332,9 +1332,6 @@ func (c *SchedulerController) completedHandoffPresent(target serving.SchedulerCa
 // names the Workload its target instance serves as the Pod's owner, so the
 // instance keeps its Workload while unrouted.
 func scheduledOperation(action serving.Action, target *serving.SchedulerCandidate, config SchedulerControllerConfig, power map[string]time.Duration, workloads []*serving.Definition) Operation {
-	if action.RouteTarget != nil {
-		target = action.RouteTarget
-	}
 	operation := Operation{ID: action.ID, Kind: action.Kind, Node: action.Node, Instance: action.Instance, Target: target,
 		ExpectedSeconds: action.ExpectedSeconds, ExpectedSource: action.ExpectedSource}
 	if action.Kind == operationPrepare {

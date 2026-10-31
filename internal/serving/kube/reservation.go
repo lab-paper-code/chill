@@ -212,17 +212,7 @@ func (c *SchedulerController) returnProofParent(run *actionRun) *actionRun {
 	if run.action.Kind == transitionRunKind {
 		return run
 	}
-	if run.proofParent != nil {
-		return run.proofParent
-	}
-	if parent := c.frozenActionParent(run); parent != nil {
-		return parent
-	}
-	parent := c.runs[transitionRunKind+"/"+run.owner]
-	if parent != nil && parent.routeReceipts[run.action.ID] == run {
-		return parent
-	}
-	return nil
+	return run.proofParent
 }
 
 // This check also runs when there are no Pods: absence is not permission to
@@ -316,21 +306,15 @@ func (c *SchedulerController) releaseObservedScopes(nodes []core.Node, pods []co
 	}
 }
 
-// Terminal owner members share authorized receipts, never an owner's name
-// alone. The owner's pre-effect baseline bounds every previous-policy proof.
+// Terminal owner members share receipts through their authorization-time parent
+// link, never an owner's name alone. Its baseline bounds previous-policy proof.
 func (c *SchedulerController) knownOwnerEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.InstanceState) bool {
 	parent := c.returnProofParent(run)
 	if parent == nil {
 		return knownEffectConfirmed(run, pod, physical, run.result.EndedAt, true)
 	}
-	if parent.result == nil || parent.result.Operation.Target == nil ||
-		parent.action.Status == nativeOperationRunning || parent.action.Status == nativeOperationCancel {
+	if parent.result == nil || parent.result.Operation.Target == nil {
 		return false
-	}
-	for _, sibling := range c.runs {
-		if sibling.owner == parent.owner && (sibling.action.Status == nativeOperationRunning || sibling.action.Status == nativeOperationCancel) {
-			return false
-		}
 	}
 	after := run.result.EndedAt
 	if parent.result.EndedAt.After(after) {
@@ -384,18 +368,6 @@ func untouchedExecutorProof(parent *actionRun, pod *core.Pod, physical []serving
 		current.Node.Name == pod.Spec.NodeName && current.Ready && !current.Stopped &&
 		current.Native != nil && current.Native.Ready && after.Before(current.ObservedAt)
 	return preexisting, untouched
-}
-
-func (c *SchedulerController) frozenActionParent(run *actionRun) *actionRun {
-	for _, candidate := range c.runs {
-		if candidate.owner == run.owner && candidate.action.Kind == transitionRunKind && candidate.result != nil &&
-			candidate.result.Operation.Target != nil && slices.ContainsFunc(candidate.result.Operation.Target.Actions, func(a serving.Action) bool {
-			return a.ID == run.action.ID && actionEquivalent(a, run.action)
-		}) {
-			return candidate
-		}
-	}
-	return nil
 }
 
 //nolint:gocyclo // Keep exact-executor and known-policy proof together at the reservation release boundary.

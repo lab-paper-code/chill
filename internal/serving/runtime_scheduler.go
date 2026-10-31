@@ -84,11 +84,6 @@ func (r *Runtime) ApplySchedulerTarget(candidate SchedulerCandidate) error {
 func (r *Runtime) ApplySchedulerWorkloadsTarget(candidate SchedulerCandidate, uids []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, uid := range uids {
-		if uid == "" || r.workloads[uid] == nil || r.workloads[uid].detached {
-			return failure("DefinitionChanged", "workload %q is not current", uid)
-		}
-	}
 	if len(uids) == 0 {
 		return nil
 	}

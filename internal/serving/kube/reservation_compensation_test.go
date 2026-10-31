@@ -172,6 +172,7 @@ func failedPrepareCompensationFixture(t *testing.T, evidence string) (*Scheduler
 	parent := &actionRun{owner: target.ID, reserved: true, scope: scope,
 		action: serving.Action{ID: transitionRunKind + "/" + target.ID, Kind: transitionRunKind, Status: nativeOperationFailed},
 		result: &OperationResult{Status: nativeOperationFailed, EndedAt: ended, Operation: Operation{Kind: transitionRunKind, Target: &target}}}
+	child.proofParent = parent
 	c.runs = map[string]*actionRun{parent.action.ID: parent, action.ID: child}
 	switch evidence {
 	case "canceled":

@@ -1037,10 +1037,8 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 	var applyErr error
 	if result.Operation.Kind == operationUnroute {
 		applyErr = o.runtime.ApplySchedulerUnrouteTarget(target, uids)
-	} else if uids != nil {
-		applyErr = o.runtime.ApplySchedulerWorkloadsTarget(target, uids)
 	} else {
-		applyErr = o.runtime.ApplySchedulerTarget(target)
+		applyErr = o.runtime.ApplySchedulerWorkloadsTarget(target, uids)
 	}
 	if applyErr != nil {
 		return applyErr

@@ -198,6 +198,7 @@ func TestPartialAutonomousOwnerAdoptsOnlyFreshKnownEffectsAC38(t *testing.T) {
 				}
 				parent := &actionRun{owner: target.ID, reserved: true, action: serving.Action{ID: "parent", Kind: transitionRunKind, Status: nativeOperationRunning},
 					result: &OperationResult{Operation: Operation{Kind: transitionRunKind, Target: &target, WorkloadUIDs: []string{"workload"}}, Status: nativeOperationRunning}}
+				child.proofParent = parent
 				c := &SchedulerController{runs: map[string]*actionRun{action.ID: child, "parent": parent}}
 				if kind == operationRoute {
 					c.state.Snapshot.Instances = []serving.SchedulerInstance{{ID: id, PodUID: string(pod.UID), Node: ref, WorkloadUID: "workload"}}
@@ -306,10 +307,12 @@ func TestPartialOwnerKeepsUnconfirmedWorkloadAndPendingPowerAC38(t *testing.T) {
 	target.Actions = []serving.Action{child.action}
 	parent := &actionRun{owner: target.ID, reserved: true, scope: scope, action: serving.Action{Kind: transitionRunKind, Status: nativeOperationFailed},
 		result: &OperationResult{Operation: Operation{Kind: transitionRunKind, Target: target}, Status: nativeOperationFailed, EndedAt: ended}}
+	child.proofParent = parent
 	powerRef := serving.NodeReference{Name: "pending-node", UID: "pending-node-uid"}
 	parent.scope.Nodes = append([]serving.NodeReference{ref}, powerRef)
 	power := &actionRun{owner: target.ID, reserved: true, scope: resourceScope{Nodes: []serving.NodeReference{powerRef}}, action: serving.Action{Kind: operationPower, Status: nativeOperationPartial},
 		result: &OperationResult{Operation: Operation{Kind: operationPower}, Status: nativeOperationPartial, EndedAt: ended}}
+	power.proofParent = parent
 	c := &SchedulerController{runs: map[string]*actionRun{"parent": parent, "route": child, "power": power}}
 	pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: "first"}}
 	otherPod := pod.DeepCopy()
@@ -399,6 +402,9 @@ func TestTerminalPreparationsShareOnlyFrozenSiblingReceiptsAC38(t *testing.T) {
 				result: &OperationResult{Operation: Operation{Kind: transitionRunKind, Target: target},
 					Status: nativeOperationFailed, EndedAt: ended.Add(time.Second), Error: "child failed"}}
 			c.runs["parent"] = parent
+			for _, child := range children {
+				child.proofParent = parent
+			}
 			mutateTerminalPreparationEvidence(evidence, nodes, pods, physical, children, parent)
 			c.releaseObservedScopes(nodes, pods, physical, observed)
 			snapshot, lost := c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute)
@@ -449,11 +455,14 @@ func mutateTerminalPreparationEvidence(evidence string, nodes []core.Node, pods 
 		children[1].action.Status = nativeOperationCancel
 	case "other-parent":
 		children[1].owner = "other-transition"
+		children[1].proofParent = nil
 	case "same-owner-unfrozen":
 		target := parent.result.Operation.Target
 		target.Actions = append(target.Actions[:1:1], target.Actions[2])
+		children[1].proofParent = nil
 	case "different-action":
 		children[1].action.Instance = "other-slot"
+		children[1].proofParent = nil
 	}
 }
 
@@ -484,6 +493,7 @@ func TestFailedCleanupAdoptsRegisteredRouteRefreshReceiptAC38(t *testing.T) {
 				routeReceipts: map[string]*actionRun{"workload": refresh},
 				action:        serving.Action{Kind: transitionRunKind, Status: nativeOperationFailed},
 				result:        &OperationResult{Operation: Operation{Kind: transitionRunKind, Target: target}, Status: nativeOperationFailed, EndedAt: ended.Add(time.Second), Error: "cleanup failed"}}
+			handoff.proofParent, cleanup.proofParent, refresh.proofParent = parent, parent, parent
 			parent.scope.Nodes = append([]serving.NodeReference{ref}, cleanupScope.Nodes...)
 			c := &SchedulerController{runs: map[string]*actionRun{"parent": parent, routeAction.ID: handoff, removeAction.ID: cleanup, "refresh": refresh}}
 			state := serving.InstanceState{ID: id, PodUID: string(pod.UID), Node: ref, Ready: true, ObservedAt: observed,
@@ -546,6 +556,7 @@ func TestCanceledPrepareAdoptsRegisteredReadySubsetReceiptAC38(t *testing.T) {
 			parent := &actionRun{owner: target.ID, reserved: true, scope: scope,
 				action: serving.Action{Kind: transitionRunKind, Status: nativeOperationFailed},
 				result: &OperationResult{Operation: Operation{Kind: transitionRunKind, Target: target}, Status: nativeOperationFailed, EndedAt: ended}}
+			prepare.proofParent = parent
 			subset := &serving.SchedulerCandidate{ID: "original-ready-subset", Instances: []serving.SchedulerInstance{wanted},
 				Routing: map[string]map[string]int32{"workload": {id: 1000}}}
 			operation := Operation{Kind: operationRoute, Target: subset, WorkloadUIDs: []string{"workload"}}

@@ -45,7 +45,7 @@ func TestUntouchedAdmissionBaselineAC38(t *testing.T) {
 				action := serving.Action{ID: "effect", Kind: kind, Node: effectNode, Status: nativeOperationRunning}
 				target.Actions = []serving.Action{action}
 				op := Operation{Kind: kind, Node: effectNode, Target: target, Nodes: []serving.NodeReference{ref}}
-				run := &actionRun{owner: parent.owner, action: action, result: &OperationResult{Operation: op, EndedAt: ended}}
+				run := &actionRun{owner: parent.owner, proofParent: parent, action: action, result: &OperationResult{Operation: op, EndedAt: ended}}
 				parent.returnObserved = true
 				if !c.reserveRun(action.ID, run, op) {
 					t.Fatal("authorization failed")
