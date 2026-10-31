@@ -14,7 +14,7 @@ export function measurementEvidenceChecks(assessment?:MeasurementAssessment|null
     const protocol=row?.condition.activeProtocol as {dataset?:{name?:string}}|undefined,ci=row?.confidence,mean=row?.incrementalJoulesPerItem
     const valid=ci&&Number.isFinite(ci.halfWidth)&&ci.halfWidth>=0&&ci.level>0&&ci.level<1
     const relative=typeof mean==="number"&&Number.isFinite(mean)&&mean!==0
-    notes.push({label:"오차 반폭 · 허용 기준 미설정",value:valid?(relative?100*ci.halfWidth/Math.abs(mean!):ci.halfWidth):"미제공",unit:relative?"%":"J/건"})
+    notes.push({label:"오차 반폭",value:valid?(relative?100*ci.halfWidth/Math.abs(mean!):ci.halfWidth):"미제공",unit:relative?"%":"J/건"})
     notes.push({label:"노드 전체 전력",value:row?.powerSource?.kind&&row.powerSource.nodeName?"장치 단독 전력 아님":"출처·범위 미제공",unit:""})
     notes.push({label:"데이터셋 메모 · 용도 일치 미검증",value:String(protocol?.dataset?.name??row?.condition.dataset??"상세 조건"),unit:""})
   }

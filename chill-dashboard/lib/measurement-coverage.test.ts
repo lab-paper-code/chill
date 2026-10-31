@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { readFile } from "node:fs/promises"
-import { coverageFailureHref, coverageProfileQuery, coverageStatusCounts, measurementAge, conditionLabel, deviceLabel, coverageSelection, coveragePathVisible, coverageModes, coverageVariant, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
+import { coverageQuality, coverageQualityReasons, coverageMeasurementStatus, coverageFailureHref, coverageProfileQuery, coverageStatusCounts, measurementAge, conditionLabel, deviceLabel, coverageSelection, coveragePathVisible, coverageModes, coverageVariant, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
-import { requestBatches, requestInitialBatches } from "./measurement-request.ts"
+import { requestBatches, requestTargetBatches } from "./measurement-request.ts"
 import type { CoverageModel } from "./measurement-coverage.ts"
 import type { InventoryClass, InventoryView, MeasurementCoverageCell, MeasurementPlan, ModelCompatibility, ProfilingRun, ResultRow } from "./read-types.ts"
 
@@ -90,7 +90,7 @@ test("coverage hides proven unsupported paths but retains truly unknown declarat
   assert.equal(coveragePathVisible(cell,{...inventory,classes:[{...cls,architecture:"amd64"}]}),false)
 })
 test("batch slots preserve separate evidence, running, missing and unknown states",()=>{
-  assert.deepEqual([1,2,4,8,16].map(batch=>coverageBatchState(cell.batchProgress,batch)),["complete","measured","running","missing","outside"])
+  assert.deepEqual([1,2,4,8,16].map(batch=>coverageBatchState(cell.batchProgress,batch)),["measured","measured","running","missing","outside"])
   assert.equal(coverageBatchState(null,1),"unknown")
   const first={id:"first",condition:{},assessment:{...cell.assessment,displayStatus:"usable" as const},batchProgress:cell.batchProgress!,resultRows:[],requestIds:[],runIds:[],profileIds:[]}
   const second={...first,id:"second",assessment:cell.assessment,batchProgress:{...first.batchProgress,measured:[8],missing:[1,2,4]}}
@@ -129,11 +129,12 @@ test("RKNN on Jetson is statically unsupported, not an unknown runtime declarati
 
 test("coverage link leaves unspecified batches for the request's path-bounded initializer",()=>{
   const query=new URL(coverageRequestHref({...cell,batchProgress:null},"ns","/measurements"),"http://local").searchParams
-  assert.equal(query.get("batches"),"")
+  assert.equal(query.has("batches"),false)
   const decoded=requestBatches(query)
   assert.equal(decoded.error,"")
   assert.deepEqual(decoded.values,[])
-  assert.deepEqual(requestInitialBatches(decoded.values,2),[1,2])
+  assert.deepEqual(requestTargetBatches(query,[2,4],8),[2,4])
+  assert.deepEqual(requestTargetBatches(query,undefined,2),[1,2])
 })
 
 test("measurement age is based on recorded timestamp and never invents missing or future dates",()=>{
@@ -161,7 +162,7 @@ test("profile time lookup uses the server's fifty-row page contract",()=>{
 })
 test("visible status totals use one denominator and include review and unknown support",()=>{
   const cells=[cell,{...cell,id:"review",assessment:{...cell.assessment,displayStatus:"review" as const}},
-    {...cell,id:"usable",assessment:{...cell.assessment,displayStatus:"usable" as const}}]
+    {...cell,id:"usable",assessment:{...cell.assessment,displayStatus:"usable" as const},batchProgress:{...cell.batchProgress!,measured:cell.batchProgress!.target}}]
   const counts=coverageStatusCounts(cells)
   assert.equal(Object.values(counts).reduce((a,b)=>a+b,0),cells.length)
   assert.equal(counts.review,1)
@@ -171,23 +172,48 @@ test("visible status totals use one denominator and include review and unknown s
 
 test("coverage UI exposes numeric progress and trust values without expanded JSON",async()=>{
   const source=await readFile(new URL("../features/measurement-coverage.tsx",import.meta.url),"utf8")
-  assert.match(source,/progress\.target\.filter\(batch=>progress\.criteriaMet\.includes\(batch\)\)\.length/)
-  assert.match(source,/cell\.assessment\.checklist\.criteriaMet===true/)
+  assert.match(source,/progress\.measured\.filter\(batch=>progress\.target\.includes\(batch\)\)\.length/)
+  assert.match(source,/품질 미충족 사유/)
   assert.match(source,/activeTrialCount/)
   assert.match(source,/idleTrialCount/)
   assert.match(source,/confidence\.lower/)
   assert.match(source,/powerSource/)
   assert.match(source,/<details><summary>원문<\/summary>/)
-  assert.match(source,/기준 충족 \/ 전체 \(조합\)/)
-  const experiment=await readFile(new URL("../features/experiments.tsx",import.meta.url),"utf8")
-  assert.match(experiment,/제한 비교 \(개\)/)
+  assert.match(source,/품질 기준 충족 진척/)
+  assert.match(source,/sm:w-\[800px\]/)
+  assert.doesNotMatch(source,/기준 충족 \/ 전체 \(조합\)/)
+  const experiment=await readFile(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8")
+  assert.match(experiment,/참고 · 제한 비교/)
   assert.match(experiment,/coverageCounts\.limited/)
   assert.doesNotMatch(experiment,/const limited=experimentHeatmap/)
   const projections=await readFile(new URL("../features/measurement-projections.tsx",import.meta.url),"utf8")
   assert.doesNotMatch(projections,/<caption[^>]*>이상값:/)
-  assert.match(projections,/aria-label="이상값 범례"/)
+  assert.match(projections,/aria-label="비용·편차 범례"/)
   const failure=await readFile(new URL("../features/read-pages.tsx",import.meta.url),"utf8")
-  assert.match(failure,/<th>종료 코드<\/th>/)
+  assert.match(failure,/\["종료 코드",failure\.exitCode/)
+  assert.match(failure,/aria-label="실패 원인·조치"/)
   assert.doesNotMatch(failure,/\(종료 코드 \$\{/)
   assert.doesNotMatch(source,/근거 확인 항목 \(개\)/)
+})
+
+test("quality reasons come from variant checks, count each cell once and never infer an absent threshold",()=>{
+  const assessment={...cell.assessment,checklist:{...cell.assessment.checklist,criteriaMet:false,checks:[{code:"FrozenPowerWindowPolicy",result:"unknown" as const,message:"raw",sourceIds:[]}]}}
+  const variant={id:"v",condition:{},assessment,batchProgress:cell.batchProgress!,resultRows:[],requestIds:[],runIds:[],profileIds:[]}
+  const measured={...cell,assessment:{...cell.assessment,displayStatus:"usable" as const},variants:[variant,{...variant,id:"v2"}]}
+  assert.equal(coverageQuality(measured).label,"기준 미충족")
+  assert.deepEqual(coverageQualityReasons([measured,cell]),[{code:"FrozenPowerWindowPolicy",label:"전력 기록 기준 미확인",count:1},{code:"QualityUnavailable",label:"품질 근거 없음",count:1}])
+  assert.equal(coverageQuality(cell).label,"품질 미확인")
+  assert.equal(coverageMeasurementStatus(measured),"insufficient")
+  const met={...variant,assessment:{...assessment,checklist:{...assessment.checklist,criteriaMet:true,checks:[{...assessment.checklist.checks[0],result:"pass" as const}]}}}
+  assert.equal(coverageQuality({...cell,variants:[met]}).label,"기준 충족")
+})
+
+test("request prefill and preflight keep selected equipment visible and operational impact separate",async()=>{
+  const request=await readFile(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
+  assert.match(request,/aria-label="선택 조건 요약"/)
+  assert.match(request,/경로 <strong>\{d\.path/)
+  const preflight=await readFile(new URL("../features/read-pages.tsx",import.meta.url),"utf8")
+  assert.match(preflight,/형식 검사 통과/)
+  assert.match(preflight,/운영 영향 미확인/)
+  assert.doesNotMatch(preflight,/answer\.resolves\?"측정 요청 가능"/)
 })

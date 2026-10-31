@@ -7,14 +7,13 @@ import { useChillMutation, useChillQuery, useSession, type ApiError } from "@/li
 import { QueryGate, SourceJSON } from "@/components/read-region"
 import { RowDialog, Rows, Screen } from "@/components/screen"
 import { PreflightAnswer, preflightConclusion } from "@/features/read-pages"
-import { powerModeText } from "@/features/resources"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { DatasetResource, PreprocessorResource, ExecutionPath, ModelList, ModelResource, WorkloadView } from "@/lib/domain"
 import type { InventoryClass, InventoryNode, MeasurementMutation, MeasurementPlan, MeasurementPlanList, MeasurementPlanSpec, MeasurementPreflight, MeasurementVariant, ProfilesView } from "@/lib/read-types"
 import { datasetGap, requestNumber, requestBatches, requestDefaults, requestInputs, requestTargetBatches, requestConditionChanges, requestPreflightReason, requestRejectionGuidance, type RequestRejectionGuidance } from "@/lib/measurement-request"
 import { parseSchedulerJSON } from "@/lib/scheduler"
-import { resolveMeasurementPrefill, serverCompatibility, staticCompatibility, type MeasurementPrefill } from "@/lib/measurement-coverage"
+import { deviceLabel, resolveMeasurementPrefill, serverCompatibility, staticCompatibility, type MeasurementPrefill } from "@/lib/measurement-coverage"
 import { useCoverageInventory, useModelCompatibility, useMeasurementCoverage } from "@/features/measurement-coverage"
 import { MeasurementNavigation } from "@/components/measurement-navigation"
 import { measurementRequestName } from "@/lib/measurements"
@@ -276,6 +275,7 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
     <MeasurementNavigation active="requests" namespace={namespace}/>
     {unknown&&<section role="alert" className="notice space-y-3"><h2>접수 결과 미확인 — 같은 이름으로 확인하세요</h2><p>{v.name}: 자동 재제출과 이름 변경을 막았습니다.</p><Button disabled={checking} onClick={()=>void refetchPlans().then(result=>{setChecked(!result.error);if(result.error)setError("목록 조회 실패: 다시 확인하세요.")})}>같은 이름의 접수 기록 조회</Button>{found?<Link className="underline" href={detailHref(namespace,found.metadata.name,found.metadata.uid)}>접수된 요청 열기</Link>:checked&&<p>아직 목록에서 확인되지 않았어요. 자동 재제출하지 않습니다.</p>}</section>}
     {variantId&&!selected&&<p role="status" className="notice">조건 미확인 · 부족 배치 자동 제외 안 됨</p>}
+    {prefill.active&&<div aria-label="선택 조건 요약" className="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-1 border-y py-2 text-sm"><span>장치 <strong>{deviceLabel(d.deviceClass)}</strong></span><span>노드 <strong>{d.node||"미선택"}</strong></span><span>전력모드 <strong>{v.powerMode||"미선택"}</strong></span><span>경로 <strong>{d.path||"미선택"}</strong></span><a className="underline" href="#measurement-conditions" onClick={()=>{const conditions=document.getElementById("measurement-conditions") as HTMLDetailsElement|null;if(conditions)conditions.open=true}}>조건 변경</a></div>}
     <fieldset disabled={unknown||pending||send.isPending} className="space-y-8 disabled:opacity-60">
       <section className="grid gap-5 border-t pt-5 md:grid-cols-2" aria-label="측정 대상">
         <label className="grid content-start gap-2 text-sm">모델<select aria-invalid={!!error&&!v.model} aria-describedby={error&&v.problem("workload")?"measurement-workload-error":undefined} className="min-h-11 w-full rounded border bg-background p-2" value={d.model} onChange={event=>{const model=context.models.find(item=>item.metadata.name===event.target.value);update({model:event.target.value,workload:"",preprocessor:"",dataset:"",...(!model?.spec.executionPaths.some(path=>path.name===d.path)?{path:""}:{})})}}><option value="">모델 선택</option>{context.models.map(model=><option key={model.metadata.uid} value={model.metadata.name}>{model.metadata.name}</option>)}</select></label>
@@ -297,11 +297,11 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
       <details id="measurement-conditions" className="space-y-4"><summary className="font-semibold">실행 조건·측정 방식</summary>
       <section id="measurement-device" className="grid gap-5 border-t pt-5 md:grid-cols-2" aria-label="장치와 실행 조건">
         <div className="space-y-4"><Pick label="장치 종류" name="device-class" value={d.deviceClass} set={deviceClass=>{const cls=context.classes.find(item=>item.name===deviceClass);update({deviceClass,node:cls?.nodes.some(node=>node.name===d.node)?d.node:cls?.nodes.find(node=>!nodeReason(node))?.name??"",powerMode:cls?.powerModes.some(mode=>mode.name===d.powerMode)?d.powerMode:cls?.powerModes.length===1?cls.powerModes[0].name:""})}} options={context.classes.map(cls=>({value:cls.name,label:cls.name,disabled:cls.nodes.some(node=>!nodeReason(node))?undefined:"준비된 장비 없음"}))}/>{v.cls&&<details><summary className="min-h-11 cursor-pointer py-2 text-sm">실행 장비 · {d.node||"미선택"}</summary><Pick label="실행 장비" name="node" value={d.node} set={node=>update({node})} options={v.cls.nodes.map(node=>({value:node.name,label:node.name,disabled:nodeReason(node)}))}/></details>}</div>
-        <div className="space-y-4"><Pick label="실행 경로" name="path" value={d.path} set={path=>update({path})} options={(v.model?.spec.executionPaths??[]).filter(path=>!v.cls||!pathReason(v.model!,path,v.cls)).map(path=>({value:path.name,label:path.name,hint:`${path.runtime.family} / ${path.runtime.backend}`}))}/>
+        <div className="space-y-4"><Pick label="실행 경로" name="path" value={d.path} set={path=>update({path})} options={(v.model?.spec.executionPaths??[]).filter(path=>!v.cls||!pathReason(v.model!,path,v.cls)).map(path=>({value:path.name,label:path.name}))}/>
           {(!v.model||!v.cls)?<p className="text-sm text-muted-foreground">모델과 장치 종류를 먼저 선택하면 실행 방식을 고를 수 있어요.</p>:!v.model.spec.executionPaths.some(path=>!pathReason(v.model!,path,v.cls!))&&<p role="status" className="notice">이 장치에서 사용할 실행 방식이 없어요. 다른 장치 종류를 선택하거나 모델의 실행 방식 등록을 확인하세요.</p>}
           {v.model&&v.cls&&v.model.spec.executionPaths.some(path=>pathReason(v.model!,path,v.cls!))&&<details><summary className="min-h-11 cursor-pointer py-2">지원 안 되는 경로와 이유</summary>{v.model.spec.executionPaths.filter(path=>pathReason(v.model!,path,v.cls!)).map(path=><p key={path.name}>{path.name}: {pathReason(v.model!,path,v.cls!)}</p>)}</details>}
           {error&&(v.problem("device")||v.problem("run"))&&<p id="measurement-run-error" tabIndex={-1} className="text-sm text-destructive">{v.problem("device")||v.problem("run")}</p>}
-          {v.cls&&<Pick label="전력 모드" name="mode" value={v.powerMode} set={powerMode=>update({powerMode})} options={v.cls.powerModes.map(mode=>({value:mode.name,label:mode.name,hint:powerModeText(mode.actuator)}))}/>}
+          {v.cls&&<Pick label="전력 모드" name="mode" value={v.powerMode} set={powerMode=>update({powerMode})} options={v.cls.powerModes.map(mode=>({value:mode.name,label:mode.name}))}/>}
           {verdict&&<div className="space-y-2 text-sm"><p>{support.isFetching?"호환성 확인 중":verdict.reason}</p>{verdict.state==="unknown"&&<><p>지원 미확인: 장치 선언·runtime 지원을 담당자가 확인해야 합니다.</p><label className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={showUnknown} onChange={event=>setShowUnknown(event.target.checked)}/>미확인 조합을 명시적으로 검사</label></>}</div>}
         </div>
       </section>
@@ -319,7 +319,7 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
     {selected&&<details className="space-y-3 rounded border p-4 text-sm"><summary>이전 결과·재사용 조건</summary><table className="w-full text-left tabular-nums"><thead><tr><th>이전 목표 배치 (건)</th><th>기측정 배치 (건)</th><th>이번 선택 배치 (건)</th></tr></thead><tbody><tr><td>{selected.batchProgress.target.join(", ")||"미기록"}</td><td>{selected.batchProgress.measured.join(", ")||"없음"}</td><td>{d.batchSizes.join(", ")||"미지정"}</td></tr></tbody></table><p>{!answer?"재사용 미검사":answer.batchPlan?.conditionMatch==="exact"?"동결 실행 조건 일치":"기존 결과 유지 · 재사용 미확인"}</p>{changes.length>0&&<table className="w-full text-left"><thead><tr><th>변경 필드</th><th>이전</th><th>현재</th></tr></thead><tbody>{changes.map(change=><tr key={change.field}><th className="font-normal">{change.label}</th><td>{change.before}</td><td>{change.after}</td></tr>)}</tbody></table>}</details>}
     {explanation&&<section className="space-y-4 border-t pt-5"><h2 className="font-semibold">{preflightConclusion(explanation)}</h2><PreflightAnswer answer={explanation}/></section>}
     {pre.error&&<table className="w-full text-left text-sm"><thead><tr><th>서빙 영향</th><th>예상 총 소요 시간 (s)</th></tr></thead><tbody><tr><td>미제공</td><td>미제공</td></tr></tbody></table>}
-    <p role="status" className="text-sm font-semibold">{passed?"검사 통과 · 미제출":"미제출"}</p>
+    <p role="status" className="text-sm font-semibold">미제출</p>
     <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={blocked||pending||unknown} onClick={verify}>{pending?"검사 중":"요청 범위 검사"}</Button><Button disabled={!passed||blocked||send.isPending||unknown} onClick={submit}>측정 요청하기</Button></div>
     <Rows><RowDialog label="보낼 요청 원본" title="측정 요청"><SourceJSON inline value={manifest(d,context,namespace)}/></RowDialog>{(answer||pre.error)&&<RowDialog label="검사 원본" title="검사 원본"><SourceJSON inline value={answer??pre.error?.data}/></RowDialog>}</Rows>
   </Screen>

@@ -63,11 +63,34 @@ export function coverageRepresentative(cell:MeasurementCoverageCell):Measurement
 export function coverageProgress(cell:MeasurementCoverageCell) {
   return cell.batchProgress??coverageVariant(cell)?.batchProgress??null
 }
+export const coverageMeasurementStates = {usable:"측정 있음",review:"검토 필요",insufficient:"부족",problem:"문제",running:"진행",unmeasured:"미측정",unknown:"미확인",unsupported:"지원 안 함"}
+export function coverageMeasurementStatus(cell:MeasurementCoverageCell):MeasurementDisplayStatus {
+  const progress=coverageProgress(cell),status=cell.assessment.displayStatus
+  if(status!=="usable")return status
+  return progress?.target.length&&!progress.target.every(batch=>progress.measured.includes(batch))?"insufficient":"usable"
+}
+export function coverageQuality(cell:MeasurementCoverageCell) {
+  const assessments=cell.variants.length?cell.variants.map(variant=>variant.assessment):[cell.assessment]
+  const checks=assessments.flatMap(assessment=>assessment.checklist.checks)
+  const labels:Record<string,string>={ActiveTrials:"실행 반복 부족",IdleTrials:"유휴 반복 부족",IncrementalConfidence:"오차 범위 미확인",ClientLatency:"지연 표본 미확인",PowerSource:"전력 출처 미확인",FrozenPowerWindowPolicy:"전력 기록 기준 미확인",ExactConditionLineage:"측정 조건 연결 미확인",TargetBatch:"배치 근거 미확인",DatasetInputContract:"입력 연결 미확인"}
+  const reasons=[...new Map(checks.filter(check=>check.result!=="pass").map(check=>[check.code,{code:check.code,label:labels[check.code]??"기타 품질 확인"}])).values()]
+  if(!checks.length)reasons.push({code:"QualityUnavailable",label:"품질 근거 없음"})
+  const met=assessments.every(assessment=>assessment.checklist.criteriaMet===true)
+  const unmet=assessments.some(assessment=>assessment.checklist.criteriaMet===false||assessment.checklist.checks.some(check=>check.result==="fail"))
+  return {label:met?"기준 충족":unmet?"기준 미충족":"품질 미확인",reasons}
+}
+export function coverageQualityReasons(cells:MeasurementCoverageCell[]) {
+  const counts=new Map<string,{code:string;label:string;count:number}>()
+  for(const cell of cells)for(const reason of coverageQuality(cell).reasons) {
+    const prior=counts.get(reason.code)
+    if(prior)prior.count++;else counts.set(reason.code,{...reason,count:1})
+  }
+  return [...counts.values()].sort((a,b)=>b.count-a.count)
+}
 export function coverageBatchState(progress:BatchProgress|null,batch:number) {
   if(!progress)return "unknown"
-  if(progress.criteriaMet.includes(batch))return "complete"
-  if(progress.inProgress.includes(batch))return "running"
   if(progress.measured.includes(batch))return "measured"
+  if(progress.inProgress.includes(batch))return "running"
   if(progress.missing.includes(batch))return "missing"
   if(progress.unknown.includes(batch))return "unknown"
   return progress.target.includes(batch)?"missing":"outside"
@@ -83,7 +106,7 @@ export function coverageFailureHref(failure:MeasurementFailure,namespace:string,
 }
 export function coverageStatusCounts(cells:MeasurementCoverageCell[]) {
   const counts:Record<MeasurementDisplayStatus,number>={usable:0,review:0,insufficient:0,problem:0,running:0,unmeasured:0,unknown:0,unsupported:0}
-  for(const cell of cells)counts[cell.assessment.displayStatus]++
+  for(const cell of cells)counts[coverageMeasurementStatus(cell)]++
   return counts
 }
 export function coverageRequestHref(cell:MeasurementCoverageCell,namespace:string,returnTo:string,variantId?:string,targetBatches:number[]=[]) {
@@ -91,7 +114,7 @@ export function coverageRequestHref(cell:MeasurementCoverageCell,namespace:strin
   const progress=variant?.batchProgress??coverageProgress(cell)
   const batches=progress?.missing.length?progress.missing:progress?.target.length?progress.target:targetBatches
   const node=(condition?.metricSource as {nodeName?:string}|undefined)?.nodeName??(condition?.state as {targetNode?:string}|undefined)?.targetNode??cell.support.node?.name
-  return `/measurements/new?${new URLSearchParams({namespace,model:cell.model.name,deviceClass:cell.deviceClass.name,path:cell.executionPath,powerMode:cell.powerMode,batches:batches.join(","),returnTo,...(variant?{variantId:variant.id}:{}),...(node?{node}:{})})}`
+  return `/measurements/new?${new URLSearchParams({namespace,model:cell.model.name,deviceClass:cell.deviceClass.name,path:cell.executionPath,powerMode:cell.powerMode,...(batches.length?{batches:batches.join(",")}:{}),returnTo,...(variant?{variantId:variant.id}:{}),...(node?{node}:{})})}`
 }
 export type Compatibility = {state:"candidate"|"unsupported"|"unknown";reason:string}
 export function staticCompatibility(model:Pick<CoverageModel,"spec">, path:ExecutionPath, cls:InventoryClass):Compatibility {
