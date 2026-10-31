@@ -10,6 +10,10 @@ metadata:
     app.kubernetes.io/component: serving-entrypoint
     {{- include "chill.labels" . | nindent 4 }}
 rules:
+  # Read-only active evaluation projection, also available without evaluation.enabled.
+  - apiGroups: [edge.dacs.io]
+    resources: [evaluationruns, evaluationstages, loadscenarios]
+    verbs: [get, list]
   # Check cross-namespace shared evidence references before destructive cleanup.
   # This owner-only grant never permits mutation outside profileNamespaces.
   - apiGroups: [edge.dacs.io]
@@ -247,7 +251,7 @@ rules:
     verbs: [get, post, put, delete]
   - nonResourceURLs: ["/chill/api/v1/pools", "/chill/api/v1/pools/*", "/chill/api/v1/observations/workloads/*", "/chill/api/v1/observations/load", "/chill/api/v1/observations/scheduler", "/chill/api/v1/observations/power"]
     verbs: [get]
-  - nonResourceURLs: ["/chill/api/v1/experiments", "/chill/api/v1/experiments/*"]
+  - nonResourceURLs: ["/chill/api/v1/experiments", "/chill/api/v1/experiments/*", "/chill/api/v1/evaluations/active"]
     verbs: [get]
   - nonResourceURLs: ["/chill/api/v1/systems", "/chill/api/v1/inventory", "/chill/api/v1/model-compatibility", "/chill/api/v1/model-compatibility-matrix"]
     verbs: [get]
