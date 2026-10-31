@@ -196,7 +196,7 @@ func TestRunUsesExistingS3ImmutableContract(t *testing.T) {
 	}
 }
 
-func TestPublishOptionalDefinitionBoundary(t *testing.T) {
+func TestPublishOptionalOutcomeBoundary(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		definition json.RawMessage
@@ -216,7 +216,9 @@ func TestPublishOptionalDefinitionBoundary(t *testing.T) {
 			if err := readPublicationJSON(manifest.Summary.LocalPath, &summary); err != nil {
 				t.Fatal(err)
 			}
-			summary.Definition = tc.definition
+			// Exercise outcome independently from definition validation.
+			summary.Definition = json.RawMessage(`{}`)
+			summary.Outcome = tc.definition
 			writePublicationFixture(t, manifest.Summary.LocalPath, summary)
 			store := &publicationMemoryStore{}
 			receipt, err := publish(context.Background(), store, "evidence", manifest)

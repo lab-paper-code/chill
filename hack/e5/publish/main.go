@@ -104,6 +104,8 @@ func readPublicationJSON(name string, value any) (err error) {
 }
 
 func publish(ctx context.Context, writer evidencestore.ImmutableWriter, store string, manifest publicationManifest) (evidencestore.Receipt, error) {
+	// Definition and outcome are opaque objects validated at the shared boundary;
+	// upload the original summary bytes so both are preserved without rewriting.
 	var summary httpapi.ExperimentSummary
 	if err := readPublicationJSON(manifest.Summary.LocalPath, &summary); err != nil {
 		return evidencestore.Receipt{}, err

@@ -149,7 +149,7 @@ func TestExperimentsMissingUnavailableAndUnauthenticated(t *testing.T) {
 func TestExperimentsPreserveOptionalDefinition(t *testing.T) {
 	for _, definition := range []json.RawMessage{nil, json.RawMessage(`{"question":"compare","stages":[{"id":"baseline"}],"future":{"opaque":true}}`)} {
 		for _, detail := range []bool{false, true} {
-			summary := ExperimentSummary{ID: "run-1", Definition: definition}
+			summary := ExperimentSummary{ID: "run-1", Definition: definition, Outcome: definition}
 			h := experimentHandler(t, true, HandlerConfig{
 				ListExperiments: func(context.Context) (ExperimentList, error) {
 					return ExperimentList{Items: []ExperimentSummary{summary}}, nil
@@ -182,6 +182,9 @@ func TestExperimentsPreserveOptionalDefinition(t *testing.T) {
 			}
 			if string(body["definition"]) != string(definition) {
 				t.Fatalf("definition=%s want=%s", body["definition"], definition)
+			}
+			if string(body["outcome"]) != string(definition) {
+				t.Fatalf("outcome=%s want=%s", body["outcome"], definition)
 			}
 		}
 	}

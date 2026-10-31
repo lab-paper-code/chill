@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"path"
 	"strings"
@@ -26,6 +27,8 @@ type ExperimentSummary struct {
 	Stages        []ExperimentStage  `json:"stages"`
 	Sources       []ExperimentSource `json:"sources"`
 	Definition    json.RawMessage    `json:"definition,omitempty"`
+	Comparisons   json.RawMessage    `json:"comparisons,omitempty"`
+	Outcome       json.RawMessage    `json:"outcome,omitempty"`
 }
 
 type ExperimentStage struct {
@@ -65,10 +68,17 @@ func ValidateExperimentSummary(summary ExperimentSummary, store, id string) erro
 		summary.From.IsZero() || !summary.To.After(summary.From) || summary.Stages == nil || summary.Sources == nil {
 		return errors.New("invalid experiment summary schema, identity, interval or collections")
 	}
-	if len(summary.Definition) != 0 {
-		definition := bytes.TrimSpace(summary.Definition)
-		if !json.Valid(summary.Definition) || len(definition) == 0 || definition[0] != '{' {
-			return errors.New("experiment definition must be a JSON object")
+	for _, field := range [...]struct {
+		name  string
+		value json.RawMessage
+	}{{"definition", summary.Definition}, {"outcome", summary.Outcome}} {
+		name, value := field.name, field.value
+		if len(value) == 0 {
+			continue
+		}
+		object := bytes.TrimSpace(value)
+		if !json.Valid(value) || len(object) == 0 || object[0] != '{' {
+			return fmt.Errorf("experiment %s must be a JSON object", name)
 		}
 	}
 	for _, stage := range summary.Stages {

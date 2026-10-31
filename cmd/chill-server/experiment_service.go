@@ -37,6 +37,15 @@ func (s *experimentService) list(ctx context.Context) (httpapi.ExperimentList, e
 		if err != nil {
 			return result, err
 		}
+		var definition struct {
+			Spec struct {
+				Comparisons json.RawMessage `json:"comparisons"`
+			} `json:"spec"`
+		}
+		// Comparisons are projected verbatim, not interpreted or recalculated.
+		_ = json.Unmarshal(summary.Definition, &definition)
+		summary.Comparisons = definition.Spec.Comparisons
+		summary.Definition = nil
 		result.Items = append(result.Items, summary)
 	}
 	sort.Slice(result.Items, func(i, j int) bool {

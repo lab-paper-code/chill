@@ -68,7 +68,7 @@ Job 성공만으로 증거 완료를 선언하지 않는다.
 | EvaluationRun | `loadGenerator`, `powerMeasurement` | 생성기 이미지·source·자원·shards·barrier; 장비 신원·Node UID·계열·sampling |
 | EvaluationRun | `control` | 공통 기본 ControlSettings: named switches·scaleDownHeadroomFraction·minimumDemand |
 | EvaluationRun | `judgment`, `evidenceStore` | 생성기 품질(lateness 등)·에너지 coverage; 실행 증거 logical store. **SLO 복사본 없음** |
-| EvaluationRun | `stages[]`, `comparisons[]` | 순서 있는 StageTemplate; 양쪽 stageID 또는 historical runUID/stageID/resultRef와 비교 이유 |
+| EvaluationRun | `stages[]`, `comparisons[]` | 순서 있는 StageTemplate; 양쪽 stageID 또는 historical publicationID/stageID와 비교 이유 |
 | EvaluationStage | `stageID`, `row`, `mode`, `loadScenarioRef` | 사용자 ID, 기존 E5 행 라벨(`scenario` 아님), autonomous/fixed/controls-disabled, 불변 부하 참조 |
 | EvaluationStage | 완성 `control`·실행 맥락 | target/harness/generator/power/judgment/store와 동결 운영 CM·snapshot 참조 |
 | EvaluationStage | `startState.evidenceRef`, `failureInjection[]` | 해석 완료 시작 증거와 typed 주입 계획. `evaluationRef` 없이 controller ownerReference가 부모 정본 |
@@ -246,6 +246,9 @@ CR 삭제가 증거 삭제로 이어지지 않는다. 저장 실패는 해당 `p
 {"schema":"evaluation-definition.v1alpha1","run":{"name":<string>,"uid":<string>},"spec":<EvaluationRun spec>,"loadScenarios":[{"name":<string>,"uid":<string>,"spec":<LoadScenario spec>}],"workloads":[{"name":<string>,"uid":<string>,"generation":<integer>,"slo":{"percentile":<number>,"targetLatencyNanos":<integer>},"model":<resolved identity>,"preprocessor":<resolved identity>,"dataset":<resolved identity>}]}
 ```
 `workloads`는 prepare가 해석한 적용 정의이며 SLO 정본이다. CR spec에 SLO를 복제하지 않는다. `summary.stages[].id`는 `spec.stages[].id`와 같아야 하며 대시보드 조인 키로 쓴다.
+과거 비교의 `historical`은 `{publicationID,stageID}`이며 기존 게시 ID를 `GET /api/v1/experiments/{publicationID}`로 찾는다. publicationID는 서버의 단일 안전 경로 요소 규칙(`^[A-Za-z0-9_-][A-Za-z0-9_.-]*$`)을 따른다. runUID/resultRef를 별도로 싣지 않는다.
+선택 object `outcome`에는 실행·측정·정리 축과 단계별 축·주입 결과를 싣는다([대시보드 계약 §3.1](../../plans/2026-11-01-evaluationrun-dashboard-handoff.md#31-outcome-형태-게시-요약의-선택-필드-서버-비해석-object)). 서버는 definition과 outcome을 object인지에 한해 검증하며 내부 값은 해석하지 않는다. outcome 부재는 과거 게시의 미기록이다. 목록 API는 definition을 생략하고 outcome은 유지하며 단건 API는 둘 다 유지한다. supersedes/정정 관계는 지원하지 않는다.
+목록 전용 선택 필드 `comparisons`는 저장 definition의 `spec.comparisons` JSON을 그대로 투영한다(없으면 생략). 단건에는 definition이 있으므로 comparisons를 추가하지 않는다. publisher와 저장 summary는 이 파생 목록 필드를 쓰지 않는다.
 실제 자식 spec/UID·동결 운영값·관측 신원·완료 축은 execution/evidence-index에 연결한다.
 단계 증거는 이미 `experiments/<UID>/...`에 저장되어 있다. bridge는 이를 다시 쓰지 않고, 그 참조를 담은 작은 게시용 실행/증거 목록 객체와 summary만 게시 prefix에 쓴다. 기존 `sources`는 이 게시 객체를 가리킨다.
 현재 bridge는 manifest의 sources를 같은 게시 prefix 안으로 제한하므로(`hack/e5/publish/main.go:106–128`) 이 경계는 유지한다. 중간 증거 writer와 최종 게시 bridge를 혼동하지 않는다.

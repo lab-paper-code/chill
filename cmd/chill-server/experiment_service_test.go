@@ -101,7 +101,8 @@ func TestExperimentSummaryReadPreservesPublishedEvidenceAndSorts(t *testing.T) {
 	store.add(t, experimentFixture("z", from))
 	withDefinition := experimentFixture("a", from)
 	withDefinition.Definition = json.RawMessage(
-		`{"question":"compare","stages":[{"id":"baseline"}],"future":{"opaque":true}}`)
+		`{"spec":{"comparisons":[{"left":{"stageID":"baseline"},"future":true}]},"future":{"opaque":true}}`)
+	withDefinition.Outcome = json.RawMessage(`{"execution":{"status":"Complete"},"future":true}`)
 	store.add(t, withDefinition)
 	store.objects = append(store.objects,
 		evidencestore.ObjectIdentity{Store: "evidence", Key: httpapi.ExperimentPrefix + "unfinished/phase.json", Size: 1},
@@ -127,11 +128,7 @@ func TestExperimentSummaryReadPreservesPublishedEvidenceAndSorts(t *testing.T) {
 		!detail.Stages[0].To.Equal(from.Add(time.Minute)) || detail.Sources[0] != list.Items[0].Sources[0] {
 		t.Fatalf("published identity, phase boundary or sources changed: %+v", detail)
 	}
-	if string(detail.Definition) != string(withDefinition.Definition) ||
-		string(list.Items[0].Definition) != string(withDefinition.Definition) ||
-		len(list.Items[1].Definition) != 0 || len(list.Items[2].Definition) != 0 {
-		t.Fatalf("optional definition changed: detail=%s list=%+v", detail.Definition, list.Items)
-	}
+	assertPublicationFields(t, detail, withDefinition, list)
 	var kpis map[string]any
 	if err := json.Unmarshal(detail.Stages[0].KPIs, &kpis); err != nil {
 		t.Fatal(err)
@@ -252,6 +249,7 @@ func TestExperimentSummaryValidatesStoredBoundaryAndDoesNotReadRaw(t *testing.T)
 		"identity", "stage interval", "schema", "source store", "source traversal", "source URL",
 		"source absolute", "KPI null", "unknown raw field", "trailing JSON", "oversize", "actual oversize",
 		"definition scalar", "definition array", "definition null",
+		"outcome scalar", "outcome array", "outcome null",
 	} {
 		t.Run(name, func(t *testing.T) {
 			summary := experimentFixture("run", time.Now().UTC())
@@ -276,6 +274,12 @@ func TestExperimentSummaryValidatesStoredBoundaryAndDoesNotReadRaw(t *testing.T)
 				summary.Definition = json.RawMessage(`[]`)
 			case "definition null":
 				summary.Definition = json.RawMessage(`null`)
+			case "outcome scalar":
+				summary.Outcome = json.RawMessage(`42`)
+			case "outcome array":
+				summary.Outcome = json.RawMessage(`[]`)
+			case "outcome null":
+				summary.Outcome = json.RawMessage(`null`)
 			}
 			store := &experimentMemoryStore{}
 			key := store.add(t, summary)
@@ -324,5 +328,25 @@ func TestExperimentSummaryCancellationAndSafeIDs(t *testing.T) {
 	}
 	if len(store.opened) != 0 || len(store.contexts) != 1 || store.contexts[0] != ctx {
 		t.Fatal("request context not propagated before reading")
+	}
+}
+
+func assertPublicationFields(
+	t *testing.T, detail, withDefinition httpapi.ExperimentSummary, list httpapi.ExperimentList,
+) {
+	t.Helper()
+	if string(detail.Definition) != string(withDefinition.Definition) ||
+		len(list.Items[0].Definition) != 0 ||
+		len(list.Items[1].Definition) != 0 || len(list.Items[2].Definition) != 0 {
+		t.Fatalf("optional definition changed: detail=%s list=%+v", detail.Definition, list.Items)
+	}
+	if string(detail.Outcome) != string(withDefinition.Outcome) ||
+		string(list.Items[0].Outcome) != string(withDefinition.Outcome) ||
+		len(list.Items[1].Outcome) != 0 || len(list.Items[2].Outcome) != 0 {
+		t.Fatalf("optional outcome changed: detail=%s list=%+v", detail.Outcome, list.Items)
+	}
+	if string(list.Items[0].Comparisons) != `[{"left":{"stageID":"baseline"},"future":true}]` ||
+		len(detail.Comparisons) != 0 || len(list.Items[1].Comparisons) != 0 || len(list.Items[2].Comparisons) != 0 {
+		t.Fatalf("list-only comparison projection changed: detail=%+v list=%+v", detail, list.Items)
 	}
 }
