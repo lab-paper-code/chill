@@ -6,6 +6,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -16,6 +17,31 @@ func TestRunNameIsDeterministic(t *testing.T) {
 	}, 1)
 	if name != "jetsono-ortcpu-m50-active-b2-a1" {
 		t.Fatalf("name = %q", name)
+	}
+}
+
+func TestBuildIdleRunSeparatesMeasurementBatchFromTrialIdentity(t *testing.T) {
+	for _, path := range []string{"ort-cpu", profilingrun.RKNNLiteExecutionPath} {
+		t.Run(path, func(t *testing.T) {
+			parent := testParent()
+			parent.Spec.State.Candidate.ExecutionPath = path
+			measurement := batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeIdle, Batch: 4}
+			run, err := BuildRun(parent, measurement, 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := int32(1)
+			if path == profilingrun.RKNNLiteExecutionPath {
+				want = 4
+			}
+			if run.Spec.Measurement.Batch != want {
+				t.Fatalf("measurement batch = %d, want %d", run.Spec.Measurement.Batch, want)
+			}
+			trial, err := projectOwnedTrial(parent, run)
+			if err != nil || trial.Measurement != measurement || trial.Attempt != 2 {
+				t.Fatalf("projected trial = %+v, error = %v", trial, err)
+			}
+		})
 	}
 }
 

@@ -21,6 +21,45 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+func TestCurvePlanSourcePlansBatchFourWithBatchOneIdle(t *testing.T) {
+	for _, declared := range []bool{false, true} {
+		t.Run(fmt.Sprintf("declared=%t", declared), func(t *testing.T) {
+			parent := testParent()
+			parent.Spec.BatchSizes = nil
+			parent.Spec.State.Candidate.PowerMode = profilingrun.FixedPowerMode
+			_, report := curvePlanCandidateReport(t, parent)
+			model := curvePlanModel(report)
+			if declared {
+				report.ArtifactCapability.DeclaredBatchSizes = []int32{4}
+				model.Spec.Artifacts[0].Derivation.DeclaredBatchSizes = []int32{4}
+			} else {
+				parent.Spec.BatchSizes = []int32{4}
+				report.ArtifactCapability = &profilingrun.CandidateArtifactCapability{}
+				model.Spec.Artifacts[0].Derivation = nil
+			}
+			reportBytes := encodeCurvePlanCandidateReport(t, report)
+			preparer := &fakeCurvePlanPreparer{report: report, reportBytes: reportBytes, nodeUID: "node-uid"}
+			source, err := NewCurvePlanSource(
+				&fakeCurvePlanModelReader{model: model},
+				&fakeCurvePlanCandidateResolver{reportBytes: reportBytes}, preparer,
+				newFakeCurvePlanStore(), CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, _, _, err := source.Resolve(context.Background(), parent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(plan.Shared().PlannedBatchSizes, []int{4}) ||
+				len(preparer.requests) != 2 || preparer.requests[0].Measurement.Batch != 4 ||
+				preparer.requests[1].Measurement.Batch != 1 {
+				t.Fatalf("plan batches=%v, preparation requests=%+v", plan.Shared().PlannedBatchSizes, preparer.requests)
+			}
+		})
+	}
+}
+
 func TestCurvePlanSourceRecordsAndRecoversFrozenPlan(t *testing.T) {
 	const storeName = "evidence"
 

@@ -10,6 +10,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -79,6 +80,9 @@ func BuildRun(
 			DurationSeconds:          protocol.DurationSeconds,
 			DurationToleranceSeconds: protocol.DurationToleranceSeconds,
 			WorkloadMode:             idleWorkloadMode,
+		}
+		if parent.Spec.State.Candidate.ExecutionPath != profilingrun.RKNNLiteExecutionPath {
+			spec.Measurement.Batch = 1
 		}
 		spec.MetricObservation = protocol.MetricObservation
 	}

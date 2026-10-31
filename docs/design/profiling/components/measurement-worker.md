@@ -136,8 +136,13 @@ create; write validated receipt to `/dev/termination-log`; exit zero.
 
 Idle start requires exact load/full observer-independent settling without
 inference; end requires monotonic duration, zero inference and verified residency.
-CPU ORT canonical idle batch is one; batch-fixed artifacts require their capability
-batch, identifying residency, not idle inference. Runtime emits signals without
+Non-RKNN idle measurement batch is always one; RKNN retains its first planned
+capability batch. Campaign trial names retain the planned batch independently
+of the measurement batch so retries and completed-trial accounting stay stable.
+ORT model sessions load artifact files without a batch argument, but firstfloor
+request validation still requires the selected batch in `initialized_batches`:
+an ORT artifact declaring only `[4]` therefore cannot execute batch-one idle
+without a separate runtime contract change. Runtime emits signals without
 reading observer results; observers cannot choose a window from observed values.
 
 Metric helper validates config, constructs frozen edge source, emits readiness,

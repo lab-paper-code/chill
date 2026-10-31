@@ -3,6 +3,8 @@ package controller
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
@@ -73,6 +75,17 @@ func projectTrial(parentName string, run *edgev1alpha1.ProfilingRun) (batchenerg
 	}
 	measurement := batchenergyoptimization.Measurement{
 		WorkloadMode: mode, Batch: int(run.Spec.Measurement.Batch),
+	}
+	if mode == batchenergyoptimization.WorkloadModeIdle {
+		// Idle trial identity retains the planned batch; its measurement batch
+		// is independently fixed at 1 except for RKNN.
+		encoded := strings.TrimPrefix(run.Name, parentName+"-idle-b")
+		batch, _, found := strings.Cut(encoded, "-a")
+		value, err := strconv.Atoi(batch)
+		if !found || err != nil || value < 1 {
+			return batchenergyoptimization.Trial{}, errors.New("idle Run name has no usable batch")
+		}
+		measurement.Batch = value
 	}
 	attempt, err := attemptFromRunName(parentName, measurement, run.Name)
 	if err != nil {
