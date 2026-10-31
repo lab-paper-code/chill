@@ -75,8 +75,6 @@ evaluation:
     finishResetWaitSeconds: "600"
     factorAckWaitSeconds: "120"
     drainTimeoutSeconds: "600"
-    returnTimeoutSeconds: "600"
-    restoreWaitSeconds: "600"
     # Include bounded drain/producer settings required by the operational recipe.
     e5Operational: "{}"
     chillAPIURL: https://chill-serving-entrypoint.chill-system.svc:8080
