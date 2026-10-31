@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -116,6 +118,52 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 	assertArgument(t, workloads.Args,
 		"--selector-label-keys=app.kubernetes.io/component,app.kubernetes.io/name,edge.dacs.io/workload-role")
 	assertWorkloadObserverCredentialIsolation(t, pod, runtimeContainer, observer, workloads)
+}
+
+func TestExecutionJobsCapsRuntimeMemoryByNodeAllocatable(t *testing.T) {
+	for _, fraction := range []float64{0.8, 0.5} {
+		t.Run(fmt.Sprint(fraction), func(t *testing.T) {
+			run := testRun()
+			resolved := resolvedRunForPrepared(t, currentPreparedRun(t))
+			resolved.ExecutionPolicy.Policy.RuntimeMemoryLimitBytes = 16 << 30
+			node := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: resolved.Prepared.RunConfig.TargetNode.Name, UID: types.UID(resolved.Prepared.RunConfig.TargetNode.UID)},
+				Status:     corev1.NodeStatus{Allocatable: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("4Gi")}},
+			}
+			scheme := executionJobTestScheme(t)
+			kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(node).Build()
+			options := testExecutionJobOptions()
+			options.MeasurementMemoryFraction = fraction
+			jobs, err := NewExecutionJobs(kube, scheme, staticEvidenceStoreResolver{binding: testEvidenceStoreBinding()}, options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			job, created, err := jobs.Ensure(context.Background(), run, resolved)
+			if err != nil || !created {
+				t.Fatalf("create Job: created=%v err=%v", created, err)
+			}
+			runtime := findContainer(t, job.Spec.Template.Spec.Containers, runtimeContainerName)
+			if got, want := runtime.Resources.Limits.Memory().Value(), int64(float64(int64(4<<30))*fraction); got != want {
+				t.Fatalf("runtime memory limit = %d, want %d (4Gi * %g)", got, want, fraction)
+			}
+			if got := runtime.Resources.Requests.Memory().Value(); got != resolved.ExecutionPolicy.Policy.RuntimeMemoryRequestBytes {
+				t.Fatalf("existing memory request changed: %d", got)
+			}
+			for _, container := range job.Spec.Template.Spec.InitContainers {
+				if got := container.Resources.Limits.Memory().Value(); got != resolved.ExecutionPolicy.Policy.ObserverMemoryLimitBytes {
+					t.Fatalf("init %s memory limit = %d", container.Name, got)
+				}
+			}
+			// Recovery uses the immutable Job spec, not new settings or Node facts.
+			jobs.options.MeasurementMemoryFraction = 0.25
+			if err := kube.Delete(context.Background(), node); err != nil {
+				t.Fatal(err)
+			}
+			if _, created, err := jobs.Ensure(context.Background(), run, resolved); err != nil || created {
+				t.Fatalf("recover retained Job: created=%v err=%v", created, err)
+			}
+		})
+	}
 }
 
 func assertDeliveryTopology(t *testing.T, pod corev1.PodSpec, config profilingrun.RunConfig) {
@@ -469,7 +517,11 @@ func TestExecutionJobsRecoverConcurrentlyCreatedJobAndRejectConflict(t *testing.
 			if test.mutate != nil {
 				test.mutate(concurrent)
 			}
-			baseClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+			node := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: prepared.RunConfig.TargetNode.Name, UID: types.UID(prepared.RunConfig.TargetNode.UID)},
+				Status:     corev1.NodeStatus{Allocatable: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("4Gi")}},
+			}
+			baseClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(node).Build()
 			kubeClient := &concurrentJobCreateClient{Client: baseClient, job: concurrent}
 			currentBinding := testEvidenceStoreBinding()
 			currentBinding.Endpoint = "http://new-evidence-store.chill-system.svc.cluster.local:9000"
@@ -502,6 +554,7 @@ func testExecutionJobOptions() ExecutionJobOptions {
 	return ExecutionJobOptions{
 		WorkloadObserverServiceAccountName: "chill-workload-observer",
 		WorkloadObserverKubeAPIServer:      "https://kubernetes.example:6443",
+		MeasurementMemoryFraction:          0.8,
 	}
 }
 

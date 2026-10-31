@@ -4,6 +4,10 @@
 {{- if or (not (regexMatch "^[0-9]+$" (toString $retention))) (lt (int64 $retention) 1) (gt (int64 $retention) 604800) }}
 {{- fail "profiler.failedJobRetentionSeconds must be an integer between 1 and 604800" }}
 {{- end }}
+{{- $memoryFraction := float64 .Values.profiler.measurementMemoryFraction }}
+{{- if or (le $memoryFraction 0.0) (ge $memoryFraction 1.0) }}
+{{- fail "profiler.measurementMemoryFraction must be between 0 and 1 (exclusive)" }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -16,6 +20,7 @@ data:
   {{ .Values.profiler.configMapKey | quote }}: |
     replicas: {{ .Values.profiler.replicaCount }}
     failedJobRetentionSeconds: {{ int64 $retention }}
+    measurementMemoryFraction: {{ $memoryFraction }}
     image: {{ include "chill.profilerImage" . | quote }}
     imagePullPolicy: {{ .Values.profiler.image.pullPolicy | quote }}
     serviceAccountName: {{ include "chill.profilerServiceAccountName" . | quote }}

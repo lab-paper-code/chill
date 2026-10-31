@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -109,6 +111,42 @@ func TestKubernetesExecutionFinalizerReadsFailedRuntimeTermination(t *testing.T)
 	}
 	if got == nil || got.ExitCode != 3 || got.LogTail != "execute firstfloor measurement: timed out\n" {
 		t.Fatalf("runtime termination = %#v", got)
+	}
+}
+
+func TestKubernetesExecutionFinalizerRecordsOOMKilledAndMemoryLimit(t *testing.T) {
+	for _, name := range []string{"runtime", "metric-observer", "workload-observer", "artifact"} {
+		t.Run(name, func(t *testing.T) {
+			scheme := executionJobTestScheme(t)
+			run := testRun()
+			job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: run.Namespace, Name: "run-job", UID: "job-uid"}}
+			container := corev1.Container{Name: name, Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Mi")},
+			}}
+			status := corev1.ContainerStatus{Name: name, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+				ExitCode: 137, Reason: "OOMKilled",
+			}}}
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Namespace: run.Namespace, Name: "run-pod", OwnerReferences: []metav1.OwnerReference{{
+					APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: job.UID, Controller: ptr.To(true),
+				}}},
+				Spec:   corev1.PodSpec{Containers: []corev1.Container{container}},
+				Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{status}},
+			}
+			if name == "artifact" {
+				pod.Spec.InitContainers, pod.Spec.Containers = pod.Spec.Containers, nil
+				pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses = pod.Status.ContainerStatuses, nil
+			}
+			finalizer, err := NewKubernetesExecutionFinalizer(fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build(), unusedStoreFactory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := finalizer.RuntimeTermination(context.Background(), run, job)
+			if err != nil || got == nil || got.ExitCode != 137 ||
+				!strings.Contains(got.LogTail, name+": OOMKilled") || !strings.Contains(got.LogTail, "memory limit=64Mi (67108864 bytes)") {
+				t.Fatalf("OOM termination = %#v, err=%v", got, err)
+			}
+		})
 	}
 }
 

@@ -98,6 +98,9 @@ profiler:
   replicaCount: 1
   # Failed Jobs receive this TTL only after their final outcome is recorded.
   failedJobRetentionSeconds: 86400
+  # Runtime memory is bounded by this fraction of the target Node's allocatable
+  # memory and the selected execution-policy limit, whichever is smaller.
+  measurementMemoryFraction: 0.8
   configMapKey: config.yaml
   image:
     repository: daclab/chill-profiler
@@ -172,9 +175,8 @@ profiling:
     maxWorkloadEvents: 10000
     maxWorkloadResultBytes: 8388608
     runtimeMemoryRequestBytes: 134217728
-    # SmolVLM2-500M fp32 under ORT 1.27 CPU peaks at 5.2 GB resident for one
-    # sample and 12.7 GB for four, so the limit admits the sample maxBatchSize.
-    # The limit reserves nothing; the request above is what scheduling sees.
+    # Upper envelope; each Job is also capped by Node allocatable memory times
+    # profiler.measurementMemoryFraction. Keep the existing scheduling request.
     runtimeMemoryLimitBytes: 17179869184
     observerCPURequest: 5m
     observerCPULimit: 100m

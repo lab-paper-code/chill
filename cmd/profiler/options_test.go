@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"math"
 	"testing"
 )
 
@@ -19,6 +20,7 @@ func TestOptionsBindFlags(t *testing.T) {
 		"--execution-policies-key=execution-policies.yaml",
 		"--actuation-policies-key=actuation-policies.yaml",
 		"--workload-observer-service-account=chill-profiler-workload-observer",
+		"--measurement-memory-fraction=0.8",
 		"--transition-observer-image=registry/chill-profiler:test",
 		"--transition-observer-image-pull-policy=IfNotPresent",
 		"--transition-observer-node-name=observer-node",
@@ -35,6 +37,7 @@ func TestOptionsBindFlags(t *testing.T) {
 		opts.metricsAddr != "0" || opts.probeAddr != ":8081" ||
 		opts.failedJobRetentionSeconds != 86400 ||
 		opts.transitionObserverNodeName != "observer-node" ||
+		opts.measurementMemoryFraction != 0.8 ||
 		opts.transitionObserverDeadlineOverheadSeconds != 180 ||
 		opts.transitionMaximumObjectBytes != 67108864 {
 		t.Fatalf("unexpected bound options: %#v", opts)
@@ -56,6 +59,7 @@ func TestOptionsValidateFactSourceContract(t *testing.T) {
 		transitionObserverDeadlineOverheadSeconds: 180,
 		transitionMaximumObjectBytes:              67108864,
 		failedJobRetentionSeconds:                 86400,
+		measurementMemoryFraction:                 0.8,
 	}
 	if err := valid.validate(); err != nil {
 		t.Fatal(err)
@@ -79,6 +83,9 @@ func TestOptionsValidateFactSourceContract(t *testing.T) {
 		func(options *options) { options.failedJobRetentionSeconds = -1 },
 		func(options *options) { options.failedJobRetentionSeconds = 0 },
 		func(options *options) { options.failedJobRetentionSeconds = 604801 },
+		func(options *options) { options.measurementMemoryFraction = 0 },
+		func(options *options) { options.measurementMemoryFraction = 1 },
+		func(options *options) { options.measurementMemoryFraction = math.NaN() },
 	} {
 		candidate := valid
 		mutate(&candidate)

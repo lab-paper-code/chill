@@ -20,6 +20,7 @@ type Config struct {
 	LeaderElection            bool                        `json:"leaderElection"`
 	LeaderElectionID          string                      `json:"leaderElectionID"`
 	FailedJobRetentionSeconds int32                       `json:"failedJobRetentionSeconds"`
+	MeasurementMemoryFraction float64                     `json:"measurementMemoryFraction"`
 	NodeSelector              map[string]string           `json:"nodeSelector,omitempty"`
 	Affinity                  *corev1.Affinity            `json:"affinity,omitempty"`
 	Tolerations               []corev1.Toleration         `json:"tolerations,omitempty"`
@@ -56,6 +57,9 @@ func (c Config) Validate() error {
 	var problems []string
 	if c.FailedJobRetentionSeconds < 1 || c.FailedJobRetentionSeconds > 604800 {
 		problems = append(problems, "failedJobRetentionSeconds must be between 1 and 604800")
+	}
+	if math.IsNaN(c.MeasurementMemoryFraction) || c.MeasurementMemoryFraction <= 0 || c.MeasurementMemoryFraction >= 1 {
+		problems = append(problems, "measurementMemoryFraction must be between 0 and 1 (exclusive)")
 	}
 	for _, field := range []struct {
 		name  string

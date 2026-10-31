@@ -158,8 +158,8 @@ func (f *KubernetesExecutionFinalizer) observe(
 	}, nil
 }
 
-// RuntimeTermination reads the failed runtime container's exit code and log
-// tail. It returns nil when the Pod is gone or the runtime did not fail.
+// RuntimeTermination retains runtime failures and any measurement-container OOM.
+// OOM diagnostics use the existing status log tail, without changing evidence.
 func (f *KubernetesExecutionFinalizer) RuntimeTermination(
 	ctx context.Context,
 	run *edgev1alpha1.ProfilingRun,
@@ -168,6 +168,27 @@ func (f *KubernetesExecutionFinalizer) RuntimeTermination(
 	pod, err := f.jobPod(ctx, run, job)
 	if err != nil || pod == nil {
 		return nil, err
+	}
+	for _, statuses := range [][]corev1.ContainerStatus{pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses} {
+		for _, status := range statuses {
+			terminated := status.State.Terminated
+			if terminated == nil || terminated.Reason != "OOMKilled" {
+				continue
+			}
+			message := status.Name + ": OOMKilled"
+			for _, containers := range [][]corev1.Container{pod.Spec.InitContainers, pod.Spec.Containers} {
+				for _, container := range containers {
+					if container.Name == status.Name {
+						limit := container.Resources.Limits.Memory()
+						message += fmt.Sprintf("; memory limit=%s (%d bytes)", limit.String(), limit.Value())
+					}
+				}
+			}
+			if terminated.Message != "" {
+				message += "\n" + terminated.Message
+			}
+			return &edgev1alpha1.ProfilingRunRuntimeTermination{ExitCode: terminated.ExitCode, LogTail: message}, nil
+		}
 	}
 	for _, status := range pod.Status.ContainerStatuses {
 		if terminated := status.State.Terminated; status.Name == runtimeContainerName &&

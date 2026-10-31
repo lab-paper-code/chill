@@ -2,6 +2,8 @@ package profiler
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -93,6 +95,33 @@ func TestConfigFailedJobRetentionRoundTrip(t *testing.T) {
 		}
 		if loaded.FailedJobRetentionSeconds != seconds {
 			t.Fatalf("retention = %d, want %d", loaded.FailedJobRetentionSeconds, seconds)
+		}
+	}
+}
+
+func TestConfigMeasurementMemoryFraction(t *testing.T) {
+	for _, fraction := range []float64{0.8, 0.5, 0, -0.1, 1, 1.1, math.NaN(), math.Inf(1)} {
+		config := validConfig()
+		config.MeasurementMemoryFraction = fraction
+		err := config.Validate()
+		valid := fraction > 0 && fraction < 1
+		if (err == nil) != valid {
+			t.Fatalf("fraction %g validation error = %v", fraction, err)
+		}
+		if !valid {
+			continue
+		}
+		data, err := yaml.Marshal(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var loaded Config
+		if err := yaml.UnmarshalStrict(data, &loaded); err != nil {
+			t.Fatal(err)
+		}
+		if loaded.MeasurementMemoryFraction != fraction ||
+			!containsArg(profilerArgs(validOptions(), loaded), fmt.Sprintf("--measurement-memory-fraction=%g", fraction)) {
+			t.Fatalf("fraction %g not projected into profiler args", fraction)
 		}
 	}
 }
@@ -308,6 +337,7 @@ func validConfig() Config {
 		LeaderElection:            true,
 		LeaderElectionID:          "profiler.edge.dacs.io",
 		FailedJobRetentionSeconds: 86400,
+		MeasurementMemoryFraction: 0.8,
 		FactSource: FactSourceConfig{
 			ConfigMapName: "chill-profiler-facts", ExecutionFactsKey: "execution-facts.yaml",
 			MetricSourcesKey: "metric-sources.yaml", WorkloadObservationKey: "workload-observation.yaml",

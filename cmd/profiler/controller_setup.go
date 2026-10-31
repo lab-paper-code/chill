@@ -80,6 +80,7 @@ func setupRunController(mgr ctrl.Manager, opts options, shared *profilerControll
 		profilercontroller.ExecutionJobOptions{
 			WorkloadObserverServiceAccountName: opts.workloadObserverServiceAccount,
 			WorkloadObserverKubeAPIServer:      opts.workloadObserverKubeAPIServer,
+			MeasurementMemoryFraction:          opts.measurementMemoryFraction,
 		},
 	)
 	if err != nil {

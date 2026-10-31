@@ -69,6 +69,12 @@ func buildExecutionJob(
 	if err != nil {
 		return nil, fmt.Errorf("derive measurement Job policy: %w", err)
 	}
+	if options.measurementMemoryLimitBytes > 0 {
+		plan.RuntimeMemoryLimitBytes = min(plan.RuntimeMemoryLimitBytes, options.measurementMemoryLimitBytes)
+		if plan.RuntimeMemoryLimitBytes < plan.RuntimeMemoryRequestBytes {
+			return nil, errors.New("measurement Node memory limit is below the runtime memory request")
+		}
+	}
 	runtimeProjection, err := projectRuntimeJob(prepared.RunConfig)
 	if err != nil {
 		return nil, fmt.Errorf("project runtime Job contract: %w", err)
@@ -140,6 +146,12 @@ func buildExecutionJob(
 				},
 			},
 		},
+	}
+	for i := range job.Spec.Template.Spec.InitContainers {
+		job.Spec.Template.Spec.InitContainers[i].Resources = corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceMemory: *resource.NewQuantity(plan.ObserverMemoryRequestBytes, resource.BinarySI)},
+			Limits:   corev1.ResourceList{corev1.ResourceMemory: *resource.NewQuantity(plan.ObserverMemoryLimitBytes, resource.BinarySI)},
+		}
 	}
 	if err := controllerutil.SetControllerReference(run, job, scheme); err != nil {
 		return nil, fmt.Errorf("set measurement Job owner: %w", err)

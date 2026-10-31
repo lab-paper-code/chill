@@ -126,6 +126,7 @@ func profilerIntegrationConfig(image string) operatorprofiler.Config {
 		LeaderElection:            true,
 		LeaderElectionID:          "profiler.edge.dacs.io",
 		FailedJobRetentionSeconds: 86400,
+		MeasurementMemoryFraction: 0.8,
 		FactSource: operatorprofiler.FactSourceConfig{
 			ConfigMapName: "chill-profiler-facts", ExecutionFactsKey: "execution-facts.yaml",
 			MetricSourcesKey:       "metric-sources.yaml",
