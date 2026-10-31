@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { largestOperationStages, operationStageLabel, operationStageLabels, operationDirection, operationModel, operationMetadata, operationTransitionCosts } from "./operation-cost.ts"
+import { largestOperationStages, operationStageLabel, operationStageLabels, operationDirection, operationModel, operationMetadata, operationTransitionCosts, operationCostOutliers, operationCostTime, operationCostEnergy } from "./operation-cost.ts"
 import { operationDuration, operationWallEnergy, type OperationStep } from "./measurements.ts"
 
 test("operation cost display bounds precision without changing missing and invalid values",()=>{
@@ -61,4 +61,21 @@ test("R10: one-transition costs retain each recorded non-idle step without summi
   assert.deepEqual(rows.map(row=>row.step.name),["power","power","prepare","remove"])
   assert.deepEqual(operationTransitionCosts([{name:"unknown",condition:undefined,results:[result]}]),[])
   assert.equal(operationTransitionCosts([{name:"unknown",condition:undefined,results:[{...result,fromPowerMode:"A",toPowerMode:"B"}]}]).length,1)
+})
+
+test("R12: compact costs and median outliers preserve per-attempt targets and exclude invalid energy",()=>{
+  const step=(kind:string,seconds:number,energy:number,verdict="Accepted"):OperationStep=>({name:kind,condition:{name:kind,kind},results:[{name:kind,key:String(seconds),verdict,durationNanos:BigInt(seconds)*1000000000n,wallJoules:energy,model:`model-${seconds}`}]})
+  const rows=operationTransitionCosts([step("prepare",7,400),step("prepare",8,500),step("prepare",9,600),step("prepare",268,36400),step("remove",999,99999),step("prepare",-1,Infinity,"Rejected")])
+  const outliers=operationCostOutliers(rows)
+  assert.equal(operationCostTime(268058690569n),"268.06")
+  assert.equal(operationCostTime(0n),"0.0")
+  assert.equal(operationCostEnergy(36400.75),"36,401")
+  assert.match(operationCostTime(-1),/품질 경고/)
+  assert.match(operationCostEnergy(undefined),/없음/)
+  assert.deepEqual(outliers.slice(0,3),[{},{},{}])
+  assert.equal(outliers[3].duration,268/8.5)
+  assert.equal(outliers[3].energy,36400/550)
+  assert.deepEqual(outliers.slice(4),[{},{}])
+  assert.equal(rows[3].result?.model,"model-268")
+  assert.deepEqual(operationCostOutliers(operationTransitionCosts([step("prepare",0,0),step("prepare",0,0),step("prepare",10,10)])),[{},{},{}])
 })

@@ -3,10 +3,11 @@
 import * as React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
+import { TriangleAlert } from "lucide-react"
 import { useChillQuery, useSession } from "@/lib/client"
 import type { DispatchOccupancyMeasurement, MeasurementEvidenceLocation, MeasurementProjection, MeasurementProjectionList, OperationCostMeasurement } from "@/lib/read-types"
-import { formatMeasurementTime, evidenceLocations, measurementHref, measurementListHref, measurementPath, measurementUIDMismatch, measurementReasonSummary, occupancyDuration, occupancyThroughput, occupancySupply, operationDuration, operationWallEnergy, operationTotals, operationSteps, type OperationStep, type ProjectionMeasurementKind } from "@/lib/measurements"
-import { operationStageLabel, operationStageLabels, largestOperationStages, operationDirection, operationModel, operationTransitionCosts } from "@/lib/operation-cost"
+import { formatMeasurementTime, evidenceLocations, measurementHref, measurementListHref, measurementPath, measurementUIDMismatch, measurementReasonSummary, occupancyDuration, occupancyThroughput, occupancySupply, operationTotals, operationSteps, type OperationStep, type ProjectionMeasurementKind } from "@/lib/measurements"
+import { operationStageLabel, operationStageLabels, largestOperationStages, operationDirection, operationModel, operationTransitionCosts, operationCostTime, operationCostEnergy, operationCostOutliers, type OperationCostRow } from "@/lib/operation-cost"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
 import { Facts, RowDialog, Rows, Screen } from "@/components/screen"
@@ -89,12 +90,25 @@ function BEOReference({namespace,name}:{namespace:string;name:string}) {
 }
 function TransitionCosts({data}:{data:OperationCostMeasurement}) {
   const rows=operationTransitionCosts(operationSteps(data))
-  return rows.length?<OperationCostValues rows={rows}/>:<span>전환 단계 미제공</span>
+  return rows.length?<OperationCostValues rows={rows} device={data.node}/>:<span>전환 단계 미제공</span>
 }
-function OperationCostValues({rows}:{rows:{step:OperationStep;result:OperationStep["results"][number]|undefined}[]}) {
-  return <div role="table" aria-label="단계별 비용" className="grid min-w-0 grid-cols-[minmax(0,1fr)_max-content_max-content] gap-x-3 gap-y-1 text-xs tabular-nums">
-    <div role="row" className="col-span-3 grid grid-cols-subgrid"><span role="columnheader">단계</span><span role="columnheader">시간 (s)</span><span role="columnheader">에너지 (J)</span></div>
-    {rows.map(({step,result},index)=><div role="row" key={index} className="col-span-3 grid grid-cols-subgrid items-start"><span role="cell" className="break-words">{operationStageLabel(step)}{step.condition?.kind==="power"&&result?<span className="block">{result.fromPowerMode||"출발 미기록"} → {result.toPowerMode||"도착 미기록"}</span>:null}</span><span role="cell" className="text-right">{result?.durationNanos==null?"미제공":operationDuration(result.durationNanos,"s").replace(/ s$/,"")}</span><span role="cell" className="text-right">{result?.verdict==="Accepted"&&result.wallJoules!=null?operationWallEnergy(result.wallJoules).replace(/ J$/,""):"미제공"}</span></div>)}
+function CostOutlier({multiple}:{multiple:number|undefined}) {
+  return multiple===undefined?null:<span className="inline-flex max-w-full flex-wrap items-center justify-end gap-1 text-xs font-semibold" aria-label={`이상값 · 같은 측정·동작 중앙값의 ${multiple.toFixed(1)}배`}><TriangleAlert className="size-3 shrink-0" aria-hidden="true"/><span>{multiple.toFixed(1)}×</span></span>
+}
+function OperationCostValues({rows,device}:{rows:OperationCostRow[];device:string}) {
+  const outliers=operationCostOutliers(rows)
+  return <div className="operation-cost-values min-w-0 overflow-x-auto">
+    <table className="operation-cost-core w-full text-xs tabular-nums">
+      <caption className="caption-bottom py-2 text-left text-muted-foreground">이상값: 같은 측정·동작의 유효 기록 3개 이상, 중앙값의 3배 이상 · 에너지는 채택 기록 기준</caption>
+      <thead><tr><th scope="col">단계 / 전환 방향</th><th scope="col">모델</th><th scope="col">장비</th><th scope="col">시간 (s)</th><th scope="col">에너지 (J)</th></tr></thead>
+      <tbody>{rows.map(({step,result},index)=><tr key={index}>
+        <td className="break-words">{operationStageLabel(step)}<span className="block text-muted-foreground">{index+1}회{step.condition?.kind==="power"?` · ${result?.fromPowerMode||"출발 미기록"} → ${result?.toPowerMode||"도착 미기록"}`:""}</span></td>
+        <td className="break-all">{result?.model||"모델 미기록"}</td>
+        <td className="break-all">{device||"장비 미기록"}</td>
+        <td className="text-right"><span className="grid justify-items-end gap-1">{operationCostTime(result?.durationNanos)}<CostOutlier multiple={outliers[index].duration}/></span></td>
+        <td className="text-right"><span className="grid justify-items-end gap-1">{result?.verdict==="Accepted"?operationCostEnergy(result.wallJoules):"미제공"}<CostOutlier multiple={outliers[index].energy}/></span></td>
+      </tr>)}</tbody>
+    </table>
   </div>
 }
 function OperationTarget({step}:{step:OperationStep}) {
@@ -108,8 +122,8 @@ function OperationResult({data}:{data:OperationCostMeasurement}) {
   const columns:DataColumn<OperationStep>[] = [
     {key:"name",label:"단계 이름",value:step => <span>{operationStageLabel(step)}{largest.duration.includes(step)&&<strong className="block">최장 시간</strong>}{largest.energy.includes(step)&&<strong className="block">최대 에너지</strong>}<details><summary className="min-h-11 cursor-pointer py-2 text-xs">단계 코드</summary>{step.name}</details></span>},
     {key:"condition",label:"대상·전환 방향",value:step => <OperationTarget step={step}/>},
-    {key:"duration",label:"실측 시간",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => <li key={index}>{operationDuration(result.durationNanos,"s",1)}</li>)}</ul> : "미제공"},
-    {key:"energy",label:"전체 장비 에너지 (채택된 기록)",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => <li key={index}>{result.verdict==="Accepted"?operationWallEnergy(result.wallJoules,1):"채택된 에너지 없음"}</li>)}</ul> : "미제공"},
+    {key:"duration",label:"실측 시간 (s)",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => <li key={index}>{operationCostTime(result.durationNanos)}</li>)}</ul> : "미제공"},
+    {key:"energy",label:"전체 장비 에너지 (J · 채택)",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => <li key={index}>{result.verdict==="Accepted"?operationCostEnergy(result.wallJoules):"채택된 에너지 없음"}</li>)}</ul> : "미제공"},
     {key:"result",label:"저장 결과",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => {
       const locations = result.key ? evidenceLocations(data.references.evidence.filter(location => location.key === result.key)) : []
       return <li key={index} className="grid gap-1">
@@ -119,7 +133,7 @@ function OperationResult({data}:{data:OperationCostMeasurement}) {
     })}</ul> : "아직 기록된 결과가 없어요"},
   ]
   return <>
-    <details><summary className="min-h-11 cursor-pointer py-2 text-sm">전체 시나리오 합계 (유휴 포함)</summary><Facts items={[["전체 시간",totals.durationNanos===null?"시간 기록 오류":operationDuration(totals.durationNanos,"s",1)],["채택 에너지",totals.wallJoules===null?"에너지 기록 오류":operationWallEnergy(totals.wallJoules,1)]]}/></details>
+    <details><summary className="min-h-11 cursor-pointer py-2 text-sm">전체 시나리오 합계 (유휴 포함)</summary><Facts items={[["전체 시간 (s)",totals.durationNanos===null?"시간 기록 오류":operationCostTime(totals.durationNanos)],["채택 에너지 (J)",totals.wallJoules===null?"에너지 기록 오류":operationCostEnergy(totals.wallJoules)]]}/></details>
     <section className="grid gap-2" aria-label="전환 1회 비용"><h2 className="font-semibold">전환 1회 비용 (유휴 제외)</h2><TransitionCosts data={data}/></section>
     <details><summary className="min-h-11 cursor-pointer py-2 text-sm">단계별 기록과 사유 보기</summary><div className="measurement-operation-table measurement-operation-steps"><DataTable data={steps} columns={columns}/></div></details>
     <Rows label="자세히"><RowDialog label="순서 있는 동작 조건" title="순서 있는 동작 조건" description="저장된 단계 순서">
