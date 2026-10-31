@@ -201,3 +201,9 @@
 - `245a88b5` S2: dependenciesComplete 소비 범위를 `handoffScope` 한 곳에서 결정하고, 증거 판정을 3갈래로 나눔. 엄격화: 완료되지 않은 dependency run은 별도 ACK로 소비 불가(fail-before 확인). 리뷰 2종 PASS, 패널 2인 "목표 충족·회귀 없음". 패널 1 축소안 적용 예정(순증 +10 → 순감).
 - 미해결 관찰(S2 회귀 아님, 추후 판단) [추정]: subset ACK 뒤 prepare 결과 전에 tick이 하나 더 있으면 run==nil 경로의 stop이 frozen bridge 자신의 prepare 의존을 보지 않고 출발할 수 있음. target_scope.go:173 부모 범위는 S3에서 다룸.
 - 09:40Z round-11(S1, 288153fd) 측정 창. 디스크 guard: control-213/214/216 대형 json을 gzip으로 무손실 압축 → 335GB.
+
+## 2026-10-31 — round-11 점수(S1 포함 live 288153fd) vs 기준
+
+- (F, J): 기준 d4a933bf (7,782, 153,057 J) → 288153fd **(6,099, 152,560 J)**. 사전식으로 개선(F −1,683, −22%). MNV 실패: E5-3m 5,787→4,407, E5-5m 1,992→1,689. E5-7m Smol D1 FAIL은 그대로(실패 0). PLC 정상. 전력 complete 3/3. 측정 재시도 0.
+- 귀속: 288153fd = 리뷰 복구(b0877c1e 계열) + S1. S1 자체는 의미 불변 리팩터이므로 개선은 주로 리뷰 복구분으로 봄 [추정]. 행당 1회 시행이라 잡음 폭은 미측정.
+- STOP 7(최종 상태): round 자신의 cleanup `manual-reset:9742040b` 예약이 확인 시점에 아직 잡혀 있었음. 직후 live는 instances 0·예약 0. round-10의 STOP 7(plan 소유자 잔류)과는 원인이 다름. 첫 발생이라 기록만 함. 측정 데이터는 유효.
