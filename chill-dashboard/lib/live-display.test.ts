@@ -148,3 +148,13 @@ test("missing metrics are awaiting observation, never observed zero traffic",()=
   assert.equal(serviceTrafficState({...metric,received:0}),"무유입")
   assert.equal(serviceTrafficState(metric),"활동 중")
 })
+
+test("planned stop is normal only with no declared instances, demand, or autonomous services",()=>{
+  const input={fresh:true,terminals:0,failed:0,sloMisses:0,queued:0,changes:0,delayed:0,serving:0,off:2,total:2,admissionBlocked:false,received:0,declared:0,unserved:0,gaps:0}
+  assert.equal(boardVerdict(input).label,"정상: 계획된 정지")
+  assert.match(boardVerdict({...input,received:1,unserved:1}).label,/^이상:/)
+  assert.match(boardVerdict({...input,failed:1}).label,/^이상:/)
+  assert.notEqual(boardVerdict({...input,declared:1}).label,"정상: 계획된 정지")
+  assert.notEqual(boardVerdict({...input,off:1}).label,"정상: 계획된 정지")
+  assert.match(boardVerdict({...input,gaps:1}).reason,/관측 공백/)
+})
