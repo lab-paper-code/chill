@@ -322,10 +322,6 @@ func (b *schedulerBridgeCompiler) handoff(w capacityWorkload) bool {
 			stage.Routing[uid][item.id] = weights[k]
 		}
 	}
-	deps, at, ok = b.stageDependencies(stage, available, deps, at)
-	if !ok {
-		return false
-	}
 	for _, i := range available {
 		stage.Instances = append(stage.Instances, i)
 	}
@@ -401,29 +397,6 @@ func (b *schedulerBridgeCompiler) peers(uid string) (map[string]SchedulerInstanc
 	}
 	slices.SortFunc(items, func(a, c capacityItem) int { return cmp.Compare(a.id, c.id) })
 	return available, items
-}
-
-func (b *schedulerBridgeCompiler) stageDependencies(stage SchedulerCandidate, available map[string]SchedulerInstance, deps []string, at float64) ([]string, float64, bool) {
-	nodes := map[NodeReference]string{}
-	for other, route := range stage.Routing {
-		if maps.Equal(route, b.routing[other]) {
-			continue // Preserved declarations are outside this bridge's execution scope.
-		}
-		for id, weight := range route {
-			if weight <= 0 {
-				continue
-			}
-			i, ready := available[id]
-			if !ready || nodes[i.Node] != "" && nodes[i.Node] != other {
-				return nil, 0, false
-			}
-			nodes[i.Node] = other
-			if prepare := b.prepares[id]; prepare != "" {
-				deps, at = appendUnique(deps, prepare), max(at, b.ends[prepare])
-			}
-		}
-	}
-	return deps, at, true
 }
 
 func (p *capacityPlanner) bridgeFlow(uid string, rate float64, routing map[string]int32, instances map[string]SchedulerInstance) (float64, float64) {
