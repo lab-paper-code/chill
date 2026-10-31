@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { LiveAction, LiveInstance, LiveMetric, LiveSnapshot, LiveWorkload } from "./live.ts"
-import { actionProgress, actionOrigin, scopeSnapshot, scopeEvents, recentEvents, liveFresh, belongsToPool, displayNumber, duration, elapsed, instanceSymbol, isStale, ratio, receivedLabel, routingShare, terminalCount, workloadLabel, workloadQueue, servicePriority, mergeKeepEvents, trendSegments, boardVerdict, decisionText } from "./live-display.ts"
+import { changeListStatus, serviceTrafficState, actionProgress, actionOrigin, scopeSnapshot, scopeEvents, recentEvents, liveFresh, belongsToPool, displayNumber, duration, elapsed, instanceSymbol, isStale, ratio, receivedLabel, routingShare, terminalCount, workloadLabel, workloadQueue, servicePriority, mergeKeepEvents, trendSegments, boardVerdict, decisionText } from "./live-display.ts"
 
 const at="2026-10-30T12:00:00.123456789Z",now=Date.parse(at)
 const instance:LiveInstance={id:"shared",node:{uid:"n",name:"Node"},ownerWorkloadUID:"a",profileID:"p",ready:true,stopped:false,routable:{a:true,b:true},running:{a:1,b:0},waiting:{a:0,b:2},observedAt:at}
@@ -129,4 +129,22 @@ test("heartbeat or reconnect never makes old metrics live",()=>{
   assert.equal(liveFresh(state,now+5001),false)
   assert.equal(liveFresh({...state,status:"resuming"},now),false)
   assert.equal(liveFresh({...state,metrics:[]},now),false)
+})
+
+test("cached changes never claim current progress or absence while disconnected or stale",()=>{
+  const state={status:"live",lastObservedAt:at,metrics:[{bucketAt:at}],snapshot:{actions:[]}} as unknown as Parameters<typeof changeListStatus>[0]
+  assert.equal(changeListStatus(state,now).title,"변경 진행 0건 / 정체 0건")
+  assert.equal(changeListStatus(state,now).emptyLabel,"진행·정체 변경이 없어요.")
+  for(const stale of [{...state,status:"reconnecting"},{...state,status:"paused-hidden"},{...state,status:"disconnected"},state]){
+    const view=changeListStatus(stale,now+6000)
+    assert.equal(view.fresh,false)
+    assert.match(view.title,/현재 상태 미확인.*마지막 관측 21:00:00 KST/)
+    assert.match(view.emptyLabel,/현재 상태.*미확인/)
+  }
+  assert.match(changeListStatus({...state,status:"reconnecting"},now).title,/현재 상태 미확인/)
+})
+test("missing metrics are awaiting observation, never observed zero traffic",()=>{
+  assert.equal(serviceTrafficState(undefined),"관측 대기")
+  assert.equal(serviceTrafficState({...metric,received:0}),"무유입")
+  assert.equal(serviceTrafficState(metric),"활동 중")
 })

@@ -58,6 +58,13 @@ export const actionOrigin=(action:LiveAction)=>action.id.startsWith("manual-")||
 export function liveFresh(state:LiveState,now:number):boolean {
   return state.status==="fixture"||state.status==="live"&&!isStale(state.lastObservedAt,now)&&!!state.metrics.at(-1)&&!isStale(state.metrics.at(-1)?.bucketAt,now)
 }
+export function changeListStatus(state:LiveState,now:number) {
+  const actions=state.snapshot?.actions.filter(action=>actionProgress(action,now)!=="terminal")??[],delayed=actions.filter(action=>actionProgress(action,now)==="delayed").length
+  return {fresh:liveFresh(state,now),title:state.snapshot?`변경 진행 ${actions.length-delayed}건 / 정체 ${delayed}건`:"변경 관측을 기다려요",emptyLabel:"진행·정체 변경이 없어요."}
+}
+export function serviceTrafficState(metric:LiveMetric|undefined):string {
+  return metric?.received?"활동 중":"무유입"
+}
 export function scopeSnapshot(snapshot:LiveSnapshot,uid?:string):LiveSnapshot {
   if(!uid)return snapshot
   return {...snapshot,workloads:snapshot.workloads.filter(row=>row.uid===uid),instances:snapshot.instances.filter(row=>belongsToPool(row,uid)),routing:{[uid]:snapshot.routing[uid]??{}},actions:snapshot.actions.filter(row=>row.workloadUID===uid),reservations:snapshot.reservations.filter(row=>row.workloadUIDs.includes(uid)),decision:null}
