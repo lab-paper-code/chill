@@ -136,7 +136,7 @@ binding의 `config.tokenLifetime.expiresUTC`와 실행별 `token-preflight-*.jso
 
 volume 상세 `du`는 `buildx_buildkit_chill-builder0_state` 92.87 GiB, `edge-builder0_state` 92.39 GiB, `merge-1132c500_state` 68.50 GiB다. 이들은 재생성 가능한 빌더 state 후보지만 **활성 volume 참조가 있고 Docker의 즉시 회수 가능 volume으로 잡히지 않는다**. 해당 builder 소유자·공유 잠금·진행 중 build 유무를 확인한 뒤 builder별 cache prune을 검토한다. `docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Mounts}}'`로 **`registry`(`registry:2`)가 쓰는 `f208fe69…` volume**도 확인했으며 해당 volume은 **95,379,914,752 B(88.83 GiB)**다. 이것은 배포 이미지 원본 저장소이지 캐시가 아니다. `df2229ec…`는 kind control-plane volume이다.
 
-2026-10-31부터 `chill-builder`는 `hack/buildkitd.toml`(BuildKit 자체 GC, `maxUsedSpace = "20GB"`)로 생성한다. 따라서 fast-deploy 빌드 캐시는 20GB를 넘지 않고, 위 chill-builder state 누적은 다시 생기지 않는다. builder를 다시 만들 때는 `docker buildx create --name chill-builder --driver docker-container --buildkitd-flags "--allow-insecure-entitlement=network.host" --buildkitd-config hack/buildkitd.toml`을 쓴다.
+2026-10-31부터 `chill-builder`는 `hack/buildkitd.toml`(BuildKit 자체 GC, `maxUsedSpace = "20GB"`)로 생성한다. BuildKit이 빌드가 끝난 뒤 캐시를 20GB 목표로 회수한다(빌드 중 순간 사용량을 막는 하드 쿼터는 아니다). 따라서 위 chill-builder state 누적은 다시 생기지 않는다. builder를 다시 만들 때는 `docker buildx create --name chill-builder --driver docker-container --buildkitd-flags "--allow-insecure-entitlement=network.host" --buildkitd-config hack/buildkitd.toml`을 쓴다.
 
 containerd는 20.11 GiB, kubelet 디렉터리는 0.01 GiB, `/var/log`는 1.32 GiB다. 즉 종료 Pod 누적 사고가 있었다고 해서 현재 최대 점유를 Pod 로그라고 단정할 수 없다. 사용자 캐시 중 `.cache/uv` 2.39 GiB, `go/pkg` 8.21 GiB, `.cache/go-build`는 약 21.2 MiB로 관측되어 Go build cache 정리만으로 부족분을 해결할 수 없다. inode는 `df -i`에서 **122,068,992개 중 10,728,424개 사용(9%)**이었다.
 
