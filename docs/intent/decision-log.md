@@ -458,3 +458,12 @@
 - 규칙 4: feeder는 같은 lane에서 2회 연속 실패하면 그 lane을 멈추고, Main은 feeder가 도는 동안 턴을 끝내지 않고 실패를 즉시 분류한다.
 - 규칙 5: feeder 시작 시 hold 상태(pause/drop)를 출력·기록한다.
 - jetson-nano는 사용자가 복구함(07:37 KST 재부팅) → 재개. rasp5는 여전히 제외.
+
+## 2026-11-01 — fast-deploy은 live values로 렌더한다: chart values 변경은 `--values` overlay가 필요
+
+- control-291은 `e0da36e0`(values-operating의 runtime 선언 15개 교체)을 배포했지만, `hack/fast-deploy.sh`가 `helm get values`(live)로 렌더하므로 선언은 바뀌지 않았다. plan3의 7셀이 옛 runtime으로 돌았다(RKNN ImportError 재발로 발견).
+- 규칙: values-*.yaml 변경은 해당 키만 담은 overlay를 `--values O/deployB/approvals/values-*.yaml`로 넘기고, chart diff에서 그 변경이 보이는지 확인한다(control-296: runtime `1dee80bf` 선언, control-294: console 512Mi).
+- 배포 확인은 실제 측정 Pod의 이미지 digest와 memory limit으로 한다(23:13Z: 6개 lane 모두 새 digest, limit = allocatable×0.8).
+- 옛 runtime 셀(plan2·plan3)은 레거시로 삭제했다(백업 `O/deployB/failed-cells-20261101/`).
+- console 128Mi OOMKilled → 512Mi. console은 chill-server query·evidence·coverage 경로의 의존성이라 유지한다.
+- jetson-nano 5W 전환이 다시 멈췄다(23:05:38 applyStarted, SSH 무응답, 2회째). nano를 pause하고 5W 셀 7개를 보류했다. 재부팅 뒤 `journalctl -b -1`로 원인을 확인한다.
