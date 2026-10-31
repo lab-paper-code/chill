@@ -379,7 +379,12 @@ class Harness:
     def cleanup_jobs(self): self.controller().cleanup_jobs()
     def finish(self): self.controller().finish()
     def publish(self):
-        tables=module('evaluation_tables',HERE/'tables.py');stages=[];results={};artifacts=[];procedures={};actual_specs={}
+        tables=module('evaluation_tables',HERE/'tables.py');stages=[];results={};artifacts=[];procedures={};actual_specs={};stage_outcomes=[]
+        not_started={'status':'Failed','reason':'NotStarted'}
+        def execution_outcome(values):
+            executions=[value.get('execution',not_started) for value in values]
+            failures=[value for value in executions if value['status']!='Complete']
+            return next((value for value in failures if value.get('reason')!='NotStarted'),failures[0] if failures else {'status':'Complete','reason':'ProcedureComplete'})
         publication_prefix='serving/experiments.v1alpha1/'+self.execution['runUID']+'/'
         for template in self.snapshot['runSpec']['stages']:
             sid=template['id'];scope=self.run/'stages'/sid;result_path=self.run/('publish-result-'+sid+'.json')
@@ -399,6 +404,24 @@ class Harness:
                 except FileNotFoundError:
                     procedures[sid][step]={'execution':{'status':'Failed','reason':'NotStarted'}}
             if (scope/'execution-spec.json').exists(): actual_specs[sid]=load(scope/'execution-spec.json')
+            child=procedures[sid]
+            injection_path=self.run/('publish-injections-'+sid+'.json')
+            injection_ref=next((ref for ref in result['artifacts'] if ref['key'].endswith('/injection-records.json')),None)
+            injection_evidence={}
+            if injection_ref:
+                self.store.get(injection_ref,injection_path);injection_evidence=load(injection_path)
+            plans=injection_evidence.get('plans',template.get('failureInjection',[]))
+            records={value['record']['id']:value['record'] for value in injection_evidence.get('records',[])}
+            injections=[]
+            for plan in plans:
+                record=records.get(plan['id'],{})
+                original=record.get('outcome','NotStarted')
+                injection_outcome={'Complete':'Executed','Executed':'Executed','Cancelled':'Cancelled','NotStarted':'Cancelled'}.get(original,'Invalid')
+                reason=record.get('reason') or original
+                if original!=injection_outcome and original not in reason: reason=original+': '+reason
+                injections.append({'id':plan['id'],'action':plan['action'],'outcome':injection_outcome,'reason':reason,'scheduledOffsetSeconds':plan['offsetSeconds'],'actualOffsetSeconds':record.get('actualOffsetSeconds')})
+            cleanup=child['cleanup-jobs']
+            stage_outcomes.append({'id':sid,'execution':execution_outcome(child.values()),'measurement':result.get('measurement',{'verdict':'NOT_EVALUATED','reason':'NotStarted'}),'cleanup':cleanup.get('cleanup',cleanup.get('execution',not_started)),'injections':injections})
             phase_path=scope/'measured/phase.json'
             if not phase_path.exists(): continue
             phase=load(phase_path);judgment=tables.sections(scope/'measured/judgment.json')
@@ -432,7 +455,9 @@ class Harness:
         scenarios=list(self.snapshot['scenarios'].values())
         definitions={workload['uid']:workload for scenario in scenarios for workload in scenario['workloads']}
         definition={'schema':'evaluation-definition.v1alpha1','run':{'name':self.execution['runName'],'uid':self.execution['runUID']},'spec':self.snapshot['runSpec'],'loadScenarios':[{'name':s['ref']['name'],'uid':s['ref']['uid'],'spec':s['spec']} for s in scenarios],'workloads':list(definitions.values())}
-        summary={'schemaVersion':'serving-experiment.v1alpha1','id':self.execution['runUID'],'from':start,'to':end,'status':measurement,'stages':stages,'sources':[{key:obj[key] for key in ('store','key')} for obj in objects],'definition':definition}
+        finish=procedures['finish']
+        outcome={'execution':execution_outcome([procedures['prepare'],finish]+[{'execution':stage['execution']} for stage in stage_outcomes]),'measurement':verdict(aggregated),'cleanup':finish.get('cleanup',finish.get('execution',not_started)),'stages':stage_outcomes}
+        summary={'schemaVersion':'serving-experiment.v1alpha1','id':self.execution['runUID'],'from':start,'to':end,'status':measurement,'stages':stages,'sources':[{key:obj[key] for key in ('store','key')} for obj in objects],'definition':definition,'outcome':outcome}
         summary_path=self.run/'publication-summary.json';save(summary_path,summary)
         manifest=self.run/'publication-manifest.json';save(manifest,{'objects':objects,'summary':{'store':self.store.name,'key':prefix+'summary.json','localPath':str(summary_path)}})
         (self.run/'tables.txt').write_text(tables.render(self.run,REPO,evaluation=aggregated))

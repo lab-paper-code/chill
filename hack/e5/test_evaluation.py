@@ -170,6 +170,51 @@ class AdapterTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'FrozenInputInvalid'):
                 evaluation.stage_config({}, {}, {}, {}, {'e5Operational':json.dumps(operation)},Path('/work'))
         self.assertNotIn('failureSelectSnapshotTTLSeconds',evaluation_inputs.OPERATIONAL)
+    def test_publish_outcome_failed_stage_and_unperformed_injection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run=Path(directory)/'campaign/run';run.mkdir(parents=True)
+            harness=object.__new__(evaluation.Harness);harness.run=run;harness.config={}
+            harness.execution={'runUID':'run','runName':'name'}
+            plans=[{'id':'done','action':'delete-serving-pod','offsetSeconds':10},{'id':'missed','action':'uncordon','offsetSeconds':20}]
+            harness.snapshot={'runSpec':{'stages':[{'id':'failed','failureInjection':plans},{'id':'never','failureInjection':plans[:1]}]},'initial':{'at':'start'},'bindings':{'failed':{}},'scenarios':{}}
+            complete={'execution':{'status':'Complete','reason':'ProcedureComplete'},'artifacts':[]}
+            evidence={'experiments/run/run/prepare/result.json':complete,'experiments/run/run/finish/result.json':dict(complete,cleanup={'status':'Failed','reason':'RestorationFailed'})}
+            for step in ('factor','stage','judge','cleanup-jobs'):
+                evidence['experiments/run/stages/failed/'+step+'/result.json']=copy.deepcopy(complete)
+            evidence['experiments/run/stages/failed/stage/result.json']['execution']={'status':'Failed','reason':'TargetUnavailable'}
+            judge=evidence['experiments/run/stages/failed/judge/result.json']
+            judge['measurement']={'verdict':'INVALID','reason':'InjectionInvalid'}
+            judge['artifacts']=[{'store':'store','key':'judge/artifacts/injection-records.json'}]
+            evidence['judge/artifacts/injection-records.json']={'plans':plans,'records':[{'record':{'id':'done','outcome':'Complete','actualOffsetSeconds':10.5}},{'record':{'id':'missed','outcome':'INVALID','reason':'InjectionInvalid'}}]}
+            def get(ref,path):
+                if ref['key'] not in evidence: raise FileNotFoundError(ref['key'])
+                evaluation.save(path,evidence[ref['key']])
+            harness.store=SimpleNamespace(name='store',get=get)
+            harness.e5=SimpleNamespace(summarize=lambda *args,**kw:{'status':'INVALID'})
+            tables=SimpleNamespace(render=lambda *args,**kw:'table')
+            env=dict.fromkeys(('CHILL_EVIDENCE_BUCKET','CHILL_EVIDENCE_ENDPOINT','CHILL_EVIDENCE_REGION','AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY'),'test')
+            temporary=evaluation.tempfile.TemporaryDirectory
+            with patch.object(evaluation,'module',return_value=tables),patch.dict(os.environ,env),patch.object(evaluation.tempfile,'TemporaryDirectory',side_effect=lambda **kw:temporary(dir=run)),patch.object(evaluation.subprocess,'run',return_value=SimpleNamespace(returncode=0)):
+                harness.publish()
+            summary=evaluation.load(run/'publication-summary.json');outcome=summary['outcome']
+            self.assertEqual(summary['definition']['spec'],harness.snapshot['runSpec'])
+            self.assertEqual(summary['stages'],[])
+            self.assertEqual(outcome['execution'],{'status':'Failed','reason':'TargetUnavailable'})
+            self.assertEqual(outcome['measurement']['verdict'],'INVALID')
+            self.assertEqual(outcome['cleanup'],{'status':'Failed','reason':'RestorationFailed'})
+            failed,never=outcome['stages']
+            self.assertEqual(failed['id'],'failed')
+            self.assertEqual(failed['measurement'],judge['measurement'])
+            self.assertEqual(failed['injections'][0]['actualOffsetSeconds'],10.5)
+            self.assertEqual(failed['injections'][1],{'id':'missed','action':'uncordon','outcome':'Invalid','reason':'INVALID: InjectionInvalid','scheduledOffsetSeconds':20,'actualOffsetSeconds':None})
+            self.assertEqual(never['execution']['reason'],'NotStarted')
+            self.assertEqual(never['measurement'],{'verdict':'NOT_EVALUATED','reason':'NotStarted'})
+            self.assertEqual(never['cleanup']['reason'],'NotStarted')
+            self.assertEqual(never['injections'][0]['outcome'],'Cancelled')
+            self.assertEqual(never['injections'][0]['reason'],'NotStarted')
+            self.assertIsNone(never['injections'][0]['actualOffsetSeconds'])
+            self.assertEqual(failed['injections'][0]['outcome'],'Executed')
+            self.assertEqual(failed['injections'][0]['reason'],'Complete')
 
 
 def offline(binding,stage,environment):
