@@ -287,6 +287,9 @@ func TestRunStageStoredResultWorkflow(t *testing.T) {
 		if !ok {
 			return nil
 		}
+		if job.Spec.Template.Spec.SecurityContext == nil || job.Spec.Template.Spec.SecurityContext.FSGroup == nil || *job.Spec.Template.Spec.SecurityContext.FSGroup != 65532 {
+			t.Fatal("non-root harness requires workspace FSGroup 65532")
+		}
 		step := job.Labels[api.EvaluationLabelStep]
 		stageID := job.Labels[api.EvaluationLabelStage]
 		result := map[string]any{"schemaVersion": "evaluation-step.v1alpha1", "runUID": parent.UID, "step": step, "execution": map[string]string{"status": complete}, "startedAt": fixtureTime, "finishedAt": fixtureTime}

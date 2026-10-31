@@ -87,6 +87,8 @@ func (r *Runtime) job(ctx context.Context, owner client.Object, run *api.Evaluat
 		env = append(env, corev1.EnvVar{Name: item.name, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: v["evidenceCredentialsSecret"]}, Key: item.key}}})
 	}
 	pod := corev1.PodSpec{ServiceAccountName: sa, AutomountServiceAccountToken: &token, RestartPolicy: corev1.RestartPolicyNever, Containers: []corev1.Container{{Name: "evaluation", Image: run.Spec.Harness.Image, Command: []string{"python3", "/opt/e5/hack/e5/evaluation.py"}, Args: []string{step, "--run", "/work/campaign/run", "--spec", "/spec"}, Env: env, VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: "/work"}, {Name: "spec", MountPath: "/spec", ReadOnly: true}, {Name: "ca", MountPath: "/etc/chill/ca", ReadOnly: true}}}}, Volumes: []corev1.Volume{{Name: "work", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: run.Status.Workspace.Name}}}, {Name: "spec", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: cmName}}}}, {Name: "ca", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: v["caSecret"], Items: []corev1.KeyToPath{{Key: "tls.crt", Path: "tls.crt"}}}}}}}
+	// The harness image runs as 65532; kubelet applies this group to RWX/Secret volumes.
+	pod.SecurityContext = &corev1.PodSecurityContext{FSGroup: ptr(int64(65532))}
 	if step == api.EvaluationStepStage {
 		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: "producer-ssh", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: v["producerSSHSecret"], DefaultMode: ptr(int32(0400))}}})
 		pod.Containers[0].VolumeMounts = append(pod.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "producer-ssh", MountPath: "/secrets/producer", ReadOnly: true})
@@ -129,6 +131,9 @@ func (r *Runtime) job(ctx context.Context, owner client.Object, run *api.Evaluat
 }
 func sameJob(a, b *batchv1.Job) bool {
 	x, y := a.Spec.Template.Spec, b.Spec.Template.Spec
+	if !equality.Semantic.DeepEqual(x.SecurityContext, y.SecurityContext) {
+		return false
+	}
 	if x.ServiceAccountName != y.ServiceAccountName || x.RestartPolicy != y.RestartPolicy || !equality.Semantic.DeepEqual(x.AutomountServiceAccountToken, y.AutomountServiceAccountToken) || !equality.Semantic.DeepEqual(a.Spec.ActiveDeadlineSeconds, b.Spec.ActiveDeadlineSeconds) || !equality.Semantic.DeepEqual(a.Spec.BackoffLimit, b.Spec.BackoffLimit) || !equality.Semantic.DeepEqual(a.Spec.Parallelism, b.Spec.Parallelism) || !equality.Semantic.DeepEqual(a.Spec.Completions, b.Spec.Completions) || len(x.Containers) != 1 {
 		return false
 	}
