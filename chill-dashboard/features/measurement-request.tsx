@@ -3,7 +3,8 @@
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useState, type ReactNode } from "react"
-import { useChillMutation, useChillQuery, useSession, type ApiError } from "@/lib/client"
+import { useQuery } from "@tanstack/react-query"
+import { ApiError, useChillMutation, useChillQuery, useSession } from "@/lib/client"
 import { QueryGate, SourceJSON } from "@/components/read-region"
 import { RowDialog, Rows, Screen } from "@/components/screen"
 import { PreflightAnswer, preflightConclusion } from "@/features/read-pages"
@@ -183,7 +184,7 @@ function AdvancedFields({ value, set, showErrors, rejection }: { value: Advanced
 }
 
 export function MeasurementRequestPage() {
-  const { config } = useSession(), params = useSearchParams()
+  const { config, token } = useSession(), params = useSearchParams()
   const from = params.get("from")
   const plans = useChillQuery<MeasurementPlanList>(`v1/namespaces/${encodeURIComponent(config.namespace)}/batch-energy-optimizations`)
   const models = useChillQuery<ModelList>("v1/models")
@@ -192,7 +193,20 @@ export function MeasurementRequestPage() {
   const datasets = useChillQuery<{items:DatasetResource[]}>("v1/datasets")
   const inventory = useCoverageInventory()
   const coverage=useMeasurementCoverage(config.namespace,!!params.get("variantId"))
-  const profiles=useChillQuery<ProfilesView>(`v1/scheduler/profiles?${new URLSearchParams({limit:"50",...(params.get("model")?{model:params.get("model")!}:{}),...(params.get("deviceClass")?{deviceClass:params.get("deviceClass")!}:{}),...(params.get("node")?{node:params.get("node")!}:{}),...(params.get("path")?{path:params.get("path")!}:{}),...(params.get("powerMode")?{powerMode:params.get("powerMode")!}:{})})}`,{decoder:parseSchedulerJSON})
+  const profiles=useQuery<ProfilesView,ApiError>({queryKey:["chill","request-profile-history"],enabled:!!token,queryFn:async({signal})=>{
+    const all:NonNullable<ProfilesView["profiles"]>=[]
+    let offset=0
+    for(;;) {
+      const response=await fetch(`/api/chill/v1/scheduler/profiles?${new URLSearchParams({limit:"50",offset:String(offset)})}`,{headers:{Authorization:`Bearer ${token}`},signal,cache:"no-store",credentials:"omit"})
+      const text=await response.text()
+      if(!response.ok)throw new ApiError(response.status,text,null)
+      const page=parseSchedulerJSON(text) as ProfilesView
+      all.push(...page.profiles??[])
+      if(page.page?.nextOffset===undefined)return {...page,profiles:all}
+      if(page.page.nextOffset<=offset)throw new ApiError(0,"프로파일 페이지가 전진하지 않습니다",null)
+      offset=page.page.nextOffset
+    }
+  }})
   if(params.get("variantId")&&!coverage.data&&!coverage.error)return <Screen title="측정 요청" lede="선택 조건과 부족 배치를 확인하고 있어요."/>
   if (!plans.data || !models.data || !workloads.data || !inventory.data || !preprocessors.data || !datasets.data || profiles.isPending) return <Screen back={back} title="측정 요청" lede="고를 수 있는 서비스와 장비를 확인하고 있어요.">
     <MeasurementNavigation namespace={config.namespace}/>
@@ -285,7 +299,7 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
           const spec=workload.desired.spec,changed=spec.modelRef.name!==d.model
           update({workload:workload.desired.metadata.name,model:spec.modelRef.name,preprocessor:spec.preprocessorRef.name,dataset:spec.datasetRef?.name??"",...(changed&&!context.models.find(model=>model.metadata.name===spec.modelRef.name)?.spec.executionPaths.some(path=>path.name===d.path)?{path:""}:{})})
         }}><option value="">직접 조건 지정</option>{context.workloads.filter(workload=>!d.model||workload.desired.spec.modelRef.name===d.model).map(workload=><option key={workload.desired.metadata.uid} value={workload.desired.metadata.name}>{workload.desired.metadata.name}</option>)}</select></label>
-        <label className="grid gap-2 text-sm">전처리기<select aria-invalid={!!error&&!d.preprocessor} aria-describedby={error&&v.problem("workload")?"measurement-workload-error":undefined} className="min-h-11 rounded border bg-background p-2" value={d.preprocessor} onChange={event=>update({preprocessor:event.target.value})}><option value="">전처리기 선택</option>{context.preprocessors.map(item=><option key={item.metadata.uid} value={item.metadata.name}>{item.metadata.name}</option>)}</select></label><label className="grid gap-2 text-sm">데이터셋<select aria-invalid={!!error&&!d.dataset} aria-describedby={`request-input-guidance${error&&v.problem("workload")?" measurement-workload-error":""}`} className="min-h-11 rounded border bg-background p-2" value={d.dataset} onChange={event=>update({dataset:event.target.value})}><option value="">데이터셋 선택</option>{context.datasets.map(item=>{const gap=datasetGap(item.spec,preprocessor?.spec);return <option key={item.metadata.uid} value={item.metadata.name} disabled={!!gap}>{item.metadata.name}{gap?` · ${gap}`:""}</option>})}</select></label>{inputs.warning&&<details id="request-input-guidance" className="text-sm"><summary>입력 계약 확인 필요</summary><p>{inputs.warning}</p>{(!inputs.dataset||noCompatibleDataset)&&<Link className="underline" href="/datasets/new">데이터셋 등록</Link>}</details>}</div>
+        <label className="grid gap-2 text-sm">전처리기<select required aria-invalid={!!error&&!d.preprocessor} aria-describedby={error&&v.problem("workload")?"measurement-workload-error":undefined} className="min-h-11 rounded border bg-background p-2" value={d.preprocessor} onChange={event=>update({preprocessor:event.target.value})}><option value="">전처리기 선택</option>{context.preprocessors.map(item=><option key={item.metadata.uid} value={item.metadata.name}>{item.metadata.name}</option>)}</select></label><label className="grid gap-2 text-sm">데이터셋<select required aria-invalid={!!error&&!d.dataset} aria-describedby={`request-input-guidance${error&&v.problem("workload")?" measurement-workload-error":""}`} className="min-h-11 rounded border bg-background p-2" value={d.dataset} onChange={event=>update({dataset:event.target.value})}><option value="">데이터셋 선택</option>{context.datasets.map(item=>{const gap=datasetGap(item.spec,preprocessor?.spec);return <option key={item.metadata.uid} value={item.metadata.name} disabled={!!gap}>{item.metadata.name}{gap?` · ${gap}`:""}</option>})}</select></label>{inputs.warning&&<details id="request-input-guidance" className="text-sm"><summary>입력 계약 확인 필요</summary><p>{inputs.warning}</p>{(!inputs.dataset||noCompatibleDataset)&&<Link className="underline" href="/datasets/new">데이터셋 등록</Link>}</details>}</div>
       {!inputs.warning&&<span id="request-input-guidance" className="sr-only">입력 계약 일치</span>}
       {error&&v.problem("workload")&&<p id="measurement-workload-error" tabIndex={-1} className="text-sm text-destructive">{v.problem("workload")}</p>}
       </section>
@@ -294,9 +308,9 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
         <div className="space-y-4"><label className="grid gap-2 text-sm">배치별 반복 횟수<Input aria-invalid={!!error&&(!Number.isInteger(v.trials)||v.trials<3||v.trials>2147483647)} aria-describedby={error&&v.problem("size")?"measurement-size-error":undefined} type="number" min={3} value={Number.isFinite(v.trials)?v.trials:""} onChange={event=>update({trials:event.target.valueAsNumber})}/></label><label className="grid gap-2 text-sm">CPU 개수<Input aria-invalid={!!error&&!/^[1-9]\d*$/.test(v.cpu)} aria-describedby={error&&v.problem("size")?"measurement-size-error":undefined} value={v.cpu} onChange={event=>update({cpu:event.target.value})}/></label></div>
         {error&&v.problem("size")&&<p id="measurement-size-error" tabIndex={-1} className="text-sm text-destructive">{v.problem("size")}</p>}
       </section>
-      <details id="measurement-conditions" className="space-y-4"><summary className="font-semibold">실행 조건·측정 방식</summary>
+      <details id="measurement-conditions" open={!!v.problem("device")||!!v.problem("run")||undefined} className="space-y-4"><summary className="font-semibold">실행 조건·측정 방식</summary>
       <section id="measurement-device" className="grid gap-5 border-t pt-5 md:grid-cols-2" aria-label="장치와 실행 조건">
-        <div className="space-y-4"><Pick label="장치 종류" name="device-class" value={d.deviceClass} set={deviceClass=>{const cls=context.classes.find(item=>item.name===deviceClass);update({deviceClass,node:cls?.nodes.some(node=>node.name===d.node)?d.node:cls?.nodes.find(node=>!nodeReason(node))?.name??"",powerMode:cls?.powerModes.some(mode=>mode.name===d.powerMode)?d.powerMode:cls?.powerModes.length===1?cls.powerModes[0].name:""})}} options={context.classes.map(cls=>({value:cls.name,label:cls.name,disabled:cls.nodes.some(node=>!nodeReason(node))?undefined:"준비된 장비 없음"}))}/>{v.cls&&<details><summary className="min-h-11 cursor-pointer py-2 text-sm">실행 장비 · {d.node||"미선택"}</summary><Pick label="실행 장비" name="node" value={d.node} set={node=>update({node})} options={v.cls.nodes.map(node=>({value:node.name,label:node.name,disabled:nodeReason(node)}))}/></details>}</div>
+        <div className="space-y-4"><Pick label="장치 종류" name="device-class" value={d.deviceClass} set={deviceClass=>{const cls=context.classes.find(item=>item.name===deviceClass);update({deviceClass,node:cls?.nodes.some(node=>node.name===d.node)?d.node:cls?.nodes.find(node=>!nodeReason(node))?.name??"",powerMode:cls?.powerModes.some(mode=>mode.name===d.powerMode)?d.powerMode:cls?.powerModes.length===1?cls.powerModes[0].name:""})}} options={context.classes.map(cls=>({value:cls.name,label:cls.name,disabled:cls.nodes.some(node=>!nodeReason(node))?undefined:"준비된 장비 없음"}))}/>{v.cls&&<details open={!v.cls.nodes.some(node=>node.name===d.node&&!nodeReason(node))||undefined}><summary className="min-h-11 cursor-pointer py-2 text-sm">실행 장비 · {d.node||"미선택"}</summary><Pick label="실행 장비" name="node" value={d.node} set={node=>update({node})} options={v.cls.nodes.map(node=>({value:node.name,label:node.name,disabled:nodeReason(node)}))}/></details>}</div>
         <div className="space-y-4"><Pick label="실행 경로" name="path" value={d.path} set={path=>update({path})} options={(v.model?.spec.executionPaths??[]).filter(path=>!v.cls||!pathReason(v.model!,path,v.cls)).map(path=>({value:path.name,label:path.name}))}/>
           {(!v.model||!v.cls)?<p className="text-sm text-muted-foreground">모델과 장치 종류를 먼저 선택하면 실행 방식을 고를 수 있어요.</p>:!v.model.spec.executionPaths.some(path=>!pathReason(v.model!,path,v.cls!))&&<p role="status" className="notice">이 장치에서 사용할 실행 방식이 없어요. 다른 장치 종류를 선택하거나 모델의 실행 방식 등록을 확인하세요.</p>}
           {v.model&&v.cls&&v.model.spec.executionPaths.some(path=>pathReason(v.model!,path,v.cls!))&&<details><summary className="min-h-11 cursor-pointer py-2">지원 안 되는 경로와 이유</summary>{v.model.spec.executionPaths.filter(path=>pathReason(v.model!,path,v.cls!)).map(path=><p key={path.name}>{path.name}: {pathReason(v.model!,path,v.cls!)}</p>)}</details>}

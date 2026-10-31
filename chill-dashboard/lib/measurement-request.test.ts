@@ -69,15 +69,22 @@ test("empty coverage batch query is a missing selection, not a permanent URL err
   assert.deepEqual(requestInitialBatches([8,1],16),[1,8])
 })
 
-test("automatic dataset selection accepts a subset input contract just like modelcatalog.Compatible",()=>{
+test("unmeasured model inputs prefer same-model history and never infer an image task from VQA surplus fields",()=>{
   const context={preprocessors:[{metadata:{name:"image-pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:"opaque-id",artifact:"onnx"}}]}}],datasets:[{metadata:{name:"vqa"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512},{name:"question",format:"UTF8",maxBytes:512}]}}]} as Parameters<typeof requestInputs>[4]
-  assert.deepEqual(requestInputs("opaque-id","onnx","","",context),{preprocessor:"image-pre",dataset:"vqa",warning:""})
-  assert.equal(requestInputs("opaque-id","onnx","image-pre","vqa",context,{preprocessor:true,dataset:true}).dataset,"vqa")
+  assert.equal(requestInputs("opaque-id","onnx","","",context).dataset,"")
+  assert.equal(requestInputs("opaque-id","onnx","image-pre","vqa",context,{dataset:true}).dataset,"")
+  assert.equal(requestInputs("opaque-id","onnx","image-pre","vqa",context).dataset,"vqa")
   const full={...context,datasets:[...context.datasets,{metadata:{name:"images"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]}}]} as Parameters<typeof requestInputs>[4]
-  assert.equal(requestInputs("opaque-id","onnx","image-pre","vqa",full,{dataset:true}).dataset,"vqa")
-  assert.equal(requestInputs("opaque-id","onnx","","",full).dataset,"")
-  assert.match(requestInputs("opaque-id","onnx","","",full).warning,/여러 개/)
+  assert.equal(requestInputs("opaque-id","onnx","","",full).dataset,"images")
+  const historical={...full,plans:[{...plan,spec:{...plan.spec,state:{...plan.spec.state,candidate:{...plan.spec.state.candidate,modelSpec:"opaque-id"}},activeProtocol:{...plan.spec.activeProtocol,dataset:"vqa"}}}]}
+  assert.equal(requestInputs("opaque-id","onnx","","",historical).dataset,"vqa")
+  assert.equal(requestInputs("opaque-id","onnx","","",{...full,plans:[plan]}).dataset,"images")
   assert.equal(requestInputs("other-model","onnx","image-pre","vqa",full,{preprocessor:true,dataset:true}).preprocessor,"")
+  const ambiguous={...full,datasets:[...full.datasets,{...full.datasets[1],metadata:{...full.datasets[1].metadata,name:"images-two"}}]}
+  assert.equal(requestInputs("opaque-id","onnx","","",ambiguous).dataset,"")
+  assert.match(requestInputs("opaque-id","onnx","","",ambiguous).warning,/여러 개/)
+  const profileHistory={...ambiguous,profiles:[{measuredAt:"2026-10-31",condition:{logicalModel:"opaque-id",preprocessor:{name:"image-pre"},activeProtocol:{dataset:{name:"images-two"}}}}] as unknown as ProfilesView["profiles"]}
+  assert.equal(requestInputs("opaque-id","onnx","","",profileHistory).dataset,"images-two")
 })
 
 test("shared dataset compatibility rejects missing fields, formats and oversized records",()=>{
@@ -170,8 +177,17 @@ test("request Funnel renders the undeclared-batch branch without a stale conditi
   assert.doesNotMatch(html,/NaN/)
   assert.match(html,/<th>예열 \(회\)<\/th>/)
   assert.match(html,/<td>—<\/td>/)
-  assert.doesNotMatch(html,/<details open=""/)
+  assert.match(html,/<details id="measurement-conditions" open=""/)
   assert.match(html,/href="\/datasets\/new"/)
+})
+
+test("unmeasured request leaves a surplus-field-only dataset unselected and required",()=>{
+  const context={models:[{metadata:{name:"opaque-id",uid:"model"},spec:{artifacts:[],executionPaths:[{name:"cpu",artifact:"onnx",runtime:{family:"firstfloor",backend:"ort-cpu"}}]}}],workloads:[],classes:[],plans:[],profiles:[],preprocessors:[{metadata:{name:"image-pre",uid:"pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:"opaque-id",artifact:"onnx"}}]}}],datasets:[{metadata:{name:"vqa",uid:"data"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512},{name:"question",format:"UTF8",maxBytes:512}]}}]}
+  const html=renderRequest({context,prefill:{active:true,values:{model:"opaque-id",path:"cpu"},node:"",errors:[],returnTo:"/measurements"}})
+  assert.match(html,/데이터셋<select required=""/)
+  assert.match(html,/<option value="" selected="">데이터셋 선택<\/option>/)
+  assert.doesNotMatch(html,/<option value="vqa" selected=""/)
+  assert.match(html,/<details id="measurement-conditions" open=""/)
 })
 
 test("required batches stay outside collapsed conditions and validation appears once",()=>{

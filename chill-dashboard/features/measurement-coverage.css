@@ -6,38 +6,31 @@
 .coverage-toolbar{display:grid;grid-template-columns:minmax(180px,280px) minmax(0,1fr);align-items:end;gap:.75rem}
 .coverage-toolbar>details[open]{grid-column:1/-1}
 .coverage-summary{display:grid;gap:.5rem;min-width:0;border-top:1px solid var(--border);padding-top:.75rem}
-.coverage-summary progress{display:block;width:100%;height:.6rem;accent-color:var(--primary)}
 .coverage-summary>table{table-layout:fixed}
 .coverage-summary th,.coverage-summary td{overflow-wrap:anywhere;vertical-align:top;padding:.25rem}
-.coverage-quality-counts{display:block;font-size:.75rem;color:var(--muted-foreground)}
-.coverage-mini-progress{display:flex;align-items:center;gap:.5rem;width:100%;font-size:.75rem}
-.coverage-mini-progress progress{width:100%;min-width:0;height:.4rem;accent-color:var(--primary)}
+.coverage-mini-progress{display:flex;align-items:center;gap:.5rem;min-width:4.5rem;flex:1;font-size:.75rem;white-space:nowrap}
+.coverage-mini-progress>span{flex:none;min-width:3ch;white-space:nowrap}
+.coverage-mini-progress progress{flex:1;width:100%;min-width:1rem;height:.4rem;accent-color:var(--primary)}
 .coverage-empty-toggle{min-height:44px;text-align:left;text-decoration:underline;font-weight:400}
 .quality-unknown{color:var(--muted-foreground)}
 .quality-fail,.coverage-cell-quality.quality-fail{color:var(--destructive)}
 .quality-pass,.coverage-cell-quality.quality-pass{color:var(--primary)}
-.coverage-quality-reasons{width:100%;font-size:.75rem;text-align:left;font-variant-numeric:tabular-nums}
-.coverage-quality-reasons caption{text-align:left;font-weight:600;margin-bottom:.25rem}
-.coverage-quality-reasons th{font-weight:400}
-.coverage-quality-reasons td:last-child{text-align:right}
-.coverage-quality-reasons td:nth-child(2){width:40%;padding-inline:.5rem}
-.coverage-reason-track{display:block;background:var(--muted);height:.5rem;border-radius:2px;overflow:hidden}
-.coverage-reason-track>span{display:block;background:var(--heat);height:100%}
 .coverage-legend{font-size:.75rem;background:var(--background)}
 .coverage-legend summary{cursor:pointer;min-height:44px;padding:.5rem 0}
 .coverage-legend[open]{display:flex;flex-wrap:wrap;gap:.5rem 1rem}
 .coverage-workspace{display:grid;grid-template-columns:minmax(0,1fr);gap:1rem;align-items:start;min-width:0}
 .coverage-pivot{min-width:0;border:1px solid var(--border);border-radius:.5rem}
 .coverage-desktop-table{overflow-x:auto}
-.coverage-desktop-table table{width:100%;min-width:540px;table-layout:fixed;border-collapse:collapse;font-size:.8125rem}
+.coverage-desktop-table table{width:100%;min-width:720px;table-layout:fixed;border-collapse:collapse;font-size:.8125rem}
 .coverage-desktop-table th{padding:.6rem;text-align:left;overflow-wrap:anywhere;font-weight:600;background:var(--background)}
 .coverage-desktop-table thead th{position:sticky;top:0;z-index:1;border-bottom:1px solid var(--border);color:var(--muted-foreground)}
 .coverage-desktop-table th:first-child{width:170px;vertical-align:top}
 .coverage-desktop-table th:first-child span,.coverage-desktop-table th:first-child small{display:block;overflow-wrap:anywhere;white-space:normal}
 .coverage-desktop-table th:first-child small{margin-block:.2rem .5rem;color:var(--muted-foreground);font-weight:400}
 .coverage-desktop-table td{border:1px solid var(--border);padding:.25rem;vertical-align:top}
-.coverage-cell{display:flex;flex-direction:column;gap:.3rem;width:100%;min-height:72px;padding:.4rem;text-align:left;border:2px solid transparent;border-radius:.375rem;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
-.coverage-cell-quality{font-size:.75rem;color:var(--muted-foreground)}
+.coverage-cell{display:flex;align-items:center;gap:.4rem;width:100%;min-width:6.25rem;min-height:44px;padding:.4rem;text-align:left;border:2px solid transparent;border-radius:.375rem;font-variant-numeric:tabular-nums;white-space:nowrap}
+.coverage-cell-quality,.coverage-usage-dot{flex:none;font-size:.75rem}
+.coverage-usage-dot{color:var(--primary)}
 .coverage-cell:hover{background:var(--muted)}
 .coverage-cell[aria-pressed="true"]{border-color:var(--primary);background:var(--muted)}
 .coverage-cell-unconfirmed{border-style:dashed;border-color:var(--border)}

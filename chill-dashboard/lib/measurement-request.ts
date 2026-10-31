@@ -54,16 +54,23 @@ export function datasetGap(dataset:DatasetSpec,preprocessor:PreprocessorSpec|und
 export const requestNumber=(value:number)=>Number.isFinite(value)?String(value):"—"
 
 // Catalog contracts, not names, select the preprocessor and dataset.
-export function requestInputs(model:string,artifact:string,preprocessor:string,dataset:string,context:{preprocessors:PreprocessorResource[];datasets:DatasetResource[]},inherited:{preprocessor?:boolean;dataset?:boolean}={}) {
+export function requestInputs(model:string,artifact:string,preprocessor:string,dataset:string,context:{preprocessors:PreprocessorResource[];datasets:DatasetResource[];plans?:MeasurementPlan[];profiles?:ProfilesView["profiles"]},inherited:{preprocessor?:boolean;dataset?:boolean}={}) {
   const candidates=context.preprocessors.filter(item=>item.spec.artifacts.some(entry=>entry.target.model===model&&(!artifact||entry.target.artifact===artifact)))
+  const history=[
+    ...(context.plans??[]).filter(plan=>plan.spec.state.candidate.modelSpec===model).map(plan=>({at:plan.metadata.creationTimestamp,preprocessor:plan.spec.state.candidate.preprocessor,dataset:plan.spec.activeProtocol.dataset})),
+    ...(context.profiles??[]).filter(profile=>profile.condition.logicalModel===model).map(profile=>({at:profile.measuredAt,preprocessor:profile.condition.preprocessor.name,dataset:profile.condition.activeProtocol.dataset?.name})),
+  ].sort((a,b)=>b.at.localeCompare(a.at))
   const explicit=context.preprocessors.find(item=>item.metadata.name===preprocessor)
-  const pre=explicit&&(!inherited.preprocessor||candidates.includes(explicit))?explicit:candidates.length===1?candidates[0]:undefined
+  const priorPre=history.map(entry=>candidates.find(item=>item.metadata.name===entry.preprocessor)).find(Boolean)
+  const pre=explicit&&(!inherited.preprocessor||candidates.includes(explicit))?explicit:priorPre??(candidates.length===1?candidates[0]:undefined)
   const compatible=(item:DatasetResource)=>!!pre&&!datasetGap(item.spec,pre.spec)
-  const datasets=context.datasets.filter(compatible)
+  // Server subset compatibility cannot distinguish image classification from VQA. Never infer a task from surplus fields.
+  const datasets=context.datasets.filter(item=>compatible(item)&&item.spec.fields.length===pre!.spec.input.fields.length)
+  const priorDataset=history.map(entry=>context.datasets.find(item=>item.metadata.name===entry.dataset&&compatible(item))).find(Boolean)
   const explicitDataset=context.datasets.find(item=>item.metadata.name===dataset)
-  const selected=explicitDataset&&(!inherited.dataset||compatible(explicitDataset))?explicitDataset:datasets.length===1?datasets[0]:undefined
+  const selected=explicitDataset&&!inherited.dataset?explicitDataset:priorDataset??(datasets.length===1?datasets[0]:undefined)
   const contract=pre?.spec.input.fields.map(field=>`${field.name} (${field.format}, 최대 ${field.maxBytes} B)`).join(", ")
-  const warning=!pre?"모델·실행 경로에 연결된 전처리기의 입력 계약을 확인할 수 없어요. 카탈로그에서 전처리기 연결을 확인하고 직접 선택하세요.":!candidates.includes(pre)?"선택한 전처리기가 이 모델·실행 경로에 연결되어 있지 않아요. 카탈로그 연결을 확인하세요.":selected&&!compatible(selected)?`데이터셋이 전처리기 입력 조건에 맞지 않아요: ${datasetGap(selected.spec,pre.spec)}`:!selected?datasets.length>1?`입력 조건 ${contract}에 맞는 데이터셋이 여러 개예요. 사용할 데이터셋을 직접 선택하세요.`:`입력 조건 ${contract}에 맞는 등록 데이터셋이 없어요. 필드 이름·형식이 같고 최대 크기가 입력 한도 이하인 데이터셋을 등록하세요. 추가 필드는 허용해요.`:""
+  const warning=!pre?"모델·실행 경로에 연결된 전처리기의 입력 계약을 확인할 수 없어요. 카탈로그에서 전처리기 연결을 확인하고 직접 선택하세요.":!candidates.includes(pre)?"선택한 전처리기가 이 모델·실행 경로에 연결되어 있지 않아요. 카탈로그 연결을 확인하세요.":selected&&!compatible(selected)?`데이터셋이 전처리기 입력 조건에 맞지 않아요: ${datasetGap(selected.spec,pre.spec)}`:!selected?datasets.length>1?`입력 조건 ${contract}에 맞는 데이터셋이 여러 개예요. 사용할 데이터셋을 직접 선택하세요.`:`입력 조건 ${contract}과 필드 집합이 같은 유일한 데이터셋을 확인하지 못했어요. 등록 데이터셋을 직접 선택하세요. 추가 필드는 명시 선택할 때 허용해요.`:""
   return {preprocessor:pre?.metadata.name??"",dataset:selected?.metadata.name??"",warning}
 }
 

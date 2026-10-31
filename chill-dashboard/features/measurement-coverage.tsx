@@ -136,7 +136,7 @@ export function MeasurementCoveragePage() {
       <CoverageCounts cells={cells}/>
       </section>
       <div className="coverage-workspace">
-      <details className="coverage-legend"><summary>상태 도움말</summary><span>품질: 기준 충족 / 기준 미충족 / 판정 불가</span><span>운영 사용: 서버의 동일 조합 판정</span><span>배치: 측정 / 목표</span></details>
+      <details className="coverage-legend"><summary>상태 도움말</summary>{cells.some(cell=>coverageQuality(cell).state!=="unknown")&&<span>품질: ✓ 기준 충족 / ! 기준 미충족</span>}<span>● 스케줄러 사용 중</span><span>측정 막대: 측정 배치 / 목표 배치</span></details>
         <div className="coverage-pivot" aria-label={`${model??""} 장치별 커버리지`}>
           {!classes.length&&<p className="p-4">조건 없음 · 필터 변경</p>}
           <div className="coverage-desktop-table"><table><caption className="sr-only">장치·전력모드별 실행 경로</caption><thead><tr><th scope="col">장치 · 전력모드</th>{[...new Set(cells.map(cell=>cell.executionPath))].sort().map(path=><th key={path} scope="col">{path.replace(/^firstfloor-/,"")}</th>)}</tr></thead><tbody>
@@ -146,7 +146,7 @@ export function MeasurementCoveragePage() {
             const expanded=expandedModes[cls.uid]??(selected?.deviceClass.uid===cls.uid&&emptyModes.includes(selected.powerMode))
             const device=<><span>{deviceLabel(cls.name)}</span><small>{inventory.data?.classes.find(item=>item.uid===cls.uid)?.nodes.map(node=>node.name).join(", ")||"노드 미확인"}</small></>
             function modeRow(mode:string,index:number){return <tr key={`${cls.uid}/${mode}`}><th scope="row">{index===0&&device}<span>{mode}</span></th>{paths.map(path=>{const cell=deviceCells.find(cell=>cell.powerMode===mode&&cell.executionPath===path);return <td key={path}>{cell?<CoverageCell cell={cell} inventory={inventory.data} selected={cell.id===selected?.id} select={select}/>:<span>—</span>}</td>})}</tr>}
-            return [...measuredModes.map(modeRow),...(emptyModes.length?[<tr key={`${cls.uid}/empty`}><th scope="row">{!measuredModes.length&&device}<button className="coverage-empty-toggle" aria-expanded={!!expanded} onClick={()=>setExpandedModes(current=>({...current,[cls.uid]:!expanded}))}>미측정 모드 {emptyModes.length} {expanded?"접기":"펼치기"}</button></th><td colSpan={paths.length}>—</td></tr>]:[]),...(expanded?emptyModes.map((mode,index)=>modeRow(mode,measuredModes.length+index+1)):[])]
+            return [...measuredModes.map(modeRow),...(emptyModes.length?[<tr key={`${cls.uid}/empty`}><th scope="row">{!measuredModes.length&&device}<button className="coverage-empty-toggle" aria-expanded={!!expanded} onClick={()=>setExpandedModes(current=>({...current,[cls.uid]:!expanded}))}>미측정 모드 {emptyModes.length} {expanded?"▾":"▸"}</button></th><td colSpan={paths.length}>—</td></tr>]:[]),...(expanded?emptyModes.map((mode,index)=>modeRow(mode,measuredModes.length+index+1)):[])]
           })}
           </tbody></table></div>
         </div>
@@ -160,10 +160,10 @@ export function MeasurementCoveragePage() {
   </Screen>
 }
 function CoverageCounts({cells}:{cells:MeasurementCoverageCell[]}) {
-  let measured=0,target=0
-  for(const cell of cells){const progress=coverageProgress(cell);measured+=progress?.measured.filter(batch=>progress.target.includes(batch)).length??0;target+=progress?.target.length??0}
+  let measured=0,target=0,measuredCells=0
+  for(const cell of cells){const progress=coverageProgress(cell);measured+=progress?.measured.filter(batch=>progress.target.includes(batch)).length??0;target+=progress?.target.length??0;if(progress?.measured.length||cell.variants.some(variant=>variant.resultRows.length))measuredCells++}
   const reasons=coverageQualityReasons(cells),qualities=cells.map(coverageQuality),met=qualities.filter(quality=>quality.state==="pass").length,unmet=qualities.filter(quality=>quality.state==="fail").length,unknown=qualities.filter(quality=>quality.state==="unknown").length
-  return <div className="coverage-summary"><table className="w-full text-left text-sm tabular-nums" aria-label="선택 범위 세 축 집계"><thead><tr><th>측정 배치 (건)</th><th>품질 기준 충족 진척</th><th>스케줄러 사용 (조합)</th></tr></thead><tbody><tr><td>{measured}/{target}</td><td><progress max={cells.length||1} value={met} aria-label={`충족 ${met} / 미충족 ${unmet} / 판정 불가 ${unknown}`}/><span className="coverage-quality-counts">충족 {met} / 미충족 {unmet} / 판정 불가 {unknown}</span></td><td>{cells.filter(cell=>measurementSchedulerUsed(cell.assessment)===true).length}</td></tr></tbody></table><details><summary>품질 미충족 사유·판정 불가</summary><table className="coverage-quality-reasons" aria-label="품질 미충족 사유·판정 불가"><thead><tr><th>사유</th><th>분포</th><th>조합 (개)</th></tr></thead><tbody>{reasons.map(reason=><tr key={reason.code}><th scope="row">{reason.label}</th><td><span className="coverage-reason-track"><span style={{width:`${reason.count/(cells.length||1)*100}%`}}/></span></td><td>{reason.count}</td></tr>)}</tbody></table></details></div>
+  return <div className="coverage-summary"><table className="w-full text-left text-sm tabular-nums" aria-label="선택 범위 집계"><thead><tr><th>측정 조합 / 전체 (개)</th><th>측정 배치 / 목표 (건)</th>{met+unmet>0&&<th>품질 충족 / 미충족 (개)</th>}<th>스케줄러 사용 (조합)</th></tr></thead><tbody><tr><td>{measuredCells}/{cells.length}</td><td>{measured}/{target}</td>{met+unmet>0&&<td>{met}/{unmet}</td>}<td>{cells.filter(cell=>measurementSchedulerUsed(cell.assessment)===true).length}</td></tr></tbody></table>{unknown>0&&<span className="text-xs text-muted-foreground" tabIndex={0} title={reasons.map(reason=>`${reason.label} ${reason.count}`).join("\n")}>품질 판정 근거 없음 {unknown}</span>}</div>
 }
 function UnsupportedReasons({cells}:{cells:MeasurementCoverageCell[]}) {
   const params=useSearchParams(),groups=new Map<string,{label:string;count:number}>()
@@ -182,10 +182,10 @@ function BatchBar({progress}:{progress:BatchProgress|null}) {
 function CoverageCell({cell,inventory,selected,select}:{cell:MeasurementCoverageCell;inventory?:InventoryView;selected:boolean;select:(cell:MeasurementCoverageCell,button:HTMLButtonElement)=>void}) {
   const progress=coverageProgress(cell)
   const label=coverageStates[coverageMeasurementStatus(cell,inventory)],quality=coverageQuality(cell)
-  return <button data-coverage-cell={cell.id} className={`coverage-cell ${cell.support.verdict!=="Compatible"?"coverage-cell-unconfirmed":""}`} aria-pressed={selected} aria-controls="coverage-selected-condition" aria-label={`${deviceLabel(cell.deviceClass.name)} ${cell.powerMode} ${cell.executionPath} ${label} ${quality.label} ${measurementUsage(cell.assessment)}`} onClick={event=>select(cell,event.currentTarget)}>
-    <strong>{measurementUsage(cell.assessment)}</strong>
-    <span className={`coverage-cell-quality quality-${quality.state}`}>{label} / {quality.label}{quality.reasons.length>0&&<span title={quality.reasons.map(reason=>reason.label).join(" / ")} aria-label={quality.reasons.map(reason=>reason.label).join(" / ")}> ⓘ</span>}</span>
+  return <button data-coverage-cell={cell.id} className={`coverage-cell ${cell.support.verdict!=="Compatible"?"coverage-cell-unconfirmed":""}`} aria-pressed={selected} aria-controls="coverage-selected-condition" aria-label={`${deviceLabel(cell.deviceClass.name)} ${cell.powerMode} ${cell.executionPath} ${label}${quality.state!=="unknown"?` ${quality.label}`:""} ${measurementUsage(cell.assessment)}`} onClick={event=>select(cell,event.currentTarget)}>
     <span className="coverage-mini-progress" aria-label="측정 배치 / 목표 배치"><progress max={progress?.target.length||1} value={progress?.measured.filter(batch=>progress.target.includes(batch)).length??0}/><span>{progress?`${progress.measured.filter(batch=>progress.target.includes(batch)).length}/${progress.target.length}`:"—/—"}</span></span>
+    {measurementSchedulerUsed(cell.assessment)===true&&<span className="coverage-usage-dot" title="스케줄러 사용 중" aria-label="스케줄러 사용 중">●</span>}
+    {quality.state!=="unknown"&&<span className={`coverage-cell-quality quality-${quality.state}`} title={[quality.label,...quality.reasons.map(reason=>reason.label)].join(" / ")} aria-label={quality.label}>{quality.state==="pass"?"✓":"!"}</span>}
   </button>
 }
 export function CoverageActions({data,namespace}:{data:MeasurementCoverageResponse;namespace:string}) {

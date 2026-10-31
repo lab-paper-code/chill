@@ -182,18 +182,17 @@ test("visible status totals use one denominator and include review and unknown s
 test("coverage UI exposes numeric progress and trust values without expanded JSON",async()=>{
   const source=await readFile(new URL("../features/measurement-coverage.tsx",import.meta.url),"utf8")
   assert.match(source,/progress\.measured\.filter\(batch=>progress\.target\.includes\(batch\)\)\.length/)
-  assert.match(source,/품질 미충족 사유/)
+  assert.match(source,/품질 판정 근거 없음/)
   assert.match(source,/activeTrialCount/)
   assert.match(source,/idleTrialCount/)
   assert.match(source,/confidence\.lower/)
   assert.match(source,/powerSource/)
   assert.match(source,/<details><summary>원문<\/summary>/)
-  assert.match(source,/품질 기준 충족 진척/)
+  assert.match(source,/측정 조합 \/ 전체/)
   assert.match(source,/sm:w-\[800px\]/)
   assert.doesNotMatch(source,/기준 충족 \/ 전체 \(조합\)/)
   const experiment=await readFile(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8")
   assert.doesNotMatch(experiment,/참고 · 제한 비교/)
-  assert.match(experiment,/aria-label="제한 비교"/)
   assert.match(experiment,/coverageCounts\.limited/)
   assert.doesNotMatch(experiment,/const limited=experimentHeatmap/)
   const projections=await readFile(new URL("../features/measurement-projections.tsx",import.meta.url),"utf8")
@@ -249,13 +248,13 @@ test("request prefill and preflight keep selected equipment visible and operatio
   assert.doesNotMatch(preflight,/answer\.resolves\?"측정 요청 가능"/)
 })
 
-function renderCoverage(query="") {
+function renderCoverage(query="",extraCells:MeasurementCoverageCell[]=[]) {
   const source=readFileSync(new URL("../features/measurement-coverage.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
   const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
   const unsupported={...cell,id:"unsupported",executionPath:"other",support:{...cell.support,verdict:"Incompatible",reasons:[{code:"RuntimeUnsupported",message:"미지원"}]}}
-  const data={cells:[cell,{...cell,id:"empty",powerMode:"15W",batchProgress:{...cell.batchProgress!,measured:[]}},unsupported],scope:{targetBatches:[1,2,4,8]},nextActions:[],sources:[]}
+  const data={cells:[cell,{...cell,id:"empty",powerMode:"15W",batchProgress:{...cell.batchProgress!,measured:[]}},unsupported,...extraCells],scope:{targetBatches:[1,2,4,8]},nextActions:[],sources:[]}
   const modules:Record<string,unknown>={
     "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
     "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams(query)},
@@ -281,10 +280,24 @@ test("coverage page folds empty modes, uses one mini progress, and opens unsuppo
   assert.equal((html.match(/data-coverage-cell=/g)??[]).length,1)
   assert.match(html,/coverage-mini-progress/)
   assert.doesNotMatch(html,/coverage-batch-bar/)
-  assert.match(html,/충족 0 \/ 미충족 0 \/ 판정 불가 2/)
+  assert.match(html,/품질 판정 근거 없음 2/)
+  assert.equal((html.match(/품질 판정 근거 없음/g)??[]).length,1)
+  assert.doesNotMatch(html,/coverage-cell-quality|품질:|판정 불가/)
+  assert.match(html,/<th>측정 조합 \/ 전체 \(개\)<\/th>/)
+  assert.match(html,/<th>측정 배치 \/ 목표 \(건\)<\/th>/)
+  assert.match(html,/<td>1\/2<\/td><td>2\/8<\/td>/)
   assert.match(html,/supportReason=RuntimeUnsupported/)
   const unsupported=renderCoverage("status=unsupported&supportReason=RuntimeUnsupported")
   assert.equal((unsupported.match(/data-coverage-cell=/g)??[]).length,1)
   assert.match(unsupported,/data-coverage-cell="unsupported"/)
   assert.match(unsupported,/지원 안 함/)
+})
+
+test("coverage only shows quality icons for judged cells and a scheduler dot instead of repeated labels",()=>{
+  const judged={...cell,id:"judged",executionPath:"gpu",assessment:{...cell.assessment,scope:{...cell.assessment.scope,schedulerUsed:true},checklist:{...cell.assessment.checklist,criteriaMet:true,checks:[{code:"ActiveTrials",result:"pass" as const,message:"반복",sourceIds:[]}]}}}
+  const html=renderCoverage("",[judged])
+  assert.equal((html.match(/class="coverage-cell-quality /g)??[]).length,1)
+  assert.match(html,/coverage-usage-dot/)
+  assert.doesNotMatch(html,/<strong>스케줄러 사용 중<\/strong>/)
+  assert.match(html,/품질: ✓ 기준 충족/)
 })
