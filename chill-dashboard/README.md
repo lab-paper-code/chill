@@ -248,7 +248,7 @@ Screenshots from this rehearsal are in `/tmp/chill-dashboard-s2/`, including
 `cluster-live-event.png`, `resync-gap.png`, `narrow-reduced-motion.png`,
 `narrow-live-board.png`, `evidence-refresh-retained.png` and `logout-cleared.png`.
 
-History, load and custom observation dates use the device's local time zone.
+History dates use KST (24-hour); load and custom observation dates use the device's local time zone.
 Only edited fields are converted to UTC; untouched submitted RFC3339Nano strings
 remain exact, including seconds and fractional precision. Empty, partial or invalid
 date edits stay unsubmitted and show the existing range validation on apply without
