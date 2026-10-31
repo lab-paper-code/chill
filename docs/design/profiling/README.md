@@ -23,6 +23,7 @@ Retired Plan 5 experiments remain conclusions, not current APIs: 12 retained idl
 
 | Contract | Ownership / status |
 |---|---|
+| [Experiment execution](experiment-execution.md) | E5 immutable definition, profiler orchestration, harness Job and publication — design |
 | [Measurement Worker](components/measurement-worker.md) | firstfloor Job-local execution, synchronization, raw-write/receipt — active |
 | [Evidence Store](components/evidence-store.md) | Immutable object storage, independent verification, operator lifecycle — active |
 | [MetricObserver](components/metric-observer.md) | Bounded typed power/thermal observation, no derivation policy — active |
