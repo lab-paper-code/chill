@@ -1276,79 +1276,52 @@ func capacityFixedWeights(rate float64, items []capacityItem) ([]int32, []float6
 	return weights, y, ok
 }
 
-// capacityWeights rounds κ-proportional shares to integers summing to
-// schedulerRouteUnits by largest remainder, independent of request or backlog
-// demand. Only a zero κ sum uses equal shares. y follows the final integer
-// weights for request energy. A weight whose share of rate exceeds its κ moves
-// one unit at a time to the item with the most room; ok is false when none has room.
+// capacityWeights minimizes the largest integer weight/κ ratio, independently
+// of request or backlog demand. It starts at floor(schedulerRouteUnits*κ/Σκ)
+// and gives each remaining unit to the smallest next weight/κ (index breaks
+// ties). Only a zero κ sum uses equal shares. y follows the integer weights;
+// ok is false when any share of rate exceeds its κ.
 func capacityWeights(rate float64, items []capacityItem) ([]int32, []float64, bool) {
 	n := len(items)
 	if n == 0 {
 		return nil, nil, true
 	}
-	y, shares := make([]float64, n), make([]float64, n)
 	total := 0.0
 	for _, item := range items {
 		total += item.kappa
 	}
-	for k, item := range items {
-		if total == 0 {
-			shares[k] = 1 / float64(n)
-		} else {
-			shares[k] = item.kappa / total
-		}
-	}
-	weights := make([]int32, n)
-	order := make([]int, n)
+	weights, y := make([]int32, n), make([]float64, n)
 	sum := int32(0)
-	for k, share := range shares {
+	for k, item := range items {
+		share := 1 / float64(n)
+		if total > 0 {
+			share = item.kappa / total
+		}
 		weights[k] = int32(math.Floor(share * schedulerRouteUnits))
 		sum += weights[k]
-		order[k] = k
 	}
-	slices.SortStableFunc(order, func(a, b int) int {
-		return cmp.Compare(shares[b]*schedulerRouteUnits-float64(weights[b]), shares[a]*schedulerRouteUnits-float64(weights[a]))
-	})
-	for k := 0; sum < schedulerRouteUnits; k = (k + 1) % n {
-		weights[order[k]]++
-		sum++
+	for ; sum < schedulerRouteUnits; sum++ {
+		to, next := -1, 0.0
+		for k, item := range items {
+			kappa := item.kappa
+			if total == 0 {
+				kappa = 1
+			}
+			if kappa <= 0 {
+				continue
+			}
+			if ratio := float64(weights[k]+1) / kappa; to < 0 || ratio < next {
+				to, next = k, ratio
+			}
+		}
+		weights[to]++
 	}
+	ok := true
 	for k, weight := range weights {
 		y[k] = rate * float64(weight) / schedulerRouteUnits
+		ok = ok && y[k] <= items[k].kappa*(1+1e-12)
 	}
-	if rate == 0 || total < rate {
-		return weights, y, true // the κ sum already decides the final judgment
-	}
-	// room is κ minus the load of one more unit; float slack keeps exact fills in.
-	room := func(k int) float64 {
-		return items[k].kappa*(1+1e-12) - rate*float64(weights[k]+1)/schedulerRouteUnits
-	}
-	for range schedulerRouteUnits {
-		over := -1
-		for k, item := range items {
-			if rate*float64(weights[k])/schedulerRouteUnits > item.kappa*(1+1e-12) {
-				over = k
-				break
-			}
-		}
-		if over < 0 {
-			return weights, y, true
-		}
-		to := -1
-		for k := range items {
-			if k != over && room(k) >= 0 && (to < 0 || room(k) > room(to)) {
-				to = k
-			}
-		}
-		if to < 0 {
-			return weights, y, false
-		}
-		weights[over]--
-		weights[to]++
-		y[over] = rate * float64(weights[over]) / schedulerRouteUnits
-		y[to] = rate * float64(weights[to]) / schedulerRouteUnits
-	}
-	return weights, y, false
+	return weights, y, ok
 }
 
 // capacityResult is one plan set evaluated exactly: per-Workload judgments,

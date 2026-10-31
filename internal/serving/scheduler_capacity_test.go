@@ -1164,7 +1164,7 @@ func TestCapacityRouteWeightsStayWithinKappa(t *testing.T) {
 		{100, []float64{100, 50}, []int32{667, 333}, true},
 		// Rounding gives 334 to the first, 33.4 req/s over 33.35, and no other has room.
 		{100, []float64{33.35, 33.35, 33.3}, nil, false},
-		// Rounding gives the first 1 unit (0.1 req/s > κ); move it to the second.
+		// The tiny κ's next weight/κ is larger, so it receives no integer unit.
 		{100, []float64{0.06, 100}, []int32{0, 1000}, true},
 		{10, []float64{20}, []int32{1000}, true},
 		{0, []float64{0, 10, 0}, []int32{0, 1000, 0}, true},
@@ -1188,6 +1188,16 @@ func TestCapacityRouteWeightsStayWithinKappa(t *testing.T) {
 	}
 }
 
+func TestCapacityIntegerWeightsIgnoreRate(t *testing.T) {
+	items := []capacityItem{{kappa: .06}, {kappa: 100}}
+	for _, rate := range []float64{50, 100} {
+		weights, _, ok := capacityWeights(rate, items)
+		if !ok || !slices.Equal(weights, []int32{0, 1000}) {
+			t.Fatalf("λ %g changed minimax route: %v ok=%t", rate, weights, ok)
+		}
+	}
+}
+
 // full-E5-3m-12: all destinations share the same κ-normalized utilization.
 func TestCapacityRouteWeights3m12(t *testing.T) {
 	items := []capacityItem{
@@ -1198,7 +1208,7 @@ func TestCapacityRouteWeights3m12(t *testing.T) {
 	}
 	for _, rate := range []float64{73.8, 0, 100} {
 		weights, y, ok := capacityWeights(rate, items)
-		if !ok || !slices.Equal(weights, []int32{114, 296, 178, 412}) {
+		if ok != (rate < 100) || !slices.Equal(weights, []int32{114, 296, 178, 412}) {
 			t.Fatalf("3m-12 at λ %g: κ-proportional weights %v ok=%t", rate, weights, ok)
 		}
 		for k, weight := range weights {
@@ -1256,7 +1266,7 @@ func TestCapacityQueuedBacklogFailsKeep(t *testing.T) {
 // m4 r2: λ 12.8 lagged a 40 req/s load with 160 queued and no instance left
 // (κ_ret 0). κ-proportional weights use every new instance, independently of
 // backlog; queued requests affect the SLO judgment, not request energy.
-func TestCapacityOverloadWeightsDrainTheBacklog(t *testing.T) {
+func TestCapacityBacklogDoesNotChangeWeightsOrRequestEnergy(t *testing.T) {
 	kappa := []float64{42.01676682274319, 48.2933028258133, 114.5538148895834, 144.47154833104395}
 	p := &capacityPlanner{ctx: context.Background(), period: 147, settings: capacityTestSettings}
 	p.ws = []capacityWorkload{{d: &Definition{UID: "w"}, rate: 12.8, queued: 160, slack: 1 - 0.139}}
@@ -1728,7 +1738,7 @@ func TestCapacityProportionalWeightsIgnoreDemandAndBacklog(t *testing.T) {
 		if !res.feasible {
 			t.Fatalf("λ %g q %d infeasible: %+v", tick.rate, tick.queued, res.judgments[0])
 		}
-		if want := map[string]int32{"q1": 195, "lut": 199, "g3": 548, "opi": 58}; !maps.Equal(res.weights[0], want) {
+		if want := map[string]int32{"q1": 195, "lut": 198, "g3": 549, "opi": 58}; !maps.Equal(res.weights[0], want) {
 			t.Fatalf("λ %g q %d: weights %v, want %v", tick.rate, tick.queued, res.weights[0], want)
 		}
 		if !maps.Equal(res.weights[0], p.keep.Routing["w"]) {
