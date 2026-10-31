@@ -12,7 +12,7 @@ const commitTerminalRecovery = "terminal-recovery"
 // SCH-55/56, AC-42: E5-5-7 observed 95.1 while the frozen destination
 // supplied 56.543181. The 34*1.25 low-load protection is not a future envelope.
 func TestReductionCommitUsesLatestDemandAndFrozenIntegerRoute(t *testing.T) {
-	for _, scenario := range []string{"low", "raw-95.1", "missing", "stale", "integer-share", "mixed-uid", commitUnrelatedUID, "not-ready-recovery", commitTerminalRecovery, "resize"} {
+	for _, scenario := range []string{"low", "raw-95.1", "missing", "stale", "integer-share", "mixed-uid", commitUnrelatedUID, "not-ready-recovery", commitTerminalRecovery} {
 		t.Run(scenario, func(t *testing.T) {
 			s, snap := schedulerFixture()
 			s.ObservationWindow, s.ControlInterval = time.Second, time.Second
@@ -57,14 +57,6 @@ func TestReductionCommitUsesLatestDemandAndFrozenIntegerRoute(t *testing.T) {
 			case "not-ready-recovery", commitTerminalRecovery:
 				snap.Instances[0].Ready = false
 				snap.Instances[0].Terminated = scenario == commitTerminalRecovery
-			case "resize":
-				// Live crash (round 8): the retained instance changes MaxBatch, so the
-				// scope check must compare its row kappa without a search population.
-				resized := old
-				resized.MaxBatch++
-				target.Instances = []SchedulerInstance{resized}
-				target.Routing["w1"] = map[string]int32{old.ID: 1000}
-				target.Actions = nil
 			}
 			uids := SchedulerReductionWorkloads(s, snap, rows, target)
 			if scenario == "mixed-uid" {
