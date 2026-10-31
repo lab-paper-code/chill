@@ -231,3 +231,11 @@
 - S2/S2b 악화 원인 조사 착수(Regress12). 판정이 나오기 전에는 S3/S3b(`702604c7`, `645f7226`, 합계 순삭제 66줄) 배포를 보류.
 - 12:08Z control-273: dashboard만 `b93a14a5`(1b07daa4 포함; 조언 세션 리뷰 2종·tsc/eslint/test 162/162/build PASS 확인)로 배포. server는 d1f4b460 그대로, 게이트웨이 재시작 없음. 12:08Z~12:38Z 클러스터 무변경(조언 세션 재설문).
 - STOP 7 서버 원인: 성공한 reset은 응답 전에 이미 예약을 원자적으로 반환함. State()가 마지막 tick의 Snapshot.Reservations 캐시를 live Actions와 함께 내보내서 생긴 불일치(`local://reset-release.md`). 수정 `b93a14a5`(State 경계에서 재투영 1줄, fail-before 확인). round-10의 STOP 7은 별개(plan owner 600s 정체, reset 미시도).
+
+## 2026-10-31 — round-12 악화 원인 판정: S2/S2b 아님, 1회 측정의 계획 분기 잡음
+
+- 실패 증가분의 97.7%가 E5-3m +180~360초에 몰림. round-11과 12는 +49초에 이미 다른 계획을 골랐음(11은 Keep, 12는 jetsonx CPU 조기 확장). 그 결과 180초 부하 상승 때 12는 CUDA prepare 3개 교체라는 긴 critical path(nano 131초)를 선택함. 첫 분기는 S2/S2b가 영향을 주는 구조(생략 bridge, 미완료 dependency)가 생기기 전임(`local://regress-12.md`).
+- 오프라인 실행부 A/B: 같은 frozen 계획과 사건 순서를 288153fd와 d1f4b460에 넣었을 때 launch·stop 적격·예약 해제 판단이 동일함(`local://ab-12.md`).
+- 입력(요청 38,299개 해시, 송신 지연)은 세 회차 동일. 따라서 **동일 입력에서도 tick 위상 차이로 계획이 분기하며, 행당 1회 측정의 F 변동이 ±40% 이상**임. 10→11(−24%)도 같은 이유로 리뷰 복구 효과라고 확정할 수 없음 [추정].
+- S3+S3b+State 수정 HEAD 61987770: 리뷰 2종 PASS(각각), 리플레이 PASS(기준 d1f4b460), clean gate PASS. 12:38Z 이후 서버 배포.
+- 알려진 한계(S3b 리뷰): route-only 목적지가 계속 NotReady이면 부모 예약이 유한 시간 안에 반환되지 않음. S3 이전에도 같은 동작.
