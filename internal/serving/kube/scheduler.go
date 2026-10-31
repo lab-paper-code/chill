@@ -1076,6 +1076,7 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 				effectStarted := err == nil
 				if err == nil {
 					result, err = c.operations.Execute(runCtx, operation)
+					result.StartedAt = initial.StartedAt
 				} else {
 					result.Status = nativeOperationFailed
 					result.Error = "persist action start before physical effect: " + err.Error()

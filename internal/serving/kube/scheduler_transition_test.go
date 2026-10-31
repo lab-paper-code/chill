@@ -1044,6 +1044,9 @@ func TestTickRoutesNewlyPreparedInstanceWhilePowerStillRuns(t *testing.T) {
 	if len(recorded) != 2 || recorded[1].Status != nativeOperationComplete || recorded[1].Actual.Routing[uid][b.ID] != 500 {
 		t.Fatalf("real route operation was not applied/recorded: %+v", recorded)
 	}
+	if recorded[0].StartedAt.IsZero() || !recorded[0].StartedAt.Equal(recorded[1].StartedAt) {
+		t.Fatalf("live action callbacks changed StartedAt: start=%s terminal=%s", recorded[0].StartedAt, recorded[1].StartedAt)
+	}
 	decision, err = controller.Tick(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
