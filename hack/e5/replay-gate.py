@@ -201,17 +201,19 @@ def summarize(compare, guard):
 
 
 def compare_bad_ticks(summary, baseline):
-    def identities(run):
-        return {(tick['at'], tick['targetID']) for tick in run['badTickDetails']}
-    current, previous = identities(summary), identities(baseline)
-    new = sorted(current - previous, key=lambda tick: (tick[0], tick[1] or ''))
-    return dict(newBadTicks=[dict(at=at, targetID=target) for at, target in new],
-                fixedTicks=len(previous - current), verdict='FAIL' if new else 'PASS')
+    def reasons(run):
+        return {(tick['at'], tick['targetID']): set(tick['reasons']) for tick in run['badTickDetails']}
+    current, previous = reasons(summary), reasons(baseline)
+    new = [dict(at=at, targetID=target, reasons=sorted(added))
+           for (at, target), causes in sorted(current.items(), key=lambda item: (item[0][0], item[0][1] or ''))
+           if (added := causes - previous.get((at, target), set()))]
+    return dict(newBadTicks=new,
+                fixedTicks=len(previous.keys() - current.keys()), verdict='FAIL' if new else 'PASS')
 
 
 def markdown(report):
     text = ['# Offline decision + guard replay gate', '',
-            'Bad tick limit: %d (reference %s; candidates must have zero new bad ticks by recorded at + targetID per stage); verdict: **%s**.' % (report['maxBadTicks'], report.get('reference'), report['verdict']), '',
+            'Bad tick limit: %d (reference %s; candidates must have zero added bad reasons by recorded at + targetID per stage); verdict: **%s**.' % (report['maxBadTicks'], report.get('reference'), report['verdict']), '',
             '| source | stage | ticks | disagreements | population mismatch | bad ticks | new bad ticks | fixed ticks | guard t0 | guard next | supply-increase rejected | seconds | verdict |',
             '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|']
     for r in report['runs']:
@@ -247,12 +249,18 @@ def self_check():
     assert summarize([c], [g])['badTicks'] == 0
     c['lostRecovery'] = True
     assert summarize([c], [g])['badTicks'] == 1
-    baseline = dict(badTickDetails=[dict(at='a', targetID='recorded')])
-    candidate = dict(badTickDetails=[dict(at='b', targetID='recorded')])
+    baseline = dict(badTickDetails=[dict(at='a', targetID='recorded', reasons=['lostRecovery'])])
+    candidate = dict(badTickDetails=[dict(at='b', targetID='recorded', reasons=['lostRecovery'])])
     delta = compare_bad_ticks(candidate, baseline)
-    assert delta == dict(newBadTicks=[dict(at='b', targetID='recorded')], fixedTicks=1, verdict='FAIL')
+    assert delta == dict(newBadTicks=[dict(at='b', targetID='recorded', reasons=['lostRecovery'])], fixedTicks=1, verdict='FAIL')
     candidate['badTickDetails'][0]['at'] = 'a'
     assert compare_bad_ticks(candidate, baseline)['verdict'] == 'PASS'
+    candidate['badTickDetails'][0]['reasons'].append('guard rejection')
+    delta = compare_bad_ticks(candidate, baseline)
+    assert delta == dict(newBadTicks=[dict(at='a', targetID='recorded', reasons=['guard rejection'])], fixedTicks=0, verdict='FAIL')
+    candidate['badTickDetails'][0]['reasons'] = []
+    assert compare_bad_ticks(candidate, baseline)['verdict'] == 'PASS'
+    candidate['badTickDetails'][0]['reasons'] = ['lostRecovery']
     candidate['badTickDetails'][0]['targetID'] = 'other'
     assert compare_bad_ticks(candidate, baseline)['verdict'] == 'FAIL'
     assert compare_bad_ticks(dict(badTickDetails=[]), baseline) == dict(newBadTicks=[], fixedTicks=1, verdict='PASS')
@@ -270,7 +278,7 @@ def main():
     p.add_argument('--cache', type=Path, default=Path.home() / '.cache/chill-replay-gate')
     p.add_argument('--next', type=int, default=3)
     p.add_argument('--max-bad-ticks', type=int, default=0)
-    p.add_argument('--reference', help='source whose per-stage bad ticks are the baseline; candidates must have zero new bad ticks by recorded at + targetID (default: first --source)')
+    p.add_argument('--reference', help='source whose per-stage bad ticks are the baseline; candidates must have zero added bad reasons by recorded at + targetID (default: first --source)')
     p.add_argument('--self-check', action='store_true')
     a = p.parse_args()
     if a.self_check:
