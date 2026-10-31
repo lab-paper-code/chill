@@ -191,7 +191,7 @@ test("variant prefill chooses missing batches while explicit URL batches, includ
   const context={models:[],workloads:[],classes:[],plans:[plan],preprocessors:[],datasets:[],profiles:[]}
   const selected={requestIds:["ns/source/uid"],batchProgress:{target:[1,2,4,8],measured:[1,2],missing:[4,8]}}
   const props={context,selected}
-  const checked=(html:string)=>[...html.matchAll(/<input type="checkbox" checked=""\/>(\d+)건/g)].map(match=>Number(match[1]))
+  const checked=(html:string)=>[...html.matchAll(/<input\b[^>]*>/g)].map(match=>match[0]).filter(input=>input.includes('checked=""')&&input.includes('name="batchSizes"')).map(input=>Number(input.match(/\bvalue="(\d+)"/)?.[1]))
   for(const draft of [props,{...props,context:{...context,plans:[]},prefill:{active:true,values:condition,errors:[],returnTo:"/measurements",node:condition.node}}]) {
     assert.deepEqual(checked(renderRequest(draft)),[4,8])
     assert.deepEqual(checked(renderRequest(draft,"batches=2")),[2])
