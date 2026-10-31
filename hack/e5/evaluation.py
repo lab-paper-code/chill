@@ -382,7 +382,14 @@ class Harness:
             events.append({'kind':plan['action'],'atUTC':record.get('requestedAt',record['scheduledAt']),'exitCode':0 if record.get('outcome')=='Complete' else 1,'podUID':record.get('podRef',{}).get('uid'),'nodeUID':record.get('nodeRef',{}).get('uid'),'commandRef':str(path),'responseRef':str(path)})
         save(folder/'failure-events.json',{'stage':self.spec['row'],'selectionPolicy':'evaluation-controller-v1','plans':self.spec['failureInjection'],'records':records,'events':events})
     def cleanup_jobs(self): self.controller().cleanup_jobs()
-    def finish(self): self.controller().finish()
+    def finish(self):
+        if not (self.inputs/'snapshot.json').exists() and not self.spec.get('inputSnapshotRef'):
+            initial_path=self.run/'initial.json'
+            if not initial_path.exists() or api(self.config,'/api/v1/scheduler/settings')==load(initial_path)['settings']:
+                self.reason='NoControlEffects'
+                return
+            self.open_snapshot()
+        self.controller().finish()
     def publish(self):
         tables=module('evaluation_tables',HERE/'tables.py');stages=[];results={};artifacts=[];procedures={};actual_specs={};stage_outcomes=[]
         not_started={'status':'Failed','reason':'NotStarted'}
@@ -474,13 +481,14 @@ class Harness:
             if result.returncode: raise RuntimeError('PublicationFailed: '+result.stderr.strip())
         self.outputs={'summary':{'store':self.store.name,'key':prefix+'summary.json','size':summary_path.stat().st_size}}
     def execute(self,step):
-        self.step=step;self.outputs={};self.measurement=None;started=now();status='Complete';reason='ProcedureComplete';artifacts=[]
+        self.step=step;self.outputs={};self.measurement=None;self.reason='ProcedureComplete';started=now();status='Complete';reason='ProcedureComplete';artifacts=[]
         before={path:(path.stat().st_mtime_ns,path.stat().st_size) for path in self.root.rglob('*') if path.is_file()}
         try:
             save(self.root/'execution-spec.json',self.spec)
             save(self.root/'execution.json',self.execution)
-            if step!='prepare': self.open_snapshot()
+            if step!='prepare' and not (step=='finish' and not (self.inputs/'snapshot.json').exists() and not self.spec.get('inputSnapshotRef')): self.open_snapshot()
             getattr(self,step.replace('-','_'))()
+            reason=self.reason
         except Exception as error:
             status='Failed';reason=str(error).split(':',1)[0] if ':' in str(error) else 'ProcedureFailed'
             if isinstance(error,(FileNotFoundError,KeyError)): reason='MissingInput'

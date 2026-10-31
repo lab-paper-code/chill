@@ -232,6 +232,20 @@ class AdapterTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError,'IdentityMismatch:.*observed='):
                         harness.check_target(target)
                 self.assertEqual(request.call_args.args,('test','get','pods','-l','app=server'))
+    def test_finish_without_snapshot_records_no_control_effects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);specdir=root/'spec';specdir.mkdir()
+            for name,value in [('spec',{}),('execution',{'runUID':'run','namespace':'test'}),('config',{})]: evaluation.save(specdir/(name+'.json'),value)
+            store=SimpleNamespace(name='store',put=lambda key,path:{'store':'store','key':key,'size':path.stat().st_size})
+            harness=evaluation.Harness(root/'campaign/run',specdir,store)
+            for initial in (None,{'settings':{'controls':{}},'state':{},'at':'start'}):
+                if initial: evaluation.save(harness.run/'initial.json',initial)
+                with patch.object(evaluation,'api',return_value={'controls':{}}) as request,patch.object(harness,'open_snapshot',side_effect=AssertionError('snapshot unavailable')):
+                    self.assertEqual(harness.execute('finish'),0)
+                record=evaluation.load(harness.run/'results/run/finish.json')
+                self.assertEqual(record['execution'],{'status':'Complete','reason':'NoControlEffects'})
+                self.assertEqual(record['cleanup'],record['execution'])
+                self.assertEqual(request.call_count,1 if initial else 0)
 
 
 def offline(binding,stage,environment):
