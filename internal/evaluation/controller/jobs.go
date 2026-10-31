@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -277,7 +278,7 @@ func (r *Runtime) advance(ctx context.Context, run *api.EvaluationRun, stage *ap
 }
 
 func validateResult(result stepResult, runUID, stageUID types.UID, stageID, step string) error {
-	if result.SchemaVersion != "evaluation-step.v1alpha1" || result.RunUID != runUID || result.StageUID != stageUID || result.StageID != stageID || result.Step != step || result.StartedAt.IsZero() || result.FinishedAt.IsZero() || (result.Execution.Status != complete && result.Execution.Status != "Failed") {
+	if result.SchemaVersion != "evaluation-step.v1alpha1" || result.RunUID != runUID || result.StageUID != stageUID || result.StageID != stageID || result.Step != step || result.StartedAt.IsZero() || result.FinishedAt.IsZero() || (result.Execution.Status != complete && result.Execution.Status != failed) {
 		return fmt.Errorf("%s: invalid result identity/schema", api.EvaluationReasonEvidenceUnreadable)
 	}
 	return nil
@@ -327,5 +328,61 @@ func (r *Runtime) parentJobContext(ctx context.Context, run *api.EvaluationRun, 
 	if run.Status.InputSnapshotRef != nil {
 		execution["inputSnapshotRef"] = run.Status.InputSnapshotRef
 	}
+	children, err := r.jobChildRefs(ctx, run)
+	if err != nil {
+		return "", err
+	}
+	execution["childRefs"] = children
 	return name + "-" + step + "-spec", nil
+}
+
+type childProcedureOutcome struct {
+	Status string `json:"status"`
+	Reason string `json:"reason"`
+}
+
+type jobChildReference struct {
+	api.EvaluationChildReference
+	Execution childProcedureOutcome `json:"execution"`
+	Cleanup   childProcedureOutcome `json:"cleanup"`
+	Uncertain bool                  `json:"uncertain"`
+}
+
+// Only recorded created children contribute cleanup; planned stages are not
+// silently promoted to executions. Reads retain the exact recorded UID.
+func (r *Runtime) jobChildRefs(ctx context.Context, run *api.EvaluationRun) ([]jobChildReference, error) {
+	children := make([]jobChildReference, 0, len(run.Status.ChildRefs))
+	for _, reference := range run.Status.ChildRefs {
+		child := &api.EvaluationStage{}
+		err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: run.Namespace, Name: reference.Name}, child)
+		execution := jobChildReference{EvaluationChildReference: reference}
+		if apierrors.IsNotFound(err) || err == nil && child.UID != reference.UID {
+			execution.Execution = childProcedureOutcome{Status: failed, Reason: api.EvaluationReasonExecutionLost}
+			execution.Cleanup = execution.Execution
+			execution.Uncertain = true
+		} else if err != nil {
+			return nil, err
+		} else {
+			execution.Execution = childConditionOutcome(child, api.EvaluationConditionExecutionComplete)
+			execution.Cleanup = childConditionOutcome(child, api.EvaluationConditionStageCleanupComplete)
+			execution.Uncertain = uncertainStage(child)
+		}
+		children = append(children, execution)
+	}
+	return children, nil
+}
+
+func childConditionOutcome(stage *api.EvaluationStage, kind string) childProcedureOutcome {
+	condition := meta.FindStatusCondition(stage.Status.Conditions, kind)
+	if condition == nil {
+		return childProcedureOutcome{Status: string(metav1.ConditionUnknown), Reason: api.EvaluationReasonNotStarted}
+	}
+	outcome := childProcedureOutcome{Status: string(metav1.ConditionUnknown), Reason: condition.Reason}
+	switch condition.Status {
+	case metav1.ConditionTrue:
+		outcome.Status = complete
+	case metav1.ConditionFalse:
+		outcome.Status = failed
+	}
+	return outcome
 }

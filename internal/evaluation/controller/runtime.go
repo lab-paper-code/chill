@@ -32,6 +32,7 @@ const configName = "chill-evaluation-config"
 const maximumResultBytes int64 = 4 << 20
 const (
 	complete           = "Complete"
+	failed             = "Failed"
 	injectionInvalid   = "INVALID"
 	injectionUnknown   = "Unknown"
 	injectionRequested = "Requested"

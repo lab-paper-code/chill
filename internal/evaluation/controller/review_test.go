@@ -341,7 +341,7 @@ func TestParentJobsReceivePrepareOutcome(t *testing.T) {
 		snapshot     bool
 	}{
 		{name: "prepare-not-completed"},
-		{name: "prepare-failed", status: "Failed"},
+		{name: "prepare-failed", status: failed},
 		{name: "prepare-complete-snapshot-lost", status: complete},
 		{name: "prepare-complete", status: complete, snapshot: true},
 	} {
@@ -402,5 +402,121 @@ func assertParentExecutionContext(t *testing.T, body string, completed bool, ref
 	}
 	if reference != nil && *reference != *execution.InputSnapshotRef {
 		t.Fatalf("snapshot identity differs: %s", body)
+	}
+}
+
+func TestParentJobsReceiveOnlyCreatedChildOutcomes(t *testing.T) {
+	for _, scenario := range []string{"complete", "cleanup-failed", "remote-effect", "execution-lost", "injection-unknown", "missing", "replacement", "empty", "read-error"} {
+		t.Run(scenario, func(t *testing.T) {
+			ctx := context.Background()
+			parent := fixtureRun("children")
+			startRun(parent)
+			uncreated := parent.Spec.Stages[0]
+			uncreated.ID = "not-created"
+			parent.Spec.Stages = append(parent.Spec.Stages, uncreated)
+			r, _ := fixtureRuntime(t, parent)
+			child := fixtureStage(t, &r, parent)
+			executionStatus, executionReason, cleanupStatus, cleanupReason, uncertain := complete, complete, complete, complete, false
+			if scenario == "cleanup-failed" {
+				cleanupStatus, cleanupReason = failed, api.EvaluationReasonResidualState
+			}
+			if scenario == "remote-effect" {
+				executionStatus, executionReason, uncertain = failed, api.EvaluationReasonRemoteEffectUnknown, true
+			}
+			if scenario == "execution-lost" {
+				executionStatus, executionReason, uncertain = failed, api.EvaluationReasonExecutionLost, true
+			}
+			before := child.DeepCopy()
+			execCondition, cleanupCondition := metav1.ConditionTrue, metav1.ConditionTrue
+			if executionStatus != complete {
+				execCondition = metav1.ConditionFalse
+			}
+			if cleanupStatus != complete {
+				cleanupCondition = metav1.ConditionFalse
+			}
+			condition(&child.Status.Conditions, child.Generation, api.EvaluationConditionExecutionComplete, execCondition, executionReason, "")
+			condition(&child.Status.Conditions, child.Generation, api.EvaluationConditionStageCleanupComplete, cleanupCondition, cleanupReason, "")
+			if scenario == "injection-unknown" {
+				child.Status.InjectionRecords = []api.FaultInjectionRecord{{ID: "fault", Outcome: injectionUnknown, Reason: api.EvaluationReasonRemoteEffectUnknown}}
+				uncertain = true
+			}
+			if err := r.patchStatus(ctx, child, before); err != nil {
+				t.Fatal(err)
+			}
+			parent.Status.ChildRefs = []api.EvaluationChildReference{{StageID: child.Spec.StageID, EvaluationObjectReference: *ref(child)}}
+			if scenario == "empty" {
+				parent.Status.ChildRefs = nil
+			}
+			if scenario == "missing" || scenario == "replacement" {
+				if err := r.Client.Delete(ctx, child); err != nil {
+					t.Fatal(err)
+				}
+				if scenario == "replacement" {
+					child.UID = "replacement-uid"
+					child.ResourceVersion = ""
+					if err := r.Client.Create(ctx, child); err != nil {
+						t.Fatal(err)
+					}
+				}
+				executionStatus, executionReason, cleanupStatus, cleanupReason, uncertain = failed, api.EvaluationReasonExecutionLost, failed, api.EvaluationReasonExecutionLost, true
+			}
+			if scenario == "read-error" {
+				r.APIReader = interceptor.NewClient(r.Client.(client.WithWatch), interceptor.Funcs{Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, options ...client.GetOption) error {
+					if _, ok := obj.(*api.EvaluationStage); ok {
+						return errors.New("temporary child observation failure")
+					}
+					return c.Get(ctx, key, obj, options...)
+				}})
+			}
+			for _, step := range []string{api.EvaluationStepFinish, api.EvaluationStepPublish} {
+				job, err := r.job(ctx, parent, parent, nil, step, &api.EvaluationProcedure{Step: step})
+				if scenario == "read-error" {
+					if err == nil {
+						t.Fatal("child observation failure must requeue parent Job creation")
+					}
+					continue
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				cm := &corev1.ConfigMap{}
+				name := job.Spec.Template.Spec.Volumes[1].ConfigMap.Name
+				if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: parent.Namespace, Name: name}, cm); err != nil {
+					t.Fatal(err)
+				}
+				assertCreatedChildContext(t, cm.Data["execution.json"], parent.Status.ChildRefs, executionStatus, executionReason, cleanupStatus, cleanupReason, uncertain)
+			}
+		})
+	}
+}
+
+func assertCreatedChildContext(t *testing.T, body string, expected []api.EvaluationChildReference, executionStatus, executionReason, cleanupStatus, cleanupReason string, uncertain bool) {
+	t.Helper()
+	var execution struct {
+		ChildRefs []struct {
+			api.EvaluationChildReference
+			Execution struct {
+				Status string `json:"status"`
+				Reason string `json:"reason"`
+			} `json:"execution"`
+			Cleanup struct {
+				Status string `json:"status"`
+				Reason string `json:"reason"`
+			} `json:"cleanup"`
+			Uncertain bool `json:"uncertain"`
+		} `json:"childRefs"`
+	}
+	if err := json.Unmarshal([]byte(body), &execution); err != nil {
+		t.Fatal(err)
+	}
+	if execution.ChildRefs == nil || len(execution.ChildRefs) != len(expected) {
+		t.Fatalf("childRefs must list only recorded created children (including explicit []): %s", body)
+	}
+	if len(expected) == 0 {
+		return
+	}
+	child := execution.ChildRefs[0]
+	if child.EvaluationChildReference != expected[0] || child.Execution.Status != executionStatus || child.Execution.Reason != executionReason || child.Cleanup.Status != cleanupStatus || child.Cleanup.Reason != cleanupReason || child.Uncertain != uncertain {
+		t.Fatalf("incorrect child cleanup/uncertainty context: %s", body)
 	}
 }
