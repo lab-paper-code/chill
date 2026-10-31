@@ -312,6 +312,8 @@ test("rendered board leads with fixed device rows and keeps idle services in a d
     "@/lib/client":{useSession:()=>({epoch:1,config:{liveFixture:false}}),useChillQuery:()=>({})},
     "@/lib/use-live":{useLive:()=>({state,status:"fixture",reconnect:()=>{}})},
     "@/lib/live-display":displayHelpers,"@/lib/experiments":{decisionRange:()=>({})},
+    "./evaluation-active":{EvaluationActive:()=>null},
+    "@/lib/evaluation-active":{evaluationInjectionMatch:()=>false},
     "@/lib/scheduler":{stringifySchedulerJSON:JSON.stringify},"@/lib/source-export":{safeSource:(value:unknown)=>value},
     "./scheduler":{judgmentLabels:{Keep:"구성 유지"},actionKinds:{power:"전력모드 변경"},actionStatuses:{},actionNodeName:(node:{name:string})=>node.name},
     "./measurement-coverage":{useCoverageInventory:()=>({data:{classes:[{nodes:[{uid:"outside",name:"외부 장치"},{uid:"not-metered",name:"관측 안 된 장치"}]}]}})},

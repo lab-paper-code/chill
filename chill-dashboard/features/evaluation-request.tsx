@@ -38,8 +38,20 @@ export function EvaluationSubmit({name,spec,disabled=false,existing,onSubmitted,
   const unsupported=answer?.liveTarget!==undefined&&!Array.isArray(answer.liveTarget)
   const confirmed=unknown&&attempt&&lookup.data?.name===attempt.name&&evaluationSameSpec(lookup.data.spec,attempt.spec)&&(!existing||lookup.data.uid!==existing.uid)
   const busy=pre.isPending||send.isPending
+  function reconcile(read:{data?:Run;error:ApiError|null},requested:{name:string;spec:EvaluationSpec}) {
+    if(!existing)return
+    const result=evaluationReplacement(existing.uid,requested.spec,read.error?.status??200,read.data)
+    if(result.state==="updated") {
+      const value={name:requested.name,uid:result.uid}
+      setReplacement(null);setUnknown(false);setCreated(value);onSubmitted?.(value)
+    } else {
+      setReplacement(result.state);setUnknown(result.state==="unknown")
+      if(result.state==="deleted"||result.state==="unchanged")setCheckedBody("")
+    }
+  }
   async function refresh() {
-    await Promise.allSettled([lookup.refetch(),cache.invalidateQueries({queryKey:["chill","v1/evaluations"]}),cache.invalidateQueries({queryKey:["chill","v1/evaluations/active"]})])
+    const [read]=await Promise.all([lookup.refetch(),cache.invalidateQueries({queryKey:["chill","v1/evaluations"]}),cache.invalidateQueries({queryKey:["chill","v1/evaluations/active"]})])
+    if(existing&&unknown&&attempt)reconcile(read,attempt)
   }
   function verify() {
     if(disabled||busy||unknown||created)return
@@ -58,9 +70,7 @@ export function EvaluationSubmit({name,spec,disabled=false,existing,onSubmitted,
     } catch(error) {
       if(existing) {
         if(error instanceof ApiError&&error.status===409){setReplacement("blocked");setCheckedBody("");return}
-        const read=await lookup.refetch(),result=evaluationReplacement(existing.uid,spec,read.error?.status??200,read.data)
-        if(result.state==="updated"){const value={name,uid:result.uid};setCreated(value);onSubmitted?.(value);await refresh()}
-        else {setReplacement(result.state);setUnknown(result.state==="unknown");if(result.state==="deleted"||result.state==="unchanged")setCheckedBody("")}
+        reconcile(await lookup.refetch(),{name,spec})
       } else if(error instanceof ApiError&&(error.unknownOutcome||error.status===0))setUnknown(true)
     }
   }

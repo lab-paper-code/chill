@@ -36,6 +36,7 @@ test("historical failures stay errors across list, detail and overview; retry re
     "lucide-react":{TriangleAlert:container},"recharts":{},
     "@/components/screen":{Screen:container,Empty:container},"@/components/read-region":{QueryGate:container,SourceJSON:container,SourceExport:container},
     "@/components/ui/button":{Button},"@/components/ui/sheet":{Sheet:container,SheetContent:container,SheetHeader:container,SheetTitle:container},
+    "@/features/evaluation-request":{EvaluationCleanup:()=>null,EvaluationLaunch:()=>null},
     "@/features/scheduler-evidence":{},"@/features/measurement-coverage":{useMeasurementCoverage:()=>({data:undefined,refetch:()=>{}}),useCoverageInventory:()=>({})},
     "@/lib/overview":{overviewCoverageMatrix:()=>({rows:[],devices:[]})},"@/lib/measurement-coverage":{},
   }
