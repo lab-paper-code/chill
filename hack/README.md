@@ -466,12 +466,12 @@ Node's CPU allocation or affinity. Catalog contracts resolve preprocessor/data.
 Three independent sessions, one warmup iteration, all declared artifact batches
 (omit `spec.batchSizes`), or the configured powers-of-two planner batch set
 bounded by runtime maximum when undeclared are used.
-Initial n uses median requirements: MNV 200, PLC 700, Smol 100, with a floor of
-100 and condition-specific outlier overrides only (Orin MNV batch 2, RTX/Rasp
-PLC batch 1, RTX Smol batch 2). The retained report states:
-“n은 중앙 필요량이며 셀별 정밀도는 측정 후 기록”.
-Per-session active time is `ceil(max(minSeconds, n * secondsPerCall / 3))`,
-subject to the configured ceiling; capped plans explicitly do not promise n.
+All models use `ceil(max(fixedActiveSeconds, minCallsPerTrial * secondsPerCall))`
+active seconds per independent trial (defaults 30 seconds and three calls).
+One BEO uses the maximum required window across its batches. Idle duration is
+the inherited fixed window, or config `idleSeconds` (10 seconds) when absent.
+There are no sample-count targets or window caps. Reports state:
+“셀별 정밀도(CI)는 측정 후 기록하며 목표치가 아님”.
 `secondsPerCall` is retained active-window time divided by completed physical
 calls, conservatively taking the slowest same-model/device measurement at that
 or a larger batch, or the slowest other device when none exists.
@@ -480,19 +480,25 @@ latency, retaining its UID/generation and source definition. Only a measured
 batch-1 timing from the same model, device class **and execution path** may
 mark `sloInfeasibleByEstimate: true` when its time is at least the SLO. Another
 device, path, or larger batch cannot establish this estimate. Such cells use
-only batch 1 and `infeasibleCalls` (default 10), with
-`ceil(max(1, infeasibleCalls * secondsPerCall / 3))` active seconds per session,
-bypassing precision floors but retaining three sessions and the upper ceiling.
+only batch 1 and the same fixed-window rule; no second measurement phase exists.
 The estimated κ=0 is a planning classification to confirm, not a measured
 result. Feeder manifest cell records carry the boolean marker; BEOs retain it
 as the string annotation `chill.dacs.io/sloInfeasibleByEstimate`. An incompatible
 artifact-declared batch set is rejected rather than sending an invalid subset.
-Estimates sum active windows and the configured 20-second overhead per active
-or shared-idle run; idle/settling windows and variable load/warmup/polling time
-are **not** included. MNV/PLC run before Smol, with power modes grouped within
-each priority tier. Check the existing feeder format without executing it:
+Estimates include active windows, three shared-idle windows and their settling
+time, plus the configured 20-second overhead per active or idle run. Variable
+load/warmup/polling time is not included. MNV/PLC precede Smol, with power modes
+grouped within each priority tier. Check the existing feeder format offline:
 `hack/measure/feeder.py --manifest /tmp/coverage-plan-out/resume-plan.json
 --stages 1,2 --check-manifest`. `gen.py --coverage --self-check` is offline.
+Add `--pilot` to emit `pilot/resume-plan.json` and two lane files: one MNV and
+one PLC cell on distinct nodes, minimizing the selected lane sizes. Documents
+reuse their full-plan BEO names. A later generation excludes cells already
+carrying the coverage-cell annotation, retaining the names/statuses in
+`existing-cells.json`. Feeder GETs existing BEOs before creation: successful
+terminal requests are skipped, active ones are awaited, and failed/refused ones
+stop the lane. A create-race `AlreadyExists` remains a fatal create error;
+feeder never applies or overwrites an existing BEO.
 Optional preflight checks one sample per model. Its audited route calls
 `client.Reader` and the pure curve-plan projector, discarding transitions
 (`internal/operatorconsole/kube/batch_energy_optimization_preflight_query.go`,

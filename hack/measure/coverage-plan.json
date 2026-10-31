@@ -1,16 +1,18 @@
 {
   "schemaVersion": "coverage-plan.v1",
-  "source": "profiling-icc.md:13 median requirements and :39 condition-specific outliers; planning estimates, not precision guarantees",
-  "budgetMeaning": "minSeconds and maxSeconds are per independent active session; initial total active floors 125/135/5700 seconds are divided across three sessions and rounded up. MNV/PLC 600-second ceilings are explicit planning limits; Smol ceiling is 9.6 hours divided by three.",
-  "sampleMeaning": "n은 중앙 필요량이며 셀별 정밀도는 측정 후 기록",
-  "minimumSamples": 100,
+  "source": "Fixed-window planning policy; precision is measured after execution, not a planning target",
+  "precisionMeaning": "셀별 정밀도(CI)는 측정 후 기록하며 목표치가 아님",
+  "fixedActiveSeconds": 30,
+  "minCallsPerTrial": 3,
+  "idleSeconds": 10,
   "undeclaredBatchSizes": [1, 2, 4, 8, 16, 32],
   "sloInfeasible": {
     "model": "smolvlm2-500m-video-instruct",
     "workload": "smolvlm2-vqa",
-    "infeasibleCalls": 10,
-    "meaning": "Same-model/device/path measured batch-1 time >= applied workload SLO: estimated kappa=0; confirm only batch 1, bypass precision n/minSeconds floors, retain three sessions and the configured maxSeconds ceiling."
+    "cellAnnotation": "chill.dacs.io/coverage-cell",
+    "meaning": "Same-model/device/path measured batch-1 time >= applied workload SLO: estimated kappa=0; only batch 1 is requested, using the same fixed-window/minimum-calls rule as all other measurements."
   },
+  "pilotModels": ["mobilenet-v2-050", "plc-lstm-ae"],
   "sessions": 3,
   "warmupIterations": 1,
   "runOverheadSeconds": 20,
@@ -27,14 +29,8 @@
   "insufficientStatus": "insufficient",
   "missingBatchReason": "TargetBatchMissing",
   "models": {
-    "mobilenet-v2-050": {"n": 200, "minSeconds": 42, "maxSeconds": 600, "priority": 0},
-    "plc-lstm-ae": {"n": 700, "minSeconds": 45, "maxSeconds": 600, "priority": 0},
-    "smolvlm2-500m-video-instruct": {"n": 100, "minSeconds": 1900, "maxSeconds": 11520, "priority": 1}
-  },
-  "sampleOverrides": [
-    {"model": "mobilenet-v2-050", "deviceClass": "jetson-agx-orin-64g", "batch": 2, "n": 3700},
-    {"model": "plc-lstm-ae", "deviceClass": "edge-server-rtx-2080-ti-64g", "batch": 1, "n": 9200},
-    {"model": "plc-lstm-ae", "deviceClass": "raspberry-pi-5-8g", "batch": 1, "n": 9200},
-    {"model": "smolvlm2-500m-video-instruct", "deviceClass": "edge-server-rtx-2080-ti-64g", "batch": 2, "n": 1340}
-  ]
+    "mobilenet-v2-050": {"priority": 0},
+    "plc-lstm-ae": {"priority": 0},
+    "smolvlm2-500m-video-instruct": {"priority": 1}
+  }
 }

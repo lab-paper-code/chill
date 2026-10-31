@@ -562,6 +562,7 @@ def coverage_timings(results):
                 timings.append({"model": condition["logicalModel"], "deviceClass": condition["deviceClass"],
                                 "batch": batch["batch"], "secondsPerCall": seconds / calls,
                                 "executionPath": condition["artifact"]["executionPath"],
+                                "powerMode": condition["powerMode"], "sourceUID": facts["request"]["uid"],
                                 "source": facts["request"]["name"]})
     return timings
 
@@ -579,50 +580,72 @@ def coverage_infeasible(cell, timings, policy, slo_seconds):
     return source if source and source["secondsPerCall"] >= slo_seconds else None
 
 
+def coverage_existing(cell, plans, policy):
+    annotation = policy["sloInfeasible"]["cellAnnotation"]
+    return next((p for p in plans if
+                 p["metadata"].get("annotations", {}).get(annotation) == cell["id"]), None)
+
+
+def coverage_manifest(output, lanes):
+    sequence = []
+    priorities = sorted({r["priority"] for lane in lanes.values() for r, _ in lane})
+    for stage, priority in enumerate(priorities, 1):
+        paths = []
+        for node, lane in sorted(lanes.items()):
+            ordered = sorted([(r, d) for r, d in lane if r["priority"] == priority],
+                             key=lambda pair: (pair[0]["powerMode"], pair[0]["model"], pair[0]["cellId"]))
+            if ordered:
+                path = output / "lanes" / f"{node}-stage{stage}.yaml"
+                write_docs(path, [d for _, d in ordered])
+                paths.append(str(path))
+        sequence.append({"stage": stage, "priority": priority, "paths": paths})
+    cells = [{"name": r["name"],
+              "sloInfeasibleByEstimate": r["sloInfeasibleByEstimate"]}
+             for lane in lanes.values() for r, _ in lane]
+    write_json(output / "resume-plan.json", {
+        "schemaVersion": "coverage-feeder-plan.v1", "sequence": sequence, "cells": cells})
+
+
+def coverage_pilot(lanes, policy):
+    pairs = [pair for lane in lanes.values() for pair in lane]
+    first, second = policy["pilotModels"]
+    choices = [(a, b) for a in pairs if a[0]["model"] == first
+               for b in pairs if b[0]["model"] == second and a[0]["node"] != b[0]["node"]]
+    if not choices:
+        raise ValueError("pilot requires one cell per configured model on distinct nodes")
+    chosen = min(choices, key=lambda pair: (
+        sum(len(lanes[r["node"]]) for r, _ in pair),
+        sum(r["estimatedSeconds"] for r, _ in pair), tuple(r["cellId"] for r, _ in pair)))
+    return {r["node"]: [(r, d)] for r, d in chosen}
+
+
 def coverage_seconds(cell, batches, timings, policy, infeasible=None):
     model, device = cell["model"]["name"], cell["deviceClass"]["name"]
-    budget = policy["models"][model]
     model_rows = [r for r in timings if r["model"] == model]
     sizing = []
     for batch in batches:
-        # An unmeasured intermediate batch uses a measured larger batch, never a
-        # faster smaller one. Missing device/batch evidence uses the slowest device.
-        local = [r for r in model_rows if r["deviceClass"] == device and r["batch"] >= batch]
-        if infeasible:
-            local = [infeasible]
-        rows = local or [r for r in model_rows if r["batch"] >= batch]
+        local = [r for r in model_rows if r["deviceClass"] == device and r["batch"] == batch]
+        larger = [r for r in model_rows if r["deviceClass"] == device and r["batch"] >= batch]
+        rows = local or larger or [r for r in model_rows if r["batch"] == batch] or [
+            r for r in model_rows if r["batch"] >= batch]
         if not rows:
             raise ValueError(f"no conservative measured timing for {cell['id']} batch {batch}")
-        source = max(rows, key=lambda r: r["secondsPerCall"])
-        if infeasible:
-            n = policy["sloInfeasible"]["infeasibleCalls"]
-            required = max(1, n * source["secondsPerCall"] / policy["sessions"])
-        else:
-            n = budget["n"]
-            for override in policy["sampleOverrides"]:
-                if (override["model"] == model and override["deviceClass"] == device and
-                        override.get("batch", batch) == batch):
-                    n = override["n"]
-            n = max(policy["minimumSamples"], n)
-            required = max(budget["minSeconds"], n * source["secondsPerCall"] / policy["sessions"])
-        sizing.append({"batch": batch, "n": n, "secondsPerCall": source["secondsPerCall"],
-                       "timingSource": source, "fallbackDevice": not bool(local),
+        source = infeasible or max(rows, key=lambda r: r["secondsPerCall"])
+        required = max(policy["fixedActiveSeconds"], policy["minCallsPerTrial"] * source["secondsPerCall"])
+        sizing.append({"batch": batch, "secondsPerCall": source["secondsPerCall"],
+                       "timingSource": source, "fallbackDevice": source["deviceClass"] != device,
                        "requiredSeconds": math.ceil(required)})
-    required = max(r["requiredSeconds"] for r in sizing)
-    return min(required, budget["maxSeconds"]), required > budget["maxSeconds"], sizing
+    return max(r["requiredSeconds"] for r in sizing), sizing
 
 
-def generate_coverage(output, policy_path, preflight=False):
+def generate_coverage(output, policy_path, preflight=False, pilot=False):
     output = output.resolve()
     policy = load(policy_path)
     if policy["sessions"] != 3 or policy["warmupIterations"] != 1:
         raise ValueError("coverage requires three independent sessions and one warmup iteration")
-    for budget in policy["models"].values():
-        if (any(type(budget[k]) is not int or budget[k] < 1 for k in ("n", "minSeconds", "maxSeconds")) or
-                budget["maxSeconds"] < budget["minSeconds"]):
-            raise ValueError("invalid sample/window budget")
-    if type(policy["sloInfeasible"]["infeasibleCalls"]) is not int or policy["sloInfeasible"]["infeasibleCalls"] < 1:
-        raise ValueError("infeasibleCalls must be a positive integer")
+    for key in ("fixedActiveSeconds", "minCallsPerTrial", "idleSeconds"):
+        if type(policy[key]) is not int or policy[key] < 1:
+            raise ValueError(key + " must be a positive integer")
     namespace = "/api/v1/namespaces/" + NS
     inputs = {}
     for name, path in (
@@ -651,6 +674,7 @@ def generate_coverage(output, policy_path, preflight=False):
     classes = {c["name"]: c for c in inputs["inventory"]["classes"]}
     models = {m["metadata"]["name"]: m for m in inputs["models"]["items"]}
     lanes, rows, no_node = defaultdict(list), [], []
+    existing = []
     plan_hash = hashlib.sha256(json.dumps(
         [policy, inputs["coverage"]["snapshotId"], slo_seconds], sort_keys=True).encode()).hexdigest()[:12]
     for cell in targets:
@@ -663,6 +687,11 @@ def generate_coverage(output, policy_path, preflight=False):
                             "nodes": classes[device]["nodes"]})
             continue
         node = eligible[0]
+        previous = coverage_existing(cell, inputs["plans"]["items"], policy)
+        if previous:
+            existing.append({"cellId": cell["id"], "name": previous["metadata"]["name"],
+                             "status": previous.get("status", {}).get("phase")})
+            continue
         spec, inherited = coverage_defaults(cell, node, inputs["plans"]["items"], inputs["profiles"]["profiles"])
         spec["state"]["targetNode"] = node
         spec["state"].setdefault("cpuRequest", policy["cpuRequest"])
@@ -679,54 +708,50 @@ def generate_coverage(output, policy_path, preflight=False):
         if not declared:
             spec["batchSizes"] = batches
         coverage_inputs(spec, model, artifact, inputs["preprocessors"]["items"], inputs["datasets"]["items"])
-        seconds, capped, sizing = coverage_seconds(cell, batches, timings, policy, infeasible)
+        seconds, sizing = coverage_seconds(cell, batches, timings, policy, infeasible)
         active = spec["activeProtocol"]
         padding = max(0, active["metricObservation"]["durationSeconds"] - active["durationSeconds"])
         active.update(durationSeconds=seconds, warmupIterations=policy["warmupIterations"])
         active["metricObservation"]["durationSeconds"] = seconds + padding
+        idle = spec["idleProtocol"]
+        idle_padding = max(0, idle["metricObservation"]["durationSeconds"] - idle.get("durationSeconds", policy["idleSeconds"]))
+        idle["durationSeconds"] = idle.get("durationSeconds") or policy["idleSeconds"]
+        idle["metricObservation"]["durationSeconds"] = idle["durationSeconds"] + idle_padding
         spec["trialsPerBatch"] = policy["sessions"]
         name = "coverage-" + plan_hash + "-" + hashlib.sha256(cell["id"].encode()).hexdigest()[:12]
         doc = {"apiVersion": "edge.dacs.io/v1alpha1", "kind": "BatchEnergyOptimization",
-               "metadata": {"name": name, "namespace": NS}, "spec": spec}
+               "metadata": {"name": name, "namespace": NS, "annotations": {
+                   policy["sloInfeasible"]["cellAnnotation"]: cell["id"]}}, "spec": spec}
         if infeasible:
-            doc["metadata"]["annotations"] = {"chill.dacs.io/sloInfeasibleByEstimate": "true"}
+            doc["metadata"]["annotations"]["chill.dacs.io/sloInfeasibleByEstimate"] = "true"
         priority = policy["models"][model]["priority"]
         row = {"cellId": cell["id"], "name": name, "model": model, "node": node, "priority": priority,
                "powerMode": cell["powerMode"], "inheritedProtocol": inherited, "batches": batches,
-               "activeSecondsPerSession": seconds, "capped": capped, "sizing": sizing,
+               "activeSecondsPerSession": seconds, "sizing": sizing,
                "activeSeconds": seconds * len(batches) * policy["sessions"],
+               "idleSeconds": policy["sessions"] * (idle["durationSeconds"] + idle.get("settlingDurationSeconds", 0)),
                "runCount": (len(batches) + 1) * policy["sessions"]}
         row["sloInfeasibleByEstimate"] = bool(infeasible)
         if infeasible:
             row["sloEstimate"] = {"estimatedKappa": 0, "sloSeconds": slo_seconds, "batch1Timing": infeasible}
-        row["estimatedSeconds"] = row["activeSeconds"] + row["runCount"] * policy["runOverheadSeconds"]
+        row["estimatedSeconds"] = row["activeSeconds"] + row["idleSeconds"] + row["runCount"] * policy["runOverheadSeconds"]
         rows.append(row)
         lanes[node].append((row, doc))
-    sequence = []
-    priorities = sorted({r["priority"] for r in rows})
-    for stage, priority in enumerate(priorities, 1):
-        paths = []
-        for node, lane in sorted(lanes.items()):
-            ordered = sorted([(r, d) for r, d in lane if r["priority"] == priority],
-                             key=lambda pair: (pair[0]["powerMode"], pair[0]["model"], pair[0]["cellId"]))
-            if ordered:
-                path = output / "lanes" / f"{node}-stage{stage}.yaml"
-                write_docs(path, [d for _, d in ordered])
-                paths.append(str(path))
-        sequence.append({"stage": stage, "priority": priority, "paths": paths})
+    coverage_manifest(output, lanes)
     infeasible_seconds = [r["sloEstimate"]["batch1Timing"]["secondsPerCall"]
                           for r in rows if r["sloInfeasibleByEstimate"]]
     summary = {"targetCellCount": len(targets), "manifestCellCount": len(rows),
                "cellsByModel": dict(Counter(r["model"] for r in rows)), "noNodeCellCount": len(no_node),
-               "unknownSupportCount": len(unknown), "cappedCellCount": sum(r["capped"] for r in rows),
-               "sampleMeaning": policy["sampleMeaning"],
+               "unknownSupportCount": len(unknown), "existingCellCount": len(existing),
+               "precisionMeaning": policy["precisionMeaning"],
                "sloInfeasibleCellCount": len(infeasible_seconds),
                "sloInfeasibleBatch1SecondsRange": [min(infeasible_seconds), max(infeasible_seconds)] if infeasible_seconds else None,
                "sloSource": {"workload": workload["name"], "uid": workload["uid"],
                              "generation": workload["generation"], "targetSeconds": slo_seconds},
-               "estimateMeaning": "active sum + 20s/run planning overhead (active and shared idle runs); excludes idle windows, settling, warmup/load variation and feeder polling",
+               "estimateMeaning": f"active + shared idle (including settling) + {policy['runOverheadSeconds']}s/run; excludes variable load/warmup and feeder polling",
                "lanes": {node: {"cellCount": len(lane),
                                   "activeSeconds": sum(r["activeSeconds"] for r, _ in lane),
+                                  "idleSeconds": sum(r["idleSeconds"] for r, _ in lane),
                                   "runCount": sum(r["runCount"] for r, _ in lane),
                                   "estimatedSeconds": sum(r["estimatedSeconds"] for r, _ in lane),
                                   "models": {model: {
@@ -735,12 +760,19 @@ def generate_coverage(output, policy_path, preflight=False):
                                                               if r["model"] == model)}
                                       for model in policy["models"]}}
                          for node, lane in sorted(lanes.items())}}
+    summary["totalNodeHours"] = sum(r["estimatedSeconds"] for r in rows) / 3600
+    summary["longestLaneSeconds"] = max((lane["estimatedSeconds"] for lane in summary["lanes"].values()), default=0)
     write_json(output / "unknown-support.json", unknown)
     write_json(output / "no-node.json", no_node)
     write_json(output / "cells.json", rows)
-    write_json(output / "resume-plan.json", {
-        "schemaVersion": "coverage-feeder-plan.v1", "sequence": sequence,
-        "cells": [{"name": r["name"], "sloInfeasibleByEstimate": r["sloInfeasibleByEstimate"]} for r in rows]})
+    write_json(output / "existing-cells.json", existing)
+    if pilot:
+        pilot_lanes = coverage_pilot(lanes, policy)
+        coverage_manifest(output / "pilot", pilot_lanes)
+        write_json(output / "pilot" / "coverage-plan.json", policy)
+        pilot_rows = [r for lane in pilot_lanes.values() for r, _ in lane]
+        summary["pilot"] = {"cells": pilot_rows, "estimatedSeconds": sum(r["estimatedSeconds"] for r in pilot_rows)}
+        write_json(output / "pilot" / "summary.json", summary["pilot"])
     if preflight:
         # Audited read-only: readapi/handler.go -> kube preflight query (client.Reader)
         # -> cmd/console/run.go projector.Project; projected transitions are discarded.
@@ -822,19 +854,15 @@ def coverage_self_check():
     timings = [{"model": model, "deviceClass": device, "batch": batch, "secondsPerCall": seconds,
                 "source": device} for device, batch, seconds in [("device", 1, .1), ("device", 4, .4),
                                                                 ("slow", 16, 10)]]
-    seconds, capped, sizing = coverage_seconds(cell, [1, 3, 16], timings, policy)
-    assert seconds == 600 and capped and sizing[-1]["fallbackDevice"]
+    seconds, sizing = coverage_seconds(cell, [1, 3, 16], timings, policy)
+    assert seconds == 30 and sizing[-1]["fallbackDevice"]
     assert sizing[1]["secondsPerCall"] == .4 and sizing[-1]["secondsPerCall"] == 10
-    assert coverage_seconds(cell, [1], timings[:1], policy)[0] == 42
-    floor_policy = copy.deepcopy(policy)
-    floor_policy["models"][model]["n"] = 1
-    assert coverage_seconds(cell, [1], timings[:1], floor_policy)[2][0]["n"] == 100
-    orin = copy.deepcopy(cell)
-    orin["deviceClass"]["name"] = "jetson-agx-orin-64g"
-    sizing = coverage_seconds(orin, [1, 2], timings, policy)[2]
-    assert [r["n"] for r in sizing] == [200, 3700]
-    facts = {"condition": {"logicalModel": model, "deviceClass": "device", "artifact": {"executionPath": "path"}},
-             "request": {"name": "source"},
+    assert coverage_seconds(cell, [1], timings[:1], policy)[0] == 30
+    slow = dict(timings[0], secondsPerCall=100)
+    assert coverage_seconds(cell, [1], [slow], policy)[0] == 300
+    facts = {"condition": {"logicalModel": model, "deviceClass": "device", "artifact": {"executionPath": "path"},
+                          "powerMode": "mode"},
+             "request": {"name": "source", "uid": "source-uid"},
              "batches": [{"batch": 1, "completedCalls": 100, "quality": [
                  {"workloadMode": "saturated-serial-fixed-batch", "windowSeconds": 10},
                  {"workloadMode": "idle-model-loaded", "windowSeconds": 500}]}]}
@@ -849,9 +877,24 @@ def coverage_self_check():
     for field, value in (("deviceClass", "fallback"), ("executionPath", "other"), ("batch", 2)):
         assert coverage_infeasible(smol, [dict(b1, **{field: value})], policy, 7) is None
     assert coverage_infeasible(cell, [b1], policy, 7) is None
-    seconds, capped, sizing = coverage_seconds(smol, [1], [b1], policy, b1)
-    assert seconds == math.ceil(10 * 7.034 / 3) == 24 and not capped and sizing[0]["n"] == 10
-    print("coverage selection, inheritance, batch contracts, timing fallback and caps checked")
+    seconds, sizing = coverage_seconds(smol, [1], [b1], policy, b1)
+    assert seconds == 30 and sizing[0]["secondsPerCall"] == 7.034
+    previous = {"metadata": {"name": "pilot", "annotations": {
+        policy["sloInfeasible"]["cellAnnotation"]: cell["id"]}}}
+    assert coverage_existing(cell, [previous], policy) == previous
+    assert coverage_existing(dict(cell, id="different"), [previous], policy) is None
+    second_model = policy["pilotModels"][1]
+    pilot_rows = [
+        {"node": node, "model": m, "cellId": name, "estimatedSeconds": seconds}
+        for node, m, name, seconds in [("small-a", model, "a", 30), ("small-b", second_model, "b", 40),
+                                     ("large", model, "c", 1), ("large", model, "d", 1)]]
+    pilot_lanes = defaultdict(list)
+    for row in pilot_rows:
+        pilot_lanes[row["node"]].append((row, {"metadata": {"name": row["cellId"]}}))
+    selected = coverage_pilot(pilot_lanes, policy)
+    assert set(selected) == {"small-a", "small-b"} and sum(map(len, selected.values())) == 2
+    assert selected["small-a"][0][1] is pilot_lanes["small-a"][0][1]
+    print("coverage selection, inheritance, batch contracts, fixed windows, SLO shortcut and pilot reuse checked")
 
 
 def self_check():
@@ -919,14 +962,15 @@ if __name__ == "__main__":
     parser.add_argument("--coverage", action="store_true", help="generate read-only live coverage plan")
     parser.add_argument("--plan-config", type=Path, default=HERE / "coverage-plan.json")
     parser.add_argument("--preflight", action="store_true", help="read-only preflight, one sample per model")
+    parser.add_argument("--pilot", action="store_true", help="also emit two-cell pilot on distinct small lanes")
     args = parser.parse_args()
-    if args.preflight and not args.coverage:
-        parser.error("--preflight requires --coverage")
+    if (args.preflight or args.pilot) and not args.coverage:
+        parser.error("--preflight and --pilot require --coverage")
     if args.coverage:
         if args.self_check:
             coverage_self_check()
         else:
-            generate_coverage(args.output_dir, args.plan_config, args.preflight)
+            generate_coverage(args.output_dir, args.plan_config, args.preflight, args.pilot)
     elif args.self_check:
         self_check()
     else:
