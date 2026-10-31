@@ -143,7 +143,7 @@ export function stagePairing(run:Experiment,stage:ExperimentStage) {
   const candidates=run.stages.filter(other=>other.id===expected)
   if(own.length>1||candidates.length>1)return {paired:false,counterpart:null,reason:"동일 단계 식별자 중복"}
   if(!candidates.length)return {paired:false,counterpart:null,reason:`정확한 대응 단계 ${expected} 없음`}
-  return {paired:true,counterpart:candidates[0],reason:"전체 E5 단계·반복 suffix 일치"}
+  return {paired:true,counterpart:candidates[0],reason:"기록된 단계·반복 코드 일치 · 실제 부하 일치는 별도 확인"}
 }
 // A load comparison is descriptive, not an exact repeated-stage pairing.
 function sameLoad(a:ExperimentStage,b:ExperimentStage):boolean {
@@ -155,6 +155,24 @@ function sameLoad(a:ExperimentStage,b:ExperimentStage):boolean {
     const ar=left/as,br=right/bs
     return ar===br||Math.abs(ar-br)/Math.max(ar,br)<=.01
   })
+}
+export function comparisonValidity(a:ExperimentStage,b:ExperimentStage) {
+  const rows=comparisonRows(a,b),left=stageSeconds(a),right=stageSeconds(b)
+  let unknown=0,changed=0
+  for(const row of rows) {
+    const x=row.a[0],y=row.b[0]
+    if(row.a.length!==1||row.b.length!==1||x.uid==null||y.uid==null||x.definition==null||y.definition==null||x.uid===""||y.uid===""||x.definition===""||y.definition==="")unknown++
+    else if(x.uid!==y.uid||x.definition!==y.definition)changed++
+  }
+  const ruleKeys=differentMeasurementRules(a,b)
+  const rulesMissing=!Object.keys(object(a.kpis.measurementRules)).length||!Object.keys(object(b.kpis.measurementRules)).length
+  return {
+    load:sameLoad(a,b)?"서비스별 평균 보낸 요청률 차이 1% 이내 · 부하 계획 일치까지 확인한 것은 아님":"서비스별 평균 보낸 요청률이 다르거나 미확인",
+    duration:`구간 길이 ${left===null||right===null?"미제공":left===right?"같음":"다름"} · A ${formatResult(left,"s")} / B ${formatResult(right,"s")}`,
+    rules:`측정 규칙 ${rulesMissing?"미기록 항목 있음":ruleKeys.length?"차이 있음":"기록된 항목 차이 없음"}${ruleKeys.length?` · 다른 항목: ${ruleKeys.join(", ")}`:""}`,
+    identity:rows.length?`서비스 등록·정의: 미확인 ${unknown} / 다름 ${changed} / 같은 등록·정의 ${rows.length-unknown-changed}개`:"서비스 등록·정의: 서비스 기록 없어 미확인",
+    limited:rulesMissing||!!ruleKeys.length||left===null||right===null||left!==right||!rows.length||unknown>0||changed>0||!sameLoad(a,b),
+  }
 }
 export function stageComparison(run:Experiment,stage:ExperimentStage) {
   const exact=stagePairing(run,stage)
@@ -266,7 +284,7 @@ export function campaignScoreboard(run:Experiment) {
   const context=(service:typeof services[number]|null)=>service?`${service.name} · ${service.pair.key} · ${stageLoadLabel(service.pair.chill,run)}`:""
   const unavailable=(count:number)=>!comparisons.length?"비교 불가":!count?"미제공":null
   const compared=new Set(comparisons.flatMap(pair=>[pair.chill,pair.control]))
-  const ruleMissing=comparisons.filter(pair=>!pair.chill.kpis.measurementRules||!pair.control.kpis.measurementRules).length
+  const ruleMissing=comparisons.filter(pair=>!Object.keys(object(pair.chill.kpis.measurementRules)).length||!Object.keys(object(pair.control.kpis.measurementRules)).length).length
   const ruleDifferences=comparisons.filter(pair=>differentMeasurementRules(pair.chill,pair.control).length).length
   const durationDifferences=comparisons.filter(pair=>stageSeconds(pair.chill)===null||stageSeconds(pair.control)===null||stageSeconds(pair.chill)!==stageSeconds(pair.control)).length
   return {
@@ -300,7 +318,7 @@ export function campaignConclusion(run:Experiment):string {
     if(a===null||b===null)missing++;else if(a<b)saved++;else if(a>b)increased++
     const services=comparisonRows(pair.chill,pair.control)
     if(!services.length)missing++
-    if(differentMeasurementRules(pair.chill,pair.control).length||stageSeconds(pair.chill)!==stageSeconds(pair.control))missing++
+    if(comparisonValidity(pair.chill,pair.control).limited)missing++
     for(const row of services) {
       if(row.a.length!==1||row.b.length!==1){missing++;continue}
       const left=row.a[0],right=row.b[0],as=resultMetric(left,"success"),bs=resultMetric(right,"success"),av=finite(as.value),bv=finite(bs.value),ap=finite(resultMetric(left,"p95").value),bp=finite(resultMetric(right,"p95").value)
@@ -312,7 +330,7 @@ export function campaignConclusion(run:Experiment):string {
     }
   }
   const unpaired=run.stages.length-pairs.length*2
-  const conclusion=worse?"자동 운영이 항상 낫지는 않았어요. 서비스 품질 저하가 있어요.":missing||unpaired?"자동 운영이 더 나은지는 아직 확인이 부족해요.":increased?"서비스 품질 저하는 없지만 에너지가 늘어난 구간이 있어요.":"비교한 구간에서 서비스 품질 저하 없이 에너지를 유지하거나 줄였어요."
+  const conclusion=worse?"관측된 구간에서 자동 운영이 항상 낫지는 않았어요. 성공률이 낮거나 p95가 높은 기록이 있어요.":missing||unpaired?"자동 운영이 더 나은지는 아직 확인이 부족해요.":increased?"비교한 관측값에서 성공률 하락·p95 증가 없이 에너지가 늘어난 구간이 있어요.":"비교한 관측값에서 성공률 하락·p95 증가 없이 에너지가 같거나 적었어요."
   return `${conclusion} 전체 ${run.stages.length}단계 중 같은 부하 ${pairs.length}쌍 · 에너지 감소 ${saved} / 증가 ${increased}구간 · 서비스 성공률·지연 개선 ${better} / 악화 ${worse}건${worstSuccess<0?` · 최대 성공률 하락 ${(worstSuccess*100).toFixed(2)}%p: ${successAt}`:""}${worstLatency>0?` · 최대 p95 증가 ${formatResult(worstLatency,"ms")}: ${latencyAt}`:""}${missing||unpaired?` · 확인 부족 ${missing}건 / 비교 불가 ${unpaired}단계`:""}`
 }
 

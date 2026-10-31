@@ -1,4 +1,4 @@
-import type { DatasetResource, PreprocessorResource } from "./domain.ts"
+import type { DatasetResource, DatasetSpec, PreprocessorResource, PreprocessorSpec } from "./domain.ts"
 import type { MeasurementPlan, MeasurementPlanSpec, ProfilesView } from "./read-types.ts"
 
 export type RequestCondition = { model:string; deviceClass:string; node:string; path:string; powerMode:string }
@@ -42,18 +42,28 @@ export function requestTargetBatches(params:URLSearchParams,previousTarget?:numb
   return params.has("batches")?requestBatches(params).values:previousTarget!==undefined?[...previousTarget]:requestInitialBatches([],max)
 }
 
+// Mirror modelcatalog.Compatible: the preprocessor's inputs may be a subset of the dataset fields.
+export function datasetGap(dataset:DatasetSpec,preprocessor:PreprocessorSpec|undefined) {
+  const records=new Map(dataset.fields.map(field=>[field.name,field]))
+  return (preprocessor?.input.fields??[]).map(field=>{
+    const record=records.get(field.name)
+    return !record?`${field.name} 필드가 없어요`:record.format!==field.format?`${field.name} 형식이 달라요 (${field.format} 필요)`:record.maxBytes>field.maxBytes?`${field.name} 크기가 최대 ${field.maxBytes} B보다 클 수 있어요`:""
+  }).filter(Boolean).join(" · ")
+}
+
+export const requestNumber=(value:number)=>Number.isFinite(value)?String(value):"—"
+
 // Catalog contracts, not names, select the preprocessor and dataset.
 export function requestInputs(model:string,artifact:string,preprocessor:string,dataset:string,context:{preprocessors:PreprocessorResource[];datasets:DatasetResource[]},inherited:{preprocessor?:boolean;dataset?:boolean}={}) {
   const candidates=context.preprocessors.filter(item=>item.spec.artifacts.some(entry=>entry.target.model===model&&(!artifact||entry.target.artifact===artifact)))
   const explicit=context.preprocessors.find(item=>item.metadata.name===preprocessor)
   const pre=explicit&&(!inherited.preprocessor||candidates.includes(explicit))?explicit:candidates.length===1?candidates[0]:undefined
-  const compatible=(item:DatasetResource)=>!!pre&&pre.spec.input.fields.every(field=>item.spec.fields.some(input=>input.name===field.name&&input.format===field.format&&input.maxBytes<=field.maxBytes))
-  const exact=(item:DatasetResource)=>compatible(item)&&item.spec.fields.length===pre?.spec.input.fields.length
-  const datasets=context.datasets.filter(exact)
+  const compatible=(item:DatasetResource)=>!!pre&&!datasetGap(item.spec,pre.spec)
+  const datasets=context.datasets.filter(compatible)
   const explicitDataset=context.datasets.find(item=>item.metadata.name===dataset)
-  const selected=explicitDataset&&(!inherited.dataset||exact(explicitDataset))?explicitDataset:datasets.length===1?datasets[0]:undefined
+  const selected=explicitDataset&&(!inherited.dataset||compatible(explicitDataset))?explicitDataset:datasets.length===1?datasets[0]:undefined
   const contract=pre?.spec.input.fields.map(field=>`${field.name} (${field.format}, 최대 ${field.maxBytes} B)`).join(", ")
-  const warning=!pre?"모델·실행 경로에 연결된 전처리기의 입력 계약을 확인할 수 없어요. 카탈로그에서 전처리기 연결을 확인하고 직접 선택하세요.":!candidates.includes(pre)?"선택한 전처리기가 이 모델·실행 경로에 연결되어 있지 않아요. 카탈로그 연결을 확인하세요.":selected&&!compatible(selected)?"데이터셋 입력 계약이 전처리기와 일치하지 않습니다.":selected&&!exact(selected)?"데이터셋에 추가 필드가 있습니다. 모델·데이터셋 용도 일치를 검토하세요.":!selected?datasets.length>1?`입력 계약 ${contract}에 맞는 데이터셋이 여러 개예요. 사용할 데이터셋을 직접 선택하세요.`:`입력 계약 ${contract}에 정확히 맞는 등록 데이터셋이 없어요. 이 필드만 포함하는 데이터셋을 등록한 뒤 선택하세요.`:""
+  const warning=!pre?"모델·실행 경로에 연결된 전처리기의 입력 계약을 확인할 수 없어요. 카탈로그에서 전처리기 연결을 확인하고 직접 선택하세요.":!candidates.includes(pre)?"선택한 전처리기가 이 모델·실행 경로에 연결되어 있지 않아요. 카탈로그 연결을 확인하세요.":selected&&!compatible(selected)?`데이터셋이 전처리기 입력 조건에 맞지 않아요: ${datasetGap(selected.spec,pre.spec)}`:!selected?datasets.length>1?`입력 조건 ${contract}에 맞는 데이터셋이 여러 개예요. 사용할 데이터셋을 직접 선택하세요.`:`입력 조건 ${contract}에 맞는 등록 데이터셋이 없어요. 필드 이름·형식이 같고 최대 크기가 입력 한도 이하인 데이터셋을 등록하세요. 추가 필드는 허용해요.`:""
   return {preprocessor:pre?.metadata.name??"",dataset:selected?.metadata.name??"",warning}
 }
 

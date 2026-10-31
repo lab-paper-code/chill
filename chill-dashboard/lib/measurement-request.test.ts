@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { requestBatches, requestDefaults, requestInputs, requestInitialBatches, requestTargetBatches, requestConditionChanges, requestPreflightReason } from "./measurement-request.ts"
+import { datasetGap, requestNumber, requestBatches, requestDefaults, requestInputs, requestInitialBatches, requestTargetBatches, requestConditionChanges, requestPreflightReason } from "./measurement-request.ts"
 import type { MeasurementPlan, ProfilesView } from "./read-types.ts"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
@@ -69,28 +69,40 @@ test("empty coverage batch query is a missing selection, not a permanent URL err
   assert.deepEqual(requestInitialBatches([8,1],16),[1,8])
 })
 
-test("unmeasured model prefill resolves its registered preprocessor and a compatible dataset",()=>{
-  const pre={metadata:{name:"pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:"model",artifact:"onnx"}}]}}
-  const data=(name:string,fields:unknown[])=>({metadata:{name},spec:{fields}})
-  const context={preprocessors:[pre],datasets:[data("vqa",[{name:"image",format:"JPEG",maxBytes:1024},{name:"question",format:"UTF8",maxBytes:512}]),data("images",[{name:"image",format:"JPEG",maxBytes:1024}])]}
-  const inputs=requestInputs("model","onnx","","",context as Parameters<typeof requestInputs>[4])
-  assert.deepEqual(inputs,{preprocessor:"pre",dataset:"images",warning:""})
-  const subset=requestInputs("model","onnx","","vqa",context as Parameters<typeof requestInputs>[4])
-  assert.equal(subset.preprocessor,"pre")
-  assert.match(subset.warning,/추가 필드/)
+test("automatic dataset selection accepts a subset input contract just like modelcatalog.Compatible",()=>{
+  const context={preprocessors:[{metadata:{name:"image-pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:"opaque-id",artifact:"onnx"}}]}}],datasets:[{metadata:{name:"vqa"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512},{name:"question",format:"UTF8",maxBytes:512}]}}]} as Parameters<typeof requestInputs>[4]
+  assert.deepEqual(requestInputs("opaque-id","onnx","","",context),{preprocessor:"image-pre",dataset:"vqa",warning:""})
+  assert.equal(requestInputs("opaque-id","onnx","image-pre","vqa",context,{preprocessor:true,dataset:true}).dataset,"vqa")
+  const full={...context,datasets:[...context.datasets,{metadata:{name:"images"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]}}]} as Parameters<typeof requestInputs>[4]
+  assert.equal(requestInputs("opaque-id","onnx","image-pre","vqa",full,{dataset:true}).dataset,"vqa")
+  assert.equal(requestInputs("opaque-id","onnx","","",full).dataset,"")
+  assert.match(requestInputs("opaque-id","onnx","","",full).warning,/여러 개/)
+  assert.equal(requestInputs("other-model","onnx","image-pre","vqa",full,{preprocessor:true,dataset:true}).preprocessor,"")
 })
 
-test("automatic inputs never inherit a VQA superset for an image-only contract",()=>{
-  const context={preprocessors:[{metadata:{name:"image-pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:"opaque-id",artifact:"onnx"}}]}}],datasets:[{metadata:{name:"vqa"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:1024},{name:"question",format:"UTF8",maxBytes:512}]}}]} as Parameters<typeof requestInputs>[4]
-  assert.equal(requestInputs("opaque-id","onnx","","",context).dataset,"")
-  assert.match(requestInputs("opaque-id","onnx","","",context).warning,/image.*JPEG.*데이터셋/)
-  assert.equal(requestInputs("opaque-id","onnx","image-pre","vqa",context,{preprocessor:true,dataset:true}).dataset,"")
-  assert.equal(requestInputs("opaque-id","onnx","image-pre","vqa",context).dataset,"vqa")
-  const compatible={metadata:{name:"images"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512}]}}
-  const full={...context,datasets:[...context.datasets,compatible]} as Parameters<typeof requestInputs>[4]
-  assert.equal(requestInputs("opaque-id","onnx","image-pre","vqa",full,{preprocessor:true,dataset:true}).dataset,"images")
-  assert.equal(requestInputs("opaque-id","onnx","image-pre","vqa",full).dataset,"vqa")
-  assert.equal(requestInputs("other-model","onnx","image-pre","vqa",full,{preprocessor:true,dataset:true}).preprocessor,"")
+test("shared dataset compatibility rejects missing fields, formats and oversized records",()=>{
+  const pre={input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]}} as Parameters<typeof datasetGap>[1]
+  for(const fields of [[],[{name:"photo",format:"JPEG",maxBytes:512}],[{name:"image",format:"UTF8",maxBytes:512}],[{name:"image",format:"JPEG",maxBytes:1025}]]) {
+    const data={metadata:{name:"bad"},spec:{fields}}
+    assert.notEqual(datasetGap(data.spec as Parameters<typeof datasetGap>[0],pre),"")
+    const context={preprocessors:[{metadata:{name:"pre"},spec:{...pre,artifacts:[{target:{model:"model",artifact:"onnx"}}]}}],datasets:[data]} as Parameters<typeof requestInputs>[4]
+    const inputs=requestInputs("model","onnx","pre","bad",context,{dataset:true})
+    assert.equal(inputs.dataset,"")
+    assert.match(inputs.warning,/image.*JPEG.*1024.*등록/)
+    assert.match(requestInputs("model","onnx","pre","bad",context).warning,/image/)
+  }
+  assert.equal(datasetGap({source:{image:"dataset",path:"/records"},fields:[{name:"image",format:"JPEG",maxBytes:1024},{name:"question",format:"UTF8",maxBytes:512}]},pre),"")
+})
+
+test("empty datasets explain the required contract and missing summary values use a dash",()=>{
+  const context={preprocessors:[{metadata:{name:"pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:"model",artifact:"onnx"}}]}}],datasets:[]} as Parameters<typeof requestInputs>[4]
+  const inputs=requestInputs("model","onnx","","",context)
+  assert.equal(inputs.dataset,"")
+  assert.match(inputs.warning,/image.*JPEG.*1024.*등록/)
+  assert.equal(requestNumber(NaN),"—")
+  assert.equal(requestNumber(Infinity),"—")
+  assert.equal(requestNumber(0),"0")
+  assert.equal(requestNumber(3),"3")
 })
 
 test("frozen condition explanation lists only observed changed fields, not missing facts",()=>{
@@ -114,7 +126,7 @@ test("request batch selection preserves explicit URL scope and previous target w
 })
 
 test("changing a preprocessor clears only inherited datasets, preserving deliberate mismatched selections",()=>{
-  const context={preprocessors:[{metadata:{name:"image-pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:"model",artifact:"onnx"}}]}}],datasets:[{metadata:{name:"vqa"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512},{name:"question",format:"UTF8",maxBytes:512}]}}]} as Parameters<typeof requestInputs>[4]
+  const context={preprocessors:[{metadata:{name:"image-pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:"model",artifact:"onnx"}}]}}],datasets:[{metadata:{name:"vqa"},spec:{fields:[{name:"image",format:"UTF8",maxBytes:512}]}}]} as Parameters<typeof requestInputs>[4]
   assert.equal(requestInputs("model","onnx","image-pre","vqa",context,{dataset:true}).dataset,"")
   assert.equal(requestInputs("model","onnx","image-pre","vqa",context,{dataset:false}).dataset,"vqa")
 })
@@ -125,7 +137,7 @@ test("request Funnel renders the undeclared-batch branch without a stale conditi
   const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
   const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
   const modules:Record<string,unknown>={
-    "next/link":{__esModule:true,default:container},
+    "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
     "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams()},
     "@/lib/client":{useChillMutation:()=>({isPending:false})},
     "@/components/read-region":{SourceJSON:()=>null},
@@ -149,4 +161,8 @@ test("request Funnel renders the undeclared-batch branch without a stale conditi
     prefill:{active:false,values:{},errors:[],returnTo:"/measurements",node:""},
   }))
   assert.match(html,/CPU·데이터셋·측정 방식이 같은 기존 결과가 있는지 검사해요/)
+  assert.doesNotMatch(html,/NaN/)
+  assert.match(html,/예열 —회/)
+  assert.doesNotMatch(html,/<details open=""/)
+  assert.match(html,/href="\/datasets\/new"/)
 })

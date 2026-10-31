@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { DatasetResource, PreprocessorResource, ExecutionPath, ModelList, ModelResource, WorkloadView } from "@/lib/domain"
 import type { InventoryClass, InventoryNode, MeasurementMutation, MeasurementPlan, MeasurementPlanList, MeasurementPlanSpec, MeasurementPreflight, MeasurementVariant, ProfilesView } from "@/lib/read-types"
-import { requestBatches, requestDefaults, requestInputs, requestTargetBatches, requestConditionChanges, requestPreflightReason } from "@/lib/measurement-request"
+import { datasetGap, requestNumber, requestBatches, requestDefaults, requestInputs, requestTargetBatches, requestConditionChanges, requestPreflightReason } from "@/lib/measurement-request"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { resolveMeasurementPrefill, serverCompatibility, staticCompatibility, type MeasurementPrefill } from "@/lib/measurement-coverage"
 import { useCoverageInventory, useModelCompatibility, useMeasurementCoverage } from "@/features/measurement-coverage"
@@ -93,12 +93,14 @@ function failure(error: ApiError) {
 }
 
 // Everything the steps read: current selections resolved against real data, plus the copied protocol.
-function view(d: Draft, { models, classes, plans }: Context) {
+function view(d: Draft, { models, classes, plans, preprocessors, datasets }: Context) {
   const model = models.find(m => m.metadata.name === d.model)
   const cls = classes.find(c => c.name === d.deviceClass)
   const node = cls?.nodes.find(n => n.name === d.node)
   const path = model?.spec.executionPaths.find(p => p.name === d.path)
   const artifact = path && model?.spec.artifacts.find(a => a.name === path.artifact)
+  const preprocessor=preprocessors.find(item=>item.metadata.name===d.preprocessor)
+  const dataset=datasets.find(item=>item.metadata.name===d.dataset)
   const protocol: Protocol = d.protocol ?? { values: blankAdvanced, from: null }
   const trials = d.trials ?? 3
   const cpu = d.cpu ?? "1"
@@ -110,7 +112,7 @@ function view(d: Draft, { models, classes, plans }: Context) {
   const affinity = parseAffinity(protocol.values.affinity) ?? []
   function problem(step: Step): string {
     switch (step) {
-      case "workload": return !model?"모델을 선택하세요.":!d.preprocessor?"전처리기를 선택하세요.":!d.dataset?"데이터셋을 선택하세요.":""
+      case "workload": return !model?"모델을 선택하세요.":!preprocessor?"전처리기를 선택하세요.":!dataset?"데이터셋을 선택하세요.":datasetGap(dataset.spec,preprocessor.spec)
       case "device":
         if (!cls || !node) return "잴 장비를 골라 주세요."
         if (nodeReason(node)) return `${node.name}는 ${nodeReason(node)}. 다른 장비를 골라 주세요.`
@@ -257,6 +259,8 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
   const found=checked?context.plans.find(plan=>plan.metadata.name===v.name):undefined
   const remaining=steps.filter(step=>step!=="review").map(step=>({step,issue:v.problem(step)})).filter(item=>item.issue)
   const inputs=requestInputs(d.model,v.path?.artifact??"",d.preprocessor,d.dataset,context)
+  const preprocessor=context.preprocessors.find(item=>item.metadata.name===d.preprocessor)
+  const noCompatibleDataset=!!preprocessor&&!context.datasets.some(item=>!datasetGap(item.spec,preprocessor.spec))
   return <Screen width="data" title="측정 요청" lede="모델·장치 종류·처리 건수를 고르고, 검사 결과를 확인한 뒤 요청하세요.">
     <MeasurementNavigation active="requests" namespace={namespace}/>
     {unknown&&<section role="alert" className="notice space-y-3"><h2>접수 결과 미확인 — 같은 이름으로 확인하세요</h2><p>{v.name}: 자동 재제출과 이름 변경을 막았습니다.</p><Button disabled={checking} onClick={()=>void refetchPlans().then(result=>{setChecked(!result.error);if(result.error)setError("목록 조회 실패: 다시 확인하세요.")})}>같은 이름의 접수 기록 조회</Button>{found?<Link className="underline" href={detailHref(namespace,found.metadata.name,found.metadata.uid)}>접수된 요청 열기</Link>:checked&&<p>아직 목록에서 확인되지 않았어요. 자동 재제출하지 않습니다.</p>}</section>}
@@ -270,7 +274,7 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
           const spec=workload.desired.spec,changed=spec.modelRef.name!==d.model
           update({workload:workload.desired.metadata.name,model:spec.modelRef.name,preprocessor:spec.preprocessorRef.name,dataset:spec.datasetRef?.name??"",...(changed&&!context.models.find(model=>model.metadata.name===spec.modelRef.name)?.spec.executionPaths.some(path=>path.name===d.path)?{path:""}:{})})
         }}><option value="">직접 조건 지정</option>{context.workloads.filter(workload=>!d.model||workload.desired.spec.modelRef.name===d.model).map(workload=><option key={workload.desired.metadata.uid} value={workload.desired.metadata.name}>{workload.desired.metadata.name}</option>)}</select></label>
-        <label className="grid gap-2 text-sm">전처리기<select className="min-h-11 rounded border bg-background p-2" value={d.preprocessor} onChange={event=>update({preprocessor:event.target.value})}><option value="">전처리기 선택</option>{context.preprocessors.map(item=><option key={item.metadata.uid} value={item.metadata.name}>{item.metadata.name}</option>)}</select>{error&&!d.preprocessor&&<span className="text-destructive">등록된 전처리기를 선택하세요.</span>}</label><label className="grid gap-2 text-sm">데이터셋<select aria-describedby="request-input-guidance" className="min-h-11 rounded border bg-background p-2" value={d.dataset} onChange={event=>update({dataset:event.target.value})}><option value="">데이터셋 선택</option>{context.datasets.map(item=><option key={item.metadata.uid} value={item.metadata.name}>{item.metadata.name}</option>)}</select>{error&&!d.dataset&&<span className="text-destructive">등록된 데이터셋을 선택하세요.</span>}</label><p id="request-input-guidance" role={inputs.warning?"status":undefined} className={inputs.warning?"rounded border p-3 text-sm":"text-sm text-muted-foreground"}>{inputs.warning||"카탈로그 입력 계약이 정확히 맞는 데이터셋만 자동 선택합니다. 직접 선택한 값은 자동 변경하지 않아요."}</p></div>
+        <label className="grid gap-2 text-sm">전처리기<select className="min-h-11 rounded border bg-background p-2" value={d.preprocessor} onChange={event=>update({preprocessor:event.target.value})}><option value="">전처리기 선택</option>{context.preprocessors.map(item=><option key={item.metadata.uid} value={item.metadata.name}>{item.metadata.name}</option>)}</select>{error&&!d.preprocessor&&<span className="text-destructive">등록된 전처리기를 선택하세요.</span>}</label><label className="grid gap-2 text-sm">데이터셋<select aria-describedby="request-input-guidance" className="min-h-11 rounded border bg-background p-2" value={d.dataset} onChange={event=>update({dataset:event.target.value})}><option value="">데이터셋 선택</option>{context.datasets.map(item=>{const gap=datasetGap(item.spec,preprocessor?.spec);return <option key={item.metadata.uid} value={item.metadata.name} disabled={!!gap}>{item.metadata.name}{gap?` · ${gap}`:""}</option>})}</select>{error&&!d.dataset&&<span className="text-destructive">등록된 데이터셋을 선택하세요.</span>}</label><p id="request-input-guidance" role={inputs.warning?"status":undefined} className={inputs.warning?"rounded border p-3 text-sm":"text-sm text-muted-foreground"}>{inputs.warning||"전처리기 입력 필드의 이름·형식·최대 크기 조건에 맞는 데이터셋을 자동 선택해요. 추가 필드는 허용하고, 직접 선택한 값은 자동 변경하지 않아요."}{inputs.warning&&(!inputs.dataset||noCompatibleDataset)&&<> <Link className="underline" href="/datasets/new">데이터셋 등록</Link></>}</p></div>
       </section>
       <section className="grid gap-5 border-t pt-5 md:grid-cols-2" aria-label="장치와 실행 조건">
         <div className="space-y-4"><Pick label="장치 종류" name="device-class" value={d.deviceClass} set={deviceClass=>{const cls=context.classes.find(item=>item.name===deviceClass);update({deviceClass,node:cls?.nodes.some(node=>node.name===d.node)?d.node:cls?.nodes.find(node=>!nodeReason(node))?.name??"",powerMode:cls?.powerModes.some(mode=>mode.name===d.powerMode)?d.powerMode:cls?.powerModes.length===1?cls.powerModes[0].name:""})}} options={context.classes.map(cls=>({value:cls.name,label:cls.name,hint:`사용 가능 장비 ${cls.nodes.filter(node=>!nodeReason(node)).length}대`,disabled:cls.nodes.some(node=>!nodeReason(node))?undefined:"지금 사용할 수 있는 장비가 없어요"}))}/>{v.cls&&<details><summary className="min-h-11 cursor-pointer py-2 text-sm">실행 장비 선택 · {d.node||"미선택"}</summary><Pick label="실행 장비" name="node" value={d.node} set={node=>update({node})} options={v.cls.nodes.map(node=>({value:node.name,label:node.name,disabled:nodeReason(node)}))}/></details>}</div>
@@ -287,7 +291,7 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
         <div className="space-y-4"><label className="grid gap-2 text-sm">배치별 반복 횟수<Input aria-invalid={!!error&&(!Number.isInteger(v.trials)||v.trials<3)} type="number" min={3} value={Number.isFinite(v.trials)?v.trials:""} onChange={event=>update({trials:event.target.valueAsNumber})}/>{error&&(!Number.isInteger(v.trials)||v.trials<3)&&<span className="text-destructive">3 이상의 정수를 입력하세요.</span>}</label><label className="grid gap-2 text-sm">CPU 개수<Input aria-invalid={!!error&&!/^[1-9]\d*$/.test(v.cpu)} value={v.cpu} onChange={event=>update({cpu:event.target.value})}/>{error&&!/^[1-9]\d*$/.test(v.cpu)&&<span className="text-destructive">1 이상의 정수를 입력하세요.</span>}</label></div>
         {error&&v.problem("size")&&<p role="alert" className="text-sm text-destructive">{v.problem("size")}</p>}
       </section>
-      <section className="space-y-3 border-t pt-5" aria-label="실제 측정 기본값"><h2 className="font-semibold">측정 방식</h2><p className="text-sm">예열 {v.protocol.values.warmup}회 / 측정 {v.protocol.values.activeDuration}초 / 유휴 {v.protocol.values.idleDuration}초 / 배치별 {v.trials}회 반복</p><p className="break-words text-sm text-muted-foreground">출처: {v.protocol.from??"직접 입력"}{from&&` / 요청 복사 원본: ${from}`}</p><details open={!d.protocol||!!error&&!!v.problem("advanced")}><summary className="min-h-11 cursor-pointer py-2">고급 측정 설정 · 예열·관측 간격 등 11개 수치와 CPU 코어</summary>{!d.protocol&&<p role="status" className="text-sm text-amber-700 dark:text-amber-300">사용할 측정 방식 근거가 없어요. 아래 수치를 직접 지정하세요.</p>}<AdvancedFields showErrors={!!error} value={v.protocol.values} set={values=>update({protocol:{values,from:"직접 입력"}})}/></details></section>
+      <section className="space-y-3 border-t pt-5" aria-label="실제 측정 기본값"><h2 className="font-semibold">측정 방식</h2><p className="text-sm">예열 {requestNumber(v.protocol.values.warmup)}회 / 측정 {requestNumber(v.protocol.values.activeDuration)}초 / 유휴 {requestNumber(v.protocol.values.idleDuration)}초 / 배치별 {requestNumber(v.trials)}회 반복</p><p className="break-words text-sm text-muted-foreground">출처: {v.protocol.from??"직접 입력"}{from&&` / 요청 복사 원본: ${from}`}</p><details open={!!error&&!!v.problem("advanced")}><summary className="min-h-11 cursor-pointer py-2">고급 측정 설정 · 예열·관측 간격 등 11개 수치와 CPU 코어</summary>{!d.protocol&&<p role="status" className="text-sm text-amber-700 dark:text-amber-300">사용할 측정 방식 근거가 없어요. 아래 수치를 직접 지정하세요.</p>}<AdvancedFields showErrors={!!error} value={v.protocol.values} set={values=>update({protocol:{values,from:"직접 입력"}})}/></details></section>
       <label className="grid gap-2 border-t pt-5 text-sm">요청 이름 (검사한 이름 고정)<Input aria-invalid={!!error&&!!v.problem("name")} value={v.name} maxLength={200} onChange={event=>update({name:event.target.value})}/>{error&&v.problem("name")&&<span className="text-destructive">{v.problem("name")}</span>}</label>
     </fieldset>
     <div id="measurement-errors" tabIndex={-1} role={error||blocked?"alert":undefined} className={error||blocked||dry.error||pre.error||send.error?"space-y-2":"hidden"}>

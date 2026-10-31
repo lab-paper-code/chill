@@ -53,6 +53,22 @@
 .coverage-selected a:not([data-slot="button"]) { color:var(--primary); text-decoration:underline; display:inline-flex; min-height:44px; align-items:center; }
 .coverage-trust { color:var(--foreground); line-height:1.65; border-top:1px solid var(--border); padding-top:.75rem; }
 .coverage-warning { display:block; border-left:3px solid var(--heat); padding:.35rem .5rem; color:var(--heat); background:var(--heat-soft,var(--muted)); font-size:.8125rem; }
+.coverage-batch-legend { font-size:.8125rem; line-height:1.6; color:var(--foreground); padding:.5rem .75rem; background:var(--muted); }
+.coverage-trust-pending { color:var(--heat); border:1px solid var(--heat); background:var(--background); }
+.coverage-condition-verdict { display:grid; gap:.6rem; padding:.75rem; border:1px solid var(--border); }
+.coverage-condition-verdict h3,.coverage-condition-verdict .measurement-status { font-size:.875rem; font-weight:650; }
+.coverage-condition-verdict p { font-size:.8125rem; }
+.measurement-operation-table table { width:100%; min-width:920px; table-layout:fixed; font-variant-numeric:tabular-nums; }
+.measurement-operation-table th,.measurement-operation-table td { white-space:normal; overflow-wrap:anywhere; padding-inline:.65rem; }
+.measurement-operation-table th > button { white-space:normal; text-align:left; }
+.measurement-operation-table th:first-child,.measurement-operation-table td:first-child { position:sticky; left:0; z-index:1; width:180px; background:var(--background); border-right:1px solid var(--border); }
+.measurement-operation-table th:first-child { z-index:2; }
+.measurement-operation-table th:nth-child(2) { width:110px; }
+.measurement-operation-table th:nth-child(3) { width:175px; }
+.measurement-operation-table th:nth-child(4),.measurement-operation-table th:nth-child(5) { width:135px; }
+.measurement-operation-steps th:nth-child(2) { width:190px; }
+.measurement-operation-steps th:nth-child(3),.measurement-operation-steps th:nth-child(4) { width:145px; }
+.measurement-operation-steps th:nth-child(5) { width:auto; }
 .coverage-failure { display:grid; border-bottom:1px solid var(--border); padding-block:.5rem; }
 .coverage-results { width:100%; font-size:.75rem; font-variant-numeric:tabular-nums; border-collapse:collapse; }
 .coverage-results td,.coverage-results th { text-align:right; padding:.5rem .25rem; border-bottom:1px solid var(--border); }

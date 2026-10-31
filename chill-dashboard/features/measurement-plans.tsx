@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
 import { ApiError, useChillMutation, useChillQuery } from "@/lib/client"
 import type { CampaignResult, MeasurementAssessment, MeasurementMutation, MeasurementPlanList, MeasurementPlanSpec, ResultRow } from "@/lib/read-types"
-import { formatMeasurementNumber as number, resultRowsCSV, safeMeasurementReturn } from "@/lib/measurements"
+import { formatMeasurementNumber as number, measurementCheckText, measurementUncertainty, resultRowsCSV, safeMeasurementReturn } from "@/lib/measurements"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
 import { Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
@@ -25,9 +25,10 @@ export function AssessmentDetails({assessment}:{assessment?:MeasurementAssessmen
     <h2 className="font-semibold">판정 근거</h2>
     {assessment.scope?.schedulerUsed===false&&<p className="text-sm">현재 스케줄러에서 사용하지 않는 결과예요.</p>}
     {assessment.scope?.reused&&<p className="text-sm">다른 Node의 측정을 참조한 결과예요. 대상 확인 측정과 원본 참조는 독립 반복으로 합산하지 않아요.</p>}
+    {!!assessment.checklist?.checks?.some(check=>check.result!=="pass")&&<ul className="space-y-2 border-l-4 border-heat pl-3 text-sm">{assessment.checklist.checks.filter(check=>check.result!=="pass").map((check,index)=><li key={index}><strong>{check.result==="fail"?"불일치":check.result==="unknown"?"미확인":"참고"}:</strong> {measurementCheckText(check)}</li>)}</ul>}
     {!!assessment.checklist?.checks?.length&&<details><summary className="min-h-11 cursor-pointer py-2 text-sm">서버 확인 항목과 사유 보기</summary>
       {!!assessment.reasons?.length&&<ul className="space-y-2 text-sm">{[...new Map(assessment.reasons.map(reason=>[`${reason.code}/${reason.message}`,reason])).values()].map((reason,index)=><li key={index}>{reason.label&&<strong>{reason.label}: </strong>}{reason.message.replace(/\s*\(FixtureOnly\)/g,"")}</li>)}</ul>}
-      <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>확인 항목</TableHead><TableHead>서버 결과</TableHead><TableHead>사유</TableHead></TableRow></TableHeader><TableBody>{assessment.checklist.checks.map((check,index)=><TableRow key={index}><TableCell>{check.code}</TableCell><TableCell>{check.result}</TableCell><TableCell className="whitespace-normal">{check.message}</TableCell></TableRow>)}</TableBody></Table></div>
+      <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>확인 항목</TableHead><TableHead>서버 결과</TableHead><TableHead>사유</TableHead></TableRow></TableHeader><TableBody>{assessment.checklist.checks.map((check,index)=><TableRow key={index}><TableCell>{check.code}</TableCell><TableCell>{{pass:"확인",fail:"불일치",warn:"참고",unknown:"미확인"}[check.result]}</TableCell><TableCell className="whitespace-normal">{measurementCheckText(check)}</TableCell></TableRow>)}</TableBody></Table></div>
     </details>}
   </section>
 }
@@ -61,7 +62,7 @@ export function ResultRows({rows,filename="chill-result-rows.csv",emptyMessage="
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">운영 판단 요약</h2><Button variant="outline" disabled={!rows.length} onClick={download}>결과 CSV 내보내기</Button></div>
     {!rows.length?<p className="notice">{emptyMessage}</p>:<div className="grid min-w-0 gap-3">{rows.map((row,index)=><article key={row.id??index} className="min-w-0 rounded-lg border p-4">
       <h3 className="font-semibold">한 번에 {row.batch}건 처리 · {row.rowKind==="confirmation"?"대상 확인 측정":row.rowKind==="source-reference"?"기존 측정 참조":row.rowKind==="direct"?"직접 측정":"측정 결과"}</h3>
-      <p className="mt-2 break-words text-sm tabular-nums">신뢰 근거: 실행 {number(row.activeTrialCount)}회 / 유휴 {number(row.idleTrialCount)}회 · 추가 에너지 {row.confidence&&row.incrementalJoulesPerItem!==null&&row.incrementalJoulesPerItem!==0?`${number(row.confidence.level*100)}% CI ±${number(100*row.confidence.halfWidth/Math.abs(row.incrementalJoulesPerItem))}%`:"오차 미제공"} · 지연 표본 {number(row.latencySampleCount)}개 · {row.powerSource?String(row.powerSource.kind??row.powerSource.metric??"출처 상세 참조"):"전력 출처 미제공"} (Node 전체 벽전력)</p>
+      <p className="mt-2 break-words text-sm tabular-nums">신뢰 근거: 작업 실행 {number(row.activeTrialCount)}회 / 작업 없이 측정 {number(row.idleTrialCount)}회 · 추가 에너지 {measurementUncertainty(row)} · 지연 표본 {number(row.latencySampleCount)}개 · {row.powerSource?String(row.powerSource.kind??row.powerSource.metric??"출처 상세 참조"):"전력 출처 미제공"} (노드 전체 전력). 오차 허용 기준 미설정으로 운영 허용 여부는 판정하지 않습니다.</p>
       <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">데이터셋: {String((row.condition.activeProtocol as {dataset?:{name?:string}}|undefined)?.dataset?.name??row.condition.dataset??"미제공")} · 모델 용도와의 일치 여부는 미검증이에요.</p>
       {!!row.missingReasons?.length&&<p className="mt-2 text-sm text-muted-foreground">일부 수치의 근거가 제공되지 않았어요. 상세 사유 {row.missingReasons.length}개는 원문에서 확인하세요.</p>}
       <dl className="mt-3 grid gap-3 sm:grid-cols-3">

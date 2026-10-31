@@ -7,7 +7,7 @@ import { serverConfig } from "./server-config.ts"
 import { parseSchedulerJSON } from "./scheduler.ts"
 import type { DispatchOccupancyMeasurement, OperationCostMeasurement } from "./read-types.ts"
 import { formatMeasurementTime, measurementConditionDiff, measurementReasonSummary } from "./measurements.ts"
-import { formatMeasurementNumber, measurementRequestName, resultRowsCSV } from "./measurements.ts"
+import { formatMeasurementNumber, measurementCheckText, measurementRequestName, measurementUncertainty, resultRowsCSV } from "./measurements.ts"
 import type { ResultRow } from "./read-types.ts"
 import { operationTotals } from "./measurements.ts"
 
@@ -232,4 +232,29 @@ test("operator result cards keep decision metrics visible and request submission
   assert.doesNotMatch(resultCards,/LaTeX|min-w-\[|<Table/)
   assert.ok(request.indexOf('onClick={submit}')>request.indexOf('<PreflightAnswer answer={answer}/>'))
   assert.match(request,/label="장치 종류"/)
+})
+
+test("energy uncertainty reports relative half width without inventing an acceptance threshold",()=>{
+  const row={incrementalJoulesPerItem:0.1,confidence:{level:0.95,halfWidth:0.02}} as ResultRow
+  assert.match(measurementUncertainty(row),/95.*±20\.00%/)
+  assert.match(measurementUncertainty({...row,incrementalJoulesPerItem:-0.1}),/±20\.00%/)
+  assert.match(measurementUncertainty({...row,incrementalJoulesPerItem:0}),/±0\.0200 J\/건/)
+  assert.doesNotMatch(measurementUncertainty({...row,incrementalJoulesPerItem:0}),/Infinity|NaN/)
+  assert.equal(measurementUncertainty({...row,confidence:{...row.confidence!,halfWidth:NaN}}),"오차 미제공")
+})
+
+test("failure actions name the measured node model path and smallest-batch limit",()=>{
+  const run={spec:{targetNode:"genesis2",candidate:{modelSpec:"smolvlm2",executionPath:"cuda"},measurement:{batch:1}},status:{},assessment:{failureSummary:[{code:"GPUMemoryExhausted"}]}} as unknown as Parameters<typeof runFailure>[0]
+  assert.match(runFailure(run).next,/genesis2.*smolvlm2/)
+  assert.match(runFailure(run).next,/배치 1.*cpu|배치 1.*int8/)
+  assert.match(runFailure({...run,spec:{...run.spec,measurement:{batch:8}}}).next,/배치 8.*작은 배치/)
+  for(const code of ["HostOOM","PowerObservationTimeout","ImagePullFailed","RuntimeFailed","Other"]) {
+    const next=runFailure({...run,assessment:{...run.assessment!,failureSummary:[{...run.assessment!.failureSummary![0],code}]}}).next
+    assert.match(next,/genesis2.*smolvlm2/)
+  }
+})
+
+test("power quality language identifies the checks operators still need to confirm",()=>{
+  assert.equal(measurementCheckText({code:"FrozenPowerWindowPolicy",message:"모든 활성·유휴 창의 동결 표본·gap·실패 정책"}),"전력 기록의 표본 수·누락 구간·실패 처리 기준")
+  assert.equal(measurementCheckText({code:"DatasetInputContract",message:"입력 image 크기 불일치"}),"입력 image 크기 불일치")
 })

@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process"
 import { campaignGroups, campaignPairs, commitExperimentSelection, comparisonDirection, experimentSelection, frozenP95SLO, stagePairing, policyStageGroups, serviceDelta, stageChartData, alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
 import { campaignConclusion, campaignScoreboard, campaignTradeoffs, policyChartStyle, stageComparison, stageHistoryLink, stageActivity, stageLoadLabel } from "./experiments.ts"
 import { campaignHeadline, publishedVerdict, selectedExperimentStage, experimentPath, stageEvidencePath } from "./experiments.ts"
+import { comparisonValidity } from "./experiments.ts"
 import type { SchedulerObservation } from "./read-types.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
@@ -486,4 +487,25 @@ test("R9: headline keeps net energy scoped to available pairs and never claims s
   assert.match(campaignHeadline(run),/항상 낫지는/)
   assert.match(campaignHeadline(run),/순 에너지 -10 J.*-10.00 %.*1\/2쌍/)
   assert.match(campaignHeadline({...run,stages:[]}),/같은 부하 구간이 없어요/)
+})
+
+test("R10: comparison limits retain missing rules, unequal durations, uncertain identity and observed load checks",()=>{
+  const make=(id:string):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",kpis:{measurementRules:{population:"offered"},requests:{camera:{uid:"camera",definitionID:"v1",offered:600,deadlineSuccessFraction:1,completedLatencyNS:{p95:1000000}}}}})
+  const a=make("full-E5-1"),b=make("static-E5-1")
+  assert.match(comparisonValidity(a,b).load,/서비스별.*1% 이내/)
+  assert.match(comparisonValidity(a,b).identity,/같은 등록·정의/)
+  assert.match(comparisonValidity(a,b).rules,/차이 없음/)
+  assert.equal(comparisonValidity(a,b).limited,false)
+  assert.equal(comparisonValidity(a,{...b,kpis:{}}).limited,true)
+  const uncertain={...b,to:"2026-10-30T00:02:00Z",kpis:{requests:{camera:{offered:600}}}}
+  const limits=comparisonValidity(a,uncertain)
+  assert.match(limits.load,/다르거나 미확인/)
+  assert.match(limits.duration,/길이 다름/)
+  assert.match(limits.rules,/미기록/)
+  assert.match(limits.identity,/미확인 1/)
+  assert.match(comparisonValidity(a,{...b,kpis:{...b.kpis,measurementRules:{}}}).rules,/미기록/)
+  assert.match(comparisonValidity(a,{...b,kpis:{...b.kpis,measurementRules:{population:"received"}}}).rules,/차이 있음/)
+  assert.match(comparisonValidity(a,{...b,kpis:{...b.kpis,requests:{camera:{uid:"camera",definitionID:"v2",offered:600}}}}).identity,/다름 1/)
+  assert.match(campaignConclusion({...recorded.publication,stages:[{...a,kpis:{...a.kpis,measurementRules:null}},b]}),/확인이 부족/)
+  assert.match(campaignConclusion({...recorded.publication,stages:[{...a,kpis:{...a.kpis,requests:{camera:{offered:600,deadlineSuccessFraction:1,completedLatencyNS:{p95:1000000}}}}},b]}),/확인이 부족/)
 })

@@ -12,7 +12,7 @@ import { Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 const coverageStates={usable:"사용 가능",review:"검토 필요",insufficient:"부족",problem:"문제",running:"진행",unmeasured:"미측정",unknown:"확인 불가"}
-import { formatMeasurementNumber as number, formatMeasurementTime } from "@/lib/measurements"
+import { formatMeasurementNumber as number, formatMeasurementTime, measurementCheckText, measurementUncertainty } from "@/lib/measurements"
 import "./measurement-coverage.css"
 async function readPage<T>(path:string,token:string,signal:AbortSignal):Promise<T> {
   const response=await fetch(`/api/chill/${path}`,{headers:{Authorization:`Bearer ${token}`},signal,cache:"no-store",credentials:"omit"})
@@ -85,7 +85,7 @@ export function useMeasurementCoverage(namespace:string,enabled=true) {
 export function CoverageSummary({data}:{data:MeasurementCoverageResponse}) {
   const inventory=useCoverageInventory()
   const visible=data.cells.filter(cell=>coveragePathVisible(cell,inventory.data)),counts=coverageStatusCounts(visible)
-  return <section className="coverage-summary" aria-label="전체 모델 측정 현황"><strong>전체 모델 · 표시 조합 {visible.length}</strong>{Object.entries(coverageStates).map(([status,label])=><span key={status} className={`status-${status}`}>{label} {counts[status as keyof typeof counts]}</span>)}<details><summary>집계 범위·갱신 시각</summary><p>위 상태 합계는 표시 조합 {visible.length}개와 같습니다. 지원 안 됨 {data.cells.length-visible.length}개는 제외했습니다. 아래 표는 선택 모델·필터 범위입니다.</p><p>커버리지 갱신 {data.dataAsOf?formatMeasurementTime(data.dataAsOf):"미확인"} / {data.freshness==="fresh"?"최신":"이전 자료"} / {data.completeness==="complete"?"전체 확인":"일부 확인"}</p><p>갱신 시각은 결과의 실제 측정 시각과 다릅니다.</p></details></section>
+  return <section className="coverage-summary" aria-label="전체 모델 측정 현황"><strong>전체 모델 집계 · {data.scope.namespace} · 표시 조합 {visible.length}</strong><span>아래 모델·장치 선택과 별개{data.scope.supportBasis==="selected-node-static"?" · 지정 노드 범위":""}</span>{Object.entries(coverageStates).map(([status,label])=><span key={status} className={`status-${status}`}>{label} {counts[status as keyof typeof counts]}</span>)}<details><summary>집계 범위·갱신 시각</summary><p>위 상태 합계는 표시 조합 {visible.length}개와 같습니다. 지원 안 됨 {data.cells.length-visible.length}개는 제외했습니다. 아래 표는 선택 모델·필터 범위입니다.</p><p>커버리지 갱신 {data.dataAsOf?formatMeasurementTime(data.dataAsOf):"미확인"} / {data.freshness==="fresh"?"최신":"이전 자료"} / {data.completeness==="complete"?"전체 확인":"일부 확인"}</p><p>갱신 시각은 결과의 실제 측정 시각과 다릅니다.</p></details></section>
 }
 export function CoverageError({error,retry}:{error:ApiError|null;retry:()=>void}) {
   return <section role={error?"alert":"status"} className="coverage-message"><p>{error?error.status===503?"서버가 커버리지를 아직 준비하지 못했습니다. 잠시 후 다시 조회하세요.":`커버리지 조회 실패 (HTTP ${error.status})로 운영 가능 범위와 다음 조치를 확인할 수 없습니다.`:"서버에서 커버리지를 준비 중입니다. 준비되지 않으면 자동으로 다시 조회합니다."}</p>{error&&<><p>{error.status===404?"서버의 커버리지 기능 배포 상태를 관리자에게 확인하세요.":"측정 요청 목록은 별도로 확인할 수 있습니다."}</p><details><summary>오류 코드·원문</summary><pre className="whitespace-pre-wrap break-all">{error.body}</pre></details><Button variant="outline" onClick={retry}>다시 조회</Button><Link href="/measurements/requests">측정 요청 목록 확인</Link></>}</section>
@@ -130,12 +130,14 @@ export function MeasurementCoveragePage() {
           <MeasurementFilters axes={[{key:"path",label:"실행 경로",values:data.cells.filter(cell=>cell.model.name===model&&coveragePathVisible(cell,inventory.data)).map(cell=>cell.executionPath)},{key:"powerMode",label:"전력모드",values:data.cells.map(cell=>cell.powerMode)}]}/><div className="grid gap-3 sm:grid-cols-2"><label>Node<Input value={params.get("node")??""} onChange={event=>update("node",event.target.value)}/></label><label>CPU quota<Input value={params.get("cpu")??""} onChange={event=>update("cpu",event.target.value)}/></label></div>
         </details>
       </div>
+      <p className="text-sm font-semibold" aria-label="선택 범위 집계">선택 범위: {model} / {params.get("deviceClass")?deviceLabel(params.get("deviceClass")!):"전체 장치"} · 표시 {cells.length}개 중 사용 가능 {cells.filter(cell=>cell.assessment.displayStatus==="usable").length}개</p>
+      <p className="coverage-batch-legend" aria-label="배치 기호 범례">배치: ■ 기준 충족 · ▧ 측정 있음 · ◷ 진행 · □ 부족 · ? 미확인 · — 요청 목표 밖 (지원 불가 아님)</p>
       <div className="coverage-workspace">
         <div className="coverage-pivot" aria-label={`${model??""} 장치별 커버리지`}>
           {!classes.length&&<p className="p-4">현재 필터에 맞는 조건이 없습니다. 선택한 조건 상세는 유지됩니다.</p>}
           {classes.map(cls=>{
             const deviceCells=cells.filter(cell=>cell.deviceClass.uid===cls.uid),paths=[...new Set(deviceCells.map(cell=>cell.executionPath))].sort(),modes=coverageModes(deviceCells)
-            return <details key={cls.uid} id={`coverage-device-${encodeURIComponent(cls.uid)}`} className="coverage-device" open={selected?.deviceClass.uid===cls.uid||(!selected&&cls.uid===classes[0]?.uid)}><summary><h2>{deviceLabel(cls.name)} <small>사용 가능 {deviceCells.filter(cell=>cell.assessment.displayStatus==="usable").length} / {deviceCells.length}개 조건</small></h2></summary>
+            return <details key={cls.uid} id={`coverage-device-${encodeURIComponent(cls.uid)}`} className="coverage-device" open={selected?.deviceClass.uid===cls.uid||(!selected&&cls.uid===classes[0]?.uid)}><summary><h2>장치 종류: {deviceLabel(cls.name)} <small>노드: {inventory.data?.classes.find(item=>item.uid===cls.uid)?.nodes.map(node=>node.name).join(", ")||"미확인"} · 사용 가능 {deviceCells.filter(cell=>cell.assessment.displayStatus==="usable").length} / {deviceCells.length}개 조건</small></h2></summary>
               <div className="coverage-desktop-table"><table><caption className="sr-only">{deviceLabel(cls.name)} 전력모드별 실행 경로</caption><thead><tr><th scope="col">전력모드<br/><small>실측 W 낮은 순</small></th>{paths.map(path=><th key={path} scope="col">{path.replace(/^firstfloor-/,"")}</th>)}</tr></thead><tbody>{modes.map(mode=><tr key={mode}><th scope="row"><span>{mode}</span><small>{powerModeLabel(mode,coverageWatts(deviceCells.filter(cell=>cell.powerMode===mode))).split(" · ")[1]}</small></th>{paths.map(path=>{const cell=deviceCells.find(cell=>cell.powerMode===mode&&cell.executionPath===path);return <td key={path}>{cell?<CoverageCell cell={cell} selected={cell.id===selected?.id} select={select}/>:<span>조건 없음</span>}</td>})}</tr>)}</tbody></table></div>
               <div className="coverage-mobile-cells">{modes.map(mode=><section key={mode}><h3>{powerModeLabel(mode,coverageWatts(deviceCells.filter(cell=>cell.powerMode===mode)))}</h3>{deviceCells.filter(cell=>cell.powerMode===mode).map(cell=><div key={cell.id}><h4>{cell.executionPath.replace(/^firstfloor-/,"")}</h4><CoverageCell cell={cell} selected={cell.id===selected?.id} select={select}/></div>)}</section>)}</div>
             </details>
@@ -156,12 +158,14 @@ function BatchBar({progress}:{progress:BatchProgress|null}) {
 }
 function CoverageCell({cell,selected,select}:{cell:MeasurementCoverageCell;selected:boolean;select:(cell:MeasurementCoverageCell,button:HTMLButtonElement)=>void}) {
   const representative=coverageRepresentative(cell),progress=coverageProgress(cell)
-  const warnings=cell.variants.flatMap(variant=>variant.assessment.checklist.checks).filter(check=>check.result==="fail")
+  const checks=coverageVariant(cell)?.assessment.checklist.checks??cell.assessment.checklist.checks
+  const warnings=checks.filter(check=>check.result==="fail"),unknown=checks.filter(check=>check.result==="unknown")
   return <button data-coverage-cell={cell.id} className={`coverage-cell ${cell.support.verdict!=="Compatible"?"coverage-cell-unconfirmed":""}`} aria-pressed={selected} aria-controls="coverage-selected-condition" aria-label={`${deviceLabel(cell.deviceClass.name)} ${cell.powerMode} ${cell.executionPath} ${cell.assessment.label} 상세`} onClick={event=>select(cell,event.currentTarget)}>
     <MeasurementStatus assessment={cell.assessment}/>
     <BatchBar progress={progress}/>
-    {warnings.length>0&&<span className="coverage-representative">확인된 불일치 {warnings.length}건 · 상세 확인</span>}
-    {cell.support.verdict==="Unknown"&&<span className="coverage-representative">? {cell.support.reasons.map(reason=>reason.message).join(" / ")||"실행 지원 근거 미확인"}</span>}
+    {warnings.length>0&&<span className="measurement-status status-review">근거 불일치 {warnings.length}건</span>}
+    {unknown.length>0&&<span className="measurement-status coverage-trust-pending">추가 확인 {unknown.length}건 · 운영 승인 별도</span>}
+    {cell.support.verdict==="Unknown"&&<span className="coverage-representative" title={cell.support.reasons.map(reason=>reason.message).join(" / ")}>실행 지원 미확인{cell.support.node?` · 노드 ${cell.support.node.name}`:""} · 상세에서 선언 확인</span>}
     <span className="coverage-representative">{representative?`배치 ${representative.batch} p95 ${number(representative.p95Milliseconds,"ms")} ms / 추가 ${number(representative.incrementalJoulesPerItem,"J/건")} J/건`:"대표값 없음"}</span>
     {cell.variantCount>1&&<small>정확 조건 {cell.variantCount}개 / 대표 조건 막대</small>}
     {cell.failureSummary.length>0&&<strong className="text-fail">{cell.failureSummary[0].label??"기타"}{cell.failureSummary.length>1?` (${cell.failureSummary.length}회)`:""}</strong>}
@@ -182,8 +186,8 @@ export function CoverageActions({data,namespace}:{data:MeasurementCoverageRespon
 function TrustLine({row}:{row:ResultRow|undefined}) {
   const source=row?.powerSource
   const power=source?[source.kind,source.metric,source.nodeName].filter(value=>typeof value==="string").join(" / ")||"출처 상세 참조":"미제공"
-  const uncertainty=row?.confidence?`${number(row.confidence.level*100)}% 신뢰구간 ${row.incrementalJoulesPerItem?`±${number(100*row.confidence.halfWidth/Math.abs(row.incrementalJoulesPerItem),"%")}%`:`±${number(row.confidence.halfWidth,"J/건")} J/건`}`:"오차 미제공"
-  return <section className="coverage-trust"><h3>측정 근거</h3><p>{row?`독립 반복 실행 ${number(row.activeTrialCount)}회 / 유휴 ${number(row.idleTrialCount)}회`:"저장된 측정 결과 없음"}</p><p>추가 에너지 {uncertainty}</p><p>전력 {power} · 장치 단독 전력 아님</p></section>
+  const uncertainty=measurementUncertainty(row)
+  return <section className="coverage-trust"><h3>측정 근거</h3><p>{row?`작업 실행 반복 ${number(row.activeTrialCount)}회 / 작업 없이 측정 ${number(row.idleTrialCount)}회`:"저장된 측정 결과 없음"}</p><p>추가 에너지 {uncertainty}</p><p>오차 허용 기준 미설정 · 수치만 표시하며 운영 허용 여부를 판정하지 않습니다.</p><p>전력 {power} · 장치 단독 전력 아님</p></section>
 }
 function CoverageDetail({cell,namespace,close,visible}:{cell:MeasurementCoverageCell;namespace:string;close:()=>void;visible:boolean}) {
   const params=useSearchParams(),router=useRouter(),panel=useRef<HTMLDivElement>(null),{token}=useSession()
@@ -212,8 +216,10 @@ function CoverageDetail({cell,namespace,close,visible}:{cell:MeasurementCoverage
     <header><h2>{deviceLabel(cell.deviceClass.name)}</h2><Button variant="outline" onClick={close}>닫기</Button></header>
     <p className="font-semibold break-words">{cell.model.name}</p><p>선택 경로: {powerModeLabel(cell.powerMode,coverageWatts([cell]))}<br/>{cell.executionPath}</p>
     {!visible&&<p className="text-muted-foreground">이 조건은 현재 탭·필터 밖에 있습니다. 선택은 유지됩니다.</p>}
-    <MeasurementStatus assessment={cell.assessment}/>
-    {rows.length>0&&<section aria-label="입력 계약·품질 확인"><h3>{checks.some(check=>check.result==="fail")?"확인된 근거 불일치":"추가 확인 사항"}</h3>{checks.length>0&&<ul>{checks.map(check=><li key={`${check.code}/${check.result}`} className={check.result==="fail"?"coverage-warning":"text-sm text-muted-foreground"}>{check.result==="fail"?"불일치":check.result==="unknown"?"미확인":"참고"}: {check.message}</li>)}</ul>}<p className="text-sm text-muted-foreground">스케줄러 사용 여부는 채택 사실이며 별도 운영 승인을 뜻하지 않습니다.</p></section>}
+    <section className="coverage-condition-verdict" aria-label="채택 상태와 신뢰 조건"><MeasurementStatus assessment={cell.assessment}/>
+      {checks.length>0&&<><h3>{checks.some(check=>check.result==="fail")?"근거 불일치 · 운영 사용 전 확인":"미확인 조건 · 운영 사용 전 확인"}</h3><ul>{checks.map(check=><li key={`${check.code}/${check.result}`} className="coverage-warning">{check.result==="fail"?"불일치":check.result==="unknown"?"미확인":"참고"}: {measurementCheckText(check)}</li>)}</ul></>}
+      <p>사용 가능은 저장 근거와 목표 배치의 충족 상태입니다. 미확인 항목은 통과가 아니며 스케줄러 채택은 별도 운영 승인을 뜻하지 않습니다.</p>
+    </section>
     <div className="text-sm">{measured.length?<p>실제 측정 <time dateTime={measured.at(-1)}>{formatMeasurementTime(measured.at(-1)!)}</time> / {measurementAge(measured.at(-1)!)}</p>:profiles.isPending&&rows.length?<p>측정 시각 조회 중</p>:profiles.error?<><p role="alert">측정 시각 조회 실패 (HTTP {profiles.error.status}) · 수치 근거는 유지합니다.</p><Button variant="outline" onClick={()=>void profiles.refetch()}>측정 시각 다시 조회</Button></>:<p>측정 시각 미기록 또는 현재 프로파일에 없음</p>}</div>
     <TrustLine row={rows.find(row=>row.batch===1)??rows[0]}/>
     <Button asChild><Link href={coverageRequestHref(cell,namespace,returnTo,variant?.id,params.get("batches")?.split(",").map(Number)??[])}>이 조건으로 측정 요청</Link></Button>

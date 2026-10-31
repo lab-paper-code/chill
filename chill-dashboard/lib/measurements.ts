@@ -16,6 +16,21 @@ export function formatMeasurementNumber(value:unknown, unit=""):string {
   const digits = unit === "J/건" || unit === "J/item" ? 4 : unit === "W" ? 1 : ["ms", "%", "%p"].includes(unit) ? 2 : 0
   return value.toLocaleString("ko-KR", {minimumFractionDigits:digits,maximumFractionDigits:digits})
 }
+export function measurementUncertainty(row:ResultRow|undefined):string {
+  const ci=row?.confidence,mean=row?.incrementalJoulesPerItem
+  if(!ci||!Number.isFinite(ci.level)||ci.level<=0||ci.level>=1||!Number.isFinite(ci.halfWidth)||ci.halfWidth<0)return "오차 미제공"
+  const relative=typeof mean==="number"&&Number.isFinite(mean)&&mean!==0?100*ci.halfWidth/Math.abs(mean):null
+  return `${formatMeasurementNumber(ci.level*100)}% 오차 범위 ${relative!==null&&Number.isFinite(relative)?`±${formatMeasurementNumber(relative,"%")}% (평균 대비)`:`±${formatMeasurementNumber(ci.halfWidth,"J/건")} J/건`}`
+}
+export function measurementCheckText(check:{code:string;message:string}):string {
+  const labels:Record<string,string>={
+    ExactConditionLineage:"측정 당시 조건과 원본 결과의 연결",TargetBatch:"이 배치의 실제 측정",
+    ActiveTrials:"작업을 실행한 독립 반복 횟수",IdleTrials:"작업 없이 잰 반복 횟수",
+    IncrementalConfidence:"작업으로 늘어난 에너지의 오차 범위",ClientLatency:"응답 100건 중 95번째 지연과 표본 수",
+    PowerSource:"전력을 잰 계측 출처",FrozenPowerWindowPolicy:"전력 기록의 표본 수·누락 구간·실패 처리 기준",
+  }
+  return labels[check.code]??check.message
+}
 export function resultRowsCSV(rows:ResultRow[]):string {
   const keys = ["id","rowKind","profileId","sourceProfileId","batch","condition","p95Milliseconds","latencySampleCount","idleWatts","activeWatts","totalJoulesPerItem","incrementalJoulesPerItem","confidence","activeTrialCount","idleTrialCount","completedItems","completedCalls","powerSource","assessment","sources","missingReasons","reuse"] as const
   const escape = (value:unknown) => {
@@ -126,6 +141,16 @@ export const cleanRunLog=(value:unknown)=>typeof value==="string"?value.replace(
 export function runFailure(run:ProfilingRun) {
   const termination=runStatusObject(run.status.runtimeTermination),log=cleanRunLog(termination?.logTail)
   const failure=run.assessment?.failureSummary?.[0]
-  const next:Record<string,string>={GPUMemoryExhausted:"GPU 메모리와 함께 실행 중인 작업을 확인하고 실행 경로를 검토하세요.",HostOOM:"Node 메모리와 함께 실행 중인 작업을 확인하세요.",PowerObservationTimeout:"전력 계측기와 관측 대기 한도를 확인하세요.",ImagePullFailed:"실행 이미지 주소와 가져오기 권한을 확인하세요.",RuntimeFailed:"회차의 실행 환경과 측정 조건을 확인하세요."}
-  return {title:failure?.label??"실패 분류 미제공",excerpt:failure?.message??"서버의 실패 분류가 제공되지 않았어요. 원본 상태를 확인하세요.",exitCode:failure?.exitCode??termination?.exitCode,log,next:next[failure?.code??""]??"원본 실행 상태를 확인하고 담당자에게 문의하세요."}
+  const spec=run.spec as {targetNode?:string;candidate?:{modelSpec?:string;executionPath?:string};measurement?:{batch?:number}}
+  const target=`노드 ${spec.targetNode??"미기록"} / 모델 ${spec.candidate?.modelSpec??"미기록"} / 경로 ${spec.candidate?.executionPath??"미기록"}`
+  const batch=spec.measurement?.batch
+  const smaller=batch===1?"배치 1에서도 실패했으므로 등록된 CPU·int8 등 다른 실행 경로 또는 메모리가 더 큰 장치를 선택하세요.":batch?`배치 ${batch}보다 작은 배치로 요청을 준비하세요.`:"실패 배치 크기를 확인하고 더 작은 배치로 요청을 준비하세요."
+  const next:Record<string,string>={
+    GPUMemoryExhausted:`GPU 메모리 여유와 같은 GPU의 동시 작업을 확인하세요. ${smaller} 당시 동시 점유 작업은 이 기록에 제공되지 않습니다.`,
+    HostOOM:`노드의 시스템 메모리와 동시 작업을 확인하세요. ${smaller}`,
+    PowerObservationTimeout:"이 노드의 전력 계측기 연결·응답과 전력 기록 대기 한도/간격을 확인하세요. 관측이 복구된 뒤 같은 조건으로 요청을 준비하세요. 모델 실행 성능 오류로 해석하지 마세요.",
+    ImagePullFailed:"이 노드에서 해당 경로의 이미지 주소·버전·가져오기 권한을 확인하세요. 이미지에 접근할 수 있을 때 다시 요청하세요.",
+    RuntimeFailed:"아래 실행 로그의 최초 오류와 이 경로의 모델 파일·장치 지원·실제 실행 환경을 확인하고 맞는 경로로 요청을 준비하세요.",
+  }
+  return {title:failure?.label??"실패 분류 미제공",excerpt:failure?.message??"서버의 실패 분류가 제공되지 않았어요. 원본 상태를 확인하세요.",exitCode:failure?.exitCode??termination?.exitCode,log,next:`${target}: ${next[failure?.code??""]??"아래 실행 조건·환경·로그에서 실패 사유를 확인한 뒤 해당 노드와 모델 정보를 담당자에게 전달하세요."}`}
 }

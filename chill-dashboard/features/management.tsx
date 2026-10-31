@@ -16,6 +16,7 @@ import type { ObservationCohort, SchedulerSettings, SchedulerWorkloadState } fro
 import { parseSchedulerJSON, preciseJSONSupported } from "@/lib/scheduler"
 import { ServiceSection, serviceSections, useServiceSignals, type ServiceSectionId } from "@/features/service-hub"
 import { putSchedulerSettings } from "@/features/scheduler-settings"
+import { datasetGap } from "@/lib/measurement-request"
 
 type Kind = "models" | "workloads" | "preprocessors" | "datasets"
 type Catalog = PreprocessorResource | DatasetResource
@@ -64,13 +65,6 @@ function preprocessorGap(p: PreprocessorSpec, model: ModelResource | undefined) 
   const targets = p.artifacts.filter(a => a.target.model === model.metadata.name && model.spec.artifacts.some(m => m.name === a.target.artifact)).map(a => a.target.artifact)
   if (!targets.length) return "이 모델 파일을 위한 전처리 파일이 없어요"
   return model.spec.executionPaths.some(path => targets.includes(path.artifact)) ? "" : "이 전처리 파일로 실행할 방식이 모델에 없어요"
-}
-// Preview of modelcatalog.Compatible: every preprocessor input needs a record field with the same name and format and a bound no larger.
-function datasetGap(d: DatasetSpec, p: PreprocessorSpec | undefined) {
-  return (p?.input.fields ?? []).map(f => {
-    const record = d.fields.find(x => x.name === f.name)
-    return !record ? `${f.name} 필드가 없어요` : record.format !== f.format ? `${f.name} 형식이 달라요` : record.maxBytes > f.maxBytes ? `${f.name} 크기가 ${size(f.maxBytes)}보다 클 수 있어요` : ""
-  }).filter(Boolean).join(" · ")
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
