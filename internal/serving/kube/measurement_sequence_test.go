@@ -292,9 +292,17 @@ func TestManualOperationGuards(t *testing.T) {
 			t.Fatalf("%s refused for wrong reason: got %v, want %s", name, err, tc.code)
 		}
 	}
+	var callbacks []OperationResult
+	h.controller.config.OnAction = func(result OperationResult) error {
+		callbacks = append(callbacks, result)
+		return nil
+	}
 	result, err := h.controller.ExecuteManual(context.Background(), manualPrepare())
 	if err != nil || !strings.Contains(result.Error, "stop after Pod creation") {
 		t.Fatalf("prepare did not reach Pod creation: %+v %v", result, err)
+	}
+	if len(callbacks) != 2 || !callbacks[0].StartedAt.Equal(callbacks[1].StartedAt) || !result.StartedAt.Equal(callbacks[0].StartedAt) {
+		t.Fatalf("manual operation changed live action identity between start and completion: %+v", callbacks)
 	}
 	pod, err := h.kube.CoreV1().Pods("chill-system").Get(context.Background(), measuredCPUPreparationFixture().Name, meta.GetOptions{})
 	if err != nil || len(pod.OwnerReferences) != 1 || pod.OwnerReferences[0].UID != "w-uid" {
