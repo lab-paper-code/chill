@@ -5,7 +5,9 @@ Coverage: CHILL_EXPERIMENT_CONFIG=/absolute/environment.json python3
 hack/measure/gen.py --coverage --output-dir /tmp/coverage-plan-out --preflight
 The frozen coverage-plan.json accompanies all outputs. --coverage --self-check
 is offline. Feeder input is resume-plan.json (--stages 1,2); generation and the
-optional read-only preflight do not submit measurements.
+optional read-only preflight do not submit measurements. --pilot covers each
+planned runtime family plus the highest-priority (heaviest) model on its
+smallest-memory planned node; repeated nodes remain ordered lanes.
 Legacy approved derivations still require the already-installed scipy.
 """
 import argparse
@@ -618,17 +620,54 @@ def coverage_manifest(output, lanes):
         "schemaVersion": "coverage-feeder-plan.v1", "sequence": sequence, "cells": cells})
 
 
-def coverage_pilot(lanes, policy):
+def coverage_runtime_family(candidate, device):
+    path, arch = candidate["executionPath"].lower(), device["architecture"]
+    if "rknn" in path:
+        return "RKNN"
+    if "cuda" in path:
+        if arch == "amd64":
+            return "CUDA amd64"
+        if device.get("accelerator") == "nvidia-jetson-nano":
+            return "L4T r32"
+        if device.get("accelerator", "").startswith("nvidia-jetson-"):
+            return "L4T r35"
+    elif "cpu" in path and arch in ("arm64", "amd64"):
+        return "CPU " + arch
+    raise ValueError("unknown pilot runtime family: " + str(candidate))
+
+
+def coverage_memory(value):
+    for base, suffixes in ((1024, ("Ki", "Mi", "Gi", "Ti", "Pi", "Ei")),
+                           (1000, ("k", "M", "G", "T", "P", "E"))):
+        for exponent, suffix in enumerate(suffixes, 1):
+            if value.endswith(suffix):
+                return Decimal(value[:-len(suffix)]) * base ** exponent
+    return Decimal(value)
+
+
+def coverage_pilot(lanes, policy, classes):
     pairs = [pair for lane in lanes.values() for pair in lane]
-    first, second = policy["pilotModels"]
-    choices = [(a, b) for a in pairs if a[0]["model"] == first
-               for b in pairs if b[0]["model"] == second and a[0]["node"] != b[0]["node"]]
-    if not choices:
-        raise ValueError("pilot requires one cell per configured model on distinct nodes")
-    chosen = min(choices, key=lambda pair: (
-        sum(len(lanes[r["node"]]) for r, _ in pair),
-        sum(r["estimatedSeconds"] for r, _ in pair), tuple(r["cellId"] for r, _ in pair)))
-    return {r["node"]: [(r, d)] for r, d in chosen}
+    if not pairs:
+        return {}
+    families = defaultdict(list)
+    for row, doc in pairs:
+        candidate = doc["spec"]["state"]["candidate"]
+        family = coverage_runtime_family(candidate, classes[candidate["deviceClass"]])
+        families[family].append((row, doc))
+    chosen = {}
+    for family in sorted(families):
+        pair = min(families[family], key=lambda pair: (pair[0]["estimatedSeconds"], pair[0]["cellId"]))
+        chosen[pair[0]["cellId"]] = pair
+    # Model priority orders light models before the heaviest model in this plan.
+    heavy = max(policy["models"][row["model"]]["priority"] for row, _ in pairs)
+    stress = min((pair for pair in pairs if policy["models"][pair[0]["model"]]["priority"] == heavy),
+                 key=lambda pair: (coverage_memory(classes[pair[1]["spec"]["state"]["candidate"]["deviceClass"]]["memory"]),
+                                   pair[0]["estimatedSeconds"], pair[0]["cellId"]))
+    chosen[stress[0]["cellId"]] = stress
+    selected = defaultdict(list)
+    for row, doc in sorted(chosen.values(), key=lambda pair: (pair[0]["priority"], pair[0]["cellId"])):
+        selected[row["node"]].append((row, doc))
+    return dict(selected)
 
 
 def coverage_batch_plan(cell, batches, timings, policy, declared=False):
@@ -787,7 +826,7 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
          "reason": "현재 runtime 측정 없음"} for cell in stale])
     write_json(output / "current-runtime-measured-cells.json", [cell["id"] for cell in measured_current])
     if pilot:
-        pilot_lanes = coverage_pilot(lanes, policy)
+        pilot_lanes = coverage_pilot(lanes, policy, classes)
         coverage_manifest(output / "pilot", pilot_lanes)
         write_json(output / "pilot" / "coverage-plan.json", policy)
         pilot_rows = [r for lane in pilot_lanes.values() for r, _ in lane]
@@ -918,18 +957,34 @@ def coverage_self_check():
     named = {"metadata": {"name": policy["requestNamePrefix"] + "already-created"}, "spec": {
         "state": {"candidate": {"modelSpec": model, "deviceClass": "device", "executionPath": "path", "powerMode": "mode"}}}}
     assert coverage_existing(cell, [named], policy) == named
-    second_model = policy["pilotModels"][1]
-    pilot_rows = [
-        {"node": node, "model": m, "cellId": name, "estimatedSeconds": seconds}
-        for node, m, name, seconds in [("small-a", model, "a", 30), ("small-b", second_model, "b", 40),
-                                     ("large", model, "c", 1), ("large", model, "d", 1)]]
+    heavy_model = max(policy["models"], key=lambda name: policy["models"][name]["priority"])
+    classes = {
+        "arm": {"architecture": "arm64", "memory": "64Gi"},
+        "amd": {"architecture": "amd64", "memory": "8Gi"},
+        "gpu": {"architecture": "amd64", "memory": "64Gi"},
+        "nano": {"architecture": "arm64", "memory": "4096Mi", "accelerator": "nvidia-jetson-nano"},
+        "orin": {"architecture": "arm64", "memory": "8Gi", "accelerator": "nvidia-jetson-agx-orin"},
+        "rk": {"architecture": "arm64", "memory": "16Gi", "accelerator": "rk3588-npu"}}
     pilot_lanes = defaultdict(list)
-    for row in pilot_rows:
-        pilot_lanes[row["node"]].append((row, {"metadata": {"name": row["cellId"]}}))
-    selected = coverage_pilot(pilot_lanes, policy)
-    assert set(selected) == {"small-a", "small-b"} and sum(map(len, selected.values())) == 2
-    assert selected["small-a"][0][1] is pilot_lanes["small-a"][0][1]
-    print("coverage selection, inheritance, batch declarations, one-call boundary, monotone exclusion and pilot reuse checked")
+    cases = [("arm", "ort-cpu", "CPU arm64"), ("amd", "ort-cpu", "CPU amd64"),
+             ("gpu", "ort-cuda", "CUDA amd64"), ("nano", "ort-cuda", "L4T r32"),
+             ("orin", "ort-cuda", "L4T r35"), ("rk", "rknnlite", "RKNN"),
+             ("nano", "ort-cpu", "CPU arm64"), ("orin", "ort-cpu", "CPU arm64")]
+    for index, (node, path, family) in enumerate(cases):
+        m = heavy_model if index >= 6 else model
+        row = {"node": node, "model": m, "cellId": str(index),
+               "priority": policy["models"][m]["priority"], "estimatedSeconds": 100 if index >= 6 else 1}
+        candidate = {"deviceClass": node, "executionPath": path}
+        assert coverage_runtime_family(candidate, classes[node]) == family
+        pilot_lanes[node].append((row, {"spec": {"state": {"candidate": candidate}}}))
+    selected = coverage_pilot(pilot_lanes, policy, classes)
+    assert {r["cellId"] for lane in selected.values() for r, _ in lane} == set(map(str, range(7)))
+    assert len(selected["nano"]) == 2  # CUDA family and heavy CPU model share an ordered lane
+    assert selected["nano"][0][1] is pilot_lanes["nano"][0][1]
+    assert coverage_pilot({"arm": pilot_lanes["arm"]}, policy, classes) == {"arm": pilot_lanes["arm"]}
+    assert coverage_pilot({}, policy, classes) == {}
+    assert coverage_memory("4Gi") == coverage_memory("4096Mi") == coverage_memory("4294967296")
+    print("coverage selection, inheritance, batches, one-call boundary, monotone exclusion and runtime-family pilot checked")
 
 
 def self_check():
@@ -997,7 +1052,7 @@ if __name__ == "__main__":
     parser.add_argument("--coverage", action="store_true", help="generate read-only live coverage plan")
     parser.add_argument("--plan-config", type=Path, default=HERE / "coverage-plan.json")
     parser.add_argument("--preflight", action="store_true", help="read-only preflight, one sample per model")
-    parser.add_argument("--pilot", action="store_true", help="also emit two-cell pilot on distinct small lanes")
+    parser.add_argument("--pilot", action="store_true", help="also emit runtime-family coverage and smallest-memory heavy-model pilot")
     args = parser.parse_args()
     if (args.preflight or args.pilot) and not args.coverage:
         parser.error("--preflight and --pilot require --coverage")

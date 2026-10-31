@@ -2,7 +2,9 @@
 # previous one is terminal (the node queue runs them one at a time anyway, so per-node order is unchanged).
 # Occupancies obey the persisted feeder-cap limit. Held documents block their lane;
 # failed terminal records stop approved campaigns, but coverage plans record them and continue.
-# Restartable: existing terminal CRs are never recreated; skipped counts existing successful CRs.
+# Coverage lanes stop after measure.maxConsecutiveFailures (default 2); other lanes continue.
+# Restartable: existing terminal CRs are never recreated. Skipped counts existing successes
+# and unattempted documents in stopped lanes.
 # Approved resume: python3 feeder.py --manifest PATH/resume-plan.json --stages 4,5,6
 # Coverage failures: feeder.log/statusLog and feeder-failed.txt; retry only via a new plan.
 # Offline regression: python3 hack/measure/feeder_check.py
@@ -85,6 +87,11 @@ assert previous_names(('t HELD n later', 't TERMINAL n done')) == ({'done'}, {'l
 def run(queues, final, continue_on_failure=False):
     pos = {n: 0 for n in queues}
     created = set()
+    failures = {n: 0 for n in queues}
+    stopped = set()
+    limit = ENV.get('maxConsecutiveFailures', 2)
+    if continue_on_failure and (type(limit) is not int or limit < 1):
+        raise ValueError('measure.maxConsecutiveFailures must be a positive integer')
     counts = dict(success=0, failed=0, skipped=0)
     # A held document has not had its future terminal result reported.
     seen, held_seen = previous_names(open(V + '/feeder.log'))
@@ -93,6 +100,8 @@ def run(queues, final, continue_on_failure=False):
         hold = json.load(open(HOLDF)) if os.path.exists(HOLDF) else {}
         pause = hold.get('pauseNodes', [])
         for n, q in queues.items():
+            if n in stopped:
+                continue
             while pos[n] < len(q):
                 d = q[pos[n]]; kind, name = d['kind'], d['metadata']['name']; st = state(kind, name)
                 if st is None and held(d):
@@ -125,11 +134,19 @@ def run(queues, final, continue_on_failure=False):
                         open(V + '/feeder-failed.txt', 'a').write(f'{now()} {n} {kind} {name} {st}\n')
                     elif kind == 'DispatchOccupancyMeasurement':
                         final[n] = name
-                if not node_released(n):
+                stop = continue_on_failure and failed and failures[n] + 1 >= limit
+                if not stop and not node_released(n):
                     busy = True; break
                 counts['failed' if failed else 'success' if name in created else 'skipped'] += 1
                 pos[n] += 1
-            if pos[n] == len(q) and ('done', n) not in seen:
+                failures[n] = failures[n] + 1 if failed else 0
+                if stop:
+                    stopped.add(n)
+                    counts['skipped'] += len(q) - pos[n]
+                    message = f'LANE STOPPED {n} after {limit} consecutive failures'
+                    S(message); print(message)
+                    break
+            if n not in stopped and pos[n] == len(q) and ('done', n) not in seen:
                 seen.add(('done', n)); S(f'LANE DONE {n}')
         json.dump(final, open(V + '/feeder-final.json', 'w'))
         if not busy:
@@ -166,6 +183,10 @@ def main():
     log = open(V + '/feeder.log', 'a')
     open(V + '/feeder.pid', 'w').write(str(os.getpid()) + '\n')
     S(f'APPROVED FEEDER START manifest={args.manifest} stages={args.stages}')
+    hold = json.load(open(HOLDF)) if os.path.exists(HOLDF) else {}
+    summary = 'FEEDER HOLD ' + json.dumps({
+        'pauseNodes': hold.get('pauseNodes', []), 'drop': hold.get('drop', '')}, sort_keys=True)
+    S(summary); print(summary)
     run(queues, {}, continue_on_failure=
         json.load(open(args.manifest)).get('schemaVersion') == 'coverage-feeder-plan.v1')
     S('APPROVED FEEDER DONE')

@@ -11,7 +11,6 @@
   "runtimeValues": "charts/chill/values-operating.yaml",
   "excludedBatchReason": "창 안 유의미 추론 불가",
   "declaredBatchConflictReason": "artifact 선언 batch 집합의 부분 요청 불가",
-  "pilotModels": ["mobilenet-v2-050", "plc-lstm-ae"],
   "sessions": 3,
   "warmupIterations": 1,
   "runOverheadSeconds": 20,
