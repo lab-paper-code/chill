@@ -24,6 +24,7 @@ components=(
   evidence-core
   evidence-kube
   evidence-s3
+  evaluation-controller
   metric-core
   metric-edgemetrics
   workload-core
@@ -77,6 +78,7 @@ component_for() {
     internal/evidencestore) echo evidence-core ;;
     internal/evidencestore/kube) echo evidence-kube ;;
     internal/evidencestore/s3) echo evidence-s3 ;;
+    internal/evaluation/controller) echo evaluation-controller ;;
     internal/metricobserver) echo metric-core ;;
     internal/metricobserver/edgemetrics) echo metric-edgemetrics ;;
     internal/workloadobserver) echo workload-core ;;

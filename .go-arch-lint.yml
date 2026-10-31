@@ -46,6 +46,7 @@ components:
   evidence-core: { in: internal/evidencestore }
   evidence-kube: { in: internal/evidencestore/kube }
   evidence-s3: { in: internal/evidencestore/s3 }
+  evaluation-controller: { in: internal/evaluation/controller }
   metric-core: { in: internal/metricobserver }
   metric-edgemetrics: { in: internal/metricobserver/edgemetrics }
   workload-core: { in: internal/workloadobserver }
@@ -182,6 +183,13 @@ deps:
   evidence-s3:
     mayDependOn:
       - evidence-core
+
+  evaluation-controller:
+    mayDependOn:
+      - api
+      - evidence-core
+      - evidence-kube
+      - evidence-s3
 
   metric-core:
     anyVendorDeps: true
