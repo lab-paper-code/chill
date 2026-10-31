@@ -441,3 +441,10 @@
 - 커버리지 기준 변경(사용자 지시 "레거시 없음"): 셀 상태는 현재 선언된 runtime으로 측정한 variant만 집계하도록 바꾸는 중(ImplCoverageCurrent). 옛 runtime variant가 셀을 insufficient로 붙잡는 문제 때문.
 - feeder: 커버리지 계획에서는 실패한 셀을 기록하고 계속 진행(`83e07ecd`). feeder-hold.json pauseNodes 전부 해제(백업 유지).
 - 전체 108셀 캠페인을 feeder stages 1,2로 시작. 예상 28 node-h, 최장 lane jetsonx 약 15 h.
+
+## 2026-11-01 — profiler 수정 배포와 새 계획(123셀) 캠페인
+
+- control-289 profiler `be1c543e`: idle 측정은 항상 batch 1(계획·projection 양쪽, 리뷰 PASS), metric-observer 수정(thermal 결손이 power를 실패시키지 않음, 최종 읽기 재시도, 리뷰 2종 PASS), 새 observer digest(metric 540db052…, workload 3c4aec4f…).
+- 커버리지 기준(`917645a7`+`a86cf25d`, 리뷰 PASS): 셀 상태는 현재 선언된 runtime variant만 집계. 선언 조회 실패 시에는 분류하지 않음. server 배포 후 반영(DeploySched).
+- 생성기(`49155374`): 60 s 창, 창 안 호출 1회 이상인 batch만 포함, 단조 제외, 옛 runtime으로만 측정된 셀 포함. 새 계획 123셀(old-runtime 35셀 포함, 노드 없음 30, unknown 67), 37.9 node-h, 최장 lane jetsonx 약 20 h. active는 셀마다 batch 1~16 또는 1~32를 모두 측정하고, 제외는 Smol 26항목뿐.
+- 옛 108셀 계획 feeder를 중지(진행 중 셀 7개는 계속)하고 새 계획 feeder 시작. 진행 중 셀과 새 계획의 중복 0 확인.
