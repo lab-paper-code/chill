@@ -62,6 +62,23 @@ func TestEvaluationRunValidate(t *testing.T) {
 	}
 }
 
+func TestHistoricalPublicationReference(t *testing.T) {
+	for _, id := range []string{"control-222-223-first-20261030", "A_b.c-1", "_", "-", "", ".", "..", ".hidden", "a/b", "a%20b", "a b", "한글"} {
+		t.Run(id, func(t *testing.T) {
+			spec := validEvaluationRunSpec()
+			spec.Comparisons[0].Right = EvaluationComparisonReference{Historical: &EvaluationHistoricalReference{PublicationID: id, StageID: "baseline"}}
+			valid := id == "control-222-223-first-20261030" || id == "A_b.c-1" || id == "_" || id == "-"
+			if err := spec.Validate(); (err == nil) != valid {
+				t.Fatalf("publicationID %q: %v", id, err)
+			}
+			spec.Comparisons[0].Right.Historical.StageID = ""
+			if err := spec.Validate(); err == nil {
+				t.Fatal("missing historical stage accepted")
+			}
+		})
+	}
+}
+
 func TestLoadScenarioValidate(t *testing.T) {
 	ref := EvaluationEvidenceReference{Store: "evidence", Key: "input", Size: 10}
 	valid := LoadScenarioSpec{Workloads: []EvaluationWorkloadReference{{Name: "workload", UID: "uid", Generation: 1}}, Parts: []LoadScenarioPart{{ID: "steady", DurationSeconds: 10, Rates: map[string]EvaluationNonNegative{"workload": 1}}}, ArrivalDistribution: map[string]string{"workload": "poisson"}, SeedRef: ref, PayloadManifestRef: ref}

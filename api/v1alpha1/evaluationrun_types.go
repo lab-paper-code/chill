@@ -2,6 +2,7 @@ package v1alpha1
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -298,11 +299,10 @@ type EvaluationComparisonReference struct {
 
 type EvaluationHistoricalReference struct {
 	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:Type=string
-	RunUID types.UID `json:"runUID"`
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9_-][A-Za-z0-9_.-]*$`
+	PublicationID string `json:"publicationID"`
 	// +kubebuilder:validation:MinLength=1
-	StageID   string                      `json:"stageID"`
-	ResultRef EvaluationEvidenceReference `json:"resultRef"`
+	StageID string `json:"stageID"`
 }
 
 // EvaluationRunSpec fixes the question, assembly and comparison, not operations.
@@ -372,6 +372,8 @@ func (s *EvaluationRunSpec) Validate() error {
 	return validateEvaluationComparisons(s.Comparisons, prior)
 }
 
+var evaluationPublicationID = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9_.-]*$`)
+
 func validateEvaluationComparisons(comparisons []EvaluationComparison, stages map[string]bool) error {
 	for _, comparison := range comparisons {
 		if comparison.Reason == "" {
@@ -384,7 +386,7 @@ func validateEvaluationComparisons(comparisons []EvaluationComparison, stages ma
 			if ref.StageID != "" && !stages[ref.StageID] {
 				return fmt.Errorf("comparison references missing stage %q", ref.StageID)
 			}
-			if h := ref.Historical; h != nil && (h.RunUID == "" || h.StageID == "" || !validEvaluationEvidence(h.ResultRef)) {
+			if h := ref.Historical; h != nil && (!evaluationPublicationID.MatchString(h.PublicationID) || h.StageID == "") {
 				return fmt.Errorf("invalid historical comparison")
 			}
 		}

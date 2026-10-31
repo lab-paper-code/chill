@@ -72,40 +72,15 @@ spec:
                       properties:
                         historical:
                           properties:
-                            resultRef:
-                              description: EvaluationEvidenceReference identifies
-                                immutable evidence, never an endpoint.
-                              properties:
-                                key:
-                                  maxLength: 1024
-                                  minLength: 1
-                                  type: string
-                                size:
-                                  format: int64
-                                  minimum: 1
-                                  type: integer
-                                store:
-                                  maxLength: 253
-                                  minLength: 1
-                                  type: string
-                              required:
-                              - key
-                              - size
-                              - store
-                              type: object
-                            runUID:
-                              description: |-
-                                UID is a type that holds unique ID values, including UUIDs.  Because we
-                                don't ONLY use UUIDs, this is an alias to string.  Being a type captures
-                                intent and helps make sure that UIDs and names do not get conflated.
+                            publicationID:
                               minLength: 1
+                              pattern: ^[A-Za-z0-9_-][A-Za-z0-9_.-]*$
                               type: string
                             stageID:
                               minLength: 1
                               type: string
                           required:
-                          - resultRef
-                          - runUID
+                          - publicationID
                           - stageID
                           type: object
                         stageID:
@@ -123,40 +98,15 @@ spec:
                       properties:
                         historical:
                           properties:
-                            resultRef:
-                              description: EvaluationEvidenceReference identifies
-                                immutable evidence, never an endpoint.
-                              properties:
-                                key:
-                                  maxLength: 1024
-                                  minLength: 1
-                                  type: string
-                                size:
-                                  format: int64
-                                  minimum: 1
-                                  type: integer
-                                store:
-                                  maxLength: 253
-                                  minLength: 1
-                                  type: string
-                              required:
-                              - key
-                              - size
-                              - store
-                              type: object
-                            runUID:
-                              description: |-
-                                UID is a type that holds unique ID values, including UUIDs.  Because we
-                                don't ONLY use UUIDs, this is an alias to string.  Being a type captures
-                                intent and helps make sure that UIDs and names do not get conflated.
+                            publicationID:
                               minLength: 1
+                              pattern: ^[A-Za-z0-9_-][A-Za-z0-9_.-]*$
                               type: string
                             stageID:
                               minLength: 1
                               type: string
                           required:
-                          - resultRef
-                          - runUID
+                          - publicationID
                           - stageID
                           type: object
                         stageID:
