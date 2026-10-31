@@ -207,3 +207,10 @@
 - (F, J): 기준 d4a933bf (7,782, 153,057 J) → 288153fd **(6,099, 152,560 J)**. 사전식으로 개선(F −1,683, −22%). MNV 실패: E5-3m 5,787→4,407, E5-5m 1,992→1,689. E5-7m Smol D1 FAIL은 그대로(실패 0). PLC 정상. 전력 complete 3/3. 측정 재시도 0.
 - 귀속: 288153fd = 리뷰 복구(b0877c1e 계열) + S1. S1 자체는 의미 불변 리팩터이므로 개선은 주로 리뷰 복구분으로 봄 [추정]. 행당 1회 시행이라 잡음 폭은 미측정.
 - STOP 7(최종 상태): round 자신의 cleanup `manual-reset:9742040b` 예약이 확인 시점에 아직 잡혀 있었음. 직후 live는 instances 0·예약 0. round-10의 STOP 7(plan 소유자 잔류)과는 원인이 다름. 첫 발생이라 기록만 함. 측정 데이터는 유효.
+
+## 2026-10-31 — S2 게이트 통과, S2b·S3 방향 결정
+
+- S2 `245a88b5`+`2ea63c10`: 제품 순감 4줄. 리뷰 2종 PASS(2회). 리플레이 게이트 PASS(기준 live 288153fd, new bad tick 0). clean lint/test/arch/helm PASS.
+- S3 패널(2인, Gemini는 quota 소진): 표식(noEffectRoutes)과 partial 특례를 삭제하는 방향은 맞음. 다만 생략 bridge의 완료를 현재 scope로 판정하면 안 됨(stage가 진행되면 다시 관측할 수 없어 부모가 영구 running이 되고, 오래된 bridge가 재실행됨). 대신 frozen edge와 receipt로 판정: 의존 action의 run이 complete면 소비된 것으로 봄. ACK가 없는 retirement-only 선언은 admission에서 제외해 영구 running을 막음.
+- 8c는 실재하는 R 문제로 판정. 생략 bridge의 자기 의존 재귀 검사는 덧댐이 아니라 P 의존 계약의 복원임(2/2). S3보다 먼저 별도 S2b로 진행.
+- 배포 계획: S2+S2b를 한 번에 배포하고 round-12로 측정.
