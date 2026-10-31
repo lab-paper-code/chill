@@ -194,3 +194,4 @@
 - S1 `67fe02aa`(Tick/Continue 공통 captureReconciled, 제품 −4줄) + 테스트 정리 `5644b165`(freshness-before-reconcile 단언 fail-before 확인) + lint `1bc385d4`. 정식·ponytail 리뷰 PASS(2회), 패널 2인 diff 검토 "목표 달성·의미 동일·덧댐 없음". 리플레이 게이트(per-tick, 기준 live b0877c1e) PASS, make test PASS.
 - 차단 1건(타 세션): `internal/serving/kube/measurement_projection.go:74 projectOperationStep` gocyclo 31 — 다른 세션이 커밋한 코드로 clean `make lint` 실패. Main은 수정 안 함(소유권). 다른 세션 수정 후 S1 배포·미니 행 측정.
 - live: server b0877c1e(control-270), 잔류 예약 0.
+- 09:09Z control-271: server·dashboard = `288153fd`(조언 세션 p90·커버리지 변경 fd8bde4c + S1 + lint 분리 `288153fd`). 게이트: 리플레이 PASS(기준 b0877c1e, new bad tick 0), clean lint/test/arch/helm PASS, 리뷰 2종 PASS. 09:09Z~09:39Z 클러스터 무변경(조언 세션 재설문). S2 패널 3인 완료(범위 축소 권고: dependenciesComplete 증거·범위 결정 단일화만, readySubset 본문 유지).
