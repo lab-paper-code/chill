@@ -701,6 +701,9 @@ template guards stop during load as well as at row boundaries. Missing rows
 are UNMEASURED, never zero or PASS. Final success requires instances 0,
 reservations 0, autonomy off. `finish` restores initial settings, so the summary
 records actual final h, including h=0; another round always PUTs h again.
+The same round JSON may reuse its evidence root (including repeated `--until 0`)
+with a unique attempt directory; `round-config.sha256` rejects a different round
+configuration. Older roots are adopted only when their saved state has the same config.
 
 Resume explicitly with the same JSON and `--resume-from 0..7` (also
 `preflight`, `deploy`, `reset`, `headroom`, `kappa`, `rows`, `tables`, `finish`).

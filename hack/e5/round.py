@@ -10,6 +10,7 @@ import copy
 import datetime as dt
 import fcntl
 import gzip
+import hashlib
 import importlib.util
 import json
 import math
@@ -192,6 +193,19 @@ class Round:
         if self.until is not None and self.plan.index(self.until) < self.plan.index(self.start):
             fail('--until must not precede --resume-from')
         self.state_path = self.root/'round-state.json'
+        config_sha = hashlib.sha256(json.dumps(c, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        config_marker = self.root/'round-config.sha256'
+        try:
+            self.root.mkdir(parents=True)
+        except FileExistsError:
+            if config_marker.exists():
+                if config_marker.read_text().strip() != config_sha:
+                    fail('Evidence root belongs to a different round configuration')
+            elif not self.state_path.is_file() or load(self.state_path).get('config') != c:
+                fail('Evidence root lacks matching round configuration')
+        if not config_marker.exists():
+            with config_marker.open('x') as stream:
+                stream.write(config_sha+'\n')
         if resume:
             self.state = load(self.state_path)
             if self.state['config'] != c:
@@ -202,10 +216,8 @@ class Round:
         else:
             if advance_tag:
                 fail('--next-row-tag requires --resume-from')
-            self.root.mkdir(parents=True, exist_ok=False)
             self.state = {'schema': 'e5-round-state.v1', 'config': c, 'completed': [], 'rowTags': dict.fromkeys(c['rows'], c['rowTag']), 'measurementRetries': 0}
-        self.attempt = self.root/('attempt-'+dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ'))
-        self.attempt.mkdir()
+        self.attempt = Path(tempfile.mkdtemp(prefix='attempt-'+dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')+'-', dir=self.root))
         self.harness = self.ops/'harness'/('e5-'+c.get('harnessSHA', c['sourceSHA']))
         self.binding = self.run/('binding-round-'+c['rowTag']+'.json')
         self.k = self.env['d2']['kubectl']+['-n', self.env['d2'].get('namespace', 'chill-system'), '--request-timeout=15s']
@@ -773,6 +785,20 @@ def self_check():
         Path(c['run']).mkdir()
         Path(c['environment']).write_text(json.dumps({'paths': {'repository': temp, 'ops': temp}, 'd2': {'kubectl': ['offline-kubectl']}}))
         runner = Round(c)
+        repeated = Round(c, until='0')
+        assert repeated.attempt != runner.attempt and repeated.attempt.is_dir()
+        repeated.preflight = lambda: None
+        assert repeated.execute() == 0 and repeated.state['completed'] == ['0']
+        for resume in (None, '0'):
+            try:
+                Round(dict(c, h=.5), resume=resume)
+            except ValueError as error:
+                assert 'different round configuration' in str(error)
+            else:
+                raise AssertionError('Evidence root accepted another round configuration')
+        # Existing roots from before the SHA marker are owned by their saved config.
+        (runner.root/'round-config.sha256').unlink()
+        assert Round(c).attempt != repeated.attempt
         order = []
         runner.preflight = lambda: order.append('0')
         def deploy():
