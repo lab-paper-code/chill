@@ -163,3 +163,9 @@
 ## 최적화 국면 워크플로우(고정, 10/30 09:45~)
 
 0 점수판(미니 행+리플레이, 점수=SLO 실패→에너지, 기준 d4a933bf) → 1 raw 추출 카드 → 2 본질(덧대기 금지; 사이클 3~7 덧댐 한 장 그림→단일 모델 대체→삭제 방향) → 3 패널 3+판정(방향+최종 diff) → 4 구현(최소 커밋 서브에이전트+정식 리뷰+ponytail 리뷰) → 5 게이트(lint/test/arch + 리플레이 게이트 PASS) → 6 round.py 한 명령(측정 전 설정/digest/외부배포 gate, 측정 창 방송, 미니 행). 정지: 같은 원인 2회. 보고: 단계마다 3줄, 30분 침묵 금지.
+
+## 2026-10-31 — 리뷰 복구 결과(사이클 1~7 scheduler 커밋 19개)
+
+- 정식 리뷰 BLOCK: F1(P1) `4b2b4bb0` kube/scheduler.go:571 — 필수 bridge route 실패가 부모 실패로 전파되지 않아 예약 영구 running; F2(P1) `ebf7c0bb`/`1f8e8ca3` scheduler.go:1051 — ready-subset이 선행 ACK하면 필수 bridge가 빈 scope로 생략되고 blocker stop이 존재하지 않는 run을 영원히 대기; F3(P2) `6c268842` scheduler_bridge.go:408 — 보존 UID의 Terminated route가 bridge Ready 검사에 포함되어 복구 후보 상실; `8ebe8f33` late-ack 테스트 미검증. 나머지 15개 통과.
+- ponytail 수정요구 5건(−34줄): returnProofParent/frozenActionParent 재탐색 삭제, releaseObservedScopes terminal 중복, ApplySchedulerWorkloadsTarget UID 중복 검사, scheduledOperation RouteTarget 재선택, operations.go 불가능 fallback. 전환·예약 가드 전체 표는 `agent://ReviewPonytail`(2단계 입력).
+- 조치: F1/F2/F3은 **새 가드 없이** 기존 실패 전파·handoff 소비 경계 수정(덧대기 금지 준수) → 최소 커밋 서브에이전트 → 리뷰 2종 → 리플레이 게이트. 배포 중인 HEAD는 7회차와 동일 코드(기준)이므로 유지.
