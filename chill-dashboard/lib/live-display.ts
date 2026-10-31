@@ -94,12 +94,25 @@ export function servicePriority(workload:LiveWorkload,metric:LiveMetric|undefine
   if (!metric || metric.received>0 || (terminalCount(metric)??0)>0) return 4
   return 5
 }
-export function serviceRows(snapshot:LiveSnapshot,metrics:Record<string,LiveMetric>,now:number) {
+export type ServiceRow = {workload:LiveWorkload;metric:LiveMetric|undefined;queued:number;changes:number;priority:number;idle:boolean;status:{label:string;tone:string;reason:string}}
+export function serviceRows(snapshot:LiveSnapshot,metrics:Record<string,LiveMetric>,now:number):ServiceRow[] {
   return snapshot.workloads.map(workload=>{
-    const metric=metrics[workload.uid],queued=workloadQueue(workload,snapshot.instances),changes=snapshot.actions.filter(action=>action.workloadUID===workload.uid&&actionProgress(action,now)!=="terminal").length
+    const metric=metrics[workload.uid],queued=workloadQueue(workload,snapshot.instances),actions=snapshot.actions.filter(action=>action.workloadUID===workload.uid&&actionProgress(action,now)!=="terminal"),changes=actions.length
     const priority=servicePriority(workload,metric,changes,queued)
     const idle=priority===5&&!snapshot.instances.some(row=>belongsToPool(row,workload.uid)&&!row.stopped)&&!snapshot.reservations.some(row=>row.workloadUIDs.includes(workload.uid))
-    return {workload,metric,queued,changes,priority,idle}
+    const unserved=(metric?.received??0)>0&&!snapshot.instances.some(row=>!row.stopped&&row.ready&&row.routable[workload.uid])
+    const status=priority===0?{label:"이상",tone:"danger",reason:(metric?.failed??0)>0?"요청 실패":"접수 거절"}:
+      sloTargetMissed(workload,metric)?{label:"이상",tone:"danger",reason:"SLO 위반"}:
+      unserved?{label:"이상",tone:"danger",reason:"유입 있음 / 처리 인스턴스 없음"}:
+      actions.some(action=>actionProgress(action,now)==="delayed")?{label:"주의",tone:"warning",reason:"예상 대비 지연"}:
+      queued>0?{label:"주의",tone:"warning",reason:"대기 있음"}:
+      changes>0?{label:"주의",tone:"warning",reason:"변경 중"}:
+      !metric?{label:"주의",tone:"warning",reason:"관측 대기"}:
+      metric.received===0?{label:"무부하",tone:"unknown",reason:"유입 없음"}:
+      !metric.latencySamples||sloLatency(workload,metric)===null?{label:"표본 부족",tone:"warning",reason:"유입 있음 / 지연 표본 없음"}:
+      sloLatency(workload,metric)===undefined?{label:"주의",tone:"warning",reason:"SLO 분위수 미제공"}:
+      {label:"정상",tone:"healthy",reason:"SLO 충족"}
+    return {workload,metric,queued,changes,priority,idle,status}
   }).sort((a,b)=>a.priority-b.priority||(b.metric?.received??0)-(a.metric?.received??0)||a.workload.name.localeCompare(b.workload.name))
 }
 /** Whole-pool watts include metered nodes absent from the live configuration. */
@@ -108,24 +121,29 @@ export function powerBreakdown(uids:string[],metrics:LiveMetrics|undefined) {
   const measured=values.every(value=>value!=null)?values.reduce<number>((sum,value)=>sum+value!,0):null
   return {whole:whole??null,measured,other:whole!=null&&measured!=null&&whole>=measured?whole-measured:null}
 }
-export function currentObservation(fresh:boolean,terminals:number|undefined):boolean {
-  return fresh&&terminals!=null
+/** Latest completed reducer bucket anchors both trend and completeness across consumers. */
+export function powerWindow(metrics:LiveMetrics[]) {
+  const end=metrics.length?Date.parse(metrics.at(-1)!.bucketAt)+1000:0,start=Math.max(end-300000,metrics.length?Date.parse(metrics[0].bucketAt):end)
+  const recent=metrics.filter(row=>Date.parse(row.bucketAt)>=start&&Date.parse(row.bucketAt)<end),nodes:Record<string,number>={}
+  for(const row of recent)for(const [uid,node] of Object.entries(row.nodes))if(node.watts!=null)nodes[uid]=(nodes[uid]??0)+1
+  return {end,expected:Math.max(0,Math.floor((end-start)/1000)),observed:recent.filter(row=>row.pool.wholeWatts!=null).length,nodes,segments:trendSegments(recent.map(row=>({at:Date.parse(row.bucketAt),value:row.pool.wholeWatts})),end)}
 }
 export function minuteMetrics(metrics:LiveMetrics[],uid:string,end:number):LiveMetric[] {
   const windowEnd=Math.floor(end/1000)*1000
   return metrics.filter(row=>Date.parse(row.bucketAt)>=windowEnd-60000&&Date.parse(row.bucketAt)<windowEnd).flatMap(row=>row.workloads[uid]?[row.workloads[uid]]:[])
 }
-export function boardVerdict({fresh,terminals,failed,sloMisses,queued,changes,delayed,serving,off,total,admissionBlocked,received=0,declared=serving,unserved=0}:{fresh:boolean;terminals:number|undefined;failed:number|undefined;sloMisses:number;queued:number;changes:number;delayed:number;serving:number;off:number;total:number;admissionBlocked:boolean;received?:number;declared?:number;unserved?:number}) {
-  if (!currentObservation(fresh,terminals)) return {label:"데이터 끊김",tone:"unknown",reason:"최신 관측을 기다려요. 마지막 수치를 현재 상태로 판단하지 마세요"}
-  if ((failed??0)>0 || admissionBlocked || unserved>0 || (!serving&&(received>0||queued>0))) return {label:"이상: 요청 처리 확인 필요",tone:"danger",reason:`실패 ${failed??0}건 / 유입 있으나 서빙 없음 ${unserved}개 / 접수 거절 ${admissionBlocked?"있음":"없음"}. 서비스 상세에서 확인하세요`}
-  if (!serving && declared===0 && received===0 && queued===0 && changes===0 && delayed===0) return {label:"평가 불가",tone:"unknown",reason:"유입·종결 표본 없음. 자동제어와 배치는 별도 상태이며 정지 사유는 미제공"}
-  if (!serving) return {label:"이상: 서빙 준비 확인",tone:"warning",reason:`서빙 인스턴스 0 / 선언 ${declared}개 / 자동제어 꺼짐 ${off}/${total}. 구성·진행 중 변경을 확인하세요`}
-  if (sloMisses>0) return {label:"SLO 위반",tone:"danger",reason:`목표 미달 서비스 ${sloMisses}개를 확인하세요`}
-  if (delayed>0) return {label:"정체",tone:"danger",reason:`예상 대비 지연 ${delayed}건. 종결 미확인으로 실제 상태 확인이 필요해요`}
-  if (changes>0) return {label:"진행",tone:"warning",reason:`구성 변경 ${changes}건이 진행 중이에요`}
-  if (queued>0) return {label:"주의",tone:"warning",reason:"배정 전·후 대기 요청을 확인하세요"}
-  if (terminals===0) return {label:"평가 불가",tone:"unknown",reason:"종결 표본이 없어 SLO를 판정할 수 없어요"}
-  return {label:"정상",tone:"healthy",reason:"종결 응답 기준으로 서비스 SLO 목표를 충족해요"}
+export function boardVerdict(rows:ServiceRow[],fresh:boolean,ongoingGap:boolean) {
+  if(ongoingGap||!fresh)return {label:"이상",tone:"danger",reason:"관측 공백 진행"}
+  const anomaly=rows.find(row=>row.status.tone==="danger")
+  if(anomaly)return {label:"이상",tone:"danger",reason:anomaly.status.reason}
+  const caution=rows.find(row=>row.status.tone==="warning")
+  if(caution)return {label:"주의",tone:"warning",reason:caution.status.reason}
+  if(rows.some(row=>row.status.label==="정상"))return {label:"정상",tone:"healthy",reason:"SLO 충족"}
+  if(rows.length&&rows.every(row=>row.metric?.received===0))return {label:"무부하",tone:"unknown",reason:"유입 없음"}
+  return {label:"주의",tone:"warning",reason:"서비스 관측 대기"}
+}
+export function decisionReason(reason:string|null|undefined,automation:boolean[]):string {
+  return automation.length>0&&automation.every(enabled=>!enabled)?"자동제어 대상 없음":liveReason(reason)
 }
 export function decisionText(decision:LiveDecision|null|undefined):string {
   return decision?.explanation || (decision?"판단 사유가 제공되지 않았어요":"아직 판단 기록이 없어요")

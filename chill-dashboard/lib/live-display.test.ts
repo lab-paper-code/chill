@@ -2,7 +2,14 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { LiveAction, LiveInstance, LiveMetric, LiveMetrics, LiveSnapshot, LiveWorkload } from "./live.ts"
 import { changeListStatus, serviceTrafficState, actionProgress, actionOrigin, scopeSnapshot, scopeEvents, recentEvents, liveFresh, belongsToPool, displayNumber, duration, elapsed, instanceSymbol, isStale, ratio, receivedLabel, routingShare, terminalCount, workloadLabel, workloadQueue, servicePriority, mergeKeepEvents, trendSegments, boardVerdict, decisionText } from "./live-display.ts"
-import { retainedEvents, sloLatency, minuteMetrics, incidentFlow, incidentSummary, serviceRows, powerBreakdown, gapEpisodes, liveReason, displayTime } from "./live-display.ts"
+import { retainedEvents, sloLatency, minuteMetrics, incidentFlow, incidentSummary, serviceRows, powerBreakdown, powerWindow, decisionReason, gapEpisodes, liveReason, displayTime } from "./live-display.ts"
+import { readFileSync } from "node:fs"
+import { createRequire } from "node:module"
+import { createElement, type ComponentType } from "react"
+import { renderToStaticMarkup } from "react-dom/server"
+import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
+import { initialLiveState, type LiveState } from "./live.ts"
+import * as displayHelpers from "./live-display.ts"
 
 const at="2026-10-30T12:00:00.123456789Z",now=Date.parse(at)
 const instance:LiveInstance={id:"shared",node:{uid:"n",name:"Node"},ownerWorkloadUID:"a",profileID:"p",ready:true,stopped:false,routable:{a:true,b:true},running:{a:1,b:0},waiting:{a:0,b:2},observedAt:at}
@@ -77,15 +84,21 @@ test("risk and work precede traffic; idle never hides missing metrics or pending
   assert.equal(servicePriority({...workload,pending:0},{...metric,received:0,completed:0,failed:0,withinSLO:0},0),5)
   assert.equal(servicePriority({...workload,pending:0},undefined,0),4)
 })
-test("verdict prioritizes lost data, zero serving, SLO, delayed changes, progress, then normal",()=>{
-  const input={fresh:true,terminals:3,failed:0,sloMisses:0,queued:0,changes:0,delayed:0,serving:1,off:0,total:1,admissionBlocked:false}
-  assert.equal(boardVerdict({...input,fresh:false,serving:0,sloMisses:1,delayed:1}).label,"데이터 끊김")
-  assert.equal(boardVerdict({...input,serving:0,sloMisses:1,delayed:1}).label,"이상: 서빙 준비 확인")
-  assert.equal(boardVerdict({...input,sloMisses:1,delayed:1}).label,"SLO 위반")
-  assert.equal(boardVerdict({...input,delayed:1,changes:1}).label,"정체")
-  assert.equal(boardVerdict({...input,changes:1}).label,"진행")
-  assert.equal(boardVerdict(input).label,"정상")
-  assert.equal(boardVerdict({...input,terminals:0}).label,"평가 불가")
+test("headline aggregates service states: anomaly, caution, normal, then no load",()=>{
+  const pool={...workload,pending:0}
+  const snapshot:LiveSnapshot={workloads:[pool],nodes:[],instances:[{...instance,waiting:{}}],routing:{},decision:null,actions:[],reservations:[]}
+  const observed={...metric,received:100,completed:100,failed:0,withinSLO:100,latencySamples:100}
+  const verdict=(samples:Record<string,LiveMetric>,fresh=true,gap=false)=>boardVerdict(serviceRows(snapshot,samples,now),fresh,gap)
+  assert.equal(verdict({a:observed}).label,"정상")
+  assert.equal(verdict({a:{...observed,received:0,completed:0,latencySamples:0}}).label,"무부하")
+  assert.equal(verdict({a:{...observed,completed:0,withinSLO:0,latencySamples:0}}).label,"주의")
+  assert.equal(serviceRows(snapshot,{a:{...observed,latencySamples:0}},now)[0].status.label,"표본 부족")
+  assert.equal(verdict({a:{...observed,withinSLO:94}}).label,"이상")
+  assert.equal(verdict({a:observed},true,true).label,"이상")
+  assert.equal(verdict({a:observed},false).label,"이상")
+  assert.equal(verdict({}).label,"주의")
+  const mixed={...snapshot,workloads:[pool,{...pool,uid:"b"}]}
+  assert.equal(boardVerdict(serviceRows(mixed,{a:observed,b:{...observed,received:0}},now),true,false).label,"정상")
 })
 test("only consecutive unchanged Keep events merge; changes remain independently visible",()=>{
   const decision=(seq:number,reason="")=>({type:"event" as const,kind:"decision" as const,seq,at,decision:{at,state:"Keep",reason,explanation:""}})
@@ -112,7 +125,8 @@ test("SLO verdict respects the configured percentile instead of demanding every 
   const observed={...metric,received:100,completed:100,failed:0,withinSLO:96,latencySamples:100}
   assert.equal(servicePriority({...workload,pending:0},observed,0),4)
   assert.equal(servicePriority({...workload,pending:0}, {...observed,withinSLO:94},0),1)
-  assert.equal(boardVerdict({fresh:true,terminals:100,failed:0,sloMisses:0,queued:0,changes:0,delayed:0,serving:1,off:0,total:1,admissionBlocked:false}).label,"정상")
+  const pool={...workload,pending:0},snapshot:LiveSnapshot={workloads:[pool],nodes:[],instances:[{...instance,waiting:{}}],routing:{},decision:null,actions:[],reservations:[]}
+  assert.equal(boardVerdict(serviceRows(snapshot,{a:observed},now),true,false).label,"정상")
 })
 
 test("delayed changes are not counted as ordinary progress; completion always wins",()=>{
@@ -166,12 +180,16 @@ test("missing metrics are awaiting observation, never observed zero traffic",()=
   assert.equal(serviceTrafficState(metric),"활동 중")
 })
 
-test("automation, placement and traffic never collapse into a stopped verdict",()=>{
-  const input={fresh:true,terminals:0,failed:0,sloMisses:0,queued:0,changes:0,delayed:0,serving:0,off:2,total:2,admissionBlocked:false,received:0,declared:0,unserved:0}
-  assert.equal(boardVerdict(input).label,"평가 불가")
-  assert.equal(boardVerdict(input).tone,"unknown")
-  assert.match(boardVerdict({...input,received:1,unserved:1}).label,/^이상:/)
-  assert.match(boardVerdict({...input,failed:1}).label,/^이상:/)
+test("automation and placement do not turn observed no-load services into an alarm",()=>{
+  const snapshot:LiveSnapshot={workloads:[{...workload,pending:0}],nodes:[],instances:[],routing:{},decision:null,actions:[],reservations:[]}
+  const idle={...metric,received:0,completed:0,failed:0,withinSLO:0,latencySamples:0}
+  assert.equal(boardVerdict(serviceRows(snapshot,{a:idle},now),true,false).label,"무부하")
+  assert.equal(boardVerdict(serviceRows(snapshot,{a:{...idle,received:1}},now),true,false).label,"이상")
+  assert.equal(boardVerdict(serviceRows(snapshot,{a:{...idle,failed:1}},now),true,false).label,"이상")
+  assert.equal(decisionReason("",[false,false]),"자동제어 대상 없음")
+  assert.equal(decisionReason("",[true,false]),"미제공")
+  assert.equal(decisionReason("",[]),"미제공")
+  assert.equal(decisionReason("Keep",[true]),"유지")
 })
 
 test("latency uses the exact SLO percentile and retained events outlive the new-event window",()=>{
@@ -256,4 +274,54 @@ test("event history loss cannot recover from metrics or disappear as a short gap
   const metrics:LiveMetrics[]=[{type:"metrics",seq:1,at,bucketAt:at,workloads:{a:metric},nodes:{},pool:{wholeWatts:10,activeWatts:0}}]
   assert.equal(gapEpisodes([gap],now,metrics)[0].recovered,false)
   assert.equal(incidentFlow([],[gap],now,false,metrics).length,1)
+})
+test("power windows use retained completed buckets, not component clocks or mount time",()=>{
+  const end=Date.parse("2026-10-30T12:01:00Z")
+  const rows:LiveMetrics[]=Array.from({length:60},(_,i)=>({type:"metrics",seq:i+1,at:new Date(end-59000+i*1000).toISOString(),bucketAt:new Date(end-60000+i*1000).toISOString(),workloads:{},nodes:{n:{watts:i===10?null:20,observedAt:at}},pool:{wholeWatts:i===10?null:20,activeWatts:null}}))
+  const desktop=powerWindow(rows),remounted=powerWindow([...rows])
+  assert.deepEqual(remounted,desktop)
+  assert.equal(desktop.expected,60)
+  assert.equal(desktop.nodes.n,59)
+  assert.equal(desktop.observed,59)
+  assert.equal(desktop.segments.length,2)
+  const sparse=powerWindow([rows[0],rows[59]])
+  assert.equal(sparse.expected,60)
+  assert.equal(sparse.observed,2)
+  assert.deepEqual(powerWindow([]),{end:0,expected:0,observed:0,nodes:{},segments:[]})
+})
+test("rendered board keeps idle names visible, incidents beside services, and one live clock",()=>{
+  const pool={...workload,pending:0},zero={...metric,received:0,completed:0,failed:0,withinSLO:0,latencySamples:0}
+  const snapshot:LiveSnapshot={workloads:Array.from({length:29},(_,i)=>({...pool,uid:`service-${i}`,name:`서비스-${i}`})),nodes:[{uid:"n",name:"장치",powerMode:"고정",ready:true,measurement:false,observedAt:at}],instances:[],routing:{},decision:{at,state:"Keep",reason:"",explanation:""},actions:[],reservations:[]}
+  const sample:LiveMetrics={type:"metrics",seq:1,at,bucketAt:"2026-10-30T12:00:00Z",workloads:Object.fromEntries(snapshot.workloads.map(row=>[row.uid,zero])),nodes:{n:{watts:40,observedAt:at},outside:{watts:60,observedAt:at}},pool:{wholeWatts:100,activeWatts:0}}
+  const state:LiveState={...initialLiveState(),snapshot,metrics:[sample],lastReceivedAt:now,lastObservedAt:at,status:"fixture",powerScale:60}
+  const source=readFileSync(new URL("../features/live-board.tsx",import.meta.url),"utf8")
+  const compiled=transpileModule(`${source}\nexport { OutsidePower };`,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const require=createRequire(import.meta.url),exports:Record<string,ComponentType<{state?:LiveState}>>={}
+  let query=new URLSearchParams()
+  const modules:Record<string,unknown>={
+    "next/link":{default:({children,...props}:Record<string,unknown>)=>createElement("a",props,children as string)},
+    "next/navigation":{usePathname:()=>"/operations/flow",useSearchParams:()=>query,useRouter:()=>({push:()=>{},replace:()=>{}})},
+    "@/lib/client":{useSession:()=>({epoch:1,config:{liveFixture:false}}),useChillQuery:()=>({})},
+    "@/lib/use-live":{useLive:()=>({state,status:"fixture",reconnect:()=>{}})},
+    "@/lib/live-display":displayHelpers,"@/lib/experiments":{decisionRange:()=>({})},
+    "@/lib/scheduler":{stringifySchedulerJSON:JSON.stringify},"@/lib/source-export":{safeSource:(value:unknown)=>value},
+    "./scheduler":{judgmentLabels:{Keep:"구성 유지"},actionKinds:{},actionStatuses:{}},
+    "./measurement-coverage":{useCoverageInventory:()=>({data:{classes:[{nodes:[{uid:"outside",name:"외부 장치"},{uid:"not-metered",name:"관측 안 된 장치"}]}]}})},
+    "./live-board.css":{},
+  }
+  new Function("require","exports",compiled)((name:string)=>modules[name]??require(name),exports)
+  const board=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
+  assert.match(board,/>무부하</)
+  assert.equal((board.match(/>서비스-\d+<\/button>/g)??[]).length,29)
+  assert.doesNotMatch(board,/live-service-scroll|aria-expanded|최근 판단/)
+  assert.equal((board.match(/마지막 수신/g)??[]).length,1)
+  assert.ok(board.indexOf('class="live-main"')<board.indexOf('class="live-rail"'))
+  assert.ok(board.indexOf('class="live-rail"')<board.indexOf('class="live-node-power"'))
+  const outside=renderToStaticMarkup(createElement(exports.OutsidePower,{state}))
+  assert.match(outside,/>외부 장치</)
+  assert.match(outside,/>60\.0</)
+  assert.doesNotMatch(outside,/관측 안 된 장치/)
+  query=new URLSearchParams({at})
+  const drawer=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
+  assert.equal((drawer.match(/자동제어 대상 없음/g)??[]).length,2)
 })
