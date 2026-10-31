@@ -32,7 +32,7 @@ export function OverviewPage() {
   const actions=[...actionGroups.values()].sort((a,b)=>Number(b.action.kind==="failure")-Number(a.action.kind==="failure")),actionCount=actions.reduce((sum,row)=>sum+row.count,0)
   const returnTo=`/?${new URLSearchParams({namespace})}`
   return <Screen title="측정·실험 현황" width="data" actionPlacement="header" action={<Button variant="outline" onClick={()=>{void coverage.refetch();void experiments.refetch()}} disabled={coverage.isFetching||experiments.isFetching}>갱신</Button>}>
-    <p className="overview-status" role="status">{namespace} / {coverage.error?"커버리지 조회 실패":!data?"커버리지 수신 대기":data.freshness==="fresh"?"최신 자료":"이전 자료"} / {data?.completeness==="partial"?"일부 확인":""}</p>
+    <p className="overview-status" role="status">{namespace} / {coverage.error?"커버리지 조회 실패":!data?"커버리지 수신 대기":data.freshness==="fresh"?"최신 자료":"이전 자료"}{data?.completeness==="partial"?" / 일부 확인":""}</p>
     <div className="overview-workspace">
       <section className="overview-panel"><header><h2>모델별 커버리지</h2><Link href={`/measurements?${new URLSearchParams({namespace})}`}>전체 보기</Link></header>
         {matrix.rows.length?<div className="overview-matrix-scroll"><table className="overview-matrix"><caption className="sr-only">사용 가능 / 지원 확인 조합</caption><thead><tr><th scope="col">모델</th>{matrix.devices.map(device=><th scope="col" key={device.uid}>{overviewDeviceLabel(device.name)}</th>)}</tr></thead><tbody>{matrix.rows.map(row=><tr key={row.model.uid}><th scope="row">{row.model.name}</th>{row.cells.map((group,index)=>{
