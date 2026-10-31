@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { runFailure, runStatusObject, exactRun, safeMeasurementReturn, significant, evidenceLocations, isProjectionMeasurementKind, measurementHref, measurementListHref, measurementPath, measurementReason, measurementUIDMismatch, occupancyDuration, occupancySupply, occupancyThroughput, operationDuration, operationWallEnergy, operationSteps } from "./measurements.ts"
+import { runFailure, runStatusObject, exactRun, safeMeasurementReturn, significant, evidenceLocations, isProjectionMeasurementKind, measurementHref, measurementListHref, measurementPath, measurementReason, measurementUIDMismatch, occupancyDuration, occupancySupply, occupancyThroughput, occupancyReason, operationDuration, operationWallEnergy, operationSteps } from "./measurements.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
 import { parseSchedulerJSON } from "./scheduler.ts"
@@ -139,12 +139,12 @@ test("operation totals require the complete plan, accepted energy, and nonnegati
 })
 
 test("occupancy preserves missing and zero d, string throughput, unspecified supply and logical location identity", () => {
-  assert.equal(occupancyDuration(occupancy.status.perRequestNanos),"결과 없음")
-  assert.equal(occupancyDuration(0),"0.00ms/request")
-  assert.equal(occupancyDuration(3807875n),"3.81ms/request")
-  assert.equal(occupancyThroughput("0.0000012300"),"0.00000123 req/s")
-  assert.equal(occupancyThroughput("0"),"0 req/s")
-  for (const value of [undefined,""]) assert.equal(occupancyThroughput(value),"결과 없음")
+  assert.equal(occupancyDuration(occupancy.status.perRequestNanos),"—")
+  assert.equal(occupancyDuration(0),"0.00")
+  assert.equal(occupancyDuration(3807875n),"3.81")
+  assert.equal(occupancyThroughput("0.0000012300"),"0.00000123")
+  assert.equal(occupancyThroughput("0"),"0")
+  for (const value of [undefined,""]) assert.equal(occupancyThroughput(value),"—")
   assert.equal(occupancySupply(occupancy.conditions.supplyMode),"기록되지 않았어요")
   assert.equal(occupancySupply("closed-loop"),"고정 동시 요청")
   assert.equal(occupancySupply("poisson"),"포아송 공급")
@@ -162,9 +162,9 @@ test("measurement reasons expose the server-provided failure or insufficiency in
 })
 
 test("raw occupancy negatives and invalid values warn without replacing zero or precision",()=>{
-  for(const value of [-3807875n,-5720000,-1n]) { assert.match(occupancyDuration(value),/품질 경고.*음수/); assert.doesNotMatch(occupancyDuration(value),/-5|-3|ms\/request/) }
-  for(const value of [NaN,Infinity,-Infinity,"NaN","broken",null]) assert.match(occupancyDuration(value),/품질 경고/)
-  for(const value of ["NaN","Infinity","-1","broken"," "]) assert.match(occupancyThroughput(value),/품질 경고/)
+  for(const value of [-3807875n,-5720000,-1n]) {assert.equal(occupancyDuration(value),"—");assert.equal(occupancyReason({...occupancy,status:{perRequestNanos:value}}),"점유시간 음수")}
+  for(const value of [NaN,Infinity,-Infinity,"NaN","broken",null]) assert.equal(occupancyDuration(value),"—")
+  for(const value of ["NaN","Infinity","-1","broken"," "]) {assert.equal(occupancyThroughput(value),"—");assert.equal(occupancyReason({...occupancy,status:{throughput:value}}),"처리량 오류")}
   assert.equal(significant(0.09261),"0.0926")
   assert.equal(significant(0.08682),"0.0868")
   for(const value of ["//evil.test","https://evil.test","/settings","/measurements\\evil","\n/measurements"])assert.equal(safeMeasurementReturn(value),"/measurements")
@@ -186,7 +186,7 @@ test("run status decodes JSON fields while failure summary uses only server clas
   assert.equal(failure.title,"GPU 메모리 부족")
   assert.equal(failure.exitCode,3)
   assert.equal(failure.excerpt,"GPU 메모리가 부족해 측정을 완료하지 못했습니다.")
-  assert.match(failure.next,/메모리/)
+  assert.match(failure.actions.flat().join(" "),/메모리/)
   assert.doesNotMatch(failure.log,/\u001b/)
   assert.equal(runFailure({...run,assessment:undefined}).title,"실패 분류 미제공")
   assert.doesNotMatch(runFailure({...run,assessment:undefined}).excerpt,/Failed to allocate/)
@@ -227,16 +227,31 @@ test("energy uncertainty reports relative half width without inventing an accept
 
 test("failure actions name the measured node model path and smallest-batch limit",()=>{
   const run={spec:{targetNode:"genesis2",candidate:{modelSpec:"smolvlm2",executionPath:"cuda"},measurement:{batch:1}},status:{},assessment:{failureSummary:[{code:"GPUMemoryExhausted"}]}} as unknown as Parameters<typeof runFailure>[0]
-  assert.match(runFailure(run).next,/genesis2.*smolvlm2/)
-  assert.match(runFailure(run).next,/배치 1.*cpu|배치 1.*int8/)
-  assert.match(runFailure({...run,spec:{...run.spec,measurement:{batch:8}}}).next,/배치 8.*작은 배치/)
+  assert.deepEqual(runFailure(run).target,[["노드","genesis2"],["모델","smolvlm2"],["경로","cuda"]])
+  assert.match(runFailure(run).actions.flat().join(" "),/CPU·int8/)
+  assert.match(runFailure({...run,spec:{...run.spec,measurement:{batch:8}}}).actions.flat().join(" "),/작은 배치/)
   for(const code of ["HostOOM","PowerObservationTimeout","ImagePullFailed","RuntimeFailed","Other"]) {
-    const next=runFailure({...run,assessment:{...run.assessment!,failureSummary:[{...run.assessment!.failureSummary![0],code}]}}).next
-    assert.match(next,/genesis2.*smolvlm2/)
+    const failure=runFailure({...run,assessment:{...run.assessment!,failureSummary:[{...run.assessment!.failureSummary![0],code}]}})
+    assert.deepEqual(failure.target,runFailure(run).target)
   }
 })
 
 test("power quality language identifies the checks operators still need to confirm",()=>{
   assert.equal(measurementCheckText({code:"FrozenPowerWindowPolicy",message:"모든 활성·유휴 창의 동결 표본·gap·실패 정책"}),"전력 기록의 표본 수·누락 구간·실패 처리 기준")
   assert.equal(measurementCheckText({code:"DatasetInputContract",message:"입력 image 크기 불일치"}),"입력 image 크기 불일치")
+})
+
+test("R13: occupancy quantity cells are unitless while invalid-value reasons remain separate",()=>{
+  assert.equal(occupancyDuration(3807875n),"3.81")
+  assert.equal(occupancyDuration(-1n),"—")
+  assert.equal(occupancyDuration(undefined),"—")
+  assert.equal(occupancyThroughput("87.1"),"87.1")
+  assert.equal(occupancyThroughput("-1"),"—")
+  assert.equal(occupancyThroughput(undefined),"—")
+})
+
+test("R13: occupancy issues retain short reasons even when the checklist has no checks",()=>{
+  assert.equal(occupancyReason({...occupancy,status:{perRequestNanos:0,throughput:"0",reason:"Stored occupancy does not match this request and status"}}),"요청·점유시간 근거 불일치")
+  assert.equal(occupancyReason({...occupancy,status:{reason:"Signed negative d"}}),"점유시간 음수")
+  assert.equal(occupancyReason({...occupancy,status:{reason:"UnknownReason"}}),"사유 확인 필요")
 })

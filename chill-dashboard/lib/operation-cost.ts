@@ -49,12 +49,13 @@ export function operationCostOutliers(rows:OperationCostRow[]) {
     if(kind==="prepare"||kind==="remove")return result?.model||step.condition?.batchEnergyOptimization?JSON.stringify([kind,result?.model??"",step.condition?.batchEnergyOptimization??""]):undefined
     return undefined
   })
-  const medians=new Map<string,{duration?:number;energy?:number}>()
+  const medians=new Map<string,{duration?:number;energy?:number;durationSamples:number;energySamples:number}>()
   for(const group of groups) {
     if(!group||medians.has(group))continue
-    const median:{duration?:number;energy?:number}={}
+    const median:{duration?:number;energy?:number;durationSamples:number;energySamples:number}={durationSamples:0,energySamples:0}
     for(const metric of ["duration","energy"] as const) {
       const samples=values.flatMap((value,index)=>groups[index]===group&&value[metric]!==undefined?[value[metric]!]:[]).sort((a,b)=>a-b)
+      median[metric==="duration"?"durationSamples":"energySamples"]=samples.length
       if(samples.length>=3) {
         const middle=Math.floor(samples.length/2)
         median[metric]=samples.length%2?samples[middle]:samples[middle-1]/2+samples[middle]/2
@@ -63,13 +64,30 @@ export function operationCostOutliers(rows:OperationCostRow[]) {
     medians.set(group,median)
   }
   return rows.map((_,index)=>{
-    const outlier:{duration?:number;energy?:number}={},median=medians.get(groups[index]??"")
+    const outlier:{duration?:number;energy?:number;insufficient?:true}={},median=medians.get(groups[index]??"")
+    if((median?.durationSamples??0)<3||(rows[index].result?.verdict==="Accepted"&&(median?.energySamples??0)<3))outlier.insufficient=true
     for(const metric of ["duration","energy"] as const) {
       const baseline=median?.[metric],value=values[index][metric]
       if(baseline!==undefined&&baseline>0&&value!==undefined&&value/baseline>=3)outlier[metric]=value/baseline
     }
     return outlier
   })
+}
+
+export function operationCostSummary(steps:OperationStep[]) {
+  const rows=operationTransitionCosts(steps),outliers=operationCostOutliers(rows)
+  const cost=(kind:string)=>{
+    const results=rows.filter(row=>row.step.condition?.kind===kind).flatMap(row=>row.result?[row.result]:[])
+    const durations=results.flatMap(result=>{const value=result.durationNanos;return (typeof value==="bigint"||typeof value==="number"&&Number.isSafeInteger(value))&&value>=0&&Number.isFinite(Number(value))?[Number(value)]:[]})
+    const energies=results.flatMap(result=>result.verdict==="Accepted"&&typeof result.wallJoules==="number"&&Number.isFinite(result.wallJoules)&&result.wallJoules>=0?[result.wallJoules]:[])
+    return {
+      duration:durations.length?[Math.min(...durations),Math.max(...durations)] as const:undefined,
+      energy:energies.length?[Math.min(...energies),Math.max(...energies)] as const:undefined,
+    }
+  }
+  return {models:[...new Set(rows.flatMap(row=>row.result?.model?[row.result.model]:[]))],prepare:cost("prepare"),remove:cost("remove"),
+    count:rows.filter(row=>row.result).length,insufficient:!outliers.length||outliers.some(row=>row.insufficient),
+    multiple:Math.max(0,...outliers.flatMap(row=>[row.duration??0,row.energy??0]))}
 }
 
 export function largestOperationStages(steps:OperationStep[]) {

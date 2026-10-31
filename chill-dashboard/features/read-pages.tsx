@@ -18,10 +18,11 @@ import { MeasurementNavigation, MeasurementStatus } from "@/components/measureme
 import { AssessmentDetails } from "@/features/measurement-plans"
 
 // /measurements/new review and /measurements/check share this conclusion and plan summary; the raw plan stays in 원본.
-export const preflightConclusion=(answer:MeasurementPreflight)=>answer.resolves?"측정 요청 가능":"측정 요청 불가"
+export const preflightConclusion=(answer:MeasurementPreflight)=>answer.resolves?"형식 검사 통과":"형식 검사 미통과"
 export function PreflightAnswer({answer}:{answer:MeasurementPreflight}) {
   const shared=answer.plan?.shared,batch=answer.batchPlan,operational=requestOperationalSummary(answer)
   return <div className="space-y-3">
+    <span title="사전검사는 요청 형식과 실행 계획만 확인합니다. 서비스 영향과 전체 소요 시간의 보장은 별도입니다."><StatusBadge tone="warn">운영 영향 미확인</StatusBadge></span>
     {batch&&<table className="w-full text-left text-sm tabular-nums"><thead><tr><th>기측정 배치 (건)</th><th>추가 측정 배치 (건)</th><th>실행 예정 배치 (건)</th></tr></thead><tbody><tr><td>{batch.measuredBatches.join(", ")||"없음"}</td><td>{batch.missingBatches.join(", ")||"없음"}</td><td>{batch.plannedBatches.join(", ")||"미확정"}</td></tr></tbody></table>}
     <table className="w-full text-left text-sm tabular-nums"><thead><tr><th>서빙 영향</th><th>예상 총 소요 시간 (s)</th></tr></thead><tbody><tr><td>{operational.servingImpact}</td><td>{operational.estimatedDurationSeconds??"미제공"}</td></tr></tbody></table>
     <details><summary>검사 상세</summary>
@@ -39,7 +40,7 @@ export function MeasurementCheckPage() {
   const [step,setStep]=React.useState(0),[namespace,setNamespace]=React.useState(config.namespace),[source,setSource]=React.useState(""),[plan,setPlan]=React.useState<object|null>(null),[error,setError]=React.useState("")
   const back:[string,string]=["/measurements","측정 결과"]
   const answer=mutation.data?.data as MeasurementPreflight|undefined
-  if(mutation.data&&answer)return <Screen back={back} status={<StatusBadge tone={answer.resolves?"ok":"fail"}>{answer.resolves?"측정 가능":"측정 불가"}</StatusBadge>} title={preflightConclusion(answer)} lede="조건만 확인했어요. 측정을 접수하지는 않았어요."
+  if(mutation.data&&answer)return <Screen back={back} title={preflightConclusion(answer)}
     action={<Button variant="outline" onClick={()=>{mutation.reset();setStep(0)}}>다른 계획 확인하기</Button>}>
     <MeasurementNavigation active="requests" namespace={config.namespace}/>
     <PreflightAnswer answer={answer}/>
@@ -145,9 +146,11 @@ export function MeasurementDetail({namespace,name}:{namespace:string;name:string
   const data=passport.data,other=!!data&&data.run.uid!==run?.uid
   const failure=run?runFailure(run):undefined
   const statusFacts=(value:unknown):[string,React.ReactNode][]=>{const object=runStatusObject(value);return object?Object.entries(object).map(([key,value])=>[({namespace:"저장 영역",name:"이름",uid:"식별자",nodeName:"실행 Node",podName:"실행 Pod",phase:"진행 상태",provider:"실행 제공자",architecture:"아키텍처",family:"런타임",version:"버전"} as Record<string,string>)[key]??key,typeof value==="object"?<SourceJSON key={key} value={value} title="세부 기록"/>:String(value)]):[["기록",value===undefined?"미제공":String(value)]]}
-  return <Screen width="data" actionPlacement="header" back={[back,"측정으로 돌아가기"]} breadcrumbs={[{href:back,label:"측정 회차"},{label:name}]} title={`${name} 측정 결과`} status={<MeasurementStatus assessment={run?.assessment}/>} lede={data&&!other?measuredWhat(data):"실행 상태와 검증 근거는 별개예요."} action={<Button variant="outline" disabled={lookup.isFetching} onClick={()=>void lookup.refetch()}>갱신</Button>}>
+  return <Screen width="data" actionPlacement="header" back={[back,"측정으로 돌아가기"]} breadcrumbs={[{href:back,label:"측정 회차"},{label:name}]} title={`${name} 측정 결과`} status={<MeasurementStatus assessment={run?.assessment}/>} lede={data&&!other?measuredWhat(data):undefined} action={<Button variant="outline" disabled={lookup.isFetching} onClick={()=>void lookup.refetch()}>갱신</Button>}>
     <MeasurementNavigation active="runs" namespace={namespace}/>
     <QueryGate query={lookup}>{lookup.data&&!run&&<div className="space-y-3"><p>이 조회 페이지에서 정확한 namespace/name/UID의 회차를 찾지 못했어요. 같은 이름의 다른 회차로 대체하지 않아요.</p>{lookup.data.page?.nextOffset!==undefined&&<Button variant="outline" onClick={()=>setOffset(lookup.data!.page!.nextOffset!)}>다음 조회 페이지에서 찾기</Button>}</div>}{run&&<>
+      {failed&&failure&&<section role="alert" className="space-y-2 rounded-xl border border-destructive/40 bg-destructive/5 p-4"><h2 className="font-semibold text-destructive">실행 실패</h2><table aria-label="실패 원인·조치" className="w-full text-left text-sm"><tbody>{[["원인",failure.title],["종료 코드",failure.exitCode==null?"미제공":String(failure.exitCode)],...failure.actions].map(([label,value],index)=><tr key={index} className="border-b last:border-0"><th scope="row" className="w-24 py-2 align-top font-medium">{label}</th><td className="py-2">{value}</td></tr>)}</tbody></table><details><summary className="min-h-11 cursor-pointer py-2 text-sm">실패 대상·원문</summary><Facts items={failure.target}/><pre className="whitespace-pre-wrap break-words text-sm">{failure.excerpt}</pre></details></section>}
+      <details open={!failed}><summary className="min-h-11 cursor-pointer py-2 text-sm">회차 조건·판정</summary>
       <Facts label="회차 조건" items={[
         ["모델 / 장치",`${runSpec(run).candidate?.modelSpec??"미기록"} / ${runSpec(run).candidate?.deviceClass??"미기록"}`],
         ["실행 Node / 전력모드",`${runSpec(run).targetNode??"미기록"} / ${runSpec(run).candidate?.powerMode??"미기록"}`],
@@ -156,13 +159,13 @@ export function MeasurementDetail({namespace,name}:{namespace:string;name:string
         ...(currentRunCondition(run,"ExecutionComplete")?.lastTransitionTime?[["실행 판정 시각",`${formatMeasurementTime(currentRunCondition(run,"ExecutionComplete")!.lastTransitionTime!)} / ${measurementAge(currentRunCondition(run,"ExecutionComplete")!.lastTransitionTime!)}`] as [string,React.ReactNode]]:[]),
       ]}/>
       <AssessmentDetails assessment={run.assessment}/>
-      {failed&&<section role="alert" className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 space-y-2"><h2 className="font-semibold text-destructive">{failure?.title}</h2><table className="w-full text-left text-sm"><thead><tr><th>종료 코드</th><th>조치</th></tr></thead><tbody><tr><td>{failure?.exitCode==null?"미제공":String(failure.exitCode)}</td><td>{failure?.next??"미제공"}</td></tr></tbody></table><details><summary>실패 원문</summary><pre className="whitespace-pre-wrap break-words text-sm">{failure?.excerpt??"상세 원인 미제공"}</pre></details></section>}
+      </details>
       <details><summary className="min-h-11 cursor-pointer py-2 text-sm">실행 조건·환경·로그 원문</summary>
         <Facts label="원본 실행 조건" items={["ExecutionComplete","EvidenceVerified"].map(type=>{const c=currentRunCondition(run,type);return [type,c?`${c.status} / ${c.reason??""}${c.message?`: ${c.message}`:""}`:"상태 미확인"] as [string,React.ReactNode]})}/>
         <Facts label="실행 작업" items={statusFacts(run.status.job)}/><Facts label="실제 실행 환경" items={statusFacts(run.status.actualExecution)}/>
         <section className="grid gap-2"><h2>실행 로그</h2>{failure?.log?<pre className="source-json">{failure.log}</pre>:<p>종료 로그 미제공</p>}</section>
       </details>
-      {noEvidence?<p className="notice">실행 실패로 검증 근거가 생성되지 않았어요.</p>:passport.error?<div className="notice"><p>검증 근거를 불러오지 못했어요. {passport.error.status===404?"보관된 근거가 없거나 아직 게시되지 않았어요.":"연결 상태를 확인하고 다시 조회하세요."}</p><Button variant="outline" onClick={()=>void passport.refetch()}>근거 다시 조회</Button></div>:!data?<p>검증 근거 확인 중</p>:other?<p role="alert">같은 이름의 다른 회차 근거예요. 이 회차의 결과로 사용할 수 없어요.</p>:<PassportSummary data={data}/>}
+      {noEvidence?<p className="notice">검증 근거 없음 · 실행 실패</p>:passport.error?<div className="notice"><p>검증 근거를 불러오지 못했어요. {passport.error.status===404?"보관된 근거가 없거나 아직 게시되지 않았어요.":"연결 상태를 확인하고 다시 조회하세요."}</p><Button variant="outline" onClick={()=>void passport.refetch()}>근거 다시 조회</Button></div>:!data?<p>검증 근거 확인 중</p>:other?<p role="alert">같은 이름의 다른 회차 근거예요. 이 회차의 결과로 사용할 수 없어요.</p>:<PassportSummary data={data}/>}
       <Rows>{data&&!other&&!!data.measurement.runtime.nativeSamples?.length&&<RowDialog label="배치 실행 기록" title="배치 실행 기록"><DataTable data={data.measurement.runtime.nativeSamples} columns={sampleColumns}/></RowDialog>}<RowDialog label="원본 자료" title="측정 원본 자료"><SourceExport value={{run,passport:other?undefined:data}} filename={`chill-passport-${name}.json`}/><SourceJSON inline value={{run,passport:other?undefined:data}}/></RowDialog></Rows>
     </>}</QueryGate>
   </Screen>

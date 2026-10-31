@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { largestOperationStages, operationStageLabel, operationStageLabels, operationDirection, operationModel, operationMetadata, operationTransitionCosts, operationCostOutliers, operationCostTime, operationCostEnergy } from "./operation-cost.ts"
+import { largestOperationStages, operationStageLabel, operationStageLabels, operationDirection, operationModel, operationMetadata, operationTransitionCosts, operationCostOutliers, operationCostSummary, operationCostTime, operationCostEnergy } from "./operation-cost.ts"
 import { operationDuration, operationWallEnergy, type OperationStep } from "./measurements.ts"
 
 test("operation cost display bounds precision without changing missing and invalid values",()=>{
@@ -75,7 +75,7 @@ test("R12: compact costs and median outliers preserve per-attempt targets and ex
   assert.deepEqual(outliers.slice(0,3),[{},{},{}])
   assert.equal(outliers[3].duration,268/8.5)
   assert.equal(outliers[3].energy,36400/550)
-  assert.deepEqual(outliers.slice(4),[{},{}])
+  assert.deepEqual(outliers.slice(4),[{insufficient:true},{}])
   assert.equal(rows[3].result?.model,"same-model")
   assert.deepEqual(operationCostOutliers(operationTransitionCosts([step("prepare",0,0),step("prepare",0,0),step("prepare",10,10)])),[{},{},{}])
 })
@@ -87,5 +87,21 @@ test("outlier cohorts isolate frozen models profiles and power transition direct
     rows.map((row,index)=>({...row,result:{...row.result,model:`model-${index}`}})),
     rows.map((row,index)=>({...row,step:{...row.step,condition:{...row.step.condition,batchEnergyOptimization:`profile-${index}`}}})),
     rows.map((row,index)=>({...row,step:{name:"power",condition:{name:"power",kind:"power"},results:[]},result:{...row.result,fromPowerMode:index<2?"A":"B",toPowerMode:index<2?"B":"A"}})),
-  ])assert.deepEqual(operationCostOutliers(isolated),[{},{},{},{}])
+  ])assert.deepEqual(operationCostOutliers(isolated),Array.from({length:4},()=>({insufficient:true})))
+})
+
+test("R13: large isolated attempts expose insufficient comparison samples instead of silently appearing normal",()=>{
+  const rows=operationTransitionCosts([{name:"prepare",condition:{name:"prepare",kind:"prepare",batchEnergyOptimization:"profile"},results:[{name:"prepare",key:"saved",model:"smolvlm2",verdict:"Accepted",durationNanos:268058690569n,wallJoules:36370}]}])
+  assert.equal(operationCostOutliers(rows)[0].insufficient,true)
+  assert.equal(operationCostOutliers(rows)[0].duration,undefined)
+})
+
+test("R13: one measurement summary preserves preparation and removal ranges without idle totals or rejected energy",()=>{
+  const step=(kind:string,seconds:number,energy:number,verdict="Accepted"):OperationStep=>({name:kind,condition:{name:kind,kind,batchEnergyOptimization:"profile"},results:[{name:kind,key:String(seconds),model:"frozen",durationNanos:BigInt(seconds)*1000000000n,wallJoules:energy,verdict}]})
+  const summary=operationCostSummary([step("prepare",10,100),step("prepare",20,200),step("remove",2,30),step("remove",4,999,"Rejected"),step("idle",1000,9999)])
+  assert.deepEqual(summary.models,["frozen"])
+  assert.deepEqual(summary.prepare,{duration:[10e9,20e9],energy:[100,200]})
+  assert.deepEqual(summary.remove,{duration:[2e9,4e9],energy:[30,30]})
+  assert.equal(summary.count,4)
+  assert.equal(summary.insufficient,true)
 })

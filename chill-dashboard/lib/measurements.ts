@@ -1,4 +1,4 @@
-import type { MeasurementEvidenceLocation, MeasurementPlanSpec, OperationCondition, OperationCostMeasurement, OperationStepStatus, ProfilingRun, ResultRow } from "./read-types.ts"
+import type { DispatchOccupancyMeasurement, MeasurementEvidenceLocation, MeasurementPlanSpec, OperationCondition, OperationCostMeasurement, OperationStepStatus, ProfilingRun, ResultRow } from "./read-types.ts"
 import { codeText } from "./labels.ts"
 import { nanosToMilliseconds, stringifySchedulerJSON } from "./scheduler.ts"
 import { safeSource } from "./source-export.ts"
@@ -60,18 +60,18 @@ export function measurementReasonSummary(reason:string) {
   if(/unknown field/i.test(reason))return "설정 항목 미지원"
   if(/native preparation Pod failed/i.test(reason))return "모델 준비 실패"
   if(/Stored occupancy does not match/i.test(reason))return "요청·점유시간 근거 불일치"
-  if(/Signed negative d/i.test(reason))return "점유시간 음수·처리량 유효성 확인 필요"
+  if(/Signed negative d/i.test(reason))return "점유시간 음수"
   if(codeText[reason]) return codeText[reason].join(" ")
   if(/exactly one proven primitive state effect/i.test(reason)) return "단일 상태 변경 미확인"
   if(/timeout|timed out|deadline exceeded/i.test(reason)) return "측정 대기 시간 초과"
   if(/memory|OOM/i.test(reason)) return "측정 메모리 부족"
   return /[가-힣]/.test(reason)?reason:"상세 사유: 원문"
 }
+// Numeric table cells stay unitless; diagnostics belong in the adjacent reason column.
 export function occupancyDuration(value?:unknown) {
-  if (value === undefined) return "결과 없음"
-  if ((typeof value !== "number" && typeof value !== "bigint") || (typeof value === "number" && (!Number.isFinite(value) || !Number.isSafeInteger(value)))) return "품질 경고: 점유시간을 변환할 수 없어요"
-  if (value < 0) return "품질 경고: 점유시간이 음수로 기록됐어요"
-  return `${formatMeasurementNumber(Number(nanosToMilliseconds(value)),"ms")}ms/request`
+  if ((typeof value !== "number" && typeof value !== "bigint") || (typeof value === "number" && !Number.isSafeInteger(value)) || value < 0) return "—"
+  const milliseconds=Number(nanosToMilliseconds(value))
+  return Number.isFinite(milliseconds)?formatMeasurementNumber(milliseconds,"ms"):"—"
 }
 export function operationDuration(value?:unknown,unit:"ms"|"s"="ms",maximumFractionDigits=9) {
   if (value === undefined || value === null) return "실측 시간 기록 없음"
@@ -84,7 +84,21 @@ export function operationWallEnergy(value?:unknown,maximumFractionDigits?:number
   if (value === undefined || value === null) return "수용된 에너지 없음"
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? `${maximumFractionDigits===undefined?significant(value):value.toLocaleString("ko-KR",{maximumFractionDigits})} J` : "품질 경고·사용 확인 필요"
 }
-export const occupancyThroughput = (value?:string) => !value ? "결과 없음" : !/^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value) || !Number.isFinite(Number(value)) || Number(value) < 0 ? "품질 경고·사용 확인 필요" : `${significant(Number(value))} req/s`
+export const occupancyThroughput = (value?:string) => !value || !/^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value) || !Number.isFinite(Number(value)) || Number(value) < 0 ? "—" : significant(Number(value))
+export function occupancyReason(data:DispatchOccupancyMeasurement) {
+  const {perRequestNanos:d,throughput:x,reason}=data.status
+  if((typeof d==="number"||typeof d==="bigint")&&d<0)return "점유시간 음수"
+  if(d!==undefined&&occupancyDuration(d)==="—")return "점유시간 오류"
+  if(x&&occupancyThroughput(x)==="—")return "처리량 오류"
+  const label=data.assessment?.reasons[0]?.label
+  if(label&&label.length<=24&&/[가-힣]/.test(label))return label
+  const recorded=reason||data.assessment?.reasons[0]?.message||data.assessment?.reasons[0]?.code||""
+  if(recorded) {
+    const summary=measurementReasonSummary(recorded)
+    return summary==="상세 사유: 원문"?"사유 확인 필요":summary.length<=24?summary:"측정 조건 확인 필요"
+  }
+  return data.assessment?.displayStatus==="problem"?"상세 사유 미제공":d===undefined||!x?"결과 없음":"—"
+}
 export const significant = (value:number) => Number.isFinite(value) ? value.toLocaleString("ko-KR",{maximumSignificantDigits:3}) : `${String(value)} · 품질 경고`
 export function formatMeasurementDuration(value:number|bigint) {
   const milliseconds=Number(nanosToMilliseconds(value))
@@ -155,15 +169,15 @@ export function runFailure(run:ProfilingRun) {
   const termination=runStatusObject(run.status.runtimeTermination),log=cleanRunLog(termination?.logTail)
   const failure=run.assessment?.failureSummary?.[0]
   const spec=run.spec as {targetNode?:string;candidate?:{modelSpec?:string;executionPath?:string};measurement?:{batch?:number}}
-  const target=`노드 ${spec.targetNode??"미기록"} / 모델 ${spec.candidate?.modelSpec??"미기록"} / 경로 ${spec.candidate?.executionPath??"미기록"}`
-  const batch=spec.measurement?.batch
-  const smaller=batch===1?"배치 1에서도 실패했으므로 등록된 CPU·int8 등 다른 실행 경로 또는 메모리가 더 큰 장치를 선택하세요.":batch?`배치 ${batch}보다 작은 배치로 요청을 준비하세요.`:"실패 배치 크기를 확인하고 더 작은 배치로 요청을 준비하세요."
-  const next:Record<string,string>={
-    GPUMemoryExhausted:`GPU 메모리 여유와 같은 GPU의 동시 작업을 확인하세요. ${smaller} 당시 동시 점유 작업은 이 기록에 제공되지 않습니다.`,
-    HostOOM:`노드의 시스템 메모리와 동시 작업을 확인하세요. ${smaller}`,
-    PowerObservationTimeout:"이 노드의 전력 계측기 연결·응답과 전력 기록 대기 한도/간격을 확인하세요. 관측이 복구된 뒤 같은 조건으로 요청을 준비하세요. 모델 실행 성능 오류로 해석하지 마세요.",
-    ImagePullFailed:"이 노드에서 해당 경로의 이미지 주소·버전·가져오기 권한을 확인하세요. 이미지에 접근할 수 있을 때 다시 요청하세요.",
-    RuntimeFailed:"아래 실행 로그의 최초 오류와 이 경로의 모델 파일·장치 지원·실제 실행 환경을 확인하고 맞는 경로로 요청을 준비하세요.",
+  const smaller=spec.measurement?.batch===1?"다른 CPU·int8 경로 / 큰 메모리 장치":"더 작은 배치"
+  const actions:Record<string,[string,string][]>={
+    GPUMemoryExhausted:[["점검","GPU 여유 메모리·동시 작업"],["재요청",smaller],["동시 점유","당시 기록 없음"]],
+    HostOOM:[["점검","시스템 메모리·동시 작업"],["재요청",smaller]],
+    PowerObservationTimeout:[["점검","전력 계측기 연결·응답·대기 한도·간격"],["재요청","전력 관측 복구 후 동일 조건"],["판정 범위","모델 성능 판정 제외"]],
+    ImagePullFailed:[["점검","이미지 주소·버전·가져오기 권한"],["재요청","이미지 접근 복구 후"]],
+    RuntimeFailed:[["점검","최초 오류·모델 파일·장치 지원·실행 환경"],["재요청","지원 실행 경로"]],
   }
-  return {title:failure?.label??"실패 분류 미제공",excerpt:failure?.message??"서버의 실패 분류가 제공되지 않았어요. 원본 상태를 확인하세요.",exitCode:failure?.exitCode??termination?.exitCode,log,next:`${target}: ${next[failure?.code??""]??"아래 실행 조건·환경·로그에서 실패 사유를 확인한 뒤 해당 노드와 모델 정보를 담당자에게 전달하세요."}`}
+  return {title:failure?.label??"실패 분류 미제공",excerpt:failure?.message??"실패 분류 미제공",exitCode:failure?.exitCode??termination?.exitCode,log,
+    target:[["노드",spec.targetNode??"미기록"],["모델",spec.candidate?.modelSpec??"미기록"],["경로",spec.candidate?.executionPath??"미기록"]] as [string,string][],
+    actions:actions[failure?.code??""]??[["점검","실행 조건·환경·최초 오류"],["전달","대상 노드·모델 정보"]]}
 }

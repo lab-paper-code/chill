@@ -373,10 +373,10 @@ test("operator conclusion names the worst service loss and does not treat missin
   const make=(id:string,success:unknown,p95:number):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",kpis:{wholePoolJoules:100,requests:{camera:{deadlineSuccessFraction:success,completedLatencyNS:{p95:p95*1e6}}}}})
   const run={stages:[make("full-E5-1",.8,20),make("static-E5-1",.9,10)]} as Experiment
   const score=campaignScoreboard(run)
-  assert.ok(Math.abs(score.summary.successDelta!+10)<1e-10)
-  assert.equal(score.summary.p95Ratio,2)
+  assert.ok(Math.abs(score.referenceSummary.successDelta!+10)<1e-10)
+  assert.equal(score.referenceSummary.p95Ratio,2)
   assert.equal(score.quality[0].service,"camera")
-  assert.equal(campaignScoreboard({...run,stages:[make("full-E5-1",null,20),run.stages[1]]}).summary.successDelta,null)
+  assert.equal(campaignScoreboard({...run,stages:[make("full-E5-1",null,20),run.stages[1]]}).referenceSummary.successDelta,null)
 })
 
 test("R7: suffix-mismatched high load remains in gains/losses, worst quality loss and shared chart axis",()=>{
@@ -428,8 +428,8 @@ test("R8: campaign scoreboard separates energy, worst service losses, missing me
   ]}
   const scoreboard=campaignScoreboard(run)
   assert.deepEqual(scoreboard.energyCounts,{decreased:1,increased:1,equal:0,missing:1,delta:0})
-  assert.ok(Math.abs(scoreboard.summary.successDelta!+10)<1e-10)
-  assert.equal(scoreboard.summary.p95Ratio,2)
+  assert.ok(Math.abs(scoreboard.referenceSummary.successDelta!+10)<1e-10)
+  assert.equal(scoreboard.referenceSummary.p95Ratio,2)
   assert.equal(scoreboard.quality[0].service,"camera")
   assert.equal(scoreboard.quality[0].stage,"E5-1")
   assert.equal(scoreboard.quality[0].missing,1)
@@ -500,8 +500,8 @@ test("campaign summary scopes relative energy to available pairs and preserves q
   const make=(id:string,joules:number|null,success:number):ExperimentStage=>({...stage,id,kpis:{wholePoolJoules:joules,requests:{camera:{offered:10,deadlineSuccessFraction:success,completedLatencyNS:{p95:1000000}}}}})
   const run={...recorded.publication,stages:[make("full-E5-1",90,.8),make("static-E5-1",100,.9),make("full-E5-2",null,1),make("static-E5-2",100,1)]}
   const score=campaignScoreboard(run)
-  assert.equal(score.summary.energyPercent,-10)
-  assert.ok(Math.abs(score.summary.successDelta!+10)<1e-10)
+  assert.equal(score.referenceSummary.energyPercent,-10)
+  assert.ok(Math.abs(score.referenceSummary.successDelta!+10)<1e-10)
   assert.equal(score.energyCounts.missing,1)
   assert.deepEqual(campaignScoreboard({...run,stages:[]}).summary,{energyPercent:null,successDelta:null,p95Ratio:null})
 })
@@ -578,4 +578,26 @@ test("selected-service chart and heatmap share ordered intervals and frozen targ
   const duplicates=experimentHeatmap({...run,stages:[early,early,fixedEarly]})
   assert.equal(new Set(duplicates.map(row=>row.key)).size,3)
   assert.ok(duplicates.every(row=>row.other===null))
+})
+
+test("R13: conclusion chips isolate matched definitions and rules from limited reference comparisons",()=>{
+  const make=(id:string,energy:number,definition="same"):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:00:10Z",kpis:{wholePoolJoules:energy,measurementRules:{window:10},requests:{camera:{uid:"camera",definitionID:definition,offered:10,deadlineSuccessFraction:1,completedLatencyNS:{p95:1000000}}}}})
+  const run={...recorded.publication,stages:[make("full-E5-1",90),make("static-E5-1",100),make("full-E5-2",1,"changed"),make("static-E5-2",100)]}
+  const score=campaignScoreboard(run)
+  assert.equal(score.summary.energyPercent,-10)
+  assert.equal(score.referenceSummary.energyPercent,-99)
+  assert.equal(score.coverageCounts.matched,1)
+  assert.equal(score.coverageCounts.limited,1)
+  const limited=campaignScoreboard({...run,stages:run.stages.slice(2)})
+  assert.equal(limited.summary.energyPercent,null)
+  assert.equal(limited.conclusion,"참고만 가능")
+})
+
+test("R13: matched conclusion prioritizes quality loss and never treats limited gains as a verified improvement",()=>{
+  const make=(id:string,energy:number,success=1):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:00:10Z",kpis:{wholePoolJoules:energy,measurementRules:{window:10},requests:{camera:{uid:"camera",definitionID:"same",offered:10,deadlineSuccessFraction:success,completedLatencyNS:{p95:1000000}}}}})
+  const run={...recorded.publication,stages:[make("full-E5-1",90),make("static-E5-1",100)]}
+  assert.equal(campaignScoreboard(run).conclusion,"에너지 감소")
+  assert.equal(campaignScoreboard({...run,stages:[make("full-E5-1",90,.8),run.stages[1]]}).conclusion,"SLO 악화")
+  assert.equal(campaignScoreboard({...run,stages:[{...run.stages[0],kpis:{...run.stages[0].kpis,measurementRules:{window:20}}},run.stages[1]]}).conclusion,"참고만 가능")
+  assert.equal(campaignScoreboard({...run,stages:[]}).conclusion,"비교 대상 없음")
 })

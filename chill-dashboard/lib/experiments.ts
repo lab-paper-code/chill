@@ -289,10 +289,22 @@ export function campaignScoreboard(run:Experiment) {
   const ruleMissing=comparisons.filter(pair=>!Object.keys(object(pair.chill.kpis.measurementRules)).length||!Object.keys(object(pair.control.kpis.measurementRules)).length).length
   const ruleDifferences=comparisons.filter(pair=>differentMeasurementRules(pair.chill,pair.control).length).length
   const durationDifferences=comparisons.filter(pair=>!sameDisplayedDuration(pair.chill,pair.control)).length
-  const energyBase=energies.reduce((sum,pair)=>sum+Number(pair.control.kpis.wholePoolJoules),0)
-  const ratios=services.map(service=>service.p95Ratio).filter((value):value is number=>value!==null)
+  const summarize=(pairs:typeof comparisons)=>{
+    const energies=pairs.filter(pair=>pair.energyDelta!==null),services=pairs.flatMap(pair=>pair.services)
+    const base=energies.reduce((sum,pair)=>sum+Number(pair.control.kpis.wholePoolJoules),0)
+    const successes=services.flatMap(service=>service.successDelta===null?[]:[service.successDelta]),ratios=services.flatMap(service=>service.p95Ratio===null?[]:[service.p95Ratio])
+    return {energyPercent:energies.length&&base>0?100*energies.reduce((sum,pair)=>sum+pair.energyDelta!,0)/base:null,successDelta:successes.length?Math.min(...successes):null,p95Ratio:ratios.length?Math.max(...ratios):null}
+  }
+  const matched=comparisons.filter(pair=>!comparisonValidity(pair.chill,pair.control).limited),limited=comparisons.filter(pair=>comparisonValidity(pair.chill,pair.control).limited)
+  const summary=summarize(matched),referenceSummary=summarize(limited)
+  let conclusion="차이 없음"
+  if(!matched.length)conclusion=limited.length?"참고만 가능":"비교 대상 없음"
+  else if(summary.successDelta!==null&&summary.successDelta<-.01||summary.p95Ratio!==null&&summary.p95Ratio>1.01)conclusion="SLO 악화"
+  else if(summary.energyPercent!==null&&summary.energyPercent<-.01)conclusion="에너지 감소"
+  else if(summary.energyPercent!==null&&summary.energyPercent>.01)conclusion="에너지 증가"
+  else if(summary.energyPercent===null&&summary.successDelta===null&&summary.p95Ratio===null)conclusion="결과 부족"
   return {
-    summary:{energyPercent:energies.length&&energyBase>0?100*energies.reduce((sum,pair)=>sum+pair.energyDelta!,0)/energyBase:null,successDelta:worstSuccess?.successDelta??null,p95Ratio:ratios.length?Math.max(...ratios):null},
+    summary,referenceSummary,conclusion,
     energyCounts:{decreased:energies.filter(pair=>pair.energyDelta!<0).length,increased:energies.filter(pair=>pair.energyDelta!>0).length,equal:energies.filter(pair=>pair.energyDelta===0).length,missing:comparisons.length-energies.length,
       delta:energies.length?energies.reduce((sum,pair)=>sum+pair.energyDelta!,0):null},
     quality:[
@@ -300,7 +312,7 @@ export function campaignScoreboard(run:Experiment) {
       {label:"최대 p95 증가",unit:"ms",value:worstLatency?.p95Delta==null?null:Math.max(0,worstLatency.p95Delta),ratio:worstLatency?.p95Ratio??null,service:worstLatency?.name??"—",stage:worstLatency?.pair.key??"—",compared:latencies.length,missing:services.length-latencies.length},
     ],
     coverageCounts:{stages:run.stages.length,pairs:comparisons.length,unpaired:run.stages.filter(stage=>!compared.has(stage)).length,ruleMissing,ruleDifferences,durationDifferences,
-      limited:comparisons.filter(pair=>comparisonValidity(pair.chill,pair.control).limited).length},
+      matched:matched.length,limited:limited.length},
   }
 }
 

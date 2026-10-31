@@ -15,16 +15,10 @@ import { Empty, Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 
+import { ExperimentConclusion, ExperimentComparisonLegend } from "@/features/experiments-conclusion"
 const number=(value:unknown,unit="")=>typeof value==="bigint"?String(value):typeof value==="number"&&Number.isFinite(value)?formatMeasurementNumber(value,unit):"—"
 const tone=(value:number|null,baseline=0,higherIsBetter=false)=>experimentDifference(value,baseline,higherIsBetter).tone
 
-function Conclusion({run}:{run:Experiment}) {
-  const {summary,coverageCounts}=campaignScoreboard(run)
-  return <dl className="flex flex-wrap gap-2 text-xs tabular-nums" aria-label="실험 결론">
-    {[{label:"에너지 Δ (%)",value:summary.energyPercent,baseline:0,higher:false},{label:"최악 성공률 Δ (%p)",value:summary.successDelta,baseline:0,higher:true},{label:"최악 p95 (배)",value:summary.p95Ratio,baseline:1,higher:false}].map(item=><div key={item.label} className={`flex items-center gap-2 rounded border px-3 py-2 ${tone(item.value,item.baseline,item.higher)}`}><dt>{item.label}</dt><dd className="font-semibold">{experimentDifference(item.value,item.baseline,item.higher).text}</dd></div>)}
-    {coverageCounts.limited>0&&<div className="flex items-center gap-2 rounded border border-heat px-3 py-2 text-heat"><dt className="flex items-center gap-1"><TriangleAlert className="size-4" aria-hidden="true"/>제한 비교 (개)</dt><dd className="font-semibold">{coverageCounts.limited}</dd></div>}
-  </dl>
-}
 
 function IntervalDrawer({run,row,service,onClose}:{run:Experiment;row:ExperimentHeatmapRow|undefined;service:string;onClose:()=>void}) {
   const stages=row?[row.stage,...(row.other?[row.other]:[])]:[]
@@ -90,6 +84,6 @@ export function ExperimentsPage() {
   const list=useChillQuery<{items:Experiment[]}>("v1/experiments",{decoder:parseSchedulerJSON})
   const query=useChillQuery<Experiment>(experimentPath(id),{enabled:!!id,decoder:parseSchedulerJSON})
   const run=query.data?.id===id?query.data:undefined
-  if(id)return <Screen width="data" title={<span className="flex flex-wrap items-center gap-x-4 gap-y-2"><span className="break-all text-xl">{id}</span>{run&&<time className="text-sm font-normal text-muted-foreground" dateTime={run.from}>{new Date(run.from).toLocaleDateString("ko-KR",{timeZone:"Asia/Seoul"})}</time>}</span>} actionPlacement="header" action={<div className="flex flex-wrap items-center gap-3">{run&&<Conclusion run={run}/>}<Button variant="outline" asChild><Link href="/experiments">목록</Link></Button></div>}><QueryGate query={query}>{run&&<ExperimentDetail key={run.id} run={run}/>}</QueryGate></Screen>
-  return <Screen width="data" title="실험"><QueryGate query={list}>{list.data&&<section aria-label="실험 목록" className="space-y-3">{campaignGroups(list.data.items).map(({run})=><Link prefetch={false} key={run.id} href={`/experiments?${new URLSearchParams({a:run.id})}`} className="flex flex-wrap items-center justify-between gap-4 rounded-lg border px-5 py-4 focus-visible:outline-2 focus-visible:outline-primary"><div className="min-w-0"><h2 className="break-all font-semibold">{run.id}</h2><time className="text-xs text-muted-foreground" dateTime={run.from}>{new Date(run.from).toLocaleDateString("ko-KR",{timeZone:"Asia/Seoul"})}</time></div><Conclusion run={run}/></Link>)}{!list.data.items.length&&<Empty title="게시 기록 없음"/>}</section>}</QueryGate></Screen>
+  if(id)return <Screen width="data" title={<span className="flex flex-wrap items-center gap-x-4 gap-y-2"><span className="break-all text-xl">{id}</span>{run&&<><strong className="text-base">{campaignScoreboard(run).conclusion}</strong><time className="text-sm font-normal text-muted-foreground" dateTime={run.from}>{new Date(run.from).toLocaleDateString("ko-KR",{timeZone:"Asia/Seoul"})}</time></>}</span>} actionPlacement="header" action={<div className="flex flex-wrap items-center gap-3"><div className="space-y-2">{run&&<ExperimentConclusion run={run}/>}<ExperimentComparisonLegend/></div><Button variant="outline" asChild><Link href="/experiments">목록</Link></Button></div>}><QueryGate query={query}>{run&&<ExperimentDetail key={run.id} run={run}/>}</QueryGate></Screen>
+  return <Screen width="data" title="실험" actionPlacement="header" action={<ExperimentComparisonLegend/>}><QueryGate query={list}>{list.data&&<section aria-label="실험 목록" className="space-y-3">{campaignGroups(list.data.items).map(({run})=><Link prefetch={false} key={run.id} href={`/experiments?${new URLSearchParams({a:run.id})}`} className="flex flex-wrap items-center justify-between gap-4 rounded-lg border px-5 py-4 focus-visible:outline-2 focus-visible:outline-primary"><div className="min-w-0"><h2 className="break-all font-semibold">{run.id}</h2><strong className="text-sm">{campaignScoreboard(run).conclusion}</strong><time className="block text-xs text-muted-foreground" dateTime={run.from}>{new Date(run.from).toLocaleDateString("ko-KR",{timeZone:"Asia/Seoul"})}</time></div><div className="w-full sm:w-auto"><ExperimentConclusion run={run}/></div></Link>)}{!list.data.items.length&&<Empty title="게시 기록 없음"/>}</section>}</QueryGate></Screen>
 }
