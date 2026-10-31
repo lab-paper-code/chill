@@ -288,3 +288,10 @@
 - 에너지 차이가 잡음 범위면 → κ 비례 유지(계획기가 더 적은 장치로 합격할 수 있어 에너지 이득 가능), 결함 3만 진행.
 - A/B 보고에 장치별 요청당 증분 에너지와 유휴 전력 비중을 함께 표시함.
 - 조언 세션 요청: server와 dashboard를 6a5b4742 이후 HEAD로 배포(view=summary API 포함). A/B 측정(약 17:00Z 종료)이 끝나고 조언 세션 게이트 결과를 받은 뒤 배포함. A/B는 서버를 교대로 바꾸므로 중간 배포 금지. 배포 후 20~30분 비워 둠.
+
+## 2026-10-31 — round 14 중단(도구 경합)과 A/B 재배열
+
+- round 13(후보 κ 비례): E5-3m 이미지 F 1,337 / M 2,121, 에너지 58,267 J. COMPLETE이고 STOP 7은 없었음(State 수정 효과).
+- round 14(기준) STOP 5:stage: round.py watch()가 phase.json을 매초 읽는 동안 harness save()가 제자리에 재작성해서 torn read(JSONDecodeError char 307200) 발생. phase.json이 1MB를 넘으면서 경합 창이 커짐. kill된 탓에 phase.json도 잘렸고 cleanup-jobs가 실패함. 우리 측정의 producer job 2개는 kubectl로 직접 삭제(증거 `O/deployB/round-14-ab/abort-cleanup/`).
+- 수정 `2788bdc5`: save()가 같은 디렉터리의 .tmp에 쓰고 os.replace함. fail-before 스모크: 기존 방식 171회 중 166 torn, 수정 후 225회 중 0. 리뷰 PASS. harness e5.py는 b0877c1e와 동일하고 atomic save만 다름 → 측정 동등.
+- 판정 규칙: tag 14는 판정 전에 도구 결함으로 중단된 미완 데이터라 "측정 재시도 금지"의 대상(판정된 결과 재측정)이 아님. A/B 표본 균형을 위해 기준 1회를 tag 19로 보충. 재배열: 15 B, 16 C, 17 B, 18 C, 19 B(harness 2788bdc5). 후보 13·16·18, 기준 15·17·19.
