@@ -30,3 +30,8 @@ type LocationReader interface {
 type Lister interface {
 	List(context.Context, string) ([]ObjectIdentity, error)
 }
+
+// Statter reads object metadata without downloading scientific input bytes.
+type Statter interface {
+	Stat(context.Context, ObjectLocation) (ObjectIdentity, error)
+}

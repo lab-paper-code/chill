@@ -29,6 +29,30 @@ type Store struct {
 	tempDir      string
 }
 
+// Stat checks existence and size with HEAD, without downloading the object.
+func (s *Store) Stat(ctx context.Context, location evidencestore.ObjectLocation) (evidencestore.ObjectIdentity, error) {
+	if err := location.Validate(); err != nil {
+		return evidencestore.ObjectIdentity{}, err
+	}
+	if err := s.validateLocation(location); err != nil {
+		return evidencestore.ObjectIdentity{}, err
+	}
+	head, ok := s.client.(interface {
+		HeadObject(context.Context, *awss3.HeadObjectInput, ...func(*awss3.Options)) (*awss3.HeadObjectOutput, error)
+	})
+	if !ok {
+		return evidencestore.ObjectIdentity{}, fmt.Errorf("%w: HEAD unavailable", evidencestore.ErrTransport)
+	}
+	result, err := head.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(location.Key)})
+	if err != nil {
+		return evidencestore.ObjectIdentity{}, translate("stat evidence object", err)
+	}
+	if result == nil || result.ContentLength == nil {
+		return evidencestore.ObjectIdentity{}, fmt.Errorf("%w: HEAD omitted content length", evidencestore.ErrTransport)
+	}
+	return evidencestore.ObjectIdentity{Store: location.Store, Key: location.Key, Size: *result.ContentLength}, nil
+}
+
 func (s *Store) PutImmutable(
 	ctx context.Context,
 	expected evidencestore.ObjectIdentity,
