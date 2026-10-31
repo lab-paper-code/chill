@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { readFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
-import { campaignGroups, campaignPairs, commitExperimentSelection, comparisonDirection, experimentSelection, frozenP95SLO, serviceDelta, alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
+import { campaignGroups, commitExperimentSelection, comparisonDirection, experimentSelection, frozenP95SLO, serviceDelta, alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
 import { campaignScoreboard, campaignTradeoffs, stageHistoryLink, stageActivity, stageLoadLabel, stageLabel, definitionPolicy, definitionStage, definitionComparisons, definitionComparisonReason, decodeExperiment, decodeExperiments, historicalPublicationIDs, experimentOutcome, injectionRows } from "./experiments.ts"
 import { publishedVerdict, selectedExperimentStage, experimentPath, stageEvidencePath, experimentHeatmap, experimentChartData, durationMismatch } from "./experiments.ts"
 import { comparisonValidity } from "./experiments.ts"
@@ -21,7 +21,7 @@ test("R11: sub-display deltas are neutral in both overview and intervals",()=>{
   }
 })
 test("R11: closing a shared interval removes all stage selection parameters",()=>{
-  const params=experimentSelection("?a=run&as=full-E5-1&b=run&bs=static-E5-1",{as:"",b:"",bs:""})
+  const params=experimentSelection("?a=run&al=historical&as=full-E5-1&b=run&bs=static-E5-1",{al:"",as:"",b:"",bs:""})
   assert.equal(params.toString(),"a=run")
 })
 import type { SchedulerObservation } from "./read-types.ts"
@@ -80,6 +80,21 @@ function withDefinition(run:Experiment,change:(definition:EvaluationDefinition)=
   change(definition)
   return decodeExperiment(JSON.stringify({...run,definition}))
 }
+test("interval selection distinguishes historical left publications with identical stage IDs",()=>{
+  const local=definedRun([{...stage,id:"x"},{...stage,id:"y"}],[["x","y"]])
+  const historical={...definedRun([{...stage,id:"x"}]),id:"historical"}
+  const run=withDefinition(local,d=>d.spec.comparisons!.push({left:{historical:{publicationID:historical.id,stageID:"x"}},right:{stageID:"y"},reason:"historical left"}))
+  const rows=experimentHeatmap(run,[run,historical]).filter(row=>row.other)
+  assert.ok("experimentIntervalSelection" in experimentHelpers)
+  const select=experimentHelpers.experimentIntervalSelection
+  assert.equal(typeof select,"function")
+  const first=select(run,rows[0]),second=select(run,rows[1])
+  assert.equal(first.a,run.id)
+  assert.equal(second.a,run.id)
+  assert.notDeepEqual(first,second)
+  const params=new URLSearchParams(second)
+  assert.equal(rows.find(row=>Object.entries(select(run,row)).every(([key,value])=>params.get(key)===value)),rows[1])
+})
 
 test("definition decoders retain complete Go-shaped definitions and preserve published status and KPI precision",()=>{
   const raw={schemaVersion:"serving-experiment.v1alpha1",id:"evaluation-fixture-uid",from:stage.from,to:stage.to,status:"FAIL",
@@ -108,7 +123,7 @@ test("past publications and malformed definition envelopes remain 미기록 inst
     assert.equal(stageLoadLabel(run.stages[0],run),"미기록")
     assert.equal(alphaText(run.stages[0],run),"미기록")
     assert.equal(definitionComparisonReason(run),"미기록")
-    assert.deepEqual(campaignPairs(run),[])
+    assert.deepEqual(definitionComparisons(run),[])
     assert.ok(experimentRows(run.stages[0]).every(row=>frozenP95SLO(row,run)===null))
     assert.equal(comparisonValidity(run.stages[0],run.stages[0],run,run).load,"미기록")
     assert.ok(experimentHeatmap(run).every(row=>row.reason==="미기록"&&row.other===null))
@@ -119,7 +134,7 @@ test("past publications and malformed definition envelopes remain 미기록 inst
     assert.equal(decoded.definition,undefined)
     assert.equal(definitionPolicy(decoded.stages[0],decoded),"미기록")
     assert.equal(definitionComparisonReason(decoded),"미기록")
-    assert.deepEqual(campaignPairs(decoded),[])
+    assert.deepEqual(definitionComparisons(decoded),[])
     assert.deepEqual(decoded.stages,run.stages)
   }
 })
@@ -215,7 +230,7 @@ test("row rename and declaration reordering preserve id-only stage and compariso
   })
   assert.equal(definitionStage(renamed,renamed.stages[0])?.row,"접미사 없는 새 표시 이름")
   assert.equal(stageLabel(renamed.stages[0],renamed),"candidate / 접미사 없는 새 표시 이름 / 자동 운영")
-  assert.deepEqual(campaignPairs(renamed).map(pair=>[pair.chill.id,pair.control.id]),[["candidate","baseline"]])
+  assert.deepEqual(definitionComparisons(renamed).map(pair=>[pair.chill.id,pair.control.id]),[["candidate","baseline"]])
   assert.equal(definitionStage(renamed,{...renamed.stages[0],id:"접미사 없는 새 표시 이름"}),undefined)
   assert.equal(definitionPolicy({...renamed.stages[0],id:"unlisted"},renamed),"미기록")
   const noComparison=withDefinition(run,d=>{delete d.spec.comparisons})
@@ -285,7 +300,7 @@ test("historical comparisons join publication ID and stage ID and carry both def
   assert.equal(pair.reason,run.definition!.spec.comparisons![0].reason)
   assert.deepEqual(historicalPublicationIDs(run),[historical.id])
   assert.deepEqual(historicalPublicationIDs(recorded.publication),[])
-  assert.deepEqual(campaignPairs(run,runs),[pair])
+  assert.deepEqual(definitionComparisons(run,runs),[pair])
   assert.equal(campaignGroups(runs).find(group=>group.run===run)!.pairs[0].rightRun,historical)
   assert.equal(campaignTradeoffs(run,runs)[0].energyDelta,-10)
   assert.equal(campaignScoreboard(run,runs).summary.energyPercent,-10)
@@ -301,7 +316,7 @@ test("historical comparisons join publication ID and stage ID and carry both def
   assert.match(chart.rightLabel,/자동 운영/)
   for(const unavailable of [[run],[run,decoy],[run,{...historical,stages:[]}],[run,historical,historical]]) {
     assert.deepEqual(definitionComparisons(run,unavailable),[])
-    assert.deepEqual(campaignPairs(run,unavailable),[])
+    assert.deepEqual(definitionComparisons(run,unavailable),[])
     assert.match(definitionComparisonReason(run,unavailable),/대상 게시 없음/)
     assert.equal(campaignScoreboard(run,unavailable).coverageCounts.pairs,0)
     assert.match(experimentHeatmap(run,unavailable)[0].reason,/대상 게시 없음/)
@@ -565,7 +580,7 @@ test("F4: null/missing alpha and mixed identities never borrow legacy identity, 
 })
 
 test("R3: rapid A/B selections preserve the preceding URL selection and clear only dependent stages",()=>{
-  const location=new URL("https://dashboard.invalid/experiments?a=old&as=old-stage&b=old-b&bs=keep&at=stale")
+  const location=new URL("https://dashboard.invalid/experiments?a=old&al=historical&as=old-stage&b=old-b&bs=keep&at=stale")
   const history={replaceState(_data:unknown,_unused:string,url?:string|URL|null){location.href=new URL(String(url),location).href}}
   commitExperimentSelection(location,history,{a:"new"})
   commitExperimentSelection(location,history,{b:"new-b"})
@@ -573,6 +588,7 @@ test("R3: rapid A/B selections preserve the preceding URL selection and clear on
   assert.equal(selected.get("a"),"new")
   assert.equal(selected.get("b"),"new-b")
   assert.equal(selected.has("as"),false)
+  assert.equal(selected.has("al"),false)
   assert.equal(selected.has("bs"),false)
   assert.equal(selected.has("at"),false)
   assert.equal(experimentSelection("a=one&as=chosen&b=two&bs=keep",{as:"next"}).get("bs"),"keep")
@@ -581,8 +597,8 @@ test("R3: rapid A/B selections preserve the preceding URL selection and clear on
 test("declared comparisons alone populate campaign groups, independent of names or observed rates",()=>{
   const left={...stage,id:"candidate"},right={...stage,id:"baseline"},unlisted={...stage,id:"full-E5-1"}
   const run=definedRun([left,right,unlisted],[["candidate","baseline"]])
-  assert.deepEqual(campaignPairs(run).map(pair=>[pair.chill.id,pair.control.id]),[["candidate","baseline"]])
-  assert.equal(campaignPairs({...run,stages:[left,left,right]}).length,0)
+  assert.deepEqual(definitionComparisons(run).map(pair=>[pair.chill.id,pair.control.id]),[["candidate","baseline"]])
+  assert.equal(definitionComparisons({...run,stages:[left,left,right]}).length,0)
   const groups=campaignGroups([run,demo])
   assert.equal(groups.length,2)
   assert.equal(groups.find(group=>group.run.id===run.id)!.pairs.length,1)
@@ -739,7 +755,7 @@ test("R8: campaign scoreboard separates energy, worst service losses, missing me
   assert.ok(Math.abs(scoreboard.referenceSummary.successDelta!+10)<1e-10)
   assert.equal(scoreboard.referenceSummary.p95Ratio,2)
   assert.equal(scoreboard.quality[0].service,"camera")
-  assert.equal(scoreboard.quality[0].stage,campaignPairs(run)[0].key)
+  assert.equal(scoreboard.quality[0].stage,definitionComparisons(run)[0].key)
   assert.equal(scoreboard.quality[0].missing,1)
   assert.equal(scoreboard.quality[1].value,10)
   assert.equal(scoreboard.quality[1].missing,1)
@@ -756,7 +772,7 @@ test("R8: campaign scoreboard separates energy, worst service losses, missing me
 test("declared comparison order is retained while heatmap intervals follow recorded time without mutating the publication",()=>{
   const make=(id:string,minute:number):ExperimentStage=>({...stage,id,from:`2026-10-30T00:0${minute}:00Z`,to:`2026-10-30T00:0${minute+1}:00Z`})
   const run=definedRun([make("later",4),make("later-reference",5),make("early",0),make("early-reference",1)],[["later","later-reference"],["early","early-reference"]])
-  assert.deepEqual(campaignPairs(run).map(pair=>pair.chill.id),["later","early"])
+  assert.deepEqual(definitionComparisons(run).map(pair=>pair.chill.id),["later","early"])
   assert.deepEqual(campaignTradeoffs(run).map(pair=>pair.chill.id),["later","early"])
   assert.deepEqual(experimentHeatmap(run).map(row=>row.stage.id),["early","later"])
   assert.equal(run.stages[0].id,"later")
@@ -948,7 +964,7 @@ test("R14: rendered experiment judgment exposes one status and cause counts with
   const source=readFileSync(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,ComponentType<{run:Experiment}>>={}
-  new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiments"?experimentHelpers:name==="@/lib/measurements"?measurementHelpers:name==="@/lib/client"?{}:name==="lucide-react"?{TriangleAlert:(props:Record<string,unknown>)=>createElement("svg",props)}:require(name),exports)
+  new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiments"?experimentHelpers:name==="@/lib/measurements"?measurementHelpers:name==="@/lib/client"?{}:name==="@/components/ui/button"?{Button:(props:Record<string,unknown>)=>createElement("button",props)}:name==="lucide-react"?{TriangleAlert:(props:Record<string,unknown>)=>createElement("svg",props)}:require(name),exports)
   const run=definedRun([{...stage,id:"candidate",kpis:{...stage.kpis,measurementRules:{window:10},requests:{camera:{offered:10}}}},{...stage,id:"baseline",kpis:{...stage.kpis,measurementRules:{window:20},requests:{camera:{offered:10}}}}],[["candidate","baseline"]])
   const judgment=renderToStaticMarkup(createElement(exports.ExperimentJudgment,{run}))
   assert.match(judgment,new RegExp(campaignScoreboard(run).conclusion))

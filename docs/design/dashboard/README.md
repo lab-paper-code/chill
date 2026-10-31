@@ -726,6 +726,8 @@ energyPopulation/energyCoverage/missingReasons.energy를 사용한다.
 단계 정의·KPI·단계 outcome은 **id만**으로 연결한다. row 이름 변경·배열 순서·이름 접미사는 조인에 영향을 주지 않는다.
 비교 짝·사유는 단건의 `definition.spec.comparisons[]`, 목록의 `comparisons[]`만 사용한다. 과거 참조는 `historical{publicationID,stageID}`이고,
 publicationID는 기존 게시 ID(캠페인 이름 포함)다. 목록 KPI 또는 필요한 단건으로 정확한 stageID와 연결하며 없으면 ‘대상 게시 없음’이다.
+구간 선택 URL은 화면 게시 ID와 별도로 양쪽 publicationID·stageID를 보존한다. 왼쪽 historical 단계도 같은 stageID의 현재 게시 단계와 구별한다.
+과거 대상 GET의 404·정상 조회의 단계 부재만 ‘대상 게시 없음’이며, 권한·서버·시간 초과 오류는 ‘대상 조회 실패’와 재조회로 구별한다.
 같은 부하는 loadScenarioRef.uid와 spec.loadGenerator가 모두 같을 때만 인정한다. 요청률·내용 유사성으로 대체하지 않는다.
 부하 단계·목표 요청률·α는 loadScenarios의 parts를 표시한다. SLO는 definition.workloads[].slo와 KPI의 **workloadUID만** 연결한다.
 workloadUID 없는 행은 이름·legacy uid·KPI SLO가 같아도 SLO ‘미기록’이다.

@@ -7,14 +7,14 @@ import { TriangleAlert } from "lucide-react"
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 import { useChillQuery } from "@/lib/client"
 import { campaignGroups, commitExperimentSelection, decodeExperiment, decodeExperiments, definitionComparisonReason, definitionPolicy, experimentChartData, experimentHeatmap, experimentPath, experimentRows, frozenP95SLO, resultMetric, stageHistoryLink, stageLabel, stageLoadLabel, stageSeconds, type Experiment, type ExperimentHeatmapRow } from "@/lib/experiments"
-import { comparisonValidity, experimentDifference } from "@/lib/experiments"
+import { comparisonValidity, experimentDifference, experimentIntervalSelection } from "@/lib/experiments"
 import { formatMeasurementNumber } from "@/lib/measurements"
 import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
 import { Empty, Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 
-import { ExperimentConclusion, ExperimentComparisonLegend, ExperimentCoverage, ExperimentInjections, ExperimentJudgment, ExperimentLimits, ExperimentOutcome, useHistoricalExperiments } from "@/features/experiments-conclusion"
+import { ExperimentConclusion, ExperimentComparisonLegend, ExperimentCoverage, ExperimentInjections, ExperimentJudgment, ExperimentLimits, ExperimentOutcome, HistoricalExperimentError, useHistoricalExperiments } from "@/features/experiments-conclusion"
 import { SchedulerIntervalEvents } from "@/features/scheduler-evidence"
 const number=(value:unknown,unit="")=>typeof value==="bigint"?String(value):typeof value==="number"&&Number.isFinite(value)?formatMeasurementNumber(value,unit):"—"
 const tone=(value:number|null,baseline=0,higherIsBetter=false)=>experimentDifference(value,baseline,higherIsBetter).tone
@@ -52,10 +52,10 @@ function ExperimentDetail({run,runs}:{run:Experiment;runs:Experiment[]}) {
   const [service,setService]=React.useState("")
   const params=useSearchParams()
   const chart=React.useMemo(()=>experimentChartData(run,service,runs),[run,service,runs])
-  const row=rows.find(row=>params.get("a")===run.id&&params.get("as")===row.stage.id&&(!row.other||params.get("b")===row.rightRun?.id&&params.get("bs")===row.other.id))
+  const row=rows.find(row=>Object.entries(experimentIntervalSelection(run,row)).every(([key,value])=>(params.get(key)??"")===value))
   function open(row:ExperimentHeatmapRow,name="") {
     if(name)setService(name)
-    commitExperimentSelection(window.location,window.history,{a:run.id,as:row.stage.id,b:row.other?row.rightRun?.id??"":"",bs:row.other?.id??""})
+    commitExperimentSelection(window.location,window.history,experimentIntervalSelection(run,row))
   }
   return <>
     <section aria-label="구간별 정책 차이" className="overflow-x-auto rounded-lg border" tabIndex={0}>
@@ -79,7 +79,7 @@ function ExperimentDetail({run,runs}:{run:Experiment;runs:Experiment[]}) {
         </ComposedChart></ResponsiveContainer>
       </div>
     </section>
-    <IntervalDrawer run={run} runs={runs} row={row} service={service} onClose={()=>commitExperimentSelection(window.location,window.history,{as:"",b:"",bs:""})}/>
+    <IntervalDrawer run={run} runs={runs} row={row} service={service} onClose={()=>commitExperimentSelection(window.location,window.history,{al:"",as:"",b:"",bs:""})}/>
   </>
 }
 
@@ -92,6 +92,6 @@ export function ExperimentsPage() {
   const selected=id?(run?[run]:[]):publications
   const historical=useHistoricalExperiments(selected,publications,!!list.data||!!list.error)
   const runs=historical.runs
-  if(id)return <Screen width="data" title={<span className="break-all text-base" title={run?definitionComparisonReason(run,runs):undefined}>{run?.definition?.run.name??id}</span>} actionPlacement="header" action={<Button variant="outline" asChild><Link href="/experiments">목록</Link></Button>}><QueryGate query={query}>{run&&<><section aria-label="실험 판정" className="space-y-3"><ExperimentOutcome run={run}/>{historical.pending?<strong className="text-xl text-muted-foreground">대상 조회 중</strong>:<><ExperimentJudgment run={run} runs={runs}/><ExperimentConclusion run={run} runs={runs}/><ExperimentLimits run={run} runs={runs}/><ExperimentCoverage run={run} runs={runs}/></>}<ExperimentComparisonLegend/></section>{!historical.pending&&<ExperimentDetail key={run.id} run={run} runs={runs}/>}</>}</QueryGate></Screen>
-  return <Screen width="data" title="실험" actionPlacement="header" action={<ExperimentComparisonLegend/>}><QueryGate query={list}>{list.data&&<section aria-label="실험 목록" className="space-y-3">{campaignGroups(publications).map(({run})=><article key={run.id} className="space-y-3 rounded-lg border px-5 py-4"><Link prefetch={false} href={`/experiments?${new URLSearchParams({a:run.id})}`} className="block space-y-3 rounded focus-visible:outline-2 focus-visible:outline-primary"><h2 className="break-all text-sm font-medium" title={definitionComparisonReason(run,runs)}>{run.definition?.run.name??run.id}</h2><ExperimentOutcome run={run}/>{historical.pending?<strong className="text-xl text-muted-foreground">대상 조회 중</strong>:<><ExperimentJudgment run={run} runs={runs}/><ExperimentConclusion run={run} runs={runs}/></>}</Link>{!historical.pending&&<><ExperimentLimits run={run} runs={runs}/><ExperimentCoverage run={run} runs={runs}/></>}</article>)}{!publications.length&&<Empty title="게시 기록 없음"/>}</section>}</QueryGate></Screen>
+  if(id)return <Screen width="data" title={<span className="break-all text-base" title={run&&!historical.error&&!historical.pending?definitionComparisonReason(run,runs):undefined}>{run?.definition?.run.name??id}</span>} actionPlacement="header" action={<Button variant="outline" asChild><Link href="/experiments">목록</Link></Button>}><QueryGate query={query}>{run&&<><section aria-label="실험 판정" className="space-y-3"><ExperimentOutcome run={run}/>{historical.error?<HistoricalExperimentError refetch={historical.refetch}/>:historical.pending?<strong className="text-xl text-muted-foreground">대상 조회 중</strong>:<><ExperimentJudgment run={run} runs={runs}/><ExperimentConclusion run={run} runs={runs}/><ExperimentLimits run={run} runs={runs}/><ExperimentCoverage run={run} runs={runs}/></>}<ExperimentComparisonLegend/></section>{!historical.error&&!historical.pending&&<ExperimentDetail key={run.id} run={run} runs={runs}/>}</>}</QueryGate></Screen>
+  return <Screen width="data" title="실험" actionPlacement="header" action={<ExperimentComparisonLegend/>}><QueryGate query={list}>{list.data&&<section aria-label="실험 목록" className="space-y-3">{historical.error&&<HistoricalExperimentError refetch={historical.refetch}/>} {campaignGroups(publications).map(({run})=><article key={run.id} className="space-y-3 rounded-lg border px-5 py-4"><Link prefetch={false} href={`/experiments?${new URLSearchParams({a:run.id})}`} className="block space-y-3 rounded focus-visible:outline-2 focus-visible:outline-primary"><h2 className="break-all text-sm font-medium" title={!historical.error&&!historical.pending?definitionComparisonReason(run,runs):undefined}>{run.definition?.run.name??run.id}</h2><ExperimentOutcome run={run}/>{!historical.error&&(historical.pending?<strong className="text-xl text-muted-foreground">대상 조회 중</strong>:<><ExperimentJudgment run={run} runs={runs}/><ExperimentConclusion run={run} runs={runs}/></>)}</Link>{!historical.error&&!historical.pending&&<><ExperimentLimits run={run} runs={runs}/><ExperimentCoverage run={run} runs={runs}/></>}</article>)}{!publications.length&&<Empty title="게시 기록 없음"/>}</section>}</QueryGate></Screen>
 }

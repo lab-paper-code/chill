@@ -249,17 +249,15 @@ export function definitionComparisonReason(run:Experiment,runs:Experiment[]=[run
   if(!comparisons.length)return "비교 없음"
   return comparisons.map(c=>`${c.reason}${!resolveComparison(run,c.left,runs)||!resolveComparison(run,c.right,runs)?" · 대상 게시 없음":""}`).join(" / ")
 }
-export function campaignPairs(run:Experiment,runs:Experiment[]=[run]) {
-  return definitionComparisons(run,runs)
-}
 export function campaignGroups(runs:Experiment[]) {
-  return runs.map(run=>({run,pairs:campaignPairs(run,runs),title:run.definition?.run.name??run.id,question:run.definition?.spec.question??"미기록",comparisonReason:definitionComparisonReason(run,runs)})).sort((a,b)=>Date.parse(b.run.from)-Date.parse(a.run.from))
+  return runs.map(run=>({run,pairs:definitionComparisons(run,runs),title:run.definition?.run.name??run.id,question:run.definition?.spec.question??"미기록",comparisonReason:definitionComparisonReason(run,runs)})).sort((a,b)=>Date.parse(b.run.from)-Date.parse(a.run.from))
 }
 export function experimentSelection(search:string,values:Record<string,string>):URLSearchParams {
   const next=new URLSearchParams(search)
   for(const [key,value] of Object.entries(values)) {
     if(value)next.set(key,value);else next.delete(key)
     if((key==="a"||key==="b")&&!Object.hasOwn(values,`${key}s`))next.delete(`${key}s`)
+    if(key==="a"&&!Object.hasOwn(values,"al"))next.delete("al")
   }
   for(const field of ["at","decision","record","evidence","evidenceCursor"])next.delete(field)
   return next
@@ -282,7 +280,7 @@ export function serviceDelta(a:ExperimentRow|undefined,b:ExperimentRow|undefined
 
 
 export function campaignTradeoffs(run:Experiment,runs:Experiment[]=[run]) {
-  const comparisons=campaignPairs(run,runs).map(pair=>({...pair,
+  const comparisons=definitionComparisons(run,runs).map(pair=>({...pair,
     energyDelta:finite(pair.chill.kpis.wholePoolJoules)!==null&&finite(pair.control.kpis.wholePoolJoules)!==null?Number(pair.chill.kpis.wholePoolJoules)-Number(pair.control.kpis.wholePoolJoules):null,
     services:comparisonRows(pair.chill,pair.control).map(row=>{
       const a=row.a.length===1?row.a[0]:undefined,b=row.b.length===1?row.b[0]:undefined
@@ -346,6 +344,9 @@ export function durationMismatch(a:ExperimentStage,b:ExperimentStage):boolean {
 export type ExperimentHeatmapRow = {
   key:string;id:string;stage:ExperimentStage;other:ExperimentStage|null;leftRun:Experiment;rightRun:Experiment;rate:number|null;durationDifferent:boolean;reason:string;energyPercent:number|null
   services:{name:string;a:ExperimentRow|undefined;b:ExperimentRow|undefined;successDelta:number|null;p95Ratio:number|null;p95Delta:number|null;worstSuccess:boolean;worstP95:boolean}[]
+}
+export function experimentIntervalSelection(run:Experiment,row:ExperimentHeatmapRow):Record<string,string> {
+  return {a:run.id,al:row.leftRun.id,as:row.stage.id,b:row.other?row.rightRun.id:"",bs:row.other?.id??""}
 }
 
 // One row per policy comparison; unmatched publications retain their own frozen stage.

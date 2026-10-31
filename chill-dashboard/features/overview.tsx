@@ -6,7 +6,7 @@ import { useMeasurementCoverage, useCoverageInventory } from "@/features/measure
 import { Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { campaignGroups, decodeExperiments, definitionComparisonReason, experimentHeatmap, stageLabel, stageLoadLabel, type Experiment } from "@/lib/experiments"
-import { ExperimentConclusion, ExperimentComparisonLegend, ExperimentCoverage, ExperimentJudgment, ExperimentLimits, ExperimentOutcome, useHistoricalExperiments } from "@/features/experiments-conclusion"
+import { ExperimentConclusion, ExperimentComparisonLegend, ExperimentCoverage, ExperimentJudgment, ExperimentLimits, ExperimentOutcome, HistoricalExperimentError, useHistoricalExperiments } from "@/features/experiments-conclusion"
 import { overviewCoverageMatrix, overviewDeviceLabel } from "@/lib/overview"
 import { coverageFailureHref, coveragePathVisible, coverageRequestHref } from "@/lib/measurement-coverage"
 import "./overview.css"
@@ -17,7 +17,7 @@ export function OverviewPage() {
   const data=coverage.data,matrix=overviewCoverageMatrix(data?.groups??[])
   const publications=experiments.data?.items??[],groups=campaignGroups(publications),recent=groups.find(group=>(group.run.definition?.spec.comparisons??group.run.comparisons)?.length)??groups[0]
   const historical=useHistoricalExperiments(recent?[recent.run]:[],publications),runs=historical.runs
-  const stages=recent&&!historical.pending?experimentHeatmap(recent.run,runs).filter(row=>row.other):[],maxEnergy=Math.max(1,...stages.map(row=>Math.abs(row.energyPercent??0)))
+  const stages=recent&&!historical.error&&!historical.pending?experimentHeatmap(recent.run,runs).filter(row=>row.other):[],maxEnergy=Math.max(1,...stages.map(row=>Math.abs(row.energyPercent??0)))
   const actionGroups=new Map<string,{action:NonNullable<typeof data>["nextActions"][number];cell:NonNullable<typeof data>["cells"][number];reason:string;count:number}>(),seen=new Set<string>()
   for(const action of data?.nextActions??[]) {
     const identity=`${action.cellId}/${action.kind}/${action.reasonCode}`
@@ -43,8 +43,8 @@ export function OverviewPage() {
         })}</tr>)}</tbody></table></div>:<p>{coverage.error?"커버리지 조회 실패":"커버리지 수신 대기"}</p>}
       </section>
       <section className="overview-panel"><header><h2>최근 실험 비교</h2></header>{recent?<>
-        <h3 className="break-all text-sm font-medium" title={definitionComparisonReason(recent.run,runs)}>{recent.run.definition?.run.name??recent.run.id}</h3><ExperimentOutcome run={recent.run}/>
-        {historical.pending?<strong className="text-xl text-muted-foreground">대상 조회 중</strong>:<><ExperimentJudgment run={recent.run} runs={runs}/><ExperimentConclusion run={recent.run} runs={runs}/><ExperimentLimits run={recent.run} runs={runs}/><ExperimentCoverage run={recent.run} runs={runs}/></>}<ExperimentComparisonLegend/>
+        <h3 className="break-all text-sm font-medium" title={!historical.error&&!historical.pending?definitionComparisonReason(recent.run,runs):undefined}>{recent.run.definition?.run.name??recent.run.id}</h3><ExperimentOutcome run={recent.run}/>
+        {historical.error?<HistoricalExperimentError refetch={historical.refetch}/>:historical.pending?<strong className="text-xl text-muted-foreground">대상 조회 중</strong>:<><ExperimentJudgment run={recent.run} runs={runs}/><ExperimentConclusion run={recent.run} runs={runs}/><ExperimentLimits run={recent.run} runs={runs}/><ExperimentCoverage run={recent.run} runs={runs}/></>}<ExperimentComparisonLegend/>
         <figure className="overview-energy"><figcaption>구간별 에너지 Δ · 부하</figcaption><div className="overview-energy-bars">{stages.map(row=>{const delta=row.energyPercent,width=Math.abs(delta??0)/maxEnergy*48;return <div key={row.key} title={`${stageLabel(row.stage,row.leftRun)} · ${row.reason} · ${delta===null?"에너지 비교 불가":`${delta.toFixed(2)}%`}`}><div className="overview-energy-track"><span className={delta!==null&&delta<0?"overview-energy-gain":"overview-energy-loss"} style={{left:`${delta!==null&&delta<0?50-width:50}%`,width:`${width}%`}}/></div><span>{stageLoadLabel(row.stage,row.leftRun)}</span></div>})}</div></figure>
         <Link href={`/experiments?${new URLSearchParams({a:recent.run.id})}`}>자세히 →</Link>
       </>:<p>{experiments.error?"실험 조회 실패":experiments.isFetching?"실험 수신 대기":"비교 기록 없음"}</p>}</section>

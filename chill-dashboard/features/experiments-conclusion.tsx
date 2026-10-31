@@ -1,6 +1,7 @@
 "use client"
 
-import { useChillQueries } from "@/lib/client"
+import { ApiError, useChillQueries } from "@/lib/client"
+import { Button } from "@/components/ui/button"
 import { TriangleAlert } from "lucide-react"
 import { campaignScoreboard, decodeExperiment, definitionComparisonReason, experimentDifference, experimentOutcome, experimentPath, historicalPublicationIDs, injectionRows, type Experiment, type ExperimentStage } from "@/lib/experiments"
 import { formatMeasurementNumber } from "@/lib/measurements"
@@ -10,7 +11,12 @@ export function useHistoricalExperiments(publications:Experiment[],catalog:Exper
   const ids=[...new Set(publications.flatMap(historicalPublicationIDs))].filter(id=>!catalog.some(run=>run.id===id)&&!publications.some(run=>run.id===id))
   const queries=useChillQueries<Experiment>(ids.map(experimentPath),{enabled,decoder:decodeExperiment})
   const fetched=queries.flatMap((query,index)=>query.data?.id===ids[index]?[query.data]:[])
-  return {runs:[...publications,...catalog.filter(run=>!publications.some(item=>item.id===run.id)),...fetched],pending:ids.length>0&&(!enabled||queries.some(query=>query.isPending))}
+  const failed=queries.filter(query=>query.error&&!(query.error instanceof ApiError&&query.error.status===404))
+  return {runs:[...publications,...catalog.filter(run=>!publications.some(item=>item.id===run.id)),...fetched],pending:ids.length>0&&(!enabled||queries.some(query=>query.isPending)),error:failed[0]?.error??null,refetch:()=>{for(const query of failed)void query.refetch()}}
+}
+
+export function HistoricalExperimentError({refetch}:{refetch:()=>void}) {
+  return <div role="alert" className="notice"><p>대상 게시 조회 실패</p><Button type="button" variant="outline" onClick={refetch}>다시 불러오기</Button></div>
 }
 
 const outcomeWords:Record<string,string>={Complete:"완료",Failed:"실패",PASS:"통과",FAIL:"실패",INVALID:"무효",NOT_EVALUATED:"미평가",Executed:"실행",Cancelled:"취소",Invalid:"무효"}
