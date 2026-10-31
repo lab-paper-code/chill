@@ -9,7 +9,7 @@
 지금 대시보드는 단계 이름 접미사·요청률 유사성으로 "자동 vs 고정 짝", 정책, SLO를 **추측**한다.
 앞으로는 게시물에 실린 **실험 정의(`definition`)를 그대로 읽는다**. 정의가 없는 과거 게시는 비교·정책을 **"미기록"**으로 표시한다.
 
-## 2. 조회 API — 경로·인증 변화 없음
+## 2. 조회 API — 인증 변화 없음
 
 | 경로 | 변화 |
 |---|---|
@@ -19,8 +19,25 @@
 - `schemaVersion`은 `serving-experiment.v1alpha1` 그대로. 단건에 `definition`이 없거나 `outcome`이 없으면 옛 게시다(해당 항목 "미기록").
 - 정정(supersedes) 관계는 게시하지 않는다. 정정 흐름이 아직 없으므로 표시하지 않는다.
 - 서버는 `definition`을 해석하지 않고 JSON object인지만 확인해 그대로 준다(`internal/serving/httpapi/experiments.go`).
-- 대시보드는 **완료된 게시만** 다룬다. 진행 중·미게시 실험은 범위 밖이다(운영자는 `kubectl get evaluationruns.edge.dacs.io`).
+- 대시보드는 결과를 **완료된 게시만** 다룬다. 진행 중 실험은 아래 §2.1의 작은 요약으로 "평가 실행 중" 표시만 한다(운영 보드 오판 방지).
 - 게시 ID = EvaluationRun UID. 같은 실험의 정정은 새 UID로 게시된다(덮어쓰기 없음).
+- 대시보드는 **읽기 전용**이다. 실험 생성·시작·중지·release는 kubectl로 CR을 만들거나 annotation을 다는 방식으로만 한다(범위 밖으로 확정).
+
+### 2.1 진행 중 평가 표시 — `GET /api/v1/evaluations/active`
+
+부하 발생, 일부러 낸 장애(Pod 삭제·cordon), 제어 스위치 끔이 실제 클러스터에서 일어나는 동안 운영 보드가 이를 평범한 사건으로 오해하지 않도록 하는 읽기 전용 요약이다.
+
+```json
+{"items": [ {"name": "ab-weights-1", "uid": "…", "startedAt": "…", "stageIndex": 1, "stagesTotal": 3,
+             "stage": {"id": "base", "mode": "autonomous", "startedAt": "…", "goAt": "…", "plannedSeconds": 300,
+                       "injections": [ {"id": "kill-1", "action": "delete-serving-pod", "offsetSeconds": 120,
+                                        "outcome": "Executed", "nodeName": "…", "podName": "…"} ]}} ]}
+```
+
+- 풀을 점유 중인(`PoolAcquired=True`) EvaluationRun만 나온다. 없으면 `items: []`.
+- `goAt`은 부하 시작 시각(없으면 아직 시작 전), `plannedSeconds`는 그 단계 LoadScenario parts 길이 합. 남은 시간 = `goAt + plannedSeconds − now`(대시보드 계산).
+- `injections[]`는 계획과 지금까지의 실행 결과. 운영 보드는 같은 노드·Pod 사건에 "주입" 태그를 붙일 수 있다(일치 판정은 nodeName/podName 정확 일치만).
+- 정리 실패 시 남은 자원은 게시 `outcome.cleanup.residuals[]`(§3.1)에 실린다.
 
 ## 3. `definition` 형태 (`evaluation-definition.v1alpha1`)
 
@@ -59,6 +76,7 @@
 ```
 
 `outcome.stages[].id`도 `summary.stages[].id`와 같은 키다. 값이 없는 축은 생략하지 않고 reason(`NotStarted` 등)으로 채워 게시한다.
+정리가 실패하면 `outcome.cleanup.residuals[]` = `[{"kind": "Node|Pod|Job|SchedulerSettings", "name": "…", "reason": "…"}]`로 남은 자원을 싣는다(운영자가 kubectl로 찾을 대상).
 
 ## 4. 대시보드가 읽을 것 — 추측 대신
 
