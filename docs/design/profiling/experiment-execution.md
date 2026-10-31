@@ -120,7 +120,7 @@ Job NotFound는 정확한 UID·조회 사실을 보존한다. 다른 UID를 삭�
 
 ## 5. 단계별 동작과 기존 하네스 연결
 
-부모 prepare는 실행당 한 번이다. 각 EvaluationStage는 복원 → 부하 → drain → 수집 → 판정 → 단계 정리이며 부하·drain·수집은 기존 `e5.py stage` **한 Job 안에서** 이어진다.
+부모 prepare는 공통 입력 해석·동결(LoadScenario·Workload 적용 정의 snapshot, 운영 설정)을 실행당 한 번 수행한다. 각 EvaluationStage는 동결 snapshot으로 그 단계의 신원·입력·장비를 확인하는 **단계별 준비** → 복원 → 부하 → drain → 수집 → 판정 → 단계 정리 순서다. 단계별 준비는 공통 입력 재해석이 아니며 부하·drain·수집은 기존 `e5.py stage` **한 Job 안에서** 이어진다.
 자식이 factor/stage/judge/cleanup·producer Job을 소유하고 **Job ownerRef는 Stage UID**다(Pod는 Job 소유). prepare/finish/publish Job·PVC·input/config CM은 EvaluationRun 소유다. adapter는 기존 함수를 재사용하며 `Round`를 통째 import하지 않는다.
 아래 공개 API 열은 **Job 안의 e5.py가 사용하는 인터페이스**다. controller가 부하 로그·GO·drain 프로토콜을 직접 소유하지 않는다.
 줄 번호는 설계 시점 소스다. 기존 운영 attempt의 `*.command.json`은 의미 비교 근거이며 새 argv 계약은 아래 §5.1이다.
@@ -212,8 +212,12 @@ CR 삭제가 증거 삭제로 이어지지 않는다. 저장 실패는 해당 `p
 
 게시 정본은 [관측 설계 §6.4](../serving/observability-split.md#64-실험-불변-요약-조회-api-b2-sch-45)다.
 게시 ID는 **EvaluationRun UID**다. 사용자 지정 `publicationID`는 두지 않는다. 최종 표·게시 Job만 bridge로 `serving/experiments.v1alpha1/<UID>/summary.json`을 마지막 PutImmutable로 쓴다.
-기존 wire 타입 `ExperimentSummary`와 schemaVersion은 유지하고 선택 object `definition`에 **EvaluationRun spec + 해석된 LoadScenario spec snapshot**을 싣는다. 서버는 내용을 해석하지 않는다.
-실제 자식 spec/UID·동결 운영값·관측 신원·완료 축은 execution/evidence-index에 연결한다. SLO는 적용 Workload snapshot 증거에서 읽으며 spec에 복제하지 않는다.
+기존 wire 타입 `ExperimentSummary`와 schemaVersion은 유지하고 선택 object `definition`에 **EvaluationRun spec + 해석된 LoadScenario spec snapshot·Workload 적용 정의**를 싣는다. 서버는 내용을 해석하지 않는다. 형태는 다음과 같이 고정한다(아래 타입 자리표시는 JSON 값으로 치환).
+```text
+{"schema":"evaluation-definition.v1alpha1","run":{"name":<string>,"uid":<string>},"spec":<EvaluationRun spec>,"loadScenarios":[{"name":<string>,"uid":<string>,"spec":<LoadScenario spec>}],"workloads":[{"name":<string>,"uid":<string>,"generation":<integer>,"slo":{"percentile":<number>,"targetLatencyNanos":<integer>},"model":<resolved identity>,"preprocessor":<resolved identity>,"dataset":<resolved identity>}]}
+```
+`workloads`는 prepare가 해석한 적용 정의이며 SLO 정본이다. CR spec에 SLO를 복제하지 않는다. `summary.stages[].id`는 `spec.stages[].id`와 같아야 하며 대시보드 조인 키로 쓴다.
+실제 자식 spec/UID·동결 운영값·관측 신원·완료 축은 execution/evidence-index에 연결한다.
 단계 증거는 이미 `experiments/<UID>/...`에 저장되어 있다. bridge는 이를 다시 쓰지 않고, 그 참조를 담은 작은 게시용 실행/증거 목록 객체와 summary만 게시 prefix에 쓴다. 기존 `sources`는 이 게시 객체를 가리킨다.
 현재 bridge는 manifest의 sources를 같은 게시 prefix 안으로 제한하므로(`hack/e5/publish/main.go:106–128`) 이 경계는 유지한다. 중간 증거 writer와 최종 게시 bridge를 혼동하지 않는다.
 `Published`는 게시 후 controller가 기록하므로 게시물에 자기 자신의 게시 완료를 선행 주장하지 않는다. 게시 충돌·정정은 새 EvaluationRun(새 UID)이 필요하며 덮어쓰기/동일 바이트 비교로 회복하지 않는다.
@@ -273,9 +277,5 @@ Node 필드/label 범위는 RBAC 자체가 아니라 코드에서 제한한다. 
 
 ## 12. 결정(2026-10-31)
 
-- **패널 7항 — cgroup 표본 주체 확정:** node-agent는 producer Pod를 대상으로 선택하지 않으며 공개 raw에도 해당 producer UID 표본이 없어 genesis1 producer의 실시간 cgroup 표본을 대체할 수 없다. stage Job이 SSH Secret `chill-evaluation-producer-ssh`의 `ssh-privatekey`·`known_hosts`로 기존 sampler를 실행한다. SSH host/user/port/host-key alias는 운영 ConfigMap에서 동결하며 host trust·접속·비대화 sudo 권한은 명시 provisioning 입력이다. Secret/host trust가 없으면 준비 단계 `MissingInput`으로 끝내고 hostPath·암묵 host key 복사·표본 없는 판정 통과는 허용하지 않는다.
-- **패널 10항 — kind 이름:** Katib `experiments.kubeflow.org`와 혼동을 피하려고 kind `EvaluationRun`/`evaluationruns.edge.dacs.io`로 확정한다. 파일명·기존 게시/API 이름은 유지한다.
-- **하위 모델 분해(2026-10-31):** LoadScenario는 공유 불변 부하, EvaluationRun은 조립·비교·풀 세션·끝 정리·게시, EvaluationStage는 원자 행·Job/producer·주입·단계 증거를 소유한다. micro도 1단계 EvaluationRun이며 단독 Stage는 허용하지 않는다. 값 타입과 불변 증거로 나머지를 표현하며 §3–8의 경계를 정본으로 한다.
-- 기각: FaultInjection CR/controller — GO·잔류와 수명이 같으므로 Stage plan/record로 충분하다.
-- 기각: ControlProfile·Target·Judgment·Instrument CR — 독립 운영 생명주기 근거가 없어 값 타입으로 둔다.
-- 기각: Snapshot/StageResult·Factor/Micro/AB·PoolSession·범용 DAG CR — 불변 증거·기존 3 CR 조립·단일 부모 점유로 충분하다.
+- cgroup 표본·kind 경계는 §1·5, 하위 모델 분해(2026-10-31)는 §3과 [ADR 0032 개정 이력](../../adr/0032-experiment-execution-boundary.md#개정-이력)을 따른다.
+- FaultInjection·프로파일·Snapshot 등 별도 CR 기각 근거는 [ADR 0032 대안](../../adr/0032-experiment-execution-boundary.md#context)을 따른다. §1의 범위 밖 범용 workflow는 도입하지 않는다.

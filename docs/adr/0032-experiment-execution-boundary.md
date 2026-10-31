@@ -35,14 +35,14 @@ E5의 조건·순서·비교 관계는 CHILL 밖 `.cache/chill-assets/ops/pools-
 
 상세 필드·단계·실패 처리는 [실행 설계](../design/profiling/experiment-execution.md)가 소유한다. 요구사항은 [실험 SRS](../spec/experiments/SRS.md) EXP-01~15를 따른다.
 
-1. namespaced 세 CR(개정 이력 참조)에 질문·조건·순서·비교·장애 주입·불변 입력 참조를 선언한다. spec 전체는 CEL `self == oldSelf`로 불변이며 정정은 새 CR이다. status는 `observedGeneration`과 type-keyed `metav1.Condition`을 사용하고 실행 완료·측정 판정·정리 완료를 구분한다.
+1. namespaced 세 CR(개정 이력 참조)에 질문·조건·순서·비교·장애 주입·불변 입력 참조를 선언한다. spec 전체는 CEL `self == oldSelf`로 불변이며 정정은 새 CR이다. 실행 두 CR(EvaluationRun·EvaluationStage)의 status는 `observedGeneration`과 type-keyed `metav1.Condition`을 사용하고 실행 완료·측정 판정·정리 완료를 구분한다.
 2. 기존 profiler manager에 reconciler를 둔다. controller는 단계 순서·Job 채택·compact status만 소유한다. 기존 다른 측정 CR 실행 위치는 이 결정으로 옮기지 않는다.
 3. 배포·업그레이드는 하지 않는다. 기대 신원과 관측한 image digest·source SHA가 다르거나 신원을 확인할 수 없으면 시작하지 않는다. 이는 배포 신원 확인이며 새 digest 형식·재계산·바이트 동일성 검증 관문은 아니다.
 4. 시험 대상 제어·관측에는 ChillServer 공개 API와 Kubernetes API만 쓴다. E5-7 주입도 선언된 계획에 따라 Kubernetes API로 수행하며 ChillServer 내부 호출이나 장애 주입 API를 만들지 않는다.
 5. profiler leader election(Helm 기본 활성)·단일 worker·캐시 아닌 목록 읽기로 생성 순서에 따라 한 실험만 실행한다. leader election이 꺼지면 이 reconciler만 등록하지 않는다. 실험 시작 표시는 한 번 조건부 갱신하되 명령별 선점 장부는 만들지 않는다. 반환 미확인 실험은 다음 실행을 막으며 별도 Lease·우선순위 큐는 없다. 실제 노드 예약은 기존 ChillServer admission이 소유한다. 퇴임 leader의 늦은 명령 가능성은 알려진 한계이며 fencing을 보장한다고 주장하지 않는다.
 6. 재개는 결정적 이름으로 기존 Job을 조회하거나 AlreadyExists 결과를 채택하는 것이다. 기록된 Job/Pod UID를 관측할 뿐 재발행·재측정하지 않는다. Job 소실은 `ExecutionLost`, 원격 효과 불명은 미확인 상태로 중단하며 원 사유·증거·예약을 보존한다. 자동 물리 복구하지 않는다.
 7. 기존 `e5.py` 단계 명령(`factor`/`stage`/`judge`/`cleanup-jobs`)을 결정적 이름의 단발 Job으로 실행하고 마지막에는 표·게시 Job을 둔다. 부하·drain·수집·판정 등 단계 프로토콜과 계산식을 Go로 옮기지 않는다. 각 Job은 Pod attempt 하나이며 자동 재시도하지 않고 Job 성공을 측정 PASS나 증거 완료로 간주하지 않는다. 단계 정리는 자기 Job 삭제만 하며 원 설정 복구·owned reset·반환 대기는 실험 끝에 한 번 수행한다. 오류 시 하네스의 자동 설정 복구는 끈다. 정리 실패도 측정 결과는 게시하고, 운영자가 실제 상태를 확인한 뒤 metadata annotation으로 해제하면 controller가 status에 기록하고 점유를 해제한다.
-8. `ExperimentSummary`의 선택 필드 `definition`은 spec 스냅샷만 담는 additive 확장이다. 신원·동결 설정·완료 축·증거 참조는 실행 기록에 둔다. 게시 ID는 EvaluationRun UID다. ChillServer는 불변 게시물만 읽고 CR은 읽지 않는다. reader(서버·대시보드)를 먼저 배포한 뒤 publisher를 전환한다. 대시보드는 완료 게시의 명시된 정책·비교 관계·SLO만 읽고 진행 중 조회는 kubectl로 한다. 옛 게시는 비교 관계 미기록으로 표시되며 추측 함수 삭제로 과거 비교가 사라지는 가시적 변화를 알린다.
+8. `ExperimentSummary`의 선택 필드 `definition`은 EvaluationRun spec + 해석된 LoadScenario spec snapshot을 담는 additive 확장이다. prepare가 해석한 Workload 적용 정의(SLO 정본)와 고정된 게시 형태는 [실행 설계 §8](../design/profiling/experiment-execution.md#8-증거게시조회)을 따른다. 실제 관측 신원·동결 운영 설정·완료 축·실행 증거 참조는 실행 기록에 둔다. 게시 ID는 EvaluationRun UID다. ChillServer는 불변 게시물만 읽고 CR은 읽지 않는다. reader(서버·대시보드)를 먼저 배포한 뒤 publisher를 전환한다. 대시보드는 완료 게시의 명시된 정책·비교 관계·SLO만 읽고 진행 중 조회는 kubectl로 한다. 옛 게시는 비교 관계 미기록으로 표시되며 추측 함수 삭제로 과거 비교가 사라지는 가시적 변화를 알린다.
 9. 운영 상한 등 설정값은 profiler config에서 선택하고 실제값과 읽은 출처를 점유 시작 시 `status.frozenConfig`와 실행 증거에 동결한다. 실행 중 설정 재조회로 조건을 바꾸지 않는다.
 
 ## 개정 이력
