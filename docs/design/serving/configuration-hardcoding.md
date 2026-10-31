@@ -95,6 +95,7 @@ Node sample/batch cadence와 transitionObserver.activeDeadlineOverheadSeconds=18
 closure는 선언 target 목록 길이와 실제 모집단을 비교한다. expectedClosureCount는 없다. full/static/factor 시간은 schedule/선택 N에서 유도한다. `e5.py check:2610-2614`의11700·10200·seed 집합·21900도 binding schedule/seed에서 유도한다. 기준은 example만이 아니라 현재 실행 함수의 schedule·fallback이다.
 
 DELAY_TOLERANCE_NS=10ms는 delayed 표시 방법론 C다. --delay-tolerance나 존재하지 않는 단독 CLI metadata를 신설하지 않는다. 기존 arrivals/seed/workers/delivery/socket/lifetime와 generatorQuality를 동결한다. poll·marker poll·종료 대기·단순 command timeout은 측정·수용 영향 근거가 없으면 C, 기존 안전 예산은 D다. 경로별30/129초·1/2/5초를 합치지 않는다. 삭제할 CHILL host-reader/SSH/crictl 수집은 설정화하지 않는다. client 수집·STOP loop·운영자 장애 주입은 유지한다.
+예정 대체: 현재 로컬 `binding.config` 동결·운영자 장애 주입은 유지하되, [실험 실행 설계](../profiling/experiment-execution.md) / [실험 SRS](../../spec/experiments/SRS.md)에 따른 정의·독립 실행으로 대체할 예정이다.
 
 `demo.py` offline 회귀와 실제 E5가 호출한 bind_before SETTINGS/eligibility, Conductor API·publication·producer·삭제, native 요청, analyze stats/quality는 유지한다. 독립 D2 main·옛 수집 비활성 경로는 제외하며 helper 전체를 삭제하지 않는다.
 

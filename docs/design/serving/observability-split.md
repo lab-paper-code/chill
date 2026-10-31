@@ -85,6 +85,7 @@ conditions: occupancy `{workload,batchEnergyOptimization,batch,supplyMode,warmup
 GET `/api/v1/experiments`는 `{items:[summary]}`(from내림차순/id순), `/{id}`는 summary다. `{schemaVersion:"serving-experiment.v1alpha1",id,from,to,status,stages:[{id,from,to,kpis}],sources:[{store,key}]}`로 [from,to) 단계와 기존 요청/결과별 수·성공/SLO 분자/분모·분위수·전체/활성 POOL J 및 모집단 설명을 보존한다. 미측정은null/이유, 실패/PRIVATE_OPERATIONAL_ONLY/한계를 통과로 바꾸지 않는다.
 E5 summarize의 실제 phase 경계/KPI/출처를 `serving/experiments.v1alpha1/{id}/summary.json`에 PutImmutable한다. 원자료 먼저·최종 요약 마지막1회, 정정은 새ID다. 서버는 기존 objects Reader/Lister로 읽기만 하며 실행/재계산·새DB·캠페인 API가 없다. 안전한 단일 id·prefix 제한·non-resource GET authorize/HTTP ctx를 따른다.
 `go run ./hack/e5/publish --config <private-store.json> --manifest <private-manifest.json>`: config=`logicalStore,bucket,endpoint,region,accessKeyID,secretAccessKey`(선택sessionToken,tempDir), 공개 응답 금지. manifest `{store,key,localPath}`는 같은 실험 prefix 원자료/summary만 허용한다. 원자료도 Created만 허용하여 부분 중단 후 Existing이면 즉시 충돌/새ID이며 digest/내용 비교로 동일 실행을 추정하지 않는다. 요약 없는 실행은 완료 목록 제외; 목록/상세 일치·덮어쓰기·404/store 실패·권한/이탈·실패 보존이 검사 경계다.
+예정 대체: 현재 `round.py`·로컬 binding의 실행·게시 경로는 [실험 실행 설계](../profiling/experiment-execution.md) / [실험 SRS](../../spec/experiments/SRS.md)를 따른 독립 실행으로 대체할 예정이다. 현재 불변 게시 조회 계약은 유지한다.
 ### 6.5 축약 상태 조회 (API B3, `SCH-46`)
 GET `/api/v1/scheduler/state?view=summary`=`{at,nodes,instances,routing,decision:{id,at,status,reasons,targetID},actions}`. 노드 식별/전력모드/ready/measurement/reasons, 인스턴스 식별/node/소유·배분UID/profileID/ready/routable/이유, planned/running action ID/종류/상태/의존/elapsedNanos/예상 시간만 포함한다. decision.id는 기존 판단 UTC RFC3339Nano, routable은 UID별 서버readback(T2)이며 UI 추론 없음.
 scheduler_summary.go 독립 whitelist DTO를 같은 controller 상태에서 투영한다. 원 struct embed/전체JSON 생성 후 삭제는 안 하며 profile/κ/options/costs/후보/과거results/raw는 제외한다. summary는/state만 허용·BFF 기본compact/full 의미와 권한 유지. 검사: 원본 ID/노드/배분/action 일치, 큰 options에 크기 비례 없음, 잘못/중복view 거절·비노출이다.
@@ -293,6 +294,7 @@ MIX의 resources 컨테이너 표본 1600건은 cluster의 Node/Pod UID/containe
 `GET /api/v1/experiments[/{id}]`는 이미 `stages[].kpis`를 opaque JSON으로 그대로 전달한다
 (`internal/serving/httpapi/experiments.go:19-39`, `cmd/chill-server/experiment_service.go:89-122`).
 조회 때 raw를 스캔하거나 현재 Workload로 보충하지 않는다. envelope/schema/prefix·KPI 모집단·판정은 유지한다.
+예정 대체: 현재 frozen binding·publisher 경로는 [실험 실행 설계](../profiling/experiment-execution.md) / [실험 SRS](../../spec/experiments/SRS.md)로 대체할 예정이며, 아래 metadata 구현·수용 기록을 변경하지 않는다.
 
 ### 18.1 생성 사실과 노출 누락의 구분
 
@@ -365,7 +367,8 @@ object reference·유한 payload만 검증하며 opaque KPI의 hash/바이트 �
 원시 자료·기존 publication(#213~#225 포함)은 수정/재게시하지 않으며 기존 experiment ID도 재사용하지 않는다.
 과거 응답의 필드 부재는 ‘α 미제공’, ‘기록 당시 identity 미기록’이다.
 새 metadata를 얻으려고 과거 summary를 GET 때 다시 계산하거나 새로운 실험으로 위장하지 않는다.
-이는 ADR 0019/0030/0031의 기존 원칙 적용이며 별도 ADR 0032는 필요하지 않다.
+이는 기존 metadata 추가에 한정한 ADR 0019/0030/0031의 원칙 적용이므로 그 추가만을 위한 별도 ADR은 필요하지 않다.
+실험 실행 경계는 [ADR 0032](../../adr/0032-experiment-execution-boundary.md)를 따른다. 예정 대체: [실험 실행 설계](../profiling/experiment-execution.md) / [실험 SRS](../../spec/experiments/SRS.md).
 
 필요물은 새 **harness/publisher revision**, 해당 revision으로 동결한 신규 publication 입력·새 ID,
 F4 소비자다. metadata 전달만을 위한 ChillServer/Console/agent/runtime 이미지·CRD 배포는 없다.

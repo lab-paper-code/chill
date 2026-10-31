@@ -152,6 +152,8 @@ UID/definition rows align across runs. Offered counts, server receipt cohorts an
 live terminal buckets are explicitly distinct. Shared POOL energy is not summed
 across rows; published gap bounds render as `value ± bound J`, with energyCoverage.
 Different measurementRules retain numbers and display “측정 규칙 다름”.
+예정 대체: 현재 suffix 대응·요청률 1% fallback은 DB-FR-66으로 대체 예정(게시물의 spec 스냅샷 읽기)이며, 정의 없는 과거 게시는 비교 미기록으로 표시한다.
+[실험 실행 설계](../docs/design/profiling/experiment-execution.md) / [실험 SRS](../docs/spec/experiments/SRS.md)를 따르며, 현재 실행·조회 수단은 아직 유지한다.
 Evidence lookup uses the exact nanosecond `decision.at` interval through the
 processed scheduler observations API, then selects the recorded judgment identity;
 it never falls back to the latest state. No-record and timeout states are distinct.

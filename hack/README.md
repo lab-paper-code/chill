@@ -399,6 +399,7 @@ upload private raw evidence first through the existing PutImmutable bridge, then
 the final `serving/experiments.v1alpha1/ID/summary.json`. Existing IDs cannot be
 overwritten; corrections require a new ID. `native_mode_request.py` remains the
 separately approved baseline-preparation path, not cleanup sequencing.
+예정 대체: 현재 E5/demo의 실행·게시 수단은 유지하되, [실험 실행 설계](../docs/design/profiling/experiment-execution.md) / [실험 SRS](../docs/spec/experiments/SRS.md)에 따른 독립 실행으로 대체할 예정이다. 과거 게시·평가 기록은 바꾸지 않는다.
 `native_mode_request.py` consumes the explicit native-mode `--release` and
 `--out`. `sample_cgroups.py` consumes an external host inventory plus
 `--duration`, `--phase` and `--out`. The `smoke_*.py` scripts exercise retained
@@ -621,6 +622,7 @@ cleanup, comparison tables, and final finish/empty-state readback. It reuses
 `e5.CPO`, `e5.py` commands, token lifetime checks, and table formatters; raw
 latency/D1/energy judgments are not recomputed or weakened. Run only outside an
 active measurement window and under an actual Main-approved release.
+예정 대체: 현재 `round.py`·로컬 binding·운영자 장애 주입은 유지하되, [실험 실행 설계](../docs/design/profiling/experiment-execution.md) / [실험 SRS](../docs/spec/experiments/SRS.md)에 따른 정의·독립 실행으로 대체할 예정이다.
 
 The private input JSON has these fields (all filesystem paths are absolute;
 replace the illustrative paths/SHAs with actual approved inputs):
