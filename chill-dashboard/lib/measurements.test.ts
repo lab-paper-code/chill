@@ -1,6 +1,5 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { readFileSync } from "node:fs"
 import { runFailure, runStatusObject, exactRun, safeMeasurementReturn, significant, evidenceLocations, isProjectionMeasurementKind, measurementHref, measurementListHref, measurementPath, measurementReason, measurementUIDMismatch, occupancyDuration, occupancySupply, occupancyThroughput, operationDuration, operationWallEnergy, operationSteps } from "./measurements.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
@@ -18,22 +17,6 @@ test("measurement quantities use fixed unit precision and preserve valid zero an
   assert.equal(formatMeasurementNumber(-0.12345,"J/건"),"-0.1235")
   assert.equal(formatMeasurementNumber(1234.5,"J"),"1,235")
   assert.equal(formatMeasurementNumber(null,"W"),"미제공")
-})
-test("operation and result views keep failure, source and missing measurements visible",()=>{
-  const request=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
-  const detail=readFileSync(new URL("../features/measurement-plans.tsx",import.meta.url),"utf8")
-  const charts=readFileSync(new URL("../features/experiments.tsx",import.meta.url),"utf8")
-  assert.ok(!request.includes("sameCondition("))
-  assert.ok(!request.includes("newest[0]"))
-  assert.ok(request.includes('useChillQuery<{items:DatasetResource[]}>("v1/datasets")'))
-  assert.ok(detail.includes('campaign.phase==="Failed"'))
-  const list=readFileSync(new URL("../features/measurement-requests.tsx",import.meta.url),"utf8")
-  assert.ok(list.includes("failureSummary"))
-  assert.ok(list.includes("실패 회차 확인"))
-  assert.ok(!detail.includes("측정 완료 후 다시 확인하세요"))
-  assert.ok(charts.includes('aria-label={`${title} 단계별 선 차트`}'))
-  assert.ok(charts.includes("결측:"))
-  assert.ok(charts.includes("index+1"))
 })
 test("CSV retains row identity, source references and exact numbers while escaping every cell",()=>{
   const rows=[{id:'row"1',rowKind:"source-reference",batch:1,sourceProfileId:"source",condition:{dataset:"a,b\nc"},p95Milliseconds:0.123456789,incrementalJoulesPerItem:0,confidence:{lower:-1,upper:1,halfWidth:1,level:0.95},reuse:{source:"origin"}}] as unknown as ResultRow[]
@@ -221,18 +204,17 @@ test("retry condition diff includes CPU and protocol changes while summaries ret
   assert.match(measurementReasonSummary("cost requires exactly one proven primitive state effect"),/단일 상태 변경/)
 })
 
-test("operator result cards keep decision metrics visible and request submission below inspection",()=>{
-  const results=readFileSync(new URL("../features/measurement-plans.tsx",import.meta.url),"utf8")
-  const request=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
-  const resultCards=results.slice(results.indexOf("export function ResultRows"),results.indexOf("export function MeasurementPlanPage"))
-  assert.match(resultCards,/sm:grid-cols-3/)
-  assert.match(resultCards,/p95Milliseconds/)
-  assert.match(resultCards,/totalJoulesPerItem/)
-  assert.match(resultCards,/activeWatts/)
-  assert.doesNotMatch(resultCards,/LaTeX|min-w-\[|<Table/)
-  assert.ok(request.indexOf('onClick={submit}')>request.indexOf('<PreflightAnswer answer={answer}/>'))
-  assert.match(request,/label="장치 종류"/)
+test("R10: projection reasons summarize repeated state-effect errors and preserve useful absence language",()=>{
+  assert.match(measurementReasonSummary("MeasurementFailed"),/실패/)
+  assert.match(measurementReasonSummary("IsolationUnconfirmed"),/단독/)
+  assert.match(measurementReasonSummary(""),/사유.*미제공/)
+  assert.match(measurementReasonSummary("accepted evidence"),/원문/)
+  assert.doesNotMatch(measurementReasonSummary("accepted evidence"),/채택되지/)
+  assert.match(measurementReasonSummary('native preparation Pod failed; json: unknown field "energyBelowResolution"'),/설정.*지원/)
+  assert.match(measurementReasonSummary("native preparation Pod failed"),/모델 준비/)
+  assert.match(measurementReasonSummary("Stored occupancy does not match this request and status"),/요청.*일치/)
 })
+
 
 test("energy uncertainty reports relative half width without inventing an acceptance threshold",()=>{
   const row={incrementalJoulesPerItem:0.1,confidence:{level:0.95,halfWidth:0.02}} as ResultRow

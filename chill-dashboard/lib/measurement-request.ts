@@ -95,3 +95,22 @@ export function requestPreflightReason(reason:{code:string;message:string}) {
   }
   return messages[reason.code]??reason.message.replace(/\s*\(FixtureOnly\)/g,"")
 }
+
+export type RequestRejectionGuidance={target:string;fields:string[];message:string}
+export function requestRejectionGuidance(reason:string):RequestRejectionGuidance|null {
+  if(/model-loaded idle measurement protocol is invalid|curve plan idle.*protocol is invalid/i.test(reason))return {target:"measurement-settling",fields:["settling"],message:"쉬는 상태 안정 시간: 1초 이상 · 자동 유휴: 예열 0/데이터셋 없음 · 정상값 거부: 서버 유휴 배치(ORT 1) 확인"}
+  if(/invalid or under-covering metric observation request|metric.*(?:interval|timeout|duration)/i.test(reason))return {target:"measurement-activeWindow",fields:["activeWindow","activeTimeout","idleWindow","idleTimeout"],message:"전력 기록 시간: 측정 시간 이상 · 대기 한도: 기록 간격보다 짧게 · 모든 값: 양의 정수"}
+  if(/active measurement cannot contain settlingDurationSeconds|curve plan active.*protocol is invalid/i.test(reason))return {target:"measurement-activeDuration",fields:["activeDuration","warmup"],message:"측정 시간: 1초 이상 · 예열: 0회 이상 · 실행 중 안정 시간: 미전송 · 정상값 거부: 서버 생성 조건 확인"}
+  if(/batch.*(?:maxBatchSize|positive|valid|supported)|planned batch size/i.test(reason))return {target:"measurement-batches",fields:[],message:"처리 건수: 1 이상/경로 최대 배치 이하 · 모델 선언 배치 집합: 전체 선택"}
+  if(/dataset|preprocessor/i.test(reason))return {target:"request-input-guidance",fields:[],message:"전처리기: 모델 파일 연결 · 데이터셋: 입력 필드 이름/형식 일치·크기 상한 이하 · UID/이미지 누락: 카탈로그 등록 수정"}
+  if(/cpu|affinity/i.test(reason))return {target:"measurement-affinity",fields:["affinity"],message:"CPU 개수: 1 이상 · CPU 코어: 선택 노드의 0 이상 번호(쉼표 구분)/미지정"}
+  if(/power.?mode|target.?node|candidate.*compatible|executionPath/i.test(reason))return {target:"measurement-device",fields:[],message:"실행 노드: 준비 상태 · 전력 모드: 장치 등록값 · 실행 경로: 호환 선언"}
+  return null
+}
+
+export function requestOperationalSummary(answer?:unknown) {
+  const value=answer&&typeof answer==="object"?answer as {servingImpact?:unknown;estimatedDurationSeconds?:unknown}:undefined
+  const impact=typeof value?.servingImpact==="string"&&value.servingImpact.trim()?value.servingImpact:"미제공"
+  const seconds=value?.estimatedDurationSeconds
+  return {servingImpact:impact,estimatedDurationSeconds:typeof seconds==="number"&&Number.isFinite(seconds)&&seconds>=0?seconds:null}
+}

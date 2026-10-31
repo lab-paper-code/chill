@@ -17,6 +17,15 @@ export function operationMetadata(steps:OperationStep[]):OperationMetadata {
   return {directions:directions.length?directions:["전환 동작 미기록"],models:models.length?models:["모델 대상 미기록"]}
 }
 
+// Keep individual measured attempts: scenario totals are not a one-transition cost.
+export function operationTransitionCosts(steps:OperationStep[]) {
+  return steps.flatMap(step=>{
+    if(step.condition?.kind==="idle")return []
+    if(!["power","prepare","remove"].includes(step.condition?.kind??"")&&!step.results.some(result=>result.fromPowerMode&&result.toPowerMode&&result.fromPowerMode!==result.toPowerMode))return []
+    return (step.results.length?step.results:[undefined]).map(result=>({step,result}))
+  })
+}
+
 export function largestOperationStages(steps:OperationStep[]) {
   const duration:OperationStep[]=[],energy:OperationStep[]=[]
   let longest=-1n,highest=-1

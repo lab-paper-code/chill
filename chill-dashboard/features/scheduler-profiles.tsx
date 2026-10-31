@@ -10,7 +10,7 @@ import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
 import { Screen, Facts } from "@/components/screen"
 import { DataTable, useServerTable } from "@/components/data-table"
 import { Button } from "@/components/ui/button"
-import { MeasurementNavigation, MeasurementStatus } from "@/components/measurement-navigation"
+import { MeasurementNavigation, MeasurementStatus, MeasurementEvidenceChecks } from "@/components/measurement-navigation"
 import { AssessmentDetails, ResultRows } from "@/features/measurement-plans"
 import { MeasurementFilters } from "@/features/measurement-coverage"
 
@@ -39,12 +39,12 @@ export function SchedulerProfilesPage() {
       {key:"path",label:"실행 경로",sortValue:p=>p.condition.artifact.executionPath,value:p=>p.condition.artifact.executionPath},
       {key:"cpu",label:"CPU / affinity",sortValue:p=>p.condition.cpu.limit,value:p=><span className="tabular-nums">{p.condition.cpu.limit} / {p.condition.cpu.affinityCPUs?.join(", ")??"미지정"}</span>},
       {key:"batch",label:"실제 batch",value:p=><span className="tabular-nums">{p.batches?.map(b=>b.batch).join(", ")??"미제공"}</span>},
-      {key:"status",label:"서버 판정",sortValue:p=>p.assessment?.displayStatus??"unknown",value:p=><MeasurementStatus assessment={p.assessment}/>},
+      {key:"status",label:"스케줄러 / 측정",sortValue:p=>p.assessment?.displayStatus??"unknown",value:p=><><MeasurementStatus assessment={p.assessment}/><MeasurementEvidenceChecks assessment={p.assessment} rows={p.resultRows}/></>},
       {key:"created",label:"측정일 (KST)",sortValue:p=>p.measuredAt,value:p=><time className="tabular-nums" title={p.measuredAt}>{formatMeasurementTime(p.measuredAt)}</time>},
       {key:"source",label:"결과와 출처",value:p=><Link className="inline-flex min-h-11 items-center text-primary underline" href={href(p.id)}>결과 행 보기</Link>},
     ]}/></QueryGate>
     {params.get("profile")&&<QueryGate query={detail}>{!selected&&!detail.isPending&&!detail.error&&<p className="notice">선택한 profile ID가 현재 catalog에 없어요. 다른 프로파일로 대체하지 않아요.</p>}</QueryGate>}
-    {selected&&<section id="profile-result" className="scroll-mt-24 space-y-5 border-t pt-5" aria-label="선택 프로파일 결과"><h2 className="break-all text-lg font-semibold">{selected.condition.logicalModel} / {selected.nodeName} 결과</h2><MeasurementStatus assessment={selected.assessment}/><ResultRows rows={selected.resultRows??[]} filename={`chill-profile-${selected.id}.csv`}/><AssessmentDetails assessment={selected.assessment}/><Facts label="동결 조건" items={conditionRows(selected.condition)}/><SourceExport value={selected} filename={`chill-profile-${selected.id}.json`}/><SourceJSON value={selected} title="동결 조건과 원본 수치"/></section>}
+    {selected&&<section id="profile-result" className="scroll-mt-24 space-y-5 border-t pt-5" aria-label="선택 프로파일 결과"><h2 className="break-all text-lg font-semibold">{selected.condition.logicalModel} / {selected.nodeName}</h2><ResultRows rows={selected.resultRows??[]} filename={`chill-profile-${selected.id}.csv`}/><details><summary>판정·근거·동결 조건</summary><AssessmentDetails assessment={selected.assessment} rows={selected.resultRows}/><Facts label="동결 조건" items={conditionRows(selected.condition)}/><SourceExport value={selected} filename={`chill-profile-${selected.id}.json`}/><SourceJSON value={selected} title="동결 조건과 원본 수치"/></details></section>}
     {!!query.data?.insufficiencies?.length&&<section className="space-y-3 border-t pt-4"><h2 className="font-semibold">측정 결과 확인 필요</h2><ul className="space-y-3 text-sm">{query.data.insufficiencies.map((issue,index)=><li key={index}><p>{issue.source.Namespace}/{issue.source.Name}</p><p>사용할 측정 결과가 부족해요. 원본 자료에서 상세 사유를 확인하세요.</p></li>)}</ul></section>}
     <p className="text-sm text-muted-foreground">수치가 제공되지 않으면 미제공으로 남겨요.</p><SourceExport value={query.data} filename="chill-profiles.json"/><SourceJSON value={query.data} title="프로파일 목록 원본"/>
   </Screen>

@@ -6,6 +6,7 @@ import { useChillQuery, useChillMutation, useSession } from "@/lib/client"
 import type { RunsView, Passport, NativeSample, MeasurementPreflight } from "@/lib/read-types"
 import { formatMeasurementNumber as num, formatMeasurementTime, runFailure, runStatusObject, exactRun, safeMeasurementReturn } from "@/lib/measurements"
 import { currentRunCondition, measurementAge, runAttempt, runSpec } from "@/lib/measurement-coverage"
+import { requestOperationalSummary, requestRejectionGuidance } from "@/lib/measurement-request"
 import { codeText } from "@/lib/labels"
 import { QueryGate, SourceJSON, SourceExport, StatusBadge } from "@/components/read-region"
 import { Screen, Rows, RowDialog, Facts } from "@/components/screen"
@@ -17,28 +18,18 @@ import { MeasurementNavigation, MeasurementStatus } from "@/components/measureme
 import { AssessmentDetails } from "@/features/measurement-plans"
 
 // /measurements/new review and /measurements/check share this conclusion and plan summary; the raw plan stays in 원본.
-export const preflightConclusion=(answer:MeasurementPreflight)=>answer.resolves?"이 조건으로 측정할 수 있어요":"이 조건으로는 측정할 수 없어요"
+export const preflightConclusion=(answer:MeasurementPreflight)=>answer.resolves?"측정 요청 가능":"측정 요청 불가"
 export function PreflightAnswer({answer}:{answer:MeasurementPreflight}) {
-  const shared=answer.plan?.shared,sizes=shared?.plannedBatchSizes??[],batch=answer.batchPlan
-  return <div className="space-y-4">
-    {batch&&<><Facts label="실행 범위" items={[
-      ["선택한 처리 건수",batch.requestedBatches.join(", ")||"미지정"],
-      ["요청 가능한 처리 건수",batch.requestableBatches.join(", ")||"없음"],
-      ["실행 예정 처리 건수",batch.plannedBatches.join(", ")||"미확정"],
-      ["이미 측정한 처리 건수",batch.measuredBatches.join(", ")||"없음"],
-      ["측정 중인 처리 건수",batch.inProgressBatches.join(", ")||"없음"],
-      ["추가 측정할 처리 건수",batch.missingBatches.join(", ")||"없음"],
-      ["일부 건수만 선택",batch.subsetAllowed?"가능":"등록된 건수를 모두 측정해요"],
-      ["기존 측정과 조건 확인",batch.conditionMatch==="exact"?"실행 조건까지 같아요":batch.conditionMatch==="planned-only"?"요청 조건은 같지만 실제 실행 조건은 아직 확인하지 못했어요":"확인 불가"],
-      ["선택 범위보다 먼저 완료",batch.searchMayStopEarly?"필요한 결과가 모이면 일부 실행 전에 마칠 수 있어요":"예정 범위를 실행해요"],
-    ]}/>{!!batch.reasons?.length&&<ul className="space-y-2 text-sm">{batch.reasons.map((reason,index)=><li key={index}>{reason.message.replace(/\s*\(FixtureOnly\)/g,"")}<details><summary className="cursor-pointer py-2">원문 코드</summary>{reason.code}</details></li>)}</ul>}</>}
-    {!answer.resolves||!shared?<p role="alert" className="text-sm text-destructive">{answer.reason??"실행 계획이 제공되지 않았어요."}</p>:<Facts label="이렇게 측정해요" items={[
-      ["한 번에 처리할 건수",sizes.length?`${sizes.join(", ")}건`:"경로 선언 범위"],
-      ["크기마다 반복",`${answer.campaign.spec.trialsPerBatch}번`],
-      ["한 회차 측정 구간",`예열 ${String(shared.activeProtocol.warmupIterations)}번 뒤 ${String(shared.activeProtocol.durationSeconds)}초`],
-      ["예상 총 소요 시간", "서버가 전체 예상 시간을 제공하지 않았어요. 예열·장비 준비·반복 횟수에 따라 달라져요."],
-      ["서빙 영향", "서버가 영향 범위를 제공하지 않았어요. 요청 전 실행 장비와 CPU 사용 범위를 확인하세요."],
-    ]}/>}
+  const shared=answer.plan?.shared,batch=answer.batchPlan,operational=requestOperationalSummary(answer)
+  return <div className="space-y-3">
+    {batch&&<table className="w-full text-left text-sm tabular-nums"><thead><tr><th>기측정 배치 (건)</th><th>추가 측정 배치 (건)</th><th>실행 예정 배치 (건)</th></tr></thead><tbody><tr><td>{batch.measuredBatches.join(", ")||"없음"}</td><td>{batch.missingBatches.join(", ")||"없음"}</td><td>{batch.plannedBatches.join(", ")||"미확정"}</td></tr></tbody></table>}
+    <table className="w-full text-left text-sm tabular-nums"><thead><tr><th>서빙 영향</th><th>예상 총 소요 시간 (s)</th></tr></thead><tbody><tr><td>{operational.servingImpact}</td><td>{operational.estimatedDurationSeconds??"미제공"}</td></tr></tbody></table>
+    <details><summary>검사 상세</summary>
+      {!answer.resolves&&<p className="text-sm">{requestRejectionGuidance(answer.reason??"")?.message??"거부 사유: 원문 확인"}</p>}
+      {batch&&<Facts label="배치 조건" items={[["선택 배치 (건)",batch.requestedBatches.join(", ")||"미지정"],["요청 가능 배치 (건)",batch.requestableBatches.join(", ")||"없음"],["측정 중 배치 (건)",batch.inProgressBatches.join(", ")||"없음"],["부분 선택",batch.subsetAllowed?"가능":"전체 집합"],["기존 조건",batch.conditionMatch==="exact"?"실행 조건 일치":batch.conditionMatch==="planned-only"?"요청 조건만 일치":"미확인"],["조기 완료",batch.searchMayStopEarly?"가능":"예정 범위"]]} />}
+      {shared&&<table className="w-full text-left text-sm tabular-nums"><thead><tr><th>반복 (회)</th><th>예열 (회)</th><th>측정 (s)</th></tr></thead><tbody><tr><td>{answer.campaign.spec.trialsPerBatch}</td><td>{shared.activeProtocol.warmupIterations}</td><td>{shared.activeProtocol.durationSeconds}</td></tr></tbody></table>}
+      <SourceJSON value={answer} title="검사 원문"/>
+    </details>
   </div>
 }
 

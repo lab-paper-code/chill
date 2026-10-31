@@ -321,19 +321,16 @@ fieldset:disabled { opacity: .65; }
 .coverage-detail { min-width:0; display:grid; gap:1rem; border-top:1px solid var(--border); padding-top:1.25rem; }
 .coverage-detail h2 { font-size:1.125rem; font-weight:650; overflow-wrap:anywhere; }
 .coverage-detail select { display:block; width:100%; min-height:44px; border:1px solid var(--border); border-radius:.375rem; padding:.5rem; background:var(--background); }
-.coverage-detail a:not([data-slot="button"]),.overview-columns a { display:inline-flex; align-items:center; min-height:24px; color:var(--primary); text-decoration:underline; text-underline-offset:4px; }
+.coverage-detail a:not([data-slot="button"]) { display:inline-flex; align-items:center; min-height:24px; color:var(--primary); text-decoration:underline; text-underline-offset:4px; }
 .coverage-message { display:grid; gap:1rem; border-left:3px solid var(--heat); padding:1rem; overflow-wrap:anywhere; }
 .measurement-status { display:inline-flex; align-items:center; min-height:28px; width:fit-content; padding:.1rem .5rem; border:1px solid currentColor; border-radius:.25rem; font-size:.8125rem; white-space:nowrap; }
-.status-usable { color:var(--ok); background:var(--ok-soft); }
+.status-usable { color:var(--foreground); background:var(--muted); }
 .status-problem { color:var(--fail); background:var(--fail-soft); }
 .status-insufficient,.status-review { color:var(--heat); background:var(--heat-soft); }
 .status-running { color:var(--primary); background:var(--info-soft); }
 .status-unknown,.status-unmeasured,.status-unsupported { color:var(--muted-foreground); }
-.overview-columns { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:2rem; }
-.overview-stages { display:grid; grid-template-columns:repeat(auto-fit,minmax(10rem,1fr)); gap:1rem; }
-.overview-stages>div { border-left:3px solid var(--primary); padding-left:.75rem; }
 .screen details>summary { min-height:44px; cursor:pointer; padding:.6rem 0; }
-@media(max-width:767px) { .overview-columns { grid-template-columns:1fr; } .coverage-table { min-width:36rem; } .screen-data { padding-inline:1rem; } }
+@media(max-width:767px) { .coverage-table { min-width:36rem; } .screen-data { padding-inline:1rem; } }
 .coverage-targets button,.coverage-detail button,.screen-header-action button { min-height:44px; min-width:44px; }
 .coverage-matrix { table-layout:fixed; min-width:52rem; }
 .coverage-matrix th,.coverage-matrix td { width:11rem; white-space:normal; word-break:normal; line-height:1.5; }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { datasetGap, requestNumber, requestBatches, requestDefaults, requestInputs, requestInitialBatches, requestTargetBatches, requestConditionChanges, requestPreflightReason } from "./measurement-request.ts"
+import { datasetGap, requestNumber, requestBatches, requestDefaults, requestInputs, requestInitialBatches, requestTargetBatches, requestConditionChanges, requestPreflightReason, requestRejectionGuidance, requestOperationalSummary } from "./measurement-request.ts"
 import type { MeasurementPlan, ProfilesView } from "./read-types.ts"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
@@ -162,7 +162,21 @@ test("request Funnel renders the undeclared-batch branch without a stale conditi
   }))
   assert.match(html,/CPU·데이터셋·측정 방식이 같은 기존 결과가 있는지 검사해요/)
   assert.doesNotMatch(html,/NaN/)
-  assert.match(html,/예열 —회/)
+  assert.match(html,/<th>예열 \(회\)<\/th>/)
+  assert.match(html,/<td>—<\/td>/)
   assert.doesNotMatch(html,/<details open=""/)
   assert.match(html,/href="\/datasets\/new"/)
+})
+
+test("rejected preflight points to exact repair fields instead of generic permission or network advice",()=>{
+  const idle=requestRejectionGuidance("model-loaded idle measurement protocol is invalid")
+  assert.deepEqual(idle?.fields,["settling"])
+  assert.match(idle?.message??"",/쉬는 상태 안정 시간.*1초/)
+  assert.match(idle?.message??"",/서버/)
+  const metric=requestRejectionGuidance("invalid or under-covering metric observation request")
+  assert.ok(metric?.fields.includes("idleWindow"))
+  assert.match(metric?.message??"",/기록 간격보다 짧/)
+  assert.equal(requestRejectionGuidance("future unknown rejection"),null)
+  assert.deepEqual(requestOperationalSummary(undefined),{servingImpact:"미제공",estimatedDurationSeconds:null})
+  assert.deepEqual(requestOperationalSummary({servingImpact:"CPU 점유",estimatedDurationSeconds:90}),{servingImpact:"CPU 점유",estimatedDurationSeconds:90})
 })

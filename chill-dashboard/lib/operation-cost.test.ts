@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { largestOperationStages, operationStageLabel, operationStageLabels, operationDirection, operationModel, operationMetadata } from "./operation-cost.ts"
+import { largestOperationStages, operationStageLabel, operationStageLabels, operationDirection, operationModel, operationMetadata, operationTransitionCosts } from "./operation-cost.ts"
 import { operationDuration, operationWallEnergy, type OperationStep } from "./measurements.ts"
 
 test("operation cost display bounds precision without changing missing and invalid values",()=>{
@@ -49,4 +49,16 @@ test("R9: list metadata preserves recorded unknown-step targets and keeps profil
   ]
   assert.deepEqual(operationMetadata(steps),{directions:["출발 모드 미기록 → 계획 목표 MAXN","MAXN → MODE_15W"],models:["모델 준비: 모델 미기록 (프로파일 참조 profile-ref)","동작 종류 미기록: historical"]})
   assert.deepEqual(operationMetadata([]),{directions:["전환 동작 미기록"],models:["모델 대상 미기록"]})
+})
+
+test("R10: one-transition costs retain each recorded non-idle step without summing or inventing missing costs",()=>{
+  const step=(kind:string,results:OperationStep["results"]):OperationStep=>({name:kind,condition:{name:kind,kind},results})
+  const result={name:"power",key:"saved",verdict:"Accepted",durationNanos:123456789n,wallJoules:2.75}
+  const rows=operationTransitionCosts([step("power",[result,{...result,key:"second",durationNanos:0n,wallJoules:0}]),step("idle",[{...result,wallJoules:999}]),step("prepare",[]),step("remove",[{...result,verdict:"Insufficient",wallJoules:null}])])
+  assert.equal(rows.length,4)
+  assert.deepEqual(rows.map(row=>row.result?.durationNanos),[123456789n,0n,undefined,123456789n])
+  assert.deepEqual(rows.map(row=>row.result?.wallJoules),[2.75,0,undefined,null])
+  assert.deepEqual(rows.map(row=>row.step.name),["power","power","prepare","remove"])
+  assert.deepEqual(operationTransitionCosts([{name:"unknown",condition:undefined,results:[result]}]),[])
+  assert.equal(operationTransitionCosts([{name:"unknown",condition:undefined,results:[{...result,fromPowerMode:"A",toPowerMode:"B"}]}]).length,1)
 })

@@ -3,8 +3,8 @@ import test from "node:test"
 import { readFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import { campaignGroups, campaignPairs, commitExperimentSelection, comparisonDirection, experimentSelection, frozenP95SLO, stagePairing, policyStageGroups, serviceDelta, stageChartData, alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
-import { campaignConclusion, campaignScoreboard, campaignTradeoffs, policyChartStyle, stageComparison, stageHistoryLink, stageActivity, stageLoadLabel } from "./experiments.ts"
-import { campaignHeadline, publishedVerdict, selectedExperimentStage, experimentPath, stageEvidencePath } from "./experiments.ts"
+import { campaignScoreboard, campaignTradeoffs, policyChartStyle, stageComparison, stageHistoryLink, stageActivity, stageLoadLabel } from "./experiments.ts"
+import { publishedVerdict, selectedExperimentStage, experimentPath, stageEvidencePath, experimentHeatmap, experimentChartData, durationMismatch } from "./experiments.ts"
 import { comparisonValidity } from "./experiments.ts"
 import type { SchedulerObservation } from "./read-types.ts"
 import { relayPlan } from "./relay.ts"
@@ -336,34 +336,36 @@ test("R5: p95 SLO comes only from each frozen stage KPI and never from another p
   assert.equal(frozenP95SLO(row({})),null)
 })
 
-test("R5: all-service charts and all-stage table are initially rendered, with original source exports retained",()=>{
-  const source=readFileSync(new URL("../features/experiments.tsx",import.meta.url),"utf8")
-  assert.doesNotMatch(source,/차트로 볼 서비스|자세히 볼 서비스|const \[chosen|const \[selected|연구|논문/)
-  assert.match(source,/md:grid-cols-2 xl:grid-cols-3/)
-  assert.match(source,/h-\[180px\]/)
-  assert.match(source,/names\.map\(name=><article/)
-  assert.match(source,/<tbody>\{rows\.map\(row=><ServiceRows/)
-  assert.match(source,/aq\.data&&<><StageCharts/)
-  assert.doesNotMatch(source,/pairs\.length>0&&<StageSummary/)
-  assert.match(source,/connectNulls=\{false\}/)
-  assert.match(source,/dataKey=\{`u\$\{index\}`\}/)
-  assert.match(source,/<SourceExport filename="experiment-comparison\.json" value=\{\{a:aq\.data,/)
+test("heatmap retains all stages without fabricated missing service values",()=>{
+  const rows=experimentHeatmap(recorded.publication)
+  const represented=rows.flatMap(row=>[row.stage,...(row.other?[row.other]:[])])
+  assert.equal(represented.length,recorded.publication.stages.length)
+  assert.ok(recorded.publication.stages.every(stage=>represented.includes(stage)))
+  const missing={...stage,id:"manual",kpis:{requests:{camera:{offered:0}}}}
+  const row=experimentHeatmap({...recorded.publication,stages:[missing]})[0]
+  assert.equal(row.other,null)
+  assert.equal(row.energyPercent,null)
+  assert.deepEqual(row.services,[])
+  assert.equal(experimentChartData({...recorded.publication,stages:[missing]},"camera")[0].automaticP95,null)
 })
 
 test("operator conclusion includes every paired stage and reports energy losses alongside gains",()=>{
   const stage=(id:string,energy:number,from:string):ExperimentStage=>({id,from,to:"2026-10-30T00:01:00Z",kpis:{wholePoolJoules:energy}} as ExperimentStage)
   const run={stages:[stage("full-E5-1",90,"2026-10-30T00:00:00Z"),stage("static-E5-1",100,"2026-10-30T00:00:00Z"),stage("full-E5-2",120,"2026-10-30T00:00:00Z"),stage("static-E5-2",100,"2026-10-30T00:00:00Z")]} as Experiment
-  assert.match(campaignConclusion(run),/전체 4단계/)
-  assert.match(campaignConclusion(run),/감소 1 \/ 증가 1구간/)
+  const score=campaignScoreboard(run)
+  assert.equal(score.coverageCounts.stages,4)
+  assert.deepEqual(score.energyCounts,{decreased:1,increased:1,equal:0,missing:0,delta:10})
   assert.equal(stageLoadLabel(run.stages[0],run),"요청률 미기록")
 })
 
 test("operator conclusion names the worst service loss and does not treat missing success as zero",()=>{
   const make=(id:string,success:unknown,p95:number):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",kpis:{wholePoolJoules:100,requests:{camera:{deadlineSuccessFraction:success,completedLatencyNS:{p95:p95*1e6}}}}})
   const run={stages:[make("full-E5-1",.8,20),make("static-E5-1",.9,10)]} as Experiment
-  assert.match(campaignConclusion(run),/최대 성공률 하락 -10.00%p: camera/)
-  assert.match(campaignConclusion(run),/최대 p95 증가 10.00 ms: camera/)
-  assert.match(campaignConclusion({...run,stages:[make("full-E5-1",null,20),run.stages[1]]}),/확인이 부족/)
+  const score=campaignScoreboard(run)
+  assert.ok(Math.abs(score.summary.successDelta!+10)<1e-10)
+  assert.equal(score.summary.p95Ratio,2)
+  assert.equal(score.quality[0].service,"camera")
+  assert.equal(campaignScoreboard({...run,stages:[make("full-E5-1",null,20),run.stages[1]]}).summary.successDelta,null)
 })
 
 test("R7: suffix-mismatched high load remains in gains/losses, worst quality loss and shared chart axis",()=>{
@@ -380,7 +382,7 @@ test("R7: suffix-mismatched high load remains in gains/losses, worst quality los
   assert.equal(row.services[0].p95Ratio,1655/282)
   assert.equal(row.services[0].worstSuccess,true)
   assert.equal(row.services[0].worstP95,true)
-  assert.match(campaignConclusion(run),/102 req\/s/)
+  assert.equal(experimentHeatmap(run).find(row=>row.stage===high)?.rate,102)
   assert.equal(policyStageGroups(run).groups.length,2)
   // A nearly identical actual duration is not a different load plan.
   assert.equal(stageComparison({...run,stages:[high,{...fixed,to:"2026-10-30T00:01:00.005Z"}]},high).counterpart?.id,fixed.id)
@@ -414,20 +416,22 @@ test("R8: campaign scoreboard separates energy, worst service losses, missing me
     make("manual",50,1,5),
   ]}
   const scoreboard=campaignScoreboard(run)
-  assert.deepEqual(scoreboard.metrics.map(metric=>metric.label),["전체 POOL 에너지","최대 성공률 하락","최대 p95 증가"])
-  assert.equal(scoreboard.metrics[0].value,"감소 1 / 증가 1 / 같음 0쌍")
-  assert.match(scoreboard.metrics[0].detail,/값 미제공 1쌍/)
-  assert.match(scoreboard.metrics[1].value,/-10.00 %p/)
-  assert.match(scoreboard.metrics[1].detail,/camera.*E5-1.*비교 불가·미제공 1건/)
-  assert.match(scoreboard.metrics[2].value,/\+10.00 ms.*×2.00/)
-  assert.match(scoreboard.metrics[2].detail,/camera.*E5-1.*비교 불가·미제공 1건/)
-  assert.match(scoreboard.coverage,/전체 7단계/)
-  assert.match(scoreboard.coverage,/같은 부하 3쌍.*비교 불가 1단계/)
+  assert.deepEqual(scoreboard.energyCounts,{decreased:1,increased:1,equal:0,missing:1,delta:0})
+  assert.ok(Math.abs(scoreboard.summary.successDelta!+10)<1e-10)
+  assert.equal(scoreboard.summary.p95Ratio,2)
+  assert.equal(scoreboard.quality[0].service,"camera")
+  assert.equal(scoreboard.quality[0].stage,"E5-1")
+  assert.equal(scoreboard.quality[0].missing,1)
+  assert.equal(scoreboard.quality[1].value,10)
+  assert.equal(scoreboard.quality[1].missing,1)
+  assert.equal(scoreboard.coverageCounts.stages,7)
+  assert.equal(scoreboard.coverageCounts.pairs,3)
+  assert.equal(scoreboard.coverageCounts.unpaired,1)
   const unavailable=campaignScoreboard({...run,stages:[make("manual",50,1,5)]})
-  assert.ok(unavailable.metrics.every(metric=>metric.value==="비교 불가"))
-  assert.match(unavailable.coverage,/비교 불가 1단계/)
+  assert.deepEqual(unavailable.summary,{energyPercent:null,successDelta:null,p95Ratio:null})
+  assert.equal(unavailable.coverageCounts.unpaired,1)
   const missing=campaignScoreboard({...run,stages:[make("full-E5-1",null,null,null),make("static-E5-1",100,1,10)]})
-  assert.ok(missing.metrics.every(metric=>metric.value==="미제공"))
+  assert.deepEqual(missing.summary,{energyPercent:null,successDelta:null,p95Ratio:null})
 })
 
 test("R8: comparisons and chart axes follow recorded time rather than severity, suffix or input order",()=>{
@@ -481,12 +485,14 @@ test("R9: selected published results use the experiment endpoint without stage f
   assert.throws(()=>relayPlan("GET",experimentPath(recorded.publication.id).split("/"),"?stage=E5-3",config),/DashboardQueryInvalid/)
 })
 
-test("R9: headline keeps net energy scoped to available pairs and never claims superiority with quality losses",()=>{
+test("campaign summary scopes relative energy to available pairs and preserves quality loss",()=>{
   const make=(id:string,joules:number|null,success:number):ExperimentStage=>({...stage,id,kpis:{wholePoolJoules:joules,requests:{camera:{offered:10,deadlineSuccessFraction:success,completedLatencyNS:{p95:1000000}}}}})
   const run={...recorded.publication,stages:[make("full-E5-1",90,.8),make("static-E5-1",100,.9),make("full-E5-2",null,1),make("static-E5-2",100,1)]}
-  assert.match(campaignHeadline(run),/항상 낫지는/)
-  assert.match(campaignHeadline(run),/순 에너지 -10 J.*-10.00 %.*1\/2쌍/)
-  assert.match(campaignHeadline({...run,stages:[]}),/같은 부하 구간이 없어요/)
+  const score=campaignScoreboard(run)
+  assert.equal(score.summary.energyPercent,-10)
+  assert.ok(Math.abs(score.summary.successDelta!+10)<1e-10)
+  assert.equal(score.energyCounts.missing,1)
+  assert.deepEqual(campaignScoreboard({...run,stages:[]}).summary,{energyPercent:null,successDelta:null,p95Ratio:null})
 })
 
 test("R10: comparison limits retain missing rules, unequal durations, uncertain identity and observed load checks",()=>{
@@ -506,6 +512,58 @@ test("R10: comparison limits retain missing rules, unequal durations, uncertain 
   assert.match(comparisonValidity(a,{...b,kpis:{...b.kpis,measurementRules:{}}}).rules,/미기록/)
   assert.match(comparisonValidity(a,{...b,kpis:{...b.kpis,measurementRules:{population:"received"}}}).rules,/차이 있음/)
   assert.match(comparisonValidity(a,{...b,kpis:{...b.kpis,requests:{camera:{uid:"camera",definitionID:"v2",offered:600}}}}).identity,/다름 1/)
-  assert.match(campaignConclusion({...recorded.publication,stages:[{...a,kpis:{...a.kpis,measurementRules:null}},b]}),/확인이 부족/)
-  assert.match(campaignConclusion({...recorded.publication,stages:[{...a,kpis:{...a.kpis,requests:{camera:{offered:600,deadlineSuccessFraction:1,completedLatencyNS:{p95:1000000}}}}},b]}),/확인이 부족/)
+  assert.equal(campaignScoreboard({...recorded.publication,stages:[{...a,kpis:{...a.kpis,measurementRules:null}},b]}).coverageCounts.limited,1)
+  assert.equal(campaignScoreboard({...recorded.publication,stages:[{...a,kpis:{...a.kpis,requests:{camera:{offered:600,deadlineSuccessFraction:1,completedLatencyNS:{p95:1000000}}}}},b]}).coverageCounts.limited,1)
+})
+
+test("R10: duration validity and scoreboard use the same precision as displayed seconds",()=>{
+  const make=(id:string,to:string):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to,kpis:{measurementRules:{population:"offered"},requests:{camera:{uid:"camera",definitionID:"v1",offered:18000}}}})
+  const a=make("full-E5-1","2026-10-30T00:30:00.001Z"),b=make("static-E5-1","2026-10-30T00:30:00.499Z")
+  assert.match(comparisonValidity(a,b).duration,/구간 길이 같음 · A 1,800 s \/ B 1,800 s/)
+  assert.equal(comparisonValidity(a,b).limited,false)
+  assert.equal(campaignScoreboard({...recorded.publication,stages:[a,b]}).coverageCounts.durationDifferences,0)
+  const different={...b,to:"2026-10-30T00:30:00.501Z"}
+  assert.match(comparisonValidity(a,different).duration,/구간 길이 다름/)
+  assert.equal(comparisonValidity(a,different).limited,true)
+  assert.match(comparisonValidity(a,{...b,to:"invalid"}).duration,/미제공/)
+})
+
+test("R10: scoreboard projects numeric counts and quality deltas without sentence parsing",()=>{
+  const make=(id:string,energy:number,success:number,p95:number):ExperimentStage=>({...stage,id,kpis:{wholePoolJoules:energy,requests:{camera:{offered:100,deadlineSuccessFraction:success,completedLatencyNS:{p95:p95*1e6}}}}})
+  const score=campaignScoreboard({...recorded.publication,stages:[make("full-E5-1",90,.8,20),make("static-E5-1",100,.9,10)]})
+  assert.deepEqual(score.energyCounts,{decreased:1,increased:0,equal:0,missing:0,delta:-10})
+  assert.equal(score.quality[0].unit,"%p")
+  assert.ok(Math.abs(score.quality[0].value!+10)<1e-10)
+  assert.equal(score.quality[1].value,10)
+  assert.equal(score.quality[1].unit,"ms")
+  assert.equal(score.coverageCounts.pairs,1)
+  assert.equal(score.coverageCounts.stages,2)
+})
+
+test("duration icon ignores rounding differences and appears only beyond one percent",()=>{
+  const make=(seconds:number):ExperimentStage=>({...stage,from:"2026-10-30T00:00:00Z",to:new Date(Date.parse("2026-10-30T00:00:00Z")+seconds*1000).toISOString()})
+  assert.equal(durationMismatch(make(1800.001),make(1800.499)),false)
+  assert.equal(durationMismatch(make(99),make(100)),false)
+  assert.equal(durationMismatch(make(98.999),make(100)),true)
+  assert.equal(durationMismatch(make(100),make(98.999)),true)
+  assert.equal(durationMismatch(make(101),make(100)),false)
+  assert.equal(durationMismatch(make(101.001),make(100)),true)
+  assert.equal(durationMismatch(make(0),make(100)),false)
+  assert.equal(durationMismatch({...make(100),to:"invalid"},make(100)),false)
+})
+
+test("selected-service chart and heatmap share ordered intervals and frozen targets",()=>{
+  const make=(id:string,minute:number,energy:number,p95:number|null):ExperimentStage=>({id,from:`2026-10-30T00:0${minute}:00Z`,to:`2026-10-30T00:0${minute+1}:00Z`,kpis:{wholePoolJoules:energy,requests:{camera:{offered:600,deadlineSuccessFraction:.9,completedLatencyNS:{p95:p95===null?null:p95*1e6},measurementSLO:{percentile:95,targetLatencyNanos:50000000}}}}})
+  const later=make("full-E5-2",4,120,20),fixedLater=make("static-E5-2",5,100,10),early=make("full-E5-1",0,90,10),fixedEarly=make("static-E5-1",1,100,null)
+  const run={...recorded.publication,stages:[later,fixedLater,early,fixedEarly]}
+  const rows=experimentHeatmap(run),chart=experimentChartData(run,"camera")
+  assert.deepEqual(rows.map(row=>row.id),[early.id,later.id])
+  assert.deepEqual(rows.map(row=>row.energyPercent),[-10,20])
+  assert.deepEqual(chart.map(row=>[row.id,row.interval,row.rate,row.automaticP95,row.fixedP95,row.automaticSLO,row.fixedSLO]),[[early.id,1,10,10,null,50,50],[later.id,2,10,20,10,50,50]])
+  assert.equal(run.stages[0],later)
+  const zero=experimentHeatmap({...run,stages:[early,{...fixedEarly,kpis:{...fixedEarly.kpis,wholePoolJoules:0}}]})[0]
+  assert.equal(zero.energyPercent,null)
+  const duplicates=experimentHeatmap({...run,stages:[early,early,fixedEarly]})
+  assert.equal(new Set(duplicates.map(row=>row.key)).size,3)
+  assert.ok(duplicates.every(row=>row.other===null))
 })

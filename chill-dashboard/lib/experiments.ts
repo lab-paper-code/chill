@@ -95,6 +95,9 @@ export function stageSeconds(stage:ExperimentStage):number|null {
   const seconds=(Date.parse(stage.to)-Date.parse(stage.from))/1000
   return Number.isFinite(seconds)&&seconds>0?seconds:null
 }
+function sameDisplayedDuration(a:ExperimentStage,b:ExperimentStage):boolean {
+  return stageSeconds(a)!==null&&stageSeconds(b)!==null&&formatResult(stageSeconds(a),"s")===formatResult(stageSeconds(b),"s")
+}
 export function stageRate(stage:ExperimentStage):number|null {
   const rows=experimentRows(stage),seconds=stageSeconds(stage)
   // Two publisher shapes for one name are alternative candidates, not additive traffic.
@@ -143,7 +146,7 @@ export function stagePairing(run:Experiment,stage:ExperimentStage) {
   const candidates=run.stages.filter(other=>other.id===expected)
   if(own.length>1||candidates.length>1)return {paired:false,counterpart:null,reason:"동일 단계 식별자 중복"}
   if(!candidates.length)return {paired:false,counterpart:null,reason:`정확한 대응 단계 ${expected} 없음`}
-  return {paired:true,counterpart:candidates[0],reason:"기록된 단계·반복 코드 일치 · 실제 부하 일치는 별도 확인"}
+  return {paired:true,counterpart:candidates[0],reason:"단계·반복 코드 일치 · 부하 계획 미확인"}
 }
 // A load comparison is descriptive, not an exact repeated-stage pairing.
 function sameLoad(a:ExperimentStage,b:ExperimentStage):boolean {
@@ -167,11 +170,11 @@ export function comparisonValidity(a:ExperimentStage,b:ExperimentStage) {
   const ruleKeys=differentMeasurementRules(a,b)
   const rulesMissing=!Object.keys(object(a.kpis.measurementRules)).length||!Object.keys(object(b.kpis.measurementRules)).length
   return {
-    load:sameLoad(a,b)?"서비스별 평균 보낸 요청률 차이 1% 이내 · 부하 계획 일치까지 확인한 것은 아님":"서비스별 평균 보낸 요청률이 다르거나 미확인",
-    duration:`구간 길이 ${left===null||right===null?"미제공":left===right?"같음":"다름"} · A ${formatResult(left,"s")} / B ${formatResult(right,"s")}`,
+    load:sameLoad(a,b)?"서비스별 평균 요청률 · 차이 1% 이내":"서비스별 평균 요청률 · 다르거나 미확인",
+    duration:`구간 길이 ${left===null||right===null?"미제공":sameDisplayedDuration(a,b)?"같음":"다름"} · A ${formatResult(left,"s")} / B ${formatResult(right,"s")}`,
     rules:`측정 규칙 ${rulesMissing?"미기록 항목 있음":ruleKeys.length?"차이 있음":"기록된 항목 차이 없음"}${ruleKeys.length?` · 다른 항목: ${ruleKeys.join(", ")}`:""}`,
     identity:rows.length?`서비스 등록·정의: 미확인 ${unknown} / 다름 ${changed} / 같은 등록·정의 ${rows.length-unknown-changed}개`:"서비스 등록·정의: 서비스 기록 없어 미확인",
-    limited:rulesMissing||!!ruleKeys.length||left===null||right===null||left!==right||!rows.length||unknown>0||changed>0||!sameLoad(a,b),
+    limited:rulesMissing||!!ruleKeys.length||!sameDisplayedDuration(a,b)||!rows.length||unknown>0||changed>0||!sameLoad(a,b),
   }
 }
 export function stageComparison(run:Experiment,stage:ExperimentStage) {
@@ -180,7 +183,7 @@ export function stageComparison(run:Experiment,stage:ExperimentStage) {
   const candidates=(own:ExperimentStage)=>run.stages.filter(other=>stagePolicy(other)!=="기타 구성"&&stagePolicy(other)!==stagePolicy(own)&&!stagePairing(run,other).paired&&stagePairing(run,other).reason!=="동일 단계 식별자 중복"&&sameLoad(own,other))
   const matches=candidates(stage)
   if(matches.length!==1||candidates(matches[0]).length!==1)return {...exact,basis:"비교 없음",reason:`${exact.reason} · 같은 부하 후보 ${matches.length}개${matches.length?" (유일한 양방향 연결 아님)":""}`}
-  return {paired:false,counterpart:matches[0],basis:"같은 부하 비교",reason:"단계 코드는 다름 · 모든 서비스의 평균 보낸 요청률 차이 1% 이내 · 양쪽 유일 후보. 실행 조건·길이·측정 규칙이 같은지는 별도 확인"}
+  return {paired:false,counterpart:matches[0],basis:"같은 부하 비교",reason:"단계 코드 다름 · 서비스별 평균 요청률 차이 1% 이내 · 양방향 유일 후보"}
 }
 export function campaignPairs(run:Experiment) {
   return [...run.stages].sort((a,b)=>Date.parse(a.from)-Date.parse(b.from)).filter(stage=>stage.id.startsWith("full-E5-")).flatMap(chill=>{
@@ -280,24 +283,58 @@ export function campaignScoreboard(run:Experiment) {
   const successes=services.filter(service=>service.successDelta!==null),latencies=services.filter(service=>service.p95Delta!==null)
   const worstSuccess=successes.reduce<typeof successes[number]|null>((worst,service)=>!worst||service.successDelta!<worst.successDelta!?service:worst,null)
   const worstLatency=latencies.reduce<typeof latencies[number]|null>((worst,service)=>!worst||service.p95Delta!>worst.p95Delta!?service:worst,null)
-  const emptyServices=comparisons.filter(pair=>!pair.services.length).length
-  const context=(service:typeof services[number]|null)=>service?`${service.name} · ${service.pair.key} · ${stageLoadLabel(service.pair.chill,run)}`:""
-  const unavailable=(count:number)=>!comparisons.length?"비교 불가":!count?"미제공":null
   const compared=new Set(comparisons.flatMap(pair=>[pair.chill,pair.control]))
   const ruleMissing=comparisons.filter(pair=>!Object.keys(object(pair.chill.kpis.measurementRules)).length||!Object.keys(object(pair.control.kpis.measurementRules)).length).length
   const ruleDifferences=comparisons.filter(pair=>differentMeasurementRules(pair.chill,pair.control).length).length
-  const durationDifferences=comparisons.filter(pair=>stageSeconds(pair.chill)===null||stageSeconds(pair.control)===null||stageSeconds(pair.chill)!==stageSeconds(pair.control)).length
+  const durationDifferences=comparisons.filter(pair=>!sameDisplayedDuration(pair.chill,pair.control)).length
+  const energyBase=energies.reduce((sum,pair)=>sum+Number(pair.control.kpis.wholePoolJoules),0)
+  const ratios=services.map(service=>service.p95Ratio).filter((value):value is number=>value!==null)
   return {
-    metrics:[
-      {label:"전체 POOL 에너지",value:unavailable(energies.length)??`감소 ${energies.filter(pair=>pair.energyDelta!<0).length} / 증가 ${energies.filter(pair=>pair.energyDelta!>0).length} / 같음 ${energies.filter(pair=>pair.energyDelta===0).length}쌍`,
-        detail:`구간 합계 비교 ${energies.length}쌍 · 값 미제공 ${comparisons.length-energies.length}쌍`},
-      {label:"최대 성공률 하락",value:unavailable(successes.length)??(worstSuccess!.successDelta!<0?difference(resultMetric(worstSuccess!.a!,"success").value,resultMetric(worstSuccess!.b!,"success").value,"%"):"하락 없음"),
-        detail:`${context(worstSuccess)}${worstSuccess?" · ":""}서비스·구간 비교 ${successes.length}건 · 비교 불가·미제공 ${services.length-successes.length}건 · 서비스 기록 없는 ${emptyServices}쌍`},
-      {label:"최대 p95 증가",value:unavailable(latencies.length)??(worstLatency!.p95Delta!>0?`${difference(resultMetric(worstLatency!.a!,"p95").value,resultMetric(worstLatency!.b!,"p95").value,"ms")} (${worstLatency!.p95Ratio===null?"배율 계산 불가 · 고정=0":`×${worstLatency!.p95Ratio.toFixed(2)}`})`:"증가 없음"),
-        detail:`${context(worstLatency)}${worstLatency?" · ":""}서비스·구간 비교 ${latencies.length}건 · 비교 불가·미제공 ${services.length-latencies.length}건 · 서비스 기록 없는 ${emptyServices}쌍`},
+    summary:{energyPercent:energies.length&&energyBase>0?100*energies.reduce((sum,pair)=>sum+pair.energyDelta!,0)/energyBase:null,successDelta:worstSuccess?.successDelta??null,p95Ratio:ratios.length?Math.max(...ratios):null},
+    energyCounts:{decreased:energies.filter(pair=>pair.energyDelta!<0).length,increased:energies.filter(pair=>pair.energyDelta!>0).length,equal:energies.filter(pair=>pair.energyDelta===0).length,missing:comparisons.length-energies.length,
+      delta:energies.length?energies.reduce((sum,pair)=>sum+pair.energyDelta!,0):null},
+    quality:[
+      {label:"최대 성공률 하락",unit:"%p",value:worstSuccess?.successDelta==null?null:Math.min(0,worstSuccess.successDelta),service:worstSuccess?.name??"—",stage:worstSuccess?.pair.key??"—",compared:successes.length,missing:services.length-successes.length},
+      {label:"최대 p95 증가",unit:"ms",value:worstLatency?.p95Delta==null?null:Math.max(0,worstLatency.p95Delta),ratio:worstLatency?.p95Ratio??null,service:worstLatency?.name??"—",stage:worstLatency?.pair.key??"—",compared:latencies.length,missing:services.length-latencies.length},
     ],
-    coverage:`전체 ${run.stages.length}단계 · 같은 부하 ${comparisons.length}쌍 (단계 대응 ${comparisons.filter(pair=>pair.basis==="단계 대응").length} / 부하만 대응 ${comparisons.filter(pair=>pair.basis!=="단계 대응").length}) · 비교 불가 ${run.stages.filter(stage=>!compared.has(stage)).length}단계 · 측정 규칙 미기록 ${ruleMissing} / 차이 ${ruleDifferences}쌍 · 구간 길이 다름·미제공 ${durationDifferences}쌍`,
+    coverageCounts:{stages:run.stages.length,pairs:comparisons.length,unpaired:run.stages.filter(stage=>!compared.has(stage)).length,ruleMissing,ruleDifferences,durationDifferences,
+      limited:comparisons.filter(pair=>comparisonValidity(pair.chill,pair.control).limited).length},
   }
+}
+
+export function durationMismatch(a:ExperimentStage,b:ExperimentStage):boolean {
+  const left=stageSeconds(a),right=stageSeconds(b)
+  return left!==null&&right!==null&&Math.abs(left-right)/right>.01
+}
+
+export type ExperimentHeatmapRow = {
+  key:string;id:string;stage:ExperimentStage;other:ExperimentStage|null;rate:number|null;durationDifferent:boolean;reason:string;energyPercent:number|null
+  services:{name:string;a:ExperimentRow|undefined;b:ExperimentRow|undefined;successDelta:number|null;p95Ratio:number|null;p95Delta:number|null;worstSuccess:boolean;worstP95:boolean}[]
+}
+
+// One row per policy comparison; unmatched publications retain their own frozen stage.
+export function experimentHeatmap(run:Experiment):ExperimentHeatmapRow[] {
+  const comparisons=campaignTradeoffs(run),used=new Set(comparisons.flatMap(row=>[row.chill,row.control]))
+  const stages=[...comparisons.map(row=>({stage:row.chill,other:row.control,comparison:row})),...run.stages.filter(stage=>!used.has(stage)).map(stage=>({stage,other:null,comparison:null}))]
+  return stages.sort((a,b)=>Date.parse(a.stage.from)-Date.parse(b.stage.from)).map(({stage,other,comparison},index)=>{
+    const base=other?finite(other.kpis.wholePoolJoules):null,energy=finite(stage.kpis.wholePoolJoules)
+    return {key:`${stage.id}/${index}`,id:stage.id,stage,other,rate:stageRate(stage),durationDifferent:!!other&&durationMismatch(stage,other),
+      reason:other?"":stageComparison(run,stage).reason,
+      energyPercent:base!==null&&base>0&&energy!==null?100*(energy-base)/base:null,
+      services:comparison?.services??[]}
+  })
+}
+
+export function experimentChartData(run:Experiment,service:string) {
+  return experimentHeatmap(run).map((row,index)=>{
+    const own=experimentRows(row.stage).filter(item=>item.name===service),other=row.other?experimentRows(row.other).filter(item=>item.name===service):[]
+    const automatic=stagePolicy(row.stage)==="자동 운영"?own:other,fixed=stagePolicy(row.stage)==="고정 구성"?own:other
+    return {id:row.id,interval:index+1,rate:row.rate,
+      automaticP95:automatic.length===1?resultMetric(automatic[0],"p95").value:null,
+      fixedP95:fixed.length===1?resultMetric(fixed[0],"p95").value:null,
+      automaticSLO:automatic.length===1?frozenP95SLO(automatic[0]):null,
+      fixedSLO:fixed.length===1?frozenP95SLO(fixed[0]):null}
+  })
 }
 
 export function stageHistoryLink(stage:ExperimentStage):string {
@@ -309,37 +346,11 @@ export function stageActivity(page:SchedulerObservationPage) {
 }
 
 export function campaignConclusion(run:Experiment):string {
-  const pairs=campaignPairs(run)
-  if(!pairs.length)return "자동 운영과 고정 구성을 비교할 같은 부하 구간이 없어요."
-  let saved=0,increased=0,better=0,worse=0,missing=0
-  let worstSuccess=0,worstLatency=0,successAt="",latencyAt=""
-  for(const pair of pairs) {
-    const a=finite(pair.chill.kpis.wholePoolJoules),b=finite(pair.control.kpis.wholePoolJoules)
-    if(a===null||b===null)missing++;else if(a<b)saved++;else if(a>b)increased++
-    const services=comparisonRows(pair.chill,pair.control)
-    if(!services.length)missing++
-    if(comparisonValidity(pair.chill,pair.control).limited)missing++
-    for(const row of services) {
-      if(row.a.length!==1||row.b.length!==1){missing++;continue}
-      const left=row.a[0],right=row.b[0],as=resultMetric(left,"success"),bs=resultMetric(right,"success"),av=finite(as.value),bv=finite(bs.value),ap=finite(resultMetric(left,"p95").value),bp=finite(resultMetric(right,"p95").value)
-      if(as.key!==bs.key||av===null||bv===null||ap===null||bp===null){missing++;continue}
-      if(av>bv||ap<bp)better++
-      if(av<bv||ap>bp)worse++
-      if(av-bv<worstSuccess){worstSuccess=av-bv;successAt=`${row.name} (${stageLoadLabel(pair.chill,run)})`}
-      if(ap-bp>worstLatency){worstLatency=ap-bp;latencyAt=`${row.name} (${stageLoadLabel(pair.chill,run)})`}
-    }
-  }
-  const unpaired=run.stages.length-pairs.length*2
-  const conclusion=worse?"관측된 구간에서 자동 운영이 항상 낫지는 않았어요. 성공률이 낮거나 p95가 높은 기록이 있어요.":missing||unpaired?"자동 운영이 더 나은지는 아직 확인이 부족해요.":increased?"비교한 관측값에서 성공률 하락·p95 증가 없이 에너지가 늘어난 구간이 있어요.":"비교한 관측값에서 성공률 하락·p95 증가 없이 에너지가 같거나 적었어요."
-  return `${conclusion} 전체 ${run.stages.length}단계 중 같은 부하 ${pairs.length}쌍 · 에너지 감소 ${saved} / 증가 ${increased}구간 · 서비스 성공률·지연 개선 ${better} / 악화 ${worse}건${worstSuccess<0?` · 최대 성공률 하락 ${(worstSuccess*100).toFixed(2)}%p: ${successAt}`:""}${worstLatency>0?` · 최대 p95 증가 ${formatResult(worstLatency,"ms")}: ${latencyAt}`:""}${missing||unpaired?` · 확인 부족 ${missing}건 / 비교 불가 ${unpaired}단계`:""}`
-}
-
-export function campaignHeadline(run:Experiment):string {
-  const pairs=campaignPairs(run),energies=pairs.filter(pair=>finite(pair.chill.kpis.wholePoolJoules)!==null&&finite(pair.control.kpis.wholePoolJoules)!==null)
-  const conclusion=campaignConclusion(run).split(" 전체 ")[0]
-  if(!energies.length)return `${conclusion}${pairs.length?" 순 에너지 미제공.":""}`
-  const a=energies.reduce((sum,pair)=>sum+Number(pair.chill.kpis.wholePoolJoules),0),b=energies.reduce((sum,pair)=>sum+Number(pair.control.kpis.wholePoolJoules),0)
-  return `${conclusion} 순 에너지 ${difference(a,b,"J")} (${relativeEnergy(a,b)}) · 에너지 제공 ${energies.length}/${pairs.length}쌍.`
+  const rows=campaignTradeoffs(run)
+  if(!rows.length)return "비교 불가"
+  if(rows.some(row=>row.services.some(service=>(service.successDelta??0)<0||(service.p95Delta??0)>0)))return "서비스 품질 악화 관측"
+  if(run.stages.length!==rows.length*2||rows.some(row=>comparisonValidity(row.chill,row.control).limited||row.energyDelta===null||!row.services.length||row.services.some(service=>service.successDelta===null||service.p95Delta===null)))return "비교 근거 부족"
+  return rows.some(row=>row.energyDelta!>0)?"품질 저하 없음 · 에너지 증가 관측":"품질 저하 없음 · 에너지 동일·감소"
 }
 export const experimentPath=(id:string)=>`v1/experiments/${encodeURIComponent(id)}`
 export const stageEvidencePath=(stage:ExperimentStage)=>`v1/observations/scheduler?${new URLSearchParams({from:stage.from,to:stage.to,limit:"100"})}`

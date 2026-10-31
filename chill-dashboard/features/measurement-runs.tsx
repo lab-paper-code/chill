@@ -8,7 +8,7 @@ import { runAttempt, runSpec } from "@/lib/measurement-coverage"
 import { formatMeasurementTime, safeMeasurementReturn } from "@/lib/measurements"
 import type { RunsView } from "@/lib/read-types"
 import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
-import { MeasurementNavigation, MeasurementStatus } from "@/components/measurement-navigation"
+import { MeasurementNavigation, MeasurementStatus, MeasurementEvidenceChecks } from "@/components/measurement-navigation"
 import { Screen } from "@/components/screen"
 import { DataTable, useServerTable } from "@/components/data-table"
 import { Button } from "@/components/ui/button"
@@ -30,7 +30,7 @@ function RunList({group=false}:{group?:boolean}) {
       {key:"powerMode",label:"전력모드 / 경로",sortValue:run=>runSpec(run).candidate?.powerMode??"",value:run=>{const s=runSpec(run);return <><p>{s.candidate?.powerMode??"미제공"}</p><p>{s.candidate?.executionPath??"미제공"}</p></>}},
       {key:"load",label:"부하 / 배치 / 반복",value:run=>{const s=runSpec(run);return <><p>{s.measurement?.workloadMode??"미제공"}</p><p>배치 {s.measurement?.batch??"미제공"}</p><p>{runAttempt(run)}</p></>}},
       {key:"cpu",label:"CPU / 데이터셋",value:run=>{const s=runSpec(run);return <><p>{s.measurement?.cpuQuota??"미제공"} / {s.measurement?.cpuAffinity?.join(", ")??"코어 미지정"}</p><p>{s.measurement?.dataset??"데이터셋 미제공"}</p></>}},
-      {key:"status",label:"서버 판정",sortValue:run=>run.assessment?.displayStatus??"unknown",value:run=><MeasurementStatus assessment={run.assessment}/>},
+      {key:"status",label:"스케줄러 / 측정",sortValue:run=>run.assessment?.displayStatus??"unknown",value:run=><><MeasurementStatus assessment={run.assessment}/><MeasurementEvidenceChecks assessment={run.assessment}/></>},
       {key:"reason",label:"사유 / 부모 요청",value:run=><div className="max-w-96"><ul className="space-y-1 text-xs">{run.assessment?.reasons?.map((reason,index)=><li key={index}>{reason.label??reason.message}</li>)}</ul>{run.ownerReferences?.filter(owner=>owner.controller&&owner.kind==="BatchEnergyOptimization").map(owner=><Link key={owner.uid} className="break-all text-primary underline" href={`/measurements/batch-energy-optimizations/${encodeURIComponent(run.namespace)}/${encodeURIComponent(owner.name)}?uid=${encodeURIComponent(owner.uid)}`}>{owner.name}</Link>)}</div>},
     ]}/></QueryGate>
     <SourceExport value={query.data} filename="chill-measurement-runs.json"/><SourceJSON value={query.data} title="현재 페이지 회차 원본"/>

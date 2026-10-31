@@ -48,11 +48,24 @@ export const measurementHref = (kind:ProjectionMeasurementKind, metadata:{namesp
 export const measurementUIDMismatch = (uid:string, expectedUID:string|null) => !!expectedUID && uid !== expectedUID
 export const measurementReason = (reason:string) => codeText[reason] ? `${codeText[reason].join(" ")} (${reason})` : reason
 export function measurementReasonSummary(reason:string) {
+  if(!reason.trim())return "상세 사유 미제공"
+  const projectionReasons:Record<string,string>={
+    MeasurementFailed:"측정 실패",
+    IsolationUnconfirmed:"장비 단독 사용 미확인",
+    MeasurementEvidenceMissing:"측정 근거 없음",
+    Insufficient:"채택 근거 부족",
+    Accepted:"측정 근거 채택",
+  }
+  if(projectionReasons[reason])return projectionReasons[reason]
+  if(/unknown field/i.test(reason))return "설정 항목 미지원"
+  if(/native preparation Pod failed/i.test(reason))return "모델 준비 실패"
+  if(/Stored occupancy does not match/i.test(reason))return "요청·점유시간 근거 불일치"
+  if(/Signed negative d/i.test(reason))return "점유시간 음수·처리량 유효성 확인 필요"
   if(codeText[reason]) return codeText[reason].join(" ")
-  if(/exactly one proven primitive state effect/i.test(reason)) return "단일 상태 변경으로 확인되지 않아 비용을 채택하지 못했어요. 준비·제거 단계의 측정 근거를 확인하세요."
-  if(/timeout|timed out|deadline exceeded/i.test(reason)) return "측정 결과를 기다리는 시간이 초과됐어요. 장비 상태와 측정 대기 시간을 확인하세요."
-  if(/memory|OOM/i.test(reason)) return "측정에 필요한 메모리를 확보하지 못했어요. 배치 크기와 장비 메모리를 확인하세요."
-  return /[가-힣]/.test(reason)?reason:"측정 근거가 채택되지 않았어요. 아래 원문에서 상세 사유를 확인하세요."
+  if(/exactly one proven primitive state effect/i.test(reason)) return "단일 상태 변경 미확인"
+  if(/timeout|timed out|deadline exceeded/i.test(reason)) return "측정 대기 시간 초과"
+  if(/memory|OOM/i.test(reason)) return "측정 메모리 부족"
+  return /[가-힣]/.test(reason)?reason:"상세 사유: 원문"
 }
 export function occupancyDuration(value?:unknown) {
   if (value === undefined) return "결과 없음"
