@@ -190,6 +190,19 @@ test("unmeasured request leaves a surplus-field-only dataset unselected and requ
   assert.match(html,/<details id="measurement-conditions" open=""/)
 })
 
+test("copied request and selected variant keep their dataset instead of the newest same-model dataset",()=>{
+  const newer={...plan,metadata:{...plan.metadata,name:"newer",uid:"newer-uid",creationTimestamp:"2026-11-01T00:00:00Z"},spec:{...plan.spec,activeProtocol:{...plan.spec.activeProtocol,dataset:"new-data"}}}
+  const context={models:[],workloads:[],classes:[],profiles:[],plans:[plan,newer],preprocessors:[{metadata:{name:"pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:condition.model,artifact:"onnx"}}]}}],datasets:["data","new-data"].map(name=>({metadata:{name},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512}]}}))} as unknown as Parameters<typeof requestInputs>[4]
+  assert.equal(requestInputs(condition.model,"onnx","pre","data",context,{preprocessor:true,dataset:true}).dataset,"data")
+  assert.equal(requestInputs(condition.model,"onnx","pre","",context,{preprocessor:true,dataset:true}).dataset,"new-data")
+  const selected={requestIds:["ns/source/uid"],batchProgress:{target:[1],measured:[],missing:[1]}}
+  for(const props of [{context,from:"source"},{context,selected}]) {
+    const html=renderRequest(props)
+    assert.match(html,/<option value="data" selected="">data<\/option>/)
+    assert.doesNotMatch(html,/<option value="new-data" selected=""/)
+  }
+})
+
 test("required batches stay outside collapsed conditions and validation appears once",()=>{
   const issue="한 번에 처리할 건수를 하나 이상 골라 주세요."
   const html=renderRequest({},"",issue)
