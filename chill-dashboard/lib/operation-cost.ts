@@ -43,22 +43,27 @@ export function operationCostOutliers(rows:OperationCostRow[]) {
       energy:result?.verdict==="Accepted"&&typeof energy==="number"&&Number.isFinite(energy)&&energy>=0?energy:undefined,
     }
   })
-  const medians=new Map<string,{duration?:number;energy?:number}>()
-  for(const {step} of rows) {
+  const groups=rows.map(({step,result})=>{
     const kind=step.condition?.kind
-    if(!kind||medians.has(kind))continue
+    if(kind==="power"||!kind&&result?.fromPowerMode&&result.toPowerMode)return result?.fromPowerMode&&result.toPowerMode?JSON.stringify(["power",result.fromPowerMode,result.toPowerMode]):undefined
+    if(kind==="prepare"||kind==="remove")return result?.model||step.condition?.batchEnergyOptimization?JSON.stringify([kind,result?.model??"",step.condition?.batchEnergyOptimization??""]):undefined
+    return undefined
+  })
+  const medians=new Map<string,{duration?:number;energy?:number}>()
+  for(const group of groups) {
+    if(!group||medians.has(group))continue
     const median:{duration?:number;energy?:number}={}
     for(const metric of ["duration","energy"] as const) {
-      const samples=values.flatMap((value,index)=>rows[index].step.condition?.kind===kind&&value[metric]!==undefined?[value[metric]!]:[]).sort((a,b)=>a-b)
+      const samples=values.flatMap((value,index)=>groups[index]===group&&value[metric]!==undefined?[value[metric]!]:[]).sort((a,b)=>a-b)
       if(samples.length>=3) {
         const middle=Math.floor(samples.length/2)
         median[metric]=samples.length%2?samples[middle]:samples[middle-1]/2+samples[middle]/2
       }
     }
-    medians.set(kind,median)
+    medians.set(group,median)
   }
-  return rows.map(({step},index)=>{
-    const outlier:{duration?:number;energy?:number}={},median=medians.get(step.condition?.kind??"")
+  return rows.map((_,index)=>{
+    const outlier:{duration?:number;energy?:number}={},median=medians.get(groups[index]??"")
     for(const metric of ["duration","energy"] as const) {
       const baseline=median?.[metric],value=values[index][metric]
       if(baseline!==undefined&&baseline>0&&value!==undefined&&value/baseline>=3)outlier[metric]=value/baseline

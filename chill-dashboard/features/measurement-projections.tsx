@@ -45,6 +45,7 @@ export function ProjectionMeasurementListPage({kind}:{kind:ProjectionMeasurement
     <MeasurementFilters axes={axes}/>
     <QueryGate query={query}>{query.data && <>
       <div className={kind==="operation-cost-measurements"?"measurement-operation-table":undefined}><DataTable key={`${kind}/${namespace}/${params}`} searchable={false} data={items} columns={columns}/></div>
+      {kind==="operation-cost-measurements"&&<OperationCostLegend/>}
       <p className="text-sm text-muted-foreground">마지막 조회 · {measurementTime(query.dataUpdatedAt)}</p>
       <Rows><RowDialog label="원본 자료" title={`${title} 목록 원본`} description="조회 응답 JSON">
         <SourceExport filename={`chill-${kind}.json`} value={{kind,namespace,queriedAt:new Date(query.dataUpdatedAt).toISOString(),source:query.data}}/><SourceJSON inline value={query.data}/>
@@ -99,7 +100,6 @@ function OperationCostValues({rows,device}:{rows:OperationCostRow[];device:strin
   const outliers=operationCostOutliers(rows)
   return <div className="operation-cost-values min-w-0 overflow-x-auto">
     <table className="operation-cost-core w-full text-xs tabular-nums">
-      <caption className="caption-bottom py-2 text-left text-muted-foreground">이상값: 같은 측정·동작의 유효 기록 3개 이상, 중앙값의 3배 이상 · 에너지는 채택 기록 기준</caption>
       <thead><tr><th scope="col">단계 / 전환 방향</th><th scope="col">모델</th><th scope="col">장비</th><th scope="col">시간 (s)</th><th scope="col">에너지 (J)</th></tr></thead>
       <tbody>{rows.map(({step,result},index)=><tr key={index}>
         <td className="break-words">{operationStageLabel(step)}<span className="block text-muted-foreground">{index+1}회{step.condition?.kind==="power"?` · ${result?.fromPowerMode||"출발 미기록"} → ${result?.toPowerMode||"도착 미기록"}`:""}</span></td>
@@ -110,6 +110,9 @@ function OperationCostValues({rows,device}:{rows:OperationCostRow[];device:strin
       </tr>)}</tbody>
     </table>
   </div>
+}
+function OperationCostLegend() {
+  return <details><summary>이상값 범례</summary><table aria-label="이상값 범례" className="w-full text-left text-xs tabular-nums"><thead><tr><th>최소 동일 대상 기록 (개)</th><th>중앙값 기준 (배)</th><th>비교 대상</th><th>에너지</th></tr></thead><tbody><tr><td>3</td><td>3</td><td>동일 장비·측정·모델/프로파일·전환 방향</td><td>채택 기록</td></tr></tbody></table></details>
 }
 function OperationTarget({step}:{step:OperationStep}) {
   const condition=step.condition
@@ -135,6 +138,7 @@ function OperationResult({data}:{data:OperationCostMeasurement}) {
   return <>
     <details><summary className="min-h-11 cursor-pointer py-2 text-sm">전체 시나리오 합계 (유휴 포함)</summary><Facts items={[["전체 시간 (s)",totals.durationNanos===null?"시간 기록 오류":operationCostTime(totals.durationNanos)],["채택 에너지 (J)",totals.wallJoules===null?"에너지 기록 오류":operationCostEnergy(totals.wallJoules)]]}/></details>
     <section className="grid gap-2" aria-label="전환 1회 비용"><h2 className="font-semibold">전환 1회 비용 (유휴 제외)</h2><TransitionCosts data={data}/></section>
+    <OperationCostLegend/>
     <details><summary className="min-h-11 cursor-pointer py-2 text-sm">단계별 기록과 사유 보기</summary><div className="measurement-operation-table measurement-operation-steps"><DataTable data={steps} columns={columns}/></div></details>
     <Rows label="자세히"><RowDialog label="순서 있는 동작 조건" title="순서 있는 동작 조건" description="저장된 단계 순서">
       <ol className="grid list-decimal gap-5 pl-5">{data.conditions.steps.map((step,index) => <li key={index}><Facts label={step.name} items={[

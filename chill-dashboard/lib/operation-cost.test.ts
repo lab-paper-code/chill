@@ -64,7 +64,7 @@ test("R10: one-transition costs retain each recorded non-idle step without summi
 })
 
 test("R12: compact costs and median outliers preserve per-attempt targets and exclude invalid energy",()=>{
-  const step=(kind:string,seconds:number,energy:number,verdict="Accepted"):OperationStep=>({name:kind,condition:{name:kind,kind},results:[{name:kind,key:String(seconds),verdict,durationNanos:BigInt(seconds)*1000000000n,wallJoules:energy,model:`model-${seconds}`}]})
+  const step=(kind:string,seconds:number,energy:number,verdict="Accepted"):OperationStep=>({name:kind,condition:{name:kind,kind,batchEnergyOptimization:"profile"},results:[{name:kind,key:String(seconds),verdict,durationNanos:BigInt(seconds)*1000000000n,wallJoules:energy,model:"same-model"}]})
   const rows=operationTransitionCosts([step("prepare",7,400),step("prepare",8,500),step("prepare",9,600),step("prepare",268,36400),step("remove",999,99999),step("prepare",-1,Infinity,"Rejected")])
   const outliers=operationCostOutliers(rows)
   assert.equal(operationCostTime(268058690569n),"268.06")
@@ -76,6 +76,16 @@ test("R12: compact costs and median outliers preserve per-attempt targets and ex
   assert.equal(outliers[3].duration,268/8.5)
   assert.equal(outliers[3].energy,36400/550)
   assert.deepEqual(outliers.slice(4),[{},{}])
-  assert.equal(rows[3].result?.model,"model-268")
+  assert.equal(rows[3].result?.model,"same-model")
   assert.deepEqual(operationCostOutliers(operationTransitionCosts([step("prepare",0,0),step("prepare",0,0),step("prepare",10,10)])),[{},{},{}])
+})
+
+test("outlier cohorts isolate frozen models profiles and power transition directions",()=>{
+  const rows=[7,8,9,268].map((seconds,index)=>({step:{name:"prepare",condition:{name:"prepare",kind:"prepare",batchEnergyOptimization:"profile"},results:[]},result:{name:"prepare",key:String(index),verdict:"Accepted",durationNanos:seconds*1e9,wallJoules:seconds,model:"same"}}))
+  assert.ok(operationCostOutliers(rows)[3].duration)
+  for(const isolated of [
+    rows.map((row,index)=>({...row,result:{...row.result,model:`model-${index}`}})),
+    rows.map((row,index)=>({...row,step:{...row.step,condition:{...row.step.condition,batchEnergyOptimization:`profile-${index}`}}})),
+    rows.map((row,index)=>({...row,step:{name:"power",condition:{name:"power",kind:"power"},results:[]},result:{...row.result,fromPowerMode:index<2?"A":"B",toPowerMode:index<2?"B":"A"}})),
+  ])assert.deepEqual(operationCostOutliers(isolated),[{},{},{},{}])
 })

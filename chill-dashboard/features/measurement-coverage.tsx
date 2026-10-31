@@ -153,7 +153,7 @@ export function MeasurementCoveragePage() {
   </Screen>
 }
 function CoverageCounts({cells}:{cells:MeasurementCoverageCell[]}) {
-  const counts=coverageStatusCounts(cells),complete=cells.filter(cell=>{const progress=coverageProgress(cell);return !!progress?.target.length&&progress.target.every(batch=>progress.criteriaMet.includes(batch))}).length
+  const counts=coverageStatusCounts(cells),complete=cells.filter(cell=>{const progress=coverageProgress(cell);return cell.assessment.checklist.criteriaMet===true&&!!progress?.target.length&&progress.target.every(batch=>progress.criteriaMet.includes(batch))}).length
   return <table className="w-full text-left text-sm tabular-nums" aria-label="선택 범위 집계"><thead><tr><th>기준 충족 / 전체 (조합)</th><th>문제 (조합)</th><th>미측정 (조합)</th></tr></thead><tbody><tr><td>{complete}/{cells.length}</td><td>{counts.problem}</td><td>{counts.unmeasured}</td></tr></tbody></table>
 }
 function UnsupportedReasons({cells}:{cells:MeasurementCoverageCell[]}) {
@@ -177,7 +177,7 @@ function CoverageCell({cell,selected,select}:{cell:MeasurementCoverageCell;selec
   return <button data-coverage-cell={cell.id} className={`coverage-cell ${cell.support.verdict!=="Compatible"?"coverage-cell-unconfirmed":""}`} aria-pressed={selected} aria-controls="coverage-selected-condition" aria-label={`${deviceLabel(cell.deviceClass.name)} ${cell.powerMode} ${cell.executionPath} ${label} ${measurementUsage(cell.assessment)}`} onClick={event=>select(cell,event.currentTarget)}>
     <span className="flex w-full justify-between gap-2"><strong>{label}</strong><span title={measurementUsage(cell.assessment)} aria-label={measurementUsage(cell.assessment)}>{used===true?"●":used===false?"○":"?"}</span></span>
     <BatchBar progress={progress}/>
-    <span className="self-end text-xs tabular-nums" title="기준 충족 배치 / 목표 배치">{progress?`${progress.criteriaMet.length}/${progress.target.length}`:"—/—"}</span>
+    <span className="self-end text-xs tabular-nums" title="기준 충족 배치 / 목표 배치">{progress?`${progress.target.filter(batch=>progress.criteriaMet.includes(batch)).length}/${progress.target.length}`:"—/—"}</span>
   </button>
 }
 export function CoverageActions({data,namespace}:{data:MeasurementCoverageResponse;namespace:string}) {

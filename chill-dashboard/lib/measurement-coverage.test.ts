@@ -171,7 +171,8 @@ test("visible status totals use one denominator and include review and unknown s
 
 test("coverage UI exposes numeric progress and trust values without expanded JSON",async()=>{
   const source=await readFile(new URL("../features/measurement-coverage.tsx",import.meta.url),"utf8")
-  assert.match(source,/criteriaMet\.length/)
+  assert.match(source,/progress\.target\.filter\(batch=>progress\.criteriaMet\.includes\(batch\)\)\.length/)
+  assert.match(source,/cell\.assessment\.checklist\.criteriaMet===true/)
   assert.match(source,/activeTrialCount/)
   assert.match(source,/idleTrialCount/)
   assert.match(source,/confidence\.lower/)
@@ -180,6 +181,11 @@ test("coverage UI exposes numeric progress and trust values without expanded JSO
   assert.match(source,/기준 충족 \/ 전체 \(조합\)/)
   const experiment=await readFile(new URL("../features/experiments.tsx",import.meta.url),"utf8")
   assert.match(experiment,/제한 비교 \(개\)/)
+  assert.match(experiment,/coverageCounts\.limited/)
+  assert.doesNotMatch(experiment,/const limited=experimentHeatmap/)
+  const projections=await readFile(new URL("../features/measurement-projections.tsx",import.meta.url),"utf8")
+  assert.doesNotMatch(projections,/<caption[^>]*>이상값:/)
+  assert.match(projections,/aria-label="이상값 범례"/)
   const failure=await readFile(new URL("../features/read-pages.tsx",import.meta.url),"utf8")
   assert.match(failure,/<th>종료 코드<\/th>/)
   assert.doesNotMatch(failure,/\(종료 코드 \$\{/)
