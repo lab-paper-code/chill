@@ -299,10 +299,11 @@ export function campaignScoreboard(run:Experiment) {
   const summary=summarize(matched),referenceSummary=summarize(limited)
   let conclusion="차이 없음"
   if(!matched.length)conclusion=limited.length?"참고만 가능":"비교 대상 없음"
-  else if(summary.successDelta!==null&&summary.successDelta<-.01||summary.p95Ratio!==null&&summary.p95Ratio>1.01)conclusion="SLO 악화"
-  else if(summary.energyPercent!==null&&summary.energyPercent<-.01)conclusion="에너지 감소"
-  else if(summary.energyPercent!==null&&summary.energyPercent>.01)conclusion="에너지 증가"
-  else if(summary.energyPercent===null&&summary.successDelta===null&&summary.p95Ratio===null)conclusion="결과 부족"
+  else if(summary.successDelta!==null&&summary.successDelta<=-.01||summary.p95Ratio!==null&&summary.p95Ratio>=1.01)conclusion="SLO 악화"
+  else if(summary.energyPercent!==null&&summary.energyPercent<=-.01)conclusion="에너지 감소"
+  else if(summary.energyPercent!==null&&summary.energyPercent>=.01)conclusion="에너지 증가"
+  else if(summary.successDelta!==null&&summary.successDelta>=.01||summary.p95Ratio!==null&&summary.p95Ratio<=.99)conclusion="SLO 개선"
+  else if(summary.energyPercent===null||summary.successDelta===null||summary.p95Ratio===null)conclusion="결과 부족"
   return {
     summary,referenceSummary,conclusion,
     energyCounts:{decreased:energies.filter(pair=>pair.energyDelta!<0).length,increased:energies.filter(pair=>pair.energyDelta!>0).length,equal:energies.filter(pair=>pair.energyDelta===0).length,missing:comparisons.length-energies.length,

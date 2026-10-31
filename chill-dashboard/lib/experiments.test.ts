@@ -601,3 +601,14 @@ test("R13: matched conclusion prioritizes quality loss and never treats limited 
   assert.equal(campaignScoreboard({...run,stages:[{...run.stages[0],kpis:{...run.stages[0].kpis,measurementRules:{window:20}}},run.stages[1]]}).conclusion,"참고만 가능")
   assert.equal(campaignScoreboard({...run,stages:[]}).conclusion,"비교 대상 없음")
 })
+
+test("R13 review: quality-only gains are improvements and no difference requires complete neutral metrics",()=>{
+  const make=(id:string,success:number|null,p95:number|null):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:00:10Z",kpis:{wholePoolJoules:100,measurementRules:{window:10},requests:{camera:{uid:"camera",definitionID:"same",offered:10,deadlineSuccessFraction:success,completedLatencyNS:{p95:p95===null?null:p95*1e6}}}}})
+  const conclude=(success:number|null,p95:number|null)=>campaignScoreboard({...recorded.publication,stages:[make("full-E5-1",success,p95),make("static-E5-1",.8,20)]}).conclusion
+  assert.equal(conclude(.9,20),"SLO 개선")
+  assert.equal(conclude(.8,10),"SLO 개선")
+  assert.equal(conclude(.9,10),"SLO 개선")
+  assert.equal(conclude(.8,20),"차이 없음")
+  assert.equal(conclude(null,20),"결과 부족")
+  assert.equal(conclude(.8,null),"결과 부족")
+})

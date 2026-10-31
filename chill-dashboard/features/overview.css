@@ -16,11 +16,6 @@
 .overview-matrix tbody th{overflow-wrap:anywhere;padding-right:.35rem}
 .overview-heat-cell{display:flex;justify-content:center;align-items:center;min-height:44px;border:1px solid var(--border);border-radius:3px;white-space:nowrap;font-size:.75rem}
 .overview-panel .overview-heat-empty{background:var(--muted);color:var(--muted-foreground)}
-.overview-chips th{text-align:center!important;font-size:.75rem}
-.overview-chips td{text-align:center;font-size:1.35rem;font-weight:650;padding:.5rem .2rem;border-radius:.375rem}
-.overview-loss{color:var(--destructive);background:color-mix(in srgb,var(--destructive) 9%,var(--background))}
-.overview-gain{color:var(--ok);background:color-mix(in srgb,var(--ok) 9%,var(--background))}
-.overview-neutral{color:var(--foreground);background:var(--muted)}
 .overview-energy{margin:1rem 0 .5rem}
 .overview-energy figcaption{font-size:.75rem;color:var(--muted-foreground);margin-bottom:.5rem}
 .overview-energy-bars{display:grid;grid-auto-columns:minmax(0,1fr);grid-auto-flow:column;gap:6px}
