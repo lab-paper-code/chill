@@ -124,9 +124,10 @@ the browser used an isolated ChillServer-contract fixture and performed no live 
 독립 상태 셀과 aria-live 요약으로 함께 제공한다. 전부 유휴이면 집계 표로 압축하고
 보기 전환으로 개별 서비스에 접근한다. 서비스 선택은 공통 Sheet 한 개를 사용한다.
 후보·추정·부하·용량 근거는 `/?open=service:UID&evidence=candidates|estimates|load|capacity`로
-연결하며, 후보 선택 시 응답을 고정하고 최신 판단을 명시적으로 채택한다.
+연결하며, `view=snapshot` 직접 진입도 첫 수신 응답을 고정하고 최신 판단을 명시적으로 채택한다.
 `/operations/devices`는 전력 추세와 이름순 장치·배치 표 두 영역이다. 계측 범위와 구성 범위를
-구분하고 사양·전력모드·측정/가용/제외 역할·실제 할당은 선택 Sheet에서 조회한다.
+구분하고 사양·전력모드·측정/가용/제외 역할·준비/제외 사유·실제 할당은 선택 Sheet에서 조회한다.
+구 POOL 상세 링크는 `workload` 범위와 `open` 선택을 분리하며 장치 선택은 `node`로 장치 화면에 매핑한다.
 Automatic application and evaluated judgment are separate; keep/target J and SLO are
 predictions, not measurements. Load preserves the submitted window in the page URL
 independently of the draft. ChillServer omits arrivals from load responses, so load

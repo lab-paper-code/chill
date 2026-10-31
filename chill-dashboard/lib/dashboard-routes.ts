@@ -27,7 +27,11 @@ export function dashboardDestination(pathname:string,search:URLSearchParams):str
     const next=new URLSearchParams(search);next.set("a",decodeURIComponent(pathname.split("/")[2]));return `/experiments/results?${next}`
   }
   if(pathname.startsWith("/pools/")&&pathname.split("/").length===3) {
-    const next=new URLSearchParams(search);next.set("open",`service:${decodeURIComponent(pathname.split("/")[2])}`);return `/?${next}`
+    const next=new URLSearchParams(search),uid=decodeURIComponent(pathname.split("/")[2]),open=next.get("open")
+    next.set("workload",uid)
+    if(open?.startsWith("node:")){next.set("node",open.slice(5));next.delete("open");return `/operations/devices?${next}`}
+    if(!open)next.set("open",`service:${uid}`)
+    return `/?${next}`
   }
   const segments=pathname.split("/")
   if(segments.length===5&&segments[1]==="measurements"&&["operation-cost-measurements","dispatch-occupancy-measurements"].includes(segments[2])) {

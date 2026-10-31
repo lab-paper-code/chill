@@ -49,3 +49,12 @@ test("same-name replacement devices never merge their power or readiness",()=>{
   assert.equal(rows.find(row=>row.uid==="old")?.watts,null)
   assert.equal(rows.find(row=>row.uid==="new")?.watts,5)
 })
+
+test("device reasons survive pool and live observation joins without crossing UID",()=>{
+  const state={...initialLiveState(),snapshot:{workloads:[],nodes:[{...node("excluded","제외"),reasons:["NodeNotReady","ExcludedNode"]}],instances:[],routing:{},decision:null,actions:[],reservations:[]}}
+  const data:PoolsView={...pools,other:[{node:{uid:"excluded",name:"제외"},ready:false,powerMode:"fixed",reasons:["ExcludedNode"]},{node:{uid:"other",name:"다른 장치"},ready:false,powerMode:"fixed",reasons:["MeasurementReserved"]}]}
+  const rows=deviceRows(state,undefined,data)
+  assert.deepEqual(rows.find(row=>row.uid==="excluded")?.reasons,["ExcludedNode","NodeNotReady"])
+  assert.deepEqual(rows.find(row=>row.uid==="other")?.reasons,["MeasurementReserved"])
+  assert.deepEqual(deviceRows({...state,snapshot:{...state.snapshot,nodes:[]}},undefined,{...pools,available:[{node:{uid:"ready",name:"가용"},ready:true,powerMode:"fixed",reasons:[]}]}).find(row=>row.uid==="ready")?.reasons,[])
+})

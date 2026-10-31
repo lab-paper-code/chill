@@ -42,3 +42,18 @@ test("legacy pool and measurement detail map identities without truncating or re
   assert.equal(run.searchParams.get("uid"),"run-uid")
   assert.equal(run.searchParams.get("requestUID"),"parent")
 })
+
+test("legacy pool details retain service scope and selected node or reservation",()=>{
+  const node=new URL(dashboardDestination("/pools/service%2Fuid",new URLSearchParams("open=node%3Anode%2Fuid&fixture=expand&filter=one&filter=two"))!,"https://dashboard.invalid")
+  assert.equal(node.pathname,"/operations/devices")
+  assert.equal(node.searchParams.get("node"),"node/uid")
+  assert.equal(node.searchParams.get("workload"),"service/uid")
+  assert.equal(node.searchParams.has("open"),false)
+  assert.deepEqual(node.searchParams.getAll("filter"),["one","two"])
+  assert.equal(node.searchParams.get("fixture"),"expand")
+  const reservations=new URL(dashboardDestination("/pools/service%2Fuid",new URLSearchParams("open=reservations&at=original"))!,"https://dashboard.invalid")
+  assert.equal(reservations.pathname,"/")
+  assert.equal(reservations.searchParams.get("open"),"reservations")
+  assert.equal(reservations.searchParams.get("workload"),"service/uid")
+  assert.equal(reservations.searchParams.get("at"),"original")
+})

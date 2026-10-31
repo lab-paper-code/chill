@@ -113,12 +113,6 @@ export function serviceRows(snapshot:LiveSnapshot,metrics:Record<string,LiveMetr
     return {workload,metric,queued,changes,priority,idle,status}
   }).sort((a,b)=>a.priority-b.priority||(b.metric?.received??0)-(a.metric?.received??0)||a.workload.name.localeCompare(b.workload.name))
 }
-/** Whole-pool watts include metered nodes absent from the live configuration. */
-export function powerBreakdown(uids:string[],metrics:LiveMetrics|undefined) {
-  const values=uids.map(uid=>metrics?.nodes[uid]?.watts),whole=metrics?.pool.wholeWatts
-  const measured=values.every(value=>value!=null)?values.reduce<number>((sum,value)=>sum+value!,0):null
-  return {whole:whole??null,measured,other:whole!=null&&measured!=null&&whole>=measured?whole-measured:null}
-}
 /** Latest completed reducer bucket anchors both trend and completeness across consumers. */
 export function powerWindow(metrics:LiveMetrics[]) {
   const end=metrics.length?Date.parse(metrics.at(-1)!.bucketAt)+1000:0,start=Math.max(end-300000,metrics.length?Date.parse(metrics[0].bucketAt):end)

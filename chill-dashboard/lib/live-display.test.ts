@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { LiveAction, LiveInstance, LiveMetric, LiveMetrics, LiveSnapshot, LiveWorkload } from "./live.ts"
 import { changeListStatus, actionProgress, actionOrigin, scopeSnapshot, scopeEvents, recentEvents, liveFresh, belongsToPool, displayNumber, duration, elapsed, instanceSymbol, isStale, ratio, receivedLabel, routingShare, terminalCount, workloadLabel, workloadQueue, servicePriority, mergeKeepEvents, trendSegments, boardVerdict, decisionText } from "./live-display.ts"
-import { retainedEvents, sloLatency, minuteMetrics, incidentFlow, incidentSummary, serviceRows, powerBreakdown, powerWindow, decisionReason, gapEpisodes, liveReason, displayTime } from "./live-display.ts"
+import { retainedEvents, sloLatency, minuteMetrics, incidentFlow, incidentSummary, serviceRows, powerWindow, decisionReason, gapEpisodes, liveReason, displayTime } from "./live-display.ts"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { createElement, type ComponentType, type ReactNode } from "react"
@@ -247,13 +247,6 @@ test("idle collapse excludes missing metrics, active instances, reservations and
   assert.equal(serviceRows({...snapshot,reservations:[{owner:"a",nodes:[],workloadUIDs:["a"],podUIDs:[],instances:[],reason:"",explanation:""}]},{a:idleMetric},now)[0].idle,false)
   assert.equal(serviceRows(snapshot,{a:{...idleMetric,failed:1}},now)[0].idle,false)
 })
-test("power remainder uses the same bucket and never invents missing node power",()=>{
-  const metrics:LiveMetrics={type:"metrics",seq:1,at,bucketAt:at,workloads:{},nodes:{a:{watts:40,observedAt:at},outside:{watts:60,observedAt:at}},pool:{wholeWatts:100,activeWatts:40}}
-  assert.equal(powerBreakdown(["a"],metrics).other,60)
-  assert.equal(powerBreakdown(["a"],{...metrics,nodes:{a:{watts:null,observedAt:null}}}).other,null)
-  assert.equal(powerBreakdown(["a"],{...metrics,pool:{...metrics.pool,wholeWatts:null}}).other,null)
-  assert.equal(powerBreakdown(["a"],{...metrics,pool:{...metrics.pool,wholeWatts:30}}).other,null)
-})
 test("contiguous device gaps form one incident rather than one incident per second",()=>{
   const time=(seconds:number)=>new Date(now+seconds*1000).toISOString()
   const gaps=Array.from({length:6},(_,i)=>({from:time(i),to:time(i+1),scope:"node:n",reason:"power sample unavailable"}))
@@ -382,6 +375,11 @@ test("operations board keeps independent axes, idle summary, service placement a
   assert.match(changing,/전력모드 변경/)
   assert.match(changing,/>진행<\/td>/)
   assert.match(changing,/예약 상세/)
+  query=new URLSearchParams({open:"reservations",workload:"service-0"})
+  assert.match(render(),/예약 없음/)
+  query=new URLSearchParams({open:"reservations",workload:"service-1"})
+  assert.match(render(),/해제 예정/)
+  query=new URLSearchParams()
   experiment="실행 중"
   assert.match(render(),/실험 상태<\/span><strong>실행 중/)
   query=new URLSearchParams({open:"service:service-0"})

@@ -76,6 +76,7 @@ function CurrentEvidence({kind}:{kind:"candidates"|"estimates"}) {
   const params=useSearchParams()
   const query=useChillQuery<SchedulerView>("v1/scheduler",{decoder:parseSchedulerJSON,poll:true})
   const [selection,setSelection]=React.useState<{key:string;view:SchedulerView}|null>(null)
+  if(kind==="candidates"&&params.get("view")==="snapshot"&&!selection&&query.data)setSelection({key:"snapshot",view:query.data})
   const view=selection?.view??query.data
   const uid=params.get("uid")??params.get("workload")??(params.get("open")?.startsWith("service:")?params.get("open")!.slice(8):"")
   const decision=view?.state.decision,snapshot=view?.state.snapshot
@@ -86,7 +87,7 @@ function CurrentEvidence({kind}:{kind:"candidates"|"estimates"}) {
     {kind==="candidates"?<>
       <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={()=>setSelection({key:"snapshot",view})}>실제 구성</Button>{candidates.map(candidate=><Button key={candidate.id} variant="outline" onClick={()=>setSelection({key:candidate.id,view})}>{candidate.keep?"유지안":"변경 후보"}</Button>)}</div>
       {selection&&query.data&&(selection.view.state.decision.at!==query.data.state.decision.at||selection.view.state.snapshot.at!==query.data.state.snapshot.at)&&<div role="status"><span>새 판단 수신</span><Button variant="outline" onClick={()=>setSelection({key:selection.key,view:query.data!})}>최신 응답</Button></div>}
-      {selection?.key==="snapshot"||(!selection&&params.get("view")==="snapshot")?<SnapshotDetails snapshot={snapshot}/>:selection?<>{candidates.find(row=>row.id===selection.key)?<CandidateDetails candidate={candidates.find(row=>row.id===selection.key)!} view={view}/>:<p>항목 없음</p>}</>:<DataTable data={candidates} columns={[
+      {selection?.key==="snapshot"?<SnapshotDetails snapshot={snapshot}/>:selection?<>{candidates.find(row=>row.id===selection.key)?<CandidateDetails candidate={candidates.find(row=>row.id===selection.key)!} view={view}/>:<p>항목 없음</p>}</>:<DataTable data={candidates} columns={[
         {key:"kind",label:"후보",value:row=>row.keep?"유지안":"변경안"},
         {key:"status",label:"판정",value:row=>judgmentLabels[row.status]??statusLabel(row.status)},
         {key:"energy",label:"예상 에너지",unit:"J",numeric:true,value:row=>row.expectedJoules??"판정 불가"},

@@ -46,3 +46,46 @@ test("selected service evidence retains configured percentile, zero prediction, 
   assert.equal(address.searchParams.get("from"),from)
   assert.equal(address.searchParams.get("to"),to)
 })
+
+test("snapshot deep links freeze the first response and require explicit latest adoption",()=>{
+  const require=createRequire(import.meta.url),params=new URLSearchParams("view=snapshot")
+  let data:unknown,cursor=0,changed=false
+  const cells:unknown[]=[]
+  const modules:Record<string,unknown>={
+    react:{useState:(initial:unknown)=>{const index=cursor++;if(!(index in cells))cells[index]=typeof initial==="function"?initial():initial;return [cells[index],(value:unknown)=>{cells[index]=value;changed=true}]}},
+    "next/navigation":{useSearchParams:()=>params},
+    "@/lib/client":{useChillQuery:()=>({data})},"@/lib/scheduler":scheduler,
+    "@/lib/labels":{},"@/lib/capacity":{},"@/lib/date-time":{},"@/lib/workload-identity":{},
+    "@/features/scheduler-profiles":{},"@/features/scheduler-capacity":{},
+    "@/components/read-region":{},"@/components/screen":{},"@/components/ui/button":{},
+    "@/components/data-table":{},"@/lib/source-export":{},"next/link":{},
+  }
+  const exports:Record<string,unknown>={}
+  const compiled=transpileModule(readFileSync(new URL("../features/scheduler.tsx",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  new Function("require","exports",compiled)((name:string)=>name in modules?modules[name]:require(name),exports)
+  type Element={type:((props:Record<string,unknown>)=>Element)|string;props:Record<string,unknown>}
+  const entry=(exports.SchedulerEvidence as (props:unknown)=>Element)({kind:"candidates"})
+  function render():Element {
+    let tree:Element
+    do {changed=false;cursor=0;tree=(entry.type as (props:Record<string,unknown>)=>Element)(entry.props)}while(changed)
+    return tree!
+  }
+  function nodes(value:unknown):Element[] {
+    if(Array.isArray(value))return value.flatMap(nodes)
+    if(!value||typeof value!=="object"||!("props" in value))return []
+    const element=value as Element;return [element,...nodes(element.props.children)]
+  }
+  const view=(at:string)=>({state:{snapshot:{at,workloads:[]},decision:{at,search:{windowStart:at,windowEnd:at},keep:{id:"keep"},target:null}}})
+  render()
+  const first=view("2026-11-01T00:00:00Z");data=first
+  let tree=render()
+  assert.equal(nodes(tree).find(node=>typeof node.type==="function"&&node.type.name==="SnapshotDetails")?.props.snapshot,first.state.snapshot)
+  const latest=view("2026-11-01T00:01:00Z");data=latest;tree=render()
+  assert.equal(nodes(tree).find(node=>typeof node.type==="function"&&node.type.name==="SnapshotDetails")?.props.snapshot,first.state.snapshot)
+  assert.ok(nodes(tree).some(node=>node.props.children==="새 판단 수신"))
+  const adopt=nodes(tree).find(node=>node.props.children==="최신 응답")!
+  ;(adopt.props.onClick as ()=>void)()
+  tree=render()
+  assert.equal(nodes(tree).find(node=>typeof node.type==="function"&&node.type.name==="SnapshotDetails")?.props.snapshot,latest.state.snapshot)
+  assert.equal(nodes(tree).some(node=>node.props.children==="새 판단 수신"),false)
+})
