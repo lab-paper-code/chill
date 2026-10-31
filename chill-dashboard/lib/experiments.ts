@@ -299,15 +299,16 @@ export function campaignScoreboard(run:Experiment) {
   const validities=comparisons.map(pair=>({pair,validity:comparisonValidity(pair.chill,pair.control)}))
   const matched=validities.filter(row=>!row.validity.limited).map(row=>row.pair),limited=validities.filter(row=>row.validity.limited).map(row=>row.pair)
   const summary=summarize(matched),referenceSummary=summarize(limited)
+  const reference=!matched.length&&limited.length>0,judged=reference?referenceSummary:summary,pairs=reference?limited:matched
   let conclusion="차이 없음"
-  if(!matched.length)conclusion=limited.length?"참고만 가능":"비교 대상 없음"
-  else if(summary.successDelta!==null&&summary.successDelta<=-.01||summary.p95Ratio!==null&&summary.p95Ratio>=1.01)conclusion="SLO 악화"
-  else if(summary.energyPercent!==null&&summary.energyPercent<=-.01)conclusion="에너지 감소"
-  else if(summary.energyPercent!==null&&summary.energyPercent>=.01)conclusion="에너지 증가"
-  else if(matched.some(pair=>pair.services.some(service=>service.successDelta!==null&&service.successDelta>=.01||service.p95Ratio!==null&&service.p95Ratio<=.99)))conclusion="SLO 개선"
-  else if(summary.energyPercent===null||summary.successDelta===null||summary.p95Ratio===null||matched.some(pair=>pair.energyDelta===null||pair.services.some(service=>service.successDelta===null||service.p95Ratio===null)))conclusion="결과 부족"
+  if(!pairs.length)conclusion="비교 없음"
+  else if(judged.successDelta!==null&&judged.successDelta<=-.01||judged.p95Ratio!==null&&judged.p95Ratio>=1.01)conclusion="SLO 악화"
+  else if(judged.energyPercent!==null&&judged.energyPercent<=-.01)conclusion="에너지 감소"
+  else if(judged.energyPercent!==null&&judged.energyPercent>=.01)conclusion="에너지 증가"
+  else if(pairs.some(pair=>pair.services.some(service=>service.successDelta!==null&&service.successDelta>=.01||service.p95Ratio!==null&&service.p95Ratio<=.99)))conclusion="SLO 개선"
+  else if(judged.energyPercent===null||judged.successDelta===null||judged.p95Ratio===null||pairs.some(pair=>pair.energyDelta===null||pair.services.some(service=>service.successDelta===null||service.p95Ratio===null)))conclusion="결과 부족"
   return {
-    summary,referenceSummary,conclusion,
+    summary,referenceSummary,conclusion,reference,
     energyCounts:{decreased:energies.filter(pair=>pair.energyDelta!<0).length,increased:energies.filter(pair=>pair.energyDelta!>0).length,equal:energies.filter(pair=>pair.energyDelta===0).length,missing:comparisons.length-energies.length,
       delta:energies.length?energies.reduce((sum,pair)=>sum+pair.energyDelta!,0):null},
     quality:[
@@ -362,7 +363,7 @@ export function experimentChartData(run:Experiment,service:string) {
 }
 
 export function stageHistoryLink(stage:ExperimentStage):string {
-  return `/scheduler/history?${new URLSearchParams({from:stage.from,to:stage.to,limit:"100",filter:"decision-action"})}`
+  return `/scheduler/history?${new URLSearchParams({from:stage.from,to:stage.to,limit:"100",filter:"decision-action",order:"asc"})}`
 }
 export function stageActivity(page:SchedulerObservationPage) {
   const events=page.events??[],decisions=events.filter(event=>event.decision),actions=events.filter(event=>event.action)

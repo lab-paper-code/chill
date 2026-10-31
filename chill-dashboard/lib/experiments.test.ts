@@ -595,7 +595,8 @@ test("R13: conclusion chips isolate matched definitions and rules from limited r
   assert.equal(score.coverageCounts.limited,1)
   const limited=campaignScoreboard({...run,stages:run.stages.slice(2)})
   assert.equal(limited.summary.energyPercent,null)
-  assert.equal(limited.conclusion,"참고만 가능")
+  assert.equal(limited.conclusion,"에너지 감소")
+  assert.equal(limited.reference,true)
 })
 
 test("R13: matched conclusion prioritizes quality loss and never treats limited gains as a verified improvement",()=>{
@@ -603,8 +604,10 @@ test("R13: matched conclusion prioritizes quality loss and never treats limited 
   const run={...recorded.publication,stages:[make("full-E5-1",90),make("static-E5-1",100)]}
   assert.equal(campaignScoreboard(run).conclusion,"에너지 감소")
   assert.equal(campaignScoreboard({...run,stages:[make("full-E5-1",90,.8),run.stages[1]]}).conclusion,"SLO 악화")
-  assert.equal(campaignScoreboard({...run,stages:[{...run.stages[0],kpis:{...run.stages[0].kpis,measurementRules:{window:20}}},run.stages[1]]}).conclusion,"참고만 가능")
-  assert.equal(campaignScoreboard({...run,stages:[]}).conclusion,"비교 대상 없음")
+  const reference=campaignScoreboard({...run,stages:[{...run.stages[0],kpis:{...run.stages[0].kpis,measurementRules:{window:20},requests:{camera:{uid:"camera",definitionID:"same",offered:10,deadlineSuccessFraction:.8,completedLatencyNS:{p95:1000000}}}}},run.stages[1]]})
+  assert.equal(reference.conclusion,"SLO 악화")
+  assert.equal(reference.reference,true)
+  assert.equal(campaignScoreboard({...run,stages:[]}).conclusion,"비교 없음")
 })
 
 test("R13 review: quality-only gains are improvements and no difference requires complete neutral metrics",()=>{
@@ -659,9 +662,14 @@ test("R14: rendered experiment judgment exposes one status and cause counts with
   assert.match(limits,/정의 미확인/)
   assert.match(limits,/<table[^>]*aria-label="비교 제한 원인"/)
   assert.match(limits,/<th[^>]*>제한 원인<\/th>/)
-  assert.match(limits,/<th[^>]*>대응 구간 수<\/th>/)
+  assert.match(limits,/<th[^>]*>구간 수<\/th>/)
+  assert.match(limits,/role="tooltip"/)
+  assert.match(limits,/invisible/)
   assert.match(limits,/<td[^>]*>1<\/td>/)
   const table=renderToStaticMarkup(createElement(exports.ExperimentConclusion,{run}))
   assert.doesNotMatch(table,/참고 · 제한 비교/)
-  assert.match(table,/aria-label="제한 비교"/)
+  assert.doesNotMatch(table,/aria-label="제한 비교"/)
+  const coverage=renderToStaticMarkup(createElement(exports.ExperimentCoverage,{run}))
+  assert.match(coverage,/role="img"/)
+  assert.match(coverage,/일치 0 · 참고 1 · 대응 없음 0/)
 })
