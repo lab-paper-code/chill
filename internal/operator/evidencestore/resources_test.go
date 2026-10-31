@@ -60,6 +60,11 @@ func TestBuildDeployment(t *testing.T) {
 	if !hasIAM {
 		t.Fatal("persistent internal IAM directory is not configured")
 	}
+	if len(pod.InitContainers) != 1 || pod.InitContainers[0].Image != config.Image ||
+		!reflect.DeepEqual(pod.InitContainers[0].Command, []string{"mkdir", "-p", dataMountPath + "/.iam"}) ||
+		!reflect.DeepEqual(pod.InitContainers[0].VolumeMounts, container.VolumeMounts) {
+		t.Fatalf("IAM initialization = %#v", pod.InitContainers)
+	}
 	if container.ReadinessProbe.HTTPGet.Path != healthPath ||
 		container.ReadinessProbe.HTTPGet.Port != intstr.FromString(s3PortName) {
 		t.Fatalf("readiness probe = %#v", container.ReadinessProbe)

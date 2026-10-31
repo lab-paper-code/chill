@@ -47,6 +47,15 @@ func buildDeployment(instance Instance, config Config) *appsv1.Deployment {
 					AutomountServiceAccountToken: ptr.To(false),
 					SecurityContext:              storePodSecurityContext(),
 					Containers:                   []corev1.Container{buildStoreContainer(instance, config)},
+					InitContainers: []corev1.Container{{
+						Name:            "iam-directory",
+						Image:           config.Image,
+						ImagePullPolicy: config.ImagePullPolicy,
+						Command:         []string{"mkdir", "-p", dataMountPath + "/.iam"},
+						Resources:       config.Resources,
+						SecurityContext: restrictedContainerSecurityContext(),
+						VolumeMounts:    []corev1.VolumeMount{{Name: dataVolumeName, MountPath: dataMountPath}},
+					}},
 					Volumes: []corev1.Volume{
 						{
 							Name: dataVolumeName,
