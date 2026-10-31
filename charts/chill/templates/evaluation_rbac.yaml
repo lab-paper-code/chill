@@ -96,6 +96,22 @@ subjects:
     name: {{ $.Values.evaluation.config.actionServiceAccount }}
     namespace: {{ $.Release.Namespace }}
 {{- end }}
+{{- if .Values.servingEntrypoint.scheduler.configMap }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "chill.fullname" . }}-evaluation-scheduler-editor
+  namespace: {{ default .Release.Namespace .Values.servingEntrypoint.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "chill.fullname" . }}-scheduler-editor
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.evaluation.config.actionServiceAccount }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- if .Values.profiler.enabled }}
