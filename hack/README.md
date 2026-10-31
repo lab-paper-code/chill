@@ -209,6 +209,13 @@ e5 finish --out "$Run" --row-tag 3; e5 cleanup-jobs --out "$Run" --row-tag 3; e5
 
 ## Profiler runtime declarations
 
+Rebuild all seven runtime platform variants and both observer images from one
+committed source whenever the RunConfig contract changes; updating only the
+profiler leaves measurement Jobs unable to decode its configuration. Replace
+the complete declaration list and observer digests in both `values-profiler.yaml`
+and `values-operating.yaml`, then deploy a profiling-only values overlay so the
+live server and dashboard images remain unchanged.
+
 `charts/chill/values-profiler.yaml` takes `profiling.executionDeclarations`
 only as exact-image inspection output. After the firstfloor runtime images are
 pushed, list each per-platform child digest and run the generator against the
