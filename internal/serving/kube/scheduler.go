@@ -1311,16 +1311,14 @@ func (c *SchedulerController) dependenciesComplete(action serving.Action, plan s
 			}
 			uids = []string{uid}
 		} else if route >= 0 && plan.Actions[route].RouteTarget != nil {
-			var handoffUIDs []string
+			// The compiler attaches every bridge to at least one blocked source stop.
+			uids = []string{}
 			for _, dependent := range plan.Actions {
 				if dependent.Kind == operationStop && slices.Contains(dependent.DependsOn, dep) {
 					if uid := handoffSourceUID(*plan.Actions[route].RouteTarget, dependent.Instance); uid != "" {
-						handoffUIDs = append(handoffUIDs, uid)
+						uids = append(uids, uid)
 					}
 				}
-			}
-			if len(handoffUIDs) > 0 {
-				uids = handoffUIDs
 			}
 		}
 		if action.Kind != operationStop && action.Kind != operationRoute || route < 0 ||

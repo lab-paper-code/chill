@@ -138,6 +138,10 @@ func TestSkippedBridgeChainConsumesExistingACKSCH51(t *testing.T) {
 			c.ctx = context.Background()
 			stage := *c.runs["acknowledged-route"].result.Operation.Target
 			c.state.Snapshot.Routing = stage.Routing
+			source := stage.Instances[0]
+			source.ID, source.Weight = "first-bridge-source", 0
+			stage.Instances = append(stage.Instances, source)
+			c.state.Snapshot.Instances = append(c.state.Snapshot.Instances, source)
 			first := serving.Action{ID: "skipped-first-bridge", Kind: operationRoute, RouteTarget: &stage}
 			secondTarget := stage
 			secondTarget.ID = "second-bridge-target"
@@ -149,7 +153,8 @@ func TestSkippedBridgeChainConsumesExistingACKSCH51(t *testing.T) {
 			goal.Routing = map[string]map[string]int32{uid: {stage.Instances[0].ID: 3}}
 			goal.Instances = append([]serving.SchedulerInstance(nil), stage.Instances...)
 			goal.Instances[0].MaxBatch += 2
-			goal.Actions = []serving.Action{first, second}
+			stop := serving.Action{ID: "stop-first-source", Kind: operationStop, Instance: source.ID, DependsOn: []string{first.ID}}
+			goal.Actions = []serving.Action{first, stop, second}
 			if !receipt {
 				delete(c.runs, "acknowledged-route")
 			}
