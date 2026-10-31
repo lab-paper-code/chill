@@ -469,6 +469,37 @@ class Harness:
         definition={'schema':'evaluation-definition.v1alpha1','run':{'name':self.execution['runName'],'uid':self.execution['runUID']},'spec':self.snapshot['runSpec'],'loadScenarios':[{'name':s['ref']['name'],'uid':s['ref']['uid'],'spec':s['spec']} for s in scenarios],'workloads':list(definitions.values())}
         finish=procedures['finish']
         outcome={'execution':execution_outcome([procedures['prepare'],finish]+[{'execution':stage['execution']} for stage in stage_outcomes]),'measurement':verdict(aggregated),'cleanup':finish.get('cleanup',finish.get('execution',not_started)),'stages':stage_outcomes}
+        residuals=[];seen_refs=set()
+        def collect_residuals(value,reason='ResidualState',resource_refs=False):
+            if not isinstance(value,dict): return
+            reason=value.get('reason') or reason
+            for residual in value.get('residuals',[]):
+                if residual['kind'] in ('Node','Pod','Job','SchedulerSettings'):
+                    item={key:residual[key] for key in ('kind','name')};item['reason']=residual.get('reason') or reason
+                    if item not in residuals: residuals.append(item)
+            reference=value.get('residualStateRef')
+            if reference and reference['key'] not in seen_refs:
+                seen_refs.add(reference['key']);path=self.run/('publication-residual-'+str(len(seen_refs))+'.json')
+                self.store.get(reference,path);collect_residuals(load(path),reason,True)
+            for key,child in value.items():
+                if resource_refs and key in ('nodeRef','podRef','jobRef') and child.get('name'):
+                    item={'kind':{'nodeRef':'Node','podRef':'Pod','jobRef':'Job'}[key],'name':child['name'],'reason':reason}
+                    if item not in residuals: residuals.append(item)
+                elif isinstance(child,dict): collect_residuals(child,reason,resource_refs)
+                elif isinstance(child,list) and key!='residuals':
+                    for entry in child: collect_residuals(entry,reason,resource_refs)
+        collect_residuals(finish)
+        path=self.run/'publication-run-residual.json'
+        try: self.store.get({'store':self.store.name,'key':'experiments/'+self.execution['runUID']+'/run/residual.json'},path)
+        except FileNotFoundError: pass
+        else: collect_residuals(load(path))
+        for template in self.snapshot['runSpec']['stages']:
+            sid=template['id'];collect_residuals(procedures[sid]['cleanup-jobs'])
+            path=self.run/('publication-finalizer-'+sid+'.json')
+            try: self.store.get({'store':self.store.name,'key':'experiments/'+self.execution['runUID']+'/stages/'+sid+'/finalizer.json'},path)
+            except FileNotFoundError: continue
+            collect_residuals(load(path))
+        outcome['cleanup']={**outcome['cleanup'],'residuals':residuals}
         summary={'schemaVersion':'serving-experiment.v1alpha1','id':self.execution['runUID'],'from':start,'to':end,'status':measurement,'stages':stages,'sources':[{key:obj[key] for key in ('store','key')} for obj in objects],'definition':definition,'outcome':outcome}
         summary_path=self.run/'publication-summary.json';save(summary_path,summary)
         manifest=self.run/'publication-manifest.json';save(manifest,{'objects':objects,'summary':{'store':self.store.name,'key':prefix+'summary.json','localPath':str(summary_path)}})

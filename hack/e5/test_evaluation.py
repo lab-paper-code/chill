@@ -186,6 +186,10 @@ class AdapterTests(unittest.TestCase):
             judge['measurement']={'verdict':'INVALID','reason':'InjectionInvalid'}
             judge['artifacts']=[{'store':'store','key':'judge/artifacts/injection-records.json'}]
             evidence['judge/artifacts/injection-records.json']={'plans':plans,'records':[{'record':{'id':'done','outcome':'Complete','actualOffsetSeconds':10.5}},{'record':{'id':'missed','outcome':'INVALID','reason':'InjectionInvalid'}}]}
+            residual={'kind':'Job','name':'leftover','reason':'DeleteFailed'}
+            evidence['experiments/run/run/finish/result.json']['cleanup']['residuals']=[residual]
+            evidence['experiments/run/stages/failed/finalizer.json']={'details':{'residualStateRef':{'store':'store','key':'residual.json'}}}
+            evidence['residual.json']={'record':{'nodeRef':{'name':'cordoned-node'},'reason':'RemoteEffectUnknown'}}
             def get(ref,path):
                 if ref['key'] not in evidence: raise FileNotFoundError(ref['key'])
                 evaluation.save(path,evidence[ref['key']])
@@ -201,7 +205,7 @@ class AdapterTests(unittest.TestCase):
             self.assertEqual(summary['stages'],[])
             self.assertEqual(outcome['execution'],{'status':'Failed','reason':'TargetUnavailable'})
             self.assertEqual(outcome['measurement']['verdict'],'INVALID')
-            self.assertEqual(outcome['cleanup'],{'status':'Failed','reason':'RestorationFailed'})
+            self.assertEqual(outcome['cleanup'],{'status':'Failed','reason':'RestorationFailed','residuals':[residual,{'kind':'Node','name':'cordoned-node','reason':'RemoteEffectUnknown'}]})
             failed,never=outcome['stages']
             self.assertEqual(failed['id'],'failed')
             self.assertEqual(failed['measurement'],judge['measurement'])
