@@ -403,3 +403,6 @@
 - 어떤 모델이든 측정하는 것은 같다(전력×시간÷처리 수, batch별 서비스 시간 분포). 느린 모델은 같은 창에서 표본이 적을 뿐임. Smol은 분포가 매우 좁아서(CV 3.2%, q95/q50 1.07) 약 10표본이면 mean ±2%가 됨(ICC 분석 n_mean 중앙 10). 표본 수 목표로 창을 늘리던 방식이 Smol을 수백 시간으로 만들었음.
 - 규칙: active 창 = max(30 s, 3 × 호출 시간), trials 3, planner batch 집합, SLO-infeasible 단축(batch 1만) 유지. n 목표와 probe 단계는 폐기. 셀별 정밀도(CI)는 측정해서 기록할 뿐 목표치가 아님.
 - 고정 창 계획(`23f5b3a2`): 110셀(MNV 29, PLC 28, Smol 53, SLO-infeasible Smol 20셀은 batch 1만), **30.4 node-h**, 최장 lane jetsonx 15.9 h(Xavier 58셀), 나머지 lane ≤5.7 h. 같은 셀의 이전 추정은 487 h, 최초 "현재 방식" 추정은 126셀 기준 102 node-h. 다음: 19:14Z profiler 배포(7415185b, quick-energy v2 포함) → 파일럿 2셀(orangepi MNV, rasp5 PLC, 예상 약 17분) → 실측 시간으로 계획 보정 → 전 lane 실행.
+
+- 2026-10-31 19:26Z — control-281 예정 배포는 게이트 실패로 **미실행**. 소스 `5342588b066e9f5c7af99439a316eeef32dd4b3f`(`deploy-202610311922-noksafe`, κsafe 3커밋 제외; 7842e35c·ed908c9a 포함), 리플레이(기준 7415185b, v2 입력) PASS, dashboard 222/0.
+- clean Go lint FAIL: evaluationstage_types.go:59 goconst(`uncordon`), evaluationrun_types.go:334/405 gocyclo(32/39), evaluationrun_types_test.go:120 gofmt. 타 세션 변경이므로 수정하지 않았으며 test/arch/helm 및 배포·Pod 확인은 실행하지 않음.
