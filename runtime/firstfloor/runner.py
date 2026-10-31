@@ -284,6 +284,8 @@ def run(options, source, destination):
             cpu_max, affinity, cpuset = import_runtime_contract("ortcpu").read_cpu_environment()
         inputs, outputs = contract["inputs"], contract["outputs"]
         batches, max_new_tokens = contract["batch_sizes"], contract["max_new_tokens"]
+        if options.warmup_batch is not None and options.warmup_batch not in batches:
+            raise ValueError("warmup batch must be one of the initialized batches")
         module = load_preprocessor(options.preprocessor, inputs)
         files = [] if options.runtime == "echo" else model_files(options.model_dir)
         metadata = {"runtime": options.runtime, "runtimeVersion": "synthetic", "numpyVersion": np.__version__,
@@ -297,7 +299,7 @@ def run(options, source, destination):
         elif options.runtime == "rknnlite":
             sessions = rknn_session(options, files, batches, metadata)
         delay_s = options.delay_ms / 1000
-        for batch in batches:
+        for batch in batches if options.warmup_batch is None else [options.warmup_batch]:
             for _ in range(options.warmup_iterations):
                 items, _, _ = execute(module, sessions, [dict(module.WARMUP_SAMPLE) for _ in range(batch)], outputs, max_new_tokens, delay_s)
                 if any("error" in item for item in items):
@@ -367,6 +369,7 @@ if __name__ == "__main__":
     parser.add_argument("--intra-op-threads", type=int, default=1)
     parser.add_argument("--cpu-affinity", help="Exact comma-separated CPU IDs within the allocated cpuset.")
     parser.add_argument("--warmup-iterations", type=int, default=20)
+    parser.add_argument("--warmup-batch", type=int, help="Profiling-only fixed K; serving warms every initialized batch.")
     parser.add_argument("--delay-ms", type=float, default=0, help="Synthetic sleep inside the echo infer stage.")
     options = parser.parse_args()
     if options.delay_ms < 0 or options.intra_op_threads < (0 if options.runtime == "rknnlite" else 1) or options.warmup_iterations < 0:

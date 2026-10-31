@@ -28,14 +28,14 @@ def infer_frame(batch_id, values):
     return encode({"type": "infer", "batch_id": batch_id, "tensors": [tensor]}, payload)
 
 
-def serve(batches, max_new_tokens=0, preprocessor=FIXTURE, tail=b""):
+def serve(batches, max_new_tokens=0, preprocessor=FIXTURE, tail=b"", warmup_batch=None):
     init = encode({"type": "init", "inputs": ["input"], "outputs": ["output"], "batch_sizes": [1, 2],
                    "max_new_tokens": max_new_tokens})
     source = BytesIO(init + b"".join(infer_frame(i + 1, values) for i, values in enumerate(batches)) + tail)
     destination = BytesIO()
     options = SimpleNamespace(runtime="echo", preprocessor=str(preprocessor), model_dir=None, delay_ms=0,
                               warmup_iterations=1, cpu_affinity=None, intra_op_threads=1, gpu_uuid=None,
-                              delivery_json=None)
+                              delivery_json=None, warmup_batch=warmup_batch)
     error = None
     try:
         runner.run(options, source, destination)
@@ -51,6 +51,17 @@ def serve(batches, max_new_tokens=0, preprocessor=FIXTURE, tail=b""):
 
 
 class RunnerContractTest(unittest.TestCase):
+    def test_profiling_warms_only_selected_batch_and_serving_warms_all(self):
+        for selected, expected in ((None, [1, 2]), (1, [1]), (2, [2])):
+            with self.subTest(selected=selected), mock.patch.object(runner, "execute", wraps=runner.execute) as execute:
+                frames, error = serve([], warmup_batch=selected)
+                self.assertIsNone(error)
+                self.assertEqual([len(call.args[2]) for call in execute.call_args_list], expected)
+                self.assertEqual(frames[0][0]["metadata"]["initializedBatches"], [1, 2])
+        frames, error = serve([], warmup_batch=3)
+        self.assertIsInstance(error, ValueError)
+        self.assertIn("warmup batch", str(error))
+
     def test_item_failure_ends_only_its_request(self):
         frames, error = serve([[b"tile+tile", b"fail:bad jpeg"]])
         self.assertIsNone(error)

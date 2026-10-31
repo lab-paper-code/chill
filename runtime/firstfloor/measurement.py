@@ -44,9 +44,7 @@ def initialized_batches(run: dict[str, Any]) -> list[int]:
     batches = [batch for batch in declared if batch <= maximum]
     if not batches or run["measurement"]["batch"] not in batches:
         raise common.ContractError("configured initialized batches must include the selected fixed K")
-    # Profiling executes one fixed K; warming other serving batches can exhaust
-    # host memory before the measurement window even starts.
-    return [run["measurement"]["batch"]]
+    return batches
 
 
 def validate_request(request: dict[str, Any]) -> None:
@@ -325,7 +323,8 @@ def worker_config(request: dict[str, Any]) -> dict[str, Any]:
     command = [sys.executable, str(Path(__file__).with_name("runner.py")), "--runtime", backend,
                "--model-dir", request["modelDirectory"], "--preprocessor", request["preprocessorPath"],
                "--intra-op-threads", str(run["cpu"]["ortIntraOpThreads"]),
-               "--warmup-iterations", str(run["measurement"]["warmupIterations"])]
+               "--warmup-iterations", str(run["measurement"]["warmupIterations"]),
+               "--warmup-batch", str(run["measurement"]["batch"])]
     affinity = common.requested_cpu_affinity(run["cpu"])
     if affinity is not None:
         command += ["--cpu-affinity", ",".join(map(str, affinity))]

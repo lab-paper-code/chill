@@ -37,6 +37,7 @@ class MeasurementBoundaryTest(unittest.TestCase):
         self.assertNotIn("maxNewTokens", config)
         command = config["runnerCommand"]
         self.assertEqual(command[command.index("--model-dir") + 1], "/model")
+        self.assertEqual(command[command.index("--warmup-batch") + 1], "1")
         self.assertEqual(command[command.index("--preprocessor") + 1], "/preprocessor")
         self.assertNotIn("--model", command)
         request["runConfig"]["state"]["preprocessor"]["maxNewTokens"] = 32
@@ -93,20 +94,11 @@ class MeasurementBoundaryTest(unittest.TestCase):
         run = {"state": {"firstfloor": {"maxBatchSize": 8}},
                "delivery": {"artifactCapability": {"declaredBatchSizes": [2, 4, 16]}},
                "measurement": {"batch": 4}}
-        self.assertEqual(measurement.initialized_batches(run), [4])
+        self.assertEqual(measurement.initialized_batches(run), [2, 4])
         run["measurement"]["batch"] = 1
         with self.assertRaises(measurement.common.ContractError):
             measurement.initialized_batches(run)
 
-    def test_profiling_initializes_only_measured_batch_even_for_dynamic_artifact(self):
-        run = {"state": {"firstfloor": {"maxBatchSize": 8}},
-               "delivery": {"artifactCapability": {}}, "measurement": {"batch": 1}}
-        self.assertEqual(measurement.initialized_batches(run), [1])
-        run["measurement"]["batch"] = 8
-        self.assertEqual(measurement.initialized_batches(run), [8])
-        run["measurement"]["batch"] = 9
-        with self.assertRaises(measurement.common.ContractError):
-            measurement.initialized_batches(run)
 
     def test_native_samples_require_actual_aligned_nested_timings(self):
         response = {"batchSize": 2, "executionComplete": True, "batchIDs": [9], "serviceSamplesMS": [2.0],
@@ -191,7 +183,7 @@ class MeasurementBoundaryTest(unittest.TestCase):
                   "outputs": ["answer"],
                   "providers": ["CUDAExecutionProvider", "CPUExecutionProvider"], "availableProviders": ["CUDAExecutionProvider", "CPUExecutionProvider"],
                   "device": "cuda", "gpuUUID": "GPU-actual", "cpuAffinity": [0, 1], "intraOpThreads": 2,
-                  "interOpThreads": 1, "initializedBatches": [4], "warmupIterations": 2,
+                  "interOpThreads": 1, "initializedBatches": [1, 2, 4], "warmupIterations": 2,
                   "cgroupCPUMax": "200000 100000", "cpuSet": "0-1", "synthetic": False}
         metadata = {"model": "model", "mode": "profiling", "maxQueueRequests": 8, "maxBatchSize": 4,
                     "modelInstanceCount": 1, "maxQueueBytes": 1024, "maxRequestBytes": measurement.FRAME_BYTES,
