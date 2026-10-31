@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { LiveAction, LiveInstance, LiveMetric, LiveMetrics, LiveSnapshot, LiveWorkload } from "./live.ts"
-import { changeListStatus, serviceTrafficState, actionProgress, actionOrigin, scopeSnapshot, scopeEvents, recentEvents, liveFresh, belongsToPool, displayNumber, duration, elapsed, instanceSymbol, isStale, ratio, receivedLabel, routingShare, terminalCount, workloadLabel, workloadQueue, servicePriority, mergeKeepEvents, trendSegments, boardVerdict, decisionText } from "./live-display.ts"
+import { changeListStatus, actionProgress, actionOrigin, scopeSnapshot, scopeEvents, recentEvents, liveFresh, belongsToPool, displayNumber, duration, elapsed, instanceSymbol, isStale, ratio, receivedLabel, routingShare, terminalCount, workloadLabel, workloadQueue, servicePriority, mergeKeepEvents, trendSegments, boardVerdict, decisionText } from "./live-display.ts"
 import { retainedEvents, sloLatency, minuteMetrics, incidentFlow, incidentSummary, serviceRows, powerBreakdown, powerWindow, decisionReason, gapEpisodes, liveReason, displayTime } from "./live-display.ts"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
@@ -100,6 +100,17 @@ test("headline aggregates service states: anomaly, caution, normal, then no load
   const mixed={...snapshot,workloads:[pool,{...pool,uid:"b"}]}
   assert.equal(boardVerdict(serviceRows(mixed,{a:observed,b:{...observed,received:0}},now),true,false).label,"정상")
 })
+test("whole-board changes and delays warn after service anomalies, including UID-less power actions",()=>{
+  const snapshot:LiveSnapshot={workloads:[{...workload,pending:0}],nodes:[],instances:[{...instance,waiting:{}}],routing:{},decision:null,actions:[],reservations:[]}
+  const observed={...metric,failed:0,withinSLO:3}
+  const rows=serviceRows(snapshot,{a:observed},now)
+  assert.equal(boardVerdict(rows,true,false,1,0).label,"주의")
+  assert.equal(boardVerdict(rows,true,false,1,0).reason,"변경 중")
+  assert.equal(boardVerdict(rows,true,false,0,1).label,"주의")
+  assert.equal(boardVerdict(rows,true,false,0,1).reason,"예상 대비 지연")
+  assert.equal(boardVerdict(serviceRows(snapshot,{a:metric},now),true,false,1,1).label,"이상")
+  assert.equal(boardVerdict(rows,true,true,1,1).label,"이상")
+})
 test("only consecutive unchanged Keep events merge; changes remain independently visible",()=>{
   const decision=(seq:number,reason="")=>({type:"event" as const,kind:"decision" as const,seq,at,decision:{at,state:"Keep",reason,explanation:""}})
   const rows=mergeKeepEvents([decision(1),decision(2),decision(3,"ReservedScope:plan-a"),decision(4)])
@@ -173,11 +184,6 @@ test("cached changes never claim current progress or absence while disconnected 
     assert.match(view.emptyLabel,/현재 상태.*미확인/)
   }
   assert.match(changeListStatus({...state,status:"reconnecting"},now).title,/현재 상태 미확인/)
-})
-test("missing metrics are awaiting observation, never observed zero traffic",()=>{
-  assert.equal(serviceTrafficState(undefined),"관측 대기")
-  assert.equal(serviceTrafficState({...metric,received:0}),"무유입")
-  assert.equal(serviceTrafficState(metric),"활동 중")
 })
 
 test("automation and placement do not turn observed no-load services into an alarm",()=>{
@@ -305,7 +311,7 @@ test("rendered board keeps idle names visible, incidents beside services, and on
     "@/lib/use-live":{useLive:()=>({state,status:"fixture",reconnect:()=>{}})},
     "@/lib/live-display":displayHelpers,"@/lib/experiments":{decisionRange:()=>({})},
     "@/lib/scheduler":{stringifySchedulerJSON:JSON.stringify},"@/lib/source-export":{safeSource:(value:unknown)=>value},
-    "./scheduler":{judgmentLabels:{Keep:"구성 유지"},actionKinds:{},actionStatuses:{}},
+    "./scheduler":{judgmentLabels:{Keep:"구성 유지"},actionKinds:{power:"전력모드 변경"},actionStatuses:{},actionNodeName:(node:{name:string})=>node.name},
     "./measurement-coverage":{useCoverageInventory:()=>({data:{classes:[{nodes:[{uid:"outside",name:"외부 장치"},{uid:"not-metered",name:"관측 안 된 장치"}]}]}})},
     "./live-board.css":{},
   }
@@ -324,4 +330,14 @@ test("rendered board keeps idle names visible, incidents beside services, and on
   query=new URLSearchParams({at})
   const drawer=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
   assert.equal((drawer.match(/자동제어 대상 없음/g)??[]).length,2)
+  query=new URLSearchParams()
+  snapshot.actions=[{id:"shared-power",kind:"power",node:{uid:"n",name:"장치"},workloadUID:"",status:"running",startedAt:new Date(Date.now()).toISOString(),expectedSeconds:null,expectedSource:null}]
+  assert.match(renderToStaticMarkup(createElement(exports.LiveBoardPage,{})),/<strong title="변경 중">주의<\/strong>/)
+  snapshot.actions[0].startedAt=new Date(Date.now()-301000).toISOString()
+  assert.match(renderToStaticMarkup(createElement(exports.LiveBoardPage,{})),/<strong title="예상 대비 지연">주의<\/strong>/)
+  sample.workloads["service-0"]={...zero,failed:1}
+  assert.match(renderToStaticMarkup(createElement(exports.LiveBoardPage,{})),/<strong title="요청 실패">이상<\/strong>/)
+  sample.workloads["service-0"]=zero
+  snapshot.actions[0].status="complete"
+  assert.match(renderToStaticMarkup(createElement(exports.LiveBoardPage,{})),/<strong title="유입 없음">무부하<\/strong>/)
 })

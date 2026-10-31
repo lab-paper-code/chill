@@ -63,9 +63,6 @@ export function changeListStatus(state:LiveState,now:number) {
   const fresh=liveFresh(state,now)
   return {fresh,title:!state.snapshot?"변경 관측을 기다려요":fresh?`변경 진행 ${actions.length-delayed}건 / 정체 ${delayed}건`:`현재 상태 미확인 · 마지막 관측 ${displayTime(state.lastObservedAt,"KST")||"미수신"}`,emptyLabel:fresh?"진행·정체 변경이 없어요.":"마지막 관측에는 진행·정체 변경이 없었어요. 현재 상태는 미확인이에요."}
 }
-export function serviceTrafficState(metric:LiveMetric|undefined):string {
-  return !metric?"관측 대기":metric.received===0?"무유입":"활동 중"
-}
 export function scopeSnapshot(snapshot:LiveSnapshot,uid?:string):LiveSnapshot {
   if(!uid)return snapshot
   return {...snapshot,workloads:snapshot.workloads.filter(row=>row.uid===uid),instances:snapshot.instances.filter(row=>belongsToPool(row,uid)),routing:{[uid]:snapshot.routing[uid]??{}},actions:snapshot.actions.filter(row=>row.workloadUID===uid),reservations:snapshot.reservations.filter(row=>row.workloadUIDs.includes(uid)),decision:null}
@@ -132,10 +129,12 @@ export function minuteMetrics(metrics:LiveMetrics[],uid:string,end:number):LiveM
   const windowEnd=Math.floor(end/1000)*1000
   return metrics.filter(row=>Date.parse(row.bucketAt)>=windowEnd-60000&&Date.parse(row.bucketAt)<windowEnd).flatMap(row=>row.workloads[uid]?[row.workloads[uid]]:[])
 }
-export function boardVerdict(rows:ServiceRow[],fresh:boolean,ongoingGap:boolean) {
+export function boardVerdict(rows:ServiceRow[],fresh:boolean,ongoingGap:boolean,changes=0,delayed=0) {
   if(ongoingGap||!fresh)return {label:"이상",tone:"danger",reason:"관측 공백 진행"}
   const anomaly=rows.find(row=>row.status.tone==="danger")
   if(anomaly)return {label:"이상",tone:"danger",reason:anomaly.status.reason}
+  if(delayed>0)return {label:"주의",tone:"warning",reason:"예상 대비 지연"}
+  if(changes>0)return {label:"주의",tone:"warning",reason:"변경 중"}
   const caution=rows.find(row=>row.status.tone==="warning")
   if(caution)return {label:"주의",tone:"warning",reason:caution.status.reason}
   if(rows.some(row=>row.status.label==="정상"))return {label:"정상",tone:"healthy",reason:"SLO 충족"}
@@ -220,6 +219,6 @@ export function incidentFlow(events:LiveEvent[],gaps:LiveState["gaps"],now:numbe
 }
 /** The badge counts only incidents present in the same rendered list. */
 export function incidentSummary(events:LiveEvent[],gaps:LiveState["gaps"],now:number,metrics:LiveMetrics[]=[]) {
-  const rows=incidentFlow(events,gaps,now,false,metrics),decisions=events.filter(row=>Date.parse(row.at)<=now).filter(row=>row.kind==="decision")
-  return {rows,newCount:rows.filter(row=>Date.parse(row.at)>=now-30000).length,lastDecision:decisions.at(-1)}
+  const rows=incidentFlow(events,gaps,now,false,metrics)
+  return {rows,newCount:rows.filter(row=>Date.parse(row.at)>=now-30000).length}
 }

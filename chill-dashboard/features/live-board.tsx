@@ -186,7 +186,7 @@ function LiveStage({uid}:{uid?:string}) {
   const received=all?.reduce((total,row)=>total+row.received,0)
   const queued=snapshot?.workloads.reduce((total,row)=>total+workloadQueue(row,snapshot.instances),0)??0,changes=snapshot?.actions.filter(action=>actionProgress(action,clock)==="progress").length??0,delayed=snapshot?.actions.filter(action=>actionProgress(action,clock)==="delayed").length??0
   const fresh=liveFresh(state,clock),ongoingGap=gapEpisodes(state.gaps,clock,state.metrics).some(gap=>!gap.lost&&!gap.recovered)
-  const rows=snapshot?serviceRows(snapshot,metrics?.workloads??{},clock):[],verdict=boardVerdict(rows,fresh,ongoingGap)
+  const rows=snapshot?serviceRows(snapshot,metrics?.workloads??{},clock):[],verdict=boardVerdict(rows,fresh,ongoingGap,changes,delayed)
   const decision=snapshot?.decision,workload=snapshot?.workloads.find(row=>row.uid===uid),important=incidentSummary(state.events,state.gaps,clock,state.metrics).newCount
   const off=snapshot?.workloads.filter(row=>!row.autonomous).length??0,placed=snapshot?.workloads.filter(row=>serviceDevices(snapshot,row.uid).length>0).length??0
   const reason=decisionReason(decision?.reason,snapshot?.workloads.map(row=>row.autonomous)??[])
