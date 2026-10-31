@@ -10,11 +10,14 @@ import (
 
 func TestLoadScenarioWriteAuthorization(t *testing.T) {
 	called := false
-	h := experimentHandler(t, false, HandlerConfig{CreateLoadScenario: func(context.Context, LoadScenarioRequest, string) (EvaluationIdentity, error) {
+	config := HandlerConfig{}
+	config.CreateLoadScenario = func(context.Context, LoadScenarioRequest, string) (EvaluationIdentity, error) {
 		called = true
 		return EvaluationIdentity{}, nil
-	}})
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/evaluations/load-scenarios", strings.NewReader(`{"name":"load","spec":{}}`))
+	}
+	h := experimentHandler(t, false, config)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/evaluations/load-scenarios",
+		strings.NewReader(`{"name":"load","spec":{}}`))
 	request.Header.Set("Authorization", "Bearer caller")
 	response := httptest.NewRecorder()
 	h.evaluationLoads(response, request)

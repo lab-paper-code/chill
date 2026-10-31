@@ -41,7 +41,15 @@ type EvaluationInputList struct {
 }
 
 func (h *Handler) registerEvaluationLoadRoutes() {
-	for _, route := range []string{"GET /api/v1/evaluations/load-scenarios", "GET /api/v1/evaluations/load-scenarios/{name}", "POST /api/v1/evaluations/load-scenarios/preflight", "POST /api/v1/evaluations/load-scenarios", "PUT /api/v1/evaluations/load-scenarios/{name}", "DELETE /api/v1/evaluations/load-scenarios/{name}", "GET /api/v1/evaluations/inputs"} {
+	for _, route := range []string{
+		"GET /api/v1/evaluations/load-scenarios",
+		"GET /api/v1/evaluations/load-scenarios/{name}",
+		"POST /api/v1/evaluations/load-scenarios/preflight",
+		"POST /api/v1/evaluations/load-scenarios",
+		"PUT /api/v1/evaluations/load-scenarios/{name}",
+		"DELETE /api/v1/evaluations/load-scenarios/{name}",
+		"GET /api/v1/evaluations/inputs",
+	} {
 		h.mux.HandleFunc(route, h.evaluationLoads)
 	}
 }
