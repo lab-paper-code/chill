@@ -39,7 +39,8 @@ type FaultInjectionSelection struct {
 	// OrderBy is the explicit deterministic tie-break order.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=3
-	// +listType=set
+	// +listType=atomic
+	// +kubebuilder:validation:XValidation:rule="self.all(k, self.filter(v, v == k).size() == 1)",message="orderBy keys must be unique"
 	OrderBy []FaultInjectionOrderKey `json:"orderBy"`
 }
 

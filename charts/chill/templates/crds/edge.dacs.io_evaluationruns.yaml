@@ -549,7 +549,11 @@ spec:
                                 maxItems: 3
                                 minItems: 1
                                 type: array
-                                x-kubernetes-list-type: set
+                                x-kubernetes-list-type: atomic
+                                x-kubernetes-validations:
+                                - message: orderBy keys must be unique
+                                  rule: self.all(k, self.filter(v, v == k).size()
+                                    == 1)
                               workloadUIDs:
                                 items:
                                   description: |-
