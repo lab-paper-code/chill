@@ -341,3 +341,8 @@
 
 - 원인(`internal/firstfloor/policy.go:93–157`): 배치 크기 후보가 모두 맨 앞 요청을 포함하는데, 그 요청이 마감을 넘기면 어떤 배치도 batchFeasible이 아니게 됨. DeadlineKeep이면 처리 시간이 가장 짧은 b1(`minimum_service`)을 고름 → 처리율이 하락해 큐가 늘고 다음 맨 앞 요청도 늦어지는 고착.
 - 사용자가 (b) runtime 수정을 승인(firstfloor 이미지 재빌드와 runtime digest 변경 허용). 수정 방향: 마감 불가일 때 항목당 비용이 최소인(처리율 최대) 배치를 고름(Clipper·Triton 방식). 영향 범위(재빌드할 이미지, profile·κ 무효화, replay 공유)를 조사(RuntimeImpact)한 뒤 배포 절차를 정함.
+
+## 2026-10-31 — 조언 세션 작업 인지: Experiment CRD 문서화(spec→SRS→설계/ADR)
+
+- 조언 세션이 오케스트레이터로서 Experiment CRD와 독립 reconciler(기존 측정 컨트롤러 cmd/profiler 안, ChillServer와 분리)의 spec→SRS→설계/ADR 문서를 진행 중. 범위는 문서만이고 경로 한정 커밋. 이 세션의 round.py, rounds/*.json, binding, A/B runner를 참조 입력으로 씀.
+- 이 세션의 조정: (1) docs/spec, SRS, ADR, 새 실험 설계 문서는 건드리지 않음. 내 문서 변경은 docs/intent/decision-log.md, docs/plans/, 스케줄러 설계 문단(analytic-planner, scheduler-implementation)으로 한정. (2) round.py와 rounds 설정 형식은 그쪽이 참조하는 동안 불필요하게 바꾸지 않음. 필요한 변경은 decision-log에 기록. (3) 재현성 지적(설정이 git 밖, 입력 경로 흩어짐, 실험 설계가 셸 스크립트에 있음)은 맞음. CRD가 그 해법이므로 round.py에 임시 보완책을 덧대지 않음.
