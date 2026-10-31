@@ -511,12 +511,12 @@ def coverage_defaults(cell, node, plans, profiles):
     return spec, "request:" + source["metadata"]["name"]
 
 
-def coverage_batches(model, path):
+def coverage_batches(model, path, policy):
     execution = next(p for p in model["spec"]["executionPaths"] if p["name"] == path)
     artifact = next(a for a in model["spec"]["artifacts"] if a["name"] == execution["artifact"])
     declared = artifact.get("derivation", {}).get("declaredBatchSizes", [])
-    batches = sorted(declared) if declared else list(range(
-        1, execution["runtime"]["settings"]["firstfloor"]["maxBatchSize"] + 1))
+    maximum = execution["runtime"]["settings"]["firstfloor"]["maxBatchSize"]
+    batches = sorted(declared) if declared else sorted(b for b in policy["undeclaredBatchSizes"] if b <= maximum)
     if not batches or any(type(b) is not int or b < 1 for b in batches) or len(set(batches)) != len(batches):
         raise ValueError("invalid artifact batch set")
     return batches, bool(declared), artifact["name"]
@@ -583,6 +583,7 @@ def coverage_seconds(cell, batches, timings, policy):
             if (override["model"] == model and override["deviceClass"] == device and
                     override.get("batch", batch) == batch):
                 n = override["n"]
+        n = max(policy["minimumSamples"], n)
         required = max(budget["minSeconds"], n * source["secondsPerCall"] / policy["sessions"])
         sizing.append({"batch": batch, "n": n, "secondsPerCall": source["secondsPerCall"],
                        "timingSource": source, "fallbackDevice": not bool(local),
@@ -641,7 +642,7 @@ def generate_coverage(output, policy_path, preflight=False):
         spec.setdefault("cpuQuota", spec["state"]["cpuRequest"])
         spec["state"]["candidate"].update(modelSpec=model, deviceClass=device,
                                          executionPath=cell["executionPath"], powerMode=cell["powerMode"])
-        batches, declared, artifact = coverage_batches(models[model], cell["executionPath"])
+        batches, declared, artifact = coverage_batches(models[model], cell["executionPath"], policy)
         spec.pop("batchSizes", None)
         if not declared:
             spec["batchSizes"] = batches
@@ -679,11 +680,17 @@ def generate_coverage(output, policy_path, preflight=False):
     summary = {"targetCellCount": len(targets), "manifestCellCount": len(rows),
                "cellsByModel": dict(Counter(r["model"] for r in rows)), "noNodeCellCount": len(no_node),
                "unknownSupportCount": len(unknown), "cappedCellCount": sum(r["capped"] for r in rows),
+               "sampleMeaning": policy["sampleMeaning"],
                "estimateMeaning": "active sum + 20s/run planning overhead (active and shared idle runs); excludes idle windows, settling, warmup/load variation and feeder polling",
                "lanes": {node: {"cellCount": len(lane),
                                   "activeSeconds": sum(r["activeSeconds"] for r, _ in lane),
                                   "runCount": sum(r["runCount"] for r, _ in lane),
-                                  "estimatedSeconds": sum(r["estimatedSeconds"] for r, _ in lane)}
+                                  "estimatedSeconds": sum(r["estimatedSeconds"] for r, _ in lane),
+                                  "models": {model: {
+                                      "cellCount": sum(r["model"] == model for r, _ in lane),
+                                      "estimatedSeconds": sum(r["estimatedSeconds"] for r, _ in lane
+                                                              if r["model"] == model)}
+                                      for model in policy["models"]}}
                          for node, lane in sorted(lanes.items())}}
     write_json(output / "unknown-support.json", unknown)
     write_json(output / "no-node.json", no_node)
@@ -762,9 +769,11 @@ def coverage_self_check():
     catalog = {"spec": {"executionPaths": [{"name": "path", "artifact": "artifact", "runtime": {
         "settings": {"firstfloor": {"maxBatchSize": 4}}}}],
         "artifacts": [{"name": "artifact", "derivation": {"declaredBatchSizes": [4, 1, 2]}}]}}
-    assert coverage_batches(catalog, "path") == ([1, 2, 4], True, "artifact")
+    assert coverage_batches(catalog, "path", policy) == ([1, 2, 4], True, "artifact")
     catalog["spec"]["artifacts"][0].pop("derivation")
-    assert coverage_batches(catalog, "path") == ([1, 2, 3, 4], False, "artifact")
+    assert coverage_batches(catalog, "path", policy) == ([1, 2, 4], False, "artifact")
+    catalog["spec"]["executionPaths"][0]["runtime"]["settings"]["firstfloor"]["maxBatchSize"] = 3
+    assert coverage_batches(catalog, "path", policy) == ([1, 2], False, "artifact")
     timings = [{"model": model, "deviceClass": device, "batch": batch, "secondsPerCall": seconds,
                 "source": device} for device, batch, seconds in [("device", 1, .1), ("device", 4, .4),
                                                                 ("slow", 16, 10)]]
@@ -772,6 +781,13 @@ def coverage_self_check():
     assert seconds == 600 and capped and sizing[-1]["fallbackDevice"]
     assert sizing[1]["secondsPerCall"] == .4 and sizing[-1]["secondsPerCall"] == 10
     assert coverage_seconds(cell, [1], timings[:1], policy)[0] == 42
+    floor_policy = copy.deepcopy(policy)
+    floor_policy["models"][model]["n"] = 1
+    assert coverage_seconds(cell, [1], timings[:1], floor_policy)[2][0]["n"] == 100
+    orin = copy.deepcopy(cell)
+    orin["deviceClass"]["name"] = "jetson-agx-orin-64g"
+    sizing = coverage_seconds(orin, [1, 2], timings, policy)[2]
+    assert [r["n"] for r in sizing] == [200, 3700]
     facts = {"condition": {"logicalModel": model, "deviceClass": "device"}, "request": {"name": "source"},
              "batches": [{"batch": 1, "completedCalls": 100, "quality": [
                  {"workloadMode": "saturated-serial-fixed-batch", "windowSeconds": 10},

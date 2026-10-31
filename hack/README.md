@@ -464,7 +464,12 @@ Protocol inheritance follows the dashboard's exact request → exact profile →
 latest successful same-model → same-path order, without transferring another
 Node's CPU allocation or affinity. Catalog contracts resolve preprocessor/data.
 Three independent sessions, one warmup iteration, all declared artifact batches
-(omit `spec.batchSizes`), or every runtime batch size when undeclared are used.
+(omit `spec.batchSizes`), or the configured powers-of-two planner batch set
+bounded by runtime maximum when undeclared are used.
+Initial n uses median requirements: MNV 200, PLC 700, Smol 100, with a floor of
+100 and condition-specific outlier overrides only (Orin MNV batch 2, RTX/Rasp
+PLC batch 1, RTX Smol batch 2). The retained report states:
+“n은 중앙 필요량이며 셀별 정밀도는 측정 후 기록”.
 Per-session active time is `ceil(max(minSeconds, n * secondsPerCall / 3))`,
 subject to the configured ceiling; capped plans explicitly do not promise n.
 `secondsPerCall` is retained active-window time divided by completed physical
