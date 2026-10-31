@@ -259,3 +259,10 @@
 - 7m Smol D1 FAIL: Pod 삭제 후 재배치 동안 들어온 5건 지연(성공 36 < 기준 39).
 - 결정: 결함 2(readiness 기반 점진 투입, maxUnavailable 0) → 결함 1(장치별 이용률 상한, 대기 시간 반영) 순서로 진행. S4는 후순위이며 게이트로만 판정.
 - 12:40Z control-274: server 61987770(S3+S3b+State 수정) 배포, restart 0.
+
+## 2026-10-31 — 디스크 정리(사용자 지시 "안 쓰는 옛날 것 과감히 삭제")
+
+- 원인: 라운드마다 디스크가 줄어든 주범은 BuildKit 캐시였음(chill-builder 96GB 등). fast-deploy가 빌드할 때마다 쌓이고 정리되지 않음. 증거 디렉터리는 원인이 아니었음.
+- 삭제: (1) 문서·hack·rounds·점수판·리플레이 입력 어디에서도 참조하지 않는 옛 증거 77개 디렉터리, 68GB(목록 `O/deployB/deleted-evidence-20261031.txt`). (2) chill-builder 캐시 79GB(20GB만 유지). 다른 builder는 7일 넘은 캐시 약 44GB 삭제. (3) 등록이 끊긴 firstfloor-experiment buildkit 컨테이너와 볼륨 20GB.
+- 결과: 가용 292GB → 491GB.
+- 유지: 참조되는 증거, O/harness/e5-*, -7·8d·223 행과 tag 10~12 행, registry 볼륨(97GB, runtime 7 digest 보호), 다른 프로젝트의 태그된 docker 이미지(약 200GB).
