@@ -89,6 +89,8 @@ func (r *Runtime) job(ctx context.Context, owner client.Object, run *api.Evaluat
 	pod := corev1.PodSpec{ServiceAccountName: sa, AutomountServiceAccountToken: &token, RestartPolicy: corev1.RestartPolicyNever, Containers: []corev1.Container{{Name: "evaluation", Image: run.Spec.Harness.Image, Command: []string{"python3", "/opt/e5/hack/e5/evaluation.py"}, Args: []string{step, "--run", "/work/campaign/run", "--spec", "/spec"}, Env: env, VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: "/work"}, {Name: "spec", MountPath: "/spec", ReadOnly: true}, {Name: "ca", MountPath: "/etc/chill/ca", ReadOnly: true}}}}, Volumes: []corev1.Volume{{Name: "work", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: run.Status.Workspace.Name}}}, {Name: "spec", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: cmName}}}}, {Name: "ca", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: v["caSecret"], Items: []corev1.KeyToPath{{Key: "tls.crt", Path: "tls.crt"}}}}}}}
 	// The harness image runs as 65532; kubelet applies this group to RWX/Secret volumes.
 	pod.SecurityContext = &corev1.PodSecurityContext{FSGroup: ptr(int64(65532))}
+	pod.Volumes = append(pod.Volumes, corev1.Volume{Name: "private", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory}}})
+	pod.Containers[0].VolumeMounts = append(pod.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "private", MountPath: "/private"})
 	if step == api.EvaluationStepStage {
 		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: "producer-ssh", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: v["producerSSHSecret"], DefaultMode: ptr(int32(0400))}}})
 		pod.Containers[0].VolumeMounts = append(pod.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "producer-ssh", MountPath: "/secrets/producer", ReadOnly: true})
@@ -151,6 +153,9 @@ func sameJob(a, b *batchv1.Job) bool {
 			return false
 		}
 		if w.PersistentVolumeClaim != nil && !equality.Semantic.DeepEqual(v.PersistentVolumeClaim, w.PersistentVolumeClaim) {
+			return false
+		}
+		if w.EmptyDir != nil && !equality.Semantic.DeepEqual(v.EmptyDir, w.EmptyDir) {
 			return false
 		}
 		if w.ConfigMap != nil && (v.ConfigMap == nil || v.ConfigMap.Name != w.ConfigMap.Name || !equality.Semantic.DeepEqual(v.ConfigMap.Items, w.ConfigMap.Items)) {

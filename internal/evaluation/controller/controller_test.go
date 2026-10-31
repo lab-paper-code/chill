@@ -290,6 +290,13 @@ func TestRunStageStoredResultWorkflow(t *testing.T) {
 		if job.Spec.Template.Spec.SecurityContext == nil || job.Spec.Template.Spec.SecurityContext.FSGroup == nil || *job.Spec.Template.Spec.SecurityContext.FSGroup != 65532 {
 			t.Fatal("non-root harness requires workspace FSGroup 65532")
 		}
+		podSpec := job.Spec.Template.Spec
+		if len(podSpec.Volumes) < 4 || podSpec.Volumes[3].EmptyDir == nil || podSpec.Volumes[3].EmptyDir.Medium != corev1.StorageMediumMemory {
+			t.Fatal("private credentials require memory emptyDir separate from evidence staging")
+		}
+		if podSpec.Containers[0].VolumeMounts[3].MountPath != "/private" {
+			t.Fatal("private credential volume must mount at /private")
+		}
 		step := job.Labels[api.EvaluationLabelStep]
 		stageID := job.Labels[api.EvaluationLabelStage]
 		result := map[string]any{"schemaVersion": "evaluation-step.v1alpha1", "runUID": parent.UID, "step": step, "execution": map[string]string{"status": complete}, "startedAt": fixtureTime, "finishedAt": fixtureTime}
