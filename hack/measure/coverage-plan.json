@@ -5,6 +5,12 @@
   "sampleMeaning": "n은 중앙 필요량이며 셀별 정밀도는 측정 후 기록",
   "minimumSamples": 100,
   "undeclaredBatchSizes": [1, 2, 4, 8, 16, 32],
+  "sloInfeasible": {
+    "model": "smolvlm2-500m-video-instruct",
+    "workload": "smolvlm2-vqa",
+    "infeasibleCalls": 10,
+    "meaning": "Same-model/device/path measured batch-1 time >= applied workload SLO: estimated kappa=0; confirm only batch 1, bypass precision n/minSeconds floors, retain three sessions and the configured maxSeconds ceiling."
+  },
   "sessions": 3,
   "warmupIterations": 1,
   "runOverheadSeconds": 20,

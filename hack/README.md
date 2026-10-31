@@ -475,6 +475,18 @@ subject to the configured ceiling; capped plans explicitly do not promise n.
 `secondsPerCall` is retained active-window time divided by completed physical
 calls, conservatively taking the slowest same-model/device measurement at that
 or a larger batch, or the slowest other device when none exists.
+The configured Smol SLO rule reads the applied `smolvlm2-vqa` workload's target
+latency, retaining its UID/generation and source definition. Only a measured
+batch-1 timing from the same model, device class **and execution path** may
+mark `sloInfeasibleByEstimate: true` when its time is at least the SLO. Another
+device, path, or larger batch cannot establish this estimate. Such cells use
+only batch 1 and `infeasibleCalls` (default 10), with
+`ceil(max(1, infeasibleCalls * secondsPerCall / 3))` active seconds per session,
+bypassing precision floors but retaining three sessions and the upper ceiling.
+The estimated κ=0 is a planning classification to confirm, not a measured
+result. Feeder manifest cell records carry the boolean marker; BEOs retain it
+as the string annotation `chill.dacs.io/sloInfeasibleByEstimate`. An incompatible
+artifact-declared batch set is rejected rather than sending an invalid subset.
 Estimates sum active windows and the configured 20-second overhead per active
 or shared-idle run; idle/settling windows and variable load/warmup/polling time
 are **not** included. MNV/PLC run before Smol, with power modes grouped within

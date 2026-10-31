@@ -561,11 +561,25 @@ def coverage_timings(results):
             if calls > 0 and active and math.isfinite(seconds) and seconds > 0:
                 timings.append({"model": condition["logicalModel"], "deviceClass": condition["deviceClass"],
                                 "batch": batch["batch"], "secondsPerCall": seconds / calls,
+                                "executionPath": condition["artifact"]["executionPath"],
                                 "source": facts["request"]["name"]})
     return timings
 
 
-def coverage_seconds(cell, batches, timings, policy):
+def coverage_infeasible(cell, timings, policy, slo_seconds):
+    rule = policy["sloInfeasible"]
+    if cell["model"]["name"] != rule["model"]:
+        return None
+    # Only exact batch-1 measurements can establish this estimate. In
+    # particular, slow CPU/larger-batch/fallback-device timings cannot condemn a GPU path.
+    exact = [r for r in timings if r["model"] == rule["model"] and
+             r["deviceClass"] == cell["deviceClass"]["name"] and r["batch"] == 1 and
+             r["executionPath"] == cell["executionPath"]]
+    source = max(exact, key=lambda r: r["secondsPerCall"]) if exact else None
+    return source if source and source["secondsPerCall"] >= slo_seconds else None
+
+
+def coverage_seconds(cell, batches, timings, policy, infeasible=None):
     model, device = cell["model"]["name"], cell["deviceClass"]["name"]
     budget = policy["models"][model]
     model_rows = [r for r in timings if r["model"] == model]
@@ -574,17 +588,23 @@ def coverage_seconds(cell, batches, timings, policy):
         # An unmeasured intermediate batch uses a measured larger batch, never a
         # faster smaller one. Missing device/batch evidence uses the slowest device.
         local = [r for r in model_rows if r["deviceClass"] == device and r["batch"] >= batch]
+        if infeasible:
+            local = [infeasible]
         rows = local or [r for r in model_rows if r["batch"] >= batch]
         if not rows:
             raise ValueError(f"no conservative measured timing for {cell['id']} batch {batch}")
         source = max(rows, key=lambda r: r["secondsPerCall"])
-        n = budget["n"]
-        for override in policy["sampleOverrides"]:
-            if (override["model"] == model and override["deviceClass"] == device and
-                    override.get("batch", batch) == batch):
-                n = override["n"]
-        n = max(policy["minimumSamples"], n)
-        required = max(budget["minSeconds"], n * source["secondsPerCall"] / policy["sessions"])
+        if infeasible:
+            n = policy["sloInfeasible"]["infeasibleCalls"]
+            required = max(1, n * source["secondsPerCall"] / policy["sessions"])
+        else:
+            n = budget["n"]
+            for override in policy["sampleOverrides"]:
+                if (override["model"] == model and override["deviceClass"] == device and
+                        override.get("batch", batch) == batch):
+                    n = override["n"]
+            n = max(policy["minimumSamples"], n)
+            required = max(budget["minSeconds"], n * source["secondsPerCall"] / policy["sessions"])
         sizing.append({"batch": batch, "n": n, "secondsPerCall": source["secondsPerCall"],
                        "timingSource": source, "fallbackDevice": not bool(local),
                        "requiredSeconds": math.ceil(required)})
@@ -601,6 +621,8 @@ def generate_coverage(output, policy_path, preflight=False):
         if (any(type(budget[k]) is not int or budget[k] < 1 for k in ("n", "minSeconds", "maxSeconds")) or
                 budget["maxSeconds"] < budget["minSeconds"]):
             raise ValueError("invalid sample/window budget")
+    if type(policy["sloInfeasible"]["infeasibleCalls"]) is not int or policy["sloInfeasible"]["infeasibleCalls"] < 1:
+        raise ValueError("infeasibleCalls must be a positive integer")
     namespace = "/api/v1/namespaces/" + NS
     inputs = {}
     for name, path in (
@@ -608,10 +630,15 @@ def generate_coverage(output, policy_path, preflight=False):
             ("plans", namespace + "/batch-energy-optimizations"),
             ("profiles", "/api/v1/scheduler/profiles"), ("inventory", "/api/v1/inventory"),
             ("models", "/api/v1/models"), ("preprocessors", "/api/v1/preprocessors"),
-            ("datasets", "/api/v1/datasets")):
+            ("datasets", "/api/v1/datasets"),
+            ("slo-workload", "/api/v1/workloads/" + policy["sloInfeasible"]["workload"])):
         inputs[name] = coverage_api(path)
         write_json(output / "inputs" / (name + ".json"), inputs[name])
     write_json(output / "coverage-plan.json", policy)
+    workload = inputs["slo-workload"]["appliedDefinition"]
+    slo_seconds = workload["slo"]["targetLatencyNanos"] / 1e9
+    if workload["model"]["name"] != policy["sloInfeasible"]["model"] or not math.isfinite(slo_seconds) or slo_seconds <= 0:
+        raise ValueError("applied SLO workload/model is invalid")
     targets, unknown = coverage_targets(inputs["coverage"], policy)
     results = []
     for profile in inputs["profiles"]["profiles"]:
@@ -625,7 +652,7 @@ def generate_coverage(output, policy_path, preflight=False):
     models = {m["metadata"]["name"]: m for m in inputs["models"]["items"]}
     lanes, rows, no_node = defaultdict(list), [], []
     plan_hash = hashlib.sha256(json.dumps(
-        [policy, inputs["coverage"]["snapshotId"]], sort_keys=True).encode()).hexdigest()[:12]
+        [policy, inputs["coverage"]["snapshotId"], slo_seconds], sort_keys=True).encode()).hexdigest()[:12]
     for cell in targets:
         model, device = cell["model"]["name"], cell["deviceClass"]["name"]
         eligible = sorted(n["name"] for n in classes[device]["nodes"] if
@@ -643,11 +670,16 @@ def generate_coverage(output, policy_path, preflight=False):
         spec["state"]["candidate"].update(modelSpec=model, deviceClass=device,
                                          executionPath=cell["executionPath"], powerMode=cell["powerMode"])
         batches, declared, artifact = coverage_batches(models[model], cell["executionPath"], policy)
+        infeasible = coverage_infeasible(cell, timings, policy, slo_seconds)
+        if infeasible:
+            if declared and batches != [1]:
+                raise ValueError("batch-1 confirmation conflicts with artifact-declared batch set: " + cell["id"])
+            batches = [1]
         spec.pop("batchSizes", None)
         if not declared:
             spec["batchSizes"] = batches
         coverage_inputs(spec, model, artifact, inputs["preprocessors"]["items"], inputs["datasets"]["items"])
-        seconds, capped, sizing = coverage_seconds(cell, batches, timings, policy)
+        seconds, capped, sizing = coverage_seconds(cell, batches, timings, policy, infeasible)
         active = spec["activeProtocol"]
         padding = max(0, active["metricObservation"]["durationSeconds"] - active["durationSeconds"])
         active.update(durationSeconds=seconds, warmupIterations=policy["warmupIterations"])
@@ -656,12 +688,17 @@ def generate_coverage(output, policy_path, preflight=False):
         name = "coverage-" + plan_hash + "-" + hashlib.sha256(cell["id"].encode()).hexdigest()[:12]
         doc = {"apiVersion": "edge.dacs.io/v1alpha1", "kind": "BatchEnergyOptimization",
                "metadata": {"name": name, "namespace": NS}, "spec": spec}
+        if infeasible:
+            doc["metadata"]["annotations"] = {"chill.dacs.io/sloInfeasibleByEstimate": "true"}
         priority = policy["models"][model]["priority"]
         row = {"cellId": cell["id"], "name": name, "model": model, "node": node, "priority": priority,
                "powerMode": cell["powerMode"], "inheritedProtocol": inherited, "batches": batches,
                "activeSecondsPerSession": seconds, "capped": capped, "sizing": sizing,
                "activeSeconds": seconds * len(batches) * policy["sessions"],
                "runCount": (len(batches) + 1) * policy["sessions"]}
+        row["sloInfeasibleByEstimate"] = bool(infeasible)
+        if infeasible:
+            row["sloEstimate"] = {"estimatedKappa": 0, "sloSeconds": slo_seconds, "batch1Timing": infeasible}
         row["estimatedSeconds"] = row["activeSeconds"] + row["runCount"] * policy["runOverheadSeconds"]
         rows.append(row)
         lanes[node].append((row, doc))
@@ -677,10 +714,16 @@ def generate_coverage(output, policy_path, preflight=False):
                 write_docs(path, [d for _, d in ordered])
                 paths.append(str(path))
         sequence.append({"stage": stage, "priority": priority, "paths": paths})
+    infeasible_seconds = [r["sloEstimate"]["batch1Timing"]["secondsPerCall"]
+                          for r in rows if r["sloInfeasibleByEstimate"]]
     summary = {"targetCellCount": len(targets), "manifestCellCount": len(rows),
                "cellsByModel": dict(Counter(r["model"] for r in rows)), "noNodeCellCount": len(no_node),
                "unknownSupportCount": len(unknown), "cappedCellCount": sum(r["capped"] for r in rows),
                "sampleMeaning": policy["sampleMeaning"],
+               "sloInfeasibleCellCount": len(infeasible_seconds),
+               "sloInfeasibleBatch1SecondsRange": [min(infeasible_seconds), max(infeasible_seconds)] if infeasible_seconds else None,
+               "sloSource": {"workload": workload["name"], "uid": workload["uid"],
+                             "generation": workload["generation"], "targetSeconds": slo_seconds},
                "estimateMeaning": "active sum + 20s/run planning overhead (active and shared idle runs); excludes idle windows, settling, warmup/load variation and feeder polling",
                "lanes": {node: {"cellCount": len(lane),
                                   "activeSeconds": sum(r["activeSeconds"] for r, _ in lane),
@@ -695,7 +738,9 @@ def generate_coverage(output, policy_path, preflight=False):
     write_json(output / "unknown-support.json", unknown)
     write_json(output / "no-node.json", no_node)
     write_json(output / "cells.json", rows)
-    write_json(output / "resume-plan.json", {"schemaVersion": "coverage-feeder-plan.v1", "sequence": sequence})
+    write_json(output / "resume-plan.json", {
+        "schemaVersion": "coverage-feeder-plan.v1", "sequence": sequence,
+        "cells": [{"name": r["name"], "sloInfeasibleByEstimate": r["sloInfeasibleByEstimate"]} for r in rows]})
     if preflight:
         # Audited read-only: readapi/handler.go -> kube preflight query (client.Reader)
         # -> cmd/console/run.go projector.Project; projected transitions are discarded.
@@ -788,12 +833,24 @@ def coverage_self_check():
     orin["deviceClass"]["name"] = "jetson-agx-orin-64g"
     sizing = coverage_seconds(orin, [1, 2], timings, policy)[2]
     assert [r["n"] for r in sizing] == [200, 3700]
-    facts = {"condition": {"logicalModel": model, "deviceClass": "device"}, "request": {"name": "source"},
+    facts = {"condition": {"logicalModel": model, "deviceClass": "device", "artifact": {"executionPath": "path"}},
+             "request": {"name": "source"},
              "batches": [{"batch": 1, "completedCalls": 100, "quality": [
                  {"workloadMode": "saturated-serial-fixed-batch", "windowSeconds": 10},
                  {"workloadMode": "idle-model-loaded", "windowSeconds": 500}]}]}
     assert coverage_timings([{"measurementFacts": facts}])[0]["secondsPerCall"] == .1
     assert coverage_timings([{"measurementFacts": None}]) == []
+    smol = copy.deepcopy(cell)
+    smol["model"]["name"] = policy["sloInfeasible"]["model"]
+    b1 = {"model": smol["model"]["name"], "deviceClass": "device", "executionPath": "path",
+          "batch": 1, "secondsPerCall": 7.034, "source": "exact-b1"}
+    assert coverage_infeasible(smol, [b1], policy, 7.034) == b1
+    assert coverage_infeasible(smol, [b1], policy, 7.035) is None
+    for field, value in (("deviceClass", "fallback"), ("executionPath", "other"), ("batch", 2)):
+        assert coverage_infeasible(smol, [dict(b1, **{field: value})], policy, 7) is None
+    assert coverage_infeasible(cell, [b1], policy, 7) is None
+    seconds, capped, sizing = coverage_seconds(smol, [1], [b1], policy, b1)
+    assert seconds == math.ceil(10 * 7.034 / 3) == 24 and not capped and sizing[0]["n"] == 10
     print("coverage selection, inheritance, batch contracts, timing fallback and caps checked")
 
 
