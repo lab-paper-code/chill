@@ -103,6 +103,7 @@ func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
 				}
 				return
 			}
+			requireReconciledObservation(t, c)
 			if second == nil || second.action.Status != nativeOperationComplete {
 				t.Fatalf("frozen chain did not advance: %+v", second)
 			}
@@ -117,5 +118,12 @@ func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
 				t.Fatal("duplicate completion relaunched an action")
 			}
 		})
+	}
+}
+
+func requireReconciledObservation(t *testing.T, c *SchedulerController) {
+	t.Helper()
+	if !c.replacementObservedAt.Equal(c.State().Snapshot.At) {
+		t.Fatal("completion did not publish the reconciled observation")
 	}
 }

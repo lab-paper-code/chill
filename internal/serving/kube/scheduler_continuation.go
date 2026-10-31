@@ -2,12 +2,9 @@ package kube
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/lab-paper-code/chill/internal/serving"
 )
 
 // Completions coalesces action outcomes; receiving is not proof of success.
@@ -24,25 +21,10 @@ func (c *SchedulerController) Continue(ctx context.Context, now time.Time) error
 	c.mu.Lock()
 	config := c.config
 	c.mu.Unlock()
-	snapshot, err := c.capture(ctx, now, config)
+	snapshot, err := c.captureReconciled(ctx, now, config, true)
 	if err != nil {
 		return err
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if reasons := serving.SchedulerContinuationReasons(config.Settings, snapshot); len(reasons) != 0 {
-		return fmt.Errorf("continuation observation unavailable: %s", strings.Join(reasons, ", "))
-	}
-	snapshot, lost := c.reconcileSnapshot(snapshot, snapshot.At, config.Settings.ObservationWindow)
-	for _, result := range lost {
-		if config.OnAction != nil {
-			if err := config.OnAction(result); err != nil {
-				return fmt.Errorf("record lost action effect: %w", err)
-			}
-		}
-	}
-	c.annotateHistory(&snapshot, config.Settings.ObservationWindow)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := ctx.Err(); err != nil {

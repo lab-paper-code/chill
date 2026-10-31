@@ -279,22 +279,10 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	config := c.config
 	c.mu.Unlock()
 	started := time.Now()
-	snapshot, err := c.capture(ctx, now, config)
+	snapshot, err := c.captureReconciled(ctx, now, config, false)
 	if err != nil {
 		return serving.SchedulerDecision{}, err
 	}
-	if err := ctx.Err(); err != nil {
-		return serving.SchedulerDecision{}, err
-	}
-	snapshot, lost := c.reconcileSnapshot(snapshot, snapshot.At, config.Settings.ObservationWindow)
-	for _, result := range lost {
-		if config.OnAction != nil {
-			if err := config.OnAction(result); err != nil {
-				return serving.SchedulerDecision{}, fmt.Errorf("record lost action effect: %w", err)
-			}
-		}
-	}
-	c.annotateHistory(&snapshot, config.Settings.ObservationWindow)
 	if len(snapshot.Instances) == 0 && len(snapshot.Reservations) == 0 && len(config.Settings.AutonomousWorkloads) > 0 {
 		if c.bootstrapStartedAt.IsZero() {
 			c.bootstrapStartedAt = snapshot.At
@@ -341,6 +329,32 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 		c.launch(keep, config)
 	}
 	return decision, nil
+}
+
+// captureReconciled keeps Tick and completion observation effects in one order.
+func (c *SchedulerController) captureReconciled(ctx context.Context, now time.Time, config SchedulerControllerConfig, continuation bool) (serving.SchedulerSnapshot, error) {
+	snapshot, err := c.capture(ctx, now, config)
+	if err != nil {
+		return snapshot, err
+	}
+	if err := ctx.Err(); err != nil {
+		return snapshot, err
+	}
+	if continuation {
+		if reasons := serving.SchedulerContinuationReasons(config.Settings, snapshot); len(reasons) != 0 {
+			return snapshot, fmt.Errorf("continuation observation unavailable: %s", strings.Join(reasons, ", "))
+		}
+	}
+	snapshot, lost := c.reconcileSnapshot(snapshot, snapshot.At, config.Settings.ObservationWindow)
+	for _, result := range lost {
+		if config.OnAction != nil {
+			if err := config.OnAction(result); err != nil {
+				return snapshot, fmt.Errorf("record lost action effect: %w", err)
+			}
+		}
+	}
+	c.annotateHistory(&snapshot, config.Settings.ObservationWindow)
+	return snapshot, nil
 }
 
 // annotateHistory sets each captured instance's UnroutedSince and HeldUntil
