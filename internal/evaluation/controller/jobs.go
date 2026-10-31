@@ -31,6 +31,9 @@ func validateConfig(v map[string]string) error {
 		if err != nil || n <= 0 || n > 86400*30 {
 			return fmt.Errorf("config %s must be positive bounded seconds", key)
 		}
+		if key == "jobActiveDeadlineSeconds" && n+60 < 600 {
+			return fmt.Errorf("jobActiveDeadlineSeconds must be at least 540 for a projected token lifetime of at least 600 seconds")
+		}
 	}
 	return nil
 }
@@ -86,11 +89,19 @@ func (r *Runtime) job(ctx context.Context, owner client.Object, run *api.Evaluat
 	for _, item := range []struct{ name, key string }{{"AWS_ACCESS_KEY_ID", "access-key"}, {"AWS_SECRET_ACCESS_KEY", "secret-key"}} {
 		env = append(env, corev1.EnvVar{Name: item.name, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: v["evidenceCredentialsSecret"]}, Key: item.key}}})
 	}
-	pod := corev1.PodSpec{ServiceAccountName: sa, AutomountServiceAccountToken: &token, RestartPolicy: corev1.RestartPolicyNever, Containers: []corev1.Container{{Name: "evaluation", Image: run.Spec.Harness.Image, Command: []string{"python3", "/opt/e5/hack/e5/evaluation.py"}, Args: []string{step, "--run", "/work/campaign/run", "--spec", "/spec"}, Env: env, VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: "/work"}, {Name: "spec", MountPath: "/spec", ReadOnly: true}, {Name: "ca", MountPath: "/etc/chill/ca", ReadOnly: true}}}}, Volumes: []corev1.Volume{{Name: "work", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: run.Status.Workspace.Name}}}, {Name: "spec", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: cmName}}}}, {Name: "ca", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: v["caSecret"], Items: []corev1.KeyToPath{{Key: "tls.crt", Path: "tls.crt"}}}}}}}
+	pod := corev1.PodSpec{ServiceAccountName: sa, AutomountServiceAccountToken: ptr(false), RestartPolicy: corev1.RestartPolicyNever, Containers: []corev1.Container{{Name: "evaluation", Image: run.Spec.Harness.Image, Command: []string{"python3", "/opt/e5/hack/e5/evaluation.py"}, Args: []string{step, "--run", "/work/campaign/run", "--spec", "/spec"}, Env: env, VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: "/work"}, {Name: "spec", MountPath: "/spec", ReadOnly: true}, {Name: "ca", MountPath: "/etc/chill/ca", ReadOnly: true}}}}, Volumes: []corev1.Volume{{Name: "work", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: run.Status.Workspace.Name}}}, {Name: "spec", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: cmName}}}}, {Name: "ca", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: v["caSecret"], Items: []corev1.KeyToPath{{Key: "tls.crt", Path: "tls.crt"}}}}}}}
 	// The harness image runs as 65532; kubelet applies this group to RWX/Secret volumes.
 	pod.SecurityContext = &corev1.PodSecurityContext{FSGroup: ptr(int64(65532))}
 	pod.Volumes = append(pod.Volumes, corev1.Volume{Name: "private", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory}}})
 	pod.Containers[0].VolumeMounts = append(pod.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "private", MountPath: "/private"})
+	if token {
+		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: "api-access", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{DefaultMode: ptr(int32(0644)), Sources: []corev1.VolumeProjection{
+			{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Path: "token", ExpirationSeconds: ptr(deadline + 60)}},
+			{ConfigMap: &corev1.ConfigMapProjection{LocalObjectReference: corev1.LocalObjectReference{Name: "kube-root-ca.crt"}, Items: []corev1.KeyToPath{{Key: "ca.crt", Path: "ca.crt"}}}},
+			{DownwardAPI: &corev1.DownwardAPIProjection{Items: []corev1.DownwardAPIVolumeFile{{Path: "namespace", FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "metadata.namespace"}}}}},
+		}}}})
+		pod.Containers[0].VolumeMounts = append(pod.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "api-access", MountPath: "/var/run/secrets/kubernetes.io/serviceaccount", ReadOnly: true})
+	}
 	if step == api.EvaluationStepStage {
 		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: "producer-ssh", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: v["producerSSHSecret"], DefaultMode: ptr(int32(0400))}}})
 		pod.Containers[0].VolumeMounts = append(pod.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "producer-ssh", MountPath: "/secrets/producer", ReadOnly: true})
@@ -144,11 +155,15 @@ func sameJob(a, b *batchv1.Job) bool {
 	if c.Image != d.Image || !equality.Semantic.DeepEqual(c.Command, d.Command) || !equality.Semantic.DeepEqual(c.Args, d.Args) || !equality.Semantic.DeepEqual(c.Env, d.Env) || !equality.Semantic.DeepEqual(c.VolumeMounts, d.VolumeMounts) {
 		return false
 	}
-	if len(x.Volumes) != len(y.Volumes) {
+	return sameVolumes(x.Volumes, y.Volumes)
+}
+
+func sameVolumes(x, y []corev1.Volume) bool {
+	if len(x) != len(y) {
 		return false
 	}
-	for i, v := range x.Volumes {
-		w := y.Volumes[i]
+	for i, v := range x {
+		w := y[i]
 		if v.Name != w.Name {
 			return false
 		}
@@ -156,6 +171,9 @@ func sameJob(a, b *batchv1.Job) bool {
 			return false
 		}
 		if w.EmptyDir != nil && !equality.Semantic.DeepEqual(v.EmptyDir, w.EmptyDir) {
+			return false
+		}
+		if w.Projected != nil && !equality.Semantic.DeepEqual(v.Projected, w.Projected) {
 			return false
 		}
 		if w.ConfigMap != nil && (v.ConfigMap == nil || v.ConfigMap.Name != w.ConfigMap.Name || !equality.Semantic.DeepEqual(v.ConfigMap.Items, w.ConfigMap.Items)) {

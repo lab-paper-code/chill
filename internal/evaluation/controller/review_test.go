@@ -235,3 +235,74 @@ func TestReviewLargeSnapshotStaysAReference(t *testing.T) {
 		t.Fatalf("input must be an immutable reference: %+v", cm)
 	}
 }
+
+func TestProjectedServiceAccountTokenBudget(t *testing.T) {
+	for _, step := range []string{api.EvaluationStepPrepare, api.EvaluationStepPublish} {
+		t.Run(step, func(t *testing.T) {
+			parent := fixtureRun("token")
+			startRun(parent)
+			r, _ := fixtureRuntime(t, parent)
+			job, err := r.job(context.Background(), parent, parent, nil, step, &api.EvaluationProcedure{Step: step})
+			if err != nil {
+				t.Fatal(err)
+			}
+			pod := job.Spec.Template.Spec
+			if pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken {
+				t.Fatal("implicit service account token must be disabled")
+			}
+			var projected *corev1.ProjectedVolumeSource
+			for _, volume := range pod.Volumes {
+				if volume.Name == "api-access" {
+					projected = volume.Projected
+				}
+			}
+			if step == api.EvaluationStepPublish {
+				if projected != nil {
+					t.Fatal("publication needs no Kubernetes token")
+				}
+				return
+			}
+			if projected == nil || len(projected.Sources) != 3 {
+				t.Fatal("missing token, CA and namespace projections")
+			}
+			token := projected.Sources[0].ServiceAccountToken
+			if token == nil || token.ExpirationSeconds == nil || *token.ExpirationSeconds != *job.Spec.ActiveDeadlineSeconds+60 || token.Path != "token" || token.Audience != "" {
+				t.Fatalf("incorrect bounded default-audience token: %+v", token)
+			}
+			assertInClusterFiles(t, projected)
+			mounted := false
+			for _, mount := range pod.Containers[0].VolumeMounts {
+				if mount.Name == "api-access" && mount.MountPath == "/var/run/secrets/kubernetes.io/serviceaccount" && mount.ReadOnly {
+					mounted = true
+				}
+			}
+			if !mounted {
+				t.Fatal("token rotation must use the standard projected mount")
+			}
+			token.ExpirationSeconds = ptr(*token.ExpirationSeconds + 1)
+			if err := r.Client.Update(context.Background(), job); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.job(context.Background(), parent, parent, nil, step, &api.EvaluationProcedure{Step: step}); err == nil {
+				t.Fatal("adopted Job must retain its frozen token budget")
+			}
+		})
+	}
+	config := fixtureConfig().Data
+	config["jobActiveDeadlineSeconds"] = "539"
+	if err := validateConfig(config); err == nil {
+		t.Fatal("projected token expiration below Kubernetes minimum must be rejected before freezing")
+	}
+}
+
+func assertInClusterFiles(t *testing.T, projected *corev1.ProjectedVolumeSource) {
+	t.Helper()
+	ca := projected.Sources[1].ConfigMap
+	if ca == nil || ca.Name != "kube-root-ca.crt" || ca.Items[0].Key != "ca.crt" || ca.Items[0].Path != "ca.crt" {
+		t.Fatal("missing in-cluster CA projection")
+	}
+	namespace := projected.Sources[2].DownwardAPI
+	if namespace == nil || namespace.Items[0].Path != "namespace" || namespace.Items[0].FieldRef.FieldPath != "metadata.namespace" {
+		t.Fatal("missing namespace projection")
+	}
+}
