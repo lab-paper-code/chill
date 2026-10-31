@@ -100,7 +100,8 @@ func TestExperimentSummaryReadPreservesPublishedEvidenceAndSorts(t *testing.T) {
 	store.add(t, experimentFixture("older", from.Add(-time.Hour)))
 	store.add(t, experimentFixture("z", from))
 	withDefinition := experimentFixture("a", from)
-	withDefinition.Definition = json.RawMessage(`{"question":"compare","stages":[{"id":"baseline"}],"future":{"opaque":true}}`)
+	withDefinition.Definition = json.RawMessage(
+		`{"question":"compare","stages":[{"id":"baseline"}],"future":{"opaque":true}}`)
 	store.add(t, withDefinition)
 	store.objects = append(store.objects,
 		evidencestore.ObjectIdentity{Store: "evidence", Key: httpapi.ExperimentPrefix + "unfinished/phase.json", Size: 1},
