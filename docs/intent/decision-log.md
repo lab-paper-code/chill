@@ -195,3 +195,9 @@
 - 차단 1건(타 세션): `internal/serving/kube/measurement_projection.go:74 projectOperationStep` gocyclo 31 — 다른 세션이 커밋한 코드로 clean `make lint` 실패. Main은 수정 안 함(소유권). 다른 세션 수정 후 S1 배포·미니 행 측정.
 - live: server b0877c1e(control-270), 잔류 예약 0.
 - 09:09Z control-271: server·dashboard = `288153fd`(조언 세션 p90·커버리지 변경 fd8bde4c + S1 + lint 분리 `288153fd`). 게이트: 리플레이 PASS(기준 b0877c1e, new bad tick 0), clean lint/test/arch/helm PASS, 리뷰 2종 PASS. 09:09Z~09:39Z 클러스터 무변경(조언 세션 재설문). S2 패널 3인 완료(범위 축소 권고: dependenciesComplete 증거·범위 결정 단일화만, readySubset 본문 유지).
+
+## 2026-10-31 — S2 진행
+
+- `245a88b5` S2: dependenciesComplete 소비 범위를 `handoffScope` 한 곳에서 결정하고, 증거 판정을 3갈래로 나눔. 엄격화: 완료되지 않은 dependency run은 별도 ACK로 소비 불가(fail-before 확인). 리뷰 2종 PASS, 패널 2인 "목표 충족·회귀 없음". 패널 1 축소안 적용 예정(순증 +10 → 순감).
+- 미해결 관찰(S2 회귀 아님, 추후 판단) [추정]: subset ACK 뒤 prepare 결과 전에 tick이 하나 더 있으면 run==nil 경로의 stop이 frozen bridge 자신의 prepare 의존을 보지 않고 출발할 수 있음. target_scope.go:173 부모 범위는 S3에서 다룸.
+- 09:40Z round-11(S1, 288153fd) 측정 창. 디스크 guard: control-213/214/216 대형 json을 gzip으로 무손실 압축 → 335GB.
