@@ -346,3 +346,8 @@
 
 - 조언 세션이 오케스트레이터로서 Experiment CRD와 독립 reconciler(기존 측정 컨트롤러 cmd/profiler 안, ChillServer와 분리)의 spec→SRS→설계/ADR 문서를 진행 중. 범위는 문서만이고 경로 한정 커밋. 이 세션의 round.py, rounds/*.json, binding, A/B runner를 참조 입력으로 씀.
 - 이 세션의 조정: (1) docs/spec, SRS, ADR, 새 실험 설계 문서는 건드리지 않음. 내 문서 변경은 docs/intent/decision-log.md, docs/plans/, 스케줄러 설계 문단(analytic-planner, scheduler-implementation)으로 한정. (2) round.py와 rounds 설정 형식은 그쪽이 참조하는 동안 불필요하게 바꾸지 않음. 필요한 변경은 decision-log에 기록. (3) 재현성 지적(설정이 git 밖, 입력 경로 흩어짐, 실험 설계가 셸 스크립트에 있음)은 맞음. CRD가 그 해법이므로 round.py에 임시 보완책을 덧대지 않음.
+
+## 2026-10-31 — 결함 4 실행 결정(Main 자율): (a) 즉시, (b)는 코드만 커밋하고 재프로파일링 계획 보류
+
+- (b) runtime 변경의 실제 비용(PlanReprofile): runtime digest가 profile 식별자·d·declaration에 고정돼 있어, 점수판 후보 공간을 유지하려면 124개 조합 / 259개 batch점(858 Job)과 d 36개 조건, 비용·κ 전량을 재측정해야 함. 노드 병렬·d 직렬 기준 **15~65시간**, 병렬 불가면 40~121시간. 과거 기준선(10~19회차)과 같은 조건 비교도 성립하지 않음.
+- 결정: (a) 서버 κsafe=min(κ, κ_b1)를 먼저 구현·측정. (b) 정책 코드(maximum_throughput)와 테스트는 커밋하되 runtime 이미지 재빌드·배포·재프로파일링은 하지 않음. (b)를 배포하려면 위 캠페인을 별도로 승인받아야 함. 주의: (b) 커밋 후 서버 replay(κ 계산)도 같은 ChooseBatch를 쓰므로, 서버를 재배포하면 서버 replay와 기존 runtime 사이에 불일치가 생김. (b) 커밋은 배포 전에 되돌리거나 보류 브랜치로 둬야 함 → 아래에서 처리.
