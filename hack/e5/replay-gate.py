@@ -75,14 +75,14 @@ def build(source, cache):
         for name, data in tool.items():
             (target / name).write_bytes(data)
         available = any('func SchedulerReductionCommit(' in p.read_text() for p in (src / 'internal/serving').glob('*.go') if not p.name.endswith('_test.go'))
-        if not available:
-            # Historical sources predating the guard must not import today's
-            # implementation. Report its absence explicitly, never as a rejection.
+        if available:
+            # The committed shim assumes no guard; a source that defines the
+            # production guard gets the real binding so rejections are its own.
             (target / 'guard_api.go').write_text('''package main
 import "github.com/lab-paper-code/chill/internal/serving"
-const guardAvailable = false
-func reductionWorkloads(serving.SchedulerSettings, serving.SchedulerSnapshot, []serving.CapacityRow, serving.SchedulerCandidate) []string { return nil }
-func reductionCommit(serving.SchedulerSettings, serving.SchedulerSnapshot, []serving.CapacityRow, serving.SchedulerCandidate, []string) string { return "GuardNotPresentInSource" }
+const guardAvailable = true
+func reductionWorkloads(s serving.SchedulerSettings, snap serving.SchedulerSnapshot, rows []serving.CapacityRow, target serving.SchedulerCandidate) []string { return serving.SchedulerReductionWorkloads(s, snap, rows, target) }
+func reductionCommit(s serving.SchedulerSettings, snap serving.SchedulerSnapshot, rows []serving.CapacityRow, target serving.SchedulerCandidate, uids []string) string { return serving.SchedulerReductionCommit(s, snap, rows, target, uids) }
 ''')
         env = dict(os.environ, GOFLAGS='-buildvcs=false', GOMAXPROCS='2')
         with (work / 'build.log').open('w') as log:
