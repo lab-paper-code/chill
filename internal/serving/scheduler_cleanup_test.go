@@ -75,7 +75,7 @@ func TestCleanupReservationAllowsOnlyReadyRouteRebalancing(t *testing.T) {
 	// The documented high-backlog distribution is the unchanged κ allocator,
 	// not a special cleanup weighting rule.
 	items := []capacityItem{{id: ids[0], kappa: kappas[0]}, {id: ids[1], kappa: kappas[1]}, {id: ids[2], kappa: kappas[2]}}
-	weights, _, _ := capacityWeights(96.03333333333335, 20, items)
+	weights, _, _ := capacityWeights(96.03333333333335, items)
 	if !slices.Equal(weights, []int32{97, 252, 651}) {
 		t.Fatalf("recorded high-backlog route changed: %v", weights)
 	}

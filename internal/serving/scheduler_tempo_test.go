@@ -159,6 +159,7 @@ func TestSchedulerTempoAllowsSpareSupplyAboveWindowMaximum(t *testing.T) {
 
 func TestSchedulerTempoBlocksIdleRemovalAndEmptyPower(t *testing.T) {
 	s, snap, rows, _, _ := capacityR5Fixture()
+	s.Controls.Routing = false // Keep idle destinations unrouted while testing the cleanup gate.
 	s.ScaleDownStabilization = time.Minute
 	snap.ScaleDown = map[string]SchedulerDownState{"w1": {}}
 	since := snap.At.Add(-time.Minute)

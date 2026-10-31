@@ -1240,12 +1240,8 @@ func SchedulerReadyExpansion(settings SchedulerSettings, snapshot SchedulerSnaps
 	if !j.satisfied || knew < kret {
 		return nil, false
 	}
-	drain := 0.0
-	if j.backlog > 0 {
-		drain = j.backlog / w.slack
-	}
 	slices.SortFunc(items, func(a, b capacityItem) int { return cmp.Or(cmp.Compare(a.e, b.e), cmp.Compare(a.id, b.id)) })
-	weights, _, ok := capacityWeights(w.rate, drain, items)
+	weights, _, ok := capacityWeights(w.rate, items)
 	if !ok {
 		return nil, false
 	}
@@ -1280,35 +1276,26 @@ func capacityFixedWeights(rate float64, items []capacityItem) ([]int32, []float6
 	return weights, y, ok
 }
 
-// capacityWeights fills rate plus the backlog drain rate onto items (sorted by
-// e) up to each κ and rounds the shares to integers summing to
-// schedulerRouteUnits by largest remainder. y is the fill of rate alone, for
-// request energy. A weight whose share of rate exceeds its κ moves one unit at
-// a time to the item with the most room; ok is false when no item has room.
-// At zero load the weights are equal; past the κ sum they follow κ.
-func capacityWeights(rate, drain float64, items []capacityItem) ([]int32, []float64, bool) {
+// capacityWeights rounds κ-proportional shares to integers summing to
+// schedulerRouteUnits by largest remainder, independent of request or backlog
+// demand. Only a zero κ sum uses equal shares. y follows the final integer
+// weights for request energy. A weight whose share of rate exceeds its κ moves
+// one unit at a time to the item with the most room; ok is false when none has room.
+func capacityWeights(rate float64, items []capacityItem) ([]int32, []float64, bool) {
 	n := len(items)
 	if n == 0 {
 		return nil, nil, true
 	}
-	fill := rate + drain
 	y, shares := make([]float64, n), make([]float64, n)
-	total, left, routed := 0.0, rate, fill
-	for k, item := range items {
-		y[k] = min(left, item.kappa)
-		left -= y[k]
-		shares[k] = min(routed, item.kappa)
-		routed -= shares[k]
+	total := 0.0
+	for _, item := range items {
 		total += item.kappa
 	}
-	for k := range items {
-		switch {
-		case fill == 0 || total == 0:
+	for k, item := range items {
+		if total == 0 {
 			shares[k] = 1 / float64(n)
-		case total < fill:
-			shares[k] = items[k].kappa / total
-		default:
-			shares[k] /= fill
+		} else {
+			shares[k] = item.kappa / total
 		}
 	}
 	weights := make([]int32, n)
@@ -1325,6 +1312,9 @@ func capacityWeights(rate, drain float64, items []capacityItem) ([]int32, []floa
 	for k := 0; sum < schedulerRouteUnits; k = (k + 1) % n {
 		weights[order[k]]++
 		sum++
+	}
+	for k, weight := range weights {
+		y[k] = rate * float64(weight) / schedulerRouteUnits
 	}
 	if rate == 0 || total < rate {
 		return weights, y, true // the κ sum already decides the final judgment
@@ -1355,6 +1345,8 @@ func capacityWeights(rate, drain float64, items []capacityItem) ([]int32, []floa
 		}
 		weights[over]--
 		weights[to]++
+		y[over] = rate * float64(weights[over]) / schedulerRouteUnits
+		y[to] = rate * float64(weights[to]) / schedulerRouteUnits
 	}
 	return weights, y, false
 }
@@ -1397,7 +1389,7 @@ type capacityResult struct {
 // evaluate judges the plan set (one plan index per Node) at route r and sums
 // its compared Node energy and request energy: [0, r] by the retained
 // instances up to κ_ret at their current weights, the overflow
-// max(0, λ − κ_ret)·r and [r, T] by the target fill y.
+// max(0, λ − κ_ret)·r and [r, T] by the target integer-weight load y.
 func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 	bridge, bridgeReason := p.bridgeSchedule(choice)
 	if bridge != nil {
@@ -1419,7 +1411,6 @@ func (p *capacityPlanner) evaluateAtRoute(choice []int, r float64, bridge *sched
 	res := capacityResult{choice: choice, route: r, keep: true, bridge: bridge}
 	keys := make([]string, len(choice))
 	items, retained := make([][]capacityItem, len(p.ws)), make([][]capacityItem, len(p.ws))
-	present := make([]bool, len(p.ws))
 	for n, j := range choice {
 		plan := p.plans[n][j]
 		res.keep = res.keep && plan.keep
@@ -1430,17 +1421,15 @@ func (p *capacityPlanner) evaluateAtRoute(choice []int, r float64, bridge *sched
 		for w := range p.ws {
 			items[w] = append(items[w], plan.items[w]...)
 			retained[w] = append(retained[w], plan.retained[w]...)
-			present[w] = present[w] || len(plan.items[w]) > 0
 		}
 	}
 	res.feasible, res.final, res.worst = true, true, math.Inf(-1)
 	res.excesses = make([]float64, len(p.ws))
 	for w, ws := range p.ws {
 		slices.SortFunc(items[w], func(a, b capacityItem) int { return cmp.Or(cmp.Compare(a.e, b.e), cmp.Compare(a.id, b.id)) })
-		knew, kret, weightSum := 0.0, 0.0, 0.0
+		kret, weightSum := 0.0, 0.0
 		rows := []string{}
 		for _, item := range items[w] {
-			knew += item.kappa
 			rows = append(rows, item.row)
 		}
 		for _, item := range retained[w] {
@@ -1448,26 +1437,15 @@ func (p *capacityPlanner) evaluateAtRoute(choice []int, r float64, bridge *sched
 			weightSum += float64(item.weight)
 		}
 		demand, slow, recovery, protectedRate := p.admissionDemand(ws, choice, kret)
-		j := capacityJudge(demand, knew, kret, present[w], r)
-		// The route also drains B within L − m.
-		drain := 0.0
-		if j.backlog > 0 && ws.slack > 0 {
-			drain = j.backlog / ws.slack
-		}
 		var weights []int32
 		var y []float64
 		var ok bool
-		greedy := false
-		switch current, carries := p.currentWeights(ws.d.UID, items[w], protectedRate+drain); {
-		case !p.settings.Controls.Routing:
+		if !p.settings.Controls.Routing {
 			weights, y, ok = capacityFixedWeights(protectedRate, items[w])
-		case carries:
-			weights, y, ok = capacityFixedWeights(protectedRate, current)
-		default:
-			weights, y, ok = capacityWeights(protectedRate, drain, items[w])
-			greedy = true
+		} else {
+			weights, y, ok = capacityWeights(protectedRate, items[w])
 		}
-		capacityEnergyLoad(y, greedy, ws.rate, protectedRate)
+		capacityEnergyLoad(y, ws.rate, protectedRate)
 		units := 0.0
 		for _, weight := range weights {
 			units += float64(weight)
@@ -1475,7 +1453,7 @@ func (p *capacityPlanner) evaluateAtRoute(choice []int, r float64, bridge *sched
 		routes := p.weightRoutes(&res, items[w], weights)
 		knew, marginOK := capacityPositiveSupply(items[w], weights, protectedRate, demand.rate)
 		ok = ok && marginOK
-		j = capacityJudge(demand, knew, kret, len(routes) > 0, r)
+		j := capacityJudge(demand, knew, kret, len(routes) > 0, r)
 		worst := j.worst()
 		if !ok {
 			// A weight past its κ fails the final judgment by that excess.
@@ -1548,34 +1526,6 @@ func (p *capacityPlanner) weightRoutes(res *capacityResult, items []capacityItem
 		res.unroutes = res.unroutes || p.partial && schedulerInstanceRouted(p.keep.Routing, item.id)
 	}
 	return routes
-}
-
-// currentWeights returns items carrying the Workload's current route weights
-// (a new instance 0). carries reports that every routed instance is among
-// items, the weights use the 1,000 scale and each share of fill (λ plus the
-// backlog drain) stays within its κ; the weights then stay as they are.
-func (p *capacityPlanner) currentWeights(uid string, items []capacityItem, fill float64) ([]capacityItem, bool) {
-	routes := p.keep.Routing[uid]
-	current := slices.Clone(items)
-	total, routed := int32(0), 0
-	for k := range current {
-		current[k].weight = max(0, routes[current[k].id])
-		total += current[k].weight
-		if current[k].weight > 0 {
-			routed++
-		}
-	}
-	positive := 0
-	for _, weight := range routes {
-		if weight > 0 {
-			positive++
-		}
-	}
-	if total != schedulerRouteUnits || routed != positive {
-		return nil, false
-	}
-	_, _, carries := capacityFixedWeights(fill, current)
-	return current, carries
 }
 
 // better orders feasible plan sets first; among the rest final-feasible first,

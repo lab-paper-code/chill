@@ -436,8 +436,8 @@ func TestCapacityNeverPreparesAnUnroutedInstance(t *testing.T) {
 			t.Fatalf("prepared %s at weight 0: routing %v", a.Instance, got.Target.Routing)
 		}
 	}
-	if got.Status != schedulerStatusKeep {
-		t.Fatalf("keep carries the load: %s %v", got.Status, got.Reasons)
+	if got.Status != schedulerStatusFeasible {
+		t.Fatalf("κ-proportional routing must be feasible: %s %v", got.Status, got.Reasons)
 	}
 }
 
@@ -1159,22 +1159,67 @@ func TestCapacityRouteWeightsStayWithinKappa(t *testing.T) {
 		within bool
 	}{
 		{100, []float64{99.6, 0.4}, []int32{996, 4}, true},
-		{100, []float64{34, 34, 34}, []int32{340, 340, 320}, true},
-		{0, []float64{1, 2, 3}, []int32{334, 333, 333}, true},
-		{100, []float64{100, 50}, []int32{1000, 0}, true},
+		{100, []float64{34, 34, 34}, []int32{334, 333, 333}, true},
+		{0, []float64{1, 2, 3}, []int32{167, 333, 500}, true},
+		{100, []float64{100, 50}, []int32{667, 333}, true},
 		// Rounding gives 334 to the first, 33.4 req/s over 33.35, and no other has room.
 		{100, []float64{33.35, 33.35, 33.3}, nil, false},
+		// Rounding gives the first 1 unit (0.1 req/s > κ); move it to the second.
+		{100, []float64{0.06, 100}, []int32{0, 1000}, true},
+		{10, []float64{20}, []int32{1000}, true},
+		{0, []float64{0, 10, 0}, []int32{0, 1000, 0}, true},
+		{10, []float64{0, 10, 0}, []int32{0, 1000, 0}, true},
+		{0, []float64{0, 0, 0}, []int32{334, 333, 333}, true},
 	} {
-		weights, _, ok := capacityWeights(c.rate, 0, items(c.kappa...))
+		weights, y, ok := capacityWeights(c.rate, items(c.kappa...))
 		sum := int32(0)
 		for k, w := range weights {
 			sum += w
+			if want := c.rate * float64(w) / schedulerRouteUnits; y[k] != want {
+				t.Fatalf("%v: request load %g, want %g", c, y[k], want)
+			}
 			if ok && c.rate*float64(w)/schedulerRouteUnits > c.kappa[k]*(1+1e-12) {
 				t.Fatalf("%v: weight %d exceeds κ", c, w)
 			}
 		}
 		if ok != c.within || sum != schedulerRouteUnits || c.want != nil && !slices.Equal(weights, c.want) {
 			t.Fatalf("rate %g κ %v: weights %v ok %v", c.rate, c.kappa, weights, ok)
+		}
+	}
+}
+
+// full-E5-3m-12: all destinations share the same κ-normalized utilization.
+func TestCapacityRouteWeights3m12(t *testing.T) {
+	items := []capacityItem{
+		{id: "nano", kappa: 10.191, e: 1},
+		{id: "rasp5", kappa: 26.498, e: 2},
+		{id: "jetsonx", kappa: 15.976, e: 3},
+		{id: "orangepi", kappa: 36.859, e: 4},
+	}
+	for _, rate := range []float64{73.8, 0, 100} {
+		weights, y, ok := capacityWeights(rate, items)
+		if !ok || !slices.Equal(weights, []int32{114, 296, 178, 412}) {
+			t.Fatalf("3m-12 at λ %g: κ-proportional weights %v ok=%t", rate, weights, ok)
+		}
+		for k, weight := range weights {
+			if want := rate * float64(weight) / schedulerRouteUnits; y[k] != want {
+				t.Fatalf("%s request load %g, want integer-weight load %g", items[k].id, y[k], want)
+			}
+		}
+	}
+}
+
+func TestCapacityEnergyLoadScalesProtectionProportionally(t *testing.T) {
+	for _, demand := range []float64{73.8, 100, 200} {
+		weights, y, ok := capacityWeights(demand, []capacityItem{{kappa: 100}, {kappa: 200}})
+		if !ok || !slices.Equal(weights, []int32{333, 667}) {
+			t.Fatalf("protection changed proportional route: %v ok=%t", weights, ok)
+		}
+		capacityEnergyLoad(y, 73.8, demand)
+		for k, weight := range weights {
+			if want := 73.8 * float64(weight) / schedulerRouteUnits; math.Abs(y[k]-want) > 1e-12 {
+				t.Fatalf("demand %g: request load %g, want %g", demand, y[k], want)
+			}
 		}
 	}
 }
@@ -1209,9 +1254,8 @@ func TestCapacityQueuedBacklogFailsKeep(t *testing.T) {
 }
 
 // m4 r2: λ 12.8 lagged a 40 req/s load with 160 queued and no instance left
-// (κ_ret 0). Filling λ alone gave the cheapest new instance (rasp5 q2) all
-// 1,000 units; λ plus the backlog drain B/(L − m) exceeds the four new
-// instances' κ sum, so the weights follow κ and every instance takes load.
+// (κ_ret 0). κ-proportional weights use every new instance, independently of
+// backlog; queued requests affect the SLO judgment, not request energy.
 func TestCapacityOverloadWeightsDrainTheBacklog(t *testing.T) {
 	kappa := []float64{42.01676682274319, 48.2933028258133, 114.5538148895834, 144.47154833104395}
 	p := &capacityPlanner{ctx: context.Background(), period: 147, settings: capacityTestSettings}
@@ -1234,11 +1278,11 @@ func TestCapacityOverloadWeightsDrainTheBacklog(t *testing.T) {
 	if !maps.Equal(res.weights[0], want) || res.weightsExceeded {
 		t.Fatalf("weights %v, want κ-proportional %v", res.weights[0], want)
 	}
-	// Without backlog the λ fill stays on the cheapest instance.
+	// Removing backlog changes neither the proportional route nor request joules.
+	withBacklog := res.joules
 	p.ws[0].queued = 0
-	p.ws[0].rate = 0.5
-	if res = p.evaluate(choice, 0); !maps.Equal(res.weights[0], map[string]int32{"i0": 1000}) {
-		t.Fatalf("no backlog: %v", res.weights[0])
+	if res = p.evaluate(choice, 15.926122415); !maps.Equal(res.weights[0], want) || res.joules != withBacklog {
+		t.Fatalf("backlog changed route or request energy: %v, %g vs %g J", res.weights[0], res.joules, withBacklog)
 	}
 }
 
@@ -1347,8 +1391,8 @@ func TestCapacityRequestEnergySplitsAtRoute(t *testing.T) {
 	res := p.evaluate(choice, 10)
 	node := p.plans[1][choice[1]].energy(10, p.period)
 	// [0,10]: 100 req/s on i1 (e 1) = 1,000 J; overflow 50 × 10 at the target mean
-	// e 250/150; [10,60]: 100 on i1 + 50 on add (e 3) = 250 W × 50 s.
-	want := 1000 + 500*250.0/150 + 250*50
+	// e 2; [10,60]: κ-proportional weights 500/500 send 75 req/s to each = 300 W.
+	want := 1000.0 + 500*2 + 300*50
 	if p.period != 60 || math.Abs(res.joules-node-want) > 1e-6 {
 		t.Fatalf("request energy %g, want %g (T %g)", res.joules-node, want, p.period)
 	}
@@ -1659,12 +1703,10 @@ func TestCapacityUnroutedTwinKeepsCurrent(t *testing.T) {
 	}
 }
 
-// m4 r4 D-R4-1: at 40 req/s the weights switched almost every Tick between the
-// backlog drain shape (genesis3 takes load) and the energy shape (rasp5 q1 at
-// exactly its κ 25.3), 181 route actions in 75 min. Current weights now stay
-// while each instance's share of λ plus the backlog drain is within its κ, so
-// the r4 queue sequence changes the weights once.
-func TestCapacityFeasibleWeightsStay(t *testing.T) {
+// m4 r4 D-R4-1: backlog and energy-greedy weights alternated 181 times in
+// 75 min. κ-proportional weights replace the old route once and then stay
+// independent of λ and backlog throughout the observed queue sequence.
+func TestCapacityProportionalWeightsIgnoreDemandAndBacklog(t *testing.T) {
 	ids := []string{"q1", "lut", "g3", "opi"}
 	kappa := []float64{25.288198615188904, 25.68831509322024, 70.93509923703007, 7.53273799179367}
 	p := &capacityPlanner{ctx: context.Background(), period: 152, settings: capacityTestSettings}
@@ -1686,12 +1728,14 @@ func TestCapacityFeasibleWeightsStay(t *testing.T) {
 		if !res.feasible {
 			t.Fatalf("λ %g q %d infeasible: %+v", tick.rate, tick.queued, res.judgments[0])
 		}
+		if want := map[string]int32{"q1": 195, "lut": 199, "g3": 548, "opi": 58}; !maps.Equal(res.weights[0], want) {
+			t.Fatalf("λ %g q %d: weights %v, want %v", tick.rate, tick.queued, res.weights[0], want)
+		}
 		if !maps.Equal(res.weights[0], p.keep.Routing["w"]) {
 			changes++
 			p.keep.Routing["w"] = res.weights[0]
 		}
 	}
-	// Only the backlog of 52 moves load off rasp5 q1 (0.643 × 40.1 > κ 25.3).
 	if changes != 1 || p.keep.Routing["w"]["g3"] == 0 {
 		t.Fatalf("%d weight changes, last %v", changes, p.keep.Routing["w"])
 	}
@@ -1727,6 +1771,9 @@ func capacityR5Fixture() (SchedulerSettings, SchedulerSnapshot, []CapacityRow, N
 // Unrouted for one observation window, they are removed; not before.
 func TestCapacityIdleInstancesAreRemovedAfterOneWindow(t *testing.T) {
 	s, snap, rows, genesis3, orangepi := capacityR5Fixture()
+	// Routing-on now assigns these destinations positive κ shares. Leave routing
+	// fixed here to exercise cleanup of instances that genuinely remain unrouted.
+	s.Controls.Routing = false
 	since := snap.At.Add(-30 * time.Second)
 	for k := 1; k < 3; k++ {
 		snap.Instances[k].UnroutedSince = &since
@@ -1817,8 +1864,8 @@ func TestCapacityHeldInstanceIsNotRemoved(t *testing.T) {
 
 // A replacement repays its transition over T at the least load of the
 // observation window. n2's instance a (e 2) can be replaced by b (e 1) for a
-// 1,000 J chain: at a steady 30 req/s the saving (≈30 W over 60 s) repays it,
-// with the same mean but one 10 s interval at 5 req/s it does not.
+// 500 J chain: at a steady 30 req/s its κ share saves ≈10 W over 60 s,
+// with the same mean but one 10 s interval at 5 req/s it does not repay.
 func TestCapacityReplacementRepaysAtLeastLoad(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge = time.Minute, 10*time.Second, time.Minute, time.Hour
@@ -1838,7 +1885,7 @@ func TestCapacityReplacementRepaysAtLeastLoad(t *testing.T) {
 	snap.Options = append(snap.Options, poolsOption(a), poolsOption(b))
 	snap.Routing = map[string]map[string]int32{"w1": {"i1": 400, "a": 600}}
 	prepare := poolsCost(schedulerActionPrepare, n2, "unloaded", schedulerState(b), "fixed")
-	prepare.Trials = []OperationTrial{{Duration: time.Second, Joules: 1000}}
+	prepare.Trials = []OperationTrial{{Duration: time.Second, Joules: 500}}
 	snap.Costs = []OperationCost{poolsCost(schedulerActionRemove, n2, schedulerState(a), "unloaded", "fixed"), prepare}
 	rows := capacityRowsForTest(s, snap, capacityKappaByProfile(map[string]float64{"profile": 100, a.Profile.ID: 50, b.Profile.ID: 50}))
 	load := func(rates ...float64) {

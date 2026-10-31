@@ -105,7 +105,7 @@ func TestTempoHeadroomSettingsBoundsSCH55(t *testing.T) {
 func TestTempoHeadroomPositiveWeightsAndIdleSCH55(t *testing.T) {
 	p := tempoAdmissionFixture(10, 10, 100, 20)
 	p.settings.ScaleDownHeadroomFraction = 1
-	p.plans[0][1].items[0] = append(p.plans[0][1].items[0], capacityItem{id: "zero", kappa: 1000, e: 2})
+	p.plans[0][1].items[0] = append(p.plans[0][1].items[0], capacityItem{id: "zero", kappa: .001, e: 2})
 	result := p.evaluate([]int{1}, 0)
 	if !p.admits(&result) || result.weights[0]["zero"] != 0 || result.sums[0][0] != 20 {
 		t.Fatalf("zero weight counted as supply: %+v", result)

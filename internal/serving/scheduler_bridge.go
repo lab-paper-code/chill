@@ -308,7 +308,7 @@ func (b *schedulerBridgeCompiler) handoff(w capacityWorkload) bool {
 		b.p.settings.TransitionReserveFraction > 0 && (before < demand.rate*(1+b.p.settings.TransitionReserveFraction) || kappa < demand.rate*(1+b.p.settings.TransitionReserveFraction)) {
 		return false
 	}
-	weights, _, ok := capacityWeights(demand.rate, backlog/demand.slack, items)
+	weights, _, ok := capacityWeights(demand.rate, items)
 	if !ok {
 		return false
 	}

@@ -6,18 +6,12 @@ const schedulerWindowCapacityInsufficient = "ScaleDownWindowCapacityInsufficient
 const schedulerTempoFast = "fast"
 
 // capacityEnergyLoad keeps protection demand out of actual request joules.
-func capacityEnergyLoad(load []float64, greedy bool, actual, demand float64) {
+func capacityEnergyLoad(load []float64, actual, demand float64) {
 	if demand <= actual {
 		return
 	}
-	left := actual
 	for k := range load {
-		if greedy {
-			load[k] = min(load[k], left)
-			left -= load[k]
-		} else {
-			load[k] *= actual / demand
-		}
+		load[k] *= actual / demand
 	}
 }
 
