@@ -120,3 +120,15 @@
 - 사이클 6 패널 판정(`local judge-verdict-cycle6`): A EmptyRoute(`ebf7c0bb`,`3f79378d`,`81f1d3df`,`6efea38b`,`4d0377bc`: 무Ready UID 생략·scope 교집합·양수→empty 전이 거절·explicit unroute), B RecoveryDAG(`dc287bd0`,`8ebe8f33`: Terminated 항목 growing 보호 제외·완료 신호로 frozen DAG 전진, 탐색 없음). gate PASS(HEAD 79438382).
 - 7회차: 서버 79438382 + h=.25(첫 유효 적용) E5-3/5/6/7.
 - 7회차 준비 중 발견·수정: (1) κ replay "hang"은 제품 회귀 아님 — κ argv에서 `-workloads/-margin` 누락(기본 all 워크로드) → 장시간 replay; #236 argv로 교정. (2) 다른 세션의 profiles API 변경(decorateProfiles가 `preparations` 삭제 + 기본 25행 paging)이 하네스 복원 계약(SCH-67)을 깨 E5-3 STOP → `d4a933bf`: 기본 응답은 전체 catalog(limit/offset 시에만 paging), `preparations` 유지, raw 표본(measurementFacts/durationNanos)만 생략. 교훈: 공유 API는 계약 테스트가 소비자(하네스) 쪽에 있어야 함 — e5 self-check에 profiles 응답 키 검증 추가 후보.
+
+## 2026-10-31 — 7회차(서버 d4a933bf = 사이클 1~6 전부, h=.25 **첫 유효 적용**) 결과
+
+| 행 | 지표 | 3회차 → 7회차 |
+|---|---|---|
+| E5-3 | MNV 실패 / p95 | 13,563 → **1,345** / 1,655 → **256ms**; D1 2/3 → **3/3**; 전력 220,082 → 213,905J(−6.2kJ) |
+| E5-5 | MNV 실패 / p95 | 1,059 → 5,264 / 226 → 364ms; Smol p95 14,093 → **3,629ms**(D1 충족); PLC 실패 0→7; D1 2/3; 전력 141,732 → 138,004J |
+| E5-7 | Smol 실패 / p95 | 114 → **1** / 1,256 → 2,638ms; MNV p95 94→184ms; D1 2/3 → **3/3**; 전력 +7.4kJ |
+| E5-6 | — | 복원 전 예약 잔류(7)로 STOP, 미측정 |
+
+- 잔류 예약: E5-3 뒤 1개, E5-7 뒤 7개 — 사이클 7 대상(원형 `control-258-20261031/reservation-leftover-*`).
+- 남은 갭: E5-5 MNV(재급증 회복, 5,264), E5-7 MNV p95 상승(jetsonx CPU queue), 예약 잔류, E5-7 전력 증가.
