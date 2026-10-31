@@ -266,3 +266,12 @@
 - 삭제: (1) 문서·hack·rounds·점수판·리플레이 입력 어디에서도 참조하지 않는 옛 증거 77개 디렉터리, 68GB(목록 `O/deployB/deleted-evidence-20261031.txt`). (2) chill-builder 캐시 79GB(20GB만 유지). 다른 builder는 7일 넘은 캐시 약 44GB 삭제. (3) 등록이 끊긴 firstfloor-experiment buildkit 컨테이너와 볼륨 20GB.
 - 결과: 가용 292GB → 491GB.
 - 유지: 참조되는 증거, O/harness/e5-*, -7·8d·223 행과 tag 10~12 행, registry 볼륨(97GB, runtime 7 digest 보호), 다른 프로젝트의 태그된 docker 이미지(약 200GB).
+
+## 2026-10-31 — 가려운 곳 3건 조사 결과
+
+- κ 보정(`local://kappa-calib.md`): CPU의 계획κ/포화 실행률 0.87/0.99/0.99로 κ는 대체로 맞음. CUDA는 과부하·배치 붕괴 상태에서 1.21/1.32배 낙관이며, 상태에 따라 달라서 고정 보정계수로 쓰면 안 됨.
+- 진짜 결함: `capacityWeights`가 에너지 순으로 각 장치를 κ(p95≤1s 무릎)까지 채움 → 싼 장치가 ρ≈1에 고정되고 빠른 orangepi는 실측 용량의 57%만 받음. 부하가 오르면 재계획 전에 느린 장치가 무너짐. 무실패 실측 ρ 상한은 약 0.88~0.94.
+- 결함 2(점진 투입) 패널(`agent://PanelPa`): 브리프의 κ 비례 투입은 orangepi를 무릎까지 밀어 위험함. 같은 노드·같은 UID 치환으로 범위를 좁혀야 함. 근본은 위의 weight 채움 규칙.
+- 탐색 예산(`local://search-budget.md`): 실험 decision의 62%가 wall-clock BudgetCut이고, 인위적으로 멈추면 결정이 바뀌는 것을 확인(비결정성). 다만 11/12 분기는 30초 무절단 탐색에서도 유지되므로 그 분기의 원인은 아님. 후순위로 평가 수 기준 예산 검토.
+- 디스크: BuildKit 자체 GC로 chill-builder 캐시를 20GB로 제한(`bd7dc822`). 가용 509GB.
+- 다음: capacityWeights를 항상 κ 비례(동일 ρ)로 바꾸고 에너지 순 채움은 삭제하는 방향으로 패널 검토 중.
