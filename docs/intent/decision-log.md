@@ -223,3 +223,9 @@
   (2) admission이 route-only NotReady 계획을 막아 readySubset 회복이 늦어질 위험. 비어 있지 않은 route는 무조건 admission하고, retirement에만 dependenciesReady를 요구.
   (3) 문서 2곳 상충.
   잔존 [추정]: 재시작이나 GC로 완료 ACK가 사라지면 prepare→생략 bridge→stop 부모가 영구 running이 될 수 있음. S3 이전부터 있던 문제로, S4 이후 판단.
+
+## 2026-10-31 — round-12 결과·STOP 7 반복 정지
+
+- round-12(S2+S2b, d1f4b460): **(F, J) = (10,235, 153,684 J)**. round-11(6,099)과 기준(7,782)보다 악화. E5-3m MNV 8,162, E5-5m 2,064, PLC 6. E5-7m Smol D1 FAIL은 그대로. 측정 재시도 0. E5-7m 판정 직후 디스크 guard에 걸려 STOP했고, 비입력 judgment를 gzip으로 무손실 압축(320GB 확보)한 뒤 guard 이후 단계만 재개함.
+- STOP 7(최종 상태)이 같은 원인으로 2회째: 확인 시점에 round 자신의 `manual-reset:*` 예약이 아직 남아 있었고, 직후 live는 예약 0. 멈춤 규칙에 따라 운영을 정지함. 사용자 결정에 따라 서버 쪽 원인부터 조사(ResetRelease).
+- S2/S2b 악화 원인 조사 착수(Regress12). 판정이 나오기 전에는 S3/S3b(`702604c7`, `645f7226`, 합계 순삭제 66줄) 배포를 보류.
