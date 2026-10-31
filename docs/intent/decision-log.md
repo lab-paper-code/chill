@@ -420,3 +420,9 @@
 - 사용자 결정: "최신화 + 배포, 레거시는 없어야 한다." → runtime 7종과 observer 2종을 현재 main(배치 정책 수정 병합 `0cd84ce2` 포함)으로 재빌드하고, 차트의 실행 선언과 이미지 참조를 새 digest로 교체(옛 digest 제거). 커버리지 측정은 새 runtime 기준으로 채움. 기존 profile과 E5 기준선은 옛 runtime 기준이 됨.
 - 배치 정책 수정 `56ef4f7b` 리뷰 2종 PASS 후 main 병합(`0cd84ce2`), firstfloor·serving 테스트 PASS.
 - 측정 기준 단순화(사용자): 모든 셀에 같은 고정 창(60초)과 전체 batch를 쓰고, 창 안에서 호출이 2회 미만인 batch만 "무의미"로 제외. 판정 기준이 막으면 기준을 고치고 보고함.
+
+## 2026-10-31 — 리플레이 게이트 입력 결함 발견과 κsafe 게이트 PASS
+
+- 원본 게이트 입력 `profiles-gate.json`의 78개 profile 전부 service 표본(durationNanos)이 비어 있었음 → stage별 263/473/591/463 tick이 탐색 전 검증에서 Pending으로 끝나 결정이 평가되지 않았음. 즉 지금까지의 리플레이 PASS는 일부 tick만 검증한 것이었음.
+- 수정: 4 stage catalog에서 표본만 복원한 `profiles-gate-v2.json`(259 batch, 702,032 표본, 그 밖의 값 동일, SHA256 aa36747d…dfb9). Pending 0, 기준 bad tick 1/2/2/7 → 0/0/0/1. 점수판 문서의 게이트 입력을 v2로 교체.
+- κsafe(8c546048, 7dba68d7, 65ce9c08) 게이트: 기준 f780d19a 대비 후보 c79ab352, 4 stage 모두 newBadTicks 0 → PASS. 다음 server 배포에 포함함.
