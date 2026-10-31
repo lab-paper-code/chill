@@ -17,7 +17,9 @@ import { statusLabel } from "@/lib/labels"
 import { Screen, Rows, Row, RowDialog, Facts, Empty } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { RecordsNavigation, RecordsRange } from "@/components/records-navigation"
+import { HistoryActionDetails, CurrentTransitionEvidence } from "./scheduler-transitions"
 
 export type SchedulerHistoryRow<T extends SchedulerObservationSummary=SchedulerObservation>={event:T;ref:SchedulerRecordRef}
 export type SchedulerHistoryQuery<T extends SchedulerObservationSummary=SchedulerObservation>={
@@ -28,7 +30,7 @@ export type SchedulerHistoryQuery<T extends SchedulerObservationSummary=Schedule
 const kinds:Record<string,string>={decision:"운영 판단",snapshot:"실제 구성",settings:"운영 설정 변경",action:"변경 동작",power:"전력 측정",other:"기타 기록"}
 const historyFilters:Record<string,string>={all:"모든 종류","decision-action":"판단·전환 기록",...kinds}
 // Shared record timestamps use the same 24-hour KST clock as the live board.
-export const when=(value?:string)=>!value||value.startsWith("0001-")||!Number.isFinite(Date.parse(value))?"정보 없음":`${new Intl.DateTimeFormat("ko-KR",{timeZone:"Asia/Seoul",month:"numeric",day:"numeric"}).format(new Date(value))} ${displayTime(value,"KST")}`
+export const when=(value?:string)=>!value||value.startsWith("0001-")||!Number.isFinite(Date.parse(value))?"미기록":`${new Intl.DateTimeFormat("ko-KR",{timeZone:"Asia/Seoul",month:"numeric",day:"numeric"}).format(new Date(value))} ${displayTime(value,"KST")}`
 export const actorName=(name?:string)=>name?.startsWith("system:serviceaccount:")?name.split(":").at(-1)!:name??"기록 없음"
 
 export function useSchedulerHistory():SchedulerHistoryQuery<SchedulerObservationSummary> {
@@ -91,13 +93,13 @@ function RecordDetails({row}:{row:SchedulerHistoryRow}){
       <Facts items={[["담당자",actorName(event.settings.actorUsername)],["검증 KST",when(event.settings.validatedAt)],["실행 환경 적용 KST",when(event.settings.appliedAt)],["마지막 관측 노드",event.settings.affected?.map(node=>node.name||"이름 미제공").join(", ")||"없음"]]}/>
       {event.settings.error&&<p role="alert">{event.settings.error}</p>}
       <SettingChanges before={event.settings.before} after={event.settings.after} stored/>
-      <p className="text-sm text-muted-foreground">설정 저장과 실제 물리 전환은 따로 일어나요.</p>
+      <Facts items={[["저장·물리 전환","별도"]]} />
     </>}
     {event.action&&<>
       <Facts items={[["동작",actionKinds[event.action.kind]??"구성 변경"],["노드",actionNodeName(event.action.node)],["단계",actionStatuses[event.action.phase]??"미확인"],["시작 KST",when(event.action.startedAt)],["완료 KST",when(event.action.completedAt)]]}/>
-      <Link href={`/transitions/${encodeURIComponent(event.action.id)}?${schedulerRecordParams(row.ref)}`}>이 변경 동작 자세히 보기</Link>
+      <HistoryActionDetails row={row}/>
     </>}
-    {(event.power||event.powerError||event.powerJoules!==undefined)&&<Link href={`/scheduler/power?${schedulerRecordParams(row.ref)}`}>이 전력 측정 자세히 보기</Link>}
+    {decision&&<><h3 className="font-semibold">입력 부하·용량</h3><SourceJSON inline title="기록된 부하" value={decision.search.loads}/><SourceJSON inline title="기록된 용량" value={decision.capacity}/></>}
     <SourceJSON inline title="선택 기록 원본" value={event}/>
     <SourceExport value={{conditions:row.ref,population:decision?.search.population??null,source:event}} filename="chill-scheduler-selected-record.json"/>
   </div>
@@ -108,7 +110,7 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
   const filter=settingsOnly?"settings":params.get("filter")??"all",rows=groupHistoryKeeps(history.rows.filter(row=>schedulerHistoryKindMatches(filter,row.ref.kind)))
   const opener=React.useRef<HTMLElement|null>(null),[filterOpen,setFilterOpen]=React.useState(false)
   const a=readSchedulerRecord(params,"a"),b=readSchedulerRecord(params,"b"),selected=readSchedulerRecord(params)
-  const requested=["offset","kind","at","id","node","startedAt"].some(key=>params.has(key))
+  const requested=["offset","at","id","node","startedAt"].some(key=>params.has(key))
   const record=useChillQuery<SchedulerObservationPage>(schedulerRecordPath(selected),{decoder:parseSchedulerJSON,enabled:requested&&!!selected})
   const event=record.data?.events?.[0],matches=selected&&schedulerRecordMatches(selected,event)
   function select(row:SchedulerHistoryRow<SchedulerObservationSummary>,prefix=""){
@@ -124,10 +126,17 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
   if(b)for(const [key,value] of schedulerRecordParams(b,"b"))compare.set(key,value)
   const same=(ref:SchedulerRecordRef|null,row:SchedulerHistoryRow<SchedulerObservationSummary>)=>!!ref&&ref.offset===row.ref.offset&&ref.at===row.ref.at&&ref.from===row.ref.from&&ref.to===row.ref.to
   const loaded=!!history.query.data
-  const title=settingsOnly?"운영 설정 변경 이력":filter==="decision-action"?"판단·전환 기록":"운영 기록"
-  return <Screen back={["/records","기록"]} title={title}
-    action={!settingsOnly&&(a||b)?<><p className="text-sm text-muted-foreground">A {a?when(a.at):"아직 고르지 않았어요"} · B {b?when(b.at):"아직 고르지 않았어요"}</p>{a&&b?<Button asChild><Link href={`/scheduler/compare?${compare}`}>두 기록 비교하기</Link></Button>:<Button disabled>두 기록 비교하기</Button>}</>:undefined}>
+  return <Screen width="data" title="기록"
+    action={!settingsOnly&&(a||b)?<>{a&&b?<Button asChild><Link href={`/records?compare=1&${compare}`}>판단 비교</Link></Button>:<Button disabled>판단 비교</Button>}</>:undefined}>
+    <RecordsNavigation/>
+    <RecordsRange target={params.get("uid")??"클러스터 전체"} from={history.submitted.from} to={history.submitted.to} at={history.query.data?.to}/>
     <HistoryControls history={history}>
+      <RowDialog label="대상" value={params.get("uid")??"클러스터 전체"} title="대상 서비스 UID">
+        <form className="grid gap-3" onSubmit={event=>{event.preventDefault();const uid=String(new FormData(event.currentTarget).get("uid")??"").trim(),next=schedulerPageParams(new URLSearchParams(params.toString()));if(uid)next.set("uid",uid);else next.delete("uid");router.replace(`${pathname}?${next}`)}}>
+          <label>서비스 UID<Input name="uid" defaultValue={params.get("uid")??""}/></label><Button type="submit">조회</Button>
+        </form>
+      </RowDialog>
+      <Row href={`/records?${new URLSearchParams({...history.submitted,scope:"management",...(params.get("uid")?{uid:params.get("uid")!}:{})})}`} label="서비스 관리 변경"/>
       {!settingsOnly&&<RowDialog open={filterOpen} onOpenChange={setFilterOpen} label="기록 종류" value={historyFilters[filter]??"이전 조건"} title="기록 종류" description="서버 필터 · 다음 페이지에도 유지 · 판단·전환 = 운영 판단 + 변경 동작">
         <fieldset className="grid gap-2">{Object.entries(historyFilters).map(([key,label])=><label key={key} className="flex min-h-11 items-center gap-2"><input type="radio" name="kind" checked={filter===key} onChange={()=>{const next=schedulerPageParams(new URLSearchParams(params.toString()));next.set("filter",key);router.replace(`${pathname}?${next}`);setFilterOpen(false)}}/>{label}</label>)}</fieldset>
       </RowDialog>}
@@ -136,22 +145,18 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
       </RowDialog>}
     </HistoryControls>
     <QueryGate query={history.query}>{loaded&&<>
-      <table className="w-full table-fixed text-sm"><thead><tr><th>정렬</th><th>범위</th><th>종류</th><th>현재 페이지 기록 수</th></tr></thead><tbody><tr><td>{params.get("order")==="desc"?"최신순":"저장순"}</td><td>{params.get("uid")?"선택 서비스":"클러스터 전체"}</td><td>{historyFilters[filter]??filter}</td><td className="text-right tabular-nums">{rows.length}</td></tr></tbody></table>
-      {rows.length?<Rows label="기록">{rows.map(row=>{
+      {rows.length?<div className="overflow-x-auto rounded-lg border"><table className="w-full text-sm"><thead><tr>{["시각 KST","대상","동작·판단","결과","선택"].map(label=><th key={label} className="p-3 text-left">{label}</th>)}</tr></thead><tbody>{rows.map(row=>{
         const ev=row.event,mark=[same(a,row)&&"A",same(b,row)&&"B"].filter(Boolean).join(" · ")
-        return <Row key={row.ref.offset} label={<span title={ev.decision?.status??ev.action?.kind}>{row.keepCount?`유지 ×${row.keepCount}`:ev.decision?judgmentLabels[ev.decision.status]??"판단 미확인":ev.action?actionKinds[ev.action.kind]??kinds.action:kinds[row.ref.kind]??kinds.other}</span>}
-          hint={`${when(ev.at)}${ev.settings?` / ${actorName(ev.settings.actorUsername)}`:ev.action?` / ${actionNodeName(ev.action.node)}`:ev.node?` / ${ev.node.name}`:""}`}
-          value={mark||(ev.settings?ev.settings.error?"실패":ev.settings.appliedAt?"적용됨":"검증됨":ev.action?actionStatuses[ev.action.phase]??statusLabel(ev.action.phase):undefined)}
-          onClick={()=>{opener.current=document.activeElement as HTMLElement|null;select(row)}}/>
-      })}</Rows>:<Empty title={settingsOnly?"이 기간에는 운영 설정 변경이 없어요":filter==="decision-action"?"가져온 기록에 판단·전환 기록이 없어요":"보여줄 기록이 없어요"}>{history.query.data?.nextCursor&&<p>다음 기록에 더 있을 수 있어요.</p>}</Empty>}
+        return <tr key={row.ref.offset} className="border-t"><td className="p-3 tabular-nums">{when(ev.at)}</td><td className="p-3">{ev.action?actionNodeName(ev.action.node):ev.node?.name??params.get("uid")??"클러스터"}</td><td className="p-3">{row.keepCount?`유지 ×${row.keepCount}`:ev.decision?judgmentLabels[ev.decision.status]??"미확인":ev.action?actionKinds[ev.action.kind]??kinds.action:kinds[row.ref.kind]??kinds.other}</td><td className="p-3">{ev.settings?ev.settings.error?"실패":ev.settings.appliedAt?"완료":"검증됨":ev.action?actionStatuses[ev.action.phase]??statusLabel(ev.action.phase):mark||"해당 없음"}</td><td className="p-3"><Button variant="outline" onClick={()=>{opener.current=document.activeElement as HTMLElement|null;select(row)}}>근거</Button></td></tr>
+      })}</tbody></table></div>:<Empty title="기록 없음"/>}
       <HistoryPaging history={history}/>
     </>}</QueryGate>
-    <Dialog open={requested} onOpenChange={open=>{if(!open)close()}}>
-      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-3xl" onCloseAutoFocus={event=>{
+    <Sheet open={requested} onOpenChange={open=>{if(!open)close()}}>
+      <SheetContent className="w-full overflow-y-auto p-6 sm:max-w-3xl" onCloseAutoFocus={event=>{
         event.preventDefault();if(opener.current?.isConnected)opener.current.focus();else{const heading=document.querySelector<HTMLElement>(".screen-head h1");if(heading){heading.tabIndex=-1;heading.focus()}}
       }}>
-        <DialogHeader><DialogTitle>기록 자세히</DialogTitle><DialogDescription>고른 기록을 원래 기간과 순서 그대로 확인해요.</DialogDescription></DialogHeader>
-        {!selected?<p role="alert">기록을 확인하지 못했어요. 기간과 순서, 종류와 시각이 모두 필요해요.</p>:
+        <SheetHeader><SheetTitle>선택 기록 근거</SheetTitle></SheetHeader>
+        {!selected?(params.has("id")&&!params.has("offset")&&!params.has("at")?<CurrentTransitionEvidence/>:<p role="alert">기록 식별자 미확인</p>):
           <QueryGate query={record}>{record.isSuccess&&(matches&&event?<>
             <RecordDetails row={{event,ref:selected}}/>
             {event.decision&&!settingsOnly&&<div className="flex flex-wrap gap-2">
@@ -161,7 +166,7 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
           </>:<p role="alert">기록을 확인하지 못했어요. 보관 범위나 기록이 바뀌었어요. 같은 시각의 다른 기록으로 대신하지 않아요.</p>)}</QueryGate>
         }
         <Button variant="outline" onClick={close}>목록으로 돌아가기</Button>
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   </Screen>
 }

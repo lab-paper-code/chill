@@ -2,180 +2,66 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { useChillQuery, type ApiError } from "@/lib/client"
-import type { ObservationCohort, ObservationResult, PoolsView, SchedulerView, WireInteger } from "@/lib/read-types"
-import { definitionIdentity, resourceHref, sloTarget, type WorkloadView } from "@/lib/domain"
-import { nanosToMilliseconds, parseSchedulerJSON } from "@/lib/scheduler"
-import { QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/read-region"
+import type { UseQueryResult } from "@tanstack/react-query"
+import type { ApiError } from "@/lib/client"
+import { useChillQuery } from "@/lib/client"
+import type { ObservationResult, PoolsView, SchedulerView } from "@/lib/read-types"
+import { resourceHref, sloTarget, type WorkloadView } from "@/lib/domain"
+import { parseSchedulerJSON } from "@/lib/scheduler"
+import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
+import { Facts, RowDialog, Rows } from "@/components/screen"
+import { DataTable } from "@/components/data-table"
+import { StatusCell } from "@/components/status-cell"
 import { statusLabel } from "@/lib/labels"
-import { Empty, Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
-import { Button } from "@/components/ui/button"
-import { gapNotice } from "@/lib/date-time"
 
-// The five screens under one service, in the order a service becomes usable.
-export const serviceSections = {
-  definition: ["정의와 적용", "설정한 모델과 지금 적용된 설정"],
-  evidence: ["측정 근거", "추론에 쓸 수 있는 입력"],
-  placement: ["배치", "이 서비스를 실행하는 곳"],
-  operation: ["최근 운영", "최근 1시간 응답 속도"],
-  changes: ["변경 기록", "최근 1시간 설정 변경"],
-} as const
-export type ServiceSectionId = keyof typeof serviceSections
-
-const outcomeLabels:Record<string,string> = {completed:"완료",error:"오류",rejected:"접수 거부",timeout:"시간 초과",canceled:"취소",incomplete:"미완료",delivery_failed:"전달 실패"}
-const lastHour = () => { const to = new Date(); return {from:new Date(to.getTime() - 3600000).toISOString(), to:to.toISOString()} }
-const localTime = (at:string) => new Date(at).toLocaleString("ko-KR",{dateStyle:"medium",timeStyle:"short"})
-const ms = (nanos:WireInteger) => `${nanosToMilliseconds(nanos)}밀리초`
-const met = (row?:ObservationCohort) => !row?.sampleCount || row.quantileNanos == null || row.targetLatencyNanos == null ? undefined : Number(row.quantileNanos) <= Number(row.targetLatencyNanos)
-const actor = (name?:string) => name?.startsWith("system:serviceaccount:") ? name.split(":").at(-1) : name ?? "담당자 기록 없음"
-
-// Each signal comes from the ChillServer response that holds it; the service screen shows one short value per section.
-export function useServiceSignals(view?:WorkloadView) {
+// Management reads remain independent of the operational WebSocket snapshot.
+type ManagementQuery<T> = Pick<UseQueryResult<T, ApiError>, "data" | "error" | "isPending" | "isFetching" | "dataUpdatedAt" | "refetch">
+export type ServiceSignals = {
+  pools: ManagementQuery<PoolsView>
+  scheduler: ManagementQuery<SchedulerView>
+  observations: ManagementQuery<ObservationResult>
+  instances: NonNullable<NonNullable<PoolsView["workloads"]>[number]["instances"]>
+}
+export function useServiceSignals(view?: WorkloadView): ServiceSignals {
   const uid = view?.desired.metadata.uid ?? ""
-  const [range,setRange] = React.useState(lastHour)
+  const [range] = React.useState(() => { const to = new Date(); return { from: new Date(to.getTime() - 3600000).toISOString(), to: to.toISOString() } })
   const pools = useChillQuery<PoolsView>("v1/pools")
-  const scheduler = useChillQuery<SchedulerView>("v1/scheduler",{decoder:parseSchedulerJSON})
-  const observations = useChillQuery<ObservationResult>(`v1/observations/workloads/${encodeURIComponent(uid)}?${new URLSearchParams({...range,limit:"20"})}`,{decoder:parseSchedulerJSON,enabled:!!uid})
+  const scheduler = useChillQuery<SchedulerView>("v1/scheduler", { decoder: parseSchedulerJSON })
+  const observations = useChillQuery<ObservationResult>(`v1/observations/workloads/${encodeURIComponent(uid)}?${new URLSearchParams({ ...range, limit: "20" })}`, { decoder: parseSchedulerJSON, enabled: !!uid })
   const instances = pools.data?.workloads?.find(pool => pool.workload.uid === uid)?.instances ?? []
-  const applied = view?.appliedDefinition
-  const cohort = applied ? observations.data?.cohorts?.find(row => row.definition === definitionIdentity(applied)) : undefined
-  const op = view?.operation
-  const operating = !!op && !["Completed","Failed"].includes(op.phase)
-  const unread = (query:{error:ApiError|null}) => query.error ? "확인 불가" : "확인 중"
-  const verdict = met(cohort)
-  const values:Record<ServiceSectionId,string> = {
-    definition: op?.phase === "Failed" ? "변경 실패" : operating ? "적용 중" : applied ? "적용됨" : "적용 대기",
-    evidence: view?.supportedInputs.length ? `입력 ${view.supportedInputs.length}개` : "측정 필요",
-    placement: !pools.data ? unread(pools) : !instances.length ? "배치 없음" : instances.some(instance => instance.ready) ? `${instances.length}곳` : "준비 중",
-    operation: !observations.data ? unread(observations) : verdict === undefined ? "표본 없음" : verdict ? "목표 안" : "목표 초과",
-    changes: !observations.data ? unread(observations) : observations.data.management?.length ? `${observations.data.management.length}건` : "없음",
-  }
-  return {setRange,pools,scheduler,observations,instances,cohort,operating,values}
-}
-type Signals = ReturnType<typeof useServiceSignals>
-type Part = {title:string;lede?:React.ReactNode;body?:React.ReactNode;action?:React.ReactNode}
-
-const sections:Record<ServiceSectionId,(view:WorkloadView,s:Signals)=>Part> = {
-  definition(view, s) {
-    const {desired, appliedDefinition:applied, operation:op} = view
-    const failed = op?.phase === "Failed"
-    return {
-      title: failed ? "설정 변경이 실패했어요" : s.operating ? "설정을 적용하고 있어요" : applied ? "설정이 적용됐어요" : "아직 설정이 적용되지 않았어요",
-      lede: failed ? "변경 작업 기록에서 이유를 보고 설정을 다시 수정해 주세요." : "설정한 내용과 지금 적용된 내용을 비교해요.",
-      body: <>
-        <Facts items={[
-          ["설정한 모델", desired.spec.modelRef.name],
-          ["설정한 전처리기", desired.spec.preprocessorRef.name],
-          ["설정한 데이터셋", desired.spec.datasetRef?.name ?? "없어요. 측정할 데이터셋을 정해야 요청을 받아요"],
-          ["설정한 응답 목표", sloTarget(desired.spec)],
-          ["적용된 모델", applied?.model.name ?? "아직 없어요"],
-          ["적용된 전처리기", applied?.preprocessor.name ?? "아직 없어요"],
-          ["적용된 데이터셋", !applied ? "아직 없어요" : applied.dataset?.name ?? "없어요"],
-          ["적용된 응답 목표", applied ? `${applied.slo.percentile}%의 요청을 ${applied.slo.targetLatencyNanos / 1000000}밀리초 안에 처리` : "아직 없어요"],
-          ["설정 변경", op ? `${statusLabel(op.kind)} · ${statusLabel(op.phase)}` : "진행 중인 변경 없음"],
-          ["처리 중인 요청", `배정 대기 ${view.pending}건 · 배정됨 ${view.assigned}건`],
-        ]} />
-        <Rows>
-          <Row href={applied ? resourceHref("models", applied.model.name, applied.model.uid) : `/models/${encodeURIComponent(desired.spec.modelRef.name)}`} label="모델 보기" />
-          <Row href={applied ? resourceHref("preprocessors", applied.preprocessor.name, applied.preprocessor.uid) : `/preprocessors/${encodeURIComponent(desired.spec.preprocessorRef.name)}`} label="전처리기 보기" />
-          {applied?.dataset ? <Row href={resourceHref("datasets", applied.dataset.name, applied.dataset.uid)} label="데이터셋 보기" /> : desired.spec.datasetRef && <Row href={`/datasets/${encodeURIComponent(desired.spec.datasetRef.name)}`} label="데이터셋 보기" />}
-          {op && <RowDialog label="변경 작업 기록" value={statusLabel(op.phase)} title="변경 작업 기록">
-            <Facts items={[["작업", statusLabel(op.kind)], ["접수", localTime(op.acceptedAt)], ["끝남", op.completedAt ? localTime(op.completedAt) : "아직이에요"], ["요청한 사람", actor(op.actorUsername)]]} />
-            {op.error && <p role="alert">{op.error}</p>}
-            <SourceJSON inline title="변경 작업 원본" value={op} />
-          </RowDialog>}
-          <RowDialog label="원본 자료 보기" hint={`관측 ${localTime(view.observedAt)}`} title="전체 상태와 관측 시각"><SourceJSON inline value={view} /><SourceExport value={view} filename={`workload-${desired.metadata.name}.json`} /></RowDialog>
-        </Rows>
-      </>,
-      action: failed ? <Button asChild><Link href={resourceHref("workloads", desired.metadata.name, desired.metadata.uid, "edit")}>설정 수정</Link></Button> : undefined,
-    }
-  },
-  evidence(view) {
-    const inputs = view.supportedInputs, preprocessor = view.appliedDefinition?.preprocessor
-    const missing = view.appliedDefinition?.model.paths.filter(path => !inputs.some(input => input.executionPath === path.name)) ?? []
-    return {
-      title: inputs.length ? `측정이 끝난 입력이 ${inputs.length}개 있어요` : "측정 결과가 필요해요",
-      lede: "측정이 끝난 실행 방식만 추론에 쓸 수 있어요. 파일이나 실행 방식을 등록하는 것만으로는 시작할 수 없어요.",
-      body: inputs.length || missing.length ? <Rows>
-        {inputs.map((input, index) => <RowDialog key={index} label={input.executionPath} hint={input.artifact} value="측정 완료" title={`${input.executionPath} 입력과 측정 근거`}>
-          <Facts items={[
-            ...(preprocessor?.input ?? []).map((f): [string, string] => [`입력 ${f.name}`, `BYTES · ${f.format} · 최대 ${f.maxBytes}바이트`]),
-            ...(preprocessor?.output ?? []).map((f): [string, string] => [`출력 ${f.name}`, `BYTES · ${f.format}`]),
-            ["전처리기", preprocessor?.name ?? "아직 없어요"], ["연결된 측정", `${input.profiles.length}개`],
-          ]} />
-          <SourceJSON inline title="입력과 측정 근거" value={input} />
-        </RowDialog>)}
-        {missing.map(path => <Row key={path.name} href="/measurements" label={path.name} hint={path.artifact} value="측정 필요" />)}
-      </Rows> : <Empty title="아직 측정이 끝난 입력이 없어요" />,
-      action: <Button asChild variant={inputs.length ? "outline" : "default"}><Link href="/measurements">측정 결과 찾기</Link></Button>,
-    }
-  },
-  placement(view, s) {
-    const uid = view.desired.metadata.uid
-    const ready = s.instances.filter(instance => instance.ready).length
-    return {
-      title: !s.pools.data ? "배치" : !s.instances.length ? "아직 이 서비스를 실행하는 곳이 없어요" : ready ? `${ready}곳에서 실행하고 있어요` : "실행을 준비하고 있어요",
-      lede: s.instances.length ? "실행하는 곳마다 대기와 처리 현황을 볼 수 있어요." : "운영 판단이 배치를 고르면 여기에 나타나요.",
-      body: <QueryGate query={s.pools}><Rows>
-        {s.instances.map(instance => {
-          const weight = s.scheduler.data?.state.snapshot.routing?.[uid]?.[instance.id]
-          return <RowDialog key={instance.id} label={instance.node.name} hint={`인스턴스 ${instance.id}`} value={<StatusBadge tone={instance.ready ? "ok" : "warn"}>{instance.ready ? "준비됨" : instance.reason ? statusLabel(instance.reason) : "준비 중"}</StatusBadge>} title={`${instance.node.name}의 실행 현황`}>
-            <Facts items={[["이 서비스의 대기", `${instance.waiting?.[uid] ?? 0}건`], ["이 서비스의 실행", `${instance.running?.[uid] ?? 0}건`], ["요청 분배 가중치", weight ?? (s.scheduler.error ? "확인 불가" : "제공 없음")], ["인스턴스", instance.id]]} />
-            <p className="text-sm text-muted-foreground">가중치는 원래 값이며 확률이 아니에요.</p>
-            <Link href={`/?${new URLSearchParams({open:`service:${uid}`})}`}>현재 관측</Link>
-            <SourceJSON inline value={instance} />
-          </RowDialog>
-        })}
-        <Row href={`/?${new URLSearchParams({open:`service:${uid}`,evidence:"estimates"})}`} label="응답 목표 예상 근거" />
-      </Rows></QueryGate>,
-    }
-  },
-  operation(view, s) {
-    const data = s.observations.data
-    const applied = view.appliedDefinition
-    const verdict = met(s.cohort)
-    return {
-      title: !data ? "최근 운영" : !data.total ? "이 구간에 기록된 요청이 없어요" : verdict === undefined ? "아직 판단할 표본이 없어요" : verdict ? "응답 목표를 지키고 있어요" : "응답 목표를 넘었어요",
-      lede: data && `${localTime(data.from)} – ${localTime(data.to)} · 전체 ${data.total}건${data.gapUntil ? ` · ${gapNotice(data.gapUntil)}` : ""}`,
-      body: <QueryGate query={s.observations}>{data && <>
-        {!!data.cohorts?.length && <Rows label="적용 설정별 응답 속도">{data.cohorts.map(row => {
-          const ok = met(row)
-          return <RowDialog key={row.definition} label={applied && row.definition === definitionIdentity(applied) ? "현재 적용 설정" : "이전 적용 설정"} hint={row.quantileNanos == null ? "값 없음" : `${row.percentile ?? "?"}% 응답 ${ms(row.quantileNanos)}${row.targetLatencyNanos == null ? "" : ` · 목표 ${ms(row.targetLatencyNanos)}`}`} value={<StatusBadge tone={ok === undefined ? "idle" : ok ? "ok" : "warn"}>{ok === undefined ? "표본 없음" : ok ? "목표 안" : "목표 초과"}</StatusBadge>} title="적용 설정별 응답 속도">
-            <Facts items={[["요청", `${row.total}건`], ["지연 표본", `${row.sampleCount}건`], ["관측 지연", row.quantileNanos == null ? "값 없음" : `${row.percentile ?? "?"}% · ${ms(row.quantileNanos)}`], ["목표", row.targetLatencyNanos == null ? "값 없음" : ms(row.targetLatencyNanos)]]} />
-            <SourceJSON inline value={row} />
-          </RowDialog>
-        })}</Rows>}
-        <Rows>
-          {Object.keys(data.outcomes ?? {}).length > 0 && <RowDialog label="처리 결과" value={`${data.total}건`} title="처리 결과"><Facts items={Object.entries(data.outcomes).map(([key, value]):[string,string] => [outcomeLabels[key] ?? statusLabel(key), `${value}건`])} /></RowDialog>}
-          <Row href={`/observations?${new URLSearchParams({uid:view.desired.metadata.uid,from:data.from,to:data.to})}`} label="이 구간의 요청 기록 전체 보기" />
-        </Rows>
-      </>}</QueryGate>,
-      action: <Button variant="outline" onClick={() => s.setRange(lastHour())}>지금 기준으로 다시 보기</Button>,
-    }
-  },
-  changes(view, s) {
-    const data = s.observations.data
-    const events = [...(data?.management ?? [])].sort((a, b) => b.at.localeCompare(a.at))
-    return {
-      title: !data ? "변경 기록" : events.length ? `최근 1시간 동안 변경이 ${events.length}번 있었어요` : "최근 1시간 동안 변경이 없어요",
-      lede: data && `${localTime(data.from)} – ${localTime(data.to)}`,
-      body: <QueryGate query={s.observations}>{data && <Rows>
-        {events.slice(0, 5).map((event, index) => <RowDialog key={`${event.at}/${index}`} label={statusLabel(event.kind)} hint={`${localTime(event.at)} · ${actor(event.actorUsername)}`} value={<StatusBadge value={event.phase} />} title={`${statusLabel(event.kind)} 기록`}>
-          {event.error && <p role="alert">{event.error}</p>}
-          <SourceJSON inline title="변경 전후 원본" value={event} />
-        </RowDialog>)}
-        <Row href={`/changes?${new URLSearchParams({uid:view.desired.metadata.uid,from:data.from,to:data.to})}`} label="변경 이력 전체 보기" />
-      </Rows>}</QueryGate>,
-    }
-  },
+  return { pools, scheduler, observations, instances }
 }
 
-// One section of one service per screen; dependent detail opens in dialogs.
-export function ServiceSection({name,uid,query,section}:{name:string;uid:string;query:ReturnType<typeof useChillQuery<WorkloadView>>;section:ServiceSectionId}) {
-  const view = [401,403].includes(query.error?.status ?? 0) ? undefined : query.data
-  const s = useServiceSignals(view)
-  const part:Part = view ? sections[section](view, s) : {title:serviceSections[section][0]}
-  return <Screen back={[resourceHref("workloads", name, view?.desired.metadata.uid ?? uid), name]} title={part.title} lede={part.lede} action={part.action}>
-    <QueryGate query={query}>{part.body}</QueryGate>
-  </Screen>
+export function ServiceAdmission({ view }: { view: WorkloadView }) {
+  return <StatusCell axis="접수 허용" label={view.admission ? "허용" : "차단"} tone={view.admission ? "ok" : "warn"} />
+}
+
+export function ServiceDefinition({ view }: { view: WorkloadView }) {
+  const { desired, appliedDefinition: applied } = view
+  return <section id="definition" className="min-w-0 space-y-3 rounded-xl border p-4"><h2 className="font-semibold">정의·설정</h2>
+    <Facts items={[["모델", desired.spec.modelRef.name], ["입력 처리", desired.spec.preprocessorRef.name], ["데이터", desired.spec.datasetRef?.name ?? "미설정"], ["설정된 지연 목표", sloTarget(desired.spec)], ["측정 입력", `${view.supportedInputs.length}개`]]} />
+    <div className="flex flex-wrap gap-4 text-sm">
+      <Link href={applied ? resourceHref("models", applied.model.name, applied.model.uid) : `/models/${encodeURIComponent(desired.spec.modelRef.name)}`}>모델</Link>
+      <Link href={applied ? resourceHref("preprocessors", applied.preprocessor.name, applied.preprocessor.uid) : `/preprocessors/${encodeURIComponent(desired.spec.preprocessorRef.name)}`}>입력 처리</Link>
+      {desired.spec.datasetRef && <Link href={applied?.dataset ? resourceHref("datasets", applied.dataset.name, applied.dataset.uid) : `/datasets/${encodeURIComponent(desired.spec.datasetRef.name)}`}>데이터</Link>}
+    </div>
+    <Rows><RowDialog label="적용 정의·측정 입력" title="적용 정의·측정 입력"><SourceJSON inline value={{ appliedDefinition: applied, supportedInputs: view.supportedInputs }} /></RowDialog></Rows>
+  </section>
+}
+
+export function ServicePlacement({ view, signals: s }: { view: WorkloadView; signals: ServiceSignals }) {
+  const uid = view.desired.metadata.uid
+  // Routing and instances must belong to the same management observation before joining them.
+  const routing = s.scheduler.data?.state.snapshot
+  const matched = !!routing && routing.at === s.pools.data?.observedAt && routing.workloads?.some(row => row?.uid === uid)
+  return <section id="placement" className="min-w-0 space-y-3 rounded-xl border p-4"><h2 className="font-semibold">배치·연결</h2>
+    <QueryGate query={s.pools}><DataTable searchable={false} data={s.instances} columns={[
+      { key: "device", label: "장치", value: row => row.node.name },
+      { key: "instance", label: "인스턴스", value: row => row.id },
+      { key: "ready", label: "준비", value: row => <StatusCell axis="배치" label={row.ready ? "준비됨" : "준비 안 됨"} tone={row.ready ? "ok" : "warn"} reason={row.reason ? statusLabel(row.reason) : undefined} /> },
+      { key: "weight", label: "분배 가중치", numeric: true, value: row => matched ? routing.routing?.[uid]?.[row.id] ?? "미제공" : "미확인" },
+    ]} /></QueryGate>
+    <nav className="flex flex-wrap gap-4 text-sm"><Link href={`/?${new URLSearchParams({ open: `service:${uid}` })}`}>현재 관측</Link><Link href={`/measurements?${new URLSearchParams({ uid, workload: view.desired.metadata.name })}`}>측정</Link><Link href={`/records?${new URLSearchParams({ kind: "requests", uid, workload: view.desired.metadata.name })}`}>기록</Link></nav>
+    <Rows><RowDialog label="원본·내보내기" title="서비스 원본"><SourceJSON inline title="서비스" value={view} /><SourceJSON inline title="배치" value={s.pools.data} /><SourceJSON inline title="운영 판단·분배" value={s.scheduler.data} /><SourceExport value={view} filename={`workload-${view.desired.metadata.name}.json`} /></RowDialog></Rows>
+  </section>
 }

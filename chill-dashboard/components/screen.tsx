@@ -6,11 +6,11 @@ import { ChevronLeft, ChevronRight } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 
 // Forms stay narrow; measurement tables opt into the available data width.
-export function Screen({back,status,title,lede,children,action,width="narrow",actionPlacement="footer",breadcrumbs}:{back?:[href:string,label:string];status?:React.ReactNode;title:React.ReactNode;lede?:React.ReactNode;children?:React.ReactNode;action?:React.ReactNode;width?:"narrow"|"data";actionPlacement?:"footer"|"header";breadcrumbs?:{href?:string;label:string}[]}) {
+export function Screen({back,status,title,children,action,width="narrow",actionPlacement="footer",breadcrumbs,embedded=false}:{back?:[href:string,label:string];status?:React.ReactNode;title:React.ReactNode;children?:React.ReactNode;action?:React.ReactNode;width?:"narrow"|"data";actionPlacement?:"footer"|"header";breadcrumbs?:{href?:string;label:string}[];embedded?:boolean}) {
   return <div className={`screen${width === "data" ? " screen-data" : ""}`}>
     {breadcrumbs && breadcrumbs.length > 1 && <nav aria-label="현재 위치"><ol className="screen-breadcrumbs">{breadcrumbs.map((item,index) => <li key={index}>{index > 0 && <ChevronRight aria-hidden="true" />}{item.href && index < breadcrumbs.length - 1 ? <Link href={item.href}>{item.label}</Link> : <span aria-current={index === breadcrumbs.length - 1 ? "page" : undefined}>{item.label}</span>}</li>)}</ol></nav>}
     {back && !breadcrumbs && <Link className="screen-back" href={back[0]}><ChevronLeft aria-hidden="true" />{back[1]}</Link>}
-    <header className="screen-head"><div className="screen-heading">{status}<h1>{title}</h1>{lede && <p>{lede}</p>}</div>{action && actionPlacement === "header" && <div className="screen-header-action">{action}</div>}</header>
+    {!embedded&&<header className="screen-head"><div className="screen-heading">{status}<h1>{title}</h1></div>{action && actionPlacement === "header" && <div className="screen-header-action">{action}</div>}</header>}
     {children}
     {action && actionPlacement === "footer" && <div className="screen-action">{action}</div>}
   </div>

@@ -69,11 +69,10 @@ export function SessionProvider({children}: {children:React.ReactNode}) {
     client.clear()
     if (token) {
       const url = new URL(window.location.href)
-      if (["/scheduler/history","/scheduler/power","/scheduler/compare","/transitions"].includes(url.pathname) || url.pathname.startsWith("/transitions/") || (url.pathname === "/changes" && url.searchParams.get("scope") === "scheduler")) {
+      if (url.pathname === "/records") {
         const selection = ["offset","kind","at","id","node","startedAt"]
         for (const key of selection) url.searchParams.delete(key)
         for (const prefix of ["a","b"]) for (const key of ["from","to",...selection]) url.searchParams.delete(`${prefix}${key[0].toUpperCase()}${key.slice(1)}`)
-        if (url.pathname.startsWith("/transitions/")) {url.pathname="/transitions";url.searchParams.delete("stage")}
         router.replace(`${url.pathname}${url.search}${url.hash}`,{scroll:false})
       }
     }

@@ -9,6 +9,16 @@ export const dashboardRedirects = [
   {source:"/scheduler/estimates",destination:"/?evidence=estimates"},
   {source:"/scheduler/load",destination:"/?evidence=load"},
   {source:"/scheduler/capacity",destination:"/?evidence=capacity"},
+  {source:"/scheduler/history",destination:"/records"},
+  {source:"/observations",destination:"/records?kind=requests"},
+  {source:"/changes",destination:"/records?scope=management"},
+  {source:"/transitions",destination:"/records?filter=action"},
+  {source:"/scheduler/power",destination:"/records?kind=power"},
+  {source:"/scheduler/compare",destination:"/records?compare=1"},
+  {source:"/models",destination:"/settings?tab=models"},
+  {source:"/preprocessors",destination:"/settings?tab=preprocessors"},
+  {source:"/datasets",destination:"/settings?tab=datasets"},
+  {source:"/configuration",destination:"/settings?tab=configuration"},
   {source:"/evaluations",destination:"/experiments"},
   {source:"/evaluations/load-scenarios",destination:"/experiments/load-scenarios"},
   {source:"/measurements/coverage",destination:"/measurements"},
@@ -22,6 +32,13 @@ export const dashboardRedirects = [
 
 export function dashboardDestination(pathname:string,search:URLSearchParams):string|null {
   let destination:string|undefined=dashboardRedirects.find(row=>row.source===pathname)?.destination
+  const service=pathname.match(/^\/workloads\/([^/]+)\/(definition|evidence|placement|operation|changes)$/)
+  if(service){const anchors:Record<string,string>={definition:"definition",evidence:"definition",placement:"placement",operation:"placement",changes:"application"};return `/workloads/${service[1]}${search.size?`?${search}`:""}#${anchors[service[2]]}`}
+  if(pathname.startsWith("/transitions/")&&pathname.split("/").length===3){
+    const next=new URLSearchParams(search);next.set("id",decodeURIComponent(pathname.split("/")[2]));next.set("filter","action")
+    return `/records?${next}`
+  }
+  if(pathname==="/changes"&&search.get("scope")==="scheduler")destination="/records?filter=settings&scope=scheduler"
   if(pathname==="/experiments"&&["a","al","as","b","bs"].some(key=>search.has(key)))destination="/experiments/results"
   if(pathname.startsWith("/experiments/")&&pathname.split("/").length===3&&!["results","new","load-scenarios"].includes(pathname.split("/")[2])) {
     const next=new URLSearchParams(search);next.set("a",decodeURIComponent(pathname.split("/")[2]));return `/experiments/results?${next}`

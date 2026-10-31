@@ -64,6 +64,7 @@ function InferenceFlow({ name, view, wrongUID }: { name: string; view: WorkloadV
   const observationLinkParams = new URLSearchParams(observationParams)
   observationLinkParams.set("workload", name)
   observationLinkParams.set("uid", workloadUID)
+  observationLinkParams.set("kind", "requests")
   if (requestID) observationLinkParams.set("requestID", requestID)
   const observation = useChillQuery<ObservationResult>(`v1/observations/workloads/${encodeURIComponent(workloadUID)}?${observationParams}`, { enabled: !!requestID && !!submittedAt && !!observationTo && !mutation.isPending })
   const completion = observation.data?.requests?.find(row => row.requestID === requestID && row.workloadUID === workloadUID && row.kind === "final")
@@ -124,9 +125,9 @@ function InferenceFlow({ name, view, wrongUID }: { name: string; view: WorkloadV
     const totalMs = completion?.elapsedNanos != null ? Number(completion.elapsedNanos) / 1e6 : undefined
     const rtt = received?.browserRTT
     return <Screen back={back} status={<StatusBadge tone={mutation.isPending ? "info" : mutation.error ? unknown ? "warn" : "fail" : "ok"}>{mutation.isPending ? "기다리는 중" : unknown ? "결과 미확인" : mutation.error ? "실패" : "완료"}</StatusBadge>}
-      title={mutation.isPending ? "결과를 기다리고 있어요" : unknown ? "실행 결과를 확인하지 못했어요" : mutation.error ? "실행을 끝내지 못했어요" : received ? "추론이 끝났어요" : "아직 응답을 받지 못했어요"}
-      lede={unknown ? "요청이 처리됐을 수도 있어요. 요청 기록과 서비스 상태를 먼저 확인해 주세요. 자동으로 다시 실행하지 않아요." : mutation.error ? [meaning, step, "적은 입력은 그대로 있어요."].filter(Boolean).join(" ") : undefined}
+      title="단일 요청 · 실제 응답"
       action={!mutation.isPending && <Button variant="outline" onClick={() => { mutation.reset(); setResult(null); setStage("fill") }}>입력 고쳐서 다시 보내기</Button>}>
+      {(unknown || mutation.error) && <p role="alert">{unknown ? "결과 미확인 · 자동 재실행 안 함" : [meaning, step].filter(Boolean).join(" ")}<Link href={`/records?${observationLinkParams}`}>요청 기록</Link></p>}
       {outputs.length > 0 && <Facts label="결과" items={outputs.map((output): [ReactNode, ReactNode] => [fieldLabel(output),
         // eslint-disable-next-line @next/next/no-img-element -- a response data URL; next/image optimizes nothing here.
         output.value === undefined ? "응답에 없어요" : output.format === "JPEG" ? <img alt={`${output.name} 결과`} className="max-w-full rounded border" src={`data:image/jpeg;base64,${output.value}`} /> : <span className="whitespace-pre-wrap">{output.value}</span>])} />}
@@ -138,7 +139,7 @@ function InferenceFlow({ name, view, wrongUID }: { name: string; view: WorkloadV
         {stages && <StageBreakdown progress={stages} generative={!!preprocessor?.maxNewTokens} />}
       </section>}
       <Rows>
-        {requestID && submittedAt && observationTo && <Row href={`/observations?${observationLinkParams}`} label="이 요청의 처리 기록 확인" />}
+        {requestID && submittedAt && observationTo && <Row href={`/records?${observationLinkParams}`} label="요청 기록" />}
         <RowDialog label="응답과 시간 측정 자세히" title="실제 응답과 시간 측정">
           <Facts items={[["화면에서 기다린 시간", rtt == null ? "정보 없음" : duration(rtt)], ["웹 중계 왕복", received?.relayTiming ? duration(Number(received.relayTiming)) : "정보 없음"], ["서비스 처리 시간", completion && totalMs !== undefined ? `${duration(totalMs)} · ${statusLabel(completion.outcome)}` : "완료 기록을 아직 못 찾았어요"]]} />
           <p>화면 대기 시간은 브라우저 왕복이에요. 웹 중계 왕복에는 서비스 대기와 실행이 들어 있어서 중계 자체 비용이나 서비스 내부 처리 시간으로 쓰지 않아요.</p>
@@ -158,14 +159,13 @@ function InferenceFlow({ name, view, wrongUID }: { name: string; view: WorkloadV
   }
 
   const ready = view.admission && !wrongUID && !!fields.length && view.supportedInputs.length > 0
-  if (!ready) return <Screen back={back} title="추론을 시작하려면 준비가 필요해요"
-    lede={view.supportedInputs.length ? "지금은 새 요청을 받을 수 없어요. 준비 상태를 확인해 주세요." : "이 모델의 실행 조건에 맞는 측정 결과가 아직 없어요. 측정이 끝나고 서비스가 준비되면 입력을 보낼 수 있어요."}
-    action={<Button asChild><Link href={view.supportedInputs.length ? service : "/measurements"}>{view.supportedInputs.length ? "서비스 상태 보기" : "측정 결과 찾기"}</Link></Button>}>
-    <Empty title={view.supportedInputs.length ? "서비스가 아직 요청을 받지 않아요" : "보낼 수 있는 입력이 없어요"} />
+  if (!ready) return <Screen back={back} title="단일 요청"
+    action={<Button asChild><Link href={view.supportedInputs.length ? service : "/measurements"}>{view.supportedInputs.length ? "서비스 상태" : "측정"}</Link></Button>}>
+    <Empty title={view.supportedInputs.length ? "접수 차단" : "측정 입력 없음"} />
     <Rows><RowDialog label="모델과 준비 상태" title={`${name} 모델과 준비 상태`}><WorkloadState view={view} /></RowDialog></Rows>
   </Screen>
 
-  if (stage === "confirm") return <Screen back={back} status={<span className="text-sm text-muted-foreground">2 / 2</span>} title="이대로 보낼까요?" lede="입력 한 건을 보내요. 모델, 전처리기, 응답 목표는 서비스 설정을 따르고, 실행할 장비는 운영 판단이 정해요."
+  if (stage === "confirm") return <Screen back={back} status={<span className="text-sm text-muted-foreground">2 / 2</span>} title="단일 요청 · 전송 점검"
     action={<div className="flex gap-3"><Button type="button" variant="outline" className="flex-1" disabled={mutation.isPending} onClick={() => { setValidation(""); setStage("fill") }}>이전</Button><Button className="flex-[2]" disabled={mutation.isPending || !view.admission || wrongUID || !!previewError} onClick={() => void send()}>추론 보내기</Button></div>}>
     <Facts items={[["서비스", name], ["전처리기", preprocessor!.name], ...fields.map((field): [ReactNode, ReactNode] => [fieldLabel(field), sentValue(field)]), ["응답 대기 시간", duration(waitMs)], ["요청 크기", size(encoder.encode(preview).byteLength)]]} />
     <Rows><RowDialog label="보낼 데이터 확인" title="실제 요청 데이터"><SourceJSON inline title="전송 설정" value={sent} /></RowDialog></Rows>
@@ -173,7 +173,7 @@ function InferenceFlow({ name, view, wrongUID }: { name: string; view: WorkloadV
     {problem}
   </Screen>
 
-  return <Screen back={back} status={<span className="text-sm text-muted-foreground">1 / 2</span>} title="보낼 값을 채워 주세요" lede={`${preprocessor!.name} 전처리기가 받는 입력 한 건이에요. 여러 요청을 묶는 일은 서비스가 해요.`}
+  return <Screen back={back} status={<span className="text-sm text-muted-foreground">1 / 2</span>} title="단일 요청 · 입력"
     action={<Button className="w-full" onClick={() => {
       try { checkInputs(); setValidation(""); setStage("confirm") } catch (error) { setValidation((error as Error).message) }
     }}>다음</Button>}>
@@ -201,7 +201,7 @@ function InferenceFlow({ name, view, wrongUID }: { name: string; view: WorkloadV
     {sloMs !== undefined && sloMs > waitMs && <p className="notice text-sm">응답 목표가 {duration(sloMs)}인데 화면은 최대 {duration(waitMs)}까지 기다려요. 더 오래 걸리면 결과를 못 볼 수 있어요.</p>}
     <Rows>
       <RowDialog label="응답 대기 시간" value={duration(waitMs)} title="응답 대기 시간"><label className="grid gap-2 text-sm">응답 대기 제한 시간<Input aria-label="응답 대기 제한 시간" required value={timeout} onChange={event => setTimeout(event.target.value)} /></label><p className="text-sm text-muted-foreground">예: 500ms, 1.5s, 20s. 최대 {duration(config.inferTimeoutMs)}까지 기다릴 수 있어요. 서비스의 응답 목표({view.desired.spec.slo.percentile}% · {sloMs === undefined ? view.desired.spec.slo.targetLatency : duration(sloMs)})와는 별개예요. 요청 크기 한도는 {size(config.maxRequestBytes)}예요.</p></RowDialog>
-      <RowDialog label="입력 계약과 측정 근거" title={`${name} 입력 계약과 측정 근거`}><SourceJSON inline title="적용된 전처리기와 측정된 실행 경로" value={{ preprocessor, supportedInputs: view.supportedInputs }} /><Link href={resourceHref("workloads", name, view.desired.metadata.uid, "evidence")}>측정 근거 보기</Link></RowDialog>
+      <RowDialog label="입력 계약과 측정 근거" title={`${name} 입력 계약과 측정 근거`}><SourceJSON inline title="적용된 전처리기와 측정된 실행 경로" value={{ preprocessor, supportedInputs: view.supportedInputs }} /><Link href={`${service}#definition`}>측정 입력</Link></RowDialog>
       <RowDialog label="모델과 준비 상태" title={`${name} 모델과 준비 상태`}><WorkloadState view={view} /></RowDialog>
     </Rows>
     {problem}
@@ -214,7 +214,7 @@ export function InferencePage({ name }: { name: string }) {
   const view = [401, 403].includes(query.error?.status ?? 0) ? undefined : query.data
   const wrongUID = !!expectedUID && !!view && expectedUID !== view.desired.metadata.uid
   const back: [string, string] = [`/workloads/${encodeURIComponent(name)}${expectedUID ? `?uid=${encodeURIComponent(expectedUID)}` : ""}`, name]
-  if (view && wrongUID) return <Screen back={back} status={<StatusBadge tone="warn">작업 멈춤</StatusBadge>} title="이름이 같은 다른 등록이에요" lede="잘못된 서비스로 보내지 않도록 실행을 멈췄어요." action={<Button asChild><Link href={resourceHref("workloads", name, view.desired.metadata.uid, "infer")}>현재 등록에서 추론하기</Link></Button>} />
-  if (!view) return <Screen back={back} title={`${name} 추론`}><QueryGate query={query}>{null}</QueryGate></Screen>
+  if (view && wrongUID) return <Screen back={back} status={<StatusBadge tone="warn">작업 멈춤</StatusBadge>} title="서비스 식별자 불일치" action={<Button asChild><Link href={resourceHref("workloads", name, view.desired.metadata.uid, "infer")}>현재 등록 · 단일 요청</Link></Button>} />
+  if (!view) return <Screen back={back} title="단일 요청"><QueryGate query={query}>{null}</QueryGate></Screen>
   return <InferenceFlow key={view.desired.metadata.uid} name={name} view={view} wrongUID={wrongUID} />
 }

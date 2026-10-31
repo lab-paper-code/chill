@@ -98,6 +98,12 @@ retain integer literals while removing credentials.
 | 기록 | `/records` 판단·변경/서비스 요청/전력, 종류별 실제 범위·페이지·누락 보존 |
 | 보조 설정 | `/settings` 운영 설정/모델/입력 처리/데이터셋 |
 
+기록 종류는 `kind=requests|power`와 기본 판단·변경으로 전환한다. 서비스 변경은 `scope=management`, 운영 설정 변경은 `scope=scheduler&filter=settings`, 기존 판단 비교는 `compare=1`이다. 종류 전환은 대상·정확한 기간·limit를 유지하고 API별 cursor·선택은 초기화한다. 같은 종류의 다음 페이지는 제출된 기간·원본 cursor를 유지한다.
+
+설정의 정본은 `/settings?tab=configuration|models|preprocessors|datasets`다(기본 운영 설정).
+운영 설정은 범위별 현재값 표와 수정 Sheet, 카탈로그는 검색 표와 선택 UID 고정 Sheet에서 정의·연결 영향·CRUD·원본을 제공한다.
+구 최상위 목록은 설정 탭으로 이동하며 등록·상세·수정 전용 경로와 변경 충돌/결과 미확인 안전 계약은 유지한다.
+
 별도 개요·링크 허브·측정 6탭은 폐지한다. 요청 실패와 기존 사용 결과, 현재 사용과 품질, 실행 종료와 측정 통과·정리는 독립이다.
 작성·수정은 전용 페이지이며 필수값·출처·변경 요약·점검을 보이고 입력 변경은 점검을 무효화한다. 목록은 breadcrumb 없이, 상세는 상위 맥락 하나다.
 연관 이동은 KPI를 복제하지 않고 대상·기간·필터·선택·namespace·UID를 보존한다. 외부 return URL은 허용하지 않는다.

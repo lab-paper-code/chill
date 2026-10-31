@@ -323,7 +323,9 @@ CHILL 설치, 업그레이드와 제거는 Helm 또는 GitOps의 배포 경로�
 요구사항에는 이력 추적용 ID를 부여하며, 폐기된 화면을 구현 완료 조건으로 사용하지 않는다.
 
 - `DB-FR-46` **폐기:** `/records` 링크 모음. 판단·변경/서비스 요청/전력의 실제 기록 조회로 대체한다.
-- `DB-FR-47` **폐기:** `/settings` 링크 모음. 운영 설정/모델/입력 처리/데이터셋의 실제 조회·변경으로 대체한다.
+- `DB-FR-47` **폐기:** `/settings` 링크 모음. `tab=configuration|models|preprocessors|datasets`의 실제 조회·변경으로 대체한다.
+  운영 설정은 범위별 현재값 표·수정 Sheet·전후 검토, 카탈로그는 검색 표·선택 UID 고정 Sheet·연결 영향·전용 CRUD 편집을 제공한다.
+  `/configuration`, `/models`, `/preprocessors`, `/datasets` 최상위는 해당 설정 탭으로 이동하며 카탈로그 등록·상세·수정 경로는 유지한다.
 - `DB-FR-48` **폐기:** `/experiments` “준비 중”. 실행·결과·부하 설정과 DB-FR-66의 정의 기반 계약으로 대체한다.
 - `DB-FR-49` **폐기:** `/measurements/:kind/...`의 “연결 준비 중” 일반 분기 요구사항.
   지원하는 측정 종류만 명시하고, 측정 조회 및 요청 기능은 유지한다.
@@ -333,6 +335,7 @@ CHILL 설치, 업그레이드와 제거는 Helm 또는 GitOps의 배포 경로�
   `/scheduler/profiles`는 `/measurements/results` 처리 성능, `/evaluations`는 `/experiments`,
   `/evaluations/load-scenarios`는 `/experiments/load-scenarios`로 redirect한다.
   기존 실험 게시·구간 query와 서비스 세부 경로는 같은 선택·해당 영역으로 명시 매핑한다. 구 화면 호환 UI는 남기지 않는다.
+  `/scheduler/history`, `/observations`, `/changes`, `/transitions[/id]`, `/scheduler/power`, `/scheduler/compare`는 `/records`의 해당 종류·선택으로 이동한다. API별 기간·cursor·limit 및 원본 기록 식별자를 유지하고 종류 전환 시 다른 API의 cursor를 재사용하지 않는다.
 
 ### 5.12 측정 커버리지와 측정·실험 해석
 

@@ -1,27 +1,22 @@
 "use client"
 
 import * as React from "react"
-import Link from "next/link"
-import { useSearchParams } from "next/navigation"
-import { useChillQuery } from "@/lib/client"
-import { workloadRoleLabel, type NodeRef, type OperationResult, type OperationState, type Routing, type SchedulerAction, type SchedulerActionObservation, type SchedulerControllerState, type SchedulerObservationPage, type SchedulerObservationSummary, type SchedulerOperation } from "@/lib/read-types"
-import { nanosToMilliseconds, parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
-import { readSchedulerRecord, schedulerRecordMatches, schedulerRecordParams, schedulerRecordPath, type SchedulerRecordRef } from "@/lib/scheduler-history"
-import { useLive } from "@/lib/use-live"
-import { changeListStatus, actionProgress, actionOrigin, displayTime, elapsed, duration, scopeSnapshot } from "@/lib/live-display"
+import type { NodeRef, OperationResult, OperationState, SchedulerActionObservation, SchedulerOperation } from "@/lib/read-types"
+import { workloadRoleLabel } from "@/lib/read-types"
+import { nanosToMilliseconds } from "@/lib/scheduler"
 import { safeSource } from "@/lib/source-export"
-import { QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/read-region"
+import { SourceJSON } from "@/components/read-region"
 import { statusLabel } from "@/lib/labels"
-import { Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
-import { HistoryControls, HistoryPaging, useSchedulerHistory, type SchedulerHistoryRow } from "@/features/scheduler-history"
-import { actionNodeName, actionKinds as kinds, actionStatuses as statuses, actionTones } from "@/features/scheduler"
-import { resolveWorkloadIdentities, type IdentityWorkload } from "@/lib/workload-identity"
+import type { SchedulerHistoryRow } from "./scheduler-history"
+import { actionNodeName, actionKinds as kinds, actionStatuses as statuses } from "./scheduler"
+import { useChillQuery } from "@/lib/client"
+import { parseSchedulerJSON } from "@/lib/scheduler"
+import type { SchedulerControllerState } from "@/lib/read-types"
+import { QueryGate, SourceExport } from "@/components/read-region"
+import { useSearchParams } from "next/navigation"
 
 const time=(value?:string)=>!value||value.startsWith("0001-")?"제공된 시각 없음":`${new Date(value).toLocaleString("ko-KR",{timeZone:"Asia/Seoul",dateStyle:"short",timeStyle:"medium"})} KST`
-const when=(value?:string)=>{const date=new Date(value??"");return !value||value.startsWith("0001-")||!Number.isFinite(date.getTime())?"시각 없음":`${date.toLocaleString("ko-KR",{timeZone:"Asia/Seoul",dateStyle:"short",timeStyle:"medium"})} KST`}
 const label=(value:string)=>statuses[value]??statusLabel(value)
-const kindLabel=(value:string)=>kinds[value]??statusLabel(value)
-const Badge=({status}:{status:string})=><StatusBadge tone={actionTones[status]??"idle"}>{label(status)}</StatusBadge>
 
 function Lines({values}:{values:string[]|null|undefined}) {return values?.length?<ul className="list-inside list-disc">{values.map((value,index)=><li key={index}>{value}</li>)}</ul>:<p>제공된 항목 없음</p>}
 function Node({node}:{node:NodeRef}) {return <span>{actionNodeName(node)} <small className="break-all">({node.uid})</small></span>}
@@ -33,10 +28,6 @@ function operation(value:unknown):SchedulerOperation|undefined {
 function result(value:unknown,action:SchedulerActionObservation):OperationResult|undefined {
   const item=object(value),op=operation(item?.operation)
   return item&&op&&op.id===action.id&&op.node.uid===action.node.uid&&item.startedAt===action.startedAt&&typeof item.status==="string"&&object(item.before)&&object(item.actual)?item as OperationResult:undefined
-}
-function historyLink(ref:SchedulerRecordRef) {return `/transitions/${encodeURIComponent(ref.id)}?${schedulerRecordParams(ref)}&view=history`}
-function historyWindow(from?:string|null,to?:string|null) {
-  return `/transitions?${new URLSearchParams({view:"history",...(from&&to?{from,to}:{})})}`
 }
 
 function Native({value}:{value:unknown}) {
@@ -69,160 +60,21 @@ function ResultDetails({value}:{value:OperationResult}) {
   return <><p role="status">관측 결과 {label(value.status)}</p><p>시작 {time(value.startedAt)} / 종료 {time(value.endedAt)}</p>{value.error&&<p role="alert" className="break-all">{value.error}</p>}<h3>제공된 진행 기록</h3><Lines values={value.progress}/><OperationDetails value={value.operation}/><StateDetails title="변경 전 관측" state={value.before}/><StateDetails title="실제 변경 후 관측" state={value.actual}/>{value.drainNative&&<section><h3>기존 요청 마무리 관측</h3><Native value={value.drainNative}/></section>}</>
 }
 
-const routingKind="manual-static-routing"
-function routingConclusion(result:OperationResult):[title:string,lede:string] {
-  // sourceConfigRV is a storage revision; it stays in the 원본 view.
-  const split="설정한 분배"
-  if(result.status==="complete")return [`${split}가 반영됐어요`,"설정한 비율과 실제로 읽어 온 비율을 나란히 보여줘요."]
-  if(result.status==="running"||result.status==="starting")return [`${split}를 반영하고 있어요`,"실행기가 준비되기를 기다리고 있어요. 반영되면 실제 비율이 채워져요."]
-  return [`${split}를 ${result.status==="partial"?"일부만 반영했어요":"반영하지 못했어요"}`,"원본 보기에서 ChillServer가 남긴 이유를 확인해 주세요."]
+function Dependencies({ids}:{ids:string[]|null}) {
+  return <section><h3>선행 동작</h3>{ids?.length?<ul>{ids.map(id=><li key={id}>{id}</li>)}</ul>:<p>기록 없음</p>}</section>
 }
-// Declared split (operation.staticRouting) next to the read-back split (actual.routing), as each service's share per instance.
-function RoutingSplit({result}:{result:OperationResult}) {
-  const state=useChillQuery<SchedulerControllerState>("v1/scheduler/state",{decoder:parseSchedulerJSON})
-  const workloads=useChillQuery<IdentityWorkload[]>("v1/workloads")
-  const declared=result.operation.staticRouting??{},actual=result.actual.routing
-  const services=resolveWorkloadIdentities(workloads.data,[],state.data?.snapshot.workloads,Object.keys({...declared,...actual}))
-  const nodes=new Map((result.operation.target?.instances??[]).map(instance=>[instance.id,instance.node.name]))
-  const ids=[...new Set([declared,actual??{}].flatMap(routing=>Object.values(routing).flatMap(weights=>Object.keys(weights))))].sort()
-  const instanceName=(id:string)=>{const node=nodes.get(id)??"이전";const same=ids.filter(other=>(nodes.get(other)??"이전")===node);return `${node} 실행기${same.length>1?` ${same.indexOf(id)+1}`:""}`}
-  const share=(routing:Routing|undefined,uid:string,id:string)=>{
-    if(!routing)return "반영 대기"
-    const weights=routing[uid]??{},total=Object.values(weights).reduce((sum,weight)=>sum+weight,0)
-    return total?`${(100*(weights[id]??0)/total).toLocaleString("ko-KR",{maximumFractionDigits:1})}%`:"0%"
-  }
-  const uids=[...new Set([...Object.keys(declared),...Object.keys(actual??{})])]
-  return <section className="rows-group" aria-label="서비스 → 인스턴스 비율"><h2 className="rows-label">서비스 → 인스턴스 비율</h2><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th>서비스 → 인스턴스</th><th>설정한 비율</th><th>실제 비율</th></tr></thead><tbody>
-    {uids.flatMap(uid=>[...new Set([...Object.keys(declared[uid]??{}),...Object.keys(actual?.[uid]??{})])].map(id=><tr key={`${uid}/${id}`}><td>{services.get(uid)!} → {instanceName(id)}</td><td>{share(declared,uid,id)}</td><td>{share(actual,uid,id)}</td></tr>))}
-  </tbody></table></div>{!uids.length&&<p>설정한 분배가 기록되지 않았어요.</p>}{result.operation.settingsValidatedAt&&<RoutingReason at={result.operation.settingsValidatedAt} declared={result.operation.staticRouting}/>}</section>
-}
-// The settings change that declared the split is the one validated at settingsValidatedAt.
-// Its reason applies only when that change wrote this exact declaration.
-function RoutingReason({at,declared}:{at:string;declared?:Routing}) {
-  const page=useChillQuery<SchedulerObservationPage>(`v1/observations/scheduler?${new URLSearchParams({from:at,to:new Date(Date.parse(at)+1).toISOString()})}`,{decoder:parseSchedulerJSON})
-  const found=page.data?.events?.find(event=>event.settings?.validatedAt===at)?.settings
-  const change=found&&stringifySchedulerJSON(found.afterStaticRouting)===stringifySchedulerJSON(declared)?found:undefined
-  return <Facts items={[["선택 이유",change?.reason??(page.isPending?"불러오고 있어요":"기록에서 찾지 못했어요")],["바꾼 사람",change?.actorUsername??"-"],["설정 변경 시각",change?when(at):"-"]]}/>
-}
-
-type CurrentRow={action?:SchedulerAction;result?:OperationResult;id:string;node:NodeRef;kind:string;status:string}
-function currentLink(row:CurrentRow) {
-  return `/transitions/${encodeURIComponent(row.id)}?${new URLSearchParams({view:"current",stage:row.result?"result":"action",node:row.node.uid,...(row.result?{startedAt:row.result.startedAt}:{})})}`
-}
-function currentRows(data?:SchedulerControllerState):CurrentRow[] {
-  return [...(data?.actions??[]).map(action=>({action,id:action.id,node:action.node,kind:action.kind,status:action.status})),...(data?.results??[]).map(result=>({result,id:result.operation.id,node:result.operation.node,kind:result.operation.kind,status:result.status}))]
-}
-function Dependencies({ids,rows}:{ids:string[]|null;rows?:CurrentRow[]}) {
-  return <><h3>먼저 필요한 동작</h3>{ids?.length?<ul>{ids.map((id,index)=>{const matches=rows?.filter(row=>row.id===id);return <li key={index}>{matches?.length===1?<Link href={currentLink(matches[0])}>{id}</Link>:rows?<Link href={`/transitions/${encodeURIComponent(id)}?view=current`}>{id} 동작 선택</Link>:<span>{id} / 일치하는 기록이 제공되지 않았습니다.</span>}</li>})}</ul>:<p>제공된 의존 동작 없음</p>}</>
-}
-// One current action or one result. Actions carry no start time, so they are never merged with a result of the same ID.
-function CurrentSummary({row,rows}:{row:CurrentRow;rows:CurrentRow[]}) {
-  const {action,result}=row
-  const source=<RowDialog label="원본 자료와 내보내기" title="원본 자료">
-    {action&&<><Facts items={[["동작 ID",<span key="id" className="break-all">{row.id}</span>],["노드 UID",<span key="node" className="break-all">{row.node.uid}</span>],["인스턴스",action.instance||"제공 없음"],["비용 근거",action.costID||"제공 없음"]]}/>{action.reason&&<p className="break-all">{action.reason}</p>}<p className="text-sm text-muted-foreground">현재 동작에는 시작 시각이 없어 결과 기록과 합치지 않아요. 결과는 목록에서 따로 골라요. 이 API에는 수동 취소나 재시도가 없어요.</p></>}
-    {result?.error&&<p role="alert" className="break-all">{result.error}</p>}
-    <SourceExport filename="scheduler-transition-selected-current.json" value={{source:"GET v1/scheduler/state",range:"선택한 현재 동작 또는 결과",identity:{id:row.id,node:row.node.uid,stage:result?"result":"action",startedAt:result?.startedAt},data:action??result}}/><SourceJSON inline value={action??result}/>
-  </RowDialog>
-  if(action)return <>
-    <Facts items={[["노드",actionNodeName(row.node)],["상태",label(action.status)],[action.status==="planned"?"예상 소요 시간":"경과 또는 소요 시간",`${nanosToMilliseconds(action.elapsedNanos)} ms`],["변경 전",action.from||"제공 없음"],["목표",action.to||"제공 없음"],["취소 가능",action.cancelable?"예":"아니요"]]}/>
-    <Rows><RowDialog label="먼저 필요한 동작" value={`${action.dependsOn?.length??0}개`} title="먼저 필요한 동작"><Dependencies ids={action.dependsOn} rows={rows}/></RowDialog>{source}</Rows>
-  </>
-  return result?<>
-    <Facts items={[["노드",actionNodeName(row.node)],["결과",label(result.status)],["시작",when(result.startedAt)],["종료",when(result.endedAt)]]}/>
-    {row.kind===routingKind?<RoutingSplit result={result}/>:result.error&&<p role="alert">실행 중 오류가 있었어요. 내용은 원본 자료에서 볼 수 있어요.</p>}
-    <Rows>
-      <RowDialog label="진행 기록" value={`${result.progress?.length??0}개`} title="진행 기록"><Lines values={result.progress}/></RowDialog>
-      <RowDialog label="실행 대상과 계획" title="실행 대상과 계획"><OperationDetails value={result.operation}/></RowDialog>
-      <RowDialog label="변경 전 상태" title="변경 전 관측"><StateDetails title="변경 전 관측" state={result.before}/></RowDialog>
-      <RowDialog label="실제 변경 후 상태" title="실제 변경 후 관측"><StateDetails title="실제 변경 후 관측" state={result.actual}/></RowDialog>
-      {result.drainNative&&<RowDialog label="기존 요청 마무리" title="기존 요청 마무리 관측"><Native value={result.drainNative}/></RowDialog>}
-      {source}
-    </Rows>
-  </>:null
-}
-
-function CurrentList() {
-  const query=useChillQuery<SchedulerControllerState>("v1/scheduler/state",{decoder:parseSchedulerJSON}),live=useLive(),params=useSearchParams(),uid=params.get("uid")??undefined,[now,setNow]=React.useState(()=>Date.now())
-  React.useEffect(()=>{const update=()=>setNow(Date.now()),timer=setInterval(update,1000);document.addEventListener("visibilitychange",update);return()=>{clearInterval(timer);document.removeEventListener("visibilitychange",update)}},[])
-  const snapshot=live.state.snapshot?scopeSnapshot(live.state.snapshot,uid):null,actions=snapshot?.actions.filter(action=>actionProgress(action,now)!=="terminal")??[],summary=changeListStatus({...live.state,snapshot},now)
-  const results=currentRows(query.data).filter(row=>row.result&&(!uid||row.result.operation.workloadUID===uid||row.result.operation.workloadUIDs?.includes(uid)))
-  return <Screen back={["/","운영 현황"]} title={summary.title} lede="보드와 동일한 실시간 작업 원본이에요. 예상 대비 지연은 종결 기록 미확인이며 실패를 뜻하지 않아요.">
-    {!summary.fresh&&<p role="status">현재 상태 미확인. 마지막 관측 {displayTime(live.state.lastObservedAt,"KST")||"미수신"}. <button type="button" className="underline underline-offset-4" onClick={live.reconnect}>다시 연결</button></p>}
-    {snapshot&&<Rows label={summary.fresh?(uid?"이 서비스의 변경":"현재 변경"):"마지막 관측의 변경"}>{actions.length?actions.map(action=>{const delayed=actionProgress(action,now)==="delayed",search=new URLSearchParams({open:`action:${JSON.stringify([action.id,action.node.uid,action.startedAt])}`,...(params.get("fixture")?{fixture:params.get("fixture")!}:{})});return <Row key={JSON.stringify([action.id,action.node.uid,action.startedAt])} href={`/?${search}`} label={`${kindLabel(action.kind)} / ${snapshot.workloads.find(row=>row.uid===action.workloadUID)?.name??"공유 구성"}`} hint={`${actionOrigin(action)} / ${actionNodeName(action.node)} / ${displayTime(action.startedAt,"KST")} 시작 / ${elapsed(action.startedAt,now).replace(" 전"," 경과")} / 예상 ${action.expectedSeconds==null?"미제공":duration(action.expectedSeconds)}`} value={`${summary.fresh?"":"마지막 관측 · "}${delayed?"예상 대비 지연 · 종결 미확인":"진행 중"}`}/> }):<p>{summary.emptyLabel}</p>}</Rows>}
-    <QueryGate query={query}>{results.length>0&&<Rows label="컨트롤러 실행 결과">{results.map((row,index)=><Row key={`${row.id}/${row.node.uid}/${row.result!.startedAt}/${index}`} href={currentLink(row)} label={kindLabel(row.kind)} hint={`${actionNodeName(row.node)} · ${when(row.result!.startedAt)} 시작`} value={<Badge status={row.status}/>}/>)}</Rows>}</QueryGate>
-    <Rows label="더 보기"><Row href="/transitions?view=history" label="변경 기록" hint="클러스터 전체의 과거 동작·결과"/></Rows>
-  </Screen>
-}
-
-function CurrentAction({id}:{id:string}) {
-  const params=useSearchParams()
-  const query=useChillQuery<SchedulerControllerState>("v1/scheduler/state",{decoder:parseSchedulerJSON})
-  const rows=currentRows(query.data)
-  const stage=params.get("stage"),node=params.get("node"),startedAt=params.get("startedAt")
-  const selected=rows.filter(row=>row.id===id&&(!stage||stage===(row.result?"result":"action"))&&(node===null||row.node.uid===node)&&(startedAt===null||row.result?.startedAt===startedAt))
-  const selectionRequested=stage!==null||node!==null||startedAt!==null
-  const row=selected.length===1?selected[0]:undefined
-  const routing=row?.result&&row.kind===routingKind?routingConclusion(row.result):undefined
-  return <Screen back={["/transitions","변경 진행"]} status={row&&<Badge status={row.status}/>}
-    title={!query.data?"변경 상세":routing?routing[0]:row?`${kindLabel(row.kind)}${row.result?" 결과":""}`:selected.length?"같은 동작이 여럿 있어요":"이 동작을 지금 찾을 수 없어요"}
-    lede={!query.data?undefined:routing?routing[1]:row?`${actionNodeName(row.node)}에서 ${row.result?"실행한":"진행하는"} 변경이에요.`:selected.length?"노드와 시작 시각을 보고 하나를 골라 주세요.":selectionRequested?"현재 상태에 같은 동작이 없어요. 다른 결과로 대신 보여주지 않아요.":"현재 상태에 이 동작이 없어요. 변경 기록에서 찾아 주세요."}>
-    <QueryGate query={query}>{query.data&&(row?<CurrentSummary row={row} rows={rows}/>:selected.length?<Rows label="고를 항목">{selected.map((item,index)=><Row key={index} href={currentLink(item)} label={item.result?"실행 결과":"현재 동작"} hint={`${actionNodeName(item.node)} · ${item.result?`${when(item.result.startedAt)} 시작`:"시작 시각 없음"}`} value={<Badge status={item.status}/>}/>)}</Rows>:<Rows><Row href="/transitions?view=history" label="변경 기록에서 찾기"/></Rows>)}</QueryGate>
-  </Screen>
-}
-
-function HistoryActionDetails({row}:{row:SchedulerHistoryRow}) {
+export function HistoryActionDetails({row}:{row:SchedulerHistoryRow}) {
   const action=row.event.action!
   const expected=operation(action.expected),actual=result(action.actual,action)
   const validExpected=expected?.id===action.id&&expected.node.uid===action.node.uid
   return <section className="space-y-4"><p>사건 {time(row.event.at)} / 동작 {action.id} / <Node node={action.node}/></p><p>{kinds[action.kind]??action.kind} / 관측 단계 {label(action.phase)} / 인스턴스 {action.instance||"제공 없음"}</p><p>시작 {time(action.startedAt)} / 완료 {time(action.completedAt)}</p>{action.error&&<p role="alert" className="break-all">{action.error}</p>}{actual?<ResultDetails value={actual}/>:<>{validExpected?<OperationDetails value={expected}/>:<p>표시할 실행 계획 필드가 제공되지 않았습니다. 제공된 내용은 원본에서 확인합니다.</p>}<p>이 사건에서 구조화된 변경 전후와 진행 결과를 확인하지 못했습니다. 다른 시점의 결과로 대체하지 않습니다.</p></>}{action.evidence?.length?<details><summary>제공된 근거</summary><SourceJSON inline value={action.evidence}/></details>:null}</section>
 }
-function HistoryDetails({row,known=[]}:{row:SchedulerHistoryRow;known?:SchedulerHistoryRow<SchedulerObservationSummary>[]}) {
-  const action=row.event.action!
-  const paired=known.filter(other=>other.ref.offset!==row.ref.offset&&other.event.action?.id===action.id&&other.event.action.node.uid===action.node.uid&&other.event.action.startedAt===action.startedAt)
-  const exportValue={source:"GET v1/observations/scheduler",range:"선택 기록",from:row.ref.from,to:row.ref.to,cursor:row.ref.offset,population:"로컬 scheduler journal의 제공된 사건",identity:row.ref,data:row.event}
-  return <div className="space-y-4"><HistoryActionDetails row={row}/>{paired.length?<><h3>동일 동작 기록</h3>{paired.map(other=><Link className="block" key={other.ref.offset} href={historyLink(other.ref)}>{label(other.event.action!.phase)} · {when(other.event.at)}</Link>)}</>:<p>동일 동작 기록 미제공</p>}<SourceExport value={exportValue} filename="scheduler-transition-selected-record.json"/><SourceJSON inline value={exportValue}/></div>
-}
 
-function SelectedHistoryDetails({record,known}:{record:SchedulerRecordRef;known:SchedulerHistoryRow<SchedulerObservationSummary>[]}) {
-  const query=useChillQuery<SchedulerObservationPage>(schedulerRecordPath(record),{decoder:parseSchedulerJSON})
-  const event=query.data?.events?.[0]
-  return <QueryGate query={query}>{query.data&&(event?.action&&schedulerRecordMatches(record,event)?<HistoryDetails row={{event,ref:record}} known={known}/>:<p role="alert">선택 기록 불일치</p>)}</QueryGate>
-}
-
-function HistoryList() {
-  const history=useSchedulerHistory(),[node,setNode]=React.useState(""),[selected,setSelected]=React.useState<string|null>(null)
-  const actions=history.rows.filter(row=>!!row.event.action),nodes=new Map(actions.map(row=>[row.event.action!.node.uid,row.event.action!.node.name]))
-  const rows=actions.filter(row=>!node||row.event.action!.node.uid===node)
-  const page={projection:"summary",source:"GET v1/observations/scheduler",range:"현재 페이지",...history.submitted,cursor:history.cursor,population:"로컬 scheduler journal의 제공된 사건",filter:{kind:"action",node:node||null,scope:"현재 가져온 기록에서"},records:rows}
-  return <Screen back={["/transitions","변경 진행"]} title={!history.query.data?"변경 기록":rows.length?`변경 동작 ${rows.length}건을 찾았어요`:"이 구간에 변경 동작이 없어요"} lede="지금 가져온 기록만 보여줘요. 구간 전체 건수는 아니에요.">
-    <HistoryControls history={history}><RowDialog label="노드" value={node?nodes.get(node)??"이전 페이지에서 고른 노드":"전체 노드"} title="노드 고르기"><label className="grid gap-1.5">지금 가져온 기록의 노드<select value={node} onChange={event=>setNode(event.target.value)}><option value="">전체 노드</option>{node&&!nodes.has(node)&&<option value={node}>이전 페이지에서 고른 노드</option>}{Array.from(nodes,([uid,name])=><option key={uid} value={uid}>{name||"이름 미제공"}</option>)}</select></label></RowDialog></HistoryControls>
-    <QueryGate query={history.query}>{history.query.data&&<>
-      {rows.length>0&&<Rows label="변경 동작">{rows.map(row=><RowDialog key={row.ref.offset} open={selected===row.ref.offset} onOpenChange={open=>setSelected(open?row.ref.offset:null)} label={kindLabel(row.event.action!.kind)} hint={`${actionNodeName(row.event.action!.node)} · ${when(row.event.at)}`} value={<Badge status={row.event.action!.phase}/>} title="변경 기록 상세">{selected===row.ref.offset&&<SelectedHistoryDetails record={row.ref} known={actions}/>}<Link href={historyLink(row.ref)}>이 기록만 따로 열기</Link></RowDialog>)}</Rows>}
-      <HistoryPaging history={history}/>
-      <Rows><RowDialog label="원본 자료와 내보내기" title="현재 페이지 원본"><p>현재 페이지 {history.rows.length}건 중 동작 {actions.length}건, 표시 {rows.length}건이에요. 구간 전체 건수나 집계가 아니에요.</p><SourceExport value={page} filename="scheduler-transition-current-page.json"/><SourceJSON inline value={page}/></RowDialog></Rows>
-    </>}</QueryGate>
-  </Screen>
-}
-
-function HistoryRecord({id}:{id:string}) {
-  const params=useSearchParams(),ref=readSchedulerRecord(params)
-  const valid=!!ref&&ref.kind==="action"&&ref.id===id
-  const query=useChillQuery<SchedulerObservationPage>(schedulerRecordPath(ref),{enabled:valid,decoder:parseSchedulerJSON})
-  const event=query.data?.events?.[0],matches=valid&&schedulerRecordMatches(ref,event)&&!!event?.action
-  const action=matches?event!.action:undefined
-  const routed=action?.kind===routingKind?result(action.actual,action):undefined,routing=routed&&routingConclusion(routed)
-  return <Screen back={[historyWindow(ref?.from??params.get("from"),ref?.to??params.get("to")),"변경 기록"]} status={action&&<Badge status={action.phase}/>}
-    title={routing?routing[0]:action?kindLabel(action.kind):valid&&!query.data?"변경 기록":"기록을 확인해야 해요"}
-    lede={!valid?"구간, 위치와 기록 정보가 모두 필요해요. 현재 동작으로 대신 보여주지 않아요.":routing?routing[1]:action?`${actionNodeName(action.node)} · ${when(event!.at)}`:query.data?"보관 범위나 기록이 달라졌어요. 같은 동작의 다른 사건으로 대신 보여주지 않아요.":undefined}>
-    {valid&&<QueryGate query={query}>{action&&ref&&<>
-      <Facts items={[["노드",actionNodeName(action.node)],...(routing?[["기록 시각",when(event!.at)] as [string,string]]:[]),["관측 단계",label(action.phase)],["시작",when(action.startedAt)],["완료",when(action.completedAt)]]}/>
-      {routed?<RoutingSplit result={routed}/>:action.error&&<p role="alert">실행 중 오류가 있었어요. 내용은 자세히에서 볼 수 있어요.</p>}
-      <Rows><RowDialog label="변경 내용 자세히" hint="계획, 변경 전후 상태와 원본" title="변경 기록 상세"><HistoryDetails row={{event:event!,ref}}/></RowDialog></Rows>
-    </>}</QueryGate>}
-  </Screen>
-}
-
-export function SchedulerTransitionsPage({id}:{id?:string}) {
-  const params=useSearchParams(),history=params.get("view")==="history"||params.has("offset")||params.has("kind")||params.has("at")
-  return history?(id?<HistoryRecord id={id}/>:<HistoryList/>):id?<CurrentAction id={id}/>:<CurrentList/>
+export function CurrentTransitionEvidence(){
+  const params=useSearchParams(),query=useChillQuery<SchedulerControllerState>("v1/scheduler/state",{decoder:parseSchedulerJSON})
+  const id=params.get("id"),node=params.get("node"),startedAt=params.get("startedAt"),stage=params.get("stage")
+  const actions=stage==="result"?[]:(query.data?.actions??[]).filter(row=>row.id===id&&(!node||row.node.uid===node))
+  const results=stage==="action"?[]:(query.data?.results??[]).filter(row=>row.operation.id===id&&(!node||row.operation.node.uid===node)&&(!startedAt||row.startedAt===startedAt))
+  const selected=actions.length+results.length===1?actions[0]??results[0]:undefined
+  return <QueryGate query={query}>{query.data&&(selected?<><h3>현재 변경 근거</h3>{results[0]?<ResultDetails value={results[0]}/>:<SourceJSON inline value={actions[0]}/>}<SourceExport value={selected} filename="scheduler-transition-current.json"/></>:<p role="alert">{actions.length+results.length?"동작 선택 필요":"현재 동작 미확인"}</p>)}</QueryGate>
 }

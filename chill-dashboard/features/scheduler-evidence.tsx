@@ -9,14 +9,15 @@ import type { ObservationResult, SchedulerCandidate, SchedulerObservation, Sched
 import { nanosToMilliseconds, parseSchedulerJSON } from "@/lib/scheduler"
 import { gapNotice } from "@/lib/date-time"
 import { readSchedulerRecord, schedulerRecordMatches, schedulerRecordParams, schedulerRecordPath, schedulerRecordRef, schedulerPageParams, type SchedulerRecordRef } from "@/lib/scheduler-history"
-import { DetailsDialog, QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/read-region"
-import { Screen, Rows, Row, RowDialog, Facts, Empty } from "@/components/screen"
+import { QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/read-region"
+import { Screen, Row, RowDialog, Facts, Empty } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { HistoryControls, HistoryPaging, useSchedulerHistory, when } from "./scheduler-history"
 import { SnapshotDetails, CandidateDetails, judgmentLabels, actionKinds, actionNodeName, PowerInterval } from "./scheduler"
 import { SettingsSummary } from "./scheduler-settings"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { RecordsNavigation, RecordsRange } from "@/components/records-navigation"
 
 export function SchedulerIntervalEvents({from,to}:{from:string;to:string}) {
   const params=new URLSearchParams({from,to,view:"summary",filter:"decision-action",order:"asc",limit:"10"})
@@ -30,17 +31,17 @@ export function SchedulerIntervalEvents({from,to}:{from:string;to:string}) {
         <thead><tr>{["시각 (KST)","종류","대상"].map(heading=><th key={heading} scope="col" className="p-3 text-left">{heading}</th>)}</tr></thead>
         <tbody>{query.data.events.slice(0,10).map((event,index)=>{
           const ref=schedulerRecordRef(event,from,to,String(index))
-          const href=event.action?`/transitions/${encodeURIComponent(event.action.id)}?${schedulerRecordParams(ref)}&view=history`:`/scheduler/history?${schedulerRecordParams(ref)}`
+          const href=`/records?${schedulerRecordParams(ref)}`
           return <tr key={ref.offset} className="border-t"><td className="whitespace-nowrap p-3"><Link className="underline underline-offset-4" href={href}>{when(event.at)}</Link></td><td className="p-3">{event.action?actionKinds[event.action.kind]??"변경 동작":`판단 · ${judgmentLabels[event.decision?.status??""]??"미확인"}`}</td><td className="break-all p-3">{event.action?actionNodeName(event.action.node):event.node?actionNodeName(event.node):"실행 그룹"}</td></tr>
         })}</tbody>
       </table></div>:<p role="status">판단·전환 기록 없음</p>}
-      <Link className="inline-block underline underline-offset-4" href={`/scheduler/history?${historyParams}`}>{query.data.nextCursor?"구간 기록 더 보기":"구간 기록 열기"}</Link>
+      <Link className="inline-block underline underline-offset-4" href={`/records?${historyParams}`}>{query.data.nextCursor?"구간 기록 더 보기":"구간 기록 열기"}</Link>
     </>}</QueryGate>
   </section>
 }
 
 function RecordReturn({record}:{record:SchedulerRecordRef|null}) {
-  return <p role="alert">고른 기록을 확인하지 못했어요. <Link href={`/scheduler/history?${record?new URLSearchParams({from:record.from,to:record.to}):""}`}>그 기간 기록으로 돌아가기</Link></p>
+  return <p role="alert">선택 기록 미확인 <Link href={`/records?${record?new URLSearchParams({from:record.from,to:record.to}):""}`}>같은 기간 기록</Link></p>
 }
 function PowerDetails({event,record}:{event:SchedulerObservation;record:SchedulerRecordRef}) {
   const power=event.power
@@ -76,33 +77,34 @@ export function SchedulerPowerPage() {
   const node=params.get("filterNode")??"",powerRows=history.rows.filter(row=>!!row.event.power),rows=powerRows.filter(row=>!node||row.event.node?.uid===node)
   const nodes=new Map(powerRows.map(row=>[row.event.node?.uid??"",row.event.node?.name??"노드 이름 없음"]))
   const nodeChoices:[string,string][]=[["","전체 노드"],...(node&&!nodes.has(node)?[[node,"이전에 고른 노드"] as [string,string]]:[]),...Array.from(nodes).filter(([uid])=>uid)]
-  const title=!history.query.data?"전력 기록":rows.length?`전력 측정 ${rows.length}건을 불러왔어요`:"이 기간에는 전력 측정이 없어요"
-  return <Screen back={["/records","기록"]} title={title} lede="노드마다 잰 전력이에요. 기록마다 측정 기간이 달라 서로 더하지 않아요.">
+  return <Screen width="data" title="기록">
+    <RecordsNavigation/>
+    <RecordsRange target={node?nodes.get(node)??node:"전체 노드"} from={history.submitted.from} to={history.submitted.to} at={history.query.data?.to}/>
     <HistoryControls history={history}>
       <RowDialog open={nodeOpen} onOpenChange={setNodeOpen} label="노드" value={node?nodes.get(node)??"이전에 고른 노드":"전체 노드"} title="노드 고르기" description="불러온 기록에만 적용돼요. 실행 그룹 전체 집계는 바뀌지 않아요.">
-        <fieldset className="grid gap-2">{nodeChoices.map(([uid,name])=><label key={uid} className="flex items-center gap-2"><input type="radio" name="node" checked={node===uid} onChange={()=>{const next=new URLSearchParams(params.toString());if(uid)next.set("filterNode",uid);else next.delete("filterNode");router.replace(`/scheduler/power?${next}`);setNodeOpen(false)}}/>{name}{uid&&<span className="break-all text-xs text-muted-foreground">{uid}</span>}</label>)}</fieldset>
+        <fieldset className="grid gap-2">{nodeChoices.map(([uid,name])=><label key={uid} className="flex items-center gap-2"><input type="radio" name="node" checked={node===uid} onChange={()=>{const next=new URLSearchParams(params.toString());if(uid)next.set("filterNode",uid);else next.delete("filterNode");router.replace(`/records?${next}`);setNodeOpen(false)}}/>{name}{uid&&<span className="break-all text-xs text-muted-foreground">{uid}</span>}</label>)}</fieldset>
       </RowDialog>
       <RowDialog label="실행 그룹 전체 전력" hint="고른 기간의 전체·활성 실행 그룹 소비" title="실행 그룹 전체 전력" description="고른 기간 전체의 실측 소비예요. 노드 고르기와 페이지는 여기에 적용되지 않아요."><PowerInterval from={history.submitted.from} to={history.submitted.to}/></RowDialog>
-      <Row href={`/scheduler/history?${new URLSearchParams(history.submitted)}`} label="같은 기간 판단 기록"/>
+      <Row href={`/records?${new URLSearchParams(history.submitted)}`} label="같은 기간 판단 기록"/>
       {history.query.data&&<RowDialog label="자료 내보내기" title="자료 내보내기" description="지금 불러온 전력 기록을 파일로 받아요.">
         <SourceExport filename="scheduler-power-page-summary.json" value={{projection:"summary",scope:"현재 페이지",source:"v1/observations/scheduler",from:history.submitted.from,to:history.submitted.to,cursor:history.cursor,filterNode:node,rows}}/>
       </RowDialog>}
     </HistoryControls>
     <QueryGate query={history.query}>{history.query.data&&<>
-      {rows.length?<Rows label="전력 측정">{rows.map(row=><Row key={row.ref.offset} label={row.event.node?.name??"노드 이름 없음"} hint={when(row.event.at)} value={row.event.powerJoules==null?"측정값 없음":`${row.event.powerJoules} J`} onClick={()=>{
+      {rows.length?<div className="overflow-x-auto rounded-lg border"><table className="w-full text-sm"><thead><tr>{["시각 KST","노드","실측 에너지 (J)","근거"].map(label=><th key={label} className="p-3 text-left">{label}</th>)}</tr></thead><tbody>{rows.map(row=><tr key={row.ref.offset} className="border-t"><td className="p-3">{when(row.event.at)}</td><td className="p-3">{row.event.node?.name??"미기록"}</td><td className="p-3 text-right tabular-nums">{row.event.powerJoules??"미제공"}</td><td className="p-3"><Button variant="outline" onClick={()=>{
         opener.current=document.activeElement as HTMLElement|null
-        router.push(`/scheduler/power?${new URLSearchParams({...Object.fromEntries(params),...Object.fromEntries(schedulerRecordParams(row.ref))})}`,{scroll:false})
-      }}/>)}</Rows>:<Empty title="보여줄 전력 측정이 없어요"/>}
+        router.push(`/records?${new URLSearchParams({...Object.fromEntries(params),...Object.fromEntries(schedulerRecordParams(row.ref))})}`,{scroll:false})
+      }}>근거</Button></td></tr>)}</tbody></table></div>:<Empty title="기록 없음"/>}
       <HistoryPaging history={history}/>
     </>}</QueryGate>
-    <Dialog open={["offset","kind","at","id"].some(key=>params.has(key))} onOpenChange={open=>{if(!open)router.replace(`/scheduler/power?${schedulerPageParams(new URLSearchParams(params.toString()),params.get("cursor")??undefined)}`,{scroll:false})}}>
-      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-3xl" onCloseAutoFocus={event=>{
+    <Sheet open={["offset","at","id"].some(key=>params.has(key))} onOpenChange={open=>{if(!open){const next=schedulerPageParams(new URLSearchParams(params.toString()),params.get("cursor")??undefined);next.set("kind","power");router.replace(`/records?${next}`,{scroll:false})}}}>
+      <SheetContent className="w-full overflow-y-auto p-6 sm:max-w-3xl" onCloseAutoFocus={event=>{
         event.preventDefault();if(opener.current?.isConnected)opener.current.focus();else{const heading=document.querySelector<HTMLElement>(".screen-head h1");if(heading){heading.tabIndex=-1;heading.focus()}}
       }}>
-        <DialogHeader><DialogTitle>전력 측정 자세히</DialogTitle><DialogDescription>고른 노드와 계측 범위의 기록 하나예요.</DialogDescription></DialogHeader>
+        <SheetHeader><SheetTitle>전력 측정 근거</SheetTitle></SheetHeader>
         <SelectedPower record={readSchedulerRecord(params)}/>
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   </Screen>
 }
 
@@ -120,7 +122,7 @@ function StoredDetails({event}:{event:SchedulerObservation}) {
   const {decision,snapshot}=event
   if(!decision)return null
   const view:SchedulerView|undefined=snapshot?{settings:decision.settings,state:{snapshot,decision,actions:snapshot.actions,results:null}}:undefined
-  return <>{snapshot?<DetailsDialog label="초기 구성 자세히" title="판단과 함께 제공된 초기 구성"><SnapshotDetails snapshot={snapshot}/></DetailsDialog>:<p>짝지어진 초기 구성이 없어요. 다른 시각의 구성으로 추정하지 않아요.</p>}{view&&[decision.keep,decision.target].filter((candidate):candidate is SchedulerCandidate=>!!candidate).map((candidate,index)=><DetailsDialog key={`${candidate.id}-${index}`} label={candidate.keep?"유지안 근거":"목표 근거"} title="선택 기록의 후보 근거"><CandidateDetails candidate={candidate} view={view}/></DetailsDialog>)}</>
+  return <>{snapshot?<details><summary>초기 구성</summary><SnapshotDetails snapshot={snapshot}/></details>:<p>초기 구성 미기록</p>}{view&&[decision.keep,decision.target].filter((candidate):candidate is SchedulerCandidate=>!!candidate).map((candidate,index)=><details key={`${candidate.id}-${index}`}><summary>{candidate.keep?"유지안 근거":"목표 근거"}</summary><CandidateDetails candidate={candidate} view={view}/></details>)}</>
 }
 function ActualSummary({data}:{data:ObservationResult}) {
   return <><p>전체 구간 {data.from} ~ {data.to}</p><p>전체 {data.total}건 / 선택 조건 {data.selected}건</p><p>모집단 {data.samplePopulation} / 방법 {data.quantileMethod}</p>{Object.entries(data.outcomes).map(([outcome,count])=><p key={outcome}>{outcome}: {count}건</p>)}{data.cohorts.length?data.cohorts.map(cohort=><p key={cohort.definition} className="break-all">정의 {cohort.definition} / 전체 {cohort.total}건 / 지연 표본 {cohort.sampleCount}개 / {cohort.percentile===undefined?"백분위 미제공":`${cohort.percentile}%`} 지연 {cohort.quantileNanos==null?"값 없음":`${Number(cohort.quantileNanos)/1e6} ms`} / 목표 {cohort.targetLatencyNanos==null?"미제공":`${nanosToMilliseconds(cohort.targetLatencyNanos)} ms`}</p>):<p>제공된 집계가 없어 지연 값을 계산하지 않아요.</p>}{data.gapUntil?<p role="status">{gapNotice(data.gapUntil)}</p>:null}</>
@@ -131,22 +133,21 @@ function ActualPair({identity,a,b,aRef,bRef}:{identity:ServiceIdentity;a:Schedul
   const aq=useChillQuery<ObservationResult>(`v1/observations/workloads/${encodeURIComponent(identity.uid)}?${new URLSearchParams(Array.from(ap).filter(([key])=>key!=="uid"))}`,{enabled:valid(ap),decoder:parseSchedulerJSON})
   const bq=useChillQuery<ObservationResult>(`v1/observations/workloads/${encodeURIComponent(identity.uid)}?${new URLSearchParams(Array.from(bp).filter(([key])=>key!=="uid"))}`,{enabled:valid(bp),decoder:parseSchedulerJSON})
   return <section className="space-y-3"><h3 className="break-all font-semibold">서비스 {identity.uid} / 고정 정의 {identity.definition}</h3>
-    {[{params:ap,query:aq,label:"A"},{params:bp,query:bq,label:"B"}].map(({params,query,label})=><div key={label} className="space-y-2"><h4 className="font-medium">{label} 입력 구간의 실제 결과</h4>{valid(params)?<><QueryGate query={query}>{query.data&&<ActualSummary data={query.data}/>}</QueryGate><Link href={`/observations?${params}`}>같은 조건으로 요청 기록 열기</Link></>:<p>입력 구간이나 고정 정의가 없어 실제 결과를 볼 수 없어요.</p>}</div>)}
+    {[{params:ap,query:aq,label:"A"},{params:bp,query:bq,label:"B"}].map(({params,query,label})=><div key={label} className="space-y-2"><h4 className="font-medium">{label} 입력 구간의 실제 결과</h4>{valid(params)?<><QueryGate query={query}>{query.data&&<ActualSummary data={query.data}/>}</QueryGate><Link href={`/records?kind=requests&${params}`}>같은 조건 요청 기록</Link></>:<p>입력 구간·고정 정의 미기록</p>}</div>)}
     <SourceExport filename="scheduler-comparison-actual.json" value={{scope:"선택 A/B 기록과 서비스별 실제 ChillServer 조회",source:"v1/observations/workloads/:uid",records:{a:{ref:aRef,event:a},b:{ref:bRef,event:b}},identity,conditions:{a:ap.toString(),b:bp.toString()},actual:{a:aq.data??null,b:bq.data??null}}}/>
   </section>
 }
-export function SchedulerComparePage() {
+export function ComparisonEvidence() {
   const params=useSearchParams(),aRef=readSchedulerRecord(params,"a"),bRef=readSchedulerRecord(params,"b")
   const aq=useChillQuery<SchedulerObservationPage>(schedulerRecordPath(aRef),{enabled:!!aRef,decoder:parseSchedulerJSON}),bq=useChillQuery<SchedulerObservationPage>(schedulerRecordPath(bRef),{enabled:!!bRef,decoder:parseSchedulerJSON})
   const a=aq.data?.events?.[0],b=bq.data?.events?.[0]
   const aOK=aRef&&schedulerRecordMatches(aRef,a)&&aRef.kind==="decision"&&a?.decision,bOK=bRef&&schedulerRecordMatches(bRef,b)&&bRef.kind==="decision"&&b?.decision
   if(!aOK||!bOK){
-    const failed=(aRef&&aq.data&&!aOK)||(bRef&&bq.data&&!bOK)
-    return <Screen back={["/scheduler/history","판단 기록"]} title={failed?"고른 기록을 찾지 못했어요":!aRef||!bRef?"비교할 판단 기록 두 개를 골라 주세요":"고른 기록을 불러오고 있어요"} lede="판단 기록에서 기록을 열고 A와 B를 고르면 나란히 비교해요."
-      action={<Button asChild><Link href="/scheduler/history">판단 기록에서 고르기</Link></Button>}>
+    return <section aria-label="판단 비교">
       {aRef&&<QueryGate query={aq}>{aq.data&&!aOK&&<RecordReturn record={aRef}/>}</QueryGate>}
       {bRef&&<QueryGate query={bq}>{bq.data&&!bOK&&<RecordReturn record={bRef}/>}</QueryGate>}
-    </Screen>
+      {(!aRef||!bRef)&&<p>비교 선택 미기록</p>}
+    </section>
   }
   const left=a!,right=b!,ad=left.decision!,bd=right.decision!
   const scopes=(event:SchedulerObservation)=>event.snapshot?.baselines?.map(item=>({node:item.node.uid,meter:item.meter,scope:item.scope}))??null
@@ -193,16 +194,14 @@ export function SchedulerComparePage() {
       ["판단 사유와 참조",event=><><p>{judgmentLabels[event.decision!.status] ?? event.decision!.status}: {event.decision!.reasons?.join(" / ")||"사유 제공 없음"}</p><p>참조: {event.decision!.references?.join(" / ")||"제공 없음"}</p><SourceJSON inline title="제공된 탐색 근거" value={event.decision!.search}/></>],
       ["변경 계획과 실행 관측",event=><><SourceJSON inline title="유지안 동작" value={event.decision!.keep.actions}/><SourceJSON inline title="목표 동작" value={event.decision!.target?.actions??null}/><SourceJSON inline title="짝지어진 구성의 진행 동작" value={event.snapshot?.actions??null}/>{event.action?<SourceJSON inline title="같은 기록의 실행 관측" value={event.action}/>:<p>이 판단 기록에는 실행 결과가 없어요. 다른 사건의 동작 ID만으로 결과를 잇지 않아요.</p>}</>],
     ]],
-    ["관련 전력 측정",[["관련 전력 측정",event=><><Link href={`/scheduler/power?${new URLSearchParams({from:event.decision!.search.windowStart,to:event.decision!.search.windowEnd})}`}>입력 관측 구간의 전력 기록 보기</Link><SourceJSON inline title="제공된 계측기와 범위" value={scopes(event)}/><p>같은 시간대의 측정일 뿐, 개별 동작의 에너지 원인으로 해석하지 않아요.</p></>]]],
+    ["관련 전력 측정",[["관련 전력 측정",event=><><Link href={`/records?kind=power&${new URLSearchParams({from:event.decision!.search.windowStart,to:event.decision!.search.windowEnd})}`}>입력 구간 전력 기록</Link><SourceJSON inline title="제공된 계측기와 범위" value={scopes(event)}/></>]]],
   ]
-  return <Screen back={["/scheduler/history","판단 기록"]} status={conditions.length?<StatusBadge tone="warn">조건 {conditions.length}개가 달라요</StatusBadge>:<StatusBadge tone="ok">조건이 같아요</StatusBadge>}
-    title={conditions.length?"조건이 달라 그대로 비교하기 어려워요":"두 판단의 조건이 같아요"} lede={conditions.length?`${conditions[0]}${conditions.length>1?` 외 ${conditions.length-1}개`:""}`:"같은 실험이나 인과 관계를 보장하지는 않아요."}>
+  return <section aria-label="판단 비교" className="space-y-4">
+    <StatusBadge tone={conditions.length?"warn":"ok"}>{conditions.length?`조건 불일치 ${conditions.length}개`:"동일 조건"}</StatusBadge>
     <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className="p-3 text-left">항목</th><th className="p-3 text-left">A</th><th className="p-3 text-left">B</th></tr></thead><tbody>{summary.map(([label,render])=><tr key={label} className="border-t"><th className="p-3 text-left align-top font-medium text-muted-foreground">{label}</th>{columns.map(({event},index)=><td key={index} className="p-3 align-top">{render(event)}</td>)}</tr>)}</tbody></table></div>
-    <Rows label="근거">
-      <RowDialog label="비교 조건" value={conditions.length?`${conditions.length}개 다름`:"같음"} title="결과를 보기 전 조건 확인">{conditions.length?<ul className="list-disc space-y-1 pl-5">{conditions.map(message=><li key={message}>{message}</li>)}</ul>:<p>제공된 예상 기간, 서비스 정의와 계측 범위가 같아요. 같은 실험이나 인과 관계를 보장하지는 않아요.</p>}</RowDialog>
-      {evidence.map(([group,items])=><RowDialog key={group} label={group} title={group}>{items.map(([label,render])=><section key={label} className="space-y-3"><h3 className="font-semibold">{label}</h3>{columns.map(({event,ref},index)=><div key={index} className="min-w-0 space-y-2 border-l-2 pl-3"><p className="text-sm font-medium text-muted-foreground">{index?"B":"A"}</p>{render(event,ref)}</div>)}</section>)}</RowDialog>)}
-      <RowDialog label="실제 요청 결과" hint="입력 관측 구간에 실제로 처리한 요청" title="입력 관측 구간의 실제 요청 결과" description="각 서비스와 고정 정의, 입력 구간 전체의 집계예요. 미래 예상 결과나 실험 점수, 동작별 원인으로 해석하지 않아요.">{services.length?services.map(identity=><ActualPair key={`${identity.uid}/${identity.definition}`} identity={identity} a={left} b={right} aRef={aRef!} bRef={bRef!}/>):<p>고정 서비스 정의가 없어 실제 요청 결과를 볼 수 없어요.</p>}</RowDialog>
-      <RowDialog label="자료 내보내기" title="자료 내보내기" description="고른 두 기록과 비교 조건을 파일로 받아요."><SourceExport filename="scheduler-comparison-selected.json" value={{scope:"선택 A/B 기록과 제공 조건",source:"v1/observations/scheduler",a:{ref:aRef,event:left},b:{ref:bRef,event:right},conditions}}/><SourceJSON inline title="선택 A/B 기록 원본" value={{a:left,b:right}}/></RowDialog>
-    </Rows>
-  </Screen>
+    <details><summary>비교 조건</summary>{conditions.length?<ul>{conditions.map(message=><li key={message}>{message}</li>)}</ul>:<p>제공 조건 일치 · 인과 관계 미확인</p>}</details>
+    {evidence.map(([group,items])=><details key={group}><summary>{group}</summary>{items.map(([label,render])=><section key={label} className="space-y-3"><h3 className="font-semibold">{label}</h3>{columns.map(({event,ref},index)=><div key={index} className="min-w-0 space-y-2 border-l-2 pl-3"><h4>{index?"B":"A"}</h4>{render(event,ref)}</div>)}</section>)}</details>)}
+    <details><summary>실제 요청 결과</summary>{services.length?services.map(identity=><ActualPair key={`${identity.uid}/${identity.definition}`} identity={identity} a={left} b={right} aRef={aRef!} bRef={bRef!}/>):<p>고정 서비스 정의 미기록</p>}</details>
+    <SourceExport filename="scheduler-comparison-selected.json" value={{scope:"선택 A/B 기록과 제공 조건",source:"v1/observations/scheduler",a:{ref:aRef,event:left},b:{ref:bRef,event:right},conditions}}/><SourceJSON inline title="선택 A/B 기록 원본" value={{a:left,b:right}}/>
+  </section>
 }

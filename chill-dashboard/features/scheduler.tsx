@@ -38,7 +38,7 @@ function Allocation({value}:{value:SchedulerAllocation}) {return <span>CPU {valu
 function ObservationLink({uid,definition,from,to,children}:{uid:string;definition?:string;from:string;to:string;children:React.ReactNode}) {
   if(!uid||!from||!to||from.startsWith("0001-")||to.startsWith("0001-"))return <span>{children}</span>
   const query=new URLSearchParams({uid,from,to});if(definition)query.set("definition",definition)
-  return <Link href={`/observations?${query}`}>{children}</Link>
+  return <Link href={`/records?kind=requests&${query}`}>{children}</Link>
 }
 function ServiceName({uid,snapshot}:{uid:string;snapshot:SchedulerSnapshot}) {return <span>{resolveWorkloadIdentities([],[],snapshot.workloads,[uid]).get(uid)!} <small className="break-all">({uid})</small></span>}
 function SLOs({candidate,decision,snapshot}:{candidate:SchedulerCandidate;decision:SchedulerDecision;snapshot:SchedulerSnapshot}) {

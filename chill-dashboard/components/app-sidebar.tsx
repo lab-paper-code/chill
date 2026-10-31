@@ -9,11 +9,11 @@ import { BrandMark } from "@/components/brand"
 
 // Every screen belongs to exactly one section by its longest path prefix.
 export const navigation = [
-  {title:"운영",url:"/",icon:BrainCircuit,prefixes:["/operations","/scheduler","/transitions","/resources","/pools"]},
+  {title:"운영",url:"/",icon:BrainCircuit,prefixes:["/operations","/scheduler/candidates","/scheduler/estimates","/scheduler/load","/scheduler/capacity","/resources","/pools"]},
   {title:"서비스",url:"/workloads",icon:Layers,prefixes:["/workloads"]},
   {title:"측정",url:"/measurements",icon:Ruler,prefixes:["/measurements","/scheduler/profiles"]},
   {title:"실험",url:"/experiments",icon:FlaskConical,prefixes:["/experiments","/evaluations"]},
-  {title:"기록",url:"/records",icon:History,prefixes:["/records","/observations","/changes","/scheduler/history","/scheduler/power","/scheduler/compare"]},
+  {title:"기록",url:"/records",icon:History,prefixes:["/records","/observations","/changes","/transitions","/scheduler/history","/scheduler/power","/scheduler/compare"]},
   {title:"설정",url:"/settings",icon:SlidersHorizontal,prefixes:["/settings","/models","/preprocessors","/datasets","/configuration"]},
 ]
 const under = (prefix:string, pathname:string) => pathname === prefix || pathname.startsWith(`${prefix}/`)

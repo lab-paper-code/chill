@@ -27,7 +27,7 @@ const number=(value:number|null|undefined,unit="",digits=0)=>value==null?"미제
 const percent=(value:number|undefined,n:number|undefined)=>value==null||n==null?"미확인":n===0?"판정 불가":`${(value/n*100).toFixed(1)}%`
 const serviceName=(snapshot:LiveSnapshot|null,uid:string)=>snapshot?.workloads.find(row=>row.uid===uid)?.name??"이름 미제공"
 const latency=(workload:LiveWorkload,metric:LiveMetrics["workloads"][string]|undefined)=>{const value=sloLatency(workload,metric);return !metric?"미확인":metric.received===0||value===null?"판정 불가":value===undefined?"미제공":`p${workload.slo.percentile} ${number(value,"",1)}`}
-const historyHref=(uid?:string,at?:string)=>{const to=new Date(),range=at?decisionRange(at):null;return `${range?"/scheduler/history":"/records"}?${new URLSearchParams({...range??{from:new Date(to.getTime()-300000).toISOString(),to:to.toISOString()},order:"asc",filter:"decision-action",...(uid?{uid}:{})})}`}
+const historyHref=(uid?:string,at?:string)=>{const to=new Date(),range=at?decisionRange(at):null;return `/records?${new URLSearchParams({...range??{from:new Date(to.getTime()-300000).toISOString(),to:to.toISOString()},order:"asc",filter:"decision-action",...(uid?{uid}:{})})}`}
 const nodeLabel=(state:LiveState,uid:string)=>state.snapshot?.nodes.find(node=>node.uid===uid)?.name||state.snapshot?.instances.find(row=>row.node.uid===uid)?.node.name||`보드 밖 노드 (…${uid.slice(-4)})`
 const gapLabel=(state:LiveState,scope:string)=>scope.startsWith("node:")?`${nodeLabel(state,scope.slice(5))} 전력`:scope.startsWith("workload:")?`${serviceName(state.snapshot,scope.slice(9))} 요청 지표`:scope==="events"?"사건 기록":scope==="workloads"?"요청 지표":"관측 연결"
 function Facts({items}:{items:[string,React.ReactNode][]}) {

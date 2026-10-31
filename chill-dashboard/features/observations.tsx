@@ -13,8 +13,10 @@ import { Input } from "@/components/ui/input"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { StageBreakdown, duration } from "@/components/stage-breakdown"
 import { gapNotice, localDateTime, utcDateTime } from "@/lib/date-time"
-import { when, actorName } from "@/features/scheduler-history"
+import { when } from "@/features/scheduler-history"
 import { resolveWorkloadIdentities, type IdentityWorkload } from "@/lib/workload-identity"
+import { RecordsNavigation, RecordsRange } from "@/components/records-navigation"
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 
 type UIDChoice=IdentityWorkload
 const outcomeLabels:Record<string,string>={completed:"완료",error:"오류",rejected:"접수 거부",timeout:"시간 초과",canceled:"취소",incomplete:"미완료",delivery_failed:"전달 실패",preprocess_failed:"전처리 실패"}
@@ -32,16 +34,18 @@ export function ObservationsPage({changes=false}:{changes?:boolean}) {
 
 // Step 1: choose whose records to read.
 function PickService({changes}:{changes:boolean}) {
-  const router=useRouter(),path=changes?"/changes":"/observations"
+  const router=useRouter(),params=useSearchParams(),path="/records"
   const workloads=useChillQuery<UIDChoice[]>("v1/workloads")
   const [uid,setUID]=React.useState("")
-  return <Screen back={["/","라이브 무대"]} title={changes?"어떤 서비스의 변경 이력을 볼까요?":"어떤 서비스의 요청 기록을 볼까요?"} lede="서비스를 고르면 최근 1시간 기록부터 보여드려요.">
-    <QueryGate query={workloads}>{workloads.data?.length?<Rows label="서비스">{workloads.data.map(row=><Row key={row.desired.metadata.uid} href={`${path}?uid=${encodeURIComponent(row.desired.metadata.uid)}`} label={row.desired.metadata.name}/>)}</Rows>:<Empty title="아직 등록된 서비스가 없어요"/>}</QueryGate>
+  const address=(value:string)=>{const next=new URLSearchParams(params.toString());next.set("uid",value);return `${path}?${next}`}
+  return <Screen title="기록">
+    <RecordsNavigation/>
+    <QueryGate query={workloads}>{workloads.data?.length?<Rows label="대상 서비스">{workloads.data.map(row=><Row key={row.desired.metadata.uid} href={address(row.desired.metadata.uid!)} label={row.desired.metadata.name}/>)}</Rows>:<Empty title="항목 없음"/>}</QueryGate>
     <Rows>
       <RowDialog label="이전 등록 서비스 찾기" hint="삭제된 서비스의 기록을 볼 때" title="이전 등록 서비스 찾기" description="삭제된 서비스의 원본 참조를 알고 있을 때 사용하세요. 이름이 같아도 새로 등록한 서비스와 기록이 달라요.">
-        <form className="grid gap-3" onSubmit={event=>{event.preventDefault();if(uid.trim())router.push(`${path}?uid=${encodeURIComponent(uid.trim())}`)}}><label className="grid gap-1.5">이전 등록 UID<Input value={uid} onChange={event=>setUID(event.target.value)} required/></label><Button type="submit">기록 찾기</Button></form>
+        <form className="grid gap-3" onSubmit={event=>{event.preventDefault();if(uid.trim())router.push(address(uid.trim()))}}><label className="grid gap-1.5">이전 등록 UID<Input value={uid} onChange={event=>setUID(event.target.value)} required/></label><Button type="submit">기록 찾기</Button></form>
       </RowDialog>
-      {changes&&<Row href="/changes?scope=scheduler" label="운영 설정 변경 이력" hint="누가 언제 운영 설정을 바꿨는지"/>}
+      {changes&&<Row href="/records?scope=scheduler" label="운영 설정 변경"/>}
     </Rows>
   </Screen>
 }
@@ -49,8 +53,8 @@ function PickService({changes}:{changes:boolean}) {
 // Step 2: one service, one window, one list.
 function ServiceRecords({uid,changes}:{uid:string;changes:boolean}) {
   const params=useSearchParams(),router=useRouter(),{config}=useSession()
-  const path=changes?"/changes":"/observations",from=params.get("from"),to=params.get("to")
-  const [poll,setPoll]=React.useState(false)
+  const path="/records",from=params.get("from"),to=params.get("to")
+  const [poll,setPoll]=React.useState(false),[selected,setSelected]=React.useState<{index:number;source:ObservationResult}|null>(null),opener=React.useRef<HTMLElement|null>(null)
   React.useEffect(()=>{
     if(from&&to&&params.has("limit"))return
     const next=new URLSearchParams(params.toString()),end=new Date()
@@ -66,13 +70,17 @@ function ServiceRecords({uid,changes}:{uid:string;changes:boolean}) {
     // A page belongs to the exact submitted window, never the unsaved form.
     const next=new URLSearchParams(params.toString());if(cursor)next.set("cursor",cursor);else next.delete("cursor");router.replace(`${path}?${next}`)
   }
-  const data=query.data,definitions=data?.definitions??[],period=from&&to?duration(Date.parse(to)-Date.parse(from)):""
+  const data=query.data,definitions=data?.definitions??[]
   const definitionLabel=(identity:string)=>{const index=definitions.findIndex(item=>item.identity===identity);return index<0?"이전 적용 설정":`적용 설정 ${index+1}`}
-  const more=!!data?.nextCursor||params.has("cursor"),count=data?.management?.length??0
-  const title=!data?`${name} ${changes?"변경 이력":"요청 기록"}`:changes?(count?`${period} 동안 변경 ${count}건${more?" 이상":""}이 있었어요`:`${period} 동안 변경이 없었어요`):data.total?`${period} 동안 요청 ${data.total}건을 받았어요`:`${period} 동안 받은 요청이 없어요`
-  return <Screen back={[path,"서비스 목록"]} status={data?.gapUntil?<StatusBadge tone="warn">관측 공백</StatusBadge>:undefined} title={title} lede={from&&to?`${name} · ${when(from)} – ${when(to)}`:name}>
+  const more=!!data?.nextCursor||params.has("cursor")
+  const requestID=params.get("requestID")??"",[openedRequest,setOpenedRequest]=React.useState("")
+  if(requestID&&requestID!==openedRequest&&data?.requests){const index=data.requests.findIndex(row=>row.requestID===requestID);if(index>=0){setOpenedRequest(requestID);setSelected({index,source:data})}}
+  return <Screen width="data" status={data?.gapUntil?<StatusBadge tone="warn">관측 공백</StatusBadge>:undefined} title="기록">
+    <RecordsNavigation/>
+    <RecordsRange target={name} from={from} to={to} at={data?.to}/>
     {data?.gapUntil&&<p role="status">{gapNotice(data.gapUntil)}</p>}
     <Rows label="조회 조건">
+      <Row href={`/records?${new URLSearchParams({kind:changes?"judgments":"requests",...(changes?{scope:"management"}:{}),...(from&&to?{from,to}:{}),...(params.get("limit")?{limit:params.get("limit")!}:{})})}`} label="대상 선택"/>
       <Conditions changes={changes} path={path} definitions={definitions} poll={poll} setPoll={setPoll}/>
       {data&&!changes&&<RowDialog label="구간 통계" hint="결과별 건수와 응답 시간" title="구간 통계" description="고른 기간 전체를 집계했어요. 아래 요청 목록과 따로 계산해요.">
         <Facts items={[["전체 요청",`${data.total}건`],["조건에 맞는 요청",`${data.selected}건`],...Object.entries(data.outcomes).map(([key,value]):[string,string]=>[outcomeLabels[key]??"기타 결과",`${value}건`])]}/>
@@ -85,15 +93,18 @@ function ServiceRecords({uid,changes}:{uid:string;changes:boolean}) {
         <SourceExport value={{conditions:{uid,query:Object.fromEntries(params.entries()),definition:params.getAll("definition"),outcome:params.getAll("outcome")},source:data}} filename={`chill-${changes?"changes":"observations"}-${data.uid}.json`}/>
         <SourceJSON inline title="조회 자료 원본 보기" value={{conditions:{uid,from,to,definition:params.getAll("definition"),outcome:params.getAll("outcome"),cursor:params.get("cursor"),limit:params.get("limit")},source:data}}/>
       </RowDialog>}
-      <Row href={`${changes?"/observations":"/changes"}?${params}`} label={changes?"같은 기간 요청 기록":"같은 기간 변경 이력"}/>
+      <Row href={`/records?${new URLSearchParams({...Object.fromEntries(params),kind:changes?"requests":"judgments",scope:changes?"requests":"management"})}`} label={changes?"같은 기간 서비스 요청":"같은 기간 서비스 변경"}/>
     </Rows>
     <QueryGate query={query}>{data&&<>
-      {changes?(data.management?.length?<Rows label="변경">{data.management.map((row,index)=><RowDialog key={index} label={statusLabel(row.kind)} hint={`${when(row.at)} · ${actorName(row.actorUsername)}`} value={statusLabel(row.phase)} title="변경 자세히" description="변경 전후와 처리 결과예요.">
-        <Facts items={[["시각",when(row.at)],["변경",statusLabel(row.kind)],["상태",statusLabel(row.phase)],["담당자",actorName(row.actorUsername)]]}/>{row.error&&<p role="alert">{row.error}</p>}<SourceJSON inline title="변경 전후 원본 보기" value={row}/>
-      </RowDialog>)}</Rows>:<Empty title="이 기간에는 변경이 없어요"/>)
-      :data.requests?.length?<Rows label="요청">{data.requests.map((row,index)=><RowDialog key={index} label={rowLabel(row)} hint={`${when(row.receivedAt)}${row.firstTokenMS!==undefined?` · 첫 토큰 ${duration(row.firstTokenMS)}`:""}${params.get("requestID")===row.requestID?" · 선택한 요청":""}`} value={ms(row.elapsedNanos)} title="요청 자세히" description="결과와 단계별 시간을 확인해요."><RequestDetails row={row} service={name} definition={definitions.find(item=>item.identity===row.definitionID)?.definition} target={data.cohorts?.find(cohort=>cohort.definition===row.definitionID)?.targetLatencyNanos}/></RowDialog>)}</Rows>:<Empty title="이 조건에 맞는 요청이 없어요"/>}
+      <div className="overflow-x-auto rounded-lg border"><table className="w-full text-sm"><thead><tr>{["시각 KST","대상","종류·결과","소요 시간 (ms)","근거"].map(label=><th key={label} className="p-3 text-left">{label}</th>)}</tr></thead><tbody>{changes?(data.management??[]).map((row,index)=><tr key={index} className="border-t"><td className="p-3">{when(row.at)}</td><td className="p-3">{name}</td><td className="p-3">{statusLabel(row.kind)} / {statusLabel(row.phase)}</td><td className="p-3">해당 없음</td><td className="p-3"><Button variant="outline" onClick={()=>setSelected({index,source:data})}>근거</Button></td></tr>):(data.requests??[]).map((row,index)=><tr key={index} className="border-t"><td className="p-3">{when(row.receivedAt)}</td><td className="p-3">{name}</td><td className="p-3">{rowLabel(row)}</td><td className="p-3 text-right tabular-nums">{row.elapsedNanos==null?"미기록":Number(row.elapsedNanos)/1e6}</td><td className="p-3"><Button variant="outline" onClick={()=>setSelected({index,source:data})}>근거</Button></td></tr>)}</tbody></table></div>
+      {(changes?!data.management?.length:!data.requests?.length)&&<Empty title="기록 없음"/>}
       {more&&<div className="flex gap-2"><Button variant="outline" disabled={!params.has("cursor")} onClick={()=>page()}>처음으로</Button><Button variant="outline" disabled={!data.nextCursor} onClick={()=>page(data.nextCursor)}>다음 기록 보기</Button></div>}
     </>}</QueryGate>
+    <Sheet open={selected!==null} onOpenChange={open=>{if(!open)setSelected(null)}}>
+      <SheetContent className="w-full overflow-y-auto p-6 sm:max-w-3xl" onOpenAutoFocus={()=>{opener.current=document.activeElement as HTMLElement|null}} onCloseAutoFocus={event=>{event.preventDefault();opener.current?.focus()}}><SheetHeader><SheetTitle>선택 기록 근거</SheetTitle></SheetHeader>
+        {selected&&(changes?<><SourceJSON inline value={selected.source.management?.[selected.index]}/><SourceExport value={selected.source.management?.[selected.index]} filename="chill-management-selected.json"/></>:selected.source.requests?.[selected.index]?<RequestDetails row={selected.source.requests[selected.index]} service={name} definition={selected.source.definitions.find(item=>item.identity===selected.source.requests![selected.index].definitionID)?.definition} target={selected.source.cohorts?.find(cohort=>cohort.definition===selected.source.requests![selected.index].definitionID)?.targetLatencyNanos}/>:<p>미기록</p>)}
+      </SheetContent>
+    </Sheet>
   </Screen>
 }
 
@@ -122,7 +133,7 @@ function ConditionsForm({changes,path,definitions,poll,setPoll,done}:{changes:bo
     const start=preset==="custom"?from:new Date(Date.parse(end)-hours*3600000).toISOString()
     const startTime=Date.parse(start),endTime=Date.parse(end)
     if(!uid||!Number.isFinite(startTime)||!Number.isFinite(endTime)||startTime>=endTime||endTime-startTime>config.maxWindowHours*3600000||!Number.isInteger(limit)||limit<1||limit>config.maxPageSize){setValidation(`올바른 기간을 골라 주세요. 최대 ${config.maxWindowHours}시간, 한 번에 1–${config.maxPageSize}건까지 볼 수 있어요.`);return}
-    const next=new URLSearchParams({uid,from:start,to:end,limit:String(limit)})
+    const next=new URLSearchParams(params.toString());for(const key of ["cursor","definition","outcome"])next.delete(key);next.set("uid",uid);next.set("from",start);next.set("to",end);next.set("limit",String(limit))
     definition.forEach(value=>next.append("definition",value));outcome.forEach(value=>next.append("outcome",value))
     if(params.get("requestID"))next.set("requestID",params.get("requestID")!)
     router.replace(`${path}?${next}`);done()
@@ -157,6 +168,7 @@ function RequestDetails({row,target,service,definition}:{row:RequestRow;target?:
     {stages?<StageBreakdown progress={stages}/>:<p className="text-sm text-muted-foreground">실행 기록이 들어오면 단계별 시간을 보여드려요.</p>}
     {row.error&&<p role="alert">{row.error}</p>}
     <h3 className="font-semibold">수신 후 단계별 시점</h3>
+    <SourceExport value={row} filename="chill-request-selected.json"/>
     {reached.length?<Facts items={reached}/>:<p className="text-sm text-muted-foreground">아직 지난 단계가 없어요.</p>}
     <details className="space-y-4 [&_dd]:break-all"><summary>실행 자세히</summary>
       <Facts items={[["요청",row.requestID],["서비스",info(row.workloadUID)],["적용 설정",info(row.definitionID)],["수신 시각",row.receivedAt],["요청 유효 시간",ms(row.lifetimeNanos)],["클라이언트 관측 시간",ms(row.clientSpanNanos)],["실행 완료 관측",row.executionComplete?"완료 확인":"완료 확인 대기"]]}/>

@@ -49,6 +49,7 @@ export function schedulerRecordMatches(ref:SchedulerRecordRef,event:SchedulerObs
 export function schedulerPageParams(params:URLSearchParams,cursor?:string):URLSearchParams {
   const next=new URLSearchParams(params)
   for(const key of ["offset","kind","at","id","node","startedAt"])next.delete(key)
+  if(params.get("kind")==="power")next.set("kind","power")
   if(cursor)next.set("cursor",cursor);else next.delete("cursor")
   return next
 }

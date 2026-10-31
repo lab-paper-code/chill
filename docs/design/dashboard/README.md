@@ -241,9 +241,16 @@ SRS DB-FR-50~52·56·65는 변경, DB-FR-67은 폐기 이력, DB-FR-68~70은 공
 | `/records` 기록 | 선택 시점에 무엇이 있었는가? 판단·변경 / 서비스 요청 / 전력의 조회 범위·기록·선택 근거 |
 | `/settings` 설정 | 어떤 값·카탈로그가 적용되는가? 운영 설정 / 모델 / 입력 처리 / 데이터셋의 선택·현재값·연결/영향 |
 
+설정 구현은 `features/settings.tsx`에서 `tab=configuration|models|preprocessors|datasets`를 선택한다.
+운영 설정은 범위 선택·현재값 표·연결 작업의 세 영역과 값 수정 Sheet를 사용한다.
+카탈로그는 검색 가능한 표에서 이름·UID를 고정한 Sheet를 열고 현재 정의·연결 영향·수정/삭제/원본을 제공한다.
+`/models`, `/preprocessors`, `/datasets`, `/configuration`의 최상위 목록은 설정 탭으로 이동하며 등록·상세·편집 경로는 유지한다.
+`Screen`의 설명 문단 API는 제거하며 입력 정의와 변경 제약은 명시적인 도움말로 제공한다.
+
 각 사실은 정본 한 곳만 소유한다. 연관 화면은 같은 KPI 묶음을 복제하지 않고 대상·기간·namespace·UID를 보존한 링크를 제공한다.
 서비스 상세의 `현재 관측`은 운영으로 연결하며 접수 허용을 실제 유입으로 번역하지 않는다.
 동일 축의 값은 같은 UID·시각일 때만 공통 계산 결과를 공유한다. 서비스 관리는 WebSocket 없이 관리 API로 동작한다.
+서비스 구현은 `features/management.tsx`의 목록 관리 표와 통합 상세다. 상세는 적용 상태·정의/설정·배치/연결 세 영역이며, `features/service-hub.tsx`는 관리 API 조회·정의·배치 표시만 소유한다. 옛 세부 화면 export는 제거하고 세부 경로는 통합 영역으로 이동한다. 등록·수정·삭제의 UID/버전·충돌·결과 미확인 계약과 자동제어 설정 재조회 후 변경 계약은 유지한다. 접수 허용 렌더 회귀는 `lib/service-ui.test.ts`가 목록·상세의 무부하 서비스로 확인한다.
 측정 범위는 전체 모델 요약과 선택 행렬을 적층하지 않는다. 조합/배치 분모를 분리하고 미측정 모드·지원 안 함·미확인을 문자로 보존한다.
 목표 배치가 없으면 진행률을 만들지 않는다. 요청 실패와 기존 사용 결과는 공존하며 회차 전체 검색·딥링크는 유지한다.
 결과 종류의 API·통계는 합치지 않고 변경 비용 준비·제거를 각각 행으로 표시한다.
@@ -279,6 +286,8 @@ SRS DB-FR-50~52·56·65는 변경, DB-FR-67은 폐기 이력, DB-FR-68~70은 공
 일별 p95 평균·브라우저 전력 적분·가짜 주간 집계를 만들지 않는다. 목록은 summary, 원본은 선택 append offset의 compact 단건이다.
 현재 페이지 내보내기와 선택 원본은 범위를 구분한다. 선택 근거는 과거 시점 원본이며 최신 상태로 대체하지 않는다.
 기존 A/B는 각각의 입력 구간·UID·정의·whole-window cohort를 유지한다.
+
+`/records`는 링크 허브 없이 종류 전환·조회 범위·기록 표와 선택 Sheet를 제공한다. 구 `/scheduler/history`, `/observations`, `/changes`, `/transitions[/id]`, `/scheduler/power`, `/scheduler/compare`는 기존 query를 보존해 같은 기록 선택으로 redirect한다. 서비스 요청·관리 변경은 workload 관측 API, 판단·설정 변경·전력은 scheduler journal의 원래 페이지 경계를 유지한다.
 
 실험은 DB-FR-66과 [실험 실행 설계](../profiling/experiment-execution.md)를 따른다.
 게시 목록의 `comparisons`, 단건 `definition.spec.comparisons`만 비교 관계로 사용하며 단계는 ID로 연결한다.

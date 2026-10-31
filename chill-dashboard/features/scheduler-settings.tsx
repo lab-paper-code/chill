@@ -12,6 +12,9 @@ import { Screen, Rows, Row, RowDialog, Facts, Empty } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { DataTable } from "@/components/data-table"
+import { SettingsNavigation } from "@/components/settings-navigation"
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 
 type NumericKey = Exclude<keyof SchedulerSettings,"controls"|"autonomousWorkloads"|"excludedNodes"|"minimumDemand"|"staticRouting"|"staticRoutingValidatedAt"|"meters"|"requestTimeout">
 type Field = {key:NumericKey;label:string;help:string;group:"cycle"|"limit"|"capacity"|"advanced";unit?:string}
@@ -94,7 +97,7 @@ export async function putSchedulerSettings(mutate:(input:ChillMutationInput)=>Pr
 // One row, one value: the dialog edits only this value and adds it to the draft.
 function EditRow({label,help,value,changed,initial,unit,range,save,disabled}:{label:string;help:string;value:string;changed:boolean;initial:string|boolean;unit?:string;range?:string;save:(value:string|boolean)=>void;disabled:boolean}) {
   const [open,setOpen]=React.useState(false),[next,setNext]=React.useState(initial),[error,setError]=React.useState(""),id=React.useId()
-  return <RowDialog label={label} hint={changed?"바꾼 값이에요":undefined} value={value} title={label} description={help} open={open} onOpenChange={state=>{setOpen(state);setNext(initial);setError("")}}>
+  return <Sheet open={open} onOpenChange={state=>{setOpen(state);setNext(initial);setError("")}}><SheetTrigger asChild><Button variant="outline" disabled={disabled} aria-label={`${label} 수정`}>수정{changed?" · 변경":""}</Button></SheetTrigger><SheetContent className="w-full overflow-y-auto sm:max-w-xl" aria-describedby={undefined}><SheetHeader><SheetTitle>{label}</SheetTitle></SheetHeader><div className="grid gap-4 px-4 pb-6"><Facts items={[["현재값",value]]}/><details><summary className="min-h-11 cursor-pointer py-2">항목 도움말</summary>{help}</details>
     <form className="grid gap-4" onSubmit={event=>{event.preventDefault();try {save(next);setOpen(false)} catch(caught) {setError(caught instanceof Error?caught.message:"값을 확인해 주세요.")}}}>
       {typeof next==="boolean"
         ?<label className="switch"><input type="checkbox" role="switch" checked={next} onChange={event=>setNext(event.target.checked)}/>{onOff(next)}</label>
@@ -102,7 +105,7 @@ function EditRow({label,help,value,changed,initial,unit,range,save,disabled}:{la
       {error&&<p role="alert">{error}</p>}
       <Button type="submit" disabled={disabled}>바꾸기</Button>
     </form>
-  </RowDialog>
+  </div></SheetContent></Sheet>
 }
 
 // Diff the declaration shown when the dialog opened, so unrelated UID changes stay untouched.
@@ -130,7 +133,8 @@ function RoutingEdit({initial,disabled,apply}:{initial?:Routing;disabled:boolean
 
 
 export function SchedulerSettingsPage() {
-  const params=useSearchParams(),capacitySection=React.useRef<HTMLDivElement|null>(null)
+  const params=useSearchParams()
+  const [category,setCategory]=React.useState<Field["group"]|"controls">(()=>params.get("section")==="capacity"?"capacity":"cycle")
   const settings=useChillQuery<SchedulerSettings>("v1/scheduler/settings",{decoder:parseSchedulerJSON,poll:true})
   const state=useChillQuery<SchedulerControllerState>("v1/scheduler/state",{decoder:parseSchedulerJSON})
   const [baseline,setBaseline]=React.useState<SchedulerSettings|null>(null),[draft,setDraft]=React.useState<SchedulerSettings|null>(null)
@@ -152,8 +156,6 @@ export function SchedulerSettingsPage() {
   const serverError=mutation.error?.data&&typeof mutation.error.data==="object"?mutation.error.data as {field?:string;message?:string;code?:string}:undefined
   const count=baseline&&draft?changedRows(baseline,draft).length:0
   const shown=count?draft:settings.data
-  const capacityReady=params.get("section")==="capacity"&&!!shown
-  React.useEffect(()=>{if(capacityReady)capacitySection.current?.focus()},[capacityReady])
   // Explicit routing operations open in the same detail view as the transitions list.
   const routing=state.data?.results?.filter(item=>["route","unroute","release"].includes(item.operation.kind)).reduce<OperationResult|undefined>((latest,item)=>!latest||Date.parse(item.startedAt)>Date.parse(latest.startedAt)?item:latest,undefined)
   const back:[string,string]=["/settings","설정"]
@@ -222,40 +224,41 @@ export function SchedulerSettingsPage() {
 
   if(routingResults) {
     const failed=routingResults.some(item=>item.status!=="complete"||item.error)
-    return <Screen back={back} title={routingPending?"요청 분배를 적용하고 있어요":routingError||failed?"요청 분배 결과를 확인해 주세요":routingResults.length?"요청 분배를 적용했어요":"바뀐 요청 분배가 없어요"} lede="서버가 반환한 실제 작업 결과예요. 실패하면 나머지는 보내지 않고, 재시도하거나 되돌리지 않아요." action={<Button disabled={routingPending} onClick={()=>{setRoutingResults(null);setRoutingError("");mutation.reset()}}>확인</Button>}>
+    return <Screen back={back} title={routingPending?"분배 적용 중":routingError||failed?"분배 결과 미확인":routingResults.length?"분배 적용 완료":"분배 변경 없음"} action={<Button disabled={routingPending} onClick={()=>{setRoutingResults(null);setRoutingError("");mutation.reset()}}>확인</Button>}>
       {routingError&&<p role="alert">{routingError}</p>}
       {routingResults.map(item=><React.Fragment key={item.operation.id}>
         <Facts items={[["작업",item.operation.kind],["결과",item.status],["시작",time(item.startedAt)],["종료",time(item.endedAt)],...(item.error?[["오류",item.error] as [string,string]]:[])]}/>
-        <Rows><Row href={`/transitions/${encodeURIComponent(item.operation.id)}?${new URLSearchParams({view:"current",stage:"result",node:item.operation.node.uid,startedAt:item.startedAt})}`} label="실제 변경 진행 보기"/><RowDialog label="원본 자료 보기" title="작업 결과 원본"><SourceJSON inline value={item}/></RowDialog></Rows>
+        <Rows><Row href={`/records?${new URLSearchParams({filter:"action",id:item.operation.id,view:"current",stage:"result",node:item.operation.node.uid,startedAt:item.startedAt})}`} label="실제 변경 진행"/><RowDialog label="원본 자료 보기" title="작업 결과 원본"><SourceJSON inline value={item}/></RowDialog></Rows>
       </React.Fragment>)}
-      {routingError&&<Rows><Row href="/transitions" label="실제 변경 진행 보기"/></Rows>}
+      {routingError&&<Rows><Row href="/records?filter=action" label="실제 변경 진행"/></Rows>}
     </Screen>
   }
-  if(result)return <Screen back={back} title={result.appliedAt?"설정을 적용했어요":"적용 결과를 확인해 주세요"} lede="실제 구성 변경은 따로 진행돼요. 진행 상황은 아래에서 볼 수 있어요." action={<Button onClick={()=>setResult(null)}>확인</Button>}>
+  if(result)return <Screen back={back} title={result.appliedAt?"설정 적용 완료":"적용 결과 미확인"} action={<Button onClick={()=>setResult(null)}>확인</Button>}>
     <Facts items={[["적용 시각",result.appliedAt?time(result.appliedAt):"아직 없어요"],["확인 시각",time(result.validatedAt)],["바꾼 사람",result.actorUsername],...(result.reason?[["분배 선택 이유",result.reason] as [string,string]]:[]),["마지막으로 확인한 노드",result.affected?.map(node=>node.name).join(", ")||"없음"],...(result.error?[["오류",result.error] as [string,string]]:[])]}/>
-    <Rows><Row href="/transitions" label="실제 변경 진행 보기"/><RowDialog label="원본 자료 보기" title="적용 결과 원본"><SourceJSON inline value={result}/></RowDialog></Rows>
+    <Rows><Row href="/records?filter=action" label="실제 변경 진행"/><RowDialog label="원본 자료 보기" title="적용 결과 원본"><SourceJSON inline value={result}/></RowDialog></Rows>
   </Screen>
 
   if(mutation.error||responseError) {
     const message=mutation.error?.status===403?"조회 권한과 별도로 설정 변경 권한과 설정 저장소(ConfigMap) 수정 권한이 모두 필요해요.":responseError??serverError?.message??mutation.error?.body
     const field=serverError?.field&&(fields.find(item=>item.key===serverError.field)?.label??({settings:"운영 설정 전체",staticRouting:"요청 분배",reason:"분배 선택 이유"} as Record<string,string>)[serverError.field]??serverError.field)
-    if(!unknown)return <Screen back={back} title={mutation.error?.status===403?"설정을 바꿀 권한이 없어요":"설정을 적용하지 못했어요"} lede={`${message??""} 바꾼 값은 그대로 있어요.`} action={<Button onClick={()=>mutation.reset()}>다시 수정하기</Button>}>
-      {field&&<Facts items={[["관련 항목",field]]}/>}
+    if(!unknown)return <Screen back={back} title={mutation.error?.status===403?"변경 권한 없음":"설정 적용 실패"} action={<Button onClick={()=>mutation.reset()}>다시 수정하기</Button>}>
+      <Facts items={[["원인",message??"미제공"],["작성값","유지"],...(field?[["관련 항목",field] as [string,string]]:[])]}/>
     </Screen>
     const events=(history.data?.events??[]).filter(event=>event.settings)
-    return <Screen back={back} title="적용됐는지 확인이 필요해요" lede={`${message??"응답을 받지 못했어요."} 바꾼 값은 그대로 있고, 자동으로 다시 보내지 않아요.`}
+    return <Screen back={back} title="적용 결과 미확인"
       action={recovered&&settings.data
         ?<Button onClick={()=>{setBaseline(settings.data!);setLatest(null);setResponseError(null);mutation.reset();setHistoryWindow(null)}}>조회한 현재 값으로 다시 검토하기</Button>
         :<Button onClick={()=>void recover()} disabled={settings.isFetching||history.isFetching}>현재 설정과 최근 변경 기록 확인하기</Button>}>
+      <Facts items={[["원인",message??"응답 미수신"],["작성값","유지"],["자동 재제출","차단"]]}/>
       {historyWindow&&<QueryGate query={history}>{events.length?<Facts items={events.map(event=>[time(event.at),`${event.settings!.actorUsername} · ${event.settings!.appliedAt?"적용됨":event.settings!.error??"적용 전 확인만 됐어요"}`] as [string,string])}/>:<Empty title="이 구간에 운영 설정 변경 기록이 없어요"/>}</QueryGate>}
       {historyWindow&&<Rows>
-        <Row href={`/changes?scope=scheduler&${new URLSearchParams(historyWindow)}`} label="이 구간의 변경 기록 모두 보기" hint={history.data?.nextCursor?"이 화면에 없는 기록이 더 있어요":undefined}/>
+        <Row href={`/records?scope=scheduler&filter=settings&${new URLSearchParams(historyWindow)}`} label="구간 변경 기록" hint={history.data?.nextCursor?"추가 기록 있음":undefined}/>
         {recovered&&settings.data&&<RowDialog label="현재 값과 바꾼 값 비교" title="현재 값과 바꾼 값" description="방금 조회한 현재 설정과 바꾼 값을 비교해요."><SettingChanges before={settings.data} after={draft??settings.data}/></RowDialog>}
       </Rows>}
     </Screen>
   }
 
-  const group=(name:Field["group"])=>shown&&fields.filter(field=>field.group===name).map(field=><EditRow key={field.key} label={field.label} help={field.help} value={plain(field,shown[field.key])} changed={!!count&&String(baseline![field.key])!==String(shown[field.key])}
+  const editField=(field:Field)=>shown&&<EditRow key={field.key} label={field.label} help={field.help} value={plain(field,shown[field.key])} changed={!!count&&String(baseline![field.key])!==String(shown[field.key])}
     initial={field.key.endsWith("Nanos")?nanosToMilliseconds(shown[field.key]):String(shown[field.key])} unit={field.key.endsWith("Nanos")?"ms":field.key==="servingMemoryBytes"?"bytes":field.unit}
     range={field.key==="scaleDownStabilizationNanos"||field.key==="replacementDwellNanos"?"0 이상의 밀리초, 소수점 아래 6자리까지":field.key==="transitionReserveFraction"||field.key==="scaleDownHeadroomFraction"?"0 ~ 1 사이 유한한 수":field.key.endsWith("Nanos")?"0보다 큰 밀리초, 소수점 아래 6자리까지":field.key==="completionMarginMS"?"0 이상의 밀리초":field.key==="servingMemoryBytes"?"0 ~ 18446744073709551615 사이 바이트 수":"1 이상의 정수"}
     save={value=>{
@@ -263,31 +266,33 @@ export function SchedulerSettingsPage() {
       const text=value as string,parsed=field.key.endsWith("Nanos")?millisecondsToNanos(text,field.key==="scaleDownStabilizationNanos"||field.key==="replacementDwellNanos"?0n:1n):field.key==="transitionReserveFraction"||field.key==="scaleDownHeadroomFraction"||field.key==="capacityBisectionWidth"?reserveFraction(text):field.key==="completionMarginMS"?marginMilliseconds(text):field.key==="servingMemoryBytes"?wireInteger(text,0n,18446744073709551615n):wireInteger(text,1n,9223372036854775807n)
       if(field.key==="capacityBisectionWidth"&&(Number(parsed)<=0||Number(parsed)>1))throw new Error("0 초과 1 이하의 유한한 값을 적어 주세요.")
       edit(base=>({...base,[field.key]:parsed}))
-    }} disabled={blocked}/>)
-  return <Screen back={back} title="운영 설정"
-    lede={!precise?"이 브라우저는 큰 정수를 정확히 다루지 못해 설정을 바꿀 수 없어요. 최신 브라우저에서 열어 주세요.":settings.data?(settings.data.autonomousWorkloads?.length?`서비스 ${settings.data.autonomousWorkloads.length}개를 자동으로 제어하고 있어요. 서비스 화면에서 켜고 끌 수 있어요.`:"모든 서비스가 마지막 구성을 유지해요. 서비스 화면에서 자동 제어를 켤 수 있어요."):undefined}
-    action={count>0&&<Button ref={reviewLauncher} onClick={()=>void inspect()} disabled={blocked}>{reviewing?"현재 값을 확인하고 있어요":`변경 ${count}건 검토`}</Button>}>
+    }} disabled={blocked}/>
+  return <Screen title="설정" width="data" actionPlacement="header"
+    action={count>0&&<Button ref={reviewLauncher} onClick={()=>void inspect()} disabled={blocked}>{reviewing?"현재값 조회 중":`변경 ${count}건 검토`}</Button>}>
+    <SettingsNavigation active="configuration"/>
+    {!precise&&<strong role="alert">큰 정수 처리 미지원 · 설정 변경 차단</strong>}
+    <label className="grid max-w-sm gap-2 text-sm">운영 설정 범위<select className="min-h-11 rounded-md border bg-background px-3" value={category} onChange={event=>setCategory(event.target.value as typeof category)}>{([["cycle","판단 주기와 범위"],["limit","자원 한도"],["controls","자동 조정 항목"],["capacity","용량 설정"],["advanced","고급"]] as const).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
     <QueryGate query={settings}>{shown&&<>
-      <Rows label="판단 주기와 범위">{group("cycle")}</Rows>
-      <Rows label="자원 한도">{group("limit")}
-        <EditRow label="계획에서 뺀 장비" help="운영 판단이 이 장비에는 서비스를 놓거나 빼거나 전력 모드를 바꾸지 않아요. 측정 중인 장비처럼 그대로 둬요." value={excludedNodes(shown)} changed={!!count&&String(baseline!.excludedNodes??[])!==String(shown.excludedNodes??[])}
-          initial={(shown.excludedNodes??[]).join(", ")||"없음"} range="쉼표로 구분한 장비 이름, 비우려면 없음" save={value=>{const names=nodeList(value as string);edit(base=>({...base,excludedNodes:names}))}} disabled={blocked}/>
-      </Rows>
-      <Rows label="자동 조정 항목">{controls.map(control=><EditRow key={control.key} label={control.label} help={`운영 판단에서 ${control.label}도 함께 조정해요.`} value={onOff(shown.controls[control.key])} changed={!!count&&baseline!.controls[control.key]!==shown.controls[control.key]}
-        initial={shown.controls[control.key]} save={value=>edit(base=>({...base,controls:{...base.controls,[control.key]:value as boolean}}))} disabled={blocked}/>)}</Rows>
-      <div id="capacity" ref={capacitySection} tabIndex={-1} className="rounded focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring">
-        <Rows label="용량 설정">{group("capacity")}<Row href="/?evidence=capacity" label="인스턴스 용량 계산 근거" hint="행에 사용한 값과 현재 적용값, 격자·이분탐색 판정"/></Rows>
-      </div>
-      <Rows label="고급">{group("advanced")}</Rows>
-      <Rows>
-        <Row href="/changes?scope=scheduler" label="최근 변경 기록" hint="누가 언제 운영 설정을 바꿨는지"/>
+      <section aria-label="현재값·정의 표">{category==="controls"?<DataTable data={controls} columns={[
+        {key:"name",label:"항목",value:control=>control.label},
+        {key:"value",label:"현재값",value:control=>onOff(shown.controls[control.key])},
+        {key:"edit",label:"작업",value:control=><EditRow label={control.label} help={`운영 판단에서 ${control.label}도 함께 조정해요.`} value={onOff(shown.controls[control.key])} changed={!!count&&baseline!.controls[control.key]!==shown.controls[control.key]} initial={shown.controls[control.key]} save={value=>edit(base=>({...base,controls:{...base.controls,[control.key]:value as boolean}}))} disabled={blocked}/>},
+      ]}/>:<DataTable data={fields.filter(field=>field.group===category)} columns={[
+        {key:"name",label:"항목",value:field=>field.label},
+        {key:"value",label:count?"작성값":"현재값",value:field=>plain(field,shown[field.key])},
+        {key:"edit",label:"작업",value:editField},
+      ]}/>}</section>
+      <details><summary className="min-h-11 cursor-pointer py-2">연결 대상·작업</summary><Facts items={[["자동 제어 서비스",autonomous(shown)],["계획 제외 장비",excludedNodes(shown)]]}/><Rows>
+        <li className="flex min-h-11 items-center justify-between gap-3"><span>계획 제외 장비</span><EditRow label="계획 제외 장비" help="운영 판단의 배치·제거·전력모드 변경 제외 대상" value={excludedNodes(shown)} changed={!!count&&String(baseline!.excludedNodes??[])!==String(shown.excludedNodes??[])} initial={(shown.excludedNodes??[]).join(", ")||"없음"} range="쉼표로 구분한 장비 이름, 비우려면 없음" save={value=>edit(base=>({...base,excludedNodes:nodeList(value as string)}))} disabled={blocked}/></li>
+        <Row href="/?evidence=capacity" label="용량 계산 근거"/>
+        <Row href="/records?scope=scheduler&filter=settings" label="최근 변경 기록"/>
         {routing
-          ?<Row href={`/transitions/${encodeURIComponent(routing.operation.id)}?${new URLSearchParams({view:"current",stage:"result",node:routing.operation.node.uid,startedAt:routing.startedAt})}`} label="설정한 요청 분배" hint="가장 최근에 적용한 서비스 → 인스턴스 비율"/>
-          :<Row href="/transitions" label="설정한 요청 분배" hint={state.data?"분배 작업 기록이 비어 있어요":state.error?"분배 기록을 불러오지 못했어요":"분배 기록을 확인하고 있어요"}/>}
+          ?<Row href={`/records?${new URLSearchParams({filter:"action",id:routing.operation.id,view:"current",stage:"result",node:routing.operation.node.uid,startedAt:routing.startedAt})}`} label="설정한 요청 분배"/>
+          :<Row href="/records?filter=action" label="설정한 요청 분배" value={state.data?"기록 없음":state.error?"조회 실패":"조회 중"}/>}
         <RoutingEdit initial={settings.data?.staticRouting} disabled={blocked||count>0} apply={(before,after,reason)=>void applyRouting(before,after,reason)}/>
         <Row href="/" label="운영 현황"/>
         {settings.data&&<RowDialog label="원본 자료 보기" title="현재 운영 설정 원본"><pre className="source-json">{stringifySchedulerJSON(safeSource(settings.data),2)}</pre><SourceExport value={settings.data} filename="chill-scheduler-settings.json"/></RowDialog>}
-      </Rows>
+      </Rows></details>
     </>}</QueryGate>
     <Dialog open={reviewOpen} onOpenChange={open=>{if(!open){setReviewOpen(false);setReview(null)}}}><DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-xl" onCloseAutoFocus={event=>{event.preventDefault();reviewLauncher.current?.focus()}}>
       <DialogHeader><DialogTitle>{latest?"다른 사람이 먼저 설정을 바꿨어요":`변경 ${count}건을 적용할까요?`}</DialogTitle><DialogDescription>{latest?"최신 값과 바꾼 값을 비교해요. 바꾼 값은 그대로 있어요.":"적용하면 운영 설정 전체를 한 번에 저장해요. 여러 사람이 바꾸면 마지막에 적용한 값이 남아요."}</DialogDescription></DialogHeader>
