@@ -179,7 +179,7 @@ export function parseLiveMessage(input:string|unknown):LiveMessage|null {
     }
   } catch { return null }
 }
-function compareAt(a:string,b:string):number {
+export function compareAt(a:string,b:string):number {
   const normalized=(at:string)=>at.slice(0,19)+"."+(at.slice(19,-1).replace(/^\./,"")).padEnd(9,"0")
   return normalized(a).localeCompare(normalized(b))
 }

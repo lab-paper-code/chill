@@ -19,6 +19,8 @@ Tokens live in `app/globals.css`: a cool frost canvas, coolant blue for actions 
 
 Experiment interval drawers restore their stage pair from `a/as/b/bs` URL parameters and clear selection parameters on close. Comparison limits are marked beside interval identifiers, with load, service identity and measurement-rule states in a condition table. Differences below 0.01 display units remain neutral in interval cells and overview chips. Measurement evidence preserves failed/unknown power-source checks; rejected request guidance appears once with numeric constraints in tables and short field errors.
 
+Scheduler history keeps default/ascending unfiltered reads bounded, including explicit `filter=all`, and returns original append offsets. Current-page counts appear only in the summary table. Live incident order preserves nanoseconds and uses descending sequence for equal timestamps; shared power remains explicitly labelled cluster-wide in service details.
+
 ## Runtime
 
 Node 24.21.0; pnpm 10.33.4. Dependencies are frozen in `pnpm-lock.yaml`. `pnpm install --frozen-lockfile`, then `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`. `pnpm start` binds `0.0.0.0:3000`. Next uses `output: standalone`; a standalone image must include `.next/standalone`, `.next/static` and `public` if present and set `HOSTNAME=0.0.0.0`, `PORT=3000`.

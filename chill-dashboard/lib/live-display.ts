@@ -1,4 +1,4 @@
-import { isLiveActionActive, type LiveAction, type LiveDecision, type LiveEvent, type LiveInstance, type LiveMetric, type LiveMetrics, type LiveSnapshot, type LiveState, type LiveWorkload } from "./live.ts"
+import { compareAt, isLiveActionActive, type LiveAction, type LiveDecision, type LiveEvent, type LiveInstance, type LiveMetric, type LiveMetrics, type LiveSnapshot, type LiveState, type LiveWorkload } from "./live.ts"
 
 export const instanceSymbols = [
   ["×", "제거"], ["◌", "분배 해제 뒤 잔여 실행"], ["●", "실제 처리"],
@@ -164,5 +164,5 @@ export function incidentFlow(events:LiveEvent[],gaps:LiveState["gaps"],now:numbe
     ...mergeKeepEvents(retainedEvents(events,now,keep)).map(row=>({kind:"event" as const,at:row.event.at,key:`event:${row.event.seq}`,...row})),
     ...gaps.filter(gap=>Date.parse(gap.from)<=now).map(gap=>({kind:"gap" as const,at:gap.from,key:`gap:${gap.scope}:${gap.from}:${gap.reason}`,gap})),
   ]
-  return incidents.sort((a,b)=>Date.parse(b.at)-Date.parse(a.at)).slice(0,30)
+  return incidents.sort((a,b)=>compareAt(b.at,a.at)||(b.kind==="event"?b.event.seq:0)-(a.kind==="event"?a.event.seq:0)).slice(0,30)
 }

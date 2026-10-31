@@ -145,6 +145,27 @@ func TestSchedulerRawCursorBoundsAppendOrder(t *testing.T) {
 	check(restored)
 }
 
+func TestSchedulerDefaultSelectionsKeepBoundedReadAndOffsets(t *testing.T) {
+	from := observationTestHour.Add(10 * time.Minute)
+	log, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	clock.set(from)
+	for i := range 3 {
+		if err := log.SchedulerRecord(SchedulerObservation{At: from, Action: &SchedulerActionObservation{ID: fmt.Sprint(i)}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendObservationLine(t, log, clock, "{not-json}")
+	for _, selection := range []SchedulerObservationSelection{{}, {Filter: "all"}, {Order: "asc"}, {Order: "asc", Filter: "all"}} {
+		page, next, _, _, err := log.SchedulerObservationPage(context.Background(), from, from.Add(time.Minute), 1, 1, selection)
+		if err != nil || len(page) != 1 || next != 2 {
+			t.Fatalf("default selection %+v was not bounded: %+v %d %v", selection, page, next, err)
+		}
+		if page[0].Offset == nil || *page[0].Offset != 1 {
+			t.Fatalf("default selection %+v lost original offset: %+v", selection, page[0])
+		}
+	}
+}
+
 func TestSchedulerRawPageDecodesOnlySelectedPayloads(t *testing.T) {
 	from := observationTestHour.Add(10 * time.Minute)
 	to := from.Add(time.Minute)
@@ -206,6 +227,7 @@ func TestSchedulerRawPageDecodesOnlySelectedPayloads(t *testing.T) {
 		stored.Options[i].Instance.ProfileID, stored.Options[i].Instance.Profile = stored.Options[i].Instance.Profile.ID, nil
 	}
 	selected.Snapshot = &stored
+	selected.Offset = page[0].Offset
 	want, err := json.Marshal(selected)
 	if err != nil {
 		t.Fatal(err)
@@ -605,7 +627,6 @@ func TestSchedulerSelectedPagesPreserveRawReferences(t *testing.T) {
 		}
 		raw, _, _, _, err := log.SchedulerObservationPage(context.Background(), from, to, 1, original, SchedulerObservationSelection{})
 		selected := page[0]
-		selected.Offset = nil
 		if err != nil || len(raw) != 1 || !reflect.DeepEqual(selected, raw[0]) {
 			t.Fatalf("original detail reference changed: %+v %+v %v", selected, raw, err)
 		}

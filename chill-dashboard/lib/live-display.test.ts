@@ -17,6 +17,14 @@ test("one incident flow includes gaps by their start and counts them alongside c
   assert.equal(flow[0].at,at)
   assert.equal(incidentFlow([],gaps,now-1).length,0)
 })
+test("incident flow preserves nanoseconds and breaks equal timestamps by descending sequence",()=>{
+  const event=(seq:number,time:string)=>({type:"event" as const,kind:"decision" as const,seq,at:time,decision:{at:time,state:"Changed",reason:"",explanation:""}})
+  const events=[event(1,"2026-10-30T12:00:00.1234Z"),event(2,"2026-10-30T12:00:00.123456789Z"),event(3,"2026-10-30T12:00:00.123456789Z")]
+  const gaps=[{from:"2026-10-30T12:00:00.123456790Z",to:at,scope:"all",reason:"gap"}]
+  assert.deepEqual(incidentFlow(events,gaps,now).map(row=>row.key),[
+    "gap:all:2026-10-30T12:00:00.123456790Z:gap","event:3","event:2","event:1",
+  ])
+})
 test("terminal ratios never divide by received and distinguish missing from observed zero",()=>{
   assert.equal(terminalCount(metric),4)
   assert.equal(ratio(metric.completed,terminalCount(metric)),"3/4 (75.0%)")

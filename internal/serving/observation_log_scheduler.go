@@ -61,7 +61,7 @@ type SchedulerObservation struct {
 	PowerCoverage *powerwindow.Policy         `json:"powerCoverage,omitempty"`
 	PowerJoules   *float64                    `json:"powerJoules,omitempty"`
 	PowerError    string                      `json:"powerError,omitempty"`
-	// Offset is the original window's append offset, only on selected reads.
+	// Offset is the original window's append offset.
 	// schedulerLine deliberately does not persist this read-side reference.
 	Offset *int `json:"offset,omitempty"`
 }
@@ -464,7 +464,7 @@ func (l *ObservationLog) SchedulerObservationPage(ctx context.Context, from, to 
 		return nil, -1, nil, ObservationCoverage{}, err
 	}
 	defer read.close()
-	if selection != (SchedulerObservationSelection{}) {
+	if selection.UID != "" || selection.Order != "" && selection.Order != "asc" || selection.Filter != "" && selection.Filter != "all" {
 		return l.schedulerSelectedPage(read, from, to, limit, offset, selection)
 	}
 	records := make([]SchedulerObservation, 0, limit)
@@ -494,6 +494,8 @@ func (l *ObservationLog) SchedulerObservationPage(ctx context.Context, from, to 
 		if err != nil {
 			return err
 		}
+		original := matched - 1
+		record.Offset = &original
 		records = append(records, record)
 		return nil
 	})

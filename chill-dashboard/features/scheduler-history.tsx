@@ -68,7 +68,7 @@ export function HistoryControls({history,children}:{history:SchedulerHistoryQuer
   </Rows>
 }
 export function HistoryPaging({history}:{history:SchedulerHistoryQuery}){
-  return <div className="grid gap-2">{history.query.data?.gapUntil&&<p role="status">{gapNotice(history.query.data.gapUntil)}</p>}<p className="text-sm text-muted-foreground">기록을 {history.rows.length}건 불러왔어요. 기간 전체 건수는 아니에요.</p><div className="flex gap-2"><Button variant="outline" onClick={()=>history.page()} disabled={history.cursor==="0"}>처음으로</Button><Button variant="outline" onClick={()=>history.page(history.query.data?.nextCursor)} disabled={!history.query.data?.nextCursor}>다음 기록 보기</Button></div></div>
+  return <div className="grid gap-2">{history.query.data?.gapUntil&&<p role="status">{gapNotice(history.query.data.gapUntil)}</p>}<div className="flex gap-2"><Button variant="outline" onClick={()=>history.page()} disabled={history.cursor==="0"}>처음으로</Button><Button variant="outline" onClick={()=>history.page(history.query.data?.nextCursor)} disabled={!history.query.data?.nextCursor}>다음 기록 보기</Button></div></div>
 }
 
 function RecordDetails({row}:{row:SchedulerHistoryRow}){
@@ -133,7 +133,7 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
       </RowDialog>}
     </HistoryControls>
     <QueryGate query={history.query}>{loaded&&<>
-      <table className="w-full table-fixed text-sm"><thead><tr><th>정렬</th><th>범위</th><th>종류</th><th>현재 페이지 건</th></tr></thead><tbody><tr><td>{params.get("order")==="desc"?"최신순":"저장순"}</td><td>{params.get("uid")?"선택 서비스":"클러스터 전체"}</td><td>{historyFilters[filter]??filter}</td><td className="text-right tabular-nums">{rows.length}</td></tr></tbody></table>
+      <table className="w-full table-fixed text-sm"><thead><tr><th>정렬</th><th>범위</th><th>종류</th><th>현재 페이지 기록 수</th></tr></thead><tbody><tr><td>{params.get("order")==="desc"?"최신순":"저장순"}</td><td>{params.get("uid")?"선택 서비스":"클러스터 전체"}</td><td>{historyFilters[filter]??filter}</td><td className="text-right tabular-nums">{rows.length}</td></tr></tbody></table>
       {rows.length?<Rows label="기록">{rows.map(row=>{
         const ev=row.event,mark=[same(a,row)&&"A",same(b,row)&&"B"].filter(Boolean).join(" · ")
         return <Row key={row.ref.offset} label={ev.decision?judgmentLabels[ev.decision.status]??statusLabel(ev.decision.status):ev.action?actionKinds[ev.action.kind]??kinds.action:kinds[row.ref.kind]??kinds.other}
