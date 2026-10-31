@@ -308,3 +308,4 @@ Node 필드/label 범위는 RBAC 자체가 아니라 코드에서 제한한다. 
 
 - cgroup 표본·kind 경계는 §1·5, 하위 모델 분해(2026-10-31)는 §3과 [ADR 0032 개정 이력](../../adr/0032-experiment-execution-boundary.md#개정-이력)을 따른다.
 - FaultInjection·프로파일·Snapshot 등 별도 CR 기각 근거는 [ADR 0032 대안](../../adr/0032-experiment-execution-boundary.md#context)을 따른다. §1의 범위 밖 범용 workflow는 도입하지 않는다.
+- 하네스 이미지의 Dockerfile 전용 `.dockerignore`는 `hack/e5`·과학 정의 문서를 포함한다. 루트 제어 이미지용 제외 규칙을 공유하지 않으며 실제 BuildKit 빌드로 입력 포함을 검증한다.
