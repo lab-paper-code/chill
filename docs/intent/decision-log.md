@@ -183,3 +183,8 @@
 - 기각: TTL, 실행 종료 즉시 반환, 단순 orphan GC, 반환 증명 원장 일괄 삭제(코드 확인: ownerReturnTerminal·knownEffectConfirmed·late binding·preparationCreatedSource가 각기 다른 사실을 지킴).
 - 삭제 단계: S0 기준·예약 반사실 진단(도구만) → S1 tick/completion 중복 제거(scheduler_continuation 60줄 범위) → S2 route/퇴역 판단 통합(readySubset·dependenciesComplete 147줄) → S3 no-effect 부모 수명 제거(87줄) → S4 cleanup route 우회로 제거(161줄). 교체 범위 455줄, 순삭제 미확정.
 - 검증: 결정 리플레이는 실행부를 검증하지 못함 → 단계마다 리뷰 2종 → 사건 순서 단위 테스트 → 결정 게이트(계획 불변) → 고정 미니 행 점수판.
+
+## 2026-10-31 — 점수판 기준 측정(round-10, 서버 d4a933bf, h=.25, 미니 행)
+
+- **기준 점수 (F, J) = (7,782, 153,056.668 J)**. E5-3m MNV 실패 5,787 D1 FAIL / E5-5m MNV 1,992 D1 FAIL / E5-7m Smol D1 FAIL(실패 0); PLC·나머지 정상. 전력 complete 3/3. 측정 재시도 0. 증거 `C/full-E5-{3m,5m,7m}-10/`, `O/deployB/round-10-baseline/`.
+- STOP 7: finish의 owned reset 대기 시간 초과(무ACK/잔류 예약) — 8c/8d와 같은 원인(반복 2회↑) = L층 책임 수렴 문제, S1~S4 범위. 측정 데이터는 유효.
