@@ -83,14 +83,22 @@ func TestSkippedRequiredBridgeConsumesReadySubsetACKSCH51(t *testing.T) {
 			stage := *c.runs["acknowledged-route"].result.Operation.Target
 			stage.ID = "independent-bridge"
 			uid := stage.Instances[0].WorkloadUID
+			source := stage.Instances[0]
+			source.ID, source.Weight = "old-source", 0
+			terminal := stage.Instances[0]
+			terminal.ID, terminal.WorkloadUID, terminal.Ready, terminal.Terminated = "terminal-w1", "w1", false, true
+			stage.Instances = append(stage.Instances, source, terminal)
+			stage.Routing = map[string]map[string]int32{uid: {stage.Instances[0].ID: 1}, "w1": {terminal.ID: 1}}
+			c.state.Snapshot.Instances = append(c.state.Snapshot.Instances, source, terminal)
 			c.state.Snapshot.Routing = stage.Routing
 			future := goal.Instances[0]
-			future.ID, future.Ready = "future-after-blocker-stop", false
-			goal.Instances = []serving.SchedulerInstance{future}
-			goal.Routing = map[string]map[string]int32{uid: {future.ID: 1}}
+			future.ID, future.WorkloadUID, future.Ready = "future-after-blocker-stop", "w1", false
+			goal.Instances = []serving.SchedulerInstance{future, stage.Instances[0]}
+			goal.Routing = map[string]map[string]int32{"w1": {future.ID: 1}, uid: {stage.Instances[0].ID: 1}}
 			bridge := serving.Action{ID: "required-bridge", Kind: operationRoute, RouteTarget: &stage, DependsOn: []string{"prepare-bridge"}}
 			stop := serving.Action{ID: "stop-blocker", Kind: operationStop, Instance: "old-source", DependsOn: []string{bridge.ID}}
-			goal.Actions = []serving.Action{bridge, stop}
+			prepare := serving.Action{ID: "prepare-w1", Kind: operationPrepare, Instance: future.ID, DependsOn: []string{stop.ID}}
+			goal.Actions = []serving.Action{bridge, stop, prepare}
 			c.runs["prepare-bridge"] = &actionRun{action: serving.Action{Status: nativeOperationComplete}}
 			if !receipt {
 				delete(c.runs, "acknowledged-route")
@@ -107,6 +115,17 @@ func TestSkippedRequiredBridgeConsumesReadySubsetACKSCH51(t *testing.T) {
 			}
 			if (c.runs[stop.ID] != nil) != receipt {
 				t.Fatalf("stop launch=%t, existing ACK=%t", c.runs[stop.ID] != nil, receipt)
+			}
+			if c.runs[prepare.ID] != nil {
+				t.Fatal("W1 prepare ran before blocker stop completed")
+			}
+			if receipt {
+				c.runs[stop.ID].action.Status = nativeOperationComplete
+				c.launchTargetLocked(goal, config)
+				c.wg.Wait()
+				if c.runs[prepare.ID] == nil {
+					t.Fatal("W1 prepare did not follow the acknowledged W2 handoff and stop")
+				}
 			}
 		})
 	}

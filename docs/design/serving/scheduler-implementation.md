@@ -100,6 +100,7 @@ break-before-make의 빈 routing/bindings 중 의도는 frozen `Operation.Target
 `SchedulerReadyExpansion`은 최종 계획과 같은 observation freshness/MaxObservationAge gate, 현재 settings/snapshot/정확한 capacity row key·λ(최근 수요,q/창,최소 수요)·q·L−m·목적지 κ를 쓴다. Ready 합집합은 r=0,B=q,W=B/κ_new이며 기존 `capacityJudge/capacityWeights`를 쓴다. 모든 old/new 양수 정수 weight·rate/κ를 검증하고 같은 Node κ 중복/old 총κ 감소/새 solver/전체 재귀는 없다. stale/unknown/future·row/ACK/identity/용량 부족이면 current와 weights를 그대로 보존한다.
 bootstrap처럼 current serving이 없으면 target Ready 부분집합을 합 1000으로 재정규화한다. stopped/고장/unroutable/이번 tick stop 가능 경로는 되살리지 않는다. 다른 prepare/power/drain이나 slow 박자를 기다리지 않으며 UID 한정 atomic runtime route와 ACK를 쓴다. launch의 `dependenciesReady`는 부분집합 target, final route는 전체 target/DAG를 검사한다.
 ID `<goal>-ready-<subset hash>`, `Action.from=ready-subset`, OnAction start/end·frozen `operation.target`·before/actual routing을 기록한다. 부분집합은 final target/DAG 완료 조건이 아니고 후속 subset 대체를 effect-lost로 만들지 않는다. 반영은 Ready를 캡처한 tick이며 부족한 current/bootstrap의 κ/SLO 보장은 아니다.
+생략된 bridge의 stop 소비도 완료 bridge와 동일하게 중단 source UID의 ACK/actual handoff만 검사한다. 보존된 다른 UID의 terminal route는 이 소비 범위에 포함하지 않는다(SCH-51).
 고유 회귀 근거: full-E5-3 `02:45:39.328560181Z`의 495:126:379(κ=103.37311385470142/s, 입력 74.58333333333333/s)를 준비 중 genesis3 단독 1000(κ=62.46166324284952/s)으로 줄이지 않고 완료 후 765:235를 적용한다. E5-1의 old+Ready genesis3 순증은 nano를 기다리지 않는다.
 
 #### 분배 적용 증거

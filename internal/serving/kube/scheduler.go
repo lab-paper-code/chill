@@ -1304,8 +1304,22 @@ func (c *SchedulerController) dependenciesReady(action serving.Action, target se
 		route := slices.IndexFunc(target.Actions, func(a serving.Action) bool {
 			return a.ID == dep && a.Kind == operationRoute
 		})
+		uids := c.targetWorkloadsLocked(target)
+		if route >= 0 && target.Actions[route].RouteTarget != nil {
+			var uid string
+			for _, source := range target.Actions[route].RouteTarget.Instances {
+				if source.ID == action.Instance {
+					uid = source.WorkloadUID
+					break
+				}
+			}
+			if uid == "" {
+				return false
+			}
+			uids = []string{uid}
+		}
 		if action.Kind != operationStop || route < 0 ||
-			!c.completedHandoffPresent(*cmp.Or(target.Actions[route].RouteTarget, &target), c.targetWorkloadsLocked(target)) {
+			!c.completedHandoffPresent(*cmp.Or(target.Actions[route].RouteTarget, &target), uids) {
 			return false
 		}
 	}
