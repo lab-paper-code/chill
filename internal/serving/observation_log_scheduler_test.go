@@ -626,8 +626,8 @@ func TestSchedulerSelectedPagesPreserveRawReferences(t *testing.T) {
 	}{
 		{SchedulerObservationSelection{Order: "asc", Filter: "decision-action", UID: uid}, []int{0, 2, 3}},
 		{SchedulerObservationSelection{Filter: "snapshot", UID: uid}, []int{1}},
-		{SchedulerObservationSelection{Filter: "action"}, []int{0, 3, 4}},
-		{SchedulerObservationSelection{Filter: "other"}, []int{5}},
+		{SchedulerObservationSelection{Filter: schedulerHistoryAction}, []int{0, 3, 4}},
+		{SchedulerObservationSelection{Filter: schedulerHistoryOther}, []int{5}},
 		{SchedulerObservationSelection{Filter: "power"}, []int{6}},
 		{SchedulerObservationSelection{UID: "missing"}, []int{}},
 	} {

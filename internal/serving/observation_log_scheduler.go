@@ -507,6 +507,38 @@ func (l *ObservationLog) SchedulerObservationPage(ctx context.Context, from, to 
 	return records, next, coverage.gapUntil(from), coverage, nil
 }
 
+const (
+	schedulerHistoryDecision = "decision"
+	schedulerHistoryAction   = "action"
+	schedulerHistoryOther    = "other"
+)
+
+type schedulerObservationEnvelope struct {
+	At       time.Time
+	Decision *struct{}
+	Snapshot *struct{}
+	Settings *struct{}
+	Action   *struct{}
+	Meter    string
+}
+
+func (e schedulerObservationEnvelope) kind() string {
+	switch {
+	case e.Decision != nil:
+		return schedulerHistoryDecision
+	case e.Snapshot != nil:
+		return "snapshot"
+	case e.Settings != nil:
+		return "settings"
+	case e.Action != nil:
+		return schedulerHistoryAction
+	case e.Meter != "":
+		return "power"
+	default:
+		return schedulerHistoryOther
+	}
+}
+
 // schedulerSelectedPage keeps only timestamps and append offsets while sorting,
 // then replays the captured streams to decode just the requested page.
 func (l *ObservationLog) schedulerSelectedPage(read *observationRead, from, to time.Time, limit, offset int, selection SchedulerObservationSelection) ([]SchedulerObservation, int, *time.Time, ObservationCoverage, error) {
@@ -517,14 +549,7 @@ func (l *ObservationLog) schedulerSelectedPage(read *observationRead, from, to t
 	var entries []entry
 	position := 0
 	err := l.scanStream(read, observationSchedulerStream, func(raw []byte) error {
-		var envelope struct {
-			At       time.Time
-			Decision *struct{}
-			Snapshot *struct{}
-			Settings *struct{}
-			Action   *struct{}
-			Meter    string
-		}
+		var envelope schedulerObservationEnvelope
 		if err := json.Unmarshal(raw, &envelope); err != nil {
 			return err
 		}
@@ -533,20 +558,8 @@ func (l *ObservationLog) schedulerSelectedPage(read *observationRead, from, to t
 		}
 		original := position
 		position++
-		kind := "other"
-		switch {
-		case envelope.Decision != nil:
-			kind = "decision"
-		case envelope.Snapshot != nil:
-			kind = "snapshot"
-		case envelope.Settings != nil:
-			kind = "settings"
-		case envelope.Action != nil:
-			kind = "action"
-		case envelope.Meter != "":
-			kind = "power"
-		}
-		if filter := selection.Filter; filter != "" && filter != "all" && filter != kind && !(filter == "decision-action" && (kind == "decision" || kind == "action")) {
+		kind := envelope.kind()
+		if filter := selection.Filter; filter != "" && filter != "all" && filter != kind && !(filter == "decision-action" && (kind == schedulerHistoryDecision || kind == schedulerHistoryAction)) {
 			return nil
 		}
 		if selection.UID != "" {

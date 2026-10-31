@@ -156,9 +156,14 @@ func TestObservationArchiveTransparentReadsAndCatalog(t *testing.T) {
 	if err != nil || len(page) != 1 || next != -1 {
 		t.Fatalf("archive terminal page: %+v %d %v", page, next, err)
 	}
+	checkArchiveSelectedPages(t, restarted, ctx, from, to)
+}
+
+func checkArchiveSelectedPages(t *testing.T, log *ObservationLog, ctx context.Context, from, to time.Time) {
+	t.Helper()
 	selection := SchedulerObservationSelection{Order: "desc", Filter: "snapshot", UID: archiveTestUID}
 	for cursor, original := range []int{1, 0} {
-		page, next, _, coverage, err := restarted.SchedulerObservationPage(ctx, from, to, 1, cursor, selection)
+		page, next, _, coverage, err := log.SchedulerObservationPage(ctx, from, to, 1, cursor, selection)
 		if err != nil || len(page) != 1 || page[0].Offset == nil || *page[0].Offset != original ||
 			page[0].Snapshot.Workloads[0].UID != archiveTestUID || coverage.Sources[0].Source != observationArchiveSource {
 			t.Fatalf("sorted archive page/catalog: %+v next=%d err=%v", page, next, err)
