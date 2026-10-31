@@ -89,8 +89,7 @@ func projectOperationStep(cr edge.OperationCostMeasurement, index int, store str
 	result := record.Result
 	// No first power sample means the operation was never invoked, so the writer
 	// legitimately retained an empty result. An invoked result must bind exactly.
-	emptyResult := result.Operation.ID == "" && result.Operation.Kind == "" && result.Operation.Node.Name == "" && result.Operation.Node.UID == "" && result.StartedAt.IsZero() && result.EndedAt.IsZero() && result.Status == ""
-	if !emptyResult && (result.Operation.ID != operation.ID || result.Operation.Kind != operation.Kind || result.Operation.Node != operation.Node) {
+	if !emptyOperationResult(&result) && (result.Operation.ID != operation.ID || result.Operation.Kind != operation.Kind || result.Operation.Node != operation.Node) {
 		return OperationStepProjection{}, errors.New("operation request/result identity mismatch")
 	}
 	p := OperationStepProjection{OperationID: id, Reason: record.Reason}
@@ -116,6 +115,10 @@ func projectOperationStep(cr edge.OperationCostMeasurement, index int, store str
 		return OperationStepProjection{}, errors.New("unsupported operation measurement verdict")
 	}
 	return p, nil
+}
+
+func emptyOperationResult(result *OperationResult) bool {
+	return result.Operation.ID == "" && result.Operation.Kind == "" && result.Operation.Node.Name == "" && result.Operation.Node.UID == "" && result.StartedAt.IsZero() && result.EndedAt.IsZero() && result.Status == ""
 }
 
 func acceptedOperationStepEnergy(record OperationMeasurement, ref evidencestore.ObjectIdentity) (*float64, error) {
