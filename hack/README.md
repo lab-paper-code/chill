@@ -524,3 +524,110 @@ pipes and mocked API/kubectl, with no cluster access, image builds or full tests
 
 `python3 hack/e5/e5.py self-check` needs `CHILL_EXPERIMENT_CONFIG` pointing at an
 environment JSON (module constants) but makes no cluster or network calls.
+
+### One-command E5 round
+
+`python3 -B hack/e5/round.py --round /absolute/private/round.json` runs the
+released server-only upgrade, initial owned reset, headroom PUT/readback, κ,
+ordered factor → headroom GET → stage/first-load-tick check → judge → guards →
+cleanup, comparison tables, and final finish/empty-state readback. It reuses
+`e5.CPO`, `e5.py` commands, token lifetime checks, and table formatters; raw
+latency/D1/energy judgments are not recomputed or weakened. Run only outside an
+active measurement window and under an actual Main-approved release.
+
+The private input JSON has these fields (all filesystem paths are absolute;
+replace the illustrative paths/SHAs with actual approved inputs):
+
+```json
+{
+  "sourceSHA": "0123456789abcdef0123456789abcdef01234567",
+  "rows": ["E5-5", "E5-7", "E5-6", "E5-3"],
+  "rowTag": "9",
+  "restoreOriginTag": "223",
+  "h": 0.25,
+  "rateBasis": {"tag": "3", "binding": "/ops/campaign/run/binding-3.json"},
+  "compareTags": ["3", "7"],
+  "environment": "/ops/campaign/inputs/environment.json",
+  "binding": "/ops/campaign/run/approved-input-binding.json",
+  "release": "/ops/campaign/run/release-round-9.json",
+  "run": "/ops/campaign/run",
+  "evidence": "/ops/deployB/round-9",
+  "control": "265",
+  "publication": "/ops/prebuilt/server-publication.json",
+  "minimumFreeBytes": 310000000000,
+  "kappa": {"reuseRows": "/ops/deployB/prior/kappa-rows.json"},
+  "takeoverAfter600Seconds": false,
+  "failureInjection": true
+}
+```
+
+`environment.paths.ops` is the actual external ops root, **not** literal `/ops`.
+`run` is the existing campaign containing original snapshots and `initial.json`.
+Do **not** create `evidence` or any `full-E5-*-TAG` directories: the runner and
+E5 controller own creation. The runner writes `run/binding-round-9.json` from
+the supplied binding, preserving R3 payloads, seeds, rates, traces, and κ while
+freezing the selected harness package references and new server provenance.
+The pre-existing approved release must name that exact generated `bindingPath`,
+`executor: "CampaignOps"`, `command: "e5-execute"`, `mainInstructionUTC`, and
+explicit `sources: {server, loadgen, power}`; legacy single `sourceSHA` releases
+are rejected. It never fabricates approval. The server publication must have
+the matching SHA, only `roles.server`, verified digest/platform receipts, and
+`runtimeBuilds: 0`; fast-deploy uses `--prebuilt-images` and never builds on the
+host. A matching live digest skips upgrade, not Ready/API/restartCount gates.
+Any chart drift stops; the runner does not accept chart-change approval.
+
+Optional `harnessSHA` selects a different full commit for the frozen
+`ops/harness/e5-<sha>` tree (default `sourceSHA`). Missing trees are created
+atomically from `git archive`; existing Python files are compared with that
+commit before use. Bind micro schedules beforehand; rows `E5-{3,5,6,7}m` must
+carry `micro: true` and `restoreStage` in the supplied binding, with their own
+bound failure runbook for E5-7m. Original micro restore snapshots use tag 223.
+For normal E5-3, the historical default is the unsuffixed `full-E5-3`; other
+rows use `restoreOriginTag`. Override with e.g.
+`"restoreOrigins": {"E5-3": "223"}` when the actual original exists there.
+R3 comparisons default to unsuffixed E5-3 and E5-7 tag `3b`; explicit
+`"compareOrigins": {"3": {"E5-7": "3b"}}` maps historical exceptions.
+
+To replay κ once, use `"kappa": {"executable": "/absolute/prebuilt/kappa"}`.
+Its fixed argv is `-mode table -workloads
+image-classification-tight-slo,smolvlm2-vqa,plc-anomaly -margin 29 -window 60
+-windows 20 -passing 19 -workers 3 -scheduler <capture> -rows <output>`.
+The result is recorded, never applied to R3 offered rates. `reuseRows` instead
+records a hash/reference and zero replays. Both require positive Built rows
+for all canonical workloads.
+
+Preflight renews insufficient-lifetime/expired credentials using only the
+existing `chill-dashboard-user` and `chill-e5-evidence-collector` service
+accounts in the configured namespace. `.token`/`.token-collector` are replaced
+atomically with mode 0600; originals remain in `.bak` (later backups receive a
+timestamp). Tokens never enter evidence or argv. Initial reservation/action
+wait is 600s; only `takeoverAfter600Seconds: true` authorizes one direct reset
+after the original timeout evidence is preserved. No other recovery or retry
+is implicit. E5-7 requires `failureInjection: true`, executes only fresh
+`failure-select` operator argv, and retains actual commands/results/timestamps;
+STOP does not silently uncordon or reset physical state.
+
+Each attempt retains its own STOP, command logs, tables/comparison JSON/text,
+and final summary under `evidence/attempt-*`; `round-state.json` tracks completed
+steps and effective row tags. Disk, restartCount/Pod identity and deployment
+template guards stop during load as well as at row boundaries. Missing rows
+are UNMEASURED, never zero or PASS. Final success requires instances 0,
+reservations 0, autonomy off. `finish` restores initial settings, so the summary
+records actual final h, including h=0; another round always PUTs h again.
+
+Resume explicitly with the same JSON and `--resume-from 0..7` (also
+`preflight`, `deploy`, `reset`, `headroom`, `kappa`, `rows`, `tables`, `finish`).
+Row boundaries use `--resume-from 5:E5-6`; individual substeps accept
+`5:E5-6:factor|headroom|stage|judge|guard|cleanup`. Incomplete prerequisites
+cannot be skipped. A pre-load input correction can use
+`--resume-from 5:E5-6 --next-row-tag` to increment the suffix for that row and
+remaining rows, preserving previous attempts. A row with `startUTC` can
+**never** be replayed by this option; a new tag is not measurement-retry
+authorization. Existing factor/reset/stage evidence is never adopted as an
+implicit retry. Correct changed top-level JSON in a separately released round
+rather than rewriting prior round history.
+
+`python3 -B hack/e5/round.py --self-check` checks input validation, ordering,
+STOP boundaries and compressed judgment projection entirely offline, without
+environment configuration, Go, image builds, deployment or network requests.
+
