@@ -1313,6 +1313,7 @@ func (c *SchedulerController) dependenciesComplete(action serving.Action, plan s
 		}
 		i := slices.IndexFunc(plan.Actions, func(a serving.Action) bool { return a.ID == dep && a.Kind == operationRoute })
 		if run != nil || i < 0 || (action.Kind != operationStop && action.Kind != operationRoute) ||
+			!c.dependenciesComplete(plan.Actions[i], plan) ||
 			!c.completedHandoffPresent(*cmp.Or(plan.Actions[i].RouteTarget, &plan), c.handoffScope(action, plan.Actions[i], plan)) {
 			return false
 		}

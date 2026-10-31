@@ -306,6 +306,21 @@ func TestReadySubsetACKPrecedesPrepareResultAndSkippedBridgeProgressS2(t *testin
 	if c.runs[bridge.ID] != nil || c.runs[stop.ID] != nil {
 		t.Fatal("bridge/stop ran before the prepare result")
 	}
+	for _, status := range []string{nativeOperationRunning, nativeOperationFailed, nativeOperationPartial} {
+		t.Run(status, func(t *testing.T) {
+			c.runs[prepare.ID].action.Status = status
+			snapshot, err = c.capture(ctx, time.Now(), c.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.state.Snapshot = snapshot
+			c.launchTargetLocked(goal, c.config)
+			c.wg.Wait()
+			if c.runs[stop.ID] != nil {
+				t.Fatalf("stop ran after subset ACK with prepare %s", status)
+			}
+		})
+	}
 	c.runs[prepare.ID].action.Status = nativeOperationComplete
 	c.runs[prepare.ID].result = &OperationResult{Operation: Operation{ID: prepare.ID, Kind: operationPrepare, Target: &goal,
 		Prepare: &PrepareSpec{Instance: b}}, Status: nativeOperationComplete, EndedAt: time.Now()}
