@@ -29,12 +29,13 @@ E5의 조건·순서·비교 관계는 CHILL 밖 `.cache/chill-assets/ops/pools-
 | Katib | 탐색·튜닝용이며 이번 고정 E5 절차 실행에는 맞지 않는다. kind는 Katib Experiment와의 이름 충돌을 피해 EvaluationRun으로 정한다. |
 | Tekton | CI 중심의 별도 실행 체계를 도입할 이유가 부족하다. |
 | Argo Workflows | 이번 단순 순차 실행에서 새 의존성을 들일 만큼 이점이 크지 않다. |
+| FaultInjection·ControlProfile·Snapshot CR | 독립 생명주기·소유자 근거 없음. |
 
 ## Decision
 
 상세 필드·단계·실패 처리는 [실행 설계](../design/profiling/experiment-execution.md)가 소유한다. 요구사항은 [실험 SRS](../spec/experiments/SRS.md) EXP-01~15를 따른다.
 
-1. namespaced `EvaluationRun` CRD에 질문·조건·순서·비교·장애 주입·불변 입력 참조를 선언한다. spec 전체는 CEL `self == oldSelf`로 불변이며 정정은 새 CR이다. status는 `observedGeneration`과 type-keyed `metav1.Condition`을 사용하고 실행 완료·측정 판정·정리 완료를 구분한다.
+1. namespaced 세 CR(개정 이력 참조)에 질문·조건·순서·비교·장애 주입·불변 입력 참조를 선언한다. spec 전체는 CEL `self == oldSelf`로 불변이며 정정은 새 CR이다. status는 `observedGeneration`과 type-keyed `metav1.Condition`을 사용하고 실행 완료·측정 판정·정리 완료를 구분한다.
 2. 기존 profiler manager에 reconciler를 둔다. controller는 단계 순서·Job 채택·compact status만 소유한다. 기존 다른 측정 CR 실행 위치는 이 결정으로 옮기지 않는다.
 3. 배포·업그레이드는 하지 않는다. 기대 신원과 관측한 image digest·source SHA가 다르거나 신원을 확인할 수 없으면 시작하지 않는다. 이는 배포 신원 확인이며 새 digest 형식·재계산·바이트 동일성 검증 관문은 아니다.
 4. 시험 대상 제어·관측에는 ChillServer 공개 API와 Kubernetes API만 쓴다. E5-7 주입도 선언된 계획에 따라 Kubernetes API로 수행하며 ChillServer 내부 호출이나 장애 주입 API를 만들지 않는다.
@@ -43,6 +44,19 @@ E5의 조건·순서·비교 관계는 CHILL 밖 `.cache/chill-assets/ops/pools-
 7. 기존 `e5.py` 단계 명령(`factor`/`stage`/`judge`/`cleanup-jobs`)을 결정적 이름의 단발 Job으로 실행하고 마지막에는 표·게시 Job을 둔다. 부하·drain·수집·판정 등 단계 프로토콜과 계산식을 Go로 옮기지 않는다. 각 Job은 Pod attempt 하나이며 자동 재시도하지 않고 Job 성공을 측정 PASS나 증거 완료로 간주하지 않는다. 단계 정리는 자기 Job 삭제만 하며 원 설정 복구·owned reset·반환 대기는 실험 끝에 한 번 수행한다. 오류 시 하네스의 자동 설정 복구는 끈다. 정리 실패도 측정 결과는 게시하고, 운영자가 실제 상태를 확인한 뒤 metadata annotation으로 해제하면 controller가 status에 기록하고 점유를 해제한다.
 8. `ExperimentSummary`의 선택 필드 `definition`은 spec 스냅샷만 담는 additive 확장이다. 신원·동결 설정·완료 축·증거 참조는 실행 기록에 둔다. 게시 ID는 EvaluationRun UID다. ChillServer는 불변 게시물만 읽고 CR은 읽지 않는다. reader(서버·대시보드)를 먼저 배포한 뒤 publisher를 전환한다. 대시보드는 완료 게시의 명시된 정책·비교 관계·SLO만 읽고 진행 중 조회는 kubectl로 한다. 옛 게시는 비교 관계 미기록으로 표시되며 추측 함수 삭제로 과거 비교가 사라지는 가시적 변화를 알린다.
 9. 운영 상한 등 설정값은 profiler config에서 선택하고 실제값과 읽은 출처를 점유 시작 시 `status.frozenConfig`와 실행 증거에 동결한다. 실행 중 설정 재조회로 조건을 바꾸지 않는다.
+
+## 개정 이력
+
+### 2026-10-31 (사용자 승인) 하위 데이터 모델 분해
+
+- `LoadScenario` CR은 재사용 가능한 불변 부하 정의이며 실행 status나 consumer ownerReference를 두지 않는다.
+- `EvaluationRun` CR은 질문·조립·비교·단일 풀 세션·실험 끝 정리·게시를 소유한다.
+- `EvaluationStage` CR은 부모가 순차 생성하는 자식이며 한 행의 복원→부하→drain→수집→판정→단계 정리 Job, producer Job과 주입 기록을 소유한다.
+- StageTemplate·ControlSettings·TargetIdentity·Judgment·Generator·PowerMeasurement·FaultInjectionPlan/Record는 값 타입이며 StartState/StageResult는 불변 증거다. 별도 CR을 만들지 않는다.
+- 단독 EvaluationStage 실행은 금지한다. controller ownerReference가 부모의 정본이며 micro 단독 실행도 1단계 EvaluationRun으로 표현한다.
+- 풀 점유·finish·release·게시는 부모만 수행한다. 자식은 Job 생성·주입 등 외부 효과 직전에 비캐시 APIReader로 부모의 점유와 자신이 active child인지 확인하며 fencing을 보장한다고 주장하지 않는다.
+- background 삭제만 지원한다. foreground/orphan 삭제로 Job이 사라지면 `ExecutionLost`와 잔류를 기록하며 finalizer가 Job을 지킨다고 주장하지 않는다.
+- LoadScenario·카탈로그는 prepare에서 1회 해석하여 부하 정의와 Workload 적용 정의를 snapshot으로 동결하고 자식은 snapshot만 사용한다. SLO는 고정된 Workload generation에서 얻으며 Judgment에 복사하지 않는다.
 
 ## Consequences
 
