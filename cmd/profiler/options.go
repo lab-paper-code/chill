@@ -95,7 +95,8 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 		0,
 		"Maximum bytes for one retained transition object and observer workspace.",
 	)
-	flags.BoolVar(&o.enableLeaderElection, "leader-elect", false, "Enable leader election for the Profiler controller.")
+	flags.BoolVar(&o.enableLeaderElection, "leader-elect", false,
+		"Enable leader election (required for EvaluationRun and EvaluationStage).")
 	flags.StringVar(&o.leaderElectionID, "leader-election-id", "profiler.edge.dacs.io", "Leader election lock identity.")
 	flags.StringVar(&o.factSourceConfigMap, "fact-source-config-map", "", "Profiler fact-source ConfigMap name.")
 	flags.StringVar(&o.executionFactsKey, "execution-facts-key", "", "ConfigMap key containing execution facts.")

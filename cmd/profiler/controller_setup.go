@@ -12,6 +12,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/component"
+	evaluationcontroller "github.com/lab-paper-code/chill/internal/evaluation/controller"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	evidences3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
@@ -54,7 +55,12 @@ func setupProfilerControllers(mgr ctrl.Manager, opts options) error {
 	if err := setupModelLoadedIdleBaselineController(mgr, opts, shared); err != nil {
 		return err
 	}
-	return setupTransitionCostController(mgr, opts, shared)
+	if err := setupTransitionCostController(mgr, opts, shared); err != nil {
+		return err
+	}
+	return evaluationcontroller.SetupWithManager(
+		mgr, opts.enableLeaderElection, evaluationcontroller.NewRuntime(mgr.GetAPIReader()),
+	)
 }
 
 // setupRunController is the composition root for bounded ProfilingRun

@@ -54,6 +54,7 @@ func main() {
 		// A power-mode writer reads the live Node it patches.
 		Client: client.Options{Cache: &client.CacheOptions{DisableFor: []client.Object{
 			&edgev1alpha1.BatchEnergyOptimization{}, &edgev1alpha1.ProfilingRun{}, &corev1.Node{},
+			&edgev1alpha1.EvaluationRun{}, &edgev1alpha1.EvaluationStage{},
 		}}},
 		Cache: cache.Options{DefaultNamespaces: map[string]cache.Config{
 			opts.watchNamespace: {},
