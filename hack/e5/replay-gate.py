@@ -200,16 +200,29 @@ def summarize(compare, guard):
                 badTickDetails=bad)
 
 
+def compare_bad_ticks(summary, baseline):
+    def identities(run):
+        return {(tick['at'], tick['targetID']) for tick in run['badTickDetails']}
+    current, previous = identities(summary), identities(baseline)
+    new = sorted(current - previous, key=lambda tick: (tick[0], tick[1] or ''))
+    return dict(newBadTicks=[dict(at=at, targetID=target) for at, target in new],
+                fixedTicks=len(previous - current), verdict='FAIL' if new else 'PASS')
+
+
 def markdown(report):
     text = ['# Offline decision + guard replay gate', '',
-            'Bad tick limit: %d (reference %s; candidates must not exceed the reference per stage); verdict: **%s**.' % (report['maxBadTicks'], report.get('reference'), report['verdict']), '',
-            '| source | stage | ticks | disagreements | population mismatch | bad ticks | guard t0 | guard next | supply-increase rejected | seconds | verdict |',
-            '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|']
+            'Bad tick limit: %d (reference %s; candidates must have zero new bad ticks by recorded at + targetID per stage); verdict: **%s**.' % (report['maxBadTicks'], report.get('reference'), report['verdict']), '',
+            '| source | stage | ticks | disagreements | population mismatch | bad ticks | new bad ticks | fixed ticks | guard t0 | guard next | supply-increase rejected | seconds | verdict |',
+            '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|']
     for r in report['runs']:
-        text.append('| %s | %s | %d | %d | %d | %d | %d | %d | %d | %.3f | %s |' % (
+        text.append('| %s | %s | %d | %d | %d | %d | %d | %d | %d | %d | %d | %.3f | %s |' % (
             r['source'], r['stage'], r['ticks'], r['disagreements'], r['populationMismatchTicks'], r['badTicks'],
-            r['admissionRejectedTicks'], r['futureRejectedTicks'], r['recoveryRejectedTicks'],
+            len(r['newBadTicks']), r['fixedTicks'], r['admissionRejectedTicks'], r['futureRejectedTicks'], r['recoveryRejectedTicks'],
             r['elapsedSeconds'], r['verdict']))
+    text.append('')
+    for r in report['runs']:
+        if r['newBadTicks']:
+            text.append('New bad ticks (%s / %s): `%s`' % (r['source'], r['stage'], json.dumps(r['newBadTicks'], ensure_ascii=False)))
     text += ['', 'Definitions: keep-short = demand > current Ready positive-route κ; supply increase = target positive-route κ > keep κ (per workload).',
              'Bad tick = keep-short recorded supply increase changed to Keep/no target, OR guard rejects a recorded supply increase at admission or any of the next N ticks; count each origin once.',
              'Demand = max(recorded minimumDemand, snapshot.scaleDown.rate). κ is the sum of built non-pending row κ for positive integer routes, not measured throughput or a complete backlog/SLO judgment.',
@@ -234,6 +247,15 @@ def self_check():
     assert summarize([c], [g])['badTicks'] == 0
     c['lostRecovery'] = True
     assert summarize([c], [g])['badTicks'] == 1
+    baseline = dict(badTickDetails=[dict(at='a', targetID='recorded')])
+    candidate = dict(badTickDetails=[dict(at='b', targetID='recorded')])
+    delta = compare_bad_ticks(candidate, baseline)
+    assert delta == dict(newBadTicks=[dict(at='b', targetID='recorded')], fixedTicks=1, verdict='FAIL')
+    candidate['badTickDetails'][0]['at'] = 'a'
+    assert compare_bad_ticks(candidate, baseline)['verdict'] == 'PASS'
+    candidate['badTickDetails'][0]['targetID'] = 'other'
+    assert compare_bad_ticks(candidate, baseline)['verdict'] == 'FAIL'
+    assert compare_bad_ticks(dict(badTickDetails=[]), baseline) == dict(newBadTicks=[], fixedTicks=1, verdict='PASS')
     print('replay-gate self-check: PASS')
 
 
@@ -248,7 +270,7 @@ def main():
     p.add_argument('--cache', type=Path, default=Path.home() / '.cache/chill-replay-gate')
     p.add_argument('--next', type=int, default=3)
     p.add_argument('--max-bad-ticks', type=int, default=0)
-    p.add_argument('--reference', help='source whose per-stage bad ticks are the baseline; a candidate passes a stage when its bad ticks and supply-increase rejections do not exceed the reference (default: first --source)')
+    p.add_argument('--reference', help='source whose per-stage bad ticks are the baseline; candidates must have zero new bad ticks by recorded at + targetID (default: first --source)')
     p.add_argument('--self-check', action='store_true')
     a = p.parse_args()
     if a.self_check:
@@ -288,12 +310,12 @@ def main():
                 summary = summarize(results['compare'], results['guard'])
                 baseline = baselines.get(stage.name)
                 if baseline is None:  # the reference source itself is the baseline, not a candidate
-                    verdict = 'REFERENCE'
-                else:  # a candidate: no worse than the reference on the same recorded ticks
-                    verdict = 'PASS' if summary['badTicks'] <= baseline['badTicks'] and summary['recoveryRejectedTicks'] <= baseline['recoveryRejectedTicks'] else 'FAIL'
+                    summary.update(newBadTicks=[], fixedTicks=0, verdict='REFERENCE')
+                else:
+                    summary.update(compare_bad_ticks(summary, baseline))
                 summary.update(source=source, sourceSHA=meta['sha'], stage=stage.name, build=meta,
                                records=inputs, elapsedSeconds=time.monotonic() - start,
-                               evidence=str(folder), verdict=verdict, baseline=baseline and {k: baseline[k] for k in ('source', 'badTicks', 'recoveryRejectedTicks')})
+                               evidence=str(folder), baseline=baseline and {k: baseline[k] for k in ('source', 'badTicks', 'recoveryRejectedTicks')})
                 if source == reference:
                     baselines[stage.name] = summary
                 (folder / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')

@@ -44,7 +44,7 @@ PY
 ## 리플레이와 측정 전 gate
 - 입력은 `C/{full-E5-3-7,full-E5-5-7,full-E5-7-7,full-E5-5-8d}`의 scheduler/catalog/requests archive **4 stage**; 각 경로·SHA256은 `C/scoreboard-inputs.json`의 `replay.stages`에 동결했다.
 - rows/profiles/scheduler는 `O/deployB/control-262-20261031/{kappa-rows.json,profiles-gate.json,scheduler.json}`; SHA256도 같은 manifest의 `replay.inputs`다. nextTicks=3, compare+guard를 기존 replay-gate.py로 실행한다.
-- `--source d4a933bf --source 후보 --reference d4a933bf`; 각 stage의 badTicks **및** recoveryRejectedTicks가 기준보다 늘면 FAIL. 4개 중 하나라도 실패하면 배포/미니 측정을 하지 않는다. 리플레이는 F/J 실측 대체가 아니다.
+- `--source d4a933bf --source 후보 --reference d4a933bf`; stage별 bad tick을 기록된 `(at, targetID)`로 대응하여 후보에만 있는 bad tick이 하나라도 있으면 FAIL. 다른 tick의 개선으로 상쇄하지 않으며 요약의 `newBadTicks` 목록·`fixedTicks` 수로 확인한다. 4개 중 하나라도 실패하면 배포/미니 측정을 하지 않는다. 리플레이는 F/J 실측 대체가 아니다.
 - 측정 전 타 세션 배포 금지 방송·창 확보, restore 후 **첫 tick 전체 실제 settings(h 포함)**을 동결 정책/원본 topology와 대조하고 서버 source/digest·Ready·외부 deployment template 불변을 확인한다. 불일치 시 부하 시작 금지.
 - 첫 load tick h/서버 restart·digest/외부 배포 감시 증거도 보존한다. round.py 기존 감시만으로 전체 settings의 사전 대조·방송이 자동 완료됐다고 간주하지 않는다.
 
