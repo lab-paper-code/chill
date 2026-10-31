@@ -21,7 +21,7 @@
 - 서버는 `definition`을 해석하지 않고 JSON object인지만 확인해 그대로 준다(`internal/serving/httpapi/experiments.go`).
 - 대시보드는 결과를 **완료된 게시만** 다룬다. 진행 중 실험은 아래 §2.1의 작은 요약으로 "평가 실행 중" 표시만 한다(운영 보드 오판 방지).
 - 게시 ID = EvaluationRun UID. 같은 실험의 정정은 새 UID로 게시된다(덮어쓰기 없음).
-- 대시보드는 **읽기 전용**이다. 실험 생성·시작·중지·release는 kubectl로 CR을 만들거나 annotation을 다는 방식으로만 한다(범위 밖으로 확정).
+- 실험 조작은 §2.2의 세 가지(실행·중지·release 확인)만 대시보드에서 한다. 그 밖의 편집(LoadScenario 작성, spec 수정 후 재제출 등)은 kubectl.
 
 ### 2.1 진행 중 평가 표시 — `GET /api/v1/evaluations/active`
 
@@ -38,6 +38,21 @@
 - `goAt`은 부하 시작 시각(없으면 아직 시작 전), `plannedSeconds`는 그 단계 LoadScenario parts 길이 합. 남은 시간 = `goAt + plannedSeconds − now`(대시보드 계산).
 - `injections[]`는 계획과 지금까지의 실행 결과. 운영 보드는 같은 노드·Pod 사건에 "주입" 태그를 붙일 수 있다(일치 판정은 nodeName/podName 정확 일치만).
 - 정리 실패 시 남은 자원은 게시 `outcome.cleanup.residuals[]`(§3.1)에 실린다.
+
+### 2.2 실험 조작 — 실행·중지·release 확인
+
+권한은 기존 scheduler-editor 역할과 같은 방식(토큰의 URL 권한 검사)을 쓴다. 측정 요청 화면처럼 **사전 점검 → 제출** 2단계다.
+
+| 조작 | 요청 | 동작 |
+|---|---|---|
+| 실행 후보 고르기 | `GET /api/v1/evaluations/load-scenarios` | `{items:[{name, uid, spec}]}` — 부하 정의 목록 |
+| 사전 점검 | `POST /api/v1/evaluations/preflight` body `{name, spec}` | `{checks:[{id, passed, reason}], liveTarget}`. 검사: spec 검증, LoadScenario name+UID 존재, 대상 이미지 digest가 실제 실행 중 Pod과 같음, 다른 EvaluationRun이 풀 점유 중 아님, **기존 E5 측정(Job/producer) 실행 중 아님**. `liveTarget`은 spec의 대상 구성요소별 지금 실행 중 digest — 다르면 화면이 차이를 보여 주고 사용자가 반영 여부를 고른다(서버가 몰래 바꾸지 않음) |
+| 실행 | `POST /api/v1/evaluations` body `{name, spec}` | 서버가 사전 점검을 다시 수행하고 통과 시 EvaluationRun 생성. 응답 `{name, uid}`. 이후 진행은 §2.1 |
+| 다시 실행 | 위와 같음 | 대시보드가 게시 `definition.spec`을 복사해 새 `name`으로 제출(과거 게시가 그대로 실행 정의다) |
+| 중지 | `DELETE /api/v1/evaluations/{name}?uid=` | UID 조건부 삭제(background). controller의 끝 정리가 원래 설정을 복구하고 풀을 반환한 뒤 사라진다. 중지한 실험도 그때까지의 결과로 게시될 수 있다 |
+| release 확인 | `POST /api/v1/evaluations/{name}/release` body `{uid, reason}` | 정리 실패로 풀이 묶인 실험에 운영자 확인 annotation을 단다. controller는 실제 반환이 관측될 때만 풀을 놓는다(버튼이 상태를 지우지 않음). 기존 실패 판정은 그대로 |
+
+- 오류·결과 불명은 기존 측정 요청 화면과 같은 처리(결과 불명이면 목록을 다시 읽어 확인).
 
 ## 3. `definition` 형태 (`evaluation-definition.v1alpha1`)
 
