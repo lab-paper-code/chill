@@ -43,7 +43,6 @@ func (c *SchedulerController) Continue(ctx context.Context, now time.Time) error
 		}
 	}
 	c.annotateHistory(&snapshot, config.Settings.ObservationWindow)
-	c.tempo.Observe(config.Settings, &snapshot, c.capacity.Rows())
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := ctx.Err(); err != nil {
