@@ -433,3 +433,11 @@
 - 비교 규칙: runtime 재빌드(control-284) 이전 profile·E5 기준선(옛 runtime digest)과 이후 측정(새 digest)을 같은 표에서 비교하지 않음. 옛 결과는 옛 runtime 기준 기록으로만 인용함.
 - 108셀 실행 전 feeder-hold.json의 pauseNodes를 전부 해제함(백업 유지).
 - v2 게이트 입력은 독립 검증에 맡김(VerifyGateV2). 결과가 나오기 전에는 κsafe를 배포하지 않음.
+
+## 2026-11-01 — runtime 재빌드 완료, 첫 실측 성공, 전체 커버리지 캠페인 시작
+
+- control-286: runtime 7종과 observer 2종을 f3a56cd8에서 재빌드하고, 차트 선언 15개씩 교체(옛 digest 0건), profiler 배포(`4bb90fcf`). BuildKit 내장 QEMU를 써서 호스트 설정은 바꾸지 않음. 68.7분.
+- 파일럿: rasp5 MNV 셀 18 Job 성공, profile 생성, batch 1~16 전부 측정, 소요 1,340초(계획 1,359초). jetson-nano PLC는 9 성공/1 실패. metric-observer 최종 읽기 결손이 원인: thermal과 power가 같은 500 ms 예산을 공유하고, 창 끝 읽기를 단 한 번만 시도함. 깐깐한 기준으로 판단해 수정 중(ImplMetric).
+- 커버리지 기준 변경(사용자 지시 "레거시 없음"): 셀 상태는 현재 선언된 runtime으로 측정한 variant만 집계하도록 바꾸는 중(ImplCoverageCurrent). 옛 runtime variant가 셀을 insufficient로 붙잡는 문제 때문.
+- feeder: 커버리지 계획에서는 실패한 셀을 기록하고 계속 진행(`83e07ecd`). feeder-hold.json pauseNodes 전부 해제(백업 유지).
+- 전체 108셀 캠페인을 feeder stages 1,2로 시작. 예상 28 node-h, 최장 lane jetsonx 약 15 h.
