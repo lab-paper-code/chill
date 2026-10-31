@@ -577,7 +577,7 @@ func (c *SchedulerController) reservationsLocked(snapshot serving.SchedulerSnaps
 		}
 		if run.action.Kind == transitionRunKind && run.result != nil && run.result.Operation.Target != nil {
 			for _, action := range run.result.Operation.Target.Actions {
-				if run.noEffectRoutes[action.ID] || c.runs[action.ID] != nil || action.Status == nativeOperationCancel {
+				if c.runs[action.ID] != nil || action.Status == nativeOperationCancel {
 					continue
 				}
 				reasons[run.owner] = append(reasons[run.owner], action.ID+": dependency/Ready/handoff proof missing; await exact Ready policy ACK")

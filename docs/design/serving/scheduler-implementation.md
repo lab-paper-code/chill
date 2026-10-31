@@ -103,9 +103,10 @@ Tick과 Continue의 `captureReconciled`는 capture 뒤 취소 확인, owner/effe
 bootstrap처럼 current serving이 없으면 target Ready 부분집합을 합 1000으로 재정규화한다. stopped/고장/unroutable/이번 tick stop 가능 경로는 되살리지 않는다. 다른 prepare/power/drain이나 slow 박자를 기다리지 않으며 UID 한정 atomic runtime route와 ACK를 쓴다. launch의 `dependenciesReady`는 부분집합 target, final route는 전체 target/DAG를 검사한다.
 ID `<goal>-ready-<subset hash>`, `Action.from=ready-subset`, OnAction start/end·frozen `operation.target`·before/actual routing을 기록한다. 부분집합은 final target/DAG 완료 조건이 아니고 후속 subset 대체를 effect-lost로 만들지 않는다. 반영은 Ready를 캡처한 tick이며 부족한 current/bootstrap의 κ/SLO 보장은 아니다.
 생략된 bridge의 stop 소비도 완료 bridge와 동일하게 중단 source UID의 ACK/actual handoff만 검사한다. 보존된 다른 UID의 terminal route는 이 소비 범위에 포함하지 않는다(SCH-51).
-다음 bridge도 부모 DAG에서 생략된 선행 bridge를 찾아, 그 bridge에 의존하는 stop들의 source UID 범위와 기존 완료 ACK를 같은 handoff 검사로 소비한다. 부모 전체 UID에 포함된 보존 terminal route는 검사하지 않는다. 현재 snapshot 대비 변경 UID는 이미 생략된 bridge에서 빈 집합이므로 이 handoff 범위를 대신하지 못한다. 생략을 성공 run으로 만들지는 않는다.
+다음 bridge도 부모 DAG에서 생략된 선행 bridge를 찾아, 그 bridge에 의존하는 stop들의 source UID 범위와 기존 완료 ACK를 같은 handoff 검사로 소비한다. 부모 전체 UID에 포함된 보존 terminal route는 검사하지 않는다. 생략된 bridge 자신의 frozen 선행조건도 먼저 완료되어야 하며, prepare 결과 전 Ready-subset ACK만으로 stop을 출발시키지 않는다. 생략을 성공 run으로 만들거나 의존 edge를 삭제하지 않는다.
 compiler는 해당 UID의 blocked stop이 있을 때만 bridge를 만들고 그 stop에 의존성을 붙이므로 stop 없는 bridge는 생성하지 않는다. 소비 범위는 빈 non-nil UID 집합에서 시작해 source UID만 모으며 부모 범위로 fallback하지 않는다. 빈 범위는 양수 route가 없어 handoff 증명이 될 수 없다.
 `dependenciesComplete`는 live run의 action(없으면 frozen plan action)에서 `handoffScope`를 한 번 정한다. 완료 run은 기존 strict proof, run 없는 생략만 기존 완료 ACK를 소비하며 running/failed/partial run은 다른 ACK로 승격하지 않는다. ACK 탐색과 정책 refresh의 `requirePolicy` 계약은 유지한다.
+생략된 route는 그 route를 직접 소비한 action의 실제 complete run으로 DAG 완료를 판정한다. 예외는 frozen UID scope가 non-nil empty인 최종 route(`RouteTarget==nil`)뿐이다. 뒤 stage가 바꾼 현재 배분/정책을 지난 bridge의 완료 조건으로 다시 요구하지 않으며, 부모 완료 전 running/cancel sibling fence와 실제 실패 우선권을 유지한다. 현재 효과 검사는 reconcile에 전달된 새 snapshot을 사용한다.
 bridge stage는 기존 routing을 복제하고 현재 UID만 변경한다. 목적지 선택(`peers`)과 prepare 의존성/종료시각 수집을 재사용하며 stage 전체를 중복 검사하지 않는다.
 고유 회귀 근거: full-E5-3 `02:45:39.328560181Z`의 495:126:379(κ=103.37311385470142/s, 입력 74.58333333333333/s)를 준비 중 genesis3 단독 1000(κ=62.46166324284952/s)으로 줄이지 않고 완료 후 765:235를 적용한다. E5-1의 old+Ready genesis3 순증은 nano를 기다리지 않는다.
 
@@ -152,11 +153,11 @@ active POOL은 Ready 필터가 아닌 **미반환 물리 점유·owner/배분**�
 
 `c.runs/actionRun`에 owner(operation ID/DecisionID), Node UID·Workload UID·Pod UID/physical ID 집합을 둔다. Node 전체를 보수적으로 예약하고 CPU별 lock/별도 예약 저장소는 없다. create 전 Node/UID/slot/allocation, 생성 뒤 exact UID/physical을 같은 owner에 묶는다.
 
-Cycle 7 / SCH-AC-38: 부모 reserveRun 전에 주 target의 route scope를 정규화한다. nil은 전체, non-nil empty는 변경 없음이며 no-op은 owner의 별도 omission bookkeeping이지 성공 route receipt가 아니다. prepare/power/retire와 그 의존성은 보존한다. 순수 빈 실행 DAG만 부모 admission을 생략하며 기존 빈 책임 orphan도 명시적 no-effect로 수렴한다. 동적 ready-subset/bridge/cleanup route도 빈 scope를 기록하고 stop의 completedHandoffPresent/exact Ready-policy 검사를 우회하지 않는다.
+Cycle 7 / SCH-AC-38, S3: admission과 launch는 같은 route scope 계산을 쓴다. nil은 전체, non-nil empty는 변경 없음이다. 빈 route를 제외하고 prepare/power/resize 또는 현재 `dependenciesReady`인 action이 있을 때만 부모를 만든다. 빈 선언이나 exact handoff가 없어 출발할 수 없는 retirement는 부모·자식·예약 없이 끝나고, level-triggered 계획기가 다음 Tick에 다시 계획한다. frozen Actions/DependsOn/RouteTarget과 stop의 completedHandoffPresent/exact Ready-policy 검사는 보존한다. 별도 omission 표식·빈 부모 orphan 호환·미시작 retirement의 partial 종결은 없으며, 실제 실행의 failed/partial receipt와 미확인 책임 수명은 바꾸지 않는다.
 
 PrepareInstance는 `(Pod UID, Node UID, 인가 DecisionID, created/reused)` 증거와 error를 함께 반환한다. Execute prepare/resize와 occupancy 호출은 같은 계약을 사용한다. 마지막 Capture 실패가 증거를 지우지 않으며 terminal 공개 전 동일 mutex에서 owner scope에 편입한다. 동일 API-confirmed RestartPolicyNever UID/Node/slot/profile/owner의 첫 container만 terminal 뒤에도 결합하며 returnObserved를 무효화한다. 재결합과 baseline 변경은 금지한다. created=false/생성 결과 불명은 새 생성 보상 proof가 아니며 검색으로 출처를 꾸미지 않는다. late 정상 ACK는 원 실패 receipt를 보존하고 기존 fresh exact proof·terminal sibling·power 경계에서만 반환한다. 증거는 owner 책임의 기존 GC 참조 수명을 따른다.
 
-예약 reason은 blocking action/Pod UID·부족 proof·다음 해소 경로를 action ID 순으로 모아 기존 raw/compact/API 투영에 전달한다. 빈 DAG, identity-awaiting-container, creation-outcome-unknown과 fresh ACK/absence/power 대기를 구별한다. 새 controller/journal/TTL은 없으며 API 결과 불명은 자동 해소를 주장하지 않는다.
+예약 reason은 blocking action/Pod UID·부족 proof·다음 해소 경로를 action ID 순으로 모아 기존 raw/compact/API 투영에 전달한다. identity-awaiting-container, creation-outcome-unknown과 fresh ACK/absence/power 대기를 구별한다. 새 controller/journal/TTL은 없으며 API 결과 불명은 자동 해소를 주장하지 않는다.
 공통 `kube/admission.go`가 `tickMu` 안에서 **영향집합→전체 충돌→원자 등록→현재 안전 재확인→시작**을 맡는다. effect 전 실패는 부분 키 없이 멱등 반환하며 범위 확대는 effect 전에 재승인한다. `c.mu`/runtime lock은 짧게, probe I/O는 밖에서, watch 신규 UID GET/게시는 수명 lock 안에서 처리한다. mutation 직전 runtime route/outstanding과 exact Pod UID/optimistic lock을 재검사하며 과거 snapshot 허가를 재사용하지 않는다.
 | 진입점 | 예약 범위·수명 |
 |---|---|

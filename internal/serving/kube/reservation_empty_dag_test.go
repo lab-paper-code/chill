@@ -1,16 +1,17 @@
 package kube
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
-// Raw deployB control-258: changedWorkloads=[] and no child receipt must
-// never create a parent. Retirement and pending prepare remain real duties.
+// Raw deployB control-258: empty routes and unproved retirement never create
+// an owner. Pending prepare/power/resize still declare physical work.
 func TestEmptyRouteAdmissionAC38(t *testing.T) {
-	for _, kind := range []string{"", operationPrepare, operationPower, operationStop} {
+	for _, kind := range []string{"", operationPrepare, operationPower, operationResize, operationStop} {
 		t.Run(kind, func(t *testing.T) {
 			c := &SchedulerController{runs: map[string]*actionRun{}, runtime: &serving.Runtime{}}
 			route := serving.Action{ID: "empty-route", Kind: operationRoute}
@@ -19,9 +20,9 @@ func TestEmptyRouteAdmissionAC38(t *testing.T) {
 				target.Actions = append(target.Actions, serving.Action{ID: "waiting-duty", Kind: kind, DependsOn: []string{route.ID}})
 			}
 			c.launch(target, SchedulerControllerConfig{})
-			if kind == "" {
-				if len(c.runs) != 0 {
-					t.Fatal("pure empty route acquired a parent reservation")
+			if kind == "" || kind == operationStop {
+				if len(c.runs) != 0 || len(c.reservationsLocked(c.state.Snapshot)) != 0 {
+					t.Fatal("empty route/unproved retirement acquired ownership")
 				}
 			} else {
 				if c.runs[transitionRunKind+"/"+target.ID] == nil {
@@ -35,16 +36,40 @@ func TestEmptyRouteAdmissionAC38(t *testing.T) {
 	}
 }
 
-func TestExistingEmptyRouteOrphanReturnsAC38(t *testing.T) {
-	target := serving.SchedulerCandidate{ID: "raw-orphan", Actions: []serving.Action{{ID: "empty-route", Kind: operationRoute}}}
-	parent := &actionRun{owner: target.ID, reserved: true, action: serving.Action{ID: transitionRunKind + "/" + target.ID, Kind: transitionRunKind, Status: nativeOperationRunning}, result: &OperationResult{Operation: Operation{Target: &target, WorkloadUIDs: []string{}}, Status: nativeOperationRunning}}
-	c := &SchedulerController{runs: map[string]*actionRun{parent.action.ID: parent}}
-	c.reconcileSnapshot(serving.SchedulerSnapshot{}, time.Now(), time.Minute)
-	if parent.reserved {
-		t.Fatal("effect-free legacy parent did not return")
+func TestEmptyRouteAdmissionReplansWithoutOwnershipAC38(t *testing.T) {
+	target := serving.SchedulerCandidate{ID: "empty-replan", Actions: []serving.Action{{ID: "empty-route", Kind: operationRoute}}}
+	c := &SchedulerController{runs: map[string]*actionRun{}, runtime: &serving.Runtime{}}
+	for range 2 {
+		c.launch(target, SchedulerControllerConfig{})
+		c.reconcileSnapshot(c.state.Snapshot, time.Now(), time.Minute)
+		if len(c.runs) != 0 || len(c.reservationsLocked(c.state.Snapshot)) != 0 {
+			t.Fatal("empty declaration left a parent, child, or reservation")
+		}
 	}
-	if parent.result.Status == nativeOperationComplete || c.runs["empty-route"] != nil {
-		t.Fatal("no-op forged a successful route receipt")
+	target.Actions = append(target.Actions, serving.Action{ID: "prepare", Kind: operationPrepare, DependsOn: []string{"empty-route"}})
+	c.launch(target, SchedulerControllerConfig{})
+	if c.runs[transitionRunKind+"/"+target.ID] == nil || c.runs["prepare"] != nil {
+		t.Fatal("new physical work was not admitted with its frozen dependency")
+	}
+}
+
+func TestRouteAdmissionWaitsForReadyRootS3(t *testing.T) {
+	instance := serving.SchedulerInstance{ID: "destination", WorkloadUID: "w"}
+	c := &SchedulerController{ctx: context.Background(), runs: map[string]*actionRun{}, runtime: &serving.Runtime{}}
+	c.state.Snapshot.Instances = []serving.SchedulerInstance{instance}
+	target := serving.SchedulerCandidate{ID: "wait-ready", Instances: []serving.SchedulerInstance{instance},
+		Routing: map[string]map[string]int32{"w": {instance.ID: 1}},
+		Actions: []serving.Action{{ID: "route", Kind: operationRoute}}}
+	config := SchedulerControllerConfig{OnAction: func(OperationResult) error { return context.Canceled }}
+	c.launch(target, config)
+	if len(c.runs) != 0 || len(c.reservationsLocked(c.state.Snapshot)) != 0 {
+		t.Fatal("blocked route acquired an owner")
+	}
+	c.state.Snapshot.Instances[0].Ready = true
+	c.launch(target, config)
+	c.wg.Wait()
+	if c.runs[transitionRunKind+"/"+target.ID] == nil || c.runs["route"] == nil {
+		t.Fatal("Ready route was not replanned and admitted")
 	}
 }
 
@@ -62,9 +87,8 @@ func TestEmptyRouteNotReadyAndRetirementAC38(t *testing.T) {
 		target.Actions = append(target.Actions, serving.Action{ID: "retire", Kind: operationStop, DependsOn: []string{"noop"}})
 		c.launch(target, SchedulerControllerConfig{})
 		c.reconcileSnapshot(c.state.Snapshot, time.Now(), time.Minute)
-		parent := c.runs[transitionRunKind+"/"+target.ID]
-		if parent == nil || parent.action.Status != nativeOperationPartial || c.runs["retire"] != nil {
-			t.Fatalf("ready=%d: unproved retirement was not closed as no-effect", ready)
+		if len(c.runs) != 0 || len(c.reservationsLocked(c.state.Snapshot)) != 0 {
+			t.Fatalf("ready=%d: unproved retirement acquired ownership", ready)
 		}
 	}
 }

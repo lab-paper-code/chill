@@ -96,8 +96,6 @@ type actionRun struct {
 	proofParent          *actionRun
 	replacements         []serving.SchedulerReplacement
 	admittedControls     serving.SchedulerControls
-	// Omitted declarations are bookkeeping, never successful handoff receipts.
-	noEffectRoutes map[string]bool
 }
 type SchedulerController struct {
 	mu         sync.Mutex
@@ -518,8 +516,6 @@ func (c *SchedulerController) reconcileOwnersLocked(snapshot serving.SchedulerSn
 			continue
 		}
 		target := parent.result.Operation.Target
-		c.normalizeRoutesLocked(target, parent)
-		noEffectRetirement := c.unstartedNoEffectRetirementLocked(target, parent)
 		if !parent.cleanup {
 			parent.cleanup = c.cleanupReadyLocked(parent, snapshot)
 		}
@@ -530,22 +526,7 @@ func (c *SchedulerController) reconcileOwnersLocked(snapshot serving.SchedulerSn
 			parent.result.Status, parent.result.EndedAt = nativeOperationFailed, now
 			continue
 		}
-		if c.ownerDAGCompleteLocked(parent, noEffectRetirement) {
-			if noEffectRetirement || len(parent.noEffectRoutes) > 0 && len(parent.noEffectRoutes) == len(target.Actions) {
-				// A no-effect owner is not a successful serving transition.
-				parent.action.Status = nativeOperationPartial
-				parent.action.Reason = "no-effect: empty route DAG; awaiting physical return"
-				if noEffectRetirement {
-					parent.action.Reason = "no-effect: unstarted retirement lacks exact handoff; await physical return then replan"
-				}
-				parent.result.Status, parent.result.EndedAt = nativeOperationPartial, now
-				if !parent.inheritedReservation && len(parent.mayTouch) == 0 &&
-					len(parent.scope.Nodes) == 0 && len(parent.scope.Workloads) == 0 &&
-					len(parent.scope.Pods) == 0 && len(parent.scope.Instances) == 0 {
-					c.releaseOwnerLocked(parent.owner)
-				}
-				continue
-			}
+		if c.ownerDAGCompleteLocked(parent) {
 			parent.action.Status = nativeOperationComplete
 			parent.result.Status, parent.result.EndedAt = nativeOperationComplete, now
 			if !gap {
@@ -984,10 +965,16 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 	if len(target.Actions) == 0 {
 		return
 	}
-	// Normalize declarations before admission, not after creating an empty lease.
-	probe := &actionRun{}
-	c.normalizeRoutesLocked(&target, probe)
-	if len(probe.noEffectRoutes) == len(target.Actions) {
+	if !slices.ContainsFunc(target.Actions, func(action serving.Action) bool {
+		if action.Kind == operationRoute {
+			_, empty := c.routeOperationScopeLocked(target, *cmp.Or(action.RouteTarget, &target), action.RouteTarget != nil)
+			if empty {
+				return false
+			}
+		}
+		return action.Kind == operationPrepare || action.Kind == operationPower || action.Kind == operationResize ||
+			c.dependenciesReady(action, target)
+	}) {
 		return
 	}
 	operation := Operation{ID: id, Kind: transitionRunKind, Target: &target, WorkloadUIDs: changedWorkloads(target, c.state.Snapshot)}
@@ -1003,7 +990,6 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 	}
 	parent := &actionRun{owner: target.ID, action: serving.Action{ID: id, Kind: transitionRunKind, Status: nativeOperationRunning}, result: &OperationResult{Operation: operation, Before: before, Status: nativeOperationRunning, StartedAt: started}, started: started}
 	parent.admittedControls = config.Settings.Controls
-	parent.noEffectRoutes = probe.noEffectRoutes
 	// Freeze only physical same-Node/Workload replacements, not route-only
 	// policy changes or added capacity. Completion is observed in reconcileSnapshot.
 	for _, next := range target.Instances {
@@ -1062,9 +1048,9 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 			}
 			operation := scheduledOperation(action, selectedTarget, config, c.powerTargets, c.state.Snapshot.Workloads)
 			if action.Kind == operationRoute {
-				operation.WorkloadUIDs = c.routeOperationScopeLocked(target, *selectedTarget, selectedTarget != &target)
-				if operation.WorkloadUIDs != nil && len(operation.WorkloadUIDs) == 0 {
-					c.recordNoEffectRouteLocked(target.ID, action.ID)
+				scope, empty := c.routeOperationScopeLocked(target, *selectedTarget, selectedTarget != &target)
+				operation.WorkloadUIDs = scope
+				if empty {
 					continue
 				}
 				operation.Target = controlledTarget(operation)

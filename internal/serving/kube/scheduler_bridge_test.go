@@ -8,6 +8,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
+const terminalW1ID = "terminal-w1"
+
 func TestBridgeStopRequiresCurrentNativeACKAC45(t *testing.T) {
 	const (
 		bridgePlanned           = "planned"
@@ -86,7 +88,7 @@ func TestSkippedRequiredBridgeConsumesReadySubsetACKSCH51(t *testing.T) {
 			source := stage.Instances[0]
 			source.ID, source.Weight = "blocker-source", 0
 			terminal := stage.Instances[0]
-			terminal.ID, terminal.WorkloadUID, terminal.Ready, terminal.Terminated = "terminal-w1", "w1", false, true
+			terminal.ID, terminal.WorkloadUID, terminal.Ready, terminal.Terminated = terminalW1ID, "w1", false, true
 			stage.Instances = append(stage.Instances, source, terminal)
 			stage.Routing = map[string]map[string]int32{uid: {stage.Instances[0].ID: 1}, "w1": {terminal.ID: 1}}
 			c.state.Snapshot.Instances = append(c.state.Snapshot.Instances, source, terminal)
@@ -109,9 +111,6 @@ func TestSkippedRequiredBridgeConsumesReadySubsetACKSCH51(t *testing.T) {
 			c.wg.Wait()
 			if c.runs[bridge.ID] != nil {
 				t.Fatal("unchanged bridge manufactured a route run")
-			}
-			if !c.runs[transitionRunKind+"/"+goal.ID].noEffectRoutes[bridge.ID] {
-				t.Fatal("bridge was not skipped at the execution boundary")
 			}
 			if (c.runs[stop.ID] != nil) != receipt {
 				t.Fatalf("stop launch=%t, existing ACK=%t", c.runs[stop.ID] != nil, receipt)
@@ -181,7 +180,7 @@ func TestSkippedBridgeChainPreservesTerminalUIDSCH51(t *testing.T) {
 			stage.ID = "w2-handoff"
 			w2 := stage.Instances[0]
 			terminal := w2
-			terminal.ID, terminal.WorkloadUID, terminal.Ready, terminal.Terminated = "terminal-w1", "w1", false, true
+			terminal.ID, terminal.WorkloadUID, terminal.Ready, terminal.Terminated = terminalW1ID, "w1", false, true
 			stage.Instances = append(stage.Instances, terminal)
 			stage.Routing = map[string]map[string]int32{w2.WorkloadUID: {w2.ID: 1000}, "w1": {terminal.ID: 1}}
 			ack := c.runs["acknowledged-route"].result.Operation.Target
@@ -210,8 +209,8 @@ func TestSkippedBridgeChainPreservesTerminalUIDSCH51(t *testing.T) {
 			c.runs[transitionRunKind+"/"+goal.ID].result.Operation.WorkloadUIDs = []string{"w1", w2.WorkloadUID}
 			c.launchTargetLocked(goal, SchedulerControllerConfig{})
 			c.wg.Wait()
-			if c.runs[first.ID] != nil || !c.runs[transitionRunKind+"/"+goal.ID].noEffectRoutes[first.ID] {
-				t.Fatal("first bridge was not skipped")
+			if c.runs[first.ID] != nil {
+				t.Fatal("unchanged first bridge manufactured a route run")
 			}
 			run := c.runs[second.ID]
 			if (run != nil) != receipt {
@@ -332,8 +331,8 @@ func TestReadySubsetACKPrecedesPrepareResultAndSkippedBridgeProgressS2(t *testin
 	c.launchTargetLocked(goal, c.config)
 	c.wg.Wait()
 	parent := c.runs[transitionRunKind+"/"+goal.ID]
-	if c.runs[bridge.ID] != nil || !parent.noEffectRoutes[bridge.ID] {
-		t.Fatal("ACK-covered bridge was not omitted")
+	if c.runs[bridge.ID] != nil {
+		t.Fatal("ACK-covered bridge manufactured a route run")
 	}
 	if run := c.runs[stop.ID]; run == nil || run.action.Status != nativeOperationComplete {
 		t.Fatalf("real source stop did not complete: %+v", run)
@@ -347,5 +346,43 @@ func TestReadySubsetACKPrecedesPrepareResultAndSkippedBridgeProgressS2(t *testin
 	c.wg.Wait()
 	if run := c.runs[next.ID]; run == nil || run.action.Status != nativeOperationComplete {
 		t.Fatalf("next bridge did not complete after omitted bridge and stop: %+v", run)
+	}
+	// The next stage changes MaxWait, so the skipped bridge's old scope is no
+	// longer empty. Its completed consumer, not the current route, proves progress.
+	if err := c.Continue(ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	c.wg.Wait()
+	if c.runs[bridge.ID] != nil || parent.action.Status != nativeOperationComplete || parent.reserved {
+		t.Fatalf("consumed bridge replayed or kept its owner alive: bridge=%+v parent=%+v", c.runs[bridge.ID], parent)
+	}
+	if nextRun := c.runs[next.ID]; nextRun.result.Actual.Routing[uid][b.ID] != 1000 {
+		t.Fatal("next stage lost its acknowledged route")
+	}
+}
+
+func TestSkippedBridgeDoesNotRetireOwnerBeforeStopS3(t *testing.T) {
+	c, goal, _ := acknowledgedHandoffFixture(t)
+	stage := *c.runs["acknowledged-route"].result.Operation.Target
+	stage.ID = "unchanged-w2-stage"
+	source := stage.Instances[0]
+	source.ID, source.Weight = "old-w2-source", 0
+	terminal := source
+	terminal.ID, terminal.WorkloadUID, terminal.Ready, terminal.Terminated = terminalW1ID, "w1", false, true
+	stage.Instances = append(stage.Instances, source, terminal)
+	stage.Routing = map[string]map[string]int32{source.WorkloadUID: {stage.Instances[0].ID: 1}, "w1": {terminal.ID: 1}}
+	c.state.Snapshot.Instances, c.state.Snapshot.Routing = stage.Instances, stage.Routing
+	goal.Instances, goal.Routing = stage.Instances, stage.Routing
+	bridge := serving.Action{ID: "unchanged-w2-bridge", Kind: operationRoute, RouteTarget: &stage}
+	stop := serving.Action{ID: "required-w2-stop", Kind: operationStop, Instance: source.ID, DependsOn: []string{bridge.ID}}
+	goal.Actions = []serving.Action{bridge, stop}
+	installTestTransition(c, &goal)
+	parent := c.runs[transitionRunKind+"/"+goal.ID]
+	c.reconcileOwnersLocked(c.state.Snapshot, time.Now(), false)
+	if parent.action.Status != nativeOperationRunning || !parent.reserved || c.runs[stop.ID] != nil {
+		t.Fatalf("unstarted stop lost its live owner: %+v", parent)
+	}
+	if !c.dependenciesReady(stop, goal) {
+		t.Fatal("source UID's existing ACK did not authorize the frozen stop")
 	}
 }
