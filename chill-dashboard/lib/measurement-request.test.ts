@@ -2,6 +2,16 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { requestBatches, requestDefaults, requestInputs, requestInitialBatches, requestTargetBatches, requestConditionChanges, requestPreflightReason } from "./measurement-request.ts"
 import type { MeasurementPlan, ProfilesView } from "./read-types.ts"
+import { readFileSync } from "node:fs"
+import { createRequire } from "node:module"
+import { runInNewContext } from "node:vm"
+import { createElement } from "react"
+import type { ComponentType, ReactNode } from "react"
+import { renderToStaticMarkup } from "react-dom/server"
+import { transpileModule, ModuleKind, JsxEmit } from "typescript"
+import * as requestHelpers from "./measurement-request.ts"
+import * as coverageHelpers from "./measurement-coverage.ts"
+import * as measurementHelpers from "./measurements.ts"
 
 const condition={model:"model & one",deviceClass:"device",node:"node",path:"cuda",powerMode:"MAXN"}
 const plan:MeasurementPlan={metadata:{name:"source",namespace:"ns",uid:"uid",resourceVersion:"1",creationTimestamp:"2026-10-30T00:00:00Z"},spec:{state:{candidate:{modelSpec:condition.model,deviceClass:condition.deviceClass,preprocessor:"pre",executionPath:condition.path,powerMode:condition.powerMode},targetNode:condition.node,cpuRequest:"2"},activeProtocol:{warmupIterations:5,durationSeconds:10,dataset:"data",metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},trialsPerBatch:3,retryLimit:1}}
@@ -107,4 +117,36 @@ test("changing a preprocessor clears only inherited datasets, preserving deliber
   const context={preprocessors:[{metadata:{name:"image-pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:"model",artifact:"onnx"}}]}}],datasets:[{metadata:{name:"vqa"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512},{name:"question",format:"UTF8",maxBytes:512}]}}]} as Parameters<typeof requestInputs>[4]
   assert.equal(requestInputs("model","onnx","image-pre","vqa",context,{dataset:true}).dataset,"")
   assert.equal(requestInputs("model","onnx","image-pre","vqa",context,{dataset:false}).dataset,"vqa")
+})
+
+test("request Funnel renders the undeclared-batch branch without a stale condition variable",()=>{
+  const source=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
+  const compiled=transpileModule(`${source}\nexport { Funnel };`,{compilerOptions:{module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
+  const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
+  const modules:Record<string,unknown>={
+    "next/link":{__esModule:true,default:container},
+    "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams()},
+    "@/lib/client":{useChillMutation:()=>({isPending:false})},
+    "@/components/read-region":{SourceJSON:()=>null},
+    "@/components/screen":{Screen:container,Rows:container,RowDialog:()=>null},
+    "@/features/read-pages":{},
+    "@/features/resources":{powerModeText:()=>"고정"},
+    "@/components/ui/button":{Button:container},
+    "@/components/ui/input":{Input:()=>null},
+    "@/lib/measurement-request":requestHelpers,
+    "@/lib/scheduler":{},
+    "@/lib/measurement-coverage":coverageHelpers,
+    "@/features/measurement-coverage":{useModelCompatibility:()=>({})},
+    "@/components/measurement-navigation":{MeasurementNavigation:()=>null},
+    "@/lib/measurements":measurementHelpers,
+  }
+  runInNewContext(compiled,{exports,require:(name:string)=>name in modules?modules[name]:require(name),URLSearchParams})
+  const Funnel=exports.Funnel as ComponentType<Record<string,unknown>>
+  const html=renderToStaticMarkup(createElement(Funnel,{
+    namespace:"ns",from:null,checking:false,refetchPlans:async()=>({error:null}),
+    context:{models:[],workloads:[],classes:[],plans:[],preprocessors:[],datasets:[],profiles:[]},
+    prefill:{active:false,values:{},errors:[],returnTo:"/measurements",node:""},
+  }))
+  assert.match(html,/CPU·데이터셋·측정 방식이 같은 기존 결과가 있는지 검사해요/)
 })

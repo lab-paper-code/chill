@@ -70,6 +70,22 @@ func TestMetricsUsesResponseFinishedCohortAndIdleZeros(t *testing.T) {
 	}
 }
 
+func TestMetricsP90DoesNotReuseP95(t *testing.T) {
+	metrics, sub, at := metricFixture(t)
+	metrics.SetWorkloads([]string{"one"})
+	for index := 1; index <= 20; index++ {
+		latency := time.Duration(index) * time.Millisecond
+		metrics.Finished("one", at.Add(time.Duration(index)*time.Millisecond), true, &latency, time.Second)
+	}
+	if err := metrics.Flush(at.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	row := nextMetrics(t, sub).Workloads["one"]
+	if row.LatencySamples != 20 || row.P90MS == nil || row.P95MS == nil || *row.P90MS != 18 || *row.P95MS != 19 {
+		t.Fatalf("distinct percentile ranks were lost: %+v", row)
+	}
+}
+
 func TestMetricsTenSecondCorrectionAndOlderGap(t *testing.T) {
 	metrics, sub, at := metricFixture(t)
 	metrics.SetWorkloads([]string{"one"})

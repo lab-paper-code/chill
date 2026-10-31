@@ -4,10 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
+	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 type coverageWaitContext struct {
@@ -98,5 +103,48 @@ func TestCoverageWithinStaleWindowReturnsWhileRefreshing(t *testing.T) {
 	}
 	if err := json.Unmarshal(payload, &view); err != nil || view.Freshness != "stale" {
 		t.Fatalf("in-flight refresh hid usable stale snapshot: %s, %v", payload, err)
+	}
+}
+
+func TestReadCoverageReturnsSnapshotWhenAllSixSourcesSucceed(t *testing.T) {
+	base := coverageSizeBase()
+	console := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body any
+		switch r.URL.Path {
+		case "/api/v1/inventory":
+			body = base.inventory
+		case "/api/v1/model-compatibility-matrix":
+			body = base.compatibility
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(body); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(console.Close)
+	origin, err := url.Parse(console.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := &servingkube.Catalog{}
+	view, err := catalog.Refresh(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler := &schedulerService{catalog: catalog}
+	scheduler.catalogRead.Store(&httpapi.ProfilesView{CatalogView: view})
+	service := &measurementService{
+		client: fake.NewClientBuilder().WithScheme(measurementScheme(t)).Build(),
+		console: origin, http: console.Client(), scheduler: scheduler,
+		opts: options{maxRequestBytes: 8 << 20},
+	}
+	got, err := service.readCoverage(context.Background(), "allowed", nil)
+	if err != nil || got == nil {
+		t.Fatalf("six successful sources discarded the snapshot: snapshot=%v error=%v", got, err)
+	}
+	if len(got.checked) != 6 || len(got.failures) != 0 || len(got.inventory.Models) == 0 {
+		t.Fatalf("incomplete source snapshot: checked=%v failures=%v", got.checked, got.failures)
 	}
 }
