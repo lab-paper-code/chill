@@ -293,6 +293,14 @@ rules:
   - apiGroups: [edge.dacs.io]
     resources: [operationcostmeasurements, dispatchoccupancymeasurements]
     verbs: [get, list]
+  {{- if $.Values.evaluation.enabled }}
+  - apiGroups: [edge.dacs.io]
+    resources: [evaluationruns, loadscenarios]
+    verbs: [create, get, list, watch]
+  - apiGroups: [edge.dacs.io]
+    resources: [evaluationstages]
+    verbs: [get, list, watch]
+  {{- end }}
 {{- end }}
 ---
 # Raw request IDs are available only to separately bound experiment collectors,

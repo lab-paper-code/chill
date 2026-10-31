@@ -59,6 +59,42 @@ operator:
     create: true
     name: ""
 
+# EXP-01/EXP-14: operational inputs are frozen from chill-evaluation-config at start.
+# Provision the referenced Secrets separately; the chart never creates credentials.
+evaluation:
+  enabled: false
+  config:
+    actionServiceAccount: chill-evaluation-action
+    publishServiceAccount: chill-evaluation-publish
+    storageClass: rook-cephfs
+    workspaceSize: 400Gi
+    minimumFreeBytes: "310000000000"
+    jobActiveDeadlineSeconds: "21600"
+    injectionWindowSeconds: "5"
+    injectionSnapshotTTLSeconds: "5"
+    finishResetWaitSeconds: "600"
+    factorAckWaitSeconds: "120"
+    drainTimeoutSeconds: "600"
+    returnTimeoutSeconds: "600"
+    restoreWaitSeconds: "600"
+    # Include bounded drain/producer settings required by the operational recipe.
+    e5Operational: "{}"
+    chillAPIURL: https://chill-serving-entrypoint.chill-system.svc:8080
+    caSecret: chill-dashboard-tls
+    evidenceEndpoint: http://chill-evidence-store.chill-system.svc.cluster.local.:9000
+    evidenceBucket: chill-profiling-evidence
+    evidenceRegion: us-east-1
+    # Dedicated read + conditional PutObject credentials, WITHOUT DeleteObject.
+    # Do not reuse the owner-measurement cleanup credentials above.
+    evidenceCredentialsSecret: chill-evaluation-evidence-credentials
+    producerSSHSecret: chill-evaluation-producer-ssh
+    sshNode: genesis1
+    sshHost: "155.230.35.213"
+    # Explicit provisioning input; no implicit host-account or trust copying.
+    sshUser: ""
+    sshPort: "22"
+    sshHostKeyAlias: ""
+
 profiler:
   enabled: false
   replicaCount: 1

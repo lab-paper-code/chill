@@ -1,0 +1,167 @@
+{{- if .Values.evaluation.enabled }}
+{{- range $name := list .Values.evaluation.config.actionServiceAccount .Values.evaluation.config.publishServiceAccount }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "chill.labels" $ | nindent 4 }}
+automountServiceAccountToken: {{ eq $name $.Values.evaluation.config.actionServiceAccount }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: chill-evaluation-action
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [create, get, list, watch, delete]
+  - apiGroups: [""]
+    resources: [pods, pods/log]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create]
+  - apiGroups: [edge.dacs.io]
+    resources: [loadscenarios, workloads, evaluationstages]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [{{ .Values.servingEntrypoint.scheduler.configMap | default "serving-scheduler" | quote }}]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: chill-evaluation-action
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: chill-evaluation-action
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.evaluation.config.actionServiceAccount }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "chill.fullname" . }}-evaluation-action
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, patch]
+  - apiGroups: [edge.dacs.io]
+    resources: [modelspecs, preprocessors, datasets, chillsystems, deviceclasses]
+    verbs: [get]
+  {{- if not .Values.servingEntrypoint.enabled }}
+  # Same collector/editor routes when the API is provisioned outside this release.
+  - nonResourceURLs: ["/chill/api/v1/observations/raw", "/chill/api/v1/observations/raw/*", "/chill/api/v1/scheduler", "/chill/api/v1/scheduler/settings", "/chill/api/v1/scheduler/state", "/chill/api/v1/scheduler/profiles", "/chill/api/v1/scheduler/capacity", "/chill/api/v1/observations/*", "/chill/api/v1/pools", "/chill/api/v1/workloads", "/chill/api/v1/workloads/*"]
+    verbs: [get]
+  - nonResourceURLs: ["/chill/api/v1/scheduler/settings"]
+    verbs: [put]
+  - nonResourceURLs: ["/chill/api/v1/scheduler/operations"]
+    verbs: [post]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "chill.fullname" . }}-evaluation-action
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "chill.fullname" . }}-evaluation-action
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.evaluation.config.actionServiceAccount }}
+    namespace: {{ .Release.Namespace }}
+{{- if .Values.servingEntrypoint.enabled }}
+{{- range $role := list "evidence-collector" "scheduler-editor" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "chill.fullname" $ }}-evaluation-{{ $role }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "chill.fullname" $ }}-{{ $role }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $.Values.evaluation.config.actionServiceAccount }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}
+{{- if .Values.profiler.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "chill.profilerName" . }}-evaluation
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: [edge.dacs.io]
+    resources: [evaluationruns, evaluationstages, loadscenarios]
+    verbs: [get, list, watch]
+  - apiGroups: [edge.dacs.io]
+    resources: [evaluationstages]
+    verbs: [create]
+  - apiGroups: [edge.dacs.io]
+    resources: [evaluationruns/status, evaluationstages/status]
+    verbs: [get, patch, update]
+  - apiGroups: [edge.dacs.io]
+    resources: [evaluationruns/finalizers, evaluationstages/finalizers]
+    verbs: [update, patch]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [create, get, list, watch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, delete]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, watch]
+  # Existing profiler Role supplies Job, ConfigMap, Secret and leader Lease rights.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "chill.profilerName" . }}-evaluation
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "chill.profilerName" . }}-evaluation
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "chill.profilerServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "chill.profilerName" . }}-evaluation
+rules:
+  - nonResourceURLs: ["/chill/api/v1/scheduler/state", "/chill/api/v1/scheduler/settings", "/chill/api/v1/observations/load"]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "chill.profilerName" . }}-evaluation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "chill.profilerName" . }}-evaluation
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "chill.profilerServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}

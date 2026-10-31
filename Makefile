@@ -7,6 +7,7 @@ IMG ?= $(IMAGE_NAMESPACE)/chill-operator:$(IMAGE_TAG)
 OPERATOR_IMG ?= $(IMG)
 NODE_AGENT_IMG ?= $(IMAGE_NAMESPACE)/chill-node-agent:$(IMAGE_TAG)
 PROFILER_IMG ?= $(IMAGE_NAMESPACE)/chill-profiler:$(IMAGE_TAG)
+EVALUATION_HARNESS_IMG ?= $(IMAGE_NAMESPACE)/chill-evaluation-harness:$(IMAGE_TAG)
 CONSOLE_IMG ?= $(IMAGE_NAMESPACE)/chill-console:$(IMAGE_TAG)
 METRIC_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-metric-observer:$(IMAGE_TAG)
 WORKLOAD_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-workload-observer:$(IMAGE_TAG)
@@ -373,6 +374,10 @@ docker-build-node-agent: ## Build the node-agent image.
 .PHONY: docker-build-profiler
 docker-build-profiler: ## Build the Profiler image.
 	$(CONTAINER_TOOL) build -f build/docker/profiler.Dockerfile -t $(PROFILER_IMG) .
+
+.PHONY: docker-build-evaluation-harness
+docker-build-evaluation-harness: ## Build the EvaluationRun procedure harness image.
+	$(CONTAINER_TOOL) build -f build/docker/evaluation-harness.Dockerfile -t $(EVALUATION_HARNESS_IMG) .
 
 .PHONY: docker-build-console
 docker-build-console: ## Build the Console API image.
