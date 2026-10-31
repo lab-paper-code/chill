@@ -1,11 +1,20 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { readFile } from "node:fs/promises"
-import { coverageQuality, coverageQualityReasons, coverageMeasurementStatus, coverageFailureHref, coverageProfileQuery, coverageStatusCounts, measurementAge, conditionLabel, deviceLabel, coverageSelection, coveragePathVisible, coverageModes, coverageVariant, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
+import { coverageQuality, coverageQualityReasons, coverageMeasurementStatus, coverageFailureHref, coverageProfileQuery, coverageStatusCounts, coverageUsageAssessment, coverageFilterVisible, coverageEmptyModes, measurementAge, conditionLabel, deviceLabel, coverageSelection, coveragePathVisible, coverageModes, coverageVariant, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 import { requestBatches, requestTargetBatches } from "./measurement-request.ts"
 import type { CoverageModel } from "./measurement-coverage.ts"
 import type { InventoryClass, InventoryView, MeasurementCoverageCell, MeasurementPlan, ModelCompatibility, ProfilingRun, ResultRow } from "./read-types.ts"
+import { readFileSync } from "node:fs"
+import { createRequire } from "node:module"
+import { runInNewContext } from "node:vm"
+import { createElement, type ComponentType, type ReactNode } from "react"
+import { renderToStaticMarkup } from "react-dom/server"
+import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
+import * as coverageHelpers from "./measurement-coverage.ts"
+import * as assessmentHelpers from "./measurement-assessment.ts"
+import * as measurementHelpers from "./measurements.ts"
 
 test("power mode labels identify measured watts rather than inventing a declared limit",()=>{
   assert.equal(powerModeLabel("MODE-1",[10,12]),"MODE-1 · 실측 10.0–12.0 W")
@@ -183,7 +192,8 @@ test("coverage UI exposes numeric progress and trust values without expanded JSO
   assert.match(source,/sm:w-\[800px\]/)
   assert.doesNotMatch(source,/기준 충족 \/ 전체 \(조합\)/)
   const experiment=await readFile(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8")
-  assert.match(experiment,/참고 · 제한 비교/)
+  assert.doesNotMatch(experiment,/참고 · 제한 비교/)
+  assert.match(experiment,/aria-label="제한 비교"/)
   assert.match(experiment,/coverageCounts\.limited/)
   assert.doesNotMatch(experiment,/const limited=experimentHeatmap/)
   const projections=await readFile(new URL("../features/measurement-projections.tsx",import.meta.url),"utf8")
@@ -200,12 +210,33 @@ test("quality reasons come from variant checks, count each cell once and never i
   const assessment={...cell.assessment,checklist:{...cell.assessment.checklist,criteriaMet:false,checks:[{code:"FrozenPowerWindowPolicy",result:"unknown" as const,message:"raw",sourceIds:[]}]}}
   const variant={id:"v",condition:{},assessment,batchProgress:cell.batchProgress!,resultRows:[],requestIds:[],runIds:[],profileIds:[]}
   const measured={...cell,assessment:{...cell.assessment,displayStatus:"usable" as const},variants:[variant,{...variant,id:"v2"}]}
-  assert.equal(coverageQuality(measured).label,"기준 미충족")
+  assert.equal(coverageQuality(measured).label,"판정 불가")
   assert.deepEqual(coverageQualityReasons([measured,cell]),[{code:"FrozenPowerWindowPolicy",label:"전력 기록 기준 미확인",count:1},{code:"QualityUnavailable",label:"품질 근거 없음",count:1}])
-  assert.equal(coverageQuality(cell).label,"품질 미확인")
+  assert.equal(coverageQuality(cell).label,"판정 불가")
   assert.equal(coverageMeasurementStatus(measured),"insufficient")
   const met={...variant,assessment:{...assessment,checklist:{...assessment.checklist,criteriaMet:true,checks:[{...assessment.checklist.checks[0],result:"pass" as const}]}}}
   assert.equal(coverageQuality({...cell,variants:[met]}).label,"기준 충족")
+})
+
+test("only explicit failing checks fail quality; absent or unknown evidence stays undecidable",()=>{
+  for(const checks of [[],[{code:"threshold",result:"unknown" as const,message:"허용 기준 미제공",sourceIds:[]}]]) {
+    assert.equal(coverageQuality({...cell,assessment:{...cell.assessment,checklist:{...cell.assessment.checklist,criteriaMet:false,checks}}}).label,"판정 불가")
+  }
+  assert.equal(coverageQuality({...cell,assessment:{...cell.assessment,checklist:{...cell.assessment.checklist,criteriaMet:false,checks:[{code:"threshold",result:"fail",message:"초과",sourceIds:[]}]}}}).label,"기준 미충족")
+})
+test("unsupported status and reason drilldown retain the combinations hidden by default",()=>{
+  const unsupported={...cell,support:{...cell.support,verdict:"Incompatible" as const,reasons:[{code:"RuntimeUnsupported",message:"미지원"}]}}
+  assert.equal(coverageFilterVisible(unsupported,inventory,"unsupported"),true)
+  assert.equal(coverageFilterVisible(unsupported,inventory,"unsupported","RuntimeUnsupported"),true)
+  assert.equal(coverageFilterVisible(unsupported,inventory,"unsupported","Other"),false)
+  assert.equal(coverageFilterVisible(unsupported,inventory,""),false)
+  assert.equal(coverageMeasurementStatus(unsupported),"unsupported")
+})
+test("empty modes use measured evidence, and request usage shares exact condition facts",()=>{
+  assert.deepEqual(coverageEmptyModes([cell,{...cell,powerMode:"15W",batchProgress:{...cell.batchProgress!,measured:[]}}]),["15W"])
+  const used={...cell,assessment:{...cell.assessment,scope:{...cell.assessment.scope,schedulerUsed:true}}}
+  assert.equal(coverageUsageAssessment([used],plan.spec),used.assessment)
+  assert.equal(coverageUsageAssessment([used],{...plan.spec,state:{...plan.spec.state,targetNode:"other"}}),undefined)
 })
 
 test("request prefill and preflight keep selected equipment visible and operational impact separate",async()=>{
@@ -216,4 +247,44 @@ test("request prefill and preflight keep selected equipment visible and operatio
   assert.match(preflight,/형식 검사 통과/)
   assert.match(preflight,/운영 영향 미확인/)
   assert.doesNotMatch(preflight,/answer\.resolves\?"측정 요청 가능"/)
+})
+
+function renderCoverage(query="") {
+  const source=readFileSync(new URL("../features/measurement-coverage.tsx",import.meta.url),"utf8")
+  const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
+  const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
+  const unsupported={...cell,id:"unsupported",executionPath:"other",support:{...cell.support,verdict:"Incompatible",reasons:[{code:"RuntimeUnsupported",message:"미지원"}]}}
+  const data={cells:[cell,{...cell,id:"empty",powerMode:"15W",batchProgress:{...cell.batchProgress!,measured:[]}},unsupported],scope:{targetBatches:[1,2,4,8]},nextActions:[],sources:[]}
+  const modules:Record<string,unknown>={
+    "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
+    "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams(query)},
+    "@tanstack/react-query":{useQuery:({queryKey}:{queryKey:string[]})=>({data:queryKey[1]==="coverage-inventory"?inventory:data})},
+    "@/lib/client":{useSession:()=>({config:{namespace:"ns"}})},
+    "@/lib/measurement-coverage":coverageHelpers,
+    "@/lib/measurement-assessment":assessmentHelpers,
+    "@/lib/measurements":measurementHelpers,
+    "@/lib/scheduler":{},
+    "@/components/measurement-navigation":{MeasurementNavigation:()=>null},
+    "@/components/screen":{Screen:container},
+    "@/components/ui/button":{Button:container},
+    "@/components/ui/input":{Input:()=>null},
+    "@/components/ui/sheet":{Sheet:container,SheetContent:container,SheetHeader:container,SheetTitle:container},
+    "./measurement-coverage.css":{},
+  }
+  runInNewContext(compiled,{exports,require:(name:string)=>name in modules?modules[name]:require(name),URLSearchParams})
+  return renderToStaticMarkup(createElement(exports.MeasurementCoveragePage as ComponentType))
+}
+test("coverage page folds empty modes, uses one mini progress, and opens unsupported reason combinations",()=>{
+  const html=renderCoverage()
+  assert.match(html,/미측정 모드 1/)
+  assert.equal((html.match(/data-coverage-cell=/g)??[]).length,1)
+  assert.match(html,/coverage-mini-progress/)
+  assert.doesNotMatch(html,/coverage-batch-bar/)
+  assert.match(html,/충족 0 \/ 미충족 0 \/ 판정 불가 2/)
+  assert.match(html,/supportReason=RuntimeUnsupported/)
+  const unsupported=renderCoverage("status=unsupported&supportReason=RuntimeUnsupported")
+  assert.equal((unsupported.match(/data-coverage-cell=/g)??[]).length,1)
+  assert.match(unsupported,/data-coverage-cell="unsupported"/)
+  assert.match(unsupported,/지원 안 함/)
 })

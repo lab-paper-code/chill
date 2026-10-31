@@ -1,6 +1,7 @@
 import type { ExecutionPath, ModelSpec } from "./domain.ts"
 import type { BatchProgress, InventoryClass, InventoryView, MeasurementCoverageCell, MeasurementDisplayStatus, MeasurementFailure, MeasurementPlanSpec, ModelCompatibility, ProfilingRun } from "./read-types.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
+import { measurementQuality } from "./measurement-assessment.ts"
 
 export function deviceLabel(name:string) {
   return name.replace(/^edge-server-/,"").replace(/^jetson-agx-orin-/,"AGX Orin ").replace(/^jetson-orin-nano-/,"Orin Nano ").replace(/-/g," ")
@@ -41,6 +42,18 @@ export function coveragePathVisible(cell:MeasurementCoverageCell,inventory?:Inve
   if(model&&path&&cls&&staticCompatibility(model,path,cls).state==="unsupported")return false
   return cell.support.verdict!=="Incompatible"&&!cell.support.reasons.some(reason=>reason.code==="ArtifactArchitectureMismatch")
 }
+export function coverageFilterVisible(cell:MeasurementCoverageCell,inventory?:InventoryView,status="",reason="") {
+  const supported=coveragePathVisible(cell,inventory)
+  return status==="unsupported"?!supported&&(!reason||coverageSupportReasons(cell).some(item=>item.code===reason)):supported
+}
+export function coverageSupportReasons(cell:MeasurementCoverageCell) {
+  return cell.support.reasons.length?cell.support.reasons:[{code:"DeclarationMismatch",message:"장치·실행 경로 불일치"}]
+}
+export function coverageUsageAssessment(cells:MeasurementCoverageCell[],spec:MeasurementPlanSpec) {
+  const candidate=spec.state.candidate
+  return cells.find(cell=>cell.model.name===candidate.modelSpec&&cell.deviceClass.name===candidate.deviceClass&&cell.executionPath===candidate.executionPath&&cell.powerMode===candidate.powerMode&&
+    (cell.support.node?.name===spec.state.targetNode||cell.variants.some(variant=>((variant.condition.metricSource as {nodeName?:string}|undefined)?.nodeName??(variant.condition.state as {targetNode?:string}|undefined)?.targetNode)===spec.state.targetNode)))?.assessment
+}
 export function coverageWatts(cells:MeasurementCoverageCell[]) {
   return cells.flatMap(cell=>cell.variants.flatMap(variant=>variant.resultRows.flatMap(row=>row.activeWatts!==null&&Number.isFinite(row.activeWatts)?[row.activeWatts]:[])))
 }
@@ -49,6 +62,9 @@ export function coverageModes(cells:MeasurementCoverageCell[]) {
     const left=coverageWatts(cells.filter(cell=>cell.powerMode===a)),right=coverageWatts(cells.filter(cell=>cell.powerMode===b))
     return (left.length?Math.min(...left):Infinity)-(right.length?Math.min(...right):Infinity)||a.localeCompare(b)
   })
+}
+export function coverageEmptyModes(cells:MeasurementCoverageCell[]) {
+  return coverageModes(cells).filter(mode=>cells.filter(cell=>cell.powerMode===mode).every(cell=>!coverageProgress(cell)?.measured.length&&!cell.variants.some(variant=>variant.resultRows.length)))
 }
 export function coverageVariant(cell:MeasurementCoverageCell,id?:string) {
   return cell.variants.find(variant=>variant.id===id)
@@ -64,20 +80,19 @@ export function coverageProgress(cell:MeasurementCoverageCell) {
   return cell.batchProgress??coverageVariant(cell)?.batchProgress??null
 }
 export const coverageMeasurementStates = {usable:"측정 있음",review:"검토 필요",insufficient:"부족",problem:"문제",running:"진행",unmeasured:"미측정",unknown:"미확인",unsupported:"지원 안 함"}
-export function coverageMeasurementStatus(cell:MeasurementCoverageCell):MeasurementDisplayStatus {
+export function coverageMeasurementStatus(cell:MeasurementCoverageCell,inventory?:InventoryView):MeasurementDisplayStatus {
   const progress=coverageProgress(cell),status=cell.assessment.displayStatus
+  if(!coveragePathVisible(cell,inventory))return "unsupported"
   if(status!=="usable")return status
   return progress?.target.length&&!progress.target.every(batch=>progress.measured.includes(batch))?"insufficient":"usable"
 }
 export function coverageQuality(cell:MeasurementCoverageCell) {
   const assessments=cell.variants.length?cell.variants.map(variant=>variant.assessment):[cell.assessment]
-  const checks=assessments.flatMap(assessment=>assessment.checklist.checks)
+  const checks=assessments.flatMap(assessment=>assessment.checklist?.checks??[])
   const labels:Record<string,string>={ActiveTrials:"실행 반복 부족",IdleTrials:"유휴 반복 부족",IncrementalConfidence:"오차 범위 미확인",ClientLatency:"지연 표본 미확인",PowerSource:"전력 출처 미확인",FrozenPowerWindowPolicy:"전력 기록 기준 미확인",ExactConditionLineage:"측정 조건 연결 미확인",TargetBatch:"배치 근거 미확인",DatasetInputContract:"입력 연결 미확인"}
   const reasons=[...new Map(checks.filter(check=>check.result!=="pass").map(check=>[check.code,{code:check.code,label:labels[check.code]??"기타 품질 확인"}])).values()]
   if(!checks.length)reasons.push({code:"QualityUnavailable",label:"품질 근거 없음"})
-  const met=assessments.every(assessment=>assessment.checklist.criteriaMet===true)
-  const unmet=assessments.some(assessment=>assessment.checklist.criteriaMet===false||assessment.checklist.checks.some(check=>check.result==="fail"))
-  return {label:met?"기준 충족":unmet?"기준 미충족":"품질 미확인",reasons}
+  return {...measurementQuality(assessments),reasons}
 }
 export function coverageQualityReasons(cells:MeasurementCoverageCell[]) {
   const counts=new Map<string,{code:string;label:string;count:number}>()

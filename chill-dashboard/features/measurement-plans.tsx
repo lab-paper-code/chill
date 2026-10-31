@@ -8,6 +8,9 @@ import { ApiError, useChillMutation, useChillQuery } from "@/lib/client"
 import type { CampaignResult, MeasurementAssessment, MeasurementMutation, MeasurementPlanList, MeasurementPlanSpec, ResultRow } from "@/lib/read-types"
 import { formatMeasurementNumber as number, measurementCheckText, resultRowsCSV, safeMeasurementReturn } from "@/lib/measurements"
 import { assessmentReasons } from "@/lib/measurement-assessment"
+import { coverageUsageAssessment } from "@/lib/measurement-coverage"
+import { requestFailureFacts } from "@/lib/measurement-request"
+import { useMeasurementCoverage } from "@/features/measurement-coverage"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
 import { Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
@@ -78,15 +81,26 @@ export function MeasurementPlanPage({namespace,name}:{namespace:string;name:stri
   const query=useChillQuery<CampaignResult>(`${plansPath(namespace)}/${encodeURIComponent(name)}/result`,{decoder:parseSchedulerJSON})
   const [deleted,setDeleted]=React.useState<MeasurementMutation|null>(null)
   const data=query.data,campaign=data?.campaign,spec=campaign?.spec as MeasurementPlanSpec|undefined
+  const coverage=useMeasurementCoverage(namespace)
+  const usage=spec?coverageUsageAssessment(coverage.data?.cells??[],spec):undefined
+  const assessment=data?.assessment&&usage?{...data.assessment,scope:usage.scope}:data?.assessment
   const other=!!campaign&&!!expectedUID&&campaign.uid!==expectedUID
   const back:[string,string]=[safeMeasurementReturn(params.get("returnTo"),`/measurements/requests?namespace=${encodeURIComponent(namespace)}`),"요청 목록으로"]
   if(deleted)return <Screen back={back} title="측정을 지웠어요" lede={`${name}의 결과와 근거 파일 ${deleted.deletedEvidence?.length??0}개를 함께 지웠어요.`}><SourceJSON value={deleted}/></Screen>
   const result=data?.result as ResultBody|null|undefined
-  return <Screen width="data" actionPlacement="header" breadcrumbs={[{href:"/measurements/requests",label:"측정 요청"},{label:name}]} back={back} title={other?"측정 식별자 불일치":name} status={!other&&data?<MeasurementStatus assessment={data.assessment}/>:undefined}
+  const linkedRuns=[...new Map([...(data?.assessment?.failureSummary??[]).filter(failure=>failure.runName).map(failure=>({namespace:failure.runNamespace||namespace,name:failure.runName,uid:failure.runId.split("/").at(-1)??""})),...(result?.excludedTrials??[]).map(trial=>trial.run)].map(run=>[`${run.namespace}/${run.name}/${run.uid}`,run])).values()]
+  return <Screen width="data" actionPlacement="header" breadcrumbs={[{href:"/measurements/requests",label:"측정 요청"},{label:name}]} back={back} title={other?"측정 식별자 불일치":name} status={!other&&data?<span title="동일 모델·장치·전력모드·실행 경로·노드의 현재 스케줄러 사용 현황"><MeasurementStatus assessment={assessment}/></span>:undefined}
     action={<Button variant="outline" disabled={query.isFetching} onClick={()=>void query.refetch()}>갱신</Button>}>
     <MeasurementNavigation active="requests" namespace={namespace}/>
     <QueryGate query={query}>{campaign&&spec&&!other&&<>
-      {campaign.phase==="Failed"&&<section role="alert" className="notice text-destructive"><p>측정 실패: {data?.assessment?.failureSummary?.map(failure=>failure.message).join(" · ")||data?.assessment?.reasons?.map(reason=>reason.message).join(" · ")||"서버 실패 원인을 확인하세요. 아래 연결된 회차에서 실패 근거를 볼 수 있어요."}</p>{data?.assessment?.failureSummary?.map(failure=>failure.runName&&<Link key={failure.runId} className="inline-flex min-h-11 items-center underline" href={`/measurements/profiling-runs/${encodeURIComponent(failure.runNamespace)}/${encodeURIComponent(failure.runName)}?${new URLSearchParams({uid:failure.runId.split("/").at(-1)??"",returnTo:planHref(namespace,name,campaign.uid)})}`}>{failure.runName} 실패 회차 보기{failure.exitCode!=null?` · 종료 코드 ${failure.exitCode}`:""}</Link>)}</section>}
+      {campaign.phase==="Failed"&&<section role="alert" className="space-y-2 rounded-xl border border-destructive/40 bg-destructive/5 p-4">
+        <h2 className="font-semibold text-destructive">측정 실패</h2>
+        <table aria-label="실패 원인·연결 회차" className="w-full text-left text-sm"><tbody>
+          {requestFailureFacts(campaign.conditions).map(([label,value],index)=><tr key={index} className="border-b"><th scope="row" className="w-28 py-2 align-top font-medium">{label}</th><td className="break-words py-2">{value}</td></tr>)}
+          <tr><th scope="row" className="py-2 align-top font-medium">연결 회차</th><td>{linkedRuns.length?linkedRuns.map(run=><Link key={run.uid||run.name} className="flex min-h-11 items-center underline" href={`/measurements/profiling-runs/${encodeURIComponent(run.namespace)}/${encodeURIComponent(run.name)}?${new URLSearchParams({uid:run.uid,returnTo:planHref(namespace,name,campaign.uid)})}`}>{run.name}</Link>):<Link className="inline-flex min-h-11 items-center underline" href={`/measurements/runs?${new URLSearchParams({namespace,parent:name,parentUID:campaign.uid,returnTo:planHref(namespace,name,campaign.uid)})}`}>연결된 회차 찾기</Link>}</td></tr>
+          {data?.assessment?.failureSummary?.map((failure,index)=><React.Fragment key={index}><tr><th scope="row" className="py-2 align-top font-medium">분류</th><td>{failure.code==="Other"?campaign.conditions?.find(condition=>condition.reason)?.reason||failure.code:failure.label??failure.code}</td></tr><tr><th scope="row" className="py-2 align-top font-medium">서버 상세</th><td className="break-words">{failure.message||"미제공"}</td></tr><tr><th scope="row" className="py-2 align-top font-medium">종료 코드</th><td>{failure.exitCode??"미제공"}</td></tr></React.Fragment>)}
+        </tbody></table>
+      </section>}
       <ResultRows rows={data?.resultRows??[]} filename={`chill-measurement-${name}.csv`} emptyMessage={campaign.phase==="Failed"?"측정 실패 · 결과 없음":campaign.phase==="Complete"?"측정 종료 · 저장 결과 없음":"측정 결과 대기"}/>
       <details><summary>판정·근거</summary><AssessmentDetails assessment={data?.assessment} rows={data?.resultRows}/></details>
       <details><summary>요청 조건·회차·원문</summary>
@@ -99,7 +113,7 @@ export function MeasurementPlanPage({namespace,name}:{namespace:string;name:stri
       </Rows>
       </details>
       <Button variant="outline" asChild><Link href={`/measurements/new?${new URLSearchParams({from:name,fromNamespace:namespace,fromUID:campaign.uid})}`}>조건을 복사해 새 이름으로 요청</Link></Button>
-      <Rows label="위험 영역"><DeleteMeasurement namespace={namespace} name={name} uid={campaign.uid} version={campaign.resourceVersion} trials={campaign.completedTrials??0} blocked={campaign.phase==="Measuring"?"진행 중인 측정은 지울 수 없어요. 끝난 뒤에 지워 주세요.":undefined} onDeleted={setDeleted}/></Rows>
+      <details><summary className="min-h-11 cursor-pointer py-2">관리</summary><Rows label="위험 영역"><DeleteMeasurement namespace={namespace} name={name} uid={campaign.uid} version={campaign.resourceVersion} trials={campaign.completedTrials??0} blocked={campaign.phase==="Measuring"?"진행 중인 측정은 지울 수 없어요. 끝난 뒤에 지워 주세요.":undefined} onDeleted={setDeleted}/></Rows></details>
     </>}</QueryGate>
   </Screen>
 }

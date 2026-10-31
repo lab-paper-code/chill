@@ -3,10 +3,10 @@
 import * as React from "react"
 import { useSearchParams } from "next/navigation"
 import { useChillQuery, useChillMutation, useSession } from "@/lib/client"
-import type { RunsView, Passport, NativeSample, MeasurementPreflight } from "@/lib/read-types"
+import type { RunsView, Passport, NativeSample, MeasurementPreflight, PoolsView } from "@/lib/read-types"
 import { formatMeasurementNumber as num, formatMeasurementTime, runFailure, runStatusObject, exactRun, safeMeasurementReturn } from "@/lib/measurements"
 import { currentRunCondition, measurementAge, runAttempt, runSpec } from "@/lib/measurement-coverage"
-import { requestOperationalSummary, requestRejectionGuidance } from "@/lib/measurement-request"
+import { requestOperationalSummary, requestRejectionGuidance, requestFailureFacts } from "@/lib/measurement-request"
 import { codeText } from "@/lib/labels"
 import { QueryGate, SourceJSON, SourceExport, StatusBadge } from "@/components/read-region"
 import { Screen, Rows, RowDialog, Facts } from "@/components/screen"
@@ -20,11 +20,12 @@ import { AssessmentDetails } from "@/features/measurement-plans"
 // /measurements/new review and /measurements/check share this conclusion and plan summary; the raw plan stays in 원본.
 export const preflightConclusion=(answer:MeasurementPreflight)=>answer.resolves?"형식 검사 통과":"형식 검사 미통과"
 export function PreflightAnswer({answer}:{answer:MeasurementPreflight}) {
-  const shared=answer.plan?.shared,batch=answer.batchPlan,operational=requestOperationalSummary(answer)
+  const pools=useChillQuery<PoolsView>("v1/pools",{enabled:answer.resolves})
+  const shared=answer.plan?.shared,batch=answer.batchPlan,operational=requestOperationalSummary(answer,pools.error?undefined:pools.data)
   return <div className="space-y-3">
-    <span title="사전검사는 요청 형식과 실행 계획만 확인합니다. 서비스 영향과 전체 소요 시간의 보장은 별도입니다."><StatusBadge tone="warn">운영 영향 미확인</StatusBadge></span>
+    <span title="사전검사는 요청 형식과 실행 계획만 확인합니다. 배치 서비스 수는 대상 노드의 현재 관측값이며 중단 여부를 보장하지 않습니다."><StatusBadge tone="warn">{operational.servingImpact===null?"운영 영향 미확인":"서비스 배치 확인"}</StatusBadge></span>
     {batch&&<table className="w-full text-left text-sm tabular-nums"><thead><tr><th>기측정 배치 (건)</th><th>추가 측정 배치 (건)</th><th>실행 예정 배치 (건)</th></tr></thead><tbody><tr><td>{batch.measuredBatches.join(", ")||"없음"}</td><td>{batch.missingBatches.join(", ")||"없음"}</td><td>{batch.plannedBatches.join(", ")||"미확정"}</td></tr></tbody></table>}
-    <table className="w-full text-left text-sm tabular-nums"><thead><tr><th>서빙 영향</th><th>예상 총 소요 시간 (s)</th></tr></thead><tbody><tr><td>{operational.servingImpact}</td><td>{operational.estimatedDurationSeconds??"미제공"}</td></tr></tbody></table>
+    <table className="w-full text-left text-sm tabular-nums"><thead><tr><th title="대상 노드에 현재 배치된 서비스 수. 실제 중단·지연 여부는 미확인입니다.">서빙 영향 · 서비스 (개)</th><th title="배치 수 × 반복 × (실행 측정 + 유휴 안정 + 유휴 측정). 예열은 횟수만 제공되어 시간 환산 불가이며 준비·재시도 시간도 제외합니다.">예상 점유 · 최소 (s)</th></tr></thead><tbody><tr><td>{operational.servingImpact??"미확인"}</td><td>{operational.estimatedDurationSeconds??"미확인"}</td></tr></tbody></table>
     <details><summary>검사 상세</summary>
       {!answer.resolves&&<p className="text-sm">{requestRejectionGuidance(answer.reason??"")?.message??"거부 사유: 원문 확인"}</p>}
       {batch&&<Facts label="배치 조건" items={[["선택 배치 (건)",batch.requestedBatches.join(", ")||"미지정"],["요청 가능 배치 (건)",batch.requestableBatches.join(", ")||"없음"],["측정 중 배치 (건)",batch.inProgressBatches.join(", ")||"없음"],["부분 선택",batch.subsetAllowed?"가능":"전체 집합"],["기존 조건",batch.conditionMatch==="exact"?"실행 조건 일치":batch.conditionMatch==="planned-only"?"요청 조건만 일치":"미확인"],["조기 완료",batch.searchMayStopEarly?"가능":"예정 범위"]]} />}
@@ -149,7 +150,7 @@ export function MeasurementDetail({namespace,name}:{namespace:string;name:string
   return <Screen width="data" actionPlacement="header" back={[back,"측정으로 돌아가기"]} breadcrumbs={[{href:back,label:"측정 회차"},{label:name}]} title={`${name} 측정 결과`} status={<MeasurementStatus assessment={run?.assessment}/>} lede={data&&!other?measuredWhat(data):undefined} action={<Button variant="outline" disabled={lookup.isFetching} onClick={()=>void lookup.refetch()}>갱신</Button>}>
     <MeasurementNavigation active="runs" namespace={namespace}/>
     <QueryGate query={lookup}>{lookup.data&&!run&&<div className="space-y-3"><p>이 조회 페이지에서 정확한 namespace/name/UID의 회차를 찾지 못했어요. 같은 이름의 다른 회차로 대체하지 않아요.</p>{lookup.data.page?.nextOffset!==undefined&&<Button variant="outline" onClick={()=>setOffset(lookup.data!.page!.nextOffset!)}>다음 조회 페이지에서 찾기</Button>}</div>}{run&&<>
-      {failed&&failure&&<section role="alert" className="space-y-2 rounded-xl border border-destructive/40 bg-destructive/5 p-4"><h2 className="font-semibold text-destructive">실행 실패</h2><table aria-label="실패 원인·조치" className="w-full text-left text-sm"><tbody>{[["원인",failure.title],["종료 코드",failure.exitCode==null?"미제공":String(failure.exitCode)],...failure.actions].map(([label,value],index)=><tr key={index} className="border-b last:border-0"><th scope="row" className="w-24 py-2 align-top font-medium">{label}</th><td className="py-2">{value}</td></tr>)}</tbody></table><details><summary className="min-h-11 cursor-pointer py-2 text-sm">실패 대상·원문</summary><Facts items={failure.target}/><pre className="whitespace-pre-wrap break-words text-sm">{failure.excerpt}</pre></details></section>}
+      {failed&&failure&&<section role="alert" className="space-y-2 rounded-xl border border-destructive/40 bg-destructive/5 p-4"><h2 className="font-semibold text-destructive">실행 실패</h2><table aria-label="실패 원인·조치" className="w-full text-left text-sm"><tbody>{[...requestFailureFacts(run.status.conditions?.filter(condition=>condition.type==="ExecutionComplete"&&condition.observedGeneration===run.generation)),["원인",run.assessment?.failureSummary?.[0]?.code==="Other"?currentRunCondition(run,"ExecutionComplete")?.reason||failure.title:failure.title],["종료 코드",failure.exitCode==null?"미제공":String(failure.exitCode)],...failure.actions].map(([label,value],index)=><tr key={index} className="border-b last:border-0"><th scope="row" className="w-24 py-2 align-top font-medium">{label}</th><td className="break-words py-2">{value}</td></tr>)}</tbody></table><details><summary className="min-h-11 cursor-pointer py-2 text-sm">실패 대상·원문</summary><Facts items={failure.target}/><pre className="whitespace-pre-wrap break-words text-sm">{failure.excerpt}</pre></details></section>}
       <details open={!failed}><summary className="min-h-11 cursor-pointer py-2 text-sm">회차 조건·판정</summary>
       <Facts label="회차 조건" items={[
         ["모델 / 장치",`${runSpec(run).candidate?.modelSpec??"미기록"} / ${runSpec(run).candidate?.deviceClass??"미기록"}`],

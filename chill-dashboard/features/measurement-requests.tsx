@@ -10,12 +10,14 @@ import { Screen } from "@/components/screen"
 import { DataTable } from "@/components/data-table"
 import { Button } from "@/components/ui/button"
 import { MeasurementNavigation, MeasurementStatus, MeasurementEvidenceChecks } from "@/components/measurement-navigation"
-import { MeasurementFilters } from "@/features/measurement-coverage"
+import { MeasurementFilters, useMeasurementCoverage } from "@/features/measurement-coverage"
+import { coverageUsageAssessment } from "@/lib/measurement-coverage"
 
 export function MeasurementRequestsPage() {
   const params=useSearchParams(),{config}=useSession(),namespace=params.get("namespace")??config.namespace
   const query=useChillQuery<MeasurementPlanList>(`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`)
-  const plans=query.data?.items??[]
+  const coverage=useMeasurementCoverage(namespace)
+  const plans=(query.data?.items??[]).map(plan=>{const usage=coverageUsageAssessment(coverage.data?.cells??[],plan.spec);return usage&&plan.assessment?{...plan,assessment:{...plan.assessment,scope:usage.scope}}:plan})
   const axes=[{key:"model",label:"모델",values:plans.map(p=>p.spec.state.candidate.modelSpec)},{key:"deviceClass",label:"장치 종류",values:plans.map(p=>p.spec.state.candidate.deviceClass)},{key:"node",label:"Node",values:plans.map(p=>p.spec.state.targetNode)},{key:"powerMode",label:"전력모드",values:plans.map(p=>p.spec.state.candidate.powerMode)},{key:"path",label:"실행 경로",values:plans.map(p=>p.spec.state.candidate.executionPath)}]
   const shown=plans.filter(p=>axes.every(axis=>!params.get(axis.key)||params.get(axis.key)===(axis.key==="model"?p.spec.state.candidate.modelSpec:axis.key==="deviceClass"?p.spec.state.candidate.deviceClass:axis.key==="node"?p.spec.state.targetNode:axis.key==="powerMode"?p.spec.state.candidate.powerMode:p.spec.state.candidate.executionPath))&&(!params.get("q")||p.metadata.name.toLocaleLowerCase().includes(params.get("q")!.toLocaleLowerCase()))&&(!params.get("status")||p.assessment?.displayStatus===params.get("status")))
   return <Screen width="data" actionPlacement="header" title="측정 요청" lede="서버가 판정한 사용 상태와 요청의 실행 기록을 확인하세요." action={<Button asChild><Link href="/measurements/new">새 측정 요청</Link></Button>}>

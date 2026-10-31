@@ -1,5 +1,5 @@
 import type { DatasetResource, DatasetSpec, PreprocessorResource, PreprocessorSpec } from "./domain.ts"
-import type { MeasurementPlan, MeasurementPlanSpec, ProfilesView } from "./read-types.ts"
+import type { Condition, MeasurementPlan, MeasurementPlanSpec, ProfilesView } from "./read-types.ts"
 
 export type RequestCondition = { model:string; deviceClass:string; node:string; path:string; powerMode:string }
 export type RequestDefaults = { spec:MeasurementPlanSpec; source:string; exact:boolean }
@@ -108,9 +108,20 @@ export function requestRejectionGuidance(reason:string):RequestRejectionGuidance
   return null
 }
 
-export function requestOperationalSummary(answer?:unknown) {
-  const value=answer&&typeof answer==="object"?answer as {servingImpact?:unknown;estimatedDurationSeconds?:unknown}:undefined
-  const impact=typeof value?.servingImpact==="string"&&value.servingImpact.trim()?value.servingImpact:"미제공"
-  const seconds=value?.estimatedDurationSeconds
-  return {servingImpact:impact,estimatedDurationSeconds:typeof seconds==="number"&&Number.isFinite(seconds)&&seconds>=0?seconds:null}
+export function requestOperationalSummary(answer?:unknown,pools?:unknown) {
+  const value=answer as {resolves?:boolean;campaign?:{spec?:MeasurementPlanSpec};batchPlan?:{plannedBatches:number[]}}|undefined
+  const spec=value?.campaign?.spec,batches=value?.batchPlan?.plannedBatches??spec?.batchSizes
+  const active=spec?.activeProtocol.durationSeconds,idle=spec?.idleProtocol.durationSeconds,settling=spec?.idleProtocol.settlingDurationSeconds
+  // Warmup is an iteration count, not seconds. Only timed request intervals form this lower bound.
+  const intervals=[active,idle,settling],trials=spec?.trialsPerBatch
+  const known=value?.resolves===true&&batches&&trials!==undefined&&Number.isSafeInteger(trials)&&trials>0&&intervals.every(seconds=>typeof seconds==="number"&&Number.isFinite(seconds)&&seconds>=0)
+  const seconds=known?batches.length*trials*intervals.reduce<number>((sum,seconds)=>sum+seconds!,0):null
+  const view=pools as {workloads?:{workload:{uid:string};instances?:{node:{name:string};stopped:boolean}[]|null}[]|null;issues?:unknown[]|null}|undefined
+  const servingImpact=value?.resolves===true&&spec?.state.targetNode&&view&&Array.isArray(view.workloads)&&!view.issues?.length&&view.workloads.every(pool=>Array.isArray(pool.instances))
+    ?new Set(view.workloads.filter(pool=>pool.instances!.some(instance=>!instance.stopped&&instance.node.name===spec.state.targetNode)).map(pool=>pool.workload.uid)).size:null
+  return {servingImpact,estimatedDurationSeconds:seconds!==null&&Number.isFinite(seconds)?seconds:null}
+}
+
+export function requestFailureFacts(conditions:Condition[]=[]):[string,string][] {
+  return conditions.length?conditions.flatMap(condition=>[["서버 상태",`${condition.type}: ${condition.status}`],["서버 사유",condition.reason||"미제공"],["서버 메시지",condition.message||"미제공"]] as [string,string][]):[["서버 사유","미제공"],["서버 메시지","미제공"]]
 }

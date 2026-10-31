@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { datasetGap, requestNumber, requestBatches, requestDefaults, requestInputs, requestInitialBatches, requestTargetBatches, requestConditionChanges, requestPreflightReason, requestRejectionGuidance, requestOperationalSummary } from "./measurement-request.ts"
+import { datasetGap, requestNumber, requestBatches, requestDefaults, requestInputs, requestInitialBatches, requestTargetBatches, requestConditionChanges, requestPreflightReason, requestRejectionGuidance, requestOperationalSummary, requestFailureFacts } from "./measurement-request.ts"
 import type { MeasurementPlan, ProfilesView } from "./read-types.ts"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
@@ -209,6 +209,29 @@ test("rejected preflight points to exact repair fields instead of generic permis
   assert.ok(metric?.fields.includes("idleWindow"))
   assert.deepEqual(metric?.constraints[1],["대기 한도","< 기록 간격"])
   assert.equal(requestRejectionGuidance("future unknown rejection"),null)
-  assert.deepEqual(requestOperationalSummary(undefined),{servingImpact:"미제공",estimatedDurationSeconds:null})
-  assert.deepEqual(requestOperationalSummary({servingImpact:"CPU 점유",estimatedDurationSeconds:90}),{servingImpact:"CPU 점유",estimatedDurationSeconds:90})
+  assert.deepEqual(requestOperationalSummary(undefined),{servingImpact:null,estimatedDurationSeconds:null})
+  const answer={resolves:true,campaign:{spec:plan.spec},batchPlan:{plannedBatches:[1,2]}}
+  assert.deepEqual(requestOperationalSummary(answer),{servingImpact:null,estimatedDurationSeconds:132})
+  assert.equal(requestOperationalSummary({...answer,campaign:{spec:{...plan.spec,activeProtocol:{...plan.spec.activeProtocol,warmupIterations:500}}}}).estimatedDurationSeconds,132)
+  assert.equal(requestOperationalSummary({...answer,campaign:{spec:{...plan.spec,idleProtocol:{durationSeconds:10}}}}).estimatedDurationSeconds,null)
+  assert.equal(requestOperationalSummary({...answer,batchPlan:{plannedBatches:[]}}).estimatedDurationSeconds,0)
+  assert.equal(requestOperationalSummary({...answer,resolves:false}).estimatedDurationSeconds,null)
+  const pools={workloads:[{workload:{uid:"service"},instances:[{node:{name:"node"},stopped:false}]},{workload:{uid:"service"},instances:[{node:{name:"node"},stopped:false}]},{workload:{uid:"other"},instances:[{node:{name:"elsewhere"},stopped:false}]}],issues:[]}
+  assert.equal(requestOperationalSummary(answer,pools).servingImpact,1)
+  assert.equal(requestOperationalSummary(answer,{...pools,issues:[{code:"Unavailable"}]}).servingImpact,null)
+  assert.equal(requestOperationalSummary(answer,{...pools,workloads:[]}).servingImpact,0)
+})
+
+test("failure cause rows retain server reason and message before a generic classification",()=>{
+  assert.deepEqual(requestFailureFacts([{type:"Complete",status:"False",reason:"NativePreparationFailed",message:"Pod image missing"}]),[["서버 상태","Complete: False"],["서버 사유","NativePreparationFailed"],["서버 메시지","Pod image missing"]])
+  assert.deepEqual(requestFailureFacts([]),[["서버 사유","미제공"],["서버 메시지","미제공"]])
+})
+
+test("failed request details lead with server causes and keep deletion collapsed under management",()=>{
+  const source=readFileSync(new URL("../features/measurement-plans.tsx",import.meta.url),"utf8")
+  assert.match(source,/requestFailureFacts\(campaign\.conditions\)/)
+  assert.ok(source.indexOf("requestFailureFacts(campaign.conditions)")<source.indexOf("<ResultRows rows="))
+  assert.match(source,/<details><summary[^>]*>관리<\/summary><Rows label="위험 영역">/)
+  assert.match(source,/coverageUsageAssessment\(coverage\.data\?\.cells/)
+  assert.match(source,/result\?\.excludedTrials/)
 })

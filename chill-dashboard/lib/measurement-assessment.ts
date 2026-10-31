@@ -1,8 +1,18 @@
 import type { MeasurementAssessment, ResultRow } from "./read-types.ts"
 import { measurementCheckText, measurementReasonSummary } from "./measurements.ts"
 
+export function measurementSchedulerUsed(assessment?:MeasurementAssessment|null) {
+  return assessment?.scope?.schedulerUsed??null
+}
 export function measurementUsage(assessment?:MeasurementAssessment|null) {
-  return assessment?.scope?.schedulerUsed===true?"스케줄러 사용 중":assessment?.scope?.schedulerUsed===false?"스케줄러 미사용":"스케줄러 사용 여부 미확인"
+  const used=measurementSchedulerUsed(assessment)
+  return used===true?"스케줄러 사용 중":used===false?"스케줄러 미사용":"스케줄러 사용 여부 미확인"
+}
+
+export function measurementQuality(assessments:(MeasurementAssessment|null|undefined)[]) {
+  const failed=assessments.some(assessment=>assessment?.checklist?.checks?.some(check=>check.result==="fail"))
+  const passed=assessments.length>0&&assessments.every(assessment=>assessment?.checklist?.criteriaMet===true&&assessment.checklist.checks.length>0&&assessment.checklist.checks.every(check=>check.result==="pass"))
+  return {label:failed?"기준 미충족":passed?"기준 충족":"판정 불가",state:failed?"fail":passed?"pass":"unknown"}
 }
 
 export type MeasurementEvidenceCheck={label:string;value:string|number;unit:string}
