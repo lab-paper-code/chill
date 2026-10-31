@@ -383,3 +383,10 @@
 - 결정적 발견(패널 1): coverage는 계획된 batch 전체를 요구하는데 quick-energy는 local-min에서 멈춤(LocalMinimum 43/88) → 지금 방식으로는 셀의 약 절반이 insufficient로 끝남.
 - 순서(계약 변경 없음, 즉시): (1) quick-energy v2 전체 batch sweep (2) Smol 창 max(10 s, n·s_b)와 warmup 1(BEO 파라미터, n은 config에 동결) (3) 빈 셀 우선·노드별 lane·runtime declaration 생성(운영) (4) 기존 run raw로 ICC·CV 오프라인 분석. 효과 추정 126셀 약 102 → 23 node-h [추정].
 - E5 종료 뒤 cutover 1회: power 정책 동결과 PolicyPassed, 그리고 (4)가 허락하면 세션 프로토콜까지 한 번에. 새 profiling ADR 필요.
+
+## 2026-10-31 — ICC 분석과 측정 계획(`local://profiling-icc.md`)
+
+- 63 profile-batch, 327 run, native 86,927 표본. 재기동 간 mean 상대 SD 중앙/p90: MNV 0/1.64%, PLC 0.34/2.33%(Orin B1 12.99%), Smol 0/1.52%. Smol idle ICC 0.245. → 단일 세션은 지금 채택 근거가 부족함. 3개 독립 세션을 유지하고, cutover는 power 정책 동결로 축소.
+- 필요 n(p95 ±5%, 상관 보정, 중앙/p90): MNV 162/596, PLC 695/4,238(최대 9,187), Smol 94/649. 지수분포 가정의 3,254는 MNV·Smol에는 비관적이고 PLC에는 낙관적.
+- 셀당 시간: MNV·PLC는 batch당 active 약 2분, Smol은 호출이 수 초라 셀당 약 95분(10 s 창으로는 본질 정밀도 미달). 패널의 Smol 13분 추정은 폐기.
+- 다음: 커버리지 기반 BEO 생성기(hack/measure/gen.py 확장, n은 config). MNV·PLC 빈 셀 68개 먼저, Smol 58개는 나중. quick-energy v2(`537403aa`) 배포 후 파일럿.
