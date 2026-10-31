@@ -53,6 +53,13 @@ func TestBuildDeployment(t *testing.T) {
 		!hasSecretEnv(container.Env, "ROOT_SECRET_ACCESS_KEY", instance.CredentialsSecretName, secretKeySecretKey) {
 		t.Fatalf("credential env = %#v", container.Env)
 	}
+	hasIAM := false
+	for _, variable := range container.Env {
+		hasIAM = hasIAM || variable.Name == "VGW_IAM_DIR" && variable.Value == dataMountPath+"/.iam"
+	}
+	if !hasIAM {
+		t.Fatal("persistent internal IAM directory is not configured")
+	}
 	if container.ReadinessProbe.HTTPGet.Path != healthPath ||
 		container.ReadinessProbe.HTTPGet.Port != intstr.FromString(s3PortName) {
 		t.Fatalf("readiness probe = %#v", container.ReadinessProbe)

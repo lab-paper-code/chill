@@ -91,6 +91,12 @@ created once in an immutable retained Secret; rotation is deferred. PVC growth
 requires StorageClass/CSI expansion support; shrink and StorageClass replacement
 are rejected. Availability does not copy native replica, PVC, or engine status.
 
+The engine's internal IAM is enabled in `/data/.iam` on the retained PVC.
+Evaluation writers use a separate `user` account and a bucket policy granting
+only ListBucket/GetObject/PutObject, without DeleteObject. Root credentials remain
+the management/bootstrap account. IAM metadata must not be exposed as an S3 bucket
+or object; deployment checks verify both root and evaluation-user access boundaries.
+
 ## Implemented scope and remaining boundaries
 
 Internal contract/S3 adapter, Operator enable/update/disable with PVC retention,

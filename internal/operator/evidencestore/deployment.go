@@ -74,6 +74,7 @@ func buildStoreContainer(instance Instance, config Config) corev1.Container {
 			{Name: "VGW_PORT", Value: ":" + strconv.Itoa(int(s3Port))},
 			{Name: "VGW_REGION", Value: config.Region},
 			{Name: "VGW_HEALTH", Value: healthPath},
+			{Name: "VGW_IAM_DIR", Value: dataMountPath + "/.iam"},
 			secretEnv("ROOT_ACCESS_KEY_ID", instance.CredentialsSecretName, accessKeySecretKey),
 			secretEnv("ROOT_SECRET_ACCESS_KEY", instance.CredentialsSecretName, secretKeySecretKey),
 		},
