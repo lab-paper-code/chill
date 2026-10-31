@@ -279,7 +279,7 @@ func TestCleanupFailureReleasePreservesFailure(t *testing.T) {
 	if !occupied(parent) {
 		t.Fatal("cleanup failure released pool")
 	}
-	annotation := `{"reason":"operator confirmed previous writers stopped and pool returned","at":"2026-11-01T12:00:00Z","evidenceRef":{"store":"evidence","key":"operator-confirmation","size":10}}`
+	annotation := `{"reason":"operator confirmed writers stopped and pool returned","at":"2026-11-01T12:00:00Z","by":"operator"}`
 	if result, err := (&RunReconciler{Runtime: r}).release(context.Background(), parent, annotation); err != nil || result.RequeueAfter == 0 || !occupied(parent) || len(parent.Status.ReleaseRecords) != 0 {
 		t.Fatalf("release must wait for owned allocation/route return: result=%v err=%v", result, err)
 	}

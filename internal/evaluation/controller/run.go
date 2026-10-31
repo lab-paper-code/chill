@@ -457,12 +457,12 @@ func (r *RunReconciler) removeFinalizer(ctx context.Context, run *api.Evaluation
 
 func (r *RunReconciler) release(ctx context.Context, run *api.EvaluationRun, annotation string) (ctrl.Result, error) {
 	var request struct {
-		Reason      string                          `json:"reason"`
-		At          metav1.Time                     `json:"at"`
-		EvidenceRef api.EvaluationEvidenceReference `json:"evidenceRef"`
+		Reason      string                           `json:"reason"`
+		At          metav1.Time                      `json:"at"`
+		EvidenceRef *api.EvaluationEvidenceReference `json:"evidenceRef,omitempty"`
 	}
-	if err := json.Unmarshal([]byte(annotation), &request); err != nil || request.Reason == "" || request.At.IsZero() || request.EvidenceRef.Size < 1 || request.EvidenceRef.Store == "" || request.EvidenceRef.Key == "" {
-		return ctrl.Result{}, fmt.Errorf("release annotation requires reason, at, evidenceRef")
+	if err := json.Unmarshal([]byte(annotation), &request); err != nil || request.Reason == "" || request.At.IsZero() {
+		return ctrl.Result{}, fmt.Errorf("release annotation requires reason and at")
 	}
 	// The operator attests prior writers are stopped; independently observe pool return.
 	v := run.Status.FrozenConfig.Values
