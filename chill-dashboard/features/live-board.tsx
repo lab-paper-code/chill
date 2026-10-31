@@ -13,6 +13,8 @@ import { safeSource } from "@/lib/source-export"
 import { actionProgress, actionOrigin, duration, liveFresh, scopeSnapshot, scopeEvents, belongsToPool, boardVerdict, displayNumber, displayTime, elapsed, instanceSymbol, routingShare, serviceDevices, serviceRows, powerBreakdown, powerWindow, decisionReason, gapEpisodes, liveReason, terminalCount, trendSegments, workloadQueue, incidentSummary, sloLatency, minuteMetrics, type ServiceRow } from "@/lib/live-display"
 import { actionKinds, actionNodeName, actionStatuses, judgmentLabels } from "./scheduler"
 import { useCoverageInventory } from "./measurement-coverage"
+import { EvaluationActive } from "./evaluation-active"
+import { evaluationInjectionMatch, type ActiveEvaluations } from "@/lib/evaluation-active"
 import "./live-board.css"
 
 type Zone="UTC"|"KST"
@@ -42,6 +44,7 @@ function StateStrip({state,status,reconnect,now,zone,paused,togglePause}:{state:
   const fresh=liveFresh(state,now)
   return <div className="live-strip" aria-label="관측 상태">
     <div className="live-freshness"><strong>{paused?"화면 일시정지":status==="live"&&!fresh?"관측 지연":connection[status]??status}</strong><span>마지막 수신 <time dateTime={state.lastReceivedAt?new Date(state.lastReceivedAt).toISOString():undefined}>{state.lastReceivedAt?displayTime(new Date(state.lastReceivedAt).toISOString(),zone):"대기"}</time></span></div>
+    <EvaluationActive now={now}/>
     <div className="live-strip-actions"><button type="button" onClick={togglePause} aria-pressed={paused}>{paused?"실시간으로 복귀":"화면 일시정지"}</button>{!["live","fixture","paused-hidden"].includes(status)&&<button type="button" onClick={reconnect}>다시 연결</button>}
       {config.liveFixture&&<label>검사용 장면 <select value={params.get("fixture")??"live"} onChange={event=>{const next=new URLSearchParams(params.toString());next.delete("open");next.delete("at");if(event.target.value==="live")next.delete("fixture");else next.set("fixture",event.target.value);router.replace(`${path}?${next}`,{scroll:false})}}><option value="live">실시간</option><option value="empty">빈 상태</option><option value="first">첫 구성</option><option value="expand">확장</option><option value="shrink">축소</option></select></label>}
     </div>
@@ -81,9 +84,11 @@ function Changes({snapshot,select,now,zone}:{snapshot:LiveSnapshot;select:Select
 }
 function EventList({state,select,zone,now}:{state:LiveState;select:Select;zone:Zone;now:number}) {
   const {rows:visible}=incidentSummary(state.events,state.gaps,now,state.metrics)
+  const active=useChillQuery<ActiveEvaluations>("v1/evaluations/active")
   return <section className="live-events" id="live-incidents"><header className="live-section-heading"><h3>최근 사건</h3></header>
     <ol>{visible.map(row=><li className={Date.parse(row.at)>=now-5000?"live-recent-change":""} key={row.key}>
       {row.kind==="gap"?<><strong>관측 공백 / {gapLabel(state,row.gap.scope)}</strong><table><thead><tr><th>시작 KST</th><th>지속 s</th><th>상태</th></tr></thead><tbody><tr><td>{displayTime(row.gap.from,zone).replace(" KST","")}</td><td>{number(row.gap.seconds,"",1)}</td><td>{row.gap.lost?"기록 손실":row.gap.recovered?"회복":"진행"}</td></tr></tbody></table></>:<><time dateTime={row.at}>{displayTime(row.at,zone)}</time><strong title={row.event.kind==="decision"?row.event.decision.state:undefined}>{row.event.kind==="decision"?judgmentLabels[row.event.decision.state]??"구성 판단":row.event.kind==="action"?`${row.event.action.workloadUID?serviceName(state.snapshot,row.event.action.workloadUID):"공유 구성"} / ${actionKinds[row.event.action.kind]??"구성 변경"} / ${row.event.action.phase==="started"?"시작":row.event.action.phase==="completed"?"완료":"실패"}`:row.event.cluster.pod?.name??"클러스터 상태 변화"}</strong></>}
+      {row.kind==="event"&&evaluationInjectionMatch(row.event,active.error?[]:active.data?.items??[])&&<span className="live-injection-tag">주입</span>}
       <button className="live-event-hit" type="button" aria-label={`${row.kind==="gap"?`관측 공백 / ${gapLabel(state,row.gap.scope)}`:displayTime(row.at,zone)} 사건 상세`} onClick={event=>row.kind==="event"&&row.event.kind==="decision"?select("at",row.event.decision.at,event.currentTarget):select("open",row.kind==="gap"?`gap:${JSON.stringify([row.gap.scope,row.gap.from])}`:`event:${row.event.seq}`,event.currentTarget)}><span className="sr-only">사건 상세</span></button>
     </li>)}</ol></section>
 }

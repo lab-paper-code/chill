@@ -985,3 +985,10 @@ test("R14: rendered experiment judgment exposes one status and cause counts with
   assert.match(coverage,/role="img"/)
   assert.match(coverage,/일치 0 · 참고 1 · 대응 없음 0/)
 })
+
+test("cleanup residuals survive publication decoding without accepting malformed rows",()=>{
+  const residual={kind:"Node",name:"worker-1",reason:"CordonNotRestored"}
+  const run=decodeExperiment(JSON.stringify({id:"cleanup-failed",outcome:{cleanup:{status:"Failed",reason:"CleanupFailed",residuals:[residual,{kind:"Pod",name:9,reason:"bad"}]}}}))
+  assert.deepEqual(run.outcome?.cleanup?.residuals,[residual])
+  assert.equal(run.outcome?.cleanup?.status,"Failed")
+})

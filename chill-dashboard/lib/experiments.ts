@@ -5,7 +5,7 @@ import { formatMeasurementNumber } from "./measurements.ts"
 
 export type Published = Record<string, unknown>
 export type ExperimentStage = {id:string;from:string;to:string;kpis:Published}
-export type OutcomeAxis = {status?:string;verdict?:string;reason?:string}
+export type OutcomeAxis = {status?:string;verdict?:string;reason?:string;residuals?:{kind:string;name:string;reason:string}[]}
 export type InjectionOutcome = {id:string;action?:string;outcome?:"Executed"|"Cancelled"|"Invalid";reason?:string;scheduledOffsetSeconds?:number;actualOffsetSeconds?:number}
 export type ExperimentOutcome = {execution?:OutcomeAxis;measurement?:OutcomeAxis;cleanup?:OutcomeAxis;stages?:{id:string;execution?:OutcomeAxis;measurement?:OutcomeAxis;cleanup?:OutcomeAxis;injections?:InjectionOutcome[]}[]}
 export type Experiment = {schemaVersion:string;id:string;from:string;to:string;status:string;stages:ExperimentStage[];sources:{store:string;key:string}[];definition?:EvaluationDefinition;comparisons?:EvaluationComparison[];outcome?:ExperimentOutcome}
@@ -27,7 +27,8 @@ function readOutcome(value:unknown):ExperimentOutcome|undefined {
   const axes=(value:Published)=>{
     const axis=(key:string,field:"status"|"verdict")=>{
       const row=object(value[key])
-      return typeof row[field]==="string"||typeof row.reason==="string"?{[field]:typeof row[field]==="string"?row[field]:undefined,reason:typeof row.reason==="string"?row.reason:undefined}:undefined
+      const residuals=key==="cleanup"&&Array.isArray(row.residuals)?row.residuals.flatMap(value=>{const item=object(value);return typeof item.kind==="string"&&typeof item.name==="string"&&typeof item.reason==="string"?[{kind:item.kind,name:item.name,reason:item.reason}]:[]}):undefined
+      return typeof row[field]==="string"||typeof row.reason==="string"?{[field]:typeof row[field]==="string"?row[field]:undefined,reason:typeof row.reason==="string"?row.reason:undefined,...(residuals===undefined?{}:{residuals})}:undefined
     }
     return {execution:axis("execution","status"),measurement:axis("measurement","verdict"),cleanup:axis("cleanup","status")}
   }

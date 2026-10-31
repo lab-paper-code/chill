@@ -20,6 +20,12 @@
 .live-freshness strong{color:var(--live-accent)}
 .live-strip button,.live-strip select{font-size:13px}
 .live-strip label{display:flex;align-items:center;gap:6px}
+.live-evaluations{display:flex;flex-wrap:wrap;gap:8px;min-width:0;flex:1}
+.live-evaluation{border:1px solid var(--live-border);border-radius:6px;background:var(--live-surface);max-width:100%;padding:0 10px}
+.live-evaluation summary{font-size:13px}
+.live-evaluation summary strong{color:var(--live-accent)}
+.live-evaluation-details{padding:0 0 10px;display:grid;gap:8px}
+.live-injection-tag{display:inline-block;border:1px solid var(--live-accent);border-radius:4px;color:var(--live-accent);padding:0 5px;font-size:12px;font-weight:650}
 .live-verdict{border:1px solid var(--live-border);border-left:5px solid var(--live-accent);border-radius:8px;background:var(--live-surface);padding:12px 16px;display:flex;flex-direction:column;gap:8px}
 .live-verdict-title{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
 .live-verdict-title>strong{font-size:23px;line-height:1.2}

@@ -100,6 +100,40 @@ test("approved long inference lifetime keeps delivery without enlarging metadata
   assert.equal(relayPlan("PUT", ["v1", "models", "smol"], "", config).timeoutMs, 60000)
 })
 
+test("evaluation relay permits only contracted operations with conditional stop", () => {
+  const config = serverConfig({
+    CHILL_BASE_URL: "https://chill.example", CHILL_NAMESPACE: "research", CHILL_SYSTEM_NAME: "chill",
+  })
+  const plan = (method: string, path: string, search = "") => relayPlan(method, path.split("/"), search, config)
+  for (const path of ["v1/evaluations/active", "v1/evaluations/inputs", "v1/evaluations/template"]) {
+    assert.deepEqual(plan("GET", path), { path: `/api/${path}`, kind: "query", timeoutMs: config.queryTimeoutMs, bodyAllowed: false })
+    for (const method of ["POST", "PUT", "DELETE", "PATCH"]) assert.throws(() => plan(method, path, "?uid=run-uid"), /DashboardMethodNotAllowed/)
+    assert.throws(() => plan("GET", path, "?limit=1"), /DashboardQueryInvalid/)
+  }
+  for (const path of ["v1/evaluations/preflight", "v1/evaluations/load-scenarios/preflight"]) {
+    assert.deepEqual(plan("POST", path), { path: `/api/${path}`, kind: "query", timeoutMs: config.queryTimeoutMs, bodyAllowed: true })
+    for (const method of ["GET", "PUT", "DELETE", "PATCH"]) assert.throws(() => plan(method, path), /DashboardMethodNotAllowed/)
+    assert.throws(() => plan("POST", path, "?variantId=other"), /DashboardQueryInvalid/)
+  }
+  for (const path of ["v1/evaluations", "v1/evaluations/load-scenarios", "v1/evaluations/run-a/release"]) {
+    assert.deepEqual(plan("POST", path), { path: `/api/${path}`, kind: "mutation", timeoutMs: config.mutationTimeoutMs, bodyAllowed: true })
+    if (!path.endsWith("/release")) assert.deepEqual(plan("GET", path), { path: `/api/${path}`, kind: "query", timeoutMs: config.queryTimeoutMs, bodyAllowed: false })
+    else assert.throws(() => plan("GET", path), /DashboardMethodNotAllowed/)
+    for (const method of ["PUT", "DELETE", "PATCH"]) assert.throws(() => plan(method, path), /DashboardMethodNotAllowed/)
+    assert.throws(() => plan("POST", path, "?dryRun=All"), /DashboardQueryInvalid/)
+  }
+  for (const path of ["v1/evaluations/run-a", "v1/evaluations/load-scenarios/load-a"]) {
+    assert.deepEqual(plan("GET", path), { path: `/api/${path}`, kind: "query", timeoutMs: config.queryTimeoutMs, bodyAllowed: false })
+    for (const method of ["DELETE", "PUT"]) {
+      assert.deepEqual(plan(method, path, "?uid=run-uid"), { path: `/api/${path}?uid=run-uid`, kind: "mutation", timeoutMs: config.mutationTimeoutMs, bodyAllowed: method === "PUT" })
+      for (const query of ["", "?uid=", "?uid=one&uid=two", "?uid=run-uid&force=true"]) assert.throws(() => plan(method, path, query), /DashboardQueryInvalid/)
+    }
+    for (const method of ["POST", "PATCH"]) assert.throws(() => plan(method, path), /DashboardMethodNotAllowed/)
+    assert.throws(() => plan("GET", path, "?uid=run-uid"), /DashboardQueryInvalid/)
+  }
+  for (const path of ["v1/evaluations/run-a/status", "v1/evaluations/run-a/release/extra"]) assert.throws(() => plan("POST", path), /DashboardRouteNotAllowed/)
+})
+
 test("scheduler consumer routes enforce exact methods and bounded observation queries", () => {
   const config = serverConfig({
     CHILL_BASE_URL: "https://chill.example", CHILL_NAMESPACE: "research", CHILL_SYSTEM_NAME: "chill",

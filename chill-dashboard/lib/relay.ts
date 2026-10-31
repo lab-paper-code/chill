@@ -56,6 +56,12 @@ export function relayPlan(method: string, segments: string[], search: string, co
   else if (route === "v1/model-compatibility") { methods = ["GET"]; query = "compatibility" }
   else if (route === "v1/model-compatibility-matrix") methods = ["GET"]
   else if (/^v1\/experiments(?:\/[^/]+)?$/.test(route)) methods = ["GET"]
+  else if (route === "v1/evaluations/active" || route === "v1/evaluations/inputs" || route === "v1/evaluations/template") methods = ["GET"]
+  else if (route === "v1/evaluations/preflight" || route === "v1/evaluations/load-scenarios/preflight") methods = ["POST"]
+  else if (route === "v1/evaluations" || route === "v1/evaluations/load-scenarios") methods = ["GET", "POST"]
+  else if (/^v1\/evaluations\/load-scenarios\/[^/]+$/.test(route)) { methods = ["GET", "PUT", "DELETE"]; if (method !== "GET") query = "uid" }
+  else if (/^v1\/evaluations\/[^/]+\/release$/.test(route)) methods = ["POST"]
+  else if (/^v1\/evaluations\/[^/]+$/.test(route)) { methods = ["GET", "PUT", "DELETE"]; if (method !== "GET") query = "uid" }
   else if (/^v1\/namespaces\/[^/]+\/(operation-cost-measurements|dispatch-occupancy-measurements)(?:\/[^/]+)?$/.test(route)) methods = ["GET"]
   else if (route === "v1/scheduler" || route === "v1/scheduler/state") methods = ["GET"]
   else if (route === "v1/scheduler/settings") methods = ["GET", "PUT"]
@@ -74,7 +80,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   const params = new URLSearchParams(search)
   // A server dry-run creates nothing, so it keeps the query lifetime like preflight instead of an unknown mutation outcome.
   const dryRun = query === "dryRun" && params.has("dryRun")
-  if (kind !== "infer" && method !== "GET" && !dryRun && !/^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/preflight$/.test(route)) kind = "mutation"
+  if (kind !== "infer" && method !== "GET" && !dryRun && !/^v1\/evaluations\/(?:load-scenarios\/)?preflight$/.test(route) && !/^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/preflight$/.test(route)) kind = "mutation"
   // History lists default to summaries; selected records explicitly request compact evidence.
   const compact = method === "GET" && (query === "schedulerHistory" || route === "v1/scheduler" || route === "v1/scheduler/state")
   const allowed = compact ? ["view"] : []
