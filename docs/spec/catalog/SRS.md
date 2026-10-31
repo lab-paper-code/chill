@@ -128,6 +128,7 @@
 - `PC-04` 길이 오차는 ProfilingRun.spec.measurement.durationToleranceSeconds(현재0.5초, finite ≥0·duration 미만)로 BEO active/idle 및 독립 idle protocol에서 전달한다. BEO.spec.pointPolicy.confidenceLevel은 (0,1) 십진 문자열, 생략 "0.95"이며 campaign point·serving baseline·incremental energy CI가 같은 선택값을 쓴다. 독립 idle CR의 기존 CI 소유권은 유지한다. Profile.ConfidenceLevel과 CI 메시지도 실제값이다. 기존 immutable spec·실행/결과 참조를 재사용하고 중복 snapshot은 없다.
 - `PC-05` BEO는 기존 trialsPerBatch, 독립 idle은 pointPolicy.minimumRuns, 전이는 acceptedCountTarget을 재사용한다. 새 BEO minimumRuns는 없다. 하한2는 비기본 허용 범위 확대이며 minimum/target·attempt limit을 함께 맞추고 attemptLimit≥minimum/target을 유지한다. 숨은 <3/<5/자유도<2가 남으면 미완료다. 현재 실험 trial3/target5는 유지하며 필수 입력을 admission default로 오해하지 않는다. occupancy는 기존 durationSeconds 양수·open-loop rateFactor finite >1을 쓰고 현재60초/1.2를 유지한다. 별도 하한 필드는 없고 seed(uint64, 현재0)만 추가한다. closed-loop에 open-loop 하한을 강제하지 않는다.
 - `PC-06` 하네스는 증거 API cutover 후 잔존 실험 정책만 bind에서 effective config로 동결한다. 기존 stages id/seconds/alpha/parts·workload seed/arrivals·generatorQuality·선택 runbook을 실행/분석이 소비한다. 10ms delayed와 단순 poll/timeout은 새 knob로 만들지 않는다. G0 stageCount·expectedClosureCount는 없고 실제 선택 percentile은 요청 지연 원시에서 계산한다. client 수집·STOP loop·운영자 장애 주입은 유지한다.
+  실험 바인딩·장애 주입의 현행 소유권은 [실험 관리 SRS](../experiments/SRS.md)가 정본이며, PC-06의 기존 하네스 설명보다 우선한다.
 - `PR-05` 기존 profile-reuse annotation에서 minimumMeasurementSeconds(finite >0, 생략30)·minimumTrials(정수 ≥2, 생략3)를 선택한다. active/idle 각각의 최소 창이며 ProfileReuseCheck에 선택값과 실제 길이/trial을 기록한다. reusedProfile 정책 identity에도 두 값을 포함한다. 기존 sourceProfileID·maximumRelativeDifference와 조건 검사를 유지하며 전역 settings로 재정의하지 않는다.
 
 | 수용 시나리오 | 확인 결과 | 요구사항 |
@@ -175,6 +176,7 @@
 - `PC-13` 실험 게시자는 KPI 모집단의 기록 당시 workload UID·definition identity와 그 출처를
   보존된 binding/definition/snapshot에서 투영해야 한다. 혼합/미기록 identity는 미확인 사유를 남기며
   현재 같은 이름의 Workload로 채우지 않는다. 기존 publication/관측 archive는 소급 수정·재게시하지 않는다.
+  실험 실행 결과와 게시자 소유권의 정본은 [실험 관리 SRS](../experiments/SRS.md)이며, PC-12~13은 게시 정보의 의미만 정한다.
 
 | 수용 시나리오 | 확인 결과 | 요구사항 |
 |---|---|---|
