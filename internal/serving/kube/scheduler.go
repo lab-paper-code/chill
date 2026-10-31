@@ -1296,18 +1296,9 @@ func (c *SchedulerController) dependenciesReady(action serving.Action, target se
 func (c *SchedulerController) dependenciesComplete(action serving.Action, plan serving.SchedulerCandidate) bool {
 	for _, dep := range action.DependsOn {
 		run := c.runs[dep]
-		var frozen *serving.Action
-		if run != nil {
-			frozen = &run.action
-		} else if i := slices.IndexFunc(plan.Actions, func(a serving.Action) bool { return a.ID == dep }); i >= 0 {
-			frozen = &plan.Actions[i]
-		}
-		if frozen == nil {
-			return false
-		}
-		uids := c.handoffScope(action, *frozen, plan)
 		if run != nil && run.action.Status == nativeOperationComplete {
-			if action.Kind == operationStop && frozen.RouteTarget != nil {
+			if action.Kind == operationStop && run.action.RouteTarget != nil {
+				uids := c.handoffScope(action, run.action, plan)
 				if run.result == nil || len(uids) == 0 || !run.result.Operation.controlsWorkload(uids[0]) {
 					return false
 				}
@@ -1320,9 +1311,9 @@ func (c *SchedulerController) dependenciesComplete(action serving.Action, plan s
 			}
 			continue
 		}
-		if run != nil || frozen.Kind != operationRoute ||
-			(action.Kind != operationStop && action.Kind != operationRoute) ||
-			!c.completedHandoffPresent(*cmp.Or(frozen.RouteTarget, &plan), uids) {
+		i := slices.IndexFunc(plan.Actions, func(a serving.Action) bool { return a.ID == dep && a.Kind == operationRoute })
+		if run != nil || i < 0 || (action.Kind != operationStop && action.Kind != operationRoute) ||
+			!c.completedHandoffPresent(*cmp.Or(plan.Actions[i].RouteTarget, &plan), c.handoffScope(action, plan.Actions[i], plan)) {
 			return false
 		}
 	}
@@ -1330,27 +1321,22 @@ func (c *SchedulerController) dependenciesComplete(action serving.Action, plan s
 }
 
 func (c *SchedulerController) handoffScope(action, dependency serving.Action, plan serving.SchedulerCandidate) []string {
-	if dependency.RouteTarget == nil {
+	if dependency.RouteTarget == nil || (action.Kind != operationStop && action.Kind != operationRoute) {
 		return c.targetWorkloadsLocked(plan)
 	}
+	consumers := plan.Actions
 	if action.Kind == operationStop {
-		if uid := handoffSourceUID(*dependency.RouteTarget, action.Instance); uid != "" {
-			return []string{uid}
-		}
-		return []string{}
+		consumers = []serving.Action{action}
 	}
-	if action.Kind == operationRoute {
-		uids := []string{}
-		for _, stop := range plan.Actions {
-			if stop.Kind == operationStop && slices.Contains(stop.DependsOn, dependency.ID) {
-				if uid := handoffSourceUID(*dependency.RouteTarget, stop.Instance); uid != "" && !slices.Contains(uids, uid) {
-					uids = append(uids, uid)
-				}
+	uids := []string{}
+	for _, stop := range consumers {
+		if stop.Kind == operationStop && slices.Contains(stop.DependsOn, dependency.ID) {
+			if uid := handoffSourceUID(*dependency.RouteTarget, stop.Instance); uid != "" && !slices.Contains(uids, uid) {
+				uids = append(uids, uid)
 			}
 		}
-		return uids
 	}
-	return c.targetWorkloadsLocked(plan)
+	return uids
 }
 
 func handoffSourceUID(target serving.SchedulerCandidate, instance string) string {
