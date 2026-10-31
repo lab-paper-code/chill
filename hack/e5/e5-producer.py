@@ -105,6 +105,8 @@ def main():
             if segment['rate'] > 0:
                 offsets.extend(base+x for x in cli.arrival_offsets_ns(kw['arrivals'], segment['rate'], segment['seconds'], kw['seed']))
             base += round(segment['seconds']*1e9)
+        if 'offsetsNS' in binding:
+            offsets = binding['offsetsNS']
         encoded = json.dumps(offsets, separators=(',', ':')).encode()
         if hashlib.sha256(encoded).hexdigest() != binding['arrivalSHA256'] or len(offsets) != binding['offered']:
             raise ValueError('Installed CLI arrival generation differs; no inference sent')

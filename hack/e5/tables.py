@@ -1,5 +1,7 @@
 """Render existing E5 summaries without changing judgments or canonical documents."""
 import json
+import gzip
+import re
 from pathlib import Path
 
 
@@ -68,9 +70,66 @@ def paired_power(pair, mode):
             'gapErrorBoundJoules':error.get(prefix+'BoundJoules'),
             'energyCoverage':error.get(prefix+'Coverage')}
 
+def sections(path):
+    """Project small judgment fields without loading duplicated raw Tick arrays."""
+    if not path.exists(): path = Path(str(path)+'.gz')
+    if not path.exists(): return None
+    wanted = {'requests', 'power', 'failureScenarioEvidence', 'status'}
+    result = {}
+    with (gzip.open(path, 'rt') if path.suffix == '.gz' else path.open()) as stream:
+        for line in stream:
+            match = re.match(r'^  "([^"]+)": (.*)', line)
+            if not match or match[1] not in wanted: continue
+            key, text = match.groups()
+            if text == '{':
+                chunk = [text+'\n']
+                for part in stream:
+                    chunk.append(part.rstrip().rstrip(',')+'\n' if part.startswith('  }') else part)
+                    if part.startswith('  }'): break
+                result[key] = json.loads(''.join(chunk))
+            else: result[key] = json.loads(text.rstrip().rstrip(','))
+            if wanted <= result.keys(): break
+    if 'requests' not in result or 'status' not in result:
+        raise ValueError('Incomplete judgment sections: '+str(path))
+    return result
+
+
+def publication_requests(judgment):
+    """Keep the existing publisher's population projection, not raw file paths."""
+    requests={}
+    fields=('offered','clientRows','unfinishedOrUnsent','outcomes','completedLatencyNS','gatewayCompletedLatencyNS','latencyScope','scheduledLatencyNS','entranceDelayNS','entranceDelayMeaning','actualLatencyNS','completionResidualNS','gatewayTailNS','deadlineSuccess','deadlineSuccessFraction','requiredSuccessfulRank','D1','unsentAtWindowEnd','actualGatewayIdentities','gatewayFinalOutcomes','offeredGatewayFinalOutcomes','selectedResidualPercentile')
+    population_fields=('rawRows','populationUniqueRows','duplicateRows','kinds','uniqueRequests','uniqueFinalRows','outcomes','executionComplete','completed','withoutUnambiguousHTTPFinal','nativeSupplementRows','nativeOutcomes','complete')
+    for name,value in judgment['requests'].items():
+        row={key:value[key] for key in fields if key in value}
+        row['issuanceFidelity']=value.get('issuanceFidelity')
+        row.update(successNumerator=value['deadlineSuccess'],successDenominator=value['offered'],population='Frozen offered arrivals; final outcome and successful execution populations remain separate')
+        for key in ('rawPopulation','offeredResponsePopulation'):
+            population=value.get(key) or {}
+            row[key]={field:population[field] for field in population_fields if field in population}
+        row['missingReasons']={'deadlineSuccessFraction':'No offered arrivals' if not value['offered'] else None,'completedLatencyNS':'No successful execution-complete gateway responses' if not value.get('completedLatencyNS',{}).get('samples') else None,'completionResidualNS':'No complete native/dispatched residual observations' if not value.get('completionResidualNS',{}).get('samples') else None}
+        requests[name]=row
+    return requests
+
+
+def render_evaluation(stages, results):
+    lines = ['EvaluationRun — existing E5 judgments; no inferred comparison pairs.']
+    for stage in stages:
+        value=stage['kpis']
+        lines.append(stage['id']+': '+value['status'])
+        for name, metric in value['requests'].items():
+            lines.append(stage['id']+' '+name+': '+result_counts(metric))
+        lines.append(stage['id']+' power: '+energy_text(value.get('power')))
+    for identifier, result in results.items():
+        lines.append(identifier+' measurement: '+result.get('measurement',{}).get('verdict','NOT_EVALUATED'))
+    return '\n'.join(lines)+'\n'
+
+
 
 def render(root, repo):
     root = root.resolve()
+    if (root / 'evaluation-results.json').exists():
+        result=load(root / 'evaluation-results.json')
+        return render_evaluation(result['stages'],result['results'])
     if not (root / 'binding.json').exists() and (root / 'run/binding.json').exists():
         root = root / 'run'
     binding = load(root / 'binding.json')

@@ -36,8 +36,10 @@ def _time(value):
 
 def _root(folder, approved_root=None):
     root = Path(folder).resolve()
-    ops = Path(approved_root).resolve() if approved_root is not None else Path(json.loads(Path(os.environ['CHILL_EXPERIMENT_CONFIG']).read_text())['paths']['campaign'])
-    if root != ops and ops not in root.parents:
+    paths = json.loads(Path(os.environ['CHILL_EXPERIMENT_CONFIG']).read_text())['paths'] if approved_root is None else {}
+    roots = [Path(approved_root).resolve()] if approved_root is not None else [Path(paths['campaign']).resolve()]
+    if paths.get('inputs'): roots.append(Path(paths['inputs']).resolve())
+    if not any(root == allowed or allowed in root.parents for allowed in roots):
         raise ValueError('archive folder is outside approved operational directory')
     return root
 

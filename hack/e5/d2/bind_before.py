@@ -24,6 +24,13 @@ BEFORE_SHA = 'e18ac391d4353e5abba03558b163312f2a7b629b'
 SETTINGS = ('completionMarginMS', 'capacityWindowNanos', 'capacityWindows',
             'capacityPassingWindows', 'capacityMinimumRequests',
             'capacityGridSteps', 'capacityBisectionWidth', 'capacityTailSamples')
+# internal/serving/scheduler.go: SchedulerSettingsInput.Settings (missing fields only).
+CAPACITY_DEFAULTS = {'capacityGridSteps':20,'capacityBisectionWidth':.005,'capacityTailSamples':100}
+
+
+def capacity_settings(record):
+    return {key:record[key] if key in record else value for key,value in CAPACITY_DEFAULTS.items()}
+
 SOURCES = ('internal/serving/capacity.go:31-111',
            'internal/serving/scheduler_replay.go:311-439',
            'internal/serving/kube/scheduler.go:563-579',
@@ -197,7 +204,7 @@ def bind(args):
     try:
         scheduler = docs['scheduler']
         require(scheduler, ('settings',), 'full scheduler GET')
-        settings = result['settings'] = scheduler['settings']
+        settings = result['settings'] = {**scheduler['settings'], **capacity_settings(scheduler['settings'])}
         require(settings, (*SETTINGS, 'maxCPUs', 'servingMemoryBytes'), 'scheduler.settings')
         if 'state' in scheduler:
             require(scheduler['state'], ('snapshot',), 'scheduler.state')
@@ -284,7 +291,7 @@ def bind(args):
                                     'allocation': i['allocation'], 'maxBatch': batch,
                                     **{k: settings[k] for k in SETTINGS}}
                         matches = [r for r in rows if isinstance(r, dict) and isinstance(r.get('input'), dict)
-                                   and all(r['input'].get(k) == v for k, v in expected.items())]
+                                   and all(r['input'].get(k,CAPACITY_DEFAULTS.get(k)) == v for k, v in expected.items())]
                         row = matches[0] if len(matches) == 1 else None
                         if not matches:
                             reasons.append('MissingExactCapacityInput')

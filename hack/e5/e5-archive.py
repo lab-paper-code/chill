@@ -93,7 +93,7 @@ def _hours(first, last):
 def _raw_get(io, path, deadline):
     request = urllib.request.Request(
         ENVIRONMENT['d2']['apiBase'] + path,
-        headers={'Authorization': 'Bearer ' + (Path(ENVIRONMENT['paths']['ops']) / '.token-collector').read_text().strip()})
+        headers={'Authorization': 'Bearer ' + Path(getattr(io, 'collector_token_file', ENVIRONMENT['d2'].get('collectorTokenFile', str(Path(ENVIRONMENT['paths']['ops']) / '.token-collector')))).read_text().strip()})
     return io.http.open(request, timeout=_remaining(deadline))
 
 

@@ -52,6 +52,13 @@ FULL_RESTORE_ROWS = ('E5-1', 'E5-3', 'E5-5', 'E5-6', 'E5-7', *MICRO_ROWS)
 
 
 def freeze_producer_config(config):
+    if config.get('evaluation'):
+        shards=config['producerShards']
+        if set(shards)!=set(PRODUCER_ALIASES) or any(type(value) is not int or value<1 for value in shards.values()):
+            raise ValueError('Evaluation shards require positive counts for each workload')
+        config['producerResources']=copy.deepcopy(config['evaluation']['resources'])
+        config['producerShards']=dict(shards)
+        return
     resources = config.get('producerResources', {'cpu': '2', 'memory': '1Gi'})
     if not isinstance(resources, dict) or set(resources) != {'cpu', 'memory'}:
         raise ValueError('producerResources requires cpu and memory quantity strings')
@@ -218,7 +225,7 @@ def self_check_g0():
         return {'errors': [], 'finals': {str(n): {'outcome': 'completed', 'executionComplete': True,
                 'elapsedNanos': n*10_000_000} for n in (1, 2)}}
     raw = SimpleNamespace(index_requests=index)
-    analysis = SimpleNamespace(Inputs=lambda folder: SimpleNamespace(jsonl=lambda path: [{'requestID': 'one'}, {'requestID': 'two'}]))
+    analysis = SimpleNamespace(Inputs=lambda folder: SimpleNamespace(jsonlines=lambda path: [{'requestID': 'one'}, {'requestID': 'two'}]))
     with patch.dict(globals(), load=lambda path: copy.deepcopy(documents[str(path)]),
                     ref=lambda path: {'path': path}, module=lambda name,path: raw if name == 'g0_raw' else analysis):
         gate = g0_evidence_gate({'g0Evidence': chosen}, 1, expected_rates=selected_rates, plc_slo=selected_slo)
@@ -282,6 +289,20 @@ def freeze_harness_config(config):
 
 
 def configured_stage_specs(config):
+    if config.get('evaluation'):
+        rows = config['stages']
+        result = []
+        for row in rows:
+            for part in row['parts']:
+                rates = part.get('rates')
+                alpha = part.get('alpha')
+                if (rates is None) == (alpha is None):
+                    raise ValueError('Evaluation part requires rates or alpha')
+                values = rates if rates is not None else alpha
+                if set(values) != set(WORKLOADS) or any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in values.values()) or not positive(part['seconds']):
+                    raise ValueError('Evaluation part requires complete finite nonnegative workload values')
+                result.append((row['id']+'-'+part['id'], part['seconds'], [alpha[name] for name in WORKLOADS] if alpha is not None else None))
+        return result
     if 'stages' not in config and E5.get('stages'):
         config['stages'] = copy.deepcopy(E5['stages'])
     if 'stages' not in config:
@@ -352,6 +373,23 @@ def serving_failure_targets(state, load_window, uids, excluded_nodes=()):
 
 def validate_failure_events(evidence, start_utc, end_utc, epoch=None):
     """Check recorded manual evidence, not success or recommended injection offsets."""
+    if evidence.get('selectionPolicy')=='evaluation-controller-v1':
+        plans=evidence['plans'];records=evidence['records']
+        if len(plans)!=len(records): raise ValueError('INVALID: incomplete controller injection evidence')
+        for plan, original in zip(plans,records):
+            record=original['record']
+            if record['id']!=plan['id'] or record.get('outcome')!='Complete':
+                raise ValueError('INVALID: controller injection '+record.get('reason','not complete'))
+            if epoch is None or not epoch(start_utc)<=epoch(record['requestedAt'])<=epoch(end_utc):
+                raise ValueError('INVALID: controller injection outside offered window')
+            if not original.get('requests') or not record.get('nodeRef',{}).get('uid'):
+                raise ValueError('INVALID: controller request or exact node absent')
+            if plan['action']!='uncordon':
+                uid=record.get('podRef',{}).get('uid')
+                deletes=[request for request in original['requests'] if request.get('method')=='DELETE']
+                if not uid or len(deletes)!=1 or deletes[0].get('body',{}).get('preconditions',{}).get('uid')!=uid:
+                    raise ValueError('INVALID: controller delete lacks exact Pod UID')
+        return
     micro = evidence.get('stage') == 'E5-7m'
     kinds = ('delete-serving-pod',) if micro else ('delete-serving-pod', 'cordon-delete', 'uncordon')
     events = evidence.get('events')
@@ -1054,7 +1092,7 @@ def g0_evidence_gate(config, weighted_capacity, *, required=True, expected_rates
     folder = Path(evidence['binding']).parent / 'smoke-G-check'
     phase = load(folder/'phase.json')
     plc = next(w for w in binding['config']['workloads'] if w['name'] == 'plc-anomaly')
-    clients = module('g0_analysis', D2/'analyze_before.py').Inputs(folder).jsonl(folder/'plc-anomaly-client.jsonl')
+    clients = module('g0_analysis', D2/'analyze_before.py').Inputs(folder).jsonlines(folder/'plc-anomaly-client.jsonl')
     response_ids = [row['requestID'] for row in clients if row.get('requestID')]
     indexed = module('g0_raw', HERE/'e5-raw.py').index_requests(folder, plc['uid'], phase['startUTC'], phase['endUTC'], response_ids)
     values = sorted(row['elapsedNanos'] for row in indexed['finals'].values()
@@ -1114,9 +1152,13 @@ def positive(x):
 def token_preflight(config, stages):
     config['timeboxes'].setdefault('finishResetWaitSeconds', 600)
     auth = module('e5_auth', HERE / 'auth.py')
-    budget = auth.lifetime_budget(stages, config['timeboxes'], config.get('tokenSafetyMarginSeconds', 60))
-    return auth.check(config['tokenFile'], budget, endpoint=config.get('endpoint'), ca_file=config.get('caFile'),
-                      timeout=config['timeboxes']['apiSeconds'])
+    evaluation=config.get('evaluation')
+    budget = config['timeboxes']['apiSeconds']+config.get('tokenSafetyMarginSeconds',60) if evaluation else auth.lifetime_budget(stages, config['timeboxes'], config.get('tokenSafetyMarginSeconds', 60))
+    record = auth.check(config['tokenFile'], budget, endpoint=config.get('endpoint'), ca_file=config.get('caFile'),
+                        timeout=config['timeboxes']['apiSeconds'])
+    if evaluation:
+        record.update(jobActiveDeadlineSeconds=evaluation['jobActiveDeadlineSeconds'],rotation='Projected token reread on every HTTP request; server authenticates each request')
+    return record
 
 
 def ref(path, allow_empty=False):
@@ -1332,7 +1374,7 @@ def power_observation(c, *, frozen=False):
     if frozen:
         policy = load(c['inputs']['powerObservation'])['schedulerSettings']['powerObservation']
     else:
-        request = urllib.request.Request(c['endpoint']+'/api/v1/scheduler/settings', headers={'Authorization':'Bearer '+(OPS/'.token-collector').read_text().strip()})
+        request = urllib.request.Request(c['endpoint']+'/api/v1/scheduler/settings', headers={'Authorization':'Bearer '+Path(c.get('collectorTokenFile', OPS/'.token-collector')).read_text().strip()})
         auth = module('e5_power_auth', HERE/'auth.py')
         opener = urllib.request.build_opener(auth.NoRedirect(), urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=c['caFile'])))
         with opener.open(request, timeout=c['timeboxes']['apiSeconds']) as response:
@@ -1349,7 +1391,7 @@ def bind(path):
     freeze_harness_config(c)
     module('e5_quality', D2/'analyze_before.py').generator_quality_config(c)
     need(c, ['approval', 'inputs', 'g0Evidence', 'mSeconds', 'N', 'burstLowSeconds', 'timeboxes', 'smokeSeconds', 'workloads', 'collection', 'factors', 'endpoint', 'caFile', 'tokenFile', 'kubeContext'], 'phase6')
-    c['collectorTokenFile']=str(OPS/'.token-collector')
+    c.setdefault('collectorTokenFile', str(OPS/'.token-collector'))
     need(c['approval'], REQUIRED['approval'], 'approval'); need(c['inputs'], REQUIRED['inputs'], 'inputs'); need(c['collection'], REQUIRED['collection'], 'collection'); need(c['timeboxes'], REQUIRED['timeboxes'], 'timeboxes')
     c['collection']['energyCoverage']=module('e5energy_policy',HERE/'e5-archive.py').energy_policy(c['collection'])
     component_sources = approval_sources(c['approval'])
@@ -1431,8 +1473,9 @@ def bind(path):
                 instance = option['instance']; profile = instance['profile']
                 if '$ref' in profile: profile = s['profiles'][profile['$ref']]
                 if w['uid'] not in (option.get('compatibleUIDs') or []): continue
-                expected = {'node': instance['node'], 'profileID': profile['id'], 'powerMode': profile['condition']['powerMode'], 'allocation': instance['allocation'], **{key: settings[key] for key in native.SETTINGS}}
-                if any(inp.get(key) != value for key, value in expected.items()): continue
+                expected = {'node': instance['node'], 'profileID': profile['id'], 'powerMode': profile['condition']['powerMode'], 'allocation': instance['allocation'], **{key: settings[key] for key in native.SETTINGS if key not in native.CAPACITY_DEFAULTS}, **native.capacity_settings(settings)}
+                recorded={**inp,**native.capacity_settings(inp)}
+                if any(recorded.get(key) != value for key,value in expected.items()): continue
                 node = next(n for n in snap['nodes'] if n['node'] == instance['node'])
                 actual_reasons=native.eligibility(instance,profile,node,None,settings,inp['maxBatch'])
                 if profile['condition']['runtimeImage'].rsplit('sha256:',1)[-1] not in c['approval']['runtimeDigests']:actual_reasons.append('RuntimeOutsideFrozen7')
@@ -1480,8 +1523,11 @@ def bind(path):
     part_ids = {(part['id'] if part['id'] == row['id'] or part['id'].startswith(row['id']+'-') else row['id']+'-'+part['id']): part['id']
                 for row in c['stages'] for part in row.get('parts', [row])}
     for label, duration, fractions in stages:
-        intended = {name: ws[name]['R']*share_by_workload[name]*fractions[j] for j, name in enumerate(WORKLOADS)}; rates = dict(intended)
-        st = {'id': label, 'seconds': duration, 'poolShares': shares, 'alpha': dict(zip(WORKLOADS, fractions)), 'intendedRates': intended, 'rates': rates, 'traces': {}}
+        direct = next((part['rates'] for row in c['stages'] for part in row.get('parts', []) if row['id']+'-'+part['id']==label and 'rates' in part), None)
+        intended = dict(direct) if direct is not None else {name: ws[name]['R']*share_by_workload[name]*fractions[j] for j, name in enumerate(WORKLOADS)}
+        rates = dict(intended)
+        st = {'id': label, 'seconds': duration, 'poolShares': shares, 'intendedRates': intended, 'rates': rates, 'traces': {}}
+        if fractions is not None: st['alpha'] = dict(zip(WORKLOADS, fractions))
         for name, rate in rates.items():
             offsets = cli.arrival_offsets_ns(c['arrivals'][name], rate, duration, c['seeds'][name]) if rate else []
             st['traces'][name] = {'seed': c['seeds'][name], 'offsetsNS': offsets, 'offered': len(offsets), 'arrivalSHA256': hashlib.sha256(json.dumps(offsets, separators=(',', ':')).encode()).hexdigest()}
@@ -1503,33 +1549,45 @@ def bind(path):
             offsets = []; base = 0
             for part in parts:
                 offsets.extend(base+x for x in part['traces'][name]['offsetsNS']); base += round(part['seconds']*1e9)
+            frozen_offsets=c.get('evaluation',{}).get('traceOffsets',{}).get(name)
+            if frozen_offsets is not None:
+                if not isinstance(frozen_offsets,list) or any(type(x) is not int or not 0<=x<round(row['seconds']*1e9) for x in frozen_offsets) or frozen_offsets!=sorted(frozen_offsets):
+                    raise ValueError('Frozen trace requires ordered nanosecond offsets within the offered window')
+                offsets=frozen_offsets
+                row['explicitTrace']=True
             row['traces'][name] = {'seed': c['seeds'][name], 'offsetsNS': offsets, 'offered': len(offsets), 'arrivalSHA256': hashlib.sha256(json.dumps(offsets,separators=(',',':')).encode()).hexdigest()}
         combined.append(row)
     schedule = combined
-    smoke = copy.deepcopy(next(row for row in schedule if row['id']=='E5-1')); smoke['id']='SMOKE'; smoke['seconds']=c['smokeSeconds']; smoke['parts']=[dict(smoke['parts'][0], id='SMOKE', seconds=c['smokeSeconds'])]
+    smoke = copy.deepcopy(next((row for row in schedule if row['id']=='E5-1'), schedule[0])); smoke['id']='SMOKE'; smoke['seconds']=c['smokeSeconds']; smoke['parts']=[dict(smoke['parts'][0], id='SMOKE', seconds=c['smokeSeconds'])]
     for name, rate in smoke['rates'].items():
         offsets = cli.arrival_offsets_ns(c['arrivals'][name], rate, c['smokeSeconds'], c['seeds'][name]) if rate else []
         smoke['traces'][name] = {'seed': c['seeds'][name], 'offsetsNS': offsets, 'offered': len(offsets), 'arrivalSHA256': hashlib.sha256(json.dumps(offsets,separators=(',',':')).encode()).hexdigest()}
-        if not offsets: raise ValueError('Approved smokeSeconds must produce at least one real recorded request per canonical Workload with frozen seed; do not invent extra arrivals')
+        if not offsets and not c.get('evaluation'): raise ValueError('Approved smokeSeconds must produce at least one real recorded request per canonical Workload with frozen seed; do not invent extra arrivals')
     c['smoke'] = smoke
     settings = dict(settings, powerObservation=power_observation(c,frozen=True))
-    c['harnessRepositoryCommit']=subprocess.check_output(['git','-C',str(REPO),'rev-parse','HEAD'],text=True).strip()
+    c['harnessRepositoryCommit']=c['evaluation']['sourceSHA'] if c.get('evaluation') else subprocess.check_output(['git','-C',str(REPO),'rev-parse','HEAD'],text=True).strip()
     c['tokenLifetime'] = token_preflight(c, schedule)
     canonical_schedule = [row for row in schedule if row['id'] in NORMATIVE_ROWS]
     return {'schema': 'e5-binding.v1', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': now(), 'schedulerSettings': settings, 'config': c, 'sources': refs, 'kappa': kappa, 'payload': payload, 'schedule': schedule, 'rowOrder': ['E5-0','E5-1','E5-2','E5-3','E5-S','E5-4','E5-5','E5-6','E5-7'], 'fullSeconds': sum(row['seconds'] for row in canonical_schedule), 'staticSeconds': sum(row['seconds'] for row in canonical_schedule if row['id'] not in ('E5-0','E5-7')), 'factorSeconds': sum(row['seconds'] for row in canonical_schedule if row['id'] in ('E5-2','E5-5'))*c['N'], 'accounting': {'d': '34/34 approved new-rule evidence; d25 closure subset frozen separately', 'exactCost': '69/69 historical exact-cost coverage, not current candidate count', 'evaluation': '0/7', 'planRows': '0/9', 'failureScenario': 'E5-7 scheduled; actual manual operator evidence required'}, 'limitations': ['B-only timing uncertainty; no profile statistical CI/global95 guarantee', 'D04/D09/D14/D23/D33 known systematic profile-serving bias; causal shares unknown', 'Profiling/evaluation record-ID separation and pinned-carrier equality UNKNOWN where actual enumeration is absent; host evaluation matches the retained producer payload', 'Single paired seed set is a case study, not three independent repetitions', E5['runtimeExclusionNote']]}
 
 
 class CPO:
-    def __init__(self, a):
+    def __init__(self, a, *, restore_control_on_error=True, go_callback=None):
+        self.restore_control_on_error = restore_control_on_error
+        self.go_callback = go_callback
         self.a = a; self.b = load_binding(a.binding); self.c = self.b['config']; self.out = a.out
         if self.b['status'] != 'BOUND_NOT_MEASURED': raise ValueError('Binding not ready')
         if 'powerObservation' not in self.b.get('schedulerSettings', {}):
             raise ValueError('Binding lacks frozen operating power observation; bind again')
         release = load(a.release)
         self.release = release
-        expected={'executor':'CampaignOps','bindingPath':str(a.binding),'sources':approval_sources(self.c['approval'])}
-        if approval_sources(release)!=expected['sources'] or any(release.get(k)!=v for k,v in expected.items()) or not release.get('mainInstructionUTC'): raise ValueError('Actual Main/CPO frozen component-source release required')
-        if release.get('command')!='e5-execute' and (release.get('command')!=a.command or release.get('stage')!=a.stage): raise ValueError('Command outside frozen release')
+        if self.c.get('evaluation'):
+            if release.get('execution') != self.c['evaluation']['execution'] or release.get('bindingPath') != str(a.binding):
+                raise ValueError('Evaluation execution authorization differs from frozen binding')
+        else:
+            expected={'executor':'CampaignOps','bindingPath':str(a.binding),'sources':approval_sources(self.c['approval'])}
+            if approval_sources(release)!=expected['sources'] or any(release.get(k)!=v for k,v in expected.items()) or not release.get('mainInstructionUTC'): raise ValueError('Actual Main/CPO frozen component-source release required')
+            if release.get('command')!='e5-execute' and (release.get('command')!=a.command or release.get('stage')!=a.stage): raise ValueError('Command outside frozen release')
         if not a.out.is_absolute() or not a.binding.is_absolute() or not a.release.is_absolute() or CAMPAIGN.resolve() not in a.out.resolve().parents: raise ValueError('Absolute external campaign output and input paths required')
         self.out.mkdir(parents=True, exist_ok=True)
         d = module('d2conduct', D2/'conduct_before.py'); self.d = d; self.io = object.__new__(d.Conductor)
@@ -1540,7 +1598,7 @@ class CPO:
         # Existing authenticated client and kubectl contracts, bound to actual phase6 configuration.
         d.BASE = self.c['endpoint']; d.CA = Path(self.c['caFile']); d.TOKEN = Path(self.c['tokenFile']); d.K = ENVIRONMENT['d2']['kubectl']+['-n',self.c['namespace']]
         self.io.config = self.c
-        self.io.collector_token_file=OPS/'.token-collector'
+        self.io.collector_token_file=Path(self.c.get('collectorTokenFile', OPS/'.token-collector'))
         self.io.ctx = ssl.create_default_context(cafile=self.c['caFile']); self.io.http = urllib.request.build_opener(d.NoRedirect(), urllib.request.HTTPSHandler(context=self.io.ctx))
         self.uids = [w['uid'] for w in self.c['workloads']]; self.tb = self.c['timeboxes']; self.ws = {w['name']: w for w in self.c['workloads']}
         self.bound_nodes=[row['node'] for row in self.state()['snapshot']['nodes'] if row['node']['name'] in NODES]
@@ -1549,9 +1607,10 @@ class CPO:
         self.native_evidence=[]
     def disk_boundary(self, row, boundary):
         usage=os.statvfs(self.out);free=usage.f_bavail*usage.f_frsize
-        record={'at':now(),'row':row,'boundary':boundary,'availableBytes':free,'minimumBytes':310_000_000_000,'path':str(self.out),'accepted':free>=310_000_000_000}
+        minimum=int(getattr(self,'c',{}).get('evaluation', {}).get('minimumFreeBytes', 310_000_000_000))
+        record={'at':now(),'row':row,'boundary':boundary,'availableBytes':free,'minimumBytes':minimum,'path':str(self.out),'accepted':free>=minimum}
         with (self.out/'disk-boundaries.jsonl').open('a') as stream:stream.write(json.dumps(record)+'\n')
-        if not record['accepted']:raise RuntimeError('Disk free below 310 GB; stop at row boundary')
+        if not record['accepted']:raise RuntimeError('Disk free below configured minimum; stop at row boundary')
 
     def api(self, method, path, body=None):
         settings_path = path == '/api/v1/scheduler/settings'
@@ -1719,7 +1778,7 @@ class CPO:
         source=sample.REMOTE
         roles=source.index("                if ns=='chill-system' and name=='serving-entrypoint':")
         role_end=source.index("                if role is None: continue",roles)
-        source=source[:roles]+"                if ns=="+repr(self.c['namespace'])+" and name=='load' and pod.startswith('e5-'): role='client'\n"+source[role_end:]
+        source=source[:roles]+"                if ns=="+repr(self.c['namespace'])+" and name=='load' and pod.startswith(('e5-','e5p-')): role='client'\n"+source[role_end:]
         thermal=source.index('    if began>=next_thermal:')
         source=source[:thermal]+source[source.index('    time.sleep(',thermal):]
         # Only external producers are discoverable by this sampler.
@@ -1741,14 +1800,30 @@ class CPO:
             p=subprocess.Popen(argv+[h['node'],str(seconds),self.a.stage],stdin=subprocess.PIPE,stdout=output,stderr=error,text=True); p.stdin.write(host_source); p.stdin.close(); children.append((p,output,error))
         return children
     def producer_job_name(self,name,stage):
+        if self.c.get('evaluation'):
+            execution=self.c['evaluation']['execution']
+            return 'e5p-'+execution['stageUID'].replace('-','')[:16]+'-'+str(list(self.ws).index(name))+'-0'
         return 'e5-'+self.a.mode.lower()+'-'+stage['id'].lower()+'-'+str(stage['traces'][name]['seed'])+('-'+self.a.row_tag.lower() if self.a.row_tag else '')
     def job(self, name, stage, folder):
         w=self.ws[name]; trace=stage['traces'][name]; job=load(w['jobTemplate']); label=self.producer_job_name(name,stage)
         job['metadata']={'name':label,'namespace':self.c['namespace'],'labels':{'chill.dacs.io/e5':self.a.mode}}
+        if self.c.get('evaluation'):
+            execution=self.c['evaluation']['execution']
+            labels={'chill.dacs.io/e5':self.a.mode,'edge.dacs.io/evaluation-run-uid':execution['runUID'],'edge.dacs.io/evaluation-stage':execution['stageID'],'edge.dacs.io/evaluation-step':'stage','edge.dacs.io/workload-role':'system'}
+            job['metadata']['labels']=labels
+            job['metadata']['ownerReferences']=[{'apiVersion':'edge.dacs.io/v1alpha1','kind':'EvaluationStage','name':execution['stageName'],'uid':execution['stageUID'],'controller':True,'blockOwnerDeletion':True}]
+            job['spec']['template']['metadata']={'labels':labels}
         spec=job['spec']; spec.pop('selector',None); spec.pop('manualSelector',None); spec['backoffLimit']=0; spec['activeDeadlineSeconds']=math.ceil(self.tb['setupSeconds']+self.tb['barrierSeconds']+stage['seconds']+self.tb['drainSeconds']); spec['template']['metadata']={'labels':{'chill.dacs.io/e5':self.a.mode}}
-        pod=spec['template']['spec']; set_producer_resources(pod,self.c)
+        if self.c.get('evaluation'):
+            spec['template']['metadata']['labels'].update(labels)
+            spec['parallelism']=spec['completions']=1
+        pod=spec['template']['spec']
+        if self.c.get('evaluation'):
+            for container in pod['containers']+pod.get('initContainers', []): container['resources']=copy.deepcopy(self.c['evaluation']['resources'])
+        else: set_producer_resources(pod,self.c)
         alias=next(alias for alias,canonical in PRODUCER_ALIASES.items() if canonical==name)
         container=pod['containers'][0]; policy={'payload':self.b['payload'][name], 'arrivalSHA256':trace['arrivalSHA256'], 'offered':trace['offered'], 'shards':self.c['producerShards'][alias], 'barrierSeconds':self.tb['barrierSeconds'], 'segments': [{'rate':part['rates'][name], 'seconds':part['seconds']} for part in stage['parts']]}
+        if stage.get('explicitTrace'): policy['offsetsNS']=trace['offsetsNS']
         container['command']=['python3','-u','-c',(HERE/'e5-producer.py').read_text()]
         encoded=base64.b64encode(zlib.compress(json.dumps(policy,separators=(',',':'),allow_nan=False).encode())).decode('ascii')
         if len(encoded)>120000: raise RuntimeError('Full frozen payload identity exceeds safe exec argument size; no payload subset is silently dropped')
@@ -1773,13 +1848,18 @@ class CPO:
         elif self.b.get('schema') != 'demo-e5-binding.v1' and self.a.command == 'smoke':
             stages = [self.c['smoke']]
         elif stage is not None:
-            stages = stages[stages.index(stage):] if stage in stages else [stage]
+            stages = [stage] if self.c.get('evaluation') else stages[stages.index(stage):] if stage in stages else [stage]
         record = token_preflight(self.c, stages)
         save(self.out / ('token-preflight-' + (stage['id'] if stage else 'start') + ('-'+self.a.row_tag if self.a.row_tag else '') + '.json'), record)
         return record
+    def record_go(self,folder,jobs,pods,at):
+        go={'goUTC':at,'producerRefs':[{'workloadUID':self.ws[name]['uid'],'shard':0,'jobRef':{'name':job,'uid':uid},'podRef':{'name':pods[name]['metadata']['name'],'uid':pods[name]['metadata']['uid']}} for name,job,uid in jobs]}
+        save(folder/'go.json',go)
+        if getattr(self,'go_callback',None): self.go_callback(go)
+        else: print('E5_GO '+at,flush=True)
     def run(self):
         """Recheck frozen operating power policy before any stage can launch load."""
-        st=self.c['smoke'] if self.a.command=='smoke' else next(x for x in self.b['schedule'] if x['id']==self.a.stage); folder=row_folder(self.out,self.a.mode,st['id'],self.a.row_tag)
+        st=self.c['smoke'] if self.a.command=='smoke' else next(x for x in self.b['schedule'] if x['id']==self.a.stage); folder=Path(self.c['evaluation']['stageFolder']) if self.c.get('evaluation') else row_folder(self.out,self.a.mode,st['id'],self.a.row_tag)
         if folder.exists(): raise RuntimeError('No implicit stage retry/overwrite')
         restore_path=full_restore_path(self.out,st['id'],self.a.row_tag) if self.a.mode=='full' and self.a.row_tag else None
         targeted=bool(restore_path and restore_path.exists())
@@ -1787,12 +1867,12 @@ class CPO:
         if self.a.row_tag and (not restored or restored['rowTag']!=self.a.row_tag or not restored['accepted']):raise RuntimeError('Tagged rows require matching successful factor restoration')
         if restored and self.a.row_tag!=restored['rowTag']:raise RuntimeError('Restored selection requires explicit matching --row-tag')
         if targeted and (restored['stage']!=st['id'] or self.settings().get('autonomousWorkloads')):raise RuntimeError('Targeted full row requires matching restored state held with autonomy off until producer release')
-        if st['id'] in MICRO_ROWS and (self.a.mode!='full' or not targeted or not st.get('micro')):
+        if not self.c.get('evaluation') and st['id'] in MICRO_ROWS and (self.a.mode!='full' or not targeted or not st.get('micro')):
             raise RuntimeError('Micro rows require tagged full restoration and micro=true')
         if self.a.row_tag:self.disk_boundary(folder.name,'before')
         self.check_token_lifetime(st)
         self.check_power_observation()
-        deferred_restore=self.a.mode=='full' and st['id']=='E5-4' and not (self.out/'restore-ack.json').exists()
+        deferred_restore=not self.c.get('evaluation') and self.a.mode=='full' and st['id']=='E5-4' and not (self.out/'restore-ack.json').exists()
         if self.a.command!='smoke' and not targeted:
             order = ['E5-0','E5-1','E5-2','E5-3','E5-4','E5-5','E5-6','E5-7'] if self.a.mode=='full' else ['E5-1','E5-2','E5-3','E5-4','E5-5','E5-6'] if self.a.mode=='static' else ['E5-2','E5-5']
             index=order.index(st['id'])
@@ -1819,10 +1899,17 @@ class CPO:
         expected={self.producer_job_name(name,st) for name,rate in st['rates'].items() if rate}
         collisions=sorted(j['metadata']['name'] for j in jobs_live if j['metadata']['name'] in expected)
         if collisions:raise RuntimeError('Producer Job name already exists (possibly retained from an earlier run): '+', '.join(collisions)+'; no create or automatic deletion attempted')
-        if any(not j.get('spec',{}).get('suspend') and not any(x.get('type') in ('Complete','Failed') and x.get('status')=='True' for x in j.get('status',{}).get('conditions',[])) for j in jobs_live): raise RuntimeError('Concurrent nonterminal producer/measurement Job; no E5 load')
+        active=[j for j in jobs_live if not j.get('spec',{}).get('suspend') and not any(x.get('type') in ('Complete','Failed') and x.get('status')=='True' for x in j.get('status',{}).get('conditions',[]))]
+        if self.c.get('evaluation'):
+            execution=self.c['evaluation']['execution']
+            active=[j for j in active if not (j['metadata'].get('labels',{}).get('edge.dacs.io/evaluation-run-uid')==execution['runUID'] and j['metadata'].get('ownerReferences',[]) and j['metadata']['ownerReferences'][0].get('uid') in (execution['runUID'],execution['stageUID']))]
+        if active: raise RuntimeError('Concurrent nonterminal producer/measurement Job; no E5 load')
         alert_path=CAMPAIGN/'control-alerts.jsonl'
-        if not alert_path.exists(): raise RuntimeError('Existing safety alert monitor required')
-        alert_offset=alert_path.stat().st_size
+        if self.c.get('evaluation'):
+            alert_offset=0  # Evaluation supplies the live target/disk/Decision monitor.
+        else:
+            if not alert_path.exists(): raise RuntimeError('Existing safety alert monitor required')
+            alert_offset=alert_path.stat().st_size
         folder.mkdir(); self.io.a.phase='e5-'+self.a.mode+'-'+st['id']; self.io.a.command=self.a.command; self.io.phase_out=folder
         barrier=None
         if self.b.get('schema')=='demo-e5-binding.v1' and 'startBarrier' in st:
@@ -1935,7 +2022,8 @@ class CPO:
                             if observed.get('kind')=='collector-error': raise RuntimeError('Prestart telemetry collector error')
                             if observed.get('kind')=='cgroup' and observed.get('pidAbsent'): unavailable.add((observed['role'],observed.get('pod')))
                             if observed.get('kind')=='cgroup' and all(observed.get(k) is not None for k in ('cpuUsageNanos','nrThrottled','throttledNanos')): coverage[(observed['role'],observed.get('pod'))]+=1
-                    if not all(coverage[('client',pod['metadata']['name'])]>=2 or ('client',pod['metadata']['name']) in unavailable for pod in pods.values()): continue
+                    samples=self.c.get('evaluation',{}).get('barrier',{}).get('minimumReadySamples',2)
+                    if not all(coverage[('client',pod['metadata']['name'])]>=samples or ('client',pod['metadata']['name']) in unavailable for pod in pods.values()): continue
                     for name,pod in pods.items():
                         current=self.io.k(['get','pod',pod['metadata']['name'],'-o','json'],timeout=self.tb['apiSeconds'])
                         self.io.assert_producer_startable(folder/('startup-'+name),current,pod,barrier_seconds=self.tb['barrierSeconds'])
@@ -1950,6 +2038,7 @@ class CPO:
                     # Same barrier file protocol as existing CPO producer; actual UTC start per producer is retained, not claimed identical.
                     if barrier is not None:
                         go_deadline=min(deadline,time.monotonic()+min(dt.datetime.fromisoformat(row['setupBarrierDeadlineUTC']).timestamp()-time.time() for row in phase['producerReadiness'].values()))
+                    go_utc=None
                     for name,pod in pods.items():
                         current=self.io.k(['get','pod',pod['metadata']['name'],'-o','json'],timeout=self.tb['apiSeconds'])
                         self.io.assert_producer_startable(folder/('startup-'+name),current,pod,barrier_seconds=self.tb['barrierSeconds'])
@@ -1966,6 +2055,9 @@ class CPO:
                                 if evidence['observedUTC']:break
                                 time.sleep(min(.2,max(0,go_deadline-time.monotonic())))
                         self.io.k(['exec',pod['metadata']['name'],'-c','load','--','python3','-c',"from pathlib import Path; Path('/tmp/e5-start').touch()"],timeout=self.tb['apiSeconds'])
+                        if go_utc is None: go_utc=now()
+                    if go_utc is None: go_utc=now()
+                    if getattr(self,'go_callback',None): self.record_go(folder,jobs,pods,go_utc)
                     if targeted:
                         frame=self.state();expected=restored['fingerprint']['routing']
                         routing={uid:frame['snapshot'].get('routing',{}).get(uid,{}) for uid in self.uids}
@@ -1974,6 +2066,9 @@ class CPO:
                         save(folder/'start-state-restoration.json',restored)
                         if not restored['postGO']['accepted']:raise RuntimeError('Restored route weights differ from fingerprint immediately after producer GO')
                     phase['startUTC']=now(); end=time.monotonic()+st['seconds']+self.tb['drainSeconds']; released=True; save(folder/'phase.json',phase)
+                    phase['goUTC']=go_utc
+                    save(folder/'phase.json',phase)
+                    if not getattr(self,'go_callback',None): self.record_go(folder,jobs,pods,go_utc)
                 if released and not ready_gate and time.monotonic()>end:
                     if jobs and (sel.get_map() or any(p.poll() is None for p,l,e in streams)): raise RuntimeError('Producer drain watchdog exceeded')
                     break
@@ -2002,7 +2097,7 @@ class CPO:
             self.collect(folder)
         except Exception as e:
             phase['status']='STOP'; phase['error']=str(e); phase['failureUTC']=now(); phase['ownedProducerStops']=[]; save(folder/'phase.json',phase)
-            if not static:
+            if not static and getattr(self,'restore_control_on_error',True):
                 try:
                     prior=load(self.out/'initial.json')['settings'];current=self.settings();restore=copy.deepcopy(current)
                     members=[uid for uid in current.get('autonomousWorkloads',[]) if uid not in self.uids]+[uid for uid in prior.get('autonomousWorkloads',[]) if uid in self.uids]
@@ -2141,10 +2236,10 @@ class CPO:
             if (self.out/'static-replay-restore.json').exists():raise RuntimeError('Static restoration already attempted; no implicit repeat')
             f={'name':'static'}
         elif full:
-            if not self.a.pre_state or not self.a.row_tag or self.a.stage not in FULL_RESTORE_ROWS:raise ValueError('Full restoration requires --pre-state, --row-tag and a targeted full or micro row')
+            if not self.a.pre_state or not self.a.row_tag or (not self.c.get('evaluation') and self.a.stage not in FULL_RESTORE_ROWS):raise ValueError('Full restoration requires explicit pre-state, row-tag and targeted row')
             if full_restore_path(self.out,self.a.stage,self.a.row_tag).exists():raise RuntimeError('Full row restoration already attempted; no implicit repeat')
             f={'name':'full'}
-            if self.a.stage in MICRO_ROWS:
+            if self.a.stage in MICRO_ROWS and not self.c.get('evaluation'):
                 validate_full_pre_state(self.out,self.a.stage,self.a.pre_state)
                 if not any(row['id']==self.a.stage and row.get('micro') is True for row in self.b['schedule']):
                     raise ValueError('Micro restoration requires the row in the frozen binding schedule')
@@ -2158,7 +2253,11 @@ class CPO:
         desired=paired_baseline(self.a.pre_state or row_folder(self.out,'full',self.a.stage)/'pre-state.json',self.uids)
         if static and desired!=load(self.out/'static-selection.json')['fingerprint']:raise RuntimeError('Restoration input differs from original frozen selection')
         restore_settings=baseline_settings(self.a.pre_state,self.settings()) if static or full else None
-        if full and set(restore_settings.get('autonomousWorkloads',[]))!=set(self.uids):raise ValueError('Original full pre-settings must enable canonical autonomy')
+        if full and not self.c.get('evaluation') and set(restore_settings.get('autonomousWorkloads',[]))!=set(self.uids):raise ValueError('Original full pre-settings must enable canonical autonomy')
+        if self.c.get('evaluation'):
+            control=self.c['evaluation']['control']
+            restore_settings.update(copy.deepcopy(control))
+            restore_settings['autonomousWorkloads']=[] if self.c['evaluation']['mode']=='fixed' else self.uids
         if static or full:
             self.check_power_observation()
             self.check_token_lifetime()
@@ -2256,9 +2355,10 @@ class CPO:
         save(folder/'caller.json',{'at':now(),'exitCode':run.returncode,'stdout':run.stdout,'stderr':run.stderr})
         if run.returncode: raise RuntimeError('Existing finite native mode realization failed; no host power fallback')
     def cleanup_jobs(self,exclude=None):
-        for p in self.out.glob('*/created-*.json'):
+        paths=Path(self.c['evaluation']['stageFolder']).glob('created-*.json') if self.c.get('evaluation', {}).get('stageFolder') else self.out.glob('*/created-*.json')
+        for p in paths:
             if p.parent==exclude:continue
-            if self.a.row_tag and not p.parent.name.endswith('-'+self.a.row_tag):continue
+            if not self.c.get('evaluation') and self.a.row_tag and not p.parent.name.endswith('-'+self.a.row_tag):continue
             j=load(p); name=j['metadata']['name']; uid=j['metadata']['uid']; phase=p.parent/'phase.json'
             stops=(load(phase).get('ownedProducerStops') or []) if phase.exists() else []
             if any(stop.get('name')==name and stop.get('uid')==uid and stop.get('stopped') is True for stop in stops):continue
@@ -2279,7 +2379,8 @@ class CPO:
         initial=load(self.out/'initial.json')
         result=self.clear_owned(prefix)
         settings=copy.deepcopy(initial['settings'])
-        settings['autonomousWorkloads']=[uid for uid in settings.get('autonomousWorkloads',[]) if uid not in self.uids]
+        if not self.c.get('evaluation'):
+            settings['autonomousWorkloads']=[uid for uid in settings.get('autonomousWorkloads',[]) if uid not in self.uids]
         save(self.out/(prefix+'-settings-ack.json'),self.put(settings))
         save(self.out/(prefix+'-state.json'),self.state())
         save(self.out/(prefix+'-complete.json'),{'at':now(),'canonicalInstances':0,'originalSettingsRestored':True,'resetStatus':result['status'],'powerReturn':'Server reset minimum supported idle mode; original physical modes are not recreated'})
@@ -2522,12 +2623,12 @@ def judge(binding, folder):
         observed=sorted(x[0] for x in items); quantile=observed[max(0,math.ceil(len(observed)*w['slo']['percentile']/100)-1)]
         thermal_slack.append({'workload':name,'profileID':pid,'batch':batch,'sensorPath':zone,'sampledPriorBin':bin_name,'profileQuantileNS':reference,'observedNativeServiceQuantileNS':quantile,'profileTimingDeltaNS':quantile-reference if reference is not None else None,'serviceOnlySLOSlackNS':w['slo']['targetLatencyNanos']-c['mSeconds']*1e9-quantile,'samples':len(items),'sampledThermalAgeSeconds':d.stats([x[1] for x in items]),'rawSources':results[name]['pages']['sources'],'meaning':'Separate descriptive view for each real sensor path; never sum sensor-group sample counts. Prior sampled zone temperature/age retained; no temperature causality or end-to-end feasibility claim.'})
     failure_capture = None
-    if st['id'] in ('E5-7','E5-7m'):
+    if (not c.get('evaluation') and st['id'] in ('E5-7','E5-7m')) or c.get('evaluation',{}).get('failureInjection'):
         try:
             receipt_path = folder/'failure-events.json'
             evidence = load(receipt_path)
             if evidence.get('stage')!=st['id']:raise ValueError('INVALID: failure receipt stage differs from measured row')
-            if (folder/'start-state-restoration.json').exists() and evidence.get('selectionPolicy')!='active-serving-v1':raise ValueError('INVALID: targeted row requires active-serving selection evidence')
+            if (folder/'start-state-restoration.json').exists() and evidence.get('selectionPolicy') not in ('active-serving-v1','evaluation-controller-v1'):raise ValueError('INVALID: targeted row requires active-serving selection evidence')
             validate_failure_events(evidence,phase['startUTC'],phase['endUTC'],d.epoch)
             references = [ref(receipt_path)]
             for event in evidence['events']:
@@ -2588,6 +2689,17 @@ def judge(binding, folder):
 
 def summarize(binding, root, tag=None):
     b=load_binding(binding); stages={}; missing=[]
+    if b['config'].get('evaluation'):
+        result=load(root/'evaluation-results.json')
+        verdicts=[value.get('measurement',{}).get('verdict','NOT_EVALUATED') for value in result['results'].values()]
+        result.update(schema='e5-summary.v1',evaluation=True,at=now())
+        result['status']='INVALID' if 'INVALID' in verdicts else 'NOT_EVALUATED' if not verdicts or any(value not in ('PASS','FAIL') for value in verdicts) else 'FAIL' if 'FAIL' in verdicts else 'PASS'
+        result['rowJudgments']={stage['id']:stage['kpis']['status'] for stage in result['stages']}
+        result['rowJudgmentCounts']=dict(Counter(result['rowJudgments'].values()))
+        finish=root/'publish-run-finish.json'
+        result['physicalRestoration']=load(finish).get('cleanup') if finish.exists() else None
+        save(root/'e5-summary.json',result)
+        return result
     modes={'full':[x['id'] for x in b['schedule'] if x['id'] in NORMATIVE_ROWS], 'static':[x['id'] for x in b['schedule'] if x['id'] in NORMATIVE_ROWS and x['id'] not in ('E5-0','E5-7')]}
     modes.update({f['name']:['E5-2','E5-5'] for f in b['config']['factors']})
     targeted={}
@@ -2942,7 +3054,8 @@ def publish_experiment(root, identifier, store_config, stages, status, *, bindin
     summary_path=destination/'summary.json';save(summary_path,summary)
     manifest=destination/'manifest.json'
     save(manifest,{'objects':objects,'summary':{'store':store,'key':prefix+'summary.json','localPath':str(summary_path)}})
-    result=subprocess.run(['go','run','./hack/e5/publish','--config',str(store_config),'--manifest',str(manifest)],cwd=REPO,capture_output=True,text=True)
+    bridge=E5.get('publishExecutable')
+    result=subprocess.run(([bridge] if bridge else ['go','run','./hack/e5/publish'])+['--config',str(store_config),'--manifest',str(manifest)],cwd=REPO,capture_output=True,text=True)
     save(destination/'upload-result.json',{'exitCode':result.returncode,'stdout':result.stdout,'stderr':result.stderr})
     if result.returncode:raise RuntimeError('Immutable publication failed; retain evidence and choose a new ID for corrections')
     receipt=json.loads(result.stdout);save(destination/'receipt.json',receipt)
@@ -2956,17 +3069,7 @@ def publish_campaign(binding, root, identifier, store_config):
     for folder in sorted(folders):
         if not folder.is_dir() or not (folder/'phase.json').exists():continue
         phase=load(folder/'phase.json');judgment=load(folder/'judgment.json')
-        requests={}
-        fields=('offered','clientRows','unfinishedOrUnsent','outcomes','completedLatencyNS','gatewayCompletedLatencyNS','latencyScope','scheduledLatencyNS','entranceDelayNS','entranceDelayMeaning','actualLatencyNS','completionResidualNS','gatewayTailNS','deadlineSuccess','deadlineSuccessFraction','requiredSuccessfulRank','D1','unsentAtWindowEnd','actualGatewayIdentities','gatewayFinalOutcomes','offeredGatewayFinalOutcomes','selectedResidualPercentile')
-        for name,value in judgment['requests'].items():
-            requests[name]={key:value[key] for key in fields if key in value}
-            requests[name]['issuanceFidelity']=value.get('issuanceFidelity')
-            requests[name].update(successNumerator=value['deadlineSuccess'],successDenominator=value['offered'],population='Frozen offered arrivals; final outcome and successful execution populations remain separate')
-            population_fields=('rawRows','populationUniqueRows','duplicateRows','kinds','uniqueRequests','uniqueFinalRows','outcomes','executionComplete','completed','withoutUnambiguousHTTPFinal','nativeSupplementRows','nativeOutcomes','complete')
-            for key in ('rawPopulation','offeredResponsePopulation'):
-                population=value.get(key) or {}
-                requests[name][key]={field:population[field] for field in population_fields if field in population}
-            requests[name]['missingReasons']={'deadlineSuccessFraction':'No offered arrivals' if not value['offered'] else None,'completedLatencyNS':'No successful execution-complete gateway responses' if not value.get('completedLatencyNS',{}).get('samples') else None,'completionResidualNS':'No complete native/dispatched residual observations' if not value.get('completionResidualNS',{}).get('samples') else None}
+        requests=module('e5_publication_tables',HERE/'tables.py').publication_requests(judgment)
         power=judgment.get('power') or {}
         kpis={'status':judgment['status'],'visibility':'PRIVATE_OPERATIONAL_ONLY','requests':requests,'judgmentCounts':dict(Counter(value['D1'] for value in judgment['requests'].values())),'wholePoolJoules':power.get('wholePoolJoules') if power.get('complete') else None,'activePoolJoules':power.get('activePoolJoules') if power.get('complete') else None,'energyPopulation':'Whole/active shared pool during offered [from,to); not attributed per workload','limitations':result['limitations'],'missingReasons':{'energy':None if power.get('complete') else 'Actual whole/active power coverage incomplete','judgment':None if judgment['status']!='NOT_READY' else 'Required evidence incomplete; actual reasons retained in raw judgment'}}
         kpis.update(publication_measurements(bound,power))
