@@ -96,6 +96,38 @@ e5 finish --out "$Run" --row-tag 223; e5 cleanup-jobs --out "$Run" --row-tag 223
 ```
 
 
+### E5 micro rows
+
+**미니 행은 반복 검증용, 정본 표는 전체 행.** `micro=true` 결과는 별도 비교
+표/`e5-summary.json.microRows`에만 표시하며 정본 E5-0..7·E5-S 및 시나리오
+완주 수에는 포함하지 않는다. D1·완료-only p95·POOL 에너지/공백 오차 판정은
+동일한 raw 규칙을 사용한다. 동일 길이 고정 trace가 없으면 에너지 Δ는 N/A다.
+전체 길이 정본 에너지와 짧은 행 에너지를 빼서 절감으로 표시하지 않는다.
+
+`hack/e5/micro-stages.example.json`의 `stages`를 기존 전체 행 뒤에 추가한다.
+실제 bind 입력은 3회차의 R·payload·seed·arrival·poolShares를 그대로 사용하고,
+기존 `stages`에 이 미니 행 정의만 덧붙인다
+(`rate_w = alpha_w × s_w × R_w`). `CHILL_EXPERIMENT_CONFIG`의 `e5.stages`도
+bind 입력에 `stages`가 없을 때만 적용된다. 운영 복사본은
+`inputs/environment-micro.json`이며 기존 `environment-212.json`은 바꾸지 않는다.
+
+| 행 | 부하 창 | 복원 원본 |
+|---|---|---|
+| E5-5m | α=.3 180s → α=.9 300s | full-E5-5-223/pre-state.json |
+| E5-7m | α=.3 360s; 120s 후 serving Pod 주입 1건 | full-E5-7-223/pre-state.json |
+| E5-3m | α=.5 180s → α=.9 300s | full-E5-3-223/pre-state.json |
+| E5-6m | α=.3 600s soak | full-E5-6-223/pre-state.json |
+
+행별 `factor --mode full --stage E5-5m --pre-state "$Run/full-E5-5-223/pre-state.json"
+--row-tag <fresh-tag>` 후 같은 stage/tag의 `stage`·`judge`를 사용한다.
+micro 행은 성공한 해당 복원 receipt가 필수이며 기존 재시도/덮어쓰기 금지는 그대로다.
+E5-7m은 stage의 `failureInjectionRunbook.steps`를 사용하며 `failure-select`는
+양의 route/assigned 및 실제 UID가 확인된 Pod 1건의 명령만 출력한다. 실행은
+운영자만 수행하고 실제 명령·시각·응답을 `failure-events.json`에 기록한다.
+이 설정은 측정을 실행하지 않는다. 네트워크 없는 산식·허용 목록·복원 원본·주입
+자가 검사는 `python3 -B hack/e5/e5.py self-check-micro`, 표 격리는
+`python3 -B hack/e5/e5.py tables --self-check`다.
+
 ### E5 targeted full replay
 
 `factor --mode full --stage E5-{1,3,5,6,7} --pre-state <original-row/pre-state.json>

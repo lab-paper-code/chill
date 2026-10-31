@@ -1,0 +1,64 @@
+{
+  "stages": [
+    {
+      "id": "E5-5m",
+      "micro": true,
+      "restoreStage": "E5-5",
+      "parts": [
+        {
+          "id": "down",
+          "seconds": 180,
+          "alpha": 0.3
+        },
+        {
+          "id": "up",
+          "seconds": 300,
+          "alpha": 0.9
+        }
+      ]
+    },
+    {
+      "id": "E5-7m",
+      "micro": true,
+      "restoreStage": "E5-7",
+      "seconds": 360,
+      "alpha": 0.3,
+      "failureInjectionRunbook": {
+        "executor": "CampaignOps only; manual existing kubectl, never automatic",
+        "stage": "E5-7m",
+        "steps": [
+          {
+            "offsetSeconds": 120,
+            "kind": "delete-serving-pod",
+            "action": "failure-select --stage E5-7m; execute the emitted UID-precondition delete once",
+            "evidence": "Capture command UTC, exact podUID/nodeUID, argv, exitCode and response; observe scheduler/cluster recovery"
+          }
+        ]
+      }
+    },
+    {
+      "id": "E5-3m",
+      "micro": true,
+      "restoreStage": "E5-3",
+      "parts": [
+        {
+          "id": "half",
+          "seconds": 180,
+          "alpha": 0.5
+        },
+        {
+          "id": "high",
+          "seconds": 300,
+          "alpha": 0.9
+        }
+      ]
+    },
+    {
+      "id": "E5-6m",
+      "micro": true,
+      "restoreStage": "E5-6",
+      "seconds": 600,
+      "alpha": 0.3
+    }
+  ]
+}

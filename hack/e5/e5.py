@@ -46,6 +46,9 @@ import zlib
 
 HERE = Path(__file__).resolve().parent
 PRODUCER_ALIASES = {'mobilenet': 'image-classification-tight-slo', 'plc': 'plc-anomaly', 'smolvlm2': 'smolvlm2-vqa'}
+NORMATIVE_ROWS = tuple('E5-'+str(n) for n in range(8))
+MICRO_ROWS = {'E5-3m': 'E5-3', 'E5-5m': 'E5-5', 'E5-6m': 'E5-6', 'E5-7m': 'E5-7'}
+FULL_RESTORE_ROWS = ('E5-1', 'E5-3', 'E5-5', 'E5-6', 'E5-7', *MICRO_ROWS)
 
 
 def freeze_producer_config(config):
@@ -279,6 +282,8 @@ def freeze_harness_config(config):
 
 
 def configured_stage_specs(config):
+    if 'stages' not in config and E5.get('stages'):
+        config['stages'] = copy.deepcopy(E5['stages'])
     if 'stages' not in config:
         rows = []
         for label, seconds, alpha in normative_stage_specs(config['burstLowSeconds']):
@@ -288,10 +293,14 @@ def configured_stage_specs(config):
             rows[-1]['parts'].append({'id': label, 'seconds': seconds, 'alpha': dict(zip(PRODUCER_ALIASES, alpha))})
         config['stages'] = rows
     rows = config['stages']
-    if not isinstance(rows, list) or [r.get('id') for r in rows if isinstance(r, dict)] != ['E5-0', 'E5-1', 'E5-2', 'E5-3', 'E5-4', 'E5-5', 'E5-6', 'E5-7']:
-        raise ValueError('stages must declare E5-0 through E5-7 in order')
+    ids = [r.get('id') for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+    if (ids[:8] != list(NORMATIVE_ROWS) or len(ids) != len(rows)
+            or len(set(ids)) != len(ids) or any(row not in MICRO_ROWS for row in ids[8:])):
+        raise ValueError('stages must declare E5-0 through E5-7 in order, then optional micro rows')
     result = []
     for row in rows:
+        if row['id'] in MICRO_ROWS and (row.get('micro') is not True or row.get('restoreStage') != MICRO_ROWS[row['id']]):
+            raise ValueError('Micro rows require micro=true and the corresponding restoreStage')
         parts = row.get('parts', [row])
         if not isinstance(parts, list) or not parts:
             raise ValueError('Nonempty stage parts required')
@@ -343,17 +352,18 @@ def serving_failure_targets(state, load_window, uids, excluded_nodes=()):
 
 def validate_failure_events(evidence, start_utc, end_utc, epoch=None):
     """Check recorded manual evidence, not success or recommended injection offsets."""
-    kinds = ('delete-serving-pod', 'cordon-delete', 'uncordon')
+    micro = evidence.get('stage') == 'E5-7m'
+    kinds = ('delete-serving-pod',) if micro else ('delete-serving-pod', 'cordon-delete', 'uncordon')
     events = evidence.get('events')
     if evidence.get('status')=='INVALID':raise ValueError('INVALID: '+evidence.get('reason','Failure target selection rejected'))
-    if evidence.get('stage') != 'E5-7' or not isinstance(events, list) or len(events) != 3:
-        raise ValueError('E5-7 requires all three actual operator command records')
+    if evidence.get('stage') not in ('E5-7', 'E5-7m') or not isinstance(events, list) or len(events) != len(kinds):
+        raise ValueError('Failure row requires every actual operator command record')
     if evidence.get('selectionPolicy')=='active-serving-v1':
         if epoch is None:raise ValueError('INVALID: active selection requires the RFC3339Nano timestamp parser')
         selections=evidence.get('selections',[])
-        if len(selections)!=2 or selections[0]['nodeUID']==selections[1]['nodeUID']:
-            raise ValueError('INVALID: two distinct active serving Node selections required')
-        for event,selection in zip(events[:2],selections):
+        if len(selections)!=(1 if micro else 2) or not micro and selections[0]['nodeUID']==selections[1]['nodeUID']:
+            raise ValueError('INVALID: expected active serving Node selections required')
+        for event,selection in zip(events[:1] if micro else events[:2],selections):
             if selection.get('status')!='SELECTED' or any(event.get(key)!=selection.get(key) for key in ('kind','podUID','nodeUID')) or selection.get('routingWeight',0)<=0 or selection.get('assigned',0)<=0:
                 raise ValueError('INVALID: command target differs from positive route/assigned selection')
             candidates=serving_failure_targets(load(selection['stateRef']),load(selection['loadRef']),selection['allowedWorkloadUIDs'])
@@ -379,7 +389,7 @@ def validate_failure_events(evidence, start_utc, end_utc, epoch=None):
                 or not event.get('nodeUID') or not event.get('commandRef') or not event.get('responseRef')
                 or kind != 'uncordon' and not event.get('podUID')):
             raise ValueError('E5-7 operator command identity/timestamp/result incomplete')
-    if events[1]['nodeUID'] != events[2]['nodeUID']:
+    if not micro and events[1]['nodeUID'] != events[2]['nodeUID']:
         raise ValueError('E5-7 cordon/uncordon Node identity differs')
     # Recovery comes only from the API scheduler/cluster streams, never operator readbacks.
 
@@ -538,13 +548,15 @@ def self_check():
     module('e5_conductor_check', D2/'conduct_before.py').self_check()
     config = {'burstLowSeconds': 300}
     freeze_harness_config(config)
-    assert configured_stage_specs(config) == normative_stage_specs(300)
+    with patch.dict(E5,stages=[]):
+        assert configured_stage_specs(config) == normative_stage_specs(300)
     assert config['timeboxes']['nativeCallerSeconds'] == 960
     assert config['inputs']['maximumIdleNanosPerRequest'] == 1e6
     custom = {'burstLowSeconds': 300, 'seeds': dict.fromkeys(WORKLOADS, 7),
               'arrivals': dict.fromkeys(WORKLOADS, 'fixed')}
     freeze_harness_config(custom)
-    configured_stage_specs(custom)
+    with patch.dict(E5,stages=[]):
+        configured_stage_specs(custom)
     custom['stages'][1]['parts'][0].update(seconds=17, alpha=.4)
     assert configured_stage_specs(custom)[1] == ('E5-1', 17, [.4]*3)
     for key, value in (('seeds', dict.fromkeys(WORKLOADS, True)), ('arrivals', dict.fromkeys(WORKLOADS, 'invalid'))):
@@ -623,7 +635,7 @@ def self_check_factor():
     node={'name':'node','uid':'node-uid'}
     targets=[{'id':str(cap),'node':node,'profile':{'id':str(cap)},'allocation':{'cpu':1},'maxBatch':1,'maxWaitNanos':0,'workloadUID':'workload'} for cap in (2,32)]
     baseline={'instances':targets,'nodes':[{'node':node,'powerMode':'paired-mode'}],'routing':{'workload':{'2':.5,'32':.5}}}
-    ns={'NODES':['node'],'copy':copy,'load':lambda _: {'snapshot':baseline},'need':lambda *args:None,'now':lambda:'now','positive':lambda x:type(x) in (int,float) and math.isfinite(x) and x>0,'RESTORED_SETTINGS_KEYS':RESTORED_SETTINGS_KEYS}
+    ns={'NODES':['node'],'copy':copy,'load':lambda _: {'snapshot':baseline},'need':lambda *args:None,'now':lambda:'now','positive':lambda x:type(x) in (int,float) and math.isfinite(x) and x>0,'RESTORED_SETTINGS_KEYS':RESTORED_SETTINGS_KEYS,'FULL_RESTORE_ROWS':FULL_RESTORE_ROWS,'MICRO_ROWS':MICRO_ROWS}
     exec(compile(ast.fix_missing_locations(ast.Module(body=selected,type_ignores=[])),__file__,'exec'),ns)
     ns['load']=lambda _: {'snapshot':baseline,'settings':{'autonomousWorkloads':['workload'],'controls':{'membership':True}}}
     merged=ns['baseline_settings'](Path('pre-state.json'),{'autonomousWorkloads':[],'scaleDownHeadroomFraction':.25,'controls':{'membership':False}})
@@ -801,6 +813,7 @@ def self_check_failure_selection(analysis):
     at='2026-10-30T00:03:00+00:00'
     ns={'Path':Path,'dt':dt,'json':json,'math':math,'urllib':urllib,'shlex':shlex,'now':lambda:at,
         'ENVIRONMENT':{'d2':{'kubectl':['fixture-kubectl']}},
+        'MICRO_ROWS':MICRO_ROWS,
         'load':lambda path:json.loads(Path(path).read_text()),
         'save':lambda path,body:Path(path).write_text(json.dumps(body))}
     exec(compile(ast.fix_missing_locations(ast.Module(body=selected,type_ignores=[])),__file__,'exec'),ns)
@@ -808,13 +821,15 @@ def self_check_failure_selection(analysis):
         try:ns['failure_select_snapshot_ttl']({'failureSelectSnapshotTTLSeconds':invalid})
         except ValueError as error:assert 'failureSelectSnapshotTTLSeconds' in str(error)
         else:raise AssertionError('Invalid snapshot TTL accepted')
-    accepted=(None,'nano','age-11','custom-ttl')
+    accepted=(None,'nano','age-11','custom-ttl','micro')
     for bad in (*accepted,'age-16','zero-weight','zero-assigned','same-node','missing-pod','stale'):
         with tempfile.TemporaryDirectory() as temporary:
-            root=Path(temporary);folder=root/'full-E5-7-3b';folder.mkdir()
-            ns['save'](root/'full-E5-7-3b-restore.json',{'rowTag':'3b','accepted':True})
+            row='E5-7m' if bad=='micro' else 'E5-7'
+            root=Path(temporary);folder=root/('full-'+row+'-3b');folder.mkdir()
+            ns['save'](root/('full-'+row+'-3b-restore.json'),{'rowTag':'3b','accepted':True})
             ns['save'](folder/'phase.json',{'status':'RUNNING','startUTC':'2026-10-30T00:00:00+00:00','stage':{'seconds':900}})
             instances=[{'id':'i'+str(n),'podUID':'p'+str(n),'podName':'pod'+str(n),'workloadUID':'w','ownerWorkloadUID':'w','ready':True,'node':{'name':'n'+str(n),'uid':'n'+str(n)}} for n in range(2)]
+            if bad=='micro':instances=instances[:1]
             if bad=='same-node':instances[1]['node']=instances[0]['node']
             if bad=='missing-pod':instances[1].pop('podUID')
             nodes=[{'node':{'name':'n'+str(n),'uid':'n'+str(n)},'ready':True} for n in range(2)]
@@ -825,7 +840,7 @@ def self_check_failure_selection(analysis):
             if bad in ('age-11','age-16','custom-ttl'):
                 state['snapshot']['at']='2026-10-30T00:02:'+('49' if bad=='age-11' else '44')+'+00:00'
                 window['to']=state['snapshot']['at']
-            runner=ns['CPO']();runner.a=SimpleNamespace(mode='full',stage='E5-7',row_tag='3b',failure_kind='delete-serving-pod')
+            runner=ns['CPO']();runner.a=SimpleNamespace(mode='full',stage=row,row_tag='3b',failure_kind='delete-serving-pod')
             runner.out=root;runner.uids=['w'];runner.tb={'apiSeconds':1}
             runner.c={'failureSelectSnapshotTTLSeconds':20} if bad=='custom-ttl' else {}
             runner.c['namespace']='fixture-namespace'
@@ -847,10 +862,16 @@ def self_check_failure_selection(analysis):
                 else:raise AssertionError('Cancelled injection accepted')
             else:
                 assert bad in accepted
-                runner.a.failure_kind='cordon-delete'
-                with contextlib.redirect_stdout(io.StringIO()):runner.failure_select()
+                if bad=='micro':
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        try:runner.failure_select()
+                        except ValueError as error:assert 'no implicit repeat' in str(error)
+                        else:raise AssertionError('Repeated micro injection accepted')
+                else:
+                    runner.a.failure_kind='cordon-delete'
+                    with contextlib.redirect_stdout(io.StringIO()):runner.failure_select()
                 evidence=ns['load'](folder/'failure-events.json')
-                assert len({s['nodeUID'] for s in evidence['selections']})==2
+                assert len({s['nodeUID'] for s in evidence['selections']})==(1 if bad=='micro' else 2)
                 for selection in evidence['selections']:
                     ttl=ns['failure_select_snapshot_ttl'](runner.c)
                     assert selection['maximumAgeSeconds']==ttl
@@ -861,7 +882,7 @@ def self_check_failure_selection(analysis):
                     command=folder/(selection['kind']+'-command.json');ns['save'](command,{'deleteArgv':selection['deleteArgv']})
                     assert ns['load'](selection['deleteOptionsRef'])['preconditions']=={'uid':selection['podUID']}
                     events.append({'kind':selection['kind'],'atUTC':at,'exitCode':0,'podUID':selection['podUID'],'nodeUID':selection['nodeUID'],'commandRef':str(command),'responseRef':str(command)})
-                events.append(dict(events[-1],kind='uncordon'))
+                if bad!='micro':events.append(dict(events[-1],kind='uncordon'))
                 evidence['events']=events
                 ns['validate_failure_events'](evidence,'2026-10-30T00:00:00Z','2026-10-30T00:15:00Z',analysis.epoch)
                 expired=copy.deepcopy(evidence);expired['events'][0]['atUTC']='2026-10-30T00:03:21Z'
@@ -918,6 +939,12 @@ def self_check_client_jsonl(analysis):
         assert first['line']==2 and first['content']=='Traceback (most recent call last):'
         assert path.read_text()==source and (folder/'judgment.json').exists()
         assert str(folder/'cgmon.log') not in result['sources']
+        for micro_row in MICRO_ROWS:
+            phase['stage']['id']=micro_row
+            (folder/'phase.json').write_text(json.dumps(phase))
+            micro_result=ns['judge'](None,folder)
+            assert micro_result['micro'] is True and micro_result['restoreStage']==MICRO_ROWS[micro_row]
+            assert micro_result['requests']==result['requests'] and micro_result['power']==result['power']
         resources=[]
         for second in (0,2):
             stamp='2026-10-29T00:00:0'+str(second)+'Z'
@@ -1204,6 +1231,13 @@ def full_restore_path(root,row,tag=None):
     return paths[0] if paths else None
 
 
+def validate_full_pre_state(root, row, pre_state):
+    original = MICRO_ROWS.get(row, row)
+    expected = 'full-'+original+'-223' if row in MICRO_ROWS else 'full-'+original+'(?:-[A-Za-z0-9]+)?'
+    if pre_state.name != 'pre-state.json' or not re.fullmatch(expected, pre_state.parent.name) or pre_state.parent.parent != root:
+        raise ValueError('Targeted restoration requires the corresponding original full row pre-state.json in this Run; micro rows use tag 223')
+
+
 def rebound_fingerprint(desired, mapping):
     chosen=copy.deepcopy(desired)
     for target in chosen['instances']:target['id']=mapping[target['id']]
@@ -1225,7 +1259,7 @@ def row_folder(root, mode, row, tag=None):
     if mode=='full':
         path=full_restore_path(root,row,tag)
         if path and path.exists():return root/('full-'+row+'-'+load(path)['rowTag'])
-        if tag and row=='E5-1':return root/('full-'+row+'-'+tag)
+        if tag and (row=='E5-1' or row in MICRO_ROWS):return root/('full-'+row+'-'+tag)
     if tag is None:tag=replay_receipt(root).get('rowTag','')
     appended=mode=='static' and row in ('E5-3','E5-4','E5-5','E5-6') or mode=='full' and row in ('E5-4','E5-5','E5-6','E5-7')
     return root/(mode+'-'+row+('-'+tag if tag and appended else ''))
@@ -1272,7 +1306,7 @@ def full_restore_dry_run(binding,root,pre_state,row,tag):
     for key in ('staticRouting','staticRoutingValidatedAt','powerObservation'):settings.pop(key,None)
     off=copy.deepcopy(settings);off['autonomousWorkloads']=[]
     result={'schema':'e5-full-restore-dry-run.v1','at':now(),'clusterRequests':0,
-            'scientificResults':'UNMEASURED; offline plan only','preState':ref(pre_state),
+            'scientificResults':'UNMEASURED; offline plan only','micro':row in MICRO_ROWS,'preState':ref(pre_state),
             'preSettings':ref(pre_state.with_name('pre-settings.json')) if 'settings' not in load(pre_state) else ref(pre_state),
             'sources':b['config']['approval']['sources'],'label':'표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2','rowTag':tag,
             'expectedFingerprint':desired,'restorationExclusions':restoration_exclusions(pre_state,uids),
@@ -1286,7 +1320,7 @@ def full_restore_dry_run(binding,root,pre_state,row,tag):
             'order':['factor --mode full --stage '+row+' --pre-state '+str(pre_state)+' --row-tag '+tag,
                      'stage --mode full --stage '+row+' --row-tag '+tag,
                      'judge --out '+str(row_folder(root,'full',row,tag))],
-            'failureInjection':'Operator only: failure-select immediately before each injection; execute emitted UID-precondition runbook and record actual command/result. Unsatisfied selection cancels injection as INVALID.' if row=='E5-7' else None}
+            'failureInjection':'Operator only: failure-select immediately before each injection; execute emitted UID-precondition runbook and record actual command/result. Unsatisfied selection cancels injection as INVALID.' if row in ('E5-7','E5-7m') else None}
     path=root/('full-'+row+'-restore-dry-run-'+tag+'.json')
     if path.exists():raise RuntimeError('Offline plan destination already exists; no overwrite')
     save(path,result);print(json.dumps({'resultPath':str(path),**result},ensure_ascii=False,indent=2))
@@ -1452,10 +1486,15 @@ def bind(path):
         schedule.append(st)
     # A normative row has one producer window; rate changes have no drain/setup hole.
     combined = []
-    for row_id in ['E5-0', 'E5-1', 'E5-2', 'E5-3', 'E5-4', 'E5-5', 'E5-6', 'E5-7']:
+    for definition in c['stages']:
+        row_id = definition['id']
         parts = [part for part in schedule if part['id'] == row_id or part['id'].startswith(row_id+'-')]
         parts = [dict(part, id=part_ids[part['id']]) for part in parts]
         row = {'id': row_id, 'seconds': sum(part['seconds'] for part in parts), 'parts': parts, 'rates': {name: max(part['rates'][name] for part in parts) for name in WORKLOADS}, 'traces': {}}
+        if row_id in MICRO_ROWS:
+            row.update(micro=True, restoreStage=MICRO_ROWS[row_id])
+            if 'failureInjectionRunbook' in definition:
+                row['failureInjectionRunbook'] = copy.deepcopy(definition['failureInjectionRunbook'])
         if row_id == 'E5-7':
             row['failureInjectionRunbook'] = copy.deepcopy(c['failureInjectionRunbook'])
         for name in WORKLOADS:
@@ -1474,7 +1513,8 @@ def bind(path):
     settings = dict(settings, powerObservation=power_observation(c,frozen=True))
     c['harnessRepositoryCommit']=subprocess.check_output(['git','-C',str(REPO),'rev-parse','HEAD'],text=True).strip()
     c['tokenLifetime'] = token_preflight(c, schedule)
-    return {'schema': 'e5-binding.v1', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': now(), 'schedulerSettings': settings, 'config': c, 'sources': refs, 'kappa': kappa, 'payload': payload, 'schedule': schedule, 'rowOrder': ['E5-0','E5-1','E5-2','E5-3','E5-S','E5-4','E5-5','E5-6','E5-7'], 'fullSeconds': sum(row['seconds'] for row in schedule), 'staticSeconds': sum(row['seconds'] for row in schedule if row['id'] not in ('E5-0','E5-7')), 'factorSeconds': sum(row['seconds'] for row in schedule if row['id'] in ('E5-2','E5-5'))*c['N'], 'accounting': {'d': '34/34 approved new-rule evidence; d25 closure subset frozen separately', 'exactCost': '69/69 historical exact-cost coverage, not current candidate count', 'evaluation': '0/7', 'planRows': '0/9', 'failureScenario': 'E5-7 scheduled; actual manual operator evidence required'}, 'limitations': ['B-only timing uncertainty; no profile statistical CI/global95 guarantee', 'D04/D09/D14/D23/D33 known systematic profile-serving bias; causal shares unknown', 'Profiling/evaluation record-ID separation and pinned-carrier equality UNKNOWN where actual enumeration is absent; host evaluation matches the retained producer payload', 'Single paired seed set is a case study, not three independent repetitions', E5['runtimeExclusionNote']]}
+    canonical_schedule = [row for row in schedule if row['id'] in NORMATIVE_ROWS]
+    return {'schema': 'e5-binding.v1', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': now(), 'schedulerSettings': settings, 'config': c, 'sources': refs, 'kappa': kappa, 'payload': payload, 'schedule': schedule, 'rowOrder': ['E5-0','E5-1','E5-2','E5-3','E5-S','E5-4','E5-5','E5-6','E5-7'], 'fullSeconds': sum(row['seconds'] for row in canonical_schedule), 'staticSeconds': sum(row['seconds'] for row in canonical_schedule if row['id'] not in ('E5-0','E5-7')), 'factorSeconds': sum(row['seconds'] for row in canonical_schedule if row['id'] in ('E5-2','E5-5'))*c['N'], 'accounting': {'d': '34/34 approved new-rule evidence; d25 closure subset frozen separately', 'exactCost': '69/69 historical exact-cost coverage, not current candidate count', 'evaluation': '0/7', 'planRows': '0/9', 'failureScenario': 'E5-7 scheduled; actual manual operator evidence required'}, 'limitations': ['B-only timing uncertainty; no profile statistical CI/global95 guarantee', 'D04/D09/D14/D23/D33 known systematic profile-serving bias; causal shares unknown', 'Profiling/evaluation record-ID separation and pinned-carrier equality UNKNOWN where actual enumeration is absent; host evaluation matches the retained producer payload', 'Single paired seed set is a case study, not three independent repetitions', E5['runtimeExclusionNote']]}
 
 
 class CPO:
@@ -1745,6 +1785,8 @@ class CPO:
         if self.a.row_tag and (not restored or restored['rowTag']!=self.a.row_tag or not restored['accepted']):raise RuntimeError('Tagged rows require matching successful factor restoration')
         if restored and self.a.row_tag!=restored['rowTag']:raise RuntimeError('Restored selection requires explicit matching --row-tag')
         if targeted and (restored['stage']!=st['id'] or self.settings().get('autonomousWorkloads')):raise RuntimeError('Targeted full row requires matching restored state held with autonomy off until producer release')
+        if st['id'] in MICRO_ROWS and (self.a.mode!='full' or not targeted or not st.get('micro')):
+            raise RuntimeError('Micro rows require tagged full restoration and micro=true')
         if self.a.row_tag:self.disk_boundary(folder.name,'before')
         self.check_token_lifetime(st)
         self.check_power_observation()
@@ -2047,14 +2089,15 @@ class CPO:
     def failure_select(self):
         """Read-only selection; actual kubectl injection remains an operator action."""
         path=full_restore_path(self.out,self.a.stage,self.a.row_tag) if self.a.row_tag else None
-        if self.a.mode!='full' or self.a.stage!='E5-7' or not path or not path.exists():raise ValueError('failure-select requires a restored targeted full E5-7 row with --row-tag')
-        folder=row_folder(self.out,'full','E5-7',self.a.row_tag);phase=load(folder/'phase.json')
-        if phase.get('status')!='RUNNING' or not phase.get('startUTC'):raise RuntimeError('Failure selection requires the actual running E5-7 offered window')
+        micro=self.a.stage=='E5-7m'
+        if self.a.mode!='full' or self.a.stage not in ('E5-7','E5-7m') or not path or not path.exists():raise ValueError('failure-select requires a restored targeted full failure row with --row-tag')
+        folder=row_folder(self.out,'full',self.a.stage,self.a.row_tag);phase=load(folder/'phase.json')
+        if phase.get('status')!='RUNNING' or not phase.get('startUTC'):raise RuntimeError('Failure selection requires the actual running offered window')
         path=folder/'failure-events.json'
-        evidence=load(path) if path.exists() else {'stage':'E5-7','selectionPolicy':'active-serving-v1','status':'PENDING_OPERATOR','selections':[],'events':[]}
+        evidence=load(path) if path.exists() else {'stage':self.a.stage,'micro':micro,'selectionPolicy':'active-serving-v1','status':'PENDING_OPERATOR','selections':[],'events':[]}
         if evidence.get('status')=='INVALID':raise RuntimeError('Failure selection already INVALID; no injection')
         selections=evidence['selections'];kind=self.a.failure_kind
-        if kind!=('delete-serving-pod' if not selections else 'cordon-delete') or len(selections)>=2:raise ValueError('Select delete-serving-pod once, then cordon-delete once; no implicit repeat')
+        if kind!=('delete-serving-pod' if not selections else 'cordon-delete') or len(selections)>=(1 if micro else 2):raise ValueError('Select each configured injection once; no implicit repeat')
         prefix=folder/('failure-'+kind)
         try:
             maximum_age=failure_select_snapshot_ttl(self.c)
@@ -2071,8 +2114,8 @@ class CPO:
             if not phase_start<=at<phase_start+dt.timedelta(seconds=phase['stage']['seconds']):raise ValueError('Outside actual offered window; injection cancelled')
             excluded=[selection['nodeUID'] for selection in selections]
             candidates=serving_failure_targets(state,window,self.uids,excluded)
-            if len({target['nodeUID'] for target in candidates})<(1 if selections else 2):
-                raise ValueError('No positive-route/assigned serving Pods on two distinct Nodes; injection cancelled')
+            if len({target['nodeUID'] for target in candidates})<(1 if micro or selections else 2):
+                raise ValueError('No positive-route/assigned serving Pods on enough distinct Nodes; injection cancelled')
             target=candidates[0]
             options=Path(str(prefix)+'-delete-options.json')
             save(options,{'apiVersion':'v1','kind':'DeleteOptions','preconditions':{'uid':target['podUID']}})
@@ -2096,9 +2139,13 @@ class CPO:
             if (self.out/'static-replay-restore.json').exists():raise RuntimeError('Static restoration already attempted; no implicit repeat')
             f={'name':'static'}
         elif full:
-            if not self.a.pre_state or not self.a.row_tag or self.a.stage not in ('E5-1','E5-3','E5-5','E5-6','E5-7'):raise ValueError('Full restoration requires --pre-state, --row-tag and a targeted E5-1/3/5/6/7 row')
+            if not self.a.pre_state or not self.a.row_tag or self.a.stage not in FULL_RESTORE_ROWS:raise ValueError('Full restoration requires --pre-state, --row-tag and a targeted full or micro row')
             if full_restore_path(self.out,self.a.stage,self.a.row_tag).exists():raise RuntimeError('Full row restoration already attempted; no implicit repeat')
             f={'name':'full'}
+            if self.a.stage in MICRO_ROWS:
+                validate_full_pre_state(self.out,self.a.stage,self.a.pre_state)
+                if not any(row['id']==self.a.stage and row.get('micro') is True for row in self.b['schedule']):
+                    raise ValueError('Micro restoration requires the row in the frozen binding schedule')
         else:
             f=next(f for f in self.c['factors'] if f['name']==self.a.mode)
             if self.a.stage not in ('E5-2','E5-5'): raise RuntimeError('Factor reset is one actual paired E5-2/E5-5 block')
@@ -2327,8 +2374,8 @@ def runtime_gc(resources, start, end, d):
 
 
 def failure_api_recovery(commands, scheduler, clusters, end, d):
-    """Require a ready positive route and matching recorded Ready Pod after uncordon."""
-    node_uid=commands[2]['nodeUID'];uncordon=d.epoch(commands[2]['atUTC'])
+    """Require a ready positive route and matching recorded Ready Pod after the last action."""
+    node_uid=commands[-1]['nodeUID'];uncordon=d.epoch(commands[-1]['atUTC'])
     candidates=[]
     for event in scheduler:
         snapshot=event.get('snapshot') or {};at=d.epoch(snapshot.get('at'))
@@ -2346,7 +2393,7 @@ def failure_api_recovery(commands, scheduler, clusters, end, d):
                                    'schedulerRefs':event.get('_rawRefs',[]),'clusterRef':latest['sourceRef']})
     observed=min(candidates,key=lambda item:d.epoch(item['atUTC'])) if candidates else None
     return {'status':'OBSERVED' if observed else 'UNMEASURED','observation':observed,
-        'evidenceSource':['scheduler','cluster'],'meaning':'CHILL-recorded ready Node, ready Pod and positive serving route after operator uncordon; cordon/schedulability itself is not recorded. No operator readback or inferred physical recovery.'}
+        'evidenceSource':['scheduler','cluster'],'meaning':'CHILL-recorded ready Node, ready Pod and positive serving route after the last operator action; cordon/schedulability itself is not recorded. No operator readback or inferred physical recovery.'}
 
 
 def judge(binding, folder):
@@ -2473,10 +2520,11 @@ def judge(binding, folder):
         observed=sorted(x[0] for x in items); quantile=observed[max(0,math.ceil(len(observed)*w['slo']['percentile']/100)-1)]
         thermal_slack.append({'workload':name,'profileID':pid,'batch':batch,'sensorPath':zone,'sampledPriorBin':bin_name,'profileQuantileNS':reference,'observedNativeServiceQuantileNS':quantile,'profileTimingDeltaNS':quantile-reference if reference is not None else None,'serviceOnlySLOSlackNS':w['slo']['targetLatencyNanos']-c['mSeconds']*1e9-quantile,'samples':len(items),'sampledThermalAgeSeconds':d.stats([x[1] for x in items]),'rawSources':results[name]['pages']['sources'],'meaning':'Separate descriptive view for each real sensor path; never sum sensor-group sample counts. Prior sampled zone temperature/age retained; no temperature causality or end-to-end feasibility claim.'})
     failure_capture = None
-    if st['id']=='E5-7':
+    if st['id'] in ('E5-7','E5-7m'):
         try:
             receipt_path = folder/'failure-events.json'
             evidence = load(receipt_path)
+            if evidence.get('stage')!=st['id']:raise ValueError('INVALID: failure receipt stage differs from measured row')
             if (folder/'start-state-restoration.json').exists() and evidence.get('selectionPolicy')!='active-serving-v1':raise ValueError('INVALID: targeted row requires active-serving selection evidence')
             validate_failure_events(evidence,phase['startUTC'],phase['endUTC'],d.epoch)
             references = [ref(receipt_path)]
@@ -2492,6 +2540,10 @@ def judge(binding, folder):
             failure_capture={'status':'INVALID' if str(exc).startswith('INVALID:') else 'UNMEASURED','reason':str(exc),'sourcePath':str(folder/'failure-events.json')}
             failure_capture['recoverySources']={'scheduler':paging,'cluster':cluster_capture}
     result={'schema':'e5-judgment.v1','visibility':'PRIVATE_OPERATIONAL_ONLY; raw references/configuration excluded from public indexes','at':now(),'status':'NOT_READY' if unknown else 'FAIL' if any(r['D1']=='FAIL' for r in results.values()) else 'MEASURED_DESCRIPTIVE','notReadyReasons':unknown,'requests':results,'Tick':sched,'cgroups':cg,'power':power,'thermal':thermals,'D6':'Observed thermal bins only; unknown active/latched remains unknown, profile slack must use bound source samples','rawErrors':inp.errors,'sources':inp.sources,'limitations':b['limitations'],'accounting':{'specScenarioDenominator':7,'planRowDenominator':9,'failureScenario':failure_capture['status'] if failure_capture else 'NOT_EXERCISED_IN_THIS_ROW'}}
+    result['micro'] = st['id'] in MICRO_ROWS
+    if result['micro']:
+        result['restoreStage'] = MICRO_ROWS[st['id']]
+        result['measurementMeaning'] = 'Comparison only; micro=true never completes a canonical E5 row'
     malformed=[error for error in inp.errors if error.get('line') is not None and Path(error['path']).name in {w['name']+'-client.jsonl' for w in c['workloads']}]
     result['coverage']={'malformedLines':len(malformed),'firstMalformedLine':malformed[0] if malformed else None}
     result['failureScenarioEvidence']=failure_capture
@@ -2534,7 +2586,7 @@ def judge(binding, folder):
 
 def summarize(binding, root, tag=None):
     b=load_binding(binding); stages={}; missing=[]
-    modes={'full':[x['id'] for x in b['schedule']], 'static':[x['id'] for x in b['schedule'] if x['id'] not in ('E5-0','E5-7')]}
+    modes={'full':[x['id'] for x in b['schedule'] if x['id'] in NORMATIVE_ROWS], 'static':[x['id'] for x in b['schedule'] if x['id'] in NORMATIVE_ROWS and x['id'] not in ('E5-0','E5-7')]}
     modes.update({f['name']:['E5-2','E5-5'] for f in b['config']['factors']})
     targeted={}
     for row in ('E5-1','E5-3','E5-5','E5-6','E5-7'):
@@ -2550,6 +2602,7 @@ def summarize(binding, root, tag=None):
             try:
                 value=load(folder/'judgment.json')
                 if value.get('scientificResults','').startswith('UNMEASURED'): raise ValueError('Operational smoke is not a scientific row')
+                if value.get('micro'):raise ValueError('Micro comparison cannot fill a canonical row')
                 value['power']=reported_power(value.get('power'))
                 stages[(mode,row_id)]=value
             except (OSError,ValueError,KeyError) as exc: missing.append({'mode':mode,'row':row_id,'reason':str(exc)})
@@ -2612,6 +2665,13 @@ def summarize(binding, root, tag=None):
     result['compositeRun']={'label':replay['label'],'rowTag':replay['rowTag'],'restorationAccepted':replay['accepted']} if replay else None
     if targeted:result['compositeRun']={'label':'표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2','rowTag':selected_tag,'restorationAccepted':all(record['accepted'] for record in targeted.values())}
     result['rowDirectories']={mode+'-'+row:str(folder) for (mode,row),folder in folders.items()}
+    result['microRows'] = {}
+    for row in MICRO_ROWS:
+        folder=row_folder(root,'full',row,tag)
+        if (folder/'judgment.json').exists():
+            value=load(folder/'judgment.json')
+            if not value.get('micro'):raise ValueError('Micro judgment must retain micro=true')
+            result['microRows'][row]={'micro':True,'folder':str(folder),'judgment':value}
     finish=root/('finish'+('-'+selected_tag if targeted else '-'+replay['rowTag'] if replay else '')+'-complete.json')
     restored=load(finish) if finish.exists() else None
     result['physicalRestoration']=restored
@@ -3040,8 +3100,8 @@ def main():
         for value in (a.config,a.binding,a.out,a.release,a.pre_state):
             if value is not None and not value.is_absolute(): raise ValueError('All paths must be absolute')
         if a.row_tag and not re.fullmatch('[A-Za-z0-9]+',a.row_tag):raise ValueError('--row-tag requires ASCII letters and digits')
-        if a.pre_state and not (a.command=='factor' and a.row_tag and (a.mode=='static' and a.stage=='E5-3' or a.mode=='full' and a.stage in ('E5-1','E5-3','E5-5','E5-6','E5-7'))):raise ValueError('--pre-state requires tagged static or targeted full factor restoration')
-        if a.pre_state and a.mode=='full' and (a.pre_state.name!='pre-state.json' or not re.fullmatch('full-'+re.escape(a.stage)+'(?:-[A-Za-z0-9]+)?',a.pre_state.parent.name) or a.pre_state.parent.parent!=a.out):raise ValueError('Targeted restoration requires the corresponding original full row pre-state.json in this Run')
+        if a.pre_state and not (a.command=='factor' and a.row_tag and (a.mode=='static' and a.stage=='E5-3' or a.mode=='full' and a.stage in FULL_RESTORE_ROWS)):raise ValueError('--pre-state requires tagged static or targeted full factor restoration')
+        if a.pre_state and a.mode=='full':validate_full_pre_state(a.out,a.stage,a.pre_state)
         if a.dry_run and not a.pre_state:raise ValueError('--dry-run requires factor --pre-state')
         if a.command=='smoke' and (a.mode!='smoke' or a.stage!='SMOKE'): raise ValueError('Smoke requires --mode smoke --stage SMOKE; never counted as E5')
         if a.command=='schema': print(json.dumps(REQUIRED,indent=2)); return 0
@@ -3061,8 +3121,9 @@ def main():
             b=load_binding(a.binding)
             for x in b['sources'].values():
                 if ref(x['path'])!=x: raise ValueError('Frozen input/package identity changed')
-            assert sum(x['seconds'] for x in b['schedule'])==b['fullSeconds']
-            assert sum(x['seconds'] for x in b['schedule'] if x['id'] not in ('E5-0','E5-7'))==b['staticSeconds']
+            canonical=[x for x in b['schedule'] if x['id'] in NORMATIVE_ROWS]
+            assert sum(x['seconds'] for x in canonical)==b['fullSeconds']
+            assert sum(x['seconds'] for x in canonical if x['id'] not in ('E5-0','E5-7'))==b['staticSeconds']
             assert sum(x['seconds'] for x in b['schedule'] if x['id'] in ('E5-2','E5-5'))*b['config']['N']==b['factorSeconds']
             assert all(trace['seed']==b['config']['seeds'][name] for row in b['schedule'] for name,trace in row['traces'].items())
             assert len(b['rowOrder'])==9
@@ -3090,7 +3151,73 @@ def main():
         print('NOT_READY: '+str(exc),file=sys.stderr); return 2
 
 
+def self_check_micro():
+    """Run the real schedule-building statements with synthetic rates, offline only."""
+    import ast
+    from unittest.mock import patch
+    sys.path.insert(0, str(REPO/'load-generator/src'))
+    from chill_loadgen import cli
+    config=load(HERE/'demo-config.e5.example.json')
+    config['stages'].extend(load(HERE/'micro-stages.example.json')['stages'])
+    config['seeds']=dict(SEEDS);config['arrivals']=dict.fromkeys(WORKLOADS,'poisson')
+    specs=configured_stage_specs(config)
+    tree=ast.parse(Path(__file__).read_text())
+    body=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='bind').body
+    first=next(i for i,n in enumerate(body) if isinstance(n,ast.Assign) and isinstance(n.targets[0],ast.Name) and n.targets[0].id=='part_ids')
+    last=next(i for i,n in enumerate(body[first:],first) if isinstance(n,ast.Assign) and isinstance(n.targets[0],ast.Name) and n.targets[0].id=='schedule' and isinstance(n.value,ast.Name) and n.value.id=='combined')
+    shares={'MNV':.45,'PLC':.1,'Smol':.45}
+    capacities=dict(zip(WORKLOADS,[2.,3.,4.]))
+    scope=dict(globals(),c=config,stages=specs,ws={name:{'R':rate} for name,rate in capacities.items()},
+               shares=shares,share_by_workload=dict(zip(WORKLOADS,shares.values())),schedule=[],cli=cli)
+    exec(compile(ast.Module(body=body[first:last+1],type_ignores=[]),__file__,'exec'),scope)
+    schedule=scope['schedule'];root=Path('/offline')
+    expected={'E5-5m':[(180,.3),(300,.9)],'E5-7m':[(360,.3)],
+              'E5-3m':[(180,.5),(300,.9)],'E5-6m':[(600,.3)]}
+    assert set(FULL_RESTORE_ROWS)=={'E5-1','E5-3','E5-5','E5-6','E5-7',*MICRO_ROWS}
+    for row in schedule:
+        if row['id'] not in MICRO_ROWS:continue
+        assert row['micro'] is True and row['restoreStage']==MICRO_ROWS[row['id']]
+        assert [(p['seconds'],p['alpha'][WORKLOADS[0]]) for p in row['parts']]==expected[row['id']]
+        assert row['seconds']==sum(seconds for seconds,_ in expected[row['id']])
+        for part in row['parts']:
+            for name in WORKLOADS:
+                assert math.isclose(part['rates'][name],part['alpha'][name]*scope['share_by_workload'][name]*capacities[name])
+                assert part['traces'][name]['seed']==SEEDS[name]
+        validate_full_pre_state(root,row['id'],root/('full-'+row['restoreStage']+'-223')/'pre-state.json')
+        for wrong in (row['id']+'-223',row['restoreStage']+'-3'):
+            try:validate_full_pre_state(root,row['id'],root/('full-'+wrong)/'pre-state.json')
+            except ValueError:pass
+            else:raise AssertionError('Wrong micro baseline accepted')
+    assert sum(row['seconds'] for row in schedule if not row.get('micro'))==11700
+    failure=next(row for row in schedule if row['id']=='E5-7m')
+    assert [step['offsetSeconds'] for step in failure['failureInjectionRunbook']['steps']]==[120]
+    for invalid in (dict(config['stages'][-1],micro=False),dict(config['stages'][-1],restoreStage='E5-5'),dict(config['stages'][-1],id='E5-8m')):
+        try:configured_stage_specs(dict(config,stages=config['stages'][:-1]+[invalid]))
+        except ValueError:pass
+        else:raise AssertionError('Invalid micro stage accepted')
+    with patch.dict(E5,stages=config['stages']):
+        assert configured_stage_specs({'burstLowSeconds':300})==specs
+    import tempfile
+    with tempfile.TemporaryDirectory() as temporary:
+        folder=Path(temporary)
+        for row in MICRO_ROWS:
+            stage_folder=row_folder(folder,'full',row,'m1');stage_folder.mkdir()
+            (stage_folder/'judgment.json').write_text(json.dumps({'micro':True,'status':'MEASURED_DESCRIPTIVE'}))
+        binding={'config':{'factors':[]},'schedule':schedule,'limitations':[],
+                 'accounting':{'d':'fixture','exactCost':'fixture'}}
+        with patch.dict(globals(),load_binding=lambda _:binding,OPS=folder):
+            summary=summarize(None,folder,'m1')
+        assert set(summary['microRows'])==set(MICRO_ROWS)
+        assert summary['planResultLinks']=='0/9' and summary['specResultLinks']=='0/7'
+        assert summary['pairedComparisons']==[] and not any(row in summary['planRows'] for row in MICRO_ROWS)
+    self_check_failure_selection(module('e5_micro_analysis',D2/'analyze_before.py'))
+    print('PASS micro rows: exact windows/alpha*share*R, frozen seeds, allowed rows, tag-223 pre-state, one 120s injection; offline only')
+
+
 # Local check: needs CHILL_EXPERIMENT_CONFIG (module constants) but no cluster binding or network.
+if __name__=='__main__' and sys.argv[1:]==['self-check-micro']:
+    self_check_micro()
+    sys.exit(0)
 if __name__=='__main__' and sys.argv[1:]==['self-check']:
     self_check()
     sys.exit(0)

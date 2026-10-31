@@ -103,6 +103,7 @@ def render(root, repo):
         lines.append('|' + '|'.join(columns) + '|')
     results_at = len(lines)
     result_rows = []
+    micro_result_rows = []
     slos = {workload['name']:workload.get('slo', {}) for workload in binding.get('config', {}).get('workloads', [])}
     pairs = {pair['row']:pair for pair in summary.get('pairedComparisons', [])}
     lines += ['', '## Frozen evidence scope and conditions', '',
@@ -138,8 +139,11 @@ def render(root, repo):
     paths = sorted(root.glob('smoke-*/summary.json')) if operational else sorted(root.glob('*/judgment.json'))
     if not operational and summary.get('rowDirectories'):
         paths=sorted({Path(folder)/'judgment.json' for folder in summary['rowDirectories'].values() if (Path(folder)/'judgment.json').exists()})
+    if not operational:
+        paths=sorted(set(paths)|{Path(record['folder'])/'judgment.json' for record in summary.get('microRows',{}).values()})
     for path in paths:
         stage = load(path)
+        micro = stage.get('micro') is True
         if not operational:
             mode, marker, suffix = path.parent.name.partition('-E5-')
             row_id = 'E5-'+suffix.split('-')[0] if marker else path.parent.name
@@ -189,8 +193,9 @@ def render(root, repo):
                 columns = [row_id, mode, name+'; p'+str(slo.get('percentile', '?'))+'≤'+number(target/1e6 if target is not None else None)+'ms',
                            number(p95/1e6 if p95 is not None else None), result_counts(metric), verdict,
                            energy_text(chill), static_text, difference_text]
-                result_rows.append('| '+' | '.join(cell(column) for column in columns)+' |')
+                (micro_result_rows if micro else result_rows).append('| '+' | '.join(cell(column) for column in columns)+' |')
             lines += [f'**{cell(name)}**', '', '```json', json.dumps(selected, ensure_ascii=False, indent=2), '```', '']
+        if micro:lines += ['micro=true — 반복 검증 비교용; 정본 표에는 포함하지 않음.', '']
         del stage
     if not paths:
         lines += ['No stage summaries present; timing values unavailable.', '']
@@ -204,6 +209,11 @@ def render(root, repo):
             '', '| 단계 | 방식 | Workload·SLO | 수신 p95 (ms) | 결과 수 (요청) | D1 (deadline/필요 rank) | CHILL 전체/활성 POOL·오차·coverage | 대응 고정 E5-S 전체/활성 POOL·오차·coverage | Δ 고정−CHILL 전체 POOL |',
             '|---|---|---|---:|---|---|---|---|---|',
             *result_rows, '']
+        if micro_result_rows:
+            lines += ['', '## 미니 행 비교 (micro=true; 정본 표 제외)', '',
+                      '동일 raw D1·완료-only p95·POOL 에너지 규칙. 대응하는 동일 길이 고정 trace가 없으면 Δ는 N/A이며, 전체 길이 정본 에너지에서 빼지 않는다.',
+                      '| 단계 | 방식 | Workload·SLO | 수신 p95 (ms) | 결과 수 (요청) | D1 (deadline/필요 rank) | CHILL 전체/활성 POOL·오차·coverage | 대응 고정 E5-S 전체/활성 POOL·오차·coverage | Δ 고정−CHILL 전체 POOL |',
+                      '|---|---|---|---:|---|---|---|---|---|', *micro_result_rows, '']
     return '\n'.join(lines)
 
 
@@ -232,8 +242,8 @@ def self_check(repo):
                 'batch':1,'energyPerInputJoules':0,'energyBelowResolution':True}]}},
         }))
         text = render(root, repo)
-        assert 'E5-7 실패' in text and text.count('MEASURED; Run ID') == 16
-        failure_row = next(line for line in text.splitlines() if line.startswith('| E5-7 실패'))
+        assert text.count('MEASURED; Run ID') == 16
+        failure_row = next(line for line in text.splitlines() if line.startswith('| E5-7 |'))
         assert ' MEASURED;' in failure_row and 'UNMEASURED' not in failure_row
         assert '"status": "CAPTURED"' in text and 'operator-receipt' in text
         assert 'below-resolution-profile' in text and '"energyBelowResolution": true' in text
@@ -283,4 +293,14 @@ def self_check(repo):
         text=render(root,repo)
         assert '표적 재실행, 시작 상태 복원, 소스 R1~R6+R4b+C1+C2' in text
         assert '| E5-5 | 1 | 1 | ACCEPTED |' in text
+        micro=root/'full-E5-5m-m1';micro.mkdir()
+        micro_value=load(root/'static-E5-1/judgment.json');micro_value['micro']=True
+        (micro/'judgment.json').write_text(json.dumps(micro_value))
+        summary['microRows']={'E5-5m':{'micro':True,'folder':str(micro)}}
+        (root/'e5-summary.json').write_text(json.dumps(summary))
+        text=render(root,repo)
+        canonical,micro_table=text.split('## 미니 행 비교',1)
+        canonical_results=canonical.split('## 워크로드별 처리 결과',1)[1].split('## Frozen evidence',1)[0]
+        assert '| E5-5m |' not in canonical_results and '| E5-5m |' in micro_table
+        assert 'micro=true' in text and '전체 길이 정본 에너지에서 빼지 않는다' in micro_table
     print('tables self-check: PASS')
