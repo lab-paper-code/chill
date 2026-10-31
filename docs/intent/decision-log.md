@@ -214,3 +214,12 @@
 - S3 패널(2인, Gemini는 quota 소진): 표식(noEffectRoutes)과 partial 특례를 삭제하는 방향은 맞음. 다만 생략 bridge의 완료를 현재 scope로 판정하면 안 됨(stage가 진행되면 다시 관측할 수 없어 부모가 영구 running이 되고, 오래된 bridge가 재실행됨). 대신 frozen edge와 receipt로 판정: 의존 action의 run이 complete면 소비된 것으로 봄. ACK가 없는 retirement-only 선언은 admission에서 제외해 영구 running을 막음.
 - 8c는 실재하는 R 문제로 판정. 생략 bridge의 자기 의존 재귀 검사는 덧댐이 아니라 P 의존 계약의 복원임(2/2). S3보다 먼저 별도 S2b로 진행.
 - 배포 계획: S2+S2b를 한 번에 배포하고 round-12로 측정.
+
+## 2026-10-31 — S2b 배포·round-12, S3 리뷰
+
+- S2b `d1f4b460`(+17, 생략 bridge 자기 의존 재귀; fail-before 확인): 리뷰 2종 PASS, 리플레이 PASS, clean gate PASS. 10:53Z control-272 서버 배포. 10:56Z round-12(S2+S2b) 측정 시작.
+- S3 `702604c7`(제품 순삭제 70줄): 리뷰 2종 PASS, 패널 2인 조건부 승인. 후속 S3b로 처리할 항목:
+  (1) stale bridge 재실행은 기존에 있던 문제. 소비 판정을 launch에도 공유해 차단.
+  (2) admission이 route-only NotReady 계획을 막아 readySubset 회복이 늦어질 위험. 비어 있지 않은 route는 무조건 admission하고, retirement에만 dependenciesReady를 요구.
+  (3) 문서 2곳 상충.
+  잔존 [추정]: 재시작이나 GC로 완료 ACK가 사라지면 prepare→생략 bridge→stop 부모가 영구 running이 될 수 있음. S3 이전부터 있던 문제로, S4 이후 판단.
