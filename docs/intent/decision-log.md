@@ -317,3 +317,9 @@
 - 반응 단축만으로는 실패 창을 못 닫음: 감지+탐색+최단 prepare+ACK ≈ 25~45초 ≫ SLO 1초.
 - warm 비용: SBC 인스턴스당 ΔW ≤ 약 0.3 W, 3개를 추가해도 480초에 ≤430 J(≈0.7%). GPU 서버는 +42~54 W이고 계획기가 이미 반영함.
 - 결정: warm 공급 가설을 코드 변경 없이 먼저 검증함. 기존 per-UID `minimumDemand`(Knative min-scale에 해당)를 image 20→105로 바꿔 오프라인 재결정한 뒤 E5-3m A/B 각 3회. 105는 trace의 peak를 알고 정한 값이므로 보고에 명시함. 계단 전 K≥95인데 계단 F가 줄지 않으면 warm 가설을 기각하고 장치별 큐 쪽을 봄.
+
+## 2026-10-31 — control-277 배포, warm min-scale A/B 준비
+
+- 16:31Z control-277: server와 dashboard를 `f780d19a`(view=summary 포함, 조언 세션 요청)로 배포. 두 Pod 모두 restart 0, dashboard 200. 게이트: 리플레이 PASS, lint/arch/helm PASS, dashboard 184/0. kube에서 부하에 민감한 테스트 1건이 부하 중 실패했으나 단독 30회와 캐시 없는 패키지 재실행 모두 PASS. 16:31~17:01Z 조언 세션 재설문 창.
+- round.py `8311fe9c`: 선택적 config `minimumDemand`(step 3에서 PUT·검증, binding에 동결, 첫 load tick 검증). 리뷰 PASS.
+- 17:01Z부터 A/B 시작: E5-3m, 서버 f780d19a 고정. image minimumDemand 105(tag 20·22·24) vs 20(tag 21·23·25). 105는 trace peak 95/s를 알고 정한 값임.
