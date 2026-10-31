@@ -74,9 +74,31 @@ export function operationCostOutliers(rows:OperationCostRow[]) {
   })
 }
 
-export function operationCostSummary(steps:OperationStep[]) {
+export type OperationCostKind = "prepare"|"remove"|"power"
+export type OperationCostStatistics = {
+  duration:readonly [number,number]|undefined
+  energy:readonly [number,number]|undefined
+  count:number
+  durationSamples:number
+  energySamples:number
+  models:string[]
+  insufficient:boolean
+}
+export type OperationCostSummary = {
+  models:string[]
+  prepare:OperationCostStatistics
+  remove:OperationCostStatistics
+  power:OperationCostStatistics
+  operationKinds:OperationCostKind[]
+  maximumOutliers:Record<"prepare"|"remove",{duration?:number;energy?:number}>
+  count:number
+  insufficient:boolean
+  powerMultiple:number
+}
+
+export function operationCostSummary(steps:OperationStep[]):OperationCostSummary {
   const rows=operationTransitionCosts(steps),outliers=operationCostOutliers(rows)
-  const cost=(kind:string)=>{
+  const cost=(kind:OperationCostKind):OperationCostStatistics=>{
     const results=rows.filter(row=>row.step.condition?.kind===kind).flatMap(row=>row.result?[row.result]:[])
     const durations=results.flatMap(result=>{const value=result.durationNanos;return (typeof value==="bigint"||typeof value==="number"&&Number.isSafeInteger(value))&&value>=0&&Number.isFinite(Number(value))?[Number(value)]:[]}).sort((a,b)=>a-b)
     const energies=results.flatMap(result=>result.verdict==="Accepted"&&typeof result.wallJoules==="number"&&Number.isFinite(result.wallJoules)&&result.wallJoules>=0?[result.wallJoules]:[]).sort((a,b)=>a-b)
@@ -84,10 +106,15 @@ export function operationCostSummary(steps:OperationStep[]) {
     return {
       duration:medianMax(durations),
       energy:medianMax(energies),
+      count:results.length,
+      durationSamples:durations.length,
+      energySamples:energies.length,
+      models:[...new Set(results.flatMap(result=>result.model?[result.model]:[]))],
+      insufficient:!results.length||rows.some((row,index)=>row.step.condition?.kind===kind&&outliers[index].insufficient),
     }
   }
-  const prepare=cost("prepare"),remove=cost("remove")
-  const maximumOutliers=(kind:"prepare"|"remove",summary:typeof prepare)=>{
+  const prepare=cost("prepare"),remove=cost("remove"),power=cost("power")
+  const maximumOutliers=(kind:"prepare"|"remove",summary:OperationCostStatistics)=>{
     const marker=(metric:"duration"|"energy")=>{
       const maximum=summary[metric]?.[1]
       if(maximum===undefined)return undefined
@@ -96,7 +123,7 @@ export function operationCostSummary(steps:OperationStep[]) {
     }
     return {duration:marker("duration"),energy:marker("energy")}
   }
-  return {models:[...new Set(rows.flatMap(row=>row.result?.model?[row.result.model]:[]))],prepare,remove,maximumOutliers:{prepare:maximumOutliers("prepare",prepare),remove:maximumOutliers("remove",remove)},
+  return {models:[...new Set(rows.flatMap(row=>row.result?.model?[row.result.model]:[]))],prepare,remove,power,operationKinds:(["prepare","remove","power"] as const).filter(kind=>rows.some(row=>row.step.condition?.kind===kind)),maximumOutliers:{prepare:maximumOutliers("prepare",prepare),remove:maximumOutliers("remove",remove)},
     count:rows.filter(row=>row.result).length,insufficient:!outliers.length||outliers.some(row=>row.insufficient),
     powerMultiple:Math.max(0,...outliers.flatMap((row,index)=>rows[index].step.condition?.kind==="power"?[row.duration??0,row.energy??0]:[]))}
 }

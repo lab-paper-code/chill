@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { datasetGap, requestNumber, requestBatches, requestDefaults, requestInputs, requestInitialBatches, requestTargetBatches, requestConditionChanges, requestPreflightReason, requestRejectionGuidance, requestOperationalSummary, requestFailureFacts } from "./measurement-request.ts"
-import type { MeasurementPlan, ProfilesView } from "./read-types.ts"
+import { datasetGap, requestNumber, requestBatches, requestDefaults, requestInputs, requestInitialBatches, requestTargetBatches, requestConditionChanges, requestPreflightReason, requestRejectionGuidance, requestOperationalSummary, requestFailureFacts, requestCheckCurrent, requestHref, requestRunHref, requestUsedResults } from "./measurement-request.ts"
+import type { MeasurementAssessment, MeasurementCoverageCell, MeasurementPlan, ProfilesView, ResultRow } from "./read-types.ts"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { runInNewContext } from "node:vm"
@@ -138,13 +138,13 @@ test("changing a preprocessor clears only inherited datasets, preserving deliber
   assert.equal(requestInputs("model","onnx","image-pre","vqa",context,{dataset:false}).dataset,"vqa")
 })
 
-function renderRequest(props:Record<string,unknown>={},query="",error="") {
+function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0) {
   const source=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(`${source}\nexport { Funnel };`,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
   const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
   const modules:Record<string,unknown>={
-    "react":{...require("react"),useState:(initial:unknown)=>{const state=require("react").useState(initial);return initial===""?[error,state[1]]:state}},
+    "react":{...require("react"),useState:(initial:unknown)=>{const state=require("react").useState(initial);return initial===""?[error,state[1]]:initial===0?[stage,state[1]]:state}},
     "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
     "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams(query)},
     "@/lib/client":{useChillMutation:()=>({isPending:false})},
@@ -152,7 +152,7 @@ function renderRequest(props:Record<string,unknown>={},query="",error="") {
     "@/components/screen":{Screen:container,Rows:container,RowDialog:()=>null},
     "@/features/read-pages":{},
     "@/features/resources":{powerModeText:()=>"고정"},
-    "@/components/ui/button":{Button:container},
+    "@/components/ui/button":{Button:({children,disabled,"aria-current":current}:{children?:ReactNode;disabled?:boolean;"aria-current"?:"step"})=>createElement("button",{disabled,"aria-current":current},children)},
     "@/components/ui/input":{Input:()=>null},
     "@/lib/measurement-request":requestHelpers,
     "@/lib/scheduler":{},
@@ -173,7 +173,7 @@ function renderRequest(props:Record<string,unknown>={},query="",error="") {
 
 test("request Funnel renders the undeclared-batch branch without a stale condition variable",()=>{
   const html=renderRequest()
-  assert.match(html,/CPU·데이터셋·측정 방식이 같은 기존 결과가 있는지 검사해요/)
+  assert.match(html,/>배치 \(건\)</)
   assert.doesNotMatch(html,/NaN/)
   assert.match(html,/<th>예열 \(회\)<\/th>/)
   assert.match(html,/<td>—<\/td>/)
@@ -258,11 +258,88 @@ test("failure cause rows retain server reason and message before a generic class
   assert.deepEqual(requestFailureFacts([]),[["서버 사유","미제공"],["서버 메시지","미제공"]])
 })
 
-test("failed request details lead with server causes and keep deletion collapsed under management",()=>{
+test("successful checks are invalid after any input or source identity change",()=>{
+  const body=JSON.stringify({name:"checked",batch:[1],sourceUID:"original"})
+  assert.equal(requestCheckCurrent(body,body,true,true),true)
+  assert.equal(requestCheckCurrent(null,body,true,true),false)
+  for(const current of [JSON.stringify({name:"renamed",batch:[1],sourceUID:"original"}),JSON.stringify({name:"checked",batch:[2],sourceUID:"original"}),JSON.stringify({name:"checked",batch:[1],sourceUID:"replacement"})])assert.equal(requestCheckCurrent(body,current,true,true),false)
+  assert.equal(requestCheckCurrent(body,body,false,true),false)
+  assert.equal(requestCheckCurrent(body,body,true,false),false)
+})
+
+test("canonical request and child round links preserve namespaces and immutable identities",()=>{
+  const request=new URL(requestHref("ns / one","parent / one","parent-uid"),"https://dashboard.invalid")
+  assert.equal(request.pathname,"/measurements/requests/parent%20%2F%20one")
+  assert.equal(request.searchParams.get("namespace"),"ns / one")
+  assert.equal(request.searchParams.get("uid"),"parent-uid")
+  const child=new URL(requestRunHref("ns","run / one","run-uid",{name:"parent",uid:"parent-uid"}),"https://dashboard.invalid")
+  assert.equal(child.pathname,"/measurements/requests/parent/runs/run%20%2F%20one")
+  assert.equal(child.searchParams.get("requestUID"),"parent-uid")
+  assert.equal(child.searchParams.get("uid"),"run-uid")
+  const orphan=new URL(requestRunHref("ns","orphan","run-uid"),"https://dashboard.invalid")
+  assert.equal(orphan.pathname,"/measurements/requests")
+  assert.equal(orphan.searchParams.get("run"),"orphan")
+})
+
+test("creation stages keep target, conditions and check submission distinct",()=>{
+  const target=renderRequest()
+  assert.match(target,/aria-label="요청 단계"/)
+  assert.match(target,/aria-current="step">대상/)
+  assert.doesNotMatch(target,/>요청 범위 검사</)
+  const review=renderRequest({},"","",2)
+  assert.match(review,/aria-label="검사·제출"/)
+  assert.match(review,/>요청 범위 검사</)
+})
+
+const retainedAssessment:MeasurementAssessment={status:"complete",displayStatus:"usable",label:"측정 완료",reasons:[],execution:null,evidence:{available:true,accepted:true,reasons:[]},checklist:{criteriaMet:null,version:"result-checklist.v1",checks:[]},scope:{schedulerUsed:true,reused:false,facts:[]}}
+const retainedProgress={basis:"requested",target:[4],measured:[4],criteriaMet:[],missing:[],inProgress:[],unknown:[]}
+const retainedRow:ResultRow={id:"retained",rowKind:"direct",profileId:"profile",sourceProfileId:null,batch:4,condition:{metricSource:{nodeName:"node"}},p95Milliseconds:12,latencySampleCount:100,idleWatts:2,activeWatts:3,totalJoulesPerItem:4,incrementalJoulesPerItem:1,confidence:null,activeTrialCount:3,idleTrialCount:3,completedItems:100,completedCalls:25,powerSource:null,assessment:retainedAssessment,sources:[],missingReasons:[],reuse:null}
+const retainedCell:MeasurementCoverageCell={id:"cell",model:{name:condition.model,uid:"model-uid"},deviceClass:{name:condition.deviceClass,uid:"device-uid"},executionPath:condition.path,powerMode:condition.powerMode,support:{verdict:"Compatible",node:{name:"node",uid:"node-uid"},reasons:[]},assessment:retainedAssessment,variantCount:1,variants:[{id:"variant",condition:{metricSource:{nodeName:"node"}},assessment:retainedAssessment,batchProgress:retainedProgress,resultRows:[retainedRow],requestIds:[],runIds:[],profileIds:["profile"]}],batchProgress:retainedProgress,representative:null,failureSummary:[],history:[]}
+
+test("failed latest requests do not remove independently retained current-use results",()=>{
+  assert.deepEqual(requestUsedResults([retainedCell],plan.spec),[retainedRow])
+  assert.deepEqual(requestUsedResults([retainedCell],{...plan.spec,state:{...plan.spec.state,targetNode:"other"}}),[])
+  assert.deepEqual(requestUsedResults([{...retainedCell,variants:retainedCell.variants.map(variant=>({...variant,assessment:{...variant.assessment,scope:{...variant.assessment.scope,schedulerUsed:false}}}))}],plan.spec),[])
+})
+
+test("failed request detail renders failure evidence, current results, checks and same-condition action together",()=>{
   const source=readFileSync(new URL("../features/measurement-plans.tsx",import.meta.url),"utf8")
-  assert.match(source,/requestFailureFacts\(campaign\.conditions\)/)
-  assert.ok(source.indexOf("requestFailureFacts(campaign.conditions)")<source.indexOf("<ResultRows rows="))
-  assert.match(source,/<details><summary[^>]*>관리<\/summary><Rows label="위험 영역">/)
-  assert.match(source,/coverageUsageAssessment\(coverage\.data\?\.cells/)
-  assert.match(source,/result\?\.excludedTrials/)
+  const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
+  const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
+  const assessment=retainedAssessment
+  const data={campaign:{...plan.metadata,spec:plan.spec,phase:"Failed",conditions:[{type:"Complete",status:"False",reason:"NativePreparationFailed",message:"Pod image missing"}]},assessment,resultRows:[],result:{excludedTrials:[{run:{namespace:"ns",name:"failed-child",uid:"child"}}]}}
+  const modules:Record<string,unknown>={
+    "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
+    "next/navigation":{useSearchParams:()=>new URLSearchParams(),useRouter:()=>({push:()=>{}})},
+    "@tanstack/react-query":{useQueryClient:()=>({})},
+    "@/lib/client":{useChillQuery:()=>({data}),useChillMutation:()=>({})},
+    "@/lib/measurement-request":requestHelpers,
+    "@/lib/measurement-assessment":{assessmentReasons:()=>[]},
+    "@/lib/measurement-coverage":coverageHelpers,
+    "@/lib/measurements":measurementHelpers,
+    "@/lib/scheduler":{},
+    "@/features/measurement-coverage":{useMeasurementCoverage:()=>({data:{cells:[{...retainedCell,assessment}]}})},
+    "@/features/measurement-runs":{MeasurementChildRuns:()=>createElement("p",null,"child-rounds")},
+    "@/components/read-region":{QueryGate:container,SourceJSON:()=>null,SourceExport:()=>null},
+    "@/components/screen":{Screen:container,Rows:container,Facts:()=>null},
+    "@/components/ui/button":{Button:container},
+    "@/components/ui/dialog":Object.fromEntries(["Dialog","DialogContent","DialogDescription","DialogHeader","DialogTitle"].map(key=>[key,container])),
+    "@/components/ui/sheet":{},
+    "@/components/ui/table":Object.fromEntries(["Table","TableBody","TableCell","TableHead","TableHeader","TableRow"].map(key=>[key,container])),
+    "@/components/status-cell":{StatusCell:({label}:{label:string})=>createElement("span",null,label)},
+    "@/components/measurement-navigation":{MeasurementStatus:()=>null,MeasurementEvidenceChecks:()=>createElement("p",null,"checks")},
+  }
+  runInNewContext(compiled,{exports,require:(name:string)=>name in modules?modules[name]:require(name),URLSearchParams})
+  const html=renderToStaticMarkup(createElement(exports.MeasurementPlanDetails as ComponentType<{namespace:string;name:string}>,{namespace:"ns",name:"source"}))
+  assert.match(html,/NativePreparationFailed/)
+  assert.match(html,/Pod image missing/)
+  assert.match(html,/failed-child/)
+  assert.match(html,/현재 사용 결과/)
+  assert.match(html,/12\.00/)
+  assert.match(html,/checks/)
+  assert.match(html,/동일 조건 요청/)
+  assert.match(html,/fromUID=uid/)
+  assert.ok(html.indexOf("Pod image missing")<html.indexOf("측정 실패 · 요청 결과 없음"))
+  assert.match(html,/<details><summary[^>]*>관리/)
 })

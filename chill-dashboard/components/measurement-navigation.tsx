@@ -3,18 +3,18 @@
 import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
 import type { MeasurementAssessment, ResultRow } from "@/lib/read-types"
-import { measurementUsage, measurementEvidenceChecks } from "@/lib/measurement-assessment"
+import { measurementSchedulerUsed, measurementQuality, measurementEvidenceChecks } from "@/lib/measurement-assessment"
 
-const tabs = [["coverage","/measurements","커버리지"],["requests","/measurements/requests","요청"],["runs","/measurements/runs","회차"],["profiles","/scheduler/profiles","프로파일"],["operation-cost-measurements","/measurements/operation-cost-measurements","동작 비용"],["dispatch-occupancy-measurements","/measurements/dispatch-occupancy-measurements","분배 점유"]] as const
-export function MeasurementNavigation({active,namespace}:{active?:string;namespace?:string}) {
+const tabs = [["coverage","/measurements","범위"],["requests","/measurements/requests","요청"],["results","/measurements/results","결과"]] as const
+export function MeasurementNavigation({active,namespace}:{active?:"coverage"|"requests"|"results";namespace?:string}) {
   const pathname=usePathname(),params=useSearchParams()
   const ns=namespace??params.get("namespace")
-  return <nav aria-label="측정" className="measurement-tabs">{tabs.map(([key,href,label])=>{const selected=active?active===key:pathname===href||(key==="coverage"&&pathname==="/measurements/coverage");return <Link key={key} href={`${href}${ns?`?${new URLSearchParams({namespace:ns})}`:""}`} aria-current={selected?"page":undefined}>{label}</Link>})}</nav>
+  return <nav aria-label="측정" className="measurement-tabs">{tabs.map(([key,href,label])=>{const selected=active?active===key:pathname===href;return <Link key={key} href={`${href}${ns?`?${new URLSearchParams({namespace:ns})}`:""}`} aria-current={selected?"page":undefined}>{label}</Link>})}</nav>
 }
-export const measurementStates = {usable:"측정 충족",review:"검토 필요",insufficient:"부족",problem:"문제",running:"진행",unmeasured:"미측정",unknown:"확인 불가",unsupported:"지원 안 함"} as const
+export const measurementStates = {usable:"측정 있음",review:"검토 필요",insufficient:"일부 완료",problem:"실패",running:"진행",unmeasured:"미측정",unknown:"미확인",unsupported:"지원 안 함"} as const
 export function MeasurementStatus({assessment}:{assessment?:MeasurementAssessment|null}) {
-  const status=assessment?.displayStatus??"unknown"
-  return <span className="inline-grid justify-items-start gap-1"><span className="measurement-status bg-muted text-foreground">{measurementUsage(assessment)}</span><span className={`text-xs ${status==="usable"?"text-muted-foreground":`status-${status}`}`}>측정: {measurementStates[status]}</span></span>
+  const status=assessment?.displayStatus??"unknown",used=measurementSchedulerUsed(assessment),quality=measurementQuality([assessment])
+  return <table className="text-left text-xs"><thead><tr><th className="pr-3">측정 상태</th><th className="pr-3">현재 사용</th><th>품질 판정</th></tr></thead><tbody><tr><td className="pr-3">{measurementStates[status]}</td><td className="pr-3">{used===true?"사용 중":used===false?"미사용":"미확인"}</td><td>{quality.label}</td></tr></tbody></table>
 }
 export function MeasurementEvidenceChecks({assessment,rows=[]}:{assessment?:MeasurementAssessment|null;rows?:ResultRow[]}) {
   const checks=measurementEvidenceChecks(assessment,rows)

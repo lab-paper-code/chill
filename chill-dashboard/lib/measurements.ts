@@ -43,8 +43,8 @@ export function resultRowsCSV(rows:ResultRow[]):string {
 export type ProjectionMeasurementKind = "operation-cost-measurements" | "dispatch-occupancy-measurements"
 export const isProjectionMeasurementKind = (kind:string):kind is ProjectionMeasurementKind => kind === "operation-cost-measurements" || kind === "dispatch-occupancy-measurements"
 export const measurementPath = (kind:ProjectionMeasurementKind, namespace:string, name?:string) => `v1/namespaces/${encodeURIComponent(namespace)}/${kind}${name === undefined ? "" : `/${encodeURIComponent(name)}`}`
-export const measurementListHref = (kind:ProjectionMeasurementKind, namespace:string) => `/measurements/${kind}?namespace=${encodeURIComponent(namespace)}`
-export const measurementHref = (kind:ProjectionMeasurementKind, metadata:{namespace:string;name:string;uid:string}) => `/measurements/${kind}/${encodeURIComponent(metadata.namespace)}/${encodeURIComponent(metadata.name)}?uid=${encodeURIComponent(metadata.uid)}`
+export const measurementListHref = (kind:ProjectionMeasurementKind, namespace:string) => `/measurements/results?${new URLSearchParams({kind:kind==="operation-cost-measurements"?"operation-cost":"dispatch-occupancy",namespace})}`
+export const measurementHref = (kind:ProjectionMeasurementKind, metadata:{namespace:string;name:string;uid:string}) => `${measurementListHref(kind,metadata.namespace)}&${new URLSearchParams({measurement:metadata.name,uid:metadata.uid})}`
 export const measurementUIDMismatch = (uid:string, expectedUID:string|null) => !!expectedUID && uid !== expectedUID
 export const measurementReason = (reason:string) => codeText[reason] ? `${codeText[reason].join(" ")} (${reason})` : reason
 export function measurementReasonSummary(reason:string) {

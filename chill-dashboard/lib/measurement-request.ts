@@ -1,8 +1,32 @@
 import type { DatasetResource, DatasetSpec, PreprocessorResource, PreprocessorSpec } from "./domain.ts"
-import type { Condition, MeasurementPlan, MeasurementPlanSpec, ProfilesView } from "./read-types.ts"
+import type { Condition, MeasurementCoverageCell, MeasurementPlan, MeasurementPlanSpec, ProfilesView } from "./read-types.ts"
 
 export type RequestCondition = { model:string; deviceClass:string; node:string; path:string; powerMode:string }
 export type RequestDefaults = { spec:MeasurementPlanSpec; source:string; exact:boolean }
+
+export function requestHref(namespace:string,name:string,uid?:string) {
+  return `/measurements/requests/${encodeURIComponent(name)}?${new URLSearchParams({namespace,...(uid?{uid}:{})})}`
+}
+export function requestRunHref(namespace:string,name:string,uid?:string,parent?:{name:string;uid:string}) {
+  const query=new URLSearchParams({namespace,...(uid?{uid}:{}),...(parent?{requestUID:parent.uid}:{run:name})})
+  return parent?`/measurements/requests/${encodeURIComponent(parent.name)}/runs/${encodeURIComponent(name)}?${query}`:`/measurements/requests?${query}`
+}
+export function requestExecutionStatus(phase?:string) {
+  return phase==="Complete"?"종료":phase==="Failed"?"실패":phase==="Measuring"?"진행 중":phase||"미확인"
+}
+
+// Bind both successful checks to the complete input, including inherited source identity.
+export function requestCheckCurrent(checked:string|null,current:string,admitted:boolean,resolves?:boolean) {
+  return checked!==null&&checked===current&&admitted&&resolves===true
+}
+
+export function requestUsedResults(cells:MeasurementCoverageCell[],spec:MeasurementPlanSpec) {
+  const candidate=spec.state.candidate
+  return cells.filter(cell=>cell.model.name===candidate.modelSpec&&cell.deviceClass.name===candidate.deviceClass&&cell.executionPath===candidate.executionPath&&cell.powerMode===candidate.powerMode).flatMap(cell=>cell.variants.filter(variant=>{
+    const condition=variant.condition,node=(condition.metricSource as {nodeName?:string}|undefined)?.nodeName??(condition.state as {targetNode?:string}|undefined)?.targetNode
+    return node===spec.state.targetNode&&variant.assessment.scope.schedulerUsed===true
+  }).flatMap(variant=>variant.resultRows))
+}
 
 // Reuse actual server values, never invent protocol constants or copy another device's CPU allocation.
 export function requestDefaults(condition:RequestCondition, plans:MeasurementPlan[], profiles:ProfilesView["profiles"]):RequestDefaults|null {

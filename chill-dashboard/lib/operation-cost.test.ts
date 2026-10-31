@@ -2,7 +2,6 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { largestOperationStages, operationStageLabel, operationStageLabels, operationDirection, operationModel, operationMetadata, operationTransitionCosts, operationCostOutliers, operationCostSummary, operationCostTime, operationCostEnergy } from "./operation-cost.ts"
 import { operationDuration, operationWallEnergy, type OperationStep } from "./measurements.ts"
-import { readFileSync } from "node:fs"
 
 test("operation cost display bounds precision without changing missing and invalid values",()=>{
   assert.equal(operationDuration(874863796474n,"s",1),"874.9 s")
@@ -101,8 +100,8 @@ test("R14: summaries show median and maximum without idle totals or rejected ene
   const step=(kind:string,seconds:number,energy:number,verdict="Accepted"):OperationStep=>({name:kind,condition:{name:kind,kind,batchEnergyOptimization:"profile"},results:[{name:kind,key:String(seconds),model:"frozen",durationNanos:BigInt(seconds)*1000000000n,wallJoules:energy,verdict}]})
   const summary=operationCostSummary([step("prepare",10,100),step("prepare",20,200),step("remove",2,30),step("remove",4,999,"Rejected"),step("idle",1000,9999)])
   assert.deepEqual(summary.models,["frozen"])
-  assert.deepEqual(summary.prepare,{duration:[15e9,20e9],energy:[150,200]})
-  assert.deepEqual(summary.remove,{duration:[3e9,4e9],energy:[30,30]})
+  assert.deepEqual(summary.prepare,{duration:[15e9,20e9],energy:[150,200],count:2,durationSamples:2,energySamples:2,models:["frozen"],insufficient:true})
+  assert.deepEqual(summary.remove,{duration:[3e9,4e9],energy:[30,30],count:2,durationSamples:2,energySamples:1,models:["frozen"],insufficient:true})
   assert.equal(summary.count,4)
   assert.equal(summary.insufficient,true)
 })
@@ -110,10 +109,10 @@ test("R14: summaries show median and maximum without idle totals or rejected ene
 test("R14: median differs from the midpoint of extremes and keeps outlier rules",()=>{
   const steps:OperationStep[]=[1,2,3,30].map(seconds=>({name:"prepare",condition:{name:"prepare",kind:"prepare",batchEnergyOptimization:"profile"},results:[{name:"prepare",key:String(seconds),model:"frozen",verdict:"Accepted",durationNanos:BigInt(seconds)*1000000000n,wallJoules:seconds*10}]}))
   const summary=operationCostSummary(steps)
-  assert.deepEqual(summary.prepare,{duration:[2.5e9,30e9],energy:[25,300]})
+  assert.deepEqual(summary.prepare,{duration:[2.5e9,30e9],energy:[25,300],count:4,durationSamples:4,energySamples:4,models:["frozen"],insufficient:false})
   assert.equal(summary.maximumOutliers.prepare.duration,12)
   assert.equal(summary.insufficient,false)
-  assert.deepEqual(operationCostSummary([]).prepare,{duration:undefined,energy:undefined})
+  assert.deepEqual(operationCostSummary([]).prepare,{duration:undefined,energy:undefined,count:0,durationSamples:0,energySamples:0,models:[],insufficient:true})
 })
 
 test("R14: maximum markers use only the maximum attempt's existing cohort verdict",()=>{
@@ -132,21 +131,28 @@ test("power transition outliers remain visible apart from prepare and remove max
   assert.equal(summary.insufficient,false)
   assert.equal(operationCostSummary(steps.slice(0,2)).powerMultiple,0)
   assert.equal(operationCostSummary(steps.map(step=>({...step,condition:{...step.condition!,kind:"prepare"}}))).powerMultiple,0)
-  const source=readFileSync(new URL("../features/measurement-projections.tsx",import.meta.url),"utf8")
-  assert.match(source,/cost\.powerMultiple\.toFixed\(1\)/)
 })
 
-test("R15: cost list remains six columns with median ranges and shared occupancy problem cells",()=>{
-  const source=readFileSync(new URL("../features/measurement-projections.tsx",import.meta.url),"utf8")
-  const list=source.slice(source.indexOf('const columns:DataColumn<MeasurementProjection>'),source.indexOf('return <Screen width="data"'))
-  assert.match(list,/\["duration","energy"\] as const/)
-  assert.doesNotMatch(list,/key:"deviation"|stat===|flatMap\(stage/)
-  for(const key of ["name","remove","attempts","phase"])assert.match(list,new RegExp(`key:"${key}"`))
-  assert.match(source,/maximum>0\?median\/maximum\*100:0/)
-  assert.match(source,/rounded-full bg-current/)
-  assert.match(source,/border-r-2 border-current/)
-  assert.match(source,/multiple\?"text-destructive"/)
-  assert.equal((source.match(/<OccupancyValue data=/g)||[]).length,4)
-  assert.match(source,/problem\?"text-muted-foreground"/)
-  assert.doesNotMatch(source,/flex-wrap/)
+
+test("operation rows keep zero, absent and invalid samples distinct for each statistic",()=>{
+  const steps:OperationStep[]=[
+    {name:"prepare",condition:{name:"prepare",kind:"prepare"},results:[
+      {name:"prepare",key:"zero",model:"a",verdict:"Accepted",durationNanos:0n,wallJoules:0},
+      {name:"prepare",key:"bad",model:"a",verdict:"Accepted",durationNanos:-1n,wallJoules:Infinity},
+      {name:"prepare",key:"missing",model:"a",verdict:"Accepted"},
+    ]},
+    {name:"remove",condition:{name:"remove",kind:"remove"},results:[]},
+    {name:"idle",condition:{name:"idle",kind:"idle"},results:[{name:"idle",key:"idle",verdict:"Accepted",durationNanos:999n,wallJoules:999}]},
+  ]
+  const summary=operationCostSummary(steps)
+  assert.deepEqual(summary.operationKinds,["prepare","remove"])
+  assert.deepEqual(summary.prepare.duration,[0,0])
+  assert.deepEqual(summary.prepare.energy,[0,0])
+  assert.equal(summary.prepare.count,3)
+  assert.equal(summary.prepare.durationSamples,1)
+  assert.equal(summary.prepare.energySamples,1)
+  assert.equal(summary.remove.count,0)
+  assert.equal(summary.remove.duration,undefined)
+  assert.equal(summary.remove.energy,undefined)
+  assert.equal(summary.remove.insufficient,true)
 })

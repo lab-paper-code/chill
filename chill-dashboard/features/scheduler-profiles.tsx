@@ -1,51 +1,81 @@
 "use client"
 
+import * as React from "react"
 import Link from "next/link"
-import { useSearchParams } from "next/navigation"
-import { useChillQuery, useSession } from "@/lib/client"
-import type { CurvePlanSpec, ProfilesView } from "@/lib/read-types"
+import { useRouter, useSearchParams } from "next/navigation"
+import { useChillQuery } from "@/lib/client"
+import type { CurvePlanSpec, MeasurementAssessment, ProfilesView, ResultRow } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
-import { formatMeasurementTime } from "@/lib/measurements"
+import { formatMeasurementNumber, formatMeasurementTime } from "@/lib/measurements"
+import { assessmentReasons, measurementQuality, measurementSchedulerUsed } from "@/lib/measurement-assessment"
+import { STATUS_AXES } from "@/lib/status"
+import { StatusCell } from "@/components/status-cell"
 import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
-import { Screen, Facts } from "@/components/screen"
+import { Facts } from "@/components/screen"
 import { DataTable, useServerTable } from "@/components/data-table"
 import { Button } from "@/components/ui/button"
-import { MeasurementNavigation, MeasurementStatus, MeasurementEvidenceChecks } from "@/components/measurement-navigation"
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
 import { AssessmentDetails, ResultRows } from "@/features/measurement-plans"
 import { MeasurementFilters } from "@/features/measurement-coverage"
 
 export const conditionRows = (condition:CurvePlanSpec):[string,string][] => [
   ["모델 파일", `${condition.logicalModel} / ${condition.artifact.name}`],
   ["실행 방식", `${condition.runtimeFamily} / ${condition.backend}`],
-  ["전처리기", condition.preprocessor.name || "없음"],
-  ["데이터셋", condition.activeProtocol.dataset?.name ?? "없음"],
+  ["전처리기", condition.preprocessor.name || "해당 없음"],
+  ["데이터셋", condition.activeProtocol.dataset?.name ?? "미기록"],
 ]
+
+// Embedded by the canonical results frame; this owns only the profiles API and its pagination.
 export function SchedulerProfilesPage() {
-  const {config}=useSession(),params=useSearchParams(),namespace=params.get("namespace")??config.namespace,tableState=useServerTable()
+  const params=useSearchParams(),router=useRouter(),tableState=useServerTable(),trigger=React.useRef<HTMLAnchorElement|null>(null)
   const search=new URLSearchParams(tableState.query)
   for(const key of ["q","model","deviceClass","node","powerMode","path","cpu","status"]) {const value=params.get(key);if(value)search.set(key,value)}
   const query=useChillQuery<ProfilesView>(`v1/scheduler/profiles?${search}`,{decoder:parseSchedulerJSON})
   const detail=useChillQuery<ProfilesView>(`v1/scheduler/profiles?${new URLSearchParams({profile:params.get("profile")??"",limit:"1"})}`,{enabled:!!params.get("profile"),decoder:parseSchedulerJSON})
   const selected=detail.data?.profiles?.find(profile=>profile.id===params.get("profile"))??query.data?.profiles?.find(profile=>profile.id===params.get("profile"))
-  function href(id:string) {const next=new URLSearchParams(params.toString());next.set("profile",id);return `/scheduler/profiles?${next}#profile-result`}
-  return <Screen width="data" actionPlacement="header" title="측정 프로파일" lede="같은 장비와 실행 조건에서 측정한 결과예요. 다른 Node, 이미지, CPU, 데이터셋은 합치지 않아요." action={<Button variant="outline" disabled={query.isFetching} onClick={()=>void query.refetch()}>갱신</Button>}>
-    <MeasurementNavigation active="profiles" namespace={namespace}/>
-    <MeasurementFilters editable axes={[{key:"model",label:"모델",values:query.data?.filters?.models??[]},{key:"deviceClass",label:"장치 종류",values:query.data?.filters?.deviceClasses??[]},{key:"node",label:"Node",values:query.data?.filters?.nodes??[]},{key:"powerMode",label:"전력모드",values:query.data?.filters?.powerModes??[]},{key:"path",label:"실행 경로",values:query.data?.filters?.paths??[]},{key:"cpu",label:"CPU quota",values:query.data?.filters?.cpus??[]}]}/>
+  function href(id:string) {const next=new URLSearchParams(params.toString());next.set("kind","throughput");next.set("profile",id);return `/measurements/results?${next}`}
+  return <>
+    <MeasurementFilters editable axes={[{key:"model",label:"모델",values:query.data?.filters?.models??[]},{key:"deviceClass",label:"장치 종류",values:query.data?.filters?.deviceClasses??[]},{key:"node",label:"장치",values:query.data?.filters?.nodes??[]},{key:"powerMode",label:"전력모드",values:query.data?.filters?.powerModes??[]},{key:"path",label:"실행 경로",values:query.data?.filters?.paths??[]},{key:"cpu",label:"CPU quota",values:query.data?.filters?.cpus??[]}]}/>
     <QueryGate query={query}><DataTable searchable={false} data={query.data?.profiles??[]} server={{...tableState,total:query.data?.page?.total??0,busy:query.isFetching}} columns={[
-      {key:"model",label:"모델",sortValue:p=>p.condition.logicalModel,value:p=><Link className="inline-flex min-h-11 items-center text-primary underline" href={href(p.id)}>{p.condition.logicalModel}</Link>},
-      {key:"deviceClass",label:"장치 종류",sortValue:p=>p.condition.deviceClass,value:p=>p.condition.deviceClass},
-      {key:"node",label:"Node",sortValue:p=>p.nodeName,value:p=><span>{p.nodeName}{p.reuse&&<span className="block text-xs">재사용 대상 {p.reuse.targetNode.name}</span>}</span>},
-      {key:"powerMode",label:"전력모드",sortValue:p=>p.condition.powerMode,value:p=>p.condition.powerMode},
-      {key:"path",label:"실행 경로",sortValue:p=>p.condition.artifact.executionPath,value:p=>p.condition.artifact.executionPath},
-      {key:"cpu",label:"CPU / affinity",sortValue:p=>p.condition.cpu.limit,value:p=><span className="tabular-nums">{p.condition.cpu.limit} / {p.condition.cpu.affinityCPUs?.join(", ")??"미지정"}</span>},
-      {key:"batch",label:"실제 batch",value:p=><span className="tabular-nums">{p.batches?.map(b=>b.batch).join(", ")??"미제공"}</span>},
-      {key:"status",label:"스케줄러 / 측정",sortValue:p=>p.assessment?.displayStatus??"unknown",value:p=><><MeasurementStatus assessment={p.assessment}/><MeasurementEvidenceChecks assessment={p.assessment} rows={p.resultRows}/></>},
-      {key:"created",label:"측정일 (KST)",sortValue:p=>p.measuredAt,value:p=><time className="tabular-nums" title={p.measuredAt}>{formatMeasurementTime(p.measuredAt)}</time>},
-      {key:"source",label:"결과와 출처",value:p=><Link className="inline-flex min-h-11 items-center text-primary underline" href={href(p.id)}>결과 행 보기</Link>},
+      {key:"model",label:"모델",sortValue:p=>p.condition.logicalModel,value:p=><Link className="min-w-0 whitespace-normal [overflow-wrap:anywhere] text-primary underline" href={href(p.id)} scroll={false} onClick={event=>{trigger.current=event.currentTarget}}>{p.condition.logicalModel}</Link>},
+      {key:"condition",label:"장치·조건",value:p=><div className="grid min-w-0 gap-1 text-xs [overflow-wrap:anywhere]"><span>{p.nodeName}</span><span>{p.condition.deviceClass}</span><span>{p.condition.powerMode}</span><span>{p.condition.artifact.executionPath}</span><span>CPU {p.condition.cpu.limit} / {p.condition.cpu.affinityCPUs?.join(", ")??"미기록"}</span>{p.reuse&&<span>재사용 대상 {p.reuse.targetNode.name}</span>}</div>},
+      {key:"batch",label:"배치",unit:"건",numeric:true,value:p=>p.resultRows?.length||p.batches?.length?<ul>{(p.resultRows?.length?p.resultRows.map(row=>row.batch):p.batches?.map(batch=>batch.batch)??[]).map((batch,index)=><li key={index}>{batch}</li>)}</ul>:"미제공"},
+      {key:"p95",label:"p95",unit:"ms",numeric:true,value:p=><ProfileValues rows={p.resultRows} metric="p95Milliseconds"/>},
+      {key:"totalEnergy",label:"총 에너지",unit:"J/건",numeric:true,value:p=><ProfileValues rows={p.resultRows} metric="totalJoulesPerItem"/>},
+      {key:"incrementalEnergy",label:"추가 에너지",unit:"J/건",numeric:true,value:p=><ProfileValues rows={p.resultRows} metric="incrementalJoulesPerItem"/>},
+      {key:"currentUse",label:"현재 사용",value:p=><ProfileUse assessment={p.assessment}/>},
+      {key:"quality",label:"품질 판정",value:p=><ProfileQuality assessment={p.assessment}/>},
+      {key:"created",label:"측정일 (KST)",sortValue:p=>p.measuredAt,value:p=><time className="tabular-nums" dateTime={p.measuredAt}>{formatMeasurementTime(p.measuredAt)}</time>},
     ]}/></QueryGate>
-    {params.get("profile")&&<QueryGate query={detail}>{!selected&&!detail.isPending&&!detail.error&&<p className="notice">선택한 profile ID가 현재 catalog에 없어요. 다른 프로파일로 대체하지 않아요.</p>}</QueryGate>}
-    {selected&&<section id="profile-result" className="scroll-mt-24 space-y-5 border-t pt-5" aria-label="선택 프로파일 결과"><h2 className="break-all text-lg font-semibold">{selected.condition.logicalModel} / {selected.nodeName}</h2><ResultRows rows={selected.resultRows??[]} filename={`chill-profile-${selected.id}.csv`}/><details><summary>판정·근거·동결 조건</summary><AssessmentDetails assessment={selected.assessment} rows={selected.resultRows}/><Facts label="동결 조건" items={conditionRows(selected.condition)}/><SourceExport value={selected} filename={`chill-profile-${selected.id}.json`}/><SourceJSON value={selected} title="동결 조건과 원본 수치"/></details></section>}
-    {!!query.data?.insufficiencies?.length&&<section className="space-y-3 border-t pt-4"><h2 className="font-semibold">측정 결과 확인 필요</h2><ul className="space-y-3 text-sm">{query.data.insufficiencies.map((issue,index)=><li key={index}><p>{issue.source.Namespace}/{issue.source.Name}</p><p>사용할 측정 결과가 부족해요. 원본 자료에서 상세 사유를 확인하세요.</p></li>)}</ul></section>}
-    <p className="text-sm text-muted-foreground">수치가 제공되지 않으면 미제공으로 남겨요.</p><SourceExport value={query.data} filename="chill-profiles.json"/><SourceJSON value={query.data} title="프로파일 목록 원본"/>
-  </Screen>
+    <Button className="justify-self-start" variant="outline" disabled={query.isFetching} onClick={()=>void query.refetch()}>갱신</Button>
+    <Sheet open={!!params.get("profile")} onOpenChange={open=>{if(!open){const next=new URLSearchParams(params.toString());next.delete("profile");router.replace(`/measurements/results?${next}`,{scroll:false})}}}>
+      <SheetContent className="w-full overflow-y-auto sm:max-w-4xl" onCloseAutoFocus={event=>{if(trigger.current){event.preventDefault();trigger.current.focus()}}}>
+        <SheetHeader><SheetTitle>{selected?.condition.logicalModel??"처리 성능"}</SheetTitle><SheetDescription className="break-all">{selected?.nodeName??params.get("profile")}</SheetDescription></SheetHeader>
+        <div className="grid min-w-0 gap-5 px-4 pb-6"><QueryGate query={detail}>
+          {selected?<>
+            <div className="flex flex-wrap gap-4"><ProfileUse assessment={selected.assessment}/><ProfileQuality assessment={selected.assessment}/></div>
+            <ResultRows rows={selected.resultRows??[]} filename={`chill-profile-${selected.id}.csv`} emptyMessage="미제공"/>
+            <Facts label="동결 조건" items={[...conditionRows(selected.condition),["장치",selected.nodeName],["전력모드",selected.condition.powerMode],["실행 경로",selected.condition.artifact.executionPath],["CPU quota",selected.condition.cpu.limit],["CPU affinity",selected.condition.cpu.affinityCPUs?.join(", ")??"미기록"],["측정 시각",formatMeasurementTime(selected.measuredAt)]]}/>
+            <details><summary className="min-h-11 cursor-pointer py-2">판정 근거</summary><AssessmentDetails assessment={selected.assessment} rows={selected.resultRows}/></details>
+            <details><summary className="min-h-11 cursor-pointer py-2">원본·출처</summary><Facts items={[["프로파일 ID",selected.id],["설정 버전",detail.data?.configVersion??"미제공"]]}/><SourceExport value={selected} filename={`chill-profile-${selected.id}.json`}/><SourceJSON inline value={selected} title="동결 조건·원본 수치"/></details>
+          </>:<StatusCell axis="측정" label="미확인" tone="idle" reason="현재 목록에 선택한 프로파일 ID 없음"/>}
+        </QueryGate><Button className="justify-self-start" variant="outline" disabled={detail.isFetching} onClick={()=>void detail.refetch()}>갱신</Button></div>
+      </SheetContent>
+    </Sheet>
+    <QueryGate query={query}>
+      {!!query.data?.insufficiencies?.length&&<section className="grid gap-2"><h2 className="font-semibold">측정 제한</h2><table className="w-full table-fixed text-left text-sm"><thead><tr><th>저장 영역</th><th>요청</th><th>사유</th></tr></thead><tbody>{query.data.insufficiencies.map((issue,index)=><tr key={index}><td className="break-all">{issue.source.Namespace}</td><td className="break-all"><Link className="underline" href={`/measurements/requests?${new URLSearchParams({namespace:issue.source.Namespace,request:issue.source.Name})}`}>{issue.source.Name}</Link></td><td className="break-words">{issue.reason||"미제공"}</td></tr>)}</tbody></table></section>}
+      <details><summary className="min-h-11 cursor-pointer py-2">목록 원본</summary><SourceExport value={query.data} filename="chill-profiles.json"/><SourceJSON inline value={query.data} title="프로파일 목록 원본"/></details>
+    </QueryGate>
+  </>
+}
+function ProfileValues({rows,metric}:{rows?:ResultRow[];metric:"p95Milliseconds"|"totalJoulesPerItem"|"incrementalJoulesPerItem"}) {
+  return rows?.length?<ul>{rows.map((row,index)=><li key={row.id??index}>{formatMeasurementNumber(row[metric],metric==="p95Milliseconds"?"ms":"J/건")}</li>)}</ul>:<span>미제공</span>
+}
+function ProfileUse({assessment}:{assessment?:MeasurementAssessment}) {
+  const used=measurementSchedulerUsed(assessment)
+  return <StatusCell axis={STATUS_AXES.currentUse} label={used===true?"사용 중":used===false?"미사용":"미확인"} tone={used===true?"info":"idle"}/>
+}
+function ProfileQuality({assessment}:{assessment?:MeasurementAssessment}) {
+  const quality=measurementQuality([assessment])
+  return <StatusCell axis={STATUS_AXES.quality} label={quality.label} tone={quality.state==="pass"?"ok":quality.state==="fail"?"fail":"idle"} reason={quality.state==="unknown"?assessmentReasons(assessment).join(" · ")||"기준·표본 미제공":undefined}/>
 }

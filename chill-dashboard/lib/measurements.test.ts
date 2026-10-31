@@ -71,8 +71,12 @@ test("measurement routes accept only the two projection kinds and keep UI querie
       }
       for (const method of ["POST","PUT","DELETE"]) assert.throws(() => relayPlan(method,path.split("/"),"",config),/DashboardMethodNotAllowed/)
     }
-    assert.equal(measurementListHref(kind,"a b"),`/measurements/${kind}?namespace=a%20b`)
-    assert.equal(measurementHref(kind,{namespace:"a b",name:"a:b",uid:"u&1"}),`/measurements/${kind}/a%20b/a%3Ab?uid=u%261`)
+    const list=new URL(measurementListHref(kind,"a b"),"http://local"),detail=new URL(measurementHref(kind,{namespace:"a b",name:"a:b",uid:"u&1"}),"http://local")
+    assert.equal(list.pathname,"/measurements/results")
+    assert.equal(list.searchParams.get("kind"),kind==="operation-cost-measurements"?"operation-cost":"dispatch-occupancy")
+    assert.equal(detail.searchParams.get("namespace"),"a b")
+    assert.equal(detail.searchParams.get("measurement"),"a:b")
+    assert.equal(detail.searchParams.get("uid"),"u&1")
   }
   for (const kind of ["unknown","power-mode-transition-costs","profiling-runs"]) assert.equal(isProjectionMeasurementKind(kind),false)
   assert.equal(measurementUIDMismatch(metadata.uid,null),false)

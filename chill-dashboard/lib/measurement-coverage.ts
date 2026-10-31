@@ -1,7 +1,7 @@
 import type { ExecutionPath, ModelSpec } from "./domain.ts"
 import type { BatchProgress, InventoryClass, InventoryView, MeasurementCoverageCell, MeasurementDisplayStatus, MeasurementFailure, MeasurementPlanSpec, ModelCompatibility, ProfilingRun } from "./read-types.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
-import { measurementQuality } from "./measurement-assessment.ts"
+import { measurementQuality, measurementSchedulerUsed } from "./measurement-assessment.ts"
 
 export function deviceLabel(name:string) {
   return name.replace(/^edge-server-/,"").replace(/^jetson-agx-orin-/,"AGX Orin ").replace(/^jetson-orin-nano-/,"Orin Nano ").replace(/-/g," ")
@@ -104,6 +104,22 @@ export function coverageQualityReasons(cells:MeasurementCoverageCell[]) {
   }
   return [...counts.values()].sort((a,b)=>b.count-a.count)
 }
+
+export function coverageScopeCounts(cells:MeasurementCoverageCell[]) {
+  let measuredCells=0,measuredBatches=0,targetBatches=0
+  for(const cell of cells) {
+    const progress=coverageProgress(cell)
+    if(progress?.measured.length||cell.variants.some(variant=>variant.resultRows.length))measuredCells++
+    if(progress?.target.length) {
+      measuredBatches+=progress.measured.filter(batch=>progress.target.includes(batch)).length
+      targetBatches+=progress.target.length
+    }
+  }
+  return {cells:cells.length,measuredCells,measuredBatches,targetBatches,
+    usedCells:cells.filter(cell=>measurementSchedulerUsed(cell.assessment)===true).length,
+    unknownQualityCells:cells.filter(cell=>coverageQuality(cell).state==="unknown").length,
+    failedCells:cells.filter(cell=>cell.failureSummary.length>0||cell.assessment.displayStatus==="problem").length}
+}
 export function coverageBatchState(progress:BatchProgress|null,batch:number) {
   if(!progress)return "unknown"
   if(progress.measured.includes(batch))return "measured"
@@ -117,9 +133,9 @@ export function coverageProfileQuery(cell:MeasurementCoverageCell) {
   return new URLSearchParams({model:cell.model.name,deviceClass:cell.deviceClass.name,path:cell.executionPath,powerMode:cell.powerMode,limit:"50"})
 }
 export function coverageFailureHref(failure:MeasurementFailure,namespace:string,returnTo:string) {
-  if(failure.runName)return `/measurements/profiling-runs/${encodeURIComponent(failure.runNamespace||namespace)}/${encodeURIComponent(failure.runName)}?${new URLSearchParams({uid:failure.runId.split("/").at(-1)??"",returnTo})}`
+  if(failure.runName)return `/measurements/requests?${new URLSearchParams({namespace:failure.runNamespace||namespace,run:failure.runName,uid:failure.runId.split("/").at(-1)??"",returnTo})}`
   const [requestNamespace,requestName,uid]=failure.requestId.split("/")
-  return `/measurements/batch-energy-optimizations/${encodeURIComponent(requestNamespace||namespace)}/${encodeURIComponent(requestName)}?${new URLSearchParams({uid:uid??"",returnTo})}`
+  return `/measurements/requests/${encodeURIComponent(requestName)}?${new URLSearchParams({namespace:requestNamespace||namespace,uid:uid??"",returnTo})}`
 }
 export function coverageStatusCounts(cells:MeasurementCoverageCell[]) {
   const counts:Record<MeasurementDisplayStatus,number>={usable:0,review:0,insufficient:0,problem:0,running:0,unmeasured:0,unknown:0,unsupported:0}
@@ -131,7 +147,7 @@ export function coverageRequestHref(cell:MeasurementCoverageCell,namespace:strin
   const progress=variant?.batchProgress??coverageProgress(cell)
   const batches=progress?.missing.length?progress.missing:progress?.target.length?progress.target:targetBatches
   const node=(condition?.metricSource as {nodeName?:string}|undefined)?.nodeName??(condition?.state as {targetNode?:string}|undefined)?.targetNode??cell.support.node?.name
-  return `/measurements/new?${new URLSearchParams({namespace,model:cell.model.name,deviceClass:cell.deviceClass.name,path:cell.executionPath,powerMode:cell.powerMode,...(batches.length?{batches:batches.join(",")}:{}),returnTo,...(variant?{variantId:variant.id}:{}),...(node?{node}:{})})}`
+  return `/measurements/requests/new?${new URLSearchParams({namespace,model:cell.model.name,modelUID:cell.model.uid,deviceClass:cell.deviceClass.name,deviceClassUID:cell.deviceClass.uid,path:cell.executionPath,powerMode:cell.powerMode,...(batches.length?{batches:batches.join(",")}:{}),returnTo,...(variant?{variantId:variant.id}:{}),...(node?{node,...(cell.support.node?.name===node?{nodeUID:cell.support.node.uid}:{})}:{})})}`
 }
 export type Compatibility = {state:"candidate"|"unsupported"|"unknown";reason:string}
 export function staticCompatibility(model:Pick<CoverageModel,"spec">, path:ExecutionPath, cls:InventoryClass):Compatibility {
@@ -181,7 +197,7 @@ export function currentRunCondition(run:ProfilingRun,type:string) {
 
 export type MeasurementPrefill = {active:boolean;values:Record<string,string>;errors:string[];returnTo:string;node:string}
 export function resolveMeasurementPrefill(params:URLSearchParams,namespace:string,inventory:InventoryView):MeasurementPrefill {
-  const keys=["namespace","model","deviceClass","node","path","powerMode","from","uid","fromNamespace","fromUID","returnTo"],errors:string[]=[]
+  const keys=["namespace","model","modelUID","deviceClass","deviceClassUID","node","nodeUID","path","powerMode","from","uid","fromNamespace","fromUID","returnTo"],errors:string[]=[]
   for(const key of keys) if(params.getAll(key).length>1) errors.push(`${key}: 같은 키가 중복됐어요`)
   const values=Object.fromEntries(keys.map(key=>[key,params.get(key)??""]))
   const active=["model","deviceClass","node","path","powerMode"].some(key=>params.has(key))
@@ -192,6 +208,9 @@ export function resolveMeasurementPrefill(params:URLSearchParams,namespace:strin
   if(active) {
     if(!model) errors.push(`모델을 찾지 못했어요: ${values.model}`)
     if(!cls) errors.push(`장치 종류를 찾지 못했어요: ${values.deviceClass}`)
+    if(values.modelUID&&model?.uid!==values.modelUID)errors.push("모델 UID 불일치")
+    if(values.deviceClassUID&&cls?.uid!==values.deviceClassUID)errors.push("장치 종류 UID 불일치")
+    if(values.nodeUID&&cls?.nodes.find(node=>node.name===values.node)?.uid!==values.nodeUID)errors.push("Node UID 불일치")
     const path=model?.spec.executionPaths.find(path=>path.name===values.path)
     if(!path) errors.push(`경로를 찾지 못했어요: ${values.path}`)
     if(cls && !cls.powerModes.some(mode=>mode.name===values.powerMode)) errors.push(`전력모드를 찾지 못했어요: ${values.powerMode}`)

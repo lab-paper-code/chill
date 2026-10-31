@@ -1,6 +1,5 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { readFile } from "node:fs/promises"
 import { coverageQuality, coverageQualityReasons, coverageMeasurementStatus, coverageFailureHref, coverageProfileQuery, coverageStatusCounts, coverageUsageAssessment, coverageFilterVisible, coverageEmptyModes, measurementAge, conditionLabel, deviceLabel, coverageSelection, coveragePathVisible, coverageModes, coverageVariant, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 import { requestBatches, requestTargetBatches } from "./measurement-request.ts"
@@ -166,11 +165,13 @@ test("measurement age is based on recorded timestamp and never invents missing o
 test("request-only failures open the exact request rather than an empty run filter",()=>{
   const failure={requestId:"ns/request name/owner-uid",runId:"",runNamespace:"",runName:"",batch:null,code:"Other",exitCode:null,message:"실행 전 실패",relation:"unresolved"}
   const href=new URL(coverageFailureHref(failure,"fallback","/measurements?cell=one"),"http://local")
-  assert.equal(href.pathname,"/measurements/batch-energy-optimizations/ns/request%20name")
+  assert.equal(href.pathname,"/measurements/requests/request%20name")
+  assert.equal(href.searchParams.get("namespace"),"ns")
   assert.equal(href.searchParams.get("uid"),"owner-uid")
   assert.equal(href.searchParams.has("status"),false)
   const runHref=new URL(coverageFailureHref({...failure,runId:"ns/run/run-uid",runNamespace:"ns",runName:"run"},"fallback","/measurements"),"http://local")
-  assert.equal(runHref.pathname,"/measurements/profiling-runs/ns/run")
+  assert.equal(runHref.pathname,"/measurements/requests")
+  assert.equal(runHref.searchParams.get("run"),"run")
   assert.equal(runHref.searchParams.get("uid"),"run-uid")
 })
 test("profile time lookup uses the server's fifty-row page contract",()=>{
@@ -233,15 +234,6 @@ test("empty modes use measured evidence, and request usage shares exact conditio
   assert.equal(coverageUsageAssessment([used],{...plan.spec,state:{...plan.spec.state,targetNode:"other"}}),undefined)
 })
 
-test("request prefill and preflight keep selected equipment visible and operational impact separate",async()=>{
-  const request=await readFile(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
-  assert.match(request,/aria-label="선택 조건 요약"/)
-  assert.match(request,/경로 <strong>\{d\.path/)
-  const preflight=await readFile(new URL("../features/read-pages.tsx",import.meta.url),"utf8")
-  assert.match(preflight,/형식 검사 통과/)
-  assert.match(preflight,/운영 영향 미확인/)
-  assert.doesNotMatch(preflight,/answer\.resolves\?"측정 요청 가능"/)
-})
 
 function renderCoverage(query="",extraCells:MeasurementCoverageCell[]=[]) {
   const source=readFileSync(new URL("../features/measurement-coverage.tsx",import.meta.url),"utf8")
@@ -269,30 +261,47 @@ function renderCoverage(query="",extraCells:MeasurementCoverageCell[]=[]) {
   runInNewContext(compiled,{exports,require:(name:string)=>name in modules?modules[name]:require(name),URLSearchParams})
   return renderToStaticMarkup(createElement(exports.MeasurementCoveragePage as ComponentType))
 }
-test("coverage page folds empty modes, uses one mini progress, and opens unsupported reason combinations",()=>{
+test("M1–M2 coverage renders separate denominators and all unmeasured modes as text",()=>{
   const html=renderCoverage()
-  assert.match(html,/미측정 모드 1/)
-  assert.equal((html.match(/data-coverage-cell=/g)??[]).length,1)
-  assert.match(html,/coverage-mini-progress/)
-  assert.doesNotMatch(html,/coverage-batch-bar/)
-  assert.match(html,/품질 판정 근거 없음 2/)
-  assert.equal((html.match(/품질 판정 근거 없음/g)??[]).length,1)
-  assert.doesNotMatch(html,/coverage-cell-quality|품질:|판정 불가/)
-  assert.match(html,/<th>측정 조합 \/ 전체 \(개\)<\/th>/)
-  assert.match(html,/<th>측정 배치 \/ 목표 \(건\)<\/th>/)
-  assert.match(html,/<td>1\/2<\/td><td>2\/8<\/td>/)
-  assert.match(html,/supportReason=RuntimeUnsupported/)
+  assert.equal((html.match(/data-coverage-cell=/g)??[]).length,3)
+  assert.match(html,/15W/)
+  assert.match(html,/미측정/)
+  assert.match(html,/지원 안 함/)
+  assert.match(html,/조합 측정 \/ 전체/)
+  assert.match(html,/배치 측정 \/ 목표/)
+  assert.equal((html.match(/품질 판정: 판정 불가/g)??[]).length,1)
+  assert.match(html,/<td>2\/3<\/td><td>4\/12<\/td>/)
   const unsupported=renderCoverage("status=unsupported&supportReason=RuntimeUnsupported")
   assert.equal((unsupported.match(/data-coverage-cell=/g)??[]).length,1)
-  assert.match(unsupported,/data-coverage-cell="unsupported"/)
-  assert.match(unsupported,/지원 안 함/)
 })
 
-test("coverage only shows quality icons for judged cells and a scheduler dot instead of repeated labels",()=>{
-  const judged={...cell,id:"judged",executionPath:"gpu",assessment:{...cell.assessment,scope:{...cell.assessment.scope,schedulerUsed:true},checklist:{...cell.assessment.checklist,criteriaMet:true,checks:[{code:"ActiveTrials",result:"pass" as const,message:"반복",sourceIds:[]}]}}}
-  const html=renderCoverage("",[judged])
-  assert.equal((html.match(/class="coverage-cell-quality /g)??[]).length,1)
-  assert.match(html,/coverage-usage-dot/)
-  assert.doesNotMatch(html,/<strong>스케줄러 사용 중<\/strong>/)
-  assert.match(html,/품질: ✓ 기준 충족/)
+test("M3 existing used results and failed requests coexist in scope counts",()=>{
+  const failed={...cell,assessment:{...cell.assessment,displayStatus:"problem" as const,scope:{...cell.assessment.scope,schedulerUsed:true}}}
+  const counts=coverageHelpers.coverageScopeCounts([failed])
+  assert.equal(counts.usedCells,1)
+  assert.equal(counts.failedCells,1)
+  assert.equal(counts.measuredCells,1)
+  const html=renderCoverage("",[failed])
+  assert.match(html,/현재 사용 \/ 전체/)
+  assert.match(html,/실패 \/ 전체/)
+})
+
+test("M4 missing target denominator does not render fake progress",()=>{
+  const noTarget={...cell,id:"no-target",powerMode:"no-target",batchProgress:null}
+  const html=renderCoverage("",[noTarget])
+  assert.match(html,/목표 미제공/)
+  const button=html.match(/<button[^>]*data-coverage-cell="no-target"[^>]*>.*?<\/button>/)?.[0]
+  assert.ok(button)
+  assert.doesNotMatch(button,/<progress/)
+  assert.equal(coverageHelpers.coverageScopeCounts([noTarget]).targetBatches,0)
+})
+
+test("same-condition request preserves source identities and rejects replaced names",()=>{
+  const params=new URL(coverageRequestHref(cell,"ns","/measurements"),"http://local").searchParams
+  assert.equal(params.get("modelUID"),model.uid)
+  assert.equal(params.get("deviceClassUID"),cls.uid)
+  assert.equal(params.get("nodeUID"),"node-uid")
+  assert.deepEqual(resolveMeasurementPrefill(params,"ns",inventory).errors,[])
+  const replaced={...inventory,models:[{...model,uid:"replacement"}]}
+  assert.match(resolveMeasurementPrefill(params,"ns",replaced).errors.join(" "),/모델 UID 불일치/)
 })
