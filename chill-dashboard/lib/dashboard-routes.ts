@@ -1,0 +1,48 @@
+// UI addresses only; API scheduler and measurement paths are unchanged.
+export const dashboardRedirects = [
+  {source:"/scheduler",destination:"/"},
+  {source:"/operations/flow",destination:"/"},
+  {source:"/resources",destination:"/operations/devices"},
+  {source:"/pools",destination:"/operations/devices"},
+  {source:"/scheduler/profiles",destination:"/measurements/results?kind=throughput"},
+  {source:"/scheduler/candidates",destination:"/?evidence=candidates"},
+  {source:"/scheduler/estimates",destination:"/?evidence=estimates"},
+  {source:"/scheduler/load",destination:"/?evidence=load"},
+  {source:"/scheduler/capacity",destination:"/?evidence=capacity"},
+  {source:"/evaluations",destination:"/experiments"},
+  {source:"/evaluations/load-scenarios",destination:"/experiments/load-scenarios"},
+  {source:"/measurements/coverage",destination:"/measurements"},
+  {source:"/measurements/operation-cost-measurements",destination:"/measurements/results?kind=operation-cost"},
+  {source:"/measurements/dispatch-occupancy-measurements",destination:"/measurements/results?kind=dispatch-occupancy"},
+  {source:"/measurements/new",destination:"/measurements/requests/new"},
+  {source:"/measurements/runs",destination:"/measurements/requests?view=runs"},
+  {source:"/measurements/group",destination:"/measurements/requests?view=runs"},
+  {source:"/measurements/check",destination:"/measurements/requests/check"},
+] as const
+
+export function dashboardDestination(pathname:string,search:URLSearchParams):string|null {
+  let destination:string|undefined=dashboardRedirects.find(row=>row.source===pathname)?.destination
+  if(pathname==="/experiments"&&["a","al","as","b","bs"].some(key=>search.has(key)))destination="/experiments/results"
+  if(pathname.startsWith("/experiments/")&&pathname.split("/").length===3&&!["results","new","load-scenarios"].includes(pathname.split("/")[2])) {
+    const next=new URLSearchParams(search);next.set("a",decodeURIComponent(pathname.split("/")[2]));return `/experiments/results?${next}`
+  }
+  if(pathname.startsWith("/pools/")&&pathname.split("/").length===3) {
+    const next=new URLSearchParams(search);next.set("open",`service:${decodeURIComponent(pathname.split("/")[2])}`);return `/?${next}`
+  }
+  const segments=pathname.split("/")
+  if(segments.length===5&&segments[1]==="measurements"&&["operation-cost-measurements","dispatch-occupancy-measurements"].includes(segments[2])) {
+    const next=new URLSearchParams(search)
+    next.set("kind",segments[2]==="operation-cost-measurements"?"operation-cost":"dispatch-occupancy")
+    next.set("namespace",decodeURIComponent(segments[3]));next.set("measurement",decodeURIComponent(segments[4]))
+    return `/measurements/results?${next}`
+  }
+  if(segments.length===5&&segments[1]==="measurements"&&["batch-energy-optimizations","profiling-runs"].includes(segments[2])) {
+    const next=new URLSearchParams(search);next.set("namespace",decodeURIComponent(segments[3]))
+    if(segments[2]==="profiling-runs")next.set("run",decodeURIComponent(segments[4]))
+    return `/measurements/requests${segments[2]==="batch-energy-optimizations"?`/${segments[4]}`:""}?${next}`
+  }
+  if(!destination)return null
+  const [path,defaults]=destination.split("?"),next=new URLSearchParams(search)
+  for(const [key,value] of new URLSearchParams(defaults))next.set(key,value)
+  return `${path}${next.size?`?${next}`:""}`
+}

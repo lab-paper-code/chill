@@ -1,20 +1,27 @@
 "use client"
 
 import { Row, Rows, Screen } from "@/components/screen"
+import { useSearchParams } from "next/navigation"
 
 // Section indexes: a list of screens, nothing else.
 export function RecordsPage() {
+  const params=useSearchParams()
+  function href(path:string) {
+    const [pathname,defaults]=path.split("?"),query=new URLSearchParams(params.toString())
+    for(const [key,value] of new URLSearchParams(defaults))query.set(key,value)
+    return `${pathname}${query.size?`?${query}`:""}`
+  }
   return <Screen title="기록" lede="지나간 요청, 변경, 판단과 측정을 찾아봐요.">
     <Rows label="서비스">
-      <Row href="/observations" label="요청 기록" hint="서비스가 받은 요청과 처리 결과" />
-      <Row href="/changes" label="서비스 변경 이력" hint="등록, 수정, 삭제한 기록" />
+      <Row href={href("/observations")} label="요청 기록" hint="서비스가 받은 요청과 처리 결과" />
+      <Row href={href("/changes")} label="서비스 변경 이력" hint="등록, 수정, 삭제한 기록" />
     </Rows>
     <Rows label="운영">
-      <Row href="/scheduler/history" label="판단 기록" hint="운영 판단이 남긴 기록" />
-      <Row href="/scheduler/compare" label="판단 비교" hint="두 판단을 나란히 비교" />
-      <Row href="/transitions?view=history" label="변경 동작 기록" hint="실제로 수행한 구성 변경" />
-      <Row href="/scheduler/power" label="전력 기록" hint="노드별 측정 전력" />
-      <Row href="/changes?scope=scheduler" label="운영 설정 변경 이력" hint="누가 언제 운영 설정을 바꿨는지" />
+      <Row href={href("/scheduler/history")} label="판단 기록" hint="운영 판단이 남긴 기록" />
+      <Row href={href("/scheduler/compare")} label="판단 비교" hint="두 판단을 나란히 비교" />
+      <Row href={href("/transitions?view=history")} label="변경 동작 기록" hint="실제로 수행한 구성 변경" />
+      <Row href={href("/scheduler/power")} label="전력 기록" hint="노드별 측정 전력" />
+      <Row href={href("/changes?scope=scheduler")} label="운영 설정 변경 이력" hint="누가 언제 운영 설정을 바꿨는지" />
     </Rows>
   </Screen>
 }

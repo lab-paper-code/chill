@@ -1,8 +1,12 @@
 import type { NextConfig } from "next"
+import { dashboardRedirects } from "./lib/dashboard-routes.ts"
 
 const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
+  async redirects() {
+    return dashboardRedirects.map(row=>({...row,permanent:false}))
+  },
   async headers() {
     return [{source:"/:path*",headers:[
       {key:"Referrer-Policy",value:"no-referrer"},

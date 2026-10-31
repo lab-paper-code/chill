@@ -26,10 +26,10 @@ export type CapacityRow = {
 }
 export type CapacityView = {rows:CapacityRow[]|null}
 export const capacityPath=(workload="",row="")=>{
-  const query=new URLSearchParams()
+  const query=new URLSearchParams({evidence:"capacity"})
   if(workload)query.set("workload",workload)
   if(row)query.set("row",row)
-  return `/scheduler/capacity${query.size?`?${query}`:""}`
+  return `/?${query}`
 }
 export const capacityRows=(rows:CapacityRow[],workload:string)=>workload?rows.filter(row=>row.input.workloadUID===workload):rows
 export const selectedCapacityRow=(rows:CapacityRow[],key:string)=>rows.find(row=>row.key===key)

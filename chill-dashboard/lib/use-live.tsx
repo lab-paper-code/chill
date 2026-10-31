@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useSearchParams } from "next/navigation"
 import { useSession } from "@/lib/client"
 import { applyLiveMessage, connectLive, initialLiveState, parseLiveMessage, type LiveConnection, type LiveState } from "@/lib/live"
@@ -17,7 +17,9 @@ export function LiveProvider({children}:{children:React.ReactNode}) {
   const requested=search.get("fixture")
   const scene=config.liveFixture && requested && ["empty","first","expand","shrink"].includes(requested) ? requested : null
   const liveKey=React.useMemo(()=>["chill-live",epoch,scene] as const,[epoch,scene])
-  const {data:state}=useQuery<LiveState>({queryKey:liveKey,enabled:false,initialData:initialLiveState,staleTime:Infinity,gcTime:Infinity})
+  const {data}=useQuery<LiveState>({queryKey:liveKey,queryFn:skipToken,enabled:false,initialData:initialLiveState,staleTime:Infinity,gcTime:Infinity})
+  // skipToken's overload permits undefined; initialData always seeds this cache-only query.
+  const state=data!
   const control=React.useRef<LiveConnection|null>(null)
   const reconnect=React.useCallback(()=>control.current?.reconnect(),[])
 

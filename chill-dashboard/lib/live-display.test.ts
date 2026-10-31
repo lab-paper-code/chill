@@ -5,11 +5,12 @@ import { changeListStatus, actionProgress, actionOrigin, scopeSnapshot, scopeEve
 import { retainedEvents, sloLatency, minuteMetrics, incidentFlow, incidentSummary, serviceRows, powerBreakdown, powerWindow, decisionReason, gapEpisodes, liveReason, displayTime } from "./live-display.ts"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
-import { createElement, type ComponentType } from "react"
+import { createElement, type ComponentType, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
-import { initialLiveState, type LiveState } from "./live.ts"
+import { compareAt, initialLiveState, type LiveState } from "./live.ts"
 import * as displayHelpers from "./live-display.ts"
+import { decisionRange } from "./experiments.ts"
 
 const at="2026-10-30T12:00:00.123456789Z",now=Date.parse(at)
 const instance:LiveInstance={id:"shared",node:{uid:"n",name:"Node"},ownerWorkloadUID:"a",profileID:"p",ready:true,stopped:false,routable:{a:true,b:true},running:{a:1,b:0},waiting:{a:0,b:2},observedAt:at}
@@ -305,88 +306,105 @@ test("power windows use retained completed buckets, not component clocks or moun
   assert.equal(sparse.observed,2)
   assert.deepEqual(powerWindow([]),{end:0,expected:0,observed:0,nodes:{},segments:[]})
 })
-test("rendered board leads with fixed device rows and keeps idle services in a drawer",()=>{
+test("operations board keeps independent axes, idle summary, service placement and selected-time evidence",()=>{
   const pool={...workload,pending:0},zero={...metric,received:0,completed:0,failed:0,withinSLO:0,latencySamples:0}
   const snapshot:LiveSnapshot={workloads:Array.from({length:29},(_,i)=>({...pool,uid:`service-${i}`,name:`서비스-${i}`})),nodes:[{uid:"n",name:"장치",powerMode:"고정",ready:true,measurement:false,observedAt:at}],instances:[],routing:{},decision:{at,state:"Keep",reason:"",explanation:""},actions:[],reservations:[]}
-  const sample:LiveMetrics={type:"metrics",seq:1,at,bucketAt:"2026-10-30T12:00:00Z",workloads:Object.fromEntries(snapshot.workloads.map(row=>[row.uid,zero])),nodes:{n:{watts:40,observedAt:at},outside:{watts:60,observedAt:at}},pool:{wholeWatts:100,activeWatts:0}}
-  const state:LiveState={...initialLiveState(),snapshot,metrics:[sample],lastReceivedAt:now,lastObservedAt:at,status:"fixture",powerScale:60}
-  const source=readFileSync(new URL("../features/live-board.tsx",import.meta.url),"utf8")
-  const compiled=transpileModule(`${source}\nexport { OutsidePower };`,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
-  const require=createRequire(import.meta.url),exports:Record<string,ComponentType<{state?:LiveState}>>={}
-  let query=new URLSearchParams()
+  const sample:LiveMetrics={type:"metrics",seq:1,at,bucketAt:"2026-10-30T12:00:00Z",workloads:Object.fromEntries(snapshot.workloads.map(row=>[row.uid,zero])),nodes:{n:{watts:40,observedAt:at}},pool:{wholeWatts:40,activeWatts:0}}
+  const state:LiveState={...initialLiveState(),snapshot,metrics:[sample],lastReceivedAt:now,lastObservedAt:at,status:"fixture"}
+  const require=createRequire(import.meta.url)
+  let query=new URLSearchParams(),experiment="활성 없음"
+  const compile=(path:string,modules:Record<string,unknown>)=>{
+    const exports:Record<string,ComponentType<Record<string,unknown>>>={}
+    const source=readFileSync(new URL(path,import.meta.url),"utf8")
+    const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+    new Function("require","exports",compiled)((name:string)=>modules[name]??require(name),exports)
+    return exports
+  }
+  const wrap=({children}:{children?:ReactNode})=>createElement("div",{},children)
+  const status=compile("../components/status-cell.tsx",{
+    "@/components/read-region":{StatusBadge:({children}:{children:ReactNode})=>createElement("strong",{},children)},
+    "@/components/ui/tooltip":{Tooltip:wrap,TooltipTrigger:wrap,TooltipContent:wrap},
+    "@/lib/status":{normalizeStatusLabel:(label:string)=>label},
+  })
   const modules:Record<string,unknown>={
     "next/link":{default:({children,...props}:Record<string,unknown>)=>createElement("a",props,children as string)},
-    "next/navigation":{usePathname:()=>"/operations/flow",useSearchParams:()=>query,useRouter:()=>({push:()=>{},replace:()=>{}})},
+    "next/navigation":{usePathname:()=>"/",useSearchParams:()=>query,useRouter:()=>({push:(url:string)=>{query=new URL(url,"http://local").searchParams},replace:(url:string)=>{query=new URL(url,"http://local").searchParams}})},
     "@/lib/client":{useSession:()=>({epoch:1,config:{liveFixture:false}}),useChillQuery:()=>({})},
     "@/lib/use-live":{useLive:()=>({state,status:"fixture",reconnect:()=>{}})},
-    "@/lib/live-display":displayHelpers,"@/lib/experiments":{decisionRange:()=>({})},
-    "./evaluation-active":{EvaluationActive:()=>null},
+    "@/lib/live-display":displayHelpers,"@/lib/experiments":{decisionRange},
+    "@/lib/live":{compareAt},
+    "@/components/status-cell":status,
+    "@/lib/status":{STATUS_AXES:{serviceImpact:"서비스 영향",performance:"성능 판정",observation:"관측 상태"}},
+    "@/components/ui/sheet":{Sheet:({open,children}:{open:boolean;children:ReactNode})=>open?createElement("div",{"data-sheet":true},children):null,SheetContent:wrap,SheetHeader:wrap,SheetTitle:wrap},
+    "./evaluation-active":{EvaluationStatusCell:()=>createElement(status.StatusCell,{axis:"실험 상태",label:experiment,tone:"info"})},
     "@/lib/evaluation-active":{evaluationInjectionMatch:()=>false},
     "@/lib/scheduler":{stringifySchedulerJSON:JSON.stringify},"@/lib/source-export":{safeSource:(value:unknown)=>value},
-    "./scheduler":{judgmentLabels:{Keep:"구성 유지"},actionKinds:{power:"전력모드 변경"},actionStatuses:{},actionNodeName:(node:{name:string})=>node.name},
-    "./measurement-coverage":{useCoverageInventory:()=>({data:{classes:[{nodes:[{uid:"outside",name:"외부 장치"},{uid:"not-metered",name:"관측 안 된 장치"}]}]}})},
+    "./scheduler":{judgmentLabels:{Keep:"구성 유지"},actionKinds:{power:"전력모드 변경"},actionStatuses:{},actionNodeName:(node:{name:string})=>node.name,SchedulerEvidence:({kind}:{kind:string})=>createElement("section",{"data-evidence":kind},kind)},
     "./live-board.css":{},
   }
-  new Function("require","exports",compiled)((name:string)=>modules[name]??require(name),exports)
-  const board=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
-  assert.match(board,/>정상 · 무부하</)
-  assert.equal((board.match(/>서비스-\d+<\/button>/g)??[]).length,0)
-  assert.match(board,/유휴 29/)
-  assert.match(board,/사건 없음/)
-  assert.doesNotMatch(board,/live-idle-services|새 사건 \/ 30초|대기 건|예약 건/)
-  assert.equal((board.match(/마지막 수신/g)??[]).length,1)
-  assert.ok(board.indexOf('class="live-node-power"')<board.indexOf('class="live-rail"'))
-  assert.match(board,/5분 전/)
-  assert.match(board,/현재/)
-  query=new URLSearchParams({open:"idle-services"})
-  const idle=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
-  assert.equal((idle.match(/>서비스-\d+<span/g)??[]).length,29)
-  query=new URLSearchParams()
-  const outside=renderToStaticMarkup(createElement(exports.OutsidePower,{state}))
-  assert.match(outside,/>외부 장치</)
-  assert.match(outside,/>60\.0</)
-  assert.doesNotMatch(outside,/관측 안 된 장치/)
-  query=new URLSearchParams({at})
-  const drawer=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
-  assert.equal((drawer.match(/자동제어 대상 없음/g)??[]).length,1)
-  query=new URLSearchParams()
-  snapshot.actions=[{id:"shared-power",kind:"power",node:{uid:"n",name:"장치"},workloadUID:"",status:"running",startedAt:new Date(Date.now()).toISOString(),expectedSeconds:null,expectedSource:null}]
-  assert.match(renderToStaticMarkup(createElement(exports.LiveBoardPage,{})),/<strong title="변경 중">주의<\/strong>/)
-  snapshot.actions[0].startedAt=new Date(Date.now()-301000).toISOString()
-  assert.match(renderToStaticMarkup(createElement(exports.LiveBoardPage,{})),/<strong title="예상 대비 지연">주의<\/strong>/)
-  sample.workloads["service-0"]={...zero,failed:1}
-  assert.match(renderToStaticMarkup(createElement(exports.LiveBoardPage,{})),/<strong title="요청 실패">이상<\/strong>/)
-  sample.workloads["service-0"]=zero
-  snapshot.actions[0].status="complete"
-  assert.match(renderToStaticMarkup(createElement(exports.LiveBoardPage,{})),/<strong title="유입 없음">정상 · 무부하<\/strong>/)
-  snapshot.nodes.push({uid:"a-node",name:"가 장치",powerMode:"",ready:true,measurement:false,observedAt:at})
-  sample.nodes["a-node"]={watts:1,observedAt:at}
-  snapshot.instances=[{...instance,ownerWorkloadUID:"service-0",routable:{"service-0":true},running:{"service-0":1},waiting:{}}]
+  const board=compile("../features/live-board.tsx",modules)
+  const render=()=>renderToStaticMarkup(createElement(board.LiveBoardPage,{}))
+  const idle=render()
+  assert.match(idle,/유휴 서비스 집계/)
+  assert.match(idle,/접수 허용 개/)
+  assert.match(idle,/자동제어 개/)
+  assert.match(idle,/성능 판정<\/span><strong>판정 불가/)
+  assert.doesNotMatch(idle,/>서비스-\d+<\/button>|live-node-power|data-sheet/)
+  query=new URLSearchParams({services:"확인 필요"})
+  assert.match(render(),/해당 서비스 없음/)
+  assert.doesNotMatch(render(),/유휴 서비스 집계/)
+  query=new URLSearchParams({view:"individual"})
+  assert.equal((render().match(/>서비스-\d+<\/button>/g)??[]).length,29)
+  query=new URLSearchParams({services:"확인 필요"})
   sample.workloads["service-0"]={...zero,received:10,completed:10,withinSLO:10,latencySamples:10,p95ms:20}
-  const active=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
-  assert.ok(active.indexOf(">가 장치</button>")<active.indexOf(">장치</button>"))
-  assert.ok(active.indexOf(">서비스-0</button>")<active.indexOf('class="live-rail"'))
-  sample.nodes["a-node"].watts=100
-  const changed=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
-  assert.ok(changed.indexOf(">가 장치</button>")<changed.indexOf(">장치</button>"))
-  snapshot.instances=[]
-  snapshot.workloads[0].readiness.reason="MissingEvidence"
-  const unplaced=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
-  assert.match(unplaced,/>측정 근거 없음</)
-  assert.ok(unplaced.indexOf(">미배치</th>")<unplaced.indexOf(">보드 밖 노드"))
-  snapshot.instances=[{...instance,node:{uid:"not-in-snapshot",name:"마지막 관측 장치"},ownerWorkloadUID:"service-0",routable:{"service-0":true},running:{"service-0":1},waiting:{}}]
-  const unknownDevice=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
-  snapshot.instances[0].node={uid:"n",name:"장치"}
-  sample.workloads["service-0"]={...zero,failed:1}
-  const zeroFailure=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
-  sample.workloads["service-0"]=zero
-  snapshot.workloads[0].pending=1
-  const zeroQueued=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
-  assert.deepEqual({
-    unknownDeviceService:unknownDevice.includes(">서비스-0</button>"),
-    unknownDeviceRow:unknownDevice.includes(">장치 미확인</th>"),
-    notUnplaced:!unknownDevice.includes(">미배치</th>"),
-    zeroFailure:/title="요청 실패">이상<\/td>/.test(zeroFailure),
-    zeroQueued:/title="대기 있음">주의<\/td>/.test(zeroQueued),
-  },{unknownDeviceService:true,unknownDeviceRow:true,notUnplaced:true,zeroFailure:true,zeroQueued:true})
+  snapshot.instances=[{...instance,ownerWorkloadUID:"service-0",routable:{"service-0":true},running:{"service-0":1},waiting:{}}]
+  assert.match(render(),/해당 서비스 없음/)
+  query=new URLSearchParams({services:"가동"})
+  const active=render()
+  assert.match(active,/>서비스-0<\/button>/)
+  assert.doesNotMatch(active,/>서비스-1<\/button>/)
+  assert.match(active,/operations\/devices\?node=n/)
+  assert.match(active,/p95 20\.0/)
+  snapshot.workloads[0].slo.percentile=90
+  assert.match(render(),/p90 15\.0/)
+  state.gaps=[{from:at,to:new Date(Date.now()+1000).toISOString(),scope:"node:n",reason:"power sample unavailable"}]
+  const gap=render()
+  assert.match(gap,/서비스 영향<\/span><strong>정상/)
+  assert.match(gap,/관측 상태<\/span><strong>관측 공백/)
+  assert.match(gap,/aria-live="polite"[^>]*>서비스 영향 정상/)
+  assert.match(gap,/관측 상태 관측 공백/)
+  assert.match(gap,/전력 표본 누락/)
+  snapshot.actions=[{id:"shared-power",kind:"power",node:{uid:"n",name:"장치"},workloadUID:"",status:"running",startedAt:new Date(Date.now()).toISOString(),expectedSeconds:null,expectedSource:null}]
+  snapshot.reservations=[{owner:"a",nodes:[],workloadUIDs:["service-1"],podUIDs:[],instances:[],reason:"ReservedScope",explanation:""}]
+  const changing=render()
+  assert.match(changing,/변경 건/)
+  assert.match(changing,/예약 건/)
+  assert.match(changing,/전력모드 변경/)
+  assert.match(changing,/>진행<\/td>/)
+  assert.match(changing,/예약 상세/)
+  experiment="실행 중"
+  assert.match(render(),/실험 상태<\/span><strong>실행 중/)
+  query=new URLSearchParams({open:"service:service-0"})
+  const detail=render()
+  assert.equal((detail.match(/data-sheet="true"/g)??[]).length,1)
+  assert.ok(detail.indexOf("서비스 SLO")<detail.indexOf("근거 조회 중"))
+  assert.match(detail,/선택 시각 KST/)
+  query=new URLSearchParams({at})
+  assert.match(render(),/21:00:00 KST/)
+  const exactRange=decisionRange(at)!
+  assert.ok(render().includes(`from=${encodeURIComponent(exactRange.from)}&amp;to=${encodeURIComponent(exactRange.to)}`))
+  query=new URLSearchParams({evidence:"capacity",workload:"service-0",row:"original"})
+  assert.match(render(),/data-evidence="capacity"/)
+  query=new URLSearchParams({open:"terms"})
+  assert.match(render(),/용어 도움말/)
+  assert.match(render(),/후속 유효 관측으로만 회복 확인/)
+  query=new URLSearchParams()
+  sample.workloads["service-1"]={...zero,failed:1}
+  const stable=render()
+  assert.ok(stable.indexOf(">서비스-0</button>")<stable.indexOf(">서비스-1</button>"))
+  state.status="disconnected"
+  query=new URLSearchParams()
+  const disconnected=render()
+  assert.match(disconnected,/서비스 영향<\/span><strong>미확인/)
+  assert.match(disconnected,/성능 판정<\/span><strong>판정 불가/)
 })

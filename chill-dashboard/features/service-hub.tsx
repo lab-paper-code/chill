@@ -122,11 +122,11 @@ const sections:Record<ServiceSectionId,(view:WorkloadView,s:Signals)=>Part> = {
           return <RowDialog key={instance.id} label={instance.node.name} hint={`인스턴스 ${instance.id}`} value={<StatusBadge tone={instance.ready ? "ok" : "warn"}>{instance.ready ? "준비됨" : instance.reason ? statusLabel(instance.reason) : "준비 중"}</StatusBadge>} title={`${instance.node.name}의 실행 현황`}>
             <Facts items={[["이 서비스의 대기", `${instance.waiting?.[uid] ?? 0}건`], ["이 서비스의 실행", `${instance.running?.[uid] ?? 0}건`], ["요청 분배 가중치", weight ?? (s.scheduler.error ? "확인 불가" : "제공 없음")], ["인스턴스", instance.id]]} />
             <p className="text-sm text-muted-foreground">가중치는 원래 값이며 확률이 아니에요.</p>
-            <Link href={`/pools/${encodeURIComponent(uid)}`}>실행 그룹 보기</Link>
+            <Link href={`/?${new URLSearchParams({open:`service:${uid}`})}`}>현재 관측</Link>
             <SourceJSON inline value={instance} />
           </RowDialog>
         })}
-        <Row href="/scheduler/estimates" label="운영 판단의 예상 보기" />
+        <Row href={`/?${new URLSearchParams({open:`service:${uid}`,evidence:"estimates"})}`} label="응답 목표 예상 근거" />
       </Rows></QueryGate>,
     }
   },

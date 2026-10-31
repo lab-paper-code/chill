@@ -19,9 +19,9 @@ test("capacity selection preserves exact row key and local workload filter, neve
   assert.equal(selectedCapacityRow([built,next],built.key),built)
   assert.deepEqual(capacityRows([built],""),[built])
   const path=capacityPath("uid with / space","key+&")
-  assert.equal(path.split("?")[0],"/scheduler/capacity")
-  assert.deepEqual(Object.fromEntries(new URLSearchParams(path.split("?")[1])),{workload:"uid with / space",row:"key+&"})
-  assert.equal(capacityPath(),"/scheduler/capacity")
+  assert.equal(path.split("?")[0],"/")
+  assert.deepEqual(Object.fromEntries(new URLSearchParams(path.split("?")[1])),{evidence:"capacity",workload:"uid with / space",row:"key+&"})
+  assert.equal(capacityPath(),"/?evidence=capacity")
   assert.equal(new URLSearchParams(capacityPath(input.workloadUID).split("?")[1]).has("row"),false)
 })
 

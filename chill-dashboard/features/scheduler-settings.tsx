@@ -276,7 +276,7 @@ export function SchedulerSettingsPage() {
       <Rows label="자동 조정 항목">{controls.map(control=><EditRow key={control.key} label={control.label} help={`운영 판단에서 ${control.label}도 함께 조정해요.`} value={onOff(shown.controls[control.key])} changed={!!count&&baseline!.controls[control.key]!==shown.controls[control.key]}
         initial={shown.controls[control.key]} save={value=>edit(base=>({...base,controls:{...base.controls,[control.key]:value as boolean}}))} disabled={blocked}/>)}</Rows>
       <div id="capacity" ref={capacitySection} tabIndex={-1} className="rounded focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring">
-        <Rows label="용량 설정">{group("capacity")}<Row href="/scheduler/capacity" label="인스턴스 용량 계산 근거" hint="행에 사용한 값과 현재 적용값, 격자·이분탐색 판정"/></Rows>
+        <Rows label="용량 설정">{group("capacity")}<Row href="/?evidence=capacity" label="인스턴스 용량 계산 근거" hint="행에 사용한 값과 현재 적용값, 격자·이분탐색 판정"/></Rows>
       </div>
       <Rows label="고급">{group("advanced")}</Rows>
       <Rows>
@@ -285,7 +285,7 @@ export function SchedulerSettingsPage() {
           ?<Row href={`/transitions/${encodeURIComponent(routing.operation.id)}?${new URLSearchParams({view:"current",stage:"result",node:routing.operation.node.uid,startedAt:routing.startedAt})}`} label="설정한 요청 분배" hint="가장 최근에 적용한 서비스 → 인스턴스 비율"/>
           :<Row href="/transitions" label="설정한 요청 분배" hint={state.data?"분배 작업 기록이 비어 있어요":state.error?"분배 기록을 불러오지 못했어요":"분배 기록을 확인하고 있어요"}/>}
         <RoutingEdit initial={settings.data?.staticRouting} disabled={blocked||count>0} apply={(before,after,reason)=>void applyRouting(before,after,reason)}/>
-        <Row href="/scheduler" label="지금 운영 판단 보기"/>
+        <Row href="/" label="운영 현황"/>
         {settings.data&&<RowDialog label="원본 자료 보기" title="현재 운영 설정 원본"><pre className="source-json">{stringifySchedulerJSON(safeSource(settings.data),2)}</pre><SourceExport value={settings.data} filename="chill-scheduler-settings.json"/></RowDialog>}
       </Rows>
     </>}</QueryGate>

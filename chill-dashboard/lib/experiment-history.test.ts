@@ -11,7 +11,6 @@ import type { Experiment } from "./experiments.ts"
 import type * as ClientModule from "./client.tsx"
 import type * as ConclusionModule from "../features/experiments-conclusion.tsx"
 import type * as ExperimentsModule from "../features/experiments.tsx"
-import type * as OverviewModule from "../features/overview.tsx"
 
 const require=createRequire(import.meta.url)
 function load<T>(path:string,modules:Record<string,unknown>):T {
@@ -25,11 +24,11 @@ const {ApiError}=load<typeof ClientModule>("./client.tsx",{"lucide-react":{}})
 const fixture=JSON.parse(readFileSync(new URL("./fixtures/experiment-213.json",import.meta.url),"utf8")).publication as Experiment
 const run:Experiment={...fixture,id:"candidate",comparisons:[{left:{stageID:fixture.stages[0].id},right:{historical:{publicationID:"baseline",stageID:"baseline-stage"}},reason:"선언된 과거 비교"}]}
 
-test("historical failures stay errors across list, detail and overview; retry refetches only failed references",()=>{
+test("historical failures stay errors across result list and detail; retry refetches only failed references",()=>{
   let queries:Array<{error:Error|null;data?:Experiment;isPending:boolean;refetch?:()=>void}>=[],params=new URLSearchParams(),retried:number[]=[],buttons:Array<()=>void>=[]
   const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
   const Button=({children,onClick,...props}:{children?:ReactNode;onClick?:()=>void})=>{if(onClick)buttons.push(onClick);return createElement("button",props,children)}
-  const client={ApiError,useChillQueries:()=>queries,useSession:()=>({config:{namespace:"test"}}),useChillQuery:(path:string)=>({data:path==="v1/experiments"?{items:[run]}:run,error:null,isFetching:false,refetch:()=>{}})}
+  const client={ApiError,useChillQueries:(paths:string[])=>queries.slice(0,paths.length),useSession:()=>({config:{namespace:"test"}}),useChillQuery:(path:string)=>({data:path==="v1/experiments"?{items:[run]}:run,error:null,isFetching:false,refetch:()=>{}})}
   const modules:Record<string,unknown>={
     "@/lib/client":client,"@/lib/experiments":helpers,"@/lib/measurements":measurements,
     "next/link":{default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},"next/navigation":{useSearchParams:()=>params},
@@ -38,11 +37,10 @@ test("historical failures stay errors across list, detail and overview; retry re
     "@/components/ui/button":{Button},"@/components/ui/sheet":{Sheet:container,SheetContent:container,SheetHeader:container,SheetTitle:container},
     "@/features/evaluation-request":{EvaluationCleanup:()=>null,EvaluationLaunch:()=>null},
     "@/features/scheduler-evidence":{},"@/features/measurement-coverage":{useMeasurementCoverage:()=>({data:undefined,refetch:()=>{}}),useCoverageInventory:()=>({})},
-    "@/lib/overview":{overviewCoverageMatrix:()=>({rows:[],devices:[]})},"@/lib/measurement-coverage":{},
   }
   const conclusion=load<typeof ConclusionModule>("../features/experiments-conclusion.tsx",modules)
   modules["@/features/experiments-conclusion"]=conclusion
-  const {ExperimentsPage}=load<typeof ExperimentsModule>("../features/experiments.tsx",modules),{OverviewPage}=load<typeof OverviewModule>("../features/overview.tsx",modules)
+  const {ExperimentsPage}=load<typeof ExperimentsModule>("../features/experiments.tsx",modules)
   for(const error of [new ApiError(500,"",null),new ApiError(403,"",null),new Error("request timed out")]) {
     retried=[]
     queries=[{error,data:undefined,isPending:false,refetch:()=>{retried.push(0)}},{error:new ApiError(404,"",null),isPending:false,refetch:()=>{retried.push(1)}},{error:null,isPending:false,refetch:()=>{retried.push(2)}}]
@@ -50,7 +48,7 @@ test("historical failures stay errors across list, detail and overview; retry re
     assert.equal(historical.error,error,`${error.message} must be returned, not treated as a missing publication`)
     historical.refetch()
     assert.deepEqual(retried,[0])
-    for(const [Page,search] of [[ExperimentsPage,""],[ExperimentsPage,"a=candidate"],[OverviewPage,""]] as const) {
+    for(const [Page,search] of [[ExperimentsPage,""],[ExperimentsPage,"a=candidate"]] as const) {
       params=new URLSearchParams(search);buttons=[];retried=[]
       const html=renderToStaticMarkup(createElement(Page))
       assert.match(html,/role="alert"/)

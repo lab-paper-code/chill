@@ -6,29 +6,32 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useSession } from "@/lib/client"
 import { useLive } from "@/lib/use-live"
 import type { LiveAction, LiveMetrics, LiveSnapshot, LiveState, LiveWorkload } from "@/lib/live"
+import { compareAt } from "@/lib/live"
 import type { SchedulerCandidate, SchedulerDecision, SchedulerObservationPage } from "@/lib/read-types"
 import { decisionRange, evidenceError } from "@/lib/experiments"
 import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import { safeSource } from "@/lib/source-export"
-import { actionProgress, actionOrigin, duration, liveFresh, scopeSnapshot, scopeEvents, belongsToPool, boardVerdict, displayNumber, displayTime, elapsed, instanceSymbol, routingShare, serviceDevices, serviceRows, powerBreakdown, powerWindow, decisionReason, gapEpisodes, liveReason, terminalCount, trendSegments, workloadQueue, incidentSummary, sloLatency, minuteMetrics, type ServiceRow } from "@/lib/live-display"
-import { actionKinds, actionNodeName, actionStatuses, judgmentLabels } from "./scheduler"
-import { useCoverageInventory } from "./measurement-coverage"
-import { EvaluationActive } from "./evaluation-active"
+import { actionProgress, actionOrigin, duration, liveFresh, scopeSnapshot, belongsToPool, boardVerdict, displayNumber, displayTime, elapsed, instanceSymbol, routingShare, serviceDevices, serviceRows, decisionReason, gapEpisodes, liveReason, terminalCount, trendSegments, workloadQueue, incidentSummary, sloLatency, minuteMetrics, sloTargetMissed, type ServiceRow } from "@/lib/live-display"
+import { actionKinds, actionNodeName, actionStatuses, judgmentLabels, SchedulerEvidence } from "./scheduler"
+import { StatusCell } from "@/components/status-cell"
+import { STATUS_AXES, type StatusTone } from "@/lib/status"
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { EvaluationStatusCell } from "./evaluation-active"
 import { evaluationInjectionMatch, type ActiveEvaluations } from "@/lib/evaluation-active"
 import "./live-board.css"
 
 type Zone="UTC"|"KST"
 type Select=(key:"open"|"at",value:string|null,opener?:HTMLElement)=>void
 const raw=(value:unknown)=>stringifySchedulerJSON(safeSource(value),2)
-const number=(value:number|null|undefined,unit="",digits=0)=>value==null?"—":displayNumber(value,unit,digits)
-const percent=(value:number|undefined,n:number|undefined)=>value==null||n==null?"미관측":n===0?"표본 없음":`${(value/n*100).toFixed(1)}%`
+const number=(value:number|null|undefined,unit="",digits=0)=>value==null?"미제공":displayNumber(value,unit,digits)
+const percent=(value:number|undefined,n:number|undefined)=>value==null||n==null?"미확인":n===0?"판정 불가":`${(value/n*100).toFixed(1)}%`
 const serviceName=(snapshot:LiveSnapshot|null,uid:string)=>snapshot?.workloads.find(row=>row.uid===uid)?.name??"이름 미제공"
-const latency=(workload:LiveWorkload,metric:LiveMetrics["workloads"][string]|undefined)=>{const value=sloLatency(workload,metric);return !metric?"미관측":metric.received===0||value===null?"평가 불가":value===undefined?"미제공":`p${workload.slo.percentile} ${number(value,"",1)}`}
-const historyHref=(uid?:string)=>{const to=new Date();return `/scheduler/history?${new URLSearchParams({from:new Date(to.getTime()-300000).toISOString(),to:to.toISOString(),order:"asc",filter:"decision-action",...(uid?{uid}:{})})}`}
+const latency=(workload:LiveWorkload,metric:LiveMetrics["workloads"][string]|undefined)=>{const value=sloLatency(workload,metric);return !metric?"미확인":metric.received===0||value===null?"판정 불가":value===undefined?"미제공":`p${workload.slo.percentile} ${number(value,"",1)}`}
+const historyHref=(uid?:string,at?:string)=>{const to=new Date(),range=at?decisionRange(at):null;return `${range?"/scheduler/history":"/records"}?${new URLSearchParams({...range??{from:new Date(to.getTime()-300000).toISOString(),to:to.toISOString()},order:"asc",filter:"decision-action",...(uid?{uid}:{})})}`}
 const nodeLabel=(state:LiveState,uid:string)=>state.snapshot?.nodes.find(node=>node.uid===uid)?.name||state.snapshot?.instances.find(row=>row.node.uid===uid)?.node.name||`보드 밖 노드 (…${uid.slice(-4)})`
 const gapLabel=(state:LiveState,scope:string)=>scope.startsWith("node:")?`${nodeLabel(state,scope.slice(5))} 전력`:scope.startsWith("workload:")?`${serviceName(state.snapshot,scope.slice(9))} 요청 지표`:scope==="events"?"사건 기록":scope==="workloads"?"요청 지표":"관측 연결"
 function Facts({items}:{items:[string,React.ReactNode][]}) {
-  return <table className="live-facts"><tbody>{items.map(([label,value])=><tr key={label}><th scope="row">{label}</th><td>{value==null||value===""?"—":value}</td></tr>)}</tbody></table>
+  return <table className="live-facts"><tbody>{items.map(([label,value])=><tr key={label}><th scope="row">{label}</th><td>{value==null||value===""?"미제공":value}</td></tr>)}</tbody></table>
 }
 function Source({value,label="원본 정보"}:{value:unknown;label?:string}) {
   return <details className="live-source"><summary>{label}</summary><pre>{raw(value)}</pre></details>
@@ -36,7 +39,7 @@ function Source({value,label="원본 정보"}:{value:unknown;label?:string}) {
 function MinuteSummary({state,workload,end}:{state:LiveState;workload:LiveWorkload;end:number}) {
   const rows=minuteMetrics(state.metrics,workload.uid,end)
   const received=rows.reduce((sum,row)=>sum+row.received,0),completed=rows.reduce((sum,row)=>sum+row.completed,0),n=rows.reduce((sum,row)=>sum+row.completed+row.failed,0),values=rows.map(row=>sloLatency(workload,row)).filter((value):value is number=>value!=null)
-  return <table className="live-minute-summary"><caption>최근 1분</caption><thead><tr><th>관측 초 / 60</th><th>수신 건</th><th>성공 %</th><th>p{workload.slo.percentile} 최소 ms</th><th>최대 ms</th></tr></thead><tbody><tr><td>{rows.length}</td><td>{rows.length?number(received):"미관측"}</td><td>{percent(rows.length?completed:undefined,rows.length?n:undefined)}</td><td>{values.length?number(Math.min(...values),"",1):"표본 없음"}</td><td>{values.length?number(Math.max(...values),"",1):"표본 없음"}</td></tr></tbody></table>
+  return <table className="live-minute-summary"><caption>최근 1분</caption><thead><tr><th>관측 초 / 60</th><th>수신 건</th><th>성공 %</th><th>p{workload.slo.percentile} 최소 ms</th><th>최대 ms</th></tr></thead><tbody><tr><td>{rows.length}</td><td>{rows.length?number(received):"미확인"}</td><td>{percent(rows.length?completed:undefined,rows.length?n:undefined)}</td><td>{values.length?number(Math.min(...values),"",1):"판정 불가"}</td><td>{values.length?number(Math.max(...values),"",1):"판정 불가"}</td></tr></tbody></table>
 }
 function StateStrip({state,status,reconnect,now,zone,paused,togglePause}:{state:LiveState;status:string;reconnect:()=>void;now:number;zone:Zone;paused:boolean;togglePause:()=>void}) {
   const params=useSearchParams(),router=useRouter(),path=usePathname(),{config}=useSession()
@@ -44,7 +47,6 @@ function StateStrip({state,status,reconnect,now,zone,paused,togglePause}:{state:
   const fresh=liveFresh(state,now)
   return <div className="live-strip" aria-label="관측 상태">
     <div className="live-freshness"><strong>{paused?"화면 일시정지":status==="live"&&!fresh?"관측 지연":connection[status]??status}</strong><span>마지막 수신 <time dateTime={state.lastReceivedAt?new Date(state.lastReceivedAt).toISOString():undefined}>{state.lastReceivedAt?displayTime(new Date(state.lastReceivedAt).toISOString(),zone):"대기"}</time></span></div>
-    <EvaluationActive now={now}/>
     <div className="live-strip-actions"><button type="button" onClick={togglePause} aria-pressed={paused}>{paused?"실시간으로 복귀":"화면 일시정지"}</button>{!["live","fixture","paused-hidden"].includes(status)&&<button type="button" onClick={reconnect}>다시 연결</button>}
       {config.liveFixture&&<label>검사용 장면 <select value={params.get("fixture")??"live"} onChange={event=>{const next=new URLSearchParams(params.toString());next.delete("open");next.delete("at");if(event.target.value==="live")next.delete("fixture");else next.set("fixture",event.target.value);router.replace(`${path}?${next}`,{scroll:false})}}><option value="live">실시간</option><option value="empty">빈 상태</option><option value="first">첫 구성</option><option value="expand">확장</option><option value="shrink">축소</option></select></label>}
     </div>
@@ -56,20 +58,22 @@ function Sparkline({state,uid,end}:{state:LiveState;uid:string;end:number}) {
   const visible=points.filter(row=>row.at>=end-300000&&row.at<=end&&row.value!=null)
   return <div className="live-spark"><svg viewBox="0 0 120 32" role="img" aria-label={`최근 5분 유입 추세, ${visible.length}초 관측. 결손은 연결하지 않음`}><line x1="0" y1="29" x2="120" y2="29" stroke="currentColor" opacity=".2"/>{segments.map((points,index)=>points.includes(" ")?<polyline key={index} points={points} fill="none" stroke="currentColor" strokeWidth="1.8"/>:<circle key={index} cx={points.split(",")[0]} cy={points.split(",")[1]} r="1.5" fill="currentColor"/>)}</svg><span>{visible.length?`최대 ${number(Math.max(...visible.map(row=>row.value!)))} req/s`:"관측 대기"}</span></div>
 }
-function ServiceTable({state,rows,select,now}:{state:LiveState;rows:ServiceRow[];select:Select;now:number}) {
-  const snapshot=state.snapshot!,[search,setSearch]=React.useState("")
-  const matched=rows.filter(({workload})=>`${workload.name} ${workload.model}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())),active=matched
-  return <section className="live-services" aria-labelledby="live-services-title"><header className="live-section-heading"><h2 id="live-services-title">서비스</h2><label className="live-search">검색<input type="search" value={search} onChange={event=>setSearch(event.target.value)} placeholder="이름 또는 모델"/></label></header>
-    {!!active.length&&<table className="live-service-table"><caption className="sr-only">마지막 완료된 1초 기준 서비스 지표</caption><thead><tr><th scope="col">서비스 / 상태</th><th scope="col">장치 / 모드</th><th scope="col">req/s</th><th scope="col">성공률 %</th><th scope="col">SLO / 목표 ms</th><th scope="col">대기 건</th></tr></thead><tbody>
-      {active.map(({workload,metric,queued,status})=>{const devices=serviceDevices(snapshot,workload.uid),n=terminalCount(metric),recent=state.events.some(event=>Date.parse(event.at)>=now-10000&&(event.kind==="action"&&event.action.workloadUID===workload.uid));return <tr key={workload.uid} id={`pool-${workload.uid}`} tabIndex={-1} className={recent?"live-recent-change":""}>
-        <th scope="row" data-label="서비스"><button className="live-service-name" type="button" onClick={event=>select("open",`service:${workload.uid}`,event.currentTarget)}>{workload.name}<span aria-hidden="true"> ›</span></button><div className="live-service-status"><span className={`live-row-state live-state-${status.tone}`} title={status.reason}>{status.label}</span><span className="live-auto-state">자동 {workload.autonomous?"켜짐":"꺼짐"}</span></div></th>
-        <td data-label="장치 / 모드">{devices.length?devices.map(node=><button className="live-device" key={node.uid} type="button" onClick={event=>select("open",`node:${node.uid}`,event.currentTarget)}>{node.name} / {node.powerMode||"모드 미확인"}</button>):<span className="live-muted">미배치</span>}</td>
-        <td data-label="req/s" className="live-numeric">{number(metric?.received)}</td><td data-label="성공률 %" className="live-numeric">{percent(metric?.completed,n)}</td>
-        <td data-label="SLO / 목표 ms" className="live-numeric">{latency(workload,metric)}<small>≤ {number(Number(workload.slo.targetLatencyNanos)/1e6)}</small></td>
-        <td data-label="대기 건" className="live-numeric"><span title={`배정 전 ${workload.pending}, 배정 후 ${queued-workload.pending}`}>{queued}</span></td>
-      </tr>})}
-    </tbody></table>}
-    {!matched.length&&<p className="live-empty">{search?"검색 결과 없음":"등록 서비스 없음"}</p>}
+function ServiceTable({state,rows,select}:{state:LiveState;rows:ServiceRow[];select:Select}) {
+  const params=useSearchParams(),router=useRouter(),path=usePathname(),filter=params.get("services")??"전체",individual=params.get("view")==="individual"
+  const snapshot=state.snapshot!,allIdle=rows.length>0&&rows.every(row=>row.idle)
+  const update=(key:string,value:string)=>{const next=new URLSearchParams(params.toString());next.set(key,value);router.replace(`${path}?${next}`,{scroll:false})}
+  const matched=rows.filter(row=>filter==="확인 필요"?["warning","danger"].includes(row.status.tone):filter==="가동"?!row.idle:filter==="유휴"?row.idle:true)
+  // Keep the server's stable service order while live metric priorities change.
+  const byUID=new Map(matched.map(row=>[row.workload.uid,row])),ordered=snapshot.workloads.flatMap(workload=>{const row=byUID.get(workload.uid);return row?[row]:[]})
+  return <section className="live-services" aria-labelledby="live-services-title"><header className="live-section-heading"><h2 id="live-services-title">서비스 상태</h2><div className="live-filters"><label>상태 <select value={filter} onChange={event=>update("services",event.target.value)}>{["확인 필요","가동","유휴","전체"].map(value=><option key={value}>{value}</option>)}</select></label>{allIdle&&<label>보기 <select value={individual?"individual":"summary"} onChange={event=>update("view",event.target.value)}><option value="summary">집계</option><option value="individual">개별</option></select></label>}</div></header>
+    {allIdle&&!individual&&(filter==="전체"||filter==="유휴")?<table className="live-idle-summary"><caption>유휴 서비스 집계</caption><thead><tr><th>서비스 개</th><th>유입 req/s</th><th>배치 개</th><th>접수 허용 개</th><th>자동제어 개</th></tr></thead><tbody><tr><td>{rows.length}</td><td>{rows.reduce((sum,row)=>sum+row.metric!.received,0)}</td><td>{rows.filter(row=>serviceDevices(snapshot,row.workload.uid).length>0).length}</td><td>{rows.filter(row=>row.workload.admission).length}</td><td>{rows.filter(row=>row.workload.autonomous).length}</td></tr></tbody></table>:<>
+      {!!ordered.length&&<table className="live-service-table"><caption className="sr-only">마지막 완료된 1초 기준 서비스 지표</caption><thead><tr><th>서비스</th><th>장치</th><th>req/s</th><th>설정 pXX ms</th><th>목표 ms</th><th>상태</th></tr></thead><tbody>{ordered.map(({workload,metric,status})=><tr key={workload.uid}>
+        <th scope="row" data-label="서비스"><button className="live-service-name" type="button" onClick={event=>select("open",`service:${workload.uid}`,event.currentTarget)}>{workload.name}</button></th>
+        <td data-label="장치">{serviceDevices(snapshot,workload.uid).map(node=><Link className="live-device" key={node.uid} href={`/operations/devices?node=${encodeURIComponent(node.uid)}`}>{node.name||"이름 미제공"}</Link>)}{!serviceDevices(snapshot,workload.uid).length&&"미배치"}</td>
+        <td data-label="req/s" className="live-numeric">{metric?number(metric.received):"미확인"}</td><td data-label="설정 pXX ms" className="live-numeric">{latency(workload,metric)}</td><td data-label="목표 ms" className="live-numeric">{number(workload.slo.targetLatencyNanos/1e6,"",1)}</td>
+        <td data-label="상태"><StatusCell axis={STATUS_AXES.serviceImpact} label={status.label} tone={status.tone==="danger"?"fail":status.tone==="warning"?"warn":status.tone==="healthy"?"ok":"idle"} reason={status.reason}/></td>
+      </tr>)}</tbody></table>}{!ordered.length&&<p className="live-empty">{rows.length?"해당 서비스 없음":"등록 서비스 없음"}</p>}
+    </>}
   </section>
 }
 function ActionCard({action,snapshot,select,now,zone}:{action:LiveAction;snapshot:LiveSnapshot;select:Select;now:number;zone:Zone}) {
@@ -82,30 +86,29 @@ function Changes({snapshot,select,now,zone}:{snapshot:LiveSnapshot;select:Select
   const sorted=[...groups].sort(([,a],[,b])=>b.filter(row=>actionProgress(row,now)==="delayed").length-a.filter(row=>actionProgress(row,now)==="delayed").length)
   return <div className="live-change-list">{sorted.map(([uid,rows])=>{const delayed=rows.filter(row=>actionProgress(row,now)==="delayed").length,nodes=[...new Set(rows.map(row=>row.node.uid))];return <details key={uid} className="live-change-group"><summary>{uid?serviceName(snapshot,uid):"공유 구성"} / {rows.length}건 {!!delayed&&<span className="live-delay-badge">예상 대비 지연 {delayed}</span>}</summary>{nodes.map(node=><section key={node}><h3>{actionNodeName(rows.find(row=>row.node.uid===node)!.node)}</h3>{rows.filter(row=>row.node.uid===node).sort((a,b)=>Date.parse(a.startedAt)-Date.parse(b.startedAt)).map(action=><ActionCard key={JSON.stringify([action.id,action.node.uid,action.startedAt])} action={action} snapshot={snapshot} select={select} now={now} zone={zone}/>)}</section>)}</details>})}{!actions.length&&<p className="live-muted">진행 변경 없음</p>}</div>
 }
-function EventList({state,select,zone,now}:{state:LiveState;select:Select;zone:Zone;now:number}) {
-  const {rows:visible}=incidentSummary(state.events,state.gaps,now,state.metrics)
+function SideRail({state,select,zone,now}:{state:LiveState;select:Select;zone:Zone;now:number}) {
   const active=useChillQuery<ActiveEvaluations>("v1/evaluations/active")
-  return <section className="live-events" id="live-incidents"><header className="live-section-heading"><h3>최근 사건</h3></header>
-    <ol>{visible.map(row=><li className={Date.parse(row.at)>=now-5000?"live-recent-change":""} key={row.key}>
-      {row.kind==="gap"?<><strong>관측 공백 / {gapLabel(state,row.gap.scope)}</strong><table><thead><tr><th>시작 KST</th><th>지속 s</th><th>상태</th></tr></thead><tbody><tr><td>{displayTime(row.gap.from,zone).replace(" KST","")}</td><td>{number(row.gap.seconds,"",1)}</td><td>{row.gap.lost?"기록 손실":row.gap.recovered?"회복":"진행"}</td></tr></tbody></table></>:<><time dateTime={row.at}>{displayTime(row.at,zone)}</time><strong title={row.event.kind==="decision"?row.event.decision.state:undefined}>{row.event.kind==="decision"?judgmentLabels[row.event.decision.state]??"구성 판단":row.event.kind==="action"?`${row.event.action.workloadUID?serviceName(state.snapshot,row.event.action.workloadUID):"공유 구성"} / ${actionKinds[row.event.action.kind]??"구성 변경"} / ${row.event.action.phase==="started"?"시작":row.event.action.phase==="completed"?"완료":"실패"}`:row.event.cluster.pod?.name??"클러스터 상태 변화"}</strong></>}
-      {row.kind==="event"&&evaluationInjectionMatch(row.event,active.error?[]:active.data?.items??[])&&<span className="live-injection-tag">주입</span>}
-      <button className="live-event-hit" type="button" aria-label={`${row.kind==="gap"?`관측 공백 / ${gapLabel(state,row.gap.scope)}`:displayTime(row.at,zone)} 사건 상세`} onClick={event=>row.kind==="event"&&row.event.kind==="decision"?select("at",row.event.decision.at,event.currentTarget):select("open",row.kind==="gap"?`gap:${JSON.stringify([row.gap.scope,row.gap.from])}`:`event:${row.event.seq}`,event.currentTarget)}><span className="sr-only">사건 상세</span></button>
-    </li>)}</ol></section>
-}
-function SideRail({state,select,zone,now,uid}:{state:LiveState;select:Select;zone:Zone;now:number;uid?:string}) {
-  const snapshot=state.snapshot,reservations=snapshot?.reservations,actions=snapshot?.actions.some(action=>actionProgress(action,now)!=="terminal"),incidents=incidentSummary(state.events,state.gaps,now,state.metrics).rows
-  const params=useSearchParams(),query=new URLSearchParams({...((uid)?{uid}:{}),...(params.get("fixture")?{fixture:params.get("fixture")!}:{})})
-  return <aside className="live-rail" aria-labelledby="live-rail-title"><header className="live-section-heading"><h2 id="live-rail-title">사건·변경</h2></header>
-    {actions&&<section className="live-changes"><h3>진행 변경</h3>{snapshot&&<Changes snapshot={snapshot} select={select} now={now} zone={zone}/>}</section>}
-    {!!reservations?.length&&<section><button type="button" onClick={event=>select("open","reservations",event.currentTarget)}>예약 상세</button></section>}
-    {!!incidents.length&&<EventList state={state} select={select} zone={zone} now={now}/>}
-    {!actions&&!reservations?.length&&!incidents.length&&<p className="live-muted">사건 없음</p>}
-    <nav className="live-detail-links"><Link href={`/transitions${query.size?`?${query}`:""}`}>전체 변경</Link><Link href={historyHref(uid)}>판단·전환 기록</Link></nav>
+  const actions=state.snapshot?.actions.filter(action=>actionProgress(action,now)!=="terminal")??[]
+  const incidents=incidentSummary(state.events,state.gaps,now,state.metrics).rows
+  return <aside className="live-rail" aria-labelledby="live-rail-title" id="live-incidents"><header className="live-section-heading"><h2 id="live-rail-title">진행·사건</h2><Link href={historyHref()}>기록</Link></header>
+    <table className="live-incident-table"><thead><tr><th>시각 KST</th><th>대상</th><th>동작</th><th>결과</th><th>사유</th></tr></thead><tbody>
+      {actions.map(action=><tr key={`action:${JSON.stringify([action.id,action.node.uid,action.startedAt])}`}><td data-label="시각 KST">{displayTime(action.startedAt,zone)}</td><th scope="row" data-label="대상"><button type="button" onClick={event=>select("open",`action:${JSON.stringify([action.id,action.node.uid,action.startedAt])}`,event.currentTarget)}>{actionNodeName(action.node)}</button></th><td data-label="동작">{actionKinds[action.kind]??action.kind}</td><td data-label="결과">{actionProgress(action,now)==="delayed"?"예상 대비 지연":"진행"}</td><td data-label="사유">미제공</td></tr>)}
+      {incidents.map(row=>{
+        const event=row.kind==="event"?row.event:null
+        const target=row.kind==="gap"?gapLabel(state,row.gap.scope):event?.kind==="action"?actionNodeName(event.action.node):event?.kind==="cluster"?event.cluster.pod?.name??event.cluster.source??"클러스터":"전체 서비스"
+        const operation=row.kind==="gap"?"관측":event?.kind==="action"?actionKinds[event.action.kind]??event.action.kind:event?.kind==="cluster"?liveReason(event.cluster.event):"구성 판단"
+        const result=row.kind==="gap"?row.gap.lost?"기록 손실":row.gap.recovered?"회복":"관측 공백":event?.kind==="action"?event.action.phase==="started"?"시작":event.action.phase==="completed"?"완료":"실패":event?.kind==="decision"?judgmentLabels[event.decision.state]??event.decision.state:event?.cluster.pod?.phase??"미제공"
+        const reason=row.kind==="gap"?liveReason(row.gap.reason):event?.kind==="decision"?liveReason(event.decision.reason):event?.kind==="cluster"?liveReason(event.cluster.reason):event?.action.result?.error??"미제공"
+        return <tr key={row.key}><td data-label="시각 KST">{displayTime(row.at,zone)}</td><th scope="row" data-label="대상"><button type="button" onClick={click=>event?.kind==="decision"?select("at",event.decision.at,click.currentTarget):select("open",row.kind==="gap"?`gap:${JSON.stringify([row.gap.scope,row.gap.from])}`:`event:${event!.seq}`,click.currentTarget)}>{target}</button></th><td data-label="동작">{operation}{event&&evaluationInjectionMatch(event,active.error?[]:active.data?.items??[])&&<span className="live-injection-tag">주입</span>}</td><td data-label="결과">{result}</td><td data-label="사유">{reason}{row.kind==="event"&&row.count>1&&<details><summary>유지 판단 원본</summary>{state.events.filter(item=>item.kind==="decision"&&item.decision.state==="Keep"&&compareAt(item.at,row.from)>=0&&compareAt(item.at,row.at)<=0).map(item=><button key={item.seq} type="button" onClick={click=>select("at",item.at,click.currentTarget)}>{displayTime(item.at,zone)}</button>)}</details>}</td></tr>
+      })}
+    </tbody></table>
+    {!actions.length&&!incidents.length&&<p className="live-muted">진행·사건 없음</p>}
+    {!!state.snapshot?.reservations.length&&<button type="button" onClick={event=>select("open","reservations",event.currentTarget)}>예약 상세</button>}
   </aside>
 }
 function ServiceMetrics({workload,state,zone}:{workload:LiveWorkload;state:LiveState;zone:Zone}) {
   const metric=state.metrics.at(-1)?.workloads[workload.uid],n=terminalCount(metric),queued=workloadQueue(workload,state.snapshot?.instances??[])
-  return <><h3>서비스 SLO</h3><Facts items={[[`관측 p${workload.slo.percentile} ms`,latency(workload,metric).replace(`p${workload.slo.percentile} `,"")],[`목표 p${workload.slo.percentile} ms`,`≤ ${number(Number(workload.slo.targetLatencyNanos)/1e6)}`],["자동제어",workload.autonomous?"켜짐":"꺼짐"],["준비 사유",<span key="reason" title={workload.readiness.reason}>{liveReason(workload.readiness.reason)}</span>],["배치",serviceDevices(state.snapshot!,workload.uid).length?"배치됨":"미배치"],["유입 req/s",number(metric?.received)],["성공률 %",percent(metric?.completed,n)]]}/><details><summary>응답·대기 상세</summary><Facts items={[["SLO 안 %",metric?.received===0?"평가 불가":percent(metric?.withinSLO,n)],["참고 p95 ms",n?number(metric?.p95ms,"",1):"평가 불가"],["참고 p99 ms",n?number(metric?.p99ms,"",1):"평가 불가"],["대기 합계",queued],["배정 전",workload.pending],["배정 후",queued-workload.pending],["접수",workload.admission?"가능":"불가"],["종결 표본",number(n)],["지연 표본",number(metric?.latencySamples)],["배정 전 관측",displayTime(workload.readiness.observedAt,zone)]]}/></details></>
+  return <><h3>서비스 SLO</h3><Facts items={[[`관측 p${workload.slo.percentile} ms`,latency(workload,metric).replace(`p${workload.slo.percentile} `,"")],[`목표 p${workload.slo.percentile} ms`,`≤ ${number(Number(workload.slo.targetLatencyNanos)/1e6)}`],["자동제어",workload.autonomous?"켜짐":"꺼짐"],["준비 사유",<span key="reason" title={workload.readiness.reason}>{liveReason(workload.readiness.reason)}</span>],["배치",serviceDevices(state.snapshot!,workload.uid).length?"배치됨":"미배치"],["유입 req/s",number(metric?.received)],["성공률 %",percent(metric?.completed,n)]]}/><details><summary>응답·대기 상세</summary><Facts items={[["SLO 안 %",metric?.received===0?"판정 불가":percent(metric?.withinSLO,n)],["참고 p95 ms",n?number(metric?.p95ms,"",1):"판정 불가"],["참고 p99 ms",n?number(metric?.p99ms,"",1):"판정 불가"],["대기 합계",queued],["배정 전",workload.pending],["배정 후",queued-workload.pending],["접수",workload.admission?"허용":"차단"],["종결 표본",number(n)],["지연 표본",number(metric?.latencySamples)],["배정 전 관측",displayTime(workload.readiness.observedAt,zone)]]}/></details></>
 }
 function ServiceTrend({state,uid,end,zone}:{state:LiveState;uid:string;end:number;zone:Zone}) {
   const rows=state.metrics.filter(row=>Date.parse(row.bucketAt)>=end-300000&&Date.parse(row.bucketAt)<=end)
@@ -117,7 +120,7 @@ function Instances({state,workload,select,zone}:{state:LiveState;workload:LiveWo
 }
 function CandidateEvidence({candidate,zone,snapshot}:{candidate:SchedulerCandidate;zone:Zone;snapshot:LiveSnapshot|null}) {
   return <section><h3>{candidate.keep?"유지안":"변경안"}</h3><Facts items={[["판정",judgmentLabels[candidate.status]??"판정 미제공"],["예상 에너지 kJ",number(candidate.expectedJoules==null?null:candidate.expectedJoules/1000,"",2)]]}/>
-    <div className="live-table-wrap"><table><caption>장치 자원</caption><thead><tr><th>장치 / 모드</th><th>CPU 개</th><th>GPU 개</th><th>RAM GiB</th><th>예약 RAM GiB</th><th>관측 KST</th></tr></thead><tbody>{candidate.nodes?.map(row=><tr key={row.node.uid}><th>{row.node.name}<small>{row.powerMode||"미제공"}</small></th><td>{row.cpus?.length??"—"}</td><td>{row.gpuUUIDs?.length??"—"}</td><td>{number(Number(row.memoryBytes)/2**30,"",2)}</td><td>{number(Number(row.reserved.memoryBytes)/2**30,"",2)}</td><td>{displayTime(row.observedAt,zone)}</td></tr>)}</tbody></table></div>
+    <div className="live-table-wrap"><table><caption>장치 자원</caption><thead><tr><th>장치 / 모드</th><th>CPU 개</th><th>GPU 개</th><th>RAM GiB</th><th>예약 RAM GiB</th><th>관측 KST</th></tr></thead><tbody>{candidate.nodes?.map(row=><tr key={row.node.uid}><th>{row.node.name}<small>{row.powerMode||"미제공"}</small></th><td>{row.cpus?.length??"미제공"}</td><td>{row.gpuUUIDs?.length??"미제공"}</td><td>{number(Number(row.memoryBytes)/2**30,"",2)}</td><td>{number(Number(row.reserved.memoryBytes)/2**30,"",2)}</td><td>{displayTime(row.observedAt,zone)}</td></tr>)}</tbody></table></div>
     {!!candidate.instances?.length&&<div className="live-table-wrap"><table><caption>인스턴스 자원</caption><thead><tr><th>장치</th><th>CPU 개</th><th>스레드 개</th><th>GPU</th><th>RAM GiB</th><th>상태</th></tr></thead><tbody>{candidate.instances.map(row=><tr key={row.id}><th>{row.node.name}</th><td>{row.allocation.cpuCount}</td><td>{row.allocation.threads}</td><td>{row.allocation.gpuUUID?"사용":"없음"}</td><td>{number(Number(row.allocation.memoryBytes)/2**30,"",2)}</td><td>{row.stopped?"제거":row.ready?"준비됨":"준비 중"}</td></tr>)}</tbody></table></div>}
     {!!candidate.slo?.length&&<div className="live-table-wrap"><table><caption>예상 서비스 지연</caption><thead><tr><th>서비스</th><th>분위수</th><th>예상 ms</th><th>목표 ms</th><th>표본 개</th></tr></thead><tbody>{candidate.slo.map(row=><tr key={row.uid}><th>{serviceName(snapshot,row.uid)}</th><td>p{row.percentile}</td><td>{number(row.expectedNanos==null?null:row.expectedNanos/1e6,"",1)}</td><td>{number(Number(row.targetNanos)/1e6,"",1)}</td><td>{row.samples}</td></tr>)}</tbody></table></div>}
   </section>
@@ -133,6 +136,7 @@ function Evidence({at,state,zone,cursor,visited=[]}:{at:string;state:LiveState;z
   const automation=decision?.workloads?.map(row=>row.state!=="Disabled")??(state.snapshot?.decision?.at===at?state.snapshot.workloads.map(row=>row.autonomous):[])
   const reason=decisionReason(decision?.reasons?.[0]??liveDecision?.reason,automation)
   return <><section className="live-evidence-summary"><h3>판단 근거</h3><Facts items={[["선택 시각 KST",displayTime(at,zone)],["판정",judgmentLabels[decision?.status??liveDecision?.state??""]??"구성 변경"],["판단 사유",reason],["범위","선택 당시"]]}/></section>
+    <Link href={historyHref(undefined,at)}>해당 시점 기록</Link>
     {!range?<p role="alert">판단 시각 오류</p>:query.error?<p role="alert">{evidenceError(query.error)}</p>:!event?<p role="status">{exhausted?"기록 없음":"근거 조회 중"}</p>:decision&&<>
       <div className="live-table-wrap"><table><caption>입력 관측 KST</caption><thead><tr><th>시작</th><th>종료</th><th>수신 건</th><th>접수 건</th><th>계산 입력 건</th><th>검토 개</th></tr></thead><tbody><tr><td>{displayTime(decision.search.windowStart,zone)}</td><td>{displayTime(decision.search.windowEnd,zone)}</td><td>{number(decision.search.received)}</td><td>{number(decision.search.accepted)}</td><td>{number(decision.search.computeInputs)}</td><td>{number(decision.search.examined)}</td></tr></tbody></table></div>
       {!!decision.capacity?.workloads?.length&&<div className="live-table-wrap"><table><caption>당시 서비스 수요</caption><thead><tr><th>서비스</th><th>수요 req/s</th><th>미종결 건</th><th>처리 잔량 건</th><th>예상 대기 s</th><th>최소 수요 req/s</th></tr></thead><tbody>{decision.capacity.workloads.map(row=><tr key={row.uid}><th>{serviceName(state.snapshot,row.uid)}</th><td>{number(row.rate,"",2)}</td><td>{row.queued}</td><td>{number(row.backlog,"",2)}</td><td>{number(row.waitSeconds,"",2)}</td><td>{number(row.minimumDemand,"",2)}</td></tr>)}</tbody></table></div>}
@@ -142,21 +146,15 @@ function Evidence({at,state,zone,cursor,visited=[]}:{at:string;state:LiveState;z
 }
 function Selection({open,state,select,zone,end,now}:{open:string;state:LiveState;select:Select;zone:Zone;end:number;now:number}) {
   const snapshot=state.snapshot,workload=open.startsWith("service:")?snapshot?.workloads.find(row=>row.uid===open.slice(8)):undefined,node=open.startsWith("node:")?snapshot?.nodes.find(row=>row.uid===open.slice(5)):undefined,action=open.startsWith("action:")?snapshot?.actions.find(row=>JSON.stringify([row.id,row.node.uid,row.startedAt])===open.slice(7)):undefined
-  if(open==="terms")return <><h3>용어 도움말</h3><table className="live-terms"><thead><tr><th>용어</th><th>정의</th><th>판정 기준</th></tr></thead><tbody>{[
-    ["정상","관측된 운영 이상 없음","실패·SLO 위반·대기·변경·관측 공백 없음"],
-    ["무부하","요청 유입 없음","모든 서비스의 관측 유입 = 0; SLO 평가는 별도"],
-    ["자동제어","서비스별 자동제어 설정","켜짐 / 전체"],
-    ["유휴","미배치·변경·예약 없는 서비스","유입·종결·대기 = 0"],
-    ["SLO","서비스별 응답 목표","목표 분위수 이상의 응답이 목표 지연 이내"],
-    ["표본 부족","유입은 있으나 지연 표본 없음","유입 > 0, 지연 표본 = 0"],
-    ["공유 전력","전체 계측 노드의 같은 1초 합계","결손 시 마지막 유효값·경과 초"],
-    ["눈금","세션 전체 장치의 공통 W축","새 최댓값에서만 확장"],
-    ["보드 밖 노드","계측 중이나 보드 구성에 없는 노드","클릭 시 노드별 W"],
-    ["관측 공백","범위별 연속 누락 사건","회복한 5초 미만 사건 제외"],
-    ["예상 대비 지연","예상 시간을 넘긴 미종결 변경","예상 평균 ×3; 예상 미제공 시 5분"],
-  ].map(([term,definition,threshold])=><tr key={term}><th scope="row">{term}</th><td>{definition}</td><td>{threshold}</td></tr>)}</tbody></table></>
-  if(open==="idle-services")return <ServiceTable state={state} rows={serviceRows(snapshot!,state.metrics.at(-1)?.workloads??{},now).filter(row=>row.idle)} select={select} now={now}/>
-  if(open==="outside-power")return <OutsidePower state={state}/>
+  if(open==="terms")return <table><thead><tr><th>용어</th><th>정의·판정 기준</th></tr></thead><tbody>{[
+    ["서비스 영향","관측된 요청 실패·목표 초과·대기·변경. 관측 공백과 별도"],
+    ["성능 판정","서비스에 설정된 분위수와 지연 목표. 무부하·표본 부족은 판정 불가"],
+    ["접수 허용","새 요청 접수 설정. 실제 유입과 별도"],
+    ["유휴","유입·종결·대기가 없고 미배치·변경·예약 없는 서비스"],
+    ["자동제어","서비스별 자동 구성 변경 설정"],
+    ["관측 공백","범위별 연속 누락. 후속 유효 관측으로만 회복 확인"],
+    ["예상 대비 지연","예상 평균의 세 배 경과. 예상 미제공은 5분 경과"],
+  ].map(([term,meaning])=><tr key={term}><th scope="row">{term}</th><td>{meaning}</td></tr>)}</tbody></table>
   if(open.startsWith("gap:")){
     const gap=gapEpisodes(state.gaps,now,state.metrics).find(row=>JSON.stringify([row.scope,row.from])===open.slice(4))
     return gap?<><h3>관측 공백 / {gapLabel(state,gap.scope)}</h3><Facts items={[["시작 KST",displayTime(gap.from,zone)],["종료 KST",displayTime(gap.to,zone)],["지속 s",number(gap.seconds,"",1)],["상태",gap.lost?"기록 손실":gap.recovered?"회복":"진행"],["사유",<span key="reason" title={gap.reason}>{liveReason(gap.reason)}</span>]]}/><Source value={gap}/></>:<p>보관 범위 밖 사건</p>
@@ -165,74 +163,42 @@ function Selection({open,state,select,zone,end,now}:{open:string;state:LiveState
     const event=state.events.find(row=>row.seq===Number(open.slice(6)))
     return event?<><h3>사건 상세</h3><Facts items={[["시각 KST",displayTime(event.at,zone)],["종류",event.kind==="action"?"구성 변경":event.kind==="decision"?"구성 판단":"클러스터"],...(event.kind==="action"?[["장치",actionNodeName(event.action.node)],["단계",actionKinds[event.action.kind]??"구성 변경"],["상태",event.action.phase==="started"?"시작":event.action.phase==="completed"?"완료":"실패"]] as [string,React.ReactNode][]:event.kind==="cluster"?[["대상",event.cluster.pod?.name??"클러스터"],["사유",<span key="reason" title={event.cluster.reason}>{liveReason(event.cluster.reason)}</span>]] as [string,React.ReactNode][]:[])]}/><Source value={event}/></>:<p>보관 범위 밖 사건</p>
   }
-  if(workload)return <><h3>{workload.name}</h3><nav className="live-detail-links"><Link href={`/pools/${encodeURIComponent(workload.uid)}`}>서비스 전체 상세</Link><Link href={`/workloads/${encodeURIComponent(workload.name)}`}>서비스 설정</Link><Link href={historyHref(workload.uid)}>판단·전환 기록</Link></nav><ServiceMetrics workload={workload} state={state} zone={zone}/><MinuteSummary state={state} workload={workload} end={end}/><Instances state={state} workload={workload} select={select} zone={zone}/><section><h3>이 서비스의 진행·정체 변경</h3><Changes snapshot={scopeSnapshot(snapshot!,workload.uid)} select={select} now={now} zone={zone}/></section><ServiceTrend state={state} uid={workload.uid} end={end} zone={zone}/><Source value={workload}/></>
+  if(workload)return <><h3>{workload.name}</h3><nav className="live-detail-links"><Link href={`/workloads/${encodeURIComponent(workload.name)}?uid=${encodeURIComponent(workload.uid)}`}>서비스 설정</Link><Link href={historyHref(workload.uid)}>기록</Link></nav><ServiceMetrics workload={workload} state={state} zone={zone}/><MinuteSummary state={state} workload={workload} end={end}/><Instances state={state} workload={workload} select={select} zone={zone}/><section><h3>진행 변경</h3><Changes snapshot={scopeSnapshot(snapshot!,workload.uid)} select={select} now={now} zone={zone}/></section><ServiceTrend state={state} uid={workload.uid} end={end} zone={zone}/></>
   if(node)return <><h3>{node.name}</h3><Facts items={[["서비스",snapshot?.workloads.filter(workload=>snapshot.instances.some(row=>row.node.uid===node.uid&&!row.stopped&&belongsToPool(row,workload.uid))).map(row=>row.name).join(", ")||"실행 서비스 없음"],["전력모드",node.powerMode],["전력 W",number(state.metrics.at(-1)?.nodes[node.uid]?.watts,"",1)],["준비",node.ready?"준비됨":"사용 불가"],["측정 작업",node.measurement?"진행 중":"없음"],["관측 KST",displayTime(node.observedAt,zone)],["사유",node.reasons?.length?node.reasons.map(reason=><span key={reason} title={reason}>{liveReason(reason)} </span>):"미제공"]]}/><Source value={node}/></>
-  if(action)return <><h3>{actionKinds[action.kind]??"구성 변경"}</h3><Facts items={[["서비스",action.workloadUID?serviceName(snapshot,action.workloadUID):"공유 구성"],["장치",actionNodeName(action.node)],["실행 방식",actionOrigin(action)],["현재 단계",actionKinds[action.kind]??"구성 변경"],["상태",actionProgress(action,now)==="delayed"?"예상 대비 지연 / 종결 미확인":actionStatuses[action.status]??"미확인"],["시작 KST",displayTime(action.startedAt,zone)],["경과",elapsed(action.startedAt,now).replace(" 전","")],["예상",action.expectedSeconds==null?"미제공":duration(action.expectedSeconds)]]}/><Link href="/transitions?view=history">변경 기록에서 종결 확인</Link><Source value={action} label="변경 원본과 시간 근거"/></>
+  if(action)return <><h3>{actionKinds[action.kind]??"구성 변경"}</h3><Facts items={[["서비스",action.workloadUID?serviceName(snapshot,action.workloadUID):"공유 구성"],["장치",actionNodeName(action.node)],["실행 방식",actionOrigin(action)],["현재 단계",actionKinds[action.kind]??"구성 변경"],["상태",actionProgress(action,now)==="delayed"?"예상 대비 지연 / 종결 미확인":actionStatuses[action.status]??"미확인"],["시작 KST",displayTime(action.startedAt,zone)],["경과",elapsed(action.startedAt,now).replace(" 전","")],["예상",action.expectedSeconds==null?"미제공":duration(action.expectedSeconds)]]}/><Link href={historyHref(action.workloadUID)}>변경 기록</Link><Source value={action} label="변경 원본과 시간 근거"/></>
   if(open==="reservations")return <>{snapshot?.reservations.length?snapshot.reservations.map((row,index)=><section className="live-reservation-detail" key={index}><h3>{row.nodes.map(node=>node.name).join(", ")||"공유 범위"}</h3><Facts items={[["서비스",row.workloadUIDs.map(uid=>serviceName(snapshot,uid)).join(", ")],["장치 수",row.nodes.length],["사유",<span key="reason" title={row.reason}>{liveReason(row.reason)}</span>],["해제 예정","미제공"]]}/><Source value={row}/></section>):<p>예약 없음</p>}</>
   return <p>현재 관측에 없는 항목</p>
 }
-function Drawer({title,close,children}:{title:string;close:()=>void;children:React.ReactNode}) {
-  const ref=React.useRef<HTMLElement>(null)
-  React.useEffect(()=>{ref.current?.focus()},[title])
-  return <aside ref={ref} tabIndex={-1} role="dialog" aria-modal="false" aria-labelledby="live-drawer-title" className="live-drawer"><header><h2 id="live-drawer-title">{title}</h2><button type="button" onClick={close}>닫기 / Esc</button></header><div className="live-drawer-body">{children}</div></aside>
-}
-function PowerReading({state,end}:{state:LiveState;end:number}) {
-  const row=state.lastPower,seconds=row?Math.max(0,Math.floor((end-Date.parse(row.bucketAt)-1000)/1000)):0,{segments,observed,expected,end:windowEnd}=powerWindow(state.metrics)
-  const max=Math.max(1,...state.metrics.filter(metric=>Date.parse(metric.bucketAt)>=windowEnd-300000).map(metric=>metric.pool.wholeWatts??0))
-  return <div className="live-power-reading"><span>{row?number(row.watts,"",1):"미관측"}</span>{seconds>0&&<small className="live-age" title="마지막 유효 관측 이후 경과 초">{seconds} s 경과</small>}<svg viewBox="0 0 190 76" role="img" aria-label={`최근 5분 공유 전력 추세, 0–${number(max," W",1)}, ${observed}/${expected}초 관측`}><path d="M38 8V56H184" fill="none" stroke="currentColor" opacity=".35"/><text x="34" y="13" textAnchor="end">{number(max,"",1)}</text><text x="34" y="56" textAnchor="end">0</text><text x="38" y="72">5분 전</text><text x="184" y="72" textAnchor="end">현재</text><g transform="translate(40 0) scale(1.2 2)">{segments.map((points,index)=>points.includes(" ")?<polyline key={index} points={points} fill="none" stroke="currentColor" strokeWidth="1" vectorEffect="non-scaling-stroke"/>:<circle key={index} cx={points.split(",")[0]} cy={points.split(",")[1]} r="1.2" fill="currentColor"/>)}</g></svg></div>
-}
-function OutsidePower({state}:{state:LiveState}) {
-  const inventory=useCoverageInventory(),known=new Set(state.snapshot?.nodes.map(node=>node.uid)),names=new Map((inventory.data?.classes??[]).flatMap(row=>row.nodes).map(node=>[node.uid,node.name]))
-  const rows=Object.entries(state.metrics.at(-1)?.nodes??{}).filter(([uid])=>!known.has(uid))
-  return <><h3>보드 밖 노드</h3><table><thead><tr><th>노드</th><th>전력 W</th></tr></thead><tbody>{rows.map(([uid,node])=><tr key={uid}><th title={uid}>{names.get(uid)||nodeLabel(state,uid)}</th><td>{number(node.watts,"",1)}</td></tr>)}</tbody></table>{!rows.length&&<p className="live-muted">관측 노드 없음</p>}</>
-}
-function NodeStrip({state,rows,select}:{state:LiveState;rows:ServiceRow[];select:Select}) {
-  const snapshot=state.snapshot!,metrics=state.metrics.at(-1),power=powerBreakdown(snapshot.nodes.map(row=>row.uid),metrics),scale=state.powerScale
-  const nodes=[...snapshot.nodes].sort((a,b)=>a.name.localeCompare(b.name,"ko")||a.uid.localeCompare(b.uid))
-  const placed=(row:ServiceRow,nodeUID?:string)=>snapshot.instances.some(instance=>!instance.stopped&&(!nodeUID||instance.node.uid===nodeUID)&&belongsToPool(instance,row.workload.uid))
-  const services=(items:ServiceRow[])=>items.length?<table className="live-device-services"><thead><tr><th>서비스</th><th>req/s</th><th>SLO</th></tr></thead><tbody>{items.map(({workload,metric,status})=><tr key={workload.uid}><th scope="row"><button type="button" onClick={event=>select("open",`service:${workload.uid}`,event.currentTarget)}>{workload.name}</button></th><td>{number(metric?.received)}</td><td className={`live-state-${status.tone}`} title={status.reason}>{status.label==="무부하"?"—":status.label}</td></tr>)}</tbody></table>:<span className="live-muted">—</span>
-  const unplaced=rows.filter(row=>!row.idle&&!placed(row))
-  const unknownDevice=rows.filter(row=>snapshot.instances.some(instance=>!instance.stopped&&belongsToPool(instance,row.workload.uid)&&!snapshot.nodes.some(node=>node.uid===instance.node.uid)))
-  return <section className="live-node-power" aria-labelledby="live-node-power-title"><header className="live-section-heading"><h2 id="live-node-power-title">장치</h2></header><div className="live-table-wrap"><table className="live-device-table"><thead><tr><th>장치</th><th><span className="live-power-axis"><span>0</span><span>전력 W</span><span>{number(scale,"",1)}</span></span></th><th>배치된 서비스</th><th>상태</th></tr></thead><tbody>
-    {nodes.map(node=>{const watts=metrics?.nodes[node.uid]?.watts;return <tr key={node.uid}><th scope="row"><button type="button" onClick={event=>select("open",`node:${node.uid}`,event.currentTarget)}>{node.name||nodeLabel(state,node.uid)}</button></th><td><div className="live-watt-reading"><div className="live-watt-bar" role="img" aria-label={`${node.name} ${number(watts," W",1)}, 공통 눈금 0–${number(scale," W",1)}`}><span style={{width:`${(watts??0)/scale*100}%`}}/></div><span>{number(watts,"",1)}</span></div></td><td>{services(rows.filter(row=>placed(row,node.uid)))}</td><td>{!node.ready?"사용 불가":node.measurement?"측정 중":"준비됨"}</td></tr>})}
-    {!!unknownDevice.length&&<tr><th scope="row">장치 미확인</th><td>—</td><td>{services(unknownDevice)}</td><td>배치됨</td></tr>}
-    {!!unplaced.length&&<tr><th scope="row">미배치</th><td>—</td><td>{services(unplaced)}</td><td>{[...new Set(unplaced.map(row=>liveReason(row.workload.readiness.reason)))].join(", ")}</td></tr>}
-    <tr><th scope="row"><button type="button" onClick={event=>select("open","outside-power",event.currentTarget)}>보드 밖 노드 ›</button></th><td><button className="live-watt-reading live-outside-hit" type="button" onClick={event=>select("open","outside-power",event.currentTarget)} aria-label="보드 밖 노드별 전력 상세"><span className={`live-watt-bar live-watt-other ${(power.other??0)>scale?"live-watt-overflow":""}`}><span style={{width:`${Math.min(100,(power.other??0)/scale*100)}%`}}/></span><span>{number(power.other,"",1)}{(power.other??0)>scale&&<span title="공통 눈금 초과" aria-label="공통 눈금 초과"> ›</span>}</span></button></td><td>—</td><td>—</td></tr>
-  </tbody></table></div></section>
-}
-function LiveStage({uid}:{uid?:string}) {
-  const live=useLive(),{epoch}=useSession(),params=useSearchParams(),router=useRouter(),path=usePathname(),[now,setNow]=React.useState(()=>Date.now()),zone:Zone="KST",[frozen,setFrozen]=React.useState<{state:LiveState;now:number;epoch:number;fixture:string|null}|null>(null)
-  const paused=!!frozen&&frozen.epoch===epoch&&frozen.fixture===params.get("fixture"),source=paused?frozen.state:live.state,clock=paused?frozen.now:now,state={...source,snapshot:source.snapshot?scopeSnapshot(source.snapshot,uid):null,events:scopeEvents(source.events,uid),gaps:source.gaps.filter(gap=>!uid||gap.scope==="all"||gap.scope==="events"||gap.scope==="workloads"||gap.scope===`workload:${uid}`||source.snapshot?.instances.some(row=>belongsToPool(row,uid)&&gap.scope===`node:${row.node.uid}`))}
-  const heading=React.useRef<HTMLHeadingElement>(null),opener=React.useRef<HTMLElement|null>(null),open=params.get("open"),at=params.get("at"),previousSelection=React.useRef<string|null>(null)
+export function LiveBoardPage() {
+  const live=useLive(),{epoch}=useSession(),params=useSearchParams(),router=useRouter(),path=usePathname()
+  const [now,setNow]=React.useState(()=>Date.now()),[frozen,setFrozen]=React.useState<{state:LiveState;now:number;epoch:number;fixture:string|null}|null>(null)
+  const paused=!!frozen&&frozen.epoch===epoch&&frozen.fixture===params.get("fixture"),state=paused?frozen.state:live.state,clock=paused?frozen.now:now,zone:Zone="KST"
+  const heading=React.useRef<HTMLHeadingElement>(null),opener=React.useRef<HTMLElement|null>(null)
+  const open=params.get("open"),at=params.get("at"),requestedEvidence=params.get("evidence"),evidence=requestedEvidence==="candidates"||requestedEvidence==="estimates"||requestedEvidence==="load"||requestedEvidence==="capacity"?requestedEvidence:null
   const snapshot=state.snapshot,metrics=state.metrics.at(-1),fixture=params.get("fixture"),end=live.status==="fixture"&&metrics?Date.parse(metrics.bucketAt)+1000:clock
-  React.useEffect(()=>{const update=()=>setNow(Date.now()),timer=setInterval(update,1000);document.addEventListener("visibilitychange",update);return()=>{clearInterval(timer);document.removeEventListener("visibilitychange",update)}},[])
-  const select:Select=React.useCallback((key,value,target)=>{if(target)opener.current=target;const next=new URLSearchParams(params.toString());next.delete("open");next.delete("at");if(value)next.set(key,value);router.push(`${path}?${next}`,{scroll:false})},[params,path,router])
-  React.useEffect(()=>{const selection=at??open;if(previousSelection.current&&!selection){if(opener.current?.isConnected)opener.current.focus();else heading.current?.focus()}previousSelection.current=selection},[open,at])
-  React.useEffect(()=>{const escape=(event:KeyboardEvent)=>{if(event.key==="Escape"&&(at||open)){event.preventDefault();select(at?"at":"open",null)}};document.addEventListener("keydown",escape);return()=>document.removeEventListener("keydown",escape)},[at,open,select])
-  const boardRows=snapshot?.workloads,complete=!!metrics&&!!boardRows?.length&&boardRows.every(row=>metrics.workloads[row.uid]),all=complete?boardRows!.map(row=>metrics!.workloads[row.uid]):null
-  const received=all?.reduce((total,row)=>total+row.received,0)
-  const queued=snapshot?.workloads.reduce((total,row)=>total+workloadQueue(row,snapshot.instances),0)??0,changes=snapshot?.actions.filter(action=>actionProgress(action,clock)==="progress").length??0,delayed=snapshot?.actions.filter(action=>actionProgress(action,clock)==="delayed").length??0
+  const selectedWorkload=open?.startsWith("service:")?snapshot?.workloads.find(row=>row.uid===open.slice(8)):undefined
+  React.useEffect(()=>{const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer)},[])
+  const select:Select=React.useCallback((key,value,target)=>{if(target)opener.current=target;const next=new URLSearchParams(params.toString());next.delete("open");next.delete("at");next.delete("evidence");if(value)next.set(key,value);router.push(`${path}?${next}`,{scroll:false})},[params,path,router])
+  const chooseEvidence=(kind:string)=>{const next=new URLSearchParams(params.toString());next.delete("at");next.set("evidence",kind);if(open?.startsWith("service:"))next.set("workload",open.slice(8));router.push(`${path}?${next}`,{scroll:false})}
+  const changes=snapshot?.actions.filter(action=>actionProgress(action,clock)!=="terminal").length??0,delayed=snapshot?.actions.filter(action=>actionProgress(action,clock)==="delayed").length??0
   const fresh=liveFresh(state,clock),ongoingGap=gapEpisodes(state.gaps,clock,state.metrics).some(gap=>!gap.lost&&!gap.recovered)
-  const rows=snapshot?serviceRows(snapshot,metrics?.workloads??{},clock):[],verdict=boardVerdict(rows,fresh,ongoingGap,changes,delayed)
-  const decision=snapshot?.decision,workload=snapshot?.workloads.find(row=>row.uid===uid),important=incidentSummary(state.events,state.gaps,clock,state.metrics).newCount
-  const off=snapshot?.workloads.filter(row=>!row.autonomous).length??0,idle=rows.filter(row=>row.idle).length
-  const statusFacts:[string,React.ReactNode][]=[["공유 전력 W / 5분",<PowerReading key={`${epoch}:${fixture}`} state={state} end={end}/>],["자동제어 / 전체",snapshot?`${rows.length-off} / ${rows.length}`:"—"]]
-  if(received)statusFacts.push(["유입 req/s",number(received)])
-  if(queued)statusFacts.push(["대기 건",queued])
-  if(changes)statusFacts.push(["변경 건",changes])
-  if(delayed)statusFacts.push(["지연 건",delayed])
-  if(snapshot?.reservations.length)statusFacts.push(["예약 건",snapshot.reservations.length])
-  const summary=`${verdict.label} / 유입 ${received??"미관측"} req/s / 변경 ${changes} / 지연 ${delayed} / 예약 ${snapshot?.reservations.length??0} / 새 사건 ${important}`
-  return <div className={`live-stage ${uid?"live-pool-page":""}`}>
-    <section className={`live-verdict live-tone-${verdict.tone}`} aria-label="운영 상태">
-      <header className="live-heading"><div><nav aria-label="운영 경로"><Link href="/scheduler">운영 요약</Link><span aria-hidden="true">/</span>{uid?<Link href={`/operations/flow${fixture?`?${new URLSearchParams({fixture})}`:""}`}>운영 흐름 보드</Link>:<span>운영 흐름 보드</span>}</nav><h1 ref={heading} tabIndex={-1}>{uid?workload?.name??"서비스 상세":"운영 흐름 보드"}</h1></div><StateStrip state={state} status={live.status} reconnect={live.reconnect} now={clock} zone={zone} paused={paused} togglePause={()=>setFrozen(paused?null:{state:live.state,now,epoch,fixture})}/></header>
-      <div className="live-verdict-title"><strong title={verdict.reason}>{verdict.label}</strong>{idle>0&&<button type="button" onClick={event=>select("open","idle-services",event.currentTarget)}>유휴 {idle} ▸</button>}<button type="button" onClick={event=>select("open","terms",event.currentTarget)}>용어 도움말</button>{decision&&<button type="button" onClick={event=>select("at",decision.at,event.currentTarget)}>판단 근거</button>}{important>0&&<a href="#live-incidents">새 사건 {important}</a>}</div>
-      <table className="live-status-table"><tbody>{statusFacts.map(([label,value])=><tr key={label}><th scope="row">{label}</th><td>{value}</td></tr>)}</tbody></table>
+  const rows=snapshot?serviceRows(snapshot,metrics?.workloads??{},clock):[],verdict=boardVerdict(rows,fresh,ongoingGap,changes-delayed,delayed)
+  const evaluable=rows.filter(row=>sloLatency(row.workload,row.metric)!=null),missed=evaluable.some(row=>sloTargetMissed(row.workload,row.metric))
+  const performance={axis:STATUS_AXES.performance,label:!fresh||!evaluable.length?"판정 불가":missed?"목표 초과":"목표 이내",tone:(!fresh||!evaluable.length?"idle":missed?"fail":"ok") as StatusTone,reason:!fresh?"관측 신선도 부족":!evaluable.length?"평가 표본 없음":undefined}
+  const summary=`서비스 영향 ${verdict.label} / 성능 판정 ${performance.label} / 관측 상태 ${verdict.observation.label} / 변경 ${changes} / 예약 ${snapshot?.reservations.length??"미확인"}`
+  const sheetOpen=!!(open||at||evidence),title=at?"선택 판단 근거":open==="terms"?"용어 도움말":open?.startsWith("service:")?"서비스 관측":evidence?"판단 근거":open==="reservations"?"예약 상세":open?.startsWith("action:")?"변경 상세":"사건 상세"
+  return <div className="live-stage">
+    <header className="live-heading"><h1 ref={heading} tabIndex={-1}>운영 현황</h1><div className="live-scope"><span>범위 전체 서비스</span><span>기준 시각 <time dateTime={metrics?.bucketAt}>{displayTime(metrics?.bucketAt,zone)||"미기록"}</time></span></div><StateStrip state={state} status={live.status} reconnect={live.reconnect} now={clock} zone={zone} paused={paused} togglePause={()=>setFrozen(paused?null:{state:live.state,now,epoch,fixture})}/></header>
+    <section className="live-verdict" aria-label="운영 판독"><div className="live-section-heading"><h2>운영 판독</h2><nav className="live-detail-links"><Link href="/operations/devices">장치</Link>{snapshot?.decision&&<button type="button" onClick={event=>select("at",snapshot.decision!.at,event.currentTarget)}>판단 근거</button>}</nav></div>
+      <table className="live-reading"><thead className="sr-only"><tr><th>서비스 영향</th><th>성능 판정</th><th>관측 상태</th><th>실험 상태</th></tr></thead><tbody><tr><td data-label="서비스 영향"><StatusCell axis={verdict.axis} label={verdict.label} tone={verdict.tone==="danger"?"fail":verdict.tone==="warning"?"warn":verdict.tone==="healthy"?"ok":"idle"} reason={verdict.reason}/></td><td data-label="성능 판정"><StatusCell {...performance}/></td><td data-label="관측 상태"><StatusCell {...verdict.observation}/></td><td data-label="실험 상태"><EvaluationStatusCell/></td></tr></tbody></table>
+      <table className="live-counts"><thead><tr><th>평가 가능 개</th><th>미평가 개</th><th>변경 건</th><th>예약 건</th></tr></thead><tbody><tr><td>{snapshot?evaluable.length:"미확인"}</td><td>{snapshot?rows.length-evaluable.length:"미확인"}</td><td>{snapshot?changes:"미확인"}</td><td>{snapshot?snapshot.reservations.length:"미확인"}</td></tr></tbody></table>
     </section>
     <p className="sr-only" aria-live={paused?"off":"polite"} aria-atomic="true">{summary}</p>
-    <div className="live-board-grid"><section className="live-main" aria-label={uid?"서비스 관측":"장치 관측"}>{uid?workload?<><ServiceMetrics workload={workload} state={state} zone={zone}/><details><summary>요청 추세·배치 상세</summary><MinuteSummary state={state} workload={workload} end={end}/><Instances state={state} workload={workload} select={select} zone={zone}/><ServiceTrend state={state} uid={uid} end={end} zone={zone}/></details></>:<p className="live-empty">현재 관측에 없는 서비스</p>:snapshot?<NodeStrip state={state} rows={rows} select={select}/>:<p className="live-empty">장치 구성 수신 대기</p>}</section><SideRail state={state} select={select} zone={zone} now={clock} uid={uid}/></div>
-    {(at||open)&&<Drawer key={at??open} title={at?"선택 판단 근거":open==="terms"?"용어 도움말":open==="idle-services"?"유휴 서비스":open?.startsWith("gap:")||open?.startsWith("event:")?"사건 상세":open?.startsWith("service:")?"서비스 상세":open==="reservations"?"예약 상세":open?.startsWith("action:")?"변경 상세":"장치 상세"} close={()=>select(at?"at":"open",null)}>{at?<Evidence key={at} at={at} state={state} zone={zone}/>:<Selection open={open!} state={state} select={select} zone={zone} end={end} now={clock}/>}</Drawer>}
+    <div className="live-board-grid">{snapshot?<ServiceTable state={state} rows={rows} select={select}/>:<section className="live-services"><h2>서비스 상태</h2><p className="live-empty">서비스 구성 수신 대기</p></section>}<SideRail state={state} select={select} zone={zone} now={clock}/></div>
+    <Sheet open={sheetOpen} onOpenChange={value=>{if(!value)select(at?"at":"open",null)}}><SheetContent className="live-stage live-sheet" aria-describedby={undefined} onCloseAutoFocus={event=>{event.preventDefault();if(opener.current?.isConnected)opener.current.focus();else heading.current?.focus()}}><SheetHeader><SheetTitle>{title}</SheetTitle></SheetHeader><div className="live-sheet-body">
+      {at?<Evidence key={at} at={at} state={state} zone={zone}/>:<>{open&&<Selection open={open} state={state} select={select} zone={zone} end={end} now={clock}/>} {(open?.startsWith("service:")||evidence)&&<nav className="live-detail-links" aria-label="판단 근거 종류">{([["candidates","구성 후보"],["estimates","성능 추정"],["load","유입 근거"],["capacity","처리 용량"]] as const).map(([kind,label])=><button type="button" key={kind} aria-pressed={evidence===kind} onClick={()=>chooseEvidence(kind)}>{label}</button>)}</nav>}{evidence?<SchedulerEvidence kind={evidence}/>:open?.startsWith("service:")&&snapshot?.decision&&<Evidence at={snapshot.decision.at} state={state} zone={zone}/>}</>}
+      {!at&&selectedWorkload&&<Source value={selectedWorkload}/>}
+      {!at&&open?.startsWith("event:")&&state.events.find(event=>event.seq===Number(open.slice(6)))&&<Link href={historyHref(undefined,state.events.find(event=>event.seq===Number(open.slice(6)))!.at)}>해당 시점 기록</Link>}
+    </div></SheetContent></Sheet>
   </div>
 }
-export function LiveBoardPage(){return <LiveStage/>}
-export function LivePoolPage({id}:{id:string}){return <LiveStage uid={id}/>}
