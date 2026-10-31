@@ -369,3 +369,10 @@
 - E5-7m: F 0 / M 55 / Smol D1 FAIL(그대로) / J 37,390. 이전 M 46~71로 차이 없음. 남은 문제는 Pod 삭제 후 Smol 회복 지연 5건이며 배분과 무관.
 - 결론: κ 비례 채택 유지. 세 행 모두 에너지 손실 없음(오히려 소폭 감소). 결함 지도의 5m 덩어리는 사라졌고, 7m은 Smol 회복(결함 3 계열)이 남음.
 - 17:39Z control-278: dashboard만 `b0917a94`(b0c97ea6 포함, 조언 세션 요청). dashboard 테스트 200/0. server는 f780d19a 그대로(restart 0). 17:39~18:09Z 클러스터 무변경.
+
+## 2026-10-31 — 프로파일링 분해 결과(`local://profiling-anatomy.md`)
+
+- usable 21셀도 criteriaMet은 0: FrozenPowerWindowPolicy 판정이 기록되지 않음(`projection/measurement_facts.go:16-21`이 PolicyPassed를 설정하지 않음). 측정을 늘려서는 해결되지 않는 코드 결손.
+- unknown-support 67셀은 전부 RuntimeDeclarationMissing(CUDA-amd64 21, RKNN 25, CUDA-arm64·rnn·vlm 각 7). 측정이 아니라 선언 생성 운영 단계로 해결할 문제.
+- unmeasured 126셀(MNV 34/PLC 34/Smol 58, Xavier 56·Orin Nano 28): 현재 방식이면 약 102 node-h(최장 lane 44 h). 본질 최소는 core 약 5.8 node-h(Xavier 병목 2.6 h)에 d를 셀당 약 7분 추가. 절감처: Smol 고정 active 창(99~600 s → 약 10 s+, 약 96%), 셀당 Pod·모델 기동 9회 → 1회, 이미 측정된 셀에 쓰던 run을 빈 셀로 재배분. checklist에는 CI 폭·표본 목표가 없어서 3 trial이면 형식상 통과함.
+- 바텀업 순서: (1) power-window 판정 기록(기존 powerObservation.coverage 정책 재사용) (2) runtime declaration 생성 (3) 빠른 프로파일링 프로토콜(본질 창, 셀당 한 세션, 빈 셀 우선, 장치 클래스별 lane 병렬) 브리프 → 패널.
