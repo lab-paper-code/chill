@@ -116,3 +116,28 @@ test("dedicated author pages restore copy and edit identity from bookmarked URLs
   tree=elements(runner.render(EvaluationAuthorPage,{name:"original"}))
   assert.ok(tree.some(element=>element.props.children==="시작 전 수정만 허용"))
 })
+
+test("selected run replacement blocks actions until the current UID is explicitly adopted",()=>{
+  const runner=hookRunner(),params=new URLSearchParams("name=run&uid=old")
+  const run={name:"run",uid:"new",phase:"Running",spec:{},conditions:[{type:"PoolAcquired",status:"True"}]}
+  const modules={...primitives,react:{...runner.react,useEffect:()=>{}},"next/navigation":{useSearchParams:()=>params},"@/lib/client":{useChillQuery:()=>({data:run})}}
+  const {EvaluationsPage}=load("../features/evaluation-request.tsx",modules)
+  const tree=elements(runner.render(EvaluationsPage))
+  assert.ok(tree.some(element=>element.props.children==="교체됨"))
+  assert.ok(!tree.some(element=>element.props.run===run),"replacement must not expose run mutations or release")
+  assert.ok(!tree.some(element=>element.props.name==="run"&&"now" in element.props),"replacement must not expose active-run stop")
+  const adopt=tree.find(element=>element.type==="a"&&element.props.children==="현재 실행 선택")!
+  assert.equal(adopt.props.href,"/experiments?name=run&uid=new")
+})
+
+test("pool occupancy is observed independently from the cleanup failure phase",()=>{
+  for(const [status,label] of [["True","점유 중"],["False","반환 관측"],["Unknown","미확인"],[undefined,"미확인"]] as const) {
+    const runner=hookRunner(),run={name:"run",uid:"uid",phase:"Blocked",spec:{},conditions:status?[{type:"PoolAcquired",status}]:[]}
+    const modules={...primitives,react:{...runner.react,useEffect:()=>{}},"@/lib/client":{useChillQuery:()=>({data:{items:[run]}})}}
+    const {EvaluationsPage}=load("../features/evaluation-request.tsx",modules)
+    const tree=elements(runner.render(EvaluationsPage))
+    const cells=tree.filter(element=>element.type==="td")
+    assert.ok(cells.some(cell=>cell.props.children==="정리 실패"))
+    assert.ok(cells.some(cell=>cell.props.children===label),`${status}: ${label}`)
+  }
+})

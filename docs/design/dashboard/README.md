@@ -309,6 +309,7 @@ suffix·요청률 유사성 fallback은 사용하지 않는다. 정책은 기록
 실험 구현의 작성 경로는 `/experiments/new`, `/experiments/[name]/edit`, `/experiments/load-scenarios/new`, `/experiments/load-scenarios/[name]/edit`다.
 복사는 `copy`(실행·설정 이름) 또는 `publication`(게시 ID), 수정은 `uid`를 보존하며 새로고침에도 서버 원본을 다시 조회한다.
 실행 목록은 KST 시각·단계·풀 상태·작업을, 결과 목록은 비교 상태 선행 표·독립 판정 축·차이·제한을 제공한다. 운영 판독은 `EvaluationStatusCell`을 재사용한다.
+선택 실행의 URL UID가 현재 조회 UID와 다르면 `교체됨`으로 표시하고 중지·수정·재실행·자원 반환 작업을 차단한다. `현재 실행 선택`으로 명시 채택한 뒤에만 새 UID 작업을 허용한다. 풀 상태는 `PoolAcquired=True`의 점유 중 / `False`의 반환 관측 / 누락·Unknown의 미확인이며, 실행의 정리 실패 판정과 합치지 않는다.
 
 ## 9. 삭제·통합·단계별 수용
 
