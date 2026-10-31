@@ -53,6 +53,19 @@ func TestBuildDeployment(t *testing.T) {
 		!hasSecretEnv(container.Env, "ROOT_SECRET_ACCESS_KEY", instance.CredentialsSecretName, secretKeySecretKey) {
 		t.Fatalf("credential env = %#v", container.Env)
 	}
+	if container.ReadinessProbe.HTTPGet.Path != healthPath ||
+		container.ReadinessProbe.HTTPGet.Port != intstr.FromString(s3PortName) {
+		t.Fatalf("readiness probe = %#v", container.ReadinessProbe)
+	}
+	if pod.Volumes[0].PersistentVolumeClaim.ClaimName != instance.PersistentVolumeClaimName {
+		t.Fatalf("volume = %#v", pod.Volumes[0])
+	}
+}
+
+func TestBuildDeploymentIAM(t *testing.T) {
+	config := validConfig()
+	pod := buildDeployment(validInstance(), config).Spec.Template.Spec
+	container := pod.Containers[0]
 	hasIAM := false
 	for _, variable := range container.Env {
 		hasIAM = hasIAM || variable.Name == "VGW_IAM_DIR" && variable.Value == dataMountPath+"/.iam"
@@ -64,13 +77,6 @@ func TestBuildDeployment(t *testing.T) {
 		!reflect.DeepEqual(pod.InitContainers[0].Command, []string{"mkdir", "-p", dataMountPath + "/.iam"}) ||
 		!reflect.DeepEqual(pod.InitContainers[0].VolumeMounts, container.VolumeMounts) {
 		t.Fatalf("IAM initialization = %#v", pod.InitContainers)
-	}
-	if container.ReadinessProbe.HTTPGet.Path != healthPath ||
-		container.ReadinessProbe.HTTPGet.Port != intstr.FromString(s3PortName) {
-		t.Fatalf("readiness probe = %#v", container.ReadinessProbe)
-	}
-	if pod.Volumes[0].PersistentVolumeClaim.ClaimName != instance.PersistentVolumeClaimName {
-		t.Fatalf("volume = %#v", pod.Volumes[0])
 	}
 }
 
