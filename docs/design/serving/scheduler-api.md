@@ -98,6 +98,9 @@ snapshot의 `reservations`는 `{owner,nodes,workloadUIDs,podUIDs,instances,targe
 `target`은 owner의 frozen target이며 실제 상태는 snapshot의 instances/routing에서 읽는다.
 전역 `inProgressTarget` 필드는 제거되었고 호환 alias는 없다. 실행 종료 뒤에도 원격 효과가
 미확인이면 예약이 남는다. 예약 밖 판단은 계속되므로 예약 존재 자체를 전역 대기로 해석하지 않는다.
+`State()` 응답은 actions와 같은 mutex 아래 현재 소유권으로 reservations를 재투영한다.
+완료 후 반환된 예약은 다음 reconcile 전에도 사라지며, 실제 소유 중인 running/partial 예약은 유지한다.
+이때 snapshot.at, 관측값과 decision은 마지막 reconcile 값 그대로다.
 
 power 조회는 controller가 수락한 ChillServer configuration 하나를 atomic하게 읽어 meter
 구성을 고정한다. 긴 refresh·control Tick의 scheduler mutex를 기다리지 않으며, 새 설정은

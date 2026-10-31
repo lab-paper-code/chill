@@ -242,6 +242,7 @@ func (c *SchedulerController) State() SchedulerControllerState {
 	defer c.mu.Unlock()
 	result := c.state
 	result.Actions = c.actionsLocked(time.Now())
+	result.Snapshot.Reservations = c.reservationsLocked(result.Snapshot)
 	result.Results = append([]OperationResult(nil), c.state.Results...)
 	result.CostIssues = c.config.CostIssues
 	return result

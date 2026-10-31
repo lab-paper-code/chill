@@ -128,3 +128,31 @@ func TestReservationReasonsDeterministicAC38(t *testing.T) {
 		}
 	}
 }
+
+func TestStateReportsCurrentReservations(t *testing.T) {
+	at := time.Now().Add(-time.Minute).UTC()
+	run := &actionRun{
+		owner: "manual-reset:test", reserved: true,
+		action: serving.Action{ID: "reset", Status: nativeOperationRunning},
+		scope:  resourceScope{Nodes: []serving.NodeReference{{Name: "node"}}},
+	}
+	c := &SchedulerController{runs: map[string]*actionRun{"reset": run}}
+	c.state.Snapshot = serving.SchedulerSnapshot{At: at}
+	c.state.Snapshot.Reservations = c.reservationsLocked(c.state.Snapshot)
+	c.state.Decision.At = at
+	for _, status := range []string{nativeOperationRunning, nativeOperationPartial, nativeOperationComplete} {
+		run.action.Status = status
+		run.reserved = status != nativeOperationComplete
+		state := c.State()
+		want := 1
+		if !run.reserved {
+			want = 0
+		}
+		if len(state.Snapshot.Reservations) != want {
+			t.Fatalf("%s: got %d reservations, want %d", status, len(state.Snapshot.Reservations), want)
+		}
+		if !state.Snapshot.At.Equal(at) || !state.Decision.At.Equal(at) || state.Actions[0].Status != status {
+			t.Fatalf("%s: observation/decision changed or action is stale: %+v", status, state)
+		}
+	}
+}
