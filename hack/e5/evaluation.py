@@ -115,7 +115,19 @@ def stage_config(base,spec,scenario,execution,config,root):
     value['producerShards']={alias:spec['loadGenerator']['shards'][name] for alias,name in aliases.items()}
     resources=spec['loadGenerator']['resources'];value['producerResources']=copy.deepcopy(resources)
     for workload in value['workloads']:
-        workload.update(operational['workloads'][workload['name']])
+        operation=operational['workloads'][workload['name']]
+        workload.update({key:child for key,child in operation.items() if key!='podSpec'})
+        template=load(workload['jobTemplate']);pod=copy.deepcopy(operation['podSpec'])
+        for group in ('containers','initContainers'):
+            images={container['name']:container['image'] for container in template['spec']['template']['spec'].get(group,[])}
+            if set(images)!={container['name'] for container in pod.get(group,[])}:
+                raise ValueError('FrozenInputInvalid: operational producer containers differ from frozen template')
+            for container in pod.get(group,[]):
+                if 'image' in container: raise ValueError('FrozenInputInvalid: operational template cannot override images')
+                container['image']=images[container['name']]
+        template['spec']['template']['spec']=pod
+        destination=root/('producer-template-'+workload['name']+'.json');save(destination,template)
+        workload['jobTemplate']=str(destination)
         pinned=next(w for w in scenario['workloads'] if w['name']==workload['name'])
         for key in ('uid','generation','slo'): workload[key]=pinned[key]
         workload['seed']=value['seeds'][workload['name']];workload['arrivals']=value['arrivals'][workload['name']]
@@ -252,7 +264,7 @@ class Harness:
             bindings[template['id']]=binding
         usage=os.statvfs(self.run)
         if usage.f_bavail*usage.f_frsize<int(self.config['minimumFreeBytes']): raise ValueError('EvidenceCapacityInsufficient: workspace free bytes')
-        snapshot={'schemaVersion':'evaluation-snapshot.v1alpha1','runUID':self.execution['runUID'],'runSpec':self.spec,'scenarios':scenarios,'environment':first[1],'bindings':bindings,'initial':initial,'config':self.config}
+        snapshot={'schemaVersion':'evaluation-snapshot.v1alpha1','runUID':self.execution['runUID'],'runSpec':self.spec,'scenarios':scenarios,'environment':first[1],'bootstrapWorkload':first[0]['workloads'][0],'bindings':bindings,'initial':initial,'config':self.config}
         path=self.inputs/'snapshot.json';save(path,snapshot)
         ref=self.upload(path,'experiments/'+self.execution['runUID']+'/run/prepare/input-snapshot.json')
         self.outputs={'inputSnapshot':ref}
@@ -295,8 +307,7 @@ class Harness:
                     raise ValueError('FrozenInputInvalid: child differs from frozen '+key)
             if self.spec['stageID']!=self.execution['stageID']:
                 raise ValueError('FrozenInputInvalid: child stage ID differs from execution')
-        first=next(iter(self.snapshot['bindings'].values()))
-        environment(self.run,self.config,self.snapshot['environment'],first['config']['workloads']);self.e5=module('evaluation_e5',HERE/'e5.py')
+        environment(self.run,self.config,self.snapshot['environment'],[self.snapshot['bootstrapWorkload']]);self.e5=module('evaluation_e5',HERE/'e5.py')
     def controller(self):
         stage_id=self.execution.get('stageID',self.snapshot['runSpec']['stages'][0]['id'])
         binding=copy.deepcopy(self.snapshot['bindings'][stage_id]);config=binding['config']

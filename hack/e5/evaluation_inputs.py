@@ -15,7 +15,7 @@ import shutil
 OPERATIONAL = {'timeboxes','tokenSafetyMarginSeconds','failureSelectSnapshotTTLSeconds'}
 LEGACY_OPERATIONAL = OPERATIONAL | {'endpoint','caFile','tokenFile','collectorTokenFile','kubeContext','producerResources','producerShards','namespace'}
 WORKLOAD_OPERATIONAL = {'producerEndpoint', 'producerTokenFile', 'producerCAFile', 'producerDatasetDir',
-                        'deliverySeconds', 'socketSeconds', 'gatewayCapSeconds', 'workers', 'lifetimeSeconds'}
+                        'deliverySeconds', 'socketSeconds', 'gatewayCapSeconds', 'workers', 'lifetimeSeconds', 'podSpec'}
 CONFIG_KEYS = {'approval','inputs','g0Evidence','mSeconds','N','burstLowSeconds','smokeSeconds','workloads',
                'collection','factors','poolShares','burstLowMaximumSeconds','failureInjectionRunbook',
                }
@@ -75,8 +75,15 @@ def build(binding_path, environment_path, out, store, prefix):
     operational = {key: config.pop(key) for key in list(config) if key in OPERATIONAL}
     for key in LEGACY_OPERATIONAL-OPERATIONAL: config.pop(key,None)
     operational['workloads'] = {}
+    templates={}
     for workload in config['workloads']:
         operational['workloads'][workload['name']] = {key:workload.pop(key) for key in list(workload) if key in WORKLOAD_OPERATIONAL}
+        template=load(workload['jobTemplate']);pod=copy.deepcopy(template['spec']['template']['spec'])
+        identities={group:[{'name':container['name'],'image':container['image']} for container in pod.get(group,[])] for group in ('containers','initContainers')}
+        for group in identities:
+            for container in pod.get(group,[]): container.pop('image')
+        operational['workloads'][workload['name']]['podSpec']=pod
+        templates[Path(workload['jobTemplate'])]={'apiVersion':'batch/v1','kind':'Job','metadata':{},'spec':{'template':{'spec':identities}}}
     for key in ('stages','seeds','arrivals','d25Acceptance','g0Gate','generatorQuality','smoke','harnessRepositoryCommit','tokenLifetime','harnessSHA','condition','canonicalDefinitionsReused','demoProvenance','demoSkipped'): config.pop(key, None)
     collection = config['collection']
     operational['collection'] = {key:collection[key] for key in ('maximumDurationSeconds',) if key in collection}
@@ -111,7 +118,7 @@ def build(binding_path, environment_path, out, store, prefix):
         if not path.is_file() or path.is_symlink(): raise ValueError('Missing or symlink scientific file: '+value)
         target = out/'files'/relative
         if path.suffix == '.json':
-            document=load(path)
+            document=copy.deepcopy(templates[path]) if path in templates else load(path)
             if path==Path(binding['config']['inputs']['scheduler']):
                 document['settings']=copy.deepcopy(binding['schedulerSettings'])
             save(target, freeze(document,metadata=True))
