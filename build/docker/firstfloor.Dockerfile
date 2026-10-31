@@ -75,6 +75,11 @@ COPY --from=builder /out/measurement-worker /measurement-worker
 COPY runtime/firstfloor/ /opt/chill/runtime/firstfloor/
 COPY runtime/ortcpu/runner.py /opt/chill/runtime/ortcpu/runner.py
 COPY runtime/rknnlite/runner.py /opt/chill/runtime/rknnlite/runner.py
+# The vendor's regular package shadows our sibling namespace directory. Install
+# Chill's helper alongside its API; toolkit-lite2 itself does not ship runner.
+RUN if python3 -m pip show rknn-toolkit-lite2 >/dev/null 2>&1; then \
+    python3 -c 'import pathlib, rknnlite, shutil; shutil.copyfile("/opt/chill/runtime/rknnlite/runner.py", pathlib.Path(rknnlite.__file__).with_name("runner.py"))' \
+    && python3 -c 'from rknnlite import runner'; fi
 ENV PYTHONDONTWRITEBYTECODE=1
 USER 65532:65532
 ENTRYPOINT ["/opt/chill/bin/serving-worker"]

@@ -241,6 +241,13 @@ Vendor runtime variants are Make targets over the same Dockerfile. Each
 | `docker-buildx-firstfloor-l4t-r32` | `jetson-nano-4g` (JetPack 4.6, L4T r32) | `nvcr.io/nvidia/l4t-tensorrt:r8.2.1-runtime` (L4T r32.7.1) with Ubuntu 18.04 Python 3.8 | 3.8 | NVIDIA JetPack 4 `onnxruntime-gpu` 1.11.0, NumPy 1.24.4, Pillow 10.4.0 |
 | `docker-buildx-firstfloor-rknn` | `orangepi-5-plus-16g` | `python:3.11-slim` | 3.11 | `onnxruntime` 1.27.0, `rknn-toolkit-lite2` 2.3.2 |
 
+Profiling initializes and warms only the selected measurement batch K; serving
+still initializes every configured batch. This prevents a K=1 SmolVLM run from
+allocating larger-batch warmup buffers before its measurement window. The RKNN
+image also installs Chill's `rknnlite.runner` contract helper beside toolkit-lite2's
+regular package (the vendor wheel does not provide that module), and checks its
+import during the image build.
+
 Version evidence, checked against the official indexes:
 
 - PyPI `onnxruntime-gpu` 1.27.0 depends on `nvidia-*-cu13` (CUDA 13, driver

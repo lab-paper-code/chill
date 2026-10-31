@@ -44,7 +44,9 @@ def initialized_batches(run: dict[str, Any]) -> list[int]:
     batches = [batch for batch in declared if batch <= maximum]
     if not batches or run["measurement"]["batch"] not in batches:
         raise common.ContractError("configured initialized batches must include the selected fixed K")
-    return batches
+    # Profiling executes one fixed K; warming other serving batches can exhaust
+    # host memory before the measurement window even starts.
+    return [run["measurement"]["batch"]]
 
 
 def validate_request(request: dict[str, Any]) -> None:
