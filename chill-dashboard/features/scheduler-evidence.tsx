@@ -64,7 +64,7 @@ export function SchedulerPowerPage() {
       <RowDialog label="실행 그룹 전체 전력" hint="고른 기간의 전체·활성 실행 그룹 소비" title="실행 그룹 전체 전력" description="고른 기간 전체의 실측 소비예요. 노드 고르기와 페이지는 여기에 적용되지 않아요."><PowerInterval from={history.submitted.from} to={history.submitted.to}/></RowDialog>
       <Row href={`/scheduler/history?${new URLSearchParams(history.submitted)}`} label="같은 기간 판단 기록"/>
       {history.query.data&&<RowDialog label="자료 내보내기" title="자료 내보내기" description="지금 불러온 전력 기록을 파일로 받아요.">
-        <SourceExport filename="scheduler-power-page.json" value={{scope:"현재 페이지",source:"v1/observations/scheduler",from:history.submitted.from,to:history.submitted.to,cursor:history.cursor,filterNode:node,rows}}/>
+        <SourceExport filename="scheduler-power-page-summary.json" value={{projection:"summary",scope:"현재 페이지",source:"v1/observations/scheduler",from:history.submitted.from,to:history.submitted.to,cursor:history.cursor,filterNode:node,rows}}/>
       </RowDialog>}
     </HistoryControls>
     <QueryGate query={history.query}>{history.query.data&&<>

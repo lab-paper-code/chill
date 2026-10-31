@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { readFileSync } from "node:fs"
 import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerHistoryKindMatches } from "./scheduler-history.ts"
 import type { SchedulerObservation, SchedulerObservationSummary } from "./read-types.ts"
 
@@ -16,20 +17,20 @@ test("filtered latest-first rows retain original append offset for evidence look
   assert.equal(query.has("uid"),false)
 })
 
-test("summary rows resolve to the exact full record without forwarding the list view",()=>{
+test("summary rows resolve to explicit compact detail while list requests default to summary",()=>{
   const summary:SchedulerObservationSummary={at:event.at,offset:21,action:{id:event.action!.id,kind:event.action!.kind,node:event.action!.node,phase:event.action!.phase,startedAt:event.action!.startedAt}}
   const ref=schedulerRecordRef(summary,from,to,"0")
   const query=new URLSearchParams(schedulerRecordPath(ref).split("?")[1])
   assert.equal(query.get("limit"),"1")
   assert.equal(query.get("cursor"),"21")
-  assert.equal(query.has("view"),false)
+  assert.equal(query.get("view"),"compact")
   assert.equal(schedulerRecordMatches(ref,event),true)
 })
 test("selected journal restoration retains exact window and refuses same-ID replacement",()=>{
   const ref=schedulerRecordRef(event,from,to,"9007199254740993")
   assert.deepEqual(readSchedulerRecord(schedulerRecordParams(ref,"a"),"a"),ref)
   const query=new URLSearchParams(schedulerRecordPath(ref).split("?")[1])
-  assert.deepEqual(Object.fromEntries(query),{from,to,limit:"1",cursor:"9007199254740993"})
+  assert.deepEqual(Object.fromEntries(query),{from,to,limit:"1",cursor:"9007199254740993",view:"compact"})
   assert.equal(schedulerRecordMatches(ref,event),true)
   assert.equal(schedulerRecordMatches(ref,{...event,at:"2026-10-13T02:30:00.000000002Z"}),false)
   assert.equal(schedulerRecordMatches(ref,{...event,action:{...event.action!,node:{name:"node",uid:"uid-b"}}}),false)
@@ -61,4 +62,13 @@ test("experiment evidence filter selects only decision and action kinds and surv
   assert.equal(next.get("to"),to)
   assert.equal(next.get("cursor"),"100")
   assert.equal(next.has("kind"),false)
+})
+
+test("every history list requests summaries and transition details mount only for the selected row",()=>{
+  const history=readFileSync(new URL("../features/scheduler-history.tsx",import.meta.url),"utf8")
+  const transitions=readFileSync(new URL("../features/scheduler-transitions.tsx",import.meta.url),"utf8")
+  assert.match(history,/request\.set\("view","summary"\)/)
+  assert.doesNotMatch(history,/useSchedulerHistory\(view/)
+  assert.match(transitions,/selected===row\.ref\.offset&&<SelectedHistoryDetails/)
+  assert.doesNotMatch(transitions,/<HistoryActionDetails row=\{other\}/)
 })

@@ -448,9 +448,10 @@ func requestArrival(row *RequestRow, definitions map[string]*Definition) Schedul
 // SchedulerObservationSelection is validated once by the HTTP query boundary.
 // Its zero value preserves the bounded append-order read.
 type SchedulerObservationSelection struct {
-	Order  string
-	Filter string
-	UID    string
+	Order   string
+	Filter  string
+	UID     string
+	Summary bool
 }
 
 // SchedulerObservationPage decodes full payloads only for page entries.
@@ -487,10 +488,7 @@ func (l *ObservationLog) SchedulerObservationPage(ctx context.Context, from, to 
 			next = offset + len(records)
 			return errObservationStop
 		}
-		if err := l.readCatalog(read, read.scanningHour); err != nil {
-			return err
-		}
-		record, err := DecodeSchedulerLine(raw, read.catalog())
+		record, err := l.decodeSchedulerPageRecord(read, raw, selection.Summary)
 		if err != nil {
 			return err
 		}
@@ -507,6 +505,85 @@ func (l *ObservationLog) SchedulerObservationPage(ctx context.Context, from, to 
 	}
 	coverage := read.coverage(map[string][2]time.Time{observationSchedulerStream: {from, to}})
 	return records, next, coverage.gapUntil(from), coverage, nil
+}
+
+// Summary reads never hydrate catalogs or decode candidate, profile, or sample
+// bodies. Exact-record reads retain the full validation/restoration path.
+func (l *ObservationLog) decodeSchedulerPageRecord(read *observationRead, raw []byte, summary bool) (SchedulerObservation, error) {
+	if !summary {
+		if err := l.readCatalog(read, read.scanningHour); err != nil {
+			return SchedulerObservation{}, err
+		}
+		return DecodeSchedulerLine(raw, read.catalog())
+	}
+	var line struct {
+		At       time.Time
+		Decision *struct {
+			At     time.Time
+			Status string
+		}
+		Snapshot *struct{ At time.Time }
+		Settings *struct {
+			ActorUsername string
+			ActorUID      string
+			AppliedAt     *time.Time
+			Error         string
+		}
+		Action *struct {
+			ID        string
+			Kind      string
+			Node      NodeReference
+			Phase     string
+			StartedAt time.Time
+		}
+		Node        *NodeReference
+		Meter       string
+		StartedAt   *time.Time
+		PowerJoules *float64
+	}
+	if err := json.Unmarshal(raw, &line); err != nil {
+		return SchedulerObservation{}, err
+	}
+	record := SchedulerObservation{At: line.At, Node: line.Node, PowerJoules: line.PowerJoules}
+	if d := line.Decision; d != nil {
+		record.Decision = &SchedulerDecision{At: d.At, Status: d.Status}
+	}
+	if s := line.Snapshot; s != nil {
+		record.Snapshot = &SchedulerSnapshot{At: s.At}
+	}
+	if s := line.Settings; s != nil {
+		record.Settings = &SchedulerSettingsChange{ActorUsername: s.ActorUsername, ActorUID: s.ActorUID, AppliedAt: s.AppliedAt, Error: s.Error}
+	}
+	if a := line.Action; a != nil {
+		record.Action = &SchedulerActionObservation{ID: a.ID, Kind: a.Kind, Node: a.Node, Phase: a.Phase, StartedAt: a.StartedAt}
+	}
+	if line.Meter != "" {
+		record.Power = &metricobserver.Result{}
+		if line.StartedAt != nil {
+			record.Power.StartedAt = *line.StartedAt
+		}
+	}
+	return record, nil
+}
+
+func schedulerSummaryPage(records []SchedulerObservation, limit, offset int, order string) ([]SchedulerObservation, int, error) {
+	if offset > len(records) {
+		return nil, -1, failure("InvalidQuery", "cursor exceeds selected observation count")
+	}
+	if order == "desc" {
+		sort.Slice(records, func(i, j int) bool {
+			if records[i].At.Equal(records[j].At) {
+				return *records[i].Offset > *records[j].Offset
+			}
+			return records[i].At.After(records[j].At)
+		})
+	}
+	end := offset + min(limit, len(records)-offset)
+	next := -1
+	if end < len(records) {
+		next = end
+	}
+	return records[offset:end], next, nil
 }
 
 const (
@@ -541,14 +618,15 @@ func (e schedulerObservationEnvelope) kind() string {
 	}
 }
 
-// schedulerSelectedPage keeps only timestamps and append offsets while sorting,
-// then replays the captured streams to decode just the requested page.
+// Summary selection projects rows in one pass without reopening archived streams.
+// Detail selection retains only offsets, then decodes the requested page.
 func (l *ObservationLog) schedulerSelectedPage(read *observationRead, from, to time.Time, limit, offset int, selection SchedulerObservationSelection) ([]SchedulerObservation, int, *time.Time, ObservationCoverage, error) {
 	type entry struct {
 		at     time.Time
 		offset int
 	}
 	var entries []entry
+	var summaries []SchedulerObservation
 	position := 0
 	err := l.scanStream(read, observationSchedulerStream, func(raw []byte) error {
 		var envelope schedulerObservationEnvelope
@@ -561,7 +639,13 @@ func (l *ObservationLog) schedulerSelectedPage(read *observationRead, from, to t
 		original := position
 		position++
 		kind := envelope.kind()
-		if filter := selection.Filter; filter != "" && filter != "all" && filter != kind && !(filter == "decision-action" && (kind == schedulerHistoryDecision || kind == schedulerHistoryAction)) {
+		switch selection.Filter {
+		case "", "all", kind:
+		case "decision-action":
+			if kind != schedulerHistoryDecision && kind != schedulerHistoryAction {
+				return nil
+			}
+		default:
 			return nil
 		}
 		if selection.UID != "" {
@@ -570,11 +654,28 @@ func (l *ObservationLog) schedulerSelectedPage(read *observationRead, from, to t
 				return err
 			}
 		}
-		entries = append(entries, entry{envelope.At, original})
+		if selection.Summary {
+			record, err := l.decodeSchedulerPageRecord(read, raw, true)
+			if err != nil {
+				return err
+			}
+			record.Offset = &original
+			summaries = append(summaries, record)
+		} else {
+			entries = append(entries, entry{envelope.At, original})
+		}
 		return nil
 	})
 	if err != nil {
 		return nil, -1, nil, ObservationCoverage{}, err
+	}
+	if selection.Summary {
+		records, next, err := schedulerSummaryPage(summaries, limit, offset, selection.Order)
+		if err != nil {
+			return nil, -1, nil, ObservationCoverage{}, err
+		}
+		coverage := read.coverage(map[string][2]time.Time{observationSchedulerStream: {from, to}})
+		return records, next, coverage.gapUntil(from), coverage, nil
 	}
 	if offset > len(entries) {
 		return nil, -1, nil, ObservationCoverage{}, failure("InvalidQuery", "cursor exceeds selected observation count")
@@ -618,10 +719,7 @@ func (l *ObservationLog) schedulerSelectedPage(read *observationRead, from, to t
 			if !ok {
 				return nil
 			}
-			if err := l.readCatalog(read, read.scanningHour); err != nil {
-				return err
-			}
-			record, err := DecodeSchedulerLine(raw, read.catalog())
+			record, err := l.decodeSchedulerPageRecord(read, raw, selection.Summary)
 			if err != nil {
 				return err
 			}

@@ -172,6 +172,7 @@ export function comparisonValidity(a:ExperimentStage,b:ExperimentStage) {
   const loadUnknown=!rows.length||rows.some(row=>row.a.length!==1||row.b.length!==1||finite(row.a[0].original.offered)===null||finite(row.b[0].original.offered)===null)||left===null||right===null
   return {
     conditions:{load:loadUnknown?"미확인":sameLoad(a,b)?"같음":"다름",identity:changed?"다름":unknown||!rows.length?"미확인":"같음",rules:rulesMissing?"미확인":ruleKeys.length?"다름":"같음"},
+    identityUnknown:unknown>0||!rows.length,identityDifferent:changed>0,
     load:sameLoad(a,b)?"서비스별 평균 요청률 · 차이 1% 이내":"서비스별 평균 요청률 · 다르거나 미확인",
     duration:`구간 길이 ${left===null||right===null?"미제공":sameDisplayedDuration(a,b)?"같음":"다름"} · A ${formatResult(left,"s")} / B ${formatResult(right,"s")}`,
     rules:`측정 규칙 ${rulesMissing?"미기록 항목 있음":ruleKeys.length?"차이 있음":"기록된 항목 차이 없음"}${ruleKeys.length?` · 다른 항목: ${ruleKeys.join(", ")}`:""}`,
@@ -295,7 +296,8 @@ export function campaignScoreboard(run:Experiment) {
     const successes=services.flatMap(service=>service.successDelta===null?[]:[service.successDelta]),ratios=services.flatMap(service=>service.p95Ratio===null?[]:[service.p95Ratio])
     return {energyPercent:energies.length&&base>0?100*energies.reduce((sum,pair)=>sum+pair.energyDelta!,0)/base:null,successDelta:successes.length?Math.min(...successes):null,p95Ratio:ratios.length?Math.max(...ratios):null}
   }
-  const matched=comparisons.filter(pair=>!comparisonValidity(pair.chill,pair.control).limited),limited=comparisons.filter(pair=>comparisonValidity(pair.chill,pair.control).limited)
+  const validities=comparisons.map(pair=>({pair,validity:comparisonValidity(pair.chill,pair.control)}))
+  const matched=validities.filter(row=>!row.validity.limited).map(row=>row.pair),limited=validities.filter(row=>row.validity.limited).map(row=>row.pair)
   const summary=summarize(matched),referenceSummary=summarize(limited)
   let conclusion="차이 없음"
   if(!matched.length)conclusion=limited.length?"참고만 가능":"비교 대상 없음"
@@ -313,6 +315,8 @@ export function campaignScoreboard(run:Experiment) {
       {label:"최대 p95 증가",unit:"ms",value:worstLatency?.p95Delta==null?null:Math.max(0,worstLatency.p95Delta),ratio:worstLatency?.p95Ratio??null,service:worstLatency?.name??"—",stage:worstLatency?.pair.key??"—",compared:latencies.length,missing:services.length-latencies.length},
     ],
     coverageCounts:{stages:run.stages.length,pairs:comparisons.length,unpaired:run.stages.filter(stage=>!compared.has(stage)).length,ruleMissing,ruleDifferences,durationDifferences,
+      identityUnknown:validities.filter(row=>row.validity.identityUnknown).length,identityDifferences:validities.filter(row=>row.validity.identityDifferent).length,
+      loadUnknown:validities.filter(row=>row.validity.conditions.load==="미확인").length,loadDifferences:validities.filter(row=>row.validity.conditions.load==="다름").length,
       matched:matched.length,limited:limited.length},
   }
 }

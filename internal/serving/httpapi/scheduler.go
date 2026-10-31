@@ -297,6 +297,7 @@ func (h *Handler) schedulerObservations(w http.ResponseWriter, r *http.Request) 
 		sendError(w, err)
 		return
 	}
+	selection.Summary = query.Get("view") == schedulerSummaryView
 	limit := h.config.MaxQueryEvents
 	offset := 0
 	if text := query.Get("limit"); text != "" {

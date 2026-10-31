@@ -253,5 +253,14 @@ test("R13: occupancy quantity cells are unitless while invalid-value reasons rem
 test("R13: occupancy issues retain short reasons even when the checklist has no checks",()=>{
   assert.equal(occupancyReason({...occupancy,status:{perRequestNanos:0,throughput:"0",reason:"Stored occupancy does not match this request and status"}}),"요청·점유시간 근거 불일치")
   assert.equal(occupancyReason({...occupancy,status:{reason:"Signed negative d"}}),"점유시간 음수")
-  assert.equal(occupancyReason({...occupancy,status:{reason:"UnknownReason"}}),"사유 확인 필요")
+  assert.equal(occupancyReason({...occupancy,status:{reason:"UnknownReason"}}),"UnknownReason")
+  assert.equal(occupancyReason({...occupancy,status:{reason:"TooFewBatches 12; NotSaturated 0.123456; FutureReason 7"}}),"배치 표본 부족 · 부하 미포화 · FutureReason 7")
+  assert.equal(occupancyReason({...occupancy,status:{reason:"UnknownPhysicalContinuity"}}),"실행 연속성 미확인")
+  assert.equal(occupancyReason({...occupancy,status:{},assessment:{...occupancy.assessment!,reasons:[{code:"OccupancyEvidenceMismatch",message:"",label:"",sourceIds:[]}]}}),"요청·점유시간 근거 불일치")
+})
+
+test("R14: occupancy evidence and interruption codes use server-grounded Korean statuses",()=>{
+  const labels={OccupancyEvidenceMissing:"점유시간 근거 파일 없음",OccupancyEvidenceUnavailable:"점유시간 근거 읽기 실패",OccupancyEvidenceInvalid:"점유시간 근거 해석 실패",OccupancyThroughputInvalid:"처리량 오류",ChillServerRestart:"서버 재시작으로 측정 중단",Failed:"측정 실패",Insufficient:"채택 근거 부족"}
+  for(const [reason,label] of Object.entries(labels))assert.equal(occupancyReason({...occupancy,status:{reason}}),label)
+  assert.equal(occupancyReason({...occupancy,status:{reason:"FutureOccupancyCode"}}),"FutureOccupancyCode")
 })

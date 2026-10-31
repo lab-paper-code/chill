@@ -113,7 +113,7 @@ export type PowerSource = {kind:string;nodeName?:string;namespace?:string;podNam
 export type PowerResult = {source:PowerSource;startedAt:string;endedAt:string;samples:{observedAt:string;watts:number;thermal?:unknown;requestLatencySeconds:number}[]|null;failures:{observedAt:string;requestLatencySeconds:number;reason:string;message:string}[]|null;summary:{attempts:number;successfulSamples:number;failures:number;observationDurationSeconds:number;meanRequestLatencySeconds:number;p95RequestLatencySeconds:number;maximumSampleGapSeconds:number;sourceTimestampAbsent:boolean}}
 export type SchedulerObservation = {offset?:WireInteger;at:string;decision?:SchedulerDecision;snapshot?:SchedulerSnapshot;settings?:SchedulerSettingsChange;action?:SchedulerActionObservation;power?:PowerResult;node?:NodeRef;meter?:string;powerScope?:string;powerSampling?:{Interval:WireInteger;Duration:WireInteger;RequestTimeout:WireInteger;MaxEvents:number};powerCoverage?:{MaximumBoundaryDistance:WireInteger;MinimumCoverage:number;MaximumGap:WireInteger};powerJoules?:number;powerError?:string}
 export type SchedulerObservationPage = {from:string;to:string;events:SchedulerObservation[]|null;nextCursor?:string;gapUntil?:string}
-export type SchedulerObservationSummary = Pick<SchedulerObservation,"at"|"offset"|"node"> & {
+export type SchedulerObservationSummary = Pick<SchedulerObservation,"at"|"offset"|"node"|"powerJoules"> & {
   decision?:Pick<SchedulerDecision,"at"|"status">;snapshot?:Pick<SchedulerSnapshot,"at">
   settings?:Pick<SchedulerSettingsChange,"actorUsername"|"actorUID"|"appliedAt"|"error">
   action?:Pick<SchedulerActionObservation,"id"|"kind"|"node"|"phase"|"startedAt">;power?:Pick<PowerResult,"startedAt">

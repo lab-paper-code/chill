@@ -30,9 +30,7 @@ const historyFilters:Record<string,string>={all:"모든 종류","decision-action
 export const when=(value?:string)=>!value||value.startsWith("0001-")||!Number.isFinite(Date.parse(value))?"정보 없음":`${new Intl.DateTimeFormat("ko-KR",{timeZone:"Asia/Seoul",month:"numeric",day:"numeric"}).format(new Date(value))} ${displayTime(value,"KST")}`
 export const actorName=(name?:string)=>name?.startsWith("system:serviceaccount:")?name.split(":").at(-1)!:name??"기록 없음"
 
-export function useSchedulerHistory():SchedulerHistoryQuery
-export function useSchedulerHistory(view:"summary"):SchedulerHistoryQuery<SchedulerObservationSummary>
-export function useSchedulerHistory(view?:"summary"):SchedulerHistoryQuery|SchedulerHistoryQuery<SchedulerObservationSummary> {
+export function useSchedulerHistory():SchedulerHistoryQuery<SchedulerObservationSummary> {
   const params=useSearchParams(),router=useRouter(),pathname=usePathname(),{config}=useSession()
   const [entry]=React.useState(()=>{const now=Date.now();return {from:new Date(now-3600000).toISOString(),to:new Date(now).toISOString()}})
   const submitted={from:params.get("from")??entry.from,to:params.get("to")??entry.to},cursor=params.get("cursor")??"0"
@@ -42,7 +40,7 @@ export function useSchedulerHistory(view?:"summary"):SchedulerHistoryQuery|Sched
   React.useEffect(()=>{if(!params.has("from")||!params.has("to")){const next=new URLSearchParams(params.toString());if(!next.has("from"))next.set("from",entry.from);if(!next.has("to"))next.set("to",entry.to);router.replace(`${pathname}?${next}`)}},[entry,params,pathname,router])
   const request=new URLSearchParams({...submitted,limit:params.get("limit")??String(config.pageSize)});if(params.has("cursor"))request.set("cursor",params.get("cursor")!)
   for(const key of ["order","filter","uid"])if(params.has(key))request.set(key,params.get(key)!)
-  if(view)request.set("view",view)
+  request.set("view","summary")
   const query=useChillQuery<SchedulerObservationSummaryPage>(`v1/observations/scheduler?${request}`,{decoder:parseSchedulerJSON})
   const rows=(query.data?.events??[]).map((event,index)=>({event,ref:schedulerRecordRef(event,submitted.from,submitted.to,(BigInt(cursor)+BigInt(index)).toString())}))
   function apply(){
@@ -105,7 +103,7 @@ function RecordDetails({row}:{row:SchedulerHistoryRow}){
 }
 
 export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean}){
-  const history=useSchedulerHistory("summary"),router=useRouter(),pathname=usePathname(),params=history.params
+  const history=useSchedulerHistory(),router=useRouter(),pathname=usePathname(),params=history.params
   const filter=settingsOnly?"settings":params.get("filter")??"all",rows=history.rows.filter(row=>schedulerHistoryKindMatches(filter,row.ref.kind))
   const opener=React.useRef<HTMLElement|null>(null),[filterOpen,setFilterOpen]=React.useState(false)
   const a=readSchedulerRecord(params,"a"),b=readSchedulerRecord(params,"b"),selected=readSchedulerRecord(params)

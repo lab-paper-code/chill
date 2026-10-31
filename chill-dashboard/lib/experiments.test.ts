@@ -7,6 +7,11 @@ import { campaignScoreboard, campaignTradeoffs, policyChartStyle, stageCompariso
 import { publishedVerdict, selectedExperimentStage, experimentPath, stageEvidencePath, experimentHeatmap, experimentChartData, durationMismatch } from "./experiments.ts"
 import { comparisonValidity } from "./experiments.ts"
 import { experimentDifference } from "./experiments.ts"
+import { createRequire } from "node:module"
+import { createElement, type ComponentType } from "react"
+import { renderToStaticMarkup } from "react-dom/server"
+import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
+import * as experimentHelpers from "./experiments.ts"
 test("R11: sub-display deltas are neutral in both overview and intervals",()=>{
   for(const [value,baseline] of [[-.004,0],[1.004,1]]) {
     assert.equal(experimentDifference(value,baseline).text,baseline===1?"1.00":"0.01 미만")
@@ -625,4 +630,34 @@ test("R13 re-review: a neutral pair cannot erase another matched pair's quality 
   }
   const neutral=[make("full-E5-1",.8,20),make("static-E5-1",.8,20)]
   assert.equal(campaignScoreboard({...recorded.publication,stages:[...neutral,make("full-E5-2",null,20),make("static-E5-2",.8,20)]}).conclusion,"결과 부족")
+})
+
+test("R14: comparison limits count each affected pair by its recorded cause",()=>{
+  const make=(id:string):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:00:10Z",kpis:{wholePoolJoules:100,measurementRules:{window:10},requests:{camera:{uid:"camera",definitionID:"same",offered:10,deadlineSuccessFraction:1,completedLatencyNS:{p95:1000000}}}}})
+  const stages=[make("full-E5-1"),make("static-E5-1"),make("full-E5-2"),make("static-E5-2"),make("full-E5-3"),make("static-E5-3")]
+  stages[0].kpis.measurementRules={window:20}
+  stages[2].kpis.requests={camera:{uid:"camera",offered:10}}
+  stages[4].kpis.requests={camera:{uid:"camera",definitionID:"same",offered:20}}
+  const run={...recorded.publication,stages},counts=campaignScoreboard(run).coverageCounts
+  assert.equal(counts.ruleDifferences,1)
+  assert.equal(counts.identityUnknown,1)
+  assert.equal(counts.loadDifferences,1)
+  assert.equal(counts.limited,3)
+})
+
+test("R14: rendered experiment judgment exposes one status and cause counts without repeated warning prose",()=>{
+  const source=readFileSync(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8")
+  const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const require=createRequire(import.meta.url),exports:Record<string,ComponentType<{run:Experiment}>>={}
+  new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiments"?experimentHelpers:name==="lucide-react"?{TriangleAlert:(props:Record<string,unknown>)=>createElement("svg",props)}:require(name),exports)
+  const run={...recorded.publication,stages:[{...stage,id:"full-E5-1",kpis:{...stage.kpis,measurementRules:{window:10},requests:{camera:{offered:10}}}},{...stage,id:"static-E5-1",kpis:{...stage.kpis,measurementRules:{window:20},requests:{camera:{offered:10}}}}]}
+  const judgment=renderToStaticMarkup(createElement(exports.ExperimentJudgment,{run}))
+  assert.match(judgment,new RegExp(campaignScoreboard(run).conclusion))
+  assert.match(judgment,/aria-label="실험 판정"/)
+  const limits=renderToStaticMarkup(createElement(exports.ExperimentLimits,{run}))
+  assert.match(limits,/규칙 다름/)
+  assert.match(limits,/정의 미확인/)
+  const table=renderToStaticMarkup(createElement(exports.ExperimentConclusion,{run}))
+  assert.doesNotMatch(table,/참고 · 제한 비교/)
+  assert.match(table,/aria-label="제한 비교"/)
 })

@@ -75,7 +75,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   // A server dry-run creates nothing, so it keeps the query lifetime like preflight instead of an unknown mutation outcome.
   const dryRun = query === "dryRun" && params.has("dryRun")
   if (kind !== "infer" && method !== "GET" && !dryRun && !/^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/preflight$/.test(route)) kind = "mutation"
-  // ChillServer compact reads keep every evidence object once and share repeats by $ref; parseSchedulerJSON restores them.
+  // History lists default to summaries; selected records explicitly request compact evidence.
   const compact = method === "GET" && (query === "schedulerHistory" || route === "v1/scheduler" || route === "v1/scheduler/state")
   const allowed = compact ? ["view"] : []
   if (query === "coverage") allowed.push("batches","node")
@@ -121,7 +121,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
     const window = timestampNanos(to) - timestampNanos(from)
     if (window <= 0n || window > BigInt(config.maxWindowHours * 3600000) * 1000000n) throw new RelayFailure("DashboardQueryInvalid", 400)
   }
-  if (compact && !params.has("view")) params.set("view", "compact")
+  if (compact && !params.has("view")) params.set("view", query === "schedulerHistory" ? "summary" : "compact")
   const suffix = params.toString()
   // Native inference may consume its entire cap; keep a bounded delivery margin.
   return { path: `/api/${route}${suffix ? `?${suffix}` : ""}`, kind, timeoutMs: kind === "infer" ? config.inferTimeoutMs + config.queryTimeoutMs : kind === "mutation" ? config.mutationTimeoutMs : config.queryTimeoutMs, bodyAllowed: method === "POST" || method === "PUT" }

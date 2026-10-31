@@ -96,12 +96,30 @@ test("R13: large isolated attempts expose insufficient comparison samples instea
   assert.equal(operationCostOutliers(rows)[0].duration,undefined)
 })
 
-test("R13: one measurement summary preserves preparation and removal ranges without idle totals or rejected energy",()=>{
+test("R14: summaries show median and maximum without idle totals or rejected energy",()=>{
   const step=(kind:string,seconds:number,energy:number,verdict="Accepted"):OperationStep=>({name:kind,condition:{name:kind,kind,batchEnergyOptimization:"profile"},results:[{name:kind,key:String(seconds),model:"frozen",durationNanos:BigInt(seconds)*1000000000n,wallJoules:energy,verdict}]})
   const summary=operationCostSummary([step("prepare",10,100),step("prepare",20,200),step("remove",2,30),step("remove",4,999,"Rejected"),step("idle",1000,9999)])
   assert.deepEqual(summary.models,["frozen"])
-  assert.deepEqual(summary.prepare,{duration:[10e9,20e9],energy:[100,200]})
-  assert.deepEqual(summary.remove,{duration:[2e9,4e9],energy:[30,30]})
+  assert.deepEqual(summary.prepare,{duration:[15e9,20e9],energy:[150,200]})
+  assert.deepEqual(summary.remove,{duration:[3e9,4e9],energy:[30,30]})
   assert.equal(summary.count,4)
   assert.equal(summary.insufficient,true)
+})
+
+test("R14: median differs from the midpoint of extremes and keeps outlier rules",()=>{
+  const steps:OperationStep[]=[1,2,3,30].map(seconds=>({name:"prepare",condition:{name:"prepare",kind:"prepare",batchEnergyOptimization:"profile"},results:[{name:"prepare",key:String(seconds),model:"frozen",verdict:"Accepted",durationNanos:BigInt(seconds)*1000000000n,wallJoules:seconds*10}]}))
+  const summary=operationCostSummary(steps)
+  assert.deepEqual(summary.prepare,{duration:[2.5e9,30e9],energy:[25,300]})
+  assert.equal(summary.multiple,12)
+  assert.equal(summary.insufficient,false)
+  assert.deepEqual(operationCostSummary([]).prepare,{duration:undefined,energy:undefined})
+})
+
+test("R14: maximum markers use only the maximum attempt's existing cohort verdict",()=>{
+  const steps:OperationStep[]=[1,2,3,30].map(seconds=>({name:"prepare",condition:{name:"prepare",kind:"prepare",batchEnergyOptimization:"profile"},results:[{name:"prepare",key:String(seconds),model:"frozen",verdict:"Accepted",durationNanos:BigInt(seconds)*1000000000n,wallJoules:seconds*10}]}))
+  const summary=operationCostSummary(steps)
+  assert.deepEqual(summary.maximumOutliers.prepare,{duration:12,energy:12})
+  assert.deepEqual(summary.maximumOutliers.remove,{duration:undefined,energy:undefined})
+  const isolated:OperationStep={...steps[0],results:[{...steps[0].results[0],model:"isolated",durationNanos:100000000000n,wallJoules:1000}]}
+  assert.deepEqual(operationCostSummary([...steps,isolated]).maximumOutliers.prepare,{duration:undefined,energy:undefined})
 })

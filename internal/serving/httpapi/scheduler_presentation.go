@@ -182,20 +182,21 @@ type schedulerHistoryPower struct {
 }
 
 type schedulerHistoryObservation struct {
-	At       time.Time                 `json:"at"`
-	Offset   *int                      `json:"offset,omitempty"`
-	Decision *schedulerHistoryDecision `json:"decision,omitempty"`
-	Snapshot *schedulerHistorySnapshot `json:"snapshot,omitempty"`
-	Settings *schedulerHistorySettings `json:"settings,omitempty"`
-	Action   *schedulerHistoryAction   `json:"action,omitempty"`
-	Power    *schedulerHistoryPower    `json:"power,omitempty"`
-	Node     *serving.NodeReference    `json:"node,omitempty"`
+	At          time.Time                 `json:"at"`
+	Offset      *int                      `json:"offset,omitempty"`
+	Decision    *schedulerHistoryDecision `json:"decision,omitempty"`
+	Snapshot    *schedulerHistorySnapshot `json:"snapshot,omitempty"`
+	Settings    *schedulerHistorySettings `json:"settings,omitempty"`
+	Action      *schedulerHistoryAction   `json:"action,omitempty"`
+	Power       *schedulerHistoryPower    `json:"power,omitempty"`
+	Node        *serving.NodeReference    `json:"node,omitempty"`
+	PowerJoules *float64                  `json:"powerJoules,omitempty"`
 }
 
 func schedulerHistoryObservations(records []serving.SchedulerObservation) []schedulerHistoryObservation {
 	result := make([]schedulerHistoryObservation, len(records))
 	for i, record := range records {
-		row := schedulerHistoryObservation{At: record.At, Offset: record.Offset, Node: record.Node}
+		row := schedulerHistoryObservation{At: record.At, Offset: record.Offset, Node: record.Node, PowerJoules: record.PowerJoules}
 		if d := record.Decision; d != nil {
 			row.Decision = &schedulerHistoryDecision{d.At, d.Status}
 		}

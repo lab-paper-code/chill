@@ -78,14 +78,25 @@ export function operationCostSummary(steps:OperationStep[]) {
   const rows=operationTransitionCosts(steps),outliers=operationCostOutliers(rows)
   const cost=(kind:string)=>{
     const results=rows.filter(row=>row.step.condition?.kind===kind).flatMap(row=>row.result?[row.result]:[])
-    const durations=results.flatMap(result=>{const value=result.durationNanos;return (typeof value==="bigint"||typeof value==="number"&&Number.isSafeInteger(value))&&value>=0&&Number.isFinite(Number(value))?[Number(value)]:[]})
-    const energies=results.flatMap(result=>result.verdict==="Accepted"&&typeof result.wallJoules==="number"&&Number.isFinite(result.wallJoules)&&result.wallJoules>=0?[result.wallJoules]:[])
+    const durations=results.flatMap(result=>{const value=result.durationNanos;return (typeof value==="bigint"||typeof value==="number"&&Number.isSafeInteger(value))&&value>=0&&Number.isFinite(Number(value))?[Number(value)]:[]}).sort((a,b)=>a-b)
+    const energies=results.flatMap(result=>result.verdict==="Accepted"&&typeof result.wallJoules==="number"&&Number.isFinite(result.wallJoules)&&result.wallJoules>=0?[result.wallJoules]:[]).sort((a,b)=>a-b)
+    const medianMax=(values:number[])=>{const middle=Math.floor(values.length/2);return values.length?[values.length%2?values[middle]:values[middle-1]/2+values[middle]/2,values[values.length-1]] as const:undefined}
     return {
-      duration:durations.length?[Math.min(...durations),Math.max(...durations)] as const:undefined,
-      energy:energies.length?[Math.min(...energies),Math.max(...energies)] as const:undefined,
+      duration:medianMax(durations),
+      energy:medianMax(energies),
     }
   }
-  return {models:[...new Set(rows.flatMap(row=>row.result?.model?[row.result.model]:[]))],prepare:cost("prepare"),remove:cost("remove"),
+  const prepare=cost("prepare"),remove=cost("remove")
+  const maximumOutliers=(kind:"prepare"|"remove",summary:typeof prepare)=>{
+    const marker=(metric:"duration"|"energy")=>{
+      const maximum=summary[metric]?.[1]
+      if(maximum===undefined)return undefined
+      const multiples=rows.flatMap((row,index)=>row.step.condition?.kind===kind&&(metric==="duration"?Number(row.result?.durationNanos):row.result?.verdict==="Accepted"?row.result.wallJoules:undefined)===maximum&&outliers[index][metric]!==undefined?[outliers[index][metric]!]:[])
+      return multiples.length?Math.max(...multiples):undefined
+    }
+    return {duration:marker("duration"),energy:marker("energy")}
+  }
+  return {models:[...new Set(rows.flatMap(row=>row.result?.model?[row.result.model]:[]))],prepare,remove,maximumOutliers:{prepare:maximumOutliers("prepare",prepare),remove:maximumOutliers("remove",remove)},
     count:rows.filter(row=>row.result).length,insufficient:!outliers.length||outliers.some(row=>row.insufficient),
     multiple:Math.max(0,...outliers.flatMap(row=>[row.duration??0,row.energy??0]))}
 }

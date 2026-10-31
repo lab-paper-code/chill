@@ -26,7 +26,7 @@ export function readSchedulerRecord(params:Pick<URLSearchParams,"get">,prefix=""
 }
 
 export function schedulerRecordPath(ref:SchedulerRecordRef|null):string {
-  return `v1/observations/scheduler?${new URLSearchParams(ref?{from:ref.from,to:ref.to,limit:"1",cursor:ref.offset}:{})}`
+  return `v1/observations/scheduler?${new URLSearchParams(ref?{from:ref.from,to:ref.to,limit:"1",cursor:ref.offset,view:"compact"}:{})}`
 }
 
 export function schedulerRecordMatches(ref:SchedulerRecordRef,event:SchedulerObservationSummary|undefined):boolean {

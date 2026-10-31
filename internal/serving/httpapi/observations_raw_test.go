@@ -30,6 +30,7 @@ type rawHTTPArchive struct {
 	body      []byte
 	list      func(context.Context) error
 	openError error
+	opens     int
 }
 
 func (a *rawHTTPArchive) List(ctx context.Context, _ string) ([]evidencestore.ObjectIdentity, error) {
@@ -41,6 +42,7 @@ func (a *rawHTTPArchive) List(ctx context.Context, _ string) ([]evidencestore.Ob
 	return a.objects, nil
 }
 func (a *rawHTTPArchive) Open(context.Context, evidencestore.ObjectIdentity) (io.ReadCloser, error) {
+	a.opens++
 	if a.openError != nil {
 		return nil, a.openError
 	}
@@ -281,5 +283,51 @@ func TestSchedulerHistorySummaryBoundsPayloadAndPreservesRecordIdentity(t *testi
 	detail := rawHTTPRequest(h, base+"&limit=1&cursor=2&view=compact")
 	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), "large retained evidence") {
 		t.Fatalf("selected record no longer retains full detail: status=%d bytes=%d", detail.Code, detail.Body.Len())
+	}
+}
+
+func TestSchedulerHistorySummaryDoesNotRestoreArchivedEvidence(t *testing.T) {
+	from := time.Now().UTC().Add(-4 * time.Hour).Truncate(time.Hour)
+	raw := `{"at":"` + from.Format(time.RFC3339Nano) + `","decision":{"at":"` + from.Format(time.RFC3339Nano) + `","status":"Keep","workloads":[{"uid":"w"}]},"snapshot":{"workloadIDs":["w/1"]}}` + "\n" +
+		`{"at":"` + from.Add(time.Second).Format(time.RFC3339Nano) + `","node":{"uid":"node","name":"node"},"meter":"missing-meter","powerJoules":12.5,"samples":[{"watts":"detail-only"}]}` + "\n"
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write([]byte(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	archive := &rawHTTPArchive{body: compressed.Bytes(), objects: []evidencestore.ObjectIdentity{{
+		Store: "evidence", Key: "serving/observations.v1alpha5/" + from.Format("20060102T15") + "/scheduler.jsonl.gz", Size: int64(compressed.Len()),
+	}}}
+	h := rawHTTPHandler(t, archive, true)
+	base := "/api/v1/observations/scheduler?from=" + from.Format(time.RFC3339Nano) + "&to=" + from.Add(time.Minute).Format(time.RFC3339Nano) + "&limit=2"
+	for _, selection := range []string{"", "&order=desc", "&order=desc&filter=decision-action&uid=w"} {
+		opened := archive.opens
+		response := rawHTTPRequest(h, base+"&view=summary"+selection)
+		var page struct {
+			Events []struct {
+				Offset      *int
+				PowerJoules *float64
+			}
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || response.Code != http.StatusOK || len(page.Events) == 0 {
+			t.Fatalf("summary restored archived detail: status=%d body=%s err=%v", response.Code, response.Body, err)
+		}
+		if archive.opens-opened != 1 {
+			t.Fatalf("summary replayed archived scheduler stream %d times", archive.opens-opened)
+		}
+		for _, record := range page.Events {
+			if record.Offset == nil || *record.Offset == 1 && (record.PowerJoules == nil || *record.PowerJoules != 12.5) {
+				t.Fatalf("summary lost original offset or measured energy: %+v", record)
+			}
+		}
+		if strings.Contains(response.Body.String(), "samples") || strings.Contains(response.Body.String(), "workloadIDs") {
+			t.Fatalf("summary leaked archived evidence: %s", response.Body)
+		}
+	}
+	if response := rawHTTPRequest(h, base+"&cursor=0&view=compact"); response.Code == http.StatusOK {
+		t.Fatal("selected original detail silently stopped resolving its missing catalog")
 	}
 }

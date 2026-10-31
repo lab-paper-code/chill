@@ -166,6 +166,39 @@ func TestSchedulerDefaultSelectionsKeepBoundedReadAndOffsets(t *testing.T) {
 	}
 }
 
+func TestSchedulerSummarySkipsUnselectedEvidenceAndCatalog(t *testing.T) {
+	from := observationTestHour.Add(10 * time.Minute)
+	log, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	clock.set(from)
+	// The missing catalog and incompatible detailed field must not affect a list.
+	appendObservationLine(t, log, clock, fmt.Sprintf(`{"at":%q,"decision":{"at":%q,"status":"Keep","workloads":[{"uid":"w"}]},"snapshot":{"at":%q,"workloadIDs":["w/1"],"instances":[{"scaleDown":{}}]}}`, from.Format(time.RFC3339Nano), from.Format(time.RFC3339Nano), from.Format(time.RFC3339Nano)))
+	appendObservationLine(t, log, clock, fmt.Sprintf(`{"at":%q,"node":{"uid":"n","name":"node"},"meter":"missing-meter","startedAt":%q,"powerJoules":12.5,"samples":[{"watts":"detail-only"}]}`, from.Add(time.Second).Format(time.RFC3339Nano), from.Format(time.RFC3339Nano)))
+	for _, selection := range []SchedulerObservationSelection{
+		{Summary: true},
+		{Summary: true, Order: "desc"},
+		{Summary: true, Order: "desc", Filter: "decision-action", UID: "w"},
+	} {
+		page, next, _, _, err := log.SchedulerObservationPage(context.Background(), from, from.Add(time.Minute), 10, 0, selection)
+		if err != nil || next != -1 || len(page) == 0 {
+			t.Fatalf("summary decoded detail or resolved catalog: selection=%+v page=%+v next=%d err=%v", selection, page, next, err)
+		}
+		for _, record := range page {
+			if record.Offset == nil {
+				t.Fatal("summary lost original append offset")
+			}
+			if record.Decision != nil && (record.Decision.Status != "Keep" || len(record.Decision.Workloads) != 0 || record.Snapshot == nil || len(record.Snapshot.Instances) != 0 || len(record.Snapshot.WorkloadIDs) != 0) {
+				t.Fatalf("summary lost identity or retained evidence: %+v", record)
+			}
+			if record.Power != nil && (record.PowerJoules == nil || *record.PowerJoules != 12.5 || len(record.Power.Samples) != 0 || !record.Power.StartedAt.Equal(from)) {
+				t.Fatalf("power summary lost measured scalar or retained samples: %+v", record)
+			}
+		}
+	}
+	if _, _, _, _, err := log.SchedulerObservationPage(context.Background(), from, from.Add(time.Minute), 1, 0, SchedulerObservationSelection{}); err == nil {
+		t.Fatal("original detail stopped validating stored evidence")
+	}
+}
+
 func TestSchedulerRawPageDecodesOnlySelectedPayloads(t *testing.T) {
 	from := observationTestHour.Add(10 * time.Minute)
 	to := from.Add(time.Minute)
