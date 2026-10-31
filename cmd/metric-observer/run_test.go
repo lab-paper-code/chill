@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -57,6 +59,100 @@ func TestExecuteFailsPromptlyWhenRuntimeFails(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > 3*time.Second {
 		t.Fatalf("observer ended %s after start, want within seconds of the runtime failure", elapsed)
+	}
+}
+
+func TestExecutePublishesPowerDespiteThermalTimeoutAndFinalRetries(t *testing.T) {
+	for _, finalFailures := range []int{0, 1, 2, -1} {
+		t.Run(fmt.Sprintf("final failures %d", finalFailures), func(t *testing.T) {
+			directory := t.TempDir()
+			var powerReads, thermalReads atomic.Int32
+			var opts options
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if request.URL.Path == "/thermal" {
+					thermalReads.Add(1)
+					<-request.Context().Done()
+					return
+				}
+				read := powerReads.Add(1)
+				if read == 1 {
+					if err := worker.PublishSignal(opts.endPath); err != nil {
+						t.Error(err)
+					}
+				} else if finalFailures < 0 || int(read) <= finalFailures+1 {
+					response.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
+				_, _ = response.Write([]byte("# TYPE frozen_wall_power_watts gauge\n" +
+					"frozen_wall_power_watts{hostname=\"lattepanda\",device_type=\"test_device\"} 5.2\n"))
+			}))
+			defer server.Close()
+			writeTestRunConfig(t, directory, server.URL)
+			opts = testOptions(directory)
+			var config profilingrun.RunConfig
+			if err := json.Unmarshal([]byte(opts.runConfig), &config); err != nil {
+				t.Fatal(err)
+			}
+			config.Metrics.ThermalEndpoint = server.URL + "/thermal"
+			config.Metrics.IntervalMilliseconds = 200
+			config.Metrics.TimeoutMilliseconds = 100
+			payload, err := config.CanonicalJSON()
+			if err != nil {
+				t.Fatal(err)
+			}
+			opts.runConfig = string(payload)
+			opts.endWaitTimeout = 2 * time.Second
+			if err := worker.PublishSignal(opts.startPath); err != nil {
+				t.Fatal(err)
+			}
+			err = execute(context.Background(), opts, server.Client(), time.Second, time.Millisecond)
+			if finalFailures < 0 {
+				if !errors.Is(err, context.DeadlineExceeded) || powerReads.Load() < 3 {
+					t.Fatalf("watchdog error=%v powerReads=%d", err, powerReads.Load())
+				}
+				if _, statErr := os.Stat(opts.metricResultPath); !os.IsNotExist(statErr) {
+					t.Fatalf("failed final reads published result: %v", statErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("power result not published: %v", err)
+			}
+			payload, err = os.ReadFile(opts.metricResultPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result metricobserver.Result
+			if err := json.Unmarshal(payload, &result); err != nil {
+				t.Fatal(err)
+			}
+			if int(powerReads.Load()) != finalFailures+2 || len(result.Samples) != 2 ||
+				len(result.Failures) != finalFailures+2 || result.Summary.Attempts != 2*int(thermalReads.Load())+finalFailures {
+				t.Fatalf("power=%d thermal=%d result=%+v", powerReads.Load(), thermalReads.Load(), result)
+			}
+			for _, sample := range result.Samples {
+				if sample.Watts != 5.2 || sample.Thermal != nil {
+					t.Fatalf("power lost or thermal fabricated: %+v", sample)
+				}
+			}
+			var timeouts, unavailable int
+			for _, failure := range result.Failures {
+				switch failure.Reason {
+				case metricobserver.FailureReasonTimeout:
+					timeouts++
+				case metricobserver.FailureReasonSourceRead:
+					unavailable++
+				default:
+					t.Fatalf("unexpected failure: %+v", failure)
+				}
+			}
+			if timeouts != 2 || unavailable != finalFailures {
+				t.Fatalf("timeouts=%d unavailable=%d", timeouts, unavailable)
+			}
+			if err := result.Validate(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

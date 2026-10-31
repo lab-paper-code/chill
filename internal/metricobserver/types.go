@@ -50,6 +50,9 @@ type Request struct {
 type Reading struct {
 	Watts   float64
 	Thermal ThermalReading
+	// ThermalError preserves an auxiliary endpoint failure without losing power.
+	// It is recorded in Result.Failures, never serialized as part of a sample.
+	ThermalError error
 }
 
 // ThermalReading contains only facts returned in one edge-metrics response.

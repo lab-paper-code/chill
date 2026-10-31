@@ -150,8 +150,8 @@ func (s *Source) Identity() metricobserver.SourceIdentity {
 	return identity
 }
 
-// ReadMetrics returns one wall-power and thermal reading assembled under the
-// same bounded request context.
+// ReadMetrics reads required wall power first, then auxiliary thermal facts.
+// A thermal failure is returned with the power reading, not as a failed read.
 func (s *Source) ReadMetrics(ctx context.Context) (metricobserver.Reading, error) {
 	powerPayload, err := s.readEndpoint(ctx, s.identity.Endpoint)
 	if err != nil {
@@ -166,11 +166,13 @@ func (s *Source) ReadMetrics(ctx context.Context) (metricobserver.Reading, error
 	}
 	thermalPayload, err := s.readEndpoint(ctx, s.identity.ThermalEndpoint)
 	if err != nil {
-		return metricobserver.Reading{}, fmt.Errorf("read thermal endpoint: %w", err)
+		power.ThermalError = fmt.Errorf("read thermal endpoint: %w", err)
+		return power, nil
 	}
 	thermal, err := parseThermalReading(bytes.NewReader(thermalPayload), *s.identity.ThermalMetrics)
 	if err != nil {
-		return metricobserver.Reading{}, err
+		power.ThermalError = fmt.Errorf("parse thermal endpoint: %w", err)
+		return power, nil
 	}
 	power.Thermal = thermal
 	return power, nil

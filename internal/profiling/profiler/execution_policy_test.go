@@ -22,8 +22,8 @@ func TestDeriveExecutionPlanBindsOneCoherentCPUORTEnvelope(t *testing.T) {
 	if plan.Policy != testConfiguredActivePolicy || plan.PolicyVersion != testConfiguredActivePolicy {
 		t.Fatalf("unexpected policy identity: %#v", plan)
 	}
-	if plan.MaxMetricEvents != 34 {
-		t.Fatalf("MaxMetricEvents = %d, want 34", plan.MaxMetricEvents)
+	if plan.MaxMetricEvents != 68 {
+		t.Fatalf("MaxMetricEvents = %d, want 68 (power plus possible thermal failure)", plan.MaxMetricEvents)
 	}
 	if plan.ActiveDeadline != 211*time.Second || plan.AttemptTimeout != 181*time.Second {
 		t.Fatalf("unexpected timing envelope: %#v", plan)
@@ -171,7 +171,7 @@ func TestCaptureWatchdogAlignsEventsResultAndOuterEnvelopes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.MetricObservationTimeout != 1762*time.Second || plan.MaxMetricEvents != 1765 ||
+	if plan.MetricObservationTimeout != 1762*time.Second || plan.MaxMetricEvents != 3530 ||
 		plan.AttemptTimeout != 2997*time.Second || plan.ActiveDeadline != 3027*time.Second ||
 		plan.MetricResultTimeout != 1192*time.Second {
 		t.Fatalf("misaligned capture envelope: %+v", plan)

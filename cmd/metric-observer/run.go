@@ -105,7 +105,7 @@ func execute(
 	log.Printf(
 		"metric observation completed\n"+
 			"  node: %s\n"+
-			"  power samples: %d successful, %d failed reads\n"+
+			"  power samples: %d successful, %d failed endpoint reads\n"+
 			"  thermal samples: %d typed, %d observable, %d active\n"+
 			"  thermal metric issues: %d\n"+
 			"  maximum temperature: %s",

@@ -101,7 +101,7 @@ func TestSourceReadMetricsCombinesExactPowerAndTypedThermal(t *testing.T) {
 	}
 }
 
-func TestSourceReadMetricsFailsWhenEitherEndpointFailsOrIsOversized(t *testing.T) {
+func TestSourceReadMetricsRequiresPowerButRetainsThermalFailures(t *testing.T) {
 	tests := []struct {
 		name          string
 		powerStatus   int
@@ -114,6 +114,7 @@ func TestSourceReadMetricsFailsWhenEitherEndpointFailsOrIsOversized(t *testing.T
 		{name: "thermal status", powerStatus: http.StatusOK, thermalStatus: http.StatusServiceUnavailable, powerBody: validPowerBody(), want: "read thermal endpoint"},
 		{name: "power oversized", powerStatus: http.StatusOK, thermalStatus: http.StatusOK, powerBody: strings.Repeat("x", maximumResponseBytes+1), want: "read power endpoint"},
 		{name: "thermal oversized", powerStatus: http.StatusOK, thermalStatus: http.StatusOK, powerBody: validPowerBody(), thermalBody: strings.Repeat("x", maximumResponseBytes+1), want: "read thermal endpoint"},
+		{name: "thermal parse", powerStatus: http.StatusOK, thermalStatus: http.StatusOK, powerBody: validPowerBody(), thermalBody: strings.Repeat("x", 70_000), want: "parse thermal endpoint"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -133,7 +134,13 @@ func TestSourceReadMetricsFailsWhenEitherEndpointFailsOrIsOversized(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := source.ReadMetrics(context.Background()); err == nil || !strings.Contains(err.Error(), test.want) {
+			reading, err := source.ReadMetrics(context.Background())
+			if strings.HasPrefix(test.name, "thermal") {
+				if err != nil || reading.Watts != 5.2 || reading.ThermalError == nil ||
+					!strings.Contains(reading.ThermalError.Error(), test.want) {
+					t.Fatalf("ReadMetrics() = %+v, %v; want power and %q thermal failure", reading, err, test.want)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("ReadMetrics() error = %v, want containing %q", err, test.want)
 			}
 		})
@@ -163,8 +170,12 @@ func TestSourceReadMetricsUsesOneContextForBothEndpoints(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 			defer cancel()
-			_, err = source.ReadMetrics(ctx)
-			if !errors.Is(err, context.DeadlineExceeded) {
+			reading, err := source.ReadMetrics(ctx)
+			if blocked == "thermal" {
+				if err != nil || reading.Watts != 5.2 || !errors.Is(reading.ThermalError, context.DeadlineExceeded) {
+					t.Fatalf("thermal timeout lost power: reading=%+v error=%v", reading, err)
+				}
+			} else if !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("ReadMetrics() error = %v, want deadline exceeded", err)
 			}
 		})

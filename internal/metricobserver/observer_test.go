@@ -3,6 +3,7 @@ package metricobserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -267,6 +268,40 @@ func TestObserveEnforcesProducerEventCap(t *testing.T) {
 	}
 	if source.reads != 1 || result.Summary.Attempts != 1 {
 		t.Fatalf("producer exceeded cap: reads=%d summary=%#v", source.reads, result.Summary)
+	}
+}
+
+func TestObserveThermalFailureRetainsPowerWithinEventCap(t *testing.T) {
+	for _, maxEvents := range []int{1, 2, 4} {
+		t.Run(fmt.Sprintf("capacity %d", maxEvents), func(t *testing.T) {
+			source := &fakeSource{read: func(context.Context) (Reading, error) {
+				return Reading{Watts: 5.2, ThermalError: context.DeadlineExceeded}, nil
+			}}
+			observer, err := New(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ticks := make(chan time.Time, 1)
+			ticks <- time.Now()
+			close(ticks)
+			callbacks := 0
+			result, err := observer.observe(context.Background(), time.Second, maxEvents, ticks, func() { callbacks++ })
+			if (err == nil) != (maxEvents == 4) || (err != nil && !errors.Is(err, errEventBudgetExceeded)) {
+				t.Fatalf("event cap error=%v capacity=%d", err, maxEvents)
+			}
+			if len(result.Samples) != maxEvents/2 || len(result.Failures) != maxEvents/2 ||
+				result.Summary.Attempts > maxEvents || (callbacks == 1) != (maxEvents >= 2) {
+				t.Fatalf("callbacks=%d result=%+v", callbacks, result)
+			}
+			for i, sample := range result.Samples {
+				if sample.Watts != 5.2 || sample.Thermal != nil || result.Failures[i].Reason != FailureReasonTimeout {
+					t.Fatalf("sample=%+v failure=%+v", sample, result.Failures[i])
+				}
+			}
+			if err := result.Validate(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

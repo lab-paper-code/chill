@@ -83,8 +83,8 @@ func (o *Observer) Observe(
 	return o.observe(observationCtx, request.RequestTimeout, request.MaxEvents, ticker.C, onFirstSample)
 }
 
-// ObserveUntil samples through the producer's end signal and then performs a
-// real final read. Duration is a finite watchdog, not the nominal action window.
+// ObserveUntil samples through the producer's end signal and then retries a real
+// final power read at Interval until one succeeds or the Duration watchdog ends.
 // Callers keep ctx live while collecting pre/post support around their action.
 func (o *Observer) ObserveUntil(
 	ctx context.Context,
@@ -124,13 +124,20 @@ func (o *Observer) ObserveUntil(
 			return o.finish(result), fmt.Errorf("observation ended before producer completion: %w", observationCtx.Err())
 		case <-end:
 			before := len(result.Samples)
-			if err := sample(); err != nil {
-				return o.finish(result), err
+			for {
+				if err := sample(); err != nil {
+					return o.finish(result), err
+				}
+				if len(result.Samples) > before {
+					return o.finish(result), nil
+				}
+				ticker.Reset(request.Interval)
+				select {
+				case <-observationCtx.Done():
+					return o.finish(result), fmt.Errorf("final metric read did not produce a sample: %w", observationCtx.Err())
+				case <-ticker.C:
+				}
 			}
-			if len(result.Samples) == before {
-				return o.finish(result), errors.New("final metric read did not produce a sample")
-			}
-			return o.finish(result), nil
 		case <-ticker.C:
 			if err := sample(); err != nil {
 				return o.finish(result), err
@@ -210,10 +217,24 @@ func (o *Observer) sample(ctx context.Context, timeout time.Duration, maxEvents 
 		})
 		return nil
 	}
+	var thermal *ThermalReading
+	if reading.ThermalError != nil {
+		if len(result.Samples)+len(result.Failures)+2 > maxEvents {
+			return errEventBudgetExceeded
+		}
+		result.Failures = append(result.Failures, Failure{
+			ObservedAt:            observedAt,
+			RequestLatencySeconds: latency.Seconds(),
+			Reason:                classify(reading.ThermalError),
+			Message:               reading.ThermalError.Error(),
+		})
+	} else {
+		thermal = cloneThermalReading(reading.Thermal)
+	}
 	result.Samples = append(result.Samples, Sample{
 		ObservedAt:            observedAt,
 		Watts:                 reading.Watts,
-		Thermal:               cloneThermalReading(reading.Thermal),
+		Thermal:               thermal,
 		RequestLatencySeconds: latency.Seconds(),
 	})
 	return nil

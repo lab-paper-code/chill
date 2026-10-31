@@ -71,7 +71,9 @@ func DeriveExecutionPlan(
 	metricDuration := time.Duration(config.Metrics.DurationSeconds) * time.Second
 	settlingDuration := time.Duration(config.Measurement.SettlingDurationSeconds) * time.Second
 	interval := time.Duration(config.Metrics.IntervalMilliseconds) * time.Millisecond
-	maxEvents64 := int64(metricDuration/interval) + 3 // immediate, deadline race, final read
+	// Each tick can retain power plus a thermal failure; the final read shares
+	// the watchdog cadence, with one extra immediate attempt after producer end.
+	maxEvents64 := 2 * (int64(metricDuration/interval) + 3)
 	if maxEvents64 < 1 || maxEvents64 > int64(policy.MaxMetricEvents) || maxEvents64 > int64(^uint(0)>>1) {
 		return ExecutionPlan{}, errors.New("metric observation schedule exceeds worker event capacity")
 	}
