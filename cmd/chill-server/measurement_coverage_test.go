@@ -59,6 +59,11 @@ func TestCoverageNeverUnionsDifferentFrozenVariants(t *testing.T) {
 			Node: operatorconsole.ModelCompatibilityObjectInput{Name: "node", UID: "node-uid"},
 		},
 	}}
+	base.compatibility.NodeRows = []operatorconsole.ModelCompatibilityView{{
+		Inputs: operatorconsole.ModelCompatibilityInputs{
+			RuntimeDeclaration: &operatorconsole.ModelCompatibilityRuntimeInput{Image: "current"},
+		},
+	}}
 	base.catalog.MeasurementFacts = map[string]serving.MeasurementFacts{}
 	zero := 0.0
 	for index := range 2 {
@@ -79,7 +84,8 @@ func TestCoverageNeverUnionsDifferentFrozenVariants(t *testing.T) {
 		batch := index + 1
 		condition := profilederivation.CurvePlanSpec{
 			LogicalModel: "model", DeviceClass: "class", NodeUID: "node-uid", PowerMode: "fixed",
-			CPU: profilederivation.CurveCPUContract{Request: []string{"1", "2"}[index]}, PlannedBatchSizes: []int{1, 2},
+			RuntimeImage: "current",
+			CPU:          profilederivation.CurveCPUContract{Request: []string{"1", "2"}[index]}, PlannedBatchSizes: []int{1, 2},
 		}
 		facts := serving.MeasurementFacts{
 			Request:   profilederivation.MeasurementRequestReference{Namespace: "allowed", Name: name, UID: string(uid)},
@@ -171,6 +177,63 @@ func TestCoverageKeepsReviewChecksAcrossVariantAndCell(t *testing.T) {
 	if cell.Assessment.DisplayStatus != "review" || len(cell.Assessment.Checklist.Checks) != 1 ||
 		cell.Variants[0].Assessment.DisplayStatus != "review" {
 		t.Fatalf("accepted measurement lost review across aggregation: %+v", cell)
+	}
+}
+
+func TestCoverageCountsOnlyDeclaredRuntimeVariants(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		images   []string
+		missing  []bool
+		expected string
+	}{
+		{"previous insufficient and current usable", []string{"old", "current"}, []bool{true, false}, "usable"},
+		{"previous only", []string{"old"}, []bool{true}, "unmeasured"},
+		{"current insufficient and current usable", []string{"current", "current"}, []bool{true, false}, "insufficient"},
+		{"current usable", []string{"current"}, []bool{false}, "usable"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			base := &measurementCoverageBase{}
+			base.compatibility.NodeRows = []operatorconsole.ModelCompatibilityView{{
+				Inputs: operatorconsole.ModelCompatibilityInputs{
+					RuntimeDeclaration: &operatorconsole.ModelCompatibilityRuntimeInput{Image: "current"},
+				},
+			}}
+			cell := operatorconsole.MeasurementCoverageCell{
+				Support: operatorconsole.MeasurementSupport{Verdict: "Compatible"},
+				History: []operatorconsole.MeasurementHistory{{RequestID: "request"}},
+			}
+			if test.name == "previous only" {
+				cell.Support.Verdict = operatorconsole.MeasurementSupportUnknown
+			}
+			for i, image := range test.images {
+				progress := operatorconsole.MeasurementBatchProgress{Target: []int{1, 2}, Measured: []int{1, 2}}
+				if test.missing[i] {
+					progress.Measured = []int{1}
+				}
+				cell.Variants = append(cell.Variants, operatorconsole.MeasurementCoverageVariant{
+					Condition:  profilederivation.CurvePlanSpec{RuntimeImage: image},
+					ProfileIDs: []string{"profile"}, BatchProgress: progress,
+				})
+			}
+			p := coverageProjection{base: base, adopted: map[string]bool{"profile": true}}
+			p.assessCell(&cell)
+			if cell.Assessment.DisplayStatus != test.expected {
+				t.Fatalf("display status = %q, want %q", cell.Assessment.DisplayStatus, test.expected)
+			}
+			if len(cell.Variants) != len(test.images) {
+				t.Fatal("previous runtime evidence must remain visible")
+			}
+			if test.images[0] == "old" {
+				found := false
+				for _, reason := range cell.Variants[0].Assessment.Reasons {
+					found = found || reason.Code == "PreviousRuntime"
+				}
+				if !found {
+					t.Fatal("previous runtime variant is not labelled")
+				}
+			}
+		})
 	}
 }
 

@@ -68,8 +68,9 @@ export function coverageEmptyModes(cells:MeasurementCoverageCell[]) {
 }
 export function coverageVariant(cell:MeasurementCoverageCell,id?:string) {
   return cell.variants.find(variant=>variant.id===id)
-    ??cell.variants.find(variant=>variant.assessment.displayStatus===cell.assessment.displayStatus)
+    ??cell.variants.find(variant=>!variant.assessment.reasons.some(reason=>reason.code==="PreviousRuntime")&&variant.assessment.displayStatus===cell.assessment.displayStatus)
     ??cell.variants.find(variant=>variant.id===cell.representative?.variantId)
+    ??cell.variants.find(variant=>!variant.assessment.reasons.some(reason=>reason.code==="PreviousRuntime"))
     ??cell.variants[0]
 }
 export function coverageRepresentative(cell:MeasurementCoverageCell):MeasurementCoverageCell["representative"] {
@@ -77,7 +78,8 @@ export function coverageRepresentative(cell:MeasurementCoverageCell):Measurement
   return variant&&row?{variantId:variant.id,batch:row.batch,incrementalJoulesPerItem:row.incrementalJoulesPerItem,p95Milliseconds:row.p95Milliseconds}:null
 }
 export function coverageProgress(cell:MeasurementCoverageCell) {
-  return cell.batchProgress??coverageVariant(cell)?.batchProgress??null
+  const variant=coverageVariant(cell)
+  return cell.batchProgress??(variant?.assessment.reasons.some(reason=>reason.code==="PreviousRuntime")?null:variant?.batchProgress??null)
 }
 export const coverageMeasurementStates = {usable:"측정 있음",review:"검토 필요",insufficient:"부족",problem:"문제",running:"진행",unmeasured:"미측정",unknown:"미확인",unsupported:"지원 안 함"}
 export function coverageMeasurementStatus(cell:MeasurementCoverageCell,inventory?:InventoryView):MeasurementDisplayStatus {

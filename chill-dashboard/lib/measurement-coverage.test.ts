@@ -107,6 +107,16 @@ test("batch slots preserve separate evidence, running, missing and unknown state
   assert.equal(coverageProgress(multiple),second.batchProgress)
   assert.equal(coverageVariant(multiple,"first"),first)
 })
+
+test("previous runtime stays selectable without overriding current runtime progress",()=>{
+  const current={id:"current",condition:{},assessment:{...cell.assessment,displayStatus:"usable" as const},batchProgress:{...cell.batchProgress!,measured:cell.batchProgress!.target},resultRows:[],requestIds:[],runIds:[],profileIds:[]}
+  const previous={...current,id:"previous",assessment:{...current.assessment,reasons:[{code:"PreviousRuntime",message:"이전 runtime",sourceIds:[]}]},batchProgress:{...current.batchProgress,measured:[1]}}
+  const mixed={...cell,assessment:current.assessment,batchProgress:null,variants:[previous,current]}
+  assert.equal(coverageVariant(mixed),current)
+  assert.equal(coverageMeasurementStatus(mixed),"usable")
+  assert.equal(coverageVariant(mixed,"previous"),previous)
+  assert.equal(coverageProgress({...mixed,assessment:cell.assessment,variants:[previous]}),null)
+})
 test("coverage requests work for unmeasured cells without exact variants and preserve return filters",()=>{
   const href=new URL(coverageRequestHref(cell,"ns","/measurements?cell=cell&status=unmeasured"),"http://local")
   assert.equal(href.searchParams.get("model"),model.name)

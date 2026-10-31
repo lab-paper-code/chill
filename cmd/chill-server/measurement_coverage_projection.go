@@ -412,13 +412,29 @@ func (p *coverageProjection) addRuns() {
 
 func (p *coverageProjection) assessCell(cell *operatorconsole.MeasurementCoverageCell) {
 	children := make([]operatorconsole.MeasurementAssessment, 0, len(cell.Variants))
+	var current *operatorconsole.MeasurementCoverageVariant
 	for i := range cell.Variants {
-		p.assessVariant(&cell.Variants[i])
-		children = append(children, cell.Variants[i].Assessment)
+		variant := &cell.Variants[i]
+		p.assessVariant(variant)
+		if condition, ok := variant.Condition.(profilederivation.CurvePlanSpec); ok {
+			declared := slices.ContainsFunc(p.base.compatibility.NodeRows,
+				func(row operatorconsole.ModelCompatibilityView) bool {
+					return condition.RuntimeImage != "" && row.Inputs.RuntimeDeclaration != nil &&
+						row.Inputs.RuntimeDeclaration.Image == condition.RuntimeImage
+				})
+			if !declared {
+				variant.Assessment.Reasons = append(variant.Assessment.Reasons, coverageReason(
+					"PreviousRuntime", "이전 runtime · 현재 실행 선언에 없어 셀 집계에서 제외",
+				))
+				continue
+			}
+		}
+		current = variant
+		children = append(children, variant.Assessment)
 	}
 	cell.VariantCount = len(cell.Variants)
-	if len(cell.Variants) == 1 {
-		variant := &cell.Variants[0]
+	if len(cell.Variants) == 1 && len(children) == 1 {
+		variant := current
 		cell.BatchProgress = &variant.BatchProgress
 		for _, row := range variant.ResultRows {
 			if row.RowKind == operatorconsole.ResultRowSourceReference {
@@ -431,8 +447,13 @@ func (p *coverageProjection) assessCell(cell *operatorconsole.MeasurementCoverag
 			break
 		}
 	}
+	support := cell.Support.Verdict
+	if len(cell.Variants) > 0 && len(children) == 0 {
+		// Retained measurements on removed runtimes do not constitute a current attempt.
+		support = operatorconsole.MeasurementSupportCompatible
+	}
 	cell.Assessment = operatorconsole.AssessMeasurement(operatorconsole.MeasurementAssessmentInput{
-		Children: children, Support: cell.Support.Verdict, Attempted: len(cell.History) > 0,
+		Children: children, Support: support, Attempted: len(children) > 0 && len(cell.History) > 0,
 		SourcesComplete: p.base.failures["BEO"] == nil && p.base.failures["Run"] == nil,
 	})
 	if cell.Support.Verdict == operatorconsole.MeasurementSupportIncompatible && cell.Assessment.Evidence.Accepted {

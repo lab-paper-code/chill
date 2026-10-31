@@ -511,6 +511,12 @@ variant는 frozen Node/image/artifact/path/dataset/preprocessor UID·CPU/quota/a
 **variant가 2개 이상이면 Cell.batchProgress와 representative는 null**, ‘조건 k개’만 표시한다.
 합집합/교집합으로 가짜 완성 조건을 만들지 않는다. variant 선택 후에만 그 batch/대표값을 보인다.
 대표값은 `{variantId,batch,incrementalJoulesPerItem,p95Milliseconds}`로 같은 실제 batch에 한정한다.
+현재 차트 실행 선언의 runtime 이미지 목록은 기존 compatibility `NodeRows`의
+`inputs.runtimeDeclaration.image`를 재사용한다. profile condition의 `RuntimeImage`가
+이 목록에 없으면 variant와 결과 행은 보존하되 `assessment.reasons`의 `PreviousRuntime`
+(`이전 runtime`)으로 구분하고 셀 상태·부족 batch 조치 집계에서 제외한다.
+현재 runtime variant가 없는 셀은 이전 측정만으로 시도/완료를 추정하지 않고 미측정으로 본다.
+현재 runtime variant끼리의 판정과 batch 비합산 규칙, 저장 CR·증거 계약은 바꾸지 않는다.
 failureSummary는 정확 request/Run identity·batch·code·exitCode·최대 160자 한 줄 원인·후속 relation만,
 긴 diff/log는 기존 상세에 둔다. 정확 후속만 verified-follow-up, 유사 조건은 related-candidate다.
 

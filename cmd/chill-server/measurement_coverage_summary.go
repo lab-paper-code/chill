@@ -110,6 +110,11 @@ func addCoverageActions(
 		actions["failure"]++
 	}
 	for _, variant := range cell.Variants {
+		if slices.ContainsFunc(variant.Assessment.Reasons, func(reason operatorconsole.MeasurementReason) bool {
+			return reason.Code == "PreviousRuntime"
+		}) {
+			continue
+		}
 		if len(variant.BatchProgress.Missing) == 0 || actions["missing-batches"] >= 3 {
 			continue
 		}
