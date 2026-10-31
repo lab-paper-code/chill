@@ -131,14 +131,15 @@ test("changing a preprocessor clears only inherited datasets, preserving deliber
   assert.equal(requestInputs("model","onnx","image-pre","vqa",context,{dataset:false}).dataset,"vqa")
 })
 
-test("request Funnel renders the undeclared-batch branch without a stale condition variable",()=>{
+function renderRequest(props:Record<string,unknown>={},query="",error="") {
   const source=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(`${source}\nexport { Funnel };`,{compilerOptions:{module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
   const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
   const modules:Record<string,unknown>={
+    "react":{...require("react"),useState:(initial:unknown)=>{const state=require("react").useState(initial);return initial===""?[error,state[1]]:state}},
     "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
-    "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams()},
+    "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams(query)},
     "@/lib/client":{useChillMutation:()=>({isPending:false})},
     "@/components/read-region":{SourceJSON:()=>null},
     "@/components/screen":{Screen:container,Rows:container,RowDialog:()=>null},
@@ -155,17 +156,48 @@ test("request Funnel renders the undeclared-batch branch without a stale conditi
   }
   runInNewContext(compiled,{exports,require:(name:string)=>name in modules?modules[name]:require(name),URLSearchParams})
   const Funnel=exports.Funnel as ComponentType<Record<string,unknown>>
-  const html=renderToStaticMarkup(createElement(Funnel,{
+  return renderToStaticMarkup(createElement(Funnel,{
     namespace:"ns",from:null,checking:false,refetchPlans:async()=>({error:null}),
     context:{models:[],workloads:[],classes:[],plans:[],preprocessors:[],datasets:[],profiles:[]},
     prefill:{active:false,values:{},errors:[],returnTo:"/measurements",node:""},
+    ...props,
   }))
+}
+
+test("request Funnel renders the undeclared-batch branch without a stale condition variable",()=>{
+  const html=renderRequest()
   assert.match(html,/CPU·데이터셋·측정 방식이 같은 기존 결과가 있는지 검사해요/)
   assert.doesNotMatch(html,/NaN/)
   assert.match(html,/<th>예열 \(회\)<\/th>/)
   assert.match(html,/<td>—<\/td>/)
   assert.doesNotMatch(html,/<details open=""/)
   assert.match(html,/href="\/datasets\/new"/)
+})
+
+test("required batches stay outside collapsed conditions and validation appears once",()=>{
+  const issue="한 번에 처리할 건수를 하나 이상 골라 주세요."
+  const html=renderRequest({},"",issue)
+  const beforeBatches=html.slice(0,html.indexOf('id="measurement-batches"'))
+  const detailTags=beforeBatches.match(/<\/?details\b[^>]*>/g)??[]
+  const collapsed=detailTags.reduce((count,tag)=>count+(tag.startsWith("</")?-1:1),0)
+  assert.equal(collapsed,0)
+  assert.equal(html.split(issue).length-1,1)
+  assert.match(html,/href="#measurement-size-error"/)
+  assert.doesNotMatch(html,/>2147483647</)
+  assert.match(html,/>제한 없음</)
+})
+
+test("variant prefill chooses missing batches while explicit URL batches, including empty, win",()=>{
+  const context={models:[],workloads:[],classes:[],plans:[plan],preprocessors:[],datasets:[],profiles:[]}
+  const selected={requestIds:["ns/source/uid"],batchProgress:{target:[1,2,4,8],measured:[1,2],missing:[4,8]}}
+  const props={context,selected}
+  const checked=(html:string)=>[...html.matchAll(/<input type="checkbox" checked=""\/>(\d+)건/g)].map(match=>Number(match[1]))
+  for(const draft of [props,{...props,context:{...context,plans:[]},prefill:{active:true,values:condition,errors:[],returnTo:"/measurements",node:condition.node}}]) {
+    assert.deepEqual(checked(renderRequest(draft)),[4,8])
+    assert.deepEqual(checked(renderRequest(draft,"batches=2")),[2])
+    assert.deepEqual(checked(renderRequest(draft,"batches=")),[])
+    assert.deepEqual(checked(renderRequest({...draft,selected:{...selected,batchProgress:{...selected.batchProgress,missing:[]}}})),[])
+  }
 })
 
 test("rejected preflight points to exact repair fields instead of generic permission or network advice",()=>{
