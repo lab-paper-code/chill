@@ -1092,7 +1092,9 @@ def load_binding(path):
 def save(path, obj):
     path = Path(path)
     if OPS.resolve() not in path.resolve().parents: raise ValueError('Output must remain below the external ops directory')
-    path.parent.mkdir(parents=True, exist_ok=True); path.write_text(json.dumps(obj, indent=2, allow_nan=False)+'\n')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Atomic replace: round.py polls phase.json every second while this process rewrites it.
+    tmp = path.with_name(path.name+'.tmp'); tmp.write_text(json.dumps(obj, indent=2, allow_nan=False)+'\n'); os.replace(tmp, path)
 
 
 def now():
