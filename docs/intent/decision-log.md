@@ -323,3 +323,9 @@
 - 16:31Z control-277: server와 dashboard를 `f780d19a`(view=summary 포함, 조언 세션 요청)로 배포. 두 Pod 모두 restart 0, dashboard 200. 게이트: 리플레이 PASS, lint/arch/helm PASS, dashboard 184/0. kube에서 부하에 민감한 테스트 1건이 부하 중 실패했으나 단독 30회와 캐시 없는 패키지 재실행 모두 PASS. 16:31~17:01Z 조언 세션 재설문 창.
 - round.py `8311fe9c`: 선택적 config `minimumDemand`(step 3에서 PUT·검증, binding에 동결, 첫 load tick 검증). 리뷰 PASS.
 - 17:01Z부터 A/B 시작: E5-3m, 서버 f780d19a 고정. image minimumDemand 105(tag 20·22·24) vs 20(tag 21·23·25). 105는 trace peak 95/s를 알고 정한 값임.
+
+## 2026-10-31 — round 16 이상치 원인(`local://r16-outlier.md`)
+
+- κ 비례 weight는 실제 route에 적용됨(옛 weight 잔류 아님). round 16의 추가 실패 2,157건 중 2,063건은 jetsonx CUDA 큐 포화임. [350,390) 구간에서 λ 33.4/s가 배정됐는데 실행된 1,022건이 **전부 batch 1**이라 ρ 1.24가 됨. 같은 창에서 round 13은 λ 26.2, batch 1/2/4 혼합, ρ 0.81, F 0.
+- 해석 [추정]: CUDA κ(34.5)는 배치가 정상일 때의 값임. 부하에서 남은 SLO가 짧아지면 런타임 정책이 최소 서비스 배치(b1)를 골라 처리율이 떨어지고, 큐가 쌓여 다시 b1을 고르는 양의 되먹임(배치 붕괴)이 생김. 3m-10의 CUDA 실패(κ/X 1.32)와 같은 계열. 관련 코드 `internal/firstfloor/policy.go:93–154`. 고착의 내부 원인은 미확정.
+- 다음 후보 결함 4: CUDA 배치 붕괴. warm min-scale A/B 뒤에 브리프를 작성함.
