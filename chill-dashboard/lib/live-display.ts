@@ -94,13 +94,16 @@ export function servicePriority(workload:LiveWorkload,metric:LiveMetric|undefine
   if (!metric || metric.received>0 || (terminalCount(metric)??0)>0) return 4
   return 5
 }
-export function boardVerdict({fresh,terminals,failed,sloMisses,queued,changes,delayed,serving,off,total,admissionBlocked}:{fresh:boolean;terminals:number|undefined;failed:number|undefined;sloMisses:number;queued:number;changes:number;delayed:number;serving:number;off:number;total:number;admissionBlocked:boolean}) {
+export function boardVerdict({fresh,terminals,failed,sloMisses,queued,changes,delayed,serving,off,total,admissionBlocked,received=0,declared=serving,unserved=0,gaps=0}:{fresh:boolean;terminals:number|undefined;failed:number|undefined;sloMisses:number;queued:number;changes:number;delayed:number;serving:number;off:number;total:number;admissionBlocked:boolean;received?:number;declared?:number;unserved?:number;gaps?:number}) {
   if (!fresh || terminals==null) return {label:"데이터 끊김",tone:"unknown",reason:"최신 관측을 기다려요. 마지막 수치를 현재 상태로 판단하지 마세요"}
-  if (!serving) return {label:"서빙 0",tone:"warning",reason:`요청을 받을 인스턴스 0개 / 자동제어 꺼짐 ${off}/${total}. 무유입만으로 장애를 단정하지 않아요`}
+  if ((failed??0)>0 || admissionBlocked || unserved>0 || (!serving&&(received>0||queued>0))) return {label:"이상: 요청 처리 확인 필요",tone:"danger",reason:`실패 ${failed??0}건 / 유입 있으나 서빙 없음 ${unserved}개 / 접수 거절 ${admissionBlocked?"있음":"없음"}. 서비스 상세에서 확인하세요`}
+  if (gaps>0) return {label:"관측 공백: 판정 보류",tone:"unknown",reason:`관측 공백 ${gaps}건이 있어 사건 없음이나 정상으로 단정하지 않아요. 관측 품질과 시각을 확인하세요`}
+  if (!serving && total>0 && off===total && declared===0 && received===0 && queued===0 && changes===0 && delayed===0) return {label:"정상: 계획된 정지",tone:"healthy",reason:`자동제어 꺼짐 ${off}/${total} / 선언 인스턴스 0 / 유입 0. 요청 처리 없이 대기 중이에요`}
+  if (!serving) return {label:"이상: 서빙 준비 확인",tone:"warning",reason:`서빙 인스턴스 0 / 선언 ${declared}개 / 자동제어 꺼짐 ${off}/${total}. 계획된 정지 조건과 다르므로 구성·변경을 확인하세요`}
   if (sloMisses>0) return {label:"SLO 위반",tone:"danger",reason:`목표 미달 서비스 ${sloMisses}개를 확인하세요`}
   if (delayed>0) return {label:"정체",tone:"danger",reason:`예상 대비 지연 ${delayed}건. 종결 미확인으로 실제 상태 확인이 필요해요`}
   if (changes>0) return {label:"진행",tone:"warning",reason:`구성 변경 ${changes}건이 진행 중이에요`}
-  if ((failed??0)>0 || admissionBlocked || queued>0) return {label:"주의",tone:"warning",reason:"실패 응답·요청 접수·대기를 확인하세요"}
+  if (queued>0) return {label:"주의",tone:"warning",reason:"배정 전·후 대기 요청을 확인하세요"}
   if (terminals===0) return {label:"표본 없음",tone:"unknown",reason:"종결 표본이 없어 SLO를 판정할 수 없어요"}
   return {label:"정상",tone:"healthy",reason:"종결 응답 기준으로 서비스 SLO 목표를 충족해요"}
 }
@@ -134,4 +137,31 @@ export function trendSegments(points:{at:number;value:number|null}[],end:number)
 export function serviceDevices(snapshot:LiveSnapshot,uid:string) {
   const references=new Map(snapshot.instances.filter(row=>belongsToPool(row,uid)&&!row.stopped).map(row=>[row.node.uid,row.node]))
   return [...references.values()].map(reference=>({uid:reference.uid,name:reference.name,powerMode:snapshot.nodes.find(row=>row.uid===reference.uid)?.powerMode??""}))
+}
+
+export function sloLatency(workload:LiveWorkload,metric:LiveMetric|undefined):number|null|undefined {
+  if (!metric || !metric.latencySamples) return null
+  switch(workload.slo.percentile) {
+    case 50:return metric.p50ms
+    case 90:return metric.p90ms
+    case 95:return metric.p95ms
+    case 99:return metric.p99ms
+    default:return undefined
+  }
+}
+export function retainedEvents(events:LiveEvent[],now:number,keep=false):LiveEvent[] {
+  return events.filter(event=>Date.parse(event.at)<=now&&(keep||event.kind!=="decision"||event.decision.state!=="Keep")).slice(-30)
+}
+export function idleGroups(snapshot:LiveSnapshot,workloads:LiveWorkload[]) {
+  const groups=new Map<string,{device:string;model:string;workloads:LiveWorkload[]}>()
+  for(const workload of workloads) {
+    const devices=serviceDevices(snapshot,workload.uid)
+    // A name prefix is a display grouping, never evidence of placement.
+    const named=snapshot.nodes.find(node=>workload.name.startsWith(`${node.name}-`))
+    const device=devices.map(node=>node.name).join(", ") || (named?`${named.name} (이름 기준)`:"장치 미지정")
+    const key=JSON.stringify([device,workload.model])
+    const group=groups.get(key)??{device,model:workload.model,workloads:[]}
+    group.workloads.push(workload);groups.set(key,group)
+  }
+  return [...groups.values()].sort((a,b)=>a.device.localeCompare(b.device)||a.model.localeCompare(b.model))
 }

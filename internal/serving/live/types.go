@@ -182,6 +182,7 @@ type Metric struct {
 	WithinSLO      uint64   `json:"withinSLO"`
 	LatencySamples uint64   `json:"latencySamples"`
 	P50MS          *float64 `json:"p50ms"`
+	P90MS          *float64 `json:"p90ms"`
 	P95MS          *float64 `json:"p95ms"`
 	P99MS          *float64 `json:"p99ms"`
 }

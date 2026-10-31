@@ -113,7 +113,7 @@
 .live-power>p{color:var(--live-muted);margin-top:4px}
 .live-power>details>summary{font-weight:400;color:var(--live-muted)}
 .live-pause-note{font-size:13px;padding:8px 12px;border:1px solid var(--live-border);border-radius:5px}
-.live-drawer{position:fixed;right:24px;bottom:24px;width:min(570px,calc(100vw - 48px));z-index:45;background:var(--live-surface);border:1px solid var(--live-border);border-radius:10px;box-shadow:0 12px 40px #152f4533;display:flex;flex-direction:column;overflow:hidden;min-height:300px}
+.live-drawer{position:fixed;right:0;top:0;bottom:0;width:min(620px,100vw);z-index:60;background:var(--live-surface);border-left:1px solid var(--live-border);box-shadow:-12px 0 40px #152f4533;display:flex;flex-direction:column;overflow:hidden;min-height:0}
 .live-drawer>header{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-shrink:0;padding:12px 18px;border-bottom:1px solid var(--live-border);background:var(--live-surface)}
 .live-drawer>header button{font-size:13px;white-space:nowrap}
 .live-drawer-body{padding:18px;overflow:auto;overscroll-behavior:contain;min-height:0}
@@ -141,3 +141,19 @@
 .dark .live-tone-warning .live-verdict-title>strong,.dark .live-rank-1,.dark .live-rank-2{color:#e6c277}
 .dark .live-tone-danger .live-verdict-title>strong,.dark .live-rank-0,.dark .live-change-delayed>span:not(.sr-only),.dark .live-delay-badge{color:#f4a5a5}
 @media(prefers-reduced-motion:reduce){.live-stage *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+.live-stage .live-drawer{top:0!important;right:0;bottom:0;width:min(620px,100vw)}
+.live-node-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px}
+.live-node-strip>button{display:flex;flex-direction:column;gap:3px}
+.live-node-strip span{font-size:13px;color:var(--live-muted)}
+.live-search{display:flex;align-items:center;gap:8px;font-size:13px;flex-wrap:wrap}
+.live-search input{width:180px;max-width:100%;min-height:44px;padding:8px;border:1px solid var(--live-border);border-radius:6px;background:var(--live-surface);color:var(--live-ink)}
+.live-idle-groups{padding:12px 14px;display:grid;gap:10px}
+.live-idle-groups section{border-top:1px solid var(--live-border);padding-top:8px}
+.live-idle-groups ul{list-style:none;margin:0;padding:0}
+.live-idle-groups li{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.live-idle-groups li button{border:0;color:var(--live-accent);text-decoration:underline;padding:5px 0;background:none}
+.live-idle-groups li span{font-size:13px;color:var(--live-muted)}
+.live-observation-gap{padding:10px 14px;border:1px solid var(--live-border);border-left:5px solid var(--live-muted);background:var(--live-surface);margin-top:-16px}
+.live-evidence-summary{border-left:4px solid var(--live-accent);padding:0 14px}
+.live-evidence-summary p{margin:8px 0}
+.live-last-event{padding:8px 0;color:var(--live-muted)}

@@ -62,7 +62,7 @@ func TestMetricsUsesResponseFinishedCohortAndIdleZeros(t *testing.T) {
 	}
 	second := nextMetrics(t, sub)
 	row := second.Workloads["one"]
-	if row.Received != 0 || row.Completed != 1 || row.Failed != 2 || row.WithinSLO != 1 || row.LatencySamples != 2 || row.P50MS == nil || *row.P50MS != 20 || *row.P95MS != 100 || *row.P99MS != 100 {
+	if row.Received != 0 || row.Completed != 1 || row.Failed != 2 || row.WithinSLO != 1 || row.LatencySamples != 2 || row.P50MS == nil || *row.P50MS != 20 || row.P90MS == nil || *row.P90MS != 100 || *row.P95MS != 100 || *row.P99MS != 100 {
 		t.Fatalf("terminal cohort/failed latency: %+v", row)
 	}
 	if idle, ok := second.Workloads["idle"]; !ok || idle.Received != 0 || idle.Completed != 0 || idle.Failed != 0 || idle.P99MS != nil {

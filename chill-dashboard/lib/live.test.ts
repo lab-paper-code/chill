@@ -10,7 +10,7 @@ const workload={uid:"pool-a",name:"Pool A",model:"generic",definitionID:"definit
 const instance={id:"instance-a",node,ownerWorkloadUID:"pool-a",profileID:"profile-a",ready:true,stopped:false,routable:{"pool-a":true,"pool-b":true},running:{"pool-a":2,"pool-b":1},waiting:{"pool-a":3,"pool-b":0},observedAt:at}
 const action={id:"action-a",kind:"prepare",node,workloadUID:"pool-a",status:"running",startedAt:at,expectedSeconds:null,expectedSource:null}
 const reservation={owner:"action-a",nodes:[node],workloadUIDs:["pool-a"],podUIDs:[],instances:["instance-a"],reason:"",explanation:"이전 변경이 자원을 예약하고 있어요."}
-const metric:LiveMetric={received:4,completed:2,failed:1,withinSLO:1,latencySamples:3,p50ms:15,p95ms:40,p99ms:60}
+const metric:LiveMetric={received:4,completed:2,failed:1,withinSLO:1,latencySamples:3,p50ms:15,p90ms:35,p95ms:40,p99ms:60}
 function snapshot(seq=0,changes:Partial<LiveSnapshot>={},stamp=at) {
   return {type:"snapshot",seq,at:stamp,workloads:[workload],nodes:[{...node,powerMode:"default",ready:false,measurement:true,reasons:["MeasurementInProgress"],observedAt:at}],instances:[instance],routing:{"pool-a":{"instance-a":1},"pool-b":{"instance-a":1}},decision:{at,state:"TransitionInProgress",reason:"prepare",explanation:"인스턴스를 준비하고 있어요."},actions:[action],reservations:[reservation],...changes}
 }

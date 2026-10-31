@@ -14,7 +14,7 @@ export type LiveAction = {
   expectedSeconds:number|null;expectedSource:{costID:string;reference:unknown;statistic:"mean";trialCount:number}|null
 }
 export type LiveReservation = {owner:string;nodes:{uid:string;name:string}[];workloadUIDs:string[];podUIDs:string[];instances:string[];reason:string;explanation:string}
-export type LiveMetric = {received:number;completed:number;failed:number;withinSLO:number;latencySamples:number;p50ms:number|null;p95ms:number|null;p99ms:number|null}
+export type LiveMetric = {received:number;completed:number;failed:number;withinSLO:number;latencySamples:number;p50ms:number|null;p90ms:number|null;p95ms:number|null;p99ms:number|null}
 export type LiveGap = {from:string;to:string;scope:string;reason:string}
 type Envelope = {seq:number;at:string}
 export type LiveMetrics = Envelope & {type:"metrics";bucketAt:string;workloads:Record<string,LiveMetric>;nodes:Record<string,{watts:number|null;observedAt:string|null}>;pool:{wholeWatts:number|null;activeWatts:number|null};gaps?:LiveGap[]}
@@ -91,8 +91,8 @@ function reservation(value:unknown):LiveReservation {
   return {owner:text(row.owner),nodes:array(row.nodes,nodeRef),workloadUIDs:array(row.workloadUIDs === null ? [] : row.workloadUIDs,text),podUIDs:array(row.podUIDs === null ? [] : row.podUIDs,text),instances:array(row.instances === null ? [] : row.instances,text),reason:text(row.reason),explanation:text(row.explanation)}
 }
 function metric(value:unknown):LiveMetric {
-  const row=object(value);keys(row,["received","completed","failed","withinSLO","latencySamples","p50ms","p95ms","p99ms"])
-  const result={received:count(row.received),completed:count(row.completed),failed:count(row.failed),withinSLO:count(row.withinSLO),latencySamples:count(row.latencySamples),p50ms:nullable(row.p50ms,number),p95ms:nullable(row.p95ms,number),p99ms:nullable(row.p99ms,number)}
+  const row=object(value);keys(row,["received","completed","failed","withinSLO","latencySamples","p50ms","p90ms","p95ms","p99ms"])
+  const result={received:count(row.received),completed:count(row.completed),failed:count(row.failed),withinSLO:count(row.withinSLO),latencySamples:count(row.latencySamples),p50ms:nullable(row.p50ms,number),p90ms:nullable(row.p90ms,number),p95ms:nullable(row.p95ms,number),p99ms:nullable(row.p99ms,number)}
   if (result.withinSLO > result.completed || result.latencySamples > result.completed + result.failed) invalid()
   return result
 }

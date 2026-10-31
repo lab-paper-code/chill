@@ -216,6 +216,8 @@ func (b *metricBucket) frame() MetricsFrame {
 			sort.Float64s(row.latencies)
 			p50, p95, p99 := stat.Quantile(.50, stat.Empirical, row.latencies, nil), stat.Quantile(.95, stat.Empirical, row.latencies, nil), stat.Quantile(.99, stat.Empirical, row.latencies, nil)
 			metric.P50MS, metric.P95MS, metric.P99MS = &p50, &p95, &p99
+			p90 := stat.Quantile(.90, stat.Empirical, row.latencies, nil)
+			metric.P90MS = &p90
 		}
 		result.Workloads[uid] = metric
 	}

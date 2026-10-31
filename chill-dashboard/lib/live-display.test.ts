@@ -2,10 +2,11 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { LiveAction, LiveInstance, LiveMetric, LiveSnapshot, LiveWorkload } from "./live.ts"
 import { changeListStatus, serviceTrafficState, actionProgress, actionOrigin, scopeSnapshot, scopeEvents, recentEvents, liveFresh, belongsToPool, displayNumber, duration, elapsed, instanceSymbol, isStale, ratio, receivedLabel, routingShare, terminalCount, workloadLabel, workloadQueue, servicePriority, mergeKeepEvents, trendSegments, boardVerdict, decisionText } from "./live-display.ts"
+import { idleGroups, retainedEvents, sloLatency } from "./live-display.ts"
 
 const at="2026-10-30T12:00:00.123456789Z",now=Date.parse(at)
 const instance:LiveInstance={id:"shared",node:{uid:"n",name:"Node"},ownerWorkloadUID:"a",profileID:"p",ready:true,stopped:false,routable:{a:true,b:true},running:{a:1,b:0},waiting:{a:0,b:2},observedAt:at}
-const metric:LiveMetric={received:9,completed:3,failed:1,withinSLO:2,latencySamples:4,p50ms:10,p95ms:20,p99ms:30}
+const metric:LiveMetric={received:9,completed:3,failed:1,withinSLO:2,latencySamples:4,p50ms:10,p90ms:15,p95ms:20,p99ms:30}
 const workload:LiveWorkload={uid:"a",name:"same-name",model:"arbitrary",definitionID:"d",slo:{percentile:95,targetLatencyNanos:100000000},autonomous:false,admission:true,pending:2,readiness:{ready:true,reason:"",observedAt:at}}
 
 test("terminal ratios never divide by received and distinguish missing from observed zero",()=>{
@@ -63,7 +64,7 @@ test("risk and work precede traffic; idle never hides missing metrics or pending
 test("verdict prioritizes lost data, zero serving, SLO, delayed changes, progress, then normal",()=>{
   const input={fresh:true,terminals:3,failed:0,sloMisses:0,queued:0,changes:0,delayed:0,serving:1,off:0,total:1,admissionBlocked:false}
   assert.equal(boardVerdict({...input,fresh:false,serving:0,sloMisses:1,delayed:1}).label,"데이터 끊김")
-  assert.equal(boardVerdict({...input,serving:0,sloMisses:1,delayed:1}).label,"서빙 0")
+  assert.equal(boardVerdict({...input,serving:0,sloMisses:1,delayed:1}).label,"이상: 서빙 준비 확인")
   assert.equal(boardVerdict({...input,sloMisses:1,delayed:1}).label,"SLO 위반")
   assert.equal(boardVerdict({...input,delayed:1,changes:1}).label,"정체")
   assert.equal(boardVerdict({...input,changes:1}).label,"진행")
@@ -157,4 +158,23 @@ test("planned stop is normal only with no declared instances, demand, or autonom
   assert.notEqual(boardVerdict({...input,declared:1}).label,"정상: 계획된 정지")
   assert.notEqual(boardVerdict({...input,off:1}).label,"정상: 계획된 정지")
   assert.match(boardVerdict({...input,gaps:1}).reason,/관측 공백/)
+})
+
+test("latency uses the exact SLO percentile and retained events outlive the new-event window",()=>{
+  assert.equal(sloLatency({...workload,slo:{...workload.slo,percentile:90}},metric),15)
+  assert.equal(sloLatency({...workload,slo:{...workload.slo,percentile:99}},metric),30)
+  assert.equal(sloLatency({...workload,slo:{...workload.slo,percentile:92}},metric),undefined)
+  assert.equal(sloLatency(workload,{...metric,latencySamples:0}),null)
+  const event={type:"event" as const,kind:"decision" as const,seq:1,at,decision:{at,state:"Changed",reason:"",explanation:"변경"}}
+  assert.equal(recentEvents([event],now+60000).length,0)
+  assert.equal(retainedEvents([event],now+60000).length,1)
+  assert.equal(retainedEvents([...Array(35)].map((_,seq)=>({...event,seq})),now).length,30)
+  assert.equal(retainedEvents([{...event,decision:{...event.decision,state:"Keep"}}],now).length,0)
+})
+test("idle model grouping labels name-derived nodes instead of fabricating placement",()=>{
+  const snapshot={workloads:[],instances:[],nodes:[{uid:"n",name:"edge"}]} as unknown as LiveSnapshot
+  const groups=idleGroups(snapshot,[{...workload,name:"edge-model"},{...workload,uid:"b",name:"edge-other"}])
+  assert.equal(groups.length,1)
+  assert.equal(groups[0].device,"edge (이름 기준)")
+  assert.equal(groups[0].workloads.length,2)
 })

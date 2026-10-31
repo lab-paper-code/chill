@@ -15,7 +15,7 @@ export function fixtureMessages(scene:string, at = new Date().toISOString()):unk
   const b = instance("inst-b", nodeB, false, {"pool-alpha":false}, {"pool-alpha":0})
   const decision = {at:time(-4), state:"TransitionInProgress", reason:"검사용 확장: 새 인스턴스 준비", explanation:"검사용 확장: 새 인스턴스를 준비하고 있어요."}
   const action = {id:"fixture-prepare", kind:"prepare", node:nodeB, workloadUID:"pool-alpha", status:"running", startedAt:time(-3), expectedSeconds:null, expectedSource:null}
-  const metric = (received:number, completed:number, failed:number, withinSLO:number):LiveMetric => ({received, completed, failed, withinSLO, latencySamples:completed, p50ms:completed?220:null, p95ms:completed?620:null, p99ms:completed?790:null})
+  const metric = (received:number, completed:number, failed:number, withinSLO:number):LiveMetric => ({received, completed, failed, withinSLO, latencySamples:completed, p50ms:completed?220:null, p90ms:completed?560:null, p95ms:completed?620:null, p99ms:completed?790:null})
   const metrics = (seq:number, second:number, alpha:LiveMetric, beta:LiveMetric) => ({type:"metrics", seq, at:time(second+1), bucketAt:time(second), workloads:{"pool-alpha":alpha,"pool-beta":beta}, nodes:{"node-a":{watts:42.5,observedAt:time(second)},"node-b":{watts:null,observedAt:null}}, pool:{wholeWatts:null,activeWatts:42.5}, gaps:[{from:time(second),to:time(second+1),scope:"node:node-b",reason:"검사용 전력 결손"}]})
   const reservation = {owner:"fixture-prepare", nodes:[nodeB], workloadUIDs:["pool-alpha"], podUIDs:["fixture-pod"], instances:["inst-b"], reason:"", explanation:"검사용 변경이 인스턴스 준비를 위해 자원을 예약하고 있어요."}
   const messages:unknown[] = [{type:"snapshot",seq:0,at:time(-6),workloads:[],nodes:[],instances:[],routing:{},decision:null,actions:[],reservations:[]}]
