@@ -95,7 +95,7 @@ test("shared dataset compatibility rejects missing fields, formats and oversized
 })
 
 test("empty datasets explain the required contract and missing summary values use a dash",()=>{
-  const context={preprocessors:[{metadata:{name:"pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:"model",artifact:"onnx"}}]}}],datasets:[]} as Parameters<typeof requestInputs>[4]
+  const context:Parameters<typeof requestInputs>[4]={preprocessors:[{metadata:{name:"pre",uid:"pre-uid",resourceVersion:"1",generation:1},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},output:{fields:[]},artifacts:[{target:{model:"model",artifact:"onnx"},source:{image:"preprocessor:fixture",architecture:"arm64",path:"/preprocess"}}]}}],datasets:[]}
   const inputs=requestInputs("model","onnx","","",context)
   assert.equal(inputs.dataset,"")
   assert.match(inputs.warning,/image.*JPEG.*1024.*등록/)
