@@ -12,6 +12,10 @@ console:
     tag: pools-e96b075
   nodeSelector:
     kubernetes.io/hostname: genesis1
+  # 128Mi OOMKilled on 2026-11-01 with ~400 coverage cells and their ProfilingRuns cached.
+  resources:
+    limits:
+      memory: 512Mi
 dashboard:
   caSecretName: chill-dashboard-ca
   enabled: true
