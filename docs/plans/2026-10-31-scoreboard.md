@@ -40,6 +40,7 @@ print(json.dumps({'F':sum(sum(m['outcomes'].get(k,0) for k in ('error','timeout'
 PY
 ```
 - 미측정/UNKNOWN/INVALID_GENERATOR·복원/설정/배포 gate 실패·주입 무효는 점수 미확정이다. 누락을 0으로 대체하거나 성공 행만 합산하지 않는다.
+- **개점 준비 구간(2026-10-31 추가)**: F를 `F_warm`(client `scheduledOffsetNs` [0,60)초)과 `F_run`(나머지)으로 나눠 함께 보고한다. 시작 상태는 매번 같은 장치 2대(복원 fingerprint)이고, 첫 60초 실패(회차당 약 1,300~1,500건)는 세 번째 장치 편입 지연(약 40초)에서 생기는 시험 출발 상태의 비용이다. 스케줄러 변경의 효과는 `F_run`으로 판정하고, `F_warm`은 출발 상태가 바뀌었을 때만 비교한다. 사전식 점수 `(F,J)` 정의 자체는 그대로 둔다. 구간 집계는 judgment `requests.*.minutes`를 쓴다.
 
 ## 리플레이와 측정 전 gate
 - 입력은 `C/{full-E5-3-7,full-E5-5-7,full-E5-7-7,full-E5-5-8d}`의 scheduler/catalog/requests archive **4 stage**; 각 경로·SHA256은 `C/scoreboard-inputs.json`의 `replay.stages`에 동결했다.
