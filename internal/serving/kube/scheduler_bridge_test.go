@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -254,6 +255,15 @@ func TestRunningBridgeCannotConsumeUnrelatedCompletedACKS2(t *testing.T) {
 }
 
 func TestReadySubsetACKPrecedesPrepareResultAndSkippedBridgeProgressS2(t *testing.T) {
+	testReadySubsetACKAndSkippedBridgeProgress(t, false)
+}
+
+func TestConsumedBridgeDoesNotReplayWithPendingSiblingS3b(t *testing.T) {
+	testReadySubsetACKAndSkippedBridgeProgress(t, true)
+}
+
+func testReadySubsetACKAndSkippedBridgeProgress(t *testing.T, pendingSibling bool) {
+	t.Helper()
 	c, prepared := tickReadySubsetController(t, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -278,8 +288,18 @@ func TestReadySubsetACKPrecedesPrepareResultAndSkippedBridgeProgressS2(t *testin
 	next := serving.Action{ID: "next-handoff", Kind: operationRoute, RouteTarget: &nextTarget, DependsOn: []string{bridge.ID, stop.ID}}
 	goal := bridgeTarget
 	goal.ID, goal.Actions = "ready-before-result", []serving.Action{prepare, bridge, stop, next}
+	power := serving.Action{ID: "pending-independent-power", Kind: operationPower, Node: serving.NodeReference{Name: slowNodeName, UID: slowNodeName}, To: raisedPowerMode}
+	if pendingSibling {
+		goal.Actions = append(goal.Actions, power)
+	}
 	c.state.Snapshot = snapshot
 	installTestTransition(c, &goal)
+	if pendingSibling {
+		// Keep an independent real-plan duty running across the later route ACK.
+		power.Status = nativeOperationRunning
+		c.runs[power.ID] = &actionRun{action: power, owner: goal.ID,
+			result: &OperationResult{Operation: Operation{ID: power.ID, Kind: operationPower, Node: power.Node, Target: &goal}, Status: nativeOperationRunning}}
+	}
 	// Native B is Ready before the controller receives its prepare result.
 	pending := prepare
 	pending.Status = nativeOperationRunning
@@ -353,8 +373,20 @@ func TestReadySubsetACKPrecedesPrepareResultAndSkippedBridgeProgressS2(t *testin
 		t.Fatal(err)
 	}
 	c.wg.Wait()
-	if c.runs[bridge.ID] != nil || parent.action.Status != nativeOperationComplete || parent.reserved {
-		t.Fatalf("consumed bridge replayed or kept its owner alive: bridge=%+v parent=%+v", c.runs[bridge.ID], parent)
+	if c.runs[bridge.ID] != nil {
+		t.Fatalf("consumed bridge replayed: %+v", c.runs[bridge.ID])
+	}
+	wantStatus := nativeOperationComplete
+	if pendingSibling {
+		wantStatus = nativeOperationRunning
+	}
+	if parent.action.Status != wantStatus || parent.reserved != pendingSibling {
+		t.Fatalf("owner status=%s reserved=%t, want status=%s reserved=%t", parent.action.Status, parent.reserved, wantStatus, pendingSibling)
+	}
+	for _, reservation := range c.reservationsLocked(c.state.Snapshot) {
+		if strings.Contains(reservation.Reason, bridge.ID+":") {
+			t.Fatalf("consumed bridge reported missing proof: %s", reservation.Reason)
+		}
 	}
 	if nextRun := c.runs[next.ID]; nextRun.result.Actual.Routing[uid][b.ID] != 1000 {
 		t.Fatal("next stage lost its acknowledged route")

@@ -87,6 +87,23 @@ func (c *SchedulerController) routeOperationScopeLocked(parent, selected serving
 	return scope, scope != nil && len(scope) == 0
 }
 
+func (c *SchedulerController) omittedRouteCompleteLocked(action serving.Action, target serving.SchedulerCandidate) bool {
+	if action.Kind != operationRoute || c.runs[action.ID] != nil {
+		return false
+	}
+	if action.RouteTarget == nil {
+		if _, empty := c.routeOperationScopeLocked(target, target, false); empty {
+			return true
+		}
+	}
+	// A completed consumer proves the frozen bridge was passed, even after
+	// a later stage supersedes its routing or policy.
+	return slices.ContainsFunc(target.Actions, func(dependent serving.Action) bool {
+		consumer := c.runs[dependent.ID]
+		return consumer != nil && consumer.action.Status == nativeOperationComplete && slices.Contains(dependent.DependsOn, action.ID)
+	})
+}
+
 func (c *SchedulerController) ownerDAGCompleteLocked(parent *actionRun) bool {
 	for _, child := range c.runs {
 		if child != parent && child.owner == parent.owner &&
@@ -96,21 +113,10 @@ func (c *SchedulerController) ownerDAGCompleteLocked(parent *actionRun) bool {
 	}
 	target := parent.result.Operation.Target
 	for _, action := range target.Actions {
-		if action.Status == nativeOperationCancel {
+		if action.Status == nativeOperationCancel || c.omittedRouteCompleteLocked(action, *target) {
 			continue
 		}
-		run := c.runs[action.ID]
-		// A completed consumer proves the frozen bridge was passed, even after
-		// a later stage supersedes its routing or policy.
-		if run == nil && action.Kind == operationRoute &&
-			(action.RouteTarget == nil && parent.result.Operation.WorkloadUIDs != nil && len(parent.result.Operation.WorkloadUIDs) == 0 ||
-				slices.ContainsFunc(target.Actions, func(dependent serving.Action) bool {
-					consumer := c.runs[dependent.ID]
-					return consumer != nil && consumer.action.Status == nativeOperationComplete && slices.Contains(dependent.DependsOn, action.ID)
-				})) {
-			continue
-		}
-		if run == nil || run.action.Status != nativeOperationComplete {
+		if run := c.runs[action.ID]; run == nil || run.action.Status != nativeOperationComplete {
 			return false
 		}
 	}

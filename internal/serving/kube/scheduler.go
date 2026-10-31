@@ -968,9 +968,7 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 	if !slices.ContainsFunc(target.Actions, func(action serving.Action) bool {
 		if action.Kind == operationRoute {
 			_, empty := c.routeOperationScopeLocked(target, *cmp.Or(action.RouteTarget, &target), action.RouteTarget != nil)
-			if empty {
-				return false
-			}
+			return !empty
 		}
 		return action.Kind == operationPrepare || action.Kind == operationPower || action.Kind == operationResize ||
 			c.dependenciesReady(action, target)
@@ -1035,7 +1033,7 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 				}
 				continue
 			}
-			if action.Status == nativeOperationComplete || action.Status == nativeOperationFailed {
+			if action.Status == nativeOperationComplete || action.Status == nativeOperationFailed || c.omittedRouteCompleteLocked(action, target) {
 				continue
 			}
 			selectedTarget := cmp.Or(action.RouteTarget, &target)

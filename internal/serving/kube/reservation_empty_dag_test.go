@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
@@ -53,23 +54,45 @@ func TestEmptyRouteAdmissionReplansWithoutOwnershipAC38(t *testing.T) {
 	}
 }
 
-func TestRouteAdmissionWaitsForReadyRootS3(t *testing.T) {
-	instance := serving.SchedulerInstance{ID: "destination", WorkloadUID: "w"}
-	c := &SchedulerController{ctx: context.Background(), runs: map[string]*actionRun{}, runtime: &serving.Runtime{}}
-	c.state.Snapshot.Instances = []serving.SchedulerInstance{instance}
-	target := serving.SchedulerCandidate{ID: "wait-ready", Instances: []serving.SchedulerInstance{instance},
-		Routing: map[string]map[string]int32{"w": {instance.ID: 1}},
-		Actions: []serving.Action{{ID: "route", Kind: operationRoute}}}
-	config := SchedulerControllerConfig{OnAction: func(OperationResult) error { return context.Canceled }}
-	c.launch(target, config)
-	if len(c.runs) != 0 || len(c.reservationsLocked(c.state.Snapshot)) != 0 {
-		t.Fatal("blocked route acquired an owner")
+func TestRouteAdmissionAppliesReadySurvivorSubsetS3b(t *testing.T) {
+	c, prepared := tickReadySubsetController(t, func(index int, state *native.State) {
+		if index == 0 {
+			state.Ready = false
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c.ctx = ctx
+	c.runtime.EnableSchedulerRouting()
+	prepared.Store(true)
+	snapshot, err := c.capture(ctx, time.Now(), c.config)
+	if err != nil {
+		t.Fatal(err)
 	}
-	c.state.Snapshot.Instances[0].Ready = true
-	c.launch(target, config)
+	a, b := snapshot.Instances[0], snapshot.Instances[1]
+	uid := snapshot.Workloads[0].UID
+	a.WorkloadUID, b.WorkloadUID = uid, uid
+	if a.Ready || !b.Ready {
+		t.Fatalf("expected NotReady A and Ready survivor B: %+v", snapshot.Instances)
+	}
+	target := serving.SchedulerCandidate{ID: "route-only-recovery", Instances: []serving.SchedulerInstance{a, b},
+		Routing: map[string]map[string]int32{uid: {a.ID: 500, b.ID: 500}},
+		Actions: []serving.Action{{ID: "route", Kind: operationRoute}}}
+	c.state.Snapshot = snapshot
+	c.launch(target, c.config)
 	c.wg.Wait()
-	if c.runs[transitionRunKind+"/"+target.ID] == nil || c.runs["route"] == nil {
-		t.Fatal("Ready route was not replanned and admitted")
+	if c.runs[transitionRunKind+"/"+target.ID] == nil || c.runs["route"] != nil {
+		t.Fatal("route-only recovery was not admitted while its full route waited")
+	}
+	var subset *actionRun
+	for _, run := range c.runs {
+		if run.action.From == readySubsetRoute {
+			subset = run
+		}
+	}
+	if subset == nil || subset.action.Status != nativeOperationComplete || subset.result.Actual.Routing[uid][b.ID] != 1000 ||
+		subset.result.Actual.Routing[uid][a.ID] != 0 {
+		t.Fatalf("Ready survivor did not receive an acknowledged subset: %+v", subset)
 	}
 }
 
