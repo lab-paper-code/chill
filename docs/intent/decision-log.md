@@ -275,3 +275,8 @@
 - 탐색 예산(`local://search-budget.md`): 실험 decision의 62%가 wall-clock BudgetCut이고, 인위적으로 멈추면 결정이 바뀌는 것을 확인(비결정성). 다만 11/12 분기는 30초 무절단 탐색에서도 유지되므로 그 분기의 원인은 아님. 후순위로 평가 수 기준 예산 검토.
 - 디스크: BuildKit 자체 GC로 chill-builder 캐시를 20GB로 제한(`bd7dc822`). 가용 509GB.
 - 다음: capacityWeights를 항상 κ 비례(동일 ρ)로 바꾸고 에너지 순 채움은 삭제하는 방향으로 패널 검토 중.
+
+## 2026-10-31 — control-275 배포, weight 비례화 착수
+
+- 13:11Z control-275: server와 dashboard를 `8a696dc3`(7788ce14 포함, 조언 세션 요청)으로 배포. 두 Pod 모두 restart 0, dashboard 응답 200. 게이트: 리플레이 PASS(기준 61987770), clean lint/test/arch/helm PASS. dashboard 테스트는 작업 트리에서 175/0. clean 사본에서만 2건 실패했는데 환경 문제로 추정. 새 builder 캐시는 3.8GB(GC 설정 동작 중).
+- weight 비례화 패널 2/2 합의: capacityWeights의 에너지 순 채움 삭제, y는 최종 정수 weight로 계산, capacityEnergyLoad의 greedy 분기 삭제, carries/currentWeights 삭제. κ 비례는 SLO 정규화 부하의 minimax임(max λᵢ/κᵢ ≥ λ/Σκ). M/M/1 지연 최적은 아니지만 κ가 이미 장치별 SLO 무릎이라 타당함. 구현 진행 중(ImplWeights). fail-before 확인: 3m-12 결과가 기존 [138 359 216 287], 기대 [114 296 178 412].
