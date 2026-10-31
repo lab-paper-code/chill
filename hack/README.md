@@ -402,7 +402,7 @@ upload private raw evidence first through the existing PutImmutable bridge, then
 the final `serving/experiments.v1alpha1/ID/summary.json`. Existing IDs cannot be
 overwritten; corrections require a new ID. `native_mode_request.py` remains the
 separately approved baseline-preparation path, not cleanup sequencing.
-예정 대체: 현재 E5/demo의 실행·게시 수단은 유지하되, [실험 실행 설계](../docs/design/profiling/experiment-execution.md) / [실험 SRS](../docs/spec/experiments/SRS.md)에 따른 독립 실행으로 대체할 예정이다. 과거 게시·평가 기록은 바꾸지 않는다.
+과거 게시·평가 기록은 바꾸지 않는다.
 `native_mode_request.py` consumes the explicit native-mode `--release` and
 `--out`. `sample_cgroups.py` consumes an external host inventory plus
 `--duration`, `--phase` and `--out`. The `smoke_*.py` scripts exercise retained
