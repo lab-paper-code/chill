@@ -211,8 +211,10 @@ test("rejected preflight points to exact repair fields instead of generic permis
   assert.equal(requestRejectionGuidance("future unknown rejection"),null)
   assert.deepEqual(requestOperationalSummary(undefined),{servingImpact:null,estimatedDurationSeconds:null})
   const answer={resolves:true,campaign:{spec:plan.spec},batchPlan:{plannedBatches:[1,2]}}
-  assert.deepEqual(requestOperationalSummary(answer),{servingImpact:null,estimatedDurationSeconds:132})
-  assert.equal(requestOperationalSummary({...answer,campaign:{spec:{...plan.spec,activeProtocol:{...plan.spec.activeProtocol,warmupIterations:500}}}}).estimatedDurationSeconds,132)
+  assert.deepEqual(requestOperationalSummary(answer),{servingImpact:null,estimatedDurationSeconds:96})
+  assert.equal(requestOperationalSummary({...answer,campaign:{spec:{...plan.spec,activeProtocol:{...plan.spec.activeProtocol,warmupIterations:500}}}}).estimatedDurationSeconds,96)
+  assert.equal(requestOperationalSummary({...answer,batchPlan:{plannedBatches:[1]}}).estimatedDurationSeconds,66)
+  assert.equal(requestOperationalSummary({...answer,batchPlan:{plannedBatches:[1,2,4]}}).estimatedDurationSeconds,126)
   assert.equal(requestOperationalSummary({...answer,campaign:{spec:{...plan.spec,idleProtocol:{durationSeconds:10}}}}).estimatedDurationSeconds,null)
   assert.equal(requestOperationalSummary({...answer,batchPlan:{plannedBatches:[]}}).estimatedDurationSeconds,0)
   assert.equal(requestOperationalSummary({...answer,resolves:false}).estimatedDurationSeconds,null)

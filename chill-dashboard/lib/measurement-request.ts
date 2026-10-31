@@ -115,7 +115,7 @@ export function requestOperationalSummary(answer?:unknown,pools?:unknown) {
   // Warmup is an iteration count, not seconds. Only timed request intervals form this lower bound.
   const intervals=[active,idle,settling],trials=spec?.trialsPerBatch
   const known=value?.resolves===true&&batches&&trials!==undefined&&Number.isSafeInteger(trials)&&trials>0&&intervals.every(seconds=>typeof seconds==="number"&&Number.isFinite(seconds)&&seconds>=0)
-  const seconds=known?batches.length*trials*intervals.reduce<number>((sum,seconds)=>sum+seconds!,0):null
+  const seconds=known?(batches.length?trials*(batches.length*active!+settling!+idle!):0):null
   const view=pools as {workloads?:{workload:{uid:string};instances?:{node:{name:string};stopped:boolean}[]|null}[]|null;issues?:unknown[]|null}|undefined
   const servingImpact=value?.resolves===true&&spec?.state.targetNode&&view&&Array.isArray(view.workloads)&&!view.issues?.length&&view.workloads.every(pool=>Array.isArray(pool.instances))
     ?new Set(view.workloads.filter(pool=>pool.instances!.some(instance=>!instance.stopped&&instance.node.name===spec.state.targetNode)).map(pool=>pool.workload.uid)).size:null
