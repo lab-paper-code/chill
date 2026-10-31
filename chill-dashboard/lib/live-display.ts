@@ -83,7 +83,7 @@ export function workloadQueue(workload:LiveWorkload,instances:LiveInstance[]):nu
 }
 export function sloTargetMissed(workload:LiveWorkload,metric:LiveMetric|undefined):boolean {
   const n=terminalCount(metric)
-  return !!metric && n!=null && n>0 && metric.withinSLO/n*100<workload.slo.percentile
+  return !!metric && metric.received>0 && n!=null && n>0 && metric.withinSLO/n*100<workload.slo.percentile
 }
 /** Smaller ranks appear first. Missing measurements are not idle. */
 export function servicePriority(workload:LiveWorkload,metric:LiveMetric|undefined,changes:number,queued=workload.pending):number {
@@ -118,13 +118,13 @@ export function minuteMetrics(metrics:LiveMetrics[],uid:string,end:number):LiveM
 export function boardVerdict({fresh,terminals,failed,sloMisses,queued,changes,delayed,serving,off,total,admissionBlocked,received=0,declared=serving,unserved=0}:{fresh:boolean;terminals:number|undefined;failed:number|undefined;sloMisses:number;queued:number;changes:number;delayed:number;serving:number;off:number;total:number;admissionBlocked:boolean;received?:number;declared?:number;unserved?:number}) {
   if (!currentObservation(fresh,terminals)) return {label:"데이터 끊김",tone:"unknown",reason:"최신 관측을 기다려요. 마지막 수치를 현재 상태로 판단하지 마세요"}
   if ((failed??0)>0 || admissionBlocked || unserved>0 || (!serving&&(received>0||queued>0))) return {label:"이상: 요청 처리 확인 필요",tone:"danger",reason:`실패 ${failed??0}건 / 유입 있으나 서빙 없음 ${unserved}개 / 접수 거절 ${admissionBlocked?"있음":"없음"}. 서비스 상세에서 확인하세요`}
-  if (!serving && total>0 && off===total && declared===0 && received===0 && queued===0 && changes===0 && delayed===0) return {label:"정지 중",tone:"unknown",reason:"근거: 자동제어 설정 / 정지 의도·책임자·복구 시점: 미제공"}
+  if (!serving && declared===0 && received===0 && queued===0 && changes===0 && delayed===0) return {label:"평가 불가",tone:"unknown",reason:"유입·종결 표본 없음. 자동제어와 배치는 별도 상태이며 정지 사유는 미제공"}
   if (!serving) return {label:"이상: 서빙 준비 확인",tone:"warning",reason:`서빙 인스턴스 0 / 선언 ${declared}개 / 자동제어 꺼짐 ${off}/${total}. 구성·진행 중 변경을 확인하세요`}
   if (sloMisses>0) return {label:"SLO 위반",tone:"danger",reason:`목표 미달 서비스 ${sloMisses}개를 확인하세요`}
   if (delayed>0) return {label:"정체",tone:"danger",reason:`예상 대비 지연 ${delayed}건. 종결 미확인으로 실제 상태 확인이 필요해요`}
   if (changes>0) return {label:"진행",tone:"warning",reason:`구성 변경 ${changes}건이 진행 중이에요`}
   if (queued>0) return {label:"주의",tone:"warning",reason:"배정 전·후 대기 요청을 확인하세요"}
-  if (terminals===0) return {label:"표본 없음",tone:"unknown",reason:"종결 표본이 없어 SLO를 판정할 수 없어요"}
+  if (terminals===0) return {label:"평가 불가",tone:"unknown",reason:"종결 표본이 없어 SLO를 판정할 수 없어요"}
   return {label:"정상",tone:"healthy",reason:"종결 응답 기준으로 서비스 SLO 목표를 충족해요"}
 }
 export function decisionText(decision:LiveDecision|null|undefined):string {
@@ -160,7 +160,7 @@ export function serviceDevices(snapshot:LiveSnapshot,uid:string) {
 }
 
 export function sloLatency(workload:LiveWorkload,metric:LiveMetric|undefined):number|null|undefined {
-  if (!metric || !metric.latencySamples) return null
+  if (!metric || metric.received===0 || !metric.latencySamples) return null
   switch(workload.slo.percentile) {
     case 50:return metric.p50ms
     case 90:return metric.p90ms
@@ -169,19 +169,41 @@ export function sloLatency(workload:LiveWorkload,metric:LiveMetric|undefined):nu
     default:return undefined
   }
 }
+/** Merge touching half-open buckets by scope; recovery requires a later valid observation. */
+export function gapEpisodes(gaps:LiveState["gaps"],now:number,metrics:LiveMetrics[]=[]) {
+  const merged:LiveState["gaps"]=[]
+  for(const gap of gaps.filter(row=>Date.parse(row.from)<=now).sort((a,b)=>a.scope.localeCompare(b.scope)||compareAt(a.from,b.from))) {
+    const previous=merged.at(-1)
+    if(previous?.scope===gap.scope&&compareAt(gap.from,previous.to)<=0) {
+      if(compareAt(gap.to,previous.to)>0)previous.to=gap.to
+    } else merged.push({...gap})
+  }
+  return merged.map(gap=>{
+    const recovered=metrics.some(row=>Date.parse(row.bucketAt)>=Date.parse(gap.to)&&Date.parse(row.bucketAt)<=now&&(gap.scope.startsWith("node:")?row.nodes[gap.scope.slice(5)]?.watts!=null:gap.scope.startsWith("workload:")?!!row.workloads[gap.scope.slice(9)]:gap.scope==="workloads"?Object.keys(row.workloads).length>0:true))
+    return {...gap,seconds:Math.max(0,(Date.parse(gap.to)-Date.parse(gap.from))/1000),recovered}
+  })
+}
+export function lastPowerSample(metrics:LiveMetrics[]) {
+  for(let index=metrics.length-1;index>=0;index--)if(metrics[index].pool.wholeWatts!=null)return metrics[index]
+}
+export function liveReason(reason:string|null|undefined):string {
+  if(!reason)return "미제공"
+  const labels:Record<string,string>={ExcludedNode:"제외 노드",Keep:"유지","power sample unavailable":"전력 표본 누락","resume history unavailable":"재연결 기록 공백","event history limit":"사건 보관 한도",Disabled:"자동제어 꺼짐",NotReady:"준비 안 됨",Ready:"준비됨"}
+  return labels[reason]??(/[a-zA-Z]/.test(reason)?"기타 사유":reason)
+}
 export function retainedEvents(events:LiveEvent[],now:number,keep=false):LiveEvent[] {
   return events.filter(event=>Date.parse(event.at)<=now&&(keep||event.kind!=="decision"||event.decision.state!=="Keep")).slice(-30)
 }
 
-export function incidentFlow(events:LiveEvent[],gaps:LiveState["gaps"],now:number,keep=false) {
+export function incidentFlow(events:LiveEvent[],gaps:LiveState["gaps"],now:number,keep=false,metrics:LiveMetrics[]=[]) {
   const incidents=[
     ...mergeKeepEvents(retainedEvents(events,now,keep)).map(row=>({kind:"event" as const,at:row.event.at,key:`event:${row.event.seq}`,...row})),
-    ...gaps.filter(gap=>Date.parse(gap.from)<=now).map(gap=>({kind:"gap" as const,at:gap.from,key:`gap:${gap.scope}:${gap.from}:${gap.reason}`,gap})),
+    ...gapEpisodes(gaps,now,metrics).filter(gap=>!gap.recovered||gap.seconds>=5).map(gap=>({kind:"gap" as const,at:gap.from,key:`gap:${gap.scope}:${gap.from}:${gap.reason}`,gap})),
   ]
   return incidents.sort((a,b)=>compareAt(b.at,a.at)||(b.kind==="event"?b.event.seq:0)-(a.kind==="event"?a.event.seq:0)).slice(0,30)
 }
-/** The badge counts only incidents present in the same rendered list. Keep is a separate heartbeat. */
-export function incidentSummary(events:LiveEvent[],gaps:LiveState["gaps"],now:number) {
-  const rows=incidentFlow(events,gaps,now),decisions=events.filter(row=>Date.parse(row.at)<=now).filter(row=>row.kind==="decision")
-  return {rows,newCount:rows.filter(row=>Date.parse(row.at)>=now-30000).length,keeps:decisions.filter(row=>row.decision.state==="Keep").length,lastDecision:decisions.at(-1)}
+/** The badge counts only incidents present in the same rendered list. */
+export function incidentSummary(events:LiveEvent[],gaps:LiveState["gaps"],now:number,metrics:LiveMetrics[]=[]) {
+  const rows=incidentFlow(events,gaps,now,false,metrics),decisions=events.filter(row=>Date.parse(row.at)<=now).filter(row=>row.kind==="decision")
+  return {rows,newCount:rows.filter(row=>Date.parse(row.at)>=now-30000).length,lastDecision:decisions.at(-1)}
 }

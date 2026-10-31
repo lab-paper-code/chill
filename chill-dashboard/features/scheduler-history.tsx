@@ -8,7 +8,8 @@ import { useChillQuery, useSession, type ApiError } from "@/lib/client"
 import type { SchedulerObservation, SchedulerObservationPage, SchedulerObservationSummary, SchedulerObservationSummaryPage } from "@/lib/read-types"
 import { parseSchedulerJSON, nanosToMilliseconds } from "@/lib/scheduler"
 import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerHistoryKindMatches, type SchedulerRecordRef } from "@/lib/scheduler-history"
-import { gapNotice, localDateTime, utcDateTime } from "@/lib/date-time"
+import { gapNotice, utcDateTime } from "@/lib/date-time"
+import { displayTime, liveReason } from "@/lib/live-display"
 import { SnapshotDetails, CandidateDetails, judgmentLabels, actionKinds, actionStatuses, actionNodeName } from "@/features/scheduler"
 import { SettingChanges } from "@/features/scheduler-settings"
 import { QueryGate, SourceJSON, SourceExport, statusLabel } from "@/components/read-region"
@@ -25,8 +26,8 @@ export type SchedulerHistoryQuery<T extends SchedulerObservationSummary=Schedule
 }
 const kinds:Record<string,string>={decision:"운영 판단",snapshot:"실제 구성",settings:"운영 설정 변경",action:"변경 동작",power:"전력 측정",other:"기타 기록"}
 const historyFilters:Record<string,string>={all:"모든 종류","decision-action":"판단·전환 기록",...kinds}
-// Shared by the record screens: readable local time, and a person instead of a service account path.
-export const when=(value?:string)=>!value||value.startsWith("0001-")||!Number.isFinite(Date.parse(value))?"정보 없음":new Date(value).toLocaleString("ko-KR",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit"})
+// Shared record timestamps use the same 24-hour KST clock as the live board.
+export const when=(value?:string)=>!value||value.startsWith("0001-")||!Number.isFinite(Date.parse(value))?"정보 없음":`${new Intl.DateTimeFormat("ko-KR",{timeZone:"Asia/Seoul",month:"numeric",day:"numeric"}).format(new Date(value))} ${displayTime(value,"KST")}`
 export const actorName=(name?:string)=>name?.startsWith("system:serviceaccount:")?name.split(":").at(-1)!:name??"기록 없음"
 
 export function useSchedulerHistory():SchedulerHistoryQuery
@@ -57,11 +58,12 @@ export function useSchedulerHistory(view?:"summary"):SchedulerHistoryQuery|Sched
 // The window filter as one row; extra filter rows of the same screen go in `children`.
 export function HistoryControls({history,children}:{history:SchedulerHistoryQuery<SchedulerObservationSummary>;children?:React.ReactNode}){
   const [open,setOpen]=React.useState(false)
+  const inputTimes=[history.draft.from,history.draft.to].map(value=>{const time=Date.parse(value);return Number.isFinite(time)?new Date(time+9*3600000).toISOString().slice(0,16):""})
   return <Rows label="조회 조건">
     <RowDialog open={open} onOpenChange={next=>{setOpen(next);if(next)history.setDraft(history.submitted)}} label="기간" value={`${when(history.submitted.from)} – ${when(history.submitted.to)}`} title="조회 기간" description="시작 시각부터 끝 시각 직전까지의 기록을 보여드려요.">
       <form noValidate className="grid gap-4" onSubmit={event=>{event.preventDefault();if(history.apply())setOpen(false)}}>
-        <label className="grid gap-1.5">시작<Input type="datetime-local" value={localDateTime(history.draft.from)} onChange={event=>{const from=utcDateTime(event.currentTarget.validity.valid?event.currentTarget.value:"");history.setDraft(current=>({...current,from}))}}/></label>
-        <label className="grid gap-1.5">종료<Input type="datetime-local" value={localDateTime(history.draft.to)} onChange={event=>{const to=utcDateTime(event.currentTarget.validity.valid?event.currentTarget.value:"");history.setDraft(current=>({...current,to}))}}/></label>
+        <label className="grid gap-1.5">시작 KST<Input type="datetime-local" value={inputTimes[0]} onChange={event=>{const value=event.currentTarget.validity.valid?event.currentTarget.value:"",from=utcDateTime(value?`${value}+09:00`:"");history.setDraft(current=>({...current,from}))}}/></label>
+        <label className="grid gap-1.5">종료 KST<Input type="datetime-local" value={inputTimes[1]} onChange={event=>{const value=event.currentTarget.validity.valid?event.currentTarget.value:"",to=utcDateTime(value?`${value}+09:00`:"");history.setDraft(current=>({...current,to}))}}/></label>
         <label className="grid gap-1.5">한 번에 볼 기록 수<Input type="number" min={1} max={history.maxPageSize} value={Number.isFinite(history.limit)?history.limit:""} onChange={event=>history.setLimit(Number(event.target.value))}/></label>
         {history.validation&&<p role="alert">{history.validation}</p>}
         <Button type="submit">이 기간으로 보기</Button>
@@ -78,23 +80,22 @@ function RecordDetails({row}:{row:SchedulerHistoryRow}){
   const event=row.event,decision=event.decision,snapshot=event.snapshot
   const view=decision&&snapshot?{settings:decision.settings,state:{decision,snapshot,actions:snapshot.actions,results:null}}:null
   return <div className="space-y-4 [&_dd]:break-all">
-    <Facts items={[["종류",kinds[row.ref.kind]??row.ref.kind],["사건 시각",event.at],["보관 순서",row.ref.offset]]}/>
+    <Facts items={[["종류",kinds[row.ref.kind]??"기타 기록"],["사건 시각 KST",when(event.at)],["보관 순서",row.ref.offset]]}/>
     {decision&&<>
-      <h3 className="font-semibold">판단: {judgmentLabels[decision.status]??statusLabel(decision.status)}</h3>
-      <Facts items={[["판단 시각",decision.at],["자동 제어 서비스",`${decision.settings.autonomousWorkloads?.length??0}개`],["입력 관측 구간",`${decision.search.windowStart} ~ ${decision.search.windowEnd}`],["모집단",decision.search.population],["에너지 비교 기간",decision.capacity?`${nanosToMilliseconds(decision.capacity.periodNanos)} ms`:"기록 없음"]]}/>
-      <p>{decision.reasons?.join(", ")||"제공된 판단 사유가 없어요."}</p>
+      <h3 className="font-semibold" title={decision.status}>판단: {judgmentLabels[decision.status]??"판단 미확인"}</h3>
+      <Facts items={[["판단 시각 KST",when(decision.at)],["자동제어 서비스",`${decision.settings.autonomousWorkloads?.length??0}개`],["입력 관측 KST",`${when(decision.search.windowStart)} ~ ${when(decision.search.windowEnd)}`],["에너지 비교 기간",decision.capacity?`${nanosToMilliseconds(decision.capacity.periodNanos)} ms`:"기록 없음"],["사유",decision.reasons?.length?decision.reasons.map(reason=><span key={reason} title={reason}>{liveReason(reason)} </span>):"미제공"]]}/>
       {view?<><details><summary>유지안 근거</summary><CandidateDetails candidate={decision.keep} view={view}/></details>{decision.target&&<details><summary>선택 목표 근거</summary><CandidateDetails candidate={decision.target} view={view}/></details>}</>:<p>같은 기록에 실제 구성이 없어요. 후보 원본은 아래 원본에서 확인해요.</p>}
     </>}
     {snapshot&&<details><summary>기록의 실제 구성</summary><SnapshotDetails snapshot={snapshot}/></details>}
     {event.settings&&<>
       <h3 className="font-semibold">설정 변경</h3>
-      <Facts items={[["담당자",`${event.settings.actorUsername} / ${event.settings.actorUID}`],["검증",event.settings.validatedAt],["실행 환경 적용",event.settings.appliedAt??"제공 없음"],["마지막 관측 노드",event.settings.affected?.map(node=>`${node.name} (${node.uid})`).join(", ")||"없음"]]}/>
+      <Facts items={[["담당자",actorName(event.settings.actorUsername)],["검증 KST",when(event.settings.validatedAt)],["실행 환경 적용 KST",when(event.settings.appliedAt)],["마지막 관측 노드",event.settings.affected?.map(node=>node.name||"이름 미제공").join(", ")||"없음"]]}/>
       {event.settings.error&&<p role="alert">{event.settings.error}</p>}
       <SettingChanges before={event.settings.before} after={event.settings.after} stored/>
       <p className="text-sm text-muted-foreground">설정 저장과 실제 물리 전환은 따로 일어나요.</p>
     </>}
     {event.action&&<>
-      <Facts items={[["동작",actionKinds[event.action.kind]??event.action.kind],["노드",actionNodeName(event.action.node)],["단계",actionStatuses[event.action.phase]??event.action.phase],["시작",event.action.startedAt],["완료",event.action.completedAt??"제공 없음"]]}/>
+      <Facts items={[["동작",actionKinds[event.action.kind]??"구성 변경"],["노드",actionNodeName(event.action.node)],["단계",actionStatuses[event.action.phase]??"미확인"],["시작 KST",when(event.action.startedAt)],["완료 KST",when(event.action.completedAt)]]}/>
       <Link href={`/transitions/${encodeURIComponent(event.action.id)}?${schedulerRecordParams(row.ref)}`}>이 변경 동작 자세히 보기</Link>
     </>}
     {(event.power||event.powerError||event.powerJoules!==undefined)&&<Link href={`/scheduler/power?${schedulerRecordParams(row.ref)}`}>이 전력 측정 자세히 보기</Link>}
@@ -139,8 +140,8 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
       <table className="w-full table-fixed text-sm"><thead><tr><th>정렬</th><th>범위</th><th>종류</th><th>현재 페이지 기록 수</th></tr></thead><tbody><tr><td>{params.get("order")==="desc"?"최신순":"저장순"}</td><td>{params.get("uid")?"선택 서비스":"클러스터 전체"}</td><td>{historyFilters[filter]??filter}</td><td className="text-right tabular-nums">{rows.length}</td></tr></tbody></table>
       {rows.length?<Rows label="기록">{rows.map(row=>{
         const ev=row.event,mark=[same(a,row)&&"A",same(b,row)&&"B"].filter(Boolean).join(" · ")
-        return <Row key={row.ref.offset} label={ev.decision?judgmentLabels[ev.decision.status]??statusLabel(ev.decision.status):ev.action?actionKinds[ev.action.kind]??kinds.action:kinds[row.ref.kind]??kinds.other}
-          hint={`${when(ev.at)}${ev.decision?` · ${ev.decision.status}`:ev.settings?` · ${actorName(ev.settings.actorUsername)}`:ev.action?` · ${actionNodeName(ev.action.node)}`:ev.node?` · ${ev.node.name}`:""}`}
+        return <Row key={row.ref.offset} label={<span title={ev.decision?.status??ev.action?.kind}>{ev.decision?judgmentLabels[ev.decision.status]??"판단 미확인":ev.action?actionKinds[ev.action.kind]??kinds.action:kinds[row.ref.kind]??kinds.other}</span>}
+          hint={`${when(ev.at)}${ev.settings?` / ${actorName(ev.settings.actorUsername)}`:ev.action?` / ${actionNodeName(ev.action.node)}`:ev.node?` / ${ev.node.name}`:""}`}
           value={mark||(ev.settings?ev.settings.error?"실패":ev.settings.appliedAt?"적용됨":"검증됨":ev.action?actionStatuses[ev.action.phase]??statusLabel(ev.action.phase):undefined)}
           onClick={()=>{opener.current=document.activeElement as HTMLElement|null;select(row)}}/>
       })}</Rows>:<Empty title={settingsOnly?"이 기간에는 운영 설정 변경이 없어요":filter==="decision-action"?"가져온 기록에 판단·전환 기록이 없어요":"보여줄 기록이 없어요"}>{history.query.data?.nextCursor&&<p>다음 기록에 더 있을 수 있어요.</p>}</Empty>}

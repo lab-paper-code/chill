@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { LiveAction, LiveInstance, LiveMetric, LiveMetrics, LiveSnapshot, LiveWorkload } from "./live.ts"
 import { changeListStatus, serviceTrafficState, actionProgress, actionOrigin, scopeSnapshot, scopeEvents, recentEvents, liveFresh, belongsToPool, displayNumber, duration, elapsed, instanceSymbol, isStale, ratio, receivedLabel, routingShare, terminalCount, workloadLabel, workloadQueue, servicePriority, mergeKeepEvents, trendSegments, boardVerdict, decisionText } from "./live-display.ts"
-import { retainedEvents, sloLatency, minuteMetrics, incidentFlow, incidentSummary, serviceRows, powerBreakdown } from "./live-display.ts"
+import { retainedEvents, sloLatency, minuteMetrics, incidentFlow, incidentSummary, serviceRows, powerBreakdown, gapEpisodes, lastPowerSample, liveReason, displayTime } from "./live-display.ts"
 
 const at="2026-10-30T12:00:00.123456789Z",now=Date.parse(at)
 const instance:LiveInstance={id:"shared",node:{uid:"n",name:"Node"},ownerWorkloadUID:"a",profileID:"p",ready:true,stopped:false,routable:{a:true,b:true},running:{a:1,b:0},waiting:{a:0,b:2},observedAt:at}
@@ -85,7 +85,7 @@ test("verdict prioritizes lost data, zero serving, SLO, delayed changes, progres
   assert.equal(boardVerdict({...input,delayed:1,changes:1}).label,"정체")
   assert.equal(boardVerdict({...input,changes:1}).label,"진행")
   assert.equal(boardVerdict(input).label,"정상")
-  assert.equal(boardVerdict({...input,terminals:0}).label,"표본 없음")
+  assert.equal(boardVerdict({...input,terminals:0}).label,"평가 불가")
 })
 test("only consecutive unchanged Keep events merge; changes remain independently visible",()=>{
   const decision=(seq:number,reason="")=>({type:"event" as const,kind:"decision" as const,seq,at,decision:{at,state:"Keep",reason,explanation:""}})
@@ -166,15 +166,12 @@ test("missing metrics are awaiting observation, never observed zero traffic",()=
   assert.equal(serviceTrafficState(metric),"활동 중")
 })
 
-test("stopped automation is neutral and never asserts a planned intention",()=>{
+test("automation, placement and traffic never collapse into a stopped verdict",()=>{
   const input={fresh:true,terminals:0,failed:0,sloMisses:0,queued:0,changes:0,delayed:0,serving:0,off:2,total:2,admissionBlocked:false,received:0,declared:0,unserved:0}
-  assert.equal(boardVerdict(input).label,"정지 중")
+  assert.equal(boardVerdict(input).label,"평가 불가")
   assert.equal(boardVerdict(input).tone,"unknown")
-  assert.match(boardVerdict(input).reason,/책임자·복구 시점: 미제공/)
   assert.match(boardVerdict({...input,received:1,unserved:1}).label,/^이상:/)
   assert.match(boardVerdict({...input,failed:1}).label,/^이상:/)
-  assert.notEqual(boardVerdict({...input,declared:1}).label,"정지 중")
-  assert.notEqual(boardVerdict({...input,off:1}).label,"정지 중")
 })
 
 test("latency uses the exact SLO percentile and retained events outlive the new-event window",()=>{
@@ -203,7 +200,6 @@ test("board counters and timeline share one retained view across desktop and 390
   const events=Array.from({length:32},(_,seq)=>({type:"event" as const,kind:"decision" as const,seq,at,decision:{at,state:"Keep",reason:"",explanation:""}}))
   const gaps=Array.from({length:35},(_,i)=>({from:new Date(now-i).toISOString(),to:at,scope:`node:${i}`,reason:"power sample unavailable"}))
   const desktop=incidentSummary(events,gaps,now),mobile=incidentSummary(events,gaps,now)
-  assert.equal(desktop.keeps,32)
   assert.equal(desktop.newCount,desktop.rows.filter(row=>Date.parse(row.at)>=now-30000).length)
   assert.deepEqual(mobile,desktop)
   assert.equal(desktop.rows.some(row=>row.kind==="event"&&row.event.kind==="decision"&&row.event.decision.state==="Keep"),false)
@@ -224,4 +220,41 @@ test("power remainder uses the same bucket and never invents missing node power"
   assert.equal(powerBreakdown(["a"],{...metrics,nodes:{a:{watts:null,observedAt:null}}}).other,null)
   assert.equal(powerBreakdown(["a"],{...metrics,pool:{...metrics.pool,wholeWatts:null}}).other,null)
   assert.equal(powerBreakdown(["a"],{...metrics,pool:{...metrics.pool,wholeWatts:30}}).other,null)
+})
+test("contiguous device gaps form one incident rather than one incident per second",()=>{
+  const time=(seconds:number)=>new Date(now+seconds*1000).toISOString()
+  const gaps=Array.from({length:6},(_,i)=>({from:time(i),to:time(i+1),scope:"node:n",reason:"power sample unavailable"}))
+  const flow=incidentFlow([],gaps,now+6000)
+  assert.equal(flow.length,1)
+  assert.equal(flow[0].kind,"gap")
+  if(flow[0].kind==="gap")assert.equal(flow[0].gap.to,time(6))
+})
+test("only recovered short gaps leave the flow; completeness keeps the original intervals",()=>{
+  const time=(seconds:number)=>new Date(now+seconds*1000).toISOString()
+  const gaps=[{from:time(0),to:time(1),scope:"node:n",reason:"power sample unavailable"},{from:time(1),to:time(3),scope:"node:n",reason:"power sample unavailable"},{from:time(0),to:time(6),scope:"node:other",reason:"power sample unavailable"}]
+  const metrics:LiveMetrics[]=[{type:"metrics",seq:1,at:time(6),bucketAt:time(6),workloads:{},nodes:{n:{watts:0,observedAt:time(6)},other:{watts:10,observedAt:time(6)}},pool:{wholeWatts:10,activeWatts:0}}]
+  const episodes=gapEpisodes(gaps,now+7000,metrics)
+  assert.deepEqual(episodes.map(row=>[row.scope,row.seconds,row.recovered]),[["node:n",3,true],["node:other",6,true]])
+  assert.equal(incidentFlow([],gaps,now+7000,false,metrics).length,1)
+  assert.equal(incidentSummary([],gaps,now+7000,metrics).newCount,1)
+  assert.equal(gaps[0].to,time(1))
+  assert.equal(gapEpisodes(gaps,now+7000,[])[0].recovered,false)
+  assert.equal(gapEpisodes(gaps,now+5000,metrics)[0].recovered,false)
+  assert.equal(gapEpisodes(gaps,now+7000,[{...metrics[0],nodes:{other:metrics[0].nodes.other}}])[0].recovered,false)
+})
+test("power retains the last valid whole-pool bucket including observed zero",()=>{
+  const sample:LiveMetrics={type:"metrics",seq:1,at,bucketAt:at,workloads:{},nodes:{},pool:{wholeWatts:0,activeWatts:0}}
+  const missing={...sample,seq:2,pool:{wholeWatts:null,activeWatts:null}}
+  assert.equal(lastPowerSample([sample,missing]),sample)
+  assert.equal(lastPowerSample([missing]),undefined)
+  assert.equal(lastPowerSample([]),undefined)
+})
+test("zero arrivals cannot claim an SLO result and product reasons use Korean labels",()=>{
+  assert.equal(sloLatency(workload,{...metric,received:0}),null)
+  assert.equal(liveReason("ExcludedNode"),"제외 노드")
+  assert.equal(liveReason("Keep"),"유지")
+  assert.equal(liveReason(""),"미제공")
+  assert.equal(liveReason("UnregisteredCode"),"기타 사유")
+  assert.equal(displayTime("2026-10-30T15:02:03Z","KST"),"00:02:03 KST")
+  assert.equal(displayTime(at,"KST"),"21:00:00 KST")
 })
