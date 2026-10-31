@@ -170,3 +170,9 @@
 - ponytail 수정요구 5건(−34줄): returnProofParent/frozenActionParent 재탐색 삭제, releaseObservedScopes terminal 중복, ApplySchedulerWorkloadsTarget UID 중복 검사, scheduledOperation RouteTarget 재선택, operations.go 불가능 fallback. 전환·예약 가드 전체 표는 `agent://ReviewPonytail`(2단계 입력).
 - 조치: F1/F2/F3은 **새 가드 없이** 기존 실패 전파·handoff 소비 경계 수정(덧대기 금지 준수) → 최소 커밋 서브에이전트 → 리뷰 2종 → 리플레이 게이트. 배포 중인 HEAD는 7회차와 동일 코드(기준)이므로 유지.
 - 배포(control-266): 서버만 `4626dc8c`(= 7회차 d4a933bf 동작 + 사이클 7 A + 리플레이 게이트). round.py는 prebuilt publication 전제라 publication 생성은 기존 fast-deploy 경로(빌드+publish)로 Main이 직접 수행; 이후 라운드는 round.py가 그 publication을 소비. 관찰: ops 에이전트 2회 연속 환경/전제 누락 STOP → 규칙 5에 따라 Main 직접 실행.
+
+## 2026-10-31 — 리뷰 복구 수정 배포(control-267 dashboard, control-268 server = b0877c1e)
+
+- 수정 체인(모두 최소 커밋 + 정식·ponytail 리뷰 PASS + 리플레이 게이트 PASS(기준 4626dc8c) + clean Go gate): F1 `7370665d`, F2 `70d1bd76`+`41275915`, F3 `19162c20`, 다단 bridge `922ff34d`+`0e171b06`+`b0877c1e`, late-ack 회귀 `694f6ed0`, StartedAt `1e9aaf7e`(조언 세션), ponytail 삭제 `9ebc5f17`(−26)·`3a6c5e91`(−27). 새 가드·예외 없음(리뷰 확인).
+- live: server·dashboard 모두 `b0877c1e`, restart 0. 07:10Z부터 20~30분 클러스터 무변경(조언 세션 재설문).
+- 다음: 점수판 정의 → 기준 측정 1회(미니 행, round.py) → 2단계 구조 검토(ponytail 가드 표 입력).
