@@ -138,7 +138,7 @@ export function boardVerdict(rows:ServiceRow[],fresh:boolean,ongoingGap:boolean,
   const caution=rows.find(row=>row.status.tone==="warning")
   if(caution)return {label:"주의",tone:"warning",reason:caution.status.reason}
   if(rows.some(row=>row.status.label==="정상"))return {label:"정상",tone:"healthy",reason:"SLO 충족"}
-  if(rows.length&&rows.every(row=>row.metric?.received===0))return {label:"무부하",tone:"unknown",reason:"유입 없음"}
+  if(rows.length&&rows.every(row=>row.metric?.received===0))return {label:"정상 · 무부하",tone:"healthy",reason:"유입 없음"}
   return {label:"주의",tone:"warning",reason:"서비스 관측 대기"}
 }
 export function decisionReason(reason:string|null|undefined,automation:boolean[]):string {
@@ -203,8 +203,8 @@ export function gapEpisodes(gaps:LiveState["gaps"],now:number,metrics:LiveMetric
 }
 export function liveReason(reason:string|null|undefined):string {
   if(!reason)return "미제공"
-  const labels:Record<string,string>={ExcludedNode:"제외 노드",Keep:"유지","power sample unavailable":"전력 표본 누락","resume history unavailable":"재연결 기록 공백","event history limit":"사건 보관 한도",Disabled:"자동제어 꺼짐",NotReady:"준비 안 됨",Ready:"준비됨"}
-  return labels[reason]??(/[a-zA-Z]/.test(reason)?"기타 사유":reason)
+  const labels:Record<string,string>={ObservationUnavailable:"관측 기록 사용 불가",ShuttingDown:"종료 중",ExcludedNode:"제외 노드",Keep:"유지","power sample unavailable":"전력 표본 누락","resume history unavailable":"재연결 기록 공백","event history limit":"사건 보관 한도",Disabled:"자동제어 꺼짐",NotReady:"준비 안 됨",Ready:"준비됨",MissingDataset:"데이터셋 없음",MissingEvidence:"측정 근거 없음",Preparing:"배치 준비 중",RestartDrain:"재시작 후 요청 정리",AppliedDefinitionUnavailable:"적용된 서비스 정의 없음",ReservedScope:"변경 자원 예약 중",PartialObservationWindow:"관측 시간 부족",BootstrapCapacityPending:"초기 처리 용량 계산 대기",CapacityPending:"처리 용량 계산 대기",NoPlanMeetsSLO:"SLO 충족 구성 없음",EvaluatedCandidatesExceedSLOWithinReportedSearchBounds:"검토 구성 SLO 초과",MissingOperationCost:"변경 비용 근거 없음",HeldAfterOverload:"부하 증가 후 구성 유지",DemandIncreasing:"유입 증가",ReplacementUnpaid:"교체 비용 미회수",ReplacementDwell:"교체 후 최소 유지",TransitionGainWithinUncertainty:"절감량 오차 범위 이내",IdleInstanceRemoved:"유휴 인스턴스 제거",ObservedOperationExecutionError:"변경 실행 오류",PreparationFailed:"배치 준비 실패"}
+  return reason.split("; ").map(part=>{const separator=part.indexOf(":"),code=separator<0?part:part.slice(0,separator);return labels[code]?`${labels[code]}${separator<0?"":part.slice(separator)}`:part}).join("; ")
 }
 export function retainedEvents(events:LiveEvent[],now:number,keep=false):LiveEvent[] {
   return events.filter(event=>Date.parse(event.at)<=now&&(keep||event.kind!=="decision"||event.decision.state!=="Keep")).slice(-30)

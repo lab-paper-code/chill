@@ -6,6 +6,17 @@ export function schedulerHistoryKindMatches(filter:string,kind:string):boolean {
   return filter==="all"||filter===kind||filter==="decision-action"&&(kind==="decision"||kind==="action")
 }
 
+/** Server kind filters include Keep; collapse only adjacent judgments in the loaded page. */
+export function groupHistoryKeeps<T extends {event:SchedulerObservationSummary}>(rows:T[]):(T&{keepCount:number})[] {
+  const grouped:(T&{keepCount:number})[]=[]
+  for(const row of rows) {
+    const keep=row.event.decision?.status==="Keep",previous=grouped.at(-1)
+    if(keep&&previous?.keepCount)previous.keepCount++
+    else grouped.push({...row,keepCount:keep?1:0})
+  }
+  return grouped
+}
+
 export function schedulerRecordRef(event:SchedulerObservationSummary,from:string,to:string,offset:string):SchedulerRecordRef {
   const kind=event.decision?"decision":event.snapshot?"snapshot":event.settings?"settings":event.action?"action":event.power?"power":"other"
   const id=event.action?.id??event.node?.uid??event.settings?.actorUID??event.decision?.at??event.snapshot?.at??""

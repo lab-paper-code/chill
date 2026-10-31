@@ -90,7 +90,7 @@ test("headline aggregates service states: anomaly, caution, normal, then no load
   const observed={...metric,received:100,completed:100,failed:0,withinSLO:100,latencySamples:100}
   const verdict=(samples:Record<string,LiveMetric>,fresh=true,gap=false)=>boardVerdict(serviceRows(snapshot,samples,now),fresh,gap)
   assert.equal(verdict({a:observed}).label,"정상")
-  assert.equal(verdict({a:{...observed,received:0,completed:0,latencySamples:0}}).label,"무부하")
+  assert.equal(verdict({a:{...observed,received:0,completed:0,latencySamples:0}}).label,"정상 · 무부하")
   assert.equal(verdict({a:{...observed,completed:0,withinSLO:0,latencySamples:0}}).label,"주의")
   assert.equal(serviceRows(snapshot,{a:{...observed,latencySamples:0}},now)[0].status.label,"표본 부족")
   assert.equal(verdict({a:{...observed,withinSLO:94}}).label,"이상")
@@ -189,7 +189,7 @@ test("cached changes never claim current progress or absence while disconnected 
 test("automation and placement do not turn observed no-load services into an alarm",()=>{
   const snapshot:LiveSnapshot={workloads:[{...workload,pending:0}],nodes:[],instances:[],routing:{},decision:null,actions:[],reservations:[]}
   const idle={...metric,received:0,completed:0,failed:0,withinSLO:0,latencySamples:0}
-  assert.equal(boardVerdict(serviceRows(snapshot,{a:idle},now),true,false).label,"무부하")
+  assert.equal(boardVerdict(serviceRows(snapshot,{a:idle},now),true,false).label,"정상 · 무부하")
   assert.equal(boardVerdict(serviceRows(snapshot,{a:{...idle,received:1}},now),true,false).label,"이상")
   assert.equal(boardVerdict(serviceRows(snapshot,{a:{...idle,failed:1}},now),true,false).label,"이상")
   assert.equal(decisionReason("",[false,false]),"자동제어 대상 없음")
@@ -271,7 +271,9 @@ test("zero arrivals cannot claim an SLO result and product reasons use Korean la
   assert.equal(liveReason("ExcludedNode"),"제외 노드")
   assert.equal(liveReason("Keep"),"유지")
   assert.equal(liveReason(""),"미제공")
-  assert.equal(liveReason("UnregisteredCode"),"기타 사유")
+  assert.equal(liveReason("UnregisteredCode"),"UnregisteredCode")
+  assert.equal(liveReason("MissingEvidence"),"측정 근거 없음")
+  assert.equal(liveReason("Preparing"),"배치 준비 중")
   assert.equal(displayTime("2026-10-30T15:02:03Z","KST"),"00:02:03 KST")
   assert.equal(displayTime(at,"KST"),"21:00:00 KST")
 })
@@ -295,7 +297,7 @@ test("power windows use retained completed buckets, not component clocks or moun
   assert.equal(sparse.observed,2)
   assert.deepEqual(powerWindow([]),{end:0,expected:0,observed:0,nodes:{},segments:[]})
 })
-test("rendered board keeps idle names visible, incidents beside services, and one live clock",()=>{
+test("rendered board leads with fixed device rows and keeps idle services in a drawer",()=>{
   const pool={...workload,pending:0},zero={...metric,received:0,completed:0,failed:0,withinSLO:0,latencySamples:0}
   const snapshot:LiveSnapshot={workloads:Array.from({length:29},(_,i)=>({...pool,uid:`service-${i}`,name:`서비스-${i}`})),nodes:[{uid:"n",name:"장치",powerMode:"고정",ready:true,measurement:false,observedAt:at}],instances:[],routing:{},decision:{at,state:"Keep",reason:"",explanation:""},actions:[],reservations:[]}
   const sample:LiveMetrics={type:"metrics",seq:1,at,bucketAt:"2026-10-30T12:00:00Z",workloads:Object.fromEntries(snapshot.workloads.map(row=>[row.uid,zero])),nodes:{n:{watts:40,observedAt:at},outside:{watts:60,observedAt:at}},pool:{wholeWatts:100,activeWatts:0}}
@@ -317,19 +319,26 @@ test("rendered board keeps idle names visible, incidents beside services, and on
   }
   new Function("require","exports",compiled)((name:string)=>modules[name]??require(name),exports)
   const board=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
-  assert.match(board,/>무부하</)
-  assert.equal((board.match(/>서비스-\d+<\/button>/g)??[]).length,29)
-  assert.doesNotMatch(board,/live-service-scroll|aria-expanded|최근 판단/)
+  assert.match(board,/>정상 · 무부하</)
+  assert.equal((board.match(/>서비스-\d+<\/button>/g)??[]).length,0)
+  assert.match(board,/유휴 29/)
+  assert.match(board,/사건 없음/)
+  assert.doesNotMatch(board,/live-idle-services|새 사건 \/ 30초|대기 건|예약 건/)
   assert.equal((board.match(/마지막 수신/g)??[]).length,1)
-  assert.ok(board.indexOf('class="live-main"')<board.indexOf('class="live-rail"'))
-  assert.ok(board.indexOf('class="live-rail"')<board.indexOf('class="live-node-power"'))
+  assert.ok(board.indexOf('class="live-node-power"')<board.indexOf('class="live-rail"'))
+  assert.match(board,/5분 전/)
+  assert.match(board,/현재/)
+  query=new URLSearchParams({open:"idle-services"})
+  const idle=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
+  assert.equal((idle.match(/>서비스-\d+<span/g)??[]).length,29)
+  query=new URLSearchParams()
   const outside=renderToStaticMarkup(createElement(exports.OutsidePower,{state}))
   assert.match(outside,/>외부 장치</)
   assert.match(outside,/>60\.0</)
   assert.doesNotMatch(outside,/관측 안 된 장치/)
   query=new URLSearchParams({at})
   const drawer=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
-  assert.equal((drawer.match(/자동제어 대상 없음/g)??[]).length,2)
+  assert.equal((drawer.match(/자동제어 대상 없음/g)??[]).length,1)
   query=new URLSearchParams()
   snapshot.actions=[{id:"shared-power",kind:"power",node:{uid:"n",name:"장치"},workloadUID:"",status:"running",startedAt:new Date(Date.now()).toISOString(),expectedSeconds:null,expectedSource:null}]
   assert.match(renderToStaticMarkup(createElement(exports.LiveBoardPage,{})),/<strong title="변경 중">주의<\/strong>/)
@@ -339,5 +348,20 @@ test("rendered board keeps idle names visible, incidents beside services, and on
   assert.match(renderToStaticMarkup(createElement(exports.LiveBoardPage,{})),/<strong title="요청 실패">이상<\/strong>/)
   sample.workloads["service-0"]=zero
   snapshot.actions[0].status="complete"
-  assert.match(renderToStaticMarkup(createElement(exports.LiveBoardPage,{})),/<strong title="유입 없음">무부하<\/strong>/)
+  assert.match(renderToStaticMarkup(createElement(exports.LiveBoardPage,{})),/<strong title="유입 없음">정상 · 무부하<\/strong>/)
+  snapshot.nodes.push({uid:"a-node",name:"가 장치",powerMode:"",ready:true,measurement:false,observedAt:at})
+  sample.nodes["a-node"]={watts:1,observedAt:at}
+  snapshot.instances=[{...instance,ownerWorkloadUID:"service-0",routable:{"service-0":true},running:{"service-0":1},waiting:{}}]
+  sample.workloads["service-0"]={...zero,received:10,completed:10,withinSLO:10,latencySamples:10,p95ms:20}
+  const active=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
+  assert.ok(active.indexOf(">가 장치</button>")<active.indexOf(">장치</button>"))
+  assert.ok(active.indexOf(">서비스-0</button>")<active.indexOf('class="live-rail"'))
+  sample.nodes["a-node"].watts=100
+  const changed=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
+  assert.ok(changed.indexOf(">가 장치</button>")<changed.indexOf(">장치</button>"))
+  snapshot.instances=[]
+  snapshot.workloads[0].readiness.reason="MissingEvidence"
+  const unplaced=renderToStaticMarkup(createElement(exports.LiveBoardPage,{}))
+  assert.match(unplaced,/>측정 근거 없음</)
+  assert.ok(unplaced.indexOf(">미배치</th>")<unplaced.indexOf(">보드 밖 노드"))
 })

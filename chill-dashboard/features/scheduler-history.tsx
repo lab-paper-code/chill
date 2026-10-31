@@ -7,7 +7,7 @@ import type { QueryObserverBaseResult } from "@tanstack/react-query"
 import { useChillQuery, useSession, type ApiError } from "@/lib/client"
 import type { SchedulerObservation, SchedulerObservationPage, SchedulerObservationSummary, SchedulerObservationSummaryPage } from "@/lib/read-types"
 import { parseSchedulerJSON, nanosToMilliseconds } from "@/lib/scheduler"
-import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerHistoryKindMatches, type SchedulerRecordRef } from "@/lib/scheduler-history"
+import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerHistoryKindMatches, groupHistoryKeeps, type SchedulerRecordRef } from "@/lib/scheduler-history"
 import { gapNotice, utcDateTime } from "@/lib/date-time"
 import { displayTime, liveReason } from "@/lib/live-display"
 import { SnapshotDetails, CandidateDetails, judgmentLabels, actionKinds, actionStatuses, actionNodeName } from "@/features/scheduler"
@@ -104,7 +104,7 @@ function RecordDetails({row}:{row:SchedulerHistoryRow}){
 
 export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean}){
   const history=useSchedulerHistory(),router=useRouter(),pathname=usePathname(),params=history.params
-  const filter=settingsOnly?"settings":params.get("filter")??"all",rows=history.rows.filter(row=>schedulerHistoryKindMatches(filter,row.ref.kind))
+  const filter=settingsOnly?"settings":params.get("filter")??"all",rows=groupHistoryKeeps(history.rows.filter(row=>schedulerHistoryKindMatches(filter,row.ref.kind)))
   const opener=React.useRef<HTMLElement|null>(null),[filterOpen,setFilterOpen]=React.useState(false)
   const a=readSchedulerRecord(params,"a"),b=readSchedulerRecord(params,"b"),selected=readSchedulerRecord(params)
   const requested=["offset","kind","at","id","node","startedAt"].some(key=>params.has(key))
@@ -138,7 +138,7 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
       <table className="w-full table-fixed text-sm"><thead><tr><th>정렬</th><th>범위</th><th>종류</th><th>현재 페이지 기록 수</th></tr></thead><tbody><tr><td>{params.get("order")==="desc"?"최신순":"저장순"}</td><td>{params.get("uid")?"선택 서비스":"클러스터 전체"}</td><td>{historyFilters[filter]??filter}</td><td className="text-right tabular-nums">{rows.length}</td></tr></tbody></table>
       {rows.length?<Rows label="기록">{rows.map(row=>{
         const ev=row.event,mark=[same(a,row)&&"A",same(b,row)&&"B"].filter(Boolean).join(" · ")
-        return <Row key={row.ref.offset} label={<span title={ev.decision?.status??ev.action?.kind}>{ev.decision?judgmentLabels[ev.decision.status]??"판단 미확인":ev.action?actionKinds[ev.action.kind]??kinds.action:kinds[row.ref.kind]??kinds.other}</span>}
+        return <Row key={row.ref.offset} label={<span title={ev.decision?.status??ev.action?.kind}>{row.keepCount?`유지 ×${row.keepCount}`:ev.decision?judgmentLabels[ev.decision.status]??"판단 미확인":ev.action?actionKinds[ev.action.kind]??kinds.action:kinds[row.ref.kind]??kinds.other}</span>}
           hint={`${when(ev.at)}${ev.settings?` / ${actorName(ev.settings.actorUsername)}`:ev.action?` / ${actionNodeName(ev.action.node)}`:ev.node?` / ${ev.node.name}`:""}`}
           value={mark||(ev.settings?ev.settings.error?"실패":ev.settings.appliedAt?"적용됨":"검증됨":ev.action?actionStatuses[ev.action.phase]??statusLabel(ev.action.phase):undefined)}
           onClick={()=>{opener.current=document.activeElement as HTMLElement|null;select(row)}}/>
