@@ -10,7 +10,7 @@ import type { SchedulerCandidate, SchedulerDecision, SchedulerObservationPage } 
 import { decisionRange, evidenceError } from "@/lib/experiments"
 import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import { safeSource } from "@/lib/source-export"
-import { serviceTrafficState, actionProgress, actionOrigin, duration, liveFresh, scopeSnapshot, scopeEvents, belongsToPool, boardVerdict, displayNumber, displayTime, elapsed, instanceSymbol, routingShare, serviceDevices, serviceRows, powerBreakdown, lastPowerSample, gapEpisodes, liveReason, sloTargetMissed, terminalCount, trendSegments, workloadQueue, incidentSummary, sloLatency, minuteMetrics } from "@/lib/live-display"
+import { serviceTrafficState, actionProgress, actionOrigin, duration, liveFresh, scopeSnapshot, scopeEvents, belongsToPool, boardVerdict, displayNumber, displayTime, elapsed, instanceSymbol, routingShare, serviceDevices, serviceRows, powerBreakdown, gapEpisodes, liveReason, sloTargetMissed, terminalCount, trendSegments, workloadQueue, incidentSummary, sloLatency, minuteMetrics } from "@/lib/live-display"
 import { actionKinds, actionNodeName, actionStatuses, judgmentLabels } from "./scheduler"
 import { useCoverageInventory } from "./measurement-coverage"
 import "./live-board.css"
@@ -85,7 +85,7 @@ function EventList({state,select,zone,now}:{state:LiveState;select:Select;zone:Z
   const {rows:visible,lastDecision:last}=incidentSummary(state.events,state.gaps,now,state.metrics)
   return <section className="live-events" id="live-incidents"><header className="live-section-heading"><h3>사건 흐름</h3>{last&&<button type="button" title="최근 판단 KST" onClick={event=>select("at",last.decision.at,event.currentTarget)}>{displayTime(last.at,zone)}</button>}</header>
     <ol>{visible.map(row=><li className={Date.parse(row.at)>=now-5000?"live-recent-change":""} key={row.key}>
-      {row.kind==="gap"?<><strong>관측 공백 / {gapLabel(state,row.gap.scope)}</strong><table><thead><tr><th>시작 KST</th><th>지속 s</th><th>상태</th></tr></thead><tbody><tr><td>{displayTime(row.gap.from,zone).replace(" KST","")}</td><td>{number(row.gap.seconds,"",1)}</td><td>{row.gap.recovered?"회복":"진행"}</td></tr></tbody></table></>:<><time dateTime={row.at}>{displayTime(row.at,zone)}</time><strong title={row.event.kind==="decision"?row.event.decision.state:undefined}>{row.event.kind==="decision"?judgmentLabels[row.event.decision.state]??"구성 판단":row.event.kind==="action"?`${row.event.action.workloadUID?serviceName(state.snapshot,row.event.action.workloadUID):"공유 구성"} / ${actionKinds[row.event.action.kind]??"구성 변경"} / ${row.event.action.phase==="started"?"시작":row.event.action.phase==="completed"?"완료":"실패"}`:row.event.cluster.pod?.name??"클러스터 상태 변화"}</strong></>}
+      {row.kind==="gap"?<><strong>관측 공백 / {gapLabel(state,row.gap.scope)}</strong><table><thead><tr><th>시작 KST</th><th>지속 s</th><th>상태</th></tr></thead><tbody><tr><td>{displayTime(row.gap.from,zone).replace(" KST","")}</td><td>{number(row.gap.seconds,"",1)}</td><td>{row.gap.lost?"기록 손실":row.gap.recovered?"회복":"진행"}</td></tr></tbody></table></>:<><time dateTime={row.at}>{displayTime(row.at,zone)}</time><strong title={row.event.kind==="decision"?row.event.decision.state:undefined}>{row.event.kind==="decision"?judgmentLabels[row.event.decision.state]??"구성 판단":row.event.kind==="action"?`${row.event.action.workloadUID?serviceName(state.snapshot,row.event.action.workloadUID):"공유 구성"} / ${actionKinds[row.event.action.kind]??"구성 변경"} / ${row.event.action.phase==="started"?"시작":row.event.action.phase==="completed"?"완료":"실패"}`:row.event.cluster.pod?.name??"클러스터 상태 변화"}</strong></>}
       <button className="live-event-hit" type="button" aria-label={`${row.kind==="gap"?`관측 공백 / ${gapLabel(state,row.gap.scope)}`:displayTime(row.at,zone)} 사건 상세`} onClick={event=>row.kind==="event"&&row.event.kind==="decision"?select("at",row.event.decision.at,event.currentTarget):select("open",row.kind==="gap"?`gap:${JSON.stringify([row.gap.scope,row.gap.from])}`:`event:${row.event.seq}`,event.currentTarget)}><span className="sr-only">사건 상세</span></button>
     </li>)}</ol>{!visible.length&&<p className="live-muted">변경·관측 공백 없음</p>}</section>
 }
@@ -139,7 +139,7 @@ function Selection({open,state,select,zone,end,now}:{open:string;state:LiveState
   if(open==="terms")return <><h3>용어 도움말</h3><Facts items={[["자동제어","서비스별 자동제어 설정. 요청 유입·배치와 별개입니다."],["배치됨","제거되지 않은 인스턴스가 있는 서비스입니다. 처리 가능 여부를 뜻하지 않습니다."],["유휴","관측된 무유입·종결 없음, 미배치·변경·예약 없음입니다."],["공유 전력","전체 계측 노드의 같은 1초 합계입니다. 결손 시 마지막 유효값과 경과 초를 표시합니다."],["완전성","최근 5분의 관측 초 / 연결 후 기대 초입니다. 짧게 회복된 공백도 반영합니다."],["눈금","장치별 연결 세션 최댓값입니다. 새 최댓값이 생길 때만 확장합니다."],["관측 공백","장치별 연속 누락은 한 사건입니다. 회복은 후속 유효 표본으로 확인합니다. 5초 미만 회복 사건은 완전성에만 반영합니다."],["평가 불가","유입 또는 지연 표본이 없어 SLO를 평가할 수 없습니다."],["예상 대비 지연","예상 평균의 3배, 예상 미제공 시 5분을 넘긴 미종결입니다. 실패·중단을 뜻하지 않습니다."]]}/></>
   if(open.startsWith("gap:")){
     const gap=gapEpisodes(state.gaps,now,state.metrics).find(row=>JSON.stringify([row.scope,row.from])===open.slice(4))
-    return gap?<><h3>관측 공백 / {gapLabel(state,gap.scope)}</h3><Facts items={[["시작 KST",displayTime(gap.from,zone)],["종료 KST",displayTime(gap.to,zone)],["지속 s",number(gap.seconds,"",1)],["상태",gap.recovered?"회복":"진행"],["사유",<span key="reason" title={gap.reason}>{liveReason(gap.reason)}</span>]]}/><Source value={gap}/></>:<p>보관 범위 밖 사건</p>
+    return gap?<><h3>관측 공백 / {gapLabel(state,gap.scope)}</h3><Facts items={[["시작 KST",displayTime(gap.from,zone)],["종료 KST",displayTime(gap.to,zone)],["지속 s",number(gap.seconds,"",1)],["상태",gap.lost?"기록 손실":gap.recovered?"회복":"진행"],["사유",<span key="reason" title={gap.reason}>{liveReason(gap.reason)}</span>]]}/><Source value={gap}/></>:<p>보관 범위 밖 사건</p>
   }
   if(open.startsWith("event:")){
     const event=state.events.find(row=>row.seq===Number(open.slice(6)))
@@ -157,11 +157,9 @@ function Drawer({title,close,children}:{title:string;close:()=>void;children:Rea
   return <aside ref={ref} tabIndex={-1} role="dialog" aria-modal="false" aria-labelledby="live-drawer-title" className="live-drawer"><header><h2 id="live-drawer-title">{title}</h2><button type="button" onClick={close}>닫기 / Esc</button></header><div className="live-drawer-body">{children}</div></aside>
 }
 function PowerReading({state,end}:{state:LiveState;end:number}) {
-  const held=React.useRef<LiveMetrics|undefined>(undefined),sample=lastPowerSample(state.metrics)
-  if(sample)held.current=sample
-  const row=held.current,seconds=row?Math.max(0,Math.floor((end-Date.parse(row.bucketAt)-1000)/1000)):0
+  const row=state.lastPower,seconds=row?Math.max(0,Math.floor((end-Date.parse(row.bucketAt)-1000)/1000)):0
   const segments=trendSegments(state.metrics.map(row=>({at:Date.parse(row.bucketAt),value:row.pool.wholeWatts})),end)
-  return <div className="live-power-reading"><span>{row?number(row.pool.wholeWatts,"",1):"미관측"}</span>{seconds>0&&<small className="live-age" title="마지막 유효 관측 이후 경과 초">{seconds} s 경과</small>}<svg viewBox="0 0 120 32" role="img" aria-label="최근 5분 공유 전력 추세">{segments.map((points,index)=>points.includes(" ")?<polyline key={index} points={points} fill="none" stroke="currentColor" strokeWidth="1.8"/>:<circle key={index} cx={points.split(",")[0]} cy={points.split(",")[1]} r="1.5" fill="currentColor"/>)}</svg></div>
+  return <div className="live-power-reading"><span>{row?number(row.watts,"",1):"미관측"}</span>{seconds>0&&<small className="live-age" title="마지막 유효 관측 이후 경과 초">{seconds} s 경과</small>}<svg viewBox="0 0 120 32" role="img" aria-label="최근 5분 공유 전력 추세">{segments.map((points,index)=>points.includes(" ")?<polyline key={index} points={points} fill="none" stroke="currentColor" strokeWidth="1.8"/>:<circle key={index} cx={points.split(",")[0]} cy={points.split(",")[1]} r="1.5" fill="currentColor"/>)}</svg></div>
 }
 function NodeStrip({state,select,end}:{state:LiveState;select:Select;end:number}) {
   const inventory=useCoverageInventory(),snapshot=state.snapshot!,metrics=state.metrics.at(-1),power=powerBreakdown(snapshot.nodes.map(row=>row.uid),metrics),scale=React.useRef<Record<string,number>>({})

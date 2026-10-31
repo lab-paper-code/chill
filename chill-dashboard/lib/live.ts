@@ -26,11 +26,11 @@ export type LiveDelta = Partial<LiveSnapshot> & {removed?:{instances?:string[];a
 export type LiveMessage = (Envelope & {type:"hello";protocol:"chill-live/1";serverAt:string;retainFrom:number}) | (Envelope & {type:"snapshot"} & LiveSnapshot) | (Envelope & {type:"delta"} & LiveDelta) | LiveMetrics | LiveEvent | (Envelope & {type:"heartbeat";serverAt:string})
 export type LiveState = {
   snapshot:LiveSnapshot|null;checkpoint:Envelope|null;metrics:LiveMetrics[];events:LiveEvent[];gaps:LiveGap[]
-  lastReceivedAt:number|null;lastObservedAt:string|null;status:string
+  lastReceivedAt:number|null;lastObservedAt:string|null;lastPower:{bucketAt:string;watts:number}|null;status:string
   definitions:Record<string,LiveWorkload>;resyncRequired:boolean;historyGaps:LiveGap[]
 }
 export function initialLiveState():LiveState {
-  return {snapshot:null,checkpoint:null,metrics:[],events:[],gaps:[],lastReceivedAt:null,lastObservedAt:null,status:"idle",definitions:{},resyncRequired:false,historyGaps:[]}
+  return {snapshot:null,checkpoint:null,metrics:[],events:[],gaps:[],lastReceivedAt:null,lastObservedAt:null,lastPower:null,status:"idle",definitions:{},resyncRequired:false,historyGaps:[]}
 }
 
 function invalid():never { throw new Error("Invalid chill-live/1 message") }
@@ -212,7 +212,7 @@ export function applyLiveMessage(state:LiveState,message:LiveMessage,receivedAt=
   if (message.type === "snapshot" && checkpoint?.seq === message.seq && checkpoint.at === message.at) return {...state,lastReceivedAt:receivedAt,status:"live",resyncRequired:false}
   if (message.type !== "snapshot" && checkpoint && message.seq <= checkpoint.seq) return {...state,lastReceivedAt:receivedAt}
   if (message.type !== "snapshot" && (state.resyncRequired || !checkpoint || !state.snapshot || message.seq !== checkpoint.seq+1)) return {...state,lastReceivedAt:receivedAt,status:"resuming",resyncRequired:true}
-  let snapshot=state.snapshot,metrics=state.metrics,events=state.events,historyGaps=state.historyGaps,definitions=state.definitions
+  let snapshot=state.snapshot,metrics=state.metrics,events=state.events,historyGaps=state.historyGaps,definitions=state.definitions,lastPower=state.lastPower
   if (message.type === "snapshot") {
     const {workloads,nodes,instances,routing,decision,actions,reservations}=message
     if (checkpoint && (checkpoint.seq !== message.seq || checkpoint.at !== message.at)) {
@@ -226,6 +226,14 @@ export function applyLiveMessage(state:LiveState,message:LiveMessage,receivedAt=
     metrics=[...metrics.filter(row=>compareAt(row.bucketAt,message.bucketAt)!==0),message].sort((a,b)=>compareAt(a.bucketAt,b.bucketAt))
     const cutoff=new Date(metrics[metrics.length-1].bucketAt).getTime()-599_000
     metrics=metrics.filter(row=>new Date(row.bucketAt).getTime()>=cutoff).slice(-600)
+    if(message.pool.wholeWatts!=null&&(!lastPower||compareAt(message.bucketAt,lastPower.bucketAt)>=0))lastPower={bucketAt:message.bucketAt,watts:message.pool.wholeWatts}
+    else if(message.pool.wholeWatts==null&&lastPower?.bucketAt===message.bucketAt){
+      lastPower=null
+      for(let index=metrics.length-1;index>=0;index--){
+        const row=metrics[index]
+        if(row.pool.wholeWatts!=null){lastPower={bucketAt:row.bucketAt,watts:row.pool.wholeWatts};break}
+      }
+    }
   } else if (message.type === "event" && !events.some(row=>eventKey(row)===eventKey(message))) {
     events=[...events,message]
     if (events.length > 1000) {
@@ -243,7 +251,7 @@ export function applyLiveMessage(state:LiveState,message:LiveMessage,receivedAt=
     for (const row of message.workloads) definitions[JSON.stringify([row.uid,row.definitionID])]=row
   }
   const gaps=metrics===state.metrics && historyGaps===state.historyGaps ? state.gaps : metrics.reduce((gaps,row)=>(row.gaps ?? []).reduce(addGap,gaps),historyGaps)
-  return {...state,snapshot,metrics,events,historyGaps,definitions,gaps,checkpoint:{seq:message.seq,at:message.at},lastReceivedAt:receivedAt,lastObservedAt:latestAt(state.lastObservedAt,observed(message)),status:"live",resyncRequired:false}
+  return {...state,snapshot,metrics,events,historyGaps,definitions,lastPower,gaps,checkpoint:{seq:message.seq,at:message.at},lastReceivedAt:receivedAt,lastObservedAt:latestAt(state.lastObservedAt,observed(message)),status:"live",resyncRequired:false}
 }
 
 export type LiveConnection = {reconnect:()=>void;close:()=>void}

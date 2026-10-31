@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { LiveAction, LiveInstance, LiveMetric, LiveMetrics, LiveSnapshot, LiveWorkload } from "./live.ts"
 import { changeListStatus, serviceTrafficState, actionProgress, actionOrigin, scopeSnapshot, scopeEvents, recentEvents, liveFresh, belongsToPool, displayNumber, duration, elapsed, instanceSymbol, isStale, ratio, receivedLabel, routingShare, terminalCount, workloadLabel, workloadQueue, servicePriority, mergeKeepEvents, trendSegments, boardVerdict, decisionText } from "./live-display.ts"
-import { retainedEvents, sloLatency, minuteMetrics, incidentFlow, incidentSummary, serviceRows, powerBreakdown, gapEpisodes, lastPowerSample, liveReason, displayTime } from "./live-display.ts"
+import { retainedEvents, sloLatency, minuteMetrics, incidentFlow, incidentSummary, serviceRows, powerBreakdown, gapEpisodes, liveReason, displayTime } from "./live-display.ts"
 
 const at="2026-10-30T12:00:00.123456789Z",now=Date.parse(at)
 const instance:LiveInstance={id:"shared",node:{uid:"n",name:"Node"},ownerWorkloadUID:"a",profileID:"p",ready:true,stopped:false,routable:{a:true,b:true},running:{a:1,b:0},waiting:{a:0,b:2},observedAt:at}
@@ -242,13 +242,6 @@ test("only recovered short gaps leave the flow; completeness keeps the original 
   assert.equal(gapEpisodes(gaps,now+5000,metrics)[0].recovered,false)
   assert.equal(gapEpisodes(gaps,now+7000,[{...metrics[0],nodes:{other:metrics[0].nodes.other}}])[0].recovered,false)
 })
-test("power retains the last valid whole-pool bucket including observed zero",()=>{
-  const sample:LiveMetrics={type:"metrics",seq:1,at,bucketAt:at,workloads:{},nodes:{},pool:{wholeWatts:0,activeWatts:0}}
-  const missing={...sample,seq:2,pool:{wholeWatts:null,activeWatts:null}}
-  assert.equal(lastPowerSample([sample,missing]),sample)
-  assert.equal(lastPowerSample([missing]),undefined)
-  assert.equal(lastPowerSample([]),undefined)
-})
 test("zero arrivals cannot claim an SLO result and product reasons use Korean labels",()=>{
   assert.equal(sloLatency(workload,{...metric,received:0}),null)
   assert.equal(liveReason("ExcludedNode"),"제외 노드")
@@ -257,4 +250,10 @@ test("zero arrivals cannot claim an SLO result and product reasons use Korean la
   assert.equal(liveReason("UnregisteredCode"),"기타 사유")
   assert.equal(displayTime("2026-10-30T15:02:03Z","KST"),"00:02:03 KST")
   assert.equal(displayTime(at,"KST"),"21:00:00 KST")
+})
+test("event history loss cannot recover from metrics or disappear as a short gap",()=>{
+  const gap={from:new Date(now-1000).toISOString(),to:at,scope:"events",reason:"event history limit"}
+  const metrics:LiveMetrics[]=[{type:"metrics",seq:1,at,bucketAt:at,workloads:{a:metric},nodes:{},pool:{wholeWatts:10,activeWatts:0}}]
+  assert.equal(gapEpisodes([gap],now,metrics)[0].recovered,false)
+  assert.equal(incidentFlow([],[gap],now,false,metrics).length,1)
 })

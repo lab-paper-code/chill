@@ -179,12 +179,10 @@ export function gapEpisodes(gaps:LiveState["gaps"],now:number,metrics:LiveMetric
     } else merged.push({...gap})
   }
   return merged.map(gap=>{
-    const recovered=metrics.some(row=>Date.parse(row.bucketAt)>=Date.parse(gap.to)&&Date.parse(row.bucketAt)<=now&&(gap.scope.startsWith("node:")?row.nodes[gap.scope.slice(5)]?.watts!=null:gap.scope.startsWith("workload:")?!!row.workloads[gap.scope.slice(9)]:gap.scope==="workloads"?Object.keys(row.workloads).length>0:true))
-    return {...gap,seconds:Math.max(0,(Date.parse(gap.to)-Date.parse(gap.from))/1000),recovered}
+    const lost=gap.scope==="events"||gap.reason==="resume history unavailable"
+    const recovered=!lost&&metrics.some(row=>Date.parse(row.bucketAt)>=Date.parse(gap.to)&&Date.parse(row.bucketAt)<=now&&(gap.scope.startsWith("node:")?row.nodes[gap.scope.slice(5)]?.watts!=null:gap.scope.startsWith("workload:")?!!row.workloads[gap.scope.slice(9)]:gap.scope==="workloads"?Object.keys(row.workloads).length>0:true))
+    return {...gap,seconds:Math.max(0,(Date.parse(gap.to)-Date.parse(gap.from))/1000),recovered,lost}
   })
-}
-export function lastPowerSample(metrics:LiveMetrics[]) {
-  for(let index=metrics.length-1;index>=0;index--)if(metrics[index].pool.wholeWatts!=null)return metrics[index]
 }
 export function liveReason(reason:string|null|undefined):string {
   if(!reason)return "미제공"
@@ -198,7 +196,7 @@ export function retainedEvents(events:LiveEvent[],now:number,keep=false):LiveEve
 export function incidentFlow(events:LiveEvent[],gaps:LiveState["gaps"],now:number,keep=false,metrics:LiveMetrics[]=[]) {
   const incidents=[
     ...mergeKeepEvents(retainedEvents(events,now,keep)).map(row=>({kind:"event" as const,at:row.event.at,key:`event:${row.event.seq}`,...row})),
-    ...gapEpisodes(gaps,now,metrics).filter(gap=>!gap.recovered||gap.seconds>=5).map(gap=>({kind:"gap" as const,at:gap.from,key:`gap:${gap.scope}:${gap.from}:${gap.reason}`,gap})),
+    ...gapEpisodes(gaps,now,metrics).filter(gap=>gap.lost||!gap.recovered||gap.seconds>=5).map(gap=>({kind:"gap" as const,at:gap.from,key:`gap:${gap.scope}:${gap.from}:${gap.reason}`,gap})),
   ]
   return incidents.sort((a,b)=>compareAt(b.at,a.at)||(b.kind==="event"?b.event.seq:0)-(a.kind==="event"?a.event.seq:0)).slice(0,30)
 }

@@ -22,6 +22,21 @@ function apply(state:LiveState,input:unknown,receivedAt=1234) {
   assert.ok(message,"test frame must satisfy the live DTO")
   return applyLiveMessage(state,message,receivedAt)
 }
+test("last valid shared power outlives the metric buffer and page consumers, but not the session",()=>{
+  let state=apply(initialLiveState(),snapshot())
+  state=apply(state,metrics(1,0,{pool:{wholeWatts:0,activeWatts:0}}))
+  for(let second=1;second<=601;second++)state=apply(state,metrics(second+1,second))
+  assert.equal(state.metrics.length,600)
+  assert.equal(state.metrics.some(row=>row.pool.wholeWatts!=null),false)
+  const remountedConsumer={...state}
+  assert.deepEqual(remountedConsumer.lastPower,{bucketAt:time(0),watts:0})
+  state=apply(state,metrics(603,602,{pool:{wholeWatts:50,activeWatts:10}}))
+  state=apply(state,metrics(604,600,{pool:{wholeWatts:20,activeWatts:10}}))
+  assert.deepEqual(state.lastPower,{bucketAt:time(602),watts:50})
+  state=apply(state,metrics(605,602))
+  assert.deepEqual(state.lastPower,{bucketAt:time(600),watts:20})
+  assert.equal(initialLiveState().lastPower,null)
+})
 
 test("active changes exclude terminal history and not-yet-started plans on both screens",()=>{
   for (const status of ["starting","running"]) assert.equal(isLiveActionActive({status}),true)
