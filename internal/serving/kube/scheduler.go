@@ -1038,13 +1038,12 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 			if action.Status == nativeOperationComplete || action.Status == nativeOperationFailed {
 				continue
 			}
-			selectedTarget := &target
-			if action.RouteTarget != nil {
-				selectedTarget = action.RouteTarget
-			} else if action.From == readySubsetRoute {
-				selectedTarget = intermediate
+			selectedTarget := cmp.Or(action.RouteTarget, &target)
+			dependencyTarget := &target
+			if action.From == readySubsetRoute {
+				selectedTarget, dependencyTarget = intermediate, intermediate
 			}
-			if !c.dependenciesReady(action, *selectedTarget) {
+			if !c.dependenciesReady(action, *dependencyTarget) {
 				continue
 			}
 			operation := scheduledOperation(action, selectedTarget, config, c.powerTargets, c.state.Snapshot.Workloads)
@@ -1254,6 +1253,7 @@ func (c *SchedulerController) runContext(action serving.Action, config Scheduler
 }
 
 func (c *SchedulerController) dependenciesReady(action serving.Action, target serving.SchedulerCandidate) bool {
+	plan := target
 	if action.RouteTarget != nil {
 		target = *action.RouteTarget
 	}
@@ -1275,6 +1275,10 @@ func (c *SchedulerController) dependenciesReady(action serving.Action, target se
 			}
 		}
 	}
+	return c.dependenciesComplete(action, plan)
+}
+
+func (c *SchedulerController) dependenciesComplete(action serving.Action, plan serving.SchedulerCandidate) bool {
 	for _, dep := range action.DependsOn {
 		if run := c.runs[dep]; run != nil && run.action.Status == nativeOperationComplete {
 			if action.Kind == operationStop && run.action.RouteTarget != nil {
@@ -1282,14 +1286,8 @@ func (c *SchedulerController) dependenciesReady(action serving.Action, target se
 					return false
 				}
 				proof := run.result.Operation
-				var uid string
-				for _, source := range run.action.RouteTarget.Instances {
-					if source.ID == action.Instance && proof.controlsWorkload(source.WorkloadUID) {
-						uid = source.WorkloadUID
-						break
-					}
-				}
-				if uid == "" {
+				uid := handoffSourceUID(*run.action.RouteTarget, action.Instance)
+				if uid == "" || !proof.controlsWorkload(uid) {
 					return false
 				}
 				// A later independent UID's bridge may supersede the global
@@ -1301,29 +1299,32 @@ func (c *SchedulerController) dependenciesReady(action serving.Action, target se
 			}
 			continue
 		}
-		route := slices.IndexFunc(target.Actions, func(a serving.Action) bool {
+		route := slices.IndexFunc(plan.Actions, func(a serving.Action) bool {
 			return a.ID == dep && a.Kind == operationRoute
 		})
-		uids := c.targetWorkloadsLocked(target)
-		if route >= 0 && target.Actions[route].RouteTarget != nil {
-			var uid string
-			for _, source := range target.Actions[route].RouteTarget.Instances {
-				if source.ID == action.Instance {
-					uid = source.WorkloadUID
-					break
-				}
-			}
+		uids := c.targetWorkloadsLocked(plan)
+		if route >= 0 && action.Kind == operationStop && plan.Actions[route].RouteTarget != nil {
+			uid := handoffSourceUID(*plan.Actions[route].RouteTarget, action.Instance)
 			if uid == "" {
 				return false
 			}
 			uids = []string{uid}
 		}
-		if action.Kind != operationStop || route < 0 ||
-			!c.completedHandoffPresent(*cmp.Or(target.Actions[route].RouteTarget, &target), uids) {
+		if action.Kind != operationStop && action.Kind != operationRoute || route < 0 ||
+			!c.completedHandoffPresent(*cmp.Or(plan.Actions[route].RouteTarget, &plan), uids) {
 			return false
 		}
 	}
 	return true
+}
+
+func handoffSourceUID(target serving.SchedulerCandidate, instance string) string {
+	for _, source := range target.Instances {
+		if source.ID == instance {
+			return source.WorkloadUID
+		}
+	}
+	return ""
 }
 
 func (c *SchedulerController) completedHandoffPresent(target serving.SchedulerCandidate, uids []string) bool {

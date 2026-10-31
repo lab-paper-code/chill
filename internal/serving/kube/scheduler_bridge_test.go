@@ -23,7 +23,7 @@ func TestBridgeStopRequiresCurrentNativeACKAC45(t *testing.T) {
 			stage.Instances = append(stage.Instances, source)
 			ack := serving.Action{ID: "bridge-ack", Kind: operationRoute, From: "handoff-bridge", Status: nativeOperationComplete, RouteTarget: &stage}
 			controller.runs[ack.ID] = &actionRun{action: ack, result: &OperationResult{Operation: Operation{Target: &stage}, Status: nativeOperationComplete}}
-			stop := serving.Action{ID: "stop-original-physical", Kind: operationStop, Instance: "old-source", DependsOn: []string{ack.ID}}
+			stop := serving.Action{ID: "stop-original-physical", Kind: operationStop, Instance: source.ID, DependsOn: []string{ack.ID}}
 			// The final goal is deliberately not ready: the stop depends on the
 			// frozen intermediate proof, never on a substituted final target.
 			future := target.Instances[0]
@@ -84,7 +84,7 @@ func TestSkippedRequiredBridgeConsumesReadySubsetACKSCH51(t *testing.T) {
 			stage.ID = "independent-bridge"
 			uid := stage.Instances[0].WorkloadUID
 			source := stage.Instances[0]
-			source.ID, source.Weight = "old-source", 0
+			source.ID, source.Weight = "blocker-source", 0
 			terminal := stage.Instances[0]
 			terminal.ID, terminal.WorkloadUID, terminal.Ready, terminal.Terminated = "terminal-w1", "w1", false, true
 			stage.Instances = append(stage.Instances, source, terminal)
@@ -96,7 +96,7 @@ func TestSkippedRequiredBridgeConsumesReadySubsetACKSCH51(t *testing.T) {
 			goal.Instances = []serving.SchedulerInstance{future, stage.Instances[0]}
 			goal.Routing = map[string]map[string]int32{"w1": {future.ID: 1}, uid: {stage.Instances[0].ID: 1}}
 			bridge := serving.Action{ID: "required-bridge", Kind: operationRoute, RouteTarget: &stage, DependsOn: []string{"prepare-bridge"}}
-			stop := serving.Action{ID: "stop-blocker", Kind: operationStop, Instance: "old-source", DependsOn: []string{bridge.ID}}
+			stop := serving.Action{ID: "stop-blocker", Kind: operationStop, Instance: source.ID, DependsOn: []string{bridge.ID}}
 			prepare := serving.Action{ID: "prepare-w1", Kind: operationPrepare, Instance: future.ID, DependsOn: []string{stop.ID}}
 			goal.Actions = []serving.Action{bridge, stop, prepare}
 			c.runs["prepare-bridge"] = &actionRun{action: serving.Action{Status: nativeOperationComplete}}
@@ -126,6 +126,41 @@ func TestSkippedRequiredBridgeConsumesReadySubsetACKSCH51(t *testing.T) {
 				if c.runs[prepare.ID] == nil {
 					t.Fatal("W1 prepare did not follow the acknowledged W2 handoff and stop")
 				}
+			}
+		})
+	}
+}
+
+func TestSkippedBridgeChainConsumesExistingACKSCH51(t *testing.T) {
+	for _, receipt := range []bool{true, false} {
+		t.Run(map[bool]string{true: "acknowledged", false: "no-ack"}[receipt], func(t *testing.T) {
+			c, goal, _ := acknowledgedHandoffFixture(t)
+			c.ctx = context.Background()
+			stage := *c.runs["acknowledged-route"].result.Operation.Target
+			c.state.Snapshot.Routing = stage.Routing
+			first := serving.Action{ID: "skipped-first-bridge", Kind: operationRoute, RouteTarget: &stage}
+			secondTarget := stage
+			secondTarget.ID = "second-bridge-target"
+			uid := stage.Instances[0].WorkloadUID
+			secondTarget.Instances = append([]serving.SchedulerInstance(nil), stage.Instances...)
+			secondTarget.Instances[0].MaxBatch++
+			secondTarget.Routing = map[string]map[string]int32{uid: {stage.Instances[0].ID: 2}}
+			second := serving.Action{ID: "second-bridge", Kind: operationRoute, RouteTarget: &secondTarget, DependsOn: []string{first.ID}}
+			goal.Routing = map[string]map[string]int32{uid: {stage.Instances[0].ID: 3}}
+			goal.Instances = append([]serving.SchedulerInstance(nil), stage.Instances...)
+			goal.Instances[0].MaxBatch += 2
+			goal.Actions = []serving.Action{first, second}
+			if !receipt {
+				delete(c.runs, "acknowledged-route")
+			}
+			installTestTransition(c, &goal)
+			c.launchTargetLocked(goal, SchedulerControllerConfig{OnAction: func(OperationResult) error { return context.Canceled }})
+			c.wg.Wait()
+			if c.runs[first.ID] != nil {
+				t.Fatal("unchanged first bridge manufactured a route run")
+			}
+			if (c.runs[second.ID] != nil) != receipt {
+				t.Fatalf("second bridge launch=%t, existing ACK=%t", c.runs[second.ID] != nil, receipt)
 			}
 		})
 	}
