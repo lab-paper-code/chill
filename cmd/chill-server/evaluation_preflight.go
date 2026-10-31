@@ -17,12 +17,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func evaluationOccupied(run *api.EvaluationRun) bool {
-	return run.Status.StartedAt != nil &&
-		!meta.IsStatusConditionTrue(run.Status.Conditions, api.EvaluationConditionCleanupComplete) &&
-		len(run.Status.ReleaseRecords) == 0
-}
-
 func (s *evaluationService) preflight(
 	ctx context.Context, request httpapi.EvaluationRequest,
 ) (httpapi.EvaluationPreflight, error) {
@@ -68,7 +62,7 @@ func (s *evaluationService) preflight(
 	}
 	free := true
 	for i := range runs.Items {
-		if evaluationOccupied(&runs.Items[i]) {
+		if meta.IsStatusConditionTrue(runs.Items[i].Status.Conditions, api.EvaluationConditionPoolAcquired) {
 			free = false
 		}
 	}

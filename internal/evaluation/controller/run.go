@@ -57,7 +57,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		}
 		return r.acquire(ctx, run)
 	}
-	if annotation := run.Annotations[api.EvaluationReleaseAnnotation]; annotation != "" {
+	if annotation := run.Annotations[api.EvaluationReleaseAnnotation]; annotation != "" && releaseEligible(run) {
 		processed := false
 		for _, record := range run.Status.ReleaseRecords {
 			if record.OriginalAnnotation == annotation {
@@ -455,11 +455,20 @@ func (r *RunReconciler) removeFinalizer(ctx context.Context, run *api.Evaluation
 	return ctrl.Result{}, r.Client.Patch(ctx, run, client.MergeFrom(before))
 }
 
+func releaseEligible(run *api.EvaluationRun) bool {
+	execution := meta.FindStatusCondition(run.Status.Conditions, api.EvaluationConditionExecutionComplete)
+	return execution != nil && execution.Status != metav1.ConditionUnknown &&
+		meta.IsStatusConditionFalse(run.Status.Conditions, api.EvaluationConditionCleanupComplete) &&
+		isTrue(run.Status.Conditions, api.EvaluationConditionPoolAcquired) && occupied(run)
+}
+
 func (r *RunReconciler) release(ctx context.Context, run *api.EvaluationRun, annotation string) (ctrl.Result, error) {
+	if !releaseEligible(run) {
+		return ctrl.Result{}, nil
+	}
 	var request struct {
-		Reason      string                           `json:"reason"`
-		At          metav1.Time                      `json:"at"`
-		EvidenceRef *api.EvaluationEvidenceReference `json:"evidenceRef,omitempty"`
+		Reason string      `json:"reason"`
+		At     metav1.Time `json:"at"`
 	}
 	if err := json.Unmarshal([]byte(annotation), &request); err != nil || request.Reason == "" || request.At.IsZero() {
 		return ctrl.Result{}, fmt.Errorf("release annotation requires reason and at")

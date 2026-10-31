@@ -104,7 +104,7 @@ rules:
   {{- end }}
   - apiGroups: [apps]
     resources: [deployments]
-    verbs: [list, delete]
+    verbs: [get, list, delete]
   - apiGroups: [apps]
     resources: [replicasets]
     verbs: [list, delete]

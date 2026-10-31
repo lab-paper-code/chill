@@ -424,3 +424,9 @@ func (r *errorReadCloser) Read([]byte) (int, error) {
 func (r *errorReadCloser) Close() error {
 	return r.closeErr
 }
+
+func (c *fakeClient) HeadObject(
+	context.Context, *awss3.HeadObjectInput, ...func(*awss3.Options),
+) (*awss3.HeadObjectOutput, error) {
+	return nil, errors.New("unexpected HeadObject")
+}

@@ -267,6 +267,8 @@ func TestGOTimeRecordedOnce(t *testing.T) {
 func TestCleanupFailureReleasePreservesFailure(t *testing.T) {
 	parent := fixtureRun("a")
 	startRun(parent)
+	condition(&parent.Status.Conditions, 1, api.EvaluationConditionPoolAcquired, metav1.ConditionTrue, "Acquired", "")
+	condition(&parent.Status.Conditions, 1, api.EvaluationConditionExecutionComplete, metav1.ConditionTrue, complete, "")
 	condition(&parent.Status.Conditions, 1, api.EvaluationConditionCleanupComplete, metav1.ConditionFalse, api.EvaluationReasonReturnTimeout, "")
 	r, _ := fixtureRuntime(t, parent)
 	allocationPresent := true
@@ -289,6 +291,25 @@ func TestCleanupFailureReleasePreservesFailure(t *testing.T) {
 	}
 	if occupied(parent) || isTrue(parent.Status.Conditions, api.EvaluationConditionCleanupComplete) || len(parent.Status.ReleaseRecords) != 1 {
 		t.Fatal("release must preserve cleanup failure")
+	}
+}
+
+func TestReleaseIgnoredWhileExecutionContinues(t *testing.T) {
+	parent := fixtureRun("running")
+	startRun(parent)
+	condition(&parent.Status.Conditions, 1, api.EvaluationConditionPoolAcquired, metav1.ConditionTrue, "Acquired", "")
+	condition(&parent.Status.Conditions, 1, api.EvaluationConditionExecutionComplete, metav1.ConditionUnknown, "Running", "")
+	condition(&parent.Status.Conditions, 1, api.EvaluationConditionCleanupComplete, metav1.ConditionFalse, "NotReturned", "")
+	r, store := fixtureRuntime(t, parent)
+	r.HTTP = func(context.Context, string, map[string]string, string, any) error {
+		t.Fatal("running release must not inspect or release the pool")
+		return nil
+	}
+	if _, err := (&RunReconciler{Runtime: r}).release(context.Background(), parent, `{"reason":"early"}`); err != nil {
+		t.Fatal(err)
+	}
+	if !occupied(parent) || len(parent.Status.ReleaseRecords) != 0 || len(store) != 0 {
+		t.Fatal("premature release changed occupancy or evidence")
 	}
 }
 

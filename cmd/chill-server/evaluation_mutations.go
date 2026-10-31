@@ -24,8 +24,9 @@ func evaluationPhase(run *api.EvaluationRun) string {
 		len(run.Status.ReleaseRecords) > 0 {
 		return "Done"
 	}
-	if evaluationOccupied(run) &&
-		meta.IsStatusConditionFalse(run.Status.Conditions, api.EvaluationConditionCleanupComplete) {
+	if meta.IsStatusConditionTrue(run.Status.Conditions, api.EvaluationConditionPoolAcquired) &&
+		meta.IsStatusConditionFalse(run.Status.Conditions, api.EvaluationConditionCleanupComplete) &&
+		evaluationExecutionFinished(run) {
 		return "Blocked"
 	}
 	if run.Status.StartedAt == nil ||
@@ -40,7 +41,9 @@ func evaluationPhase(run *api.EvaluationRun) string {
 }
 func evaluationView(run *api.EvaluationRun) httpapi.EvaluationView {
 	value := httpapi.EvaluationView{
-		Name: run.Name, UID: string(run.UID), Spec: run.Spec, Status: run.Status, Phase: evaluationPhase(run),
+		Name: run.Name, UID: string(run.UID), Spec: run.Spec, Phase: evaluationPhase(run),
+		Conditions: run.Status.Conditions, CurrentStage: run.Status.CurrentStage,
+		StartedAt: run.Status.StartedAt, FinishedAt: run.Status.FinishedAt,
 	}
 	if meta.IsStatusConditionTrue(run.Status.Conditions, api.EvaluationConditionPublished) {
 		value.PublicationID = string(run.UID)
@@ -125,6 +128,9 @@ func (s *evaluationService) replace(
 			Code: "ResourceVersionConflict", Message: "only unchanged Pending evaluations may be replaced",
 		}
 	}
+	if request.Name == "" {
+		request.Name = name
+	}
 	if request.Name != name {
 		return httpapi.EvaluationIdentity{}, &serving.Error{Code: "InvalidInput", Message: "request name must match path"}
 	}
@@ -174,6 +180,11 @@ func (s *evaluationService) release(
 			Code: "ResourceVersionConflict", Message: "EvaluationRun UID changed",
 		}
 	}
+	if evaluationPhase(&run) != "Blocked" {
+		return httpapi.EvaluationIdentity{}, &serving.Error{
+			Code: "ResourceVersionConflict", Message: "release requires a finished, blocked evaluation",
+		}
+	}
 	if request.Reason == "" {
 		return httpapi.EvaluationIdentity{}, &serving.Error{Code: "InvalidInput", Message: "release reason required"}
 	}
@@ -195,4 +206,9 @@ func (s *evaluationService) release(
 		return httpapi.EvaluationIdentity{}, err
 	}
 	return httpapi.EvaluationIdentity{Name: name, UID: request.UID}, nil
+}
+
+func evaluationExecutionFinished(run *api.EvaluationRun) bool {
+	execution := meta.FindStatusCondition(run.Status.Conditions, api.EvaluationConditionExecutionComplete)
+	return execution != nil && execution.Status != metav1.ConditionUnknown
 }

@@ -30,7 +30,7 @@ func (h *Handler) beginEvaluationAudit(r *http.Request, name, uid string) (*serv
 		ID:   "evaluation/" + r.Method + "/" + name + "/" + now.Format(time.RFC3339Nano),
 		Kind: "evaluation-" + strings.ToLower(r.Method), Phase: "validated", StartedAt: now, Expected: expected,
 	}
-	if err := h.observationLog.SchedulerRecord(serving.SchedulerObservation{At: now, Action: action}); err != nil {
+	if err := h.recordMutationAudit(action); err != nil {
 		return nil, err
 	}
 	return action, nil
@@ -46,7 +46,7 @@ func (h *Handler) finishEvaluationAudit(
 		action.Error = errorCode(mutationErr)
 	}
 	action.Actual, _ = json.Marshal(value)
-	recordErr := h.observationLog.SchedulerRecord(serving.SchedulerObservation{At: now, Action: action})
+	recordErr := h.recordMutationAudit(action)
 	if recordErr != nil && mutationErr == nil {
 		return &serving.Error{
 			Code:    "EvaluationAuditIncomplete",

@@ -33,6 +33,8 @@ for kind in ("preprocessors", "datasets"):
 serving = [r for r in roles if r["metadata"]["name"] == "chill-serving-entrypoint"]
 if not serving or not grants(serving[0], "services", "list"):
     sys.exit("serving namespace Role lacks services list")
+if not grants(serving[0], "deployments", "get"):
+    sys.exit("serving namespace Role lacks target Deployment get")
 profiles = [r for r in roles if r["metadata"]["name"] == "chill-serving-entrypoint-profiles"]
 if not profiles:
     sys.exit("profile namespace Role is missing")

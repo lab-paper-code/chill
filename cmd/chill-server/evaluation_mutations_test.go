@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -66,12 +67,13 @@ func TestEvaluationPreflightBoundaries(t *testing.T) {
 	for _, fault := range []string{"none", "pool", "e5", "profiling", "digest"} {
 		t.Run(fault, func(t *testing.T) {
 			service, request := evaluationFixture(t)
-			now := metav1.NewTime(time.Now())
 			var object client.Object
 			switch fault {
 			case "pool":
 				object = &api.EvaluationRun{ObjectMeta: metav1.ObjectMeta{Name: "occupied", Namespace: "ns"},
-					Status: api.EvaluationRunStatus{StartedAt: &now}}
+					Status: api.EvaluationRunStatus{Conditions: []metav1.Condition{{
+						Type: api.EvaluationConditionPoolAcquired, Status: metav1.ConditionTrue,
+					}}}}
 			case "e5":
 				object = &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
 					Name: "legacy", Namespace: "ns", Labels: map[string]string{"chill.dacs.io/e5": "full"},
@@ -119,7 +121,9 @@ func TestEvaluationLifecycleMutationGuards(t *testing.T) {
 	if _, err := service.delete(ctx, created.Name, "wrong", "operator"); err == nil {
 		t.Fatal("UID mismatch accepted")
 	}
-	replacement, err := service.replace(ctx, created.Name, created.UID, request, "operator")
+	replaceRequest := request
+	replaceRequest.Name = ""
+	replacement, err := service.replace(ctx, created.Name, created.UID, replaceRequest, "operator")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,6 +144,16 @@ func TestEvaluationLifecycleMutationGuards(t *testing.T) {
 		t.Fatal("Running replacement accepted")
 	}
 	release := httpapi.EvaluationReleaseRequest{UID: replacement.UID, Reason: "checked"}
+	if _, err := service.release(ctx, request.Name, release, "operator"); err == nil {
+		t.Fatal("running release accepted")
+	}
+	run.Status.Conditions = append(run.Status.Conditions,
+		metav1.Condition{Type: api.EvaluationConditionExecutionComplete, Status: metav1.ConditionTrue},
+		metav1.Condition{Type: api.EvaluationConditionCleanupComplete, Status: metav1.ConditionFalse},
+	)
+	if err := service.client.Update(ctx, &run); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := service.release(ctx, request.Name, release, "operator"); err != nil {
 		t.Fatal(err)
 	}
@@ -175,5 +189,44 @@ func TestEvaluationPhaseTable(t *testing.T) {
 				t.Fatalf("phase=%s want=%s", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestEvaluationViewFlattensStatus(t *testing.T) {
+	service, request := evaluationFixture(t)
+	now := metav1.NewTime(time.Now().UTC())
+	run := &api.EvaluationRun{ObjectMeta: metav1.ObjectMeta{Name: request.Name, Namespace: "ns"}}
+	run.Status = api.EvaluationRunStatus{
+		CurrentStage: "stage", StartedAt: &now, FinishedAt: &now,
+		Conditions: []metav1.Condition{{Type: api.EvaluationConditionPublished, Status: metav1.ConditionTrue}},
+	}
+	if err := service.client.Create(context.Background(), run); err != nil {
+		t.Fatal(err)
+	}
+	detail, err := service.get(context.Background(), run.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := service.list(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, view := range []httpapi.EvaluationView{detail, list.Items[0]} {
+		body, err := json.Marshal(view)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(body, &fields); err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range []string{"conditions", "currentStage", "startedAt", "finishedAt"} {
+			if len(fields[key]) == 0 {
+				t.Fatalf("missing top-level %s: %s", key, body)
+			}
+		}
+		if _, exists := fields["status"]; exists {
+			t.Fatal("nested status leaked into projection")
+		}
 	}
 }

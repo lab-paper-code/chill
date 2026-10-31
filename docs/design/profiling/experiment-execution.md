@@ -200,6 +200,7 @@ leader election은 퇴임 leader의 늦은 명령을 차단하는 fencing이 아
 부모 finalizer는 풀 반환·전역 보존, 자식 finalizer는 단계 증거·잔류 기록만 맡는다. 서로의 삭제 완료를 기다리는 순환은 금지하며 TTL 자동 GC도 쓰지 않는다.
 운영자는 잔류 정리·풀 반환뿐 아니라 이전 발행 주체/진행 중 명령이 더 이상 작용하지 않음을 확인한 뒤 metadata의 `edge.dacs.io/evaluation-release` annotation으로 해제를 요청한다.
 annotation 값은 JSON `{reason,at,by,evidenceRef?}`이며 `at`은 시각, `by`는 요청자다. 선택 evidenceRef 없이도 controller가 annotation 자체를 감사 증거로 저장한다. controller가 실제 반환을 관측하고 원 요청·처리 시각·증거를 status에 기록한 뒤 점유를 해제한다. spec은 불변이며 CleanupComplete 실패/측정 결과를 성공으로 고치지 않는다(`internal/evaluation/controller/run.go`).
+release는 실행 완료(True/False)·CleanupComplete=False·PoolAcquired=True인 Blocked 상태에서만 수락한다. 서버는 그 밖의 상태를 409로 거절하고 controller도 선행 annotation을 무시하며 정상 실행을 계속한다. 목록·단건 projection의 conditions/currentStage/startedAt/finishedAt는 최상위 필드다.
 
 ## 7. 장애 주입
 

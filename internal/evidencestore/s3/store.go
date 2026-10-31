@@ -37,13 +37,9 @@ func (s *Store) Stat(ctx context.Context, location evidencestore.ObjectLocation)
 	if err := s.validateLocation(location); err != nil {
 		return evidencestore.ObjectIdentity{}, err
 	}
-	head, ok := s.client.(interface {
-		HeadObject(context.Context, *awss3.HeadObjectInput, ...func(*awss3.Options)) (*awss3.HeadObjectOutput, error)
+	result, err := s.client.HeadObject(ctx, &awss3.HeadObjectInput{
+		Bucket: aws.String(s.bucket), Key: aws.String(location.Key),
 	})
-	if !ok {
-		return evidencestore.ObjectIdentity{}, fmt.Errorf("%w: HEAD unavailable", evidencestore.ErrTransport)
-	}
-	result, err := head.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(location.Key)})
 	if err != nil {
 		return evidencestore.ObjectIdentity{}, translate("stat evidence object", err)
 	}

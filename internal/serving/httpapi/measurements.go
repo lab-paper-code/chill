@@ -199,7 +199,7 @@ func (h *Handler) finishMeasurementAudit(
 			result.EvidenceDeleted, len(result.DeletedEvidence), result.Task.Spec,
 		})
 	}
-	if err := h.observationLog.SchedulerRecord(serving.SchedulerObservation{At: now, Action: audit}); err != nil && mutationErr == nil {
+	if err := h.recordMutationAudit(audit); err != nil && mutationErr == nil {
 		return &serving.Error{
 			Code: "MeasurementAuditIncomplete",
 			Message: "measurement mutation may have been accepted, but its final audit record could not be saved; " +
@@ -234,8 +234,16 @@ func (h *Handler) beginMeasurementAudit(
 		ID:   "measurement/" + r.Method + "/" + r.PathValue("namespace") + "/" + name + "/" + now.Format(time.RFC3339Nano),
 		Kind: "measurement-" + strings.ToLower(r.Method), Phase: "validated", StartedAt: now, Expected: expected,
 	}
-	if err := h.observationLog.SchedulerRecord(serving.SchedulerObservation{At: now, Action: action}); err != nil {
+	if err := h.recordMutationAudit(action); err != nil {
 		return nil, err
 	}
 	return action, nil
+}
+
+func (h *Handler) recordMutationAudit(action *serving.SchedulerActionObservation) error {
+	at := action.StartedAt
+	if action.CompletedAt != nil {
+		at = *action.CompletedAt
+	}
+	return h.observationLog.SchedulerRecord(serving.SchedulerObservation{At: at, Action: action})
 }
