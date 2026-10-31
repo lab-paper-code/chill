@@ -16,14 +16,14 @@
 | WebSocket | WSS `/api/live` → Node `server/live-proxy.mjs` :3000 → 고정 HTTPS `/api/v1/live`; 일반 HTTP는 자식 `.next/standalone/server.js` loopback :3001. Next custom server 없음; 실패/SIGTERM은 두 프로세스 종료. Upgrade의 원래 Origin/Host 보존. |
 | 업무 소유권 | 인증·도메인 검증·변경 선언·진행·판단·통계·Evidence는 ChillServer 뒤 CHILL이 소유. 웹은 Kubernetes·firstfloor·S3·Node를 직접 호출하지 않음. |
 | 상태 | 사용자별 탭 QueryClient의 서버 cache, 로컬 폼, URL 대상/UID/필터/기간. 신원 변경·logout은 socket/timer 종료 → 요청 취소·cache clear·QueryClient 교체·민감 폼 remount. 늦은 callback은 이전 cache에서 종료. |
-| 정보 구조 | 흐름 보드 → UID별 POOL → 인스턴스·Node·예약 → 선택 당시 근거. 고정 구조는 CSS grid/inline SVG, 시계열은 Recharts; 자동 배치 그래프 의존성 없음. 키보드·focus 복원·reduced-motion·텍스트 상태·가로 스크롤 유지. |
-| 운영자 | 카탈로그·설정·측정 요청/근거 유지. 과거 `/records`, `/settings` 링크 모음과 일반 미지원 측정 준비 페이지는 부활하지 않음. 지원 종류만 명시하고 나머지는 notFound. |
+| 정보 구조 | 운영·서비스·측정·실험·기록, 보조 설정. 정본 경로와 소유권은 §6. 기존 도메인 계산·API·변경 안전 계약을 유지한다. |
+| 전환 상태 | 아래 구조는 승인된 목표이며 단계별 배포 수용과 구별한다. 링크 허브·일반 준비 중 화면은 부활하지 않는다. |
 
 ## 2. 인증·중계·변경 계약
 
 | 항목 | 현행 계약 |
 |---|---|
-| 신원 | 기존 Kubernetes bearer를 탭 메모리와 승인된 sessionStorage에 보관한다. 새로고침 복원·로그아웃·401 처리는 §9.6. BFF는 원본 Authorization 전달. ChillServer TokenReview + 정확한 verb/path SAR, 검증된 username/UID만 actor로 기록. |
+| 신원 | 기존 Kubernetes bearer를 탭 메모리와 버전·system 단위 sessionStorage에 보관한다. hydration 후 복원하며 저장 거부는 메모리 전용. 신원 변경·logout·401/4401은 저장분·요청·cache·socket을 같은 epoch로 정리한다. 403/4403·서비스 장애는 만료가 아니며 목적 URL을 유지한다. 복제 탭 토큰은 별도이고 새 창은 noopener다. BFF는 원본 Authorization 전달; ChillServer TokenReview + 정확한 verb/path SAR로 신원을 검증한다. |
 | 권한 | 401 누락/무효, 403 실제 SAR 거부, 503 review 통신·권한·evaluation 오류. non-resource path는 `/chill` 접두사. Console private leg의 서버 identity는 사용자 SAR를 대체하지 않음. |
 | HTTP 제한 | method/path allowlist; Authorization·If-Match·Content-Type·추론 timeout·필요 CHILL identity header만 전달. 요청/완전한 응답 각각 8 MiB, 응답 header 16 KiB. 상태·요청 ID·Workload UID 보존, no-store. |
 | 초기 웹 설정 | page 50/최대 200, 기본 구간 1시간/최대 24시간, 갱신 5초, 조회 timeout 10초/변경 60초. 추론은 사용자 timeout과 서버 상한 및 중계 여유 사용. WS 연결 수명에 HTTP 한도를 재사용하지 않음. |
@@ -89,7 +89,7 @@ runtime workload readiness의 읽기 시각만 바뀐 것은 상태 변화로 �
 |---|---|
 | delta | instances/actions identity별 행 전체 upsert 후 removed. workloads/nodes/routing/reservations는 키 존재 시 전체 대체, 생략 유지·빈 값 비우기. decision:null은 제거. 상태 권위는 snapshot/delta, event는 이력; 관련 delta 뒤 event, cluster는 event만. 같은 capture/판단은 한 delta, 동일 상태/callback 중복 생략. |
 | identity | decision.at 원본; actionKey=JSON 튜플 `[id,node.uid,startedAt]`. 삭제 정의도 시간축 사전에 보존. ready·routable·routing·native running·waiting·actions는 독립 사실이며 AssignedUnknown은 실행 증거 아님. |
-| first auth | 정확한 `/api/live`, 동일 CHILL_PUBLIC_ORIGIN(미설정 시 검증한 HTTPS Host); query/subprotocol/누락·다른 Origin 거부, 임의 forwarded 불신. 5초 내 ≤16 KiB 첫 `{type:"auth",token}`. 상류에 Bearer 변환, URL/cookie/log/디스크 영속 저장 금지. 승인된 탭 sessionStorage는 §9.6만 허용. |
+| first auth | 정확한 `/api/live`, 동일 CHILL_PUBLIC_ORIGIN(미설정 시 검증한 HTTPS Host); query/subprotocol/누락·다른 Origin 거부, 임의 forwarded 불신. 5초 내 ≤16 KiB 첫 `{type:"auth",token}`. 상류에 Bearer 변환, URL/cookie/log/디스크 영속 저장 금지. 승인된 탭 sessionStorage 예외는 §2 신원 계약만 허용. |
 | 상류 권한 | Upgrade 전 TokenReview와 `get /chill/api/v1/live` SAR, 성공 전 데이터 0개. HTTP 401/403/503→4401/4403/1013, 첫 auth 오류=4401·인증 뒤 계약 오류=1002. 4401/4403 자동 재시도 없음. 전역 feed 권한을 단일 workload 권한에서 확대하지 않음. |
 | 수명 | handshake 10초·socket write 5초, 일반 HTTP timeout/deadline 전 정확한 live 분기. 상류 성공 hello→resume→snapshot/재개; head capture+구독 등록은 한 잠금. 조기 resume 한 건만 보관. 양 끝 종료/logout/shutdown은 socket/구독/timer 해제. |
 | resume | `{type:"resume",from,at}`; from=0은 baseline(at 생략), 나머지는 보존 `(seq,at)` 일치만 재개. 범위 밖·미래·재시작 불일치면 snapshot. hello는 checkpoint 전진 없음, baseline 뒤 중복 버림·last+1 초과는 미적용 후 재동기화. |
@@ -101,66 +101,18 @@ runtime workload readiness의 읽기 시각만 바뀐 것은 상태 변화로 �
 | producer | cmd/chill-server 조립, internal/serving/live hub; OnDecision은 동일 capture, OnAction은 원본 결과, RequestEvent 반영 성공 뒤 집계, 기존 power Source adapter 사용. callback은 메모리만 갱신, socket/REST/S3 대기·새 수집 루프·서버 REST polling 없음. |
 | client | 탭 QueryClient의 chill-live reducer: checkpoint/snapshot/metricsByBucket/events/gaps/lastReceivedAt/lastObservedAt. 최근600초·1000사건과 시작 baseline/bounded delta; 상한 유실 명시. 화면 일시정지는 선택 snapshot·시각을 고정하고 수신 계속, live 복귀 최신 baseline. 숨긴 탭의 의도된 수신 중지는 별도 `paused-hidden` 상태이며 다시 보이면 재연결한다. |
 
-### 3.1 운영 흐름 보드 재구성 (2026-11-01)
+### 3.1 운영 판독표
 
-라운드 14 라이브 평균 SUS 64.2 정체의 원인인 유휴 타일·0 KPI·장치 관계 분리를 라운드 15에서 제거한다. 목표 70 이상은 재설문으로 확인한다.
-1440×900의 주요 영역은 운영 상태 / 장치 표 / 오른쪽 사건·변경 세 개다. 장치는 이름순으로 고정하며 전력 변화로 재정렬하지 않는다. 활성·주의 서비스를 장치 행에서 함께 표시하고 유휴 서비스는 상태줄의 ‘유휴 n ▸’에서 목록 서랍으로 연다.
-화면은 라벨·숫자·상태어로 제한하며 설명은 클릭·터치·키보드로 열리는 용어 도움말 서랍 한 곳에 둔다.
-수치는 단위가 헤더에 있는 표·시각화로 제공한다. 상태줄은 판정 하나·축 있는 공유 전력 5분 추세(높이 76px)·자동제어 켜짐/전체가 기본이며 유입·대기·변경·지연·예약은 양수일 때만 추가한다. 후보·원본은 선택 상세 또는 기본 접힘으로 유지한다.
-개요 첫 화면은 상태 한 줄·모델×장치 커버리지 히트맵·최근 실험 3칩과 에너지 미니 막대·다음 조치 최대 3행으로 제한한다. 실험 칩은 `campaignScoreboard().summary`, 막대는 `experimentHeatmap()`을 공유하고, 상세는 기존 커버리지 셀·실험·회차/요청으로 연결한다.
-
-```text
-운영 상태: 제목 / 마지막 수신 KST / 일시정지
-이상 > 주의 > 정상(전부 무유입이면 정상 · 무부하) / 유휴 n ▸ / 용어 도움말 / 판단 근거
-공유 전력 W + 축 있는 5분 추세 | 자동제어 켜짐/전체 | 양수인 유입·대기·변경·지연·예약만
-장치(이름순 고정) / 공통 W 막대 / 배치된 서비스 / 상태 | 사건·변경
-서비스: 이름 / req/s / SLO 상태                      | 없으면 ‘사건 없음’
-미배치 활성·주의 서비스 / 서버 사유                    | 판단·전환 기록
-마지막 행: 보드 밖 노드 → 노드별 W 표
-```
-
-- **판정 규칙:** `serviceRows`의 서비스 상태를 `boardVerdict`가 이상 > 주의 > 정상으로 집계한다. 실패·접수 거절·SLO 위반·유입 있는 서비스의 처리 인스턴스 없음과 진행 중 관측 공백은 ‘이상’이다. 대기·변경·예상 대비 지연·미관측·유입은 있지만 지연 표본이 없는 서비스는 ‘주의’다.
-  UID 없는 전력모드 변경 같은 공유 동작도 전체 변경·지연 건수로 집계하며, 서비스 이상 다음 우선순위로 ‘주의’에 반영한다. 종결·미시작 동작은 포함하지 않는다.
-  자동제어 설정·배치·유입을 ‘정지 중’으로 합치지 않는다. 이상·주의가 없고 전부 유입 0인 관측은 ‘정상 · 무부하’이며 SLO 표본이 있다는 뜻은 아니다. 유입>0·지연 표본 없음은 ‘표본 부족’이다.
-  판단 사유는 판단 서랍 한 곳에서 `decisionReason`으로 표시한다. 자동제어 대상이 전부 꺼져 있으면 ‘자동제어 대상 없음’, 그 외 빈 사유는 ‘미제공’이다. 과거 설정을 현재 설정으로 추정하지 않는다. 도움말은 용어당 한 행이며 판정 기준을 별도 표 열에 둔다.
-- **정체:** 공유 순수 함수 `actionProgress`가 종결/진행/지연을 구분한다. 시작 후 예상 평균의 3배,
-  예상 미제공이면 5분을 넘긴 미종결은 ‘예상 대비 지연 · 종결 미확인’이며 진행 건수에서 분리한다.
-  실제 실패/중단을 추정하지 않는다. 서비스→장치로 묶고 수동/자동, 동일 한국어 단계, KST 시작·분/시간 경과를 표시한다.
-  UUID·SHA·원본 JSON·후보별 계산은 상세 안 `details`로 접고 핵심 사유를 먼저 읽는다.
-- **운영 메뉴와 용어:** `/scheduler` 링크를 머리글에 두고 ‘서비스’, ‘변경 진행’,
-  ‘실행 준비/기존 요청 마무리/전력모드 변경’ 등 운영 메뉴의 한국어를 재사용한다.
-  내부 E1/E4/C1 코드와 가운뎃점 메타 문자열은 주 화면에서 제거한다.
-- **수치 일치:** 보드와 `/transitions` 현재 목록은 같은 live snapshot과 `actionProgress`를 쓴다.
-  REST scheduler state는 원본 조회를 담당한다. `incidentSummary`가 최신 30건 목록과 그중 최근 30초 새 사건 수를 함께 산출한다. 숫자는 해당 목록으로 이동하며 유지 판단은 새 사건·강조·목록에서 제외한다. 사건 목록 머리글의 두 번째 시계는 없애고 운영 상태 헤더의 마지막 수신 시각만 갱신한다. 사건 발생 시각은 각 기록에 보존한다.
-  대기=배정 전 pending + 배정 후 native waiting이다. 판단 근거의 queued는 과거 판단 당시
-  대기·실행·응답 중을 포함한 미종결 요청이므로 현재 대기와 같은 수치로 표기하지 않는다.
-  성공률=completed/(completed+failed), SLO 안=withinSLO/(completed+failed);
-  전체 합계는 동일한 마지막 1초 버킷에 모든 서비스가 있을 때만 표시하고 결손은 0으로 채우지 않는다.
-- **관측 공백 사건:** `gapEpisodes`는 장치/범위별로 접하거나 겹친 누락 버킷을 시작·지속 s·진행/회복 한 사건으로 병합한다. 회복은 해당 범위의 후속 유효 관측으로만 확인한다. 5초 미만 회복 사건은 흐름·새 사건 수에서 제외한다. 모든 사건 행은 클릭·키보드로 선택 상세를 연다. 원래 공백은 보존해 추세가 결손을 잇지 않게 한다.
-  사건 보관 상한·재연결 이력 유실은 ‘기록 손실’이며 metrics 재개로 회복되지 않는다. 이력 손실은 짧은 회복 공백 제외 대상이 아니다.
-- **장치 표 우선:** `serviceRows`의 관측된 무유입·종결 없음, 미배치·변경/예약 없음만 유휴 목록으로 옮긴다. 미관측·실행 인스턴스·주의 서비스는 장치 행 또는 ‘미배치’ 행에 남긴다. 실행 인스턴스의 노드가 현재 구성에 없으면 ‘장치 미확인’ 행에서 배치 상태를 보존한다. 유입 0이어도 이상·주의 상태는 표시하고 무부하일 때만 SLO 평가를 ‘—’로 둔다. 이름·모델 검색은 유휴 목록 서랍에 둔다. 첫 화면에 유휴 타일 그리드와 빈 서비스 표를 남기지 않는다.
-- **교대 인수인계:** 중복된 ‘왜 조용한가’ 문단은 제거한다. 최근 1분 수신 누계·종결 성공률·동일 SLO 분위수 초별 범위는 선택 서비스 상세의 표로 이동한다. 분위수를 평균하거나 합산하지 않고 관측 초 수/60을 명시한다.
-  최근 1분은 완료된 초 경계 `windowEnd` 기준 `[windowEnd−60초, windowEnd)`의 60개 버킷을 포함한다. ‘판단·전환 기록’ 링크는 같은 이름의 화면에 최근 5분 from/to·`order=asc&filter=decision-action`·서비스 UID를 전달한다. 서버 허용 filter는 종류 기준이며 Keep 제외값이 없으므로 화면에서 연속 Keep을 ‘유지 ×n’ 한 행으로 묶고 첫 원본 append offset 참조를 보존한다.
-- **서비스 상세:** 서비스 SLO 분위수와 목표를 먼저, 이후 요청 지표·인스턴스·실제 노드·분배 관계를 표시한다. 참고 p95/p99는 서비스 SLO 분위수로 대신 쓰지 않는다.
-- **연결 수명:** LiveProvider는 경로·화면 너비와 무관하게 연결한다. 캐시는 세션 epoch·검사용 장면으로 구분하며 공급자 effect의 시작·해제에서 버퍼를 비우지 않는다. 같은 세션의 재마운트도 체크포인트에서 재개한다. 로그아웃·세션 변경은 기존 QueryClient 초기화 경계를 유지한다.
-  마지막 유효 공유 전력은 reducer의 `lastPower:{bucketAt,watts}|null`에 저장해 600버킷 보관 범위와 화면 수명에 종속되지 않는다. 기존 세션 초기화에서 함께 지우며, 이전 버킷 수정으로 최신값을 되돌리지 않는다. 마지막 유효 버킷 자체가 null로 정정되면 보관된 유효 버킷에서 다시 선택한다.
-  모든 계측 장치의 공통 눈금 최댓값은 reducer의 `powerScale:number`에 보관한다. 원본 노드 W의 세션 최댓값에서만 증가하고 버킷 수정·만료·재마운트로 줄어들지 않는다. `powerWindow`는 reducer의 마지막 완료 버킷을 기준으로 공유 전력 추세·장치별 관측 초·기대 초를 함께 계산한다. 컴포넌트의 마운트 시각이나 상태·화면 폭에 의존하지 않는다.
-- **상세·접근성:** 우측 전체 높이 서랍과 독립 스크롤을 쓴다. 판단 근거는 선택 시각·판정, 입력 관측/건수, 서비스 수요 표를 제공하고 후보 자원·예상 에너지는 접힘 표로 표시한다. 영문 해석·원시 나노초·바이트 문장은 제거하고 KST 초 단위·GiB로 표시한다. 원문은 JSON 한 곳에 보존한다.
-  Esc 닫기·열기 포커스·닫은 뒤 복원. 요약 하나만 atomic aria-live로 읽고 일시정지는
-  화면 snapshot을 고정하되 수신은 유지한다. 기본 글자는 13px 이상, 숫자는 tabular 처리한다.
-  5분 추세는 받은 초만 잇고 결손·접속 이전은 공백으로 남긴다.
-- **장치 전력:** 장치명·공통 W 막대·배치된 서비스(이름·req/s·SLO)·장치 상태를 이름순으로 고정한다. 전체 W는 서버 `live/metrics.go`의 계측 범위 UID 합이며 보드 밖 노드도 포함한다. 같은 버킷 전체 W와 구성 장치 W 합의 차액이 ‘보드 밖 노드’다. 결손·음수 차액을 추정하지 않으며 눈금 초과는 표식과 실제 W를 표시한다. 마지막 행을 누르면 현재 metrics에 있고 보드 구성에는 없는 노드의 개별 W 표를 연다. 공유 전력은 마지막 유효 버킷·경과 s를 유지하고 추세는 결손을 연결하지 않는다.
-  서버 `runtime.go`의 MissingDataset·MissingEvidence·Preparing과 `cmd/chill-server/live.go`의 판단 사유를 한국어로 매핑한다. 미등록 코드는 원문 그대로 표시하며 ‘기타 사유’로 뭉개지 않는다. SLO 분위수는 p50/p90/p95/p99를 정확히 사용한다. 장치명이 없으면 축약 UID 별칭으로 표시하고 기록·기간 입력은 24시간제 KST를 사용한다.
-- **범위·신선도:** 서비스 상세의 합계·판정·변경·예약·사건을 UID로 한 번 제한하며 클러스터 판단은 섞지 않는다.
-  공유 전력만 ‘클러스터 전체’로 명시한다. 상세 서랍에도 그 서비스의 진행/정체 묶음을 제공한다.
-  KST를 패널·추세·근거까지 고정하고 탭 복귀 시 시계를 즉시 갱신한다. 연결만 복구되고 관측/버킷이 오래되면 ‘실시간’이 아닌 ‘관측 지연’이다.
-  변경 목록도 동일한 `liveFresh` 판정을 쓰며, 끊김/지연 중 캐시는 ‘현재 상태 미확인·마지막 관측 KST’로 표시하고 실제 live 재연결 버튼을 제공한다.
-  서비스 지표 미수신은 ‘관측 대기’, 관측된 received=0만 ‘무유입’으로 구별한다.
-- **시작 identity 버그:** 시작 callback의 `StartedAt`이 실행기 결과의 새 시각으로 바뀌어 hub의
-  `[id,node.uid,startedAt]` upsert가 다른 행을 만들었다. 컨트롤러 상태와 달리 이전 시작 행이 잔존했다.
-  수동 실행은 최초 시작을 보존하며 회귀 `TestManualOperationGuards`로 시작/종결 identity를 확인한다.
-  자동 launch 동일 원인 수정은 메인 소유 `scheduler.go`에 별도 반영해야 한다.
-
+기본 진입점 `/`는 운영 판독 / 서비스 상태 / 진행·사건의 세 영역이다.
+서비스 영향·성능 판정·관측 상태·실험 상태를 분리하며 무부하를 성능 정상으로 답하지 않는다.
+서비스 표에 실제 장치를 직접 표시하고 실제 설정된 SLO 분위수를 사용한다.
+유휴만 있으면 유입·배치·접수·자동제어 집계로 압축하고 개별 유휴는 같은 표의 보기 전환으로 연다.
+장치 화면은 명시적으로 선택하며 빈 장치 표로 자동 전환하지 않는다.
+장치는 이름순, 서비스는 선택·읽기 중 자동 재정렬 금지다.
+관측 공백·전력 누락·연결 지연을 서비스 장애와 합치지 않고 회복은 후속 유효 관측으로만 확인한다.
+사건은 대상·동작·결과·제공 사유를 보이고 유지 묶음의 원본을 보존한다. 임의 작업 생애주기를 만들지 않는다.
+선택 근거는 정확한 decision.at·UID·구간을 고정한다. 대기 pending/native waiting과 과거 판단 queued는 다른 집단이다.
+지연 분위수 평균·결손 영 채움·공유 전력의 서비스 귀속은 금지한다.
 
 ## 4. API 소유권과 연결 현황
 
@@ -180,14 +132,14 @@ Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.
 | `POST /namespaces/{namespace}/batch-energy-optimizations/preflight` | 입력을 해석하고 `resolves`, `reason`, `plan`을 반환하는 읽기 전용 요청 | 측정 요청의 검토 단계와 `/measurements/check`에 사용한다. 캠페인 접수는 별도 POST로 수행한다. |
 | `GET, POST /namespaces/{namespace}/batch-energy-optimizations`, `DELETE .../{name}` | 측정 목록, `dryRun=All` 검증과 접수, `uid`와 `If-Match`의 영구 삭제 | 측정 목록, 요청과 삭제에 재사용한다. |
 | `GET /scheduler`, `GET /scheduler/settings`, `GET /scheduler/state`, `PUT /scheduler/settings` | 현재 설정, 실제 snapshot과 판단, 동작과 결과, 전체 설정 적용 및 행위자 관측 기록 | 고정 BFF 경로에 연결한다. 버전 조건과 dry-run 계약은 ChillServer 조회 대기다. |
-| `GET, POST /scheduler/profiles`, `DELETE /scheduler/profiles/{namespace}/{name}` | 채택 프로파일과 조건, 채택 결과와 `configVersion` | 측정 화면의 채택과 해제, `/scheduler/profiles` 목록에 재사용한다. |
+| `GET, POST /scheduler/profiles`, `DELETE /scheduler/profiles/{namespace}/{name}` | 채택 프로파일과 조건, 채택 결과와 `configVersion` | 측정 결과 처리 성능의 현재 사용·채택·해제에 재사용한다. |
 | `GET /namespaces/{namespace}/operation-cost-measurements[/{name}]`, 같은 형태의 `dispatch-occupancy-measurements` | `{items:MeasurementProjection[]}` 또는 단건 안전한 projection. 원본 spec 전체가 아니다. | relay GET 허용됨. 두 측정 화면으로 연결한다. |
 | `GET /scheduler/capacity` | `{rows:CapacityRow[]}`. 자동제어 워크로드가 필요로 하는 행과 입력, κ 및 탐색 판정 | relay GET 허용됨, query 없음. 용량 근거 화면과 현재 settings 대조에 연결한다. |
 | `GET /observations/load` | 명시적 구간의 수신, 접수, 배정과 완료 사건 수 및 사건률 | from/to를 필수로 전달한다. 완료는 수신 cohort와 별개의 사건 집계다. |
 | `GET /observations/scheduler` | 판단, snapshot, 설정 변경, action과 전력 관측의 보관 중인 append-order 페이지 | from/to, bounded limit와 cursor를 사용한다. 응답은 페이지 항목과 nextCursor로 구성된다. relay는 이 경로와 `GET /scheduler`, `/scheduler/state`, `/scheduler/profiles`를 ChillServer `view=compact`로 읽고, 화면 파싱 전에 공유된 `profile`과 `completionMeasurement` `$ref`를 응답 dictionary로 복원해 full 응답과 같은 값을 쓴다. 응답 상한은 그대로다. |
-| `GET /observations/power` | 명시적 구간의 전체 및 활성 POOL joules와 평균 W, 노드별 값, `complete`, `reasons`, 로컬 보존보다 앞선 구간의 `gapUntil`(`internal/serving/httpapi/power.go:10-32`) | `/scheduler/power`의 실행 그룹 전체 전력에 연결했다(`chill-dashboard/features/scheduler.tsx:251-267`). |
+| `GET /observations/power` | 명시적 구간의 전체 및 활성 POOL joules와 평균 W, 노드별 값, `complete`, `reasons`, 로컬 보존보다 앞선 구간의 `gapUntil` | 기록의 전력 조회와 장치 전력 범위에 연결한다. 브라우저에서 적분하지 않는다. |
 | `GET /systems`, `GET /inventory` | ChillSystem의 condition과 이유, DeviceClass와 typed 전력모드 actuator, Node | System, Inventory와 Run 목록은 아래 query handler에서 제공한다. |
-| `GET /experiments`, `GET /experiments/{id}` | 완료된 불변 게시·단계 KPI·출처와 선택적 `outcome`. 목록은 `definition` 대신 선택적 `comparisons`, 단건은 `definition` 제공 | §8.6의 정의 기반 reader를 사용한다. 목록 판정은 comparisons와 목록 KPI만 사용하며 항목별 단건 GET을 하지 않는다. |
+| `GET /experiments`, `GET /experiments/{id}` | 완료된 불변 게시·단계 KPI·출처와 선택적 `outcome`. 목록은 `definition` 대신 선택적 `comparisons`, 단건은 `definition` 제공 | §8 정의 기반 reader. 목록 판정은 comparisons와 목록 KPI만 사용하며 항목별 단건 GET을 하지 않는다. |
 
 ### 연결 예정 API (서버 책임)
 
@@ -263,962 +215,117 @@ System/Inventory/Run 목록은 limit 1..200, offset 0..1,000,000·bounded q; Run
 | 이력·비교 | history 종류/power Node 필터는 받은 페이지에만 적용, cursor는 제출 원래 from/to 보존. append offset/limit=1 복원은 kind/at/대상/action node·시작 일치 필요. A/B는 각 입력 구간·미래 horizon과 UID/정의 whole-window cohort 구분. |
 | 재생 분모 | T4 immutable summary·stages·sources·coverage(local/archive/gaps) 사용. 원시 수신 cohort를 UID/requestID 중복 제거·final 우선, receivedAt+elapsedNanos ns 종결 초로 재집계(재생만). exact definitionID SLO, 미확인/이전 구간은 공백. 단계 KPI를 초별 보간하지 않음; 공유 POOL J 행 합산 금지. |
 
-## 6. SRS 추적성
+## 6. 화면 소유권·정본 IA
 
-ID 정본은 Dashboard SRS다. U는 기존 구현 단위, T는 라이브/재생 통합, G는 서버 조회 선행 단위이며 완료 판정이 아니다.
+기존 개요 → 측정 흐름, 측정 여섯 탭, 장치 중심 운영 보드와 과거 §8~9의 중복 설계를 아래 규약으로 대체한다.
+SRS DB-FR-50~52·56·65는 변경, DB-FR-67은 폐기 이력, DB-FR-68~70은 공통 규약이다.
 
-| 요구사항 | 구현 위치와 API | 작업 단위 | 수용 시나리오 |
-|---|---|---|---|
-| DB-SEC-01, DB-SEC-03 | 이 문서의 bearer 전달, TLS, credential 제거 | 기존 | 권한과 만료, 내보내기와 이력 |
-| DB-SEC-02, DB-SEC-04 | 이 문서. BFF는 설정된 ChillServer origin 하나로 중계하고 ChillServer가 신원을 검증한다(`lib/server-config.ts`, `lib/relay.ts`). | U6 | 권한과 만료 |
-| DB-INT-01~02 | 현재 아키텍처의 고정 Git, 독립 모듈과 배포 | 기존 | 독립 모듈과 템플릿 |
-| DB-INT-03 | API 원본 DTO와 원본 식별자 보존 | U6 | 데이터와 API 공백 |
-| DB-INT-04 | 도메인 writer와 If-Match | 기존 | POOL과 유지보수 |
-| DB-INT-05 | API 연결 현황과 남은 조회, 독립 Query의 영역별 미지원/공백 표시 | D0, T6, G1~G3 | 데이터와 API 공백, 시스템 개요 |
-| DB-INT-06 | 이 문서의 영역별 상태와 마지막 관측 시각 | 기존 | 데이터와 API 공백 |
-| DB-UX-01~02, DB-UX-04 | 단계형 폼, 필드 오류, preview와 원본 identity | 기존 | 안내형 등록, 충돌과 연결 단절 |
-| DB-UX-03 | 이 문서의 목록 행 직접 이동과 조회 범위 문장 | D0 | 안내형 등록, 데이터와 API 공백 |
-| DB-FR-01 | System, Inventory, Workload 상태 구분 | 기존 | POOL과 유지보수, 시스템 개요 |
-| DB-FR-02 | `/resources` 장비 Dialog와 `/measurements/new` 전력모드 단계의 같은 제어 방식 문장, `GET /inventory` typed actuator | U0, U3 | 장비 전력모드 |
-| DB-FR-03 | `/` 개요의 독립 요약 행: 구성요소별 condition 상태, 이유와 시각(`GET /systems`, `ComponentsDisabled` 별도 문장), 서비스별 SLO와 실제 요청 결과(`GET /workloads`, `GET /observations/workloads/{uid}`), 부하와 큐(`GET /observations/load`, `GET /scheduler`), 전체 및 활성 POOL W와 J, 구간과 관측 공백(`GET /observations/power`), 진행 작업 | U1, U5 | 시스템 개요, 에너지와 실험 |
-| DB-FR-04 | 모델 실행 방식 단계와 파일 화면의 사용자 용어, `internal/modelcatalog/catalog.go:107-123`과 같은 선택 규칙 | U2, U1 | 안내형 등록, 공유 모델 변경 |
-| DB-FR-05, DB-FR-07 | 기존 Model과 Workload 관리 API, operation, 영향 및 참조 보호 | 기존 | 안내형 등록, 처리 중 수정과 삭제, 공유 모델 변경 |
-| DB-FR-06 | `/workloads/[name]`의 준비 사유 문장과 다음 행동, 이 문서 표 | U1, U2 | 근거 부족, 오류 안내 |
-| DB-FR-28 | 전처리기와 데이터셋 계약 결론 문장의 필드 이름 | U2 | 전처리기와 데이터셋 관리, 계약 기반 입력과 결과 |
-| DB-FR-08 | `/workloads/[name]/infer`의 단일 입력 제출 | U2 | 모델 공유와 추론, 계약 기반 입력과 결과 |
-| DB-FR-09 | 기존 infer와 exact 요청 관측, timeout 및 지연 경계 | 기존 | 모델 공유와 추론 |
-| DB-FR-29 | `/workloads/[name]/infer`의 계약 기반 입력과 결과, 이 문서 | U2 | 계약 기반 입력과 결과 |
-| DB-FR-10 | POOL 실제 projection과 Inventory | 기존 | POOL과 유지보수 |
-| DB-FR-11 | 이 문서의 허용 자원과 유지보수 계약(ChillServer 관리 API 대기) | D0 | POOL과 유지보수 |
-| DB-FR-12 | `/measurements/new` 검토 단계와 `/measurements/check`의 preflight 결론과 계획 요약, 전력모드 문장 | U0, U3 | 측정과 실패, 장비 전력모드 |
-| DB-FR-13 | 측정 상세의 결과와 실패 문장 및 다음 행동, 측정 회차의 Passport 제공 필드(family, version, provider, architecture). 실제 backend와 실행 장치는 이 문서 조회 이후 | U1, U3, G2 | 측정과 실패 |
-| DB-FR-14 | `/scheduler/profiles`와 후보 상세의 측정 조건 네 행, 조건이 다른 프로파일 구분 | U0, U4 | 프로파일 조건 |
-| DB-FR-30 | `/workloads/[name]/coverage`, 측정 요청 장비 단계의 사유 | G1 | 측정 가능 범위 |
-| DB-FR-32 | `/measurements/transition-costs`와 상세, 후보 전환 비용 연결 | G3 | 전환 비용 원본 |
-| DB-FR-15 | 이 문서 현재 판단 띠와 실제/목표/후보 구분 | T6 | 구성과 설정 변경 |
-| DB-FR-16 | 이 문서 선택 당시 근거와 예측/실측 구분 | T6 | 구성과 설정 변경, 전환 비용 원본 |
-| DB-FR-17 | `/configuration`의 SchedulerSettings 편집, 예측 영향은 ChillServer 조회 대기 | U4 | 구성과 설정 변경 |
-| DB-FR-18 | 이 문서 근거의 선언/실제 분배, T2 scheduler-api의 route/unroute/release/reset 기록. 예전 `manual-static-routing` 이력은 원본 보기로 유지하며 새 설정 쓰기로 재사용하지 않는다. | T2/T6 | 설정 기반 요청 분배 |
-| DB-FR-19~21 | 이 문서 시간축의 계획/실제 작업, 의존관계·실패·부분 적용과 선택 근거 | T6 | 전환 일부 실패 |
-| DB-FR-22 | UID 관측 기록과 단계별 요청 항목 | 기존 | 빈 구간과 집계 |
-| DB-FR-23 | `/observations`의 전체 구간 cohort, 표본 0의 0개와 빈 통계 값(기존 화면 유지) | D0 | 빈 구간과 집계 |
-| DB-FR-24 | `/scheduler/power`의 개별 기록과 `GET /observations/power` 전체 및 활성 POOL 집계. 증분 에너지는 ChillServer 조회 대기 | 기존 | 에너지와 실험 |
-| DB-FR-25 | `/scheduler/compare`의 A/B 조건, 예측과 같은 구간 실제 cohort | 기존 | 에너지와 실험 |
-| DB-FR-26~27 | 선택 기록과 현재 페이지 export, 설정 변경의 검증 actor | 기존 | 내보내기와 이력 |
-| DB-OP-01~04 | 영향 확인, If-Match, 원본 작업 조회, 제출 잠금과 명시적 재제출 | 기존 | 처리 중 수정과 삭제, 공유 모델 변경, 충돌과 연결 단절 |
-| DB-OP-05 | 이 문서 표, 공통 오류 영역, 관리 변경과 추론 오류의 의미와 다음 행동 | U1, U2 | 오류 안내, 권한과 만료 |
-| DB-NFR-01~06 | 접근성, 값 보존, bounded 조회, 성능 예산, 독립 배포와 안전한 렌더링 | 기존 | 접근성과 화면 안전, 조회 부하와 재시작 |
-| SCH-37, DB-INT-07~08 | 라이브 계약의 first auth→Bearer, producer, snapshot/delta/seq/집계 | T5 | 라이브 인증과 재동기화 |
-| DB-NFR-07 | 라이브 계약의 gap/마지막 수신·관측/신선도 | T5/T6 | 라이브 인증과 재동기화 |
-| DB-FR-35~39, DB-FR-50~52 | 흐름 보드·POOL 계층·시간축·선택 당시 근거; 세부 기준은 SRS | T6 | 라이브 무대의 연속 흐름 |
-| DB-FR-40~44 | 이 문서 재생·분모·비교·정의·불변 결과와 archive | T4/T6 | 재생 결과의 모집단과 에너지 |
-| DB-FR-45~49 | 이 문서 운영자 측정 근거와 폐기 route | T4/T6 | 운영자 조회와 폐기 화면 |
-| DB-FR-53~54 | 이 문서 동작 비용/분배 점유시간 목록·상세, 실제 투영과 UID·출처 보존 | API coverage 계획 | 동작 비용의 실제 API와 원본 identity, 분배 점유시간의 조건과 누락 결과 |
-| DB-FR-55 | 이 문서 `/scheduler/capacity`의 전체 입력·판정과 독립 settings 대조 | API coverage 계획 | 용량 입력과 계산 판정 및 현재 설정 대조 |
-| DB-FR-56~60 | §9.2~9.4와 측정 API §13의 서버 집계·정확 상태·경로별 요청 범위 | U1/U2/U3 | 개요, 커버리지, 조건별 목록과 batchPlan |
-| DB-FR-61~63 | §9.4의 결과 행·서버 상태·실패/후속·d/비용 | U1/U3 | 운영 사용 여부와 부족 근거, 실패 원인, 동일 판정 소비 |
-| DB-FR-64~65 | §9.5의 전 서비스/비대응 단계·부호·정밀도 | U3 | 실험의 전체 득실과 단계 의미 |
-| DB-UX-05~06 | §9.1~9.3·9.6의 data Screen·탭·제목·인증/URL 복원 | U2(공용), U3(적용) | 데이터 폭·탐색·새로고침과 SUS ≥70 재설문 |
-
-## 7. 남은 연결과 수용 경계
-
-| 항목 | 현재 공백·다음 근거 |
+| 정본 경로 | 소유 정보 / 첫 화면 질문·구성 |
 |---|---|
-| DB-FR-13 / G2 | Passport는 family/version/provider/architecture 제공. 실제 backend는 검증된 RuntimeResult.Backend, 실행 장치는 firstfloor RuntimeMetadata의 device/providers/gpuUUID/rknn 투영 대기. candidate.executionPath 이름으로 추정 금지. |
-| DB-FR-30 / G1 | 실행 경로×DeviceClass Compatible/Incompatible/Unknown·사유는 internal/modelcompat 내부; Inventory 선언과 별개인 조회 필요. |
-| DB-FR-32 / G3 | PowerModeTransitionCost 원본의 모드 쌍·방향별 반복 시간/J·판정/사유·관측 구간·경계 불확실성·Serving 지속·참조 API 대기. OperationCostMeasurement는 대체 불가. |
-| 라이브/재생 | T5/T6 코드 연결은 승인 배포·실제 WS 수용 완료가 아님. 재생 API/원본 계약은 [T4 관측 설계](../serving/observability-split.md); 제품과 고정 fixture를 구분. fixture는 CHILL_DEMO_REPLAY=1에서만, 인증 우회·upstream·변경·추론 금지. |
-| 실제 수용 | qualifying native campaign 이후 Ready 추론 성공, ARM/RKNN hardware, 요청 drain·운영 전력·selector·전환/writer·전체 SRS 시나리오·성능 예산은 전체 완료 근거가 필요. |
-| 실제 조회 장애 | scheduler-dashboard-8c7cbec 배포 시 load/journal BFF 504, 직접 1분/limit=1 journal도 30초 무응답·S3 PutObject deadline. 과거 기록/A/B/전력 정상 조회 미검증; timeout/타 컴포넌트 설정 변경 없음. 실제 작업은 GET 한정, 설정 PUT·제어 활성화·인위 전환·전력 실험 아님. |
+| `/` 운영 | 지금 무엇을 확인해야 하는가? 현재 서비스 영향·유입·배치·진행 변경 / 운영 판독·서비스 상태·진행/사건 |
+| `/operations/devices` 장치 | 어디에 무엇이 배치됐는가? 전력 추세·장치/배치 표 → 사양·모드·자원 역할 |
+| `/workloads` 서비스 | 어떤 정의가 적용되는가? 목록 관리 표; 상세 적용 상태·정의/설정·배치/연결 |
+| `/measurements` 범위 | 어떤 조합의 근거가 있는가? 조건/범위·선택 모델 행렬·선택 결과 |
+| `/measurements/requests` 요청 | 어떤 요청·회차가 진행/실패했는가? 부모 요청 표 → 자식 회차·점검·동일 조건 요청 |
+| `/measurements/results` 결과 | 현재 사용과 품질은 어떠한가? 처리 성능 / 변경 비용 / 분배 처리시간 표 |
+| `/experiments` 실행 | 무엇이 실행·정리 중인가? 실행 표·선택 실행·필요한 정리 확인 |
+| `/experiments/results` 결과 | 비교 근거로 어떤 차이를 말할 수 있는가? 비교 판독·구간 비교·선택 서비스 추세 |
+| `/experiments/load-scenarios` 부하 설정 | 어떤 부하 정의를 사용하는가? 검색/표; 상세 정의·구간 미리보기·사용 중 실행 |
+| `/records` 기록 | 선택 시점에 무엇이 있었는가? 판단·변경 / 서비스 요청 / 전력의 조회 범위·기록·선택 근거 |
+| `/settings` 설정 | 어떤 값·카탈로그가 적용되는가? 운영 설정 / 모델 / 입력 처리 / 데이터셋의 선택·현재값·연결/영향 |
 
-## 8. 측정·실험 UX와 커버리지 (2026-10-30)
+각 사실은 정본 한 곳만 소유한다. 연관 화면은 같은 KPI 묶음을 복제하지 않고 대상·기간·namespace·UID를 보존한 링크를 제공한다.
+서비스 상세의 `현재 관측`은 운영으로 연결하며 접수 허용을 실제 유입으로 번역하지 않는다.
+동일 축의 값은 같은 UID·시각일 때만 공통 계산 결과를 공유한다. 서비스 관리는 WebSocket 없이 관리 API로 동작한다.
+측정 범위는 전체 모델 요약과 선택 행렬을 적층하지 않는다. 조합/배치 분모를 분리하고 미측정 모드·지원 안 함·미확인을 문자로 보존한다.
+목표 배치가 없으면 진행률을 만들지 않는다. 요청 실패와 기존 사용 결과는 공존하며 회차 전체 검색·딥링크는 유지한다.
+결과 종류의 API·통계는 합치지 않고 변경 비용 준비·제거를 각각 행으로 표시한다.
+작성·수정은 전용 페이지의 대상 → 조건·내용 → 점검·제출, 단일 요청은 입력·실행 상태·실제 응답이다.
+필수값을 고급 설정에 숨기지 않고 조건 변경 시 점검을 무효화한다. 과거 정의/현재 환경 차이는 명시 반영한다.
 
-**대체된 설계 이력.** 이 절은 1~4차 구현 당시의 결정·검증 기록이다. 현재 화면·집계·요청·인증
-설계의 정본은 **§9**이며, 충돌 시 §9와 [5차 계획](../../plans/2026-10-31-dashboard-measurement-redesign.md)을 따른다.
-특히 클라이언트 전수 집계·select 내비·운영 홈 유지·7단계 요청·평균 SUS 68 기준은 폐기한다.
+## 7. 공통 상태·컴포넌트·상세 규약
 
-### 8.1 시각 방향: 계획 → 브리프 재검토 → 확정
+기존 폰트·의미색·테마를 재사용한 운영 판독표다. 새 상태 엔진·위젯 체계·기록 저장소·보고서 빌더·차트 의존성은 추가하지 않는다.
 
-**1차 계획.** CHILL을 ‘연구 계측표’로 읽히게 한다. 첫 화면의 주인공은 큰 숫자 카드가 아니라
-조합의 빈칸과 비교 열이다. 차원명은 왼쪽, 수치/단위는 오른쪽, 상태 기호는 일정 위치에 놓는다.
-8/12/16/24/32px 간격과 기존 테두리·모서리를 재사용하며 동일 카드 88개를 반복하지 않는다.
-
-**브리프 대비 재검토.** uxexpert §8.2의 ice/petrol/ink와 master-detail 방향은 채택한다.
-그러나 제안의 새 petrol `#0D5C75`, amber `#D97706`, crimson `#C81E1E`로 기존 토큰을
-덮지 않는다. `globals.css:55-98`의 실제 토큰이 정본이다. 매 화면에 어두운 KPI 배너를 붙이는 것도
-또 다른 템플릿이므로 버렸다. 라이트 화면은 조용한 표와 한 줄 결론, 다크 모드는 기존 `.dark` 대응값을 쓴다.
-‘모든 숫자는 monospace’ 제안도 수정했다. 기존 Asta Sans를 유지하고 수치에만 tabular-nums를 적용한다.
-Fira/JetBrains/Pretendard를 새로 가져오지 않는다. 전치 토글은 판단을 어렵게 하므로 행=모델→경로로 고정한다.
-
-**확정 팔레트(6색, 새 전역 테마 아님).**
-
-| 이름 | 기존 hex / 토큰 | 용도 |
-|---|---|---|
-| Ice canvas | `#E3EAF0` / sidebar | 기존 크롬과 화면의 연결. 본문 배경은 기존 background, 표는 기존 card를 그대로 사용 |
-| Instrument ink | `#0F2230` / foreground | 제목·결론·주요 수치 |
-| Coolant petrol | `#0D6A8C` / primary, chart-1 | 선택 셀·focus·요청 CTA·A 계열 |
-| Verified green | `#17784A` / ok | 근거가 채택된 완료 상태만. 실행 phase만으로 녹색 금지 |
-| Calibration amber | `#B5530B` / heat, chart-4 | 품질 경고. B 시리즈는 점선/명시 이름도 병기해 경고와 혼동 방지 |
-| Fault red | `#B42318` / fail, destructive | 실행 실패. 원문 오류와 연결 |
-
-색은 컴포넌트에 hex로 복사하지 않고 semantic 변수로 참조한다. 보조면은 기존 ok/heat/fail/info/idle-soft,
-흰색 card와 border를 사용한다. 미지원은 사선+‘지원 안 함’, 미측정은 점선+빈 원,
-미확인은 물음표+문구로 구별한다. Lucide 아이콘은 장식 처리하고 접근 가능한 상태 이름을 제공한다.
-대비는 일반 텍스트 4.5:1, focus는 3:1 이상을 수용 시 확인하며 색만으로 판정하지 않는다.
-
-타입: Asta Sans 제목 26px/700/1.3, 소제목 18px/600/1.4, 본문 16px/1.6,
-표 14px/1.5, 보조 12~13px. **모든 수치 셀·KPI·날짜·배치에 `tabular-nums`**와
-`font-variant-numeric: tabular-nums`를 명시한다. body의 기존 `"tnum"` 선언만으로 모든 상속을 가정하지 않는다.
-monospace는 원본 ID/JSON에만 쓴다. 설명문은 65~80자 이내 폭으로 제한하되 데이터 표는 제한하지 않는다.
-
-도구 근거(2026-10-30, 설치된 ui-ux-pro-max `scripts/search.py` 실행; 아래 채택 규칙만 적용):
-
-| 질의 | 채택한 규칙 한 줄 |
+| 대상 | 규약 |
 |---|---|
-| `"research data dashboard" --design-system --density 8` | Data-Dense Dashboard의 높은 정보 밀도·필터 우선·불필요한 장식 회피를 채택 |
-| `"coverage matrix heatmap" --domain chart` | 색 외에 셀 값·기호·패턴을 제공하고 읽을 수 있는 표를 기본으로 사용 |
-| `"comparison table" --domain chart` | 정확 수치 비교는 가시적인 정렬 가능 표와 짧은 비교 요약을 함께 제공 |
-| `"color blind status" --domain ux` | 상태는 아이콘+문구, 일반 텍스트 최소 4.5:1 대비 |
-| `"breadcrumb back navigation" --domain ux` | 브라우저 이력과 예측 가능한 뒤로가기, 키보드 순서·focus 유지 |
-| `"shadcn table sticky header" --stack shadcn` | TableHeader/Body/Row/Head/Cell의 의미론 구조와 기존 TanStack Table 패턴 재사용 |
+| 상태 정본 | `chill-dashboard/lib/status.ts`; 기존 판정의 표시 계층 |
+| 부재 종류 | 미기록·미제공·미확인·판정 불가·해당 없음·지원 안 함·결과 미확인·권한 없음·조회 실패·오래된 관측 (DB-INT-06 의미 유지) |
+| 축 이름 | 서비스 영향·성능 판정·관측 상태·실험 상태·접수 허용·배치·실제 유입·현재 사용·품질 판정·실행·측정·정리 |
+| 상태 셀 | `components/status-cell.tsx`의 `StatusCell({axis,label,tone,reason?})`; 책임 축만 표시, 새 판정 엔진 금지 |
+| 부재 해석 | 확인된 영=0, 성공 조회 빈 목록=항목 없음/기록 없음, 지원 조합 근거 부재=미측정. null을 영으로 바꾸지 않음 |
+| 반복 압축 | 범위 공통 상태·사유는 머리에 한 번; 필수 열과 선택 상세는 유지 |
+| 화면 | 1440×900, 주요 영역 최대 3개(독립 필터 포함), sidebar 184px·header 56px·본문 여백 24px·표 14px·행 44px 목표 |
+| 머리 | 명사형 H1 한 번, 목록 breadcrumb 없음, 상세 상위 맥락 하나. 대상·기간·기준 KST·신선도 구조화 |
+| 표 | 단위는 헤더, 숫자 오른쪽 정렬·tabular-nums, 이름은 자기 열 안 줄바꿈. 중앙값·최대·표본 수 구분 |
+| DetailSheet | 새 래퍼 없이 기존 `components/ui/sheet.tsx` 재사용 규약. 단일 selected 상태로 하나만 열기·중첩 금지·핵심 표 상단·원본 하단 |
+| 비동기 | 핵심값 뒤 영역, 로딩·오류·사건 도착이 읽던 값을 밀어내지 않음 |
+| Dialog | 삭제·중지·자원 반환 확인 등 짧은 위험 작업만 |
+| 수치·설명 | 표·Recharts·CSS만, 결손 보간/영 채움 금지. 한국어 라벨·숫자·상태어; 정의는 툴팁·전역 용어 도움말 한 곳 |
+| 제한 | 판단에 필요한 건수·원인·제약은 본문에 표시, tooltip/title에 숨기지 않음 |
+| URL·접근성 | 필터·기간·선택·namespace·UID 복원, 외부 return URL 금지. 키보드 행 선택·Esc·focus 복원·비색상 상태 |
+| 좁은 폭 | 라벨/값 세로 배열, 행렬은 장치→모드→경로 목록. 모든 필드·작업 보존; 문서 넘침과 내부 잘림 별도 확인 |
 
-design-system 결과의 Enterprise Gateway/Contact Sales는 업무와 맞지 않아 폐기했다.
-`"research analytics dashboard" --design-system --density 8`로 한 번 좁혀도 같은 패턴이어서
-랜딩 패턴·신규 색·폰트는 미채택이다. sticky header 자체는 검색 결과의 보장이 아니라 이 설계의 CSS 결정이다.
-frontend-design의 두 단계 검토 결과, 동일 카드·그라데이션·장식용 번호 대신 **공백이 보이는 행렬 한 가지**에 시각적 강점을 집중한다.
+## 8. 기록·비교·실험 안전
 
-### 8.2 화면과 넓은 레이아웃
+기록은 범위 선택만 공유한다. 서로 다른 API를 완전한 단일 이력으로 합치지 않으며 실제 제공 구간·누락·서버 상한·페이지 경계를 보존한다.
+일별 p95 평균·브라우저 전력 적분·가짜 주간 집계를 만들지 않는다. 목록은 summary, 원본은 선택 append offset의 compact 단건이다.
+현재 페이지 내보내기와 선택 원본은 범위를 구분한다. 선택 근거는 과거 시점 원본이며 최신 상태로 대체하지 않는다.
+기존 A/B는 각각의 입력 구간·UID·정의·whole-window cohort를 유지한다.
 
-공용 `Screen`에 `width="data"`(최대 80rem, 가용 폭 100%, min-width:0),
-`actionPlacement="header"`와 optional `breadcrumbs`를 추가한다.
-기존 호출의 기본값은 narrow/기존 동작을 유지하되, sticky CTA가 있는 화면에는 마지막 내용과 focus가
-가려지지 않도록 footer가 흐름 공간을 차지하게 한다. 데이터 화면은 CTA를 상단에 놓아 하단 overlay를 없앤다.
-본문이 좁은 폼·추론 화면은 전면 확장하지 않는다.
+실험은 DB-FR-66과 [실험 실행 설계](../profiling/experiment-execution.md)를 따른다.
+게시 목록의 `comparisons`, 단건 `definition.spec.comparisons`만 비교 관계로 사용하며 단계는 ID로 연결한다.
+suffix·요청률 유사성 fallback은 사용하지 않는다. 정책은 기록 정의, SLO는 기록 정의·실행 결과에서만 읽고 현재 Workload로 소급하지 않는다.
+과거 대상은 publicationID·stageID, 서비스는 workloadUID로 연결한다. 정의 없는 과거 게시의 비교는 미기록이다.
+목록 판정 때문에 항목별 단건을 전수 조회하지 않는다. 대상이 목록에 없을 때만 필요한 게시 단건을 캐시 조회한다.
 
-1440px에서는 sidebar를 뺀 본문 폭을 사용하고, 1280px 이상에서 행렬과 20~24rem 우측 패널을 나란히 놓는다.
-그 이하에서는 패널을 같은 페이지 Dialog/Sheet로 열고 닫으면 셀에 focus를 돌린다.
-390px 개요는 장치 종류 하나를, 상세는 실행 경로 하나를 선택해 읽는다. 모든 전력모드 행은 유지한다.
-고정 폭 거대 표 대신 가용 폭에 맞춘 table-fixed·줄바꿈과 명시적인 닫기 버튼을 둔다.
-페이지 전체 가로 넘침이나 `overflow:hidden`으로 마지막 열을 숨기지 않는다.
-
-```text
-측정 > 커버리지                                  [새 측정 요청]
-[커버리지] [요청 목록] [프로파일] [개별 회차] [동작 비용] [분배 점유]
-전체 조회 완료 전 로딩 / 완료 C / 유효 후보 N / 7상태 수
-모델 [ ] 장치 [ ] 경로 [ ] 모드 [ ] 상태 [ ] [지원 안 함도 표시]
-개요: 모델       | 장치 A: 완료/후보, 실패 | 장치 B: 완료/후보, 실패
-      MobileNet  | 3/12                  | 2/6
-선택 상세:
-전력모드 | 실행 경로 CPU        | 실행 경로 CUDA        | 선택 조건 패널
-MAXN     | 완료, 최저 J/배치    | 완료, 최저 J/배치     | Node/정확 조건
-15W      | 품질 경고            | 미측정, 조건 요청     | CI/지연/회차/시도
-상태 범례 / 선언 기준과 읽은 범위 / 마지막 조회 / 원본
-```
-
-```text
-측정 > 요청 목록                                 [새 측정 요청]
-커버리지 / 종류별 탐색 (목록 아래에 숨기지 않음)
-모델[ ] 장치[ ] Node[ ] 모드[ ] 경로[ ] 상태[ ] 날짜[ ] 이름 검색[ ]
-모델 | 장치 종류 | Node | 전력모드 | 실행 경로 | 상태/후속 결과 | 날짜
-... 요청 한 건 한 행, 25행씩 ...                [이전] [다음]
-
-측정 > 요청 목록 > 선택 측정
-모델 / 장치 종류 / Node / 모드 / 경로 / CPU       [조건 복사해 새 요청]
-실행 상태와 증거 상태 + 한 줄 결론 (단일 배치면 비교 없음)
-배치 | 증분 J/건 | 오차 제공 여부 | p95/회차 범위 | 유효 반복 | 근거
-배치별 에너지 곡선 + 정확 수치 표                 조건/품질/원본
-실패·제외 회차 / 후속 유효 결과 / 실제 원본 참조
-```
-
-```text
-기록 > 실험 목록: 이름 / 날짜 / 연구 질문 / 비교 정책 / 첫 대응 단계의 관측 차이
-캠페인 선택 → CHILL(full-E5-*) ↔ 정적 비교군(static-E5-*) 자동 대응 단계
-결론: 서비스별 기한 내 성공률 / 성공 응답 p95 / 공유 POOL J와 차이
-조건 검토: 측정 규칙·구간 길이 차이와 미기록 항목
-단계: 실제 시간 비례 구간 막대 + 번호·전체 단계명·기간·평균 req/s 목록
-같은 단계 번호 축: 평균 req/s / 공유 에너지 막대 / 서비스별 성공률·p95 점
-수치·분모·출처 자세히 [기본 접힘] / 당시 판단 근거 [기본 접힘]
-```
-
-목록에서 한 번 선택하면 대응 단계와 요약이 열린다. 직접 A/B 비교는 보조 펼침이다.
-단계 클릭은 URL·선택 결과와 요약 제목 focus를 즉시 갱신하며, 목록으로 이동은 상단에 유지한다.
-원시 필드·식별 정보·세부 계획은 기본 접힘이고 모바일에서도 전체 단계명과 번호를 읽는다.
-
-### 8.3 커버리지 데이터와 셀 판정
-
-**명칭과 축.** URL은 `/measurements/coverage`, 제목은 ‘측정 커버리지’,
-설명은 ‘모델과 장치를 고르면 전력모드별 측정 현황을 볼 수 있어요.’다.
-개요는 모델(행) × 장치 종류(열), 셀은 완료/유효 후보와 실패 수다. 클릭하면
-해당 모델×장치의 전력모드(행) × 실행 경로(열)를 연다. 상세 셀 키는 `(model UID, path name, class UID, powerMode name)`이다.
-모드 없는 class에 가짜 fixed를 만들지 않는다. 삭제된 모델/class의 과거 시도는 ‘현재 선언 밖 이력’으로 별도 보존한다.
-
-전체 선언 후보 수는 `Σmodel |executionPaths| × Σclass |powerModes|`다. R3 분모는
-`/model-compatibility-matrix`의 **Compatible** 조합만 센다. Incompatible과 Unknown은 제외하고
-지원 미확인 수를 별도 표시한다. 행렬 조회 실패/미배포 시 비율은 ‘미확정’이며 선언 분모로 대체하지 않는다.
-행렬 오류 중에도 명시적 artifact/class architecture 불일치는 ‘지원 안 함’으로 보존한다.
-이는 불가능한 선언의 제외일 뿐, 나머지 선언 후보를 지원됨으로 세는 fallback은 아니다.
-장치 열은 inventory 이름순으로 고정하며 지원 안 함 토글은 셀/상세 경로 노출만 바꾼다.
-필터는 기본 접힘, 답인 행렬을 먼저 보인다. 홈 운영 보드 위에도 동일 분모의 연구 진척 띠와 최근
-실험의 에너지·성공률·p95 절충 요약 링크를 둔다. 390px에서는 표시 장치를 선택한다.
-홈 진척 띠는 데스크톱 한 줄, 모바일에서는 최근 비교의 첫 서비스 Δ와 전체 비교 링크를
-줄바꿈해 보여 긴 결론 링크가 한두 글자로 축소되지 않게 한다. 전체 서비스 결론은 title과 비교 화면에 유지한다.
-UI UX Pro Max `Heatmap / Intensity`의 수치·기호 병기 규칙을 채택했다: 기존 primary 색 농도
-4단계(0%, 1–49%, 50–74%, 75–100%)와 완료/지원 조합 수를 함께 써 색만으로 해석하지 않는다.
-로딩은 장치·모델, 요청, 결과, 전체 회차(읽은 수/전체 수), 실행 지원의 5단계로 표시한다.
-독립 GET은 병렬 시작하고 도착한 선언/측정 모드 개요를 먼저 표시하되 최종 카운터는 전체 회차 완료 전 숨긴다.
-
-| 원본 GET (`/api/v1` 이하) | 조인 필드와 역할 | 범위/오류 규칙 |
-|---|---|---|
-| `/inventory` | `models[].{name,uid,spec}`, `classes[].{name,uid,architecture,accelerator,powerModes,nodes}` | classPage/modelPage 각각 nextOffset 끝까지, UID로 중복 제거. resourceVersion 세 종류와 readAt 보존 |
-| `/model-compatibility-matrix` | 전체 model/path/class의 대표 Node 정적 판정. 모델/class UID·resourceVersion과 Node UID를 대조 | 화면당 GET 1회, power mode 공용. Unknown/입력 identity 불일치는 분모 제외. Node 필터가 대표와 다르면 미확인 |
-| `/namespaces/{ns}/batch-energy-optimizations` | `metadata.{namespace,name,uid,creationTimestamp}`, `spec.state.candidate.{modelSpec,deviceClass,executionPath,powerMode}`, `.targetNode`, CPU/protocol, `status.{phase,outcome,conditions,result}` | namespace 명시. 목록에 있는 요청의 phase이지 채택 품질이 아님 |
-| `/scheduler/profiles` | `profiles[].condition.{logicalModel,deviceClass,nodeUID,powerMode,artifact.executionPath,...}`, `id`, `reference`, `batches`, `measuredAt`, `reuse` | 현재 사용 가능한 증거. profile id 문자열을 추측 파싱해 요청 UID를 만들지 않음 |
-| 같은 응답 `insufficiencies[]` | `source.{Namespace,Name}`, `code`, `reason`를 BEO namespace/name과 연결 | `ReplacementSelection`은 대체된 이력이며 다른 유효 profile을 무효화하지 않음. 연결 불가 issue는 ‘연결 안 된 경고’로 보존 |
-| `/namespaces/{ns}/profiling-runs` | `spec.candidate`, `targetNode`, `measurement.{batch,cpuQuota,cpuAffinity,workloadMode,dataset}`, `status.conditions`, `status.evidence` | 시작 시 page 끝까지 모으고 집계. 선택 패널 재마운트만으로 다시 조회하지 않음. 수동 새로 고침은 전체 재조회 |
-
-profile 정확 variant는 `condition`에서 `name`과 `plannedBatchSizes`만 뺀 frozen 조건과 metricSource다
-(`internal/serving/kube/catalog.go:200-230`). Node UID·runtime image·artifact·preprocessor·dataset
-UID·CPU/affinity·protocol·runtime backend가 다르면 합쳐 정상 완료 하나로 만들지 않는다.
-BEO 요청 spec만으로 확인할 수 없는 frozen 항목은 ‘조건 일부 미확인’으로 둔다.
-같은 class의 미측정 Node를 다른 Node profile로 채우지 않는다. `reuse`로 서버가 검증한 대상 Node만 재사용으로 표시한다.
-Node 필터가 없으면 class의 현재 Node 각각을 평가해 ‘완료 Node C/N’을 표시한다.
-일부 Node 또는 요청 배치만 완료면 ‘부분 완료’이며 수치 품질 경고와 분리한다.
-CPU·dataset·이미지의 아직 요청되지 않은 무한 조합을 가상 분모로 만들지 않는다.
-여기서 variant 집합은 실제 BEO/Run/profile에 나타난 조건이며, 후보 셀 수와 variant 수는 별도다.
-
-**정적 지원 판정은 증거 상태와 분리한다.** 행렬 GET은 class별 이름순 첫 Node를 대표로
-B1 resolver를 재사용하며 대표 정적 판정만 분모에 반영한다. class 전체 Node 지원 보증은 아니다.
-선택 패널은 기존 `GET /model-compatibility`로 실제 선택 Node들을 별도 확인한다.
-선택 조회 결과를 행렬에 주입하지 않으므로 셀을 열거나 해당 조회가 실패해도 이웃 칸은 바뀌지 않는다.
-선언상 후보(artifact/class architecture)와 정적 실행 지원, 측정 상태를 각각 표시한다.
-대표와 다른 Node 필터, UID/선언 resourceVersion 불일치, 미조회는 지원 미확인이다.
-Node resourceVersion은 heartbeat로 달라질 수 있어 UID를 대조하며 원문 버전은 보존한다.
-브라우저 backend 추측표나 구형 서버용 선언 분모 fallback은 없다.
-실제 실행·Ready·전력모드 적격성·측정 완료·admission 성공은 보장하지 않으며 기존 preflight를 유지한다.
-
-**대표 상태는 아래 순서대로 계산하며 보조 사실을 지우지 않는다.**
-먼저 필수 목록 조회의 완전성과 identity 모순을 확인한다. 정적 불일치인데 해당 셀에 현재 증거가 있으면
-‘품질 경고 — 현재 정적 선언과 저장된 측정 근거가 달라요’로 각각 확인하게 한다.
-이후 exact variant별 상태를 만들고 상위 셀은 다음 규칙으로 요약한다.
-
-| 셀 상태 | 구체적인 판정 규칙 | 셀/패널에 남길 보조 사실 |
-|---|---|---|
-| **확인 불가** | 필요한 inventory/BEO/profiles 조회 실패·권한 거부·일부 page, identity 미확인, 선언 모순 또는 정적 판정 입력 불명 | 실패 API/조회 범위·readAt, 알려진 결과는 별도 표시. 403을 미측정/지원 안 함으로 바꾸지 않음 |
-| **지원 안 함** | B1 행렬의 Incompatible 또는 명시적 architecture 불일치이며 측정 이력이 없음 | 대표 Node와 이유, 해칭. 측정 상태·선택 Node 지원과 구분 |
-| **품질 경고** | 사용 가능한 variant와 경고/미완료 variant가 섞임, Complete인데 연결 profile 없음, source insufficiency, 완료 Run의 검증·근거 누락, 실제 조회한 근거의 오류/404·수치 이상 | 실제로 조회한 해당 셀만 경고 cache에 기록해 개요에도 반영. 지원 확인 기능의 404는 측정 품질과 분리 |
-| **부분 완료** | 정확히 연결한 profile의 측정 배치가 요청 집합보다 적거나 class 일부 Node만 측정 | 배치 측정 n/m, 다른 Node 미측정. 수치 품질 경고와 별도 |
-| **측정 완료** | 현재 catalog가 exact variant의 profile을 제공하고 그 범위에 알려진 미해결 경고가 없음 | 에너지 측정 완료이며 CI·지연·반복·계측 품질의 논문용 검토는 별도 |
-| **진행 중** | 유효 profile/품질 경고가 없고 BEO `phase=Measuring` 또는 현재 generation Run `ExecutionComplete=Unknown` 등 명시된 비종결 진행 상태 | 이전 실패/대기 사유. 알 수 없는 phase를 진행으로 추측하지 않음 |
-| **실패** | 위 상태가 없고 BEO `phase=Failed` 또는 현재 Run `ExecutionComplete=False`가 명시됨 | reason/message와 후속 결과 링크. 실행 성공 뒤 검증 불충분은 품질 경고로 분리하고 원본 상태 유지 |
-| **미측정** | 선언상 후보이고 필요한 전 범위 목록에 해당 키의 BEO/profile/Run 이력이 없음. Run 전 범위 확인 전에는 ‘이력 확인 중’, 실패 시 확인 불가 | **‘측정 이력 없음 · 실행 지원 미확인’**. 정적 일치만으로 지원됨이라고 쓰지 않음 |
-위 규칙에 들지 않는 알 수 없는 phase·condition 조합의 기본값은 확인 불가다.
-전체 회차 조회 중에는 진행과 먼저 도착한 개요를 표시한다. 확정 카운터나 미측정 판정은 보류한다.
-
-과거 실패만 있고 후속 유효 profile이 있으면 대표는 완료, 보조는 ‘실패 이력·재측정됨’이다.
-유효 profile 뒤의 새 실패는 이전 증거를 지우지 않고 ‘사용 가능 결과 있음 · 최근 시도 실패’ 품질 경고다.
-실패 요약은 ‘실패 상태 N칸 / 현재 조건 실패 요청 M건 / 전체 이력 실패 요청 K건’으로 단위를
-명시한다. M/K는 요청 목록과 같은 `status.phase=Failed`이며 재측정 성공 이력도 빼지 않는다.
-완료 뒤 진행 중 요청은 ‘완료 · 재측정 진행’으로 병기한다. 경고가 없는 완료를 유지할 수 있는
-과거 이력과 현재 사용 조건의 경고를 구별한다. 조회하지 않은 Run 상태를 정상이라고 가정하지 않으며
-초기 완료는 ‘catalog 근거 기준’임을 명시하고 상세에서 새 경고가 발견되면 같은 cache의 판정을 갱신한다.
-
-**재측정됨의 의미.** 서로 다른 immutable 요청의 조건 일치와 더 늦은 유효 결과만으로
-관측된 후속 측정을 안내한다. 결과 reference의 store/key가 정확히 이어지는 profile, 명시적
-ReplacementSelection 사유 등 확인 가능한 연결은 원본과 함께 표시한다. BEO spec의
-model/class/path/mode/targetNode/preprocessor/dataset/CPU request/quota/affinity/active·idle protocol이
-하나라도 다르거나 frozen 이미지·UID 일치를 입증 못하면 ‘관련 재측정 후보’다.
-이때 자동 ‘해결됨’/실패 숨김/완료율 가산을 하지 않는다. 이름 접두사/195→195b로 자동 연결하지 않는다.
-
-**셀 값·필터·패널.** 모델/class/Node/path/mode/status/CPU/배치 필터와 이름 검색을 URL에 보존한다.
-셀은 상태, 최저값의 배치, 실제 측정 배치 집합과 요청 대비 수, 반복 수, CPU를 표시한다.
-최저값은 최적 조건 추천이 아니며 정확 조건별 수치는 패널에서 구별한다.
-미측정/실패 셀에는 ‘이 조건으로 측정 요청’을 바로 제공한다. 요청 수와 회차 수는 패널에서 구분한다.
-패널은 Node/조건 선택 → 배치 표·에너지 곡선(제공된 오차만) → 실패/제외/후속 이력 →
-측정 상세/회차/원본 링크 → 요청 CTA 순이다. p95가 없으면 ‘미제공’ 또는 회차별 범위로 표시한다.
-
-‘논문용 검토만’ 필터는 제거한다. 목록에 CI가 없어 항상 0건이던 동작 대신 검토 기준
-(CI·지연 표본·반복 수·계측 품질)을 안내하고 상세의 보존 근거로 검토한다.
-GET 확인: `u2-o-15w-m-beo-195/result`는 200, 정확 active 회차의
-`profiling-runs/u2-o-15w-m-beo-195-active-b1-a1/evidence-passport`는 404
-`EvidencePassportUnavailable`였다. 정상 URL의 보존 근거 부재이므로 해당 셀에 품질 경고와 재측정 안내를 남긴다.
-
-**클라이언트 집계와 상한.** 현재 88 BEO/78 profiles는 Map 조인으로 충분하다.
-inventory·BEO·profiles는 독립 Query cache, 새로 고침 취소/인증 변경 cache 초기화는 기존 계약을 쓴다.
-Run 전체 페이지는 진입 시 다른 목록과 병렬 조회하고 동일 namespace cache로 재사용한다.
-1155 Run/200은 최대 여섯 페이지 규모다. 개별 셀마다 전체 목록을 다시 받지 않으며 모든 Passport를 fan-out하지 않는다.
-선택 Result와 정확 참조 Run Passport만 요청한다. 자동 retry/focus refetch를 새로 켜지 않는다.
-목록을 주기적으로 통째 재집계하는 새 polling을 추가하지 않고 기존 수동 갱신과 명시된 진행 갱신만 쓴다.
-
-F4는 [측정 API §12](../serving/measurement-api.md#12-대시보드-측정-api-보강-계약-b0-2026-10-30)의
-호환성 GET와 기존 응답의 optional owner/statistics/비용 필드를 소비한다.
-정적 지원 행렬 GET 외 별도 coverage 집계 endpoint·지원 registry·통계 알고리즘·전체 셀 통계 fan-out은 추가하지 않는다.
-
-### 8.4 요청 prefill과 목록·그룹
-
-커버리지 CTA는 아래처럼 **초깃값만** 전달한다. POST/자동 제출·자동 preflight는 하지 않는다.
-
-```text
-/measurements/new?namespace=<ns>&model=<model-name>&deviceClass=<class-name>
-  &node=<node-name>&path=<execution-path-name>&powerMode=<raw-mode-name>
-  &returnTo=<encoded-local-coverage-URL>
-```
-
-모든 값은 URLSearchParams로 encode/decode한다. 같은 키 중복은 오류로 표시하고 임의 마지막 값을 쓰지 않는다.
-namespace는 현재 접근 범위로 확인한다. 모델/class는 현재 선언에 다시 resolve하고
-node는 해당 class 소속인지, path/mode는 실제 목록에 있는지 확인한다.
-삭제/변경/비호환 값은 ‘미리 채운 조건을 확인해 주세요’와 원값을 표시하고 제출 잠금한다.
-Node가 하나면 명시 선택한 값으로 채울 수 있지만 여러 Node면 선택을 남긴다.
-workload/preprocessor/dataset/CPU/batch/반복/protocol은 이 네 축에서 추측하지 않는다.
-모델을 참조하는 workload만 먼저 제시하고 사용자가 고르게 한다. 다중 후보 자동 선택은 하지 않는다.
-선택한 workload가 prefill 모델을 바꾸면 차이를 안내하고 기존 조합을 조용히 유지하지 않는다.
-
-기존 `?from=<BEO-name>` 복사 진입은 유지하며 새 키와 동시에 오면 충돌로 안내한다.
-복사 원본의 namespace/UID를 확인하고 mode·Node·CPU·dataset 등 달라진 조건을 검토에 표시한다.
-경로 단계와 최종 확인에 ‘같은 조건 완료/진행/실패·관련 후보’를 구별하고 기존 상세 링크를 둔다.
-정적 비호환은 이유와 함께 비활성, 미확인 runtime은 미확인 안내 후 기존 사용자 검토 시
-dry-run+preflight로 확인한다. 기존 7단계 순서·제출 전 검토 계약을 전면 바꾸지 않는다.
-
-목록 기본 열은 모델·장치 종류·Node·전력모드·경로·상태·날짜다.
-BEO spec에서 읽고 제목/slug를 해독하지 않는다. profile 목록에도 같은 축과 CPU/실제 batch를 보인다.
-전력모드는 원본 이름을 보존하며 MODE_15W처럼 명확한 값에만 ‘15 W (MODE_15W)’ 보조 표기를 허용한다.
-날짜는 기본 시간대를 명시한 짧은 값, 상세/tooltip에 UTC/KST 원본을 보존한다.
-날짜 필터는 요청 생성 시각이며 profile 측정 시각과 섞지 않는다. 표는 정렬/25행 페이지,
-필터는 `namespace,model,deviceClass,node,path,powerMode,status,from,to,q,page`다.
-UI용 필터를 지원하지 않는 upstream API에 넘기지 않는다.
-
-Run 그룹 키는 최소 model/class/targetNode/path/mode/preprocessor/dataset/CPU request/quota/affinity/
-workloadMode·측정 protocol을 포함한 조건이다. active와 idle은 같은 실행 조건 아래 별도 구역으로 표시한다.
-배치·시도 번호는 원본 참조의 batch/attempt만 사용하고 서로 다른 전력모드/부모 요청을 1~N회차로 재번호하지 않는다.
-소유 요청 UID를 알 수 없으면 번호 대신 Run name과 생성일을 표시한다.
-BEO의 저장 result가 있으면 `completedTrials[].run`과 `excludedTrials[].run`의 namespace/name/uid가
-정확한 결과 참조다. 실패 `result:null`도 전체 namespace Run 목록의 `ownerReferences`에서
-namespace + controller=true + apiVersion=edge.dacs.io/v1alpha1 + kind=BatchEnergyOptimization +
-부모 UID 정확 일치만 소유 Run으로 연결한다. 이름·labels는 소유 증거가 아니다.
-원 spec의 mode/batch와 양의 정수 attempt label만 표시하고 누락/잘못된 회차는 ‘회차 기록 없음’이다.
-전체 page 조회 전에는 소유 회차 없음을 확정하지 않고 과거 owner 미기록은 ‘소유 연결 기록 없음’이다.
-조건/이름 부분일치 후보를 소유 회차로 세지 않는다.
-
-### 8.5 측정 상세·실패·품질
-
-**2차 설문 R2 결정(2026-10-30).** 기존 청록색/서체 토큰을 유지하며 전력모드 칩만 강조한다.
-상세 상단에 모델·장치 종류·Node·전력모드·실행 경로·배치·CPU·데이터셋을 항상 노출한다.
-실패는 정확 owner로 연결된 최신 실패 회차의 로그 발췌·종료 코드·다음 행동을 최상단 alert로 요약하며,
-owner 기록이 없는 과거 요청은 이름으로 추정하지 않고 요청 자체의 사유만 표시한다.
-`runtimeTermination`/Job/실제 실행의 JSON 문자열은 객체로 해석하고 사실 목록으로 표시한다.
-UI/UX Pro Max `error message actionable`의 Error Messages 규칙을 채택하여 오류를 `role=alert`로 알린다.
-요청 목록은 모델/장치·Node/경로·전력모드/배치·상태·생성일 5열로 묶고 개별 축 정렬은 별도 선택으로 유지한다.
-상태는 완료/측정 중/실패로 짧게 구분하고 완료의 근거 주의는 목록에서 한 번만 안내한다.
-측정 화면의 7개 필 탭은 label 있는 단일 native select로 축소한다. breadcrumb가 있는 화면은 중복 뒤로 링크를 숨긴다. 삭제는 별도 ‘위험 영역’에 둔다.
-
-| 표시할 값 | 실제 제공 필드 / 정직한 대안 |
+| 비교 조건 | 표시 |
 |---|---|
-| 배치별 증분 에너지 | BEO `result.detail.incrementalWorkByBatch[].{batch,incrementalWorkJoulesPerItem}`, bestBatch, measuredBatchSizes. 평균만 제공 |
-| 배치 에너지 오차 | BEO 응답 형제 `statistics.batches[].confidence`의 level/halfWidth로 평균±halfWidth 표시. 음수 하한·0폭 보존. 부재는 CI 미제공; 유휴 W CI를 J/건 오차로 재사용 금지 |
-| p50/p95/p99·표본 | 통합 p95는 `statistics.batches[].latencyP95Milliseconds`, 같은 배치 client 호출 표본 수는 latencySampleCount. 부재 시 정확 Run Passport의 회차 p95 범위/개별 값만 표시하며 평균을 전체 p95라 하지 않음 |
-| profile 지연 | `batches[].durationNanos`는 표본이며 게시된 p95 summary가 아니다. 별도 통계 알고리즘을 UI에 추가하지 않음 |
-| 반복/배치 범위 | BEO completed/excluded exact 참조와 detail.trialsPerBatch, measuredBatchSizes. plannedBatchSizes 모두 측정했다고 단정 금지 |
-| 품질 사실 | Passport 전력 samples/failures/gap/sourceTimestampAbsent, thermal observationAvailableSamples/issues, 실제 runtime/Node/동거 Pod·정책·dataset. 미관측 발열=정상 금지 |
-상세 첫 화면은 서버가 보존 자료로 계산한 독립 active/shared-idle trial CI와 통합 p95를 표시한다.
-통계 미제공 서버/객체에서만 기존 exact completed active Passport를 최대 3개 동시 조회해
-회차 p95 범위와 각 회차 표본 수를 제공한다. idle p95를 active 지연에 합치지 않는다.
-`NoPublishedResult`, `RetainedEvidenceMissing`, `StatisticsNotRecorded`는 각각 게시 결과 없음,
-통계 원근거 기록 없음, CI·통합 p95 기록 없음이며 권한/transport 오류와 구별한다.
-커버리지는 선택 Result만 읽고 catalog 표에는 같은 store/key 결과 참조인 경우만 통계를 연결한다.
+| 명시 관계·조건 확인 | 동일 조건 비교·원값·차이 |
+| 관계 있으나 조건 다름/일부 미확인 | 참고 비교·제한·원값, 동일 조건 성과 집계와 분리 |
+| 정의/관계 없음 | 단계 절대값·비교 미기록 |
+| 대상 조회 오류 | 대상 조회 실패·다시 조회 |
+| 실제 게시/단계 없음 | 대상 게시 없음 |
 
-공통 `lib/measurements.ts`가 3자리 유효숫자, ns→ms/s, Asia/Seoul KST 주표기를 소유한다. UTC와 정확 원값은 tooltip·원본 자료에 보존한다.
-회차 지연은 ms, 전력 W, 에너지 J/건. 반복 수와 **지연 표본 수 N은 다른 수**다.
-CI를 제공하는 원본만 신뢰 수준과 종류를 표시한다. 배치 막대에 CI 오차막대를 함께 그리며 겹치면 ‘이 근거만으로 차이 주장 불가’를 표시한다. 이는 유의성 검정 결과가 아니다.
-단일 배치면 ‘배치 1 측정 결과 · 다른 배치와 비교하지 않았어요’,
-여러 배치면 ‘측정한 배치 {…} 중 에너지 평균이 가장 낮은 배치’다.
-지연 표본 count=1은 ‘꼬리 지연을 판단하기에 표본이 부족해요’이며 반복 1회와 혼동하지 않는다.
+비교 상태·제한·일치/참고/대응 없음 건수는 차이보다 앞이다. 단순 흐림이나 tooltip으로 대체하지 않는다.
+서비스 선택은 표·차트를 함께 바꾸고 모든 서비스에 접근 가능하다. 구간 상세는 조건 → 원값 → 사건 → 원본이다.
+차이는 후보−기준, 비율 차이는 %p, 지연은 ms, 에너지는 J/%이며 기준 0의 절대 차이와 상대 계산 불가를 구분한다.
+표시 단위 미만 차이는 방향 없이 표시한다. 공유 에너지는 서비스별 합산/배분하지 않고 단계 KPI를 초별 보간하거나 인과로 꾸미지 않는다.
+성공률 분자·분모·모집단, p95 표본, 공백 오차 상한(CI 아님), 출처·원값을 보존한다.
 
-**3차 설문 R3 결정.** 헤드라인은 전체 배치의 평균이 아니라 ‘측정 배치 중 최저 에너지 (배치 n)’다. 명시 요청 배치 대비 결과 누락은 녹색 완료 대신 ‘부분 완료 n/m’이다.
-‘논문 사용 전 확인’ 한 곳에 반복 수·CI·요청 배치 충족·전력 계측 표본/최대 간격·노드 전체 전력·원본 timestamp를 모은다. 계측 항목은 정확 UID의 대표 부하 Passport 1건만 추가 조회하고 대표 범위/누락을 명시한다.
-후속 결과의 동일 조건 판정은 표시용 조건 diff와 같은 필드 집합을 쓴다. CPU·배치·반복·protocol 등의 차이를 `이전 → 이후`로 표시하고 이름으로 연결하지 않는다.
-동작 비용·분배 점유·프로파일은 한국어 실패 요약과 사유 원문 펼침을 분리하고, S3 store/key와 CR 식별자는 ‘근거 위치’/원본 펼침 안에 둔다. M5 서비스는 모델별로 그룹화한다.
-표는 aria-sort와 24px 이상 링크(모바일 44px)를 제공하고 명시 label/id를 사용한다.
-도구 근거: ui-ux-pro-max `"confidence interval" --domain chart`의 ‘이름 있는 불확실성 범위와 수치 대안’ 원칙을 채택했다. 결과는 시계열 예측용이므로 차트 종류는 미채택, 기존 배치 막대와 CI 수치 표를 유지한다.
+실험 실행·측정·정리는 독립 축이다. 별도 평가 운영자 권한·사전 점검 후 명시 제출·Pending 수정 제한·같은 이름 새 UID 교체,
+사용 중 부하 변경/삭제 보호·원본 UID 조건·결과 미확인 원본 조회·자동 재제출 금지를 유지한다.
+`자원 반환 확인 요청`은 실제 반환 관측이 아니다. 잔여 자원·사유와 실제 정리 결과를 별도로 확인한다.
+주입은 단계 ID와 정확한 대상 일치 범위로만 표시하고 입력 번들은 기존 오프라인 도구가 생성한다.
+폼/JSON은 같은 정의를 편집하며 미래 필드·정밀 정수와 원본 출처를 보존한다.
 
+## 9. 삭제·통합·단계별 수용
 
-**실패 Passport의 원인과 처리.** `kube/evidence_passport_query.go:61-76`은
-Run의 `status.evidence=nil`에서 `verified evidence is not available`을 반환하고,
-readapi handler는 이 일반 오류를 502 `EvidencePassportUnavailable`로 보낸다.
-같은 코드는 저장소/loader 실패에도 쓰이므로 502 하나만으로 미생성/실행 실패를 확정하지 않는다.
-기존 `MeasurementDetail`의 Passport 단일 QueryGate를 없애고 Run 상태와 Passport를 독립 표시한다.
+별도 개요와 전용 계산, 기록/설정 링크 허브, 운영 허브를 제거한다.
+후보·부하·추정·용량은 선택 서비스/판단 근거로, 장비·POOL은 장치/배치로, 서비스 관리·상세는 단일 책임으로 통합한다.
+회차 기본 탭은 요청 아래로, 프로파일은 처리 성능으로, 비용/점유는 결과 종류로, 긴 작성 모달은 전용 페이지로 옮긴다.
+기존 Sheet/Dialog/DataTable/ReadRegion·도메인 계산·인증·중계·라이브 공급·정의 기반 reader·변경 안전 계약은 유지한다.
 
-raw Run 단건 GET은 공개되지 않는다. 기존 namespaced 목록 `q=<name>&limit<=200`의 모든
-nextOffset을 읽고 **정확 namespace/name/uid**를 선택한다(q는 오직 수집 축소용 부분일치).
-목록 실패/미완료는 404가 아니다. 상태는 conditions의 observedGeneration과 Run generation을
-비교해 ExecutionComplete/EvidenceVerified를 독립 표시한다.
-실패 reason/message, 제공된 `status.runtimeTermination.{exitCode,logTail}`, job/actualExecution을 보여 준다.
-로그 없는 Run에 가짜 OOM/timeout 진단을 쓰지 않는다. evidence가 없고 종결 실패가 명시되면
-Passport를 자동 호출하지 않고 ‘검증 근거가 생성되지 않았어요’로 안내한다.
-evidence 참조가 있는데 로드가 실패하면 ‘근거 조회 실패’와 오류 코드·명시적 재조회 동작을 제공한다.
-둘 모두 Run 본문과 뒤로가기는 유지한다.
-
-실패 원인이 `RetryLimitExhausted`뿐이면 ‘재시도 한도에 도달했어요 · 상세 원인 미제공’이며
-retryLimit=0을 여러 번 재시도했다고 표현하지 않는다. 상태 reason/message 원문을 본문에 보존한다.
-새 유효 결과가 확인되면 첫 CTA는 ‘후속 측정 결과 보기’, 복사는 보조다.
-미해결 실패의 CTA는 본문과 동일하게 **‘조건을 복사해 새 이름으로 요청’**이며 제출하지 않고 폼으로 이동한다.
-동일 이름 재제출/기존 immutable 요청 수정이라고 표현하지 않는다.
-
-**d 품질 경고와 근본 포맷 수정.** 서버 d는 `round(1e9/X - profileMeanNanos/batch)`이므로
-음수도 저장될 수 있다(`internal/serving/kube/occupancy.go:327-332,670-677`).
-UI `lib/scheduler.ts:nanosToMilliseconds`의 음수 remainder 문자열은 잘못된 소수 문자열을 만들어
-`occupancyDuration`의 Number 변환에서 NaN이 될 수 있다. 공유 변환 함수에서 부호와 절댓값을
-한 번 처리해 모든 호출자를 고친다. 음수/NaN/Infinity/비숫자 결과는 **품질 경고·사용 확인 필요**로
-덮어 표시하되 원래 phase와 원값을 보존한다. 음수를 몰래 0으로 바꾸지 않는다.
-누락은 결과 없음, 정상적인 0은 0으로 남긴다. throughput은 유한한 0 이상 문자열인지 표시용 확인만 하며
-d/X를 브라우저에서 재계산하지 않는다. 정상 여부가 불명확한 문자열을 0으로 대체하지 않는다.
-운영 consumer의 음수 clamp와 raw 측정은 다른 계약이다. 음수 d는 숫자 대신 품질 경고와 이유를
-표시하고 원값은 원본 자료/내보내기에 보존한다.
-
-**동작 비용.** optional step operationID/durationNanos/wallJoules/reason을 표시한다.
-durationNanos는 lossless JSON 정수로 읽어 실제 ms와 원래 ns를 함께 보존한다. 실제 0 J는 0이며
-null/미제공 J는 ‘수용된 에너지 없음’, 시간은 ‘실측 시간 기록 없음’이다. 원 조회 오류는 숨기지 않는다.
-실측 J는 전체 Node 벽에너지이며 증분 J/item이 아니다. 계획 idleDurationSeconds를 실측으로 대신하지 않는다.
-전체 실패/불수용과 일부 단계의 수용·실측 시간은 함께 표시하고 name/key/verdict·근거 위치를 보존한다.
-
-### 8.6 실험의 게시 데이터와 설명형 비교
-
-GET `/experiments`는 `{items:Experiment[]}`, `/{id}`는 단건이다. 완료된 게시만 다루며 진행 중·미게시 실험은 범위 밖이다.
-envelope는 `schemaVersion/id/from/to/status/stages[{id,from,to,kpis}]/sources`에 선택적 `outcome`을 더한다.
-서버 wire와 schemaVersion은 바꾸지 않는다. 정본은 [EvaluationRun 연결 계약](../../plans/2026-11-01-evaluationrun-dashboard-handoff.md)이다.
-목록은 크기 때문에 `definition`을 생략하고 선택적 `comparisons`(저장된 definition.spec.comparisons)를 제공한다. 단건은 definition을 제공하고 별도 comparisons는 없다.
-목록·개요의 판정 칩은 comparisons와 목록 KPI만 읽으며 항목별 지연 단건 GET을 하지 않는다. comparisons가 없으면 비교 판정은 ‘미기록’이다.
-과거 비교 대상 KPI는 목록의 id=publicationID를 우선 사용하고 목록에 없을 때만 해당 게시 단건을 캐시 조회한다.
-필드가 없으면 미기록이지 0/같은 조건이 아니다. query filter API는 없으므로 화면 필터는 클라이언트 전용이다.
-
-| 의미 | `kpis.workloads[name]` shape | `kpis.requests[name]` shape |
-|---|---|---|
-| 기록 이름·identity | map key name; `workloadUID??uid`, `definitionID??definition` | 동일. UID/definition 미제공인 실제 campaign도 있음 |
-| HTTP 성공률 | `successFraction`, successNumerator/successDenominator | 별도 의미 없는 경우 미제공 |
-| SLO/기한 내 성공률 | `withinSLOFraction`, withinSLONumerator/withinSLODenominator | `deadlineSuccessFraction`, successNumerator/successDenominator |
-| 성공 응답 p95 | `latencyMS.p95`, `.samples` (ms) | `completedLatencyNS.p95`, `.samples` (ns→ms) |
-| 모집단·결손 | `population`, `missingReasons`, `outcomes`, offered | 동일 + rawPopulation/offeredResponsePopulation/issuanceFidelity |
-
-ratio가 누락됐지만 명시적 성공 분자·분모가 존재할 때만 해당 같은 의미의 비율을 계산할 수 있다.
-분모 0이면 비율 없음이며 `deadlineSuccess` 건수만으로 분모/HTTP 성공률을 추측하지 않는다.
-요약의 첫 성공 지표는 ‘기한 내 성공 / 보낸 요청’으로 명확히 쓰고 HTTP 성공은 별도다.
-서비스별 p95를 평균내 전체 p95를 만들거나 서비스별 %를 단순 평균내지 않는다.
-전체 성공률은 동일 의미/집단의 분자·분모가 모두 있을 때만 합계로 제공한다.
-
-같은 기록 이름을 A/B 한 행에 놓되 **‘동명 기록의 설명형 비교’**다.
-UID/definition 같음·다름·미제공을 각 열에 보존한다. 현재 workload API로 과거 identity를 보충하지 않는다.
-하나의 이름에 여러 후보가 있으면 임의 `.find()` 대신 후보를 구별하고 비교 선택을 요구한다.
-이름이 다른 행은 한쪽 없음으로 남긴다. 다른 UID라는 이유만으로 같은 서비스명을 수십 개 행으로 찢지 않는다.
-측정 규칙 차이는 기존 `differentMeasurementRules`를 사용하고 시간 길이·조건·SLO 미제공도 경고한다.
-경고가 있는 차이는 ‘관측값 차이’이지 통제 실험/인과/안전성/통계적 승리 판정이 아니다.
-
-차이 방향은 화면 전체 **A−B = left−right**로 고정한다. 정의 비교의 left는 후보, right는 기준이며 정책 모드와 무관하다.
-비율은 `100*(A-B)` %p, 지연·J는 A-B 원단위, 상대 에너지 변화는 `100*(A-B)/B` %다.
-B=0/값 없음/지표 의미가 다르면 상대 차이는 계산 불가다. 원값이 다르면 반올림된 0 차이를
-‘동일’이라고 단정하지 않고 ‘표시 정밀도 미만’으로 안내한다.
-단위는 지연 ms, 비율 소수 2자리 %, J·W와 기타 수치는 공통 `significant`의 3 유효숫자다.
-원본 정밀도와 분자/분모·표본·출처는 펼침으로 보존한다.
-
-에너지는 stage `wholePoolJoules/activePoolJoules`와 `gapErrorBoundJoules`,
-energyPopulation/energyCoverage/missingReasons.energy를 사용한다.
-오차 bound는 **관측 공백 오차 상한**이지 95% CI가 아니다. 공유 POOL J는 서비스별로 나누거나 더하지 않는다.
-실행 구간 길이/부하가 다르면 총 J가 낮다는 것만으로 효율 개선이라고 하지 않는다.
-정책은 `definition.spec.stages[].mode`의 autonomous·fixed·controls-disabled만 읽는다.
-꺼진 제어요소는 단계 `control.controls`가 있으면 전체 대체하고, 없으면 spec의 기본 control을 읽는다.
-단계 정의·KPI·단계 outcome은 **id만**으로 연결한다. row 이름 변경·배열 순서·이름 접미사는 조인에 영향을 주지 않는다.
-비교 짝·사유는 단건의 `definition.spec.comparisons[]`, 목록의 `comparisons[]`만 사용한다. 과거 참조는 `historical{publicationID,stageID}`이고,
-publicationID는 기존 게시 ID(캠페인 이름 포함)다. 목록 KPI 또는 필요한 단건으로 정확한 stageID와 연결하며 없으면 ‘대상 게시 없음’이다.
-구간 선택 URL은 화면 게시 ID와 별도로 양쪽 publicationID·stageID를 보존한다. 왼쪽 historical 단계도 같은 stageID의 현재 게시 단계와 구별한다.
-과거 대상 GET의 404·정상 조회의 단계 부재만 ‘대상 게시 없음’이며, 권한·서버·시간 초과 오류는 ‘대상 조회 실패’와 재조회로 구별한다.
-같은 부하는 loadScenarioRef.uid와 spec.loadGenerator가 모두 같을 때만 인정한다. 요청률·내용 유사성으로 대체하지 않는다.
-부하 단계·목표 요청률·α는 loadScenarios의 parts를 표시한다. SLO는 definition.workloads[].slo와 KPI의 **workloadUID만** 연결한다.
-workloadUID 없는 행은 이름·legacy uid·KPI SLO가 같아도 SLO ‘미기록’이다.
-definition 없는 과거 게시는 정책·같은 부하·SLO ‘미기록’이며 comparisons도 없으면 비교 ‘미기록’이다. 과거 reader·재게시·소급 정의 부착을 만들지 않는다.
-`outcome.execution.status`·`measurement.verdict`·`cleanup.status`와 각 reason은 독립된 세 축이다.
-실행 Complete는 평가 PASS가 아니며 정리 Failed도 보존한다. summary.status는 measurement 값이고 없는 outcome 축을 대신하지 않는다.
-장애 주입 계획은 단계 failureInjection, 결과는 outcome.stages[].injections를 id로 연결한다.
-예정/실제 offsetSeconds와 action·outcome·reason을 보존하고, 결과 없는 계획은 ‘미기록’으로 남긴다.
-화면은 한국어 라벨·숫자·상태만 제공하고 계약 설명은 하나의 접근 가능한 툴팁에 모은다.
-
-단계 레인은 실제 `[from,to)` 순서/폭으로 그리고 클릭하면 해당 단계 KPI와 근거 범위를 함께 바꾼다.
-두 publisher의 optional workloadUID/definitionID/identitySource와 substages를 타임라인 펼침 및
-비교표에 표시한다. α=0을 보존하고 direct-rate null α와 과거 미기록은 missingReasons로 구별한다.
-예정 offset은 lossless ns, from/to는 해당 workload의 실제 producer 시작에 고정한 예정 구간이다.
-관측된 전환 사건이라고 부르지 않으며 anchor 부재는 stage 전체 시각으로 채우지 않는다.
-명시 null identity는 legacy alias나 현재 Workload identity로 대체하지 않는다.
-offered와 실제 기간이 있으면 ‘단계 평균 보낸 요청률’=offered/기간을 표시할 수 있지만 목표 부하나 α가 아니다.
-초별 지연/에너지 선형 보간·가짜 이벤트는 금지한다. 게시 단계 집계 표/막대와 선택 당시 journal을 사용한다.
-
-정의에 선언된 후보·기준 단계를 같은 축에 놓고 고정 색·실선/점선·원/사각 마커와 범례로 구분한다.
-비교가 없는 단계도 남기며 대상 게시·단계 부재를 임의 대응하지 않고 결손으로 표시한다.
-W 막대는 J/실제 구간 초로 정규화하고
-관측 공백 오차 상한/초를 오차막대로 표시한다(CI 아님). 원 J 및 J/전체 보낸 요청은 수치 표에 보존한다.
-요청 수 결손·동명 publisher 중복·0 요청에서는 J/요청을 만들지 않는다. 공유 에너지를 서비스에 배분하지 않는다.
-상단 전체 대응 단계 표는 req/s·W·원 J 차이와 서비스별 성공률 Δ(%p)·p95 Δ(ms, 배율)를 제공한다.
-목록과 선택 단계 모두 에너지 절감과 서비스 손실을 병기하며 단일 단계를 캠페인 우열로 승격하지 않는다.
-차트는 서비스 선택 한 개, 상세는 서비스 선택·하위 계획·원본 필드별 접힘으로 긴 문서를 제한한다.
-UI UX Pro Max `Compare Categories`의 그룹 막대·비색상 구별·접근 가능한 수치 표 권고를 채택했다:
-정책 비교가 목적이므로 정책별 시리즈와 키보드 접근 표를 두고 실제 시간순 레인은 별도 접힘으로 유지한다.
-선택 URL은 Next의 native history 연동으로 동기 갱신하며 각 동작이 최신 location.search를
-읽는다. A/B 연속 선택은 이전 렌더의 searchParams 스냅샷으로 서로 덮어쓰지 않는다.
-없는 이유는 미제공으로 남기며 FAIL/NOT_READY/MEASURED_DESCRIPTIVE는 각각 게시 판정·준비·설명형 결과로 구분한다.
-성능 실패와 공개 불가/미평가를 같은 빨간 배지로 처리하지 않는다.
-
-#### 실험 실행·부하 정의 작성
-
-`/evaluations`는 실행 목록·단건·시작 전 수정을, `/evaluations/load-scenarios`는 재사용 부하 정의를 다룬다.
-두 경로 모두 사이드바의 ‘실험’에 속하며 완료된 게시 `/experiments`와 진행 중 CR을 섞지 않는다.
-기본 새 실행 진입은 게시 `definition.spec` 복사다. 복사 시 기존 이름·실행 UID를 승계하지 않고
-참조 LoadScenario·증거 UID와 알 수 없는 spec 필드는 그대로 보존한다.
-‘빈 템플릿’은 `GET /evaluations/template`의 spec·sources만 사용한다. sources의 `none`만 ‘입력 필요’로 강조하며
-하네스 이미지·측정기·증거 저장소 등 운영 값을 브라우저에서 지어내거나 기본값으로 보충하지 않는다.
-
-편집기는 단계 mode·LoadScenario name/uid·시작 증거/앞선 단계 출력·장애 주입 계획,
-후보 left/기준 right의 같은 실험 stageID 또는 과거 publicationID/stageID,
-판정 기준·기본/단계 제어를 폼과 JSON으로 양방향 편집한다.
-단계 control은 기본값 전체 대체이며 개별 스위치를 임의 병합하지 않는다.
-JSON 수정과 폼 수정은 원래 spec의 해당 경로만 바꿔 미래 필드·정밀 정수를 보존한다.
-JSON 구문 오류는 제출을 막지만 spec 의미 검증을 중복 구현하지 않는다. 정본은 서버 사전점검이다.
-단계 제어 JSON 오류가 남아 있으면 단계 삭제·이동을 막아 오류 편집기와 인덱스 기반 유효성 상태를 함께 유지한다.
-
-부하 정의는 목록의 UID·inUse 실험 칩과 단건 spec을 제공한다. parts는 길이(s)·요청률(요청/s) 또는 α 표,
-구간 길이×요청률 막대 미리보기로 편집한다. 증거 선택기는 서버 inputs의 실제 kind별 목록만 사용한다.
-seed·trace·입력 번들·rateBasis·κ의 store/key/size를 선택하며 입력 번들 자체를 생성하지 않는다.
-liveWorkloads 차이는 정의/현재 UID·generation 표에 보이고 기본은 미반영이다.
-선택한 행만 명시 반영하면 기존 사전점검을 폐기하고 다시 점검해야 한다.
-inUse가 하나라도 있으면 수정·삭제를 막고 참조 실험을 연결한다. 경쟁 상태의 409도 ‘사용 중’으로 표시한다.
-Workload 이름이 다른 Workload 또는 기존 부하 맵 키와 충돌하면 이름·구간·도착 분포·trace 변경을 전부 거부한다.
-
-실행·부하 저장은 사전점검 통과 및 점검한 name/spec와 현재 편집본 일치를 요구한다.
-실행 대상 digest 차이도 liveTarget의 정확한 component/resource 식별자와 ready Pod imageID로만 표시하고
-사용자가 고른 값을 반영한 뒤 재점검한다. 실패를 숨기거나 서버 검사를 클라이언트 추측으로 대체하지 않는다.
-수정은 PUT과 원래 UID 조건으로 같은 이름을 교체하며 응답 새 UID를 갱신한다.
-부하 수정은 inUse가 비었을 때, 실험 수정은 Pending일 때만 제공한다.
-PUT의 403·409 외 오류는 단건 GET으로 확인한다: 새 UID·동일 spec은 ‘수정 확인’, 원래 UID는 ‘미변경’,
-404는 ‘삭제됨·재생성 필요’, 조회 실패는 ‘결과 미확인’이다. 편집본을 유지하며 재생성은 재점검 후 명시 POST다.
-‘결과 미확인’ 뒤의 수동 재조회에도 같은 판정을 적용해, 기존 UID·404 확인 시 편집본의 제출 잠금을 해제한다.
-확정 403은 ‘권한 없음(평가 운영자)’를 유지하고 결과 불명으로 전환하거나 편집본을 잠그지 않는다.
-생성·삭제의 결과 불명도 해당 이름 단건으로 확인하고 자동 재전송하지 않는다.
-
-운영 보드는 active 요약으로 ‘평가 실행 중’을 표시하고 같은 nodeName/podName 정확 일치 사건만 ‘주입’ 태그를 붙인다.
-주입 동작은 wire 값 `cordon-delete`와 `uncordon`을 각각 ‘노드 차단·Pod 삭제’, ‘노드 차단 해제’로 표시한다.
-중지·삭제는 원래 UID 조건을 포함한다. Blocked 정리 실패는 residuals와 필수 reason을 확인한 release 요청을 제공하며
-확인 버튼이 정리 성공·풀 반환·기존 실패 판정을 직접 바꾸지 않는다.
-릴레이는 계약의 정확한 method/path만 허용한다. 쓰기 권한은 별도 `chill-evaluation-operator`이며
-403은 ‘권한 없음(평가 운영자)’로 표시한다. 권한 조회 API를 만들거나 버튼을 추측으로 숨기지 않는다.
-서버 API 미제공·오류는 실제 조회 상태로 표시하며 가짜 목록·입력·템플릿으로 대체하지 않는다.
-
-### 8.7 탐색 계약과 구현 소유권
-
-Breadcrumb는 `측정 > 커버리지/요청 목록 > 측정 > 회차`, `기록 > 실험`을 따른다.
-필터/선택한 셀과 parent UID가 있는 내부 `returnTo`를 링크에 유지한다.
-허용 returnTo는 `/measurements` 계층, `/scheduler/profiles`, `/experiments`의 same-origin 상대 URL뿐이다.
-`//host`, scheme, 제어문자, 다른 origin은 무시하고 안전한 상위 목록으로 돌아간다.
-브라우저 뒤로가기는 history를 유지한다. 직접 진입도 URL만으로 선택/필터가 복원되고 parent가 없으면
-유효한 기본 breadcrumb를 쓴다. `/scheduler/profiles`는 기존 경로를 유지하되 sidebar의 측정으로 소속을 맞춘다.
-
-| 소유자 | 파일 소유권과 공유 계약 |
+| 옛 주소 | redirect 정본 |
 |---|---|
-| S1 | 새 `features/measurement-coverage.tsx`(coverage와 `MeasurementPlansPage`), `features/measurement-runs.tsx`(`MeasurementRunsPage/MeasurementGroupPage`), `lib/measurement-coverage.ts`+test. 기존 request/scheduler-profiles, **read-types.ts와 catch-all page.tsx 독점** |
-| S2 | 기존 measurement-plans(상세만)/read-pages(Run 상세·PreflightAnswer)/measurement-projections, measurements.ts+test, **scheduler.ts의 nanosToMilliseconds와 scheduler.test.ts**, Screen/sidebar/globals.css 독점 |
-| S3 | experiments.tsx, lib/experiments.ts+test 독점. URL a/as/b/bs 유지, route/CSS/type 파일은 수정하지 않음 |
+| `/scheduler`, `/operations/flow` | `/` |
+| `/resources`, `/pools` | `/operations/devices` |
+| `/scheduler/profiles` | `/measurements/results` 처리 성능 |
+| `/evaluations` | `/experiments` |
+| `/evaluations/load-scenarios` | `/experiments/load-scenarios` |
 
-Screen 공유 인터페이스는 `width?: "narrow"|"data"`, `actionPlacement?: "footer"|"header"`,
-`breadcrumbs?: {href?:string;label:string}[]`다. 마지막 breadcrumb는 현재 위치, back은 기존 호출과 호환한다.
-S1/S3는 이 props만 사용하고 CSS는 기존 Tailwind/semantic 토큰을 이용한다.
-S1은 새 목록 함수를 route에 연결하고 S2는 옮겨진 옛 목록·그룹 구현을 제거한다.
-함수 alias/중복 export·새 공용 framework는 남기지 않는다. PreflightAnswer/preflightConclusion은 기존 caller가 있어 유지한다.
+기존 실험 선택 query는 결과의 같은 게시·구간, 서비스 세부 경로는 통합 상세 해당 영역으로 명시 매핑한다.
+구 화면 호환 UI는 남기지 않는다. 서버 API `/scheduler`·`/experiments` 등은 화면 URL 변경과 별개다.
 
-S1 구현은 `/measurements/coverage`와 새 목록/정확 조건 Run 그룹을 별도 소유 파일에 둔다.
-inventory 양쪽 페이지와 namespace Run 전체 페이지는 탭 Query cache에 한 번 모으며,
-선택 Result와 정확 참조 Passport만 추가로 읽는다. 미조회 Run은 미측정으로 바꾸지 않는다.
-`논문용 검토만`은 현재 catalog에 CI가 없어 검토 보류(0개)로 남긴다. CI를 만들어내거나
-`confidenceLevel`을 에너지 CI로 취급하지 않는다. 복사 진입은 기존 `from`에
-`fromNamespace`/`fromUID`가 제공되면 정확히 확인하며, 조합 prefill과 함께 오면 잠근다.
-이 구현 상태는 runtime 지원 확정·논문 적격·재설문 수용 완료를 뜻하지 않는다.
-
-실제 순수 함수의 최소 회귀는 [계획 §5](../../plans/2026-10-30-dashboard-measurement-ux.md#5-검증과-통합-완료-조건)를 따른다.
-특히 nanosToMilliseconds 모든 caller의 음수·정밀 정수, 이름 partial-match 충돌,
-누락 CI/단일 배치/분모0/UID 불일치를 테스트한다. UI 구조를 문자열로 검색하는 테스트는 새 회귀 근거가 아니다.
-모든 슬라이스 후 통합 담당자가 한 번 test/typecheck/lint/build와 브라우저 수용을 실행한다.
-완료는 M1·E1 세 페르소나 전원 성공과 평균 SUS ≥68까지이며, 이 문서 작성은 그 달성 증거가 아니다.
-
-### 8.8 F4 새 API 소비 검증 (2026-10-30)
-
-B1 `340f96ee`, B2 `2963ee11` 실제 DTO 및 B3 `80ea2196`의 두 publication shape를 대조했다.
-relay에는 정확 `GET /model-compatibility`와 필수 단일 query 네 개만 추가했다.
-새 라이브러리·Go·클러스터·저장 객체·publication 변경은 없다.
-
-Node 24.0.0 / nice 19 최종 typecheck·lint·전체 80 tests·production build 통과.
-build의 Asta Sans fallback font-metrics 경고는 남아 있다. 마지막 코드 수정 뒤 통합 검사를 실행했고,
-그 전 초기 검사도 통과했다. 검사는 로컬 구현 회귀이며 배포 수용의 증거는 아니다.
-
-`/tmp/uxf4`, 포트 3204의 production 사본에서 GET-only 가드를 로그인 전에 설치했다.
-실서버의 statistics/step 실측/실험 metadata 부재를 확인하고 기존 미제공·기록 없음 화면을 캡처했다.
-새 필드는 명시 `f4-fixture-*` route mock으로 CI 음수 하한·0폭, 호출 표본/독립 trial,
-정확 owner UID, 실패 전체+0 J/정밀 ns, 두 publisher α=0/direct-rate/identity/예정 구간을 확인했다.
-coverage와 request prefill을 여는 전체 과정의 compatibility GET는 각 한 번(총 2회)이었다.
-1440×900 및 390×844 캡처에서 기존 토큰·표·모바일 가로 스크롤 방향을 유지했다.
-
-증거 경로: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/ux-survey-20261030/`.
-`f4-live-{coverage,statistics-fallback,operation-fallback,experiment-fallback}.png`는 실데이터,
-`f4-fixture-{statistics,failed-owner,coverage,request-prefill,operation,experiment-timeline,experiment-comparison,experiment-mobile}.png`는 합성 응답이다.
-검사 원로그는 같은 폴더의 `f4-{typecheck,lint,test,build}.log`다.
-보조 캡처는 `f4-live-owner-fallback.png`, `f4-fixture-operation-exact-nanos.png`,
-`f4-fixture-experiment-{substages,alpha-comparison}.png`다. 브라우저 탭과 로컬 서비스는 종료하고
-자기 사본 `/tmp/uxf4`는 삭제했다. 토큰·원시 export·쓰기 요청·서버 설정 변경은 없다.
-운영 B1/B2 배포와 B3 신규 publication·세 페르소나 재설문은 수행하지 않았으며 별도 승인 수용이다.
-
-## 9. 운영 중심 측정·실험 5차 재설계
-
-2026-10-30 교차 모델 검토와 U1/U2/U3 코드 반영. 클러스터 배포·성능 측정·운영 담당자 재설문 수용 전이다.
-[계획](../../plans/2026-10-31-dashboard-measurement-redesign.md)은 근거·파일 소유권·수용을,
-[측정 API §13](../serving/measurement-api.md#13-측정-커버리지-읽기-projection-u1)은 DTO·단일 판정·신선도를 소유한다.
-이 절이 §8의 화면 결정을 대체한다. 대상 사용자는 **엣지 클러스터 운영 담당자**이며
-‘스케줄러가 이 결과를 쓰는가, 운영에 쓰기 전에 무엇을 확인해야 하는가’ 순서로 설명한다.
-평가 역할을 제품 용어로 사용하지 않는다.
-**화면 비율 원칙(사용자 지시, 2026-10-31):** 기준 화면은 일반 데스크톱 비율(1440×900, 최소 1280)이다.
-레이아웃·정보 밀도·병렬 배치는 데스크톱에서 한눈에 판단하도록 설계하고, 모바일(390px)은 같은 정보를 잃지 않고
-읽을 수 있는 수준(세로 재배치·가로 넘침 없음)으로 지원한다. 모바일을 위해 데스크톱 배치를 단순화하지 않는다.
-
-### 9.1 디자인 계획 → 브리프 재검토
-
-**계획.** 요청 객체 수 대신 지원 조건·부족 batch·현재 채택 여부를 앞에 둔다.
-개요 → 커버리지 → 정확 조건의 결과 행 → 필요한 요청으로 연결한다.
-좌측 조건/우측 숫자, H1 28px/700, 절 18px/600, 본문 16px/1.6, 데이터 14px/1.5,
-보조 12~13px의 기존 Asta Sans를 쓴다. 수치/날짜는 tabular-nums·오른쪽 정렬,
-원본 ID/JSON만 monospace, 간격 8/12/16/24/32px, 설명 폭 65~80ch다.
-
-| 기존 semantic 토큰 / 밝은 모드 기준 hex | 용도 |
+| 단계 | 변경 / 배포 수용 |
 |---|---|
-| sidebar `#E3EAF0` | 기존 CHILL 크롬 |
-| foreground `#0F2230` | 조건/제목/수치 |
-| primary/chart-1 `#0D6A8C` | 선택/focus/요청/CHILL |
-| ok `#17784A` | 서버가 판정한 사용 가능 |
-| heat/chart-4 `#B5530B` | 부족/확인 필요 |
-| fail/destructive `#B42318` | 실제 문제/위험 동작 |
+| 1 상태·표·상세 | 공통 규약·문서 확정 / null·영·빈 목록·미기록·권한·실패·결과 불명, 긴 이름·tooltip 폭·느린 사건·키보드/focus |
+| 2 운영·서비스 | 운영 진입·서비스 우선·유휴 집계·장치 분리·개요 제거 / 무부하·활성·SLO 위반·전력 누락·연결 지연·변경·예약·실험, 동일 UID/시각/축 일치·관리의 WS 비의존 |
+| 3 측정 | 범위·요청→회차·결과·조건 유지 / M1~M5, 분모·미측정 모드·실패/기존 사용 공존·기준 미제공·입력 변경 후 재점검 |
+| 4 실험 | 실행·결과·부하·페이지 편집·비교/정리 / DB-FR-66, 정의 유무·단계 이름 변경·대상 없음/오류·UID 교체·결과 불명·권한·실제 반환 |
+| 5 기록·설정·전체 | 실제 조회·원본·내보내기·구 화면 정리 / 모든 구 URL/query·뒤로가기·새로고침·선택·1440×900/390px/확대·동일 과업 재평가 |
 
-기존 dark 대응값과 background/card/border를 유지하며 컴포넌트에 새 hex를 복사하지 않는다.
-색만으로 뜻을 전하지 않고 문구/아이콘/패턴을 병기한다.
-
-**브리프 재검토.** 일반 운영 KPI 카드 3개와 대형 보드 대신 범위 요약·실험 득실·다음 조치의
-평평한 작업면을 확정했다. 시각적 특징은 **부족 batch가 보이는 계측표 하나**다.
-좁은 패널/중첩 카드/중복 제목/가운뎃점 메타를 제거하되 새 색·폰트로 변화를 가장하지 않는다.
-교차 검토 후 ‘결과가 있어도 모두 경고’가 되는 원안과 중간 폭에서 표를 없애는 안도 폐기했다.
-
-기존 실행한 ui-ux-pro-max 검색의 적합성은 유지한다.
-`research data dashboard --design-system --density 8` 및 좁힌 재검색은 Data-Dense의 밀도/
-대비/키보드 원칙만 채택했고 Enterprise Gateway/새 색/Fira는 미채택이다.
-tabs 질의를 navigation hierarchy active로 좁혀 Active State/Heading Hierarchy,
-loading 질의를 loading feedback으로 좁혀 안정 skeleton/aria-busy를 채택했다.
-wizard reduce steps는 0건 후 multi step form의 label/submit feedback만 채택했다.
-small multiples는 0건 후 재검색도 직접 일치하지 않아 계열 구별/원값 표만 참고했고,
-session persistence는 0건 후 state preservation의 Deep Linking만 채택했다.
-소형 다중 차트·sessionStorage 보안·한 화면 요청은 검색의 보장이 아니라 사용자 결정/관찰 근거다.
-
-### 9.2 IA·제목·라이브 경로
-
-전역 메뉴는 **개요 `/` / 측정 / 실험 / 서비스 / 운영 / 기록 / 설정**이다.
-운영 보드는 `/operations/flow`, 실험은 `/experiments`로 직접 간다.
-sidebar 가장 긴 prefix 규칙을 갱신해 `/operations`는 운영, `/experiments`는 실험,
-`/scheduler/profiles`는 측정, `/scheduler/history`는 기록을 활성화한다.
-`use-live.tsx`의 활성 경로도 `/operations/flow`·`/pools`로 옮기고 `/`에서는 연결하지 않는다.
-POOL 상세의 보드 복귀/anchor, scheduler 진입 링크와 hubs 중복 링크를 함께 바꾼다.
-live-board의 옛 CoverageProgress import/caller도 제거해 홈 이동으로 라이브 기능이 깨지지 않게 한다.
-
-| 측정 링크 탭 | 경로/의미 |
-|---|---|
-| 커버리지 | `/measurements` 기본, 기존 `/measurements/coverage?...`도 같은 화면 |
-| 요청 | `/measurements/requests` 계획/진행/실패 |
-| 회차 | `/measurements/runs` 실제 반복 실행 |
-| 프로파일 | `/scheduler/profiles` 스케줄러 채택 조건 |
-| 동작 비용 | `/measurements/operation-cost-measurements` 준비/해제/유휴/모드 전환 시간·전체 Node J |
-| 분배 점유 | `/measurements/dispatch-occupancy-measurements` batch 실행 외 요청당 점유 d와 지속 처리량 X |
-
-링크 nav와 aria-current를 쓰며 route를 tabpanel로 가장하지 않는다.
-모바일은 두 줄 3열로 여섯 링크를 노출한다. 계획 검사는 요청 보조 동작이며 별도 탭이 아니다.
-H1 한 번, shell은 유틸리티만, 목록 breadcrumb 없음, 상세는 `측정 > 요청 > 항목` 등 하나다.
-뒤로 링크/breadcrumb를 중복하지 않는다. returnTo는 same-origin 허용 경로만,
-조건/variantId/batch/필터는 URL로 유지하며 닫으면 원래 셀/행 focus로 돌아간다.
-section은 제목+간격+구분선, 표는 표 border만 쓴다. Sheet/Dialog 외곽은 가능하나 내부 카드 중첩은 금지한다.
-조건은 dl/표, 실패는 한 문장, 기술 원문은 펼침, 용어 도움말은 한 곳이다.
-
-### 9.3 개요·커버리지와 반응형
-
-```text
-측정·실험 현황                                            [갱신]
-사용 가능 C/N    기준 충족 P    재사용 K    지원 미확인 U    기준 시각
-──────────────────────────────────────────────────────────────────
-최근 비교 실험 / 비교 목적
-대응 단계 전부의 에너지 Δ: E5-1 … E5-2 … E5-4 … E5-5 … E5-6 …
-각 서비스의 최악 성공률 Δ / 최대 p95 증가와 해당 단계
-[실험 전체 보기]
-──────────────────────────────────────────────────────────────────
-다음 조치                           모델 × 장치 커버리지 요약
-실제 원인 [확인]                    모델        Orin      Xavier
-부족 batch [요청 범위 확인]          MobileNet   C/N       C/N
-[운영 흐름 보드]                    PLC         C/N       C/N
-```
-
-가장 좋은 단계 하나를 골라 캠페인 결론으로 쓰지 않는다.
-모든 대응 단계 Δ, 서비스별 최소 성공률 Δ/최대 p95 Δ와 stage를 함께 표시한다.
-최신 비교 불가 기록도 남기며 한 단계 또는 서비스의 결손을 숨기지 않는다.
-
-```text
-측정                                                       [새 측정 요청]
-[커버리지] [요청] [회차] [프로파일] [동작 비용] [분배 점유]
-사용 가능 C/N   기준 충족 P   지원 미확인 U      기준 시각 / freshness
-목표 배치 [1] [2] [4] [8] [16]  (직접 선택, URL 동기화)
-[모델] [장치] [상태] [조건 더 보기]
-모델 × 장치 개요
-선택: MobileNet / Orin
-mode    CPU                    CUDA
-MAXN    사용 가능              조건 2개 [조건 선택]
-15W     부족 B4,8              미측정
-──────────────────────────────────────────────────────────────────
-선택 variant / batch: 조건·p95·idle W·active W·총/증분 J·CI·n/N·전력원
-스케줄러 사용 여부 / 기준 충족·부족 이유 / 고정 계측 각주
-[결과 행 내보내기 CSV] [LaTeX] [요청 범위 확인]
-이력 / 원본 [펼침]
-```
-
-목표 chip은 URL batches에 반영하고 목표가 없으면 ‘요청 범위’다.
-여러 variant의 Cell.batchProgress/representative는 null, ‘조건 k개’만 표시한다.
-선택한 정확 variant 하나에서만 같은 batch의 J/p95를 보이며 최저를 최적 batch라고 하지 않는다.
-지원 안 함 기본 숨김에도 장치 순서는 고정, Unknown은 사유와 분모 제외를 보인다.
-**1024px 이상은 표 아래 상세**, 768~1023px도 표 아래 상세를 유지한다.
-전체 폭 대체/단일 Sheet는 **768px 미만만** 적용한다. 390px은 장치 선택+평평한 조건 행이다.
-목록/행렬/상세 모두 min-width:0·안전 줄바꿈, 상단 CTA·44px 모바일 타깃·가시 focus를 제공한다.
-이전/다음 조건 이동과 셀 복귀는 같은 필터/variant/batch를 유지한다.
-
-### 9.4 상태·결과 행·요청
-
-서버가 `MeasurementAssessment.status/displayStatus/label/reasons/checklist`를 제공한다.
-화면은 **사용 가능/부족/문제/진행/미측정 5개**, 지원 안 함·확인 불가는 별도다.
-`MeasurementStatus`는 받은 label만 표시하며 UI phase 번역/CI 판정/체크 재계산을 하지 않는다.
-complete와 criteria_met는 모두 사용 가능, 상세 사유 행에서 ‘기준 충족’ 여부를 구분한다.
-서버 세부 9개 상태의 의미는 API §13.4와 공통 도움말 하나가 정본이다.
-timestamp 부재·node-wall은 상태/기준 충족 gate가 아닌 전력원 옆 고정 각주다.
-catalog 실제 기각/근거 파손/선언 충돌/음수 d만 문제, superseded/scope 밖 정상 결과는
-사용 가능+‘현재 스케줄러 미사용’, reuse는 사용 가능일 수 있으나 기준 충족은 아니다.
-실행 Complete만으로 사용 가능을 만들지 않고 원본 실행 상태·채택 여부·평가 범위를 보존한다.
-
-결과 행은 API resultRows를 그대로 쓴다. catalog가 이미 로드한 메모리 facts를 재사용하며
-채택 profile 상세에서 Console `/result`를 다시 읽지 않는다. catalog 밖 단건만 기존 retained 경로다.
-조건·pooled client p95/N·idle/active W·총/증분 J·증분 CI·active/idle n·전력원을 함께 읽는다.
-원본 timestamp 부재는 ‘관측 시각은 수집 시각’, node-wall은 ‘장치 단독 전력 아님’ 각주다.
-재사용은 대상 확인 실측 행/source 참조 행을 나눠 혼합 총 J를 만들지 않는다.
-개별 CI 중첩만으로 유의성을 판단하지 않는다. null/0·증분 CI/전력 오차·호출 N/반복 n을 구분한다.
-CSV/LaTeX는 같은 서버 행/단위/출처/결손을 내보내고 safeSource+수식 문자/LaTeX escape를 적용한다.
-음수 d 원값은 원본/내보내기에 보존하고 본문은 문제 사유, 계획 시간은 실측으로 대체하지 않는다.
-기존 list/detail에도 같은 서버 assessment가 있어 전체 aggregate 권한 없이 단건을 볼 수 있다.
-
-요청은 모델×장치×mode×batch부터 고르는 한 편집 화면+같은 화면 검사/검토다.
-셀에서 variantId와 목표 batch를 전달하고 정확 조건을 유지한 때만 missing을 초기 선택한다.
-다른 CPU/dataset/protocol/선언 UID 또는 미확정 image는 중복 확정하지 않으며 기존 자동 제외를 무효화한다.
-서버 preflight batchPlan이 최신 정확/planned-only/unknown 대조·요청 가능/실제 예정 범위를 제공한다.
-subsetAllowed 경로만 ‘부족 배치만 요청’, declaredBatchSizes는 칩 읽기 전용·batchSizes 생략,
-전체 탐색/중복 가능성과 조기 종료 가능성을 명시 확인한다. 모든 선택 batch 실행을 보장하지 않는다.
-Compatible 기본, Incompatible 숨긴 이유 목록, Unknown은 선언/설정 담당 조치와 검사 경로다.
-서비스는 입력 프리셋이며 복수 후보를 임의 선택하지 않는다.
-실제 active/idle 시간·반복·warmup/settling·계측 주기/timeout·CPU와 복사 출처는 항상 요약한다.
-이름은 mode/path/CPU 포함 자동 이름, **검사 통과 시 suffix 고정**이다.
-명시 검사만 dryRun/preflight POST, 실패 HTTP/코드/조치는 접지 않은 본문,
-조건 변경 시 무효화·응답 미확인 시 같은 이름 조회·자동 제출/재제출 금지다.
-실패 목록은 실제 owner 원인 한 줄/후속 링크만, JSON diff는 상세 전/후 표다.
-
-구현 채택 근거(2026-10-30): U3는 ui-ux-pro-max의 **Focusable Error Summary / Error Messages** 권고에 따라 한 편집면 상단의 키보드 초점 가능한 오류 요약과 접지 않은 HTTP·사유·조치를 사용한다. U2는 Navigation/Keyboard Navigation 권고와 frontend-design에 따라 6개 보이는 링크 탭, Asta Sans/기존 semantic 색, 단일 H1·구분선 계측표, 768px 이상 표 아래 상세를 채택했다.
-
-### 9.5 실험·수치
-
-7차(R6 #6): 상세 결론은 구간별 **득/실 칩**으로 공유 에너지 Δ(J·%)와 서비스별 성공률 Δ(%p)·
-p95 배율/절대차를 병기한다. 최대 성공률 하락·최대 p95 증가 구간을 먼저 보여 빠뜨리지 않는다.
-차트는 전 단계 표보다 위에 두며 3열/2열/1열, 높이 180px다. 가로축은 짧은 구간 번호만
-회전 표시하고 번호→부하/구간 코드 범례를 별도로 둬 좁은 폭의 라벨 겹침을 막는다.
-보조 코드도 일반 본문색을 쓰며 기본/강조 버튼의 서로 다른 배경색 위에 고정 회색을 얹지 않는다.
-비대응 단계는 선을 끊고 속 빈 마커/사유를 유지한다. 정확한 suffix 단계 대응이 우선이다.
-정확 대응이 없더라도 두 정책의 **모든 서비스별 평균 보낸 요청률 차이가 1% 이내**이고
-서로 유일한 후보일 때 ‘같은 부하 비교’로 포함한다. 합계 req/s만 같거나 후보가 여러 개면
-자동 선택하지 않는다. 실제 구간 길이의 미세한 차이를 허용하되 단계 대응/통제 비교로 포장하지 않고
-양쪽 코드·관측 요청률·측정 규칙/길이 차이를 비교 근거에 함께 표시한다.
-예정 대체: 현재 suffix 대응·요청률 1% fallback은 [실험 실행 설계](../profiling/experiment-execution.md) / [실험 SRS](../../spec/experiments/SRS.md)의 DB-FR-66으로 대체 예정(게시물의 spec 스냅샷 읽기)이며, 정의 없는 과거 게시는 비교 미기록으로 표시한다. 위 설명은 현재 구현 기록으로 유지한다.
-동결 stage KPI에 실제 목표가 있을 때만 SLO 기준선을 추출하며 현재 Workload SLO로 보충하지 않는다.
-성공률 축 0~100%, p95는 서비스별 고정 범위/명시 단위, 정책별 선/마커/범례와 원값 표를 제공한다.
-단계 설명/예정 α/관측 평균을 구분하고 초별 회복·인과를 꾸미지 않는다.
-기본 CHILL−정적, 수동 A/B는 실제 선택 이름으로 ‘A가 B보다 낮음/높음’이라 쓴다.
-공유 에너지를 서비스별 합산/배분하지 않는다.
-
-선택 구간의 ‘CHILL이 한 일’은 기존 `GET /observations/scheduler?from=…&to=…&limit=100`의
-판단 수·전환 사건 수/종류를 표시한다. 다음 cursor/보관 공백이 있으면 첫 페이지 부분 건수이며
-전체 구간 합계로 주장하지 않는다. 실패/기록 없음도 최신 기록으로 바꾸지 않는다.
-전 단계 표와 선택 구간 모두 정확한 from/to를 채운 `/scheduler/history` 링크를 제공한다.
-나노초 시각 수동 입력 폼과 실험 화면 내부의 별도 판단 선택기를 제거하고 정본 기록 화면을 재사용한다.
-
-**고정 자릿수:** J·요청 수 정수, W 1자리, %/%p·ms 2자리, J/건 4자리.
-가변 3→6유효숫자 탐색은 없다. Δ는 원값으로 계산하고 근삿값/표시값 차와 마지막 자리 차이를 설명한다.
-`|Δ|<표시단위`는 방향 없이 표시하며 정확값/복사는 원본을 보존한다.
-기준 B=0도 절대 J/ms 차이·%p는 가능, 상대 %·배율만 계산 불가다.
-성공률 자체 분모 0/지표 미제공은 별개 사유다. CI 중첩만으로 유의성을 판단하지 않는다.
-
-### 9.6 토큰·조회 수명
-
-sessionStorage는 버전+**system 단위 key**이며 namespace 이동에 재로그인하지 않는다.
-설정/hydration 완료 전 인증 확인 상태를 표시해 로그인 화면 깜빡임을 막는다.
-접속 관리 버튼은 **‘이 탭에서 토큰 지우기’**다. 이 탭 저장분 삭제이고 서버 bearer/복제 탭 폐기는 아니다.
-신원 변경/확정 401/WS4401은 storage 삭제·요청 취소·QueryClient 교체·socket 종료를 같은 epoch로 처리한다.
-403/4403·503/1013은 만료 아님, 내부 목적 URL 유지, 늦은 응답의 신원 cache 유입 차단을 유지한다.
-앱이 여는 모든 새 창은 noopener로 opener 제거, 복제/세션 복원 가능성과 storage 거부시 메모리 전용을 안내한다.
-sessionStorage는 XSS 방어가 아니다. 현 CSP의 unsafe-inline은 강한 격리의 근거가 아니며
-CSP가 bearer를 보호한다고 설명하지 않는다. 안전한 텍스트·중계 allowlist는 유지한다.
-coverage는 진입/명시 갱신만 조회, 브라우저 30초 polling은 없다.
-dataAsOf/freshness와 partial/source 사유를 표시하고 stale을 현재 확인된 숫자로 포장하지 않는다.
-
-### 9.7 6차 운영 화면 보정
-
-장치 머리글은 약칭·고정 열 폭·줄바꿈으로 분리하고, 상태는 동일 용어에 의미색과 기호를 함께 쓴다.
-조건 선택은 Node·CPU·데이터셋 이름으로 표시하며 원본은 상세에 둔다. 초기 화면에는 모달을 열지 않고
-조건 상세를 본문에 표시한다. 실행 선언 누락·지원 불가 경로는 기본 숨김이며 토글로 사유를 확인한다.
-상태 도움말은 커버리지 한 곳에 두고 기준 충족·체크리스트는 상세 보조 정보로 유지한다.
-실패 셀은 원인 한 줄과 정확 namespace/name/UID의 실패 회차 링크를 제공하고 다음 조치는 모델·장비를 명시한다.
-회차의 모델·장치·Node·경로·전력모드·CPU·상태·부모·조건 필터는 서버 전체에 적용한 뒤 페이지를 나눈다.
-
-요청 폼은 무언 복사를 제거하고 명시적 `from` 출처만 표시한다. 실패는 대기 안내보다 원인을 우선하며,
-결과는 CI·전력 출처를 첫 줄에 표시한다. 동작 비용은 초 단위·한국어 단계로, 실험은 고유 단계 축·
-명시적 결측·차트 접근성 이름으로 표시한다. 이 보정 자체는 SUS 목표 달성 증거가 아니다.
-
-### 9.8 소유권·수용
-
-U1 Go 집계/catalog 통계/행렬 memo/QPS, U2 IA/개요/coverage/토큰·공유 파일,
-U3 상태 소비/측정 상세/결과 행/요청/실험을
-[계획 §7](../../plans/2026-10-31-dashboard-measurement-redesign.md#7-세-병렬-슬라이스파일-소유권)대로 병렬 구현한다.
-live-board/use-live/hubs/scheduler·POOL 복귀·sidebar prefix를 U2 소유에 포함한다.
-httpapi 자체 DTO/cmd adapter로 package 방향을 유지하므로 `.go-arch-lint.yml`은 변경하지 않는다.
-폐기된 브라우저 전수 집계/별도 판정/select/7단계/단일 서비스 차트/옛 제품 어휘는 cutover 때 제거한다.
-
-Main은 모두 합친 뒤 검사·브라우저 수용을 한 번 수행한다.
-성공 GET뿐 아니라 **첫 사용 가능 coverage/선택 채택 행 판정 각각 p95<2초**,
-cold process 준비 30초 이내 목표·warming/partial 비율·제어 부하를 함께 확인한다.
-새 평가는 **운영 담당자 계열 3역할**이며 과거 평가와 모집단 변경을 명시한다.
-preflight/dryRun은 설문 가드 허용, 실제 제출/삭제/변경은 차단한다.
-평균 SUS ≥70와 M1·M3·M5·E1 전원 성공이 수용 기준이며 미달 시 반복한다.
-교차 모델 검토 반영은 구현/배포/성능/새 점수 달성의 증거가 아니다.
-
-### 9.9 재설문 측정·실험 보정 (2026-10-31)
-
-- 화면은 상태·핵심 표/시각화·다음 행동의 최대 3블록으로 제한한다. 문장은 3개 이하의 명사형 라벨로 줄이고, 수치는 단위 헤더 표/시각화로, 보조 지표·원문·근거 목록은 선택 상세의 기본 접힘으로 둔다.
-- R15 첫 화면은 ① 모델·범위와 실제 측정 집계 ② 장치·전력모드 × 경로 매트릭스 ③ 접힌 다음 조치의 3블록이다.
-  상단의 `측정 조합 / 전체`와 `측정 배치 / 목표`를 분리한다. 셀은 실제 측정/목표 배치 `n/m` 미니 막대와 스케줄러 사용 `●` 한 줄이며 숫자는 줄바꿈하지 않는다. 배치 칩은 선택 상세에만 표시한다. 측정 0건인 모드는 장치별 `미측정 모드 n ▸` 한 행으로 접고 펼치면 개별 조합을 선택한다.
-  매트릭스·다음 조치의 세로 높이 제한과 내부 스크롤을 없애 페이지 스크롤을 공유한다. 모바일 요약은 고정 열 너비·줄바꿈으로 문서 가로 넘침을 막는다.
-  셀·선택 상세·다음 조치와 요청 목록/상세 헤더는 `measurementUsage`와 동일 조합 coverage의 `schedulerUsed`를 공유한다. 요청은 모델·장치·경로·모드·노드가 일치할 때만 이 현재 조합의 사용 현황을 표시하며 요청 자체의 성공으로 해석하지 않는다.
-  품질은 공통 `measurementQuality`의 확정 충족·미충족 셀에만 아이콘으로 표시한다. 전부 미판정이면 셀·필터·범례의 품질 축을 없애고 상단 `품질 판정 근거 없음 n` 한 곳으로 모으며 사유 분포는 툴팁에서 확인한다. checklist 부재·unknown으로 미충족을 추정하지 않는다.
-  운영 GET과 inventory 선언 필터로 확인한 MobileNet 53셀은 cell `criteriaMet=false` 9 / `null` 44였다.
-  variant의 실제 비통과 항목은 14셀(24 variant)의 `FrozenPowerWindowPolicy=unknown`뿐이며 나머지 39셀은 품질 checklist가 없다.
-  `measurement_coverage_facts.go:28-40`은 CI의 존재·유한성만 검사하고 허용 오차 설정 필드는 제공하지 않는다. `허용 기준 미제공` 표기는 `TrustValues`의 고정 미제공 셀에서 나오며 이 열을 근거로 미충족을 추정하지 않는다. 임의 기준·설정 링크도 만들지 않는다.
-  선택 상세는 데스크톱 800px 서랍이다. 상단 품질 요약은 실행/유휴 반복·상대 오차·허용 기준 제공 여부·공통 품질 판정의 5열 표다.
-  신뢰 수준·절대 구간·전력 출처와 원문은 기본 접힘으로 보존한다. 지원 불가 사유 집계 항목은 해당 코드의 조합 목록으로 연결한다. 기존 `지원 안 함` 빈 목록은 지원 불가를 먼저 숨긴 뒤 상태를 필터한 순서가 원인이므로, 이 상태에서는 숨김의 반대 집합을 표시한다.
-  입력 계약은 현재 Dataset UID와 동결 전처리기 산출물 연결이 확인될 때만 기존 `modelcatalog.Compatible` 규칙으로 판단한다.
-- 근거 없는 미측정 칸에 운영 검토 경고를 만들지 않는다. 측정 시각 조회는 profile API의 50행 상한과 페이지를 따르며 갱신 시각과 구분한다.
-- 실패 Run identity가 있으면 정확 회차 상세로, 없으면 정확 namespace/name/UID의 **실패 요청**으로 간다.
-  회차 미연결을 빈 실패 목록으로 가장하지 않는다. 실패 회차는 원인·종료 코드·점검·재요청의 짧은 표를
-  조건·판정보다 먼저 표시한다. 조건·대상 노드·모델·경로·원문은 기본 접힘으로 이동한다.
-  메모리 부족은 실패 배치가 1인지 구분하여 작은 배치 또는 다른 경로·장치를 안내하며, 당시 동시 GPU 점유 기록이 없으면 명시한다.
-  실패 요청·회차의 원인 표 맨 위는 서버 상태의 reason/message 원문이다. 요청의 연결 회차를 같은 표에 두며 `Other`를 `기타 오류`로 덮지 않는다. 삭제 영역은 기본 접힌 `관리` 아래에 둔다.
-- 복사 원본·선택 variant의 동일 모델·전처리기 데이터셋은 보존한다. 값이 없을 때만 동일 모델의 기존 요청·측정 프로파일에서 실제 사용한 데이터셋을 선택한다. 프로파일은 50행 페이지를 모두 읽어 다른 장치·경로의 동일 모델 이력도 확인한다.
-  이력이 없으면 모델/artifact에 연결된 전처리기의 입력 필드 집합·이름·형식·최대 바이트 상한에 맞는 유일 후보만 자동 선택한다. 없거나 여러 개면 빈 필수 칸을 유지한다. 사용자 명시 선택의 호환성은 서버 `modelcatalog.Compatible`과 같은 `datasetGap` 부분집합 규칙을 유지한다.
-  서버 ModelSpec/Dataset에는 작업·모달리티 필드가 없고 `Preprocessor.artifacts.target(model,artifact)`→`input.fields`→`Dataset.fields` 연결만 있다. 입력 필드가 추가된 VQA 데이터셋을 이미지 전용 입력의 유일 후보로 추론하지 않는다.
-  URL에 명시된 배치를 우선하고 이전 저장 배치·현재 재사용 여부·실제 제공된 동결 필드 차이를 분리한다.
-  셀→요청 링크는 배치가 없으면 `batches` 키를 생략해 부족 배치/경로 상한 기본 선택을 유지한다(실패-먼저 회귀).
-  미리 채운 장치·노드·전력모드·경로는 폼 상단 한 줄에 표시하며 조건 변경 링크로 기존 입력을 펼친다.
-  필수 배치는 기본 펼침이고 미선택·실행 불가 장치/노드·경로 입력도 펼친다. 같은 검증 오류는 한 곳에만 노출하며 int32 최대값은 `제한 없음`으로 표시한다.
-  원 variantId를 검사에 전달하며 검사와 제출은 별개다. 빈 수치 요약은 `—`로 표시하고 고급 수치는 기본 접힘이다.
-  사전검사 거부는 유휴/실행 측정 방식·전력 관측·배치·입력 계약·CPU·장치 조건별 수정할 필드와 허용 관계를 안내한다.
-  고급 설정 관련 거부는 해당 설정을 펼쳐 필드 옆 오류와 이동 링크를 제공한다. 자동 생성 유휴 조건의 서버 거부를
-  실행 배치 축소로 우회하지 않는다. 사전검사 통과 후 서빙 영향은 `v1/pools` 대상 노드의 미중지 인스턴스에 배치된 고유 서비스 수다. 조회 실패·불완전 자료는 `미확인`이며 0으로 대체하지 않는다.
-- 사전검사는 `형식 검사 통과 / 형식 검사 미통과`다. 예상 점유 최소 시간은 반복 × (예정 배치 수 × 실행 측정 + 유휴 안정 + 유휴 측정) 요청 필드만 합산한다. 유휴 기준 측정은 배치 전체에서 공유한다(`internal/profiling/campaign/energy_optimization.go:63-84`). 예열은 횟수이므로 초로 바꾸지 않으며 준비·재시도·예열 시간 제외를 툴팁에 명시한다. 검사 통과를 운영 안전이나 접수 완료로 표현하지 않는다.
-  신뢰구간은 평균 대비 반폭 비율을 표시하며 허용 오차 기준은 서버 API 미제공이다. 임의의 허용 상수나 `기준 미설정` 서버 상태로 바꾸지 않는다.
-  표본·관측 누락·실패 처리 기준은 평이한 확인 항목으로 번역하며 미확인을 통과로 설명하지 않는다.
-- 실험 상세는 이름·날짜·결론 상태어와 칩·상시 한 줄 범례, 구간×서비스 히트맵, 요청률·선택 서비스 p95 통합 차트의 3블록이다.
-  히트맵의 부하·에너지 변화·성공률 차이·p95 배율을 선택하면 A/B 원값·당시 시간·판단/전환 기록 링크·원문을 오른쪽 서랍에 연다.
-  목록·상세·개요는 게시 `definition.run.name`(없으면 게시 ID) → 큰 판정 → 핵심 수치 칩 → 작은 제한 아이콘·구간 수 순서다.
-  제한 원인 표는 툴팁과 선택 서랍에서만 제공한다. 아이콘 건수는 참고 비교·대응 없는 구간 합이며 중복 원인 합계가 아니다.
-  일치·참고·대응 없음은 작은 세그먼트 막대 하나로 표시하고 각 건수는 막대 툴팁으로 제공한다.
-  정의·목록 comparisons·outcome의 reader와 과거 게시 처리는 §8.6을 따른다. 과거 대상은 publicationID·stageID로만 연결하고 서랍에서 다른 실험명 링크를 제공한다.
-  단계 라벨은 id / row / 모드이며 비교 이유는 헤더·서랍 툴팁에 표시한다. 차트 요청률은 직접 rates의 구간 길이 가중 평균이며 α만 있는 경우 역산하지 않는다.
-  `campaignScoreboard().summary`는 `comparisonValidity`의 정의·식별자·규칙·길이·부하 일치 비교만 집계한다.
-  제한 비교는 별도 `referenceSummary`로 보존한다. 일치 비교가 없으면 참고 수치로 같은 판정 규칙을 적용하고 `참고` 태그를 붙인다.
-  판정은 SLO 악화를 에너지 절감보다 우선하며, 비교 자체가 없으면 `비교 없음`이다.
-  에너지 중립에서 일치 비교의 개별 서비스 성공률 또는 p95가 하나라도 표시 단위 이상 개선되면 `SLO 개선`이다. 중립 비교가 함께 있어도 개선을 지우지 않는다. `차이 없음`은 비교 지표가 모두 제공되고 중립일 때만 표시하며, 중립·누락 비교가 섞이면 `결과 부족`이다.
-  비교 방향(Δ 왼쪽−오른쪽 / p95 왼쪽÷오른쪽)은 화면당 한 곳에 표시하고 비교 조건과 막대 범례는 툴팁으로 제공한다. 모드와 무관하게 선언 순서를 유지한다.
-  구간 길이 같음/다름 비교는 표시 정밀도를 따르고, 히트맵 길이 차이 아이콘은 1% 초과일 때만 표시한다.
-  차트는 실행 순서의 구간 집계 비교축이며 연속 시계열·전환 직후 효과를 만들지 않는다.
-  히트맵 선택 서랍은 선택 왼쪽 단계의 판단·전환 사건을 시각·종류·대상 표 최대 10행으로 바로 표시하고 전체 구간 기록 링크를 제공한다.
-- 동작 비용 목록의 전환 방향·모델은 저장 동작의 Before/Actual 모드와 동결 준비 profile만 사용한다.
-  목록은 대상(대표 모델 + 추가 건수·장치 별칭), 준비 s, 준비 J, 제거 s/J, 횟수, 상태 아이콘의 6열이다.
-  준비·제거 비용은 중앙값 점·최댓값 끝점의 범위 막대로 표시한다. 중앙값은 해당 측정의 유효 동작 결과만 사용하며,
-  다른 측정의 대표 전환 비용으로 일반화하지 않는다. 시간은 소수 1~2자리, J는 정수로 표시한다.
-  단계별 원값·전환 방향 표는 상세에 둔다. 동일 측정·동작·동결 대상의 유효 기록 3건 이상에서 중앙값 대비 3배 이상이면 이상값 색상으로 구분한다.
-  동일 대상 표본 3개 미만과 전력 전환 이상값은 상태 아이콘 툴팁에 표시하며 다른 모델·측정 기록을 섞어 이상값으로 단정하지 않는다.
-  원값·저장 판정은 바꾸지 않고 기준은 화면당 한 범례로 제공한다. 시나리오 합계·유휴 기준선은 추정하지 않는다.
-  분배 점유는 서버 reason 코드별 한국어 상태어를 사유 열에 표시하고, 미등록 코드는 원문 그대로 보존한다.
-  필터된 모든 행의 사유가 같으면 표 제목에 한 번만 표시하고 사유 열을 제거한다. 숫자 칸은 단위 없는 수치 또는 `—`이며,
-  음수·변환 오류·근거 불일치의 원문은 사유 툴팁과 원본에 남긴다. 단위는 헤더에만 표시한다.
-  `측정: 문제` 행은 원래 수치를 유지하되 흐린 색과 경고 아이콘으로 정상 수치와 구분한다(목록·상세 공통).
-  운영 GET에서 동작 비용 목록 35개는 4.934초, 분배 점유 목록 150개는 2.224초였다. 첫 5초 지연은 목록 API 대기와
-  일치하며 서버 변경 없이 보고만 한다. 내부 단계별 소요 기여는 측정하지 않았다.
-- 커버리지 수집·완료 판정은 같은 6소스 목록 길이를 사용한다. 상세의 입력 계약 안내는 서버 checklist만
-  소비하며 Dataset·Preprocessor를 다시 조회하지 않는다. 요청 Funnel의 미선언 배치 분기는 실제 렌더 회귀로 보호한다.
-  렌더 하네스는 ES2022로 컴파일해 제품의 Set 전개·배치 선택을 보존한다. TypeScript 기본 ES5 변환에서 생긴 빈 배치 띠를 제품 동작으로 오인하지 않는다.
-
-측정 판정·스케줄러 동작·배포는 변경하지 않는다. R14의 서버 읽기 경로 최적화는 §9.10에 별도 기록한다.
-라운드 10 측정·실험 평균 SUS 55.8의 문제를 보정한 것이며 새 SUS ≥70 달성 증거는 아니다.
-
-### 9.10 R12~R15 사건 기록 응답 분리 (L5/M6)
-
-- 운영 흐름 보드의 서비스 범위 링크와 실험 `stageHistoryLink`는 모두 `/scheduler/history`를 연다.
-  목록은 `view=summary`로 사건 시각·원래 offset·종류별 식별자·행 상태만 받는다.
-  실험 구간 링크와 서랍 요약은 정확한 from/to 및 `order=asc&filter=decision-action`을 사용하여 역순 전체 스캔을 피한다.
-  서랍은 `view=summary&limit=10`이며 선택 원본의 append offset 계약은 바꾸지 않는다.
-  relay의 기존 asc/desc·filter·uid 전달은 그대로 재사용하며 별도 중계 우회는 추가하지 않는다.
-- 선택 기록·A/B 비교는 원래 기간과 append offset의 `limit=1` 요청으로 전체 compact 원본을 읽는다.
-  목록 내보내기는 `projection: summary`로 명시하며 선택 원본 내보내기와 혼동하지 않는다.
-  journal/catalog 저장 계약·조회 권한·relay 크기 상한·기본 페이지 크기는 변경하지 않는다.
-- 2026-10-31 읽기 전용 운영 GET: compact 3건은 1,320,950 B, snapshot은 약 422 KB/건,
-  coverage는 219 B였다. 기본 1시간·50건은 22,011,394 B 중 snapshot 21,114,295 B,
-  coverage 305 B였다. snapshot의 정의·비용·기준 전력·옵션 전체가 매 사건마다 복원되며
-  기존 compact는 profile만 공유하므로 이 응답에서는 축소하지 못했다(profile 0개).
-  기본 페이지 50건과 relay 응답 상한 8,388,608 B의 충돌이 원인이며 coverage 팽창은 아니다.
-- 첫 화면 구조는 조회 조건·범위 표·기록 목록의 3블록으로 유지한다.
-- R14 운영 GET의 설문 04구간은 `full-E5-3`, `from=2026-10-29T07:36:07.841309Z`,
-  `to=2026-10-29T08:06:08.331052Z`다. `/api/v1/observations/scheduler`의
-  `limit=50&order=desc&filter=decision-action`, 이미지 서비스 `uid=5833a580-f4e7-473a-97ad-7129db6834c2` 조회 결과:
-
-  | 서비스 범위 | view | 응답 시간 (s) | 응답 크기 (B) |
-  |---|---|---:|---:|
-  | 클러스터 전체 | summary | 10.624 | 9,412 |
-  | 클러스터 전체 | compact | 10.568 | 30,623,571 |
-  | 이미지 서비스 UID | summary | 11.904 | 9,412 |
-  | 이미지 서비스 UID | compact | 12.670 | 30,623,571 |
-
-  summary도 기본 조회 제한 10초를 넘으며, compact는 응답 상한 8 MiB도 넘는다.
-  기존 summary는 응답에서만 축약하고 서버에서는 전체 기록 복원과 조회 구간의 중복 스캔을 수행했다.
-  R14는 summary의 카탈로그·상세 복원을 제거하며, 모든 이력 목록은 summary를 명시한다. relay 기본값은 상세 소비자의 판단·설정 근거를 보존하는 compact로 유지한다.
-  선택 원본은 정확한 append offset의 명시적 `view=compact&limit=1`이며 전환 상세도 선택한 행에만 요청한다.
-  서버 회귀는 단건 원본·필터·시각 정렬 동률·append offset 보존을 확인한다. timeout 상향·재시도는 추가하지 않는다.
-  위 수치는 변경 전 운영 배포의 GET 결과이며 로컬 변경 후 운영 응답 개선을 측정한 값이 아니다.
-  같은 설문 구간의 `cursor=3927&limit=1&view=compact` 원본은 6.302초 / 595,426 B였다(order/filter/uid 없음).
-  기본 1시간(2026-10-31T17:01:43.314Z~18:01:43.314Z)의 50건은 summary 0.125초 / 9,358 B,
-  compact 0.104초 / 1,116,185 B였다. 설문 과거 구간의 느린 읽기와 기본 구간을 구분한다.
-- 후속 운영 실측(배포 `7415185b`, 구간 `2026-10-29T06:44:45Z`~`07:14:46Z`)에서 summary 무필터는 약 2.3초,
-  `filter=decision-action`은 정렬과 무관하게 8.8~8.9초였다. 필터 경로가 페이지 뒤까지 전체 구간을 스캔하며 모든 일치 행을
-  summary로 복원하던 것이 남은 원인이다. 저장 형식·정렬 의미는 변경하지 않는다.
-  저장순/asc는 필터된 `offset + limit + 1`번째 일치 행에서 중단하고, desc는 키만 전체 스캔한 뒤 선택 페이지에만 summary를 복원한다.
-  gzip archive의 desc는 재열기가 필요하지만 모든 행의 summary 복원·보관을 피한다. 잘못된 JSON은 여전히 검사하고,
-  응답 투영 필드의 타입 검사는 선택 행에만 수행한다. 저장 순서가 아닌 사건 시각과 원래 append offset으로 desc 정렬 동률을 보존한다.
-  운영 raw GET 권한이 403이므로 실측 로그 대신 저장행 규모를 맞춘 합성 gzip fixture(4,000행, 563,667,104 B)로 로컬 비교했다.
-
-  | 정렬 | 이전 중앙값 (s) | 수정 중앙값 (s) | archive Open 이전/수정 (회) |
-  |---|---:|---:|---:|
-  | asc | 13.691 | 0.207 | 1 / 1 |
-  | desc | 12.547 | 11.292 | 1 / 2 |
-
-  각 3회, limit 50, `GOMAXPROCS=2`, nice 19다. desc의 요약 복원은 4,000→50행, 할당은 약 11.34→4.30 MB였다.
-  두 번째 gzip 스캔을 포함해도 desc 중앙값이 10.0% 줄어 선택 페이지만 복원하는 경로를 유지한다.
-  이 수치는 합성 로컬 벤치이며 후속 수정의 운영 지연 개선값이 아니다.
+반복 감점 수용은 SRS §9의 구조 개편 시나리오를 따른다. 평균 SUS만으로 통과하지 않는다.
+야간 당직·운영 팀장·신규 SRE별 동일 과업 완료·시간·잘못된 결론·도움 요청을 따로 기록한다.
+교차 검토·문서 확정은 구현·배포·접근성·SUS 상승의 증거가 아니다. 각 단계는 해당 화면을 대체해 독립 배포한다.
+검사는 통합 담당자가 격리 환경에서 한 번 수행하고 운영 조회는 GET 전용이다. 실험은 reader 준비 후 publisher 활성화 순서를 지킨다.

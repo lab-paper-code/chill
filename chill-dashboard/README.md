@@ -15,9 +15,11 @@ The upstream demo records, accounts/avatars, revenue/time series, marketing link
 
 ## Visual system
 
-Tokens live in `app/globals.css`: a cool frost canvas, coolant blue for actions and focus, and heat amber for energy and caution. Status is never color-only: `StatusBadge` pairs each tone with an icon and text. Every screen does one function, built from `components/screen.tsx`: a back link, one plain-Korean conclusion as the headline, one key value or list, `›` rows that open the next screen or a dialog, and at most one primary action pinned at the bottom of a narrow centered column. Multi-field input is a step funnel; the scheduler settings are rows edited one value per dialog and applied after one review. Internal codes, UIDs and nanoseconds appear only in 원본 자료 dialogs; times display in local time. Signed-out visitors see only the sign-in screen. Light, dark and 390 px layouts were reviewed against fixture-backed ChillServer responses; no live ChillServer was written.
+기존 `app/globals.css` 폰트·테마·의미색을 재사용한 운영 판독표를 사용한다. 한국어 명사형 H1 한 번, 라벨·숫자·상태어가 기본이며 수치는 표·Recharts·CSS로 제공한다. 정의 설명은 툴팁·전역 용어 도움말 한 곳에 두되 판단에 필요한 건수·원인·제약은 숨기지 않는다. 1440×900 첫 화면은 필터 포함 주요 영역 최대 세 개다.
 
-Experiment interval drawers restore their stage pair from `a/as/b/bs` URL parameters and clear selection parameters on close. Comparison limits are marked beside interval identifiers, with load, service identity and measurement-rule states in a condition table. Differences below 0.01 display units remain neutral in interval cells and overview chips; p95 ratios retain their two-decimal ratio value without a delta label. Measurement evidence preserves failed/unknown power-source checks; rejected request guidance appears once with numeric constraints in tables and short field errors.
+상태 정본은 `lib/status.ts`, 표시 계층은 `components/status-cell.tsx`의 `StatusCell({axis,label,tone,reason?})`다. 기존 판정을 재사용하며 새 상태 엔진을 만들지 않는다. 부재는 미기록·미제공·미확인·판정 불가·해당 없음·지원 안 함·결과 미확인·권한 없음·조회 실패·오래된 관측을 구분한다. 축 이름은 서비스 영향·성능 판정·관측 상태·실험 상태·접수 허용·배치·실제 유입·현재 사용·품질 판정·실행·측정·정리다.
+
+표의 단위는 헤더, 숫자는 오른쪽 정렬·tabular-nums, 이름은 자기 열 안 줄바꿈이다. DetailSheet는 새 래퍼가 아니라 기존 `components/ui/sheet.tsx` 재사용 규약이다: 하나만 열기·중첩 금지·핵심 표 상단·원본 하단·비동기 영역은 핵심값 뒤. Esc·키보드 선택·focus 복원을 유지한다. 좁은 폭에서도 라벨/값 재배치로 모든 필드·작업에 접근할 수 있어야 한다.
 
 Scheduler history keeps default/ascending unfiltered reads bounded, including explicit `filter=all`, and returns original append offsets. Current-page counts appear only in the summary table. Live incident order preserves nanoseconds and uses descending sequence for equal timestamps; shared power remains explicitly labelled cluster-wide in service details.
 
@@ -83,15 +85,31 @@ these native features; there is no rounded Number fallback. Original exports
 retain integer literals while removing credentials.
 
 
-## Public routes and current core
+## 정본 경로와 탐색
 
-`/`, `/workloads`, `/workloads/new`, `/workloads/[name]`, `/workloads/[name]/{definition,evidence,placement,operation,changes}`, `/workloads/[name]/edit`, `/workloads/[name]/infer`, `/models`, `/models/new`, `/models/[name]`, `/models/[name]/{files,services}`, `/models/[name]/edit`, `/scheduler`, `/scheduler/candidates`, `/scheduler/estimates`, `/scheduler/load`, `/scheduler/profiles`, `/transitions`, `/transitions/[id]`, `/resources`, `/pools`, `/pools/[id]`, `/records`, `/observations`, `/changes`, `/scheduler/history`, `/scheduler/power`, `/scheduler/compare`, `/measurements`, `/measurements/new`, `/measurements/batch-energy-optimizations/[namespace]/[name]`, `/measurements/runs`, `/measurements/group`, `/measurements/check`, `/measurements/profiling-runs/[namespace]/[name]`, `/experiments`, `/settings`, `/configuration`.
+아래는 승인된 구조 개편 목표다. 문서 확정과 단계별 구현·배포·수용은 별개이며 [SRS](../docs/spec/dashboard/SRS.md)와 [설계](../docs/design/dashboard/README.md)가 수용 기준을 소유한다.
 
-The menu has seven sections: 개요, 측정, 실험, 서비스, 운영, 기록, 설정. Home summarizes server-assessed measurement coverage, every paired experiment stage and next actions; the live flow board is `/operations/flow`. Measurement defaults to coverage (`/measurements`, also `/measurements/coverage`) with six visible links: coverage, requests (`/measurements/requests`), runs, profiles, operation costs and dispatch occupancy. Requests use one editing surface and explicit same-page preflight/dry-run review. A service page states its readiness and offers the next step; its definition, evidence, placement, last-hour operation and changes are separate screens.
+| 업무 | 정본 경로·책임 |
+|---|---|
+| 운영 | `/` 현재 서비스 영향·유입·배치·진행 변경, `/operations/devices` 장치·전력·배치 |
+| 서비스 | `/workloads`, `/workloads/[name]?uid=…` 정의·접수·자동제어·관리; 현재 관측은 운영 링크 |
+| 측정 | `/measurements` 범위, `/measurements/requests` 부모 요청→자식 회차, `/measurements/results` 처리 성능/변경 비용/분배 처리시간 |
+| 실험 | `/experiments` 실행, `/experiments/results` 비교 결과, `/experiments/load-scenarios` 부하 설정 |
+| 기록 | `/records` 판단·변경/서비스 요청/전력, 종류별 실제 범위·페이지·누락 보존 |
+| 보조 설정 | `/settings` 운영 설정/모델/입력 처리/데이터셋 |
+
+별도 개요·링크 허브·측정 6탭은 폐지한다. 요청 실패와 기존 사용 결과, 현재 사용과 품질, 실행 종료와 측정 통과·정리는 독립이다.
+작성·수정은 전용 페이지이며 필수값·출처·변경 요약·점검을 보이고 입력 변경은 점검을 무효화한다. 목록은 breadcrumb 없이, 상세는 상위 맥락 하나다.
+연관 이동은 KPI를 복제하지 않고 대상·기간·필터·선택·namespace·UID를 보존한다. 외부 return URL은 허용하지 않는다.
+
+redirect: `/scheduler`, `/operations/flow` → `/`; `/resources`, `/pools` → `/operations/devices`; `/scheduler/profiles` → `/measurements/results` 처리 성능; `/evaluations` → `/experiments`; `/evaluations/load-scenarios` → `/experiments/load-scenarios`.
+기존 실험 `a/as/b/bs` 선택은 새 결과의 같은 게시·구간으로, 서비스 세부 경로는 통합 상세 해당 영역으로 명시 매핑한다. 구 화면 호환 UI는 남기지 않는다.
+후보·부하·추정·용량은 선택 근거, 장비·POOL은 장치/배치, 회차는 요청 아래로 통합한다. 원본·검색·CRUD·도메인 계산은 보존한다.
+이 절 이후 옛 화면 경로는 기존 연결·검증 기록이며 새 탐색 책임은 위 표가 대체한다. API 경로는 화면 redirect와 무관하다.
 
 Bearer tokens use versioned, system-scoped sessionStorage in the current tab; storage denial falls back to memory. Refresh restores the session after configuration hydration. “이 탭에서 토큰 지우기”, identity changes and HTTP 401 / WS 4401 clear that tab's token, queries, requests and live connection. HTTP 403 / WS 4403 and service failures retain the destination URL and do not expire the token. Duplicated/restored tabs may inherit storage; clearing a tab does not revoke the bearer or other tabs.
 
-Coverage consumes the exact namespaced aggregate GET with only `batches` and `node` upstream; other filters stay in the URL/browser. Entry and explicit refresh fetch snapshots without periodic polling. A first `CoverageWarming` response permits one Retry-After completion check. The server's five display statuses and exact variant result rows are shown without browser status derivation or all-Run crawling. At 768px and above details remain below the matrix; smaller screens use one dialog and device/path selectors.
+Coverage consumes the exact namespaced aggregate GET with only `batches` and `node` upstream; other filters stay in the URL/browser. Entry and explicit refresh fetch snapshots without periodic polling. A first `CoverageWarming` response permits one Retry-After completion check. Server assessments and exact variant result rows are preserved without browser rejudgment or all-Run crawling. The selected result follows the common DetailSheet contract.
 
 Real Model/Workload CRUD and version preconditions, one independent raw-sample inference (JPEG fields from a file, UTF8 fields from text, sent as base64 `BYTES` and answered with output fields decoded by format), current POOL state, System/Inventory/ProfilingRun bounded queries, verified Passport with per-batch dataset record IDs, units and stage times, sealed campaign result and read-only preflight are wired. Observation selection preserves UID, original UTC `from`/`to`, repeated definition/outcome filters and cursor; cohort statistics remain the server's whole-window values, separate from raw paging. JSON exports preserve source identity/conditions/units and redact credentials. Changes uses the real per-Workload management observations; absence of a broader feed is disclosed.
 
@@ -152,7 +170,7 @@ UID/definition rows align across runs. Offered counts, server receipt cohorts an
 live terminal buckets are explicitly distinct. Shared POOL energy is not summed
 across rows; published gap bounds render as `value ± bound J`, with energyCoverage.
 Different measurementRules retain numbers and display “측정 규칙 다름”.
-예정 대체: 현재 suffix 대응·요청률 1% fallback은 [Dashboard SRS DB-FR-66](../docs/spec/dashboard/SRS.md)에 따라 대체 예정(게시물의 spec 스냅샷 읽기)이며, 정의 없는 과거 게시는 비교 미기록으로 표시한다. [실험 실행 설계](../docs/design/profiling/experiment-execution.md) / [실험 SRS EXP-15](../docs/spec/experiments/SRS.md)를 따르며 현재 실행·조회 수단은 아직 유지한다.
+현재 reader는 [DB-FR-66](../docs/spec/dashboard/SRS.md)에 따라 게시 단건의 `definition.spec.comparisons`와 목록의 `comparisons`로 비교 관계를 읽고 단계 ID·서비스 UID·publicationID로 연결한다. suffix·요청률 유사성 fallback은 사용하지 않는다. 정의 없는 과거 게시는 비교 미기록, 실제 대상 부재는 대상 게시 없음, 권한/서버/timeout은 대상 조회 실패로 구분한다. 정책·SLO는 기록된 정의·실행 결과에서만 읽는다. 비교 상태·제한·일치/참고/대응 없음 건수는 차이보다 먼저 표시하며 참고 비교는 동일 조건 성과 집계와 분리한다. 상세는 조건 → 원값 → 사건 → 원본이다.
 Evidence lookup uses the exact nanosecond `decision.at` interval through the
 processed scheduler observations API, then selects the recorded judgment identity;
 it never falls back to the latest state. No-record and timeout states are distinct.
@@ -264,4 +282,4 @@ Model authoring and applied workload definitions use `firstfloor` settings with 
 
 Resource policy/maintenance writers and measurement writers/options remain unavailable. Scheduler judgment, candidate/load, settings, transitions, history, whole/active POOL power, A/B comparison and immutable experiment publications are connected to existing producers. FULL labels enabled plus all eight controls, not successful physical application or SLO satisfaction; the compact control section links measured candidate evidence, current observations, actual transitions and the same input-window request/power results. Experiment reads do not execute experiments or judge their success. Missing Console configuration in ChillServer is an explicit `503`, not a successful empty list. Measurement power is not operating POOL energy.
 
-Browser token exists only in tab memory. Authentication changes abort requests, cancel and clear queries, replace the entire QueryClient, and remount draft forms. Query retry, focus and reconnect refetch are disabled; optional visible polling has a configured bound. Mutations/inference are never replayed. Shared changes and deletion require explicit confirmation; conflict retains drafts. Explicit latest-version adoption updates both the comparison baseline and version without replacing the draft, so before/after confirmation uses the actual latest definition. Response loss is `결과 미확인` and requires original-state lookup before an explicit user resubmission. The public native HTTPS ChillServer gateway serves this private web module on the same origin; the BFF still calls its fixed HTTPS ChillServer origin and validates the native CA.
+Browser tokens follow the tab-memory/sessionStorage contract above. Authentication changes abort requests, cancel and clear queries, replace the entire QueryClient, and remount draft forms. Query retry, focus and reconnect refetch are disabled; optional visible polling has a configured bound. Mutations/inference are never replayed. Shared changes and deletion require explicit confirmation; conflict retains drafts. Explicit latest-version adoption updates both the comparison baseline and version without replacing the draft. Response loss is `결과 미확인` and requires original-state lookup before explicit resubmission. The public native HTTPS ChillServer gateway serves this private web module on the same origin; the BFF calls its fixed HTTPS ChillServer origin and validates the native CA.
