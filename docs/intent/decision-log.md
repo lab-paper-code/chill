@@ -141,3 +141,10 @@
 
 - E5-5: MNV 실패 **50,994**(7회차 5,264), p95 1,972ms; PLC/Smol 정상(Smol p95 3,820). 사용자 지시로 8d 중단(E5-7/6/3 미측정). 전력 136,195J.
 - 조치: 측정 중단, 워크플로우 전환 — 오프라인 결정 리플레이(`hack/kappa -mode compare`) 1차 + 미니 행(`36c8778c`) 2차, 원클릭 러너(`a0b0422f`). dashboard만 HEAD 36c8778c 배포(조언 세션 요청).
+
+## 2026-10-31 — 워크플로우 전환: 오프라인 리플레이 게이트가 배포 전 필수
+
+- 8d 회귀 원인(리플레이로 확정, 카드 `cards-r8/full-E5-5-8d-01.md` 일치): 사이클 7 B의 `SchedulerReductionCommit`이 **owner 단위**로 거부 — 혼합 target(MNV 회복 103.7↑ + PLC 축소 218→77)을 `ScaleDownWindowCapacityInsufficient`로 통째 거부 → 준비된 인스턴스 route 없이 방치, BU 50,000. 조치: `60009f0f`·`b620a315` revert(`d2831eff`,`e68e1d43`), 사이클 7 A(`1f8e8ca3`)는 유지.
+- 게이트(`79f5fd7f`, `hack/e5/replay-gate.py`+`kappa -mode guard`): 기록 tick(7회차 E5-3/5/7, 8d)을 후보 바이너리로 재결정·guard 재검증, 기준 소스(live) 대비 나빠진 tick/공급 증가 거부가 늘면 FAIL. 실행 30s/stage. 결과: b620a315 FAIL(6~13 거부), revert HEAD PASS(기준 d4a933bf와 동일). 증거 `O/campaign/v2/replay-gate/2026-10-31*/`.
+- 규칙: 코드 변경 → 게이트 PASS → 미니 행(`36c8778c`) → 정본 전체 행은 릴리스 후보만. 원클릭 러너 `a0b0422f`.
+- 사이클 7 B 재설계는 "UID별 guard(해당 UID 공급이 줄 때만, 회복 UID 미차단)"로 다시 — 게이트에 8d 기록이 있으므로 오프라인에서 검증 가능.
