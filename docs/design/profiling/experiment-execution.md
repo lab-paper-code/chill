@@ -1,6 +1,6 @@
 # EvaluationRun 실행 — profiler 측정 컨트롤러
 
-상태: 설계. CRD·controller·이미지·배포는 아직 구현하지 않는다.
+상태: 승인된 설계, 구현 중.
 정본: [실험 SRS](../../spec/experiments/SRS.md) EXP-01~15 · [Profiling 색인](README.md).
 
 ## 1. 범위와 하지 않는 것
@@ -128,7 +128,7 @@ controller는 기존 `hack/e5/e5.py {factor|stage|judge|cleanup-jobs}`를 UID·s
 controller와 Job의 단계 증거는 `experiments/<UID>/stages/<stageID>/...`에 `ImmutableWriter`로 저장한다. 기존 publish bridge는 중간 저장/전달에 쓰지 않는다.
 부하 Job은 재시작과 무관하게 sampler·GO·drain·수집을 계속한다. 주입용 GO 시각은 한 번 쓰는 진행 증거로 노출하고 실제 producer별 시작과 구분한다.
 실행 중 genesis1 producer cgroup 표본은 사전 GO 검사·종료 counter·판정에 필요하며 현재 SSH + sudo crictl을 쓴다(`hack/e5/e5.py:1717–1741,1919–1938`).
-node-agent 공개 관측으로 대체 가능한지 먼저 확인한다. 불가하면 명시 승인된 Secret/권한으로 stage Job이 기존 sampler를 실행한다. 이 선택은 §12의 열린 질문이며 표본 생성을 사후 raw 수집으로 대신하지 않는다.
+node-agent 공개 관측 대체를 우선 적용하고 불가하면 명시 Secret(SSH)로 stage Job이 기존 sampler를 실행한다. 구현 조사 결과에 따라 확정하며(§12 결정), 표본 생성을 사후 raw 수집으로 대신하지 않는다.
 최종 단발 표·게시 Job은 기록된 판정·정리 결과만 표현한다. 정리 실패도 세 축을 구분해 게시하며 후속 측정/복구를 시작하지 않는다.
 `summarize`(`hack/e5/e5.py:2589`)·`render`(`hack/e5/tables.py:72`)를 재사용하고 `Round.reports`(`hack/e5/round.py:654`)의 필요한 표 조립만 기존 tables 경계로 옮긴다.
 
@@ -236,7 +236,7 @@ Node 필드/label 범위는 RBAC 자체가 아니라 코드에서 제한한다. 
 | EXP-14 | §8 UID 기반 최종 게시·definition=spec·새 CR 정정·과거 불변 |
 | EXP-15 | §8·10 완료 게시 Dashboard/진행 중 kubectl·명시적 관계/SLO·reader 우선·과거 미기록 |
 
-## 12. 열린 질문
+## 12. 결정(2026-10-31)
 
-- **패널 7항 — cgroup 표본 주체:** genesis1 producer의 실시간 표본을 node-agent 공개 관측으로 같은 의미로 대체할 수 있는가? 불가하면 stage Job에 SSH + sudo crictl용 Secret/권한을 명시적으로 허용할지 사용자 결정이 필요하다. 표본 없이 판정을 통과시키지 않는다.
-- **패널 10항 — kind 이름 확인:** 이 설계는 Katib `experiments.kubeflow.org`와 혼동을 피하려고 `EvaluationRun`/`evaluationruns.edge.dacs.io`를 사용한다. 최종 사용자 명칭 확인이 필요하며 파일명·기존 게시/API 이름은 유지한다.
+- **패널 7항 — cgroup 표본 주체:** genesis1 producer의 실시간 cgroup 표본은 node-agent 공개 관측 대체를 우선 적용하고, 불가하면 명시 Secret(SSH)로 stage Job이 기존 sampler를 실행한다. 구현 조사 결과에 따라 확정한다. 표본 없이 판정을 통과시키지 않는다.
+- **패널 10항 — kind 이름:** Katib `experiments.kubeflow.org`와 혼동을 피하려고 kind `EvaluationRun`/`evaluationruns.edge.dacs.io`로 확정한다. 파일명·기존 게시/API 이름은 유지한다.

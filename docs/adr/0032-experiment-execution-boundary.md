@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — 사용자 승인 대기. 아래는 예정 대체 설계이며 CRD·실행기는 아직 구현되지 않았다. 현재 실행 수단은 `hack/e5/round.py`다.
+Accepted (2026-10-31, 사용자 승인).
 
 ## Context
 
