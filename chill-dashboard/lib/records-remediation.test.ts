@@ -10,13 +10,12 @@ import { dashboardDestination } from "./dashboard-routes.ts"
 import * as refs from "./scheduler-history.ts"
 import * as scheduler from "./scheduler.ts"
 import * as identity from "./workload-identity.ts"
-import * as experiments from "./experiments.ts"
 
 const require=createRequire(import.meta.url)
 const box=({children}:{children?:ReactNode})=>createElement("div",null,children)
 function load(file:string,modules:Record<string,unknown>){const exports:Record<string,unknown>={};const compiled=transpileModule(readFileSync(new URL(file,import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText;new Function("require","exports",compiled)((name:string)=>name in modules?modules[name]:require(name),exports);return exports}
 function modulesFor(params:URLSearchParams,query:(path:string,options?:{enabled?:boolean})=>unknown):Record<string,unknown>{
-  return {react:require("react"),"next/navigation":{useSearchParams:()=>params,useRouter:()=>({replace:()=>{}}),usePathname:()=>"/records"},"next/link":{default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},"@/lib/client":{useSession:()=>({config:{pageSize:25,maxPageSize:100,maxWindowHours:24}}),useChillQuery:query},"@/lib/scheduler":scheduler,"@/lib/scheduler-history":refs,"@/lib/workload-identity":identity,"@/lib/experiments":experiments,"@/lib/read-types":{},"@/lib/date-time":{},"@/lib/live-display":{displayTime:(value:string)=>value},"@/features/scheduler":{judgmentLabels:{Keep:"현재 구성 유지"},actionNodeName:(node:{name:string})=>node.name,actionKinds:{"manual-static-routing":"설정한 분배"}},"./scheduler":{actionNodeName:(node:{name:string})=>node.name,actionKinds:{"manual-static-routing":"설정한 분배"},actionStatuses:{complete:"완료"}},"@/features/scheduler-settings":{},"./scheduler-transitions":{CurrentTransitionEvidence:()=>createElement("p",null,"현재 동작 대체")},"@/features/scheduler-history":{when:(value:string)=>value},"@/lib/source-export":{safeSource:(value:unknown)=>value},"@/lib/labels":{statusLabel:(value:string)=>value},"@/components/read-region":{QueryGate:box,SourceJSON:()=>null,SourceExport:()=>null},"@/components/screen":{Screen:box,Rows:box,Row:({href,label}:{href:string;label:string})=>createElement("a",{href},label),RowDialog:()=>null,Facts:({items}:{items:[string,ReactNode][]})=>createElement("dl",null,items.map(([key,value])=>createElement("div",{key},key,value))),Empty:()=>null},"@/components/records-navigation":{RecordsNavigation:()=>null,RecordsRange:()=>null},"@/components/ui/button":{Button:box},"@/components/ui/input":{},"@/components/ui/sheet":{Sheet:box,SheetContent:box,SheetHeader:box,SheetTitle:box},"@/components/chart-area-interactive":{},"@/components/stage-breakdown":{duration:(value:number)=>String(value)}}
+  return {react:require("react"),"next/navigation":{useSearchParams:()=>params,useRouter:()=>({replace:()=>{}}),usePathname:()=>"/records"},"next/link":{default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},"@/lib/client":{useSession:()=>({config:{pageSize:25,maxPageSize:100,maxWindowHours:24}}),useChillQuery:query},"@/lib/scheduler":scheduler,"@/lib/scheduler-history":refs,"@/lib/workload-identity":identity,"@/lib/read-types":{},"@/lib/date-time":{},"@/lib/live-display":{displayTime:(value:string)=>value},"@/features/scheduler":{judgmentLabels:{Keep:"현재 구성 유지"},actionNodeName:(node:{name:string})=>node.name,actionKinds:{route:"요청 분배 변경",unroute:"요청 분배 해제",release:"자원 예약 해제"}},"./scheduler":{actionNodeName:(node:{name:string})=>node.name,actionKinds:{route:"요청 분배 변경",unroute:"요청 분배 해제",release:"자원 예약 해제"},actionStatuses:{complete:"완료"}},"@/features/scheduler-settings":{},"./scheduler-transitions":{CurrentTransitionEvidence:()=>createElement("p",null,"현재 동작 대체")},"@/features/scheduler-history":{when:(value:string)=>value},"@/lib/source-export":{safeSource:(value:unknown)=>value},"@/lib/labels":{statusLabel:(value:string)=>value},"@/components/read-region":{QueryGate:box,SourceJSON:()=>null,SourceExport:()=>null},"@/components/screen":{Screen:box,Rows:box,Row:({href,label}:{href:string;label:string})=>createElement("a",{href},label),RowDialog:()=>null,Facts:({items}:{items:[string,ReactNode][]})=>createElement("dl",null,items.map(([key,value])=>createElement("div",{key},key,value))),Empty:()=>null},"@/components/records-navigation":{RecordsNavigation:()=>null,RecordsRange:()=>null},"@/components/ui/button":{Button:box},"@/components/ui/input":{},"@/components/ui/sheet":{Sheet:box,SheetContent:box,SheetHeader:box,SheetTitle:box},"@/components/chart-area-interactive":{},"@/components/stage-breakdown":{duration:(value:number)=>String(value)}}
 }
 
 test("scheduler changes cannot be intercepted by an unconditional Next redirect",async()=>{
@@ -78,34 +77,34 @@ test("identity changes retain request and power API kinds and their own cursor",
   }finally{if(previousWindow)Object.defineProperty(globalThis,"window",previousWindow);else Reflect.deleteProperty(globalThis,"window")}
 })
 
-test("current and historical static-routing evidence compares declared and actual shares and exact settings provenance",()=>{
-  const at="2026-10-31T01:00:00.123456789Z",declared={service:{first:3,second:1}},state={at,node:{name:"node",uid:"node"},powerMode:"",instances:null,native:null,pods:null,states:null},operation={id:"split",kind:"manual-static-routing",node:state.node,staticRouting:declared,settingsValidatedAt:at},result={operation,before:state,actual:{...state,routing:{service:{first:1,second:1}}},startedAt:at,endedAt:at,status:"complete",progress:null}
-  for(const historical of [false,true]){
-    const calls:string[]=[],params=new URLSearchParams({id:"split",view:"current",stage:"result",node:"node",startedAt:at})
-    const modules=modulesFor(params,path=>{calls.push(path);return {data:path==="v1/scheduler/state"?{results:[result],actions:[]}:path==="v1/workloads"?[]:{events:[{at,settings:{validatedAt:at,afterStaticRouting:declared,reason:"선택한 분배 근거",actorUsername:"operator-exact"}}]},isSuccess:true}})
+test("server route, unroute and release results render declared and actual routing with operation provenance",()=>{
+  const at="2026-10-31T01:00:00.123456789Z",state={at,node:{name:"",uid:""},powerMode:"",instances:null,native:null,pods:null,states:null}
+  for(const kind of ["route","unroute","release"])for(const historical of [false,true]){
+    const declared=kind==="route"?{service:{first:3,second:1}}:kind==="unroute"?{service:{}}:{}
+    const operation={id:`manual-${kind}:record`,kind,node:state.node,workloadUID:"service",staticRouting:declared,settingsValidatedAt:at,reason:`선택한 ${kind} 근거`,actorUsername:`operator-${kind}`}
+    const result={operation,before:state,actual:{...state,routing:{service:{first:1,second:1}}},startedAt:at,endedAt:at,status:kind==="unroute"?"partial":"complete",progress:null}
+    const calls:string[]=[],params=new URLSearchParams({id:operation.id,view:"current",stage:"result",node:"",startedAt:at})
+    const modules=modulesFor(params,path=>{calls.push(path);return {data:{results:[result],actions:[]}}})
     const exports=load("../features/scheduler-transitions.tsx",modules)
-    const html=historical?renderToStaticMarkup(createElement(exports.HistoryActionDetails as (props:{row:unknown})=>ReactNode,{row:{event:{at,action:{id:"split",kind:"manual-static-routing",node:state.node,phase:"complete",startedAt:at,actual:result}},ref:{from:at,to:at,offset:"17",kind:"action",at,id:"split"}}})):renderToStaticMarkup(createElement(exports.CurrentTransitionEvidence as ()=>ReactNode))
-    for(const label of ["설정한 비율","실제 비율","75%","25%","50%","선택한 분배 근거","operator-exact"])assert.ok(html.includes(label),label)
-    const source=calls.find(path=>path.startsWith("v1/observations/scheduler?"))!
-    assert.equal(new URL(source,"https://dashboard.invalid").searchParams.get("from"),at)
-    assert.equal(new URL(source,"https://dashboard.invalid").searchParams.get("to"),"2026-10-31T01:00:00.123456790Z")
+    const html=historical?renderToStaticMarkup(createElement(exports.HistoryActionDetails as (props:{row:unknown})=>ReactNode,{row:{event:{at,action:{id:operation.id,kind,node:state.node,phase:result.status,startedAt:at,actual:result}},ref:{from:at,to:at,offset:"17",kind:"action",at,id:operation.id}}})):renderToStaticMarkup(createElement(exports.CurrentTransitionEvidence as ()=>ReactNode))
+    for(const label of ["설정한 비율","실제 비율","50%",operation.reason,operation.actorUsername])assert.ok(html.includes(label),`${kind}: ${label}`)
+    if(kind==="route"){assert.match(html,/75%/);assert.match(html,/25%/)}
+    assert.deepEqual(calls,historical?[]:["v1/scheduler/state"])
   }
 })
 
-test("static-routing provenance rejects another declaration or validation timestamp and follows exact-window pages",()=>{
-  const at="2026-10-31T01:00:00.123456789Z",declared={service:{first:3,second:1}},state={at,node:{name:"node",uid:"node"},instances:null,native:null,pods:null,states:null},operation={id:"split",kind:"manual-static-routing",node:state.node,staticRouting:declared,settingsValidatedAt:at},result={operation,before:state,actual:{...state,routing:declared},startedAt:at,endedAt:at,status:"complete",progress:null}
-  for(const available of [false,true]){
-    const params=new URLSearchParams({id:"split",view:"current",stage:"result",node:"node",startedAt:at}),calls:string[]=[]
-    const modules=modulesFor(params,path=>{
-      calls.push(path)
-      if(path==="v1/scheduler/state")return {data:{results:[result],actions:[]}}
-      const page=new URL(path,"https://dashboard.invalid").searchParams.get("cursor")
-      return {data:page?{events:available?[{settings:{validatedAt:at,afterStaticRouting:declared,actorUsername:"exact-author",reason:"exact-reason"}}]:[]}:{events:[{settings:{validatedAt:at,afterStaticRouting:{service:{first:1}},actorUsername:"wrong-routing",reason:"wrong-routing-reason"}},{settings:{validatedAt:"2026-10-31T01:00:00.123456788Z",afterStaticRouting:declared,actorUsername:"wrong-time",reason:"wrong-time-reason"}}],nextCursor:"100"}}
-    })
+test("selected routing provenance is never borrowed from another journal event",()=>{
+  const at="2026-10-31T01:00:00.123456789Z",state={at,node:{name:"",uid:""},instances:null,native:null,pods:null,states:null}
+  for(const stored of [false,true]){
+    const operation={id:"manual-route:record",kind:"route",node:state.node,workloadUID:"service",staticRouting:{service:{first:1}},...(stored?{settingsValidatedAt:at,reason:"operation-only-reason",actorUsername:"operation-only-actor"}:{})}
+    const result={operation,before:state,actual:{...state,routing:{service:{first:1}}},startedAt:at,endedAt:at,status:"complete",progress:null}
+    const calls:string[]=[],params=new URLSearchParams({id:operation.id,view:"current",stage:"result",startedAt:at})
+    const modules=modulesFor(params,path=>{calls.push(path);return {data:path==="v1/scheduler/state"?{results:[result],actions:[]}:{events:[{settings:{validatedAt:at,afterStaticRouting:operation.staticRouting,actorUsername:"wrong-journal-actor",reason:"wrong-journal-reason"}}]}}})
     const exports=load("../features/scheduler-transitions.tsx",modules),html=renderToStaticMarkup(createElement(exports.CurrentTransitionEvidence as ()=>ReactNode))
-    assert.doesNotMatch(html,/wrong-routing|wrong-time/)
-    assert.equal(html.includes("exact-author"),available)
-    assert.ok(calls.some(path=>path.includes("cursor=100")))
-    if(!available)assert.match(html,/미기록/)
+    assert.deepEqual(calls,["v1/scheduler/state"])
+    assert.doesNotMatch(html,/wrong-journal/)
+    assert.equal(html.includes("operation-only-reason"),stored)
+    assert.equal(html.includes("operation-only-actor"),stored)
+    if(!stored)assert.match(html,/미기록/)
   }
 })
