@@ -20,8 +20,10 @@ const tone=(value:number|null,baseline=0,higherIsBetter=false)=>experimentDiffer
 
 function Conclusion({run}:{run:Experiment}) {
   const {summary}=campaignScoreboard(run)
+  const limited=experimentHeatmap(run).filter(row=>row.other&&comparisonValidity(row.stage,row.other).limited).length
   return <dl className="flex flex-wrap gap-2 text-xs tabular-nums" aria-label="실험 결론">
     {[{label:"에너지 Δ (%)",value:summary.energyPercent,baseline:0,higher:false},{label:"최악 성공률 Δ (%p)",value:summary.successDelta,baseline:0,higher:true},{label:"최악 p95 (배)",value:summary.p95Ratio,baseline:1,higher:false}].map(item=><div key={item.label} className={`flex items-center gap-2 rounded border px-3 py-2 ${tone(item.value,item.baseline,item.higher)}`}><dt>{item.label}</dt><dd className="font-semibold">{experimentDifference(item.value,item.baseline,item.higher).text}</dd></div>)}
+    {limited>0&&<div className="flex items-center gap-2 rounded border border-heat px-3 py-2 text-heat"><dt className="flex items-center gap-1"><TriangleAlert className="size-4" aria-hidden="true"/>제한 비교 (개)</dt><dd className="font-semibold">{limited}</dd></div>}
   </dl>
 }
 

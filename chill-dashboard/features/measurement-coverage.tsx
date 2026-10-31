@@ -5,10 +5,10 @@ import { useEffect, useRef } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { ApiError, useChillQuery, useSession } from "@/lib/client"
 import { coverageFailureHref, coverageProfileQuery, coverageStatusCounts, measurementAge, coverageSelection, coveragePathVisible, coverageWatts, coverageModes, coverageVariant, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, deviceLabel, conditionLabel, type CompatibilityRead } from "@/lib/measurement-coverage"
-import type { BatchProgress, InventoryView, ModelCompatibility, MeasurementCoverageResponse, MeasurementCoverageCell, ProfilesView, RunsView } from "@/lib/read-types"
+import type { BatchProgress, InventoryView, ModelCompatibility, MeasurementCoverageResponse, MeasurementCoverageCell, ProfilesView, RunsView, ResultRow } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { MeasurementNavigation, MeasurementStatus, MeasurementEvidenceChecks, measurementStates } from "@/components/measurement-navigation"
-import { measurementEvidenceChecks, measurementUsage } from "@/lib/measurement-assessment"
+import { measurementUsage } from "@/lib/measurement-assessment"
 import { Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -121,7 +121,7 @@ export function MeasurementCoveragePage() {
   return <Screen title="측정 커버리지" width="data" actionPlacement="header" action={<Button variant="outline" disabled={query.isFetching} onClick={()=>void query.refetch()}>갱신</Button>}>
     <MeasurementNavigation active="coverage" namespace={namespace}/>
     {!data?<CoverageError error={query.isFetching?null:query.error} retry={()=>void query.refetch()}/>:<>
-      <CoverageSummary data={data}/>
+      <section className="coverage-controls" aria-label="모델·측정 범위">
       <nav className="coverage-models" aria-label="모델 선택">{models.map(item=><button key={item.uid} aria-current={item.name===model?"page":undefined} onClick={()=>update("model",item.name)}>{item.name}</button>)}</nav>
       <label className="coverage-mobile-model">모델<select value={model??""} onChange={event=>update("model",event.target.value)}>{models.map(item=><option key={item.uid} value={item.name}>{item.name}</option>)}</select></label>
       <div className="coverage-toolbar">
@@ -131,25 +131,39 @@ export function MeasurementCoveragePage() {
           <MeasurementFilters axes={[{key:"path",label:"실행 경로",values:data.cells.filter(cell=>cell.model.name===model&&coveragePathVisible(cell,inventory.data)).map(cell=>cell.executionPath)},{key:"powerMode",label:"전력모드",values:data.cells.map(cell=>cell.powerMode)}]}/><div className="grid gap-3 sm:grid-cols-2"><label>Node<Input value={params.get("node")??""} onChange={event=>update("node",event.target.value)}/></label><label>CPU quota<Input value={params.get("cpu")??""} onChange={event=>update("cpu",event.target.value)}/></label></div>
         </details>
       </div>
-      <div className="flex items-center gap-3 text-sm" aria-label="선택 범위 집계"><span>{model} / {params.get("deviceClass")?deviceLabel(params.get("deviceClass")!):"전체 장치"}</span><progress aria-label="측정 충족 조합" max={cells.length||1} value={cells.filter(cell=>cell.assessment.displayStatus==="usable").length}/></div>
+      <CoverageCounts cells={cells}/>
+      </section>
       <div className="coverage-workspace">
         <div className="coverage-pivot" aria-label={`${model??""} 장치별 커버리지`}>
           {!classes.length&&<p className="p-4">조건 없음 · 필터 변경</p>}
-          {classes.map(cls=>{
-            const deviceCells=cells.filter(cell=>cell.deviceClass.uid===cls.uid),paths=[...new Set(deviceCells.map(cell=>cell.executionPath))].sort(),modes=coverageModes(deviceCells)
-            return <details key={cls.uid} id={`coverage-device-${encodeURIComponent(cls.uid)}`} className="coverage-device" open={selected?.deviceClass.uid===cls.uid||(!selected&&cls.uid===classes[0]?.uid)}><summary><h2>{deviceLabel(cls.name)} <small>{inventory.data?.classes.find(item=>item.uid===cls.uid)?.nodes.map(node=>node.name).join(", ")||"노드 미확인"}</small></h2><progress aria-label="장치 측정 충족 조합" max={deviceCells.length||1} value={deviceCells.filter(cell=>cell.assessment.displayStatus==="usable").length}/></summary>
-              <div className="coverage-desktop-table"><table><caption className="sr-only">{deviceLabel(cls.name)} 전력모드별 실행 경로</caption><thead><tr><th scope="col">전력모드<br/><small>실측 W 낮은 순</small></th>{paths.map(path=><th key={path} scope="col">{path.replace(/^firstfloor-/,"")}</th>)}</tr></thead><tbody>{modes.map(mode=><tr key={mode}><th scope="row"><span>{mode}</span><small>{powerModeLabel(mode,coverageWatts(deviceCells.filter(cell=>cell.powerMode===mode))).split(" · ")[1]}</small></th>{paths.map(path=>{const cell=deviceCells.find(cell=>cell.powerMode===mode&&cell.executionPath===path);return <td key={path}>{cell?<CoverageCell cell={cell} selected={cell.id===selected?.id} select={select}/>:<span>조건 없음</span>}</td>})}</tr>)}</tbody></table></div>
-              <div className="coverage-mobile-cells">{modes.map(mode=><section key={mode}><h3>{powerModeLabel(mode,coverageWatts(deviceCells.filter(cell=>cell.powerMode===mode)))}</h3>{deviceCells.filter(cell=>cell.powerMode===mode).map(cell=><div key={cell.id}><h4>{cell.executionPath.replace(/^firstfloor-/,"")}</h4><CoverageCell cell={cell} selected={cell.id===selected?.id} select={select}/></div>)}</section>)}</div>
-            </details>
+          <div className="coverage-desktop-table"><table><caption className="sr-only">장치·전력모드별 실행 경로</caption><thead><tr><th scope="col">장치 · 전력모드</th>{[...new Set(cells.map(cell=>cell.executionPath))].sort().map(path=><th key={path} scope="col">{path.replace(/^firstfloor-/,"")}</th>)}</tr></thead><tbody>
+          {classes.flatMap(cls=>{
+            const deviceCells=cells.filter(cell=>cell.deviceClass.uid===cls.uid),paths=[...new Set(cells.map(cell=>cell.executionPath))].sort()
+            return coverageModes(deviceCells).map((mode,index)=><tr key={`${cls.uid}/${mode}`}><th scope="row">{index===0&&<><span>{deviceLabel(cls.name)}</span><small>{inventory.data?.classes.find(item=>item.uid===cls.uid)?.nodes.map(node=>node.name).join(", ")||"노드 미확인"}</small></>}<span>{mode}</span></th>{paths.map(path=>{const cell=deviceCells.find(cell=>cell.powerMode===mode&&cell.executionPath===path);return <td key={path}>{cell?<CoverageCell cell={cell} selected={cell.id===selected?.id} select={select}/>:<span>—</span>}</td>})}</tr>)
           })}
+          </tbody></table></div>
         </div>
         <aside className="coverage-inspector" aria-label="선택 조건 상세">{selected?<CoverageDetail cell={selected} namespace={namespace} close={close} visible={cells.some(cell=>cell.id===selected.id)}/>:<div className="coverage-inspector-empty"><h2>조건 상세</h2><p>조합 선택</p></div>}</aside>
       </div>
-      <details className="coverage-detail"><summary>다음 조치</summary><CoverageActions data={data} namespace={namespace}/></details>
+      <section aria-label="조치·범례" className="grid gap-2"><details className="coverage-detail"><summary>다음 조치</summary><CoverageActions data={data} namespace={namespace}/></details>
       {data.sources.filter(source=>source.error).map(source=><p role="alert" key={source.kind}>{source.kind}: 조회하지 못한 자료가 있습니다 ({source.error?.code})</p>)}
-      <details><summary className="min-h-11 cursor-pointer py-2">용어·지원 불가 조건</summary><p>스케줄러 사용: 현재 사용 사실 · 측정 충족: 근거·목표 배치 충족</p><p>배치: ■ 충족 / ▧ 측정 / ◷ 진행 / □ 부족 / ? 미확인 / — 목표 밖</p><ul>{data.cells.filter(cell=>cell.model.name===model&&!coveragePathVisible(cell,inventory.data)).map(cell=><li key={cell.id}>{deviceLabel(cell.deviceClass.name)} / {cell.powerMode} / {cell.executionPath}: {cell.support.reasons.map(reason=>reason.message).join(" / ")||"아키텍처·가속기 선언 불일치"}</li>)}</ul></details>
+      <details><summary className="min-h-11 cursor-pointer py-2">범례·지원 불가</summary><p>■ 충족 / ▧ 측정 / ◷ 진행 / □ 부족 / ? 미확인 / — 목표 밖</p><p>● 스케줄러 사용 / ○ 미사용 / ? 사용 미확인</p><UnsupportedReasons cells={data.cells.filter(cell=>cell.model.name===model&&!coveragePathVisible(cell,inventory.data))}/><CoverageSummary data={data}/></details>
+      </section>
     </>}
   </Screen>
+}
+function CoverageCounts({cells}:{cells:MeasurementCoverageCell[]}) {
+  const counts=coverageStatusCounts(cells),complete=cells.filter(cell=>{const progress=coverageProgress(cell);return !!progress?.target.length&&progress.target.every(batch=>progress.criteriaMet.includes(batch))}).length
+  return <table className="w-full text-left text-sm tabular-nums" aria-label="선택 범위 집계"><thead><tr><th>기준 충족 / 전체 (조합)</th><th>문제 (조합)</th><th>미측정 (조합)</th></tr></thead><tbody><tr><td>{complete}/{cells.length}</td><td>{counts.problem}</td><td>{counts.unmeasured}</td></tr></tbody></table>
+}
+function UnsupportedReasons({cells}:{cells:MeasurementCoverageCell[]}) {
+  const groups=new Map<string,{label:string;count:number}>()
+  for(const cell of cells)for(const reason of cell.support.reasons.length?cell.support.reasons:[{code:"DeclarationMismatch",message:"장치·실행 경로 불일치"}]){
+    const label=reason.code==="ArtifactArchitectureMismatch"?"모델·장치 아키텍처 불일치":reason.label||reason.message
+    const group=groups.get(reason.code)
+    if(group)group.count++;else groups.set(reason.code,{label,count:1})
+  }
+  return <table className="w-full text-left text-sm tabular-nums"><thead><tr><th>지원 불가 사유</th><th>조합 (개)</th></tr></thead><tbody>{[...groups].map(([key,group])=><tr key={key}><th className="font-normal">{group.label}</th><td>{group.count}</td></tr>)}</tbody></table>
 }
 const batchSymbols={complete:"■",measured:"▧",running:"◷",missing:"□",unknown:"?",outside:"—"}
 function BatchBar({progress}:{progress:BatchProgress|null}) {
@@ -157,14 +171,13 @@ function BatchBar({progress}:{progress:BatchProgress|null}) {
   return <span className="coverage-batch-bar" aria-label="배치별 측정 현황">{batches.map(batch=>{const state=coverageBatchState(progress,batch),label=`배치 ${batch}: ${{complete:"기준 충족",measured:"측정됨",running:"진행",missing:"부족",unknown:"미확인",outside:"목표 밖"}[state]}`;return <span key={batch} className={`batch-${state}`} title={label} aria-label={label}><b aria-hidden="true">{batchSymbols[state]}</b>{batch}</span>})}</span>
 }
 function CoverageCell({cell,selected,select}:{cell:MeasurementCoverageCell;selected:boolean;select:(cell:MeasurementCoverageCell,button:HTMLButtonElement)=>void}) {
-  const progress=coverageProgress(cell)
-  const variant=coverageVariant(cell),notes=measurementEvidenceChecks(variant?.assessment??cell.assessment,variant?.resultRows??[])
-  return <button data-coverage-cell={cell.id} className={`coverage-cell ${cell.support.verdict!=="Compatible"?"coverage-cell-unconfirmed":""}`} aria-pressed={selected} aria-controls="coverage-selected-condition" aria-label={`${deviceLabel(cell.deviceClass.name)} ${cell.powerMode} ${cell.executionPath} ${measurementUsage(cell.assessment)} · 근거 확인 항목 ${notes.length}개 상세`} onClick={event=>select(cell,event.currentTarget)}>
-    <MeasurementStatus assessment={cell.assessment}/>
+  const progress=coverageProgress(cell),used=cell.assessment.scope.schedulerUsed
+  const status=cell.assessment.displayStatus
+  const label=status==="usable"?(progress?.target.length&&progress.target.every(batch=>progress.criteriaMet.includes(batch))?"충족":"측정"):({review:"검토",insufficient:"부족",problem:"문제",running:"진행",unmeasured:"미측정",unknown:"미확인",unsupported:"불가"} as const)[status]
+  return <button data-coverage-cell={cell.id} className={`coverage-cell ${cell.support.verdict!=="Compatible"?"coverage-cell-unconfirmed":""}`} aria-pressed={selected} aria-controls="coverage-selected-condition" aria-label={`${deviceLabel(cell.deviceClass.name)} ${cell.powerMode} ${cell.executionPath} ${label} ${measurementUsage(cell.assessment)}`} onClick={event=>select(cell,event.currentTarget)}>
+    <span className="flex w-full justify-between gap-2"><strong>{label}</strong><span title={measurementUsage(cell.assessment)} aria-label={measurementUsage(cell.assessment)}>{used===true?"●":used===false?"○":"?"}</span></span>
     <BatchBar progress={progress}/>
-    <span role="table" className="coverage-representative"><span role="row" className="grid grid-cols-[1fr_auto] gap-2"><span role="columnheader">근거 확인 항목 (개)</span><span role="cell">{notes.length}</span></span></span>
-    {cell.support.verdict==="Unknown"&&<span className="coverage-representative">실행 지원 미확인</span>}
-    {cell.failureSummary.length>0&&<strong className="text-fail">{cell.failureSummary[0].label??"기타"}</strong>}
+    <span className="self-end text-xs tabular-nums" title="기준 충족 배치 / 목표 배치">{progress?`${progress.criteriaMet.length}/${progress.target.length}`:"—/—"}</span>
   </button>
 }
 export function CoverageActions({data,namespace}:{data:MeasurementCoverageResponse;namespace:string}) {
@@ -206,15 +219,18 @@ function CoverageDetail({cell,namespace,close,visible}:{cell:MeasurementCoverage
     <header><h2>{deviceLabel(cell.deviceClass.name)}</h2><Button variant="outline" onClick={close}>닫기</Button></header>
     <p className="font-semibold break-words">{cell.model.name}</p><p>선택 경로: {powerModeLabel(cell.powerMode,coverageWatts([cell]))}<br/>{cell.executionPath}</p>
     {!visible&&<p className="text-muted-foreground">이 조건은 현재 탭·필터 밖에 있습니다. 선택은 유지됩니다.</p>}
-    <section className="coverage-condition-verdict" aria-label="스케줄러 사용 사실과 근거 확인"><MeasurementStatus assessment={assessment}/>
-      <MeasurementEvidenceChecks assessment={assessment} rows={rows}/>
-    </section>
+    <details className="coverage-condition-verdict"><summary>추가 확인</summary><MeasurementEvidenceChecks assessment={assessment} rows={rows}/></details>
     <div className="text-sm">{measured.length?<p>실제 측정 <time dateTime={measured.at(-1)}>{formatMeasurementTime(measured.at(-1)!)}</time> / {measurementAge(measured.at(-1)!)}</p>:profiles.isPending&&rows.length?<p>측정 시각 조회 중</p>:profiles.error?<><p role="alert">측정 시각 조회 실패 (HTTP {profiles.error.status}) · 수치 근거는 유지합니다.</p><Button variant="outline" onClick={()=>void profiles.refetch()}>측정 시각 다시 조회</Button></>:<p>측정 시각 미기록 또는 현재 프로파일에 없음</p>}</div>
     <Button asChild><Link href={coverageRequestHref(cell,namespace,returnTo,variant?.id,params.get("batches")?.split(",").map(Number)??[])}>이 조건으로 측정 요청</Link></Button>
     {cell.variantCount>1&&<label className="grid gap-2">측정 조건<select value={variant?.id??""} onChange={event=>choose(event.target.value)}>{cell.variants.map(item=><option key={item.id} value={item.id}>{conditionLabel(item.condition)} / {String(item.condition.name??item.id.slice(-8))}</option>)}</select></label>}
     <details><summary>선택 조건·배치 범위</summary><table className="w-full text-left text-sm"><thead><tr><th>목표 배치 (건)</th><th>부족 배치 (건)</th></tr></thead><tbody><tr><td>{progress?.target.join(", ")||"미지정"}</td><td>{progress?.missing.join(", ")||"없음"}</td></tr></tbody></table>{variant&&<p className="text-xs">{conditionLabel(variant.condition)}</p>}</details>
     {cell.failureSummary.length>0&&<section><h3>실패 기록</h3>{[...new Map(cell.failureSummary.map(failure=>[failure.runId||`${failure.requestId}/${failure.code}`,failure])).values()].map((failure,index)=>{const run=runs.data?.runs.find(run=>run.uid===failure.runId.split("/").at(-1));const at=run?.status.conditions?.filter(condition=>condition.status==="False").map(condition=>condition.lastTransitionTime).filter((value):value is string=>!!value).sort().at(-1)??run?.creationTimestamp;return <div key={index} className="coverage-failure"><strong>{failure.label??"기타"}</strong><Link href={coverageFailureHref(failure,namespace,returnTo)}>{failure.runName?"실패 회차 확인":"실패 요청 사유 확인"}</Link>{!failure.runName&&<p>연결된 실패 회차가 없습니다. 요청 자체의 실패 사유를 확인하세요.</p>}<p>{at?`${formatMeasurementTime(at)} / ${measurementAge(at)}`:"실패 시각 미기록 또는 현재 조회 범위에 없음"}</p><span>{failure.message}</span></div>})}</section>}
     {rows.length>0&&<section><h3>배치별 결과</h3><div className="overflow-x-auto"><table className="coverage-results"><thead><tr><th>배치 (건)</th><th>p95 (ms)</th><th>총 (J/건)</th><th>추가 (J/건)</th></tr></thead><tbody>{rows.map(row=><tr key={row.id}><th scope="row">{row.batch}</th><td>{number(row.p95Milliseconds,"ms")}</td><td>{number(row.totalJoulesPerItem,"J/건")}</td><td>{number(row.incrementalJoulesPerItem,"J/건")}</td></tr>)}</tbody></table></div></section>}
-    <details><summary>신뢰 근거·조건·원문</summary><p>실행 지원: {cell.support.verdict==="Compatible"?"확인":cell.support.verdict==="Incompatible"?"지원 안 함":"확인 불가"}</p><ul>{(variant?.assessment??cell.assessment).checklist.checks.map(check=><li key={check.code}>{check.message} ({check.result})</li>)}</ul><pre className="whitespace-pre-wrap break-all text-xs">{JSON.stringify({condition:variant?.condition,rows,support:cell.support,history:cell.history},null,2)}</pre></details>
+    {rows.length>0&&<section><h3>신뢰 수치</h3><TrustValues rows={rows}/></section>}
+    <details><summary>근거 확인</summary><table className="coverage-results"><thead><tr><th>항목</th><th>판정</th></tr></thead><tbody>{assessment.checklist.checks.map(check=><tr key={check.code}><th className="font-normal">{check.message}</th><td>{{pass:"확인",warn:"주의",fail:"불일치",unknown:"미확인"}[check.result]}</td></tr>)}</tbody></table></details>
+    <details><summary>원문</summary><pre className="whitespace-pre-wrap break-all text-xs">{JSON.stringify({condition:variant?.condition,rows,support:cell.support,history:cell.history},null,2)}</pre></details>
   </div>
+}
+function TrustValues({rows}:{rows:ResultRow[]}) {
+  return <div className="overflow-x-auto"><table className="coverage-results"><thead><tr><th>배치 (건)</th><th>실행 반복 (회)</th><th>유휴 반복 (회)</th><th>신뢰 수준 (%)</th><th>구간 (J/건)</th><th>오차 반폭 (J/건)</th><th>상대 반폭 (%)</th><th>전력 출처</th></tr></thead><tbody>{rows.map(row=><tr key={row.id}><th scope="row">{row.batch}</th><td>{row.activeTrialCount??"미제공"}</td><td>{row.idleTrialCount??"미제공"}</td><td>{row.confidence?number(row.confidence.level*100,"%"):"미제공"}</td><td>{row.confidence?`${number(row.confidence.lower,"J/건")}–${number(row.confidence.upper,"J/건")}`:"미제공"}</td><td>{row.confidence?number(row.confidence.halfWidth,"J/건"):"미제공"}</td><td>{row.confidence&&row.incrementalJoulesPerItem?number(row.confidence.halfWidth/Math.abs(row.incrementalJoulesPerItem)*100,"%"):"미제공"}</td><td className="text-left">{row.powerSource?["kind","nodeName","meter","scope"].map(key=>row.powerSource?.[key]).filter(value=>typeof value==="string").join(" / ")||"미제공":"미제공"}</td></tr>)}</tbody></table><table className="coverage-results"><thead><tr><th>오차 허용 기준</th></tr></thead><tbody><tr><td>미설정</td></tr></tbody></table></div>
 }

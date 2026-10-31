@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { readFile } from "node:fs/promises"
 import { coverageFailureHref, coverageProfileQuery, coverageStatusCounts, measurementAge, conditionLabel, deviceLabel, coverageSelection, coveragePathVisible, coverageModes, coverageVariant, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 import { requestBatches, requestInitialBatches } from "./measurement-request.ts"
@@ -166,4 +167,21 @@ test("visible status totals use one denominator and include review and unknown s
   assert.equal(counts.review,1)
   assert.equal(counts.usable,1)
   assert.equal(counts.unmeasured,1)
+})
+
+test("coverage UI exposes numeric progress and trust values without expanded JSON",async()=>{
+  const source=await readFile(new URL("../features/measurement-coverage.tsx",import.meta.url),"utf8")
+  assert.match(source,/criteriaMet\.length/)
+  assert.match(source,/activeTrialCount/)
+  assert.match(source,/idleTrialCount/)
+  assert.match(source,/confidence\.lower/)
+  assert.match(source,/powerSource/)
+  assert.match(source,/<details><summary>원문<\/summary>/)
+  assert.match(source,/기준 충족 \/ 전체 \(조합\)/)
+  const experiment=await readFile(new URL("../features/experiments.tsx",import.meta.url),"utf8")
+  assert.match(experiment,/제한 비교 \(개\)/)
+  const failure=await readFile(new URL("../features/read-pages.tsx",import.meta.url),"utf8")
+  assert.match(failure,/<th>종료 코드<\/th>/)
+  assert.doesNotMatch(failure,/\(종료 코드 \$\{/)
+  assert.doesNotMatch(source,/근거 확인 항목 \(개\)/)
 })
