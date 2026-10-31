@@ -199,7 +199,7 @@ leader election은 퇴임 leader의 늦은 명령을 차단하는 fencing이 아
 **background 삭제만 지원**한다. foreground/orphan 삭제로 Job이 사라지면 ExecutionLost·잔류를 기록하며 finalizer가 Job 보존을 보장한다고 주장하지 않는다.
 부모 finalizer는 풀 반환·전역 보존, 자식 finalizer는 단계 증거·잔류 기록만 맡는다. 서로의 삭제 완료를 기다리는 순환은 금지하며 TTL 자동 GC도 쓰지 않는다.
 운영자는 잔류 정리·풀 반환뿐 아니라 이전 발행 주체/진행 중 명령이 더 이상 작용하지 않음을 확인한 뒤 metadata의 `edge.dacs.io/evaluation-release` annotation으로 해제를 요청한다.
-annotation 값은 JSON `{reason,at,evidenceRef}`이며 `at`은 시각, `evidenceRef`는 `{store,key,size}`다. controller가 실제 반환을 관측하고 원 요청·처리 시각·증거를 status에 기록한 뒤 점유를 해제한다. spec은 불변이며 CleanupComplete 실패/측정 결과를 성공으로 고치지 않는다(`internal/evaluation/controller/run.go`).
+annotation 값은 JSON `{reason,at,by,evidenceRef?}`이며 `at`은 시각, `by`는 요청자다. 선택 evidenceRef 없이도 controller가 annotation 자체를 감사 증거로 저장한다. controller가 실제 반환을 관측하고 원 요청·처리 시각·증거를 status에 기록한 뒤 점유를 해제한다. spec은 불변이며 CleanupComplete 실패/측정 결과를 성공으로 고치지 않는다(`internal/evaluation/controller/run.go`).
 
 ## 7. 장애 주입
 
@@ -232,6 +232,7 @@ prepare는 필수 키 누락을 `MissingInput`, 알 수 없는 키·잘못된 �
 `evaluation_inputs.py build --round FILE --attempt DIR --out DIR --store STORE --prefix KEY`는 기존 기록에서 번들·named files·업로드 목록·운영값 파일을 오프라인 생성하며 업로드하지 않는다.
 seedRef는 workloadName→uint64, traceRefs는 workload별 ordered offsetsNS 배열, rateBasisRef는 workloadName→pool-weighted R, kappaRef는 기존 capacity rows JSON이다.
 power `sourceIdentity`는 source 객체의 JSON 문자열이며 비교는 파싱된 객체끼리 한다; `series=source.metric`, `intervalNanos=live powerObservation.sampling.Interval`이다.
+입력 목록은 `experiments/_inputs/<set>/` 아래 정확한 파일명 bundle.json→payload, seeds.json→seed, rate-basis.json→rateBasis, kappa.json→kappa로 분류하고 나머지는 other다(현재 builder는 독립 trace 파일을 내지 않음). preflight는 기존 opaque EvidenceRef도 그대로 검증하며 prefix를 강제하지 않는다.
 
 실행 증거의 store는 spec에서 고정하고 키는 생성 시 부여된 불변 UID로 `experiments/<UID>/...`가 된다. 별도 configurable prefix 필드는 없다.
 따라서 생성 시 실행 증거 위치가 결정되며 실제 key/size·저장 완료는 status에만 기록한다. 정의 스냅샷·명령/응답·시각·client/raw·판정·표·최종 실행 기록을 연결한다.
@@ -255,6 +256,7 @@ CR 삭제가 증거 삭제로 이어지지 않는다. 저장 실패는 해당 `p
 `Published`는 게시 후 controller가 기록하므로 게시물에 자기 자신의 게시 완료를 선행 주장하지 않는다. 게시 충돌·정정은 새 EvaluationRun(새 UID)이 필요하며 덮어쓰기/동일 바이트 비교로 회복하지 않는다.
 ChillServer는 objects Reader/Lister로 완료 게시를 기존 `/api/v1/experiments[/{id}]`에서 제공한다. 별도 `/api/v1/evaluations/active`는 direct Kubernetes reader로 PoolAcquired=True 부모와 현재 자식·LoadScenario만 읽어 진행 요약을 제공한다. GO 증거를 최초 검증할 때 기록한 자식 status.goAt을 보존하고, plannedSeconds는 부하 parts의 durationSeconds 합이다. 주입 계획·결과는 id로 연결한다([대시보드 계약 §2.1](../../plans/2026-11-01-evaluationrun-dashboard-handoff.md#21-진행-중-평가-표시--get-apiv1evaluationsactive)).
 **완료 게시 목록과 진행 중 요약은 분리**한다. 정리 실패도 세 축을 표시하며 미게시 실행을 완료 목록에 넣지 않는다.
+평가·부하 정의 CRUD는 [대시보드 계약 §2.2](../../plans/2026-11-01-evaluationrun-dashboard-handoff.md#22-실험-조작--부하-정의-작성spec-편집실행중지release-확인)를 따른다. CRD spec 불변성을 유지하며 PUT은 UID 조건부 삭제 후 재생성이다(평가는 Pending만, 부하 정의는 미사용만). 모든 변경은 기존 ObservationLog의 SchedulerAction 감사에 요청자·시각·조작·이름/UID를 먼저 기록하며 실패하면 변경하지 않는다. 쓰기 URL 권한은 별도 evaluation-operator 역할이다. 사전 점검은 spec/부하 참조·live ready Pod imageID·풀 점유·기존 E5 Job·프로파일링 진행을 확인하고 spec을 변경하지 않는다. template은 최근 게시 정의와 live target·scheduler meter 설정·config evidence store의 출처를 함께 반환한다.
 대시보드는 `definition`의 정책·비교 관계와 정의/결과의 적용 SLO를 읽는다([DB-FR-66](../../spec/dashboard/SRS.md)).
 `stagePolicy`/`stagePairing`/`stageComparison`과 요청률 유사성 기반 추측을 삭제하고 `campaignPairs`/`policyStageGroups` 등 소비자를 명시적 관계로 바꾼다.
 이 변경으로 과거 게시의 정책/비교 화면은 **미기록**으로 바뀌는 가시적 변화가 생긴다. 같은 reader가 `definition` 부재로 읽으며 별도 과거 reader·재게시·단계 ID/평균률 추측은 없다.

@@ -14,6 +14,12 @@ rules:
   - apiGroups: [edge.dacs.io]
     resources: [evaluationruns, evaluationstages, loadscenarios]
     verbs: [get, list]
+  - apiGroups: [edge.dacs.io]
+    resources: [evaluationruns]
+    verbs: [create, delete, patch]
+  - apiGroups: [edge.dacs.io]
+    resources: [loadscenarios]
+    verbs: [create, delete]
   # Check cross-namespace shared evidence references before destructive cleanup.
   # This owner-only grant never permits mutation outside profileNamespaces.
   - apiGroups: [edge.dacs.io]
@@ -251,7 +257,7 @@ rules:
     verbs: [get, post, put, delete]
   - nonResourceURLs: ["/chill/api/v1/pools", "/chill/api/v1/pools/*", "/chill/api/v1/observations/workloads/*", "/chill/api/v1/observations/load", "/chill/api/v1/observations/scheduler", "/chill/api/v1/observations/power"]
     verbs: [get]
-  - nonResourceURLs: ["/chill/api/v1/experiments", "/chill/api/v1/experiments/*", "/chill/api/v1/evaluations/active"]
+  - nonResourceURLs: ["/chill/api/v1/experiments", "/chill/api/v1/experiments/*", "/chill/api/v1/evaluations", "/chill/api/v1/evaluations/*"]
     verbs: [get]
   - nonResourceURLs: ["/chill/api/v1/systems", "/chill/api/v1/inventory", "/chill/api/v1/model-compatibility", "/chill/api/v1/model-compatibility-matrix"]
     verbs: [get]
@@ -277,6 +283,17 @@ rules:
       - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations/*" $namespace | quote }}
     verbs: [delete]
   {{- end }}
+---
+# Deliberately unbound: evaluation mutations are separate from scheduler editing.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "chill.fullname" . }}-evaluation-operator
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+rules:
+  - nonResourceURLs: ["/chill/api/v1/evaluations", "/chill/api/v1/evaluations/*"]
+    verbs: [post, put, delete]
 {{- range $namespace := $profileNamespaces | uniq | sortAlpha }}
 ---
 # Native caller rights are deliberately unbound and separate from the owner SA.
