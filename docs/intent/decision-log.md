@@ -397,3 +397,8 @@
 - 게이트: 리플레이 PASS(기준 f780d19a, v1 입력), clean lint/test/arch/helm PASS, dashboard 217/0.
 - 게이트 과정에서 발견해 고친 것: (1) 내 537403aa가 통합 테스트(`TestBatchEnergyOptimizationReconcilerCompletesAcrossCollisionWaitRetryAndRestart`)를 깸. 구현자가 internal/profiling만 테스트하고 test/integration은 돌리지 않았음 → `e72e3aa4`로 v2 계약에 맞게 기대를 갱신. (2) 다른 세션 커밋 49f7ee9a의 lll lint → `81e95666`(줄 바꿈만). (3) 로컬 main 커밋이 push되지 않아 배포 브랜치에 빠졌던 문제 → push 후 재빌드.
 - 교훈: 구현 에이전트 검증에 test/integration을 포함하고, 커밋 뒤 push까지 확인할 것.
+
+## 2026-10-31 — 측정 창 단순화(사용자 지시): 모든 모델에 같은 고정 창
+
+- 어떤 모델이든 측정하는 것은 같다(전력×시간÷처리 수, batch별 서비스 시간 분포). 느린 모델은 같은 창에서 표본이 적을 뿐임. Smol은 분포가 매우 좁아서(CV 3.2%, q95/q50 1.07) 약 10표본이면 mean ±2%가 됨(ICC 분석 n_mean 중앙 10). 표본 수 목표로 창을 늘리던 방식이 Smol을 수백 시간으로 만들었음.
+- 규칙: active 창 = max(30 s, 3 × 호출 시간), trials 3, planner batch 집합, SLO-infeasible 단축(batch 1만) 유지. n 목표와 probe 단계는 폐기. 셀별 정밀도(CI)는 측정해서 기록할 뿐 목표치가 아님.
