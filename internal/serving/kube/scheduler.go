@@ -95,6 +95,7 @@ type actionRun struct {
 	proofParent          *actionRun
 	replacements         []serving.SchedulerReplacement
 	admittedControls     serving.SchedulerControls
+	reductionWorkloads   []string
 	// Omitted declarations are bookkeeping, never successful handoff receipts.
 	noEffectRoutes map[string]bool
 }
@@ -989,6 +990,11 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 	parent := &actionRun{owner: target.ID, action: serving.Action{ID: id, Kind: transitionRunKind, Status: nativeOperationRunning}, result: &OperationResult{Operation: operation, Before: before, Status: nativeOperationRunning, StartedAt: started}, started: started}
 	parent.admittedControls = config.Settings.Controls
 	parent.noEffectRoutes = probe.noEffectRoutes
+	var rows []serving.CapacityRow
+	if c.capacity != nil {
+		rows = c.capacity.Rows()
+	}
+	parent.reductionWorkloads = serving.SchedulerReductionWorkloads(config.Settings, c.state.Snapshot, rows, target)
 	// Freeze only physical same-Node/Workload replacements, not route-only
 	// policy changes or added capacity. Completion is observed in reconcileSnapshot.
 	for _, next := range target.Instances {
@@ -1013,6 +1019,9 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 }
 
 func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandidate, config SchedulerControllerConfig) {
+	if !c.reductionCommitAllowedLocked(target, config, nil) {
+		return
+	}
 	actions, intermediate := c.intermediateActions(target)
 	// Decide eligible old-source stops before starting policy refreshes that can
 	// supersede the existing acknowledged handoff proof in this same tick.
@@ -1023,8 +1032,7 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 			}
 			// Evaluation can retain a running snapshot after its live run finishes.
 			// Reconciliation, not a stale target, retires a terminal action identity.
-			if run := c.runs[action.ID]; run != nil && actionEquivalent(run.action, action) &&
-				run.action.Status != nativeOperationRunning && run.action.Status != nativeOperationCancel {
+			if c.finishedEquivalentActionLocked(action) {
 				continue
 			}
 			if action.Status == nativeOperationCancel {
@@ -1045,6 +1053,9 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 			}
 			if !c.dependenciesReady(action, *selectedTarget) {
 				continue
+			}
+			if !c.reductionCommitAllowedLocked(target, config, &action) {
+				return
 			}
 			operation := scheduledOperation(action, selectedTarget, config, c.powerTargets, c.state.Snapshot.Workloads)
 			if action.Kind == operationRoute {
@@ -1118,6 +1129,12 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 			}(operation, run)
 		}
 	}
+}
+
+func (c *SchedulerController) finishedEquivalentActionLocked(action serving.Action) bool {
+	run := c.runs[action.ID]
+	return run != nil && actionEquivalent(run.action, action) &&
+		run.action.Status != nativeOperationRunning && run.action.Status != nativeOperationCancel
 }
 
 func (c *SchedulerController) intermediateActions(

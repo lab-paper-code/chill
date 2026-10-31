@@ -141,6 +141,7 @@
   Cycle 5: `scaleDownHeadroomFraction`은 유한 [0,1], 기본0이며 최종 하강 route·idle 후처리에만 `max(현재 유효수요,WindowMax)×(1+h)`를 요구한다. 실제 양수 정수 weight/각 κ를 검사하고 weight0을 세지 않는다. bridge/reserve 수요·실제 요청 J는 할증하지 않는다. 동일 관측 keep의 해당 UID κ/대기 SLO 미충족+목표 완전 충족·backlog 처리 때만 그 UID timing 예외를 인정한다. 타 UID 하강 편승 금지; partial/held/unknown·예약·소유권·Ready/정확 ACK·peak·bridge·reserve 불변. 최종 증명 전 실행 가능한 후보/target으로 공개하지 않는다. 에너지/leximin/payback/dwell은 유지한다.
 - `SCH-56` 하강 판정은 Kubernetes HPA scale-down stabilization window 방식으로 통일한다. 기존 `scaleDownStabilizationNanos`(기본 300초, 시연 120초)의 지난 기간에 관측된 Workload별 유효 수요(최소 수요 포함)의 최대값을 현재 하강 판정 수요로 사용하며, 그 값이 현재 실제 가용 공급 κ보다 엄격히 작을 때만 축소·에너지 교체에 적격이다. 축소 후보도 이 수요를 감당해야 한다. 빈 Node 새 절전에는 동일한 Workload별 판정을 적용하여 모든 제어 Workload가 비증가(최대 수요≤공급), 하나 이상이 엄격한 여유(최대 수요<공급)를 가져야 한다. 합계 상쇄, 기준률 미만 유지 timer와 별도 전역 timer를 쓰지 않는다. 전체 기간의 유효 관측이 없으면 보류하고, 공백·재시작·설정 변경·UID 교체 뒤 새 관측 기간을 채운다. 0은 추가 기간 대기만 없애며 현재 수요·공급 검사는 유지한다. 기간·관측 범위·최대 수요·공급·허가/보류 이유를 결정에 기록하고 설정을 Run의 `binding.schedulerSettings`에 고정한다.
   회복 예외는 `Observe.Allowed`의 역사 창 의미를 바꾸지 않는다. h0/1·NaN/Inf/범위 밖·W0·공백/재시작·weight0/반올림·idle·양수 reserve 경계를 검사한다. `.25`는 offline 대조값이며 burst/Node 상실 보장이 아니다. API·ConfigMap·Dashboard·sample·결정·Run binding은 동일 설정을 보존한다.
+  Cycle 7: 이미 인가된 비회복 축소·에너지 교체도 final handoff route 및 stop 등 공급 감소 commit 직전에 최신 유효수요로 재검증한다. Tick 없이 완료 기반 Continue만 실행되어도 수요를 관측하며 새 후보를 평가하지 않는다. 기존 admission/idle의 최대수요·headroom·양수 정수 weight별 κ와 backlog/SLO 판정을 공용한다. 급증 때문에 keep이 부족해져도 frozen 축소를 recovery로 재분류하지 않는다. 위반 시 미시작 suffix는 비인가/no-effect로 닫고 owner를 terminal 실패/partial 경계로 보낸다. 실제 route/실패 receipt와 진행 중·준비 완료 효과의 책임은 유지하며 정상 complete의 전체 예약 해제는 금지한다. NotReady/Terminated 대상 회복 퇴역과 장애 cleanup은 제외한다. 감지 전 envelope는 별도 `minimumDemand` 운용 설정이지 재검증의 보장이 아니다.
 - `SCH-57` 전환 중 수요 대비 예비 용량 비율을 scheduler 설정으로 제공한다(기본 0, 0=별도 예비 없음, 유한한 0~1). 양수이면 영향을 받는 워크로드마다 실제 준비·ACK된 가용 용량으로 수요와 설정 예비를 감당하고 기존 전환 SLO 검사도 통과해야 한다. 예비를 위한 준비·유지·해제 에너지도 E5 전체 POOL 에너지에 포함하고 비율·판정·미확보 이유를 결정과 `binding.schedulerSettings`에 기록한다.
 - `SCH-58` 에너지 비교 기간 H는 양수인 하나의 scheduler 설정으로 고정하여 같은 판단의 keep과 모든 후보에 동일하게 사용한다. 후보의 전환 시간이나 미선택 후보의 추가·삭제로 H를 늘리지 않으며 사용한 H와 부하 가정을 결정 및 `binding.schedulerSettings`에 기록한다. H는 실제 전환 완료 확인이나 동작 timeout을 대체하지 않는다.
 - `SCH-59` 빈 Node의 새 `Fixed` 절전도 일반 교체와 동일한 keep 대비 에너지 허가를 받는다. 같은 H 안 nominal 이득이 양수이고 기존 minimumGain 문턱 및 payback을 모두 통과해야 하며, Fixed라는 이유로 비용을 공통 경로에서 소거하거나 검사를 면제하지 않는다. 별도 절전 계산기·기간·문턱을 추가하지 않는다. 이미 실행 중인 허가된 동작의 완료 의무는 유지한다.
@@ -288,6 +289,7 @@ Serving 평가에서 검증한다.
 - When: (1) 100 req/s 일정 부하에 관측 잡음을 섞어 W보다 오래 유지하고, (2) 실제 하강 전 높은 수요가 있는 창에서 낮은 수요로 전환하여 W 경계 전후를 비교하며, (3) 빈 출발·증설을 실행한다.
 - Then: (1) 잡음의 국소 고점으로 timer가 시작되어 축소·새 절전이 허가되지 않는다(공급은 창 최대 수요 이하인 재현 입력). (2) 높은 수요가 창에서 빠지고 전체 W의 유효 관측 및 최대 수요<현재 공급 조건이 충족되면 기존 이득·SLO 조건을 통과한 후보를 허용한다. Workload와 빈 Node는 같은 창 정의를 쓰며 UID 사이 증감을 합계로 상쇄하지 않는다. 공백·restart·설정 변경·UID 교체 후 불완전 창은 보류한다. (3) SCH-54 빈 출발과 매 주기 증설·부분 Ready 배분·예약 밖 진행은 불변이다. 0 설정도 현재 수요·공급 검사는 남긴다. 결정에는 창·최대 수요·현재 공급·보류 이유가 남는다.
 - 추가 후보 보호: 창 최대 110 req/s·현재 수요 20 req/s·현재 공급 160 req/s인 동일 입력에서는 gate가 열려도 후보 공급 60은 거절하고, 후보 공급 120은 전환·SLO·본전 등 기존 조건을 충족하면 허용한다. gate뿐 아니라 후보 검사에도 최대 수요를 사용하며, 증설 후 여유 공급에서 과거 최대 수요를 보존하는 축소까지 금지하지는 않는다.
+- 실행 재검증: E5-5-7 raw의 λ95.1 감지 뒤 미시작 final route/stop을 차단하고 준비된 신 인스턴스를 유지한다. 급증이 prepare/route 전·route 중·ACK 후 stop 전인 경우, Tick 없는 Continue, stale/missing 수요, mixed UID·정수 weight를 검사한다. 이미 완료한 route·실패 receipt를 보존하고 active/cancel sibling 및 prepare 효과가 남은 예약은 기존 exact ReturnProof 전 반환하지 않는다. 진짜 NotReady/Terminated 회복과 장애 cleanup은 차단하지 않으며 E5-6 절전과 E5-3 headroom 회귀를 유지한다.
 - 요구사항: SCH-40, SCH-52, SCH-54, SCH-55, SCH-56.
 
 #### SCH-AC-43 — 양수 예비 비율의 전환 SLO와 에너지
@@ -397,6 +399,7 @@ Counter·Gauge, Prometheus 구간 집계, Knative 부하 관측·안정화, Envo
 
 ## 7. 변경 이력
 
+- 2026-10-31: SCH-55/56·SCH-AC-42 보완 — 진행 중 비회복 축소의 실행 경계 최신 수요 재검증, Tick 없는 Continue의 수요 갱신, 비인가 suffix 중단과 이미 발생한 효과의 ReturnProof 책임 보존을 명시했다. 사전 envelope용 minimumDemand 설정 실험은 코드와 분리한다.
 - 2026-10-30: SCH-20·SCH-AC-38 보완 — 중간 분배의 old 공급 보존과 exact ACK·capacity 검증된 독립 Node 순증을 허용한다. 같은 Node κ 가산·current 총κ 감소를 금지하고 불확실하면 R1 current 보존으로 돌아간다.
 - 2026-10-29: SCH-20·SCH-AC-38 보완 — 성공한 최종 handoff 뒤 cleanup의 실물 소유와 현재 Ready 목적지의 route-only 조정을 분리한다. 같은 owner route 직렬화·stop 안전 증거·퇴역 의무와 미확인 효과의 예약 유지 기준은 보존한다.
 - 2026-10-27: E5 혼합률을 `α×s_w×R_w`로 정규화하고 SCH-AC-46에 지분 검증·binding 동결·고정 배치 G 계단을 추가했다. Node당 한 인스턴스로 고립 R을 동시에 사용할 수 없는 제약을 명시했다.

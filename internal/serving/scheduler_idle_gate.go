@@ -166,7 +166,8 @@ func (p *capacityPlanner) idleWindowAllowed(best capacityResult, removed map[str
 				}
 			}
 		}
-		ws.rate = max(ws.rate, p.snapshot.ScaleDown[ws.d.UID].WindowMax) * (1 + p.settings.ScaleDownHeadroomFraction)
+		_, protected := p.protectedReductionDemand(ws)
+		ws.rate = protected
 		for n, j := range best.choice {
 			for _, item := range p.plans[n][j].items[w] {
 				if weight := best.weights[w][item.id]; !removed[item.id] && weight > 0 &&
@@ -199,9 +200,14 @@ func (p *capacityPlanner) admissionDemand(w capacityWorkload, choice []int, reta
 	}
 	protected := demand.rate
 	if slow && !recovery {
-		protected *= 1 + p.settings.ScaleDownHeadroomFraction
+		demand, protected = p.protectedReductionDemand(w)
 	}
 	return demand, slow, recovery, protected
+}
+
+func (p *capacityPlanner) protectedReductionDemand(w capacityWorkload) (capacityWorkload, float64) {
+	w.rate = max(w.rate, p.snapshot.ScaleDown[w.d.UID].WindowMax)
+	return w, w.rate * (1 + p.settings.ScaleDownHeadroomFraction)
 }
 
 // timingReason grants only this UID's fully proved recovery a timing exception.
