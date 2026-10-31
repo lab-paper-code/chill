@@ -136,3 +136,8 @@
 - 사이클 7 패널(2인; Gemini quota 소진) 판정(`local judge-verdict-cycle7`): A `1f8e8ca3`(빈 DAG 부모 미생성·no-effect 반환·prepare UID 증거·동일 UID late binding·결정적 blocker reason), B `60009f0f`(퇴역 진입 직전 최신 수요로 guarded commit·Continue에도 수요 관측·미시작 suffix no-effect 중단; raw: 수요 95.1 감지 0.245s 뒤 final route→24s 뒤 stop이 원인). minimumDemand 상향은 별도 설정 실험(보류). gate PASS → 8회차(E5-5/7/6 + E5-3 회귀 확인).
 - 8회차 1차 시도(서버 60009f0f): 재시작 후 **orphan 예약 7개 자동 반환 확인**(사이클 7 A 효과). 그러나 E5-5 중 서버 panic 3회(`SchedulerReductionWorkloads`가 빈 planner로 `kappa(…,0)` 호출 → index out of range; resize 대상에서만 발생, 단위 테스트에 resize 시나리오 부재). 수정 `b620a315`(rows에서 직접 κ 조회, resize 회귀 추가). 교훈: 공유 프로세스(추론 경로 포함)에서 planner panic이 서버를 죽임 — 제어 루프 fail-safe(recover→tick 실패 공개)는 다음 패널 안건.
 - 운영 실수(Main): 디스크 정리 중 `O/harness/e5-*` 동결 하네스 사본(최근 3개 외)을 삭제 → 8b E5-5가 `e5-5f1dc4f1` 참조 실패·archive 수집 불완전 STOP. `git archive <sha>`로 복원(a3d020d6, d45fe66e, 947b50a2, 134f56bb, 5f1dc4f1). 규칙 추가: `O/harness/`는 binding이 참조하는 한 삭제 금지(ops 가이드 반영 필요).
+
+## 2026-10-31 — 8d(서버 b620a315 = 사이클 7) E5-5 결과: 심각 회귀
+
+- E5-5: MNV 실패 **50,994**(7회차 5,264), p95 1,972ms; PLC/Smol 정상(Smol p95 3,820). 사용자 지시로 8d 중단(E5-7/6/3 미측정). 전력 136,195J.
+- 조치: 측정 중단, 워크플로우 전환 — 오프라인 결정 리플레이(`hack/kappa -mode compare`) 1차 + 미니 행(`36c8778c`) 2차, 원클릭 러너(`a0b0422f`). dashboard만 HEAD 36c8778c 배포(조언 세션 요청).
