@@ -448,3 +448,13 @@
 - 커버리지 기준(`917645a7`+`a86cf25d`, 리뷰 PASS): 셀 상태는 현재 선언된 runtime variant만 집계. 선언 조회 실패 시에는 분류하지 않음. server 배포 후 반영(DeploySched).
 - 생성기(`49155374`): 60 s 창, 창 안 호출 1회 이상인 batch만 포함, 단조 제외, 옛 runtime으로만 측정된 셀 포함. 새 계획 123셀(old-runtime 35셀 포함, 노드 없음 30, unknown 67), 37.9 node-h, 최장 lane jetsonx 약 20 h. active는 셀마다 batch 1~16 또는 1~32를 모두 측정하고, 제외는 Smol 26항목뿐.
 - 옛 108셀 계획 feeder를 중지(진행 중 셀 7개는 계속)하고 새 계획 feeder 시작. 진행 중 셀과 새 계획의 중복 0 확인.
+
+## 2026-11-01 — 오늘 실패에서 나온 운영 규칙(조언 세션 정리 채택)
+
+- 공통점: 변경을 넣은 직후 실제 장비에서 그 경로를 한 번도 돌려 보지 않고 넓게 돌렸음.
+- 규칙 1: 측정 Job 컨테이너에 노드별 메모리 limit(allocatable × 0.8, config)을 건다. Smol hold는 이것과 warmup 수정이 배포된 뒤에만 푼다(ImplMemLimit, FixFailures).
+- 규칙 2: profiler·runtime·RunConfig 변경 배포는 runtime 이미지 계열마다 실제 측정 1회(Job 성공 + profile 생성)가 확인돼야 완료로 친다. 선언 probe 성공은 이미지 정상의 근거가 아님.
+- 규칙 3: 파일럿은 셀 수가 아니라 "이미지 계열마다 1셀 + 가장 무거운 모델 × 메모리가 가장 작은 노드"로 고른다.
+- 규칙 4: feeder는 같은 lane에서 2회 연속 실패하면 그 lane을 멈추고, Main은 feeder가 도는 동안 턴을 끝내지 않고 실패를 즉시 분류한다.
+- 규칙 5: feeder 시작 시 hold 상태(pause/drop)를 출력·기록한다.
+- jetson-nano는 사용자가 복구함(07:37 KST 재부팅) → 재개. rasp5는 여전히 제외.
