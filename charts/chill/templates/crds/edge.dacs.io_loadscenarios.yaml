@@ -1,0 +1,274 @@
+{{- if .Values.crds.enabled }}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.1
+    helm.sh/resource-policy: keep
+  name: loadscenarios.edge.dacs.io
+spec:
+  group: edge.dacs.io
+  names:
+    kind: LoadScenario
+    listKind: LoadScenarioList
+    plural: loadscenarios
+    shortNames:
+    - loadscenario
+    singular: loadscenario
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.payloadManifestRef.key
+      name: Payload
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: LoadScenario is reusable immutable load, without execution status.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: LoadScenarioSpec is the sole source of workload identities
+              and declared load.
+            properties:
+              arrivalDistribution:
+                additionalProperties:
+                  type: string
+                maxProperties: 128
+                minProperties: 1
+                type: object
+              kappaRef:
+                description: EvaluationEvidenceReference identifies immutable evidence,
+                  never an endpoint.
+                properties:
+                  key:
+                    maxLength: 1024
+                    minLength: 1
+                    type: string
+                  size:
+                    format: int64
+                    minimum: 1
+                    type: integer
+                  store:
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                required:
+                - key
+                - size
+                - store
+                type: object
+              parts:
+                description: Parts is ordered; atomic list equality makes reordering
+                  an immutable change.
+                items:
+                  description: LoadScenarioPart fixes one interval; map keys are Workload
+                    names.
+                  properties:
+                    alpha:
+                      additionalProperties:
+                        description: EvaluationNonNegative is a finite, nonnegative
+                          scientific input.
+                        maximum: 1.7976931348623157e+308
+                        minimum: 0
+                        type: number
+                      maxProperties: 128
+                      minProperties: 1
+                      type: object
+                    durationSeconds:
+                      exclusiveMinimum: true
+                      minimum: 0
+                      type: number
+                    id:
+                      maxLength: 63
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    rates:
+                      additionalProperties:
+                        description: EvaluationNonNegative is a finite, nonnegative
+                          scientific input.
+                        maximum: 1.7976931348623157e+308
+                        minimum: 0
+                        type: number
+                      maxProperties: 128
+                      minProperties: 1
+                      type: object
+                  required:
+                  - durationSeconds
+                  - id
+                  type: object
+                  x-kubernetes-validations:
+                  - message: exactly one of rates or alpha is required
+                    rule: has(self.rates) != has(self.alpha)
+                maxItems: 128
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: atomic
+              payloadManifestRef:
+                description: EvaluationEvidenceReference identifies immutable evidence,
+                  never an endpoint.
+                properties:
+                  key:
+                    maxLength: 1024
+                    minLength: 1
+                    type: string
+                  size:
+                    format: int64
+                    minimum: 1
+                    type: integer
+                  store:
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                required:
+                - key
+                - size
+                - store
+                type: object
+              rateBasisRef:
+                description: EvaluationEvidenceReference identifies immutable evidence,
+                  never an endpoint.
+                properties:
+                  key:
+                    maxLength: 1024
+                    minLength: 1
+                    type: string
+                  size:
+                    format: int64
+                    minimum: 1
+                    type: integer
+                  store:
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                required:
+                - key
+                - size
+                - store
+                type: object
+              seedRef:
+                description: EvaluationEvidenceReference identifies immutable evidence,
+                  never an endpoint.
+                properties:
+                  key:
+                    maxLength: 1024
+                    minLength: 1
+                    type: string
+                  size:
+                    format: int64
+                    minimum: 1
+                    type: integer
+                  store:
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                required:
+                - key
+                - size
+                - store
+                type: object
+              traceRefs:
+                additionalProperties:
+                  description: EvaluationEvidenceReference identifies immutable evidence,
+                    never an endpoint.
+                  properties:
+                    key:
+                      maxLength: 1024
+                      minLength: 1
+                      type: string
+                    size:
+                      format: int64
+                      minimum: 1
+                      type: integer
+                    store:
+                      maxLength: 253
+                      minLength: 1
+                      type: string
+                  required:
+                  - key
+                  - size
+                  - store
+                  type: object
+                maxProperties: 128
+                type: object
+              workloads:
+                items:
+                  properties:
+                    generation:
+                      format: int64
+                      minimum: 1
+                      type: integer
+                    name:
+                      maxLength: 253
+                      minLength: 1
+                      type: string
+                    uid:
+                      description: |-
+                        UID is a type that holds unique ID values, including UUIDs.  Because we
+                        don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                        intent and helps make sure that UIDs and names do not get conflated.
+                      maxLength: 128
+                      minLength: 1
+                      type: string
+                  required:
+                  - generation
+                  - name
+                  - uid
+                  type: object
+                maxItems: 32
+                minItems: 1
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+            required:
+            - arrivalDistribution
+            - parts
+            - payloadManifestRef
+            - seedRef
+            - workloads
+            type: object
+            x-kubernetes-validations:
+            - message: LoadScenario spec is immutable
+              rule: self == oldSelf
+            - message: alpha requires rateBasisRef and kappaRef
+              rule: '!self.parts.exists(p, has(p.alpha)) || (has(self.rateBasisRef)
+                && has(self.kappaRef))'
+            - message: load keys must name declared workloads
+              rule: self.parts.all(p, (!has(p.rates) || p.rates.all(k, self.workloads.exists(w,
+                w.name == k))) && (!has(p.alpha) || p.alpha.all(k, self.workloads.exists(w,
+                w.name == k))))
+            - message: arrivalDistribution must cover exactly the declared workloads
+              rule: self.arrivalDistribution.all(k, self.workloads.exists(w, w.name
+                == k)) && self.workloads.all(w, w.name in self.arrivalDistribution)
+            - message: part IDs must be unique
+              rule: self.parts.all(p, self.parts.filter(q, q.id == p.id).size() ==
+                1)
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources: {}
+{{- end }}
