@@ -113,6 +113,28 @@ func (in CapacityInput) Key() string {
 	return hex.EncodeToString(sum[:12])
 }
 
+// CapacityPlanningKappa returns the batch-1 safety envelope, the policy row key
+// and a pending/rejected reason when the policy row has no usable κ. Missing or
+// unusable batch-1 evidence keeps policy κ; neither row's evidence is changed.
+func CapacityPlanningKappa(in CapacityInput, rows map[string]CapacityRow) (float64, string, string) {
+	key := in.Key()
+	row, ok := rows[key]
+	switch {
+	case !ok || row.Status == CapacityPending:
+		return 0, key, CapacityPending
+	case row.Kappa == nil:
+		return 0, key, CapacityRejected
+	}
+	kappa := *row.Kappa
+	if in.MaxBatch > 1 {
+		in.MaxBatch = 1
+		if b1, ok := rows[in.Key()]; ok && b1.Status == CapacityBuilt && b1.Kappa != nil {
+			kappa = min(kappa, *b1.Kappa)
+		}
+	}
+	return kappa, key, ""
+}
+
 // capacityThroughput is the largest b/(mean service time + b × occupancy)
 // over batches up to b (req/s).
 func capacityThroughput(p *Profile, b int, occupancy time.Duration) float64 {

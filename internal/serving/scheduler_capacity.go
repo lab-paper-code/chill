@@ -512,26 +512,9 @@ func (p *capacityPlanner) idle(i SchedulerInstance) bool {
 	return !p.partial && i.UnroutedSince != nil && p.snapshot.At.Sub(*i.UnroutedSince) >= p.settings.ObservationWindow && !p.held(i)
 }
 
-// kappa applies the batch-1 safety envelope without changing the policy row
-// or native batch cap. Missing or unusable batch-1 evidence keeps policy κ.
+// kappa uses the shared planning envelope and retains the original policy row.
 func (p *capacityPlanner) kappa(o SchedulerOption, w int) (float64, string, string) {
-	in := NewCapacityInput(p.settings, p.snapshot.DispatchOccupancy, o, p.ws[w].d)
-	key := in.Key()
-	row, ok := p.rows[key]
-	switch {
-	case !ok || row.Status == CapacityPending:
-		return 0, key, CapacityPending
-	case row.Kappa == nil:
-		return 0, key, CapacityRejected
-	}
-	kappa := *row.Kappa
-	if in.MaxBatch > 1 {
-		in.MaxBatch = 1
-		if b1, ok := p.rows[in.Key()]; ok && b1.Status == CapacityBuilt && b1.Kappa != nil {
-			kappa = min(kappa, *b1.Kappa)
-		}
-	}
-	return kappa, key, ""
+	return CapacityPlanningKappa(NewCapacityInput(p.settings, p.snapshot.DispatchOccupancy, o, p.ws[w].d), p.rows)
 }
 
 func capacityInputEnergy(i SchedulerInstance) float64 {
