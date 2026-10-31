@@ -160,13 +160,13 @@ test("missing metrics are awaiting observation, never observed zero traffic",()=
 
 test("stopped automation is neutral and never asserts a planned intention",()=>{
   const input={fresh:true,terminals:0,failed:0,sloMisses:0,queued:0,changes:0,delayed:0,serving:0,off:2,total:2,admissionBlocked:false,received:0,declared:0,unserved:0}
-  assert.equal(boardVerdict(input).label,"정지 중(자동제어 꺼짐 2/2)")
+  assert.equal(boardVerdict(input).label,"정지 중")
   assert.equal(boardVerdict(input).tone,"unknown")
-  assert.match(boardVerdict(input).reason,/책임자·복구 시점은 제공되지/)
+  assert.match(boardVerdict(input).reason,/책임자·복구 시점: 미제공/)
   assert.match(boardVerdict({...input,received:1,unserved:1}).label,/^이상:/)
   assert.match(boardVerdict({...input,failed:1}).label,/^이상:/)
-  assert.notEqual(boardVerdict({...input,declared:1}).label,"정지 중(자동제어 꺼짐 2/2)")
-  assert.notEqual(boardVerdict({...input,off:1}).label,"정지 중(자동제어 꺼짐 2/2)")
+  assert.notEqual(boardVerdict({...input,declared:1}).label,"정지 중")
+  assert.notEqual(boardVerdict({...input,off:1}).label,"정지 중")
 })
 
 test("latency uses the exact SLO percentile and retained events outlive the new-event window",()=>{

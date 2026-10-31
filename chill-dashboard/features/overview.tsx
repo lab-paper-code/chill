@@ -2,28 +2,55 @@
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { useChillQuery, useSession } from "@/lib/client"
-import { useMeasurementCoverage, CoverageSummary, CoverageError, CoverageActions } from "@/features/measurement-coverage"
+import { useMeasurementCoverage, useCoverageInventory } from "@/features/measurement-coverage"
 import { Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
-import { campaignGroups, campaignConclusion, stageLoadLabel, comparisonRows, difference, finite, resultMetric, type Experiment } from "@/lib/experiments"
+import { campaignGroups, campaignScoreboard, experimentHeatmap, type Experiment } from "@/lib/experiments"
+import { overviewCoverageMatrix, overviewDeviceLabel } from "@/lib/overview"
+import { coverageFailureHref, coveragePathVisible, coverageRequestHref } from "@/lib/measurement-coverage"
 import { parseSchedulerJSON } from "@/lib/scheduler"
+import "./overview.css"
 
 export function OverviewPage() {
   const {config}=useSession(),params=useSearchParams(),namespace=params.get("namespace")??config.namespace
-  const coverage=useMeasurementCoverage(namespace),experiments=useChillQuery<{items:Experiment[]}>("v1/experiments",{decoder:parseSchedulerJSON})
+  const coverage=useMeasurementCoverage(namespace),inventory=useCoverageInventory(),experiments=useChillQuery<{items:Experiment[]}>("v1/experiments",{decoder:parseSchedulerJSON})
+  const data=coverage.data,matrix=overviewCoverageMatrix(data?.groups??[])
   const groups=campaignGroups(experiments.data?.items??[]),recent=groups.find(group=>group.pairs.length)??groups[0]
-  const services=new Map<string,{success:{delta:number;stage:string}|null;p95:{delta:number;stage:string}|null}>()
-  for(const pair of recent?.pairs??[])for(const row of comparisonRows(pair.chill,pair.control)) {
-    const current=services.get(row.name)??{success:null,p95:null}
-    if(row.a.length===1&&row.b.length===1)for(const key of ["success","p95"] as const) {
-      const a=finite(resultMetric(row.a[0],key).value),b=finite(resultMetric(row.b[0],key).value)
-      if(a!==null&&b!==null){const delta=(a-b)*(key==="success"?100:1);if(!current[key]||(key==="success"?delta<current[key]!.delta:delta>current[key]!.delta))current[key]={delta,stage:pair.key}}
-    }
-    services.set(row.name,current)
+  const summary=recent?campaignScoreboard(recent.run).summary:null,stages=recent?experimentHeatmap(recent.run).filter(row=>row.other):[],maxEnergy=Math.max(1,...stages.map(row=>Math.abs(row.energyPercent??0)))
+  const actionGroups=new Map<string,{action:NonNullable<typeof data>["nextActions"][number];cell:NonNullable<typeof data>["cells"][number];reason:string;count:number}>(),seen=new Set<string>()
+  for(const action of data?.nextActions??[]) {
+    const identity=`${action.cellId}/${action.kind}/${action.reasonCode}`
+    if(seen.has(identity))continue
+    seen.add(identity)
+    const cell=data?.cells.find(cell=>cell.id===action.cellId)
+    if(!cell||!coveragePathVisible(cell,inventory.data))continue
+    const failure=cell.failureSummary.find(row=>row.requestId===action.entityId)??cell.failureSummary[0]
+    const reason=action.kind==="missing-batches"?"배치 부족":/CUDAOutOfMemory|GPU.*Memory|GPU 메모리/i.test(`${failure?.code??""} ${failure?.label??""} ${action.reasonCode}`)?"GPU 메모리 부족":"기타"
+    const key=`${action.kind}/${reason}`,group=actionGroups.get(key)
+    if(group)group.count++;else actionGroups.set(key,{action,cell,reason,count:1})
   }
-  return <Screen title="측정·실험 현황" width="data" lede="사용 가능한 범위와 다음 운영 조치를 확인하세요." actionPlacement="header" action={<Button variant="outline" onClick={()=>{void coverage.refetch();void experiments.refetch()}} disabled={coverage.isFetching||experiments.isFetching}>갱신</Button>}>
-    {coverage.data?<CoverageSummary data={coverage.data}/>:<CoverageError error={coverage.isFetching?null:coverage.error} retry={()=>void coverage.refetch()}/>}
-    <section className="coverage-detail"><h2>최근 실험 비교</h2>{recent?<><p>{recent.run.id}</p><p>{campaignConclusion(recent.run)}</p>{groups[0]!==recent&&<p>최신 기록은 대응하는 부하 구간이 없어 비교 가능한 이전 기록을 표시합니다.</p>}{recent.pairs.length?<><div className="overview-stages">{recent.pairs.map(pair=><div key={pair.key}><strong>{stageLoadLabel(pair.chill,recent.run)}</strong><p>CHILL 자동 운영 − 고정 구성</p><p>{difference(pair.chill.kpis.wholePoolJoules,pair.control.kpis.wholePoolJoules,"J")}</p><small>출처: 단계별 클러스터 에너지</small></div>)}</div><h3>서비스별 가장 큰 손실</h3>{[...services].map(([name,s])=><p key={name}>{name}: 성공률 최소 차이 {s.success?`${s.success.delta!==0&&Math.abs(s.success.delta)<0.01?"0.01 %p 미만 (방향 없음)":`${s.success.delta.toFixed(2)} %p`} (${s.success.stage})`:"비교 불가"}, p95 최대 증가 {s.p95?`${s.p95.delta!==0&&Math.abs(s.p95.delta)<0.01?"0.01 ms 미만 (방향 없음)":`${s.p95.delta.toFixed(2)} ms`} (${s.p95.stage})`:"비교 불가"}</p>)}<p className="text-sm text-muted-foreground">대응 단계 전체를 표시합니다. Δ는 원값으로 계산하며 표시값 차이와 마지막 자리가 다를 수 있습니다. 서비스별 성공률·p95는 동결 kpis의 같은 이름 결과입니다.</p></>:<p>정확히 대응하는 단계가 없어 비교할 수 없습니다. 최신 기록은 유지합니다.</p>}</>:<p>{experiments.error?"실험 기록 조회 실패":"실험 기록 확인 중"}</p>}<Link href="/experiments">실험 전체 보기</Link></section>
-    <div className="overview-columns"><section className="coverage-detail"><h2>다음 조치</h2>{coverage.data?<CoverageActions data={coverage.data} namespace={namespace}/>:<p>커버리지를 확인하면 다음 조치를 표시합니다.</p>}<Link href={`/measurements/requests?${new URLSearchParams({namespace})}`}>측정 요청 목록 확인</Link><Link href="/operations/flow">운영 흐름 보드</Link></section><section className="coverage-detail"><h2>모델별 커버리지</h2>{coverage.data?.groups.map(group=><p key={`${group.model.uid}/${group.deviceClass.uid}`}><Link href={`/measurements?${new URLSearchParams({namespace,model:group.model.name,deviceClass:group.deviceClass.name})}`}>{group.model.name} / {group.deviceClass.name}: <span className={group.complete?"text-ok":"text-muted-foreground"}>사용 가능 {group.complete??"미확인"}</span> / 지원 확인 {group.supported??"미확인"}</Link></p>)}<Link href="/measurements">커버리지 열기</Link></section></div>
+  const actions=[...actionGroups.values()].sort((a,b)=>Number(b.action.kind==="failure")-Number(a.action.kind==="failure")),actionCount=actions.reduce((sum,row)=>sum+row.count,0)
+  const returnTo=`/?${new URLSearchParams({namespace})}`
+  return <Screen title="측정·실험 현황" width="data" actionPlacement="header" action={<Button variant="outline" onClick={()=>{void coverage.refetch();void experiments.refetch()}} disabled={coverage.isFetching||experiments.isFetching}>갱신</Button>}>
+    <p className="overview-status" role="status">{namespace} / {coverage.error?"커버리지 조회 실패":!data?"커버리지 수신 대기":data.freshness==="fresh"?"최신 자료":"이전 자료"} / {data?.completeness==="partial"?"일부 확인":""}</p>
+    <div className="overview-workspace">
+      <section className="overview-panel"><header><h2>모델별 커버리지</h2><Link href={`/measurements?${new URLSearchParams({namespace})}`}>전체 보기</Link></header>
+        {matrix.rows.length?<div className="overview-matrix-scroll"><table className="overview-matrix"><caption className="sr-only">사용 가능 / 지원 확인 조합</caption><thead><tr><th scope="col">모델</th>{matrix.devices.map(device=><th scope="col" key={device.uid}>{overviewDeviceLabel(device.name)}</th>)}</tr></thead><tbody>{matrix.rows.map(row=><tr key={row.model.uid}><th scope="row">{row.model.name}</th>{row.cells.map((group,index)=>{
+          const supported=group?.supported??null,ratio=supported!==null&&supported>0?Math.min(1,group!.complete/supported):0
+          const query=new URLSearchParams({namespace,model:row.model.name,deviceClass:matrix.devices[index].name,...(group?.cellIds[0]?{cell:group.cellIds[0]}:{})})
+          return <td key={matrix.devices[index].uid}><Link className={`overview-heat-cell ${ratio===0?"overview-heat-empty":""}`} style={{background:ratio>0?`color-mix(in srgb, var(--primary) ${12+ratio*45}%, var(--background))`:undefined}} href={`/measurements?${query}`} aria-label={`${row.model.name} ${overviewDeviceLabel(matrix.devices[index].name)}: ${group?.complete??0} / ${supported??"미확인"}`}>{group?.complete??0}/{supported??"—"}</Link></td>
+        })}</tr>)}</tbody></table></div>:<p>{coverage.error?"커버리지 조회 실패":"커버리지 수신 대기"}</p>}
+      </section>
+      <section className="overview-panel"><header><h2>{recent?.run.id??"최근 실험 비교"}</h2></header>{recent&&summary?<>
+        <table className="overview-chips"><thead><tr><th>에너지 Δ %</th><th>최악 성공률 Δ %p</th><th>최악 p95 배율</th></tr></thead><tbody><tr>{[{value:summary.energyPercent,loss:(summary.energyPercent??0)>0,neutral:summary.energyPercent===0},{value:summary.successDelta,loss:(summary.successDelta??0)<0,neutral:summary.successDelta===0},{value:summary.p95Ratio,loss:(summary.p95Ratio??1)>1,neutral:summary.p95Ratio===1}].map((metric,index)=><td key={index} className={metric.value===null||metric.neutral?"overview-neutral":metric.loss?"overview-loss":"overview-gain"}>{metric.value===null?"—":`${index<2&&metric.value>0?"+":""}${metric.value.toFixed(index===2?2:1)}`}</td>)}</tr></tbody></table>
+        <figure className="overview-energy"><figcaption>구간별 에너지 Δ · req/s</figcaption><div className="overview-energy-bars">{stages.map(row=>{const delta=row.energyPercent,width=Math.abs(delta??0)/maxEnergy*48;return <div key={row.id} title={delta===null?"에너지 비교 불가":`${delta.toFixed(2)}%`}><div className="overview-energy-track"><span className={delta!==null&&delta<0?"overview-energy-gain":"overview-energy-loss"} style={{left:`${delta!==null&&delta<0?50-width:50}%`,width:`${width}%`}}/></div><span>{row.rate===null?"—":row.rate.toFixed(0)}</span></div>})}</div></figure>
+        <Link href={`/experiments?${new URLSearchParams({a:recent.run.id})}`}>자세히 →</Link>
+      </>:<p>{experiments.error?"실험 조회 실패":experiments.isFetching?"실험 수신 대기":"비교 기록 없음"}</p>}</section>
+    </div>
+    <section className="overview-panel"><header><h2>다음 조치</h2><Link href={`/measurements?${new URLSearchParams({namespace})}`}>전체 {actionCount}건 →</Link></header>{actions.length?<table className="overview-actions"><thead><tr><th aria-label="상태"/><th>대상</th><th>원인</th><th>동작</th></tr></thead><tbody>{actions.slice(0,3).map(({action,cell,reason,count})=>{
+      const failure=action.kind==="failure"?cell.failureSummary.find(row=>row.requestId===action.entityId)??cell.failureSummary[0]:undefined
+      const href=failure?coverageFailureHref(failure,namespace,returnTo):coverageRequestHref(cell,namespace,returnTo,action.variantId??undefined)
+      return <tr key={`${action.kind}/${reason}`}><td aria-label={action.kind==="failure"?"실패":"확인 필요"}>{action.kind==="failure"?"×":"△"}</td><td title={count>1?"같은 원인의 대표 대상":""}>{cell.model.name} · {overviewDeviceLabel(cell.deviceClass.name)} · {cell.powerMode} · {cell.executionPath.replace(/^firstfloor-/,"")}</td><td>{reason}{count>1&&<> {count}</>}</td><td><Link href={href}>{failure?.runName?"회차 열기":failure?"요청 열기":"요청"}</Link></td></tr>
+    })}</tbody></table>:<p>{data?"추가 조치 없음":"조치 확인 대기"}</p>}</section>
   </Screen>
 }
