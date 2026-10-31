@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	energyObjectivePolicyVersion = "quick-energy-v1"
+	energyObjectivePolicyVersion = "quick-energy-v2"
 	waitBackstop                 = 30 * time.Second
 
 	batchEnergyOptimizationPhaseMeasuring = "Measuring"

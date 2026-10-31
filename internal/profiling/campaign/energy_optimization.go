@@ -7,9 +7,9 @@ import (
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
-// CurveSource derives the energy-objective decision over the completed active
-// batches it is given. The controller supplies it because building a Curve
-// needs evidence the progress rules never see.
+// CurveSource derives the energy-objective decision over all completed planned
+// batches. The controller supplies it because building a Curve needs evidence
+// the progress rules never see.
 type CurveSource func(batches []int) (CurveResult, error)
 
 // CurveResult is the method's view of a derivation outcome. Only fields needed
@@ -29,9 +29,8 @@ type quickEnergyMinimization struct {
 	curve  CurveSource
 }
 
-// NewQuickEnergyMinimization constructs the one-dimensional CHILL variant of
-// Triton Quick Search. The exact objective is owned by the derivation boundary;
-// the campaign only schedules the measured prefix it requests.
+// NewQuickEnergyMinimization constructs the full planned-batch energy sweep.
+// The exact objective is owned by the derivation boundary.
 func NewQuickEnergyMinimization(config QuickEnergyConfig, curve CurveSource) (Method, error) {
 	if config.TrialsPerBatch < 2 {
 		return nil, errors.New("quick-energy configuration is outside the supported range")
@@ -80,6 +79,11 @@ func (s *quickEnergyMinimization) Plan(observed Observed) (Plan, error) {
 		return Plan{Next: &first}, nil
 	}
 
+	if next, found := nextPlannedBatchSize(observed.PlannedBatchSizes, highestActive); found {
+		measurement := Measurement{WorkloadMode: WorkloadModeActive, Batch: next}
+		return Plan{Next: &measurement}, nil
+	}
+
 	batches := measuredBatchPrefix(observed.PlannedBatchSizes, highestActive)
 	if s.curve == nil {
 		return Plan{}, errors.New("a curve source is required once a batch is complete")
@@ -91,12 +95,7 @@ func (s *quickEnergyMinimization) Plan(observed Observed) (Plan, error) {
 	if !result.Continue {
 		return Plan{Result: &Result{Outcome: result.Outcome, Detail: result.Detail}}, nil
 	}
-	next, found := nextPlannedBatchSize(observed.PlannedBatchSizes, highestActive)
-	if !found {
-		return Plan{}, errors.New("energy derivation continued after exhausting the planned search space")
-	}
-	measurement := Measurement{WorkloadMode: WorkloadModeActive, Batch: next}
-	return Plan{Next: &measurement}, nil
+	return Plan{}, errors.New("energy derivation continued after exhausting the planned search space")
 }
 
 func measuredBatchPrefix(plannedBatchSizes []int, highest int) []int {

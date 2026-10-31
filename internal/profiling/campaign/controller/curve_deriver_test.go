@@ -46,8 +46,8 @@ func TestCurveDeriverMapsTheEnergyObjectiveDecision(t *testing.T) {
 	}
 	if detail.BestBatch == nil || *detail.BestBatch != 1 ||
 		detail.Status != profilederivation.EnergySearchComplete ||
-		detail.CompletionReason != profilederivation.EnergySearchLocalMinimum ||
-		result.Outcome != "MinimumFound/LocalMinimum" {
+		detail.CompletionReason != profilederivation.EnergySearchSpaceExhausted ||
+		result.Outcome != "MinimumFound/SearchSpaceExhausted" {
 		t.Fatalf("terminal mapping = continue=%t outcome=%q detail=%+v", result.Continue, result.Outcome, detail)
 	}
 	baseline, exists := detail.IdleBaselinesByState[fixture.stateIdentity]
@@ -374,7 +374,7 @@ func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
 	fixture := curveDeriverFixture{
 		evidence: evidence, plan: plan,
 		policy: profilederivation.EnergyObjectivePolicy{
-			Version: "quick-energy-v1", TrialsPerBatch: 4, ConfidenceLevel: .95,
+			Version: "quick-energy-v2", TrialsPerBatch: 4, ConfidenceLevel: .95,
 		},
 	}
 	for _, batch := range []int{1, 2} {

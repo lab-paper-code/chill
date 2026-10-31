@@ -2,6 +2,17 @@
 
 Current boundary: execution → immutable raw/finalized evidence → numeric derivation. Scientific admission removed @`788bcf93`: thermal/workload observations remain, without automatic scientific accept/reject. Read only the relevant contract; source and retained evidence, not historical plans, establish implementation facts.
 
+Quick-energy policy `quick-energy-v2` measures every batch in the frozen ordered
+plan before deriving the minimum measured mean incremental work per item.
+Intermediate local minima no longer stop measurement; completion is
+`MinimumFound/SearchSpaceExhausted`, not a saturation or unmeasured-optimality
+claim. The policy label is recorded in result detail; CRD, RunConfig, raw and
+evidence schemas are unchanged. Terminal current-generation v1 campaigns and
+their immutable results remain untouched/readable. Nonterminal campaigns use
+the current controller policy on resume (the policy version is not frozen in
+the BEO spec); an already stored incompatible result is rejected, never
+overwritten. Use a new campaign identity for a new v2 sweep.
+
 ## Plans
 
 | Plan | Boundary | Status |
@@ -11,7 +22,7 @@ Current boundary: execution → immutable raw/finalized evidence → numeric der
 | [3](plans/03-profile-admission-derivation.md) | Numeric derivation and serving below-resolution energy | completed |
 | [4](plans/04-minimal-profiler-control-path.md) | Operator-managed Profiler and durable control | completed |
 | [6](plans/06-execution-support-expansion.md) | Exact support matrix and outstanding device/live gates | active |
-| [7](plans/07-batch-energy-optimization-control-path.md) | Direct minimum-energy Quick search | completed |
+| [7](plans/07-batch-energy-optimization-control-path.md) | Minimum-energy objective; v2 full sweep supersedes historical local-stop scheduling | completed |
 | [8](plans/08-declared-batch-size-artifacts.md) | Artifact versus campaign batch-set ownership | completed |
 | [10](plans/10-transition-cost-measurement.md) | Exact directed tau/eta measurement; new estimator live gate open | completed / live gate active |
 | 5 / 5a | Saturation / sequential early-stop designs | removed @`dd520844`; Plan 7 owns current objective |

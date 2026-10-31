@@ -392,9 +392,9 @@ func TestEnergyOptimizationFollowsEveryStrictImprovement(t *testing.T) {
 			wantStatus: EnergySearchContinue, wantBest: 4,
 		},
 		{
-			name:  "first non-improving neighbor closes the local search",
+			name:  "non-improving neighbor does not close a partial sweep",
 			means: []float64{1, .8, .81}, planSize: 5,
-			wantStatus: EnergySearchComplete, wantReason: EnergySearchLocalMinimum, wantBest: 2,
+			wantStatus: EnergySearchContinue, wantBest: 2,
 		},
 		{
 			name:  "search-space exhaustion is successful completion",
@@ -420,6 +420,23 @@ func TestEnergyOptimizationFollowsEveryStrictImprovement(t *testing.T) {
 				t.Fatalf("energy-optimization provenance is incomplete: %+v", got)
 			}
 		})
+	}
+}
+
+func TestEnergyOptimizationSelectsGlobalMinimumAfterLocalMinimum(t *testing.T) {
+	curve := testEnergyOptimizationCurve(t, []float64{1, .8, .81, .6, .7}, 5)
+	result, err := DeriveMinimumEnergyBatch(curve, EnergyObjectivePolicy{
+		Version: "quick-energy-v2", TrialsPerBatch: 3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != EnergySearchComplete || result.CompletionReason != EnergySearchSpaceExhausted ||
+		result.BestBatch == nil || *result.BestBatch != 4 ||
+		result.MinimumIncrementalWorkJoulesPerItem == nil ||
+		math.Abs(*result.MinimumIncrementalWorkJoulesPerItem-.6) > 1e-12 ||
+		!reflect.DeepEqual(result.MeasuredBatchSizes, []int{1, 2, 3, 4, 5}) {
+		t.Fatalf("unexpected full-sweep result: %+v", result)
 	}
 }
 
@@ -454,13 +471,9 @@ func TestEnergyOptimizationFollowsSparsePlannedBatchSizes(t *testing.T) {
 	}
 }
 
-func TestEnergyOptimizationRejectsPostMinimumAndPolicyDrift(t *testing.T) {
-	curve := testEnergyOptimizationCurve(t, []float64{1, 1.01, .9}, 4)
-	policy := EnergyObjectivePolicy{Version: "energy-objective-v1", TrialsPerBatch: 3}
-	if _, err := DeriveMinimumEnergyBatch(curve, policy); err == nil {
-		t.Fatal("expected points after the local minimum to be rejected")
-	}
-	curve = testEnergyOptimizationCurve(t, []float64{1, .8}, 3)
+func TestEnergyOptimizationRejectsPolicyDrift(t *testing.T) {
+	curve := testEnergyOptimizationCurve(t, []float64{1, .8}, 3)
+	policy := EnergyObjectivePolicy{Version: "quick-energy-v2", TrialsPerBatch: 3}
 	policy.TrialsPerBatch = 4
 	if _, err := DeriveMinimumEnergyBatch(curve, policy); !errors.Is(err, ErrEnergyObjectivePolicyMismatch) {
 		t.Fatalf("expected classified trials-per-batch policy mismatch, got %v", err)

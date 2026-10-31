@@ -52,11 +52,9 @@ type EnergyOptimizationResult struct {
 	IdleBaselinesByState                map[string]IdleBaseline      `json:"idleBaselinesByState"`
 }
 
-// DeriveMinimumEnergyBatch applies a one-dimensional quick search to the
-// measured prefix of a verified batch plan. Every strictly lower mean advances
-// the search, regardless of the size of the improvement. The first point that
-// does not improve the objective closes the local search; exhausting the
-// declared search space is a separate successful completion.
+// DeriveMinimumEnergyBatch selects the lowest mean over the measured prefix of
+// a verified batch plan. Only exhausting the declared search space completes
+// the sweep; a non-improving neighbor does not stop it.
 func DeriveMinimumEnergyBatch(
 	curve Curve,
 	policy EnergyObjectivePolicy,
@@ -103,12 +101,6 @@ func DeriveMinimumEnergyBatch(
 		if value < best {
 			best = value
 			bestBatch = point.Batch
-			continue
-		}
-		result.Status = EnergySearchComplete
-		result.CompletionReason = EnergySearchLocalMinimum
-		if index != len(search.points)-1 {
-			return EnergyOptimizationResult{}, errors.New("search curve contains points after its local minimum")
 		}
 	}
 
@@ -118,7 +110,7 @@ func DeriveMinimumEnergyBatch(
 		result.BestBatch = &selected
 		result.MinimumIncrementalWorkJoulesPerItem = &bestValue
 	}
-	if result.Status == EnergySearchContinue && len(search.points) == len(plannedBatchSizes) {
+	if len(search.points) == len(plannedBatchSizes) {
 		result.Status = EnergySearchComplete
 		result.CompletionReason = EnergySearchSpaceExhausted
 	}

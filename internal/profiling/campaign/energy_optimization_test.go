@@ -85,6 +85,30 @@ func TestQuickEnergyStepsOverAGapInThePlannedBatchSizeSet(t *testing.T) {
 	}
 }
 
+func TestQuickEnergySweepsEveryPlannedBatchBeforeDeriving(t *testing.T) {
+	planned := []int{1, 2, 4, 8}
+	curveCalls := 0
+	method := newTestQuickEnergyMethod(t, func(batches []int) (CurveResult, error) {
+		curveCalls++
+		// A local minimum at batch 2 must not stop the sweep before batch 8.
+		return CurveResult{Outcome: "MinimumFound/LocalMinimum"}, nil
+	})
+	for index := 1; index < len(planned); index++ {
+		plan, err := method.Plan(Observed{
+			PlannedBatchSizes: planned,
+			Completed:         completedForBatches(planned[:index], 3),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := Measurement{WorkloadMode: WorkloadModeActive, Batch: planned[index]}
+		if plan.Next == nil || *plan.Next != want || plan.Result != nil || curveCalls != 0 {
+			t.Fatalf("prefix %v: plan=%+v, curve calls=%d; want %+v without derivation",
+				planned[:index], plan, curveCalls, want)
+		}
+	}
+}
+
 func TestQuickEnergyPassesTheMeasuredPrefixToTheObjective(t *testing.T) {
 	var curveBatches []int
 	method := newTestQuickEnergyMethod(t, func(batches []int) (CurveResult, error) {
