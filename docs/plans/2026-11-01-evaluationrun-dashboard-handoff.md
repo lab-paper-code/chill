@@ -21,7 +21,7 @@
 - 서버는 `definition`을 해석하지 않고 JSON object인지만 확인해 그대로 준다(`internal/serving/httpapi/experiments.go`).
 - 대시보드는 결과를 **완료된 게시만** 다룬다. 진행 중 실험은 아래 §2.1의 작은 요약으로 "평가 실행 중" 표시만 한다(운영 보드 오판 방지).
 - 게시 ID = EvaluationRun UID. 같은 실험의 정정은 새 UID로 게시된다(덮어쓰기 없음).
-- 실험 조작은 §2.2의 세 가지(실행·중지·release 확인)만 대시보드에서 한다. 그 밖의 편집(LoadScenario 작성, spec 수정 후 재제출 등)은 kubectl.
+- 실험 조작은 §2.2(부하 정의 작성·실험 spec 편집·실행·중지·release 확인)를 대시보드에서 한다.
 
 ### 2.1 진행 중 평가 표시 — `GET /api/v1/evaluations/active`
 
@@ -39,13 +39,19 @@
 - `injections[]`는 계획과 지금까지의 실행 결과. 운영 보드는 같은 노드·Pod 사건에 "주입" 태그를 붙일 수 있다(일치 판정은 nodeName/podName 정확 일치만).
 - 정리 실패 시 남은 자원은 게시 `outcome.cleanup.residuals[]`(§3.1)에 실린다.
 
-### 2.2 실험 조작 — 실행·중지·release 확인
+### 2.2 실험 조작 — 부하 정의 작성·spec 편집·실행·중지·release 확인
 
 권한은 기존 scheduler-editor 역할과 같은 방식(토큰의 URL 권한 검사)을 쓴다. 측정 요청 화면처럼 **사전 점검 → 제출** 2단계다.
+두 CR은 spec이 불변이다. 따라서 "편집"은 언제나 **복사해서 고친 뒤 새 이름으로 만드는 것**이다. 기존 객체를 고치는 API는 없다.
 
 | 조작 | 요청 | 동작 |
 |---|---|---|
-| 실행 후보 고르기 | `GET /api/v1/evaluations/load-scenarios` | `{items:[{name, uid, spec}]}` — 부하 정의 목록 |
+| 부하 정의 목록 | `GET /api/v1/evaluations/load-scenarios` | `{items:[{name, uid, spec, inUse}]}` — `inUse`=이 정의를 참조하는 진행 중 실험 이름 목록 |
+| 부하 정의 사전 점검 | `POST /api/v1/evaluations/load-scenarios/preflight` body `{name, spec}` | `{checks, liveWorkloads}`. 검사: spec 검증(rates/alpha 배타, alpha면 rateBasis·κ 참조 필수 등), 각 Workload name+UID+generation이 지금 클러스터와 같음, 참조한 증거 객체(seed·trace·payload 번들·rateBasis·κ)가 저장소에 존재. `liveWorkloads`는 현재 name→{uid, generation}(다르면 화면이 차이를 보여 주고 사용자가 반영 여부 선택) |
+| 부하 정의 만들기 | `POST /api/v1/evaluations/load-scenarios` body `{name, spec}` | 서버가 점검을 다시 하고 생성. 응답 `{name, uid}`. 화면은 기존 정의를 복사해 parts(구간 길이·요청률 또는 alpha)·도착 분포·Workload를 고치는 폼과 JSON 편집을 함께 준다 |
+| 부하 정의 지우기 | `DELETE /api/v1/evaluations/load-scenarios/{name}?uid=` | `inUse`가 비어 있을 때만. 이미 게시된 실험은 정의 snapshot을 갖고 있어 영향이 없다 |
+| 증거 객체 고르기 | `GET /api/v1/evaluations/inputs` | `{items:[{store, key, size, kind}]}` — 저장소의 입력 번들·seed·trace·rateBasis·κ 목록(`kind`별). 새 입력 번들 자체를 만드는 일은 오프라인 도구(`hack/e5/evaluation_inputs.py`) 몫이다 — 원천 측정 기록에서 만들어지는 과학 입력이라 화면에서 지어내지 않는다 |
+| 실험 spec 편집 | (대시보드 내부) | 게시 `definition.spec` 또는 빈 템플릿을 복사해 질문·단계(mode·부하 정의·시작 상태·장애 주입 계획)·비교(left 후보/right 기준)·판정 기준·제어 설정을 폼/JSON으로 고친다. 서버 저장 없음 — 아래 사전 점검이 검증 정본 |
 | 사전 점검 | `POST /api/v1/evaluations/preflight` body `{name, spec}` | `{checks:[{id, passed, reason}], liveTarget}`. 검사: spec 검증, LoadScenario name+UID 존재, 대상 이미지 digest가 실제 실행 중 Pod과 같음, 다른 EvaluationRun이 풀 점유 중 아님, **기존 E5 측정(Job/producer) 실행 중 아님**. `liveTarget`은 spec의 대상 구성요소별 지금 실행 중 digest — 다르면 화면이 차이를 보여 주고 사용자가 반영 여부를 고른다(서버가 몰래 바꾸지 않음) |
 | 실행 | `POST /api/v1/evaluations` body `{name, spec}` | 서버가 사전 점검을 다시 수행하고 통과 시 EvaluationRun 생성. 응답 `{name, uid}`. 이후 진행은 §2.1 |
 | 다시 실행 | 위와 같음 | 대시보드가 게시 `definition.spec`을 복사해 새 `name`으로 제출(과거 게시가 그대로 실행 정의다) |
