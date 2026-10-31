@@ -2,8 +2,8 @@
 # Source: helm -n chill-system get values chill --revision 74 -o json (2026-10-25).
 # This profile enables profiling, not the full operating system; use
 # values-operating.yaml alone to reproduce the full revision 74 settings.
-# Runtime declarations and observer digests are one frozen set. Regenerate
-# declarations with hack/runtime-declarations.py after changing runtime images.
+# Runtime images/declarations: f3a56cd89c0a; observer images: 93c7b814ece1.
+# Regenerate declarations with hack/runtime-declarations.py only when runtime images change.
 # Only Secret references are stored; provision their values outside git.
 operator:
   image:
@@ -167,7 +167,7 @@ profiling:
     runtime:
       payload: '{"schemaVersion":"chill.dacs.io/runtime-declaration.v1alpha2","image":"155.230.35.213:5000/chill/chill-firstfloor@sha256:4b55db8b9a6e72358970206ff852a3f9f3bf6808b26fcb1b27859a809fcd022c","architecture":"arm64","runtime":{"family":"firstfloor","backends":["rknnlite"]},"packages":[{"name":"rknn-toolkit-lite2","version":"2.3.2"}],"verification":"exact-image-runtime-inspection-v1"}'
   executionPolicyDefaults: {}
-  metricObserverImage: 155.230.35.213:5000/chill/chill-metric-observer@sha256:535b656bf1b6ec739b9906879227be4aec581107d3771d2130a617ce60dbc031
+  metricObserverImage: 155.230.35.213:5000/chill/chill-metric-observer@sha256:540db0529423aee0b3bbf3e52e89f4086749d3646796396995a3d134c0e22379
   metricSources:
   - endpoint: http://155.230.35.213:18766/prometheus?hostname=raspberrypi-5
     kind: edge-metrics
@@ -329,4 +329,4 @@ profiling:
       latched: device_thermal_throttle_latched
       maximumTemperatureCelsius: device_thermal_max_celsius
       observationAvailable: device_thermal_throttle_observation_available
-  workloadObserverImage: 155.230.35.213:5000/chill/chill-workload-observer@sha256:67e7eb0ca64477f3c389e54319bc5116147301425d5510763ca1799316bd07be
+  workloadObserverImage: 155.230.35.213:5000/chill/chill-workload-observer@sha256:3c4aec4f6d7dc10c973c943266c74d4a0458c1ba0f480b6225c781eeeebde413
