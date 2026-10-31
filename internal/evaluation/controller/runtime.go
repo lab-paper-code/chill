@@ -35,8 +35,6 @@ const (
 	injectionInvalid   = "INVALID"
 	injectionUnknown   = "Unknown"
 	injectionRequested = "Requested"
-	actionUncordon     = "uncordon"
-	actionCordonDelete = "cordon-delete"
 )
 
 var pending = ctrl.Result{RequeueAfter: time.Second}

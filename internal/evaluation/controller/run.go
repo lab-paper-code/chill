@@ -456,16 +456,12 @@ func (r *RunReconciler) removeFinalizer(ctx context.Context, run *api.Evaluation
 }
 
 func releaseEligible(run *api.EvaluationRun) bool {
-	execution := meta.FindStatusCondition(run.Status.Conditions, api.EvaluationConditionExecutionComplete)
-	return execution != nil && execution.Status != metav1.ConditionUnknown &&
+	return terminal(run.Status.Conditions, api.EvaluationConditionExecutionComplete) &&
 		meta.IsStatusConditionFalse(run.Status.Conditions, api.EvaluationConditionCleanupComplete) &&
 		isTrue(run.Status.Conditions, api.EvaluationConditionPoolAcquired) && occupied(run)
 }
 
 func (r *RunReconciler) release(ctx context.Context, run *api.EvaluationRun, annotation string) (ctrl.Result, error) {
-	if !releaseEligible(run) {
-		return ctrl.Result{}, nil
-	}
 	var request struct {
 		Reason string      `json:"reason"`
 		At     metav1.Time `json:"at"`
@@ -492,9 +488,6 @@ func (r *RunReconciler) release(ctx context.Context, run *api.EvaluationRun, ann
 	if run.Status.FinishedAt == nil {
 		now := r.now()
 		run.Status.FinishedAt = &now
-	}
-	if !terminal(run.Status.Conditions, api.EvaluationConditionExecutionComplete) {
-		condition(&run.Status.Conditions, run.Generation, api.EvaluationConditionExecutionComplete, metav1.ConditionFalse, "OperatorReleased", "")
 	}
 	condition(&run.Status.Conditions, run.Generation, api.EvaluationConditionPoolAcquired, metav1.ConditionFalse, "OperatorReleased", "")
 	return pending, r.patchStatus(ctx, run, before)

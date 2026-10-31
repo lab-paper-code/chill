@@ -33,7 +33,7 @@ func fixtureStageExecution(t *testing.T) (Runtime, memoryStore, *api.EvaluationR
 	r, store := fixtureRuntime(t, parent, node, pod)
 	stage := fixtureStage(t, &r, parent)
 	stage.Finalizers = []string{api.EvaluationStageFinalizer}
-	stage.Spec.FailureInjection = []api.FaultInjectionPlan{{ID: "fault", Action: actionCordonDelete, Selection: &api.FaultInjectionSelection{WorkloadUIDs: []types.UID{"workload-uid"}, OrderBy: []api.FaultInjectionOrderKey{"node", "pod", "instance"}}}}
+	stage.Spec.FailureInjection = []api.FaultInjectionPlan{{ID: "fault", Action: api.FaultInjectionCordonDelete, Selection: &api.FaultInjectionSelection{WorkloadUIDs: []types.UID{"workload-uid"}, OrderBy: []api.FaultInjectionOrderKey{"node", "pod", "instance"}}}}
 	if err := r.Client.Update(ctx, stage); err != nil {
 		t.Fatal(err)
 	}
@@ -260,5 +260,147 @@ func assertInClusterFiles(t *testing.T, projected *corev1.ProjectedVolumeSource)
 	namespace := projected.Sources[2].DownwardAPI
 	if namespace == nil || namespace.Items[0].Path != "namespace" || namespace.Items[0].FieldRef.FieldPath != "metadata.namespace" {
 		t.Fatal("missing namespace projection")
+	}
+}
+
+func TestCompletedStageRecoversRequestedInjection(t *testing.T) {
+	for _, test := range []struct {
+		name, outcome          string
+		missingGO, readFailure bool
+	}{
+		{name: "stored-complete", outcome: complete},
+		{name: "stored-unknown", outcome: injectionUnknown},
+		{name: "missing-result", outcome: injectionUnknown},
+		{name: "missing-GO-stored-complete", outcome: complete, missingGO: true},
+		{name: "store-read-requeues", readFailure: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			r, store, parent, stage := fixtureStageExecution(t)
+			goAt := metav1.NewTime(fixtureTime.Add(-2 * time.Minute))
+			requestedAt := metav1.NewTime(fixtureTime.Add(-time.Minute))
+			before := stage.DeepCopy()
+			stage.Status.InjectionRecords = []api.FaultInjectionRecord{{ID: "fault", ScheduledAt: goAt, RequestedAt: &requestedAt, Outcome: injectionRequested, PodRef: &api.EvaluationObjectReference{Name: "serving", UID: "pod-uid"}, NodeRef: &api.EvaluationObjectReference{Name: "node", UID: "node-uid"}}}
+			store.put(stage.Status.GoRef.Key, map[string]any{"runUID": parent.UID, "stageUID": stage.UID, "stageID": stage.Spec.StageID, "goUTC": goAt})
+			if test.missingGO {
+				stage.Status.GoRef = nil
+			}
+			if err := r.patchStatus(ctx, stage, before); err != nil {
+				t.Fatal(err)
+			}
+			key := evidenceKey(parent.UID, scope(stage.Spec.StageID)+"/injections/fault.json")
+			if strings.Contains(test.name, "stored") {
+				record := stage.Status.InjectionRecords[0]
+				record.Outcome = test.outcome
+				if test.outcome == injectionUnknown {
+					record.Reason = api.EvaluationReasonRemoteEffectUnknown
+				}
+				store.put(key, injectionEvidence{RunUID: parent.UID, StageUID: stage.UID, StageID: stage.Spec.StageID, Record: record})
+			}
+			if test.readFailure {
+				r.Store = func(context.Context, string, string, map[string]string) (ObjectStore, error) {
+					return readFaultStore{ObjectStore: store, Key: key, Err: errors.New("temporary result read failure")}, nil
+				}
+			}
+			store.put(evidenceKey(parent.UID, scope(stage.Spec.StageID)+"/stage/result.json"), map[string]any{"schemaVersion": "evaluation-step.v1alpha1", "runUID": parent.UID, "stageUID": stage.UID, "stageID": stage.Spec.StageID, "step": api.EvaluationStepStage, "execution": map[string]string{"status": complete}, "startedAt": goAt, "finishedAt": fixtureTime.Add(-time.Second)})
+			r.HTTP = func(context.Context, string, map[string]string, string, any) error {
+				t.Fatal("completion recovery must not select or inject")
+				return nil
+			}
+			_, err := (&StageReconciler{Runtime: r}).Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(stage)})
+			if test.readFailure {
+				if err == nil {
+					t.Fatal("unreadable requested-result evidence must requeue")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			saved := &api.EvaluationStage{}
+			if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(stage), saved); err != nil {
+				t.Fatal(err)
+			}
+			record := saved.Status.InjectionRecords[0]
+			if record.Outcome != test.outcome || record.EvidenceRef == nil || record.EvidenceRef.Key != key {
+				t.Fatalf("requested effect not resolved: %+v", record)
+			}
+			if uncertainStage(saved) != (test.outcome == injectionUnknown) {
+				t.Fatalf("incorrect occupancy uncertainty: %+v", saved.Status)
+			}
+			if test.outcome == injectionUnknown && !meta.IsStatusConditionFalse(saved.Status.Conditions, api.EvaluationConditionExecutionComplete) {
+				t.Fatal("unknown request must stop execution and retain occupancy")
+			}
+		})
+	}
+}
+
+func TestParentJobsReceivePrepareOutcome(t *testing.T) {
+	for _, test := range []struct {
+		name, status string
+		snapshot     bool
+	}{
+		{name: "prepare-not-completed"},
+		{name: "prepare-failed", status: "Failed"},
+		{name: "prepare-complete-snapshot-lost", status: complete},
+		{name: "prepare-complete", status: complete, snapshot: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			parent := fixtureRun("context")
+			startRun(parent)
+			snapshot := parent.Status.InputSnapshotRef
+			parent.Status.InputSnapshotRef = nil
+			r, store := fixtureRuntime(t, parent)
+			prepareJob, err := r.job(ctx, parent, parent, nil, api.EvaluationStepPrepare, &api.EvaluationProcedure{Step: api.EvaluationStepPrepare})
+			if err != nil {
+				t.Fatal(err)
+			}
+			prepareCM := prepareJob.Spec.Template.Spec.Volumes[1].ConfigMap.Name
+			if test.status != "" {
+				key := evidenceKey(parent.UID, "run/prepare/result.json")
+				store.put(key, map[string]any{"schemaVersion": "evaluation-step.v1alpha1", "runUID": parent.UID, "step": api.EvaluationStepPrepare, "execution": map[string]string{"status": test.status}, "startedAt": fixtureTime, "finishedAt": fixtureTime})
+				at := metav1.NewTime(fixtureTime)
+				parent.Status.Procedures = []api.EvaluationProcedure{{Step: api.EvaluationStepPrepare, FinishedAt: &at, EvidenceRef: &api.EvaluationEvidenceReference{Store: parent.Spec.EvidenceStore, Key: key, Size: int64(len(store[key]))}}}
+			}
+			if test.snapshot {
+				parent.Status.InputSnapshotRef = snapshot
+			}
+			for _, step := range []string{api.EvaluationStepFinish, api.EvaluationStepPublish} {
+				job, err := r.job(ctx, parent, parent, nil, step, &api.EvaluationProcedure{Step: step})
+				if err != nil {
+					t.Fatal(err)
+				}
+				name := job.Spec.Template.Spec.Volumes[1].ConfigMap.Name
+				if name == prepareCM {
+					t.Fatal("parent outcome must not mutate prepare's immutable ConfigMap")
+				}
+				cm := &corev1.ConfigMap{}
+				if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: parent.Namespace, Name: name}, cm); err != nil {
+					t.Fatal(err)
+				}
+				assertParentExecutionContext(t, cm.Data["execution.json"], test.status == complete, parent.Status.InputSnapshotRef)
+			}
+		})
+	}
+}
+
+func assertParentExecutionContext(t *testing.T, body string, completed bool, reference *api.EvaluationEvidenceReference) {
+	t.Helper()
+	var execution struct {
+		PrepareCompleted *bool                            `json:"prepareCompleted"`
+		InputSnapshotRef *api.EvaluationEvidenceReference `json:"inputSnapshotRef"`
+	}
+	if err := json.Unmarshal([]byte(body), &execution); err != nil {
+		t.Fatal(err)
+	}
+	if execution.PrepareCompleted == nil || *execution.PrepareCompleted != completed {
+		t.Fatalf("prepare completion is missing or incorrect: %s", body)
+	}
+	if (reference == nil) != (execution.InputSnapshotRef == nil) {
+		t.Fatalf("snapshot omission is incorrect: %s", body)
+	}
+	if reference != nil && *reference != *execution.InputSnapshotRef {
+		t.Fatalf("snapshot identity differs: %s", body)
 	}
 }

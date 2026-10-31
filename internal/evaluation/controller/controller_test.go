@@ -300,15 +300,21 @@ func TestReleaseIgnoredWhileExecutionContinues(t *testing.T) {
 	condition(&parent.Status.Conditions, 1, api.EvaluationConditionPoolAcquired, metav1.ConditionTrue, "Acquired", "")
 	condition(&parent.Status.Conditions, 1, api.EvaluationConditionExecutionComplete, metav1.ConditionUnknown, "Running", "")
 	condition(&parent.Status.Conditions, 1, api.EvaluationConditionCleanupComplete, metav1.ConditionFalse, "NotReturned", "")
+	parent.Status.Workspace = nil
+	parent.Annotations = map[string]string{api.EvaluationReleaseAnnotation: `{"reason":"early"}`}
 	r, store := fixtureRuntime(t, parent)
 	r.HTTP = func(context.Context, string, map[string]string, string, any) error {
 		t.Fatal("running release must not inspect or release the pool")
 		return nil
 	}
-	if _, err := (&RunReconciler{Runtime: r}).release(context.Background(), parent, `{"reason":"early"}`); err != nil {
+	if _, err := (&RunReconciler{Runtime: r}).Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}); err != nil {
 		t.Fatal(err)
 	}
-	if !occupied(parent) || len(parent.Status.ReleaseRecords) != 0 || len(store) != 0 {
+	saved := &api.EvaluationRun{}
+	if err := r.APIReader.Get(context.Background(), client.ObjectKeyFromObject(parent), saved); err != nil {
+		t.Fatal(err)
+	}
+	if !occupied(saved) || len(saved.Status.ReleaseRecords) != 0 || len(store) != 0 {
 		t.Fatal("premature release changed occupancy or evidence")
 	}
 }
@@ -406,7 +412,7 @@ func TestInjectionCordonBeforeUIDDeleteAndNoReplay(t *testing.T) {
 			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "serving", Namespace: parent.Namespace, UID: "pod-uid"}, Spec: corev1.PodSpec{NodeName: node.Name}}
 			r, store := fixtureRuntime(t, parent, node, pod)
 			stage := fixtureStage(t, &r, parent)
-			stage.Spec.FailureInjection = []api.FaultInjectionPlan{{ID: "fault", Action: actionCordonDelete, Selection: &api.FaultInjectionSelection{WorkloadUIDs: []types.UID{"workload-uid"}, OrderBy: []api.FaultInjectionOrderKey{"node", "pod", "instance"}}}}
+			stage.Spec.FailureInjection = []api.FaultInjectionPlan{{ID: "fault", Action: api.FaultInjectionCordonDelete, Selection: &api.FaultInjectionSelection{WorkloadUIDs: []types.UID{"workload-uid"}, OrderBy: []api.FaultInjectionOrderKey{"node", "pod", "instance"}}}}
 			if err := r.Client.Update(ctx, stage); err != nil {
 				t.Fatal(err)
 			}

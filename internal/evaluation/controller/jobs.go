@@ -45,16 +45,23 @@ func (r *Runtime) job(ctx context.Context, owner client.Object, run *api.Evaluat
 		suffix = "cleanup"
 	}
 	name := uidName(owner.GetUID()) + "-" + suffix
-	cmName := uidName(owner.GetUID()) + "-spec"
+	var cmName string
 	spec := any(run.Spec)
 	stageID := ""
 	execution := map[string]any{"runName": run.Name, "runUID": run.UID, "generation": owner.GetGeneration(), "namespace": run.Namespace}
 	if stage != nil {
+		cmName = uidName(owner.GetUID()) + "-spec"
 		spec = stage.Spec
 		stageID = stage.Spec.StageID
 		execution["stageName"] = stage.Name
 		execution["stageUID"] = stage.UID
 		execution["stageID"] = stageID
+	} else {
+		var err error
+		cmName, err = r.parentJobContext(ctx, run, step, execution)
+		if err != nil {
+			return nil, err
+		}
 	}
 	specJSON, err := jsonString(spec)
 	if err != nil {
@@ -281,4 +288,44 @@ func mapRefs(values map[string]api.EvaluationEvidenceReference) []api.Evaluation
 		refs = append(refs, v)
 	}
 	return refs
+}
+
+func (r *Runtime) prepareCompleted(ctx context.Context, run *api.EvaluationRun) (bool, error) {
+	// The controller records this reference only from a Complete prepare result.
+	if run.Status.InputSnapshotRef != nil {
+		return true, nil
+	}
+	prepare := findProcedure(run.Status.Procedures, api.EvaluationStepPrepare)
+	if prepare == nil || prepare.EvidenceRef == nil {
+		return false, nil
+	}
+	store, err := r.Store(ctx, run.Namespace, run.Spec.EvidenceStore, run.Status.FrozenConfig.Values)
+	if err != nil {
+		return false, err
+	}
+	var result struct {
+		Execution struct {
+			Status string `json:"status"`
+		} `json:"execution"`
+	}
+	if _, err := readJSON(ctx, store, prepare.EvidenceRef.Store, prepare.EvidenceRef.Key, &result); err != nil {
+		return false, err
+	}
+	return result.Execution.Status == complete, nil
+}
+
+func (r *Runtime) parentJobContext(ctx context.Context, run *api.EvaluationRun, step string, execution map[string]any) (string, error) {
+	name := uidName(run.UID)
+	if step != api.EvaluationStepFinish && step != api.EvaluationStepPublish {
+		return name + "-spec", nil
+	}
+	completed, err := r.prepareCompleted(ctx, run)
+	if err != nil {
+		return "", err
+	}
+	execution["prepareCompleted"] = completed
+	if run.Status.InputSnapshotRef != nil {
+		execution["inputSnapshotRef"] = run.Status.InputSnapshotRef
+	}
+	return name + "-" + step + "-spec", nil
 }

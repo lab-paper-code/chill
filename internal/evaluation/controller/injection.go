@@ -159,12 +159,7 @@ func (r *Runtime) injections(ctx context.Context, parent *api.EvaluationRun, sta
 		return err
 	}
 	for _, plan := range stage.Spec.FailureInjection {
-		var record *api.FaultInjectionRecord
-		for i := range stage.Status.InjectionRecords {
-			if stage.Status.InjectionRecords[i].ID == plan.ID {
-				record = &stage.Status.InjectionRecords[i]
-			}
-		}
+		record := injectionRecord(stage, plan.ID)
 		if record != nil && record.Outcome != injectionRequested {
 			continue
 		}
@@ -237,7 +232,7 @@ func (r *Runtime) executeInjection(ctx context.Context, parent *api.EvaluationRu
 				evidence.Requests = append(evidence.Requests, map[string]any{"error": err.Error()})
 			} else {
 				evidence.Record.Outcome = complete
-				if plan.Action == actionUncordon {
+				if plan.Action == api.FaultInjectionUncordon {
 					at := r.now()
 					evidence.Record.EffectObservedAt = &at
 				}
@@ -278,7 +273,7 @@ func (r *Runtime) injectionVerdict(stage *api.EvaluationStage, record api.FaultI
 	}
 }
 func (r *Runtime) selectInjection(ctx context.Context, parent *api.EvaluationRun, stage *api.EvaluationStage, plan api.FaultInjectionPlan, e *injectionEvidence) error {
-	if plan.Action == actionUncordon {
+	if plan.Action == api.FaultInjectionUncordon {
 		for _, prior := range stage.Status.InjectionRecords {
 			if prior.ID == plan.PriorInjectionID && prior.Outcome == complete && prior.NodeRef != nil {
 				e.Record.NodeRef = prior.NodeRef
@@ -388,7 +383,7 @@ func (r *Runtime) applyInjection(ctx context.Context, parent *api.EvaluationRun,
 	if node.UID != e.Record.NodeRef.UID {
 		return fmt.Errorf("%w: Node UID changed", errInjectionSelection)
 	}
-	if plan.Action != actionUncordon {
+	if plan.Action != api.FaultInjectionUncordon {
 		pod := &corev1.Pod{}
 		if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: parent.Namespace, Name: e.Record.PodRef.Name}, pod); err != nil {
 			return err
@@ -397,10 +392,10 @@ func (r *Runtime) applyInjection(ctx context.Context, parent *api.EvaluationRun,
 			return fmt.Errorf("%w: Pod UID/node changed", errInjectionSelection)
 		}
 	}
-	if plan.Action == actionCordonDelete || plan.Action == actionUncordon {
+	if plan.Action == api.FaultInjectionCordonDelete || plan.Action == api.FaultInjectionUncordon {
 		before := node.DeepCopy()
-		node.Spec.Unschedulable = plan.Action == actionCordonDelete
-		if plan.Action == actionCordonDelete && before.Spec.Unschedulable {
+		node.Spec.Unschedulable = plan.Action == api.FaultInjectionCordonDelete
+		if plan.Action == api.FaultInjectionCordonDelete && before.Spec.Unschedulable {
 			return fmt.Errorf("%w: node was already cordoned; cannot own uncordon", errInjectionSelection)
 		}
 		if err := r.injectionReady(ctx, parent, stage, e); err != nil {
@@ -417,7 +412,7 @@ func (r *Runtime) applyInjection(ctx context.Context, parent *api.EvaluationRun,
 		e.Record.RespondedAt = &response
 		e.Requests[len(e.Requests)-1]["response"] = map[string]any{"uid": node.UID, "resourceVersion": node.ResourceVersion, "unschedulable": node.Spec.Unschedulable}
 	}
-	if plan.Action != actionUncordon {
+	if plan.Action != api.FaultInjectionUncordon {
 		pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: parent.Namespace, Name: e.Record.PodRef.Name}}
 		uid := e.Record.PodRef.UID
 		if err := r.injectionReady(ctx, parent, stage, e); err != nil {
@@ -472,7 +467,17 @@ func eligible(i servingInstance, allowed map[string]bool, nodes map[string]types
 }
 
 func (r *Runtime) finishInjections(ctx context.Context, parent *api.EvaluationRun, stage *api.EvaluationStage, result *stepResult) error {
-	if len(stage.Spec.FailureInjection) == len(stage.Status.InjectionRecords) {
+	if err := r.recoverRequestedInjections(ctx, parent, stage); err != nil {
+		return err
+	}
+	unfinished := false
+	for _, plan := range stage.Spec.FailureInjection {
+		if !finalInjection(injectionRecord(stage, plan.ID)) {
+			unfinished = true
+			break
+		}
+	}
+	if !unfinished {
 		return nil
 	}
 	if stage.Status.GoRef == nil {
@@ -494,13 +499,8 @@ func (r *Runtime) finishInjections(ctx context.Context, parent *api.EvaluationRu
 		return err
 	}
 	for _, plan := range stage.Spec.FailureInjection {
-		exists := false
-		for _, record := range stage.Status.InjectionRecords {
-			if record.ID == plan.ID {
-				exists = true
-			}
-		}
-		if exists {
+		record := injectionRecord(stage, plan.ID)
+		if finalInjection(record) {
 			continue
 		}
 		key := evidenceKey(parent.UID, scope(stage.Spec.StageID)+"/injections/"+plan.ID+".json")
@@ -517,8 +517,64 @@ func (r *Runtime) finishInjections(ctx context.Context, parent *api.EvaluationRu
 			return fmt.Errorf("injection evidence identity mismatch")
 		}
 		saved.Record.EvidenceRef = reference
-		stage.Status.InjectionRecords = append(stage.Status.InjectionRecords, saved.Record)
+		if record == nil {
+			stage.Status.InjectionRecords = append(stage.Status.InjectionRecords, saved.Record)
+		} else {
+			*record = saved.Record
+		}
 		r.injectionVerdict(stage, saved.Record)
+	}
+	return nil
+}
+
+func injectionRecord(stage *api.EvaluationStage, id string) *api.FaultInjectionRecord {
+	for i := range stage.Status.InjectionRecords {
+		if stage.Status.InjectionRecords[i].ID == id {
+			return &stage.Status.InjectionRecords[i]
+		}
+	}
+	return nil
+}
+
+func finalInjection(record *api.FaultInjectionRecord) bool {
+	return record != nil && (record.Outcome == complete || record.Outcome == injectionInvalid || record.Outcome == injectionUnknown)
+}
+
+// Only already-requested effects are recovered here. Completion never authorizes
+// a new target selection or a second mutation.
+func (r *Runtime) recoverRequestedInjections(ctx context.Context, parent *api.EvaluationRun, stage *api.EvaluationStage) error {
+	var store ObjectStore
+	for i := range stage.Status.InjectionRecords {
+		record := &stage.Status.InjectionRecords[i]
+		if record.Outcome != injectionRequested {
+			continue
+		}
+		if store == nil {
+			var err error
+			store, err = r.Store(ctx, parent.Namespace, parent.Spec.EvidenceStore, parent.Status.FrozenConfig.Values)
+			if err != nil {
+				return err
+			}
+		}
+		key := evidenceKey(parent.UID, scope(stage.Spec.StageID)+"/injections/"+record.ID+".json")
+		var saved injectionEvidence
+		reference, err := readJSON(ctx, store, parent.Spec.EvidenceStore, key, &saved)
+		if errors.Is(err, evidencestore.ErrNotFound) {
+			saved = injectionEvidence{RunUID: parent.UID, StageUID: stage.UID, StageID: stage.Spec.StageID, Record: *record}
+			saved.Record.Outcome = injectionUnknown
+			saved.Record.Reason = api.EvaluationReasonRemoteEffectUnknown
+			saved.Record.EvidenceRef = nil
+			reference, err = writeJSON(ctx, store, parent.Spec.EvidenceStore, key, saved)
+		}
+		if err != nil {
+			return err
+		}
+		if saved.RunUID != parent.UID || saved.StageUID != stage.UID || saved.StageID != stage.Spec.StageID || saved.Record.ID != record.ID || !finalInjection(&saved.Record) {
+			return fmt.Errorf("injection evidence identity/outcome mismatch")
+		}
+		saved.Record.EvidenceRef = reference
+		*record = saved.Record
+		r.injectionVerdict(stage, *record)
 	}
 	return nil
 }
