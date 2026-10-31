@@ -479,7 +479,7 @@ CHILL 설치, 업그레이드와 제거는 Helm 또는 GitOps의 배포 경로�
 | DB-FR-46~49 (폐기) | 링크 모음, 준비 중 화면과 미지원 측정 일반 분기를 제거하되 실제 기능은 새 흐름에 유지하는 재설계 결정 |
 | DB-FR-53~54 | `internal/serving/httpapi/measurement_projections.go`의 안전한 목록·단건 투영과 두 CRD. PowerModeTransitionCost와 OperationCostMeasurement는 서로 다른 측정 계약이다. |
 | DB-FR-55 | `internal/serving/capacity.go`의 CapacityInput/CapacityRow/CapacityJudgment와 `internal/serving/httpapi/profiles.go`의 용량 조회, 현재 설정 대조 요구 |
-| DB-FR-66 | [실험 관리 SRS](../experiments/SRS.md) EXP-04, EXP-12, EXP-18 및 [실클러스터 평가 정의](../README.md#실클러스터-검증과-평가) |
+| DB-FR-66 | [실험 관리 SRS](../experiments/SRS.md) EXP-02, EXP-10, EXP-15 및 [실클러스터 평가 정의](../README.md#실클러스터-검증과-평가) |
 
 ## 9. 수용 검증 시나리오
 
