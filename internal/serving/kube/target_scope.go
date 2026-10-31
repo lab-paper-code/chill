@@ -170,7 +170,7 @@ func (c *SchedulerController) unstartedNoEffectRetirementLocked(target *serving.
 			return false
 		}
 	}
-	return retirement && (c.runtime == nil || !c.completedHandoffPresent(*target))
+	return retirement && (c.runtime == nil || !c.completedHandoffPresent(*target, c.targetWorkloadsLocked(*target)))
 }
 
 func positiveWorkloadScope(target serving.SchedulerCandidate, allowed []string) []string {

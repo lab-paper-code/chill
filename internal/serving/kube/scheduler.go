@@ -1,6 +1,7 @@
 package kube
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -1300,19 +1301,20 @@ func (c *SchedulerController) dependenciesReady(action serving.Action, target se
 			}
 			continue
 		}
-		route := slices.ContainsFunc(target.Actions, func(a serving.Action) bool {
+		route := slices.IndexFunc(target.Actions, func(a serving.Action) bool {
 			return a.ID == dep && a.Kind == operationRoute
 		})
-		if action.Kind != operationStop || !route || !c.completedHandoffPresent(target) {
+		if action.Kind != operationStop || route < 0 ||
+			!c.completedHandoffPresent(*cmp.Or(target.Actions[route].RouteTarget, &target), c.targetWorkloadsLocked(target)) {
 			return false
 		}
 	}
 	return true
 }
 
-func (c *SchedulerController) completedHandoffPresent(target serving.SchedulerCandidate) bool {
+func (c *SchedulerController) completedHandoffPresent(target serving.SchedulerCandidate, uids []string) bool {
 	physical := c.runtime.Instances()
-	selected := controlledTarget(Operation{Target: &target, WorkloadUIDs: c.targetWorkloadsLocked(target)})
+	selected := controlledTarget(Operation{Target: &target, WorkloadUIDs: uids})
 	if !c.routingTargetPresent(selected, c.state.Snapshot, physical, false) {
 		return false
 	}

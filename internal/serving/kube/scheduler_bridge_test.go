@@ -1,6 +1,7 @@
 package kube
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -69,6 +70,43 @@ func TestRequiredBridgeFailureFailsOwnerSCH26AC38(t *testing.T) {
 			}
 			if parent.action.Status != want {
 				t.Fatalf("bridge %s left parent %s, want %s", status, parent.action.Status, want)
+			}
+		})
+	}
+}
+
+func TestSkippedRequiredBridgeConsumesReadySubsetACKSCH51(t *testing.T) {
+	for _, receipt := range []bool{true, false} {
+		t.Run(map[bool]string{true: "acknowledged", false: "no-ack"}[receipt], func(t *testing.T) {
+			c, goal, _ := acknowledgedHandoffFixture(t)
+			c.ctx = context.Background()
+			stage := *c.runs["acknowledged-route"].result.Operation.Target
+			stage.ID = "independent-bridge"
+			uid := stage.Instances[0].WorkloadUID
+			c.state.Snapshot.Routing = stage.Routing
+			future := goal.Instances[0]
+			future.ID, future.Ready = "future-after-blocker-stop", false
+			goal.Instances = []serving.SchedulerInstance{future}
+			goal.Routing = map[string]map[string]int32{uid: {future.ID: 1}}
+			bridge := serving.Action{ID: "required-bridge", Kind: operationRoute, RouteTarget: &stage, DependsOn: []string{"prepare-bridge"}}
+			stop := serving.Action{ID: "stop-blocker", Kind: operationStop, Instance: "old-source", DependsOn: []string{bridge.ID}}
+			goal.Actions = []serving.Action{bridge, stop}
+			c.runs["prepare-bridge"] = &actionRun{action: serving.Action{Status: nativeOperationComplete}}
+			if !receipt {
+				delete(c.runs, "acknowledged-route")
+			}
+			installTestTransition(c, &goal)
+			config := SchedulerControllerConfig{OnAction: func(OperationResult) error { return context.Canceled }}
+			c.launchTargetLocked(goal, config)
+			c.wg.Wait()
+			if c.runs[bridge.ID] != nil {
+				t.Fatal("unchanged bridge manufactured a route run")
+			}
+			if !c.runs[transitionRunKind+"/"+goal.ID].noEffectRoutes[bridge.ID] {
+				t.Fatal("bridge was not skipped at the execution boundary")
+			}
+			if (c.runs[stop.ID] != nil) != receipt {
+				t.Fatalf("stop launch=%t, existing ACK=%t", c.runs[stop.ID] != nil, receipt)
 			}
 		})
 	}
