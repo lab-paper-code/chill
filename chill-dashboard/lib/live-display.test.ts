@@ -157,7 +157,7 @@ test("planned stop is normal only with no declared instances, demand, or autonom
   assert.match(boardVerdict({...input,failed:1}).label,/^이상:/)
   assert.notEqual(boardVerdict({...input,declared:1}).label,"정상: 계획된 정지")
   assert.notEqual(boardVerdict({...input,off:1}).label,"정상: 계획된 정지")
-  assert.match(boardVerdict({...input,gaps:1}).reason,/관측 공백/)
+  assert.equal(boardVerdict({...input,gaps:1}).label,"정상: 계획된 정지")
 })
 
 test("latency uses the exact SLO percentile and retained events outlive the new-event window",()=>{
@@ -171,10 +171,10 @@ test("latency uses the exact SLO percentile and retained events outlive the new-
   assert.equal(retainedEvents([...Array(35)].map((_,seq)=>({...event,seq})),now).length,30)
   assert.equal(retainedEvents([{...event,decision:{...event.decision,state:"Keep"}}],now).length,0)
 })
-test("idle model grouping labels name-derived nodes instead of fabricating placement",()=>{
+test("idle model grouping never infers placement from service names",()=>{
   const snapshot={workloads:[],instances:[],nodes:[{uid:"n",name:"edge"}]} as unknown as LiveSnapshot
   const groups=idleGroups(snapshot,[{...workload,name:"edge-model"},{...workload,uid:"b",name:"edge-other"}])
   assert.equal(groups.length,1)
-  assert.equal(groups[0].device,"edge (이름 기준)")
+  assert.equal(groups[0].device,"배치 없음")
   assert.equal(groups[0].workloads.length,2)
 })

@@ -94,10 +94,9 @@ export function servicePriority(workload:LiveWorkload,metric:LiveMetric|undefine
   if (!metric || metric.received>0 || (terminalCount(metric)??0)>0) return 4
   return 5
 }
-export function boardVerdict({fresh,terminals,failed,sloMisses,queued,changes,delayed,serving,off,total,admissionBlocked,received=0,declared=serving,unserved=0,gaps=0}:{fresh:boolean;terminals:number|undefined;failed:number|undefined;sloMisses:number;queued:number;changes:number;delayed:number;serving:number;off:number;total:number;admissionBlocked:boolean;received?:number;declared?:number;unserved?:number;gaps?:number}) {
+export function boardVerdict({fresh,terminals,failed,sloMisses,queued,changes,delayed,serving,off,total,admissionBlocked,received=0,declared=serving,unserved=0}:{fresh:boolean;terminals:number|undefined;failed:number|undefined;sloMisses:number;queued:number;changes:number;delayed:number;serving:number;off:number;total:number;admissionBlocked:boolean;received?:number;declared?:number;unserved?:number;gaps?:number}) {
   if (!fresh || terminals==null) return {label:"데이터 끊김",tone:"unknown",reason:"최신 관측을 기다려요. 마지막 수치를 현재 상태로 판단하지 마세요"}
   if ((failed??0)>0 || admissionBlocked || unserved>0 || (!serving&&(received>0||queued>0))) return {label:"이상: 요청 처리 확인 필요",tone:"danger",reason:`실패 ${failed??0}건 / 유입 있으나 서빙 없음 ${unserved}개 / 접수 거절 ${admissionBlocked?"있음":"없음"}. 서비스 상세에서 확인하세요`}
-  if (gaps>0) return {label:"관측 공백: 판정 보류",tone:"unknown",reason:`관측 공백 ${gaps}건이 있어 사건 없음이나 정상으로 단정하지 않아요. 관측 품질과 시각을 확인하세요`}
   if (!serving && total>0 && off===total && declared===0 && received===0 && queued===0 && changes===0 && delayed===0) return {label:"정상: 계획된 정지",tone:"healthy",reason:`자동제어 꺼짐 ${off}/${total} / 선언 인스턴스 0 / 유입 0. 요청 처리 없이 대기 중이에요`}
   if (!serving) return {label:"이상: 서빙 준비 확인",tone:"warning",reason:`서빙 인스턴스 0 / 선언 ${declared}개 / 자동제어 꺼짐 ${off}/${total}. 계획된 정지 조건과 다르므로 구성·변경을 확인하세요`}
   if (sloMisses>0) return {label:"SLO 위반",tone:"danger",reason:`목표 미달 서비스 ${sloMisses}개를 확인하세요`}
@@ -156,9 +155,7 @@ export function idleGroups(snapshot:LiveSnapshot,workloads:LiveWorkload[]) {
   const groups=new Map<string,{device:string;model:string;workloads:LiveWorkload[]}>()
   for(const workload of workloads) {
     const devices=serviceDevices(snapshot,workload.uid)
-    // A name prefix is a display grouping, never evidence of placement.
-    const named=snapshot.nodes.find(node=>workload.name.startsWith(`${node.name}-`))
-    const device=devices.map(node=>node.name).join(", ") || (named?`${named.name} (이름 기준)`:"장치 미지정")
+    const device=devices.map(node=>node.name).join(", ") || "배치 없음"
     const key=JSON.stringify([device,workload.model])
     const group=groups.get(key)??{device,model:workload.model,workloads:[]}
     group.workloads.push(workload);groups.set(key,group)
