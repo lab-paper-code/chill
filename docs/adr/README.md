@@ -32,3 +32,4 @@ One line per ADR; decisions and consequences remain in each record.
 - [0029 Gateway Control/Data Plane Split](0029-gateway-control-data-plane-split.md) — superseded/removed @e8344b20
 - [0030 Observation Evidence API Streams](0030-observation-evidence-api-streams.md) — accepted
 - [0031 Configuration Ownership and Freezing Paths](0031-configuration-ownership-and-freezing.md) — accepted
+- [0032 Experiment Execution Boundary](0032-experiment-execution-boundary.md) — proposed
