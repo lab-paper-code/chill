@@ -2372,6 +2372,7 @@ class CPO:
         save(folder/'caller.json',{'at':now(),'exitCode':run.returncode,'stdout':run.stdout,'stderr':run.stderr})
         if run.returncode: raise RuntimeError('Existing finite native mode realization failed; no host power fallback')
     def cleanup_jobs(self,exclude=None):
+        self.residuals=[]
         paths=Path(self.c['evaluation']['stageFolder']).glob('created-*.json') if self.c.get('evaluation', {}).get('stageFolder') else self.out.glob('*/created-*.json')
         for p in paths:
             if p.parent==exclude:continue
@@ -2379,9 +2380,13 @@ class CPO:
             j=load(p); name=j['metadata']['name']; uid=j['metadata']['uid']; phase=p.parent/'phase.json'
             stops=(load(phase).get('ownedProducerStops') or []) if phase.exists() else []
             if any(stop.get('name')==name and stop.get('uid')==uid and stop.get('stopped') is True for stop in stops):continue
-            actual=self.io.k(['get','job',name,'-o','json'])
-            if actual['metadata']['uid']!=uid: raise RuntimeError('Owned producer UID changed')
-            self.io.remove_job(name,uid)
+            try:
+                actual=self.io.k(['get','job',name,'-o','json'])
+                if actual['metadata']['uid']!=uid: raise RuntimeError('Owned producer UID changed')
+                self.io.remove_job(name,uid)
+            except Exception as error:
+                self.residuals.append({'kind':'Job','name':name,'uid':uid,'reason':str(error)})
+                raise
             if phase.exists():
                 record=load(phase);record.setdefault('ownedProducerStops',[]).append({'name':name,'uid':uid,'stopped':True});save(phase,record)
     def factor_restore(self):

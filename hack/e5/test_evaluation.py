@@ -22,6 +22,19 @@ NAMES=['image-classification-tight-slo','plc-anomaly','smolvlm2-vqa']
 
 
 class AdapterTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.environment_dir=tempfile.TemporaryDirectory()
+        root=Path(cls.environment_dir.name)
+        config={'paths':{'repository':str(evaluation.REPO),'ops':str(root),'campaign':str(root),'d2State':str(root)},'e5':{'operationalRecipe':str(root/'recipe.json'),'nodes':{},'plan':str(root/'plan')},'d2':{'repoBin':str(evaluation.REPO/'bin'),'apiBase':'https://offline.invalid','caFile':str(root/'ca'),'tokenFile':str(root/'token'),'kubectl':['kubectl'],'jobTemplate':str(root/'job'),'workloadUID':'offline','workloadName':'offline','nodes':[]}}
+        path=root/'environment.json';evaluation.save(path,config)
+        with patch.dict(os.environ,CHILL_EXPERIMENT_CONFIG=str(path)):
+            cls.e5=evaluation.module('adapter_test_e5',evaluation.HERE/'e5.py')
+            cls.native=evaluation.module('adapter_test_native',evaluation.HERE/'d2/native_mode_request.py')
+            cls.bind=evaluation.module('adapter_test_bind',evaluation.HERE/'d2/bind_before.py')
+    @classmethod
+    def tearDownClass(cls):
+        cls.environment_dir.cleanup()
     @patch.object(evaluation,'save')
     @patch.object(evaluation,'load',return_value={'spec':{'template':{'spec':{'containers':[{'name':'load','image':'load@sha256:test'}]}}}})
     def test_envelope_and_operational_boundary(self,unused_load,unused_save):
@@ -98,68 +111,60 @@ class AdapterTests(unittest.TestCase):
                 token.write_text(value);namespace['api'](client,'GET','/state')
             self.assertEqual(observed,['Bearer first','Bearer rotated'])
     def test_capacity_defaults_only_when_absent(self):
-        tree=ast.parse((Path(__file__).parent/'d2/bind_before.py').read_text())
-        nodes=[node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='capacity_settings' or isinstance(node,ast.Assign) and any(isinstance(target,ast.Name) and target.id=='CAPACITY_DEFAULTS' for target in node.targets)]
-        namespace={};exec(compile(ast.fix_missing_locations(ast.Module(body=nodes,type_ignores=[])),'capacity-defaults','exec'),namespace)
-        self.assertEqual(namespace['capacity_settings']({}),{'capacityGridSteps':20,'capacityBisectionWidth':.005,'capacityTailSamples':100})
+        self.assertEqual(self.bind.capacity_settings({}),{'capacityGridSteps':20,'capacityBisectionWidth':.005,'capacityTailSamples':100})
         original={'capacityGridSteps':4,'capacityBisectionWidth':None}
-        values=namespace['capacity_settings'](original)
+        values=self.bind.capacity_settings(original)
         self.assertEqual(values['capacityGridSteps'],4)
         self.assertIsNone(values['capacityBisectionWidth'])
         self.assertEqual(original,{'capacityGridSteps':4,'capacityBisectionWidth':None})
     def test_native_guard_excludes_only_exact_factor_job(self):
-        tree=ast.parse((Path(__file__).parent/'d2/native_mode_request.py').read_text())
-        function=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='active_jobs')
-        namespace={};exec(compile(ast.fix_missing_locations(ast.Module(body=[function],type_ignores=[])),'native-jobs','exec'),namespace)
+        active_jobs=self.native.active_jobs
         current={'name':'factor','uid':'job','runUID':'run','stageUID':'stage','stageID':'id'}
         job={'metadata':{'name':'factor','uid':'job','labels':{'edge.dacs.io/evaluation-run-uid':'run','edge.dacs.io/evaluation-stage':'id','edge.dacs.io/evaluation-step':'factor'},'ownerReferences':[{'kind':'EvaluationStage','uid':'stage','controller':True}]},'status':{'active':1}}
         other={'metadata':{'name':'other','uid':'other'},'status':{'active':1}}
-        self.assertEqual(namespace['active_jobs']([job,other],current),[other])
-        self.assertEqual(namespace['active_jobs']([job]),[job])
-        self.assertEqual(namespace['active_jobs']([job],current),[])
+        self.assertEqual(active_jobs([job,other],current),[other])
+        self.assertEqual(active_jobs([job]),[job])
+        self.assertEqual(active_jobs([job],current),[])
         changed=copy.deepcopy(job);changed['metadata']['uid']='replacement'
-        with self.assertRaises(RuntimeError): namespace['active_jobs']([changed],current)
+        with self.assertRaises(RuntimeError): active_jobs([changed],current)
         changed=copy.deepcopy(job);changed['metadata']['labels']['edge.dacs.io/evaluation-step']='stage'
-        with self.assertRaises(RuntimeError): namespace['active_jobs']([changed],current)
+        with self.assertRaises(RuntimeError): active_jobs([changed],current)
     def test_zero_load_go_precedes_decision_confirmation(self):
         import contextlib
         import io
-        from types import MethodType
-        tree=ast.parse((Path(__file__).parent/'e5.py').read_text())
-        cpo=next(node for node in tree.body if isinstance(node,ast.ClassDef) and node.name=='CPO')
-        run=next(node for node in cpo.body if isinstance(node,ast.FunctionDef) and node.name=='run')
-        idle=next(node for node in ast.walk(run) if isinstance(node,ast.If) and isinstance(node.test,ast.Name) and node.test.id=='released')
-        record=next(node for node in cpo.body if isinstance(node,ast.FunctionDef) and node.name=='record_go')
-        namespace={'save':evaluation.save};exec(compile(ast.fix_missing_locations(ast.Module(body=[record],type_ignores=[])),'record-go','exec'),namespace)
-        with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory);folder=root/'measured';folder.mkdir();control={'scaleDownHeadroomFraction':.25,'minimumDemand':{}}
+        with tempfile.TemporaryDirectory(dir=self.environment_dir.name) as directory:
+            root=Path(directory);folder=root/'measured';control={'scaleDownHeadroomFraction':.25,'minimumDemand':{}}
             harness=object.__new__(evaluation.Harness);harness.root=root;harness.execution={'runUID':'run','stageUID':'stage','stageID':'idle'};harness.prefix='experiments/run/stages/idle';harness.step='stage'
             harness.store=SimpleNamespace(put=lambda key,path:{'store':'store','key':key,'size':path.stat().st_size})
             harness.spec={'target':{},'control':control,'mode':'autonomous','loadGenerator':{'barrier':{'maxStartSkewNanos':0}}}
-            harness.e5=SimpleNamespace(module=lambda *args:SimpleNamespace(_time=lambda value:0))
-            controller=SimpleNamespace(c={'evaluation':{'enabled':True}},ws={},go_callback=harness.go,authorize_native_modes=lambda:None,put=lambda settings:settings,disk_boundary=lambda *args:None,d=SimpleNamespace(epoch=lambda value:0),api=lambda *args:{'state':{'decision':{'at':'after-GO','settings':control}}},state=lambda:{'snapshot':{}},settings=lambda:control)
-            controller.record_go=MethodType(namespace['record_go'],controller)
-            def run_idle():
-                phase={'starts':{},'status':'RUNNING'}
-                scope={'self':controller,'released':True,'targeted':True,'restored':{'fullSettings':{'autonomousWorkloads':['w']}},'phase':phase,'folder':folder,'jobs':[],'pods':{},'st':{'seconds':1},'now':lambda:'2026-11-01T00:00:00Z','time':SimpleNamespace(monotonic=lambda:0),'save':evaluation.save}
-                exec(compile(ast.fix_missing_locations(ast.Module(body=[idle],type_ignores=[])),'idle-go','exec'),scope)
-                controller.monitor(0,folder)
-            controller.run=run_idle
+            harness.e5=self.e5
+            controller=object.__new__(self.e5.CPO)
+            controller.c={'evaluation':{'stageFolder':str(folder),'execution':harness.execution}}
+            controller.b={'schedule':[{'id':'E5-0','rates':{},'seconds':0}],'sources':{}}
+            controller.a=SimpleNamespace(command='stage',stage='E5-0',mode='full',row_tag='')
+            controller.out=root;controller.ws={};controller.uids=[];controller.go_callback=harness.go
+            controller.tb={'setupSeconds':0,'drainSeconds':0,'flushSeconds':0}
+            controller.io=SimpleNamespace(k=lambda *args:{'items':[]},a=SimpleNamespace())
+            controller.d=SimpleNamespace(epoch=lambda value:self.e5.dt.datetime.fromisoformat(value).timestamp())
+            controller.check_token_lifetime=lambda *args:None;controller.check_power_observation=lambda:None
+            controller.static_placement=lambda:False;controller.settings=lambda:{'autonomousWorkloads':[],**control}
+            controller.disk_boundary=lambda *args:None;controller.sampler=lambda *args:[]
+            controller.state=lambda:{'snapshot':{}}
+            controller.api=lambda *args:{'state':{'decision':{'at':self.e5.now(),'settings':control}}}
+            controller.boundary=lambda target,side:evaluation.save(target/(side+'-state.json'),{'snapshot':{}})
+            controller.collect=lambda *args:None
             with patch.object(harness,'controller',return_value=controller),patch.object(harness,'check_target',return_value=[]),contextlib.redirect_stdout(io.StringIO()) as output:
                 harness.stage()
             self.assertIn('EVALUATION_GO store/experiments/run/stages/idle/go.json ',output.getvalue())
             self.assertEqual(evaluation.load(folder/'go.json')['producerRefs'],[])
             self.assertTrue((folder/'first-load-tick.json').exists())
     def test_summary_aggregates_memory_without_input_reads(self):
-        from collections import Counter
-        tree=ast.parse((Path(__file__).parent/'e5.py').read_text())
-        function=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='summarize')
         def unexpected(*args): raise AssertionError('Summary reread its inputs')
-        namespace={'load_binding':unexpected,'load':unexpected,'Counter':Counter,'now':lambda:'now','save':evaluation.save}
-        exec(compile(ast.fix_missing_locations(ast.Module(body=[function],type_ignores=[])),'memory-summary','exec'),namespace)
         values={'stages':[{'id':'id','kpis':{'status':'FAIL'}}],'results':{'id':{'measurement':{'verdict':'FAIL'}}},'physicalRestoration':{'status':'Complete'}}
-        with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory);summary=namespace['summarize'](None,root,evaluation=values)
+        with tempfile.TemporaryDirectory(dir=self.environment_dir.name) as directory:
+            root=Path(directory)
+            with patch.object(self.e5,'load',side_effect=unexpected),patch.object(self.e5,'load_binding',side_effect=unexpected):
+                summary=self.e5.summarize(None,root,evaluation=values)
             self.assertEqual(summary['status'],'FAIL')
             self.assertEqual(summary['rowJudgmentCounts'],{'FAIL':1})
             self.assertEqual(summary['physicalRestoration'],{'status':'Complete'})
@@ -177,35 +182,38 @@ class AdapterTests(unittest.TestCase):
             harness.execution={'runUID':'run','runName':'name'}
             plans=[{'id':'done','action':'delete-serving-pod','offsetSeconds':10},{'id':'missed','action':'uncordon','offsetSeconds':20}]
             harness.snapshot={'runSpec':{'stages':[{'id':'failed','failureInjection':plans},{'id':'never','failureInjection':plans[:1]}]},'initial':{'at':'start'},'bindings':{'failed':{}},'scenarios':{}}
-            complete={'execution':{'status':'Complete','reason':'ProcedureComplete'},'artifacts':[]}
+            complete={'execution':{'status':'Complete','reason':'ProcedureComplete'},'cleanup':{'status':'Complete','reason':'ProcedureComplete'},'artifacts':[]}
             evidence={'experiments/run/run/prepare/result.json':complete,'experiments/run/run/finish/result.json':dict(complete,cleanup={'status':'Failed','reason':'RestorationFailed'})}
             for step in ('factor','stage','judge','cleanup-jobs'):
                 evidence['experiments/run/stages/failed/'+step+'/result.json']=copy.deepcopy(complete)
             evidence['experiments/run/stages/failed/stage/result.json']['execution']={'status':'Failed','reason':'TargetUnavailable'}
             judge=evidence['experiments/run/stages/failed/judge/result.json']
             judge['measurement']={'verdict':'INVALID','reason':'InjectionInvalid'}
-            judge['artifacts']=[{'store':'store','key':'judge/artifacts/injection-records.json'}]
-            evidence['judge/artifacts/injection-records.json']={'plans':plans,'records':[{'record':{'id':'done','outcome':'Complete','actualOffsetSeconds':10.5}},{'record':{'id':'missed','outcome':'INVALID','reason':'InjectionInvalid'}}]}
-            residual={'kind':'Job','name':'leftover','reason':'DeleteFailed'}
-            evidence['experiments/run/run/finish/result.json']['cleanup']['residuals']=[residual]
-            evidence['experiments/run/stages/failed/finalizer.json']={'details':{'residualStateRef':{'store':'store','key':'residual.json'}}}
-            evidence['residual.json']={'record':{'nodeRef':{'name':'cordoned-node'},'reason':'RemoteEffectUnknown'}}
+            for record in ({'id':'done','outcome':'Complete','actualOffsetSeconds':10.5},{'id':'missed','outcome':'INVALID','reason':'InjectionInvalid'}):
+                evidence['experiments/run/stages/failed/injections/'+record['id']+'.json']={'runUID':'run','stageID':'failed','record':record}
+            failed_cleanup=self.cleanup_failure_result(run/'cleanup-fixture')
+            evidence['experiments/run/stages/failed/cleanup-jobs/result.json']=failed_cleanup
+            evidence['experiments/run/stages/failed/finalizer.json']={'details':{'jobRef':{'name':'residual-job'},'reason':'DeleteFailed'}}
             def get(ref,path):
                 if ref['key'] not in evidence: raise FileNotFoundError(ref['key'])
                 evaluation.save(path,evidence[ref['key']])
             harness.store=SimpleNamespace(name='store',get=get)
-            harness.e5=SimpleNamespace(summarize=lambda *args,**kw:{'status':'INVALID'})
+            harness.e5=self.e5
             tables=SimpleNamespace(render=lambda *args,**kw:'table')
             env=dict.fromkeys(('CHILL_EVIDENCE_BUCKET','CHILL_EVIDENCE_ENDPOINT','CHILL_EVIDENCE_REGION','AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY'),'test')
             temporary=evaluation.tempfile.TemporaryDirectory
-            with patch.object(evaluation,'module',return_value=tables),patch.dict(os.environ,env),patch.object(evaluation.tempfile,'TemporaryDirectory',side_effect=lambda **kw:temporary(dir=run)),patch.object(evaluation.subprocess,'run',return_value=SimpleNamespace(returncode=0)):
-                harness.publish()
-            summary=evaluation.load(run/'publication-summary.json');outcome=summary['outcome']
+            def publish():
+                with patch.object(evaluation,'module',return_value=tables),patch.dict(os.environ,env),patch.object(evaluation.tempfile,'TemporaryDirectory',side_effect=lambda **kw:temporary(dir=run)),patch.object(evaluation.subprocess,'run',return_value=SimpleNamespace(returncode=0)):
+                    harness.publish()
+                return evaluation.load(run/'publication-summary.json')
+            with patch.object(self.e5,'OPS',run):
+                summary=publish()
+            outcome=summary['outcome']
             self.assertEqual(summary['definition']['spec'],harness.snapshot['runSpec'])
             self.assertEqual(summary['stages'],[])
             self.assertEqual(outcome['execution'],{'status':'Failed','reason':'TargetUnavailable'})
             self.assertEqual(outcome['measurement']['verdict'],'INVALID')
-            self.assertEqual(outcome['cleanup'],{'status':'Failed','reason':'RestorationFailed','residuals':[residual,{'kind':'Node','name':'cordoned-node','reason':'RemoteEffectUnknown'}]})
+            self.assertEqual(outcome['cleanup'],{'status':'Failed','reason':'RestorationFailed','residuals':[{'kind':'Job','name':'producer','reason':'DeleteFailed'},{'kind':'Job','name':'residual-job','reason':'DeleteFailed'}]})
             failed,never=outcome['stages']
             self.assertEqual(failed['id'],'failed')
             self.assertEqual(failed['measurement'],judge['measurement'])
@@ -219,9 +227,22 @@ class AdapterTests(unittest.TestCase):
             self.assertIsNone(never['injections'][0]['actualOffsetSeconds'])
             self.assertEqual(failed['injections'][0]['outcome'],'Executed')
             self.assertEqual(failed['injections'][0]['reason'],'Complete')
+            evidence['experiments/run/run/finish/result.json']=copy.deepcopy(complete)
+            with patch.object(self.e5,'OPS',run):
+                self.assertEqual(publish()['outcome']['cleanup']['status'],'Failed')
+                evidence['experiments/run/stages/failed/cleanup-jobs/result.json']=copy.deepcopy(complete)
+                evidence['experiments/run/stages/never/cleanup-jobs/result.json']=copy.deepcopy(complete)
+                self.assertEqual(publish()['outcome']['cleanup']['status'],'Complete')
+                evidence['experiments/run/stages/failed/injections/done.json']['record'].update(outcome='Unknown',reason='RemoteEffectUnknown')
+                self.assertEqual(publish()['outcome']['cleanup']['reason'],'RemoteEffectUnknown')
+                del evidence['experiments/run/stages/failed/judge/result.json']
+                unjudged=publish()['outcome']
+                self.assertEqual(unjudged['measurement'],{'verdict':'NOT_EVALUATED','reason':'NotStarted'})
+                self.assertEqual(unjudged['stages'][0]['injections'][0]['reason'],'Unknown: RemoteEffectUnknown')
+                self.assertEqual(unjudged['stages'][0]['injections'][1]['reason'],'INVALID: InjectionInvalid')
     def test_target_identity_uses_every_running_image_digest(self):
         digest='sha256:'+'a'*64
-        target={'components':[{'name':'server','image':'registry:5000/server@'+digest,'sourceSHA':'source','resource':{'namespace':'test','kind':'Deployment','name':'server'}}]}
+        target={'components':[{'name':'server','image':'registry:5000/server:expected@'+digest,'sourceSHA':'source','resource':{'namespace':'test','kind':'Deployment','name':'server'}}]}
         deployment={'kind':'Deployment','metadata':{'uid':'deployment'},'spec':{'selector':{'matchLabels':{'app':'server'}},'template':{'spec':{'containers':[{'name':'server','image':'registry:5000/server:live'}]}}}}
         pod={'metadata':{'uid':'pod'},'status':{'conditions':[{'type':'Ready','status':'True'}],'containerStatuses':[{'name':'server','ready':True,'restartCount':0,'imageID':'docker-pullable://registry:5000/server@'+digest}]}}
         harness=object.__new__(evaluation.Harness)
@@ -239,7 +260,7 @@ class AdapterTests(unittest.TestCase):
     def test_finish_without_snapshot_records_no_control_effects(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);specdir=root/'spec';specdir.mkdir()
-            for name,value in [('spec',{}),('execution',{'runUID':'run','namespace':'test'}),('config',{})]: evaluation.save(specdir/(name+'.json'),value)
+            for name,value in [('spec',{}),('execution',{'runUID':'run','namespace':'test','prepareCompleted':False}),('config',{})]: evaluation.save(specdir/(name+'.json'),value)
             store=SimpleNamespace(name='store',put=lambda key,path:{'store':'store','key':key,'size':path.stat().st_size})
             harness=evaluation.Harness(root/'campaign/run',specdir,store)
             for initial in (None,{'settings':{'controls':{}},'state':{},'at':'start'}):
@@ -250,6 +271,82 @@ class AdapterTests(unittest.TestCase):
                 self.assertEqual(record['execution'],{'status':'Complete','reason':'NoControlEffects'})
                 self.assertEqual(record['cleanup'],record['execution'])
                 self.assertEqual(request.call_count,1 if initial else 0)
+    def test_unjudged_verdict_is_not_pass(self):
+        self.assertEqual(evaluation.verdict({'status':'NOT_EVALUATED','reason':'NotStarted'}),{'verdict':'NOT_EVALUATED','reason':'NotStarted'})
+    def test_completed_prepare_missing_snapshot_is_not_no_effects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);specdir=root/'spec';specdir.mkdir()
+            ref={'store':'store','key':'snapshot'}
+            for name,value in [('spec',{}),('execution',{'runUID':'run','namespace':'test','prepareCompleted':True,'inputSnapshotRef':ref}),('config',{})]: evaluation.save(specdir/(name+'.json'),value)
+            store=SimpleNamespace(name='store',put=lambda key,path:{'store':'store','key':key,'size':path.stat().st_size})
+            harness=evaluation.Harness(root/'campaign/run',specdir,store)
+            snapshot={'schemaVersion':'evaluation-snapshot.v1alpha1','runUID':'run','environment':{},'bootstrapWorkload':{}}
+            evaluation.save(harness.inputs/'snapshot.json',snapshot)
+            def readable(reference,path):
+                self.assertEqual(reference,ref)
+                evaluation.save(path,snapshot)
+            store.get=readable
+            controller=SimpleNamespace(finish=unittest.mock.Mock())
+            with patch.object(evaluation,'environment'),patch.object(evaluation,'module',return_value=self.e5),patch.object(harness,'controller',return_value=controller):
+                self.assertEqual(harness.execute('finish'),0)
+            controller.finish.assert_called_once()
+            for unreadable in (lambda reference,path:(_ for _ in ()).throw(FileNotFoundError(reference['key'])),lambda reference,path:path.write_text('{broken')):
+                store.get=unreadable
+                self.assertEqual(harness.execute('finish'),1)
+                self.assertEqual(evaluation.load(harness.run/'results/run/finish.json')['execution'],{'status':'Failed','reason':'EvidenceUnreadable'})
+    def cleanup_failure_result(self,root):
+        specdir=root/'spec';specdir.mkdir(parents=True)
+        for name,value in [('spec',{}),('execution',{'runUID':'run','namespace':'test','stageID':'failed'}),('config',{})]: evaluation.save(specdir/(name+'.json'),value)
+        store=SimpleNamespace(name='store',put=lambda key,path:{'store':'store','key':key,'size':path.stat().st_size})
+        harness=evaluation.Harness(root/'campaign/run',specdir,store)
+        folder=harness.root/'measured';folder.mkdir(parents=True)
+        evaluation.save(folder/'created-load.json',{'metadata':{'name':'producer','uid':'exact-uid'}})
+        controller=object.__new__(self.e5.CPO)
+        controller.c={'evaluation':{'stageFolder':str(folder)}};controller.out=harness.root
+        controller.io=SimpleNamespace(k=lambda *args:{'metadata':{'uid':'exact-uid'}},remove_job=lambda *args:(_ for _ in ()).throw(RuntimeError('DeleteFailed')))
+        with patch.object(harness,'controller',return_value=controller),patch.object(harness,'open_snapshot'):
+            self.assertEqual(harness.execute('cleanup-jobs'),1)
+        return evaluation.load(harness.run/'results/stages/failed/cleanup-jobs.json')
+    def test_cleanup_delete_failure_records_exact_job_residual(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result=self.cleanup_failure_result(Path(directory))
+            self.assertEqual(result['execution']['status'],'Failed')
+            self.assertEqual(result['residuals'],[{'kind':'Job','name':'producer','uid':'exact-uid','reason':'DeleteFailed'}])
+    def publish_single_stage(self,overrides):
+        with tempfile.TemporaryDirectory() as directory:
+            run=Path(directory)/'campaign/run';run.mkdir(parents=True)
+            complete={'execution':{'status':'Complete','reason':'ProcedureComplete'},'cleanup':{'status':'Complete','reason':'ProcedureComplete'},'artifacts':[]}
+            records={scope+'/result.json':copy.deepcopy(complete) for scope in ('run/prepare','run/finish','stages/only/factor','stages/only/stage','stages/only/judge','stages/only/cleanup-jobs')}
+            records['stages/only/judge/result.json']['measurement']={'verdict':'PASS','reason':'MeasurementComplete'}
+            records.update(overrides)
+            def get(reference,path):
+                value=records.get(reference['key'][len('experiments/run/'):])
+                if value is None: raise FileNotFoundError(reference['key'])
+                evaluation.save(path,value)
+            harness=object.__new__(evaluation.Harness);harness.run=run;harness.config={};harness.e5=self.e5
+            harness.execution={'runUID':'run','runName':'name'}
+            harness.store=SimpleNamespace(name='store',get=get)
+            harness.snapshot={'runSpec':{'stages':[{'id':'only','failureInjection':[{'id':'fault','action':'delete-serving-pod','offsetSeconds':1}]}]},'initial':{'at':'start'},'bindings':{'only':{}},'scenarios':{}}
+            temporary=evaluation.tempfile.TemporaryDirectory
+            env=dict.fromkeys(('CHILL_EVIDENCE_BUCKET','CHILL_EVIDENCE_ENDPOINT','CHILL_EVIDENCE_REGION','AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY'),'test')
+            with patch.object(evaluation,'module',return_value=SimpleNamespace(render=lambda *args,**kw:'')),patch.dict(os.environ,env),patch.object(evaluation.tempfile,'TemporaryDirectory',side_effect=lambda **kw:temporary(dir=run)),patch.object(evaluation.subprocess,'run',return_value=SimpleNamespace(returncode=0)),patch.object(self.e5,'OPS',run):
+                harness.publish()
+            return evaluation.load(run/'publication-summary.json')['outcome']
+    def test_publish_unjudged_measurement_keeps_reason(self):
+        outcome=self.publish_single_stage({'stages/only/judge/result.json':None})
+        self.assertEqual(outcome['measurement'],{'verdict':'NOT_EVALUATED','reason':'NotStarted'})
+    def test_publish_cleanup_requires_child_completion_and_known_effects(self):
+        self.assertEqual(self.publish_single_stage({})['cleanup']['status'],'Complete')
+        self.assertEqual(self.publish_single_stage({'stages/only/cleanup-jobs/result.json':None})['cleanup']['status'],'Failed')
+        missing_cleanup={'execution':{'status':'Complete','reason':'ProcedureComplete'},'artifacts':[]}
+        self.assertEqual(self.publish_single_stage({'stages/only/cleanup-jobs/result.json':missing_cleanup})['cleanup']['status'],'Failed')
+        unknown={'runUID':'run','stageID':'only','record':{'id':'fault','outcome':'Unknown','reason':'RemoteEffectUnknown'}}
+        self.assertEqual(self.publish_single_stage({'stages/only/injections/fault.json':unknown})['cleanup']['reason'],'RemoteEffectUnknown')
+    def test_publish_reads_injection_evidence_without_judge(self):
+        record={'runUID':'run','stageID':'only','record':{'id':'fault','outcome':'Complete','actualOffsetSeconds':1.25}}
+        outcome=self.publish_single_stage({'stages/only/judge/result.json':None,'stages/only/injections/fault.json':record})
+        self.assertEqual(outcome['stages'][0]['injections'][0]['outcome'],'Executed')
+        self.assertEqual(outcome['stages'][0]['injections'][0]['actualOffsetSeconds'],1.25)
 
 
 def offline(binding,stage,environment):

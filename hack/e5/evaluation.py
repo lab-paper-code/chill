@@ -157,7 +157,7 @@ def result_record(execution,step,started,status='Complete',reason='ProcedureComp
 def verdict(judgment):
     status=judgment['status'];failure=judgment.get('failureScenarioEvidence') or {}
     if status.startswith('INVALID') or failure.get('status')=='INVALID': return {'verdict':'INVALID','reason':'GeneratorInvalid' if status=='INVALID_GENERATOR' else 'InjectionInvalid'}
-    if status in ('NOT_READY','INCOMPLETE','UNKNOWN') or failure.get('status')=='UNMEASURED': return {'verdict':'NOT_EVALUATED','reason':'ObservationUnavailable'}
+    if status in ('NOT_EVALUATED','NOT_READY','INCOMPLETE','UNKNOWN') or failure.get('status')=='UNMEASURED': return {'verdict':'NOT_EVALUATED','reason':judgment.get('reason') or 'ObservationUnavailable'}
     return {'verdict':'FAIL' if status=='FAIL' else 'PASS','reason':'SLOFailed' if status=='FAIL' else 'MeasurementComplete'}
 
 
@@ -280,7 +280,7 @@ class Harness:
             resource=component['resource'];obj=kubectl(resource['namespace'],'get',resource['kind'],resource['name'])
             podspec=obj['spec'].get('template',{}).get('spec',obj['spec'])
             expected_digest=component['image'].split('@')[-1]
-            repository=component['image'].split('@')[0]
+            repository=re.sub(r':[^/:]+$','',component['image'].split('@')[0])
             container_names={c['name'] for c in podspec['containers'] if re.sub(r':[^/:]+$','',c['image'].split('@')[0])==repository}
             labels=obj['metadata'].get('labels',{});annotations=obj['metadata'].get('annotations',{})
             source=labels.get('org.opencontainers.image.revision',annotations.get('org.opencontainers.image.revision'))
@@ -300,10 +300,20 @@ class Harness:
         return identities
     def open_snapshot(self):
         path=self.inputs/'snapshot.json'
-        if not path.exists(): self.store.get(self.spec['inputSnapshotRef'],path)
-        self.snapshot=load(path)
-        if self.snapshot.get('schemaVersion')!='evaluation-snapshot.v1alpha1' or self.snapshot.get('runUID')!=self.execution['runUID']:
-            raise ValueError('FrozenInputInvalid: input snapshot execution identity')
+        reference=self.execution.get('inputSnapshotRef') or self.spec.get('inputSnapshotRef')
+        if self.step=='finish' and self.execution.get('prepareCompleted') is True:
+            try:
+                if not reference: raise ValueError('missing snapshot reference')
+                self.store.get(reference,path)
+            except Exception as error: raise RuntimeError('EvidenceUnreadable: '+str(error)) from error
+        elif not path.exists(): self.store.get(reference,path)
+        try:
+            self.snapshot=load(path)
+            if self.snapshot.get('schemaVersion')!='evaluation-snapshot.v1alpha1' or self.snapshot.get('runUID')!=self.execution['runUID']:
+                raise ValueError('FrozenInputInvalid: input snapshot execution identity')
+        except Exception as error:
+            if self.step=='finish': raise RuntimeError('EvidenceUnreadable: '+str(error)) from error
+            raise
         if self.execution.get('stageID'):
             template=next(stage for stage in self.snapshot['runSpec']['stages'] if stage['id']==self.execution['stageID'])
             expected={**{key:self.snapshot['runSpec'][key] for key in ('target','harness','loadGenerator','powerMeasurement','control','judgment','evidenceStore')},**template}
@@ -381,14 +391,17 @@ class Harness:
             record=original['record'];path=self.root/('injection-'+plan['id']+'.json')
             events.append({'kind':plan['action'],'atUTC':record.get('requestedAt',record['scheduledAt']),'exitCode':0 if record.get('outcome')=='Complete' else 1,'podUID':record.get('podRef',{}).get('uid'),'nodeUID':record.get('nodeRef',{}).get('uid'),'commandRef':str(path),'responseRef':str(path)})
         save(folder/'failure-events.json',{'stage':self.spec['row'],'selectionPolicy':'evaluation-controller-v1','plans':self.spec['failureInjection'],'records':records,'events':events})
-    def cleanup_jobs(self): self.controller().cleanup_jobs()
+    def cleanup_jobs(self):
+        controller=self.controller()
+        try: controller.cleanup_jobs()
+        finally: self.residuals=controller.residuals if hasattr(controller,'residuals') else []
     def finish(self):
-        if not (self.inputs/'snapshot.json').exists() and not self.spec.get('inputSnapshotRef'):
+        if self.execution.get('prepareCompleted') is False:
             initial_path=self.run/'initial.json'
             if not initial_path.exists() or api(self.config,'/api/v1/scheduler/settings')==load(initial_path)['settings']:
                 self.reason='NoControlEffects'
                 return
-            self.open_snapshot()
+            raise RuntimeError('ResidualState: scheduler settings changed before prepare completed')
         self.controller().finish()
     def publish(self):
         tables=module('evaluation_tables',HERE/'tables.py');stages=[];results={};artifacts=[];procedures={};actual_specs={};stage_outcomes=[]
@@ -417,23 +430,22 @@ class Harness:
                     procedures[sid][step]={'execution':{'status':'Failed','reason':'NotStarted'}}
             if (scope/'execution-spec.json').exists(): actual_specs[sid]=load(scope/'execution-spec.json')
             child=procedures[sid]
-            injection_path=self.run/('publish-injections-'+sid+'.json')
-            injection_ref=next((ref for ref in result['artifacts'] if ref['key'].endswith('/injection-records.json')),None)
-            injection_evidence={}
-            if injection_ref:
-                self.store.get(injection_ref,injection_path);injection_evidence=load(injection_path)
-            plans=injection_evidence.get('plans',template.get('failureInjection',[]))
-            records={value['record']['id']:value['record'] for value in injection_evidence.get('records',[])}
             injections=[]
-            for plan in plans:
-                record=records.get(plan['id'],{})
+            for plan in template.get('failureInjection',[]):
+                injection_path=self.run/('publish-injection-'+sid+'-'+plan['id']+'.json')
+                try:
+                    self.store.get({'store':self.store.name,'key':'experiments/'+self.execution['runUID']+'/stages/'+sid+'/injections/'+plan['id']+'.json'},injection_path)
+                    evidence=load(injection_path)
+                    if evidence['runUID']!=self.execution['runUID'] or evidence['stageID']!=sid: raise ValueError('FrozenInputInvalid: injection publication identity')
+                    record=evidence['record']
+                except FileNotFoundError: record={}
                 original=record.get('outcome','NotStarted')
                 injection_outcome={'Complete':'Executed','Executed':'Executed','Cancelled':'Cancelled','NotStarted':'Cancelled'}.get(original,'Invalid')
                 reason=record.get('reason') or original
-                if original!=injection_outcome and original not in reason: reason=original+': '+reason
+                if original!=injection_outcome and reason!=original: reason=original+': '+reason
                 injections.append({'id':plan['id'],'action':plan['action'],'outcome':injection_outcome,'reason':reason,'scheduledOffsetSeconds':plan['offsetSeconds'],'actualOffsetSeconds':record.get('actualOffsetSeconds')})
             cleanup=child['cleanup-jobs']
-            stage_outcomes.append({'id':sid,'execution':execution_outcome(child.values()),'measurement':result.get('measurement',{'verdict':'NOT_EVALUATED','reason':'NotStarted'}),'cleanup':cleanup.get('cleanup',cleanup.get('execution',not_started)),'injections':injections})
+            stage_outcomes.append({'id':sid,'execution':execution_outcome(child.values()),'measurement':result.get('measurement',{'verdict':'NOT_EVALUATED','reason':'NotStarted'}),'cleanup':cleanup.get('cleanup',not_started),'injections':injections})
             phase_path=scope/'measured/phase.json'
             if not phase_path.exists(): continue
             phase=load(phase_path);judgment=tables.sections(scope/'measured/judgment.json')
@@ -468,9 +480,16 @@ class Harness:
         definitions={workload['uid']:workload for scenario in scenarios for workload in scenario['workloads']}
         definition={'schema':'evaluation-definition.v1alpha1','run':{'name':self.execution['runName'],'uid':self.execution['runUID']},'spec':self.snapshot['runSpec'],'loadScenarios':[{'name':s['ref']['name'],'uid':s['ref']['uid'],'spec':s['spec']} for s in scenarios],'workloads':list(definitions.values())}
         finish=procedures['finish']
-        outcome={'execution':execution_outcome([procedures['prepare'],finish]+[{'execution':stage['execution']} for stage in stage_outcomes]),'measurement':verdict(aggregated),'cleanup':finish.get('cleanup',finish.get('execution',not_started)),'stages':stage_outcomes}
+        cleanup_results=[finish]+[procedures[stage['id']]['cleanup-jobs'] for stage in stage_outcomes]
+        cleanup=execution_outcome([entry for value in cleanup_results for entry in ({'execution':value.get('cleanup',not_started)},value)])
+        if any('Unknown' in injection['reason'] or 'Requested' in injection['reason'] for stage in stage_outcomes for injection in stage['injections']):
+            cleanup={'status':'Failed','reason':'RemoteEffectUnknown'}
+        unjudged=next((stage['measurement'] for stage in stage_outcomes if stage['measurement']['verdict']=='NOT_EVALUATED'),None)
+        measured=verdict(aggregated)
+        if measured['verdict']=='NOT_EVALUATED' and unjudged: measured=unjudged
+        outcome={'execution':execution_outcome([procedures['prepare'],finish]+[{'execution':stage['execution']} for stage in stage_outcomes]),'measurement':measured,'cleanup':cleanup,'stages':stage_outcomes}
         residuals=[];seen_refs=set()
-        def collect_residuals(value,reason='ResidualState',resource_refs=False):
+        def collect_residuals(value,reason='ResidualState',resource_refs=True):
             if not isinstance(value,dict): return
             reason=value.get('reason') or reason
             for residual in value.get('residuals',[]):
@@ -512,12 +531,12 @@ class Harness:
             if result.returncode: raise RuntimeError('PublicationFailed: '+result.stderr.strip())
         self.outputs={'summary':{'store':self.store.name,'key':prefix+'summary.json','size':summary_path.stat().st_size}}
     def execute(self,step):
-        self.step=step;self.outputs={};self.measurement=None;self.reason='ProcedureComplete';started=now();status='Complete';reason='ProcedureComplete';artifacts=[]
+        self.step=step;self.outputs={};self.measurement=None;self.residuals=[];self.reason='ProcedureComplete';started=now();status='Complete';reason='ProcedureComplete';artifacts=[]
         before={path:(path.stat().st_mtime_ns,path.stat().st_size) for path in self.root.rglob('*') if path.is_file()}
         try:
             save(self.root/'execution-spec.json',self.spec)
             save(self.root/'execution.json',self.execution)
-            if step!='prepare' and not (step=='finish' and not (self.inputs/'snapshot.json').exists() and not self.spec.get('inputSnapshotRef')): self.open_snapshot()
+            if step!='prepare' and not (step=='finish' and self.execution.get('prepareCompleted') is False): self.open_snapshot()
             getattr(self,step.replace('-','_'))()
             reason=self.reason
         except Exception as error:
@@ -533,6 +552,7 @@ class Harness:
                 if self.scope=='run' and relative.startswith('stages/'): continue
                 artifacts.append(self.upload(path,self.prefix+'/'+step+'/artifacts/'+relative))
             record=result_record(self.execution,step,started,status,reason,self.measurement,artifacts,self.outputs)
+            if self.residuals: record['residuals']=self.residuals
             path=self.run/'results'/self.scope/(step+'.json');save(path,record)
             self.upload(path,self.prefix+'/'+step+'/result.json')
             return exit_code(record)
