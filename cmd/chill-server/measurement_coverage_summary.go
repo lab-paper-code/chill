@@ -111,7 +111,7 @@ func addCoverageActions(
 	}
 	for _, variant := range cell.Variants {
 		if slices.ContainsFunc(variant.Assessment.Reasons, func(reason operatorconsole.MeasurementReason) bool {
-			return reason.Code == "PreviousRuntime"
+			return reason.Code == coveragePreviousRuntime
 		}) {
 			continue
 		}

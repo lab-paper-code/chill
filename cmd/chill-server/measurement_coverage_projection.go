@@ -16,6 +16,8 @@ import (
 	"k8s.io/utils/ptr"
 )
 
+const coveragePreviousRuntime = "PreviousRuntime"
+
 func coverageCellID(model, class, path, mode string) string {
 	return strings.Join([]string{model, class, path, mode}, "/")
 }
@@ -411,12 +413,18 @@ func (p *coverageProjection) addRuns() {
 }
 
 func (p *coverageProjection) assessCell(cell *operatorconsole.MeasurementCoverageCell) {
+	declarationsRead := p.base.failures["compatibility"] == nil && len(p.base.compatibility.NodeRows) > 0 &&
+		!slices.ContainsFunc(p.base.compatibility.NodeRows, func(row operatorconsole.ModelCompatibilityView) bool {
+			return slices.ContainsFunc(row.Reasons, func(reason operatorconsole.ModelCompatibilityReason) bool {
+				return reason.Code == "CompatibilityReadFailed"
+			})
+		})
 	children := make([]operatorconsole.MeasurementAssessment, 0, len(cell.Variants))
 	var current *operatorconsole.MeasurementCoverageVariant
 	for i := range cell.Variants {
 		variant := &cell.Variants[i]
 		p.assessVariant(variant)
-		if condition, ok := variant.Condition.(profilederivation.CurvePlanSpec); ok {
+		if condition, ok := variant.Condition.(profilederivation.CurvePlanSpec); ok && declarationsRead {
 			declared := slices.ContainsFunc(p.base.compatibility.NodeRows,
 				func(row operatorconsole.ModelCompatibilityView) bool {
 					return condition.RuntimeImage != "" && row.Inputs.RuntimeDeclaration != nil &&
@@ -424,7 +432,7 @@ func (p *coverageProjection) assessCell(cell *operatorconsole.MeasurementCoverag
 				})
 			if !declared {
 				variant.Assessment.Reasons = append(variant.Assessment.Reasons, coverageReason(
-					"PreviousRuntime", "이전 runtime · 현재 실행 선언에 없어 셀 집계에서 제외",
+					coveragePreviousRuntime, "이전 runtime · 현재 실행 선언에 없어 셀 집계에서 제외",
 				))
 				continue
 			}

@@ -514,9 +514,12 @@ variant는 frozen Node/image/artifact/path/dataset/preprocessor UID·CPU/quota/a
 현재 차트 실행 선언의 runtime 이미지 목록은 기존 compatibility `NodeRows`의
 `inputs.runtimeDeclaration.image`를 재사용한다. profile condition의 `RuntimeImage`가
 이 목록에 없으면 variant와 결과 행은 보존하되 `assessment.reasons`의 `PreviousRuntime`
-(`이전 runtime`)으로 구분하고 셀 상태·부족 batch 조치 집계에서 제외한다.
+(`이전 runtime`)으로 구분하고 셀 상태·품질·부족 batch 조치 집계에서 제외한다.
 현재 runtime variant가 없는 셀은 이전 측정만으로 시도/완료를 추정하지 않고 미측정으로 본다.
 현재 runtime variant끼리의 판정과 batch 비합산 규칙, 저장 CR·증거 계약은 바꾸지 않는다.
+compatibility source 또는 Node별 선언 조회(`CompatibilityReadFailed`)가 실패하면
+이미지 부재를 확정하지 않는다. 이때 `PreviousRuntime`으로 분류하지 않고 기존 variant 판정과
+support Unknown을 보존한다. 상세에서는 이전 runtime variant도 계속 선택할 수 있다.
 failureSummary는 정확 request/Run identity·batch·code·exitCode·최대 160자 한 줄 원인·후속 relation만,
 긴 diff/log는 기존 상세에 둔다. 정확 후속만 verified-follow-up, 유사 조건은 related-candidate다.
 

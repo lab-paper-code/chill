@@ -201,6 +201,17 @@ test("quality reasons come from variant checks, count each cell once and never i
   assert.equal(coverageQuality({...cell,variants:[met]}).label,"기준 충족")
 })
 
+test("cell quality excludes previous runtime checks but retains explicit detail selection",()=>{
+  const pass={...cell.assessment,checklist:{...cell.assessment.checklist,criteriaMet:true,checks:[{code:"ActiveTrials",result:"pass" as const,message:"enough",sourceIds:[]}]}}
+  const current={id:"current",condition:{},assessment:pass,batchProgress:cell.batchProgress!,resultRows:[],requestIds:[],runIds:[],profileIds:[]}
+  const previous={...current,id:"previous",assessment:{...pass,reasons:[{code:"PreviousRuntime",message:"이전 runtime",sourceIds:[]}],checklist:{...pass.checklist,criteriaMet:false,checks:[{code:"ActiveTrials",result:"fail" as const,message:"few",sourceIds:[]}]}}}
+  const mixed={...cell,variants:[previous,current]}
+  assert.equal(coverageQuality(mixed).label,"기준 충족")
+  assert.deepEqual(coverageQualityReasons([mixed]),[])
+  assert.equal(coverageVariant(mixed,"previous"),previous)
+  assert.equal(coverageQuality({...cell,variants:[previous]}).label,"판정 불가")
+})
+
 test("only explicit failing checks fail quality; absent or unknown evidence stays undecidable",()=>{
   for(const checks of [[],[{code:"threshold",result:"unknown" as const,message:"허용 기준 미제공",sourceIds:[]}]]) {
     assert.equal(coverageQuality({...cell,assessment:{...cell.assessment,checklist:{...cell.assessment.checklist,criteriaMet:false,checks}}}).label,"판정 불가")

@@ -227,10 +227,49 @@ func TestCoverageCountsOnlyDeclaredRuntimeVariants(t *testing.T) {
 			if test.images[0] == "old" {
 				found := false
 				for _, reason := range cell.Variants[0].Assessment.Reasons {
-					found = found || reason.Code == "PreviousRuntime"
+					found = found || reason.Code == coveragePreviousRuntime
 				}
 				if !found {
 					t.Fatal("previous runtime variant is not labelled")
+				}
+			}
+		})
+	}
+}
+
+func TestCoverageUnreadDeclarationsDoNotMarkPreviousRuntime(t *testing.T) {
+	for _, failure := range []string{"CompatibilityReadFailed", "source unavailable"} {
+		t.Run(failure, func(t *testing.T) {
+			base := &measurementCoverageBase{
+				failures: map[string]error{},
+				compatibility: operatorconsole.ModelCompatibilityMatrixView{
+					NodeRows: []operatorconsole.ModelCompatibilityView{{
+						Reasons: []operatorconsole.ModelCompatibilityReason{{Code: "CompatibilityReadFailed"}},
+					}},
+				},
+			}
+			if failure == "source unavailable" {
+				base.failures["compatibility"] = assertCoverageError{}
+				base.compatibility.NodeRows = nil
+			}
+			cell := operatorconsole.MeasurementCoverageCell{
+				Support: operatorconsole.MeasurementSupport{Verdict: "Unknown"},
+				Variants: []operatorconsole.MeasurementCoverageVariant{{
+					Condition:  profilederivation.CurvePlanSpec{RuntimeImage: "retained"},
+					ProfileIDs: []string{"profile"},
+					BatchProgress: operatorconsole.MeasurementBatchProgress{
+						Target: []int{1, 2}, Measured: []int{1},
+					},
+				}},
+			}
+			p := coverageProjection{base: base}
+			p.assessCell(&cell)
+			if cell.Assessment.DisplayStatus != "insufficient" || cell.Support.Verdict != "Unknown" {
+				t.Fatalf("unread declarations replaced retained measurement: %+v", cell)
+			}
+			for _, reason := range cell.Variants[0].Assessment.Reasons {
+				if reason.Code == coveragePreviousRuntime {
+					t.Fatal("unread declarations cannot prove a previous runtime")
 				}
 			}
 		})
