@@ -467,3 +467,5 @@
 - 옛 runtime 셀(plan2·plan3)은 레거시로 삭제했다(백업 `O/deployB/failed-cells-20261101/`).
 - console 128Mi OOMKilled → 512Mi. console은 chill-server query·evidence·coverage 경로의 의존성이라 유지한다.
 - jetson-nano 5W 전환이 다시 멈췄다(23:05:38 applyStarted, SSH 무응답, 2회째). nano를 pause하고 5W 셀 7개를 보류했다. 재부팅 뒤 `journalctl -b -1`로 원인을 확인한다.
+
+- 2026-10-31T23:41:20Z — control-297 server·dashboard 배포 SHA `d2891691e227b86fc3ee83ee94a8542be9695ba2`: v2 리플레이(기준 `6d5aef39`, 후보 `83e07ecd`, 4 stage new bad ticks 0) PASS; 이후 internal/serving 변경 없음으로 재사용, 새 HEAD clean lint/test/integration/arch/Helm 및 dashboard 316 tests PASS. 두 Pod Ready·restart 0, dashboard·인증 scheduler state HTTP 200; chart drift 없음, profiler/runtime 미배포.
