@@ -132,3 +132,4 @@
 
 - 잔류 예약: E5-3 뒤 1개, E5-7 뒤 7개 — 사이클 7 대상(원형 `control-258-20261031/reservation-leftover-*`).
 - 남은 갭: E5-5 MNV(재급증 회복, 5,264), E5-7 MNV p95 상승(jetsonx CPU queue), 예약 잔류, E5-7 전력 증가.
+- 사이클 7 추출(`cards-r7/`): ① E5-7 Smol 복구 85.3→**42.3s**(완료 신호 전진 효과: action 간 대기 32.8→3.4s; cold prepare 26s 잔존). ② 예약 잔류 2유형 — (a) 늦게 Ready/ACK한 orangepi Pod의 exact UID/container가 prepare 효과 신원에 미등록 → 반환·R4b 불가(≥750s); (b) `changedWorkloads=[]`(무Ready UID 전부 생략)인데 부모 예약은 생성되고 child 없음 → 영구 잔류(7개, ≥910~1,550s) = 사이클 6 A의 회귀. ③ E5-5: h=.25 유효(120/120 tick), 저κ 40.4 차단하나 47.8→47.8 교체 허용; 복원은 fast 경로 24s(prepare 03.16→Ready 12.42→route 27.24)로 빨라졌지만 3배 재급증 첫 60s에 BU 5,106 — 과거 저부하 기준 headroom의 구조적 한계. ④ MNV p95 184ms tail의 65.5%는 nano(jetsonx 11.9%).
