@@ -116,7 +116,7 @@
   목표 양수 목적지 일부가 준비 중이어도 old serving 공급을 보존하면서 현재 serving이 없는 독립 Node의 새 Ready 공급을 추가할 수 있다. 새 목적지의 exact identity·native policy ACK와 기존 λ·q·slack·capacity row·목적지별 κ·전환 B/W·양수 weight 판정을 통과해야 하며, 같은 Node의 old/new κ를 합산하거나 현재 총 공급 κ를 줄여서는 안 된다. 확인 불능·용량 미달이면 current를 보존한다.
 - `SCH-21` 배칭 정책은 evidence·워크로드 SLO와 최초 CHILL 수신 이후 요청별 경과 시간을 적용할 정보를 제공한다. firstfloor 큐 진입 이전 소비 시간, 현재 큐 대기·진행 중 실행, 후보의 실행 시간과 `SCH-13`의 설정 여유를 포함해 요청별 추가 대기 여유를 판단한다.
 - `SCH-22` firstfloor 내부 배처가 현재 요청·큐·실행 상태에 CHILL 정책을 적용해 실제 배치 구성·추가 대기·실행 시점을 판단한다. CHILL은 정책과 요청별 정보를 제공하고 기존 firstfloor 큐·배처·모델 runner를 재사용한다.
-- `SCH-23` 실행 배치는 같은 워크로드/불변 정의의 호환 요청으로 구성한다. normal queue는 stable EDF, deferred queue는 normal 이후 FIFO로 실행한다. SLO 여유와 evidence 기반 energy gain으로 배치·대기를 정하고 모델의 deadlinePolicy(drop/keep/defer, 기본 keep)를 actual과 용량 계산 재생에 동일하게 적용한다. keep의 overdue/infeasible 선택은 현재 fillable minimum-C batch(동률은 큰 batch)이며 drop은 queued 요청 종료, defer는 후순위 이동이다. explicit timeout/cancel은 세 모드에 별도로 적용하며 active batch는 SLO만으로 취소하지 않는다.
+- `SCH-23` 실행 배치는 같은 워크로드/불변 정의의 호환 요청으로 구성한다. normal queue는 stable EDF, deferred queue는 normal 이후 FIFO로 실행한다. SLO 여유와 evidence 기반 energy gain으로 배치·대기를 정하고 모델의 deadlinePolicy(drop/keep/defer, 기본 keep)를 actual과 용량 계산 재생에 동일하게 적용한다. keep의 overdue/infeasible 및 deferred 선택은 현재 fillable·MaxBatch 이내 batch 중 항목당 p-quantile service 비용이 최소인 batch(동률은 큰 batch, `maximum_throughput`)이며 drop은 queued 요청 종료, defer는 후순위 이동이다. explicit timeout/cancel은 세 모드에 별도로 적용하며 active batch는 SLO만으로 취소하지 않는다.
 - `SCH-39` 배분 선언의 변경은 `route`(워크로드별 인스턴스 가중치 지정), `unroute`(선언을 유지한 배분 해제), `release`(선언 삭제 후 Pod 기본 표시 적용)를 구분하는 명시적 작업으로만 받는다. 각 작업은 실제 적용 ACK와 readback을 반환하고, 설정의 `staticRouting`은 읽기 전용으로 제공한다.
 
 ### 3.5 전환·실패와 재판단

@@ -128,15 +128,15 @@ func ChooseBatch(p Policy, requests []RequestState) BatchChoice {
 	r := requests[head]
 	choice := BatchChoice{RequestID: r.Context.RequestID, WorkloadUID: r.Context.WorkloadUID, Definition: r.Context.Definition}
 	count := compatibleCount(requests, head)
-	var available, fastest BatchProfile
-	fastestCost := math.Inf(1)
+	var available, throughput BatchProfile
+	perItemCost := math.Inf(1)
 	for _, b := range p.Batches {
 		if b.Size < 1 || b.Size > count || !allowedBatch(p, b.Size) {
 			continue
 		}
-		cost := serviceCost(b, r.Context.SLO.Percentile)
-		if fastest.Size == 0 || cost < fastestCost || cost == fastestCost && b.Size > fastest.Size {
-			fastest, fastestCost = b, cost
+		cost := serviceCost(b, r.Context.SLO.Percentile) / float64(b.Size)
+		if throughput.Size == 0 || cost < perItemCost || cost == perItemCost && b.Size > throughput.Size {
+			throughput, perItemCost = b, cost
 		}
 		if r.Phase != phaseDeferred && batchFeasible(requests, head, b) && (available.Size == 0 || b.EnergyPerItemJ < available.EnergyPerItemJ || b.EnergyPerItemJ == available.EnergyPerItemJ && b.Size > available.Size) {
 			available = b
@@ -150,7 +150,7 @@ func ChooseBatch(p Policy, requests []RequestState) BatchChoice {
 			}
 			return choice
 		}
-		choice.Size, choice.Reason = fastest.Size, "minimum_service"
+		choice.Size, choice.Reason = throughput.Size, "maximum_throughput"
 		return choice
 	}
 	choice.Size, choice.Reason = available.Size, "available_energy"
