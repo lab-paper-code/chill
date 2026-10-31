@@ -234,9 +234,10 @@ func TestBatchEnergyOptimizationReconcilerCompletesAcrossCollisionWaitRetryAndRe
 		batchcontroller.RunName(parent.Name, idle, 3),
 		batchcontroller.RunName(parent.Name, idle, 4),
 	}
-	if curves.calls != 2 || !runNamesEqual(curves.activeRuns, wantActiveNames) ||
+	if curves.calls != 1 || !runNamesEqual(curves.activeRuns, wantActiveNames) ||
 		!runNamesEqual(curves.idleRuns, wantIdleNames) || len(curves.batches) != 2 ||
-		curves.batches[0] != 1 || curves.batches[1] != 2 || curves.policy.TrialsPerBatch != 3 {
+		curves.batches[0] != 1 || curves.batches[1] != 2 || curves.policy.TrialsPerBatch != 3 ||
+		curves.policy.Version != "quick-energy-v2" {
 		t.Fatalf("curve derivation calls = %d, active=%d idle=%d batches=%v policy=%+v",
 			curves.calls, len(curves.activeRuns), len(curves.idleRuns), curves.batches, curves.policy)
 	}
