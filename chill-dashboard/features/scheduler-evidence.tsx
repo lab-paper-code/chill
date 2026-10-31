@@ -5,18 +5,39 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Line, LineChart, CartesianGrid, XAxis, YAxis } from "recharts"
 import { useChillQuery } from "@/lib/client"
-import type { ObservationResult, SchedulerCandidate, SchedulerObservation, SchedulerObservationPage, SchedulerView } from "@/lib/read-types"
+import type { ObservationResult, SchedulerCandidate, SchedulerObservation, SchedulerObservationPage, SchedulerObservationSummaryPage, SchedulerView } from "@/lib/read-types"
 import { nanosToMilliseconds, parseSchedulerJSON } from "@/lib/scheduler"
 import { gapNotice } from "@/lib/date-time"
-import { readSchedulerRecord, schedulerRecordMatches, schedulerRecordParams, schedulerRecordPath, schedulerPageParams, type SchedulerRecordRef } from "@/lib/scheduler-history"
+import { readSchedulerRecord, schedulerRecordMatches, schedulerRecordParams, schedulerRecordPath, schedulerRecordRef, schedulerPageParams, type SchedulerRecordRef } from "@/lib/scheduler-history"
 import { DetailsDialog, QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/read-region"
 import { Screen, Rows, Row, RowDialog, Facts, Empty } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { HistoryControls, HistoryPaging, useSchedulerHistory, when } from "./scheduler-history"
-import { SnapshotDetails, CandidateDetails, judgmentLabels, PowerInterval } from "./scheduler"
+import { SnapshotDetails, CandidateDetails, judgmentLabels, actionKinds, actionNodeName, PowerInterval } from "./scheduler"
 import { SettingsSummary } from "./scheduler-settings"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
+
+export function SchedulerIntervalEvents({from,to}:{from:string;to:string}) {
+  const params=new URLSearchParams({from,to,view:"summary",filter:"decision-action",order:"asc",limit:"10"})
+  const query=useChillQuery<SchedulerObservationSummaryPage>(`v1/observations/scheduler?${params}`,{decoder:parseSchedulerJSON})
+  const historyParams=new URLSearchParams({from,to,filter:"decision-action",order:"asc"})
+  return <section className="space-y-3" aria-label="구간 판단·전환">
+    <QueryGate query={query}>{query.data&&<>
+      {query.data.gapUntil&&<p role="status">{gapNotice(query.data.gapUntil)}</p>}
+      {query.data.events?.length?<div className="overflow-x-auto"><table className="w-full text-sm">
+        <caption className="sr-only">구간 판단·전환 기록</caption>
+        <thead><tr>{["시각 (KST)","종류","대상"].map(heading=><th key={heading} scope="col" className="p-3 text-left">{heading}</th>)}</tr></thead>
+        <tbody>{query.data.events.slice(0,10).map((event,index)=>{
+          const ref=schedulerRecordRef(event,from,to,String(index))
+          const href=event.action?`/transitions/${encodeURIComponent(event.action.id)}?${schedulerRecordParams(ref)}&view=history`:`/scheduler/history?${schedulerRecordParams(ref)}`
+          return <tr key={ref.offset} className="border-t"><td className="whitespace-nowrap p-3"><Link className="underline underline-offset-4" href={href}>{when(event.at)}</Link></td><td className="p-3">{event.action?actionKinds[event.action.kind]??"변경 동작":`판단 · ${judgmentLabels[event.decision?.status??""]??"미확인"}`}</td><td className="break-all p-3">{event.action?actionNodeName(event.action.node):event.node?actionNodeName(event.node):"실행 그룹"}</td></tr>
+        })}</tbody>
+      </table></div>:<p role="status">판단·전환 기록 없음</p>}
+      <Link className="inline-block underline underline-offset-4" href={`/scheduler/history?${historyParams}`}>{query.data.nextCursor?"구간 기록 더 보기":"구간 기록 열기"}</Link>
+    </>}</QueryGate>
+  </section>
+}
 
 function RecordReturn({record}:{record:SchedulerRecordRef|null}) {
   return <p role="alert">고른 기록을 확인하지 못했어요. <Link href={`/scheduler/history?${record?new URLSearchParams({from:record.from,to:record.to}):""}`}>그 기간 기록으로 돌아가기</Link></p>
