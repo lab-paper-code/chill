@@ -1,0 +1,6 @@
+# BuildKit daemon config for the chill buildx builder. Without a cap BuildKit
+# keeps cache up to a share of the whole disk; every fast-deploy build then
+# grows it until the measurement disk guard trips.
+[worker.oci]
+  gc = true
+  maxUsedSpace = "20GB"

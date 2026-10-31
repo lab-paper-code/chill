@@ -396,13 +396,13 @@ docker-push-firstfloor: ## Push the native runtime image.
 
 .PHONY: docker-buildx-firstfloor
 docker-buildx-firstfloor: ## Build and push the native CPU runtime for selected platforms.
-	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER) --buildkitd-config hack/buildkitd.toml
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build $(FIRSTFLOOR_OUTPUT) --platform=$(PLATFORMS) -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_IMG) .
 
 .PHONY: docker-buildx-firstfloor-cuda
 docker-buildx-firstfloor-cuda: ## Build and push the amd64 CUDA runtime (RTX, driver >= 555).
-	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER) --buildkitd-config hack/buildkitd.toml
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build $(FIRSTFLOOR_OUTPUT) --platform=linux/amd64 -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_CUDA_IMG) \
 		--build-arg RUNTIME_IMAGE=$(FIRSTFLOOR_CUDA_BASE) --build-arg APT_PACKAGES="python3 python3-pip" \
@@ -410,7 +410,7 @@ docker-buildx-firstfloor-cuda: ## Build and push the amd64 CUDA runtime (RTX, dr
 
 .PHONY: docker-buildx-firstfloor-l4t-r36
 docker-buildx-firstfloor-l4t-r36: ## Build and push the JetPack 6 (L4T r36.4) CUDA runtime.
-	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER) --buildkitd-config hack/buildkitd.toml
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build $(FIRSTFLOOR_OUTPUT) --platform=linux/arm64 -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_L4T_R36_IMG) \
 		--build-arg RUNTIME_IMAGE=$(FIRSTFLOOR_L4T_R36_BASE) --build-arg APT_PACKAGES="python3 python3-pip" \
@@ -419,7 +419,7 @@ docker-buildx-firstfloor-l4t-r36: ## Build and push the JetPack 6 (L4T r36.4) CU
 
 .PHONY: docker-buildx-firstfloor-l4t-r32
 docker-buildx-firstfloor-l4t-r32: ## Build and push the JetPack 4.6 (L4T r32, Jetson Nano) CUDA runtime.
-	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER) --buildkitd-config hack/buildkitd.toml
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build $(FIRSTFLOOR_OUTPUT) --platform=linux/arm64 -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_L4T_R32_IMG) \
 		--build-arg RUNTIME_IMAGE=l4t-r32 --build-arg NUMPY_VERSION=1.24.4 \
@@ -428,7 +428,7 @@ docker-buildx-firstfloor-l4t-r32: ## Build and push the JetPack 4.6 (L4T r32, Je
 
 .PHONY: docker-buildx-firstfloor-l4t-r35
 docker-buildx-firstfloor-l4t-r35: ## Build and push the JetPack 5 (L4T r35.4) CUDA runtime.
-	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER) --buildkitd-config hack/buildkitd.toml
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build $(FIRSTFLOOR_OUTPUT) --platform=linux/arm64 -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_L4T_R35_IMG) \
 		--build-arg RUNTIME_IMAGE=l4t-r35 --build-arg NUMPY_VERSION=1.26.4 \
@@ -436,7 +436,7 @@ docker-buildx-firstfloor-l4t-r35: ## Build and push the JetPack 5 (L4T r35.4) CU
 
 .PHONY: docker-buildx-firstfloor-rknn
 docker-buildx-firstfloor-rknn: ## Build and push the arm64 RKNNLite runtime (host librknnrt).
-	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER) --buildkitd-config hack/buildkitd.toml
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build $(FIRSTFLOOR_OUTPUT) --platform=linux/arm64 -f build/docker/firstfloor.Dockerfile --tag $(FIRSTFLOOR_RKNN_IMG) \
 		--build-arg EXTRA_PACKAGES="$(FIRSTFLOOR_RKNN_PACKAGES)" .
@@ -498,49 +498,49 @@ docker-buildx: docker-buildx-operator ## Build and push the operator image for c
 
 .PHONY: docker-buildx-operator
 docker-buildx-operator: ## Build and push the operator image for cross-platform support.
-	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER) --buildkitd-config hack/buildkitd.toml
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/operator.Dockerfile --tag $(OPERATOR_IMG) .
 
 .PHONY: docker-buildx-node-agent
 docker-buildx-node-agent: ## Build and push the node-agent image for cross-platform support.
-	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER) --buildkitd-config hack/buildkitd.toml
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/node-agent.Dockerfile --tag $(NODE_AGENT_IMG) .
 
 .PHONY: docker-buildx-profiler
 docker-buildx-profiler: ## Build and push the Profiler image for cross-platform support.
-	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER) --buildkitd-config hack/buildkitd.toml
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/profiler.Dockerfile --tag $(PROFILER_IMG) .
 
 .PHONY: docker-buildx-console
 docker-buildx-console: ## Build and push the Console API image for cross-platform support.
-	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER) --buildkitd-config hack/buildkitd.toml
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/console.Dockerfile --tag $(CONSOLE_IMG) .
 
 .PHONY: docker-buildx-metric-observer
 docker-buildx-metric-observer: ## Build and push the MetricObserver image for cross-platform support.
-	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER) --buildkitd-config hack/buildkitd.toml
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/metric-observer.Dockerfile --tag $(METRIC_OBSERVER_IMG) .
 
 .PHONY: docker-buildx-workload-observer
 docker-buildx-workload-observer: ## Build and push the bounded WorkloadObserver helper image.
-	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER) --buildkitd-config hack/buildkitd.toml
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/workload-observer.Dockerfile --tag $(WORKLOAD_OBSERVER_IMG) .
 
 .PHONY: docker-buildx-chill-server
 docker-buildx-chill-server: ## Build and push the ChillServer image for cross-platform support.
-	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER) --buildkitd-config hack/buildkitd.toml
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/chill-server.Dockerfile --tag $(SERVING_ENTRYPOINT_IMG) .
 
 .PHONY: docker-buildx-dashboard
 docker-buildx-dashboard: ## Build and push the Dashboard image for cross-platform support.
-	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER)
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER) --buildkitd-config hack/buildkitd.toml
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/dashboard.Dockerfile --tag $(DASHBOARD_IMG) .
 
