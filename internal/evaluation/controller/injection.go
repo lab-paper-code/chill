@@ -24,6 +24,7 @@ import (
 // +kubebuilder:rbac:urls=/chill;/api/v1/scheduler/state;/api/v1/scheduler/settings;/api/v1/observations/load,verbs=get
 
 var errInjectionUpdated = errors.New("injection status persisted")
+var errInjectionSelection = errors.New("injection selection is invalid")
 var errInjectionExpired = errors.New("injection window expired before mutation")
 
 type servingInstance struct {
@@ -193,12 +194,12 @@ func (r *Runtime) injections(ctx context.Context, parent *api.EvaluationRun, sta
 		if !errors.Is(readErr, evidencestore.ErrNotFound) {
 			return readErr
 		}
-		return r.executeInjection(ctx, parent, stage, plan, record, scheduled, goEvidence.GoUTC.Time, store, key)
+		return r.executeInjection(ctx, parent, stage, plan, record, scheduled, store, key)
 	}
 	return nil
 }
 
-func (r *Runtime) executeInjection(ctx context.Context, parent *api.EvaluationRun, stage *api.EvaluationStage, plan api.FaultInjectionPlan, record *api.FaultInjectionRecord, scheduled, goTime time.Time, store ObjectStore, key string) error {
+func (r *Runtime) executeInjection(ctx context.Context, parent *api.EvaluationRun, stage *api.EvaluationStage, plan api.FaultInjectionPlan, record *api.FaultInjectionRecord, scheduled time.Time, store ObjectStore, key string) error {
 	v := parent.Status.FrozenConfig.Values
 	now := r.now()
 	var err error
@@ -215,38 +216,31 @@ func (r *Runtime) executeInjection(ctx context.Context, parent *api.EvaluationRu
 			return err
 		}
 		if err = r.selectInjection(ctx, parent, stage, plan, &evidence); err != nil {
+			if !errors.Is(err, errInjectionSelection) {
+				return err
+			}
 			evidence.Record.Outcome = injectionInvalid
 			evidence.Record.Reason = api.EvaluationReasonInjectionInvalid
 			evidence.Requests = append(evidence.Requests, map[string]any{"selectionError": err.Error()})
 		} else {
-			// Persist intent before sending a mutation. A restart never resends it.
-			before := stage.DeepCopy()
-			evidence.Record.Outcome = injectionRequested
-			at := r.now()
-			evidence.Record.RequestedAt = &at
-			offset := at.Sub(goTime).Seconds()
-			evidence.Record.ActualOffsetSeconds = &offset
-			stage.Status.InjectionRecords = append(stage.Status.InjectionRecords, evidence.Record)
-			if err = r.patchStatus(ctx, stage, before); err != nil {
-				return err
-			}
-			if _, err = r.activeParent(ctx, stage); err == nil {
-				err = r.applyInjection(ctx, parent, stage, plan, &evidence)
-			}
-			response := r.now()
-			evidence.Record.RespondedAt = &response
+			err = r.applyInjection(ctx, parent, stage, plan, &evidence)
 			if err != nil {
-				evidence.Record.Outcome = injectionUnknown
-				evidence.Record.Reason = api.EvaluationReasonRemoteEffectUnknown
-				if errors.Is(err, errInjectionExpired) && len(evidence.Requests) == 0 {
+				if len(evidence.Requests) == 0 {
+					if !errors.Is(err, errInjectionExpired) && !errors.Is(err, errInjectionSelection) {
+						return err
+					}
 					evidence.Record.Outcome = injectionInvalid
 					evidence.Record.Reason = api.EvaluationReasonInjectionInvalid
+				} else {
+					evidence.Record.Outcome = injectionUnknown
+					evidence.Record.Reason = api.EvaluationReasonRemoteEffectUnknown
 				}
 				evidence.Requests = append(evidence.Requests, map[string]any{"error": err.Error()})
 			} else {
 				evidence.Record.Outcome = complete
 				if plan.Action == actionUncordon {
-					evidence.Record.EffectObservedAt = &response
+					at := r.now()
+					evidence.Record.EffectObservedAt = &at
 				}
 			}
 		}
@@ -294,7 +288,7 @@ func (r *Runtime) selectInjection(ctx context.Context, parent *api.EvaluationRun
 				return nil
 			}
 		}
-		return fmt.Errorf("prior cordon node unavailable")
+		return fmt.Errorf("%w: prior cordon node unavailable", errInjectionSelection)
 	}
 	v := parent.Status.FrozenConfig.Values
 	state := &schedulerState{}
@@ -304,7 +298,7 @@ func (r *Runtime) selectInjection(ctx context.Context, parent *api.EvaluationRun
 		return err
 	}
 	if !state.fresh(r.now().Time, v) {
-		return fmt.Errorf("scheduler snapshot expired")
+		return fmt.Errorf("%w: scheduler snapshot expired", errInjectionSelection)
 	}
 	var settings struct {
 		ObservationWindowNanos int64 `json:"observationWindowNanos"`
@@ -313,7 +307,7 @@ func (r *Runtime) selectInjection(ctx context.Context, parent *api.EvaluationRun
 		return err
 	}
 	if settings.ObservationWindowNanos <= 0 {
-		return fmt.Errorf("observation window missing")
+		return fmt.Errorf("%w: observation window missing", errInjectionSelection)
 	}
 	from := state.Snapshot.At.Add(-time.Duration(settings.ObservationWindowNanos))
 	query := url.Values{"from": {from.Format(time.RFC3339Nano)}, "to": {state.Snapshot.At.Format(time.RFC3339Nano)}}
@@ -325,7 +319,7 @@ func (r *Runtime) selectInjection(ctx context.Context, parent *api.EvaluationRun
 	}
 	e.State, e.Load, e.Rejected = state, load, map[string]string{}
 	if !load.From.Equal(from) || !load.To.Equal(state.Snapshot.At) {
-		return fmt.Errorf("load window differs from scheduler snapshot")
+		return fmt.Errorf("%w: load window differs from scheduler snapshot", errInjectionSelection)
 	}
 	allowed := map[string]bool{}
 	for _, uid := range plan.Selection.WorkloadUIDs {
@@ -339,7 +333,7 @@ func (r *Runtime) selectInjection(ctx context.Context, parent *api.EvaluationRun
 			}
 		}
 		if excluded == "" {
-			return fmt.Errorf("different-node predecessor missing")
+			return fmt.Errorf("%w: different-node predecessor missing", errInjectionSelection)
 		}
 	}
 	nodes := map[string]types.UID{}
@@ -378,7 +372,7 @@ func (r *Runtime) selectInjection(ctx context.Context, parent *api.EvaluationRun
 		return a.ID < b.ID
 	})
 	if len(e.Candidates) == 0 {
-		return fmt.Errorf("no positive-route/assigned serving target")
+		return fmt.Errorf("%w: no positive-route/assigned serving target", errInjectionSelection)
 	}
 	target := e.Candidates[0]
 	e.Record.PodRef = &api.EvaluationObjectReference{Name: target.PodName, UID: target.PodUID}
@@ -393,7 +387,7 @@ func (r *Runtime) applyInjection(ctx context.Context, parent *api.EvaluationRun,
 		return err
 	}
 	if node.UID != e.Record.NodeRef.UID {
-		return fmt.Errorf("Node UID changed")
+		return fmt.Errorf("%w: Node UID changed", errInjectionSelection)
 	}
 	if plan.Action != actionUncordon {
 		pod := &corev1.Pod{}
@@ -401,22 +395,27 @@ func (r *Runtime) applyInjection(ctx context.Context, parent *api.EvaluationRun,
 			return err
 		}
 		if pod.UID != e.Record.PodRef.UID || pod.Spec.NodeName != node.Name {
-			return fmt.Errorf("Pod UID/node changed")
+			return fmt.Errorf("%w: Pod UID/node changed", errInjectionSelection)
 		}
 	}
 	if plan.Action == actionCordonDelete || plan.Action == actionUncordon {
 		before := node.DeepCopy()
 		node.Spec.Unschedulable = plan.Action == actionCordonDelete
 		if plan.Action == actionCordonDelete && before.Spec.Unschedulable {
-			return fmt.Errorf("node was already cordoned; cannot own uncordon")
+			return fmt.Errorf("%w: node was already cordoned; cannot own uncordon", errInjectionSelection)
 		}
 		if err := r.injectionReady(ctx, parent, stage, e); err != nil {
+			return err
+		}
+		if err := r.markInjectionRequest(ctx, stage, plan, e); err != nil {
 			return err
 		}
 		e.Requests = append(e.Requests, map[string]any{"method": "PATCH", "path": "/api/v1/nodes/" + node.Name, "body": map[string]any{"metadata": map[string]any{"uid": node.UID, "resourceVersion": before.ResourceVersion}, "spec": map[string]any{"unschedulable": node.Spec.Unschedulable}}})
 		if err := r.Client.Patch(ctx, node, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
 			return err
 		}
+		response := r.now()
+		e.Record.RespondedAt = &response
 		e.Requests[len(e.Requests)-1]["response"] = map[string]any{"uid": node.UID, "resourceVersion": node.ResourceVersion, "unschedulable": node.Spec.Unschedulable}
 	}
 	if plan.Action != actionUncordon {
@@ -425,15 +424,35 @@ func (r *Runtime) applyInjection(ctx context.Context, parent *api.EvaluationRun,
 		if err := r.injectionReady(ctx, parent, stage, e); err != nil {
 			return err
 		}
+		if len(e.Requests) == 0 {
+			if err := r.markInjectionRequest(ctx, stage, plan, e); err != nil {
+				return err
+			}
+		}
 		e.Requests = append(e.Requests, map[string]any{"method": "DELETE", "path": "/api/v1/namespaces/" + parent.Namespace + "/pods/" + pod.Name, "body": metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}})
 		if err := r.Client.Delete(ctx, pod, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil {
 			return err
 		}
+		response := r.now()
+		e.Record.RespondedAt = &response
 		e.Requests[len(e.Requests)-1]["response"] = "accepted"
 		// Accepted deletion is not proof of physical disappearance.
 		return nil
 	}
 	return nil
+}
+
+// Read/selection checks precede intent persistence; the next operation is the
+// actual mutation. A status conflict or a failed read never claims remote effects.
+func (r *Runtime) markInjectionRequest(ctx context.Context, stage *api.EvaluationStage, plan api.FaultInjectionPlan, e *injectionEvidence) error {
+	before := stage.DeepCopy()
+	at := r.now()
+	offset := at.Sub(e.Record.ScheduledAt.Time).Seconds() + plan.OffsetSeconds
+	e.Record.Outcome = injectionRequested
+	e.Record.RequestedAt = &at
+	e.Record.ActualOffsetSeconds = &offset
+	stage.Status.InjectionRecords = append(stage.Status.InjectionRecords, e.Record)
+	return r.patchStatus(ctx, stage, before)
 }
 
 func (r *Runtime) injectionReady(ctx context.Context, parent *api.EvaluationRun, stage *api.EvaluationStage, e *injectionEvidence) error {

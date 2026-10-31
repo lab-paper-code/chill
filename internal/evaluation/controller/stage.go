@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -131,22 +132,7 @@ func (r *StageReconciler) reconcileSteps(ctx context.Context, parent *api.Evalua
 		}
 		p = procedure(&stage.Status.Procedures, step)
 		stage.Status.CurrentProcedure = step
-		if step == api.EvaluationStepStage && p.JobRef != nil && !failed && !deleting {
-			if err := r.injections(ctx, parent, stage); err != nil {
-				if errors.Is(err, errParentPending) || errors.Is(err, errInjectionUpdated) {
-					return pending, nil
-				}
-				condition(&stage.Status.Conditions, stage.Generation, api.EvaluationConditionExecutionComplete, metav1.ConditionFalse, api.EvaluationReasonRemoteEffectUnknown, err.Error())
-				stage.Status.ResidualStateRef = stage.Status.GoRef
-				// Persist uncertain effects and never issue another injection.
-				for i := range stage.Status.InjectionRecords {
-					if stage.Status.InjectionRecords[i].Outcome == injectionRequested {
-						stage.Status.InjectionRecords[i].Outcome = injectionUnknown
-						stage.Status.InjectionRecords[i].Reason = api.EvaluationReasonRemoteEffectUnknown
-					}
-				}
-			}
-		}
+		hadJob := p.JobRef != nil
 		result, done, err := r.advance(ctx, parent, stage, step, p)
 		stage.Status.JobRef = p.JobRef
 		stage.Status.PodRef = p.PodRef
@@ -161,6 +147,19 @@ func (r *StageReconciler) reconcileSteps(ctx context.Context, parent *api.Evalua
 			condition(&stage.Status.Conditions, stage.Generation, api.EvaluationConditionExecutionComplete, metav1.ConditionFalse, reason(err), err.Error())
 			if step == api.EvaluationStepCleanupJobs {
 				condition(&stage.Status.Conditions, stage.Generation, api.EvaluationConditionStageCleanupComplete, metav1.ConditionFalse, reason(err), err.Error())
+			}
+		}
+		// Completion evidence wins over the wall clock: never inject after completion.
+		if err == nil && !done && step == api.EvaluationStepStage && hadJob && !failed && !deleting {
+			// Commit newly observed Job/Pod status before injection's own status patches.
+			if !equality.Semantic.DeepEqual(before.Status, stage.Status) {
+				return pending, r.patchStatus(ctx, stage, before)
+			}
+			if err := r.injections(ctx, parent, stage); err != nil {
+				if errors.Is(err, errParentPending) || errors.Is(err, errInjectionUpdated) {
+					return pending, nil
+				}
+				return ctrl.Result{}, err
 			}
 		}
 		if done && result != nil {

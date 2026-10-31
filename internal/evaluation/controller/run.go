@@ -22,6 +22,7 @@ import (
 
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=evaluationruns;evaluationstages;loadscenarios,verbs=get;list;watch
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=evaluationstages,verbs=create
+// +kubebuilder:rbac:groups=edge.dacs.io,resources=evaluationruns;evaluationstages,verbs=patch
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=evaluationruns/status;evaluationstages/status,verbs=get;patch;update
 // +kubebuilder:rbac:groups=edge.dacs.io,resources=evaluationruns/finalizers;evaluationstages/finalizers,verbs=update;patch
 // +kubebuilder:rbac:groups="",resources=configmaps;persistentvolumeclaims,verbs=get;list;watch;create
@@ -369,19 +370,11 @@ func (r *RunReconciler) workspace(ctx context.Context, run *api.EvaluationRun) e
 	if run.Status.InputSnapshotRef == nil {
 		return nil
 	}
-	store, e := r.Store(ctx, run.Namespace, run.Spec.EvidenceStore, run.Status.FrozenConfig.Values)
+	snapshotRef, e := jsonString(run.Status.InputSnapshotRef)
 	if e != nil {
 		return e
 	}
-	var snapshot json.RawMessage
-	loaded, e := readJSON(ctx, store, run.Status.InputSnapshotRef.Store, run.Status.InputSnapshotRef.Key, &snapshot)
-	if e != nil {
-		return e
-	}
-	if loaded.Size != run.Status.InputSnapshotRef.Size {
-		return fmt.Errorf("FrozenInputInvalid: snapshot size differs")
-	}
-	cm, e = r.ensureConfigMap(ctx, run, uidName(run.UID)+"-input", map[string]string{"snapshot.json": string(snapshot)})
+	cm, e = r.ensureConfigMap(ctx, run, uidName(run.UID)+"-input", map[string]string{"snapshot-ref.json": snapshotRef})
 	if e != nil {
 		return e
 	}
