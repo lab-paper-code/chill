@@ -84,6 +84,17 @@ const guardAvailable = true
 func reductionWorkloads(s serving.SchedulerSettings, snap serving.SchedulerSnapshot, rows []serving.CapacityRow, target serving.SchedulerCandidate) []string { return serving.SchedulerReductionWorkloads(s, snap, rows, target) }
 func reductionCommit(s serving.SchedulerSettings, snap serving.SchedulerSnapshot, rows []serving.CapacityRow, target serving.SchedulerCandidate, uids []string) string { return serving.SchedulerReductionCommit(s, snap, rows, target, uids) }
 ''')
+        if not any('func CapacityPlanningKappa(' in p.read_text() for p in (src / 'internal/serving').glob('*.go') if not p.name.endswith('_test.go')):
+            # Historical planners used policy κ directly; do not transplant the
+            # current safety envelope into the source used as a replay baseline.
+            (target / 'kappa_api.go').write_text('''package main
+import "github.com/lab-paper-code/chill/internal/serving"
+func planningKappa(in serving.CapacityInput, rows map[string]serving.CapacityRow) float64 {
+    row := rows[in.Key()]
+    if row.Kappa == nil || row.Status == serving.CapacityPending { return 0 }
+    return *row.Kappa
+}
+''')
         env = dict(os.environ, GOFLAGS='-buildvcs=false', GOMAXPROCS='2')
         with (work / 'build.log').open('w') as log:
             run(['flock', '/tmp/chill-gotest.lock', 'nice', '-n', '19', 'go', 'build', '-p', '1', '-o', str(work / 'kappa'), './hack/kappa'], cwd=src, env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -227,7 +238,7 @@ def markdown(report):
             text.append('New bad ticks (%s / %s): `%s`' % (r['source'], r['stage'], json.dumps(r['newBadTicks'], ensure_ascii=False)))
     text += ['', 'Definitions: keep-short = demand > current Ready positive-route κ; supply increase = target positive-route κ > keep κ (per workload).',
              'Bad tick = keep-short recorded supply increase changed to Keep/no target, OR guard rejects a recorded supply increase at admission or any of the next N ticks; count each origin once.',
-             'Demand = max(recorded minimumDemand, snapshot.scaleDown.rate). κ is the sum of built non-pending row κ for positive integer routes, not measured throughput or a complete backlog/SLO judgment.',
+             'Demand = max(recorded minimumDemand, snapshot.scaleDown.rate). κ sums the source planner’s capacity for positive integer routes: its batch-1 safety envelope when available, otherwise historical policy row κ; not measured throughput or a complete backlog/SLO judgment.',
              'Compare includes route weights and wait limits; disagreements alone do not fail the gate. Guard reasons are the unmodified server API result, not an inferred internal predicate.',
              'Catalog references are decoded by the archived server decoder; omitted arrivals are restored from real request rows (final supersedes assigned; native supplements excluded). Population mismatches expose final-state versus original capture differences.',
              'Targets and reduction workload scope stay frozen at admission; future snapshots are recorded observations, not a closed-loop simulator or completion callbacks.',

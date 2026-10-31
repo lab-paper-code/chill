@@ -279,6 +279,8 @@ python3 -B hack/e5/replay-gate.py --source HEAD \
 제품 planner/guard는 해당 소스 그대로 빌드한다. 캐시는 소스·tree patch·계측기·
 Go 버전/플랫폼 해시로 구분한다. guard가 없던 역사적 소스는
 `guardAvailable=false`/`GuardNotPresentInSource`로 명시하며 현 guard를 이식하지 않는다.
+`CapacityPlanningKappa`가 있는 소스는 실제 바인딩을, 없는 역사적 소스는
+`kappa_api.go`의 정책 κ 바인딩을 사용한다. 현 batch-1 envelope를 기준 소스에 이식하지 않는다.
 입력 파일 SHA256, 빌드 provenance, 실행 시간, 모든 tick의 compare/guard JSONL과
 요약 JSON/MD를 보존한다. 종료값은 PASS=0, 문턱 초과=2, 실행 오류=1이다.
 출력 디렉터리는 새 경로여야 하며, 실패/오류도 배포 불가다.
@@ -299,7 +301,8 @@ native supplement 제외). 창은 `[observationEnd-observationWindow, observatio
 compare JSONL의 recordedCounts/replayCounts 및 populationMismatch를 함께 보존한다.
 재구성 요청의 final 상태는 capture 순간과 다를 수 있으므로 mismatch는 감춰서는 안 된다.
 수요는 max(minimumDemand, snapshot.scaleDown.rate), 공급은 Ready positive-route
-인스턴스의 built row κ 합이다(target의 준비 전 인스턴스도 예상 공급에 포함).
+인스턴스에 해당 소스의 계획용 κ를 적용한 합이다(target의 준비 전 인스턴스도 예상 공급에 포함).
+batch-1 안전 envelope가 있는 소스는 κsafe를, 도입 전 소스는 정책 행의 κ를 그대로 쓴다.
 이는 backlog/SLO 전체 판정이나 실측 처리율이 아니며 guard의 내부 거부 predicate를
 추측하지 않는다. 기록된 stage의 setup/teardown을 포함한 모든 decision을 사용한다.
 다음 tick 검증은 동결 target+기록 관측의 반사실 진단이며 completion callback,
