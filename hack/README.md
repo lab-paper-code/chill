@@ -254,6 +254,61 @@ list and validate the render with
 
 `go run ./hack/kappa -mode slo -scheduler <GET /api/v1/scheduler dump> -workloads <names>` proposes an SLO target per named Workload: per Node the lowest p99 b1 latency (execution + dispatch occupancy + `completionMarginMS`), then the target that passes at least half the Nodes and fails the two slowest, at the widest latency gap. It builds the Workload's rows at that target with p95 and p99 and prints the largest kappa per Node, the kappa sum, whether the rule holds on kappa, and each table's build time. A Workload need not be autonomous; any Workload with the same model, preprocessor and dataset selects the same options. `go test ./hack/kappa` checks the proposal on synthetic Nodes.
 
+### Required pre-deployment decision + guard replay gate
+
+**배포 전 필수:** `hack/e5/replay-gate.py`를 보존한 E5-3/5/7 및 회귀
+stage 전체에 실행하고 `summary.json`의 `verdict=PASS`를 배포 증거에 첨부한다.
+기본 문턱은 **나빠진 tick 0** (`--max-bad-ticks 0`); 불일치 자체는 실패가 아니다.
+나빠진 tick은 (1) keep κ가 수요보다 부족한 상황의 기록된 공급 증가 target을
+재평가가 Keep/no target으로 바꿈, 또는 (2) guard가 공급 증가 target을
+당시/다음 N tick 중 한 번이라도 거부함이다. 공동 owner는 workload 하나라도
+공급이 증가하면 포함하고, origin tick당 한 번만 센다.
+
+```sh
+python3 -B hack/e5/replay-gate.py --source HEAD \
+  --stage /ops/campaign/full-E5-3-7 --stage /ops/campaign/full-E5-5-7 \
+  --stage /ops/campaign/full-E5-7-7 --stage /ops/campaign/full-E5-5-8d \
+  --rows /ops/deployB/control/kappa-rows.json \
+  --profiles /ops/deployB/control/profiles-gate.json \
+  --scheduler /ops/deployB/control/scheduler.json \
+  --out /ops/campaign/v2/replay-gate/YYYY-MM-DD
+```
+
+`--source`는 반복 가능하며 SHA/ref 또는 `tree`(현재 tracked diff와 untracked
+파일 포함)다. `git archive` 소스에 현재 `hack/kappa`만 계측기로 덧입히고
+제품 planner/guard는 해당 소스 그대로 빌드한다. 캐시는 소스·tree patch·계측기·
+Go 버전/플랫폼 해시로 구분한다. guard가 없던 역사적 소스는
+`guardAvailable=false`/`GuardNotPresentInSource`로 명시하며 현 guard를 이식하지 않는다.
+입력 파일 SHA256, 빌드 provenance, 실행 시간, 모든 tick의 compare/guard JSONL과
+요약 JSON/MD를 보존한다. 종료값은 PASS=0, 문턱 초과=2, 실행 오류=1이다.
+출력 디렉터리는 새 경로여야 하며, 실패/오류도 배포 불가다.
+
+`kappa -mode guard -scheduler ... -profiles ... -records records.jsonl.gz -rows ...
+-catalog catalog.jsonl.gz -arrivals arrivals.jsonl.gz [-next 3] [-format jsonl]`는
+admission의 `SchedulerReductionWorkloads`를
+동결한 뒤 `SchedulerReductionCommit`을 당시/다음 snapshot에 호출한다.
+표는 at/status/target key/거부 여부·사유/수요와 keep·target κ를 포함한다.
+`-mode compare -format jsonl`는 각 decision을 재평가하고 route 정수 weight,
+instance ID, profile, CPU, batch와 wait까지 비교한다.
+원본 `SchedulerRecord`는 workload/cost/baseline을 catalog 참조로 바꾸고 arrivals를
+제거한다. runner는 stage의 `obs/*/catalog.jsonl*`을 서버의
+`DecodeSchedulerLine`으로 복원하고, `requests.jsonl*`의 실제 ingress를
+`requestArrival`과 동일한 accepted/compute 규칙으로 복원한다(assigned보다 final 우선,
+native supplement 제외). 창은 `[observationEnd-observationWindow, observationEnd)`다.
+참조/arrival이 누락된 원본을 빈 수요로 평가하지 않고 오류로 닫는다.
+compare JSONL의 recordedCounts/replayCounts 및 populationMismatch를 함께 보존한다.
+재구성 요청의 final 상태는 capture 순간과 다를 수 있으므로 mismatch는 감춰서는 안 된다.
+수요는 max(minimumDemand, snapshot.scaleDown.rate), 공급은 Ready positive-route
+인스턴스의 built row κ 합이다(target의 준비 전 인스턴스도 예상 공급에 포함).
+이는 backlog/SLO 전체 판정이나 실측 처리율이 아니며 guard의 내부 거부 predicate를
+추측하지 않는다. 기록된 stage의 setup/teardown을 포함한 모든 decision을 사용한다.
+다음 tick 검증은 동결 target+기록 관측의 반사실 진단이며 completion callback,
+실행기 owner 취소 또는 closed-loop 클러스터 시뮬레이션을 대체하지 않는다.
+끝부분은 남은 tick까지만 검증한다. 클러스터 접근은 하지 않는다.
+최소 회귀 검사는 `python3 -B hack/e5/replay-gate.py --self-check`와
+`go test ./hack/kappa`다.
+
+
 ## Experiment controllers
 
 New experiment Python starts under `hack/`. `hack/e5/` owns the campaign

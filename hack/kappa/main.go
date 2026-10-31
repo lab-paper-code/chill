@@ -39,7 +39,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "table", "table, tick, compare or slo")
+	mode := flag.String("mode", "table", "table, tick, compare, guard or slo")
 	schedulerFile := flag.String("scheduler", "", "ChillServer /api/v1/scheduler dump; options carry profile bodies")
 	profilesFile := flag.String("profiles", "", "ChillServer /api/v1/scheduler/profiles dump (compare)")
 	recordsFile := flag.String("records", "", "scheduler record JSONL with decision rows (compare)")
@@ -52,6 +52,10 @@ func main() {
 	rate := flag.Float64("rate", 0, "tick: Poisson arrivals (req/s) in the observation window; 0 keeps the dump's")
 	repeat := flag.Int("repeat", 200, "tick: planner runs")
 	workers := flag.Int("workers", 3, "planSearchWorkers")
+	format := flag.String("format", "markdown", "compare/guard: markdown or jsonl")
+	next := flag.Int("next", 3, "guard: revalidate frozen target for this many following decision ticks")
+	catalogFile := flag.String("catalog", "", "compare/guard: archived catalog JSONL restoring workload, cost and baseline references")
+	arrivalsFile := flag.String("arrivals", "", "compare/guard: real request arrival JSONL restoring omitted snapshot arrivals")
 	flag.Parse()
 	snapshot, settings, err := loadScheduler(*schedulerFile)
 	if err == nil {
@@ -73,7 +77,17 @@ func main() {
 		case "tick":
 			err = tick(settings, snapshot, *rowsFile, *rate, *repeat)
 		case "compare":
-			err = compare(settings, *profilesFile, *recordsFile, *rowsFile, *margin)
+			if *format == replayJSONL {
+				err = replay(settings, *profilesFile, *recordsFile, *rowsFile, *catalogFile, *arrivalsFile, *margin, -1, *format)
+			} else {
+				err = compare(settings, *profilesFile, *recordsFile, *rowsFile, *margin)
+			}
+		case "guard":
+			if *next < 0 {
+				err = errors.New("-next must be nonnegative")
+			} else {
+				err = replay(settings, *profilesFile, *recordsFile, *rowsFile, *catalogFile, *arrivalsFile, *margin, *next, *format)
+			}
 		case "slo":
 			err = slo(settings, snapshot)
 		default:
