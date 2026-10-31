@@ -37,6 +37,18 @@ test("last valid shared power outlives the metric buffer and page consumers, but
   assert.deepEqual(state.lastPower,{bucketAt:time(600),watts:20})
   assert.equal(initialLiveState().lastPower,null)
 })
+test("device power scales grow only at session maxima and survive buffer expiry and page consumers",()=>{
+  let state=apply(initialLiveState(),snapshot())
+  state=apply(state,metrics(1,0,{nodes:{"node-a":{watts:40,observedAt:time(0)}},pool:{wholeWatts:100,activeWatts:40}}))
+  assert.deepEqual(state.powerScale,{nodes:{"node-a":40},other:60})
+  state=apply(state,metrics(2,1,{nodes:{"node-a":{watts:20,observedAt:time(1)}},pool:{wholeWatts:50,activeWatts:20}}))
+  assert.deepEqual(state.powerScale,{nodes:{"node-a":40},other:60})
+  for(let second=2;second<=601;second++)state=apply(state,metrics(second+1,second))
+  assert.deepEqual({...state}.powerScale,{nodes:{"node-a":40},other:60})
+  state=apply(state,metrics(603,602,{nodes:{"node-a":{watts:80,observedAt:time(602)}},pool:{wholeWatts:150,activeWatts:80}}))
+  assert.deepEqual(state.powerScale,{nodes:{"node-a":80},other:70})
+  assert.deepEqual(initialLiveState().powerScale,{nodes:{},other:1})
+})
 
 test("active changes exclude terminal history and not-yet-started plans on both screens",()=>{
   for (const status of ["starting","running"]) assert.equal(isLiveActionActive({status}),true)
