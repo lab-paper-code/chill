@@ -1295,52 +1295,62 @@ func (c *SchedulerController) dependenciesReady(action serving.Action, target se
 
 func (c *SchedulerController) dependenciesComplete(action serving.Action, plan serving.SchedulerCandidate) bool {
 	for _, dep := range action.DependsOn {
-		if run := c.runs[dep]; run != nil && run.action.Status == nativeOperationComplete {
-			if action.Kind == operationStop && run.action.RouteTarget != nil {
-				if run.result == nil {
+		run := c.runs[dep]
+		var frozen *serving.Action
+		if run != nil {
+			frozen = &run.action
+		} else if i := slices.IndexFunc(plan.Actions, func(a serving.Action) bool { return a.ID == dep }); i >= 0 {
+			frozen = &plan.Actions[i]
+		}
+		if frozen == nil {
+			return false
+		}
+		uids := c.handoffScope(action, *frozen, plan)
+		if run != nil && run.action.Status == nativeOperationComplete {
+			if action.Kind == operationStop && frozen.RouteTarget != nil {
+				if run.result == nil || len(uids) == 0 || !run.result.Operation.controlsWorkload(uids[0]) {
 					return false
 				}
 				proof := run.result.Operation
-				uid := handoffSourceUID(*run.action.RouteTarget, action.Instance)
-				if uid == "" || !proof.controlsWorkload(uid) {
-					return false
-				}
-				// A later independent UID's bridge may supersede the global
-				// route. Recheck this source's handoff, not unrelated routes.
-				proof.WorkloadUIDs = []string{uid}
+				// Recheck this source's handoff, not unrelated routes.
+				proof.WorkloadUIDs = uids
 				if !c.routingTargetPresent(controlledTarget(proof), c.state.Snapshot, c.runtime.Instances(), true) {
 					return false
 				}
 			}
 			continue
 		}
-		route := slices.IndexFunc(plan.Actions, func(a serving.Action) bool {
-			return a.ID == dep && a.Kind == operationRoute
-		})
-		uids := c.targetWorkloadsLocked(plan)
-		if route >= 0 && action.Kind == operationStop && plan.Actions[route].RouteTarget != nil {
-			uid := handoffSourceUID(*plan.Actions[route].RouteTarget, action.Instance)
-			if uid == "" {
-				return false
-			}
-			uids = []string{uid}
-		} else if route >= 0 && plan.Actions[route].RouteTarget != nil {
-			// The compiler attaches every bridge to at least one blocked source stop.
-			uids = []string{}
-			for _, dependent := range plan.Actions {
-				if dependent.Kind == operationStop && slices.Contains(dependent.DependsOn, dep) {
-					if uid := handoffSourceUID(*plan.Actions[route].RouteTarget, dependent.Instance); uid != "" {
-						uids = append(uids, uid)
-					}
-				}
-			}
-		}
-		if action.Kind != operationStop && action.Kind != operationRoute || route < 0 ||
-			!c.completedHandoffPresent(*cmp.Or(plan.Actions[route].RouteTarget, &plan), uids) {
+		if run != nil || frozen.Kind != operationRoute ||
+			(action.Kind != operationStop && action.Kind != operationRoute) ||
+			!c.completedHandoffPresent(*cmp.Or(frozen.RouteTarget, &plan), uids) {
 			return false
 		}
 	}
 	return true
+}
+
+func (c *SchedulerController) handoffScope(action, dependency serving.Action, plan serving.SchedulerCandidate) []string {
+	if dependency.RouteTarget == nil {
+		return c.targetWorkloadsLocked(plan)
+	}
+	if action.Kind == operationStop {
+		if uid := handoffSourceUID(*dependency.RouteTarget, action.Instance); uid != "" {
+			return []string{uid}
+		}
+		return []string{}
+	}
+	if action.Kind == operationRoute {
+		uids := []string{}
+		for _, stop := range plan.Actions {
+			if stop.Kind == operationStop && slices.Contains(stop.DependsOn, dependency.ID) {
+				if uid := handoffSourceUID(*dependency.RouteTarget, stop.Instance); uid != "" && !slices.Contains(uids, uid) {
+					uids = append(uids, uid)
+				}
+			}
+		}
+		return uids
+	}
+	return c.targetWorkloadsLocked(plan)
 }
 
 func handoffSourceUID(target serving.SchedulerCandidate, instance string) string {

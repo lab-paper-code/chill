@@ -223,3 +223,114 @@ func TestSkippedBridgeChainPreservesTerminalUIDSCH51(t *testing.T) {
 		})
 	}
 }
+
+func TestRunningBridgeCannotConsumeUnrelatedCompletedACKS2(t *testing.T) {
+	for _, status := range []string{nativeOperationRunning, nativeOperationFailed, nativeOperationPartial} {
+		t.Run(status, func(t *testing.T) {
+			c, goal, _ := acknowledgedHandoffFixture(t)
+			c.ctx = context.Background()
+			stage := *c.runs["acknowledged-route"].result.Operation.Target
+			source := stage.Instances[0]
+			source.ID, source.Weight = "pending-bridge-source", 0
+			stage.Instances = append(stage.Instances, source)
+			bridge := serving.Action{ID: "pending-bridge", Kind: operationRoute, RouteTarget: &stage}
+			stop := serving.Action{ID: "blocked-stop", Kind: operationStop, Instance: source.ID, DependsOn: []string{bridge.ID}}
+			final := serving.Action{ID: "blocked-final", Kind: operationRoute, DependsOn: []string{bridge.ID}}
+			goal.Actions = []serving.Action{bridge, stop, final}
+			c.state.Snapshot.Routing = stage.Routing
+			installTestTransition(c, &goal)
+			running := bridge
+			running.Status = status
+			c.runs[bridge.ID] = &actionRun{action: running, owner: goal.ID}
+			if c.dependenciesReady(stop, goal) || c.dependenciesReady(final, goal) {
+				t.Fatal("stop/final route accepted an incomplete bridge despite its existing frozen effect")
+			}
+			c.launchTargetLocked(goal, SchedulerControllerConfig{OnAction: func(OperationResult) error { return context.Canceled }})
+			c.wg.Wait()
+			if c.runs[stop.ID] != nil || c.runs[final.ID] != nil {
+				t.Fatal("incomplete bridge consumed an unrelated completed ACK and released its stop/final route")
+			}
+		})
+	}
+}
+
+func TestReadySubsetACKPrecedesPrepareResultAndSkippedBridgeProgressS2(t *testing.T) {
+	c, prepared := tickReadySubsetController(t, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c.ctx = ctx
+	c.runtime.EnableSchedulerRouting()
+	snapshot, err := c.capture(ctx, time.Now(), c.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := snapshot.Instances[0], snapshot.Instances[1]
+	uid := snapshot.Workloads[0].UID
+	a.WorkloadUID, b.WorkloadUID = uid, uid
+	bridgeTarget := serving.SchedulerCandidate{ID: "handoff-b", Instances: []serving.SchedulerInstance{a, b},
+		Routing: map[string]map[string]int32{uid: {b.ID: 1000}}}
+	nextTarget := bridgeTarget
+	nextTarget.ID = "next-handoff-b"
+	nextTarget.Instances = append([]serving.SchedulerInstance(nil), bridgeTarget.Instances...)
+	nextTarget.Instances[1].MaxWait = time.Millisecond
+	prepare := serving.Action{ID: "prepare-b", Kind: operationPrepare, Instance: b.ID, Node: b.Node}
+	bridge := serving.Action{ID: "skipped-handoff", Kind: operationRoute, RouteTarget: &bridgeTarget, DependsOn: []string{prepare.ID}}
+	stop := serving.Action{ID: "stop-a", Kind: operationStop, Instance: a.ID, Node: a.Node, DependsOn: []string{bridge.ID}}
+	next := serving.Action{ID: "next-handoff", Kind: operationRoute, RouteTarget: &nextTarget, DependsOn: []string{bridge.ID, stop.ID}}
+	goal := bridgeTarget
+	goal.ID, goal.Actions = "ready-before-result", []serving.Action{prepare, bridge, stop, next}
+	c.state.Snapshot = snapshot
+	installTestTransition(c, &goal)
+	// Native B is Ready before the controller receives its prepare result.
+	pending := prepare
+	pending.Status = nativeOperationRunning
+	c.runs[prepare.ID] = &actionRun{action: pending, owner: goal.ID,
+		result: &OperationResult{Operation: Operation{ID: prepare.ID, Kind: operationPrepare, Target: &goal}, Status: starting}}
+	prepared.Store(true)
+	snapshot, err = c.capture(ctx, time.Now(), c.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.state.Snapshot = snapshot
+	c.launchTargetLocked(goal, c.config)
+	c.wg.Wait()
+	var subset *actionRun
+	for _, run := range c.runs {
+		if run.action.From == readySubsetRoute {
+			subset = run
+		}
+	}
+	if subset == nil || subset.action.Status != nativeOperationComplete || subset.result.Actual.Routing[uid][b.ID] != 1000 {
+		t.Fatalf("Ready B did not receive a real subset ACK before prepare completion: %+v", subset)
+	}
+	if c.runs[bridge.ID] != nil || c.runs[stop.ID] != nil {
+		t.Fatal("bridge/stop ran before the prepare result")
+	}
+	c.runs[prepare.ID].action.Status = nativeOperationComplete
+	c.runs[prepare.ID].result = &OperationResult{Operation: Operation{ID: prepare.ID, Kind: operationPrepare, Target: &goal,
+		Prepare: &PrepareSpec{Instance: b}}, Status: nativeOperationComplete, EndedAt: time.Now()}
+	snapshot, err = c.capture(ctx, time.Now(), c.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.state.Snapshot = snapshot
+	c.launchTargetLocked(goal, c.config)
+	c.wg.Wait()
+	parent := c.runs[transitionRunKind+"/"+goal.ID]
+	if c.runs[bridge.ID] != nil || !parent.noEffectRoutes[bridge.ID] {
+		t.Fatal("ACK-covered bridge was not omitted")
+	}
+	if run := c.runs[stop.ID]; run == nil || run.action.Status != nativeOperationComplete {
+		t.Fatalf("real source stop did not complete: %+v", run)
+	}
+	snapshot, err = c.capture(ctx, time.Now(), c.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.state.Snapshot = snapshot
+	c.launchTargetLocked(goal, c.config)
+	c.wg.Wait()
+	if run := c.runs[next.ID]; run == nil || run.action.Status != nativeOperationComplete {
+		t.Fatalf("next bridge did not complete after omitted bridge and stop: %+v", run)
+	}
+}

@@ -105,6 +105,7 @@ ID `<goal>-ready-<subset hash>`, `Action.from=ready-subset`, OnAction start/end�
 생략된 bridge의 stop 소비도 완료 bridge와 동일하게 중단 source UID의 ACK/actual handoff만 검사한다. 보존된 다른 UID의 terminal route는 이 소비 범위에 포함하지 않는다(SCH-51).
 다음 bridge도 부모 DAG에서 생략된 선행 bridge를 찾아, 그 bridge에 의존하는 stop들의 source UID 범위와 기존 완료 ACK를 같은 handoff 검사로 소비한다. 부모 전체 UID에 포함된 보존 terminal route는 검사하지 않는다. 현재 snapshot 대비 변경 UID는 이미 생략된 bridge에서 빈 집합이므로 이 handoff 범위를 대신하지 못한다. 생략을 성공 run으로 만들지는 않는다.
 compiler는 해당 UID의 blocked stop이 있을 때만 bridge를 만들고 그 stop에 의존성을 붙이므로 stop 없는 bridge는 생성하지 않는다. 소비 범위는 빈 non-nil UID 집합에서 시작해 source UID만 모으며 부모 범위로 fallback하지 않는다. 빈 범위는 양수 route가 없어 handoff 증명이 될 수 없다.
+`dependenciesComplete`는 live run의 action(없으면 frozen plan action)에서 `handoffScope`를 한 번 정한다. 완료 run은 기존 strict proof, run 없는 생략만 기존 완료 ACK를 소비하며 running/failed/partial run은 다른 ACK로 승격하지 않는다. ACK 탐색과 정책 refresh의 `requirePolicy` 계약은 유지한다.
 bridge stage는 기존 routing을 복제하고 현재 UID만 변경한다. 목적지 선택(`peers`)과 prepare 의존성/종료시각 수집을 재사용하며 stage 전체를 중복 검사하지 않는다.
 고유 회귀 근거: full-E5-3 `02:45:39.328560181Z`의 495:126:379(κ=103.37311385470142/s, 입력 74.58333333333333/s)를 준비 중 genesis3 단독 1000(κ=62.46166324284952/s)으로 줄이지 않고 완료 후 765:235를 적용한다. E5-1의 old+Ready genesis3 순증은 nano를 기다리지 않는다.
 
