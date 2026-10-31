@@ -1,8 +1,11 @@
 # feeder.py: lane orchestrator. Each node's documents are created in file order, one at a time, after the
 # previous one is terminal (the node queue runs them one at a time anyway, so per-node order is unchanged).
 # Occupancies obey the persisted feeder-cap limit. Held documents block their lane;
-# failed terminal records stop the campaign. Restartable: successful terminal CRs are skipped.
+# failed terminal records stop approved campaigns, but coverage plans record them and continue.
+# Restartable: existing terminal CRs are never recreated; skipped counts existing successful CRs.
 # Approved resume: python3 feeder.py --manifest PATH/resume-plan.json --stages 4,5,6
+# Coverage failures: feeder.log/statusLog and feeder-failed.txt; retry only via a new plan.
+# Offline regression: python3 hack/measure/feeder_check.py
 import argparse, json, os, re, subprocess, time, datetime as dt
 from pathlib import Path
 
@@ -79,8 +82,10 @@ def previous_names(lines):
         if len(fields) > 3 and fields[1] == 'HELD': held_names.add(fields[3])
     return terminal, held_names
 assert previous_names(('t HELD n later', 't TERMINAL n done')) == ({'done'}, {'later'})
-def run(queues, final):
+def run(queues, final, continue_on_failure=False):
     pos = {n: 0 for n in queues}
+    created = set()
+    counts = dict(success=0, failed=0, skipped=0)
     # A held document has not had its future terminal result reported.
     seen, held_seen = previous_names(open(V + '/feeder.log'))
     while True:
@@ -106,21 +111,32 @@ def run(queues, final):
                     r = k('create', '-f', '-', inp=json.dumps(d)); L('CREATE', n, name, r.returncode, (r.stdout + r.stderr).strip()[:200])
                     if r.returncode:
                         raise SystemExit(f'cannot create staged CR: {name}: {r.stderr.strip()}')
+                    created.add(name)
                     busy = True; break
                 if not terminal(st):
                     busy = True; break
-                if st[0] in ('Failed', 'Insufficient') or st[2].startswith('Refused'):
+                failed = st[0] in ('Failed', 'Insufficient') or st[2].startswith('Refused')
+                if failed and not continue_on_failure:
                     raise SystemExit(f'campaign stopped after terminal failure: {name}: {st}')
-                if not node_released(n):
-                    busy = True; break
                 if name not in seen:
                     seen.add(name); L('TERMINAL', n, name, *st)
-                    if kind == 'DispatchOccupancyMeasurement': final[n] = name
+                    if failed:
+                        S(f'FAILED {n} {kind} {name} {st}')
+                        open(V + '/feeder-failed.txt', 'a').write(f'{now()} {n} {kind} {name} {st}\n')
+                    elif kind == 'DispatchOccupancyMeasurement':
+                        final[n] = name
+                if not node_released(n):
+                    busy = True; break
+                counts['failed' if failed else 'success' if name in created else 'skipped'] += 1
                 pos[n] += 1
             if pos[n] == len(q) and ('done', n) not in seen:
                 seen.add(('done', n)); S(f'LANE DONE {n}')
         json.dump(final, open(V + '/feeder-final.json', 'w'))
-        if not busy: return
+        if not busy:
+            summary = 'CAMPAIGN SUMMARY ' + ' '.join(f'{key}={value}' for key, value in counts.items())
+            S(summary)
+            print(summary)
+            return counts
         time.sleep(30)
 def main():
     global log
@@ -150,7 +166,8 @@ def main():
     log = open(V + '/feeder.log', 'a')
     open(V + '/feeder.pid', 'w').write(str(os.getpid()) + '\n')
     S(f'APPROVED FEEDER START manifest={args.manifest} stages={args.stages}')
-    run(queues, {})
+    run(queues, {}, continue_on_failure=
+        json.load(open(args.manifest)).get('schemaVersion') == 'coverage-feeder-plan.v1')
     S('APPROVED FEEDER DONE')
 
 if __name__ == '__main__':
