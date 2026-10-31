@@ -184,6 +184,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	}
 	handlerConfig.ListExperiments = experiments.list
 	handlerConfig.GetExperiment = experiments.get
+	handlerConfig.ListActiveEvaluations = (&evaluationService{reader: store.Client()}).listActive
 	handler, err := httpapi.NewHandler(manager, execution, authorizer, observationLog, observer, handlerConfig)
 	if err != nil {
 		return err

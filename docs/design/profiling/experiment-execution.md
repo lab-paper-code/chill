@@ -253,8 +253,8 @@ CR 삭제가 증거 삭제로 이어지지 않는다. 저장 실패는 해당 `p
 단계 증거는 이미 `experiments/<UID>/...`에 저장되어 있다. bridge는 이를 다시 쓰지 않고, 그 참조를 담은 작은 게시용 실행/증거 목록 객체와 summary만 게시 prefix에 쓴다. 기존 `sources`는 이 게시 객체를 가리킨다.
 현재 bridge는 manifest의 sources를 같은 게시 prefix 안으로 제한하므로(`hack/e5/publish/main.go:106–128`) 이 경계는 유지한다. 중간 증거 writer와 최종 게시 bridge를 혼동하지 않는다.
 `Published`는 게시 후 controller가 기록하므로 게시물에 자기 자신의 게시 완료를 선행 주장하지 않는다. 게시 충돌·정정은 새 EvaluationRun(새 UID)이 필요하며 덮어쓰기/동일 바이트 비교로 회복하지 않는다.
-ChillServer는 지금처럼 objects Reader/Lister로 게시물만 읽고 기존 `/api/v1/experiments[/{id}]`로 제공한다. EvaluationRun CR을 읽는 새 권한·의존·캠페인 API는 추가하지 않는다.
-**대시보드는 완료된 게시만 조회**한다. 진행 중/미게시 STOP은 `kubectl get evaluationruns,evaluationstages,loadscenarios`로 조회한다. 정리 실패도 세 축을 표시하며 미게시 실행을 완료 목록에 넣지 않는다.
+ChillServer는 objects Reader/Lister로 완료 게시를 기존 `/api/v1/experiments[/{id}]`에서 제공한다. 별도 `/api/v1/evaluations/active`는 direct Kubernetes reader로 PoolAcquired=True 부모와 현재 자식·LoadScenario만 읽어 진행 요약을 제공한다. GO 증거를 최초 검증할 때 기록한 자식 status.goAt을 보존하고, plannedSeconds는 부하 parts의 durationSeconds 합이다. 주입 계획·결과는 id로 연결한다([대시보드 계약 §2.1](../../plans/2026-11-01-evaluationrun-dashboard-handoff.md#21-진행-중-평가-표시--get-apiv1evaluationsactive)).
+**완료 게시 목록과 진행 중 요약은 분리**한다. 정리 실패도 세 축을 표시하며 미게시 실행을 완료 목록에 넣지 않는다.
 대시보드는 `definition`의 정책·비교 관계와 정의/결과의 적용 SLO를 읽는다([DB-FR-66](../../spec/dashboard/SRS.md)).
 `stagePolicy`/`stagePairing`/`stageComparison`과 요청률 유사성 기반 추측을 삭제하고 `campaignPairs`/`policyStageGroups` 등 소비자를 명시적 관계로 바꾼다.
 이 변경으로 과거 게시의 정책/비교 화면은 **미기록**으로 바뀌는 가시적 변화가 생긴다. 같은 reader가 `definition` 부재로 읽으며 별도 과거 reader·재게시·단계 ID/평균률 추측은 없다.
