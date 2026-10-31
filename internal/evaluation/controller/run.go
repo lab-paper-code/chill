@@ -20,15 +20,6 @@ import (
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 )
 
-// +kubebuilder:rbac:groups=edge.dacs.io,resources=evaluationruns;evaluationstages;loadscenarios,verbs=get;list;watch
-// +kubebuilder:rbac:groups=edge.dacs.io,resources=evaluationstages,verbs=create
-// +kubebuilder:rbac:groups=edge.dacs.io,resources=evaluationruns;evaluationstages,verbs=patch
-// +kubebuilder:rbac:groups=edge.dacs.io,resources=evaluationruns/status;evaluationstages/status,verbs=get;patch;update
-// +kubebuilder:rbac:groups=edge.dacs.io,resources=evaluationruns/finalizers;evaluationstages/finalizers,verbs=update;patch
-// +kubebuilder:rbac:groups="",resources=configmaps;persistentvolumeclaims,verbs=get;list;watch;create
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
-// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create
-
 type RunReconciler struct{ Runtime }
 
 func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

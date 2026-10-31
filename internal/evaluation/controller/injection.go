@@ -19,10 +19,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
 
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
-// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;patch
-// +kubebuilder:rbac:urls=/chill;/api/v1/scheduler/state;/api/v1/scheduler/settings;/api/v1/observations/load,verbs=get
-
 var errInjectionUpdated = errors.New("injection status persisted")
 var errInjectionSelection = errors.New("injection selection is invalid")
 var errInjectionExpired = errors.New("injection window expired before mutation")

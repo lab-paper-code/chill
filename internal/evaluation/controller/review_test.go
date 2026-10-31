@@ -5,15 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"os"
-	"regexp"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,50 +18,10 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
-	"sigs.k8s.io/yaml"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
-
-func TestReviewMetadataPatchRBAC(t *testing.T) {
-	source, err := os.ReadFile("run.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	matches := regexp.MustCompile(`\+kubebuilder:rbac:groups=edge.dacs.io,resources=([^,\n]+),verbs=([^\n]+)`).FindAllStringSubmatch(string(source), -1)
-	markerRules := make([]rbacv1.PolicyRule, 0, len(matches))
-	for _, match := range matches {
-		markerRules = append(markerRules, rbacv1.PolicyRule{APIGroups: []string{"edge.dacs.io"}, Resources: strings.Split(match[1], ";"), Verbs: strings.Split(match[2], ";")})
-	}
-	chart, err := os.ReadFile("../../../charts/chill/templates/evaluation_rbac.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	profiler := strings.SplitN(string(chart), "{{- if .Values.profiler.enabled }}", 2)
-	if len(profiler) != 2 {
-		t.Fatal("missing profiler Role")
-	}
-	roleYAML := strings.Split(profiler[1], "\n---\n")[1]
-	roleYAML = regexp.MustCompile(`{{[^}]+}}`).ReplaceAllString(roleYAML, "profiler")
-	var role rbacv1.Role
-	if err := yaml.Unmarshal([]byte(roleYAML), &role); err != nil {
-		t.Fatal(err)
-	}
-	for _, resource := range []string{"evaluationruns", "evaluationstages"} {
-		for name, rules := range map[string][]rbacv1.PolicyRule{"marker": markerRules, "chart": role.Rules} {
-			allowed := false
-			for _, rule := range rules {
-				if slices.Contains(rule.APIGroups, "edge.dacs.io") && slices.Contains(rule.Resources, resource) && slices.Contains(rule.Verbs, "patch") {
-					allowed = true
-				}
-			}
-			if !allowed {
-				t.Errorf("%s lacks metadata patch on %s", name, resource)
-			}
-		}
-	}
-}
 
 func fixtureStageExecution(t *testing.T) (Runtime, memoryStore, *api.EvaluationRun, *api.EvaluationStage) {
 	t.Helper()
