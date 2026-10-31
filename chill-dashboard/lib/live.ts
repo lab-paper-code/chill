@@ -229,10 +229,13 @@ export function applyLiveMessage(state:LiveState,message:LiveMessage,receivedAt=
   } else if (message.type === "event" && !events.some(row=>eventKey(row)===eventKey(message))) {
     events=[...events,message]
     if (events.length > 1000) {
-      const removed=events.slice(0,-1000),previous=historyGaps.find(row=>row.scope==="events" && row.reason==="event history limit")
+      const important=events.filter(row=>row.kind!=="decision"||row.decision.state!=="Keep").slice(-30)
+      const protectedEvents=new Set(important)
+      const recent=new Set(events.filter(row=>!protectedEvents.has(row)).slice(-(1000-important.length)))
+      const removed=events.filter(row=>!protectedEvents.has(row)&&!recent.has(row)),previous=historyGaps.find(row=>row.scope==="events" && row.reason==="event history limit")
       historyGaps=historyGaps.filter(row=>row!==previous)
-      historyGaps=addGap(historyGaps,{from:previous?.from ?? removed[0].at,to:events[events.length-1000].at,scope:"events",reason:"event history limit"})
-      events=events.slice(-1000)
+      historyGaps=addGap(historyGaps,{from:previous?.from ?? removed[0].at,to:events[events.indexOf(removed.at(-1)!)+1].at,scope:"events",reason:"event history limit"})
+      events=events.filter(row=>protectedEvents.has(row)||recent.has(row))
     }
   }
   if ((message.type === "snapshot" || message.type === "delta") && message.workloads) {

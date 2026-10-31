@@ -176,6 +176,14 @@ test("event cap records omitted history and retains 1000 events",()=>{
   assert.deepEqual(state.gaps.filter(row=>row.scope==="events"),[{from:time(1),to:time(3),scope:"events",reason:"event history limit"}])
 })
 
+test("unchanged Keep traffic cannot evict the last actual change",()=>{
+  let state=apply(initialLiveState(),snapshot())
+  state=apply(state,{type:"event",seq:1,at:time(1),kind:"cluster",cluster:{kind:"issue",at:time(1),event:"issue",source:"observer",reason:"remember"}})
+  for(let seq=2;seq<=1002;seq++) state=apply(state,{type:"event",seq,at:time(seq),kind:"decision",decision:{at:time(seq),state:"Keep",reason:"",explanation:"유지"}})
+  assert.equal(state.events.length,1000)
+  assert.equal(state.events[0].seq,1)
+})
+
 test("all synthetic scenes use the real DTO parser/reducer",()=>{
   for (const scene of ["empty","first","expand","shrink"]) {
     let state=initialLiveState()
