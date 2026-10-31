@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { LiveAction, LiveInstance, LiveMetric, LiveMetrics, LiveSnapshot, LiveWorkload } from "./live.ts"
 import { changeListStatus, serviceTrafficState, actionProgress, actionOrigin, scopeSnapshot, scopeEvents, recentEvents, liveFresh, belongsToPool, displayNumber, duration, elapsed, instanceSymbol, isStale, ratio, receivedLabel, routingShare, terminalCount, workloadLabel, workloadQueue, servicePriority, mergeKeepEvents, trendSegments, boardVerdict, decisionText } from "./live-display.ts"
-import { retainedEvents, sloLatency, minuteMetrics, incidentFlow } from "./live-display.ts"
+import { retainedEvents, sloLatency, minuteMetrics, incidentFlow, incidentSummary, serviceRows, powerBreakdown } from "./live-display.ts"
 
 const at="2026-10-30T12:00:00.123456789Z",now=Date.parse(at)
 const instance:LiveInstance={id:"shared",node:{uid:"n",name:"Node"},ownerWorkloadUID:"a",profileID:"p",ready:true,stopped:false,routable:{a:true,b:true},running:{a:1,b:0},waiting:{a:0,b:2},observedAt:at}
@@ -197,4 +197,31 @@ test("minute summary includes exactly sixty completed second buckets at aligned 
     assert.equal(selected.length,60)
     assert.equal(selected.reduce((sum,row)=>sum+row.received,0),540)
   }
+})
+
+test("board counters and timeline share one retained view across desktop and 390px remounts",()=>{
+  const events=Array.from({length:32},(_,seq)=>({type:"event" as const,kind:"decision" as const,seq,at,decision:{at,state:"Keep",reason:"",explanation:""}}))
+  const gaps=Array.from({length:35},(_,i)=>({from:new Date(now-i).toISOString(),to:at,scope:`node:${i}`,reason:"power sample unavailable"}))
+  const desktop=incidentSummary(events,gaps,now),mobile=incidentSummary(events,gaps,now)
+  assert.equal(desktop.keeps,32)
+  assert.equal(desktop.newCount,desktop.rows.filter(row=>Date.parse(row.at)>=now-30000).length)
+  assert.deepEqual(mobile,desktop)
+  assert.equal(desktop.rows.some(row=>row.kind==="event"&&row.event.kind==="decision"&&row.event.decision.state==="Keep"),false)
+  assert.equal(incidentSummary(events,[],now).newCount,0)
+})
+test("idle collapse excludes missing metrics, active instances, reservations and attention",()=>{
+  const idleMetric={...metric,received:0,completed:0,failed:0,withinSLO:0},idleWorkload={...workload,pending:0}
+  const snapshot:LiveSnapshot={workloads:[idleWorkload],nodes:[],instances:[],routing:{},decision:null,actions:[],reservations:[]}
+  assert.equal(serviceRows(snapshot,{a:idleMetric},now)[0].idle,true)
+  assert.equal(serviceRows(snapshot,{},now)[0].idle,false)
+  assert.equal(serviceRows({...snapshot,instances:[instance]},{a:idleMetric},now)[0].idle,false)
+  assert.equal(serviceRows({...snapshot,reservations:[{owner:"a",nodes:[],workloadUIDs:["a"],podUIDs:[],instances:[],reason:"",explanation:""}]},{a:idleMetric},now)[0].idle,false)
+  assert.equal(serviceRows(snapshot,{a:{...idleMetric,failed:1}},now)[0].idle,false)
+})
+test("power remainder uses the same bucket and never invents missing node power",()=>{
+  const metrics:LiveMetrics={type:"metrics",seq:1,at,bucketAt:at,workloads:{},nodes:{a:{watts:40,observedAt:at},outside:{watts:60,observedAt:at}},pool:{wholeWatts:100,activeWatts:40}}
+  assert.equal(powerBreakdown(["a"],metrics).other,60)
+  assert.equal(powerBreakdown(["a"],{...metrics,nodes:{a:{watts:null,observedAt:null}}}).other,null)
+  assert.equal(powerBreakdown(["a"],{...metrics,pool:{...metrics.pool,wholeWatts:null}}).other,null)
+  assert.equal(powerBreakdown(["a"],{...metrics,pool:{...metrics.pool,wholeWatts:30}}).other,null)
 })
