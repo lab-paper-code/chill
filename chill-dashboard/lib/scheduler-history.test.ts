@@ -1,13 +1,36 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { readFileSync } from "node:fs"
-import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerHistoryKindMatches } from "./scheduler-history.ts"
+import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerHistoryKindMatches, groupHistoryKeeps } from "./scheduler-history.ts"
 import type { SchedulerObservation, SchedulerObservationSummary } from "./read-types.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
 
 const from="2026-10-13T02:00:00.123456789Z",to="2026-10-13T03:00:00.987654321Z"
 const event:SchedulerObservation={at:"2026-10-13T02:30:00.000000001Z",action:{id:"same-action",kind:"route",node:{name:"node",uid:"uid-a"},phase:"starting",startedAt:"2026-10-13T02:29:59.123456789Z"}}
+
+test("inline interval evidence keeps exact bounds, summary projection, ten-row cap and empty state",()=>{
+  const source=readFileSync(new URL("../features/scheduler-evidence.tsx",import.meta.url),"utf8")
+  const inline=source.slice(source.indexOf("export function SchedulerIntervalEvents("),source.indexOf("function RecordReturn("))
+  assert.match(inline,/new URLSearchParams\(\{from,to,view:"summary",filter:"decision-action",order:"asc",limit:"10"\}\)/)
+  assert.match(inline,/events\.slice\(0,10\)\.map/)
+  assert.match(inline,/schedulerRecordRef\(event,from,to,String\(index\)\)/)
+  assert.match(inline,/schedulerRecordParams\(ref\)/)
+  assert.match(inline,/\["시각 \(KST\)","종류","대상"\]/)
+  assert.match(inline,/role="status">판단·전환 기록 없음/)
+})
+
+test("consecutive Keep judgments collapse without crossing a transition or losing the first record reference",()=>{
+  const keep:SchedulerObservationSummary={at:event.at,decision:{at:event.at,status:"Keep"}}
+  const rows=[keep,keep,event,keep].map((event,index)=>({event,ref:schedulerRecordRef(event,from,to,String(index))}))
+  const grouped=groupHistoryKeeps(rows)
+  assert.deepEqual(grouped.map(row=>row.keepCount),[2,0,1])
+  assert.equal(grouped[0].ref.offset,"0")
+  assert.equal(grouped[1].event,event)
+  const source=readFileSync(new URL("../features/scheduler-history.tsx",import.meta.url),"utf8")
+  assert.match(source,/groupHistoryKeeps/)
+  assert.match(source,/유지 ×/)
+})
 
 test("filtered latest-first rows retain original append offset for evidence lookup",()=>{
   const ref=schedulerRecordRef({...event,offset:9007199254740993n},from,to,"0")
