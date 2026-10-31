@@ -94,6 +94,20 @@ export function servicePriority(workload:LiveWorkload,metric:LiveMetric|undefine
   if (!metric || metric.received>0 || (terminalCount(metric)??0)>0) return 4
   return 5
 }
+export function serviceRows(snapshot:LiveSnapshot,metrics:Record<string,LiveMetric>,now:number) {
+  return snapshot.workloads.map(workload=>{
+    const metric=metrics[workload.uid],queued=workloadQueue(workload,snapshot.instances),changes=snapshot.actions.filter(action=>action.workloadUID===workload.uid&&actionProgress(action,now)!=="terminal").length
+    const priority=servicePriority(workload,metric,changes,queued)
+    const idle=priority===5&&!snapshot.instances.some(row=>belongsToPool(row,workload.uid)&&!row.stopped)&&!snapshot.reservations.some(row=>row.workloadUIDs.includes(workload.uid))
+    return {workload,metric,queued,changes,priority,idle}
+  }).sort((a,b)=>a.priority-b.priority||(b.metric?.received??0)-(a.metric?.received??0)||a.workload.name.localeCompare(b.workload.name))
+}
+/** Whole-pool watts include metered nodes absent from the live configuration. */
+export function powerBreakdown(uids:string[],metrics:LiveMetrics|undefined) {
+  const values=uids.map(uid=>metrics?.nodes[uid]?.watts),whole=metrics?.pool.wholeWatts
+  const measured=values.every(value=>value!=null)?values.reduce<number>((sum,value)=>sum+value!,0):null
+  return {whole:whole??null,measured,other:whole!=null&&measured!=null&&whole>=measured?whole-measured:null}
+}
 export function currentObservation(fresh:boolean,terminals:number|undefined):boolean {
   return fresh&&terminals!=null
 }
@@ -165,4 +179,9 @@ export function incidentFlow(events:LiveEvent[],gaps:LiveState["gaps"],now:numbe
     ...gaps.filter(gap=>Date.parse(gap.from)<=now).map(gap=>({kind:"gap" as const,at:gap.from,key:`gap:${gap.scope}:${gap.from}:${gap.reason}`,gap})),
   ]
   return incidents.sort((a,b)=>compareAt(b.at,a.at)||(b.kind==="event"?b.event.seq:0)-(a.kind==="event"?a.event.seq:0)).slice(0,30)
+}
+/** The badge counts only incidents present in the same rendered list. Keep is a separate heartbeat. */
+export function incidentSummary(events:LiveEvent[],gaps:LiveState["gaps"],now:number) {
+  const rows=incidentFlow(events,gaps,now),decisions=events.filter(row=>Date.parse(row.at)<=now).filter(row=>row.kind==="decision")
+  return {rows,newCount:rows.filter(row=>Date.parse(row.at)>=now-30000).length,keeps:decisions.filter(row=>row.decision.state==="Keep").length,lastDecision:decisions.at(-1)}
 }
