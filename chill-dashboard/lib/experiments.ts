@@ -380,7 +380,7 @@ export function experimentChartData(run:Experiment,service:string,runs:Experimen
 }
 
 export function stageHistoryLink(stage:ExperimentStage):string {
-  return `/scheduler/history?${new URLSearchParams({from:stage.from,to:stage.to,limit:"100",filter:"decision-action",order:"asc"})}`
+  return `/records?${new URLSearchParams({from:stage.from,to:stage.to,limit:"100",filter:"decision-action",order:"asc"})}`
 }
 export function stageActivity(page:SchedulerObservationPage) {
   const events=page.events??[],decisions=events.filter(event=>event.decision),actions=events.filter(event=>event.action)

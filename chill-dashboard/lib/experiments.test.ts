@@ -729,6 +729,7 @@ test("declared mismatched stage names retain numeric gains, losses and worst ser
 
 test("R7: stage record links retain the exact range and activity counts never claim a partial page is complete",()=>{
   const params=new URL(stageHistoryLink(stage),"https://dashboard.invalid").searchParams
+  assert.equal(new URL(stageHistoryLink(stage),"https://dashboard.invalid").pathname,"/records")
   assert.equal(params.get("from"),stage.from)
   assert.equal(params.get("to"),stage.to)
   assert.equal(params.get("limit"),"100")
