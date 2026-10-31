@@ -99,7 +99,9 @@ func TestExperimentSummaryReadPreservesPublishedEvidenceAndSorts(t *testing.T) {
 	from := time.Date(2026, 10, 24, 1, 0, 0, 123, time.UTC)
 	store.add(t, experimentFixture("older", from.Add(-time.Hour)))
 	store.add(t, experimentFixture("z", from))
-	store.add(t, experimentFixture("a", from))
+	withDefinition := experimentFixture("a", from)
+	withDefinition.Definition = json.RawMessage(`{"question":"compare","stages":[{"id":"baseline"}],"future":{"opaque":true}}`)
+	store.add(t, withDefinition)
 	store.objects = append(store.objects,
 		evidencestore.ObjectIdentity{Store: "evidence", Key: httpapi.ExperimentPrefix + "unfinished/phase.json", Size: 1},
 		evidencestore.ObjectIdentity{Store: "evidence", Key: httpapi.ExperimentPrefix + "../summary.json", Size: 1},
@@ -123,6 +125,11 @@ func TestExperimentSummaryReadPreservesPublishedEvidenceAndSorts(t *testing.T) {
 	if detail.ID != list.Items[0].ID || detail.Status != "NOT_READY" || !detail.From.Equal(from) ||
 		!detail.Stages[0].To.Equal(from.Add(time.Minute)) || detail.Sources[0] != list.Items[0].Sources[0] {
 		t.Fatalf("published identity, phase boundary or sources changed: %+v", detail)
+	}
+	if string(detail.Definition) != string(withDefinition.Definition) ||
+		string(list.Items[0].Definition) != string(withDefinition.Definition) ||
+		len(list.Items[1].Definition) != 0 || len(list.Items[2].Definition) != 0 {
+		t.Fatalf("optional definition changed: detail=%s list=%+v", detail.Definition, list.Items)
 	}
 	var kpis map[string]any
 	if err := json.Unmarshal(detail.Stages[0].KPIs, &kpis); err != nil {
@@ -243,6 +250,7 @@ func TestExperimentSummaryValidatesStoredBoundaryAndDoesNotReadRaw(t *testing.T)
 	for _, name := range []string{
 		"identity", "stage interval", "schema", "source store", "source traversal", "source URL",
 		"source absolute", "KPI null", "unknown raw field", "trailing JSON", "oversize", "actual oversize",
+		"definition scalar", "definition array", "definition null",
 	} {
 		t.Run(name, func(t *testing.T) {
 			summary := experimentFixture("run", time.Now().UTC())
@@ -261,6 +269,12 @@ func TestExperimentSummaryValidatesStoredBoundaryAndDoesNotReadRaw(t *testing.T)
 				summary.Sources[0].Key = "/tmp/private"
 			case "KPI null":
 				summary.Stages[0].KPIs = json.RawMessage(`null`)
+			case "definition scalar":
+				summary.Definition = json.RawMessage(`42`)
+			case "definition array":
+				summary.Definition = json.RawMessage(`[]`)
+			case "definition null":
+				summary.Definition = json.RawMessage(`null`)
 			}
 			store := &experimentMemoryStore{}
 			key := store.add(t, summary)

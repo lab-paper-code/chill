@@ -145,3 +145,44 @@ func TestExperimentsMissingUnavailableAndUnauthenticated(t *testing.T) {
 		})
 	}
 }
+
+func TestExperimentsPreserveOptionalDefinition(t *testing.T) {
+	for _, definition := range []json.RawMessage{nil, json.RawMessage(`{"question":"compare","stages":[{"id":"baseline"}],"future":{"opaque":true}}`)} {
+		for _, detail := range []bool{false, true} {
+			summary := ExperimentSummary{ID: "run-1", Definition: definition}
+			h := experimentHandler(t, true, HandlerConfig{
+				ListExperiments: func(context.Context) (ExperimentList, error) {
+					return ExperimentList{Items: []ExperimentSummary{summary}}, nil
+				},
+				GetExperiment: func(context.Context, string) (ExperimentSummary, error) {
+					return summary, nil
+				},
+			})
+			r := httptest.NewRequest(http.MethodGet, "/api/v1/experiments", nil)
+			if detail {
+				r = httptest.NewRequest(http.MethodGet, "/api/v1/experiments/run-1", nil)
+				r.SetPathValue("id", "run-1")
+			}
+			r.Header.Set("Authorization", "Bearer caller")
+			w := httptest.NewRecorder()
+			h.experiments(w, r)
+			if w.Code != http.StatusOK {
+				t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+			}
+			var body map[string]json.RawMessage
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if !detail {
+				var items []map[string]json.RawMessage
+				if err := json.Unmarshal(body["items"], &items); err != nil || len(items) != 1 {
+					t.Fatalf("items=%s err=%v", body["items"], err)
+				}
+				body = items[0]
+			}
+			if string(body["definition"]) != string(definition) {
+				t.Fatalf("definition=%s want=%s", body["definition"], definition)
+			}
+		}
+	}
+}

@@ -195,3 +195,39 @@ func TestRunUsesExistingS3ImmutableContract(t *testing.T) {
 		t.Fatalf("S3 publication receipt=%+v keys=%v", receipt, keys)
 	}
 }
+
+func TestPublishOptionalDefinitionBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		definition json.RawMessage
+		valid      bool
+	}{
+		{"absent", nil, true},
+		{"object", json.RawMessage(`{"question":"compare","future":{"opaque":true},"stages":[{"id":"baseline"}]}`), true},
+		{"empty object", json.RawMessage(` { } `), true},
+		{"scalar", json.RawMessage(`42`), false},
+		{"string", json.RawMessage(`"definition"`), false},
+		{"array", json.RawMessage(`[]`), false},
+		{"null", json.RawMessage(`null`), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest := publicationFixture(t)
+			var summary httpapi.ExperimentSummary
+			if err := readPublicationJSON(manifest.Summary.LocalPath, &summary); err != nil {
+				t.Fatal(err)
+			}
+			summary.Definition = tc.definition
+			writePublicationFixture(t, manifest.Summary.LocalPath, summary)
+			store := &publicationMemoryStore{}
+			receipt, err := publish(context.Background(), store, "evidence", manifest)
+			if tc.valid {
+				if err != nil || receipt.Outcome != evidencestore.CreateOutcomeCreated ||
+					len(store.keys) != 2 || store.keys[1] != manifest.Summary.Key {
+					t.Fatalf("valid definition rejected: receipt=%+v err=%v keys=%v", receipt, err, store.keys)
+				}
+			} else if err == nil || len(store.keys) != 0 {
+				t.Fatalf("invalid definition must fail before uploads: err=%v keys=%v", err, store.keys)
+			}
+		})
+	}
+}
