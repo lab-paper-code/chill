@@ -96,7 +96,6 @@ spec:
                     additionalProperties:
                       description: EvaluationNonNegative is a finite, nonnegative
                         scientific input.
-                      maximum: 1.7976931348623157e+308
                       minimum: 0
                       type: number
                     description: MinimumDemand keys are Workload UIDs, not mutable

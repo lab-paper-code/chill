@@ -47,7 +47,6 @@ type EvaluationEvidenceReference struct {
 
 // EvaluationNonNegative is a finite, nonnegative scientific input.
 // +kubebuilder:validation:Minimum=0
-// +kubebuilder:validation:Maximum=1.7976931348623157e308
 type EvaluationNonNegative float64
 
 // LoadScenarioPart fixes one interval; map keys are Workload names.
