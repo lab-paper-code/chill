@@ -94,6 +94,8 @@ def validate(c):
         fail('All configured paths must be absolute')
     if 'harnessSHA' in c and (not isinstance(c['harnessSHA'], str) or not re.fullmatch('[0-9a-f]{40}', c['harnessSHA'])):
         fail('harnessSHA requires a full commit SHA')
+    if 'minimumDemand' in c and (not isinstance(c['minimumDemand'], dict) or not c['minimumDemand'] or any(type(v) not in (int, float) or v < 0 for v in c['minimumDemand'].values())):
+        fail('minimumDemand requires a non-empty workload-UID map of non-negative numbers')
     for key in ('takeoverAfter600Seconds', 'failureInjection'):
         if key in c and type(c[key]) is not bool:
             fail(key+' must be boolean')
@@ -428,6 +430,8 @@ class Round:
         b['config']['approval']['sources']['server'] = self.c['sourceSHA']
         b['config']['approval']['controlImageDigest'] = entry['image'].split('@')[0].split(':pools-control-')[0]+'@'+entry['digest']
         b['schedulerSettings']['scaleDownHeadroomFraction'] = self.c['h']
+        if 'minimumDemand' in self.c:
+            b['schedulerSettings']['minimumDemand'] = self.c['minimumDemand']
         b['roundProvenance'] = {'sourceSHA': self.c['sourceSHA'], 'harnessSHA': sha, 'harness': str(self.harness), 'rateBasis': self.c['rateBasis'], 'measurementRetries': 0}
         for key in b['sources']:
             if key.startswith('package-'):
@@ -525,11 +529,15 @@ class Round:
         if row is None:
             settings['autonomousWorkloads'] = []
             settings['scaleDownHeadroomFraction'] = self.c['h']
+            if 'minimumDemand' in self.c:
+                settings['minimumDemand'] = self.c['minimumDemand']
             self.save('headroom-put-ack.json', self.cpo.put(settings))
             settings = self.cpo.settings()
         self.save((row+'-' if row else '')+'headroom-get.json', settings)
         if settings.get('scaleDownHeadroomFraction') != self.c['h']:
             raise RuntimeError('INVALID_CONFIGURATION headroom '+str(row))
+        if 'minimumDemand' in self.c and settings.get('minimumDemand') != self.c['minimumDemand']:
+            raise RuntimeError('INVALID_CONFIGURATION minimumDemand '+str(row))
 
     def kappa(self):
         if 'reuseRows' in self.c['kappa']:
@@ -602,6 +610,8 @@ class Round:
                     first = True
                     if decision.get('settings', {}).get('scaleDownHeadroomFraction') != self.c['h']:
                         raise RuntimeError('INVALID_CONFIGURATION first load tick h '+row)
+                    if 'minimumDemand' in self.c and decision.get('settings', {}).get('minimumDemand') != self.c['minimumDemand']:
+                        raise RuntimeError('INVALID_CONFIGURATION first load tick minimumDemand '+row)
             if not injections or injected >= len(injections):
                 return
             planned = injections[injected]
