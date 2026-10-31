@@ -585,6 +585,7 @@ test("R3: rapid A/B selections preserve the preceding URL selection and clear on
   commitExperimentSelection(location,history,{a:"new"})
   commitExperimentSelection(location,history,{b:"new-b"})
   const selected=location.searchParams
+  assert.equal(location.pathname,"/experiments/results")
   assert.equal(selected.get("a"),"new")
   assert.equal(selected.get("b"),"new-b")
   assert.equal(selected.has("as"),false)

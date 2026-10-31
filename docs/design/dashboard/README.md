@@ -114,6 +114,13 @@ runtime workload readiness의 읽기 시각만 바뀐 것은 상태 변화로 �
 선택 근거는 정확한 decision.at·UID·구간을 고정한다. 대기 pending/native waiting과 과거 판단 queued는 다른 집단이다.
 지연 분위수 평균·결손 영 채움·공유 전력의 서비스 귀속은 금지한다.
 
+운영 구현은 `features/live-board.tsx`의 `LiveBoardPage`, 장치는 `features/resources.tsx`의
+`DevicesPage`다. `boardVerdict.observation`은 서비스 영향과 별도 StatusCell 및 aria-live 축으로
+출력한다. 후보·추정·부하·용량은 서비스 Sheet의 `evidence` 선택이며 별도 운영 허브를 만들지 않는다.
+장치 표는 inventory·POOL·실제 scheduler 자원과 계측 UID의 합집합을 이름순으로 보존한다.
+계측 전체와 구성 범위 차이는 같은 시각·범위·완전성을 확인할 때만 산출한다.
+정본 이동은 `lib/dashboard-routes.ts`의 명시적 URL/query 매핑을 공유하며 API 경로는 변경하지 않는다.
+
 ## 4. API 소유권과 연결 현황
 
 Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.go), Console 정본:
@@ -225,9 +232,9 @@ SRS DB-FR-50~52·56·65는 변경, DB-FR-67은 폐기 이력, DB-FR-68~70은 공
 | `/` 운영 | 지금 무엇을 확인해야 하는가? 현재 서비스 영향·유입·배치·진행 변경 / 운영 판독·서비스 상태·진행/사건 |
 | `/operations/devices` 장치 | 어디에 무엇이 배치됐는가? 전력 추세·장치/배치 표 → 사양·모드·자원 역할 |
 | `/workloads` 서비스 | 어떤 정의가 적용되는가? 목록 관리 표; 상세 적용 상태·정의/설정·배치/연결 |
-| `/measurements` 범위 | 어떤 조합의 근거가 있는가? 조건/범위·선택 모델 행렬·선택 결과 |
-| `/measurements/requests` 요청 | 어떤 요청·회차가 진행/실패했는가? 부모 요청 표 → 자식 회차·점검·동일 조건 요청 |
-| `/measurements/results` 결과 | 현재 사용과 품질은 어떠한가? 처리 성능 / 변경 비용 / 분배 처리시간 표 |
+| `/measurements` 범위 | 조건·집계와 선택 모델 행렬. 조합/배치 분모 분리, 미측정 모드 직접 표시, 목표 미제공 시 진행률 없음. 셀 Sheet는 상태 축→배치 결과→출처·작업·원본 순서 |
+| `/measurements/requests` 요청 | 부모 요청 선택 Sheet에 자식 회차·실패 원인·점검·기존 사용 결과. `?view=runs` 전체 회차 검색, `?run=…&uid=…` 직접 선택. 작성 `/measurements/requests/new` 대상→조건→점검·제출 |
+| `/measurements/results?kind=throughput\|operation-cost\|dispatch-occupancy` 결과 | 종류 전환 틀 하나, API·통계 의미는 독립. 현재 사용/품질 분리, 변경 비용 준비·제거별 행과 실제 통계 열. `profile` 또는 `measurement`·namespace·UID 선택 보존 |
 | `/experiments` 실행 | 무엇이 실행·정리 중인가? 실행 표·선택 실행·필요한 정리 확인 |
 | `/experiments/results` 결과 | 비교 근거로 어떤 차이를 말할 수 있는가? 비교 판독·구간 비교·선택 서비스 추세 |
 | `/experiments/load-scenarios` 부하 설정 | 어떤 부하 정의를 사용하는가? 검색/표; 상세 정의·구간 미리보기·사용 중 실행 |
@@ -298,6 +305,10 @@ suffix·요청률 유사성 fallback은 사용하지 않는다. 정책은 기록
 `자원 반환 확인 요청`은 실제 반환 관측이 아니다. 잔여 자원·사유와 실제 정리 결과를 별도로 확인한다.
 주입은 단계 ID와 정확한 대상 일치 범위로만 표시하고 입력 번들은 기존 오프라인 도구가 생성한다.
 폼/JSON은 같은 정의를 편집하며 미래 필드·정밀 정수와 원본 출처를 보존한다.
+
+실험 구현의 작성 경로는 `/experiments/new`, `/experiments/[name]/edit`, `/experiments/load-scenarios/new`, `/experiments/load-scenarios/[name]/edit`다.
+복사는 `copy`(실행·설정 이름) 또는 `publication`(게시 ID), 수정은 `uid`를 보존하며 새로고침에도 서버 원본을 다시 조회한다.
+실행 목록은 KST 시각·단계·풀 상태·작업을, 결과 목록은 비교 상태 선행 표·독립 판정 축·차이·제한을 제공한다. 운영 판독은 `EvaluationStatusCell`을 재사용한다.
 
 ## 9. 삭제·통합·단계별 수용
 

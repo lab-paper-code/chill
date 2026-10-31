@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { ApiError, useChillQueries } from "@/lib/client"
 import { Button } from "@/components/ui/button"
 import { campaignScoreboard, decodeExperiment, definitionComparisonReason, experimentDifference, experimentOutcome, experimentPath, historicalPublicationIDs, injectionRows, type Experiment, type ExperimentStage } from "@/lib/experiments"
@@ -22,7 +23,7 @@ const outcomeWords:Record<string,string>={Complete:"완료",Failed:"실패",PASS
 
 export function ExperimentOutcome({run,stage}:{run:Experiment;stage?:ExperimentStage}) {
   const outcome=experimentOutcome(run,stage)
-  return <dl aria-label={stage?"단계 판정 3축":"실험 판정 3축"} className="flex flex-wrap gap-x-4 gap-y-1 text-xs">{([["execution","실행"],["measurement","측정"],["cleanup","정리"]] as const).map(([axis,label])=><div key={axis} className="flex items-center gap-1"><dt className="text-muted-foreground">{label}</dt><dd title={outcome[axis].reason} className={["Failed","FAIL","INVALID"].includes(outcome[axis].value)?"font-medium text-destructive":""}>{outcomeWords[outcome[axis].value]??"미기록"}</dd></div>)}</dl>
+  return <dl aria-label={stage?"단계 판정 3축":"실험 판정 3축"} className="flex flex-wrap gap-x-4 gap-y-1 text-sm">{([["execution","실행"],["measurement","측정"],["cleanup","정리"]] as const).map(([axis,label])=><div key={axis} className="flex items-start gap-2"><dt className="text-muted-foreground">{label}</dt><dd className={["Failed","FAIL","INVALID"].includes(outcome[axis].value)?"font-medium text-destructive":""}>{outcomeWords[outcome[axis].value]??"미기록"}{outcome[axis].reason&&<div className="text-xs font-normal text-muted-foreground">{outcome[axis].reason}</div>}</dd></div>)}</dl>
 }
 
 export function ExperimentInjections({run,stage}:{run:Experiment;stage:ExperimentStage}) {
@@ -62,4 +63,19 @@ export function ExperimentConclusion({run,runs=[run]}:{run:Experiment;runs?:Expe
 
 export function ExperimentComparisonLegend() {
   return <span className="text-xs text-muted-foreground" title="일치: 게시 정의의 부하 시나리오 UID·부하 생성기와 서비스 식별자·정의, 측정 규칙, 표시 구간 길이가 같음. 참고: 조건이 다르거나 미기록. 제한 원인은 중복될 수 있어요.">Δ 왼쪽−오른쪽 / p95 왼쪽÷오른쪽</span>
+}
+
+export function ExperimentResultRow({run,runs,pending,error}:{run:Experiment;runs:Experiment[];pending:boolean;error:boolean}) {
+  const score=campaignScoreboard(run,runs),c=score.coverageCounts
+  const state=error?"조회 실패":pending?"조회 중":!run.definition&&run.comparisons===undefined?"미기록":c.matched?"일치":c.limited?"참고":score.conclusion==="대상 게시 없음"?"대상 없음":"비교 없음"
+  const metrics=score.reference?score.referenceSummary:score.summary
+  const outcome=experimentOutcome(run)
+  return <tr className="border-t">
+    <th scope="row" className="p-3 text-left font-medium">{state}</th>
+    <td data-label="실험" className="max-w-64 break-all p-3"><Link prefetch={false} className="underline" href={`/experiments/results?${new URLSearchParams({a:run.id})}`}>{run.definition?.run.name??run.id}</Link></td>
+    {[c.matched,c.limited,c.unpaired].map((count,index)=><td key={index} data-label={["일치 (개)","참고 (개)","대응 없음 (개)"][index]} className="p-3 text-right tabular-nums">{pending||error?"미확인":state==="미기록"?"미기록":count}</td>)}
+    {(["execution","measurement","cleanup"] as const).map((axis,index)=><td key={axis} data-label={["실행","측정","정리"][index]} className="p-3">{outcomeWords[outcome[axis].value]??"미기록"}{outcome[axis].reason&&<div className="text-xs text-muted-foreground">{outcome[axis].reason}</div>}</td>)}
+    {[{value:metrics.energyPercent,base:0,higher:false},{value:metrics.successDelta,base:0,higher:true},{value:metrics.p95Ratio,base:1,higher:false}].map((metric,index)=><td key={index} data-label={["에너지 Δ (%)","최악 성공률 Δ (%p)","최악 p95 (배)"][index]} className="p-3 text-right tabular-nums">{error||pending?"미확인":metric.value===null?"미기록":experimentDifference(metric.value,metric.base,metric.higher).text}</td>)}
+    <td data-label="제한 사유" className="max-w-80 break-words p-3">{pending||error?"미확인":definitionComparisonReason(run,runs)}{c.limited>0&&<ExperimentLimits run={run} runs={runs}/>}</td>
+  </tr>
 }

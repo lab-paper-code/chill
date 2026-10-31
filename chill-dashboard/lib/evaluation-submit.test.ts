@@ -10,6 +10,8 @@ import * as requestHelpers from "./evaluation-request.ts"
 import * as authorHelpers from "./evaluation-author.ts"
 import * as scheduler from "./scheduler.ts"
 import * as activeHelpers from "./evaluation-active.ts"
+import * as measurementHelpers from "./measurements.ts"
+import { STATUS_AXES } from "./status.ts"
 import type { EvaluationSubmit } from "../features/evaluation-request.tsx"
 
 const require=createRequire(import.meta.url)
@@ -36,7 +38,7 @@ test("manual evaluation replacement re-read unlocks deleted and unchanged drafts
       "@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{}})},
       "@/lib/client":{ApiError,useChillMutation:()=>mutationIndex++===0?pre:send,useChillQuery:()=>lookup},
       "@/lib/evaluation-request":requestHelpers,"@/lib/evaluation-author":authorHelpers,"@/lib/scheduler":scheduler,
-      "@/lib/experiments":{},"@/features/evaluation-author":{},"@/components/ui/button":{Button},
+      "@/lib/experiments":{},"@/features/evaluation-author":{},"@/features/evaluation-active":{},"@/lib/measurements":measurementHelpers,"@/components/ui/button":{Button},
       "@/components/read-region":{},"@/components/screen":{},"@/components/ui/input":{},"@/components/ui/dialog":{},
       "next/link":{default:({children,href}:{children:React.ReactNode;href:string})=>React.createElement("a",{href},children)},"next/navigation":{},
     }
@@ -71,6 +73,7 @@ test("active evaluation injection table translates wire action names",()=>{
   const modules:Record<string,unknown>={
     "@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/evaluations/active"?active:{items:[]}}),useChillMutation:()=>({})},
     "@/lib/evaluation-active":activeHelpers,
+    "@/lib/status":{STATUS_AXES},"@/components/status-cell":{StatusCell:container},
     "@/components/ui/dialog":{Dialog:container,DialogContent:container,DialogDescription:container,DialogHeader:container,DialogTitle:container},
   }
   const source=readFileSync(new URL("../features/evaluation-active.tsx",import.meta.url),"utf8")
@@ -81,4 +84,55 @@ test("active evaluation injection table translates wire action names",()=>{
   assert.match(html,/노드 차단·Pod 삭제/)
   assert.match(html,/노드 차단 해제/)
   assert.match(html,/서비스 Pod 삭제/)
+})
+
+test("compact experiment status keeps cleanup, running, empty and denied states separate",()=>{
+  let answer:unknown
+  const modules:Record<string,unknown>={
+    "@/lib/client":{useChillQuery:()=>answer},
+    "@/lib/evaluation-active":activeHelpers,
+    "@/lib/status":{STATUS_AXES},
+    "@/components/status-cell":{StatusCell:({axis,label}:{axis:string;label:string})=>React.createElement("span",{"data-axis":axis},label)},
+    "@/components/ui/dialog":{},
+  }
+  const source=readFileSync(new URL("../features/evaluation-active.tsx",import.meta.url),"utf8")
+  const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const exports:{EvaluationStatusCell?:React.ComponentType}={}
+  new Function("require","exports",compiled)((name:string)=>name in modules?modules[name]:require(name),exports)
+  for(const [phases,label] of [[[],"활성 없음"],[["Running"],"실행 중"],[["Running","Finishing"],"정리 중"],[["Running","Blocked"],"정리 실패"],[["Pending"],"시작 전"]] as [string[],string][]) {
+    answer={data:{items:phases.map((phase,index)=>({name:String(index),uid:String(index),phase}))}}
+    const html=renderToStaticMarkup(React.createElement(exports.EvaluationStatusCell!))
+    assert.match(html,/data-axis="실험 상태"/)
+    assert.ok(html.includes(label))
+  }
+  answer={error:{status:403}}
+  assert.match(renderToStaticMarkup(React.createElement(exports.EvaluationStatusCell!)),/권한 없음/)
+})
+
+test("return observation requires matching UID and explicit pool release, not request acceptance",()=>{
+  let observed={name:"run",uid:"old",conditions:[{type:"PoolAcquired",status:"True"}]}
+  const container=({children}:{children?:React.ReactNode})=>React.createElement("div",null,children)
+  const modules:Record<string,unknown>={
+    "@tanstack/react-query":{useQueryClient:()=>({})},
+    "@/lib/client":{useChillQuery:()=>({data:observed}),useChillMutation:()=>({isSuccess:true})},
+    "@/lib/evaluation-request":requestHelpers,"@/lib/evaluation-author":authorHelpers,"@/lib/scheduler":scheduler,
+    "@/lib/experiments":{},"@/lib/measurements":measurementHelpers,"@/features/evaluation-active":{},
+    "@/components/ui/button":{Button:container},"@/components/ui/input":{Input:container},
+    "@/components/ui/dialog":{Dialog:container,DialogContent:container,DialogHeader:container,DialogTitle:container},
+    "@/components/read-region":{},"@/components/screen":{},
+  }
+  const source=readFileSync(new URL("../features/evaluation-request.tsx",import.meta.url),"utf8")
+  const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const exports:{EvaluationCleanup?:React.ComponentType<{run:unknown}>}={}
+  new Function("require","exports",compiled)((name:string)=>name in modules?modules[name]:require(name),exports)
+  const run={definition:{run:{name:"run",uid:"old"}},outcome:{cleanup:{status:"Failed"}}}
+  const render=()=>renderToStaticMarkup(React.createElement(exports.EvaluationCleanup!,{run}))
+  assert.match(render(),/확인 접수/)
+  assert.match(render(),/점유 중/)
+  assert.doesNotMatch(render(),/반환 관측/)
+  observed={...observed,conditions:[{type:"PoolAcquired",status:"False"}]}
+  assert.match(render(),/반환 관측/)
+  observed={...observed,uid:"new"}
+  assert.doesNotMatch(render(),/반환 관측/)
+  assert.match(render(),/미확인/)
 })

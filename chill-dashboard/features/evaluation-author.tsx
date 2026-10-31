@@ -2,6 +2,8 @@
 
 import { useState, type ReactNode } from "react"
 import Link from "next/link"
+import { useRouter, useSearchParams } from "next/navigation"
+import { Screen } from "@/components/screen"
 import { useChillQuery } from "@/lib/client"
 import { QueryGate } from "@/components/read-region"
 import { Button } from "@/components/ui/button"
@@ -45,7 +47,7 @@ export function EvidencePicker({label,value,onChange}:{label:string;value:unknow
   </div>
 }
 export function AuthorHelp() {
-  return <TooltipProvider><Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost">편집 도움말</Button></TooltipTrigger><TooltipContent className="max-w-sm">검증 정본은 서버 사전점검입니다. 게시 복사는 새 이름으로 실행합니다. 수정은 같은 이름을 새 UID로 교체하며 사용 중인 부하 정의는 수정·삭제할 수 없습니다. 현재 식별자 반영은 선택 사항이며 반영 후 재점검합니다. JSON의 알 수 없는 필드와 정밀 정수는 보존합니다. 막대 폭은 구간 길이, 높이는 요청률 또는 α이며 원값은 표에 표시합니다.</TooltipContent></Tooltip></TooltipProvider>
+  return <TooltipProvider><Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost">편집 도움말</Button></TooltipTrigger><TooltipContent className="max-w-sm">검증 정본은 서버 사전점검입니다. 게시 복사는 새 이름으로 실행합니다. 수정은 같은 이름을 새 UID로 교체하며 사용 중인 부하 설정은 수정·삭제할 수 없습니다. 현재 식별자 반영은 선택 사항이며 반영 후 재점검합니다. JSON의 알 수 없는 필드와 정밀 정수는 보존합니다. 막대 폭은 구간 길이, 높이는 요청률 또는 α이며 원값은 표에 표시합니다.</TooltipContent></Tooltip></TooltipProvider>
 }
 const switches=[["placement","배치 위치"],["resources","자원"],["replicas","복제 수"],["routing","라우팅"],["batching","배치 크기"],["power","전력"],["membership","풀 구성"]] as const
 function ControlFields({spec,path,onChange,onValidityChange}:{spec:Spec;path:(string|number)[];onChange:(spec:Spec)=>void;onValidityChange?:(valid:boolean)=>void}) {
@@ -85,16 +87,16 @@ export function EvaluationSpecEditor({spec,onChange,onValidityChange}:{spec:Spec
     {tab==="json"?<AuthorJSON label="실험 spec JSON" value={spec} onChange={onChange} onValidityChange={valid=>reportValidity("spec",valid)}/>:<>
       {tab==="stages"&&<div className="grid gap-4"><QueryGate query={loads}>{null}</QueryGate>{stages.map((stage,index)=>{const p:(string|number)[]=["stages",index],ref=object(stage.loadScenarioRef),start=object(stage.startState);return <details key={index} className="rounded-md border p-3" open={stages.length===1?true:undefined}><summary className="cursor-pointer font-medium">{String(stage.id||`단계 ${index+1}`)} · {String(stage.mode??"미선택")}</summary><div className="mt-3 grid gap-4">
         <div className="grid gap-3 sm:grid-cols-3"><AuthorField label="단계 ID" spec={spec} path={[...p,"id"]} onChange={onChange}/><AuthorField label="행 이름" spec={spec} path={[...p,"row"]} onChange={onChange}/><AuthorSelect label="모드" value={String(stage.mode??"")} onChange={mode=>onChange(patchSpec(spec,[...p,"mode"],mode))}><option value="">미선택</option><option value="autonomous">자율</option><option value="fixed">고정</option><option value="controls-disabled">제어요소 끔</option></AuthorSelect></div>
-        <AuthorSelect label="부하 정의 · UID" value={String(ref.uid??"")} onChange={uid=>{const selected=loads.data?.items.find(x=>x.uid===uid);if(selected)onChange(patchSpec(spec,[...p,"loadScenarioRef"],{...ref,name:selected.name,uid:selected.uid}))}}><option value="">미선택</option>{ref.uid&&!loads.data?.items.some(x=>x.uid===ref.uid)?<option value={String(ref.uid)}>{String(ref.name)} · {String(ref.uid)} · 대상 없음</option>:null}{loads.data?.items.map(item=><option key={item.uid} value={item.uid}>{item.name} · {item.uid}</option>)}</AuthorSelect>
+        <AuthorSelect label="부하 설정 · UID" value={String(ref.uid??"")} onChange={uid=>{const selected=loads.data?.items.find(x=>x.uid===uid);if(selected)onChange(patchSpec(spec,[...p,"loadScenarioRef"],{...ref,name:selected.name,uid:selected.uid}))}}><option value="">미선택</option>{ref.uid&&!loads.data?.items.some(x=>x.uid===ref.uid)?<option value={String(ref.uid)}>{String(ref.name)} · {String(ref.uid)} · 대상 없음</option>:null}{loads.data?.items.map(item=><option key={item.uid} value={item.uid}>{item.name} · {item.uid}</option>)}</AuthorSelect>
         <AuthorSelect label="시작 상태" value={start.stageResultRef!==undefined?"stage":"evidence"} onChange={kind=>{const next={...start};delete next.evidenceRef;delete next.stageResultRef;onChange(patchSpec(spec,[...p,"startState"],{...next,[kind==="stage"?"stageResultRef":"evidenceRef"]:{}}))}}><option value="evidence">증거 객체</option><option value="stage">앞선 단계 출력</option></AuthorSelect>
         {start.stageResultRef!==undefined?<div className="grid gap-3 sm:grid-cols-2"><AuthorField label="앞선 단계 ID" spec={spec} path={[...p,"startState","stageResultRef","stageID"]} onChange={onChange}/><AuthorField label="출력 이름" spec={spec} path={[...p,"startState","stageResultRef","output"]} onChange={onChange}/></div>:<EvidencePicker label="시작 상태 증거" value={start.evidenceRef} onChange={value=>onChange(patchSpec(spec,[...p,"startState","evidenceRef"],value))}/>}
         <details><summary className="cursor-pointer text-sm">단계 제어 · {stage.control===undefined?"기본 상속":"전체 대체"}</summary><div className="mt-3 grid gap-3"><label className="flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" checked={stage.control!==undefined} onChange={event=>{onChange(patchSpec(spec,[...p,"control"],event.target.checked?structuredClone(object(spec.control)):undefined));reportValidity(`stage-${index}`,true)}}/>단계 제어 사용</label>{stage.control!==undefined&&<ControlFields spec={spec} path={[...p,"control"]} onChange={onChange} onValidityChange={valid=>reportValidity(`stage-${index}`,valid)}/>}</div></details>
         <InjectionEditor spec={spec} path={[...p,"failureInjection"]} onChange={onChange}/>
         <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={invalid.length>0||index===0} onClick={()=>{const next=[...stages];[next[index-1],next[index]]=[next[index],next[index-1]];onChange(patchSpec(spec,["stages"],next))}}>앞으로 이동</Button><Button type="button" variant="outline" disabled={invalid.length>0} onClick={()=>onChange(patchSpec(spec,["stages"],stages.filter((_,i)=>i!==index)))}>단계 삭제</Button></div>
-      </div></details>})}<Button type="button" variant="outline" onClick={()=>onChange(patchSpec(spec,["stages"],[...stages,{id:"",row:"",startState:{}}]))}>단계 추가</Button><Link className="text-sm text-primary underline" href="/evaluations/load-scenarios">부하 정의</Link></div>}
+      </div></details>})}<Button type="button" variant="outline" onClick={()=>onChange(patchSpec(spec,["stages"],[...stages,{id:"",row:"",startState:{}}]))}>단계 추가</Button><Link className="text-sm text-primary underline" href="/experiments/load-scenarios">부하 설정</Link></div>}
       {tab==="comparisons"&&<div className="grid gap-4">{comparisons.map((comparison,index)=><fieldset key={index} className="grid gap-3 rounded-md border p-3"><legend className="text-sm">비교 {index+1}</legend><div className="grid gap-4 sm:grid-cols-2"><ComparisonSide label="후보 (left)" spec={spec} path={["comparisons",index,"left"]} stages={stages} onChange={onChange}/><ComparisonSide label="기준 (right)" spec={spec} path={["comparisons",index,"right"]} stages={stages} onChange={onChange}/></div><AuthorField label="비교 사유" spec={spec} path={["comparisons",index,"reason"]} onChange={onChange}/><Button type="button" variant="outline" onClick={()=>onChange(patchSpec(spec,["comparisons"],comparisons.filter((_,i)=>i!==index)))}>비교 삭제</Button></fieldset>)}<Button type="button" variant="outline" onClick={()=>onChange(patchSpec(spec,["comparisons"],[...comparisons,{left:{stageID:""},right:{stageID:""},reason:""}]))}>비교 추가</Button></div>}
       {tab==="criteria"&&<div className="grid gap-4"><table className="w-full text-left text-sm"><caption className="sr-only">판정 기준</caption><thead><tr><th>항목</th><th>단위</th><th>값</th></tr></thead><tbody>{[["generatorQuality","latenessToleranceNanos","발행 지연 허용","ns"],["generatorQuality","maxExceedingFraction","지연 초과 비율","비율"],["energyCoverage","maxGapFraction","전력 결손 비율","비율"],["energyCoverage","maxSingleGapSeconds","단일 전력 공백","s"]].map(([section,key,label,unit])=><tr key={key}><th className="font-normal">{label}</th><td>{unit}</td><td className="py-1"><AuthorField label={label} compact spec={spec} path={["judgment",section,key]} numeric onChange={onChange}/></td></tr>)}</tbody></table><ControlFields spec={spec} path={["control"]} onChange={onChange} onValidityChange={valid=>reportValidity("control",valid)}/></div>}
-      {tab==="context"&&<div className="grid gap-4"><AuthorField label="증거 저장소" spec={spec} path={["evidenceStore"]} onChange={onChange}/>{[["target","대상 구성요소"],["harness","하네스 이미지·소스"],["loadGenerator","부하 발생기"],["powerMeasurement","전력 측정"]].map(([key,label])=><AuthorJSON key={key} disabled={invalid.length>0&&!invalid.includes(key)} label={label} value={object(spec[key])} onChange={value=>onChange(patchSpec(spec,[key],value))} onValidityChange={valid=>reportValidity(key,valid)}/>)}</div>}
+      {tab==="context"&&<div className="grid gap-4"><AuthorField label="증거 저장소" spec={spec} path={["evidenceStore"]} onChange={onChange}/>{[["target","대상 구성요소"],["harness","실행기 이미지·소스"],["loadGenerator","부하 발생기"],["powerMeasurement","전력 측정"]].map(([key,label])=><AuthorJSON key={key} disabled={invalid.length>0&&!invalid.includes(key)} label={label} value={object(spec[key])} onChange={value=>onChange(patchSpec(spec,[key],value))} onValidityChange={valid=>reportValidity(key,valid)}/>)}</div>}
     </>}
   </div>
 }
@@ -106,7 +108,7 @@ export function EvaluationAuthor({initialSpec,initialName,existing,onSubmitted}:
     const result=await template.refetch()
     if(!result.error&&result.data){setSpec(copyAuthorDraft(result.data).spec);setSources(result.data.sources);setOrigin("");setReady(true);setValid(true);setVersion(v=>v+1)}
   }
-  const labels:Record<string,string>={question:"질문",target:"대상 구성요소",harness:"하네스",loadGenerator:"부하 발생기",powerMeasurement:"전력 측정",control:"제어",judgment:"판정 기준",evidenceStore:"증거 저장소",stages:"단계",comparisons:"비교"}
+  const labels:Record<string,string>={question:"질문",target:"대상 구성요소",harness:"실행기",loadGenerator:"부하 발생기",powerMeasurement:"전력 측정",control:"제어",judgment:"판정 기준",evidenceStore:"증거 저장소",stages:"단계",comparisons:"비교"}
   return <div className="grid gap-5">
     <div className="flex justify-end"><AuthorHelp/></div>
     {!initialSpec&&<section className="grid gap-3" aria-label="정의 출처">
@@ -121,4 +123,15 @@ export function EvaluationAuthor({initialSpec,initialName,existing,onSubmitted}:
       <AuthorField label="질문" spec={spec} path={["question"]} onChange={setSpec}/><EvaluationSpecEditor key={version} spec={spec} onChange={setSpec} onValidityChange={setValid}/>
     </section><EvaluationSubmit name={name} spec={spec} existing={existing} disabled={!valid||!name.trim()||(!existing&&name===origin)} onSpecChange={setSpec} onSubmitted={onSubmitted}/></>}
   </div>
+}
+
+export function EvaluationAuthorPage({name}:{name?:string}) {
+  const params=useSearchParams(),router=useRouter(),copy=params.get("copy")??"",publication=params.get("publication")??"",source=name??copy
+  const run=useChillQuery<{name:string;uid:string;phase:string;spec:Spec}>(`v1/evaluations/${encodeURIComponent(source||"_")}`,{enabled:!!source,decoder:parseSchedulerJSON})
+  const result=useChillQuery<{definition?:{run:{name:string};spec:Spec}}>(`v1/experiments/${encodeURIComponent(publication||"_")}`,{enabled:!source&&!!publication,decoder:parseSchedulerJSON})
+  const identityChanged=!!name&&!!params.get("uid")&&run.data?.uid!==params.get("uid")
+  const submitted=(value:{name:string;uid:string})=>router.replace(`/experiments?${new URLSearchParams(value)}`)
+  return <Screen title={name?"실험 수정":"새 실험"} width="data" back={["/experiments","실험"]}>
+    {source?<QueryGate query={run}>{run.data&&(name&&(run.data.phase!=="Pending"||identityChanged)?<strong role="alert">{identityChanged?"실험 교체 확인":"시작 전 수정만 허용"}</strong>:<EvaluationAuthor onSubmitted={submitted} key={run.data.uid} initialSpec={run.data.spec} initialName={run.data.name} existing={name?{name:run.data.name,uid:run.data.uid}:undefined}/>)}</QueryGate>:publication?<QueryGate query={result}>{result.data&&(result.data.definition?<EvaluationAuthor onSubmitted={submitted} key={publication} initialSpec={result.data.definition.spec} initialName={result.data.definition.run.name}/>:<strong role="status">정의 미기록</strong>)}</QueryGate>:<EvaluationAuthor onSubmitted={submitted}/>}
+  </Screen>
 }

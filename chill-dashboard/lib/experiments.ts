@@ -264,7 +264,7 @@ export function experimentSelection(search:string,values:Record<string,string>):
   return next
 }
 export function commitExperimentSelection(location:Pick<Location,"search">,history:Pick<History,"replaceState">,values:Record<string,string>) {
-  history.replaceState(null,"",`/experiments?${experimentSelection(location.search,values)}`)
+  history.replaceState(null,"",`/experiments/results?${experimentSelection(location.search,values)}`)
 }
 export function frozenP95SLO(row:ExperimentRow,run?:Experiment):number|null {
   const uid=row.original.workloadUID
@@ -365,7 +365,7 @@ export function experimentHeatmap(run:Experiment,runs:Experiment[]=[run]):Experi
 export function experimentDifference(value:number|null,baseline=0,higherIsBetter=false) {
   const delta=value===null?null:value-baseline
   const small=delta!==null&&delta!==0&&Math.abs(delta)<.01
-  return {text:value===null?"—":small&&baseline===0?"0.01 미만":formatMeasurementNumber(value,"%"),tone:delta===null||small||delta===0?"bg-muted/50 text-muted-foreground":(delta>0)===higherIsBetter?"bg-ok/10 text-ok":"bg-destructive/10 text-destructive"}
+  return {text:value===null?"미기록":small&&baseline===0?"0.01 미만":formatMeasurementNumber(value,"%"),tone:delta===null||small||delta===0?"bg-muted/50 text-muted-foreground":(delta>0)===higherIsBetter?"bg-ok/10 text-ok":"bg-destructive/10 text-destructive"}
 }
 
 export function experimentChartData(run:Experiment,service:string,runs:Experiment[]=[run]) {

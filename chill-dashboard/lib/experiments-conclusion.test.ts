@@ -11,7 +11,7 @@ import type { Experiment } from "./experiments.ts"
 
 const require=createRequire(import.meta.url)
 const compiled=transpileModule(readFileSync(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
-const components:Record<string,ComponentType<{run:Experiment}>>={}
+const components:Record<string,ComponentType<{run:Experiment;runs?:Experiment[];pending?:boolean;error?:boolean}>>={}
 const modules:Record<string,unknown>={"@/lib/client":{},"@/components/ui/button":{},"@/lib/experiments":experiments,"@/lib/measurements":measurements,"lucide-react":{TriangleAlert:()=>null}}
 new Function("require","exports",compiled)((name:string)=>modules[name]??require(name),components)
 const stage=(id:string)=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",kpis:{}})
@@ -35,4 +35,15 @@ test("comparison coverage counts are visible table cells, including observed zer
 test("legacy publications do not invent comparison counts",()=>{
   const legacy={...run,comparisons:undefined}
   for(const name of ["ExperimentLimits","ExperimentCoverage"])assert.equal(renderToStaticMarkup(createElement(components[name],{run:legacy})),"")
+})
+
+test("result rows lead with comparison status and do not turn missing relationships into zero",()=>{
+  const legacy={...run,comparisons:undefined}
+  const html=renderToStaticMarkup(createElement(components.ExperimentResultRow,{run:legacy,runs:[legacy],pending:false,error:false}))
+  assert.match(html,/<tr[^>]*><th[^>]*>미기록<\/th>/)
+  assert.doesNotMatch(html,/>0<\/td>/)
+  assert.match(html,/href="\/experiments\/results\?a=comparison"/)
+  const failed=renderToStaticMarkup(createElement(components.ExperimentResultRow,{run,runs:[run],pending:false,error:true}))
+  assert.match(failed,/<tr[^>]*><th[^>]*>조회 실패<\/th>/)
+  assert.doesNotMatch(failed,/대상 없음<\/th>/)
 })

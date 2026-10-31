@@ -93,7 +93,7 @@ retain integer literals while removing credentials.
 |---|---|
 | 운영 | `/` 현재 서비스 영향·유입·배치·진행 변경, `/operations/devices` 장치·전력·배치 |
 | 서비스 | `/workloads`, `/workloads/[name]?uid=…` 정의·접수·자동제어·관리; 현재 관측은 운영 링크 |
-| 측정 | `/measurements` 범위, `/measurements/requests` 부모 요청→자식 회차, `/measurements/results` 처리 성능/변경 비용/분배 처리시간 |
+| 측정 | `/measurements` 조건·집계/행렬/결과 Sheet, `/measurements/requests` 부모 요청→자식 회차(`?view=runs` 전체 검색), `/measurements/requests/new` 대상→조건→점검·제출, `/measurements/results?kind=throughput\|operation-cost\|dispatch-occupancy` 종류별 결과 |
 | 실험 | `/experiments` 실행, `/experiments/results` 비교 결과, `/experiments/load-scenarios` 부하 설정 |
 | 기록 | `/records` 판단·변경/서비스 요청/전력, 종류별 실제 범위·페이지·누락 보존 |
 | 보조 설정 | `/settings` 운영 설정/모델/입력 처리/데이터셋 |
@@ -120,16 +120,20 @@ update. Deferred requests remain waiting, not running or completed. The actual
 local editor was exercised with all three values and existing limits preserved;
 the browser used an isolated ChillServer-contract fixture and performed no live writes.
 
-`/scheduler` shows only the current judgment; candidates, per-service estimates,
-event-time load and actions are separate screens. A candidate detail dialog
-freezes the response it was opened on and announces newer decisions.
+`/`는 운영 판독·서비스 상태·진행/사건의 세 영역이다. 서비스 영향과 관측 공백을
+독립 상태 셀과 aria-live 요약으로 함께 제공한다. 전부 유휴이면 집계 표로 압축하고
+보기 전환으로 개별 서비스에 접근한다. 서비스 선택은 공통 Sheet 한 개를 사용한다.
+후보·추정·부하·용량 근거는 `/?open=service:UID&evidence=candidates|estimates|load|capacity`로
+연결하며, 후보 선택 시 응답을 고정하고 최신 판단을 명시적으로 채택한다.
+`/operations/devices`는 전력 추세와 이름순 장치·배치 표 두 영역이다. 계측 범위와 구성 범위를
+구분하고 사양·전력모드·측정/가용/제외 역할·실제 할당은 선택 Sheet에서 조회한다.
 Automatic application and evaluated judgment are separate; keep/target J and SLO are
 predictions, not measurements. Load preserves the submitted window in the page URL
 independently of the draft. ChillServer omits arrivals from load responses, so load
 links query all definitions for the original UID/window; candidate SLO links
 include the provided immutable definition. Request details separately display
 CHILL dispatch and native progress, including exact uint64 batch identity.
-Service labels share a UID resolver across observations, load, overview and routing.
+Service labels share a UID resolver across observations, load and routing.
 Deleted registrations use retained observation definitions or scheduler snapshot
 workloads; unresolved labels show `이름 미확인` with the first eight UID characters.
 Load reads definitions with the existing per-workload observation API (one request
@@ -160,7 +164,7 @@ and runtime results. Kind/node filters apply only to the fetched page; an empty
 filtered page can still advance. Exports name the selected-record/current-page
 scope. Identity changes clear selections; first login retains bookmarked records.
 
-`/experiments` reads immutable published runs/stages from `GET /api/v1/experiments`
+`/experiments/results` reads immutable published runs/stages from `GET /api/v1/experiments`
 and `/{id}`. The A/B selectors retain two runs and two stages in the URL. Only
 publisher `kpis.workloads` (demo) and `kpis.requests` (E5) shapes are interpreted;
 original KPIs, numerator/denominator, populations, sources and missing reasons
@@ -171,6 +175,7 @@ live terminal buckets are explicitly distinct. Shared POOL energy is not summed
 across rows; published gap bounds render as `value ± bound J`, with energyCoverage.
 Different measurementRules retain numbers and display “측정 규칙 다름”.
 현재 reader는 [DB-FR-66](../docs/spec/dashboard/SRS.md)에 따라 게시 단건의 `definition.spec.comparisons`와 목록의 `comparisons`로 비교 관계를 읽고 단계 ID·서비스 UID·publicationID로 연결한다. suffix·요청률 유사성 fallback은 사용하지 않는다. 정의 없는 과거 게시는 비교 미기록, 실제 대상 부재는 대상 게시 없음, 권한/서버/timeout은 대상 조회 실패로 구분한다. 정책·SLO는 기록된 정의·실행 결과에서만 읽는다. 비교 상태·제한·일치/참고/대응 없음 건수는 차이보다 먼저 표시하며 참고 비교는 동일 조건 성과 집계와 분리한다. 상세는 조건 → 원값 → 사건 → 원본이다.
+실행은 `/experiments`, 부하 설정은 `/experiments/load-scenarios`다. 작성·수정은 각각 `/experiments/new`, `/experiments/[name]/edit`, `/experiments/load-scenarios/new`, `/experiments/load-scenarios/[name]/edit` 전용 페이지다. 원본은 `copy` 또는 `publication`, 수정 UID는 `uid` query로 복원한다. 목록 시각은 KST이며 결과 표는 비교 상태·구간 수·실행/측정/정리·차이·제한을 한 행에 제공한다. 구간 Sheet의 사건은 조건·원값 뒤에 배치한다.
 Evidence lookup uses the exact nanosecond `decision.at` interval through the
 processed scheduler observations API, then selects the recorded judgment identity;
 it never falls back to the latest state. No-record and timeout states are distinct.
