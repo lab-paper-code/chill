@@ -13,7 +13,7 @@
 
 | 경로 | 변화 |
 |---|---|
-| `GET /api/v1/experiments` | 각 항목에 선택 필드 `outcome` 추가. **`definition`은 목록에서 생략**(크기) |
+| `GET /api/v1/experiments` | 각 항목에 선택 필드 `outcome`과 `comparisons`(= 저장된 `definition.spec.comparisons`를 서버가 그대로 잘라 낸 것) 추가. **`definition`은 목록에서 생략**(크기) |
 | `GET /api/v1/experiments/{id}` | `definition`·`outcome` 모두 포함 |
 
 - `schemaVersion`은 `serving-experiment.v1alpha1` 그대로. 단건에 `definition`이 없거나 `outcome`이 없으면 옛 게시다(해당 항목 "미기록").
