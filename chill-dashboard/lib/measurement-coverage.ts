@@ -75,7 +75,7 @@ export function coverageBatchState(progress:BatchProgress|null,batch:number) {
 export function coverageRequestHref(cell:MeasurementCoverageCell,namespace:string,returnTo:string,variantId?:string,targetBatches:number[]=[]) {
   const variant=cell.variants.find(variant=>variant.id===variantId),condition=variant?.condition
   const progress=variant?.batchProgress??coverageProgress(cell)
-  const batches=progress?.missing.length?progress.missing:progress?.target.length?progress.target:targetBatches.length?targetBatches:[1,2,4]
+  const batches=progress?.missing.length?progress.missing:progress?.target.length?progress.target:targetBatches
   const node=(condition?.metricSource as {nodeName?:string}|undefined)?.nodeName??(condition?.state as {targetNode?:string}|undefined)?.targetNode??cell.support.node?.name
   return `/measurements/new?${new URLSearchParams({namespace,model:cell.model.name,deviceClass:cell.deviceClass.name,path:cell.executionPath,powerMode:cell.powerMode,batches:batches.join(","),returnTo,...(variant?{variantId:variant.id}:{}),...(node?{node}:{})})}`
 }

@@ -1,15 +1,7 @@
-import { operationDuration, operationWallEnergy, type OperationStep } from "./measurements.ts"
+import type { OperationStep } from "./measurements.ts"
 
-export function operationCostDuration(value?:unknown) {
-  if((typeof value!=="number"&&typeof value!=="bigint")||(typeof value==="number"&&!Number.isSafeInteger(value))||value<0)return operationDuration(value,"s")
-  const seconds=Number(value)/1e9
-  return Number.isFinite(seconds)?`${seconds.toLocaleString("ko-KR",{maximumFractionDigits:1})} s`:"품질 경고: 실측 시간이 올바르지 않아요"
-}
-export function operationCostEnergy(value?:unknown) {
-  return typeof value==="number"&&Number.isFinite(value)&&value>=0?`${value.toLocaleString("ko-KR",{maximumFractionDigits:1})} J`:operationWallEnergy(value)
-}
-export const operationStageLabel=(step:OperationStep)=>(stageLabels[step.condition?.kind??""]??"동작 종류 미기록")
-const stageLabels:Record<string,string>={power:"전력 모드 변경",prepare:"모델 준비",idle:"쉬는 상태 유지",remove:"모델 제거"}
+export const operationStageLabel=(step:OperationStep)=>(operationStageLabels[step.condition?.kind??""]??"동작 종류 미기록")
+export const operationStageLabels:Record<string,string>={power:"전력 모드 변경",prepare:"모델 준비",idle:"쉬는 상태 유지",remove:"모델 제거"}
 
 export function largestOperationStages(steps:OperationStep[]) {
   const duration:OperationStep[]=[],energy:OperationStep[]=[]

@@ -45,14 +45,16 @@ export function occupancyDuration(value?:unknown) {
   if (value < 0) return "품질 경고: 점유시간이 음수로 기록됐어요"
   return `${formatMeasurementNumber(Number(nanosToMilliseconds(value)),"ms")}ms/request`
 }
-export function operationDuration(value?:unknown,unit:"ms"|"s"="ms") {
+export function operationDuration(value?:unknown,unit:"ms"|"s"="ms",maximumFractionDigits=9) {
   if (value === undefined || value === null) return "실측 시간 기록 없음"
   if ((typeof value !== "number" && typeof value !== "bigint") || (typeof value === "number" && !Number.isSafeInteger(value)) || value < 0) return "품질 경고: 실측 시간이 올바르지 않아요"
-  return unit==="s"?`${(Number(nanosToMilliseconds(value))/1000).toLocaleString("ko-KR",{maximumFractionDigits:9})} s`:formatMeasurementDuration(value)
+  const seconds=Number(nanosToMilliseconds(value))/1000
+  if(!Number.isFinite(seconds))return "품질 경고: 실측 시간이 올바르지 않아요"
+  return unit==="s"?`${seconds.toLocaleString("ko-KR",{maximumFractionDigits})} s`:formatMeasurementDuration(value)
 }
-export function operationWallEnergy(value?:unknown) {
+export function operationWallEnergy(value?:unknown,maximumFractionDigits?:number) {
   if (value === undefined || value === null) return "수용된 에너지 없음"
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? `${significant(value)} J` : "품질 경고·사용 확인 필요"
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? `${maximumFractionDigits===undefined?significant(value):value.toLocaleString("ko-KR",{maximumFractionDigits})} J` : "품질 경고·사용 확인 필요"
 }
 export const occupancyThroughput = (value?:string) => !value ? "결과 없음" : !/^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value) || !Number.isFinite(Number(value)) || Number(value) < 0 ? "품질 경고·사용 확인 필요" : `${significant(Number(value))} req/s`
 export const significant = (value:number) => Number.isFinite(value) ? value.toLocaleString("ko-KR",{maximumSignificantDigits:3}) : `${String(value)} · 품질 경고`

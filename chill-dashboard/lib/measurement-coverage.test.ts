@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { measurementAge, conditionLabel, deviceLabel, coverageSelection, coveragePathVisible, coverageModes, coverageVariant, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
+import { requestBatches, requestInitialBatches } from "./measurement-request.ts"
 import type { CoverageModel } from "./measurement-coverage.ts"
 import type { InventoryClass, InventoryView, MeasurementCoverageCell, MeasurementPlan, ModelCompatibility, ProfilingRun, ResultRow } from "./read-types.ts"
 
@@ -125,9 +126,13 @@ test("RKNN on Jetson is statically unsupported, not an unknown runtime declarati
   assert.equal(coveragePathVisible({...cell,executionPath:"rknn"}, {...inventory,models:[rknn],classes:[{...cls,accelerator:"nvidia-jetson-agx-orin"}]}),false)
 })
 
-test("coverage request without an existing target supplies actionable default batches",()=>{
+test("coverage link leaves unspecified batches for the request's path-bounded initializer",()=>{
   const query=new URL(coverageRequestHref({...cell,batchProgress:null},"ns","/measurements"),"http://local").searchParams
-  assert.equal(query.get("batches"),"1,2,4")
+  assert.equal(query.get("batches"),"")
+  const decoded=requestBatches(query)
+  assert.equal(decoded.error,"")
+  assert.deepEqual(decoded.values,[])
+  assert.deepEqual(requestInitialBatches(decoded.values,2),[1,2])
 })
 
 test("measurement age is based on recorded timestamp and never invents missing or future dates",()=>{
