@@ -188,3 +188,9 @@
 
 - **기준 점수 (F, J) = (7,782, 153,056.668 J)**. E5-3m MNV 실패 5,787 D1 FAIL / E5-5m MNV 1,992 D1 FAIL / E5-7m Smol D1 FAIL(실패 0); PLC·나머지 정상. 전력 complete 3/3. 측정 재시도 0. 증거 `C/full-E5-{3m,5m,7m}-10/`, `O/deployB/round-10-baseline/`.
 - STOP 7: finish의 owned reset 대기 시간 초과(무ACK/잔류 예약) — 8c/8d와 같은 원인(반복 2회↑) = L층 책임 수렴 문제, S1~S4 범위. 측정 데이터는 유효.
+
+## 2026-10-31 — S1 완료(배포 대기)
+
+- S1 `67fe02aa`(Tick/Continue 공통 captureReconciled, 제품 −4줄) + 테스트 정리 `5644b165`(freshness-before-reconcile 단언 fail-before 확인) + lint `1bc385d4`. 정식·ponytail 리뷰 PASS(2회), 패널 2인 diff 검토 "목표 달성·의미 동일·덧댐 없음". 리플레이 게이트(per-tick, 기준 live b0877c1e) PASS, make test PASS.
+- 차단 1건(타 세션): `internal/serving/kube/measurement_projection.go:74 projectOperationStep` gocyclo 31 — 다른 세션이 커밋한 코드로 clean `make lint` 실패. Main은 수정 안 함(소유권). 다른 세션 수정 후 S1 배포·미니 행 측정.
+- live: server b0877c1e(control-270), 잔류 예약 0.
