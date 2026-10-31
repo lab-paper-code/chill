@@ -2,6 +2,7 @@ package serving
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -724,5 +726,99 @@ func TestSchedulerObservationWorkloadRelationships(t *testing.T) {
 		if err != nil || match {
 			t.Fatalf("unrelated workload matched: %s %v", raw, err)
 		}
+	}
+}
+
+func TestSchedulerFilteredSummaryStopsAfterPageLookahead(t *testing.T) {
+	from := observationTestHour
+	log, clock := clockedObservationLog(t, ObservationLogConfig{}, from)
+	for _, raw := range []string{
+		fmt.Sprintf(`{"at":%q,"snapshot":{}}`, from.Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"at":%q,"action":{"id":"first","expected":{"workloadUID":"w"}}}`, from.Add(time.Second).Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"at":%q,"action":{"id":"lookahead","expected":{"workloadUID":"w"}}}`, from.Add(2*time.Second).Format(time.RFC3339Nano)),
+		`{broken-after-page}`,
+	} {
+		appendObservationLine(t, log, clock, raw)
+	}
+	for _, order := range []string{"", "asc"} {
+		page, next, _, _, err := log.SchedulerObservationPage(context.Background(), from, from.Add(time.Minute), 1, 0, SchedulerObservationSelection{Summary: true, Filter: "decision-action", Order: order, UID: "w"})
+		if err != nil || len(page) != 1 || page[0].Action.ID != "first" || *page[0].Offset != 1 || next != 1 {
+			t.Fatalf("filtered summary read past lookahead: order=%q page=%+v next=%d err=%v", order, page, next, err)
+		}
+	}
+}
+
+func TestSchedulerDescendingSummaryDecodesOnlySelectedPage(t *testing.T) {
+	from := observationTestHour
+	log, clock := clockedObservationLog(t, ObservationLogConfig{}, from)
+	for _, raw := range []string{
+		fmt.Sprintf(`{"at":%q,"decision":{"status":123}}`, from.Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"at":%q,"decision":{"status":123}}`, from.Add(2*time.Second).Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"at":%q,"decision":{"status":"selected"}}`, from.Add(2*time.Second).Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"at":%q,"decision":{"status":123}}`, from.Add(time.Second).Format(time.RFC3339Nano)),
+	} {
+		appendObservationLine(t, log, clock, raw)
+	}
+	selection := SchedulerObservationSelection{Summary: true, Filter: "decision-action", Order: "desc"}
+	page, next, _, _, err := log.SchedulerObservationPage(context.Background(), from, from.Add(time.Minute), 1, 0, selection)
+	if err != nil || len(page) != 1 || page[0].Decision.Status != "selected" || *page[0].Offset != 2 || next != 1 {
+		t.Fatalf("summary decoded an unselected body or lost timestamp/offset ties: page=%+v next=%d err=%v", page, next, err)
+	}
+	if _, _, _, _, err := log.SchedulerObservationPage(context.Background(), from, from.Add(time.Minute), 1, 1, selection); err == nil {
+		t.Fatal("selected summary stopped validating its own fields")
+	}
+}
+
+func BenchmarkSchedulerFilteredSummaryArchive(b *testing.B) {
+	// Synthetic stored-line scale: 4,000 rows near the existing 135 KiB
+	// compact-record ceiling, not catalog-expanded HTTP response bytes.
+	const rows = 4000
+	from := observationTestHour
+	archive := &readableObservationArchive{observationArchive: &observationArchive{directory: b.TempDir()}}
+	key := observationArchivePrefix + observationHour(from) + "/" + observationSchedulerStream + ".jsonl.gz"
+	name := filepath.Join(archive.directory, key)
+	if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
+		b.Fatal(err)
+	}
+	file, err := os.Create(name)
+	if err != nil {
+		b.Fatal(err)
+	}
+	writer := gzip.NewWriter(file)
+	body := strings.TrimSuffix(strings.Repeat(`{"samples":[1,2,3,4]},`, 6400), ",")
+	var rawBytes int64
+	for i := range rows {
+		at := from.Add(time.Duration(i) * time.Millisecond).Format(time.RFC3339Nano)
+		n, err := fmt.Fprintf(writer, "{\"at\":%q,\"decision\":{\"at\":%q,\"status\":\"Keep\",\"keep\":{\"evidence\":[%s]}}}\n", at, at, body)
+		if err != nil {
+			b.Fatal(err)
+		}
+		rawBytes += int64(n)
+	}
+	if err := writer.Close(); err != nil {
+		b.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		b.Fatal(err)
+	}
+	log, err := NewObservationLog(ObservationLogConfig{Directory: b.TempDir(), Store: archiveTestStore, Writer: archive, Retention: 2 * time.Hour})
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { _ = log.Close(context.Background()) })
+	for _, order := range []string{"asc", "desc"} {
+		b.Run(order, func(b *testing.B) {
+			selection := SchedulerObservationSelection{Summary: true, Filter: "decision-action", Order: order}
+			b.ReportMetric(float64(rawBytes), "fixture-B")
+			b.ReportAllocs()
+			for range b.N {
+				opened := archive.opens
+				page, next, _, _, err := log.SchedulerObservationPage(context.Background(), from, from.Add(time.Minute), 50, 0, selection)
+				if err != nil || len(page) != 50 || next != 50 {
+					b.Fatalf("page=%d next=%d err=%v", len(page), next, err)
+				}
+				b.ReportMetric(float64(archive.opens-opened), "archive-opens/op")
+			}
+		})
 	}
 }

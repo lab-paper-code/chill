@@ -303,7 +303,7 @@ func TestSchedulerHistorySummaryDoesNotRestoreArchivedEvidence(t *testing.T) {
 	}}}
 	h := rawHTTPHandler(t, archive, true)
 	base := "/api/v1/observations/scheduler?from=" + from.Format(time.RFC3339Nano) + "&to=" + from.Add(time.Minute).Format(time.RFC3339Nano) + "&limit=2"
-	for _, selection := range []string{"", "&order=desc", "&order=desc&filter=decision-action&uid=w"} {
+	for _, selection := range []string{"", "&filter=decision-action", "&order=desc", "&order=desc&filter=decision-action&uid=w"} {
 		opened := archive.opens
 		response := rawHTTPRequest(h, base+"&view=summary"+selection)
 		var page struct {
@@ -315,8 +315,12 @@ func TestSchedulerHistorySummaryDoesNotRestoreArchivedEvidence(t *testing.T) {
 		if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || response.Code != http.StatusOK || len(page.Events) == 0 {
 			t.Fatalf("summary restored archived detail: status=%d body=%s err=%v", response.Code, response.Body, err)
 		}
-		if archive.opens-opened != 1 {
-			t.Fatalf("summary replayed archived scheduler stream %d times", archive.opens-opened)
+		wantOpens := 1
+		if strings.Contains(selection, "order=desc") {
+			wantOpens = 2 // key-only pass, then decode only the selected summaries
+		}
+		if archive.opens-opened != wantOpens {
+			t.Fatalf("summary archive passes=%d want=%d selection=%q", archive.opens-opened, wantOpens, selection)
 		}
 		for _, record := range page.Events {
 			if record.Offset == nil || *record.Offset == 1 && (record.PowerJoules == nil || *record.PowerJoules != 12.5) {

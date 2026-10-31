@@ -465,20 +465,24 @@ func (l *ObservationLog) SchedulerObservationPage(ctx context.Context, from, to 
 		return nil, -1, nil, ObservationCoverage{}, err
 	}
 	defer read.close()
-	if selection.UID != "" || selection.Order != "" && selection.Order != "asc" || selection.Filter != "" && selection.Filter != "all" {
+	if selection.Order == "desc" {
 		return l.schedulerSelectedPage(read, from, to, limit, offset, selection)
 	}
 	records := make([]SchedulerObservation, 0, limit)
-	matched, next := 0, -1
+	position, matched, next := 0, 0, -1
 	err = l.scanStream(read, observationSchedulerStream, func(raw []byte) error {
-		var envelope struct {
-			At time.Time `json:"at"`
-		}
+		var envelope schedulerObservationEnvelope
 		if err := json.Unmarshal(raw, &envelope); err != nil {
 			return err
 		}
 		if !observationInInterval(envelope.At, from, to) {
 			return nil
+		}
+		original := position
+		position++
+		selected, err := schedulerObservationMatches(raw, envelope, selection)
+		if err != nil || !selected {
+			return err
 		}
 		matched++
 		if matched <= offset {
@@ -492,7 +496,6 @@ func (l *ObservationLog) SchedulerObservationPage(ctx context.Context, from, to 
 		if err != nil {
 			return err
 		}
-		original := matched - 1
 		record.Offset = &original
 		records = append(records, record)
 		return nil
@@ -566,26 +569,6 @@ func (l *ObservationLog) decodeSchedulerPageRecord(read *observationRead, raw []
 	return record, nil
 }
 
-func schedulerSummaryPage(records []SchedulerObservation, limit, offset int, order string) ([]SchedulerObservation, int, error) {
-	if offset > len(records) {
-		return nil, -1, failure("InvalidQuery", "cursor exceeds selected observation count")
-	}
-	if order == "desc" {
-		sort.Slice(records, func(i, j int) bool {
-			if records[i].At.Equal(records[j].At) {
-				return *records[i].Offset > *records[j].Offset
-			}
-			return records[i].At.After(records[j].At)
-		})
-	}
-	end := offset + min(limit, len(records)-offset)
-	next := -1
-	if end < len(records) {
-		next = end
-	}
-	return records[offset:end], next, nil
-}
-
 const (
 	schedulerHistoryDecision = "decision"
 	schedulerHistoryAction   = "action"
@@ -618,15 +601,14 @@ func (e schedulerObservationEnvelope) kind() string {
 	}
 }
 
-// Summary selection projects rows in one pass without reopening archived streams.
-// Detail selection retains only offsets, then decodes the requested page.
+// Descending selection scans only sort/filter keys, then projects the selected
+// page. Ascending selection uses the bounded append-order path above.
 func (l *ObservationLog) schedulerSelectedPage(read *observationRead, from, to time.Time, limit, offset int, selection SchedulerObservationSelection) ([]SchedulerObservation, int, *time.Time, ObservationCoverage, error) {
 	type entry struct {
 		at     time.Time
 		offset int
 	}
 	var entries []entry
-	var summaries []SchedulerObservation
 	position := 0
 	err := l.scanStream(read, observationSchedulerStream, func(raw []byte) error {
 		var envelope schedulerObservationEnvelope
@@ -638,44 +620,15 @@ func (l *ObservationLog) schedulerSelectedPage(read *observationRead, from, to t
 		}
 		original := position
 		position++
-		kind := envelope.kind()
-		switch selection.Filter {
-		case "", "all", kind:
-		case "decision-action":
-			if kind != schedulerHistoryDecision && kind != schedulerHistoryAction {
-				return nil
-			}
-		default:
-			return nil
+		selected, err := schedulerObservationMatches(raw, envelope, selection)
+		if err != nil || !selected {
+			return err
 		}
-		if selection.UID != "" {
-			matches, err := schedulerObservationHasWorkload(raw, selection.UID)
-			if err != nil || !matches {
-				return err
-			}
-		}
-		if selection.Summary {
-			record, err := l.decodeSchedulerPageRecord(read, raw, true)
-			if err != nil {
-				return err
-			}
-			record.Offset = &original
-			summaries = append(summaries, record)
-		} else {
-			entries = append(entries, entry{envelope.At, original})
-		}
+		entries = append(entries, entry{envelope.At, original})
 		return nil
 	})
 	if err != nil {
 		return nil, -1, nil, ObservationCoverage{}, err
-	}
-	if selection.Summary {
-		records, next, err := schedulerSummaryPage(summaries, limit, offset, selection.Order)
-		if err != nil {
-			return nil, -1, nil, ObservationCoverage{}, err
-		}
-		coverage := read.coverage(map[string][2]time.Time{observationSchedulerStream: {from, to}})
-		return records, next, coverage.gapUntil(from), coverage, nil
 	}
 	if offset > len(entries) {
 		return nil, -1, nil, ObservationCoverage{}, failure("InvalidQuery", "cursor exceeds selected observation count")
@@ -737,6 +690,23 @@ func (l *ObservationLog) schedulerSelectedPage(read *observationRead, from, to t
 	}
 	coverage := read.coverage(map[string][2]time.Time{observationSchedulerStream: {from, to}})
 	return records, next, coverage.gapUntil(from), coverage, nil
+}
+
+func schedulerObservationMatches(raw []byte, envelope schedulerObservationEnvelope, selection SchedulerObservationSelection) (bool, error) {
+	kind := envelope.kind()
+	switch selection.Filter {
+	case "", "all", kind:
+	case "decision-action":
+		if kind != schedulerHistoryDecision && kind != schedulerHistoryAction {
+			return false, nil
+		}
+	default:
+		return false, nil
+	}
+	if selection.UID != "" {
+		return schedulerObservationHasWorkload(raw, selection.UID)
+	}
+	return true, nil
 }
 
 // Project only workload relationships, never arbitrary UID-looking strings in
