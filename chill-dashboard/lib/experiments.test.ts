@@ -612,3 +612,17 @@ test("R13 review: quality-only gains are improvements and no difference requires
   assert.equal(conclude(null,20),"결과 부족")
   assert.equal(conclude(.8,null),"결과 부족")
 })
+
+test("R13 re-review: a neutral pair cannot erase another matched pair's quality gain",()=>{
+  const make=(id:string,success:number|null,p95:number|null):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:00:10Z",kpis:{wholePoolJoules:100,measurementRules:{window:10},requests:{camera:{uid:"camera",definitionID:"same",offered:10,deadlineSuccessFraction:success,completedLatencyNS:{p95:p95===null?null:p95*1e6}}}}})
+  for(const [success,p95] of [[.9,20],[.8,10],[.9,10]]) {
+    const stages=[make("full-E5-1",success,p95),make("static-E5-1",.8,20),make("full-E5-2",.8,20),make("static-E5-2",.8,20)]
+    const score=campaignScoreboard({...recorded.publication,stages})
+    assert.equal(score.summary.successDelta,0)
+    assert.equal(score.summary.p95Ratio,1)
+    assert.equal(score.conclusion,"SLO 개선")
+    assert.equal(campaignScoreboard({...recorded.publication,stages:[...stages.slice(0,2),make("full-E5-2",.7,20),stages[3]]}).conclusion,"SLO 악화")
+  }
+  const neutral=[make("full-E5-1",.8,20),make("static-E5-1",.8,20)]
+  assert.equal(campaignScoreboard({...recorded.publication,stages:[...neutral,make("full-E5-2",null,20),make("static-E5-2",.8,20)]}).conclusion,"결과 부족")
+})

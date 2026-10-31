@@ -302,8 +302,8 @@ export function campaignScoreboard(run:Experiment) {
   else if(summary.successDelta!==null&&summary.successDelta<=-.01||summary.p95Ratio!==null&&summary.p95Ratio>=1.01)conclusion="SLO 악화"
   else if(summary.energyPercent!==null&&summary.energyPercent<=-.01)conclusion="에너지 감소"
   else if(summary.energyPercent!==null&&summary.energyPercent>=.01)conclusion="에너지 증가"
-  else if(summary.successDelta!==null&&summary.successDelta>=.01||summary.p95Ratio!==null&&summary.p95Ratio<=.99)conclusion="SLO 개선"
-  else if(summary.energyPercent===null||summary.successDelta===null||summary.p95Ratio===null)conclusion="결과 부족"
+  else if(matched.some(pair=>pair.services.some(service=>service.successDelta!==null&&service.successDelta>=.01||service.p95Ratio!==null&&service.p95Ratio<=.99)))conclusion="SLO 개선"
+  else if(summary.energyPercent===null||summary.successDelta===null||summary.p95Ratio===null||matched.some(pair=>pair.energyDelta===null||pair.services.some(service=>service.successDelta===null||service.p95Ratio===null)))conclusion="결과 부족"
   return {
     summary,referenceSummary,conclusion,
     energyCounts:{decreased:energies.filter(pair=>pair.energyDelta!<0).length,increased:energies.filter(pair=>pair.energyDelta!>0).length,equal:energies.filter(pair=>pair.energyDelta===0).length,missing:comparisons.length-energies.length,
