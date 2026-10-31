@@ -461,6 +461,41 @@ func TestNativeLifetimeWitnessKeepsAcceptedDeadlineAcrossPolicyChange(t *testing
 	}
 }
 
+func TestLateQueueMaximumThroughput(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		count int
+		costs []float64
+		cap   int
+		want  int
+	}{
+		// Rounded jetsonx-012-mnv2-cuda-q1-15w6c profile durations (ms).
+		{"late_head_eight", 8, []float64{31, 50, 92, 172}, 0, 8},
+		{"late_head_four", 4, []float64{31, 50, 92, 172}, 0, 4},
+		{"partial_queue", 3, []float64{31, 50, 92, 172}, 0, 2},
+		{"single_item_cheaper", 8, []float64{31, 80, 160, 320}, 0, 1},
+		{"equal_cost_larger_batch", 8, []float64{31, 62, 124, 248}, 0, 8},
+		{"maximum_batch_cap", 8, []float64{31, 50, 92, 172}, 2, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := testPolicy()
+			p.MaxBatchSize = tc.cap
+			p.Batches = nil
+			for i, size := range []int{1, 2, 4, 8} {
+				p.Batches = append(p.Batches, BatchProfile{Size: size, ServiceSamplesMS: []float64{tc.costs[i]}, EnergyPerItemJ: 1})
+			}
+			queue := make([]RequestState, tc.count)
+			for i := range queue {
+				queue[i] = testState("a", 1000, 100)
+				queue[i].ElapsedMS = 1100
+			}
+			if c := ChooseBatch(p, queue); c.Size != tc.want || c.WaitMS != 0 || c.Reason != "maximum_throughput" {
+				t.Fatalf("late queue must minimize service cost per item: want size %d, got %+v", tc.want, c)
+			}
+		})
+	}
+}
+
 func TestDeadlineSelectorModesAndOrdering(t *testing.T) {
 	p := testPolicy()
 	p.Batches = []BatchProfile{
@@ -473,7 +508,7 @@ func TestDeadlineSelectorModesAndOrdering(t *testing.T) {
 		late[i].Context.RequestID = string(rune('a' + i))
 	}
 	if c := ChooseBatch(p, late); c.Size != 2 || c.WaitMS != 0 {
-		t.Fatalf("keep must run minimum service, tying toward larger fillable batch: %+v", c)
+		t.Fatalf("keep must run maximum throughput among fillable batches: %+v", c)
 	}
 	for _, mode := range []string{DeadlineDrop, DeadlineDefer} {
 		p.DeadlinePolicy = mode
