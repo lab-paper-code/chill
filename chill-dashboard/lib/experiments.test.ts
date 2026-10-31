@@ -9,7 +9,7 @@ import { comparisonValidity } from "./experiments.ts"
 import { experimentDifference } from "./experiments.ts"
 test("R11: sub-display deltas are neutral in both overview and intervals",()=>{
   for(const [value,baseline] of [[-.004,0],[1.004,1]]) {
-    assert.equal(experimentDifference(value,baseline).text,"0.01 미만")
+    assert.equal(experimentDifference(value,baseline).text,baseline===1?"1.00":"0.01 미만")
     assert.match(experimentDifference(value,baseline).tone,/text-muted-foreground/)
   }
 })

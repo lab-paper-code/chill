@@ -329,7 +329,7 @@ export function experimentHeatmap(run:Experiment):ExperimentHeatmapRow[] {
 export function experimentDifference(value:number|null,baseline=0,higherIsBetter=false) {
   const delta=value===null?null:value-baseline
   const small=delta!==null&&delta!==0&&Math.abs(delta)<.01
-  return {text:value===null?"—":small?"0.01 미만":formatMeasurementNumber(value,"%"),tone:delta===null||small||delta===0?"bg-muted/50 text-muted-foreground":(delta>0)===higherIsBetter?"bg-ok/10 text-ok":"bg-destructive/10 text-destructive"}
+  return {text:value===null?"—":small&&baseline===0?"0.01 미만":formatMeasurementNumber(value,"%"),tone:delta===null||small||delta===0?"bg-muted/50 text-muted-foreground":(delta>0)===higherIsBetter?"bg-ok/10 text-ok":"bg-destructive/10 text-destructive"}
 }
 
 export function experimentChartData(run:Experiment,service:string) {
