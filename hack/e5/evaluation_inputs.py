@@ -12,8 +12,8 @@ import json
 from pathlib import Path
 import shutil
 
-OPERATIONAL = {'timeboxes','tokenSafetyMarginSeconds','failureSelectSnapshotTTLSeconds'}
-LEGACY_OPERATIONAL = OPERATIONAL | {'endpoint','caFile','tokenFile','collectorTokenFile','kubeContext','producerResources','producerShards','namespace'}
+OPERATIONAL = {'timeboxes','tokenSafetyMarginSeconds'}
+LEGACY_OPERATIONAL = OPERATIONAL | {'endpoint','caFile','tokenFile','collectorTokenFile','kubeContext','producerResources','producerShards','namespace','failureSelectSnapshotTTLSeconds'}
 WORKLOAD_OPERATIONAL = {'producerEndpoint', 'producerTokenFile', 'producerCAFile', 'producerDatasetDir',
                         'deliverySeconds', 'socketSeconds', 'gatewayCapSeconds', 'workers', 'lifetimeSeconds', 'podSpec'}
 CONFIG_KEYS = {'approval','inputs','g0Evidence','mSeconds','N','burstLowSeconds','smokeSeconds','workloads',
@@ -74,6 +74,7 @@ def build(binding_path, environment_path, out, store, prefix):
     config = copy.deepcopy(binding['config'])
     operational = {key: config.pop(key) for key in list(config) if key in OPERATIONAL}
     for key in LEGACY_OPERATIONAL-OPERATIONAL: config.pop(key,None)
+    operational.get('timeboxes',{}).pop('nativeFutureAllowanceSeconds',None)
     operational['workloads'] = {}
     templates={}
     for workload in config['workloads']:

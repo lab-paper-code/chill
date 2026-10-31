@@ -137,39 +137,7 @@ def next_tag(value):
     return stem+('a'*(len(suffix)+1) if not chars else ''.join(chars[:-1])+chr(ord(chars[-1])+1)+'a'*(len(suffix)-len(chars)))
 
 
-def sections(path):
-    """Read only small top-level judgment fields, never duplicated GB-sized ticks.
-
-    This is a projection of the existing judge, not another latency/D1 reducer.
-    Strict e5.save indentation is required; gzip retains historical compressed rows.
-    """
-    if not path.exists():
-        path = Path(str(path)+'.gz')
-    if not path.exists():
-        return None
-    wanted = {'requests', 'power', 'failureScenarioEvidence', 'status'}
-    result = {}
-    with (gzip.open(path, 'rt') if path.suffix == '.gz' else path.open()) as stream:
-        for line in stream:
-            match = re.match(r'^  "([^"]+)": (.*)', line)
-            if not match or match[1] not in wanted:
-                continue
-            key, text = match.groups()
-            if text == '{':
-                chunk = [text+'\n']
-                for part in stream:
-                    chunk.append(part.rstrip().rstrip(',')+'\n' if part.startswith('  }') else part)
-                    if part.startswith('  }'):
-                        break
-                result[key] = json.loads(''.join(chunk))
-            else:
-                result[key] = json.loads(text.rstrip().rstrip(','))
-            if wanted <= result.keys():
-                break
-    if 'requests' not in result or 'status' not in result:
-        fail('Incomplete judgment sections: '+str(path))
-    result['judgmentRef'] = str(path)
-    return result
+sections = module('round_tables', HERE/'tables.py').sections
 
 
 class Round:
@@ -793,6 +761,7 @@ def self_check():
             stream.write(p.read_text())
         p.unlink()
         assert sections(p)['power']['wholePoolJoules'] is None
+        assert sections(p)['judgmentRef'] == str(p)+'.gz'
         c = dict(fixture, rows=['E5-5'], failureInjection=False, environment=str(root/'env.json'), run=str(root/'run'), evidence=str(root/'evidence'))
         Path(c['run']).mkdir()
         Path(c['environment']).write_text(json.dumps({'paths': {'repository': temp, 'ops': temp}, 'd2': {'kubectl': ['offline-kubectl']}}))

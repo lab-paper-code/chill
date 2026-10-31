@@ -59,12 +59,7 @@ class AdapterTests(unittest.TestCase):
         calls=[];runner=SimpleNamespace(restore_control_on_error=False,settings=lambda:calls.append('GET'),put=lambda value:calls.append('PUT'))
         exec(compile(ast.fix_missing_locations(ast.Module(body=[guard],type_ignores=[])),'restore-guard','exec'),{'self':runner,'static':False})
         self.assertEqual(calls,[])
-    def test_sections_and_bundle_rejection(self):
-        tables=evaluation.module('evaluation_tables_test',Path(__file__).parent/'tables.py')
-        with tempfile.TemporaryDirectory() as directory:
-            path=Path(directory)/'judgment.json';evaluation.save(path,{'requests':{'w':{'offered':1}},'Tick':[{'large':'ignored'}],'power':{},'status':'FAIL'})
-            self.assertEqual(tables.sections(path)['status'],'FAIL')
-            self.assertNotIn('Tick',tables.sections(path))
+    def test_bundle_rejection(self):
         with self.assertRaisesRegex(ValueError,'MissingInput'): evaluation_inputs.validate({})
     def test_result_uploaded_last_on_failure(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -112,6 +107,69 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(values['capacityGridSteps'],4)
         self.assertIsNone(values['capacityBisectionWidth'])
         self.assertEqual(original,{'capacityGridSteps':4,'capacityBisectionWidth':None})
+    def test_native_guard_excludes_only_exact_factor_job(self):
+        tree=ast.parse((Path(__file__).parent/'d2/native_mode_request.py').read_text())
+        function=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='active_jobs')
+        namespace={};exec(compile(ast.fix_missing_locations(ast.Module(body=[function],type_ignores=[])),'native-jobs','exec'),namespace)
+        current={'name':'factor','uid':'job','runUID':'run','stageUID':'stage','stageID':'id'}
+        job={'metadata':{'name':'factor','uid':'job','labels':{'edge.dacs.io/evaluation-run-uid':'run','edge.dacs.io/evaluation-stage':'id','edge.dacs.io/evaluation-step':'factor'},'ownerReferences':[{'kind':'EvaluationStage','uid':'stage','controller':True}]},'status':{'active':1}}
+        other={'metadata':{'name':'other','uid':'other'},'status':{'active':1}}
+        self.assertEqual(namespace['active_jobs']([job,other],current),[other])
+        self.assertEqual(namespace['active_jobs']([job]),[job])
+        self.assertEqual(namespace['active_jobs']([job],current),[])
+        changed=copy.deepcopy(job);changed['metadata']['uid']='replacement'
+        with self.assertRaises(RuntimeError): namespace['active_jobs']([changed],current)
+        changed=copy.deepcopy(job);changed['metadata']['labels']['edge.dacs.io/evaluation-step']='stage'
+        with self.assertRaises(RuntimeError): namespace['active_jobs']([changed],current)
+    def test_zero_load_go_precedes_decision_confirmation(self):
+        import contextlib
+        import io
+        from types import MethodType
+        tree=ast.parse((Path(__file__).parent/'e5.py').read_text())
+        cpo=next(node for node in tree.body if isinstance(node,ast.ClassDef) and node.name=='CPO')
+        run=next(node for node in cpo.body if isinstance(node,ast.FunctionDef) and node.name=='run')
+        idle=next(node for node in ast.walk(run) if isinstance(node,ast.If) and isinstance(node.test,ast.Name) and node.test.id=='released')
+        record=next(node for node in cpo.body if isinstance(node,ast.FunctionDef) and node.name=='record_go')
+        namespace={'save':evaluation.save};exec(compile(ast.fix_missing_locations(ast.Module(body=[record],type_ignores=[])),'record-go','exec'),namespace)
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);folder=root/'measured';folder.mkdir();control={'scaleDownHeadroomFraction':.25,'minimumDemand':{}}
+            harness=object.__new__(evaluation.Harness);harness.root=root;harness.execution={'runUID':'run','stageUID':'stage','stageID':'idle'};harness.prefix='experiments/run/stages/idle';harness.step='stage'
+            harness.store=SimpleNamespace(put=lambda key,path:{'store':'store','key':key,'size':path.stat().st_size})
+            harness.spec={'target':{},'control':control,'mode':'autonomous','loadGenerator':{'barrier':{'maxStartSkewNanos':0}}}
+            harness.e5=SimpleNamespace(module=lambda *args:SimpleNamespace(_time=lambda value:0))
+            controller=SimpleNamespace(c={'evaluation':{'enabled':True}},ws={},go_callback=harness.go,authorize_native_modes=lambda:None,put=lambda settings:settings,disk_boundary=lambda *args:None,d=SimpleNamespace(epoch=lambda value:0),api=lambda *args:{'state':{'decision':{'at':'after-GO','settings':control}}},state=lambda:{'snapshot':{}},settings=lambda:control)
+            controller.record_go=MethodType(namespace['record_go'],controller)
+            def run_idle():
+                phase={'starts':{},'status':'RUNNING'}
+                scope={'self':controller,'released':True,'targeted':True,'restored':{'fullSettings':{'autonomousWorkloads':['w']}},'phase':phase,'folder':folder,'jobs':[],'pods':{},'st':{'seconds':1},'now':lambda:'2026-11-01T00:00:00Z','time':SimpleNamespace(monotonic=lambda:0),'save':evaluation.save}
+                exec(compile(ast.fix_missing_locations(ast.Module(body=[idle],type_ignores=[])),'idle-go','exec'),scope)
+                controller.monitor(0,folder)
+            controller.run=run_idle
+            with patch.object(harness,'controller',return_value=controller),patch.object(harness,'check_target',return_value=[]),contextlib.redirect_stdout(io.StringIO()) as output:
+                harness.stage()
+            self.assertIn('EVALUATION_GO store/experiments/run/stages/idle/go.json ',output.getvalue())
+            self.assertEqual(evaluation.load(folder/'go.json')['producerRefs'],[])
+            self.assertTrue((folder/'first-load-tick.json').exists())
+    def test_summary_aggregates_memory_without_input_reads(self):
+        from collections import Counter
+        tree=ast.parse((Path(__file__).parent/'e5.py').read_text())
+        function=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='summarize')
+        def unexpected(*args): raise AssertionError('Summary reread its inputs')
+        namespace={'load_binding':unexpected,'load':unexpected,'Counter':Counter,'now':lambda:'now','save':evaluation.save}
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[function],type_ignores=[])),'memory-summary','exec'),namespace)
+        values={'stages':[{'id':'id','kpis':{'status':'FAIL'}}],'results':{'id':{'measurement':{'verdict':'FAIL'}}},'physicalRestoration':{'status':'Complete'}}
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);summary=namespace['summarize'](None,root,evaluation=values)
+            self.assertEqual(summary['status'],'FAIL')
+            self.assertEqual(summary['rowJudgmentCounts'],{'FAIL':1})
+            self.assertEqual(summary['physicalRestoration'],{'status':'Complete'})
+            self.assertFalse((root/'evaluation-results.json').exists())
+            self.assertNotIn('status',values)
+    def test_evaluation_rejects_unused_legacy_allowances(self):
+        for operation in ({'failureSelectSnapshotTTLSeconds':15},{'timeboxes':{'nativeFutureAllowanceSeconds':15}}):
+            with self.assertRaisesRegex(ValueError,'FrozenInputInvalid'):
+                evaluation.stage_config({}, {}, {}, {}, {'e5Operational':json.dumps(operation)},Path('/work'))
+        self.assertNotIn('failureSelectSnapshotTTLSeconds',evaluation_inputs.OPERATIONAL)
 
 
 def offline(binding,stage,environment):

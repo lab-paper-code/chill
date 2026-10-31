@@ -91,6 +91,7 @@ def sections(path):
             if wanted <= result.keys(): break
     if 'requests' not in result or 'status' not in result:
         raise ValueError('Incomplete judgment sections: '+str(path))
+    result['judgmentRef'] = str(path)
     return result
 
 
@@ -125,16 +126,16 @@ def render_evaluation(stages, results):
 
 
 
-def render(root, repo):
+def render(root, repo, *, evaluation=None):
     root = root.resolve()
-    if (root / 'evaluation-results.json').exists():
-        result=load(root / 'evaluation-results.json')
-        return render_evaluation(result['stages'],result['results'])
+    if evaluation is not None:
+        return render_evaluation(evaluation['stages'],evaluation['results'])
     if not (root / 'binding.json').exists() and (root / 'run/binding.json').exists():
         root = root / 'run'
     binding = load(root / 'binding.json')
     operational = binding.get('schema') == 'demo-e5-binding.v1'
     summary = {} if operational else load(root / 'e5-summary.json')
+    if summary.get('evaluation'): return render_evaluation(summary['stages'],summary['results'])
     spec = table_lines(repo / 'docs/spec/README.md', '| 시나리오 | 관찰할 내용 |')
     # workload-pools is a design document in this repository, not a spec file.
     pools = table_lines(repo / 'docs/design/serving/workload-pools.md', '| 단계 | 시간/부하 | 관측·요구사항 |')

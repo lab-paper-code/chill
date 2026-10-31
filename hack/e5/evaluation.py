@@ -86,7 +86,7 @@ def environment(run,config,scientific,workloads):
 def stage_config(base,spec,scenario,execution,config,root):
     value=copy.deepcopy(base);operational=json.loads(config['e5Operational'])
     rules=module('evaluation_input_rules',HERE/'evaluation_inputs.py')
-    timebox_keys={'setupSeconds','barrierSeconds','drainSeconds','flushSeconds','collectSeconds','apiSeconds','settleSeconds','finishResetWaitSeconds','powerDownSeconds','factorAckWaitSeconds','maxActuationSeconds','nativeCallerSeconds','nativeFutureAllowanceSeconds'}
+    timebox_keys={'setupSeconds','barrierSeconds','drainSeconds','flushSeconds','collectSeconds','apiSeconds','settleSeconds','finishResetWaitSeconds','powerDownSeconds','factorAckWaitSeconds','maxActuationSeconds','nativeCallerSeconds'}
     if set(operational.get('timeboxes',{}))-timebox_keys:
         raise ValueError('FrozenInputInvalid: unknown operational timebox fields')
     if set(operational)-(rules.OPERATIONAL|{'workloads','collection'}):
@@ -426,9 +426,8 @@ class Harness:
         execution_path=self.run/'publication-execution.json';save(execution_path,{'runUID':self.execution['runUID'],'results':results,'procedures':procedures,'stages':actual_specs,'frozenConfig':self.config})
         index_path=self.run/'publication-evidence-index.json';save(index_path,{'artifacts':artifacts})
         objects=[{'store':self.store.name,'key':prefix+name,'localPath':str(path)} for name,path in (('execution.json',execution_path),('evidence-index.json',index_path))]
-        save(self.run/'evaluation-results.json',{'stages':stages,'results':results})
         first_binding=next(iter(self.snapshot['bindings'].values()));save(self.run/'binding.json',first_binding)
-        aggregated=self.e5.summarize(self.run/'binding.json',self.run)
+        aggregated=self.e5.summarize(None,self.run,evaluation={'stages':stages,'results':results,'physicalRestoration':procedures.get('finish',{}).get('cleanup')})
         measurement=aggregated['status']
         scenarios=list(self.snapshot['scenarios'].values())
         definitions={workload['uid']:workload for scenario in scenarios for workload in scenario['workloads']}
@@ -436,7 +435,7 @@ class Harness:
         summary={'schemaVersion':'serving-experiment.v1alpha1','id':self.execution['runUID'],'from':start,'to':end,'status':measurement,'stages':stages,'sources':[{key:obj[key] for key in ('store','key')} for obj in objects],'definition':definition}
         summary_path=self.run/'publication-summary.json';save(summary_path,summary)
         manifest=self.run/'publication-manifest.json';save(manifest,{'objects':objects,'summary':{'store':self.store.name,'key':prefix+'summary.json','localPath':str(summary_path)}})
-        (self.run/'tables.txt').write_text(tables.render(self.run,REPO))
+        (self.run/'tables.txt').write_text(tables.render(self.run,REPO,evaluation=aggregated))
         private={'logicalStore':self.store.name,'bucket':os.environ['CHILL_EVIDENCE_BUCKET'],'endpoint':os.environ['CHILL_EVIDENCE_ENDPOINT'],'region':os.environ['CHILL_EVIDENCE_REGION'],'accessKeyID':os.environ['AWS_ACCESS_KEY_ID'],'secretAccessKey':os.environ['AWS_SECRET_ACCESS_KEY'],'tempDir':str(self.run.parent.parent/'.evidence-tmp')}
         Path(private['tempDir']).mkdir(mode=0o700,parents=True,exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='evaluation-publish-',dir='/private') as directory:

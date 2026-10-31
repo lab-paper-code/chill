@@ -265,7 +265,7 @@ def freeze_harness_config(config):
     config['namespace'] = ENVIRONMENT['d2'].get('namespace', 'chill-system')
     if not isinstance(config['namespace'], str) or not re.fullmatch('[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?', config['namespace']):
         raise ValueError('d2.namespace must be a Kubernetes namespace')
-    config['failureSelectSnapshotTTLSeconds'] = failure_select_snapshot_ttl(config)
+    if not config.get('evaluation'): config['failureSelectSnapshotTTLSeconds'] = failure_select_snapshot_ttl(config)
     config.setdefault('tokenSafetyMarginSeconds', 60)
     config.setdefault('burstLowMaximumSeconds', 900)
     config.setdefault('collection', {}).setdefault('maximumDurationSeconds', 4200)
@@ -280,6 +280,7 @@ def freeze_harness_config(config):
                        'apiSeconds': 30, 'factorAckWaitSeconds': 120,
                        'maxActuationSeconds': 900, 'nativeCallerSeconds': 960,
                        'nativeFutureAllowanceSeconds': 15}.items():
+        if key=='nativeFutureAllowanceSeconds' and config.get('evaluation'): continue
         timeboxes.setdefault(key, value)
     if any(not positive(v) for v in timeboxes.values()) or timeboxes['nativeCallerSeconds'] <= timeboxes['maxActuationSeconds']:
         raise ValueError('Positive timeboxes and native caller > actuation required')
@@ -1949,7 +1950,15 @@ class CPO:
                 log=(folder/(name+'-client.jsonl')).open('w');err=(folder/(name+'-log.stderr')).open('w')
                 p=subprocess.Popen(self.d.K+['logs','-f','pod/'+pod['metadata']['name'],'-c','load'],stdout=subprocess.PIPE,stderr=err,bufsize=0);os.set_blocking(p.stdout.fileno(),False);streams.append((p,log,err));buffers[name]=b'';sel.register(p.stdout,selectors.EVENT_READ,(name,log))
             ready=set();window_ended=set();drained=set();counter_released=set();released=not jobs
-            if released: phase['startUTC']=now(); end=time.monotonic()+st['seconds']
+            if released:
+                if self.c.get('evaluation') and targeted:
+                    self.authorize_native_modes()
+                    save(folder/'full-settings-release-ack.json',self.put(restored['fullSettings']))
+                phase['startUTC']=now(); end=time.monotonic()+st['seconds']
+                if self.c.get('evaluation'):
+                    phase['goUTC']=phase['startUTC']
+                    self.record_go(folder,jobs,pods,phase['goUTC'])
+                    save(folder/'phase.json',phase)
             ready_gate=self.b.get('schema')=='demo-e5-binding.v1' and st.get('readyGate') is True
             if ready_gate:
                 if jobs:raise RuntimeError('Ready gate requires a zero-load stage')
@@ -2350,7 +2359,15 @@ class CPO:
         return self.operation({'kind':'reset','workloadUIDs':self.uids,'reason':'Approved campaign owned reset: '+prefix},prefix+'-reset')
     def native_mode(self,node,target,prefix):
         folder=self.out/(prefix+'-'+node['name']+'-mode'); request=folder/'release.json'
-        save(request,{'executor':'CampaignOps','command':'node-native-mode','mainInstructionUTC':self.release['mainInstructionUTC'],'node':node,'targetMode':target,'namespace':self.c['namespace'],'maxActuationSeconds':self.tb['maxActuationSeconds'],'parentFrozenE5Release':str(self.a.release)})
+        release={'executor':'CampaignOps','command':'node-native-mode','mainInstructionUTC':self.release['mainInstructionUTC'],'node':node,'targetMode':target,'namespace':self.c['namespace'],'maxActuationSeconds':self.tb['maxActuationSeconds'],'parentFrozenE5Release':str(self.a.release)}
+        if self.c.get('evaluation'):
+            execution=self.c['evaluation']['execution']
+            pod=self.io.k(['get','pod',os.environ['HOSTNAME'],'-o','json'])
+            owners=[owner for owner in pod['metadata'].get('ownerReferences',[]) if owner.get('kind')=='Job' and owner.get('controller') is True]
+            if len(owners)!=1 or self.a.command!='factor': raise RuntimeError('Native evaluation request requires its current factor Job')
+            release['currentJob']={key:execution[key] for key in ('runUID','stageUID','stageID')}
+            release['currentJob'].update(name=owners[0]['name'],uid=owners[0]['uid'])
+        save(request,release)
         run=subprocess.run([sys.executable,str(D2/'native_mode_request.py'),'--release',str(request),'--out',str(folder)],timeout=self.tb['nativeCallerSeconds'],capture_output=True,text=True)
         save(folder/'caller.json',{'at':now(),'exitCode':run.returncode,'stdout':run.stdout,'stderr':run.stderr})
         if run.returncode: raise RuntimeError('Existing finite native mode realization failed; no host power fallback')
@@ -2687,19 +2704,19 @@ def judge(binding, folder):
     save(folder/'judgment.json',result); return result
 
 
-def summarize(binding, root, tag=None):
-    b=load_binding(binding); stages={}; missing=[]
-    if b['config'].get('evaluation'):
-        result=load(root/'evaluation-results.json')
+def summarize(binding, root, tag=None, *, evaluation=None):
+    if evaluation is not None:
+        result=dict(evaluation)
         verdicts=[value.get('measurement',{}).get('verdict','NOT_EVALUATED') for value in result['results'].values()]
         result.update(schema='e5-summary.v1',evaluation=True,at=now())
         result['status']='INVALID' if 'INVALID' in verdicts else 'NOT_EVALUATED' if not verdicts or any(value not in ('PASS','FAIL') for value in verdicts) else 'FAIL' if 'FAIL' in verdicts else 'PASS'
         result['rowJudgments']={stage['id']:stage['kpis']['status'] for stage in result['stages']}
         result['rowJudgmentCounts']=dict(Counter(result['rowJudgments'].values()))
-        finish=root/'publish-run-finish.json'
-        result['physicalRestoration']=load(finish).get('cleanup') if finish.exists() else None
+        result.setdefault('physicalRestoration',None)
         save(root/'e5-summary.json',result)
         return result
+    b=load_binding(binding); stages={}; missing=[]
+    if b['config'].get('evaluation'): raise ValueError('Evaluation summary requires explicit step results')
     modes={'full':[x['id'] for x in b['schedule'] if x['id'] in NORMATIVE_ROWS], 'static':[x['id'] for x in b['schedule'] if x['id'] in NORMATIVE_ROWS and x['id'] not in ('E5-0','E5-7')]}
     modes.update({f['name']:['E5-2','E5-5'] for f in b['config']['factors']})
     targeted={}

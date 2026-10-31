@@ -46,6 +46,20 @@ def settled(node,mode,requested=None):
     return False,transition
 
 
+def active_jobs(items,current=None):
+    if current is not None:
+        matches=[job for job in items if job['metadata']['name']==current['name'] and job['metadata']['uid']==current['uid']]
+        if len(matches)!=1: raise RuntimeError('Current factor Job identity changed')
+        metadata=matches[0]['metadata'];labels=metadata.get('labels',{})
+        if (labels.get('edge.dacs.io/evaluation-run-uid')!=current['runUID']
+                or labels.get('edge.dacs.io/evaluation-stage')!=current['stageID']
+                or labels.get('edge.dacs.io/evaluation-step')!='factor'
+                or not any(owner.get('kind')=='EvaluationStage' and owner.get('uid')==current['stageUID'] and owner.get('controller') is True for owner in metadata.get('ownerReferences',[]))):
+            raise RuntimeError('Current factor Job execution identity differs')
+    return [job for job in items if job.get('status',{}).get('active',0)
+            and not (current and job['metadata']['name']==current['name'] and job['metadata']['uid']==current['uid'])]
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--release',required=True,type=Path)
@@ -64,7 +78,7 @@ def main():
     try:
         # These read-only guards precede a native request and never overlap load.
         jobs=k(['-n',namespace,'get','jobs','-o','json'])
-        if any(x.get('status',{}).get('active',0) for x in jobs['items']):raise RuntimeError('Active producer/measurement Job exists')
+        if active_jobs(jobs['items'],release.get('currentJob')):raise RuntimeError('Active producer/measurement Job exists')
         pods=k(['-n',namespace,'get','pods','--field-selector','spec.nodeName='+name,'-o','json'])
         active=[x for x in pods['items'] if not x['metadata'].get('deletionTimestamp') and x.get('status',{}).get('phase') not in ('Succeeded','Failed') and any(c.get('name')=='firstfloor' for c in x['spec'].get('containers',[]))]
         if active:raise RuntimeError('Target native serving instances remain; mode realization requires drained empty node')
