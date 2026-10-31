@@ -467,6 +467,14 @@ cluster resources. Compatible unmeasured and TargetBatchMissing insufficient
 cells are planned; unknown support and cells without an eligible Node are listed
 separately. The config excludes genesis1/orin-nano (testbed) and genesis2
 (hardware failure), so RTX2080Ti cells use genesis3.
+Coverage is evaluated against current per-class runtime image identities in
+`profiling.executionDeclarations` from config `runtimeValues`
+(`charts/chill/values-operating.yaml`, read with the existing PyYAML package).
+Cells measured only on obsolete images are treated as unmeasured even if the
+server still calls them usable. A current-runtime measured variant excludes
+the cell. Image identities and source SHA-256 are frozen in
+`inputs/current-runtime-images.json`; separate stale/current-runtime lists
+explain selection. Old measurements remain available as timing estimates.
 Protocol inheritance follows the dashboard's exact request → exact profile →
 latest successful same-model → same-path order, without transferring another
 Node's CPU allocation or affinity. Catalog contracts resolve preprocessor/data.
@@ -477,9 +485,13 @@ Every model and included batch uses the same config `windowSeconds` active
 window (default 60 seconds), independently repeated three times. Start with
 the full planner batch set, then retain a batch only if its same-model/class
 measured time allows `floor(windowSeconds / secondsPerCall) >= minCallsInWindow`
-(default two calls). The conservative time is the slowest measurement of that
+(default one call). The conservative time is the slowest measurement of that
 exact batch on the same device class, including client overhead. Without such
-a timing the batch remains included; another device's timing never excludes it.
+a timing the batch remains included unless a smaller batch was already
+excluded. Once any batch fails the threshold, all larger batches in the same
+cell are excluded, even with unknown or apparently faster timings.
+`excludedFromBatch` records the first failure. Another device's timing never
+starts this monotone exclusion.
 `excluded-batches.json` records “창 안 유의미 추론 불가”; if no batches survive,
 `excluded-cells.json` records the cell and no BEO is emitted. A partially
 filtered artifact-declared set also excludes the cell rather than violating the
@@ -495,9 +507,10 @@ grouped within each priority tier. Check the existing feeder format offline:
 --stages 1,2 --check-manifest`. `gen.py --coverage --self-check` is offline.
 Add `--pilot` to emit `pilot/resume-plan.json` and two lane files: one MNV and
 one PLC cell on distinct nodes, minimizing the selected lane sizes. Documents
-reuse their full-plan BEO names. A later generation excludes cells already
-carrying the coverage-cell annotation, retaining the names/statuses in
-`existing-cells.json`. Feeder GETs existing BEOs before creation: successful
+reuse their full-plan BEO names. A later generation excludes cells with an
+existing coverage-cell annotation or matching `coverage-` BEO model/class/path/
+mode, retaining names/statuses in `existing-cells.json`.
+Feeder GETs existing BEOs before creation: successful
 terminal requests are skipped, active ones are awaited, and failed/refused ones
 stop the lane. A create-race `AlreadyExists` remains a fatal create error;
 feeder never applies or overwrites an existing BEO.
