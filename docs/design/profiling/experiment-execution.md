@@ -204,6 +204,19 @@ uncordon은 앞선 주입의 같은 Node에만 적용한다. 실제 요청 metho
 trace·seed·외부 시작 상태는 내용이 고정된 입력 객체다. 앞 단계에서 만든 시작 상태도 생산 시 불변 저장한다. 현재 설정·동명 새 Workload로 대체하지 않는다.
 prepare에서 LoadScenario·카탈로그를 **한 번만** name+UID(Workload는 generation도) 확인·해석한다. LoadScenario spec snapshot과 적용 Workload 정의(ModelSpec·Preprocessor·Dataset 신원·SLO)를 conditional-create 증거와 immutable CM에 보존한다.
 자식은 이 snapshot만 사용한다. 실행 중 LoadScenario 삭제 보호 장치는 필요 없으며 같은 이름 재생성도 기존 snapshot을 바꾸지 않는다.
+
+### 재현 입력 번들
+
+`LoadScenario.payloadManifestRef`는 불변 `evaluation-inputs.v1alpha1` JSON 객체를 가리킨다.
+형태는 `{schemaVersion, config, environment, files: {name: EvidenceRef}, payload}`다.
+`config`는 기존 e5 bind의 scheduler/capacity/d25/ranking/cost/bias/gateway/producer 및 templates/data 과학 입력이고 `payload`는 순서·recordID·필드 바이트 신원이다.
+파일 참조는 `$files/<name>`으로 쓰며 prepare가 `/work/inputs/` 아래 materialize하고 적용 Workload·LoadScenario snapshot과 함께 보존한다.
+endpoint·Secret·시간 상한·실행 호스트 경로는 번들 설정에 넣지 않고 동결 ConfigMap의 허용된 `e5Operational` 운영 키에서만 읽는다.
+prepare는 필수 키 누락을 `MissingInput`, 알 수 없는 키·잘못된 의미를 `FrozenInputInvalid`로 거절하고 자식은 동결 snapshot만 사용한다.
+`evaluation_inputs.py build --round FILE --attempt DIR --out DIR --store STORE --prefix KEY`는 기존 기록에서 번들·named files·업로드 목록·운영값 파일을 오프라인 생성하며 업로드하지 않는다.
+seedRef는 workloadName→uint64, traceRefs는 workload별 ordered offsetsNS 배열, rateBasisRef는 workloadName→pool-weighted R, kappaRef는 기존 capacity rows JSON이다.
+power `sourceIdentity`는 source 객체의 JSON 문자열이며 비교는 파싱된 객체끼리 한다; `series=source.metric`, `intervalNanos=live powerObservation.sampling.Interval`이다.
+
 실행 증거의 store는 spec에서 고정하고 키는 생성 시 부여된 불변 UID로 `experiments/<UID>/...`가 된다. 별도 configurable prefix 필드는 없다.
 따라서 생성 시 실행 증거 위치가 결정되며 실제 key/size·저장 완료는 status에만 기록한다. 정의 스냅샷·명령/응답·시각·client/raw·판정·표·최종 실행 기록을 연결한다.
 입력과 실행 기록은 `ImmutableWriter.PutImmutable`의 conditional create로 보존하며 단계 저장과 최종 게시 경로를 구분한다. receipt만으로 저장 완료라 하지 않고 결과 loader 경계에서 크기 제한·schema·실험 UID/참조 연결을 한 번 확인한다.
