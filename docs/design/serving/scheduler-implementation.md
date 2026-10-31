@@ -93,7 +93,8 @@ native 교환이 완료 proof 없이 502/504/취소로 끝나고 native progress
 break-before-make의 빈 routing/bindings 중 의도는 frozen `Operation.Target`의 UID cohort/replicas/weights에서 읽되 actual 점유/ownership/Ready는 현재 snapshot만 쓴다. observed TargetID의 physical slot을 중복 prepare하지 않고 frozen target/proof를 덮거나 복원하지 않는다. prepare timeout은 cost trial 최대+관측 창 하나이며 `failed/ActionDeadlineExceeded` 뒤 원격 효과 불명 예약은 유지한다.
 
 **완료 기반 전진 (Cycle 6 / SCH-20·26·50).** action의 결과와 기록 실패 상태를 저장한 뒤 버퍼1 non-blocking 완료 신호를 보낸다. 서비스는 주기 timer와 별도 case에서 `Continue`를 실행하며 기존 주기 deadline을 재설정하지 않는다. `Continue`는 Tick/설정 변경과 같은 직렬화 경계에서 capture·동일 freshness/resource 검증·owner/effect reconciliation·running parent launch만 재사용한다. EvaluateScheduler·capacity search·신규 admission/decision 발행은 하지 않는다. 관측/기록 실패·취소 parent·실패/partial 결과는 후속 허가가 아니며 중복 신호와 late ACK도 기존 exact effect/owner proof를 우회하지 않는다. 현재 controls가 admission 시점과 다르거나 UID 자동제어가 해제된 parent는 완료 경로에서 전진하지 않는다. 완료마다 관측 I/O는 늘지만 전체 탐색을 반복하지 않고, 실제 cold prepare 시간·자원 반환·ACK-before-live-stop·peak/reserve/ReturnProof는 그대로 남는다.
-Tick과 Continue의 `captureReconciled`는 capture 뒤 취소 확인, owner/effect reconciliation, lost-effect 기록, history 갱신을 같은 순서로 수행한다. Continue에만 필요한 freshness/resource 검증은 reconciliation 전에 유지하며, 기록 실패 시 history 갱신과 후속 launch를 진행하지 않는다. Tick의 탐색과 신규 admission은 이 공통 관측 경로 밖에 남는다.
+
+Tick과 Continue의 `captureReconciled`는 capture 뒤 취소 확인, owner/effect reconciliation, lost-effect 기록, history 갱신을 같은 순서로 수행한다. Continue의 freshness/resource 검증은 reconciliation 전에 수행하며, 기록 실패 시 history 갱신과 후속 launch를 진행하지 않는다.
 
 #### 중간 배분
 

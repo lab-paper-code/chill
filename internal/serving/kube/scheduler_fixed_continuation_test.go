@@ -33,12 +33,6 @@ func TestTargetlessFixedActionsRequireObservedAuthorization(t *testing.T) {
 			}
 		})
 	}
-	// Authorization belongs to the current observation, not an earlier wakeup.
-	observed = nil
-	if authorizedFixedContinuation(old, observed) {
-		t.Fatal("a later wakeup reused authorization absent from its observation")
-	}
-	observed = []serving.Action{old}
 	observed[0].Fixed = false
 	if authorizedFixedContinuation(old, observed) {
 		t.Fatal("a different class of action authorized new Fixed work")

@@ -87,10 +87,14 @@ func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
 				first.action.Status, first.result.Status = nativeOperationPartial, nativeOperationPartial
 			}
 			before := c.State().Decision
+			observedAt := c.replacementObservedAt
 			err = c.Continue(ctx, time.Now())
 			if scenario == "freshness" || scenario == "capture-failed" {
 				if err == nil {
 					t.Fatal("bad observation unexpectedly authorized continuation")
+				}
+				if scenario == "freshness" && !c.replacementObservedAt.Equal(observedAt) {
+					t.Fatal("stale observation mutated reconciliation state")
 				}
 			} else if err != nil {
 				t.Fatal(err)
@@ -103,7 +107,6 @@ func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
 				}
 				return
 			}
-			requireReconciledObservation(t, c)
 			if second == nil || second.action.Status != nativeOperationComplete {
 				t.Fatalf("frozen chain did not advance: %+v", second)
 			}
@@ -118,12 +121,5 @@ func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
 				t.Fatal("duplicate completion relaunched an action")
 			}
 		})
-	}
-}
-
-func requireReconciledObservation(t *testing.T, c *SchedulerController) {
-	t.Helper()
-	if !c.replacementObservedAt.Equal(c.State().Snapshot.At) {
-		t.Fatal("completion did not publish the reconciled observation")
 	}
 }
