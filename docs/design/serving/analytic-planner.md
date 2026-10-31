@@ -25,6 +25,10 @@ Tick은 κ 합, 노드 계획과 두 출발점의 이웃 탐색으로 구성을 
 
 **κ.** 요청 수와 배칭이 λ에 따라 바뀌므로 단조성을 가정하지 않는다. `G=capacityGridSteps`, `λ_k=(k/G)μ`(k=1~G)를 전부 판정한다. 충족 앞부분/미충족 뒷부분으로 나뉠 때 마지막 충족과 다음 격자 사이를 `capacityBisectionWidth×μ`까지 이분 탐색한다. K=0이면 κ0, K=G이면 κ=μ다. 미충족 뒤 충족이면 NonMonotone으로 κ가 없고 CapacityRejected다. 디스패치 점유가 없으면 MissingDispatchOccupancy로 재생 없이 거절한다. 격자 결과는 행에 보존한다. 격자·이분 폭·tail은 코드 상수가 아니라 기존 settings의 추가3개이며 기본20/.005/100을 유지한다. 모두 CapacityInput/용량 행에 포함하고 기본값도 새 입력 키로 재계산한다([설정 설계](configuration-hardcoding.md#3-serving-settings와-요청별-reuse)).
 
+**계획용 안전 κ.** 배치 상한이 1보다 큰 모든 경로(CPU·CUDA·그 밖의 backend 포함)는 `κsafe = min(κpolicy, κb1)`을 쓴다. κb1은 `CapacityVariants`가 이미 계산하는 동일 profile·Node·할당·디스패치 점유·SLO·설정의 b1 행이다. 신규 후보, keep, retained, Ready 중간 확장, 공급/축소 판정과 정수 routing이 같은 조회를 사용한다. 정상 배칭 행의 κ를 과부하 후 b1 상태에서도 공급으로 과신하지 않기 위한 서버 측 envelope이며 native MaxBatch(예: 4/8)와 공통 ChooseBatch는 바꾸지 않는다. b1이 더 빠른 CPU처럼 κb1 ≥ κpolicy이면 변화가 없다. usable b1 행이 없으면(미측정/누락, Pending 또는 κ 없는 거절 행) κpolicy를 그대로 쓰며, b1 κ가 0이면 κsafe도 0이다. 새 감지기·보정 상수·재시도는 없다.
+
+CapacityRow의 입력, κ와 `capacity-row-built` 기록은 원래 정책 행의 측정 의미를 유지한다. 기존 decision의 `capacity.plans[].kappa`/`kappaRetained`, `capacity.workloads[].kappaNew`/`kappaRetained`, `capacity.workloads[].scaleDown.supply`에는 실제 사용한 κsafe와 합이 기록된다. `capacity.workloads[].rows`는 원래 정책 행 키를 유지하며 별도 b1 키나 envelope 적용 여부 필드는 추가하지 않는다. 따라서 실제 수치와 원래 행은 관찰 가능하지만, 제한한 b1의 출처는 해당 정책 CapacityInput의 MaxBatch만 1로 바꾼 키로 용량표 기록과 대조해야 한다.
+
 **불가 조기 판정.** b 이하 모든 측정 배치의 관측 최소 실행시간 중 최솟값 + m > L이면 백분위와 무관하게 단일 배치 처리만으로 모든 요청이 초과하므로 재생 없이 `Built`, κ 0, `BatchServiceExceedsSLO`와 `minimumServiceNanos`(m·L은 입력)를 기록한다(등호는 재생); 재생 창은 확정 초과 요청이 `N − ⌈pN⌉`개를 넘거나 timeout·만료가 하나라도 있으면 즉시 실패(-1, 완전 분위수 없음)로 끝내며, `Ensure`의 최신 대상에서 빠진 queued/running 행은 취소하고 부분 결과와 기록을 버린다.
 
 **설정.** `capacityWindowNanos` 60 s, `capacityWindows` 20, `capacityPassingWindows` 19, `capacityMinimumRequests` 1,000. 60 s 창이 필요한 근거: 요청 수 창만 쓰면 빠른 option(genesis2 cuda, 2,000 요청이 14 s)의 κ가 μ에 붙어 relaxed 1.2κ에서 20/20 충족이었고, 60 s 창에서는 0/20이다. 20개 중 19개 기준이 필요한 근거: 창 하나로 정한 κ는 1.0κ에서 6~12/20만 충족했다.

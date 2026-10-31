@@ -1304,23 +1304,24 @@ func TestCapacityBatchLimitChangeIsPolicyRoute(t *testing.T) {
 	s.ScaleDownStabilization = 300 * time.Second
 	profile := *snap.Instances[0].Profile
 	profile.Batches = append(slices.Clone(profile.Batches), BatchProfile{Batch: 2, DurationNanos: []float64{float64(15 * time.Millisecond)}, EnergyPerInputJoules: 0.8, MemoryBytes: 100})
-	snap.Instances[0].Profile = &profile
+	snap.Instances[0].Profile, snap.Instances[0].MaxBatch = &profile, 2
 	option := snap.Instances[0]
-	option.MaxBatch = 2
 	snap.Options = []SchedulerOption{poolsOption(option)}
 	n1 := snap.Instances[0].Node
 	snap.Costs = nil
-	capacityLoad(s, &snap, snap.Workloads[0], 150)
-	rows := capacityRowsForTest(s, snap, func(o SchedulerOption) float64 { return 100 * float64(o.Instance.MaxBatch) })
+	capacityLoad(s, &snap, snap.Workloads[0], 75)
+	// b2 cannot gain safe capacity above b1. Exercise the opposite recovery:
+	// b1 is faster, so lowering the cap raises κsafe from 50 to 100.
+	rows := capacityRowsForTest(s, snap, func(o SchedulerOption) float64 { return 100 / float64(o.Instance.MaxBatch) })
 	d := capacityDecideForTest(t, s, snap, rows)
 	plans := poolsPlans(d, n1)
-	i := slices.IndexFunc(plans, func(p SchedulerNodePlan) bool { return p.Key == "profile/b2/w1" })
-	if i < 0 || !plans[i].Eligible || plans[i].Pre != 0 || plans[i].Post != 0 || plans[i].KappaRetained["w1"] != 100 {
-		t.Fatalf("b2 plan must reuse i1 with no chain: %+v", plans)
+	i := slices.IndexFunc(plans, func(p SchedulerNodePlan) bool { return p.Key == "profile/b1/w1" })
+	if i < 0 || !plans[i].Eligible || plans[i].Pre != 0 || plans[i].Post != 0 || plans[i].KappaRetained["w1"] != 50 {
+		t.Fatalf("b1 plan must reuse i1 with no chain: %+v", plans)
 	}
-	if d.Target == nil || len(d.Target.Instances) != 1 || d.Target.Instances[0].ID != "i1" || d.Target.Instances[0].MaxBatch != 2 ||
+	if d.Target == nil || len(d.Target.Instances) != 1 || d.Target.Instances[0].ID != "i1" || d.Target.Instances[0].MaxBatch != 1 ||
 		slices.ContainsFunc(d.Target.Actions, func(a Action) bool { return a.Kind != schedulerActionRoute }) {
-		t.Fatalf("target must route i1 with batch 2 only: %+v", d.Target)
+		t.Fatalf("target must route i1 with batch 1 only: %+v", d.Target)
 	}
 	if plans[i].Tempo != "fast" {
 		t.Fatalf("capacity recovery policy was not fast: %+v", plans[i])
@@ -1329,7 +1330,7 @@ func TestCapacityBatchLimitChangeIsPolicyRoute(t *testing.T) {
 	rows = capacityRowsForTest(s, snap, func(SchedulerOption) float64 { return 100 })
 	energyOnly := capacityDecideForTest(t, s, snap, rows)
 	for _, plan := range poolsPlans(energyOnly, n1) {
-		if plan.Key == "profile/b2/w1" && (plan.Eligible || plan.Tempo != "slow" || plan.Reason != "ScaleDownStabilizing") {
+		if plan.Key == "profile/b1/w1" && (plan.Eligible || plan.Tempo != "slow" || plan.Reason != "ScaleDownStabilizing") {
 			t.Fatalf("non-increasing policy escaped slow gate: %+v", plan)
 		}
 	}
@@ -2124,6 +2125,146 @@ func TestSchedulerReadyExpansionCapacitySCH20AC38(t *testing.T) {
 						t.Fatalf("destination overload: %v", weights)
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestCapacitySafeKappaJetsonBatchProfile(t *testing.T) {
+	s, snap := capacityFixture()
+	s.CompletionMarginMS = 29
+	snap.Workloads[0].SLO = SLO{Percentile: 95, TargetLatency: time.Second}
+	snap.DispatchOccupancy[0].PerRequest = 5 * time.Millisecond
+	option := snap.Options[0]
+	option.Instance.MaxBatch = 8
+	option.Instance.Profile.Condition.Backend = "ort-cuda"
+	snap.Workloads[0].Model.Paths[0].Backend = "ort-cuda"
+	option.Instance.Profile.Batches = []BatchProfile{
+		{Batch: 1, DurationNanos: []float64{31e6}, EnergyPerInputJoules: 1, MemoryBytes: 100},
+		{Batch: 2, DurationNanos: []float64{50e6}, EnergyPerInputJoules: 0.8, MemoryBytes: 100},
+		{Batch: 4, DurationNanos: []float64{92e6}, EnergyPerInputJoules: 0.6, MemoryBytes: 100},
+		{Batch: 8, DurationNanos: []float64{172e6}, EnergyPerInputJoules: 0.5, MemoryBytes: 100},
+	}
+	rows := []CapacityRow{}
+	for _, variant := range CapacityVariants(option) {
+		row, err := BuildCapacityRow(context.Background(), s, snap.DispatchOccupancy, variant, snap.Workloads[0], snap.Nodes[0], snap.Baselines, snap.At)
+		if err != nil || row.Status != CapacityBuilt || row.Kappa == nil {
+			t.Fatalf("b%d row: %+v, %v", variant.Instance.MaxBatch, row, err)
+		}
+		rows = append(rows, row)
+	}
+	if len(rows) != 4 || *rows[0].Kappa <= 0 || *rows[0].Kappa >= *rows[2].Kappa {
+		t.Fatalf("fixture must expose b1 κ < b4 κ: %+v", rows)
+	}
+	p := newCapacityPlanner(context.Background(), s, snap, SchedulerCandidate{}, rows, SchedulerDecision{
+		Workloads: []SchedulerWorkloadState{{UID: "w1", State: WorkloadControlled}},
+	})
+	for _, variant := range CapacityVariants(option) {
+		k, key, reason := p.kappa(variant, 0)
+		wantKey := NewCapacityInput(s, snap.DispatchOccupancy, variant, snap.Workloads[0]).Key()
+		if k != *rows[0].Kappa || key != wantKey || reason != "" {
+			t.Fatalf("b%d κsafe=%g, want b1=%g; policy row=%s reason=%s", variant.Instance.MaxBatch, k, *rows[0].Kappa, key, reason)
+		}
+	}
+	if option.Instance.MaxBatch != 8 || rows[2].Input.MaxBatch != 4 || *rows[2].Kappa <= *rows[0].Kappa {
+		t.Fatal("safe planning must not rewrite native policy or capacity evidence")
+	}
+	t.Logf("jetson-shaped rows: b1=%g b4=%g b8=%g; κsafe=%g", *rows[0].Kappa, *rows[2].Kappa, *rows[3].Kappa, *rows[0].Kappa)
+}
+
+func TestCapacitySafeKappaAcrossPlanningPaths(t *testing.T) {
+	s, snap := schedulerFixture()
+	old := snap.Instances[0]
+	old.MaxBatch = 8
+	old.Profile.Batches = append(slices.Clone(old.Profile.Batches),
+		BatchProfile{Batch: 4, DurationNanos: []float64{92e6}, EnergyPerInputJoules: 0.6, MemoryBytes: 100},
+		BatchProfile{Batch: 8, DurationNanos: []float64{172e6}, EnergyPerInputJoules: 0.5, MemoryBytes: 100})
+	added := poolsInstance(snap.Instances[0], "ready-added", poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10}), "fixed", "w1")
+	added.MaxBatch = 1
+	snap.Instances = []SchedulerInstance{old}
+	snap.Options = []SchedulerOption{poolsOption(old), poolsOption(added)}
+	snap.Routing = map[string]map[string]int32{"w1": {old.ID: 1000}}
+	capacityLoad(s, &snap, snap.Workloads[0], 70)
+	rows := capacityRowsForTest(s, snap, func(o SchedulerOption) float64 {
+		if o.Instance.Node == added.Node {
+			return 52
+		}
+		if o.Instance.MaxBatch == 1 {
+			return 26
+		}
+		return 40
+	})
+	p := newCapacityPlanner(context.Background(), s, snap, SchedulerCandidate{Routing: snap.Routing}, rows, SchedulerDecision{
+		Search:    schedulerSearchPopulation(context.Background(), s, snap),
+		Workloads: []SchedulerWorkloadState{{UID: "w1", State: WorkloadControlled}},
+	})
+	for _, option := range snap.Options {
+		k, _, reason := p.kappa(option, 0)
+		want := 26.0
+		if option.Instance.Node == added.Node {
+			want = 52
+		}
+		if k != want || reason != "" {
+			t.Fatalf("candidate %s κ=%g, want %g, reason=%s", option.Instance.ID, k, want, reason)
+		}
+	}
+	plan := &capacityPlan{keep: true, instances: []SchedulerInstance{old}}
+	p.annotate(plan, nil)
+	p.sum(plan)
+	if plan.record.Kappa["w1"] != 26 || plan.record.KappaRetained["w1"] != 26 || p.tempoSupply("w1") != 26 {
+		t.Fatalf("keep, retained and supply must use κsafe: %+v, supply=%g", plan.record, p.tempoSupply("w1"))
+	}
+	weights, ok := SchedulerReadyExpansion(s, snap, rows, "w1", []SchedulerInstance{old}, []SchedulerInstance{added})
+	if !ok || !maps.Equal(weights, map[string]int32{old.ID: 333, added.ID: 667}) {
+		t.Fatalf("ready expansion weights must follow κsafe 26:52, not policy 40:52: %v, %v", weights, ok)
+	}
+	capacityLoad(s, &snap, snap.Workloads[0], 90)
+	if weights, ok = SchedulerReadyExpansion(s, snap, rows, "w1", []SchedulerInstance{old}, []SchedulerInstance{added}); ok {
+		t.Fatalf("policy capacity 92 must not admit demand beyond safe capacity 78: %v", weights)
+	}
+}
+
+func TestCapacitySafeKappaCPUAndUnavailableBatchOne(t *testing.T) {
+	for _, scenario := range []string{"faster-b1", "missing", "pending", "rejected", "zero", "different-allocation", "different-occupancy", "different-slo"} {
+		t.Run(scenario, func(t *testing.T) {
+			s, snap := schedulerFixture()
+			option := snap.Options[0]
+			option.Instance.MaxBatch = 4
+			option.Instance.Profile.Batches = append(slices.Clone(option.Instance.Profile.Batches),
+				BatchProfile{Batch: 4, DurationNanos: []float64{80e6}, EnergyPerInputJoules: 0.5, MemoryBytes: 100})
+			snap.Options = []SchedulerOption{option}
+			rows := capacityRowsForTest(s, snap, func(o SchedulerOption) float64 {
+				if o.Instance.MaxBatch == 1 {
+					return 100
+				}
+				return 40
+			})
+			want := 40.0
+			switch scenario {
+			case "missing":
+				rows = rows[1:]
+			case "pending":
+				rows[0].Status = CapacityPending
+			case "rejected":
+				rows[0].Status, rows[0].Kappa = CapacityRejected, nil
+			case "zero":
+				zero := 0.0
+				rows[0].Kappa, want = &zero, 0
+			case "different-allocation":
+				rows[0].Input.Allocation.Threads++
+				rows[0].Key = rows[0].Input.Key()
+			case "different-occupancy":
+				rows[0].Input.DispatchOccupancy = &DispatchOccupancy{Source: "other"}
+				rows[0].Key = rows[0].Input.Key()
+			case "different-slo":
+				rows[0].Input.SLO.TargetLatency++
+				rows[0].Key = rows[0].Input.Key()
+			}
+			p := newCapacityPlanner(context.Background(), s, snap, SchedulerCandidate{}, rows, SchedulerDecision{
+				Workloads: []SchedulerWorkloadState{{UID: "w1", State: WorkloadControlled}},
+			})
+			if k, key, reason := p.kappa(option, 0); k != want || key != rows[len(rows)-1].Key || reason != "" {
+				t.Fatalf("CPU policy κ must stay 40 unless usable b1 is lower: κ=%g want=%g key=%s reason=%s", k, want, key, reason)
 			}
 		})
 	}
