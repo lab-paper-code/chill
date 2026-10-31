@@ -413,3 +413,10 @@
 - 19:36Z control-282: server와 dashboard를 `6d5aef39`로 배포(main HEAD에서 κsafe 3커밋만 뺀 배포 브랜치. 6aeef74d·ed908c9a·7842e35c 포함). 게이트: 리플레이 PASS(기준 7415185b), clean lint/test/arch/helm PASS, dashboard 222/0. 두 Pod 모두 restart 0, dashboard 200.
 - 차트에 조언 세션의 새 CRD 3종(EvaluationRun, EvaluationStage, LoadScenario)이 추가됨. fast-deploy가 chart diff 승인을 요구해 control-281에서 멈췄고, 사용자 승인 후 diff(추가만 3,120줄, 삭제 0)를 `O/deployB/approvals/chart-diff-6d5aef39-evaluation-crds.txt`로 승인해 적용. CRD 3종 생성 확인.
 - 이전 profiler 배포 작업(bg_103, 7415185b 기준)은 lock 대기 중이었고 control-280을 만들지 않음 → 취소. live 차트와 같은 6d5aef39로 profiler 재배포(control-283) 진행.
+
+## 2026-10-31 — 프로파일링 파일럿 실패 원인과 runtime 재빌드 결정(사용자)
+
+- 파일럿 2셀 모두 측정 전에 실패: ProfilingRun Job의 runtime(measurement-worker)·metric-observer·workload-observer가 `decode RunConfig: json: unknown field "durationToleranceSeconds"`. 10/30 커밋 58348057이 RunConfig에 필드를 추가했지만 그것을 읽는 runtime·observer 이미지는 재빌드되지 않음. 10/27 이후 프로파일링 성공 0건. 저장 계약 변경이 절반만 된 상태(ADR 0019 위반)였음. 이 밖에 feeder-hold.json에 10/23 캠페인의 전 노드 일시정지가 남아 있었음 → 파일럿 노드 2개만 해제(백업 `feeder-hold.json.bak-20261031T1950Z`).
+- 사용자 결정: "최신화 + 배포, 레거시는 없어야 한다." → runtime 7종과 observer 2종을 현재 main(배치 정책 수정 병합 `0cd84ce2` 포함)으로 재빌드하고, 차트의 실행 선언과 이미지 참조를 새 digest로 교체(옛 digest 제거). 커버리지 측정은 새 runtime 기준으로 채움. 기존 profile과 E5 기준선은 옛 runtime 기준이 됨.
+- 배치 정책 수정 `56ef4f7b` 리뷰 2종 PASS 후 main 병합(`0cd84ce2`), firstfloor·serving 테스트 PASS.
+- 측정 기준 단순화(사용자): 모든 셀에 같은 고정 창(60초)과 전체 batch를 쓰고, 창 안에서 호출이 2회 미만인 batch만 "무의미"로 제외. 판정 기준이 막으면 기준을 고치고 보고함.
