@@ -179,7 +179,7 @@ test("idle services group by model independently of service names",()=>{
 
 test("minute summary includes exactly sixty completed second buckets at aligned and fractional clocks",()=>{
   const end=Date.parse("2026-10-30T12:01:00Z")
-  const rows=Array.from({length:62},(_,i)=>({bucketAt:new Date(end-61000+i*1000).toISOString(),workloads:{a:metric}} as LiveMetrics))
+  const rows:LiveMetrics[]=Array.from({length:62},(_,i)=>({type:"metrics",seq:i+1,at:new Date(end-61000+i*1000).toISOString(),bucketAt:new Date(end-61000+i*1000).toISOString(),workloads:{a:metric},nodes:{},pool:{wholeWatts:null,activeWatts:null}}))
   for(const clock of [end,end+750]) {
     const selected=minuteMetrics(rows,"a",clock)
     assert.equal(selected.length,60)
