@@ -6,7 +6,7 @@ import { useMeasurementCoverage, useCoverageInventory } from "@/features/measure
 import { Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { campaignGroups, experimentHeatmap, type Experiment } from "@/lib/experiments"
-import { ExperimentConclusion, ExperimentComparisonLegend, ExperimentJudgment, ExperimentLimits } from "@/features/experiments-conclusion"
+import { ExperimentConclusion, ExperimentComparisonLegend, ExperimentCoverage, ExperimentJudgment, ExperimentLimits } from "@/features/experiments-conclusion"
 import { overviewCoverageMatrix, overviewDeviceLabel } from "@/lib/overview"
 import { coverageFailureHref, coveragePathVisible, coverageRequestHref } from "@/lib/measurement-coverage"
 import { parseSchedulerJSON } from "@/lib/scheduler"
@@ -42,9 +42,9 @@ export function OverviewPage() {
           return <td key={matrix.devices[index].uid}><Link className={`overview-heat-cell ${ratio===0?"overview-heat-empty":""}`} style={{background:ratio>0?`color-mix(in srgb, var(--primary) ${12+ratio*45}%, var(--background))`:undefined}} href={`/measurements?${query}`} aria-label={`${row.model.name} ${overviewDeviceLabel(matrix.devices[index].name)}: ${group?.complete??0} / ${supported??"미확인"}`}>{group?.complete??0}/{supported??"—"}</Link></td>
         })}</tr>)}</tbody></table></div>:<p>{coverage.error?"커버리지 조회 실패":"커버리지 수신 대기"}</p>}
       </section>
-      <section className="overview-panel"><header><h2 title={recent?.run.id}>최근 실험 비교</h2>{recent&&<ExperimentJudgment run={recent.run}/>}</header>{recent?<>
-        <ExperimentLimits run={recent.run}/>
-        <ExperimentConclusion run={recent.run}/><ExperimentComparisonLegend/>
+      <section className="overview-panel"><header><h2>최근 실험 비교</h2></header>{recent?<>
+        <h3 className="break-all text-sm font-medium">{recent.run.id}</h3><ExperimentJudgment run={recent.run}/>
+        <ExperimentConclusion run={recent.run}/><ExperimentLimits run={recent.run}/><ExperimentCoverage run={recent.run}/><ExperimentComparisonLegend/>
         <figure className="overview-energy"><figcaption>구간별 에너지 Δ · req/s</figcaption><div className="overview-energy-bars">{stages.map(row=>{const delta=row.energyPercent,width=Math.abs(delta??0)/maxEnergy*48;return <div key={row.id} title={delta===null?"에너지 비교 불가":`${delta.toFixed(2)}%`}><div className="overview-energy-track"><span className={delta!==null&&delta<0?"overview-energy-gain":"overview-energy-loss"} style={{left:`${delta!==null&&delta<0?50-width:50}%`,width:`${width}%`}}/></div><span>{row.rate===null?"—":row.rate.toFixed(0)}</span></div>})}</div></figure>
         <Link href={`/experiments?${new URLSearchParams({a:recent.run.id})}`}>자세히 →</Link>
       </>:<p>{experiments.error?"실험 조회 실패":experiments.isFetching?"실험 수신 대기":"비교 기록 없음"}</p>}</section>
