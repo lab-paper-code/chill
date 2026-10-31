@@ -3,6 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"path"
+	"sort"
+	"strings"
+	"time"
+
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -13,11 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"path"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sort"
-	"strings"
-	"time"
 )
 
 type evaluationLoadService struct {
@@ -50,7 +51,9 @@ func (s *evaluationLoadService) inUse(ctx context.Context, name string) ([]strin
 }
 func (s *evaluationLoadService) view(ctx context.Context, obj *api.LoadScenario) (httpapi.LoadScenarioView, error) {
 	names, err := s.inUse(ctx, obj.Name)
-	return httpapi.LoadScenarioView{Name: obj.Name, UID: string(obj.UID), Spec: obj.Spec, InUse: names, CreatedAt: obj.CreationTimestamp}, err
+	return httpapi.LoadScenarioView{
+		Name: obj.Name, UID: string(obj.UID), Spec: obj.Spec, InUse: names, CreatedAt: obj.CreationTimestamp,
+	}, err
 }
 func (s *evaluationLoadService) list(ctx context.Context) (httpapi.LoadScenarioList, error) {
 	result := httpapi.LoadScenarioList{Items: []httpapi.LoadScenarioView{}}
@@ -75,8 +78,12 @@ func (s *evaluationLoadService) get(ctx context.Context, name string) (httpapi.L
 	}
 	return s.view(ctx, &obj)
 }
-func (s *evaluationLoadService) preflight(ctx context.Context, request httpapi.LoadScenarioRequest) (httpapi.LoadScenarioPreflight, error) {
-	result := httpapi.LoadScenarioPreflight{Checks: []httpapi.EvaluationCheck{}, LiveWorkloads: map[string]httpapi.LiveWorkload{}}
+func (s *evaluationLoadService) preflight(
+	ctx context.Context, request httpapi.LoadScenarioRequest,
+) (httpapi.LoadScenarioPreflight, error) {
+	result := httpapi.LoadScenarioPreflight{
+		Checks: []httpapi.EvaluationCheck{}, LiveWorkloads: map[string]httpapi.LiveWorkload{},
+	}
 	add := func(id string, err error) {
 		check := httpapi.EvaluationCheck{ID: id, Passed: err == nil}
 		if err != nil {
@@ -131,12 +138,22 @@ func (s *evaluationLoadService) checked(ctx context.Context, request httpapi.Loa
 	}
 	return nil
 }
-func (s *evaluationLoadService) createObject(ctx context.Context, request httpapi.LoadScenarioRequest, actor string) (httpapi.EvaluationIdentity, error) {
-	obj := api.LoadScenario{ObjectMeta: metav1.ObjectMeta{Namespace: s.namespace, Name: request.Name, Annotations: map[string]string{"edge.dacs.io/requested-by": actor}}, Spec: request.Spec}
+func (s *evaluationLoadService) createObject(
+	ctx context.Context, request httpapi.LoadScenarioRequest, actor string,
+) (httpapi.EvaluationIdentity, error) {
+	obj := api.LoadScenario{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: s.namespace, Name: request.Name,
+			Annotations: map[string]string{"edge.dacs.io/requested-by": actor},
+		},
+		Spec: request.Spec,
+	}
 	err := s.client.Create(ctx, &obj)
 	return httpapi.EvaluationIdentity{Name: obj.Name, UID: string(obj.UID)}, err
 }
-func (s *evaluationLoadService) create(ctx context.Context, request httpapi.LoadScenarioRequest, actor string) (httpapi.EvaluationIdentity, error) {
+func (s *evaluationLoadService) create(
+	ctx context.Context, request httpapi.LoadScenarioRequest, actor string,
+) (httpapi.EvaluationIdentity, error) {
 	if err := s.checked(ctx, request); err != nil {
 		return httpapi.EvaluationIdentity{}, err
 	}
@@ -171,7 +188,9 @@ func (s *evaluationLoadService) delete(ctx context.Context, name, uid string) (h
 	pinned := types.UID(uid)
 	return identity, s.client.Delete(ctx, obj, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &pinned}})
 }
-func (s *evaluationLoadService) replace(ctx context.Context, name, uid string, request httpapi.LoadScenarioRequest, actor string) (httpapi.EvaluationIdentity, error) {
+func (s *evaluationLoadService) replace(
+	ctx context.Context, name, uid string, request httpapi.LoadScenarioRequest, actor string,
+) (httpapi.EvaluationIdentity, error) {
 	request.Name = name
 	if err := s.checked(ctx, request); err != nil {
 		return httpapi.EvaluationIdentity{}, err
@@ -179,14 +198,15 @@ func (s *evaluationLoadService) replace(ctx context.Context, name, uid string, r
 	if _, err := s.delete(ctx, name, uid); err != nil {
 		return httpapi.EvaluationIdentity{}, err
 	}
-	err := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 30*time.Second, true, func(ctx context.Context) (bool, error) {
-		var obj api.LoadScenario
-		err := s.client.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: name}, &obj)
-		if apierrors.IsNotFound(err) {
-			return true, nil
-		}
-		return false, err
-	})
+	err := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 30*time.Second, true,
+		func(ctx context.Context) (bool, error) {
+			var obj api.LoadScenario
+			err := s.client.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: name}, &obj)
+			if apierrors.IsNotFound(err) {
+				return true, nil
+			}
+			return false, err
+		})
 	if err != nil {
 		return httpapi.EvaluationIdentity{}, fmt.Errorf("이전 객체 삭제됨; replacement wait: %w", err)
 	}
@@ -217,10 +237,13 @@ func (s *evaluationLoadService) inputs(ctx context.Context) (httpapi.EvaluationI
 	}
 	for _, obj := range objects {
 		relative := strings.TrimPrefix(obj.Key, "experiments/_inputs/")
-		if relative == obj.Key || !strings.Contains(relative, "/") || strings.HasPrefix(relative, "/") || strings.HasSuffix(relative, "/") {
+		if relative == obj.Key || !strings.Contains(relative, "/") ||
+			strings.HasPrefix(relative, "/") || strings.HasSuffix(relative, "/") {
 			continue
 		}
-		result.Items = append(result.Items, httpapi.EvaluationInput{Store: obj.Store, Key: obj.Key, Size: obj.Size, Kind: evaluationInputKind(obj.Key)})
+		result.Items = append(result.Items, httpapi.EvaluationInput{
+			Store: obj.Store, Key: obj.Key, Size: obj.Size, Kind: evaluationInputKind(obj.Key),
+		})
 	}
 	sort.Slice(result.Items, func(i, j int) bool { return result.Items[i].Key < result.Items[j].Key })
 	return result, nil

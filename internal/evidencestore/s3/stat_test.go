@@ -2,10 +2,11 @@ package s3
 
 import (
 	"context"
+	"testing"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"testing"
 )
 
 type headClient struct {
