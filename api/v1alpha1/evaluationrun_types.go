@@ -369,7 +369,11 @@ func (s *EvaluationRunSpec) Validate() error {
 		}
 		prior[stage.ID] = true
 	}
-	for _, comparison := range s.Comparisons {
+	return validateEvaluationComparisons(s.Comparisons, prior)
+}
+
+func validateEvaluationComparisons(comparisons []EvaluationComparison, stages map[string]bool) error {
+	for _, comparison := range comparisons {
 		if comparison.Reason == "" {
 			return fmt.Errorf("comparison reason is required")
 		}
@@ -377,7 +381,7 @@ func (s *EvaluationRunSpec) Validate() error {
 			if (ref.StageID == "") == (ref.Historical == nil) {
 				return fmt.Errorf("exactly one comparison reference required")
 			}
-			if ref.StageID != "" && !prior[ref.StageID] {
+			if ref.StageID != "" && !stages[ref.StageID] {
 				return fmt.Errorf("comparison references missing stage %q", ref.StageID)
 			}
 			if h := ref.Historical; h != nil && (h.RunUID == "" || h.StageID == "" || !validEvaluationEvidence(h.ResultRef)) {
@@ -420,6 +424,23 @@ func validateEvaluationContext(target TargetIdentity, harness EvaluationImage, g
 			return fmt.Errorf("images require @sha256: and sourceSHA")
 		}
 	}
+	if err := validateEvaluationGenerator(generator); err != nil {
+		return err
+	}
+	if err := validateEvaluationPower(power); err != nil {
+		return err
+	}
+	if err := validateEvaluationControl(control); err != nil {
+		return err
+	}
+	q, e := judgment.GeneratorQuality, judgment.EnergyCoverage
+	if q.LatenessToleranceNanos < 0 || !finiteNonNegative(q.MaxExceedingFraction) || q.MaxExceedingFraction > 1 || !finiteNonNegative(e.MaxGapFraction) || e.MaxGapFraction > 1 || !finitePositive(e.MaxSingleGapSeconds) {
+		return fmt.Errorf("invalid judgment numeric ranges")
+	}
+	return nil
+}
+
+func validateEvaluationGenerator(generator Generator) error {
 	if len(generator.Shards) == 0 || generator.Barrier.MaxStartSkewNanos < 0 || generator.Barrier.MinimumReadySamples < 1 {
 		return fmt.Errorf("invalid generator shards or barrier")
 	}
@@ -435,10 +456,14 @@ func validateEvaluationContext(target TargetIdentity, harness EvaluationImage, g
 			}
 		}
 	}
+	return nil
+}
+
+func validateEvaluationPower(power PowerMeasurement) error {
 	if len(power.Meters) == 0 || len(power.Nodes) == 0 || power.Series == "" || power.Sampling.IntervalNanos < 1 {
 		return fmt.Errorf("invalid power measurement")
 	}
-	names = map[string]bool{}
+	names := map[string]bool{}
 	for _, meter := range power.Meters {
 		if meter.ID == "" || meter.SourceIdentity == "" || names[meter.ID] {
 			return fmt.Errorf("invalid or duplicate meter")
@@ -451,13 +476,6 @@ func validateEvaluationContext(target TargetIdentity, harness EvaluationImage, g
 			return fmt.Errorf("invalid or duplicate power node")
 		}
 		names[node.Name] = true
-	}
-	if err := validateEvaluationControl(control); err != nil {
-		return err
-	}
-	q, e := judgment.GeneratorQuality, judgment.EnergyCoverage
-	if q.LatenessToleranceNanos < 0 || !finiteNonNegative(q.MaxExceedingFraction) || q.MaxExceedingFraction > 1 || !finiteNonNegative(e.MaxGapFraction) || e.MaxGapFraction > 1 || !finitePositive(e.MaxSingleGapSeconds) {
-		return fmt.Errorf("invalid judgment numeric ranges")
 	}
 	return nil
 }

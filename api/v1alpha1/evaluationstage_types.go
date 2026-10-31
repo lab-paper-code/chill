@@ -47,6 +47,12 @@ type FaultInjectionSelection struct {
 // +kubebuilder:validation:Enum=node;pod;instance
 type FaultInjectionOrderKey string
 
+const (
+	FaultInjectionDeleteServingPod = "delete-serving-pod"
+	FaultInjectionCordonDelete     = "cordon-delete"
+	FaultInjectionUncordon         = "uncordon"
+)
+
 func validateFaultInjection(plans []FaultInjectionPlan) error {
 	prior := map[string]FaultInjectionPlan{}
 	for _, plan := range plans {
@@ -56,12 +62,12 @@ func validateFaultInjection(plans []FaultInjectionPlan) error {
 		if _, exists := prior[plan.ID]; exists {
 			return fmt.Errorf("duplicate injection %q", plan.ID)
 		}
-		if plan.Action != "delete-serving-pod" && plan.Action != "cordon-delete" && plan.Action != "uncordon" {
+		if plan.Action != FaultInjectionDeleteServingPod && plan.Action != FaultInjectionCordonDelete && plan.Action != FaultInjectionUncordon {
 			return fmt.Errorf("invalid injection action %q", plan.Action)
 		}
-		if plan.Action == "uncordon" {
+		if plan.Action == FaultInjectionUncordon {
 			p, exists := prior[plan.PriorInjectionID]
-			if !exists || p.Action != "cordon-delete" || p.OffsetSeconds >= plan.OffsetSeconds {
+			if !exists || p.Action != FaultInjectionCordonDelete || p.OffsetSeconds >= plan.OffsetSeconds {
 				return fmt.Errorf("uncordon %q requires an earlier cordon-delete priorInjectionID", plan.ID)
 			}
 			if plan.Selection != nil {
@@ -91,7 +97,7 @@ func validateFaultInjection(plans []FaultInjectionPlan) error {
 			}
 			if selection.DifferentNodeFrom != "" {
 				p, exists := prior[selection.DifferentNodeFrom]
-				if !exists || p.Action == "uncordon" || p.OffsetSeconds >= plan.OffsetSeconds {
+				if !exists || p.Action == FaultInjectionUncordon || p.OffsetSeconds >= plan.OffsetSeconds {
 					return fmt.Errorf("differentNodeFrom must reference an earlier target selection")
 				}
 			}

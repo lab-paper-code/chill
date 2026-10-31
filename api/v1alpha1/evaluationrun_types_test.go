@@ -117,4 +117,3 @@ func TestAggregateMeasurement(t *testing.T) {
 		})
 	}
 }
-
