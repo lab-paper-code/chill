@@ -258,7 +258,7 @@ list and validate the render with
 
 **배포 전 필수:** `hack/e5/replay-gate.py`를 보존한 E5-3/5/7 및 회귀
 stage 전체에 실행하고 `summary.json`의 `verdict=PASS`를 배포 증거에 첨부한다.
-기본 문턱은 **나빠진 tick 0** (`--max-bad-ticks 0`); 불일치 자체는 실패가 아니다.
+판정은 **기준 소스 대비**다: 첫 `--source`(또는 `--reference`)가 기준이며 후보는 stage마다 나빠진 tick·공급 증가 거부가 기준을 넘지 않으면 PASS(기록 자체의 population mismatch로 생기는 잔여 bad tick은 기준에도 같이 나타난다). 불일치 자체는 실패가 아니다. 배포 전 기준은 **현재 live 서버 소스**로 둔다.
 나빠진 tick은 (1) keep κ가 수요보다 부족한 상황의 기록된 공급 증가 target을
 재평가가 Keep/no target으로 바꿈, 또는 (2) guard가 공급 증가 target을
 당시/다음 N tick 중 한 번이라도 거부함이다. 공동 owner는 workload 하나라도

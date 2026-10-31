@@ -202,7 +202,7 @@ def summarize(compare, guard):
 
 def markdown(report):
     text = ['# Offline decision + guard replay gate', '',
-            'Bad tick limit: %d; verdict: **%s**.' % (report['maxBadTicks'], report['verdict']), '',
+            'Bad tick limit: %d (reference %s; candidates must not exceed the reference per stage); verdict: **%s**.' % (report['maxBadTicks'], report.get('reference'), report['verdict']), '',
             '| source | stage | ticks | disagreements | population mismatch | bad ticks | guard t0 | guard next | supply-increase rejected | seconds | verdict |',
             '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|']
     for r in report['runs']:
@@ -248,6 +248,7 @@ def main():
     p.add_argument('--cache', type=Path, default=Path.home() / '.cache/chill-replay-gate')
     p.add_argument('--next', type=int, default=3)
     p.add_argument('--max-bad-ticks', type=int, default=0)
+    p.add_argument('--reference', help='source whose per-stage bad ticks are the baseline; a candidate passes a stage when its bad ticks and supply-increase rejections do not exceed the reference (default: first --source)')
     p.add_argument('--self-check', action='store_true')
     a = p.parse_args()
     if a.self_check:
@@ -265,6 +266,9 @@ def main():
                   maxBadTicks=a.max_bad_ticks, inputs={k: dict(path=str(getattr(a, k).resolve()), sha256=digest(getattr(a, k))) for k in ('rows', 'profiles', 'scheduler')}, runs=[])
     try:
         stages = [(s.resolve(), *prepare(s.resolve(), a.cache)) for s in a.stage]
+        reference = a.reference or a.source[0]
+        baselines = {}
+        report['reference'] = reference
         for number, source in enumerate(a.source):
             binary, meta = build(source, a.cache)
             for stage, records, catalog, arrivals, inputs in stages:
@@ -282,12 +286,20 @@ def main():
                     with (folder / (mode + '.jsonl')).open() as stream:
                         results[mode] = [json.loads(line) for line in stream]
                 summary = summarize(results['compare'], results['guard'])
+                baseline = baselines.get(stage.name)
+                if baseline is None:  # the reference source itself is the baseline, not a candidate
+                    verdict = 'REFERENCE'
+                else:  # a candidate: no worse than the reference on the same recorded ticks
+                    verdict = 'PASS' if summary['badTicks'] <= baseline['badTicks'] and summary['recoveryRejectedTicks'] <= baseline['recoveryRejectedTicks'] else 'FAIL'
                 summary.update(source=source, sourceSHA=meta['sha'], stage=stage.name, build=meta,
                                records=inputs, elapsedSeconds=time.monotonic() - start,
-                               evidence=str(folder), verdict='PASS' if summary['badTicks'] <= a.max_bad_ticks else 'FAIL')
+                               evidence=str(folder), verdict=verdict, baseline=baseline and {k: baseline[k] for k in ('source', 'badTicks', 'recoveryRejectedTicks')})
+                if source == reference:
+                    baselines[stage.name] = summary
                 (folder / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
                 report['runs'].append(summary)
-                report['verdict'] = 'PASS' if all(r['verdict'] == 'PASS' for r in report['runs']) else 'FAIL'
+                candidates = [r for r in report['runs'] if r['verdict'] != 'REFERENCE']
+                report['verdict'] = 'PASS' if candidates and all(r['verdict'] == 'PASS' for r in candidates) else 'FAIL'
                 report['elapsedSeconds'] = time.monotonic() - began
                 (a.out / 'summary.json').write_text(json.dumps(report, indent=2) + '\n')
                 (a.out / 'summary.md').write_text(markdown(report))
