@@ -1,4 +1,4 @@
-import type { LiveDecision, LiveEvent, LiveInstance, LiveMetric, LiveSnapshot, LiveWorkload } from "./live.ts"
+import { isLiveActionActive, type LiveAction, type LiveDecision, type LiveEvent, type LiveInstance, type LiveMetric, type LiveSnapshot, type LiveState, type LiveWorkload } from "./live.ts"
 
 export const instanceSymbols = [
   ["×", "제거"], ["◌", "분배 해제 뒤 잔여 실행"], ["●", "실제 처리"],
@@ -40,8 +40,30 @@ export function displayTime(at:string|null|undefined,zone:"UTC"|"KST"):string {
 export function elapsed(at:string|number|null|undefined,now:number):string {
   if(at==null)return ""
   const time=typeof at==="number"?at:Date.parse(at)
-  return Number.isFinite(time)?`${Math.max(0,Math.floor((now-time)/1000))}초 전`:""
+  return Number.isFinite(time)?`${duration(Math.max(0,(now-time)/1000))} 전`:""
 }
+export function duration(seconds:number):string {
+  const value=Math.max(0,Math.floor(seconds))
+  if(value<60)return `${value}초`
+  if(value<3600)return `${Math.floor(value/60)}분${value%60?` ${value%60}초`:""}`
+  return `${Math.floor(value/3600)}시간${Math.floor(value%3600/60)?` ${Math.floor(value%3600/60)}분`:""}`
+}
+/** Estimates are means, not deadlines: flag after 3×; without one, use five minutes. */
+export function actionProgress(action:LiveAction,now:number):"terminal"|"progress"|"delayed" {
+  if(!isLiveActionActive(action))return "terminal"
+  const threshold=action.expectedSeconds!=null&&action.expectedSeconds>0?action.expectedSeconds*3:300
+  return now-Date.parse(action.startedAt)>threshold*1000?"delayed":"progress"
+}
+export const actionOrigin=(action:LiveAction)=>action.id.startsWith("manual-")||action.kind.startsWith("manual-")?"수동":"자동"
+export function liveFresh(state:LiveState,now:number):boolean {
+  return state.status==="fixture"||state.status==="live"&&!isStale(state.lastObservedAt,now)&&!!state.metrics.at(-1)&&!isStale(state.metrics.at(-1)?.bucketAt,now)
+}
+export function scopeSnapshot(snapshot:LiveSnapshot,uid?:string):LiveSnapshot {
+  if(!uid)return snapshot
+  return {...snapshot,workloads:snapshot.workloads.filter(row=>row.uid===uid),instances:snapshot.instances.filter(row=>belongsToPool(row,uid)),routing:{[uid]:snapshot.routing[uid]??{}},actions:snapshot.actions.filter(row=>row.workloadUID===uid),reservations:snapshot.reservations.filter(row=>row.workloadUIDs.includes(uid)),decision:null}
+}
+export const scopeEvents=(events:LiveEvent[],uid?:string)=>uid?events.filter(event=>event.kind==="action"&&event.action.workloadUID===uid):events
+export const recentEvents=(events:LiveEvent[],now:number)=>events.filter(event=>Date.parse(event.at)>=now-30000&&Date.parse(event.at)<=now&&(event.kind!=="decision"||event.decision.state!=="Keep"))
 export function routingShare(weights:Record<string,number>|undefined,id:string):number|undefined {
   if(!weights || weights[id]==null)return undefined
   const total=Object.values(weights).reduce((sum,weight)=>sum+weight,0)
@@ -64,11 +86,14 @@ export function servicePriority(workload:LiveWorkload,metric:LiveMetric|undefine
   if (!metric || metric.received>0 || (terminalCount(metric)??0)>0) return 4
   return 5
 }
-export function boardVerdict(fresh:boolean,terminals:number|undefined,failed:number|undefined,sloMisses:number|undefined,queued:number,changes:number,admissionBlocked:boolean) {
-  if (!fresh || terminals==null) return {label:"판정 불가",tone:"unknown",reason:"최신 관측을 기다리고 있어요"}
-  if ((failed??0)>0 || admissionBlocked) return {label:"이상",tone:"danger",reason:"실패 응답 또는 요청 접수 불가를 확인하세요"}
-  if ((sloMisses??0)>0 || queued>0 || changes>0) return {label:"주의",tone:"warning",reason:sloMisses?"SLO 목표 미달 서비스가 있어요":queued?"처리를 기다리는 요청이 있어요":"구성 변경이 진행 중이에요"}
-  if (terminals===0) return {label:"판정 불가",tone:"unknown",reason:"종결 표본이 없어 SLO를 판정할 수 없어요"}
+export function boardVerdict({fresh,terminals,failed,sloMisses,queued,changes,delayed,serving,off,total,admissionBlocked}:{fresh:boolean;terminals:number|undefined;failed:number|undefined;sloMisses:number;queued:number;changes:number;delayed:number;serving:number;off:number;total:number;admissionBlocked:boolean}) {
+  if (!fresh || terminals==null) return {label:"데이터 끊김",tone:"unknown",reason:"최신 관측을 기다려요. 마지막 수치를 현재 상태로 판단하지 마세요"}
+  if (!serving) return {label:"서빙 0",tone:"warning",reason:`요청을 받을 인스턴스 0개 / 자동제어 꺼짐 ${off}/${total}. 무유입만으로 장애를 단정하지 않아요`}
+  if (sloMisses>0) return {label:"SLO 위반",tone:"danger",reason:`목표 미달 서비스 ${sloMisses}개를 확인하세요`}
+  if (delayed>0) return {label:"정체",tone:"danger",reason:`예상 대비 지연 ${delayed}건. 종결 미확인으로 실제 상태 확인이 필요해요`}
+  if (changes>0) return {label:"진행",tone:"warning",reason:`구성 변경 ${changes}건이 진행 중이에요`}
+  if ((failed??0)>0 || admissionBlocked || queued>0) return {label:"주의",tone:"warning",reason:"실패 응답·요청 접수·대기를 확인하세요"}
+  if (terminals===0) return {label:"표본 없음",tone:"unknown",reason:"종결 표본이 없어 SLO를 판정할 수 없어요"}
   return {label:"정상",tone:"healthy",reason:"종결 응답 기준으로 서비스 SLO 목표를 충족해요"}
 }
 export function decisionText(decision:LiveDecision|null|undefined):string {

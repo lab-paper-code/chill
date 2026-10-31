@@ -8,7 +8,6 @@ import { conditionRows } from "@/features/scheduler-profiles"
 import type { LoadWindow, OperatingPower, SchedulerAllocation, SchedulerCandidate, SchedulerDecision, SchedulerDefinition, SchedulerEstimate, SchedulerInstance, SchedulerNode, SchedulerSnapshot, SchedulerView, WireInteger } from "@/lib/read-types"
 import { nanosToMilliseconds, parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import { capacityPath } from "@/lib/capacity"
-import { isLiveActionActive } from "@/lib/live"
 import { excludedNodes } from "@/features/scheduler-settings"
 import { safeSource } from "@/lib/source-export"
 import { gapNotice, localDateTime, utcDateTime } from "@/lib/date-time"
@@ -20,7 +19,7 @@ import { resolveWorkloadIdentities, type IdentityWorkload } from "@/lib/workload
 
 export const judgmentLabels:Record<string,string>={Pending:"판단 대기",Keep:"현재 구성 유지",Feasible:"목표 충족",Overload:"예상 부하가 목표 초과",InfeasibleLifetime:"요청 유효기간 충족 어려움",InfeasibleResources:"자원 조건 충족 어려움",InfeasibleTransition:"변경 조건 충족 어려움",ExecutionError:"실행 오류 확인"}
 export const judgmentTones:Record<string,Tone>={Keep:"ok",Feasible:"ok",Pending:"idle",Overload:"warn",InfeasibleLifetime:"warn",InfeasibleResources:"warn",InfeasibleTransition:"warn",ExecutionError:"fail"}
-export const actionKinds:Record<string,string>={prepare:"실행 준비",route:"요청 분배 변경",stop:"요청 접수 중지",drain:"기존 요청 마무리",remove:"인스턴스 제거",power:"전력모드 변경",resize:"인스턴스 교체","manual-static-routing":"설정한 요청 분배 적용"}
+export const actionKinds:Record<string,string>={prepare:"실행 준비",route:"요청 분배 변경",unroute:"요청 분배 해제",release:"자원 예약 해제",reset:"서비스 초기화",stop:"요청 접수 중지",drain:"기존 요청 마무리",remove:"인스턴스 제거",power:"전력모드 변경",resize:"인스턴스 교체","manual-static-routing":"설정한 요청 분배 적용"}
 // internal/serving/kube/static_routing.go: a configuration-sourced route has no single node (empty NodeRef).
 export const actionNodeName=(node:{name:string;uid:string})=>node.uid?node.name||"이름 미제공":"전체 노드"
 export const actionStatuses:Record<string,string>={planned:"계획됨",starting:"시작 기록",running:"실행 중",complete:"완료",failed:"실패",cancel:"취소",partial:"일부 변경 관측"}
@@ -140,7 +139,7 @@ export function SchedulerPage() {
       <Row href="/operations/flow" label="운영 흐름 보드" hint="수신, 실행과 구성 변경의 실시간 흐름"/>
       <Row href="/scheduler/estimates" label="서비스별 응답 목표 예상" value={now?.estimates.length?`초과 ${now.exceeding} / ${now.estimates.length}`:undefined}/>
       <Row href="/scheduler/load" label="실제 부하" hint="구간마다 받은 요청과 처리"/>
-      <Row href="/transitions" label="변경 진행" value={view?`${view.state.actions?.filter(isLiveActionActive).length??0}건`:undefined}/>
+      <Row href="/transitions" label="변경 진행·정체" hint="운영 흐름 보드와 같은 실시간 관측"/>
       <Row href="/scheduler/profiles" label="측정 프로파일" hint="운영 판단이 쓰는 측정 결과"/>
       <Row href="/scheduler/capacity" label="인스턴스 용량 계산 근거" hint="조건별 κ와 탐색 판정, 현재 설정 대조"/>
       <Row href="/resources" label="장비"/>

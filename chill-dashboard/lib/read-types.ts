@@ -97,7 +97,7 @@ export type SchedulerCapacity = {periodNanos:WireInteger;routeNanos:WireInteger;
 export type SchedulerDecision = {at:string;status:string;keep:SchedulerCandidate;target:SchedulerCandidate|null;reasons:string[]|null;settings:SchedulerSettings;workloads:SchedulerWorkloadState[]|null;search:{examined:number;bounds:SchedulerSettings;windowStart:string;windowEnd:string;received:number;accepted:number;computeInputs:number;population:string;loads:{uid:string;received:number;accepted:number;computeInputs:number;inputsPerSecond:number}[]|null;comparedNodes:NodeRef[]|null};references:string[]|null;capacity?:SchedulerCapacity;evaluationElapsedNanos?:WireInteger}
 // Weights per workload UID and instance ID; original weights, not probabilities.
 export type Routing = Record<string,Record<string,number>>
-export type SchedulerOperation = {id:string;kind:string;node:NodeRef;instance?:string;prepare?:{name:string;instance:SchedulerInstance;bundle:unknown;store:unknown;config:unknown;memoryBytes:WireInteger};actuation?:unknown;target?:SchedulerCandidate;sourceConfigRV?:string;staticRouting?:Routing;settingsValidatedAt?:string}
+export type SchedulerOperation = {id:string;kind:string;node:NodeRef;workloadUID?:string;workloadUIDs?:string[];instance?:string;prepare?:{name:string;instance:SchedulerInstance;bundle:unknown;store:unknown;config:unknown;memoryBytes:WireInteger};actuation?:unknown;target?:SchedulerCandidate;sourceConfigRV?:string;staticRouting?:Routing;settingsValidatedAt?:string}
 // Pods carrying this label were placed by CHILL: internal/profiling/run/workload.go
 export const workloadRoleLabel = "edge.dacs.io/workload-role"
 export type WorkloadPod = {namespace:string;name:string;uid:string;phase:string;images:string[];labels?:Record<string,string>}

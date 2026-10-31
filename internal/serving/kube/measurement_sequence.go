@@ -353,6 +353,8 @@ func (c *SchedulerController) ExecuteManual(ctx context.Context, request ManualO
 }
 
 func (c *SchedulerController) executeManualOperation(ctx context.Context, operation Operation, config SchedulerControllerConfig, plan manualResetPlan, result *OperationResult) error {
+	startedAt := result.StartedAt
+	defer func() { result.StartedAt = startedAt }()
 	switch operation.Kind {
 	case operationReset:
 		return c.executeManualReset(ctx, operation, config, plan, result)

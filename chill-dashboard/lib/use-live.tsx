@@ -15,7 +15,7 @@ export function LiveProvider({children}:{children:React.ReactNode}) {
   const {token,epoch,config,signals}=useSession()
   const queryClient=useQueryClient()
   const pathname=usePathname(),search=useSearchParams()
-  const active=pathname === "/operations/flow" || pathname === "/pools" || pathname.startsWith("/pools/")
+  const active=pathname === "/operations/flow" || pathname === "/pools" || pathname.startsWith("/pools/") || pathname === "/transitions"
   const requested=search.get("fixture")
   const scene=config.liveFixture && requested && ["empty","first","expand","shrink"].includes(requested) ? requested : null
   const {data:state}=useQuery<LiveState>({queryKey:liveKey,enabled:false,initialData:initialLiveState,staleTime:Infinity,gcTime:Infinity})
