@@ -714,6 +714,14 @@ authorization. Existing factor/reset/stage evidence is never adopted as an
 implicit retry. Correct changed top-level JSON in a separately released round
 rather than rewriting prior round history.
 
+Use `--until <step>` to exit successfully after that step, recording its canonical
+identifier in `round-summary.json` as `stoppedAfter`. It accepts the same names
+and substeps as resume; `5`/`rows` includes every configured row, and `5:E5-6`
+includes that row's cleanup. The boundary cannot precede `--resume-from`.
+For example, `--until 1` stops after deployment; continue with the identical
+round JSON and `--resume-from 2`. Early stops do not run later steps or `finish`
+and therefore do not imply final empty-state verification.
+
 `python3 -B hack/e5/round.py --self-check` checks input validation, ordering,
 STOP boundaries and compressed judgment projection entirely offline, without
 environment configuration, Go, image builds, deployment or network requests.

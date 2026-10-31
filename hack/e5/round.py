@@ -170,7 +170,7 @@ def sections(path):
 
 
 class Round:
-    def __init__(self, c, resume=None, advance_tag=False):
+    def __init__(self, c, resume=None, advance_tag=False, until=None):
         self.c = validate(c)
         self.env = load(c['environment'])
         self.repo = Path(self.env['paths']['repository'])
@@ -184,6 +184,13 @@ class Round:
             fail('Existing campaign run directory required')
         self.plan = steps(c['rows'])
         self.start = resume_step(resume or '0', c['rows'])
+        self.until = resume_step(until, c['rows']) if until is not None else None
+        if until in ('5', 'rows'):
+            self.until = '5:'+c['rows'][-1]+':cleanup'
+        elif until is not None and until.startswith('5:') and until.count(':') == 1:
+            self.until = until+':cleanup'
+        if self.until is not None and self.plan.index(self.until) < self.plan.index(self.start):
+            fail('--until must not precede --resume-from')
         self.state_path = self.root/'round-state.json'
         if resume:
             self.state = load(self.state_path)
@@ -667,7 +674,7 @@ class Round:
         if not marker.exists():
             self.cpo.finish()
         self.state['finalState'] = self.empty('final')
-        self.save('round-summary.json', {'status': 'COMPLETE', 'at': now(), 'sourceSHA': self.c['sourceSHA'], 'rowTags': self.state['rowTags'], 'reports': self.state['reports'], 'finalState': self.state['finalState'], 'measurementRetries': 0, 'meaning': 'Completion is workflow completion, not scientific PASS; finish restores initial settings and may reset h to zero'})
+        self.save('round-summary.json', {'status': 'COMPLETE', 'at': now(), 'sourceSHA': self.c['sourceSHA'], 'rowTags': self.state['rowTags'], 'reports': self.state['reports'], 'finalState': self.state['finalState'], 'measurementRetries': 0, 'meaning': 'Completion is workflow completion, not scientific PASS; finish restores initial settings and may reset h to zero', **({'stoppedAfter': self.until} if self.until is not None else {})})
         print(json.dumps({'status': 'COMPLETE', 'summary': str(self.attempt/'round-summary.json'), 'measurementRetries': 0}))
 
     def execute(self):
@@ -675,7 +682,8 @@ class Round:
         try:
             # fast-deploy owns the same heavy lock during deployment. Measurement
             # acquires it afterward and retains it through final state verification.
-            for step in self.plan[self.plan.index(self.start):]:
+            end = self.plan.index(self.until)+1 if self.until is not None else len(self.plan)
+            for step in self.plan[self.plan.index(self.start):end]:
                 self.active_step = step
                 if step in self.state['completed']:
                     continue
@@ -711,6 +719,10 @@ class Round:
                         elif part == 'cleanup': self.call('cleanup-jobs', row)
                 self.state['completed'].append(step)
                 self.save_state()
+            if self.until is not None and self.until != '7':
+                summary = {'status': 'STOPPED', 'at': now(), 'stoppedAfter': self.until, 'sourceSHA': self.c['sourceSHA'], 'rowTags': self.state['rowTags'], 'measurementRetries': 0}
+                self.save('round-summary.json', summary)
+                print(json.dumps({**summary, 'summary': str(self.attempt/'round-summary.json')}))
             return 0
         except BaseException as error:
             self.save('STOP.json', {'status': 'STOP', 'at': now(), 'step': self.active_step, 'reason': str(error), 'measurementRetries': 0, 'physicalRecoveryAttempted': False, 'rowTags': self.state['rowTags']})
@@ -739,7 +751,7 @@ def self_check():
     assert steps(fixture['rows'])[-2:] == ['6', '7']
     assert resume_step('5:E5-6', fixture['rows']) == '5:E5-6:factor'
     assert [next_tag(t) for t in ('8', '8d', '8z', '8az', 'abc')] == ['8a', '8e', '8aa', '8ba', 'abca']
-    for key, value in [('h', True), ('h', float('nan')), ('rows', ['E5-5', 'E5-5']), ('rows', ['E5-4']), ('rowTag', '../8'), ('sourceSHA', 'HEAD'), ('minimumFreeBytes', 1), ('kappa', {'argv': ['go', 'run']}), ('rateBasis', {'tag': '7', 'binding': '/ops/x'}), ('failureInjection', False), ('environment', 'relative')]:
+    for key, value in [('h', True), ('h', float('nan')), ('rows', []), ('rows', ['E5-5', 'E5-5']), ('rows', ['E5-4']), ('rowTag', '../8'), ('sourceSHA', 'HEAD'), ('minimumFreeBytes', 1), ('kappa', {'argv': ['go', 'run']}), ('rateBasis', {'tag': '7', 'binding': '/ops/x'}), ('failureInjection', False), ('environment', 'relative')]:
         try:
             validate(dict(fixture, **{key: value}))
         except ValueError:
@@ -781,6 +793,22 @@ def self_check():
         with patch.object(fcntl, 'flock'), patch(__name__+'.load', side_effect=lambda path: {} if str(path) == c['publication'] else original_load(path)):
             assert runner.execute() == 0
         assert order == ['0', '1', '2', '3', '4', 'factor', 'headroom', 'stage', 'judge', 'cleanup-jobs', '6', '7']
+        c['evidence'] = str(root/'until-evidence')
+        limited = Round(c, until='deploy')
+        limited.preflight = lambda: None
+        limited.deploy = lambda: None
+        assert limited.execute() == 0
+        assert limited.state['completed'] == ['0', '1']
+        assert load(limited.attempt/'round-summary.json')['stoppedAfter'] == '1'
+        resumed = Round(c, resume='2', until='2')
+        assert resumed.start == '2' and resumed.state['completed'] == ['0', '1']
+        resumed.import_harness = lambda: None
+        resumed.controller = lambda: None
+        resumed.guard = lambda label: None
+        resumed.reset = lambda: order.append('resumed-reset')
+        with patch.object(fcntl, 'flock'), patch(__name__+'.load', side_effect=lambda path: {} if str(path) == c['publication'] else original_load(path)):
+            assert resumed.execute() == 0
+        assert order[-1] == 'resumed-reset' and resumed.state['completed'] == ['0', '1', '2']
         c['evidence'] = str(root/'stop-evidence')
         stopped = Round(c)
         stopped.preflight = lambda: (_ for _ in ()).throw(RuntimeError('fixture stop'))
@@ -812,6 +840,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--round', type=Path)
     parser.add_argument('--resume-from', help='0..7, name, or 5:E5-N[:factor|headroom|stage|judge|guard|cleanup]')
+    parser.add_argument('--until', help='Stop successfully after 0..7, name, or 5:E5-N[:substep]; 5/rows includes all rows')
     parser.add_argument('--next-row-tag', action='store_true', help='Explicit fresh tag for a pre-load input correction only; never retry measured rows')
     parser.add_argument('--self-check', action='store_true')
     args = parser.parse_args()
@@ -822,7 +851,7 @@ def main():
         parser.error('--round <JSON> required')
     os.umask(0o077)
     try:
-        return Round(load(args.round), args.resume_from, args.next_row_tag).execute()
+        return Round(load(args.round), args.resume_from, args.next_row_tag, args.until).execute()
     except Exception as error:
         print('STOP input: '+str(error), file=sys.stderr)
         return 2
