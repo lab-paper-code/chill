@@ -707,6 +707,8 @@ configuration. Older roots are adopted only when their saved state has the same 
 
 Resume explicitly with the same JSON and `--resume-from 0..7` (also
 `preflight`, `deploy`, `reset`, `headroom`, `kappa`, `rows`, `tables`, `finish`).
+An existing evidence root with completed steps requires `--resume-from`; a
+preflight-only STOP with no completed steps may reuse the root without it.
 Row boundaries use `--resume-from 5:E5-6`; individual substeps accept
 `5:E5-6:factor|headroom|stage|judge|guard|cleanup`. Incomplete prerequisites
 cannot be skipped. A pre-load input correction can use

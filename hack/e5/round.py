@@ -203,6 +203,8 @@ class Round:
                     fail('Evidence root belongs to a different round configuration')
             elif not self.state_path.is_file() or load(self.state_path).get('config') != c:
                 fail('Evidence root lacks matching round configuration')
+            if not resume and self.state_path.is_file() and load(self.state_path).get('completed'):
+                fail('Evidence root has completed steps; --resume-from required to preserve round state')
         if not config_marker.exists():
             with config_marker.open('x') as stream:
                 stream.write(config_sha+'\n')
@@ -798,7 +800,7 @@ def self_check():
                 raise AssertionError('Evidence root accepted another round configuration')
         # Existing roots from before the SHA marker are owned by their saved config.
         (runner.root/'round-config.sha256').unlink()
-        assert Round(c).attempt != repeated.attempt
+        assert Round(c, resume='0').attempt != repeated.attempt
         order = []
         runner.preflight = lambda: order.append('0')
         def deploy():
@@ -835,6 +837,18 @@ def self_check():
         with patch.object(fcntl, 'flock'), patch(__name__+'.load', side_effect=lambda path: {} if str(path) == c['publication'] else original_load(path)):
             assert resumed.execute() == 0
         assert order[-1] == 'resumed-reset' and resumed.state['completed'] == ['0', '1', '2']
+        resumed.state['lastStop'] = {'step': '3', 'reason': 'fixture stop'}
+        resumed.save_state()
+        saved_state = resumed.state_path.read_bytes()
+        attempts = set(resumed.root.glob('attempt-*'))
+        try:
+            Round(c)
+        except ValueError as error:
+            assert '--resume-from required' in str(error)
+        else:
+            raise AssertionError('Progressed round state overwritten without explicit resume')
+        assert resumed.state_path.read_bytes() == saved_state
+        assert set(resumed.root.glob('attempt-*')) == attempts
         c['evidence'] = str(root/'stop-evidence')
         stopped = Round(c)
         stopped.preflight = lambda: (_ for _ in ()).throw(RuntimeError('fixture stop'))
@@ -842,6 +856,9 @@ def self_check():
         assert stopped.execute() == 2
         assert load(stopped.attempt/'STOP.json')['step'] == '0'
         assert stopped.state['completed'] == []
+        restarted = Round(c)
+        assert restarted.state['completed'] == [] and restarted.attempt != stopped.attempt
+        assert load(stopped.attempt/'STOP.json')['step'] == '0'
         try:
             Round(c, resume='7')
         except ValueError:
