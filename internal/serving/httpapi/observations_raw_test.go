@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -193,5 +194,49 @@ func TestRawHTTPEmptyDefinitions(t *testing.T) {
 	response := rawHTTPRequest(h, rawObservationsPath+"/definitions")
 	if response.Code != http.StatusOK || response.Body.Len() != 0 || response.Header().Get("Content-Length") != "0" || response.Header().Get("Content-Type") != "application/x-ndjson" {
 		t.Fatalf("empty definitions: %d %v %q", response.Code, response.Header(), response.Body.String())
+	}
+}
+
+func TestSchedulerHistorySelectionQueries(t *testing.T) {
+	h := rawHTTPHandler(t, &rawHTTPArchive{}, true)
+	from := time.Now().UTC().Add(-time.Second)
+	to := from.Add(time.Minute)
+	for _, event := range []serving.SchedulerObservation{
+		{At: from.Add(3 * time.Second), Action: &serving.SchedulerActionObservation{ID: "new", Expected: json.RawMessage(`{"workloadUID":"w"}`)}},
+		{At: from, Snapshot: &serving.SchedulerSnapshot{Workloads: []*serving.Definition{{UID: "w", Generation: 1}}}},
+		{At: from.Add(time.Second), Decision: &serving.SchedulerDecision{Status: "old", Workloads: []serving.SchedulerWorkloadState{{UID: "w"}}}},
+		{At: from.Add(4 * time.Second), Action: &serving.SchedulerActionObservation{ID: "other", Expected: json.RawMessage(`{"workloadUID":"other"}`)}},
+	} {
+		if err := h.observationLog.SchedulerRecord(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := "/api/v1/observations/scheduler?from=" + from.Format(time.RFC3339Nano) + "&to=" + to.Format(time.RFC3339Nano)
+	for _, view := range []string{"", "&view=compact"} {
+		for cursor, original := range []int{0, 2} {
+			path := base + "&limit=1&order=desc&filter=decision-action&uid=w&cursor=" + strconv.Itoa(cursor) + view
+			response := rawHTTPRequest(h, path)
+			var result struct {
+				Events     []serving.SchedulerObservation
+				NextCursor string
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || response.Code != http.StatusOK ||
+				len(result.Events) != 1 || result.Events[0].Offset == nil || *result.Events[0].Offset != original {
+				t.Fatalf("history selection: status=%d body=%s err=%v", response.Code, response.Body, err)
+			}
+			if cursor == 0 && result.NextCursor != "1" || cursor == 1 && result.NextCursor != "" {
+				t.Fatalf("history next cursor: %s", response.Body)
+			}
+		}
+	}
+	for _, invalid := range []string{
+		"order=", "order=DESC", "order=asc&order=desc", "filter=", "filter=wrong", "filter=action&filter=decision",
+		"uid=", "uid=a&uid=b", "uid=a%20b", "uid=a%2Fb", "uid=a%5Cb", "uid=a%00b", "uid=" + strings.Repeat("a", 257),
+	} {
+		response := rawHTTPRequest(h, base+"&"+invalid)
+		var result serving.Error
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || response.Code != http.StatusBadRequest || result.Code != "InvalidQuery" {
+			t.Fatalf("invalid history query %s: status=%d body=%s err=%v", invalid, response.Code, response.Body, err)
+		}
 	}
 }

@@ -65,7 +65,7 @@ operations POST 전용이며 settings PUT에는 넣지 않는다. 설정 PUT의 
 | `GET /api/v1/pools` | 실제 CHILL 인스턴스의 owner와 binding에서 도출한 `workloads[]`(`workload`, 활성 POOL `nodes`, `instances`), 측정 taint Node의 `measurement[]`, `available[]`와 `other[]`(`node/ready/powerMode/reasons`), `observedAt`, observer `issues` |
 | `GET /api/v1/pools/{uid}` | 해당 Workload의 활성 POOL 하나. 없으면 `PoolNotFound` |
 | `GET /api/v1/observations/load` | 사건 구간의 모든 UID 유입·접수·배정·완료율과 instance assignment 집계 |
-| `GET /api/v1/observations/scheduler` | 고정 `from/to`, bounded `limit`, append-order `cursor/nextCursor`의 원시 기록 |
+| `GET /api/v1/observations/scheduler` | 고정 `from/to`, bounded `limit`, `cursor/nextCursor`의 원시 기록. 기본/`order=asc`는 append 순, `order=desc`는 사건 `at` 최신순(동률은 append offset 내림차순). `filter`와 `uid`는 아래 조회 계약을 따른다 |
 | `GET /api/v1/observations/power` | 같은 고정 `from/to`의 raw 표본을 Node당 한 번 적분한 전체·활성 POOL J/평균 W; 누락은 null과 사유 |
 
 `/scheduler/state`의 `costIssues[]`(CostIssue `source/code/reason`)는 비용에 기여하지 못한
@@ -113,7 +113,11 @@ controller 적용 성공 뒤에만 게시한다. 거절된 refresh는 이전 설
 
 현행 시간 세그먼트·catalog·로컬/archive 선택과 요청 reducer는 [관측 분리 §3~6](observability-split.md)이 권위다. 폐기된 window metadata/census/prefix reader 계약은 적용하지 않는다.
 - writer mutex에서 stream fd·길이·시간을 고정하고 읽기/decode/집계는 밖에서 한다. 새 append·rotation을 섞지 않으며 실제 손상/read 오류는 health·incomplete로 남긴다. 별도 저장index·decoded cache는 없다.
-- scheduler page는 `[from,to)` 사건시각을 append 순으로 읽고 다음 일치1건으로 continuation을 확인한다. cursor의 matching-offset 의미를 유지하며 append wall time을 사건시간 필터로 쓰지 않는다.
+- scheduler page는 `[from,to)` 사건시각을 선택하고 append wall time을 사건시간 필터로 쓰지 않는다. query 생략 시 기존 append 순 bounded read와 다음 일치 1건 lookahead를 유지한다. `order=desc`는 사건시각 내림차순이며 동률은 원본 append offset 내림차순이다(`asc`는 기존 append 순).
+- `filter`는 기존 Dashboard 종류 규약 `all`, `decision-action`, `decision`, `action`, `snapshot`, `settings`, `power`, `other`를 받으며 생략은 `all`과 같다. 복합 행의 종류 우선순위는 decision → snapshot → settings → action → power → other이다. `decision-action`은 전력 표본 등 나머지 종류를 제외한다.
+- `uid=<workloadUID>`는 decision의 workload·후보, snapshot의 Workload 참조·인스턴스·routing, settings의 제어 UID·전후 static routing, action.expected의 명시 workloadUID/workloadUIDs 또는 prepare owner·인스턴스·target 관계로 선택한다. action의 명시 UID 범위가 있으면 target의 다른 Workload로 확대하지 않는다. Node UID·임의 문자열은 Workload 관계가 아니다.
+- 새 query는 HTTP 경계에서 한 번 검증한다. `order`/`filter`의 미지원·빈 값, 중복 키, 빈 UID·256 bytes 초과·공백/제어문자·경로 구분자는 400 `InvalidQuery`이다. cursor는 선택·정렬된 결과의 offset이므로 페이지마다 같은 from/to/order/filter/uid를 보낸다. 새 query를 사용한 응답의 각 `event.offset`은 필터·정렬 이전 `[from,to)` append offset이다. 상세 ref는 이를 보존하고 원본 조회에는 `limit=1&cursor=<offset>`만 사용한다(order/filter/uid 생략). 저장 JSONL·catalog·archive에는 offset이나 query를 추가하지 않는다.
+- Dashboard 사건 표시는 라벨·숫자·상태어와 짧은 근거 칩을 사용하고, 설명은 용어 도움말 한 곳으로 모은다.
 - power의 짧은 collector verdict는 조회 coverage의 대체물이 아니다. 실제 sample·원 gap·경계거리·meter/scope/source identity·보관 완전성·조회구간을 검사한다. 경계 밖은 기록된 boundary 거리 안에서만 보조하고 오래된 이전 표본으로 정상 닫힌 구간을 무효화하지 않는다. source 실패·OOM/재시작 공백은 결손이다.
 - source kind/endpoint/metric/labels가 다른 과거 기록을 현재 meter 실측으로 재해석하지 않는다. 누락정의·역순시각·알수없는 원시를 빈성공으로 바꾸거나 legacy window reader로 fallback하지 않는다.
 - JSON projection은 `encoding/json.Unmarshal` 한 경계에서 건너뛴 subtree까지 구문검사하고 실제 float/정수/duration/시각과 선택원문은 표준decoder 의미를 보존한다. 별도 구문 검증 pass는 없다. Scanner는 stream별 buffer를 재사용하고 newline 경계를 유지한다.

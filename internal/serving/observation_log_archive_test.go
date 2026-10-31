@@ -148,13 +148,24 @@ func TestObservationArchiveTransparentReadsAndCatalog(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(load.Workloads, wantLoad.Workloads) || !reflect.DeepEqual(load.Arrivals, wantLoad.Arrivals) || load.GapUntil != nil {
 		t.Fatalf("archive load: %+v %v", load, err)
 	}
-	page, next, gap, coverage, err := restarted.SchedulerObservationPage(ctx, from, to, 1, 0)
+	page, next, gap, coverage, err := restarted.SchedulerObservationPage(ctx, from, to, 1, 0, SchedulerObservationSelection{})
 	if err != nil || len(page) != 1 || page[0].Snapshot.Workloads[0].UID != archiveTestUID || next != 1 || gap != nil || coverage.Sources[0].Source != observationArchiveSource {
 		t.Fatalf("archive first page/catalog: %+v %d %v", page, next, err)
 	}
-	page, next, _, _, err = restarted.SchedulerObservationPage(ctx, from, to, 1, next)
+	page, next, _, _, err = restarted.SchedulerObservationPage(ctx, from, to, 1, next, SchedulerObservationSelection{})
 	if err != nil || len(page) != 1 || next != -1 {
 		t.Fatalf("archive terminal page: %+v %d %v", page, next, err)
+	}
+	selection := SchedulerObservationSelection{Order: "desc", Filter: "snapshot", UID: archiveTestUID}
+	for cursor, original := range []int{1, 0} {
+		page, next, _, coverage, err := restarted.SchedulerObservationPage(ctx, from, to, 1, cursor, selection)
+		if err != nil || len(page) != 1 || page[0].Offset == nil || *page[0].Offset != original ||
+			page[0].Snapshot.Workloads[0].UID != archiveTestUID || coverage.Sources[0].Source != observationArchiveSource {
+			t.Fatalf("sorted archive page/catalog: %+v next=%d err=%v", page, next, err)
+		}
+		if cursor == 0 && next != 1 || cursor == 1 && next != -1 {
+			t.Fatalf("sorted archive cursor: %d", next)
+		}
 	}
 }
 
@@ -168,7 +179,7 @@ func checkArchiveLocalOverlap(t *testing.T, log *ObservationLog, ctx context.Con
 	if err != nil || !reflect.DeepEqual(load.Workloads, wantLoad.Workloads) {
 		t.Fatalf("overlap load: %+v %v", load, err)
 	}
-	page, next, gap, coverage, err := log.SchedulerObservationPage(ctx, from, to, 1, 0)
+	page, next, gap, coverage, err := log.SchedulerObservationPage(ctx, from, to, 1, 0, SchedulerObservationSelection{})
 	if err != nil || len(page) != 1 || next != 1 || gap != nil || coverage.Sources[0].Source != localSource {
 		t.Fatalf("local page overlap: %+v next=%d gap=%v coverage=%+v err=%v", page, next, gap, coverage, err)
 	}
@@ -215,15 +226,15 @@ func TestObservationArchiveCoverageGapsAndErrors(t *testing.T) {
 		writeArchivedObservation(t, archive, hour, []byte("{\"at\":\""+hour.Add(time.Second).Format(time.RFC3339Nano)+"\"}\n"))
 	}
 	log, _ := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, from.Add(4*time.Hour))
-	page, _, gap, coverage, err := log.SchedulerObservationPage(ctx, from, from.Add(3*time.Hour), 10, 0)
+	page, _, gap, coverage, err := log.SchedulerObservationPage(ctx, from, from.Add(3*time.Hour), 10, 0, SchedulerObservationSelection{})
 	if err != nil || len(page) != 2 || gap != nil || len(coverage.Gaps) != 1 || !coverage.Gaps[0].From.Equal(from.Add(time.Hour)) || !coverage.Gaps[0].To.Equal(from.Add(2*time.Hour)) || coverage.Gaps[0].Reason != "StreamUnavailable" {
 		t.Fatalf("internal gap/provenance: %+v %+v %v", page, coverage, err)
 	}
-	_, _, gap, coverage, err = log.SchedulerObservationPage(ctx, from.Add(-time.Hour), from.Add(3*time.Hour), 10, 0)
+	_, _, gap, coverage, err = log.SchedulerObservationPage(ctx, from.Add(-time.Hour), from.Add(3*time.Hour), 10, 0, SchedulerObservationSelection{})
 	if err != nil || gap == nil || !gap.Equal(from) || coverage.From == nil || !coverage.From.Equal(from) {
 		t.Fatalf("leading actual gap: %+v gap=%v err=%v", coverage, gap, err)
 	}
-	_, _, _, coverage, err = log.SchedulerObservationPage(ctx, from.Add(-3*time.Hour), from.Add(-2*time.Hour), 10, 0)
+	_, _, _, coverage, err = log.SchedulerObservationPage(ctx, from.Add(-3*time.Hour), from.Add(-2*time.Hour), 10, 0, SchedulerObservationSelection{})
 	if err != nil || coverage.From != nil || coverage.To != nil || len(coverage.Sources) != 0 || len(coverage.Gaps) != 1 {
 		t.Fatalf("unavailable extent must be null: %+v %v", coverage, err)
 	}
@@ -234,7 +245,7 @@ func TestObservationArchiveCoverageGapsAndErrors(t *testing.T) {
 		} else {
 			archive.listError, archive.openError = nil, failure
 		}
-		if _, _, _, _, err := log.SchedulerObservationPage(ctx, from, from.Add(time.Minute), 10, 0); !errors.Is(err, failure) {
+		if _, _, _, _, err := log.SchedulerObservationPage(ctx, from, from.Add(time.Minute), 10, 0, SchedulerObservationSelection{}); !errors.Is(err, failure) {
 			t.Fatalf("%s failure hidden: %v", boundary, err)
 		}
 		if !log.Health().Healthy {
@@ -244,7 +255,7 @@ func TestObservationArchiveCoverageGapsAndErrors(t *testing.T) {
 	archive.openError = nil
 	cancelled, cancel := context.WithCancel(ctx)
 	archive.beforeList = cancel
-	if _, _, _, _, err := log.SchedulerObservationPage(cancelled, from, from.Add(time.Minute), 10, 0); !errors.Is(err, context.Canceled) {
+	if _, _, _, _, err := log.SchedulerObservationPage(cancelled, from, from.Add(time.Minute), 10, 0, SchedulerObservationSelection{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("list cancellation lost: %v", err)
 	}
 }
@@ -285,7 +296,7 @@ func TestObservationArchivePageStopsAcrossSources(t *testing.T) {
 	writeArchivedObservation(t, archive, from, []byte("{\"at\":\""+from.Add(time.Second).Format(time.RFC3339Nano)+"\"}\n{\"at\":\""+from.Add(2*time.Second).Format(time.RFC3339Nano)+"\"}\n{broken}\n"))
 	writeArchivedObservation(t, archive, from.Add(time.Hour), []byte("{broken}\n"))
 	log, _ := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, from.Add(3*time.Hour))
-	page, next, _, _, err := log.SchedulerObservationPage(context.Background(), from, from.Add(2*time.Hour), 1, 0)
+	page, next, _, _, err := log.SchedulerObservationPage(context.Background(), from, from.Add(2*time.Hour), 1, 0, SchedulerObservationSelection{})
 	if err != nil || len(page) != 1 || next != 1 || archive.opens != 1 {
 		t.Fatalf("archive page scanned past lookahead: %+v next=%d opens=%d err=%v", page, next, archive.opens, err)
 	}
@@ -317,7 +328,7 @@ func TestObservationArchiveMissingCatalogAndInvalidJSON(t *testing.T) {
 		archive := newReadableObservationArchive(t)
 		writeArchivedObservation(t, archive, observationTestHour, []byte(raw))
 		log, _ := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour.Add(3*time.Hour))
-		if _, _, _, _, err := log.SchedulerObservationPage(context.Background(), observationTestHour, observationTestHour.Add(time.Minute), 10, 0); err == nil {
+		if _, _, _, _, err := log.SchedulerObservationPage(context.Background(), observationTestHour, observationTestHour.Add(time.Minute), 10, 0, SchedulerObservationSelection{}); err == nil {
 			t.Fatalf("invalid archive hidden: %s", raw)
 		}
 	}
@@ -388,7 +399,7 @@ func TestObservationQueriesHonorPreCancelledContext(t *testing.T) {
 	from, to := observationTestHour, observationTestHour.Add(time.Minute)
 	_, queryErr := log.Query(ctx, archiveTestUID, from, to, nil, nil, 0, "")
 	_, loadErr := log.LoadWindow(ctx, from, to)
-	_, _, _, _, pageErr := log.SchedulerObservationPage(ctx, from, to, 10, 0)
+	_, _, _, _, pageErr := log.SchedulerObservationPage(ctx, from, to, 10, 0, SchedulerObservationSelection{})
 	_, powerErr := log.OperatingPower(ctx, from, to, nil, 10)
 	_, occupancyErr := log.ScanOccupancyRows(ctx, archiveTestUID, "node", from, to, func(RequestRow) {})
 	for _, err := range []error{queryErr, loadErr, pageErr, powerErr, occupancyErr} {
@@ -407,7 +418,7 @@ func TestSchedulerActionObservationPreservesExpectedDuration(t *testing.T) {
 	if err := log.SchedulerRecord(SchedulerObservation{At: at, Action: &action}); err != nil {
 		t.Fatal(err)
 	}
-	page, _, _, _, err := log.SchedulerObservationPage(context.Background(), at, at.Add(time.Second), 10, 0)
+	page, _, _, _, err := log.SchedulerObservationPage(context.Background(), at, at.Add(time.Second), 10, 0, SchedulerObservationSelection{})
 	if err != nil || len(page) != 1 || !reflect.DeepEqual(page[0].Action, &action) {
 		t.Fatalf("action estimate lost: %+v %v", page, err)
 	}

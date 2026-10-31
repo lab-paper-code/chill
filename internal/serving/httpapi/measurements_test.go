@@ -165,7 +165,7 @@ func TestMeasurementObservationLogPreservesReviewedActorAndActualMutationPhase(t
 			calls := 0
 			assertStarted := func() {
 				calls++
-				events, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), started, time.Now().UTC().Add(time.Second), 10, 0)
+				events, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), started, time.Now().UTC().Add(time.Second), 10, 0, serving.SchedulerObservationSelection{})
 				if err != nil || len(events) != 1 || events[0].Action == nil ||
 					events[0].Action.Phase != "validated" {
 					t.Fatal("mutation began without its durable validated actor/target record")
@@ -216,7 +216,7 @@ func TestMeasurementObservationLogPreservesReviewedActorAndActualMutationPhase(t
 				}
 				return
 			}
-			events, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), started, time.Now().UTC().Add(time.Second), 10, 0)
+			events, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), started, time.Now().UTC().Add(time.Second), 10, 0, serving.SchedulerObservationSelection{})
 			if err != nil || w.Code != tc.status || calls != 1 || len(events) != 2 {
 				t.Fatalf("audit/response mismatch code=%d events=%+v err=%v", w.Code, events, err)
 			}

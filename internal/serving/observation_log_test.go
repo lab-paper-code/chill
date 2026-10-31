@@ -404,7 +404,7 @@ func TestObservationQueriesOpenOnlyTheirRange(t *testing.T) {
 	if load, err := observationLog.LoadWindow(context.Background(), from, to); err != nil || len(load.Arrivals) != 1 {
 		t.Fatalf("load window: %+v %v", load, err)
 	}
-	if page, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), from, to, 10, 0); err != nil || len(page) != 1 {
+	if page, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), from, to, 10, 0, SchedulerObservationSelection{}); err != nil || len(page) != 1 {
 		t.Fatalf("scheduler page: %+v %v", page, err)
 	}
 	if power, err := observationLog.OperatingPower(context.Background(), from, to, nil, 10); err != nil || power.GapUntil != nil {

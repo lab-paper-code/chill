@@ -155,6 +155,22 @@ test("scheduler consumer routes enforce exact methods and bounded observation qu
   assert.equal(plan("GET", "v1/observations/scheduler", `?${window}`).path, `/api/v1/observations/scheduler?${window}&limit=7&view=compact`)
   assert.equal(plan("GET", "v1/observations/scheduler", `?${window}&limit=20&cursor=${Number.MAX_SAFE_INTEGER}`).path,
     `/api/v1/observations/scheduler?${window}&limit=20&cursor=${Number.MAX_SAFE_INTEGER}&view=compact`)
+  for (const order of ["asc", "desc"]) {
+    const search = `?${window}&order=${order}&filter=decision-action&uid=workload-uid`
+    assert.equal(plan("GET", "v1/observations/scheduler", search).path,
+      `/api/v1/observations/scheduler?${window}&order=${order}&filter=decision-action&uid=workload-uid&limit=7&view=compact`)
+  }
+  for (const filter of ["all", "decision", "action", "snapshot", "settings", "power", "other"]) {
+    assert.match(plan("GET", "v1/observations/scheduler", `?${window}&filter=${filter}`).path, new RegExp(`filter=${filter}`))
+  }
+  for (const invalid of ["order=", "order=DESC", "order=desc&order=asc", "filter=", "filter=unknown", "filter=action&filter=decision", "uid=", "uid=a&uid=b", "uid=a%20b", "uid=a%2Fb", "uid=a%5Cb", `uid=${"a".repeat(257)}`]) {
+    assert.throws(() => plan("GET", "v1/observations/scheduler", `?${window}&${invalid}`), /DashboardQueryInvalid/)
+  }
+  for (const path of ["v1/observations/load", "v1/observations/power"]) {
+    for (const extra of ["order=desc", "filter=decision-action", "uid=workload-uid"]) {
+      assert.throws(() => plan("GET", path, `?${window}&${extra}`), /DashboardQueryInvalid/)
+    }
+  }
   for (const path of ["v1/observations/load", "v1/observations/power", "v1/observations/scheduler"]) {
     for (const method of ["POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]) {
       assert.throws(() => plan(method, path, `?${window}`), /DashboardMethodNotAllowed/)

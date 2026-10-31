@@ -3,8 +3,10 @@ package serving
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
@@ -59,6 +61,9 @@ type SchedulerObservation struct {
 	PowerCoverage *powerwindow.Policy         `json:"powerCoverage,omitempty"`
 	PowerJoules   *float64                    `json:"powerJoules,omitempty"`
 	PowerError    string                      `json:"powerError,omitempty"`
+	// Offset is the original window's append offset, only on selected reads.
+	// schedulerLine deliberately does not persist this read-side reference.
+	Offset *int `json:"offset,omitempty"`
 }
 
 // schedulerLine is the stored scheduler record. Immutable bodies live in the
@@ -440,10 +445,17 @@ func requestArrival(row *RequestRow, definitions map[string]*Definition) Schedul
 	}
 }
 
-// SchedulerObservationPage decodes full payloads only for page entries and
-// stops at the next matching event. Cursor offsets apply to the selected
-// records in append order.
-func (l *ObservationLog) SchedulerObservationPage(ctx context.Context, from, to time.Time, limit, offset int) ([]SchedulerObservation, int, *time.Time, ObservationCoverage, error) {
+// SchedulerObservationSelection is validated once by the HTTP query boundary.
+// Its zero value preserves the bounded append-order read.
+type SchedulerObservationSelection struct {
+	Order  string
+	Filter string
+	UID    string
+}
+
+// SchedulerObservationPage decodes full payloads only for page entries.
+// Cursors count selected records; Offset retains the unfiltered append position.
+func (l *ObservationLog) SchedulerObservationPage(ctx context.Context, from, to time.Time, limit, offset int, selection SchedulerObservationSelection) ([]SchedulerObservation, int, *time.Time, ObservationCoverage, error) {
 	if from.IsZero() || !from.Before(to) || limit <= 0 || offset < 0 {
 		return nil, -1, nil, ObservationCoverage{}, failure("InvalidQuery", "positive window, bounded limit and nonnegative cursor are required")
 	}
@@ -452,6 +464,9 @@ func (l *ObservationLog) SchedulerObservationPage(ctx context.Context, from, to 
 		return nil, -1, nil, ObservationCoverage{}, err
 	}
 	defer read.close()
+	if selection != (SchedulerObservationSelection{}) {
+		return l.schedulerSelectedPage(read, from, to, limit, offset, selection)
+	}
 	records := make([]SchedulerObservation, 0, limit)
 	matched, next := 0, -1
 	err = l.scanStream(read, observationSchedulerStream, func(raw []byte) error {
@@ -490,4 +505,197 @@ func (l *ObservationLog) SchedulerObservationPage(ctx context.Context, from, to 
 	}
 	coverage := read.coverage(map[string][2]time.Time{observationSchedulerStream: {from, to}})
 	return records, next, coverage.gapUntil(from), coverage, nil
+}
+
+// schedulerSelectedPage keeps only timestamps and append offsets while sorting,
+// then replays the captured streams to decode just the requested page.
+func (l *ObservationLog) schedulerSelectedPage(read *observationRead, from, to time.Time, limit, offset int, selection SchedulerObservationSelection) ([]SchedulerObservation, int, *time.Time, ObservationCoverage, error) {
+	type entry struct {
+		at     time.Time
+		offset int
+	}
+	var entries []entry
+	position := 0
+	err := l.scanStream(read, observationSchedulerStream, func(raw []byte) error {
+		var envelope struct {
+			At       time.Time
+			Decision *struct{}
+			Snapshot *struct{}
+			Settings *struct{}
+			Action   *struct{}
+			Meter    string
+		}
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			return err
+		}
+		if !observationInInterval(envelope.At, from, to) {
+			return nil
+		}
+		original := position
+		position++
+		kind := "other"
+		switch {
+		case envelope.Decision != nil:
+			kind = "decision"
+		case envelope.Snapshot != nil:
+			kind = "snapshot"
+		case envelope.Settings != nil:
+			kind = "settings"
+		case envelope.Action != nil:
+			kind = "action"
+		case envelope.Meter != "":
+			kind = "power"
+		}
+		if filter := selection.Filter; filter != "" && filter != "all" && filter != kind && !(filter == "decision-action" && (kind == "decision" || kind == "action")) {
+			return nil
+		}
+		if selection.UID != "" {
+			matches, err := schedulerObservationHasWorkload(raw, selection.UID)
+			if err != nil || !matches {
+				return err
+			}
+		}
+		entries = append(entries, entry{envelope.At, original})
+		return nil
+	})
+	if err != nil {
+		return nil, -1, nil, ObservationCoverage{}, err
+	}
+	if offset > len(entries) {
+		return nil, -1, nil, ObservationCoverage{}, failure("InvalidQuery", "cursor exceeds selected observation count")
+	}
+	if selection.Order == "desc" {
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].at.Equal(entries[j].at) {
+				return entries[i].offset > entries[j].offset
+			}
+			return entries[i].at.After(entries[j].at)
+		})
+	}
+	end := offset + min(limit, len(entries)-offset)
+	next := -1
+	if end < len(entries) {
+		next = end
+	}
+	records := make([]SchedulerObservation, end-offset)
+	selected := make(map[int]int, len(records))
+	for i, entry := range entries[offset:end] {
+		selected[entry.offset] = i
+	}
+	for _, file := range read.files[observationSchedulerStream] {
+		if _, err := file.file.Seek(0, io.SeekStart); err != nil {
+			return nil, -1, nil, ObservationCoverage{}, err
+		}
+	}
+	position = 0
+	if len(selected) != 0 {
+		err = l.scanStream(read, observationSchedulerStream, func(raw []byte) error {
+			var envelope struct{ At time.Time }
+			if err := json.Unmarshal(raw, &envelope); err != nil {
+				return err
+			}
+			if !observationInInterval(envelope.At, from, to) {
+				return nil
+			}
+			original := position
+			position++
+			index, ok := selected[original]
+			if !ok {
+				return nil
+			}
+			if err := l.readCatalog(read, read.scanningHour); err != nil {
+				return err
+			}
+			record, err := DecodeSchedulerLine(raw, read.catalog())
+			if err != nil {
+				return err
+			}
+			record.Offset = &original
+			records[index] = record
+			delete(selected, original)
+			if len(selected) == 0 {
+				return errObservationStop
+			}
+			return nil
+		})
+	}
+	if err != nil {
+		return nil, -1, nil, ObservationCoverage{}, err
+	}
+	coverage := read.coverage(map[string][2]time.Time{observationSchedulerStream: {from, to}})
+	return records, next, coverage.gapUntil(from), coverage, nil
+}
+
+// Project only workload relationships, never arbitrary UID-looking strings in
+// Node identities, error text or evidence payloads.
+func schedulerObservationHasWorkload(raw []byte, uid string) (bool, error) {
+	type workload struct {
+		UID              string
+		WorkloadUID      string
+		OwnerWorkloadUID string
+	}
+	type candidate struct {
+		Instances []workload
+		Routing   map[string]json.RawMessage
+	}
+	var record struct {
+		Decision *struct {
+			Workloads []workload
+			Keep      candidate
+			Target    *candidate
+		}
+		Snapshot *struct {
+			WorkloadIDs []string
+			Workloads   []workload
+			Instances   []workload
+			Routing     map[string]json.RawMessage
+		}
+		Settings *struct {
+			Before, After                           SchedulerSettings
+			BeforeStaticRouting, AfterStaticRouting map[string]json.RawMessage
+		}
+		Action *struct {
+			Expected struct {
+				WorkloadUID  string
+				WorkloadUIDs []string
+				Prepare      *struct {
+					Owner    *workload
+					Instance workload
+				}
+				Target *candidate
+			}
+		}
+	}
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return false, err
+	}
+	has := func(w workload) bool { return w.UID == uid || w.WorkloadUID == uid || w.OwnerWorkloadUID == uid }
+	inCandidate := func(c *candidate) bool {
+		return c != nil && (c.Routing[uid] != nil || slices.ContainsFunc(c.Instances, has))
+	}
+	if d := record.Decision; d != nil && (slices.ContainsFunc(d.Workloads, has) || inCandidate(&d.Keep) || inCandidate(d.Target)) {
+		return true, nil
+	}
+	if s := record.Snapshot; s != nil {
+		if slices.ContainsFunc(s.WorkloadIDs, func(id string) bool { return strings.HasPrefix(id, uid+"/") }) ||
+			slices.ContainsFunc(s.Workloads, has) || slices.ContainsFunc(s.Instances, has) || s.Routing[uid] != nil {
+			return true, nil
+		}
+	}
+	if s := record.Settings; s != nil && (slices.Contains(s.Before.AutonomousWorkloads, uid) || slices.Contains(s.After.AutonomousWorkloads, uid) || s.BeforeStaticRouting[uid] != nil || s.AfterStaticRouting[uid] != nil) {
+		return true, nil
+	}
+	if a := record.Action; a != nil {
+		e := a.Expected
+		if e.WorkloadUID != "" {
+			return e.WorkloadUID == uid, nil
+		}
+		if e.WorkloadUIDs != nil {
+			return slices.Contains(e.WorkloadUIDs, uid), nil
+		}
+		if inCandidate(e.Target) || e.Prepare != nil && (e.Prepare.Owner != nil && has(*e.Prepare.Owner) || has(e.Prepare.Instance)) {
+			return true, nil
+		}
+	}
+	return false, nil
 }

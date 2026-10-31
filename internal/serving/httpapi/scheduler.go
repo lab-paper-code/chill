@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -215,6 +216,43 @@ func persistSchedulerSettings(
 	return err
 }
 
+func schedulerObservationSelectionQuery(query url.Values) (serving.SchedulerObservationSelection, error) {
+	selection := serving.SchedulerObservationSelection{}
+	for _, key := range []string{"order", "filter", "uid"} {
+		values, present := query[key]
+		if !present {
+			continue
+		}
+		valid := len(values) == 1 && values[0] != ""
+		if valid {
+			switch key {
+			case "order":
+				selection.Order = values[0]
+				valid = selection.Order == "asc" || selection.Order == "desc"
+			case "filter":
+				selection.Filter = values[0]
+				switch selection.Filter {
+				case "all", "decision-action", "decision", "action", "snapshot", "settings", "power", "other":
+				default:
+					valid = false
+				}
+			case "uid":
+				selection.UID = values[0]
+				valid = len(selection.UID) <= 256 && !strings.ContainsAny(selection.UID, " /\\\t\r\n")
+				for _, char := range selection.UID {
+					if char < 32 || char == 127 {
+						valid = false
+					}
+				}
+			}
+		}
+		if !valid {
+			return selection, &serving.Error{Code: "InvalidQuery", Message: "invalid scheduler observation " + key, Field: key}
+		}
+	}
+	return selection, nil
+}
+
 func (h *Handler) schedulerObservations(w http.ResponseWriter, r *http.Request) {
 	if err := h.authorize(r); err != nil {
 		sendError(w, err)
@@ -254,6 +292,11 @@ func (h *Handler) schedulerObservations(w http.ResponseWriter, r *http.Request) 
 		sendJSON(w, http.StatusOK, result)
 		return
 	}
+	selection, err := schedulerObservationSelectionQuery(query)
+	if err != nil {
+		sendError(w, err)
+		return
+	}
 	limit := h.config.MaxQueryEvents
 	offset := 0
 	if text := query.Get("limit"); text != "" {
@@ -268,7 +311,7 @@ func (h *Handler) schedulerObservations(w http.ResponseWriter, r *http.Request) 
 		sendError(w, &serving.Error{Code: "InvalidQuery", Message: "bounded limit and nonnegative cursor are required"})
 		return
 	}
-	records, nextOffset, gapUntil, coverage, err := h.observationLog.SchedulerObservationPage(r.Context(), from, to, limit, offset)
+	records, nextOffset, gapUntil, coverage, err := h.observationLog.SchedulerObservationPage(r.Context(), from, to, limit, offset, selection)
 	if err != nil {
 		sendError(w, err)
 		return

@@ -134,7 +134,7 @@ func TestArchiveDeletionReportsGap(t *testing.T) {
 	if err != nil || power.GapUntil == nil || power.Complete {
 		t.Fatalf("power after deletion: %+v %v", power, err)
 	}
-	if _, _, gap, _, err := observationLog.SchedulerObservationPage(context.Background(), from, from.Add(time.Hour), 10, 0); err != nil || gap == nil {
+	if _, _, gap, _, err := observationLog.SchedulerObservationPage(context.Background(), from, from.Add(time.Hour), 10, 0, SchedulerObservationSelection{}); err != nil || gap == nil {
 		t.Fatalf("scheduler page after deletion: %v %v", gap, err)
 	}
 }

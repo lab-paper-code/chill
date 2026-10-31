@@ -77,7 +77,7 @@ func TestObservationReadAllowsIngressAndSchedulerAppendWhilePaused(t *testing.T)
 	if err != nil || len(load.Arrivals) != 2 || !observationLog.Health().Healthy {
 		t.Fatalf("next consumer lost completed appends: %+v %v", load, err)
 	}
-	page, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), at.Add(-time.Second), at.Add(time.Second), 10, 0)
+	page, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), at.Add(-time.Second), at.Add(time.Second), 10, 0, SchedulerObservationSelection{})
 	if err != nil || len(page) != 2 {
 		t.Fatalf("next scheduler consumer lost an appended record: %+v %v", page, err)
 	}
@@ -131,7 +131,7 @@ func TestObservationReadReusesLargeLineBufferAndPreservesSelectedPayloads(t *tes
 	if count := scanLargeLines(t, observationLog, [2]time.Time{}); count != len(payloads) {
 		t.Fatalf("captured prefix changed: count=%d expected=%d", count, len(payloads))
 	}
-	page, next, _, _, err := observationLog.SchedulerObservationPage(context.Background(), at, at.Add(time.Second), len(payloads), 0)
+	page, next, _, _, err := observationLog.SchedulerObservationPage(context.Background(), at, at.Add(time.Second), len(payloads), 0, SchedulerObservationSelection{})
 	if err != nil || len(page) != len(payloads) || next != -1 {
 		t.Fatalf("large selected page lost records: count=%d next=%d error=%v", len(page), next, err)
 	}
@@ -156,7 +156,7 @@ func TestObservationReadIgnoresUnterminatedLastLine(t *testing.T) {
 	if _, err = observationLog.files[observationSchedulerStream].Write(unterminated); err != nil {
 		t.Fatal(err)
 	}
-	page, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), at.Add(-time.Second), at.Add(time.Second), 10, 0)
+	page, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), at.Add(-time.Second), at.Add(time.Second), 10, 0, SchedulerObservationSelection{})
 	if err != nil || len(page) != 1 || !observationLog.Health().Healthy {
 		t.Fatalf("line still being written was read: %+v %v %+v", page, err, observationLog.Health())
 	}
@@ -254,7 +254,7 @@ func TestObservationPublicReadsIgnoreBoundLocations(t *testing.T) {
 			if err != nil || len(load.Arrivals) != 1 || load.GapUntil != nil || len(load.Coverage.Gaps) != 0 {
 				t.Fatalf("load lookup changed with bound location: %+v %v", load, err)
 			}
-			events, next, gap, coverage, err := log.SchedulerObservationPage(ctx, start, end, 10, 0)
+			events, next, gap, coverage, err := log.SchedulerObservationPage(ctx, start, end, 10, 0, SchedulerObservationSelection{})
 			if err != nil || len(events) != 1 || next != -1 || gap != nil || len(coverage.Gaps) != 0 {
 				t.Fatalf("scheduler lookup changed with bound location: events=%+v next=%d gap=%v coverage=%+v err=%v", events, next, gap, coverage, err)
 			}
