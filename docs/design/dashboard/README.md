@@ -232,8 +232,8 @@ SRS DB-FR-50~52·56·65는 변경, DB-FR-67은 폐기 이력, DB-FR-68~70은 공
 | `/` 운영 | 지금 무엇을 확인해야 하는가? 현재 서비스 영향·유입·배치·진행 변경 / 운영 판독·서비스 상태·진행/사건 |
 | `/operations/devices` 장치 | 어디에 무엇이 배치됐는가? 전력 추세·장치/배치 표 → 사양·모드·자원 역할 |
 | `/workloads` 서비스 | 어떤 정의가 적용되는가? 목록 관리 표; 상세 적용 상태·정의/설정·배치/연결 |
-| `/measurements` 범위 | 조건·집계와 선택 모델 행렬. 조합/배치 분모 분리, 미측정 모드 직접 표시, 목표 미제공 시 진행률 없음. 셀 Sheet는 상태 축→배치 결과→출처·작업·원본 순서 |
-| `/measurements/requests` 요청 | 부모 요청 선택 Sheet에 자식 회차·실패 원인·점검·기존 사용 결과. `?view=runs` 전체 회차 검색, `?run=…&uid=…` 직접 선택. 작성 `/measurements/requests/new` 대상→조건→점검·제출 |
+| `/measurements` 범위 | 조건·집계와 선택 모델 행렬. 지원 안 함 조합은 행렬에 보존하고 지원 범위 집계 분모에서는 제외. 서버 기준 시각·신선도·갱신 상태 표시, 목표 미제공 시 진행률 없음. 셀 Sheet는 상태 축→배치 결과→출처·작업·원본 순서 |
+| `/measurements/requests` 요청 | 부모 요청 선택 Sheet에 자식 회차·실패 원인·점검·기존 사용 결과. 회차 복귀 링크는 부모 UID 또는 검색 필터·페이지를 보존. `?view=runs` 전체 회차 검색, `?run=…&uid=…` 직접 선택. 작성 `/measurements/requests/new` 대상→조건→점검·제출 |
 | `/measurements/results?kind=throughput\|operation-cost\|dispatch-occupancy` 결과 | 종류 전환 틀 하나, API·통계 의미는 독립. 현재 사용/품질 분리, 변경 비용 준비·제거별 행과 실제 통계 열. `profile` 또는 `measurement`·namespace·UID 선택 보존 |
 | `/experiments` 실행 | 무엇이 실행·정리 중인가? 실행 표·선택 실행·필요한 정리 확인 |
 | `/experiments/results` 결과 | 비교 근거로 어떤 차이를 말할 수 있는가? 비교 판독·구간 비교·선택 서비스 추세 |
