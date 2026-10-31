@@ -176,3 +176,10 @@
 - 수정 체인(모두 최소 커밋 + 정식·ponytail 리뷰 PASS + 리플레이 게이트 PASS(기준 4626dc8c) + clean Go gate): F1 `7370665d`, F2 `70d1bd76`+`41275915`, F3 `19162c20`, 다단 bridge `922ff34d`+`0e171b06`+`b0877c1e`, late-ack 회귀 `694f6ed0`, StartedAt `1e9aaf7e`(조언 세션), ponytail 삭제 `9ebc5f17`(−26)·`3a6c5e91`(−27). 새 가드·예외 없음(리뷰 확인).
 - live: server·dashboard 모두 `b0877c1e`, restart 0. 07:10Z부터 20~30분 클러스터 무변경(조언 세션 재설문).
 - 다음: 점수판 정의 → 기준 측정 1회(미니 행, round.py) → 2단계 구조 검토(ponytail 가드 표 입력).
+
+## 2026-10-31 — 2단계 구조 판정(패널 3+판정, `local judge-verdict-structure`)
+
+- 채택 모델: **P/R/L 3층 = 인가된 경로를 관측으로 전진시키는 level-triggered rollout** (P Planner: κ·weight·전환 비용·에너지로 목표+경로; R Rollout reconciler: tick·completion 공통 전진; L Effect responsibility: 인가된 쓰기·미확정 실물 책임). Deployment/Argo 도입 아님(κ≠replica, physicalBudget≠maxSurge, ACK·drain 부재).
+- 기각: TTL, 실행 종료 즉시 반환, 단순 orphan GC, 반환 증명 원장 일괄 삭제(코드 확인: ownerReturnTerminal·knownEffectConfirmed·late binding·preparationCreatedSource가 각기 다른 사실을 지킴).
+- 삭제 단계: S0 기준·예약 반사실 진단(도구만) → S1 tick/completion 중복 제거(scheduler_continuation 60줄 범위) → S2 route/퇴역 판단 통합(readySubset·dependenciesComplete 147줄) → S3 no-effect 부모 수명 제거(87줄) → S4 cleanup route 우회로 제거(161줄). 교체 범위 455줄, 순삭제 미확정.
+- 검증: 결정 리플레이는 실행부를 검증하지 못함 → 단계마다 리뷰 2종 → 사건 순서 단위 테스트 → 결정 게이트(계획 불변) → 고정 미니 행 점수판.
