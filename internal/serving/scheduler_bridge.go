@@ -406,8 +406,8 @@ func (b *schedulerBridgeCompiler) peers(uid string) (map[string]SchedulerInstanc
 func (b *schedulerBridgeCompiler) stageDependencies(stage SchedulerCandidate, available map[string]SchedulerInstance, deps []string, at float64) ([]string, float64, bool) {
 	nodes := map[NodeReference]string{}
 	for other, route := range stage.Routing {
-		if _, controlled := b.p.index[other]; !controlled {
-			continue // Fixed/disabled scopes retain their unchanged declaration.
+		if maps.Equal(route, b.routing[other]) {
+			continue // Preserved declarations are outside this bridge's execution scope.
 		}
 		for id, weight := range route {
 			if weight <= 0 {

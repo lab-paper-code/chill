@@ -65,6 +65,24 @@ func TestCapacityStagedBridgePreparesBeforeRoutedBlockerStopsAC45(t *testing.T) 
 	}
 }
 
+func TestCapacityBridgePreservesTerminatedRecoveryRouteSCH51(t *testing.T) {
+	s, snap, rows, blocker, _ := capacityBridgeFixture(t)
+	snap.Instances[0].Ready, snap.Instances[0].Terminated = false, true
+	decision := capacityDecideForTest(t, s, snap, rows)
+	if decision.Target == nil {
+		t.Fatalf("terminal recovery lost its target: %v", decision.Reasons)
+	}
+	actions := decision.Target.Actions
+	stage := slices.IndexFunc(actions, func(a Action) bool { return a.RouteTarget != nil })
+	stop := slices.IndexFunc(actions, func(a Action) bool { return a.Kind == schedulerActionStop && a.Instance == blocker.ID })
+	if stage < 0 || stop < 0 || !slices.Contains(actions[stop].DependsOn, actions[stage].ID) {
+		t.Fatalf("terminal recovery lost executable bridge handoff: %+v", actions)
+	}
+	if actions[stage].RouteTarget.Routing["w1"][snap.Instances[0].ID] != snap.Routing["w1"][snap.Instances[0].ID] {
+		t.Fatal("bridge changed the preserved terminal UID declaration")
+	}
+}
+
 func TestCapacityBridgeQueuedIngressReplayAC45(t *testing.T) {
 	s, snap, rows, _, bridge := capacityBridgeFixture(t)
 	decision := capacityDecideForTest(t, s, snap, rows)
