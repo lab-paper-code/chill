@@ -10,7 +10,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-type evaluationService struct{ reader client.Reader }
+type evaluationService struct {
+	reader      client.Reader
+	client      client.Client
+	namespace   string
+	store       string
+	experiments *experimentService
+}
 
 func (s *evaluationService) listActive(ctx context.Context) (httpapi.ActiveEvaluationList, error) {
 	result := httpapi.ActiveEvaluationList{Items: []httpapi.ActiveEvaluation{}}

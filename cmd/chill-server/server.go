@@ -184,7 +184,29 @@ func run(ctx context.Context, opts options) (retErr error) {
 	}
 	handlerConfig.ListExperiments = experiments.list
 	handlerConfig.GetExperiment = experiments.get
-	handlerConfig.ListActiveEvaluations = (&evaluationService{reader: store.Client()}).listActive
+	evaluations := &evaluationService{
+		reader: store.Client(), client: store.Client(), namespace: opts.servingNamespace,
+		store: opts.storeName, experiments: experiments,
+	}
+	handlerConfig.ListActiveEvaluations = evaluations.listActive
+	handlerConfig.ListEvaluations = evaluations.list
+	handlerConfig.GetEvaluation = evaluations.get
+	handlerConfig.PreflightEvaluation = evaluations.preflight
+	handlerConfig.CreateEvaluation = evaluations.create
+	handlerConfig.ReplaceEvaluation = evaluations.replace
+	handlerConfig.DeleteEvaluation = evaluations.delete
+	handlerConfig.ReleaseEvaluation = evaluations.release
+	handlerConfig.GetEvaluationTemplate = evaluations.template
+	evaluationLoads := &evaluationLoadService{
+		client: store.Client(), namespace: opts.servingNamespace, evidence: objects, lister: objects,
+	}
+	handlerConfig.ListLoadScenarios = evaluationLoads.list
+	handlerConfig.GetLoadScenario = evaluationLoads.get
+	handlerConfig.PreflightLoadScenario = evaluationLoads.preflight
+	handlerConfig.CreateLoadScenario = evaluationLoads.create
+	handlerConfig.ReplaceLoadScenario = evaluationLoads.replace
+	handlerConfig.DeleteLoadScenario = evaluationLoads.delete
+	handlerConfig.ListEvaluationInputs = evaluationLoads.inputs
 	handler, err := httpapi.NewHandler(manager, execution, authorizer, observationLog, observer, handlerConfig)
 	if err != nil {
 		return err

@@ -25,11 +25,14 @@ func experimentHandler(t *testing.T, allowed bool, config HandlerConfig) *Handle
 	})
 	kube.PrependReactor("create", "subjectaccessreviews", func(action ktesting.Action) (bool, runtime.Object, error) {
 		review := action.(ktesting.CreateAction).GetObject().(*authorization.SubjectAccessReview)
+		loadPost := review.Spec.NonResourceAttributes != nil &&
+			review.Spec.NonResourceAttributes.Verb == "post" &&
+			review.Spec.NonResourceAttributes.Path == "/chill/api/v1/evaluations/load-scenarios"
 		if review.Spec.ResourceAttributes != nil || review.Spec.User != "experiment-reader" ||
-			review.Spec.NonResourceAttributes.Verb != measurementGetVerb ||
-			(review.Spec.NonResourceAttributes.Path != "/chill/api/v1/experiments" &&
-				review.Spec.NonResourceAttributes.Path != "/chill/api/v1/experiments/run-1" &&
-				review.Spec.NonResourceAttributes.Path != "/chill/api/v1/evaluations/active") {
+			(!loadPost && (review.Spec.NonResourceAttributes.Verb != measurementGetVerb ||
+				(review.Spec.NonResourceAttributes.Path != "/chill/api/v1/experiments" &&
+					review.Spec.NonResourceAttributes.Path != "/chill/api/v1/experiments/run-1" &&
+					review.Spec.NonResourceAttributes.Path != "/chill/api/v1/evaluations/active"))) {
 			t.Fatalf("incorrect experiment non-resource authorization: %+v", review.Spec)
 		}
 		return true, &authorization.SubjectAccessReview{Status: authorization.SubjectAccessReviewStatus{Allowed: allowed}}, nil
