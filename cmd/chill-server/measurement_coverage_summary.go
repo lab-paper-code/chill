@@ -48,7 +48,8 @@ func newCoverageSummary(out *operatorconsole.MeasurementCoverageResponse) operat
 		FailedCellCount: ptr.To(0), CurrentFailedRequestCount: ptr.To(0), HistoricalFailedRequestCount: ptr.To(0),
 	}
 	for _, status := range []string{
-		operatorconsole.MeasurementUsable, operatorconsole.MeasurementReview, operatorconsole.MeasurementInsufficient, operatorconsole.MeasurementProblem,
+		operatorconsole.MeasurementUsable, operatorconsole.MeasurementReview,
+		operatorconsole.MeasurementInsufficient, operatorconsole.MeasurementProblem,
 		operatorconsole.MeasurementRunning, operatorconsole.MeasurementUnmeasured,
 		operatorconsole.MeasurementUnsupported, operatorconsole.MeasurementUnknown,
 	} {
@@ -118,7 +119,8 @@ func addCoverageActions(
 		})
 		actions["missing-batches"]++
 	}
-	if (cell.Assessment.Status == operatorconsole.MeasurementUnknown || cell.Assessment.Status == operatorconsole.MeasurementReview) &&
+	if (cell.Assessment.Status == operatorconsole.MeasurementUnknown ||
+		cell.Assessment.Status == operatorconsole.MeasurementReview) &&
 		cell.Support.Verdict != operatorconsole.MeasurementSupportIncompatible && actions["evidence"] < 3 {
 		message := "지원 입력과 동결 근거를 확인하세요"
 		if cell.Assessment.Status == operatorconsole.MeasurementReview {

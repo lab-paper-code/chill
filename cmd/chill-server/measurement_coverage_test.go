@@ -178,7 +178,7 @@ func TestCoverageDatasetContractOnlyFailsProvenMismatch(t *testing.T) {
 	base := &measurementCoverageBase{}
 	base.datasets.Items = []api.Dataset{{
 		ObjectMeta: meta.ObjectMeta{Name: "records", UID: "data-uid"},
-		Spec: api.DatasetSpec{Fields: []api.RawField{{Name: "image", Format: "JPEG", MaxBytes: 1024}}},
+		Spec:       api.DatasetSpec{Fields: []api.RawField{{Name: "image", Format: "JPEG", MaxBytes: 1024}}},
 	}}
 	base.preprocessors.Items = []api.Preprocessor{{
 		ObjectMeta: meta.ObjectMeta{Name: "pre"},
@@ -193,7 +193,9 @@ func TestCoverageDatasetContractOnlyFailsProvenMismatch(t *testing.T) {
 	condition := profilederivation.CurvePlanSpec{
 		LogicalModel: "model", Artifact: profilederivation.CurveArtifactContract{Name: "onnx"},
 		Preprocessor: profilederivation.CurvePreprocessorContract{Name: "pre", Image: "pre-image", Path: "/pre"},
-		ActiveProtocol: profilederivation.CurveProtocolContract{Dataset: &profilederivation.CurveDatasetContract{Name: "records", UID: "data-uid"}},
+		ActiveProtocol: profilederivation.CurveProtocolContract{
+			Dataset: &profilederivation.CurveDatasetContract{Name: "records", UID: "data-uid"},
+		},
 	}
 	if check := coverageDatasetCheck(base, condition); check.Result != "pass" {
 		t.Fatalf("compatible declared fields must pass: %+v", check)

@@ -136,7 +136,7 @@ func TestReadCoverageReturnsSnapshotWhenAllSixSourcesSucceed(t *testing.T) {
 	scheduler := &schedulerService{catalog: catalog}
 	scheduler.catalogRead.Store(&httpapi.ProfilesView{CatalogView: view})
 	service := &measurementService{
-		client: fake.NewClientBuilder().WithScheme(measurementScheme(t)).Build(),
+		client:  fake.NewClientBuilder().WithScheme(measurementScheme(t)).Build(),
 		console: origin, http: console.Client(), scheduler: scheduler,
 		opts: options{maxRequestBytes: 8 << 20},
 	}

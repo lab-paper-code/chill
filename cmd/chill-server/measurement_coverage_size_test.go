@@ -260,7 +260,8 @@ func coverageSizeAssertVariant(
 			check := coverageDatasetCheck(base, condition)
 			ids := []string{}
 			for _, row := range variant.ResultRows {
-				if row.RowKind != operatorconsole.ResultRowSourceReference && coverageContains(variant.BatchProgress.Target, row.Batch) {
+				if row.RowKind != operatorconsole.ResultRowSourceReference &&
+					coverageContains(variant.BatchProgress.Target, row.Batch) {
 					ids = append(ids, row.ID)
 				}
 			}

@@ -20,7 +20,7 @@ func AssessMeasurementBatch(
 	knownCheck := func(code string, pass bool, message string) MeasurementCheck {
 		out := check(code, pass, message)
 		if !pass {
-			out.Result = "fail"
+			out.Result = measurementCheckFailed
 		}
 		return out
 	}
@@ -46,7 +46,7 @@ func AssessMeasurementBatch(
 	qualityCheck := check("FrozenPowerWindowPolicy", quality, "모든 활성·유휴 창의 동결 표본·gap·실패 정책")
 	for _, trial := range facts.Quality {
 		if trial.PolicyPassed != nil && !*trial.PolicyPassed {
-			qualityCheck.Result = "fail"
+			qualityCheck.Result = measurementCheckFailed
 		}
 	}
 	checks = append(checks, qualityCheck)

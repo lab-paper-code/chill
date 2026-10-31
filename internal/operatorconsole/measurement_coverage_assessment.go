@@ -1,6 +1,9 @@
 package operatorconsole
 
-const measurementExecutionFailed = "Failed"
+const (
+	measurementExecutionFailed = "Failed"
+	measurementCheckFailed     = "fail"
+)
 
 // MeasurementAssessment is a read projection, never a stored execution verdict.
 type MeasurementAssessment struct {
@@ -192,7 +195,7 @@ func assessAcceptedMeasurement(out *MeasurementAssessment, in MeasurementAssessm
 		if check.Result != "pass" {
 			met = false
 		}
-		if check.Result == "fail" {
+		if check.Result == measurementCheckFailed {
 			out.Status = MeasurementReview
 		}
 	}

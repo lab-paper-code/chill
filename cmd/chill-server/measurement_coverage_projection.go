@@ -485,7 +485,8 @@ func (p *coverageProjection) assessVariant(variant *operatorconsole.MeasurementC
 		input.Children = checks
 		if condition, ok := variant.Condition.(profilederivation.CurvePlanSpec); ok {
 			input.Children = append(input.Children, operatorconsole.AssessMeasurement(operatorconsole.MeasurementAssessmentInput{
-				Accepted: true, Available: true, Checks: []operatorconsole.MeasurementCheck{coverageDatasetCheck(p.base, condition)},
+				Accepted: true, Available: true,
+				Checks: []operatorconsole.MeasurementCheck{coverageDatasetCheck(p.base, condition)},
 			}))
 		}
 	}
@@ -521,17 +522,20 @@ func coverageResultRow(
 	return row
 }
 
-func coverageDatasetCheck(base *measurementCoverageBase, condition profilederivation.CurvePlanSpec) operatorconsole.MeasurementCheck {
+func coverageDatasetCheck(
+	base *measurementCoverageBase, condition profilederivation.CurvePlanSpec,
+) operatorconsole.MeasurementCheck {
 	check := operatorconsole.MeasurementCheck{
 		Code: "DatasetInputContract", Result: "unknown",
-		Message: "입력 계약 검증 기록 없음: 현재 카탈로그와 동결 조건의 연결을 확인하지 못했습니다",
+		Message:   "입력 계약 검증 기록 없음: 현재 카탈로그와 동결 조건의 연결을 확인하지 못했습니다",
 		SourceIDs: []string{},
 	}
 	if base.failures["input-contract"] != nil || condition.ActiveProtocol.Dataset == nil {
 		return check
 	}
 	for _, dataset := range base.datasets.Items {
-		if dataset.Name != condition.ActiveProtocol.Dataset.Name || string(dataset.UID) != condition.ActiveProtocol.Dataset.UID {
+		if dataset.Name != condition.ActiveProtocol.Dataset.Name ||
+			string(dataset.UID) != condition.ActiveProtocol.Dataset.UID {
 			continue
 		}
 		for _, pre := range base.preprocessors.Items {
@@ -539,7 +543,8 @@ func coverageDatasetCheck(base *measurementCoverageBase, condition profilederiva
 				continue
 			}
 			artifact, found := modelcatalog.PreprocessorArtifact(&pre, condition.LogicalModel, condition.Artifact.Name)
-			if !found || artifact.Source.Image != condition.Preprocessor.Image || artifact.Source.Path != condition.Preprocessor.Path {
+			if !found || artifact.Source.Image != condition.Preprocessor.Image ||
+				artifact.Source.Path != condition.Preprocessor.Path {
 				continue
 			}
 			if mismatched := modelcatalog.Compatible(&dataset, &pre); len(mismatched) > 0 {

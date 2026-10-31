@@ -17,7 +17,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-var measurementCoverageSourceKinds = [...]string{"inventory", "compatibility", "catalog", "BEO", "Run", "input-contract"}
+var measurementCoverageSourceKinds = [...]string{
+	"inventory", "compatibility", "catalog", "BEO", "Run", "input-contract",
+}
 
 type measurementCoverageCache struct {
 	mu         sync.Mutex

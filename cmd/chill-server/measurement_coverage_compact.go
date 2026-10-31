@@ -46,7 +46,8 @@ func coverageVariantChecklist(variant *operatorconsole.MeasurementCoverageVarian
 		if check.Code == "DatasetInputContract" {
 			check.SourceIDs = []string{}
 			for _, row := range variant.ResultRows {
-				if row.RowKind != operatorconsole.ResultRowSourceReference && coverageContains(variant.BatchProgress.Target, row.Batch) {
+				if row.RowKind != operatorconsole.ResultRowSourceReference &&
+					coverageContains(variant.BatchProgress.Target, row.Batch) {
 					check.SourceIDs = append(check.SourceIDs, row.ID)
 				}
 			}
