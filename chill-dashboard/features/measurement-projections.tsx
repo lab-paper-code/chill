@@ -42,7 +42,7 @@ export function ProjectionMeasurementListPage({kind}:{kind:ProjectionMeasurement
         sortValue:(item:MeasurementProjection)=>costs.get(item as OperationCostMeasurement)?.[stage][metric]?.[stat],
       })))),
       {key:"attempts",label:"횟수 (회)",value:(item:MeasurementProjection)=>costs.get(item as OperationCostMeasurement)?.count??0},
-      {key:"deviation",label:"편차",value:(item:MeasurementProjection)=>costs.get(item as OperationCostMeasurement)?.insufficient?<span title="동일 장치·측정·모델/프로파일·동작별 유효 기록이 3개 미만"><TriangleAlert className="mr-1 inline size-3" aria-hidden="true"/>비교 표본 부족</span>:"—"},
+      {key:"deviation",label:"편차",value:(item:MeasurementProjection)=>{const cost=costs.get(item as OperationCostMeasurement);return <div className="grid gap-1">{!!cost?.powerMultiple&&<span className="inline-flex items-center gap-1" title="같은 전력모드 전환 방향의 유효 기록 중앙값 대비 배수">전력 전환 <CostOutlier multiple={cost.powerMultiple}/></span>}{cost?.insufficient?<span title="동일 장치·측정·모델/프로파일·동작별 유효 기록이 3개 미만"><TriangleAlert className="mr-1 inline size-3" aria-hidden="true"/>비교 표본 부족</span>:!cost?.powerMultiple?"—":null}</div>}},
     ] : [
       {key:"node",label:"장치",value:(item:MeasurementProjection)=>item.node},
       {key:"workload",label:"서비스",sortValue:(item:MeasurementProjection)=>item.kind==="DispatchOccupancyMeasurement"?item.conditions.workload:undefined,value:(item:MeasurementProjection) => item.kind === "DispatchOccupancyMeasurement" ? item.conditions.workload : "종류 확인 필요"},

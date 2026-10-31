@@ -98,7 +98,7 @@ export function operationCostSummary(steps:OperationStep[]) {
   }
   return {models:[...new Set(rows.flatMap(row=>row.result?.model?[row.result.model]:[]))],prepare,remove,maximumOutliers:{prepare:maximumOutliers("prepare",prepare),remove:maximumOutliers("remove",remove)},
     count:rows.filter(row=>row.result).length,insufficient:!outliers.length||outliers.some(row=>row.insufficient),
-    multiple:Math.max(0,...outliers.flatMap(row=>[row.duration??0,row.energy??0]))}
+    powerMultiple:Math.max(0,...outliers.flatMap((row,index)=>rows[index].step.condition?.kind==="power"?[row.duration??0,row.energy??0]:[]))}
 }
 
 export function largestOperationStages(steps:OperationStep[]) {

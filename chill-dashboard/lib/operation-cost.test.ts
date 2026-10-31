@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { largestOperationStages, operationStageLabel, operationStageLabels, operationDirection, operationModel, operationMetadata, operationTransitionCosts, operationCostOutliers, operationCostSummary, operationCostTime, operationCostEnergy } from "./operation-cost.ts"
 import { operationDuration, operationWallEnergy, type OperationStep } from "./measurements.ts"
+import { readFileSync } from "node:fs"
 
 test("operation cost display bounds precision without changing missing and invalid values",()=>{
   assert.equal(operationDuration(874863796474n,"s",1),"874.9 s")
@@ -110,7 +111,7 @@ test("R14: median differs from the midpoint of extremes and keeps outlier rules"
   const steps:OperationStep[]=[1,2,3,30].map(seconds=>({name:"prepare",condition:{name:"prepare",kind:"prepare",batchEnergyOptimization:"profile"},results:[{name:"prepare",key:String(seconds),model:"frozen",verdict:"Accepted",durationNanos:BigInt(seconds)*1000000000n,wallJoules:seconds*10}]}))
   const summary=operationCostSummary(steps)
   assert.deepEqual(summary.prepare,{duration:[2.5e9,30e9],energy:[25,300]})
-  assert.equal(summary.multiple,12)
+  assert.equal(summary.maximumOutliers.prepare.duration,12)
   assert.equal(summary.insufficient,false)
   assert.deepEqual(operationCostSummary([]).prepare,{duration:undefined,energy:undefined})
 })
@@ -122,4 +123,15 @@ test("R14: maximum markers use only the maximum attempt's existing cohort verdic
   assert.deepEqual(summary.maximumOutliers.remove,{duration:undefined,energy:undefined})
   const isolated:OperationStep={...steps[0],results:[{...steps[0].results[0],model:"isolated",durationNanos:100000000000n,wallJoules:1000}]}
   assert.deepEqual(operationCostSummary([...steps,isolated]).maximumOutliers.prepare,{duration:undefined,energy:undefined})
+})
+
+test("power transition outliers remain visible apart from prepare and remove maximum markers",()=>{
+  const steps:OperationStep[]=[1,2,30].map(seconds=>({name:"power",condition:{name:"power",kind:"power",powerMode:"high"},results:[{name:"power",key:String(seconds),fromPowerMode:"low",toPowerMode:"high",verdict:"Accepted",durationNanos:BigInt(seconds)*1000000000n,wallJoules:seconds*10}]}))
+  const summary=operationCostSummary(steps)
+  assert.equal(summary.powerMultiple,15)
+  assert.equal(summary.insufficient,false)
+  assert.equal(operationCostSummary(steps.slice(0,2)).powerMultiple,0)
+  assert.equal(operationCostSummary(steps.map(step=>({...step,condition:{...step.condition!,kind:"prepare"}}))).powerMultiple,0)
+  const source=readFileSync(new URL("../features/measurement-projections.tsx",import.meta.url),"utf8")
+  assert.match(source,/<CostOutlier multiple=\{cost\.powerMultiple\}/)
 })

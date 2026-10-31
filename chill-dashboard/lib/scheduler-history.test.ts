@@ -3,6 +3,8 @@ import test from "node:test"
 import { readFileSync } from "node:fs"
 import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerHistoryKindMatches } from "./scheduler-history.ts"
 import type { SchedulerObservation, SchedulerObservationSummary } from "./read-types.ts"
+import { relayPlan } from "./relay.ts"
+import { serverConfig } from "./server-config.ts"
 
 const from="2026-10-13T02:00:00.123456789Z",to="2026-10-13T03:00:00.987654321Z"
 const event:SchedulerObservation={at:"2026-10-13T02:30:00.000000001Z",action:{id:"same-action",kind:"route",node:{name:"node",uid:"uid-a"},phase:"starting",startedAt:"2026-10-13T02:29:59.123456789Z"}}
@@ -71,4 +73,16 @@ test("every history list requests summaries and transition details mount only fo
   assert.doesNotMatch(history,/useSchedulerHistory\(view/)
   assert.match(transitions,/selected===row\.ref\.offset&&<SelectedHistoryDetails/)
   assert.doesNotMatch(transitions,/<HistoryActionDetails row=\{other\}/)
+})
+
+test("detail consumers with omitted view retain compact decision and settings evidence",()=>{
+  const config=serverConfig({CHILL_BASE_URL:"https://chill.example",CHILL_NAMESPACE:"chill-system",CHILL_SYSTEM_NAME:"chill"})
+  const queries={
+    liveBoardDecision:new URLSearchParams({from,to,limit:"100"}),
+    transitionRoutingReason:new URLSearchParams({from,to:new Date(Date.parse(from)+1).toISOString()}),
+  }
+  for(const [consumer,params] of Object.entries(queries)){
+    const path=relayPlan("GET",["v1","observations","scheduler"],`?${params}`,config).path
+    assert.equal(new URL(path,"https://chill.example").searchParams.get("view"),"compact",consumer)
+  }
 })

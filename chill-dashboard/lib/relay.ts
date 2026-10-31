@@ -121,7 +121,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
     const window = timestampNanos(to) - timestampNanos(from)
     if (window <= 0n || window > BigInt(config.maxWindowHours * 3600000) * 1000000n) throw new RelayFailure("DashboardQueryInvalid", 400)
   }
-  if (compact && !params.has("view")) params.set("view", query === "schedulerHistory" ? "summary" : "compact")
+  if (compact && !params.has("view")) params.set("view", "compact")
   const suffix = params.toString()
   // Native inference may consume its entire cap; keep a bounded delivery margin.
   return { path: `/api/${route}${suffix ? `?${suffix}` : ""}`, kind, timeoutMs: kind === "infer" ? config.inferTimeoutMs + config.queryTimeoutMs : kind === "mutation" ? config.mutationTimeoutMs : config.queryTimeoutMs, bodyAllowed: method === "POST" || method === "PUT" }

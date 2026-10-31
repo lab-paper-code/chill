@@ -9,7 +9,9 @@ export function ExperimentJudgment({run}:{run:Experiment}) {
 export function ExperimentLimits({run}:{run:Experiment}) {
   const {coverageCounts:c}=campaignScoreboard(run)
   const reasons=[["규칙 다름",c.ruleDifferences],["규칙 미확인",c.ruleMissing],["정의 미확인",c.identityUnknown],["정의 다름",c.identityDifferences],["부하 다름",c.loadDifferences],["부하 미확인",c.loadUnknown],["길이 다름·미확인",c.durationDifferences],["대응 없음",c.unpaired]] as const
-  return <span aria-label="비교 제한 원인" className="text-xs font-normal text-muted-foreground tabular-nums" title="비교 원인별 대응 구간 수, 대응 없음은 단독 구간 수. 한 비교가 여러 원인에 포함될 수 있어요.">{reasons.filter(([,count])=>count>0).map(([label,count])=>`${label} ${count}`).join(" · ")}</span>
+  const limited=reasons.filter(([,count])=>count>0)
+  if(!limited.length)return null
+  return <table aria-label="비교 제한 원인" className="inline-table w-auto text-left text-xs font-normal text-muted-foreground tabular-nums" title="비교 원인별 대응 구간 수, 대응 없음은 단독 구간 수. 한 비교가 여러 원인에 포함될 수 있어요."><thead><tr><th scope="col" className="pr-3 font-normal">제한 원인</th><th scope="col" className="text-right font-normal">대응 구간 수</th></tr></thead><tbody>{limited.map(([label,count])=><tr key={label}><th scope="row" className="pr-3 font-normal">{label}</th><td className="text-right">{count}</td></tr>)}</tbody></table>
 }
 
 export function ExperimentConclusion({run}:{run:Experiment}) {
