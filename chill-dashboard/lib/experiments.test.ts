@@ -2,8 +2,8 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { readFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
-import { campaignGroups, campaignPairs, commitExperimentSelection, comparisonDirection, experimentSelection, frozenP95SLO, stagePairing, policyStageGroups, serviceDelta, stageChartData, alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
-import { campaignScoreboard, campaignTradeoffs, policyChartStyle, stageComparison, stageHistoryLink, stageActivity, stageLoadLabel } from "./experiments.ts"
+import { campaignGroups, campaignPairs, commitExperimentSelection, comparisonDirection, experimentSelection, frozenP95SLO, serviceDelta, alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
+import { campaignScoreboard, campaignTradeoffs, stageHistoryLink, stageActivity, stageLoadLabel, stageLabel, definitionPolicy, definitionStage, definitionComparisons, definitionComparisonReason, decodeExperiment, decodeExperiments, historicalPublicationIDs, experimentOutcome, injectionRows } from "./experiments.ts"
 import { publishedVerdict, selectedExperimentStage, experimentPath, stageEvidencePath, experimentHeatmap, experimentChartData, durationMismatch } from "./experiments.ts"
 import { comparisonValidity } from "./experiments.ts"
 import { experimentDifference } from "./experiments.ts"
@@ -12,6 +12,8 @@ import { createElement, type ComponentType } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as experimentHelpers from "./experiments.ts"
+import type { EvaluationDefinition } from "./evaluation-definition.ts"
+import * as measurementHelpers from "./measurements.ts"
 test("R11: sub-display deltas are neutral in both overview and intervals",()=>{
   for(const [value,baseline] of [[-.004,0],[1.004,1]]) {
     assert.equal(experimentDifference(value,baseline).text,baseline===1?"1.00":"0.01 미만")
@@ -31,6 +33,371 @@ import { schedulerHistoryKindMatches } from "./scheduler-history.ts"
 const recorded=JSON.parse(readFileSync(new URL("./fixtures/experiment-213.json",import.meta.url),"utf8")) as {publication:Experiment;decision:SchedulerObservation}
 const demo=JSON.parse(readFileSync(new URL("./fixtures/experiment-demo.json",import.meta.url),"utf8")) as Experiment
 const stage=recorded.publication.stages[0]
+
+const controls={placement:true,resources:true,replicas:true,routing:true,batching:true,power:true,membership:true}
+const evidenceRef={store:"evaluation-archive",key:"frozen/start-state.json",size:128}
+const image={image:`registry.invalid/evaluation@sha256:${"a".repeat(64)}`,sourceSHA:"0123456789abcdef"}
+type DeclaredPair = [left:string,right:string,row?:string]
+
+// Synthetic EvaluationRun publication; the retained JSON fixtures remain past publications.
+function definitionFixture(stages:ExperimentStage[],pairs:DeclaredPair[]=[]) {
+  const workload={name:"camera",uid:"camera",generation:1}
+  return {
+    schema:"evaluation-definition.v1alpha1",
+    run:{name:"evaluation-fixture",uid:"evaluation-fixture-uid"},
+    spec:{
+      question:"같은 부하에서 선언한 제어 구성의 성공률·지연·에너지는 어떻게 다른가?",
+      target:{components:[{name:"scheduler",resource:{apiVersion:"apps/v1",kind:"Deployment",namespace:"research",name:"chill-scheduler"},...image}]},
+      harness:{...image},
+      loadGenerator:{...image,resources:{requests:{cpu:"1",memory:"256Mi"},limits:{cpu:"1",memory:"256Mi"}},shards:{camera:1},barrier:{maxStartSkewNanos:1000000,minimumReadySamples:1}},
+      powerMeasurement:{meters:[{id:"meter-1",sourceIdentity:"lab-meter-1"}],nodes:[{name:"worker-1",uid:"worker-1-uid"}],series:"power_watts",sampling:{intervalNanos:1000000000}},
+      control:{scaleDownHeadroomFraction:.1,minimumDemand:{camera:0},controls:{...controls}},
+      judgment:{generatorQuality:{latenessToleranceNanos:1000000,maxExceedingFraction:.01},energyCoverage:{maxGapFraction:.01,maxSingleGapSeconds:30}},
+      evidenceStore:"evaluation-archive",
+      stages:[...new Map(stages.map(stage=>[stage.id,stage])).values()].map(stage=>{
+        const pair=pairs.find(pair=>pair[0]===stage.id||pair[1]===stage.id)
+        return {id:stage.id,row:pair?.[2]??pair?.[0]??stage.id,mode:pair?.[1]===stage.id?"fixed":"autonomous",
+          loadScenarioRef:{name:"camera-load",uid:"camera-load-uid"},startState:{evidenceRef:{...evidenceRef}}}
+      }),
+      comparisons:pairs.map(([left,right])=>({left:{stageID:left},right:{stageID:right},reason:`${left}와 ${right}의 선언된 비교`})),
+    },
+    loadScenarios:[{name:"camera-load",uid:"camera-load-uid",spec:{workloads:[workload],parts:[{id:"steady",durationSeconds:60,rates:{camera:10}}],arrivalDistribution:{camera:"poisson"},seedRef:{...evidenceRef,key:"frozen/seed.json"},payloadManifestRef:{...evidenceRef,key:"frozen/payload.json"}}}],
+    workloads:[{...workload,slo:{percentile:95,targetLatencyNanos:50000000},model:"image-classifier",preprocessor:"image-preprocessor",dataset:"evaluation-images"}],
+  }
+}
+
+function definedRun(stages:ExperimentStage[],pairs:DeclaredPair[]=[]):Experiment {
+  return decodeExperiment(JSON.stringify({
+    schemaVersion:"serving-experiment.v1alpha1",id:"evaluation-fixture-uid",
+    from:"2026-10-30T00:00:00Z",to:"2026-10-30T01:00:00Z",status:"FAIL",stages,
+    sources:[{store:"evaluation-archive",key:"runs/evaluation-fixture-uid/summary.json"}],
+    definition:definitionFixture(stages,pairs),
+  }))
+}
+
+function withDefinition(run:Experiment,change:(definition:EvaluationDefinition)=>void):Experiment {
+  const definition=JSON.parse(JSON.stringify(run.definition)) as EvaluationDefinition
+  change(definition)
+  return decodeExperiment(JSON.stringify({...run,definition}))
+}
+
+test("definition decoders retain complete Go-shaped definitions and preserve published status and KPI precision",()=>{
+  const raw={schemaVersion:"serving-experiment.v1alpha1",id:"evaluation-fixture-uid",from:stage.from,to:stage.to,status:"FAIL",
+    stages:[{...stage,id:"candidate",kpis:{status:"INVALID",executionComplete:true,cleanupComplete:false,requests:{camera:{workloadUID:"camera",offered:9007199254740993n,completedLatencyNS:{p95:123456789}}}}}],
+    sources:[{store:"evaluation-archive",key:"summary.json"}],definition:definitionFixture([{...stage,id:"candidate"}])}
+  const decoded=decodeExperiment(publishedText(raw))
+  assert.equal(decoded.definition?.schema,"evaluation-definition.v1alpha1")
+  assert.deepEqual(decoded.definition,raw.definition)
+  assert.equal(decoded.status,"FAIL")
+  assert.deepEqual(decoded.stages,raw.stages)
+  assert.equal(experimentRows(decoded.stages[0])[0].original.offered,9007199254740993n)
+  const list=decodeExperiments(publishedText({items:[raw,recorded.publication,demo]}))
+  assert.deepEqual(list.items[0],decoded)
+  assert.equal(list.items[1].definition,undefined)
+  assert.equal(list.items[2].definition,undefined)
+  assert.deepEqual(list.items[1].stages,recorded.publication.stages)
+})
+
+test("past publications and malformed definition envelopes remain 미기록 instead of using stage names or KPIs",()=>{
+  for(const original of [recorded.publication,demo]) {
+    assert.equal(original.definition,undefined)
+    const run=decodeExperiment(publishedText(original))
+    assert.equal(run.definition,undefined)
+    assert.equal(definitionPolicy(run.stages[0],run),"미기록")
+    assert.equal(stageLabel(run.stages[0],run),`${run.stages[0].id} / 미기록`)
+    assert.equal(stageLoadLabel(run.stages[0],run),"미기록")
+    assert.equal(alphaText(run.stages[0],run),"미기록")
+    assert.equal(definitionComparisonReason(run),"미기록")
+    assert.deepEqual(campaignPairs(run),[])
+    assert.ok(experimentRows(run.stages[0]).every(row=>frozenP95SLO(row,run)===null))
+    assert.equal(comparisonValidity(run.stages[0],run.stages[0],run,run).load,"미기록")
+    assert.ok(experimentHeatmap(run).every(row=>row.reason==="미기록"&&row.other===null))
+  }
+  const run=definedRun([{...stage,id:"candidate"},{...stage,id:"baseline"}],[["candidate","baseline"]])
+  for(const definition of [null,[],{},false,"evaluation-definition.v1alpha1",{schema:"evaluation-definition.v2"},{schema:"evaluation-definition.v1alpha1"}]) {
+    const decoded=decodeExperiment(publishedText({...run,definition}))
+    assert.equal(decoded.definition,undefined)
+    assert.equal(definitionPolicy(decoded.stages[0],decoded),"미기록")
+    assert.equal(definitionComparisonReason(decoded),"미기록")
+    assert.deepEqual(campaignPairs(decoded),[])
+    assert.deepEqual(decoded.stages,run.stages)
+  }
+})
+
+test("definition boundary rejects malformed required downstream fields before any reader uses them",()=>{
+  const run=definedRun([{...stage,id:"candidate"},{...stage,id:"baseline"}],[["candidate","baseline"]])
+  const invalid:Array<[string,(definition:EvaluationDefinition)=>void]>=[
+    ["schema",d=>{object(d).schema="evaluation-definition.v9"}],
+    ["run UID",d=>{d.run.uid=""}],
+    ["run name",d=>{delete object(d.run).name}],
+    ["spec",d=>{object(d).spec=null}],
+    ["question",d=>{d.spec.question=""}],
+    ["default controls",d=>{delete object(d.spec.control).controls}],
+    ...Object.keys(controls).map(key=>[`control ${key}`,(d:EvaluationDefinition)=>{delete object(d.spec.control.controls)[key]}] as [string,(definition:EvaluationDefinition)=>void]),
+    ["boolean switch",d=>{object(d.spec.control.controls).power="false"}],
+    ["load generator",d=>{d.spec.loadGenerator={}}],
+    ["generator image",d=>{delete d.spec.loadGenerator.image}],
+    ["generator source",d=>{delete d.spec.loadGenerator.sourceSHA}],
+    ["generator resources",d=>{d.spec.loadGenerator.resources=[]}],
+    ["generator shards",d=>{d.spec.loadGenerator.shards={camera:0}}],
+    ["generator barrier",d=>{object(d.spec.loadGenerator.barrier).minimumReadySamples=0}],
+    ["stages",d=>{d.spec.stages=[]}],
+    ["stage ID",d=>{d.spec.stages[0].id=""}],
+    ["duplicate stage IDs",d=>{d.spec.stages.push({...d.spec.stages[0]})}],
+    ["row",d=>{delete object(d.spec.stages[0]).row}],
+    ["mode",d=>{object(d.spec.stages[0]).mode="automatic"}],
+    ["scenario UID",d=>{d.spec.stages[0].loadScenarioRef.uid=""}],
+    ["scenario name",d=>{d.spec.stages[0].loadScenarioRef.name=""}],
+    ["unresolved scenario UID",d=>{d.spec.stages[0].loadScenarioRef.uid="missing-load"}],
+    ["replacement controls",d=>{object(d.spec.stages[0]).control={controls:{power:false}}}],
+    ["comparison list",d=>{object(d.spec).comparisons={}}],
+    ["comparison reason",d=>{d.spec.comparisons![0].reason=""}],
+    ["comparison stage",d=>{d.spec.comparisons![0].left={stageID:"unknown"}}],
+    ["comparison reference",d=>{object(d.spec.comparisons![0]).left={}}],
+    ["ambiguous reference",d=>{object(d.spec.comparisons![0]).right={stageID:"baseline",historical:{publicationID:"past-id",stageID:"baseline"}}}],
+    ["historical publication ID",d=>{object(d.spec.comparisons![0]).right={historical:{publicationID:"",stageID:"baseline"}}}],
+    ["historical stage ID",d=>{object(d.spec.comparisons![0]).right={historical:{publicationID:"past-id",stageID:""}}}],
+    ["obsolete historical reference",d=>{object(d.spec.comparisons![0]).right={historical:{runUID:"past-uid",stageID:"baseline",resultRef:evidenceRef}}}],
+    ["scenarios",d=>{d.loadScenarios=[]}],
+    ["duplicate scenario UID",d=>{d.loadScenarios.push({...d.loadScenarios[0]})}],
+    ["parts",d=>{d.loadScenarios[0].spec.parts=[]}],
+    ["part ID",d=>{d.loadScenarios[0].spec.parts[0].id=""}],
+    ["part duration",d=>{d.loadScenarios[0].spec.parts[0].durationSeconds=0}],
+    ["missing load",d=>{delete d.loadScenarios[0].spec.parts[0].rates}],
+    ["rates and alpha",d=>{d.loadScenarios[0].spec.parts[0].alpha={camera:1}}],
+    ["empty rates",d=>{d.loadScenarios[0].spec.parts[0].rates={}}],
+    ["negative rates",d=>{d.loadScenarios[0].spec.parts[0].rates={camera:-1}}],
+    ["nonnumeric rates",d=>{object(d.loadScenarios[0].spec.parts[0]).rates={camera:"10"}}],
+    ["workloads",d=>{d.workloads=[]}],
+    ["workload UID",d=>{d.workloads[0].uid=""}],
+    ["workload generation",d=>{d.workloads[0].generation=0}],
+    ["duplicate workload UID",d=>{d.workloads.push({...d.workloads[0]})}],
+    ["workload SLO",d=>{delete object(d.workloads[0]).slo}],
+    ["SLO percentile",d=>{d.workloads[0].slo.percentile=101}],
+    ["SLO latency",d=>{d.workloads[0].slo.targetLatencyNanos=-1}],
+  ]
+  for(const [field,change] of invalid) {
+    const definition=JSON.parse(JSON.stringify(run.definition)) as EvaluationDefinition
+    change(definition)
+    const decoded=decodeExperiment(publishedText({...run,definition}))
+    assert.equal(decoded.definition,undefined,field)
+    assert.equal(definitionPolicy(decoded.stages[0],decoded),"미기록",field)
+    assert.equal(definitionComparisonReason(decoded),"미기록",field)
+    assert.deepEqual(definitionComparisons(decoded),[],field)
+    assert.deepEqual(decoded.stages,run.stages,field)
+    const list=decodeExperiments(publishedText({items:[{...run,definition}]}))
+    assert.equal(list.items[0].definition,undefined,field)
+  }
+})
+
+test("declared modes and complete replacement controls override suggestive stage names",()=>{
+  const run=withDefinition(definedRun([{...stage,id:"full-e5-1"},{...stage,id:"static-e5-1"},{...stage,id:"switches"}]),d=>{
+    d.spec.stages[0].mode="fixed"
+    d.spec.stages[1].mode="autonomous"
+    d.spec.stages[2].mode="controls-disabled"
+    d.spec.control.controls={...controls,power:false,membership:false}
+  })
+  assert.equal(definitionPolicy(run.stages[0],run),"고정 구성")
+  assert.equal(definitionPolicy(run.stages[1],run),"자동 운영")
+  assert.equal(definitionPolicy(run.stages[2],run),"제어요소 끔 · 전력, 구성원")
+  const replaced=withDefinition(run,d=>{d.spec.stages[2].control={controls:{...controls,routing:false,batching:false}}})
+  assert.equal(definitionPolicy(replaced.stages[2],replaced),"제어요소 끔 · 라우팅, 배칭")
+  const allOff=withDefinition(run,d=>{d.spec.stages[2].control={controls:{placement:false,resources:false,replicas:false,routing:false,batching:false,power:false,membership:false}}})
+  assert.equal(definitionPolicy(allOff.stages[2],allOff),"제어요소 끔 · 배치, 자원, 복제본, 라우팅, 배칭, 전력, 구성원")
+})
+
+test("row rename and declaration reordering preserve id-only stage and comparison joins",()=>{
+  const run=definedRun([{...stage,id:"candidate"},{...stage,id:"baseline"}],[["candidate","baseline","원래 이름"]])
+  const renamed=withDefinition(run,d=>{
+    d.spec.stages[0].row="접미사 없는 새 표시 이름"
+    d.spec.stages[1].row="완전히 다른 표시 이름"
+    d.spec.stages.reverse()
+  })
+  assert.equal(definitionStage(renamed,renamed.stages[0])?.row,"접미사 없는 새 표시 이름")
+  assert.equal(stageLabel(renamed.stages[0],renamed),"candidate / 접미사 없는 새 표시 이름 / 자동 운영")
+  assert.deepEqual(campaignPairs(renamed).map(pair=>[pair.chill.id,pair.control.id]),[["candidate","baseline"]])
+  assert.equal(definitionStage(renamed,{...renamed.stages[0],id:"접미사 없는 새 표시 이름"}),undefined)
+  assert.equal(definitionPolicy({...renamed.stages[0],id:"unlisted"},renamed),"미기록")
+  const noComparison=withDefinition(run,d=>{delete d.spec.comparisons})
+  assert.deepEqual(definitionComparisons(noComparison),[])
+  assert.equal(definitionComparisonReason(noComparison),"비교 없음")
+})
+
+test("declared ordered rates and alpha include zero without using offered counts, durations or relative rank",()=>{
+  const run=withDefinition(definedRun([{...stage,id:"candidate",kpis:{requests:{camera:{offered:999999}}}}]),d=>{
+    const scenario=d.loadScenarios[0]
+    object(scenario.spec).rateBasisRef={...evidenceRef,key:"frozen/rates.json"}
+    object(scenario.spec).kappaRef={...evidenceRef,key:"frozen/kappa.json"}
+    scenario.spec.parts=[{id:"idle",durationSeconds:10,rates:{camera:0}},{id:"steady",durationSeconds:30,rates:{camera:12.5}},{id:"ramp",durationSeconds:20,alpha:{camera:.7}},{id:"zero-alpha",durationSeconds:10,alpha:{camera:0}}]
+  })
+  assert.equal(stageLoadLabel(run.stages[0],run),"idle: camera 0 req/s / steady: camera 12.5 req/s / ramp: camera α 0.7 / zero-alpha: camera α 0")
+  assert.equal(alphaText(run.stages[0],run),"idle: 직접 요청률 · α 없음 / steady: 직접 요청률 · α 없음 / ramp: camera α 0.7 / zero-alpha: camera α 0")
+  assert.equal(stageLoadLabel({...run.stages[0],to:"invalid",kpis:{}},run),stageLoadLabel(run.stages[0],run))
+})
+
+test("target rate is duration-weighted declared direct rates, never observed offered divided by time",()=>{
+  const run=withDefinition(definedRun([{...stage,id:"candidate",kpis:{requests:{camera:{offered:999999}}}}]),d=>{
+    d.loadScenarios[0].spec.parts=[
+      {id:"idle",durationSeconds:10,rates:{camera:0,other:0}},
+      {id:"steady",durationSeconds:30,rates:{camera:12,other:4}},
+    ]
+  })
+  assert.equal(stageRate(run.stages[0],run),12)
+  assert.equal(stageRate({...run.stages[0],to:"invalid",kpis:{}},run),12)
+  const alpha=withDefinition(run,d=>{d.loadScenarios[0].spec.parts=[{id:"alpha",durationSeconds:10,alpha:{camera:.5}}]})
+  assert.equal(stageRate(alpha.stages[0],alpha),null)
+  assert.equal(stageRate(run.stages[0],recorded.publication),null)
+})
+
+test("same-load validity requires frozen scenario UID and the complete load generator, not observed rate similarity",()=>{
+  const a={...stage,id:"candidate",kpis:{requests:{camera:{offered:1}}}},b={...stage,id:"baseline",kpis:{requests:{camera:{offered:1000000}}}}
+  const run=definedRun([a,b],[["candidate","baseline"]])
+  assert.equal(comparisonValidity(a,b,run,run).conditions.load,"같음")
+  assert.equal(comparisonValidity(a,b).conditions.load,"미기록")
+  const changedScenario=withDefinition(run,d=>{
+    d.loadScenarios.push({...d.loadScenarios[0],uid:"other-scenario-uid"})
+    d.spec.stages[1].loadScenarioRef.uid="other-scenario-uid"
+  })
+  assert.equal(comparisonValidity(a,b,changedScenario,changedScenario).conditions.load,"다름")
+  const renamedScenario=withDefinition(run,d=>{d.spec.stages[1].loadScenarioRef.name="renamed"})
+  assert.equal(comparisonValidity(a,b,renamedScenario,renamedScenario).conditions.load,"같음")
+  const changedGenerator=withDefinition(run,d=>{d.spec.loadGenerator.sourceSHA="different-source"})
+  assert.equal(comparisonValidity(a,b,run,changedGenerator).conditions.load,"다름")
+})
+
+test("historical comparisons join publication ID and stage ID and carry both definitions through every projection",()=>{
+  const make=(id:string,energy:number,p95:number):ExperimentStage=>({id,from:stage.from,to:stage.to,kpis:{wholePoolJoules:energy,measurementRules:{population:"offered"},requests:{camera:{workloadUID:"camera",definitionID:"camera-v1",offered:100,deadlineSuccessFraction:1,completedLatencyNS:{p95:p95*1e6}}}}})
+  const historical=withDefinition({...definedRun([make("baseline",100,10)]),id:"control-222-223-first-20261030"},d=>{
+    d.run={name:"same-display-name",uid:"different-run-uid"}
+    d.workloads[0].slo.targetLatencyNanos=80000000
+  })
+  const run=withDefinition(definedRun([make("candidate",90,20)]),d=>{
+    d.run.name="same-display-name"
+    d.spec.stages[0].mode="fixed"
+    d.spec.comparisons=[{left:{stageID:"candidate"},right:{historical:{publicationID:historical.id,stageID:"baseline"}},reason:"고정 구성과 과거 자율 운영의 선언된 비교"}]
+  })
+  const decoy={...historical,id:"different-run-uid"}
+  const runs=[run,decoy,historical],pair=definitionComparisons(run,runs)[0]
+  assert.equal(pair.chill,run.stages[0])
+  assert.equal(pair.control,historical.stages[0])
+  assert.equal(pair.leftRun,run)
+  assert.equal(pair.rightRun,historical)
+  assert.equal(pair.reason,run.definition!.spec.comparisons![0].reason)
+  assert.deepEqual(historicalPublicationIDs(run),[historical.id])
+  assert.deepEqual(historicalPublicationIDs(recorded.publication),[])
+  assert.deepEqual(campaignPairs(run,runs),[pair])
+  assert.equal(campaignGroups(runs).find(group=>group.run===run)!.pairs[0].rightRun,historical)
+  assert.equal(campaignTradeoffs(run,runs)[0].energyDelta,-10)
+  assert.equal(campaignScoreboard(run,runs).summary.energyPercent,-10)
+  assert.equal(campaignScoreboard(run,runs).coverageCounts.unpaired,0)
+  const heatmap=experimentHeatmap(run,runs)[0]
+  assert.equal(heatmap.leftRun,run)
+  assert.equal(heatmap.rightRun,historical)
+  assert.equal(heatmap.reason,pair.reason)
+  assert.equal(heatmap.energyPercent,-10)
+  const chart=experimentChartData(run,"camera",runs)[0]
+  assert.deepEqual([chart.leftP95,chart.rightP95,chart.leftSLO,chart.rightSLO],[20,10,50,80])
+  assert.match(chart.leftLabel,/고정 구성/)
+  assert.match(chart.rightLabel,/자동 운영/)
+  for(const unavailable of [[run],[run,decoy],[run,{...historical,stages:[]}],[run,historical,historical]]) {
+    assert.deepEqual(definitionComparisons(run,unavailable),[])
+    assert.deepEqual(campaignPairs(run,unavailable),[])
+    assert.match(definitionComparisonReason(run,unavailable),/대상 게시 없음/)
+    assert.equal(campaignScoreboard(run,unavailable).coverageCounts.pairs,0)
+    assert.match(experimentHeatmap(run,unavailable)[0].reason,/대상 게시 없음/)
+    assert.equal(experimentChartData(run,"camera",unavailable)[0].rightSLO,null)
+  }
+  const reverse=withDefinition(run,d=>{
+    const comparison=d.spec.comparisons![0]
+    ;[comparison.left,comparison.right]=[comparison.right,comparison.left]
+  })
+  assert.equal(campaignTradeoffs(reverse,[reverse,historical])[0].energyDelta,10)
+  assert.deepEqual(experimentChartData(reverse,"camera",[reverse,historical]).find(row=>row.id==="baseline")?.leftSLO,80)
+})
+
+test("list comparisons join local and historical KPI without definitions and do not invent frozen metadata",()=>{
+  const detail=definedRun([{...stage,id:"candidate"},{...stage,id:"baseline"}],[["candidate","baseline"]])
+  const historical={...recorded.publication,id:"control-222-223-first-20261030"}
+  const comparisons=[
+    ...detail.definition!.spec.comparisons!,
+    {left:{stageID:"candidate"},right:{historical:{publicationID:historical.id,stageID:historical.stages[0].id}},reason:"목록의 과거 비교"},
+  ]
+  const list=decodeExperiments(publishedText({items:[{...detail,definition:undefined,comparisons},historical]}))
+  const run=list.items[0],pairs=definitionComparisons(run,list.items)
+  assert.equal(run.definition,undefined)
+  assert.deepEqual(run.comparisons,comparisons)
+  assert.equal(pairs.length,2)
+  assert.equal(pairs[0].chill.id,"candidate")
+  assert.equal(pairs[0].control.id,"baseline")
+  assert.equal(pairs[1].rightRun,list.items[1])
+  assert.equal(pairs[1].control.id,historical.stages[0].id)
+  assert.deepEqual(historicalPublicationIDs(run),[historical.id])
+  assert.equal(definitionPolicy(run.stages[0],run),"미기록")
+  assert.equal(stageLoadLabel(run.stages[0],run),"미기록")
+  assert.equal(comparisonValidity(pairs[0].chill,pairs[0].control,run,run).conditions.load,"미기록")
+  assert.ok(experimentRows(run.stages[0]).every(row=>frozenP95SLO(row,run)===null))
+  assert.match(definitionComparisonReason(run,[run]),/대상 게시 없음/)
+  const absent=decodeExperiments(publishedText({items:[{...detail,definition:undefined}]})).items[0]
+  assert.deepEqual(definitionComparisons(absent),[])
+  assert.equal(definitionComparisonReason(absent),"미기록")
+  const overridden=decodeExperiment(publishedText({...detail,comparisons:[comparisons[1]]}))
+  assert.equal(definitionComparisons(overridden,[overridden,historical]).length,1)
+  assert.equal(definitionComparisons(overridden,[overridden,historical])[0].control.id,"baseline")
+})
+
+test("outcome preserves independent execution, measurement and cleanup axes at run and stage scope",()=>{
+  const base=definedRun([{...stage,id:"candidate"},{...stage,id:"baseline"}])
+  const outcome={
+    execution:{status:"Complete",reason:"ExecutionComplete"},
+    measurement:{verdict:"FAIL",reason:"RequestTargetFailed"},
+    cleanup:{status:"Failed",reason:"CleanupFailed"},
+    stages:[
+      {id:"baseline",execution:{status:"Failed",reason:"NotStarted"},measurement:{verdict:"NOT_EVALUATED",reason:"NotStarted"},cleanup:{status:"Complete",reason:"NoResources"}},
+      {id:"candidate",execution:{status:"Complete",reason:"StageComplete"},measurement:{verdict:"INVALID",reason:"CoverageGap"},cleanup:{status:"Failed",reason:"StageCleanupFailed"}},
+    ],
+  }
+  const run=decodeExperiment(publishedText({...base,outcome}))
+  assert.deepEqual(run.outcome,outcome)
+  assert.deepEqual(decodeExperiments(publishedText({items:[{...base,definition:undefined,outcome}]})).items[0].outcome,outcome)
+  assert.deepEqual(experimentOutcome(run),{
+    execution:{value:"Complete",reason:"ExecutionComplete"},
+    measurement:{value:"FAIL",reason:"RequestTargetFailed"},
+    cleanup:{value:"Failed",reason:"CleanupFailed"},
+  })
+  assert.deepEqual(experimentOutcome(run,run.stages[0]),{
+    execution:{value:"Complete",reason:"StageComplete"},
+    measurement:{value:"INVALID",reason:"CoverageGap"},
+    cleanup:{value:"Failed",reason:"StageCleanupFailed"},
+  })
+  const missing={execution:{value:"미기록",reason:"미기록"},measurement:{value:"미기록",reason:"미기록"},cleanup:{value:"미기록",reason:"미기록"}}
+  assert.deepEqual(experimentOutcome(recorded.publication),missing)
+  assert.deepEqual(experimentOutcome(run,{...run.stages[0],id:"absent"}),missing)
+  assert.deepEqual(experimentOutcome(decodeExperiment(publishedText({...base,outcome:{execution:outcome.execution}}))),{
+    ...missing,execution:{value:"Complete",reason:"ExecutionComplete"},
+  })
+})
+
+test("injection results join planned IDs despite reordered records and retain unmatched plans and results",()=>{
+  const base=withDefinition(definedRun([{...stage,id:"candidate"},{...stage,id:"baseline"}]),d=>{
+    d.spec.stages[0].failureInjection=[
+      {id:"kill-1",action:"delete-serving-pod",offsetSeconds:120},
+      {id:"kill-2",action:"delete-serving-pod",offsetSeconds:180},
+    ]
+    d.spec.stages.reverse()
+  })
+  const injections=[
+    {id:"orphan",action:"delete-serving-pod",outcome:"Invalid",reason:"NoTarget",scheduledOffsetSeconds:240},
+    {id:"kill-1",action:"delete-serving-pod",outcome:"Executed",reason:"PodDeleted",scheduledOffsetSeconds:121,actualOffsetSeconds:121.4},
+  ]
+  const run=decodeExperiment(publishedText({...base,outcome:{stages:[{id:"baseline",injections:[{id:"kill-2",outcome:"Cancelled"}]},{id:"candidate",injections}]}}))
+  assert.deepEqual(injectionRows(run,run.stages[0]),[
+    {id:"kill-1",action:"delete-serving-pod",outcome:"Executed",reason:"PodDeleted",scheduledOffsetSeconds:121,actualOffsetSeconds:121.4},
+    {id:"kill-2",action:"delete-serving-pod",outcome:"미기록",reason:"미기록",scheduledOffsetSeconds:180,actualOffsetSeconds:null},
+    {id:"orphan",action:"delete-serving-pod",outcome:"Invalid",reason:"NoTarget",scheduledOffsetSeconds:240,actualOffsetSeconds:null},
+  ])
+  assert.deepEqual(injectionRows(base,base.stages[0]).map(row=>[row.id,row.outcome,row.scheduledOffsetSeconds]),[["kill-1","미기록",120],["kill-2","미기록",180]])
+  assert.deepEqual(injectionRows(recorded.publication,stage),[])
+})
 
 test("S1-1: real demo and #213 publication shapes preserve values, denominators, populations, sources and missing reasons",()=>{
   const rows=experimentRows(stage),image=rows.find(row=>row.name==="image-classification-tight-slo")!
@@ -93,10 +460,6 @@ test("S1-4: archive judgment lookup pins nanosecond decision.at plus identity, n
   const config=serverConfig({CHILL_BASE_URL:"https://fixture.invalid",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"fixture"})
   const plan=relayPlan("GET",["v1","observations","scheduler"],`?${new URLSearchParams({...range,limit:"20"})}`,config)
   assert.match(plan.path,/365665918Z/);assert.match(plan.path,/365665919Z/)
-  const source=readFileSync(new URL("../features/experiments.tsx",import.meta.url),"utf8")
-  assert.match(source,/stageHistoryLink\(stage\)/)
-  assert.doesNotMatch(source,/RFC3339Nano|<Input/)
-  assert.doesNotMatch(source,/observations\/raw|v1\/scheduler\/state/)
 })
 
 test("S1-5: rendered unbound serving-manager caller grants include experiment and both measurement reads, never raw",()=>{
@@ -124,8 +487,8 @@ test("S3: name matching preserves changed/missing identity and explicit ambiguou
   assert.equal(rows[0].b[1].uid,"new")
   assert.equal(rows[0].b.length,2)
   assert.equal(rows.find(row=>row.name==="onlyB")!.a.length,0)
-  assert.equal(stageRate(a),1)
-  assert.equal(stageRate(b),null)
+  assert.equal(stageRate(a,recorded.publication),null)
+  assert.equal(stageRate(b,recorded.publication),null)
 })
 
 test("S3: publisher units, ratios, differences and invalid values stay explicit",()=>{
@@ -175,9 +538,6 @@ test("F4: both retained publisher shapes expose historical identity and ordered 
 })
 
 test("F4: null/missing alpha and mixed identities never borrow legacy identity, rate or another producer anchor",()=>{
-  assert.equal(alphaText(0,undefined),"α 0")
-  assert.equal(alphaText(null,"Direct request rates configured; alpha not recorded"),"직접 요청률 설정 — α 없음")
-  assert.equal(alphaText(null,undefined),"α 미제공")
   for(const shape of ["requests","workloads"] as const) {
     const missingReasons={identity:"Mixed historical definitions",alpha:"Direct rates: alpha not configured",producerAnchor:"Producer not started",substageSource:"Phase not published"}
     const published:ExperimentStage={...stage,kpis:{[shape]:{same:{offered:100,uid:"legacy-uid",definition:"legacy-definition",workloadUID:null,definitionID:null,identitySource:null,missingReasons,substages:[{id:"alpha-is-not-inferred-9",alpha:null,startOffsetNanos:0,endOffsetNanos:1000000000,from:null,to:null,source:null},{id:"missing-alpha",startOffsetNanos:1000000000,endOffsetNanos:2000000000,from:null,to:null,source:null}]}}}}
@@ -191,7 +551,7 @@ test("F4: null/missing alpha and mixed identities never borrow legacy identity, 
     assert.equal(row.substages?.[0].to,null)
     assert.equal(row.substages?.[0].startOffsetNanos,0)
     assert.equal(row.substages?.[0].source,null)
-    assert.ok(stageRate(published)!>0)
+    assert.equal(stageRate(published,recorded.publication),null)
     const absent=experimentRows({...stage,kpis:{[shape]:{same:{offered:100}}}})[0]
     assert.equal(absent.uid,undefined)
     assert.equal(absent.definition,undefined)
@@ -218,54 +578,21 @@ test("R3: rapid A/B selections preserve the preceding URL selection and clear on
   assert.equal(experimentSelection("a=one&as=chosen&b=two&bs=keep",{as:"next"}).get("bs"),"keep")
 })
 
-test("R7: campaign grouping uses exact stages first and unique same-load comparisons second",()=>{
-  const full={...stage,id:"full-E5-1"},staticStage={...stage,id:"static-E5-1"}
-  const run={...recorded.publication,stages:[full,{...full,id:"full-E5-2"},staticStage,{...staticStage,id:"static-E5-3"}]}
-  assert.deepEqual(campaignPairs(run).map(pair=>[pair.chill.id,pair.control.id]),[["full-E5-1","static-E5-1"],["full-E5-2","static-E5-3"]])
-  assert.equal(campaignPairs({...run,stages:[full,full,staticStage]}).length,0)
+test("declared comparisons alone populate campaign groups, independent of names or observed rates",()=>{
+  const left={...stage,id:"candidate"},right={...stage,id:"baseline"},unlisted={...stage,id:"full-E5-1"}
+  const run=definedRun([left,right,unlisted],[["candidate","baseline"]])
+  assert.deepEqual(campaignPairs(run).map(pair=>[pair.chill.id,pair.control.id]),[["candidate","baseline"]])
+  assert.equal(campaignPairs({...run,stages:[left,left,right]}).length,0)
   const groups=campaignGroups([run,demo])
   assert.equal(groups.length,2)
-  assert.equal(groups.find(group=>group.run.id===run.id)!.pairs.length,2)
+  assert.equal(groups.find(group=>group.run.id===run.id)!.pairs.length,1)
   assert.equal(groups.find(group=>group.run.id===demo.id)!.pairs.length,0)
-  assert.ok(groups.every(group=>group.title===group.run.id),"each card identifies its publication instead of repeating a generic title")
+  assert.equal(groups.find(group=>group.run.id===demo.id)!.comparisonReason,"미기록")
+  assert.equal(groups.find(group=>group.run.id===run.id)!.question,run.definition!.spec.question)
 })
 
-test("R3: chart points retain per-service success and p95 without averaging or inventing missing values",()=>{
-  const data=stageChartData(recorded.publication)
-  assert.equal(data.length,recorded.publication.stages.length)
-  assert.equal(data[0].rate,stageRate(stage))
-  const row=experimentRows(stage)[0]
-  assert.equal(data[0].services[row.name].p95,resultMetric(row,"p95").value)
-  assert.equal(data[0].services[row.name].success,Number(resultMetric(row,"success").value)*100)
-  const missing=stageChartData({...recorded.publication,stages:[{...stage,kpis:{wholePoolJoules:0,requests:{same:{offered:0}}}}]})[0]
-  assert.equal(missing.energy,0)
-  assert.equal(missing.services.same.p95,null)
-  assert.equal(missing.services.same.success,null)
-})
 
-test("R3fix: policies share exact stage axes and normalize shared energy by offered requests and actual duration",()=>{
-  const make=(id:string,seconds:number,offered:unknown=10):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:`2026-10-30T00:00:${String(seconds).padStart(2,"0")}Z`,kpis:{wholePoolJoules:100,gapErrorBoundJoules:5,requests:{same:{offered}}}})
-  const run={...recorded.publication,stages:[make("full-E5-2",20),make("static-E5-2",10),make("full-E5-3-repeat",10,0)]}
-  const points=stageChartData(run)
-  assert.deepEqual(points.map(p=>p.policy),["자동 운영","고정 구성","자동 운영"])
-  assert.deepEqual(points.map(p=>p.axis),["E5-2","E5-2","E5-3-repeat"])
-  assert.equal(points[0].joulesPerRequest,10)
-  assert.equal(points[0].watts,5)
-  assert.equal(points[0].wattError,.25)
-  assert.equal(points[1].watts,10)
-  assert.equal(points[2].joulesPerRequest,null)
-  assert.equal(stageChartData({...run,stages:[make("unknown",10,null)]})[0].joulesPerRequest,null)
-  const grouped=policyStageGroups(run)
-  assert.deepEqual(grouped.policies,["자동 운영","고정 구성"])
-  assert.deepEqual(grouped.groups.map(group=>group.axis),["E5-2","E5-3-repeat"])
-  assert.equal(grouped.groups[0].series[0]?.watts,5)
-  assert.equal(grouped.groups[0].series[1]?.watts,10)
-  assert.equal(grouped.groups[1].series[1],null)
-  const duplicateGroups=policyStageGroups({...run,stages:[run.stages[0],run.stages[0]]}).groups
-  assert.equal(duplicateGroups.length,2)
-  assert.ok(duplicateGroups.every(group=>group.series[0]?.paired===false))
-  const duplicates={...run.stages[0],kpis:{wholePoolJoules:100,requests:{same:{offered:10}},workloads:{same:{offered:10}}}}
-  assert.equal(stageChartData({...run,stages:[duplicates]})[0].joulesPerRequest,null)
+test("service deltas preserve published precision without inventing missing values",()=>{
   const left=experimentRows({...stage,kpis:{requests:{same:{deadlineSuccessFraction:.9737,successDenominator:100,completedLatencyNS:{p95:299300000}}}}})[0]
   const right=experimentRows({...stage,kpis:{requests:{same:{deadlineSuccessFraction:1,successDenominator:100,completedLatencyNS:{p95:142100000}}}}})[0]
   assert.match(serviceDelta(left,right),/성공 -2.63 %p; p95 \+157.20 ms \(×2.11\)/)
@@ -325,31 +652,16 @@ test("R5: direct A/B direction names the actual policy in both orders without cl
   assert.equal(comparisonDirection(undefined,12,"ms","A","B"),"비교 불가")
 })
 
-test("R7: unique load comparisons preserve exact pairing status, duplicate stages and unknown policies",()=>{
-  const make=(id:string):ExperimentStage=>({...stage,id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:00:10Z",kpis:{wholePoolJoules:100,requests:{same:{offered:100}}}})
-  const stages=[make("full-E5-1-a"),make("static-E5-1-b"),make("full-E5-2"),make("static-E5-2"),make("full-E5-3"),make("full-E5-3"),make("static-E5-3"),make("manual")]
-  const run={...recorded.publication,stages}
-  assert.ok(stages.every(stage=>stageRate(stage)===10))
-  assert.deepEqual(campaignPairs(run).map(pair=>pair.key),["E5-1-a","E5-2"])
-  assert.match(stagePairing(run,stages[0]).reason,/static-E5-1-a 없음/)
-  assert.match(stagePairing(run,stages[1]).reason,/full-E5-1-b 없음/)
-  assert.equal(stagePairing(run,stages[4]).reason,"동일 단계 식별자 중복")
-  assert.equal(stagePairing(run,stages[7]).paired,false)
-  const points=stageChartData(run)
-  assert.equal(points.length,stages.length)
-  assert.equal(points.filter(point=>point.paired).length,2)
-  const grouped=policyStageGroups(run).groups.flatMap(group=>group.series.filter(point=>point!==null))
-  assert.equal(grouped.length,stages.length)
-  assert.equal(grouped.filter(point=>point.reason==="동일 단계 식별자 중복").length,3)
-})
-
-test("R5: p95 SLO comes only from each frozen stage KPI and never from another percentile or live settings",()=>{
-  const row=(original:Record<string,unknown>)=>experimentRows({...stage,kpis:{workloads:{same:original}}})[0]
-  assert.equal(frozenP95SLO(row({measurementSLO:{percentile:95,targetLatencyNanos:123456789}})),123.456789)
-  assert.equal(frozenP95SLO(row({sloPercentile:95,sloMS:50})),50)
-  assert.equal(frozenP95SLO(row({measurementSLO:{percentile:99,targetLatencyNanos:1000000}})),null)
-  assert.equal(frozenP95SLO(row({schedulerSLO:{percentile:95,targetLatencyNanos:1000000}})),null)
-  assert.equal(frozenP95SLO(row({})),null)
+test("p95 SLO joins the frozen workload UID, never a name, legacy UID or retained KPI SLO",()=>{
+  const run=definedRun([{...stage,id:"baseline"}])
+  const row=(original:Record<string,unknown>,name="camera")=>experimentRows({...stage,kpis:{workloads:{[name]:original}}})[0]
+  assert.equal(frozenP95SLO(row({workloadUID:"camera",measurementSLO:{percentile:95,targetLatencyNanos:999999999}}),run),50)
+  assert.equal(frozenP95SLO(row({workloadUID:"camera"},"renamed-camera"),run),50)
+  assert.equal(frozenP95SLO(row({uid:"camera"}),run),null)
+  assert.equal(frozenP95SLO(row({measurementSLO:{percentile:95,targetLatencyNanos:50000000}}),run),null)
+  assert.equal(frozenP95SLO(row({workloadUID:"replacement-camera"}),run),null)
+  assert.equal(frozenP95SLO(row({measurementSLO:{percentile:95,targetLatencyNanos:123456789},sloPercentile:95,sloMS:50})),null)
+  assert.equal(frozenP95SLO(row({workloadUID:"camera"}),withDefinition(run,definition=>{definition.workloads[0].slo.percentile=99})),null)
 })
 
 test("heatmap retains all stages without fabricated missing service values",()=>{
@@ -362,21 +674,20 @@ test("heatmap retains all stages without fabricated missing service values",()=>
   assert.equal(row.other,null)
   assert.equal(row.energyPercent,null)
   assert.deepEqual(row.services,[])
-  assert.equal(experimentChartData({...recorded.publication,stages:[missing]},"camera")[0].automaticP95,null)
+  assert.equal(experimentChartData({...recorded.publication,stages:[missing]},"camera")[0].leftP95,null)
 })
 
 test("operator conclusion includes every paired stage and reports energy losses alongside gains",()=>{
   const stage=(id:string,energy:number,from:string):ExperimentStage=>({id,from,to:"2026-10-30T00:01:00Z",kpis:{wholePoolJoules:energy}} as ExperimentStage)
-  const run={stages:[stage("full-E5-1",90,"2026-10-30T00:00:00Z"),stage("static-E5-1",100,"2026-10-30T00:00:00Z"),stage("full-E5-2",120,"2026-10-30T00:00:00Z"),stage("static-E5-2",100,"2026-10-30T00:00:00Z")]} as Experiment
+  const run=definedRun([stage("candidate-1",90,"2026-10-30T00:00:00Z"),stage("baseline-1",100,"2026-10-30T00:00:00Z"),stage("candidate-2",120,"2026-10-30T00:00:00Z"),stage("baseline-2",100,"2026-10-30T00:00:00Z")],[["candidate-1","baseline-1"],["candidate-2","baseline-2"]])
   const score=campaignScoreboard(run)
   assert.equal(score.coverageCounts.stages,4)
   assert.deepEqual(score.energyCounts,{decreased:1,increased:1,equal:0,missing:0,delta:10})
-  assert.equal(stageLoadLabel(run.stages[0],run),"요청률 미기록")
 })
 
 test("operator conclusion names the worst service loss and does not treat missing success as zero",()=>{
   const make=(id:string,success:unknown,p95:number):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",kpis:{wholePoolJoules:100,requests:{camera:{deadlineSuccessFraction:success,completedLatencyNS:{p95:p95*1e6}}}}})
-  const run={stages:[make("full-E5-1",.8,20),make("static-E5-1",.9,10)]} as Experiment
+  const run=definedRun([make("full-E5-1",.8,20),make("static-E5-1",.9,10)],[["full-E5-1","static-E5-1"]])
   const score=campaignScoreboard(run)
   assert.ok(Math.abs(score.referenceSummary.successDelta!+10)<1e-10)
   assert.equal(score.referenceSummary.p95Ratio,2)
@@ -384,27 +695,19 @@ test("operator conclusion names the worst service loss and does not treat missin
   assert.equal(campaignScoreboard({...run,stages:[make("full-E5-1",null,20),run.stages[1]]}).referenceSummary.successDelta,null)
 })
 
-test("R7: suffix-mismatched high load remains in gains/losses, worst quality loss and shared chart axis",()=>{
-  const make=(id:string,success:number,p95:number,offered=6120):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",kpis:{wholePoolJoules:id.startsWith("full")?90:100,requests:{camera:{offered,deadlineSuccessFraction:success,successDenominator:offered,completedLatencyNS:{p95:p95*1e6}}}}})
-  const high=make("full-E5-3",.847,1655),fixed=make("static-E5-3-223",.892,282)
-  const run={...recorded.publication,stages:[make("full-E5-1",.99,10,600),make("static-E5-1",1,9,600),high,fixed]}
-  const comparison=stageComparison(run,high)
-  assert.equal(comparison.basis,"같은 부하 비교")
-  assert.equal(comparison.paired,false)
-  assert.equal(comparison.counterpart,fixed)
-  const row=campaignTradeoffs(run).find(row=>row.chill===high)!
+test("declared mismatched stage names retain numeric gains, losses and worst service quality",()=>{
+  const make=(id:string,energy:number,success:number,p95:number,offered:number):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",kpis:{wholePoolJoules:energy,requests:{camera:{offered,deadlineSuccessFraction:success,successDenominator:offered,completedLatencyNS:{p95:p95*1e6}}}}})
+  const run=definedRun([make("low",90,.99,10,600),make("low-reference",100,1,9,600),make("high",90,.847,1655,6120),make("different-row-name",100,.892,282,7000)],[["low","low-reference"],["high","different-row-name"]])
+  const comparison=definitionComparisons(run).find(pair=>pair.chill.id==="high")!
+  assert.equal(comparison.basis,"정의 비교")
+  assert.equal(comparison.control.id,"different-row-name")
+  const row=campaignTradeoffs(run).find(row=>row.chill.id==="high")!
   assert.equal(row.energyDelta,-10)
   assert.ok(Math.abs(row.services[0].successDelta!-(-4.5))<1e-10)
   assert.equal(row.services[0].p95Ratio,1655/282)
   assert.equal(row.services[0].worstSuccess,true)
   assert.equal(row.services[0].worstP95,true)
-  assert.equal(experimentHeatmap(run).find(row=>row.stage===high)?.rate,102)
-  assert.equal(policyStageGroups(run).groups.length,2)
-  // A nearly identical actual duration is not a different load plan.
-  assert.equal(stageComparison({...run,stages:[high,{...fixed,to:"2026-10-30T00:01:00.005Z"}]},high).counterpart?.id,fixed.id)
-  assert.equal(stageComparison({...run,stages:[high,fixed,{...fixed,id:"static-E5-4"}]},high).counterpart,null)
-  assert.equal(stageComparison({...run,stages:[high,{...fixed,kpis:{requests:{other:{offered:6120}}}}]},high).counterpart,null)
-  assert.equal(stageComparison({...run,stages:[high,{...fixed,kpis:{requests:{camera:{offered:7000}}}}]},high).counterpart,null)
+  assert.equal(experimentHeatmap(run).find(row=>row.stage.id==="high")?.rate,10)
 })
 
 test("R7: stage record links retain the exact range and activity counts never claim a partial page is complete",()=>{
@@ -425,18 +728,18 @@ test("R8: campaign scoreboard separates energy, worst service losses, missing me
     id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",
     kpis:{wholePoolJoules:energy,measurementRules:{population:"offered"},requests:{camera:{offered:600,deadlineSuccessFraction:success,completedLatencyNS:{p95:p95===null?null:p95*1e6}}}},
   })
-  const run={...recorded.publication,stages:[
+  const run=definedRun([
     make("full-E5-1",90,.8,20),make("static-E5-1",100,.9,10),
     make("full-E5-2",110,1,5),make("static-E5-2",100,1,5),
     make("full-E5-3",null,null,null),make("static-E5-3",100,1,10),
     make("manual",50,1,5),
-  ]}
+  ],[["full-E5-1","static-E5-1"],["full-E5-2","static-E5-2"],["full-E5-3","static-E5-3"]])
   const scoreboard=campaignScoreboard(run)
   assert.deepEqual(scoreboard.energyCounts,{decreased:1,increased:1,equal:0,missing:1,delta:0})
   assert.ok(Math.abs(scoreboard.referenceSummary.successDelta!+10)<1e-10)
   assert.equal(scoreboard.referenceSummary.p95Ratio,2)
   assert.equal(scoreboard.quality[0].service,"camera")
-  assert.equal(scoreboard.quality[0].stage,"E5-1")
+  assert.equal(scoreboard.quality[0].stage,campaignPairs(run)[0].key)
   assert.equal(scoreboard.quality[0].missing,1)
   assert.equal(scoreboard.quality[1].value,10)
   assert.equal(scoreboard.quality[1].missing,1)
@@ -450,31 +753,22 @@ test("R8: campaign scoreboard separates energy, worst service losses, missing me
   assert.deepEqual(missing.summary,{energyPercent:null,successDelta:null,p95Ratio:null})
 })
 
-test("R8: comparisons and chart axes follow recorded time rather than severity, suffix or input order",()=>{
+test("declared comparison order is retained while heatmap intervals follow recorded time without mutating the publication",()=>{
   const make=(id:string,minute:number):ExperimentStage=>({...stage,id,from:`2026-10-30T00:0${minute}:00Z`,to:`2026-10-30T00:0${minute+1}:00Z`})
-  const run={...recorded.publication,stages:[make("full-E5-1",4),make("static-E5-1",5),make("full-E5-3",0),make("static-E5-3",1)]}
-  assert.deepEqual(campaignPairs(run).map(pair=>pair.key),["E5-3","E5-1"])
-  assert.deepEqual(campaignTradeoffs(run).map(pair=>pair.key),["E5-3","E5-1"])
-  assert.deepEqual(policyStageGroups(run).groups.map(group=>group.axis),["E5-3","E5-1"])
-  assert.equal(run.stages[0].id,"full-E5-1","sorting never mutates the publication")
+  const run=definedRun([make("later",4),make("later-reference",5),make("early",0),make("early-reference",1)],[["later","later-reference"],["early","early-reference"]])
+  assert.deepEqual(campaignPairs(run).map(pair=>pair.chill.id),["later","early"])
+  assert.deepEqual(campaignTradeoffs(run).map(pair=>pair.chill.id),["later","early"])
+  assert.deepEqual(experimentHeatmap(run).map(row=>row.stage.id),["early","later"])
+  assert.equal(run.stages[0].id,"later")
 })
 
-test("R8: policy markers distinguish square fixed from circle automatic without converting missing chart points to zero",()=>{
-  assert.deepEqual(policyChartStyle("고정 구성"),{color:"var(--color-slate-500, #64748b)",shape:"square"})
-  assert.deepEqual(policyChartStyle("자동 운영"),{color:"var(--color-teal-600, #0d9488)",shape:"circle"})
-  const run={...recorded.publication,stages:[{...stage,id:"full-E5-1",kpis:{requests:{camera:{offered:0}}}}]}
-  assert.equal(stageChartData(run)[0].services.camera.success,null)
-  assert.equal(stageChartData(run)[0].services.camera.p95,null)
-  assert.equal(policyStageGroups(run).groups[0].series[0]?.services.camera.p95,null)
-})
-
-test("R9: comparable campaigns precede newer incomparable records and expose the missing counterpart reason",()=>{
-  const paired={...recorded.publication,id:"paired",from:"2026-10-29T00:00:00Z",stages:[{...stage,id:"full-E5-1"},{...stage,id:"static-E5-1"}]}
-  const unpaired={...paired,id:"unpaired",from:"2026-10-31T00:00:00Z",stages:[{...stage,id:"full-E5-1"}]}
+test("campaign groups expose declared comparison reasons and missing targets without inventing counterparts",()=>{
+  const paired={...definedRun([{...stage,id:"candidate"},{...stage,id:"baseline"}],[["candidate","baseline"]]),from:"2026-10-29T00:00:00Z"}
+  const unpaired={...paired,id:"unpaired",from:"2026-10-31T00:00:00Z",stages:paired.stages.slice(0,1)}
   const groups=campaignGroups([unpaired,paired])
-  assert.deepEqual(groups.map(group=>group.run.id),["paired","unpaired"])
-  assert.match(groups[1].comparisonReason,/static-E5-1/)
-  assert.equal(groups[0].comparisonReason,"같은 부하 비교 1쌍")
+  assert.deepEqual(groups.map(group=>group.run.id),["unpaired",paired.id])
+  assert.match(groups[0].comparisonReason,/대상 게시 없음/)
+  assert.equal(groups[1].comparisonReason,paired.definition!.spec.comparisons![0].reason)
 })
 
 test("R9: published FAIL means a failed request target, never a failed result query",()=>{
@@ -503,7 +797,7 @@ test("R9: selected published results use the experiment endpoint without stage f
 
 test("campaign summary scopes relative energy to available pairs and preserves quality loss",()=>{
   const make=(id:string,joules:number|null,success:number):ExperimentStage=>({...stage,id,kpis:{wholePoolJoules:joules,requests:{camera:{offered:10,deadlineSuccessFraction:success,completedLatencyNS:{p95:1000000}}}}})
-  const run={...recorded.publication,stages:[make("full-E5-1",90,.8),make("static-E5-1",100,.9),make("full-E5-2",null,1),make("static-E5-2",100,1)]}
+  const run=definedRun([make("full-E5-1",90,.8),make("static-E5-1",100,.9),make("full-E5-2",null,1),make("static-E5-2",100,1)],[["full-E5-1","static-E5-1"],["full-E5-2","static-E5-2"]])
   const score=campaignScoreboard(run)
   assert.equal(score.referenceSummary.energyPercent,-10)
   assert.ok(Math.abs(score.referenceSummary.successDelta!+10)<1e-10)
@@ -511,34 +805,34 @@ test("campaign summary scopes relative energy to available pairs and preserves q
   assert.deepEqual(campaignScoreboard({...run,stages:[]}).summary,{energyPercent:null,successDelta:null,p95Ratio:null})
 })
 
-test("R10: comparison limits retain missing rules, unequal durations, uncertain identity and observed load checks",()=>{
+test("R10: comparison limits retain missing rules, unequal durations and uncertain identity with declared load",()=>{
   const make=(id:string):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",kpis:{measurementRules:{population:"offered"},requests:{camera:{uid:"camera",definitionID:"v1",offered:600,deadlineSuccessFraction:1,completedLatencyNS:{p95:1000000}}}}})
-  const a=make("full-E5-1"),b=make("static-E5-1")
-  assert.match(comparisonValidity(a,b).load,/서비스별.*1% 이내/)
-  assert.match(comparisonValidity(a,b).identity,/같은 등록·정의/)
-  assert.match(comparisonValidity(a,b).rules,/차이 없음/)
-  assert.equal(comparisonValidity(a,b).limited,false)
-  assert.deepEqual(comparisonValidity(a,b).conditions,{load:"같음",identity:"같음",rules:"같음"})
+  const a=make("candidate"),b=make("baseline"),run=definedRun([a,b],[["candidate","baseline"]])
+  assert.equal(comparisonValidity(a,b,run,run).load,"같음")
+  assert.match(comparisonValidity(a,b,run,run).identity,/같은 등록·정의/)
+  assert.match(comparisonValidity(a,b,run,run).rules,/차이 없음/)
+  assert.equal(comparisonValidity(a,b,run,run).limited,false)
+  assert.deepEqual(comparisonValidity(a,b,run,run).conditions,{load:"같음",identity:"같음",rules:"같음"})
   assert.equal(comparisonValidity(a,{...b,kpis:{}}).limited,true)
   const uncertain={...b,to:"2026-10-30T00:02:00Z",kpis:{requests:{camera:{offered:600}}}}
   const limits=comparisonValidity(a,uncertain)
-  assert.match(limits.load,/다르거나 미확인/)
+  assert.equal(limits.load,"미기록")
   assert.match(limits.duration,/길이 다름/)
   assert.match(limits.rules,/미기록/)
   assert.match(limits.identity,/미확인 1/)
   assert.match(comparisonValidity(a,{...b,kpis:{...b.kpis,measurementRules:{}}}).rules,/미기록/)
   assert.match(comparisonValidity(a,{...b,kpis:{...b.kpis,measurementRules:{population:"received"}}}).rules,/차이 있음/)
   assert.match(comparisonValidity(a,{...b,kpis:{...b.kpis,requests:{camera:{uid:"camera",definitionID:"v2",offered:600}}}}).identity,/다름 1/)
-  assert.equal(campaignScoreboard({...recorded.publication,stages:[{...a,kpis:{...a.kpis,measurementRules:null}},b]}).coverageCounts.limited,1)
-  assert.equal(campaignScoreboard({...recorded.publication,stages:[{...a,kpis:{...a.kpis,requests:{camera:{offered:600,deadlineSuccessFraction:1,completedLatencyNS:{p95:1000000}}}}},b]}).coverageCounts.limited,1)
+  assert.equal(campaignScoreboard({...run,stages:[{...a,kpis:{...a.kpis,measurementRules:null}},b]}).coverageCounts.limited,1)
+  assert.equal(campaignScoreboard({...run,stages:[{...a,kpis:{...a.kpis,requests:{camera:{offered:600,deadlineSuccessFraction:1,completedLatencyNS:{p95:1000000}}}}},b]}).coverageCounts.limited,1)
 })
 
 test("R10: duration validity and scoreboard use the same precision as displayed seconds",()=>{
   const make=(id:string,to:string):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to,kpis:{measurementRules:{population:"offered"},requests:{camera:{uid:"camera",definitionID:"v1",offered:18000}}}})
-  const a=make("full-E5-1","2026-10-30T00:30:00.001Z"),b=make("static-E5-1","2026-10-30T00:30:00.499Z")
-  assert.match(comparisonValidity(a,b).duration,/구간 길이 같음 · A 1,800 s \/ B 1,800 s/)
-  assert.equal(comparisonValidity(a,b).limited,false)
-  assert.equal(campaignScoreboard({...recorded.publication,stages:[a,b]}).coverageCounts.durationDifferences,0)
+  const a=make("candidate","2026-10-30T00:30:00.001Z"),b=make("baseline","2026-10-30T00:30:00.499Z"),run=definedRun([a,b],[["candidate","baseline"]])
+  assert.match(comparisonValidity(a,b,run,run).duration,/구간 길이 같음 · A 1,800 s \/ B 1,800 s/)
+  assert.equal(comparisonValidity(a,b,run,run).limited,false)
+  assert.equal(campaignScoreboard(run).coverageCounts.durationDifferences,0)
   const different={...b,to:"2026-10-30T00:30:00.501Z"}
   assert.match(comparisonValidity(a,different).duration,/구간 길이 다름/)
   assert.equal(comparisonValidity(a,different).limited,true)
@@ -547,7 +841,7 @@ test("R10: duration validity and scoreboard use the same precision as displayed 
 
 test("R10: scoreboard projects numeric counts and quality deltas without sentence parsing",()=>{
   const make=(id:string,energy:number,success:number,p95:number):ExperimentStage=>({...stage,id,kpis:{wholePoolJoules:energy,requests:{camera:{offered:100,deadlineSuccessFraction:success,completedLatencyNS:{p95:p95*1e6}}}}})
-  const score=campaignScoreboard({...recorded.publication,stages:[make("full-E5-1",90,.8,20),make("static-E5-1",100,.9,10)]})
+  const score=campaignScoreboard(definedRun([make("full-E5-1",90,.8,20),make("static-E5-1",100,.9,10)],[["full-E5-1","static-E5-1"]]))
   assert.deepEqual(score.energyCounts,{decreased:1,increased:0,equal:0,missing:0,delta:-10})
   assert.equal(score.quality[0].unit,"%p")
   assert.ok(Math.abs(score.quality[0].value!+10)<1e-10)
@@ -570,14 +864,14 @@ test("duration icon ignores rounding differences and appears only beyond one per
 })
 
 test("selected-service chart and heatmap share ordered intervals and frozen targets",()=>{
-  const make=(id:string,minute:number,energy:number,p95:number|null):ExperimentStage=>({id,from:`2026-10-30T00:0${minute}:00Z`,to:`2026-10-30T00:0${minute+1}:00Z`,kpis:{wholePoolJoules:energy,requests:{camera:{offered:600,deadlineSuccessFraction:.9,completedLatencyNS:{p95:p95===null?null:p95*1e6},measurementSLO:{percentile:95,targetLatencyNanos:50000000}}}}})
-  const later=make("full-E5-2",4,120,20),fixedLater=make("static-E5-2",5,100,10),early=make("full-E5-1",0,90,10),fixedEarly=make("static-E5-1",1,100,null)
-  const run={...recorded.publication,stages:[later,fixedLater,early,fixedEarly]}
+  const make=(id:string,minute:number,energy:number,p95:number|null):ExperimentStage=>({id,from:`2026-10-30T00:0${minute}:00Z`,to:`2026-10-30T00:0${minute+1}:00Z`,kpis:{wholePoolJoules:energy,requests:{camera:{workloadUID:"camera",offered:600,deadlineSuccessFraction:.9,completedLatencyNS:{p95:p95===null?null:p95*1e6}}}}})
+  const later=make("candidate-later",4,120,20),fixedLater=make("baseline-later",5,100,10),early=make("candidate-early",0,90,10),fixedEarly=make("baseline-early",1,100,null)
+  const run=definedRun([later,fixedLater,early,fixedEarly],[["candidate-later","baseline-later"],["candidate-early","baseline-early"]])
   const rows=experimentHeatmap(run),chart=experimentChartData(run,"camera")
   assert.deepEqual(rows.map(row=>row.id),[early.id,later.id])
   assert.deepEqual(rows.map(row=>row.energyPercent),[-10,20])
-  assert.deepEqual(chart.map(row=>[row.id,row.interval,row.rate,row.automaticP95,row.fixedP95,row.automaticSLO,row.fixedSLO]),[[early.id,1,10,10,null,50,50],[later.id,2,10,20,10,50,50]])
-  assert.equal(run.stages[0],later)
+  assert.deepEqual(chart.map(row=>[row.id,row.interval,row.rate,row.leftP95,row.rightP95,row.leftSLO,row.rightSLO]),[[early.id,1,10,10,null,50,50],[later.id,2,10,20,10,50,50]])
+  assert.equal(run.stages[0].id,later.id)
   const zero=experimentHeatmap({...run,stages:[early,{...fixedEarly,kpis:{...fixedEarly.kpis,wholePoolJoules:0}}]})[0]
   assert.equal(zero.energyPercent,null)
   const duplicates=experimentHeatmap({...run,stages:[early,early,fixedEarly]})
@@ -587,7 +881,7 @@ test("selected-service chart and heatmap share ordered intervals and frozen targ
 
 test("R13: conclusion chips isolate matched definitions and rules from limited reference comparisons",()=>{
   const make=(id:string,energy:number,definition="same"):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:00:10Z",kpis:{wholePoolJoules:energy,measurementRules:{window:10},requests:{camera:{uid:"camera",definitionID:definition,offered:10,deadlineSuccessFraction:1,completedLatencyNS:{p95:1000000}}}}})
-  const run={...recorded.publication,stages:[make("full-E5-1",90),make("static-E5-1",100),make("full-E5-2",1,"changed"),make("static-E5-2",100)]}
+  const run=definedRun([make("full-E5-1",90),make("static-E5-1",100),make("full-E5-2",1,"changed"),make("static-E5-2",100)],[["full-E5-1","static-E5-1"],["full-E5-2","static-E5-2"]])
   const score=campaignScoreboard(run)
   assert.equal(score.summary.energyPercent,-10)
   assert.equal(score.referenceSummary.energyPercent,-99)
@@ -601,18 +895,18 @@ test("R13: conclusion chips isolate matched definitions and rules from limited r
 
 test("R13: matched conclusion prioritizes quality loss and never treats limited gains as a verified improvement",()=>{
   const make=(id:string,energy:number,success=1):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:00:10Z",kpis:{wholePoolJoules:energy,measurementRules:{window:10},requests:{camera:{uid:"camera",definitionID:"same",offered:10,deadlineSuccessFraction:success,completedLatencyNS:{p95:1000000}}}}})
-  const run={...recorded.publication,stages:[make("full-E5-1",90),make("static-E5-1",100)]}
+  const run=definedRun([make("full-E5-1",90),make("static-E5-1",100)],[["full-E5-1","static-E5-1"]])
   assert.equal(campaignScoreboard(run).conclusion,"에너지 감소")
   assert.equal(campaignScoreboard({...run,stages:[make("full-E5-1",90,.8),run.stages[1]]}).conclusion,"SLO 악화")
   const reference=campaignScoreboard({...run,stages:[{...run.stages[0],kpis:{...run.stages[0].kpis,measurementRules:{window:20},requests:{camera:{uid:"camera",definitionID:"same",offered:10,deadlineSuccessFraction:.8,completedLatencyNS:{p95:1000000}}}}},run.stages[1]]})
   assert.equal(reference.conclusion,"SLO 악화")
   assert.equal(reference.reference,true)
-  assert.equal(campaignScoreboard({...run,stages:[]}).conclusion,"비교 없음")
+  assert.equal(campaignScoreboard({...run,stages:[]}).conclusion,"대상 게시 없음")
 })
 
 test("R13 review: quality-only gains are improvements and no difference requires complete neutral metrics",()=>{
   const make=(id:string,success:number|null,p95:number|null):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:00:10Z",kpis:{wholePoolJoules:100,measurementRules:{window:10},requests:{camera:{uid:"camera",definitionID:"same",offered:10,deadlineSuccessFraction:success,completedLatencyNS:{p95:p95===null?null:p95*1e6}}}}})
-  const conclude=(success:number|null,p95:number|null)=>campaignScoreboard({...recorded.publication,stages:[make("full-E5-1",success,p95),make("static-E5-1",.8,20)]}).conclusion
+  const conclude=(success:number|null,p95:number|null)=>campaignScoreboard(definedRun([make("full-E5-1",success,p95),make("static-E5-1",.8,20)],[["full-E5-1","static-E5-1"]])).conclusion
   assert.equal(conclude(.9,20),"SLO 개선")
   assert.equal(conclude(.8,10),"SLO 개선")
   assert.equal(conclude(.9,10),"SLO 개선")
@@ -625,14 +919,14 @@ test("R13 re-review: a neutral pair cannot erase another matched pair's quality 
   const make=(id:string,success:number|null,p95:number|null):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:00:10Z",kpis:{wholePoolJoules:100,measurementRules:{window:10},requests:{camera:{uid:"camera",definitionID:"same",offered:10,deadlineSuccessFraction:success,completedLatencyNS:{p95:p95===null?null:p95*1e6}}}}})
   for(const [success,p95] of [[.9,20],[.8,10],[.9,10]]) {
     const stages=[make("full-E5-1",success,p95),make("static-E5-1",.8,20),make("full-E5-2",.8,20),make("static-E5-2",.8,20)]
-    const score=campaignScoreboard({...recorded.publication,stages})
+    const run=definedRun(stages,[["full-E5-1","static-E5-1"],["full-E5-2","static-E5-2"]]),score=campaignScoreboard(run)
     assert.equal(score.summary.successDelta,0)
     assert.equal(score.summary.p95Ratio,1)
     assert.equal(score.conclusion,"SLO 개선")
-    assert.equal(campaignScoreboard({...recorded.publication,stages:[...stages.slice(0,2),make("full-E5-2",.7,20),stages[3]]}).conclusion,"SLO 악화")
+    assert.equal(campaignScoreboard({...run,stages:[...stages.slice(0,2),make("full-E5-2",.7,20),stages[3]]}).conclusion,"SLO 악화")
   }
   const neutral=[make("full-E5-1",.8,20),make("static-E5-1",.8,20)]
-  assert.equal(campaignScoreboard({...recorded.publication,stages:[...neutral,make("full-E5-2",null,20),make("static-E5-2",.8,20)]}).conclusion,"결과 부족")
+  assert.equal(campaignScoreboard(definedRun([...neutral,make("full-E5-2",null,20),make("static-E5-2",.8,20)],[["full-E5-1","static-E5-1"],["full-E5-2","static-E5-2"]])).conclusion,"결과 부족")
 })
 
 test("R14: comparison limits count each affected pair by its recorded cause",()=>{
@@ -640,8 +934,10 @@ test("R14: comparison limits count each affected pair by its recorded cause",()=
   const stages=[make("full-E5-1"),make("static-E5-1"),make("full-E5-2"),make("static-E5-2"),make("full-E5-3"),make("static-E5-3")]
   stages[0].kpis.measurementRules={window:20}
   stages[2].kpis.requests={camera:{uid:"camera",offered:10}}
-  stages[4].kpis.requests={camera:{uid:"camera",definitionID:"same",offered:20}}
-  const run={...recorded.publication,stages},counts=campaignScoreboard(run).coverageCounts
+  const run=withDefinition(definedRun(stages,[["full-E5-1","static-E5-1"],["full-E5-2","static-E5-2"],["full-E5-3","static-E5-3"]]),definition=>{
+    definition.loadScenarios.push({...definition.loadScenarios[0],name:"different-load",uid:"different-load-uid"})
+    definition.spec.stages[4].loadScenarioRef={name:"different-load",uid:"different-load-uid"}
+  }),counts=campaignScoreboard(run).coverageCounts
   assert.equal(counts.ruleDifferences,1)
   assert.equal(counts.identityUnknown,1)
   assert.equal(counts.loadDifferences,1)
@@ -652,14 +948,14 @@ test("R14: rendered experiment judgment exposes one status and cause counts with
   const source=readFileSync(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,ComponentType<{run:Experiment}>>={}
-  new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiments"?experimentHelpers:name==="lucide-react"?{TriangleAlert:(props:Record<string,unknown>)=>createElement("svg",props)}:require(name),exports)
-  const run={...recorded.publication,stages:[{...stage,id:"full-E5-1",kpis:{...stage.kpis,measurementRules:{window:10},requests:{camera:{offered:10}}}},{...stage,id:"static-E5-1",kpis:{...stage.kpis,measurementRules:{window:20},requests:{camera:{offered:10}}}}]}
+  new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiments"?experimentHelpers:name==="@/lib/measurements"?measurementHelpers:name==="@/lib/client"?{}:name==="lucide-react"?{TriangleAlert:(props:Record<string,unknown>)=>createElement("svg",props)}:require(name),exports)
+  const run=definedRun([{...stage,id:"candidate",kpis:{...stage.kpis,measurementRules:{window:10},requests:{camera:{offered:10}}}},{...stage,id:"baseline",kpis:{...stage.kpis,measurementRules:{window:20},requests:{camera:{offered:10}}}}],[["candidate","baseline"]])
   const judgment=renderToStaticMarkup(createElement(exports.ExperimentJudgment,{run}))
   assert.match(judgment,new RegExp(campaignScoreboard(run).conclusion))
   assert.match(judgment,/aria-label="실험 판정"/)
   const limits=renderToStaticMarkup(createElement(exports.ExperimentLimits,{run}))
   assert.match(limits,/규칙 다름/)
-  assert.match(limits,/정의 미확인/)
+  assert.match(limits,/정의 미기록/)
   assert.match(limits,/<table[^>]*aria-label="비교 제한 원인"/)
   assert.match(limits,/<th[^>]*>제한 원인<\/th>/)
   assert.match(limits,/<th[^>]*>구간 수<\/th>/)

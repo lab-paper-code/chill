@@ -187,7 +187,7 @@ Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.
 | `GET /observations/scheduler` | 판단, snapshot, 설정 변경, action과 전력 관측의 보관 중인 append-order 페이지 | from/to, bounded limit와 cursor를 사용한다. 응답은 페이지 항목과 nextCursor로 구성된다. relay는 이 경로와 `GET /scheduler`, `/scheduler/state`, `/scheduler/profiles`를 ChillServer `view=compact`로 읽고, 화면 파싱 전에 공유된 `profile`과 `completionMeasurement` `$ref`를 응답 dictionary로 복원해 full 응답과 같은 값을 쓴다. 응답 상한은 그대로다. |
 | `GET /observations/power` | 명시적 구간의 전체 및 활성 POOL joules와 평균 W, 노드별 값, `complete`, `reasons`, 로컬 보존보다 앞선 구간의 `gapUntil`(`internal/serving/httpapi/power.go:10-32`) | `/scheduler/power`의 실행 그룹 전체 전력에 연결했다(`chill-dashboard/features/scheduler.tsx:251-267`). |
 | `GET /systems`, `GET /inventory` | ChillSystem의 condition과 이유, DeviceClass와 typed 전력모드 actuator, Node | System, Inventory와 Run 목록은 아래 query handler에서 제공한다. |
-| `GET /experiments`, `GET /experiments/{id}` | 저장된 불변 실행·단계 envelope와 publisher별 KPI·출처. 실제 GET 목록 6개 확인 | 이미 공개된 조회다. §8.6의 설명형 비교·단위·단계 연결에 재사용하며 미게시 α/identity를 추정하지 않는다. |
+| `GET /experiments`, `GET /experiments/{id}` | 완료된 불변 게시·단계 KPI·출처와 선택적 `outcome`. 목록은 `definition` 대신 선택적 `comparisons`, 단건은 `definition` 제공 | §8.6의 정의 기반 reader를 사용한다. 목록 판정은 comparisons와 목록 KPI만 사용하며 항목별 단건 GET을 하지 않는다. |
 
 ### 연결 예정 API (서버 책임)
 
@@ -681,10 +681,13 @@ null/미제공 J는 ‘수용된 에너지 없음’, 시간은 ‘실측 시간
 
 ### 8.6 실험의 게시 데이터와 설명형 비교
 
-GET `/experiments`는 `{items:Experiment[]}`, `/{id}`는 단건이다.
-envelope는 `schemaVersion/id/from/to/status/stages[{id,from,to,kpis}]/sources`이고
-`kpis`는 `json.RawMessage`다(`internal/serving/httpapi/experiments.go:19-43`).
-필드가 없으면 미제공이지 0/같은 조건이 아니다. query filter API는 없으므로 화면 필터는 클라이언트 전용이다.
+GET `/experiments`는 `{items:Experiment[]}`, `/{id}`는 단건이다. 완료된 게시만 다루며 진행 중·미게시 실험은 범위 밖이다.
+envelope는 `schemaVersion/id/from/to/status/stages[{id,from,to,kpis}]/sources`에 선택적 `outcome`을 더한다.
+서버 wire와 schemaVersion은 바꾸지 않는다. 정본은 [EvaluationRun 연결 계약](../../plans/2026-11-01-evaluationrun-dashboard-handoff.md)이다.
+목록은 크기 때문에 `definition`을 생략하고 선택적 `comparisons`(저장된 definition.spec.comparisons)를 제공한다. 단건은 definition을 제공하고 별도 comparisons는 없다.
+목록·개요의 판정 칩은 comparisons와 목록 KPI만 읽으며 항목별 지연 단건 GET을 하지 않는다. comparisons가 없으면 비교 판정은 ‘미기록’이다.
+과거 비교 대상 KPI는 목록의 id=publicationID를 우선 사용하고 목록에 없을 때만 해당 게시 단건을 캐시 조회한다.
+필드가 없으면 미기록이지 0/같은 조건이 아니다. query filter API는 없으므로 화면 필터는 클라이언트 전용이다.
 
 | 의미 | `kpis.workloads[name]` shape | `kpis.requests[name]` shape |
 |---|---|---|
@@ -707,7 +710,7 @@ UID/definition 같음·다름·미제공을 각 열에 보존한다. 현재 work
 측정 규칙 차이는 기존 `differentMeasurementRules`를 사용하고 시간 길이·조건·SLO 미제공도 경고한다.
 경고가 있는 차이는 ‘관측값 차이’이지 통제 실험/인과/안전성/통계적 승리 판정이 아니다.
 
-차이 방향은 화면 전체 **A−B**로 고정한다. A/B 레이블은 사용자가 선택한 게시 기록 이름이다.
+차이 방향은 화면 전체 **A−B = left−right**로 고정한다. 정의 비교의 left는 후보, right는 기준이며 정책 모드와 무관하다.
 비율은 `100*(A-B)` %p, 지연·J는 A-B 원단위, 상대 에너지 변화는 `100*(A-B)/B` %다.
 B=0/값 없음/지표 의미가 다르면 상대 차이는 계산 불가다. 원값이 다르면 반올림된 0 차이를
 ‘동일’이라고 단정하지 않고 ‘표시 정밀도 미만’으로 안내한다.
@@ -718,10 +721,20 @@ B=0/값 없음/지표 의미가 다르면 상대 차이는 계산 불가다. 원
 energyPopulation/energyCoverage/missingReasons.energy를 사용한다.
 오차 bound는 **관측 공백 오차 상한**이지 95% CI가 아니다. 공유 POOL J는 서비스별로 나누거나 더하지 않는다.
 실행 구간 길이/부하가 다르면 총 J가 낮다는 것만으로 효율 개선이라고 하지 않는다.
-2차 설문의 명시적 E5 명명 계약을 적용한다: `full-E5-*`는 CHILL, `static-E5-*`는 정적 비교군.
-같은 게시 기록 안에서 접두사를 제외한 전체 suffix가 정확히 일치하고 양쪽이 유일할 때만
-자동 짝짓는다. 반복 suffix 불일치·중복·한쪽 부재는 임의 대응하지 않는다. 다른 접두사는 정책 미기록이다.
-이 정책 라벨은 frozen 조건의 동일성이나 통제 성공을 인증하지 않는다.
+정책은 `definition.spec.stages[].mode`의 autonomous·fixed·controls-disabled만 읽는다.
+꺼진 제어요소는 단계 `control.controls`가 있으면 전체 대체하고, 없으면 spec의 기본 control을 읽는다.
+단계 정의·KPI·단계 outcome은 **id만**으로 연결한다. row 이름 변경·배열 순서·이름 접미사는 조인에 영향을 주지 않는다.
+비교 짝·사유는 단건의 `definition.spec.comparisons[]`, 목록의 `comparisons[]`만 사용한다. 과거 참조는 `historical{publicationID,stageID}`이고,
+publicationID는 기존 게시 ID(캠페인 이름 포함)다. 목록 KPI 또는 필요한 단건으로 정확한 stageID와 연결하며 없으면 ‘대상 게시 없음’이다.
+같은 부하는 loadScenarioRef.uid와 spec.loadGenerator가 모두 같을 때만 인정한다. 요청률·내용 유사성으로 대체하지 않는다.
+부하 단계·목표 요청률·α는 loadScenarios의 parts를 표시한다. SLO는 definition.workloads[].slo와 KPI의 **workloadUID만** 연결한다.
+workloadUID 없는 행은 이름·legacy uid·KPI SLO가 같아도 SLO ‘미기록’이다.
+definition 없는 과거 게시는 정책·같은 부하·SLO ‘미기록’이며 comparisons도 없으면 비교 ‘미기록’이다. 과거 reader·재게시·소급 정의 부착을 만들지 않는다.
+`outcome.execution.status`·`measurement.verdict`·`cleanup.status`와 각 reason은 독립된 세 축이다.
+실행 Complete는 평가 PASS가 아니며 정리 Failed도 보존한다. summary.status는 measurement 값이고 없는 outcome 축을 대신하지 않는다.
+장애 주입 계획은 단계 failureInjection, 결과는 outcome.stages[].injections를 id로 연결한다.
+예정/실제 offsetSeconds와 action·outcome·reason을 보존하고, 결과 없는 계획은 ‘미기록’으로 남긴다.
+화면은 한국어 라벨·숫자·상태만 제공하고 계약 설명은 하나의 접근 가능한 툴팁에 모은다.
 
 단계 레인은 실제 `[from,to)` 순서/폭으로 그리고 클릭하면 해당 단계 KPI와 근거 범위를 함께 바꾼다.
 두 publisher의 optional workloadUID/definitionID/identitySource와 substages를 타임라인 펼침 및
@@ -732,9 +745,9 @@ energyPopulation/energyCoverage/missingReasons.energy를 사용한다.
 offered와 실제 기간이 있으면 ‘단계 평균 보낸 요청률’=offered/기간을 표시할 수 있지만 목표 부하나 α가 아니다.
 초별 지연/에너지 선형 보간·가짜 이벤트는 금지한다. 게시 단계 집계 표/막대와 선택 당시 journal을 사용한다.
 
-3차 개선은 전체 suffix 대응 단계(E5-1, E5-2, 반복 suffix 포함)를 같은 축에 놓고
-CHILL과 정적군을 고정 색·실선/점선·원/사각 마커와 범례로 구분한다. 한쪽만 있는 단계도 남기며
-중복 정책/단계는 임의 선택하지 않고 결손으로 표시한다. W 막대는 J/실제 구간 초로 정규화하고
+정의에 선언된 후보·기준 단계를 같은 축에 놓고 고정 색·실선/점선·원/사각 마커와 범례로 구분한다.
+비교가 없는 단계도 남기며 대상 게시·단계 부재를 임의 대응하지 않고 결손으로 표시한다.
+W 막대는 J/실제 구간 초로 정규화하고
 관측 공백 오차 상한/초를 오차막대로 표시한다(CI 아님). 원 J 및 J/전체 보낸 요청은 수치 표에 보존한다.
 요청 수 결손·동명 publisher 중복·0 요청에서는 J/요청을 만들지 않는다. 공유 에너지를 서비스에 배분하지 않는다.
 상단 전체 대응 단계 표는 req/s·W·원 J 차이와 서비스별 성공률 Δ(%p)·p95 Δ(ms, 배율)를 제공한다.
@@ -1078,17 +1091,19 @@ preflight/dryRun은 설문 가드 허용, 실제 제출/삭제/변경은 차단�
   표본·관측 누락·실패 처리 기준은 평이한 확인 항목으로 번역하며 미확인을 통과로 설명하지 않는다.
 - 실험 상세는 이름·날짜·결론 상태어와 칩·상시 한 줄 범례, 구간×서비스 히트맵, 요청률·선택 서비스 p95 통합 차트의 3블록이다.
   히트맵의 부하·에너지 변화·성공률 차이·p95 배율을 선택하면 A/B 원값·당시 시간·판단/전환 기록 링크·원문을 오른쪽 서랍에 연다.
-  목록·상세·개요는 실험명 → 큰 판정 → 핵심 수치 칩 → 작은 제한 아이콘·구간 수 순서다.
+  목록·상세·개요는 게시 `definition.run.name`(없으면 게시 ID) → 큰 판정 → 핵심 수치 칩 → 작은 제한 아이콘·구간 수 순서다.
   제한 원인 표는 툴팁과 선택 서랍에서만 제공한다. 아이콘 건수는 참고 비교·대응 없는 구간 합이며 중복 원인 합계가 아니다.
   일치·참고·대응 없음은 작은 세그먼트 막대 하나로 표시하고 각 건수는 막대 툴팁으로 제공한다.
+  정의·목록 comparisons·outcome의 reader와 과거 게시 처리는 §8.6을 따른다. 과거 대상은 publicationID·stageID로만 연결하고 서랍에서 다른 실험명 링크를 제공한다.
+  단계 라벨은 id / row / 모드이며 비교 이유는 헤더·서랍 툴팁에 표시한다. 차트 요청률은 직접 rates의 구간 길이 가중 평균이며 α만 있는 경우 역산하지 않는다.
   `campaignScoreboard().summary`는 `comparisonValidity`의 정의·식별자·규칙·길이·부하 일치 비교만 집계한다.
   제한 비교는 별도 `referenceSummary`로 보존한다. 일치 비교가 없으면 참고 수치로 같은 판정 규칙을 적용하고 `참고` 태그를 붙인다.
   판정은 SLO 악화를 에너지 절감보다 우선하며, 비교 자체가 없으면 `비교 없음`이다.
   에너지 중립에서 일치 비교의 개별 서비스 성공률 또는 p95가 하나라도 표시 단위 이상 개선되면 `SLO 개선`이다. 중립 비교가 함께 있어도 개선을 지우지 않는다. `차이 없음`은 비교 지표가 모두 제공되고 중립일 때만 표시하며, 중립·누락 비교가 섞이면 `결과 부족`이다.
-  비교 방향(Δ 자동−고정 / p95 자동÷고정)은 화면당 한 곳에 표시하고 비교 조건과 막대 범례는 툴팁으로 제공한다.
+  비교 방향(Δ 왼쪽−오른쪽 / p95 왼쪽÷오른쪽)은 화면당 한 곳에 표시하고 비교 조건과 막대 범례는 툴팁으로 제공한다. 모드와 무관하게 선언 순서를 유지한다.
   구간 길이 같음/다름 비교는 표시 정밀도를 따르고, 히트맵 길이 차이 아이콘은 1% 초과일 때만 표시한다.
   차트는 실행 순서의 구간 집계 비교축이며 연속 시계열·전환 직후 효과를 만들지 않는다.
-  히트맵 선택 서랍은 선택 자동 운영 구간의 판단·전환 사건을 시각·종류·대상 표 최대 10행으로 바로 표시하고 전체 구간 기록 링크를 제공한다.
+  히트맵 선택 서랍은 선택 왼쪽 단계의 판단·전환 사건을 시각·종류·대상 표 최대 10행으로 바로 표시하고 전체 구간 기록 링크를 제공한다.
 - 동작 비용 목록의 전환 방향·모델은 저장 동작의 Before/Actual 모드와 동결 준비 profile만 사용한다.
   목록은 대상(대표 모델 + 추가 건수·장치 별칭), 준비 s, 준비 J, 제거 s/J, 횟수, 상태 아이콘의 6열이다.
   준비·제거 비용은 중앙값 점·최댓값 끝점의 범위 막대로 표시한다. 중앙값은 해당 측정의 유효 동작 결과만 사용하며,

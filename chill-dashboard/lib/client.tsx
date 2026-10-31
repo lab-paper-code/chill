@@ -158,6 +158,18 @@ export function useChillQuery<T>(path:string,options:{enabled?:boolean;poll?:boo
   },retry:false,refetchOnWindowFocus:false,refetchOnReconnect:false,refetchInterval:query => options.poll && visible && ![401,403].includes(query.state.error?.status ?? 0) ? config.pollIntervalMs : false,refetchIntervalInBackground:false})
   return {...query,data:query.error && [401,403].includes(query.error.status) ? undefined : query.data}
 }
+export function useChillQueries<T>(paths:readonly string[],options:{enabled?:boolean;decoder?:(body:string)=>unknown}={}) {
+  const {token}=useSession()
+  return useQueries({queries:[...new Set(paths)].map(path=>({
+    queryKey:["chill",path],enabled:!!token&&options.enabled!==false,
+    queryFn:async ({signal}:{signal:AbortSignal}):Promise<T>=>{
+      const response=await relay(path,token,signal)
+      try {return (options.decoder?options.decoder(response.body):response.data) as T}
+      catch(error){throw new ApiError(0,error instanceof Error?error.message:"응답 해석 실패",{code:"DashboardPrecisionUnsupported"})}
+    },
+    staleTime:Infinity,
+  }))}).map(query=>({...query,data:query.error instanceof ApiError&&[401,403].includes(query.error.status)?undefined:query.data}))
+}
 
 // Load summaries omit definitions: read the retained catalog through the existing per-UID API.
 export function useWorkloadDefinitions(uids:readonly string[],range:{from:string;to:string}) {
