@@ -97,7 +97,34 @@ subjects:
     namespace: {{ $.Release.Namespace }}
 {{- end }}
 {{- end }}
+{{- end }}
 {{- if .Values.profiler.enabled }}
+{{- /* The Profiler always registers the evaluation reconcilers, so its informers need watch rights even while evaluation is disabled. */}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "chill.profilerName" . }}-evaluation-watch
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: [edge.dacs.io]
+    resources: [evaluationruns, evaluationstages, loadscenarios]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "chill.profilerName" . }}-evaluation-watch
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "chill.profilerName" . }}-evaluation-watch
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "chill.profilerServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- if .Values.evaluation.enabled }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -105,9 +132,6 @@ metadata:
   name: {{ include "chill.profilerName" . }}-evaluation
   namespace: {{ .Release.Namespace }}
 rules:
-  - apiGroups: [edge.dacs.io]
-    resources: [evaluationruns, evaluationstages, loadscenarios]
-    verbs: [get, list, watch]
   - apiGroups: [edge.dacs.io]
     resources: [evaluationstages]
     verbs: [create]
