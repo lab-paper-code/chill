@@ -151,13 +151,12 @@ test("missing metrics are awaiting observation, never observed zero traffic",()=
 })
 
 test("planned stop is normal only with no declared instances, demand, or autonomous services",()=>{
-  const input={fresh:true,terminals:0,failed:0,sloMisses:0,queued:0,changes:0,delayed:0,serving:0,off:2,total:2,admissionBlocked:false,received:0,declared:0,unserved:0,gaps:0}
+  const input={fresh:true,terminals:0,failed:0,sloMisses:0,queued:0,changes:0,delayed:0,serving:0,off:2,total:2,admissionBlocked:false,received:0,declared:0,unserved:0}
   assert.equal(boardVerdict(input).label,"정상: 계획된 정지")
   assert.match(boardVerdict({...input,received:1,unserved:1}).label,/^이상:/)
   assert.match(boardVerdict({...input,failed:1}).label,/^이상:/)
   assert.notEqual(boardVerdict({...input,declared:1}).label,"정상: 계획된 정지")
   assert.notEqual(boardVerdict({...input,off:1}).label,"정상: 계획된 정지")
-  assert.equal(boardVerdict({...input,gaps:1}).label,"정상: 계획된 정지")
 })
 
 test("latency uses the exact SLO percentile and retained events outlive the new-event window",()=>{
@@ -171,10 +170,9 @@ test("latency uses the exact SLO percentile and retained events outlive the new-
   assert.equal(retainedEvents([...Array(35)].map((_,seq)=>({...event,seq})),now).length,30)
   assert.equal(retainedEvents([{...event,decision:{...event.decision,state:"Keep"}}],now).length,0)
 })
-test("idle model grouping never infers placement from service names",()=>{
-  const snapshot={workloads:[],instances:[],nodes:[{uid:"n",name:"edge"}]} as unknown as LiveSnapshot
-  const groups=idleGroups(snapshot,[{...workload,name:"edge-model"},{...workload,uid:"b",name:"edge-other"}])
+test("idle services group by model independently of service names",()=>{
+  const groups=idleGroups([{...workload,name:"edge-model"},{...workload,uid:"b",name:"other-node-model"}])
   assert.equal(groups.length,1)
-  assert.equal(groups[0].device,"배치 없음")
+  assert.equal(groups[0].model,workload.model)
   assert.equal(groups[0].workloads.length,2)
 })

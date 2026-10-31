@@ -94,7 +94,7 @@ export function servicePriority(workload:LiveWorkload,metric:LiveMetric|undefine
   if (!metric || metric.received>0 || (terminalCount(metric)??0)>0) return 4
   return 5
 }
-export function boardVerdict({fresh,terminals,failed,sloMisses,queued,changes,delayed,serving,off,total,admissionBlocked,received=0,declared=serving,unserved=0}:{fresh:boolean;terminals:number|undefined;failed:number|undefined;sloMisses:number;queued:number;changes:number;delayed:number;serving:number;off:number;total:number;admissionBlocked:boolean;received?:number;declared?:number;unserved?:number;gaps?:number}) {
+export function boardVerdict({fresh,terminals,failed,sloMisses,queued,changes,delayed,serving,off,total,admissionBlocked,received=0,declared=serving,unserved=0}:{fresh:boolean;terminals:number|undefined;failed:number|undefined;sloMisses:number;queued:number;changes:number;delayed:number;serving:number;off:number;total:number;admissionBlocked:boolean;received?:number;declared?:number;unserved?:number}) {
   if (!fresh || terminals==null) return {label:"데이터 끊김",tone:"unknown",reason:"최신 관측을 기다려요. 마지막 수치를 현재 상태로 판단하지 마세요"}
   if ((failed??0)>0 || admissionBlocked || unserved>0 || (!serving&&(received>0||queued>0))) return {label:"이상: 요청 처리 확인 필요",tone:"danger",reason:`실패 ${failed??0}건 / 유입 있으나 서빙 없음 ${unserved}개 / 접수 거절 ${admissionBlocked?"있음":"없음"}. 서비스 상세에서 확인하세요`}
   if (!serving && total>0 && off===total && declared===0 && received===0 && queued===0 && changes===0 && delayed===0) return {label:"정상: 계획된 정지",tone:"healthy",reason:`자동제어 꺼짐 ${off}/${total} / 선언 인스턴스 0 / 유입 0. 요청 처리 없이 대기 중이에요`}
@@ -151,14 +151,11 @@ export function sloLatency(workload:LiveWorkload,metric:LiveMetric|undefined):nu
 export function retainedEvents(events:LiveEvent[],now:number,keep=false):LiveEvent[] {
   return events.filter(event=>Date.parse(event.at)<=now&&(keep||event.kind!=="decision"||event.decision.state!=="Keep")).slice(-30)
 }
-export function idleGroups(snapshot:LiveSnapshot,workloads:LiveWorkload[]) {
-  const groups=new Map<string,{device:string;model:string;workloads:LiveWorkload[]}>()
+export function idleGroups(workloads:LiveWorkload[]) {
+  const groups=new Map<string,{model:string;workloads:LiveWorkload[]}>()
   for(const workload of workloads) {
-    const devices=serviceDevices(snapshot,workload.uid)
-    const device=devices.map(node=>node.name).join(", ") || "배치 없음"
-    const key=JSON.stringify([device,workload.model])
-    const group=groups.get(key)??{device,model:workload.model,workloads:[]}
-    group.workloads.push(workload);groups.set(key,group)
+    const group=groups.get(workload.model)??{model:workload.model,workloads:[]}
+    group.workloads.push(workload);groups.set(workload.model,group)
   }
-  return [...groups.values()].sort((a,b)=>a.device.localeCompare(b.device)||a.model.localeCompare(b.model))
+  return [...groups.values()].sort((a,b)=>a.model.localeCompare(b.model))
 }
