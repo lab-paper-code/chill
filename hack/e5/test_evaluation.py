@@ -215,6 +215,23 @@ class AdapterTests(unittest.TestCase):
             self.assertIsNone(never['injections'][0]['actualOffsetSeconds'])
             self.assertEqual(failed['injections'][0]['outcome'],'Executed')
             self.assertEqual(failed['injections'][0]['reason'],'Complete')
+    def test_target_identity_uses_every_running_image_digest(self):
+        digest='sha256:'+'a'*64
+        target={'components':[{'name':'server','image':'registry:5000/server@'+digest,'sourceSHA':'source','resource':{'namespace':'test','kind':'Deployment','name':'server'}}]}
+        deployment={'kind':'Deployment','metadata':{'uid':'deployment'},'spec':{'selector':{'matchLabels':{'app':'server'}},'template':{'spec':{'containers':[{'name':'server','image':'registry:5000/server:live'}]}}}}
+        pod={'metadata':{'uid':'pod'},'status':{'conditions':[{'type':'Ready','status':'True'}],'containerStatuses':[{'name':'server','ready':True,'restartCount':0,'imageID':'docker-pullable://registry:5000/server@'+digest}]}}
+        harness=object.__new__(evaluation.Harness)
+        for images in ([digest,digest],[],['sha256:'+'b'*64],[digest,'sha256:'+'b'*64]):
+            pods=[]
+            for index,image in enumerate(images):
+                value=copy.deepcopy(pod);value['metadata']['uid']=str(index);value['status']['containerStatuses'][0]['imageID']='containerd://'+image;pods.append(value)
+            with patch.object(evaluation,'kubectl',side_effect=[deployment,{'items':pods}]) as request:
+                if images==[digest,digest]:
+                    self.assertEqual(len(harness.check_target(target)[0]['pods']),2)
+                else:
+                    with self.assertRaisesRegex(ValueError,'IdentityMismatch:.*observed='):
+                        harness.check_target(target)
+                self.assertEqual(request.call_args.args,('test','get','pods','-l','app=server'))
 
 
 def offline(binding,stage,environment):

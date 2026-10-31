@@ -279,15 +279,20 @@ class Harness:
         for component in target['components']:
             resource=component['resource'];obj=kubectl(resource['namespace'],'get',resource['kind'],resource['name'])
             podspec=obj['spec'].get('template',{}).get('spec',obj['spec'])
-            if component['image'] not in [c['image'] for c in podspec['containers']]: raise ValueError('IdentityMismatch: target image '+component['name'])
+            expected_digest=component['image'].split('@')[-1]
+            repository=component['image'].split('@')[0]
+            container_names={c['name'] for c in podspec['containers'] if re.sub(r':[^/:]+$','',c['image'].split('@')[0])==repository}
             labels=obj['metadata'].get('labels',{});annotations=obj['metadata'].get('annotations',{})
             source=labels.get('org.opencontainers.image.revision',annotations.get('org.opencontainers.image.revision'))
             if source is not None and source!=component['sourceSHA']: raise ValueError('IdentityMismatch: target source '+component['name'])
             pods=kubectl(resource['namespace'],'get','pods','-l',','.join(k+'='+v for k,v in obj['spec'].get('selector',{}).get('matchLabels',{}).items())) if obj['kind']!='Pod' else {'items':[obj]}
             current=[pod for pod in pods['items'] if not pod['metadata'].get('deletionTimestamp')]
-            if not current: raise RuntimeError('TargetUnavailable: no live target Pod')
+            if not current: raise ValueError('IdentityMismatch: target image '+component['name']+' observed=[]')
             for pod in current:
                 statuses=pod.get('status',{}).get('containerStatuses',[])
+                observed={status['name']:status.get('imageID') for status in statuses if status['name'] in container_names}
+                if not observed or any(not image or image.rsplit('://',1)[-1].split('@')[-1]!=expected_digest for image in observed.values()):
+                    raise ValueError('IdentityMismatch: target image '+component['name']+' observed='+json.dumps(observed,sort_keys=True))
                 if not statuses or any(not status.get('ready') or status.get('restartCount') or not status.get('imageID') for status in statuses) or not any(condition['type']=='Ready' and condition['status']=='True' for condition in pod.get('status',{}).get('conditions',[])):
                     raise RuntimeError('TargetUnavailable: target Pod not Ready or restarted')
             pods['items']=sorted(current,key=lambda pod:pod['metadata']['uid'])
