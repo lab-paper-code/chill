@@ -245,13 +245,21 @@ func TestCleanupFailureReleasePreservesFailure(t *testing.T) {
 	startRun(parent)
 	condition(&parent.Status.Conditions, 1, api.EvaluationConditionCleanupComplete, metav1.ConditionFalse, api.EvaluationReasonReturnTimeout, "")
 	r, _ := fixtureRuntime(t, parent)
+	allocationPresent := true
 	r.HTTP = func(_ context.Context, _ string, _ map[string]string, _ string, value any) error {
+		if allocationPresent {
+			return json.Unmarshal([]byte(`{"snapshot":{"at":"2026-11-01T12:00:00Z","instances":[{"id":"owned","ownerWorkloadUID":"workload-uid"}],"routing":{"workload-uid":{"owned":1}}}}`), value)
+		}
 		return json.Unmarshal([]byte(`{"snapshot":{"at":"2026-11-01T12:00:00Z","reservations":[],"outstanding":[],"actions":[]}}`), value)
 	}
 	if !occupied(parent) {
 		t.Fatal("cleanup failure released pool")
 	}
 	annotation := `{"reason":"operator confirmed previous writers stopped and pool returned","at":"2026-11-01T12:00:00Z","evidenceRef":{"store":"evidence","key":"operator-confirmation","size":10}}`
+	if result, err := (&RunReconciler{Runtime: r}).release(context.Background(), parent, annotation); err != nil || result.RequeueAfter == 0 || !occupied(parent) || len(parent.Status.ReleaseRecords) != 0 {
+		t.Fatalf("release must wait for owned allocation/route return: result=%v err=%v", result, err)
+	}
+	allocationPresent = false
 	if _, e := (&RunReconciler{Runtime: r}).release(context.Background(), parent, annotation); e != nil {
 		t.Fatal(e)
 	}

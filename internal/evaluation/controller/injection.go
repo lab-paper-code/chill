@@ -67,6 +67,18 @@ func (s schedulerState) returned(now time.Time, v map[string]string) bool {
 	if !s.fresh(now, v) || len(s.Snapshot.Reservations) > 0 || len(s.Snapshot.Outstanding) > 0 {
 		return false
 	}
+	for _, instance := range s.Snapshot.Instances {
+		if instance.OwnerWorkloadUID != "" {
+			return false
+		}
+	}
+	for _, routes := range s.Snapshot.Routing {
+		for _, weight := range routes {
+			if weight > 0 {
+				return false
+			}
+		}
+	}
 	for _, a := range s.Snapshot.Actions {
 		if a.Status == "running" || a.Status == "cancel" {
 			return false
