@@ -280,3 +280,10 @@
 
 - 13:11Z control-275: server와 dashboard를 `8a696dc3`(7788ce14 포함, 조언 세션 요청)으로 배포. 두 Pod 모두 restart 0, dashboard 응답 200. 게이트: 리플레이 PASS(기준 61987770), clean lint/test/arch/helm PASS. dashboard 테스트는 작업 트리에서 175/0. clean 사본에서만 2건 실패했는데 환경 문제로 추정. 새 builder 캐시는 3.8GB(GC 설정 동작 중).
 - weight 비례화 패널 2/2 합의: capacityWeights의 에너지 순 채움 삭제, y는 최종 정수 weight로 계산, capacityEnergyLoad의 greedy 분기 삭제, carries/currentWeights 삭제. κ 비례는 SLO 정규화 부하의 minimax임(max λᵢ/κᵢ ≥ λ/Σκ). M/M/1 지연 최적은 아니지만 κ가 이미 장치별 SLO 무릎이라 타당함. 구현 진행 중(ImplWeights). fail-before 확인: 3m-12 결과가 기존 [138 359 216 287], 기대 [114 296 178 412].
+
+## 2026-10-31 — weight A/B 판정 규칙(사용자 제안 채택)
+
+- A/B(E5-3m만, 후보 506cd82a κ 비례 vs 기준 8a696dc3 에너지 순 채움, 교대 각 3회, tag 13~18)는 그대로 진행함.
+- 판정: κ 비례가 SLO를 개선하고 에너지 증가가 잡음 범위 밖이면 → "상한 채우기"로 전환(싼 장치부터 ρ*×κ까지 채우고 넘는 양만 다음 장치로; HPA target utilization 발상). ρ*는 config 값 하나이고, 근거는 재계획 완료 전 예상 부하 증가 배율의 역수(E5-3m 계단 1.27배면 ≤0.78). 같은 ρ*를 결함 3(계획기 여유 용량 ρ*×Σκ ≥ 수요)에도 써서 파라미터 하나로 묶음. 별도 headroom 메커니즘은 추가하지 않음.
+- 에너지 차이가 잡음 범위면 → κ 비례 유지(계획기가 더 적은 장치로 합격할 수 있어 에너지 이득 가능), 결함 3만 진행.
+- A/B 보고에 장치별 요청당 증분 에너지와 유휴 전력 비중을 함께 표시함.
