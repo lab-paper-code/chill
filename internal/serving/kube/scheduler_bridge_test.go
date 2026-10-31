@@ -2,6 +2,7 @@ package kube
 
 import (
 	"testing"
+	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
 )
@@ -43,6 +44,31 @@ func TestBridgeStopRequiresCurrentNativeACKAC45(t *testing.T) {
 			}
 			if got := controller.dependenciesReady(stop, target); got != (proof == nativeOperationComplete || proof == independentRouteChanged) {
 				t.Fatalf("bridge ACK proof %s allowed stop=%t", proof, got)
+			}
+		})
+	}
+}
+
+func TestRequiredBridgeFailureFailsOwnerSCH26AC38(t *testing.T) {
+	for _, status := range []string{nativeOperationFailed, nativeOperationPartial, nativeOperationComplete} {
+		t.Run(status, func(t *testing.T) {
+			c, goal, _ := acknowledgedHandoffFixture(t)
+			stage := *c.runs["acknowledged-route"].result.Operation.Target
+			bridge := serving.Action{ID: "required-bridge", Kind: operationRoute, RouteTarget: &stage, Status: status}
+			goal.Actions = []serving.Action{bridge, {ID: "blocked-stop", Kind: operationStop, DependsOn: []string{bridge.ID}}}
+			installTestTransition(c, &goal)
+			parent := c.runs[transitionRunKind+"/"+goal.ID]
+			c.runs[bridge.ID] = &actionRun{action: bridge, owner: goal.ID,
+				result: &OperationResult{Operation: Operation{Target: &stage}, Status: status}}
+			// The bridge's successful effect can be superseded by the final
+			// route; an execution failure must still terminate its owner.
+			c.reconcileOwnersLocked(serving.SchedulerSnapshot{}, time.Now(), false)
+			want := nativeOperationFailed
+			if status == nativeOperationComplete {
+				want = nativeOperationRunning
+			}
+			if parent.action.Status != want {
+				t.Fatalf("bridge %s left parent %s, want %s", status, parent.action.Status, want)
 			}
 		})
 	}

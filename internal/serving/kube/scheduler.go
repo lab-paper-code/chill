@@ -568,7 +568,7 @@ func (c *SchedulerController) failTargetLocked(snapshot serving.SchedulerSnapsho
 		}
 	}
 	for _, desired := range actions {
-		if desired.RouteTarget != nil || desired.From == readySubsetRoute || desired.From == externalActionSource {
+		if desired.From == readySubsetRoute || desired.From == externalActionSource {
 			continue
 		}
 		run := c.runs[desired.ID]
@@ -592,7 +592,7 @@ func (c *SchedulerController) failTargetLocked(snapshot serving.SchedulerSnapsho
 			proof = &scopedRun
 		}
 		// Fixed lowering is undone by the goal's own raise of the same Node.
-		if !desired.Fixed && run.result.Status == nativeOperationComplete && !c.actionEffectPresent(snapshot, proof) && !c.actionEffectUnknown(snapshot, proof) {
+		if desired.RouteTarget == nil && !desired.Fixed && run.result.Status == nativeOperationComplete && !c.actionEffectPresent(snapshot, proof) && !c.actionEffectUnknown(snapshot, proof) {
 			result := *run.result
 			result.Status, result.Error, result.EndedAt = nativeOperationFailed, "completed effect lost", now
 			run.result, run.action.Status, run.action.Reason = &result, nativeOperationFailed, result.Error
