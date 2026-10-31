@@ -6,6 +6,8 @@ import { ObservationsPage } from "@/features/observations"
 import { MeasurementCheckPage, MeasurementDetail } from "@/features/read-pages"
 import { MeasurementRunsPage, MeasurementGroupPage } from "@/features/measurement-runs"
 import { ExperimentsPage } from "@/features/experiments"
+import { EvaluationsPage } from "@/features/evaluation-request"
+import { LoadScenarioPage } from "@/features/load-scenario-author"
 import { ResourcesPage, PoolsPage } from "@/features/resources"
 import { LiveBoardPage, LivePoolPage } from "@/features/live-board"
 import { SchedulerPage, SchedulerCandidatesPage, SchedulerEstimatesPage, SchedulerLoadPage } from "@/features/scheduler"
@@ -83,6 +85,8 @@ export default async function Page({params,searchParams}:{params:Promise<{route:
   else if (head === "records" && route.length === 1) page = <RecordsPage />
   else if (head === "settings" && route.length === 1) page = <SettingsPage />
   else if (head === "experiments" && route.length <= 2) page = <ExperimentsPage />
+  else if (head === "evaluations" && route.length === 1) page = <EvaluationsPage />
+  else if (head === "evaluations" && name === "load-scenarios" && route.length === 2) page = <LoadScenarioPage />
   else notFound()
   return <Suspense fallback={<p className="screen" role="status">화면 여는 중</p>}>{page}</Suspense>
 }

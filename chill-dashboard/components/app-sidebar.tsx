@@ -11,7 +11,7 @@ import { BrandMark } from "@/components/brand"
 export const navigation = [
   {title:"개요",url:"/",icon:Gauge,prefixes:[] as string[]},
   {title:"측정",url:"/measurements",icon:FlaskConical,prefixes:["/measurements","/scheduler/profiles"]},
-  {title:"실험",url:"/experiments",icon:FlaskConical,prefixes:["/experiments"]},
+  {title:"실험",url:"/experiments",icon:FlaskConical,prefixes:["/experiments","/evaluations"]},
   {title:"서비스",url:"/workloads",icon:Layers,prefixes:["/workloads"]},
   {title:"운영",url:"/scheduler",icon:BrainCircuit,prefixes:["/operations","/scheduler","/transitions","/resources","/pools"]},
   {title:"기록",url:"/records",icon:History,prefixes:["/records","/observations","/changes","/scheduler/history","/scheduler/power","/scheduler/compare"]},

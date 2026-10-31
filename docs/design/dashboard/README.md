@@ -762,6 +762,45 @@ UI UX Pro Max `Compare Categories`의 그룹 막대·비색상 구별·접근 �
 없는 이유는 미제공으로 남기며 FAIL/NOT_READY/MEASURED_DESCRIPTIVE는 각각 게시 판정·준비·설명형 결과로 구분한다.
 성능 실패와 공개 불가/미평가를 같은 빨간 배지로 처리하지 않는다.
 
+#### 실험 실행·부하 정의 작성
+
+`/evaluations`는 실행 목록·단건·시작 전 수정을, `/evaluations/load-scenarios`는 재사용 부하 정의를 다룬다.
+두 경로 모두 사이드바의 ‘실험’에 속하며 완료된 게시 `/experiments`와 진행 중 CR을 섞지 않는다.
+기본 새 실행 진입은 게시 `definition.spec` 복사다. 복사 시 기존 이름·실행 UID를 승계하지 않고
+참조 LoadScenario·증거 UID와 알 수 없는 spec 필드는 그대로 보존한다.
+‘빈 템플릿’은 `GET /evaluations/template`의 spec·sources만 사용한다. sources의 `none`만 ‘입력 필요’로 강조하며
+하네스 이미지·측정기·증거 저장소 등 운영 값을 브라우저에서 지어내거나 기본값으로 보충하지 않는다.
+
+편집기는 단계 mode·LoadScenario name/uid·시작 증거/앞선 단계 출력·장애 주입 계획,
+후보 left/기준 right의 같은 실험 stageID 또는 과거 publicationID/stageID,
+판정 기준·기본/단계 제어를 폼과 JSON으로 양방향 편집한다.
+단계 control은 기본값 전체 대체이며 개별 스위치를 임의 병합하지 않는다.
+JSON 수정과 폼 수정은 원래 spec의 해당 경로만 바꿔 미래 필드·정밀 정수를 보존한다.
+JSON 구문 오류는 제출을 막지만 spec 의미 검증을 중복 구현하지 않는다. 정본은 서버 사전점검이다.
+
+부하 정의는 목록의 UID·inUse 실험 칩과 단건 spec을 제공한다. parts는 길이(s)·요청률(요청/s) 또는 α 표,
+구간 길이×요청률 막대 미리보기로 편집한다. 증거 선택기는 서버 inputs의 실제 kind별 목록만 사용한다.
+seed·trace·입력 번들·rateBasis·κ의 store/key/size를 선택하며 입력 번들 자체를 생성하지 않는다.
+liveWorkloads 차이는 정의/현재 UID·generation 표에 보이고 기본은 미반영이다.
+선택한 행만 명시 반영하면 기존 사전점검을 폐기하고 다시 점검해야 한다.
+inUse가 하나라도 있으면 수정·삭제를 막고 참조 실험을 연결한다. 경쟁 상태의 409도 ‘사용 중’으로 표시한다.
+
+실행·부하 저장은 사전점검 통과 및 점검한 name/spec와 현재 편집본 일치를 요구한다.
+실행 대상 digest 차이도 liveTarget의 정확한 component/resource 식별자와 ready Pod imageID로만 표시하고
+사용자가 고른 값을 반영한 뒤 재점검한다. 실패를 숨기거나 서버 검사를 클라이언트 추측으로 대체하지 않는다.
+수정은 PUT과 원래 UID 조건으로 같은 이름을 교체하며 응답 새 UID를 갱신한다.
+부하 수정은 inUse가 비었을 때, 실험 수정은 Pending일 때만 제공한다.
+PUT의 409 외 오류는 단건 GET으로 확인한다: 새 UID·동일 spec은 ‘수정 확인’, 원래 UID는 ‘미변경’,
+404는 ‘삭제됨·재생성 필요’, 조회 실패는 ‘결과 미확인’이다. 편집본을 유지하며 재생성은 재점검 후 명시 POST다.
+생성·삭제의 결과 불명도 해당 이름 단건으로 확인하고 자동 재전송하지 않는다.
+
+운영 보드는 active 요약으로 ‘평가 실행 중’을 표시하고 같은 nodeName/podName 정확 일치 사건만 ‘주입’ 태그를 붙인다.
+중지·삭제는 원래 UID 조건을 포함한다. Blocked 정리 실패는 residuals와 필수 reason을 확인한 release 요청을 제공하며
+확인 버튼이 정리 성공·풀 반환·기존 실패 판정을 직접 바꾸지 않는다.
+릴레이는 계약의 정확한 method/path만 허용한다. 쓰기 권한은 별도 `chill-evaluation-operator`이며
+403은 ‘권한 없음(평가 운영자)’로 표시한다. 권한 조회 API를 만들거나 버튼을 추측으로 숨기지 않는다.
+서버 API 미제공·오류는 실제 조회 상태로 표시하며 가짜 목록·입력·템플릿으로 대체하지 않는다.
+
 ### 8.7 탐색 계약과 구현 소유권
 
 Breadcrumb는 `측정 > 커버리지/요청 목록 > 측정 > 회차`, `기록 > 실험`을 따른다.
