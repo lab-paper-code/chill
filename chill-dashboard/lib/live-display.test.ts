@@ -2,13 +2,21 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { LiveAction, LiveInstance, LiveMetric, LiveMetrics, LiveSnapshot, LiveWorkload } from "./live.ts"
 import { changeListStatus, serviceTrafficState, actionProgress, actionOrigin, scopeSnapshot, scopeEvents, recentEvents, liveFresh, belongsToPool, displayNumber, duration, elapsed, instanceSymbol, isStale, ratio, receivedLabel, routingShare, terminalCount, workloadLabel, workloadQueue, servicePriority, mergeKeepEvents, trendSegments, boardVerdict, decisionText } from "./live-display.ts"
-import { idleGroups, retainedEvents, sloLatency, minuteMetrics, quietReason } from "./live-display.ts"
+import { idleGroups, retainedEvents, sloLatency, minuteMetrics, quietReason, incidentFlow } from "./live-display.ts"
 
 const at="2026-10-30T12:00:00.123456789Z",now=Date.parse(at)
 const instance:LiveInstance={id:"shared",node:{uid:"n",name:"Node"},ownerWorkloadUID:"a",profileID:"p",ready:true,stopped:false,routable:{a:true,b:true},running:{a:1,b:0},waiting:{a:0,b:2},observedAt:at}
 const metric:LiveMetric={received:9,completed:3,failed:1,withinSLO:2,latencySamples:4,p50ms:10,p90ms:15,p95ms:20,p99ms:30}
 const workload:LiveWorkload={uid:"a",name:"same-name",model:"arbitrary",definitionID:"d",slo:{percentile:95,targetLatencyNanos:100000000},autonomous:false,admission:true,pending:2,readiness:{ready:true,reason:"",observedAt:at}}
 
+test("one incident flow includes gaps by their start and counts them alongside changes",()=>{
+  const gaps=[{from:at,to:new Date(now+1000).toISOString(),scope:"node:n",reason:"power sample unavailable"}]
+  const flow=incidentFlow([],gaps,now+1000)
+  assert.equal(flow.length,1)
+  assert.equal(flow[0].kind,"gap")
+  assert.equal(flow[0].at,at)
+  assert.equal(incidentFlow([],gaps,now-1).length,0)
+})
 test("terminal ratios never divide by received and distinguish missing from observed zero",()=>{
   assert.equal(terminalCount(metric),4)
   assert.equal(ratio(metric.completed,terminalCount(metric)),"3/4 (75.0%)")
