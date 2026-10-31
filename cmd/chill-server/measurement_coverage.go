@@ -17,6 +17,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+var measurementCoverageSourceKinds = [...]string{"inventory", "compatibility", "catalog", "BEO", "Run", "input-contract"}
+
 type measurementCoverageCache struct {
 	mu         sync.Mutex
 	namespaces map[string]*measurementCoverageEntry
@@ -180,7 +182,7 @@ func (o *measurementService) readCoverage(
 		err  error
 		at   time.Time
 	}
-	results := make(chan sourceResult, 6)
+	results := make(chan sourceResult, len(measurementCoverageSourceKinds))
 	go func() {
 		var value operatorconsole.InventoryView
 		err := o.readConsoleCoverage(ctx, "/api/v1/inventory", &value)
@@ -246,7 +248,7 @@ func (o *measurementService) readCoverage(
 		results <- sourceResult{"catalog", err, at}
 	}()
 	var failures []error
-	for range 6 {
+	for range measurementCoverageSourceKinds {
 		result := <-results
 		if result.err != nil {
 			next.failures[result.kind] = result.err
@@ -258,7 +260,7 @@ func (o *measurementService) readCoverage(
 			next.checked[result.kind] = result.at
 		}
 	}
-	if len(next.checked) != 5 {
+	if len(next.checked) != len(measurementCoverageSourceKinds) {
 		return nil, errors.Join(failures...)
 	}
 	// Stable source order, not LIST iteration order, determines the projection.

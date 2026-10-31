@@ -94,7 +94,7 @@ func (p *coverageProjection) initialize() {
 }
 
 func (p *coverageProjection) addSources() {
-	for _, kind := range []string{"inventory", "compatibility", "catalog", "BEO", "Run", "input-contract"} {
+	for _, kind := range measurementCoverageSourceKinds {
 		source := operatorconsole.MeasurementCoverageSource{
 			Kind: kind, ResourceVersions: []string{}, Complete: true,
 		}

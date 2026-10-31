@@ -5,9 +5,7 @@ import { useEffect, useRef } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { ApiError, useChillQuery, useSession } from "@/lib/client"
 import { coverageFailureHref, coverageProfileQuery, coverageStatusCounts, measurementAge, coverageSelection, coveragePathVisible, coverageWatts, coverageModes, coverageVariant, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, deviceLabel, conditionLabel, type CompatibilityRead } from "@/lib/measurement-coverage"
-import { requestInputs } from "@/lib/measurement-request"
-import type { DatasetResource, PreprocessorResource } from "@/lib/domain"
-import type { BatchProgress, InventoryView, ModelCompatibility, MeasurementCoverageResponse, MeasurementCoverageCell, MeasurementFailure, ProfilesView, RunsView, ResultRow } from "@/lib/read-types"
+import type { BatchProgress, InventoryView, ModelCompatibility, MeasurementCoverageResponse, MeasurementCoverageCell, ProfilesView, RunsView, ResultRow } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { MeasurementNavigation, MeasurementStatus } from "@/components/measurement-navigation"
 import { Screen } from "@/components/screen"
@@ -205,15 +203,6 @@ function CoverageDetail({cell,namespace,close,visible}:{cell:MeasurementCoverage
     }
   }})
   const runs=useChillQuery<RunsView>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs?${new URLSearchParams({model:cell.model.name,deviceClass:cell.deviceClass.name,path:cell.executionPath,powerMode:cell.powerMode,limit:"200",status:"problem"})}`,{enabled:cell.failureSummary.length>0})
-  const preprocessors=useChillQuery<{items:PreprocessorResource[]}>("v1/preprocessors",{enabled:rows.length>0})
-  const datasets=useChillQuery<{items:DatasetResource[]}>("v1/datasets",{enabled:rows.length>0})
-  const condition=variant?.condition
-  const active=condition?.activeProtocol as {dataset?:string|{name?:string}}|undefined
-  const pre=condition?.preprocessor as {name?:string}|string|undefined
-  const legacy=condition?.state as {candidate?:{preprocessor?:string}}|undefined
-  const dataset=typeof active?.dataset==="string"?active.dataset:active?.dataset?.name??""
-  const preprocessor=typeof pre==="string"?pre:pre?.name??legacy?.candidate?.preprocessor??""
-  const inputs=preprocessors.data&&datasets.data?requestInputs(cell.model.name,"",preprocessor,dataset,{preprocessors:preprocessors.data.items,datasets:datasets.data.items}):undefined
   const profileIDs=new Set(rows.flatMap(row=>[row.profileId,row.sourceProfileId].filter(Boolean)))
   const measured=(profiles.data?.profiles??[]).filter(profile=>profileIDs.has(profile.id)).map(profile=>profile.measuredAt).filter(at=>Number.isFinite(Date.parse(at))).sort()
   const checks=(variant?.assessment??cell.assessment).checklist.checks.filter(check=>check.result!=="pass")
@@ -224,7 +213,7 @@ function CoverageDetail({cell,namespace,close,visible}:{cell:MeasurementCoverage
     <p className="font-semibold break-words">{cell.model.name}</p><p>선택 경로: {powerModeLabel(cell.powerMode,coverageWatts([cell]))}<br/>{cell.executionPath}</p>
     {!visible&&<p className="text-muted-foreground">이 조건은 현재 탭·필터 밖에 있습니다. 선택은 유지됩니다.</p>}
     <MeasurementStatus assessment={cell.assessment}/>
-    {rows.length>0&&<section aria-label="입력 계약·품질 확인"><h3>{checks.some(check=>check.result==="fail")?"확인된 근거 불일치":"추가 확인 사항"}</h3>{inputs?.warning&&<p className="text-sm text-muted-foreground">{inputs.warning}</p>}{checks.length>0&&<ul>{checks.map(check=><li key={`${check.code}/${check.result}`} className={check.result==="fail"?"coverage-warning":"text-sm text-muted-foreground"}>{check.result==="fail"?"불일치":check.result==="unknown"?"미확인":"참고"}: {check.message}</li>)}</ul>}<p className="text-sm text-muted-foreground">스케줄러 사용 여부는 채택 사실이며 별도 운영 승인을 뜻하지 않습니다.</p></section>}
+    {rows.length>0&&<section aria-label="입력 계약·품질 확인"><h3>{checks.some(check=>check.result==="fail")?"확인된 근거 불일치":"추가 확인 사항"}</h3>{checks.length>0&&<ul>{checks.map(check=><li key={`${check.code}/${check.result}`} className={check.result==="fail"?"coverage-warning":"text-sm text-muted-foreground"}>{check.result==="fail"?"불일치":check.result==="unknown"?"미확인":"참고"}: {check.message}</li>)}</ul>}<p className="text-sm text-muted-foreground">스케줄러 사용 여부는 채택 사실이며 별도 운영 승인을 뜻하지 않습니다.</p></section>}
     <div className="text-sm">{measured.length?<p>실제 측정 <time dateTime={measured.at(-1)}>{formatMeasurementTime(measured.at(-1)!)}</time> / {measurementAge(measured.at(-1)!)}</p>:profiles.isPending&&rows.length?<p>측정 시각 조회 중</p>:profiles.error?<><p role="alert">측정 시각 조회 실패 (HTTP {profiles.error.status}) · 수치 근거는 유지합니다.</p><Button variant="outline" onClick={()=>void profiles.refetch()}>측정 시각 다시 조회</Button></>:<p>측정 시각 미기록 또는 현재 프로파일에 없음</p>}</div>
     <TrustLine row={rows.find(row=>row.batch===1)??rows[0]}/>
     <Button asChild><Link href={coverageRequestHref(cell,namespace,returnTo,variant?.id,params.get("batches")?.split(",").map(Number)??[])}>이 조건으로 측정 요청</Link></Button>
