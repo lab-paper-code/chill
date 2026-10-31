@@ -118,7 +118,18 @@ func TestLoadReplacementGetsNewUID(t *testing.T) {
 		&api.LoadScenario{ObjectMeta: metav1.ObjectMeta{Name: "load", Namespace: "ns", UID: "old"}},
 	)
 	s.client = loadUIDClient{s.client}
-	identity, err := s.replace(context.Background(), "load", "old", loadRequest(), "actor")
+	request := loadRequest()
+	request.Name = "different"
+	if _, err := s.replace(context.Background(), "load", "old", request, "actor"); err == nil {
+		t.Fatal("mismatched body name accepted")
+	}
+	var original api.LoadScenario
+	key := client.ObjectKey{Namespace: "ns", Name: "load"}
+	if err := s.client.Get(context.Background(), key, &original); err != nil || original.UID != "old" {
+		t.Fatalf("mismatch mutated original: uid=%s error=%v", original.UID, err)
+	}
+	request.Name = ""
+	identity, err := s.replace(context.Background(), "load", "old", request, "actor")
 	if err != nil || identity.UID != "new" {
 		t.Fatalf("replacement=%+v error=%v", identity, err)
 	}

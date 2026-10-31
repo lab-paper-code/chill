@@ -191,6 +191,9 @@ func (s *evaluationLoadService) delete(ctx context.Context, name, uid string) (h
 func (s *evaluationLoadService) replace(
 	ctx context.Context, name, uid string, request httpapi.LoadScenarioRequest, actor string,
 ) (httpapi.EvaluationIdentity, error) {
+	if request.Name != "" && request.Name != name {
+		return httpapi.EvaluationIdentity{}, loadError("InvalidInput", "body name must match path name")
+	}
 	request.Name = name
 	if err := s.checked(ctx, request); err != nil {
 		return httpapi.EvaluationIdentity{}, err
