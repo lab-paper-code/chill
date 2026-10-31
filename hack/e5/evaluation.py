@@ -304,11 +304,16 @@ class Harness:
         if self.step=='finish' and self.execution.get('prepareCompleted') is True:
             try:
                 if not reference: raise ValueError('missing snapshot reference')
-                self.store.get(reference,path)
+                self.inputs.mkdir(parents=True,exist_ok=True)
+                with tempfile.TemporaryDirectory(prefix='finish-snapshot-',dir=self.inputs) as directory:
+                    downloaded=Path(directory)/'snapshot.json'
+                    self.store.get(reference,downloaded)
+                    self.snapshot=load(downloaded)
             except Exception as error: raise RuntimeError('EvidenceUnreadable: '+str(error)) from error
-        elif not path.exists(): self.store.get(reference,path)
-        try:
+        else:
+            if not path.exists(): self.store.get(reference,path)
             self.snapshot=load(path)
+        try:
             if self.snapshot.get('schemaVersion')!='evaluation-snapshot.v1alpha1' or self.snapshot.get('runUID')!=self.execution['runUID']:
                 raise ValueError('FrozenInputInvalid: input snapshot execution identity')
         except Exception as error:
@@ -480,40 +485,49 @@ class Harness:
         definitions={workload['uid']:workload for scenario in scenarios for workload in scenario['workloads']}
         definition={'schema':'evaluation-definition.v1alpha1','run':{'name':self.execution['runName'],'uid':self.execution['runUID']},'spec':self.snapshot['runSpec'],'loadScenarios':[{'name':s['ref']['name'],'uid':s['ref']['uid'],'spec':s['spec']} for s in scenarios],'workloads':list(definitions.values())}
         finish=procedures['finish']
-        cleanup_results=[finish]+[procedures[stage['id']]['cleanup-jobs'] for stage in stage_outcomes]
-        cleanup=execution_outcome([entry for value in cleanup_results for entry in ({'execution':value.get('cleanup',not_started)},value)])
-        if any('Unknown' in injection['reason'] or 'Requested' in injection['reason'] for stage in stage_outcomes for injection in stage['injections']):
+        children=self.execution['childRefs']
+        created_ids={child['stageID'] for child in children}
+        cleanup_results=[finish]+[procedures[child['stageID']]['cleanup-jobs'] for child in children]
+        cleanup=execution_outcome([entry for value in cleanup_results for entry in ({'execution':value.get('cleanup',not_started)},value)]+[{'execution':child.get('cleanup',not_started)} for child in children])
+        uncertain=next((child for child in children if child['uncertain']),None)
+        if uncertain:
+            reason=uncertain['execution']['reason']
+            cleanup={'status':'Failed','reason':reason if reason in ('ExecutionLost','RemoteEffectUnknown') else 'RemoteEffectUnknown'}
+        elif any('Unknown' in injection['reason'] or 'Requested' in injection['reason'] for stage in stage_outcomes if stage['id'] in created_ids for injection in stage['injections']):
             cleanup={'status':'Failed','reason':'RemoteEffectUnknown'}
+        if cleanup['status']!='Complete': cleanup={**cleanup,'status':'Failed'}
         unjudged=next((stage['measurement'] for stage in stage_outcomes if stage['measurement']['verdict']=='NOT_EVALUATED'),None)
         measured=verdict(aggregated)
         if measured['verdict']=='NOT_EVALUATED' and unjudged: measured=unjudged
         outcome={'execution':execution_outcome([procedures['prepare'],finish]+[{'execution':stage['execution']} for stage in stage_outcomes]),'measurement':measured,'cleanup':cleanup,'stages':stage_outcomes}
         residuals=[];seen_refs=set()
-        def collect_residuals(value,reason='ResidualState',resource_refs=True):
+        def collect_residuals(value,reason='ResidualState'):
             if not isinstance(value,dict): return
             reason=value.get('reason') or reason
-            for residual in value.get('residuals',[]):
+            failed=any(value.get(axis,{}).get('status')=='Failed' for axis in ('execution','cleanup')) or value.get('status')=='Failed'
+            for residual in value.get('residuals',[]) if failed else []:
                 if residual['kind'] in ('Node','Pod','Job','SchedulerSettings'):
                     item={key:residual[key] for key in ('kind','name')};item['reason']=residual.get('reason') or reason
                     if item not in residuals: residuals.append(item)
             reference=value.get('residualStateRef')
             if reference and reference['key'] not in seen_refs:
                 seen_refs.add(reference['key']);path=self.run/('publication-residual-'+str(len(seen_refs))+'.json')
-                self.store.get(reference,path);collect_residuals(load(path),reason,True)
-            for key,child in value.items():
-                if resource_refs and key in ('nodeRef','podRef','jobRef') and child.get('name'):
-                    item={'kind':{'nodeRef':'Node','podRef':'Pod','jobRef':'Job'}[key],'name':child['name'],'reason':reason}
-                    if item not in residuals: residuals.append(item)
-                elif isinstance(child,dict): collect_residuals(child,reason,resource_refs)
-                elif isinstance(child,list) and key!='residuals':
-                    for entry in child: collect_residuals(entry,reason,resource_refs)
+                self.store.get(reference,path);collect_residuals(load(path),reason)
+            record=value.get('record',{})
+            if record.get('outcome') in ('Unknown','Requested'):
+                for key,kind in (('nodeRef','Node'),('podRef','Pod')):
+                    if record.get(key,{}).get('name'):
+                        item={'kind':kind,'name':record[key]['name'],'reason':record.get('reason') or 'RemoteEffectUnknown'}
+                        if item not in residuals: residuals.append(item)
+            for key in ('details','cleanup'):
+                collect_residuals(value.get(key),reason)
         collect_residuals(finish)
         path=self.run/'publication-run-residual.json'
         try: self.store.get({'store':self.store.name,'key':'experiments/'+self.execution['runUID']+'/run/residual.json'},path)
         except FileNotFoundError: pass
         else: collect_residuals(load(path))
-        for template in self.snapshot['runSpec']['stages']:
-            sid=template['id'];collect_residuals(procedures[sid]['cleanup-jobs'])
+        for child in children:
+            sid=child['stageID'];collect_residuals(procedures[sid]['cleanup-jobs'])
             path=self.run/('publication-finalizer-'+sid+'.json')
             try: self.store.get({'store':self.store.name,'key':'experiments/'+self.execution['runUID']+'/stages/'+sid+'/finalizer.json'},path)
             except FileNotFoundError: continue
