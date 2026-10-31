@@ -67,7 +67,7 @@ test("manual evaluation replacement re-read unlocks deleted and unchanged drafts
 
 test("active evaluation injection table translates wire action names",()=>{
   const container=({children}:{children?:React.ReactNode})=>React.createElement("div",null,children)
-  const active={items:[{name:"run",uid:"uid",stageIndex:1,stagesTotal:1,stage:{id:"base",mode:"autonomous",plannedSeconds:60,injections:[{id:"cordon",action:"cordon-delete",offsetSeconds:0},{id:"restore",action:"uncordon",offsetSeconds:10}]}}]}
+  const active={items:[{name:"run",uid:"uid",stageIndex:1,stagesTotal:1,stage:{id:"base",mode:"autonomous",plannedSeconds:60,injections:[{id:"kill",action:"delete-serving-pod",offsetSeconds:0},{id:"cordon",action:"cordon-delete",offsetSeconds:0},{id:"restore",action:"uncordon",offsetSeconds:10}]}}]}
   const modules:Record<string,unknown>={
     "@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/evaluations/active"?active:{items:[]}}),useChillMutation:()=>({})},
     "@/lib/evaluation-active":activeHelpers,
@@ -80,4 +80,5 @@ test("active evaluation injection table translates wire action names",()=>{
   const html=renderToStaticMarkup(React.createElement(exports.EvaluationActive!,{now:0}))
   assert.match(html,/노드 차단·Pod 삭제/)
   assert.match(html,/노드 차단 해제/)
+  assert.match(html,/서비스 Pod 삭제/)
 })

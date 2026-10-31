@@ -6,7 +6,7 @@ import { evaluationPoolBlocked, evaluationRemaining, evaluationStopPath, type Ac
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
 const modes:Record<string,string>={autonomous:"자율",fixed:"고정","controls-disabled":"제어요소 끔"}
-const actions:Record<string,string>={"cordon-delete":"노드 차단·Pod 삭제",uncordon:"노드 차단 해제"}
+const actions:Record<string,string>={"delete-serving-pod":"서비스 Pod 삭제","cordon-delete":"노드 차단·Pod 삭제",uncordon:"노드 차단 해제"}
 const outcomes:Record<string,string>={Executed:"실행됨",Cancelled:"취소됨",Invalid:"무효"}
 
 export function EvaluationActive({now}:{now:number}) {
