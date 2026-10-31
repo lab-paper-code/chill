@@ -20,6 +20,36 @@ func TestProjectVerifiedCurveStateRequiresLoaderEvidence(t *testing.T) {
 	}
 }
 
+func TestCurvePlanIdleBatchPolicy(t *testing.T) {
+	for _, backend := range []string{profilingrun.FirstfloorORTCPUBackend, profilingrun.FirstfloorORTCUDABackend, profilingrun.FirstfloorRKNNLiteBackend} {
+		t.Run(backend, func(t *testing.T) {
+			active := curvePlanRunConfig()
+			active.State.RuntimeFamily, active.State.Backend = profilingrun.FirstfloorRuntimeFamily, backend
+			active.Measurement.Batch = 4
+			idle := active
+			wantBatch := 1
+			if backend == profilingrun.FirstfloorRKNNLiteBackend {
+				wantBatch = 4
+			}
+			idle.Measurement = profilingrun.MeasurementContract{
+				Batch: wantBatch, SettlingDurationSeconds: 60, DurationSeconds: 30,
+				WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
+			}
+			spec, err := ProjectCurvePlanSpec("test-curve", active, idle, profilederivation.CurveConversionContract{}, []int{4})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validateCurvePlanRunConfigs(active, idle, active.TargetNode.UID, idle.TargetNode.UID, spec); err != nil {
+				t.Fatal(err)
+			}
+			idle.Measurement.Batch = 5 - wantBatch
+			if err := validateCurvePlanRunConfigs(active, idle, active.TargetNode.UID, idle.TargetNode.UID, spec); err == nil {
+				t.Fatal("wrong idle measurement batch was accepted")
+			}
+		})
+	}
+}
+
 func TestProjectCurvePlanSpecRoundTripsThroughRunConfigValidation(t *testing.T) {
 	active := curvePlanRunConfig()
 	idle := active
@@ -256,7 +286,7 @@ func TestVerifiedCurvePlanRunConfigProjectionBindsObservableFacts(t *testing.T) 
 	}
 }
 
-func TestVerifiedCurvePlanUsesFirstPlannedBatchSizeIdleWitness(t *testing.T) {
+func TestVerifiedCurvePlanUsesBatchOneORTIdleWitness(t *testing.T) {
 	active := curvePlanRunConfig()
 	active.Candidate.ExecutionPath = "ort-cpu"
 	active.State.Artifact = "canonical-onnx"
@@ -312,13 +342,13 @@ func TestVerifiedCurvePlanUsesFirstPlannedBatchSizeIdleWitness(t *testing.T) {
 
 	shared.PlannedBatchSizes = []int{2, 4}
 	active.Measurement.Batch = 4
-	idle.Measurement.Batch = 2
-	if err := validateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err != nil {
-		t.Fatalf("first planned batch size was not accepted as the idle witness: %v", err)
-	}
 	idle.Measurement.Batch = 1
+	if err := validateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err != nil {
+		t.Fatalf("batch one was not accepted as the ORT idle witness: %v", err)
+	}
+	idle.Measurement.Batch = 2
 	if err := validateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err == nil {
-		t.Fatal("curve plan accepted an idle batch before the first planned batch size")
+		t.Fatal("curve plan accepted a non-canonical ORT idle batch")
 	}
 }
 

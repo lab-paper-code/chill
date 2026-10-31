@@ -142,8 +142,12 @@ func validateCurvePlanRunConfigs(
 	); err != nil {
 		return fmt.Errorf("active curve state: %w", err)
 	}
-	if idle.Measurement.Batch != spec.PlannedBatchSizes[0] {
-		return errors.New("idle curve state does not use the first planned batch size")
+	idleBatch := 1
+	if idle.State.RuntimeFamily == profilingrun.FirstfloorRuntimeFamily && idle.State.Backend == profilingrun.FirstfloorRKNNLiteBackend {
+		idleBatch = spec.PlannedBatchSizes[0]
+	}
+	if idle.Measurement.Batch != idleBatch {
+		return fmt.Errorf("idle curve state batch %d does not match required batch %d", idle.Measurement.Batch, idleBatch)
 	}
 	if err := validateCurvePlanRunConfig(
 		idle, idleNodeUID, spec, spec.IdleProtocol,

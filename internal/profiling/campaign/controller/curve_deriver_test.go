@@ -26,6 +26,25 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+func TestCurveDeriverAcceptsBatchFourWithBatchOneIdle(t *testing.T) {
+	fixture := newCurveDeriverFixture(t, 4)
+	for _, run := range fixture.idleRuns {
+		if run.Spec.Measurement.Batch != 1 {
+			t.Fatalf("idle measurement batch = %d", run.Spec.Measurement.Batch)
+		}
+	}
+	result, err := fixture.deriver.Derive(
+		context.Background(), fixture.plan, fixture.activeRuns, fixture.idleRuns, []int{4}, fixture.policy,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail := result.Detail.(profilederivation.EnergyOptimizationResult)
+	if detail.BestBatch == nil || *detail.BestBatch != 4 || result.Outcome != energySearchExhaustedOutcome {
+		t.Fatalf("derived result = %+v", result)
+	}
+}
+
 func TestCurveDeriverMapsTheEnergyObjectiveDecision(t *testing.T) {
 	fixture := newCurveDeriverFixture(t)
 
@@ -344,9 +363,13 @@ type curveDeriverFixture struct {
 	stateIdentity string
 }
 
-func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
+func newCurveDeriverFixture(t *testing.T, batches ...int) curveDeriverFixture {
 	t.Helper()
 	base := curveFixtureRunConfig(t)
+	if len(batches) == 0 {
+		batches = []int{1, 2}
+	}
+	base.Measurement.Batch = batches[0]
 	idleRunConfig := base
 	idleRunConfig.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
@@ -357,7 +380,7 @@ func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
 	}
 	spec, err := profilerprojection.ProjectCurvePlanSpec(
 		"test-curve", base, idleRunConfig,
-		profilederivation.CurveConversionContract{}, []int{1, 2},
+		profilederivation.CurveConversionContract{}, batches,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -377,7 +400,7 @@ func newCurveDeriverFixture(t *testing.T) curveDeriverFixture {
 			Version: "quick-energy-v2", TrialsPerBatch: 4, ConfidenceLevel: .95,
 		},
 	}
-	for _, batch := range []int{1, 2} {
+	for _, batch := range batches {
 		watts := float64(4 + 2*batch)
 		for trial := 1; trial <= fixture.policy.TrialsPerBatch; trial++ {
 			name := fmt.Sprintf("active-b%d-t%d", batch, trial)
