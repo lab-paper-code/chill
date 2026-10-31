@@ -11,7 +11,6 @@ export const dashboardRedirects = [
   {source:"/scheduler/capacity",destination:"/?evidence=capacity"},
   {source:"/scheduler/history",destination:"/records"},
   {source:"/observations",destination:"/records?kind=requests"},
-  {source:"/changes",destination:"/records?scope=management"},
   {source:"/transitions",destination:"/records?filter=action"},
   {source:"/scheduler/power",destination:"/records?kind=power"},
   {source:"/scheduler/compare",destination:"/records?compare=1"},
@@ -36,9 +35,10 @@ export function dashboardDestination(pathname:string,search:URLSearchParams):str
   if(service){const anchors:Record<string,string>={definition:"definition",evidence:"definition",placement:"placement",operation:"placement",changes:"application"};return `/workloads/${service[1]}${search.size?`?${search}`:""}#${anchors[service[2]]}`}
   if(pathname.startsWith("/transitions/")&&pathname.split("/").length===3){
     const next=new URLSearchParams(search);next.set("id",decodeURIComponent(pathname.split("/")[2]));next.set("filter","action")
+    if(!next.has("view")&&!["offset","kind","at"].some(key=>next.has(key)))next.set("view","current")
     return `/records?${next}`
   }
-  if(pathname==="/changes"&&search.get("scope")==="scheduler")destination="/records?filter=settings&scope=scheduler"
+  if(pathname==="/changes")destination=search.get("scope")==="scheduler"?"/records?filter=settings&scope=scheduler":"/records?scope=management"
   if(pathname==="/experiments"&&["a","al","as","b","bs"].some(key=>search.has(key)))destination="/experiments/results"
   if(pathname.startsWith("/experiments/")&&pathname.split("/").length===3&&!["results","new","load-scenarios"].includes(pathname.split("/")[2])) {
     const next=new URLSearchParams(search);next.set("a",decodeURIComponent(pathname.split("/")[2]));return `/experiments/results?${next}`

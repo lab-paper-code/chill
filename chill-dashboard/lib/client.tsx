@@ -70,9 +70,11 @@ export function SessionProvider({children}: {children:React.ReactNode}) {
     if (token) {
       const url = new URL(window.location.href)
       if (url.pathname === "/records") {
-        const selection = ["offset","kind","at","id","node","startedAt"]
+        const selection = ["offset","at","id","node","startedAt"]
+        const kind=url.searchParams.get("kind")
+        if(kind&&!["requests","power","judgments"].includes(kind)){url.searchParams.delete("kind");url.searchParams.delete("cursor")}
         for (const key of selection) url.searchParams.delete(key)
-        for (const prefix of ["a","b"]) for (const key of ["from","to",...selection]) url.searchParams.delete(`${prefix}${key[0].toUpperCase()}${key.slice(1)}`)
+        for (const prefix of ["a","b"]) for (const key of ["from","to","kind",...selection]) url.searchParams.delete(`${prefix}${key[0].toUpperCase()}${key.slice(1)}`)
         router.replace(`${url.pathname}${url.search}${url.hash}`,{scroll:false})
       }
     }

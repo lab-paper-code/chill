@@ -42,7 +42,7 @@ export function useSchedulerHistory():SchedulerHistoryQuery<SchedulerObservation
   if(previousAddress!==address){setPreviousAddress(address);setDraft(submitted);setLimit(Number(params.get("limit")??config.pageSize))}
   React.useEffect(()=>{if(!params.has("from")||!params.has("to")){const next=new URLSearchParams(params.toString());if(!next.has("from"))next.set("from",entry.from);if(!next.has("to"))next.set("to",entry.to);router.replace(`${pathname}?${next}`)}},[entry,params,pathname,router])
   const request=new URLSearchParams({...submitted,limit:params.get("limit")??String(config.pageSize)});if(params.has("cursor"))request.set("cursor",params.get("cursor")!)
-  for(const key of ["order","filter","uid"])if(params.has(key))request.set(key,params.get(key)!)
+  for(const key of ["order","filter","uid"])if(params.has(key)&&(key!=="uid"||params.get("kind")!=="power"))request.set(key,params.get(key)!)
   request.set("view","summary")
   const query=useChillQuery<SchedulerObservationSummaryPage>(`v1/observations/scheduler?${request}`,{decoder:parseSchedulerJSON})
   const rows=(query.data?.events??[]).map((event,index)=>({event,ref:schedulerRecordRef(event,submitted.from,submitted.to,(BigInt(cursor)+BigInt(index)).toString())}))
@@ -156,7 +156,7 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
         event.preventDefault();if(opener.current?.isConnected)opener.current.focus();else{const heading=document.querySelector<HTMLElement>(".screen-head h1");if(heading){heading.tabIndex=-1;heading.focus()}}
       }}>
         <SheetHeader><SheetTitle>선택 기록 근거</SheetTitle></SheetHeader>
-        {!selected?(params.has("id")&&!params.has("offset")&&!params.has("at")?<CurrentTransitionEvidence/>:<p role="alert">기록 식별자 미확인</p>):
+        {!selected?(params.get("view")==="current"&&params.has("id")&&!params.has("offset")&&!params.has("at")?<CurrentTransitionEvidence/>:<p role="alert">기록 식별자 미확인</p>):
           <QueryGate query={record}>{record.isSuccess&&(matches&&event?<>
             <RecordDetails row={{event,ref:selected}}/>
             {event.decision&&!settingsOnly&&<div className="flex flex-wrap gap-2">

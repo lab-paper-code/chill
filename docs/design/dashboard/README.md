@@ -290,6 +290,9 @@ SRS DB-FR-50~52·56·65는 변경, DB-FR-67은 폐기 이력, DB-FR-68~70은 공
 
 `/records`는 링크 허브 없이 종류 전환·조회 범위·기록 표와 선택 Sheet를 제공한다. 구 `/scheduler/history`, `/observations`, `/changes`, `/transitions[/id]`, `/scheduler/power`, `/scheduler/compare`는 기존 query를 보존해 같은 기록 선택으로 redirect한다. 서비스 요청·관리 변경은 workload 관측 API, 판단·설정 변경·전력은 scheduler journal의 원래 페이지 경계를 유지한다.
 
+`/changes`는 query를 읽는 페이지 redirect로만 처리해 `scope=scheduler`와 서비스 관리 변경을 분리한다. 전력 탭의 workload UID는 왕복 맥락이지 journal 전력 필터가 아니며, 요청·변경 이동은 반복 definition/outcome을 그대로 보존한다. 인증 변경은 requests/power 화면 종류를 유지하고 사건 선택만 초기화한다. `view=history`의 불완전한 참조는 현재 상태로 대체하지 않는다.
+정적 분배 결과의 선택 근거는 선언/실제 비율을 병렬 표시하며, `settingsValidatedAt`의 정확한 1ns 구간에서 같은 `afterStaticRouting`을 기록한 설정 변경의 이유·행위자만 연결한다. 현재·과거 결과가 같은 렌더러를 사용한다.
+
 실험은 DB-FR-66과 [실험 실행 설계](../profiling/experiment-execution.md)를 따른다.
 게시 목록의 `comparisons`, 단건 `definition.spec.comparisons`만 비교 관계로 사용하며 단계는 ID로 연결한다.
 suffix·요청률 유사성 fallback은 사용하지 않는다. 정책은 기록 정의, SLO는 기록 정의·실행 결과에서만 읽고 현재 Workload로 소급하지 않는다.

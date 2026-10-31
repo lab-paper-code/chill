@@ -9,9 +9,11 @@ import { SourceJSON } from "@/components/read-region"
 import { statusLabel } from "@/lib/labels"
 import type { SchedulerHistoryRow } from "./scheduler-history"
 import { actionNodeName, actionKinds as kinds, actionStatuses as statuses } from "./scheduler"
-import { useChillQuery } from "@/lib/client"
+import { useChillQuery, useSession } from "@/lib/client"
 import { parseSchedulerJSON } from "@/lib/scheduler"
-import type { SchedulerControllerState } from "@/lib/read-types"
+import type { SchedulerControllerState, SchedulerObservationPage, Routing } from "@/lib/read-types"
+import { decisionRange } from "@/lib/experiments"
+import { Facts } from "@/components/screen"
 import { QueryGate, SourceExport } from "@/components/read-region"
 import { useSearchParams } from "next/navigation"
 
@@ -56,8 +58,41 @@ function OperationDetails({value}:{value:SchedulerOperation}) {
     {target&&<><p>목표 {target.id} / {target.status} / 예상 에너지 {target.expectedJoules==null?"계산값 없음":`${target.expectedJoules} J`}</p><Lines values={target.reasons}/><details><summary>목표의 노드, 인스턴스와 요청 분배</summary>{target.nodes?.map((node,index)=><p key={index}><Node node={node.node}/> / 전력모드 {node.powerMode} / 준비 {node.ready?"완료":"확인 대기"}</p>)}{target.instances?.map((instance,index)=><p key={index}>{instance.id} / {instance.node.name} / CPU {instance.allocation.cpus?.join(", ")||"없음"}, GPU {instance.allocation.gpuUUID||"없음"}, 메모리 {String(instance.allocation.memoryBytes)} bytes / 서비스 {instance.workloadUID||"없음"}</p>)}<p>요청 분배는 원래 가중치이며 확률이 아닙니다.</p>{Object.entries(target.routing??{}).map(([uid,weights])=><p key={uid}>{uid}: {Object.entries(weights).map(([id,weight])=>`${id} ${weight}`).join(", ")}</p>)}</details></>}</section>
 }
 
+function RoutingReason({at,declared,cursor,visited=[]}:{at:string;declared?:Routing;cursor?:string;visited?:string[]}){
+  const {config}=useSession(),range=decisionRange(at)
+  const params=new URLSearchParams({...range,limit:String(config.pageSize),...(cursor?{cursor}:{})})
+  const query=useChillQuery<SchedulerObservationPage>(`v1/observations/scheduler?${params}`,{enabled:!!range,decoder:parseSchedulerJSON})
+  const change=query.data?.events?.map(event=>event.settings).find(settings=>{
+    const after=settings?.afterStaticRouting
+    return settings?.validatedAt===at&&declared!==undefined&&after!==undefined&&Object.keys(after).length===Object.keys(declared).length&&Object.entries(declared).every(([uid,weights])=>Object.hasOwn(after,uid)&&Object.keys(after[uid]).length===Object.keys(weights).length&&Object.entries(weights).every(([id,weight])=>after[uid][id]===weight))
+  })
+  const next=query.data?.nextCursor
+  if(!change&&next&&!visited.includes(next))return <RoutingReason at={at} declared={declared} cursor={next} visited={[...visited,next]}/>
+  if(!range)return <p role="alert">설정 변경 시각 미확인</p>
+  return <QueryGate query={query}>{query.data&&<>
+    <Facts items={[["선택 이유",change?.reason??"미기록"],["행위자",change?.actorUsername??"미기록"],["설정 변경 시각",change?time(change.validatedAt):"미기록"]]}/>
+    {change&&<SourceJSON inline title="일치하는 설정 변경 원본" value={change}/>}
+  </>}</QueryGate>
+}
+
+function RoutingSplit({value}:{value:OperationResult}){
+  const declared=value.operation.staticRouting,actual=value.actual.routing
+  const services=[...new Set([...Object.keys(declared??{}),...Object.keys(actual??{})])]
+  const share=(routing:Routing|undefined,uid:string,id:string,missing:string)=>{
+    if(!routing)return missing
+    const weights=routing[uid]??{},total=Object.values(weights).reduce((sum,weight)=>sum+weight,0)
+    return `${total?((weights[id]??0)/total*100).toLocaleString("ko-KR",{maximumFractionDigits:1}):0}%`
+  }
+  return <section aria-label="설정·실제 요청 분배" className="space-y-3">
+    <h3>서비스·인스턴스 분배</h3>
+    <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th>서비스 UID</th><th>인스턴스</th><th>설정한 비율</th><th>실제 비율</th></tr></thead><tbody>{services.flatMap(uid=>[...new Set([...Object.keys(declared?.[uid]??{}),...Object.keys(actual?.[uid]??{})])].map(id=><tr key={`${uid}/${id}`}><td className="break-all">{uid}</td><td className="break-all">{id}</td><td className="text-right tabular-nums">{share(declared,uid,id,"미기록")}</td><td className="text-right tabular-nums">{share(actual,uid,id,"미확인")}</td></tr>))}</tbody></table></div>
+    {!services.length&&<p>분배 기록 없음</p>}
+    {value.operation.settingsValidatedAt?<RoutingReason at={value.operation.settingsValidatedAt} declared={declared}/>:<p>설정 변경 시각 미기록</p>}
+  </section>
+}
+
 function ResultDetails({value}:{value:OperationResult}) {
-  return <><p role="status">관측 결과 {label(value.status)}</p><p>시작 {time(value.startedAt)} / 종료 {time(value.endedAt)}</p>{value.error&&<p role="alert" className="break-all">{value.error}</p>}<h3>제공된 진행 기록</h3><Lines values={value.progress}/><OperationDetails value={value.operation}/><StateDetails title="변경 전 관측" state={value.before}/><StateDetails title="실제 변경 후 관측" state={value.actual}/>{value.drainNative&&<section><h3>기존 요청 마무리 관측</h3><Native value={value.drainNative}/></section>}</>
+  return <><p role="status">관측 결과 {label(value.status)}</p><p>시작 {time(value.startedAt)} / 종료 {time(value.endedAt)}</p>{value.error&&<p role="alert" className="break-all">{value.error}</p>}{value.operation.kind==="manual-static-routing"&&<RoutingSplit value={value}/>}<h3>제공된 진행 기록</h3><Lines values={value.progress}/><OperationDetails value={value.operation}/><StateDetails title="변경 전 관측" state={value.before}/><StateDetails title="실제 변경 후 관측" state={value.actual}/>{value.drainNative&&<section><h3>기존 요청 마무리 관측</h3><Native value={value.drainNative}/></section>}</>
 }
 
 function Dependencies({ids}:{ids:string[]|null}) {

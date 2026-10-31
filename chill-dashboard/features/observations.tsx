@@ -75,6 +75,7 @@ function ServiceRecords({uid,changes}:{uid:string;changes:boolean}) {
   const more=!!data?.nextCursor||params.has("cursor")
   const requestID=params.get("requestID")??"",[openedRequest,setOpenedRequest]=React.useState("")
   if(requestID&&requestID!==openedRequest&&data?.requests){const index=data.requests.findIndex(row=>row.requestID===requestID);if(index>=0){setOpenedRequest(requestID);setSelected({index,source:data})}}
+  const relatedParams=new URLSearchParams(params.toString());relatedParams.set("kind",changes?"requests":"judgments");relatedParams.set("scope",changes?"requests":"management")
   return <Screen width="data" status={data?.gapUntil?<StatusBadge tone="warn">관측 공백</StatusBadge>:undefined} title="기록">
     <RecordsNavigation/>
     <RecordsRange target={name} from={from} to={to} at={data?.to}/>
@@ -93,7 +94,7 @@ function ServiceRecords({uid,changes}:{uid:string;changes:boolean}) {
         <SourceExport value={{conditions:{uid,query:Object.fromEntries(params.entries()),definition:params.getAll("definition"),outcome:params.getAll("outcome")},source:data}} filename={`chill-${changes?"changes":"observations"}-${data.uid}.json`}/>
         <SourceJSON inline title="조회 자료 원본 보기" value={{conditions:{uid,from,to,definition:params.getAll("definition"),outcome:params.getAll("outcome"),cursor:params.get("cursor"),limit:params.get("limit")},source:data}}/>
       </RowDialog>}
-      <Row href={`/records?${new URLSearchParams({...Object.fromEntries(params),kind:changes?"requests":"judgments",scope:changes?"requests":"management"})}`} label={changes?"같은 기간 서비스 요청":"같은 기간 서비스 변경"}/>
+      <Row href={`/records?${relatedParams}`} label={changes?"같은 기간 서비스 요청":"같은 기간 서비스 변경"}/>
     </Rows>
     <QueryGate query={query}>{data&&<>
       <div className="overflow-x-auto rounded-lg border"><table className="w-full text-sm"><thead><tr>{["시각 KST","대상","종류·결과","소요 시간 (ms)","근거"].map(label=><th key={label} className="p-3 text-left">{label}</th>)}</tr></thead><tbody>{changes?(data.management??[]).map((row,index)=><tr key={index} className="border-t"><td className="p-3">{when(row.at)}</td><td className="p-3">{name}</td><td className="p-3">{statusLabel(row.kind)} / {statusLabel(row.phase)}</td><td className="p-3">해당 없음</td><td className="p-3"><Button variant="outline" onClick={()=>setSelected({index,source:data})}>근거</Button></td></tr>):(data.requests??[]).map((row,index)=><tr key={index} className="border-t"><td className="p-3">{when(row.receivedAt)}</td><td className="p-3">{name}</td><td className="p-3">{rowLabel(row)}</td><td className="p-3 text-right tabular-nums">{row.elapsedNanos==null?"미기록":Number(row.elapsedNanos)/1e6}</td><td className="p-3"><Button variant="outline" onClick={()=>setSelected({index,source:data})}>근거</Button></td></tr>)}</tbody></table></div>
