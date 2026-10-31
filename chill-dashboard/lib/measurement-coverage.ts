@@ -17,6 +17,12 @@ export function powerModeLabel(name:string,activeWatts:readonly number[]=[]) {
   const watts=activeWatts.filter(Number.isFinite)
   return watts.length?`${name} · 실측 ${Math.min(...watts).toFixed(1)}${Math.min(...watts)!==Math.max(...watts)?`–${Math.max(...watts).toFixed(1)}`:""} W`:`${name} · 전력 미확인`
 }
+export function measurementAge(value:string,now=Date.now()) {
+  const timestamp=Date.parse(value)
+  if(!Number.isFinite(timestamp))return "시각 미기록"
+  const days=Math.floor((now-timestamp)/86400000)
+  return days<0?"시각 확인 필요":days===0?"오늘":`${days}일 전`
+}
 
 export type CoverageModel = InventoryView["models"][number] & {spec:ModelSpec}
 export function coverageSelection(search:string,cell:{id:string;model:{uid:string};deviceClass:{uid:string}}|undefined,open:boolean) {
@@ -27,13 +33,13 @@ export function coverageSelection(search:string,cell:{id:string;model:{uid:strin
   return next
 }
 
-// Only an architecture conflict proves that a path cannot run on this device.
+// Hide only proven declaration conflicts; a missing runtime declaration remains unknown.
 export function coveragePathVisible(cell:MeasurementCoverageCell,inventory?:InventoryView) {
   const model=inventory?.models.find(model=>model.uid===cell.model.uid) as CoverageModel|undefined
   const cls=inventory?.classes.find(cls=>cls.uid===cell.deviceClass.uid)
   const path=model?.spec.executionPaths.find(path=>path.name===cell.executionPath)
   if(model&&path&&cls&&staticCompatibility(model,path,cls).state==="unsupported")return false
-  return !cell.support.reasons.some(reason=>reason.code==="ArtifactArchitectureMismatch")
+  return cell.support.verdict!=="Incompatible"&&!cell.support.reasons.some(reason=>reason.code==="ArtifactArchitectureMismatch")
 }
 export function coverageWatts(cells:MeasurementCoverageCell[]) {
   return cells.flatMap(cell=>cell.variants.flatMap(variant=>variant.resultRows.flatMap(row=>row.activeWatts!==null&&Number.isFinite(row.activeWatts)?[row.activeWatts]:[])))
@@ -69,7 +75,7 @@ export function coverageBatchState(progress:BatchProgress|null,batch:number) {
 export function coverageRequestHref(cell:MeasurementCoverageCell,namespace:string,returnTo:string,variantId?:string,targetBatches:number[]=[]) {
   const variant=cell.variants.find(variant=>variant.id===variantId),condition=variant?.condition
   const progress=variant?.batchProgress??coverageProgress(cell)
-  const batches=progress?.missing.length?progress.missing:progress?.target.length?progress.target:targetBatches
+  const batches=progress?.missing.length?progress.missing:progress?.target.length?progress.target:targetBatches.length?targetBatches:[1,2,4]
   const node=(condition?.metricSource as {nodeName?:string}|undefined)?.nodeName??(condition?.state as {targetNode?:string}|undefined)?.targetNode??cell.support.node?.name
   return `/measurements/new?${new URLSearchParams({namespace,model:cell.model.name,deviceClass:cell.deviceClass.name,path:cell.executionPath,powerMode:cell.powerMode,batches:batches.join(","),returnTo,...(variant?{variantId:variant.id}:{}),...(node?{node}:{})})}`
 }
@@ -78,10 +84,12 @@ export function staticCompatibility(model:Pick<CoverageModel,"spec">, path:Execu
   const artifact = model.spec.artifacts.find(item => item.name === path.artifact)
   if (!artifact?.source.architecture || !cls.architecture) return {state:"unknown",reason:"모델 파일 또는 architecture 선언 미확인"}
   if (artifact.source.architecture !== cls.architecture) return {state:"unsupported",reason:`architecture 불일치: 파일 ${artifact.source.architecture} / 장치 ${cls.architecture}`}
+  if(path.runtime.backend==="rknnlite"&&cls.accelerator&&cls.accelerator!=="rk3588-npu")return {state:"unsupported",reason:`RKNNLite는 rk3588-npu 전용입니다. 장치 가속기: ${cls.accelerator}`}
   return {state:"candidate",reason:"선언상 후보 · 실제 runtime 지원 미확인"}
 }
 export type CompatibilityRead = {node:string;selection?:ModelCompatibility["selection"];data?:ModelCompatibility;error?:string}
 export function serverCompatibility(fallback:Compatibility, reads:CompatibilityRead[]):Compatibility {
+  if(fallback.state==="unsupported")return fallback
   if (!reads.length) return fallback
   const reason=reads.map(read=>`${read.node}: ${read.error??read.data?.reasons.map(reason=>`${reason.message} (${reason.code})`).join(" / ")??"미조회"}`).join(" · ")
   if (reads.some(read=>read.error||!read.data)) return {state:"unknown",reason:`지원 확인 불가 — ${reason}`}

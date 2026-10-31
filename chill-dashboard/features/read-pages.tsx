@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation"
 import { useChillQuery, useChillMutation, useSession } from "@/lib/client"
 import type { RunsView, Passport, NativeSample, MeasurementPreflight } from "@/lib/read-types"
 import { formatMeasurementNumber as num, formatMeasurementTime, runFailure, runStatusObject, exactRun, safeMeasurementReturn } from "@/lib/measurements"
-import { currentRunCondition } from "@/lib/measurement-coverage"
+import { currentRunCondition, measurementAge, runAttempt, runSpec } from "@/lib/measurement-coverage"
 import { codeText } from "@/lib/labels"
 import { QueryGate, SourceJSON, SourceExport, StatusBadge } from "@/components/read-region"
 import { Screen, Rows, RowDialog, Facts } from "@/components/screen"
@@ -157,6 +157,13 @@ export function MeasurementDetail({namespace,name}:{namespace:string;name:string
   return <Screen width="data" actionPlacement="header" back={[back,"측정으로 돌아가기"]} breadcrumbs={[{href:back,label:"측정 회차"},{label:name}]} title={`${name} 측정 결과`} status={<MeasurementStatus assessment={run?.assessment}/>} lede={data&&!other?measuredWhat(data):"실행 상태와 검증 근거는 별개예요."} action={<Button variant="outline" disabled={lookup.isFetching} onClick={()=>void lookup.refetch()}>갱신</Button>}>
     <MeasurementNavigation active="runs" namespace={namespace}/>
     <QueryGate query={lookup}>{lookup.data&&!run&&<div className="space-y-3"><p>이 조회 페이지에서 정확한 namespace/name/UID의 회차를 찾지 못했어요. 같은 이름의 다른 회차로 대체하지 않아요.</p>{lookup.data.page?.nextOffset!==undefined&&<Button variant="outline" onClick={()=>setOffset(lookup.data!.page!.nextOffset!)}>다음 조회 페이지에서 찾기</Button>}</div>}{run&&<>
+      <Facts label="회차 조건" items={[
+        ["모델 / 장치",`${runSpec(run).candidate?.modelSpec??"미기록"} / ${runSpec(run).candidate?.deviceClass??"미기록"}`],
+        ["실행 Node / 전력모드",`${runSpec(run).targetNode??"미기록"} / ${runSpec(run).candidate?.powerMode??"미기록"}`],
+        ["실행 경로 / 배치",`${runSpec(run).candidate?.executionPath??"미기록"} / ${runSpec(run).measurement?.batch??"미기록"}건 / ${runAttempt(run)}`],
+        ["회차 생성",`${formatMeasurementTime(run.creationTimestamp)} / ${measurementAge(run.creationTimestamp)}`],
+        ...(currentRunCondition(run,"ExecutionComplete")?.lastTransitionTime?[["실행 판정 시각",`${formatMeasurementTime(currentRunCondition(run,"ExecutionComplete")!.lastTransitionTime!)} / ${measurementAge(currentRunCondition(run,"ExecutionComplete")!.lastTransitionTime!)}`] as [string,React.ReactNode]]:[]),
+      ]}/>
       <AssessmentDetails assessment={run.assessment}/>
       {failed&&<section role="alert" className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 space-y-2"><h2 className="font-semibold text-destructive">{failure?.title}</h2><p className="text-sm break-words">{failure?.excerpt??"상세 원인 미제공"}{failure?.exitCode!==undefined?` (종료 코드 ${String(failure.exitCode)})`:""}</p><p className="text-sm">{failure?.next}</p></section>}
       <details><summary className="min-h-11 cursor-pointer py-2 text-sm">실행 조건·환경·로그 원문</summary>

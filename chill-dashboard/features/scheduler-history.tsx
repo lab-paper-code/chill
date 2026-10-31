@@ -7,7 +7,7 @@ import type { QueryObserverBaseResult } from "@tanstack/react-query"
 import { useChillQuery, useSession, type ApiError } from "@/lib/client"
 import type { SchedulerObservation, SchedulerObservationPage } from "@/lib/read-types"
 import { parseSchedulerJSON, nanosToMilliseconds } from "@/lib/scheduler"
-import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, type SchedulerRecordRef } from "@/lib/scheduler-history"
+import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerHistoryKindMatches, type SchedulerRecordRef } from "@/lib/scheduler-history"
 import { gapNotice, localDateTime, utcDateTime } from "@/lib/date-time"
 import { SnapshotDetails, CandidateDetails, judgmentLabels, actionKinds, actionStatuses, actionNodeName } from "@/features/scheduler"
 import { SettingChanges } from "@/features/scheduler-settings"
@@ -24,6 +24,7 @@ export type SchedulerHistoryQuery={
   limit:number;setLimit:React.Dispatch<React.SetStateAction<number>>;validation:string;maxPageSize:number;apply:()=>boolean;page:(cursor?:string)=>void
 }
 const kinds:Record<string,string>={decision:"운영 판단",snapshot:"실제 구성",settings:"운영 설정 변경",action:"변경 동작",power:"전력 측정",other:"기타 기록"}
+const historyFilters:Record<string,string>={all:"모든 종류","decision-action":"판단·전환 기록",...kinds}
 // Shared by the record screens: readable local time, and a person instead of a service account path.
 export const when=(value?:string)=>!value||value.startsWith("0001-")||!Number.isFinite(Date.parse(value))?"정보 없음":new Date(value).toLocaleString("ko-KR",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit"})
 export const actorName=(name?:string)=>name?.startsWith("system:serviceaccount:")?name.split(":").at(-1)!:name??"기록 없음"
@@ -100,7 +101,7 @@ function RecordDetails({row}:{row:SchedulerHistoryRow}){
 
 export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean}){
   const history=useSchedulerHistory(),router=useRouter(),pathname=usePathname(),params=history.params
-  const filter=settingsOnly?"settings":params.get("filter")??"all",rows=history.rows.filter(row=>filter==="all"||row.ref.kind===filter)
+  const filter=settingsOnly?"settings":params.get("filter")??"all",rows=history.rows.filter(row=>schedulerHistoryKindMatches(filter,row.ref.kind))
   const opener=React.useRef<HTMLElement|null>(null),[filterOpen,setFilterOpen]=React.useState(false)
   const a=readSchedulerRecord(params,"a"),b=readSchedulerRecord(params,"b"),selected=readSchedulerRecord(params)
   const requested=["offset","kind","at","id","node","startedAt"].some(key=>params.has(key))
@@ -119,25 +120,26 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
   if(b)for(const [key,value] of schedulerRecordParams(b,"b"))compare.set(key,value)
   const same=(ref:SchedulerRecordRef|null,row:SchedulerHistoryRow)=>!!ref&&ref.offset===row.ref.offset&&ref.at===row.ref.at&&ref.from===row.ref.from&&ref.to===row.ref.to
   const loaded=!!history.query.data
-  const title=settingsOnly?(!loaded?"운영 설정 변경 이력":rows.length?`운영 설정 변경 ${rows.length}건을 찾았어요`:"이 기간에는 운영 설정 변경이 없어요"):(!loaded?"운영 판단 기록":rows.length?`운영 기록 ${rows.length}건을 불러왔어요`:"이 기간에는 운영 기록이 없어요")
+  const title=settingsOnly?(!loaded?"운영 설정 변경 이력":rows.length?`운영 설정 변경 ${rows.length}건을 찾았어요`:"이 기간에는 운영 설정 변경이 없어요"):filter==="decision-action"?(!loaded?"판단·전환 기록":rows.length?`판단·전환 기록 ${rows.length}건을 불러왔어요`:"가져온 기록에 판단·전환 기록이 없어요"):(!loaded?"운영 판단 기록":rows.length?`운영 기록 ${rows.length}건을 불러왔어요`:"이 기간에는 운영 기록이 없어요")
   return <Screen back={["/records","기록"]} title={title} lede={settingsOnly?"누가 언제 운영 설정을 바꿨는지 보여드려요.":"기록을 열어 비교할 판단 두 개(A, B)를 고를 수 있어요."}
     action={!settingsOnly&&(a||b)?<><p className="text-sm text-muted-foreground">A {a?when(a.at):"아직 고르지 않았어요"} · B {b?when(b.at):"아직 고르지 않았어요"}</p>{a&&b?<Button asChild><Link href={`/scheduler/compare?${compare}`}>두 기록 비교하기</Link></Button>:<Button disabled>두 기록 비교하기</Button>}</>:undefined}>
     <HistoryControls history={history}>
-      {!settingsOnly&&<RowDialog open={filterOpen} onOpenChange={setFilterOpen} label="기록 종류" value={filter==="all"?"모든 종류":kinds[filter]??"이전 조건"} title="기록 종류" description="불러온 기록 중에서 골라 보여드려요.">
-        <fieldset className="grid gap-2">{[["all","모든 종류"],...Object.entries(kinds)].map(([key,label])=><label key={key} className="flex items-center gap-2"><input type="radio" name="kind" checked={filter===key} onChange={()=>{const next=new URLSearchParams(params.toString());next.set("filter",key);router.replace(`${pathname}?${next}`);setFilterOpen(false)}}/>{label}</label>)}</fieldset>
+      {!settingsOnly&&<RowDialog open={filterOpen} onOpenChange={setFilterOpen} label="기록 종류" value={historyFilters[filter]??"이전 조건"} title="기록 종류" description="불러온 기록 중에서 골라 보여드려요. 판단·전환 기록은 운영 판단과 변경 동작만 포함해요. 전력 측정은 제외하며, 다음 기록에도 같은 필터를 유지해요.">
+        <fieldset className="grid gap-2">{Object.entries(historyFilters).map(([key,label])=><label key={key} className="flex min-h-11 items-center gap-2"><input type="radio" name="kind" checked={filter===key} onChange={()=>{const next=new URLSearchParams(params.toString());next.set("filter",key);router.replace(`${pathname}?${next}`);setFilterOpen(false)}}/>{label}</label>)}</fieldset>
       </RowDialog>}
       {history.query.data&&<RowDialog label="자료 내보내기" title="자료 내보내기" description="지금 불러온 기록을 파일로 받아요. 기간 전체 집계는 아니에요.">
         <SourceExport value={{conditions:{...history.submitted,cursor:history.cursor,limit:params.get("limit")??history.limit,filter},source:history.query.data}} filename="chill-scheduler-current-page.json"/>
       </RowDialog>}
     </HistoryControls>
     <QueryGate query={history.query}>{loaded&&<>
+      {filter==="decision-action"&&<p className="text-sm text-muted-foreground">지금 가져온 기록 중 운영 판단과 변경 동작만 표시해요. 전력 측정은 제외해요. 이 페이지에 없으면 다음 기록에도 확인해 주세요. 기간 전체 건수는 아니에요.</p>}
       {rows.length?<Rows label="기록">{rows.map(row=>{
         const ev=row.event,mark=[same(a,row)&&"A",same(b,row)&&"B"].filter(Boolean).join(" · ")
         return <Row key={row.ref.offset} label={ev.decision?judgmentLabels[ev.decision.status]??statusLabel(ev.decision.status):ev.action?actionKinds[ev.action.kind]??kinds.action:kinds[row.ref.kind]??kinds.other}
           hint={`${when(ev.at)}${ev.decision?` · ${ev.decision.status}`:ev.settings?` · ${actorName(ev.settings.actorUsername)}`:ev.action?` · ${actionNodeName(ev.action.node)}`:ev.node?` · ${ev.node.name}`:""}`}
           value={mark||(ev.settings?ev.settings.error?"실패":ev.settings.appliedAt?"적용됨":"검증됨":ev.action?actionStatuses[ev.action.phase]??statusLabel(ev.action.phase):undefined)}
           onClick={()=>{opener.current=document.activeElement as HTMLElement|null;select(row)}}/>
-      })}</Rows>:<Empty title={settingsOnly?"이 기간에는 운영 설정 변경이 없어요":"보여줄 기록이 없어요"}>{history.query.data?.nextCursor&&<p>다음 기록에 더 있을 수 있어요.</p>}</Empty>}
+      })}</Rows>:<Empty title={settingsOnly?"이 기간에는 운영 설정 변경이 없어요":filter==="decision-action"?"가져온 기록에 판단·전환 기록이 없어요":"보여줄 기록이 없어요"}>{history.query.data?.nextCursor&&<p>다음 기록에 더 있을 수 있어요.</p>}</Empty>}
       <HistoryPaging history={history}/>
     </>}</QueryGate>
     <Dialog open={requested} onOpenChange={open=>{if(!open)close()}}>

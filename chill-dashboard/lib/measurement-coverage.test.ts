@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { conditionLabel, deviceLabel, coverageSelection, coveragePathVisible, coverageModes, coverageVariant, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
+import { measurementAge, conditionLabel, deviceLabel, coverageSelection, coveragePathVisible, coverageModes, coverageVariant, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 import type { CoverageModel } from "./measurement-coverage.ts"
 import type { InventoryClass, InventoryView, MeasurementCoverageCell, MeasurementPlan, ModelCompatibility, ProfilingRun, ResultRow } from "./read-types.ts"
@@ -51,6 +51,7 @@ test("server support is Node-scoped, independent of evidence and does not invent
   assert.equal(serverCompatibility(fallback,[{node:"node",error:"HTTP 403"}]).state,"unknown")
   assert.match(serverCompatibility(fallback,[{node:"node",error:"HTTP 503"}]).reason,/503/)
   assert.equal(serverCompatibility(fallback,[{node:"node",data},{node:"node2",data:{...data,verdict:"Incompatible"}}]).state,"unknown")
+  assert.equal(serverCompatibility({state:"unsupported",reason:"architecture 불일치"},[{node:"node",data:{...data,verdict:"Unknown"}}]).state,"unsupported")
 })
 test("attempts are not invented and return links stay same-origin",()=>{
   assert.equal(runAttempt(run),"회차 기록 없음")
@@ -79,9 +80,9 @@ test("condition choices name Node CPU and dataset without dumping frozen JSON",(
 })
 
 const cell:MeasurementCoverageCell={id:"cell",model:{name:model.name,uid:model.uid},deviceClass:{name:cls.name,uid:cls.uid},executionPath:"cpu",powerMode:"MAXN",support:{verdict:"Unknown",node:{name:"node",uid:"node-uid"},reasons:[{code:"RuntimeDeclarationMissing",message:"선언 없음"}]},assessment:{status:"unmeasured",displayStatus:"unmeasured",label:"미측정",reasons:[],execution:null,evidence:{available:false,accepted:false,reasons:[]},checklist:{criteriaMet:null,version:"result-checklist.v1",checks:[]},scope:{schedulerUsed:null,reused:false,facts:[]}},variantCount:0,variants:[],batchProgress:{basis:"explicit",target:[1,2,4,8],measured:[1,2],criteriaMet:[1],missing:[4,8],inProgress:[4],unknown:[]},representative:null,failureSummary:[],history:[]}
-test("coverage hides architecture conflicts only, never declarations or measured unsupported paths",()=>{
+test("coverage hides proven unsupported paths but retains truly unknown declarations",()=>{
   assert.equal(coveragePathVisible(cell),true)
-  assert.equal(coveragePathVisible({...cell,support:{...cell.support,verdict:"Incompatible",reasons:[{code:"RuntimeUnsupported",message:"runtime 미지원"}]}}),true)
+  assert.equal(coveragePathVisible({...cell,support:{...cell.support,verdict:"Incompatible",reasons:[{code:"RuntimeUnsupported",message:"runtime 미지원"}]}}),false)
   assert.equal(coveragePathVisible({...cell,support:{...cell.support,reasons:[{code:"ArtifactArchitectureMismatch",message:"아키텍처 불일치"}]}}),false)
   assert.equal(coveragePathVisible(cell,inventory),true)
   assert.equal(coveragePathVisible(cell,{...inventory,classes:[{...cls,architecture:"amd64"}]}),false)
@@ -114,4 +115,24 @@ test("power modes put measured zero watts first and unknown watts last",()=>{
   const measured=(mode:string,watts:number):MeasurementCoverageCell=>({...cell,powerMode:mode,variants:[{id:mode,condition:{},assessment:cell.assessment,batchProgress:cell.batchProgress!,resultRows:[resultRow(watts)],requestIds:[],runIds:[],profileIds:[]}]})
   assert.deepEqual(coverageModes([measured("high",30),{...cell,powerMode:"unknown"},measured("idle",0),measured("low",12)]),["idle","low","high","unknown"])
   assert.deepEqual(coverageRepresentative(measured("low",12)),{variantId:"low",batch:1,incrementalJoulesPerItem:1,p95Milliseconds:2})
+})
+
+test("RKNN on Jetson is statically unsupported, not an unknown runtime declaration",()=>{
+  const path={name:"rknn",artifact:"rknn",runtime:{family:"firstfloor",backend:"rknnlite"}}
+  const rknn={...model,spec:{artifacts:[{name:"rknn",format:"rknn",source:{architecture:"arm64",image:"image",files:[]},derivation:{sourceArtifact:"onnx",targetPlatform:"rk3588",declaredBatchSizes:[1],conversion:{tool:"tool",version:"1"}}}],executionPaths:[path]}}
+  assert.equal(staticCompatibility(rknn,path,{...cls,accelerator:"nvidia-jetson-agx-orin"}).state,"unsupported")
+  assert.equal(staticCompatibility(rknn,path,{...cls,accelerator:"rk3588-npu"}).state,"candidate")
+  assert.equal(coveragePathVisible({...cell,executionPath:"rknn"}, {...inventory,models:[rknn],classes:[{...cls,accelerator:"nvidia-jetson-agx-orin"}]}),false)
+})
+
+test("coverage request without an existing target supplies actionable default batches",()=>{
+  const query=new URL(coverageRequestHref({...cell,batchProgress:null},"ns","/measurements"),"http://local").searchParams
+  assert.equal(query.get("batches"),"1,2,4")
+})
+
+test("measurement age is based on recorded timestamp and never invents missing or future dates",()=>{
+  const now=Date.parse("2026-10-31T12:00:00Z")
+  assert.equal(measurementAge("2026-10-27T12:00:00Z",now),"4일 전")
+  assert.equal(measurementAge("",now),"시각 미기록")
+  assert.equal(measurementAge("2026-11-01T12:00:00Z",now),"시각 확인 필요")
 })

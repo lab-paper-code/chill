@@ -7,8 +7,14 @@
 .coverage-toolbar > details[open] { grid-column:1 / -1; }
 .coverage-key { color:var(--muted-foreground); font-size:.8125rem; line-height:1.6; max-width:85ch; }
 .coverage-workspace { display:grid; grid-template-columns:minmax(0,1fr) minmax(300px,350px); gap:1rem; align-items:start; min-width:0; }
-.coverage-pivot { min-width:0; max-height:72vh; overflow:auto; border:1px solid var(--border); border-radius:.5rem; scrollbar-gutter:stable; }
+.coverage-pivot { min-width:0; border:1px solid var(--border); border-radius:.5rem; }
 .coverage-device { min-width:0; }
+.coverage-device { scroll-margin-top:6rem; }
+.coverage-device > summary { cursor:pointer; min-height:52px; background:var(--muted); padding-left:.75rem; }
+.coverage-device > summary h2 { display:inline-block; background:transparent; }
+.coverage-device-index { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:.5rem; }
+.coverage-device-index a { padding:.65rem; border:1px solid var(--border); border-radius:.375rem; min-height:44px; overflow-wrap:anywhere; font-size:.8125rem; }
+.coverage-device-index small { color:var(--muted-foreground); }
 .coverage-device + .coverage-device { border-top:3px solid var(--border); }
 .coverage-device h2 { padding:.8rem 1rem; font-weight:700; background:var(--muted); color:var(--foreground); font-size:1rem; }
 .coverage-device h2 small { font-weight:400; font-size:.8125rem; margin-left:.5rem; }
@@ -16,9 +22,11 @@
 .coverage-desktop-table table { width:100%; table-layout:fixed; border-collapse:collapse; font-size:.8125rem; }
 .coverage-desktop-table th { padding:.6rem; text-align:left; overflow-wrap:anywhere; font-weight:600; background:var(--background); }
 .coverage-desktop-table thead th { border-bottom:1px solid var(--border); color:var(--muted-foreground); }
-.coverage-desktop-table th:first-child { width:108px; }
+.coverage-desktop-table th:first-child { width:180px; vertical-align:top; }
+.coverage-desktop-table th:first-child span,.coverage-desktop-table th:first-child small { display:block; overflow-wrap:anywhere; white-space:normal; }
+.coverage-desktop-table th:first-child small { margin-top:.3rem; color:var(--muted-foreground); font-weight:400; }
 .coverage-desktop-table td { border:1px solid var(--border); padding:.25rem; vertical-align:top; }
-.coverage-cell { display:flex; flex-direction:column; gap:.5rem; width:100%; height:100%; min-height:130px; padding:.6rem; text-align:left; border:2px solid transparent; border-radius:.375rem; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.coverage-cell { display:flex; flex-direction:column; gap:.35rem; width:100%; height:100%; min-height:88px; padding:.5rem; text-align:left; border:2px solid transparent; border-radius:.375rem; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
 .coverage-cell:hover { background:var(--muted); }
 .coverage-cell[aria-pressed="true"] { border-color:var(--primary); background:var(--primary-soft,var(--muted)); }
 .coverage-cell-unconfirmed { background:var(--muted); border-style:dashed; border-color:var(--border); color:var(--muted-foreground); }
@@ -41,7 +49,8 @@
 .coverage-selected h3 { font-weight:650; margin-bottom:.5rem; }
 .coverage-selected select { display:block; width:100%; min-height:44px; border:1px solid var(--border); padding:.5rem; background:var(--background); border-radius:.375rem; }
 .coverage-selected a:not([data-slot="button"]) { color:var(--primary); text-decoration:underline; display:inline-flex; min-height:44px; align-items:center; }
-.coverage-trust { color:var(--muted-foreground); line-height:1.65; }
+.coverage-trust { color:var(--foreground); line-height:1.65; border-top:1px solid var(--border); padding-top:.75rem; }
+.coverage-warning { display:block; border-left:3px solid var(--heat); padding:.35rem .5rem; color:var(--heat); background:var(--heat-soft,var(--muted)); font-size:.8125rem; }
 .coverage-failure { display:grid; border-bottom:1px solid var(--border); padding-block:.5rem; }
 .coverage-results { width:100%; font-size:.75rem; font-variant-numeric:tabular-nums; border-collapse:collapse; }
 .coverage-results td,.coverage-results th { text-align:right; padding:.5rem .25rem; border-bottom:1px solid var(--border); }

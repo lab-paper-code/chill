@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { requestBatches, requestDefaults } from "./measurement-request.ts"
+import { requestBatches, requestDefaults, requestInputs, requestInitialBatches } from "./measurement-request.ts"
 import type { MeasurementPlan, ProfilesView } from "./read-types.ts"
 
 const condition={model:"model & one",deviceClass:"device",node:"node",path:"cuda",powerMode:"MAXN"}
@@ -10,7 +10,7 @@ test("request query batches decode, deduplicate and sort without accepting malfo
   const query=new URLSearchParams({...condition,batches:"8,1,4,1"})
   assert.equal(query.get("model"),condition.model)
   assert.deepEqual(requestBatches(query),{values:[1,4,8],error:""})
-  for(const raw of ["", "0", "-1", "1.5", "1e2", "1,", "2147483648", "1&batches=2"]){const result=requestBatches(new URLSearchParams(`batches=${raw}`));assert.notEqual(result.error,"");assert.deepEqual(result.values,[])}
+  for(const raw of ["0", "-1", "1.5", "1e2", "1,", "2147483648", "1&batches=2"]){const result=requestBatches(new URLSearchParams(`batches=${raw}`));assert.notEqual(result.error,"");assert.deepEqual(result.values,[])}
   assert.deepEqual(requestBatches(new URLSearchParams()),{values:[],error:""})
 })
 
@@ -50,4 +50,22 @@ test("unmeasured targets reuse successful protocol without copying another devic
   assert.match(pathOnly?.source??"",/같은 실행 경로/)
   assert.equal(requestDefaults({...otherTarget,model:"new-model"},[success],[]),null)
   assert.equal(requestDefaults(otherTarget,[{...success,status:{phase:"Failed"}}],[]),null)
+})
+
+test("empty coverage batch query is a missing selection, not a permanent URL error",()=>{
+  assert.deepEqual(requestBatches(new URLSearchParams("batches=")),{values:[],error:""})
+  assert.deepEqual(requestInitialBatches([],16),[1,2,4])
+  assert.deepEqual(requestInitialBatches([],2),[1,2])
+  assert.deepEqual(requestInitialBatches([8,1],16),[1,8])
+})
+
+test("unmeasured model prefill resolves its registered preprocessor and a compatible dataset",()=>{
+  const pre={metadata:{name:"pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:"model",artifact:"onnx"}}]}}
+  const data=(name:string,fields:unknown[])=>({metadata:{name},spec:{fields}})
+  const context={preprocessors:[pre],datasets:[data("vqa",[{name:"image",format:"JPEG",maxBytes:1024},{name:"question",format:"UTF8",maxBytes:512}]),data("images",[{name:"image",format:"JPEG",maxBytes:1024}])]}
+  const inputs=requestInputs("model","onnx","","",context as Parameters<typeof requestInputs>[4])
+  assert.deepEqual(inputs,{preprocessor:"pre",dataset:"images",warning:""})
+  const subset=requestInputs("model","onnx","","vqa",context as Parameters<typeof requestInputs>[4])
+  assert.equal(subset.preprocessor,"pre")
+  assert.match(subset.warning,/추가 필드/)
 })

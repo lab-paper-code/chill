@@ -165,7 +165,7 @@ export function stageComparison(run:Experiment,stage:ExperimentStage) {
   return {paired:false,counterpart:matches[0],basis:"같은 부하 비교",reason:"단계 코드는 다름 · 모든 서비스의 평균 보낸 요청률 차이 1% 이내 · 양쪽 유일 후보. 실행 조건·길이·측정 규칙이 같은지는 별도 확인"}
 }
 export function campaignPairs(run:Experiment) {
-  return run.stages.filter(stage=>stage.id.startsWith("full-E5-")).flatMap(chill=>{
+  return [...run.stages].sort((a,b)=>Date.parse(a.from)-Date.parse(b.from)).filter(stage=>stage.id.startsWith("full-E5-")).flatMap(chill=>{
     const pairing=stageComparison(run,chill)
     return pairing.counterpart?[{key:chill.id.slice(5),chill,control:pairing.counterpart,basis:pairing.basis,reason:pairing.reason}]:[]
   })
@@ -198,6 +198,9 @@ export function frozenP95SLO(row:ExperimentRow):number|null {
   }
   return row.original.sloPercentile===95?finite(row.original.sloMS):null
 }
+export function policyChartStyle(policy:string):{color:string;shape:"square"|"circle"|"diamond"} {
+  return policy==="고정 구성"?{color:"var(--color-slate-500, #64748b)",shape:"square"}:policy==="자동 운영"?{color:"var(--color-teal-600, #0d9488)",shape:"circle"}:{color:"var(--chart-3)",shape:"diamond"}
+}
 export function stageChartData(run:Experiment) {
   return [...run.stages].sort((a,b)=>Date.parse(a.from)-Date.parse(b.from)).map((stage,index)=>{
     const rows=experimentRows(stage),services:Record<string,{success:number|null;p95:number|null;sloMS:number|null;reason:string}>={}
@@ -226,7 +229,7 @@ export function serviceDelta(a:ExperimentRow|undefined,b:ExperimentRow|undefined
 export function policyStageGroups(run:Experiment) {
   const points=stageChartData(run)
   const policies=[...new Set(points.map(point=>point.policy))]
-  const axes=[...new Set(points.map(point=>point.axis))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}))
+  const axes=[...new Set(points.map(point=>point.axis))]
   return {policies,groups:axes.flatMap(axis=>{
     const candidates=points.filter(point=>point.axis===axis)
     if(candidates.some(point=>point.reason==="동일 단계 식별자 중복"))return candidates.map((point,index)=>({
@@ -251,8 +254,34 @@ export function campaignTradeoffs(run:Experiment) {
   return comparisons.map(row=>({...row,services:row.services.map(service=>({...service,worstSuccess:worstSuccess<0&&service.successDelta===worstSuccess,worstP95:worstP95>0&&service.p95Delta===worstP95}))}))
 }
 
+export function campaignScoreboard(run:Experiment) {
+  const comparisons=campaignTradeoffs(run),services=comparisons.flatMap(pair=>pair.services.map(service=>({...service,pair})))
+  const energies=comparisons.filter(pair=>pair.energyDelta!==null)
+  const successes=services.filter(service=>service.successDelta!==null),latencies=services.filter(service=>service.p95Delta!==null)
+  const worstSuccess=successes.reduce<typeof successes[number]|null>((worst,service)=>!worst||service.successDelta!<worst.successDelta!?service:worst,null)
+  const worstLatency=latencies.reduce<typeof latencies[number]|null>((worst,service)=>!worst||service.p95Delta!>worst.p95Delta!?service:worst,null)
+  const emptyServices=comparisons.filter(pair=>!pair.services.length).length
+  const context=(service:typeof services[number]|null)=>service?`${service.name} · ${service.pair.key} · ${stageLoadLabel(service.pair.chill,run)}`:""
+  const unavailable=(count:number)=>!comparisons.length?"비교 불가":!count?"미제공":null
+  const compared=new Set(comparisons.flatMap(pair=>[pair.chill,pair.control]))
+  const ruleMissing=comparisons.filter(pair=>!pair.chill.kpis.measurementRules||!pair.control.kpis.measurementRules).length
+  const ruleDifferences=comparisons.filter(pair=>differentMeasurementRules(pair.chill,pair.control).length).length
+  const durationDifferences=comparisons.filter(pair=>stageSeconds(pair.chill)===null||stageSeconds(pair.control)===null||stageSeconds(pair.chill)!==stageSeconds(pair.control)).length
+  return {
+    metrics:[
+      {label:"전체 POOL 에너지",value:unavailable(energies.length)??`감소 ${energies.filter(pair=>pair.energyDelta!<0).length} / 증가 ${energies.filter(pair=>pair.energyDelta!>0).length} / 같음 ${energies.filter(pair=>pair.energyDelta===0).length}쌍`,
+        detail:`구간 합계 비교 ${energies.length}쌍 · 값 미제공 ${comparisons.length-energies.length}쌍`},
+      {label:"최대 성공률 하락",value:unavailable(successes.length)??(worstSuccess!.successDelta!<0?difference(resultMetric(worstSuccess!.a!,"success").value,resultMetric(worstSuccess!.b!,"success").value,"%"):"하락 없음"),
+        detail:`${context(worstSuccess)}${worstSuccess?" · ":""}서비스·구간 비교 ${successes.length}건 · 비교 불가·미제공 ${services.length-successes.length}건 · 서비스 기록 없는 ${emptyServices}쌍`},
+      {label:"최대 p95 증가",value:unavailable(latencies.length)??(worstLatency!.p95Delta!>0?`${difference(resultMetric(worstLatency!.a!,"p95").value,resultMetric(worstLatency!.b!,"p95").value,"ms")} (${worstLatency!.p95Ratio===null?"배율 계산 불가 · 고정=0":`×${worstLatency!.p95Ratio.toFixed(2)}`})`:"증가 없음"),
+        detail:`${context(worstLatency)}${worstLatency?" · ":""}서비스·구간 비교 ${latencies.length}건 · 비교 불가·미제공 ${services.length-latencies.length}건 · 서비스 기록 없는 ${emptyServices}쌍`},
+    ],
+    coverage:`전체 ${run.stages.length}단계 · 같은 부하 ${comparisons.length}쌍 (단계 대응 ${comparisons.filter(pair=>pair.basis==="단계 대응").length} / 부하만 대응 ${comparisons.filter(pair=>pair.basis!=="단계 대응").length}) · 비교 불가 ${run.stages.filter(stage=>!compared.has(stage)).length}단계 · 측정 규칙 미기록 ${ruleMissing} / 차이 ${ruleDifferences}쌍 · 구간 길이 다름·미제공 ${durationDifferences}쌍`,
+  }
+}
+
 export function stageHistoryLink(stage:ExperimentStage):string {
-  return `/scheduler/history?${new URLSearchParams({from:stage.from,to:stage.to,limit:"100"})}`
+  return `/scheduler/history?${new URLSearchParams({from:stage.from,to:stage.to,limit:"100",filter:"decision-action"})}`
 }
 export function stageActivity(page:SchedulerObservationPage) {
   const events=page.events??[],decisions=events.filter(event=>event.decision),actions=events.filter(event=>event.action)

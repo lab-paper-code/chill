@@ -3,11 +3,12 @@ import test from "node:test"
 import { readFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import { campaignGroups, campaignPairs, commitExperimentSelection, comparisonDirection, experimentSelection, frozenP95SLO, stagePairing, policyStageGroups, serviceDelta, stageChartData, alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
-import { campaignConclusion, campaignTradeoffs, stageComparison, stageHistoryLink, stageActivity, stageLoadLabel } from "./experiments.ts"
+import { campaignConclusion, campaignScoreboard, campaignTradeoffs, policyChartStyle, stageComparison, stageHistoryLink, stageActivity, stageLoadLabel } from "./experiments.ts"
 import type { SchedulerObservation } from "./read-types.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
 import { parseSchedulerJSON } from "./scheduler.ts"
+import { schedulerHistoryKindMatches } from "./scheduler-history.ts"
 
 const recorded=JSON.parse(readFileSync(new URL("./fixtures/experiment-213.json",import.meta.url),"utf8")) as {publication:Experiment;decision:SchedulerObservation}
 const demo=JSON.parse(readFileSync(new URL("./fixtures/experiment-demo.json",import.meta.url),"utf8")) as Experiment
@@ -391,8 +392,56 @@ test("R7: stage record links retain the exact range and activity counts never cl
   assert.equal(params.get("from"),stage.from)
   assert.equal(params.get("to"),stage.to)
   assert.equal(params.get("limit"),"100")
+  assert.equal(params.get("filter"),"decision-action")
+  assert.deepEqual(["decision","action","power","snapshot","settings"].filter(kind=>schedulerHistoryKindMatches(params.get("filter")!,kind)),["decision","action"])
   const page={from:stage.from,to:stage.to,events:[recorded.decision,{at:stage.from,action:{id:"a",kind:"prepare",node:{name:"node",uid:"node-uid"},phase:"Started",startedAt:stage.from}}],nextCursor:"100"}
   assert.deepEqual(stageActivity(page),{decisions:1,actions:1,partial:true,statuses:[recorded.decision.decision!.status],kinds:["prepare"]})
   assert.equal(stageActivity({...page,nextCursor:undefined,gapUntil:stage.to}).partial,true)
   assert.deepEqual(stageActivity({from:stage.from,to:stage.to,events:null}),{decisions:0,actions:0,partial:false,statuses:[],kinds:[]})
+})
+
+test("R8: campaign scoreboard separates energy, worst service losses, missing metrics and incomparable stages",()=>{
+  const make=(id:string,energy:number|null,success:number|null,p95:number|null):ExperimentStage=>({
+    id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",
+    kpis:{wholePoolJoules:energy,measurementRules:{population:"offered"},requests:{camera:{offered:600,deadlineSuccessFraction:success,completedLatencyNS:{p95:p95===null?null:p95*1e6}}}},
+  })
+  const run={...recorded.publication,stages:[
+    make("full-E5-1",90,.8,20),make("static-E5-1",100,.9,10),
+    make("full-E5-2",110,1,5),make("static-E5-2",100,1,5),
+    make("full-E5-3",null,null,null),make("static-E5-3",100,1,10),
+    make("manual",50,1,5),
+  ]}
+  const scoreboard=campaignScoreboard(run)
+  assert.deepEqual(scoreboard.metrics.map(metric=>metric.label),["전체 POOL 에너지","최대 성공률 하락","최대 p95 증가"])
+  assert.equal(scoreboard.metrics[0].value,"감소 1 / 증가 1 / 같음 0쌍")
+  assert.match(scoreboard.metrics[0].detail,/값 미제공 1쌍/)
+  assert.match(scoreboard.metrics[1].value,/-10.00 %p/)
+  assert.match(scoreboard.metrics[1].detail,/camera.*E5-1.*비교 불가·미제공 1건/)
+  assert.match(scoreboard.metrics[2].value,/\+10.00 ms.*×2.00/)
+  assert.match(scoreboard.metrics[2].detail,/camera.*E5-1.*비교 불가·미제공 1건/)
+  assert.match(scoreboard.coverage,/전체 7단계/)
+  assert.match(scoreboard.coverage,/같은 부하 3쌍.*비교 불가 1단계/)
+  const unavailable=campaignScoreboard({...run,stages:[make("manual",50,1,5)]})
+  assert.ok(unavailable.metrics.every(metric=>metric.value==="비교 불가"))
+  assert.match(unavailable.coverage,/비교 불가 1단계/)
+  const missing=campaignScoreboard({...run,stages:[make("full-E5-1",null,null,null),make("static-E5-1",100,1,10)]})
+  assert.ok(missing.metrics.every(metric=>metric.value==="미제공"))
+})
+
+test("R8: comparisons and chart axes follow recorded time rather than severity, suffix or input order",()=>{
+  const make=(id:string,minute:number):ExperimentStage=>({...stage,id,from:`2026-10-30T00:0${minute}:00Z`,to:`2026-10-30T00:0${minute+1}:00Z`})
+  const run={...recorded.publication,stages:[make("full-E5-1",4),make("static-E5-1",5),make("full-E5-3",0),make("static-E5-3",1)]}
+  assert.deepEqual(campaignPairs(run).map(pair=>pair.key),["E5-3","E5-1"])
+  assert.deepEqual(campaignTradeoffs(run).map(pair=>pair.key),["E5-3","E5-1"])
+  assert.deepEqual(policyStageGroups(run).groups.map(group=>group.axis),["E5-3","E5-1"])
+  assert.equal(run.stages[0].id,"full-E5-1","sorting never mutates the publication")
+})
+
+test("R8: policy markers distinguish square fixed from circle automatic without converting missing chart points to zero",()=>{
+  assert.deepEqual(policyChartStyle("고정 구성"),{color:"var(--color-slate-500, #64748b)",shape:"square"})
+  assert.deepEqual(policyChartStyle("자동 운영"),{color:"var(--color-teal-600, #0d9488)",shape:"circle"})
+  const run={...recorded.publication,stages:[{...stage,id:"full-E5-1",kpis:{requests:{camera:{offered:0}}}}]}
+  assert.equal(stageChartData(run)[0].services.camera.success,null)
+  assert.equal(stageChartData(run)[0].services.camera.p95,null)
+  assert.equal(policyStageGroups(run).groups[0].series[0]?.services.camera.p95,null)
 })

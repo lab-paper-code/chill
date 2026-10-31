@@ -7,7 +7,7 @@ import { useChillQuery } from "@/lib/client"
 import type { SchedulerObservationPage } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { object } from "@/lib/experiments"
-import { campaignGroups, campaignPairs, campaignTradeoffs, stageActivity, stageHistoryLink, commitExperimentSelection, comparisonDirection, policyStageGroups, serviceDelta, stageChartData, stagePolicy, alphaText, comparisonRows, differentMeasurementRules, difference, evidenceError, experimentRows, formatResult, relativeEnergy, resultMetric, stageRate, stageSeconds, campaignConclusion, stageLoadLabel, type Experiment, type ExperimentRow, type ExperimentStage, type PublishedMetric } from "@/lib/experiments"
+import { campaignGroups, campaignScoreboard, campaignTradeoffs, experimentSelection, policyChartStyle, stageActivity, stageHistoryLink, commitExperimentSelection, comparisonDirection, policyStageGroups, serviceDelta, stageChartData, stagePolicy, alphaText, comparisonRows, differentMeasurementRules, difference, evidenceError, experimentRows, formatResult, relativeEnergy, resultMetric, stageRate, stageSeconds, stageLoadLabel, type Experiment, type ExperimentRow, type ExperimentStage, type PublishedMetric } from "@/lib/experiments"
 import { QueryGate, SourceJSON, SourceExport, StatusBadge } from "@/components/read-region"
 import { Screen, Empty } from "@/components/screen"
 import { Button } from "@/components/ui/button"
@@ -93,10 +93,16 @@ function Timeline({run,selected,label,onSelect}:{run:Experiment;selected?:Experi
   </section>
 }
 
+function PolicyDot({cx,cy,value,policy,hollow=false,r=4}:{cx?:number;cy?:number;value?:unknown;policy:string;hollow?:boolean;r?:number}) {
+  if(cx==null||cy==null||typeof value!=="number"||!Number.isFinite(value))return <g/>
+  const {color,shape}=policyChartStyle(policy),fill=hollow?"var(--background)":color
+  return shape==="square"?<rect x={cx-r} y={cy-r} width={r*2} height={r*2} fill={fill} stroke={color} strokeWidth={2}/>:shape==="diamond"?<polygon points={`${cx},${cy-r} ${cx+r},${cy} ${cx},${cy+r} ${cx-r},${cy}`} fill={fill} stroke={color} strokeWidth={2}/>:<circle cx={cx} cy={cy} r={r} fill={fill} stroke={color} strokeWidth={2}/>
+}
+
 function StageCharts({run}:{run:Experiment}) {
   const data=stageChartData(run),names=[...new Set(data.flatMap(point=>Object.keys(point.services)))]
   const {policies,groups}=policyStageGroups(run)
-  const color=(policy:string)=>policy==="자동 운영"?"var(--primary)":policy==="고정 구성"?"var(--muted-foreground)":"var(--chart-3)"
+  const color=(policy:string)=>policyChartStyle(policy).color
   const chart=(title:string,unit:string,get:(point:typeof data[number])=>number|null,bar=false,service?:string)=>{
     const points=groups.map(({axis,series})=>Object.fromEntries([["axis",axis],...series.flatMap((point,index)=>{
       const value=point?get(point):null
@@ -109,11 +115,11 @@ function StageCharts({run}:{run:Experiment}) {
     const tooltip=<Tooltip formatter={value=>formatResult(typeof value==="number"?(unit==="%"?value/100:value):null,unit)}/>
     return <figure className="min-w-0 space-y-2" key={title}>
       <figcaption className="text-sm font-medium">{title} ({unit})</figcaption>
-      <div className="h-[180px] w-full" role="img" aria-label={`${title} · 단계 집계 · 비대응은 속 빈 마커`}>
+      <div className="h-[180px] w-full" role="img" aria-label={`${title} · 고정 구성 회색 사각, 자동 운영 청록 원 · 비대응은 속 빈 마커 · 결측은 빈 구간`}>
         <ResponsiveContainer width="100%" height="100%">{bar?
           <BarChart accessibilityLayer aria-label={`${title} 단계별 막대 차트`} data={points} margin={{left:0,right:8,top:8,bottom:0}}>
             <CartesianGrid vertical={false}/>{xAxis}{yAxis}{tooltip}{legend}
-            {policies.map((policy,index)=><Bar key={policy} dataKey={`p${index}`} name={policy} fill={color(policy)} stroke={color(policy)} strokeDasharray={policy==="고정 구성"?"3 2":undefined} isAnimationActive={false}>
+            {policies.map((policy,index)=><Bar key={policy} dataKey={`p${index}`} name={policy} legendType={policyChartStyle(policy).shape} fill={color(policy)} stroke={color(policy)} strokeDasharray={policy==="고정 구성"?"3 2":undefined} isAnimationActive={false}>
               {points.map((point,i)=><Cell key={i} fill={point[`paired${index}`]?color(policy):"var(--background)"}/>)}
               <ErrorBar dataKey={`e${index}`} width={4} stroke="var(--foreground)"/>
             </Bar>)}
@@ -121,9 +127,9 @@ function StageCharts({run}:{run:Experiment}) {
           <LineChart accessibilityLayer aria-label={`${title} 단계별 선 차트`} data={points} margin={{left:0,right:8,top:8,bottom:0}}>
             <CartesianGrid vertical={false}/>{xAxis}{yAxis}{tooltip}{legend}
             {policies.map((policy,index)=><React.Fragment key={policy}>
-              <Line dataKey={`p${index}`} name={policy} stroke={color(policy)} strokeWidth={2} strokeDasharray={policy==="고정 구성"?"4 3":undefined} dot={{r:3}} isAnimationActive={false} connectNulls={false}/>
-              <Line dataKey={`u${index}`} name={`${policy} 비대응`} stroke="none" legendType="none" dot={{r:4,fill:"var(--background)",stroke:color(policy),strokeWidth:2}} activeDot={{r:5,fill:"var(--background)",stroke:color(policy)}} isAnimationActive={false} connectNulls={false}/>
-              {service&&<Line dataKey={`s${index}`} name={`${policy} 당시 p95 목표`} type="stepAfter" stroke={color(policy)} strokeDasharray="2 4" dot={{r:2}} isAnimationActive={false} connectNulls={false}/>}
+              <Line dataKey={`p${index}`} name={policy} legendType={policyChartStyle(policy).shape} stroke={color(policy)} strokeWidth={2} dot={props=><PolicyDot {...props} policy={policy} r={4}/>} activeDot={props=><PolicyDot {...props} policy={policy} r={5}/>} isAnimationActive={false} connectNulls={false}/>
+              <Line dataKey={`u${index}`} name={`${policy} 비대응`} stroke="none" legendType="none" dot={props=><PolicyDot {...props} policy={policy} hollow r={4}/>} activeDot={props=><PolicyDot {...props} policy={policy} hollow r={5}/>} isAnimationActive={false} connectNulls={false}/>
+              {service&&<Line dataKey={`s${index}`} name={`${policy} 당시 p95 목표`} legendType="plainline" type="stepAfter" stroke="var(--heat)" strokeDasharray="2 4" dot={false} isAnimationActive={false} connectNulls={false}/>}
             </React.Fragment>)}
           </LineChart>}
         </ResponsiveContainer>
@@ -133,7 +139,8 @@ function StageCharts({run}:{run:Experiment}) {
   }
   return <section aria-label="단계별 부하와 결과" className="min-w-0 space-y-5">
     <h2 className="text-xl font-semibold">정책별 단계 비교</h2>
-    <p className="text-sm text-muted-foreground">가로축은 아래 구간 번호예요. 같은 단계 또는 같은 부하 비교를 나란히 표시해요. 단계 코드가 다른 비교는 속 빈 마커이며 관측값의 차이이지 전환의 인과 효과는 아니에요.</p>
+    <p className="text-sm text-muted-foreground">비교 구간은 처음 실행된 시각 순서예요. 서로 다른 시각에 실행된 같은 단계·부하를 나란히 놓은 비교 축이며 실제 연속 시간축은 아니에요.</p>
+    <p className="text-sm">고정 구성: 회색 사각 · 자동 운영: 청록 원 · 당시 p95 목표: 주황 점선. 단계 코드가 다른 비교는 속 빈 마커예요. 결측은 비워 두며 전환의 인과 효과로 단정하지 않아요.</p>
     <ol className="flex flex-wrap gap-x-5 gap-y-2 text-sm" aria-label="차트 구간 범례">{groups.map(({axis,series},index)=><li key={axis}><strong>{index+1}.</strong> {formatResult(series.find(Boolean)?.rate,"req/s")} <span className="text-muted-foreground">({axis})</span></li>)}</ol>
     <div className="grid min-w-0 gap-4 md:grid-cols-2">{chart("평균 보낸 요청률","req/s",point=>point.rate)}{chart("전체 POOL 평균 전력","W",point=>point.watts,true)}</div>
     <p className="text-xs text-muted-foreground">평균 전력은 구간의 전체 에너지를 실제 실행 시간으로 나눈 값이에요. 오차막대는 전력 기록이 비어 있는 동안의 오차 한도예요.</p>
@@ -183,12 +190,28 @@ function Evidence({stage}:{stage:ExperimentStage}) {
   </section>
 }
 
+function Scoreboard({run}:{run:Experiment}) {
+  const {metrics,coverage}=campaignScoreboard(run)
+  return <section aria-label="자동 운영과 고정 구성 결과 점수판" className="space-y-2">
+    <p className="text-xs text-muted-foreground md:hidden">표를 좌우로 이동하면 비교 범위와 결손까지 볼 수 있어요.</p>
+    <div className="overflow-x-auto rounded border" tabIndex={0} role="region" aria-label="실험 결과 점수판">
+      <table className="w-full min-w-[580px] text-sm"><caption className="sr-only">자동 운영 − 고정 구성, 서비스별 결과는 평균하지 않음</caption>
+        <thead className="bg-muted/60"><tr><th scope="col" className="p-3 text-left">지표</th><th scope="col" className="p-3 text-left">자동 운영 − 고정 구성</th><th scope="col" className="p-3 text-left">비교 범위·결손</th></tr></thead>
+        <tbody>{metrics.map(metric=><tr key={metric.label} className="border-t"><th scope="row" className="p-3 text-left align-top font-medium">{metric.label}</th><td className="p-3 align-top font-semibold tabular-nums">{metric.value}</td><td className="p-3 align-top text-xs">{metric.detail}</td></tr>)}</tbody>
+      </table>
+    </div>
+    <p className="break-words text-xs text-muted-foreground">{coverage}</p>
+    <p className="text-xs text-muted-foreground">관측값 비교이며 에너지 절감만으로 우열을 판단하지 않아요. 구간 길이·측정 규칙 차이는 아래 상세 근거에서 확인하세요. 성공률·p95는 서비스별로 비교하며 평균하지 않아요.</p>
+  </section>
+}
+
 function Tradeoffs({run,onSelect}:{run:Experiment;onSelect:(a:string,b:string)=>void}) {
-  const rows=campaignTradeoffs(run).sort((a,b)=>Number(b.services.some(service=>service.worstSuccess||service.worstP95))-Number(a.services.some(service=>service.worstSuccess||service.worstP95)))
+  const rows=campaignTradeoffs(run)
   const chip=(text:string,tone:"gain"|"loss"|"neutral")=><span className={`inline-block rounded border px-2 py-1 text-sm ${tone==="gain"?"border-ok/40 text-ok":tone==="loss"?"border-destructive/40 text-destructive":"border-border text-foreground"}`}>{tone==="gain"?"득 · ":tone==="loss"?"실 · ":""}{text}</span>
   return <section id="experiment-tradeoffs" tabIndex={-1} className="space-y-3 scroll-mt-4" aria-label="구간별 득실 결론">
     <h2 className="text-xl font-semibold">자동 운영으로 얻은 것과 잃은 것</h2>
-    <p className="text-sm">자동 운영 − 고정 구성. 에너지 절감만으로 더 낫다고 판단하지 않아요. 가장 큰 성공률 하락·p95 증가 구간도 포함해요.</p>
+    <Scoreboard run={run}/>
+    <p className="text-sm">자동 운영 − 고정 구성. 아래 비교 구간은 자동 운영의 실행 시각 순서예요. 에너지 절감만으로 더 낫다고 판단하지 않아요. 가장 큰 성공률 하락·p95 증가도 해당 구간에 표시해요.</p>
     {!rows.length&&<p>비교할 같은 부하 구간이 없어요. 아래 전 단계 결과에서 개별 값을 확인하세요.</p>}
     <ul className="grid gap-x-8 md:grid-cols-2">{rows.map(row=><li key={row.key} className="space-y-3 border-b py-4">
       <div className="flex flex-wrap items-center justify-between gap-2"><button type="button" className="min-h-11 text-left font-semibold underline underline-offset-4" onClick={()=>onSelect(row.chill.id,row.control.id)}>{stageLoadLabel(row.chill,run)} <span className="text-sm font-normal">({row.key})</span></button><span className="text-sm">{row.basis}</span></div>
@@ -218,13 +241,14 @@ export function ExperimentsPage() {
   }
   return <Screen width="data" breadcrumbs={[{label:"실험"}]} title={a?"실험 결과 비교":"실험 목록"} lede="실험 기록의 전 단계와 전 서비스 결과를 보고, 정확히 대응하는 정책 단계 또는 직접 고른 A/B를 비교합니다.">
     {!a?<QueryGate query={list}>{list.data&&<section aria-label="실험 캠페인 목록" className="space-y-4">{campaignGroups(list.data.items).map(({run,title,question,pairs})=>{
-      const pair=pairs[0]
+      const pair=pairs[0],first=[...run.stages].sort((a,b)=>Date.parse(a.from)-Date.parse(b.from))[0]
+      const href=`/experiments?${experimentSelection("",pair?{a:run.id,as:pair.chill.id,b:run.id,bs:pair.control.id}:{a:run.id,as:first?.id??"",b:"",bs:""})}`
       return <article key={run.id} className="space-y-3 rounded-lg border p-4 sm:p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h2 className="text-lg font-semibold">{title}</h2><p className="break-words text-sm text-muted-foreground">{run.id}</p></div><time className="text-sm tabular-nums" dateTime={run.from}>{new Date(run.from).toLocaleDateString("ko-KR",{timeZone:"Asia/Seoul"})}</time></div>
+        <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h2 className="text-lg font-semibold"><Link prefetch={false} href={href} className="inline-flex min-h-11 items-center break-all underline underline-offset-4">{title}</Link></h2></div><time className="text-sm tabular-nums" dateTime={run.from}>{new Date(run.from).toLocaleDateString("ko-KR",{timeZone:"Asia/Seoul"})}</time></div>
         <p className="text-sm">{question}</p>
-        <p className="text-sm font-medium">{campaignConclusion(run)}</p>
+        <Scoreboard run={run}/>
         <p className="text-sm text-muted-foreground">전 단계의 서비스별 득실은 상세 결과에서 확인하세요.</p>
-        <Button variant="outline" onClick={()=>select(pair?{a:run.id,as:pair.chill.id,b:run.id,bs:pair.control.id}:{a:run.id,as:run.stages[0]?.id??"",b:"",bs:""})}>운영 비교 결론 보기</Button>
+        <Button variant="outline" asChild><Link prefetch={false} href={href}>운영 비교 결론 보기</Link></Button>
       </article>
     })}{!list.data.items.length&&<Empty title="게시된 실험이 없어요"/>}</section>}</QueryGate>:<Button variant="outline" onClick={()=>select({a:"",as:"",b:"",bs:""})}>실험 목록으로</Button>}
     {a&&<QueryGate query={aq}>{aq.data&&<Tradeoffs run={aq.data} onSelect={(as,bs)=>select({a,as,b:a,bs})}/>}</QueryGate>}

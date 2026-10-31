@@ -2,6 +2,10 @@ import type { SchedulerObservation } from "./read-types.ts"
 
 export type SchedulerRecordRef = {from:string;to:string;offset:string;kind:string;at:string;id:string;node?:string;startedAt?:string}
 
+export function schedulerHistoryKindMatches(filter:string,kind:string):boolean {
+  return filter==="all"||filter===kind||filter==="decision-action"&&(kind==="decision"||kind==="action")
+}
+
 export function schedulerRecordRef(event:SchedulerObservation,from:string,to:string,offset:string):SchedulerRecordRef {
   const kind=event.decision?"decision":event.snapshot?"snapshot":event.settings?"settings":event.action?"action":event.power?"power":"other"
   const id=event.action?.id??event.node?.uid??event.settings?.actorUID??event.decision?.at??event.snapshot?.at??""

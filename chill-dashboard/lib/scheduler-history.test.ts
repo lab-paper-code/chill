@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams } from "./scheduler-history.ts"
+import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerHistoryKindMatches } from "./scheduler-history.ts"
 import type { SchedulerObservation } from "./read-types.ts"
 
 const from="2026-10-13T02:00:00.123456789Z",to="2026-10-13T03:00:00.987654321Z"
@@ -27,4 +27,19 @@ test("cursor movement keeps submitted nano window and local filter while clearin
   assert.deepEqual(Object.fromEntries(next),{from,to,scope:"scheduler",filter:"power",cursor:"40",aOffset:"10"})
   assert.equal(schedulerPageParams(next).has("cursor"),false)
   assert.equal(params.get("offset"),"21")
+})
+
+test("experiment evidence filter selects only decision and action kinds and survives paging",()=>{
+  const kinds=["decision","action","snapshot","settings","power","other"]
+  assert.deepEqual(kinds.filter(kind=>schedulerHistoryKindMatches("decision-action",kind)),["decision","action"])
+  assert.deepEqual(kinds.filter(kind=>schedulerHistoryKindMatches("all",kind)),kinds)
+  assert.deepEqual(kinds.filter(kind=>schedulerHistoryKindMatches("decision",kind)),["decision"])
+  assert.deepEqual(kinds.filter(kind=>schedulerHistoryKindMatches("action",kind)),["action"])
+  const params=new URLSearchParams({from,to,filter:"decision-action",limit:"100",offset:"21",kind:"action",at:event.at,id:"same-action"})
+  const next=schedulerPageParams(params,"100")
+  assert.equal(next.get("filter"),"decision-action")
+  assert.equal(next.get("from"),from)
+  assert.equal(next.get("to"),to)
+  assert.equal(next.get("cursor"),"100")
+  assert.equal(next.has("kind"),false)
 })

@@ -5,7 +5,8 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useSession } from "@/lib/client"
 import type { DispatchOccupancyMeasurement, MeasurementEvidenceLocation, MeasurementProjection, MeasurementProjectionList, OperationCostMeasurement } from "@/lib/read-types"
-import { formatMeasurementTime, evidenceLocations, measurementHref, measurementListHref, measurementPath, measurementUIDMismatch, occupancyDuration, occupancyThroughput, occupancySupply, operationDuration, operationWallEnergy, operationTotals, operationSteps, type OperationTotals, type OperationStep, type ProjectionMeasurementKind } from "@/lib/measurements"
+import { formatMeasurementTime, evidenceLocations, measurementHref, measurementListHref, measurementPath, measurementUIDMismatch, occupancyDuration, occupancyThroughput, occupancySupply, operationTotals, operationSteps, type OperationTotals, type OperationStep, type ProjectionMeasurementKind } from "@/lib/measurements"
+import { operationCostDuration as operationDuration, operationCostEnergy as operationWallEnergy, operationStageLabel, largestOperationStages } from "@/lib/operation-cost"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
 import { Facts, RowDialog, Rows, Screen } from "@/components/screen"
@@ -33,9 +34,9 @@ export function ProjectionMeasurementListPage({kind}:{kind:ProjectionMeasurement
     {key:"node",label:"Node",value:item => item.node,sortValue:item => item.node},
     {key:"phase",label:"서버 판정",value:item => <MeasurementStatus assessment={item.assessment}/>,sortValue:item => item.assessment?.label??""},
     ...(kind === "operation-cost-measurements" ? [
-      {key:"duration",label:"실측 총 시간 (s)",sortValue:(item:ProjectionRow)=>item.totals?.durationNanos??undefined,value:(item:ProjectionRow)=>item.totals?.durationNanos===null?"잘못된 시간 기록 · 확인 필요":operationDuration(item.totals?.durationNanos,"s")},
-      {key:"energy",label:"수용된 총 벽에너지 (J)",sortValue:(item:ProjectionRow)=>item.totals?.wallJoules??undefined,value:(item:ProjectionRow)=>item.totals?.wallJoules===null?"잘못된 에너지 기록 · 확인 필요":operationWallEnergy(item.totals?.wallJoules)},
-      {key:"steps",label:"단계 기록",sortValue:(item:ProjectionRow)=>item.kind==="OperationCostMeasurement"?item.status.steps?.length??0:undefined,value:(item:ProjectionRow) => item.kind === "OperationCostMeasurement" ? `기록 ${item.status.steps?.length ?? 0} / 계획 ${item.conditions.steps.length}단계` : "종류 확인 필요"},
+      {key:"duration",label:"전체 시나리오 시간 (유휴 포함)",sortValue:(item:ProjectionRow)=>item.totals?.durationNanos??undefined,value:(item:ProjectionRow)=>item.totals?.durationNanos===null?"잘못된 시간 기록 · 확인 필요":operationDuration(item.totals?.durationNanos)},
+      {key:"energy",label:"전체 장비 에너지 (J, 유휴 포함)",sortValue:(item:ProjectionRow)=>item.totals?.wallJoules??undefined,value:(item:ProjectionRow)=>item.totals?.wallJoules===null?"잘못된 에너지 기록 · 확인 필요":operationWallEnergy(item.totals?.wallJoules)},
+      {key:"steps",label:"단계별 시간·에너지",value:(item:ProjectionRow) => item.kind === "OperationCostMeasurement" ? <OperationSummary data={item}/> : "종류 확인 필요"},
     ] : [
       {key:"workload",label:"워크로드",sortValue:(item:ProjectionRow)=>item.kind==="DispatchOccupancyMeasurement"?item.conditions.workload:undefined,value:(item:ProjectionRow) => item.kind === "DispatchOccupancyMeasurement" ? item.conditions.workload : "종류 확인 필요"},
       {key:"batch",label:"배치",sortValue:(item:ProjectionRow)=>item.kind==="DispatchOccupancyMeasurement"?item.conditions.batch:undefined,value:(item:ProjectionRow) => item.kind === "DispatchOccupancyMeasurement" ? `${item.conditions.batch}건/batch` : "종류 확인 필요"},
@@ -94,13 +95,27 @@ const stepKinds:Record<string,string> = {power:"전력 모드 변경",prepare:"�
 function BEOReference({namespace,name}:{namespace:string;name:string}) {
   return <Link className="underline underline-offset-4" href={`/measurements/batch-energy-optimizations/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`}>{name} (현재 이름 기준 / UID 없는 참조)</Link>
 }
+function OperationSummary({data}:{data:OperationCostMeasurement}) {
+  const steps=operationSteps(data),largest=largestOperationStages(steps)
+  return <div className="grid min-w-56 gap-3 whitespace-normal break-words">
+    <p className="font-medium">최장 시간: {largest.duration.map(step=>`${steps.indexOf(step)+1}. ${operationStageLabel(step)} ${operationDuration(step.results[0].durationNanos)}`).join(", ")||"비교할 기록 없음"} · 최대 에너지: {largest.energy.map(step=>`${steps.indexOf(step)+1}. ${operationStageLabel(step)} ${operationWallEnergy(step.results[0].wallJoules)}`).join(", ")||"비교할 기록 없음"}</p>
+    <ol className="grid list-decimal gap-2 pl-5">{steps.map((step,index)=><li key={index}>{operationStageLabel(step)} · {step.results.length?step.results.map((result,i)=><span key={i} className="block">{operationDuration(result.durationNanos)} / {result.verdict==="Accepted"?operationWallEnergy(result.wallJoules):"채택된 에너지 없음"}</span>):"실측 미기록"}<OperationTarget step={step}/></li>)}</ol>
+    <p className="text-xs text-muted-foreground">기록 {data.status.steps?.length??0} / 계획 {data.conditions.steps.length}단계. 최대값은 단일 결과가 있는 단계끼리 비교해요.</p>
+  </div>
+}
+function OperationTarget({step}:{step:OperationStep}) {
+  const condition=step.condition
+  if(condition?.kind==="power")return <p className="text-xs text-muted-foreground">전환 방향 미기록 · 계획 목표: {condition.powerMode||"미기록"}</p>
+  if(condition?.kind==="prepare"||condition?.kind==="remove")return <p className="text-xs text-muted-foreground">모델 미기록 · 측정 프로파일: {condition.batchEnergyOptimization||"미기록"}</p>
+  return null
+}
 function OperationResult({data}:{data:OperationCostMeasurement}) {
-  const totals=operationTotals(data)
+  const totals=operationTotals(data),steps=operationSteps(data),largest=largestOperationStages(steps)
   const columns:DataColumn<OperationStep>[] = [
-    {key:"name",label:"단계 이름",value:step => <span>{step.condition ? stepKinds[step.condition.kind] ?? "동작" : "동작"}<details><summary className="min-h-6 cursor-pointer text-xs">단계 코드</summary>{step.name}</details></span>},
-    {key:"condition",label:"조건 연결",value:step => step.condition ? stepKinds[step.condition.kind] ?? "확인이 필요해요" : "조건 연결 없음"},
-    {key:"duration",label:"실측 시간",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => <li key={index}>{operationDuration(result.durationNanos,"s")}</li>)}</ul> : "미제공"},
-    {key:"energy",label:"수용된 전체 Node 벽에너지",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => <li key={index}>{result.verdict==="Accepted"?operationWallEnergy(result.wallJoules):"수용된 에너지 없음"}</li>)}</ul> : "미제공"},
+    {key:"name",label:"단계 이름",value:step => <span>{operationStageLabel(step)}{largest.duration.includes(step)&&<strong className="block">최장 시간</strong>}{largest.energy.includes(step)&&<strong className="block">최대 에너지</strong>}<details><summary className="min-h-11 cursor-pointer py-2 text-xs">단계 코드</summary>{step.name}</details></span>},
+    {key:"condition",label:"대상·전환 방향",value:step => <OperationTarget step={step}/>},
+    {key:"duration",label:"실측 시간",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => <li key={index}>{operationDuration(result.durationNanos)}</li>)}</ul> : "미제공"},
+    {key:"energy",label:"전체 장비 에너지 (채택된 기록)",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => <li key={index}>{result.verdict==="Accepted"?operationWallEnergy(result.wallJoules):"채택된 에너지 없음"}</li>)}</ul> : "미제공"},
     {key:"result",label:"저장 결과",value:step => step.results.length ? <ul className="grid gap-2">{step.results.map((result,index) => {
       const locations = result.key ? evidenceLocations(data.references.evidence.filter(location => location.key === result.key)) : []
       return <li key={index} className="grid gap-1">
@@ -109,9 +124,9 @@ function OperationResult({data}:{data:OperationCostMeasurement}) {
     })}</ul> : "아직 기록된 결과가 없어요"},
   ]
   return <>
-    <p className="notice">실측 총 시간 {totals.durationNanos===null?"잘못된 시간 기록 · 확인 필요":operationDuration(totals.durationNanos,"s")} · 수용된 총 벽에너지 {totals.wallJoules===null?"잘못된 에너지 기록 · 확인 필요":operationWallEnergy(totals.wallJoules)}. 계획 전체 단계가 기록된 경우에만 합계를 표시해요. 에너지는 모든 단계가 수용된 경우에만 합산해요.</p>
-    <p className="text-sm text-muted-foreground">기록 {data.status.steps?.length ?? 0} / 계획 {data.conditions.steps.length}단계. 완료 상태만으로 단계 채택을 재판정하지 않아요.</p>
-    <DataTable data={operationSteps(data)} columns={columns}/>
+    <p className="notice">전체 시나리오 시간 {totals.durationNanos===null?"잘못된 시간 기록 · 확인 필요":operationDuration(totals.durationNanos)} · 전체 장비 에너지 {totals.wallJoules===null?"잘못된 에너지 기록 · 확인 필요":operationWallEnergy(totals.wallJoules)}. 쉬는 상태 유지도 포함하며 순수 전환 비용이나 요청당 추가 에너지가 아니에요. 계획 전체 단계가 기록된 경우에만 합계를 표시해요. 에너지는 모든 단계가 채택된 경우에만 합산해요.</p>
+    <OperationSummary data={data}/>
+    <DataTable data={steps} columns={columns}/>
     <Rows label="자세히"><RowDialog label="순서 있는 동작 조건" title="순서 있는 동작 조건" description="조건에 기록된 순서예요. 단계별로 해당 동작의 조건만 표시해요.">
       <ol className="grid list-decimal gap-5 pl-5">{data.conditions.steps.map((step,index) => <li key={index}><Facts label={step.name} items={[
         ["동작 종류",stepKinds[step.kind] ?? "확인이 필요해요"],
