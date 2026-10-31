@@ -390,3 +390,10 @@
 - 필요 n(p95 ±5%, 상관 보정, 중앙/p90): MNV 162/596, PLC 695/4,238(최대 9,187), Smol 94/649. 지수분포 가정의 3,254는 MNV·Smol에는 비관적이고 PLC에는 낙관적.
 - 셀당 시간: MNV·PLC는 batch당 active 약 2분, Smol은 호출이 수 초라 셀당 약 95분(10 s 창으로는 본질 정밀도 미달). 패널의 Smol 13분 추정은 폐기.
 - 다음: 커버리지 기반 BEO 생성기(hack/measure/gen.py 확장, n은 config). MNV·PLC 빈 셀 68개 먼저, Smol 58개는 나중. quick-energy v2(`537403aa`) 배포 후 파일럿.
+
+## 2026-10-31 — control-279 배포(조언 세션 요청), κsafe는 제외
+
+- 18:44Z control-279: server와 dashboard를 `7415185b`로 배포. 이 커밋은 main HEAD(618e8897 이후, 사건 기록 summary 단회 스캔 포함)에서 κsafe 3커밋(8c546048, 7dba68d7, 65ce9c08)만 되돌린 배포 브랜치 `deploy-20261031-noksafe`임. 이유: κsafe의 리플레이 게이트(v2 입력)가 아직 끝나지 않아 배포 규칙상 함께 올릴 수 없었음. 두 Pod 모두 restart 0, dashboard 200.
+- 게이트: 리플레이 PASS(기준 f780d19a, v1 입력), clean lint/test/arch/helm PASS, dashboard 217/0.
+- 게이트 과정에서 발견해 고친 것: (1) 내 537403aa가 통합 테스트(`TestBatchEnergyOptimizationReconcilerCompletesAcrossCollisionWaitRetryAndRestart`)를 깸. 구현자가 internal/profiling만 테스트하고 test/integration은 돌리지 않았음 → `e72e3aa4`로 v2 계약에 맞게 기대를 갱신. (2) 다른 세션 커밋 49f7ee9a의 lll lint → `81e95666`(줄 바꿈만). (3) 로컬 main 커밋이 push되지 않아 배포 브랜치에 빠졌던 문제 → push 후 재빌드.
+- 교훈: 구현 에이전트 검증에 test/integration을 포함하고, 커밋 뒤 push까지 확인할 것.
