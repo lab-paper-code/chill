@@ -313,7 +313,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 		t.Fatal(err)
 	}
 	// Recreate after routing has changed the retained ConfigMap's mutable policy.
-	if err := operations.PrepareInstance(ctx, spec); err != nil {
+	if _, err := operations.PrepareInstance(ctx, spec); err != nil {
 		t.Fatal("recreated executor could not acknowledge its mounted current policy", err)
 	}
 	pod := &core.Pod{}
@@ -333,7 +333,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	}
 	id := physicalID(fixture.UID, firstfloorStatus(fixture).ContainerID)
 	assertCurrentPolicyObservation(t, manager.runtime.Instances(), id, policyAckPendingReason, currentPolicy)
-	if err := operations.PrepareInstance(ctx, spec); err != nil {
+	if _, err := operations.PrepareInstance(ctx, spec); err != nil {
 		t.Fatal("idempotent prepare did not repair a previous partial acknowledgment", err)
 	}
 	if err := manager.observer.Refresh(ctx); err != nil {
@@ -428,7 +428,7 @@ func TestCUDAPreparationReproducesMeasuredSupplementalGroups(t *testing.T) {
 		},
 		MemoryBytes: 1 << 20,
 	}
-	if err = operations.PrepareInstance(ctx, spec); err == nil || !strings.Contains(err.Error(), "stop after Pod creation") {
+	if _, err = operations.PrepareInstance(ctx, spec); err == nil || !strings.Contains(err.Error(), "stop after Pod creation") {
 		t.Fatalf("preparation did not reach Pod creation: %v", err)
 	}
 	pod := &core.Pod{}
@@ -471,7 +471,7 @@ func TestPreparationSeedsRoutingBeforeRoute(t *testing.T) {
 			Config: native.Config{Mode: nativeServingMode, ProfilePath: "/profile/bundle.json",
 				Policy: native.Policy{ProfileID: profile.ID, DeadlinePolicy: profile.Condition.Firstfloor.DeadlinePolicy}},
 		}
-		if err := operations.PrepareInstance(ctx, spec); err == nil || !strings.Contains(err.Error(), "stop after Pod creation") {
+		if _, err := operations.PrepareInstance(ctx, spec); err == nil || !strings.Contains(err.Error(), "stop after Pod creation") {
 			t.Fatalf("%s preparation did not reach Pod creation: %v", name, err)
 		}
 		pod := &core.Pod{}
@@ -531,7 +531,7 @@ func TestRKNNPreparationProjectsMeasuredHostAccess(t *testing.T) {
 		},
 		MemoryBytes: 1 << 20,
 	}
-	if err = operations.PrepareInstance(ctx, spec); err == nil || !strings.Contains(err.Error(), "stop after Pod creation") {
+	if _, err = operations.PrepareInstance(ctx, spec); err == nil || !strings.Contains(err.Error(), "stop after Pod creation") {
 		t.Fatalf("preparation did not reach Pod creation: %v", err)
 	}
 	config := &core.ConfigMap{}
@@ -571,7 +571,7 @@ func TestRKNNPreparationProjectsMeasuredHostAccess(t *testing.T) {
 	}
 	// The unchanged existing Pod is reused; one with another host source, group
 	// set or privilege is a different preparation.
-	if err = operations.PrepareInstance(ctx, spec); err == nil || !strings.Contains(err.Error(), "stop after Pod creation") {
+	if _, err = operations.PrepareInstance(ctx, spec); err == nil || !strings.Contains(err.Error(), "stop after Pod creation") {
 		t.Fatalf("unchanged existing preparation was not reused: %v", err)
 	}
 	original := pod.DeepCopy()
@@ -589,7 +589,7 @@ func TestRKNNPreparationProjectsMeasuredHostAccess(t *testing.T) {
 		if err = store.client.Update(ctx, existing); err != nil {
 			t.Fatal(err)
 		}
-		if err = operations.PrepareInstance(ctx, spec); err == nil || !strings.Contains(err.Error(), "existing preparation Pod differs") {
+		if _, err = operations.PrepareInstance(ctx, spec); err == nil || !strings.Contains(err.Error(), "existing preparation Pod differs") {
 			t.Fatalf("existing Pod with different %s was reused: %v", name, err)
 		}
 	}
@@ -623,7 +623,7 @@ func TestMeasurementPoolAdmitsOnlyMatchingOperations(t *testing.T) {
 			store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node.DeepCopy()).Build()}
 			operations := &Operations{store: store, kube: kube, observer: newTestObserver(t), config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond, Measurement: tc.measurement}}
 			spec := measuredCPUPreparationFixture()
-			err := operations.PrepareInstance(ctx, spec)
+			evidence, err := operations.PrepareInstance(ctx, spec)
 			pod := &core.Pod{}
 			getErr := store.client.Get(ctx, types.NamespacedName{Namespace: "chill-system", Name: spec.Name}, pod)
 			if !tc.admitted {
@@ -640,6 +640,14 @@ func TestMeasurementPoolAdmitsOnlyMatchingOperations(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), "stop after Pod creation") || getErr != nil {
 				t.Fatalf("measurement preparation did not reach Pod creation: %v %v", err, getErr)
+			}
+			if evidence == nil || !evidence.Created || evidence.PodUID != string(pod.UID) ||
+				evidence.NodeUID != spec.Instance.Node.UID || evidence.DecisionID == "" {
+				t.Fatalf("post-Create failure lost independent API evidence: %+v", evidence)
+			}
+			reused, reuseErr := operations.PrepareInstance(ctx, spec)
+			if reuseErr == nil || reused == nil || reused.Created || reused.PodUID != evidence.PodUID {
+				t.Fatalf("verified existing GET lost reused provenance: %+v %v", reused, reuseErr)
 			}
 			if !slices.Contains(pod.Spec.Tolerations, profilingrun.MeasurementToleration()) {
 				t.Fatalf("measurement Pod lacks the measurement toleration: %+v", pod.Spec.Tolerations)

@@ -87,6 +87,92 @@ func (c *SchedulerController) routeOperationScopeLocked(parent, selected serving
 	})
 }
 
+// normalizeRoutesLocked records semantic no-ops without manufacturing an ACK
+// or deleting dependency edges. A dependent stop must still pass the existing
+// completedHandoffPresent check. Preparations and retirement work are untouched.
+func (c *SchedulerController) normalizeRoutesLocked(target *serving.SchedulerCandidate, parent *actionRun) {
+	if target == nil {
+		return
+	}
+	for _, action := range target.Actions {
+		if action.Kind != operationRoute || c.runs[action.ID] != nil || action.From == readySubsetRoute {
+			continue
+		}
+		selected := target
+		if action.RouteTarget != nil {
+			selected = action.RouteTarget
+		}
+		scope := c.routeOperationScopeLocked(*target, *selected, selected != target)
+		if scope != nil && len(scope) == 0 {
+			if parent.noEffectRoutes == nil {
+				parent.noEffectRoutes = map[string]bool{}
+			}
+			parent.noEffectRoutes[action.ID] = true
+		}
+	}
+}
+
+func (c *SchedulerController) recordNoEffectRouteLocked(owner, id string) {
+	if parent := c.runs[transitionRunKind+"/"+owner]; parent != nil {
+		if parent.noEffectRoutes == nil {
+			parent.noEffectRoutes = map[string]bool{}
+		}
+		parent.noEffectRoutes[id] = true
+	}
+}
+
+func (c *SchedulerController) ownerDAGCompleteLocked(parent *actionRun, noEffectRetirement bool) bool {
+	for _, child := range c.runs {
+		if child != parent && child.owner == parent.owner &&
+			(child.action.Status == nativeOperationRunning || child.action.Status == nativeOperationCancel) {
+			return false
+		}
+	}
+	if noEffectRetirement {
+		return true
+	}
+	for _, action := range parent.result.Operation.Target.Actions {
+		if parent.noEffectRoutes[action.ID] || action.Status == nativeOperationCancel {
+			continue
+		}
+		if run := c.runs[action.ID]; run == nil || run.action.Status != nativeOperationComplete {
+			return false
+		}
+	}
+	return true
+}
+
+// A route-identical declaration cannot authorize retirement. If no operation
+// was admitted and no future prepare/power/route can supply that proof, close
+// the unstarted suffix as no-effect instead of reserving it forever.
+func (c *SchedulerController) unstartedNoEffectRetirementLocked(target *serving.SchedulerCandidate, parent *actionRun) bool {
+	if target == nil || len(parent.noEffectRoutes) == 0 || parent.inheritedReservation || len(parent.mayTouch) != 0 {
+		return false
+	}
+	retirement := false
+	for _, action := range target.Actions {
+		if c.runs[action.ID] != nil {
+			return false
+		}
+		switch action.Kind {
+		case operationRoute:
+			if !parent.noEffectRoutes[action.ID] {
+				return false
+			}
+		case operationStop, operationDrain, operationRemove:
+			retirement = true
+		default:
+			return false
+		}
+	}
+	for _, child := range c.runs {
+		if child != parent && child.owner == parent.owner {
+			return false
+		}
+	}
+	return retirement && (c.runtime == nil || !c.completedHandoffPresent(*target))
+}
+
 func positiveWorkloadScope(target serving.SchedulerCandidate, allowed []string) []string {
 	active := []string{}
 	for uid, weights := range target.Routing {

@@ -342,7 +342,7 @@ func TestManualPrepareAppliesMeasuredMaxBatch(t *testing.T) {
 			if operation.Prepare.Instance.MaxBatch != cap || operation.Prepare.Config.Policy.MaxBatchSize != cap {
 				t.Fatalf("maxBatch was not applied to instance and policy: %+v", operation.Prepare)
 			}
-			if err := h.controller.operations.PrepareInstance(context.Background(), *operation.Prepare); err == nil || !strings.Contains(err.Error(), "stop after Pod creation") {
+			if _, err := h.controller.operations.PrepareInstance(context.Background(), *operation.Prepare); err == nil || !strings.Contains(err.Error(), "stop after Pod creation") {
 				t.Fatalf("preparation did not persist its native config: %v", err)
 			}
 			cm := &core.ConfigMap{}

@@ -95,6 +95,8 @@ type actionRun struct {
 	proofParent          *actionRun
 	replacements         []serving.SchedulerReplacement
 	admittedControls     serving.SchedulerControls
+	// Omitted declarations are bookkeeping, never successful handoff receipts.
+	noEffectRoutes map[string]bool
 }
 type SchedulerController struct {
 	mu         sync.Mutex
@@ -451,21 +453,35 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 }
 
 func (c *SchedulerController) freezePreparingExecutorsLocked(snapshot serving.SchedulerSnapshot) {
-	// A timeout can cancel the final Capture itself. Freeze the first observed
-	// preparing executor while its operation is still live, never after failure.
+	// API-confirmed RestartPolicyNever Pod identity permits one late container
+	// binding even after failure. Slot/name discovery is not creation evidence.
 	for _, run := range c.runs {
-		if run.action.Kind != operationPrepare || run.action.Status != nativeOperationRunning || run.prepareIdentity != "" || run.result == nil || run.result.Operation.Prepare == nil {
+		if (run.action.Kind != operationPrepare && run.action.Kind != operationResize) || run.prepareIdentity != "" || run.result == nil || run.result.Operation.Prepare == nil {
 			continue
 		}
 		wanted := run.result.Operation.Prepare.Instance
+		evidence := run.result.Preparation
+		if evidence == nil || run.result.Operation.Prepare.Owner == nil ||
+			run.result.Operation.Prepare.Owner.UID != wanted.WorkloadUID {
+			continue
+		}
 		for _, actual := range snapshot.Instances {
 			podUID, containerID, exact := strings.Cut(actual.ID, "/")
 			if wanted.Profile != nil && actual.Profile != nil && actual.Profile.ID == wanted.Profile.ID &&
 				actual.TargetID == wanted.ID && actual.Node == wanted.Node && actual.OwnerWorkloadUID == wanted.WorkloadUID &&
 				actual.PodUID != "" && exact && actual.PodUID == podUID && containerID != "" {
+				if evidence.PodUID != actual.PodUID || evidence.NodeUID != actual.Node.UID ||
+					evidence.DecisionID != run.result.Operation.Prepare.Config.Policy.DecisionID {
+					continue
+				}
 				run.prepareIdentity = actual.ID
 				run.scope.Pods = append(run.scope.Pods, actual.PodUID)
 				run.scope.Instances = append(run.scope.Instances, actual.ID)
+				if parent := c.returnProofParent(run); parent != nil {
+					parent.returnObserved = false
+					parent.scope.Pods = append(parent.scope.Pods, actual.PodUID)
+					parent.scope.Instances = append(parent.scope.Instances, actual.ID)
+				}
 				break
 			}
 		}
@@ -487,6 +503,8 @@ func (c *SchedulerController) reconcileOwnersLocked(snapshot serving.SchedulerSn
 			continue
 		}
 		target := parent.result.Operation.Target
+		c.normalizeRoutesLocked(target, parent)
+		noEffectRetirement := c.unstartedNoEffectRetirementLocked(target, parent)
 		if !parent.cleanup {
 			parent.cleanup = c.cleanupReadyLocked(parent, snapshot)
 		}
@@ -497,19 +515,22 @@ func (c *SchedulerController) reconcileOwnersLocked(snapshot serving.SchedulerSn
 			parent.result.Status, parent.result.EndedAt = nativeOperationFailed, now
 			continue
 		}
-		complete := true
-		for _, action := range target.Actions {
-			run := c.runs[action.ID]
-			if action.Status != nativeOperationCancel && (run == nil || run.action.Status != nativeOperationComplete) {
-				complete = false
+		if c.ownerDAGCompleteLocked(parent, noEffectRetirement) {
+			if noEffectRetirement || len(parent.noEffectRoutes) > 0 && len(parent.noEffectRoutes) == len(target.Actions) {
+				// A no-effect owner is not a successful serving transition.
+				parent.action.Status = nativeOperationPartial
+				parent.action.Reason = "no-effect: empty route DAG; awaiting physical return"
+				if noEffectRetirement {
+					parent.action.Reason = "no-effect: unstarted retirement lacks exact handoff; await physical return then replan"
+				}
+				parent.result.Status, parent.result.EndedAt = nativeOperationPartial, now
+				if !parent.inheritedReservation && len(parent.mayTouch) == 0 &&
+					len(parent.scope.Nodes) == 0 && len(parent.scope.Workloads) == 0 &&
+					len(parent.scope.Pods) == 0 && len(parent.scope.Instances) == 0 {
+					c.releaseOwnerLocked(parent.owner)
+				}
+				continue
 			}
-		}
-		for _, child := range c.runs {
-			if child != parent && child.owner == parent.owner && child.action.Status == nativeOperationRunning {
-				complete = false
-			}
-		}
-		if complete {
 			parent.action.Status = nativeOperationComplete
 			parent.result.Status, parent.result.EndedAt = nativeOperationComplete, now
 			if !gap {
@@ -948,6 +969,12 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 	if len(target.Actions) == 0 {
 		return
 	}
+	// Normalize declarations before admission, not after creating an empty lease.
+	probe := &actionRun{}
+	c.normalizeRoutesLocked(&target, probe)
+	if len(probe.noEffectRoutes) == len(target.Actions) {
+		return
+	}
 	operation := Operation{ID: id, Kind: transitionRunKind, Target: &target, WorkloadUIDs: changedWorkloads(target, c.state.Snapshot)}
 	for _, action := range target.Actions {
 		if action.Node.UID != "" {
@@ -961,6 +988,7 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 	}
 	parent := &actionRun{owner: target.ID, action: serving.Action{ID: id, Kind: transitionRunKind, Status: nativeOperationRunning}, result: &OperationResult{Operation: operation, Before: before, Status: nativeOperationRunning, StartedAt: started}, started: started}
 	parent.admittedControls = config.Settings.Controls
+	parent.noEffectRoutes = probe.noEffectRoutes
 	// Freeze only physical same-Node/Workload replacements, not route-only
 	// policy changes or added capacity. Completion is observed in reconcileSnapshot.
 	for _, next := range target.Instances {
@@ -1022,6 +1050,7 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 			if action.Kind == operationRoute {
 				operation.WorkloadUIDs = c.routeOperationScopeLocked(target, *selectedTarget, selectedTarget != &target)
 				if operation.WorkloadUIDs != nil && len(operation.WorkloadUIDs) == 0 {
+					c.recordNoEffectRouteLocked(target.ID, action.ID)
 					continue
 				}
 				operation.Target = controlledTarget(operation)
@@ -1052,6 +1081,11 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 					result.Error = "persist action start before physical effect: " + err.Error()
 					result.EndedAt = time.Now().UTC()
 				}
+				// Publish creation evidence into the responsibility scope before
+				// terminal state or the completion notification becomes visible.
+				c.mu.Lock()
+				c.recordPreparationLocked(run, result.Preparation)
+				c.mu.Unlock()
 				if config.OnAction != nil {
 					if recordErr := config.OnAction(result); recordErr != nil {
 						err = errors.Join(err, fmt.Errorf("record physical operation outcome: %w", recordErr))

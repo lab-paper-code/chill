@@ -144,6 +144,12 @@ active POOL은 Ready 필터가 아닌 **미반환 물리 점유·owner/배분**�
 #### ② 범위 예약과 단일 허가 경로 — SCH-51
 
 `c.runs/actionRun`에 owner(operation ID/DecisionID), Node UID·Workload UID·Pod UID/physical ID 집합을 둔다. Node 전체를 보수적으로 예약하고 CPU별 lock/별도 예약 저장소는 없다. create 전 Node/UID/slot/allocation, 생성 뒤 exact UID/physical을 같은 owner에 묶는다.
+
+Cycle 7 / SCH-AC-38: 부모 reserveRun 전에 주 target의 route scope를 정규화한다. nil은 전체, non-nil empty는 변경 없음이며 no-op은 owner의 별도 omission bookkeeping이지 성공 route receipt가 아니다. prepare/power/retire와 그 의존성은 보존한다. 순수 빈 실행 DAG만 부모 admission을 생략하며 기존 빈 책임 orphan도 명시적 no-effect로 수렴한다. 동적 ready-subset/bridge/cleanup route도 빈 scope를 기록하고 stop의 completedHandoffPresent/exact Ready-policy 검사를 우회하지 않는다.
+
+PrepareInstance는 `(Pod UID, Node UID, 인가 DecisionID, created/reused)` 증거와 error를 함께 반환한다. Execute prepare/resize와 occupancy 호출은 같은 계약을 사용한다. 마지막 Capture 실패가 증거를 지우지 않으며 terminal 공개 전 동일 mutex에서 owner scope에 편입한다. 동일 API-confirmed RestartPolicyNever UID/Node/slot/profile/owner의 첫 container만 terminal 뒤에도 결합하며 returnObserved를 무효화한다. 재결합과 baseline 변경은 금지한다. created=false/생성 결과 불명은 새 생성 보상 proof가 아니며 검색으로 출처를 꾸미지 않는다. late 정상 ACK는 원 실패 receipt를 보존하고 기존 fresh exact proof·terminal sibling·power 경계에서만 반환한다. 증거는 owner 책임의 기존 GC 참조 수명을 따른다.
+
+예약 reason은 blocking action/Pod UID·부족 proof·다음 해소 경로를 action ID 순으로 모아 기존 raw/compact/API 투영에 전달한다. 빈 DAG, identity-awaiting-container, creation-outcome-unknown과 fresh ACK/absence/power 대기를 구별한다. 새 controller/journal/TTL은 없으며 API 결과 불명은 자동 해소를 주장하지 않는다.
 공통 `kube/admission.go`가 `tickMu` 안에서 **영향집합→전체 충돌→원자 등록→현재 안전 재확인→시작**을 맡는다. effect 전 실패는 부분 키 없이 멱등 반환하며 범위 확대는 effect 전에 재승인한다. `c.mu`/runtime lock은 짧게, probe I/O는 밖에서, watch 신규 UID GET/게시는 수명 lock 안에서 처리한다. mutation 직전 runtime route/outstanding과 exact Pod UID/optimistic lock을 재검사하며 과거 snapshot 허가를 재사용하지 않는다.
 | 진입점 | 예약 범위·수명 |
 |---|---|

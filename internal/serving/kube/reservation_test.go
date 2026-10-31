@@ -205,6 +205,7 @@ func TestPartialAutonomousOwnerAdoptsOnlyFreshKnownEffectsAC38(t *testing.T) {
 				// A late prepare's Pod was absent when the target acquired its scope.
 				child.scope, parent.scope = c.operationScope(operation), c.operationScope(parent.result.Operation)
 				if kind == operationPrepare {
+					child.result.Preparation = &PreparationEvidence{PodUID: string(pod.UID), NodeUID: ref.UID, DecisionID: policy.DecisionID, Created: true}
 					preparing := wanted
 					preparing.ID, preparing.TargetID, preparing.OwnerWorkloadUID = id, wanted.ID, wanted.WorkloadUID
 					child.action.Status = nativeOperationRunning

@@ -165,6 +165,7 @@ func failedPrepareCompensationFixture(t *testing.T, evidence string) (*Scheduler
 	scope := resourceScope{Nodes: []serving.NodeReference{actual.Node}, Workloads: []string{uid}, Pods: []string{actual.PodUID}, Instances: []string{actual.ID}}
 	child := &actionRun{owner: target.ID, action: action, reserved: true, scope: scope, prepareIdentity: actual.ID,
 		result: &OperationResult{Status: nativeOperationFailed, Error: serving.ActionDeadlineExceeded, EndedAt: ended,
+			Preparation: &PreparationEvidence{PodUID: actual.PodUID, NodeUID: actual.Node.UID, DecisionID: target.ID, Created: true},
 			Operation: Operation{ID: action.ID, Kind: operationPrepare, Node: actual.Node, WorkloadUIDs: []string{uid}, Prepare: &PrepareSpec{
 				Instance: wanted, Owner: &serving.WorkloadReference{UID: uid}, Config: native.Config{Policy: native.Policy{DecisionID: target.ID}},
 			}}}}

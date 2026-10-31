@@ -129,6 +129,16 @@ type OperationStep struct {
 	Actual    OperationState `json:"actual"`
 	Error     string         `json:"error,omitempty"`
 }
+
+// PreparationEvidence survives a canceled final Capture. Spec remains the
+// authority for slot, owner and policy; these are the API-confirmed identities.
+type PreparationEvidence struct {
+	PodUID     string `json:"podUID"`
+	NodeUID    string `json:"nodeUID"`
+	DecisionID string `json:"decisionID"`
+	Created    bool   `json:"created"`
+}
+
 type OperationResult struct {
 	Operation   Operation               `json:"operation"`
 	Before      OperationState          `json:"before"`
@@ -140,6 +150,7 @@ type OperationResult struct {
 	Progress    []string                `json:"progress"`
 	DrainNative map[string]native.State `json:"drainNative,omitempty"`
 	Steps       []OperationStep         `json:"steps,omitempty"`
+	Preparation *PreparationEvidence    `json:"preparation,omitempty"`
 	// Only a confirmed pre-effect failure permits immediate reservation return.
 	effectsNotStarted bool
 }
@@ -298,7 +309,7 @@ func (o *Operations) executeOperation(ctx context.Context, operation Operation, 
 		if operation.Prepare == nil {
 			err = errors.New("prepare specification required")
 		} else {
-			err = o.PrepareInstance(ctx, *operation.Prepare)
+			result.Preparation, err = o.PrepareInstance(ctx, *operation.Prepare)
 			if err == nil {
 				result.Progress = append(result.Progress, "prepare observed")
 			}
@@ -335,7 +346,7 @@ func (o *Operations) executeOperation(ctx context.Context, operation Operation, 
 		if operation.Prepare == nil || operation.Target == nil {
 			err = errors.New("resize requires prepared replacement and routing target")
 		} else {
-			err = o.PrepareInstance(ctx, *operation.Prepare)
+			result.Preparation, err = o.PrepareInstance(ctx, *operation.Prepare)
 			if err == nil {
 				result.Progress = append(result.Progress, "replacement ready")
 				err = o.ApplyTarget(ctx, *operation.Target, result)
@@ -352,6 +363,9 @@ func (o *Operations) executeOperation(ctx context.Context, operation Operation, 
 	return err
 }
 func samePreparedPod(actual, desired *core.Pod) bool {
+	if actual.Spec.RestartPolicy != desired.Spec.RestartPolicy || workloadOwner(actual.OwnerReferences) != workloadOwner(desired.OwnerReferences) {
+		return false
+	}
 	if actual.Annotations[ServingProfileAnnotation] != desired.Annotations[ServingProfileAnnotation] || actual.Annotations[ServingSlotAnnotation] != desired.Annotations[ServingSlotAnnotation] || actual.Spec.NodeName != desired.Spec.NodeName || len(actual.Spec.Containers) != 1 || !samePreparedContainer(actual.Spec.Containers[0], desired.Spec.Containers[0]) || actual.Spec.Containers[0].TerminationMessagePolicy != desired.Spec.Containers[0].TerminationMessagePolicy || len(actual.Spec.InitContainers) != len(desired.Spec.InitContainers) ||
 		!slices.EqualFunc(actual.Spec.Volumes, desired.Spec.Volumes, samePreparedVolume) || !slices.Equal(supplementalGroups(actual), supplementalGroups(desired)) {
 		return false
@@ -384,30 +398,30 @@ func privilegedContainer(container core.Container) bool {
 	return container.SecurityContext != nil && ptr.Deref(container.SecurityContext.Privileged, false)
 }
 
-func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) error {
+func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) (evidence *PreparationEvidence, err error) {
 	if err := ValidatePreparation(spec); err != nil {
-		return err
+		return nil, err
 	}
 	p := spec.Instance.Profile
 	if err := bindPreparationAffinity(&spec); err != nil {
-		return err
+		return nil, err
 	}
 	node := spec.Instance.Node
 	host, delivery, err := measuredRuntimeDelivery(p)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	decisionID, err := o.ensurePreparationConfig(ctx, spec, delivery)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	cpuRequest, err := resource.ParseQuantity(p.Condition.CPU.Request)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	cpuLimit, err := resource.ParseQuantity(p.Condition.CPU.Limit)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	requests := core.ResourceList{core.ResourceCPU: cpuRequest, core.ResourceMemory: *resource.NewQuantity(int64(spec.MemoryBytes), resource.BinarySI)}
 	limits := core.ResourceList{core.ResourceCPU: cpuLimit, core.ResourceMemory: *resource.NewQuantity(int64(spec.MemoryBytes), resource.BinarySI)}
@@ -445,21 +459,23 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 	}
 	// ponytail: admitted just before the Pod create; the remaining window closes with M3 single-writer fencing.
 	if _, err = o.admittedNode(ctx, node); err != nil {
-		return err
+		return nil, err
 	}
 	if err = o.store.client.Create(ctx, pod); err != nil && !apierrors.IsAlreadyExists(err) {
-		return err
+		return nil, err
 	}
+	created := err == nil
 	if apierrors.IsAlreadyExists(err) {
 		existing := &core.Pod{}
 		if err = o.store.client.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, existing); err != nil {
-			return err
+			return nil, err
 		}
 		if !samePreparedPod(existing, pod) {
-			return errors.New("existing preparation Pod differs")
+			return nil, errors.New("existing preparation Pod differs")
 		}
 		pod = existing
 	}
+	evidence = &PreparationEvidence{PodUID: string(pod.UID), NodeUID: node.UID, DecisionID: decisionID, Created: created}
 	o.observer.mu.Lock()
 	o.observer.restoreSources([]core.Pod{*pod})
 	if source := o.observer.sources[string(pod.UID)]; source != nil {
@@ -468,19 +484,19 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) erro
 	err = o.observer.publishLedger(nil)
 	o.observer.mu.Unlock()
 	if err != nil {
-		return err
+		return evidence, err
 	}
 	if err = o.ensureInstanceService(ctx, pod); err != nil {
-		return err
+		return evidence, err
 	}
 	if pod.Annotations[ServingPolicyAnnotation] != decisionID {
 		previous := pod.DeepCopy()
 		pod.Annotations[ServingPolicyAnnotation] = decisionID
 		if err = o.store.client.Patch(ctx, pod, client.MergeFromWithOptions(previous, client.MergeFromWithOptimisticLock{})); err != nil {
-			return err
+			return evidence, err
 		}
 	}
-	return o.wait(ctx, func() (bool, error) { return o.prepareObserved(ctx, pod) })
+	return evidence, o.wait(ctx, func() (bool, error) { return o.prepareObserved(ctx, pod) })
 }
 
 // prepareObserved reports whether the runtime holds the prepared Pod's

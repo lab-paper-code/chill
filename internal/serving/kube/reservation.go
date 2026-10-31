@@ -160,6 +160,20 @@ func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Op
 	return true
 }
 
+// recordPreparationLocked precedes all terminal publication paths. The result
+// evidence and scope share the owner's mutex and lifetime, not Capture's.
+func (c *SchedulerController) recordPreparationLocked(run *actionRun, evidence *PreparationEvidence) {
+	if evidence == nil || evidence.PodUID == "" {
+		return
+	}
+	run.result.Preparation = evidence
+	run.scope.Pods = append(run.scope.Pods, evidence.PodUID)
+	if parent := c.returnProofParent(run); parent != nil {
+		parent.returnObserved = false
+		parent.scope.Pods = append(parent.scope.Pods, evidence.PodUID)
+	}
+}
+
 func (c *SchedulerController) registerMayTouchLocked(run *actionRun, operation Operation, scope resourceScope) {
 	if operation.Kind == transitionRunKind {
 		return
@@ -390,7 +404,7 @@ func knownEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.Inst
 		return false
 	}
 	operation := run.result.Operation
-	if !isRoutingOperation(operation.Kind) && operation.Kind != operationPrepare {
+	if !isRoutingOperation(operation.Kind) && operation.Kind != operationPrepare && operation.Kind != operationResize {
 		return false
 	}
 	id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
@@ -405,7 +419,7 @@ func knownEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.Inst
 		return false
 	}
 	actual := state.Native.Metadata
-	if operation.Kind == operationPrepare && operation.Prepare != nil {
+	if (operation.Kind == operationPrepare || operation.Kind == operationResize) && operation.Prepare != nil {
 		wanted := operation.Prepare.Instance
 		decision := operation.Prepare.Config.Policy.DecisionID
 		if wanted.Profile != nil && state.TargetID == wanted.ID && wanted.Node == state.Node &&
@@ -501,6 +515,10 @@ func failedPreparationIdentityMatches(child *actionRun, actual serving.InstanceS
 }
 
 func preparationCreatedSource(child *actionRun, actual serving.InstanceState) bool {
+	if evidence := child.result.Preparation; evidence == nil ||
+		!evidence.Created || evidence.PodUID != actual.PodUID || evidence.NodeUID != actual.Node.UID {
+		return false
+	}
 	// Never infer creation from a slot/owner alone, or retire a pre-existing
 	// source. A timeout may have no final capture: the live frozen UID suffices.
 	identityKnown := child.prepareIdentity == actual.ID || slices.ContainsFunc(child.result.Actual.Instances, func(state serving.InstanceState) bool {
@@ -558,6 +576,7 @@ func (c *SchedulerController) releaseOwnerLocked(owner string) {
 
 func (c *SchedulerController) reservationsLocked(snapshot serving.SchedulerSnapshot) []serving.SchedulerReservation {
 	byOwner := map[string]*serving.SchedulerReservation{}
+	reasons := map[string][]string{}
 	for _, run := range c.runs {
 		if !run.reserved {
 			continue
@@ -577,12 +596,31 @@ func (c *SchedulerController) reservationsLocked(snapshot serving.SchedulerSnaps
 		if run.action.Kind == transitionRunKind && run.cleanup && run.action.Status == nativeOperationRunning {
 			reservation.RouteOnly = c.cleanupDestinationsLocked(run, snapshot)
 		}
-		if run.action.Reason != "" {
-			reservation.Reason = run.action.Reason
+		reason := run.action.Reason
+		if run.result != nil && run.result.Operation.Prepare != nil && run.prepareIdentity == "" {
+			reason = "creation-outcome-unknown: retain owner; reconcile API outcome or reset"
+			if evidence := run.result.Preparation; evidence != nil && evidence.PodUID != "" {
+				reason = "identity-awaiting-container: " + evidence.PodUID + "; await same UID exact executor"
+			}
 		}
+		if run.action.Kind == transitionRunKind && run.result != nil && run.result.Operation.Target != nil {
+			for _, action := range run.result.Operation.Target.Actions {
+				if run.noEffectRoutes[action.ID] || c.runs[action.ID] != nil || action.Status == nativeOperationCancel {
+					continue
+				}
+				reasons[run.owner] = append(reasons[run.owner], action.ID+": dependency/Ready/handoff proof missing; await exact Ready policy ACK")
+			}
+		}
+		if reason == "" {
+			reason = "await fresh exact ACK/untouched/absence proof, terminal siblings and settled power"
+		}
+		reasons[run.owner] = append(reasons[run.owner], run.action.ID+": "+reason)
 	}
 	reservations := make([]serving.SchedulerReservation, 0, len(byOwner))
 	for _, reservation := range byOwner {
+		ownerReasons := reasons[reservation.Owner]
+		slices.Sort(ownerReasons)
+		reservation.Reason = strings.Join(slices.Compact(ownerReasons), "; ")
 		reservations = append(reservations, *reservation)
 	}
 	slices.SortFunc(reservations, func(a, b serving.SchedulerReservation) int {

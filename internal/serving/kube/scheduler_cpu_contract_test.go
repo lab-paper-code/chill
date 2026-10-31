@@ -140,7 +140,7 @@ func TestPreparationRejectsUndercountedMeasuredRequestBeforeKubernetesAccess(t *
 	spec.Instance.Allocation.CPUCount = 1
 	kube := kubefake.NewSimpleClientset()
 	operations := &Operations{kube: kube}
-	err := operations.PrepareInstance(context.Background(), spec)
+	_, err := operations.PrepareInstance(context.Background(), spec)
 	if err == nil || !strings.Contains(err.Error(), "CPU request count differs") {
 		t.Fatalf("undercounted preparation was not rejected at admission: %v", err)
 	}

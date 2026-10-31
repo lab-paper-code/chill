@@ -588,7 +588,7 @@ func (c *SchedulerController) runOccupancy(ctx context.Context, m *edge.Dispatch
 		prepareCtx, cancel = context.WithTimeout(ctx, time.Duration(m.Spec.PreparationSeconds+m.Spec.JobSetupSeconds)*time.Second)
 		defer cancel()
 	}
-	if err := c.measurement.PrepareInstance(prepareCtx, spec); err != nil {
+	if _, err := c.measurement.PrepareInstance(prepareCtx, spec); err != nil {
 		return fail(err)
 	}
 	mean, _ := profile.MeanNanos(b)

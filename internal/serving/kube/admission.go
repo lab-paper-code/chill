@@ -440,6 +440,9 @@ func (c *SchedulerController) startNodeRun(operation Operation, config Scheduler
 			}
 			result.Error = err.Error()
 		}
+		c.mu.Lock()
+		c.recordPreparationLocked(run, result.Preparation)
+		c.mu.Unlock()
 		if config.OnAction != nil {
 			if recordErr := config.OnAction(result); recordErr != nil {
 				result.Error = errors.Join(err, fmt.Errorf("record operation outcome: %w", recordErr)).Error()
