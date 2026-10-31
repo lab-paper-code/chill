@@ -356,3 +356,8 @@
 
 - 관찰: 이번 runtime 정책 수정은 측정값을 바꾸지 않음. profiling 모드에는 fixedBatchSize가 없고(config.go:100) d는 고정 배치(occupancy.go:584 → policy.go:110–111)라 동적 분기를 지나지 않음. 15~65시간은 profile 식별자가 이미지 digest 전체에 묶여서 생기는 비용임.
 - 순서: (1) "측정 경로는 동적 배치 선택을 지나지 않음"을 테스트로 고정. (2) 동등성 방식 설계(브리프 → 패널 → ADR 초안): A/A 점검과 증거 연결, 신원 분리, 정책 계층 분리를 비교. 조언 세션의 Experiment CRD 문서와 조율. (3) 프로파일링 구조 단축(장치·모드·모델당 Pod 하나, 정밀도 기준 종료, 노드 병렬)은 별도 과제.
+
+## 2026-10-31 — 프로파일링 목표 재정의: 측정 커버리지를 가장 빨리 채움(사용자 지시)
+
+- 기준: 대시보드 측정 커버리지(`/api/v1/namespaces/chill-system/measurement-coverage`, measurement-coverage.v1). 셀 = (모델, 장치 클래스, 실행 경로, 전력 모드). 17:29Z 기준 지원 셀 162(지원 여부 미확인 67), usable 21(13%), insufficient 14, problem 5, unmeasured 126. 누적 run 1,155개, profile 79개(profile당 약 15 run).
+- 방향: 셀마다 본질 수치(배치별 서비스 시간 분포와 p95, 요청당 증분 J, 유휴 W, d)를 checklist(result-checklist.v1) 기준을 만족하는 최소 측정으로 얻음. 장치·모드·모델당 Pod 하나, 정밀도 기준 종료, 노드 병렬. 바텀업 순서: (1) 기존 run의 시간 분해(준비 오버헤드 vs 측정 창) (2) checklist 기준에서 나오는 최소 표본·시간 (3) 설계 브리프 → 패널 (4) 구현 → 리뷰 → 셀 몇 개로 실측 비교.
