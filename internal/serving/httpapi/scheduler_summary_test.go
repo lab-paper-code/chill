@@ -73,8 +73,10 @@ func TestSchedulerSummaryViewValidation(t *testing.T) {
 		{"/api/v1/scheduler/state?view=compact", true},
 		{"/api/v1/scheduler/state", true},
 		{"/api/v1/scheduler?view=summary", false},
-		{"/api/v1/observations/scheduler?view=summary", false},
+		{"/api/v1/observations/scheduler?view=summary", true},
 		{"/api/v1/scheduler/state?view=summary&view=summary", false},
+		{"/api/v1/observations/scheduler?view=summary&view=compact", false},
+		{"/api/v1/observations/load?view=summary", false},
 		{"/api/v1/scheduler/state?view=full", false},
 	} {
 		_, err := schedulerCompactQuery(httptest.NewRequest("GET", tc.path, nil))

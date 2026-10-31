@@ -155,6 +155,10 @@ test("scheduler consumer routes enforce exact methods and bounded observation qu
   assert.equal(plan("GET", "v1/observations/scheduler", `?${window}`).path, `/api/v1/observations/scheduler?${window}&limit=7&view=compact`)
   assert.equal(plan("GET", "v1/observations/scheduler", `?${window}&limit=20&cursor=${Number.MAX_SAFE_INTEGER}`).path,
     `/api/v1/observations/scheduler?${window}&limit=20&cursor=${Number.MAX_SAFE_INTEGER}&view=compact`)
+  assert.equal(plan("GET", "v1/observations/scheduler", `?${window}&view=summary&order=desc&filter=decision-action&uid=workload-uid`).path,
+    `/api/v1/observations/scheduler?${window}&view=summary&order=desc&filter=decision-action&uid=workload-uid&limit=7`)
+  assert.throws(() => plan("GET", "v1/scheduler", "?view=summary"), /DashboardQueryInvalid/)
+  assert.throws(() => plan("GET", "v1/observations/scheduler", `?${window}&view=summary&view=compact`), /DashboardQueryInvalid/)
   for (const order of ["asc", "desc"]) {
     const search = `?${window}&order=${order}&filter=decision-action&uid=workload-uid`
     assert.equal(plan("GET", "v1/observations/scheduler", search).path,

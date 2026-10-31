@@ -105,7 +105,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
       } else if (key === "condition") {
         if (Buffer.byteLength(value) > 128 || !/^[^=]+=(True|False|Unknown)$/.test(value)) throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (key === "view") {
-        if (value !== "compact" && !(value === "summary" && route === "v1/scheduler/state")) throw new RelayFailure("DashboardQueryInvalid", 400)
+        if (value !== "compact" && !(value === "summary" && (route === "v1/scheduler/state" || query === "schedulerHistory"))) throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (key === "dryRun") {
         if (value !== "All") throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (Buffer.byteLength(value) > (key === "group" ? 16384 : key === "outcome" ? 64 : 256) || (key !== "q" && !value)) throw new RelayFailure("DashboardQueryInvalid", 400)

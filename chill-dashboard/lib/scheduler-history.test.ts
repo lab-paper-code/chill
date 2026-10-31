@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerHistoryKindMatches } from "./scheduler-history.ts"
-import type { SchedulerObservation } from "./read-types.ts"
+import type { SchedulerObservation, SchedulerObservationSummary } from "./read-types.ts"
 
 const from="2026-10-13T02:00:00.123456789Z",to="2026-10-13T03:00:00.987654321Z"
 const event:SchedulerObservation={at:"2026-10-13T02:30:00.000000001Z",action:{id:"same-action",kind:"route",node:{name:"node",uid:"uid-a"},phase:"starting",startedAt:"2026-10-13T02:29:59.123456789Z"}}
@@ -14,6 +14,16 @@ test("filtered latest-first rows retain original append offset for evidence look
   assert.equal(query.has("order"),false)
   assert.equal(query.has("filter"),false)
   assert.equal(query.has("uid"),false)
+})
+
+test("summary rows resolve to the exact full record without forwarding the list view",()=>{
+  const summary:SchedulerObservationSummary={at:event.at,offset:21,action:{id:event.action!.id,kind:event.action!.kind,node:event.action!.node,phase:event.action!.phase,startedAt:event.action!.startedAt}}
+  const ref=schedulerRecordRef(summary,from,to,"0")
+  const query=new URLSearchParams(schedulerRecordPath(ref).split("?")[1])
+  assert.equal(query.get("limit"),"1")
+  assert.equal(query.get("cursor"),"21")
+  assert.equal(query.has("view"),false)
+  assert.equal(schedulerRecordMatches(ref,event),true)
 })
 test("selected journal restoration retains exact window and refuses same-ID replacement",()=>{
   const ref=schedulerRecordRef(event,from,to,"9007199254740993")

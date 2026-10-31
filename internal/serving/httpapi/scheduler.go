@@ -33,7 +33,7 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 			sendError(w, err)
 			return
 		}
-		if r.URL.Query().Get("view") == "summary" {
+		if r.URL.Query().Get("view") == schedulerSummaryView {
 			state := h.config.Scheduler.State()
 			sendJSON(w, http.StatusOK, summarizeScheduler(&state))
 			return
@@ -319,6 +319,17 @@ func (h *Handler) schedulerObservations(w http.ResponseWriter, r *http.Request) 
 	next := ""
 	if nextOffset >= 0 {
 		next = strconv.Itoa(nextOffset)
+	}
+	if query.Get("view") == schedulerSummaryView {
+		sendJSON(w, http.StatusOK, struct {
+			From       time.Time                     `json:"from"`
+			To         time.Time                     `json:"to"`
+			Events     []schedulerHistoryObservation `json:"events"`
+			NextCursor string                        `json:"nextCursor,omitempty"`
+			GapUntil   *time.Time                    `json:"gapUntil,omitempty"`
+			Coverage   serving.ObservationCoverage   `json:"coverage"`
+		}{from, to, schedulerHistoryObservations(records), next, gapUntil, coverage})
+		return
 	}
 	if compact {
 		evidence := newSchedulerReadEvidence()

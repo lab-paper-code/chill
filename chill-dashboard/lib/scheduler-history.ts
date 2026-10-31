@@ -1,4 +1,4 @@
-import type { SchedulerObservation } from "./read-types.ts"
+import type { SchedulerObservationSummary } from "./read-types.ts"
 
 export type SchedulerRecordRef = {from:string;to:string;offset:string;kind:string;at:string;id:string;node?:string;startedAt?:string}
 
@@ -6,7 +6,7 @@ export function schedulerHistoryKindMatches(filter:string,kind:string):boolean {
   return filter==="all"||filter===kind||filter==="decision-action"&&(kind==="decision"||kind==="action")
 }
 
-export function schedulerRecordRef(event:SchedulerObservation,from:string,to:string,offset:string):SchedulerRecordRef {
+export function schedulerRecordRef(event:SchedulerObservationSummary,from:string,to:string,offset:string):SchedulerRecordRef {
   const kind=event.decision?"decision":event.snapshot?"snapshot":event.settings?"settings":event.action?"action":event.power?"power":"other"
   const id=event.action?.id??event.node?.uid??event.settings?.actorUID??event.decision?.at??event.snapshot?.at??""
   return {from,to,offset:String(event.offset??offset),kind,at:event.at,id,...(event.action?{node:event.action.node.uid,startedAt:event.action.startedAt}:{})}
@@ -29,7 +29,7 @@ export function schedulerRecordPath(ref:SchedulerRecordRef|null):string {
   return `v1/observations/scheduler?${new URLSearchParams(ref?{from:ref.from,to:ref.to,limit:"1",cursor:ref.offset}:{})}`
 }
 
-export function schedulerRecordMatches(ref:SchedulerRecordRef,event:SchedulerObservation|undefined):boolean {
+export function schedulerRecordMatches(ref:SchedulerRecordRef,event:SchedulerObservationSummary|undefined):boolean {
   if(!event)return false
   const actual=schedulerRecordRef(event,ref.from,ref.to,ref.offset)
   return actual.kind===ref.kind&&actual.at===ref.at&&actual.id===ref.id&&actual.node===ref.node&&actual.startedAt===ref.startedAt

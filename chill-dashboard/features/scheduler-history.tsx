@@ -5,7 +5,7 @@ import Link from "next/link"
 import { usePathname, useRouter, useSearchParams, type ReadonlyURLSearchParams } from "next/navigation"
 import type { QueryObserverBaseResult } from "@tanstack/react-query"
 import { useChillQuery, useSession, type ApiError } from "@/lib/client"
-import type { SchedulerObservation, SchedulerObservationPage } from "@/lib/read-types"
+import type { SchedulerObservation, SchedulerObservationPage, SchedulerObservationSummary, SchedulerObservationSummaryPage } from "@/lib/read-types"
 import { parseSchedulerJSON, nanosToMilliseconds } from "@/lib/scheduler"
 import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerHistoryKindMatches, type SchedulerRecordRef } from "@/lib/scheduler-history"
 import { gapNotice, localDateTime, utcDateTime } from "@/lib/date-time"
@@ -17,9 +17,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
-export type SchedulerHistoryRow={event:SchedulerObservation;ref:SchedulerRecordRef}
-export type SchedulerHistoryQuery={
-  query:QueryObserverBaseResult<SchedulerObservationPage,ApiError>;rows:SchedulerHistoryRow[];params:ReadonlyURLSearchParams
+export type SchedulerHistoryRow<T extends SchedulerObservationSummary=SchedulerObservation>={event:T;ref:SchedulerRecordRef}
+export type SchedulerHistoryQuery<T extends SchedulerObservationSummary=SchedulerObservation>={
+  query:QueryObserverBaseResult<Omit<SchedulerObservationPage,"events">&{events:T[]|null},ApiError>;rows:SchedulerHistoryRow<T>[];params:ReadonlyURLSearchParams
   submitted:{from:string;to:string};cursor:string;draft:{from:string;to:string};setDraft:React.Dispatch<React.SetStateAction<{from:string;to:string}>>
   limit:number;setLimit:React.Dispatch<React.SetStateAction<number>>;validation:string;maxPageSize:number;apply:()=>boolean;page:(cursor?:string)=>void
 }
@@ -29,7 +29,9 @@ const historyFilters:Record<string,string>={all:"모든 종류","decision-action
 export const when=(value?:string)=>!value||value.startsWith("0001-")||!Number.isFinite(Date.parse(value))?"정보 없음":new Date(value).toLocaleString("ko-KR",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit"})
 export const actorName=(name?:string)=>name?.startsWith("system:serviceaccount:")?name.split(":").at(-1)!:name??"기록 없음"
 
-export function useSchedulerHistory():SchedulerHistoryQuery {
+export function useSchedulerHistory():SchedulerHistoryQuery
+export function useSchedulerHistory(view:"summary"):SchedulerHistoryQuery<SchedulerObservationSummary>
+export function useSchedulerHistory(view?:"summary"):SchedulerHistoryQuery|SchedulerHistoryQuery<SchedulerObservationSummary> {
   const params=useSearchParams(),router=useRouter(),pathname=usePathname(),{config}=useSession()
   const [entry]=React.useState(()=>{const now=Date.now();return {from:new Date(now-3600000).toISOString(),to:new Date(now).toISOString()}})
   const submitted={from:params.get("from")??entry.from,to:params.get("to")??entry.to},cursor=params.get("cursor")??"0"
@@ -39,7 +41,8 @@ export function useSchedulerHistory():SchedulerHistoryQuery {
   React.useEffect(()=>{if(!params.has("from")||!params.has("to")){const next=new URLSearchParams(params.toString());if(!next.has("from"))next.set("from",entry.from);if(!next.has("to"))next.set("to",entry.to);router.replace(`${pathname}?${next}`)}},[entry,params,pathname,router])
   const request=new URLSearchParams({...submitted,limit:params.get("limit")??String(config.pageSize)});if(params.has("cursor"))request.set("cursor",params.get("cursor")!)
   for(const key of ["order","filter","uid"])if(params.has(key))request.set(key,params.get(key)!)
-  const query=useChillQuery<SchedulerObservationPage>(`v1/observations/scheduler?${request}`,{decoder:parseSchedulerJSON})
+  if(view)request.set("view",view)
+  const query=useChillQuery<SchedulerObservationSummaryPage>(`v1/observations/scheduler?${request}`,{decoder:parseSchedulerJSON})
   const rows=(query.data?.events??[]).map((event,index)=>({event,ref:schedulerRecordRef(event,submitted.from,submitted.to,(BigInt(cursor)+BigInt(index)).toString())}))
   function apply(){
     const from=Date.parse(draft.from),to=Date.parse(draft.to)
@@ -52,7 +55,7 @@ export function useSchedulerHistory():SchedulerHistoryQuery {
 }
 
 // The window filter as one row; extra filter rows of the same screen go in `children`.
-export function HistoryControls({history,children}:{history:SchedulerHistoryQuery;children?:React.ReactNode}){
+export function HistoryControls({history,children}:{history:SchedulerHistoryQuery<SchedulerObservationSummary>;children?:React.ReactNode}){
   const [open,setOpen]=React.useState(false)
   return <Rows label="조회 조건">
     <RowDialog open={open} onOpenChange={next=>{setOpen(next);if(next)history.setDraft(history.submitted)}} label="기간" value={`${when(history.submitted.from)} – ${when(history.submitted.to)}`} title="조회 기간" description="시작 시각부터 끝 시각 직전까지의 기록을 보여드려요.">
@@ -67,7 +70,7 @@ export function HistoryControls({history,children}:{history:SchedulerHistoryQuer
     {children}
   </Rows>
 }
-export function HistoryPaging({history}:{history:SchedulerHistoryQuery}){
+export function HistoryPaging({history}:{history:SchedulerHistoryQuery<SchedulerObservationSummary>}){
   return <div className="grid gap-2">{history.query.data?.gapUntil&&<p role="status">{gapNotice(history.query.data.gapUntil)}</p>}<div className="flex gap-2"><Button variant="outline" onClick={()=>history.page()} disabled={history.cursor==="0"}>처음으로</Button><Button variant="outline" onClick={()=>history.page(history.query.data?.nextCursor)} disabled={!history.query.data?.nextCursor}>다음 기록 보기</Button></div></div>
 }
 
@@ -101,14 +104,14 @@ function RecordDetails({row}:{row:SchedulerHistoryRow}){
 }
 
 export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean}){
-  const history=useSchedulerHistory(),router=useRouter(),pathname=usePathname(),params=history.params
+  const history=useSchedulerHistory("summary"),router=useRouter(),pathname=usePathname(),params=history.params
   const filter=settingsOnly?"settings":params.get("filter")??"all",rows=history.rows.filter(row=>schedulerHistoryKindMatches(filter,row.ref.kind))
   const opener=React.useRef<HTMLElement|null>(null),[filterOpen,setFilterOpen]=React.useState(false)
   const a=readSchedulerRecord(params,"a"),b=readSchedulerRecord(params,"b"),selected=readSchedulerRecord(params)
   const requested=["offset","kind","at","id","node","startedAt"].some(key=>params.has(key))
   const record=useChillQuery<SchedulerObservationPage>(schedulerRecordPath(selected),{decoder:parseSchedulerJSON,enabled:requested&&!!selected})
   const event=record.data?.events?.[0],matches=selected&&schedulerRecordMatches(selected,event)
-  function select(row:SchedulerHistoryRow,prefix=""){
+  function select(row:SchedulerHistoryRow<SchedulerObservationSummary>,prefix=""){
     const next=new URLSearchParams(params.toString())
     for(const [key,value] of schedulerRecordParams(row.ref,prefix))next.set(key,value)
     router.replace(`${pathname}?${next}`,{scroll:false})
@@ -119,7 +122,7 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
   const compare=new URLSearchParams()
   if(a)for(const [key,value] of schedulerRecordParams(a,"a"))compare.set(key,value)
   if(b)for(const [key,value] of schedulerRecordParams(b,"b"))compare.set(key,value)
-  const same=(ref:SchedulerRecordRef|null,row:SchedulerHistoryRow)=>!!ref&&ref.offset===row.ref.offset&&ref.at===row.ref.at&&ref.from===row.ref.from&&ref.to===row.ref.to
+  const same=(ref:SchedulerRecordRef|null,row:SchedulerHistoryRow<SchedulerObservationSummary>)=>!!ref&&ref.offset===row.ref.offset&&ref.at===row.ref.at&&ref.from===row.ref.from&&ref.to===row.ref.to
   const loaded=!!history.query.data
   const title=settingsOnly?"운영 설정 변경 이력":filter==="decision-action"?"판단·전환 기록":"운영 기록"
   return <Screen back={["/records","기록"]} title={title}
@@ -129,7 +132,7 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
         <fieldset className="grid gap-2">{Object.entries(historyFilters).map(([key,label])=><label key={key} className="flex min-h-11 items-center gap-2"><input type="radio" name="kind" checked={filter===key} onChange={()=>{const next=schedulerPageParams(new URLSearchParams(params.toString()));next.set("filter",key);router.replace(`${pathname}?${next}`);setFilterOpen(false)}}/>{label}</label>)}</fieldset>
       </RowDialog>}
       {history.query.data&&<RowDialog label="자료 내보내기" title="자료 내보내기" description="지금 불러온 기록을 파일로 받아요. 기간 전체 집계는 아니에요.">
-        <SourceExport value={{conditions:{...history.submitted,cursor:history.cursor,limit:params.get("limit")??history.limit,filter},source:history.query.data}} filename="chill-scheduler-current-page.json"/>
+        <SourceExport value={{projection:"summary",conditions:{...history.submitted,cursor:history.cursor,limit:params.get("limit")??history.limit,filter},source:history.query.data}} filename="chill-scheduler-current-page-summary.json"/>
       </RowDialog>}
     </HistoryControls>
     <QueryGate query={history.query}>{loaded&&<>

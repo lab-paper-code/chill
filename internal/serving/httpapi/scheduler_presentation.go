@@ -4,10 +4,13 @@ import (
 	"net/http"
 	"reflect"
 	"strconv"
+	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 )
+
+const schedulerSummaryView = "summary"
 
 // Compact reads share only the large repeated profile evidence. Everything
 // else, including policy, candidate order and action acknowledgements, is intact.
@@ -148,16 +151,81 @@ func (e *schedulerReadEvidence) observations(records []serving.SchedulerObservat
 	return result
 }
 
+// History lists carry identity and row labels only; exact-record reads retain
+// the complete payload. This projection never changes the journal/catalog.
+type schedulerHistoryDecision struct {
+	At     time.Time `json:"at"`
+	Status string    `json:"status"`
+}
+
+type schedulerHistorySnapshot struct {
+	At time.Time `json:"at"`
+}
+
+type schedulerHistorySettings struct {
+	ActorUsername string     `json:"actorUsername"`
+	ActorUID      string     `json:"actorUID"`
+	AppliedAt     *time.Time `json:"appliedAt,omitempty"`
+	Error         string     `json:"error,omitempty"`
+}
+
+type schedulerHistoryAction struct {
+	ID        string                `json:"id"`
+	Kind      string                `json:"kind"`
+	Node      serving.NodeReference `json:"node"`
+	Phase     string                `json:"phase"`
+	StartedAt time.Time             `json:"startedAt"`
+}
+
+type schedulerHistoryPower struct {
+	StartedAt time.Time `json:"startedAt"`
+}
+
+type schedulerHistoryObservation struct {
+	At       time.Time                 `json:"at"`
+	Offset   *int                      `json:"offset,omitempty"`
+	Decision *schedulerHistoryDecision `json:"decision,omitempty"`
+	Snapshot *schedulerHistorySnapshot `json:"snapshot,omitempty"`
+	Settings *schedulerHistorySettings `json:"settings,omitempty"`
+	Action   *schedulerHistoryAction   `json:"action,omitempty"`
+	Power    *schedulerHistoryPower    `json:"power,omitempty"`
+	Node     *serving.NodeReference    `json:"node,omitempty"`
+}
+
+func schedulerHistoryObservations(records []serving.SchedulerObservation) []schedulerHistoryObservation {
+	result := make([]schedulerHistoryObservation, len(records))
+	for i, record := range records {
+		row := schedulerHistoryObservation{At: record.At, Offset: record.Offset, Node: record.Node}
+		if d := record.Decision; d != nil {
+			row.Decision = &schedulerHistoryDecision{d.At, d.Status}
+		}
+		if s := record.Snapshot; s != nil {
+			row.Snapshot = &schedulerHistorySnapshot{s.At}
+		}
+		if s := record.Settings; s != nil {
+			row.Settings = &schedulerHistorySettings{s.ActorUsername, s.ActorUID, s.AppliedAt, s.Error}
+		}
+		if a := record.Action; a != nil {
+			row.Action = &schedulerHistoryAction{a.ID, a.Kind, a.Node, a.Phase, a.StartedAt}
+		}
+		if p := record.Power; p != nil {
+			row.Power = &schedulerHistoryPower{p.StartedAt}
+		}
+		result[i] = row
+	}
+	return result
+}
+
 func schedulerCompactQuery(r *http.Request) (bool, error) {
 	views := r.URL.Query()["view"]
 	if len(views) == 0 {
 		return false, nil
 	}
-	if len(views) == 1 && views[0] == "summary" && r.URL.Path == "/api/v1/scheduler/state" {
+	if len(views) == 1 && views[0] == schedulerSummaryView && (r.URL.Path == "/api/v1/scheduler/state" || r.URL.Path == "/api/v1/observations/scheduler") {
 		return false, nil
 	}
 	if len(views) == 1 && views[0] == "compact" {
 		return true, nil
 	}
-	return false, &serving.Error{Code: "InvalidQuery", Message: "scheduler view must be compact, summary (state only), or omitted"}
+	return false, &serving.Error{Code: "InvalidQuery", Message: "scheduler view must be compact, summary (state/history only), or omitted"}
 }

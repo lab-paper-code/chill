@@ -212,7 +212,7 @@ func TestSchedulerHistorySelectionQueries(t *testing.T) {
 		}
 	}
 	base := "/api/v1/observations/scheduler?from=" + from.Format(time.RFC3339Nano) + "&to=" + to.Format(time.RFC3339Nano)
-	for _, view := range []string{"", "&view=compact"} {
+	for _, view := range []string{"", "&view=compact", "&view=summary"} {
 		for cursor, original := range []int{0, 2} {
 			path := base + "&limit=1&order=desc&filter=decision-action&uid=w&cursor=" + strconv.Itoa(cursor) + view
 			response := rawHTTPRequest(h, path)
@@ -238,5 +238,48 @@ func TestSchedulerHistorySelectionQueries(t *testing.T) {
 		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || response.Code != http.StatusBadRequest || result.Code != "InvalidQuery" {
 			t.Fatalf("invalid history query %s: status=%d body=%s err=%v", invalid, response.Code, response.Body, err)
 		}
+	}
+}
+
+func TestSchedulerHistorySummaryBoundsPayloadAndPreservesRecordIdentity(t *testing.T) {
+	h := rawHTTPHandler(t, &rawHTTPArchive{}, true)
+	from := time.Now().UTC()
+	to := from.Add(time.Minute)
+	for i := range 3 {
+		if err := h.observationLog.SchedulerRecord(serving.SchedulerObservation{
+			At:       from.Add(time.Duration(i) * time.Second),
+			Decision: &serving.SchedulerDecision{At: from, Status: "Keep"},
+			Snapshot: &serving.SchedulerSnapshot{At: from, Reasons: []string{strings.Repeat("large retained evidence", 30000)}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := "/api/v1/observations/scheduler?from=" + from.Format(time.RFC3339Nano) + "&to=" + to.Format(time.RFC3339Nano)
+	path := base + "&limit=2&order=desc&filter=decision-action&view=summary"
+	response := rawHTTPRequest(h, path)
+	var page struct {
+		Events []struct {
+			At       time.Time
+			Offset   int
+			Decision struct {
+				At     time.Time
+				Status string
+			}
+			Snapshot json.RawMessage
+		}
+		NextCursor string
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || response.Code != http.StatusOK {
+		t.Fatalf("summary response: status=%d err=%v body=%s", response.Code, err, response.Body)
+	}
+	if response.Body.Len() > 4096 || len(page.Events) != 2 || page.Events[0].Offset != 2 || page.Events[1].Offset != 1 || page.NextCursor != "2" {
+		t.Fatalf("summary payload or pagination: bytes=%d page=%+v", response.Body.Len(), page)
+	}
+	if page.Events[0].Decision.Status != "Keep" || !page.Events[0].Decision.At.Equal(from) || strings.Contains(string(page.Events[0].Snapshot), "reasons") {
+		t.Fatalf("summary lost identity or included detail: %+v", page.Events[0])
+	}
+	detail := rawHTTPRequest(h, base+"&limit=1&cursor=2&view=compact")
+	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), "large retained evidence") {
+		t.Fatalf("selected record no longer retains full detail: status=%d bytes=%d", detail.Code, detail.Body.Len())
 	}
 }
