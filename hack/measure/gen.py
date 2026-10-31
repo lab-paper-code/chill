@@ -693,6 +693,16 @@ def coverage_batch_plan(cell, batches, timings, policy, declared=False):
     return included, estimates, reason
 
 
+def coverage_active_protocol(active, estimates, policy):
+    seconds = policy["windowSeconds"]
+    padding = max(0, active["metricObservation"]["durationSeconds"] - active["durationSeconds"])
+    tail = max((r["secondsPerCall"] * policy["callDurationEstimateMultiplier"]
+                if r["secondsPerCall"] is not None else policy["unknownCallDurationSeconds"])
+               for r in estimates if r["included"])
+    active.update(durationSeconds=seconds, warmupIterations=policy["warmupIterations"])
+    active["metricObservation"]["durationSeconds"] = seconds + math.ceil(tail) + padding
+
+
 def generate_coverage(output, policy_path, preflight=False, pilot=False):
     output = output.resolve()
     policy = load(policy_path)
@@ -701,6 +711,9 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
     for key in ("windowSeconds", "minCallsInWindow", "idleSeconds"):
         if type(policy[key]) is not int or policy[key] < 1:
             raise ValueError(key + " must be a positive integer")
+    for key in ("callDurationEstimateMultiplier", "unknownCallDurationSeconds"):
+        if type(policy[key]) not in (int, float) or not math.isfinite(policy[key]) or policy[key] < 1:
+            raise ValueError(key + " must be finite and at least one")
     namespace = "/api/v1/namespaces/" + NS
     inputs = {}
     for name, path in (
@@ -766,10 +779,7 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
             spec["batchSizes"] = batches
         coverage_inputs(spec, model, artifact, inputs["preprocessors"]["items"], inputs["datasets"]["items"])
         seconds = policy["windowSeconds"]
-        active = spec["activeProtocol"]
-        padding = max(0, active["metricObservation"]["durationSeconds"] - active["durationSeconds"])
-        active.update(durationSeconds=seconds, warmupIterations=policy["warmupIterations"])
-        active["metricObservation"]["durationSeconds"] = seconds + padding
+        coverage_active_protocol(spec["activeProtocol"], estimates, policy)
         idle = spec["idleProtocol"]
         idle_padding = max(0, idle["metricObservation"]["durationSeconds"] - idle.get("durationSeconds", policy["idleSeconds"]))
         idle["durationSeconds"] = idle.get("durationSeconds") or policy["idleSeconds"]
@@ -941,6 +951,15 @@ def coverage_self_check():
     assert coverage_batch_plan(cell, [1, 2, 4], mixed, policy, declared=True)[2] == policy["declaredBatchConflictReason"]
     two_calls = dict(policy, minCallsInWindow=2)
     assert coverage_batch_plan(cell, [1], [dict(fast, secondsPerCall=40)], two_calls)[0] == []
+    active = {"durationSeconds": 60, "durationToleranceSeconds": 0,
+              "metricObservation": {"durationSeconds": 62}}
+    coverage_active_protocol(active, [{"included": True, "secondsPerCall": 37.294},
+                                     {"included": False, "secondsPerCall": 900}], policy)
+    assert active["durationSeconds"] == 60 and active["durationToleranceSeconds"] == 0
+    assert active["metricObservation"]["durationSeconds"] == 137
+    active["metricObservation"]["durationSeconds"] = 62
+    coverage_active_protocol(active, [{"included": True, "secondsPerCall": None}], policy)
+    assert active["metricObservation"]["durationSeconds"] == 662
     facts = {"condition": {"logicalModel": model, "deviceClass": "device", "artifact": {"executionPath": "path"},
                           "powerMode": "mode"},
              "request": {"name": "source", "uid": "source-uid"},

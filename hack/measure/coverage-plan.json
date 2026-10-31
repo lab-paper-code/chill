@@ -4,6 +4,8 @@
   "precisionMeaning": "셀별 정밀도(CI)는 측정 후 기록하며 목표치가 아님",
   "windowSeconds": 60,
   "minCallsInWindow": 1,
+  "callDurationEstimateMultiplier": 2,
+  "unknownCallDurationSeconds": 600,
   "idleSeconds": 10,
   "undeclaredBatchSizes": [1, 2, 4, 8, 16, 32],
   "cellAnnotation": "chill.dacs.io/coverage-cell",

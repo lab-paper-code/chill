@@ -497,6 +497,20 @@ starts this monotone exclusion.
 filtered artifact-declared set also excludes the cell rather than violating the
 server's indivisible declaration contract. There is no SLO-based shortcut,
 second phase, sample-count target, dynamic window extension, or window cap.
+The active metric observation deadline includes the last in-flight call:
+`windowSeconds + ceil(max(included batch call bounds)) + inherited metric padding`.
+Each known call bound is the slowest same-model/class/batch estimate multiplied
+by config `callDurationEstimateMultiplier` (2); unknown timings use config
+`unknownCallDurationSeconds` (600). Excluded batches do not inflate the deadline.
+This changes observer/worker budgets, not the runtime's 60-second start window,
+actual power integration window, or `durationToleranceSeconds`: tolerance only
+allows measurement undershoot and must remain finite, nonnegative and below
+the measurement duration. Both tolerance and metric duration are frozen in
+RunConfig/curve identity; no storage schema or acceptance rule changes.
+The policy is part of the shared plan hash, so changing these settings renames
+every newly generated cell, not just slow cells; existing requests are still
+listed/skipped rather than rewritten. A running feeder keeps its frozen plan
+until the operator explicitly replaces it.
 Idle uses the inherited fixed window or config `idleSeconds` (10 seconds).
 Reports state: “셀별 정밀도(CI)는 측정 후 기록하며 목표치가 아님”.
 Estimates include active windows, three shared-idle windows and their settling
