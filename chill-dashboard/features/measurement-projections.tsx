@@ -3,7 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
-import { TriangleAlert } from "lucide-react"
+import { Check, CircleHelp, TriangleAlert } from "lucide-react"
 import { useChillQuery, useSession } from "@/lib/client"
 import type { DispatchOccupancyMeasurement, MeasurementEvidenceLocation, MeasurementProjection, MeasurementProjectionList, OperationCostMeasurement } from "@/lib/read-types"
 import { formatMeasurementTime, evidenceLocations, measurementHref, measurementListHref, measurementPath, measurementUIDMismatch, measurementReasonSummary, occupancyDuration, occupancyThroughput, occupancyReason, occupancySupply, operationTotals, operationSteps, type OperationStep, type ProjectionMeasurementKind } from "@/lib/measurements"
@@ -31,26 +31,25 @@ export function ProjectionMeasurementListPage({kind}:{kind:ProjectionMeasurement
   const axes=[{key:"node",label:"노드",values:all.map(item=>item.node)},...(kind==="dispatch-occupancy-measurements"?[{key:"workload",label:"서비스",values:all.flatMap(item=>item.kind==="DispatchOccupancyMeasurement"?[item.conditions.workload]:[])}]:[])]
   const items=all.filter(item=>(!params.get("q")||item.metadata.name.toLocaleLowerCase().includes(params.get("q")!.toLocaleLowerCase()))&&(!params.get("status")||item.assessment?.displayStatus===params.get("status"))&&(!params.get("node")||item.node===params.get("node"))&&(!params.get("workload")||(item.kind==="DispatchOccupancyMeasurement"&&item.conditions.workload===params.get("workload"))))
   const costs=new Map(items.flatMap(item=>item.kind==="OperationCostMeasurement"?[[item,operationCostSummary(operationSteps(item))] as const]:[]))
-  const costValue=(item:MeasurementProjection,kind:"prepare"|"remove",metric:"duration"|"energy",stat:0|1)=>{const cost=costs.get(item as OperationCostMeasurement),value=cost?.[kind][metric]?.[stat];return value===undefined?"—":<span className="grid justify-items-end gap-1">{metric==="duration"?operationCostTime(Math.round(value)):operationCostEnergy(value)}{stat===1&&<CostOutlier multiple={cost?.maximumOutliers[kind][metric]}/>}</span>}
   const commonReason=kind==="dispatch-occupancy-measurements"&&items.length&&items.every(item=>item.kind==="DispatchOccupancyMeasurement"&&occupancyReason(item)===occupancyReason(items[0] as DispatchOccupancyMeasurement))?occupancyReason(items[0] as DispatchOccupancyMeasurement):undefined
   const columns:DataColumn<MeasurementProjection>[] = [
-    {key:"name",label:kind==="operation-cost-measurements"?"모델 · 장치":"측정",value:item => <Link className="break-words underline underline-offset-4" title={item.metadata.name} href={measurementHref(kind,item.metadata)}>{item.kind==="OperationCostMeasurement"?`${costs.get(item)?.models.join(" / ")||"모델 미기록"} · ${overviewDeviceLabel(item.node)}`:item.metadata.name}</Link>,sortValue:item => item.metadata.name},
+    {key:"name",label:kind==="operation-cost-measurements"?"모델 · 장치":"측정",value:item => <Link className="block truncate underline underline-offset-4" title={item.kind==="OperationCostMeasurement"?`${costs.get(item)?.models.join(" / ")||"모델 미기록"} · ${item.node} · ${item.metadata.name}`:item.metadata.name} href={measurementHref(kind,item.metadata)}>{item.kind==="OperationCostMeasurement"?`${costs.get(item)?.models[0]||"모델 미기록"}${(costs.get(item)?.models.length??0)>1?` +${costs.get(item)!.models.length-1}`:""} · ${overviewDeviceLabel(item.node)}`:item.metadata.name}</Link>,sortValue:item => item.metadata.name},
     ...(kind === "operation-cost-measurements" ? [
-      ...(["prepare","remove"] as const).flatMap(stage=>(["duration","energy"] as const).flatMap(metric=>([0,1] as const).map(stat=>({
-        key:`${stage}-${metric}-${stat}`,label:`${stage==="prepare"?"준비":"제거"} ${stat===0?"중앙값":"최대"} (${metric==="duration"?"s":"J"})`,
-        value:(item:MeasurementProjection)=>costValue(item,stage,metric,stat),
-        sortValue:(item:MeasurementProjection)=>costs.get(item as OperationCostMeasurement)?.[stage][metric]?.[stat],
-      })))),
+      ...(["duration","energy"] as const).map(metric=>({
+        key:`prepare-${metric}`,label:`준비 (${metric==="duration"?"s":"J"})`,
+        value:(item:MeasurementProjection)=><CostRange values={costs.get(item as OperationCostMeasurement)?.prepare[metric]} metric={metric} multiple={costs.get(item as OperationCostMeasurement)?.maximumOutliers.prepare[metric]}/>,
+        sortValue:(item:MeasurementProjection)=>costs.get(item as OperationCostMeasurement)?.prepare[metric]?.[0],
+      })),
+      {key:"remove",label:"제거 (s / J)",value:(item:MeasurementProjection)=>{const cost=costs.get(item as OperationCostMeasurement);return <div className="grid gap-2"><CostRange values={cost?.remove.duration} metric="duration" multiple={cost?.maximumOutliers.remove.duration}/><CostRange values={cost?.remove.energy} metric="energy" multiple={cost?.maximumOutliers.remove.energy}/></div>}},
       {key:"attempts",label:"횟수 (회)",value:(item:MeasurementProjection)=>costs.get(item as OperationCostMeasurement)?.count??0},
-      {key:"deviation",label:"편차",value:(item:MeasurementProjection)=>{const cost=costs.get(item as OperationCostMeasurement);return <div className="grid gap-1">{!!cost?.powerMultiple&&<span className="inline-flex items-center gap-1" title="같은 전력모드 전환 방향의 유효 기록 중앙값 대비 배수">전력 전환 <CostOutlier multiple={cost.powerMultiple}/></span>}{cost?.insufficient?<span title="동일 장치·측정·모델/프로파일·동작별 유효 기록이 3개 미만"><TriangleAlert className="mr-1 inline size-3" aria-hidden="true"/>비교 표본 부족</span>:!cost?.powerMultiple?"—":null}</div>}},
     ] : [
       {key:"node",label:"장치",value:(item:MeasurementProjection)=>item.node},
       {key:"workload",label:"서비스",sortValue:(item:MeasurementProjection)=>item.kind==="DispatchOccupancyMeasurement"?item.conditions.workload:undefined,value:(item:MeasurementProjection) => item.kind === "DispatchOccupancyMeasurement" ? item.conditions.workload : "종류 확인 필요"},
       ...(!commonReason?[{key:"reason",label:"사유",value:(item:MeasurementProjection)=>item.kind==="DispatchOccupancyMeasurement"?<span title={item.status.reason||item.assessment?.reasons.map(reason=>reason.message||reason.code).join("\n")}>{occupancyReason(item)}</span>:"—"}]:[]),
-      {key:"d",label:"분배 점유시간 (ms/요청)",sortValue:(item:MeasurementProjection)=>item.kind==="DispatchOccupancyMeasurement"&&occupancyDuration(item.status.perRequestNanos)!=="—"?item.status.perRequestNanos:undefined,value:(item:MeasurementProjection)=>item.kind==="DispatchOccupancyMeasurement"?occupancyDuration(item.status.perRequestNanos):"—"},
-      {key:"x",label:"완료 처리량 (req/s)",sortValue:(item:MeasurementProjection)=>item.kind==="DispatchOccupancyMeasurement"&&occupancyThroughput(item.status.throughput)!=="—"?Number(item.status.throughput):undefined,value:(item:MeasurementProjection)=>item.kind==="DispatchOccupancyMeasurement"?occupancyThroughput(item.status.throughput):"—"},
+      {key:"d",label:"분배 점유시간 (ms/요청)",sortValue:(item:MeasurementProjection)=>item.kind==="DispatchOccupancyMeasurement"&&occupancyDuration(item.status.perRequestNanos)!=="—"?item.status.perRequestNanos:undefined,value:(item:MeasurementProjection)=>item.kind==="DispatchOccupancyMeasurement"?<OccupancyValue data={item} value={occupancyDuration(item.status.perRequestNanos)}/>:"—"},
+      {key:"x",label:"완료 처리량 (req/s)",sortValue:(item:MeasurementProjection)=>item.kind==="DispatchOccupancyMeasurement"&&occupancyThroughput(item.status.throughput)!=="—"?Number(item.status.throughput):undefined,value:(item:MeasurementProjection)=>item.kind==="DispatchOccupancyMeasurement"?<OccupancyValue data={item} value={occupancyThroughput(item.status.throughput)}/>:"—"},
     ]),
-    {key:"phase",label:"측정 상태",value:item => <MeasurementStatus assessment={item.assessment}/>,sortValue:item => item.assessment?.label??""},
+    {key:"phase",label:"측정 상태",value:item => item.kind==="OperationCostMeasurement"?<CostStatus data={item} cost={costs.get(item)}/>:<MeasurementStatus assessment={item.assessment}/>,sortValue:item => item.assessment?.label??""},
   ]
   return <Screen width="data" actionPlacement="header" title={title} action={<Rows><RowDialog open={namespaceOpen} onOpenChange={setNamespaceOpen} label="저장 영역" value={namespace} title="저장 영역 선택"><NamespaceForm key={namespace} kind={kind} namespace={namespace} done={() => setNamespaceOpen(false)}/></RowDialog></Rows>}>
     <MeasurementNavigation active={kind} namespace={namespace}/>
@@ -107,7 +106,28 @@ function TransitionCosts({data}:{data:OperationCostMeasurement}) {
   return rows.length?<OperationCostValues rows={rows} device={data.node}/>:<span>전환 단계 미제공</span>
 }
 function CostOutlier({multiple}:{multiple:number|undefined}) {
-  return multiple===undefined?null:<span className="inline-flex max-w-full flex-wrap items-center justify-end gap-1 text-xs font-semibold" aria-label={`이상값 · 같은 측정·동작 중앙값의 ${multiple.toFixed(1)}배`}><TriangleAlert className="size-3 shrink-0" aria-hidden="true"/><span>{multiple.toFixed(1)}×</span></span>
+  return multiple===undefined?null:<span className="inline-flex max-w-full shrink-0 items-center justify-end gap-1 whitespace-nowrap text-xs font-semibold" aria-label={`이상값 · 같은 측정·동작 중앙값의 ${multiple.toFixed(1)}배`}><TriangleAlert className="size-3 shrink-0" aria-hidden="true"/><span>{multiple.toFixed(1)}×</span></span>
+}
+function CostRange({values,metric,multiple}:{values:readonly [number,number]|undefined;metric:"duration"|"energy";multiple?:number}) {
+  if(!values)return <span className="text-muted-foreground">—</span>
+  const [median,maximum]=values,position=maximum>0?median/maximum*100:0
+  const format=(value:number)=>metric==="duration"?operationCostTime(Math.round(value)):operationCostEnergy(value)
+  return <span className={`grid min-w-24 gap-1 tabular-nums ${multiple?"text-destructive":""}`} title={`중앙값 ${format(median)} / 최대 ${format(maximum)}${multiple?` · 이상값 ${multiple.toFixed(1)}배`:""}`} aria-label={`중앙값 ${format(median)}, 최대 ${format(maximum)}`}>
+    <span className="flex justify-between gap-2 whitespace-nowrap text-xs"><span>{format(median)}</span><span>{format(maximum)}</span></span>
+    <span className="relative mx-1 h-2" aria-hidden="true"><span className="absolute inset-x-0 top-1/2 h-0.5 bg-current opacity-30"/><span className="absolute top-0 size-2 -translate-x-1/2 rounded-full bg-current" style={{left:`${position}%`}}/><span className="absolute right-0 top-0 h-2 border-r-2 border-current"/></span>
+  </span>
+}
+function CostStatus({data,cost}:{data:OperationCostMeasurement;cost:{powerMultiple:number;insufficient:boolean;maximumOutliers:Record<"prepare"|"remove",{duration?:number;energy?:number}>}|undefined}) {
+  const outlier=!!cost&&(!!cost.powerMultiple||Object.values(cost.maximumOutliers).some(stage=>stage.duration!==undefined||stage.energy!==undefined))
+  const status=data.assessment?.displayStatus
+  const problem=outlier||status==="problem",uncertain=cost?.insufficient||status!=="usable"
+  const Icon=problem?TriangleAlert:uncertain?CircleHelp:Check
+  const label=[data.assessment?.label||"확인 불가",outlier?"이상값":undefined,cost?.insufficient?"비교 표본 부족":undefined,cost?.powerMultiple?`전력 전환 ${cost.powerMultiple.toFixed(1)}배`:undefined].filter(Boolean).join(" · ")
+  return <span className={`inline-flex whitespace-nowrap ${problem?"text-destructive":uncertain?"text-muted-foreground":""}`} role="img" aria-label={label} title={label}><Icon className="size-4" aria-hidden="true"/></span>
+}
+function OccupancyValue({data,value}:{data:DispatchOccupancyMeasurement;value:string}) {
+  const problem=data.assessment?.displayStatus==="problem"||occupancyDuration(data.status.perRequestNanos)==="—"||occupancyThroughput(data.status.throughput)==="—"||["review","insufficient"].includes(data.assessment?.displayStatus??"")
+  return <span className={`inline-flex items-center gap-1 whitespace-nowrap tabular-nums ${problem?"text-muted-foreground":""}`}>{problem&&<TriangleAlert className="size-3 shrink-0" role="img" aria-label={`측정 문제 · ${occupancyReason(data)}`}/>}<span>{value}</span></span>
 }
 function OperationCostValues({rows,device}:{rows:OperationCostRow[];device:string}) {
   const outliers=operationCostOutliers(rows)
@@ -167,7 +187,7 @@ function OperationResult({data}:{data:OperationCostMeasurement}) {
 function OccupancyResult({data}:{data:DispatchOccupancyMeasurement}) {
   const c = data.conditions, s = data.status
   return <>
-    <table aria-label="분배 점유시간 결과" className="w-full text-left text-sm tabular-nums"><thead><tr>{["분배 점유시간 (ms/요청)","완료 처리량 (req/s)","결과 전력모드","사유"].map(label=><th key={label} className="p-3">{label}</th>)}</tr></thead><tbody><tr><td className="p-3">{occupancyDuration(s.perRequestNanos)}</td><td className="p-3">{occupancyThroughput(s.throughput)}</td><td className="p-3">{s.powerMode||"미기록"}</td><td className="p-3" title={s.reason}>{occupancyReason(data)}</td></tr></tbody></table>
+    <table aria-label="분배 점유시간 결과" className="w-full text-left text-sm tabular-nums"><thead><tr>{["분배 점유시간 (ms/요청)","완료 처리량 (req/s)","결과 전력모드","사유"].map(label=><th key={label} className="p-3">{label}</th>)}</tr></thead><tbody><tr><td className="p-3"><OccupancyValue data={data} value={occupancyDuration(s.perRequestNanos)}/></td><td className="p-3"><OccupancyValue data={data} value={occupancyThroughput(s.throughput)}/></td><td className="p-3">{s.powerMode||"미기록"}</td><td className="p-3" title={s.reason}>{occupancyReason(data)}</td></tr></tbody></table>
     <Rows label="자세히"><RowDialog label="측정 조건" title="분배 점유시간 측정 조건" description="예열 제외 · 현재 이름 기준 참조">
       <Facts items={[
         ["워크로드",<Link key="workload" className="underline underline-offset-4" href={`/workloads/${encodeURIComponent(c.workload)}`}>{c.workload} (현재 이름 기준 / UID 없는 참조)</Link>],
