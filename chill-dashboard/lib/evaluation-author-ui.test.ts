@@ -7,6 +7,7 @@ import { setImmediate } from "node:timers/promises"
 import * as author from "./evaluation-author.ts"
 import * as request from "./evaluation-request.ts"
 import * as scheduler from "./scheduler.ts"
+import * as activeHelpers from "./evaluation-active.ts"
 
 type Tree={type:unknown;props:Record<string,unknown>}
 const require=createRequire(import.meta.url)
@@ -140,4 +141,27 @@ test("pool occupancy is observed independently from the cleanup failure phase",(
     assert.ok(cells.some(cell=>cell.props.children==="정리 실패"))
     assert.ok(cells.some(cell=>cell.props.children===label),`${status}: ${label}`)
   }
+})
+
+test("active stop uses the selected UID when active and detail queries disagree",()=>{
+  const runner=hookRunner(),active={name:"run",uid:"new",stageIndex:1,stagesTotal:1}
+  const writes:unknown[]=[]
+  const modules={...primitives,react:runner.react,"@/lib/evaluation-active":activeHelpers,"@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/evaluations/active"?{items:[active]}:{items:[]}}),useChillMutation:()=>({reset:()=>{},mutate:(input:unknown)=>writes.push(input)})}}
+  const {EvaluationActive}=load("../features/evaluation-active.tsx",modules)
+  let tree=elements(runner.render(EvaluationActive,{name:"run",uid:"old",now:0}))
+  assert.ok(!tree.some(element=>element.type==="details"),"same-name active replacement must not display under the old selection")
+  tree=elements(runner.render(EvaluationActive,{name:"run",uid:"new",now:0}))
+  ;(tree.find(element=>element.type==="button"&&element.props.children==="실험 중지")!.props.onClick as ()=>void)()
+  tree=elements(runner.render(EvaluationActive,{name:"run",uid:"old",now:0}))
+  ;(tree.find(element=>element.type==="button"&&element.props.children==="중지 요청")!.props.onClick as ()=>void)()
+  assert.equal(writes.length,0,"a pending stop cannot cross a changed selected UID")
+})
+
+test("selected detail passes the URL UID to the independent active query",()=>{
+  const runner=hookRunner(),params=new URLSearchParams("name=run&uid=old")
+  const run={name:"run",uid:"old",phase:"Running",spec:{}}
+  const modules={...primitives,react:{...runner.react,useEffect:()=>{}},"next/navigation":{useSearchParams:()=>params},"@/lib/client":{useChillQuery:()=>({data:run})}}
+  const {EvaluationsPage}=load("../features/evaluation-request.tsx",modules)
+  const active=elements(runner.render(EvaluationsPage)).find(element=>element.props.name==="run"&&"now" in element.props)!
+  assert.equal(active.props.uid,"old")
 })
