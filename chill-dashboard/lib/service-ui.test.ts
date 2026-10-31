@@ -72,15 +72,31 @@ test("integrated detail retains three regions and UID-specific current observati
   assert.ok(elements(tree.props.action).some(element => element.props.href === "/workloads/idle/infer?uid=service-uid"))
 })
 
-test("distribution joins require the same UID and observation time", () => {
-  const h = harness(), instance = { id: "instance", node: { name: "device" }, ready: true }
-  function weight(uid: string, at: string) {
-    const placement = h.hub.ServicePlacement({ view: idle, signals: { pools: { data: { observedAt: idle.observedAt } }, scheduler: { data: { state: { snapshot: { at, workloads: [{ uid }], routing: { "service-uid": { instance: 2 } } } } } }, instances: [instance] } })
-    const table = elements(placement).find(element => element.type === "data-table")!
-    const columns = table.props.columns as {key: string; value: (row: unknown) => unknown}[]
-    return columns.find(column => column.key === "weight")!.value(instance)
-  }
-  assert.equal(weight("service-uid", idle.observedAt), 2)
-  assert.equal(weight("replacement", idle.observedAt), "미확인")
-  assert.equal(weight("service-uid", "2026-10-31T23:59:00Z"), "미확인")
+test("distribution rows and weights come from one scheduler snapshot despite a later pools observation", () => {
+  const h = harness()
+  const snapshotAt = "2026-10-31T23:59:00Z"
+  const instance = { id: "instance", workloadUID: "service-uid", node: { name: "scheduler-device" }, ready: true }
+  const shared = { id: "shared", workloadUID: "another-service", node: { name: "shared-device" }, ready: true }
+  const unrelated = { id: "unrelated", workloadUID: "another-service", node: { name: "other-device" }, ready: true }
+  const unweighted = { id: "unweighted", workloadUID: "service-uid", node: { name: "unweighted-device" }, ready: false }
+  const poolInstance = { id: "pool-only", node: { name: "pools-device" }, ready: true }
+  const placement = h.hub.ServicePlacement({ view: idle, signals: {
+    pools: { data: { observedAt: idle.observedAt } },
+    scheduler: { data: { state: { snapshot: { at: snapshotAt, instances: [instance, shared, unrelated, unweighted], routing: { "service-uid": { instance: 2, shared: 0 } } } } } },
+    instances: [poolInstance],
+  } })
+  const table = elements(placement).find(element => element.type === "data-table")!
+  assert.deepEqual(table.props.data, [instance, shared, unweighted])
+  const columns = table.props.columns as {key: string; value: (row: unknown) => unknown}[]
+  const weight = columns.find(column => column.key === "weight")!
+  assert.equal(weight.value(instance), 2)
+  assert.equal(weight.value(shared), 0)
+  assert.equal(weight.value(unweighted), "미제공")
+  const poolTable = elements(placement).filter(element => element.type === "data-table")[1]
+  assert.deepEqual(poolTable.props.data, [poolInstance])
+  const facts = elements(placement).filter(element => element.type === "facts").map(element => element.props.items)
+  assert.deepEqual(facts, [
+    [["분배 기준 시각 (KST)", new Date(snapshotAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })]],
+    [["배치 관측 시각 (KST)", new Date(idle.observedAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })]],
+  ])
 })

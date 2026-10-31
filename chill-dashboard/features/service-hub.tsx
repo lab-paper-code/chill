@@ -51,17 +51,27 @@ export function ServiceDefinition({ view }: { view: WorkloadView }) {
 
 export function ServicePlacement({ view, signals: s }: { view: WorkloadView; signals: ServiceSignals }) {
   const uid = view.desired.metadata.uid
-  // Routing and instances must belong to the same management observation before joining them.
-  const routing = s.scheduler.data?.state.snapshot
-  const matched = !!routing && routing.at === s.pools.data?.observedAt && routing.workloads?.some(row => row?.uid === uid)
+  // Instance rows and weights share one scheduler snapshot; pools are a separate observation.
+  const snapshot = s.scheduler.data?.state.snapshot
+  const weights = snapshot?.routing?.[uid]
+  const instances = snapshot?.instances?.filter(row => row.workloadUID === uid || !!weights && Object.hasOwn(weights, row.id)) ?? []
   return <section id="placement" className="min-w-0 space-y-3 rounded-xl border p-4"><h2 className="font-semibold">배치·연결</h2>
-    <QueryGate query={s.pools}><DataTable searchable={false} data={s.instances} columns={[
+    <Facts items={[["분배 기준 시각 (KST)", snapshot?.at ? new Date(snapshot.at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) : "미확인"]]} />
+    <QueryGate query={s.scheduler}><DataTable searchable={false} data={instances} columns={[
       { key: "device", label: "장치", value: row => row.node.name },
       { key: "instance", label: "인스턴스", value: row => row.id },
-      { key: "ready", label: "준비", value: row => <StatusCell axis="배치" label={row.ready ? "준비됨" : "준비 안 됨"} tone={row.ready ? "ok" : "warn"} reason={row.reason ? statusLabel(row.reason) : undefined} /> },
-      { key: "weight", label: "분배 가중치", numeric: true, value: row => matched ? routing.routing?.[uid]?.[row.id] ?? "미제공" : "미확인" },
+      { key: "ready", label: "준비", value: row => <StatusCell axis="배치" label={row.ready ? "준비됨" : "준비 안 됨"} tone={row.ready ? "ok" : "warn"} /> },
+      { key: "weight", label: "분배 가중치", numeric: true, value: row => weights?.[row.id] ?? "미제공" },
     ]} /></QueryGate>
     <nav className="flex flex-wrap gap-4 text-sm"><Link href={`/?${new URLSearchParams({ open: `service:${uid}` })}`}>현재 관측</Link><Link href={`/measurements?${new URLSearchParams({ uid, workload: view.desired.metadata.name })}`}>측정</Link><Link href={`/records?${new URLSearchParams({ kind: "requests", uid, workload: view.desired.metadata.name })}`}>기록</Link></nav>
+    <Rows><RowDialog label="배치 관측" title="배치 관측">
+      <Facts items={[["배치 관측 시각 (KST)", s.pools.data?.observedAt ? new Date(s.pools.data.observedAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) : "미확인"]]} />
+      <QueryGate query={s.pools}><DataTable searchable={false} data={s.instances} columns={[
+        { key: "device", label: "장치", value: row => row.node.name },
+        { key: "instance", label: "인스턴스", value: row => row.id },
+        { key: "ready", label: "준비", value: row => <StatusCell axis="배치" label={row.ready ? "준비됨" : "준비 안 됨"} tone={row.ready ? "ok" : "warn"} reason={row.reason ? statusLabel(row.reason) : undefined} /> },
+      ]} /></QueryGate>
+    </RowDialog></Rows>
     <Rows><RowDialog label="원본·내보내기" title="서비스 원본"><SourceJSON inline title="서비스" value={view} /><SourceJSON inline title="배치" value={s.pools.data} /><SourceJSON inline title="운영 판단·분배" value={s.scheduler.data} /><SourceExport value={view} filename={`workload-${view.desired.metadata.name}.json`} /></RowDialog></Rows>
   </section>
 }
