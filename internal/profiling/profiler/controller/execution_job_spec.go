@@ -148,9 +148,10 @@ func buildExecutionJob(
 		},
 	}
 	for i := range job.Spec.Template.Spec.InitContainers {
+		// File-copy page cache is charged to the init cgroup, not the observers.
 		job.Spec.Template.Spec.InitContainers[i].Resources = corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{corev1.ResourceMemory: *resource.NewQuantity(plan.ObserverMemoryRequestBytes, resource.BinarySI)},
-			Limits:   corev1.ResourceList{corev1.ResourceMemory: *resource.NewQuantity(plan.ObserverMemoryLimitBytes, resource.BinarySI)},
+			Requests: corev1.ResourceList{corev1.ResourceMemory: *resource.NewQuantity(plan.RuntimeMemoryRequestBytes, resource.BinarySI)},
+			Limits:   corev1.ResourceList{corev1.ResourceMemory: *resource.NewQuantity(plan.RuntimeMemoryLimitBytes, resource.BinarySI)},
 		}
 	}
 	if err := controllerutil.SetControllerReference(run, job, scheme); err != nil {

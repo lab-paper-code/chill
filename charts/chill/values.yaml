@@ -98,7 +98,7 @@ profiler:
   replicaCount: 1
   # Failed Jobs receive this TTL only after their final outcome is recorded.
   failedJobRetentionSeconds: 86400
-  # Runtime memory is bounded by this fraction of the target Node's allocatable
+  # Runtime and copy-init memory share this fraction of target Node allocatable
   # memory and the selected execution-policy limit, whichever is smaller.
   measurementMemoryFraction: 0.8
   configMapKey: config.yaml
@@ -175,8 +175,8 @@ profiling:
     maxWorkloadEvents: 10000
     maxWorkloadResultBytes: 8388608
     runtimeMemoryRequestBytes: 134217728
-    # Upper envelope; each Job is also capped by Node allocatable memory times
-    # profiler.measurementMemoryFraction. Keep the existing scheduling request.
+    # Runtime/copy-init upper envelope, also capped by Node allocatable times
+    # profiler.measurementMemoryFraction. Both use runtimeMemoryRequestBytes.
     runtimeMemoryLimitBytes: 17179869184
     observerCPURequest: 5m
     observerCPULimit: 100m

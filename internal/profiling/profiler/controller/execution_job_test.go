@@ -120,49 +120,57 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 	assertWorkloadObserverCredentialIsolation(t, pod, runtimeContainer, observer, workloads)
 }
 
-func TestExecutionJobsCapsRuntimeMemoryByNodeAllocatable(t *testing.T) {
+func TestExecutionJobsCapsRuntimeAndInitMemoryByNodeAllocatable(t *testing.T) {
 	for _, fraction := range []float64{0.8, 0.5} {
-		t.Run(fmt.Sprint(fraction), func(t *testing.T) {
-			run := testRun()
-			resolved := resolvedRunForPrepared(t, currentPreparedRun(t))
-			resolved.ExecutionPolicy.Policy.RuntimeMemoryLimitBytes = 16 << 30
-			node := &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{Name: resolved.Prepared.RunConfig.TargetNode.Name, UID: types.UID(resolved.Prepared.RunConfig.TargetNode.UID)},
-				Status:     corev1.NodeStatus{Allocatable: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("4Gi")}},
-			}
-			scheme := executionJobTestScheme(t)
-			kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(node).Build()
-			options := testExecutionJobOptions()
-			options.MeasurementMemoryFraction = fraction
-			jobs, err := NewExecutionJobs(kube, scheme, staticEvidenceStoreResolver{binding: testEvidenceStoreBinding()}, options)
-			if err != nil {
-				t.Fatal(err)
-			}
-			job, created, err := jobs.Ensure(context.Background(), run, resolved)
-			if err != nil || !created {
-				t.Fatalf("create Job: created=%v err=%v", created, err)
-			}
-			runtime := findContainer(t, job.Spec.Template.Spec.Containers, runtimeContainerName)
-			if got, want := runtime.Resources.Limits.Memory().Value(), int64(float64(int64(4<<30))*fraction); got != want {
-				t.Fatalf("runtime memory limit = %d, want %d (4Gi * %g)", got, want, fraction)
-			}
-			if got := runtime.Resources.Requests.Memory().Value(); got != resolved.ExecutionPolicy.Policy.RuntimeMemoryRequestBytes {
-				t.Fatalf("existing memory request changed: %d", got)
-			}
-			for _, container := range job.Spec.Template.Spec.InitContainers {
-				if got := container.Resources.Limits.Memory().Value(); got != resolved.ExecutionPolicy.Policy.ObserverMemoryLimitBytes {
-					t.Fatalf("init %s memory limit = %d", container.Name, got)
+		for _, policyLimit := range []int64{16 << 30, 1 << 30} {
+			t.Run(fmt.Sprintf("%g/%d", fraction, policyLimit), func(t *testing.T) {
+				run := testRun()
+				resolved := resolvedRunForPrepared(t, currentPreparedRun(t))
+				resolved.ExecutionPolicy.Policy.RuntimeMemoryLimitBytes = policyLimit
+				// Observer requests are independent and may exceed the runtime cap.
+				resolved.ExecutionPolicy.Policy.ObserverMemoryRequestBytes = 2 << 30
+				resolved.ExecutionPolicy.Policy.ObserverMemoryLimitBytes = 2 << 30
+				node := &corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{Name: resolved.Prepared.RunConfig.TargetNode.Name, UID: types.UID(resolved.Prepared.RunConfig.TargetNode.UID)},
+					Status:     corev1.NodeStatus{Allocatable: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("4Gi")}},
 				}
-			}
-			// Recovery uses the immutable Job spec, not new settings or Node facts.
-			jobs.options.MeasurementMemoryFraction = 0.25
-			if err := kube.Delete(context.Background(), node); err != nil {
-				t.Fatal(err)
-			}
-			if _, created, err := jobs.Ensure(context.Background(), run, resolved); err != nil || created {
-				t.Fatalf("recover retained Job: created=%v err=%v", created, err)
-			}
-		})
+				scheme := executionJobTestScheme(t)
+				kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(node).Build()
+				options := testExecutionJobOptions()
+				options.MeasurementMemoryFraction = fraction
+				jobs, err := NewExecutionJobs(kube, scheme, staticEvidenceStoreResolver{binding: testEvidenceStoreBinding()}, options)
+				if err != nil {
+					t.Fatal(err)
+				}
+				job, created, err := jobs.Ensure(context.Background(), run, resolved)
+				if err != nil || !created {
+					t.Fatalf("create Job: created=%v err=%v", created, err)
+				}
+				runtime := findContainer(t, job.Spec.Template.Spec.Containers, runtimeContainerName)
+				if got, want := runtime.Resources.Limits.Memory().Value(), min(policyLimit, int64(float64(int64(4<<30))*fraction)); got != want {
+					t.Fatalf("runtime memory limit = %d, want %d (min(policy, 4Gi * %g))", got, want, fraction)
+				}
+				if got := runtime.Resources.Requests.Memory().Value(); got != resolved.ExecutionPolicy.Policy.RuntimeMemoryRequestBytes {
+					t.Fatalf("existing memory request changed: %d", got)
+				}
+				for _, container := range job.Spec.Template.Spec.InitContainers {
+					if got, want := container.Resources.Limits.Memory().Value(), runtime.Resources.Limits.Memory().Value(); got != want {
+						t.Fatalf("init %s memory limit = %d, want runtime limit %d", container.Name, got, want)
+					}
+					if got := container.Resources.Requests.Memory().Value(); got != resolved.ExecutionPolicy.Policy.RuntimeMemoryRequestBytes {
+						t.Fatalf("init %s does not share the runtime scheduling request: %d", container.Name, got)
+					}
+				}
+				// Recovery uses the immutable Job spec, not new settings or Node facts.
+				jobs.options.MeasurementMemoryFraction = 0.25
+				if err := kube.Delete(context.Background(), node); err != nil {
+					t.Fatal(err)
+				}
+				if _, created, err := jobs.Ensure(context.Background(), run, resolved); err != nil || created {
+					t.Fatalf("recover retained Job: created=%v err=%v", created, err)
+				}
+			})
+		}
 	}
 }
 
