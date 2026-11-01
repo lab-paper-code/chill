@@ -10,11 +10,15 @@ import { formatMeasurementNumber, measurementCheckText, measurementRequestName, 
 import type { ResultRow } from "./read-types.ts"
 import { operationTotals } from "./measurements.ts"
 
-test("measurement display labels hide internal protocol and path codes without inventing runtime support",()=>{
-  assert.equal(executionPathLabel("firstfloor-ort-cpu-arm64"),"CPU · ARM 64비트")
-  assert.equal(executionPathLabel("firstfloor-ort-cuda-arm64"),"CUDA · ARM 64비트")
+test("measurement labels distinguish backend variants while translating workload protocols",()=>{
+  assert.equal(executionPathLabel("firstfloor-ort-cpu-arm64"),"CPU · ARM 64비트 (firstfloor-ort-cpu-arm64)")
+  const paths=["firstfloor-ort-cuda-arm64","firstfloor-rnn-ort-cuda-arm64","firstfloor-vlm-ort-cuda-arm64"]
+  const labels=paths.map(path=>executionPathLabel(path))
+  assert.equal(new Set(labels).size,paths.length)
+  for(const [index,path] of paths.entries())assert.equal(labels[index],`CUDA · ARM 64비트 (${path})`)
   assert.equal(executionPathLabel("new-private-backend",2),"등록 실행 경로 3")
   assert.equal(workloadModeLabel("saturated-serial-fixed-batch"),"포화 · 순차 · 고정 배치")
+  assert.equal(workloadModeLabel("idle-model-loaded"),"모델 적재 유휴")
   assert.equal(workloadModeLabel("new-protocol"),"기타 부하 방식")
   assert.equal(measurementReasonSummary("No verified catalog profile for current condition"),"현재 조건의 검증된 프로파일 없음")
 })

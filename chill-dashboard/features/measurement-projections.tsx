@@ -145,10 +145,9 @@ function ProjectionResult({data}:{data:MeasurementProjection}) {
 function BEOReference({namespace,name}:{namespace:string;name:string}) {
   return <Link className="break-all underline underline-offset-4" href={`/measurements/requests?${new URLSearchParams({namespace,request:name})}`}>{name}</Link>
 }
-function OperationCostValues({rows,device,comparisonSummary=true}:{rows:OperationCostRow[];device:string;comparisonSummary?:boolean}) {
+function OperationCostValues({rows,device}:{rows:OperationCostRow[];device:string}) {
   const outliers=operationCostOutliers(rows)
   return <table className="w-full table-fixed text-left text-xs [&_th]:break-words [&_th]:p-2 [&_td]:p-2 [&_td]:align-top [&_td]:[overflow-wrap:anywhere] max-sm:[&_thead]:hidden max-sm:[&_tr]:block max-sm:[&_td]:grid max-sm:[&_td]:grid-cols-2 max-sm:[&_td]:gap-2 max-sm:[&_td]:before:content-[attr(data-label)]">
-    {comparisonSummary&&outliers.some(value=>value.insufficient)&&<caption className="pb-2 text-left text-muted-foreground">판정 불가 · 비교 표본 부족 — 편차 열의 표본 부족 행</caption>}
     <thead><tr><th scope="col">동작·전환 방향</th><th scope="col">모델</th><th scope="col">장치</th><th scope="col" className="text-right">시간 (s)</th><th scope="col" className="text-right">에너지 (J · 채택)</th><th scope="col">편차</th></tr></thead>
     <tbody>{rows.map(({step,result},index)=><tr key={index} className="border-b">
       <td data-label="동작·전환 방향"><span>{operationStageLabel(step)}{step.condition?.kind==="power"&&<span className="block text-muted-foreground">{result?.fromPowerMode||"미기록"} → {result?.toPowerMode||"미기록"}</span>}</span></td>
@@ -188,7 +187,7 @@ function OperationResult({data}:{data:OperationCostMeasurement}) {
     {key:"result",label:"저장 결과",value:step=>step.results.length?<ul className="grid gap-2">{step.results.map((result,index)=><li key={index}>{measurementReasonSummary(result.reason||result.verdict)}<details><summary className="min-h-11 cursor-pointer py-2">단계 원본</summary><Facts items={[["판정 원문",result.verdict||"미기록"],["원본 사유",result.reason||"미기록"],["동작 ID",result.operationID||"미기록"],["키",result.key||"미기록"]]}/><Locations locations={result.key?evidenceLocations(data.references.evidence.filter(location=>location.key===result.key)):[]}/></details></li>)}</ul>:"미기록"},
   ]
   return <>
-    <section className="grid min-w-0 gap-2" aria-label="전환 1회 비용"><h2 className="font-semibold">전환 1회 비용</h2>{rows.length?<><OperationRanges steps={steps} device={data.node}/><details><summary className="min-h-11 cursor-pointer py-2">개별 전환 실측값·편차</summary><OperationCostValues rows={rows} device={data.node} comparisonSummary={false}/></details></>:<p>미기록</p>}</section>
+    <section className="grid min-w-0 gap-2" aria-label="전환 1회 비용"><h2 className="font-semibold">전환 1회 비용</h2>{rows.length?<><OperationRanges steps={steps} device={data.node}/><details><summary className="min-h-11 cursor-pointer py-2">개별 전환 실측값·편차</summary><OperationCostValues rows={rows} device={data.node}/></details></>:<p>미기록</p>}</section>
     <details><summary className="min-h-11 cursor-pointer py-2">전체 시나리오 합계 (유휴 포함)</summary><Facts items={[["전체 시간 (s)",totals.durationNanos===null?"시간 기록 오류":operationCostTime(totals.durationNanos)],["채택 에너지 (J)",totals.wallJoules===null?"에너지 기록 오류":operationCostEnergy(totals.wallJoules)]]}/></details>
     <details><summary className="min-h-11 cursor-pointer py-2">단계별 기록·사유</summary><DataTable data={steps} columns={columns}/></details>
     <details><summary className="min-h-11 cursor-pointer py-2">동작 조건</summary><ol className="grid list-decimal gap-5 pl-5">{data.conditions.steps.map((step,index)=><li key={index}><Facts label={step.name} items={[["동작",operationStageLabels[step.kind]??"미확인"],...(step.kind==="power"?[["목표 전력모드",step.powerMode??"미기록"] as [string,React.ReactNode]]:[]),...(["prepare","remove"].includes(step.kind)?[["측정 프로파일 참조",step.batchEnergyOptimization?<BEOReference namespace={data.metadata.namespace} name={step.batchEnergyOptimization}/>:"미기록"] as [string,React.ReactNode]]:[]),...(step.kind==="idle"?[["계획 유휴 시간 (s · 실측 아님)",step.idleDurationSeconds??"미기록"] as [string,React.ReactNode]]:[])]}/></li>)}</ol></details>

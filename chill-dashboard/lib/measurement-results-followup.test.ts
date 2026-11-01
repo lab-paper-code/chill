@@ -39,7 +39,7 @@ function load(file:string,names:string[]) {
   return exports
 }
 const profile=load("../features/scheduler-profiles.tsx",["ProfileValues","ProfileBatches"])
-const projection=load("../features/measurement-projections.tsx",["OperationCostTable","OperationCostValues","OperationRanges"])
+const projection=load("../features/measurement-projections.tsx",["OperationCostTable","OperationRanges"])
 const step=(kind:"prepare"|"remove"|"power",results:OperationStep["results"]):OperationStep=>({name:kind,condition:{name:kind,kind},results})
 const result=(durationNanos:number,wallJoules:number|null|undefined,extra:Partial<OperationStep["results"][number]>={})=>({name:"attempt",key:"raw-key",durationNanos,wallJoules,verdict:"Accepted",model:"model",...extra})
 
@@ -69,16 +69,6 @@ test("cost primary list opts into URL and model absence is structural, not a mis
   assert.equal(verdicts.split("판정 불가 · 비교 표본 부족").length-1,1)
 })
 
-test("actual transition rows lift shared insufficiency once while retaining individual numeric values",()=>{
-  const steps=[step("power",[result(0,0,{model:undefined})]),step("remove",[result(2e9,null,{model:undefined,reason:"different raw reason"})])]
-  const tree=projection.OperationCostValues({rows:costs.operationTransitionCosts(steps),device:"device"})
-  assert.equal(text(tree).split("판정 불가 · 비교 표본 부족").length-1,1)
-  const rows=nodes(tree).filter(node=>node.type==="tr").slice(1)
-  assert.match(text(rows[0]),/해당 없음/)
-  assert.match(text(rows[1]),/미기록/)
-  assert.match(text(rows[0]),/0\.0/)
-  assert.match(text(rows[1]),/2\.0/)
-})
 
 test("range chart uses measured median and maximum grouped by operation and device, retaining numeric table",()=>{
   const steps=[step("prepare",[result(0,0),result(10e9,10),result(100e9,100)]),step("remove",[result(0,null)])]

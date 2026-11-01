@@ -66,7 +66,10 @@ test("data tables retain required columns and put units and the common status in
   const columns:DataColumn<{name:string;value:number}>[]=[{key:"name",label:"서비스",value:row=>row.name},{key:"latency",label:"지연",unit:"ms",numeric:true,value:row=>row.value},{key:"quality",label:"품질",headerStatus:commonStatus([shared,shared]),value:()=>"판정 불가"}]
   const html=renderToStaticMarkup(createElement(table.DataTable,{data:[{name:"long-service-name".repeat(10),value:0}],columns,searchable:false}))
   assert.match(html,/지연 \(ms\)/)
-  assert.match(html,/<td[^>]+text-right tabular-nums[^>]*>0<\/td>/)
+  const numericCell=html.match(/<td\b[^>]*data-label="지연 \(ms\)"[^>]*>[\s\S]*?<\/td>/)?.[0]
+  assert.ok(numericCell)
+  assert.match(numericCell,/text-right tabular-nums/)
+  assert.match(numericCell,/>0<\/div><\/td>/)
   assert.equal((html.match(/<th\b/g)??[]).length,3)
   assert.equal((html.match(/<td\b/g)??[]).length,3)
   assert.match(html,/품질 판정/)

@@ -17,26 +17,39 @@ import { Facts } from "@/components/screen"
 const features = tableFeatures({rowPaginationFeature,rowSortingFeature,sortFns,paginatedRowModel:createPaginatedRowModel(),sortedRowModel:createSortedRowModel()})
 export type DataColumn<T> = {key:string;label:string;unit?:string;numeric?:boolean;headerStatus?:StatusValue;value:(row:T)=>React.ReactNode;sortValue?:(row:T)=>string|number|bigint|undefined}
 type ServerTable = {pagination:PaginationState;sorting:SortingState;total:number;busy:boolean;onPaginationChange:(value:PaginationState)=>void;onSortingChange:(value:SortingState)=>void}
+type TableNavigation = {params:URLSearchParams|Readonly<URLSearchParams>;replace:(url:string)=>void}
 export function useServerTable(defaultSorting:SortingState=[{id:"created",desc:true}],urlState=true) {
   const params=useSearchParams(),router=useRouter()
+  return useTableState(defaultSorting,urlState?{params,replace:url=>router.replace(url,{scroll:false})}:undefined)
+}
+function useTableState(defaultSorting:SortingState=[],navigation?:TableNavigation) {
+  const params=navigation?.params??new URLSearchParams(),urlState=!!navigation
   const [localPagination,setLocalPagination]=React.useState<PaginationState>({pageIndex:0,pageSize:25})
   const [localSorting,setLocalSorting]=React.useState<SortingState>(defaultSorting)
   const pageSize=[10,25,50].includes(Number(params.get("limit")))?Number(params.get("limit")):25
   const requestedPage=Number(params.get("page"))
   const pagination=urlState?{pageIndex:Number.isSafeInteger(requestedPage)&&requestedPage>0?requestedPage-1:0,pageSize}:localPagination
   const sorting:SortingState=urlState?(params.get("sort")?[{id:params.get("sort")!,desc:params.get("order")==="desc"}]:defaultSorting):localSorting
-  function update(patch:Record<string,string|undefined>) {const next=new URLSearchParams(params.toString());next.delete("offset");for(const [key,value] of Object.entries(patch)){if(value)next.set(key,value);else next.delete(key)}router.replace(`?${next}`,{scroll:false})}
+  function update(patch:Record<string,string|undefined>) {const next=new URLSearchParams(params.toString());next.delete("offset");for(const [key,value] of Object.entries(patch)){if(value)next.set(key,value);else next.delete(key)}navigation?.replace(`?${next}`)}
   const query=new URLSearchParams({limit:String(pagination.pageSize),offset:String(pagination.pageIndex*pagination.pageSize)})
   if(sorting[0]) {query.set("sort",sorting[0].id);query.set("order",sorting[0].desc?"desc":"asc")}
   return {pagination,sorting,query,
     onPaginationChange:(value:PaginationState)=>{if(urlState)update({page:String(value.pageIndex+1),limit:String(value.pageSize)});else setLocalPagination(value)},
     onSortingChange:(value:SortingState)=>{if(urlState)update({page:undefined,sort:value[0]?.id,order:value[0]?(value[0].desc?"desc":"asc"):undefined});else {setLocalSorting(value);setLocalPagination(current=>({...current,pageIndex:0}))}}}
 }
-export function DataTable<T extends RowData>({data,columns,searchable=true,server,urlState=false,emptyAction}: {data:T[];columns:DataColumn<T>[];searchable?:boolean;server?:ServerTable;urlState?:boolean;emptyAction?:React.ReactNode}) {
-  const params=useSearchParams(),router=useRouter(),[localSearch,setLocalSearch]=React.useState("")
-  const local=useServerTable(columns.some(column=>column.key==="created")?[{id:"created",desc:true}]:[],urlState)
-  const search=urlState?params.get("search")??"":localSearch
-  function setSearch(value:string){if(!urlState){setLocalSearch(value);local.onPaginationChange({...local.pagination,pageIndex:0});return}const next=new URLSearchParams(params.toString());if(value)next.set("search",value);else next.delete("search");next.delete("page");router.replace(`?${next}`,{scroll:false})}
+type DataTableProps<T> = {data:T[];columns:DataColumn<T>[];searchable?:boolean;server?:ServerTable;urlState?:boolean;emptyAction?:React.ReactNode}
+export function DataTable<T extends RowData>(props:DataTableProps<T>) {
+  return props.urlState?<URLDataTable {...props}/>:<LocalDataTable {...props}/>
+}
+function URLDataTable<T extends RowData>(props:DataTableProps<T>) {
+  const params=useSearchParams(),router=useRouter()
+  return <LocalDataTable {...props} navigation={{params,replace:url=>router.replace(url,{scroll:false})}}/>
+}
+function LocalDataTable<T extends RowData>({data,columns,searchable=true,server,navigation,emptyAction}:DataTableProps<T>&{navigation?:TableNavigation}) {
+  const [localSearch,setLocalSearch]=React.useState("")
+  const local=useTableState(columns.some(column=>column.key==="created")?[{id:"created",desc:true}]:[],navigation)
+  const search=navigation?navigation.params.get("search")??"":localSearch
+  function setSearch(value:string){if(!navigation){setLocalSearch(value);local.onPaginationChange({...local.pagination,pageIndex:0});return}const next=new URLSearchParams(navigation.params.toString());if(value)next.set("search",value);else next.delete("search");next.delete("page");navigation.replace(`?${next}`)}
   const controls=server??local,sorting=controls.sorting,pagination=controls.pagination
   const id = React.useId()
   const filtered = !searchable||server?data:data.filter(row => !search || stringifySchedulerJSON(row).toLocaleLowerCase().includes(search.toLocaleLowerCase()))

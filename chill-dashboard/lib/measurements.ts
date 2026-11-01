@@ -50,10 +50,10 @@ export const measurementReason = (reason:string) => codeText[reason] ? `${codeTe
 export function executionPathLabel(value:string,index?:number) {
   const backend=/ort-cuda|cuda/.test(value)?"CUDA":/rknn/.test(value)?"NPU":/ort-cpu|cpu/.test(value)?"CPU":""
   if(!backend)return `등록 실행 경로${index===undefined?"":` ${index+1}`}`
-  return [backend,/int8/.test(value)?"정수 8비트":"",/arm64/.test(value)?"ARM 64비트":/amd64/.test(value)?"x86 64비트":""].filter(Boolean).join(" · ")
+  return `${[backend,/int8/.test(value)?"정수 8비트":"",/arm64/.test(value)?"ARM 64비트":/amd64/.test(value)?"x86 64비트":""].filter(Boolean).join(" · ")} (${value})`
 }
 export function workloadModeLabel(value?:string) {
-  return ({active:"실행",idle:"유휴","saturated-serial-fixed-batch":"포화 · 순차 · 고정 배치","fixed-batch":"고정 배치"} as Record<string,string>)[value??""]??(value?"기타 부하 방식":"미제공")
+  return ({active:"실행",idle:"유휴","idle-model-loaded":"모델 적재 유휴","saturated-serial-fixed-batch":"포화 · 순차 · 고정 배치","fixed-batch":"고정 배치"} as Record<string,string>)[value??""]??(value?"기타 부하 방식":"미제공")
 }
 export function measurementReasonSummary(reason:string) {
   if(!reason.trim())return "상세 사유 미제공"

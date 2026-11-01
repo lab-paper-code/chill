@@ -241,3 +241,66 @@ test("standalone plan verification states its stored-plan and non-submission rol
   const facts=elements(tree).find(element=>element.type==="facts")!
   assert.deepEqual(facts.props.items,[["대상","저장된 계획 파일"],["동작","검사만"],["측정 제출","없음"]])
 })
+
+test("editable execution path filters accept off-page identifiers and deduplicate suggestions",()=>{
+  const h=harness("namespace=ns&path=off-page-path&node=device&page=3&offset=50&profile=selected",()=>undefined)
+  const filters=load("../features/measurement-coverage.tsx",{...h.modules,"./measurement-coverage.css":{}}).MeasurementFilters
+  const paths=["firstfloor-ort-cuda-arm64","firstfloor-rnn-ort-cuda-arm64","firstfloor-vlm-ort-cuda-arm64"]
+  const axes=[{key:"path",label:"실행 경로",values:[...paths,paths[0],""]}]
+  const tree=filters({editable:true,states:false,axes})
+  const input=elements(tree).find(element=>element.type==="input"&&element.props.list==="measurement-path")!
+  assert.ok(input)
+  assert.equal(input.props.value,"off-page-path")
+  assert.equal(elements(tree).some(element=>element.type==="select"),false)
+  const suggestions=elements(elements(tree).find(element=>element.type==="datalist"))
+    .filter(element=>element.type==="option")
+  assert.deepEqual(suggestions.map(element=>element.props.value),paths)
+  assert.equal(new Set(suggestions.map(text)).size,paths.length)
+  ;(input.props.onChange as (event:{target:{value:string}})=>void)({target:{value:"another-page-path"}})
+  const next=new URL(h.replacements[0],"https://dashboard.invalid").searchParams
+  assert.equal(next.get("path"),"another-page-path")
+  assert.equal(next.get("namespace"),"ns")
+  assert.equal(next.get("node"),"device")
+  for(const key of ["page","offset","profile"])assert.equal(next.has(key),false)
+  const select=elements(filters({states:false,axes})).find(element=>element.type==="select")!
+  const options=elements(select).filter(element=>element.type==="option")
+  assert.equal(options.filter(element=>element.props.value===paths[0]).length,1)
+  assert.equal(options.filter(element=>element.props.value==="off-page-path").length,1)
+})
+
+test("selected cost product shows comparison insufficiency once outside individual transition values",()=>{
+  const h=harness("kind=operation-cost&namespace=ns&measurement=cost&uid=original",path=>path.endsWith("/cost")?measurement:{items:[measurement]})
+  const tree=projection(h)
+  const content=elements(tree).find(element=>typeof element.type==="function"&&element.props.data===measurement)!
+  const selected=(content.type as Component)(content.props)
+  const values=elements(selected).filter(element=>typeof element.type==="function"&&element.props.data===measurement)
+    .map(element=>(element.type as Component)(element.props))
+    .find(node=>elements(node).some(element=>element.props["aria-label"]==="전환 1회 비용"))
+  assert.ok(values)
+  assert.equal(text(values).split("판정 불가 · 비교 표본 부족").length-1,1)
+  const individual=elements(values).find(element=>element.type==="details"&&text(element.props.children).includes("개별 전환 실측값·편차"))!
+  assert.ok(individual)
+  assert.doesNotMatch(text(individual),/판정 불가 · 비교 표본 부족/)
+  assert.match(text(individual),/actual-device-name/)
+  assert.match(text(individual),/미제공/)
+})
+
+test("selected throughput explains absent quality fields without inventing sample counts or criteria",()=>{
+  for(const state of ["unknown","pass","fail"]) {
+    const assessmentValue={...accepted,checklist:{criteriaMet:state==="pass"?true:null,checks:state==="unknown"?[]:[{code:"Recorded",result:state,message:"",sourceIds:[]}]}}
+    const row={id:"row",batch:2,activeTrialCount:0,idleTrialCount:null,latencySampleCount:17} as ResultRow
+    const profile={id:"selected",nodeName:"device",condition:{logicalModel:"model",artifact:{name:"artifact",executionPath:"ort"},preprocessor:{name:""},activeProtocol:{},cpu:{limit:"1"}},assessment:assessmentValue,resultRows:[row]}
+    const h=harness("kind=throughput&profile=selected",()=>({profiles:[profile]}))
+    const tree=load("../features/scheduler-profiles.tsx",h.modules).SchedulerProfilesPage({})
+    const evidence=elements(tree).find(element=>typeof element.type==="function"&&element.props.rows===profile.resultRows&&text(element).includes("품질 판정 불가 · 기준·표본 제공 여부"))
+    assert.equal(!!evidence,state==="unknown")
+    if(!evidence)continue
+    const rendered=(evidence.type as Component)(evidence.props)
+    const rows=elements(rendered).filter(element=>element.type==="tr").slice(1)
+    const cells=rows.map(row=>elements(row).filter(element=>element.type==="th"||element.type==="td").map(text))
+    for(const label of ["허용 오차 반폭 기준","최소 활성·유휴 반복 수 기준","최소 지연 표본 수 기준","p95 신뢰구간"])assert.deepEqual(cells.find(row=>row[0]===label),[label,"미제공","현재 조회 계약에 해당 필드 없음"])
+    assert.deepEqual(cells.find(row=>row[0]==="배치 2 · 활성 반복 수"),["배치 2 · 활성 반복 수","0","관측 표본 수 · 충족 기준 미제공"])
+    assert.deepEqual(cells.find(row=>row[0]==="배치 2 · 유휴 반복 수"),["배치 2 · 유휴 반복 수","미제공","조회 결과에 값 없음"])
+    assert.deepEqual(cells.find(row=>row[0]==="배치 2 · 지연 표본 수"),["배치 2 · 지연 표본 수","17","관측 표본 수 · 충족 기준 미제공"])
+  }
+})

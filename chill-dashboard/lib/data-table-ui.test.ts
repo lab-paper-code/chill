@@ -7,18 +7,23 @@ import {transpileModule,ModuleKind,JsxEmit} from "typescript"
 const require=createRequire(import.meta.url)
 test("client tables restore page size sorting and search from URL and persist changes",()=>{
   const params=new URLSearchParams("model=plc&page=2&limit=10&sort=name&order=asc&search=hello"),urls:string[]=[]
+  let routerAvailable=true
   let options:Record<string,unknown>={}
   const react=require("react")
   const modules:Record<string,unknown>={
     react:{...react,useId:()=>"table",useState:(value:unknown)=>[typeof value==="function"?value():value,()=>{}],useMemo:(fn:()=>unknown)=>fn()},
-    "next/navigation":{useSearchParams:()=>params,useRouter:()=>({replace:(url:string)=>urls.push(url)})},
+    "next/navigation":{useSearchParams:()=>{assert.ok(routerAvailable,"local tables must not read router search params");return params},useRouter:()=>{assert.ok(routerAvailable,"local tables must not require an app router");return {replace:(url:string)=>urls.push(url)}}},
     "@tanstack/react-table":{tableFeatures:()=>({}),createPaginatedRowModel:()=>{},createSortedRowModel:()=>{},createColumnHelper:()=>({columns:(v:unknown)=>v,accessor:()=>({})}),useTable:(v:Record<string,unknown>)=>{options=v;return {getPageCount:()=>3,getHeaderGroups:()=>[],getRowModel:()=>({rows:[]}),getCanPreviousPage:()=>true,getCanNextPage:()=>true}}},
     "@/components/ui/table":{},"@/components/ui/button":{},"@/components/ui/input":{},"lucide-react":{},"@/components/read-region":{DetailsDialog:"details-dialog"},"@/components/status-cell":{},"@/components/screen":{Facts:"facts"},"@/lib/scheduler":{stringifySchedulerJSON:JSON.stringify},
   }
   const compiled=transpileModule(readFileSync(new URL("../components/data-table.tsx",import.meta.url),"utf8"),{compilerOptions:{module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const exports:Record<string,(props:unknown)=>unknown>={}
   new Function("require","exports",compiled)((name:string)=>modules[name]??require(name),exports)
-  const tree=exports.DataTable({urlState:true,data:[{name:"hello"},{name:"other"}],columns:[{key:"name",label:"이름",value:(r:{name:string})=>r.name,sortValue:(r:{name:string})=>r.name}]})
+  function render(node:unknown):unknown {
+    const element=node as {type?:unknown;props:unknown}
+    return typeof element?.type==="function"?render(element.type(element.props)):node
+  }
+  const tree=render(exports.DataTable({urlState:true,data:[{name:"hello"},{name:"other"}],columns:[{key:"name",label:"이름",value:(r:{name:string})=>r.name,sortValue:(r:{name:string})=>r.name}]}))
   assert.deepEqual(options.state,{sorting:[{id:"name",desc:false}],pagination:{pageIndex:1,pageSize:10}})
   assert.equal((options.data as unknown[]).length,1)
   type Element={type:unknown;props:Record<string,unknown>}
@@ -35,7 +40,8 @@ test("client tables restore page size sorting and search from URL and persist ch
   assert.equal(sorted.has("page"),false)
   assert.equal(sorted.get("model"),"plc")
   urls.length=0
-  exports.DataTable({data:[{name:"hello"},{name:"other"}],columns:[{key:"name",label:"이름",value:(r:{name:string})=>r.name,sortValue:(r:{name:string})=>r.name}]})
+  routerAvailable=false
+  render(exports.DataTable({data:[{name:"hello"},{name:"other"}],columns:[{key:"name",label:"이름",value:(r:{name:string})=>r.name,sortValue:(r:{name:string})=>r.name}]}))
   assert.deepEqual(options.state,{sorting:[],pagination:{pageIndex:0,pageSize:25}})
   assert.equal((options.data as unknown[]).length,2)
   ;(options.onPaginationChange as (v:unknown)=>void)({pageIndex:1,pageSize:10})

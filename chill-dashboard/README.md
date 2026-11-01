@@ -21,6 +21,8 @@ The upstream demo records, accounts/avatars, revenue/time series, marketing link
 
 표의 단위는 헤더, 숫자는 오른쪽 정렬·tabular-nums, 이름은 자기 열 안 줄바꿈이다. DetailSheet는 새 래퍼가 아니라 기존 `components/ui/sheet.tsx` 재사용 규약이다: 하나만 열기·중첩 금지·핵심 표 상단·원본 하단·비동기 영역은 핵심값 뒤. Esc·키보드 선택·focus 복원을 유지한다. 좁은 폭에서도 라벨/값 재배치로 모든 필드·작업에 접근할 수 있어야 한다.
 
+로컬 상세 표는 App Router 없이 검색·정렬·페이지를 유지한다. `urlState`를 명시한 목록만 URL 상태를 읽고 갱신한다. 편집형 측정 필터는 실행 경로도 입력·후보 목록을 사용하며, 실행 경로 별칭에는 원 식별자를 함께 표시한다. 품질 기준·표본의 부재는 제공 계약의 필드별 미제공 표로 표시하고 기준값을 만들지 않는다.
+
 Scheduler history keeps default/ascending unfiltered reads bounded, including explicit `filter=all`, and returns original append offsets. Current-page counts appear only in the summary table. Live incident order preserves nanoseconds and uses descending sequence for equal timestamps; shared power remains explicitly labelled cluster-wide in service details.
 
 ## Runtime

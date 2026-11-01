@@ -54,6 +54,7 @@ export function SchedulerProfilesPage() {
         <div className="grid min-w-0 gap-5 px-4 pb-6"><QueryGate query={detail}>
           {selected?<>
             <div className="flex flex-wrap gap-4"><ProfileUse assessment={selected.assessment}/><ProfileQuality assessment={selected.assessment}/></div>
+            {measurementQuality([selected.assessment]).state==="unknown"&&<ProfileQualityMissing rows={selected.resultRows??[]}/>}
             <ResultRows rows={selected.resultRows??[]} filename={`chill-profile-${selected.id}.csv`} emptyMessage="미제공"/>
             <Facts label="동결 조건" items={[...conditionRows(selected.condition),["장치",selected.nodeName],["전력모드",selected.condition.powerMode],["실행 경로",executionPathLabel(selected.condition.artifact.executionPath)],["CPU quota",selected.condition.cpu.limit],["CPU affinity",selected.condition.cpu.affinityCPUs?.join(", ")??"미기록"],["측정 시각",formatMeasurementTime(selected.measuredAt)]]}/>
             <details><summary className="min-h-11 cursor-pointer py-2">판정 근거</summary><AssessmentDetails assessment={selected.assessment} rows={selected.resultRows}/></details>
@@ -82,4 +83,14 @@ function ProfileUse({assessment}:{assessment?:MeasurementAssessment}) {
 function ProfileQuality({assessment}:{assessment?:MeasurementAssessment}) {
   const quality=measurementQuality([assessment])
   return <StatusCell axis={STATUS_AXES.quality} label={quality.label} tone={quality.state==="pass"?"ok":quality.state==="fail"?"fail":"idle"} reason={quality.state==="unknown"?assessmentReasons(assessment).join(" · ")||"기준·표본 미제공":undefined}/>
+}
+function ProfileQualityMissing({rows}:{rows:ResultRow[]}) {
+  return <table className="w-full table-fixed text-left text-sm [&_th]:p-2 [&_td]:p-2 [&_td]:break-words">
+    <caption className="pb-2 text-left font-semibold">품질 판정 불가 · 기준·표본 제공 여부</caption>
+    <thead><tr><th scope="col">필드</th><th scope="col">제공 값</th><th scope="col">제한 사유</th></tr></thead>
+    <tbody>
+      {["허용 오차 반폭 기준","최소 활성·유휴 반복 수 기준","최소 지연 표본 수 기준","p95 신뢰구간"].map(label=><tr key={label}><th scope="row">{label}</th><td>미제공</td><td>현재 조회 계약에 해당 필드 없음</td></tr>)}
+      {rows.length?rows.flatMap(row=>([["활성 반복 수",row.activeTrialCount],["유휴 반복 수",row.idleTrialCount],["지연 표본 수",row.latencySampleCount]] as const).map(([label,value])=><tr key={`${row.id}/${label}`}><th scope="row">배치 {row.batch} · {label}</th><td>{value??"미제공"}</td><td>{value==null?"조회 결과에 값 없음":"관측 표본 수 · 충족 기준 미제공"}</td></tr>)):<tr><th scope="row">활성·유휴 반복 수 / 지연 표본 수</th><td>미제공</td><td>배치 결과 미제공</td></tr>}
+    </tbody>
+  </table>
 }

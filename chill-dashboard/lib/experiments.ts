@@ -350,7 +350,7 @@ export function durationMismatch(a:ExperimentStage,b:ExperimentStage):boolean {
 }
 
 export type ExperimentHeatmapRow = {
-  key:string;id:string;stage:ExperimentStage;other:ExperimentStage|null;leftRun:Experiment;rightRun:Experiment;rate:number|null;durationDifferent:boolean;reason:string;energyPercent:number|null
+  key:string;id:string;stage:ExperimentStage;other:ExperimentStage|null;leftRun:Experiment;rightRun:Experiment;durationDifferent:boolean;reason:string;energyPercent:number|null
   services:{name:string;a:ExperimentRow|undefined;b:ExperimentRow|undefined;successDelta:number|null;p95Ratio:number|null;p95Delta:number|null;worstSuccess:boolean;worstP95:boolean}[]
 }
 export function experimentIntervalSelection(run:Experiment,row:ExperimentHeatmapRow):Record<string,string> {
@@ -363,7 +363,7 @@ export function experimentHeatmap(run:Experiment,runs:Experiment[]=[run]):Experi
   const stages=[...comparisons.map(row=>({stage:row.chill,other:row.control,comparison:row,leftRun:row.leftRun,rightRun:row.rightRun})),...run.stages.filter(stage=>!used.has(stage)).map(stage=>({stage,other:null,comparison:null,leftRun:run,rightRun:run}))]
   return stages.sort((a,b)=>Date.parse(a.stage.from)-Date.parse(b.stage.from)).map(({stage,other,comparison,leftRun,rightRun},index)=>{
     const base=other?finite(other.kpis.wholePoolJoules):null,energy=finite(stage.kpis.wholePoolJoules)
-    return {key:`${stage.id}/${index}`,id:stage.id,stage,other,leftRun,rightRun,rate:stageRate(stage,leftRun),durationDifferent:!!other&&durationMismatch(stage,other),
+    return {key:`${stage.id}/${index}`,id:stage.id,stage,other,leftRun,rightRun,durationDifferent:!!other&&durationMismatch(stage,other),
       reason:comparison?.reason??definitionComparisonReason(run,runs),
       energyPercent:base!==null&&base>0&&energy!==null?100*(energy-base)/base:null,
       services:comparison?.services??[]}

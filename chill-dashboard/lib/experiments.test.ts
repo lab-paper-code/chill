@@ -724,7 +724,6 @@ test("declared mismatched stage names retain numeric gains, losses and worst ser
   assert.equal(row.services[0].p95Ratio,1655/282)
   assert.equal(row.services[0].worstSuccess,true)
   assert.equal(row.services[0].worstP95,true)
-  assert.equal(experimentHeatmap(run).find(row=>row.stage.id==="high")?.rate,10)
 })
 
 test("R7: stage record links retain the exact range and activity counts never claim a partial page is complete",()=>{
