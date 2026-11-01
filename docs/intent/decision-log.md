@@ -492,3 +492,7 @@
 
 - lattepanda Smol CPU b2가 limit 5.98Gi에서 OOMKilled(exit 137)됐다(b1 peak 5.78Gi). 8GB 보드 4종(lattepanda·rasp5·xavier·orin-nano)의 Smol batch는 1까지만 잰다. 그 위 batch는 "측정 불가(메모리)"로 기록한다(`memoryMaxBatch`, coverage-plan.json).
 - 생성기가 Failed와 "problem" 상태 셀도 다시 계획에 넣는다(원인을 고친 뒤 재측정하는 경로).
+
+## 2026-11-01 — CPU 크기는 모드별 allocatable 기준
+
+- orin-nano 7W(online 4)에서 4코어 요청이 Insufficient cpu였다. kubelet allocatable이 모드의 online CPU를 따라가므로, 크기 = floor(min(full, online) − 다른 Pod request − 0.01)로 바꿨다(`cpuRequestedByOthersByDeviceClass`). jetsonx 2코어 모드 1, 4코어 모드 3; jetsono MODE_15W 3; nano 5W 1.
