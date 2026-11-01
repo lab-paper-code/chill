@@ -22,10 +22,11 @@
       "lattepanda-3-delta-8g": 1,
       "raspberry-pi-5-8g": 1,
       "jetson-xavier-nx-8g": 1,
-      "jetson-orin-nano-8g": 1
+      "jetson-orin-nano-8g": 1,
+      "edge-server-rtx-2080-ti-64g": 2
     }
   },
-  "memoryMaxBatchSource": "lattepanda Smol CPU b2 OOMKilled (exit 137) under the 0.8×allocatable limit 5.98Gi, b1 peak 5.78Gi (2026-11-01 05:49Z); other 8 GB boards have limits 5.3-6.1Gi",
+  "memoryMaxBatchSource": "lattepanda Smol CPU b2 OOMKilled (exit 137) under the 0.8×allocatable limit 5.98Gi, b1 peak 5.78Gi (2026-11-01 05:49Z); other 8 GB boards have limits 5.3-6.1Gi; RTX 2080 Ti CUDA b4 fails at warmup (Softmax RUNTIME_EXCEPTION, 2026-11-01 13:14Z)",
   "declaredBatchConflictReason": "artifact 선언 batch 집합의 부분 요청 불가",
   "sessions": 3,
   "warmupIterations": 1,
