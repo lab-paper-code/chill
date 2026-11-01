@@ -12,6 +12,9 @@
   "requestNamePrefix": "coverage-",
   "runtimeValues": "charts/chill/values-operating.yaml",
   "laneLastExecutionPaths": ["firstfloor-ort-cuda-vlm-arm64"],
+  "laneLastModelExecutionPaths": {
+    "smolvlm2-500m-video-instruct": ["firstfloor-ort-cuda-amd64"]
+  },
   "excludedBatchReason": "창 안 유의미 추론 불가",
   "declaredBatchConflictReason": "artifact 선언 batch 집합의 부분 요청 불가",
   "sessions": 3,

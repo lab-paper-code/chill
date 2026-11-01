@@ -468,6 +468,13 @@ insufficient cells are considered, with existing requests filtered by CPU size;
 unknown support and cells without an eligible Node are listed separately.
 The config excludes genesis1/orin-nano (testbed) and genesis2
 (hardware failure), so RTX2080Ti cells use genesis3.
+A cell whose only Unknown support reason is `RuntimeDeclarationMissing` is
+included if the first eligible Node has a matching runtime execution declaration
+and the live profiler has that class/path policy. The artifact and declaration
+must match the class architecture and path runtime family/backend; declarations
+for another Node do not count. This recovers genesis3's CUDA amd64 cells without
+admitting impossible architecture/backend combinations. `node-declared-cells.json`
+records the selected Node per recovered cell; other Unknown cells stay excluded.
 Coverage is evaluated against current per-class runtime image identities in
 `profiling.executionDeclarations` from config `runtimeValues`
 (`charts/chill/values-operating.yaml`, read with the existing PyYAML package).
@@ -528,10 +535,12 @@ Reports state: “셀별 정밀도(CI)는 측정 후 기록하며 목표치가 �
 Estimates include active windows, three shared-idle windows and their settling
 time, plus the configured 20-second overhead per active or idle run. Variable
 load/warmup/polling time is not included. MNV/PLC precede Smol, with power modes
-grouped within each priority tier. `laneLastExecutionPaths` stably moves the
-configured CUDA VLM path to the end of its lane tier; all other cells keep their
-relative order. Order changes belong in the generator config, never hand-edited
-lane files. Canary/holds remain operator-owned feeder-hold policy.
+grouped within each priority tier. `laneLastExecutionPaths` and the model-specific
+`laneLastModelExecutionPaths` stably move CUDA VLM and Smol CUDA amd64 cells to
+the end of their lane tier, without delaying MNV/PLC on the shared amd64 path.
+All other cells keep their relative order. Order changes belong in the generator
+config, never hand-edited lane files. Canary/holds remain operator-owned
+feeder-hold policy.
 Check the existing feeder format offline:
 `hack/measure/feeder.py --manifest /tmp/coverage-plan-out/resume-plan.json
 --stages 1,2 --check-manifest`. `gen.py --coverage --self-check` is offline.

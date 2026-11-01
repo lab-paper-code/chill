@@ -452,6 +452,29 @@ def coverage_runtime_images(path):
     return {device: sorted(values) for device, values in images.items()}
 
 
+def coverage_declared_on_node(cell, node, device, model, declarations, has_policy):
+    """Resolve only a representative Node's missing runtime declaration."""
+    reasons = {r["code"] for r in cell["support"].get("reasons", [])}
+    if not node or reasons != {"RuntimeDeclarationMissing"}:
+        return False
+    path = cell["executionPath"]
+    if (device["name"], path) not in has_policy and ("*", path) not in has_policy:
+        return False
+    execution = next(p for p in model["spec"]["executionPaths"] if p["name"] == path)
+    artifact = next(a for a in model["spec"]["artifacts"] if a["name"] == execution["artifact"])
+    if artifact["source"]["architecture"] != device["architecture"]:
+        return False
+    for declaration in declarations:
+        if declaration["deviceClass"] != device["name"] or declaration.get("node", node) != node:
+            continue
+        payload = json.loads(declaration["runtime"]["payload"])
+        if (payload["architecture"] == device["architecture"] and
+                payload["runtime"]["family"] == execution["runtime"]["family"] and
+                execution["runtime"]["backend"] in payload["runtime"]["backends"]):
+            return True
+    return False
+
+
 def coverage_cpu_matches(cell, cpu, policy):
     expected = Decimal(policy["cpuByDeviceClass"][cell["deviceClass"]["name"]])
     def quantity(value):
@@ -460,15 +483,15 @@ def coverage_cpu_matches(cell, cpu, policy):
                for key in ("request", "limit"))
 
 
-def coverage_targets(coverage, policy, current_images):
+def coverage_targets(coverage, policy, current_images, node_declared=()):
     targets, unknown, stale, measured_current = [], [], [], []
     if coverage["completeness"] != "complete":
         raise ValueError("incomplete coverage cannot define a complete plan")
     for cell in coverage["cells"]:
         verdict, assessment = cell["support"]["verdict"], cell["assessment"]
-        if verdict == policy["unknownVerdict"]:
+        if verdict == policy["unknownVerdict"] and cell["id"] not in node_declared:
             unknown.append(cell)
-        elif verdict == policy["supportedVerdict"]:
+        elif verdict == policy["supportedVerdict"] or cell["id"] in node_declared:
             measured = [v for v in cell.get("variants", []) if
                         v.get("profileIds") or v.get("assessment", {}).get("evidence", {}).get("accepted")]
             current = [v for v in measured if
@@ -478,7 +501,7 @@ def coverage_targets(coverage, policy, current_images):
                 continue
             if measured and not current:
                 stale.append(cell)
-            if measured or assessment["displayStatus"] in (policy["unmeasuredStatus"], "running") or (
+            if cell["id"] in node_declared or measured or assessment["displayStatus"] in (policy["unmeasuredStatus"], "running") or (
                     assessment["displayStatus"] == policy["insufficientStatus"] and
                     any(r["code"] == policy["missingBatchReason"] for r in assessment["reasons"])):
                 targets.append(cell)
@@ -619,7 +642,9 @@ def coverage_existing(cell, plans, policy):
 
 def coverage_lane_order(lane, policy):
     return sorted(lane, key=lambda pair: (
-        pair[1]["spec"]["state"]["candidate"]["executionPath"] in policy["laneLastExecutionPaths"],
+        pair[1]["spec"]["state"]["candidate"]["executionPath"] in policy["laneLastExecutionPaths"] or
+        pair[1]["spec"]["state"]["candidate"]["executionPath"] in
+        policy["laneLastModelExecutionPaths"].get(pair[0]["model"], []),
         pair[0]["powerMode"], pair[0]["model"], pair[0]["cellId"]))
 
 
@@ -751,10 +776,10 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
     write_json(output / "coverage-plan.json", policy)
     runtime_values = (HERE.parents[1] / policy["runtimeValues"]).resolve()
     current_images = coverage_runtime_images(runtime_values)
+    declarations = yaml.safe_load(runtime_values.read_text())["profiling"]["executionDeclarations"]
     write_json(output / "inputs" / "current-runtime-images.json", {
-        "source": identity(runtime_values), "imagesByDeviceClass": current_images})
-    targets, unknown, stale, measured_current = coverage_targets(inputs["coverage"], policy, current_images)
-    stale_ids = {cell["id"] for cell in stale}
+        "source": identity(runtime_values), "imagesByDeviceClass": current_images,
+        "executionDeclarations": declarations})
     results = []
     for profile in inputs["profiles"]["profiles"]:
         name = profile["id"].split("/")[1]
@@ -772,14 +797,27 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
     policies = yaml.safe_load(facts["data"]["execution-policies.yaml"])
     policies = policies if isinstance(policies, list) else policies["policies"]
     has_policy = {(p["deviceClass"], p["executionPath"]) for p in policies}
+    eligible_by_class = {
+        device: sorted(n["name"] for n in c["nodes"] if n["name"] not in policy["excludedNodes"] and
+                       n["ready"] == "True" and not n["schedulingDisabled"])
+        for device, c in classes.items()}
+    node_declared = {
+        cell["id"]: eligible_by_class[cell["deviceClass"]["name"]][0]
+        for cell in inputs["coverage"]["cells"]
+        if cell["support"]["verdict"] == policy["unknownVerdict"] and
+        eligible_by_class[cell["deviceClass"]["name"]] and coverage_declared_on_node(
+            cell, eligible_by_class[cell["deviceClass"]["name"]][0], classes[cell["deviceClass"]["name"]],
+            models[cell["model"]["name"]], declarations, has_policy)}
+    targets, unknown, stale, measured_current = coverage_targets(
+        inputs["coverage"], policy, current_images, node_declared)
+    stale_ids = {cell["id"] for cell in stale}
+    write_json(output / "node-declared-cells.json", node_declared)
     existing, excluded_batches, excluded_cells = [], [], []
     plan_hash = hashlib.sha256(json.dumps(
         [policy, inputs["coverage"]["snapshotId"], current_images], sort_keys=True).encode()).hexdigest()[:12]
     for cell in targets:
         model, device = cell["model"]["name"], cell["deviceClass"]["name"]
-        eligible = sorted(n["name"] for n in classes[device]["nodes"] if
-                          n["name"] not in policy["excludedNodes"] and
-                          n["ready"] == "True" and not n["schedulingDisabled"])
+        eligible = eligible_by_class[device]
         if (device, cell["executionPath"]) not in has_policy and ("*", cell["executionPath"]) not in has_policy:
             no_policy.append(cell["id"])
             continue
@@ -847,6 +885,7 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
     summary = {"targetCellCount": len(targets), "manifestCellCount": len(rows),
                "cellsByModel": dict(Counter(r["model"] for r in rows)), "noNodeCellCount": len(no_node), "noPolicyCellCount": len(no_policy),
                "unknownSupportCount": len(unknown), "existingCellCount": len(existing),
+               "nodeDeclaredCellCount": len(node_declared),
                "remeasurementCellCount": sum(bool(r["remeasures"]) for r in rows),
                "remeasurementsByDeviceClass": dict(Counter(r["deviceClass"] for r in rows if r["remeasures"])),
                "precisionMeaning": policy["precisionMeaning"],
@@ -857,6 +896,7 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
                "unknownTimingBatchCount": sum(r["secondsPerCall"] is None for cell in rows for r in cell["batchEstimates"]),
                "estimateMeaning": f"active + shared idle (including settling) + {policy['runOverheadSeconds']}s/run; excludes variable load/warmup and feeder polling",
                "lanes": {node: {"cellCount": len(lane),
+                                  "cpuQuotaCounts": dict(Counter(r["cpuQuota"] for r, _ in lane)),
                                   "activeSeconds": sum(r["activeSeconds"] for r, _ in lane),
                                   "idleSeconds": sum(r["idleSeconds"] for r, _ in lane),
                                   "runCount": sum(r["runCount"] for r, _ in lane),
@@ -932,6 +972,24 @@ def coverage_self_check():
     running = dict(cell, assessment={"displayStatus": "running", "reasons": []})
     assert coverage_targets({"completeness": "complete", "cells": [cell, partial, running, unknown, unsupported, other]},
                             policy, {"device": ["current-image"]}) == ([cell, partial, running], [unknown], [], [])
+    missing = copy.deepcopy(unknown)
+    missing["support"]["reasons"] = [{"code": "RuntimeDeclarationMissing"}]
+    missing["assessment"]["displayStatus"] = "unknown"
+    device = {"name": "device", "architecture": "amd64"}
+    native_model = {"spec": {
+        "executionPaths": [{"name": "path", "artifact": "a",
+                            "runtime": {"family": "firstfloor", "backend": "ort-cuda"}}],
+        "artifacts": [{"name": "a", "source": {"architecture": "amd64"}}]}}
+    declarations = [{"deviceClass": "device", "node": "actual-node", "runtime": {"payload": json.dumps({
+        "architecture": "amd64", "runtime": {"family": "firstfloor", "backends": ["ort-cuda"]}})}}]
+    assert coverage_declared_on_node(missing, "actual-node", device, native_model, declarations, {("device", "path")})
+    assert not coverage_declared_on_node(missing, "other-node", device, native_model, declarations, {("device", "path")})
+    assert not coverage_declared_on_node(missing, "actual-node", device, native_model, declarations, set())
+    assert not coverage_declared_on_node(unknown, "actual-node", device, native_model, declarations, {("device", "path")})
+    assert not coverage_declared_on_node(missing, "actual-node", dict(device, architecture="arm64"),
+                                        native_model, declarations, {("device", "path")})
+    assert coverage_targets({"completeness": "complete", "cells": [missing]}, policy,
+                            {"device": []}, {missing["id"]: "actual-node"}) == ([missing], [], [], [])
     old = copy.deepcopy(cell)
     old["assessment"]["displayStatus"] = "usable"
     old["variants"] = [{"condition": {"runtimeImage": "old-image"}, "profileIds": ["old-profile"]}]
@@ -1080,7 +1138,10 @@ def coverage_self_check():
         for index, path in enumerate(("firstfloor-ort-cuda-vlm-arm64", "firstfloor-ort-cpu-arm64",
                                      "firstfloor-ort-cuda-arm64", "firstfloor-ort-cuda-vlm-arm64",
                                      "firstfloor-ort-cpu-int8-arm64"))]
-    assert [r["cellId"] for r, _ in coverage_lane_order(lane, policy)] == ["1", "2", "4", "0", "3"]
+    for index, m in ((5, "smolvlm2-500m-video-instruct"), (6, model)):
+        lane.append(({"powerMode": "fixed", "model": m, "cellId": str(index)},
+                     {"spec": {"state": {"candidate": {"executionPath": "firstfloor-ort-cuda-amd64"}}}}))
+    assert [r["cellId"] for r, _ in coverage_lane_order(lane, policy)] == ["1", "2", "4", "6", "0", "3", "5"]
     print("coverage selection, inheritance, batches, one-call boundary, monotone exclusion and runtime-family pilot checked")
 
 
