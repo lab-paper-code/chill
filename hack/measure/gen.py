@@ -519,7 +519,7 @@ def coverage_targets(coverage, policy, current_images, node_declared=()):
                 continue
             if measured and not current:
                 stale.append(cell)
-            if cell["id"] in node_declared or measured or assessment["displayStatus"] in (policy["unmeasuredStatus"], "running") or (
+            if cell["id"] in node_declared or measured or assessment["displayStatus"] in (policy["unmeasuredStatus"], "running", "problem") or (
                     assessment["displayStatus"] == policy["insufficientStatus"] and
                     any(r["code"] == policy["missingBatchReason"] for r in assessment["reasons"])):
                 targets.append(cell)
