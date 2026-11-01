@@ -469,3 +469,10 @@
 - jetson-nano 5W 전환이 다시 멈췄다(23:05:38 applyStarted, SSH 무응답, 2회째). nano를 pause하고 5W 셀 7개를 보류했다. 재부팅 뒤 `journalctl -b -1`로 원인을 확인한다.
 
 - 2026-10-31T23:41:20Z — control-297 server·dashboard 배포 SHA `d2891691e227b86fc3ee83ee94a8542be9695ba2`: v2 리플레이(기준 `6d5aef39`, 후보 `83e07ecd`, 4 stage new bad ticks 0) PASS; 이후 internal/serving 변경 없음으로 재사용, 새 HEAD clean lint/test/integration/arch/Helm 및 dashboard 316 tests PASS. 두 Pod Ready·restart 0, dashboard·인증 scheduler state HTTP 200; chart drift 없음, profiler/runtime 미배포.
+
+## 2026-11-01 — 차트가 의도적으로 뺀 정책 6개 추가(사용자 지시)
+
+- jetson-xavier-nx-8g의 cuda-rnn-arm64·cuda-vlm-arm64, jetson-nano-4g의 cuda-vlm-arm64에 agx-orin rnn/vlm 정책을 복제(control-299, overlay `O/deployB/approvals/values-policies-xavier-nano-rnn-vlm.yaml`). values.yaml 주석의 제외 사유(xavier LSTM CUDA 점수가 CPU와 다름 / 8GB 보드 VLM 로드 OOM)는 측정으로 판정한다.
+- 생성기의 정책 필터(`cb0799f1`)는 유지. 정책이 생겨 해당 셀이 다시 계획에 들어온다.
+- vlm 11셀: xavier canary 1셀(`1689a25b6144`, MODE_15W_2CORE)을 먼저 돌리고 나머지는 보류 → lane 끝에 투입. 노드가 멈추면 그 조합만 "측정 불가(메모리)"로 기록.
+- rnn 9셀: 결과에 "CUDA 값이 CPU 결과와 다를 수 있음" 메모를 남긴다.
