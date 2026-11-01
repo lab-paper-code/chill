@@ -165,6 +165,8 @@ function Selection({open,state,select,zone,end,now}:{open:string;state:LiveState
     ["자동제어","서비스별 자동 구성 변경 설정"],
     ["관측 공백","범위별 연속 누락. 후속 유효 관측으로만 회복 확인"],
     ["예상 대비 지연","예상 평균의 세 배 경과. 예상 미제공은 5분 경과"],
+    ["변경 비용 (이전: 동작 비용)","준비·제거·전력모드 전환의 시간·에너지"],
+    ["분배 처리시간 (이전: 분배 점유시간)","요청당 점유시간(ms/요청)·완료 처리량(req/s)"],
   ].map(([term,meaning])=><tr key={term}><th scope="row">{term}</th><td>{meaning}</td></tr>)}</tbody></table>
   if(open.startsWith("gap:")){
     const gap=gapEpisodes(state.gaps,now,state.metrics).find(row=>JSON.stringify([row.scope,row.from])===open.slice(4))
