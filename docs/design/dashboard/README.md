@@ -134,8 +134,8 @@ Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.
 | `POST /workloads/{id}/infer` | 단일 원시 표본 입력(Preprocessor 입력 필드의 base64 `BYTES`), 실제 응답과 요청 identity | 단일 추론에 재사용한다. |
 | `GET /pools`, `GET /pools/{id}` | 실제 Node와 Workload identity, 인스턴스, 준비 및 대기와 실행 수 | 자원, 모델 경로와 전력모드 및 활성 범위의 실제 관측을 추가한다. |
 | `GET /observations/workloads/{uid}` | 구간, 정의 및 outcome 필터, cursor, 전체 선택 구간 cohort와 raw 이벤트 | SLO 초과, 분포, 집계 설정과 archive 조회 계약을 보완한다. |
-| `GET /namespaces/{namespace}/profiling-runs/{name}/evidence-passport` | 검증된 Run 계보와 제한된 Evidence 요약. `measurement.runtime`은 family, version, provider, architecture를 담는다(`internal/operatorconsole/evidence_passport_view.go:66-83`). | 공통 HTTPS 경계에 인증을 적용해 재사용한다. |
-| `GET /namespaces/{namespace}/batch-energy-optimizations/{name}/result` | 캠페인의 봉인된 결과 | 진행 상세와 구분해 재사용한다. |
+| `GET /namespaces/{namespace}/profiling-runs/{name}/evidence-passport` | 검증된 Run 계보와 제한된 Evidence 요약. 현재 진행 세대에서 근거 참조가 아직 없으면 `202 EvidencePassportPending`, `run/assessment`, `measurement:null/evidence:null` | 발행 대기를 연결 장애로 안내하지 않으며 실패·오래된 세대·잘못된 게시 근거의 오류는 유지한다. |
+| `GET /namespaces/{namespace}/batch-energy-optimizations/{name}/result` | 캠페인의 봉인된 결과. 파일 조회·검증 오류는 원 HTTP/code를 유지하면서 별도 `campaign/assessment`, `result:null`, `evidenceError` 제공 | 요청 실행 상태·실패 원인은 결과 파일 오류와 독립 표시한다. 오류를 성공 측정값으로 바꾸지 않는다. |
 | `POST /namespaces/{namespace}/batch-energy-optimizations/preflight` | 입력을 해석하고 `resolves`, `reason`, `plan`을 반환하는 읽기 전용 요청 | 측정 요청의 검토 단계와 `/measurements/check`에 사용한다. 캠페인 접수는 별도 POST로 수행한다. |
 | `GET, POST /namespaces/{namespace}/batch-energy-optimizations`, `DELETE .../{name}` | 측정 목록, `dryRun=All` 검증과 접수, `uid`와 `If-Match`의 영구 삭제 | 측정 목록, 요청과 삭제에 재사용한다. |
 | `GET /scheduler`, `GET /scheduler/settings`, `GET /scheduler/state`, `PUT /scheduler/settings` | 현재 설정, 실제 snapshot과 판단, 동작과 결과, 전체 설정 적용 및 행위자 관측 기록 | 고정 BFF 경로에 연결한다. 버전 조건과 dry-run 계약은 ChillServer 조회 대기다. |
@@ -242,8 +242,9 @@ SRS DB-FR-50~52·56·65는 변경, DB-FR-67은 폐기 이력, DB-FR-68~70은 공
 | `/settings` 설정 | 어떤 값·카탈로그가 적용되는가? 운영 설정 / 모델 / 입력 처리 / 데이터셋의 선택·현재값·연결/영향 |
 
 설정 구현은 `features/settings.tsx`에서 `tab=configuration|models|preprocessors|datasets`를 선택한다.
-운영 설정은 범위 선택·현재값 표·연결 작업의 세 영역과 값 수정 Sheet를 사용한다.
-카탈로그는 검색 가능한 표에서 이름·UID를 고정한 Sheet를 열고 현재 정의·연결 영향·수정/삭제/원본을 제공한다.
+운영 설정은 범위 선택·현재값 표·연결 작업의 세 영역과 값 수정 Sheet를 사용한다. `section=cycle|limit|controls|capacity|advanced`, `edit=<설정 key>|controls.<key>|excludedNodes`를 URL에 보존한다. 선택 열기는 push, 닫기는 replace다.
+요청 분배는 서비스×인스턴스×int32 가중치 표와 접힌 원문을 함께 편집한다. 새 요청 차단은 빈 객체, 기본 분배 복귀는 서비스 제거이며 순차 적용·첫 실패 중단 계약은 바꾸지 않는다.
+카탈로그는 검색 가능한 표에서 모델 파일·실행 방식 수, 입력 처리 대상 모델 수, 데이터셋 필드·연결 서비스 수를 우선 제공한다. 보관 주소·해시는 접힌 원문에 보존하며 이름·UID 고정 Sheet에서 정의·영향·수정/삭제/원본을 제공한다.
 `/models`, `/preprocessors`, `/datasets`, `/configuration`의 최상위 목록은 설정 탭으로 이동하며 등록·상세·편집 경로는 유지한다.
 `Screen`의 설명 문단 API는 제거하며 입력 정의와 변경 제약은 명시적인 도움말로 제공한다.
 
@@ -252,9 +253,9 @@ SRS DB-FR-50~52·56·65는 변경, DB-FR-67은 폐기 이력, DB-FR-68~70은 공
 동일 축의 값은 같은 UID·시각일 때만 공통 계산 결과를 공유한다. 서비스 관리는 WebSocket 없이 관리 API로 동작한다.
 서비스 구현은 `features/management.tsx`의 목록 관리 표와 통합 상세다. 상세는 적용 상태·정의/설정·배치/연결 세 영역이며, `features/service-hub.tsx`는 관리 API 조회·정의·배치 표시만 소유한다. 옛 세부 화면 export는 제거하고 세부 경로는 통합 영역으로 이동한다. 등록·수정·삭제의 UID/버전·충돌·결과 미확인 계약과 자동제어 설정 재조회 후 변경 계약은 유지한다. 접수 허용 렌더 회귀는 `lib/service-ui.test.ts`가 목록·상세의 무부하 서비스로 확인한다.
 서비스 분배 표의 장치·인스턴스·준비·가중치는 동일한 scheduler snapshot에서 읽고 서비스 UID/라우팅 관계로 제한한다. 가중치 영은 보존하며 미제공은 별도로 표시한다. `/pools`의 배치 관측은 자체 관측 시각이 있는 상세로 유지하고 분배 snapshot과 시각 일치를 요구하거나 서로의 행을 결합하지 않는다.
-측정 범위는 전체 모델 요약과 선택 행렬을 적층하지 않는다. 조합/배치 분모를 분리하고 미측정 모드·지원 안 함·미확인을 문자로 보존한다.
-목표 배치가 없으면 진행률을 만들지 않는다. 요청 실패와 기존 사용 결과는 공존하며 회차 전체 검색·딥링크는 유지한다.
-결과 종류의 API·통계는 합치지 않고 변경 비용 준비·제거를 각각 행으로 표시한다.
+측정 범위는 전체 모델 요약과 선택 행렬을 적층하지 않는다. ‘측정 있음’·‘문제’ 집계는 셀과 동일한 상태 함수를 사용하며 실패 요청 총수가 아니다. 지원 안 함은 지원 조합 분모에서 제외하되 제외 수를 별도로 표시한다. 현재 사용은 스케줄러 참조, 품질은 독립 판정이다. 조합/배치 분모와 미측정·미확인을 보존한다.
+목표 배치가 없으면 진행률을 만들지 않는다. 셀 열기는 push로 이력을 남기고 상세 필터는 표를 밀어내지 않는 패널이다. 목록의 `page/limit/sort/order/search`는 URL로 복원하며 좁은 폭에서는 모든 열을 라벨/값 행으로 재배치한다.
+요청 상태는 결과 파일 조회 오류와 독립 제공한다. 같은 결과 ID 또는 프로파일·배치의 현재 사용 결과는 한 표로 합치고, 다른 보관 프로파일은 이 요청의 결과와 별개라는 관계를 표시한다. 회차의 성능·전력·표본 수는 조건보다 먼저 표로 제공한다. 결과 종류의 API·통계는 합치지 않으며 변경 비용 준비·제거를 각각 행으로, 실패 분배 수치는 경고 아이콘과 흐린 미검증 원자료로 표시한다.
 작성·수정은 전용 페이지의 대상 → 조건·내용 → 점검·제출, 단일 요청은 입력·실행 상태·실제 응답이다.
 필수값을 고급 설정에 숨기지 않고 조건 변경 시 점검을 무효화한다. 과거 정의/현재 환경 차이는 명시 반영한다.
 
@@ -313,6 +314,10 @@ suffix·요청률 유사성 fallback은 사용하지 않는다. 정책은 기록
 표시 단위 미만 차이는 방향 없이 표시한다. 공유 에너지는 서비스별 합산/배분하지 않고 단계 KPI를 초별 보간하거나 인과로 꾸미지 않는다.
 성공률 분자·분모·모집단, p95 표본, 공백 오차 상한(CI 아님), 출처·원값을 보존한다.
 
+정의·비교가 없는 게시도 목록과 상세에서 단계별 구간·길이·공유 에너지 및 서비스별 성공률·p95 원값을 제공한다.
+발행 요청률은 게시된 offered / 실제 단계 구간 길이이며 계획 요청률이나 현재 유입이 아니다.
+계획·비교 대상·SLO가 없으면 해당 차트 계열과 범례를 만들지 않고, 이름으로 정책·비교·같은 부하를 복원하지 않는다.
+
 실험 실행·측정·정리는 독립 축이다. 별도 평가 운영자 권한·사전 점검 후 명시 제출·Pending 수정 제한·같은 이름 새 UID 교체,
 사용 중 부하 변경/삭제 보호·원본 UID 조건·결과 미확인 원본 조회·자동 재제출 금지를 유지한다.
 `자원 반환 확인 요청`은 실제 반환 관측이 아니다. 잔여 자원·사유와 실제 정리 결과를 별도로 확인한다.
@@ -320,8 +325,8 @@ suffix·요청률 유사성 fallback은 사용하지 않는다. 정책은 기록
 폼/JSON은 같은 정의를 편집하며 미래 필드·정밀 정수와 원본 출처를 보존한다.
 
 실험 구현의 작성 경로는 `/experiments/new`, `/experiments/[name]/edit`, `/experiments/load-scenarios/new`, `/experiments/load-scenarios/[name]/edit`다.
-복사는 `copy`(실행·설정 이름) 또는 `publication`(게시 ID), 수정은 `uid`를 보존하며 새로고침에도 서버 원본을 다시 조회한다.
-실행 목록은 KST 시각·단계·풀 상태·작업을, 결과 목록은 비교 상태 선행 표·독립 판정 축·차이·제한을 제공한다. 운영 판독은 `EvaluationStatusCell`을 재사용한다.
+복사는 `copy`(실행·설정 이름) 또는 `publication`(게시 ID), 수정은 `uid`를 보존한다. 미저장 폼·잘못된 JSON 편집은 `beforeunload` 경고를 연결하며 새로고침을 계속하면 서버 원본을 다시 조회한다.
+실행 목록은 KST 시각·단계·풀 상태를 제공하고 다시 실행·삭제는 UID가 확인된 선택 실행 작업에만 둔다. 결과 목록은 정의가 있으면 비교 상태 선행 표·독립 판정 축·차이·제한, 정의가 없으면 단계 원값을 제공한다. 운영 판독은 `EvaluationStatusCell`을 재사용한다.
 선택 실행의 URL UID가 현재 조회 UID와 다르면 `교체됨`으로 표시하고 중지·수정·재실행·자원 반환 작업을 차단한다. `현재 실행 선택`으로 명시 채택한 뒤에만 새 UID 작업을 허용한다. 풀 상태는 `PoolAcquired=True`의 점유 중 / `False`의 반환 관측 / 누락·Unknown의 미확인이며, 실행의 정리 실패 판정과 합치지 않는다.
 독립적인 진행 중 실험 조회에도 선택 UID를 전달한다. 이름이 같아도 UID가 다른 활성 실행은 선택 상세에 표시하지 않으며, 중지 확인 도중 선택 UID가 바뀌면 DELETE 제출을 차단한다.
 

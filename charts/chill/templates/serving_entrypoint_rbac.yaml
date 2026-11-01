@@ -255,7 +255,7 @@ rules:
     verbs: [get]
   - nonResourceURLs: ["/chill/api/v1/models", "/chill/api/v1/models/*", "/chill/api/v1/preprocessors", "/chill/api/v1/preprocessors/*", "/chill/api/v1/datasets", "/chill/api/v1/datasets/*", "/chill/api/v1/workloads", "/chill/api/v1/workloads/*"]
     verbs: [get, post, put, delete]
-  - nonResourceURLs: ["/chill/api/v1/pools", "/chill/api/v1/pools/*", "/chill/api/v1/observations/workloads/*", "/chill/api/v1/observations/load", "/chill/api/v1/observations/scheduler", "/chill/api/v1/observations/power"]
+  - nonResourceURLs: ["/chill/api/v1/pools", "/chill/api/v1/pools/*", "/chill/api/v1/observations/workloads/*", "/chill/api/v1/observations/load", "/chill/api/v1/observations/scheduler", "/chill/api/v1/observations/power", "/chill/api/v1/observations/events"]
     verbs: [get]
   - nonResourceURLs: ["/chill/api/v1/experiments", "/chill/api/v1/experiments/*", "/chill/api/v1/evaluations", "/chill/api/v1/evaluations/*"]
     verbs: [get]

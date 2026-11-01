@@ -102,7 +102,7 @@ retain integer literals while removing credentials.
 전력 조회는 서비스 UID를 API 필터로 보내지 않고 이동 맥락으로만 유지한다. `/changes?scope=scheduler`는 페이지 redirect에서 설정 변경으로 분기한다. 반복 definition/outcome, 인증 변경 전 requests/power 종류, 불완전한 과거 참조의 식별자 오류를 보존한다. 분배 동작(route/unroute/release)의 선택 근거는 선언/실제 비율과 선택된 operation의 이유·행위자·설정 검증 시각을 표시하며 journal 재조회로 대체하지 않는다.
 
 설정의 정본은 `/settings?tab=configuration|models|preprocessors|datasets`다(기본 운영 설정).
-운영 설정은 범위별 현재값 표와 수정 Sheet, 카탈로그는 검색 표와 선택 UID 고정 Sheet에서 정의·연결 영향·CRUD·원본을 제공한다.
+운영 설정은 `section` 범위·`edit` 수정 Sheet 선택을 URL에 보존한다. 분배는 서비스·인스턴스·가중치 표와 접힌 JSON에서 편집하며 기존 차단/기본 복귀/순차 적용 의미를 유지한다. 카탈로그 목록은 필드·파일·실행 방식 수와 연결 서비스 수를 우선하고 긴 주소·해시는 원문에 접는다.
 구 최상위 목록은 설정 탭으로 이동하며 등록·상세·수정 전용 경로와 변경 충돌/결과 미확인 안전 계약은 유지한다.
 
 별도 개요·링크 허브·측정 6탭은 폐지한다. 요청 실패와 기존 사용 결과, 현재 사용과 품질, 실행 종료와 측정 통과·정리는 독립이다.
@@ -117,6 +117,7 @@ redirect: `/scheduler`, `/operations/flow` → `/`; `/resources`, `/pools` → `
 Bearer tokens use versioned, system-scoped sessionStorage in the current tab; storage denial falls back to memory. Refresh restores the session after configuration hydration. “이 탭에서 토큰 지우기”, identity changes and HTTP 401 / WS 4401 clear that tab's token, queries, requests and live connection. HTTP 403 / WS 4403 and service failures retain the destination URL and do not expire the token. Duplicated/restored tabs may inherit storage; clearing a tab does not revoke the bearer or other tabs.
 
 Coverage consumes the exact namespaced aggregate GET with only `batches` and `node` upstream; other filters stay in the URL/browser. Entry and explicit refresh fetch snapshots without periodic polling. A first `CoverageWarming` response permits one Retry-After completion check. Server assessments and exact variant result rows are preserved without browser rejudgment or all-Run crawling. The selected result follows the common DetailSheet contract.
+범위의 측정 있음·문제 집계는 셀과 같은 정의를 쓰고 지원 안 함 제외 수를 별도로 표시한다. 현재 사용(스케줄러 참조)과 품질 판정은 독립이다. 셀 선택은 뒤로가기로 닫히며, 표의 `page/limit/sort/order/search`는 새로고침에도 유지된다. 390px에서는 집계·목록을 라벨/값 행으로 재배치한다. 요청 결과와 현재 사용 결과가 같은 ID/프로파일·배치면 중복 표를 만들지 않으며 다른 보관 결과는 별도 객체로 명시한다. 회차 상세의 성능·전력·표본 요약은 조건 앞에 있고 실패 분배 값은 미검증 원자료다.
 
 Real Model/Workload CRUD and version preconditions, one independent raw-sample inference (JPEG fields from a file, UTF8 fields from text, sent as base64 `BYTES` and answered with output fields decoded by format), current POOL state, System/Inventory/ProfilingRun bounded queries, verified Passport with per-batch dataset record IDs, units and stage times, sealed campaign result and read-only preflight are wired. Observation selection preserves UID, original UTC `from`/`to`, repeated definition/outcome filters and cursor; cohort statistics remain the server's whole-window values, separate from raw paging. JSON exports preserve source identity/conditions/units and redact credentials. Changes uses the real per-Workload management observations; absence of a broader feed is disclosed.
 
