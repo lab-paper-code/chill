@@ -487,3 +487,8 @@
 - 원시 원인: allocatable 전체(genesis3 12)는 다른 Pod request(3.4) 때문에 스케줄 불가였다(FailedScheduling Insufficient cpu → Job deadline, 3셀 실패). jetsonx 5코어는 MODE_*_2CORE/4CORE에서 "process CPU affinity is smaller than the ORT thread contract"로 실패했다.
 - 수정(생성기 한 곳): `cpuByDeviceClass` = floor(allocatable − 비측정 Pod request − 0.01) (`hack/measure/coverage-plan.json`), 그리고 셀별로 min(그 값, 차트 catalog의 모드별 onlineCPUs). genesis3 8, jetsono 11/8/4, jetsonx 5/4/2, orangepi 7, orin-nano 5/4, lattepanda·rasp5 3, nano 3/2.
 - 옛 코어 수로 잰 셀은 `chill.dacs.io/coverage-cpu=<N>core` 라벨로 남긴다.
+
+## 2026-11-01 — Smol 8GB 보드 batch 상한 1, 실패 셀 재계획
+
+- lattepanda Smol CPU b2가 limit 5.98Gi에서 OOMKilled(exit 137)됐다(b1 peak 5.78Gi). 8GB 보드 4종(lattepanda·rasp5·xavier·orin-nano)의 Smol batch는 1까지만 잰다. 그 위 batch는 "측정 불가(메모리)"로 기록한다(`memoryMaxBatch`, coverage-plan.json).
+- 생성기가 Failed와 "problem" 상태 셀도 다시 계획에 넣는다(원인을 고친 뒤 재측정하는 경로).
