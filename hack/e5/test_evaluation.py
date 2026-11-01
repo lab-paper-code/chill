@@ -373,6 +373,44 @@ class AdapterTests(unittest.TestCase):
             self.assertEqual(self.publish_single_stage({},child_refs=[child])['cleanup'],{'status':'Failed','reason':reason,'residuals':[]})
         child={'stageID':'only','uid':'child','uncertain':True,'execution':{'status':'Complete','reason':'ProcedureComplete'},'cleanup':{'status':'Complete','reason':'ProcedureComplete'}}
         self.assertEqual(self.publish_single_stage({},child_refs=[child])['cleanup']['reason'],'RemoteEffectUnknown')
+    def test_publish_failed_prepare_without_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);specdir=root/'spec';specdir.mkdir()
+            spec={'stages':[{'id':'never-created'}],'question':'record preparation failure'}
+            execution={'runUID':'failed-run','runName':'failed','namespace':'test','prepareCompleted':False,'childRefs':[]}
+            for name,value in [('spec',spec),('execution',execution),('config',{})]: evaluation.save(specdir/(name+'.json'),value)
+            started='2026-11-01T00:00:00+00:00';finished='2026-11-01T00:00:01+00:00'
+            prepare={'execution':{'status':'Failed','reason':'IdentityMismatch'},'startedAt':started,'finishedAt':finished,'artifacts':[]}
+            finish={'execution':{'status':'Complete','reason':'NoControlEffects'},'cleanup':{'status':'Complete','reason':'NoControlEffects'},'startedAt':finished,'finishedAt':finished,'artifacts':[]}
+            records={'experiments/failed-run/run/prepare/result.json':prepare,'experiments/failed-run/run/finish/result.json':finish}
+            def get(reference,path):
+                if reference['key'] not in records: raise FileNotFoundError(reference['key'])
+                path.parent.mkdir(parents=True,exist_ok=True)
+                with path.open('x') as output: json.dump(records[reference['key']],output)
+            store=SimpleNamespace(name='store',get=get,put=lambda key,path:{'store':'store','key':key,'size':path.stat().st_size})
+            harness=evaluation.Harness(root/'campaign/run',specdir,store)
+            env=dict.fromkeys(('CHILL_EVIDENCE_BUCKET','CHILL_EVIDENCE_ENDPOINT','CHILL_EVIDENCE_REGION','AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY'),'test')
+            temporary=evaluation.tempfile.TemporaryDirectory
+            with patch.dict(os.environ,env),patch.object(evaluation.tempfile,'TemporaryDirectory',side_effect=lambda **kw:temporary(dir=root)),patch.object(evaluation.subprocess,'run',return_value=SimpleNamespace(returncode=0)):
+                self.assertEqual(harness.execute('publish'),0)
+            summary=evaluation.load(harness.run/'publication-summary.json')
+            self.assertEqual(summary['definition'],{'schema':'evaluation-definition.v1alpha1','run':{'name':'failed','uid':'failed-run'},'spec':spec,'loadScenarios':[],'workloads':[]})
+            self.assertEqual(summary['stages'],[])
+            self.assertEqual(summary['outcome'],{'execution':prepare['execution'],'measurement':{'verdict':'NOT_EVALUATED','reason':'IdentityMismatch'},'cleanup':dict(finish['cleanup'],residuals=[]),'stages':[]})
+            self.assertEqual((summary['from'],summary['to']),(started,finished))
+            self.assertGreater(evaluation.dt.datetime.fromisoformat(summary['to']),evaluation.dt.datetime.fromisoformat(summary['from']))
+            prepare['startedAt']=finished
+            harness=evaluation.Harness(root/'second-campaign/run',specdir,store)
+            with patch.dict(os.environ,env),patch.object(evaluation.tempfile,'TemporaryDirectory',side_effect=lambda **kw:temporary(dir=root)),patch.object(evaluation.subprocess,'run',return_value=SimpleNamespace(returncode=0)):
+                self.assertEqual(harness.execute('publish'),0)
+            summary=evaluation.load(harness.run/'publication-summary.json')
+            self.assertGreater(evaluation.dt.datetime.fromisoformat(summary['to']),evaluation.dt.datetime.fromisoformat(summary['from']))
+            execution.update(prepareCompleted=True,inputSnapshotRef={'store':'store','key':'missing-snapshot'})
+            evaluation.save(specdir/'execution.json',execution)
+            harness=evaluation.Harness(root/'third-campaign/run',specdir,store)
+            with patch.object(evaluation.subprocess,'run') as publisher:
+                self.assertEqual(harness.execute('publish'),1)
+            publisher.assert_not_called()
 
 
 def offline(binding,stage,environment):

@@ -410,13 +410,16 @@ class Harness:
         self.controller().finish()
     def publish(self):
         tables=module('evaluation_tables',HERE/'tables.py');stages=[];results={};artifacts=[];procedures={};actual_specs={};stage_outcomes=[]
+        prepare_failed=self.execution.get('prepareCompleted') is False
+        run_spec=self.spec if prepare_failed else self.snapshot['runSpec']
+        templates=[] if prepare_failed else run_spec['stages']
         not_started={'status':'Failed','reason':'NotStarted'}
         def execution_outcome(values):
             executions=[value.get('execution',not_started) for value in values]
             failures=[value for value in executions if value['status']!='Complete']
             return next((value for value in failures if value.get('reason')!='NotStarted'),failures[0] if failures else {'status':'Complete','reason':'ProcedureComplete'})
         publication_prefix='serving/experiments.v1alpha1/'+self.execution['runUID']+'/'
-        for template in self.snapshot['runSpec']['stages']:
+        for template in templates:
             sid=template['id'];scope=self.run/'stages'/sid;result_path=self.run/('publish-result-'+sid+'.json')
             try:
                 self.store.get({'store':self.store.name,'key':'experiments/'+self.execution['runUID']+'/stages/'+sid+'/judge/result.json'},result_path)
@@ -467,7 +470,7 @@ class Harness:
                 kpis={'status':judgment['status'],'requests':requests,'wholePoolJoules':power.get('wholePoolJoules') if power.get('complete') else None,'activePoolJoules':power.get('activePoolJoules') if power.get('complete') else None,'power':{key:power.get(key) for key in ('complete','wholePoolJoules','activePoolJoules','energyCoverage','gapErrorBoundJoules')},'schedulerSettings':bound['schedulerSettings'],'limitations':bound['limitations']}
                 kpis.update(self.e5.publication_measurements(bound,power))
                 stages.append({'id':sid,'from':phase['startUTC'],'to':phase['endUTC'],'kpis':kpis})
-        generated=now();start=min((stage['from'] for stage in stages),default=self.snapshot['initial']['at']);end=max((stage['to'] for stage in stages),default=generated)
+        generated=now();start=min((stage['from'] for stage in stages),default=generated if prepare_failed else self.snapshot['initial']['at']);end=max((stage['to'] for stage in stages),default=generated)
         prefix='serving/experiments.v1alpha1/'+self.execution['runUID']+'/'
         for step in ('prepare','finish'):
             path=self.run/('publish-run-'+step+'.json')
@@ -475,15 +478,23 @@ class Harness:
                 self.store.get({'store':self.store.name,'key':'experiments/'+self.execution['runUID']+'/run/'+step+'/result.json'},path)
                 value=load(path);procedures[step]=value;artifacts.extend(value['artifacts'])
             except FileNotFoundError: procedures[step]={'execution':{'status':'Failed','reason':'NotStarted'}}
+        if prepare_failed:
+            start=procedures['prepare'].get('startedAt',generated)
+            end=procedures['finish'].get('finishedAt',generated)
+            start_time=dt.datetime.fromisoformat(start);end_time=dt.datetime.fromisoformat(end)
+            if end_time<=start_time: end=(start_time+dt.timedelta(microseconds=1)).isoformat()
         execution_path=self.run/'publication-execution.json';save(execution_path,{'runUID':self.execution['runUID'],'results':results,'procedures':procedures,'stages':actual_specs,'frozenConfig':self.config})
         index_path=self.run/'publication-evidence-index.json';save(index_path,{'artifacts':artifacts})
         objects=[{'store':self.store.name,'key':prefix+name,'localPath':str(path)} for name,path in (('execution.json',execution_path),('evidence-index.json',index_path))]
-        first_binding=next(iter(self.snapshot['bindings'].values()));save(self.run/'binding.json',first_binding)
-        aggregated=self.e5.summarize(None,self.run,evaluation={'stages':stages,'results':results,'physicalRestoration':procedures.get('finish',{}).get('cleanup')})
+        if prepare_failed:
+            aggregated={'stages':[],'results':{},'status':'NOT_EVALUATED','reason':procedures['prepare']['execution']['reason']}
+        else:
+            first_binding=next(iter(self.snapshot['bindings'].values()));save(self.run/'binding.json',first_binding)
+            aggregated=self.e5.summarize(None,self.run,evaluation={'stages':stages,'results':results,'physicalRestoration':procedures.get('finish',{}).get('cleanup')})
         measurement=aggregated['status']
-        scenarios=list(self.snapshot['scenarios'].values())
+        scenarios=[] if prepare_failed else list(self.snapshot['scenarios'].values())
         definitions={workload['uid']:workload for scenario in scenarios for workload in scenario['workloads']}
-        definition={'schema':'evaluation-definition.v1alpha1','run':{'name':self.execution['runName'],'uid':self.execution['runUID']},'spec':self.snapshot['runSpec'],'loadScenarios':[{'name':s['ref']['name'],'uid':s['ref']['uid'],'spec':s['spec']} for s in scenarios],'workloads':list(definitions.values())}
+        definition={'schema':'evaluation-definition.v1alpha1','run':{'name':self.execution['runName'],'uid':self.execution['runUID']},'spec':run_spec,'loadScenarios':[{'name':s['ref']['name'],'uid':s['ref']['uid'],'spec':s['spec']} for s in scenarios],'workloads':list(definitions.values())}
         finish=procedures['finish']
         children=self.execution['childRefs']
         created_ids={child['stageID'] for child in children}
@@ -496,6 +507,7 @@ class Harness:
         elif any('Unknown' in injection['reason'] or 'Requested' in injection['reason'] for stage in stage_outcomes if stage['id'] in created_ids for injection in stage['injections']):
             cleanup={'status':'Failed','reason':'RemoteEffectUnknown'}
         if cleanup['status']!='Complete': cleanup={**cleanup,'status':'Failed'}
+        elif not children: cleanup=finish['cleanup']
         unjudged=next((stage['measurement'] for stage in stage_outcomes if stage['measurement']['verdict']=='NOT_EVALUATED'),None)
         measured=verdict(aggregated)
         if measured['verdict']=='NOT_EVALUATED' and unjudged: measured=unjudged
@@ -550,7 +562,7 @@ class Harness:
         try:
             save(self.root/'execution-spec.json',self.spec)
             save(self.root/'execution.json',self.execution)
-            if step!='prepare' and not (step=='finish' and self.execution.get('prepareCompleted') is False): self.open_snapshot()
+            if step!='prepare' and not (step in ('finish','publish') and self.execution.get('prepareCompleted') is False): self.open_snapshot()
             getattr(self,step.replace('-','_'))()
             reason=self.reason
         except Exception as error:

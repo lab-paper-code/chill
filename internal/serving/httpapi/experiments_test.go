@@ -194,3 +194,25 @@ func TestExperimentsPreserveOptionalDefinition(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateExperimentSummaryAllowsFailedPreparationWithoutStages(t *testing.T) {
+	from := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	summary := ExperimentSummary{
+		SchemaVersion: ExperimentSchemaVersion,
+		ID:            "failed-run",
+		From:          from,
+		To:            from.Add(time.Second),
+		Status:        "NOT_EVALUATED",
+		Stages:        []ExperimentStage{},
+		Sources:       []ExperimentSource{},
+		Definition:    json.RawMessage(`{"schema":"evaluation-definition.v1alpha1","run":{"name":"failed","uid":"failed-run"},"spec":{"stages":[]},"loadScenarios":[],"workloads":[]}`),
+		Outcome:       json.RawMessage(`{"execution":{"status":"Failed","reason":"IdentityMismatch"},"measurement":{"verdict":"NOT_EVALUATED","reason":"IdentityMismatch"},"cleanup":{"status":"Complete","reason":"NoControlEffects","residuals":[]},"stages":[]}`),
+	}
+	if err := ValidateExperimentSummary(summary, "store", summary.ID); err != nil {
+		t.Fatalf("failed preparation with an empty stage array must publish: %v", err)
+	}
+	summary.Stages = nil
+	if err := ValidateExperimentSummary(summary, "store", summary.ID); err == nil {
+		t.Fatal("omitted stages must remain invalid")
+	}
+}
