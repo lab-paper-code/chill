@@ -645,8 +645,9 @@ def coverage_existing(cell, plans, policy):
     for plan in plans:
         spec = plan.get("spec", {})
         state = spec.get("state", {})
-        if not coverage_cpu_matches(cell, {"request": state.get("cpuRequest", ""),
-                                          "limit": spec.get("cpuQuota", "")}, policy):
+        # A Failed request measured nothing; its cell is planned again once the cause is fixed.
+        if plan.get("status", {}).get("phase") == "Failed" or not coverage_cpu_matches(
+                cell, {"request": state.get("cpuRequest", ""), "limit": spec.get("cpuQuota", "")}, policy):
             continue
         metadata = plan["metadata"]
         if metadata.get("annotations", {}).get(policy["cellAnnotation"]) == cell["id"]:
