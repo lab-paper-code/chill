@@ -22,6 +22,7 @@ ChillServer가 `chill.dacs.io/measurement:NoSchedule` taint를 소유한다. Nod
 | OperationCostMeasurement | spec.node | Complete, Insufficient, Failed |
 | DispatchOccupancyMeasurement | spec.node | Complete, Insufficient, Failed |
 BEO/MLIB 자식 ProfilingRun은 루트 승인 뒤 생성하므로 별도 요청하지 않는다.
+- BEO의 결정적 curve-plan 오류(CPU request/quota의 allocatable 초과, 불가능한 batch set·Run 입력)는 기존 `Failed/InvalidRunSpec`, `MeasurementComplete=False`로 종료한다. 이미 분류된 execution/actuation policy 오류도 해당 terminal reason을 유지한다. controller는 같은 generation에서 재시도하지 않고 admission은 위 정상 반환 절차를 따른다. Kubernetes/Evidence Store 읽기·쓰기 오류와 mutable fact 불일치는 기존 `CurvePlanResolutionFailed`로 남아 재시도하며 lease를 유지한다. status 저장 스키마는 바뀌지 않는다.
 
 ### 2.2 승인과 거절
 

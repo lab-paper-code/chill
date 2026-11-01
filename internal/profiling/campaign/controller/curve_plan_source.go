@@ -134,7 +134,8 @@ func (p *CurvePlanProjector) Project(
 	}
 	plan, err := profilederivation.NewCurvePlan(spec)
 	if err != nil {
-		return profilederivation.CurvePlan{}, nil, fmt.Errorf("construct curve plan: %w", err)
+		return profilederivation.CurvePlan{}, nil, profiler.NewTerminalResolutionError(
+			profiler.ResolutionReasonInvalidRunSpec, fmt.Errorf("construct curve plan: %w", err))
 	}
 	return plan, transition, nil
 }
@@ -162,7 +163,7 @@ func (p *CurvePlanProjector) resolveCandidateReportAndBatches(
 	}
 	plannedBatchSizes, err := resolvePlannedBatchSizes(parent.Spec.BatchSizes, report.ArtifactCapability)
 	if err != nil {
-		return profilingrun.CandidateReport{}, nil, err
+		return profilingrun.CandidateReport{}, nil, profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, err)
 	}
 	return report, plannedBatchSizes, nil
 }
@@ -372,13 +373,17 @@ func (p *CurvePlanProjector) prepare(
 ) (profiler.PreparedRun, error) {
 	run, err := BuildRun(parent, measurement, 1)
 	if err != nil {
-		return profiler.PreparedRun{}, err
+		return profiler.PreparedRun{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, err)
 	}
 	requested, err := profilercontroller.ProjectRequest(run.Spec)
 	if err != nil {
-		return profiler.PreparedRun{}, err
+		return profiler.PreparedRun{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, err)
 	}
-	return p.preparer.Prepare(ctx, requested.Preparation)
+	prepared, err := p.preparer.Prepare(ctx, requested.Preparation)
+	if errors.Is(err, profiler.ErrCPURequestExceedsAllocatable) || errors.Is(err, profiler.ErrCPUQuotaExceedsAllocatable) {
+		return profiler.PreparedRun{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, err)
+	}
+	return prepared, err
 }
 
 func (p *CurvePlanProjector) resolveArtifact(

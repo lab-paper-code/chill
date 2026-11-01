@@ -12,6 +12,7 @@ import (
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilerprojection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -101,6 +102,88 @@ func TestTerminalCampaignReplayDoesNotRecreateEvidenceButResolverFailureStillRet
 			_, err = reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: parent.Namespace, Name: parent.Name}})
 			if (err == nil) != test.terminal || (dependencies.resolves == 0) != test.terminal || dependencies.derives != 0 || dependencies.writes != 0 {
 				t.Fatalf("terminal=%v err=%v resolves=%d derives=%d writes=%d", test.terminal, err, dependencies.resolves, dependencies.derives, dependencies.writes)
+			}
+		})
+	}
+}
+
+func TestCampaignCurvePlanFailureClassification(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		failure          error
+		mutate           func(*api.BatchEnergyOptimization)
+		preparedArtifact string
+		terminal         bool
+	}{
+		{name: "CPU request exceeds allocatable", failure: fmt.Errorf("%w: request 5, allocatable 4", profiler.ErrCPURequestExceedsAllocatable), terminal: true},
+		{name: "CPU quota exceeds allocatable", failure: fmt.Errorf("%w: quota 5, allocatable 4", profiler.ErrCPUQuotaExceedsAllocatable), terminal: true},
+		{name: "conflicting batch inputs", mutate: func(parent *api.BatchEnergyOptimization) { parent.Spec.BatchSizes = []int32{1, 2} }, terminal: true},
+		{name: "invalid protocol", mutate: func(parent *api.BatchEnergyOptimization) { parent.Spec.ActiveProtocol.DurationSeconds = 0 }, terminal: true},
+		{name: "temporary resolver failure", failure: errors.New("resolver temporarily unavailable")},
+		{name: "mutable artifact mismatch", preparedArtifact: "different-artifact"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			parent := testParent()
+			parent.Generation = 1
+			parent.Annotations = map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Unix(0, 0))}
+			if test.mutate != nil {
+				test.mutate(parent)
+			}
+			reportBytes, report := curvePlanCandidateReport(t, parent)
+			preparer := &fakeCurvePlanPreparer{
+				report: report, reportBytes: reportBytes, nodeUID: "node-uid",
+				err: test.failure, preparedArtifact: test.preparedArtifact,
+			}
+			store := newFakeCurvePlanStore()
+			source, err := NewCurvePlanSource(
+				&fakeCurvePlanModelReader{model: curvePlanModel(report)},
+				&fakeCurvePlanCandidateResolver{reportBytes: reportBytes}, preparer, store,
+				CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			scheme := runtime.NewScheme()
+			if err := api.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			native := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(parent).WithObjects(parent).Build()
+			dependencies := &terminalReplayDependencies{}
+			reconciler, err := NewBatchEnergyOptimizationReconciler(native, source.Resolve, dependencies.Derive, dependencies.Write)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}
+			for attempt := range 2 {
+				result, reconcileErr := reconciler.Reconcile(ctx, request)
+				if (reconcileErr == nil) != test.terminal || result != (ctrl.Result{}) {
+					t.Fatalf("attempt %d: result=%+v error=%v, terminal=%v", attempt, result, reconcileErr, test.terminal)
+				}
+			}
+			updated := &api.BatchEnergyOptimization{}
+			if err := native.Get(ctx, request.NamespacedName, updated); err != nil {
+				t.Fatal(err)
+			}
+			reason, opens := "CurvePlanResolutionFailed", 2
+			if test.terminal {
+				reason, opens = profiler.ResolutionReasonInvalidRunSpec, 1
+			}
+			if updated.Status.Phase != batchEnergyOptimizationPhaseFailed || updated.Status.Outcome != reason ||
+				updated.Status.ObservedGeneration != parent.Generation || len(updated.Status.Conditions) != 1 {
+				t.Fatalf("failure status = %+v", updated.Status)
+			}
+			condition := updated.Status.Conditions[0]
+			if condition.Type != "MeasurementComplete" || condition.Status != metav1.ConditionFalse ||
+				condition.Reason != reason || condition.ObservedGeneration != parent.Generation || condition.Message == "" {
+				t.Fatalf("failure condition = %+v", condition)
+			}
+			runs := &api.ProfilingRunList{}
+			if err := native.List(ctx, runs); err != nil {
+				t.Fatal(err)
+			}
+			if store.opens != opens || store.puts != 0 || len(runs.Items) != 0 || dependencies.derives != 0 || dependencies.writes != 0 {
+				t.Fatalf("opens=%d puts=%d children=%d derives=%d writes=%d", store.opens, store.puts, len(runs.Items), dependencies.derives, dependencies.writes)
 			}
 		})
 	}

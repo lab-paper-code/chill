@@ -562,6 +562,7 @@ type fakeCurvePlanPreparer struct {
 	preparedArtifact string
 	requests         []profiler.PreparationRequest
 	calls            *[]string
+	err              error
 }
 
 func (p *fakeCurvePlanPreparer) Prepare(
@@ -569,6 +570,9 @@ func (p *fakeCurvePlanPreparer) Prepare(
 	request profiler.PreparationRequest,
 ) (profiler.PreparedRun, error) {
 	p.requests = append(p.requests, request)
+	if p.err != nil {
+		return profiler.PreparedRun{}, p.err
+	}
 	if p.calls != nil {
 		*p.calls = append(*p.calls, "prepare:"+request.Measurement.WorkloadMode)
 	}

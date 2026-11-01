@@ -407,32 +407,54 @@ const (
 // The hand-back requests the lowest mode on the Node it still holds and removes
 // the taint once the agent settled it.
 func TestHandBackSetsTheLowestModeBeforeRemovingTheTaint(t *testing.T) {
-	h := newAdmissionHarness(t)
-	actuator := edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: 2}}
-	class := &edge.DeviceClass{ObjectMeta: meta.ObjectMeta{Name: "cpu"}, Spec: edge.DeviceClassSpec{NodeSelector: map[string]string{"hardware": "cpu"},
-		Architecture: "amd64", PowerModes: []edge.PowerMode{{Name: lowMode, Actuator: actuator}}}}
-	h.create(class)
-	h.controller.mu.Lock()
-	h.controller.config.PowerPolicies = []nodeactuator.ActuationPolicySpec{{Name: lowMode, DeviceClass: "cpu", PowerMode: lowMode, ActuatorKind: string(actuator.Kind), SettlingDurationSeconds: 1, MaxActuationDurationSeconds: 60}}
-	h.controller.config.Baselines = []serving.NodeBaseline{{ID: "idle", Node: serving.NodeReference{Name: "node", UID: "node-uid"}, PowerMode: lowMode, Watts: 5,
-		Meter: "wall", Scope: measurementWallScope, Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: "idle", Size: 1}}}
-	h.controller.mu.Unlock()
-	h.setNode(func(n *core.Node) {
-		n.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Value: "deleted-uid", Effect: core.TaintEffectNoSchedule}}
-	})
-	settle := settleAgent(class)
-	holderAtRequest := ""
-	h.nodes.agent = func(n *core.Node) {
-		holderAtRequest, _ = profilingrun.MeasurementHolder(n)
-		settle(n)
-	}
-	h.admit()
-	node, err := h.kube.CoreV1().Nodes().Get(context.Background(), "node", meta.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if holderAtRequest != "deleted-uid" || node.Labels[chillmeta.PowerMode] != lowMode || h.holder() != "" {
-		t.Fatalf("hand-back requested %q under %q, taint %q: %+v", node.Labels[chillmeta.PowerMode], holderAtRequest, h.holder(), h.controller.State().Results)
+	for _, reason := range []string{"", "InvalidRunSpec", "CurvePlanResolutionFailed"} {
+		t.Run("failure="+reason, func(t *testing.T) {
+			h := newAdmissionHarness(t)
+			actuator := edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: 2}}
+			class := &edge.DeviceClass{ObjectMeta: meta.ObjectMeta{Name: "cpu"}, Spec: edge.DeviceClassSpec{NodeSelector: map[string]string{"hardware": "cpu"},
+				Architecture: "amd64", PowerModes: []edge.PowerMode{{Name: lowMode, Actuator: actuator}}}}
+			h.create(class)
+			h.controller.mu.Lock()
+			h.controller.config.PowerPolicies = []nodeactuator.ActuationPolicySpec{{Name: lowMode, DeviceClass: "cpu", PowerMode: lowMode, ActuatorKind: string(actuator.Kind), SettlingDurationSeconds: 1, MaxActuationDurationSeconds: 60}}
+			h.controller.config.Baselines = []serving.NodeBaseline{{ID: "idle", Node: serving.NodeReference{Name: "node", UID: "node-uid"}, PowerMode: lowMode, Watts: 5,
+				Meter: "wall", Scope: measurementWallScope, Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: "idle", Size: 1}}}
+			h.controller.mu.Unlock()
+			holder := "deleted-uid"
+			if reason != "" {
+				root := &edge.BatchEnergyOptimization{
+					ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: "failed", UID: "held-uid", Generation: 1,
+						Annotations: map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Now())}},
+					Status: edge.BatchEnergyOptimizationStatus{Phase: "Failed", Outcome: reason, ObservedGeneration: 1,
+						Conditions: []meta.Condition{{Type: "MeasurementComplete", Status: meta.ConditionFalse, Reason: reason, ObservedGeneration: 1}}},
+				}
+				root.Spec.State.TargetNode = h.node.Name
+				h.create(root)
+				holder = string(root.UID)
+			}
+			h.setNode(func(n *core.Node) {
+				n.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Value: holder, Effect: core.TaintEffectNoSchedule}}
+			})
+			settle := settleAgent(class)
+			holderAtRequest := ""
+			h.nodes.agent = func(n *core.Node) {
+				holderAtRequest, _ = profilingrun.MeasurementHolder(n)
+				settle(n)
+			}
+			h.admit()
+			if reason == "CurvePlanResolutionFailed" {
+				if holderAtRequest != "" || h.holder() != holder {
+					t.Fatalf("recoverable resolver failure was handed back: holder=%q request=%q", h.holder(), holderAtRequest)
+				}
+				return
+			}
+			node, err := h.kube.CoreV1().Nodes().Get(context.Background(), "node", meta.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if holderAtRequest != holder || node.Labels[chillmeta.PowerMode] != lowMode || h.holder() != "" {
+				t.Fatalf("hand-back requested %q under %q, taint %q: %+v", node.Labels[chillmeta.PowerMode], holderAtRequest, h.holder(), h.controller.State().Results)
+			}
+		})
 	}
 }
 

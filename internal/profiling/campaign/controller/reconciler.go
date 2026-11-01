@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/metadata"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -84,9 +86,13 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 
 	curvePlan, curvePlanReference, transitionMaterial, err := r.curvePlans(ctx, parent)
 	if err != nil {
-		status := failedStatus(parent, "CurvePlanResolutionFailed", err.Error())
+		reason, terminal := profiler.TerminalResolutionReason(err)
+		status := failedStatus(parent, cmp.Or(reason, "CurvePlanResolutionFailed"), err.Error())
 		if patchErr := r.patchStatus(ctx, parent, status); patchErr != nil {
 			return ctrl.Result{}, errors.Join(err, patchErr)
+		}
+		if terminal {
+			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, fmt.Errorf("resolve BatchEnergyOptimization curve plan: %w", err)
 	}
@@ -421,11 +427,12 @@ func terminalCampaignStatusCurrent(parent *edgev1alpha1.BatchEnergyOptimization)
 			return parent.Status.Result != nil && condition.Status == metav1.ConditionTrue && condition.Reason == "ResultWritten"
 		}
 		if parent.Status.Phase == batchEnergyOptimizationPhaseFailed && condition.Status == metav1.ConditionFalse && condition.Reason == parent.Status.Outcome {
-			// CurvePlanResolutionFailed is deliberately not terminal: its
-			// resolver error still owns the existing retry/recovery behavior.
 			return condition.Reason == terminalReasonTransitionFailed ||
 				condition.Reason == terminalReasonRetryLimitExhausted ||
-				condition.Reason == terminalReasonEnergyObjectivePolicyMismatch
+				condition.Reason == terminalReasonEnergyObjectivePolicyMismatch ||
+				condition.Reason == profiler.ResolutionReasonInvalidRunSpec ||
+				condition.Reason == profiler.ResolutionReasonExecutionPolicyInvalid ||
+				condition.Reason == profiler.ResolutionReasonActuationPolicyInvalid
 		}
 	}
 	return false
