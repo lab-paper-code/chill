@@ -1,4 +1,4 @@
-import { compareAt, isLiveActionActive, type LiveAction, type LiveDecision, type LiveEvent, type LiveInstance, type LiveMetric, type LiveMetrics, type LiveSnapshot, type LiveState, type LiveWorkload } from "./live.ts"
+import { compareAt, isLiveActionActive, type LiveAction, type LiveEvent, type LiveInstance, type LiveMetric, type LiveMetrics, type LiveSnapshot, type LiveState, type LiveWorkload } from "./live.ts"
 import { STATUS_AXES, type StatusValue } from "./status.ts"
 
 export const instanceSymbols = [
@@ -146,19 +146,6 @@ export function boardVerdict(rows:ServiceRow[],fresh:boolean,ongoingGap:boolean,
 export function decisionReason(reason:string|null|undefined,automation:boolean[]):string {
   return automation.length>0&&automation.every(enabled=>!enabled)?"자동제어 대상 없음":liveReason(reason)
 }
-export function decisionText(decision:LiveDecision|null|undefined):string {
-  return decision?.explanation || (decision?"판단 사유가 제공되지 않았어요":"아직 판단 기록이 없어요")
-}
-export function mergeKeepEvents(events:LiveEvent[]):{event:LiveEvent;count:number;from:string}[] {
-  const rows:{event:LiveEvent;count:number;from:string}[]=[]
-  for (const event of events) {
-    const previous=rows.at(-1)
-    if (event.kind==="decision" && event.decision.state==="Keep" && previous?.event.kind==="decision" && previous.event.decision.state==="Keep" && previous.event.decision.reason===event.decision.reason && previous.event.decision.explanation===event.decision.explanation) {
-      previous.event=event;previous.count++
-    } else rows.push({event,count:1,from:event.at})
-  }
-  return rows
-}
 /** Points use elapsed time, never stitch absent seconds into a continuous trend. */
 export function trendSegments(points:{at:number;value:number|null}[],end:number):string[] {
   const visible=points.filter(row=>row.at>=end-300000 && row.at<=end),max=Math.max(1,...visible.map(row=>row.value??0))
@@ -250,9 +237,6 @@ export function liveReason(reason:string|null|undefined):string {
   if(reason.includes("Pod is not labelled as a serving instance"))return "서비스 인스턴스가 아닌 파드"
   const labels:Record<string,string>={Running:"실행 중",Pending:"대기",Failed:"실패",Succeeded:"완료",Unknown:"미확인",created:"생성",observed:"관측",changed:"변경",deleted:"삭제","server-start":"서버 시작",raised:"문제 감지",resolved:"해소",ObservationUnavailable:"관측 기록 사용 불가",ShuttingDown:"종료 중",ExcludedNode:"제외 노드",Keep:"유지","power sample unavailable":"전력 표본 누락","resume history unavailable":"재연결 기록 공백","event history limit":"사건 보관 한도",Disabled:"자동제어 꺼짐",NotReady:"준비 안 됨",Ready:"준비됨",MissingDataset:"데이터셋 없음",MissingEvidence:"측정 근거 없음",Preparing:"배치 준비 중",RestartDrain:"재시작 후 요청 정리",AppliedDefinitionUnavailable:"적용된 서비스 정의 없음",ReservedScope:"변경 자원 예약 중",PartialObservationWindow:"관측 시간 부족",BootstrapCapacityPending:"초기 처리 용량 계산 대기",CapacityPending:"처리 용량 계산 대기",NoPlanMeetsSLO:"SLO 충족 구성 없음",EvaluatedCandidatesExceedSLOWithinReportedSearchBounds:"검토 구성 SLO 초과",MissingOperationCost:"변경 비용 근거 없음",HeldAfterOverload:"부하 증가 후 구성 유지",DemandIncreasing:"유입 증가",ReplacementUnpaid:"교체 비용 미회수",ReplacementDwell:"교체 후 최소 유지",TransitionGainWithinUncertainty:"절감량 오차 범위 이내",IdleInstanceRemoved:"유휴 인스턴스 제거",ObservedOperationExecutionError:"변경 실행 오류",PreparationFailed:"배치 준비 실패"}
   return reason.split("; ").map(part=>{const separator=part.indexOf(":"),code=separator<0?part:part.slice(0,separator);return labels[code]??(/[a-z]/i.test(part)?"상세 사유 원본 참조":part)}).join("; ")
-}
-export function retainedEvents(events:LiveEvent[],now:number,keep=false):LiveEvent[] {
-  return events.filter(event=>Date.parse(event.at)<=now&&(keep||event.kind!=="decision"||event.decision.state!=="Keep")).slice(-30)
 }
 
 export function incidentFlow(events:LiveEvent[],gaps:LiveState["gaps"],now:number,keep=false,metrics:LiveMetrics[]=[]) {

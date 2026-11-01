@@ -8,7 +8,7 @@ import { useChillQuery } from "@/lib/client"
 import type { ObservationResult, PoolsView, SchedulerView } from "@/lib/read-types"
 import { resourceHref, type WorkloadView } from "@/lib/domain"
 import { parseSchedulerJSON } from "@/lib/scheduler"
-import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
+import { QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/read-region"
 import { Facts, RowDialog, Rows } from "@/components/screen"
 import { DataTable } from "@/components/data-table"
 import { StatusCell } from "@/components/status-cell"
@@ -41,6 +41,11 @@ export function useServiceSignals(view?: WorkloadView): ServiceSignals {
 
 export function ServiceAdmission({ view }: { view: WorkloadView }) {
   return <StatusCell axis="접수 허용" label={view.admission ? "허용" : "차단"} tone={view.admission ? "ok" : "warn"} />
+}
+
+export function ServiceReadiness({ view }: { view: WorkloadView }) {
+  const reason = view.reason && statusLabel(view.reason)
+  return <><StatusBadge value={view.readiness} />{reason && reason !== statusLabel(view.readiness) && <span className="block text-xs">{reason}</span>}</>
 }
 
 export function ServiceAppliedFacts({ view }: { view: WorkloadView }) {

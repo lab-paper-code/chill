@@ -28,12 +28,12 @@ function CapacityDetails({row,settings,capacityAt}:{row:CapacityRow;settings:{da
   const input=row.input,allocation=input.allocation,d=input.dispatchOccupancy
   return <div className="min-w-0 space-y-6 [&_dd]:break-all">
     <section className="space-y-3"><h3 className="font-semibold">결과</h3><StatusBadge tone={row.status==="Built"?"ok":row.status==="CapacityRejected"?"warn":"idle"}>{capacityStatus(row.status)}</StatusBadge><p>{capacityReason(row.reason)}</p>{row.previous&&<p>이전 계산 결과 · 다시 계산 중</p>}
-      <Facts items={[["행 key",row.key],["처리량 상한 μ",row.status==="CapacityPending"&&row.mu===0?"값 없음":`${row.mu} req/s`],["계산 용량 κ",capacityRate(row.kappa)],["가장 짧은 배치 실행",value(row.minimumServiceNanos,"ns")],["계산 시각",at(row.builtAt)],["계산 경과",nanos(row.elapsedNanos)],["용량 조회 시각",checked(capacityAt)]]}/>
+      <Facts items={[["행 key",row.key],["처리량 상한",row.status==="CapacityPending"&&row.mu===0?"값 없음":`${row.mu} req/s`],["처리 용량",capacityRate(row.kappa)],["가장 짧은 배치 실행",value(row.minimumServiceNanos,"ns")],["계산 시각",at(row.builtAt)],["계산 경과",nanos(row.elapsedNanos)],["용량 조회 시각",checked(capacityAt)]]}/>
       {row.reason==="MissingDispatchOccupancy"&&<Link href="/measurements/results?kind=dispatch-occupancy">분배 처리시간 측정</Link>}
     </section>
     <section className="space-y-3"><h3 className="font-semibold">입력</h3>
       <Facts items={[["워크로드 UID",input.workloadUID],["SLO 백분위",`p${input.slo.percentile}`],["SLO 목표",nanos(input.slo.targetLatencyNanos)],["Node 이름 / UID",`${input.node.name} / ${input.node.uid}`],["전력모드",input.powerMode],["프로파일 ID",input.profileID],["CPU 코어 ID 목록",allocation.cpus===null?"null":`[${allocation.cpus.join(", ")}]`],["GPU UUID",allocation.gpuUUID??"값 없음"],["메모리",value(allocation.memoryBytes,"bytes")],["스레드",value(allocation.threads,"개")],["CPU 수",value(allocation.cpuCount,"개")],["CPU 예약",allocation.cpuReserved?"예약함":"예약 안 함"],["최대 배치",value(input.maxBatch,"건/batch")],...capacityFields.map(field=>[field.label,field.key==="capacityWindowNanos"?`${input[field.key]} ns (${Number(input[field.key])/1e9} s)`:value(input[field.key],field.unit)] as [string,string])]}/>
-      <p className="text-sm text-muted-foreground">이분탐색 폭은 μ에 대한 종료 폭 비율이며 달성한 정밀도가 아니에요.</p>
+      <p className="text-sm text-muted-foreground">이분탐색 폭은 처리량 상한에 대한 종료 폭 비율이며 달성한 정밀도가 아니에요.</p>
       <h4 className="font-medium">분배 점유시간 d와 출처</h4>{d?<Facts items={[["Node 이름 / UID",`${d.node.name} / ${d.node.uid}`],["전력모드",d.powerMode],["실행 이미지",d.runtimeImage],["모델",d.model],["d",value(d.perRequestNanos,"ns/request")],["측정 기록 식별자",d.source]]}/>:<p>분배 점유시간 근거가 없어요</p>}
     </section>
     <section className="space-y-3"><h3 className="font-semibold">현재 설정 대조</h3><p>행에 사용한 값과 서버의 현재 적용값이에요. 편집 초안은 아니며, 설정이 달라도 오류를 뜻하지 않아요.</p><Facts items={[["용량 조회 시각",checked(capacityAt)],["설정 조회 시각",checked(settings.dataUpdatedAt)]]}/>
@@ -65,14 +65,14 @@ export function CapacityEvidence() {
   return <section className="space-y-4"><header className="flex flex-wrap items-center justify-between gap-2"><h3>인스턴스 용량 근거</h3><Button variant="outline" onClick={()=>void query.refetch()} disabled={!token||query.isFetching}>새로고침</Button></header>
     <QueryGate query={query}>{query.data&&<>
       <Facts items={[["용량 조회",checked(query.dataUpdatedAt)],["대상 UID",workload||"전체"]]}/>
-      {params.has("row")?<><Button variant="outline" onClick={()=>select()}>용량 행 목록</Button>{selected?<CapacityDetails row={selected} settings={settings} capacityAt={query.dataUpdatedAt}/>:<p>항목 없음 · 선택 key 미확인</p>}</>:<DataTable data={rows} columns={[
+      {params.has("row")?<><Button variant="outline" onClick={()=>select()}>용량 행 목록</Button>{selected?<CapacityDetails row={selected} settings={settings} capacityAt={query.dataUpdatedAt}/>:<p>항목 없음 · 선택 key 미확인</p>}</>:!rows.length?<Facts label="처리 용량" items={[["상태","처리 용량 근거 없음"],["조회 범위",workload?"선택 서비스":"전체 서비스"],["누락 사유","서버 미제공"],["계산 완료 예정","서버 미제공"]]}/>:<DataTable data={rows} columns={[
         {key:"workload",label:"서비스 UID",value:row=><button type="button" className="min-h-11 break-all text-left underline underline-offset-4" onClick={()=>select(row.key)}>{row.input.workloadUID}</button>},
         {key:"node",label:"장치",value:row=>row.input.node.name},
         {key:"power",label:"전력모드",value:row=>row.input.powerMode},
         {key:"profile",label:"프로파일",value:row=>row.input.profileID},
         {key:"batch",label:"최대 배치",unit:"건/batch",numeric:true,value:row=>String(row.input.maxBatch)},
         {key:"status",label:"상태·사유",value:row=><><StatusBadge tone={row.status==="Built"?"ok":row.status==="CapacityRejected"?"warn":"idle"}>{capacityStatus(row.status)}</StatusBadge>{row.reason&&<p>{capacityReason(row.reason)}</p>}</>},
-        {key:"kappa",label:"κ",unit:"req/s",numeric:true,value:row=>row.kappa??"판정 불가"},
+        {key:"kappa",label:"처리 용량",unit:"req/s",numeric:true,value:row=>row.kappa??"판정 불가"},
         {key:"built",label:"계산 시각",value:row=>at(row.builtAt)},
         {key:"previous",label:"이전 결과",value:row=>row.previous?"다시 계산 중":"해당 없음"},
       ]}/>}

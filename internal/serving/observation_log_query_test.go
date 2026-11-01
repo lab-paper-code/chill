@@ -14,7 +14,7 @@ import (
 type requestQueryArchive struct {
 	*readableObservationArchive
 	rejectCatalog bool
-	catalogReads int
+	catalogReads  int
 }
 
 func (a *requestQueryArchive) Open(ctx context.Context, object evidencestore.ObjectIdentity) (io.ReadCloser, error) {

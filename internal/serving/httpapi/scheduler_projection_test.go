@@ -23,8 +23,14 @@ func TestSchedulerCurrentProjectionBoundsRawProfileSamples(t *testing.T) {
 	evidence := newSchedulerReadEvidence()
 	projected := evidence.state(&state)
 	for _, response := range []any{
-		struct { State schedulerReadState `json:"state"`; schedulerReadEvidence }{projected, evidence},
-		struct { schedulerReadState; schedulerReadEvidence }{projected, evidence},
+		struct {
+			State schedulerReadState `json:"state"`
+			schedulerReadEvidence
+		}{projected, evidence},
+		struct {
+			schedulerReadState
+			schedulerReadEvidence
+		}{projected, evidence},
 	} {
 		raw, err := json.Marshal(response)
 		if err != nil {
@@ -33,12 +39,16 @@ func TestSchedulerCurrentProjectionBoundsRawProfileSamples(t *testing.T) {
 		if len(raw) >= 8_388_608 {
 			t.Fatalf("current read still scales with irrelevant raw profile samples: %d bytes", len(raw))
 		}
-		var wire struct { Profiles map[string]struct { Batches []struct {
-			DurationNanos []float64 `json:"durationNanos"`
-			DurationSampleCount int `json:"durationSampleCount"`
-			EnergyBelowResolution bool `json:"energyBelowResolution"`
-			MemoryBytes uint64 `json:"memoryBytes"`
-		} `json:"batches"` } `json:"profiles"` }
+		var wire struct {
+			Profiles map[string]struct {
+				Batches []struct {
+					DurationNanos         []float64 `json:"durationNanos"`
+					DurationSampleCount   int       `json:"durationSampleCount"`
+					EnergyBelowResolution bool      `json:"energyBelowResolution"`
+					MemoryBytes           uint64    `json:"memoryBytes"`
+				} `json:"batches"`
+			} `json:"profiles"`
+		}
 		if err := json.Unmarshal(raw, &wire); err != nil {
 			t.Fatal(err)
 		}

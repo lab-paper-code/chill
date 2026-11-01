@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation"
 import type { PublicConfig } from "@/lib/server-config"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { BrandMark, FinField } from "@/components/brand"
 import { KeyRound } from "lucide-react"
 import type { ObservationResult } from "@/lib/read-types"
@@ -91,7 +91,15 @@ export function SessionProvider({children}: {children:React.ReactNode}) {
       <Input id="bearer-token" type="password" autoComplete="off" spellCheck={false} value={draft} onChange={event => setDraft(event.target.value)} placeholder="관리자에게 받은 토큰을 붙여 넣으세요" required />
     </label>
     <Button type="submit" size="lg" disabled={!config || !draft.trim()}><KeyRound />{token ? "접속 정보 바꾸기" : "시작하기"}</Button>
-    <p className="text-sm text-muted-foreground">{storageAvailable?"토큰은 이 시스템의 이 탭에 저장되어 새로고침 후에도 사용됩니다. 탭 복제·브라우저 복원 시 복사될 수 있습니다.":"브라우저 저장을 사용할 수 없어 메모리에서만 사용합니다. 새로고침하면 다시 입력하세요."} 토큰 삭제는 다른 탭이나 토큰 자체를 폐기하지 않습니다.</p>
+    <table className="w-full table-fixed border-collapse text-sm" aria-label="토큰 보관·유효 범위"><tbody>{[
+      ["보관 위치",storageAvailable?"이 시스템·현재 탭":"메모리 전용"],
+      ["새로고침",storageAvailable?"이 탭에서 복원":"다시 입력 필요"],
+      ["탭 복제·브라우저 복원",storageAvailable?"토큰이 복사될 수 있음":"보관 보장 없음"],
+      ["이 탭 삭제 영향","현재 탭에 보관된 토큰만 삭제"],
+      ["다른 탭·토큰 자체","폐기되지 않음"],
+      ["탭 닫기","안전 삭제 보장 없음"],
+      ["토큰 유효기간","미제공"],
+    ].map(([label,value])=><tr key={label} className="border-b"><th scope="row" className="w-1/2 break-keep px-2 py-2 text-left font-normal text-muted-foreground">{label}</th><td className="break-keep px-2 py-2">{value}</td></tr>)}</tbody></table>
   </form>
   // Signed out shows only the sign-in screen; the shell appears after sign-in.
   return <QueryClientProvider client={client}>
@@ -99,7 +107,7 @@ export function SessionProvider({children}: {children:React.ReactNode}) {
       <section className="login-brand" aria-label="CHILL 소개">
         <span className="flex items-center gap-2.5 text-lg font-bold"><BrandMark className="size-7 text-[#5fc2e8]" />CHILL</span>
         <div className="relative grid gap-4"><h1>응답 목표를 지키면서 에너지를 덜 쓰는 구성을 찾아요</h1><p>모델과 서비스를 등록하고, 실행 그룹의 실제 구성과 운영 판단이 예상한 에너지를 한곳에서 확인하세요.</p></div>
-        {config ? <div className="login-target relative" aria-label="접속 대상"><span>대상 {config.systemName}</span><span>namespace {config.namespace}</span></div> : <span />}
+        {config ? <div className="login-target relative" aria-label="접속 대상"><span>대상 {config.systemName}</span><span>네임스페이스 {config.namespace}</span></div> : <span />}
         <FinField className="login-fins" />
       </section>
       <main className="login-form" id="main-content"><h2>접속하기</h2>{signInForm}{configError && <p role="alert">접속 설정을 불러오지 못했어요. 잠시 후 다시 확인해 주세요.</p>}</main>
@@ -117,8 +125,8 @@ export function AccountControl() {
   if (!account) return null
   return <Dialog open={account.open} onOpenChange={account.setOpen}>
     <DialogTrigger asChild><Button variant="outline" size="sm" className="gap-2 rounded-full"><span className="size-2 rounded-full bg-ok" aria-hidden="true" /><span className="max-w-40 truncate">{config.systemName}</span><span className="hidden text-muted-foreground sm:inline">{config.namespace}</span><span className="sr-only">접속 관리</span></Button></DialogTrigger>
-    <DialogContent><DialogHeader><DialogTitle>접속 관리</DialogTitle><DialogDescription>다른 접속 정보로 바꾸거나 안전하게 나갈 수 있어요.</DialogDescription></DialogHeader>
-      <dl className="grid grid-cols-2 gap-x-4 rounded-lg bg-muted p-3 text-sm"><div><dt>대상</dt><dd>{config.systemName}</dd></div><div><dt>namespace</dt><dd>{config.namespace}</dd></div></dl>
+    <DialogContent aria-describedby={undefined}><DialogHeader><DialogTitle>접속 관리</DialogTitle></DialogHeader>
+      <dl className="grid grid-cols-2 gap-x-4 rounded-lg bg-muted p-3 text-sm"><div><dt>대상</dt><dd>{config.systemName}</dd></div><div><dt>네임스페이스</dt><dd>{config.namespace}</dd></div></dl>
       {account.form}<Button variant="outline" onClick={account.signOut}>이 탭에서 토큰 지우기</Button>
     </DialogContent>
   </Dialog>

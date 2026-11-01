@@ -30,7 +30,13 @@ func TestObservationEventsRecoverSimultaneousCommittedFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	response := rawHTTPRequest(h, "/api/v1/observations/events?"+url.Values{"at": {at.Format(time.RFC3339Nano)}}.Encode())
-	var page struct { Events []struct { Type string `json:"type"`; At time.Time `json:"at"`; live.Event } `json:"events"` }
+	var page struct {
+		Events []struct {
+			Type string    `json:"type"`
+			At   time.Time `json:"at"`
+			live.Event
+		} `json:"events"`
+	}
 	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || response.Code != http.StatusOK || len(page.Events) != 2 {
 		t.Fatalf("exact committed recovery: status=%d body=%s err=%v", response.Code, response.Body, err)
 	}

@@ -33,3 +33,54 @@ func TestArchivedEventRecoverySkipsCatalogHydration(t *testing.T) {
 		t.Fatalf("nearby timestamp invented a match or opened catalogs: %+v err=%v reads=%d", empty, err, archive.catalogReads)
 	}
 }
+
+func TestEventRecoveryFindsLateAppendsAcrossSegments(t *testing.T) {
+	for _, archived := range []bool{false, true} {
+		name := "local"
+		if archived {
+			name = "archived"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			archive := &requestQueryArchive{readableObservationArchive: newReadableObservationArchive(t)}
+			log, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
+			at := observationTestHour.Add(time.Second)
+			// Event timestamps predate the segment selected by the append clock.
+			clock.set(at.Add(3 * time.Hour))
+			if err := log.SchedulerRecord(SchedulerObservation{
+				At: at, Action: &SchedulerActionObservation{ID: "action", Kind: "power", Phase: "failed"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			for _, timestamp := range []time.Time{at, at.Add(time.Nanosecond)} {
+				if err := log.ClusterRecord(ClusterObservation{
+					Kind: "issue", At: timestamp, Event: "raised", Source: "observer", Reason: "late",
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if archived {
+				clock.set(at.Add(6 * time.Hour))
+				if err := log.Flush(ctx); err != nil {
+					t.Fatal(err)
+				}
+				log, _ = clockedObservationLog(t, ObservationLogConfig{Writer: archive}, at.Add(6*time.Hour))
+			}
+			archive.rejectCatalog = true
+			events, err := log.EventObservations(ctx, at, 2)
+			if err != nil || len(events) != 2 {
+				t.Fatalf("exact event recovery lost a late append: %+v err=%v", events, err)
+			}
+			if events[0].Action == nil || events[0].Action.ID != "action" ||
+				events[1].Cluster == nil || !events[1].Cluster.At.Equal(at) {
+				t.Fatalf("exact event recovery returned different facts: %+v", events)
+			}
+			if _, err := log.EventObservations(ctx, at, 1); rawErrorCode(err) != "IncompleteObservation" {
+				t.Fatalf("late simultaneous event bypassed the bound: %v", err)
+			}
+			if archive.catalogReads != 0 {
+				t.Fatalf("event recovery opened %d catalogs", archive.catalogReads)
+			}
+		})
+	}
+}

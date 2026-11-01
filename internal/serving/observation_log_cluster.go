@@ -96,8 +96,8 @@ func (l *ObservationLog) EventObservations(ctx context.Context, at time.Time, li
 	if at.IsZero() || limit <= 0 {
 		return nil, failure("InvalidQuery", "an event timestamp and positive event bound are required")
 	}
-	hour := at.UTC().Truncate(time.Hour)
-	bounds := [2]time.Time{hour, hour.Add(time.Hour).Add(-time.Nanosecond)}
+	// Segments follow append time, so delayed events can be in any later hour.
+	bounds := [2]time.Time{at.UTC().Truncate(time.Hour), {}}
 	read, err := l.prepare(ctx, map[string][2]time.Time{observationSchedulerStream: bounds, observationClusterStream: bounds})
 	if err != nil {
 		return nil, err

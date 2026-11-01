@@ -180,12 +180,13 @@ function InferenceFlow({ name, view, wrongUID }: { name: string; view: WorkloadV
     }}>다음</Button>}>
     <div className="grid gap-5">
       {fields.map(field => {
-        const title = field.name, chosen = picked[field.name], used = values[field.name]?.length ?? 0
+        const title = field.format === "JPEG" ? "사진" : field.name, chosen = picked[field.name], used = values[field.name]?.length ?? 0
         return <div key={field.name} className="grid gap-2 text-sm">
           <span className="font-semibold">{title} <span className="font-normal text-muted-foreground">· {formatText(field.format)}</span></span>
+          <span className="text-xs text-muted-foreground">{`계약 키 · ${field.name}`}</span>
           {field.format === "JPEG"
             ? <label className="relative flex cursor-pointer items-center gap-4 rounded-2xl border-2 border-dashed p-4 hover:bg-muted has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-ring" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); void pick(field, event.dataTransfer.files[0]) }}>
-              <input type="file" accept="image/jpeg,.jpg,.jpeg" className="sr-only" aria-label={`${title} 사진 고르기`} onChange={event => { void pick(field, event.currentTarget.files?.[0]); event.currentTarget.value = "" }} />
+              <input type="file" accept="image/jpeg,.jpg,.jpeg" className="sr-only" aria-label={`${title} 고르기`} onChange={event => { void pick(field, event.currentTarget.files?.[0]); event.currentTarget.value = "" }} />
               {/* eslint-disable-next-line @next/next/no-img-element -- a local data URL; next/image optimizes nothing here. */}
               {chosen ? <img alt={`고른 ${title}`} src={chosen.url} className="size-20 shrink-0 rounded-lg border object-cover" /> : <ImagePlus className="size-10 shrink-0 text-muted-foreground" aria-hidden="true" />}
               <span className="grid min-w-0 flex-1 gap-1"><span className="truncate font-semibold">{chosen ? chosen.name : "사진을 끌어 놓거나 골라 주세요"}</span><span className="text-muted-foreground">{chosen ? `${size(used)} · 눌러서 다른 사진 고르기` : `JPEG 사진 · 최대 ${size(field.maxBytes)}`}</span></span>

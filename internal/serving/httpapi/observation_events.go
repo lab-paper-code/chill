@@ -12,8 +12,8 @@ import (
 )
 
 type observationEvent struct {
-	Type string `json:"type"`
-	At time.Time `json:"at"`
+	Type string    `json:"type"`
+	At   time.Time `json:"at"`
 	live.Event
 }
 
@@ -79,5 +79,7 @@ func (h *Handler) observationEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		events = append(events, event)
 	}
-	sendJSON(w, http.StatusOK, struct { Events []observationEvent `json:"events"` }{events})
+	sendJSON(w, http.StatusOK, struct {
+		Events []observationEvent `json:"events"`
+	}{events})
 }

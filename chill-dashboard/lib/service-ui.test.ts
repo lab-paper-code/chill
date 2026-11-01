@@ -24,27 +24,28 @@ function elements(node: unknown): Element[] {
   return [element, ...elements(element.props.children)]
 }
 const idle = { desired: { metadata: { name: "idle", uid: "service-uid" }, spec: { modelRef: { name: "model" }, preprocessorRef: { name: "input" }, slo: { percentile: 95, targetLatency: "1s" } } }, admission: true, readiness: "Ready", pending: 0, assigned: 0, reason: "", supportedInputs: [], observedAt: "2026-11-01T00:00:00Z" } as unknown as WorkloadView
-function harness(query="") {
-  const paths: string[] = []
+function harness(query="", responses: Record<string, unknown>={}) {
+  const paths: string[] = [], replacements: string[] = []
   const modules: Record<string, unknown> = {
     react: { useState: (value: unknown) => [typeof value === "function" ? value() : value, () => {}], useMemo: (value: () => unknown) => value() },
     "next/link": { default: "a" },
-    "next/navigation": { useSearchParams: () => new URLSearchParams(query), useRouter: () => ({replace:()=>{}}) },
+    "next/navigation": { useSearchParams: () => new URLSearchParams(query), useRouter: () => ({replace:(path:string)=>replacements.push(path)}) },
     "@tanstack/react-query": { useQueryClient: () => ({}) },
     "@/lib/domain": domain, "@/lib/labels": labels, "@/lib/scheduler": scheduler,
-    "@/lib/client": { useSession: () => ({config:{inferTimeoutMs:129000,maxRequestBytes:8388608,pageSize:25}}), useChillQuery: (path: string) => { paths.push(path); return { data: path === "v1/workloads" ? [idle] : path.endsWith("/idle") ? idle : undefined, error: null } }, useChillMutation: () => ({ isPending: false }) },
+    "@/lib/client": { useSession: () => ({config:{inferTimeoutMs:129000,maxRequestBytes:8388608,pageSize:25}}), useChillQuery: (path: string) => { paths.push(path); return responses[path] ?? { data: path === "v1/workloads" ? [idle] : path.endsWith("/idle") ? idle : undefined, error: null } }, useChillMutation: () => ({ isPending: false }) },
     "@/components/status-cell": { StatusCell: "status-cell" },
     "@/components/data-table": { DataTable: "data-table" },
     "@/components/screen": { Screen: "main", Rows: "rows", RowDialog: "row-dialog", Facts: "facts" },
     "@/components/read-region": { QueryGate: "query-gate" },
-    "@/components/ui/button": { Button: "button" },
+    "@/components/ui/button": { Button: "button", buttonVariants: () => "" },
+    "lucide-react": { ImagePlus: "image-plus" },
     "@/components/stage-breakdown": { duration: (value: number) => `${value} ms` },
   }
   const hub = load("../features/service-hub.tsx", modules)
   modules["@/features/service-hub"] = hub
   const management=load("../features/management.tsx", modules)
   modules["@/features/management"]=management
-  return { hub, management, inference:load("../features/inference.tsx",modules), paths }
+  return { hub, management, inference:load("../features/inference.tsx",modules), paths, replacements }
 }
 
 test("idle admission remains permission, not actual traffic, in service list and detail", () => {
@@ -145,4 +146,52 @@ test("distribution rows and weights come from one scheduler snapshot despite a l
     [["분배 기준 시각 (KST)", new Date(snapshotAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })]],
     [["배치 관측 시각 (KST)", new Date(idle.observedAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })]],
   ])
+})
+
+test("service readiness preserves distinct reasons without repeating the same preparation label",()=>{
+  const h=harness()
+  for(const reason of ["Preparing","NativeNotReady",""]){
+    const tree=h.hub.ServiceReadiness({view:{...idle,readiness:"Preparing",reason}})
+    assert.equal(elements(tree).filter(node=>node.type==="span").length,0)
+  }
+  const tree=h.hub.ServiceReadiness({view:{...idle,readiness:"Preparing",reason:"MissingEvidence"}})
+  assert.ok(elements(tree).some(node=>node.props.children===labels.statusLabel("MissingEvidence")))
+  const table=elements(h.management.ServicesPage({})).find(node=>node.type==="data-table")!
+  const ready=(table.props.columns as {key:string;value:(view:WorkloadView)=>Element}[]).find(column=>column.key==="ready")!
+  assert.equal(ready.value(idle).type,h.hub.ServiceReadiness)
+})
+
+test("service empty reset clears search, state and page while preserving sort and page size",()=>{
+  const h=harness("filter=blocked&search=missing&page=4&limit=10&sort=service&order=desc")
+  const table=elements(h.management.ServicesPage({})).find(node=>node.type==="data-table")!
+  const button=table.props.emptyAction as Element
+  ;(button.props.onClick as ()=>void)()
+  const params=new URL(h.replacements[0],"https://dashboard.invalid").searchParams
+  for(const key of ["filter","search","page"])assert.equal(params.has(key),false)
+  assert.equal(params.get("sort"),"service")
+  assert.equal(params.get("limit"),"10")
+})
+
+test("autonomy distinguishes failed query, pending query, absent decision and disabled control",()=>{
+  for(const [response,settings,label] of [
+    [{error:{message:"offline"}},{autonomousWorkloads:["service-uid"]},"운영 판단 조회 실패"],
+    [{isPending:true},{autonomousWorkloads:["service-uid"]},"운영 판단 조회 중"],
+    [{data:{state:{decision:{}}}},{autonomousWorkloads:["service-uid"]},"이 서비스의 판단 기록 없음"],
+    [{data:{state:{decision:{}}}},{autonomousWorkloads:[]},"자동제어 꺼짐"],
+  ] as const){
+    const h=harness("",{"v1/scheduler":response,"v1/scheduler/settings":{data:settings}})
+    const facts=elements(h.management.ServicePage({name:"idle"})).find(node=>node.type==="facts")!
+    const rows=(facts.props.items as [string,Element][]).find(([key])=>key==="자동제어")![1]
+    const autonomy=elements(rows).find(node=>typeof node.type==="function")!
+    const tree=(autonomy.type as Component)(autonomy.props)
+    const state=elements(tree).find(node=>node.type==="facts")!
+    assert.equal((state.props.items as [string,string][])[0][1],label)
+  }
+})
+
+test("JPEG input leads with a user label and retains its original contract key",()=>{
+  const h=harness(),page=h.inference.InferencePage({name:"idle"})
+  const tree=(page.type as Component)({...page.props,view:{...idle,supportedInputs:[{}],appliedDefinition:{preprocessor:{input:[{name:"image",format:"JPEG",maxBytes:1024}]},slo:{percentile:95,targetLatencyNanos:1000}}}})
+  assert.ok(elements(tree).some(node=>node.props["aria-label"]==="사진 고르기"))
+  assert.ok(elements(tree).some(node=>node.props.children==="계약 키 · image"))
 })

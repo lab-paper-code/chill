@@ -49,6 +49,7 @@ function StateStrip({state,status,reconnect,now,zone,paused,togglePause}:{state:
   return <div className="live-strip" aria-label="관측 상태">
     <div className="live-freshness"><strong>{paused?"화면 일시정지":status==="live"&&!fresh?"관측 지연":connection[status]??status}</strong><span>마지막 수신 <time dateTime={state.lastReceivedAt?new Date(state.lastReceivedAt).toISOString():undefined}>{state.lastReceivedAt?displayTime(new Date(state.lastReceivedAt).toISOString(),zone):"대기"}</time></span></div>
     <div className="live-strip-actions"><button type="button" onClick={togglePause} aria-pressed={paused}>{paused?"실시간으로 복귀":"화면 일시정지"}</button>{!["live","fixture","paused-hidden"].includes(status)&&<button type="button" onClick={reconnect}>다시 연결</button>}
+      <small>새로고침 시 실시간 복귀</small>
       {config.liveFixture&&<label>검사용 장면 <select value={params.get("fixture")??"live"} onChange={event=>{const next=new URLSearchParams(params.toString());next.delete("open");next.delete("at");if(event.target.value==="live")next.delete("fixture");else next.set("fixture",event.target.value);router.replace(`${path}?${next}`,{scroll:false})}}><option value="live">실시간</option><option value="empty">빈 상태</option><option value="first">첫 구성</option><option value="expand">확장</option><option value="shrink">축소</option></select></label>}
     </div>
   </div>
@@ -150,24 +151,24 @@ function IncidentDetails({identity,state,zone}:{identity:string;state:LiveState;
   const local=state.events.find(row=>eventIdentity(row)===identity||String(row.seq)===identity)
   const query=useChillQuery<{events:IncidentEvent[]}>(`v1/observations/events?${new URLSearchParams({at:at??""})}`,{enabled:!local&&!!at})
   const event=local??query.data?.events.find(row=>eventIdentity(row)===identity)
-  if(!event)return <><p role={query.error?"alert":"status"}>{query.error?evidenceError(query.error):at&&!query.data?"사건 조회 중":"보관 범위 밖 사건"}</p><Link href={historyHref(undefined,at)}>같은 기간 기록</Link></>
+  if(!event)return <><p role={query.error?"alert":"status"}>{query.error?evidenceError(query.error):at&&!query.data?"사건 조회 중":"보관 범위 밖 사건"}</p><Facts items={[["선택 사건 시각",at?displayTime(at,zone):"미제공"],["서버 사건 보관 범위","미제공"],["현재 탭 보관 시작",displayTime(state.events[0]?.at,zone)],["현재 탭 보관 종료",displayTime(state.events.at(-1)?.at,zone)]]}/><Link href={historyHref(undefined,at)}>{at?"같은 기간 기록":"최근 기록 검색"}</Link></>
   const action=event.kind==="action"?event.action:null,cluster=event.kind==="cluster"?event.cluster:null
   const diagnosis=incidentDiagnosis(action?.result?.error??cluster?.reason)
   return <><Facts items={[["시각 KST",displayTime(event.at,zone)],["종류",action?"구성 변경":cluster?"클러스터":"구성 판단"],["대상",action?actionNodeName(action.node):cluster?.pod?.name??cluster?.source??"전체 서비스"],...(action?[["동작",actionKinds[action.kind]??(action.kind==="measurement-handback"?"측정 장치 반환":"구성 변경")],["결과",action.phase==="started"?"시작":action.phase==="completed"?"완료":"실패"]] as [string,React.ReactNode][]:[]),["사유",diagnosis.reason],...(diagnosis.mode?[["목표 전력모드",diagnosis.mode]] as [string,React.ReactNode][]:[]),["확인 항목",diagnosis.check]]}/>{action&&<Link href={`/operations/devices?node=${encodeURIComponent(action.node.uid)}`}>해당 장치 확인</Link>}<Link href={historyHref(action?.workloadUID,event.at,action?.node.uid)}>해당 시점 기록</Link><Source value={event}/></>
 }
 function Selection({open,state,select,zone,end,now}:{open:string;state:LiveState;select:Select;zone:Zone;end:number;now:number}) {
   const snapshot=state.snapshot,workload=open.startsWith("service:")?snapshot?.workloads.find(row=>row.uid===open.slice(8)):undefined,node=open.startsWith("node:")?snapshot?.nodes.find(row=>row.uid===open.slice(5)):undefined,action=open.startsWith("action:")?snapshot?.actions.find(row=>JSON.stringify([row.id,row.node.uid,row.startedAt])===open.slice(7)):undefined
-  if(open==="terms")return <table><thead><tr><th>용어</th><th>정의·판정 기준</th></tr></thead><tbody>{[
+  if(open==="terms")return <><table><thead><tr><th>용어</th><th>정의·판정 기준</th></tr></thead><tbody>{[
     ["서비스 영향","관측된 요청 실패·목표 초과·대기·변경. 관측 공백과 별도"],
     ["성능 판정","서비스에 설정된 분위수와 지연 목표. 무부하·표본 부족은 판정 불가"],
     ["접수 허용","새 요청 접수 설정. 실제 유입과 별도"],
     ["유휴","유입·종결·대기가 없고 미배치·변경·예약 없는 서비스"],
     ["자동제어","서비스별 자동 구성 변경 설정"],
     ["관측 공백","범위별 연속 누락. 후속 유효 관측으로만 회복 확인"],
-    ["예상 대비 지연","예상 평균의 세 배 경과. 예상 미제공은 5분 경과"],
+    ["예상 대비 지연","제공된 예상 평균 또는 예상 미제공 기본 기준 초과"],
     ["변경 비용 (이전: 동작 비용)","준비·제거·전력모드 전환의 시간·에너지"],
     ["분배 처리시간 (이전: 분배 점유시간)","요청당 점유시간(ms/요청)·완료 처리량(req/s)"],
-  ].map(([term,meaning])=><tr key={term}><th scope="row">{term}</th><td>{meaning}</td></tr>)}</tbody></table>
+  ].map(([term,meaning])=><tr key={term}><th scope="row">{term}</th><td>{meaning}</td></tr>)}</tbody></table><Facts items={[["예상 평균 대비 배수",3],["예상 미제공 기준 분",5]]}/></>
   if(open.startsWith("gap:")){
     const gap=gapEpisodes(state.gaps,now,state.metrics).find(row=>JSON.stringify([row.scope,row.from])===open.slice(4))
     return gap?<><h3>관측 공백 / {gapLabel(state,gap.scope)}</h3><Facts items={[["시작 KST",displayTime(gap.from,zone)],["종료 KST",displayTime(gap.to,zone)],["지속 s",number(gap.seconds,"",1)],["상태",gap.lost?"기록 손실":gap.recovered?"회복":"진행"],["사유",liveReason(gap.reason)]]}/><Source value={gap}/></>:<p>보관 범위 밖 사건</p>
@@ -201,13 +202,13 @@ export function LiveBoardPage() {
   const evaluable=rows.filter(row=>sloLatency(row.workload,row.metric)!=null),missed=evaluable.some(row=>sloTargetMissed(row.workload,row.metric))
   const performance={axis:STATUS_AXES.performance,label:!fresh||!evaluable.length?"판정 불가":missed?"목표 초과":"목표 이내",tone:(!fresh||!evaluable.length?"idle":missed?"fail":"ok") as StatusTone,reason:!fresh?"관측 신선도 부족":!evaluable.length?"평가 표본 없음":undefined}
   const alerts=deviceAlerts(snapshot,state.events),failedEvents=state.events.filter(event=>event.kind==="action"&&event.action.phase==="failed").length
-  const summary=`서비스 영향 ${verdict.label} / 성능 판정 ${performance.label} / 관측 상태 ${verdict.observation.label} / 진행 변경 ${changes} / 접속 후 실패 사건 ${failedEvents} / 예약 ${snapshot?.reservations.length??"미확인"} / 장치 확인 ${alerts.length}`
+  const summary=`서비스 영향 ${verdict.label} / 성능 판정 ${performance.label} / 관측 상태 ${verdict.observation.label} / 진행 변경 ${changes} / 보관 중 실패 사건 ${failedEvents} / 예약 ${snapshot?.reservations.length??"미확인"} / 장치 확인 ${alerts.length}`
   const sheetOpen=!!(open||at||evidence),title=at?"선택 판단 근거":open==="terms"?"용어 도움말":open?.startsWith("service:")?"서비스 관측":open?.startsWith("node:")?"장치 관측":evidence?"판단 근거":open==="reservations"?"예약 상세":open?.startsWith("action:")?"변경 상세":"사건 상세"
   return <div className="live-stage">
     <header className="live-heading"><h1 ref={heading} tabIndex={-1}>운영 현황</h1><div className="live-scope"><span>범위 전체 서비스</span><span>기준 시각 <time dateTime={metrics?.bucketAt}>{displayTime(metrics?.bucketAt,zone)||"미기록"}</time></span></div><StateStrip state={state} status={live.status} reconnect={live.reconnect} now={clock} zone={zone} paused={paused} togglePause={()=>setFrozen(paused?null:{state:live.state,now,epoch,fixture})}/></header>
     <section className="live-verdict" aria-label="운영 판독"><div className="live-section-heading"><h2>운영 판독</h2><nav className="live-detail-links"><Link href="/operations/devices">장치</Link>{snapshot?.decision&&<button type="button" onClick={event=>select("at",snapshot.decision!.at,event.currentTarget)}>판단 근거</button>}</nav></div>
       <table className="live-reading"><thead className="sr-only"><tr><th>서비스 영향</th><th>성능 판정</th><th>관측 상태</th><th>실험 상태</th></tr></thead><tbody><tr><td data-label="서비스 영향"><StatusCell axis={verdict.axis} label={verdict.label} tone={verdict.tone==="danger"?"fail":verdict.tone==="warning"?"warn":verdict.tone==="healthy"?"ok":"idle"} reason={verdict.reason}/></td><td data-label="성능 판정"><StatusCell {...performance}/></td><td data-label="관측 상태"><StatusCell {...verdict.observation}/></td><td data-label="실험 상태"><EvaluationStatusCell/></td></tr></tbody></table>
-      <table className="live-counts"><thead><tr><th>평가 가능 개</th><th>미평가 개</th><th>진행 변경 건</th><th>접속 후 실패 건</th><th>예약 건</th><th>장치 확인 개</th></tr></thead><tbody><tr><td data-label="평가 가능 개">{snapshot?evaluable.length:"미확인"}</td><td data-label="미평가 개">{snapshot?rows.length-evaluable.length:"미확인"}</td><td data-label="진행 변경 건">{snapshot?changes:"미확인"}</td><td data-label="접속 후 실패 건">{failedEvents}</td><td data-label="예약 건"><button type="button" onClick={event=>select("open","reservations",event.currentTarget)}><ReservationCount key={epoch} count={snapshot?.reservations.length??null}/></button></td><td data-label="장치 확인 개"><strong>{fresh?alerts.length:"미확인"}</strong>{alerts.map(node=><Link className="live-device" key={node.uid} href={`/operations/devices?node=${encodeURIComponent(node.uid)}`}>{node.name||"장치"}<small>{node.reason}</small></Link>)}</td></tr></tbody></table>
+      <table className="live-counts"><thead><tr><th>평가 가능 개</th><th>미평가 개</th><th>진행 변경 건</th><th>보관 중 실패 건</th><th>예약 건</th><th>장치 확인 개</th></tr></thead><tbody><tr><td data-label="평가 가능 개">{snapshot?evaluable.length:"미확인"}</td><td data-label="미평가 개">{snapshot?rows.length-evaluable.length:"미확인"}</td><td data-label="진행 변경 건">{snapshot?changes:"미확인"}</td><td data-label="보관 중 실패 건">{failedEvents}</td><td data-label="예약 건"><button type="button" onClick={event=>select("open","reservations",event.currentTarget)}><ReservationCount key={epoch} count={snapshot?.reservations.length??null}/></button></td><td data-label="장치 확인 개"><strong>{fresh?alerts.length:"미확인"}</strong>{alerts.map(node=><Link className="live-device" key={node.uid} href={`/operations/devices?node=${encodeURIComponent(node.uid)}`}>{node.name||"장치"}<small>{node.reason}</small></Link>)}</td></tr></tbody></table>
     </section>
     <p className="sr-only" aria-live={paused?"off":"polite"} aria-atomic="true">{summary}</p>
     <div className="live-board-grid">{snapshot?<ServiceTable state={state} rows={rows} select={select}/>:<section className="live-services"><h2>서비스 상태</h2><p className="live-empty">서비스 구성 수신 대기</p></section>}<SideRail state={state} select={select} zone={zone} now={clock}/></div>

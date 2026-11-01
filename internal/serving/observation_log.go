@@ -1243,17 +1243,17 @@ func (l *ObservationLog) runtimeFacts() (map[string]*Definition, []RequestRow) {
 // observationRead holds files opened under the writer lock; reads and
 // decoding run outside it. Deleting an hour does not affect an open file.
 type observationRead struct {
-	files        map[string][]observationOpenFile
-	open         map[string]*RequestRow
-	definitions  map[string]*Definition
-	start        time.Time
-	ctx          context.Context
-	now          time.Time
-	localHours   map[time.Time]bool
-	sources      map[string][]observationSource
-	archive      ObservationArchive
-	catalogs     map[time.Time]*ObservationCatalog
-	scanningHour time.Time
+	files           map[string][]observationOpenFile
+	open            map[string]*RequestRow
+	definitions     map[string]*Definition
+	start           time.Time
+	ctx             context.Context
+	now             time.Time
+	localHours      map[time.Time]bool
+	sources         map[string][]observationSource
+	archive         ObservationArchive
+	catalogs        map[time.Time]*ObservationCatalog
+	scanningHour    time.Time
 	definitionsOnly bool
 }
 

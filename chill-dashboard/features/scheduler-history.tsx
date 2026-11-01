@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams, type ReadonlyURLSearchParams }
 import type { QueryObserverBaseResult } from "@tanstack/react-query"
 import { useChillQuery, useSession, type ApiError } from "@/lib/client"
 import type { SchedulerObservation, SchedulerObservationPage, SchedulerObservationSummary, SchedulerObservationSummaryPage } from "@/lib/read-types"
+import type { WorkloadView } from "@/lib/domain"
 import { parseSchedulerJSON, nanosToMilliseconds } from "@/lib/scheduler"
 import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerComparisonParams, schedulerHistoryNodeMatches, schedulerHistoryKindMatches, groupHistoryKeeps, type SchedulerRecordRef } from "@/lib/scheduler-history"
 import { gapNotice, utcDateTime } from "@/lib/date-time"
@@ -33,7 +34,7 @@ const historyFilters:Record<string,string>={all:"모든 종류","decision-action
 export const when=(value?:string)=>!value||value.startsWith("0001-")||!Number.isFinite(Date.parse(value))?"미기록":`${new Intl.DateTimeFormat("ko-KR",{timeZone:"Asia/Seoul",month:"numeric",day:"numeric"}).format(new Date(value))} ${displayTime(value,"KST")}`
 export const actorName=(name?:string)=>name?.startsWith("system:serviceaccount:")?name.split(":").at(-1)!:name??"기록 없음"
 
-export function useSchedulerHistory():SchedulerHistoryQuery<SchedulerObservationSummary> {
+export function useSchedulerHistory(defaultFilter="decision-action"):SchedulerHistoryQuery<SchedulerObservationSummary> {
   const params=useSearchParams(),router=useRouter(),pathname=usePathname(),{config}=useSession()
   const [entry]=React.useState(()=>{const now=Date.now();return {from:new Date(now-3600000).toISOString(),to:new Date(now).toISOString()}})
   const submitted={from:params.get("from")??entry.from,to:params.get("to")??entry.to},cursor=params.get("cursor")??"0"
@@ -43,6 +44,7 @@ export function useSchedulerHistory():SchedulerHistoryQuery<SchedulerObservation
   React.useEffect(()=>{if(!params.has("from")||!params.has("to")){const next=new URLSearchParams(params.toString());if(!next.has("from"))next.set("from",entry.from);if(!next.has("to"))next.set("to",entry.to);router.replace(`${pathname}?${next}`)}},[entry,params,pathname,router])
   const request=new URLSearchParams({...submitted,limit:params.get("limit")??String(config.pageSize)});if(params.has("cursor"))request.set("cursor",params.get("cursor")!)
   for(const key of ["order","filter","uid"])if(params.has(key)&&(key!=="uid"||params.get("kind")!=="power"))request.set(key,params.get(key)!)
+  request.set("filter",params.get("filter")??defaultFilter)
   request.set("view","summary")
   const query=useChillQuery<SchedulerObservationSummaryPage>(`v1/observations/scheduler?${request}`,{decoder:parseSchedulerJSON})
   const rows=(query.data?.events??[]).map((event,index)=>({event,ref:schedulerRecordRef(event,submitted.from,submitted.to,(BigInt(cursor)+BigInt(index)).toString())}))
@@ -61,7 +63,7 @@ export function HistoryControls({history,children}:{history:SchedulerHistoryQuer
   const [open,setOpen]=React.useState(false)
   const inputTimes=[history.draft.from,history.draft.to].map(value=>{const time=Date.parse(value);return Number.isFinite(time)?new Date(time+9*3600000).toISOString().slice(0,16):""})
   return <Rows label="조회 조건">
-    <RowDialog open={open} onOpenChange={next=>{setOpen(next);if(next)history.setDraft(history.submitted)}} label="기간" value={`${when(history.submitted.from)} – ${when(history.submitted.to)}`} title="조회 기간" description="시작 시각부터 끝 시각 직전까지의 기록을 보여드려요.">
+    <RowDialog open={open} onOpenChange={next=>{setOpen(next);if(next)history.setDraft(history.submitted)}} label="기간 변경" title="조회 기간" description="시작 시각부터 끝 시각 직전까지의 기록을 보여드려요.">
       <form noValidate className="grid gap-4" onSubmit={event=>{event.preventDefault();if(history.apply())setOpen(false)}}>
         <label className="grid gap-1.5">시작 KST<Input type="datetime-local" value={inputTimes[0]} onChange={event=>{const value=event.currentTarget.validity.valid?event.currentTarget.value:"",from=utcDateTime(value?`${value}+09:00`:"");history.setDraft(current=>({...current,from}))}}/></label>
         <label className="grid gap-1.5">종료 KST<Input type="datetime-local" value={inputTimes[1]} onChange={event=>{const value=event.currentTarget.validity.valid?event.currentTarget.value:"",to=utcDateTime(value?`${value}+09:00`:"");history.setDraft(current=>({...current,to}))}}/></label>
@@ -106,8 +108,10 @@ function RecordDetails({row}:{row:SchedulerHistoryRow}){
 }
 
 export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean}){
-  const history=useSchedulerHistory(),router=useRouter(),pathname=usePathname(),params=history.params
-  const filter=settingsOnly?"settings":params.get("filter")??"all",filterNode=params.get("filterNode")??""
+  const history=useSchedulerHistory(settingsOnly?"settings":"decision-action"),router=useRouter(),pathname=usePathname(),params=history.params
+  const workloads=useChillQuery<WorkloadView[]>("v1/workloads")
+  const uid=params.get("uid")??"",serviceName=workloads.data?.find(row=>row.desired.metadata.uid===uid)?.desired.metadata.name
+  const filter=settingsOnly?"settings":params.get("filter")??"decision-action",filterNode=params.get("filterNode")??""
   const rows=groupHistoryKeeps(history.rows.filter(row=>schedulerHistoryKindMatches(filter,row.ref.kind)&&schedulerHistoryNodeMatches(filterNode,row.event)))
   const targetEvent=filterNode?history.rows.find(row=>schedulerHistoryNodeMatches(filterNode,row.event))?.event:undefined
   const nodeName=(targetEvent?.action?.node??targetEvent?.node)?.name||"선택 장치"
@@ -116,6 +120,10 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
   const requested=["offset","at","id","node","startedAt"].some(key=>params.has(key))
   const record=useChillQuery<SchedulerObservationPage>(schedulerRecordPath(selected),{decoder:parseSchedulerJSON,enabled:requested&&!!selected})
   const event=record.data?.events?.[0],matches=selected&&schedulerRecordMatches(selected,event)
+  function target(uid:string){
+    const next=schedulerPageParams(new URLSearchParams(params.toString()));if(uid)next.set("uid",uid);else next.delete("uid")
+    router.replace(`${pathname}?${next}`)
+  }
   function select(row:SchedulerHistoryRow<SchedulerObservationSummary>,prefix=""){
     const next=new URLSearchParams(params.toString())
     for(const [key,value] of schedulerRecordParams(row.ref,prefix))next.set(key,value)
@@ -130,12 +138,18 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
   return <Screen width="data" title="기록"
     action={!settingsOnly&&(a||b)?<>{a&&b?<Button asChild><Link href={`/records?${compare}`} scroll={false}>판단 비교</Link></Button>:<Button disabled>판단 비교</Button>}</>:undefined}>
     <RecordsNavigation/>
-    <RecordsRange target={filterNode?nodeName:params.get("uid")??"클러스터 전체"} from={history.submitted.from} to={history.submitted.to} at={history.query.data?.to}/>
+    <RecordsRange target={filterNode?nodeName:serviceName??(uid||"클러스터 전체")} from={history.submitted.from} to={history.submitted.to} at={history.query.data?.to}/>
     <HistoryControls history={history}>
-      <RowDialog label="대상" value={params.get("uid")??"클러스터 전체"} title="대상 서비스 UID">
-        <form className="grid gap-3" onSubmit={event=>{event.preventDefault();const uid=String(new FormData(event.currentTarget).get("uid")??"").trim(),next=schedulerPageParams(new URLSearchParams(params.toString()));if(uid)next.set("uid",uid);else next.delete("uid");router.replace(`${pathname}?${next}`)}}>
-          <label>서비스 UID<Input name="uid" defaultValue={params.get("uid")??""}/></label><Button type="submit">조회</Button>
-        </form>
+      <RowDialog label="대상 변경" title="대상 서비스">
+        <QueryGate query={workloads}><label className="grid gap-2">서비스<select className="min-h-11 rounded-md border bg-background px-2" value={uid} onChange={event=>target(event.target.value)}>
+          <option value="">클러스터 전체</option>
+          {uid&&!serviceName&&<option value={uid}>이름 미확인 · {uid}</option>}
+          {workloads.data?.map(row=><option key={row.desired.metadata.uid} value={row.desired.metadata.uid}>{row.desired.metadata.name}</option>)}
+        </select></label></QueryGate>
+        {uid&&<Facts items={[["서비스 UID",uid]]}/>}
+        <details><summary className="min-h-11 cursor-pointer py-2">UID 직접 입력</summary><form className="grid gap-3" onSubmit={event=>{event.preventDefault();target(String(new FormData(event.currentTarget).get("uid")??"").trim())}}>
+          <label>서비스 UID<Input name="uid" defaultValue={uid}/></label><Button type="submit">조회</Button>
+        </form></details>
       </RowDialog>
       {filterNode&&<RowDialog label="장치 사건 · 현재 페이지" value={nodeName} title="장치 사건 범위">
         <Facts items={[["대상",nodeName],["적용 범위","불러온 현재 페이지"],["포함 기록","장치가 명시된 사건"],["클러스터 판단","장치 필터 해제 후 확인"],...(params.get("eventAt")?[["기준 사건 시각 KST",when(params.get("eventAt")!)] as [string,string]]:[])]}/>

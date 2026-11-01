@@ -8,6 +8,7 @@ import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as scheduler from "./scheduler.ts"
 import * as identity from "./workload-identity.ts"
 import * as dates from "./date-time.ts"
+import * as liveDisplay from "./live-display.ts"
 import type * as Screen from "../features/scheduler.tsx"
 
 test("selected service evidence retains configured percentile, zero prediction, missing prediction and exact load window",()=>{
@@ -23,6 +24,7 @@ test("selected service evidence retains configured percentile, zero prediction, 
     "next/navigation":{useSearchParams:()=>params,useRouter:()=>({replace:()=>{}})},
     "@/lib/client":{useSession:()=>({config:{maxWindowHours:24}}),useWorkloadDefinitions:()=>[],useChillQuery:(path:string)=>{calls.push(path);return {data:path==="v1/scheduler"?view:path.startsWith("v1/observations/load?")?load:path==="v1/workloads"?[{desired:{metadata:{uid:definition.uid,name:definition.name}}}]:[],error:null}}},
     "@/lib/scheduler":scheduler,"@/lib/workload-identity":identity,"@/lib/date-time":dates,
+    "@/lib/live-display":liveDisplay,
     "@/features/scheduler-profiles":{},"@/features/scheduler-capacity":{},"@/lib/capacity":{},"@/lib/labels":{statusLabel:(value:string)=>value},"@/lib/source-export":{},
     "@/components/read-region":{QueryGate:container,SourceJSON:()=>null,SourceExport:()=>null,StatusBadge:container},
     "@/components/ui/button":{Button:container},"@/components/screen":{Facts:()=>null},
@@ -56,6 +58,7 @@ test("snapshot deep links freeze the first response and require explicit latest 
     "next/navigation":{useSearchParams:()=>params},
     "@/lib/client":{useChillQuery:()=>({data})},"@/lib/scheduler":scheduler,
     "@/lib/labels":{},"@/lib/capacity":{},"@/lib/date-time":{},"@/lib/workload-identity":{},
+    "@/lib/live-display":liveDisplay,
     "@/features/scheduler-profiles":{},"@/features/scheduler-capacity":{},
     "@/components/read-region":{},"@/components/screen":{},"@/components/ui/button":{},
     "@/components/data-table":{},"@/lib/source-export":{},"next/link":{},

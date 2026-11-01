@@ -14,11 +14,18 @@ func TestRecordedActionUsesSameDurableAndLiveTimestamp(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	publisher := newLivePublisher(ctx)
-	log, err := serving.NewObservationLog(serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: schedulerPowerArchive{directory: t.TempDir()}})
+	log, err := serving.NewObservationLog(serving.ObservationLogConfig{
+		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
+		Writer: schedulerPowerArchive{directory: t.TempDir()},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { if err := log.Close(context.Background()); err != nil { t.Error(err) } })
+	t.Cleanup(func() {
+		if err := log.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
 	subscription, err := publisher.hub.Subscribe(0, "")
 	if err != nil {
 		t.Fatal(err)
@@ -28,7 +35,12 @@ func TestRecordedActionUsesSameDurableAndLiveTimestamp(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := &schedulerService{observationLog: log, live: publisher}
-	result := servingkube.OperationResult{Operation: servingkube.Operation{ID: "operation", Kind: "power", Node: serving.NodeReference{UID: "node"}}, StartedAt: time.Now().UTC(), Status: "running"}
+	result := servingkube.OperationResult{
+		Operation: servingkube.Operation{
+			ID: "operation", Kind: "power", Node: serving.NodeReference{UID: "node"},
+		},
+		StartedAt: time.Now().UTC(), Status: "running",
+	}
 	if err := service.recordAction(result); err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +51,10 @@ func TestRecordedActionUsesSameDurableAndLiveTimestamp(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var event struct { Type string `json:"type"`; At time.Time `json:"at"` }
+		var event struct {
+			Type string    `json:"type"`
+			At   time.Time `json:"at"`
+		}
 		if err := json.Unmarshal(raw, &event); err != nil {
 			t.Fatal(err)
 		}

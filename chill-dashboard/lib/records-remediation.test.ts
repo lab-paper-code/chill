@@ -27,7 +27,7 @@ test("scheduler changes cannot be intercepted by an unconditional Next redirect"
 
 test("power journal queries ignore workload UID while retaining its navigation context",()=>{
   const params=new URLSearchParams("kind=power&uid=service&from=2026-10-31T01:00:00.123456789Z&to=2026-10-31T02:00:00.987654321Z&limit=17&cursor=81"),calls:string[]=[]
-  const modules=modulesFor(params,(path,options)=>{if(options?.enabled===false)return {};calls.push(path);return {data:{events:[]},isSuccess:true}})
+  const modules=modulesFor(params,(path,options)=>{if(options?.enabled===false)return {};if(path==="v1/workloads")return {data:[]};calls.push(path);return {data:{events:[]},isSuccess:true}})
   const exports=load("../features/scheduler-history.tsx",modules)
   renderToStaticMarkup(createElement(exports.SchedulerHistoryPage as ()=>ReactNode))
   const query=new URL(calls[0],"https://dashboard.invalid").searchParams
@@ -50,7 +50,7 @@ test("request and management navigation preserves all repeated cohort filters",(
 
 test("incomplete historical references never mount current-state evidence",()=>{
   for(const search of ["view=history&id=same&from=start&to=end","view=history&id=same&node=node","id=same&offset=17&from=start&to=end"]){
-    const modules=modulesFor(new URLSearchParams(search),()=>({data:{events:[]},isSuccess:true}))
+    const modules=modulesFor(new URLSearchParams(search),path=>({data:path==="v1/workloads"?[]:{events:[]},isSuccess:true}))
     const exports=load("../features/scheduler-history.tsx",modules)
     const html=renderToStaticMarkup(createElement(exports.SchedulerHistoryPage as ()=>ReactNode))
     assert.match(html,/기록 식별자 미확인/);assert.doesNotMatch(html,/현재 동작 대체/)

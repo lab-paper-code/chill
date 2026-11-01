@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { LiveAction, LiveInstance, LiveMetric, LiveMetrics, LiveSnapshot, LiveWorkload } from "./live.ts"
-import { changeListStatus, actionProgress, actionOrigin, scopeSnapshot, scopeEvents, recentEvents, liveFresh, belongsToPool, displayNumber, duration, elapsed, instanceSymbol, isStale, ratio, receivedLabel, routingShare, terminalCount, workloadLabel, workloadQueue, servicePriority, mergeKeepEvents, trendSegments, boardVerdict, decisionText } from "./live-display.ts"
-import { retainedEvents, sloLatency, minuteMetrics, incidentFlow, incidentSummary, serviceRows, powerWindow, decisionReason, gapEpisodes, liveReason, displayTime } from "./live-display.ts"
+import { changeListStatus, actionProgress, actionOrigin, scopeSnapshot, scopeEvents, recentEvents, liveFresh, belongsToPool, displayNumber, duration, elapsed, instanceSymbol, isStale, ratio, receivedLabel, routingShare, terminalCount, workloadLabel, workloadQueue, servicePriority, trendSegments, boardVerdict } from "./live-display.ts"
+import { sloLatency, minuteMetrics, incidentFlow, incidentSummary, serviceRows, powerWindow, decisionReason, gapEpisodes, liveReason, displayTime } from "./live-display.ts"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { createElement, type ComponentType, type ReactNode } from "react"
@@ -144,13 +144,6 @@ test("whole-board changes and delays warn after service anomalies, including UID
   assert.equal(concurrent.observation.axis,"관측 상태")
   assert.equal(concurrent.observation.label,"관측 공백")
 })
-test("only consecutive unchanged Keep events merge; changes remain independently visible",()=>{
-  const decision=(seq:number,reason="")=>({type:"event" as const,kind:"decision" as const,seq,at,decision:{at,state:"Keep",reason,explanation:""}})
-  const rows=mergeKeepEvents([decision(1),decision(2),decision(3,"ReservedScope:plan-a"),decision(4)])
-  assert.deepEqual(rows.map(row=>row.count),[2,1,1])
-  assert.equal(rows[0].event.seq,2)
-  assert.equal(decisionText({at,state:"Keep",reason:"ReservedScope:plan-a",explanation:"예약된 자원은 유지해요"}),"예약된 자원은 유지해요")
-})
 test("five-minute sparkline does not join missing seconds or absent workload samples",()=>{
   const end=now+4000
   const points=[{at:now,value:1},{at:now+1000,value:2},{at:now+3000,value:3},{at:now+4000,value:null}]
@@ -231,16 +224,11 @@ test("automation and placement do not turn observed no-load services into an ala
   assert.equal(decisionReason("Keep",[true]),"유지")
 })
 
-test("latency uses the exact SLO percentile and retained events outlive the new-event window",()=>{
+test("latency uses the exact SLO percentile",()=>{
   assert.equal(sloLatency({...workload,slo:{...workload.slo,percentile:90}},metric),15)
   assert.equal(sloLatency({...workload,slo:{...workload.slo,percentile:99}},metric),30)
   assert.equal(sloLatency({...workload,slo:{...workload.slo,percentile:92}},metric),undefined)
   assert.equal(sloLatency(workload,{...metric,latencySamples:0}),null)
-  const event={type:"event" as const,kind:"decision" as const,seq:1,at,decision:{at,state:"Changed",reason:"",explanation:"변경"}}
-  assert.equal(recentEvents([event],now+60000).length,0)
-  assert.equal(retainedEvents([event],now+60000).length,1)
-  assert.equal(retainedEvents([...Array(35)].map((_,seq)=>({...event,seq})),now).length,30)
-  assert.equal(retainedEvents([{...event,decision:{...event.decision,state:"Keep"}}],now).length,0)
 })
 
 test("minute summary includes exactly sixty completed second buckets at aligned and fractional clocks",()=>{
@@ -368,6 +356,7 @@ test("operations board keeps independent axes, idle summary, service placement a
   assert.match(idle,/자동제어 개/)
   assert.match(idle,/성능 판정<\/span><strong>판정 불가/)
   assert.match(idle,/전체 미배치/)
+  assert.match(idle,/새로고침 시 실시간 복귀/)
   assert.match(idle,/서비스별 위치/)
   assert.doesNotMatch(idle,/live-node-power|data-sheet/)
   query=new URLSearchParams({services:"확인 필요"})
@@ -430,9 +419,10 @@ test("operations board keeps independent axes, idle summary, service placement a
   const failure:LiveState["events"][number]={type:"event",seq:77,at,kind:"action",action:{id:"attempt",kind:"measurement-handback",node:{uid:"n",name:"장치"},workloadUID:"",status:"failed",startedAt:at,phase:"failed",expectedSeconds:null,expectedSource:null,result:{status:"failed",error:"node n did not reach power mode MAXN within 15m0s"}}}
   state.events=[failure]
   const failedBoard=render()
-  assert.match(failedBoard,/접속 후 실패 건/)
+  assert.match(failedBoard,/보관 중 실패 건/)
   assert.match(failedBoard,/장치 확인 개/)
   assert.match(failedBoard,/전력모드 전환 시간 초과/)
+  assert.doesNotMatch(failedBoard,/접속 후 실패/)
   query=new URLSearchParams({open:`event:${JSON.stringify(["action",at,"attempt","n"])}`})
   assert.match(render(),/장치 전원·전력모드 제어기 확인/)
   archived=[failure];state.events=[]

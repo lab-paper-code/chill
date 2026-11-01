@@ -299,20 +299,6 @@ func (r *observationRead) scanSource(stream string, source observationSource, sc
 
 const observationArchiveSource = "archive"
 
-func (l *ObservationLog) readCatalogs(read *observationRead) error {
-	for stream, sources := range read.sources {
-		if stream == observationCatalogStream {
-			continue
-		}
-		for _, source := range sources {
-			if err := l.readCatalog(read, source.hour); err != nil {
-				return err
-			}
-		}
-	}
-	return read.ctx.Err()
-}
-
 func (l *ObservationLog) readCatalog(read *observationRead, hour time.Time) error {
 	if read.catalogs == nil {
 		read.catalogs = map[time.Time]*ObservationCatalog{}

@@ -76,7 +76,7 @@ function SelectedPower({record}:{record:SchedulerRecordRef|null}) {
   return <QueryGate query={query}>{query.data&&(schedulerRecordMatches(record,event)&&record.kind==="power"&&event?<PowerDetails event={event} record={record}/>:<RecordReturn record={record}/>)}</QueryGate>
 }
 export function SchedulerPowerPage() {
-  const history=useSchedulerHistory(),router=useRouter(),params=useSearchParams()
+  const history=useSchedulerHistory("power"),router=useRouter(),params=useSearchParams()
   const opener=React.useRef<HTMLElement|null>(null),[nodeOpen,setNodeOpen]=React.useState(false)
   const node=params.get("filterNode")??"",powerRows=history.rows.filter(row=>!!row.event.power),rows=powerRows.filter(row=>!node||row.event.node?.uid===node)
   const nodes=new Map(powerRows.map(row=>[row.event.node?.uid??"",row.event.node?.name??"노드 이름 없음"]))
@@ -85,7 +85,7 @@ export function SchedulerPowerPage() {
     <RecordsNavigation/>
     <RecordsRange target={node?nodes.get(node)??node:"전체 노드"} from={history.submitted.from} to={history.submitted.to} at={history.query.data?.to}/>
     <HistoryControls history={history}>
-      <RowDialog open={nodeOpen} onOpenChange={setNodeOpen} label="노드" value={node?nodes.get(node)??"이전에 고른 노드":"전체 노드"} title="노드 고르기" description="불러온 기록에만 적용돼요. 실행 그룹 전체 집계는 바뀌지 않아요.">
+      <RowDialog open={nodeOpen} onOpenChange={setNodeOpen} label="노드 변경" title="노드 고르기" description="불러온 기록에만 적용돼요. 실행 그룹 전체 집계는 바뀌지 않아요.">
         <fieldset className="grid gap-2">{nodeChoices.map(([uid,name])=><label key={uid} className="flex items-center gap-2"><input type="radio" name="node" checked={node===uid} onChange={()=>{const next=new URLSearchParams(params.toString());if(uid)next.set("filterNode",uid);else next.delete("filterNode");router.replace(`/records?${next}`);setNodeOpen(false)}}/>{name}{uid&&<span className="break-all text-xs text-muted-foreground">{uid}</span>}</label>)}</fieldset>
       </RowDialog>
       <RowDialog label="실행 그룹 전체 전력" hint="고른 기간의 전체·활성 실행 그룹 소비" title="실행 그룹 전체 전력" description="고른 기간 전체의 실측 소비예요. 노드 고르기와 페이지는 여기에 적용되지 않아요."><PowerInterval from={history.submitted.from} to={history.submitted.to}/></RowDialog>
