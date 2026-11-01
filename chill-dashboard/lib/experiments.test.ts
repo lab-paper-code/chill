@@ -993,3 +993,31 @@ test("cleanup residuals survive publication decoding without accepting malformed
   assert.deepEqual(run.outcome?.cleanup?.residuals,[residual])
   assert.equal(run.outcome?.cleanup?.status,"Failed")
 })
+
+test("R17: legacy publications retain observed rates and service latency without a comparison definition",()=>{
+  const run=decodeExperiment(publishedText(recorded.publication))
+  const chart=experimentChartData(run,"")
+  assert.equal(chart.length,run.stages.length)
+  assert.ok(chart.some(row=>row.observedRate!==null&&row.observedRate>0))
+  assert.ok(chart.every(row=>row.rate===null))
+  const name=experimentRows(run.stages[0])[0].name
+  const service=experimentChartData(run,name)
+  assert.equal(service[0].leftP95,resultMetric(experimentRows(run.stages[0])[0],"p95").value)
+  assert.ok(service.every(row=>row.rightP95===null&&row.leftSLO===null&&row.rightSLO===null))
+})
+
+test("R17: legacy result rows render absolute stage KPIs instead of an empty delta matrix",()=>{
+  const source=readFileSync(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8")
+  const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const require=createRequire(import.meta.url),exports:Record<string,ComponentType<{run:Experiment;runs:Experiment[];pending:boolean;error:boolean}>>={}
+  new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiments"?experimentHelpers:name==="@/lib/measurements"?measurementHelpers:name==="@/lib/client"?{}:name==="@/components/ui/button"?{Button:(props:Record<string,unknown>)=>createElement("button",props)}:name==="next/link"?{__esModule:true,default:(props:Record<string,unknown>)=>createElement("a",props)}:require(name),exports)
+  const run=decodeExperiment(publishedText(recorded.publication))
+  const markup=renderToStaticMarkup(createElement(exports.ExperimentResultRow,{run,runs:[run],pending:false,error:false}))
+  assert.match(markup,/단계별 원값/)
+  assert.match(markup,/발행 요청률/)
+  assert.match(markup,/에너지/)
+  assert.match(markup,/p95/)
+  assert.match(markup,new RegExp(run.stages[0].id))
+  assert.match(markup,new RegExp(experimentRows(run.stages[0])[0].name))
+  assert.doesNotMatch(markup,/성공률 Δ|p95 \(배\)/)
+})

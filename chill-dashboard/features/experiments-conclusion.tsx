@@ -3,8 +3,8 @@
 import Link from "next/link"
 import { ApiError, useChillQueries } from "@/lib/client"
 import { Button } from "@/components/ui/button"
-import { campaignScoreboard, decodeExperiment, definitionComparisonReason, experimentDifference, experimentOutcome, experimentPath, historicalPublicationIDs, injectionRows, type Experiment, type ExperimentStage } from "@/lib/experiments"
-import { formatMeasurementNumber } from "@/lib/measurements"
+import { campaignScoreboard, decodeExperiment, definitionComparisonReason, experimentDifference, experimentOutcome, experimentPath, historicalPublicationIDs, injectionRows, experimentRows, observedStageRate, resultMetric, stageSeconds, type Experiment, type ExperimentStage } from "@/lib/experiments"
+import { formatMeasurementNumber, formatMeasurementTime } from "@/lib/measurements"
 
 // The list already carries comparison endpoints and KPIs; only omitted historical publications need a GET.
 export function useHistoricalExperiments(publications:Experiment[],catalog:Experiment[]=publications,enabled=true) {
@@ -65,11 +65,24 @@ export function ExperimentComparisonLegend() {
   return <span className="text-xs text-muted-foreground" title="일치: 게시 정의의 부하 시나리오 UID·부하 생성기와 서비스 식별자·정의, 측정 규칙, 표시 구간 길이가 같음. 참고: 조건이 다르거나 미기록. 제한 원인은 중복될 수 있어요.">Δ 왼쪽−오른쪽 / p95 왼쪽÷오른쪽</span>
 }
 
+export function ExperimentAbsoluteValues({run,service="",onSelect}:{run:Experiment;service?:string;onSelect?:(stage:ExperimentStage,service:string)=>void}) {
+  const number=(value:unknown,unit="")=>typeof value==="number"&&Number.isFinite(value)?unit==="req/s"?value>0&&value<.01?"0.01 미만":value.toLocaleString("ko-KR",{minimumFractionDigits:2,maximumFractionDigits:2}):formatMeasurementNumber(value,unit):"미제공"
+  return <div className="min-w-0 space-y-2" aria-label="단계별 원값">{[...run.stages].sort((a,b)=>Date.parse(a.from)-Date.parse(b.from)).map((stage,index)=><details key={`${stage.id}/${index}`} open={index===0} className="min-w-0 rounded border p-2">
+    <summary className="min-h-10 cursor-pointer break-all text-sm font-medium">{stage.id}</summary>
+    <table className="mb-2 w-full text-left text-xs tabular-nums max-md:[&>tbody>tr]:grid max-md:[&>tbody>tr]:grid-cols-2"><tbody><tr><th className="font-normal text-muted-foreground">길이 (s)</th><td>{number(stageSeconds(stage),"s")}</td><th className="font-normal text-muted-foreground">에너지 (J)</th><td>{number(stage.kpis.wholePoolJoules,"J")}</td></tr><tr><th className="font-normal text-muted-foreground">시작 (KST)</th><td>{formatMeasurementTime(stage.from)}</td><th className="font-normal text-muted-foreground">종료 (KST)</th><td>{formatMeasurementTime(stage.to)}</td></tr></tbody></table>
+    <table className="w-full text-sm tabular-nums max-md:[&>thead]:sr-only max-md:[&>tbody>tr]:grid max-md:[&>tbody>tr]:grid-cols-2 max-md:[&>tbody>tr>th]:col-span-2 max-md:[&>tbody>tr>td]:flex max-md:[&>tbody>tr>td]:flex-col max-md:[&>tbody>tr>td]:text-left max-md:[&>tbody>tr>td]:before:text-xs max-md:[&>tbody>tr>td]:before:text-muted-foreground max-md:[&>tbody>tr>td]:before:content-[attr(data-label)]">
+      <thead><tr>{["서비스","발행 요청률 (요청/s)","기한 내 성공률 (%)","성공 응답 p95 (ms)"].map(label=><th key={label} className="p-2 text-right first:text-left">{label}</th>)}</tr></thead>
+      <tbody>{experimentRows(stage).filter(row=>!service||row.name===service).map(row=><tr key={row.source} className="border-t"><th className="max-w-64 break-words p-2 text-left font-normal">{onSelect?<button type="button" className="min-h-10 text-left underline" onClick={()=>onSelect(stage,row.name)}>{row.name}</button>:<Link prefetch={false} className="inline-flex min-h-10 items-center underline" href={`/experiments/results?${new URLSearchParams({a:run.id,al:run.id,as:stage.id,service:row.name})}`}>{row.name}</Link>}</th><td data-label="발행 요청률 (요청/s)" className="p-2 text-right">{number(observedStageRate(stage,row.name),"req/s")}</td><td data-label="기한 내 성공률 (%)" className="p-2 text-right">{number(typeof resultMetric(row,"success").value==="number"?Number(resultMetric(row,"success").value)*100:null,"%")}</td><td data-label="성공 응답 p95 (ms)" className="p-2 text-right">{number(resultMetric(row,"p95").value,"ms")}</td></tr>)}</tbody>
+    </table>
+  </details>)}</div>
+}
+
 export function ExperimentResultRow({run,runs,pending,error}:{run:Experiment;runs:Experiment[];pending:boolean;error:boolean}) {
   const score=campaignScoreboard(run,runs),c=score.coverageCounts
   const state=error?"조회 실패":pending?"조회 중":!run.definition&&run.comparisons===undefined?"미기록":c.matched?"일치":c.limited?"참고":score.conclusion==="대상 게시 없음"?"대상 없음":"비교 없음"
   const metrics=score.reference?score.referenceSummary:score.summary
   const outcome=experimentOutcome(run)
+  if(!run.definition&&run.comparisons===undefined)return <tr className="border-t"><th scope="row" className="max-w-64 break-all p-3 text-left align-top font-medium"><Link prefetch={false} className="underline" href={`/experiments/results?${new URLSearchParams({a:run.id})}`}>{run.id}</Link><div className="mt-2 text-xs font-normal text-muted-foreground">비교・정책・같은 부하 미기록</div></th><td colSpan={11} className="min-w-0 p-3"><ExperimentAbsoluteValues run={run}/></td></tr>
   return <tr className="border-t">
     <th scope="row" className="p-3 text-left font-medium">{state}</th>
     <td data-label="실험" className="max-w-64 break-all p-3"><Link prefetch={false} className="underline" href={`/experiments/results?${new URLSearchParams({a:run.id})}`}>{run.definition?.run.name??run.id}</Link></td>

@@ -52,7 +52,7 @@ test("load PUT denial preserves operator permission status and keeps the draft e
     throw new ApiError(403,"Forbidden",null)
   }}),useChillQuery:(path:string)=>({data:path==="v1/evaluations/load-scenarios/load"?source:undefined,refetch:async()=>{gets++;return {data:source,error:null}}})}
   const parent=hookRunner(),child=hookRunner()
-  const modules={...primitives,react:parent.react,"@/lib/client":client,"@/features/evaluation-author":{AuthorSelect:"select",AuthorField:"input",AuthorJSON:"textarea",AuthorHelp:"help",EvidencePicker:"select"}}
+  const modules={...primitives,react:parent.react,"@/lib/client":client,"@/features/evaluation-author":{AuthorSelect:"select",AuthorField:"input",AuthorJSON:"textarea",AuthorHelp:"help",EvidencePicker:"select",useUnsavedAuthor:()=>{}}}
   const {LoadScenarioAuthorPage}=load("../features/load-scenario-author.tsx",modules)
   const editor=elements(parent.render(LoadScenarioAuthorPage,{name:"load"})).find(element=>element.props.editing===true&&typeof element.props.onSaved==="function")!
   // The child shares the module's mocked React bindings, but has an independent hook state.
@@ -164,4 +164,52 @@ test("selected detail passes the URL UID to the independent active query",()=>{
   const {EvaluationsPage}=load("../features/evaluation-request.tsx",modules)
   const active=elements(runner.render(EvaluationsPage)).find(element=>element.props.name==="run"&&"now" in element.props)!
   assert.equal(active.props.uid,"old")
+})
+
+test("R17: unsaved author edits install and remove a cancellable beforeunload guard",()=>{
+  const events=new EventTarget(),previous=globalThis.window
+  let cleanup:(()=>void)|undefined
+  Object.defineProperty(globalThis,"window",{value:events,configurable:true,writable:true})
+  try {
+    const modules={...primitives,react:{useEffect:(effect:()=>undefined|(()=>void))=>{cleanup=effect()}}}
+    const {useUnsavedAuthor}=load("../features/evaluation-author.tsx",modules)
+    useUnsavedAuthor(true as unknown as Record<string,unknown>)
+    const event=new Event("beforeunload",{cancelable:true})
+    events.dispatchEvent(event)
+    assert.equal(event.defaultPrevented,true)
+    cleanup?.()
+    const saved=new Event("beforeunload",{cancelable:true})
+    events.dispatchEvent(saved)
+    assert.equal(saved.defaultPrevented,false)
+    useUnsavedAuthor(false as unknown as Record<string,unknown>)
+    const pristine=new Event("beforeunload",{cancelable:true})
+    events.dispatchEvent(pristine)
+    assert.equal(pristine.defaultPrevented,false)
+  } finally {Object.defineProperty(globalThis,"window",{value:previous,configurable:true,writable:true})}
+})
+
+test("R17: list rows do not expose rerun or removal until a run is selected",()=>{
+  const runner=hookRunner(),run={name:"run",uid:"uid",phase:"Done",spec:{}}
+  const modules={...primitives,react:{...runner.react,useEffect:()=>{}},"@/lib/client":{useChillQuery:()=>({data:{items:[run]}})}}
+  const {EvaluationsPage}=load("../features/evaluation-request.tsx",modules)
+  const tree=elements(runner.render(EvaluationsPage))
+  assert.ok(!tree.some(element=>element.props.run===run))
+  assert.ok(tree.some(element=>element.type==="a"&&element.props.href==="/experiments?name=run&uid=uid"))
+})
+
+test("R17: load parts expose every service rate as labeled fields without a wide table",()=>{
+  const runner=hookRunner(),source={name:"load",uid:"load-uid",spec:{parts:[{id:"zero",durationSeconds:1,rates:{camera:0,plc:0}}],workloads:[{name:"camera",uid:"camera-uid"},{name:"plc",uid:"plc-uid"}]},inUse:["original"]}
+  const modules={...primitives,react:runner.react,"@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/workloads"?[]:source}),useChillMutation:()=>({isPending:false})},"@/features/evaluation-author":{AuthorSelect:"select",AuthorField:"input",AuthorJSON:"textarea",AuthorHelp:"help",EvidencePicker:"select",useUnsavedAuthor:()=>{}}}
+  const {LoadScenarioAuthorPage}=load("../features/load-scenario-author.tsx",modules)
+  const page=elements(runner.render(LoadScenarioAuthorPage,{name:"load"}))
+  const editor=page.find(element=>element.props.editing===true)!
+  const parent=elements(hookRunner().render(editor.type as (props:Record<string,unknown>)=>unknown,editor.props))
+  const specEditor=parent.find(element=>element.props.spec&&typeof element.props.onValidityChange==="function")!
+  const partRunner=hookRunner()
+  modules.react.useState=partRunner.react.useState
+  const form=elements(partRunner.render(specEditor.type as (props:Record<string,unknown>)=>unknown,specEditor.props))
+  assert.ok(form.some(element=>element.type==="fieldset"))
+  assert.ok(form.some(element=>element.props.label==="camera (요청/s)"))
+  assert.ok(form.some(element=>element.props.label==="plc (요청/s)"))
+  assert.ok(!form.some(element=>element.type==="table"))
 })

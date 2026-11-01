@@ -37,10 +37,12 @@ test("legacy publications do not invent comparison counts",()=>{
   for(const name of ["ExperimentLimits","ExperimentCoverage"])assert.equal(renderToStaticMarkup(createElement(components[name],{run:legacy})),"")
 })
 
-test("result rows lead with comparison status and do not turn missing relationships into zero",()=>{
+test("result rows separate missing comparisons from absolute values and preserve actual comparison query errors",()=>{
   const legacy={...run,comparisons:undefined}
   const html=renderToStaticMarkup(createElement(components.ExperimentResultRow,{run:legacy,runs:[legacy],pending:false,error:false}))
-  assert.match(html,/<tr[^>]*><th[^>]*>미기록<\/th>/)
+  assert.match(html,/비교・정책・같은 부하 미기록/)
+  assert.match(html,/aria-label="단계별 원값"/)
+  assert.doesNotMatch(html,/에너지 Δ|최악 성공률 Δ/)
   assert.doesNotMatch(html,/>0<\/td>/)
   assert.match(html,/href="\/experiments\/results\?a=comparison"/)
   const failed=renderToStaticMarkup(createElement(components.ExperimentResultRow,{run,runs:[run],pending:false,error:true}))
