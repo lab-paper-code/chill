@@ -76,8 +76,8 @@ function ProjectionResults({kind,namespace}:{kind:ProjectionMeasurementKind;name
     {key:"name",label:"측정",value:item=>select(item,item.metadata.name),sortValue:item=>item.metadata.name},
     {key:"node",label:"장치",value:item=>item.node,sortValue:item=>item.node},
     {key:"workload",label:"서비스",value:item=>item.conditions.workload,sortValue:item=>item.conditions.workload},
-    {key:"d",label:"점유시간",unit:"ms/요청",numeric:true,value:item=><OccupancyValue value={occupancyDuration(item.status.perRequestNanos)}/>,sortValue:item=>occupancyDuration(item.status.perRequestNanos)==="—"?undefined:item.status.perRequestNanos},
-    {key:"x",label:"완료 처리량",unit:"req/s",numeric:true,value:item=><OccupancyValue value={occupancyThroughput(item.status.throughput)}/>,sortValue:item=>occupancyThroughput(item.status.throughput)==="—"?undefined:Number(item.status.throughput)},
+    {key:"d",label:"점유시간",unit:"ms/요청",numeric:true,value:item=><OccupancyValue value={occupancyDuration(item.status.perRequestNanos)} unverified={item.assessment?.displayStatus==="problem"||item.status.phase==="Failed"}/>,sortValue:item=>occupancyDuration(item.status.perRequestNanos)==="—"?undefined:item.status.perRequestNanos},
+    {key:"x",label:"완료 처리량",unit:"req/s",numeric:true,value:item=><OccupancyValue value={occupancyThroughput(item.status.throughput)} unverified={item.assessment?.displayStatus==="problem"||item.status.phase==="Failed"}/>,sortValue:item=>occupancyThroughput(item.status.throughput)==="—"?undefined:Number(item.status.throughput)},
     {key:"phase",label:"측정",value:item=><ProjectionStatus data={item}/>},
     {key:"reason",label:"사유",value:item=>occupancyReason(item)==="—"?"해당 없음":occupancyReason(item)},
   ]
@@ -121,7 +121,7 @@ function ProjectionStatus({data}:{data:MeasurementProjection}) {
   const status=data.assessment?.displayStatus??"unknown"
   return <StatusCell axis="측정" label={normalizeStatusLabel(measurementStates[status])} tone={status==="problem"?"fail":status==="usable"?"ok":status==="running"?"info":"idle"}/>
 }
-function OccupancyValue({value}:{value:string}) {return <span className="tabular-nums">{value==="—"?"미제공":value}</span>}
+function OccupancyValue({value,unverified=false}:{value:string;unverified?:boolean}) {return <span className={`inline-flex items-center gap-1 tabular-nums ${unverified?"font-normal text-muted-foreground":""}`}>{unverified&&<><TriangleAlert className="size-3 shrink-0" aria-hidden="true"/><span className="sr-only">미검증 원자료 · </span></>}{value==="—"?"미제공":value}</span>}
 function CostOutlier({multiple}:{multiple:number|undefined}) {
   return multiple===undefined?null:<span className="inline-flex items-center gap-1 text-xs font-semibold tabular-nums" aria-label={`이상값 · 같은 측정·동작 중앙값의 ${multiple.toFixed(1)}배`}><TriangleAlert className="size-3 shrink-0" aria-hidden="true"/>{multiple.toFixed(1)}×</span>
 }
@@ -180,9 +180,9 @@ function OperationResult({data}:{data:OperationCostMeasurement}) {
   </>
 }
 function OccupancyResult({data}:{data:DispatchOccupancyMeasurement}) {
-  const c=data.conditions,s=data.status
+  const c=data.conditions,s=data.status,unverified=data.assessment?.displayStatus==="problem"||s.phase==="Failed"
   return <>
-    <table aria-label="분배 처리시간 결과" className="w-full table-fixed text-left text-sm [&_th]:p-2 [&_th]:[overflow-wrap:anywhere] [&_td]:p-2 [&_td]:[overflow-wrap:anywhere]"><thead><tr><th className="text-right">점유시간 (ms/요청)</th><th className="text-right">완료 처리량 (req/s)</th><th>결과 전력모드</th><th>사유</th></tr></thead><tbody><tr><td className="text-right tabular-nums"><OccupancyValue value={occupancyDuration(s.perRequestNanos)}/></td><td className="text-right tabular-nums"><OccupancyValue value={occupancyThroughput(s.throughput)}/></td><td>{s.powerMode||"미기록"}</td><td>{occupancyReason(data)==="—"?"해당 없음":occupancyReason(data)}</td></tr></tbody></table>
+    <table aria-label="분배 처리시간 결과" className="w-full table-fixed text-left text-sm [&_th]:p-2 [&_th]:[overflow-wrap:anywhere] [&_td]:p-2 [&_td]:[overflow-wrap:anywhere]">{unverified&&<caption className="pb-2 text-left text-sm text-muted-foreground"><TriangleAlert className="mr-1 inline size-4" aria-hidden="true"/>미검증 원자료 · 채택값 아님</caption>}<thead><tr><th className="text-right">점유시간 (ms/요청)</th><th className="text-right">완료 처리량 (req/s)</th><th>결과 전력모드</th><th>사유</th></tr></thead><tbody><tr><td className="text-right tabular-nums"><OccupancyValue value={occupancyDuration(s.perRequestNanos)} unverified={unverified}/></td><td className="text-right tabular-nums"><OccupancyValue value={occupancyThroughput(s.throughput)} unverified={unverified}/></td><td>{s.powerMode||"미기록"}</td><td>{occupancyReason(data)==="—"?"해당 없음":occupancyReason(data)}</td></tr></tbody></table>
     <details><summary className="min-h-11 cursor-pointer py-2">측정 조건</summary><Facts items={[["서비스",<Link key="workload" className="break-all underline underline-offset-4" href={`/workloads/${encodeURIComponent(c.workload)}`}>{c.workload}</Link>],["측정 프로파일 참조",<BEOReference key="beo" namespace={data.metadata.namespace} name={c.batchEnergyOptimization}/>],["장치",data.node],["배치 (건)",c.batch],["공급 방식",occupancySupply(c.supplyMode)],["동시 송신자 (명)",c.workers],["예열 (s · 측정 제외)",c.warmupSeconds],["측정 구간 (s)",c.durationSeconds],["참조 UID","미기록"]]}/></details>
   </>
 }

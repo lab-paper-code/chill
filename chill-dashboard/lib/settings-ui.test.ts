@@ -6,6 +6,7 @@ import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as domain from "./domain.ts"
 import * as scheduler from "./scheduler.ts"
 import * as sourceExport from "./source-export.ts"
+import * as labels from "./labels.ts"
 
 type Tree={type:unknown;props:Record<string,unknown>}
 const require=createRequire(import.meta.url)
@@ -16,8 +17,9 @@ function elements(node:unknown):Tree[] {
   return [element,...elements(element.props.children)]
 }
 function hooks() {
-  const values:unknown[]=[];let cursor=0
-  return {react:{useState(initial:unknown){const index=cursor++;if(!Object.hasOwn(values,index))values[index]=typeof initial==="function"?initial():initial;return [values[index],(next:unknown)=>{values[index]=typeof next==="function"?next(values[index]):next}]},useRef:()=>({current:null}),useEffect:()=>{},useId:()=>"field"},render(Component:(props:Record<string,unknown>)=>unknown,props:Record<string,unknown>={}){cursor=0;return Component(props)}}
+  let values:unknown[]=[];let cursor=0
+  const states=new Map<unknown,unknown[]>()
+  return {react:{useState(initial:unknown){const index=cursor++;if(!Object.hasOwn(values,index))values[index]=typeof initial==="function"?initial():initial;const state=values;return [state[index],(next:unknown)=>{state[index]=typeof next==="function"?next(state[index]):next}]},useRef:()=>({current:null}),useEffect:()=>{},useId:()=>"field"},render(Component:(props:Record<string,unknown>)=>unknown,props:Record<string,unknown>={}){cursor=0;if(!states.has(Component))states.set(Component,[]);values=states.get(Component)!;return Component(props)}}
 }
 function load(path:string,modules:Record<string,unknown>):Record<string,(props:Record<string,unknown>)=>unknown> {
   const compiled=transpileModule(readFileSync(new URL(path,import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
@@ -25,7 +27,7 @@ function load(path:string,modules:Record<string,unknown>):Record<string,(props:R
   new Function("require","exports",compiled)((name:string)=>Object.hasOwn(modules,name)?modules[name]:name.startsWith("@/")?{}:require(name),exports)
   return exports
 }
-const base={"next/link":{default:"a"},"next/navigation":{useSearchParams:()=>new URLSearchParams()},"@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{}})},"@/lib/domain":domain,"@/lib/scheduler":scheduler,"@/lib/source-export":sourceExport,"@/components/screen":{Screen:"main",Facts:"facts",Rows:"rows",Row:"row",RowDialog:"row-dialog"},"@/components/data-table":{DataTable:"table"},"@/components/ui/button":{Button:"button"},"@/components/ui/input":{Input:"input"},"@/components/ui/sheet":{Sheet:"sheet",SheetContent:"aside",SheetHeader:"header",SheetTitle:"h2",SheetTrigger:"trigger"},"@/components/read-region":{QueryGate:"query",StatusBadge:"status"},"@/components/settings-navigation":{SettingsNavigation:"tabs"},"@/features/service-hub":{ServiceAdmission:"admission"}}
+const base={"next/link":{default:"a"},"next/navigation":{useSearchParams:()=>new URLSearchParams(),useRouter:()=>({push:()=>{},replace:()=>{}})},"@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{}})},"@/lib/domain":domain,"@/lib/scheduler":scheduler,"@/lib/source-export":sourceExport,"@/components/screen":{Screen:"main",Facts:"facts",Rows:"rows",Row:"row",RowDialog:"row-dialog"},"@/components/data-table":{DataTable:"table"},"@/components/ui/button":{Button:"button"},"@/components/ui/input":{Input:"input"},"@/components/ui/sheet":{Sheet:"sheet",SheetContent:"aside",SheetHeader:"header",SheetTitle:"h2",SheetTrigger:"trigger"},"@/components/read-region":{QueryGate:"query",StatusBadge:"status"},"@/components/settings-navigation":{SettingsNavigation:"tabs"},"@/features/service-hub":{ServiceAdmission:"admission"}}
 
 test("settings tabs open actual screens, with operating settings as default",()=>{
   let params=new URLSearchParams()
@@ -107,4 +109,122 @@ test("operating range table edits accumulate a precise draft before review",()=>
   assert.equal(value,"9007199254.740993ms")
   const action=(tree.find(element=>element.type==="main")!.props.action as Tree)
   assert.equal(action.props.children,"변경 1건 검토")
+})
+
+test("operating sections and numeric, boolean and node Sheets follow URL history and reload",()=>{
+  let params=new URLSearchParams({tab:"configuration",section:"limit",namespace:"kept"})
+  const history=[params.toString()]
+  const navigation={useSearchParams:()=>params,useRouter:()=>({
+    push:(url:string)=>{params=new URL(url,"https://dashboard.test").searchParams;history.push(params.toString())},
+    replace:(url:string)=>{params=new URL(url,"https://dashboard.test").searchParams;history[history.length-1]=params.toString()},
+  })}
+  const settings={controls:{placement:true},maxReplicas:3,maxInstances:4,maxCPUs:2,servingMemoryBytes:1048576,capacityWindows:5,excludedNodes:["meter"]}
+  const runner=hooks()
+  const modules={...base,react:runner.react,"next/navigation":navigation,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({isPending:false}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:path==="v1/scheduler/state"?{results:[]}:undefined})}}
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",modules)
+  let tree=elements(runner.render(SchedulerSettingsPage))
+  assert.equal(tree.find(node=>node.type==="select")!.props.value,"limit")
+  ;(tree.find(node=>node.type==="select")!.props.onChange as (event:unknown)=>void)({target:{value:"capacity"}})
+  assert.equal(params.get("section"),"capacity")
+  assert.equal(params.get("namespace"),"kept")
+  const fresh=hooks()
+  const reloaded=load("../features/scheduler-settings.tsx",{...modules,react:fresh.react}).SchedulerSettingsPage
+  assert.equal(elements(fresh.render(reloaded)).find(node=>node.type==="select")!.props.value,"capacity")
+  params=new URLSearchParams(history[0])
+  tree=elements(runner.render(SchedulerSettingsPage))
+  assert.equal(tree.find(node=>node.type==="select")!.props.value,"limit")
+  for(const [section,key] of [["limit","maxReplicas"],["controls","controls.placement"],["cycle","excludedNodes"]]){
+    params.set("section",section)
+    tree=elements(runner.render(SchedulerSettingsPage))
+    const table=tree.find(node=>node.type==="table")!
+    const columns=table.props.columns as {key:string;value:(row:unknown)=>Tree}[]
+    const row=(table.props.data as {key:string}[]).find(row=>row.key===key.replace("controls.",""))
+    const editor=key==="excludedNodes"?tree.find(node=>node.props.editKey===key)!:columns.find(column=>column.key==="edit")!.value(row)
+    const component=editor.type as (props:Record<string,unknown>)=>unknown
+    let sheet=elements(runner.render(component,editor.props)).find(node=>node.type==="sheet")!
+    ;(sheet.props.onOpenChange as (open:boolean)=>void)(true)
+    assert.equal(params.get("edit"),key)
+    sheet=elements(runner.render(component,editor.props)).find(node=>node.type==="sheet")!
+    assert.equal(sheet.props.open,true)
+    const refreshed=hooks(),refreshedPage=load("../features/scheduler-settings.tsx",{...modules,react:refreshed.react}).SchedulerSettingsPage
+    const refreshedTree=elements(refreshed.render(refreshedPage)),refreshedTable=refreshedTree.find(node=>node.type==="table")!
+    const refreshedColumns=refreshedTable.props.columns as {key:string;value:(row:unknown)=>Tree}[]
+    const refreshedRow=(refreshedTable.props.data as {key:string}[]).find(row=>row.key===key.replace("controls.",""))
+    const refreshedEditor=key==="excludedNodes"?refreshedTree.find(node=>node.props.editKey===key)!:refreshedColumns.find(column=>column.key==="edit")!.value(refreshedRow)
+    assert.equal(elements(refreshed.render(refreshedEditor.type as (props:Record<string,unknown>)=>unknown,refreshedEditor.props)).find(node=>node.type==="sheet")!.props.open,true)
+    params=new URLSearchParams(history[history.length-2])
+    assert.equal(elements(runner.render(component,editor.props)).find(node=>node.type==="sheet")!.props.open,false)
+  }
+})
+
+test("catalog lists prioritize fields, models and numeric counts while retaining complete collapsed definitions",()=>{
+  const secret="registry.example/very-long-address@sha256:"+"a".repeat(64)
+  const specs={
+    models:{artifacts:[{name:"internal-file-a",format:"ONNX"},{name:"internal-file-b",format:"ONNX"}],executionPaths:[{name:"internal-path-a",runtime:{backend:"cpu"}},{name:"internal-path-b",runtime:{backend:"cpu"}}]},
+    preprocessors:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1048576}]},output:{fields:[{name:"tensor",format:"Tensor"}]},artifacts:[{target:{model:"model-a",artifact:"internal-file-a"},source:{image:secret}},{target:{model:"model-a",artifact:"internal-file-b"},source:{image:secret}}]},
+    datasets:{fields:[{name:"image",format:"JPEG",maxBytes:1048576}],source:{image:secret,path:"/data"}},
+  }
+  for(const [kind,spec] of Object.entries(specs)){
+    const runner=hooks(),item={metadata:{name:"catalog",uid:"catalog-uid"},spec}
+    const {CatalogSettingsPage}=load("../features/management.tsx",{...base,"@/lib/labels":labels,react:runner.react,"@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/workloads"?[]:{items:[item]}})}})
+    const table=elements(runner.render(CatalogSettingsPage,{kind})).find(node=>node.type==="table")!
+    const columns=table.props.columns as {key:string;numeric?:boolean;value:(item:unknown)=>unknown}[]
+    const definition=columns.find(column=>column.key==="definition")!.value(item)
+    const rendered=JSON.stringify(definition)
+    assert.ok(!rendered.includes(secret))
+    assert.ok(!rendered.includes("internal-file"))
+    assert.ok(!rendered.includes("internal-path"))
+    const count=columns.find(column=>column.key==="count")!
+    assert.equal(count.numeric,true)
+    assert.equal(count.value(item),kind==="models"?2:1)
+    assert.equal(columns.find(column=>column.key==="services")!.value(item),0)
+    const source=columns.find(column=>column.key==="source")!.value(item) as Tree
+    assert.equal(source.type,"details")
+    assert.ok(!source.props.open)
+    assert.ok(elements(source).some(node=>node.props.value===spec))
+  }
+})
+
+test("routing table edits preserve route, block and release semantics and reject invalid weights",()=>{
+  const pageRunner=hooks(),initial={service:{instance:2},release:{old:1}}
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:pageRunner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({isPending:false}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?{controls:{},staticRouting:initial}:path==="v1/scheduler/state"?{results:[]}:undefined})}})
+  const editor=elements(pageRunner.render(SchedulerSettingsPage)).find(node=>typeof node.props.apply==="function"&&"initial" in node.props)!
+  const runner=pageRunner,applied:unknown[]=[]
+  const props={...editor.props,snapshot:{workloads:[{uid:"service",name:"Service A"},{uid:"release",name:"Service B"},{uid:"new",name:"Service C"}],instances:[{id:"instance",workloadUID:"service",node:{name:"Device"}},{id:"new-instance",workloadUID:"new",node:{name:"Other device"}}]},apply:(...args:unknown[])=>applied.push(args)}
+  const component=editor.type as (props:Record<string,unknown>)=>unknown
+  let tree=elements(runner.render(component,props))
+  ;(tree.find(node=>node.type==="row-dialog")!.props.onOpenChange as (open:boolean)=>void)(true)
+  tree=elements(runner.render(component,props))
+  assert.ok(!tree.find(node=>node.type==="row-dialog")!.props.description)
+  assert.ok(tree.some(node=>node.type==="details"&&!node.props.open&&elements(node).some(child=>child.type==="textarea")))
+  const reason=tree.find(node=>node.type==="input"&&String(node.props.id).endsWith("-reason"))!
+  ;(reason.props.onChange as (event:unknown)=>void)({target:{value:"manual choice"}})
+  const changeWeight=(value:string)=>{
+    const table=elements(runner.render(component,props)).find(node=>node.type==="table")!
+    const column=(table.props.columns as {key:string;value:(row:unknown)=>Tree}[]).find(column=>column.key==="weight")!
+    ;(column.value((table.props.data as unknown[])[0]).props.onChange as (event:unknown)=>void)({target:{value}})
+  }
+  const submit=()=>{
+    const form=elements(runner.render(component,props)).find(node=>node.type==="form")!
+    ;(form.props.onSubmit as (event:unknown)=>void)({preventDefault(){}})
+  }
+  for(const invalid of ["0","-1","1.5","2147483648",""]){changeWeight(invalid);submit();assert.equal(applied.length,0);assert.ok(elements(runner.render(component,props)).some(node=>node.props.role==="alert"))}
+  changeWeight("7")
+  tree=elements(runner.render(component,props))
+  const release=tree.filter(node=>node.type==="button"&&node.props.children==="기본 분배로")[1]
+  ;(release.props.onClick as ()=>void)()
+  submit()
+  assert.deepEqual(applied,[[initial,{service:{instance:7}},"manual choice"]])
+  tree=elements(runner.render(component,props))
+  ;(tree.find(node=>node.type==="button"&&node.props.children==="새 요청 차단")!.props.onClick as ()=>void)()
+  submit()
+  assert.deepEqual(applied[1],[initial,{service:{}},"manual choice"])
+  tree=elements(runner.render(component,props))
+  ;(tree.find(node=>node.type==="button"&&node.props.children==="서비스 추가")!.props.onClick as ()=>void)()
+  tree=elements(runner.render(component,props))
+  ;(tree.find(node=>node.type==="button"&&node.props.children==="서비스 추가")!.props.onClick as ()=>void)()
+  tree=elements(runner.render(component,props))
+  ;(tree.filter(node=>node.type==="button"&&node.props.children==="인스턴스 추가").at(-1)!.props.onClick as ()=>void)()
+  submit()
+  assert.deepEqual(applied[2],[initial,{service:{},release:{},new:{"new-instance":1}},"manual choice"])
 })

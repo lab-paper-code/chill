@@ -97,7 +97,7 @@ export function MeasurementCoveragePage() {
   const model=params.get("model")??selected?.model.name??models[0]?.name
   function update(key:string,value:string) {const next=new URLSearchParams(params.toString());if(value)next.set(key,value);else next.delete(key);router.replace(`?${next}`,{scroll:false})}
   function close(){router.replace(`?${coverageSelection(params.toString(),selected,false)}`,{scroll:false});trigger.current?.focus()}
-  function select(cell:MeasurementCoverageCell,button:HTMLButtonElement){trigger.current=button;const next=coverageSelection(params.toString(),cell,true);next.set("model",cell.model.name);router.replace(`?${next}`,{scroll:false})}
+  function select(cell:MeasurementCoverageCell,button:HTMLButtonElement){trigger.current=button;const next=coverageSelection(params.toString(),cell,true);next.set("model",cell.model.name);router.push(`?${next}`,{scroll:false})}
   useEffect(()=>{
     if(!selectedID)return
     const buttons=document.querySelectorAll<HTMLButtonElement>(`[data-coverage-cell="${CSS.escape(selectedID)}"]`)
@@ -122,13 +122,13 @@ export function MeasurementCoveragePage() {
       <label className="coverage-mobile-model">모델<select value={model??""} onChange={event=>update("model",event.target.value)}>{models.map(item=><option key={item.uid} value={item.name}>{item.name}</option>)}</select></label>
       <div className="coverage-toolbar">
         <label className="grid gap-1 text-sm">장치<select className="h-11 rounded-md border bg-background px-2" value={params.get("deviceClass")??""} onChange={event=>update("deviceClass",event.target.value)}><option value="">전체 장치</option>{[...new Set(data.cells.filter(cell=>cell.model.name===model).map(cell=>cell.deviceClass.name))].sort().map(name=><option key={name} value={name}>{deviceLabel(name)}</option>)}</select></label>
-        <details><summary className="min-h-11 cursor-pointer py-2">목표 배치·세부 필터</summary>
+        <details className="coverage-filter-panel"><summary className="min-h-11 cursor-pointer py-2">목표 배치·세부 필터</summary><div className="coverage-filter-content">
           <fieldset className="coverage-targets"><legend>목표 배치</legend><Button variant={!targets.length?"default":"outline"} onClick={()=>update("batches","")}>요청 범위</Button>{batches.map(batch=><Button key={batch} variant={targets.includes(batch)?"default":"outline"} aria-pressed={targets.includes(batch)} onClick={()=>update("batches",(targets.includes(batch)?targets.filter(value=>value!==batch):[...targets,batch]).sort((a,b)=>a-b).join(","))}>{batch}</Button>)}</fieldset>
-          <MeasurementFilters axes={[{key:"path",label:"실행 경로",values:data.cells.filter(cell=>cell.model.name===model&&coveragePathVisible(cell,inventory.data)).map(cell=>cell.executionPath)},{key:"powerMode",label:"전력모드",values:data.cells.map(cell=>cell.powerMode)}]}/><div className="grid gap-3 sm:grid-cols-2"><label>Node<Input value={params.get("node")??""} onChange={event=>update("node",event.target.value)}/></label><label>CPU quota<Input value={params.get("cpu")??""} onChange={event=>update("cpu",event.target.value)}/></label></div>
-        </details>
+          <MeasurementFilters axes={[{key:"path",label:"실행 경로",values:data.cells.filter(cell=>cell.model.name===model&&coveragePathVisible(cell,inventory.data)).map(cell=>cell.executionPath)},{key:"powerMode",label:"전력모드",values:data.cells.map(cell=>cell.powerMode)}]}/><div className="grid gap-3 sm:grid-cols-2"><label>장비<Input value={params.get("node")??""} onChange={event=>update("node",event.target.value)}/></label><label>CPU 상한<Input value={params.get("cpu")??""} onChange={event=>update("cpu",event.target.value)}/></label></div>
+        </div></details>
       </div>
       <dl className="flex flex-wrap gap-x-6 gap-y-2 text-sm" aria-label="범위 기준"><div><dt>기준 시각 KST</dt><dd>{data.dataAsOf?formatMeasurementTime(data.dataAsOf):"미기록"}</dd></div><div><dt>신선도</dt><dd>{data.freshness==="fresh"?"최신":"오래된 관측"}</dd></div><div><dt>조회 갱신</dt><dd>{query.isFetching?"조회 중":"완료"}</dd></div></dl>
-      <CoverageCounts cells={cells.filter(cell=>coveragePathVisible(cell,inventory.data))}/>
+      <CoverageCounts cells={cells} inventory={inventory.data}/>
       </section>
       <div className="coverage-workspace">
         <div className="coverage-pivot" aria-label={`${model??""} 장치별 커버리지`}>
@@ -151,9 +151,17 @@ export function MeasurementCoveragePage() {
     </>}
   </Screen>
 }
-function CoverageCounts({cells}:{cells:MeasurementCoverageCell[]}) {
-  const counts=coverageScopeCounts(cells),reasons=coverageQualityReasons(cells)
-  return <div className="coverage-summary"><table className="w-full text-left text-sm tabular-nums" aria-label="선택 범위 집계"><thead><tr><th>조합 측정 / 전체 (개)</th><th>배치 측정 / 목표 (건)</th><th>현재 사용 / 전체 (개)</th><th>품질 판정 불가 / 전체 (개)</th><th>실패 / 전체 (개)</th></tr></thead><tbody><tr><td>{counts.measuredCells}/{counts.cells}</td><td>{counts.targetBatches?`${counts.measuredBatches}/${counts.targetBatches}`:"목표 미제공"}</td><td>{counts.usedCells}/{counts.cells}</td><td>{counts.unknownQualityCells}/{counts.cells}</td><td>{counts.failedCells}/{counts.cells}</td></tr></tbody></table>{counts.unknownQualityCells===counts.cells&&counts.cells>0&&<div className="text-sm"><strong>품질 판정: 판정 불가</strong><ul>{reasons.map(reason=><li key={reason.code}>{reason.label}</li>)}</ul></div>}</div>
+function CoverageCounts({cells,inventory}:{cells:MeasurementCoverageCell[];inventory?:InventoryView}) {
+  const counts=coverageScopeCounts(cells,inventory)
+  const metrics=[
+    ["측정 있음 / 지원 조합",`${counts.measuredCells}/${counts.cells}`],
+    ["배치 측정 / 목표",counts.targetBatches?`${counts.measuredBatches}/${counts.targetBatches}`:"목표 미제공"],
+    ["현재 사용 / 지원 조합",`${counts.usedCells}/${counts.cells}`],
+    ["품질 판정 불가 / 지원 조합",`${counts.unknownQualityCells}/${counts.cells}`],
+    ["문제 / 지원 조합",`${counts.failedCells}/${counts.cells}`],
+    ["지원 안 함 (집계 제외)",String(counts.unsupportedCells)],
+  ]
+  return <div className="coverage-summary"><table className="w-full text-left text-sm tabular-nums" aria-label="선택 범위 집계"><thead><tr>{metrics.map(([label])=><th key={label}>{label}</th>)}</tr></thead><tbody><tr>{metrics.map(([label,value])=><td key={label} data-label={label}>{value}</td>)}</tr></tbody></table><details><summary className="min-h-11 cursor-pointer py-2 text-sm">집계 축·품질 근거</summary><table className="w-full text-left text-sm"><tbody><tr><th scope="row">측정</th><td>표의 측정 있음·문제 상태와 동일한 조합 기준</td></tr><tr><th scope="row">현재 사용</th><td>스케줄러 참조 여부 · 품질 판정과 별개</td></tr><tr><th scope="row">실패 요청</th><td><Link className="underline" href="/measurements/requests?status=problem">요청별 실패 기록</Link></td></tr>{coverageQualityReasons(cells.filter(cell=>coveragePathVisible(cell,inventory))).map(reason=><tr key={reason.code}><th scope="row">{reason.label}</th><td>{reason.count} 조합</td></tr>)}</tbody></table></details></div>
 }
 function UnsupportedReasons({cells}:{cells:MeasurementCoverageCell[]}) {
   const params=useSearchParams(),groups=new Map<string,{label:string;count:number}>()

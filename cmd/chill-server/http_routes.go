@@ -28,6 +28,8 @@ func privateOrigin(raw string) (*url.URL, error) {
 	return origin, nil
 }
 
+const consoleUnavailableCode = "ConsoleUnavailable"
+
 func consoleError(w http.ResponseWriter, status int, code string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
@@ -50,43 +52,7 @@ func composeChillServer(
 	if len(measurements) != 0 {
 		measurement = measurements[0]
 	}
-	var console http.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		consoleError(w, http.StatusServiceUnavailable, "ConsoleUnavailable")
-	})
-	if origin != nil {
-		console = &httputil.ReverseProxy{
-			Rewrite: func(proxy *httputil.ProxyRequest) {
-				proxy.Out.URL.Scheme, proxy.Out.URL.Host = origin.Scheme, origin.Host
-				proxy.Out.Host = origin.Host
-				// Allowlist, rather than chasing every forged identity header.
-				proxy.Out.Header = make(http.Header)
-				proxy.Out.URL.User = nil
-				proxy.Out.URL.RawQuery = proxy.In.URL.RawQuery
-				for _, key := range []string{"Accept", "Content-Type"} {
-					if value := proxy.In.Header.Get(key); value != "" {
-						proxy.Out.Header.Set(key, value)
-					}
-				}
-				proxy.Out.Header.Set("User-Agent", "")
-			},
-			// ReverseProxy uses RoundTrip directly: redirects are never followed.
-			ModifyResponse: func(response *http.Response) error {
-				response.Header.Set("Cache-Control", "no-store")
-				response.Header.Del("Set-Cookie")
-				if measurement != nil && response.StatusCode == http.StatusOK && isMeasurementPreflight(response.Request) {
-					return measurement.enrichPreflightResponse(response)
-				}
-				return nil
-			},
-			ErrorHandler: func(w http.ResponseWriter, r *http.Request, _ error) {
-				if errors.Is(r.Context().Err(), context.DeadlineExceeded) {
-					consoleError(w, http.StatusGatewayTimeout, "ConsoleTimeout")
-					return
-				}
-				consoleError(w, http.StatusBadGateway, "ConsoleUnavailable")
-			},
-		}
-	}
+	console := consoleReadHandler(origin, measurement)
 	authenticated := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), opts.requestTimeout)
 		defer cancel()
@@ -108,15 +74,18 @@ func composeChillServer(
 		deadline, _ := ctx.Deadline()
 		controller := http.NewResponseController(w)
 		if err := controller.SetReadDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
-			consoleError(w, http.StatusServiceUnavailable, "ConsoleUnavailable")
+			consoleError(w, http.StatusServiceUnavailable, consoleUnavailableCode)
 			return
 		}
 		if err := controller.SetWriteDeadline(deadline.Add(opts.requestTimeout)); err != nil &&
 			!errors.Is(err, http.ErrNotSupported) {
-			consoleError(w, http.StatusServiceUnavailable, "ConsoleUnavailable")
+			consoleError(w, http.StatusServiceUnavailable, consoleUnavailableCode)
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, opts.maxRequestBytes)
+		if measurement != nil && measurement.servePendingPassport(w, r) {
+			return
+		}
 		console.ServeHTTP(w, r)
 	})
 	mux := http.NewServeMux()

@@ -224,6 +224,18 @@ test("request usage shares exact condition facts",()=>{
   assert.equal(coverageUsageAssessment([used],{...plan.spec,state:{...plan.spec.state,targetNode:"other"}}),undefined)
 })
 
+test("scope counts use the same measurement state as visible cells, with unsupported counted separately",()=>{
+  const partial={...cell,assessment:{...cell.assessment,displayStatus:"usable" as const}}
+  const complete={...partial,batchProgress:{...cell.batchProgress!,measured:cell.batchProgress!.target}}
+  const failed={...complete,assessment:{...cell.assessment,displayStatus:"problem" as const}}
+  const unsupported={...complete,support:{...cell.support,verdict:"Incompatible" as const}}
+  const counts=coverageHelpers.coverageScopeCounts([partial,complete,failed,unsupported])
+  assert.equal(counts.measuredCells,1)
+  assert.equal(counts.cells,3)
+  assert.equal(counts.unsupportedCells,1)
+  assert.equal(counts.failedCells,1)
+})
+
 
 function renderCoverage(query="",extraCells:MeasurementCoverageCell[]=[],freshness:"fresh"|"stale"="fresh",isFetching=false) {
   const source=readFileSync(new URL("../features/measurement-coverage.tsx",import.meta.url),"utf8")
@@ -257,13 +269,14 @@ test("M1–M2 unsupported cells stay visible but only supported cells contribute
   assert.match(html,/15W/)
   assert.match(html,/미측정/)
   assert.match(html,/지원 안 함/)
-  assert.match(html,/조합 측정 \/ 전체/)
+  assert.match(html,/측정 있음 \/ 지원 조합/)
   assert.match(html,/배치 측정 \/ 목표/)
-  assert.equal((html.match(/품질 판정: 판정 불가/g)??[]).length,1)
-  assert.match(html,/<td>1\/2<\/td><td>2\/8<\/td>/)
-  assert.doesNotMatch(html,/<td>2\/3<\/td><td>4\/12<\/td>/)
+  assert.match(html,/품질 판정 불가 \/ 지원 조합/)
+  assert.match(html,/<td data-label="측정 있음 \/ 지원 조합">0\/2<\/td><td data-label="배치 측정 \/ 목표">2\/8<\/td>/)
+  assert.match(html,/<td data-label="지원 안 함 \(집계 제외\)">1<\/td>/)
   const unsupported=renderCoverage("status=unsupported&supportReason=RuntimeUnsupported")
   assert.equal((unsupported.match(/data-coverage-cell=/g)??[]).length,1)
+  assert.match(unsupported,/<td data-label="지원 안 함 \(집계 제외\)">1<\/td>/)
 })
 
 test("coverage header shows server observation time, freshness and refresh status",()=>{
@@ -305,10 +318,10 @@ test("M3 existing used results and failed requests coexist in scope counts",()=>
   const counts=coverageHelpers.coverageScopeCounts([failed])
   assert.equal(counts.usedCells,1)
   assert.equal(counts.failedCells,1)
-  assert.equal(counts.measuredCells,1)
+  assert.equal(counts.measuredCells,0)
   const html=renderCoverage("",[failed])
-  assert.match(html,/현재 사용 \/ 전체/)
-  assert.match(html,/실패 \/ 전체/)
+  assert.match(html,/현재 사용 \/ 지원 조합/)
+  assert.match(html,/문제 \/ 지원 조합/)
 })
 
 test("M4 missing target denominator does not render fake progress",()=>{

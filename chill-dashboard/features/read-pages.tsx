@@ -96,22 +96,16 @@ function PassportSummary({data}:{data:Passport}) {
   const throttled=(thermal?.activeSamples??0)+(thermal?.latchedSamples??0)
   const podsChanged=!!pods&&((pods.materialEvents??0)>0||pods.initialActivePods!==pods.finalActivePods)
   return <>
-    <Facts label="처리 성능" items={[
-      ["처리량",`초당 ${num(r.throughputItemsPerSecond)}건`],
-      ["p50",`${num(l.p50,"ms")} ms`],
-      ["p95",`${num(l.p95,"ms")} ms`],
-      ["p99",`${num(l.p99,"ms")} ms`],
-      ["지연 표본 수 N",`${l.count}개`],
-      ["처리한 요청",`${r.completedCalls.toLocaleString("ko-KR")}건 / 한 번에 ${r.batch}건씩`],
-    ]}/>
-    <Facts label="전력 (노드 전체)" items={[
-      ["평균",p.watts?`${num(p.watts.mean,"W")} W`:"값 없음"],
-      ["가장 낮을 때 – 높을 때",p.watts?`${num(p.watts.minimum,"W")} – ${num(p.watts.maximum,"W")} W`:"값 없음"],
-      ["계측",`${p.source.nodeName ?? "노드"} 전원 계측기 / ${p.samples}번 측정${p.failures?`, ${p.failures}번 실패`:""}`],
-      ["최대 표본 간격",`${num(p.maximumSampleGapSeconds)} s`],
-      ["원본 시각",p.sourceTimestampAbsent?"관측 시각은 수집 시각":"원본 timestamp 제공"],
-    ]}/>
-    <p className="-mt-4 px-1 text-sm text-muted-foreground">노드 벽전력이며 장치 단독 전력이 아니에요. {pods?.initialActivePods!==undefined?`같은 노드에서 함께 돌던 Pod ${pods.initialActivePods}개를 포함한 값이에요. `:""}지금 운영 중 소비와는 달라요.</p>
+    <div className="grid gap-4 sm:grid-cols-2">
+      <table aria-label="처리 성능" className="w-full text-left text-sm tabular-nums [&_th]:py-2 [&_th]:font-medium [&_td]:text-right"><caption className="pb-2 text-left font-semibold">처리 성능</caption><tbody>{[
+        ["처리량 (건/s)",num(r.throughputItemsPerSecond)],["p50 (ms)",num(l.p50,"ms")],["p95 (ms)",num(l.p95,"ms")],["p99 (ms)",num(l.p99,"ms")],["지연 표본 (개)",l.count],["완료 요청 (건)",r.completedCalls],["요청당 배치 (건)",r.batch],
+      ].map(([label,value])=><tr key={String(label)} className="border-b"><th scope="row">{label}</th><td>{value}</td></tr>)}</tbody></table>
+      <table aria-label="전력 측정" className="w-full text-left text-sm tabular-nums [&_th]:py-2 [&_th]:font-medium [&_td]:text-right"><caption className="pb-2 text-left font-semibold">전력 · 노드 전체</caption><tbody>{[
+        ["평균 (W)",p.watts?num(p.watts.mean,"W"):"미제공"],["최소–최대 (W)",p.watts?`${num(p.watts.minimum,"W")}–${num(p.watts.maximum,"W")}`:"미제공"],["전력 표본 (개)",p.samples],["전력 실패 표본 (개)",p.failures??"미기록"],["최대 표본 간격 (s)",num(p.maximumSampleGapSeconds)],["동시 Pod 시작 (개)",pods?.initialActivePods??"미관측"],["동시 Pod 종료 (개)",pods?.finalActivePods??"미관측"],
+      ].map(([label,value])=><tr key={String(label)} className="border-b"><th scope="row">{label}</th><td>{value}</td></tr>)}</tbody></table>
+    </div>
+    <details><summary className="min-h-11 cursor-pointer py-2 text-sm">측정 조건·전력 범위·관측 사실</summary>
+    <Facts items={[["계측 노드",p.source.nodeName??"미기록"],["전력 범위","노드 전체 벽전력 · 공유 작업 포함 · 당시 측정값"],["원본 시각",p.sourceTimestampAbsent?"수집 시각":"원본 시각 제공"]]}/>
     <Facts label="측정 조건" items={[
       ["모델",spec.candidate?.modelSpec??"정보 없음"],
       ["전처리기",spec.candidate?.preprocessor??"없음"],
@@ -128,6 +122,7 @@ function PassportSummary({data}:{data:Passport}) {
       ["다른 작업",pods?podsChanged?"측정 중 같은 노드의 Pod가 바뀌었어요":"측정 중 같은 노드의 Pod 변화가 없었어요":"관측 없음"],
       ["CHILL이 배치하지 않은 Pod",pods?pods.coResidents?.filter(pod=>!pod.chillPlaced).map(pod=>`${pod.namespace}/${pod.name}`).join(", ")||"없음":"관측 없음"],
     ]}/>
+    </details>
   </>
 }
 
@@ -138,8 +133,9 @@ export function MeasurementDetail({namespace:namespaceOverride,name}:{namespace?
   const lookup=useChillQuery<RunsView>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs?${new URLSearchParams({q:name,limit:"200",offset:String(offset)})}`)
   const run=exactRun(lookup.data?.runs??[],namespace,name,expectedUID),failed=!!run&&currentRunCondition(run,"ExecutionComplete")?.status==="False"
   const noEvidence=failed&&!run?.status.evidence
-  const passport=useChillQuery<Passport>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs/${encodeURIComponent(name)}/evidence-passport`,{enabled:!!run&&!noEvidence})
-  const data=passport.data,other=!!data&&data.run.uid!==run?.uid
+  const passport=useChillQuery<Passport|{code:"EvidencePassportPending"}>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs/${encodeURIComponent(name)}/evidence-passport`,{enabled:!!run&&!noEvidence})
+  const pending=passport.data&&"code" in passport.data&&passport.data.code==="EvidencePassportPending"
+  const data=passport.data&&"measurement" in passport.data&&passport.data.measurement?passport.data:undefined,other=!!data&&data.run.uid!==run?.uid
   const failure=run?runFailure(run):undefined
   const statusFacts=(value:unknown):[string,React.ReactNode][]=>{const object=runStatusObject(value);return object?Object.entries(object).map(([key,value])=>[({namespace:"저장 영역",name:"이름",uid:"식별자",nodeName:"실행 Node",podName:"실행 Pod",phase:"진행 상태",provider:"실행 제공자",architecture:"아키텍처",family:"런타임",version:"버전"} as Record<string,string>)[key]??key,typeof value==="object"?<SourceJSON key={key} value={value} title="세부 기록"/>:String(value)]):[["기록",value===undefined?"미제공":String(value)]]}
   return <Screen width="data" actionPlacement="header" back={[back,"측정 요청"]} title={name} action={<Button variant="outline" disabled={lookup.isFetching} onClick={()=>void lookup.refetch()}>갱신</Button>}>
@@ -147,7 +143,8 @@ export function MeasurementDetail({namespace:namespaceOverride,name}:{namespace?
     <QueryGate query={lookup}>{lookup.data&&!run&&<div className="space-y-3"><p>이 조회 페이지에서 정확한 namespace/name/UID의 회차를 찾지 못했어요. 같은 이름의 다른 회차로 대체하지 않아요.</p>{lookup.data.page?.nextOffset!==undefined&&<Button variant="outline" onClick={()=>setOffset(lookup.data!.page!.nextOffset!)}>다음 조회 페이지에서 찾기</Button>}</div>}{run&&<>
       <MeasurementStatus assessment={run.assessment}/>
       {failed&&failure&&<section role="alert" className="space-y-2 rounded-xl border border-destructive/40 bg-destructive/5 p-4"><h2 className="font-semibold text-destructive">실행 실패</h2><table aria-label="실패 원인·조치" className="w-full text-left text-sm"><tbody>{[...requestFailureFacts(run.status.conditions?.filter(condition=>condition.type==="ExecutionComplete"&&condition.observedGeneration===run.generation)),["원인",run.assessment?.failureSummary?.[0]?.code==="Other"?currentRunCondition(run,"ExecutionComplete")?.reason||failure.title:failure.title],["종료 코드",failure.exitCode==null?"미제공":String(failure.exitCode)],...failure.actions].map(([label,value],index)=><tr key={index} className="border-b last:border-0"><th scope="row" className="w-24 py-2 align-top font-medium">{label}</th><td className="break-words py-2">{value}</td></tr>)}</tbody></table><details><summary className="min-h-11 cursor-pointer py-2 text-sm">실패 대상·원문</summary><Facts items={failure.target}/><pre className="whitespace-pre-wrap break-words text-sm">{failure.excerpt}</pre></details></section>}
-      <details open={!failed}><summary className="min-h-11 cursor-pointer py-2 text-sm">회차 조건·판정</summary>
+      {noEvidence?<p className="notice">검증 근거 없음 · 실행 실패</p>:pending?<p role="status">진행 중 · 근거 발행 대기</p>:passport.error?<div role="alert" className="notice"><p>검증 근거 조회 실패 · HTTP {passport.error.status}</p><SourceJSON value={passport.error.data??passport.error.body} title="근거 조회 오류 원문"/><Button variant="outline" onClick={()=>void passport.refetch()}>근거 다시 조회</Button></div>:!data?<p>검증 근거 확인 중</p>:other?<p role="alert">같은 이름의 다른 회차 근거예요. 이 회차의 결과로 사용할 수 없어요.</p>:<PassportSummary data={data}/>}
+      <details><summary className="min-h-11 cursor-pointer py-2 text-sm">회차 조건·판정</summary>
       <Facts label="회차 조건" items={[
         ["모델 / 장치",`${runSpec(run).candidate?.modelSpec??"미기록"} / ${runSpec(run).candidate?.deviceClass??"미기록"}`],
         ["실행 Node / 전력모드",`${runSpec(run).targetNode??"미기록"} / ${runSpec(run).candidate?.powerMode??"미기록"}`],
@@ -157,7 +154,6 @@ export function MeasurementDetail({namespace:namespaceOverride,name}:{namespace?
       ]}/>
       <AssessmentDetails assessment={run.assessment}/>
       </details>
-      {noEvidence?<p className="notice">검증 근거 없음 · 실행 실패</p>:passport.error?<div className="notice"><p>검증 근거를 불러오지 못했어요. {passport.error.status===404?"보관된 근거가 없거나 아직 게시되지 않았어요.":"연결 상태를 확인하고 다시 조회하세요."}</p><Button variant="outline" onClick={()=>void passport.refetch()}>근거 다시 조회</Button></div>:!data?<p>검증 근거 확인 중</p>:other?<p role="alert">같은 이름의 다른 회차 근거예요. 이 회차의 결과로 사용할 수 없어요.</p>:<PassportSummary data={data}/>}
       <details><summary className="min-h-11 cursor-pointer py-2 text-sm">실행 조건·환경·로그 원문</summary>
         <Facts label="원본 실행 조건" items={["ExecutionComplete","EvidenceVerified"].map(type=>{const c=currentRunCondition(run,type);return [type,c?`${c.status} / ${c.reason??""}${c.message?`: ${c.message}`:""}`:"상태 미확인"] as [string,React.ReactNode]})}/>
         <Facts label="실행 작업" items={statusFacts(run.status.job)}/><Facts label="실제 실행 환경" items={statusFacts(run.status.actualExecution)}/>

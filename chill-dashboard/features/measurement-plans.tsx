@@ -61,13 +61,13 @@ function ResultCondition({condition}:{condition:Record<string,unknown>}) {
   </div>
 }
 
-export function ResultRows({rows,filename="chill-result-rows.csv",emptyMessage="결과 미기록"}:{rows:ResultRow[];filename?:string;emptyMessage?:string}) {
+export function ResultRows({rows,filename="chill-result-rows.csv",emptyMessage="결과 미기록",title="측정 결과"}:{rows:ResultRow[];filename?:string;emptyMessage?:string;title?:string}) {
   function download() {
     const url=URL.createObjectURL(new Blob([resultRowsCSV(rows)],{type:"text/csv;charset=utf-8"}))
     const link=document.createElement("a");link.href=url;link.download=filename.replace(/[^a-zA-Z0-9._-]/g,"_");link.click();URL.revokeObjectURL(url)
   }
   return <section className="min-w-0 space-y-3" aria-label="결과 행">
-    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">측정 결과</h2><Button variant="outline" disabled={!rows.length} onClick={download}>결과 CSV</Button></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">{title}</h2><Button variant="outline" disabled={!rows.length} onClick={download}>결과 CSV</Button></div>
     {!rows.length?<p className="notice">{emptyMessage}</p>:<div className="min-w-0 overflow-x-auto"><Table className="[&_th]:text-right [&_td]:text-right [&_td]:tabular-nums"><TableHeader><TableRow><TableHead>배치 (건)</TableHead><TableHead>p95 (ms)</TableHead><TableHead>총 에너지 (J/건)</TableHead><TableHead>추가 에너지 (J/건)</TableHead><TableHead>실행 (회)</TableHead><TableHead>유휴 (회)</TableHead><TableHead>지연 표본 (개)</TableHead><TableHead>유휴 (W)</TableHead><TableHead>실행 (W)</TableHead></TableRow></TableHeader><TableBody>{rows.map((row,index)=><TableRow key={row.id??index}><TableCell>{row.batch}</TableCell><TableCell>{number(row.p95Milliseconds,"ms")}</TableCell><TableCell>{number(row.totalJoulesPerItem,"J/item")}</TableCell><TableCell>{number(row.incrementalJoulesPerItem,"J/item")}</TableCell><TableCell>{number(row.activeTrialCount)}</TableCell><TableCell>{number(row.idleTrialCount)}</TableCell><TableCell>{number(row.latencySampleCount)}</TableCell><TableCell>{number(row.idleWatts,"W")}</TableCell><TableCell>{number(row.activeWatts,"W")}</TableCell></TableRow>)}</TableBody></Table></div>}
     {rows.length>0&&<details><summary className="min-h-11 cursor-pointer py-2 text-sm">조건·표본·출처</summary><div className="space-y-4">{rows.map((row,index)=><section key={row.id??index} className="min-w-0 border-t pt-3"><h3 className="font-medium">{row.rowKind==="confirmation"?"대상 확인 측정":row.rowKind==="source-reference"?"기존 측정 참조":"직접 측정"}</h3><ResultCondition condition={row.condition}/><ExactFields value={row}/></section>)}</div></details>}
   </section>
@@ -87,7 +87,12 @@ export function MeasurementPlanDetails({namespace,name}:{namespace:string;name:s
   const params=useSearchParams(),expectedUID=params.get("uid")
   const query=useChillQuery<CampaignResult>(`${plansPath(namespace)}/${encodeURIComponent(name)}/result`,{decoder:parseSchedulerJSON})
   const [deleted,setDeleted]=React.useState<MeasurementMutation|null>(null)
-  const data=query.data,campaign=data?.campaign,spec=campaign?.spec as MeasurementPlanSpec|undefined
+  const denied=[401,403].includes(query.error?.status??0)
+  const errorData=denied?undefined:query.error?.data as Partial<CampaignResult>|undefined
+  const metadata=useChillQuery<MeasurementPlanList>(plansPath(namespace),{enabled:!!query.error&&!denied&&!errorData?.campaign})
+  const stored=metadata.data?.items?.find(plan=>plan.metadata.name===name&&(!expectedUID||plan.metadata.uid===expectedUID))
+  const data=denied?undefined:query.data??(errorData?.campaign?errorData as CampaignResult:stored?{campaign:{...stored.metadata,...stored.status,spec:stored.spec},assessment:stored.assessment,resultRows:[],result:null}:undefined)
+  const campaign=data?.campaign,spec=campaign?.spec as MeasurementPlanSpec|undefined
   const coverage=useMeasurementCoverage(namespace)
   const usage=spec?coverageUsageAssessment(coverage.data?.cells??[],spec):undefined
   const assessment=data?.assessment&&usage?{...data.assessment,scope:usage.scope}:data?.assessment
@@ -96,14 +101,18 @@ export function MeasurementPlanDetails({namespace,name}:{namespace:string;name:s
   const result=data?.result as ResultBody|null|undefined
   const linkedRuns=[...new Map([...(data?.assessment?.failureSummary??[]).filter(failure=>failure.runName).map(failure=>({namespace:failure.runNamespace||namespace,name:failure.runName,uid:failure.runId.split("/").at(-1)??""})),...(result?.excludedTrials??[]).map(trial=>trial.run)].map(run=>[`${run.namespace}/${run.name}/${run.uid}`,run])).values()]
   const used=spec?requestUsedResults(coverage.data?.cells??[],spec):[]
+  const otherUsed=used.filter(candidate=>!data?.resultRows?.some(row=>!!row.id&&row.id===candidate.id||!!row.profileId&&row.profileId===candidate.profileId&&row.batch===candidate.batch))
+  const sharesUsed=otherUsed.length<used.length
   const resultQuery=spec?new URLSearchParams({namespace,kind:"throughput",model:spec.state.candidate.modelSpec,deviceClass:spec.state.candidate.deviceClass,node:spec.state.targetNode,path:spec.state.candidate.executionPath,powerMode:spec.state.candidate.powerMode}):new URLSearchParams()
   const returnTo=`${requestHref(namespace,name,campaign?.uid)}&${new URLSearchParams({returnTo:params.get("returnTo")??""})}`
   return <>
     <Button variant="outline" disabled={query.isFetching} onClick={()=>void query.refetch()}>갱신</Button>
     {other&&<p role="alert" className="notice">측정 식별자 불일치</p>}
-    <QueryGate query={query}>{campaign&&spec&&!other&&<>
+    {query.error&&!denied&&data&&<section role="alert" className="border border-destructive/40 p-3"><StatusCell axis="관측 상태" label={`결과 조회 실패 · HTTP ${query.error.status}`} tone="fail"/><SourceJSON value={query.error.data??query.error.body} title="결과 조회 오류 원문"/><span className="text-sm">요청 상태와 결과 파일 조회는 별도</span></section>}
+    {!data&&<QueryGate query={query}>{null}</QueryGate>}
+    {campaign&&spec&&!other&&<>
       <div className="flex flex-wrap gap-3"><StatusCell axis="실행" label={requestExecutionStatus(campaign.phase)} tone={campaign.phase==="Failed"?"fail":"idle"}/><MeasurementStatus assessment={assessment}/></div>
-      <Facts label="요청 조건" items={[["모델",spec.state.candidate.modelSpec],["장치 종류",spec.state.candidate.deviceClass],["Node",spec.state.targetNode],["전력모드",spec.state.candidate.powerMode],["실행 경로",spec.state.candidate.executionPath],["배치 (건)",spec.batchSizes?.join(", ")??"선언 범위"],["반복 (회)",spec.trialsPerBatch],["CPU 상한",spec.cpuQuota??"미제공"],["CPU 코어",spec.cpuAffinity?.join(", ")??"미지정"],["데이터셋",spec.activeProtocol.dataset??"미제공"],["실행 측정 (s)",spec.activeProtocol.durationSeconds??"미제공"],["예열 (회)",spec.activeProtocol.warmupIterations??"미제공"],["유휴 측정 (s)",spec.idleProtocol.durationSeconds??"미제공"]]}/>
+      <details><summary className="min-h-11 cursor-pointer py-2 text-sm">요청 조건</summary><Facts label="요청 조건" items={[["모델",spec.state.candidate.modelSpec],["장치 종류",spec.state.candidate.deviceClass],["장비",spec.state.targetNode],["전력모드",spec.state.candidate.powerMode],["실행 경로",spec.state.candidate.executionPath],["배치 (건)",spec.batchSizes?.join(", ")??"선언 범위"],["반복 (회)",spec.trialsPerBatch],["CPU 상한",spec.cpuQuota??"미제공"],["CPU 코어",spec.cpuAffinity?.join(", ")??"미지정"],["데이터셋",spec.activeProtocol.dataset??"미제공"],["실행 측정 (s)",spec.activeProtocol.durationSeconds??"미제공"],["예열 (회)",spec.activeProtocol.warmupIterations??"미제공"],["유휴 측정 (s)",spec.idleProtocol.durationSeconds??"미제공"]]}/></details>
       {campaign.phase==="Failed"&&<section role="alert" className="space-y-2 border border-destructive/40 p-4">
         <h2 className="font-semibold text-destructive">실패 근거</h2>
         <table aria-label="실패 원인·연결 회차" className="w-full text-left text-sm"><tbody>
@@ -112,14 +121,14 @@ export function MeasurementPlanDetails({namespace,name}:{namespace:string;name:s
           {data?.assessment?.failureSummary?.map((failure,index)=><React.Fragment key={index}><tr><th scope="row" className="py-2 align-top font-medium">분류</th><td>{failure.code==="Other"?campaign.conditions?.find(condition=>condition.reason)?.reason||failure.code:failure.label??failure.code}</td></tr><tr><th scope="row" className="py-2 align-top font-medium">서버 상세</th><td className="break-words">{failure.message||"미제공"}</td></tr><tr><th scope="row" className="py-2 align-top font-medium">종료 코드</th><td className="text-right tabular-nums">{failure.exitCode??"미제공"}</td></tr></React.Fragment>)}
         </tbody></table>
       </section>}
-      <ResultRows rows={data?.resultRows??[]} filename={`chill-measurement-${name}.csv`} emptyMessage={campaign.phase==="Failed"?"측정 실패 · 요청 결과 없음":campaign.phase==="Complete"?"실행 종료 · 저장 결과 없음":"측정 결과 대기"}/>
-      <section aria-label="현재 사용 결과" className="space-y-3"><h2 className="font-semibold">현재 사용 결과</h2><QueryGate query={coverage}>{used.length>0&&<ResultRows rows={used} filename={`chill-used-${name}.csv`}/>}</QueryGate><Link className="inline-flex min-h-11 items-center underline" href={`/measurements/results?${resultQuery}`}>같은 대상 결과</Link></section>
+      <ResultRows rows={data?.resultRows??[]} title={sharesUsed?"측정 결과 · 현재 사용 결과 포함":"이 요청의 측정 결과"} filename={`chill-measurement-${name}.csv`} emptyMessage={query.error?"결과 파일 조회 실패":campaign.phase==="Failed"?"측정 실패 · 요청 결과 없음":campaign.phase==="Complete"?"실행 종료 · 저장 결과 없음":"측정 결과 대기"}/>
+      <QueryGate query={coverage}>{otherUsed.length>0&&<section aria-label="현재 사용 결과" className="space-y-3"><h2 className="font-semibold">별도 보관 결과</h2><Facts items={[["요청과의 관계","이 요청의 측정 결과와 다른 객체"],["출처","보관된 처리 성능 프로파일"],["현재 사용","스케줄러 참조 · 품질 승인과 별개"]]}/><ResultRows title="다른 보관 프로파일의 현재 사용 결과" rows={otherUsed} filename={`chill-used-${name}.csv`}/></section>}</QueryGate><Link className="inline-flex min-h-11 items-center underline" href={`/measurements/results?${resultQuery}`}>같은 대상 결과</Link>
       <section id="request-child-runs" className="space-y-3"><h2 className="font-semibold">자식 회차</h2><MeasurementChildRuns namespace={namespace} parent={{name,uid:campaign.uid}}/></section>
       <AssessmentDetails assessment={data?.assessment} rows={data?.resultRows}/>
       <Button variant="outline" asChild><Link href={`/measurements/requests/new?${new URLSearchParams({namespace,from:name,fromNamespace:namespace,fromUID:campaign.uid})}`}>동일 조건 요청</Link></Button>
       <details><summary className="min-h-11 cursor-pointer py-2">관리</summary><Rows label="위험 영역"><DeleteMeasurement namespace={namespace} name={name} uid={campaign.uid} version={campaign.resourceVersion} trials={campaign.completedTrials??0} blocked={campaign.phase==="Measuring"?"진행 중인 측정은 삭제할 수 없어요.":undefined} onDeleted={setDeleted}/></Rows></details>
       <section aria-label="원본"><SourceExport value={{namespace,name,expectedUID,source:data}} filename={`chill-measurement-${name}.json`}/><SourceJSON value={data} title="요청 원본"/></section>
-    </>}</QueryGate>
+    </>}
   </>
 }
 

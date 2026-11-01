@@ -9,7 +9,7 @@ import { formatMeasurementTime } from "@/lib/measurements"
 import { requestHref, requestRunHref } from "@/lib/measurement-request"
 import type { ProfilingRun, RunsView } from "@/lib/read-types"
 import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
-import { MeasurementNavigation, MeasurementStatus, MeasurementEvidenceChecks } from "@/components/measurement-navigation"
+import { MeasurementNavigation, MeasurementStatus } from "@/components/measurement-navigation"
 import { Screen } from "@/components/screen"
 import { DataTable, useServerTable } from "@/components/data-table"
 import { Button } from "@/components/ui/button"
@@ -22,9 +22,9 @@ const columns = (parent?:{name:string;uid:string},returnTo?:string) => [
   {key:"batch",label:"배치",unit:"건",numeric:true,value:(run:ProfilingRun)=>runSpec(run).measurement?.batch??"미제공"},
   {key:"attempt",label:"반복",value:(run:ProfilingRun)=>runAttempt(run)},
   {key:"cpu",label:"CPU / 데이터셋",value:(run:ProfilingRun)=>{const s=runSpec(run);return <><p>{s.measurement?.cpuQuota??"미제공"}</p><p>{s.measurement?.cpuAffinity?.join(", ")??"코어 미지정"}</p><p>{s.measurement?.dataset??"미제공"}</p></>}},
-  {key:"status",label:"측정 / 현재 사용 / 품질",value:(run:ProfilingRun)=><><MeasurementStatus assessment={run.assessment}/><MeasurementEvidenceChecks assessment={run.assessment}/></>},
+  {key:"status",label:"측정 / 현재 사용 / 품질",value:(run:ProfilingRun)=><MeasurementStatus assessment={run.assessment}/>},
   {key:"reason",label:"사유 / 부모 요청",value:(run:ProfilingRun)=>{const owner=run.ownerReferences?.find(owner=>owner.controller&&owner.kind==="BatchEnergyOptimization");return <div><ul className="space-y-1 text-sm">{run.assessment?.reasons?.map((reason,index)=><li key={index}>{reason.label??reason.message}</li>)}</ul>{owner&&<Link className="break-all text-primary underline" href={requestHref(run.namespace,owner.name,owner.uid)}>{owner.name}</Link>}</div>}},
-]
+].filter(column=>!parent||!["model","cpu","reason"].includes(column.key))
 
 export function MeasurementChildRuns({namespace,parent}:{namespace:string;parent:{name:string;uid:string}}) {
   const table=useServerTable()

@@ -102,20 +102,21 @@ export function coverageQualityReasons(cells:MeasurementCoverageCell[]) {
   return [...counts.values()].sort((a,b)=>b.count-a.count)
 }
 
-export function coverageScopeCounts(cells:MeasurementCoverageCell[]) {
+export function coverageScopeCounts(scope:MeasurementCoverageCell[],inventory?:InventoryView) {
+  const cells=scope.filter(cell=>coveragePathVisible(cell,inventory))
   let measuredCells=0,measuredBatches=0,targetBatches=0
   for(const cell of cells) {
     const progress=coverageProgress(cell)
-    if(progress?.measured.length||cell.variants.some(variant=>variant.resultRows.length))measuredCells++
+    if(coverageMeasurementStatus(cell,inventory)==="usable")measuredCells++
     if(progress?.target.length) {
       measuredBatches+=progress.measured.filter(batch=>progress.target.includes(batch)).length
       targetBatches+=progress.target.length
     }
   }
-  return {cells:cells.length,measuredCells,measuredBatches,targetBatches,
+  return {cells:cells.length,unsupportedCells:scope.length-cells.length,measuredCells,measuredBatches,targetBatches,
     usedCells:cells.filter(cell=>measurementSchedulerUsed(cell.assessment)===true).length,
     unknownQualityCells:cells.filter(cell=>coverageQuality(cell).state==="unknown").length,
-    failedCells:cells.filter(cell=>cell.failureSummary.length>0||cell.assessment.displayStatus==="problem").length}
+    failedCells:cells.filter(cell=>coverageMeasurementStatus(cell,inventory)==="problem").length}
 }
 export function coverageBatchState(progress:BatchProgress|null,batch:number) {
   if(!progress)return "unknown"

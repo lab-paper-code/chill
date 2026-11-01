@@ -8,6 +8,8 @@ import * as costs from "./operation-cost.ts"
 import * as assessment from "./measurement-assessment.ts"
 import * as scheduler from "./scheduler.ts"
 import * as status from "./status.ts"
+import * as coverage from "./measurement-coverage.ts"
+import * as requests from "./measurement-request.ts"
 import type { MeasurementAssessment, OperationCostMeasurement, ProfilesView, ResultRow } from "./read-types.ts"
 
 type Element={type:unknown;props:Record<string,unknown>}
@@ -186,4 +188,42 @@ test("empty operation measurements retain a selectable row instead of disappeari
   assert.equal(rows.length,1)
   assert.equal(text(columns.find(column=>column.key==="operation")!.value(rows[0])),"미기록")
   assert.equal(text(columns.find(column=>column.key==="duration-0")!.value(rows[0])),"미제공")
+})
+
+test("pending run evidence is not presented as a connection failure",()=>{
+  const run={namespace:"ns",name:"running",uid:"run-uid",generation:1,spec:{},status:{conditions:[{type:"ExecutionComplete",status:"Unknown",observedGeneration:1}]},assessment:accepted}
+  const h=harness("namespace=ns&uid=run-uid",path=>path.includes("evidence-passport")?{code:"EvidencePassportPending",run}:({runs:[run]}))
+  Object.assign(h.modules,{"@/lib/measurement-coverage":coverage,"@/lib/measurement-request":requests,"@/lib/labels":{codeText:{}},react:{useState:(value:unknown)=>[value,()=>{}]}})
+  const tree=load("../features/read-pages.tsx",h.modules).MeasurementDetail({namespace:"ns",name:"running"})
+  assert.match(text(tree),/근거 발행 대기/)
+  assert.doesNotMatch(text(tree),/연결 상태/)
+})
+
+test("failed occupancy values remain visible only as unverified raw data",()=>{
+  const failed={...measurement,kind:"DispatchOccupancyMeasurement",assessment:{...accepted,displayStatus:"problem"},conditions:{workload:"service"},status:{phase:"Failed",perRequestNanos:1880000,throughput:"87.1",reason:"evidence missing"}}
+  const h=harness("kind=dispatch-occupancy&namespace=ns",path=>path.endsWith("dispatch-occupancy-measurements")?{items:[failed]}:undefined)
+  const tree=projection(h),table=elements(tree).find(element=>element.type==="data-table")!
+  const columns=table.props.columns as Column[]
+  for(const key of ["d","x"]) {
+    const cell=columns.find(column=>column.key===key)!.value(failed)
+    assert.match(text(cell),/미검증 원자료/)
+  }
+})
+
+test("opening a coverage cell pushes a closeable history entry while retaining the filtered matrix",()=>{
+  const cell={id:"one",model:{name:"model",uid:"model"},deviceClass:{name:"device",uid:"device"},executionPath:"cpu",powerMode:"fixed",support:{verdict:"Compatible",reasons:[]},assessment:accepted,variants:[],failureSummary:[],history:[],batchProgress:null}
+  const h=harness("model=model&deviceClass=device&status=usable",()=>undefined)
+  Object.assign(h.modules,{
+    react:{useRef:(current:unknown)=>({current}),useEffect:()=>{}},
+    "@tanstack/react-query":{useQuery:({queryKey}:{queryKey:string[]})=>({data:queryKey[1]==="coverage-inventory"?{classes:[],models:[]}:{cells:[cell],scope:{targetBatches:[]},sources:[],nextActions:[]}})},
+    "@/lib/measurement-coverage":coverage,"./measurement-coverage.css":{},
+  })
+  const tree=load("../features/measurement-coverage.tsx",h.modules).MeasurementCoveragePage({})
+  const chosen=elements(tree).find(element=>element.props.cell===cell&&typeof element.props.select==="function")!
+  ;(chosen.props.select as (cell:unknown,button:unknown)=>void)(cell,{})
+  assert.equal(h.replacements.length,0)
+  const opened=new URL(h.pushes[0],"https://test").searchParams
+  assert.equal(opened.get("cell"),"one")
+  assert.equal(opened.get("status"),"usable")
+  assert.equal(opened.get("deviceClass"),"device")
 })

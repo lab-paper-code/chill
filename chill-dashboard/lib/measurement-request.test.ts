@@ -319,12 +319,13 @@ test("failed request detail renders failure evidence, current results, checks an
   const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
   const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
   const assessment=retainedAssessment
-  const data={campaign:{...plan.metadata,spec:plan.spec,phase:"Failed",conditions:[{type:"Complete",status:"False",reason:"NativePreparationFailed",message:"Pod image missing"}]},assessment,resultRows:[],result:{excludedTrials:[{run:{namespace:"ns",name:"failed-child",uid:"child"}}]}}
+  const data={campaign:{...plan.metadata,spec:plan.spec,phase:"Failed",conditions:[{type:"Complete",status:"False",reason:"NativePreparationFailed",message:"Pod image missing"}]},assessment,resultRows:[] as ResultRow[],result:{excludedTrials:[{run:{namespace:"ns",name:"failed-child",uid:"child"}}]}}
+  let queryError:{status:number;data:unknown}|undefined
   const modules:Record<string,unknown>={
     "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
     "next/navigation":{useSearchParams:()=>new URLSearchParams(),useRouter:()=>({push:()=>{}})},
     "@tanstack/react-query":{useQueryClient:()=>({})},
-    "@/lib/client":{useChillQuery:()=>({data}),useChillMutation:()=>({})},
+    "@/lib/client":{useChillQuery:(path:string)=>queryError&&path.endsWith("/result")?{error:queryError}:{data},useChillMutation:()=>({})},
     "@/lib/measurement-request":requestHelpers,
     "@/lib/measurement-assessment":{assessmentReasons:()=>[]},
     "@/lib/measurement-coverage":coverageHelpers,
@@ -347,10 +348,24 @@ test("failed request detail renders failure evidence, current results, checks an
   assert.match(html,/Pod image missing/)
   assert.match(html,/failed-child/)
   assert.match(html,/현재 사용 결과/)
+  assert.match(html,/별도 보관 결과/)
   assert.match(html,/12\.00/)
   assert.match(html,/checks/)
   assert.match(html,/동일 조건 요청/)
   assert.match(html,/fromUID=uid/)
   assert.ok(html.indexOf("Pod image missing")<html.indexOf("측정 실패 · 요청 결과 없음"))
   assert.match(html,/<details><summary[^>]*>관리/)
+  data.campaign.phase="Complete";data.resultRows=[retainedRow]
+  const success=renderToStaticMarkup(createElement(exports.MeasurementPlanDetails as ComponentType<{namespace:string;name:string}>,{namespace:"ns",name:"source"}))
+  assert.equal((success.match(/12\.00/g)??[]).length,1)
+  assert.doesNotMatch(success,/별도 보관 결과/)
+  data.campaign.phase="Failed";data.resultRows=[]
+  queryError={status:502,data:{...data,code:"BatchEnergyOptimizationResultUnavailable"}}
+  const unavailable=renderToStaticMarkup(createElement(exports.MeasurementPlanDetails as ComponentType<{namespace:string;name:string}>,{namespace:"ns",name:"source"}))
+  assert.match(unavailable,/HTTP 502/)
+  assert.match(unavailable,/NativePreparationFailed/)
+  assert.match(unavailable,/별도 보관 결과/)
+  queryError={status:403,data}
+  const denied=renderToStaticMarkup(createElement(exports.MeasurementPlanDetails as ComponentType<{namespace:string;name:string}>,{namespace:"ns",name:"source"}))
+  assert.doesNotMatch(denied,/NativePreparationFailed/)
 })

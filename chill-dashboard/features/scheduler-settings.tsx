@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useSearchParams } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useQueryClient, type QueryClient } from "@tanstack/react-query"
 import { useChillQuery, useChillMutation, useSession, ApiError, type ChillMutationInput, type RelayResponse } from "@/lib/client"
 import type { OperationResult, Routing, SchedulerSettings, SchedulerSettingsChange, SchedulerControllerState, SchedulerObservationPage, WireInteger } from "@/lib/read-types"
@@ -95,9 +95,16 @@ export async function putSchedulerSettings(mutate:(input:ChillMutationInput)=>Pr
 }
 
 // One row, one value: the dialog edits only this value and adds it to the draft.
-function EditRow({label,help,value,changed,initial,unit,range,save,disabled}:{label:string;help:string;value:string;changed:boolean;initial:string|boolean;unit?:string;range?:string;save:(value:string|boolean)=>void;disabled:boolean}) {
-  const [open,setOpen]=React.useState(false),[next,setNext]=React.useState(initial),[error,setError]=React.useState(""),id=React.useId()
-  return <Sheet open={open} onOpenChange={state=>{setOpen(state);setNext(initial);setError("")}}><SheetTrigger asChild><Button variant="outline" disabled={disabled} aria-label={`${label} 수정`}>수정{changed?" · 변경":""}</Button></SheetTrigger><SheetContent className="w-full overflow-y-auto sm:max-w-xl" aria-describedby={undefined}><SheetHeader><SheetTitle>{label}</SheetTitle></SheetHeader><div className="grid gap-4 px-4 pb-6"><Facts items={[["현재값",value]]}/><details><summary className="min-h-11 cursor-pointer py-2">항목 도움말</summary>{help}</details>
+function EditRow({editKey,label,help,value,changed,initial,unit,range,save,disabled}:{editKey:string;label:string;help:string;value:string;changed:boolean;initial:string|boolean;unit?:string;range?:string;save:(value:string|boolean)=>void;disabled:boolean}) {
+  const params=useSearchParams(),router=useRouter(),open=params.get("edit")===editKey
+  const [next,setNext]=React.useState(initial),[error,setError]=React.useState(""),id=React.useId()
+  function setOpen(state:boolean) {
+    const query=new URLSearchParams(params.toString())
+    if(state)query.set("edit",editKey);else query.delete("edit")
+    router[state?"push":"replace"](`/settings?${query}`,{scroll:false})
+    setNext(initial);setError("")
+  }
+  return <Sheet open={open} onOpenChange={setOpen}><SheetTrigger asChild><Button variant="outline" disabled={disabled} aria-label={`${label} 수정`}>수정{changed?" · 변경":""}</Button></SheetTrigger><SheetContent className="w-full overflow-y-auto sm:max-w-xl" aria-describedby={undefined}><SheetHeader><SheetTitle>{label}</SheetTitle></SheetHeader><div className="grid gap-4 px-4 pb-6"><Facts items={[["현재값",value]]}/><details><summary className="min-h-11 cursor-pointer py-2">항목 도움말</summary>{help}</details>
     <form className="grid gap-4" onSubmit={event=>{event.preventDefault();try {save(next);setOpen(false)} catch(caught) {setError(caught instanceof Error?caught.message:"값을 확인해 주세요.")}}}>
       {typeof next==="boolean"
         ?<label className="switch"><input type="checkbox" role="switch" checked={next} onChange={event=>setNext(event.target.checked)}/>{onOff(next)}</label>
@@ -109,9 +116,17 @@ function EditRow({label,help,value,changed,initial,unit,range,save,disabled}:{la
 }
 
 // Diff the declaration shown when the dialog opened, so unrelated UID changes stay untouched.
-function RoutingEdit({initial,disabled,apply}:{initial?:Routing;disabled:boolean;apply:(before:Routing,after:Routing,reason:string)=>void}) {
+function RoutingEdit({initial,snapshot,disabled,apply}:{initial?:Routing;snapshot?:SchedulerControllerState["snapshot"];disabled:boolean;apply:(before:Routing,after:Routing,reason:string)=>void}) {
   const [open,setOpen]=React.useState(false),[text,setText]=React.useState(""),[reason,setReason]=React.useState(""),[error,setError]=React.useState(""),[before,setBefore]=React.useState<Routing>({}),id=React.useId()
-  return <RowDialog label="요청 분배 바꾸기" hint="자동 제어하지 않는 서비스의 인스턴스 비율과 선택 이유" title="요청 분배 바꾸기" description="서비스 UID → 인스턴스 ID → 가중치를 JSON으로 적어요. 바꾼 서비스만 순서대로 적용해요. 서비스의 빈 객체는 새 요청을 막고, 기존 서비스를 생략하면 기본 분배로 돌려요. 실패하면 나머지는 적용하지 않고 이미 적용한 내용은 유지해요." open={open} onOpenChange={state=>{setOpen(state);setBefore(initial??{});setText(JSON.stringify(initial??{},null,2));setReason("");setError("")}}>
+  let routing:Routing={}
+  try {
+    const parsed:unknown=JSON.parse(text)
+    if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed)&&Object.values(parsed).every(weights=>weights&&typeof weights==="object"&&!Array.isArray(weights)))routing=parsed as Routing
+  } catch {}
+  const services=snapshot?.workloads?.filter(service=>service!==null)??[]
+  const instances=snapshot?.instances??[]
+  function update(next:Routing) {setText(JSON.stringify(next,null,2));setError("")}
+  return <RowDialog label="요청 분배 바꾸기" title="요청 분배 바꾸기" open={open} onOpenChange={state=>{setOpen(state);setBefore(initial??{});setText(JSON.stringify(initial??{},null,2));setReason("");setError("")}}>
     <form className="grid gap-4" onSubmit={event=>{event.preventDefault();try {
       const parsed:unknown=JSON.parse(text)
       if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))throw new Error("JSON 객체로 적어 주세요.")
@@ -123,7 +138,29 @@ function RoutingEdit({initial,disabled,apply}:{initial?:Routing;disabled:boolean
       if(!reason.trim())throw new Error("선택 이유를 적어 주세요.")
       apply(before,parsed as Routing,reason.trim());setOpen(false)
     } catch(caught) {setError(caught instanceof Error?caught.message:"값을 확인해 주세요.")}}}>
-      <div className="grid gap-2"><label htmlFor={`${id}-routing`}>분배</label><textarea id={`${id}-routing`} className="min-h-40 rounded-md border p-2 font-mono text-sm" required value={text} onChange={event=>{setText(event.target.value);setError("")}} aria-invalid={!!error}/></div>
+      {Object.entries(routing).map(([uid,weights],index)=><fieldset key={index} className="grid min-w-0 gap-3 rounded-md border p-3">
+        <legend className="px-1">서비스 {index+1}</legend>
+        <label className="grid min-w-0 gap-2">서비스<select aria-label={`서비스 ${index+1}`} className="min-h-11 w-full min-w-0 rounded-md border bg-background px-2" value={uid} onChange={event=>{
+          const next={...routing};delete next[uid];next[event.target.value]=weights;update(next)
+        }}>
+          {!services.some(service=>service.uid===uid)&&<option value={uid}>{uid||"서비스 선택"}</option>}
+          {services.map(service=><option key={service.uid} value={service.uid} disabled={service.uid!==uid&&Object.hasOwn(routing,service.uid)}>{service.name}</option>)}
+        </select></label>
+        <DataTable searchable={false} data={Object.entries(weights)} columns={[
+          {key:"instance",label:"인스턴스",value:([instance,weight])=><select aria-label={`서비스 ${index+1} 인스턴스 ${Object.keys(weights).indexOf(instance)+1}`} className="min-h-11 w-full min-w-0 rounded-md border bg-background px-2" value={instance} onChange={event=>{const next={...weights};delete next[instance];next[event.target.value]=weight;update({...routing,[uid]:next})}}>
+            {!instances.some(item=>item.id===instance)&&<option value={instance}>{instance||"인스턴스 선택"}</option>}
+            {instances.filter(item=>item.workloadUID===uid||item.id===instance).map((item,i)=><option key={item.id} value={item.id} disabled={item.id!==instance&&Object.hasOwn(weights,item.id)}>{item.node.name} · 인스턴스 {i+1}</option>)}
+          </select>},
+          {key:"weight",label:"가중치",numeric:true,value:([instance,weight])=><Input aria-label={`서비스 ${index+1} 가중치 ${Object.keys(weights).indexOf(instance)+1}`} className="min-w-0" type="number" required min={0} max={2147483647} step={1} value={weight??""} onChange={event=>update({...routing,[uid]:{...weights,[instance]:event.target.value===""?NaN:Number(event.target.value)}})}/>},
+          {key:"remove",label:"작업",value:([instance])=><Button type="button" variant="outline" onClick={()=>{const next={...weights};delete next[instance];update({...routing,[uid]:next})}}>대상 제외</Button>},
+        ]}/>
+        {!Object.keys(weights).length&&<Facts items={[["요청 접수","차단"]]} />}
+        <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" onClick={()=>{const instance=instances.find(item=>item.workloadUID===uid&&!Object.hasOwn(weights,item.id));if(instance)update({...routing,[uid]:{...weights,[instance.id]:1}})}} disabled={!instances.some(item=>item.workloadUID===uid&&!Object.hasOwn(weights,item.id))}>인스턴스 추가</Button>
+        <Button type="button" variant="outline" onClick={()=>update({...routing,[uid]:{}})}>새 요청 차단</Button>
+        <Button type="button" variant="outline" onClick={()=>{const next={...routing};delete next[uid];update(next)}}>기본 분배로</Button></div>
+      </fieldset>)}
+      <Button type="button" variant="outline" disabled={!services.some(service=>!Object.hasOwn(routing,service.uid))} onClick={()=>{const service=services.find(service=>!Object.hasOwn(routing,service.uid));if(service)update({...routing,[service.uid]:{}})}}>서비스 추가</Button>
+      <details><summary className="min-h-11 cursor-pointer py-2">분배 원문</summary><label className="grid gap-2" htmlFor={`${id}-routing`}>분배 JSON<textarea id={`${id}-routing`} className="min-h-40 w-full min-w-0 rounded-md border p-2 font-mono text-sm" required value={text} onChange={event=>{setText(event.target.value);setError("")}} aria-invalid={!!error}/></label></details>
       <div className="grid gap-2"><label htmlFor={`${id}-reason`}>선택 이유</label><Input id={`${id}-reason`} required value={reason} onChange={event=>setReason(event.target.value)}/></div>
       {error&&<p role="alert">{error}</p>}
       <Button type="submit" disabled={disabled||!reason.trim()}>분배 적용하기</Button>
@@ -133,8 +170,8 @@ function RoutingEdit({initial,disabled,apply}:{initial?:Routing;disabled:boolean
 
 
 export function SchedulerSettingsPage() {
-  const params=useSearchParams()
-  const [category,setCategory]=React.useState<Field["group"]|"controls">(()=>params.get("section")==="capacity"?"capacity":"cycle")
+  const params=useSearchParams(),router=useRouter()
+  const section=params.get("section"),category:Field["group"]|"controls"=section==="limit"||section==="controls"||section==="capacity"||section==="advanced"?section:"cycle"
   const settings=useChillQuery<SchedulerSettings>("v1/scheduler/settings",{decoder:parseSchedulerJSON,poll:true})
   const state=useChillQuery<SchedulerControllerState>("v1/scheduler/state",{decoder:parseSchedulerJSON})
   const [baseline,setBaseline]=React.useState<SchedulerSettings|null>(null),[draft,setDraft]=React.useState<SchedulerSettings|null>(null)
@@ -258,7 +295,7 @@ export function SchedulerSettingsPage() {
     </Screen>
   }
 
-  const editField=(field:Field)=>shown&&<EditRow key={field.key} label={field.label} help={field.help} value={plain(field,shown[field.key])} changed={!!count&&String(baseline![field.key])!==String(shown[field.key])}
+  const editField=(field:Field)=>shown&&<EditRow key={field.key} editKey={field.key} label={field.label} help={field.help} value={plain(field,shown[field.key])} changed={!!count&&String(baseline![field.key])!==String(shown[field.key])}
     initial={field.key.endsWith("Nanos")?nanosToMilliseconds(shown[field.key]):String(shown[field.key])} unit={field.key.endsWith("Nanos")?"ms":field.key==="servingMemoryBytes"?"bytes":field.unit}
     range={field.key==="scaleDownStabilizationNanos"||field.key==="replacementDwellNanos"?"0 이상의 밀리초, 소수점 아래 6자리까지":field.key==="transitionReserveFraction"||field.key==="scaleDownHeadroomFraction"?"0 ~ 1 사이 유한한 수":field.key.endsWith("Nanos")?"0보다 큰 밀리초, 소수점 아래 6자리까지":field.key==="completionMarginMS"?"0 이상의 밀리초":field.key==="servingMemoryBytes"?"0 ~ 18446744073709551615 사이 바이트 수":"1 이상의 정수"}
     save={value=>{
@@ -271,25 +308,25 @@ export function SchedulerSettingsPage() {
     action={count>0&&<Button ref={reviewLauncher} onClick={()=>void inspect()} disabled={blocked}>{reviewing?"현재값 조회 중":`변경 ${count}건 검토`}</Button>}>
     <SettingsNavigation active="configuration"/>
     {!precise&&<strong role="alert">큰 정수 처리 미지원 · 설정 변경 차단</strong>}
-    <label className="grid max-w-sm gap-2 text-sm">운영 설정 범위<select className="min-h-11 rounded-md border bg-background px-3" value={category} onChange={event=>setCategory(event.target.value as typeof category)}>{([["cycle","판단 주기와 범위"],["limit","자원 한도"],["controls","자동 조정 항목"],["capacity","용량 설정"],["advanced","고급"]] as const).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
+    <label className="grid max-w-sm gap-2 text-sm">운영 설정 범위<select className="min-h-11 rounded-md border bg-background px-3" value={category} onChange={event=>{const query=new URLSearchParams(params.toString());query.set("section",event.target.value);query.delete("edit");router.push(`/settings?${query}`,{scroll:false})}}>{([["cycle","판단 주기와 범위"],["limit","자원 한도"],["controls","자동 조정 항목"],["capacity","용량 설정"],["advanced","고급"]] as const).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
     <QueryGate query={settings}>{shown&&<>
       <section aria-label="현재값·정의 표">{category==="controls"?<DataTable data={controls} columns={[
         {key:"name",label:"항목",value:control=>control.label},
         {key:"value",label:"현재값",value:control=>onOff(shown.controls[control.key])},
-        {key:"edit",label:"작업",value:control=><EditRow label={control.label} help={`운영 판단에서 ${control.label}도 함께 조정해요.`} value={onOff(shown.controls[control.key])} changed={!!count&&baseline!.controls[control.key]!==shown.controls[control.key]} initial={shown.controls[control.key]} save={value=>edit(base=>({...base,controls:{...base.controls,[control.key]:value as boolean}}))} disabled={blocked}/>},
+        {key:"edit",label:"작업",value:control=><EditRow editKey={`controls.${control.key}`} label={control.label} help={`운영 판단에서 ${control.label}도 함께 조정해요.`} value={onOff(shown.controls[control.key])} changed={!!count&&baseline!.controls[control.key]!==shown.controls[control.key]} initial={shown.controls[control.key]} save={value=>edit(base=>({...base,controls:{...base.controls,[control.key]:value as boolean}}))} disabled={blocked}/>},
       ]}/>:<DataTable data={fields.filter(field=>field.group===category)} columns={[
         {key:"name",label:"항목",value:field=>field.label},
         {key:"value",label:count?"작성값":"현재값",value:field=>plain(field,shown[field.key])},
         {key:"edit",label:"작업",value:editField},
       ]}/>}</section>
       <details><summary className="min-h-11 cursor-pointer py-2">연결 대상·작업</summary><Facts items={[["자동 제어 서비스",autonomous(shown)],["계획 제외 장비",excludedNodes(shown)]]}/><Rows>
-        <li className="flex min-h-11 items-center justify-between gap-3"><span>계획 제외 장비</span><EditRow label="계획 제외 장비" help="운영 판단의 배치·제거·전력모드 변경 제외 대상" value={excludedNodes(shown)} changed={!!count&&String(baseline!.excludedNodes??[])!==String(shown.excludedNodes??[])} initial={(shown.excludedNodes??[]).join(", ")||"없음"} range="쉼표로 구분한 장비 이름, 비우려면 없음" save={value=>edit(base=>({...base,excludedNodes:nodeList(value as string)}))} disabled={blocked}/></li>
+        <li className="flex min-h-11 items-center justify-between gap-3"><span>계획 제외 장비</span><EditRow editKey="excludedNodes" label="계획 제외 장비" help="운영 판단의 배치·제거·전력모드 변경 제외 대상" value={excludedNodes(shown)} changed={!!count&&String(baseline!.excludedNodes??[])!==String(shown.excludedNodes??[])} initial={(shown.excludedNodes??[]).join(", ")||"없음"} range="쉼표로 구분한 장비 이름, 비우려면 없음" save={value=>edit(base=>({...base,excludedNodes:nodeList(value as string)}))} disabled={blocked}/></li>
         <Row href="/?evidence=capacity" label="용량 계산 근거"/>
         <Row href="/records?scope=scheduler&filter=settings" label="최근 변경 기록"/>
         {routing
           ?<Row href={`/records?${new URLSearchParams({filter:"action",id:routing.operation.id,view:"current",stage:"result",node:routing.operation.node.uid,startedAt:routing.startedAt})}`} label="설정한 요청 분배"/>
           :<Row href="/records?filter=action" label="설정한 요청 분배" value={state.data?"기록 없음":state.error?"조회 실패":"조회 중"}/>}
-        <RoutingEdit initial={settings.data?.staticRouting} disabled={blocked||count>0} apply={(before,after,reason)=>void applyRouting(before,after,reason)}/>
+        <RoutingEdit initial={settings.data?.staticRouting} snapshot={state.data?.snapshot} disabled={blocked||count>0} apply={(before,after,reason)=>void applyRouting(before,after,reason)}/>
         <Row href="/" label="운영 현황"/>
         {settings.data&&<RowDialog label="원본 자료 보기" title="현재 운영 설정 원본"><pre className="source-json">{stringifySchedulerJSON(safeSource(settings.data),2)}</pre><SourceExport value={settings.data} filename="chill-scheduler-settings.json"/></RowDialog>}
       </Rows></details>
