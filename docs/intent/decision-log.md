@@ -496,3 +496,8 @@
 ## 2026-11-01 — CPU 크기는 모드별 allocatable 기준
 
 - orin-nano 7W(online 4)에서 4코어 요청이 Insufficient cpu였다. kubelet allocatable이 모드의 online CPU를 따라가므로, 크기 = floor(min(full, online) − 다른 Pod request − 0.01)로 바꿨다(`cpuRequestedByOthersByDeviceClass`). jetsonx 2코어 모드 1, 4코어 모드 3; jetsono MODE_15W 3; nano 5W 1.
+
+## 2026-11-01 — orin-nano CPU 3, CurvePlanResolutionFailed는 lease를 영구 점유
+
+- orin-nano는 7W 이후 allocatable이 4로 남는다. 그래서 MAXN_SUPER 5코어 요청이 CurvePlanResolutionFailed가 됐다. 생성기 config에서 orin-nano 크기를 3으로 낮췄다.
+- 결함(미수정): `admission.go:53-55`, `reconciler.go:423-428`가 CurvePlanResolutionFailed를 비종료로 취급해서, measurement lease와 taint가 BEO 삭제 전까지 남는다(09:08–09:39Z, orin lane 31분 정지). BEO 삭제로 handback되는 것을 확인했다. 최소 수정 후보: 결정적 CPU 용량 오류를 terminal 사유로 분류.
