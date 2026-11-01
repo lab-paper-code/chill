@@ -479,13 +479,12 @@ Coverage is evaluated against current per-class runtime image identities in
 `profiling.executionDeclarations` from config `runtimeValues`
 (`charts/chill/values-operating.yaml`, read with the existing PyYAML package).
 Cells measured only on obsolete images are treated as unmeasured even if the
-server still calls them usable. A current-runtime CPU variant excludes the cell
-only when its request and limit equal `cpuByDeviceClass`. Those explicit values
-come from `Node.status.allocatable.cpu`; `cpuSource` records the read time and
-source Node (excluded Nodes do not determine their class's measurement size).
-New CPU, CUDA and RKNN BEOs use that whole-node request and quota. Every path
-uses the same comparison: existing BEOs and current-runtime measured variants
-exclude a cell only when both CPU request and quota match. CUDA and RKNN still
+server still calls them usable. CPU size is the frozen table
+`cpuByDeviceClassMode` (whole cores per device class and power mode; `cpuSource`
+records the rule and freeze time). It is never recomputed per plan. A
+current-runtime variant or an existing BEO covers a cell when its CPU request and
+quota are at or above that size; smaller ones are re-measured. New CPU, CUDA and
+RKNN BEOs use the table value for both request and quota; CUDA and RKNN still
 have a host CPU quota, and serving reproduces it just as for CPU execution.
 No result is deleted. Image identities and source SHA-256 are frozen in
 `inputs/current-runtime-images.json`; stale/current-runtime lists explain

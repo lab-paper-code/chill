@@ -476,33 +476,16 @@ def coverage_declared_on_node(cell, node, device, model, declarations, has_polic
 
 
 def coverage_cpu(policy, device, mode):
-    """Schedulable whole cores in this power mode: kubelet allocatable follows the online CPUs, minus other Pods' requests."""
-    online = policy.get("onlineCPUsByMode", {}).get(device + "/" + mode)
-    size = int(policy["cpuByDeviceClass"][device])
-    if online:
-        others = Decimal(policy["cpuRequestedByOthersByDeviceClass"][device])
-        size = min(size, int((online - others - Decimal("0.01")).to_integral_value(rounding="ROUND_FLOOR")))
-    if size < 1:
-        raise ValueError(device + "/" + mode + ": no schedulable whole core")
-    return str(size)
-
-
-def coverage_online_cpus(values):
-    counts = {}
-    for device in values["discovery"]["catalog"]["classes"]:
-        for mode in device["powerModes"]:
-            if mode.get("onlineCPUs"):
-                counts[device["name"] + "/" + mode["name"]] = sum(
-                    int(b) - int(a) + 1 for a, _, b in (part.partition("-") if "-" in part else (part, "", part)
-                                                       for part in mode["onlineCPUs"].split(",")))
-    return counts
+    """Frozen whole-core size per (device class, power mode); never recomputed per plan."""
+    return str(policy["cpuByDeviceClassMode"][device][mode])
 
 
 def coverage_cpu_matches(cell, cpu, policy):
+    """A request at or above the frozen size covers the cell; smaller ones are re-measured."""
     expected = Decimal(coverage_cpu(policy, cell["deviceClass"]["name"], cell["powerMode"]))
     def quantity(value):
         return Decimal(value[:-1]) / 1000 if value.endswith("m") else Decimal(value)
-    return all(cpu.get(key) not in (None, "") and quantity(str(cpu[key])) == expected
+    return all(cpu.get(key) not in (None, "") and quantity(str(cpu[key])) >= expected
                for key in ("request", "limit"))
 
 
@@ -786,10 +769,10 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
     for key in ("callDurationEstimateMultiplier", "unknownCallDurationSeconds"):
         if type(policy[key]) not in (int, float) or not math.isfinite(policy[key]) or policy[key] < 1:
             raise ValueError(key + " must be finite and at least one")
-    for device, cpu in policy["cpuByDeviceClass"].items():
-        value = Decimal(cpu)
-        if not value.is_finite() or value <= 0 or value != value.to_integral_value():
-            raise ValueError(device + ": allocatable CPU must be a positive whole core count")
+    for device, modes in policy["cpuByDeviceClassMode"].items():
+        for mode, cpu in modes.items():
+            if type(cpu) is not int or cpu < 1:
+                raise ValueError(device + "/" + mode + ": CPU size must be a positive whole core count")
     namespace = "/api/v1/namespaces/" + NS
     inputs = {}
     for name, path in (
@@ -805,7 +788,6 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
     current_images = coverage_runtime_images(runtime_values)
     runtime_doc = yaml.safe_load(runtime_values.read_text())
     declarations = runtime_doc["profiling"]["executionDeclarations"]
-    policy["onlineCPUsByMode"] = coverage_online_cpus(runtime_doc)
     write_json(output / "inputs" / "current-runtime-images.json", {
         "source": identity(runtime_values), "imagesByDeviceClass": current_images,
         "executionDeclarations": declarations})
@@ -985,7 +967,7 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
 
 def coverage_self_check():
     policy = load(HERE / "coverage-plan.json")
-    policy["cpuByDeviceClass"] = dict(policy["cpuByDeviceClass"], device="4")
+    policy["cpuByDeviceClassMode"] = dict(policy["cpuByDeviceClassMode"], device={"mode": 4})
     model = "mobilenet-v2-050"
     cell = {"id": "cell", "model": {"name": model}, "deviceClass": {"name": "device"},
             "executionPath": "path", "powerMode": "mode", "support": {"verdict": "Compatible"},

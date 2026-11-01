@@ -30,40 +30,22 @@
   "sessions": 3,
   "warmupIterations": 1,
   "runOverheadSeconds": 20,
-  "cpuByDeviceClass": {
-    "edge-server-rtx-2080-ti-64g": "8",
-    "jetson-agx-orin-64g": "11",
-    "jetson-nano-4g": "3",
-    "jetson-orin-nano-8g": "3",
-    "jetson-xavier-nx-8g": "5",
-    "lattepanda-3-delta-8g": "3",
-    "orangepi-5-plus-16g": "7",
-    "raspberry-pi-5-8g": "3"
-  },
-  "cpuRequestedByOthersByDeviceClass": {
-    "edge-server-rtx-2080-ti-64g": "3.4",
-    "jetson-agx-orin-64g": "0.615",
-    "jetson-nano-4g": "0.615",
-    "jetson-orin-nano-8g": "0.615",
-    "jetson-xavier-nx-8g": "0.615",
-    "lattepanda-3-delta-8g": "0.705",
-    "orangepi-5-plus-16g": "0.605",
-    "raspberry-pi-5-8g": "0.615"
+  "cpuByDeviceClassMode": {
+    "edge-server-rtx-2080-ti-64g": {"fixed": 8, "GPU_1500": 8, "GPU_1200": 8, "GPU_900": 8},
+    "jetson-agx-orin-64g": {"MAXN": 11, "MODE_50W": 11, "MODE_30W": 7, "MODE_15W": 3},
+    "jetson-nano-4g": {"MAXN": 3, "5W": 1},
+    "jetson-orin-nano-8g": {"MAXN_SUPER": 3, "25W": 3, "15W": 3, "7W": 3},
+    "jetson-xavier-nx-8g": {"MODE_20W_6CORE": 5, "MODE_15W_6CORE": 5, "MODE_20W_4CORE": 3, "MODE_15W_4CORE": 3,
+                            "MODE_10W_4CORE": 3, "MODE_10W_DESKTOP": 3, "MODE_20W_2CORE": 1, "MODE_15W_2CORE": 1,
+                            "MODE_10W_2CORE": 1},
+    "lattepanda-3-delta-8g": {"fixed": 3},
+    "orangepi-5-plus-16g": {"fixed": 7},
+    "raspberry-pi-5-8g": {"fixed": 3}
   },
   "cpuSource": {
-    "field": "floor(Node.status.allocatable.cpu - non-measurement Pod cpu requests - 0.01 observer requests): allocatable alone is unschedulable (genesis3 12 vs 3.4 already requested)",
-    "readAt": "2026-11-01T02:47:00Z",
-    "orinNano": "jetson-orin-nano-8g allocatable stays at the CPUs online when edgecore last registered (4 after 7W), so MAXN_SUPER requests of 5 fail CurvePlanResolution (2026-11-01 09:08Z); xavier and agx-orin keep full allocatable across modes",
-    "nodesByDeviceClass": {
-      "edge-server-rtx-2080-ti-64g": "genesis3",
-      "jetson-agx-orin-64g": "jetsono",
-      "jetson-nano-4g": "jetson-nano",
-      "jetson-orin-nano-8g": "orin-nano",
-      "jetson-xavier-nx-8g": "jetsonx",
-      "lattepanda-3-delta-8g": "lattepanda",
-      "orangepi-5-plus-16g": "orangepi",
-      "raspberry-pi-5-8g": "rasp5"
-    }
+    "frozenAt": "2026-11-01T13:00:00Z",
+    "rule": "largest whole core count a measurement Pod can get in that mode: min(Node allocatable, mode onlineCPUs) minus other Pods' requests, floored. Any nonzero other request (node-agent 15m, edgemesh-agent 500m, mosquitto 100m on edge nodes; 3.4 on genesis3) costs one whole core, so the edge maximum is online-1.",
+    "orinNano": "jetson-orin-nano-8g allocatable stays at the CPUs online when edgecore last registered (4 after 7W), so MAXN_SUPER requests of 5 fail CurvePlanResolution (2026-11-01 09:08Z); xavier and agx-orin keep full allocatable across modes"
   },
   "excludedNodes": ["genesis1", "genesis2"],
   "excludedNodeReasons": {
