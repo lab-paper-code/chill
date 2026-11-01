@@ -1021,3 +1021,13 @@ test("R17: legacy result rows render absolute stage KPIs instead of an empty del
   assert.match(markup,new RegExp(experimentRows(run.stages[0])[0].name))
   assert.doesNotMatch(markup,/성공률 Δ|p95 \(배\)/)
 })
+
+test("R17b: planned and issued chart rates share the selected service and duration weighting",()=>{
+  const run=withDefinition(definedRun([{...stage,id:"candidate"}]),definition=>{
+    definition.loadScenarios[0].spec.parts=[{id:"early",durationSeconds:10,rates:{camera:2,plc:30}},{id:"late",durationSeconds:30,rates:{camera:6,plc:10}}]
+  })
+  assert.equal(experimentChartData(run,"camera")[0].rate,5)
+  assert.equal(experimentChartData(run,"plc")[0].rate,15)
+  assert.equal(experimentChartData(run,"")[0].rate,20)
+  assert.equal(experimentChartData(run,"absent")[0].rate,null)
+})

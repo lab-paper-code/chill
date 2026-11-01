@@ -49,3 +49,11 @@ test("result rows separate missing comparisons from absolute values and preserve
   assert.match(failed,/<tr[^>]*><th[^>]*>조회 실패<\/th>/)
   assert.doesNotMatch(failed,/대상 없음<\/th>/)
 })
+
+test("R17b: preparation-failure publications retain execution, measurement and cleanup without a decodable definition",()=>{
+  const failed=experiments.decodeExperiment(JSON.stringify({...run,stages:[],comparisons:undefined,definition:{schema:"evaluation-definition.v1alpha1",run:{name:"failed",uid:"failed-run"},spec:{stages:[{id:"never-created"}]},loadScenarios:[],workloads:[]},outcome:{execution:{status:"Failed",reason:"IdentityMismatch"},measurement:{verdict:"NOT_EVALUATED",reason:"IdentityMismatch"},cleanup:{status:"Complete",reason:"NoControlEffects"}}}))
+  assert.equal(failed.definition,undefined)
+  const html=renderToStaticMarkup(createElement(components.ExperimentResultRow,{run:failed,runs:[failed],pending:false,error:false}))
+  for(const value of ["실행","측정","정리","실패","미평가","완료"])assert.ok(html.includes(value),value)
+  assert.match(html,/실험 판정 3축/)
+})

@@ -20,10 +20,11 @@ export function HistoricalExperimentError({refetch}:{refetch:()=>void}) {
 }
 
 const outcomeWords:Record<string,string>={Complete:"완료",Failed:"실패",PASS:"통과",FAIL:"실패",INVALID:"무효",NOT_EVALUATED:"미평가",Executed:"실행",Cancelled:"취소",Invalid:"무효"}
+const outcomeReasons:Record<string,string>={IdentityMismatch:"실행 대상 식별자 불일치",NoControlEffects:"복구할 제어 변경 없음",ProcedureComplete:"절차 완료",CleanupFailed:"정리 실패",ExecutionLost:"실행 기록 확인 불가",RemoteEffectUnknown:"원격 변경 결과 미확인"}
 
 export function ExperimentOutcome({run,stage}:{run:Experiment;stage?:ExperimentStage}) {
   const outcome=experimentOutcome(run,stage)
-  return <dl aria-label={stage?"단계 판정 3축":"실험 판정 3축"} className="flex flex-wrap gap-x-4 gap-y-1 text-sm">{([["execution","실행"],["measurement","측정"],["cleanup","정리"]] as const).map(([axis,label])=><div key={axis} className="flex items-start gap-2"><dt className="text-muted-foreground">{label}</dt><dd className={["Failed","FAIL","INVALID"].includes(outcome[axis].value)?"font-medium text-destructive":""}>{outcomeWords[outcome[axis].value]??"미기록"}{outcome[axis].reason&&<div className="text-xs font-normal text-muted-foreground">{outcome[axis].reason}</div>}</dd></div>)}</dl>
+  return <dl aria-label={stage?"단계 판정 3축":"실험 판정 3축"} className="flex flex-wrap gap-x-4 gap-y-1 text-sm">{([["execution","실행"],["measurement","측정"],["cleanup","정리"]] as const).map(([axis,label])=><div key={axis} className="flex items-start gap-2"><dt className="text-muted-foreground">{label}</dt><dd className={["Failed","FAIL","INVALID"].includes(outcome[axis].value)?"font-medium text-destructive":""}>{outcomeWords[outcome[axis].value]??"미기록"}{outcome[axis].reason&&outcome[axis].reason!=="미기록"&&<div className="text-xs font-normal text-muted-foreground">{outcomeReasons[outcome[axis].reason]??"원문 확인"}</div>}</dd></div>)}</dl>
 }
 
 export function ExperimentInjections({run,stage}:{run:Experiment;stage:ExperimentStage}) {
@@ -82,7 +83,7 @@ export function ExperimentResultRow({run,runs,pending,error}:{run:Experiment;run
   const state=error?"조회 실패":pending?"조회 중":!run.definition&&run.comparisons===undefined?"미기록":c.matched?"일치":c.limited?"참고":score.conclusion==="대상 게시 없음"?"대상 없음":"비교 없음"
   const metrics=score.reference?score.referenceSummary:score.summary
   const outcome=experimentOutcome(run)
-  if(!run.definition&&run.comparisons===undefined)return <tr className="border-t"><th scope="row" className="max-w-64 break-all p-3 text-left align-top font-medium"><Link prefetch={false} className="underline" href={`/experiments/results?${new URLSearchParams({a:run.id})}`}>{run.id}</Link><div className="mt-2 text-xs font-normal text-muted-foreground">비교・정책・같은 부하 미기록</div></th><td colSpan={11} className="min-w-0 p-3"><ExperimentAbsoluteValues run={run}/></td></tr>
+  if(!run.definition&&run.comparisons===undefined)return <tr className="border-t"><th scope="row" className="max-w-64 break-all p-3 text-left align-top font-medium"><Link prefetch={false} className="underline" href={`/experiments/results?${new URLSearchParams({a:run.id})}`}>{run.id}</Link><div className="mt-2 text-xs font-normal text-muted-foreground">비교・정책・같은 부하 미기록</div>{run.outcome&&<div className="mt-3 font-normal"><ExperimentOutcome run={run}/></div>}</th><td colSpan={11} className="min-w-0 p-3"><ExperimentAbsoluteValues run={run}/></td></tr>
   return <tr className="border-t">
     <th scope="row" className="p-3 text-left font-medium">{state}</th>
     <td data-label="실험" className="max-w-64 break-all p-3"><Link prefetch={false} className="underline" href={`/experiments/results?${new URLSearchParams({a:run.id})}`}>{run.definition?.run.name??run.id}</Link></td>

@@ -9,7 +9,7 @@ import { QueryGate } from "@/components/read-region"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { EvaluationSubmit } from "@/features/evaluation-request"
+import { EvaluationPermission, EvaluationSubmit } from "@/features/evaluation-request"
 import { object, records, specValue, patchSpec, parseSpec, specJSON, copyAuthorDraft, type Spec, type LoadScenario, type EvidenceInput } from "@/lib/evaluation-author"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 
@@ -42,7 +42,7 @@ export function AuthorJSON({label,value,onChange,onValidityChange,disabled=false
   }}/></label>{error&&<><span role="alert" className="text-destructive">{error}</span><Button type="button" variant="outline" onClick={()=>{setDraft(null);setError("");onValidityChange?.(true)}}>JSON 변경 취소</Button></>}</div>
 }
 export function EvidencePicker({label,value,onChange}:{label:string;value:unknown;onChange:(value:Spec|undefined)=>void}) {
-  const defaultKind=label.includes("난수")?"seed":label.includes("번들")?"payload":label.includes("요청률")?"rateBasis":label.includes("분배")?"kappa":label.includes("trace")?"other":""
+  const defaultKind=label.includes("난수")?"seed":label.includes("번들")?"payload":label.includes("요청률")?"rateBasis":label.includes("분배")?"kappa":label.includes("요청 시각")?"other":""
   const query=useChillQuery<{items:EvidenceInput[]}>("v1/evaluations/inputs",{decoder:parseSchedulerJSON}),[kind,setKind]=useState(defaultKind)
   const items=query.data?.items??[],current=object(value)
   const identity=(item:Spec)=>`${String(item.store)}\n${String(item.key)}\n${String(item.size)}`
@@ -51,13 +51,13 @@ export function EvidencePicker({label,value,onChange}:{label:string;value:unknow
   return <div className="grid gap-2 sm:grid-cols-[minmax(6rem,1fr)_minmax(0,3fr)]">
     <AuthorSelect label="입력 종류" value={kind} onChange={setKind}><option value="">전체</option>{[...new Set(items.map(item=>item.kind))].map(k=><option key={k} value={k}>{{seed:"난수",payload:"입력 번들",rateBasis:"요청률 기준",kappa:"분배 계수",other:"기타"}[k]??"기타"}</option>)}</AuthorSelect>
     <AuthorSelect label={label} value={selected} onChange={key=>{const item=items.find(item=>identity(item)===key);onChange(item?{...current,store:item.store,key:item.key,size:item.size}:undefined)}}>
-      <option value="">미선택</option>{selected&&!visible.some(item=>identity(item)===selected)&&<option value={selected}>{String(current.store)}/{String(current.key)} ({String(current.size)} B)</option>}
-      {visible.map(item=><option key={identity(item)} value={identity(item)}>{item.store}/{item.key} ({String(item.size)} B)</option>)}
-    </AuthorSelect><div className="sm:col-span-2"><QueryGate query={query}>{null}</QueryGate></div>
+      <option value="">미선택</option>{selected&&!visible.some(item=>identity(item)===selected)&&<option value={selected}>저장된 {label}</option>}
+      {visible.map((item,index)=><option key={identity(item)} value={identity(item)}>{{seed:"난수 입력",payload:"입력 번들",rateBasis:"요청률 기준",kappa:"분배 계수",other:"기타 입력"}[item.kind]??"입력 객체"} · 항목 {index+1}</option>)}
+    </AuthorSelect><div className="min-w-0 sm:col-span-2"><QueryGate query={query}>{null}</QueryGate>{selected&&<><table className="w-full text-left text-sm tabular-nums"><tbody><tr><th className="font-normal">선택 입력 크기 (B)</th><td className="text-right">{String(current.size??"미기록")}</td></tr></tbody></table><details className="min-w-0"><summary className="min-h-11 cursor-pointer text-sm">선택 입력 원문</summary><pre className="max-w-full overflow-x-auto whitespace-pre-wrap break-all text-xs">{specJSON(current)}</pre></details></>}</div>
   </div>
 }
 export function AuthorHelp() {
-  return <TooltipProvider><Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost">편집 도움말</Button></TooltipTrigger><TooltipContent className="max-w-sm">검증 정본은 서버 사전점검입니다. 게시 복사는 새 이름으로 실행합니다. 수정은 같은 이름을 새 UID로 교체하며 사용 중인 부하 설정은 수정·삭제할 수 없습니다. 현재 식별자 반영은 선택 사항이며 반영 후 재점검합니다. JSON의 알 수 없는 필드와 정밀 정수는 보존합니다. 막대 폭은 구간 길이, 높이는 요청률 또는 α이며 원값은 표에 표시합니다.</TooltipContent></Tooltip></TooltipProvider>
+  return <TooltipProvider><Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost">편집 도움말</Button></TooltipTrigger><TooltipContent className="max-w-sm"><table className="w-full text-left text-xs"><caption className="sr-only">작성 제약</caption><tbody>{[["점검 기준","서버 사전점검"],["게시 복사","새 이름"],["수정 식별자","같은 이름 · 새 UID"],["사용 중 부하","수정·삭제 제한"],["현재 식별자 반영","선택 사항 · 반영 후 재점검"],["원문 편집","확장 필드·정밀 정수 보존"],["미리보기 폭","구간 길이"],["미리보기 높이","요청률 또는 α"]].map(([label,value])=><tr key={label}><th className="p-1 font-normal">{label}</th><td className="p-1">{value}</td></tr>)}</tbody></table></TooltipContent></Tooltip></TooltipProvider>
 }
 const switches=[["placement","배치 위치"],["resources","자원"],["replicas","복제 수"],["routing","라우팅"],["batching","배치 크기"],["power","전력"],["membership","풀 구성"]] as const
 function ControlFields({spec,path,onChange,onValidityChange}:{spec:Spec;path:(string|number)[];onChange:(spec:Spec)=>void;onValidityChange?:(valid:boolean)=>void}) {
@@ -136,6 +136,7 @@ export function EvaluationAuthor({initialSpec,initialName,existing,onSubmitted}:
   }
   const labels:Record<string,string>={question:"질문",target:"대상 구성요소",harness:"실행기",loadGenerator:"부하 발생기",powerMeasurement:"전력 측정",control:"제어",judgment:"판정 기준",evidenceStore:"증거 저장소",stages:"단계",comparisons:"비교"}
   return <div className="grid min-w-0 gap-5">
+    {!ready&&<EvaluationPermission/>}
     <div className="flex justify-end"><AuthorHelp/></div>
     {!initialSpec&&<section className="grid gap-3" aria-label="정의 출처">
       <AuthorSelect label="게시에서 복사" value={source} onChange={setSource}><option value="">게시 선택</option>{publications.data?.items.map(item=><option key={item.id} value={item.id}>{item.id}</option>)}</AuthorSelect>
@@ -144,9 +145,10 @@ export function EvaluationAuthor({initialSpec,initialName,existing,onSubmitted}:
         <Button type="button" variant="outline" disabled={template.isFetching} onClick={()=>void loadTemplate()}>빈 템플릿</Button>{publication.data&&!publication.data.definition?.spec&&<span role="status" className="text-sm">정의 미기록</span>}</div>
     </section>}
     {ready&&<><section className="grid gap-4" aria-label="실험 정의">
+      {Object.values(sources).some(source=>source==="none")&&<table aria-label="입력 필요 항목" className="w-full text-left text-sm"><thead><tr><th>입력 필요</th><th>상태</th></tr></thead><tbody>{Object.entries(sources).filter(([,source])=>source==="none").map(([field])=><tr key={field}><th className="py-1 font-normal">{labels[field]??"기타 입력"}</th><td>출처 미제공</td></tr>)}</tbody></table>}
       {Object.keys(sources).length>0&&<details><summary className="cursor-pointer text-sm">입력 출처</summary><table className="w-full text-left text-sm"><thead><tr><th>필드</th><th>출처</th><th>상태</th></tr></thead><tbody>{Object.entries(sources).map(([field,source])=><tr key={field} className={source==="none"?"bg-destructive/10":""}><th className="py-2">{labels[field]??field}</th><td>{{live:"현재 구성",config:"운영 설정",latestPublication:"최근 게시",none:"없음"}[String(source)]??"원문 확인"}</td><td>{source==="none"?"입력 필요":"확인됨"}</td></tr>)}</tbody></table></details>}
       <label className="grid gap-1 text-sm">실험 이름<Input value={name} disabled={!!existing} onChange={event=>setName(event.target.value)}/></label>{!existing&&origin&&name===origin&&<span role="alert" className="text-sm text-destructive">새 이름 필요</span>}
-      <AuthorField label={origin?"질문 · 저장된 원문":"질문"} spec={spec} path={["question"]} onChange={setSpec}/><EvaluationSpecEditor key={version} spec={spec} onChange={setSpec} onValidityChange={setValid}/>
+      {origin?<details><summary className="min-h-11 cursor-pointer text-sm">질문 원문</summary><AuthorField label="질문 · 저장된 원문" spec={spec} path={["question"]} onChange={setSpec}/></details>:<AuthorField label="질문" spec={spec} path={["question"]} onChange={setSpec}/>}<EvaluationSpecEditor key={version} spec={spec} onChange={setSpec} onValidityChange={setValid}/>
     </section><EvaluationSubmit name={name} spec={spec} existing={existing} disabled={!valid||!name.trim()||(!existing&&name===origin)} onSpecChange={setSpec} onSubmitted={onSubmitted}/></>}
   </div>
 }

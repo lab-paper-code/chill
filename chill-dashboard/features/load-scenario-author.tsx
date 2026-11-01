@@ -16,6 +16,7 @@ import { parseSchedulerJSON } from "@/lib/scheduler"
 import { evaluationPreflight, evaluationSameSpec, type EvaluationPreflight } from "@/lib/evaluation-request"
 import { object, records, patchSpec, specJSON, copyAuthorDraft, workloadChanges, adoptWorkloads, canDeleteLoad, canCreateLoad, renameLoadWorkload, removeLoadWorkload, evaluationReplacement, type LoadScenario, type Spec } from "@/lib/evaluation-author"
 import { AuthorSelect, AuthorField, AuthorJSON, AuthorHelp, EvidencePicker, useUnsavedAuthor } from "@/features/evaluation-author"
+import { EvaluationPermission } from "@/features/evaluation-request"
 
 const base="v1/evaluations/load-scenarios"
 const endpoint=(item:{name:string;uid:string})=>`${base}/${encodeURIComponent(item.name)}?${new URLSearchParams({uid:item.uid})}`
@@ -48,7 +49,7 @@ function LoadSpecEditor({spec,onChange,onValidityChange}:{spec:Spec;onChange:(sp
       <AuthorSelect label="서비스" value={String(w.uid??"")} onChange={uid=>{const selected=services.find(item=>item.uid===uid);if(!selected)return;let next=renameLoadWorkload(spec,index,selected.name);if(records(next.workloads)[index]?.name!==selected.name)return;next=patchSpec(next,["workloads",index,"uid"],uid);onChange(patchSpec(next,["workloads",index,"generation"],selected.generation))}}><option value="">미선택</option>{!!w.uid&&!services.some(item=>item.uid===w.uid)&&<option value={String(w.uid)}>{String(w.name)} · 저장된 정의</option>}{services.map(item=><option key={item.uid} value={item.uid}>{item.name}</option>)}</AuthorSelect>
       <AuthorField label="도착 분포" spec={spec} path={["arrivalDistribution",String(w.name)]} onChange={onChange}/>
       <Button type="button" variant="outline" onClick={()=>onChange(removeLoadWorkload(spec,index))}>서비스 삭제</Button>
-      <EvidencePicker label={`${String(w.name)} trace`} value={object(spec.traceRefs)[String(w.name)]} onChange={value=>onChange(patchSpec(spec,["traceRefs",String(w.name)],value))}/>
+      <EvidencePicker label={`${String(w.name)} 요청 시각 입력`} value={object(spec.traceRefs)[String(w.name)]} onChange={value=>onChange(patchSpec(spec,["traceRefs",String(w.name)],value))}/>
     </fieldset>)}<Button type="button" variant="outline" onClick={()=>onChange(patchSpec(spec,["workloads"],[...workloads,{name:"",uid:""}]))}>서비스 추가</Button></>}
     {tab==="inputs"&&[["seedRef","난수"],["payloadManifestRef","입력 번들"],["rateBasisRef","요청률 기준"],["kappaRef","분배 계수"]].map(([key,label])=><EvidencePicker key={key} label={label} value={spec[key]} onChange={value=>onChange(patchSpec(spec,[key],value))}/>)}
   </div>
@@ -99,6 +100,7 @@ function LoadEditor({source,editing,onSaved,onConfirmed}:{source?:LoadScenario;e
     <fieldset className="min-w-0" disabled={unknown||mutation.isPending}><LoadSpecEditor spec={spec} onChange={setSpec} onValidityChange={setValid}/></fieldset>
     {changes.length>0&&<div className="grid gap-3 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr><th>반영</th><th>Workload</th><th>정의 UID</th><th>현재 UID</th><th>정의 세대</th><th>현재 세대</th></tr></thead><tbody>{changes.map(change=><tr key={change.name}><td><input type="checkbox" aria-label={`${change.name} 현재 식별자 반영`} checked={selected.includes(change.name)} onChange={event=>setSelected(event.target.checked?[...selected,change.name]:selected.filter(x=>x!==change.name))}/></td><th>{change.name}</th><td>{String(change.before.uid)}</td><td>{String(change.after.uid)}</td><td>{String(change.before.generation)}</td><td>{String(change.after.generation)}</td></tr>)}</tbody></table><Button type="button" variant="outline" disabled={!selected.length} onClick={()=>{setSpec(adoptWorkloads(spec,changes,selected));setAnswer(null);setLive(null);setSelected([])}}>선택한 현재 식별자 반영</Button></div>}
     {answer&&<table className="w-full text-left text-sm"><thead><tr><th>검사</th><th>상태</th><th>사유</th></tr></thead><tbody>{answer.checks.map(check=><tr key={check.id}><th>{check.id}</th><td>{check.passed?"통과":"실패"}</td><td>{check.reason??"미기록"}</td></tr>)}</tbody></table>}
+    <EvaluationPermission denied={mutation.error?.status===403}/>
     {message&&<output className="break-all text-sm" role="status">{message}</output>}<div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={blocked||unknown} onClick={()=>void preflight()}>사전점검</Button><Button type="button" disabled={blocked||!canCreateLoad(answer,checked,body,unknown)} onClick={()=>void save()}>{replacementLost?"다시 만들기":editing?"수정":"생성"}</Button>{unknown&&<Button type="button" variant="outline" onClick={()=>void reconcile()}>결과 다시 조회</Button>}</div>
   </div>
 }

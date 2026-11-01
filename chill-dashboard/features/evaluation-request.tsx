@@ -29,6 +29,10 @@ function Failure({error}:{error:ApiError|null}) {
   return <strong role="alert" className="text-sm text-destructive" title={value?.message??error.body}>{error.status===403?"권한 없음(실험 운영자)":error.unknownOutcome?"결과 미확인":value?.code??error.message}</strong>
 }
 
+export function EvaluationPermission({denied=false}:{denied?:boolean}) {
+  return <dl aria-label="실험 작업 권한" className="flex flex-wrap gap-x-4 gap-y-1 text-xs"><div className="flex gap-2"><dt>필요 권한</dt><dd>평가 운영자</dd></div><div className="flex gap-2"><dt>현재 권한</dt><dd className={denied?"text-destructive":"text-muted-foreground"}>{denied?"권한 없음":"미확인"}</dd></div></dl>
+}
+
 export function EvaluationSubmit({name,spec,disabled=false,existing,onSubmitted,onSpecChange}:{name:string;spec:EvaluationSpec;disabled?:boolean;existing?:Created;onSubmitted?:(value:Created)=>void;onSpecChange:(spec:EvaluationSpec)=>void}) {
   const pre=useChillMutation(),send=useChillMutation(),cache=useQueryClient()
   const [checkedBody,setCheckedBody]=React.useState(""),[unknown,setUnknown]=React.useState(false),[selected,setSelected]=React.useState<string[]>([]),[created,setCreated]=React.useState<Created|null>(null)
@@ -85,6 +89,7 @@ export function EvaluationSubmit({name,spec,disabled=false,existing,onSubmitted,
     <Failure error={pre.error}/><Failure error={send.error}/>
     {replacement&&<strong role="status">{replacement==="deleted"?"삭제됨·재생성 필요":replacement==="unchanged"?"미변경":replacement==="blocked"?"중지 후 다시 실행":"결과 미확인"}</strong>}
     {(unknown||created)&&<div role="status" className="flex flex-wrap items-center gap-3 text-sm"><strong>{created?existing?"수정 접수":"실행 접수":confirmed?"실행 확인":"결과 미확인"}</strong>{(created||confirmed)&&<Link className="underline" href={`/experiments?${new URLSearchParams({name:created?.name??attempt?.name??name})}`}>실험 상태</Link>}{unknown&&<Button variant="outline" onClick={()=>void refresh()} disabled={lookup.isFetching}>다시 조회</Button>}</div>}
+    <EvaluationPermission denied={pre.error?.status===403||send.error?.status===403}/>
     <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={disabled||busy||unknown||!!created} onClick={verify}>{pre.isPending?"점검 중":"사전 점검"}</Button><Button disabled={disabled||busy||!!created||unsupported||!evaluationCanSubmit(answer,checkedBody,body,unknown)} onClick={()=>void submit()}>{send.isPending?"제출 중":replacement==="deleted"?"재생성 제출":existing?"수정 제출":"실행 제출"}</Button></div>
   </div>
 }

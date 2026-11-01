@@ -8,6 +8,8 @@ import * as author from "./evaluation-author.ts"
 import * as request from "./evaluation-request.ts"
 import * as scheduler from "./scheduler.ts"
 import * as activeHelpers from "./evaluation-active.ts"
+import * as experimentHelpers from "./experiments.ts"
+import * as measurementHelpers from "./measurements.ts"
 
 type Tree={type:unknown;props:Record<string,unknown>}
 const require=createRequire(import.meta.url)
@@ -212,4 +214,58 @@ test("R17: load parts expose every service rate as labeled fields without a wide
   assert.ok(form.some(element=>element.props.label==="camera (요청/s)"))
   assert.ok(form.some(element=>element.props.label==="plc (요청/s)"))
   assert.ok(!form.some(element=>element.type==="table"))
+})
+
+test("R17b: author help uses constraint rows and input options keep internal identities in the original view",()=>{
+  const runner=hookRunner(),input={kind:"seed",store:"internal-store",key:"experiments/private-seed.json",size:512}
+  const {AuthorHelp,EvidencePicker}=load("../features/evaluation-author.tsx",{...primitives,react:runner.react,"@/lib/client":{useChillQuery:()=>({data:{items:[input]}})},"@/components/ui/tooltip":{TooltipProvider:"div",Tooltip:"div",TooltipTrigger:"div",TooltipContent:"aside"}})
+  const help=elements(runner.render(AuthorHelp))
+  assert.ok(help.some(element=>element.type==="table"))
+  const picker=elements(runner.render(EvidencePicker,{label:"난수",value:input,onChange:()=>{}}))
+  const options=picker.filter(element=>element.type==="option")
+  assert.ok(!JSON.stringify(options.map(option=>option.props.children)).includes("internal-store"))
+  assert.ok(!JSON.stringify(options.map(option=>option.props.children)).includes("private-seed.json"))
+  assert.ok(picker.some(element=>element.type==="details"))
+})
+
+test("R17b: evaluation writes disclose the required role without claiming an unverified permission",()=>{
+  const {EvaluationPermission}=load("../features/evaluation-request.tsx",primitives)
+  const unknown=elements(EvaluationPermission({}))
+  assert.ok(unknown.some(element=>element.props.children==="평가 운영자"))
+  assert.ok(unknown.some(element=>element.props.children==="미확인"))
+  const denied=elements(EvaluationPermission({denied:true}))
+  assert.ok(denied.some(element=>element.props.children==="권한 없음"))
+  assert.ok(!denied.some(element=>element.props.children==="허용"))
+})
+
+test("R17b: result detail keeps outcome independent and labels every mobile comparison value",()=>{
+  const runner=hookRunner(),params=new URLSearchParams("a=publication")
+  const stage=(id:string)=>({id,from:"2026-11-01T00:00:00Z",to:"2026-11-01T00:01:00Z",kpis:{wholePoolJoules:60,requests:{camera:{offered:600,deadlineSuccessFraction:.9,completedLatencyNS:{p95:1000000}}}}})
+  let run:Record<string,unknown>={id:"publication",stages:[],outcome:{execution:{status:"Failed"},measurement:{verdict:"NOT_EVALUATED"},cleanup:{status:"Complete"}}}
+  const modules={...primitives,react:{...runner.react,useMemo:(fn:()=>unknown)=>fn(),useRef:()=>({current:null})},"lucide-react":{TriangleAlert:"svg"},recharts:{},"next/navigation":{useSearchParams:()=>params},"@/lib/client":{useChillQuery:()=>({data:run})},"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/features/experiments-conclusion":{ExperimentOutcome:"outcome",useHistoricalExperiments:()=>({runs:[run],pending:false,error:null})}}
+  const {ExperimentsPage}=load("../features/experiments.tsx",modules)
+  assert.ok(elements(runner.render(ExperimentsPage)).some(element=>element.type==="outcome"))
+  run={...run,stages:[stage("candidate"),stage("baseline")],comparisons:[{left:{stageID:"candidate"},right:{stageID:"baseline"},reason:"저장된 비교"}]}
+  const page=elements(runner.render(ExperimentsPage))
+  const detail=page.find(element=>element.props.run===run&&typeof element.type==="function")!
+  const tree=elements(runner.render(detail.type as (props:Record<string,unknown>)=>unknown,detail.props))
+  const labels=tree.filter(element=>element.type==="td").map(element=>element.props["data-label"])
+  for(const label of ["비교 상태","부하","에너지 Δ (%)","camera 성공률 Δ (%p)","camera p95 배율"])assert.ok(labels.includes(label),label)
+})
+
+test("R17b: template missing inputs stay visible while copied question text is folded as original",async()=>{
+  const runner=hookRunner(),modules={...primitives,react:{...runner.react,useEffect:()=>{}},"@/lib/client":{useChillQuery:()=>({data:{items:[]},refetch:async()=>({data:{spec:{question:""},sources:{target:"none",harness:"config"}}})})},"@/features/evaluation-request":{EvaluationPermission:"permission",EvaluationSubmit:"submit"}}
+  const {EvaluationAuthor}=load("../features/evaluation-author.tsx",modules)
+  let tree=elements(runner.render(EvaluationAuthor))
+  await (tree.find(element=>element.type==="button"&&element.props.children==="빈 템플릿")!.props.onClick as ()=>Promise<void>)()
+  await setImmediate()
+  tree=elements(runner.render(EvaluationAuthor))
+  assert.ok(tree.some(element=>element.type==="table"&&element.props["aria-label"]==="입력 필요 항목"))
+  assert.ok(tree.some(element=>element.props.children==="대상 구성요소"))
+  const copied=hookRunner(),copyModules={...modules,react:{...copied.react,useEffect:()=>{}}}
+  const CopyAuthor=load("../features/evaluation-author.tsx",copyModules).EvaluationAuthor
+  const copyTree=elements(copied.render(CopyAuthor,{initialName:"source",initialSpec:{question:"Retained English question"}}))
+  const original=copyTree.find(element=>element.type==="details"&&elements(element.props.children).some(child=>child.type==="summary"&&child.props.children==="질문 원문"))!
+  assert.ok(original)
+  assert.notEqual(original.props.open,true)
 })

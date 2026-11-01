@@ -153,11 +153,11 @@ export function stageSeconds(stage:ExperimentStage):number|null {
 function sameDisplayedDuration(a:ExperimentStage,b:ExperimentStage):boolean {
   return stageSeconds(a)!==null&&stageSeconds(b)!==null&&formatResult(stageSeconds(a),"s")===formatResult(stageSeconds(b),"s")
 }
-export function stageRate(stage:ExperimentStage,run:Experiment):number|null {
+export function stageRate(stage:ExperimentStage,run:Experiment,service=""):number|null {
   const spec=definitionStage(run,stage),scenario=run.definition?.loadScenarios.find(s=>s.uid===spec?.loadScenarioRef.uid)
-  if(!scenario||scenario.spec.parts.some(part=>!part.rates))return null
+  if(!scenario||scenario.spec.parts.some(part=>!part.rates||service&&!Object.hasOwn(part.rates,service)))return null
   const seconds=scenario.spec.parts.reduce((sum,part)=>sum+part.durationSeconds,0)
-  return seconds>0?scenario.spec.parts.reduce((sum,part)=>sum+Object.values(part.rates!).reduce((sum,rate)=>sum+rate,0)*part.durationSeconds,0)/seconds:null
+  return seconds>0?scenario.spec.parts.reduce((sum,part)=>sum+(service?part.rates![service]:Object.values(part.rates!).reduce((sum,rate)=>sum+rate,0))*part.durationSeconds,0)/seconds:null
 }
 
 export function observedStageRate(stage:ExperimentStage,service=""):number|null {
@@ -378,7 +378,7 @@ export function experimentDifference(value:number|null,baseline=0,higherIsBetter
 export function experimentChartData(run:Experiment,service:string,runs:Experiment[]=[run]) {
   return experimentHeatmap(run,runs).map((row,index)=>{
     const own=experimentRows(row.stage).filter(item=>item.name===service),other=row.other?experimentRows(row.other).filter(item=>item.name===service):[]
-    return {id:row.id,interval:index+1,rate:row.rate,observedRate:observedStageRate(row.stage,service),leftLabel:stageLabel(row.stage,row.leftRun),rightLabel:row.other?stageLabel(row.other,row.rightRun):"비교 없음",
+    return {id:row.id,interval:index+1,rate:stageRate(row.stage,row.leftRun,service),observedRate:observedStageRate(row.stage,service),leftLabel:stageLabel(row.stage,row.leftRun),rightLabel:row.other?stageLabel(row.other,row.rightRun):"비교 없음",
       leftP95:own.length===1?resultMetric(own[0],"p95").value:null,
       rightP95:other.length===1?resultMetric(other[0],"p95").value:null,
       leftSLO:own.length===1?frozenP95SLO(own[0],row.leftRun):null,
