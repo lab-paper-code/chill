@@ -13,9 +13,9 @@ import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { backendsByFormat, datatypes, definitionIdentity, formatText, positiveIntegers, resourceHref as href, sloTarget as target, workloadSpec, type ModelResource, type ModelList, type ModelSpec, type ModelArtifact, type ExecutionPath, type TensorContract, fieldFormats, type RawField, type PreprocessorArtifact, type PreprocessorResource, type PreprocessorSpec, type DatasetResource, type DatasetSpec, type WorkloadResource, type WorkloadSpec, type WorkloadView } from "@/lib/domain"
 import { explain } from "@/lib/labels"
-import type { ObservationCohort, SchedulerSettings, SchedulerWorkloadState } from "@/lib/read-types"
+import type { ObservationCohort, PoolsView, SchedulerSettings, SchedulerWorkloadState } from "@/lib/read-types"
 import { parseSchedulerJSON, preciseJSONSupported } from "@/lib/scheduler"
-import { ServiceAdmission, ServiceAppliedFacts, ServiceDefinition, ServicePlacement, serviceListReturn, useServiceSignals } from "@/features/service-hub"
+import { ServiceAdmission, ServiceReadiness, ServiceAppliedFacts, ServiceDefinition, ServicePlacement, serviceListReturn, useServiceSignals, type ServiceSignals } from "@/features/service-hub"
 import { DataTable } from "@/components/data-table"
 import { putSchedulerSettings } from "@/features/scheduler-settings"
 import { datasetGap } from "@/lib/measurement-request"
@@ -211,22 +211,28 @@ function brief(spec: Spec): [string, string][] {
   return "modelRef" in spec ? [["모델", spec.modelRef.name], ["전처리기", spec.preprocessorRef.name], ["데이터셋", spec.datasetRef?.name ?? "정하지 않음"], ["응답 목표", target(spec)]] : [["모델 파일", spec.artifacts.map(a => a.name).join(", ") || "없음"], ["실행 방식", spec.executionPaths.map(p => p.name).join(", ") || "없음"]]
 }
 function DefinitionSummary({ spec }: { spec: Spec }) {
+  const images="input" in spec?[...new Set(spec.artifacts.map(a=>a.source.image))]:[]
   const items:[string,string][]="input" in spec ? [
     ...spec.input.fields.map((f): [string, string] => [`입력 ${f.name}`, `${f.format} · 최대 ${size(f.maxBytes)}`]),
     ...spec.output.fields.map((f): [string, string] => [`출력 ${f.name}`, f.format]),
     ["최대 생성 토큰", spec.maxNewTokens ? `${spec.maxNewTokens}개` : "정하지 않음"],
-    ...spec.artifacts.map((a): [string, string] => [`대상 ${a.target.model} · ${a.target.artifact}`, `${a.source.image} · ${a.source.architecture} · ${a.source.path}`]),
+    ...images.flatMap((image,imageIndex):[string,string][]=>[
+      [`공통 이미지 ${imageIndex+1}`,image],
+      ...spec.artifacts.flatMap((a,index):[string,string][]=>a.source.image===image?[
+        [`대상 ${index+1} 모델`,a.target.model],[`대상 ${index+1} 아키텍처`,a.source.architecture],[`대상 ${index+1} 파일 위치`,a.source.path],
+      ]:[]),
+    ]),
   ] : "source" in spec ? [
     ["보관 주소", spec.source.image], ["데이터 위치", spec.source.path], ["측정용 묶음", subsets(spec.source.path)[0]], ["평가용 묶음", subsets(spec.source.path)[1]],
     ...spec.fields.map((f): [string, string] => [`필드 ${f.name}`, `${f.format} · 최대 ${size(f.maxBytes)}`]),
   ] : "modelRef" in spec ? brief(spec) : [
-    ...spec.artifacts.map((a, i): [string, string] => [`파일 ${a.name || i + 1}`, `${a.format} · ${a.source.files.join(", ")}${a.input ? ` · 입력 ${a.input.tensors.map(t => `${t.name} (${t.sampleShape.join(" × ")})`).join(", ")}` : ""}`]),
-    ...spec.executionPaths.map((p, i): [string, string] => [`실행 방식 ${p.name || i + 1}`, `${p.artifact} · ${explain(p.runtime.backend)[0]}`]),
+    ...spec.artifacts.map((a, i): [string, string] => [`모델 파일 ${i+1}`, `${a.format.toUpperCase()} · ${a.source.architecture}`]),
+    ...spec.executionPaths.map((p, i): [string, string] => {
+      const artifactIndex=spec.artifacts.findIndex(a=>a.name===p.artifact)
+      return [`실행 방식 ${i+1}`, `${explain(p.runtime.backend)[0]} · ${artifactIndex<0?"연결 파일 미확인":`모델 파일 ${artifactIndex+1}`}`]
+    }),
   ]
   return <DataTable searchable={false} data={items} columns={[{key:"name",label:"항목",value:row=>row[0]},{key:"value",label:"정의",value:row=>row[1]}]}/>
-}
-function serviceRow(w: WorkloadView) {
-  return <Row key={w.desired.metadata.uid} href={href("workloads", w.desired.metadata.name, w.desired.metadata.uid)} label={w.desired.metadata.name} hint={`${w.desired.spec.modelRef.name} · ${w.desired.spec.preprocessorRef.name} · ${target(w.desired.spec)}`} value={<ServiceAdmission view={w} />} />
 }
 const impactNotes: Record<Referenced, string> = {
   models: "모델을 바꾸면 연결된 서비스는 새 요청을 잠시 멈추고 기존 요청을 마무리해요. 쓰는 서비스가 있는 모델은 삭제할 수 없어요. 전처리기가 대상으로 삼은 모델은 삭제할 수 없고, 대상이 된 모델 파일도 뺄 수 없어요.",
@@ -392,10 +398,10 @@ export function ServicesPage() {
   return <Screen width="data" title="서비스" action={<Button asChild><Link href="/workloads/new">등록</Link></Button>}>
     <QueryGate query={workloads}>
       <label className="flex items-center gap-3 text-sm">상태<select className={select} value={filter} onChange={event => { const next = new URLSearchParams(params.toString()); next.set("filter", event.target.value); next.delete("page"); router.replace(`/workloads?${next}`, { scroll: false }) }}><option value="all">전체</option><option value="allowed">접수 허용</option><option value="blocked">접수 차단</option><option value="changing">관리 진행</option></select></label>
-      <DataTable data={list} columns={[
+      <DataTable urlState data={list} emptyAction={<Button variant="outline" onClick={() => { const next = new URLSearchParams(params.toString()); for (const key of ["filter", "search", "page"]) next.delete(key); router.replace(`/workloads?${next}`, { scroll: false }) }}>검색·필터·페이지 초기화</Button>} columns={[
         {key:"service",label:"서비스",value:w=><Link href={`${href("workloads",w.desired.metadata.name,w.desired.metadata.uid)}&${new URLSearchParams({returnTo})}`}>{w.desired.metadata.name}</Link>,sortValue:w=>w.desired.metadata.name},
         {key:"model",label:"모델",value:w=>w.desired.spec.modelRef.name,sortValue:w=>w.desired.spec.modelRef.name},
-        {key:"ready",label:"준비",value:w=><StatusBadge value={w.readiness} />,sortValue:w=>w.readiness},
+        {key:"ready",label:"준비",value:w=><ServiceReadiness view={w} />,sortValue:w=>w.readiness},
         {key:"admission",label:"접수 허용",value:w=><ServiceAdmission view={w} />},
         {key:"autonomy",label:"자동제어",value:w=>settings.error?"조회 실패":!settings.data?"미확인":settings.data.autonomousWorkloads?.includes(w.desired.metadata.uid)?"켜짐":"꺼짐"},
         {key:"operation",label:"관리 진행",value:w=>w.operation?`${statusLabel(w.operation.kind)} · ${statusLabel(w.operation.phase)}`:"해당 없음"},
@@ -410,11 +416,11 @@ export function ServicesPage() {
 const workloadStates: Record<string, string> = { Disabled: "자동 제어를 꺼 두었어요", MeasurementEvidenceMissing: "측정 근거가 생기면 자동 제어를 시작해요", Controlled: "운영 판단이 구성을 정하고 있어요" }
 // One Workload's autonomous control. The switch PUTs the full current settings with this UID toggled in
 // autonomousWorkloads; the state comes from the latest decision.workloads.
-function Autonomy({ uid, state, cohorts, current }: { uid: string; state?: SchedulerWorkloadState; cohorts: ObservationCohort[]; current?: string }) {
+function Autonomy({ uid, state, scheduler, cohorts, current }: { uid: string; state?: SchedulerWorkloadState; scheduler: ServiceSignals["scheduler"]; cohorts: ObservationCohort[]; current?: string }) {
   const settings = useChillQuery<SchedulerSettings>("v1/scheduler/settings", { decoder: parseSchedulerJSON })
   const mutation = useChillMutation(), client = useQueryClient(), [error, setError] = useState("")
   const on = settings.data?.autonomousWorkloads?.includes(uid) ?? false, margin = settings.data?.completionMarginMS
-  const stateText = state ? workloadStates[state.state] ?? statusLabel(state.state) : "첫 판단을 기다리고 있어요"
+  const stateText = scheduler.error ? "운영 판단 조회 실패" : settings.error ? "자동제어 설정 조회 실패" : !settings.data ? "자동제어 설정 미확인" : !on ? "자동제어 꺼짐" : scheduler.isPending ? "운영 판단 조회 중" : state ? workloadStates[state.state] ?? statusLabel(state.state) : "이 서비스의 판단 기록 없음"
   async function toggle(next: boolean) {
     setError("")
     try {
@@ -427,7 +433,7 @@ function Autonomy({ uid, state, cohorts, current }: { uid: string; state?: Sched
   return <RowDialog label={settings.error ? "조회 실패" : !settings.data ? "미확인" : on ? "켜짐" : "꺼짐"} title="자동제어">
       <label className="switch"><input type="checkbox" role="switch" checked={on} disabled={!settings.data || mutation.isPending || !preciseJSONSupported()} onChange={event => void toggle(event.target.checked)} />운영 판단이 이 서비스의 구성을 정하게 하기</label>
       {error && <p role="alert">{error}</p>}
-      <Facts items={[["판단 상태", stateText], ["사유", state?.reason || "없어요"]]} />
+      <Facts items={[["판단 상태", stateText], ["사유", scheduler.error ? scheduler.error.message : state?.reason || "미제공"]]} />
       <details><summary className="min-h-11 cursor-pointer py-2">도움말</summary>자동 제어를 끈 서비스는 마지막 구성을 그대로 유지해요. 설정한 요청 분배와 직접 실행한 변경은 그대로 적용돼요.</details>
     <details><summary>완료 여유 · {margin === undefined ? "미확인" : `${margin} ms`}</summary>
       {cohorts.map(row => {
@@ -458,9 +464,9 @@ export function ServicePage({ name }: { name: string }) {
       <Problem r={r} kind="workloads" />
       <section id="application" className="space-y-3 rounded-xl border p-4"><h2 className="font-semibold">적용 상태</h2>
         <Facts items={[
-          ["준비", <><StatusBadge value={view.readiness} />{view.reason && statusLabel(view.reason) !== statusLabel(view.readiness) && <span className="block text-xs">{statusLabel(view.reason)}</span>}</>],
+          ["준비", <ServiceReadiness key="ready" view={view} />],
           ["접수 허용", <ServiceAdmission key="admission" view={view} />],
-          ["자동제어", <Rows key="autonomy"><Autonomy uid={uid} state={s.scheduler.data?.state.decision.workloads?.find(row => row.uid === uid)} cohorts={s.observations.data?.cohorts ?? []} current={view.appliedDefinition && definitionIdentity(view.appliedDefinition)} /></Rows>],
+          ["자동제어", <Rows key="autonomy"><Autonomy uid={uid} scheduler={s.scheduler} state={s.scheduler.data?.state.decision.workloads?.find(row => row.uid === uid)} cohorts={s.observations.data?.cohorts ?? []} current={view.appliedDefinition && definitionIdentity(view.appliedDefinition)} /></Rows>],
           ["적용 정의", view.appliedDefinition ? <Rows><RowDialog label="적용됨" title="적용 정의"><ServiceAppliedFacts view={view} /><SourceJSON inline value={view.appliedDefinition} /></RowDialog></Rows> : "미적용"],
           ["관리 진행", view.operation ? <Rows><RowDialog label={`${statusLabel(view.operation.kind)} · ${statusLabel(view.operation.phase)}`} title="관리 작업">{view.operation.error && <p role="alert">{view.operation.error}</p>}<SourceJSON inline value={view.operation} /></RowDialog></Rows> : "해당 없음"],
         ]} />
@@ -500,13 +506,23 @@ export function ModelPage({ name,expectedUID,embedded=false }: { name: string;ex
 export function ModelSectionPage({ name, section }: { name: string; section: "files" | "services" }) {
   const r = useResource("models", name)
   const preprocessors = useChillQuery<{ items: PreprocessorResource[] }>("v1/preprocessors", { enabled: section === "files" })
+  const pools = useChillQuery<PoolsView>("v1/pools", { enabled: section === "services" })
   const model = r.detail.data && !("desired" in r.detail.data) && !r.denied ? r.detail.data as ModelResource : undefined
   if ((r.wrongUID || r.identityChanged) && r.current) return <Mismatch kind="models" name={name} uid={r.current.metadata.uid} />
   const back: [string, string] = [href("models", name, model?.metadata.uid ?? r.expectedUID ?? ""), name]
   if (section === "services") {
     const affected = r.affected
     return <Screen back={back} title="연결 서비스">
-      <QueryGate query={r.detail}><QueryGate query={r.workloads}>{affected?.length ? <Rows>{affected.map(serviceRow)}</Rows> : <Empty title="이 모델을 쓰는 서비스가 없어요" />}</QueryGate></QueryGate>
+      <QueryGate query={r.detail}><QueryGate query={r.workloads}>{affected?.length ? <DataTable searchable={false} data={affected} columns={[
+        {key:"service",label:"서비스",value:view=><Link href={href("workloads",view.desired.metadata.name,view.desired.metadata.uid)}>{view.desired.metadata.name}</Link>},
+        {key:"devices",label:"장치",value:view=>{
+          if(pools.error)return "조회 실패"
+          if(!pools.data)return "조회 중"
+          const pool=(pools.data.workloads??[]).find(pool=>pool.workload.uid===view.desired.metadata.uid)
+          return !pool?.nodes?"배치 미확인":pool.nodes.map(node=>node.name).join(", ")||"배치 없음"
+        }},
+        {key:"admission",label:"접수 상태",value:view=><ServiceAdmission view={view}/>},
+      ]}/> : <Empty title="이 모델을 쓰는 서비스가 없어요" />}</QueryGate></QueryGate>
     </Screen>
   }
   const spec = model?.spec
@@ -514,19 +530,23 @@ export function ModelSectionPage({ name, section }: { name: string; section: "fi
     <QueryGate query={r.detail}>{spec && <>
       <Rows label="모델 파일">{spec.artifacts.map((a, i) => {
         const targeting = preprocessors.data?.items.filter(p => p.spec.artifacts.some(t => t.target.model === name && t.target.artifact === a.name))
-        return <RowDialog key={i} label={a.name || `파일 ${i + 1}`} hint={`${a.format} 파일 · ${a.source.architecture}`} value={`모델 파일 ${a.source.files.length}개`} title={`${a.name || `파일 ${i + 1}`} 파일`}>
+        return <RowDialog key={i} label={`${a.format.toUpperCase()} 모델 파일 ${i+1}`} hint={a.source.architecture} value={`모델 파일 ${a.source.files.length}개`} title={`${a.format.toUpperCase()} 모델 파일 ${i+1}`}>
         <Facts items={[
-          ["형식", a.format], ["보관 주소", a.source.image], ["대상 장비", a.source.architecture],
-          ...a.source.files.map((file, fi): [string, string] => [`모델 파일 ${fi + 1}`, file]),
+          ["형식", a.format.toUpperCase()], ["대상 장비", a.source.architecture],
           ...(a.input?.tensors ?? []).map((t): [string, string] => [`RKNN 입력 ${t.name}`, `${t.datatype} · 크기 ${t.sampleShape.join(" × ")}`]),
           ["전처리기", targeting === undefined ? preprocessors.error ? "확인 불가" : "확인 중" : targeting.map(p => p.metadata.name).join(", ") || "이 파일을 대상으로 하는 전처리기가 없어요"],
-          ["변환", a.derivation ? `${a.derivation.sourceArtifact}에서 ${a.derivation.conversion.tool} ${a.derivation.conversion.version}로 변환 · ${a.derivation.targetPlatform} · 묶음 ${a.derivation.declaredBatchSizes.join(", ")}` : "원본 파일"],
+          ["변환", a.derivation ? `${a.derivation.conversion.tool} ${a.derivation.conversion.version} · ${a.derivation.targetPlatform}` : "원본 파일"],
         ]} />
+        <details><summary className="min-h-11 cursor-pointer py-2">파일 식별자·보관 위치 원문</summary><SourceJSON inline value={a}/></details>
       </RowDialog>})}</Rows>
       <Rows label="실행 방식">{spec.executionPaths.map((p, i) => {
         const ff = p.runtime.settings?.firstfloor
-        return <RowDialog key={i} label={p.name || `실행 방식 ${i + 1}`} hint={`${p.artifact} 파일 사용`} title={`${p.name || `실행 방식 ${i + 1}`} 실행 방식`}>
-          <Facts items={[["사용하는 파일", p.artifact], ["처리 방식", explain(p.runtime.backend)[0]], ["요청 처리 설정", ff ? `최대 묶음 ${ff.maxBatchSize}건 · 대기 한도 ${ff.maxQueueSize}건 · ${ff.deadlinePolicy === "drop" ? "실행 전 거절" : ff.deadlinePolicy === "defer" ? "뒤로 미루기" : "계속 처리"}` : "사용 안 함"]]} />
+        const artifactIndex=spec.artifacts.findIndex(a=>a.name===p.artifact)
+        const title=`실행 방식 ${i+1} · ${explain(p.runtime.backend)[0]}`
+        return <RowDialog key={i} label={title} hint={artifactIndex<0?"연결 파일 미확인":`모델 파일 ${artifactIndex+1} 사용`} title={title}>
+          <Facts items={[["사용하는 파일", artifactIndex<0?"연결 파일 미확인":`모델 파일 ${artifactIndex+1}`],["처리 방식",explain(p.runtime.backend)[0]]]}/>
+          {ff?<table aria-label="실행 한도" className="w-full text-left text-sm tabular-nums"><tbody><tr><th scope="row">최대 묶음 크기 (건)</th><td className="text-right">{ff.maxBatchSize}</td></tr><tr><th scope="row">서비스별 대기 한도 (건)</th><td className="text-right">{ff.maxQueueSize}</td></tr><tr><th scope="row">응답 목표 초과 정책</th><td>{ff.deadlinePolicy==="drop"?"실행 전 거절":ff.deadlinePolicy==="defer"?"뒤로 미루기":"계속 처리"}</td></tr></tbody></table>:<p>요청 처리 설정 사용 안 함</p>}
+          <details><summary className="min-h-11 cursor-pointer py-2">실행 방식 식별자·설정 원문</summary><SourceJSON inline value={p}/></details>
         </RowDialog>
       })}</Rows>
       <Rows><RowDialog label="원본 자료 보기" title="파일과 실행 설정 원본"><SourceJSON inline value={spec} /></RowDialog></Rows>
@@ -542,7 +562,7 @@ export function CatalogSettingsPage({kind}:{kind:Referenced}) {
   const label=kind==="preprocessors"?"입력 처리":kindLabel(kind)
   return <Screen title="설정" width="data" actionPlacement="header" action={<Button asChild><Link href={`/${kind}/new`}>{label} 등록</Link></Button>}>
     <SettingsNavigation active={kind}/>
-    <section aria-label={`${label} 목록`}><QueryGate query={list}><DataTable data={list.data?.items??[]} columns={[
+    <section aria-label={`${label} 목록`}><QueryGate query={list}><DataTable urlState data={list.data?.items??[]} columns={[
       {key:"name",label:"이름",sortValue:item=>item.metadata.name,value:item=><Link className="underline" href={`/settings?${new URLSearchParams({...Object.fromEntries(params),tab:kind,name:item.metadata.name,uid:item.metadata.uid})}`} scroll={false}>{item.metadata.name}</Link>},
       {key:"definition",label:"정의",value:item=>{
         const spec=item.spec

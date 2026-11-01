@@ -1,10 +1,11 @@
 "use client"
 
 import * as React from "react"
+import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { useChillQuery, useChillMutation, useSession } from "@/lib/client"
 import type { RunsView, Passport, NativeSample, MeasurementPreflight, PoolsView } from "@/lib/read-types"
-import { formatMeasurementNumber as num, formatMeasurementTime, runFailure, runStatusObject, exactRun, safeMeasurementReturn } from "@/lib/measurements"
+import { executionPathLabel, formatMeasurementNumber as num, formatMeasurementTime, runFailure, runStatusObject, exactRun, safeMeasurementReturn } from "@/lib/measurements"
 import { currentRunCondition, measurementAge, runAttempt, runSpec } from "@/lib/measurement-coverage"
 import { requestOperationalSummary, requestRejectionGuidance, requestFailureFacts } from "@/lib/measurement-request"
 import { codeText } from "@/lib/labels"
@@ -60,10 +61,12 @@ export function MeasurementCheckPage() {
   }
   const planName=plan&&"metadata" in plan&&plan.metadata&&typeof plan.metadata==="object"&&"name" in plan.metadata?String(plan.metadata.name):"이름 없음"
   return <Screen back={back} status={<span className="text-sm text-muted-foreground">{step+1} / 3</span>}
-    title="계획 점검"
+    title="저장 계획 검사"
     action={<div className="flex gap-2">{step>0&&<Button variant="outline" onClick={()=>{setError("");mutation.reset();setStep(step-1)}}>이전</Button>}<Button className="flex-1" disabled={mutation.isPending} onClick={next}>{step===2?"조건 확인하기":"다음"}</Button></div>}>
     <MeasurementNavigation active="requests" namespace={config.namespace}/>
-    <ol className="flex gap-4 text-sm" aria-label="점검 단계">{["대상","조건","점검"].map((label,index)=><li key={label} aria-current={index===step?"step":undefined}>{label}</li>)}</ol>
+    <Facts items={[["대상","저장된 계획 파일"],["동작","검사만"],["측정 제출","없음"]]}/>
+    <Button variant="outline" asChild><Link href="/measurements/requests/new">새 요청 작성</Link></Button>
+    <ol className="flex gap-4 text-sm" aria-label="점검 단계">{["저장 영역","계획 파일","검토"].map((label,index)=><li key={label} aria-current={index===step?"step":undefined}>{label}</li>)}</ol>
     {step===0&&<label className="grid gap-1.5">저장 영역<Input value={namespace} onChange={event=>setNamespace(event.target.value)} required/></label>}
     {step===1&&<div className="grid gap-4">
       <label className="grid gap-1.5">계획 파일<Input type="file" accept="application/json,.json" onChange={async event=>{const file=event.currentTarget.files?.[0];if(file)setSource(await file.text())}}/></label>
@@ -79,7 +82,7 @@ export function MeasurementCheckPage() {
 type RunSpec = {candidate?:{modelSpec?:string;preprocessor?:string;deviceClass?:string;executionPath?:string;powerMode?:string};targetNode?:string;measurement?:{cpuQuota?:string;cpuAffinity?:number[];durationSeconds?:number;dataset?:string}}
 type Thermal = {observationAvailableSamples?:number;activeSamples?:number;latchedSamples?:number;maximumTemperatureCelsius?:{maximum?:number};issues?:unknown}
 type Coresidence = {continuous?:boolean;initialActivePods?:number;finalActivePods?:number;materialEvents?:number;coResidents?:{namespace:string;name:string;chillPlaced:boolean}[]}
-const plain=(code:string)=>codeText[code]?.[0]??code
+const plain=(code:string)=>codeText[code]?.[0]??"등록 실행 환경"
 // One row per profile batch execution; stage spans are the batch's, recordIDs and units are per request.
 const sampleColumns:DataColumn<NativeSample>[]=[
   {key:"batch",label:"배치",value:row=>`${String(row.batchID)} / ${row.batchSize}건`,sortValue:row=>row.batchSize},
@@ -138,17 +141,17 @@ export function MeasurementDetail({namespace:namespaceOverride,name}:{namespace?
   const data=passport.data&&"measurement" in passport.data&&passport.data.measurement?passport.data:undefined,other=!!data&&data.run.uid!==run?.uid
   const failure=run?runFailure(run):undefined
   const statusFacts=(value:unknown):[string,React.ReactNode][]=>{const object=runStatusObject(value);return object?Object.entries(object).map(([key,value])=>[({namespace:"저장 영역",name:"이름",uid:"식별자",nodeName:"실행 Node",podName:"실행 Pod",phase:"진행 상태",provider:"실행 제공자",architecture:"아키텍처",family:"런타임",version:"버전"} as Record<string,string>)[key]??key,typeof value==="object"?<SourceJSON key={key} value={value} title="세부 기록"/>:String(value)]):[["기록",value===undefined?"미제공":String(value)]]}
-  return <Screen width="data" actionPlacement="header" back={[back,"측정 요청"]} title={name} action={<Button variant="outline" disabled={lookup.isFetching} onClick={()=>void lookup.refetch()}>갱신</Button>}>
+  return <Screen width="data" actionPlacement="header" back={[back,"측정 요청"]} title="측정 회차" action={<Button variant="outline" disabled={lookup.isFetching||passport.isFetching} onClick={()=>{void lookup.refetch();if(run&&!noEvidence)void passport.refetch()}}>갱신</Button>}>
     <MeasurementNavigation active="requests" namespace={namespace}/>
     <QueryGate query={lookup}>{lookup.data&&!run&&<div className="space-y-3"><p>이 조회 페이지에서 정확한 namespace/name/UID의 회차를 찾지 못했어요. 같은 이름의 다른 회차로 대체하지 않아요.</p>{lookup.data.page?.nextOffset!==undefined&&<Button variant="outline" onClick={()=>setOffset(lookup.data!.page!.nextOffset!)}>다음 조회 페이지에서 찾기</Button>}</div>}{run&&<>
       <MeasurementStatus assessment={run.assessment}/>
       {failed&&failure&&<section role="alert" className="space-y-2 rounded-xl border border-destructive/40 bg-destructive/5 p-4"><h2 className="font-semibold text-destructive">실행 실패</h2><table aria-label="실패 원인·조치" className="w-full text-left text-sm"><tbody>{[...requestFailureFacts(run.status.conditions?.filter(condition=>condition.type==="ExecutionComplete"&&condition.observedGeneration===run.generation)),["원인",run.assessment?.failureSummary?.[0]?.code==="Other"?currentRunCondition(run,"ExecutionComplete")?.reason||failure.title:failure.title],["종료 코드",failure.exitCode==null?"미제공":String(failure.exitCode)],...failure.actions].map(([label,value],index)=><tr key={index} className="border-b last:border-0"><th scope="row" className="w-24 py-2 align-top font-medium">{label}</th><td className="break-words py-2">{value}</td></tr>)}</tbody></table><details><summary className="min-h-11 cursor-pointer py-2 text-sm">실패 대상·원문</summary><Facts items={failure.target}/><pre className="whitespace-pre-wrap break-words text-sm">{failure.excerpt}</pre></details></section>}
-      {noEvidence?<p className="notice">검증 근거 없음 · 실행 실패</p>:pending?<p role="status">진행 중 · 근거 발행 대기</p>:passport.error?<div role="alert" className="notice"><p>검증 근거 조회 실패 · HTTP {passport.error.status}</p><SourceJSON value={passport.error.data??passport.error.body} title="근거 조회 오류 원문"/><Button variant="outline" onClick={()=>void passport.refetch()}>근거 다시 조회</Button></div>:!data?<p>검증 근거 확인 중</p>:other?<p role="alert">같은 이름의 다른 회차 근거예요. 이 회차의 결과로 사용할 수 없어요.</p>:<PassportSummary data={data}/>}
+      {noEvidence?<p className="notice">검증 근거 없음 · 실행 실패</p>:pending?<div role="status" className="flex flex-wrap items-center gap-3"><span>진행 중 · 근거 발행 대기</span><Button variant="outline" disabled={passport.isFetching} onClick={()=>void passport.refetch()}>근거 확인</Button></div>:passport.error?<div role="alert" className="notice"><p>검증 근거 조회 실패 · HTTP {passport.error.status}</p><SourceJSON value={passport.error.data??passport.error.body} title="근거 조회 오류 원문"/><Button variant="outline" onClick={()=>void passport.refetch()}>근거 다시 조회</Button></div>:!data?<p>검증 근거 확인 중</p>:other?<p role="alert">같은 이름의 다른 회차 근거예요. 이 회차의 결과로 사용할 수 없어요.</p>:<PassportSummary data={data}/>}
       <details><summary className="min-h-11 cursor-pointer py-2 text-sm">회차 조건·판정</summary>
       <Facts label="회차 조건" items={[
         ["모델 / 장치",`${runSpec(run).candidate?.modelSpec??"미기록"} / ${runSpec(run).candidate?.deviceClass??"미기록"}`],
         ["실행 Node / 전력모드",`${runSpec(run).targetNode??"미기록"} / ${runSpec(run).candidate?.powerMode??"미기록"}`],
-        ["실행 경로 / 배치",`${runSpec(run).candidate?.executionPath??"미기록"} / ${runSpec(run).measurement?.batch??"미기록"}건 / ${runAttempt(run)}`],
+        ["실행 경로 / 배치",`${executionPathLabel(runSpec(run).candidate?.executionPath??"")} / ${runSpec(run).measurement?.batch??"미기록"}건 / ${runAttempt(run)}`],
         ["회차 생성",`${formatMeasurementTime(run.creationTimestamp)} / ${measurementAge(run.creationTimestamp)}`],
         ...(currentRunCondition(run,"ExecutionComplete")?.lastTransitionTime?[["실행 판정 시각",`${formatMeasurementTime(currentRunCondition(run,"ExecutionComplete")!.lastTransitionTime!)} / ${measurementAge(currentRunCondition(run,"ExecutionComplete")!.lastTransitionTime!)}`] as [string,React.ReactNode]]:[]),
       ]}/>

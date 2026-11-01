@@ -114,6 +114,7 @@ export function coverageScopeCounts(scope:MeasurementCoverageCell[],inventory?:I
     }
   }
   return {cells:cells.length,unsupportedCells:scope.length-cells.length,measuredCells,measuredBatches,targetBatches,
+    missingTargetCells:cells.filter(cell=>!coverageProgress(cell)?.target.length).length,
     usedCells:cells.filter(cell=>measurementSchedulerUsed(cell.assessment)===true).length,
     unknownQualityCells:cells.filter(cell=>coverageQuality(cell).state==="unknown").length,
     failedCells:cells.filter(cell=>coverageMeasurementStatus(cell,inventory)==="problem").length}

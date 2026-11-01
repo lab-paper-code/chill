@@ -5,11 +5,19 @@ import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
 import { parseSchedulerJSON } from "./scheduler.ts"
 import type { DispatchOccupancyMeasurement, OperationCostMeasurement } from "./read-types.ts"
-import { formatMeasurementTime, measurementConditionDiff, measurementReasonSummary } from "./measurements.ts"
+import { executionPathLabel, workloadModeLabel, formatMeasurementTime, measurementConditionDiff, measurementReasonSummary } from "./measurements.ts"
 import { formatMeasurementNumber, measurementCheckText, measurementRequestName, measurementUncertainty, resultRowsCSV } from "./measurements.ts"
 import type { ResultRow } from "./read-types.ts"
 import { operationTotals } from "./measurements.ts"
 
+test("measurement display labels hide internal protocol and path codes without inventing runtime support",()=>{
+  assert.equal(executionPathLabel("firstfloor-ort-cpu-arm64"),"CPU · ARM 64비트")
+  assert.equal(executionPathLabel("firstfloor-ort-cuda-arm64"),"CUDA · ARM 64비트")
+  assert.equal(executionPathLabel("new-private-backend",2),"등록 실행 경로 3")
+  assert.equal(workloadModeLabel("saturated-serial-fixed-batch"),"포화 · 순차 · 고정 배치")
+  assert.equal(workloadModeLabel("new-protocol"),"기타 부하 방식")
+  assert.equal(measurementReasonSummary("No verified catalog profile for current condition"),"현재 조건의 검증된 프로파일 없음")
+})
 test("measurement quantities use fixed unit precision and preserve valid zero and negative CI bounds",()=>{
   assert.equal(formatMeasurementNumber(0,"W"),"0.0")
   assert.equal(formatMeasurementNumber(12,"ms"),"12.00")

@@ -228,3 +228,64 @@ test("routing table edits preserve route, block and release semantics and reject
   submit()
   assert.deepEqual(applied[2],[initial,{service:{},release:{},new:{"new-instance":1}},"manual choice"])
 })
+
+test("excluded node selection retains unknown names and saves selected known names without UIDs",()=>{
+  const runner=hooks(),settings={controls:{},excludedNodes:["retired"]},saved:unknown[]=[]
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:path==="v1/scheduler/state"?{snapshot:{nodes:[{node:{name:"worker",uid:"hidden-uid"}}]}}:undefined})}})
+  const editor=elements(runner.render(SchedulerSettingsPage)).find(node=>node.props.editKey==="excludedNodes")!
+  const component=editor.type as (props:Record<string,unknown>)=>unknown,props={...editor.props,save:(value:unknown)=>saved.push(value)}
+  let tree=elements(runner.render(component,props))
+  assert.ok(!JSON.stringify(tree).includes("hidden-uid"))
+  const choice=tree.find(node=>node.type==="input"&&node.props.type==="checkbox"&&node.props.value==="worker")!
+  ;(choice.props.onChange as (event:unknown)=>void)({target:{checked:true}})
+  tree=elements(runner.render(component,props))
+  const unknown=tree.find(node=>node.type==="input"&&node.props["aria-label"]==="현재 목록에 없는 장비 1")!
+  ;(unknown.props.onChange as (event:unknown)=>void)({target:{value:"renamed"}})
+  tree=elements(runner.render(component,props))
+  ;(tree.find(node=>node.type==="form")!.props.onSubmit as (event:unknown)=>void)({preventDefault(){}})
+  assert.deepEqual(saved,[["renamed","worker"]])
+})
+
+test("routing lookup failure remains visible beside its action even with stale state",()=>{
+  const runner=hooks(),error={status:502,data:{code:"UpstreamUnavailable",message:"분배 저장소 응답 없음"}}
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({}),useChillQuery:(path:string)=>path==="v1/scheduler/settings"?{data:{controls:{}}}:path==="v1/scheduler/state"?{data:{results:[]},error}:{}}})
+  const row=elements(runner.render(SchedulerSettingsPage)).find(node=>node.props.label==="설정한 요청 분배")!
+  assert.match(JSON.stringify(row.props.value),/502/)
+  assert.match(JSON.stringify(row.props.value),/UpstreamUnavailable/)
+  assert.match(JSON.stringify(row.props.value),/분배 저장소 응답 없음/)
+})
+
+test("model details use human titles and independent execution limits while retaining raw source",()=>{
+  const runner=hooks(),spec={artifacts:[{name:"internal-file",format:"onnx",source:{image:"registry@sha256:abc",architecture:"arm64",files:["/internal/model.onnx"]}}],executionPaths:[{name:"internal-path",artifact:"internal-file",runtime:{backend:"ort-cpu",settings:{firstfloor:{maxBatchSize:8,maxQueueSize:16,deadlinePolicy:"drop"}}}}]}
+  const {ModelSectionPage}=load("../features/management.tsx",{...base,react:runner.react,"@/lib/labels":labels,"@/lib/client":{useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path==="v1/models/model"?{metadata:{name:"model",uid:"uid"},spec}:path==="v1/workloads"?[]:{items:[]}})}})
+  const tree=elements(runner.render(ModelSectionPage,{name:"model",section:"files"})),dialogs=tree.filter(node=>node.type==="row-dialog")
+  assert.ok(dialogs.every(node=>!String(node.props.label).includes("internal-")))
+  const rows=tree.filter(node=>node.type==="tr").map(row=>elements(row).filter(cell=>cell.type==="th"||cell.type==="td").map(cell=>cell.props.children))
+  assert.deepEqual(rows.find(row=>row[0]==="최대 묶음 크기 (건)"),["최대 묶음 크기 (건)",8])
+  assert.deepEqual(rows.find(row=>row[0]==="서비스별 대기 한도 (건)"),["서비스별 대기 한도 (건)",16])
+  assert.ok(rows.some(row=>row[0]==="응답 목표 초과 정책"&&row[1]==="실행 전 거절"))
+  assert.ok(tree.some(node=>node.props.value===spec))
+})
+
+test("preprocessor summary groups exact image references without losing target architecture or path",()=>{
+  const runner=hooks(),image="registry@sha256:shared",spec={input:{fields:[]},output:{fields:[]},artifacts:[{target:{model:"model",artifact:"a"},source:{image,architecture:"arm64",path:"/arm"}},{target:{model:"model",artifact:"b"},source:{image,architecture:"amd64",path:"/x86"}},{target:{model:"model",artifact:"c"},source:{image:"registry@sha256:other",architecture:"arm64",path:"/other"}}]}
+  const {CatalogPage}=load("../features/management.tsx",{...base,react:runner.react,"@/lib/client":{useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path==="v1/preprocessors/prep"?{metadata:{name:"prep",uid:"uid"},spec}:path==="v1/workloads"?[]:{items:[]}})}})
+  const summary=elements(runner.render(CatalogPage,{kind:"preprocessors",name:"prep"})).find(node=>typeof node.type==="function"&&node.props.spec===spec)!
+  const table=elements((summary.type as (props:Record<string,unknown>)=>unknown)(summary.props)).find(node=>node.type==="table")!
+  const rows=table.props.data as [string,string][]
+  assert.equal(rows.filter(([,value])=>value===image).length,1)
+  for(const value of ["arm64","amd64","/arm","/x86","/other"])assert.ok(rows.some(row=>row.includes(value)))
+})
+
+test("model connected services separate names, observed devices and admission without repeating model",()=>{
+  const runner=hooks(),view={desired:{metadata:{name:"service",uid:"service-uid"},spec:{modelRef:{name:"model"},preprocessorRef:{name:"prep"},slo:{}}},admission:true}
+  const {ModelSectionPage,CatalogSettingsPage}=load("../features/management.tsx",{...base,react:runner.react,"@/lib/client":{useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path==="v1/models/model"?{metadata:{name:"model",uid:"model-uid"},spec:{artifacts:[],executionPaths:[]}}:path==="v1/workloads"?[view]:path==="v1/pools"?{workloads:[{workload:{uid:"service-uid"},nodes:[{name:"device",uid:"hidden"}]}]}:{items:[]}})}})
+  const table=elements(runner.render(ModelSectionPage,{name:"model",section:"services"})).find(node=>node.type==="table")!
+  const columns=table.props.columns as {key:string;value:(row:unknown)=>unknown}[]
+  assert.deepEqual(columns.map(column=>column.key),["service","devices","admission"])
+  assert.equal(columns.find(column=>column.key==="devices")!.value(view),"device")
+  assert.ok(!JSON.stringify(columns.find(column=>column.key==="service")!.value(view)).includes("model"))
+  assert.notEqual(table.props.urlState,true)
+  const primary=elements(runner.render(CatalogSettingsPage,{kind:"models"})).find(node=>node.type==="table")!
+  assert.equal(primary.props.urlState,true)
+})

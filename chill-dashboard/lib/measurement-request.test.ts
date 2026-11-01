@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { datasetGap, requestNumber, requestBatches, requestDefaults, requestInputs, requestInitialBatches, requestTargetBatches, requestConditionChanges, requestPreflightReason, requestRejectionGuidance, requestOperationalSummary, requestFailureFacts, requestCheckCurrent, requestHref, requestRunHref, requestUsedResults } from "./measurement-request.ts"
+import { datasetGap, requestNumber, requestBatches, requestDefaults, requestInputs, requestInitialBatches, requestTargetBatches, requestConditionChanges, requestPreflightReason, requestRejectionGuidance, requestOperationalSummary, requestFailureFacts, requestCheckCurrent, requestHref, requestRunHref, requestUsedResults, requestCopySource, requestCopyQuery, requestExecutionStatus } from "./measurement-request.ts"
 import type { MeasurementAssessment, MeasurementCoverageCell, MeasurementPlan, ProfilesView, ResultRow } from "./read-types.ts"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
@@ -302,6 +302,90 @@ test("creation stages keep target, conditions and check submission distinct",()=
   assert.match(review,/>요청 범위 검사</)
 })
 
+test("name-only copies pin observed namespace and UID, preserve navigation, and reject replacements",()=>{
+  const params=new URLSearchParams("from=source&returnTo=%2Fmeasurements%2Frequests%3Fpage%3D2")
+  const found=requestCopySource("source","ns",null,[plan])
+  assert.equal(found.source,plan)
+  assert.equal(found.error,"")
+  const pinned=new URLSearchParams(requestCopyQuery(params,plan))
+  assert.equal(pinned.get("namespace"),"ns")
+  assert.equal(pinned.get("fromNamespace"),"ns")
+  assert.equal(pinned.get("fromUID"),"uid")
+  assert.equal(pinned.get("returnTo"),"/measurements/requests?page=2")
+  assert.equal(requestCopySource("source","ns","old",[plan]).source,undefined)
+  assert.notEqual(requestCopySource("source","ns","old",[plan]).error,"")
+  assert.equal(requestCopySource("source","other",null,[plan]).source,undefined)
+  assert.equal(requestCopySource("source","ns",null,[{...plan,metadata:{...plan.metadata,uid:""}}]).source,undefined)
+  assert.equal(requestExecutionStatus("private-phase"),"미확인")
+})
+
+test("copied source identity is reviewable without a UID query and replacement blocks submission",()=>{
+  const context={models:[],workloads:[],classes:[],plans:[plan],preprocessors:[],datasets:[],profiles:[]}
+  const html=renderRequest({context,from:"source"},"from=source","",2)
+  assert.match(html,/원본 저장 영역<\/th><td[^>]*>ns</)
+  assert.match(html,/원본 UID<\/th><td[^>]*>uid</)
+  const mismatch=renderRequest({context,from:"source"},"from=source&fromUID=old","",2)
+  assert.match(mismatch,/복사 원본.*식별자/)
+  assert.match(mismatch,/<button disabled="">요청 범위 검사<\/button>/)
+})
+
+test("advanced timing shows actual measurement and observation windows without inventing warmup seconds",()=>{
+  const context={models:[],workloads:[],classes:[],plans:[plan],preprocessors:[],datasets:[],profiles:[]}
+  const html=renderRequest({context,from:"source"},"from=source","",1)
+  assert.match(html,/aria-label="측정 시간과 전력 기록 창"/)
+  assert.match(html,/실행 측정<\/th><td[^>]*>10<\/td><td[^>]*>11<\/td>/)
+  assert.match(html,/유휴 측정<\/th><td[^>]*>10<\/td><td[^>]*>11<\/td>/)
+  assert.match(html,/예열 시간.*미제공/)
+  const unknown=renderRequest()
+  assert.doesNotMatch(unknown,/width:NaN|width:Infinity/)
+})
+
+function renderRequestList(kind:"requests"|"runs",record:unknown) {
+  const source=readFileSync(new URL(`../features/measurement-${kind}.tsx`,import.meta.url),"utf8")
+  const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
+  const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
+  const table=({columns,data,urlState}:{columns:{key:string;label:string;value:(row:unknown)=>ReactNode}[];data:unknown[];urlState?:boolean})=>createElement("table",{"data-url-state":urlState},createElement("thead",null,createElement("tr",null,columns.map(column=>createElement("th",{key:column.key},column.label)))),createElement("tbody",null,data.map((row,index)=>createElement("tr",{key:index},columns.map(column=>createElement("td",{key:column.key},column.value(row)))))))
+  const modules:Record<string,unknown>={
+    "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
+    "next/navigation":{useSearchParams:()=>new URLSearchParams()},
+    "@/lib/client":{useSession:()=>({config:{namespace:"ns"}}),useChillQuery:()=>({data:{items:[record],runs:[record],page:{total:1}}})},
+    "@/lib/measurements":measurementHelpers,
+    "@/lib/measurement-request":requestHelpers,
+    "@/lib/measurement-coverage":coverageHelpers,
+    "@/features/measurement-coverage":{MeasurementFilters:()=>null,useMeasurementCoverage:()=>({})},
+    "@/features/measurement-plans":{MeasurementPlanSheet:()=>null},
+    "@/components/read-region":{QueryGate:container,SourceJSON:({inline,value}:{inline?:boolean;value:unknown})=>inline?createElement("pre",null,JSON.stringify(value)):null,SourceExport:()=>null},
+    "@/components/screen":{Screen:container},
+    "@/components/data-table":{DataTable:table,useServerTable:()=>({query:""})},
+    "@/components/ui/button":{Button:container},
+    "@/components/status-cell":{StatusCell:({label}:{label:string})=>createElement("span",null,label)},
+    "@/components/measurement-navigation":{MeasurementNavigation:()=>null,MeasurementStatus:()=>createElement("span",null,"상태")},
+  }
+  runInNewContext(compiled,{exports,require:(name:string)=>name in modules?modules[name]:require(name),URLSearchParams})
+  return renderToStaticMarkup(createElement(exports[kind==="requests"?"MeasurementRequestsPage":"MeasurementRunsPage"] as ComponentType))
+}
+
+test("request and run summaries translate dynamic reasons and retain unknown text only in source disclosure",()=>{
+  const assessment:MeasurementAssessment={status:"running",displayStatus:"running",label:"진행 중",reasons:[],execution:null,evidence:{available:false,accepted:false,reasons:[]},checklist:{criteriaMet:null,version:"result-checklist.v1",checks:[]},scope:{schedulerUsed:false,reused:false,facts:[]}}
+  const reason={code:"FutureReason",label:"Private English reason",message:"No verified catalog profile for current condition"}
+  const requests=renderRequestList("requests",{...plan,assessment:{...assessment,reasons:[reason]}})
+  assert.match(requests,/현재 조건의 검증된 프로파일 없음/)
+  assert.doesNotMatch(requests,/Private English reason/)
+  assert.match(requests,/data-url-state="true"/)
+  const run={namespace:"ns",name:"round",uid:"run",creationTimestamp:"2026-11-01",generation:1,spec:{candidate:plan.spec.state.candidate,targetNode:"node",measurement:{batch:4,workloadMode:"private-protocol",cpuQuota:"2",dataset:"data"}},status:{},assessment:{...assessment,reasons:[{...reason,message:"private unknown reason"}]}}
+  const runs=renderRequestList("runs",run)
+  assert.ok((runs.match(/<th>/g)??[]).length<=5)
+  assert.match(runs,/기타 부하 방식/)
+  assert.match(runs,/<details><summary[^>]*>조건·사유·출처/)
+  assert.match(runs,/부하 방식 원문/)
+  assert.match(runs,/private-protocol/)
+  assert.match(runs,/상세 사유: 원문/)
+  assert.match(runs,/private unknown reason/)
+  assert.match(runs,/모델/)
+  assert.match(runs,/데이터셋/)
+})
+
 const retainedAssessment:MeasurementAssessment={status:"complete",displayStatus:"usable",label:"측정 완료",reasons:[],execution:null,evidence:{available:true,accepted:true,reasons:[]},checklist:{criteriaMet:null,version:"result-checklist.v1",checks:[]},scope:{schedulerUsed:true,reused:false,facts:[]}}
 const retainedProgress={basis:"requested",target:[4],measured:[4],criteriaMet:[],missing:[],inProgress:[],unknown:[]}
 const retainedRow:ResultRow={id:"retained",rowKind:"direct",profileId:"profile",sourceProfileId:null,batch:4,condition:{metricSource:{nodeName:"node"}},p95Milliseconds:12,latencySampleCount:100,idleWatts:2,activeWatts:3,totalJoulesPerItem:4,incrementalJoulesPerItem:1,confidence:null,activeTrialCount:3,idleTrialCount:3,completedItems:100,completedCalls:25,powerSource:null,assessment:retainedAssessment,sources:[],missingReasons:[],reuse:null}
@@ -355,6 +439,13 @@ test("failed request detail renders failure evidence, current results, checks an
   assert.match(html,/fromUID=uid/)
   assert.ok(html.indexOf("Pod image missing")<html.indexOf("측정 실패 · 요청 결과 없음"))
   assert.match(html,/<details><summary[^>]*>관리/)
+  data.campaign.phase="Measuring"
+  Object.assign(data.campaign,{completedTrials:7})
+  const progressing=renderToStaticMarkup(createElement(exports.MeasurementPlanDetails as ComponentType<{namespace:string;name:string}>,{namespace:"ns",name:"source"}))
+  assert.match(progressing,/aria-label="요청 진행"/)
+  assert.match(progressing,/완료 회차 \(회\)<\/th><td[^>]*>7</)
+  assert.match(progressing,/예정 회차 \(회\)<\/th><td[^>]*>미제공</)
+  assert.ok(progressing.indexOf('aria-label="요청 진행"')<progressing.indexOf(">요청 조건</summary>"))
   data.campaign.phase="Complete";data.resultRows=[retainedRow]
   const success=renderToStaticMarkup(createElement(exports.MeasurementPlanDetails as ComponentType<{namespace:string;name:string}>,{namespace:"ns",name:"source"}))
   assert.equal((success.match(/12\.00/g)??[]).length,1)

@@ -14,7 +14,22 @@ export function requestRunHref(namespace:string,name:string,uid?:string,parent?:
   return parent?`/measurements/requests/${encodeURIComponent(parent.name)}/runs/${encodeURIComponent(name)}?${query}`:`/measurements/requests?${query}`
 }
 export function requestExecutionStatus(phase?:string) {
-  return phase==="Complete"?"종료":phase==="Failed"?"실패":phase==="Measuring"?"진행 중":phase||"미확인"
+  return phase==="Complete"?"종료":phase==="Failed"?"실패":phase==="Measuring"?"진행 중":"미확인"
+}
+
+export function requestCopySource(name:string,namespace:string,uid:string|null,plans:MeasurementPlan[]) {
+  const source=plans.find(plan=>plan.metadata.name===name&&plan.metadata.namespace===namespace)
+  return !source?.metadata.uid||uid&&source.metadata.uid!==uid
+    ?{source:undefined,error:"복사 원본의 저장 영역·식별자를 확인할 수 없어요. 같은 이름의 다른 요청으로 대체하지 않아요."}
+    :{source,error:""}
+}
+
+export function requestCopyQuery(params:URLSearchParams,source:MeasurementPlan) {
+  const query=new URLSearchParams(params)
+  query.set("namespace",source.metadata.namespace)
+  query.set("fromNamespace",source.metadata.namespace)
+  query.set("fromUID",source.metadata.uid)
+  return query.toString()
 }
 
 // Bind both successful checks to the complete input, including inherited source identity.

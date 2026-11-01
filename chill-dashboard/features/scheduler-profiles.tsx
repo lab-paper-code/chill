@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery } from "@/lib/client"
 import type { CurvePlanSpec, MeasurementAssessment, ProfilesView, ResultRow } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
-import { formatMeasurementNumber, formatMeasurementTime } from "@/lib/measurements"
+import { executionPathLabel, formatMeasurementNumber, formatMeasurementTime } from "@/lib/measurements"
 import { assessmentReasons, measurementQuality, measurementSchedulerUsed } from "@/lib/measurement-assessment"
 import { STATUS_AXES } from "@/lib/status"
 import { StatusCell } from "@/components/status-cell"
@@ -38,8 +38,8 @@ export function SchedulerProfilesPage() {
     <MeasurementFilters editable axes={[{key:"model",label:"모델",values:query.data?.filters?.models??[]},{key:"deviceClass",label:"장치 종류",values:query.data?.filters?.deviceClasses??[]},{key:"node",label:"장치",values:query.data?.filters?.nodes??[]},{key:"powerMode",label:"전력모드",values:query.data?.filters?.powerModes??[]},{key:"path",label:"실행 경로",values:query.data?.filters?.paths??[]},{key:"cpu",label:"CPU quota",values:query.data?.filters?.cpus??[]}]}/>
     <QueryGate query={query}><DataTable searchable={false} data={query.data?.profiles??[]} server={{...tableState,total:query.data?.page?.total??0,busy:query.isFetching}} columns={[
       {key:"model",label:"모델",sortValue:p=>p.condition.logicalModel,value:p=><Link className="min-w-0 whitespace-normal [overflow-wrap:anywhere] text-primary underline" href={href(p.id)} scroll={false} onClick={event=>{trigger.current=event.currentTarget}}>{p.condition.logicalModel}</Link>},
-      {key:"condition",label:"장치·조건",value:p=><div className="grid min-w-0 gap-1 text-xs [overflow-wrap:anywhere]"><span>{p.nodeName}</span><span>{p.condition.deviceClass}</span><span>{p.condition.powerMode}</span><span>{p.condition.artifact.executionPath}</span><span>CPU {p.condition.cpu.limit} / {p.condition.cpu.affinityCPUs?.join(", ")??"미기록"}</span>{p.reuse&&<span>재사용 대상 {p.reuse.targetNode.name}</span>}</div>},
-      {key:"batch",label:"배치",unit:"건",numeric:true,value:p=>p.resultRows?.length||p.batches?.length?<ul>{(p.resultRows?.length?p.resultRows.map(row=>row.batch):p.batches?.map(batch=>batch.batch)??[]).map((batch,index)=><li key={index}>{batch}</li>)}</ul>:"미제공"},
+      {key:"condition",label:"장치·조건",value:p=><div className="grid min-w-0 gap-1 text-xs [overflow-wrap:anywhere]"><span>{p.nodeName}</span><span>{p.condition.deviceClass}</span><span>{p.condition.powerMode}</span><span>{executionPathLabel(p.condition.artifact.executionPath)}</span><span>CPU {p.condition.cpu.limit} / {p.condition.cpu.affinityCPUs?.join(", ")??"미기록"}</span>{p.reuse&&<span>재사용 대상 {p.reuse.targetNode.name}</span>}</div>},
+      {key:"batch",label:"배치",unit:"건",numeric:true,value:p=><ProfileBatches rows={p.resultRows} batches={p.batches}/>},
       {key:"p95",label:"p95",unit:"ms",numeric:true,value:p=><ProfileValues rows={p.resultRows} metric="p95Milliseconds"/>},
       {key:"totalEnergy",label:"총 에너지",unit:"J/건",numeric:true,value:p=><ProfileValues rows={p.resultRows} metric="totalJoulesPerItem"/>},
       {key:"incrementalEnergy",label:"추가 에너지",unit:"J/건",numeric:true,value:p=><ProfileValues rows={p.resultRows} metric="incrementalJoulesPerItem"/>},
@@ -55,7 +55,7 @@ export function SchedulerProfilesPage() {
           {selected?<>
             <div className="flex flex-wrap gap-4"><ProfileUse assessment={selected.assessment}/><ProfileQuality assessment={selected.assessment}/></div>
             <ResultRows rows={selected.resultRows??[]} filename={`chill-profile-${selected.id}.csv`} emptyMessage="미제공"/>
-            <Facts label="동결 조건" items={[...conditionRows(selected.condition),["장치",selected.nodeName],["전력모드",selected.condition.powerMode],["실행 경로",selected.condition.artifact.executionPath],["CPU quota",selected.condition.cpu.limit],["CPU affinity",selected.condition.cpu.affinityCPUs?.join(", ")??"미기록"],["측정 시각",formatMeasurementTime(selected.measuredAt)]]}/>
+            <Facts label="동결 조건" items={[...conditionRows(selected.condition),["장치",selected.nodeName],["전력모드",selected.condition.powerMode],["실행 경로",executionPathLabel(selected.condition.artifact.executionPath)],["CPU quota",selected.condition.cpu.limit],["CPU affinity",selected.condition.cpu.affinityCPUs?.join(", ")??"미기록"],["측정 시각",formatMeasurementTime(selected.measuredAt)]]}/>
             <details><summary className="min-h-11 cursor-pointer py-2">판정 근거</summary><AssessmentDetails assessment={selected.assessment} rows={selected.resultRows}/></details>
             <details><summary className="min-h-11 cursor-pointer py-2">원본·출처</summary><Facts items={[["프로파일 ID",selected.id],["설정 버전",detail.data?.configVersion??"미제공"]]}/><SourceExport value={selected} filename={`chill-profile-${selected.id}.json`}/><SourceJSON inline value={selected} title="동결 조건·원본 수치"/></details>
           </>:<StatusCell axis="측정" label="미확인" tone="idle" reason="현재 목록에 선택한 프로파일 ID 없음"/>}
@@ -69,7 +69,11 @@ export function SchedulerProfilesPage() {
   </>
 }
 function ProfileValues({rows,metric}:{rows?:ResultRow[];metric:"p95Milliseconds"|"totalJoulesPerItem"|"incrementalJoulesPerItem"}) {
-  return rows?.length?<ul>{rows.map((row,index)=><li key={row.id??index}>{formatMeasurementNumber(row[metric],metric==="p95Milliseconds"?"ms":"J/건")}</li>)}</ul>:<span>미제공</span>
+  return rows?.length?<span>{formatMeasurementNumber(rows[0][metric],metric==="p95Milliseconds"?"ms":"J/건")}</span>:<span>미제공</span>
+}
+function ProfileBatches({rows,batches}:{rows?:ResultRow[];batches?:{batch:number}[]|null}) {
+  const representative=rows?.[0]?.batch??batches?.[0]?.batch
+  return representative===undefined?<span>미제공</span>:<div className="grid min-w-0 gap-1"><span>대표 배치 {representative} · 첫 기록</span><details><summary className="min-h-11 cursor-pointer py-2">전체 배치</summary>{rows?.length?<ResultRows rows={rows}/>:<ul>{batches?.map((batch,index)=><li key={index}>{batch.batch}</li>)}</ul>}</details></div>
 }
 function ProfileUse({assessment}:{assessment?:MeasurementAssessment}) {
   const used=measurementSchedulerUsed(assessment)

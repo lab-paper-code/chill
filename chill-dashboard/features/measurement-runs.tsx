@@ -4,8 +4,8 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { MeasurementFilters } from "@/features/measurement-coverage"
 import { useChillQuery, useSession } from "@/lib/client"
-import { runAttempt, runSpec } from "@/lib/measurement-coverage"
-import { formatMeasurementTime } from "@/lib/measurements"
+import { currentRunCondition, runAttempt, runSpec } from "@/lib/measurement-coverage"
+import { executionPathLabel, formatMeasurementTime, measurementReasonSummary, workloadModeLabel } from "@/lib/measurements"
 import { requestHref, requestRunHref } from "@/lib/measurement-request"
 import type { ProfilingRun, RunsView } from "@/lib/read-types"
 import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
@@ -15,19 +15,21 @@ import { DataTable, useServerTable } from "@/components/data-table"
 import { Button } from "@/components/ui/button"
 
 const columns = (parent?:{name:string;uid:string},returnTo?:string) => [
-  {key:"name",label:"회차",sortValue:(run:ProfilingRun)=>run.name,value:(run:ProfilingRun)=>{const owner=parent??run.ownerReferences?.find(owner=>owner.controller&&owner.kind==="BatchEnergyOptimization");return <Link className="break-all text-primary underline" href={requestRunHref(run.namespace,run.name,run.uid,owner,returnTo)}>{run.name}</Link>}},
-  {key:"created",label:"생성 (KST)",sortValue:(run:ProfilingRun)=>run.creationTimestamp,value:(run:ProfilingRun)=><time title={run.creationTimestamp}>{formatMeasurementTime(run.creationTimestamp)}</time>},
-  {key:"model",label:"모델 / 장치 / Node",value:(run:ProfilingRun)=>{const s=runSpec(run);return <><p>{s.candidate?.modelSpec??"미제공"}</p><p>{s.candidate?.deviceClass??"미제공"}</p><p>{s.targetNode??"미제공"}</p></>}},
-  {key:"condition",label:"전력모드 / 경로 / 부하",value:(run:ProfilingRun)=>{const s=runSpec(run);return <><p>{s.candidate?.powerMode??"미제공"}</p><p>{s.candidate?.executionPath??"미제공"}</p><p>{s.measurement?.workloadMode==="active"?"실행":s.measurement?.workloadMode==="idle"?"유휴":s.measurement?.workloadMode??"미제공"}</p></>}},
+  {key:"name",label:"회차 / 부모 요청",sortValue:(run:ProfilingRun)=>run.name,value:(run:ProfilingRun)=>{const owner=parent??run.ownerReferences?.find(owner=>owner.controller&&owner.kind==="BatchEnergyOptimization");return <div className="space-y-2"><Link className="inline-flex min-h-11 items-center break-all text-primary underline" href={requestRunHref(run.namespace,run.name,run.uid,owner,returnTo)}>{run.name}</Link>{!parent&&owner&&<Link className="block break-all text-primary underline" href={requestHref(run.namespace,owner.name,owner.uid)}>{owner.name}</Link>}<details><summary className="min-h-11 cursor-pointer py-2">조건·사유·출처</summary><RunDetails run={run}/></details></div>}},
+  {key:"status",label:"측정 / 현재 사용 / 품질",value:(run:ProfilingRun)=><><MeasurementStatus assessment={run.assessment}/><ul className="space-y-1 text-sm">{run.assessment?.reasons?.map((reason,index)=><li key={index}>{measurementReasonSummary(reason.message||reason.code)}</li>)}</ul></>},
   {key:"batch",label:"배치",unit:"건",numeric:true,value:(run:ProfilingRun)=>runSpec(run).measurement?.batch??"미제공"},
   {key:"attempt",label:"반복",value:(run:ProfilingRun)=>runAttempt(run)},
-  {key:"cpu",label:"CPU / 데이터셋",value:(run:ProfilingRun)=>{const s=runSpec(run);return <><p>{s.measurement?.cpuQuota??"미제공"}</p><p>{s.measurement?.cpuAffinity?.join(", ")??"코어 미지정"}</p><p>{s.measurement?.dataset??"미제공"}</p></>}},
-  {key:"status",label:"측정 / 현재 사용 / 품질",value:(run:ProfilingRun)=><MeasurementStatus assessment={run.assessment}/>},
-  {key:"reason",label:"사유 / 부모 요청",value:(run:ProfilingRun)=>{const owner=run.ownerReferences?.find(owner=>owner.controller&&owner.kind==="BatchEnergyOptimization");return <div><ul className="space-y-1 text-sm">{run.assessment?.reasons?.map((reason,index)=><li key={index}>{reason.label??reason.message}</li>)}</ul>{owner&&<Link className="break-all text-primary underline" href={requestHref(run.namespace,owner.name,owner.uid)}>{owner.name}</Link>}</div>}},
-].filter(column=>!parent||!["model","cpu","reason"].includes(column.key))
+  {key:"completed",label:"실행 종료 (KST)",value:(run:ProfilingRun)=>{const condition=currentRunCondition(run,"ExecutionComplete");return condition&&["True","False"].includes(condition.status)&&condition.lastTransitionTime?<time title={condition.lastTransitionTime}>{formatMeasurementTime(condition.lastTransitionTime)}</time>:"미제공"}},
+]
+
+function RunDetails({run}:{run:ProfilingRun}) {
+  const s=runSpec(run)
+  const facts:[string,string][]=[["모델",s.candidate?.modelSpec??"미제공"],["장치 종류",s.candidate?.deviceClass??"미제공"],["실행 장비",s.targetNode??"미제공"],["전력모드",s.candidate?.powerMode??"미제공"],["실행 경로",s.candidate?.executionPath?executionPathLabel(s.candidate.executionPath):"미제공"],["부하 방식",workloadModeLabel(s.measurement?.workloadMode)],["CPU 상한",s.measurement?.cpuQuota??"미제공"],["CPU 코어",s.measurement?.cpuAffinity?.join(", ")??"코어 미지정"],["데이터셋",s.measurement?.dataset??"미제공"],["생성 (KST)",formatMeasurementTime(run.creationTimestamp)],["저장 영역",run.namespace],["UID",run.uid]]
+  return <div className="min-w-0 space-y-2 whitespace-normal text-sm"><dl>{facts.map(([label,value])=><div className="grid gap-1 border-b py-2" key={label}><dt className="font-medium">{label}</dt><dd className="break-all">{value}</dd></div>)}</dl><details><summary className="min-h-11 cursor-pointer py-2">실행 경로·부하 방식·사유 원문</summary><dl><dt>실행 경로 원문</dt><dd className="break-all">{s.candidate?.executionPath??"미제공"}</dd><dt>부하 방식 원문</dt><dd className="break-all">{s.measurement?.workloadMode??"미제공"}</dd></dl><SourceJSON inline value={run.assessment?.reasons} title="사유 원문"/></details></div>
+}
 
 export function MeasurementChildRuns({namespace,parent}:{namespace:string;parent:{name:string;uid:string}}) {
-  const table=useServerTable()
+  const table=useServerTable(undefined,false)
   const params=useSearchParams(),returnTo=`${requestHref(namespace,parent.name,parent.uid)}&${new URLSearchParams({returnTo:params.get("returnTo")??""})}`
   const search=new URLSearchParams(table.query);search.set("parentUID",parent.uid)
   const query=useChillQuery<RunsView>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs?${search}`)

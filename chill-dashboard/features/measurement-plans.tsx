@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
 import { ApiError, useChillMutation, useChillQuery } from "@/lib/client"
 import type { CampaignResult, MeasurementAssessment, MeasurementMutation, MeasurementPlanList, MeasurementPlanSpec, ResultRow } from "@/lib/read-types"
-import { formatMeasurementNumber as number, measurementCheckText, resultRowsCSV, safeMeasurementReturn } from "@/lib/measurements"
+import { executionPathLabel, formatMeasurementNumber as number, measurementCheckText, measurementReasonSummary, resultRowsCSV, safeMeasurementReturn } from "@/lib/measurements"
 import { assessmentReasons } from "@/lib/measurement-assessment"
 import { coverageUsageAssessment } from "@/lib/measurement-coverage"
 import { requestExecutionStatus, requestFailureFacts, requestHref, requestRunHref, requestUsedResults } from "@/lib/measurement-request"
@@ -52,12 +52,13 @@ function ResultCondition({condition}:{condition:Record<string,unknown>}) {
   const cpu=condition.cpu&&typeof condition.cpu==="object"?condition.cpu:undefined
   const artifact=condition.artifact&&typeof condition.artifact==="object"?condition.artifact:undefined
   const active=condition.activeProtocol&&typeof condition.activeProtocol==="object"?condition.activeProtocol:undefined
+  const executionPath=condition.executionPath??(artifact&&"executionPath" in artifact?artifact.executionPath:undefined)
   const text=(value:unknown)=>value==null?"미제공":typeof value==="object"?"name" in value?String(value.name):"식별 정보는 전체 조건 참조":String(value)
   return <div className="min-w-52 space-y-2 whitespace-normal text-xs">
     <p>모델 {text(condition.logicalModel??condition.model)}</p><p>Node {text(condition.targetNode??condition.nodeUID)}</p>
-    <p>모드 {text(condition.powerMode)} / 경로 {text(condition.executionPath??(artifact&&"executionPath" in artifact?artifact.executionPath:undefined))}</p>
+    <p>모드 {text(condition.powerMode)} / 경로 {typeof executionPath==="string"?executionPathLabel(executionPath):"미제공"}</p>
     <p>CPU {text(cpu&&"request" in cpu?cpu.request:undefined)} / quota {text(cpu&&"limit" in cpu?cpu.limit:undefined)}</p><p>데이터셋 {text(active&&"dataset" in active?active.dataset:condition.dataset)}</p>
-    <details><summary className="flex min-h-11 cursor-pointer items-center underline">UID·이미지·측정 방식 포함 전체 조건</summary><ExactFields value={condition}/></details>
+    <details><summary className="flex min-h-11 cursor-pointer items-center underline">UID·이미지·측정 방식 포함 전체 조건 원문</summary><ExactFields value={condition}/></details>
   </div>
 }
 
@@ -112,14 +113,18 @@ export function MeasurementPlanDetails({namespace,name}:{namespace:string;name:s
     {!data&&<QueryGate query={query}>{null}</QueryGate>}
     {campaign&&spec&&!other&&<>
       <div className="flex flex-wrap gap-3"><StatusCell axis="실행" label={requestExecutionStatus(campaign.phase)} tone={campaign.phase==="Failed"?"fail":"idle"}/><MeasurementStatus assessment={assessment}/></div>
-      <details><summary className="min-h-11 cursor-pointer py-2 text-sm">요청 조건</summary><Facts label="요청 조건" items={[["모델",spec.state.candidate.modelSpec],["장치 종류",spec.state.candidate.deviceClass],["장비",spec.state.targetNode],["전력모드",spec.state.candidate.powerMode],["실행 경로",spec.state.candidate.executionPath],["배치 (건)",spec.batchSizes?.join(", ")??"선언 범위"],["반복 (회)",spec.trialsPerBatch],["CPU 상한",spec.cpuQuota??"미제공"],["CPU 코어",spec.cpuAffinity?.join(", ")??"미지정"],["데이터셋",spec.activeProtocol.dataset??"미제공"],["실행 측정 (s)",spec.activeProtocol.durationSeconds??"미제공"],["예열 (회)",spec.activeProtocol.warmupIterations??"미제공"],["유휴 측정 (s)",spec.idleProtocol.durationSeconds??"미제공"]]}/></details>
+      <table aria-label="요청 진행" className="w-full text-left text-sm tabular-nums"><tbody><tr><th className="py-2 font-medium">완료 회차 (회)</th><td>{campaign.completedTrials??"미제공"}</td></tr><tr><th className="py-2 font-medium">예정 회차 (회)</th><td>미제공</td></tr><tr><th className="py-2 font-medium">현재 단계</th><td>{requestExecutionStatus(campaign.phase)}</td></tr><tr><th className="py-2 font-medium">현재 세부 실행 단계</th><td>미제공</td></tr></tbody></table>
+      <details><summary className="min-h-11 cursor-pointer py-2 text-sm">요청 조건</summary><Facts items={[["모델",spec.state.candidate.modelSpec],["장치 종류",spec.state.candidate.deviceClass],["장비",spec.state.targetNode],["전력모드",spec.state.candidate.powerMode],["실행 경로",executionPathLabel(spec.state.candidate.executionPath)],["배치 (건)",spec.batchSizes?.join(", ")??"선언 범위"],["반복 (회)",spec.trialsPerBatch],["CPU 상한",spec.cpuQuota??"미제공"],["CPU 코어",spec.cpuAffinity?.join(", ")??"미지정"],["데이터셋",spec.activeProtocol.dataset??"미제공"],["실행 측정 (s)",spec.activeProtocol.durationSeconds??"미제공"],["예열 (회)",spec.activeProtocol.warmupIterations??"미제공"],["유휴 측정 (s)",spec.idleProtocol.durationSeconds??"미제공"]]}/></details>
       {campaign.phase==="Failed"&&<section role="alert" className="space-y-2 border border-destructive/40 p-4">
         <h2 className="font-semibold text-destructive">실패 근거</h2>
+        <ul className="space-y-2 text-sm">{(data?.assessment?.failureSummary??[]).map((failure,index)=><li key={index}>{measurementReasonSummary(failure.message||failure.code)}</li>)}</ul>
+        <details><summary className="min-h-11 cursor-pointer py-2">서버 실패 사유·연결 회차 원문</summary>
         <table aria-label="실패 원인·연결 회차" className="w-full text-left text-sm"><tbody>
           {requestFailureFacts(campaign.conditions).map(([label,value],index)=><tr key={index} className="border-b"><th scope="row" className="w-28 py-2 align-top font-medium">{label}</th><td className="break-words py-2">{value}</td></tr>)}
           <tr><th scope="row" className="py-2 align-top font-medium">연결 회차</th><td>{linkedRuns.length?linkedRuns.map(run=><Link key={run.uid||run.name} className="flex min-h-11 items-center break-all underline" href={requestRunHref(run.namespace,run.name,run.uid,{name,uid:campaign.uid},returnTo)}>{run.name}</Link>):<a className="inline-flex min-h-11 items-center underline" href="#request-child-runs">회차 검색</a>}</td></tr>
           {data?.assessment?.failureSummary?.map((failure,index)=><React.Fragment key={index}><tr><th scope="row" className="py-2 align-top font-medium">분류</th><td>{failure.code==="Other"?campaign.conditions?.find(condition=>condition.reason)?.reason||failure.code:failure.label??failure.code}</td></tr><tr><th scope="row" className="py-2 align-top font-medium">서버 상세</th><td className="break-words">{failure.message||"미제공"}</td></tr><tr><th scope="row" className="py-2 align-top font-medium">종료 코드</th><td className="text-right tabular-nums">{failure.exitCode??"미제공"}</td></tr></React.Fragment>)}
         </tbody></table>
+        </details>
       </section>}
       <ResultRows rows={data?.resultRows??[]} title={sharesUsed?"측정 결과 · 현재 사용 결과 포함":"이 요청의 측정 결과"} filename={`chill-measurement-${name}.csv`} emptyMessage={query.error?"결과 파일 조회 실패":campaign.phase==="Failed"?"측정 실패 · 요청 결과 없음":campaign.phase==="Complete"?"실행 종료 · 저장 결과 없음":"측정 결과 대기"}/>
       <QueryGate query={coverage}>{otherUsed.length>0&&<section aria-label="현재 사용 결과" className="space-y-3"><h2 className="font-semibold">별도 보관 결과</h2><Facts items={[["요청과의 관계","이 요청의 측정 결과와 다른 객체"],["출처","보관된 처리 성능 프로파일"],["현재 사용","스케줄러 참조 · 품질 승인과 별개"]]}/><ResultRows title="다른 보관 프로파일의 현재 사용 결과" rows={otherUsed} filename={`chill-used-${name}.csv`}/></section>}</QueryGate><Link className="inline-flex min-h-11 items-center underline" href={`/measurements/results?${resultQuery}`}>같은 대상 결과</Link>

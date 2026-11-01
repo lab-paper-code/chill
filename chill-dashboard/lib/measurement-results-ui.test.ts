@@ -38,13 +38,13 @@ function load(file:string,modules:Record<string,unknown>):Record<string,Componen
   return exports
 }
 function harness(search:string,respond:(path:string)=>unknown) {
-  const params=new URLSearchParams(search),pushes:string[]=[],replacements:string[]=[],paths:string[]=[]
+  const params=new URLSearchParams(search),pushes:string[]=[],replacements:string[]=[],paths:string[]=[],refreshes:string[]=[]
   const modules={
     react:{useRef:(value:unknown)=>({current:value}),useState:(value:unknown)=>[value,()=>{}]},
     "lucide-react":{TriangleAlert:()=>null},
     "next/link":{default:"a"},
     "next/navigation":{useSearchParams:()=>params,useRouter:()=>({push:(value:string)=>pushes.push(value),replace:(value:string)=>replacements.push(value)})},
-    "@/lib/client":{useSession:()=>({config:{namespace:"system"}}),useChillQuery:(path:string)=>{paths.push(path);return {data:respond(path),error:null,isPending:false,isFetching:false,dataUpdatedAt:1,refetch:()=>{}}}},
+    "@/lib/client":{useSession:()=>({config:{namespace:"system"}}),useChillQuery:(path:string)=>{paths.push(path);return {data:respond(path),error:null,isPending:false,isFetching:false,dataUpdatedAt:1,refetch:()=>{refreshes.push(path)}}}},
     "@/lib/measurements":measurements,"@/lib/operation-cost":costs,"@/lib/measurement-assessment":assessment,"@/lib/scheduler":scheduler,"@/lib/status":status,
     "@/components/status-cell":{StatusCell:"status-cell"},
     "@/components/screen":{Screen:"main",Facts:"facts"},
@@ -57,7 +57,7 @@ function harness(search:string,respond:(path:string)=>unknown) {
     "@/features/measurement-coverage":{MeasurementFilters:"measurement-filters"},
     "@/features/scheduler-profiles":{SchedulerProfilesPage:"throughput-results"},
   }
-  return {modules,params,pushes,replacements,paths}
+  return {modules,params,pushes,replacements,paths,refreshes}
 }
 function projection(h:{modules:Record<string,unknown>}) {
   const frame=load("../features/measurement-projections.tsx",h.modules).MeasurementResultsPage({})
@@ -197,6 +197,10 @@ test("pending run evidence is not presented as a connection failure",()=>{
   const tree=load("../features/read-pages.tsx",h.modules).MeasurementDetail({namespace:"ns",name:"running"})
   assert.match(text(tree),/근거 발행 대기/)
   assert.doesNotMatch(text(tree),/연결 상태/)
+  const refresh=elements(tree).find(element=>element.type==="button"&&text(element)==="근거 확인")!
+  assert.ok(refresh,"pending evidence needs an explicit refresh path")
+  ;(refresh.props.onClick as ()=>void)()
+  assert.ok(h.refreshes.some(path=>path.endsWith("/evidence-passport")))
 })
 
 test("failed occupancy values remain visible only as unverified raw data",()=>{
@@ -226,4 +230,14 @@ test("opening a coverage cell pushes a closeable history entry while retaining t
   assert.equal(opened.get("cell"),"one")
   assert.equal(opened.get("status"),"usable")
   assert.equal(opened.get("deviceClass"),"device")
+})
+
+test("standalone plan verification states its stored-plan and non-submission role",()=>{
+  const h=harness("",()=>undefined)
+  Object.assign(h.modules,{react:{useState:(value:unknown)=>[value,()=>{}]},"@/lib/client":{useSession:()=>({config:{namespace:"ns"}}),useChillMutation:()=>({})}})
+  const tree=load("../features/read-pages.tsx",h.modules).MeasurementCheckPage({})
+  assert.equal((tree as Element).props.title,"저장 계획 검사")
+  assert.match(text(tree),/새 요청 작성/)
+  const facts=elements(tree).find(element=>element.type==="facts")!
+  assert.deepEqual(facts.props.items,[["대상","저장된 계획 파일"],["동작","검사만"],["측정 제출","없음"]])
 })

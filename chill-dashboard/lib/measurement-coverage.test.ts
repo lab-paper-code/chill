@@ -343,3 +343,25 @@ test("same-condition request preserves source identities and rejects replaced na
   const replaced={...inventory,models:[{...model,uid:"replacement"}]}
   assert.match(resolveMeasurementPrefill(params,"ns",replaced).errors.join(" "),/모델 UID 불일치/)
 })
+
+test("coverage keeps active filters visible and omits empty result table headings and repeated absent targets",()=>{
+  const noTarget={...cell,id:"no-target",powerMode:"no-target",batchProgress:null}
+  const html=renderCoverage("cell=no-target&status=unmeasured&cpu=2",[noTarget])
+  assert.match(html,/선택한 필터/)
+  assert.match(html,/전체 해제/)
+  assert.match(html,/상태: 미측정/)
+  const result=html.match(/<section><h3>배치별 결과<\/h3>.*?<\/section>/)?.[0]??""
+  assert.match(result,/미측정/)
+  assert.doesNotMatch(result,/<thead/)
+  const button=html.match(/<button[^>]*data-coverage-cell="no-target"[^>]*>.*?<\/button>/)?.[0]??""
+  assert.doesNotMatch(button,/목표 미제공/)
+})
+
+test("progressing cell shows recorded run progress without inventing a planned total or ETA",()=>{
+  const running={...cell,id:"running",assessment:{...cell.assessment,displayStatus:"running" as const}}
+  const html=renderCoverage("cell=running",[running])
+  assert.match(html,/진행 회차/)
+  assert.match(html,/예정 회차/)
+  assert.match(html,/미제공/)
+  assert.doesNotMatch(html,/완료 예정/)
+})

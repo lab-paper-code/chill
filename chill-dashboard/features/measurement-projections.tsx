@@ -83,7 +83,7 @@ function ProjectionResults({kind,namespace}:{kind:ProjectionMeasurementKind;name
   ]
   return <>
     <MeasurementFilters axes={axes}/>
-    <QueryGate query={query}>{kind==="operation-cost-measurements"?<OperationCostTable items={items.filter((item):item is OperationCostMeasurement=>item.kind==="OperationCostMeasurement")} select={select}/>:<DataTable key={`${namespace}/${params}`} searchable={false} data={items.filter((item):item is DispatchOccupancyMeasurement=>item.kind==="DispatchOccupancyMeasurement")} columns={columns}/>}</QueryGate>
+    <QueryGate query={query}>{kind==="operation-cost-measurements"?<OperationCostTable items={items.filter((item):item is OperationCostMeasurement=>item.kind==="OperationCostMeasurement")} select={select}/>:<DataTable urlState key={`${namespace}/${params}`} searchable={false} data={items.filter((item):item is DispatchOccupancyMeasurement=>item.kind==="DispatchOccupancyMeasurement")} columns={columns}/>}</QueryGate>
     <Button className="justify-self-start" variant="outline" disabled={query.isFetching} onClick={()=>void query.refetch()}>갱신</Button>
     {!!query.data&&<Facts items={[["조회 시각",formatMeasurementTime(query.dataUpdatedAt)]]}/>}
     <Sheet open={!!name} onOpenChange={open=>{if(!open){const next=new URLSearchParams(params.toString());next.delete("measurement");next.delete("uid");router.replace(`/measurements/results?${next}`,{scroll:false})}}}>
@@ -102,20 +102,21 @@ function ProjectionResults({kind,namespace}:{kind:ProjectionMeasurementKind;name
 type CostListRow={measurement:OperationCostMeasurement;operation:OperationCostKind|undefined;summary:OperationCostSummary}
 function OperationCostTable({items,select}:{items:OperationCostMeasurement[];select:(item:MeasurementProjection,label:React.ReactNode)=>React.ReactNode}) {
   const rows:CostListRow[]=items.flatMap(measurement=>{const summary=operationCostSummary(operationSteps(measurement));return (summary.operationKinds.length?summary.operationKinds:[undefined]).map(operation=>({measurement,operation,summary}))})
+  const firstInsufficient=rows.find(row=>!row.operation||row.summary[row.operation].insufficient)
   const columns:DataColumn<CostListRow>[]=[
-    {key:"model",label:"모델",value:row=>select(row.measurement,(row.operation?row.summary[row.operation].models:row.summary.models).join(" / ")||"미기록"),sortValue:row=>(row.operation?row.summary[row.operation].models:row.summary.models).join(" / ")},
+    {key:"model",label:"모델",value:row=>select(row.measurement,(row.operation?row.summary[row.operation].models:row.summary.models).join(" / ")||(row.operation==="power"?"해당 없음":"미기록")),sortValue:row=>(row.operation?row.summary[row.operation].models:row.summary.models).join(" / ")},
     {key:"node",label:"장치",value:row=>row.measurement.node,sortValue:row=>row.measurement.node},
     {key:"operation",label:"동작",value:row=>row.operation?operationStageLabels[row.operation]:"미기록",sortValue:row=>row.operation},
     ...(["duration","energy"] as const).flatMap(metric=>([0,1] as const).map(index=>({key:`${metric}-${index}`,label:`${metric==="duration"?"시간":"에너지"} ${index===0?"중앙값":"최대"}`,unit:metric==="duration"?"s":"J",numeric:true,value:(row:CostListRow)=>{const value=row.operation?row.summary[row.operation][metric]?.[index]:undefined;return value===undefined?"미제공":metric==="duration"?operationCostTime(Math.round(value)):operationCostEnergy(value)},sortValue:(row:CostListRow)=>row.operation?row.summary[row.operation][metric]?.[index]:undefined}))),
     {key:"samples",label:"표본 수 (시간 / 에너지)",unit:"개",numeric:true,value:row=>row.operation?`${row.summary[row.operation].durationSamples} / ${row.summary[row.operation].energySamples}`:"미기록"},
     {key:"phase",label:"측정",value:row=><ProjectionStatus data={row.measurement}/>},
-    {key:"source",label:"측정·편차",value:row=><div className="grid min-w-0 gap-1">{select(row.measurement,row.measurement.metadata.name)}<CostMarkers summary={row.summary} operation={row.operation}/></div>},
+    {key:"source",label:"측정·편차",value:row=><div className="grid min-w-0 gap-1">{select(row.measurement,row.measurement.metadata.name)}<CostMarkers summary={row.summary} operation={row.operation} explainInsufficient={row===firstInsufficient}/></div>},
   ]
-  return <DataTable searchable={false} data={rows} columns={columns}/>
+  return <DataTable urlState searchable={false} data={rows} columns={columns}/>
 }
-function CostMarkers({summary,operation}:{summary:OperationCostSummary;operation:OperationCostKind|undefined}) {
+function CostMarkers({summary,operation,explainInsufficient}:{summary:OperationCostSummary;operation:OperationCostKind|undefined;explainInsufficient:boolean}) {
   const markers=operation==="prepare"||operation==="remove"?summary.maximumOutliers[operation]:{}
-  return <>{Object.entries(markers).filter(([,multiple])=>multiple!==undefined).map(([metric,multiple])=><span key={metric} className="text-xs text-destructive">{metric==="duration"?"시간":"에너지"} <CostOutlier multiple={multiple}/></span>)}{operation==="power"&&!!summary.powerMultiple&&<span className="text-xs text-destructive">전력 전환 <CostOutlier multiple={summary.powerMultiple}/></span>}{(!operation||summary[operation].insufficient)&&<span className="text-xs text-muted-foreground">판정 불가 · 비교 표본 부족</span>}</>
+  return <>{Object.entries(markers).filter(([,multiple])=>multiple!==undefined).map(([metric,multiple])=><span key={metric} className="text-xs text-destructive">{metric==="duration"?"시간":"에너지"} <CostOutlier multiple={multiple}/></span>)}{operation==="power"&&!!summary.powerMultiple&&<span className="text-xs text-destructive">전력 전환 <CostOutlier multiple={summary.powerMultiple}/></span>}{(!operation||summary[operation].insufficient)&&<span className="text-xs text-muted-foreground">{explainInsufficient?"판정 불가 · 비교 표본 부족":"표본 부족"}</span>}</>
 }
 function ProjectionStatus({data}:{data:MeasurementProjection}) {
   const status=data.assessment?.displayStatus??"unknown"
@@ -144,18 +145,32 @@ function ProjectionResult({data}:{data:MeasurementProjection}) {
 function BEOReference({namespace,name}:{namespace:string;name:string}) {
   return <Link className="break-all underline underline-offset-4" href={`/measurements/requests?${new URLSearchParams({namespace,request:name})}`}>{name}</Link>
 }
-function OperationCostValues({rows,device}:{rows:OperationCostRow[];device:string}) {
+function OperationCostValues({rows,device,comparisonSummary=true}:{rows:OperationCostRow[];device:string;comparisonSummary?:boolean}) {
   const outliers=operationCostOutliers(rows)
-  return <table className="w-full table-fixed text-left text-xs [&_th]:break-words [&_th]:p-2 [&_td]:p-2 [&_td]:align-top [&_td]:[overflow-wrap:anywhere]">
+  return <table className="w-full table-fixed text-left text-xs [&_th]:break-words [&_th]:p-2 [&_td]:p-2 [&_td]:align-top [&_td]:[overflow-wrap:anywhere] max-sm:[&_thead]:hidden max-sm:[&_tr]:block max-sm:[&_td]:grid max-sm:[&_td]:grid-cols-2 max-sm:[&_td]:gap-2 max-sm:[&_td]:before:content-[attr(data-label)]">
+    {comparisonSummary&&outliers.some(value=>value.insufficient)&&<caption className="pb-2 text-left text-muted-foreground">판정 불가 · 비교 표본 부족 — 편차 열의 표본 부족 행</caption>}
     <thead><tr><th scope="col">동작·전환 방향</th><th scope="col">모델</th><th scope="col">장치</th><th scope="col" className="text-right">시간 (s)</th><th scope="col" className="text-right">에너지 (J · 채택)</th><th scope="col">편차</th></tr></thead>
     <tbody>{rows.map(({step,result},index)=><tr key={index} className="border-b">
-      <td>{operationStageLabel(step)}{step.condition?.kind==="power"&&<span className="block text-muted-foreground">{result?.fromPowerMode||"미기록"} → {result?.toPowerMode||"미기록"}</span>}</td>
-      <td>{result?.model||"미기록"}</td><td>{device||"미기록"}</td>
-      <td className="text-right tabular-nums">{result?.durationNanos==null?"미기록":operationCostTime(result.durationNanos)}<CostOutlier multiple={outliers[index].duration}/></td>
-      <td className="text-right tabular-nums">{result?.verdict==="Accepted"?result.wallJoules==null?"미기록":operationCostEnergy(result.wallJoules):"미제공"}<CostOutlier multiple={outliers[index].energy}/></td>
-      <td>{outliers[index].insufficient?"판정 불가 · 비교 표본 부족":"해당 없음"}</td>
+      <td data-label="동작·전환 방향"><span>{operationStageLabel(step)}{step.condition?.kind==="power"&&<span className="block text-muted-foreground">{result?.fromPowerMode||"미기록"} → {result?.toPowerMode||"미기록"}</span>}</span></td>
+      <td data-label="모델">{result?.model||(["power","idle"].includes(step.condition?.kind??"")?"해당 없음":"미기록")}</td><td data-label="장치">{device||"미기록"}</td>
+      <td data-label="시간 (s)" className="text-right tabular-nums"><span>{result?.durationNanos==null?"미기록":operationCostTime(result.durationNanos)}<CostOutlier multiple={outliers[index].duration}/></span></td>
+      <td data-label="에너지 (J · 채택)" className="text-right tabular-nums"><span>{result?.verdict==="Accepted"?result.wallJoules==null?"미기록":operationCostEnergy(result.wallJoules):"미제공"}<CostOutlier multiple={outliers[index].energy}/></span></td>
+      <td data-label="편차">{outliers[index].insufficient?"표본 부족":"해당 없음"}</td>
     </tr>)}</tbody>
   </table>
+}
+function OperationRanges({steps,device}:{steps:OperationStep[];device:string}) {
+  const summary=operationCostSummary(steps)
+  return <section className="grid min-w-0 gap-3" aria-label="동작·장치별 중앙값–최대 범위"><h3 className="font-semibold">중앙값–최대 범위 · {device}</h3>
+    <p className="text-xs text-muted-foreground">각 막대는 같은 동작·장치의 실측 중앙값부터 최대값까지입니다. 시간과 에너지는 별도 척도입니다.</p>
+    <table className="w-full table-fixed text-left text-xs [&_th]:break-words [&_td]:break-words [&_th]:p-2 [&_td]:p-2 max-sm:[&_thead]:hidden max-sm:[&_tr]:grid max-sm:[&_tr]:grid-cols-2 max-sm:[&_th]:col-span-2 max-sm:[&_td]:before:block max-sm:[&_td]:before:content-[attr(data-label)]"><thead><tr><th>동작</th><th>지표</th><th>중앙값</th><th>최대</th><th>범위</th></tr></thead><tbody>{summary.operationKinds.flatMap(kind=>(["duration","energy"] as const).map(metric=>{
+      const values=summary[kind][metric],unit=metric==="duration"?"s":"J",format=metric==="duration"?(value:number)=>operationCostTime(Math.round(value)):operationCostEnergy
+      const label=`${operationStageLabels[kind]} · ${device} · ${metric==="duration"?"시간":"에너지"}`
+      const start=values&&values[1]>0?values[0]/values[1]*100:0
+      return <tr key={`${kind}/${metric}`} className="border-b"><th scope="row">{operationStageLabels[kind]}</th><td data-label="지표" className="max-sm:col-span-2">{metric==="duration"?"시간":"에너지"} ({unit})</td><td data-label="중앙값" className="tabular-nums">{values?format(values[0]):"미제공"}</td><td data-label="최대" className="tabular-nums">{values?format(values[1]):"미제공"}</td><td data-label="범위" className="max-sm:col-span-2">{values?<div role="img" aria-label={`${label}: 중앙값 ${format(values[0])}, 최대 ${format(values[1])} ${unit}`} className="relative h-3 w-full rounded bg-muted"><span className="absolute inset-y-0 right-0 min-w-px rounded bg-primary" style={{left:`${start}%`}}/></div>:"미제공"}</td></tr>
+    }))}</tbody></table>
+    {summary.insufficient&&<p className="text-xs text-muted-foreground">판정 불가 · 비교 표본 부족 — 범위는 실측 분포이며 품질 판정이 아닙니다.</p>}
+  </section>
 }
 function OperationTarget({step}:{step:OperationStep}) {
   const condition=step.condition
@@ -173,7 +188,7 @@ function OperationResult({data}:{data:OperationCostMeasurement}) {
     {key:"result",label:"저장 결과",value:step=>step.results.length?<ul className="grid gap-2">{step.results.map((result,index)=><li key={index}>{measurementReasonSummary(result.reason||result.verdict)}<details><summary className="min-h-11 cursor-pointer py-2">단계 원본</summary><Facts items={[["판정 원문",result.verdict||"미기록"],["원본 사유",result.reason||"미기록"],["동작 ID",result.operationID||"미기록"],["키",result.key||"미기록"]]}/><Locations locations={result.key?evidenceLocations(data.references.evidence.filter(location=>location.key===result.key)):[]}/></details></li>)}</ul>:"미기록"},
   ]
   return <>
-    <section className="grid min-w-0 gap-2" aria-label="전환 1회 비용"><h2 className="font-semibold">전환 1회 비용</h2>{rows.length?<OperationCostValues rows={rows} device={data.node}/>:<p>미기록</p>}</section>
+    <section className="grid min-w-0 gap-2" aria-label="전환 1회 비용"><h2 className="font-semibold">전환 1회 비용</h2>{rows.length?<><OperationRanges steps={steps} device={data.node}/><details><summary className="min-h-11 cursor-pointer py-2">개별 전환 실측값·편차</summary><OperationCostValues rows={rows} device={data.node} comparisonSummary={false}/></details></>:<p>미기록</p>}</section>
     <details><summary className="min-h-11 cursor-pointer py-2">전체 시나리오 합계 (유휴 포함)</summary><Facts items={[["전체 시간 (s)",totals.durationNanos===null?"시간 기록 오류":operationCostTime(totals.durationNanos)],["채택 에너지 (J)",totals.wallJoules===null?"에너지 기록 오류":operationCostEnergy(totals.wallJoules)]]}/></details>
     <details><summary className="min-h-11 cursor-pointer py-2">단계별 기록·사유</summary><DataTable data={steps} columns={columns}/></details>
     <details><summary className="min-h-11 cursor-pointer py-2">동작 조건</summary><ol className="grid list-decimal gap-5 pl-5">{data.conditions.steps.map((step,index)=><li key={index}><Facts label={step.name} items={[["동작",operationStageLabels[step.kind]??"미확인"],...(step.kind==="power"?[["목표 전력모드",step.powerMode??"미기록"] as [string,React.ReactNode]]:[]),...(["prepare","remove"].includes(step.kind)?[["측정 프로파일 참조",step.batchEnergyOptimization?<BEOReference namespace={data.metadata.namespace} name={step.batchEnergyOptimization}/>:"미기록"] as [string,React.ReactNode]]:[]),...(step.kind==="idle"?[["계획 유휴 시간 (s · 실측 아님)",step.idleDurationSeconds??"미기록"] as [string,React.ReactNode]]:[])]}/></li>)}</ol></details>

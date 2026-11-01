@@ -4,7 +4,7 @@ import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useQueryClient, type QueryClient } from "@tanstack/react-query"
 import { useChillQuery, useChillMutation, useSession, ApiError, type ChillMutationInput, type RelayResponse } from "@/lib/client"
-import type { OperationResult, Routing, SchedulerSettings, SchedulerSettingsChange, SchedulerControllerState, SchedulerObservationPage, WireInteger } from "@/lib/read-types"
+import type { OperationResult, PoolsView, Routing, SchedulerSettings, SchedulerSettingsChange, SchedulerControllerState, SchedulerObservationPage, WireInteger } from "@/lib/read-types"
 import { millisecondsToNanos, nanosToMilliseconds, wireInteger, marginMilliseconds, preciseJSONSupported, parseSchedulerJSON, stringifySchedulerJSON, settingsEqual } from "@/lib/scheduler"
 import { safeSource } from "@/lib/source-export"
 import { QueryGate, SourceJSON, SourceExport } from "@/components/read-region"
@@ -55,10 +55,10 @@ const reserveFraction = (text:string) => {
 const autonomous = (settings:SchedulerSettings) => `${settings.autonomousWorkloads?.length??0}개`
 // Nodes the planner never changes, like measurement Nodes.
 export const excludedNodes = (settings:SchedulerSettings) => settings.excludedNodes?.length?settings.excludedNodes.join(", "):"없음"
-const nodeList = (text:string) => {
-  const names=text.trim()==="없음"?[]:text.split(",").map(name=>name.trim()).filter(Boolean)
-  if(new Set(names).size!==names.length)throw new Error("같은 장비 이름을 두 번 적었어요.")
-  return names
+const nodeList = (names:string[]) => {
+  const selected=names.map(name=>name.trim()).filter(Boolean)
+  if(new Set(selected).size!==selected.length)throw new Error("같은 장비 이름을 두 번 적었어요.")
+  return selected
 }
 const mib = (bytes:WireInteger|string) => `약 ${(Number(bytes)/1048576).toLocaleString("ko-KR",{maximumFractionDigits:3})}MiB`
 const time = (at:string) => new Date(at).toLocaleString("ko-KR")
@@ -95,7 +95,7 @@ export async function putSchedulerSettings(mutate:(input:ChillMutationInput)=>Pr
 }
 
 // One row, one value: the dialog edits only this value and adds it to the draft.
-function EditRow({editKey,label,help,value,changed,initial,unit,range,save,disabled}:{editKey:string;label:string;help:string;value:string;changed:boolean;initial:string|boolean;unit?:string;range?:string;save:(value:string|boolean)=>void;disabled:boolean}) {
+function EditRow({editKey,label,help,value,changed,initial,unit,range,save,disabled,nodeNames=[]}:{editKey:string;label:string;help:string;value:string;changed:boolean;initial:string|boolean|string[];unit?:string;range?:string;save:(value:string|boolean|string[])=>void;disabled:boolean;nodeNames?:string[]}) {
   const params=useSearchParams(),router=useRouter(),open=params.get("edit")===editKey
   const [next,setNext]=React.useState(initial),[error,setError]=React.useState(""),id=React.useId()
   function setOpen(state:boolean) {
@@ -105,8 +105,8 @@ function EditRow({editKey,label,help,value,changed,initial,unit,range,save,disab
     setNext(initial);setError("")
   }
   return <Sheet open={open} onOpenChange={setOpen}><SheetTrigger asChild><Button variant="outline" disabled={disabled} aria-label={`${label} 수정`}>수정{changed?" · 변경":""}</Button></SheetTrigger><SheetContent className="w-full overflow-y-auto sm:max-w-xl" aria-describedby={undefined}><SheetHeader><SheetTitle>{label}</SheetTitle></SheetHeader><div className="grid gap-4 px-4 pb-6"><Facts items={[["현재값",value]]}/><details><summary className="min-h-11 cursor-pointer py-2">항목 도움말</summary>{help}</details>
-    <form className="grid gap-4" onSubmit={event=>{event.preventDefault();try {save(next);setOpen(false)} catch(caught) {setError(caught instanceof Error?caught.message:"값을 확인해 주세요.")}}}>
-      {typeof next==="boolean"
+    <form className="grid gap-4" onSubmit={event=>{event.preventDefault();try {save(Array.isArray(next)?nodeList(next):next);setOpen(false)} catch(caught) {setError(caught instanceof Error?caught.message:"값을 확인해 주세요.")}}}>
+      {Array.isArray(next)?<div className="grid gap-3"><fieldset className="flex flex-wrap gap-2"><legend className="mb-2">관측된 장비 선택</legend>{nodeNames.map(name=><label key={name} className="flex min-h-11 items-center gap-2 rounded-md border px-3"><input type="checkbox" value={name} checked={next.includes(name)} onChange={event=>setNext(event.target.checked?[...next,name]:next.filter(item=>item!==name))}/>{name}</label>)}{!nodeNames.length&&<p>관측된 장비 목록 없음 · 현재 설정은 유지돼요.</p>}</fieldset>{next.map((name,index)=>!nodeNames.includes(name)&&<div key={index} className="flex min-w-0 gap-2"><Input aria-label={`현재 목록에 없는 장비 ${index+1}`} value={name} onChange={event=>setNext(next.map((item,i)=>i===index?event.target.value:item))}/><Button type="button" variant="outline" onClick={()=>setNext(next.filter((_,i)=>i!==index))}>제외 해제</Button></div>)}</div>:typeof next==="boolean"
         ?<label className="switch"><input type="checkbox" role="switch" checked={next} onChange={event=>setNext(event.target.checked)}/>{onOff(next)}</label>
         :<div className="grid gap-2"><label htmlFor={id}>{unit?`값 (${unit})`:"값"}</label><Input id={id} autoFocus required inputMode={unit==="ms"?"decimal":"text"} value={next} onChange={event=>{setNext(event.target.value);setError("")}} aria-invalid={!!error} aria-describedby={`${id}-help`}/><span id={`${id}-help`} className="text-sm text-muted-foreground">{range}{unit==="bytes"&&/^\d+$/.test(next)?` · ${mib(next)}`:""}</span></div>}
       {error&&<p role="alert">{error}</p>}
@@ -174,6 +174,14 @@ export function SchedulerSettingsPage() {
   const section=params.get("section"),category:Field["group"]|"controls"=section==="limit"||section==="controls"||section==="capacity"||section==="advanced"?section:"cycle"
   const settings=useChillQuery<SchedulerSettings>("v1/scheduler/settings",{decoder:parseSchedulerJSON,poll:true})
   const state=useChillQuery<SchedulerControllerState>("v1/scheduler/state",{decoder:parseSchedulerJSON})
+  const pools=useChillQuery<PoolsView>("v1/pools",{enabled:params.get("edit")==="excludedNodes"})
+  const knownNodeNames=[...new Set([
+    ...(state.data?.snapshot?.nodes??[]).map(item=>item.node.name),
+    ...(pools.data?.available??[]).map(item=>item.node.name),
+    ...(pools.data?.other??[]).map(item=>item.node.name),
+    ...(pools.data?.measurement??[]).map(item=>item.node.name),
+    ...(pools.data?.workloads??[]).flatMap(pool=>(pool.nodes??[]).map(node=>node.name)),
+  ])]
   const [baseline,setBaseline]=React.useState<SchedulerSettings|null>(null),[draft,setDraft]=React.useState<SchedulerSettings|null>(null)
   const [reviewOpen,setReviewOpen]=React.useState(false),[checkError,setCheckError]=React.useState("")
   const [review,setReview]=React.useState<SchedulerSettings|null>(null),[latest,setLatest]=React.useState<SchedulerSettings|null>(null)
@@ -304,6 +312,9 @@ export function SchedulerSettingsPage() {
       if(field.key==="capacityBisectionWidth"&&(Number(parsed)<=0||Number(parsed)>1))throw new Error("0 초과 1 이하의 유한한 값을 적어 주세요.")
       edit(base=>({...base,[field.key]:parsed}))
     }} disabled={blocked}/>
+  const routingFailure=state.error?.data
+  const routingFailureCode=routingFailure&&typeof routingFailure==="object"&&"code" in routingFailure&&typeof routingFailure.code==="string"?routingFailure.code:"오류 코드 미제공"
+  const routingFailureReason=routingFailure&&typeof routingFailure==="object"&&"message" in routingFailure&&typeof routingFailure.message==="string"?routingFailure.message:"상세 사유 미제공"
   return <Screen title="설정" width="data" actionPlacement="header"
     action={count>0&&<Button ref={reviewLauncher} onClick={()=>void inspect()} disabled={blocked}>{reviewing?"현재값 조회 중":`변경 ${count}건 검토`}</Button>}>
     <SettingsNavigation active="configuration"/>
@@ -320,10 +331,10 @@ export function SchedulerSettingsPage() {
         {key:"edit",label:"작업",value:editField},
       ]}/>}</section>
       <details><summary className="min-h-11 cursor-pointer py-2">연결 대상·작업</summary><Facts items={[["자동 제어 서비스",autonomous(shown)],["계획 제외 장비",excludedNodes(shown)]]}/><Rows>
-        <li className="flex min-h-11 items-center justify-between gap-3"><span>계획 제외 장비</span><EditRow editKey="excludedNodes" label="계획 제외 장비" help="운영 판단의 배치·제거·전력모드 변경 제외 대상" value={excludedNodes(shown)} changed={!!count&&String(baseline!.excludedNodes??[])!==String(shown.excludedNodes??[])} initial={(shown.excludedNodes??[]).join(", ")||"없음"} range="쉼표로 구분한 장비 이름, 비우려면 없음" save={value=>edit(base=>({...base,excludedNodes:nodeList(value as string)}))} disabled={blocked}/></li>
+        <li className="flex min-h-11 items-center justify-between gap-3"><span>계획 제외 장비</span><EditRow editKey="excludedNodes" label="계획 제외 장비" help="운영 판단의 배치·제거·전력모드 변경 제외 대상" value={excludedNodes(shown)} changed={!!count&&String(baseline!.excludedNodes??[])!==String(shown.excludedNodes??[])} initial={shown.excludedNodes??[]} nodeNames={knownNodeNames} save={value=>edit(base=>({...base,excludedNodes:value as string[]}))} disabled={blocked}/></li>
         <Row href="/?evidence=capacity" label="용량 계산 근거"/>
         <Row href="/records?scope=scheduler&filter=settings" label="최근 변경 기록"/>
-        {routing
+        {state.error?<Row href="/records?filter=action" label="설정한 요청 분배" value={<span role="status" className="break-words">조회 실패 · HTTP {state.error.status} · {routingFailureCode} · {routingFailureReason}</span>}/>:routing
           ?<Row href={`/records?${new URLSearchParams({filter:"action",id:routing.operation.id,view:"current",stage:"result",node:routing.operation.node.uid,startedAt:routing.startedAt})}`} label="설정한 요청 분배"/>
           :<Row href="/records?filter=action" label="설정한 요청 분배" value={state.data?"기록 없음":state.error?"조회 실패":"조회 중"}/>}
         <RoutingEdit initial={settings.data?.staticRouting} snapshot={state.data?.snapshot} disabled={blocked||count>0} apply={(before,after,reason)=>void applyRouting(before,after,reason)}/>

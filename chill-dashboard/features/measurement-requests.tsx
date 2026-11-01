@@ -4,7 +4,7 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { useChillQuery, useSession } from "@/lib/client"
 import type { MeasurementPlanList } from "@/lib/read-types"
-import { formatMeasurementTime } from "@/lib/measurements"
+import { executionPathLabel, formatMeasurementTime, measurementReasonSummary } from "@/lib/measurements"
 import { requestExecutionStatus, requestHref } from "@/lib/measurement-request"
 import { QueryGate, SourceJSON } from "@/components/read-region"
 import { Screen } from "@/components/screen"
@@ -29,14 +29,14 @@ export function MeasurementRequestsPage({name,namespace:routeNamespace}:{name?:s
   return <Screen width="data" actionPlacement="header" title="측정 요청" action={<Button asChild><Link href={`/measurements/requests/new?${new URLSearchParams({namespace})}`}>측정 요청</Link></Button>}>
     <MeasurementNavigation active="requests" namespace={namespace}/><MeasurementFilters axes={axes}/>
     <Link className="inline-flex min-h-11 items-center underline" href={`/measurements/requests?${new URLSearchParams({namespace,view:"runs"})}`}>전체 회차 검색</Link>
-    <QueryGate query={query}><DataTable key={params.toString()} searchable={false} data={shown} columns={[
+    <QueryGate query={query}><DataTable urlState key={params.toString()} searchable={false} data={shown} columns={[
       {key:"name",label:"요청 / 모델",sortValue:p=>p.metadata.name,value:p=><Link data-request-name={p.metadata.name} className="inline-flex min-h-11 items-center break-all text-primary underline" href={`${requestHref(namespace,p.metadata.name,p.metadata.uid)}&${new URLSearchParams({returnTo})}`}>{p.metadata.name}<br/>{p.spec.state.candidate.modelSpec}</Link>},
-      {key:"condition",label:"장치 / 모드 / 경로",sortValue:p=>p.spec.state.targetNode,value:p=><span>{p.spec.state.targetNode}<br/>{p.spec.state.candidate.deviceClass}<br/>{p.spec.state.candidate.powerMode}<br/>{p.spec.state.candidate.executionPath}</span>},
+      {key:"condition",label:"장치 / 모드 / 경로",sortValue:p=>p.spec.state.targetNode,value:p=><span>{p.spec.state.targetNode}<br/>{p.spec.state.candidate.deviceClass}<br/>{p.spec.state.candidate.powerMode}<br/>{executionPathLabel(p.spec.state.candidate.executionPath)}</span>},
       {key:"execution",label:"실행",value:p=><StatusCell axis="실행" label={requestExecutionStatus(p.status?.phase)} tone={p.status?.phase==="Failed"?"fail":"idle"}/>},
       {key:"status",label:"측정 / 현재 사용 / 품질",value:p=><MeasurementStatus assessment={p.assessment}/>},
       {key:"completed",label:"완료 회차",unit:"회",numeric:true,value:p=>p.status?.completedTrials??"미제공"},
       {key:"planned",label:"예정 회차",unit:"회",numeric:true,value:()=>"미제공"},
-      {key:"reason",label:"사유",value:p=>p.assessment?.failureSummary?.length?<ul className="space-y-2">{p.assessment.failureSummary.map(failure=><li key={`${failure.runId}/${failure.code}`}>{failure.label??failure.message}</li>)}</ul>:p.assessment?.reasons.map(r=>r.label??r.message).join("\n")||"미제공"},
+      {key:"reason",label:"사유",value:p=>{const reasons=p.assessment?.failureSummary?.length?p.assessment.failureSummary:p.assessment?.reasons;return reasons?.length?<ul className="space-y-2">{reasons.map((reason,index)=><li key={index}>{measurementReasonSummary(reason.message||reason.code)}</li>)}</ul>:"미제공"}},
       {key:"created",label:"생성 (KST)",sortValue:p=>p.metadata.creationTimestamp,value:p=>formatMeasurementTime(p.metadata.creationTimestamp)},
     ]}/></QueryGate>
     <SourceJSON value={query.data} title="요청 목록 원본"/>
