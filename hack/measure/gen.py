@@ -17,12 +17,14 @@ import json
 import math
 import os
 import ssl
+import subprocess
 import urllib.error
 import urllib.request
 from collections import Counter, defaultdict
 from decimal import Decimal
 from pathlib import Path
 
+import yaml
 from scipy.stats import t
 
 HERE = Path(__file__).resolve().parent
@@ -741,7 +743,13 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
     write_json(output / "timings.json", timings)
     classes = {c["name"]: c for c in inputs["inventory"]["classes"]}
     models = {m["metadata"]["name"]: m for m in inputs["models"]["items"]}
-    lanes, rows, no_node = defaultdict(list), [], []
+    lanes, rows, no_node, no_policy = defaultdict(list), [], [], []
+    # The Profiler refuses a RunConfig without a (deviceClass, executionPath) policy; the values comments name the reason per omission.
+    facts = json.loads(subprocess.check_output([ENV["kubectl"], "--kubeconfig", ENV["kubeconfig"], "--context", ENV["kubeContext"], "-n", NS,
+                                                "get", "configmap", "chill-profiler-facts", "-o", "json"]))
+    policies = yaml.safe_load(facts["data"]["execution-policies.yaml"])
+    policies = policies if isinstance(policies, list) else policies["policies"]
+    has_policy = {(p["deviceClass"], p["executionPath"]) for p in policies}
     existing, excluded_batches, excluded_cells = [], [], []
     plan_hash = hashlib.sha256(json.dumps(
         [policy, inputs["coverage"]["snapshotId"], current_images], sort_keys=True).encode()).hexdigest()[:12]
@@ -750,6 +758,9 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
         eligible = sorted(n["name"] for n in classes[device]["nodes"] if
                           n["name"] not in policy["excludedNodes"] and
                           n["ready"] == "True" and not n["schedulingDisabled"])
+        if (device, cell["executionPath"]) not in has_policy and ("*", cell["executionPath"]) not in has_policy:
+            no_policy.append(cell["id"])
+            continue
         if not eligible:
             no_node.append({"cellId": cell["id"], "reason": "노드 없음",
                             "nodes": classes[device]["nodes"]})
@@ -802,7 +813,7 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
         lanes[node].append((row, doc))
     coverage_manifest(output, lanes)
     summary = {"targetCellCount": len(targets), "manifestCellCount": len(rows),
-               "cellsByModel": dict(Counter(r["model"] for r in rows)), "noNodeCellCount": len(no_node),
+               "cellsByModel": dict(Counter(r["model"] for r in rows)), "noNodeCellCount": len(no_node), "noPolicyCellCount": len(no_policy),
                "unknownSupportCount": len(unknown), "existingCellCount": len(existing),
                "precisionMeaning": policy["precisionMeaning"],
                "staleRuntimeCellCount": len(stale), "currentRuntimeMeasuredCellCount": len(measured_current),
@@ -826,6 +837,7 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
     summary["longestLaneSeconds"] = max((lane["estimatedSeconds"] for lane in summary["lanes"].values()), default=0)
     write_json(output / "unknown-support.json", unknown)
     write_json(output / "no-node.json", no_node)
+    write_json(output / "no-policy.json", no_policy)
     write_json(output / "cells.json", rows)
     write_json(output / "existing-cells.json", existing)
     write_json(output / "excluded-batches.json", excluded_batches)
