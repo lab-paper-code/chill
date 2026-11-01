@@ -34,7 +34,7 @@
     "edge-server-rtx-2080-ti-64g": "8",
     "jetson-agx-orin-64g": "11",
     "jetson-nano-4g": "3",
-    "jetson-orin-nano-8g": "5",
+    "jetson-orin-nano-8g": "3",
     "jetson-xavier-nx-8g": "5",
     "lattepanda-3-delta-8g": "3",
     "orangepi-5-plus-16g": "7",
@@ -53,6 +53,7 @@
   "cpuSource": {
     "field": "floor(Node.status.allocatable.cpu - non-measurement Pod cpu requests - 0.01 observer requests): allocatable alone is unschedulable (genesis3 12 vs 3.4 already requested)",
     "readAt": "2026-11-01T02:47:00Z",
+    "orinNano": "jetson-orin-nano-8g allocatable stays at the CPUs online when edgecore last registered (4 after 7W), so MAXN_SUPER requests of 5 fail CurvePlanResolution (2026-11-01 09:08Z); xavier and agx-orin keep full allocatable across modes",
     "nodesByDeviceClass": {
       "edge-server-rtx-2080-ti-64g": "genesis3",
       "jetson-agx-orin-64g": "jetsono",
