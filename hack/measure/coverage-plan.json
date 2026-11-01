@@ -21,18 +21,18 @@
   "warmupIterations": 1,
   "runOverheadSeconds": 20,
   "cpuByDeviceClass": {
-    "edge-server-rtx-2080-ti-64g": "12",
-    "jetson-agx-orin-64g": "12",
-    "jetson-nano-4g": "4",
-    "jetson-orin-nano-8g": "4",
-    "jetson-xavier-nx-8g": "6",
-    "lattepanda-3-delta-8g": "4",
-    "orangepi-5-plus-16g": "8",
-    "raspberry-pi-5-8g": "4"
+    "edge-server-rtx-2080-ti-64g": "8",
+    "jetson-agx-orin-64g": "11",
+    "jetson-nano-4g": "3",
+    "jetson-orin-nano-8g": "5",
+    "jetson-xavier-nx-8g": "5",
+    "lattepanda-3-delta-8g": "3",
+    "orangepi-5-plus-16g": "7",
+    "raspberry-pi-5-8g": "3"
   },
   "cpuSource": {
-    "field": "Node.status.allocatable.cpu",
-    "readAt": "2026-11-01T00:55:12Z",
+    "field": "floor(Node.status.allocatable.cpu - non-measurement Pod cpu requests - 0.01 observer requests): allocatable alone is unschedulable (genesis3 12 vs 3.4 already requested)",
+    "readAt": "2026-11-01T02:47:00Z",
     "nodesByDeviceClass": {
       "edge-server-rtx-2080-ti-64g": "genesis3",
       "jetson-agx-orin-64g": "jetsono",
