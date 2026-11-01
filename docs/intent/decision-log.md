@@ -501,3 +501,12 @@
 
 - orin-nano는 7W 이후 allocatable이 4로 남는다. 그래서 MAXN_SUPER 5코어 요청이 CurvePlanResolutionFailed가 됐다. 생성기 config에서 orin-nano 크기를 3으로 낮췄다.
 - 결함(미수정): `admission.go:53-55`, `reconciler.go:423-428`가 CurvePlanResolutionFailed를 비종료로 취급해서, measurement lease와 taint가 BEO 삭제 전까지 남는다(09:08–09:39Z, orin lane 31분 정지). BEO 삭제로 handback되는 것을 확인했다. 최소 수정 후보: 결정적 CPU 용량 오류를 terminal 사유로 분류.
+
+## 2026-11-01 — 고정 CPU 표, 장애 복구, lease·시작 timeout 수정
+
+- CPU 크기를 (장비, 전력 모드) 표로 고정했다(`cpuByDeviceClassMode`, `090b33d3`). 계획마다 다시 계산하지 않는다. 기존 측정은 고정값 이상이면 인정한다. edge 노드에서는 다른 Pod request(node-agent 15m 등)가 있어 online−1이 최대이고, 이를 비워서 더 올릴 수는 없다.
+- 11:48–13:05Z genesis1 DiskPressure(빌드 이미지 220GB)로 제어 Pod가 축출됐다. `docker image prune -a`로 복구했다. 빌드 후 prune을 절차로 둔다. 감시에 제어 Pod 상태와 디스크 80%를 추가했다.
+- profiler control-304 `62c90aea`: 결정적 curve-plan 실패는 InvalidRunSpec(terminal)이다 → lease를 반환한다.
+- server control-305 `976d0a19`: cold-start catalog 검증에 operationTimeout(30m)을 쓴다(129s request timeout에 걸려 재시작이 반복되던 문제).
+- Smol CUDA on RTX 2080 Ti는 b2까지만 잰다(b4 warmup Softmax 오류).
+- 시작 검증 대상을 줄이려고 Failed와 옛 runtime coverage BEO 22개(ProfilingRun 168개)를 백업한 뒤 삭제했다(`O/deployB/pruned-beo-20261101/`). 1코어 등 Complete 결과는 남긴다.
