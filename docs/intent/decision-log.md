@@ -476,3 +476,8 @@
 - 생성기의 정책 필터(`cb0799f1`)는 유지. 정책이 생겨 해당 셀이 다시 계획에 들어온다.
 - vlm 11셀: xavier canary 1셀(`1689a25b6144`, MODE_15W_2CORE)을 먼저 돌리고 나머지는 보류 → lane 끝에 투입. 노드가 멈추면 그 조합만 "측정 불가(메모리)"로 기록.
 - rnn 9셀: 결과에 "CUDA 값이 CPU 결과와 다를 수 있음" 메모를 남긴다.
+
+## 2026-11-01 — orin-nano 재포함, vlm 정책 orin-nano 추가
+
+- `orin-nano 수집0`은 더 이상 사실이 아님(01:30Z 직접 확인: shelly_power_total_watts 5.1W, thermal 46.2°C·observation 1). excludedNodes에서 제거(`8912307f`), cuda-vlm 정책 2개 추가(control-301, overlay `values-policies-rnn-vlm-v2.yaml`).
+- orin-nano MNV CPU canary(`47916f0b610f`) 성공 전까지 나머지 24셀 보류. vlm canary는 jetsonx·orin-nano 각 1셀, lane 끝.
