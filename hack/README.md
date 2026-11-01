@@ -463,21 +463,33 @@ and `--output-dir` for its external tables.
 `hack/measure/gen.py --coverage --output-dir /tmp/coverage-plan-out --preflight`
 reads live coverage/catalog/inventory and retains the inputs and frozen
 `hack/measure/coverage-plan.json` alongside BEO lane manifests; it never creates
-cluster resources. Compatible unmeasured and TargetBatchMissing insufficient
-cells are planned; unknown support and cells without an eligible Node are listed
-separately. The config excludes genesis1/orin-nano (testbed) and genesis2
+cluster resources. Compatible unmeasured, running and TargetBatchMissing
+insufficient cells are considered, with existing requests filtered by CPU size;
+unknown support and cells without an eligible Node are listed separately.
+The config excludes genesis1/orin-nano (testbed) and genesis2
 (hardware failure), so RTX2080Ti cells use genesis3.
 Coverage is evaluated against current per-class runtime image identities in
 `profiling.executionDeclarations` from config `runtimeValues`
 (`charts/chill/values-operating.yaml`, read with the existing PyYAML package).
 Cells measured only on obsolete images are treated as unmeasured even if the
-server still calls them usable. A current-runtime measured variant excludes
-the cell. Image identities and source SHA-256 are frozen in
-`inputs/current-runtime-images.json`; separate stale/current-runtime lists
-explain selection. Old measurements remain available as timing estimates.
+server still calls them usable. A current-runtime CPU variant excludes the cell
+only when its request and limit equal `cpuByDeviceClass`. Those explicit values
+come from `Node.status.allocatable.cpu`; `cpuSource` records the read time and
+source Node (excluded Nodes do not determine their class's measurement size).
+New CPU, CUDA and RKNN BEOs use that whole-node request and quota. Every path
+uses the same comparison: existing BEOs and current-runtime measured variants
+exclude a cell only when both CPU request and quota match. CUDA and RKNN still
+have a host CPU quota, and serving reproduces it just as for CPU execution.
+No result is deleted. Image identities and source SHA-256 are frozen in
+`inputs/current-runtime-images.json`; stale/current-runtime lists explain
+selection. `remeasurement-cells.json` maps retained coverage BEO names/quotas to
+their new cells; old measurements remain available as timing estimates.
 Protocol inheritance follows the dashboard's exact request → exact profile →
-latest successful same-model → same-path order, without transferring another
-Node's CPU allocation or affinity. Catalog contracts resolve preprocessor/data.
+latest successful same-model → same-path order, but never inherits CPU request,
+quota or affinity, even on the same Node. Catalog contracts resolve inputs.
+Serving Pod request/limit must exactly match the selected profile, so these
+whole-node profiles cannot stand in for smaller scheduler allocations; smaller
+size measurements are intentionally outside this plan change.
 Three independent sessions, one warmup iteration, all declared artifact batches
 (omit `spec.batchSizes`), or the configured powers-of-two planner batch set
 bounded by runtime maximum when undeclared are used.
@@ -508,15 +520,19 @@ allows measurement undershoot and must remain finite, nonnegative and below
 the measurement duration. Both tolerance and metric duration are frozen in
 RunConfig/curve identity; no storage schema or acceptance rule changes.
 The policy is part of the shared plan hash, so changing these settings renames
-every newly generated cell, not just slow cells; existing requests are still
-listed/skipped rather than rewritten. A running feeder keeps its frozen plan
+every newly generated cell, not just slow cells; existing requests are skipped
+only under the CPU comparison rules above, never rewritten. A running feeder keeps its frozen plan
 until the operator explicitly replaces it.
 Idle uses the inherited fixed window or config `idleSeconds` (10 seconds).
 Reports state: “셀별 정밀도(CI)는 측정 후 기록하며 목표치가 아님”.
 Estimates include active windows, three shared-idle windows and their settling
 time, plus the configured 20-second overhead per active or idle run. Variable
 load/warmup/polling time is not included. MNV/PLC precede Smol, with power modes
-grouped within each priority tier. Check the existing feeder format offline:
+grouped within each priority tier. `laneLastExecutionPaths` stably moves the
+configured CUDA VLM path to the end of its lane tier; all other cells keep their
+relative order. Order changes belong in the generator config, never hand-edited
+lane files. Canary/holds remain operator-owned feeder-hold policy.
+Check the existing feeder format offline:
 `hack/measure/feeder.py --manifest /tmp/coverage-plan-out/resume-plan.json
 --stages 1,2 --check-manifest`. `gen.py --coverage --self-check` is offline.
 Add `--pilot` to emit `pilot/resume-plan.json` and two lane files: one MNV and

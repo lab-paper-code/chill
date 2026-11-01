@@ -11,12 +11,36 @@
   "cellAnnotation": "chill.dacs.io/coverage-cell",
   "requestNamePrefix": "coverage-",
   "runtimeValues": "charts/chill/values-operating.yaml",
+  "laneLastExecutionPaths": ["firstfloor-ort-cuda-vlm-arm64"],
   "excludedBatchReason": "창 안 유의미 추론 불가",
   "declaredBatchConflictReason": "artifact 선언 batch 집합의 부분 요청 불가",
   "sessions": 3,
   "warmupIterations": 1,
   "runOverheadSeconds": 20,
-  "cpuRequest": "1",
+  "cpuByDeviceClass": {
+    "edge-server-rtx-2080-ti-64g": "12",
+    "jetson-agx-orin-64g": "12",
+    "jetson-nano-4g": "4",
+    "jetson-orin-nano-8g": "4",
+    "jetson-xavier-nx-8g": "6",
+    "lattepanda-3-delta-8g": "4",
+    "orangepi-5-plus-16g": "8",
+    "raspberry-pi-5-8g": "4"
+  },
+  "cpuSource": {
+    "field": "Node.status.allocatable.cpu",
+    "readAt": "2026-11-01T00:55:12Z",
+    "nodesByDeviceClass": {
+      "edge-server-rtx-2080-ti-64g": "genesis3",
+      "jetson-agx-orin-64g": "jetsono",
+      "jetson-nano-4g": "jetson-nano",
+      "jetson-orin-nano-8g": "orin-nano",
+      "jetson-xavier-nx-8g": "jetsonx",
+      "lattepanda-3-delta-8g": "lattepanda",
+      "orangepi-5-plus-16g": "orangepi",
+      "raspberry-pi-5-8g": "rasp5"
+    }
+  },
   "excludedNodes": ["genesis1", "genesis2", "orin-nano"],
   "excludedNodeReasons": {
     "genesis1": "testbed exclusion",
