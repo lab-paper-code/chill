@@ -37,8 +37,8 @@
     "jetson-nano-4g": {"MAXN": 3, "5W": 1},
     "jetson-orin-nano-8g": {"MAXN_SUPER": 3, "25W": 3, "15W": 3, "7W": 3},
     "jetson-xavier-nx-8g": {"MODE_20W_6CORE": 5, "MODE_15W_6CORE": 5, "MODE_20W_4CORE": 3, "MODE_15W_4CORE": 3,
-                            "MODE_10W_4CORE": 3, "MODE_10W_DESKTOP": 3, "MODE_20W_2CORE": 1, "MODE_15W_2CORE": 1,
-                            "MODE_10W_2CORE": 1},
+                            "MODE_10W_4CORE": 3, "MODE_10W_DESKTOP": 3, "MODE_20W_2CORE": {"request": 1, "quota": 2},
+                            "MODE_15W_2CORE": {"request": 1, "quota": 2}, "MODE_10W_2CORE": {"request": 1, "quota": 2}},
     "lattepanda-3-delta-8g": {"fixed": 3},
     "orangepi-5-plus-16g": {"fixed": 7},
     "raspberry-pi-5-8g": {"fixed": 3}
@@ -46,6 +46,7 @@
   "cpuSource": {
     "frozenAt": "2026-11-01T13:00:00Z",
     "rule": "largest whole core count a measurement Pod can get in that mode: min(Node allocatable, mode onlineCPUs) minus other Pods' requests, floored. Any nonzero other request (node-agent 15m, edgemesh-agent 500m, mosquitto 100m on edge nodes; 3.4 on genesis3) costs one whole core, so the edge maximum is online-1.",
+    "xavier2Core": "E5 uses the xavier 2CORE modes, so those cells split request 1 / quota 2 (all online cores); the split rule applies to every cell from the next campaign (user, 2026-11-01)",
     "orinNano": "jetson-orin-nano-8g allocatable stays at the CPUs online when edgecore last registered (4 after 7W), so MAXN_SUPER requests of 5 fail CurvePlanResolution (2026-11-01 09:08Z); xavier and agx-orin keep full allocatable across modes"
   },
   "excludedNodes": ["genesis1", "genesis2"],

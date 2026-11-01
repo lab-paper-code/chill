@@ -476,17 +476,19 @@ def coverage_declared_on_node(cell, node, device, model, declarations, has_polic
 
 
 def coverage_cpu(policy, device, mode):
-    """Frozen whole-core size per (device class, power mode); never recomputed per plan."""
-    return str(policy["cpuByDeviceClassMode"][device][mode])
+    """Frozen (request, quota) whole cores per (device class, power mode); never recomputed per plan.
+    An int means request == quota; {"request", "quota"} splits them (request schedules, quota uses the online cores)."""
+    value = policy["cpuByDeviceClassMode"][device][mode]
+    return (str(value["request"]), str(value["quota"])) if isinstance(value, dict) else (str(value), str(value))
 
 
 def coverage_cpu_matches(cell, cpu, policy):
-    """A request at or above the frozen size covers the cell; smaller ones are re-measured."""
-    expected = Decimal(coverage_cpu(policy, cell["deviceClass"]["name"], cell["powerMode"]))
+    """A request and quota at or above the frozen sizes cover the cell; smaller ones are re-measured."""
+    request, quota = coverage_cpu(policy, cell["deviceClass"]["name"], cell["powerMode"])
     def quantity(value):
         return Decimal(value[:-1]) / 1000 if value.endswith("m") else Decimal(value)
-    return all(cpu.get(key) not in (None, "") and quantity(str(cpu[key])) >= expected
-               for key in ("request", "limit"))
+    return all(cpu.get(key) not in (None, "") and quantity(str(cpu[key])) >= Decimal(expected)
+               for key, expected in (("request", request), ("limit", quota)))
 
 
 def coverage_targets(coverage, policy, current_images, node_declared=()):
@@ -771,8 +773,9 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
             raise ValueError(key + " must be finite and at least one")
     for device, modes in policy["cpuByDeviceClassMode"].items():
         for mode, cpu in modes.items():
-            if type(cpu) is not int or cpu < 1:
-                raise ValueError(device + "/" + mode + ": CPU size must be a positive whole core count")
+            sizes = (cpu["request"], cpu["quota"]) if isinstance(cpu, dict) else (cpu, cpu)
+            if any(type(v) is not int or v < 1 for v in sizes) or sizes[0] > sizes[1]:
+                raise ValueError(device + "/" + mode + ": CPU request/quota must be whole cores with request <= quota")
     namespace = "/api/v1/namespaces/" + NS
     inputs = {}
     for name, path in (
@@ -852,8 +855,7 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
             continue
         spec, inherited = coverage_defaults(cell, node, inputs["plans"]["items"], inputs["profiles"]["profiles"])
         spec["state"]["targetNode"] = node
-        spec["state"]["cpuRequest"] = coverage_cpu(policy, device, cell["powerMode"])
-        spec["cpuQuota"] = spec["state"]["cpuRequest"]
+        spec["state"]["cpuRequest"], spec["cpuQuota"] = coverage_cpu(policy, device, cell["powerMode"])
         spec["state"]["candidate"].update(modelSpec=model, deviceClass=device,
                                          executionPath=cell["executionPath"], powerMode=cell["powerMode"])
         spec.pop("batchSizes", None)
