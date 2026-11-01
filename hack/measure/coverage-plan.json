@@ -40,6 +40,16 @@
     "orangepi-5-plus-16g": "7",
     "raspberry-pi-5-8g": "3"
   },
+  "cpuRequestedByOthersByDeviceClass": {
+    "edge-server-rtx-2080-ti-64g": "3.4",
+    "jetson-agx-orin-64g": "0.615",
+    "jetson-nano-4g": "0.615",
+    "jetson-orin-nano-8g": "0.615",
+    "jetson-xavier-nx-8g": "0.615",
+    "lattepanda-3-delta-8g": "0.705",
+    "orangepi-5-plus-16g": "0.605",
+    "raspberry-pi-5-8g": "0.615"
+  },
   "cpuSource": {
     "field": "floor(Node.status.allocatable.cpu - non-measurement Pod cpu requests - 0.01 observer requests): allocatable alone is unschedulable (genesis3 12 vs 3.4 already requested)",
     "readAt": "2026-11-01T02:47:00Z",

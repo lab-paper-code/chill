@@ -476,10 +476,15 @@ def coverage_declared_on_node(cell, node, device, model, declarations, has_polic
 
 
 def coverage_cpu(policy, device, mode):
-    """Schedulable whole cores, capped by the power mode's online CPUs (ORT threads need that many)."""
+    """Schedulable whole cores in this power mode: kubelet allocatable follows the online CPUs, minus other Pods' requests."""
     online = policy.get("onlineCPUsByMode", {}).get(device + "/" + mode)
     size = int(policy["cpuByDeviceClass"][device])
-    return str(min(size, online) if online else size)
+    if online:
+        others = Decimal(policy["cpuRequestedByOthersByDeviceClass"][device])
+        size = min(size, int((online - others - Decimal("0.01")).to_integral_value(rounding="ROUND_FLOOR")))
+    if size < 1:
+        raise ValueError(device + "/" + mode + ": no schedulable whole core")
+    return str(size)
 
 
 def coverage_online_cpus(values):
