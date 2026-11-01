@@ -475,8 +475,26 @@ def coverage_declared_on_node(cell, node, device, model, declarations, has_polic
     return False
 
 
+def coverage_cpu(policy, device, mode):
+    """Schedulable whole cores, capped by the power mode's online CPUs (ORT threads need that many)."""
+    online = policy.get("onlineCPUsByMode", {}).get(device + "/" + mode)
+    size = int(policy["cpuByDeviceClass"][device])
+    return str(min(size, online) if online else size)
+
+
+def coverage_online_cpus(values):
+    counts = {}
+    for device in values["discovery"]["catalog"]["classes"]:
+        for mode in device["powerModes"]:
+            if mode.get("onlineCPUs"):
+                counts[device["name"] + "/" + mode["name"]] = sum(
+                    int(b) - int(a) + 1 for a, _, b in (part.partition("-") if "-" in part else (part, "", part)
+                                                       for part in mode["onlineCPUs"].split(",")))
+    return counts
+
+
 def coverage_cpu_matches(cell, cpu, policy):
-    expected = Decimal(policy["cpuByDeviceClass"][cell["deviceClass"]["name"]])
+    expected = Decimal(coverage_cpu(policy, cell["deviceClass"]["name"], cell["powerMode"]))
     def quantity(value):
         return Decimal(value[:-1]) / 1000 if value.endswith("m") else Decimal(value)
     return all(cpu.get(key) not in (None, "") and quantity(str(cpu[key])) == expected
@@ -776,7 +794,9 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
     write_json(output / "coverage-plan.json", policy)
     runtime_values = (HERE.parents[1] / policy["runtimeValues"]).resolve()
     current_images = coverage_runtime_images(runtime_values)
-    declarations = yaml.safe_load(runtime_values.read_text())["profiling"]["executionDeclarations"]
+    runtime_doc = yaml.safe_load(runtime_values.read_text())
+    declarations = runtime_doc["profiling"]["executionDeclarations"]
+    policy["onlineCPUsByMode"] = coverage_online_cpus(runtime_doc)
     write_json(output / "inputs" / "current-runtime-images.json", {
         "source": identity(runtime_values), "imagesByDeviceClass": current_images,
         "executionDeclarations": declarations})
@@ -841,8 +861,8 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
             continue
         spec, inherited = coverage_defaults(cell, node, inputs["plans"]["items"], inputs["profiles"]["profiles"])
         spec["state"]["targetNode"] = node
-        spec["state"]["cpuRequest"] = policy["cpuByDeviceClass"][device]
-        spec["cpuQuota"] = policy["cpuByDeviceClass"][device]
+        spec["state"]["cpuRequest"] = coverage_cpu(policy, device, cell["powerMode"])
+        spec["cpuQuota"] = spec["state"]["cpuRequest"]
         spec["state"]["candidate"].update(modelSpec=model, deviceClass=device,
                                          executionPath=cell["executionPath"], powerMode=cell["powerMode"])
         spec.pop("batchSizes", None)
