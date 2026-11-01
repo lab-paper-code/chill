@@ -730,8 +730,9 @@ def coverage_batch_plan(cell, batches, timings, policy, declared=False):
     estimates = []
     excluded_from = None
     for batch in sorted(batches):
-        measured = [r for r in timings if r["model"] == model and
-                    r["deviceClass"] == device and r["batch"] == batch]
+        # CPU and accelerator paths of one model differ by orders of magnitude; never borrow across paths.
+        measured = [r for r in timings if r["model"] == model and r["deviceClass"] == device and
+                    r["batch"] == batch and r.get("executionPath") == cell["executionPath"]]
         source = max(measured, key=lambda r: r["secondsPerCall"]) if measured else None
         calls = math.floor(policy["windowSeconds"] / source["secondsPerCall"]) if source else None
         if calls is not None and calls < policy["minCallsInWindow"] and excluded_from is None:
@@ -1058,8 +1059,10 @@ def coverage_self_check():
     catalog["spec"]["executionPaths"][0]["runtime"]["settings"]["firstfloor"]["maxBatchSize"] = 3
     assert coverage_batches(catalog, "path", policy) == ([1, 2], False, "artifact")
     timings = [{"model": model, "deviceClass": device, "batch": batch, "secondsPerCall": seconds,
-                "source": device} for device, batch, seconds in [("device", 1, .1), ("device", 4, .4),
-                                                                ("slow", 16, 10)]]
+                "executionPath": "path", "source": device} for device, batch, seconds in
+               [("device", 1, .1), ("device", 4, .4), ("slow", 16, 10)]]
+    other_path = dict(timings[0], executionPath="other", secondsPerCall=600)
+    assert coverage_batch_plan(cell, [1], timings + [other_path], policy)[1][0]["secondsPerCall"] == .1  # never borrow another path
     included, estimates, reason = coverage_batch_plan(cell, [1, 3, 16], timings, policy)
     assert included == [1, 3, 16] and reason is None
     assert estimates[-1]["secondsPerCall"] is None  # another class is not grounds for exclusion
