@@ -510,3 +510,5 @@
 - server control-305 `976d0a19`: cold-start catalog 검증에 operationTimeout(30m)을 쓴다(129s request timeout에 걸려 재시작이 반복되던 문제).
 - Smol CUDA on RTX 2080 Ti는 b2까지만 잰다(b4 warmup Softmax 오류).
 - 시작 검증 대상을 줄이려고 Failed와 옛 runtime coverage BEO 22개(ProfilingRun 168개)를 백업한 뒤 삭제했다(`O/deployB/pruned-beo-20261101/`). 1코어 등 Complete 결과는 남긴다.
+
+- 2026-11-01: cpuRequest=1 / cpuQuota=online 분리는 호환성상 안전(serving operations.go:603-625, scheduler_replay.go:348-368; runtime quota==limit, affinity>=threads)하나, 사용자 결정으로 이번 캠페인은 고정 표 유지. 분리는 다음 캠페인부터.
