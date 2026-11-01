@@ -735,6 +735,7 @@ def coverage_pilot(lanes, policy, classes):
 
 def coverage_batch_plan(cell, batches, timings, policy, declared=False):
     model, device = cell["model"]["name"], cell["deviceClass"]["name"]
+    memory_max = policy["memoryMaxBatch"].get(model, {}).get(device)
     estimates = []
     excluded_from = None
     for batch in sorted(batches):
@@ -744,10 +745,12 @@ def coverage_batch_plan(cell, batches, timings, policy, declared=False):
         calls = math.floor(policy["windowSeconds"] / source["secondsPerCall"]) if source else None
         if calls is not None and calls < policy["minCallsInWindow"] and excluded_from is None:
             excluded_from = batch
-        included = excluded_from is None
+        over_memory = memory_max is not None and batch > memory_max
+        included = excluded_from is None and not over_memory
         estimates.append({"batch": batch, "secondsPerCall": source["secondsPerCall"] if source else None,
                           "estimatedCallsInWindow": calls, "timingSource": source, "included": included,
-                          "reason": None if included else policy["excludedBatchReason"],
+                          "reason": None if included else (policy["memoryExcludedBatchReason"] if over_memory
+                                                           else policy["excludedBatchReason"]),
                           "excludedFromBatch": excluded_from})
     included = [r["batch"] for r in estimates if r["included"]]
     reason = policy["excludedBatchReason"] if not included else None

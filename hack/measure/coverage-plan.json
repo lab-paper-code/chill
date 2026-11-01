@@ -16,6 +16,16 @@
     "smolvlm2-500m-video-instruct": ["firstfloor-ort-cuda-amd64"]
   },
   "excludedBatchReason": "창 안 유의미 추론 불가",
+  "memoryExcludedBatchReason": "측정 불가(메모리)",
+  "memoryMaxBatch": {
+    "smolvlm2-500m-video-instruct": {
+      "lattepanda-3-delta-8g": 1,
+      "raspberry-pi-5-8g": 1,
+      "jetson-xavier-nx-8g": 1,
+      "jetson-orin-nano-8g": 1
+    }
+  },
+  "memoryMaxBatchSource": "lattepanda Smol CPU b2 OOMKilled (exit 137) under the 0.8×allocatable limit 5.98Gi, b1 peak 5.78Gi (2026-11-01 05:49Z); other 8 GB boards have limits 5.3-6.1Gi",
   "declaredBatchConflictReason": "artifact 선언 batch 집합의 부분 요청 불가",
   "sessions": 3,
   "warmupIterations": 1,
