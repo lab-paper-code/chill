@@ -102,7 +102,8 @@ func newSchedulerService(ctx context.Context, store *servingkube.Store, kube kub
 		cancel()
 		return nil, err
 	}
-	initializeCtx, cancelInitialize := context.WithTimeout(ctx, opts.requestTimeout)
+	// A cold start re-verifies every retained curve's evidence; that scales with campaign size, not HTTP requests.
+	initializeCtx, cancelInitialize := context.WithTimeout(ctx, opts.operationTimeout)
 	defer cancelInitialize()
 	if err = service.refresh(initializeCtx); err != nil {
 		service.Close()
