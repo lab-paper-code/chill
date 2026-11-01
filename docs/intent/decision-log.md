@@ -518,3 +518,10 @@
 - 원인 1: 디스크 장애 중에 만든 측정 Pod가 Pending/Terminating에 갇혀 11코어 request를 계속 쥐었다 → 재시도 Pod가 Insufficient cpu. 강제 삭제로 해소했다(15:47Z).
 - 원인 2: 장애 뒤 jetsono의 edgemesh-agent가 evidence store로 터널을 열지 못했다("stream reset") → 매 시도 "evidence store transport failed". edgemesh Pod를 재시작했더니, DaemonSet이 chill measurement taint를 tolerate하지 않아 taint가 걸린 동안은 다시 생성되지 않았다. BEO를 삭제하고 jetsono를 잠시 pause → handback → taint가 해제되자 edgemesh가 재생성됐고 정상화됐다(18:00Z).
 - 교훈: edge 시스템 Pod를 재시작하려면 그 노드의 측정 lane을 먼저 pause한다. 감시에 Pending/Terminating 10분 초과 Pod를 추가했다.
+
+## 2026-11-02 — 보고 전 점검 규칙(같은 실수 반복 금지)
+
+- 12:10Z와 01:43 KST 보고는 장애 중인데 "정상"이라고 했다(셀 상태만 봤음).
+- 규칙: 매 보고 전에 같은 점검 스크립트를 실행하고, 그 출력만 근거로 쓴다. 점검 항목은 feeder 프로세스, 제어 Pod 6종 Running, 디스크, Pending/Terminating 측정 Pod, 셀 시간 초과(생성기 예상 2배), 같은 셀 evidence 저장 실패 3회, lane별 진행이다. 하나라도 이상하면 "정상"이라고 쓰지 않고 그 항목을 먼저 분류한다.
+- 상시 감시: 실패 셀, lane 정지, 노드 유휴, 제어 Pod·디스크 80%, Pending/Terminating 10분, 셀 2배 초과·evidence 실패 3회.
+- 측정 중인 노드에서 시스템 Pod를 재시작하지 않는다(먼저 pause). 보류는 lane 끝 셀에만 쓴다.
