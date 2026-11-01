@@ -512,3 +512,9 @@
 - 시작 검증 대상을 줄이려고 Failed와 옛 runtime coverage BEO 22개(ProfilingRun 168개)를 백업한 뒤 삭제했다(`O/deployB/pruned-beo-20261101/`). 1코어 등 Complete 결과는 남긴다.
 
 - 2026-11-01: cpuRequest=1 / cpuQuota=online 분리는 호환성상 안전(serving operations.go:603-625, scheduler_replay.go:348-368; runtime quota==limit, affinity>=threads)하나, 사용자 결정으로 이번 캠페인은 고정 표 유지. 분리는 다음 캠페인부터.
+
+## 2026-11-01/02 — 장애 후유증: jetsono 정지(11:50–18:00Z)
+
+- 원인 1: 디스크 장애 중에 만든 측정 Pod가 Pending/Terminating에 갇혀 11코어 request를 계속 쥐었다 → 재시도 Pod가 Insufficient cpu. 강제 삭제로 해소했다(15:47Z).
+- 원인 2: 장애 뒤 jetsono의 edgemesh-agent가 evidence store로 터널을 열지 못했다("stream reset") → 매 시도 "evidence store transport failed". edgemesh Pod를 재시작했더니, DaemonSet이 chill measurement taint를 tolerate하지 않아 taint가 걸린 동안은 다시 생성되지 않았다. BEO를 삭제하고 jetsono를 잠시 pause → handback → taint가 해제되자 edgemesh가 재생성됐고 정상화됐다(18:00Z).
+- 교훈: edge 시스템 Pod를 재시작하려면 그 노드의 측정 lane을 먼저 pause한다. 감시에 Pending/Terminating 10분 초과 Pod를 추가했다.
