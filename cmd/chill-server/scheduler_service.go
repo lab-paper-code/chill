@@ -412,13 +412,14 @@ func (o *schedulerService) recordAction(result servingkube.OperationResult) erro
 	if !result.EndedAt.IsZero() {
 		event.CompletedAt = &result.EndedAt
 	}
+	recordedAt := time.Now().UTC()
 	if err := o.observationLog.SchedulerRecord(serving.SchedulerObservation{
-		At: time.Now().UTC(), Action: &event,
+		At: recordedAt, Action: &event,
 	}); err != nil {
 		return err
 	}
 	if o.live != nil {
-		o.live.action(result)
+		o.live.action(result, recordedAt)
 	}
 	return nil
 }

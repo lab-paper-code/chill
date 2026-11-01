@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerHistoryKindMatches, groupHistoryKeeps } from "./scheduler-history.ts"
+import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerComparisonParams, schedulerHistoryNodeMatches, powerNumber, powerPolicyFacts, schedulerHistoryKindMatches, groupHistoryKeeps } from "./scheduler-history.ts"
 import type { SchedulerObservation, SchedulerObservationSummary } from "./read-types.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
@@ -8,6 +8,44 @@ import { serverConfig } from "./server-config.ts"
 const from="2026-10-13T02:00:00.123456789Z",to="2026-10-13T03:00:00.987654321Z"
 const event:SchedulerObservation={at:"2026-10-13T02:30:00.000000001Z",action:{id:"same-action",kind:"route",node:{name:"node",uid:"uid-a"},phase:"starting",startedAt:"2026-10-13T02:29:59.123456789Z"}}
 
+test("incident node filtering matches only loaded records with that explicit node and survives evidence close",()=>{
+  assert.equal(schedulerHistoryNodeMatches("",event),true)
+  assert.equal(schedulerHistoryNodeMatches("uid-a",event),true)
+  assert.equal(schedulerHistoryNodeMatches("node",event),true)
+  assert.equal(schedulerHistoryNodeMatches("uid-b",event),false)
+  assert.equal(schedulerHistoryNodeMatches("uid-a",{at:event.at,node:{uid:"uid-a",name:"node"}}),true)
+  assert.equal(schedulerHistoryNodeMatches("uid-a",{at:event.at,decision:{at:event.at,status:"Keep"}}),false)
+  const params=new URLSearchParams({filterNode:"uid-a",eventAt:event.at,cursor:"100",...Object.fromEntries(schedulerRecordParams(schedulerRecordRef(event,from,to,"21")))})
+  const closed=schedulerPageParams(params,"100")
+  assert.equal(closed.get("filterNode"),"uid-a")
+  assert.equal(closed.get("eventAt"),event.at)
+  assert.equal(closed.has("node"),false)
+})
+test("comparison entry and close retain the investigation window, filter, cursor and both selections",()=>{
+  const a=schedulerRecordRef(event,from,to,"21"),b={...a,offset:"75"}
+  const params=new URLSearchParams({from,to,filter:"decision",cursor:"100",limit:"50",uid:"service"})
+  for(const [key,value] of schedulerRecordParams(a,"a"))params.set(key,value)
+  for(const [key,value] of schedulerRecordParams(b,"b"))params.set(key,value)
+  const next=schedulerComparisonParams(params)
+  assert.equal(next.get("compare"),"1")
+  assert.deepEqual(readSchedulerRecord(next,"a"),a)
+  assert.deepEqual(readSchedulerRecord(next,"b"),b)
+  next.delete("compare")
+  assert.equal(next.toString(),params.toString())
+})
+
+test("power display rounds only presented values and translates duration policies",()=>{
+  assert.equal(powerNumber(52.58421453765),"52.584")
+  assert.equal(powerNumber(0),"0")
+  assert.equal(powerNumber(undefined),"미제공")
+  assert.deepEqual(powerPolicyFacts({
+    powerSampling:{Interval:500000000n,Duration:5000898121n,RequestTimeout:1000000000n,MaxEvents:20},
+    powerCoverage:{MaximumBoundaryDistance:1000000000n,MinimumCoverage:0.9,MaximumGap:758787895n},
+  }),[
+    ["표본 간격 (초)","0.5"],["수집 기간 (초)","5.001"],["요청 제한 시간 (초)","1"],["최대 표본 수 (개)","20"],
+    ["경계 허용 거리 (초)","1"],["최소 관측 비율 (%)","90"],["최대 표본 간격 기준 (초)","0.759"],
+  ])
+})
 
 test("consecutive Keep judgments collapse without crossing a transition or losing the first record reference",()=>{
   const keep:SchedulerObservationSummary={at:event.at,decision:{at:event.at,status:"Keep"}}

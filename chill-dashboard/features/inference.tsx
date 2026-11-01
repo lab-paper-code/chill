@@ -15,6 +15,7 @@ import { formatText, rawInferenceBody, rawOutputs, resourceHref, type RawField, 
 import { explain } from "@/lib/labels"
 import type { BackendProgress, ObservationResult } from "@/lib/read-types"
 import { WorkloadState } from "@/features/management"
+import { ServiceAppliedFacts } from "@/features/service-hub"
 import { rowStages } from "@/features/observations"
 import { gapNotice } from "@/lib/date-time"
 
@@ -198,10 +199,13 @@ function InferenceFlow({ name, view, wrongUID }: { name: string; view: WorkloadV
         </div>
       })}
     </div>
-    {sloMs !== undefined && sloMs > waitMs && <p className="notice text-sm">응답 목표가 {duration(sloMs)}인데 화면은 최대 {duration(waitMs)}까지 기다려요. 더 오래 걸리면 결과를 못 볼 수 있어요.</p>}
+    {sloMs !== undefined && sloMs > waitMs && <Facts label="응답 확인 범위" items={[["응답 목표", duration(sloMs)], ["화면 대기 제한", duration(waitMs)], ["제한 이후 응답", "화면 확인 불가 가능"]]} />}
     <Rows>
-      <RowDialog label="응답 대기 시간" value={duration(waitMs)} title="응답 대기 시간"><label className="grid gap-2 text-sm">응답 대기 제한 시간<Input aria-label="응답 대기 제한 시간" required value={timeout} onChange={event => setTimeout(event.target.value)} /></label><p className="text-sm text-muted-foreground">예: 500ms, 1.5s, 20s. 최대 {duration(config.inferTimeoutMs)}까지 기다릴 수 있어요. 서비스의 응답 목표({view.desired.spec.slo.percentile}% · {sloMs === undefined ? view.desired.spec.slo.targetLatency : duration(sloMs)})와는 별개예요. 요청 크기 한도는 {size(config.maxRequestBytes)}예요.</p></RowDialog>
-      <RowDialog label="입력 계약과 측정 근거" title={`${name} 입력 계약과 측정 근거`}><SourceJSON inline title="적용된 전처리기와 측정된 실행 경로" value={{ preprocessor, supportedInputs: view.supportedInputs }} /><Link href={`${service}#definition`}>측정 입력</Link></RowDialog>
+      <RowDialog label="응답 대기 시간" value={duration(waitMs)} title="응답 대기 시간">
+        <label className="grid gap-2 text-sm">응답 대기 제한 시간<Input aria-label="응답 대기 제한 시간" required value={timeout} onChange={event => setTimeout(event.target.value)} /></label>
+        <Facts items={[["입력 예시", "500ms / 1.5s / 20s"], ["최대 대기", duration(config.inferTimeoutMs)], ["현재 대기", duration(waitMs)], ["응답 목표 기준", view.appliedDefinition ? "적용 정의" : "등록 설정"], ["응답 목표 비율 (%)", view.appliedDefinition?.slo.percentile ?? view.desired.spec.slo.percentile], ["응답 목표 지연", sloMs === undefined ? view.desired.spec.slo.targetLatency : duration(sloMs)], ["요청 크기 한도", size(config.maxRequestBytes)], ["대기 제한 · 응답 목표", "별도"]]} />
+      </RowDialog>
+      <RowDialog label="입력 계약과 측정 근거" title={`${name} 입력 계약과 측정 근거`}><ServiceAppliedFacts view={view} /><SourceJSON inline title="적용된 전처리기와 측정된 실행 경로" value={{ preprocessor, supportedInputs: view.supportedInputs }} /><Link href={`${service}#definition`}>측정 입력</Link></RowDialog>
       <RowDialog label="모델과 준비 상태" title={`${name} 모델과 준비 상태`}><WorkloadState view={view} /></RowDialog>
     </Rows>
     {problem}

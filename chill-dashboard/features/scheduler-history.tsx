@@ -7,7 +7,7 @@ import type { QueryObserverBaseResult } from "@tanstack/react-query"
 import { useChillQuery, useSession, type ApiError } from "@/lib/client"
 import type { SchedulerObservation, SchedulerObservationPage, SchedulerObservationSummary, SchedulerObservationSummaryPage } from "@/lib/read-types"
 import { parseSchedulerJSON, nanosToMilliseconds } from "@/lib/scheduler"
-import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerHistoryKindMatches, groupHistoryKeeps, type SchedulerRecordRef } from "@/lib/scheduler-history"
+import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerComparisonParams, schedulerHistoryNodeMatches, schedulerHistoryKindMatches, groupHistoryKeeps, type SchedulerRecordRef } from "@/lib/scheduler-history"
 import { gapNotice, utcDateTime } from "@/lib/date-time"
 import { displayTime, liveReason } from "@/lib/live-display"
 import { SnapshotDetails, CandidateDetails, judgmentLabels, actionKinds, actionStatuses, actionNodeName } from "@/features/scheduler"
@@ -107,7 +107,10 @@ function RecordDetails({row}:{row:SchedulerHistoryRow}){
 
 export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean}){
   const history=useSchedulerHistory(),router=useRouter(),pathname=usePathname(),params=history.params
-  const filter=settingsOnly?"settings":params.get("filter")??"all",rows=groupHistoryKeeps(history.rows.filter(row=>schedulerHistoryKindMatches(filter,row.ref.kind)))
+  const filter=settingsOnly?"settings":params.get("filter")??"all",filterNode=params.get("filterNode")??""
+  const rows=groupHistoryKeeps(history.rows.filter(row=>schedulerHistoryKindMatches(filter,row.ref.kind)&&schedulerHistoryNodeMatches(filterNode,row.event)))
+  const targetEvent=filterNode?history.rows.find(row=>schedulerHistoryNodeMatches(filterNode,row.event))?.event:undefined
+  const nodeName=(targetEvent?.action?.node??targetEvent?.node)?.name||"선택 장치"
   const opener=React.useRef<HTMLElement|null>(null),[filterOpen,setFilterOpen]=React.useState(false)
   const a=readSchedulerRecord(params,"a"),b=readSchedulerRecord(params,"b"),selected=readSchedulerRecord(params)
   const requested=["offset","at","id","node","startedAt"].some(key=>params.has(key))
@@ -121,33 +124,36 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
   function close(){
     router.replace(`${pathname}?${schedulerPageParams(new URLSearchParams(params.toString()),params.get("cursor")??undefined)}`,{scroll:false})
   }
-  const compare=new URLSearchParams()
-  if(a)for(const [key,value] of schedulerRecordParams(a,"a"))compare.set(key,value)
-  if(b)for(const [key,value] of schedulerRecordParams(b,"b"))compare.set(key,value)
+  const compare=schedulerComparisonParams(new URLSearchParams(params.toString()))
   const same=(ref:SchedulerRecordRef|null,row:SchedulerHistoryRow<SchedulerObservationSummary>)=>!!ref&&ref.offset===row.ref.offset&&ref.at===row.ref.at&&ref.from===row.ref.from&&ref.to===row.ref.to
   const loaded=!!history.query.data
   return <Screen width="data" title="기록"
-    action={!settingsOnly&&(a||b)?<>{a&&b?<Button asChild><Link href={`/records?compare=1&${compare}`}>판단 비교</Link></Button>:<Button disabled>판단 비교</Button>}</>:undefined}>
+    action={!settingsOnly&&(a||b)?<>{a&&b?<Button asChild><Link href={`/records?${compare}`} scroll={false}>판단 비교</Link></Button>:<Button disabled>판단 비교</Button>}</>:undefined}>
     <RecordsNavigation/>
-    <RecordsRange target={params.get("uid")??"클러스터 전체"} from={history.submitted.from} to={history.submitted.to} at={history.query.data?.to}/>
+    <RecordsRange target={filterNode?nodeName:params.get("uid")??"클러스터 전체"} from={history.submitted.from} to={history.submitted.to} at={history.query.data?.to}/>
     <HistoryControls history={history}>
       <RowDialog label="대상" value={params.get("uid")??"클러스터 전체"} title="대상 서비스 UID">
         <form className="grid gap-3" onSubmit={event=>{event.preventDefault();const uid=String(new FormData(event.currentTarget).get("uid")??"").trim(),next=schedulerPageParams(new URLSearchParams(params.toString()));if(uid)next.set("uid",uid);else next.delete("uid");router.replace(`${pathname}?${next}`)}}>
           <label>서비스 UID<Input name="uid" defaultValue={params.get("uid")??""}/></label><Button type="submit">조회</Button>
         </form>
       </RowDialog>
+      {filterNode&&<RowDialog label="장치 사건 · 현재 페이지" value={nodeName} title="장치 사건 범위">
+        <Facts items={[["대상",nodeName],["적용 범위","불러온 현재 페이지"],["포함 기록","장치가 명시된 사건"],["클러스터 판단","장치 필터 해제 후 확인"],...(params.get("eventAt")?[["기준 사건 시각 KST",when(params.get("eventAt")!)] as [string,string]]:[])]}/>
+        <Button variant="outline" onClick={()=>{const next=new URLSearchParams(params.toString());next.delete("filterNode");router.replace(`${pathname}?${next}`,{scroll:false})}}>전체 장치</Button>
+        <SourceJSON inline title="장치 조회 조건 원본" value={{filterNode,eventAt:params.get("eventAt"),scope:"loaded-page"}}/>
+      </RowDialog>}
       <Row href={`/records?${new URLSearchParams({...history.submitted,scope:"management",...(params.get("uid")?{uid:params.get("uid")!}:{})})}`} label="서비스 관리 변경"/>
       {!settingsOnly&&<RowDialog open={filterOpen} onOpenChange={setFilterOpen} label="기록 종류" value={historyFilters[filter]??"이전 조건"} title="기록 종류" description="서버 필터 · 다음 페이지에도 유지 · 판단·전환 = 운영 판단 + 변경 동작">
         <fieldset className="grid gap-2">{Object.entries(historyFilters).map(([key,label])=><label key={key} className="flex min-h-11 items-center gap-2"><input type="radio" name="kind" checked={filter===key} onChange={()=>{const next=schedulerPageParams(new URLSearchParams(params.toString()));next.set("filter",key);router.replace(`${pathname}?${next}`);setFilterOpen(false)}}/>{label}</label>)}</fieldset>
       </RowDialog>}
       {history.query.data&&<RowDialog label="자료 내보내기" title="자료 내보내기" description="지금 불러온 기록을 파일로 받아요. 기간 전체 집계는 아니에요.">
-        <SourceExport value={{projection:"summary",conditions:{...history.submitted,cursor:history.cursor,limit:params.get("limit")??history.limit,filter},source:history.query.data}} filename="chill-scheduler-current-page-summary.json"/>
+        <SourceExport value={{projection:"summary",conditions:{...history.submitted,cursor:history.cursor,limit:params.get("limit")??history.limit,filter,filterNode,nodeFilterScope:filterNode?"loaded-page":null,eventAt:params.get("eventAt")},source:history.query.data}} filename="chill-scheduler-current-page-summary.json"/>
       </RowDialog>}
     </HistoryControls>
     <QueryGate query={history.query}>{loaded&&<>
-      {rows.length?<div className="overflow-x-auto rounded-lg border"><table className="w-full text-sm"><thead><tr>{["시각 KST","대상","동작·판단","결과","선택"].map(label=><th key={label} className="p-3 text-left">{label}</th>)}</tr></thead><tbody>{rows.map(row=>{
+      {rows.length?<div className="rounded-lg border"><table className="block w-full text-sm sm:table"><thead className="hidden sm:table-header-group"><tr>{["시각 KST","대상","동작·판단","결과","선택"].map(label=><th key={label} className="p-3 text-left">{label}</th>)}</tr></thead><tbody className="block sm:table-row-group">{rows.map(row=>{
         const ev=row.event,mark=[same(a,row)&&"A",same(b,row)&&"B"].filter(Boolean).join(" · ")
-        return <tr key={row.ref.offset} className="border-t"><td className="p-3 tabular-nums">{when(ev.at)}</td><td className="p-3">{ev.action?actionNodeName(ev.action.node):ev.node?.name??params.get("uid")??"클러스터"}</td><td className="p-3">{row.keepCount?`유지 ×${row.keepCount}`:ev.decision?judgmentLabels[ev.decision.status]??"미확인":ev.action?actionKinds[ev.action.kind]??kinds.action:kinds[row.ref.kind]??kinds.other}</td><td className="p-3">{ev.settings?ev.settings.error?"실패":ev.settings.appliedAt?"완료":"검증됨":ev.action?actionStatuses[ev.action.phase]??statusLabel(ev.action.phase):mark||"해당 없음"}</td><td className="p-3"><Button variant="outline" onClick={()=>{opener.current=document.activeElement as HTMLElement|null;select(row)}}>근거</Button></td></tr>
+        return <tr key={row.ref.offset} className="grid gap-1 border-t p-3 first:border-t-0 sm:table-row sm:p-0"><td className="min-w-0 tabular-nums sm:p-3"><span className="text-muted-foreground sm:hidden">시각 KST </span>{when(ev.at)}</td><td className="min-w-0 [overflow-wrap:anywhere] sm:p-3"><span className="text-muted-foreground sm:hidden">대상 </span>{ev.action?actionNodeName(ev.action.node):ev.node?.name??params.get("uid")??"클러스터"}</td><td className="min-w-0 sm:p-3"><span className="text-muted-foreground sm:hidden">동작·판단 </span>{row.keepCount?`유지 ×${row.keepCount}`:ev.decision?judgmentLabels[ev.decision.status]??"미확인":ev.action?actionKinds[ev.action.kind]??kinds.action:kinds[row.ref.kind]??kinds.other}</td><td className="min-w-0 sm:p-3"><span className="text-muted-foreground sm:hidden">결과 </span>{ev.settings?ev.settings.error?"실패":ev.settings.appliedAt?"완료":"검증됨":ev.action?actionStatuses[ev.action.phase]??statusLabel(ev.action.phase):mark||"해당 없음"}</td><td className="sm:p-3"><Button variant="outline" onClick={()=>{opener.current=document.activeElement as HTMLElement|null;select(row)}}>근거</Button></td></tr>
       })}</tbody></table></div>:<Empty title="기록 없음"/>}
       <HistoryPaging history={history}/>
     </>}</QueryGate>

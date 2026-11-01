@@ -39,9 +39,9 @@ func TestLiveOnlyPublishesRecordedDecisionAndActionIdentity(t *testing.T) {
 		Operation: servingkube.Operation{ID: "same", Kind: "prepare", Node: serving.NodeReference{UID: "node"}},
 		StartedAt: at, Status: "running",
 	}
-	p.action(result)
+	p.action(result, at)
 	result.StartedAt = at.Add(time.Second)
-	p.action(result)
+	p.action(result, at.Add(time.Second))
 	sub, err := p.hub.Subscribe(0, "")
 	if err != nil {
 		t.Fatal(err)
@@ -261,13 +261,13 @@ func TestLiveDecisionReservationsAndNodeAvailability(t *testing.T) {
 		Operation: servingkube.Operation{ID: "operation", Kind: "prepare", Node: node, WorkloadUID: "a"},
 		StartedAt: at, Status: "running",
 	}
-	p.action(result)
+	p.action(result, at)
 	_ = nextProjection(t, sub)
 	_ = nextProjection(t, sub)
-	p.action(result)
+	p.action(result, at)
 	noProjection(t, sub)
 	result.Status, result.EndedAt = liveOperationComplete, at.Add(time.Second)
-	p.action(result)
+	p.action(result, at.Add(time.Second))
 	_ = nextProjection(t, sub)
 	_ = nextProjection(t, sub)
 	if err := sub.Resume(0, ""); err != nil {

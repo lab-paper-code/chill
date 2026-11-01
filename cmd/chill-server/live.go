@@ -285,7 +285,7 @@ func liveReservationExplanation(r serving.SchedulerReservation) string {
 	}
 	return explanation
 }
-func (p *livePublisher) action(r servingkube.OperationResult) {
+func (p *livePublisher) action(r servingkube.OperationResult, recordedAt time.Time) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	uid := r.Operation.WorkloadUID
@@ -327,7 +327,7 @@ func (p *livePublisher) action(r servingkube.OperationResult) {
 	if phase != "started" {
 		event.Result = &live.ActionResult{Status: r.Status, Error: r.Error}
 	}
-	p.publish(time.Now().UTC(), live.Delta{Actions: &rows, Removed: removed}, &live.Event{Kind: "action", Action: event})
+	p.publish(recordedAt, live.Delta{Actions: &rows, Removed: removed}, &live.Event{Kind: "action", Action: event})
 }
 func (p *livePublisher) request(event serving.RequestEvent) {
 	if event.WorkloadUID == "" {

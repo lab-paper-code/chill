@@ -12,19 +12,19 @@ import (
 
 const schedulerSummaryView = "summary"
 
-// Compact reads share only the large repeated profile evidence. Everything
-// else, including policy, candidate order and action acknowledgements, is intact.
-// These references belong to this response, not to the stored observation contract.
+// Compact history shares repeated profile evidence without changing it.
+// Current-state reads additionally project raw latency populations to counts.
+// These response-local references never change the stored observation contract.
 type schedulerEvidenceRef struct {
 	Ref string `json:"$ref"`
 }
 
 type schedulerReadEvidence struct {
-	Profiles map[string]*serving.Profile `json:"profiles"`
+	Profiles map[string]any `json:"profiles"`
 }
 
 func newSchedulerReadEvidence() schedulerReadEvidence {
-	return schedulerReadEvidence{Profiles: make(map[string]*serving.Profile)}
+	return schedulerReadEvidence{Profiles: make(map[string]any)}
 }
 
 func (e *schedulerReadEvidence) profile(p *serving.Profile) *schedulerEvidenceRef {
@@ -133,8 +133,32 @@ type schedulerReadState struct {
 	Decision *schedulerReadDecision `json:"decision"`
 }
 
+// Current operational reads need the measurement identity, conditions, counts
+// and scalar resource/energy facts, not every empirical latency sample. Exact
+// historical evidence and the unprojected REST read retain the raw population.
+type schedulerReadProfile struct {
+	*serving.Profile
+	Batches []schedulerReadBatch `json:"batches"`
+}
+
+type schedulerReadBatch struct {
+	*serving.BatchProfile
+	DurationNanos       []float64 `json:"durationNanos,omitempty"`
+	DurationSampleCount int       `json:"durationSampleCount"`
+}
+
 func (e *schedulerReadEvidence) state(state *servingkube.SchedulerControllerState) schedulerReadState {
-	return schedulerReadState{state, e.snapshot(&state.Snapshot), e.decision(&state.Decision)}
+	projected := schedulerReadState{state, e.snapshot(&state.Snapshot), e.decision(&state.Decision)}
+	for key, value := range e.Profiles {
+		profile := value.(*serving.Profile)
+		batches := make([]schedulerReadBatch, len(profile.Batches))
+		for i := range profile.Batches {
+			batch := &profile.Batches[i]
+			batches[i] = schedulerReadBatch{BatchProfile: batch, DurationSampleCount: len(batch.DurationNanos)}
+		}
+		e.Profiles[key] = schedulerReadProfile{profile, batches}
+	}
+	return projected
 }
 
 type schedulerReadObservation struct {

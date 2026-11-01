@@ -17,10 +17,11 @@ import { statusLabel } from "@/lib/labels"
 import { Facts } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { resolveWorkloadIdentities, type IdentityWorkload } from "@/lib/workload-identity"
+import { liveReason } from "@/lib/live-display"
 
 export const judgmentLabels:Record<string,string>={Pending:"판단 대기",Keep:"현재 구성 유지",Feasible:"목표 충족",Overload:"예상 부하가 목표 초과",InfeasibleLifetime:"요청 유효기간 충족 어려움",InfeasibleResources:"자원 조건 충족 어려움",InfeasibleTransition:"변경 조건 충족 어려움",ExecutionError:"실행 오류 확인"}
 export const judgmentTones:Record<string,Tone>={Keep:"ok",Feasible:"ok",Pending:"idle",Overload:"warn",InfeasibleLifetime:"warn",InfeasibleResources:"warn",InfeasibleTransition:"warn",ExecutionError:"fail"}
-export const actionKinds:Record<string,string>={prepare:"실행 준비",route:"요청 분배 변경",unroute:"요청 분배 해제",release:"자원 예약 해제",reset:"서비스 초기화",stop:"요청 접수 중지",drain:"기존 요청 마무리",remove:"인스턴스 제거",power:"전력모드 변경",resize:"인스턴스 교체","manual-static-routing":"설정한 요청 분배 적용"}
+export const actionKinds:Record<string,string>={prepare:"실행 준비",route:"요청 분배 변경",unroute:"요청 분배 해제",release:"자원 예약 해제",reset:"서비스 초기화",stop:"요청 접수 중지",drain:"기존 요청 마무리",remove:"인스턴스 제거",power:"전력모드 변경",resize:"인스턴스 교체","measurement-handback":"측정 장치 반환","manual-static-routing":"설정한 요청 분배 적용"}
 // internal/serving/kube/static_routing.go: a configuration-sourced route has no single node (empty NodeRef).
 export const actionNodeName=(node:{name:string;uid:string})=>node.uid?node.name||"이름 미제공":"전체 노드"
 export const actionStatuses:Record<string,string>={planned:"계획됨",starting:"시작 기록",running:"실행 중",complete:"완료",failed:"실패",cancel:"취소",partial:"일부 변경 관측"}
@@ -33,7 +34,7 @@ const ms=(value:WireInteger)=>`${nanosToMilliseconds(value)} ms`
 const energy=(value:number|null)=>value==null?"미제공":`${value} J`
 const reasonLabels:Record<string,string>={MissingPoolInventory:"실행 그룹의 노드 관측이 필요합니다.",MissingImmutableDefinition:"요청의 고정 서비스 정의가 필요합니다.",NoFullyEvaluableCandidateWithinReportedBounds:"제공된 탐색 범위에서 전체 계산을 마친 후보를 기다립니다.",NoResourceFeasibleCandidateWithinReportedBounds:"제공된 탐색 범위에서 자원 조건을 충족하는 후보가 필요합니다.",NoReadyTransitionWithinReportedBounds:"제공된 탐색 범위에서 실행 가능한 변경을 기다립니다.",EvaluatedCandidatesExceedSLOWithinReportedSearchBounds:"계산한 후보의 예상 지연이 서비스 목표를 초과합니다.",UnevaluableCandidatesRemainPending:"추가 근거를 기다리는 후보가 있습니다.",ExplicitRequestLifetimeCapacityExceeded:"요청 유효기간 안의 처리 용량을 확인합니다.",ObservedOperationExecutionError:"관측된 변경 실행 오류를 확인합니다."}
 
-function Lines({values}:{values?:string[]|null}) {return values?.length?<ul className="list-inside list-disc">{values.map((value,index)=><li key={index}>{reasonLabels[value] ?? value}</li>)}</ul>:<p>제공된 항목 없음</p>}
+function Lines({values}:{values?:string[]|null}) {return values?.length?<ul className="list-inside list-disc">{values.map((value,index)=><li key={index}>{reasonLabels[value]??liveReason(value)}</li>)}</ul>:<p>제공된 항목 없음</p>}
 function Allocation({value}:{value:SchedulerAllocation}) {return <span>CPU {value.cpus?.join(", ")||"목록 없음"} / {value.cpuCount}개, 스레드 {value.threads}, CPU 예약 {value.cpuReserved?"사용":"미사용"}, GPU {value.gpuUUID||"없음"}, 메모리 {String(value.memoryBytes)} bytes</span>}
 function ObservationLink({uid,definition,from,to,children}:{uid:string;definition?:string;from:string;to:string;children:React.ReactNode}) {
   if(!uid||!from||!to||from.startsWith("0001-")||to.startsWith("0001-"))return <span>{children}</span>
@@ -46,12 +47,12 @@ function SLOs({candidate,decision,snapshot}:{candidate:SchedulerCandidate;decisi
 }
 function Configuration({nodes,instances,routing,snapshot}:{nodes?:SchedulerNode[]|null;instances?:SchedulerInstance[]|null;routing:SchedulerCandidate["routing"];snapshot:SchedulerSnapshot}) {
   return <><h3>노드</h3>{nodes?.length?nodes.map(node=><section key={node.node.uid} className="space-y-2 rounded border p-3"><h4>{node.node.name}{node.measurement&&" / 측정 중"}</h4><p className="break-all">노드 UID {node.node.uid}</p><p>준비 {node.ready?"완료":"확인 대기"} / 전력모드 {node.powerMode||"제공 없음"} / 관측 {time(node.observedAt)}</p>{!!node.reasons?.length&&<Lines values={node.reasons}/>}<p>전체 CPU {node.cpus?.join(", ")||"없음"}, GPU {node.gpuUUIDs?.join(", ")||"없음"}, 메모리 {String(node.memoryBytes)} bytes</p><p>예약: <Allocation value={node.reserved}/></p><h5>서비스 외 할당</h5>{node.nonServing?.map((allocation,index)=><p key={index}><Allocation value={allocation}/></p>)}{!node.nonServing?.length&&<p>제공된 할당 없음</p>}</section>):<p>제공된 노드 없음</p>}
-    <h3>인스턴스와 서비스 연결</h3>{instances?.map(instance=><Instance key={instance.id} instance={instance} snapshot={snapshot}/>)}{!instances?.length&&<p>제공된 인스턴스 없음</p>}
+    <h3>인스턴스와 서비스 연결</h3>{instances?.map(instance=><Instance key={instance.id} instance={instance}/>)}{!instances?.length&&<p>제공된 인스턴스 없음</p>}
     <h3>요청 분배</h3><p>원래 가중치이며 확률이 아닙니다.</p>{Object.entries(routing??{}).map(([uid,weights])=><div key={uid}><ServiceName uid={uid} snapshot={snapshot}/><ul>{Object.entries(weights).map(([id,weight])=><li key={id}>{id}: {weight}</li>)}</ul></div>)}{!Object.keys(routing??{}).length&&<p>제공된 요청 분배 없음</p>}</>
 }
-function Instance({instance,snapshot}:{instance:SchedulerInstance;snapshot:SchedulerSnapshot}) {
+function Instance({instance}:{instance:SchedulerInstance}) {
   const profile=instance.profile
-  return <section className="space-y-2 rounded border p-3"><h4 className="break-all">{instance.id}</h4><p>{instance.node.name} / 준비 {instance.ready?"완료":"확인 대기"} / 처리 중지 {instance.stopped?"사용":"미사용"}</p><p><Allocation value={instance.allocation}/></p><p>처리 용량 {instance.capacity}, 원래 가중치 {instance.weight}, 최대 배치 {instance.maxBatch}, 최대 대기 {ms(instance.maxWaitNanos)}</p><p>관측 {time(instance.observedAt)}</p><p>유휴 계측기 {instance.idleMeter} / 범위 {instance.idleScope}</p><p>{instance.workloadUID?<ServiceName uid={instance.workloadUID} snapshot={snapshot}/>:"서비스 없음"}</p>{profile?<><Facts label="측정 조건" items={conditionRows(profile.condition)}/><details><summary>프로파일 {profile.id}</summary><p>노드 {profile.nodeName}, 측정 {time(profile.measuredAt)}, 신뢰 수준 {profile.confidenceLevel}, 유휴 {profile.idleBaselineWatts} W</p><p>조건 원본</p><pre className="source-json">{stringifySchedulerJSON(safeSource(profile.condition),2)}</pre>{profile.batches?.map((batch,index)=><p key={index}>배치 {batch.batch}: 지연 표본 {batch.durationNanos?.map(value=>`${Number(value) / 1e6} ms`).join(", ")||"없음"}, 입력당 {batch.energyPerInputJoules} J, 메모리 {String(batch.memoryBytes)} bytes</p>)}<p>참조와 측정 근거</p><pre className="source-json">{stringifySchedulerJSON(safeSource({reference:profile.reference,evidence:profile.evidence,runtimeMetadata:profile.runtimeMetadata,metricSource:profile.metricSource}),2)}</pre></details></>:<p>프로파일 {instance.profileID??"제공 없음"}</p>}</section>
+  return <section className="space-y-2 rounded border p-3"><h4 className="break-all">{instance.id}</h4><Facts items={[["장치",instance.node.name],["준비",instance.ready?"완료":"확인 대기"],["처리 중지",instance.stopped?"사용":"미사용"],["처리 용량",instance.capacity],["분배 가중치",instance.weight],["최대 배치",instance.maxBatch],["최대 대기 ms",nanosToMilliseconds(instance.maxWaitNanos)],["관측",time(instance.observedAt)]]}/><Allocation value={instance.allocation}/>{profile?<><Facts label="측정 조건" items={conditionRows(profile.condition)}/><details><summary>프로파일 근거</summary><Facts items={[["장치",profile.nodeName],["측정 시각",time(profile.measuredAt)],["신뢰 수준",profile.confidenceLevel],["유휴 W",profile.idleBaselineWatts]]}/><table className="w-full text-sm"><thead><tr><th>배치</th><th>지연 표본 개</th><th>입력당 J</th><th>메모리 B</th></tr></thead><tbody>{profile.batches?.map(batch=><tr key={batch.batch}><td>{batch.batch}</td><td>{batch.durationSampleCount??batch.durationNanos?.length??"미제공"}</td><td>{batch.energyPerInputJoules}</td><td>{String(batch.memoryBytes)}</td></tr>)}</tbody></table><SourceJSON inline value={profile}/></details></>:<p>프로파일 미제공</p>}<SourceJSON inline value={instance}/></section>
 }
 export function SnapshotDetails({snapshot}:{snapshot:SchedulerSnapshot}) {
   return <><p>구성 관측 {time(snapshot.at)}</p><Lines values={snapshot.reasons}/><Configuration nodes={snapshot.nodes} instances={snapshot.instances} routing={snapshot.routing} snapshot={snapshot}/><h3>처리 중 요청</h3><p>배정 후 실행 단계 확인 대기는 실제 대기열과 구분합니다.</p>{snapshot.outstanding?.map((request,index)=><details key={index}><summary>{phaseLabels[request.phase]??request.phase} / {request.definition?.name??request.definitionID??"정의 제공 없음"} / {request.id}</summary><p>서비스 UID {request.definition?.uid}, 인스턴스 {request.instance||"미배정"}, 배치 {request.batchID||"없음"}, 큐 순서 {request.queueOrder}</p><p>수신 {time(request.receivedAt)}, 전체 경과 {ms(request.elapsedNanos)}, 대기 {ms(request.queueAgeNanos)}, 실행 {ms(request.runningElapsedNanos)}, 반환 {ms(request.returnElapsedNanos)}</p>{request.phase==="returning"&&request.nativeOutcome&&<p>native 결과 {request.nativeOutcome}</p>}<p>남은 유효기간 {request.remainingLifetimeNanos==null?"제공 없음":ms(request.remainingLifetimeNanos)}, 도착률 {request.arrivalRate}, native sender 경과 {request.nativeSenderElapsedMS??"제공 없음"} ms</p></details>)}{!snapshot.outstanding?.length&&<p>제공된 처리 중 요청 없음</p>}<h3>참조</h3><Lines values={snapshot.references}/><SourceJSON inline value={snapshot}/></>
@@ -132,7 +133,7 @@ function LoadEvidence() {
       <Button type="submit">조회</Button>{validation&&<p role="alert">{validation}</p>}
     </form>
     <QueryGate query={query}>{data&&<>
-      <Facts items={[["실제 시작",time(data.from)],["실제 종료",time(data.to)],["모집단",data.population],["누락",data.gapUntil?gapNotice(data.gapUntil):"없음"]]}/>
+      <Facts items={[["실제 시작",time(data.from)],["실제 종료",time(data.to)],["수신 모집단","모든 유입 요청"],["계산 입력","권한·입력 검사 통과"],["집계 기준","단계별 발생 시각"],["입력 단위","요청당 입력 하나"],["누락",data.gapUntil?gapNotice(data.gapUntil):"없음"]]}/>
       <DataTable data={rows} columns={[
         {key:"service",label:"서비스",value:row=>choices.get(row.uid)!},
         {key:"received",label:"수신",unit:"건",numeric:true,value:row=>row.received},
@@ -148,19 +149,19 @@ function LoadEvidence() {
 
 export function PowerInterval({from,to}:{from:string;to:string}) {
   const query=useChillQuery<OperatingPower>(`v1/observations/power?${new URLSearchParams({from,to})}`,{decoder:parseSchedulerJSON})
-  const data=query.data,measuredEnergy=(value:number|null)=>value==null?"측정값 없음":joules(value),watts=(value:number|null)=>value==null?"측정값 없음":`${value.toLocaleString("ko-KR",{maximumFractionDigits:2})} W`
+  const data=query.data,measuredEnergy=(value:number|null)=>value==null?"미제공":joules(value),watts=(value:number|null)=>value==null?"미제공":`${value.toLocaleString("ko-KR",{maximumFractionDigits:2})} W`
   return <QueryGate query={query}>{data&&<div className="space-y-4">
-    <p>정확한 집계 구간 {data.from} ~ {data.to} / 범위 {data.scope}</p><StatusBadge tone={data.complete?"ok":"warn"}>{data.complete?"계측 집계 완료":"관측 공백 있음"}</StatusBadge><p className="text-sm text-muted-foreground">ChillServer가 같은 구간의 노드 벽전력을 한 번씩 적분한 실측값입니다. 현재 설정, 후보의 예상 에너지 또는 Serving 참여 여부만으로 소비를 계산하지 않습니다.</p>
-    <dl className="grid gap-3 sm:grid-cols-2"><div><dt>전체 POOL (서빙 비참여 노드 포함)</dt><dd>{measuredEnergy(data.wholePoolJoules)} / 평균 {watts(data.wholePoolMeanWatts)}</dd></div><div><dt>활성 POOL (구간 중 실제 Serving 참여)</dt><dd>{measuredEnergy(data.activePoolJoules)} / 평균 {watts(data.activePoolMeanWatts)}</dd></div></dl>
+    <Facts items={[["집계 시작",time(data.from)],["집계 종료",time(data.to)],["전력 범위","노드 벽전력"],["집계",data.complete?"계측 집계 완료":"관측 공백 있음"],["전체 실행 그룹 J",measuredEnergy(data.wholePoolJoules)],["전체 평균 W",watts(data.wholePoolMeanWatts)],["활성 실행 그룹 J",measuredEnergy(data.activePoolJoules)],["활성 평균 W",watts(data.activePoolMeanWatts)],["원본 시각 없는 장치 개",(data.nodes??[]).filter(row=>row.sourceTimestampAbsent).length]]}/>
+    {data.nodes?.some(row=>row.sourceTimestampAbsent)&&<StatusBadge tone="warn">수집 시각 기준 · 신선도 미확인</StatusBadge>}
     {data.reasons?.length>0&&<div role="status"><h3>측정 공백과 집계 사유</h3><Lines values={data.reasons}/></div>}{data.gapUntil&&<p role="status">{gapNotice(data.gapUntil)}</p>}
     <DataTable data={data.nodes??[]} columns={[
-      {key:"node",label:"기대 노드",value:row=><span>{row.node.name}<small className="block break-all">{row.node.uid}</small></span>},
-      {key:"scope",label:"계측기와 범위",value:row=><span>{row.meter||"계측기 없음"}<small className="block">{row.scope}</small></span>},
+      {key:"node",label:"기대 장치",value:row=>row.node.name},
+      {key:"scope",label:"계측 범위",value:()=>"노드 단독 벽전력"},
       {key:"energy",label:"실측 에너지",value:row=>measuredEnergy(row.joules)},
       {key:"power",label:"평균 전력",value:row=>watts(row.meanWatts)},
       {key:"samples",label:"표본 수",value:row=>row.samples},
-      {key:"coverage",label:"관측 상태와 사유",value:row=><><p>{row.sourceTimestampAbsent?"원본 시각 없음 (수집 시각 사용; 신선도 증거 아님)":"원본 시각 부재 보고 없음"}</p>{row.reasons?.length>0?<Lines values={row.reasons}/>:<p>보고된 공백 사유 없음</p>}</>},
-    ]}/>{!data.nodes?.length&&<p>기대 노드와 계측 범위가 제공되지 않았습니다. 전체 소비를 0으로 대체하지 않습니다.</p>}
+      {key:"coverage",label:"시각 기준·공백",value:row=><>{row.sourceTimestampAbsent?"수집 시각":"원본 시각"}{row.reasons?.length>0&&<Lines values={row.reasons}/>}</>},
+    ]}/>{!data.nodes?.length&&<p>기대 장치·계측 범위 미제공</p>}
     <SourceExport filename="chill-operating-power.json" value={{source:"v1/observations/power",conditions:{from,to},result:data}}/><SourceJSON title="정확한 구간의 집계 원본" value={data}/>
   </div>}</QueryGate>
 }

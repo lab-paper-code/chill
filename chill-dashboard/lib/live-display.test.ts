@@ -12,6 +12,30 @@ import { compareAt, initialLiveState, type LiveState } from "./live.ts"
 import * as displayHelpers from "./live-display.ts"
 import { decisionRange } from "./experiments.ts"
 
+test("repeated failures group by target action result and reason before the row limit",()=>{
+  const failed=(seq:number,node="n",error="mode failed")=>({type:"event" as const,kind:"action" as const,seq,at:new Date(now+seq*1000).toISOString(),action:{id:`attempt-${seq}`,kind:"measurement-handback",node:{uid:node,name:node},workloadUID:"",status:"failed",startedAt:at,phase:"failed" as const,expectedSeconds:null,expectedSource:null,result:{status:"failed",error}}})
+  const events=[failed(0,"other"),...Array.from({length:40},(_,i)=>failed(i+1)),failed(41,"n","different")]
+  const rows=incidentFlow(events,[],now+50000)
+  assert.equal(rows.length,3)
+  assert.equal(rows[1].kind,"event")
+  if(rows[1].kind==="event"){assert.equal(rows[1].count,40);assert.equal(rows[1].from,events[1].at);assert.equal(rows[1].members.length,40)}
+})
+test("incident history uses a meaningful interval and preserves target identity",()=>{
+  const params=new URL(displayHelpers.incidentHistoryHref("a",at,"n"),"http://local").searchParams
+  assert.equal(Date.parse(params.get("to")!)-Date.parse(params.get("from")!),600000)
+  assert.equal(params.get("uid"),"a")
+  assert.equal(params.get("filterNode"),"n")
+  assert.equal(params.get("eventAt"),at)
+})
+test("protocol reservations and power-mode failures have Korean causes and checks",()=>{
+  assert.equal(displayHelpers.reservationReason("measurement-handback:n: await fresh exact ACK/untouched/absence proof, terminal siblings and settled power"),"장치 반환·실행 종료·전력 안정 확인 대기")
+  assert.equal(liveReason("PowerModeUnavailable"),"전력모드 확인 불가")
+  const diagnosis=displayHelpers.incidentDiagnosis("node jetson-nano did not reach power mode MAXN within 15m0s")
+  assert.equal(diagnosis.reason,"전력모드 전환 시간 초과")
+  assert.equal(diagnosis.mode,"MAXN")
+  assert.equal(diagnosis.check,"장치 전원·전력모드 제어기 확인")
+  assert.equal(displayHelpers.deviceAlerts(null,[]).length,0)
+})
 const at="2026-10-30T12:00:00.123456789Z",now=Date.parse(at)
 const instance:LiveInstance={id:"shared",node:{uid:"n",name:"Node"},ownerWorkloadUID:"a",profileID:"p",ready:true,stopped:false,routable:{a:true,b:true},running:{a:1,b:0},waiting:{a:0,b:2},observedAt:at}
 const metric:LiveMetric={received:9,completed:3,failed:1,withinSLO:2,latencySamples:4,p50ms:10,p90ms:15,p95ms:20,p99ms:30}
@@ -273,7 +297,7 @@ test("zero arrivals cannot claim an SLO result and product reasons use Korean la
   assert.equal(liveReason("ExcludedNode"),"제외 노드")
   assert.equal(liveReason("Keep"),"유지")
   assert.equal(liveReason(""),"미제공")
-  assert.equal(liveReason("UnregisteredCode"),"UnregisteredCode")
+  assert.equal(liveReason("UnregisteredCode"),"상세 사유 원본 참조")
   assert.equal(liveReason("MissingEvidence"),"측정 근거 없음")
   assert.equal(liveReason("Preparing"),"배치 준비 중")
   assert.equal(displayTime("2026-10-30T15:02:03Z","KST"),"00:02:03 KST")
@@ -306,6 +330,7 @@ test("operations board keeps independent axes, idle summary, service placement a
   const state:LiveState={...initialLiveState(),snapshot,metrics:[sample],lastReceivedAt:now,lastObservedAt:at,status:"fixture"}
   const require=createRequire(import.meta.url)
   let query=new URLSearchParams(),experiment="활성 없음"
+  let archived:LiveState["events"]=[]
   const compile=(path:string,modules:Record<string,unknown>)=>{
     const exports:Record<string,ComponentType<Record<string,unknown>>>={}
     const source=readFileSync(new URL(path,import.meta.url),"utf8")
@@ -322,7 +347,7 @@ test("operations board keeps independent axes, idle summary, service placement a
   const modules:Record<string,unknown>={
     "next/link":{default:({children,...props}:Record<string,unknown>)=>createElement("a",props,children as string)},
     "next/navigation":{usePathname:()=>"/",useSearchParams:()=>query,useRouter:()=>({push:(url:string)=>{query=new URL(url,"http://local").searchParams},replace:(url:string)=>{query=new URL(url,"http://local").searchParams}})},
-    "@/lib/client":{useSession:()=>({epoch:1,config:{liveFixture:false}}),useChillQuery:()=>({})},
+    "@/lib/client":{useSession:()=>({epoch:1,config:{liveFixture:false}}),useChillQuery:(path:string)=>path.startsWith("v1/observations/events")?{data:{events:archived}}:{}},
     "@/lib/use-live":{useLive:()=>({state,status:"fixture",reconnect:()=>{}})},
     "@/lib/live-display":displayHelpers,"@/lib/experiments":{decisionRange},
     "@/lib/live":{compareAt},
@@ -342,7 +367,9 @@ test("operations board keeps independent axes, idle summary, service placement a
   assert.match(idle,/접수 허용 개/)
   assert.match(idle,/자동제어 개/)
   assert.match(idle,/성능 판정<\/span><strong>판정 불가/)
-  assert.doesNotMatch(idle,/>서비스-\d+<\/button>|live-node-power|data-sheet/)
+  assert.match(idle,/전체 미배치/)
+  assert.match(idle,/서비스별 위치/)
+  assert.doesNotMatch(idle,/live-node-power|data-sheet/)
   query=new URLSearchParams({services:"확인 필요"})
   assert.match(render(),/해당 서비스 없음/)
   assert.doesNotMatch(render(),/유휴 서비스 집계/)
@@ -389,8 +416,8 @@ test("operations board keeps independent axes, idle summary, service placement a
   assert.match(detail,/선택 시각 KST/)
   query=new URLSearchParams({at})
   assert.match(render(),/21:00:00 KST/)
-  const exactRange=decisionRange(at)!
-  assert.ok(render().includes(`from=${encodeURIComponent(exactRange.from)}&amp;to=${encodeURIComponent(exactRange.to)}`))
+  const around=new URL(displayHelpers.incidentHistoryHref(undefined,at),"http://local")
+  assert.ok(render().includes(`from=${encodeURIComponent(around.searchParams.get("from")!)}&amp;to=${encodeURIComponent(around.searchParams.get("to")!)}`))
   query=new URLSearchParams({evidence:"capacity",workload:"service-0",row:"original"})
   assert.match(render(),/data-evidence="capacity"/)
   query=new URLSearchParams({open:"terms"})
@@ -400,6 +427,19 @@ test("operations board keeps independent axes, idle summary, service placement a
   sample.workloads["service-1"]={...zero,failed:1}
   const stable=render()
   assert.ok(stable.indexOf(">서비스-0</button>")<stable.indexOf(">서비스-1</button>"))
+  const failure:LiveState["events"][number]={type:"event",seq:77,at,kind:"action",action:{id:"attempt",kind:"measurement-handback",node:{uid:"n",name:"장치"},workloadUID:"",status:"failed",startedAt:at,phase:"failed",expectedSeconds:null,expectedSource:null,result:{status:"failed",error:"node n did not reach power mode MAXN within 15m0s"}}}
+  state.events=[failure]
+  const failedBoard=render()
+  assert.match(failedBoard,/접속 후 실패 건/)
+  assert.match(failedBoard,/장치 확인 개/)
+  assert.match(failedBoard,/전력모드 전환 시간 초과/)
+  query=new URLSearchParams({open:`event:${JSON.stringify(["action",at,"attempt","n"])}`})
+  assert.match(render(),/장치 전원·전력모드 제어기 확인/)
+  archived=[failure];state.events=[]
+  assert.match(render(),/장치 전원·전력모드 제어기 확인/)
+  assert.doesNotMatch(render(),/보관 범위 밖 사건/)
+  query=new URLSearchParams({open:"node:n"})
+  assert.match(render(),/장치 관측/)
   state.status="disconnected"
   query=new URLSearchParams()
   const disconnected=render()

@@ -203,10 +203,53 @@ export function gapEpisodes(gaps:LiveState["gaps"],now:number,metrics:LiveMetric
     return {...gap,seconds:Math.max(0,(Date.parse(gap.to)-Date.parse(gap.from))/1000),recovered,lost}
   })
 }
+export function incidentHistoryHref(uid?:string,at?:string,node?:string):string {
+  const end=at?Date.parse(at):Date.now(),range={from:new Date(end-300000).toISOString(),to:new Date(end+(at?300000:0)).toISOString()}
+  return `/records?${new URLSearchParams({...range,order:"asc",filter:"decision-action",...(uid?{uid}:{}),...(node?{filterNode:node}:{}),...(at?{eventAt:at}:{})})}`
+}
+export function reservationReason(reason:string):string {
+  const labels=[
+    ["await fresh exact ACK/untouched/absence proof","장치 반환·실행 종료·전력 안정 확인 대기"],
+    ["creation-outcome-unknown","생성 결과 확인 대기"],
+    ["identity-awaiting-container","동일 실행기 식별 확인 대기"],
+    ["dependency/Ready/handoff proof missing","선행 작업·실행 준비·반환 확인 대기"],
+  ]
+  const matched=labels.filter(([code])=>reason.includes(code)).map(([,label])=>label)
+  return matched.length?[...new Set(matched)].join(" / "):liveReason(reason)
+}
+export function incidentDiagnosis(reason:string|null|undefined) {
+  const power=/did not reach power mode (\S+) within (\S+)/.exec(reason??"")
+  if(power)return {reason:"전력모드 전환 시간 초과",mode:power[1],check:"장치 전원·전력모드 제어기 확인"}
+  if(reason?.includes("Pod is not labelled as a serving instance"))return {reason:"서비스 인스턴스가 아닌 파드",check:"파드 역할·측정 작업 확인"}
+  return {reason:liveReason(reason),check:reason?"장치·변경 원본 확인":"조치 근거 미제공"}
+}
+export function groupIncidentEvents(events:LiveEvent[]) {
+  const rows:{event:LiveEvent;count:number;from:string;members:LiveEvent[]}[]=[],failures=new Map<string,typeof rows[number]>()
+  for(const event of events){
+    const key=event.kind==="action"&&event.action.phase==="failed"?JSON.stringify([event.action.node.uid,event.action.workloadUID,event.action.kind,event.action.phase,event.action.result?.status,event.action.result?.error]):
+      event.kind==="cluster"?JSON.stringify([event.cluster.kind,event.cluster.pod?.uid??event.cluster.source,event.cluster.event,event.cluster.pod?.phase,event.cluster.reason]):null
+    const previous=key?failures.get(key):undefined
+    if(previous){previous.event=event;previous.count++;previous.members.push(event)}
+    else {const row={event,count:1,from:event.at,members:[event]};rows.push(row);if(key)failures.set(key,row)}
+  }
+  return rows
+}
+export function deviceAlerts(snapshot:LiveSnapshot|null,events:LiveEvent[]) {
+  const alerts=new Map<string,{uid:string;name:string;reason:string}>()
+  for(const node of snapshot?.nodes??[])if(!node.ready||node.reasons?.some(reason=>reason!=="ExcludedNode"))alerts.set(node.uid,{uid:node.uid,name:node.name,reason:node.reasons?.length?node.reasons.map(liveReason).join(" / "):"준비 미확인"})
+  const latest=new Map<string,LiveEvent>()
+  for(const event of events)if(event.kind==="action")latest.set(JSON.stringify([event.action.node.uid,event.action.kind]),event)
+  for(const event of latest.values())if(event.kind==="action"&&event.action.phase==="failed")alerts.set(event.action.node.uid,{...event.action.node,reason:incidentDiagnosis(event.action.result?.error).reason})
+  return [...alerts.values()]
+}
 export function liveReason(reason:string|null|undefined):string {
   if(!reason)return "미제공"
-  const labels:Record<string,string>={ObservationUnavailable:"관측 기록 사용 불가",ShuttingDown:"종료 중",ExcludedNode:"제외 노드",Keep:"유지","power sample unavailable":"전력 표본 누락","resume history unavailable":"재연결 기록 공백","event history limit":"사건 보관 한도",Disabled:"자동제어 꺼짐",NotReady:"준비 안 됨",Ready:"준비됨",MissingDataset:"데이터셋 없음",MissingEvidence:"측정 근거 없음",Preparing:"배치 준비 중",RestartDrain:"재시작 후 요청 정리",AppliedDefinitionUnavailable:"적용된 서비스 정의 없음",ReservedScope:"변경 자원 예약 중",PartialObservationWindow:"관측 시간 부족",BootstrapCapacityPending:"초기 처리 용량 계산 대기",CapacityPending:"처리 용량 계산 대기",NoPlanMeetsSLO:"SLO 충족 구성 없음",EvaluatedCandidatesExceedSLOWithinReportedSearchBounds:"검토 구성 SLO 초과",MissingOperationCost:"변경 비용 근거 없음",HeldAfterOverload:"부하 증가 후 구성 유지",DemandIncreasing:"유입 증가",ReplacementUnpaid:"교체 비용 미회수",ReplacementDwell:"교체 후 최소 유지",TransitionGainWithinUncertainty:"절감량 오차 범위 이내",IdleInstanceRemoved:"유휴 인스턴스 제거",ObservedOperationExecutionError:"변경 실행 오류",PreparationFailed:"배치 준비 실패"}
-  return reason.split("; ").map(part=>{const separator=part.indexOf(":"),code=separator<0?part:part.slice(0,separator);return labels[code]?`${labels[code]}${separator<0?"":part.slice(separator)}`:part}).join("; ")
+  if(reason==="PowerModeUnavailable")return "전력모드 확인 불가"
+  if(reason.includes("await fresh exact")||reason.includes("creation-outcome-unknown")||reason.includes("identity-awaiting-container")||reason.includes("dependency/Ready/handoff"))return reservationReason(reason)
+  if(reason.includes("did not reach power mode"))return "전력모드 전환 시간 초과"
+  if(reason.includes("Pod is not labelled as a serving instance"))return "서비스 인스턴스가 아닌 파드"
+  const labels:Record<string,string>={Running:"실행 중",Pending:"대기",Failed:"실패",Succeeded:"완료",Unknown:"미확인",created:"생성",observed:"관측",changed:"변경",deleted:"삭제","server-start":"서버 시작",raised:"문제 감지",resolved:"해소",ObservationUnavailable:"관측 기록 사용 불가",ShuttingDown:"종료 중",ExcludedNode:"제외 노드",Keep:"유지","power sample unavailable":"전력 표본 누락","resume history unavailable":"재연결 기록 공백","event history limit":"사건 보관 한도",Disabled:"자동제어 꺼짐",NotReady:"준비 안 됨",Ready:"준비됨",MissingDataset:"데이터셋 없음",MissingEvidence:"측정 근거 없음",Preparing:"배치 준비 중",RestartDrain:"재시작 후 요청 정리",AppliedDefinitionUnavailable:"적용된 서비스 정의 없음",ReservedScope:"변경 자원 예약 중",PartialObservationWindow:"관측 시간 부족",BootstrapCapacityPending:"초기 처리 용량 계산 대기",CapacityPending:"처리 용량 계산 대기",NoPlanMeetsSLO:"SLO 충족 구성 없음",EvaluatedCandidatesExceedSLOWithinReportedSearchBounds:"검토 구성 SLO 초과",MissingOperationCost:"변경 비용 근거 없음",HeldAfterOverload:"부하 증가 후 구성 유지",DemandIncreasing:"유입 증가",ReplacementUnpaid:"교체 비용 미회수",ReplacementDwell:"교체 후 최소 유지",TransitionGainWithinUncertainty:"절감량 오차 범위 이내",IdleInstanceRemoved:"유휴 인스턴스 제거",ObservedOperationExecutionError:"변경 실행 오류",PreparationFailed:"배치 준비 실패"}
+  return reason.split("; ").map(part=>{const separator=part.indexOf(":"),code=separator<0?part:part.slice(0,separator);return labels[code]??(/[a-z]/i.test(part)?"상세 사유 원본 참조":part)}).join("; ")
 }
 export function retainedEvents(events:LiveEvent[],now:number,keep=false):LiveEvent[] {
   return events.filter(event=>Date.parse(event.at)<=now&&(keep||event.kind!=="decision"||event.decision.state!=="Keep")).slice(-30)
@@ -214,7 +257,7 @@ export function retainedEvents(events:LiveEvent[],now:number,keep=false):LiveEve
 
 export function incidentFlow(events:LiveEvent[],gaps:LiveState["gaps"],now:number,keep=false,metrics:LiveMetrics[]=[]) {
   const incidents=[
-    ...mergeKeepEvents(retainedEvents(events,now,keep)).map(row=>({kind:"event" as const,at:row.event.at,key:`event:${row.event.seq}`,...row})),
+    ...groupIncidentEvents(events.filter(event=>Date.parse(event.at)<=now&&(keep||event.kind!=="decision"||event.decision.state!=="Keep"))).map(row=>({kind:"event" as const,at:row.event.at,key:`event:${row.event.seq}`,...row})),
     ...gapEpisodes(gaps,now,metrics).filter(gap=>gap.lost||!gap.recovered||gap.seconds>=5).map(gap=>({kind:"gap" as const,at:gap.from,key:`gap:${gap.scope}:${gap.from}:${gap.reason}`,gap})),
   ]
   return incidents.sort((a,b)=>compareAt(b.at,a.at)||(b.kind==="event"?b.event.seq:0)-(a.kind==="event"?a.event.seq:0)).slice(0,30)

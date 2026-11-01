@@ -1,9 +1,15 @@
-import type { SchedulerObservationSummary } from "./read-types.ts"
+import type { SchedulerObservation, SchedulerObservationSummary } from "./read-types.ts"
 
 export type SchedulerRecordRef = {from:string;to:string;offset:string;kind:string;at:string;id:string;node?:string;startedAt?:string}
 
 export function schedulerHistoryKindMatches(filter:string,kind:string):boolean {
   return filter==="all"||filter===kind||filter==="decision-action"&&(kind==="decision"||kind==="action")
+}
+
+/** Node filtering is limited to the loaded summary page; cluster judgments have no node. */
+export function schedulerHistoryNodeMatches(filter:string,event:SchedulerObservationSummary):boolean {
+  const node=event.action?.node??event.node
+  return !filter||!!node&&(node.uid===filter||node.name===filter)
 }
 
 /** Server kind filters include Keep; collapse only adjacent judgments in the loaded page. */
@@ -52,4 +58,27 @@ export function schedulerPageParams(params:URLSearchParams,cursor?:string):URLSe
   if(params.get("kind")==="power")next.set("kind","power")
   if(cursor)next.set("cursor",cursor);else next.delete("cursor")
   return next
+}
+
+export function schedulerComparisonParams(params:URLSearchParams):URLSearchParams {
+  const next=schedulerPageParams(params,params.get("cursor")??undefined)
+  next.set("compare","1")
+  return next
+}
+
+export const powerNumber=(value:number|undefined|null)=>value==null?"미제공":value.toLocaleString("ko-KR",{maximumFractionDigits:3})
+
+export function powerPolicyFacts(event:Pick<SchedulerObservation,"powerSampling"|"powerCoverage">):[string,string][] {
+  const sampling=event.powerSampling,coverage=event.powerCoverage
+  const seconds=(value:bigint|number)=>powerNumber(Number(value)/1e9)
+  return [
+    ...(sampling?[
+      ["표본 간격 (초)",seconds(sampling.Interval)],["수집 기간 (초)",seconds(sampling.Duration)],
+      ["요청 제한 시간 (초)",seconds(sampling.RequestTimeout)],["최대 표본 수 (개)",powerNumber(sampling.MaxEvents)],
+    ] as [string,string][]:[["표본 수집 정책","미제공"]] as [string,string][]),
+    ...(coverage?[
+      ["경계 허용 거리 (초)",seconds(coverage.MaximumBoundaryDistance)],["최소 관측 비율 (%)",powerNumber(coverage.MinimumCoverage*100)],
+      ["최대 표본 간격 기준 (초)",seconds(coverage.MaximumGap)],
+    ] as [string,string][]:[["에너지 범위 정책","미제공"]] as [string,string][]),
+  ]
 }

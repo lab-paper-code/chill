@@ -42,7 +42,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   if (!segments.length || segments.some(part => part.length > 253 || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(part))) throw new RelayFailure("DashboardRouteNotAllowed", 404)
   const route = segments.join("/")
   let methods: string[] = []
-  let query: "none" | "page" | "profiles" | "runs" | "observations" | "load" | "schedulerHistory" | "dryRun" | "uid" | "compatibility" | "coverage" | "preflight" = "none"
+  let query: "none" | "page" | "profiles" | "runs" | "observations" | "event" | "load" | "schedulerHistory" | "dryRun" | "uid" | "compatibility" | "coverage" | "preflight" = "none"
   let kind: RelayPlan["kind"] = "query"
   if (/^v1\/(models|workloads|preprocessors|datasets)$/.test(route)) methods = ["GET", "POST"]
   else if (/^v1\/(models|workloads|preprocessors|datasets)\/[^/]+$/.test(route)) methods = ["GET", "PUT", "DELETE"]
@@ -52,6 +52,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   else if (route === "v1/observations/load") { methods = ["GET"]; query = "load" }
   else if (route === "v1/observations/power") { methods = ["GET"]; query = "load" }
   else if (route === "v1/observations/scheduler") { methods = ["GET"]; query = "schedulerHistory" }
+  else if (route === "v1/observations/events") { methods = ["GET"]; query = "event" }
   else if (route === "v1/scheduler/capacity") methods = ["GET"]
   else if (route === "v1/model-compatibility") { methods = ["GET"]; query = "compatibility" }
   else if (route === "v1/model-compatibility-matrix") methods = ["GET"]
@@ -86,6 +87,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   const allowed = compact ? ["view"] : []
   if (query === "coverage") allowed.push("batches","node")
   if (query === "preflight") allowed.push("variantId")
+  if (query === "event") allowed.push("at")
   if (query === "profiles") allowed.push("limit","offset","model","deviceClass","profile","q","node","powerMode","path","cpu","status","sort","order")
   if (query === "runs") allowed.push("model","deviceClass","node","path","powerMode","cpu","status","group","parentUID","sort","order")
   allowed.push(...(query === "compatibility" ? ["modelSpec", "executionPath", "deviceClass", "node"] : query === "observations" ? ["from", "to", "limit", "cursor", "definition", "outcome"] : query === "load" ? ["from", "to"] : query === "schedulerHistory" ? ["from", "to", "limit", "cursor", "order", "filter", "uid"] : query === "page" ? ["limit", "offset", "q"] : query === "runs" ? ["limit", "offset", "q", "condition"] : query === "dryRun" ? ["dryRun"] : query === "uid" ? ["uid"] : []))
@@ -120,6 +122,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   if (params.has("order") && query !== "schedulerHistory" && !params.has("sort")) throw new RelayFailure("DashboardQueryInvalid", 400)
   if (query === "uid" && !params.get("uid")) throw new RelayFailure("DashboardQueryInvalid", 400)
   if (query === "compatibility" && allowed.some(key => !params.get(key))) throw new RelayFailure("DashboardQueryInvalid", 400)
+  if (query === "event") timestampNanos(params.get("at") ?? "")
   if (["page", "profiles", "runs", "observations", "schedulerHistory"].includes(query) && !params.has("limit")) params.set("limit", String(query==="profiles"?Math.min(50,config.pageSize):config.pageSize))
   if (query === "observations" || query === "load" || query === "schedulerHistory") {
     const from = params.get("from"), to = params.get("to")

@@ -1,6 +1,8 @@
 package serving
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -79,4 +81,65 @@ func (l *ObservationLog) ClusterRecord(row ClusterObservation) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.appendLocked(observationClusterStream, l.now(), row)
+}
+
+// RecordedEvent is the durable source for an event-lane recovery read. It never
+// hydrates scheduler snapshots, measurement profiles or unrelated catalog rows.
+type RecordedEvent struct {
+	At      time.Time                   `json:"at"`
+	Action  *SchedulerActionObservation `json:"action,omitempty"`
+	Cluster *ClusterObservation         `json:"cluster,omitempty"`
+}
+
+func (l *ObservationLog) EventObservations(ctx context.Context, at time.Time, limit int) ([]RecordedEvent, error) {
+	events := []RecordedEvent{}
+	if at.IsZero() || limit <= 0 {
+		return nil, failure("InvalidQuery", "an event timestamp and positive event bound are required")
+	}
+	hour := at.UTC().Truncate(time.Hour)
+	bounds := [2]time.Time{hour, hour.Add(time.Hour).Add(-time.Nanosecond)}
+	read, err := l.prepare(ctx, map[string][2]time.Time{observationSchedulerStream: bounds, observationClusterStream: bounds})
+	if err != nil {
+		return nil, err
+	}
+	defer read.close()
+	for _, stream := range []string{observationSchedulerStream, observationClusterStream} {
+		err := l.scanStream(read, stream, func(raw []byte) error {
+			var header struct {
+				At time.Time `json:"at"`
+			}
+			if err := json.Unmarshal(raw, &header); err != nil {
+				return err
+			}
+			if !header.At.Equal(at) {
+				return nil
+			}
+			event := RecordedEvent{At: at}
+			if stream == observationSchedulerStream {
+				var row struct {
+					Action *SchedulerActionObservation `json:"action"`
+				}
+				if err := json.Unmarshal(raw, &row); err != nil {
+					return err
+				}
+				if row.Action == nil {
+					return nil
+				}
+				event.Action = row.Action
+			} else {
+				if err := json.Unmarshal(raw, &event.Cluster); err != nil {
+					return err
+				}
+			}
+			if len(events) == limit {
+				return failure("IncompleteObservation", "simultaneous events exceed the configured event bound")
+			}
+			events = append(events, event)
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return events, ctx.Err()
 }

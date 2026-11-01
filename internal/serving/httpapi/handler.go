@@ -126,6 +126,7 @@ func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authoriz
 	h.mux.HandleFunc("GET /api/v1/pools", h.management)
 	h.mux.HandleFunc("GET /api/v1/pools/{id}", h.management)
 	h.mux.HandleFunc("GET /api/v1/observations/workloads/{uid}", h.observations)
+	h.mux.HandleFunc("GET /api/v1/observations/events", h.observationEvents)
 	h.mux.HandleFunc("GET /api/v1/scheduler", h.scheduler)
 	h.mux.HandleFunc("GET /api/v1/scheduler/settings", h.scheduler)
 	h.mux.HandleFunc("GET /api/v1/scheduler/state", h.scheduler)

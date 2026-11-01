@@ -323,6 +323,17 @@ func (l *ObservationLog) readCatalog(read *observationRead, hour time.Time) erro
 	catalog := &ObservationCatalog{}
 	read.catalogs[hour] = catalog
 	visit := func(raw []byte) error {
+		if read.definitionsOnly {
+			var header struct {
+				Kind string `json:"kind"`
+			}
+			if err := json.Unmarshal(raw, &header); err != nil {
+				return err
+			}
+			if header.Kind != "definition" {
+				return nil
+			}
+		}
 		var row CatalogRow
 		if err := json.Unmarshal(raw, &row); err != nil {
 			return err

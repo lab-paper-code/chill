@@ -1082,7 +1082,10 @@ func (l *ObservationLog) Query(ctx context.Context, uid string, from, to time.Ti
 	defer read.close()
 	result.Coverage = read.coverage(map[string][2]time.Time{observationRequestStream: {from, to}, observationManagementStream: {from, to}})
 	result.GapUntil = result.Coverage.gapUntil(from)
-	if err := l.readCatalogs(read); err != nil {
+	rows, err := l.requestRows(read, func(row *requestEnvelope) bool {
+		return row.WorkloadUID == uid && observationInInterval(row.ReceivedAt, from, to)
+	})
+	if err != nil {
 		return result, err
 	}
 	byID := map[string]*Definition{}
@@ -1090,12 +1093,6 @@ func (l *ObservationLog) Query(ctx context.Context, uid string, from, to time.Ti
 		if d.UID == uid && observationIncludes(result.DefinitionFilter, id) {
 			byID[id] = d
 		}
-	}
-	rows, err := l.requestRows(read, func(row *requestEnvelope) bool {
-		return row.WorkloadUID == uid && observationInInterval(row.ReceivedAt, from, to)
-	})
-	if err != nil {
-		return result, err
 	}
 	selected, err := result.aggregate(ctx, byID, rows)
 	if err != nil {
@@ -1151,12 +1148,33 @@ type requestEnvelope struct {
 // requestRows merges the captured rows by request: final, else the open row,
 // else assigned.
 func (l *ObservationLog) requestRows(read *observationRead, keep func(*requestEnvelope) bool) ([]*RequestRow, error) {
-	if err := l.readCatalogs(read); err != nil {
-		return nil, err
-	}
+	// Request rows reference definitions only. Retained immutable definitions
+	// normally resolve them without opening hourly catalogs full of raw profile
+	// populations. A cold archive read loads only a selected row's catalog.
+	read.definitionsOnly = true
 	rows := map[string]*RequestRow{}
 	err := l.scanStream(read, observationRequestStream, func(raw []byte) error {
-		return mergeRequestRow(rows, raw, keep, read.catalog())
+		var envelope requestEnvelope
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			return err
+		}
+		if envelope.Kind == RequestRowNative || !keep(&envelope) {
+			return nil
+		}
+		if err := mergeRequestRow(rows, raw, keep, nil); err != nil {
+			return err
+		}
+		row := rows[envelope.RequestID]
+		if row == nil || row.DefinitionID == "" || read.definitions[row.DefinitionID] != nil {
+			return nil
+		}
+		if err := l.readCatalog(read, read.scanningHour); err != nil {
+			return err
+		}
+		if read.definitions[row.DefinitionID] == nil {
+			return failure("IncompleteObservation", "catalog has no definition %s", row.DefinitionID)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -1236,6 +1254,7 @@ type observationRead struct {
 	archive      ObservationArchive
 	catalogs     map[time.Time]*ObservationCatalog
 	scanningHour time.Time
+	definitionsOnly bool
 }
 
 type observationOpenFile struct {

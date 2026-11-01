@@ -8,7 +8,7 @@ import { useChillQuery } from "@/lib/client"
 import type { ObservationResult, SchedulerCandidate, SchedulerObservation, SchedulerObservationPage, SchedulerObservationSummaryPage, SchedulerView } from "@/lib/read-types"
 import { nanosToMilliseconds, parseSchedulerJSON } from "@/lib/scheduler"
 import { gapNotice } from "@/lib/date-time"
-import { readSchedulerRecord, schedulerRecordMatches, schedulerRecordParams, schedulerRecordPath, schedulerRecordRef, schedulerPageParams, type SchedulerRecordRef } from "@/lib/scheduler-history"
+import { readSchedulerRecord, schedulerRecordMatches, schedulerRecordParams, schedulerRecordPath, schedulerRecordRef, schedulerPageParams, powerNumber, powerPolicyFacts, type SchedulerRecordRef } from "@/lib/scheduler-history"
 import { QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/read-region"
 import { Screen, Row, RowDialog, Facts, Empty } from "@/components/screen"
 import { Button } from "@/components/ui/button"
@@ -46,21 +46,25 @@ function RecordReturn({record}:{record:SchedulerRecordRef|null}) {
 function PowerDetails({event,record}:{event:SchedulerObservation;record:SchedulerRecordRef}) {
   const power=event.power
   if(!power)return <RecordReturn record={record}/>
-  return <div className="space-y-4 [&_dd]:break-all">
+  return <div className="min-w-0 space-y-4">
     <Facts items={[
-      ["노드",`${event.node?.name??"노드 이름 없음"} / ${event.node?.uid??"UID 제공 없음"}`],["계측기와 범위",`${event.meter||"제공 없음"} / ${event.powerScope||"제공 없음"}`],
-      ["사건 시각",event.at],["측정 기간",`${power.startedAt} ~ ${power.endedAt}`],["출처",`${power.source.kind} / ${power.source.metric} / ${power.source.nodeName??"노드 제공 없음"}`],
-      ["에너지",event.powerJoules==null?"측정값 없음":`${event.powerJoules} J`],["표본 / 실패 / 시도",`${power.samples?.length??0}개 / ${power.failures?.length??0}개 / ${power.summary.attempts}회`],
-      ["생산자 요약",`성공 ${power.summary.successfulSamples}개, 실패 ${power.summary.failures}개, 관측 ${power.summary.observationDurationSeconds}초, 최대 표본 간격 ${power.summary.maximumSampleGapSeconds}초`],
-      ["측정기 시각 제공",power.summary.sourceTimestampAbsent?"없음":"있음"],
-      ...Object.entries(event.powerSampling??{}).map(([key,value]):[string,string]=>[`sampling ${key}`,`${String(value)}${key==="MaxEvents"?"개":" ns"}`]),
-      ...Object.entries(event.powerCoverage??{}).map(([key,value]):[string,string]=>[`coverage ${key}`,`${String(value)}${key==="MinimumCoverage"?"":" ns"}`]),
+      ["노드",event.node?.name??"노드 이름 없음"],["노드 식별자",event.node?.uid??"미제공"],["계측기",event.meter||"미제공"],["계측 범위",event.powerScope||"미제공"],
+      ["출처 종류",power.source.kind],["전력 지표",power.source.metric],["출처 노드",power.source.nodeName??"미제공"],
+      ["사건 시각 KST",when(event.at)],["측정 시작 KST",when(power.startedAt)],["측정 종료 KST",when(power.endedAt)],
+      ["실측 에너지 (J)",powerNumber(event.powerJoules)],["저장 표본 (개)",powerNumber(power.samples?.length??0)],["저장 실패 (개)",powerNumber(power.failures?.length??0)],
+      ["수집 시도 (회)",powerNumber(power.summary.attempts)],["성공 표본 (개)",powerNumber(power.summary.successfulSamples)],["수집 실패 (개)",powerNumber(power.summary.failures)],
+      ["관측 기간 (초)",powerNumber(power.summary.observationDurationSeconds)],["최대 표본 간격 (초)",powerNumber(power.summary.maximumSampleGapSeconds)],
+      ["평균 요청 지연 (초)",powerNumber(power.summary.meanRequestLatencySeconds)],["요청 지연 p95 (초)",powerNumber(power.summary.p95RequestLatencySeconds)],
+      ["측정기 시각 제공",power.summary.sourceTimestampAbsent?"없음":"있음"],["표본 시각 기준","수집기 수신"],
+      ...powerPolicyFacts(event),
     ]}/>
     {event.powerError&&<p role="alert">에너지 관측 오류: {event.powerError}</p>}
-    <p className="text-sm text-muted-foreground">표본 시각은 수집기가 받은 시각이에요.{!event.powerSampling&&" 표본 수집 정책이 제공되지 않았어요."}{!event.powerCoverage&&" 에너지 범위 정책이 제공되지 않았어요."}</p>
     <SourceJSON inline title="계측 출처와 조건" value={power.source}/>
-    {power.samples?.length?<ChartContainer config={{watts:{label:"전력 (W)",color:"var(--chart-2)"}}} className="aspect-auto h-[250px] w-full"><LineChart data={power.samples.map(({observedAt,watts})=>({observedAt,watts:Number(watts)}))}><CartesianGrid vertical={false}/><XAxis dataKey="observedAt"/><YAxis unit="W"/><ChartTooltip content={<ChartTooltipContent/>}/><Line dataKey="watts" stroke="var(--color-watts)" dot={false} isAnimationActive={false}/></LineChart></ChartContainer>:<p>전력 표본이 0개예요. 에너지 제공 여부와는 따로 봐요.</p>}
-    <details><summary>개별 표본과 수집 실패</summary>{power.samples?.map((sample,index)=><p key={`s${index}`}>{sample.observedAt} / {sample.watts} W / 요청 지연 {sample.requestLatencySeconds}초</p>)}{power.failures?.map((failure,index)=><p key={`f${index}`}>{failure.observedAt} / {failure.reason}: {failure.message} / 요청 지연 {failure.requestLatencySeconds}초</p>)}</details>
+    {power.samples?.length?<ChartContainer config={{watts:{label:"전력 (W)",color:"var(--chart-2)"}}} className="aspect-auto h-[250px] w-full"><LineChart data={power.samples.map(({observedAt,watts})=>({observedAt:when(observedAt),watts:Number(watts)}))}><CartesianGrid vertical={false}/><XAxis dataKey="observedAt"/><YAxis unit="W"/><ChartTooltip content={<ChartTooltipContent/>}/><Line dataKey="watts" stroke="var(--color-watts)" dot={false} isAnimationActive={false}/></LineChart></ChartContainer>:<Facts items={[["전력 표본","없음"]]}/>}
+    <details><summary>개별 표본과 수집 실패</summary>
+      {power.samples?.map((sample,index)=><Facts key={`s${index}`} items={[["수신 시각 KST",when(sample.observedAt)],["전력 (W)",powerNumber(sample.watts)],["요청 지연 (초)",powerNumber(sample.requestLatencySeconds)]]}/>)}
+      {power.failures?.map((failure,index)=><Facts key={`f${index}`} items={[["실패 시각 KST",when(failure.observedAt)],["수집 상태","실패"],["요청 지연 (초)",powerNumber(failure.requestLatencySeconds)]]}/>)}
+    </details>
     <SourceExport filename="scheduler-power-selected.json" value={{scope:"선택 기록",source:"v1/observations/scheduler",...record,event}}/>
     <SourceJSON inline value={event}/>
   </div>
@@ -91,7 +95,7 @@ export function SchedulerPowerPage() {
       </RowDialog>}
     </HistoryControls>
     <QueryGate query={history.query}>{history.query.data&&<>
-      {rows.length?<div className="overflow-x-auto rounded-lg border"><table className="w-full text-sm"><thead><tr>{["시각 KST","노드","실측 에너지 (J)","근거"].map(label=><th key={label} className="p-3 text-left">{label}</th>)}</tr></thead><tbody>{rows.map(row=><tr key={row.ref.offset} className="border-t"><td className="p-3">{when(row.event.at)}</td><td className="p-3">{row.event.node?.name??"미기록"}</td><td className="p-3 text-right tabular-nums">{row.event.powerJoules??"미제공"}</td><td className="p-3"><Button variant="outline" onClick={()=>{
+      {rows.length?<div className="rounded-lg border"><table className="block w-full text-sm sm:table"><thead className="hidden sm:table-header-group"><tr>{["시각 KST","노드","실측 에너지 (J)","근거"].map(label=><th key={label} className="p-3 text-left">{label}</th>)}</tr></thead><tbody className="block sm:table-row-group">{rows.map(row=><tr key={row.ref.offset} className="grid gap-1 border-t p-3 first:border-t-0 sm:table-row sm:p-0"><td className="min-w-0 sm:p-3"><span className="text-muted-foreground sm:hidden">시각 KST </span>{when(row.event.at)}</td><td className="min-w-0 [overflow-wrap:anywhere] sm:p-3"><span className="text-muted-foreground sm:hidden">노드 </span>{row.event.node?.name??"미기록"}</td><td className="tabular-nums sm:p-3 sm:text-right"><span className="text-muted-foreground sm:hidden">실측 에너지 (J) </span>{powerNumber(row.event.powerJoules)}</td><td className="sm:p-3"><Button variant="outline" onClick={()=>{
         opener.current=document.activeElement as HTMLElement|null
         router.push(`/records?${new URLSearchParams({...Object.fromEntries(params),...Object.fromEntries(schedulerRecordParams(row.ref))})}`,{scroll:false})
       }}>근거</Button></td></tr>)}</tbody></table></div>:<Empty title="기록 없음"/>}

@@ -24,24 +24,27 @@ function elements(node: unknown): Element[] {
   return [element, ...elements(element.props.children)]
 }
 const idle = { desired: { metadata: { name: "idle", uid: "service-uid" }, spec: { modelRef: { name: "model" }, preprocessorRef: { name: "input" }, slo: { percentile: 95, targetLatency: "1s" } } }, admission: true, readiness: "Ready", pending: 0, assigned: 0, reason: "", supportedInputs: [], observedAt: "2026-11-01T00:00:00Z" } as unknown as WorkloadView
-function harness() {
+function harness(query="") {
   const paths: string[] = []
   const modules: Record<string, unknown> = {
-    react: { useState: (value: unknown) => [typeof value === "function" ? value() : value, () => {}] },
+    react: { useState: (value: unknown) => [typeof value === "function" ? value() : value, () => {}], useMemo: (value: () => unknown) => value() },
     "next/link": { default: "a" },
-    "next/navigation": { useSearchParams: () => new URLSearchParams() },
+    "next/navigation": { useSearchParams: () => new URLSearchParams(query), useRouter: () => ({replace:()=>{}}) },
     "@tanstack/react-query": { useQueryClient: () => ({}) },
     "@/lib/domain": domain, "@/lib/labels": labels, "@/lib/scheduler": scheduler,
-    "@/lib/client": { useChillQuery: (path: string) => { paths.push(path); return { data: path === "v1/workloads" ? [idle] : path.endsWith("/idle") ? idle : undefined, error: null } }, useChillMutation: () => ({ isPending: false }) },
+    "@/lib/client": { useSession: () => ({config:{inferTimeoutMs:129000,maxRequestBytes:8388608,pageSize:25}}), useChillQuery: (path: string) => { paths.push(path); return { data: path === "v1/workloads" ? [idle] : path.endsWith("/idle") ? idle : undefined, error: null } }, useChillMutation: () => ({ isPending: false }) },
     "@/components/status-cell": { StatusCell: "status-cell" },
     "@/components/data-table": { DataTable: "data-table" },
     "@/components/screen": { Screen: "main", Rows: "rows", RowDialog: "row-dialog", Facts: "facts" },
     "@/components/read-region": { QueryGate: "query-gate" },
     "@/components/ui/button": { Button: "button" },
+    "@/components/stage-breakdown": { duration: (value: number) => `${value} ms` },
   }
   const hub = load("../features/service-hub.tsx", modules)
   modules["@/features/service-hub"] = hub
-  return { hub, management: load("../features/management.tsx", modules), paths }
+  const management=load("../features/management.tsx", modules)
+  modules["@/features/management"]=management
+  return { hub, management, inference:load("../features/inference.tsx",modules), paths }
 }
 
 test("idle admission remains permission, not actual traffic, in service list and detail", () => {
@@ -50,12 +53,15 @@ test("idle admission remains permission, not actual traffic, in service list and
   assert.equal(admission.props.axis, "접수 허용")
   assert.equal(admission.props.label, "허용")
   assert.equal(h.hub.ServiceAdmission({ view: { ...idle, admission: false } }).props.label, "차단")
-  for (const tree of [h.management.ServicesPage({}), h.management.ServicePage({ name: "idle" })]) {
-    const table = elements(tree).find(element => element.type === "data-table")!
-    const columns = table.props.columns as { key: string; value: (view: WorkloadView) => Element }[]
-    const cell = columns.find(column => column.key === "admission")!.value(idle)
-    assert.equal(cell.type, h.hub.ServiceAdmission)
-    assert.equal(h.hub.ServiceAdmission(cell.props).props.label, "허용")
+  const list=h.management.ServicesPage({})
+  const table=elements(list).find(element=>element.type==="data-table")!
+  const columns=table.props.columns as {key:string;value:(view:WorkloadView)=>Element}[]
+  const listAdmission=columns.find(column=>column.key==="admission")!.value(idle)
+  const detail=elements(h.management.ServicePage({name:"idle"})).find(element=>element.type==="facts")!
+  const detailAdmission=(detail.props.items as [string,Element][]).find(([label])=>label==="접수 허용")![1]
+  for(const cell of [listAdmission,detailAdmission]){
+    assert.equal(cell.type,h.hub.ServiceAdmission)
+    assert.equal(h.hub.ServiceAdmission(cell.props).props.label,"허용")
   }
   assert.ok(h.paths.includes("v1/workloads"))
   assert.ok(h.paths.includes("v1/workloads/idle"))
@@ -70,6 +76,46 @@ test("integrated detail retains three regions and UID-specific current observati
   const placement = h.hub.ServicePlacement({ view: idle, signals: { pools: {}, scheduler: {}, instances: [] } })
   assert.ok(elements(placement).some(element => element.props.href === "/?open=service%3Aservice-uid"))
   assert.ok(elements(tree.props.action).some(element => element.props.href === "/workloads/idle/infer?uid=service-uid"))
+})
+
+test("service detail links and back retain the URL-backed list investigation",()=>{
+  const query="filter=allowed&search=idle&page=2&limit=10&sort=service&order=desc"
+  const h=harness(query),list=h.management.ServicesPage({})
+  const table=elements(list).find(element=>element.type==="data-table")!
+  const column=(table.props.columns as {key:string;value:(view:WorkloadView)=>Element}[]).find(column=>column.key==="service")!
+  const link=column.value(idle),url=new URL(link.props.href as string,"https://dashboard.invalid")
+  assert.equal(url.searchParams.get("returnTo"),`/workloads?${query}`)
+  const detail=harness(url.searchParams.toString()).management.ServicePage({name:"idle"})
+  assert.deepEqual(detail.props.back,[`/workloads?${query}`,"서비스"])
+  assert.equal(elements(detail).filter(element=>element.type==="data-table").length,0)
+  for(const unsafe of ["//outside.invalid","https://outside.invalid","/workloads/../settings","/\\outside.invalid","/workloads%0a"]){
+    assert.deepEqual(harness(new URLSearchParams({returnTo:unsafe}).toString()).management.ServicePage({name:"idle"}).props.back,["/workloads","서비스"])
+  }
+})
+
+test("service definition exposes applied state and measured paths before raw evidence",()=>{
+  const h=harness(),tree=h.hub.ServiceDefinition({view:idle})
+  const dialog=elements(tree).find(element=>element.type==="row-dialog")!
+  const summary=elements(dialog).find(element=>element.type===h.hub.ServiceAppliedFacts)!
+  assert.ok(summary)
+  const facts=h.hub.ServiceAppliedFacts({view:idle})
+  assert.deepEqual((facts.props.items as [string,string][]).slice(0,1),[["적용 상태","미적용"]])
+})
+
+test("inference waiting controls separate target, wait limit and request size into facts",()=>{
+  const h=harness()
+  const page=h.inference.InferencePage({name:"idle"}),flow=page.type as Component
+  const view={...idle,supportedInputs:[{executionPath:"cpu",artifact:"onnx",profiles:[]}],appliedDefinition:{
+    preprocessor:{name:"input",input:[{name:"image",format:"JPEG",maxBytes:1024}],output:[]},
+    slo:{percentile:90,targetLatencyNanos:1500000000},
+  }}
+  const tree=flow({...page.props,view}),dialog=elements(tree).find(element=>element.props.title==="응답 대기 시간")!
+  const facts=elements(dialog).find(element=>element.type==="facts")!
+  const values=new Map(facts.props.items as [string,unknown][])
+  assert.equal(values.get("응답 목표 비율 (%)"),90)
+  assert.equal(values.get("요청 크기 한도"),"8 MiB")
+  assert.equal(values.get("대기 제한 · 응답 목표"),"별도")
+  assert.ok(elements(tree).some(element=>element.type===h.hub.ServiceAppliedFacts))
 })
 
 test("distribution rows and weights come from one scheduler snapshot despite a later pools observation", () => {
