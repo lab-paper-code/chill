@@ -481,3 +481,9 @@
 
 - `orin-nano 수집0`은 더 이상 사실이 아님(01:30Z 직접 확인: shelly_power_total_watts 5.1W, thermal 46.2°C·observation 1). excludedNodes에서 제거(`8912307f`), cuda-vlm 정책 2개 추가(control-301, overlay `values-policies-rnn-vlm-v2.yaml`).
 - orin-nano MNV CPU canary(`47916f0b610f`) 성공 전까지 나머지 24셀 보류. vlm canary는 jetsonx·orin-nano 각 1셀, lane 끝.
+
+## 2026-11-01 — 커버리지 CPU 크기 = 스케줄 가능한 정수 코어, 전력 모드 online CPU로 상한
+
+- 원시 원인: allocatable 전체(genesis3 12)는 다른 Pod request(3.4) 때문에 스케줄 불가였다(FailedScheduling Insufficient cpu → Job deadline, 3셀 실패). jetsonx 5코어는 MODE_*_2CORE/4CORE에서 "process CPU affinity is smaller than the ORT thread contract"로 실패했다.
+- 수정(생성기 한 곳): `cpuByDeviceClass` = floor(allocatable − 비측정 Pod request − 0.01) (`hack/measure/coverage-plan.json`), 그리고 셀별로 min(그 값, 차트 catalog의 모드별 onlineCPUs). genesis3 8, jetsono 11/8/4, jetsonx 5/4/2, orangepi 7, orin-nano 5/4, lattepanda·rasp5 3, nano 3/2.
+- 옛 코어 수로 잰 셀은 `chill.dacs.io/coverage-cpu=<N>core` 라벨로 남긴다.
