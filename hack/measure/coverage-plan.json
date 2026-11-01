@@ -44,11 +44,10 @@
       "raspberry-pi-5-8g": "rasp5"
     }
   },
-  "excludedNodes": ["genesis1", "genesis2", "orin-nano"],
+  "excludedNodes": ["genesis1", "genesis2"],
   "excludedNodeReasons": {
     "genesis1": "testbed exclusion",
-    "genesis2": "hardware failure",
-    "orin-nano": "testbed exclusion"
+    "genesis2": "hardware failure"
   },
   "supportedVerdict": "Compatible",
   "unknownVerdict": "Unknown",
