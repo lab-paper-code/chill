@@ -23,6 +23,7 @@ import bisect
 from collections import Counter, defaultdict
 import copy
 import datetime as dt
+import gzip
 import hashlib
 import importlib.util
 import inspect
@@ -32,7 +33,6 @@ import os
 from pathlib import Path
 import re
 import selectors
-import signal
 import ssl
 import shlex
 import subprocess
@@ -43,6 +43,9 @@ import urllib.parse
 import urllib.error
 import urllib.request
 import zlib
+
+LOAD_GENERATOR_ROLE_LABEL = 'edge.dacs.io/workload-role'
+LOAD_GENERATOR_ROLE = 'load-generator'
 
 HERE = Path(__file__).resolve().parent
 PRODUCER_ALIASES = {'mobilenet': 'image-classification-tight-slo', 'plc': 'plc-anomaly', 'smolvlm2': 'smolvlm2-vqa'}
@@ -1006,7 +1009,7 @@ def self_check_client_jsonl(analysis):
         (folder/'fixture-cgroup.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in counters))
         first,last=analysis.epoch(at),analysis.epoch('2026-10-29T00:00:02Z')
         telemetry=analysis.telemetry(analysis.Inputs(folder),first,last,resource_rows=rows)
-        assert telemetry['roles']['server']['identities']==telemetry['roles']['client']['identities']==1
+        assert telemetry['roles']['server']['identities']==1 and telemetry['roles']['client']['identities']==0
         gc=runtime_gc(resources,first,last,analysis)
         assert gc['complete'] and gc['cpuSecondsDelta']==1 and gc['cyclesDelta']==2
         reset=copy.deepcopy(resources);reset[2]['row']['gcCPUSeconds']=-1
@@ -1020,7 +1023,7 @@ def self_check_client_jsonl(analysis):
         assert recovery['status']=='OBSERVED' and recovery['observation']['clusterRef']=={'line':9}
         pod['row']['event']='deleted'
         assert failure_api_recovery(commands,[{'snapshot':snapshot}],[pod],last,analysis)['status']=='UNMEASURED'
-    print('PASS E5 trailing stderr coverage; API resource counters plus client-only local cgroups; cumulative GC delta/reset/brackets and scheduler+cluster recovery; offline only')
+    print('PASS E5 trailing stderr coverage; API-only resource counters; cumulative GC delta/reset/brackets and scheduler+cluster recovery; offline only')
 
 
 
@@ -1051,7 +1054,7 @@ REQUIRED = {
  'inputs': ['scheduler', 'capacity', 'capacityScheduler', 'ranking', 'd25', 'costs', 'bias', 'gateway', 'producer', 'powerObservation', 'evaluationPayload'],
  'numerical': ['g0Evidence', 'mSeconds', 'N', 'burstLowSeconds', 'timeboxes', 'smokeSeconds'],
  'workload': ['name', 'uid', 'generation', 'slo', 'R', 'deliverySeconds', 'socketSeconds', 'gatewayCapSeconds', 'workers', 'datasetDir', 'fields', 'jobTemplate', 'producerEndpoint', 'producerTokenFile', 'producerCAFile', 'producerDatasetDir'],
- 'collection': ['hosts', 'powerExecutable', 'powerReceipt'],
+ 'collection': ['powerExecutable', 'powerReceipt'],
  'factor': ['name', 'controls', 'witness'],
  'timeboxes': ['setupSeconds', 'barrierSeconds', 'drainSeconds', 'flushSeconds', 'collectSeconds', 'apiSeconds', 'settleSeconds'],
 }
@@ -1419,7 +1422,7 @@ def bind(path):
     refs['inputConfig'] = ref(path)
     for name in ('e5.py','auth.py','e5-wire.py','e5-producer.py','e5-raw.py','e5-archive.py'): refs['package-'+name]=ref(HERE/name)
     refs['operationalRecipe']=ref(OPERATIONAL_RECIPE); refs['experimentEnvironment']=ref(ENVIRONMENT_PATH)
-    for name in ('conduct_before.py','bind_before.py','analyze_before.py','sample_cgroups.py','native_mode_request.py'):refs['D2-helper-'+name]=ref(D2/name)
+    for name in ('conduct_before.py','bind_before.py','analyze_before.py','native_mode_request.py'):refs['D2-helper-'+name]=ref(D2/name)
     receipt=load(c['collection']['powerReceipt']); power=ref(c['collection']['powerExecutable'])
     require_component_source(receipt,component_sources['power'],'power',power['path'])
     if receipt.get('executable')!=power['path'] or receipt.get('sha256')!=power['sha256'] or receipt.get('buildExitCode')!=0: raise ValueError('Actual frozen-source existing offline power tool receipt required')
@@ -1526,7 +1529,6 @@ def bind(path):
         if f['name'] not in ('membership-off', 'replicas-off') and not f.get('approvedDirection'): raise ValueError('Additional factor needs explicit approved direction')
         if set(f['controls']) != set(settings['controls']) or not any(f['controls'][k] != settings['controls'][k] for k in f['controls']): raise ValueError('Factor must change actual source controls')
         refs['witness-'+f['name']] = ref(f['witness'])
-    refs['hosts'] = ref(c['collection']['hosts'])
     if 'failureInjectionRunbook' not in c:
         c['failureInjectionRunbook'] = copy.deepcopy(load(HERE/'demo-config.e5.example.json')['failureInjectionRunbook'])
         refs['failureRunbook'] = ref(HERE/'demo-config.e5.example.json')
@@ -1793,33 +1795,6 @@ class CPO:
             if decision['classification'] in ('approved-node-actuation-boot','approved-node-actuation-in-progress'):
                 with (folder/'node-actuation-boot-alerts.jsonl').open('a') as out:out.write(json.dumps({'row':row,'decision':decision})+'\n')
         return new_offset
-    def sampler(self, folder, seconds):
-        sample=module('d2sample',D2/'sample_cgroups.py')
-        source=sample.REMOTE
-        roles=source.index("                if ns=='chill-system' and name=='serving-entrypoint':")
-        role_end=source.index("                if role is None: continue",roles)
-        source=source[:roles]+"                if ns=="+repr(self.c['namespace'])+" and name=='load' and pod.startswith(('e5-','e5p-')): role='client'\n"+source[role_end:]
-        thermal=source.index('    if began>=next_thermal:')
-        source=source[:thermal]+source[source.index('    time.sleep(',thermal):]
-        # Only external producers are discoverable by this sampler.
-        pods=self.io.k(['get','pods','-l','chill.dacs.io/e5='+self.a.mode,'-o','json'],timeout=self.tb['apiSeconds'])['items']
-        children=[]
-        for h in load(self.c['collection']['hosts']):
-            if h['node'] != E5['producerNode']: continue
-            argv=[sys.executable,'-u','-'] if h.get('local') else h['ssh']
-            if not h.get('local') and argv[-3:] != ['python3','-u','-']: raise RuntimeError('Verified existing producer SSH python sampler argv required')
-            output=(folder/(h['node']+'-cgroup.jsonl')).open('w'); error=(folder/(h['node']+'-cgroup.stderr')).open('w')
-            current=[{'id':status.get('containerID','').split('://')[-1],
-                      'metadata':{'name':status['name'],'attempt':status.get('restartCount')},
-                      'labels':{'io.kubernetes.pod.namespace':pod['metadata']['namespace'],
-                                'io.kubernetes.pod.name':pod['metadata']['name'],
-                                'io.kubernetes.pod.uid':pod['metadata']['uid']}}
-                     for pod in pods if pod['spec'].get('nodeName')==h['node']
-                     for status in pod.get('status',{}).get('containerStatuses',[])]
-            # A restricted producer key may force `python3 -u -`, dropping client argv; carry the arguments in the program itself.
-            host_source='import sys; sys.argv[1:]='+repr([h['node'],str(seconds),self.a.stage])+'\n'+source.replace('initial=None\n','initial='+repr(current)+'\n',1)
-            p=subprocess.Popen(argv+[h['node'],str(seconds),self.a.stage],stdin=subprocess.PIPE,stdout=output,stderr=error,text=True); p.stdin.write(host_source); p.stdin.close(); children.append((p,output,error))
-        return children
     def producer_job_name(self,name,stage):
         if self.c.get('evaluation'):
             execution=self.c['evaluation']['execution']
@@ -1827,14 +1802,14 @@ class CPO:
         return 'e5-'+self.a.mode.lower()+'-'+stage['id'].lower()+'-'+str(stage['traces'][name]['seed'])+('-'+self.a.row_tag.lower() if self.a.row_tag else '')
     def job(self, name, stage, folder):
         w=self.ws[name]; trace=stage['traces'][name]; job=load(w['jobTemplate']); label=self.producer_job_name(name,stage)
-        job['metadata']={'name':label,'namespace':self.c['namespace'],'labels':{'chill.dacs.io/e5':self.a.mode}}
+        job['metadata']={'name':label,'namespace':self.c['namespace'],'labels':{'chill.dacs.io/e5':self.a.mode,LOAD_GENERATOR_ROLE_LABEL:LOAD_GENERATOR_ROLE}}
         if self.c.get('evaluation'):
             execution=self.c['evaluation']['execution']
-            labels={'chill.dacs.io/e5':self.a.mode,'edge.dacs.io/evaluation-run-uid':execution['runUID'],'edge.dacs.io/evaluation-stage':execution['stageID'],'edge.dacs.io/evaluation-step':'stage','edge.dacs.io/workload-role':'system'}
+            labels={**job['metadata']['labels'],'edge.dacs.io/evaluation-run-uid':execution['runUID'],'edge.dacs.io/evaluation-stage':execution['stageID'],'edge.dacs.io/evaluation-step':'stage'}
             job['metadata']['labels']=labels
             job['metadata']['ownerReferences']=[{'apiVersion':'edge.dacs.io/v1alpha1','kind':'EvaluationStage','name':execution['stageName'],'uid':execution['stageUID'],'controller':True,'blockOwnerDeletion':True}]
             job['spec']['template']['metadata']={'labels':labels}
-        spec=job['spec']; spec.pop('selector',None); spec.pop('manualSelector',None); spec['backoffLimit']=0; spec['activeDeadlineSeconds']=math.ceil(self.tb['setupSeconds']+self.tb['barrierSeconds']+stage['seconds']+self.tb['drainSeconds']); spec['template']['metadata']={'labels':{'chill.dacs.io/e5':self.a.mode}}
+        spec=job['spec']; spec.pop('selector',None); spec.pop('manualSelector',None); spec['backoffLimit']=0; spec['activeDeadlineSeconds']=math.ceil(self.tb['setupSeconds']+self.tb['barrierSeconds']+stage['seconds']+self.tb['drainSeconds']+self.tb['collectSeconds']); spec['template']['metadata']={'labels':dict(job['metadata']['labels'])}
         if self.c.get('evaluation'):
             spec['template']['metadata']['labels'].update(labels)
             spec['parallelism']=spec['completions']=1
@@ -1954,26 +1929,22 @@ class CPO:
                 raise
         if targeted:
             save(folder/'start-state-restoration.json',restored)
-        self.boundary(folder,'pre'); children=self.sampler(folder,self.tb['setupSeconds']+st['seconds']+self.tb['drainSeconds']+self.tb['flushSeconds']); jobs=[]; streams=[]; phase={'stage':st,'mode':self.a.mode,'status':'RUNNING','startUTC':None,'endUTC':None,'starts':{}}
+        self.boundary(folder,'pre'); jobs=[]; streams=[]; phase={'stage':st,'mode':self.a.mode,'status':'RUNNING','startUTC':None,'endUTC':None,'starts':{}}
         if barrier is not None:phase['startBarrier']=barrier
         pre_state=load(folder/'pre-state.json')
         phase['schedulerBoundaryObservations']={'start':scheduler_boundary_observation(pre_state)}
         self.native_evidence=(pre_state.get('results') or [])+[load(path) for root in (self.out,self.out.parent/'smoke-run') for path in root.glob('*-mode/result.json')]
         save(folder/'phase.json',phase); sel=selectors.DefaultSelector(); buffers={};pods={};deadline=time.monotonic()+self.tb['setupSeconds']
-        def samplers_alive():
-            for sampler,output,error in children:
-                if sampler.poll() is not None:
-                    error.flush()
-                    raise RuntimeError('Producer telemetry sampler exited before GO (code '+str(sampler.returncode)+'): '+Path(error.name).read_text()[-500:].strip())
         try:
             for name,rate in st['rates'].items():
                 if not rate: continue
                 created=self.io.k(['create','-f','-','-o','json'],stdin=json.dumps(self.job(name,st,folder))); jobs.append((name,created['metadata']['name'],created['metadata']['uid'])); save(folder/('created-'+name+'.json'),created)
             for name,job,uid in jobs:
                 startup=folder/('startup-'+name);startup.mkdir()
-                pod=self.io.wait_load_container((job,uid),startup,deadline,alive=samplers_alive);pods[name]=pod
+                pod=self.io.wait_load_container((job,uid),startup,deadline);pods[name]=pod
                 log=(folder/(name+'-client.jsonl')).open('w');err=(folder/(name+'-log.stderr')).open('w')
                 p=subprocess.Popen(self.d.K+['logs','-f','pod/'+pod['metadata']['name'],'-c','load'],stdout=subprocess.PIPE,stderr=err,bufsize=0);os.set_blocking(p.stdout.fileno(),False);streams.append((p,log,err));buffers[name]=b'';sel.register(p.stdout,selectors.EVENT_READ,(name,log))
+            telemetry=ProducerResources(self.io,pods,self.tb['apiSeconds']) if pods else None
             ready=set();window_ended=set();drained=set();counter_released=set();released=not jobs
             if released:
                 if self.c.get('evaluation') and targeted:
@@ -2002,7 +1973,6 @@ class CPO:
                         save(folder/'ready-gate-state.json',{'observedUTC':observed,'state':state})
                         save(folder/'phase.json',phase)
                         break
-                if not released: samplers_alive()
                 if not released and time.monotonic()>deadline: raise RuntimeError('Producer setup timebox exceeded')
                 for key,_ in sel.select(timeout=min(.2,max(0,end-time.monotonic())) if ready_gate else .2):
                     name,log=key.data;lines,buffers[name],eof=self.d.read_stream_lines(key.fileobj,buffers[name])
@@ -2040,25 +2010,17 @@ class CPO:
                 if phase['endUTC'] is not None:
                     for name in sorted(drained-counter_released):
                         pod=pods[name];cid=next(status['containerID'] for status in pod['status']['containerStatuses'] if status['name']=='load')
-                        collector=folder/(pod['spec']['nodeName']+'-cgroup.jsonl')
-                        counter=self.d.client_end_counter(collector,pod['metadata']['uid'],cid,phase['endUTC'])
+                        counter=self.d.client_end_counter_rows(telemetry.poll(end),pod['metadata']['uid'],cid,phase['endUTC'])
                         if counter is None:continue
                         current=self.io.k(['get','pod',pod['metadata']['name'],'-o','json'],timeout=self.tb['apiSeconds'])
                         self.d.assert_producer_running(current,pod)
                         proof=folder/(name+'-client-end-counter.json')
-                        save(proof,{'at':now(),'originalEndUTC':phase['endUTC'],'podUID':pod['metadata']['uid'],'containerID':cid,'collectorPath':str(collector),'actualCounterRow':counter,'actualPod':current})
+                        save(proof,{'at':now(),'originalEndUTC':phase['endUTC'],'podUID':pod['metadata']['uid'],'containerID':cid,'actualCounterRow':counter,'actualPod':current})
                         self.io.k(['exec',pod['metadata']['name'],'-c','load','--','python3','-c',"from pathlib import Path; Path('/tmp/e5-start').unlink()"],timeout=self.tb['apiSeconds'])
                         counter_released.add(name);phase.setdefault('clientEndCounterRelease',{})[name]={'at':now(),'proofPath':str(proof)};save(folder/'phase.json',phase)
                 if not released and len(ready)==len(jobs):
-                    coverage=Counter(); unavailable=set()
-                    for path in folder.glob('*-cgroup.jsonl'):
-                        for line in path.read_text().splitlines():
-                            observed=json.loads(line)
-                            if observed.get('kind')=='collector-error': raise RuntimeError('Prestart telemetry collector error')
-                            if observed.get('kind')=='cgroup' and observed.get('pidAbsent'): unavailable.add((observed['role'],observed.get('pod')))
-                            if observed.get('kind')=='cgroup' and all(observed.get(k) is not None for k in ('cpuUsageNanos','nrThrottled','throttledNanos')): coverage[(observed['role'],observed.get('pod'))]+=1
                     samples=self.c.get('evaluation',{}).get('barrier',{}).get('minimumReadySamples',2)
-                    if not all(coverage[('client',pod['metadata']['name'])]>=samples or ('client',pod['metadata']['name']) in unavailable for pod in pods.values()): continue
+                    if not telemetry.ready(samples,deadline):continue
                     for name,pod in pods.items():
                         current=self.io.k(['get','pod',pod['metadata']['name'],'-o','json'],timeout=self.tb['apiSeconds'])
                         self.io.assert_producer_startable(folder/('startup-'+name),current,pod,barrier_seconds=self.tb['barrierSeconds'])
@@ -2100,7 +2062,7 @@ class CPO:
                         restored['accepted']=restored['accepted'] and restored['postGO']['accepted']
                         save(folder/'start-state-restoration.json',restored)
                         if not restored['postGO']['accepted']:raise RuntimeError('Restored route weights differ from fingerprint immediately after producer GO')
-                    phase['startUTC']=now(); end=time.monotonic()+st['seconds']+self.tb['drainSeconds']; released=True; save(folder/'phase.json',phase)
+                    phase['startUTC']=now(); end=time.monotonic()+st['seconds']+self.tb['drainSeconds']+self.tb['collectSeconds']; released=True; save(folder/'phase.json',phase)
                     phase['goUTC']=go_utc
                     save(folder/'phase.json',phase)
                     if not getattr(self,'go_callback',None): self.record_go(folder,jobs,pods,go_utc)
@@ -2123,11 +2085,6 @@ class CPO:
             self.boundary(folder,'post')
             phase['schedulerBoundaryObservations']['end']=scheduler_boundary_observation(load(folder/'post-state.json'))
             phase['status']='DRAINED_NOT_EVALUATED'; save(folder/'phase.json',phase)
-            for sampler,output,error in children:
-                intentional=sampler.poll() is None
-                if intentional:sampler.terminate()
-                code=sampler.wait(timeout=15);output.flush();error.flush()
-                if code not in (0,-signal.SIGTERM): raise RuntimeError('Producer cgroup sampler failed')
             time.sleep(self.tb['flushSeconds'])
             self.collect(folder)
         except Exception as e:
@@ -2176,13 +2133,6 @@ class CPO:
                     except subprocess.TimeoutExpired:p.kill();p.wait()
                     p.stdout.close();l.close();e.close()
                 except Exception as cleanup_error:cleanup_errors.append('log-follower: '+str(cleanup_error))
-            for p,o,e in children:
-                try:
-                    if p.poll() is None:p.terminate()
-                    try:p.wait(timeout=15)
-                    except subprocess.TimeoutExpired:p.kill();p.wait()
-                    o.close();e.close()
-                except Exception as cleanup_error:cleanup_errors.append('sampler: '+str(cleanup_error))
             if self.a.row_tag:
                 try:self.disk_boundary(folder.name,'after')
                 except Exception:
@@ -2463,9 +2413,53 @@ def reported_power(power):
     return value
 
 
-def resource_telemetry(resources, clusters, scheduler):
+class ProducerResources:
+    """Poll closed raw minutes using the existing authenticated archive client."""
+    def __init__(self, io, pods, api_seconds):
+        self.io,self.pods,self.api_seconds=io,list(pods.values()),api_seconds
+        self.archive=module('e5_producer_archive',HERE/'e5-archive.py')
+        self.first=dt.datetime.now(dt.timezone.utc).replace(minute=0,second=0,microsecond=0)
+        self.minute=None
+        self.rows=[]
+
+    def poll(self, deadline):
+        self.archive._remaining(deadline)
+        minute=time.time_ns()//60_000_000_000
+        if minute==self.minute:return self.rows
+        resources=[]
+        current=dt.datetime.now(dt.timezone.utc).replace(minute=0,second=0,microsecond=0)
+        for hour in self.archive._hours(self.first,current):
+            endpoint=self.archive.RAW_PATH+'/'+hour+'/resources'
+            request_deadline=min(deadline,time.monotonic()+self.api_seconds)
+            try:
+                with self.archive._raw_get(self.io,endpoint,request_deadline) as response:
+                    content=response.headers.get_content_type()
+                    if response.status!=200 or content not in ('application/x-ndjson','application/gzip'):
+                        raise RuntimeError('Unexpected producer raw resources response')
+                    source=gzip.GzipFile(fileobj=response) if content=='application/gzip' else response
+                    for index,line in enumerate(source,1):
+                        self.archive._remaining(deadline)
+                        resources.append({'row':json.loads(line),'sourceRef':{'endpoint':endpoint,'line':index}})
+            except urllib.error.HTTPError as error:
+                if error.code!=404:raise
+        self.archive._remaining(deadline)
+        self.rows=[row for row in resource_telemetry(resources,[],[],self.pods)[0] if row['role']=='client']
+        self.minute=minute
+        return self.rows
+
+    def ready(self, minimum, deadline):
+        rows=self.poll(deadline)
+        coverage=Counter((row['podUID'],row['containerID']) for row in rows
+            if all(isinstance(row.get(key),(int,float)) and not isinstance(row[key],bool) and math.isfinite(row[key]) and row[key]>=0
+                   for key in ('cpuUsageNanos','nrThrottled','throttledNanos')))
+        return all(coverage[(pod['metadata']['uid'],status['containerID'])]>=minimum
+                   for pod in self.pods for status in pod['status']['containerStatuses'] if status['name']=='load')
+
+
+def resource_telemetry(resources, clusters, scheduler, producers=()):
     """Map API identities/units to the shared cumulative-counter reducer."""
     containers={}
+    clients={(pod['metadata']['uid'],status['containerID']):pod['metadata']['name'] for pod in producers for status in pod.get('status',{}).get('containerStatuses',[]) if status['name']=='load' and status.get('containerID')}
     server_pods={item['row'].get('podUID') for item in resources if item['row'].get('kind')=='server'}
     native_ids={instance['id'] for event in scheduler for instance in instance_rows((event.get('snapshot') or {}).get('instances') or []) if instance.get('podUID') and instance.get('id','').startswith(instance['podUID']+'/')}
     for item in clusters:
@@ -2485,8 +2479,9 @@ def resource_telemetry(resources, clusters, scheduler):
                 name=containers.get((container.get('podUID'),container.get('containerID')))
                 identity=(container.get('podUID') or '')+'/'+(container.get('containerID') or '')
                 identified=bool(node.get('uid') and container.get('podUID') and container.get('containerID'))
-                role='unknown' if not identified else 'server' if container['podUID'] in server_pods else 'native' if identity in native_ids else 'edgemesh' if name=='edgemesh' else 'unknown'
-                cgroups.append({**container,**common,'kind':'cgroup','role':role,
+                client=clients.get((container.get('podUID'),container.get('containerID')))
+                role='unknown' if not identified else 'client' if client else 'server' if container['podUID'] in server_pods else 'native' if identity in native_ids else 'edgemesh' if name=='edgemesh' else 'unknown'
+                cgroups.append({**container,**common,'kind':'cgroup','role':role,'pod':client,
                                 'nrThrottled':container.get('throttledPeriods'),'memoryBytes':container.get('memoryCurrentBytes')})
             for sensor in sample.get('thermal') or []:
                 value=sensor.get('milliCelsius'); temperature=value/1000 if value is not None else None
@@ -2554,7 +2549,8 @@ def judge(binding, folder):
     events=[e for e in events if d.epoch(e.get('at')) is not None and d.epoch(phase['startUTC'])<=d.epoch(e['at'])<=d.epoch(phase['drainedUTC'])]
     resources,resource_capture=raw.stream_events(folder,'resources')
     clusters,cluster_capture=raw.stream_events(folder,'cluster')
-    resource_rows,thermals=resource_telemetry(resources,clusters,events)
+    producers=[load(path) for path in folder.glob('producer-*.json')]
+    resource_rows,thermals=resource_telemetry(resources,clusters,events,producers)
     for name,capture in (('scheduler',paging),('resources',resource_capture),('cluster',cluster_capture)):
         unknown.extend(name+': '+str(error) for error in capture['errors'])
     sched=d.scheduler_summary(events); searches=[]; final_indexes={}
@@ -2725,7 +2721,7 @@ def judge(binding, folder):
     result['schedulerCapture']=paging
     result['resourceCapture']=resource_capture
     result['resourceObservations']=resources
-    result['resourceRoleScope']='Server: all node-agent sampled containers in the process-identified server Pod (current chart has one); native: exact scheduler physical podUID/containerID. Other or missing identities stay separate/unknown. SampledAt is the Node clock and receivedAt the server clock; neither is corrected.'
+    result['resourceRoleScope']='Server: all node-agent sampled containers in the process-identified server Pod; native: exact scheduler physical podUID/containerID; client: exact created producer Pod UID/load containerID. Other or missing identities stay separate/unknown. SampledAt is the Node clock and receivedAt the server clock; neither is corrected.'
     result['phaseStatus']=phase['status']
     result['phaseError']=phase.get('error')
     result['schedulerBoundaryObservations']=phase.get('schedulerBoundaryObservations')

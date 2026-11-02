@@ -76,7 +76,7 @@ evaluation:
     factorAckWaitSeconds: "120"
     drainTimeoutSeconds: "600"
     # Include bounded drain/producer settings required by the operational recipe.
-    e5Operational: "{}"
+    e5Operational: '{"timeboxes":{"setupSeconds":405}}'
     chillAPIURL: https://chill-serving-entrypoint.chill-system.svc:8080
     caSecret: chill-dashboard-tls
     evidenceEndpoint: http://chill-evidence-store.chill-system.svc.cluster.local.:9000
@@ -85,13 +85,6 @@ evaluation:
     # Dedicated read + conditional PutObject credentials, WITHOUT DeleteObject.
     # Do not reuse the owner-measurement cleanup credentials above.
     evidenceCredentialsSecret: chill-evaluation-evidence-credentials
-    producerSSHSecret: chill-evaluation-producer-ssh
-    sshNode: genesis1
-    sshHost: "155.230.35.213"
-    # Explicit provisioning input; no implicit host-account or trust copying.
-    sshUser: ""
-    sshPort: "22"
-    sshHostKeyAlias: ""
 
 profiler:
   enabled: false

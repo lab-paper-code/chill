@@ -373,10 +373,7 @@ def assemble(e5, args, spec):
     for name in e5.WORKLOADS:
         actual, _ = registration.api('GET', '/api/v1/workloads/' + name)
         e5.save(args.out / ('canonical-' + name + '.json'), actual)
-    collection = {'hosts': op['collection']['hosts'], 'powerExecutable': e5.E5['powerExecutable'], 'powerReceipt': e5.E5['powerReceipt']}
-    producer_hosts = [host for host in e5.load(collection['hosts']) if host['node'] == e5.E5['producerNode']]
-    e5.save(args.out / 'producer-hosts.json', producer_hosts)
-    collection['hosts'] = str(args.out / 'producer-hosts.json')
+    collection = {'powerExecutable': e5.E5['powerExecutable'], 'powerReceipt': e5.E5['powerReceipt']}
     c = {key: op[key] for key in ('endpoint', 'caFile', 'tokenFile', 'kubeContext')}
     c['collectorTokenFile'] = op['collectorTokenFile']
     c.update(approval={'sources': component_sources, 'controlImageDigest': status['imageID']}, inputs={'scheduler': str(args.out / 'scheduler.json')}, timeboxes=spec['timeboxes'], collection=collection, workloads=[], canonicalDefinitionsReused=reused)
@@ -1325,7 +1322,7 @@ def self_check():
                 return {}
             raise AssertionError(argv)
         cpo.io.k = kubectl
-        cpo.io.wait_load_container = lambda job, folder, deadline, alive=None: next(pod for pod in pods.values() if pod['metadata']['ownerReferences'][0]['uid'] == job[1])
+        cpo.io.wait_load_container = lambda job, folder, deadline: next(pod for pod in pods.values() if pod['metadata']['ownerReferences'][0]['uid'] == job[1])
         cpo.io.assert_producer_startable = lambda *args, **kwargs: None
         cpo.io.wait_job_complete = lambda *args: {'status': {'conditions': [{'type': 'Complete', 'status': 'True'}]}}
         def boundary(folder, prefix):
@@ -1335,11 +1332,13 @@ def self_check():
             snapshot['at'] = e5.now()
             e5.save(folder / (prefix + '-state.json'), cpo.state())
         cpo.boundary = boundary
-        def sampler(folder, seconds):
-            rows = [{'kind': 'cgroup', 'role': role, 'pod': pod, 'cpuUsageNanos': 1, 'nrThrottled': 0, 'throttledNanos': 0} for role, pod in [('server', 'server'), ('edgemesh', 'mesh')] + [('client', 'pod-' + w['name']) for w in workloads] for _ in range(2)]
-            (folder / 'fixture-cgroup.jsonl').write_text('\n'.join(map(json.dumps, rows)) + '\n')
-            return []
-        cpo.sampler = sampler
+        class FixtureResources:
+            def __init__(self, io, owned, api_seconds):self.owned=owned
+            def ready(self, minimum, deadline):return minimum<=2
+            def poll(self, deadline):
+                stamp=(e5.dt.datetime.now(e5.dt.timezone.utc)+e5.dt.timedelta(seconds=60)).isoformat()
+                return [{'kind':'cgroup','role':'client','podUID':pod['metadata']['uid'],'containerID':pod['status']['containerStatuses'][0]['containerID'],'at':stamp,'cpuUsageNanos':1,'nrThrottled':0,'throttledNanos':0} for pod in self.owned.values()]
+        e5.ProducerResources=FixtureResources
         cpo.b['config']['harnessRepositoryCommit'] = 'a' * 40
         publication_coverage = {'policy': {'maxGapFraction': .01, 'maxSingleGapSeconds': 30},
                                 'nodeGapSecondsSum': 1, 'maximumGapSeconds': 1, 'maximumNodeGapFraction': .001}
@@ -1372,7 +1371,7 @@ def self_check():
             return original_module(name, path)
         e5.module = modules
         (root / 'control-alerts.jsonl').write_text('')
-        with patch.object(e5.subprocess, 'Popen', popen), patch.object(d, 'client_end_counter', lambda *args: {'fixtureCounter': True}):
+        with patch.object(e5.subprocess, 'Popen', popen):
             with patch.object(e5, 'power_observation', return_value=dict(fixture_power, coverage=dict(fixture_power['coverage'], MaximumGap=2000000000))):
                 for operation in (cpo.start, cpo.run):
                     try:
@@ -1604,7 +1603,7 @@ def self_check():
         static_settings = dict(copy.deepcopy(settings), autonomousWorkloads=[])
         def no_mutation(*args, **kwargs):
             raise AssertionError('Static placement must not mutate scheduler control or routes')
-        with patch.object(cpo, 'out', static_out), patch.object(cpo, 'settings', lambda: copy.deepcopy(static_settings)), patch.object(cpo, 'put', no_mutation), patch.object(cpo.io, 'api', no_mutation), patch.object(cpo, 'state', lambda: copy.deepcopy(static_state)), patch.dict(cpo.b, {'schedule': static_stages, 'demoConfig': static_config}), patch.object(e5.subprocess, 'Popen', popen), patch.object(d, 'client_end_counter', lambda *args: {'fixtureCounter': True}):
+        with patch.object(cpo, 'out', static_out), patch.object(cpo, 'settings', lambda: copy.deepcopy(static_settings)), patch.object(cpo, 'put', no_mutation), patch.object(cpo.io, 'api', no_mutation), patch.object(cpo, 'state', lambda: copy.deepcopy(static_state)), patch.dict(cpo.b, {'schedule': static_stages, 'demoConfig': static_config}), patch.object(e5.subprocess, 'Popen', popen):
             cpo.start()
             with patch.object(cpo, 'boundary', lambda folder, prefix: e5.save(folder / (prefix + '-state.json'), cpo.state())):
                 original_stages = stages
@@ -1675,7 +1674,7 @@ def self_check():
                     assert len(observations) >= 4
                     assert cpo.native_evidence == busy['results']
                 else:
-                    with patch.object(cpo, 'sampler', side_effect=AssertionError('Timed out barrier must not start collection')), patch.object(cpo.io, 'remove_job', lambda name, uid: removed_barrier.append((name, uid)), create=True), patch.object(cpo.io, 'k', side_effect=lambda argv, **kwargs: {'items': []} if argv == ['get', 'jobs', '-o', 'json'] else {'metadata': {'uid': 'prior-uid'}} if argv == ['get', 'job', 'prior-producer', '-o', 'json'] else no_mutation()):
+                    with patch.object(e5, 'ProducerResources', side_effect=AssertionError('Timed out barrier must not start collection')), patch.object(cpo.io, 'remove_job', lambda name, uid: removed_barrier.append((name, uid)), create=True), patch.object(cpo.io, 'k', side_effect=lambda argv, **kwargs: {'items': []} if argv == ['get', 'jobs', '-o', 'json'] else {'metadata': {'uid': 'prior-uid'}} if argv == ['get', 'job', 'prior-producer', '-o', 'json'] else no_mutation()):
                         try:
                             run_stage(cpo, barrier_stage)
                         except RuntimeError as error:
@@ -1799,7 +1798,7 @@ def self_check():
             removed_go = []
             real_producer_deadline = d.producer_barrier_deadline
             try:
-                with patch.object(cpo, 'out', go_out), patch.object(cpo, 'state', go_state), patch.object(cpo, 'settings', lambda: copy.deepcopy(static_settings)), patch.object(cpo, 'put', no_mutation), patch.dict(cpo.b, {'schedule': stages, 'demoConfig': static_config}), patch.object(cpo, 'boundary', lambda folder, prefix: e5.save(folder / (prefix + '-state.json'), cpo.state())), patch.object(e5.subprocess, 'Popen', popen), patch.object(d, 'client_end_counter', lambda *args: {'fixtureCounter': True}), patch.object(d, 'producer_barrier_deadline', side_effect=lambda row, seconds: real_producer_deadline(row, seconds) if go_clears else e5.time.time() - 1), patch.object(cpo.io, 'remove_job', lambda name, uid: removed_go.append((name, uid)), create=True), patch.object(e5.subprocess, 'run', return_value=SimpleNamespace(stdout='fixture stopped producer', stderr='', returncode=0)):
+                with patch.object(cpo, 'out', go_out), patch.object(cpo, 'state', go_state), patch.object(cpo, 'settings', lambda: copy.deepcopy(static_settings)), patch.object(cpo, 'put', no_mutation), patch.dict(cpo.b, {'schedule': stages, 'demoConfig': static_config}), patch.object(cpo, 'boundary', lambda folder, prefix: e5.save(folder / (prefix + '-state.json'), cpo.state())), patch.object(e5.subprocess, 'Popen', popen), patch.object(d, 'producer_barrier_deadline', side_effect=lambda row, seconds: real_producer_deadline(row, seconds) if go_clears else e5.time.time() - 1), patch.object(cpo.io, 'remove_job', lambda name, uid: removed_go.append((name, uid)), create=True), patch.object(e5.subprocess, 'run', return_value=SimpleNamespace(stdout='fixture stopped producer', stderr='', returncode=0)):
                     if go_clears:
                         run_stage(cpo, go_stage)
                     else:
@@ -1918,9 +1917,6 @@ def self_check():
         e5.E5.update(fixture_env['e5'])
         e5.ENVIRONMENT['d2'].update(fixture_env['d2'])
         op = {'endpoint': 'https://fixture.invalid', 'caFile': temp, 'tokenFile': temp, 'kubeContext': 'fixture', 'producer': {'endpoint': 'https://fixture.invalid', 'tokenFile': temp, 'caFile': temp, 'datasetDir': '/data'}, 'workloads': {w['name']: {'datasetDir': temp, 'fields': ['input'], 'datasetImage': 'fixture@sha256:fixture', 'datasetImagePath': '/fixture'} for w in workloads}}
-        host_path = root / 'producer-hosts-fixture.json'
-        host_path.write_text(json.dumps([{'node': 'fixture', 'local': True}]))
-        op['collection'] = {'hosts': str(host_path)}
         for recipe_workload in op['workloads'].values():
             recipe_workload.update(modelRef='fixture-model', preprocessorRef='fixture-preprocessor', datasetRef='fixture-dataset')
         recipe = root / 'recipe.json'

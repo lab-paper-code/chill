@@ -243,13 +243,11 @@ class Prepare:
         c['inputs']['capacityScheduler']=str(self.out/'scheduler.json')
         c['inputs']['powerObservation']=str(self.out/'power-observation.json')
         c['inputs']['evaluationPayload']=str(self.out/'evaluation-payload.json')
-        c['collection']={k:self.op['collection'][k] for k in ('hosts','powerExecutable','powerReceipt')}
+        c['collection']={k:self.op['collection'][k] for k in ('powerExecutable','powerReceipt')}
         for key in ('namespace','stages','seeds','arrivals','producerResources','producerShards','failureInjectionRunbook','tokenSafetyMarginSeconds','burstLowMaximumSeconds'):
             if key in self.n:c[key]=self.n[key]
         c['collection'].update(self.n['collection'])
         c['inputs'].update(self.n['inputs'])
-        producer_hosts=[host for host in e5.load(c['collection']['hosts']) if host['node']==e5.E5['producerNode']]
-        e5.save(self.out/'producer-hosts.json',producer_hosts);c['collection']['hosts']=str(self.out/'producer-hosts.json')
         e5.save(c['inputs']['powerObservation'],{'schedulerSettings':{'powerObservation':e5.power_observation(c)}})
         c['workloads']=[]
         sys.path.insert(0,str(e5.REPO/'load-generator/src'));from chill_loadgen import cli

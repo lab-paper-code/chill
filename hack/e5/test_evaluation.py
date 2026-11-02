@@ -35,6 +35,43 @@ class AdapterTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.environment_dir.cleanup()
+    def test_producer_raw_closed_minutes_and_timebox(self):
+        import io
+        import email.message
+        pod={'metadata':{'uid':'producer','name':'owned'},'status':{'containerStatuses':[{'name':'load','containerID':'containerd://load'}]}}
+        other={'podUID':'other','containerID':'containerd://load','cpuUsageNanos':1,'throttledPeriods':1,'throttledNanos':1}
+        owned={**other,'podUID':'producer'}
+        wrong_container={**owned,'containerID':'containerd://sidecar'}
+        row={'kind':'node','node':{'name':'node','uid':'node-uid'},'samples':[
+            {'sampledAt':'2026-11-02T00:00:01Z','containers':[other,owned,wrong_container]},
+            {'sampledAt':'2026-11-02T00:00:02Z','containers':[other,owned]}]}
+        archive=SimpleNamespace(RAW_PATH='/api/v1/observations/raw',_hours=lambda *args:['20261102T00'])
+        def remaining(deadline):
+            if deadline<=self.e5.time.monotonic():raise TimeoutError('Finite collection deadline exhausted')
+            return deadline-self.e5.time.monotonic()
+        archive._remaining=remaining
+        calls=[]
+        def raw_get(client,path,deadline):
+            calls.append(path)
+            response=io.BytesIO((json.dumps(row)+'\n').encode())
+            response.status=200;response.headers=email.message.Message()
+            response.headers['Content-Type']='application/x-ndjson'
+            return response
+        archive._raw_get=raw_get
+        with patch.object(self.e5,'module',return_value=archive):
+            telemetry=self.e5.ProducerResources(object(),{'workload':pod},129)
+        deadline=self.e5.time.monotonic()+10
+        self.assertTrue(telemetry.ready(2,deadline))
+        self.assertEqual(len(telemetry.rows),2)
+        self.assertTrue(all(item['podUID']=='producer' and item['containerID']=='containerd://load' for item in telemetry.rows))
+        self.assertEqual(calls,['/api/v1/observations/raw/20261102T00/resources'])
+        self.assertFalse(telemetry.ready(3,deadline))
+        self.assertEqual(len(calls),1)
+        self.assertIsNotNone(self.conductor.client_end_counter_rows(telemetry.rows,'producer','containerd://load','2026-11-02T00:00:02Z'))
+        with self.assertRaises(TimeoutError):telemetry.ready(2,self.e5.time.monotonic()-1)
+        row['samples']=[{'sampledAt':'2026-11-02T00:00:01Z','containers':[other,wrong_container]}]
+        telemetry.minute=None
+        self.assertFalse(telemetry.ready(2,deadline))
     @patch.object(evaluation,'save')
     @patch.object(evaluation,'load',return_value={'spec':{'template':{'spec':{'containers':[{'name':'load','image':'load@sha256:test'}]}}}})
     def test_envelope_and_operational_boundary(self,unused_load,unused_save):
@@ -152,7 +189,7 @@ class AdapterTests(unittest.TestCase):
         controller.d=SimpleNamespace(epoch=lambda value:self.e5.dt.datetime.fromisoformat(value).timestamp())
         controller.check_token_lifetime=lambda *args:None;controller.check_power_observation=lambda:None
         controller.static_placement=lambda:False;controller.settings=lambda:{'autonomousWorkloads':[],**control}
-        controller.disk_boundary=lambda *args:None;controller.sampler=lambda *args:[]
+        controller.disk_boundary=lambda *args:None
         controller.state=lambda:{'snapshot':{}}
         controller.api=lambda *args:{'state':{'decision':{'at':self.e5.now(),'settings':control}}}
         controller.boundary=lambda target,side:evaluation.save(target/(side+'-state.json'),{'snapshot':{}})
@@ -451,7 +488,6 @@ def offline_bundle(directory):
         scenario={'spec':{'arrivalDistribution':dict.fromkeys(NAMES,'poisson'),'parts':[{'id':'one','durationSeconds':60,'rates':dict.fromkeys(NAMES,1)}]},'seeds':evaluation.load(directory/'seeds.json'),'workloads':base['workloads']}
         execution={'runUID':'offline','namespace':'test'};config={'namespace':'test','e5Operational':operational,'chillAPIURL':'https://offline.invalid','minimumFreeBytes':'1','jobActiveDeadlineSeconds':'7200'}
         run=work/'campaign/run';root=run/'stages/offline';root.mkdir(parents=True)
-        evaluation.save(root/'producer-hosts.json',[{'node':scientific['producerNode'],'ssh':['ssh','python3','-u','-']}])
         evaluation.environment(run,config,scientific,base['workloads'])
         harness=evaluation.module('offline_bundle_e5',Path(__file__).parent/'e5.py')
         assembled=evaluation.stage_config(base,spec,scenario,execution,config,root);path=root/'config.json';evaluation.save(path,assembled)

@@ -24,7 +24,7 @@ ARG TARGETARCH=amd64
 ARG KUBECTL_VERSION=v1.31.14
 LABEL org.opencontainers.image.revision=$SOURCE_SHA
 ENV PYTHONDONTWRITEBYTECODE=1 HOME=/tmp CHILL_HARNESS_SOURCE_SHA=$SOURCE_SHA
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssh-client curl && rm -rf /var/lib/apt/lists/* && curl -fsSL https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl -o /usr/bin/kubectl && chmod 0755 /usr/bin/kubectl
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/* && curl -fsSL https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl -o /usr/bin/kubectl && chmod 0755 /usr/bin/kubectl
 WORKDIR /opt/e5
 COPY hack/e5/ hack/e5/
 COPY load-generator/ load-generator/
@@ -32,7 +32,5 @@ COPY docs/spec/README.md docs/spec/README.md
 COPY docs/design/serving/workload-pools.md docs/design/serving/workload-pools.md
 COPY --from=builder /out/ bin/
 RUN pip install --no-cache-dir ./load-generator && python3 -c 'import hashlib,json,pathlib; p=pathlib.Path("/opt/e5/bin/observation-power-source-d39c9576"); p.with_suffix(".receipt.json").write_text(json.dumps({"sourceSHA":"d39c9576f5b2f4ee6a48034e6b95eba28e43cd4e","executable":str(p),"sha256":hashlib.sha256(p.read_bytes()).hexdigest(),"buildExitCode":0,"buildArgv":["go","build","./hack/observations/power"]}))'
-# ssh refuses to run for a uid without a passwd entry (producer cgroup sampler).
-RUN groupadd -g 65532 evaluation && useradd -u 65532 -g 65532 -d /tmp -M -s /usr/sbin/nologin evaluation
 USER 65532:65532
 ENTRYPOINT ["python3", "/opt/e5/hack/e5/evaluation.py"]

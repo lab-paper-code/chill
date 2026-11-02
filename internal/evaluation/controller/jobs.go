@@ -22,7 +22,7 @@ import (
 )
 
 func validateConfig(v map[string]string) error {
-	for _, key := range []string{"actionServiceAccount", "publishServiceAccount", "caSecret", "producerSSHSecret", "evidenceCredentialsSecret", "evidenceEndpoint", "evidenceBucket", "evidenceRegion", "storageClass", "workspaceSize", "chillAPIURL"} {
+	for _, key := range []string{"actionServiceAccount", "publishServiceAccount", "caSecret", "evidenceCredentialsSecret", "evidenceEndpoint", "evidenceBucket", "evidenceRegion", "storageClass", "workspaceSize", "chillAPIURL"} {
 		if strings.TrimSpace(v[key]) == "" {
 			return fmt.Errorf("config %s is required", key)
 		}
@@ -109,10 +109,6 @@ func (r *Runtime) job(ctx context.Context, owner client.Object, run *api.Evaluat
 			{DownwardAPI: &corev1.DownwardAPIProjection{Items: []corev1.DownwardAPIVolumeFile{{Path: "namespace", FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "metadata.namespace"}}}}},
 		}}}})
 		pod.Containers[0].VolumeMounts = append(pod.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "api-access", MountPath: "/var/run/secrets/kubernetes.io/serviceaccount", ReadOnly: true})
-	}
-	if step == api.EvaluationStepStage {
-		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: "producer-ssh", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: v["producerSSHSecret"], DefaultMode: ptr(int32(0400))}}})
-		pod.Containers[0].VolumeMounts = append(pod.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "producer-ssh", MountPath: "/secrets/producer", ReadOnly: true})
 	}
 	expected := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: owner.GetNamespace(), Labels: labels}, Spec: batchv1.JobSpec{BackoffLimit: ptr(int32(0)), Parallelism: ptr(int32(1)), Completions: ptr(int32(1)), ActiveDeadlineSeconds: &deadline, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: pod}}}
 	if err = controllerutil.SetControllerReference(owner, expected, r.Scheme); err != nil {

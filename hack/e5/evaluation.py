@@ -96,10 +96,11 @@ def stage_config(base,spec,scenario,execution,config,root):
     for workload in operational.get('workloads',{}).values():
         if set(workload)-rules.WORKLOAD_OPERATIONAL:
             raise ValueError('FrozenInputInvalid: unknown operational workload fields')
-    value.update({key:child for key,child in operational.items() if key not in ('workloads','collection')})
+    value.update({key:child for key,child in operational.items() if key not in ('workloads','collection','timeboxes')})
+    value.setdefault('timeboxes',{}).update(operational.get('timeboxes',{}))
     value.update(endpoint=config['chillAPIURL'],caFile=CA,tokenFile=TOKEN,collectorTokenFile=TOKEN,kubeContext='in-cluster',namespace=execution['namespace'])
     value['collection'].update(operational.get('collection',{}))
-    value['collection'].update(hosts=str(root/'producer-hosts.json'),powerExecutable=str(REPO/'bin/observation-power-source-d39c9576'),powerReceipt=str(REPO/'bin/observation-power-source-d39c9576.receipt.json'))
+    value['collection'].update(powerExecutable=str(REPO/'bin/observation-power-source-d39c9576'),powerReceipt=str(REPO/'bin/observation-power-source-d39c9576.receipt.json'))
     value['timeboxes'].update({key:float(config[key]) for key in ('finishResetWaitSeconds','factorAckWaitSeconds') if key in config})
     if 'drainTimeoutSeconds' in config: value['timeboxes']['drainSeconds']=float(config['drainTimeoutSeconds'])
     if value['approval']['sources']['power'] not in ('bin/observation-power-source-d39c9576','d39c9576f5b2f4ee6a48034e6b95eba28e43cd4e'):
@@ -238,7 +239,6 @@ class Harness:
                 if key in ('d25Manifest','operationalRecipe'): left,right=load(left),load(right)
                 if left!=right: raise ValueError('FrozenInputInvalid: inconsistent equipment environments')
             root=self.run/'stages'/template['id'];root.mkdir(parents=True,exist_ok=True)
-            self.hosts(root)
             config=stage_config(base,stage,scenarios[template['loadScenarioRef']['uid']],self.execution,self.config,root)
             targets=self.check_target(stage['target'])
             serving=[(component,container) for component in stage['target']['components'] for target in targets if target['name']==component['name'] for pod in target['pods'] for container in pod['containers'] if container['name']=='serving-entrypoint']
@@ -251,7 +251,6 @@ class Harness:
             binding=self.e5.bind(path)
             if binding['payload']!=scenarios[template['loadScenarioRef']['uid']]['bundle']['payload']:
                 raise ValueError('FrozenInputInvalid: payload manifest differs from materialized dataset')
-            if scientific['producerNode']!=self.config['sshNode']: raise ValueError('FrozenInputInvalid: SSH Node differs from producer binding')
             expected=stage['powerMeasurement']
             if {node['uid'] for node in expected['nodes']}!={row['node']['uid'] for row in snapshot['nodes'] if row['node']['name'] in scientific['nodes']}: raise ValueError('IdentityMismatch: power Nodes')
             meters={meter['id']:meter for meter in settings['meters']}
@@ -268,12 +267,6 @@ class Harness:
         path=self.inputs/'snapshot.json';save(path,snapshot)
         ref=self.upload(path,'experiments/'+self.execution['runUID']+'/run/prepare/input-snapshot.json')
         self.outputs={'inputSnapshot':ref}
-    def hosts(self,root):
-        config=self.config
-        argv=['ssh','-T','-i','/secrets/producer/ssh-privatekey','-o','IdentitiesOnly=yes','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile=/secrets/producer/known_hosts','-o','ConnectTimeout=5','-p',config['sshPort']]
-        if config.get('sshHostKeyAlias'): argv+=['-o','HostKeyAlias='+config['sshHostKeyAlias']]
-        argv+=[config['sshUser']+'@'+config['sshHost'],'python3','-u','-']
-        save(root/'producer-hosts.json',[{'node':config['sshNode'],'ssh':argv}])
     def check_target(self,target):
         identities=[]
         for component in target['components']:

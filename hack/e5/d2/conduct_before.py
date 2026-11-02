@@ -89,24 +89,26 @@ def assert_producer_running(pod, expected_pod):
     if pod['metadata']['uid']!=expected_pod['metadata']['uid'] or pod.get('status',{}).get('phase')!='Running' or len(current)!=1 or len(expected)!=1 or not current[0].get('state',{}).get('running') or not expected[0].get('containerID') or current[0].get('containerID')!=expected[0]['containerID']:
         raise RuntimeError('Actual bound producer Pod/container is not running')
 
-def client_end_counter(path, pod_uid, container_id, end_utc):
-    """Read a real, complete exact-client counter row; never synthesize an endpoint."""
+def client_end_counter_rows(rows, pod_uid, container_id, end_utc):
+    """Select a real, complete exact-client counter; never synthesize an endpoint."""
     end=epoch(end_utc)
     if not pod_uid or not container_id or end is None:
         raise RuntimeError('Original client identity/window end required for counter closure')
     expected=container_id[len('containerd://'):] if container_id.startswith('containerd://') else container_id
+    for row in rows:
+        if row.get('kind')!='cgroup' or row.get('role')!='client' or row.get('podUID')!=pod_uid or row.get('containerID') not in (expected,'containerd://'+expected):continue
+        at=epoch(row.get('at'))
+        if at is None or at<end:continue
+        counters=[row.get(key) for key in ('cpuUsageNanos','nrThrottled','throttledNanos')]
+        if all(isinstance(value,(int,float)) and not isinstance(value,bool) and math.isfinite(value) and value>=0 for value in counters):
+            return row
+    return None
+
+
+def client_end_counter(path, pod_uid, container_id, end_utc):
     if not Path(path).exists():return None
     with Path(path).open() as rows:
-        for line in rows:
-            if not line.endswith('\n'):continue  # Concurrent writer's unfinished last record.
-            row=json.loads(line)
-            if row.get('kind')!='cgroup' or row.get('role')!='client' or row.get('podUID')!=pod_uid or row.get('containerID') not in (expected,'containerd://'+expected):continue
-            at=epoch(row.get('at'))
-            if at is None or at<end:continue
-            counters=[row.get(key) for key in ('cpuUsageNanos','nrThrottled','throttledNanos')]
-            if all(isinstance(value,(int,float)) and not isinstance(value,bool) and math.isfinite(value) and value>=0 for value in counters):
-                return row
-    return None
+        return client_end_counter_rows((json.loads(line) for line in rows if line.endswith('\n')),pod_uid,container_id,end_utc)
 
 
 def load(path):
@@ -803,9 +805,8 @@ class Conductor:
             time.sleep(1)
         raise RuntimeError('Exact owned Job/Pods deletion did not complete within existing60s bound')
 
-    def wait_load_container(self, jobref, folder, deadline, alive=None):
+    def wait_load_container(self, jobref, folder, deadline):
         while time.monotonic()<deadline:
-            if alive: alive()
             pods=self.k(['get','pods','-l','job-name='+jobref[0],'-o','json'])['items']
             if not pods:
                 time.sleep(1);continue

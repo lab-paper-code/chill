@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""One offline collector regression: fresh Pod ID, missing PID, restart, coverage."""
-import ast
+"""Offline D2 collector regression: missing PID, restart and counter coverage."""
 import contextlib
 import datetime as dt
 import importlib.util
@@ -27,33 +26,12 @@ def module(name, path):
 def main():
     sample = module('sampler', ROOT / 'sample_cgroups.py')
     analysis = module('analysis', ROOT / 'analyze_before.py')
-    tree = ast.parse((ROOT.parent / 'e5.py').read_text())
-    cpo = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'CPO')
-    method = next(n for n in cpo.body if isinstance(n, ast.FunctionDef) and n.name == 'sampler')
-    scope = dict(module=lambda *args: sample, D2=ROOT, load=lambda _: [{'node': 'fixture', 'local': True}],
-                 sys=sys, subprocess=subprocess, json=json)
-    exec(compile(ast.Module(body=[method], type_ignores=[]), 'CPO.sampler', 'exec'), scope)
-    pod = {'metadata': {'namespace': 'chill-system', 'name': 'native', 'uid': 'uid'},
-           'spec': {'nodeName': 'fixture'}, 'status': {'containerStatuses': [
-               {'name': 'firstfloor', 'containerID': 'containerd://current', 'restartCount': 1}]}}
-    queries = []
-    def get_pods(argv, **kwargs):
-        queries.append(argv)
-        return {'items': [pod]}
-    class Sink(io.StringIO):
-        def close(self):
-            pass
-    source = Sink()
-    collector = SimpleNamespace(c={'collection': {'hosts': 'fixture'}}, tb={'apiSeconds': 1},
-                                a=SimpleNamespace(stage='E5-2'), io=SimpleNamespace(k=get_pods))
+    initial=[{'id':'current','metadata':{'name':'firstfloor','attempt':1},
+              'labels':{'io.kubernetes.pod.namespace':'chill-system',
+                        'io.kubernetes.pod.name':'native','io.kubernetes.pod.uid':'uid'}}]
+    source=sample.REMOTE.replace('initial=None\n','initial='+repr(initial)+'\n',1)
     with tempfile.TemporaryDirectory() as directory:
         folder = Path(directory)
-        (folder / 'pre-pods.json').write_text(json.dumps({'containerID': 'stale'}))
-        with patch.object(subprocess, 'Popen', return_value=SimpleNamespace(stdin=source)):
-            children = scope['sampler'](collector, folder, 5)
-        for _, out, error in children:
-            out.close(); error.close()
-        assert queries == [['get', 'pods', '-A', '-o', 'json']]
         clock = [0]
         inspected = []
         def run(argv, **kwargs):
@@ -90,7 +68,7 @@ def main():
              patch.object(time, 'sleep', lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
              patch('glob.glob', return_value=[]), patch.object(dt, 'datetime', DateTime), \
              contextlib.redirect_stdout(output):
-            exec(source.getvalue(), {})
+            exec(source, {})
         rows = [json.loads(line) for line in output.getvalue().splitlines()]
         assert not any(row['kind'] == 'collector-error' for row in rows)
         counters = [row for row in rows if row['kind'] == 'cgroup']
@@ -105,7 +83,7 @@ def main():
         assert judged['roles']['native']['cpuObservedWallSeconds'] == 1
         assert judged['roles']['native']['cpuMeanCores'] == 1
         assert not judged['collectorErrors']
-    print('PASS cgroup lifecycle: current Pod ID, missing PID continuation, next-sample restart resolution, missing coverage; cluster calls=0')
+    print('PASS D2 cgroup lifecycle: missing PID continuation, next-sample restart resolution, missing coverage; cluster calls=0')
 
 
 if __name__ == '__main__':
