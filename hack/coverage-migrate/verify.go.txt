@@ -1,0 +1,173 @@
+package main
+
+// Compiled beside the selected revision's unmodified Query sources. This keeps
+// the private coverage projection and the real catalog as the verification oracle.
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	api "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/queryapi"
+	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
+	"github.com/lab-paper-code/chill/internal/serving/httpapi"
+	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"io"
+	core "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
+	"net/http"
+	"net/url"
+	"os"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"time"
+)
+
+type migrationObjects string
+
+func (s migrationObjects) OpenLocation(ctx context.Context, loc evidencestore.ObjectLocation) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", string(s)+"/object?key="+url.QueryEscape(loc.Key)+"&store="+url.QueryEscape(loc.Store), nil)
+	if err != nil {
+		return nil, err
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if res.StatusCode != 200 {
+		defer res.Body.Close()
+		b, _ := io.ReadAll(res.Body)
+		return nil, fmt.Errorf("object: %s: %s", res.Status, b)
+	}
+	return res.Body, nil
+}
+func init() {
+	endpoint := os.Getenv("CHILL_COVMIG_VERIFY")
+	if endpoint == "" {
+		return
+	}
+	if err := migrationVerify(endpoint); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+func migrationVerify(endpoint string) error {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = api.AddToScheme(scheme)
+	_ = core.AddToScheme(scheme)
+	store, err := servingkube.NewStore(&rest.Config{Host: endpoint + "/kube", QPS: 200, Burst: 400}, scheme)
+	if err != nil {
+		return err
+	}
+	namespace := os.Getenv("CHILL_COVMIG_NAMESPACE")
+	catalog, err := servingkube.NewCatalog(store, migrationObjects(endpoint), 64<<20)
+	if err != nil {
+		return err
+	}
+	view, err := catalog.Refresh(ctx, []string{namespace})
+	if err != nil {
+		return err
+	}
+	inventory, err := querykube.NewKubernetesInventoryQuery(store.Client())
+	if err != nil {
+		return err
+	}
+	inv, err := inventory.Read(ctx)
+	if err != nil {
+		return err
+	}
+	opts := options{namespace: namespace, factSourceConfigMap: "chill-profiler-facts", executionFactsKey: "execution-facts.yaml"}
+	compatibility, err := newModelCompatibilityMatrixQuery(store.Client(), opts)(ctx)
+	if err != nil {
+		return err
+	}
+	base := &measurementCoverageBase{inventory: queryapi.BuildInventory(inv), compatibility: compatibility, catalog: httpapi.ProfilesView{CatalogView: view}, checked: map[string]time.Time{}, failures: map[string]error{}, adopted: map[string]bool{}}
+	for _, kind := range measurementCoverageSourceKinds {
+		base.checked[kind] = time.Now()
+	}
+	for _, p := range view.Profiles {
+		base.adopted[p.ID] = true
+	}
+	for _, list := range []client.ObjectList{&base.requests, &base.runs} {
+		if err := store.Client().List(ctx, list, client.InNamespace(namespace)); err != nil {
+			return err
+		}
+	}
+	for _, list := range []client.ObjectList{&base.datasets, &base.preprocessors} {
+		if err := store.Client().List(ctx, list); err != nil {
+			return err
+		}
+	}
+	coverage := buildMeasurementCoverage(base, namespace, httpapi.MeasurementCoverageQuery{})
+	usable := 0
+	for _, cell := range coverage.Cells {
+		if cell.Assessment.DisplayStatus == "usable" {
+			usable++
+		}
+	}
+	batches := map[string]any{}
+	for _, p := range view.Profiles {
+		batches[p.ID] = p.Batches
+	}
+	response, err := (&measurementService{}).buildProfiles(ctx, httpapi.ProfilesView{CatalogView: view})
+	if err != nil {
+		return err
+	}
+	type digestBatch struct {
+		B int     `json:"b"`
+		J float64 `json:"j"`
+		W float64 `json:"w"`
+	}
+	type digestProfile struct {
+		ID      string        `json:"id"`
+		Node    string        `json:"node"`
+		Path    string        `json:"path"`
+		Mode    string        `json:"mode"`
+		Status  string        `json:"status"`
+		Batches []digestBatch `json:"batches"`
+		Rows    int           `json:"rows"`
+	}
+	// Decode the real HTTP projection's public wire fields, not an approximation.
+	raw, _ := json.Marshal(response)
+	var wire struct {
+		Profiles []struct {
+			ID        string `json:"id"`
+			Node      string `json:"nodeName"`
+			Condition struct {
+				Artifact struct {
+					Path string `json:"executionPath"`
+				} `json:"artifact"`
+				Mode string `json:"powerMode"`
+			} `json:"condition"`
+			Assessment struct {
+				Status string `json:"displayStatus"`
+			} `json:"assessment"`
+			Batches []struct {
+				Batch int     `json:"batch"`
+				J     float64 `json:"energyPerInputJoules"`
+				W     float64 `json:"meanWallWatts"`
+			} `json:"batches"`
+			Rows []json.RawMessage `json:"resultRows"`
+		} `json:"profiles"`
+	}
+	if err = json.Unmarshal(raw, &wire); err != nil {
+		return err
+	}
+	digest := []digestProfile{}
+	for _, p := range wire.Profiles {
+		d := digestProfile{ID: p.ID, Node: p.Node, Path: p.Condition.Artifact.Path, Mode: p.Condition.Mode, Status: p.Assessment.Status, Rows: len(p.Rows), Batches: []digestBatch{}}
+		for _, b := range p.Batches {
+			d.Batches = append(d.Batches, digestBatch{b.Batch, b.J, b.W})
+		}
+		digest = append(digest, d)
+	}
+	return json.NewEncoder(os.Stdout).Encode(struct {
+		Usable   int            `json:"usable"`
+		Batches  map[string]any `json:"batches"`
+		Issues   any            `json:"issues"`
+		Digest   any            `json:"digest"`
+		Retained int            `json:"retained"`
+	}{usable, batches, view.Insufficiencies, digest, len(view.MeasurementFacts)})
+}
