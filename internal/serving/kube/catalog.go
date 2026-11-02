@@ -26,7 +26,6 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -216,9 +215,6 @@ func completeNativeProfile(profile serving.Profile) bool {
 		profile.Batches[0].Batch != 1 {
 		return false
 	}
-	if len(condition.CPU.AffinityCPUs) != 0 && !slices.Equal(condition.CPU.AffinityCPUs, profile.RuntimeMetadata.CPUAffinity) {
-		return false
-	}
 	previous := 0
 	for _, batch := range profile.Batches {
 		if batch.Batch <= previous || batch.Batch > int(condition.Firstfloor.MaxBatchSize) ||
@@ -308,7 +304,7 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	condition := plan.Shared()
 	if resultSpec.CurvePlan.SchemaVersion != plan.SchemaVersion() || condition.DeviceClass != state.Candidate.DeviceClass ||
 		condition.Artifact.ExecutionPath != state.Candidate.ExecutionPath || condition.PowerMode != state.Candidate.PowerMode ||
-		condition.MetricSource.NodeName != state.TargetNode || condition.CPU.Request != state.CPURequest.String() {
+		condition.MetricSource.NodeName != state.TargetNode {
 		return serving.Profile{}, nil, errors.New("frozen curve plan contradicts campaign measurement state")
 	}
 	if condition.RuntimeFamily != profilingrun.FirstfloorRuntimeFamily {
@@ -655,7 +651,7 @@ func validateCatalogRun(campaign *edgev1alpha1.BatchEnergyOptimization, run *edg
 		return errors.New("Run identity or campaign ownership mismatch")
 	}
 	if run.Spec.MeasurementStateSpec.Candidate != campaign.Spec.State.Candidate || run.Spec.TargetNode != campaign.Spec.State.TargetNode ||
-		run.Spec.CPURequest.Cmp(campaign.Spec.State.CPURequest) != 0 || int(run.Spec.Measurement.Batch) != reference.Measurement.Batch {
+		int(run.Spec.Measurement.Batch) != reference.Measurement.Batch {
 		return errors.New("Run measurement state or batch contradicts completed trial reference")
 	}
 	mode := batchenergyoptimization.WorkloadModeActive
@@ -682,14 +678,6 @@ func validateCatalogRun(campaign *edgev1alpha1.BatchEnergyOptimization, run *edg
 
 func validateCatalogRunProtocol(campaign *edgev1alpha1.BatchEnergyOptimization, run *edgev1alpha1.ProfilingRun) error {
 	measurement := run.Spec.Measurement
-	selectedQuota := campaign.Spec.CPUQuota
-	if (measurement.CPUQuota == nil) != (selectedQuota == nil) ||
-		(measurement.CPUQuota != nil && measurement.CPUQuota.Cmp(*selectedQuota) != 0) {
-		return errors.New("campaign trial CPU quota contradicts selected source quota")
-	}
-	if !slices.Equal(measurement.CPUAffinity, campaign.Spec.CPUAffinity) {
-		return errors.New("campaign trial CPU affinity contradicts selected source CPU IDs")
-	}
 	if measurement.WorkloadMode == "idle-model-loaded" {
 		protocol := campaign.Spec.IdleProtocol
 		if measurement.WarmupIterations != 0 || measurement.SettlingDurationSeconds == nil ||
@@ -737,28 +725,10 @@ func validateCatalogRunConfig(run *edgev1alpha1.ProfilingRun, config profilingru
 	if config.Candidate.Inputs.ModelSpec.Name != run.Spec.Candidate.ModelSpec || config.State.DeviceClass != run.Spec.Candidate.DeviceClass ||
 		config.Candidate.ExecutionPath != run.Spec.Candidate.ExecutionPath || config.State.PowerMode != run.Spec.Candidate.PowerMode ||
 		config.TargetNode.Name != run.Spec.TargetNode || config.Measurement.Batch != int(run.Spec.Measurement.Batch) ||
-		config.Measurement.WorkloadMode != run.Spec.Measurement.WorkloadMode || config.CPU.Request != run.Spec.CPURequest.String() {
+		config.Measurement.WorkloadMode != run.Spec.Measurement.WorkloadMode {
 		return errors.New("stored RunConfig contradicts completed Run spec")
 	}
 	measurement := run.Spec.Measurement
-	if measurement.CPUQuota == nil {
-		if config.CPU.Policy != profilingrun.AllocatableCPUQuotaPolicy {
-			return errors.New("frozen CPU quota policy contradicts completed Run selection")
-		}
-	} else {
-		quota, err := resource.ParseQuantity(config.CPU.Limit)
-		if err != nil || config.CPU.Policy != profilingrun.ConfiguredCPUQuotaPolicy || quota.Cmp(*measurement.CPUQuota) != 0 {
-			return errors.New("frozen CPU quota contradicts completed Run selection")
-		}
-	}
-	if len(config.CPU.AffinityCPUs) != len(measurement.CPUAffinity) {
-		return errors.New("frozen CPU affinity contradicts completed Run selection")
-	}
-	for index, cpu := range measurement.CPUAffinity {
-		if !slices.Contains(config.CPU.AffinityCPUs, int(cpu)) || slices.Contains(measurement.CPUAffinity[:index], cpu) {
-			return errors.New("frozen CPU affinity contradicts completed Run selection")
-		}
-	}
 	settling := 0
 	if measurement.SettlingDurationSeconds != nil {
 		settling = int(*measurement.SettlingDurationSeconds)

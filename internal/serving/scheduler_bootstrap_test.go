@@ -71,26 +71,12 @@ func loadRev76Fixture(t *testing.T) rev76Fixture {
 	if err = json.Unmarshal(data, &f); err != nil {
 		t.Fatal(err)
 	}
-	// Preserve the captured raw document; construct current-contract replay
-	// inputs explicitly rather than treating old row keys as current keys.
+	// Read historical raw only to prove its controlled-execution rows cannot
+	// enter the shared planner; never rewrite its row keys into current keys.
 	margin := f.Settings.CompletionMarginMS
 	f.Settings, err = (SchedulerSettingsInput{SchedulerSettings: f.Settings, CompletionMarginMS: &margin, BootstrapCapacityWait: &f.Settings.BootstrapCapacityWait, ScaleDownStabilization: &f.Settings.ScaleDownStabilization, ReplacementDwell: &f.Settings.ReplacementDwell}).Settings()
 	if err != nil {
 		t.Fatal(err)
-	}
-	for _, snapshot := range []*SchedulerSnapshot{&f.Cold, &f.Post} {
-		for index := range snapshot.Nodes {
-			node := &snapshot.Nodes[index]
-			if node.ModeCPUs == nil {
-				node.ModeCPUs = map[string][]int{}
-			}
-			node.ModeCPUs[node.PowerMode] = node.CPUs
-		}
-	}
-	for index := range f.Rows {
-		row := &f.Rows[index]
-		row.Input.GridSteps, row.Input.BisectionWidth, row.Input.TailSamples = f.Settings.CapacityGridSteps, f.Settings.CapacityBisectionWidth, f.Settings.CapacityTailSamples
-		row.Key = row.Input.Key()
 	}
 	profiles := map[string]*Profile{}
 	for _, profile := range f.Profiles {
@@ -113,92 +99,82 @@ func loadRev76Fixture(t *testing.T) rev76Fixture {
 	return f
 }
 
-func rev76RowsAt(rows []CapacityRow, at time.Time) []CapacityRow {
-	return slices.DeleteFunc(slices.Clone(rows), func(row CapacityRow) bool { return row.BuiltAt.After(at) })
-}
-
-// The raw document is preserved; replay inputs normalize the observed current
-// inventory and hydrate stored references to the current snapshot contract.
-//
-//nolint:gocyclo // One preserved trace covers the successive partial and joint decisions.
-func TestRev76BootstrapRawReplayAC41(t *testing.T) {
-	f := loadRev76Fixture(t)
-	s, snapshot := f.Settings, f.Cold
-	s.ScaleDownStabilization = 300 * time.Second
-	firstRows := rev76RowsAt(f.Rows, snapshot.At)
-	// With waiting disabled, S:861 still reproduces the original premature
-	// genesis2 FP32 allocation; leximin is not a bootstrap barrier.
-	original := capacityDecideForTest(t, s, snapshot, firstRows)
-	if original.Target == nil || len(original.Target.Instances) != 1 || original.Target.Instances[0].Node.Name != "genesis2" {
-		t.Fatalf("S:861 input no longer reproduces the first Smol allocation: %+v", original)
-	}
-	s.BootstrapCapacityWait = 10 * time.Minute
+func TestControlledRawReplayCapacityDoesNotCrossSharedCutover(t *testing.T) {
+	fixture := loadRev76Fixture(t)
+	settings, snapshot := fixture.Settings, fixture.Cold
+	settings.BootstrapCapacityWait = time.Minute
 	snapshot.BootstrapStartedAt = snapshot.At
-	for _, cutoff := range []string{"2026-10-25T20:07:20.716185712Z", "2026-10-25T20:08:50Z", "2026-10-25T20:09:24.365Z"} {
-		at, err := time.Parse(time.RFC3339Nano, cutoff)
-		if err != nil {
-			t.Fatal(err)
-		}
-		// Advance decision time, not capture time: refresh observed timestamps
-		// below only when replaying a later capture.
-		snapshot.At = at
-		refreshRev76Times(&snapshot)
-		got := capacityDecideForTest(t, s, snapshot, rev76RowsAt(f.Rows, at))
-		if got.Status != CapacityPending || got.Target != nil || got.Bootstrap == nil || len(got.Bootstrap.PendingRows) == 0 || len(got.Keep.Actions) != 0 {
-			t.Fatalf("partial row order %s committed a target: status=%s reasons=%v bootstrap=%+v", cutoff, got.Status, got.Reasons, got.Bootstrap)
-		}
-		t.Logf("%s: no target/reservation; pending rows=%d deadline=%s", cutoff, len(got.Bootstrap.PendingRows), got.Bootstrap.Deadline)
-	}
-	// Counterfactual empty-pool capture at post-state time: no S:861 action
-	// has been launched. All measured terminal rows are now available.
-	snapshot.At = f.Post.At
-	refreshRev76Times(&snapshot)
-	got := capacityDecideForTest(t, s, snapshot, f.Rows)
-	if got.Target == nil || got.Target.Keep || got.Bootstrap == nil || len(got.Bootstrap.PendingRows) != 0 {
-		t.Fatalf("completed rows did not release bootstrap: status=%s reasons=%v bootstrap=%+v", got.Status, got.Reasons, got.Bootstrap)
-	}
-	for _, uid := range s.AutonomousWorkloads {
-		if !slices.ContainsFunc(got.Capacity.Workloads, func(w SchedulerCapacityWorkload) bool { return w.UID == uid && w.KappaNew > 0 && len(w.Weights) > 0 }) {
-			t.Fatalf("no positive capacity/route for %s: %+v", uid, got.Capacity.Workloads)
-		}
-	}
-	prepares := 0
-	for _, action := range got.Target.Actions {
-		if action.Kind == schedulerActionPrepare {
-			prepares++
-		}
-	}
-	if prepares < 3 {
-		t.Fatalf("three Workloads did not receive prepare actions: %d", prepares)
-	}
-	t.Logf("joint placement: prepares=%d workloads=%+v", prepares, got.Capacity.Workloads)
-}
-
-func refreshRev76Times(snapshot *SchedulerSnapshot) {
-	snapshot.ObservationEnd = snapshot.At
-	for k := range snapshot.Nodes {
-		snapshot.Nodes[k].ObservedAt = snapshot.At
-	}
-	for k := range snapshot.Options {
-		snapshot.Options[k].Instance.ObservedAt = snapshot.At
+	decision := capacityDecideForTest(t, settings, snapshot, fixture.Rows)
+	if decision.Status != CapacityPending || decision.Target != nil || decision.Bootstrap == nil || len(decision.Bootstrap.PendingRows) == 0 {
+		t.Fatalf("controlled raw rows were relabeled as current shared capacity: status=%s reasons=%v", decision.Status, decision.Reasons)
 	}
 }
 
-func TestRev76PostStateRawReplayAC40(t *testing.T) {
-	f := loadRev76Fixture(t)
-	f.Settings.BootstrapCapacityWait = 10 * time.Minute
-	got := capacityDecideForTest(t, f.Settings, f.Post, f.Rows)
-	if got.Bootstrap != nil || got.Target == nil || got.Target.Keep {
-		t.Fatalf("post-state independent expansion suppressed: status=%s reasons=%v", got.Status, got.Reasons)
+func sharedBootstrapFixture() (SchedulerSettings, SchedulerSnapshot, []CapacityRow) {
+	settings, snapshot := schedulerFixture()
+	base := snapshot.Instances[0]
+	settings.MaxReplicas, settings.MaxInstances = 3, 3
+	settings.AutonomousWorkloads = []string{"w1", "w2", "w3"}
+	settings.MinimumDemand = map[string]float64{"w1": 20, "w2": 20, "w3": 20}
+	settings.BootstrapCapacityWait = time.Minute
+	poolsAddWorkload(&snapshot, "w2")
+	poolsAddWorkload(&snapshot, "w3")
+	for _, uid := range []string{"n2", "n3"} {
+		node := poolsAddNode(&snapshot, uid, map[string]float64{"fixed": 10})
+		option := poolsInstance(base, "option-"+uid, node, "fixed", "")
+		snapshot.Options = append(snapshot.Options, SchedulerOption{Instance: option})
 	}
-	const mnv = "9f7dca68-71a8-4493-bc87-413c6a98f11a"
-	if !slices.ContainsFunc(got.Capacity.Workloads, func(w SchedulerCapacityWorkload) bool { return w.UID == mnv && w.KappaNew > 0 }) {
-		t.Fatalf("impossible PLC hid MNV improvement: %+v", got.Capacity.Workloads)
+	for index := range snapshot.Options {
+		option := &snapshot.Options[index]
+		option.CompatibleUIDs = slices.Clone(settings.AutonomousWorkloads)
+		snapshot.Costs = append(snapshot.Costs, poolsCost(schedulerActionPrepare, option.Instance.Node, "unloaded", schedulerState(option.Instance), "fixed"))
 	}
-	if !slices.ContainsFunc(got.Target.Actions, func(a Action) bool { return a.Kind == schedulerActionPrepare && a.Node.Name != "genesis2" }) {
-		t.Fatal("no independent MNV prepare")
+	snapshot.Instances = nil
+	snapshot.Routing = map[string]map[string]int32{}
+	snapshot.BootstrapStartedAt = snapshot.At
+	return settings, snapshot, capacityRowsForTest(settings, snapshot, nil)
+}
+
+func TestSharedBootstrapWaitsForJointCapacityAC41(t *testing.T) {
+	settings, snapshot, rows := sharedBootstrapFixture()
+	for _, count := range []int{1, len(rows) - 1} {
+		decision := capacityDecideForTest(t, settings, snapshot, rows[:count])
+		if decision.Status != CapacityPending || decision.Target != nil || decision.Bootstrap == nil || len(decision.Bootstrap.PendingRows) == 0 || len(decision.Keep.Actions) != 0 {
+			t.Fatalf("partial rows committed bootstrap: count=%d status=%s reasons=%v", count, decision.Status, decision.Reasons)
+		}
 	}
-	t.Logf("post-state: reserved genesis2 unchanged; MNV expansion selected: %+v", got.Capacity.Workloads)
+	decision := capacityDecideForTest(t, settings, snapshot, rows)
+	if decision.Target == nil || decision.Target.Keep || decision.Bootstrap == nil || len(decision.Bootstrap.PendingRows) != 0 {
+		t.Fatalf("complete shared rows did not release bootstrap: status=%s reasons=%v", decision.Status, decision.Reasons)
+	}
+	for _, uid := range settings.AutonomousWorkloads {
+		if !slices.ContainsFunc(decision.Capacity.Workloads, func(workload SchedulerCapacityWorkload) bool {
+			return workload.UID == uid && workload.KappaNew > 0 && len(workload.Weights) > 0
+		}) {
+			t.Fatalf("joint bootstrap omitted %s: %+v", uid, decision.Capacity.Workloads)
+		}
+	}
+	if prepares := slices.DeleteFunc(slices.Clone(decision.Target.Actions), func(action Action) bool { return action.Kind != schedulerActionPrepare }); len(prepares) != 3 {
+		t.Fatalf("joint bootstrap did not prepare all three Workloads: %+v", decision.Target.Actions)
+	}
+}
+
+func TestSharedBootstrapReservationAllowsIndependentProgressAC40(t *testing.T) {
+	settings, snapshot, rows := sharedBootstrapFixture()
+	reserved := snapshot.Options[len(snapshot.Options)-1].Instance
+	reserved.WorkloadUID = "w3"
+	target := SchedulerCandidate{ID: "in-flight-owner", Instances: []SchedulerInstance{reserved}, Routing: map[string]map[string]int32{"w3": {reserved.ID: 1000}}}
+	reserveTargetForTest(&snapshot, &target)
+	decision := capacityDecideForTest(t, settings, snapshot, rows)
+	if decision.Bootstrap != nil || decision.Target == nil || decision.Target.Keep {
+		t.Fatalf("reservation restarted empty-pool barrier or blocked independent progress: status=%s reasons=%v", decision.Status, decision.Reasons)
+	}
+	if !slices.ContainsFunc(decision.Target.Actions, func(action Action) bool { return action.Kind == schedulerActionPrepare && action.Node != reserved.Node }) {
+		t.Fatal("independent scopes did not prepare")
+	}
+	if !schedulerReservedNode(snapshot, reserved.Node) || snapshot.Reservations[0].Target.Instances[0].Node != reserved.Node {
+		t.Fatal("independent planning returned the in-flight owner's physical scope")
+	}
 }
 
 func TestBootstrapDeadlineAndTerminalRows(t *testing.T) {

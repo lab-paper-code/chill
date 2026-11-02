@@ -57,9 +57,9 @@ func TestBuildAttemptJobProjectsOneOffTargetAttempt(t *testing.T) {
 
 	request.Prepared.PowerSource.MetricLabels["device_type"] = "caller-mutation"
 	options.Tolerations[0].TolerationSeconds = new(int64)
-	options.Resources.Requests[corev1.ResourceCPU] = resource.MustParse("9")
+	options.Resources.Requests[corev1.ResourceMemory] = resource.MustParse("9Mi")
 	if pod.Tolerations[0].TolerationSeconds == nil || *pod.Tolerations[0].TolerationSeconds != tolerationSeconds ||
-		container.Resources.Requests.Cpu().String() != "10m" ||
+		container.Resources.Requests.Memory().String() != "10Mi" ||
 		wire.PowerSource.MetricLabels["device_type"] != "device-b" {
 		t.Fatal("Job aliases caller-owned attempt material")
 	}
@@ -140,6 +140,12 @@ func TestBuildAttemptJobRejectsInvalidOperationalSelection(t *testing.T) {
 		name   string
 		mutate func(*AttemptJobRequest, *AttemptJobOptions)
 	}{
+		{name: "CPU request including zero", mutate: func(_ *AttemptJobRequest, options *AttemptJobOptions) {
+			options.Resources.Requests[corev1.ResourceCPU] = resource.MustParse("0")
+		}},
+		{name: "CPU limit", mutate: func(_ *AttemptJobRequest, options *AttemptJobOptions) {
+			options.Resources.Limits[corev1.ResourceCPU] = resource.MustParse("1")
+		}},
 		{name: "direction index", mutate: func(request *AttemptJobRequest, _ *AttemptJobOptions) {
 			request.DirectionIndex = 2
 		}},
@@ -217,8 +223,8 @@ func validAttemptJobInputs(t *testing.T) (AttemptJobRequest, AttemptJobOptions, 
 			ActiveDeadlineOverhead: 1100 * time.Millisecond,
 			CoordinationBytes:      1024, WorkspaceBytes: 4096,
 			Resources: corev1.ResourceRequirements{
-				Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m")},
-				Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")},
+				Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("10Mi")},
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("100Mi")},
 			},
 			Tolerations: []corev1.Toleration{{Key: "dedicated", TolerationSeconds: &tolerationSeconds}},
 		}, scheme

@@ -77,6 +77,16 @@ func (o *Observer) nativeNode(ctx context.Context) (*transitioncost.NativeNodeOb
 
 func (o *Observer) nativeInstance(ctx context.Context, pod *core.Pod,
 	container *core.Container) (transitioncost.NativeInstanceObservation, error) {
+	for _, containers := range [][]core.Container{pod.Spec.Containers, pod.Spec.InitContainers} {
+		for _, actual := range containers {
+			if _, present := actual.Resources.Requests[core.ResourceCPU]; present {
+				return transitioncost.NativeInstanceObservation{}, errors.New("native source must not request CPU")
+			}
+			if _, present := actual.Resources.Limits[core.ResourceCPU]; present {
+				return transitioncost.NativeInstanceObservation{}, errors.New("native source must not limit CPU")
+			}
+		}
+	}
 	var status *core.ContainerStatus
 	for i := range pod.Status.ContainerStatuses {
 		if pod.Status.ContainerStatuses[i].Name == container.Name {

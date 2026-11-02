@@ -20,7 +20,6 @@ import (
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
-	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -28,7 +27,6 @@ import (
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/utils/cpuset"
 )
 
 const controlPlaneLabel = "node-role.kubernetes.io/control-plane"
@@ -627,14 +625,7 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 			sn.Reasons = append(sn.Reasons, serving.NodeExcluded)
 		}
 		captureNodeInventory(&sn, n, profiles)
-		sn.ModeCPUs = declaredModeCPUs(n, nodeClass(n, classes.Items))
 		sn.PowerMode = readBackMode(n, nodeClass(n, classes.Items))
-		if sn.PowerMode != "" && len(sn.CPUs) > 0 {
-			if sn.ModeCPUs == nil {
-				sn.ModeCPUs = map[string][]int{}
-			}
-			sn.ModeCPUs[sn.PowerMode] = sn.CPUs
-		}
 		lowest := serving.SchedulerLowestMode(config.Baselines, sn.Node)
 		targets := nodePowerTargets(n, classes.Items, config.PowerPolicies)
 		if _, ok := targets[lowest]; sn.PowerMode == "" || len(targets) == 0 || lowest != "" && lowest != sn.PowerMode && !ok {
@@ -699,41 +690,15 @@ func nodePowerTargets(n *core.Node, classes []edge.DeviceClass, policies []nodea
 	return targets
 }
 
-// captureNodeInventory reads the online CPU list the node agent publishes and
-// the GPUs the Node's profiles were measured on. A missing or unreadable list,
-// more devices than allocatable, or a reservation outside them leaves the
-// Node without placement inventory.
+// captureNodeInventory retains GPU identity and quantity checks. CPU online
+// observations belong to the node agent, not placement admission.
 func captureNodeInventory(sn *serving.SchedulerNode, n *core.Node, profiles []serving.Profile) {
-	cpus, err := cpuset.Parse(n.Annotations[chillmeta.OnlineCPUs])
-	sn.CPUs, sn.GPUUUIDs = cpus.List(), measuredGPUs(profiles, sn.Node.UID)
+	sn.GPUUUIDs = measuredGPUs(profiles, sn.Node.UID)
 	gpuQuantity := n.Status.Allocatable["nvidia.com/gpu"]
-	if err != nil || len(sn.CPUs) == 0 || int64(len(sn.CPUs)) > n.Status.Allocatable.Cpu().Value() ||
-		int64(len(sn.GPUUUIDs)) > gpuQuantity.Value() || !cpuset.New(sn.Reserved.CPUs...).IsSubsetOf(cpus) ||
+	if int64(len(sn.GPUUUIDs)) > gpuQuantity.Value() ||
 		sn.Reserved.GPUUUID != "" && !slices.Contains(sn.GPUUUIDs, sn.Reserved.GPUUUID) {
 		sn.Reasons = append(sn.Reasons, serving.NodePlacementInventoryMissing)
 	}
-}
-
-// declaredModeCPUs holds declared CPU sets and preserves the Node-specific
-// current CPU set for GPU-only clock changes.
-func declaredModeCPUs(n *core.Node, class *edge.DeviceClass) map[string][]int {
-	if class == nil {
-		return nil
-	}
-	var modes map[string][]int
-	for _, m := range class.Spec.PowerModes {
-		if list := modeCPUList(n, m); list != "" {
-			cpus, err := cpuset.Parse(list)
-			if err != nil || cpus.Size() == 0 {
-				continue
-			}
-			if modes == nil {
-				modes = map[string][]int{}
-			}
-			modes[m.Name] = cpus.List()
-		}
-	}
-	return modes
 }
 
 // measuredGPUs is the GPU inventory of one Node: the GPUs its verified
@@ -763,7 +728,6 @@ func bindProfileMeters(s *serving.SchedulerSnapshot, meters []MeterDeclaration) 
 // A Pod CHILL did not place leaves the Node in the POOL; when its GPU or CPU use
 // cannot be admitted the Node gets PlacementBudgetUnavailable.
 func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n *core.Node, pods *core.PodList, physical map[string]serving.InstanceState, profileByID map[string]*serving.Profile) {
-	var nonServingMilliCPU int64
 	var nonServingMemory uint64
 	servingUIDs := map[string]bool{}
 	for _, state := range physical {
@@ -788,8 +752,7 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 		}
 		if state.Native != nil {
 			m := state.Native.Metadata
-			instance.Allocation.CPUs = slices.Clone(m.Runtime.CPUAffinity)
-			instance.Allocation.GPUUUID, instance.Allocation.Threads = m.Runtime.GPUUUID, m.Runtime.IntraOpThreads
+			instance.Allocation.GPUUUID = m.Runtime.GPUUUID
 			instance.Ready = instance.Ready && state.Native.Ready
 			instance.Capacity, instance.MaxBatch, instance.FixedBatchSize = m.MaxQueueRequests, m.MaxBatchSize, m.Policy.FixedBatchSize
 			instance.MaxWait = time.Duration(m.Policy.MaxBatchWaitMS * float64(time.Millisecond))
@@ -804,7 +767,6 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 			instance.PodName = pod.Name
 			for _, container := range pod.Spec.Containers {
 				if container.Name == firstfloorContainerName {
-					instance.Allocation.CPUCount = int(container.Resources.Requests.Cpu().Value())
 					instance.Allocation.MemoryBytes = uint64(container.Resources.Limits.Memory().Value())
 				}
 			}
@@ -824,8 +786,7 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 		if p.Spec.NodeName != n.Name || servingUIDs[string(p.UID)] || p.Status.Phase == core.PodSucceeded || p.Status.Phase == core.PodFailed {
 			continue
 		}
-		milliCPU, memory, gpu := podBudget(p)
-		nonServingMilliCPU += milliCPU
+		memory, gpu := podBudget(p)
 		if gpu {
 			sn.Reasons = appendReason(sn.Reasons, serving.NodePlacementBudgetUnavailable)
 		}
@@ -835,13 +796,8 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 		}
 		nonServingMemory += uint64(memory)
 	}
-	// Quota requests are an aggregate count budget, not observed affinity.
-	// Round once; the explicit reservation must cover the entire milliCPU sum.
-	if nonServingMilliCPU > 0 || nonServingMemory > 0 {
-		sn.NonServing = append(sn.NonServing, serving.SchedulerAllocation{CPUCount: int((nonServingMilliCPU + 999) / 1000), CPUReserved: len(sn.Reserved.CPUs) > 0, MemoryBytes: nonServingMemory})
-	}
-	if nonServingMilliCPU > int64(len(sn.Reserved.CPUs))*1000 {
-		sn.Reasons = appendReason(sn.Reasons, serving.NodePlacementBudgetUnavailable)
+	if nonServingMemory > 0 {
+		sn.NonServing = append(sn.NonServing, serving.SchedulerAllocation{MemoryBytes: nonServingMemory})
 	}
 }
 
@@ -872,9 +828,8 @@ func ValidatePreparationCapacity(
 	}
 	memory := node.Status.Allocatable.Memory().Value()
 	gpus := node.Status.Allocatable["nvidia.com/gpu"]
-	if !ready || len(inventory.CPUs) == 0 || int64(len(inventory.CPUs)) > node.Status.Allocatable.Cpu().Value() ||
-		memory <= 0 || int64(len(inventory.GPUUUIDs)) > gpus.Value() {
-		return errors.New("preparation requires current Node readiness and bounded physical CPU/memory inventory")
+	if !ready || memory <= 0 || int64(len(inventory.GPUUUIDs)) > gpus.Value() {
+		return errors.New("preparation requires current Node readiness and bounded memory/device inventory")
 	}
 	for _, pod := range pods.Items {
 		if pod.Namespace == servingNamespace && pod.Spec.NodeName == node.Name &&
@@ -1534,32 +1489,26 @@ func schedulerPolicyAcknowledged(wanted serving.SchedulerInstance, actual native
 		actual.Policy.MaxBatchWaitMS == float64(wanted.MaxWait)/float64(time.Millisecond) &&
 		native.EffectiveDeadlinePolicy(actual.Policy.DeadlinePolicy) == native.EffectiveDeadlinePolicy(wanted.Profile.Condition.Firstfloor.DeadlinePolicy)
 }
-func podBudget(pod *core.Pod) (int64, int64, bool) {
-	var cpu, memory, sideCPU, sideMemory, initCPU, initMemory int64
+func podBudget(pod *core.Pod) (int64, bool) {
+	var memory, sideMemory, initMemory int64
 	gpu := false
 	for _, container := range pod.Spec.Containers {
-		cpu += container.Resources.Requests.Cpu().MilliValue()
 		memory += container.Resources.Requests.Memory().Value()
 		q := container.Resources.Requests["nvidia.com/gpu"]
 		gpu = gpu || q.Sign() > 0
 	}
 	for _, container := range pod.Spec.InitContainers {
-		c, m := container.Resources.Requests.Cpu().MilliValue(), container.Resources.Requests.Memory().Value()
+		m := container.Resources.Requests.Memory().Value()
 		q := container.Resources.Requests["nvidia.com/gpu"]
 		gpu = gpu || q.Sign() > 0
 		if container.RestartPolicy != nil && *container.RestartPolicy == core.ContainerRestartPolicyAlways {
-			sideCPU += c
 			sideMemory += m
-			c = sideCPU
 			m = sideMemory
 		} else {
-			c += sideCPU
 			m += sideMemory
 		}
-		initCPU = max(initCPU, c)
 		initMemory = max(initMemory, m)
 	}
-	cpu = max(cpu+sideCPU, initCPU) + pod.Spec.Overhead.Cpu().MilliValue()
 	memory = max(memory+sideMemory, initMemory) + pod.Spec.Overhead.Memory().Value()
-	return cpu, memory, gpu
+	return memory, gpu
 }

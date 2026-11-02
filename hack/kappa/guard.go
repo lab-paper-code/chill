@@ -61,7 +61,7 @@ func replayKey(t *serving.SchedulerCandidate) string {
 	}
 	instances := make([]string, 0, len(t.Instances))
 	for _, i := range t.Instances {
-		instances = append(instances, fmt.Sprintf("%s|%s|%s|%v|b%d|w%d", i.ID, i.Node.Name, i.ProfileID, i.Allocation.CPUs, i.MaxBatch, i.MaxWait))
+		instances = append(instances, fmt.Sprintf("%s|%s|%s|%s|b%d|w%d", i.ID, i.Node.Name, i.ProfileID, i.Allocation.GPUUUID, i.MaxBatch, i.MaxWait))
 	}
 	slices.Sort(instances)
 	b, _ := json.Marshal(struct {

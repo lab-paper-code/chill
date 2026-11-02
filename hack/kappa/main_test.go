@@ -11,12 +11,22 @@ import (
 )
 
 func TestDecodeSnapshotUsesCurrentWorkloadUID(t *testing.T) {
-	snapshot, err := decodeSnapshot([]byte(`{"instances":[{"id":"current","workloadUID":"w","workloadUIDs":["old"]},{"id":"unbound","workloadUIDs":["old"]}]}`))
+	snapshot, err := decodeSnapshot([]byte(`{"instances":[{"id":"current","workloadUID":"w"},{"id":"unbound"}]}`))
 	if err != nil || len(snapshot.Instances) != 2 || snapshot.Instances[0].WorkloadUID != "w" || snapshot.Instances[1].WorkloadUID != "" {
 		t.Fatalf("current snapshot decode: %+v %v", snapshot, err)
 	}
 	if _, err := decodeSnapshot([]byte(`{"instances":[]} {}`)); err == nil {
 		t.Fatal("trailing JSON accepted")
+	}
+	for _, retired := range []string{
+		`{"instances":[{"allocation":{"cpus":[0]}}]}`,
+		`{"instances":[{"profile":{"condition":{"cpu":{"request":"1"}}}}]}`,
+		`{"nodes":[{"modeCPUs":{"fixed":[0]}}]}`,
+		`{"instances":[{"workloadUIDs":["old"]}]}`,
+	} {
+		if _, err := decodeSnapshot([]byte(retired)); err == nil {
+			t.Fatalf("retired allocation/evidence crossed replay cutover: %s", retired)
+		}
 	}
 }
 

@@ -52,7 +52,7 @@ func validNativeNode(node *NativeNodeObservation) error {
 		id := i.PodUID + "/" + i.ContainerID
 		if i.PodUID == "" || i.PodName == "" || i.Namespace == "" || i.ContainerID == "" ||
 			i.StartedAt.IsZero() || i.RestartCount < 0 || seen[id] || i.Image == "" || i.ImageID == "" ||
-			i.CPURequestMilli <= 0 || i.CPULimitMilli < i.CPURequestMilli || i.MemoryRequestBytes <= 0 ||
+			i.CPURequestMilli != 0 || i.CPULimitMilli != 0 || i.MemoryRequestBytes <= 0 ||
 			i.MemoryLimitBytes < i.MemoryRequestBytes || !validNativeState(&i.State) {
 			return fmt.Errorf("native physical allocation/readiness/zero-queue proof incomplete for %s", id)
 		}
@@ -68,8 +68,8 @@ func validNativeState(state *native.State) bool {
 	m := &state.Metadata
 	return state.Ready && !state.At.IsZero() && m.Mode == "serving" && m.ProfileID != "" &&
 		!m.Runtime.Synthetic && m.Runtime.RuntimeVersion != "" && len(m.Runtime.ModelFiles) != 0 &&
-		len(m.Runtime.CPUAffinity) > 0 && m.Runtime.IntraOpThreads >= 1 &&
-		len(m.Runtime.CPUAffinity) >= m.Runtime.IntraOpThreads && len(state.Requests) == 0
+		len(m.Runtime.CPUAffinity) > 0 && m.Runtime.IntraOpThreads >= 0 &&
+		m.Runtime.InterOpThreads >= 0 && len(state.Requests) == 0
 }
 
 // VerifyNativeTransition proves the wall trial excludes Serving incremental
@@ -91,8 +91,13 @@ func VerifyNativeTransition(before, after *NativeNodeObservation) error {
 			if a.PodUID != b.PodUID || a.ContainerID != b.ContainerID {
 				continue
 			}
+			beforeMetadata, afterMetadata := a.State.Metadata, b.State.Metadata
+			// CPU masks/cgroups are observations, not a loaded allocation.
+			beforeMetadata.Runtime.CPUAffinity = afterMetadata.Runtime.CPUAffinity
+			beforeMetadata.Runtime.CPUSet = afterMetadata.Runtime.CPUSet
+			beforeMetadata.Runtime.CgroupCPUMax = afterMetadata.Runtime.CgroupCPUMax
 			found = true
-			if !a.StartedAt.Equal(b.StartedAt) || a.RestartCount != b.RestartCount || a.Image != b.Image || a.ImageID != b.ImageID || a.CPURequestMilli != b.CPURequestMilli || a.CPULimitMilli != b.CPULimitMilli || a.MemoryRequestBytes != b.MemoryRequestBytes || a.MemoryLimitBytes != b.MemoryLimitBytes || a.GPURequest != b.GPURequest || a.GPULimit != b.GPULimit || a.State.AcceptedRequests != b.State.AcceptedRequests || a.State.CompletedRequests != b.State.CompletedRequests || a.State.Executions != b.State.Executions || !reflect.DeepEqual(a.State.Metadata, b.State.Metadata) {
+			if !a.StartedAt.Equal(b.StartedAt) || a.RestartCount != b.RestartCount || a.Image != b.Image || a.ImageID != b.ImageID || a.CPURequestMilli != b.CPURequestMilli || a.CPULimitMilli != b.CPULimitMilli || a.MemoryRequestBytes != b.MemoryRequestBytes || a.MemoryLimitBytes != b.MemoryLimitBytes || a.GPURequest != b.GPURequest || a.GPULimit != b.GPULimit || a.State.AcceptedRequests != b.State.AcceptedRequests || a.State.CompletedRequests != b.State.CompletedRequests || a.State.Executions != b.State.Executions || !reflect.DeepEqual(beforeMetadata, afterMetadata) {
 				return errors.New("native loaded condition changed or Serving executed during power window")
 			}
 			break

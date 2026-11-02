@@ -153,6 +153,9 @@ func compareReuseProfiles(source, target serving.Profile, check *serving.Profile
 	}
 	sourceRuntime, targetRuntime := *source.RuntimeMetadata, *target.RuntimeMetadata
 	sourceRuntime.GPUUUID, targetRuntime.GPUUUID = "", ""
+	// Confirmation judges shared execution empirically, not by matching CPU masks.
+	sourceRuntime.CPUAffinity, sourceRuntime.CPUSet, sourceRuntime.CgroupCPUMax = targetRuntime.CPUAffinity, targetRuntime.CPUSet, targetRuntime.CgroupCPUMax
+	sourceRuntime.IntraOpThreads, sourceRuntime.InterOpThreads = targetRuntime.IntraOpThreads, targetRuntime.InterOpThreads
 	if !reflect.DeepEqual(sourceRuntime, targetRuntime) {
 		return errors.New("actual runner versions, resources or initialized batch conditions differ")
 	}

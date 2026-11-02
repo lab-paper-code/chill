@@ -103,11 +103,7 @@ func (b *schedulerBridgeCompiler) initialize() (string, string) {
 	}
 	for n, j := range choice {
 		plan := p.plans[n][j]
-		projected, known := b.goal.Nodes[n].AtMode(plan.mode)
-		if !known {
-			return "", NodePlacementInventoryMissing
-		}
-		b.goal.Nodes[n] = projected
+		b.goal.Nodes[n].PowerMode = plan.mode
 		b.goal.Instances = append(b.goal.Instances, plan.instances...)
 		for _, i := range plan.instances {
 			if _, current := b.out.instances[i.ID]; !current {

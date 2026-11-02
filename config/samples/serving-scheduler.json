@@ -9,7 +9,6 @@
     "maxObservationAgeNanos": 5000000000,
     "maxReplicas": 8,
     "maxInstances": 16,
-    "maxCPUs": 256,
     "servingMemoryBytes": 134217728,
     "completionMarginMS": 29,
     "capacityWindowNanos": 60000000000,

@@ -22,7 +22,7 @@ ChillServer가 `chill.dacs.io/measurement:NoSchedule` taint를 소유한다. Nod
 | OperationCostMeasurement | spec.node | Complete, Insufficient, Failed |
 | DispatchOccupancyMeasurement | spec.node | Complete, Insufficient, Failed |
 BEO/MLIB 자식 ProfilingRun은 루트 승인 뒤 생성하므로 별도 요청하지 않는다.
-- BEO의 결정적 curve-plan 오류(CPU request/quota의 allocatable 초과, 불가능한 batch set·Run 입력)는 기존 `Failed/InvalidRunSpec`, `MeasurementComplete=False`로 종료한다. 이미 분류된 execution/actuation policy 오류도 해당 terminal reason을 유지한다. controller는 같은 generation에서 재시도하지 않고 admission은 위 정상 반환 절차를 따른다. Kubernetes/Evidence Store 읽기·쓰기 오류와 mutable fact 불일치는 기존 `CurvePlanResolutionFailed`로 남아 재시도하며 lease를 유지한다. status 저장 스키마는 바뀌지 않는다.
+- BEO의 결정적 curve-plan 오류(불가능한 batch set·Run 입력)는 기존 Failed/InvalidRunSpec, MeasurementComplete=False로 종료한다. CPU 할당량 선택이나 allocatable 검사는 없다. execution/actuation policy 오류의 terminal 의미와 정상 물리 반환 절차는 유지한다. Kubernetes/Evidence Store 일시 읽기·쓰기 오류를 측정 조건 자체의 실패로 바꾸지 않는다.
 
 ### 2.2 승인과 거절
 
@@ -32,10 +32,10 @@ BEO/MLIB 자식 ProfilingRun은 루트 승인 뒤 생성하므로 별도 요청�
 | 1 | taint·예약run·전력pending·앞루트 대기 | 다음 주기 대기 |
 | 2 | Node 없음 | Refused: NodeMissing |
 | 3 | nonterminal CHILL serving Pod 있음 | Refused: NodeServing와 namespace/name, taint 없음 |
-| 4 | BEO/MLIB CPU affinity/quota가 모드 online−reserved를 초과 | CPUsUnavailable, 모드 online을 모르면 OnlineCPUsUnknown |
+| 4 | CPU 공유 실행 | affinity/quota/online−reserved 검사 없음. CPU 관측의 누락은 측정 승인 거절 사유가 아니다 |
 | 5 | PMTC runner 부적격 | 아래 runner 사유 |
 | 6 | 그 밖 | taint값=루트UID, Granted RFC3339 시각; PMTC는 runner 준비 뒤 Granted |
-- onlineCPUs는 DeviceClass powerModes에서 읽고 필드가 없으면 현재 read-back 모드(Fixed는 유일모드)에만 Node `edge.dacs.io/cpus`를 쓴다. 다른 모드 inventory를 추정하지 않는다.
+- DeviceClass power mode와 Node readback은 실제 전력 상태를 판정한다. online CPU 목록은 관측이며 예약 mask나 배치 가능성 proof가 아니다.
 - taint/전력pending을 먼저 보므로 앞 측정의 runner 때문에 뒤 루트가 NodeServing으로 거절되지 않는다. 서빙 Pod 거절은 소유 Workload/자동제어와 무관하다.
 - taint는 resourceVersion merge patch다. atomic taints 목록을 SSA manager로 나눌 수 없고 충돌은 다음 주기에 재시도한다.
 - 승인 후 capture/operations의 admittedNode가 해당 노드를 서빙 배치·전력변경에서 제외한다. 전력pending은 Node state/requested-at/policy 기한으로 판단한다. 정책·시각이 없으면 기한을 추정하지 않고 대기한다(`admission.go:powerModePending`).

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -39,7 +40,6 @@ func measuredAdoptionProfile() serving.Profile {
 				Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"},
 			},
 			Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 4, MaxQueueSize: 8},
-			CPU:        derivation.CurveCPUContract{Request: "1", Limit: "1", ORTIntraOpThreads: 1},
 		},
 		RuntimeMetadata: &native.RuntimeMetadata{
 			Runtime: "ort-cuda", ModelFiles: []string{"/model/model.onnx"},
@@ -104,8 +104,7 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 		spec.MemoryBytes != 4098 || spec.Store.CredentialsSecretName != "actual-secret" {
 		t.Fatalf("lost measured startup/delivery facts: %+v", spec)
 	}
-	if !reflect.DeepEqual(spec.Instance.Allocation.CPUs, []int{3}) ||
-		spec.Instance.Allocation.GPUUUID != "GPU-measured" ||
+	if spec.Instance.Allocation.GPUUUID != "GPU-measured" ||
 		!strings.Contains(strings.Join(spec.Config.RunnerCommand, " "),
 			"--runtime ort-cuda --model-dir /model --preprocessor /preprocessor") {
 		t.Fatal("measured GPU/runtime allocation changed")
@@ -155,7 +154,7 @@ func TestMeasuredPreparationReservesQueueMemoryAboveMeasuredPeak(t *testing.T) {
 		t.Fatal("headroom without queue bytes accepted")
 	}
 }
-func TestMeasuredPreparationKeepsQuotaAffinityAndThreadsDistinct(t *testing.T) {
+func TestMeasuredPreparationUsesSharedCPUWithoutAllocation(t *testing.T) {
 	node := &core.Node{
 		ObjectMeta: meta.ObjectMeta{
 			Name: "node", UID: "node-uid",
@@ -163,7 +162,7 @@ func TestMeasuredPreparationKeepsQuotaAffinityAndThreadsDistinct(t *testing.T) {
 		Status: core.NodeStatus{
 			Conditions: []core.NodeCondition{{Type: core.NodeReady, Status: core.ConditionTrue}},
 			Allocatable: core.ResourceList{
-				core.ResourceCPU: resource.MustParse("4"), core.ResourceMemory: resource.MustParse("1Gi"),
+				core.ResourceMemory: resource.MustParse("1Gi"),
 			},
 		},
 	}
@@ -175,40 +174,28 @@ func TestMeasuredPreparationKeepsQuotaAffinityAndThreadsDistinct(t *testing.T) {
 			maxEvidenceBytes: 64 << 20, maxRequestBytes: 8 << 20,
 		},
 	}
-	for _, request := range []string{"500m", "1500m", "2"} {
-		t.Run(request, func(t *testing.T) {
+	for _, threads := range []int{0, 2, 8} {
+		t.Run(fmt.Sprint(threads), func(t *testing.T) {
 			profile := measuredAdoptionProfile()
-			profile.Condition.CPU.Request, profile.Condition.CPU.Limit = request, "2"
-			profile.Condition.CPU.ORTIntraOpThreads = 2
-			profile.Condition.CPU.AffinityCPUs = []int{0, 1, 2, 3}
 			profile.RuntimeMetadata.CPUAffinity = []int{0, 1, 2, 3}
-			profile.RuntimeMetadata.IntraOpThreads = 2
-			profile.RuntimeMetadata.CgroupCPUMax = "200000 100000"
+			profile.RuntimeMetadata.IntraOpThreads, profile.RuntimeMetadata.InterOpThreads = threads, 0
+			profile.RuntimeMetadata.CgroupCPUMax = "max 100000"
 			profile.RuntimeMetadata.GPUUUID = ""
 			spec, err := service.measuredPreparation(context.Background(), profile, 128<<20)
 			if err != nil {
 				t.Fatal(err)
 			}
-			quantity := resource.MustParse(request)
-			if spec.Instance.Allocation.CPUCount != int(quantity.Value()) ||
-				spec.Instance.Allocation.Threads != 2 ||
-				!reflect.DeepEqual(spec.Instance.Allocation.CPUs, []int{0, 1, 2, 3}) ||
-				!strings.Contains(strings.Join(spec.Config.RunnerCommand, " "), "--intra-op-threads 2") {
-				t.Fatalf("preparation conflated measured request, affinity or threads: %+v", spec)
+			command := strings.Join(spec.Config.RunnerCommand, " ")
+			if strings.Contains(command, "--intra-op-threads") || strings.Contains(command, "--cpu-affinity") {
+				t.Fatalf("shared serving preparation injected CPU controls: %+v", spec)
 			}
 			inventory := serving.SchedulerNode{
-				Node: spec.Instance.Node, CPUs: []int{0, 1, 2, 3}, MemoryBytes: 1 << 30,
+				Node: spec.Instance.Node, MemoryBytes: 1 << 30,
 			}
 			if err = servingkube.ValidatePreparationCapacity(
 				"serving", node, &core.PodList{}, inventory, spec.Instance,
 			); err != nil {
 				t.Fatalf("admitted measured preparation failed capacity: %v", err)
-			}
-			for _, threads := range []int{0, 5} {
-				profile.RuntimeMetadata.IntraOpThreads = threads
-				if _, err = service.measuredPreparation(context.Background(), profile, 128<<20); err == nil {
-					t.Fatalf("invalid measured thread count %d accepted", threads)
-				}
 			}
 		})
 	}
@@ -279,7 +266,7 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 		MaxObservationAge: time.Second, MaxReplicas: 1,
 		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
 		CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
-		CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 2,
+		CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
 	}
 	// The native store is unreachable, so listing completed measurements fails.
 	rejected := schedulerConfiguration{Settings: settings}
@@ -451,9 +438,9 @@ func schedulerTestConfiguration() schedulerConfiguration {
 			MaxObservationAge: time.Second, MaxReplicas: 1,
 			MaxInstances: 5, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
 			CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
-			CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 2,
+			CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
 		},
-		Reserved: map[string]serving.SchedulerAllocation{"rpi": {CPUs: []int{0}}},
+		Reserved: map[string]serving.SchedulerAllocation{"rpi": {MemoryBytes: 1024}},
 	}
 }
 

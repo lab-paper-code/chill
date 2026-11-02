@@ -25,7 +25,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
@@ -443,14 +442,11 @@ func (o *Observer) publishLedger(probed []serving.ReadyInstance) error {
 			instance.Profile = profile
 			if profile.RuntimeMetadata != nil {
 				m := profile.RuntimeMetadata
-				instance.State.Allocation.CPUs = slices.Clone(m.CPUAffinity)
 				instance.State.Allocation.GPUUUID = m.GPUUUID
-				instance.State.Allocation.Threads = m.IntraOpThreads
 			}
 		}
 		for _, container := range pod.Spec.Containers {
 			if container.Name == firstfloorContainerName {
-				instance.State.Allocation.CPUCount = int(container.Resources.Requests.Cpu().Value())
 				instance.State.Allocation.MemoryBytes = uint64(container.Resources.Limits.Memory().Value())
 			}
 		}
@@ -712,6 +708,16 @@ func validateSourceContainers(pod *corev1.Pod, condition *profilederivation.Curv
 	if len(pod.Spec.Containers) != 1 || len(pod.Spec.InitContainers) != 3 || len(pod.Spec.EphemeralContainers) != 0 || pod.Spec.HostNetwork {
 		return errors.New("native source requires isolated firstfloor runner, artifact, preprocessor and immutable profile init containers")
 	}
+	for _, containers := range [][]corev1.Container{pod.Spec.Containers, pod.Spec.InitContainers} {
+		for _, container := range containers {
+			if _, present := container.Resources.Requests[corev1.ResourceCPU]; present {
+				return errors.New("shared CPU execution must not request CPU in any container")
+			}
+			if _, present := container.Resources.Limits[corev1.ResourceCPU]; present {
+				return errors.New("shared CPU execution must not limit CPU in any container")
+			}
+		}
+	}
 	runtime, artifact, preprocessor, bundle := pod.Spec.Containers[0], pod.Spec.InitContainers[0], pod.Spec.InitContainers[1], pod.Spec.InitContainers[2]
 	status := firstfloorStatus(pod)
 	if runtime.Name != firstfloorContainerName || artifact.Name != "artifact" || preprocessor.Name != "preprocessor" || bundle.Name != profileInitContainerName || status == nil || status.State.Running == nil || !status.Ready || status.ContainerID == "" || !observedImage(runtime.Image, status.ImageID, condition.RuntimeImage) {
@@ -751,12 +757,11 @@ func initCompleted(pod *corev1.Pod, init corev1.Container, image string) bool {
 }
 
 func validateSourceResources(runtime *corev1.Container, node *corev1.Node, profile *serving.Profile) error {
-	condition := &profile.Condition
-	request, requestErr := resource.ParseQuantity(condition.CPU.Request)
-	limit, limitErr := resource.ParseQuantity(condition.CPU.Limit)
-	actualRequest, actualLimit := runtime.Resources.Requests[corev1.ResourceCPU], runtime.Resources.Limits[corev1.ResourceCPU]
-	if requestErr != nil || limitErr != nil || request.Cmp(actualRequest) != 0 || limit.Cmp(actualLimit) != 0 || condition.CPU.ExclusivityClaimed {
-		return errors.New("actual CPU request/limit does not match measured quota condition")
+	if _, requested := runtime.Resources.Requests[corev1.ResourceCPU]; requested {
+		return errors.New("shared CPU execution must not request CPU")
+	}
+	if _, limited := runtime.Resources.Limits[corev1.ResourceCPU]; limited {
+		return errors.New("shared CPU execution must not limit CPU")
 	}
 	memoryLimit := runtime.Resources.Limits[corev1.ResourceMemory]
 	memoryRequest := runtime.Resources.Requests[corev1.ResourceMemory]

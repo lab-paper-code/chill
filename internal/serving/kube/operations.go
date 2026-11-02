@@ -252,7 +252,7 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (O
 			continue
 		}
 		s.Native[id] = state
-		allocation := serving.SchedulerAllocation{CPUs: state.Metadata.Runtime.CPUAffinity, GPUUUID: state.Metadata.Runtime.GPUUUID, Threads: state.Metadata.Runtime.IntraOpThreads, MemoryBytes: uint64(p.Spec.Containers[0].Resources.Limits.Memory().Value())}
+		allocation := serving.SchedulerAllocation{GPUUUID: state.Metadata.Runtime.GPUUUID, MemoryBytes: uint64(p.Spec.Containers[0].Resources.Limits.Memory().Value())}
 		s.States = append(s.States, serving.SchedulerInstanceState(serving.SchedulerInstance{Profile: &serving.Profile{ID: state.Metadata.ProfileID}, Allocation: allocation}))
 	}
 	slices.SortFunc(s.Pods, func(a, b workloadobserver.Pod) int { return strings.Compare(a.UID, b.UID) })
@@ -403,9 +403,6 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) (evi
 		return nil, err
 	}
 	p := spec.Instance.Profile
-	if err := bindPreparationAffinity(&spec); err != nil {
-		return nil, err
-	}
 	node := spec.Instance.Node
 	host, delivery, err := measuredRuntimeDelivery(p)
 	if err != nil {
@@ -415,16 +412,8 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) (evi
 	if err != nil {
 		return nil, err
 	}
-	cpuRequest, err := resource.ParseQuantity(p.Condition.CPU.Request)
-	if err != nil {
-		return nil, err
-	}
-	cpuLimit, err := resource.ParseQuantity(p.Condition.CPU.Limit)
-	if err != nil {
-		return nil, err
-	}
-	requests := core.ResourceList{core.ResourceCPU: cpuRequest, core.ResourceMemory: *resource.NewQuantity(int64(spec.MemoryBytes), resource.BinarySI)}
-	limits := core.ResourceList{core.ResourceCPU: cpuLimit, core.ResourceMemory: *resource.NewQuantity(int64(spec.MemoryBytes), resource.BinarySI)}
+	requests := core.ResourceList{core.ResourceMemory: *resource.NewQuantity(int64(spec.MemoryBytes), resource.BinarySI)}
+	limits := core.ResourceList{core.ResourceMemory: *resource.NewQuantity(int64(spec.MemoryBytes), resource.BinarySI)}
 	initResources := core.ResourceRequirements{Requests: requests, Limits: limits}
 	if spec.Instance.Allocation.GPUUUID != "" {
 		requests = requests.DeepCopy()
@@ -595,14 +584,6 @@ func ValidatePreparation(spec PrepareSpec) error {
 	if p == nil || p.Condition.Firstfloor == nil || p.RuntimeMetadata == nil || spec.Name == "" || spec.Instance.Node.UID != p.Condition.NodeUID {
 		return errors.New("measured firstfloor preparation contract required")
 	}
-	request, err := resource.ParseQuantity(p.Condition.CPU.Request)
-	count := spec.Instance.Allocation.CPUCount
-	if count == 0 {
-		count = len(spec.Instance.Allocation.CPUs)
-	}
-	if err != nil || request.Sign() <= 0 || int64(count) != request.Value() {
-		return errors.New("preparation CPU request count differs from measured profile")
-	}
 	if err := spec.Store.Validate(); err != nil {
 		return err
 	}
@@ -619,33 +600,9 @@ func ValidatePreparation(spec PrepareSpec) error {
 	if spec.MemoryBytes != spec.Instance.Allocation.MemoryBytes || spec.MemoryBytes > uint64(1<<63-1) {
 		return errors.New("preparation memory must exactly equal selected bounded allocation")
 	}
-	if len(p.Condition.CPU.AffinityCPUs) > 0 && !slices.Equal(p.Condition.CPU.AffinityCPUs, p.RuntimeMetadata.CPUAffinity) {
-		return errors.New("explicit measured CPU mask differs from actual runtime")
+	if spec.Instance.Allocation.GPUUUID != p.RuntimeMetadata.GPUUUID {
+		return errors.New("preparation GPU selection differs from measured physical conditions")
 	}
-	if !slices.Equal(spec.Instance.Allocation.CPUs, p.RuntimeMetadata.CPUAffinity) || spec.Instance.Allocation.GPUUUID != p.RuntimeMetadata.GPUUUID || spec.Instance.Allocation.Threads != p.RuntimeMetadata.IntraOpThreads {
-		return errors.New("preparation CPU/GPU/thread selection differs from measured physical conditions")
-	}
-	return nil
-}
-func bindPreparationAffinity(spec *PrepareSpec) error {
-	cpuIDs := make([]string, len(spec.Instance.Allocation.CPUs))
-	for i, id := range spec.Instance.Allocation.CPUs {
-		cpuIDs[i] = strconv.Itoa(id)
-	}
-	command := slices.Clone(spec.Config.RunnerCommand)
-	for i := 0; i < len(command); i++ {
-		if command[i] == "--cpu-affinity" {
-			if i+1 >= len(command) {
-				return errors.New("runner CPU affinity flag lacks value")
-			}
-			command = append(command[:i], command[i+2:]...)
-			i--
-		} else if strings.HasPrefix(command[i], "--cpu-affinity=") {
-			command = append(command[:i], command[i+1:]...)
-			i--
-		}
-	}
-	spec.Config.RunnerCommand = append(command, "--cpu-affinity", strings.Join(cpuIDs, ","))
 	return nil
 }
 func secretEnvOperation(name, secret, key string) core.EnvVar {
@@ -966,7 +923,7 @@ func (o *Operations) waitPowerState(ctx context.Context, node serving.NodeRefere
 			if !b.Ready {
 				return false, nil
 			}
-			if len(b.Requests) != 0 || a.AcceptedRequests != b.AcceptedRequests || a.CompletedRequests != b.CompletedRequests || a.Executions != b.Executions || !reflect.DeepEqual(a.Metadata, b.Metadata) {
+			if len(b.Requests) != 0 || a.AcceptedRequests != b.AcceptedRequests || a.CompletedRequests != b.CompletedRequests || a.Executions != b.Executions || !sameLoadedMetadata(a.Metadata, b.Metadata) {
 				return false, errors.New("power transition native condition changed or Serving inference occurred")
 			}
 		}

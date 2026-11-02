@@ -190,7 +190,7 @@ POOL 전환은 신규 인스턴스 실제 준비/연결 후 route 편입, 제외
 | `enabled,tls.secretName,port:8080` | HTTPS, `/etc/chill/tls/tls.crt`, `tls.key`, `--bind-address` |
 | `namespace,actuationNamespace` | `--serving-namespace,--actuation-namespace`; 빈 값 release namespace |
 | `profileNamespaces:[]` | 반복 `--profile-namespace`; 빈 값 serving namespace. 측정 조회/제출/삭제/profile 범위 |
-| limits CPU6/memory4Gi, `goMemLimit:3GiB` | `GOMAXPROCS=limits.cpu`, 필수 Go 형식 `GOMEMLIMIT=goMemLimit`(memory75%, limit과 함께 변경) |
+| memory limit4Gi, `goMemLimit:3GiB` | GOMEMLIMIT는 메모리 보호 설정이다. CPU request/limit·limits.cpu 기반 GOMAXPROCS는 없고 Go runtime 기본·자동 병렬성을 쓴다. 과거6CPU 수치는 당시 실행 조건의 기록이다. |
 | `goDebug:""` | 비면 미설정, evaluation `GODEBUG=gctrace=1`(GC마다 stderr1행) |
 | queue1024/request30s/drain2m | `--queue-limit,--request-timeout,--drain-timeout`; SLO timeout 아님 |
 | source1s/profile1m | source/profile refresh, 관측 upload1분 |

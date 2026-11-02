@@ -649,7 +649,7 @@ func validInputs() (transitioncost.FrozenContract, transitioncost.RawObservation
 		PostTransitionProcess: &process,
 	}
 	nativeWitness := func(at time.Time) *transitioncost.NativeNodeObservation {
-		return &transitioncost.NativeNodeObservation{NodeName: "target", NodeUID: "target-uid", ReceivedAt: at, Pods: []workloadobserver.Pod{{Namespace: "measure", Name: "serving", UID: "pod", Phase: "Running", Images: []string{"fixture-image"}}}, Instances: []transitioncost.NativeInstanceObservation{{Namespace: "measure", PodName: "serving", PodUID: "pod", ContainerID: process.ContainerID, StartedAt: process.StartedAt, Image: "fixture-image", ImageID: "fixture-image-id", CPURequestMilli: 1000, CPULimitMilli: 1000, MemoryRequestBytes: 128, MemoryLimitBytes: 128, State: native.State{At: testTime(1), Ready: true, Metadata: native.Metadata{Mode: "serving", ProfileID: "profile", Runtime: native.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "fixture", ModelFiles: []string{"/model/model.onnx"}, CPUAffinity: []int{0}, IntraOpThreads: 1}}}}}}
+		return &transitioncost.NativeNodeObservation{NodeName: "target", NodeUID: "target-uid", ReceivedAt: at, Pods: []workloadobserver.Pod{{Namespace: "measure", Name: "serving", UID: "pod", Phase: "Running", Images: []string{"fixture-image"}}}, Instances: []transitioncost.NativeInstanceObservation{{Namespace: "measure", PodName: "serving", PodUID: "pod", ContainerID: process.ContainerID, StartedAt: process.StartedAt, Image: "fixture-image", ImageID: "fixture-image-id", MemoryRequestBytes: 128, MemoryLimitBytes: 128, State: native.State{At: testTime(1), Ready: true, Metadata: native.Metadata{Mode: "serving", ProfileID: "profile", Runtime: native.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "fixture", ModelFiles: []string{"/model/model.onnx"}, CPUAffinity: []int{0}, IntraOpThreads: 1}}}}}}
 	}
 	raw.BeforeNative = nativeWitness(testTime(1))
 	raw.AfterNative = nativeWitness(testTime(6))
@@ -693,5 +693,26 @@ func TestDeriveRequiresActualNativeZeroInferenceAndAllocationInvariance(t *testi
 			assertOutcome(t, result, transitioncost.VerdictInsufficient, transitioncost.ReasonNativeStateUnverified)
 			assertNoAcceptedObservation(t, result)
 		})
+	}
+}
+
+func TestNativeTransitionAllowsSharedCPUObservationsButNotCPUReservations(t *testing.T) {
+	_, raw, _ := validInputs()
+	before := &raw.BeforeNative.Instances[0].State.Metadata.Runtime
+	after := &raw.AfterNative.Instances[0].State.Metadata.Runtime
+	before.IntraOpThreads, before.InterOpThreads = 0, 0
+	after.IntraOpThreads, after.InterOpThreads = 0, 0
+	before.CgroupCPUMax, after.CgroupCPUMax = "max 100000", "max 100000"
+	before.CPUSet, after.CPUSet = "0-3", "4-7"
+	after.CPUAffinity = []int{7}
+	if err := transitioncost.VerifyNativeTransition(raw.BeforeNative, raw.AfterNative); err != nil {
+		t.Fatal("shared CPU observations became allocation equality", err)
+	}
+	if before.CPUSet != "0-3" || after.CPUAffinity[0] != 7 {
+		t.Fatal("verification rewrote observed CPU facts")
+	}
+	raw.AfterNative.Instances[0].CPURequestMilli = 1
+	if err := transitioncost.VerifyNativeTransition(raw.BeforeNative, raw.AfterNative); err == nil {
+		t.Fatal("CPU-reserved native actor entered shared transition evidence")
 	}
 }

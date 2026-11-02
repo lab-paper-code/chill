@@ -47,16 +47,16 @@ func TestProfileSortAndEveryFilterPrecedePagination(t *testing.T) {
 		return "problem"
 	}}
 	for _, id := range []string{"z", "b", "a"} {
-		value, cpu, seconds := "a", "2", int64(1)
+		value, seconds := "a", int64(1)
 		if id == "z" {
-			value, cpu, seconds = "z", "10", 2
+			value, seconds = "z", 2
 		}
 		p := serving.Profile{ID: id, NodeName: value, MeasuredAt: time.Unix(seconds, 0)}
 		p.Condition.LogicalModel, p.Condition.DeviceClass = value, value
-		p.Condition.PowerMode, p.Condition.Artifact.ExecutionPath, p.Condition.CPU.Request = value, value, cpu
+		p.Condition.PowerMode, p.Condition.Artifact.ExecutionPath = value, value
 		view.Profiles = append(view.Profiles, p)
 	}
-	for _, key := range []string{"model", "deviceClass", "node", "powerMode", "path", "cpu", "created", "status"} {
+	for _, key := range []string{"model", "deviceClass", "node", "powerMode", "path", "created", "status"} {
 		for _, order := range []string{"asc", "desc"} {
 			want := "b"
 			if order == "desc" {
@@ -68,13 +68,13 @@ func TestProfileSortAndEveryFilterPrecedePagination(t *testing.T) {
 			}
 		}
 	}
-	for key, value := range map[string]string{"q": "z", "model": "z", "deviceClass": "z", "node": "z", "powerMode": "z", "path": "z", "cpu": "10", "status": "usable"} {
+	for key, value := range map[string]string{"q": "z", "model": "z", "deviceClass": "z", "node": "z", "powerMode": "z", "path": "z", "status": "usable"} {
 		got, err := PageProfiles(view, url.Values{key: {value}, "limit": {"1"}})
 		if err != nil || len(got.Profiles) != 1 || got.Profiles[0].ID != "z" || got.Page.Total != 1 || len(got.Filters.Nodes) != 2 || len(got.Filters.Statuses) != 2 {
 			t.Fatalf("%s global filter: %+v %v", key, got, err)
 		}
 	}
-	for _, query := range []string{"sort=unknown", "sort=", "sort=class", "sort=model&sort=model", "sort=model&order=DESC", "sort=model&order=", "sort=model&order=asc&order=desc", "order=asc"} {
+	for _, query := range []string{"cpu=2", "sort=cpu", "sort=unknown", "sort=", "sort=class", "sort=model&sort=model", "sort=model&order=DESC", "sort=model&order=", "sort=model&order=asc&order=desc", "order=asc"} {
 		values, _ := url.ParseQuery(query)
 		if _, err := PageProfiles(view, values); err == nil {
 			t.Fatalf("invalid sort accepted: %s", query)

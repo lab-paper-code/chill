@@ -3,7 +3,6 @@ package serving
 import (
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 	"time"
 
@@ -14,9 +13,7 @@ import (
 // and the comparison period: every plan's complete pool energy is compared over
 // the fixed ComparisonPeriod. AutonomousWorkloads lists the Workload UIDs under
 // autonomous control.
-// MaxReplicas, MaxInstances and MaxCPUs gate node plans: a plan holds at most
-// MaxReplicas instances of one Workload and MaxInstances instances in total,
-// each with at most MaxCPUs CPUs.
+// MaxReplicas and MaxInstances bound plan instance counts; CPU is shared.
 type SchedulerSettings struct {
 	ObservationWindow time.Duration `json:"observationWindowNanos"`
 	ControlInterval   time.Duration `json:"controlIntervalNanos"`
@@ -30,7 +27,6 @@ type SchedulerSettings struct {
 	ScaleDownHeadroomFraction float64       `json:"scaleDownHeadroomFraction"`
 	MaxReplicas               int           `json:"maxReplicas"`
 	MaxInstances              int           `json:"maxInstances"`
-	MaxCPUs                   int           `json:"maxCPUs"`
 	ServingMemoryBytes        uint64        `json:"servingMemoryBytes"`
 	CompletionMarginMS        float64       `json:"completionMarginMS"`
 	AutonomousWorkloads       []string      `json:"autonomousWorkloads"`
@@ -95,12 +91,8 @@ type SchedulerControls struct {
 	Membership bool `json:"membership"`
 }
 type SchedulerAllocation struct {
-	CPUs        []int  `json:"cpus"`
 	GPUUUID     string `json:"gpuUUID,omitempty"`
 	MemoryBytes uint64 `json:"memoryBytes"`
-	Threads     int    `json:"threads"`
-	CPUCount    int    `json:"cpuCount"`
-	CPUReserved bool   `json:"cpuReserved"`
 }
 
 // Node reasons: configuration a Node of the entire POOL lacks.
@@ -119,32 +111,16 @@ const (
 // SchedulerNode is one Node of the entire POOL. Measurement marks the
 // measurement POOL; Reasons name configuration the Node lacks.
 type SchedulerNode struct {
-	Node        NodeReference `json:"node"`
-	PowerMode   string        `json:"powerMode"`
-	Ready       bool          `json:"ready"`
-	Measurement bool          `json:"measurement,omitempty"`
-	CPUs        []int         `json:"cpus"`
-	// ModeCPUs holds snapshot-owned mode inventories. Capture overwrites the
-	// current mode's declaration with published CPUs; target masks are read-only.
-	ModeCPUs    map[string][]int      `json:"modeCPUs,omitempty"`
+	Node        NodeReference         `json:"node"`
+	PowerMode   string                `json:"powerMode"`
+	Ready       bool                  `json:"ready"`
+	Measurement bool                  `json:"measurement,omitempty"`
 	GPUUUIDs    []string              `json:"gpuUUIDs"`
 	MemoryBytes uint64                `json:"memoryBytes"`
 	Reserved    SchedulerAllocation   `json:"reserved"`
 	NonServing  []SchedulerAllocation `json:"nonServing"`
 	ObservedAt  time.Time             `json:"observedAt"`
 	Reasons     []string              `json:"reasons,omitempty"`
-}
-
-// AtMode projects the Node's power mode and CPU inventory together. ModeCPUs
-// owns the observed current CPUs as well as declared target inventories; this
-// keeps a projection reversible without trusting a mutable mode label.
-func (n SchedulerNode) AtMode(mode string) (SchedulerNode, bool) {
-	cpus, ok := n.ModeCPUs[mode]
-	if !ok || len(cpus) == 0 {
-		return n, false
-	}
-	n.PowerMode, n.CPUs = mode, cpus
-	return n, true
 }
 
 type SchedulerInstance struct {
@@ -446,8 +422,8 @@ func (s SchedulerSettings) Validate() error {
 	if !schedulerUnitFraction(s.ScaleDownHeadroomFraction) {
 		return fmt.Errorf("scaleDownHeadroomFraction must be finite and between 0 and 1")
 	}
-	if s.MaxReplicas < 1 || s.MaxInstances < 1 || s.MaxCPUs < 1 {
-		return fmt.Errorf("maxReplicas, maxInstances and maxCPUs must be positive")
+	if s.MaxReplicas < 1 || s.MaxInstances < 1 {
+		return fmt.Errorf("maxReplicas and maxInstances must be positive")
 	}
 	if math.IsNaN(s.CompletionMarginMS) || math.IsInf(s.CompletionMarginMS, 0) || s.CompletionMarginMS < 0 {
 		return fmt.Errorf("completionMarginMS must be finite and nonnegative")
@@ -557,13 +533,11 @@ func SmoothWeightedRoute(weights []int32, current []int64, available []bool) int
 func schedulerFinite(x float64) bool       { return !math.IsNaN(x) && !math.IsInf(x, 0) }
 func schedulerUnitFraction(x float64) bool { return schedulerFinite(x) && x >= 0 && x <= 1 }
 func schedulerState(i SchedulerInstance) string {
-	cpus := append([]int(nil), i.Allocation.CPUs...)
-	sort.Ints(cpus)
 	profile := ""
 	if i.Profile != nil {
 		profile = i.Profile.ID
 	}
-	return fmt.Sprintf("%s:%v:%s:%d:%d", profile, cpus, i.Allocation.GPUUUID, i.Allocation.MemoryBytes, i.Allocation.Threads)
+	return fmt.Sprintf("%s:%s:%d", profile, i.Allocation.GPUUUID, i.Allocation.MemoryBytes)
 }
 func SchedulerInstanceState(i SchedulerInstance) string { return schedulerState(i) }
 
@@ -572,10 +546,9 @@ func SchedulerInstanceState(i SchedulerInstance) string { return schedulerState(
 // (as in schedulerSameResourceChoice), so a planned allocation with queue
 // headroom matches the cost measured at the bare peak. Other states pass.
 func schedulerCostState(state string) string {
-	if strings.Count(state, ":") < 4 {
+	memory := strings.LastIndexByte(state, ':')
+	if memory < 0 {
 		return state
 	}
-	threads := strings.LastIndexByte(state, ':')
-	memory := strings.LastIndexByte(state[:threads], ':')
-	return state[:memory] + state[threads:]
+	return state[:memory]
 }

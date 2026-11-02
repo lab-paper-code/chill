@@ -298,7 +298,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 		config: OperationConfig{Namespace: fixture.Namespace, PollInterval: time.Millisecond}}
 	spec := PrepareSpec{Name: fixture.Name, MemoryBytes: 1024,
 		Instance: serving.SchedulerInstance{ID: "slot", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile, Weight: 1,
-			Allocation: serving.SchedulerAllocation{CPUs: []int{0}, Threads: 1, MemoryBytes: 1024}},
+			Allocation: serving.SchedulerAllocation{MemoryBytes: 1024}},
 		Store:  storekube.Binding{Store: "evidence", Endpoint: "http://evidence", Bucket: "bucket", Region: "region", CredentialsSecretName: "credentials"},
 		Bundle: evidencestore.ObjectIdentity{Store: "evidence", Key: "bundle", Size: 1},
 		Config: native.Config{Mode: "serving", Model: "chill_model", ProfilePath: "/profile/bundle.json",
@@ -306,9 +306,6 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	}
 	persisted := spec
 	persisted.Config.Policy = currentPolicy
-	if err := bindPreparationAffinity(&persisted); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := operations.ensurePreparationConfig(ctx, persisted, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -320,6 +317,19 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	key := types.NamespacedName{Namespace: fixture.Namespace, Name: fixture.Name}
 	if err := manager.store.client.Get(ctx, key, pod); err != nil {
 		t.Fatal(err)
+	}
+	for _, containers := range [][]core.Container{pod.Spec.Containers, pod.Spec.InitContainers} {
+		for _, container := range containers {
+			if _, present := container.Resources.Requests[core.ResourceCPU]; present {
+				t.Fatal("prepared Pod requested CPU", container.Name)
+			}
+			if _, present := container.Resources.Limits[core.ResourceCPU]; present {
+				t.Fatal("prepared Pod limited CPU", container.Name)
+			}
+			if container.Resources.Requests.Memory().Value() != int64(spec.MemoryBytes) || container.Resources.Limits.Memory().Value() != int64(spec.MemoryBytes) {
+				t.Fatal("shared CPU removed bounded memory", container.Name)
+			}
+		}
 	}
 	pod.Annotations[ServingPolicyAnnotation] = "bootstrap"
 	if err := manager.store.client.Update(ctx, pod); err != nil {
@@ -417,7 +427,7 @@ func TestCUDAPreparationReproducesMeasuredSupplementalGroups(t *testing.T) {
 		Name: "measured-rknn",
 		Instance: serving.SchedulerInstance{
 			ID: "measured-rknn", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile,
-			Allocation: serving.SchedulerAllocation{CPUs: []int{0}, CPUCount: 1, Threads: 1, MemoryBytes: 1 << 20},
+			Allocation: serving.SchedulerAllocation{MemoryBytes: 1 << 20},
 		},
 		Bundle: evidencestore.ObjectIdentity{Store: "store", Key: "bundle", Size: 1},
 		Store:  storekube.Binding{Store: "store", Endpoint: "http://store", Bucket: "bucket", Region: "region", CredentialsSecretName: "secret"},
@@ -465,7 +475,7 @@ func TestPreparationSeedsRoutingBeforeRoute(t *testing.T) {
 		}
 		spec := PrepareSpec{Name: name, Owner: owner, MemoryBytes: 1 << 20,
 			Instance: serving.SchedulerInstance{ID: name, Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile, Weight: 2,
-				Allocation: serving.SchedulerAllocation{CPUs: []int{0}, CPUCount: 1, Threads: 1, MemoryBytes: 1 << 20}},
+				Allocation: serving.SchedulerAllocation{MemoryBytes: 1 << 20}},
 			Bundle: evidencestore.ObjectIdentity{Store: "store", Key: "bundle", Size: 1},
 			Store:  storekube.Binding{Store: "store", Endpoint: "http://store", Bucket: "bucket", Region: "region", CredentialsSecretName: "secret"},
 			Config: native.Config{Mode: nativeServingMode, ProfilePath: "/profile/bundle.json",
@@ -520,7 +530,7 @@ func TestRKNNPreparationProjectsMeasuredHostAccess(t *testing.T) {
 		Name: "measured-rknn",
 		Instance: serving.SchedulerInstance{
 			ID: "measured-rknn", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile,
-			Allocation: serving.SchedulerAllocation{CPUs: []int{0}, CPUCount: 1, MemoryBytes: 1 << 20},
+			Allocation: serving.SchedulerAllocation{MemoryBytes: 1 << 20},
 		},
 		Bundle: evidencestore.ObjectIdentity{Store: "store", Key: "bundle", Size: 1},
 		Store:  storekube.Binding{Store: "store", Endpoint: "http://store", Bucket: "bucket", Region: "region", CredentialsSecretName: "secret"},

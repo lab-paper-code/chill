@@ -107,7 +107,7 @@ func schedulerCaptureClockController(t *testing.T, onLiveNodes func(*Observer)) 
 	manager.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
 	return &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, observationLog: manager.observationLog,
 		runs: map[string]*actionRun{}, config: SchedulerControllerConfig{
-			Settings: serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxObservationAge: maxAge, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 4, CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100},
+			Settings: serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxObservationAge: maxAge, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100},
 		}}
 }
 
@@ -236,8 +236,7 @@ func schedulerEmptyPoolController(t *testing.T) *SchedulerController {
 		SchedulerControllerConfig{
 			Settings: serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxObservationAge: time.Second,
 				CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
-				MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 4,
-				Controls: serving.SchedulerControls{Placement: true, Resources: true, Replicas: true,
+				MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, Controls: serving.SchedulerControls{Placement: true, Resources: true, Replicas: true,
 					Routing: true, Batching: true, Power: true}},
 			Baselines: []serving.NodeBaseline{{ID: "empty-pool-idle", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)},
 				PowerMode: "fixed", Watts: 10, Meter: "node-wall", Scope: "node-exclusive-wall", MeasuredAt: time.Now(),
@@ -344,15 +343,15 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 	}
 	config.PowerPolicies = []nodeactuator.ActuationPolicySpec{{Name: "cpu-eco", DeviceClass: "cpu", PowerMode: "eco",
 		ActuatorKind: nodeactuator.ActuatorKindJetsonNVPModel, SettlingDurationSeconds: 1, MaxActuationDurationSeconds: 30}}
-	config.Reserved = map[string]serving.SchedulerAllocation{"reserved-out": {CPUs: []int{7}}}
+	config.Reserved = map[string]serving.SchedulerAllocation{"reserved-out": {GPUUUID: "missing-gpu"}}
 	want := map[string]struct {
 		reasons     []string
 		measurement bool
 		gpus        []string
 	}{
 		base.Name:      {},
-		"bare":         {reasons: []string{serving.NodePlacementInventoryMissing}},
-		"garbled":      {reasons: []string{serving.NodePlacementInventoryMissing}},
+		"bare":         {},
+		"garbled":      {},
 		"reserved-out": {reasons: []string{serving.NodePlacementInventoryMissing}},
 		"unpowered":    {reasons: []string{serving.NodePowerModeUnavailable}},
 		"fixed-only":   {reasons: []string{serving.NodePowerModeUnavailable}},
@@ -409,41 +408,28 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 	}
 }
 
-func TestSchedulerCaptureNormalizesObservedModeInventory(t *testing.T) {
-	for _, declared := range []string{"", "0"} {
-		t.Run("declared="+declared, func(t *testing.T) {
-			controller := schedulerEmptyPoolController(t)
-			ctx := context.Background()
-			class := &edge.DeviceClass{}
-			if err := controller.store.client.Get(ctx, client.ObjectKey{Name: "cpu"}, class); err != nil {
-				t.Fatal(err)
-			}
-			class.Spec.PowerModes[0].OnlineCPUs = declared
-			class.Spec.PowerModes = append(class.Spec.PowerModes, edge.PowerMode{
-				Name: "six", OnlineCPUs: "0-5",
-				Actuator: edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: 1}},
-			})
-			if err := controller.store.client.Update(ctx, class); err != nil {
-				t.Fatal(err)
-			}
-			snapshot, err := controller.capture(ctx, time.Now().UTC(), controller.config)
-			if err != nil {
-				t.Fatal(err)
-			}
-			node := snapshot.Nodes[0]
-			current, known := node.AtMode(node.PowerMode)
-			if !known || !slices.Equal(current.CPUs, node.CPUs) {
-				t.Fatalf("capture did not normalize actual CPUs over declaration %q: %+v", declared, node)
-			}
-			target, known := node.AtMode("six")
-			if !known || target.PowerMode != "six" || !slices.Equal(target.CPUs, []int{0, 1, 2, 3, 4, 5}) {
-				t.Fatalf("target inventory lost its declaration: %+v", target)
-			}
-			back, known := target.AtMode(node.PowerMode)
-			if !known || !slices.Equal(back.CPUs, node.CPUs) || !slices.Equal(node.ModeCPUs[node.PowerMode], node.CPUs) {
-				t.Fatalf("round trip lost observed CPUs: %+v", back)
-			}
-		})
+func TestSchedulerCaptureDoesNotRequireOnlineCPUInventory(t *testing.T) {
+	controller := schedulerEmptyPoolController(t)
+	ctx := context.Background()
+	nodes, err := controller.kube.CoreV1().Nodes().List(ctx, meta.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, node := range nodes.Items {
+		delete(node.Annotations, chillmeta.OnlineCPUs)
+		delete(node.Status.Allocatable, core.ResourceCPU)
+		if _, err := controller.kube.CoreV1().Nodes().Update(ctx, &node, meta.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot, err := controller.capture(ctx, time.Now().UTC(), controller.config)
+	if err != nil || len(snapshot.Nodes) == 0 {
+		t.Fatalf("capture failed: %+v %v", snapshot, err)
+	}
+	for _, node := range snapshot.Nodes {
+		if slices.Contains(node.Reasons, serving.NodePlacementInventoryMissing) {
+			t.Fatalf("CPU annotation remained placement authority: %+v", node)
+		}
 	}
 }
 
@@ -597,9 +583,9 @@ func TestPodBudgetAccountsForInitSidecarsAndOverhead(t *testing.T) {
 		return core.ResourceRequirements{Requests: core.ResourceList{core.ResourceCPU: resource.MustParse(cpu), core.ResourceMemory: resource.MustParse(memory)}}
 	}
 	pod := &core.Pod{Spec: core.PodSpec{Containers: []core.Container{{Resources: resources("500m", "100")}}, InitContainers: []core.Container{{Resources: resources("200m", "20"), RestartPolicy: &always}, {Resources: resources("2", "300")}}, Overhead: core.ResourceList{core.ResourceCPU: resource.MustParse("100m"), core.ResourceMemory: resource.MustParse("10")}}}
-	cpu, memory, gpu := podBudget(pod)
-	if cpu != 2300 || memory != 330 || gpu {
-		t.Fatal("Kubernetes effective request budget miscounted", cpu, memory, gpu)
+	memory, gpu := podBudget(pod)
+	if memory != 330 || gpu {
+		t.Fatal("Kubernetes effective memory/device request budget miscounted", memory, gpu)
 	}
 }
 
@@ -607,23 +593,20 @@ func TestCaptureNodePodsAggregatesNonServingBudget(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		cpu        string
-		reserved   []int
 		memory     uint64
 		gpu        bool
 		available  bool
-		wantCPU    int
 		wantMemory bool
 	}{
-		{name: "fractional requests fit", cpu: "10m", reserved: []int{0}, memory: 1000, available: true, wantCPU: 1},
-		{name: "real CPU overbudget", cpu: "110m", reserved: []int{0}, memory: 1000, wantCPU: 2},
-		{name: "missing exclusive reservation", cpu: "10m", memory: 1000, wantCPU: 1},
-		{name: "real memory overbudget", cpu: "10m", reserved: []int{0}, memory: 99, available: true, wantCPU: 1, wantMemory: true},
-		{name: "unknown GPU ownership", cpu: "10m", reserved: []int{0}, memory: 1000, gpu: true, wantCPU: 1},
+		{name: "fractional foreign CPU ignored", cpu: "10m", memory: 1000, available: true},
+		{name: "large foreign CPU ignored", cpu: "100", memory: 1000, available: true},
+		{name: "real memory overbudget", cpu: "10m", memory: 99, available: true, wantMemory: true},
+		{name: "unknown GPU ownership", cpu: "10m", memory: 1000, gpu: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			at := time.Unix(100, 0)
 			node := &core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}}
-			sn := serving.SchedulerNode{Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Ready: true, CPUs: []int{0, 1}, Reserved: serving.SchedulerAllocation{CPUs: tc.reserved}, MemoryBytes: tc.memory, ObservedAt: at}
+			sn := serving.SchedulerNode{Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Ready: true, Reserved: serving.SchedulerAllocation{}, MemoryBytes: tc.memory, ObservedAt: at}
 			pods := &core.PodList{}
 			for range 10 {
 				requests := core.ResourceList{core.ResourceCPU: resource.MustParse(tc.cpu), core.ResourceMemory: resource.MustParse("10")}
@@ -641,18 +624,13 @@ func TestCaptureNodePodsAggregatesNonServingBudget(t *testing.T) {
 				t.Fatal("incorrect readiness or physical classification", sn, snapshot.Instances)
 			}
 			allocation := sn.NonServing[0]
-			if allocation.CPUCount != tc.wantCPU || allocation.MemoryBytes != 100 || allocation.CPUReserved != (len(tc.reserved) > 0) {
+			if allocation.MemoryBytes != 100 {
 				t.Fatal("non-serving requests were not aggregated exactly", allocation)
 			}
 			// Isolate the captured non-serving budget in the actual consumer.
 			reasons := serving.ValidateNodeBudget(sn, sn.NonServing, nil)
-			cpuInfeasible, memoryInfeasible, unknownAffinity := false, false, false
-			for _, reason := range reasons {
-				cpuInfeasible = cpuInfeasible || strings.HasPrefix(reason, "CPUBudgetInfeasible:")
-				memoryInfeasible = memoryInfeasible || strings.HasPrefix(reason, "MemoryBudgetInfeasible:")
-				unknownAffinity = unknownAffinity || strings.HasPrefix(reason, "UnknownExclusiveCPUAffinity:")
-			}
-			if cpuInfeasible != (len(tc.reserved) > 0 && tc.wantCPU > len(tc.reserved)) || memoryInfeasible != tc.wantMemory || unknownAffinity != (len(tc.reserved) == 0) {
+			memoryInfeasible := slices.Contains(reasons, "MemoryBudgetInfeasible:"+sn.Node.UID)
+			if memoryInfeasible != tc.wantMemory {
 				t.Fatal("consumer miscounted the captured budget", reasons)
 			}
 		})
@@ -677,7 +655,7 @@ func TestNonServingGPUOwnershipQuarantinesOnlyItsNode(t *testing.T) {
 	node := &core.Node{ObjectMeta: meta.ObjectMeta{Name: "quarantined-gpu", UID: "gpu-node"}}
 	state := serving.SchedulerNode{
 		Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Ready: true,
-		CPUs: []int{0, 1}, Reserved: serving.SchedulerAllocation{CPUs: []int{0}}, MemoryBytes: 4096,
+		Reserved: serving.SchedulerAllocation{}, MemoryBytes: 4096,
 	}
 	pods := &core.PodList{Items: []core.Pod{{
 		ObjectMeta: meta.ObjectMeta{Name: "foreign-gpu"},
@@ -694,8 +672,7 @@ func TestNonServingGPUOwnershipQuarantinesOnlyItsNode(t *testing.T) {
 	if !state.Ready || !slices.Contains(state.Reasons, serving.NodePlacementBudgetUnavailable) || len(snapshot.Reasons) != 0 {
 		t.Fatalf("node-local GPU uncertainty became a global evaluation gap: node=%+v reasons=%v", state, snapshot.Reasons)
 	}
-	if len(state.NonServing) != 1 || state.NonServing[0].CPUCount != 1 ||
-		state.NonServing[0].MemoryBytes != 1024 || !state.NonServing[0].CPUReserved {
+	if len(state.NonServing) != 1 || state.NonServing[0].MemoryBytes != 1024 {
 		t.Fatalf("quarantine discarded actual non-serving resource budget: %+v", state.NonServing)
 	}
 }
@@ -849,7 +826,7 @@ func TestSchedulerCapturePreservesTerminalLedgerWithoutReadFailureAC45(t *testin
 	if len(snapshot.Instances) != 1 || !snapshot.Instances[0].Terminated || snapshot.Instances[0].Ready || !snapshot.Instances[0].Stopped {
 		t.Fatalf("capture lost exact terminal fact: %+v", snapshot.Instances)
 	}
-	if slices.Contains(snapshot.Nodes[0].Reasons, serving.NodeInstanceUnavailable) || len(snapshot.Instances[0].Allocation.CPUs) == 0 {
+	if slices.Contains(snapshot.Nodes[0].Reasons, serving.NodeInstanceUnavailable) || snapshot.Instances[0].Allocation.MemoryBytes == 0 {
 		t.Fatalf("terminal occupancy became an unknown read or disappeared: %+v", snapshot)
 	}
 }

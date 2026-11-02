@@ -407,7 +407,7 @@ func readyPod(name, containerID string, restartCount int32) *corev1.Pod {
 		},
 		Spec: corev1.PodSpec{
 			NodeName:   "jetsono",
-			Containers: []corev1.Container{{Name: "firstfloor", Image: "example.invalid/firstfloor:fixture", Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("128Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("128Mi")}}}},
+			Containers: []corev1.Container{{Name: "firstfloor", Image: "example.invalid/firstfloor:fixture", Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("128Mi")}, Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("128Mi")}}}},
 		},
 		Status: corev1.PodStatus{
 			Phase: corev1.PodRunning,

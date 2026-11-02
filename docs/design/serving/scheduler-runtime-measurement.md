@@ -36,15 +36,15 @@ raw repetition은 client `latencyMs`, runner service/backend call duration, actu
 |---|---|
 | measurement | `python3 /opt/chill/runtime/firstfloor/measurement.py --result-file /workspace/runtime-result.json`; stdin frozen request. child `/opt/chill/bin/serving-worker --config <temporary-worker.json> --bind-address 127.0.0.1:<port> --node-name <frozen-node>` |
 | image | serving-worker, `runtime/firstfloor/runner.py`, 공통 `runtime/ortcpu/runner.py`, NumPy+선택 SDK. RKNN은 host/input query의 `runtime/rknnlite/runner.py`, CUDA는 nvidia-smi+실제 SDK/provider도 필요. |
-| runner | `--runtime ort-cpu\|ort-cuda\|rknnlite --model /model/model.onnx\|model.rknn --intra-op-threads <frozen-count> --warmup-iterations <frozen-count>`. CUDA 추가 `--gpu-uuid <frozen-physical-GPU-UUID>`, RKNN `--delivery-json <temporary-delivery.json>` |
-| device/resource | CUDA_VISIBLE_DEVICES는 frozen whole-GPU UUID1장. whole-GPU allocation/UUID, RKNN package/host/driver/device, CPU quota/affinity/thread, 모든 initialized batch actual metadata 불일치 시 거절. kernel cgroup lifetime peak는 worker+runner runtime container 범위. |
+| runner | `--runtime ort-cpu\|ort-cuda\|rknnlite --model /model/model.onnx\|model.rknn --warmup-iterations <frozen-count>`. ORT SessionOptions는 기본·자동 병렬성을 사용하며 CPU affinity/intra-op-thread 인자를 주입하지 않는다. CUDA는 `--gpu-uuid <frozen-physical-GPU-UUID>`, RKNN은 `--delivery-json <temporary-delivery.json>`을 추가한다. |
+| device/resource | CUDA_VISIBLE_DEVICES는 frozen whole-GPU UUID1장. whole-GPU allocation/UUID, RKNN package/host/driver/device와 initialized batch의 실제 신원을 확인한다. CPU affinity/cpuset/cgroup/quota/thread는 실제 관측이며 profile-to-current 할당 matching이 아니다. kernel cgroup lifetime peak는 worker+runner runtime container 범위다. |
 | batch domain | Serving 초기화/native 최대는 validated runtime metadata, dispatch/policy cap은 measured domain. initialized `[1,2]`, measured `[1]`이면 초기화는 유지하고 선택은 `[1]`만. |
 | RKNN delivery | raw RunConfig delivery를 preparation에 그대로 사용. ConfigMap delivery.json→`--delivery-json /config/delivery.json`; Job과 같은 `profilingrun.ProjectRuntimeDelivery`로 library/driver/platform/device hostPath·privileged/supplemental group/allocation resource 투영. ORT thread 미사용이므로 측정/배치 threads=0. |
 
 latest successful profile은 frozen node/model/artifact/runtime/input/resources/power/protocol 조건별 최신 성공이다. source SLO와 무관하게 matching execution profile을 재사용하고 독립 option 오류/누락 이유를 남긴다. ORT/RKNN reference는 고유 owner/실행 조건으로 firstfloor evidence와 구별한다.
 strict stored schema 변경은 caller/fixture/generated schema를 작업 단위로 함께 갱신한다. 구 testbed 정리는 ADR0019 절차, 진행 campaign stored 변경은 해당 campaign 정리 후다.
 Catalog는 refresh마다 현재 Campaign native UID/resourceVersion/terminal 적격성을 읽고 Campaign당 검증 entry1개만 유지한다. 같은 immutable source는 raw 재다운로드/재도출하지 않고 caller mutable slice/map/pointer는 분리 반환한다. UID/RV 변경·pending·삭제는 entry를 버리고 필요하면 전체 evidence 재검증, 오류에 이전 success fallback 없음. control tick/profile ticker/GET의 중복 raw reload만 제거하며 native refresh/시각/freshness는 바꾸지 않는다.
-profiling/serving은 [같은 실행 계약](../../spec/00_measurement.md#측정의-단위)을 쓴다. Node/backend/affinity/GPU UUID/threads/initialized batch/raw를 유지하고 준비·측정 적격성·SLO 평가는 독립이다. CPU `cpuAffinity`/campaign `cpuQuota`는 선택 physical mask+threads의 실제 runner 입력이며 frozen affinityCPUs·허용 inventory·actual affinity를 raw에 연결한다. quota와 mask는 다르고 quota-only reference는 별도 조건이다.
+profiling/serving은 [같은 공유 실행 계약](../../spec/00_measurement.md#측정의-단위)을 쓴다. CPU request/limit·quota·명시 affinity/pinning과 quota-threads 결합은 없다. ORT 기본·자동 thread 설정의 실제 readback(0 포함), affinity/cpuset/cgroup quota·사용량·throttling은 관측으로 보존한다. Node/backend/GPU UUID/initialized batch/raw와 메모리 안전 검사는 유지한다. 과거 CPU 통제 profile/κ는 공유 실행 근거로 재사용하지 않고 단일 저장 계약 cutover 뒤 새 조건으로 측정한다.
 
 ## Strict fixed-size baseline serving
 
@@ -65,11 +65,11 @@ Node power의 독립 read-back/directed raw trial과 준비/제거/idle 별도 r
 ## 자원 할당과 공존 경계
 
 일반 자원 계약은 Node:serving Pod=1:N, Pod가 제공하는 모델 인스턴스:Workload=1:N을 허용한다. Pod당 모델 실행 인스턴스1개이며 같은 artifact/runtime/input 조건의 여러 Workload가 공유할 수 있다. 현재 계획기의 단일 UID/Node별 후보 제한은 [구현 설계](scheduler-implementation.md)의 별도 계약이다.
-Pod당 persistent runner1개·순차 batch1개다. 실행 중 HTTP 취소도 runner 완료/actual container 종료까지 점유한다. instance 증감=Pod 추가/제거, instance 자원=Pod allocation+backend 설정, 입력 묶음=batch policy다. 자원 할당/프로파일 실행 구성/serving instance 단위를 맞추고 quota/threads/actual affinity를 각각 확인한다. batch 내부 여러 CPU, Pod간 batch 병렬은 가능하다.
+Pod당 persistent runner1개·순차 batch1개다. 실행 중 HTTP 취소도 runner 완료/actual container 종료까지 점유한다. instance 증감=Pod 추가/제거, 선택 자원=메모리와 GPU, 입력 묶음=batch policy다. CPU는 Pod 간 공유하며 병렬성은 runtime 기본·자동 정책이고 실제 적용값을 기록한다.
 현재 구성은 actual label/resource/native readiness/연결 관측으로 산출하고 scheduler가 Pod/실측 resource/batch/mode 후보와 전환을 연결한다([전환 명세](../../spec/05_transition_control.md)). memory는 measured 사용+system/Serving 부가 예산의 가용성 제약이지 성능/비용 탐색 변수는 아니다.
-공존은 순간 사용률이 아닌 **배정 가능한 자원** 기준이다. CPU Pod는 분리 mask, GPU Pod는 서로 다른 whole physical GPU이며 보조 CPU/memory도 센다. Kubernetes 기존 allocation을 사용하고 time-slicing/MPS/별도 allocator는 범위 밖이다.
-CPU request/limit만으로 mask 분리가 안 된다. 전용 배정은 CPU Manager static/Guaranteed/정수 CPU 등 플랫폼 조건이 필요하고 profiling 관측 container를 포함한 Pod도 맞춰야 한다. 실제 지원/배정은 배포에서 확인하며 이 문서가 현 클러스터 격리를 입증하지 않는다.
-Serving artifact/profile init도 선택 profile CPU request/limit+선택 memory를 쓰고 GPU 요청은 runtime container에만 둔다. 모든 container의 양수 CPU/memory request=limit이면 Guaranteed지만 분수 CPU도 가능하므로 QoS는 exclusive proof가 아니다. CPU 수량을 반올림/request-limit 강제 일치시키지 않는다.
+공존 안전은 메모리 예산과 필요한 whole physical GPU의 exclusive UUID 할당으로 검사한다. CPU 전용 mask·request quota·reserved CPU 장부는 없으며 ModeCPUs/online CPU를 배치 관문으로 쓰지 않는다. time-slicing/MPS/별도 GPU allocator는 범위 밖이다.
+Pod/Node 소유와 물리 반환 증명은 CPU 공유와 별개다. 작업 timeout/논리 종료/Pod 목록 부재만으로 자원을 반환하지 않는다.
+Serving runtime과 artifact/preprocessor/profile init container는 CPU request/limit 없이 선택 memory request/limit을 유지한다. whole GPU resource는 runtime container에만 둔다. admission 후 CPU resource 재주입도 source 적격성에서 거절한다. 메모리를 유지하므로 Kubernetes QoS는 Burstable일 수 있으며 BestEffort QoS 자체가 목표가 아니다.
 분리 allocation도 cache/memory bandwidth/power/thermal 간섭이 가능하다. resource-feasible 공존을 허용하고 actual latency/power를 관측하되 자원 적합성≠SLO 적합성이다. 무관측 무간섭 보장/모든 조합 예측기는 없으며 Node power 변경은 모든 공존 instance에 영향을 준다.
 
 ## Immutable worker bundle

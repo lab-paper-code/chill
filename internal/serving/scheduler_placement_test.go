@@ -6,8 +6,7 @@ import (
 	"time"
 )
 
-// placementFixture: w1 runs i1 on n1 (CPU0, batch limit 2); n2 offers the
-// same CPU0 option, a two-CPU option and the batch-1 variants.
+// placementFixture offers CPU-only and whole-GPU measured options plus batch variants.
 func placementFixture() (SchedulerSettings, SchedulerSnapshot, NodeReference) {
 	s, snap := schedulerFixture()
 	profile := *snap.Instances[0].Profile
@@ -18,11 +17,12 @@ func placementFixture() (SchedulerSettings, SchedulerSnapshot, NodeReference) {
 	wide := poolsInstance(snap.Instances[0], "wide", n2, "fixed", "w1")
 	wideProfile := *wide.Profile
 	wideProfile.ID += "-wide"
-	wideProfile.Condition.CPU.AffinityCPUs, wideProfile.Condition.CPU.ORTIntraOpThreads = []int{0, 1}, 2
 	metadata := *wideProfile.RuntimeMetadata
 	metadata.CPUAffinity, metadata.IntraOpThreads = []int{0, 1}, 2
 	wideProfile.RuntimeMetadata = &metadata
-	wide.Profile, wide.Allocation.CPUs, wide.Allocation.Threads = &wideProfile, []int{0, 1}, 2
+	wide.Profile, wide.Allocation.GPUUUID = &wideProfile, "GPU-n2"
+	metadata.GPUUUID = wide.Allocation.GPUUUID
+	snap.Nodes[len(snap.Nodes)-1].GPUUUIDs = []string{wide.Allocation.GPUUUID}
 	snap.Options = []SchedulerOption{poolsOption(snap.Instances[0]), poolsOption(same), poolsOption(wide)}
 	snap.Costs = []OperationCost{poolsCost(schedulerActionRemove, snap.Nodes[0].Node, schedulerState(snap.Instances[0]), "unloaded", "fixed")}
 	for _, i := range []SchedulerInstance{same, wide} {
@@ -54,13 +54,13 @@ func TestNodePlanHoldsOneInstancePerWorkload(t *testing.T) {
 			single++
 		}
 	}
-	if single != 2 {
-		t.Fatalf("each option alone must stay a node plan, got %d", single)
+	if single != 1 {
+		t.Fatalf("CPU observation-only variants must not duplicate one measured condition, got %d", single)
 	}
 }
 
 // The disabled controls gate node plans: placement OFF keeps each Workload on
-// its Nodes, resources OFF keeps its CPU/GPU choice, batching OFF its batch
+// its Nodes, resources OFF keeps its GPU choice, batching OFF its batch
 // limit, and replicas OFF its total instance count while it moves.
 func TestDisabledControlsGateNodePlans(t *testing.T) {
 	for _, disabled := range []string{"placement", "resources", "batching", "replicas"} {
@@ -92,7 +92,7 @@ func TestDisabledControlsGateNodePlans(t *testing.T) {
 				}
 			case "resources":
 				if wide || !same2 {
-					t.Fatalf("resources OFF changed the CPU choice: %+v", plans)
+					t.Fatalf("resources OFF changed the GPU choice: %+v", plans)
 				}
 			case "batching":
 				if same1 || !same2 {

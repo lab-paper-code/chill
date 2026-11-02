@@ -52,12 +52,12 @@ func TestCatalogMeasurementFactsReuseLoadedRaw(t *testing.T) {
 	row := facts.Batches[0]
 	assertCatalogMeasurementBatchFacts(t, row)
 	*row.P95Milliseconds = 999
-	facts.Condition.CPU.AffinityCPUs[0] = 999
+	facts.Condition.PlannedBatchSizes[0] = 999
 	second, err := catalog.Refresh(ctx, []string{source.Namespace})
 	if err != nil || counted.reads != 14 || !second.SourceCheckedAt.After(first.SourceCheckedAt) || second.Revision != first.Revision {
 		t.Fatalf("unchanged refresh did not check source without raw I/O: %+v %v reads=%d", second, err, counted.reads)
 	}
-	if *second.MeasurementFacts[id].Batches[0].P95Milliseconds != 2 || second.MeasurementFacts[id].Condition.CPU.AffinityCPUs[0] == 999 {
+	if *second.MeasurementFacts[id].Batches[0].P95Milliseconds != 2 || second.MeasurementFacts[id].Condition.PlannedBatchSizes[0] == 999 {
 		t.Fatal("caller mutated cached measurement facts")
 	}
 	original := catalog.store.client

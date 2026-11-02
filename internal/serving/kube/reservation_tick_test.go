@@ -133,7 +133,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 			for _, profile := range profiles {
 				profile.IdleBaselineWatts = 10
 				spec := measuredCPUPreparationFixture()
-				spec.Instance = serving.SchedulerInstance{ID: "option-" + profile.ID, Node: serving.NodeReference{Name: profile.NodeName, UID: profile.Condition.NodeUID}, Profile: &profile, Allocation: serving.SchedulerAllocation{CPUs: []int{0}, CPUCount: 1, Threads: 1, MemoryBytes: 1024}, MaxBatch: 1, Capacity: 4}
+				spec.Instance = serving.SchedulerInstance{ID: "option-" + profile.ID, Node: serving.NodeReference{Name: profile.NodeName, UID: profile.Condition.NodeUID}, Profile: &profile, Allocation: serving.SchedulerAllocation{MemoryBytes: 1024}, MaxBatch: 1, Capacity: 4}
 				spec.Config.Policy.ProfileID = profile.ID
 				c.config.Preparations[profile.ID] = spec
 				c.config.DispatchOccupancy = append(c.config.DispatchOccupancy, serving.DispatchOccupancy{Node: spec.Instance.Node, PowerMode: profile.Condition.PowerMode, RuntimeImage: profile.Condition.RuntimeImage, Model: profile.Condition.LogicalModel, Source: "AC-39 measured fixture"})

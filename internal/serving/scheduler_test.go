@@ -27,16 +27,16 @@ const (
 
 func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	at := time.Unix(100, 0)
-	s := SchedulerSettings{ObservationWindow: 100 * time.Millisecond, ControlInterval: time.Second, ComparisonPeriod: 100 * time.Millisecond, MaxObservationAge: time.Second, MaxReplicas: 2, MaxInstances: 4, MaxCPUs: 4, AutonomousWorkloads: []string{"w1"}, CapacityWindow: time.Second, CapacityWindows: 3, CapacityPassingWindows: 2, CapacityMinimumRequests: 50, PlanSearchWorkers: 2, Controls: SchedulerControls{Placement: true, Resources: true, Replicas: true, Routing: true, Batching: true, Power: true, Membership: true}}
+	s := SchedulerSettings{ObservationWindow: 100 * time.Millisecond, ControlInterval: time.Second, ComparisonPeriod: 100 * time.Millisecond, MaxObservationAge: time.Second, MaxReplicas: 2, MaxInstances: 4, AutonomousWorkloads: []string{"w1"}, CapacityWindow: time.Second, CapacityWindows: 3, CapacityPassingWindows: 2, CapacityMinimumRequests: 50, PlanSearchWorkers: 2, Controls: SchedulerControls{Placement: true, Resources: true, Replicas: true, Routing: true, Batching: true, Power: true, Membership: true}}
 	s.CapacityGridSteps, s.CapacityBisectionWidth, s.CapacityTailSamples = 20, .005, 100
-	node := SchedulerNode{Node: NodeReference{Name: "node1", UID: "n1"}, PowerMode: "fixed", Ready: true, CPUs: []int{0, 1, 2, 3}, ModeCPUs: map[string][]int{"fixed": {0, 1, 2, 3}, schedulerTestEcoMode: {0, 1, 2, 3}}, MemoryBytes: 10000, ObservedAt: at}
+	node := SchedulerNode{Node: NodeReference{Name: "node1", UID: "n1"}, PowerMode: "fixed", Ready: true, MemoryBytes: 10000, ObservedAt: at}
 	image := "registry/model@sha256:" + strings.Repeat("a", 64)
 	settings := &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 100}
 	path := ModelPath{Name: "cpu", Artifact: "model", Files: []string{"/model"}, Format: "onnx", Image: image, RuntimeFamily: "firstfloor", Backend: "ort-cpu", Firstfloor: settings}
 	d := &Definition{Name: "workload", UID: "w1", Generation: 1, Model: Model{Name: "model", UID: "m", Generation: 1, Paths: []ModelPath{path}}, Preprocessor: Preprocessor{Name: "pre", Input: []RawField{{Name: "x", Format: "UTF8", MaxBytes: 16}}, Output: []RawField{{Name: "y", Format: "UTF8"}}}, Dataset: &DatasetReference{Name: "data", UID: "data-uid"}, SLO: SLO{Percentile: 100, TargetLatency: 100 * time.Millisecond}}
-	p := &Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", CPU: derivation.CurveCPUContract{Policy: "quota-affinity", PolicyVersion: "v1", Request: "1", Limit: "1", ORTIntraOpThreads: 1, ORTInterOpThreads: 1, AffinityCPUs: []int{0}}, PlannedBatchSizes: []int{1}, Preprocessor: derivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}}, ActiveProtocol: derivation.CurveProtocolContract{Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"}}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}, Image: image}}, IdleBaselineWatts: 12, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []BatchProfile{{Batch: 1, DurationNanos: []float64{float64(10 * time.Millisecond)}, EnergyPerInputJoules: 1, MemoryBytes: 100}}}
+	p := &Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", PlannedBatchSizes: []int{1}, Preprocessor: derivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}}, ActiveProtocol: derivation.CurveProtocolContract{Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"}}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}, Image: image}}, IdleBaselineWatts: 12, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []BatchProfile{{Batch: 1, DurationNanos: []float64{float64(10 * time.Millisecond)}, EnergyPerInputJoules: 1, MemoryBytes: 100}}}
 	p.RuntimeMetadata = &firstfloor.RuntimeMetadata{Runtime: "onnxruntime", RuntimeVersion: "1.19.0", ModelFiles: []string{"/model/model"}, Inputs: []string{"x"}, Outputs: []string{"y"}, Providers: []string{"CPUExecutionProvider"}, Device: "cpu", CPUAffinity: []int{0}, IntraOpThreads: 1, InterOpThreads: 1, InitializedBatches: []int{1}, WarmupIterations: 1}
-	i := SchedulerInstance{ID: "i1", Node: node.Node, Profile: p, WorkloadUID: d.UID, Allocation: SchedulerAllocation{CPUs: []int{0}, Threads: 1, MemoryBytes: 1000}, Ready: true, Routable: map[string]bool{d.UID: true}, Capacity: 100, Weight: 1, MaxBatch: 1, ObservedAt: at, IdleMeter: "wall-n1", IdleScope: schedulerNodeWallScope}
+	i := SchedulerInstance{ID: "i1", Node: node.Node, Profile: p, WorkloadUID: d.UID, Allocation: SchedulerAllocation{MemoryBytes: 1000}, Ready: true, Routable: map[string]bool{d.UID: true}, Capacity: 100, Weight: 1, MaxBatch: 1, ObservedAt: at, IdleMeter: "wall-n1", IdleScope: schedulerNodeWallScope}
 	b := NodeBaseline{ID: "unloaded-n1", Node: node.Node, PowerMode: "fixed", Watts: 10, Meter: "wall-n1", Scope: schedulerNodeWallScope, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "idle"}}
 	b.Reference.Size = 1
 	p.Evidence[0].Size = 1
@@ -92,11 +92,11 @@ func schedulerReplayForTest(s SchedulerSettings, snap SchedulerSnapshot, c Sched
 func TestReplayEnergyRemainsNonnegativeWithResolutionMarker(t *testing.T) {
 	for _, below := range []bool{false, true} {
 		for _, energy := range []float64{-1, 0, 1} {
-			settings, snapshot := schedulerFixture()
+			_, snapshot := schedulerFixture()
 			instance := snapshot.Instances[0]
 			instance.Profile.Batches[0].EnergyPerInputJoules = energy
 			instance.Profile.Batches[0].EnergyBelowResolution = below
-			reasons := schedulerValidateService(settings, instance, nil)
+			reasons, _ := schedulerValidateService(instance, nil)
 			if rejected := slices.Contains(reasons, "MissingServiceEnergyEvidence:"+instance.ID); rejected != (energy < 0) {
 				t.Fatalf("energy %g, below-resolution %t: %v", energy, below, reasons)
 			}
@@ -111,14 +111,12 @@ func TestReplayEnergyRemainsNonnegativeWithResolutionMarker(t *testing.T) {
 func schedulerTestCPU(i SchedulerInstance) SchedulerInstance {
 	p := *i.Profile
 	p.ID += "-other-cpu"
-	p.Condition.CPU.AffinityCPUs = []int{1}
 	if p.RuntimeMetadata != nil {
 		metadata := *p.RuntimeMetadata
 		metadata.CPUAffinity = []int{1}
 		p.RuntimeMetadata = &metadata
 	}
 	i.Profile = &p
-	i.Allocation.CPUs = []int{1}
 	return i
 }
 
@@ -359,11 +357,12 @@ func TestSchedulerResourcesAndNodeWidePowerPrerequisites(t *testing.T) {
 			t.Fatalf("power prereq not node-wide drain: %+v", power)
 		}
 	}
-	snap.Nodes[0].Reserved.CPUs = []int{0}
+	snap.Nodes[0].Reserved.MemoryBytes = snap.Nodes[0].MemoryBytes
 	reasons := schedulerValidateResources(s, snap.Nodes, snap.Instances)
-	schedulerRequireReason(t, reasons, "ExclusiveCPUInfeasible")
-	// An overlapping replacement needs the measured removal before preparation.
-	snap.Nodes[0].Reserved.CPUs = nil
+	schedulerRequireReason(t, reasons, "MemoryBudgetInfeasible")
+	// A replacement with insufficient coexistence memory requires removal first.
+	snap.Nodes[0].Reserved.MemoryBytes = 0
+	snap.Nodes[0].MemoryBytes = old.Allocation.MemoryBytes
 	c = SchedulerCandidate{ID: "resize", Nodes: snap.Nodes, Instances: []SchedulerInstance{old}}
 	c.Instances[0].ID = "resize-new"
 	c.Actions = schedulerPlan(snap, c)
@@ -401,7 +400,7 @@ func TestSchedulerInFlightAndReturnPopulation(t *testing.T) {
 	}
 }
 
-func TestSchedulerRejectedComputeAndUnknownCPUQuota(t *testing.T) {
+func TestSchedulerRejectedComputeAndCurrentMemoryBudget(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.AutonomousWorkloads = nil
 	snap.Arrivals = []SchedulerArrival{{ID: "capacity-rejected", At: snap.At.Add(-s.ObservationWindow), Definition: snap.Workloads[0], Compute: true, Outcome: "QueueFull"}}
@@ -411,14 +410,13 @@ func TestSchedulerRejectedComputeAndUnknownCPUQuota(t *testing.T) {
 	if search.Accepted != 0 || search.ComputeInputs != 1 || e.ExpectedNanos == nil || *e.ExpectedNanos != float64(10*time.Millisecond) {
 		t.Fatalf("valid rejected demand must be replayed: %+v %+v", search, e)
 	}
-	snap.Nodes[0].NonServing = []SchedulerAllocation{{CPUCount: 1, MemoryBytes: 500}}
-	unknown := schedulerKeepForTest(t, s, snap)
-	schedulerRequireReason(t, unknown.Reasons, "UnknownExclusiveCPUAffinity")
-	snap.Nodes[0].Reserved.CPUs = []int{3}
-	snap.Nodes[0].NonServing[0].CPUReserved = true
+	snap.Nodes[0].NonServing = []SchedulerAllocation{{MemoryBytes: snap.Nodes[0].MemoryBytes}}
+	blocked := schedulerKeepForTest(t, s, snap)
+	schedulerRequireReason(t, blocked.Reasons, "MemoryBudgetInfeasible")
+	snap.Nodes[0].NonServing[0].MemoryBytes = 500
 	covered := schedulerKeepForTest(t, s, snap)
 	if covered.ExpectedJoules == nil {
-		t.Fatalf("explicit reserved coverage should restore evaluability %v", covered.Reasons)
+		t.Fatalf("restored memory should restore evaluability %v", covered.Reasons)
 	}
 }
 

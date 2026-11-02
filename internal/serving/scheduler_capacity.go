@@ -241,14 +241,13 @@ func schedulerBootstrap(ctx context.Context, settings SchedulerSettings, snapsho
 		}
 		for _, option := range p.options {
 			i := option.Instance
-			if i.Node != node.Node || i.Profile == nil || i.Profile.Condition.NodeUID != node.Node.UID || len(i.Allocation.CPUs) > settings.MaxCPUs {
+			if i.Node != node.Node || i.Profile == nil || i.Profile.Condition.NodeUID != node.Node.UID {
 				continue
 			}
 			if node.PowerMode != i.Profile.Condition.PowerMode && (!settings.Controls.Power || slices.Contains(node.Reasons, NodePowerModeUnavailable)) {
 				continue
 			}
-			modeNode, known := node.AtMode(i.Profile.Condition.PowerMode)
-			if !known || len(ValidateNodeBudget(modeNode, append(append([]SchedulerAllocation{node.Reserved}, node.NonServing...), i.Allocation), nil)) != 0 {
+			if len(ValidateNodeBudget(node, append(append([]SchedulerAllocation{node.Reserved}, node.NonServing...), i.Allocation), nil)) != 0 {
 				continue
 			}
 			for w, workload := range p.ws {
@@ -659,7 +658,7 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 	groups, names := map[string][]capacityChoice{}, []string{}
 	for _, o := range p.options {
 		i := o.Instance
-		if i.Node != node.Node || i.Profile == nil || i.Profile.Condition.NodeUID != node.Node.UID || len(i.Allocation.CPUs) > p.settings.MaxCPUs {
+		if i.Node != node.Node || i.Profile == nil || i.Profile.Condition.NodeUID != node.Node.UID {
 			continue
 		}
 		if node.PowerMode != i.Profile.Condition.PowerMode && (!p.settings.Controls.Power || slices.Contains(node.Reasons, NodePowerModeUnavailable)) {
@@ -703,15 +702,12 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 			return
 		}
 		for _, c := range groups[names[j]] {
-			i := c.option.Instance
 			next := append(slices.Clone(chosen), c)
 			wanted := slices.Clone(allocations)
 			for _, o := range next {
 				wanted = append(wanted, o.option.Instance.Allocation)
 			}
-			// A plan that changes the mode places on the CPUs that mode leaves online.
-			modeNode, known := node.AtMode(i.Profile.Condition.PowerMode)
-			if !known || len(ValidateNodeBudget(modeNode, wanted, nil)) != 0 {
+			if len(ValidateNodeBudget(node, wanted, nil)) != 0 {
 				// Adding options never restores the budget, so the walk stops here.
 				instances := make([]SchedulerInstance, len(next))
 				for k, o := range next {
@@ -719,9 +715,6 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 					instances[k].WorkloadUID = p.ws[o.w].d.UID
 				}
 				reason := schedulerPlanInfeasibleResources
-				if !known {
-					reason = NodePlacementInventoryMissing
-				}
 				plans = append(plans, &capacityPlan{record: SchedulerNodePlan{Node: node.Node, Key: planKey(instances), Reason: reason}})
 				continue
 			}
@@ -815,11 +808,8 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	if plan.record.Reason != "" {
 		return plan
 	}
-	at, known := node.AtMode(mode)
-	if !known {
-		plan.record.Reason = NodePlacementInventoryMissing
-		return plan
-	}
+	at := node
+	at.PowerMode = mode
 	for _, i := range plan.instances {
 		if len(schedulerValidateInstance(p.settings, at, i, nil)) != 0 {
 			plan.record.Reason = schedulerPlanInfeasibleResources
@@ -1007,11 +997,7 @@ func (p *capacityPlanner) bounded(choice []int) bool {
 func (p *capacityPlanner) chain(n int, plan *capacityPlan) (map[string]bool, map[string]bool, string) {
 	node := p.snapshot.Nodes[n].Node
 	c := SchedulerCandidate{Nodes: slices.Clone(p.keep.Nodes), Routing: p.keep.Routing}
-	projected, known := c.Nodes[n].AtMode(plan.mode)
-	if !known {
-		return nil, nil, NodePlacementInventoryMissing
-	}
-	c.Nodes[n] = projected
+	c.Nodes[n].PowerMode = plan.mode
 	for _, i := range p.snapshot.Instances {
 		if i.Node != node {
 			c.Instances = append(c.Instances, i)
@@ -1844,13 +1830,7 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	for n, j := range best.choice {
 		plan := p.plans[n][j]
 		if !plan.keep {
-			projected, known := target.Nodes[n].AtMode(plan.mode)
-			if !known {
-				decision.Status = schedulerStatusPending
-				decision.Reasons = appendUnique(decision.Reasons, NodePlacementInventoryMissing+":"+target.Nodes[n].Node.UID)
-				return decision
-			}
-			target.Nodes[n] = projected
+			target.Nodes[n].PowerMode = plan.mode
 		}
 		for _, i := range plan.instances {
 			if best.bridge == nil && p.idleRemovable(i, best, target.Routing) {

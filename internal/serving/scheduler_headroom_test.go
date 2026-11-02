@@ -132,12 +132,10 @@ func TestTempoRecoverySurvivesNodeLocalTimingAndNotReadySCH56(t *testing.T) {
 	next := poolsInstance(old, "cuda", old.Node, snap.Nodes[0].PowerMode, "w1")
 	profile := *next.Profile
 	profile.ID = "cuda"
-	profile.Condition.CPU.AffinityCPUs = []int{1}
 	metadata := *profile.RuntimeMetadata
 	metadata.CPUAffinity = []int{1}
 	profile.RuntimeMetadata = &metadata
 	next.Profile = &profile
-	next.Allocation.CPUs = []int{1}
 	snap.Options = append(snap.Options, poolsOption(next))
 	snap.Costs = []OperationCost{
 		poolsCost(schedulerActionPrepare, old.Node, "unloaded", schedulerState(next), snap.Nodes[0].PowerMode),

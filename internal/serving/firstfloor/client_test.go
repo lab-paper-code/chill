@@ -257,3 +257,23 @@ func TestNativeInitializationMatchesRecordedRuntimeNotMeasuredCurve(t *testing.T
 		})
 	}
 }
+
+func TestNativeSharedCPUReadbackIsNotFrozenAllocation(t *testing.T) {
+	measured := native.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "fixture", ModelFiles: []string{"/model/model.onnx"},
+		Providers: []string{"CPUExecutionProvider"}, Device: "cpu", CPUAffinity: []int{0}, IntraOpThreads: 2, InterOpThreads: 1}
+	actual := measured
+	actual.CPUAffinity, actual.CPUSet, actual.CgroupCPUMax = []int{7}, "4-7", "max 100000"
+	actual.IntraOpThreads, actual.InterOpThreads = 0, 0
+	spec := Spec{ExpectedRuntime: &measured}
+	if err := validateMeasuredRuntime(spec, actual); err != nil {
+		t.Fatal("shared CPU observations blocked measured runtime", err)
+	}
+	actual.GPUUUID = "unmeasured-device"
+	if err := validateMeasuredRuntime(spec, actual); err == nil {
+		t.Fatal("device identity guard removed with CPU allocation")
+	}
+	actual.GPUUUID, actual.IntraOpThreads = "", -1
+	if err := validateMeasuredRuntime(spec, actual); err == nil {
+		t.Fatal("negative observed thread setting accepted")
+	}
+}

@@ -108,9 +108,10 @@ func NewCapacityInput(settings SchedulerSettings, occupancy []DispatchOccupancy,
 
 // Key is the stable row key of the input.
 func (in CapacityInput) Key() string {
+	// The CPU-sharing cutover must not reuse controlled-execution archive keys.
 	data, _ := json.Marshal(in)
 	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:12])
+	return "shared-cpu/" + hex.EncodeToString(sum[:12])
 }
 
 // capacityThroughput is the largest b/(mean service time + b × occupancy)
@@ -133,11 +134,10 @@ type capacityBuilder struct {
 	replay     func(ctx context.Context, lambda float64, n, seed int) (float64, bool, error)
 }
 
-// BuildCapacityRow computes the row of option variant o for Workload w. node
-// is the option's Node and baselines its idle evidence; at anchors the windows.
-// An option whose Node and runtime image lack a dispatch occupancy measurement
-// gets a rejected row without kappa.
-func BuildCapacityRow(ctx context.Context, settings SchedulerSettings, occupancy []DispatchOccupancy, o SchedulerOption, w *Definition, node SchedulerNode, baselines []NodeBaseline, at time.Time) (CapacityRow, error) {
+// BuildCapacityRow computes the measured option's capacity, independent of
+// current placement inventory. at anchors the simulated arrival windows.
+// Missing dispatch occupancy is an intrinsic rejected result.
+func BuildCapacityRow(ctx context.Context, settings SchedulerSettings, occupancy []DispatchOccupancy, o SchedulerOption, w *Definition, at time.Time) (CapacityRow, error) {
 	if err := ctx.Err(); err != nil {
 		return CapacityRow{}, err
 	}
@@ -166,7 +166,7 @@ func BuildCapacityRow(ctx context.Context, settings SchedulerSettings, occupancy
 		row.BuiltAt, row.Elapsed = time.Now().UTC(), time.Since(began)
 		return row, nil
 	}
-	r := &capacityReplay{settings: settings, node: node, at: at, baselines: baselines, occupancy: *in.DispatchOccupancy, option: o, w: w, gaps: map[[2]int][]float64{}}
+	r := &capacityReplay{settings: settings, at: at, occupancy: *in.DispatchOccupancy, option: o, w: w, gaps: map[[2]int][]float64{}}
 	b := capacityBuilder{settings: settings, percentile: w.SLO.Percentile, replay: r.window}
 	if err := b.build(ctx, &row); err != nil {
 		return row, err
@@ -255,9 +255,7 @@ func (b *capacityBuilder) judge(ctx context.Context, lambda float64) (CapacityJu
 // unit-rate exponential gaps per (seed, request count), shared across rates.
 type capacityReplay struct {
 	settings  SchedulerSettings
-	node      SchedulerNode
 	at        time.Time
-	baselines []NodeBaseline
 	occupancy DispatchOccupancy
 	option    SchedulerOption
 	w         *Definition
@@ -325,19 +323,14 @@ func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int
 	for j, offset := range offsets {
 		arrivals[j] = SchedulerArrival{ID: fmt.Sprintf("a%07d", j), At: start.Add(offset), Definition: w, Accepted: true, Compute: true, WorkloadUID: w.UID}
 	}
-	node, known := b.node.AtMode(o.Instance.Profile.Condition.PowerMode)
-	if !known {
-		return 0, false, fmt.Errorf("capacity replay: %s:%s", NodePlacementInventoryMissing, b.node.Node.UID)
-	}
-	node.Ready, node.Measurement, node.Reasons, node.ObservedAt = true, false, nil, at
 	instance := o.Instance
 	instance.ID, instance.TargetID, instance.OwnerWorkloadUID = "capacity", "", ""
 	instance.WorkloadUID, instance.Ready, instance.Stopped = w.UID, true, false
 	instance.Weight, instance.ObservedAt = 1, at
 	snapshot := SchedulerSnapshot{
-		At: at, ObservationEnd: at, Workloads: []*Definition{w}, Nodes: []SchedulerNode{node},
+		At: at, ObservationEnd: at, Workloads: []*Definition{w},
 		Instances: []SchedulerInstance{instance}, Routing: map[string]map[string]int32{w.UID: {instance.ID: 1}},
-		Arrivals: arrivals, Options: []SchedulerOption{o}, Baselines: b.baselines, DispatchOccupancy: []DispatchOccupancy{b.occupancy},
+		Arrivals: arrivals, Options: []SchedulerOption{o}, DispatchOccupancy: []DispatchOccupancy{b.occupancy},
 	}
 	settings := b.settings
 	settings.AutonomousWorkloads = nil
@@ -397,7 +390,6 @@ func NewCapacityTable(parallel int, record func(CapacityRow) error, load func(co
 type capacityTask struct {
 	option   SchedulerOption
 	workload *Definition
-	node     SchedulerNode
 	key      string
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -428,14 +420,8 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 				if _, built := t.rows[key]; built || t.running[key] != nil {
 					continue
 				}
-				node := SchedulerNode{Node: o.Instance.Node}
-				for _, n := range snapshot.Nodes {
-					if n.Node.UID == o.Instance.Node.UID {
-						node = n
-					}
-				}
 				taskCtx, cancel := context.WithCancel(ctx)
-				task := &capacityTask{o, w, node, key, taskCtx, cancel}
+				task := &capacityTask{o, w, key, taskCtx, cancel}
 				t.running[key] = task
 				t.wg.Add(1)
 				pending[i] = append(pending[i], task)
@@ -460,7 +446,7 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 				task := tasks[row]
 				select {
 				case t.parallel <- struct{}{}:
-					go t.build(settings, snapshot.DispatchOccupancy, task, snapshot.Baselines, snapshot.At)
+					go t.build(settings, snapshot.DispatchOccupancy, task, snapshot.At)
 				case <-task.ctx.Done():
 					t.mu.Lock()
 					if t.running[task.key] == task {
@@ -501,11 +487,11 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 	}
 }
 
-func (t *CapacityTable) build(settings SchedulerSettings, occupancy []DispatchOccupancy, task *capacityTask, baselines []NodeBaseline, at time.Time) {
+func (t *CapacityTable) build(settings SchedulerSettings, occupancy []DispatchOccupancy, task *capacityTask, at time.Time) {
 	defer t.wg.Done()
 	defer task.cancel()
 	defer func() { <-t.parallel }()
-	row, err := BuildCapacityRow(task.ctx, settings, occupancy, task.option, task.workload, task.node, baselines, at)
+	row, err := BuildCapacityRow(task.ctx, settings, occupancy, task.option, task.workload, at)
 	t.mu.Lock()
 	if t.running[task.key] != task {
 		t.mu.Unlock()

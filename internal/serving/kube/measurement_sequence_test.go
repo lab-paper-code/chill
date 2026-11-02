@@ -169,7 +169,7 @@ func sequenceHarness(t *testing.T) (*admissionHarness, *writeLog, *memEvidence) 
 	}
 	h.controller.state.Snapshot = serving.SchedulerSnapshot{
 		Workloads: []*serving.Definition{{Name: "w", UID: "w-uid"}},
-		Nodes:     []serving.SchedulerNode{{Node: serving.NodeReference{Name: "node", UID: "node-uid"}, CPUs: []int{0, 1, 2, 3}, Ready: true}},
+		Nodes:     []serving.SchedulerNode{{Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Ready: true}},
 	}
 	spec := measuredCPUPreparationFixture()
 	h.controller.config.Preparations = map[string]PrepareSpec{spec.Instance.Profile.ID: spec}

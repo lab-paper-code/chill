@@ -15,7 +15,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -181,7 +180,7 @@ func nativeCostState(node *transitioncost.NativeNodeObservation) []string {
 	state := make([]string, 0, len(node.Instances))
 	for _, i := range node.Instances {
 		m := i.State.Metadata
-		state = append(state, serving.SchedulerInstanceState(serving.SchedulerInstance{Profile: &serving.Profile{ID: m.ProfileID}, Allocation: serving.SchedulerAllocation{CPUs: m.Runtime.CPUAffinity, GPUUUID: m.Runtime.GPUUUID, Threads: m.Runtime.IntraOpThreads, MemoryBytes: uint64(i.MemoryLimitBytes)}}))
+		state = append(state, serving.SchedulerInstanceState(serving.SchedulerInstance{Profile: &serving.Profile{ID: m.ProfileID}, Allocation: serving.SchedulerAllocation{GPUUUID: m.Runtime.GPUUUID, MemoryBytes: uint64(i.MemoryLimitBytes)}}))
 	}
 	slices.Sort(state)
 	return state
@@ -227,19 +226,13 @@ func validatePowerNativeProfiles(profiles []serving.Profile, node *transitioncos
 		actual := instance.State.Metadata.Runtime
 		expected := *profile.RuntimeMetadata
 		expected.ModelFiles = deliveredModelFiles(profile.Condition.Artifact.Files)
+		expected.CPUAffinity, expected.CgroupCPUMax, expected.CPUSet = actual.CPUAffinity, actual.CgroupCPUMax, actual.CPUSet
+		expected.IntraOpThreads, expected.InterOpThreads = actual.IntraOpThreads, actual.InterOpThreads
 		if !reflect.DeepEqual(actual, expected) {
-			return errors.New("power actual native runtime/provider/allocation differs from verified profile")
+			return errors.New("power actual native runtime/provider/device differs from verified profile")
 		}
-		request, err := resource.ParseQuantity(profile.Condition.CPU.Request)
-		if err != nil {
-			return err
-		}
-		limit, err := resource.ParseQuantity(profile.Condition.CPU.Limit)
-		if err != nil {
-			return err
-		}
-		if request.MilliValue() != instance.CPURequestMilli || limit.MilliValue() != instance.CPULimitMilli {
-			return errors.New("power native CPU quota differs from measured profile")
+		if instance.CPURequestMilli != 0 || instance.CPULimitMilli != 0 {
+			return errors.New("power native actor must use shared CPU execution")
 		}
 	}
 	return nil

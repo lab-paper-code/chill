@@ -91,9 +91,17 @@ type schedulerReplayResult struct {
 // snapshot, resource or replay facts that block the replay.
 func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, c SchedulerCandidate, seed uint64, compared map[NodeReference]bool, capacity *capacityWindowLimit) (SchedulerCandidate, error) {
 	c.Status = schedulerStatusPending
-	c.Reasons = append(c.Reasons, snapshot.Reasons...)
-	c.Reasons = append(c.Reasons, schedulerValidateSnapshot(settings, snapshot)...)
-	c.Reasons = append(c.Reasons, schedulerValidateResources(settings, c.Nodes, c.Instances)...)
+	if capacity == nil {
+		c.Reasons = append(c.Reasons, snapshot.Reasons...)
+		c.Reasons = append(c.Reasons, schedulerValidateSnapshot(settings, snapshot)...)
+		c.Reasons = append(c.Reasons, schedulerValidateResources(settings, c.Nodes, c.Instances)...)
+	} else {
+		// Capacity windows contain measured service and simulated arrivals, not
+		// a current Node snapshot. Placement admission belongs to the planner.
+		for _, instance := range c.Instances {
+			c.Reasons, _ = schedulerValidateService(instance, c.Reasons)
+		}
+	}
 	if len(c.Reasons) != 0 {
 		return c, ctx.Err()
 	}
@@ -296,8 +304,6 @@ func schedulerValidateResources(settings SchedulerSettings, nodes []SchedulerNod
 		seen[n.Node.UID] = true
 		allocations := append([]SchedulerAllocation{n.Reserved}, n.NonServing...)
 		hosted := false
-		mode := ""
-		projectMode := false
 		for _, i := range instances {
 			if i.Node != n.Node {
 				continue
@@ -313,22 +319,11 @@ func schedulerValidateResources(settings SchedulerSettings, nodes []SchedulerNod
 				reasons = appendUnique(reasons, "MissingProfile:"+i.ID)
 				continue
 			}
-			mode, projectMode = i.Profile.Condition.PowerMode, true
 			reasons = schedulerValidateInstance(settings, n, i, reasons)
 			allocations = append(allocations, i.Allocation)
 		}
 		if hosted {
-			// Retained-only occupancy uses observed CPUs, not an unconfirmed
-			// power target. Executable candidates need the target projection.
-			at, known := n, true
-			if projectMode {
-				at, known = n.AtMode(mode)
-			}
-			if known {
-				reasons = ValidateNodeBudget(at, allocations, reasons)
-			} else {
-				reasons = appendUnique(reasons, NodePlacementInventoryMissing+":"+n.Node.UID)
-			}
+			reasons = ValidateNodeBudget(n, allocations, reasons)
 		}
 	}
 	for _, i := range instances {
@@ -345,38 +340,20 @@ func schedulerValidateInstance(settings SchedulerSettings, n SchedulerNode, i Sc
 	if i.Profile.Condition.NodeUID != n.Node.UID || i.Profile.Condition.PowerMode != n.PowerMode {
 		reasons = appendUnique(reasons, "ProfileConditionMismatch:"+i.ID)
 	}
-	// RKNNLite is measured with no ONNX Runtime threads on its CPU set.
-	noThreads := i.Allocation.Threads == 0 && i.Profile.Condition.Backend == "rknnlite"
-	if len(i.Allocation.CPUs) == 0 || !noThreads && (i.Allocation.Threads < 1 || i.Allocation.Threads > len(i.Allocation.CPUs)) ||
-		i.Allocation.Threads != i.Profile.Condition.CPU.ORTIntraOpThreads {
-		reasons = appendUnique(reasons, "CPUThreadAllocationMismatch:"+i.ID)
-	}
-	measuredAffinity := i.Profile.Condition.CPU.AffinityCPUs
-	if runtime := i.Profile.RuntimeMetadata; runtime != nil {
-		measuredAffinity = runtime.CPUAffinity
-		if i.Allocation.Threads != runtime.IntraOpThreads {
-			reasons = appendUnique(reasons, "CPUThreadAllocationMismatch:"+i.ID)
-		}
-	}
-	if len(measuredAffinity) > 0 {
-		measured := append([]int(nil), measuredAffinity...)
-		actual := append([]int(nil), i.Allocation.CPUs...)
-		sort.Ints(measured)
-		sort.Ints(actual)
-		if !reflect.DeepEqual(measured, actual) {
-			reasons = appendUnique(reasons, "MeasuredAffinityMismatch:"+i.ID)
-		}
-	}
 	if i.Capacity < 1 || i.Weight < 0 || i.MaxWait < 0 {
 		reasons = appendUnique(reasons, "MissingQueueOrTransportEvidence:"+i.ID)
 	}
 	if len(i.Profile.Batches) == 0 || i.Profile.ID == "" || len(i.Profile.Evidence) == 0 {
 		reasons = appendUnique(reasons, "MissingProfileEvidence:"+i.ID)
 	}
-	return schedulerValidateService(settings, i, reasons)
+	reasons, maxMemory := schedulerValidateService(i, reasons)
+	if maxMemory == 0 || maxMemory > i.Allocation.MemoryBytes || settings.ServingMemoryBytes > i.Allocation.MemoryBytes-maxMemory {
+		reasons = appendUnique(reasons, "MeasuredMemoryInfeasible:"+i.ID)
+	}
+	return reasons
 }
 
-func schedulerValidateService(settings SchedulerSettings, i SchedulerInstance, reasons []string) []string {
+func schedulerValidateService(i SchedulerInstance, reasons []string) ([]string, uint64) {
 	maxMemory := uint64(0)
 	single := false
 	for _, b := range i.Profile.Batches {
@@ -401,57 +378,18 @@ func schedulerValidateService(settings SchedulerSettings, i SchedulerInstance, r
 	if !single {
 		reasons = appendUnique(reasons, "MissingSingleBatchEvidence:"+i.ID)
 	}
-	if maxMemory == 0 || maxMemory > i.Allocation.MemoryBytes || settings.ServingMemoryBytes > i.Allocation.MemoryBytes-maxMemory {
-		reasons = appendUnique(reasons, "MeasuredMemoryInfeasible:"+i.ID)
-	}
-	return reasons
+	return reasons, maxMemory
 }
 
-// ValidateNodeBudget applies the shared configured CPU/GPU/memory admission
-// contract. Reserved CPU coverage is not observed physical CPU isolation.
+// ValidateNodeBudget checks memory safety and exclusive GPU allocation.
 func ValidateNodeBudget(n SchedulerNode, allocations []SchedulerAllocation, reasons []string) []string {
-	cpus := map[int]bool{}
 	gpu := map[string]bool{}
 	var memory uint64
-	cpuBudget := 0
-	reservedQuota := 0
 	for _, a := range allocations {
 		if math.MaxUint64-memory < a.MemoryBytes {
 			reasons = appendUnique(reasons, "MemoryBudgetOverflow:"+n.Node.UID)
 		} else {
 			memory += a.MemoryBytes
-		}
-		count := a.CPUCount
-		if count == 0 {
-			count = len(a.CPUs)
-		}
-		if count < 0 {
-			reasons = appendUnique(reasons, "UnknownCPUAllocationCount:"+n.Node.UID)
-			continue
-		}
-		if a.CPUReserved {
-			reservedQuota += count
-		} else {
-			cpuBudget += count
-			// Request count and the measured affinity width are distinct. The
-			// full mask remains exclusive even when quota/threads use fewer CPUs.
-			if count > len(a.CPUs) {
-				reasons = appendUnique(reasons, "UnknownExclusiveCPUAffinity:"+n.Node.UID)
-			}
-		}
-		if !a.CPUReserved {
-			for _, cpu := range a.CPUs {
-				found := false
-				for _, v := range n.CPUs {
-					if cpu == v {
-						found = true
-					}
-				}
-				if !found || cpus[cpu] {
-					reasons = appendUnique(reasons, "ExclusiveCPUInfeasible:"+n.Node.UID)
-				}
-				cpus[cpu] = true
-			}
 		}
 		if a.GPUUUID != "" {
 			if !slices.Contains(n.GPUUUIDs, a.GPUUUID) || gpu[a.GPUUUID] {
@@ -459,9 +397,6 @@ func ValidateNodeBudget(n SchedulerNode, allocations []SchedulerAllocation, reas
 			}
 			gpu[a.GPUUUID] = true
 		}
-	}
-	if cpuBudget > len(n.CPUs) || reservedQuota > len(n.Reserved.CPUs) {
-		reasons = appendUnique(reasons, "CPUBudgetInfeasible:"+n.Node.UID)
 	}
 	if memory > n.MemoryBytes {
 		reasons = appendUnique(reasons, "MemoryBudgetInfeasible:"+n.Node.UID)
@@ -989,13 +924,7 @@ func (s *schedulerReplayState) completeActions() bool {
 			case schedulerActionPower:
 				for n := range s.nodes {
 					if s.nodes[n].Node == a.action.Node {
-						projected, known := s.nodes[n].AtMode(a.action.To)
-						if !known {
-							a.done = false
-							s.out.reasons = appendUnique(s.out.reasons, NodePlacementInventoryMissing+":"+a.action.Node.UID)
-							return false
-						}
-						s.nodes[n] = projected
+						s.nodes[n].PowerMode = a.action.To
 					}
 				}
 			}
@@ -1762,7 +1691,7 @@ func schedulerIdleAtMode(i SchedulerInstance, mode string, options []SchedulerOp
 			continue
 		}
 		q := j.Profile.Condition
-		if q.PowerMode == mode && p.RuntimeFamily == q.RuntimeFamily && p.Backend == q.Backend && p.RuntimeImage == q.RuntimeImage && reflect.DeepEqual(p.Artifact, q.Artifact) && reflect.DeepEqual(p.Preprocessor, q.Preprocessor) && reflect.DeepEqual(p.ActiveProtocol.Dataset, q.ActiveProtocol.Dataset) && reflect.DeepEqual(p.CPU, q.CPU) && reflect.DeepEqual(p.Firstfloor, q.Firstfloor) && reflect.DeepEqual(p.RuntimeAccess, q.RuntimeAccess) && reflect.DeepEqual(p.PlannedBatchSizes, q.PlannedBatchSizes) {
+		if q.PowerMode == mode && p.RuntimeFamily == q.RuntimeFamily && p.Backend == q.Backend && p.RuntimeImage == q.RuntimeImage && reflect.DeepEqual(p.Artifact, q.Artifact) && reflect.DeepEqual(p.Preprocessor, q.Preprocessor) && reflect.DeepEqual(p.ActiveProtocol.Dataset, q.ActiveProtocol.Dataset) && reflect.DeepEqual(p.Firstfloor, q.Firstfloor) && reflect.DeepEqual(p.RuntimeAccess, q.RuntimeAccess) && reflect.DeepEqual(p.PlannedBatchSizes, q.PlannedBatchSizes) {
 			return j, true
 		}
 	}

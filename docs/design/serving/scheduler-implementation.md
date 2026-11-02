@@ -41,7 +41,7 @@ firstfloor Go 큐·배처·persistent Python IPC runner는 `internal/firstfloor`
 4. feasible batch가 없으면 keep은 현재 채울 수 있고 MaxBatch 이내인 batch 중 `serviceCost(p-quantile)/크기`가 최소인 batch(동률 큰 batch)를 `maximum_throughput`으로 즉시 실행한다. drop은 head 제거, defer는 후순위 FIFO로 옮긴다.
 5. normal이 없으면 deferred FIFO 호환 prefix도 같은 항목당 비용 최소 규칙으로 실행한다. drop/defer/timeout과 성공 지연 표본, caller lifetime/cancel은 구별한다.
 실제 config/profile·진행 batch snapshot을 기록하고 accepted 정의·SLO는 config 변경으로 재해석하지 않는다.
-가상/전환 Node는 `SchedulerNode.AtMode`의 원자 projection으로 PowerMode와 CPUs를 함께 갱신한다. capture가 snapshot 소유 `ModeCPUs[current]`에 실제 published CPUs를 넣고, 다른 mode는 DeviceClass 선언을 쓴다. projection은 이 정규화된 map만 조회하며 라벨-only fast path나 CPU mask 복제를 하지 않는다. capacity·fixed/common·idle·chain·최종 target·power 완료 replay가 같은 경로를 사용하고, 왕복 투영도 실제 현재 inventory를 보존한다. unknown target은 후보 거부/명시적 미확인으로 남기며 reserved/non-serving 예산·측정 affinity 검증과 실제 power 완료 전 공급 경계는 완화하지 않는다.
+가상/전환 Node는 PowerMode만 투영하며 CPU inventory를 만들거나 할당하지 않는다. 실제 online CPU는 node-agent 관측이고 `SchedulerNode`/allocation에 ModeCPUs·독점 CPU mask·threads·CPU quota 장부를 두지 않는다. power actuator의 class/readback·정책·물리 Node 신원 검사는 유지한다.
 
 ## 4. 측정 계약과 catalog
 
@@ -63,8 +63,8 @@ Runtime pending/assigned와 native queued/running·elapsed·batch를 physical in
 
 #### 정책 ACK 대기와 실제 관측 실패의 분리 — SCH-48~49
 
-ACK pending·실제 읽기 실패·중복 실물 정리는 함께 적용할 계약이다. 기존 `ExclusiveCPUInfeasible` 등 전체 자원 실패의 전역 Pending은 유지하되 Node 하나의 `InstanceUnavailable`을 새 전역 중지로 확대하지 않는다.
-- **SCH-48 / AC-34~35:** `validateMetadata`는 desired/actual DecisionID 불일치만 오류에서 빼고 profile/runtime/provider/device/affinity/입출력/Ready는 모두 검증한다. `(ReadyInstance,nil)`과 기존 `State.Reason=PolicyAckPending`을 쓰며 새 bool/cache/sentinel은 없다.
+ACK pending·실제 읽기 실패·중복 실물 정리는 함께 적용할 계약이다. 전체 메모리/GPU 자원 실패의 Pending은 유지하되 Node 하나의 InstanceUnavailable을 새 전역 중지로 확대하지 않는다.
+- **SCH-48 / AC-34~35:** `validateMetadata`는 desired/actual DecisionID 불일치만 ACK pending으로 분리하고 profile/runtime/provider/device/입출력/Ready를 검증한다. CPU mask·관측 thread 수를 frozen allocation과 대조하지 않는다. `(ReadyInstance,nil)`과 기존 `State.Reason=PolicyAckPending`을 쓰며 새 bool/cache/sentinel은 없다.
 - 성공 read의 실제 physical ID·Node·profile·allocation·owner·TargetID·Ready·정책·요청·원래 시각을 유지한다. desired로 Native를 덮거나 ACK 때문에 `Ready=false`/`Stopped=true`/`Native=nil`로 바꾸지 않는다. 실패/교체 executor의 stale 상태를 무기한 살리지 않는다.
 - observer는 성공 probe로 받아 동일 Pod UID/container·Service 단일 executor를 검증한다. pending은 unavailable/read-failed fallback이 아니다. 실제 HTTP/디코딩/metadata/Pod/Service 오류는 기존 실패 경로다.
 - Runtime·snapshot의 실물/할당·`!Stopped` replica·POOL 귀속을 유지하고 scheduler 원본/compact/summary/기록 `reasons`, POOL `InstanceState.reason`에 **반영 대기**를 표시한다. ACK 후 다음 probe에서 지우며 available POOL로 이동하지 않는다.
@@ -78,10 +78,10 @@ ACK pending·실제 읽기 실패·중복 실물 정리는 함께 적용할 계�
 Tick은 replay하지 않는다. 외부 worker가 켜진 Workload SLO와 measured option/배치 상한별 최대 충족률 κ를 계산하고 Tick은 합계를 쓴다. row key·포아송 창·격자/이분 탐색·`NonMonotone`·계산/이전 행 사용은 [용량표 계획기](analytic-planner.md), 설정은 `capacityWindowNanos`, `capacityWindows`, `capacityPassingWindows`, `capacityMinimumRequests`가 원본이다.
 `dispatchOccupancy`는 node/mode/runtime image/model의 측정 record다. 없는 option은 `MissingDispatchOccupancy`로 κ가 없고 켜진 UID에 κ 행이 전혀 없으면 `CapacityPending:<UID>`다. κ 불명 UID를 고정하여 독립 UID 진행을 허용하는 규칙은 5.4절을 따른다.
 창은 option 하나인 keep snapshot에 seeded Poisson arrival을 넣고 공유 selector로 재생한다. 실행은 empirical service sample + batch size×dispatch occupancy이며 queue/실행/전달/반환의 **전체 E2E 분포**를 gonum/stat로 percentile 계산한다. 완료 여유를 포함해 SLO 이하이고 timeout/만료 0인 창만 충족이다.
-Node마다 keep과 해당 Node/mode의 measured option 변형 하나 중 `ValidateNodeBudget` 충족 계획을 만든다. 계획당 κ_new/κ_ret·route 전후 사슬·전력을 두며 현재 계획의 Node당 serving instance는 하나다. `FixedWorkload`, `MeasurementNode`, `NodeUnavailable`, 배치 설정 부족은 keep-only다. 비용/행/자원/baseline 누락은 이유를 남기고 비교에서 뺀다. placement/resources/replicas/routing/batching/membership gate와 `maxReplicas`/`maxInstances`/`maxCPUs`는 계획기 원본을 따른다.
+Node마다 keep과 measured option 변형 하나 중 현재 memory/GPU budget을 만족하는 계획을 만든다. κ_new/κ_ret·전환 사슬·전력을 유지하고 FixedWorkload/MeasurementNode/NodeUnavailable/배치 설정 부족은 keep-only다. 비용/행/현재 자원/baseline 누락은 이유를 남긴다. maxReplicas/maxInstances와 제어 gate는 유지하되 maxCPUs는 없다.
 instance는 Workload 하나를 맡고 snapshot/기록에 `workloadUID` 하나를 가진다. Runtime/replay는 같은 deterministic smooth-weighted 분배를 사용한다. active UID 가중치 합 1000, 비자율 UID는 현재 값 유지, active UID 누락은 오류다. 준비 slot은 실제 Ready physical ID로 해결한다. 같은 physical ID/weight의 credit만 유지하고 변경/new entry는 0이다.
-CPU/GPU/memory 예산은 전체 allocation+system/non-serving 예약이다. `CPUCount`는 measured/actual Pod request 올림값으로 quota/ORT threads/affinity 폭과 다르다. measured threads와 전체 affinity를 재현하며 폭>threads를 허용하되 mask 중복·예약 침범은 차단한다. whole GPU UUID exclusive, measured peak memory+Serving 부가 예산을 검사한다. Pod당 runner 하나·순차 batch이고 replica는 Pod 수다.
-non-serving effective CPU는 Node millicore 합 후 한 번 올림, memory도 합한다. quota는 affinity proof가 아니다. explicit exclusive 예약이 합계를 덮지 못하거나 CHILL 외 Pod가 물리 GPU를 요청하면 `PlacementBudgetUnavailable`로 그 Node만 keep이다. 현재 native serving은 합계에서 제외하며 이유 있는 Node도 POOL에 남는다.
+GPU/memory 예산은 실제 allocation과 system/non-serving 메모리·GPU 예약이다. CPUCount·CPUReserved·독점 CPU IDs와 quota/threads/affinity matching은 없다. whole GPU UUID의 inventory/중복과 measured peak memory+Serving 부가 예산은 계속 검사한다. Pod당 runner 하나·순차 batch이고 replica는 Pod 수다.
+non-serving memory는 Kubernetes init/sidecar/overhead를 포함해 합산한다. CPU request는 배치 예산으로 세지 않는다. CHILL 외 Pod가 물리 GPU를 요청하면 PlacementBudgetUnavailable로 해당 Node만 keep이며 현재 native serving은 non-serving 합계에서 제외한다. 이유 있는 Node도 POOL에 남는다.
 
 ### 5.3 전환·에너지·선택
 
@@ -134,7 +134,7 @@ Pod UID 장부/runtime/snapshot 투영과 owner별 예약이 현행 구조이며
 |---|---|
 | identity | namespace/name+Pod UID, Node Name+UID. container 전에도 항목을 만들고 physical ID는 생성 뒤 `Pod UID/container ID`; 이전 container 종료 추적을 덮지 않는다. |
 | slot | ServingSlotAnnotation/TargetID는 계획 주소이지 executor 신분/유일성 proof가 아니다. 같은 slot의 여러 Pod를 모두 보존한다. |
-| allocation | 실제 request/limit·준비 CPU affinity/GPU/threads/profile·마지막 검증 native allocation. 준비 중 예약도 점유다. 불일치/미확인은 Node 변경을 닫지 점유를 0으로 만들지 않는다. |
+| allocation | 준비·실제 memory/GPU/profile과 마지막 검증 native 관측. CPU 관측을 할당/예약으로 승격하지 않는다. 준비 중 물리 소유도 점유이며 불일치/미확인은 Node 변경을 닫지 점유를 0으로 만들지 않는다. |
 | owner/route | Workload owner reference와 현재 binding/routing을 구별하고 빈 route로 owner를 지우지 않는다. |
 | observation | 마지막 성공 state/applied DecisionID/Ready/Stopped/요청, 조회 시작·성공 확인·최근 시도 시각/실패 이유. 실패는 성공값/시각을 갱신하지 않는다. |
 | lifetime | 생성/삭제 표식·exact container 종료·source finalizer/제거 결과. 실행 종료/자원 반환/API 삭제/cleanup 완료는 다르다. |
@@ -215,7 +215,7 @@ reset은 선택 owner의 **모든** exact Pod UID/container를 열거·remove �
 | SCH-20~23 | Runtime/actor: Ready 전달·원래 elapsed·UID batch·energy-gain wait·명시 수명 |
 | SCH-24~27,30 | atomic/operation ledger: prepare-route-drain-remove·effect·partial·재사용·appliedAt |
 | SCH-32 | authenticated settings·UID autonomy·frozen static 비교 |
-| SCH-48~49,AC-34~35 | ACK 지연에도 동일 물리/할당/owner/slot·Native/Ready/POOL/replica/meter joules 보존, prepare/Create0, ACK 후 표시 해제; actual read 실패 Node 네 gate·정상 Node 진행·기존 전역 CPU gate 유지. pending/normal 모두 stop/drain·queued/running 동안 power0, 빈 native/drain 뒤만 power 허가 |
+| SCH-48~49,AC-34~35 | ACK 지연에도 동일 물리/memory·GPU/owner/slot·Native/Ready/POOL/replica/meter joules 보존, prepare/Create0, ACK 후 표시 해제; actual read 실패 Node 네 gate·정상 Node 진행·전역 memory/GPU 안전 유지. queued/running 동안 power0, 빈 native/drain 뒤만 power 허가 |
 | AC-36 | exact 우선/다중 alias 거절·같은 slot 모든 owned Pod 제거·타 owner 보존·두 번째 reset Pod write0 |
 | SCH-50,AC-37 | ACK/읽기/Service/LIST/watch 장애에도 UID/점유/owner 보존·unknown effect 재전송0·freshness 없이 κ/dispatch 금지·init 실패/중복 Pod 각각 exact 종료/삭제 뒤 퇴역·late probe 부활 금지 |
 | SCH-51,AC-38 | 모든 mutation 공통 예약, source+destination 충돌·동일 UID 측정 한 승인·독립 범위 실제 시작·부분 예약0·effect 전 멱등 반환/effect 후 unknown 유지·fresh proof 해제·snapshot 뒤 새 route/outstanding remove 거절·새 UID 옛 승인 금지 |

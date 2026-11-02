@@ -82,14 +82,10 @@ func TestCatalogSupportsExactlyInitializedMeasuredSparseBatches(t *testing.T) {
 	if completeNativeProfile(standalone) {
 		t.Fatal("standalone became native evidence")
 	}
-	profile.Condition.CPU.AffinityCPUs = []int{0, 1}
-	profile.RuntimeMetadata.CPUAffinity = []int{0, 1}
+	profile.RuntimeMetadata.CPUAffinity = []int{7}
+	profile.RuntimeMetadata.IntraOpThreads = 0
 	if !completeNativeProfile(profile) {
-		t.Fatal("exact explicitly measured CPU mask excluded")
-	}
-	profile.Condition.CPU.AffinityCPUs = []int{2, 3}
-	if completeNativeProfile(profile) {
-		t.Fatal("profile relabeled to alternate CPU IDs")
+		t.Fatal("shared runtime observation became a CPU allocation gate")
 	}
 }
 
@@ -105,11 +101,11 @@ func TestCatalogLatestSuccessUsesFrozenConditionAndSourceCompletion(t *testing.T
 	otherMeter := old
 	otherMeter.ID = "other-meter/uid"
 	otherMeter.MetricSource.MetricLabels = map[string]string{"meter": "independent"}
-	otherMask := old
-	otherMask.ID = "other-mask/uid"
-	otherMask.Condition.CPU.AffinityCPUs = []int{4, 5}
-	result, err := latestConditionProfiles([]serving.Profile{newer, old, otherNode, otherMeter, otherMask})
-	if err != nil || len(result) != 4 || result[0].ID != newer.ID || result[1].ID != otherNode.ID || result[2].ID != otherMeter.ID || result[3].ID != otherMask.ID {
+	otherRuntime := old
+	otherRuntime.ID = "other-runtime/uid"
+	otherRuntime.Condition.RuntimeImage = "new-runtime"
+	result, err := latestConditionProfiles([]serving.Profile{newer, old, otherNode, otherMeter, otherRuntime})
+	if err != nil || len(result) != 4 || result[0].ID != newer.ID || result[1].ID != otherNode.ID || result[2].ID != otherMeter.ID || result[3].ID != otherRuntime.ID {
 		t.Fatalf("latest source matching changed identity/scope: %+v %v", result, err)
 	}
 }

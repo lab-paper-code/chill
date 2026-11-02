@@ -18,7 +18,6 @@ import (
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
-	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -168,16 +167,10 @@ func (o *schedulerService) measuredPreparation(
 	if queueBytes < 1 {
 		return spec, fmt.Errorf("settings.servingMemoryBytes must hold the firstfloor queue")
 	}
-	if memory == 0 || servingMemory > uint64(1<<63-1) || memory > uint64(1<<63-1)-servingMemory ||
-		len(runtime.CPUAffinity) == 0 || runtime.IntraOpThreads < 0 ||
-		(runtime.IntraOpThreads == 0) != rknn || len(runtime.CPUAffinity) < runtime.IntraOpThreads {
-		return spec, fmt.Errorf("bounded measured memory and physical CPU/thread allocation required")
+	if memory == 0 || servingMemory > uint64(1<<63-1) || memory > uint64(1<<63-1)-servingMemory {
+		return spec, fmt.Errorf("bounded measured memory required")
 	}
 	memory += servingMemory
-	request, err := resource.ParseQuantity(p.Condition.CPU.Request)
-	if err != nil || request.Sign() <= 0 {
-		return spec, fmt.Errorf("positive measured CPU request required")
-	}
 	binding := storekube.Binding{
 		Store: o.opts.storeName, Endpoint: o.opts.storeEndpoint, Bucket: o.opts.storeBucket,
 		Region: o.opts.storeRegion, CredentialsSecretName: o.opts.storeCredentialsSecret,
@@ -198,8 +191,7 @@ func (o *schedulerService) measuredPreparation(
 		Instance: serving.SchedulerInstance{
 			ID: name, Node: serving.NodeReference{Name: p.NodeName, UID: p.Condition.NodeUID},
 			Allocation: serving.SchedulerAllocation{
-				CPUs: slices.Clone(runtime.CPUAffinity), CPUCount: int(request.Value()),
-				Threads: runtime.IntraOpThreads, GPUUUID: runtime.GPUUUID, MemoryBytes: memory,
+				GPUUUID: runtime.GPUUUID, MemoryBytes: memory,
 			},
 			Capacity: int(settings.MaxQueueSize), Weight: 1,
 			MaxBatch: p.Batches[len(p.Batches)-1].Batch,
@@ -212,7 +204,6 @@ func (o *schedulerService) measuredPreparation(
 			RunnerCommand: []string{
 				"python3", "/opt/chill/runtime/firstfloor/runner.py", "--runtime", p.Condition.Backend,
 				"--model-dir", "/model", "--preprocessor", "/preprocessor",
-				"--intra-op-threads", strconv.Itoa(runtime.IntraOpThreads),
 				"--warmup-iterations", strconv.Itoa(runtime.WarmupIterations),
 			},
 			RunnerTimeoutMS: int(o.opts.operationTimeout / time.Millisecond), MaxQueueRequests: int(settings.MaxQueueSize),

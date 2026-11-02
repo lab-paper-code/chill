@@ -81,7 +81,7 @@ func powerTrialInputs(settling int32, watts float64) (transitioncost.FrozenContr
 	runtime := native.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "fixture", ModelFiles: []string{"/model/model.onnx"}, CPUAffinity: []int{0}, IntraOpThreads: 1}
 	before := transitioncost.NativeNodeObservation{NodeName: costTestMeter.Node.Name, NodeUID: costTestMeter.Node.UID, ReceivedAt: at,
 		Instances: []transitioncost.NativeInstanceObservation{{Namespace: "measure", PodName: "serving", PodUID: "pod", ContainerID: process.ContainerID, StartedAt: process.StartedAt,
-			Image: "fixture-image", ImageID: "fixture-image-id", CPURequestMilli: 1000, CPULimitMilli: 1000, MemoryRequestBytes: 128, MemoryLimitBytes: 128,
+			Image: "fixture-image", ImageID: "fixture-image-id", MemoryRequestBytes: 128, MemoryLimitBytes: 128,
 			State: native.State{At: at, Ready: true, Metadata: native.Metadata{Mode: "serving", ProfileID: "profile", Runtime: runtime}}}}}
 	after := before
 	after.ReceivedAt = at.Add(time.Duration(3+settling) * time.Second)
@@ -102,6 +102,6 @@ func powerTrialInputs(settling int32, watts float64) (transitioncost.FrozenContr
 	policy := transitioncost.Policy{MaximumBoundaryDistance: time.Second, MinimumCoverage: .95, MaximumSampleGap: 2 * time.Second,
 		MaximumBoundaryUncertainty: 50 * time.Millisecond, MaximumReadyObservationDelay: 3 * time.Second}
 	profile := serving.Profile{ID: "profile", RuntimeMetadata: &runtime, Condition: derivation.CurvePlanSpec{NodeUID: before.NodeUID, RuntimeImage: "fixture-image",
-		CPU: derivation.CurveCPUContract{Request: "1", Limit: "1"}, Artifact: derivation.CurveArtifactContract{Files: []string{"model.onnx"}}}}
+		Artifact: derivation.CurveArtifactContract{Files: []string{"model.onnx"}}}}
 	return contract, raw, policy, profile
 }

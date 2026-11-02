@@ -26,6 +26,7 @@ func capacityBridgeFixture(t *testing.T) (SchedulerSettings, SchedulerSnapshot, 
 	blocker.Profile = &profile
 	bridge := poolsInstance(blocker, "bridge", spare, "fixed", "w2")
 	wanted := poolsInstance(snap.Instances[0], "recovery", blocked, "fixed", "w1")
+	snap.Nodes[slices.IndexFunc(snap.Nodes, func(node SchedulerNode) bool { return node.Node == blocked })].MemoryBytes = blocker.Allocation.MemoryBytes
 	snap.Instances = append(snap.Instances, blocker)
 	snap.Options = append(snap.Options, poolsOption(blocker), poolsOption(bridge), poolsOption(wanted))
 	snap.Routing = map[string]map[string]int32{"w1": {snap.Instances[0].ID: 1000}, "w2": {blocker.ID: 1000}}

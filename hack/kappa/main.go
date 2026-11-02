@@ -19,12 +19,14 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"math"
 	"math/rand/v2"
 	"os"
@@ -124,8 +126,16 @@ func loadScheduler(name string) (serving.SchedulerSnapshot, serving.SchedulerSet
 
 func decodeSnapshot(raw json.RawMessage) (serving.SchedulerSnapshot, error) {
 	var snapshot serving.SchedulerSnapshot
-	err := json.Unmarshal(raw, &snapshot)
-	return snapshot, err
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&snapshot); err != nil {
+		return serving.SchedulerSnapshot{}, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return serving.SchedulerSnapshot{}, errors.New("one current-contract scheduler snapshot required")
+	}
+	return snapshot, nil
 }
 
 // table builds the server capacity table for the autonomous Workloads, prints
@@ -363,7 +373,7 @@ func targetKey(target *serving.SchedulerCandidate) string {
 		if i.Profile != nil {
 			profile = i.Profile.ID
 		}
-		keys = append(keys, fmt.Sprintf("%s|%s|%v|b%d", i.Node.Name, profile, i.Allocation.CPUs, i.MaxBatch))
+		keys = append(keys, fmt.Sprintf("%s|%s|%s|b%d", i.Node.Name, profile, i.Allocation.GPUUUID, i.MaxBatch))
 	}
 	sort.Strings(keys)
 	return strings.Join(keys, " + ")
@@ -436,7 +446,7 @@ func compare(base serving.SchedulerSettings, profilesFile, recordsFile, rowsFile
 		settings := base
 		recorded := r.Decision.Settings
 		settings.ObservationWindow, settings.ControlInterval, settings.ComparisonPeriod, settings.MaxObservationAge = recorded.ObservationWindow, recorded.ControlInterval, recorded.ComparisonPeriod, recorded.MaxObservationAge
-		settings.MaxReplicas, settings.MaxInstances, settings.MaxCPUs, settings.Controls = recorded.MaxReplicas, recorded.MaxInstances, recorded.MaxCPUs, recorded.Controls
+		settings.MaxReplicas, settings.MaxInstances, settings.Controls = recorded.MaxReplicas, recorded.MaxInstances, recorded.Controls
 		settings.AutonomousWorkloads = recorded.AutonomousWorkloads
 		if margin < 0 {
 			settings.CompletionMarginMS = recorded.CompletionMarginMS

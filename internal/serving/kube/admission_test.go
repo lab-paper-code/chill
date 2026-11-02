@@ -126,7 +126,7 @@ func newAdmissionController(t *testing.T, kube kubernetes.Interface) (*Scheduler
 			Settings: serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 				MaxObservationAge: time.Second, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1,
 				CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
-				CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 4},
+				CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1},
 			MeasurementNamespaces: []string{"chill-system"},
 		})
 	if err != nil {
@@ -468,62 +468,19 @@ func cpuClass() *edge.DeviceClass {
 		Architecture: "amd64", PowerModes: []edge.PowerMode{{Name: "max", Actuator: actuator(0), OnlineCPUs: "0-5"}, {Name: "low", Actuator: actuator(1)}}}}
 }
 
-// A measurement whose CPUs its mode cannot leave outside the serving
-// reservation is refused before the Node is taken; the option it would
-// measure could never be placed.
-func TestAdmitRefusesCPUsTheModeCannotOffer(t *testing.T) {
-	for _, test := range []struct {
-		name     string
-		mode     string
-		affinity []int32
-		readBack string
-		want     string
-	}{
-		{name: "declared affinity fits", mode: "max", affinity: []int32{2, 3, 4, 5}, want: "Granted"},
-		{name: "declared affinity offline", mode: "max", affinity: []int32{4, 5, 6}, want: "Refused: CPUsUnavailable 4-6 max available 2-5"},
-		{name: "affinity on a reserved CPU", mode: "max", affinity: []int32{1, 2}, want: "Refused: CPUsUnavailable"},
-		{name: "undeclared mode not read back", mode: "low", affinity: []int32{2}, want: "Refused: OnlineCPUsUnknown low"},
-		{name: "undeclared mode read back uses the Node", mode: "low", affinity: []int32{2, 3}, readBack: "low", want: "Granted"},
-		{name: "undeclared read-back mode too small", mode: "low", affinity: []int32{2, 3, 4}, readBack: "low", want: "Refused: CPUsUnavailable"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
+func TestAdmitSharedCPUWithoutOnlineInventory(t *testing.T) {
+	for _, mode := range []string{"max", "low"} {
+		t.Run(mode, func(t *testing.T) {
 			h := newAdmissionHarness(t)
 			h.create(cpuClass())
-			h.controller.mu.Lock()
-			h.controller.config.Reserved = map[string]serving.SchedulerAllocation{"node": {CPUs: []int{0, 1}}}
-			h.controller.mu.Unlock()
-			if test.readBack != "" {
-				h.setNode(func(n *core.Node) {
-					n.Annotations[chillmeta.PowerActuator] = `{"kind":"JetsonNVPModel","jetsonNVPModel":{"id":1}}`
-				})
-			}
+			h.setNode(func(node *core.Node) { delete(node.Annotations, chillmeta.OnlineCPUs) })
 			root := beoRoot("beo", "node", "")
-			root.Spec.State.Candidate.PowerMode, root.Spec.CPUAffinity = test.mode, test.affinity
+			root.Spec.State.Candidate.PowerMode = mode
 			h.create(root)
 			h.admit()
-			if got := h.admission(root); !strings.HasPrefix(got, test.want) {
-				t.Fatalf("admission = %q, want %q", got, test.want)
-			}
-			if granted := strings.HasPrefix(test.want, "Granted"); granted != (h.holder() == string(root.UID)) {
-				t.Fatalf("taint holder %q", h.holder())
+			if got := h.admission(root); !strings.HasPrefix(got, "Granted") || h.holder() != string(root.UID) {
+				t.Fatalf("shared CPU admission required allocation inventory: %q holder=%q", got, h.holder())
 			}
 		})
-	}
-}
-
-// A refusal is terminal and does not hold the Node's queue: the next root on
-// the Node is granted in the same cycle.
-func TestAdmitRefusalLetsTheNextRootGo(t *testing.T) {
-	h := newAdmissionHarness(t)
-	h.create(cpuClass())
-	first, second := beoRoot("first", "node", ""), baselineRoot("second", time.Now())
-	first.Spec.State.Candidate.PowerMode, first.Spec.CPUAffinity = maxMode, []int32{7}
-	h.create(first, second)
-	h.admit()
-	if got := h.admission(first); !strings.HasPrefix(got, "Refused: CPUsUnavailable") {
-		t.Fatalf("first = %q", got)
-	}
-	if h.holder() != string(second.UID) {
-		t.Fatalf("holder %q", h.holder())
 	}
 }

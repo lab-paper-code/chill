@@ -27,7 +27,6 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -98,7 +97,6 @@ func assertCatalogRawProfile(t *testing.T, profile serving.Profile) {
 		profile.NodeName != "lattepanda" || profile.Condition.NodeUID != "uid" || len(profile.Evidence) != 13 ||
 		profile.RuntimeMetadata == nil || profile.IdleBaselineWatts != 4 || profile.MeasuredAt.IsZero() ||
 		profile.MetricSource.NodeName != "lattepanda" || len(profile.MetricSource.MetricLabels) == 0 ||
-		profile.Condition.CPU.Limit != "2" || len(profile.Condition.CPU.AffinityCPUs) != 2 ||
 		profile.RuntimeMetadata.IntraOpThreads != 2 || len(profile.RuntimeMetadata.CPUAffinity) != 2 ||
 		batch.MemoryBytes != 4096 || len(batch.DurationNanos) != 6 || batch.DurationNanos[0] != 500000 ||
 		math.Abs(batch.EnergyPerInputJoules-30) > 1e-9 || batch.EnergyBelowResolution {
@@ -194,21 +192,21 @@ func TestCatalogSelectedConfidenceChangesNegativeEnergyDecision(t *testing.T) {
 	}
 }
 
-func TestCatalogRejectsRunAffinityChangedFromCampaignSource(t *testing.T) {
+func TestCatalogRejectsRunPowerModeChangedFromCampaignSource(t *testing.T) {
 	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
 	run := &edgev1alpha1.ProfilingRun{}
 	ctx := context.Background()
 	if err := catalog.store.client.Get(ctx, types.NamespacedName{Namespace: source.Namespace, Name: "trial-0"}, run); err != nil {
 		t.Fatal(err)
 	}
-	run.Spec.Measurement.CPUAffinity = []int32{4, 5, 6, 7}
+	run.Spec.Candidate.PowerMode = "unmeasured-mode"
 	if err := catalog.store.client.Update(ctx, run); err != nil {
 		t.Fatal(err)
 	}
 	view, err := catalog.Refresh(ctx, []string{source.Namespace})
 	if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 ||
-		view.Insufficiencies[0].Code != invalidEvidenceCode || !strings.Contains(view.Insufficiencies[0].Reason, "CPU affinity") {
-		t.Fatalf("source CPU selection drift accepted: %+v %v", view, err)
+		view.Insufficiencies[0].Code != invalidEvidenceCode || !strings.Contains(view.Insufficiencies[0].Reason, "measurement state") {
+		t.Fatalf("source power selection drift accepted: %+v %v", view, err)
 	}
 }
 
@@ -242,9 +240,6 @@ func catalogEvidenceFixturePolicy(t *testing.T, memory uint64, trialWatts [6]flo
 	}
 	active.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 32}
 	active.Measurement.DurationToleranceSeconds = .5
-	active.CPU.Policy, active.CPU.Limit = profilingrun.ConfiguredCPUQuotaPolicy, "2"
-	active.CPU.ORTIntraOpThreads = 2
-	active.CPU.AffinityCPUs = []int{0, 1}
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, DurationToleranceSeconds: .5,
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode}
@@ -277,7 +272,7 @@ func catalogEvidenceFixturePolicy(t *testing.T, memory uint64, trialWatts [6]flo
 		Spec: edgev1alpha1.BatchEnergyOptimizationSpec{
 			State: edgev1alpha1.MeasurementStateSpec{
 				Candidate:  edgev1alpha1.ProfilingRunCandidateSpec{ModelSpec: active.Candidate.Inputs.ModelSpec.Name, Preprocessor: active.State.Preprocessor.Name, DeviceClass: active.State.DeviceClass, ExecutionPath: active.Candidate.ExecutionPath, PowerMode: active.State.PowerMode},
-				TargetNode: active.TargetNode.Name, CPURequest: resource.MustParse(active.CPU.Request),
+				TargetNode: active.TargetNode.Name,
 			},
 			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{WarmupIterations: int32(active.Measurement.WarmupIterations), DurationSeconds: 30, Dataset: active.Measurement.Dataset.Name,
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31}},
@@ -290,11 +285,6 @@ func catalogEvidenceFixturePolicy(t *testing.T, memory uint64, trialWatts [6]flo
 			Phase: catalogCompletePhase, ObservedGeneration: 1, Outcome: "MinimumFound",
 		},
 	}
-	for _, cpu := range active.CPU.AffinityCPUs {
-		campaign.Spec.CPUAffinity = append(campaign.Spec.CPUAffinity, int32(cpu))
-	}
-	quota := resource.MustParse("2")
-	campaign.Spec.CPUQuota = &quota
 	apiObjects := []client.Object{campaign}
 	completed := make([]batchenergyoptimization.CompletedTrialReference, 0, 6)
 	for index := range 6 {
@@ -320,13 +310,6 @@ func catalogEvidenceFixturePolicy(t *testing.T, memory uint64, trialWatts [6]flo
 			WorkloadMode: config.Measurement.WorkloadMode}
 		if config.Measurement.Dataset != nil {
 			measurement.Dataset = config.Measurement.Dataset.Name
-		}
-		if len(config.CPU.AffinityCPUs) != 0 {
-			measurement.CPUAffinity = append([]int32(nil), campaign.Spec.CPUAffinity...)
-		}
-		if campaign.Spec.CPUQuota != nil {
-			quota := campaign.Spec.CPUQuota.DeepCopy()
-			measurement.CPUQuota = &quota
 		}
 		if mode == batchenergyoptimization.WorkloadModeIdle {
 			measurement.SettlingDurationSeconds = &settling
@@ -473,7 +456,6 @@ func TestCatalogRetainsAdmittedFactsWithCallerOwnedViews(t *testing.T) {
 	profile.Evidence[0].Key = callerMutation
 	profile.Batches[0].DurationNanos[0] = 999
 	profile.Condition.Firstfloor.MaxBatchSize = 999
-	profile.Condition.CPU.AffinityCPUs[0] = 999
 	profile.Condition.PlannedBatchSizes[0] = 999
 	profile.Condition.Preprocessor.Inputs[0] = callerMutation
 	profile.RuntimeMetadata.CPUAffinity[0] = 999
@@ -587,9 +569,6 @@ func TestCatalogAcceptsHistoricalRunConfigWithoutDurationTolerance(t *testing.T)
 		t.Fatal(err)
 	}
 	config.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 32}
-	config.CPU.Policy, config.CPU.Limit = profilingrun.ConfiguredCPUQuotaPolicy, "2"
-	config.CPU.ORTIntraOpThreads = 2
-	config.CPU.AffinityCPUs = []int{0, 1}
 	config.Measurement.DurationToleranceSeconds = 0
 	defaulted := .5
 	run.Spec.Measurement.DurationToleranceSeconds = &defaulted // CRD default applied on read

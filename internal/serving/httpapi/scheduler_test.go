@@ -39,7 +39,7 @@ func schedulerSettingsForTest() serving.SchedulerSettings {
 		ReplacementDwell:       17 * time.Second,
 		ScaleDownStabilization: 120 * time.Second, TransitionReserveFraction: .25,
 		CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
-		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 1}
+		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1}
 }
 
 type settingsArchive struct{ directory string }
@@ -151,7 +151,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			before := schedulerSettingsForTest()
 			after := before
-			after.MaxCPUs++
+			after.MaxInstances++
 			after.CapacityGridSteps, after.CapacityBisectionWidth, after.CapacityTailSamples = 7, .02, 12
 			// PUT stores only autonomous UIDs of current Workloads.
 			after.AutonomousWorkloads = tc.autonomous
@@ -164,7 +164,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			configRaw := `{"settings":` + string(beforeRaw) + `,"reserved":{"node":{"cpus":[0]}}}`
+			configRaw := `{"settings":` + string(beforeRaw) + `,"reserved":{"node":{"memoryBytes":1024}}}`
 			kube := fake.NewSimpleClientset(&core.ConfigMap{
 				ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "scheduler", ResourceVersion: "1"},
 				Data:       map[string]string{"scheduler.json": configRaw, "other": "untouched"},
@@ -329,7 +329,7 @@ func assertSchedulerSettingsAudit(t *testing.T, persisted *core.ConfigMap, respo
 	if err := json.Unmarshal([]byte(persisted.Data["scheduler.json"]), &saved); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(saved.Reserved, map[string]serving.SchedulerAllocation{"node": {CPUs: []int{0}}}) {
+	if !reflect.DeepEqual(saved.Reserved, map[string]serving.SchedulerAllocation{"node": {MemoryBytes: 1024}}) {
 		t.Fatal("operator configuration lost")
 	}
 	var applied serving.SchedulerSettingsChange

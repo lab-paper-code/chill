@@ -46,12 +46,15 @@ Tick은 κ 합, 노드 계획과 두 출발점의 이웃 탐색으로 구성을 
 **계산하는 때와 대상.**
 - ChillServer의 용량표 worker가 시작할 때 표 전체를 계산한다. 그 뒤에는 Workload의 자동제어가 켜지거나, 켜진 Workload의 SLO, profile, m, 디스패치 점유, 용량표 설정이 바뀔 때 빠진 행을 계산한다. 표는 메모리에만 있고 시작마다 비어 있으므로 재생, 배칭 규칙, κ 계산 코드가 바뀐 image도 그 코드로 계산한 표를 쓴다.
 - 대상은 자동제어가 켜진 Workload의 SLO와 그 Workload에 측정 근거가 있는 option 변형이다. 꺼진 Workload의 노드는 keep뿐이라(4장) 그 κ를 쓰지 않는다. E1에서는 tight 하나라 option 변형 38개, 38행이다(SLO 3개 전체는 114행).
-- 행 하나가 작업 하나이고 행끼리 독립이라 병렬로 계산한다. ChillServer의 CPU limit은 6(`charts/chill/values.yaml`)이고 `GOMAXPROCS`가 이를 따르므로 서버 안의 병렬은 6 CPU에 묶인다.
+- 행 하나가 작업 하나이고 행끼리 독립이라 병렬로 계산한다. capacity worker 수는 runtime GOMAXPROCS의 실행 병렬성일 뿐 CPU 예약·limit이 아니다. ChillServer는 CPU request/limit이나 limits.cpu 기반 GOMAXPROCS를 설정하지 않는다.
 - 빠진 행은 Workload마다 다음 행 하나씩 round-robin으로 공용 semaphore에 투입하여, 행이 많은 Workload 뒤에서 다른 Workload가 굶지 않게 한다.
 - 계산한 행도 기록된 이전 행(계산 시간 문단)도 없으면 그 option은 `CapacityPending`으로 계획에서 빠지고, 켜진 Workload에 κ가 있는 option이 하나도 없으면 판단이 `CapacityPending`이다.
 - 행마다 `management` stream에 `capacity-row-built` 사건(행 전체, 계산 시각, 걸린 시간)을 남긴다. 이 사건은 기록이고 판단은 읽지 않는다.
 
 **계산 시간과 이전 행.** 재생은 미완료 도착을 훑고 다음 도착은 정렬목록 선두, Definition.Identity는 도착 원형당1회, 배치는 정렬 분위수 색인·재사용 공간을 쓴다. E1 tight38행 단일코어1,386초; m4/r7 합성d114행은 GOMAXPROCS12에서132초/CPU804초였다. 최종 evaluation는 같은 dump로 source별 측정한다. worker는 동일키 마지막 capacity-row-built를 로컬 management→archive 최신순으로 찾아 previous로 쓰고 계산 후 교체하며 없으면 CapacityPending이다.
+
+**κ와 현재 실행 가능성(R1).** BuildCapacityRow는 profile·SLO·dispatch occupancy·수치 정책과 모의 도착만 사용한다. 현재 Node snapshot/baseline/readiness/CPU inventory/예약/GPU inventory/memory 가용성은 입력이 아니며 Ready를 덮어 통과시키지 않는다. 장치·메모리 부재 중에도 κ는 계산·재사용하고 planner/prepare가 현재 상태로 실행을 거절한다. 복구 뒤 같은 key/κ로 다시 배치 판단한다. MissingDispatchOccupancy/NonMonotone/수치 오류와 κ=0의 의미는 유지한다.
+공유 실행 key는 `shared-cpu/` namespace다. local/archived management의 이전 controlled key는 새 계산의 previous 행이 될 수 없으며 원본 archive를 변경하지 않는다. 새 namespace 안에서는 같은 측정 조건의 previous/pending·취소·수치 재사용을 유지한다. TTL/retry knob나 changing snapshot 전체 hash는 없다.
 
 **imagenet.** imagenet(p99 100 ms)은 E1 설정 m 139 ms에서 모든 option의 κ가 0이었다(m > 목표 100 ms, `hack/kappa`). 이 Workload는 꺼진 채로 두므로 행을 계산하지 않는다.
 
@@ -84,7 +87,7 @@ Tick은 κ 합, 노드 계획과 두 출발점의 이웃 탐색으로 구성을 
 
 ## 4. 노드 계획과 탐색
 
-**노드 계획.** 노드마다 keep, 그리고 배치 가능한 노드에서 측정 option 변형 하나로 만든 계획 중 그 모드에서 `ValidateNodeBudget`을 만족하는 것. 노드마다 서빙 인스턴스는 하나다. 같은 노드에 인스턴스 둘을 두면 κ가 더해지지 않으므로(m4 r8 D-R8-1: rasp5 q1과 q1-lut의 κ 합이 40 req/s를 덮는다고 판정했지만 둘이 35~38 req/s만 처리했고 SLO가 25.5%로 떨어졌다), 노드에서 더 큰 용량은 CPU 할당이 넓은 측정 option(q2, q4)이 맡는다. 다른 Workload의 인스턴스와 함께 둔 κ와 전력도 재지 않았으므로 이 규칙은 모든 Workload에 같다. 모드를 바꾸는 계획은 목표 모드에서 온라인인 CPU로 예산을 확인한다. 현재 모드는 노드 annotation의 CPU를, 다른 모드는 DeviceClass `powerModes[].onlineCPUs`를 쓰고, 그 필드가 없는 모드의 계획은 `PlacementInventoryMissing`으로 뺀다. 꺼진 Workload의 인스턴스가 있는 노드는 keep뿐이다. 계획마다 Workload별 `κ_new`와 `κ_ret`, 사슬, 전력을 둔다.
+**노드 계획.** 노드마다 keep과 측정 option 변형 하나를 후보로 만들며 현재 snapshot의 readiness/측정·소유 scope, GPU inventory/중복과 memory 예산을 매번 검사한다. CPU 독점 mask·예약 quota·mode별 CPU inventory는 관문이 아니다. 노드마다 서빙 인스턴스는 하나이며 같은 노드의 κ를 단순 합하지 않는다(m4 r8 D-R8-1의 공존 간섭 근거는 과거 관측으로 보존한다). 더 큰 용량은 새 공유 실행 조건의 측정 option으로만 판단한다.
 
 **인스턴스와 Workload.** 인스턴스는 Workload 하나에 속하고 κ는 그 Workload와 option의 행이다. 노드마다 서빙 인스턴스는 하나이므로 같은 모델의 Workload들도 노드를 따로 쓴다. 실제 상태에서 인스턴스 둘 이상이 있는 노드는 keep이 그대로 두고, 그 노드의 다른 계획은 인스턴스 하나를 남긴다. 계획기가 만드는 분배에서 인스턴스마다 Workload는 하나다. 서빙 source는 routing annotation이 Workload를 하나 이하로 가리키는 Pod이므로 실제 분배에서도 인스턴스마다 Workload는 하나 이하다. 꺼진 Workload의 인스턴스가 있는 노드는 keep뿐이므로 꺼진 Workload의 SLO는 계획 동작의 영향을 받지 않는다(workload-pools 4.4절의 노드 동작 규칙).
 
@@ -164,7 +167,7 @@ snapshot 인스턴스의 `WorkloadUID`와 Pod owner/routing 참조는 같은 소
 | 용량표 설정 | `capacityWindowNanos`>0, `capacityWindows`≥1, `capacityPassingWindows`는 1부터 전체 창 수까지, `capacityMinimumRequests`≥1이다 |
 | 비교 기간 | `comparisonPeriodNanos`>0인 정수 ns; H의 유일한 필드다. 제안 600초. 후보 집합과 무관하며 실제 H를 `decision.capacity.periodNanos`에 남긴다 |
 | 디스패치 점유 | snapshot의 `dispatchOccupancy`는 immutable 측정 record에서 도출한다. 행 입력에 Node UID, mode, runtime/model, 값과 source를 포함한다 |
-| 탐색 병렬 | `planSearchWorkers`≥1이다. sample은 3이고, 실제 CPU 한도와 gateway/Tick 관측으로 평가한다 |
+| 탐색 병렬 | `planSearchWorkers`≥1이다. sample은 3이고 CPU 예약과 무관한 도구 병렬성이며 실제 경합·gateway/Tick 관측으로 평가한다 |
 | 판단 기록 | `decision.capacity`는 구성의 판정, 에너지, 사슬과 `search`를 기록한다. `management`의 `capacity-row-built`는 행과 계산시간을 기록한다 |
 | 인스턴스 시간 | `unroutedSince`와 `heldUntil`은 controller의 메모리 상태이며 유휴 제거와 Overload 준비 유지에 사용한다 |
 | 최소 이득 | `OperationTrial.energyUncertaintyJoules`와 실제 선택한 `NodeBaseline.wattsUncertainty`를 signed 노출량으로 전파한다. `gainUncertaintyJoules`는 B-only 문턱이다 |
@@ -178,10 +181,10 @@ Timing이 없는 비용의 미기록 B를 관측한 0으로 취급하지 않는�
 ## 8. 측정·검사와 실행 경계
 
 - profile/runtime/측정 계약 변경은 해당 NodeUID/mode/model의 d, 정확 profile prepare/remove, loaded/unloaded baseline·전력 전환 비용을 열거하고 대표1건의 생성→raw→projection→계획 소비→실물 반환 뒤 대량 수집한다.
-- mobilenet CPU8/GPU2의 legacy는 Accepted 대체 전까지 보존·소비한다. D2 뒤 CPU8/GPU5/PLC12 재측정, Smol D04/D09 새 source 대체 뒤에도 옛CPU2 raw/status 보존. d 없으면 MissingDispatchOccupancy, 정확 비용 없으면 MissingOperationCost다.
+- 과거 mobilenet CPU8/GPU2 및 D2/Smol 원시·status·publication은 그대로 보존한다. CPU request/quota/affinity를 선택했던 실행은 새 공유 실행과 동등한 profile/κ로 소비하지 않는다. 의존 캠페인 종료 뒤 strict 계약을 단일 전환하고 새 조건에서 측정한다. d 없으면 MissingDispatchOccupancy, 정확 비용 없으면 MissingOperationCost다.
 - signed d와 max0 정책은 구분한다. Smol D04/D09/D14/D23/D33의 profile 포함95% 근사구간<0은 systematic profile-versus-serving bias이며 인과 기여 미확정; identity·harness/warmup/timing/시점 차이는 남기고 보정·추정정책은 M5 후보다. 근거: `ops/pools-deploy/audit-20261024/smol-systematic-bias-20261024.{json,txt}`.
 - `E±B`, `B=S+G`는 [측정 API](measurement-api.md)를 따른다. minimumGain은 선택 evidence B만 전파하며 profile 통계·BEO fallback CI·시점/센서/모델 오차를 포괄하는 global95% 보장이 아니다.
-- 검사 계약: 재생 결정성/NonMonotone/창·m·SLO 경계, 입력별 재계산/previous/pending, κ_new/κ_ret/B/W·make-before-break, 노드단일소유·모드 CPU, brute force/k3/빈 출발/replica/예산·동률, 동일H 에너지·signed 상쇄·문턱 equality/keep infeasible, weight1000·ACK·budgetCut을 확인한다. 이 목록은 새 source의 통과 기록이 아니다.
+- 검사 계약: 재생 결정성/NonMonotone/창·m·SLO 경계, 입력별 재계산/previous/pending, 현재 memory·장치 부재→복구와 동일 κ 재사용, κ_new/κ_ret/B/W·make-before-break, 노드단일소유·전력모드, brute force/k3/빈 출발/replica/예산·동률, 동일H 에너지·signed 상쇄·문턱 equality/keep infeasible, weight1000·ACK·budgetCut을 확인한다. 이 목록은 새 source의 통과 기록이 아니다.
 - 최종 dump의 source별 `hack/kappa`는 provenance·κ/status·시간·에너지 차를 남긴다. 승인 rev72 BEFORE/D2 AFTER는 자율MNV/native8 paired의 Tick/CPU/GC/mesh/요청/physical G를 비교한다. E1 무부하→유부하, E4 이동, E5-0~6/E5-S는 두 관측률·λ·보호κ·route시각·사슬·유효 offered 전체 결과·전환 포함 전체 POOL J를 연결한다.
 - 최종 d/G/m에서 SLO/κ/R·threshold를 정한다. 과거 E1/m4와 새 evaluation는 Run ID/원시로 구분한다. 요청 에너지는 κ 비례(λ 무관)로 정한 최종 정수 weight와 일치하며, 모델 κ와 실제 장치 처리율·배치상태의 차이는 추정 한계로 유지한다.
 - BEFORE·유한 진단 최대1회·최종D2 최대1회 순서는 [POOL 검증](workload-pools.md)을 따른다. runtime7 digest·기존 자원·evidence store를 유지하며 paired 물리 보존 실패는 unknown/mismatch로 보고하고 paired 주장을 중단한다. 조건·판정·범위 변경은 승인 대상이다.
@@ -191,7 +194,7 @@ Timing이 없는 비용의 미기록 B를 관측한 0으로 취급하지 않는�
 
 4장의 계획기를 `internal/serving/scheduler_capacity.go`가 다음 규칙으로 구현한다.
 
-- **설정 gate.** placement, resources, batching, membership이 꺼져 있으면 option 변형은 그 Workload의 지금 인스턴스 하나와 노드, CPU와 GPU 선택, 배치 상한과 대기 시간이 같아야 한다(membership은 그 Workload의 인스턴스가 있는 노드만). `maxReplicas`와 `maxInstances`는 POOL 전체의 Workload별 인스턴스 수와 전체 인스턴스 수 상한이고, replicas가 꺼져 있으면 Workload별 인스턴스 수가 지금 수와 같다. 탐색은 이 수를 집합마다 세어 상한을 정확히 지킨다. `maxCPUs`는 인스턴스마다의 CPU 수 상한이다. routing이 꺼져 있으면 남는 인스턴스는 지금 가중치를, 새 인스턴스는 option의 가중치를 쓰고 같은 κ 검사를 받는다.
+- **설정 gate.** placement/resources/batching/membership은 현재 Node/GPU 선택/배치 상한/대기 시간에 각각 적용한다. CPU 선택 gate는 없다. maxReplicas/maxInstances는 Workload별·POOL 전체 인스턴스 수 상한이며 replicas OFF이면 현재 수를 유지한다. routing OFF에서는 기존 인스턴스의 현재 가중치와 신규 option 가중치로 같은 κ 검사를 한다.
 - **batching OFF의 고정 정책.** ON/OFF 모두 `CapacityVariants`로 측정된 cap 변형을 생성한 뒤 `controlAllows`가 Workload의 현재 `(MaxBatch, MaxWait)` 정책 집합에 속하는 변형만 허가한다. 여러 현재 정책을 임의의 최소/최대 하나로 축약하지 않는다. cap1도 측정·초기화된 변형일 때만 사용하며, 다른 제어가 켜져 있으면 고정 cap 안에서 placement/resources/replicas 후보 평가는 계속한다.
 - **진행 중 전환.** 전역 계획기는 하나다. owner별 예약의 Node·Workload UID·Pod UID·physical ID와 frozen target만 고정하고 예약 밖 후보 평가·확장·준비된 용량 배분은 계속한다. 관측 불명 또는 κ pending Workload도 해당 범위만 고정한다. 실패·효과 소실은 해당 owner DAG에 기록하며 다른 owner의 목표를 버리지 않는다. 실패한 준비는 관측 창 동안 `PreparationFailed`로 제외한다.
 - **동작 기한.** prepare는 cost의 측정 trial 최대 시간에 관측 창 하나를 더한 시간 안에 실행된다. 초과하면 `failed`/`ActionDeadlineExceeded`로 실행을 끝내되 원격 효과 미확인 예약은 유지한다. 취소도 같은 계약이다. 이후 효과 확인 또는 reset의 실제 정리 proof 뒤에만 예약을 반환하고 현재 실제 상태에서 재계획한다. 독립 범위의 다른 동작과 판단은 계속한다.

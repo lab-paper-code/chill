@@ -135,28 +135,10 @@ func decodeSchedulerConfiguration(raw string, maxBytes int64) (schedulerConfigur
 	if config.Settings, err = wire.Settings.Settings(); err != nil {
 		return config, err
 	}
-	if err := config.validateInventory(); err != nil {
-		return config, err
-	}
 	if err := config.validatePower(); err != nil {
 		return config, err
 	}
 	return config, nil
-}
-
-// validateInventory checks the operator reservation; the live Node inventory
-// it must fall within is checked at capture.
-func (config schedulerConfiguration) validateInventory() error {
-	for node, reservation := range config.Reserved {
-		seen := map[int]bool{}
-		for _, cpu := range reservation.CPUs {
-			if cpu < 0 || seen[cpu] {
-				return fmt.Errorf("Node %s reserved CPUs must be unique nonnegative physical IDs", node)
-			}
-			seen[cpu] = true
-		}
-	}
-	return nil
 }
 
 func (config schedulerConfiguration) validatePower() error {

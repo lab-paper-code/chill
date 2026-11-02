@@ -118,7 +118,7 @@ BEO annotation `chill.dacs.io/replaces-batch-energy-optimization`은 같은 name
 
 | kind | 승인 전 확인/사유 |
 |---|---|
-| BEO | `CPUsUnavailable <CPU> <모드>`, `OnlineCPUsUnknown <모드>`: candidate mode online CPU−reserved와 affinity 조건 |
+| BEO | CPU 공유 실행은 affinity/quota/online−reserved 거절을 사용하지 않는다. 전력 상태·물리 Node·memory/GPU·소유/반환 증명은 유지한다. |
 | opcost, occupancy | `ProfileMissing <BEO> <사유>`: 없음/NotComplete/non-Complete terminal/catalog issue. 같은 노드 앞 BEO는 순서대로 대기하며 catalog profile/issue 모두 없으면 갱신을 기다림. `NodeMismatch`(targetNode≠spec.node), `ActuationNamespace`(owner와 같은 namespace 요구) |
 | opcost | `PowerModeUnknown <모드>`, `MeterUndeclared` |
 | occupancy | `BatchUnmeasured <B>`, `WorkloadMissing`, `WorkloadAutonomous`, `WorkloadServing <Pod>`(같은 capture의 owner/route 가중치), `LoadGeneratorUnconfigured` |
@@ -188,7 +188,7 @@ evaluation 전 범위는 Node당 기준 mode의 필수 profile·d·정확 비용
 요구사항/허용값 근거는 [catalog SRS §7](../../spec/catalog/SRS.md#7-u4-같은-기종-프로파일-재사용)을 따른다. 새 CRD·spec/status 필드·일반화 엔진 없이 대상의 기존 BEO→ProfilingRun→불변 result/raw를 사용한다.
 대상 BEO metadata annotation은 `chill.dacs.io/profile-reuse: '{"sourceProfileID":"chill-system/SOURCE-BEO/SOURCE-UID","maximumRelativeDifference":0.05}'`다. 두 필드 필수, unknown 필드·(0,1) 밖/비유한 허용 차이는 거절한다. 0.05는 계획 여유 25%의 1/5인 screening 권고이지 고정 검증/통계적 SLO·전력 오차 상한이 아니다.
 원본은 같은 namespace의 **직접 측정** catalog profile이며 최신 조건 선택 후 유효해야 한다. 자기 자신·전이 재사용·무효화/삭제/대체되어 catalog에서 빠진 원본은 거절한다. 확인 BEO는 일반 독립 후보가 되지 않는다. 실패 annotation을 지워 짧은 측정을 승격하지 않고 사유/raw 보존 후 새 BEO로 독립 측정한다.
-원본/확인 frozen condition 비교에서 plan 이름·Node UID·meter identity·GPU UUID·활성/유휴 창 길이만 제외한다. DeviceClass·image digest·모델/전처리/데이터셋·mode·CPU request/limit/affinity/격리/thread·accelerator 할당/권한·runtime 설정/version·initialized batches는 일치해야 한다.
+원본/확인 frozen condition 비교에서 plan 이름·Node UID·meter identity·GPU UUID·활성/유휴 창 길이만 제외한다. DeviceClass·image digest·모델/전처리/데이터셋·mode·accelerator 할당/권한·runtime version·initialized batches는 일치해야 한다. CPU allocation은 frozen 계약에 없고 실제 affinity/cgroup/cpuset/thread 관측값을 자원 보장으로 matching하지 않는다.
 확인 활성/유휴 창 각각 ≥30초, 기존 trial≥3, 같은 warmup/settling/관측 interval/timeout/observer image를 유지한다. 원본의 모든 실측 batch가 확인에 있어야 하며 빠진 batch를 추정 추가하지 않는다.
 배치별 서비스 평균은 raw RUNNER SERVICE 표본 평균이다. 활성 평균 벽전력은 trial별 `activeWindowWallJoulesPerItem/idleBaselineSecondsPerItem`(같은 창 총 벽에너지/측정초)의 trial 간 산술 평균이고 유휴는 model-loaded idle baseline이다. 서비스시간으로 전력을 역산하거나 증분 전력을 전체 벽전력으로 비교하지 않는다.
 각 지표의 `abs(target−source)/source`가 모두 설정값 이하면 Accepted, 분모≤0·결측/비유한·조건 불일치·차이 초과면 Rejected/독립 측정이다.
@@ -198,7 +198,7 @@ scheduler service는 Accepted/Rejected 모두 `{schemaVersion:"chill.dacs.io/pro
 ### 11.2 대상 행과 물리 개체 계약
 
 행 ID는 `확인 profile ID/reuse-<SHA256(sourceProfileID + NUL + 허용값)>`로 source/정책 변경이 immutable startup bundle을 덮어쓰지 않게 한다. `Reference`, `MeasuredAt`, frozen condition·NodeName/UID·meter·runtime metadata/delivery·idle baseline은 **대상**이다.
-서비스 분포/증분 에너지는 원본, 메모리는 원본/대상 관측 최대 중 큰 값, 활성 평균 벽전력은 확인값이다. `Evidence`에 양쪽 result/raw를 연결한다. GPU UUID는 Condition.RuntimeAccess/RuntimeMetadata/runtime delivery 모두 대상 확인 기록에서 가져오고 원본 UUID를 가장/대상 inventory에 넣지 않는다. CPU affinity는 임의 재배치 없이 같은 실측 mask만 허용하며 대상 Node UID 재생성 시 확인을 재사용하지 못한다.
+서비스 분포/증분 에너지는 원본, 메모리는 원본/대상 관측 최대 중 큰 값, 활성 평균 벽전력은 확인값이다. Evidence에 양쪽 result/raw를 연결한다. GPU UUID는 Condition.RuntimeAccess/RuntimeMetadata/runtime delivery 모두 대상 확인 기록에서 가져오며 원본 UUID를 대상 inventory에 넣지 않는다. CPU 관측도 대상 기록을 보존하고 대상 Node UID 재생성 시 확인을 재사용하지 못한다.
 
 | Node UID 소비 경로 | 계약 |
 |---|---|
@@ -506,7 +506,7 @@ catalog/kube가 queryapi transport를 import하도록 package 예외를 추가�
 **Cell**: model UID × class UID × path × mode다. 각 이름/UID와 `support`, `assessment`,
 `variantCount`, `variants`, nullable `batchProgress`/`representative`, `failureSummary`, `history`를 갖는다.
 support는 `{verdict:"Compatible"|"Incompatible"|"Unknown",node:{name,uid}|null,reasons:[]}`다.
-variant는 frozen Node/image/artifact/path/dataset/preprocessor UID·CPU/quota/affinity/protocol/metricSource까지
+variant는 frozen Node/image/artifact/path/dataset/preprocessor UID·공유 runtime/protocol/metricSource까지
 같은 조건의 `{id,condition,assessment,batchProgress,resultRows,requestIds,runIds,profileIds}`다.
 `batchProgress={basis,target,measured,criteriaMet,missing,inProgress,unknown}`이며 각 집합은 batch 정수 배열이다.
 **variant가 2개 이상이면 Cell.batchProgress와 representative는 null**, ‘조건 k개’만 표시한다.
@@ -602,7 +602,7 @@ superseded와 notInCatalogScope는 정상 측정 결과의 `complete`+보조 사
 ### 13.5 결과 행·measurementFacts·요청 검사
 
 `ResultRow/resultRows[]`는 정확 variant × batch 한 행이다. 조건(model/class/Node UID·mode/path/
-image/backend·batch·CPU/quota/affinity·dataset/preprocessor UID·protocol), p95Milliseconds,
+image/backend·batch·공유 runtime·dataset/preprocessor UID·protocol), p95Milliseconds,
 latencySampleCount, idleWatts, activeWatts, totalJoulesPerItem, incrementalJoulesPerItem,
 confidence, activeTrialCount, idleTrialCount, completedItems, completedCalls, powerSource,
 assessment, sources, missingReasons를 포함한다.
@@ -710,10 +710,10 @@ variantId와 안전한 상대 returnTo는 선택 사항이다. variant가 없는
 최신 BEO spec, 없으면 같은 조건 catalog profile의 보존 protocol을 출처와 함께 사용한다.
 같은 조건 근거도 없으면 같은 모델의 최근 Complete BEO, 그 다음 같은 실행 경로의 최근
 Complete BEO에서 **장치와 독립적인 protocol·dataset만** 가져오고 이름과 원본 장치를 표시한다.
-다른 장치의 CPU 수·batch는 복사하지 않으며 CPU affinity·코어 번호는 자동 복사하지 않는다.
+다른 장치의 batch를 복사하지 않으며 CPU allocation 입력 자체를 제공하지 않는다. 실제 affinity/cgroup/thread 관측은 표시용이다.
 catalog가 보존하지 않는 재시도 정책, 위 순서의 근거가 없는 protocol은 미제공으로 두고 직접
-입력을 요구한다. 반복 3회·CPU 1개는 기존 화면 기본값으로 구분한다.
-조건 변경은 protocol·dataset·CPU·선택 batches를 초기화하지 않으며,
+입력을 요구한다. 반복 3회는 화면 기본값으로 구분하며 CPU 수 기본값은 없다.
+조건 변경은 protocol·dataset·선택 batches를 초기화하지 않으며,
 서버 사전 검사와 exact 자동 제외만 무효화한다. 실제 제출은 사용자 동작이다.
 
 요청·회차·프로파일·동작 비용·분배 점유 목록은 필터를 표 위, 정렬을 열 머리글,

@@ -205,6 +205,11 @@ func validateAttemptJobRequest(
 	if !clean(options.ObserverImage) || !clean(options.ServiceAccountName) {
 		return PreparedDirection{}, errors.New("observer image and ServiceAccount are required")
 	}
+	for _, resources := range []corev1.ResourceList{options.Resources.Requests, options.Resources.Limits} {
+		if _, present := resources[corev1.ResourceCPU]; present {
+			return PreparedDirection{}, errors.New("transition observer must use shared CPU execution without CPU resources")
+		}
+	}
 	switch options.ImagePullPolicy {
 	case corev1.PullAlways, corev1.PullIfNotPresent, corev1.PullNever:
 	default:

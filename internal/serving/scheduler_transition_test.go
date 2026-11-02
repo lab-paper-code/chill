@@ -17,7 +17,7 @@ const preparedPhysicalID = "prepared-physical"
 // instance whose slot is the planner's target ID for it.
 func preparedSlot(snapshot SchedulerSnapshot, n2 NodeReference) SchedulerInstance {
 	i := slices.IndexFunc(snapshot.Options, func(o SchedulerOption) bool {
-		return o.Instance.Node == n2 && len(o.Instance.Allocation.CPUs) == 1
+		return o.Instance.Node == n2 && o.Instance.Allocation.GPUUUID == ""
 	})
 	prepared := snapshot.Options[i].Instance
 	prepared.TargetID = fmt.Sprintf("target-%s-%s-%d", prepared.WorkloadUID, prepared.Profile.ID, prepared.MaxBatch)
@@ -277,8 +277,8 @@ func TestResumedExecutorCannotReuseHistoricalDrainBeforeNewStopAndHandoff(t *tes
 	}
 }
 
-// overlappingResourceFixture widens i1 (CPU0) to the two-CPU option on n1,
-// which needs the measured removal before the preparation.
+// overlappingResourceFixture replaces i1 within a bounded memory domain,
+// requiring physical removal before preparation.
 func overlappingResourceFixture(t *testing.T) (SchedulerSettings, SchedulerSnapshot, SchedulerCandidate) {
 	t.Helper()
 	settings, snapshot, _ := placementFixture()
@@ -288,11 +288,11 @@ func overlappingResourceFixture(t *testing.T) (SchedulerSettings, SchedulerSnaps
 	wanted := poolsInstance(source, "wide-target", source.Node, "fixed", "w1")
 	profile := *wanted.Profile
 	profile.ID = "profile-wide"
-	profile.Condition.CPU.AffinityCPUs, profile.Condition.CPU.ORTIntraOpThreads = []int{0, 1}, 2
 	metadata := *profile.RuntimeMetadata
 	metadata.CPUAffinity, metadata.IntraOpThreads = []int{0, 1}, 2
 	profile.RuntimeMetadata = &metadata
-	wanted.Profile, wanted.Allocation.CPUs, wanted.Allocation.Threads, wanted.IdleMeter = &profile, []int{0, 1}, 2, source.IdleMeter
+	wanted.Profile, wanted.IdleMeter = &profile, source.IdleMeter
+	snapshot.Nodes[0].MemoryBytes = source.Allocation.MemoryBytes
 	snapshot.Options = []SchedulerOption{poolsOption(wanted)}
 	snapshot.Costs = []OperationCost{
 		{ID: "overlap-remove", Node: source.Node, Kind: schedulerActionRemove, From: schedulerState(source), To: "unloaded",

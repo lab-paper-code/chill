@@ -258,8 +258,7 @@ func (c *SchedulerController) rootRefusal(ctx context.Context, root measurementR
 		plan, reason, detail, wait := c.occupancyRefusal(ctx, o, node, in)
 		return reason, detail, wait, func() { c.startOccupancy(node, o.DeepCopy(), plan, in.config) }
 	}
-	reason, detail = cpuRefusal(root.object, node, in.classes, in.config.Reserved[node.Name].CPUs)
-	return reason, detail, false, nil
+	return "", "", false, nil
 }
 
 // chillServerRun reports a measurement kind ChillServer runs itself.

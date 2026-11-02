@@ -2,6 +2,8 @@ package serving
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"math"
 	"os"
@@ -28,7 +30,7 @@ func capacityFixture() (SchedulerSettings, SchedulerSnapshot) {
 
 func capacityBuildForTest(t *testing.T, s SchedulerSettings, snap SchedulerSnapshot) CapacityRow {
 	t.Helper()
-	row, err := BuildCapacityRow(context.Background(), s, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0], snap.Nodes[0], snap.Baselines, snap.At)
+	row, err := BuildCapacityRow(context.Background(), s, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0], snap.At)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,43 +51,76 @@ func TestCapacityRowKappaIsFixedAndRepeatable(t *testing.T) {
 	}
 }
 
-func TestCapacityReplayUsesTargetModeCPUs(t *testing.T) {
-	for _, mode := range []string{"MODE_15W_4CORE", "MODE_15W_6CORE"} {
-		t.Run(mode, func(t *testing.T) {
-			s, snap := capacityFixture()
-			node := &snap.Nodes[0]
-			node.PowerMode, node.CPUs = "MODE_20W_2CORE", []int{0, 1}
-			node.ModeCPUs = map[string][]int{
-				"MODE_15W_4CORE": {0, 1, 2, 3},
-				"MODE_15W_6CORE": {0, 1, 2, 3, 4, 5},
+func TestCapacityTableRecoversCurrentPlacementWithoutPoisoningMeasuredRow(t *testing.T) {
+	for _, resource := range []string{"memory", "device"} {
+		t.Run(resource, func(t *testing.T) {
+			settings, snapshot := capacityFixture()
+			if resource == "device" {
+				snapshot.Instances[0].Allocation.GPUUUID = "gpu"
+				snapshot.Options[0].Instance.Allocation.GPUUUID = "gpu"
+				snapshot.Nodes[0].GPUUUIDs = []string{"gpu"}
 			}
-			node.Reserved = SchedulerAllocation{CPUs: []int{0, 1}}
-			node.NonServing = []SchedulerAllocation{{CPUCount: 1, CPUReserved: true}}
-			option := &snap.Options[0].Instance
-			option.Profile.Condition.PowerMode = mode
-			option.Profile.Condition.CPU.AffinityCPUs = []int{3}
-			option.Profile.RuntimeMetadata.CPUAffinity = []int{3}
-			option.Allocation.CPUs = []int{3}
-			snap.DispatchOccupancy[0].PowerMode = mode
-			row := capacityBuildForTest(t, s, snap)
-			if row.Status != CapacityBuilt || row.Kappa == nil || *row.Kappa <= 0 {
-				t.Fatalf("target mode has room for reserved CPUs and measured affinity: %+v", row)
+			healthy := snapshot.Nodes[0]
+			if resource == "memory" {
+				snapshot.Nodes[0].MemoryBytes = snapshot.Instances[0].Allocation.MemoryBytes - 1
+			} else {
+				snapshot.Nodes[0].GPUUUIDs = nil
 			}
-			if node.PowerMode != "MODE_20W_2CORE" || !reflect.DeepEqual(node.CPUs, []int{0, 1}) {
-				t.Fatalf("capacity replay mutated the live inventory: %+v", node)
+			var recorded []CapacityRow
+			table := NewCapacityTable(1, func(row CapacityRow) error { recorded = append(recorded, row); return nil }, nil)
+			table.Ensure(context.Background(), settings, snapshot)
+			table.Wait()
+			initial := table.Rows()[0]
+			blocked, err := EvaluateScheduler(context.Background(), settings, snapshot, table.Rows())
+			if err != nil || len(blocked.Keep.Reasons) == 0 || blocked.Target != nil {
+				t.Fatalf("current resource absence did not block execution: %+v %v", blocked, err)
 			}
-			node.Reserved.CPUs = []int{0, 1, 3}
-			_, err := BuildCapacityRow(context.Background(), s, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0], *node, snap.Baselines, snap.At)
-			if err == nil || err.Error() != "capacity replay: ExclusiveCPUInfeasible:"+node.Node.UID {
-				t.Fatalf("target projection admitted reserved CPU overlap: %v", err)
+			snapshot.Nodes[0] = healthy
+			table.Ensure(context.Background(), settings, snapshot)
+			table.Wait()
+			restored := table.Rows()[0]
+			if restored.Status != CapacityBuilt || restored.Kappa == nil || *restored.Kappa <= 0 {
+				t.Fatalf("recovered placement stuck at old rejection: initial=%+v restored=%+v", initial, restored)
 			}
-			node.Reserved.CPUs = []int{0, 1}
-			delete(node.ModeCPUs, mode)
-			_, err = BuildCapacityRow(context.Background(), s, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0], *node, snap.Baselines, snap.At)
-			if err == nil || err.Error() != "capacity replay: "+NodePlacementInventoryMissing+":"+node.Node.UID {
-				t.Fatalf("unknown target mode must not borrow current CPUs: %v", err)
+			recovered, err := EvaluateScheduler(context.Background(), settings, snapshot, table.Rows())
+			if err != nil || len(recovered.Keep.Reasons) != 0 {
+				t.Fatalf("recovered current resources remain rejected: %+v %v", recovered.Keep, err)
+			}
+			if initial.Status != CapacityBuilt || initial.Key != restored.Key || !initial.BuiltAt.Equal(restored.BuiltAt) ||
+				len(recorded) != 1 || recorded[0].Status != CapacityBuilt {
+				t.Fatalf("current inventory contaminated cached or archived capacity: %+v %+v records=%+v", initial, restored, recorded)
+			}
+			snapshot.Nodes = nil
+			table.Ensure(context.Background(), settings, snapshot)
+			table.Wait()
+			if row := table.Rows()[0]; row.Key != restored.Key || row.Status != CapacityBuilt {
+				t.Fatalf("missing current snapshot changed measured row: %+v", row)
 			}
 		})
+	}
+}
+
+func TestCapacityArchiveCutoverDoesNotLoadControlledExecutionRows(t *testing.T) {
+	settings, snapshot := capacityFixture()
+	input := NewCapacityInput(settings, snapshot.DispatchOccupancy, snapshot.Options[0], snapshot.Workloads[0])
+	// Before the shared-execution cutover the input hash had no namespace.
+	payload, _ := json.Marshal(input)
+	sum := sha256.Sum256(payload)
+	oldKey := hex.EncodeToString(sum[:12])
+	observationLog, _ := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	old := CapacityRow{Key: oldKey, Status: CapacityRejected, Reason: "capacity replay: MemoryBudgetInfeasible:n1"}
+	if err := observationLog.ManagementEvent(ManagementEvent{WorkloadUID: "w1", Kind: CapacityRowBuiltEvent, At: observationTestHour, Capacity: &old}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := observationLog.CapacityRecords(context.Background(), []string{input.Key()})
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("controlled execution row crossed archive cutover: %+v %v", rows, err)
+	}
+	table := NewCapacityTable(1, nil, observationLog.CapacityRecords)
+	table.Ensure(context.Background(), settings, snapshot)
+	table.Wait()
+	if row := table.Rows()[0]; row.Status != CapacityBuilt || row.Previous {
+		t.Fatalf("old archived rejection survived fresh build: %+v", row)
 	}
 }
 

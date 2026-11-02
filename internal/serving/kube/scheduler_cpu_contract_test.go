@@ -2,9 +2,6 @@ package kube
 
 import (
 	"context"
-	"slices"
-	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -17,134 +14,66 @@ import (
 	kubefake "k8s.io/client-go/kubernetes/fake"
 )
 
-const measuredTwoCoreCPUMax = "200000 100000"
-
-func TestNativePodReadbackKeepsMeasuredWideAffinityResourceEvaluable(t *testing.T) {
-	for _, request := range []string{"500m", "1500m", "2"} {
-		t.Run(request, func(t *testing.T) {
-			pod, node, profile, _ := observerSourceFixture()
-			profile.Condition.CPU.Request, profile.Condition.CPU.Limit = request, "2"
-			profile.Condition.CPU.ORTIntraOpThreads = 2
-			profile.Condition.CPU.AffinityCPUs = []int{0, 1, 2, 3}
-			profile.RuntimeMetadata.CPUAffinity = []int{0, 1, 2, 3}
-			profile.RuntimeMetadata.IntraOpThreads = 2
-			profile.RuntimeMetadata.CgroupCPUMax = measuredTwoCoreCPUMax
-			container := &pod.Spec.Containers[0]
-			container.Resources.Requests[core.ResourceCPU] = resource.MustParse(request)
-			container.Resources.Limits[core.ResourceCPU] = resource.MustParse("2")
-			container.Resources.Requests[core.ResourceMemory] = resource.MustParse("1024")
-			container.Resources.Limits[core.ResourceMemory] = resource.MustParse("1024")
-			if err := validateSourceResources(container, node, &profile); err != nil {
-				t.Fatalf("actual measured Pod quota rejected: %v", err)
-			}
-			at := time.Unix(100, 0)
-			sn := serving.SchedulerNode{
-				Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)},
-				CPUs: []int{0, 1, 2, 3}, MemoryBytes: 1 << 30, Ready: true, PowerMode: "fixed", ObservedAt: at,
-			}
-			id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
-			state := serving.InstanceState{
-				ID: id, Node: sn.Node, Profile: profile.ID, Ready: true, ObservedAt: at,
-				Native: &native.State{Ready: true, Metadata: native.Metadata{
-					ProfileID: profile.ID, Runtime: *profile.RuntimeMetadata, MaxQueueRequests: 4, MaxBatchSize: 1,
-					Policy: native.Policy{MaxBatchSize: 1},
-				}},
-			}
-			snapshot := serving.SchedulerSnapshot{At: at, ObservationEnd: at}
-			captureNodePods(&snapshot, &sn, node, &core.PodList{Items: []core.Pod{*pod}},
-				map[string]serving.InstanceState{id: state}, map[string]*serving.Profile{profile.ID: &profile})
-			if len(snapshot.Instances) != 1 || len(snapshot.Reasons) != 0 || len(sn.NonServing) != 0 {
-				t.Fatalf("actual native ownership lost: %+v", snapshot)
-			}
-			allocation := snapshot.Instances[0].Allocation
-			quantity := resource.MustParse(request)
-			if allocation.CPUCount != int(quantity.Value()) || allocation.Threads != 2 ||
-				!slices.Equal(allocation.CPUs, []int{0, 1, 2, 3}) {
-				t.Fatalf("readback conflated request, affinity and threads: %+v", allocation)
-			}
-			snapshot.Nodes = []serving.SchedulerNode{sn}
-			settings := serving.SchedulerSettings{
-				ObservationWindow: time.Second,
-				ControlInterval:   time.Second, ComparisonPeriod: time.Second, MaxObservationAge: time.Second,
-				CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
-				MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 4,
-			}
-			decision, err := serving.EvaluateScheduler(context.Background(), settings, snapshot, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, reason := range decision.Keep.Reasons {
-				for _, resourceReason := range []string{
-					"CPUThreadAllocationMismatch:", "MeasuredAffinityMismatch:", "UnknownExclusiveCPUAffinity:",
-					"ExclusiveCPUInfeasible:", "CPUBudgetInfeasible:", "MeasuredMemoryInfeasible:",
-					"MemoryBudgetInfeasible:", "ExclusiveGPUInfeasible:",
-				} {
-					if strings.HasPrefix(reason, resourceReason) {
-						t.Fatalf("actual native readback became resource-infeasible: %v", decision.Keep.Reasons)
-					}
-				}
-			}
-		})
-	}
-}
+const measuredTwoCoreCPUMax = "max 100000"
 
 func measuredCPUPreparationFixture() PrepareSpec {
 	pod, node, profile, _ := observerSourceFixture()
-	profile.Condition.CPU.Request, profile.Condition.CPU.Limit = "1500m", "2"
-	profile.Condition.CPU.ORTIntraOpThreads = 2
-	profile.Condition.CPU.AffinityCPUs = []int{0, 1, 2, 3}
 	profile.RuntimeMetadata.CPUAffinity = []int{0, 1, 2, 3}
-	profile.RuntimeMetadata.IntraOpThreads = 2
+	profile.RuntimeMetadata.IntraOpThreads, profile.RuntimeMetadata.InterOpThreads = 0, 0
 	profile.RuntimeMetadata.CgroupCPUMax = measuredTwoCoreCPUMax
 	return PrepareSpec{
 		Name: pod.Name, MemoryBytes: 1024,
-		Instance: serving.SchedulerInstance{
-			ID: "measured-slot", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)},
-			Profile: &profile, Weight: 1,
-			Allocation: serving.SchedulerAllocation{CPUs: []int{0, 1, 2, 3}, CPUCount: 2, Threads: 2, MemoryBytes: 1024},
-		},
-		Store:  storekube.Binding{Store: "evidence", Endpoint: "http://evidence", Bucket: "bucket", Region: "region", CredentialsSecretName: "credentials"},
-		Bundle: evidencestore.ObjectIdentity{Store: "evidence", Key: "bundle", Size: 1},
-		Config: native.Config{Mode: "serving", Model: "chill_model", ProfilePath: "/profile/bundle.json",
-			Policy: native.Policy{DecisionID: "bootstrap", ProfileID: profile.ID, MaxBatchSize: 1}},
+		Instance: serving.SchedulerInstance{ID: "measured-slot", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile, Weight: 1, Allocation: serving.SchedulerAllocation{MemoryBytes: 1024}},
+		Store:    storekube.Binding{Store: "evidence", Endpoint: "http://evidence", Bucket: "bucket", Region: "region", CredentialsSecretName: "credentials"},
+		Bundle:   evidencestore.ObjectIdentity{Store: "evidence", Key: "bundle", Size: 1},
+		Config:   native.Config{Mode: "serving", Model: "chill_model", ProfilePath: "/profile/bundle.json", Policy: native.Policy{DecisionID: "bootstrap", ProfileID: profile.ID, MaxBatchSize: 1}},
 	}
 }
 
-func TestPreparationBindsCPUCountToMeasuredRequest(t *testing.T) {
+func TestNativePodReadbackUsesMemoryAndGPUWithoutCPUAllocation(t *testing.T) {
+	pod, node, profile, _ := observerSourceFixture()
+	profile.RuntimeMetadata.IntraOpThreads, profile.RuntimeMetadata.InterOpThreads = 0, 0
+	profile.RuntimeMetadata.CPUAffinity = []int{7}
+	container := &pod.Spec.Containers[0]
+	if err := validateSourceResources(container, node, &profile); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Unix(100, 0)
+	sn := serving.SchedulerNode{Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, MemoryBytes: 1 << 30, Ready: true, PowerMode: "fixed", ObservedAt: at}
+	id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+	state := serving.InstanceState{ID: id, Node: sn.Node, Profile: profile.ID, Ready: true, ObservedAt: at, Native: &native.State{Ready: true, Metadata: native.Metadata{ProfileID: profile.ID, Runtime: *profile.RuntimeMetadata, MaxQueueRequests: 4, MaxBatchSize: 1, Policy: native.Policy{MaxBatchSize: 1}}}}
+	snapshot := serving.SchedulerSnapshot{At: at, ObservationEnd: at}
+	captureNodePods(&snapshot, &sn, node, &core.PodList{Items: []core.Pod{*pod}}, map[string]serving.InstanceState{id: state}, map[string]*serving.Profile{profile.ID: &profile})
+	if len(snapshot.Instances) != 1 || len(sn.NonServing) != 0 || snapshot.Instances[0].Allocation.MemoryBytes != 1024 {
+		t.Fatalf("native physical ownership/memory lost: %+v", snapshot)
+	}
+	for _, resources := range []*core.ResourceList{&container.Resources.Requests, &container.Resources.Limits} {
+		(*resources)[core.ResourceCPU] = resource.MustParse("0")
+		if err := validateSourceResources(container, node, &profile); err == nil {
+			t.Fatal("admission-injected CPU field accepted")
+		}
+		delete(*resources, core.ResourceCPU)
+	}
+}
+
+func TestPreparationSharedCPURetainsMemoryAndDeviceAdmission(t *testing.T) {
 	if err := ValidatePreparation(measuredCPUPreparationFixture()); err != nil {
-		t.Fatalf("consistent wide-affinity preparation rejected: %v", err)
+		t.Fatal("runtime automatic threads rejected", err)
 	}
-	for _, count := range []int{-1, 0, 1, 3, 4} {
-		t.Run(strconv.Itoa(count), func(t *testing.T) {
-			inconsistent := measuredCPUPreparationFixture()
-			inconsistent.Instance.Allocation.CPUCount = count
-			if err := ValidatePreparation(inconsistent); err == nil || !strings.Contains(err.Error(), "CPU request count differs") {
-				t.Fatalf("inconsistent profile-bound count %d entered planning: %v", count, err)
-			}
-		})
-	}
-	// Existing zero-count semantics use affinity width, but only when that
-	// effective count equals the measured request rounded to a CPU budget.
-	spec := measuredCPUPreparationFixture()
-	spec.Instance.Allocation.CPUCount = 0
-	spec.Instance.Allocation.CPUs = []int{0, 1}
-	spec.Instance.Profile.Condition.CPU.AffinityCPUs = []int{0, 1}
-	spec.Instance.Profile.RuntimeMetadata.CPUAffinity = []int{0, 1}
-	if err := ValidatePreparation(spec); err != nil {
-		t.Fatalf("consistent implicit request budget rejected: %v", err)
-	}
-}
-
-func TestPreparationRejectsUndercountedMeasuredRequestBeforeKubernetesAccess(t *testing.T) {
-	spec := measuredCPUPreparationFixture()
-	spec.Instance.Allocation.CPUCount = 1
-	kube := kubefake.NewSimpleClientset()
-	operations := &Operations{kube: kube}
-	_, err := operations.PrepareInstance(context.Background(), spec)
-	if err == nil || !strings.Contains(err.Error(), "CPU request count differs") {
-		t.Fatalf("undercounted preparation was not rejected at admission: %v", err)
-	}
-	if len(kube.Actions()) != 0 {
-		t.Fatal("undercounted measured preparation reached Kubernetes before rejection")
+	for _, change := range []func(*PrepareSpec){
+		func(s *PrepareSpec) { s.MemoryBytes-- },
+		func(s *PrepareSpec) { s.Instance.Allocation.GPUUUID = "unmeasured" },
+		func(s *PrepareSpec) { s.Instance.Node.UID = "wrong-node" },
+	} {
+		spec := measuredCPUPreparationFixture()
+		change(&spec)
+		kube := kubefake.NewSimpleClientset()
+		operations := &Operations{kube: kube}
+		if _, err := operations.PrepareInstance(context.Background(), spec); err == nil {
+			t.Fatal("unsafe preparation admitted")
+		}
+		if len(kube.Actions()) != 0 {
+			t.Fatal("invalid preparation reached Kubernetes")
+		}
 	}
 }

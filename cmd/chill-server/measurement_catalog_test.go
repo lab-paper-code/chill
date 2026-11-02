@@ -65,7 +65,7 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 		MaxObservationAge: time.Second, MaxReplicas: 1, MaxInstances: 1,
 		CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
 		CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
-		CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 2,
+		CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
 	}
 	raw, err := json.Marshal(schedulerConfiguration{Settings: settings})
 	if err != nil {

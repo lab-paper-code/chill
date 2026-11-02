@@ -22,13 +22,11 @@ import (
 )
 
 func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) {
-	settings := serving.SchedulerSettings{
-		ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
+	settings := serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 		MaxObservationAge: time.Second, MaxReplicas: 1,
 		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
 		CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
-		CapacityMinimumRequests: 1, PlanSearchWorkers: 1, MaxCPUs: 2,
-	}
+		CapacityMinimumRequests: 1, PlanSearchWorkers: 1}
 	rawSettings, err := json.Marshal(settings)
 	if err != nil {
 		t.Fatal(err)
@@ -37,9 +35,9 @@ func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) 
 		name, fields string
 		valid        bool
 	}{
-		{name: "explicit controls-off configuration", fields: `"reserved":{"node":{"cpus":[2]}}`, valid: true},
-		{name: "duplicate reserved CPU", fields: `"reserved":{"node":{"cpus":[0,0]}}`},
-		{name: "negative reserved CPU", fields: `"reserved":{"node":{"cpus":[-1]}}`},
+		{name: "explicit controls-off configuration", fields: `"reserved":{"node":{"memoryBytes":1024}}`, valid: true},
+		{name: "retired reserved CPU", fields: `"reserved":{"node":{"cpus":[0]}}`},
+		{name: "retired reserved CPU quota", fields: `"reserved":{"node":{"cpuCount":1,"cpuReserved":true}}`},
 		{name: "retired CPU inventory", fields: `"cpuInventory":{"node":[0]}`},
 		{name: "retired GPU inventory", fields: `"gpuInventory":{"node":["GPU-real"]}`},
 		{name: "fake cost injection", fields: `"costs":[{"id":"fake","trials":[{"joules":0}]}]`},

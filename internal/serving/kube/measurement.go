@@ -15,6 +15,7 @@ import (
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -347,7 +348,7 @@ func stableIdle(before, after OperationState) error {
 	}
 	for id, a := range before.Native {
 		b, ok := after.Native[id]
-		if !ok || !a.Ready || !b.Ready || len(a.Requests) != 0 || len(b.Requests) != 0 || a.AcceptedRequests != b.AcceptedRequests || a.CompletedRequests != b.CompletedRequests || a.Executions != b.Executions || !reflect.DeepEqual(a.Metadata, b.Metadata) {
+		if !ok || !a.Ready || !b.Ready || len(a.Requests) != 0 || len(b.Requests) != 0 || a.AcceptedRequests != b.AcceptedRequests || a.CompletedRequests != b.CompletedRequests || a.Executions != b.Executions || !sameLoadedMetadata(a.Metadata, b.Metadata) {
 			return fmt.Errorf("idle zero-inference/state stability unconfirmed for %s", id)
 		}
 	}
@@ -361,6 +362,12 @@ func stableIdle(before, after OperationState) error {
 		}
 	}
 	return nil
+}
+
+func sameLoadedMetadata(a, b native.Metadata) bool {
+	// Keep observed CPU changes without interpreting them as allocation changes.
+	a.Runtime.CPUAffinity, a.Runtime.CPUSet, a.Runtime.CgroupCPUMax = b.Runtime.CPUAffinity, b.Runtime.CPUSet, b.Runtime.CgroupCPUMax
+	return reflect.DeepEqual(a, b)
 }
 func (o *Operations) measureIdle(ctx context.Context, operation Operation, duration, interval time.Duration) (OperationResult, []OperationState, error) {
 	result := OperationResult{Operation: operation, StartedAt: time.Now().UTC(), Status: nativeOperationRunning}

@@ -71,6 +71,9 @@ func TestProfileReuseMaterializesTargetIdentityAndRetainsConfirmation(t *testing
 		target.Batches[index].MemoryBytes *= 2
 	}
 	target.IdleBaselineWatts *= 1.04
+	target.RuntimeMetadata.CPUAffinity = []int{7}
+	target.RuntimeMetadata.CPUSet, target.RuntimeMetadata.CgroupCPUMax = "4-7", "max 100000"
+	target.RuntimeMetadata.IntraOpThreads, target.RuntimeMetadata.InterOpThreads = 0, 0
 	view := reuseView(t, source, target, .05)
 	if len(view.Profiles) != 2 || len(view.ReuseChecks) != 1 || view.ReuseChecks[0].Outcome != measurementAccepted || len(view.Insufficiencies) != 0 {
 		t.Fatalf("equivalent confirmation rejected: %+v", view)
@@ -85,6 +88,9 @@ func TestProfileReuseMaterializesTargetIdentityAndRetainsConfirmation(t *testing
 		profile.Batches[0].MemoryBytes != target.Batches[0].MemoryBytes || profile.Reuse == nil ||
 		profile.Reuse.ConfirmationTrialsPerBatch != 3 || len(profile.Evidence) <= len(target.Evidence) {
 		t.Fatalf("source facts leaked into target physical contract: %+v", profile)
+	}
+	if !reflect.DeepEqual(profile.RuntimeMetadata, target.RuntimeMetadata) {
+		t.Fatal("reuse replaced target shared CPU observations")
 	}
 	profile.Batches[0].DurationNanos[0] = -1
 	profile.RuntimeMetadata.GPUUUID = "mutated"
@@ -126,7 +132,6 @@ func TestProfileReuseRejectsUnconfirmedConditionsAndDifferences(t *testing.T) {
 	}{
 		{"device-family", func(_, p *serving.Profile) { p.Condition.DeviceClass += "-different" }},
 		{"runtime-image", func(_, p *serving.Profile) { p.Condition.RuntimeImage += "-other-image" }},
-		{"cpu-affinity", func(_, p *serving.Profile) { p.Condition.CPU.AffinityCPUs = []int{99} }},
 		{"power-mode", func(_, p *serving.Profile) { p.Condition.PowerMode = "different" }},
 		{"runner-version", func(_, p *serving.Profile) { p.RuntimeMetadata.RuntimeVersion += "-other-version" }},
 		{"short-window", func(_, p *serving.Profile) { p.Condition.ActiveProtocol.DurationSeconds = 29 }},

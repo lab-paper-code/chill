@@ -119,9 +119,6 @@ func validateMetadata(spec Spec, actual native.Metadata) error {
 	if b := actual.Policy.FixedBatchSize; b < 0 || b > 0 && !slices.ContainsFunc(spec.Profile.Batches, func(p serving.BatchProfile) bool { return p.Batch == b }) {
 		return errors.New("native fixed batch size has no measured profile")
 	}
-	if actual.Runtime.IntraOpThreads != condition.CPU.ORTIntraOpThreads || actual.Runtime.InterOpThreads != condition.CPU.ORTInterOpThreads || len(actual.Runtime.CPUAffinity) < condition.CPU.ORTIntraOpThreads {
-		return errors.New("native thread/affinity condition differs from profile")
-	}
 	if err := validateProfileInputs(spec, actual); err != nil {
 		return err
 	}
@@ -142,11 +139,14 @@ func validateProfileInputs(spec Spec, actual native.Metadata) error {
 
 func validateMeasuredRuntime(spec Spec, actual native.RuntimeMetadata) error {
 	if spec.ExpectedRuntime == nil {
-		return errors.New("verified runtime/provider/device/affinity evidence unavailable")
+		return errors.New("verified runtime/provider/device evidence unavailable")
 	}
 	measured := spec.ExpectedRuntime
-	if !slices.Equal(actual.ModelFiles, measured.ModelFiles) || actual.Runtime != measured.Runtime || actual.RuntimeVersion != measured.RuntimeVersion || actual.NumpyVersion != measured.NumpyVersion || actual.Device != measured.Device || actual.GPUUUID != measured.GPUUUID || !slices.Equal(actual.Providers, measured.Providers) || !slices.Equal(actual.CPUAffinity, measured.CPUAffinity) {
-		return errors.New("actual runtime/provider/device/affinity differs from verified profile")
+	if actual.IntraOpThreads < 0 || actual.InterOpThreads < 0 {
+		return errors.New("invalid observed runtime thread settings")
+	}
+	if !slices.Equal(actual.ModelFiles, measured.ModelFiles) || actual.Runtime != measured.Runtime || actual.RuntimeVersion != measured.RuntimeVersion || actual.NumpyVersion != measured.NumpyVersion || actual.Device != measured.Device || actual.GPUUUID != measured.GPUUUID || !slices.Equal(actual.Providers, measured.Providers) {
+		return errors.New("actual runtime/provider/device differs from verified profile")
 	}
 	return nil
 }

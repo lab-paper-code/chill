@@ -51,7 +51,7 @@ func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.Sch
 	node := serving.NodeReference{Name: profile.NodeName, UID: profile.Condition.NodeUID}
 	wanted := serving.SchedulerInstance{
 		ID: "destination-physical", Node: node, Profile: &profile,
-		Allocation:  serving.SchedulerAllocation{CPUs: []int{0}, Threads: 1, MemoryBytes: 1024},
+		Allocation:  serving.SchedulerAllocation{MemoryBytes: 1024},
 		WorkloadUID: d.UID, Ready: true, Capacity: 8, Weight: 1, MaxBatch: 1,
 	}
 	oldTarget := serving.SchedulerCandidate{ID: "old-target", Instances: []serving.SchedulerInstance{wanted}, Routing: map[string]map[string]int32{d.UID: {wanted.ID: 1}}}
@@ -960,13 +960,10 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State)) (
 	controller := &SchedulerController{
 		ctx: ctx, store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer,
 		operations: operations, observationLog: manager.observationLog, capacity: serving.NewCapacityTable(1, nil, nil), runs: map[string]*actionRun{},
-		config: SchedulerControllerConfig{Settings: serving.SchedulerSettings{
-			ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
-			MaxObservationAge: time.Minute, MaxReplicas: 3, MaxInstances: 3, MaxCPUs: 4,
-			CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
+		config: SchedulerControllerConfig{Settings: serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
+			MaxObservationAge: time.Minute, MaxReplicas: 3, MaxInstances: 3, CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 			CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
-			AutonomousWorkloads: []string{d.UID},
-		}},
+			AutonomousWorkloads: []string{d.UID}}},
 	}
 	return controller, prepared
 }
@@ -1148,7 +1145,7 @@ func assertPendingPhysicalCapture(t *testing.T, controller *SchedulerController,
 	}
 	actual := state.Snapshot.Instances[0]
 	if actual.ID != a.ID || actual.TargetID != a.TargetID || actual.OwnerWorkloadUID != uid ||
-		actual.Node != a.Node || !actual.Ready || actual.Stopped || !slices.Equal(actual.Allocation.CPUs, a.Allocation.CPUs) ||
+		actual.Node != a.Node || !actual.Ready || actual.Stopped || actual.Allocation != a.Allocation ||
 		!slices.Equal(actual.Reasons, []string{policyAckPendingReason}) {
 		t.Fatalf("pending instance changed physical facts: %+v", actual)
 	}
@@ -1555,7 +1552,7 @@ func TestCapturePreservesEveryExecutorlessPodUIDAC37(t *testing.T) {
 		}
 		instance := snapshot.Instances[index]
 		if instance.ID != "" || instance.PodName != name || instance.TargetID != name+"-slot" || instance.OwnerWorkloadUID == "" ||
-			instance.Node.Name != "a" || instance.Allocation.CPUCount != 1 || instance.Ready {
+			instance.Node.Name != "a" || instance.Allocation.MemoryBytes == 0 || instance.Ready {
 			t.Fatalf("executorless physical facts changed: %+v", instance)
 		}
 	}

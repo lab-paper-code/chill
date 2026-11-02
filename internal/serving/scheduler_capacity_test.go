@@ -464,6 +464,7 @@ func TestCapacityStopsRoutedInstancesOnlyAfterTheRoute(t *testing.T) {
 	cheaper.ID, cheaper.IdleBaselineWatts = "profile-q1@genesis3", 50
 	q1.Profile = &cheaper
 	snap.Instances = append(snap.Instances, q2)
+	snap.Nodes[len(snap.Nodes)-1].MemoryBytes = q2.Allocation.MemoryBytes
 	snap.Options = append(snap.Options, poolsOption(q1))
 	snap.Routing = map[string]map[string]int32{"w1": {rasp5.ID: 468, q2.ID: 532}}
 	snap.Costs = []OperationCost{
@@ -1460,11 +1461,10 @@ func TestCapacityReentryAmongFortyOptions(t *testing.T) {
 		option := poolsInstance(base, fmt.Sprint("option-", k), nodes[k%len(nodes)], "fixed", "w1")
 		profile := *option.Profile
 		profile.ID += fmt.Sprint("-cpu", k%4, "-", k)
-		profile.Condition.CPU.AffinityCPUs = []int{k % 4}
 		metadata := *profile.RuntimeMetadata
 		metadata.CPUAffinity = []int{k % 4}
 		profile.RuntimeMetadata = &metadata
-		option.Profile, option.Allocation.CPUs = &profile, []int{k % 4}
+		option.Profile = &profile
 		snap.Options = append(snap.Options, poolsOption(option))
 		snap.Costs = append(snap.Costs, poolsCost(schedulerActionPrepare, option.Node, "unloaded", schedulerState(option), "fixed"))
 		snap.Costs[len(snap.Costs)-1].ID += fmt.Sprint("-", k)
@@ -1536,16 +1536,15 @@ func TestCapacityRecordsExcludedPlans(t *testing.T) {
 	_, noCost := add("no-cost", "fixed", true)
 	_, pending := add("pending", "fixed", true)
 	_, rejected := add("rejected", "fixed", true)
-	// One option alone over the Node's CPUs: CPU 7 is not online.
-	offline, first := add("offline-cpu", "fixed", false)
+	// A current GPU inventory absence blocks placement, not the measured row.
+	offline, first := add("missing-device", "fixed", false)
 	second := first
 	profile := *first.Profile
 	profile.ID += "-second"
-	profile.Condition.CPU.AffinityCPUs = []int{7}
 	metadata := *profile.RuntimeMetadata
 	metadata.CPUAffinity = []int{7}
 	profile.RuntimeMetadata = &metadata
-	second.Profile, second.Allocation.CPUs = &profile, []int{7}
+	second.Profile, second.Allocation.GPUUUID = &profile, "missing"
 	snap.Options = append(snap.Options, poolsOption(second))
 	fixed, _ := add("fixed-workload", "fixed", true)
 	disabled := poolsInstance(base, "disabled", fixed, "fixed", "w2")
@@ -1574,46 +1573,27 @@ func TestCapacityRecordsExcludedPlans(t *testing.T) {
 	}
 }
 
-// A plan that changes the mode checks its CPUs against the target mode's.
-func TestCapacityModeChangePlansUseTargetModeCPUs(t *testing.T) {
-	s, snap := schedulerFixture()
-	base := snap.Instances[0]
-	add := func(uid, mode string, modeCPUs map[string][]int) NodeReference {
-		node := poolsAddNode(&snap, uid, map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
-		snap.Nodes[len(snap.Nodes)-1].ModeCPUs = modeCPUs
-		captured := &snap.Nodes[len(snap.Nodes)-1]
-		if captured.ModeCPUs == nil {
-			captured.ModeCPUs = map[string][]int{}
-		}
-		captured.ModeCPUs[captured.PowerMode] = captured.CPUs
-		i := poolsInstance(base, "opt-"+uid, node, mode, "w1")
-		snap.Options = append(snap.Options, poolsOption(i))
-		snap.Costs = append(snap.Costs, poolsCost(schedulerActionPrepare, node, "unloaded", schedulerState(i), mode))
-		return node
-	}
-	twoCore := add("two-core", schedulerTestEcoMode, map[string][]int{schedulerTestEcoMode: {1}})
-	undeclared := add("undeclared", schedulerTestEcoMode, nil)
-	current := add("current", "fixed", map[string][]int{schedulerTestEcoMode: {1}})
-	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
-	for node, reason := range map[NodeReference]string{twoCore: schedulerPlanInfeasibleResources, undeclared: NodePlacementInventoryMissing} {
-		if !slices.ContainsFunc(poolsPlans(d, node), func(p SchedulerNodePlan) bool { return !p.Eligible && p.Reason == reason }) {
-			t.Fatalf("%s: no plan excluded with %s: %+v", node.UID, reason, poolsPlans(d, node))
-		}
-	}
-	if slices.ContainsFunc(poolsPlans(d, current), func(p SchedulerNodePlan) bool {
-		return p.Reason == schedulerPlanInfeasibleResources || p.Reason == NodePlacementInventoryMissing
+func TestCapacityModeChangePlansNeedNoCPUInventory(t *testing.T) {
+	settings, snapshot := schedulerFixture()
+	node := poolsAddNode(&snapshot, "target", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
+	option := poolsInstance(snapshot.Instances[0], "eco-option", node, schedulerTestEcoMode, "w1")
+	snapshot.Options = append(snapshot.Options, poolsOption(option))
+	snapshot.Costs = append(snapshot.Costs, poolsCost(schedulerActionPrepare, node, "unloaded", schedulerState(option), schedulerTestEcoMode),
+		poolsCost(schedulerActionPower, node, "fixed", schedulerTestEcoMode, ""))
+	decision := capacityDecideForTest(t, settings, snapshot, capacityRowsForTest(settings, snapshot, nil))
+	if !slices.ContainsFunc(poolsPlans(decision, node), func(plan SchedulerNodePlan) bool {
+		return plan.Eligible && strings.HasPrefix(plan.Key, option.Profile.ID+"/")
 	}) {
-		t.Fatalf("current-mode plan excluded: %+v", poolsPlans(d, current))
+		t.Fatalf("power plan required a CPU inventory: %+v", poolsPlans(decision, node))
 	}
 }
 
-func TestCapacityTargetAndIdleDAGUseProjectedInventory(t *testing.T) {
+func TestCapacityTargetAndIdleDAGProjectOnlyPowerMode(t *testing.T) {
 	const currentMode, targetMode = "two", "fixed"
 	settings, snapshot, rows, expanded := capacityE1Fixture()
 	n := slices.IndexFunc(snapshot.Nodes, func(node SchedulerNode) bool { return node.Node == expanded })
 	source := &snapshot.Nodes[n]
-	source.PowerMode, source.CPUs = currentMode, []int{0, 1}
-	source.ModeCPUs = map[string][]int{currentMode: {0, 1}, targetMode: {0, 1, 2, 3}}
+	source.PowerMode = currentMode
 	for _, baseline := range snapshot.Baselines {
 		if baseline.Node == expanded {
 			baseline.ID, baseline.PowerMode = "two-current", currentMode
@@ -1627,19 +1607,18 @@ func TestCapacityTargetAndIdleDAGUseProjectedInventory(t *testing.T) {
 		t.Fatalf("target mode expansion missing: status=%s reasons=%v", decision.Status, decision.Reasons)
 	}
 	target := decision.Target.Nodes[slices.IndexFunc(decision.Target.Nodes, func(node SchedulerNode) bool { return node.Node == expanded })]
-	if target.PowerMode != targetMode || !slices.Equal(target.CPUs, source.ModeCPUs[targetMode]) || source.PowerMode != currentMode {
-		t.Fatalf("final target split mode from inventory or mutated source: %+v", target)
+	if target.PowerMode != targetMode || source.PowerMode != currentMode {
+		t.Fatalf("target mode missing or source mutated: %+v", target)
 	}
 	planner := capacityPlannerForTest(t, settings, snapshot, rows)
 	n = slices.IndexFunc(planner.snapshot.Nodes, func(node SchedulerNode) bool { return node.Node == expanded })
 	choice := capacityChoiceForTest(t, planner, map[string]string{"genesis3": "profile@genesis3-fixed/b1/w1"})
 	best := planner.evaluate(choice, 0)
-	delete(source.ModeCPUs, targetMode)
-	if _, _, reason := planner.chain(n, planner.plans[n][choice[n]]); reason != NodePlacementInventoryMissing {
-		t.Fatalf("chain accepted unknown target inventory: %s", reason)
+	if _, _, reason := planner.chain(n, planner.plans[n][choice[n]]); reason != "" {
+		t.Fatalf("chain failed without CPU inventory: %s", reason)
 	}
-	if reason, _ := planner.idleTransition(best, nil); reason != NodePlacementInventoryMissing {
-		t.Fatalf("idle DAG accepted unknown target inventory: %s", reason)
+	if reason, _ := planner.idleTransition(best, nil); reason != "" {
+		t.Fatalf("idle DAG failed without CPU inventory: %s", reason)
 	}
 }
 
@@ -2099,7 +2078,7 @@ func TestSchedulerReadyExpansionCapacitySCH20AC38(t *testing.T) {
 			case "nil-kappa":
 				rows[1].Kappa = nil
 			case "wrong-allocation":
-				added.Allocation.Threads++
+				added.Allocation.GPUUUID = "different-device"
 			case "overload":
 				capacityLoad(s, &snap, snap.Workloads[0], 200)
 			case "backlog":

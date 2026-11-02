@@ -50,7 +50,7 @@ func TestCapacityTerminalLedgerAllowsIndependentRecoveryAC45(t *testing.T) {
 			// The tombstone remains an allocation/ownership obligation; recovery
 			// must not manufacture physical absence to pass the global guard.
 			if !slices.ContainsFunc(decision.Target.Instances, func(i SchedulerInstance) bool {
-				return i.ID == old.ID && slices.Equal(i.Allocation.CPUs, old.Allocation.CPUs)
+				return i.ID == old.ID && i.Allocation == old.Allocation
 			}) {
 				t.Fatal("independent recovery erased retained physical allocation")
 			}

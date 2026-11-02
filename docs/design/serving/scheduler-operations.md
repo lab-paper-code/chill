@@ -101,7 +101,7 @@ reset은 현재 Workload로 scope를 고정하고 observer refresh/live 계획 �
 |---|---|
 | 공통 | 현재 Workload·자동제어 밖, Node 존재, measurement taint/실행 run/Node power label pending 없음(NodeBusy). |
 | prepare | 그 Node의 derived profileID, owner=대상 UID. 양수 fixedBatchSize는 policy/instance에 함께 기록하고 measured/initialized B 검증([baseline](scheduler-runtime-measurement.md#strict-fixed-size-baseline-serving)). 선택 maxBatch도 initialized+measured 양수만 허용하여 policy cap 적용, 범위 밖 InvalidInput. SCH-AC-46 초기 복원 ACK는 snapshot.instances[].maxBatch이며 options[].instance planner template 불변. |
-| capacity | ValidatePreparationCapacity가 fresh Node/all Pod request·inventory/예약을 검사. 설정 namespace 기존 serving Pod·미확인 GPU owner·CPU 예약 부족·memory 초과/MemoryPressure 거절. |
+| capacity | ValidatePreparationCapacity가 fresh Node UID/readiness·Pod 소유·현재 GPU inventory/외부 owner·memory budget/MemoryPressure를 검사한다. CPU 예약·quota·mask·online inventory는 검사하지 않는다. |
 | seed | applied routing에 UID 있으면 빈 map/nil도 배분0 유지. UID 없으면 Pod owner별 annotation seed. manual/measurement 준비 seed는 Ready/owner/native ACK 확인한 instance만, planner seed는 빈 분배. |
 | remove | snapshot instance, 타 UID 소유/binding 없음, 모든 UID route weight0·outstanding0. 먼저 unroute ACK 확인. snapshot physical ID로 planner serving-<hash> Pod도 선택 가능하며 이는 manual 증거일 뿐 automatic/power 측정 아님. |
 

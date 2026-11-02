@@ -67,12 +67,7 @@ func schedulerCommonNodes(snapshot SchedulerSnapshot) []SchedulerNode {
 	for index, n := range nodes {
 		for _, a := range snapshot.Actions {
 			if a.Fixed && a.Node == n.Node && (a.Status == schedulerActionPlanned || a.Status == phaseRunning) {
-				projected, known := nodes[index].AtMode(a.To)
-				if !known {
-					nodes[index].Reasons = appendUnique(slices.Clone(nodes[index].Reasons), NodePlacementInventoryMissing)
-					continue
-				}
-				nodes[index] = projected
+				nodes[index].PowerMode = a.To
 			}
 		}
 	}
@@ -225,7 +220,7 @@ func schedulerOptionCondition(o SchedulerOption) string {
 	}
 	p := i.Profile
 	// A top-level *CurveDatasetContract prints its value (&{name uid}), not its address.
-	return fmt.Sprint(i.Node, p.Condition.Artifact, p.Condition.RuntimeFamily, p.Condition.Backend, p.Condition.RuntimeImage, p.Condition.Preprocessor, p.Condition.ActiveProtocol.Dataset, p.Condition.PowerMode, p.Condition.CPU, p.Condition.Firstfloor, p.Condition.RuntimeAccess, p.Condition.PlannedBatchSizes, i.Allocation, i.MaxBatch, i.MaxWait)
+	return fmt.Sprint(i.Node, p.Condition.Artifact, p.Condition.RuntimeFamily, p.Condition.Backend, p.Condition.RuntimeImage, p.Condition.Preprocessor, p.Condition.ActiveProtocol.Dataset, p.Condition.PowerMode, p.Condition.Firstfloor, p.Condition.RuntimeAccess, p.Condition.PlannedBatchSizes, i.Allocation, i.MaxBatch, i.MaxWait)
 }
 
 func schedulerConfigKey(c SchedulerCandidate) string {
@@ -269,11 +264,11 @@ func schedulerSameResourceChoice(old, target SchedulerInstance) bool {
 	// Memory is a measured placement constraint, not a resource control knob.
 	a.MemoryBytes, b.MemoryBytes = 0, 0
 	if old.Node != target.Node {
-		// Physical CPU IDs and GPU UUIDs are scoped to the selected Node.
-		if len(a.CPUs) != len(b.CPUs) || (a.GPUUUID == "") != (b.GPUUUID == "") {
+		// GPU UUIDs are scoped to the selected Node.
+		if (a.GPUUUID == "") != (b.GPUUUID == "") {
 			return false
 		}
-		b.CPUs, b.GPUUUID = a.CPUs, a.GPUUUID
+		b.GPUUUID = a.GPUUUID
 	}
 	return reflect.DeepEqual(a, b)
 }
@@ -611,8 +606,7 @@ func (p *schedulerPlanState) freePreparationResources(wanted SchedulerInstance) 
 			if actual.Node != wanted.Node || p.stops[actual.ID] != "" || slices.ContainsFunc(p.target.Instances, func(target SchedulerInstance) bool { return schedulerSamePhysicalTarget(actual, target) }) {
 				continue
 			}
-			overlap := (actual.Allocation.GPUUUID != "" && actual.Allocation.GPUUUID == wanted.Allocation.GPUUUID) ||
-				slices.ContainsFunc(actual.Allocation.CPUs, func(cpu int) bool { return slices.Contains(wanted.Allocation.CPUs, cpu) })
+			overlap := actual.Allocation.GPUUUID != "" && actual.Allocation.GPUUUID == wanted.Allocation.GPUUUID
 			if phase == 0 && !overlap {
 				continue
 			}
@@ -628,6 +622,9 @@ func (p *schedulerPlanState) preparationFits(wanted SchedulerInstance) bool {
 	for _, node := range p.snap.Nodes {
 		if node.Node != wanted.Node {
 			continue
+		}
+		if slices.Contains(node.Reasons, NodeInstanceUnavailable) {
+			return false // Unknown physical ownership is not free coexistence capacity.
 		}
 		allocations := append([]SchedulerAllocation{node.Reserved}, node.NonServing...)
 		for _, actual := range p.snap.Instances {
@@ -649,12 +646,7 @@ func (p *schedulerPlanState) preparationFits(wanted SchedulerInstance) bool {
 			}
 		}
 		allocations = append(allocations, wanted.Allocation)
-		mode := node.PowerMode
-		if wanted.Profile != nil {
-			mode = wanted.Profile.Condition.PowerMode
-		}
-		modeNode, known := node.AtMode(mode)
-		return known && len(ValidateNodeBudget(modeNode, allocations, nil)) == 0
+		return len(ValidateNodeBudget(node, allocations, nil)) == 0
 	}
 	return false
 }
