@@ -58,9 +58,8 @@ func setupProfilerControllers(mgr ctrl.Manager, opts options) error {
 	if err := setupTransitionCostController(mgr, opts, shared); err != nil {
 		return err
 	}
-	return evaluationcontroller.SetupWithManager(
-		mgr, opts.enableLeaderElection, evaluationcontroller.NewRuntime(mgr.GetAPIReader()),
-	)
+	runtime := evaluationcontroller.NewRuntime(mgr.GetAPIReader(), component.ProfilerEvidenceStagingPath)
+	return evaluationcontroller.SetupWithManager(mgr, opts.enableLeaderElection, runtime)
 }
 
 // setupRunController is the composition root for bounded ProfilingRun
