@@ -304,3 +304,14 @@ test("selected throughput explains absent quality fields without inventing sampl
     assert.deepEqual(cells.find(row=>row[0]==="배치 2 · 지연 표본 수"),["배치 2 · 지연 표본 수","17","관측 표본 수 · 충족 기준 미제공"])
   }
 })
+
+test("namespace form pattern compiles with HTML v flag and enforces DNS labels",()=>{
+  const h=harness("kind=dispatch-occupancy",()=>({items:[]}))
+  const frame=load("../features/measurement-projections.tsx",h.modules).MeasurementResultsPage({})
+  const form=elements(frame).find(item=>typeof item.type==="function"&&Object.hasOwn(item.props,"namespace")&&!Object.hasOwn(item.props,"kind"))!
+  const input=elements((form.type as Component)(form.props)).find(item=>item.type==="input")!
+  const pattern=new RegExp(`^(?:${String(input.props.pattern)})$`,"v")
+  assert.equal(pattern.test("BAD_NAMESPACE"),false)
+  assert.equal(pattern.test("chill-system"),true)
+  for(const invalid of ["-chill","chill-","a_b","a.b"])assert.equal(pattern.test(invalid),false)
+})

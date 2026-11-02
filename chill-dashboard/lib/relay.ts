@@ -42,7 +42,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   if (!segments.length || segments.some(part => part.length > 253 || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(part))) throw new RelayFailure("DashboardRouteNotAllowed", 404)
   const route = segments.join("/")
   let methods: string[] = []
-  let query: "none" | "page" | "profiles" | "runs" | "observations" | "event" | "load" | "schedulerHistory" | "dryRun" | "uid" | "compatibility" | "coverage" | "preflight" = "none"
+  let query: "none" | "page" | "inputs" | "profiles" | "runs" | "observations" | "event" | "load" | "schedulerHistory" | "dryRun" | "uid" | "compatibility" | "coverage" | "preflight" = "none"
   let kind: RelayPlan["kind"] = "query"
   if (/^v1\/(models|workloads|preprocessors|datasets)$/.test(route)) methods = ["GET", "POST"]
   else if (/^v1\/(models|workloads|preprocessors|datasets)\/[^/]+$/.test(route)) methods = ["GET", "PUT", "DELETE"]
@@ -57,7 +57,8 @@ export function relayPlan(method: string, segments: string[], search: string, co
   else if (route === "v1/model-compatibility") { methods = ["GET"]; query = "compatibility" }
   else if (route === "v1/model-compatibility-matrix") methods = ["GET"]
   else if (/^v1\/experiments(?:\/[^/]+)?$/.test(route)) methods = ["GET"]
-  else if (route === "v1/evaluations/active" || route === "v1/evaluations/inputs" || route === "v1/evaluations/template") methods = ["GET"]
+  else if (route === "v1/evaluations/inputs") { methods = ["GET"]; query = "inputs" }
+  else if (route === "v1/evaluations/active" || route === "v1/evaluations/template") methods = ["GET"]
   else if (route === "v1/evaluations/preflight" || route === "v1/evaluations/load-scenarios/preflight") methods = ["POST"]
   else if (route === "v1/evaluations" || route === "v1/evaluations/load-scenarios") methods = ["GET", "POST"]
   else if (/^v1\/evaluations\/load-scenarios\/[^/]+$/.test(route)) { methods = ["GET", "PUT", "DELETE"]; if (method !== "GET") query = "uid" }
@@ -86,6 +87,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   const compact = method === "GET" && (query === "schedulerHistory" || route === "v1/scheduler" || route === "v1/scheduler/state")
   const allowed = compact ? ["view"] : []
   if (query === "coverage") allowed.push("batches","node")
+  if (query === "inputs") allowed.push("kind","set","offset","limit")
   if (query === "preflight") allowed.push("variantId")
   if (query === "event") allowed.push("at")
   if (query === "profiles") allowed.push("limit","offset","model","deviceClass","profile","q","node","powerMode","path","cpu","status","sort","order")

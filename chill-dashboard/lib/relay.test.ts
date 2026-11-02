@@ -108,7 +108,7 @@ test("evaluation relay permits only contracted operations with conditional stop"
   for (const path of ["v1/evaluations/active", "v1/evaluations/inputs", "v1/evaluations/template"]) {
     assert.deepEqual(plan("GET", path), { path: `/api/${path}`, kind: "query", timeoutMs: config.queryTimeoutMs, bodyAllowed: false })
     for (const method of ["POST", "PUT", "DELETE", "PATCH"]) assert.throws(() => plan(method, path, "?uid=run-uid"), /DashboardMethodNotAllowed/)
-    assert.throws(() => plan("GET", path, "?limit=1"), /DashboardQueryInvalid/)
+    if (path !== "v1/evaluations/inputs") assert.throws(() => plan("GET", path, "?limit=1"), /DashboardQueryInvalid/)
   }
   for (const path of ["v1/evaluations/preflight", "v1/evaluations/load-scenarios/preflight"]) {
     assert.deepEqual(plan("POST", path), { path: `/api/${path}`, kind: "query", timeoutMs: config.queryTimeoutMs, bodyAllowed: true })
@@ -132,6 +132,14 @@ test("evaluation relay permits only contracted operations with conditional stop"
     assert.throws(() => plan("GET", path, "?uid=run-uid"), /DashboardQueryInvalid/)
   }
   for (const path of ["v1/evaluations/run-a/status", "v1/evaluations/run-a/release/extra"]) assert.throws(() => plan("POST", path), /DashboardRouteNotAllowed/)
+})
+
+test("evaluation inputs accepts single server filters and bounded explicit pages",()=>{
+  const config=serverConfig({CHILL_BASE_URL:"https://chill.example",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"chill",CHILL_MAX_PAGE_SIZE:"50"})
+  const plan=(search:string)=>relayPlan("GET",["v1","evaluations","inputs"],search,config).path
+  assert.equal(plan(""),"/api/v1/evaluations/inputs")
+  for(const search of ["?kind=seed&set=evaluation-enable-20261101&offset=0&limit=25","?kind=payload","?set=한글","?offset=2","?limit=2","?kind=future-kind"]) assert.equal(plan(search),`/api/v1/evaluations/inputs?${new URLSearchParams(search)}`)
+  for(const search of ["?kind=seed&kind=payload","?set=a&set=b","?offset=0&offset=1","?limit=2&limit=3","?limit=0","?limit=51","?offset=-1","?offset=1000001","?offset=1.5","?kind=","?set=","?kind=%00","?unknown=a",`?set=${"a".repeat(257)}`]) assert.throws(()=>plan(search),/DashboardQueryInvalid/)
 })
 
 test("scheduler consumer routes enforce exact methods and bounded observation queries", () => {

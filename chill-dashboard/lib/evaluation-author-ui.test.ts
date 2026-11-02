@@ -216,15 +216,17 @@ test("R17: load parts expose every service rate as labeled fields without a wide
   assert.ok(!form.some(element=>element.type==="table"))
 })
 
-test("R17b: author help uses constraint rows and input options keep internal identities in the original view",()=>{
-  const runner=hookRunner(),input={kind:"seed",store:"internal-store",key:"experiments/private-seed.json",size:512}
-  const {AuthorHelp,EvidencePicker}=load("../features/evaluation-author.tsx",{...primitives,react:runner.react,"@/lib/client":{useChillQuery:()=>({data:{items:[input]}})},"@/components/ui/tooltip":{TooltipProvider:"div",Tooltip:"div",TooltipTrigger:"div",TooltipContent:"aside"}})
+test("R17b: author help uses constraint rows and evidence options use server names",()=>{
+  const runner=hookRunner(),input={kind:"seed",store:"internal-store",key:"experiments/private-seed.json",size:512,name:"실험 난수",set:"실험 묶음"}
+  const {AuthorHelp,EvidencePicker}=load("../features/evaluation-author.tsx",{...primitives,react:{...runner.react,useId:()=>"inputs"},"@/lib/client":{useChillQuery:()=>({data:{items:[input],page:{offset:0,limit:25,total:1}}})},"@/components/ui/tooltip":{TooltipProvider:"div",Tooltip:"div",TooltipTrigger:"div",TooltipContent:"aside"}})
   const help=elements(runner.render(AuthorHelp))
   assert.ok(help.some(element=>element.type==="table"))
   const picker=elements(runner.render(EvidencePicker,{label:"난수",value:input,onChange:()=>{}}))
   const options=picker.filter(element=>element.type==="option")
   assert.ok(!JSON.stringify(options.map(option=>option.props.children)).includes("internal-store"))
   assert.ok(!JSON.stringify(options.map(option=>option.props.children)).includes("private-seed.json"))
+  assert.ok(options.some(option=>option.props.children==="실험 난수"))
+  assert.ok(picker.some(element=>element.type==="optgroup"&&element.props.label==="실험 묶음"))
   assert.ok(picker.some(element=>element.type==="details"))
 })
 
@@ -268,4 +270,37 @@ test("R17b: template missing inputs stay visible while copied question text is f
   const original=copyTree.find(element=>element.type==="details"&&elements(element.props.children).some(child=>child.type==="summary"&&child.props.children==="질문 원문"))!
   assert.ok(original)
   assert.notEqual(original.props.open,true)
+})
+
+test("evidence picker filters and pages on the server and preserves off-page selections",()=>{
+  const runner=hookRunner(),paths:string[]=[],changes:unknown[]=[]
+  const first={store:"s",key:"one",size:1,kind:"seed",set:"set-a",name:"서버 이름"}
+  const second={store:"s",key:"two",size:2,kind:"seed",set:"set-b",name:""}
+  const {EvidencePicker}=load("../features/evaluation-author.tsx",{...primitives,react:{...runner.react,useId:()=>"sets"},"@/lib/client":{useChillQuery:(path:string)=>{
+    paths.push(path)
+    const params=new URLSearchParams(path.split("?")[1])
+    return {data:{items:params.get("offset")==="7"?[second]:[first],page:{offset:Number(params.get("offset")??0),limit:25,total:30,nextOffset:params.get("offset")==="7"?undefined:7}}}
+  }}})
+  const props={label:"난수",value:{store:"old",key:"saved",size:99},onChange:(value:unknown)=>changes.push(value)}
+  let tree=elements(runner.render(EvidencePicker,props))
+  assert.equal(new URLSearchParams(paths.at(-1)!.split("?")[1]).get("kind"),"seed")
+  assert.equal(new URLSearchParams(paths.at(-1)!.split("?")[1]).get("limit"),"25")
+  assert.ok(tree.some(item=>item.type==="option"&&item.props.children==="서버 이름"))
+  assert.ok(tree.some(item=>item.type==="option"&&item.props.children==="saved"))
+  ;(tree.find(item=>item.props.label==="난수")!.props.onChange as (value:string)=>void)(String(tree.find(item=>item.type==="option"&&item.props.children==="서버 이름")!.props.value))
+  assert.deepEqual(changes.at(-1),{store:"s",key:"one",size:1})
+  ;(tree.find(item=>item.type==="button"&&item.props.children==="다음")!.props.onClick as ()=>void)()
+  tree=elements(runner.render(EvidencePicker,{...props,value:{store:"s",key:"one",size:900}}))
+  assert.equal(new URLSearchParams(paths.at(-1)!.split("?")[1]).get("offset"),"7")
+  assert.ok(tree.some(item=>item.type==="option"&&item.props.children==="서버 이름"))
+  assert.ok(tree.some(item=>item.type==="option"&&item.props.children==="two"))
+  assert.ok(tree.find(item=>item.type==="button"&&item.props.children==="다음")!.props.disabled)
+  ;(tree.find(item=>item.type==="input"&&item.props.list==="sets")!.props.onChange as (event:unknown)=>void)({target:{value:"set-b"}})
+  tree=elements(runner.render(EvidencePicker,props))
+  const params=new URLSearchParams(paths.at(-1)!.split("?")[1])
+  assert.equal(params.get("set"),"set-b")
+  assert.equal(params.get("offset"),"0")
+  ;(tree.find(item=>item.props.label==="입력 종류")!.props.onChange as (value:string)=>void)("payload")
+  runner.render(EvidencePicker,props)
+  assert.equal(new URLSearchParams(paths.at(-1)!.split("?")[1]).get("kind"),"payload")
 })

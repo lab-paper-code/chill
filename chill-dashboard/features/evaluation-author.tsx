@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useId, useState, type ReactNode } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Screen } from "@/components/screen"
@@ -43,17 +43,24 @@ export function AuthorJSON({label,value,onChange,onValidityChange,disabled=false
 }
 export function EvidencePicker({label,value,onChange}:{label:string;value:unknown;onChange:(value:Spec|undefined)=>void}) {
   const defaultKind=label.includes("난수")?"seed":label.includes("번들")?"payload":label.includes("요청률")?"rateBasis":label.includes("분배")?"kappa":label.includes("요청 시각")?"other":""
-  const query=useChillQuery<{items:EvidenceInput[]}>("v1/evaluations/inputs",{decoder:parseSchedulerJSON}),[kind,setKind]=useState(defaultKind)
+  const [kind,setKind]=useState(defaultKind),[set,setSet]=useState(""),[offsets,setOffsets]=useState([0]),[chosen,setChosen]=useState<EvidenceInput|null>(null),setList=useId()
+  const params=new URLSearchParams({limit:"25",offset:String(offsets.at(-1)??0)})
+  if(kind)params.set("kind",kind)
+  if(set)params.set("set",set)
+  const query=useChillQuery<{items:EvidenceInput[];page:{offset:number;limit:number;total:number;nextOffset?:number}}>(`v1/evaluations/inputs?${params}`,{decoder:parseSchedulerJSON})
   const items=query.data?.items??[],current=object(value)
-  const identity=(item:Spec)=>`${String(item.store)}\n${String(item.key)}\n${String(item.size)}`
-  const selected=current.key?identity(current):""
-  const visible=items.filter(item=>!kind||item.kind===kind)
-  return <div className="grid gap-2 sm:grid-cols-[minmax(6rem,1fr)_minmax(0,3fr)]">
-    <AuthorSelect label="입력 종류" value={kind} onChange={setKind}><option value="">전체</option>{[...new Set(items.map(item=>item.kind))].map(k=><option key={k} value={k}>{{seed:"난수",payload:"입력 번들",rateBasis:"요청률 기준",kappa:"분배 계수",other:"기타"}[k]??"기타"}</option>)}</AuthorSelect>
-    <AuthorSelect label={label} value={selected} onChange={key=>{const item=items.find(item=>identity(item)===key);onChange(item?{...current,store:item.store,key:item.key,size:item.size}:undefined)}}>
-      <option value="">미선택</option>{selected&&!visible.some(item=>identity(item)===selected)&&<option value={selected}>저장된 {label}</option>}
-      {visible.map((item,index)=><option key={identity(item)} value={identity(item)}>{{seed:"난수 입력",payload:"입력 번들",rateBasis:"요청률 기준",kappa:"분배 계수",other:"기타 입력"}[item.kind]??"입력 객체"} · 항목 {index+1}</option>)}
-    </AuthorSelect><div className="min-w-0 sm:col-span-2"><QueryGate query={query}>{null}</QueryGate>{selected&&<><table className="w-full text-left text-sm tabular-nums"><tbody><tr><th className="font-normal">선택 입력 크기 (B)</th><td className="text-right">{String(current.size??"미기록")}</td></tr></tbody></table><details className="min-w-0"><summary className="min-h-11 cursor-pointer text-sm">선택 입력 원문</summary><pre className="max-w-full overflow-x-auto whitespace-pre-wrap break-all text-xs">{specJSON(current)}</pre></details></>}</div>
+  const identity=(item:Spec)=>JSON.stringify([item.store,item.key])
+  const selected=current.key?identity(current):"",next=query.data?.page.nextOffset
+  const selectedItem=items.find(item=>identity(item)===selected)??(chosen&&identity(chosen)===selected?chosen:current)
+  return <div className="grid min-w-0 gap-2 sm:grid-cols-2">
+    <AuthorSelect label="입력 종류" value={kind} onChange={value=>{setKind(value);setOffsets([0])}}><option value="">전체</option>{Object.entries({seed:"난수",payload:"입력 번들",rateBasis:"요청률 기준",kappa:"분배 계수",other:"기타"}).map(([key,name])=><option key={key} value={key}>{name}</option>)}</AuthorSelect>
+    <label className="grid min-w-0 gap-1 text-sm">입력 묶음<Input list={setList} value={set} onChange={event=>{setSet(event.target.value);setOffsets([0])}}/><datalist id={setList}>{[...new Set(items.map(item=>item.set).filter(Boolean))].map(value=><option key={value} value={value}/>)}</datalist></label>
+    <div className="min-w-0 sm:col-span-2"><AuthorSelect label={label} value={selected} onChange={key=>{const item=items.find(item=>identity(item)===key);setChosen(item??null);onChange(item?{...current,store:item.store,key:item.key,size:item.size}:undefined)}}>
+      <option value="">미선택</option>{selected&&!items.some(item=>identity(item)===selected)&&<option value={selected}>{String(selectedItem.name||current.key)}</option>}
+      {[...new Set(items.map(item=>item.set??""))].map(group=><optgroup key={group} label={group||"묶음 미기록"}>{items.filter(item=>(item.set??"")===group).map(item=><option key={identity(item)} value={identity(item)}>{item.name||item.key}</option>)}</optgroup>)}
+    </AuthorSelect></div>
+    <div className="flex gap-2 sm:col-span-2"><Button type="button" variant="outline" disabled={offsets.length===1||query.isFetching} onClick={()=>setOffsets(offsets.slice(0,-1))}>이전</Button><Button type="button" variant="outline" disabled={next===undefined||query.isFetching} onClick={()=>{if(next!==undefined)setOffsets([...offsets,next])}}>다음</Button></div>
+    <div className="min-w-0 sm:col-span-2"><QueryGate query={query}>{null}</QueryGate>{query.data&&<table className="w-full text-left text-sm tabular-nums"><tbody><tr><th className="font-normal">전체 입력</th><td className="text-right">{query.data.page.total}</td></tr><tr><th className="font-normal">현재 입력</th><td className="text-right">{items.length}</td></tr></tbody></table>}{selected&&<><table className="w-full text-left text-sm tabular-nums"><tbody><tr><th className="font-normal">선택 입력 크기 (B)</th><td className="text-right">{String(current.size??"미기록")}</td></tr></tbody></table><details className="min-w-0"><summary className="min-h-11 cursor-pointer text-sm">선택 입력 원문</summary><pre className="max-w-full overflow-x-auto whitespace-pre-wrap break-all text-xs">{specJSON(current)}</pre></details></>}</div>
   </div>
 }
 export function AuthorHelp() {

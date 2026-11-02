@@ -3,7 +3,7 @@ import { evaluationCanSubmit, evaluationSameSpec } from "./evaluation-request.ts
 
 export type Spec = Record<string, unknown>
 export type LoadScenario = {name:string;uid:string;spec:Spec;inUse:string[];createdAt?:string}
-export type EvidenceInput = {store:string;key:string;size:number|bigint;kind:string}
+export type EvidenceInput = {store:string;key:string;size:number|bigint;kind:string;set?:string;name?:string}
 export type WorkloadChange = {name:string;before:Spec;after:Spec}
 export const object = (value:unknown):Spec => value!==null&&typeof value==="object"&&!Array.isArray(value)?value as Spec:{}
 export const records = (value:unknown):Spec[] => Array.isArray(value)?value.map(object):[]

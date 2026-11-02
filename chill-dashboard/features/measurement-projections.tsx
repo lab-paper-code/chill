@@ -52,7 +52,7 @@ function NamespaceForm({namespace}:{namespace:string}) {
     const next=new URLSearchParams(params.toString());next.set("namespace",value.trim())
     for(const key of ["profile","measurement","uid","page","offset"])next.delete(key)
     router.push(`/measurements/results?${next}`,{scroll:false})
-  }}><label className="grid gap-1.5 text-sm">저장 영역<Input className="min-h-11" value={value} onChange={event=>setValue(event.target.value)} required pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?" maxLength={63}/></label><Button variant="outline" type="submit">조회</Button></form>
+  }}><label className="grid gap-1.5 text-sm">저장 영역<Input className="min-h-11" value={value} onChange={event=>setValue(event.target.value)} required pattern="[a-z0-9]([\-a-z0-9]*[a-z0-9])?" maxLength={63}/></label><Button variant="outline" type="submit">조회</Button></form>
 }
 
 function ProjectionResults({kind,namespace}:{kind:ProjectionMeasurementKind;namespace:string}) {
