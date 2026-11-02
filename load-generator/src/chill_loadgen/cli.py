@@ -288,11 +288,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     replay_parser.add_argument("--seed", type=int, default=0, help="Poisson arrival seed (default 0)")
     replay_parser.add_argument("--workers", type=_positive(int), default=8, help="concurrent connections (default 8)")
-    replay_parser.add_argument("--timeout", type=_positive(float), help="socket seconds (E5 default lifetime + 2*delivery; otherwise lifetime + delivery or 30)")
+    replay_parser.add_argument("--timeout", type=_positive(float), help="socket seconds (evaluation default lifetime + 2*delivery; otherwise lifetime + delivery or 30)")
     replay_parser.add_argument("--request-lifetime", type=_positive(float), help="native request lifetime seconds; sends X-Chill-Request-Timeout")
     replay_parser.add_argument("--delivery-margin", type=_positive(float), default=0.01, help="socket delivery seconds beyond lifetime (default .01)")
-    replay_parser.add_argument("--workload-slo", type=_positive(float), help="frozen E5 Workload SLO seconds; paired with gateway timeout")
-    replay_parser.add_argument("--gateway-timeout", type=_positive(float), help="frozen E5 gateway lifetime cap seconds; paired with workload SLO")
+    replay_parser.add_argument("--workload-slo", type=_positive(float), help="frozen evaluation Workload SLO seconds; paired with gateway timeout")
+    replay_parser.add_argument("--gateway-timeout", type=_positive(float), help="frozen evaluation gateway lifetime cap seconds; paired with workload SLO")
     return parser
 
 
@@ -309,10 +309,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             raise ValueError("--rate is required for fixed/poisson arrivals")
         if args.arrivals == "closed-loop" and args.rate is not None:
             raise ValueError("--rate does not apply to closed-loop arrivals")
-        e5_contract = args.workload_slo is not None or args.gateway_timeout is not None
-        if e5_contract:
+        evaluation_contract = args.workload_slo is not None or args.gateway_timeout is not None
+        if evaluation_contract:
             if args.workload_slo is None or args.gateway_timeout is None:
-                raise ValueError("E5 replay requires --workload-slo and --gateway-timeout")
+                raise ValueError("evaluation replay requires --workload-slo and --gateway-timeout")
             if args.request_lifetime is not None:
                 if args.request_lifetime < args.workload_slo:
                     raise ValueError("--request-lifetime must cover --workload-slo")
@@ -321,12 +321,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         required_timeout = (
             args.request_lifetime + args.delivery_margin if args.request_lifetime is not None else 30
         )
-        default_timeout = required_timeout + args.delivery_margin if e5_contract and args.request_lifetime is not None else required_timeout
+        default_timeout = required_timeout + args.delivery_margin if evaluation_contract and args.request_lifetime is not None else required_timeout
         timeout = args.timeout if args.timeout is not None else default_timeout
         if args.request_lifetime is not None and (
-            timeout < required_timeout or e5_contract and timeout <= required_timeout
+            timeout < required_timeout or evaluation_contract and timeout <= required_timeout
         ):
-            raise ValueError("socket --timeout must exceed lifetime + delivery for E5 and cover it for measurement replay")
+            raise ValueError("socket --timeout must exceed lifetime + delivery for evaluation and cover it for measurement replay")
         if not _valid_identifier(args.workload):
             raise ValueError("--workload must be a Kubernetes DNS subdomain name")
         if not fields:
@@ -351,6 +351,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         workers=args.workers,
         new_client=prepared_client.new_connection,
         out=sys.stdout,
-        open_loop=e5_contract,
+        open_loop=evaluation_contract,
     )
     return 0

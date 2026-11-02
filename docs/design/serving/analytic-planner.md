@@ -51,7 +51,7 @@ Tick은 κ 합, 노드 계획과 두 출발점의 이웃 탐색으로 구성을 
 - 계산한 행도 기록된 이전 행(계산 시간 문단)도 없으면 그 option은 `CapacityPending`으로 계획에서 빠지고, 켜진 Workload에 κ가 있는 option이 하나도 없으면 판단이 `CapacityPending`이다.
 - 행마다 `management` stream에 `capacity-row-built` 사건(행 전체, 계산 시각, 걸린 시간)을 남긴다. 이 사건은 기록이고 판단은 읽지 않는다.
 
-**계산 시간과 이전 행.** 재생은 미완료 도착을 훑고 다음 도착은 정렬목록 선두, Definition.Identity는 도착 원형당1회, 배치는 정렬 분위수 색인·재사용 공간을 쓴다. E1 tight38행 단일코어1,386초; m4/r7 합성d114행은 GOMAXPROCS12에서132초/CPU804초였다. 최종 E5는 같은 dump로 source별 측정한다. worker는 동일키 마지막 capacity-row-built를 로컬 management→archive 최신순으로 찾아 previous로 쓰고 계산 후 교체하며 없으면 CapacityPending이다.
+**계산 시간과 이전 행.** 재생은 미완료 도착을 훑고 다음 도착은 정렬목록 선두, Definition.Identity는 도착 원형당1회, 배치는 정렬 분위수 색인·재사용 공간을 쓴다. E1 tight38행 단일코어1,386초; m4/r7 합성d114행은 GOMAXPROCS12에서132초/CPU804초였다. 최종 evaluation는 같은 dump로 source별 측정한다. worker는 동일키 마지막 capacity-row-built를 로컬 management→archive 최신순으로 찾아 previous로 쓰고 계산 후 교체하며 없으면 CapacityPending이다.
 
 **imagenet.** imagenet(p99 100 ms)은 E1 설정 m 139 ms에서 모든 option의 κ가 0이었다(m > 목표 100 ms, `hack/kappa`). 이 Workload는 꺼진 채로 두므로 행을 계산하지 않는다.
 
@@ -124,7 +124,7 @@ Workload별 `loads`의 `computeInputs`와 `inputsPerSecond`는 장기 관측값�
 그 Workload의 확장과 다른 Workload의 축소, 교체와 분배 판단은 계속한다.
 기존 진행 중 목표의 유지 규칙과 장기 관측 창을 쓰는 유휴 제거, 교체 회수는 유지한다.
 
-**비용.** 한 걸음의 평가 수는 노드 계획 수의 쌍곱(k = 2)과 세 쌍곱(k = 3)에 비례하고 요청 수와 무관하다. 평가 하나는 약 5 µs다. E5 규모의 노드 계획 수, 걸음 수, 탐색 시간과 정확한 최소 대비 에너지 차는 [용량표 근거 7장](capacity-table-evidence.md#7-계획-탐색)이다.
+**비용.** 한 걸음의 평가 수는 노드 계획 수의 쌍곱(k = 2)과 세 쌍곱(k = 3)에 비례하고 요청 수와 무관하다. 평가 하나는 약 5 µs다. evaluation 규모의 노드 계획 수, 걸음 수, 탐색 시간과 정확한 최소 대비 에너지 차는 [용량표 근거 7장](capacity-table-evidence.md#7-계획-탐색)이다.
 
 ## 5. 완료 여유 규칙
 
@@ -183,7 +183,7 @@ Timing이 없는 비용의 미기록 B를 관측한 0으로 취급하지 않는�
 - `E±B`, `B=S+G`는 [측정 API](measurement-api.md)를 따른다. minimumGain은 선택 evidence B만 전파하며 profile 통계·BEO fallback CI·시점/센서/모델 오차를 포괄하는 global95% 보장이 아니다.
 - 검사 계약: 재생 결정성/NonMonotone/창·m·SLO 경계, 입력별 재계산/previous/pending, κ_new/κ_ret/B/W·make-before-break, 노드단일소유·모드 CPU, brute force/k3/빈 출발/replica/예산·동률, 동일H 에너지·signed 상쇄·문턱 equality/keep infeasible, weight1000·ACK·budgetCut을 확인한다. 이 목록은 새 source의 통과 기록이 아니다.
 - 최종 dump의 source별 `hack/kappa`는 provenance·κ/status·시간·에너지 차를 남긴다. 승인 rev72 BEFORE/D2 AFTER는 자율MNV/native8 paired의 Tick/CPU/GC/mesh/요청/physical G를 비교한다. E1 무부하→유부하, E4 이동, E5-0~6/E5-S는 두 관측률·λ·보호κ·route시각·사슬·유효 offered 전체 결과·전환 포함 전체 POOL J를 연결한다.
-- 최종 d/G/m에서 SLO/κ/R·threshold를 정한다. 과거 E1/m4와 새 E5는 Run ID/원시로 구분한다. 요청 에너지는 κ 비례(λ 무관)로 정한 최종 정수 weight와 일치하며, 모델 κ와 실제 장치 처리율·배치상태의 차이는 추정 한계로 유지한다.
+- 최종 d/G/m에서 SLO/κ/R·threshold를 정한다. 과거 E1/m4와 새 evaluation는 Run ID/원시로 구분한다. 요청 에너지는 κ 비례(λ 무관)로 정한 최종 정수 weight와 일치하며, 모델 κ와 실제 장치 처리율·배치상태의 차이는 추정 한계로 유지한다.
 - BEFORE·유한 진단 최대1회·최종D2 최대1회 순서는 [POOL 검증](workload-pools.md)을 따른다. runtime7 digest·기존 자원·evidence store를 유지하며 paired 물리 보존 실패는 unknown/mismatch로 보고하고 paired 주장을 중단한다. 조건·판정·범위 변경은 승인 대상이다.
 - 승인/manifest/NodeUID/profile/runtime/source SHA·원시만 선별 보존하고 `.token`/Secret/전체 캐시 백업은 제외한다. 로컬 결정 원문은 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/{d-measurement-decision.md,deployment2-e5-proposal-20261024.md}`다.
 
@@ -257,7 +257,7 @@ controller 상태와 기존 단일 계획기에 연결하며 실제 클러스터
 예약에서 검사한다. 확보 못하면 `TransitionReserveInsufficient`로 해당 후보만 보류하고
 유지·안전한 증설은 계속한다. f=0은 추가 예비 검사만 끄고 기존 B/W·SLO 검사를 유지한다.
 예비의 실제 적재 baseline, prepare/remove와 전력 사슬을 동일 H 에너지에 한 번 포함하고
-E5 실측은 실제 전환 전체와 전체 POOL(예비 노드 포함)을 집계한다. 예비 비율만으로
+evaluation 실측은 실제 전환 전체와 전체 POOL(예비 노드 포함)을 집계한다. 예비 비율만으로
 실제 SLO를 보장했다고 주장하지 않고 AC-43에서 요청 결과로 확인한다.
 
 ### 기록과 설정 고정
@@ -269,7 +269,7 @@ strict scheduler 설정 decode/검증·설정 API·ConfigMap·Dashboard·sample�
 `decision.capacity.periodNanos`는 사용한 H와 일치시킨다.
 `decision.capacity.workloads[].scaleDown`은 구 timer 형식을 대체하여
 `rate`(현재 유효 수요), `windowMax`(D), `windowNanos`(설정 W), `supply`(현재 실제 Ready/ACK 공급 C), `allowed`, `reason`, 선택적 `resetReason`을 기록한다. `baselineRate`/`previousRate`/`downSince`/`elapsedNanos`는 삭제하며 병행 writer/reader나 alias를 두지 않는다. 기존 저장 기록은 당시 schema의 역사 자료로 보존하고 새 창 판정으로 소급 해석하지 않는다. 탐색 전 반환에도 창 불완전/공백 근거를 남긴다. 빈 Node 판정은 같은 UID별 기록의 결합이며 후보에는 `slow` 분류와 창/공급 또는 본전 보류 이유, H·keep/후보 에너지·gain·minimumGain/payback 판정을 연결한다.
-원본 raw archive 보존과 현재 API의 typed decode(`observation_log_scheduler.go:DecodeSchedulerLine`)는 별도 경계다. 현재 `scaleDown`은 `windowMax`·`windowNanos`·`supply`의 존재를 검증하며 누락은 조회 오류다. 구 timer 기록을 생략하는 호환 decoder·alias·병행 reader는 두지 않고, 원본 archive와 게시 증거는 그대로 남긴다. 배치3 선행 확인: 최대 수요 창 도입은 `f44f6e36`(2026-10-26T19:15:23+09:00)이며 게시4건의 `raw-source-index.json` 전체 requested/supporting/source hour 최솟값은 #213=`20261028T00`, #216=`20261028T01`, #222-223=`20261029T05`, #222-r3=`20261029T19`로 도입 이전 archive를 읽지 않는다. 확인 정본은 `O/campaign/v2/dashboard-acceptance-20261030/approved-publication-inputs.json`과 그 단계별 index(`O=/home/genesis1/.cache/chill-assets/ops/pools-deploy`)다. E5 집계의 기존 search/에너지 계약은 유지하되 새 창 증거와 구 timer 증거를 혼합하지 않는다. Dashboard 설정 도움말의 “하강이 이 기간 유지”도 “지난 기간의 최대 유효 수요로 축소를 판정”으로 바꾸고, 새 창 구조화 표시는 타입과 표시를 함께 이행한다.
+원본 raw archive 보존과 현재 API의 typed decode(`observation_log_scheduler.go:DecodeSchedulerLine`)는 별도 경계다. 현재 `scaleDown`은 `windowMax`·`windowNanos`·`supply`의 존재를 검증하며 누락은 조회 오류다. 구 timer 기록을 생략하는 호환 decoder·alias·병행 reader는 두지 않고, 원본 archive와 게시 증거는 그대로 남긴다. 배치3 선행 확인: 최대 수요 창 도입은 `f44f6e36`(2026-10-26T19:15:23+09:00)이며 게시4건의 `raw-source-index.json` 전체 requested/supporting/source hour 최솟값은 #213=`20261028T00`, #216=`20261028T01`, #222-223=`20261029T05`, #222-r3=`20261029T19`로 도입 이전 archive를 읽지 않는다. 확인 정본은 `O/campaign/v2/dashboard-acceptance-20261030/approved-publication-inputs.json`과 그 단계별 index(`O=/home/genesis1/.cache/chill-assets/ops/pools-deploy`)다. evaluation 집계의 기존 search/에너지 계약은 유지하되 새 창 증거와 구 timer 증거를 혼합하지 않는다. Dashboard 설정 도움말의 “하강이 이 기간 유지”도 “지난 기간의 최대 유효 수요로 축소를 판정”으로 바꾸고, 새 창 구조화 표시는 타입과 표시를 함께 이행한다.
 예비 평가는 Workload별 수요·필요 κ·구간별 가용 κ·부족 이유를 같은 결정에 연결한다.
 Run 시작의 `binding.schedulerSettings`, 설정 캡처와 summary는 같은 값을 보존하며
 시연 120초와 운영 기본 300초 결과를 같은 설정의 실험으로 합치지 않는다.

@@ -1,4 +1,4 @@
-# 남은 길: E5 뒤 과제
+# 남은 길: evaluation 뒤 과제
 
 기준: 2026-10-30 저장소 문서의 마지막 기록. 실시간 클러스터 상태가 아니다. E5 결과는 [확정 보고서](../reports/e5-evaluation-20261030.md), 승인 경계는 [사용자 의도](../intent/user-intent.md)를 따른다.
 
@@ -17,7 +17,7 @@
 | kube client limiter·예약 | prepare194s timeout 및 preflight finish 재발의 호출/설정 원인과 R4b 보상 미발동 조사. timeout으로 예약을 삭제하지 않는다 |
 | 운영 환경 | 외부 Helm CloudCore의 nodeName drift를 승인 절차로 nodeSelector 전환; genesis1 디스크 점유·보존 규칙 실행과 PodGC 임계 권고. 운영 문서 작성은 live 적용 증거가 아니다 |
 | 하네스 | summarize5.6GB JSON 메모리/출력, 단계 재개 필요성. 새 재개 장치는 승인 전 추가하지 않고 기존 pre-state 복원 경로를 사용한다 |
-| E5 후속 실험 | 활성 경로 E5-7 자동 주입, 생성기 TLS keep-alive, R6 factor 재실험은 미완. R6 회귀와 factor 인과는 구분한다 |
+| evaluation 후속 실험 | 활성 경로 failure 자동 주입, 생성기 TLS keep-alive, R6 factor 재실험은 미완. R6 회귀와 factor 인과는 구분한다 |
 | 관측 수집 | jetsonx identity·orin-nano(POOL 외) resources0. edge-metrics 간헐 timeout 원인은 미확정이며 전력 결측0 대체·근거 없는 timeout 상향 금지 |
 | U2/U5 | jetsonx PLC4CORE d 두 번 실패·자원 Rejected로 미완. Smol x·nano5W는 Infeasible이며 조건 완화하지 않는다. native 단발 유실 정확 단계는 미확정, 측정 중 Pod 로그 동시 캡처 금지 |
 | 하드웨어 | genesis2 Xid79 반복으로 E5 제외. 카드/전원/PCIe 점검과 재부팅 뒤24h 무재발은 복구 확인 과제이지 완료 사실이 아니다 |

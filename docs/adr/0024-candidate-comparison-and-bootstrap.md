@@ -35,7 +35,7 @@ Full rules and acceptance criteria are in [scheduler SRS](../spec/scheduler/SRS.
 
 An impossible Workload no longer masks useful improvements for the others. The raw-order regression retains the three-Workload joint placement with five prepare actions; disabling the wait reproduces the early reservation problem. Revision 77 subsequently reached all three Ready/routed Workloads in 166.85 seconds; a separate observer readiness defect, not bootstrap, then failed the next gate.
 
-Lexicographic comparison can also change rankings among finite exceedances. Evaluation scenario E5 must therefore identify the controller/settings used; this is not merely an infinity-handling patch.
+Lexicographic comparison can also change rankings among finite exceedances. Evaluation must therefore identify the controller/settings used; this is not merely an infinity-handling patch.
 
 **Known limit / unimplemented option B:** after the deadline, or during normal operation, a pending Workload's only usable Node may still be reserved by another Workload. We did not adopt a general prohibition on preempting such Nodes. The comparison neither reclaims a Node nor rewrites an existing owner's frozen execution graph. A longer bootstrap wait is not a proof that this cannot occur.
 

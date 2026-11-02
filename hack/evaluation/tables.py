@@ -1,4 +1,4 @@
-"""Render existing E5 summaries without changing judgments or canonical documents."""
+"""Render existing evaluation summaries without changing judgments or canonical documents."""
 import json
 import gzip
 import re
@@ -113,7 +113,7 @@ def publication_requests(judgment):
 
 
 def render_evaluation(stages, results):
-    lines = ['EvaluationRun — existing E5 judgments; no inferred comparison pairs.']
+    lines = ['EvaluationRun — existing evaluation judgments; no inferred comparison pairs.']
     for stage in stages:
         value=stage['kpis']
         lines.append(stage['id']+': '+value['status'])
@@ -136,16 +136,16 @@ def render(root, repo, *, evaluation=None):
     operational = binding.get('schema') == 'demo-e5-binding.v1'
     summary = {} if operational else load(root / 'e5-summary.json')
     if summary.get('evaluation'): return render_evaluation(summary['stages'],summary['results'])
-    spec = table_lines(repo / 'docs/spec/README.md', '| 시나리오 | 관찰할 내용 |')
+    spec = table_lines(repo / 'docs/spec/README.md', '| 시나리오 | 새 ID | 관찰할 내용 |')
     # workload-pools is a design document in this repository, not a spec file.
     pools = table_lines(repo / 'docs/design/serving/workload-pools.md', '| 단계 | 시간/부하 | 관측·요구사항 |')
     scenarios = ['steady', 'gradual-up-and-down', 'burst', 'post-transition-drop-resurge',
                  'mixed-heterogeneous', 'pool-overload', 'node-serving-control-failure']
-    title = f'# E5 table rows: {cell(root.name)}'
+    title = f'# evaluation table rows: {cell(root.name)}'
     if summary.get('compositeRun'):title+=' — '+summary['compositeRun']['label']
     lines = [title, '', 'PRIVATE_OPERATIONAL_ONLY; spec/design files are not modified.',
              'Existing summary judgments only; MEASURED is a result link, not criterion PASS or complete scenario coverage. Missing values are not zero.',
-             'Operational G0/demo evidence does not complete an E5 evaluation row.' if operational else 'Source: e5-summary.json (existing summarize output).', '', '## docs/spec/README.md', '', *spec[:2]]
+             'Operational G0/demo evidence does not complete an evaluation row.' if operational else 'Source: e5-summary.json (existing summarize output).', '', '## docs/spec/README.md', '', *spec[:2]]
     for row, key in zip(spec[2:], scenarios):
         columns = row.split('|')[1:-1]
         status = summary.get('specScenarios', {}).get(key, 'UNMEASURED')
@@ -154,7 +154,7 @@ def render(root, repo, *, evaluation=None):
     lines += ['', 'Scope: E5-3 covers increases, not gradual decreases; E5-5 is an abrupt drop/resurge. '
               'The burst is Smol-only. One paired seed set is not independent repetition. '
               'membership-off/replicas-off do not isolate every control contribution.', '']
-    lines += ['', '## workload-pools E5', '', *pools[:2]]
+    lines += ['', '## workload-pools evaluation', '', *pools[:2]]
     for row in pools[2:]:
         columns = row.split('|')[1:-1]
         stage = columns[0].strip().split()[0]
@@ -264,7 +264,7 @@ def render(root, repo, *, evaluation=None):
             '', '## 워크로드별 처리 결과와 동일 단계 POOL 에너지', '',
             '수신 p95는 성공·executionComplete HTTP final의 완료-only 지연 분포다. D1은 전체 planned offered를 분모로 하며 deadline 성공 수/필요 rank를 표시한다. 오류·거절·취소·무발행·미완료는 p95 표본에 섞지 않지만 D1 분모에는 남는다.',
             '완료 수는 이 완료-only 지연 표본 수, 실패는 error/timeout/preprocess_failed/delivery_failed, 미완료·불명은 나머지 planned다. 괄호는 offered 요청에 결합한 상위 오류 코드(없으면 원래 실패 outcome)다.',
-            '에너지는 workload 귀속이 아닌 동일 단계 공유 POOL 값(전체/활성)이며 반복 행을 합산하지 않는다. ±는 198150d6 E5 공백 보간 오차 상한, coverage는 Node 공백초 합/최대 공백/최대 Node 공백 비율이다. UNKNOWN을 0으로 바꾸지 않는다.',
+            '에너지는 workload 귀속이 아닌 동일 단계 공유 POOL 값(전체/활성)이며 반복 행을 합산하지 않는다. ±는 198150d6 evaluation 공백 보간 오차 상한, coverage는 Node 공백초 합/최대 공백/최대 Node 공백 비율이다. UNKNOWN을 0으로 바꾸지 않는다.',
             '고정 E5-S는 같은 E5-1~6 trace의 기준선이다. static 행의 에너지 열도 full CHILL과 해당 고정을 나란히 보여주며, Δ=고정−CHILL(양수는 CHILL 절감)이다. factor 행에서는 CHILL 열이 표시된 제어요소 변형이다.',
             '', '| 단계 | 방식 | Workload·SLO | 수신 p95 (ms) | 결과 수 (요청) | D1 (deadline/필요 rank) | CHILL 전체/활성 POOL·오차·coverage | 대응 고정 E5-S 전체/활성 POOL·오차·coverage | Δ 고정−CHILL 전체 POOL |',
             '|---|---|---|---:|---|---|---|---|---|',

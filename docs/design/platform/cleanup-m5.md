@@ -9,4 +9,4 @@
 - **D5 / D-R7-5:** `bca2da3`은 재시작 때 관측 잠금을 기다린다. **D-R6-7:** `bfb4563`은 지난 시간의 모든 stream을 process마다 한 번 올린다. 실패·재시작 처리와 남은 대기 한계는 [관측 계약](node-agent.md#63-관측-잠금과-s3d5).
 - 수동 prepare·remove·`staticRouting` 사용법은 [정적 배치 운영](../serving/scheduler-operations.md#정적-배치-사용법), 측정 전용 경로 제거는 [측정 API](../serving/measurement-api.md)가 맡는다.
 - **Q1·Q2 확정:** agent는 수동 변경을 되돌리지 않으며, 기존 profile을 살리려고 실행 evidence `handoff`는 선택 필드로 유지한다. 근거는 현행 적용·저장 계약에 통합했다.
-- E5 재검토: 다중 Workload 계획 탐색 시간·게이트웨이 간섭, 같은 노드 instance 간섭, 전환 중 SLO. 이 계획의 완료로 해결된 것으로 보지 않는다.
+- evaluation 재검토: 다중 Workload 계획 탐색 시간·게이트웨이 간섭, 같은 노드 instance 간섭, 전환 중 SLO. 이 계획의 완료로 해결된 것으로 보지 않는다.

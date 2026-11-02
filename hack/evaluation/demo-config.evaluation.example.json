@@ -189,7 +189,7 @@
     "smolvlm2": null,
     "plc": null
   },
-  "evaluation": "E5: freeze approved capacityR, poolShares and alpha before prepare; rate_w = alpha_w * s_w * R_w; examples are not approved capacity",
+  "evaluation": "evaluation: freeze approved capacityR, poolShares and alpha before prepare; rate_w = alpha_w * s_w * R_w; examples are not approved capacity",
   "failureInjectionRunbook": {
     "executor": "CampaignOps only; manual existing kubectl, never automatic",
     "stage": "E5-7",

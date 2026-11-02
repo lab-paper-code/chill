@@ -38,7 +38,7 @@ class CLITest(unittest.TestCase):
 
         self.assertIn("record q1 has no field question", errors.getvalue())
 
-    def test_e5_prepares_one_tls_context_before_independent_connections(self):
+    def test_evaluation_prepares_one_tls_context_before_independent_connections(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "q1").mkdir()
@@ -119,7 +119,7 @@ class ReplayTest(unittest.TestCase):
             self.assertEqual([request.scheduled_offset_ns for request in part], offsets[shard::3])
 
     def test_process_shards_merge_full_planned_population_on_one_start(self):
-        path = Path(__file__).resolve().parents[2] / "hack/e5/e5-producer.py"
+        path = Path(__file__).resolve().parents[2] / "hack/evaluation/producer.py"
         spec = importlib.util.spec_from_file_location("test_sharded_producer", path)
         producer = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(producer)
@@ -141,12 +141,12 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual({row["requestIndex"] for row in rows}, set(range(len(offsets))))
         self.assertEqual(sum(row["status"] == 200 for row in rows), len(offsets))
         self.assertEqual({row["shardIndex"] for row in rows}, {0, 1, 2})
-        starts = [row["monotonicNS"] for row in lines if row.get("e5Event") == "start"]
+        starts = [row["monotonicNS"] for row in lines if row.get("evaluationEvent") == "start"]
         self.assertEqual(len(starts), 1)
         self.assertEqual({row["scheduledMonotonicNS"] for row in rows}, set(starts))
-        self.assertEqual(sum(row.get("e5Event") == "drained" for row in lines), 1)
+        self.assertEqual(sum(row.get("evaluationEvent") == "drained" for row in lines), 1)
 
-    def test_e5_lateness_does_not_reduce_lifetime_or_prevent_send(self):
+    def test_evaluation_lateness_does_not_reduce_lifetime_or_prevent_send(self):
         for delay in (250_000_000, 2_000_000_000):
             with self.subTest(delay=delay), patch("chill_loadgen.http_client.HTTPSConnection") as connection:
                 connection.return_value.sock = None
@@ -170,7 +170,7 @@ class ReplayTest(unittest.TestCase):
                 self.assertIn("sentAtUnixNS", row)
                 self.assertIn("finishedAtUnixNS", row)
 
-    def test_e5_thread_start_failure_records_plan_and_continues_draining(self):
+    def test_evaluation_thread_start_failure_records_plan_and_continues_draining(self):
         original_start = threading.Thread.start
         attempts = []
         def start(thread):
@@ -190,7 +190,7 @@ class ReplayTest(unittest.TestCase):
         self.assertFalse(rows[0]["issued"])
         self.assertEqual(sum(row.get("status") == 200 for row in rows), 2)
 
-    def test_e5_dispatch_has_no_worker_cap_and_counts_scheduler_lateness(self) -> None:
+    def test_evaluation_dispatch_has_no_worker_cap_and_counts_scheduler_lateness(self) -> None:
         # All three calls must enter infer before any can finish, even workers=1.
         entered = threading.Barrier(3, timeout=2)
         now = [0]
@@ -350,7 +350,7 @@ class MainTest(unittest.TestCase):
                 with self.subTest(extra=extra), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                     main(args + extra)
 
-    def test_e5_poisson_binds_slo_lifetime_gateway_cap_and_socket(self) -> None:
+    def test_evaluation_poisson_binds_slo_lifetime_gateway_cap_and_socket(self) -> None:
         from unittest.mock import patch
 
         with tempfile.TemporaryDirectory() as directory:

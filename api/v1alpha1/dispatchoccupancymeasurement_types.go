@@ -62,7 +62,7 @@ type DispatchOccupancyMeasurementSpec struct {
 	// +kubebuilder:validation:Maximum=4096
 	Workers int32 `json:"workers"`
 
-	// SupplyMode selects fixed outstanding supply without changing E5 arrivals.
+	// SupplyMode selects fixed outstanding supply without changing evaluation arrivals.
 	// +optional
 	// +kubebuilder:validation:Enum=closed-loop;poisson
 	SupplyMode string `json:"supplyMode,omitempty"`

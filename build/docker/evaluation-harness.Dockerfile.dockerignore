@@ -9,8 +9,8 @@
 !cmd/evaluation-evidence/
 !cmd/evaluation-evidence/**
 !hack/
-!hack/e5/
-!hack/e5/**
+!hack/evaluation/
+!hack/evaluation/**
 !load-generator/
 !load-generator/**
 !docs/

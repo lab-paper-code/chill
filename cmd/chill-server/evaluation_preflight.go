@@ -73,7 +73,7 @@ func (s *evaluationService) preflight(
 	}
 	idle := true
 	for _, job := range jobs.Items {
-		if job.Labels["chill.dacs.io/e5"] == "" {
+		if job.Labels["edge.dacs.io/workload-role"] != "load-generator" {
 			continue
 		}
 		terminal := false
@@ -87,7 +87,7 @@ func (s *evaluationService) preflight(
 			idle = false
 		}
 	}
-	add("e5", idle, "legacy E5 producer/measurement Job is active")
+	add("load-generator", idle, "load-generator Job is active")
 	var profiles api.ProfilingRunList
 	if err := s.reader.List(ctx, &profiles); err != nil {
 		return result, err
@@ -104,7 +104,7 @@ func (s *evaluationService) preflight(
 		return result, err
 	}
 	for _, measurement := range measurements.Items {
-		if measurement.Status.Phase == "" || measurement.Status.Phase == measurementPhaseMeasuring {
+		if measurement.Status.Phase == "" || measurement.Status.Phase == string(api.MeasurementPhaseMeasuring) {
 			idle = false
 		}
 	}

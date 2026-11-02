@@ -1,7 +1,7 @@
-# 관측 분리와 E5 증거 API
+# 관측 분리와 evaluation 증거 API
 
 [채택한 이행 단계](../architecture-rethink/README.md)의 M1/T4 설계다. ChillServer는 로컬 버퍼와 evidence store의 같은 시간 세그먼트로 조회·오프라인 표 산출에 답한다. [M0](decision-record-diet.md)가 전제이며 T4 원본은 [scheduler SRS](../../spec/scheduler/SRS.md)의 `SCH-42~47`이다. 코드 반영은 배포·클러스터 검증 완료가 아니다.
-현행 E5 계약은 [17장](#17-e5-증거-api-2026-10-30)의 SCH-67~70 / SCH-AC-52~55와 [ADR 0030](../../adr/0030-observation-evidence-api-streams.md)이다. `v1alpha5`를 유지하며 과거 버전 삭제나 7·15장의 호스트/S3 직접 회수를 새 E5 수집 경로로 쓰지 않는다. 이 문서 변경은 코드·배포·리허설을 수행하지 않는다.
+현행 evaluation 계약은 [17장](#17-evaluation-증거-api-2026-10-30)의 SCH-67~70 / SCH-AC-52~55와 [ADR 0030](../../adr/0030-observation-evidence-api-streams.md)이다. `v1alpha5`를 유지하며 과거 버전 삭제나 7·15장의 호스트/S3 직접 회수를 새 evaluation 수집 경로로 쓰지 않는다. 이 문서 변경은 코드·배포·리허설을 수행하지 않는다.
 
 ## 1. 측정한 문제
 E1 재실행(2026-10-19, rev35, `v1alpha4`, [workload-pools](workload-pools.md)) S3 `serving/` 636창·659MB와 2req/s/무부하 1분 창 분석이 근거다.
@@ -44,7 +44,7 @@ catalog 행은 `{kind,key,at,body}`다. 시간 안 첫 key 참조와 프로세�
 target.id==keep.id이면 `{id,keep:true}`(7.7KB 절약). 전력은 `{at,startedAt,node,meter,samples,failures,powerJoules,powerError}`(at=관측 끝, failures=실패 때만)이며 재계산 가능한 summary는 생략한다. options는 가변 입력이라 유지한다. SchedulerObservationPage는 참조/target 본문을 복원해 기존 API/Dashboard 형태를 유지한다. candidates 요약·무부하 변경 시만 기록은 M4 소관이다.
 
 ## 5. 세그먼트와 보존
-파일은 `<directory>/v1alpha5/<YYYYMMDDTHH>/<stream>.<MM>.jsonl`(쓰는 시각 UTC 분), 루트 `v1alpha5/definitions.jsonl`은 DefinitionRecord append다. 초기 stream은 requests/scheduler/management/catalog, E5 추가는17장. 경로가 버전이므로 행에 schemaVersion/window는 없다.
+파일은 `<directory>/v1alpha5/<YYYYMMDDTHH>/<stream>.<MM>.jsonl`(쓰는 시각 UTC 분), 루트 `v1alpha5/definitions.jsonl`은 DefinitionRecord append다. 초기 stream은 requests/scheduler/management/catalog, evaluation 추가는17장. 경로가 버전이므로 행에 schemaVersion/window는 없다.
 1분 archive ticker는 지난 시간의 분 파일을 stream별 순서로 이어 gzip(`compress/gzip`, 헤더 시각0)하고 `serving/observations.v1alpha5/<YYYYMMDDTHH>/<stream>.jsonl.gz`에 PutImmutable한다. 동일 입력은 동일 gzip→Existing; 모든 stream 성공 시간은 프로세스 메모리에 기억한다.
 gzip `.archive-*`와 S3 staging `chill-evidence-*`는 PVC 밖 `/tmp` emptyDir512Mi에 흘려 쓴다. 압축 stream-시간 두 벌 이상 공간이 필요하며 PVC full에도 업로드를 시작할 수 있다. 8MiB 비압축성 시간의 할당21.8MB→0.86MB; 기동 때 두 staging 잔재를 지운다. Flush는 serve loop 밖 goroutine 하나, 진행 중 tick 생략, source refresh/Advance는 기다리지 않고 종료는 진행 Flush 뒤 Close의 마지막 archive다.
 시간의 모든 stream이 Created/Existing이고 디렉터리 시작부터 retention 경과 때만 삭제한다. `servingEntrypoint.observationStorage.retention`→`--observation-retention`→`ObservationLogConfig.Retention`은 양수 Go duration, 기본2h(현재/직전 시간), 업로드1분이다. 하나라도 실패하면 해당/이후 시간 유지·다음 pass 처음부터 재업로드; 미완료 assigned 시간/이후도 pin한다. mu 아래 삭제하므로 조회는 시간 전체를 열거나 삭제된 것으로 본다. S3 중단은 PVC 누적→append 실패→readyz503이다.
@@ -83,8 +83,8 @@ conditions: occupancy `{workload,batchEnergyOptimization,batch,supplyMode,warmup
 기존 measurements bearer/namespace/name 검증·AuthorizeResource와 measurement service List/Get 패턴을 재사용한다. 두 CR 각각 caller namespace list/get SAR(서버 SA 대체 금지), 쓰기 추가 없음. 검사에는 원본 일치/조건 whitelist·신원/key·list-only/get-only·권한 거절·404·Measuring/Failed/Insufficient·비노출을 포함한다.
 ### 6.4 실험 불변 요약 조회 (API B2, `SCH-45`)
 GET `/api/v1/experiments`는 `{items:[summary]}`(from내림차순/id순), `/{id}`는 summary다. `{schemaVersion:"serving-experiment.v1alpha1",id,from,to,status,stages:[{id,from,to,kpis}],sources:[{store,key}]}`로 [from,to) 단계와 기존 요청/결과별 수·성공/SLO 분자/분모·분위수·전체/활성 POOL J 및 모집단 설명을 보존한다. 미측정은null/이유, 실패/PRIVATE_OPERATIONAL_ONLY/한계를 통과로 바꾸지 않는다.
-E5 summarize의 실제 phase 경계/KPI/출처를 `serving/experiments.v1alpha1/{id}/summary.json`에 PutImmutable한다. 원자료 먼저·최종 요약 마지막1회, 정정은 새ID다. 서버는 기존 objects Reader/Lister로 읽기만 하며 실행/재계산·새DB·캠페인 API가 없다. 안전한 단일 id·prefix 제한·non-resource GET authorize/HTTP ctx를 따른다.
-`go run ./hack/e5/publish --config <private-store.json> --manifest <private-manifest.json>`: config=`logicalStore,bucket,endpoint,region,accessKeyID,secretAccessKey`(선택sessionToken,tempDir), 공개 응답 금지. manifest `{store,key,localPath}`는 같은 실험 prefix 원자료/summary만 허용한다. 원자료도 Created만 허용하여 부분 중단 후 Existing이면 즉시 충돌/새ID이며 digest/내용 비교로 동일 실행을 추정하지 않는다. 요약 없는 실행은 완료 목록 제외; 목록/상세 일치·덮어쓰기·404/store 실패·권한/이탈·실패 보존이 검사 경계다.
+evaluation summarize의 실제 phase 경계/KPI/출처를 `serving/experiments.v1alpha1/{id}/summary.json`에 PutImmutable한다. 원자료 먼저·최종 요약 마지막1회, 정정은 새ID다. 서버는 기존 objects Reader/Lister로 읽기만 하며 실행/재계산·새DB·캠페인 API가 없다. 안전한 단일 id·prefix 제한·non-resource GET authorize/HTTP ctx를 따른다.
+`go run ./hack/evaluation/publish --config <private-store.json> --manifest <private-manifest.json>`: config=`logicalStore,bucket,endpoint,region,accessKeyID,secretAccessKey`(선택sessionToken,tempDir), 공개 응답 금지. manifest `{store,key,localPath}`는 같은 실험 prefix 원자료/summary만 허용한다. 원자료도 Created만 허용하여 부분 중단 후 Existing이면 즉시 충돌/새ID이며 digest/내용 비교로 동일 실행을 추정하지 않는다. 요약 없는 실행은 완료 목록 제외; 목록/상세 일치·덮어쓰기·404/store 실패·권한/이탈·실패 보존이 검사 경계다.
 현재 불변 게시 조회 계약은 유지한다.
 ### 6.5 축약 상태 조회 (API B3, `SCH-46`)
 GET `/api/v1/scheduler/state?view=summary`=`{at,nodes,instances,routing,decision:{id,at,status,reasons,targetID},actions}`. 노드 식별/전력모드/ready/measurement/reasons, 인스턴스 식별/node/소유·배분UID/profileID/ready/routable/이유, planned/running action ID/종류/상태/의존/elapsedNanos/예상 시간만 포함한다. decision.id는 기존 판단 UTC RFC3339Nano, routable은 UID별 서버readback(T2)이며 UI 추론 없음.
@@ -95,19 +95,19 @@ action에 `expectedSeconds:number|null,expectedSource:{costID,reference,statisti
 selectCosts가 고른 CostID/Trials/Reference로 capacityOperationCost의 평균 규칙을 재사용해 한 번 산출하고 실행 중 근거를 고정한다. kube actions/scheduledOperation/Operation→recordAction→SchedulerActionObservation, 수동작업 동일 조건, full/compact/summary/저장/live 모두 같은 값이다. 과거 필드 부재는null, 과거 cost 재대입 없음. 조건/평균/출처/개수·근거 없음·실행 중 갱신 불변·실측 분리가 검사 경계다.
 
 ## 7. 측정 표 산출
-과거 오프라인 경로의 원자료는 S3 시간 catalog/streams와 loadgen JSONL이다. `hack/observations/fetch.sh <from시> <to시> <dir>`는 obs 시간 prefix와 power용 앞뒤1시간을 받고 단계 loadgen은 `<dir>/loadgen/<단계>.jsonl`에 둔다. `e1.sql`은 요청/포화/Tick(evaluationElapsedNanos) 표, 완료 여유는 [계획기](analytic-planner.md)다. `power/main.go --dir <dir>/obs --scheduler-config <file> --from --to`는 전체/활성 POOL J이며 수락된 meters와[from−1분,to+1분] segment가 필수다. E5 새 수집은17장 API만 쓴다.
+과거 오프라인 경로의 원자료는 S3 시간 catalog/streams와 loadgen JSONL이다. `hack/observations/fetch.sh <from시> <to시> <dir>`는 obs 시간 prefix와 power용 앞뒤1시간을 받고 단계 loadgen은 `<dir>/loadgen/<단계>.jsonl`에 둔다. `e1.sql`은 요청/포화/Tick(evaluationElapsedNanos) 표, 완료 여유는 [계획기](analytic-planner.md)다. `power/main.go --dir <dir>/obs --scheduler-config <file> --from --to`는 전체/활성 POOL J이며 수락된 meters와[from−1분,to+1분] segment가 필수다. evaluation 새 수집은17장 API만 쓴다.
 요청은 loadgen LEFT JOIN final(requestID), 분모=sent, sent−recorded=서버 행 없음; p95는 gonum Empirical, completed/e2e<1s, 잔여p50/p99/max는 유효 표본이며 executionComplete일 때만 계산한다. SLO는 catalog definitionID join이다. 전력 적분/snapshot 소속은 서버 OperatingPower reducer iterator를 재사용하고 catalog meter는 본문 해석용일 뿐 선언 집합이 아니다. 구조/필드 검사만 두며 digest/재인코딩/byte 비교 관문은 없다.
 ## 8. 예상 크기
 M1 당시 `[추론]` 원문/gzip: 2req/s는 실측273MiB/h→요청9.3+판단46.9+전력6.3+catalog0.2≈63MB/h·gzip5.5MB/h; 5req/s는이전약582MB/h→23.2+46.9+6.3+0.2≈77MB/h·gzip7.4MB/h; 무부하는실측45MB/h→11.6+6.3+0.2≈18MB/h·gzip1.9MB/h.
 산출: 요청1.29KB×7,200/18,000; 판단185−target7.7−중복51+참조4≈130KB×360=46.9MB, 무부하87−7.7−47=32KB×360=11.6MB; 전력763B+식별110B≈0.87KB×7,200=6.3MB; catalog 비용/baseline40KB+정의수KB+profile16KB×사용 수. gzip은 final138B/assigned40B와 scheduler 실측12.6배/무부하9.5배이며 중복 제거 후 비율은 달라질 수 있다.
 당시 추정 PVC2h/5req/s≈155MB·32Gi 중단약17일, S3하루180MB/32Gi약180일, 임시24h≈1.86GB(+1.705GB/5.4%)는 실측 보장이 아니다. 현행 운영 예산·기동 비용/2h 결정은5.1절이 우선한다.
 ## 9. 계약과 버전
-M1은 `v1alpha4→v1alpha5` 단일 cutover([ADR 0019](../../adr/0019-durable-stored-contract-compatibility.md)) 계약이었다. 당시 절차는 루트 정의를 이행하지 않아 AppliedSnapshotUnavailable이 된 Workload를 동일 spec으로 재적용하고 Completed/Ready·binding/routing 복구를 확인하도록 했다(실제 수행 증거가 아님). 옛 창 reader/디렉터리/S3 `serving/<windowID>/` 삭제는 과거 절차이며 E5에서 재실행하지 않는다.
+M1은 `v1alpha4→v1alpha5` 단일 cutover([ADR 0019](../../adr/0019-durable-stored-contract-compatibility.md)) 계약이었다. 당시 절차는 루트 정의를 이행하지 않아 AppliedSnapshotUnavailable이 된 Workload를 동일 spec으로 재적용하고 Completed/Ready·binding/routing 복구를 확인하도록 했다(실제 수행 증거가 아님). 옛 창 reader/디렉터리/S3 `serving/<windowID>/` 삭제는 과거 절차이며 evaluation에서 재실행하지 않는다.
 현행 Query.requests는final/없으면assigned; incompleteWindows→gapUntil, ObservationLogHealth.windows/observation-window flag·Helm observationWindow는 제거, ObservationGap과 maximumBoundaryDistance≤1분을 쓴다.
 ## 10. 삭제
 창 metadata/census·전체 사건 재조립·definitions stream은 시간 파일/범위 reader·루트 정의/catalog로 대체됐다. 무한 이력을 빠르게 읽는 옛 장치/검사/옵션을 새 경로로 복구하지 않는다.
 ## 11. 커밋 단위
-과거 M1 작업 순서는 생략한다. 현행 저장·조회 계약은3~6장, E5 코드/배포 근거는17.7~17.8절이다.
+과거 M1 작업 순서는 생략한다. 현행 저장·조회 계약은3~6장, evaluation 코드/배포 근거는17.7~17.8절이다.
 ## 12. 검사
 계약 검사:1분 상한·분 선택/이어진 gzip·부분 archive 실패/Existing 재시도·retention/pin·torn-tail/rollback·범위 읽기/삭제 경쟁, 요청 cohort/늦은final/중복/restart/배정rollback, catalog 시간별 완결/변경/재기록·동일J, T4 인증/projection/coverage다. 당시 목표는 요청≤1.5KB(19참조), 판단≤135KB; offline power=서버J다. M1 검사 통과를 T4 통과로 재사용하지 않는다.
 ## 13. E 확인
@@ -135,32 +135,34 @@ gctrace/cgmon의 window.start−60s UTC대응은근사다. D11 GCclock `.085+4.6
 S3 `serving/observations.v1alpha5/20261026T19/requests.jsonl.gz`를 read-only `.../d-20261027/raw-19/`에 보존(143,588,423B,SHA256 `97a16157e0e705ff48adfcf01eed4a9e37b9c0298aea1ebaadf03d3e38739846`,원격쓰기0). D11 99,368개 전부 exact final join. `exchangeNanos−dispatchedNanos−clientSpanNanos`(assignment대기/직렬화/스케줄/응답decode잔여,순수mutex아님) 전체p50/p95/p99/max=.198/.633/.932/445.510ms,>50ms164개; 최대공백미완료64코호트p50/p95/max=.239/.512/.588ms,>50ms0. 코호트완료시각만client추정,잔여는서버단조원시다.
 결론: 최대공백을 ObservationLog assignment writer체류 급증에 귀속할 근거가 없다. native HTTP/전달/실행/client스케줄·응답 중 원인은미확정 `[INFERENCE]`; loaderCPU/throttle·lock/flush·exactUTC/monotonic anchor가 없다. 다른창pprof경합은 인과증거가 아니다. 상세 `.../d-20261027/u6-issuance-gaps.json`, `raw-19/{receipt.json,u6-gateway-residual.json,analyze-u6.py}`는private이며 공개복제하지 않는다.
 ### 16.2 최소 구현과 E5 결과
-CLI replay/주입E5 producer는 JSON직렬화만 stdout공유lock 밖으로 옮기고 완전한 한줄 write+flush는lock으로 보호한다. worker는flush뒤 다음요청, writer thread/queue는추가하지 않는다. 이는 불필요critical-section축소이지 공백원인/해결증명이 아니다. CLI의 sentMonotonicNS/finishedMonotonicNS는 infer직전/응답·transport오류처리직후 같은프로세스 단조시각이며 stdout/패킷/gateway수신이 아니다.
+CLI replay/주입evaluation producer는 JSON직렬화만 stdout공유lock 밖으로 옮기고 완전한 한줄 write+flush는lock으로 보호한다. worker는flush뒤 다음요청, writer thread/queue는추가하지 않는다. 이는 불필요critical-section축소이지 공백원인/해결증명이 아니다. CLI의 sentMonotonicNS/finishedMonotonicNS는 infer직전/응답·transport오류처리직후 같은프로세스 단조시각이며 stdout/패킷/gateway수신이 아니다.
 issuanceFidelity는 실제producer start/send로 발행순 정렬하여 시작/끝포함gap p50/p95/p99/max·>50ms개수/비율/구간offset/안의planned수, frozen trace planned-gap분포·send lateness분포/>50ms수를 judgment/e5-summary/출판KPI에 보존한다. Poisson/0부하 자연공백을 자동실패로 하지 않고 timestamp없음UNKNOWN/NotReady·offered0 NOT_OFFERED, 미발행/결손0대체금지다. 기존10ms delayed와50ms보고는 별개다. demo E5-0~7도 d2/analyze_before.py 공통계산을 e5 judge/demo summarize·단계/전체summary.json/md·publish workload KPI에 쓰고 결손은UNKNOWN/이유다.
-다음 측정은15절 load로그, E5는producer start/monotonic anchor·client/server/edgemesh cgroup·GC를 보존한다. CLI적용은 load-generator새이미지/digest/receipt가 필요하며 주입파일 변경만으로 CLI배포를 주장하지 않는다. U6는runtime7재빌드가 불필요하다.
+다음 측정은15절 load로그, evaluation는producer start/monotonic anchor·client/server/edgemesh cgroup·GC를 보존한다. CLI적용은 load-generator새이미지/digest/receipt가 필요하며 주입파일 변경만으로 CLI배포를 주장하지 않는다. U6는runtime7재빌드가 불필요하다.
 ### 16.3 별도 writer 개선의 설계 경계(미구현)
 위 근거로 U6에서 observation_log.go는 바꾸지 않는다. 별도 배정 시 immutable snapshot/closing을 requestMu아래 확보→밖에서marshal→writer mutex아래 closed/현재row·참조재확인→catalog/request를같은commit-time hour에 append한다. JSON완료순 아닌기존append순, assigned성공전 native시작금지다. final실패는closing유지/Flush재시도, phase갱신시pointer비교로최신row삭제금지다. Runtime/Flush경쟁·close/hour/catalog-first를보존하며 Flush의기존mutex경로를helper임시unlock만으로고치지 않는다. 모든caller와diagnostic mark를함께이행하고 약50줄초과/순서변경은별도설계·회귀검사다. 비동기장부/generic queue는없다.
 
-## 17. E5 증거 API (2026-10-30)
+<a id="17-e5-증거-api-2026-10-30"></a>
+
+## 17. evaluation 증거 API (2026-10-30)
 
 [계획 §1~6](../../plans/2026-10-28-e5-evidence-api.md)의 구현 계약이다. 원본 요구는 [Serving 관측](../../spec/00_measurement.md#측정의-단위), [scheduler SRS](../../spec/scheduler/SRS.md)의 SCH-67~70 / SCH-AC-52~55다. 코드 이행과 실제 배포·실험 수용은 구분하며 구현 커밋은 17.7에 남긴다. 기존 `ObservationLog`, `ObservationArchive`/Reader/Lister, 로컬 우선 시간 선택, `append`/archive/health, TokenReview/SAR, live hub를 재사용한다. 별도 저장소·TSDB·broker·다중 버전 reader·router 파라미터를 만들지 않는다.
 
 ### 17.1 범위와 수집 경계
 
-하네스가 아는 CHILL 내부 사실은 CHILL API에서만 얻는다. CHILL 대상 sudo/crictl, `/proc` 직접 읽기, SSH cgroup 수집, S3 다운로드, kubectl readback, observer 로그 복사를 cutover 때 제거한다. `raw-source-index.json`은 판정 입력으로 유지하며 API 수집기가 만든다. 원시 전송·과거 조회는 측정 대상 서버의 CPU/I/O를 쓰므로 **E5 측정 창 밖**에서 실행한다. 라이브 보기만 창 안에서 허용한다(운영 규칙, 앱의 새 강제 관문은 없음).
+하네스가 아는 CHILL 내부 사실은 CHILL API에서만 얻는다. CHILL 대상 sudo/crictl, `/proc` 직접 읽기, SSH cgroup 수집, S3 다운로드, kubectl readback, observer 로그 복사를 cutover 때 제거한다. `raw-source-index.json`은 판정 입력으로 유지하며 API 수집기가 만든다. 원시 전송·과거 조회는 측정 대상 서버의 CPU/I/O를 쓰므로 **evaluation 측정 창 밖**에서 실행한다. 라이브 보기만 창 안에서 허용한다(운영 규칙, 앱의 새 강제 관문은 없음).
 
 | 사실 | 단일 출처와 제외 경계 |
 |---|---|
 | 요청·판단·정의·관리 원시 | 아래 raw API. 대시보드용 `/observations/workloads`, `/scheduler` 가공 조회는 유지 |
 | CHILL 컨테이너 CPU/throttle/메모리·thermal | `resources`. `client` 컨테이너 표본·시작 관문·생산자 해제는 외부 장비라 유지 |
 | GC·관측 디렉터리 바이트 | 서버 in-process `resources`. gctrace 강제 요구·pre/post PVC host 수집 제거 |
-| Pod 신원/상태·제어 image digest·observer 오류 | `cluster`. E5-7 사후 readback은 `scheduler`와 `cluster`; 운영자 파일에는 장애 주입 명령만 남김 |
+| Pod 신원/상태·제어 image digest·observer 오류 | `cluster`. failure 사후 readback은 `scheduler`와 `cluster`; 운영자 파일에는 장애 주입 명령만 남김 |
 | Node 참조·POOL Node 목록 | 기존 state/scheduler의 Node 이름·UID. 합성 NodeList나 새 Node/cordon stream 없음 |
 | 전력계↔Node 선언 | settings `meters`; 전력 정책은 기존 `powerObservation`. 실제 전력은 기존 edge-metrics API 유지 |
 | 수집 영수증 | capture-identity, s3-hour-list-*, upload.log, collector-status, *-collector.stderr와 이를 읽는 판정 코드 삭제 |
-| 운영 안전 | `control-alerts` STOP 루프, 생성기 품질 관문, Job 조작과 E5-7 운영자 kubectl 명령은 그대로 유지 |
+| 운영 안전 | `control-alerts` STOP 루프, 생성기 품질 관문, Job 조작과 failure 운영자 kubectl 명령은 그대로 유지 |
 
-판정 수식과 기존 publication은 바꾸지 않는다. GC는 사이클 분포가 아니라 창 안 누적 차, E5-7 recovery는 운영자 readback이 아니라 scheduler/cluster 출처임을 새 보고서에 명시한다. 다음 새 publication의 `measurementRules`에 `evidenceSource=api`, `gcMeaning=runtime-metrics-delta`를 기록한다. #213~#225를 수정·재게시하거나 비교 가능성 판정 관문을 추가하지 않는다.
+판정 수식과 기존 publication은 바꾸지 않는다. GC는 사이클 분포가 아니라 창 안 누적 차, failure recovery는 운영자 readback이 아니라 scheduler/cluster 출처임을 새 보고서에 명시한다. 다음 새 publication의 `measurementRules`에 `evidenceSource=api`, `gcMeaning=runtime-metrics-delta`를 기록한다. #213~#225를 수정·재게시하거나 비교 가능성 판정 관문을 추가하지 않는다.
 
 ### 17.2 원시 내보내기 (`SCH-67`)
 
@@ -238,7 +240,7 @@ append 실패는 기존 ObservationLog health·호출 오류/로그로 노출하
 
 - `HandlerConfig.SchedulerMeters func() []servingkube.MeterDeclaration`를 root에서 accepted configuration 조회에 연결한다. settings GET에서만 읽기 projection에 붙이고 `SchedulerSettingsInput`, scheduler 저장 ConfigMap, settings mutation 본문에는 넣지 않는다. 기존 `powerObservation` 경계는 바꾸지 않는다.
 - `meters`가 든 PUT은 기존 strict unknown-field 거절로 실패시킨다. 서버가 조용히 버리거나 쓰기 별칭으로 수락하지 않는다.
-- 같은 구현 1에서 `hack/e5/e5.py:CPO.put`, `chill-dashboard/features/scheduler-settings.tsx:putSchedulerSettings`가 GET 결과에서 `meters`를 제거한 뒤 PUT하도록 고친다. 기존 staticRouting/staticRoutingValidatedAt 제거와 CPO의 powerObservation 처리도 보존한다. 대시보드 read type에는 읽기 전용 선언을 추가한다.
+- 같은 구현 1에서 `hack/evaluation/conductor.py:CPO.put`, `chill-dashboard/features/scheduler-settings.tsx:putSchedulerSettings`가 GET 결과에서 `meters`를 제거한 뒤 PUT하도록 고친다. 기존 staticRouting/staticRoutingValidatedAt 제거와 CPO의 powerObservation 처리도 보존한다. 대시보드 read type에는 읽기 전용 선언을 추가한다.
 - 기존 `hack/e5/d2/conduct_before.py`는 과거 before 실행 기록 도구이며 신규 API 수집·설정 쓰기 경로로 재활성화하지 않는다. 클라이언트 두 곳을 고치지 않은 채 GET 확장만 배포하지 않는다.
 
 ### 17.6 병렬 구현 3개: 파일 영역과 인터페이스
@@ -299,7 +301,7 @@ MIX의 resources 컨테이너 표본 1600건은 cluster의 Node/Pod UID/containe
 
 ### 18.1 생성 사실과 노출 누락의 구분
 
-- E5는 frozen binding의 workload UID/generation·definitionID, schedule parts의 α·seconds,
+- evaluation는 frozen binding의 workload UID/generation·definitionID, schedule parts의 α·seconds,
   phase의 workload별 실제 producer start를 이미 기록한다. 게시 경계의 공통
   `publication_metadata`가 두 publisher에 같은 metadata를 추가한다. 기존 judgment의
   workload별 substage 통계나 metric 모집단/단위를 바꾸지 않는다.
@@ -311,7 +313,7 @@ MIX의 resources 컨테이너 표본 1600건은 cluster의 Node/Pod UID/containe
 
 ### 18.2 두 publisher 공통 metadata
 
-기존 `stages[].kpis.requests[<기록 당시 이름>]`(E5)와
+기존 `stages[].kpis.requests[<기록 당시 이름>]`(evaluation)와
 `stages[].kpis.workloads[<기록 당시 이름>]`(demo)에 같은 아래 필드를 추가한다.
 두 통계 shape 자체를 합치거나 기존 ms/ns 단위를 바꾸지 않는다.
 
@@ -322,7 +324,7 @@ MIX의 resources 컨테이너 표본 1600건은 cluster의 Node/Pod UID/containe
 | `identitySource` | 기존 published historical snapshot/definition의 `{store,key}` 또는 null. summary.sources에 포함된 참조여야 하며 로컬 경로를 store key로 꾸미지 않음 |
 | `substages` | 한 part인 경우도 포함한 frozen schedule의 순서 있는 배열, schedule 자체가 미기록이면 null |
 | `substages[].id` | 동결된 part ID. 문자열에서 조건/비교군/α를 추론하지 않음 |
-| `substages[].alpha` | 이 workload에 해당하는 단일 dimensionless number, finite ≥0, 또는 null. E5는 canonical-name map, demo는 기존 ALIASES로 alias를 정확히 대응. direct rates는 null |
+| `substages[].alpha` | 이 workload에 해당하는 단일 dimensionless number, finite ≥0, 또는 null. evaluation는 canonical-name map, demo는 기존 ALIASES로 alias를 정확히 대응. direct rates는 null |
 | `substages[].startOffsetNanos`, `endOffsetNanos` | workload producer 시작 기준 예정 `[start,end)`의 정수 ns. 기존 part seconds의 누적·round 규칙 재사용 |
 | `substages[].from`, `to` | **해당 workload의 기록된 실제 producer 시작+예정 offset**인 RFC3339 UTC 시각, anchor 없으면 각각 null. 0부하로 producer 미기동이면 다른 workload의 시작으로 채우지 않음 |
 | `substages[].source` | 해당 frozen parts/starts를 담은 published phase의 `{store,key}` 또는 null. summary.sources에 포함 |
@@ -347,7 +349,7 @@ offered가 양수인데 원 archived identity가 없거나 request provenance/pa
 게시할 수 있지만 producer anchor/관측된 요청이 생겼다고 해석하지 않는다.
 반환된 request ID마다 archived HTTP receipt가 있어야 하며 일부 ID만 보존되거나
 client JSONL 파싱 오류가 있어도 identity는 coverage-incomplete이다.
-phase는 E5 `phase.json`, demo는 기존 `phase_path`가 선택한 원본/수집복구 phase를 참조하고
+phase는 evaluation `phase.json`, demo는 기존 `phase_path`가 선택한 원본/수집복구 phase를 참조하고
 두 출처 모두 같은 summary.sources 안에 있어야 한다. phase의 part seconds를 각각
 `round(seconds*1e9)`한 누적으로 offset을 만들고 원 시작 시각의 나노초를 보존한다.
 stage 길이는 part seconds의 합과 초 단위로 비교한다. 최종 offset을 stage seconds의
@@ -372,8 +374,8 @@ object reference·유한 payload만 검증하며 opaque KPI의 hash/바이트 �
 실험 실행 경계는 [ADR 0032](../../adr/0032-experiment-execution-boundary.md)를 따른다. 예정 대체: [실험 실행 설계](../profiling/experiment-execution.md) / [실험 SRS](../../spec/experiments/SRS.md).
 
 필요물은 새 **harness/publisher revision**, 해당 revision으로 동결한 신규 publication 입력·새 ID,
-F4 소비자다. metadata 전달만을 위한 ChillServer/Console/agent/runtime 이미지·CRD 배포는 없다.
+F4 소비자다. metadata 전달만을 위한 ChillServer/Query API/agent/runtime 이미지·CRD 배포는 없다.
 publication 검증은 기존 Python self-check/recorded-data 검사와 Go opaque pass-through 회귀를 확장한다.
 기존 `demo.py --self-check`가 읽는 E5 정본 표의 현재 헤더(`시간/부하`)에 맞춰
 `tables.py`의 선택자도 수정했다. 이는 보고 표 탐색 회귀 수정이며 측정/게시 계약 변경이 아니다.
-raw export·대시보드 과거 조회는 §17/ADR0030대로 E5 측정 창 밖에서 수행한다.
+raw export·대시보드 과거 조회는 §17/ADR0030대로 evaluation 측정 창 밖에서 수행한다.

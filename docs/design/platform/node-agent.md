@@ -168,4 +168,4 @@ ADR 0020의 fence·read-back·settling 시작·Ready 네 시각은 transition an
 - M2 배포 확인 N1–N6의 결과도 원문에 없었다: N1 당시 10개 노드의 CPU annotation과 손 inventory 일치, N2 policy 있는 Jetson의 `PowerModeUnavailable` 없음·`PlacementInventoryMissing` 0, N3 inventory/runtimeAccess 원인 `PreparationUnavailable` 0·Jetson CUDA 준비, N4 같은 모드 반복 전환의 독립 read-back, N5 측정 taint 아래 두 DaemonSet desired/Ready 일치, N6 `MeterUndeclared` 0·기존 비용 근거 수 유지. N4의 NodeActuation 생성 방식은 3장으로 대체되었다.
 - agent `/metrics`(전력·inventory)는 TSDB와 소비자가 필요할 때 추가한다. 모드별 online CPU 집합이 필요하면 profile 조건에서 다룬다.
 - agent merge patch를 Server-Side Apply field manager로 바꾸는 M3 준비 항목은 원문에 완료 근거가 없다.
-- 다중 Workload 계획 탐색 시간·게이트웨이 간섭, 같은 노드 instance 간섭, 전환 중 SLO의 재검토는 E5 범위이며 이 문서가 해결하지 않는다.
+- 다중 Workload 계획 탐색 시간·게이트웨이 간섭, 같은 노드 instance 간섭, 전환 중 SLO의 재검토는 evaluation 범위이며 이 문서가 해결하지 않는다.

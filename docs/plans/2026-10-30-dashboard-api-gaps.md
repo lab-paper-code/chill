@@ -22,7 +22,7 @@
 | 2. 실패 BEO→Run 소유 연결 | Run metadata.controller owner UID와 mode/batch/attempt labels는 생성 때 저장됨. public Run projection에서 누락. 실패 BEO result:null은 정상 | 기존 Run 목록에 ownerReferences와 기존 4 labels 공개. BEO UID exact join | 없음. CRD/owner/result writer 불변 | B1, PC-08 |
 | 3. 배치 CI·통합 p95 | raw의 client latency vector, active/idle trial, frozen plan과 정책 보존. CI는 기존 유도 중 계산되지만 sealed result.detail에는 평균만 남음. pooled p95 summary는 미생성 | result 응답 형제 statistics read-projection. 기존 verified loader와 curve 유도·Gonum quantile로 계산, sealed detail은 불변 | 없음. **생성·result schema 변경을 택하지 않음** | B2, PC-09~10 |
 | 4. OpCost 실측 시간/J | immutable operation record에 actual startedAt/endedAt, wallJoules·수용/사유·identity 존재. CR status/public projection에는 name/key/verdict뿐 | CR 정확 step key를 읽어 list/detail status.steps에 실제 ns/J·operationID·reason 노출 | 없음. operation/raw/status 계약 불변 | B2, PC-11 |
-| 5. 실험 α·historical identity | E5/demo의 frozen binding/schedule/phase/captured definitions에는 대체로 존재하나 publication에서 누락. direct-rate α, 일부 producer anchor/혼합 identity는 애초에 없거나 단일값 확정 불가 | **두 publisher**가 미래 publication의 기존 KPI 행에 동일 metadata를 투영. GET는 기존 opaque JSON 전달 그대로 | 신규 optional KPI 의미 추가만 캠페인 사이 1회. envelope/prefix/version/관측/raw는 불변; 과거 재게시 없음 | B3, PC-12~13 |
+| 5. 실험 α·historical identity | evaluation/demo의 frozen binding/schedule/phase/captured definitions에는 대체로 존재하나 publication에서 누락. direct-rate α, 일부 producer anchor/혼합 identity는 애초에 없거나 단일값 확정 불가 | **두 publisher**가 미래 publication의 기존 KPI 행에 동일 metadata를 투영. GET는 기존 opaque JSON 전달 그대로 | 신규 optional KPI 의미 추가만 캠페인 사이 1회. envelope/prefix/version/관측/raw는 불변; 과거 재게시 없음 | B3, PC-12~13 |
 
 ### 1.1 정직하게 남기는 한계
 
@@ -133,7 +133,7 @@ F4 전체 수용은 B1/B2 배포와 B3 새 publication 검증이 모두 있어�
 |---|---|---|
 | B1 | `internal/profiling/profiler/kube/candidate_resolver.go`, `execution_facts.go`의 좁은 공통 읽기·호환성 메서드; `internal/operatorconsole/profiling_runs_view.go`; 새 `internal/operatorconsole/model_compatibility_view.go`, `internal/operatorconsole/kube/model_compatibility_query.go`, `internal/operatorconsole/readapi/model_compatibility.go`; 인접 테스트 | compatibility typed selection→snapshot callback, 기존 RunView metadata. 새 handler는 기존 QueryHandler에 합칠 등록 함수를 제공; controller import 금지 |
 | B2 | `internal/operatorconsole/batch_energy_optimization_result_view.go`, `kube/batch_energy_optimization_result_query.go`; 새 `cmd/console/measurement_statistics.go`의 저장 자료→통계 callback; `internal/profiling/derivation`의 좁은 statistics summary(기존 수학 재사용); `internal/serving/httpapi/measurement_projections.go`, `internal/serving/kube`의 exact operation projection loader; `cmd/chill-server/measurement_service.go`; 인접 테스트 | validated result/campaign→statistics·reason·error callback, CR+exact operation record→safe step DTO. campaign controller/result writer/raw producer는 편집하지 않음 |
-| B3 | `hack/e5/e5.py`, `hack/e5/demo.py`와 기존 recorded-data/self-check; `cmd/chill-server/experiment_service_test.go`의 metadata pass-through 회귀 | 두 기존 KPI shape 안 동일 metadata/null/source. Go experiments.go·uploader envelope 코드는 변경 불필요 |
+| B3 | `hack/evaluation/conductor.py`, `hack/evaluation/demo.py`와 기존 recorded-data/self-check; `cmd/chill-server/experiment_service_test.go`의 metadata pass-through 회귀 | 두 기존 KPI shape 안 동일 metadata/null/source. Go experiments.go·uploader envelope 코드는 변경 불필요 |
 | 통합 소유자 | `cmd/console/run.go`, `internal/operatorconsole/readapi/queries.go`(callback wiring), `cmd/chill-server/http_routes.go`, `charts/chill/templates/serving_entrypoint_rbac.yaml`, 필요한 Console read RBAC/차트, 공통 route/auth 테스트 | B1 GET 등록·프록시·narrow GET grant와 B2 result statistics callback 연결. 정의된 실제 callback만 연결하고 stub/가짜 fallback 없이 B1/B2를 함께 완결 |
 | F4 | 기존 UI S1/S2/S3가 끝난 뒤 `chill-dashboard/lib/read-types.ts`, `lib/measurements.ts`, `lib/measurement-coverage.ts`, `lib/experiments.ts`와 측정/실험 feature·인접 테스트; 기존 담당과 이동 파일 사전 조율 | 서버 판정을 정적 표시와 증거 상태로 분리, exact owner join, CI/p95/ns/J와 null, 두 실험 metadata 소비. 새 독자적 호환성 표/통계 구현 없음 |
 
@@ -148,15 +148,15 @@ Console snapshot→BuildView→HTTP 패턴과 composition-root port/callback으�
 | B1 | trusted 충돌만 Incompatible, 선언 부재/모호함 Unknown, class/Node/family/backend 유일 선택과 artifact architecture, Node-bound GPU/동일 class 다른 Node, query 중복·누락·unknown·403/404/503. 기존 preflight 성공/거절 불변. owner UID exact join·동명 재생성·owner 없음·누락/잘못된 attempt·active/idle/batch별 원 회차·result:null·전체 page 미조회 |
 | B2 통계 | 기존 CI의 비영분산/영분산·비기본 level·shared idle variance·signed 음수 하한 유지. unequal trial vector로 pooled p95≠trial 분위 평균을 입증; 호출/Run/item 수 구분. stored completed references만 포함, 다른 batch/조건·excluded/reuse 확인 섞지 않음. 원근거 404와 권한/store/invalid 구분, 원 result/detail 불변, 요청 취소·유한 read·JSON serialization |
 | B2 비용 | 실제 end-start, accepted 0 J, failed에 시간만 제공, insufficient/isolation null J, idle 별도 분기, 부분 완료 sequence, 미실행 후속 없음. foreign CR UID/step/kind/Node/key·missing/corrupt evidence·권한 오류. 원 phase/verdict/reason·evidence 위치 보존, raw/비밀 유출 없음 |
-| B3 | E5/demo 두 shape, workload마다 다른 α와 demo alias, direct-rate null α, 한/여러 part, staggered producer starts·0부하 anchor 없음, mixed/missing definition, historical UID/출처. 기존 metric 모집단·판정·에너지/지연 단위와 opaque GET 보존. 과거 #213 읽기에 새 raw open/현재 Workload 조회가 없고 신규 publication collision/불변 순서 유지 |
+| B3 | evaluation/demo 두 shape, workload마다 다른 α와 demo alias, direct-rate null α, 한/여러 part, staggered producer starts·0부하 anchor 없음, mixed/missing definition, historical UID/출처. 기존 metric 모집단·판정·에너지/지연 단위와 opaque GET 보존. 과거 #213 읽기에 새 raw open/현재 Workload 조회가 없고 신규 publication collision/불변 순서 유지 |
 | F4 | Compatible≠측정 완료/admission, backend Unknown·오류 상태의 정직한 표시. 실패 BEO의 owner UID 일치 회차만 연결. CI 부재/0폭·음수 CI·call count·p95 범위·ns lossless 처리·수용 J 0/누락/오류 구분. 두 publisher identity·α·예정 구간과 과거 미기록. 기존 화면 regression 및 DB-FR-56~65 수용 |
 
 통합 소유자가 구현 뒤 실행할 최소 명령군(이 B0에서 실행하지 않음):
 
 - focused `go test ./internal/operatorconsole/... ./internal/profiling/profiler/kube ./internal/profiling/derivation ./internal/serving/kube ./internal/serving/httpapi ./cmd/console ./cmd/chill-server`.
-- B3의 기존 `python3 hack/e5/e5.py self-check`(기존 CHILL_EXPERIMENT_CONFIG 전제) /
-  `python3 hack/e5/demo.py --self-check`와 recorded publication 검사, 필요 시
-  `go test ./hack/e5/publish`. mock/self-check는 실험·게시 성공의 증거가 아니다.
+- B3의 기존 `python3 hack/evaluation/conductor.py self-check`(기존 CHILL_EXPERIMENT_CONFIG 전제) /
+  `python3 hack/evaluation/demo.py --self-check`와 recorded publication 검사, 필요 시
+  `go test ./hack/evaluation/publish`. mock/self-check는 실험·게시 성공의 증거가 아니다.
 - 변경된 Go의 repository gate `make lint`, `make test`; 허용 package edge가 실제로 바뀔 때만
   `.go-arch-lint.yml`/설계와 `make arch-check`를 함께 다룬다. 새 package는 이번 설계에 필요 없다.
 - chart/RBAC가 바뀌는 B1 통합은 `make helm-lint helm-template`와 별도 default/profiler render,

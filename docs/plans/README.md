@@ -17,7 +17,7 @@
 | [2026-10-18-dashboard-chill-concepts.md](2026-10-18-dashboard-chill-concepts.md) | superseded | 현행 범위는 live-stage·API coverage |
 | [2026-10-26-dashboard-live-stage.md](2026-10-26-dashboard-live-stage.md) | active | S1/S2 게시·배포; PASS8/FAIL0/미확인5·§5 deferred 유지 |
 | [2026-10-26-e5-evaluation.md](2026-10-26-e5-evaluation.md) | completed | full/static/factor·표적 회차 완료, 조건은 확정 보고서 |
-| [2026-10-26-remaining-roadmap.md](2026-10-26-remaining-roadmap.md) | active | post-E5 미해결·보류의 단일 목록 |
+| [2026-10-26-remaining-roadmap.md](2026-10-26-remaining-roadmap.md) | active | post-evaluation 미해결·보류의 단일 목록 |
 | [2026-10-27-power-mode-coverage.md](2026-10-27-power-mode-coverage.md) | completed | 최소18조합 결과·Infeasible/미달 구분, 추가 측정은 로드맵 |
 | [2026-10-27-pre-e5-workflow.md](2026-10-27-pre-e5-workflow.md) | completed | U1~U10 선행 결과 통합; U11 코드 removed @e8344b20 |
 | [2026-10-28-e5-evidence-api.md](2026-10-28-e5-evidence-api.md) | completed | API-only 하네스 전환·KPI 동일 리허설(d39c9576) |

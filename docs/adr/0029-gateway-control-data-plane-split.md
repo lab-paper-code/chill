@@ -14,7 +14,7 @@ G0(#203)의 동결된 gateway 판정은 PASS다(`binding.json`의 gatewayVerdict
 
 ## Reopen conditions
 
-재개는 E5 종료·결과 표 기입 뒤 다음 중 하나가 있고, 기존 경로의 직접 수정이나 작업 동시성 축소(예: κ 계산 병렬도)로 해결되지 않을 때 결정한다.
+재개는 evaluation 종료·결과 표 기입 뒤 다음 중 하나가 있고, 기존 경로의 직접 수정이나 작업 동시성 축소(예: κ 계산 병렬도)로 해결되지 않을 때 결정한다.
 
 1. gateway에 귀속되는 G 확인(SCH-AC-46) 실패.
 2. 제어·조회·복원 작업의 간섭이 spec 측정 표의 지연·성공률을 훼손한다는 근거.
@@ -32,7 +32,7 @@ G0(#203)의 동결된 gateway 판정은 PASS다(`binding.json`의 gatewayVerdict
 3. **적용 확인은 두 단계다.** 먼저 native의 실제 정책 `DecisionID` ACK를 확인한 뒤 배분표를 보낸다. 각 router가 실제 교체한 후 보낸 `applied(planVersion)`을 모두 확인해야 route 적용 완료다. 전송 성공이나 Dashboard 표시용 순번은 적용 증거가 아니다. 라우터 가입·제외도 이 장벽에 반영하며, 전체 라우터의 동시 원자 전환은 약속하지 않는다.
 4. **퇴역은 모든 소유 라우터의 물리 점유로 막는다.** source 신규 배정 차단과 applied 장벽 후, 그 source에 배정할 수 있었던 모든 router의 `outstanding=0` 및 기존 native 물리 완료 증거를 확인해야 drain 완료·stop· remove로 진행한다. timeout, 연결 단절, readiness 제외를 점유 0으로 대체하지 않는다. 수락된 미배정 요청·실물 장부·범위 예약은 유지한다.
 5. **T5 WebSocket 메커니즘을 재사용한다.** 인증된 TLS 연결, bounded 송수신, 순번·재동기화·heartbeat의 전달 방식을 공유하되 Dashboard의 읽기 전용 feed/권한과 router의 배분표/ACK 권한은 분리한다. T5가 구현 완료됐다고 전제하지 않으며 G2에서 공통 전송부를 연결한다. 배분표와 점유/완료 증거는 손실 가능한 화면 지표로 취급하지 않는다.
-6. **라우터별 기록을 기존 보관/reader 경로로 합친다.** 각 router의 독립 assigned/final·catalog stream을 시간별 파일과 근거 저장소에 보관하고, λ·d·E5·Dashboard reader는 `requestID`로 `final > open > assigned` 병합한다. 로컬/archive 우선순위는 시간뿐 아니라 router 차원에서 적용한다. 출처·공백과 참여 router 목록을 남기며 누락을 무유입으로 바꾸지 않는다.
+6. **라우터별 기록을 기존 보관/reader 경로로 합친다.** 각 router의 독립 assigned/final·catalog stream을 시간별 파일과 근거 저장소에 보관하고, λ·d·evaluation·Dashboard reader는 `requestID`로 `final > open > assigned` 병합한다. 로컬/archive 우선순위는 시간뿐 아니라 router 차원에서 적용한다. 출처·공백과 참여 router 목록을 남기며 누락을 무유입으로 바꾸지 않는다.
 7. **stale은 조용히 통과시키지 않는다.** 적용 미확인/연결 상실 router는 신규 유입 gate와 readiness를 닫고, 이미 시작한 요청의 물리 완료는 계속 추적한다. stale 유입 또는 기록 완전성 미확인은 실험 무효/검증 실패다. native admission이 최종 상한이며 초기 router별 점유 한도는 보수적으로 나눈다. 정확한 전역 lease 할당기는 이번 범위에 추가하지 않는다.
 
 ## Rationale and rejected alternatives
@@ -53,8 +53,8 @@ G0(#203)의 동결된 gateway 판정은 PASS다(`binding.json`의 gatewayVerdict
 - 운영자는 목표 배분표와 라우터별 applied/신선도·물리 점유·가입 상태를 구분해야 한다. 혼합 버전 구간은 정상적으로 발생할 수 있으나 시각과 요청 버전으로 공개하며, 미확인 상태에서 source를 정리하지 않는다.
 - 각 router의 SWRR는 로컬이다. 짧은 창의 전역 분배 오차와 보수적 점유 분할의 유휴 용량이 생길 수 있으므로 두 라우터 G/SLO·전환·장시간 시험으로 평가한다.
 - 기록 소스 수가 늘어난다. namespace 충돌 방지, archive 보존, 재시작 전 미완료 복구, 모든 reader/수집기의 router별 소스 선택을 한 번에 이행해야 한다. 구형 단일 gateway 자료는 원래 형식으로 해석하며 split 검증 결과로 간주하지 않는다.
-- native 이미지, Pod 전용 Service와 EdgeMesh, firstfloor 배칭·마감 정책, 중앙 장부/예약 및 E5 분모는 변경하지 않는다. 새 CRD·DB·외부 프레임워크는 없다.
-- 적용 순서는 **E5 완료·표 기입 → `e947cd5e` 미사용 분리 코드 정리와 단일 source evidence API 이행 → 재개 조건 판단 → 승인된 최소 분리 검증 → 별도 cutover**다. E5 종료 자체는 G2/G3 개시 조건이 아니다. 현 E5는 단일 게이트웨이와 G0 통과점을 조건으로 보고한다.
+- native 이미지, Pod 전용 Service와 EdgeMesh, firstfloor 배칭·마감 정책, 중앙 장부/예약 및 evaluation 분모는 변경하지 않는다. 새 CRD·DB·외부 프레임워크는 없다.
+- 적용 순서는 **evaluation 완료·표 기입 → `e947cd5e` 미사용 분리 코드 정리와 단일 source evidence API 이행 → 재개 조건 판단 → 승인된 최소 분리 검증 → 별도 cutover**다. evaluation 종료 자체는 G2/G3 개시 조건이 아니다. 현 evaluation는 단일 게이트웨이와 G0 통과점을 조건으로 보고한다.
 
 ## Removal evidence
 

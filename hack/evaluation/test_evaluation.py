@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Network-free adapter checks; optionally replay a copied historical raw stage.
 
-python3 -B hack/e5/test_evaluation.py
-python3 -B hack/e5/test_evaluation.py --offline-binding B --offline-stage S --environment E
+python3 -B hack/evaluation/test_evaluation.py
+python3 -B hack/evaluation/test_evaluation.py --offline-binding B --offline-stage S --environment E
 """
 import copy
 import json
@@ -25,10 +25,10 @@ class AdapterTests(unittest.TestCase):
     def setUpClass(cls):
         cls.environment_dir=tempfile.TemporaryDirectory()
         root=Path(cls.environment_dir.name)
-        config={'paths':{'repository':str(evaluation.REPO),'ops':str(root),'campaign':str(root),'d2State':str(root)},'e5':{'operationalRecipe':str(root/'recipe.json'),'nodes':{},'plan':str(root/'plan')},'d2':{'repoBin':str(evaluation.REPO/'bin'),'apiBase':'https://offline.invalid','caFile':str(root/'ca'),'tokenFile':str(root/'token'),'kubectl':['kubectl'],'jobTemplate':str(root/'job'),'workloadUID':'offline','workloadName':'offline','nodes':[]}}
+        config={'paths':{'repository':str(evaluation.REPO),'ops':str(root),'campaign':str(root),'d2State':str(root)},'evaluation':{'operationalRecipe':str(root/'recipe.json'),'nodes':{},'plan':str(root/'plan')},'d2':{'repoBin':str(evaluation.REPO/'bin'),'apiBase':'https://offline.invalid','caFile':str(root/'ca'),'tokenFile':str(root/'token'),'kubectl':['kubectl'],'jobTemplate':str(root/'job'),'workloadUID':'offline','workloadName':'offline','nodes':[]}}
         path=root/'environment.json';evaluation.save(path,config)
         with patch.dict(os.environ,CHILL_EXPERIMENT_CONFIG=str(path)):
-            cls.e5=evaluation.module('adapter_test_e5',evaluation.HERE/'e5.py')
+            cls.harness_module=evaluation.module('adapter_test_harness',evaluation.HERE/'conductor.py')
             cls.native=evaluation.module('adapter_test_native',evaluation.HERE/'d2/native_mode_request.py')
             cls.bind=evaluation.module('adapter_test_bind',evaluation.HERE/'d2/bind_before.py')
             cls.conductor=evaluation.module('adapter_test_conductor',evaluation.HERE/'d2/conduct_before.py')
@@ -47,8 +47,8 @@ class AdapterTests(unittest.TestCase):
             {'sampledAt':'2026-11-02T00:00:02Z','containers':[other,owned]}]}
         archive=SimpleNamespace(RAW_PATH='/api/v1/observations/raw',_hours=lambda *args:['20261102T00'])
         def remaining(deadline):
-            if deadline<=self.e5.time.monotonic():raise TimeoutError('Finite collection deadline exhausted')
-            return deadline-self.e5.time.monotonic()
+            if deadline<=self.harness_module.time.monotonic():raise TimeoutError('Finite collection deadline exhausted')
+            return deadline-self.harness_module.time.monotonic()
         archive._remaining=remaining
         calls=[]
         def raw_get(client,path,deadline):
@@ -59,10 +59,10 @@ class AdapterTests(unittest.TestCase):
             return response
         archive._raw_get=raw_get
         saved=[]
-        with patch.object(self.e5,'module',return_value=archive):
-            telemetry=self.e5.ProducerResources(object(),{'workload':pod},129,Path('producer-resources.json'))
-        save_patch=patch.object(self.e5,'save',side_effect=lambda path,value:saved.append((path,value)));save_patch.start();self.addCleanup(save_patch.stop)
-        deadline=self.e5.time.monotonic()+10
+        with patch.object(self.harness_module,'module',return_value=archive):
+            telemetry=self.harness_module.ProducerResources(object(),{'workload':pod},129,Path('producer-resources.json'))
+        save_patch=patch.object(self.harness_module,'save',side_effect=lambda path,value:saved.append((path,value)));save_patch.start();self.addCleanup(save_patch.stop)
+        deadline=self.harness_module.time.monotonic()+10
         self.assertTrue(telemetry.ready(2,deadline))
         self.assertEqual(len(telemetry.rows),2)
         self.assertTrue(all(item['podUID']=='producer' and item['containerID']=='containerd://load' for item in telemetry.rows))
@@ -71,7 +71,7 @@ class AdapterTests(unittest.TestCase):
         self.assertFalse(telemetry.ready(3,deadline))
         self.assertEqual(len(calls),1)
         self.assertIsNotNone(self.conductor.client_end_counter_rows(telemetry.rows,'producer','containerd://load','2026-11-02T00:00:02Z'))
-        with self.assertRaises(TimeoutError):telemetry.ready(2,self.e5.time.monotonic()-1)
+        with self.assertRaises(TimeoutError):telemetry.ready(2,self.harness_module.time.monotonic()-1)
         row['samples']=[{'sampledAt':'2026-11-02T00:00:01Z','containers':[other,wrong_container]}]
         telemetry.minute=None
         self.assertFalse(telemetry.ready(2,deadline))
@@ -143,12 +143,12 @@ class AdapterTests(unittest.TestCase):
         from contextlib import nullcontext
         auth=SimpleNamespace(check=lambda path,budget,**kw:{'requiredSeconds':budget},lifetime_budget=lambda *args:333)
         config={'evaluation':{'jobActiveDeadlineSeconds':7200},'timeboxes':{'apiSeconds':30},'tokenFile':'projected'}
-        with patch.object(self.e5,'module',return_value=auth):
-            record=self.e5.token_preflight(config,[{'seconds':10000}])
+        with patch.object(self.harness_module,'module',return_value=auth):
+            record=self.harness_module.token_preflight(config,[{'seconds':10000}])
             self.assertEqual(record['requiredSeconds'],90)
             self.assertEqual(record['jobActiveDeadlineSeconds'],7200)
             del config['evaluation']
-            self.assertEqual(self.e5.token_preflight(config,[])['requiredSeconds'],333)
+            self.assertEqual(self.harness_module.token_preflight(config,[])['requiredSeconds'],333)
         with tempfile.TemporaryDirectory() as directory:
             token=Path(directory)/'token';observed=[]
             client=object.__new__(self.conductor.Conductor);client.collector_token_file=token
@@ -192,20 +192,20 @@ class AdapterTests(unittest.TestCase):
         harness=object.__new__(evaluation.Harness);harness.root=root;harness.execution={'runUID':'run','stageUID':'stage','stageID':'idle'};harness.prefix='experiments/run/stages/idle';harness.step='stage'
         harness.store=SimpleNamespace(put=lambda key,path:{'store':'store','key':key,'size':path.stat().st_size})
         harness.spec={'target':{},'control':control,'mode':'autonomous','loadGenerator':{'barrier':{'maxStartSkewNanos':0}}}
-        harness.e5=self.e5
-        controller=object.__new__(self.e5.CPO)
+        harness.harness_module=self.harness_module
+        controller=object.__new__(self.harness_module.CPO)
         controller.c={'evaluation':{'stageFolder':str(folder),'execution':harness.execution}}
         controller.b={'schedule':[{'id':'E5-0','rates':{},'seconds':0}],'sources':{}}
         controller.a=SimpleNamespace(command='stage',stage='E5-0',mode='full',row_tag='')
         controller.out=root;controller.ws={};controller.uids=[];controller.go_callback=harness.go
         controller.tb={'setupSeconds':0,'drainSeconds':0,'flushSeconds':0}
         controller.io=SimpleNamespace(k=lambda *args:{'items':[]},a=SimpleNamespace())
-        controller.d=SimpleNamespace(epoch=lambda value:self.e5.dt.datetime.fromisoformat(value).timestamp())
+        controller.d=SimpleNamespace(epoch=lambda value:self.harness_module.dt.datetime.fromisoformat(value).timestamp())
         controller.check_token_lifetime=lambda *args:None;controller.check_power_observation=lambda:None
         controller.static_placement=lambda:False;controller.settings=lambda:{'autonomousWorkloads':[],**control}
         controller.disk_boundary=lambda *args:None
         controller.state=lambda:{'snapshot':{}}
-        controller.api=lambda *args:{'state':{'decision':{'at':self.e5.now(),'settings':control}}}
+        controller.api=lambda *args:{'state':{'decision':{'at':self.harness_module.now(),'settings':control}}}
         controller.boundary=lambda target,side:evaluation.save(target/(side+'-state.json'),{'snapshot':{}})
         controller.collect=lambda *args:None
         return harness,controller
@@ -214,8 +214,8 @@ class AdapterTests(unittest.TestCase):
         values={'stages':[{'id':'id','kpis':{'status':'FAIL'}}],'results':{'id':{'measurement':{'verdict':'FAIL'}}},'physicalRestoration':{'status':'Complete'}}
         with tempfile.TemporaryDirectory(dir=self.environment_dir.name) as directory:
             root=Path(directory)
-            with patch.object(self.e5,'load',side_effect=unexpected),patch.object(self.e5,'load_binding',side_effect=unexpected):
-                summary=self.e5.summarize(None,root,evaluation=values)
+            with patch.object(self.harness_module,'load',side_effect=unexpected),patch.object(self.harness_module,'load_binding',side_effect=unexpected):
+                summary=self.harness_module.summarize(None,root,evaluation=values)
             self.assertEqual(summary['status'],'FAIL')
             self.assertEqual(summary['rowJudgmentCounts'],{'FAIL':1})
             self.assertEqual(summary['physicalRestoration'],{'status':'Complete'})
@@ -252,7 +252,7 @@ class AdapterTests(unittest.TestCase):
                 with path.open('x') as output: json.dump(evidence[ref['key']],output)
                 downloaded.append(path)
             harness.store=SimpleNamespace(name='store',get=get)
-            harness.e5=self.e5
+            harness.harness_module=self.harness_module
             tables=SimpleNamespace(render=lambda *args,**kw:'table')
             env=dict.fromkeys(('CHILL_EVIDENCE_BUCKET','CHILL_EVIDENCE_ENDPOINT','CHILL_EVIDENCE_REGION','AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY'),'test')
             temporary=evaluation.tempfile.TemporaryDirectory
@@ -262,7 +262,7 @@ class AdapterTests(unittest.TestCase):
                 with patch.object(evaluation,'module',return_value=tables),patch.dict(os.environ,env),patch.object(evaluation.tempfile,'TemporaryDirectory',side_effect=lambda **kw:temporary(dir=run)),patch.object(evaluation.subprocess,'run',return_value=SimpleNamespace(returncode=0)):
                     harness.publish()
                 return evaluation.load(run/'publication-summary.json')
-            with patch.object(self.e5,'OPS',run):
+            with patch.object(self.harness_module,'OPS',run):
                 summary=publish()
             outcome=summary['outcome']
             self.assertEqual(summary['definition']['spec'],harness.snapshot['runSpec'])
@@ -284,7 +284,7 @@ class AdapterTests(unittest.TestCase):
             self.assertEqual(failed['injections'][0]['outcome'],'Executed')
             self.assertEqual(failed['injections'][0]['reason'],'Complete')
             evidence['experiments/run/run/finish/result.json']=copy.deepcopy(complete)
-            with patch.object(self.e5,'OPS',run):
+            with patch.object(self.harness_module,'OPS',run):
                 self.assertEqual(publish()['outcome']['cleanup']['status'],'Failed')
                 evidence['experiments/run/stages/failed/cleanup-jobs/result.json']=copy.deepcopy(complete)
                 evidence['experiments/run/stages/never/cleanup-jobs/result.json']=copy.deepcopy(complete)
@@ -345,7 +345,7 @@ class AdapterTests(unittest.TestCase):
                 with path.open('x') as output: json.dump(snapshot,output)
             store.get=readable
             controller=SimpleNamespace(finish=unittest.mock.Mock())
-            with patch.object(evaluation,'environment'),patch.object(evaluation,'module',return_value=self.e5),patch.object(harness,'controller',return_value=controller):
+            with patch.object(evaluation,'environment'),patch.object(evaluation,'module',return_value=self.harness_module),patch.object(harness,'controller',return_value=controller):
                 self.assertEqual(harness.execute('finish'),0)
             controller.finish.assert_called_once()
             self.assertEqual(evaluation.load(harness.inputs/'snapshot.json')['runUID'],'stale-cache')
@@ -362,7 +362,7 @@ class AdapterTests(unittest.TestCase):
         harness=evaluation.Harness(root/'campaign/run',specdir,store)
         folder=harness.root/'measured';folder.mkdir(parents=True)
         evaluation.save(folder/'created-load.json',{'metadata':{'name':'producer','uid':'exact-uid'}})
-        controller=object.__new__(self.e5.CPO)
+        controller=object.__new__(self.harness_module.CPO)
         controller.c={'evaluation':{'stageFolder':str(folder)}};controller.out=harness.root
         controller.io=SimpleNamespace(k=lambda *args:{'metadata':{'uid':'exact-uid'}},remove_job=lambda *args:(_ for _ in ()).throw(RuntimeError('DeleteFailed')))
         with patch.object(harness,'controller',return_value=controller),patch.object(harness,'open_snapshot'):
@@ -385,13 +385,13 @@ class AdapterTests(unittest.TestCase):
                 if value is None: raise FileNotFoundError(reference['key'])
                 path.parent.mkdir(parents=True,exist_ok=True)
                 with path.open('x') as output: json.dump(value,output)
-            harness=object.__new__(evaluation.Harness);harness.run=run;harness.config={};harness.e5=self.e5
+            harness=object.__new__(evaluation.Harness);harness.run=run;harness.config={};harness.harness_module=self.harness_module
             harness.execution={'runUID':'run','runName':'name','childRefs':[{'stageID':'only','uid':'child','cleanup':{'status':'Complete','reason':'ProcedureComplete'},'uncertain':False}] if child_refs is None else child_refs}
             harness.store=SimpleNamespace(name='store',get=get)
             harness.snapshot={'runSpec':{'stages':[{'id':'only','failureInjection':[{'id':'fault','action':'delete-serving-pod','offsetSeconds':1}]}]},'initial':{'at':'start'},'bindings':{'only':{}},'scenarios':{}}
             temporary=evaluation.tempfile.TemporaryDirectory
             env=dict.fromkeys(('CHILL_EVIDENCE_BUCKET','CHILL_EVIDENCE_ENDPOINT','CHILL_EVIDENCE_REGION','AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY'),'test')
-            with patch.object(evaluation,'module',return_value=SimpleNamespace(render=lambda *args,**kw:'')),patch.dict(os.environ,env),patch.object(evaluation.tempfile,'TemporaryDirectory',side_effect=lambda **kw:temporary(dir=run)),patch.object(evaluation.subprocess,'run',return_value=SimpleNamespace(returncode=0)),patch.object(self.e5,'OPS',run):
+            with patch.object(evaluation,'module',return_value=SimpleNamespace(render=lambda *args,**kw:'')),patch.dict(os.environ,env),patch.object(evaluation.tempfile,'TemporaryDirectory',side_effect=lambda **kw:temporary(dir=run)),patch.object(evaluation.subprocess,'run',return_value=SimpleNamespace(returncode=0)),patch.object(self.harness_module,'OPS',run):
                 harness.publish()
             return evaluation.load(run/'publication-summary.json')['outcome']
     def test_publish_unjudged_measurement_keeps_reason(self):
@@ -477,7 +477,7 @@ def offline(binding,stage,environment):
             return value
         index=target/'raw-source-index.json';evaluation.save(index,rebase(evaluation.load(index)))
         os.environ['CHILL_EXPERIMENT_CONFIG']=str(environment)
-        harness=evaluation.module('offline_e5',Path(__file__).parent/'e5.py')
+        harness=evaluation.module('offline_harness',Path(__file__).parent/'conductor.py')
         result=harness.judge(binding,target)
         selfields=('offered','outcomes','D1','gatewayCompletedLatencyNS','completedLatencyNS','deadlineSuccessFraction','issuanceFidelity')
         assert result['status']==expected['status'],(result['status'],expected['status'],result.get('notReadyReasons'))
@@ -503,7 +503,7 @@ def offline_bundle(directory):
         execution={'runUID':'offline','namespace':'test'};config={'namespace':'test','e5Operational':operational,'chillAPIURL':'https://offline.invalid','minimumFreeBytes':'1','jobActiveDeadlineSeconds':'7200'}
         run=work/'campaign/run';root=run/'stages/offline';root.mkdir(parents=True)
         evaluation.environment(run,config,scientific,base['workloads'])
-        harness=evaluation.module('offline_bundle_e5',Path(__file__).parent/'e5.py')
+        harness=evaluation.module('offline_bundle_harness',Path(__file__).parent/'conductor.py')
         assembled=evaluation.stage_config(base,spec,scenario,execution,config,root);path=root/'config.json';evaluation.save(path,assembled)
         gateway=evaluation.load(assembled['inputs']['gateway'])
         assembled['approval']['sources']['server']=gateway['sourceSHA']
@@ -513,7 +513,7 @@ def offline_bundle(directory):
             bound=harness.bind(path)
         assert bound['status']=='BOUND_NOT_MEASURED' and bound['schedule'][0]['id']=='E5-5m'
         assert bound['schedule'][0]['rates']==dict.fromkeys(NAMES,1)
-    print('PASS recorded bundle materialization and existing e5.bind scientific gates; authentication deliberately not exercised')
+    print('PASS recorded bundle materialization and existing conductor.bind scientific gates; authentication deliberately not exercised')
 
 
 if __name__=='__main__':

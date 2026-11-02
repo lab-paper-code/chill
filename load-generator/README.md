@@ -22,11 +22,11 @@ slow the offered load until every connection is busy. No request is sent after
 gaps of mean `1/--rate` from `--seed` (default 0), so the same seed repeats the
 same send times.
 
-### E5 scheduled-time replay
+### Evaluation scheduled-time replay
 
-With the E5 contract (`--workload-slo` and `--gateway-timeout`), every frozen
+With the evaluation contract (`--workload-slo` and `--gateway-timeout`), every frozen
 arrival starts an independent request on the original timeline; `--workers`
-does not cap in-flight E5 requests. The injected `hack/e5/e5-producer.py` uses
+does not cap in-flight evaluation requests. The injected `hack/evaluation/producer.py` uses
 the same dispatcher for its frozen segmented trace. Late arrivals are still
 sent and drained, not silently dropped at the issue-window boundary.
 Endpoint/token validation and TLS context/CA loading occur once before replay

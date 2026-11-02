@@ -20,7 +20,7 @@
 
 - live 변경은 한 운영 담당이 직렬 수행한다. 측정·부하 창에 build/test·raw 내보내기·대시보드 과거 조회를 겹치지 않는다.
 - runtime 7종 digest 변경은 측정·d·비용·비교 기준의 재측정 영향과 승인을 먼저 확인한다. 설정은 실행 기록에 동결한다.
-- 관측 결손은 UNKNOWN, 원시·실패·Accepted는 불변. `tolerateArchive`는 진단 전용이며 E5에서는 거부한다.
+- 관측 결손은 UNKNOWN, 원시·실패·Accepted는 불변. `tolerateArchive`는 진단 전용이며 evaluation에서는 거부한다.
 - 자동 변경의 시작·종결 live callback은 같은 `StartedAt`을 유지한다. 실행기가 반환한 별도 시작 시각으로 바꾸면 live 보드의 진행 항목과 종결 결과가 분리된다.
 - scheduler의 Ready subset ACK는 생략된 frozen bridge의 선행 prepare 완료를 대체하지 않는다. prepare가 running/failed/partial이면 ACK가 있어도 source stop은 대기한다.
 - 옛 완료 Job은 evidence binding 의존 확인과 삭제 승인 전 보존한다([ADR0026](adr/0026-finished-measurement-pods.md)).

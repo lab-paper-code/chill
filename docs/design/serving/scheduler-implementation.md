@@ -123,7 +123,7 @@ nominal 이득이 operation/선택 baseline의 조건부 B 민감도 문턱 이�
 
 ### 5.4 자원 장부 — SCH-50~52, AC-37~39
 
-Pod UID 장부/runtime/snapshot 투영과 owner별 예약이 현행 구조이며 전역 `InProgressTarget`/`TransitionInProgress`·global goal/route 장벽·종류별 별도 guard는 제거 대상/대체된 계약이다. 단일 전역 계획기·기존 저장소/CRD/서비스만 사용한다. 정책 ConfigMap 단일화·finalizer 책임 이동은 E5 뒤 미해결이다.
+Pod UID 장부/runtime/snapshot 투영과 owner별 예약이 현행 구조이며 전역 `InProgressTarget`/`TransitionInProgress`·global goal/route 장벽·종류별 별도 guard는 제거 대상/대체된 계약이다. 단일 전역 계획기·기존 저장소/CRD/서비스만 사용한다. 정책 ConfigMap 단일화·finalizer 책임 이동은 evaluation 뒤 미해결이다.
 결정 근거는 `/home/genesis1/.cache/chill-assets/ops/pools-deploy`의 `intent/structure-redesign-20261026.md` **나**, `audit-20261024/structure-20261026/{StructTruth,StructFailure,StructControl,StructActions2,clusters}.md` K1~K5·`Research-K1~K5.md`다. 권고 전부/증거 저장소 복구/전력 프로토콜/λ·κ 변경을 완료 조건으로 섞지 않는다.
 장부 cutover의 결정 근거: `6120aaa7`의 unavailable/deferNode 임시 guard는 안전 행동·진단을 장부/공통 proof로 흡수한 뒤 삭제한다. `6545c800`의 ACK pending/actual 관측 보존은 장부 계약으로 유지하고, `dc9c90bf`/`73f1ec79`의 exact 우선·중복 reset은 전체 Pod 열거로 유지한다. Ready 누락=삭제/제거 성공/effect-lost, slot별 단일 실물, reset 전용 예약·global replay 목표 분기는 남기지 않는다.
 
@@ -225,7 +225,7 @@ reset은 선택 owner의 **모든** exact Pod UID/container를 열거·remove �
 
 ### 두 박자·예비·고정 비교 기간 — SCH-55~58, AC-42~44
 
-현행 정정 결정은 **SCH-56 최대 수요 창 + SCH-59 Fixed 본전 통일**이다. 이전 timer 구현/검증은 이 정정의 완료 근거가 아니다. 4회차 `demo-20261027-4/report.md` §C·ADR 0025가 근거이며 [용량표 계획기](analytic-planner.md)가 정책 원본이다. 장부/공통 예약/부분 Ready를 대체하지 않으며 클러스터/이미지 변경이나 E5 수용을 주장하지 않는다.
+현행 정정 결정은 **SCH-56 최대 수요 창 + SCH-59 Fixed 본전 통일**이다. 이전 timer 구현/검증은 이 정정의 완료 근거가 아니다. 4회차 `demo-20261027-4/report.md` §C·ADR 0025가 근거이며 [용량표 계획기](analytic-planner.md)가 정책 원본이다. 장부/공통 예약/부분 Ready를 대체하지 않으며 클러스터/이미지 변경이나 evaluation 수용을 주장하지 않는다.
 | 경계 | 현행 계약 |
 |---|---|
 | strict 설정 | `scaleDownStabilizationNanos`: 정수 ns≥0, 기본300초/시연120초. `transitionReserveFraction`: 유한[0,1], 기본0. `comparisonPeriodNanos`: 정수 ns>0, H 제안600초. 표현형 초과 거절. energyHorizonNanos alias/두 번째 horizon 없음; API/ConfigMap/Dashboard/sample/binding 동일 검증. |
@@ -241,8 +241,8 @@ reset은 선택 owner의 **모든** exact Pod UID/container를 열거·remove �
 
 H=600초 근거는 로컬 `campaign/v2/demo-*/summary.json`의 `stages[].actions[].action` 성공 완료: jetsono MAXN150.939초, lattepanda Smol prepare268.867초, genesis3 Smol prepare292.163초, jetsono 하강196.180초; 보수적 직렬 약488초 포함이지 미래 상한 보장 아님. 285초/Ready와 완료 시각 차이는 계획기를 따른다.
 필수 수용: AC-42 일정100 req/s+잡음에서 W가 지나도 공급≤D면 축소/절전 없음(국소 고점 timer로39초 허가한 4회차 결함). 실제 하강은 높은 표본 W 만료·완전 창·D<공급·기존 이득/SLO 뒤 허가하며 gap/설정/restart/UID/W=0/역행/벡터 상쇄를 검사한다. D110·rate20·공급160이면 후보60 거절,120은 전환/SLO/본전 충족 시 허용한다.
-AC-43은 f=0 기존 SLO 보존, f>0 미준비/중복 공급 거절·충분한 예비 허가·native ACK/actual SLO/예비 포함 E5 joules다. AC-44/SCH-59는 H600초 jetsono MAXN→15W −699J/손익 약52분 및 양수이나 문턱 미달 후보 미실행, 다른 Node 이득에 손해 Fixed를 묻지 않음, 빈 Node 후보/비교 집합/payback 포함, 미선택 긴 후보 추가/삭제에도 H/energy 불변, 조합>H 제외/=H 허용이다.
-SCH-54 빈 출발/최소 instance1/증설/부분 Ready/예약 밖 진행은 창 대기 없이 유지한다. 3회차 B의 G/L15~18초 Ready 뒤 N32초까지 대기한 fake 시계 사례에서 G/L이 다음 주기 먼저 배분되어야 한다. 무한 초과량 leximin·예약 해제·accepted drain·H 독립 action timeout·typed API/UI 구 기록 경계·Dashboard 최대 수요 창 도움말도 수용 범위다. 실클러스터 재시연/E5는 별도 승인 후 같은 H/binding/부하로 수행한다.
+AC-43은 f=0 기존 SLO 보존, f>0 미준비/중복 공급 거절·충분한 예비 허가·native ACK/actual SLO/예비 포함 evaluation joules다. AC-44/SCH-59는 H600초 jetsono MAXN→15W −699J/손익 약52분 및 양수이나 문턱 미달 후보 미실행, 다른 Node 이득에 손해 Fixed를 묻지 않음, 빈 Node 후보/비교 집합/payback 포함, 미선택 긴 후보 추가/삭제에도 H/energy 불변, 조합>H 제외/=H 허용이다.
+SCH-54 빈 출발/최소 instance1/증설/부분 Ready/예약 밖 진행은 창 대기 없이 유지한다. 3회차 B의 G/L15~18초 Ready 뒤 N32초까지 대기한 fake 시계 사례에서 G/L이 다음 주기 먼저 배분되어야 한다. 무한 초과량 leximin·예약 해제·accepted drain·H 독립 action timeout·typed API/UI 구 기록 경계·Dashboard 최대 수요 창 도움말도 수용 범위다. 실클러스터 재시연/evaluation는 별도 승인 후 같은 H/binding/부하로 수행한다.
 
 ## 9. 실행 증거와 현재 수용 범위
 

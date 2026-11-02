@@ -4,9 +4,9 @@
 - `O=/home/genesis1/.cache/chill-assets/ops/pools-deploy`, `C=O/campaign/v2/d-20261027/control-222-full`, `R=/home/genesis1/ETRI/chill`.
 - 기준 서버: **d4a933bf033d87e90c2777cd9276526c317b73b2**(7회차). 기준점수: **최초 측정으로 채움**.
 - 7회차 전체 행은 아래 미니 행과 길이·부하가 다르므로 실패 수·에너지를 기준점수에 대입하지 않는다. live b0877c1e도 기준 버전이 아니다.
-- 행·순서: `E5-3m → E5-5m → E5-7m`; 정의는 `36c8778c:hack/e5/micro-stages.example.json`, `micro=true`, 정본 전체 행/정적 기준선과 분리한다.
-- E5-3m: 180초 α=.5 → 300초 α=.9(480초); E5-5m: 180초 α=.3 → 300초 α=.9(480초).
-- E5-7m: 360초 α=.3, 120초에 실제 양의 route/assignment가 있는 serving Pod를 UID 사전조건으로 1회 삭제; cordon/강제삭제 없음. 실제 선택·UTC·응답·회복 증거를 보존한다.
+- 행·순서: `ramp-up-micro → drop-surge-micro → failure-micro`; 정의는 `36c8778c:hack/e5/micro-stages.example.json`, `micro=true`, 정본 전체 행/정적 기준선과 분리한다. 과거 저장 행 라벨 `E5-3m`/`E5-5m`/`E5-7m`와 증거 경로는 유지한다.
+- ramp-up-micro: 180초 α=.5 → 300초 α=.9(480초); drop-surge-micro: 180초 α=.3 → 300초 α=.9(480초).
+- failure-micro: 360초 α=.3, 120초에 실제 양의 route/assignment가 있는 serving Pod를 UID 사전조건으로 1회 삭제; cordon/강제삭제 없음. 실제 선택·UTC·응답·회복 증거를 보존한다.
 - rate basis는 **3회차** `C/binding-3.json`의 κ·payload·workloads·arrivals·seed. rate=α×고정 share×R, share MNV/PLC/Smol=.45/.10/.45; 새 κ로 부하를 재조정하지 않는다.
 - Poisson seed: MNV(image-classification-tight-slo)=101, PLC(plc-anomaly)=202, Smol(smolvlm2-vqa)=303. 생성된 offsetsNS·arrivalSHA256도 같은 파일에서 고정한다.
 - 실행 입력은 `C/binding-scoreboard.json`(binding-8 + 위 미니 schedule; 기존 e5.bind의 schedule 생성문 재사용). SHA256=`8a85d0908631408e9a5bff67e098889ff301598c38b3e471a669802e6a0e2611`.
@@ -23,13 +23,13 @@
 - 점수 `(F,J)`를 **사전식 최소화**: F가 작으면 승리, F 동률일 때만 J가 작은 쪽이 승리한다.
 - `F = Σ(3행×3워크로드 failures) + count(D1 == "FAIL")`; failures는 outcomes의 `error+timeout+preprocess_failed+delivery_failed` 합이다. D1 FAIL은 요청 수가 아니라 행×워크로드 판정 한 건당 1이다.
 - `J = Σ(3행 power.wholePoolJoules)`; 전체 POOL을 행당 한 번만 합산한다. activePool·워크로드별 공유 전력·리플레이 전력을 더하지 않는다.
-- 기존 `round.py`의 `tables-TAG.txt`에 failures/D1/whole POOL이 모두 있고 comparison JSON에는 원시 requests/power가 있다. **round.py/e5.py 변경·새 reducer·커밋은 불필요**하다.
+- 기존 `round.py`의 `tables-TAG.txt`에 failures/D1/whole POOL이 모두 있고 comparison JSON에는 원시 requests/power가 있다. **round.py/conductor.py 변경·새 reducer·커밋은 불필요**하다.
 - 아래는 동일 tables 원본 judgment 필드만 더하는 오프라인 명령이다(`C`를 위 절대 경로로 export, `TAG=10`; 후보는 해당 태그). 출력 반올림값 대신 원시 J를 쓴다.
 ```sh
 TAG=10 python3 - <<'PY'
 import importlib.util, json, os
 from pathlib import Path
-spec = importlib.util.spec_from_file_location('round_report', 'hack/e5/round.py')
+spec = importlib.util.spec_from_file_location('round_report', 'hack/evaluation/round.py')
 r = importlib.util.module_from_spec(spec); spec.loader.exec_module(r)
 values = [r.sections(Path(os.environ['C']) / f'full-{row}-{os.environ["TAG"]}' / 'judgment.json') for row in ('E5-3m','E5-5m','E5-7m')]
 assert all(v and len(v['requests']) == 3 for v in values), 'Incomplete rows'
@@ -55,4 +55,4 @@ PY
 - `O/campaign/v2/rounds/round-10-baseline.json`: source=d4a933bf, harness=b0877c1e, tag=10, restoreOriginTag=223, compareTags=[](전체 길이 7회차와 잘못 비교하지 않음).
 - baseline publication=`O/deployB/control-257-20261030/publication.json`, server digest=`sha256:1f1c201192946d75d8d01d19a455590f9ff311c2c69bb84124037964ed04fa04`(platform digest도 publication 사용). 다음 후보 publication=`O/deployB/control-268-20261031/publication.json`(b0877c1e); 서로 바꿔 쓰지 않는다.
 - `C/release-round-10.json`은 release-round-9 형식으로 Main 승인 1회 측정·notBeforeUTC=2026-10-31T07:40:00Z를 기록한다. 이 시간 제한은 운영 조건이며 runner가 자동 강제하지 않는다.
-- 실행은 Main이 창·gate를 확인한 뒤 `python3 hack/e5/round.py --round O/campaign/v2/rounds/round-10-baseline.json`(O는 절대 경로로 치환) **한 명령만**. 이 문서 작업에서는 배포·클러스터 변경·측정·체크 실행을 하지 않았다.
+- 실행은 Main이 창·gate를 확인한 뒤 `python3 hack/evaluation/round.py --round O/campaign/v2/rounds/round-10-baseline.json`(O는 절대 경로로 치환) **한 명령만**. 이 문서 작업에서는 배포·클러스터 변경·측정·체크 실행을 하지 않았다.

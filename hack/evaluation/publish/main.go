@@ -1,4 +1,4 @@
-// Command publish stores E5's private raw evidence before its immutable summary.
+// Command publish stores evaluation's private raw evidence before its immutable summary.
 package main
 
 import (

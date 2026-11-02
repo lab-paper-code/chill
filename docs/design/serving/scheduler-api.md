@@ -20,7 +20,7 @@ HTTPS ChillServer는 `--serving-scheduler-configmap=<name>`과
 | `settings.servingMemoryBytes` | 서빙 Pod의 memory request와 limit은 profile의 측정 최대 메모리에 이 값을 더한 것이다. 절반(최대 64 MiB)이 firstfloor `maxQueueBytes`이고, Go의 기본 GOGC 100에서 heap이 대기 요청 바이트의 두 배까지 자라는 것을 나머지 절반이 받는다. 2 미만이면 서빙 준비가 `PreparationUnavailable`이다. sample의 128 MiB는 rasp5 q1(측정 198 MiB)이 포아송 40 req/s에서 대기 요청으로 OOMKilled된 m4 r2 사건의 대기열 64 MiB를 담는다 |
 | `settings.completionMarginMS` | 필수, 유한한 0 이상의 ms. firstfloor 처리 완료에 요청마다 더하는 완료 여유이고 ChillServer가 dispatch 때 요청에 넣는다. sample의 `29`는 m4 r3 포아송 40 req/s 포화에서 잰 m(종단 경과 − (`nativeElapsedMS` − ingress))의 p95 29.2 ms다([용량표 계획기 5장](analytic-planner.md#5-완료-여유-규칙)). E1의 p99 138.23 ms는 요청마다 걸리던 TokenReview 지연이 대부분이었고, 인증 결과 재사용(c829518)과 authz singleflight가 그 지연을 없앴다 |
 | `settings.capacityWindowNanos`, `capacityWindows`, `capacityPassingWindows`, `capacityMinimumRequests` | 필수. 용량표 행의 창 길이(> 0), 요청률마다 재생하는 창 수(≥ 1), 충족 창 수(1 이상 창 수 이하), 창의 최소 요청 수(≥ 1). sample은 60 s, 20, 19, 1,000이다([용량표 계획기](analytic-planner.md#2-용량표)) |
-| `settings.planSearchWorkers` | 필수 정수≥1. 판단시작부터 controlIntervalNanos 절반 예산, 종료시 capacity.search.budgetCut. sample3/서버6CPU에서 G≈220req/s 게이트웨이≈1.7+나머지Tick≈.5core와 합쳐≈.8core 여유였다([자원 상한](workload-management.md#e5의-chillserver-메모리와-cpu-상한),[계획기](analytic-planner.md#4-노드-계획과-탐색)). E5 G 실측 뒤 선택한다 |
+| `settings.planSearchWorkers` | 필수 정수≥1. 판단시작부터 controlIntervalNanos 절반 예산, 종료시 capacity.search.budgetCut. sample3/서버6CPU에서 G≈220req/s 게이트웨이≈1.7+나머지Tick≈.5core와 합쳐≈.8core 여유였다([자원 상한](workload-management.md#evaluation의-chillserver-메모리와-cpu-상한),[계획기](analytic-planner.md#4-노드-계획과-탐색)). evaluation G 실측 뒤 선택한다 |
 | `settings.autonomousWorkloads` | 자동제어할 Workload UID 목록. decision은 Workload마다 `workloads[]`에 `Disabled`, `MeasurementEvidenceMissing`, `Controlled` 상태와 사유를 남긴다([워크로드별 자동제어](workload-pools.md#31-워크로드별-자동제어)) |
 | `settings.excludedNodes` | 계획에서 뺀 Node 이름 목록(이름마다 하나, 빈 이름 불가, sample은 빈 목록). 그 Node는 측정 POOL Node처럼 그대로 두며 판단의 노드 계획과 snapshot 노드 사유에 `ExcludedNode`로 남는다([용량표 계획기 14장](analytic-planner.md#14-구현-규칙)). Dashboard 운영 설정의 "계획에서 뺀 장비"가 고친다 |
 | `reserved` | Node별 비서빙 전용 예약 CPU IDs와 GPU UUID. quota는 별도 수량 예산. CPU inventory는 node agent가 Node annotation `edge.dacs.io/cpus`에 게시한 online CPU이고, GPU inventory는 그 Node에서 측정한 profile의 GPU UUID다([node agent](../platform/node-agent.md#21-필드별-출처)). inventory 밖의 예약은 Node를 `PlacementInventoryMissing`으로 만든다 |
@@ -46,7 +46,7 @@ serving이며 worker metadata ack로 확인한다([strict fixed-size baseline](s
 작업 입력은 HTTP와 CLI의 공유 typed strict decoder에서 중첩 `node`의 미선언 필드까지
 거절한다. 종류별 허용 필드 검사는 값이 `null`이나 0이어도 필드의 존재를 기준으로 적용한다(`SCH-39`).
 Dashboard의 `scheduler-settings.tsx`도 설정 PUT에서 두 읽기 전용 필드를 제외한다.
-`hack/e5`의 E5/demo/D2 설정 쓰기도 같은 입력 계약을 따른다. `reason`은
+`hack/evaluation`의 evaluation/demo/D2 설정 쓰기도 같은 입력 계약을 따른다. `reason`은
 operations POST 전용이며 settings PUT에는 넣지 않는다. 설정 PUT의 미선언
 `reason` 필드는 strict decode에서 400 `InvalidBody`(`field=body`)로 거절한다.
 배분 편집은 바뀐 UID만 route/unroute/release POST로 순서대로 보내고,

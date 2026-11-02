@@ -12,7 +12,7 @@ import time
 from types import SimpleNamespace
 
 _parser_spec = importlib.util.spec_from_file_location(
-    'soak_timestamp_parser', Path(__file__).resolve().parents[1] / 'e5/d2/analyze_before.py')
+    'soak_timestamp_parser', Path(__file__).resolve().parents[1] / 'evaluation/d2/analyze_before.py')
 _parser = importlib.util.module_from_spec(_parser_spec)
 _parser_spec.loader.exec_module(_parser)
 
@@ -306,7 +306,7 @@ def main():
     repository = Path(config['paths']['repository']).resolve()
     if args.out.resolve() == repository or repository in args.out.resolve().parents:
         parser.error('--out must be outside repository')
-    spec = importlib.util.spec_from_file_location('soak_conductor', Path(__file__).resolve().parents[1] / 'e5/d2/conduct_before.py')
+    spec = importlib.util.spec_from_file_location('soak_conductor', Path(__file__).resolve().parents[1] / 'evaluation/d2/conduct_before.py')
     helper = importlib.util.module_from_spec(spec); spec.loader.exec_module(helper)
     client = object.__new__(helper.Conductor)
     client.http = helper.urllib.request.build_opener(helper.NoRedirect(), helper.urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=str(helper.CA))))

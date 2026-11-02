@@ -92,7 +92,7 @@ Node sample/batch cadence와 transitionObserver.activeDeadlineOverheadSeconds=18
 | inputs.maximumIdleNanosPerRequest | finite ≥0, ns/request | 입력 closure 검증→분석 eligibility |
 | failureInjectionRunbook | 기존 문서 구조 | 입력 config 우선, 누락 때만 example 기본 선택→binding 보존→운영자 주입·분석 |
 
-closure는 선언 target 목록 길이와 실제 모집단을 비교한다. expectedClosureCount는 없다. full/static/factor 시간은 schedule/선택 N에서 유도한다. `e5.py check:2610-2614`의11700·10200·seed 집합·21900도 binding schedule/seed에서 유도한다. 기준은 example만이 아니라 현재 실행 함수의 schedule·fallback이다.
+closure는 선언 target 목록 길이와 실제 모집단을 비교한다. expectedClosureCount는 없다. full/static/factor 시간은 schedule/선택 N에서 유도한다. `conductor.py check:2610-2614`의11700·10200·seed 집합·21900도 binding schedule/seed에서 유도한다. 기준은 example만이 아니라 현재 실행 함수의 schedule·fallback이다.
 
 DELAY_TOLERANCE_NS=10ms는 delayed 표시 방법론 C다. --delay-tolerance나 존재하지 않는 단독 CLI metadata를 신설하지 않는다. 기존 arrivals/seed/workers/delivery/socket/lifetime와 generatorQuality를 동결한다. poll·marker poll·종료 대기·단순 command timeout은 측정·수용 영향 근거가 없으면 C, 기존 안전 예산은 D다. 경로별30/129초·1/2/5초를 합치지 않는다. 삭제할 CHILL host-reader/SSH/crictl 수집은 설정화하지 않는다. client 수집·STOP loop·운영자 장애 주입은 유지한다.
 예정 대체: 현재 로컬 `binding.config` 동결·운영자 장애 주입은 유지하되, [실험 실행 설계](../profiling/experiment-execution.md) / [실험 SRS](../../spec/experiments/SRS.md)에 따른 정의·독립 실행으로 대체할 예정이다.
@@ -105,7 +105,7 @@ DELAY_TOLERANCE_NS=10ms는 delayed 표시 방법론 C다. --delay-tolerance나 �
 
 | 키 | 생략 기본값 | 소비자 |
 |---|---|---|
-| stages[].id/seconds/alpha/parts | 기존 `normative_stage_specs(burstLowSeconds)`의 8개 E5 row/12개 part: 600,1800,900,1800,900,1200,3600,900초; 기존 α 그대로 | bind → 연속 part trace/producer → judge; 명시 part ID 보존. demo의 필수 stages는 기존대로 |
+| stages[].id/seconds/alpha/parts | 기존 `normative_stage_specs(burstLowSeconds)`의 8개 evaluation row/12개 part: 600,1800,900,1800,900,1200,3600,900초; 기존 α 그대로 | bind → 연속 part trace/producer → judge; 명시 part ID 보존. demo의 필수 stages는 기존대로 |
 | seeds | canonical MNV101/PLC202/Smol303 | bind trace·smoke·workload.seed·Job 이름/인자·check |
 | arrivals | canonical workload별 poisson | bind trace·workload.arrivals·producer의 모든 segment; fixed도 허용 |
 | g0Evidence.durationSeconds / alpha / maximumCPUFraction | 120 / 1.2 / 1 | one-shot G-check schedule·rates·엄격한 CPU fraction 상한 검증; demo bootstrap도 선택 duration/alpha 소비 |
@@ -118,13 +118,13 @@ DELAY_TOLERANCE_NS=10ms는 delayed 표시 방법론 C다. --delay-tolerance나 �
 | failureSelectSnapshotTTLSeconds | 15초 | 장애 선택 snapshot age/expiry |
 | tokenSafetyMarginSeconds | 60초 | bind·각 실행 token lifetime 사전 점검 |
 | timeboxes.finishResetWaitSeconds / powerDownSeconds / factorAckWaitSeconds | 600 / 1800 / 120초 | zero-state reset 대기·reset HTTP 총 예산·복원 ACK |
-| timeboxes.apiSeconds | 기존 E5 필수 입력 유지; 일반 정규화 fallback30초 | 각 경로 API 예산; 승인129초를30초로 바꾸지 않음 |
+| timeboxes.apiSeconds | 기존 evaluation 필수 입력 유지; 일반 정규화 fallback30초 | 각 경로 API 예산; 승인129초를30초로 바꾸지 않음 |
 | collection.energyCoverage | maxGapFraction=.01,maxSingleGapSeconds=30 | 에너지 row gap 수용 |
 | generatorQuality | latenessToleranceNS=50000000,maxExceedingFraction=.01 | 실제 issuance/품질 수용 |
-| failureInjectionRunbook | 누락 때만 기존 example 문서 | 선택 문서를 config와 E5-7 row에 보존, 운영자 주입/분석 |
+| failureInjectionRunbook | 누락 때만 기존 example 문서 | 선택 문서를 config와 failure row에 보존, 운영자 주입/분석 |
 | workloads[].workers/deliverySeconds/socketSeconds/lifetimeSeconds | 기존 필수 workers/delivery/socket 유지; lifetime 생략 None | 기존 CLI 인자로 동결·재생; None은 request-lifetime 인자 미전달, CLI fallback 유지 |
 
-`fullSeconds`, `staticSeconds`, `factorSeconds` 및 `check`의 시간/seed 대조는 binding schedule/config에서 유도한다. closure 모집단도 선언 target 목록과 비교한다. 새 closure count·G0 count·delay/poll 키는 없다. 현재 E5→실행 helper는 측정 CR을 생성하지 않으므로 슬라이스2 후속 CI/tolerance/occupancy seed 선택 전달 대상은 없다. 기존 운영 입력 sample은 §7의 완전 문서 선택을 따른다.
+`fullSeconds`, `staticSeconds`, `factorSeconds` 및 `check`의 시간/seed 대조는 binding schedule/config에서 유도한다. closure 모집단도 선언 target 목록과 비교한다. 새 closure count·G0 count·delay/poll 키는 없다. 현재 evaluation→실행 helper는 측정 CR을 생성하지 않으므로 슬라이스2 후속 CI/tolerance/occupancy seed 선택 전달 대상은 없다. 기존 운영 입력 sample은 §7의 완전 문서 선택을 따른다.
 
 기존 실제 bind와 새 기본 bind의 stage/part 시간·rates·offset·offered/full11700/static10200/factor2100×N/payload/κ/settings를 offline 대조했다. E5/demo/report/collector self-check, load-generator32검사·serving/kube 검사 및 비기본 stage/fixed/seed7/G0(37초/.8/.75)/PLC p90·freshness 회귀가 근거다. 키/hash/바이트 동등성 관문은 없고 운영 전체 bind/E5·클러스터·SSH·배포는 미실행이다.
 

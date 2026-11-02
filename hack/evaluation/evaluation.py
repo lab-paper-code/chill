@@ -76,7 +76,7 @@ def expand(value,inputs):
 def environment(run,config,scientific,workloads):
     work=run.parent.parent
     env={'paths':{'repository':str(REPO),'ops':str(work),'campaign':str(run.parent),'d2State':str(work/'d2'),'inputs':str(work/'inputs')},
-         'e5':{**scientific,'publishExecutable':str(REPO/'bin/e5-publish')},
+         'evaluation':{**scientific,'publishExecutable':str(REPO/'bin/evaluation-publish')},
          'd2':{'kubectl':['/usr/bin/kubectl'],'namespace':config['namespace'],'apiBase':config['chillAPIURL'],'caFile':CA,'tokenFile':TOKEN,'collectorTokenFile':TOKEN,'repoBin':str(REPO/'bin'),'jobTemplate':workloads[0]['jobTemplate'],'workloadUID':workloads[0]['uid'],'workloadName':workloads[0]['name']}}
     env['d2']['nodes']=scientific['nodes']
     path=work/'environment.json';save(path,env);os.environ['CHILL_EXPERIMENT_CONFIG']=str(path)
@@ -108,7 +108,7 @@ def stage_config(base,spec,scenario,execution,config,root):
     value['approval']['sources']['power']='bin/observation-power-source-d39c9576'
     value['seeds']=scenario['seeds'];value['arrivals']=scenario['spec']['arrivalDistribution']
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]{0,39}',spec['row']):
-        raise ValueError('FrozenInputInvalid: row requires a safe E5 row label')
+        raise ValueError('FrozenInputInvalid: row requires a safe evaluation row label')
     value['stages']=[{'id':spec['row'],'parts':[{'id':part['id'],'seconds':part['durationSeconds'],**{key:part[key] for key in ('rates','alpha') if key in part}} for part in scenario['spec']['parts']]}]
     value['generatorQuality']={'latenessToleranceNS':spec['judgment']['generatorQuality']['latenessToleranceNanos'],'maxExceedingFraction':spec['judgment']['generatorQuality']['maxExceedingFraction']}
     value['collection']['energyCoverage']=spec['judgment']['energyCoverage']
@@ -174,7 +174,7 @@ class Harness:
         self.scope='stages/'+self.execution['stageID'] if self.execution.get('stageID') else 'run'
         self.prefix='experiments/'+self.execution['runUID']+'/'+self.scope
         self.root=self.run/self.scope if self.scope!='run' else self.run
-        self.e5=None
+        self.harness_module=None
     def upload(self,path,key): return self.store.put(key,path)
     def emit(self,value,name,key=None):
         path=self.root/name;save(path,value);return self.upload(path,key or self.prefix+'/'+self.step+'/'+name)
@@ -221,7 +221,7 @@ class Harness:
                 actual=next(value for value in workloads if value['name']==workload['name'])
                 workload.update({key:actual[key] for key in ('uid','generation','slo')})
             bases[identity]=(base,scientific)
-        first=next(iter(bases.values()));environment(self.run,self.config,first[1],first[0]['workloads']);self.e5=module('evaluation_e5',HERE/'e5.py')
+        first=next(iter(bases.values()));environment(self.run,self.config,first[1],first[0]['workloads']);self.harness_module=module('evaluation_harness',HERE/'conductor.py')
         self.run.mkdir(parents=True,exist_ok=True)
         initial={'state':api(self.config,'/api/v1/scheduler/state'),'settings':api(self.config,'/api/v1/scheduler/settings'),'at':now()};save(self.run/'initial.json',initial)
         if self.spec['harness']['sourceSHA']!=os.environ.get('CHILL_HARNESS_SOURCE_SHA'):
@@ -248,7 +248,7 @@ class Harness:
             gateway=root/'current-gateway.json';save(gateway,{'requestTimeoutSeconds':settings['requestTimeout']/1e9,'sourceSHA':component['sourceSHA'],'controlImageDigest':container['imageID'],'capturedUTC':now(),'target':targets})
             config['inputs'].update(scheduler=str(scheduler_path),powerObservation=str(power_path),gateway=str(gateway))
             path=root/'prepared-config.json';save(path,config)
-            binding=self.e5.bind(path)
+            binding=self.harness_module.bind(path)
             if binding['payload']!=scenarios[template['loadScenarioRef']['uid']]['bundle']['payload']:
                 raise ValueError('FrozenInputInvalid: payload manifest differs from materialized dataset')
             expected=stage['powerMeasurement']
@@ -320,7 +320,7 @@ class Harness:
                     raise ValueError('FrozenInputInvalid: child differs from frozen '+key)
             if self.spec['stageID']!=self.execution['stageID']:
                 raise ValueError('FrozenInputInvalid: child stage ID differs from execution')
-        environment(self.run,self.config,self.snapshot['environment'],[self.snapshot['bootstrapWorkload']]);self.e5=module('evaluation_e5',HERE/'e5.py')
+        environment(self.run,self.config,self.snapshot['environment'],[self.snapshot['bootstrapWorkload']]);self.harness_module=module('evaluation_harness',HERE/'conductor.py')
     def controller(self):
         stage_id=self.execution.get('stageID',self.snapshot['runSpec']['stages'][0]['id'])
         binding=copy.deepcopy(self.snapshot['bindings'][stage_id]);config=binding['config']
@@ -329,7 +329,7 @@ class Harness:
         path=self.root/'binding.json';save(path,binding)
         release=self.root/'release.json';save(release,{'executor':'EvaluationRun','execution':self.execution,'bindingPath':str(path),'mainInstructionUTC':self.snapshot['initial']['at']})
         args=SimpleNamespace(binding=path,release=release,out=self.root,mode='full',stage=self.spec.get('row',binding['schedule'][0]['id']),row_tag=self.execution.get('stageUID','').replace('-',''),pre_state=None,command=self.step)
-        return self.e5.CPO(args,restore_control_on_error=False,go_callback=self.go)
+        return self.harness_module.CPO(args,restore_control_on_error=False,go_callback=self.go)
     def go(self,value):
         value.update({key:self.execution[key] for key in ('runUID','stageUID','stageID')})
         path=self.root/'measured/go.json';save(path,value)
@@ -362,7 +362,7 @@ class Harness:
         controller.monitor=MethodType(monitor,controller)
         controller.run()
         phase=load(self.root/'measured/phase.json')
-        parser=self.e5.module('evaluation_start_times',HERE/'e5-raw.py')._time
+        parser=self.harness_module.module('evaluation_start_times',HERE/'raw.py')._time
         starts=[parser(value['at']) for value in phase['starts'].values()]
         skew=max(starts)-min(starts) if starts else 0
         save(self.root/'measured/generator-barrier.json',{'startSkewNanos':skew,'maximumStartSkewNanos':self.spec['loadGenerator']['barrier']['maxStartSkewNanos'],'accepted':skew<=self.spec['loadGenerator']['barrier']['maxStartSkewNanos']})
@@ -371,7 +371,7 @@ class Harness:
     def judge(self):
         controller_binding=self.root/'binding.json';folder=self.root/'measured'
         if self.spec.get('failureInjection'): self.injections(folder)
-        self.measurement=verdict(self.e5.judge(controller_binding,folder))
+        self.measurement=verdict(self.harness_module.judge(controller_binding,folder))
         if not load(folder/'generator-barrier.json')['accepted']:
             self.measurement={'verdict':'INVALID','reason':'GeneratorInvalid'}
     def injections(self,folder):
@@ -455,13 +455,13 @@ class Harness:
                 definitions={'workloads':self.snapshot['scenarios'][template['loadScenarioRef']['uid']]['workloads']}
                 phase_source=next(({key:ref[key] for key in ('store','key')} for ref in artifacts if ref['key'].endswith('/stage/artifacts/measured/phase.json') and '/stages/'+sid+'/' in ref['key']),None)
                 for name,row in requests.items():
-                    metadata,reasons=self.e5.publication_metadata(bound,phase,name,definitions,{'store':self.store.name,'key':publication_prefix+'execution.json'},phase_source,row.get('actualGatewayIdentities',[]))
+                    metadata,reasons=self.harness_module.publication_metadata(bound,phase,name,definitions,{'store':self.store.name,'key':publication_prefix+'execution.json'},phase_source,row.get('actualGatewayIdentities',[]))
                     if row.get('offered') and not row.get('actualGatewayIdentities'):
                         metadata.update(workloadUID=None,definitionID=None,identitySource=None);reasons['identity']='Observed request identity absent'
                     row.update(metadata);row['missingReasons'].update(reasons)
                 power=judgment.get('power') or {}
                 kpis={'status':judgment['status'],'requests':requests,'wholePoolJoules':power.get('wholePoolJoules') if power.get('complete') else None,'activePoolJoules':power.get('activePoolJoules') if power.get('complete') else None,'power':{key:power.get(key) for key in ('complete','wholePoolJoules','activePoolJoules','energyCoverage','gapErrorBoundJoules')},'schedulerSettings':bound['schedulerSettings'],'limitations':bound['limitations']}
-                kpis.update(self.e5.publication_measurements(bound,power))
+                kpis.update(self.harness_module.publication_measurements(bound,power))
                 stages.append({'id':sid,'from':phase['startUTC'],'to':phase['endUTC'],'kpis':kpis})
         generated=now();start=min((stage['from'] for stage in stages),default=generated if prepare_failed else self.snapshot['initial']['at']);end=max((stage['to'] for stage in stages),default=generated)
         prefix='serving/experiments.v1alpha1/'+self.execution['runUID']+'/'
@@ -483,7 +483,7 @@ class Harness:
             aggregated={'stages':[],'results':{},'status':'NOT_EVALUATED','reason':procedures['prepare']['execution']['reason']}
         else:
             first_binding=next(iter(self.snapshot['bindings'].values()));save(self.run/'binding.json',first_binding)
-            aggregated=self.e5.summarize(None,self.run,evaluation={'stages':stages,'results':results,'physicalRestoration':procedures.get('finish',{}).get('cleanup')})
+            aggregated=self.harness_module.summarize(None,self.run,evaluation={'stages':stages,'results':results,'physicalRestoration':procedures.get('finish',{}).get('cleanup')})
         measurement=aggregated['status']
         scenarios=[] if prepare_failed else list(self.snapshot['scenarios'].values())
         definitions={workload['uid']:workload for scenario in scenarios for workload in scenario['workloads']}
@@ -546,7 +546,7 @@ class Harness:
         Path(private['tempDir']).mkdir(mode=0o700,parents=True,exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='evaluation-publish-',dir='/private') as directory:
             credentials=Path(directory)/'config.json';credentials.write_text(json.dumps(private));credentials.chmod(0o600)
-            result=subprocess.run([str(REPO/'bin/e5-publish'),'--config',str(credentials),'--manifest',str(manifest)],capture_output=True,text=True)
+            result=subprocess.run([str(REPO/'bin/evaluation-publish'),'--config',str(credentials),'--manifest',str(manifest)],capture_output=True,text=True)
             if result.returncode: raise RuntimeError('PublicationFailed: '+result.stderr.strip())
         self.outputs={'summary':{'store':self.store.name,'key':prefix+'summary.json','size':summary_path.stat().st_size}}
     def execute(self,step):

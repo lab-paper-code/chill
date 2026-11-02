@@ -156,7 +156,7 @@ spec:
                 type: integer
               supplyMode:
                 description: SupplyMode selects fixed outstanding supply without changing
-                  E5 arrivals.
+                  evaluation arrivals.
                 enum:
                 - closed-loop
                 - poisson

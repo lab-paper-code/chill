@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Released, one-shot E5 round orchestration. No implicit measurement retries.
+"""Released, one-shot evaluation round orchestration. No implicit measurement retries.
 
 Configuration and resume semantics are documented in hack/README.md.
 --self-check is entirely offline and does not require experiment configuration.
@@ -26,7 +26,10 @@ from types import SimpleNamespace
 
 HERE = Path(__file__).resolve().parent
 ROWS = ('E5-3', 'E5-5', 'E5-6', 'E5-7')
-ACCOUNTS = {'.token': 'chill-dashboard-user', '.token-collector': 'chill-e5-evidence-collector'}
+# Stored package-* source keys belong to the retained binding, not the new checkout.
+PACKAGE_FILENAMES = {'e5.py': 'conductor.py', 'e5-wire.py': 'wire.py', 'e5-producer.py': 'producer.py',
+                     'e5-raw.py': 'raw.py', 'e5-archive.py': 'archive.py'}
+ACCOUNTS = {'.token': 'chill-dashboard-user', '.token-collector': 'chill-evaluation-evidence-collector'}
 KAPPA = ['-mode', 'table', '-workloads', 'image-classification-tight-slo,smolvlm2-vqa,plc-anomaly',
          '-margin', '29', '-window', '60', '-windows', '20', '-passing', '19', '-workers', '3']
 
@@ -77,7 +80,7 @@ def validate(c):
     if type(c['h']) not in (float, int) or not math.isfinite(c['h']) or not 0 <= c['h'] <= 1:
         fail('h requires a finite fraction in [0,1]')
     if type(c['minimumFreeBytes']) is not int or c['minimumFreeBytes'] < 310_000_000_000:
-        fail('minimumFreeBytes must be at least the existing E5 310 GB boundary')
+        fail('minimumFreeBytes must be at least the existing evaluation 310 GB boundary')
     if not isinstance(c['control'], str) or not c['control'].isdigit():
         fail('control requires decimal digits')
     basis = c['rateBasis']
@@ -194,10 +197,10 @@ class Round:
                 fail('--next-row-tag requires --resume-from')
             self.state = {'schema': 'e5-round-state.v1', 'config': c, 'completed': [], 'rowTags': dict.fromkeys(c['rows'], c['rowTag']), 'measurementRetries': 0}
         self.attempt = Path(tempfile.mkdtemp(prefix='attempt-'+dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')+'-', dir=self.root))
-        self.harness = self.ops/'harness'/('e5-'+c.get('harnessSHA', c['sourceSHA']))
+        self.harness = self.ops/'harness'/('evaluation-'+c.get('harnessSHA', c['sourceSHA']))
         self.binding = self.run/('binding-round-'+c['rowTag']+'.json')
         self.k = self.env['d2']['kubectl']+['-n', self.env['d2'].get('namespace', 'chill-system'), '--request-timeout=15s']
-        self.e5 = None
+        self.harness_module = None
         self.cpo = None
         self.active_step = self.start
         if advance_tag:
@@ -264,16 +267,16 @@ class Round:
 
     def import_harness(self):
         os.environ['CHILL_EXPERIMENT_CONFIG'] = self.c['environment']
-        self.e5 = module('round_e5', self.harness/'hack/e5/e5.py')
+        self.harness_module = module('round_harness', self.harness/'hack/evaluation/conductor.py')
 
     def controller(self, row=None, command='factor', row_tag=None):
-        if self.e5 is None:
+        if self.harness_module is None:
             self.import_harness()
         a = SimpleNamespace(binding=self.binding, release=Path(self.c['release']), out=self.run, command=command, mode='full', stage=row or self.c['rows'][0], row_tag=row_tag or self.state['rowTags'][row or self.c['rows'][0]])
-        return self.e5.CPO(a)
+        return self.harness_module.CPO(a)
 
     def call(self, command, row, extra=(), **kwargs):
-        argv = [sys.executable, '-B', self.harness/'hack/e5/e5.py', command, '--binding', self.binding, '--release', self.c['release'], '--out', self.run, '--mode', 'full', '--stage', row, '--row-tag', self.state['rowTags'][row], *extra]
+        argv = [sys.executable, '-B', self.harness/'hack/evaluation/conductor.py', command, '--binding', self.binding, '--release', self.c['release'], '--out', self.run, '--mode', 'full', '--stage', row, '--row-tag', self.state['rowTags'][row], *extra]
         return self.command(argv, row+'-'+command, timeout=7200, **kwargs)
 
     def disk(self, label):
@@ -355,7 +358,7 @@ class Round:
             # git archive is extracted in a sibling temporary tree; incomplete copies
             # can never masquerade as the immutable final harness after interruption.
             self.harness.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.TemporaryDirectory(dir=self.harness.parent, prefix='.e5-') as directory:
+            with tempfile.TemporaryDirectory(dir=self.harness.parent, prefix='.evaluation-') as directory:
                 archive = Path(directory)/'source.tar'
                 self.command(['git', 'archive', '--format=tar', '--output='+str(archive), sha], 'harness-archive')
                 source = Path(directory)/'source'
@@ -363,7 +366,7 @@ class Round:
                 self.command(['tar', '-xf', archive, '-C', source], 'harness-extract')
                 (source/'round-source.json').write_text(json.dumps({'sourceSHA': sha})+'\n')
                 source.rename(self.harness)
-        tracked = self.command(['git', 'ls-tree', '-r', '--name-only', sha, 'hack/e5'], 'harness-files').read_text().splitlines()
+        tracked = self.command(['git', 'ls-tree', '-r', '--name-only', sha, 'hack/evaluation'], 'harness-files').read_text().splitlines()
         for index, relative in enumerate(tracked):
             if not relative.endswith('.py'):
                 continue
@@ -371,8 +374,8 @@ class Round:
             if frozen.read_bytes() != (self.harness/relative).read_bytes():
                 fail('Frozen harness content differs from commit: '+relative)
         self.import_harness()
-        b = self.e5.load_binding(self.c['binding'])
-        basis = self.e5.load_binding(self.c['rateBasis']['binding'])
+        b = self.harness_module.load_binding(self.c['binding'])
+        basis = self.harness_module.load_binding(self.c['rateBasis']['binding'])
         for key in ('payload', 'kappa'):
             if b[key] != basis[key]:
                 fail('Frozen R3 '+key+' differs')
@@ -409,14 +412,15 @@ class Round:
         b['roundProvenance'] = {'sourceSHA': self.c['sourceSHA'], 'harnessSHA': sha, 'harness': str(self.harness), 'rateBasis': self.c['rateBasis'], 'measurementRetries': 0}
         for key in b['sources']:
             if key.startswith('package-'):
-                b['sources'][key] = self.e5.ref(self.harness/'hack/e5'/key[len('package-'):])
+                filename = key[len('package-'):]
+                b['sources'][key] = self.harness_module.ref(self.harness/'hack/evaluation'/PACKAGE_FILENAMES.get(filename, filename))
             elif key == 'failureRunbook':
-                b['sources'][key] = self.e5.ref(self.harness/'hack/e5/demo-config.e5.example.json')
+                b['sources'][key] = self.harness_module.ref(self.harness/'hack/evaluation/demo-config.evaluation.example.json')
             elif key.startswith('D2-helper-'):
-                b['sources'][key] = self.e5.ref(self.harness/'hack/e5/d2'/key[len('D2-helper-'):])
+                b['sources'][key] = self.harness_module.ref(self.harness/'hack/evaluation/d2'/key[len('D2-helper-'):])
         release = load(self.c['release'])
-        if release.get('bindingPath') != str(self.binding) or release.get('executor') != 'CampaignOps' or release.get('command') != 'e5-execute' or not release.get('mainInstructionUTC') or self.e5.approval_sources(release) != self.e5.approval_sources(b['config']['approval']):
-            fail('Main-approved e5-execute release must name generated bindingPath and exact component sources')
+        if release.get('bindingPath') != str(self.binding) or release.get('executor') != 'CampaignOps' or release.get('command') != 'evaluation-execute' or not release.get('mainInstructionUTC') or self.harness_module.approval_sources(release) != self.harness_module.approval_sources(b['config']['approval']):
+            fail('Main-approved evaluation-execute release must name generated bindingPath and exact component sources')
         auth = module('round_budget', HERE/'auth.py')
         budget = max(1200, auth.lifetime_budget(b['schedule'], b['config']['timeboxes'], b['config'].get('tokenSafetyMarginSeconds', 60)))
         budget += sum(schedule[r]['seconds']+sum(b['config']['timeboxes'].values()) for r in self.c['rows'])+7200
@@ -470,7 +474,7 @@ class Round:
         self.save(label+'-state.json', state)
         self.save(label+'-settings.json', settings)
         snapshot = state['snapshot']
-        reservations, ignored = self.e5.stage_scope(snapshot.get('reservations'), self.c.get('reservationNodes'))
+        reservations, ignored = self.harness_module.stage_scope(snapshot.get('reservations'), self.c.get('reservationNodes'))
         self.save(label+'-reservation-scope.json', {'reservationNodes': self.c.get('reservationNodes'), 'reservations': reservations, 'ignoredReservations': ignored})
         if snapshot.get('instances') or reservations or settings.get('autonomousWorkloads'):
             raise RuntimeError('Final state requires instances0/participating-reservations0/autonomyoff')
@@ -519,7 +523,7 @@ class Round:
         if 'reuseRows' in self.c['kappa']:
             source = Path(self.c['kappa']['reuseRows'])
             rows = load(source)
-            self.save('kappa-reuse.json', {'source': str(source), 'replays': 0, 'sha256': self.e5.ref(source)['sha256']})
+            self.save('kappa-reuse.json', {'source': str(source), 'replays': 0, 'sha256': self.harness_module.ref(source)['sha256']})
         else:
             self.cpo = self.controller()
             scheduler = self.save('scheduler.json', self.cpo.api('GET', '/api/v1/scheduler'))
@@ -615,7 +619,7 @@ class Round:
             command_ref = self.save(row+'-injection-'+str(injected)+'.json', {'argv': commands[-1], 'commands': commands, 'results': results})
             record['events'].append({'offsetSeconds': planned['offsetSeconds'], 'actualOffsetSeconds': time.time()-self.cpo.d.epoch(phase['startUTC']), 'kind': kind, 'atUTC': at, 'exitCode': 0, 'nodeUID': selected['nodeUID'], 'podUID': selected['podUID'], 'commandRef': str(command_ref), 'responseRef': results[-1]['stdoutPath']})
             record['status'] = 'OPERATOR_RECORDED'
-            self.e5.save(events_path, record)
+            self.harness_module.save(events_path, record)
             injected += 1
         try:
             self.call('stage', row, watch=watch)
@@ -628,9 +632,9 @@ class Round:
             raise RuntimeError('Missing first load tick or failure injection evidence')
 
     def reports(self):
-        tables = module('round_tables', self.harness/'hack/e5/tables.py')
+        tables = module('round_tables', self.harness/'hack/evaluation/tables.py')
         current = {}
-        lines = ['E5 round '+self.c['rowTag']+' — frozen R3 rates; existing raw judgments only.']
+        lines = ['evaluation round '+self.c['rowTag']+' — frozen R3 rates; existing raw judgments only.']
         for row in self.c['rows']:
             value = sections(self.folder(row)/'judgment.json')
             current[row] = value
@@ -697,7 +701,7 @@ class Round:
                         lock = open('/tmp/chill-heavy.lock', 'a')
                         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                         self.publication = load(self.c['publication'])
-                        if self.e5 is None:
+                        if self.harness_module is None:
                             self.import_harness()
                         self.cpo = self.controller()
                         self.guard('resume-gate')
@@ -731,7 +735,7 @@ class Round:
             print('STOP '+self.active_step+': '+str(error)+'; evidence '+str(self.attempt), file=sys.stderr)
             # Offline reports are useful even when a later row was never measured.
             # They live in this attempt, never replace previous raw or reports.
-            if self.e5 is not None and self.active_step != '6' and self.state.get('reports') != str(self.attempt):
+            if self.harness_module is not None and self.active_step != '6' and self.state.get('reports') != str(self.attempt):
                 try:
                     self.reports()
                 except Exception as report_error:
@@ -745,6 +749,8 @@ class Round:
 def self_check():
     from unittest.mock import patch
     original_load = load
+    assert all((HERE / filename).is_file() for filename in PACKAGE_FILENAMES.values())
+    assert PACKAGE_FILENAMES['e5.py'] == 'conductor.py'
     fixture = dict(sourceSHA='a'*40, rows=['E5-5', 'E5-7', 'E5-6', 'E5-3'], rowTag='8d', restoreOriginTag='223', h=.25, rateBasis={'tag': '3', 'binding': '/ops/r3.json'}, compareTags=['3', '7'], environment='/ops/environment.json', binding='/ops/input.json', release='/ops/release.json', run='/ops/run', evidence='/ops/evidence', control='265', publication='/ops/publication.json', minimumFreeBytes=310_000_000_000, kappa={'reuseRows': '/ops/kappa.json'}, failureInjection=True)
     validate(fixture)
     assert steps(fixture['rows'])[:8] == ['0', '1', '2', '3', '4', '5:E5-5:factor', '5:E5-5:headroom', '5:E5-5:stage']

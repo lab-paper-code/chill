@@ -26,7 +26,7 @@ E5의 조건·순서·비교 관계는 CHILL 밖 `.cache/chill-assets/ops/pools-
 | 새 독립 프로세스 | 기존 profiler가 이미 분리된 측정 주체이므로 별도 서비스는 불필요하다. |
 | EvaluationRun 전용 Lease | 기존 leader election·단일 worker·캐시 아닌 목록 읽기로 현재 단일 풀을 직렬화한다. 추가 Lease도 퇴임 leader의 늦은 명령을 fencing하지 못한다. |
 | 판정·단계 프로토콜을 Go로 이식 | 기존 계산식과 실행 절차를 다시 쓰면 판정·측정 의미가 바뀔 위험이 있다. |
-| Katib | 탐색·튜닝용이며 이번 고정 E5 절차 실행에는 맞지 않는다. kind는 Katib Experiment와의 이름 충돌을 피해 EvaluationRun으로 정한다. |
+| Katib | 탐색·튜닝용이며 이번 고정 evaluation 절차 실행에는 맞지 않는다. kind는 Katib Experiment와의 이름 충돌을 피해 EvaluationRun으로 정한다. |
 | Tekton | CI 중심의 별도 실행 체계를 도입할 이유가 부족하다. |
 | Argo Workflows | 이번 단순 순차 실행에서 새 의존성을 들일 만큼 이점이 크지 않다. |
 | FaultInjection·ControlProfile·Snapshot CR | 독립 생명주기·소유자 근거 없음. |
@@ -38,10 +38,10 @@ E5의 조건·순서·비교 관계는 CHILL 밖 `.cache/chill-assets/ops/pools-
 1. namespaced 세 CR(개정 이력 참조)에 질문·조건·순서·비교·장애 주입·불변 입력 참조를 선언한다. spec 전체는 CEL `self == oldSelf`로 불변이며 정정은 새 CR이다. 실행 두 CR(EvaluationRun·EvaluationStage)의 status는 `observedGeneration`과 type-keyed `metav1.Condition`을 사용하고 실행 완료·측정 판정·정리 완료를 구분한다.
 2. 기존 profiler manager에 reconciler를 둔다. controller는 단계 순서·Job 채택·compact status만 소유한다. 기존 다른 측정 CR 실행 위치는 이 결정으로 옮기지 않는다.
 3. 배포·업그레이드는 하지 않는다. 기대 신원과 관측한 image digest·source SHA가 다르거나 신원을 확인할 수 없으면 시작하지 않는다. 이는 배포 신원 확인이며 새 digest 형식·재계산·바이트 동일성 검증 관문은 아니다.
-4. 시험 대상 제어·관측에는 ChillServer 공개 API와 Kubernetes API만 쓴다. E5-7 주입도 선언된 계획에 따라 Kubernetes API로 수행하며 ChillServer 내부 호출이나 장애 주입 API를 만들지 않는다.
+4. 시험 대상 제어·관측에는 ChillServer 공개 API와 Kubernetes API만 쓴다. failure 주입도 선언된 계획에 따라 Kubernetes API로 수행하며 ChillServer 내부 호출이나 장애 주입 API를 만들지 않는다.
 5. profiler leader election(Helm 기본 활성)·단일 worker·캐시 아닌 목록 읽기로 생성 순서에 따라 한 실험만 실행한다. leader election이 꺼지면 이 reconciler만 등록하지 않는다. 실험 시작 표시는 한 번 조건부 갱신하되 명령별 선점 장부는 만들지 않는다. 반환 미확인 실험은 다음 실행을 막으며 별도 Lease·우선순위 큐는 없다. 실제 노드 예약은 기존 ChillServer admission이 소유한다. 퇴임 leader의 늦은 명령 가능성은 알려진 한계이며 fencing을 보장한다고 주장하지 않는다.
 6. 재개는 결정적 이름으로 기존 Job을 조회하거나 AlreadyExists 결과를 채택하는 것이다. 기록된 Job/Pod UID를 관측할 뿐 재발행·재측정하지 않는다. Job 소실은 `ExecutionLost`, 원격 효과 불명은 미확인 상태로 중단하며 원 사유·증거·예약을 보존한다. 자동 물리 복구하지 않는다.
-7. 기존 `e5.py` 단계 명령(`factor`/`stage`/`judge`/`cleanup-jobs`)을 결정적 이름의 단발 Job으로 실행하고 마지막에는 표·게시 Job을 둔다. 부하·drain·수집·판정 등 단계 프로토콜과 계산식을 Go로 옮기지 않는다. 각 Job은 Pod attempt 하나이며 자동 재시도하지 않고 Job 성공을 측정 PASS나 증거 완료로 간주하지 않는다. 단계 정리는 자기 Job 삭제만 하며 원 설정 복구·owned reset·반환 대기는 실험 끝에 한 번 수행한다. 오류 시 하네스의 자동 설정 복구는 끈다. 정리 실패도 측정 결과는 게시하고, 운영자가 실제 상태를 확인한 뒤 metadata annotation으로 해제하면 controller가 status에 기록하고 점유를 해제한다.
+7. 기존 `conductor.py` 단계 명령(`factor`/`stage`/`judge`/`cleanup-jobs`)을 결정적 이름의 단발 Job으로 실행하고 마지막에는 표·게시 Job을 둔다. 부하·drain·수집·판정 등 단계 프로토콜과 계산식을 Go로 옮기지 않는다. 각 Job은 Pod attempt 하나이며 자동 재시도하지 않고 Job 성공을 측정 PASS나 증거 완료로 간주하지 않는다. 단계 정리는 자기 Job 삭제만 하며 원 설정 복구·owned reset·반환 대기는 실험 끝에 한 번 수행한다. 오류 시 하네스의 자동 설정 복구는 끈다. 정리 실패도 측정 결과는 게시하고, 운영자가 실제 상태를 확인한 뒤 metadata annotation으로 해제하면 controller가 status에 기록하고 점유를 해제한다.
 8. `ExperimentSummary`의 선택 필드 `definition`은 EvaluationRun spec + 해석된 LoadScenario spec snapshot을 담는 additive 확장이다. prepare가 해석한 Workload 적용 정의(SLO 정본)와 고정된 게시 형태는 [실행 설계 §8](../design/profiling/experiment-execution.md#8-증거게시조회)을 따른다. 실제 관측 신원·동결 운영 설정·완료 축·실행 증거 참조는 실행 기록에 둔다. 게시 ID는 EvaluationRun UID다. ChillServer는 불변 게시물만 읽고 CR은 읽지 않는다. reader(서버·대시보드)를 먼저 배포한 뒤 publisher를 전환한다. 대시보드는 완료 게시의 명시된 정책·비교 관계·SLO만 읽고 진행 중 조회는 kubectl로 한다. 옛 게시는 비교 관계 미기록으로 표시되며 추측 함수 삭제로 과거 비교가 사라지는 가시적 변화를 알린다.
 9. 운영 상한 등 설정값은 profiler config에서 선택하고 실제값과 읽은 출처를 점유 시작 시 `status.frozenConfig`와 실행 증거에 동결한다. 실행 중 설정 재조회로 조건을 바꾸지 않는다.
 
@@ -49,8 +49,8 @@ E5의 조건·순서·비교 관계는 CHILL 밖 `.cache/chill-assets/ops/pools-
 
 ### 2026-11-02 producer cgroup을 node-agent raw로(사용자 결정)
 
-- E5의 SSH sampler·producer SSH Secret·호스트 계정/authorized_keys·sudo crictl 요구를 제거한다. node-agent가 producer cgroup을 수집하고 기존 resources raw의 닫힌 분을 폴링하여 정확한 Pod UID/load containerID로 GO 전·종료 counter·판정을 연결한다. 별도 API·폴백·local client 병합은 없다.
-- 서버 namespace의 일반 계약 라벨 `edge.dacs.io/workload-role=load-generator`는 **자원 표본만** 선택한다. cluster observer 선택은 유지하고 서버는 E5 전용 라벨에 결합하지 않는다.
+- evaluation의 SSH sampler·producer SSH Secret·호스트 계정/authorized_keys·sudo crictl 요구를 제거한다. node-agent가 producer cgroup을 수집하고 기존 resources raw의 닫힌 분을 폴링하여 정확한 Pod UID/load containerID로 GO 전·종료 counter·판정을 연결한다. 별도 API·폴백·local client 병합은 없다.
+- 서버 namespace의 일반 계약 라벨 `edge.dacs.io/workload-role=load-generator`는 **자원 표본만** 선택한다. cluster observer 선택은 유지하고 서버는 evaluation 전용 라벨에 결합하지 않는다.
 - 과거 “node-agent 대체 불가” 결정을 폐기한다. 닫힌 분 지연 ≤82초 + 기존 API 상한 129초를 기존 startup 예산 194초에 더해 chart setup 기본을 405초로 조정한다. 근거·상한·실패 의미는 [실행 설계 §12](../design/profiling/experiment-execution.md#12-결정2026-11-02-사용자-개정)를 따른다. raw 저장 형식/ADR 0019는 변경하지 않으며 D2 sampler 도구는 유지한다.
 
 ### 2026-10-31 (사용자 승인) 하위 데이터 모델 분해

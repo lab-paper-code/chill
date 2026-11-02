@@ -15,7 +15,7 @@
 | [measurement-admission](measurement-admission.md) | active: 노드승인/거절/반환·단일writer(M3) |
 | [measurement-api](measurement-api.md) | active: operation비용/디스패치점유/재사용·과학판정 |
 | [decision-record-diet](decision-record-diet.md) | completed: M0 결과·저장projection 요약 |
-| [observability-split](observability-split.md) | active: 요청/catalog/시간세그먼트·E5 raw/resources/cluster API(ADR0030) |
+| [observability-split](observability-split.md) | active: 요청/catalog/시간세그먼트·evaluation raw/resources/cluster API(ADR0030) |
 | [analytic-planner](analytic-planner.md) | active: κ/노드계획/탐색/하강창/예비·고정H |
 | [capacity-table-evidence](capacity-table-evidence.md) | completed: κ·탐색 선택의 입력별 근거(현행수식은 계획기) |
 | [scheduler-operations](scheduler-operations.md) | active: Pod-bound Service/수동원자실행 |

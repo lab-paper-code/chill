@@ -22,17 +22,17 @@
 ②는 동일 노드·구간의 공통 에너지 항만 소거하므로 후보 순위는 같고 A에도 적용 가능하다. 전체 POOL 에너지는 실측 보고하며 영향 없는 baseline 누락으로 전체 Pending을 만들지 않는다. ①·①'은 평균 처리량/분위수 단순 합산 금지를 유지하고 측정 기반 보수 평가를 허용, ④는 actual/replay 대신 actual/평가 모델에 같은 deadlinePolicy(drop/keep/defer, 기본 keep)를 적용한다. `SCH-05/15/17/18/25/26/27/30/31/33/34`, 공유 노드의 같은 등록 모델 제약과 동작별 관측은 유지한다.
 ## 검증과 미해결 승인
 수치 문턱은 명세 요구가 아닌 설계 제안이다. 오프라인 target 일치 또는 에너지 차 ≤5%·재생보다 낙관적 SLO 판정 없음, ≥95% 창에서 예측≥실측·에너지 손해 ≤5%, 열 상태별 `l_q(b)` 변동이 SLO 여유 안, 기록 ≤100KB·RSS limit 미만·OOM 0, 측정/prepare 1000회 겹침 0·자동 반환, B3 버스트/급감 진동·에너지 비교가 검증 대상이다. `SCH-AC-24/25/26`은 첫 구성·공존·측정 admission을 확인한다.
-P10은 E5→M5→main 병합→해당 main image 빌드→최종 배포 뒤 source commit·image·release revision을 고정해 판정한다. 병합 전 E5는 최종 배포 검증을 대신하지 않는다. E5는 시작·일정·버스트·증가(0.5/0.7/0.9 `R_w`)·한계·급감/재급증·1시간 soak, 총 요청률≤게이트웨이 한계 G; 원시 요청·판단·열·부하·프로파일·설정·seed와 Tick p50/p99·CPU/RSS·저장 증가를 같은 시간축으로 보존한다. testbed 변경은 사용자 요청이 있을 때만 한다.
+P10은 evaluation→M5→main 병합→해당 main image 빌드→최종 배포 뒤 source commit·image·release revision을 고정해 판정한다. 병합 전 evaluation는 최종 배포 검증을 대신하지 않는다. evaluation는 시작·일정·버스트·증가(0.5/0.7/0.9 `R_w`)·한계·급감/재급증·1시간 soak, 총 요청률≤게이트웨이 한계 G; 원시 요청·판단·열·부하·프로파일·설정·seed와 Tick p50/p99·CPU/RSS·저장 증가를 같은 시간축으로 보존한다. testbed 변경은 사용자 요청이 있을 때만 한다.
 | 미해결 ID | 승인할 내용 |
 |---|---|
-| D1 | E5-1/3/5/6의 단계 백분위 또는 1분 창 충족률·문턱, 전환 포함 여부 |
+| D1 | steady-mixed / ramp-up / drop-surge / soak의 단계 백분위 또는 1분 창 충족률·문턱, 전환 포함 여부 |
 | D2 | PLC·SmolVLM2 SLO 백분위와 L 승인; tight p95 1s는 기존 조건 |
 | D3 | 위 5%·95% 예시 문턱 확정과 재생이 Tick에서 빠진 뒤 비교 기준 해(전수 최소/기준선/예측-실측) |
 | D4 | 예측 충족을 `κ_new≥λ`·`Overload` 없음으로 둘지(판단별 예측 백분위는 없음) |
 | D5 | `budgetCut` 불일치 별도 집계 여부와 낙관성 검증을 실측 비교로 대체할지 |
 | D6 | 열 상태(throttle active/latched/온도)·SLO 여유(`L−(l_q(b)+b×d+m)`)·5초 표본 간격 |
-| D7 | E5 Tick 목표: E1 기준 p99≤100ms·CPU500m을 유지할지; E5 탐색 예산은 제어 주기 절반 |
+| D7 | evaluation Tick 목표: E1 기준 p99≤100ms·CPU500m을 유지할지; evaluation 탐색 예산은 제어 주기 절반 |
 | D8 | fake-client `-race -count=1000`을 envtest 대신 인정할지, 실클러스터 agent kill 포함 여부 |
 | D9 | B3 구현/정적 구성·제어요소 끄기/생략 중 기준선과 재실행 단계 |
 | D10 | `SCH-AC-25`를 kind E2E로 닫을지 실클러스터 E2를 별도 수행할지 |
-| D11 | E5-6 세 Workload의 예측-비교 집합 실측 에너지 차 ≤2% 적용 여부 |
+| D11 | soak 세 Workload의 예측-비교 집합 실측 에너지 차 ≤2% 적용 여부 |

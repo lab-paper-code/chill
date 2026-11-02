@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Short CPO demo: prepare -> start -> stage/run -> collect -> summary -> finish.
 
-Reuses E5's authenticated API, producer/barrier/counter lifecycle, raw collection
+Reuses evaluation's authenticated API, producer/barrier/counter lifecycle, raw collection
 and server-owned reset cleanup, but not its normative R/G0/11700-second scientific gates.
 Outputs are PRIVATE operational evidence. publish --experiment-id ID --store-config
 /private/store.json uploads raw inputs before a final immutable summary; corrections
@@ -51,7 +51,7 @@ routing. Omit it (or false) for unchanged fixed-duration stages. phase.json and
 summary.json retain readyGate.observedUTC (null on timeout), timedOut and the
 last missingWorkloadUIDs; ready-gate-state.json retains the actual observation.
 
-Diagnostic-only (진단 전용, E5 금지): top-level or stage-level
+Diagnostic-only (진단 전용, evaluation 금지): top-level or stage-level
 "tolerateArchive": ["power", "power-drain-inclusive"] in demo.py
 allows only those power archive failures to advance after a completed request
 window. A stage list overrides the top-level list ([] restores strict capture).
@@ -117,12 +117,12 @@ ANALYSIS = module('demo_statistics', HERE / 'd2/analyze_before.py')
 epoch = ANALYSIS.epoch
 
 
-def schedule(config, e5):
-    sys.path.insert(0, str(e5.REPO / 'load-generator/src'))
+def schedule(config, harness_module):
+    sys.path.insert(0, str(harness_module.REPO / 'load-generator/src'))
     from chill_loadgen import cli
     ANALYSIS.generator_quality_config(config)
-    e5.freeze_producer_config(dict(config))
-    e5.freeze_arrivals(config)
+    harness_module.freeze_producer_config(dict(config))
+    harness_module.freeze_arrivals(config)
     g0 = config.setdefault('g0Evidence', {'status': 'UNKNOWN'})
     for key, value in (('durationSeconds', 120), ('alpha', 1.2), ('maximumCPUFraction', 1)):
         g0.setdefault(key, value)
@@ -132,15 +132,15 @@ def schedule(config, e5):
     if not isinstance(config.get('stages'), list) or not config['stages']:
         raise ValueError('A nonempty stages list is required')
     capacity = config.get('capacityR')
-    if capacity is not None and (not isinstance(capacity, dict) or set(capacity) != set(ALIASES) or any(not e5.positive(v) for v in capacity.values())):
+    if capacity is not None and (not isinstance(capacity, dict) or set(capacity) != set(ALIASES) or any(not harness_module.positive(v) for v in capacity.values())):
         raise ValueError('capacityR requires final approved positive mobilenet/smolvlm2/plc capacities')
-    shares = e5.pool_shares(config)
+    shares = harness_module.pool_shares(config)
     share_by_alias = {'mobilenet': shares['MNV'], 'smolvlm2': shares['Smol'], 'plc': shares['PLC']}
     bootstrap = config.get('g0Bootstrap', False)
     if type(bootstrap) is not bool or (bootstrap and (len(config['stages']) != 1 or config['stages'][0].get('id') != 'G-check' or config['stages'][0].get('seconds') != g0['durationSeconds'] or config['stages'][0].get('alpha') != g0['alpha'])):
         raise ValueError('g0Bootstrap is only the selected one-shot G-check')
     if capacity is not None:
-        gate = {'status': 'UNKNOWN', 'sources': {}} if bootstrap else e5.g0_evidence_gate(
+        gate = {'status': 'UNKNOWN', 'sources': {}} if bootstrap else harness_module.g0_evidence_gate(
             config, sum(capacity[name] * share_by_alias[name] for name in ALIASES), required=False,
             expected_rates={ALIASES[name]: g0['alpha'] * capacity[name] * share_by_alias[name] for name in ALIASES},
             plc_slo=config.get('measurementSLO', {}).get('plc'))
@@ -177,7 +177,7 @@ def schedule(config, e5):
                 rates = {name: capacity[name] * share_by_alias[name] * alpha[name] for name in ALIASES}
             if not isinstance(part_id, str) or not re.fullmatch('[A-Za-z0-9][A-Za-z0-9-]{0,39}', part_id) or any(p['id'].lower() == part_id.lower() for p in parts):
                 raise ValueError('Unique short Kubernetes-safe part IDs required within each stage')
-            if not e5.positive(seconds) or not isinstance(rates, dict) or set(rates) != set(ALIASES):
+            if not harness_module.positive(seconds) or not isinstance(rates, dict) or set(rates) != set(ALIASES):
                 raise ValueError('Positive seconds and mobilenet/smolvlm2/plc rates required')
             if any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in rates.values()):
                 raise ValueError('Rates must be finite nonnegative requests/second')
@@ -260,10 +260,10 @@ def bind_minimum_demand(api, spec):
 
 
 
-def canonical_definitions(e5, registration):
+def canonical_definitions(harness_module, registration):
     """Keep matching applied identities; replace only mismatched definitions."""
     reuse = {}
-    for name in e5.WORKLOADS:
+    for name in harness_module.WORKLOADS:
         path = '/api/v1/workloads/' + name
         actual, status = registration.api('GET', path, accepted=(200, 404))
         reuse[name] = False
@@ -281,9 +281,9 @@ def canonical_definitions(e5, registration):
                 and applied.get('generation') == desired['metadata']['generation']):
             reuse[name] = True
             continue
-        e5.save(registration.out / ('replace-' + name + '-before.json'), actual)
+        harness_module.save(registration.out / ('replace-' + name + '-before.json'), actual)
         result, _ = registration.api('DELETE', path, headers={'If-Match': desired['metadata']['resourceVersion']}, accepted=(202,))
-        e5.save(registration.out / ('replace-' + name + '-ack.json'), result)
+        harness_module.save(registration.out / ('replace-' + name + '-ack.json'), result)
         deadline = time.monotonic() + registration.tb['settleSeconds']
         while registration.api('GET', path, accepted=(200, 404))[1] != 404:
             if time.monotonic() >= deadline:
@@ -291,7 +291,7 @@ def canonical_definitions(e5, registration):
             time.sleep(1)
     scheduler = registration.canonical()
     identities = {}
-    for name in e5.WORKLOADS:
+    for name in harness_module.WORKLOADS:
         actual, _ = registration.api('GET', '/api/v1/workloads/' + name)
         identities[name] = actual['desired']['metadata']
     deadline = time.monotonic() + registration.tb['settleSeconds']
@@ -308,53 +308,53 @@ def canonical_definitions(e5, registration):
         scheduler, _ = registration.api('GET', '/api/v1/scheduler')
 
 
-def assemble(e5, args, spec):
+def assemble(harness_module, args, spec):
     """Reuse matching canonical definitions, then capture actual applied inputs."""
     if args.out.exists() and any(args.out.iterdir()):
         raise RuntimeError('Live preparation requires a fresh output directory; retain partial captures')
-    recipe_path = Path(spec.get('operationalRecipe', e5.OPERATIONAL_RECIPE)).resolve()
-    op = e5.load(recipe_path)
-    op['collectorTokenFile'] = str(e5.OPS / '.token-collector')
-    e5.need(spec, ['controlSourceSHA', 'sources', 'timeboxes', 'measurementSLO'], 'demo config')
-    component_sources = e5.approval_sources(spec)
-    e5.need(spec['timeboxes'], e5.REQUIRED['timeboxes'], 'timeboxes')
-    if any(not e5.positive(v) for v in spec['timeboxes'].values()):
+    recipe_path = Path(spec.get('operationalRecipe', harness_module.OPERATIONAL_RECIPE)).resolve()
+    op = harness_module.load(recipe_path)
+    op['collectorTokenFile'] = str(harness_module.OPS / '.token-collector')
+    harness_module.need(spec, ['controlSourceSHA', 'sources', 'timeboxes', 'measurementSLO'], 'demo config')
+    component_sources = harness_module.approval_sources(spec)
+    harness_module.need(spec['timeboxes'], harness_module.REQUIRED['timeboxes'], 'timeboxes')
+    if any(not harness_module.positive(v) for v in spec['timeboxes'].values()):
         raise ValueError('Finite positive demo timeboxes required')
     if set(spec['measurementSLO']) != set(ALIASES):
         raise ValueError('Measurement SLO required for each workload alias')
     for slo in spec['measurementSLO'].values():
-        if not e5.positive(slo['targetLatencyNanos']) or not 0 < slo['percentile'] <= 100:
+        if not harness_module.positive(slo['targetLatencyNanos']) or not 0 < slo['percentile'] <= 100:
             raise ValueError('Positive measurement SLO latency and percentile in (0,100] required')
-    source = e5.subprocess.check_output(['git', '-C', str(e5.REPO), 'rev-parse', '--verify', spec['controlSourceSHA'] + '^{commit}'], text=True).strip()
+    source = harness_module.subprocess.check_output(['git', '-C', str(harness_module.REPO), 'rev-parse', '--verify', spec['controlSourceSHA'] + '^{commit}'], text=True).strip()
     if component_sources['server'] != source:
         raise ValueError('sources.server must match the resolved controlSourceSHA; loadgen and power identities must be supplied independently')
     args.out.mkdir(parents=True)
-    d = e5.module('demo_capture', HERE / 'd2/conduct_before.py')
+    d = harness_module.module('demo_capture', HERE / 'd2/conduct_before.py')
     d.BASE, d.CA, d.TOKEN = op['endpoint'], Path(op['caFile']), Path(op['tokenFile'])
-    d.K = e5.ENVIRONMENT['d2']['kubectl'] + ['-n', e5.ENVIRONMENT['d2'].get('namespace', 'chill-system')]
+    d.K = harness_module.ENVIRONMENT['d2']['kubectl'] + ['-n', harness_module.ENVIRONMENT['d2'].get('namespace', 'chill-system')]
     io = object.__new__(d.Conductor)
     io.a = argparse.Namespace(command='demo-prepare', phase='demo-prepare')
     io.out = io.phase_out = args.out
     io.collector_token_file = Path(op['collectorTokenFile'])
-    io.source, io.journal, io.journal_lock = source, args.out / 'prepare-commands.jsonl', e5.threading.Lock()
-    io.ctx = e5.ssl.create_default_context(cafile=op['caFile'])
-    io.http = e5.urllib.request.build_opener(d.NoRedirect(), e5.urllib.request.HTTPSHandler(context=io.ctx))
+    io.source, io.journal, io.journal_lock = source, args.out / 'prepare-commands.jsonl', harness_module.threading.Lock()
+    io.ctx = harness_module.ssl.create_default_context(cafile=op['caFile'])
+    io.http = harness_module.urllib.request.build_opener(d.NoRedirect(), harness_module.urllib.request.HTTPSHandler(context=io.ctx))
     timeout = spec['timeboxes']['apiSeconds']
     scheduler = io.api('GET', '/api/v1/scheduler', timeout=timeout)
-    e5.save(args.out / 'scheduler-before-register.json', scheduler)
+    harness_module.save(args.out / 'scheduler-before-register.json', scheduler)
     settings = io.api('GET', '/api/v1/scheduler/settings', timeout=timeout)
-    e5.save(args.out / 'settings-before-register.json', settings)
+    harness_module.save(args.out / 'settings-before-register.json', settings)
     cap = settings['requestTimeout'] / 1e9
-    if not e5.positive(cap):
+    if not harness_module.positive(cap):
         raise ValueError('Actual positive API requestTimeout in nanoseconds required')
     prototype = io.job('demo-timing', 0, 1)['spec']['template']['spec']['containers'][0]['args']
     timing = {flag: prototype[prototype.index(flag) + 1] for flag in ('--workers', '--delivery-margin', '--timeout')}
-    wire = e5.module('demo_templates', HERE / 'e5-wire.py')
+    wire = harness_module.module('demo_templates', HERE / 'wire.py')
     registration = object.__new__(wire.Prepare)
     registration.op, registration.out, registration.tb, registration.http = op, args.out, spec['timeboxes'], io.http
     registration.io = io
     by_name = {w['name']: w for w in scheduler['state']['snapshot']['workloads']}
-    registration.n = {'workloads': {name: {'slo': spec['measurementSLO'][next(alias for alias, canonical in ALIASES.items() if canonical == name)]} for name in e5.WORKLOADS}}
+    registration.n = {'workloads': {name: {'slo': spec['measurementSLO'][next(alias for alias, canonical in ALIASES.items() if canonical == name)]} for name in harness_module.WORKLOADS}}
     def registration_api(method, path, body=None, headers=None, accepted=(200,)):
         if spec.get('staticPlacement') and method != 'GET':
             raise RuntimeError('No canonical mutation permitted during static capture')
@@ -364,49 +364,49 @@ def assemble(e5, args, spec):
     registration.api = registration_api
     _, status = registration.controller()
     if spec.get('staticPlacement'):
-        if any(name not in by_name for name in e5.WORKLOADS):
+        if any(name not in by_name for name in harness_module.WORKLOADS):
             raise RuntimeError('Static placement requires existing canonical definitions')
-        reused = {name: True for name in e5.WORKLOADS}
+        reused = {name: True for name in harness_module.WORKLOADS}
     else:
-        scheduler, reused = canonical_definitions(e5, registration)
-    e5.save(args.out / 'scheduler.json', scheduler)
-    for name in e5.WORKLOADS:
+        scheduler, reused = canonical_definitions(harness_module, registration)
+    harness_module.save(args.out / 'scheduler.json', scheduler)
+    for name in harness_module.WORKLOADS:
         actual, _ = registration.api('GET', '/api/v1/workloads/' + name)
-        e5.save(args.out / ('canonical-' + name + '.json'), actual)
-    collection = {'powerExecutable': e5.E5['powerExecutable'], 'powerReceipt': e5.E5['powerReceipt']}
+        harness_module.save(args.out / ('canonical-' + name + '.json'), actual)
+    collection = {'powerExecutable': harness_module.EVALUATION['powerExecutable'], 'powerReceipt': harness_module.EVALUATION['powerReceipt']}
     c = {key: op[key] for key in ('endpoint', 'caFile', 'tokenFile', 'kubeContext')}
     c['collectorTokenFile'] = op['collectorTokenFile']
     c.update(approval={'sources': component_sources, 'controlImageDigest': status['imageID']}, inputs={'scheduler': str(args.out / 'scheduler.json')}, timeboxes=spec['timeboxes'], collection=collection, workloads=[], canonicalDefinitionsReused=reused)
-    for name in e5.WORKLOADS:
+    for name in harness_module.WORKLOADS:
         actual = [w for w in scheduler['state']['snapshot']['workloads'] if w['name'] == name]
         if len(actual) != 1:
             raise RuntimeError('Registered canonical workload has no unambiguous applied definition: ' + name)
         actual, recipe = actual[0], op['workloads'][name]
         template = args.out / ('producer-template-' + name + '.json')
-        e5.save(template, wire.template(op, name, e5.ENVIRONMENT['d2']['producerImage']))
+        harness_module.save(template, wire.template(op, name, harness_module.ENVIRONMENT['d2']['producerImage']))
         alias = next(alias for alias, canonical in ALIASES.items() if canonical == name)
         requested = {'workers': int(timing['--workers']), 'deliverySeconds': float(timing['--delivery-margin']), 'socketSeconds': float(timing['--timeout'])}
         requested.update(spec.get('requestTiming', {}).get(alias, {}))
-        if any(not e5.positive(requested[key]) for key in ('workers', 'deliverySeconds', 'socketSeconds')) or type(requested['workers']) is not int:
+        if any(not harness_module.positive(requested[key]) for key in ('workers', 'deliverySeconds', 'socketSeconds')) or type(requested['workers']) is not int:
             raise ValueError('Positive configured request timings and integer workers required')
         lifetime = requested.get('lifetimeSeconds')
-        if lifetime is not None and (not e5.positive(lifetime) or lifetime < actual['slo']['targetLatencyNanos'] / 1e9 or lifetime > cap or requested['socketSeconds'] <= lifetime + requested['deliverySeconds']):
+        if lifetime is not None and (not harness_module.positive(lifetime) or lifetime < actual['slo']['targetLatencyNanos'] / 1e9 or lifetime > cap or requested['socketSeconds'] <= lifetime + requested['deliverySeconds']):
             raise ValueError('Explicit lifetime must cover SLO, fit gateway cap and socket budget')
         c['workloads'].append({**{key: actual[key] for key in ('name', 'uid', 'generation', 'slo')}, 'datasetDir': recipe['datasetDir'], 'fields': recipe['fields'], 'jobTemplate': str(template), 'producerEndpoint': op['producer']['endpoint'], 'producerTokenFile': op['producer']['tokenFile'], 'producerCAFile': op['producer']['caFile'], 'producerDatasetDir': op['producer']['datasetDir'], **requested, 'gatewayCapSeconds': cap})
-    c['demoSkipped'] = ['E5 R/kappa capacity binding and strict G0 research gate', '11700-second normative schedule and factor baselines', 'phase6 scientific approvals/D1/D6/D9 judgment gates', 'image/source publication and profiling-vs-evaluation metadata Jobs; existing pinned images/datasets reused']
+    c['demoSkipped'] = ['evaluation R/kappa capacity binding and strict G0 research gate', '11700-second normative schedule and factor baselines', 'phase6 scientific approvals/D1/D6/D9 judgment gates', 'image/source publication and profiling-vs-evaluation metadata Jobs; existing pinned images/datasets reused']
     c['demoProvenance'] = {'recipe': str(recipe_path), 'sources': 'Explicit Main-provided component identities; no loadgen/power identity inferred from server or image bytes', 'controlSourceSHA': 'Main-provided helm-revision source claim resolved in git and checked against sources.server, not inferred from image bytes', 'controlImageDigest': 'Raw API cluster Ready Pod container imageID', 'requestTiming': 'API settings requestTimeout gateway cap; D2 Conductor.job socket/worker baseline plus explicit requestTiming overrides; absent lifetime omits client deadline header', 'measurementSLO': spec['measurementSLO']}
-    config_path = args.out / 'demo-e5-config.json'
-    e5.save(config_path, c)
+    config_path = args.out / 'demo-evaluation-config.json'
+    harness_module.save(config_path, c)
     return config_path
 
 
-def finish_definitions(e5, cpo, *, delete_definitions=False):
+def finish_definitions(harness_module, cpo, *, delete_definitions=False):
     """Retain identities unless deletion was explicitly requested after cleanup."""
     if cpo.static_placement() or not delete_definitions:
         return
     if not (cpo.out / 'finish-complete.json').exists():
         raise RuntimeError('Owned instances/routing/settings cleanup must complete before definition deletion')
-    wire = e5.module('demo_definition_cleanup', HERE / 'e5-wire.py')
+    wire = harness_module.module('demo_definition_cleanup', HERE / 'wire.py')
     manager = object.__new__(wire.Prepare)
     manager.op, manager.out, manager.tb, manager.http = cpo.c, cpo.out, cpo.tb, cpo.io.http
     for w in cpo.c['workloads']:
@@ -415,53 +415,53 @@ def finish_definitions(e5, cpo, *, delete_definitions=False):
         metadata = current['desired']['metadata']
         if metadata['uid'] != w['uid'] or metadata['generation'] != w['generation']:
             raise RuntimeError('Canonical definition identity changed; no deletion: ' + w['name'])
-        e5.save(cpo.out / ('finish-definition-' + w['name'] + '-before.json'), current)
+        harness_module.save(cpo.out / ('finish-definition-' + w['name'] + '-before.json'), current)
         result, _ = manager.api('DELETE', path, headers={'If-Match': metadata['resourceVersion']}, accepted=(202,))
-        e5.save(cpo.out / ('finish-definition-' + w['name'] + '-ack.json'), result)
-    deadline = e5.time.monotonic() + cpo.tb['settleSeconds']
+        harness_module.save(cpo.out / ('finish-definition-' + w['name'] + '-ack.json'), result)
+    deadline = harness_module.time.monotonic() + cpo.tb['settleSeconds']
     while True:
         views = {w['name']: manager.api('GET', '/api/v1/workloads/' + w['name'], accepted=(200, 404))[1] for w in cpo.c['workloads']}
         state, _ = manager.api('GET', '/api/v1/scheduler/state')
-        e5.save(cpo.out / 'finish-definitions-last-state.json', {'at': e5.now(), 'statuses': views, 'state': state})
+        harness_module.save(cpo.out / 'finish-definitions-last-state.json', {'at': harness_module.now(), 'statuses': views, 'state': state})
         if all(status == 404 for status in views.values()) and not any(w['uid'] in cpo.uids for w in state['snapshot']['workloads']):
-            e5.save(cpo.out / 'finish-definitions-complete.json', {'at': e5.now(), 'deletedUIDs': cpo.uids})
+            harness_module.save(cpo.out / 'finish-definitions-complete.json', {'at': harness_module.now(), 'deletedUIDs': cpo.uids})
             return
-        if e5.time.monotonic() >= deadline:
+        if harness_module.time.monotonic() >= deadline:
             raise RuntimeError('Canonical definition deletion did not publish within existing settle timebox')
-        e5.time.sleep(1)
+        harness_module.time.sleep(1)
 
 
-def prepare(e5, args):
+def prepare(harness_module, args):
     target = args.out / 'binding.json'
     if target.exists():
         raise RuntimeError('No implicit preparation overwrite; use a fresh output directory')
     args.config = args.config.resolve()
-    spec = e5.load(args.config)
-    if spec.get('e5Config'):
-        base = e5.load(spec['e5Config'])
+    spec = harness_module.load(args.config)
+    if spec.get('evaluationConfig'):
+        base = harness_module.load(spec['evaluationConfig'])
         for key in ('seeds', 'arrivals'):
             if key in base:
                 spec.setdefault(key, copy.deepcopy(base[key]))
-    stages = schedule(spec, e5)
+    stages = schedule(spec, harness_module)
     if spec.get('preflight'):
         if spec.get('staticPlacement') or len(stages) != 2 or not stages[0].get('readyGate') or len(stages[1]['parts']) != 1 or stages[1]['seconds'] != 60 or stages[1]['rates'] != {ALIASES['mobilenet']: 20, ALIASES['smolvlm2']: .3, ALIASES['plc']: 40}:
             raise ValueError('Preflight requires zero-load Ready gate then 60s mixed load (20/.3/40)')
-        e5.require_strict_archives(spec)
-    token_config = e5.load(spec['e5Config']) if spec.get('e5Config') else e5.load(spec.get('operationalRecipe', e5.OPERATIONAL_RECIPE))
+        harness_module.require_strict_archives(spec)
+    token_config = harness_module.load(spec['evaluationConfig']) if spec.get('evaluationConfig') else harness_module.load(spec.get('operationalRecipe', harness_module.OPERATIONAL_RECIPE))
     token_config = dict(token_config, timeboxes=spec.get('timeboxes', token_config.get('timeboxes')),
                         tokenSafetyMarginSeconds=spec.get('tokenSafetyMarginSeconds', token_config.get('tokenSafetyMarginSeconds', 60)))
-    e5.token_preflight(token_config, stages)
-    config_path = Path(spec['e5Config']).resolve() if spec.get('e5Config') else assemble(e5, args, spec)
-    c = e5.load(config_path)
+    harness_module.token_preflight(token_config, stages)
+    config_path = Path(spec['evaluationConfig']).resolve() if spec.get('evaluationConfig') else assemble(harness_module, args, spec)
+    c = harness_module.load(config_path)
     for key in ('producerResources', 'producerShards', 'seeds', 'arrivals', 'failureSelectSnapshotTTLSeconds', 'burstLowMaximumSeconds', 'g0Evidence', 'failureInjectionRunbook'):
         if key in spec:
             c[key] = copy.deepcopy(spec[key])
     for key in ('collection', 'inputs'):
         c.setdefault(key, {}).update(copy.deepcopy(spec.get(key, {})))
-    e5.freeze_harness_config(c)
+    harness_module.freeze_harness_config(c)
     c['stages'] = copy.deepcopy(spec['stages'])
     if 'failureInjectionRunbook' not in c:
-        c['failureInjectionRunbook'] = copy.deepcopy(e5.load(HERE/'demo-config.e5.example.json')['failureInjectionRunbook'])
+        c['failureInjectionRunbook'] = copy.deepcopy(harness_module.load(HERE/'demo-config.evaluation.example.json')['failureInjectionRunbook'])
     for stage in stages:
         if stage['id'] == 'E5-7':
             stage['failureInjectionRunbook'] = copy.deepcopy(c['failureInjectionRunbook'])
@@ -470,67 +470,67 @@ def prepare(e5, args):
     else:
         ANALYSIS.generator_quality_config(c)
     if spec.get('preflight'):
-        e5.require_strict_archives(c)
-    e5.need(c, ['approval', 'inputs', 'timeboxes', 'workloads', 'collection', 'endpoint', 'caFile', 'tokenFile'], 'e5Config')
-    c['collection']['energyCoverage']=e5.module('demo_energy_policy',HERE/'e5-archive.py').energy_policy(c['collection'])
-    e5.need(c['approval'], ['sources', 'controlImageDigest'], 'approval')
-    e5.approval_sources(c['approval'])
-    e5.need(c['timeboxes'], e5.REQUIRED['timeboxes'], 'timeboxes')
-    if any(not e5.positive(v) for v in c['timeboxes'].values()):
-        raise ValueError('Finite positive E5 timeboxes required')
+        harness_module.require_strict_archives(c)
+    harness_module.need(c, ['approval', 'inputs', 'timeboxes', 'workloads', 'collection', 'endpoint', 'caFile', 'tokenFile'], 'evaluationConfig')
+    c['collection']['energyCoverage']=harness_module.module('demo_energy_policy',HERE/'archive.py').energy_policy(c['collection'])
+    harness_module.need(c['approval'], ['sources', 'controlImageDigest'], 'approval')
+    harness_module.approval_sources(c['approval'])
+    harness_module.need(c['timeboxes'], harness_module.REQUIRED['timeboxes'], 'timeboxes')
+    if any(not harness_module.positive(v) for v in c['timeboxes'].values()):
+        raise ValueError('Finite positive evaluation timeboxes required')
     c['tokenSafetyMarginSeconds'] = token_config['tokenSafetyMarginSeconds']
-    c['tokenLifetime'] = e5.token_preflight(c, stages)
+    c['tokenLifetime'] = harness_module.token_preflight(c, stages)
     if len(c['workloads']) != 3 or {w['name'] for w in c['workloads']} != set(ALIASES.values()):
         raise ValueError('Existing three canonical workload definitions required')
     if any(c['timeboxes']['setupSeconds'] + s['seconds'] + c['timeboxes']['drainSeconds'] + c['timeboxes']['flushSeconds'] > c['collection']['maximumDurationSeconds'] for s in stages):
         raise ValueError('Stage exceeds selected finite collector duration limit')
-    wire = e5.module('demo_floor_binding', HERE / 'e5-wire.py')
+    wire = harness_module.module('demo_floor_binding', HERE / 'wire.py')
     manager = object.__new__(wire.Prepare)
     manager.op, manager.out, manager.tb = c, args.out, c['timeboxes']
-    d = e5.module('demo_floor_client', HERE / 'd2/conduct_before.py')
-    manager.http = e5.urllib.request.build_opener(d.NoRedirect(), e5.urllib.request.HTTPSHandler(context=e5.ssl.create_default_context(cafile=c['caFile'])))
+    d = harness_module.module('demo_floor_client', HERE / 'd2/conduct_before.py')
+    manager.http = harness_module.urllib.request.build_opener(d.NoRedirect(), harness_module.urllib.request.HTTPSHandler(context=harness_module.ssl.create_default_context(cafile=c['caFile'])))
     scheduler = bind_minimum_demand(manager.api, spec)
     args.out.mkdir(parents=True, exist_ok=True)
     scheduler_path = args.out / 'scheduler-bound.json'
-    e5.save(scheduler_path, scheduler)
+    harness_module.save(scheduler_path, scheduler)
     c['inputs'] = dict(c['inputs'], scheduler=str(scheduler_path))
-    sys.path.insert(0, str(e5.REPO / 'load-generator/src'))
+    sys.path.insert(0, str(harness_module.REPO / 'load-generator/src'))
     from chill_loadgen import cli
-    producer = module('demo_producer', HERE / 'e5-producer.py')
+    producer = module('demo_producer', HERE / 'producer.py')
     payload = {}
-    sources = {'demoConfig': e5.ref(args.config), 'e5Config': e5.ref(config_path), 'environment': e5.ref(e5.ENVIRONMENT_PATH)}
-    sources['scheduler'] = e5.ref(c['inputs']['scheduler'])
+    sources = {'demoConfig': harness_module.ref(args.config), 'evaluationConfig': harness_module.ref(config_path), 'environment': harness_module.ref(harness_module.ENVIRONMENT_PATH)}
+    sources['scheduler'] = harness_module.ref(c['inputs']['scheduler'])
     gate = spec.get('g0Gate', {'status': 'UNKNOWN', 'sources': {}})
     sources.update({'g0Evidence-' + key: value for key, value in gate['sources'].items()})
     c['g0Gate'] = {key: value for key, value in gate.items() if key != 'sources'}
-    scheduler_settings = e5.load(c['inputs']['scheduler'])['settings']
-    scheduler_settings = dict(scheduler_settings, powerObservation=e5.power_observation(c))
-    for filename in ('demo.py', 'e5.py', 'auth.py', 'e5-wire.py', 'e5-producer.py', 'e5-archive.py', 'e5-raw.py'):
-        sources[filename] = e5.ref(HERE / filename)
+    scheduler_settings = harness_module.load(c['inputs']['scheduler'])['settings']
+    scheduler_settings = dict(scheduler_settings, powerObservation=harness_module.power_observation(c))
+    for filename in ('demo.py', 'conductor.py', 'auth.py', 'wire.py', 'producer.py', 'archive.py', 'raw.py'):
+        sources[filename] = harness_module.ref(HERE / filename)
     for w in c['workloads']:
-        e5.need(w, [k for k in e5.REQUIRED['workload'] if k != 'R'], w['name'])
-        if any(not e5.positive(w[k]) for k in ('workers', 'deliverySeconds', 'socketSeconds', 'gatewayCapSeconds')) or type(w['workers']) is not int:
+        harness_module.need(w, [k for k in harness_module.REQUIRED['workload'] if k != 'R'], w['name'])
+        if any(not harness_module.positive(w[k]) for k in ('workers', 'deliverySeconds', 'socketSeconds', 'gatewayCapSeconds')) or type(w['workers']) is not int:
             raise ValueError('Positive workload timing and integer workers required')
-        if not e5.positive(w['slo']['targetLatencyNanos']) or not 0 < w['slo']['percentile'] <= 100:
+        if not harness_module.positive(w['slo']['targetLatencyNanos']) or not 0 < w['slo']['percentile'] <= 100:
             raise ValueError('Valid frozen workload SLO required')
         lifetime = w.get('lifetimeSeconds')
-        if lifetime is not None and (not e5.positive(lifetime) or lifetime < w['slo']['targetLatencyNanos'] / 1e9 or w['gatewayCapSeconds'] < lifetime or w['socketSeconds'] <= lifetime + w['deliverySeconds']):
+        if lifetime is not None and (not harness_module.positive(lifetime) or lifetime < w['slo']['targetLatencyNanos'] / 1e9 or w['gatewayCapSeconds'] < lifetime or w['socketSeconds'] <= lifetime + w['deliverySeconds']):
             raise ValueError('Explicit lifetime requires lifetime>=SLO, gateway>=lifetime, socket>lifetime+delivery')
         records = cli.load_records(Path(w['datasetDir']), w['fields'])
         if not records:
             raise ValueError('Nonempty existing evaluation dataset required')
         payload[w['name']] = producer.identity(records)
-        job = e5.load(w['jobTemplate'])
+        job = harness_module.load(w['jobTemplate'])
         pod = job['spec']['template']['spec']
         if pod['restartPolicy'] != 'Never' or len(pod['containers']) != 1 or pod['containers'][0]['name'] != 'load':
             raise ValueError('Existing single load container/Never Job required')
         if any('@sha256:' not in container['image'] for container in pod['containers'] + pod.get('initContainers', [])):
             raise ValueError('Existing digest-pinned producer/dataset images required; no build')
-        sources['job-' + w['name']] = e5.ref(w['jobTemplate'])
+        sources['job-' + w['name']] = harness_module.ref(w['jobTemplate'])
     c['smoke'] = stages[0]
-    c['harnessRepositoryCommit'] = e5.subprocess.check_output(['git', '-C', str(e5.REPO), 'rev-parse', 'HEAD'], text=True).strip()
-    binding = {'schema': 'demo-e5-binding.v1', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': e5.now(), 'schedulerSettings': scheduler_settings, 'canonicalDefinitionsReused': c.get('canonicalDefinitionsReused', {}), 'config': c, 'sources': sources, 'payload': payload, 'schedule': stages, 'demoConfig': spec}
-    e5.save(target, binding)
+    c['harnessRepositoryCommit'] = harness_module.subprocess.check_output(['git', '-C', str(harness_module.REPO), 'rev-parse', 'HEAD'], text=True).strip()
+    binding = {'schema': 'demo-e5-binding.v1', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': harness_module.now(), 'schedulerSettings': scheduler_settings, 'canonicalDefinitionsReused': c.get('canonicalDefinitionsReused', {}), 'config': c, 'sources': sources, 'payload': payload, 'schedule': stages, 'demoConfig': spec}
+    harness_module.save(target, binding)
     print(str(target))
 
 
@@ -567,11 +567,11 @@ def run_stage(cpo, stage):
             path.write_text('')
 
 
-def collect_stage(e5, cpo, stage):
+def collect_stage(harness_module, cpo, stage):
     folder = stage_folder(cpo.out, stage)
     if (folder / 'collected.json').exists():
         return
-    phase = e5.load(folder / 'phase.json')
+    phase = harness_module.load(folder / 'phase.json')
     cpo.c['smoke'] = stage
     if phase['status'] == 'STOP':
         archive_stop = bool(stage.get('tolerateArchive')) and phase.get('error') == 'Required exact-hour archive/current capture incomplete; preserve private index and stop' and bool(phase.get('drainedUTC'))
@@ -582,7 +582,7 @@ def collect_stage(e5, cpo, stage):
             if not active <= set(phase.get(field) or {}):
                 raise RuntimeError('Completed producer evidence missing: ' + field)
         for name in active:
-            terminal = e5.load(folder / ('terminal-' + name + '.json'))
+            terminal = harness_module.load(folder / ('terminal-' + name + '.json'))
             if not any(row.get('type') == 'Complete' and row.get('status') == 'True' for row in terminal.get('status', {}).get('conditions', [])):
                 raise RuntimeError('Producer completion proof missing: ' + name)
         derived = folder / 'collected-phase.json'
@@ -595,12 +595,12 @@ def collect_stage(e5, cpo, stage):
             phase['postBoundaryPrefix'] = 'recovery-post'
         phase['status'] = 'DRAINED_NOT_EVALUATED'
         cpo.collect(folder, phase=phase)
-        e5.save(derived, phase)
+        harness_module.save(derived, phase)
     else:
         cpo.collect(folder)
 
 
-def resume(e5, cpo):
+def resume(harness_module, cpo):
     """Reset the owned scope once, then re-enable autonomy with original evidence retained."""
     cpo.check_power_observation()
     if cpo.static_placement():
@@ -608,9 +608,9 @@ def resume(e5, cpo):
     if not (cpo.out / 'initial.json').exists() or not (cpo.out / 'start-ack.json').exists():
         raise RuntimeError('Resume requires the original initial/start evidence; use start for a new run')
     for frozen in cpo.b['sources'].values():
-        if e5.ref(frozen['path']) != frozen:
+        if harness_module.ref(frozen['path']) != frozen:
             raise RuntimeError('Resume requires explicitly re-frozen inputs; no automatic source refresh')
-    alerts = e5.CAMPAIGN / 'control-alerts.jsonl'
+    alerts = harness_module.CAMPAIGN / 'control-alerts.jsonl'
     alert_offset = alerts.stat().st_size
     jobs = cpo.io.k(['get', 'jobs', '-o', 'json'])['items']
     if any(not job.get('spec', {}).get('suspend') and not any(row.get('type') in ('Complete', 'Failed') and row.get('status') == 'True' for row in job.get('status', {}).get('conditions', [])) for job in jobs):
@@ -620,41 +620,41 @@ def resume(e5, cpo):
         raise RuntimeError('Foreign physical ownership; no demo resume')
     if any(uid not in cpo.uids for uid in settings.get('autonomousWorkloads', [])) or any(uid not in cpo.uids for uid in settings.get('staticRouting') or {}):
         raise RuntimeError('Foreign control declarations; no demo resume')
-    folder = cpo.out / ('resume-' + re.sub('[^A-Za-z0-9]', '', e5.now()))
+    folder = cpo.out / ('resume-' + re.sub('[^A-Za-z0-9]', '', harness_module.now()))
     folder.mkdir()
-    e5.save(folder / 'pre-state.json', state)
-    e5.save(folder / 'pre-settings.json', settings)
+    harness_module.save(folder / 'pre-state.json', state)
+    harness_module.save(folder / 'pre-settings.json', settings)
     marker = cpo.out / 'native-mode-authorization.json'
     if marker.exists():
-        e5.save(folder / 'prior-native-mode-authorization.json', e5.load(marker))
+        harness_module.save(folder / 'prior-native-mode-authorization.json', harness_module.load(marker))
     cpo.clear_owned(folder.name)
     settings = cpo.settings()
     settings['autonomousWorkloads'] = cpo.uids
-    settings['excludedNodes'] = e5.E5['excludedNodes']
-    cpo.io.a.command, cpo.io.a.phase = 'resume', 'e5-demo-resume'
+    settings['excludedNodes'] = harness_module.EVALUATION['excludedNodes']
+    cpo.io.a.command, cpo.io.a.phase = 'resume', 'evaluation-demo-resume'
     cpo.native_evidence = state.get('results') or []
     cpo.authorize_native_modes()
-    e5.save(folder / 'resume-ack.json', cpo.put(settings))
+    harness_module.save(folder / 'resume-ack.json', cpo.put(settings))
     if not cpo.state()['snapshot']['instances']:
         bootstrap = copy.deepcopy(cpo.b['schedule'][0])
         bootstrap['id'] = 'E0-' + folder.name
         cpo.c['smoke'], cpo.a.stage, cpo.a.command = bootstrap, bootstrap['id'], 'smoke'
         cpo.run()
-        e5.save(folder / 'bootstrap.json', {'stage': bootstrap, 'phaseFolder': str(stage_folder(cpo.out, bootstrap)), 'meaning': 'Fresh zero-load bootstrap; original E0 evidence retained'})
-    deadline = e5.time.monotonic() + cpo.tb['settleSeconds']
+        harness_module.save(folder / 'bootstrap.json', {'stage': bootstrap, 'phaseFolder': str(stage_folder(cpo.out, bootstrap)), 'meaning': 'Fresh zero-load bootstrap; original E0 evidence retained'})
+    deadline = harness_module.time.monotonic() + cpo.tb['settleSeconds']
     while True:
         alert_offset = cpo.monitor(alert_offset, folder)
         current = cpo.state()
-        e5.save(folder / 'last-state.json', current)
+        harness_module.save(folder / 'last-state.json', current)
         if any(i.get('ownerWorkloadUID') not in cpo.uids for i in current['snapshot']['instances'] or []):
             raise RuntimeError('Foreign physical ownership appeared during demo resume')
         if not cpo.missing_ready_routes(current):
-            e5.save(folder / 'ready.json', current)
+            harness_module.save(folder / 'ready.json', current)
             print('Resumed owned autonomous topology: ' + str(folder))
             return
-        if e5.time.monotonic() >= deadline:
+        if harness_module.time.monotonic() >= deadline:
             raise RuntimeError('Resume Ready/positive routing did not converge within existing settle timebox')
-        e5.time.sleep(1)
+        harness_module.time.sleep(1)
 
 
 def placement(snapshot, uids):
@@ -665,20 +665,20 @@ def placement(snapshot, uids):
     }
 
 
-def wait_preflight_empty(e5, cpo):
-    deadline = e5.time.monotonic() + cpo.tb['settleSeconds']
+def wait_preflight_empty(harness_module, cpo):
+    deadline = harness_module.time.monotonic() + cpo.tb['settleSeconds']
     while True:
         state = cpo.state()
-        e5.save(cpo.out / 'preflight-final-state.json', state)
+        harness_module.save(cpo.out / 'preflight-final-state.json', state)
         snap = state['snapshot']
         if not snap['instances'] and not snap.get('reservations') and not any(a.get('status') in ('running', 'cancel') for a in state.get('actions') or []):
             return
-        if e5.time.monotonic() >= deadline:
+        if harness_module.time.monotonic() >= deadline:
             raise RuntimeError('Preflight final instances/reservations did not reach zero within settle timebox')
-        e5.time.sleep(min(1, max(0, deadline - e5.time.monotonic())))
+        harness_module.time.sleep(min(1, max(0, deadline - harness_module.time.monotonic())))
 
 
-def preflight_result(e5, binding, out, stages, *, judge=False):
+def preflight_result(harness_module, binding, out, stages, *, judge=False):
     """Missing or partial evidence is FAIL; never infer cleanup from reset ACKs."""
     ready = next((s.get('readyGate') for s in stages if s.get('readyGate')), {})
     configured = binding['config']['workloads']
@@ -688,12 +688,12 @@ def preflight_result(e5, binding, out, stages, *, judge=False):
         m.get('offered', 0) > 0 and m.get('clientRows') == m['offered'] and m.get('httpSuccess') == m['offered']
         for m in loaded[0]['workloads'].values())
     def snapshot(path):
-        return e5.load(path)['state']['snapshot'] if path.name == 'initial.json' else e5.load(path)['snapshot']
+        return harness_module.load(path)['state']['snapshot'] if path.name == 'initial.json' else harness_module.load(path)['snapshot']
     initial = snapshot(out / 'initial.json') if (out / 'initial.json').exists() else None
     final_path = out / 'preflight-final-state.json'
     final = snapshot(final_path) if final_path.exists() else None
     power_complete = len(stages) == len(binding['schedule']) and all(
-        (stage_folder(out, s) / name).exists() and e5.load(stage_folder(out, s) / name).get('complete') is True
+        (stage_folder(out, s) / name).exists() and harness_module.load(stage_folder(out, s) / name).get('complete') is True
         for s in binding['schedule'] for name in ('power.json', 'power-drain-inclusive.json'))
     checks = {
         'emptyStart': initial is not None and 'instances' in initial and not initial['instances'] and not initial.get('reservations'),
@@ -702,34 +702,34 @@ def preflight_result(e5, binding, out, stages, *, judge=False):
         'powerComplete': power_complete,
         'finalInstances0': final is not None and 'instances' in final and not final['instances'],
         'finalReservations0': final is not None and 'instances' in final and not final.get('reservations'),
-        'finalTransitions0': final_path.exists() and not any(a.get('status') in ('running', 'cancel') for a in e5.load(final_path).get('actions') or []),
+        'finalTransitions0': final_path.exists() and not any(a.get('status') in ('running', 'cancel') for a in harness_module.load(final_path).get('actions') or []),
         'stagesComplete': len(stages) == len(binding['schedule']) and all(s.get('status') == 'DRAINED_NOT_EVALUATED' for s in stages),
         'finishComplete': (out / 'finish-complete.json').exists(),
         'noStop': not (out / 'preflight-STOP.json').exists(),
     }
     stop_path = out / 'preflight-STOP.json'
-    stop = e5.load(stop_path) if stop_path.exists() else None
+    stop = harness_module.load(stop_path) if stop_path.exists() else None
     resolved_stop = judge and stop is not None and stop.get('error') == "'reservations'" and all(value for key, value in checks.items() if key != 'noStop')
     if resolved_stop:
         checks['noStop'] = True
     return {'status': 'PASS' if all(checks.values()) else 'FAIL',
             'checks': {key: 'PASS' if value else 'FAIL' for key, value in checks.items()},
-            'readyWorkloads': ready_count, 'scope': 'Operational preflight only; not E5 scientific PASS',
+            'readyWorkloads': ready_count, 'scope': 'Operational preflight only; not evaluation scientific PASS',
             'resolvedHistoricalStop': stop if resolved_stop else None}
 
 
-def summarize(e5, binding, out, destination=None, *, judge=False):
-    raw = e5.module('demo_raw', HERE / 'e5-raw.py')
+def summarize(harness_module, binding, out, destination=None, *, judge=False):
+    raw = harness_module.module('demo_raw', HERE / 'raw.py')
     analysis = ANALYSIS
     destination = destination or out
     rows, stage_summaries = [], []
     previous_end = None
-    previous_snapshot = e5.load(out / 'initial.json')['state']['snapshot'] if (out / 'initial.json').exists() else None
+    previous_snapshot = harness_module.load(out / 'initial.json')['state']['snapshot'] if (out / 'initial.json').exists() else None
     for stage in binding['schedule']:
         folder = stage_folder(out, stage)
         if not (folder / 'phase.json').exists():
             continue
-        phase = e5.load(phase_path(folder))
+        phase = harness_module.load(phase_path(folder))
         if not phase.get('startUTC') or not phase.get('endUTC'):
             stage_summaries.append({'stage': stage['id'], 'status': phase['status'], 'error': phase.get('error'), 'metricsAvailable': False})
             for key in ('readyGate', 'startBarrier'):
@@ -739,10 +739,10 @@ def summarize(e5, binding, out, destination=None, *, judge=False):
         gap = None if previous_end is None else epoch(phase['startUTC']) - epoch(previous_end)
         previous_end = phase['endUTC']
         events, provenance = raw.scheduler_events(folder, approved_root=out) if judge else raw.scheduler_events(folder)
-        pre = e5.load(folder / 'pre-state.json')['snapshot']
+        pre = harness_module.load(folder / 'pre-state.json')['snapshot']
         baseline = previous_snapshot or pre
         post_path = folder / (phase.get('postBoundaryPrefix', 'post') + '-state.json')
-        post = e5.load(post_path)['snapshot'] if post_path.exists() else None
+        post = harness_module.load(post_path)['snapshot'] if post_path.exists() else None
         lower, upper = epoch(baseline['at']), epoch(post['at'] if post else phase.get('drainedUTC') or phase['endUTC'])
         events = [e for e in events if epoch(e.get('at')) is not None and lower <= epoch(e['at']) <= upper]
         snapshots = [(epoch(pre['at']), pre['at'], pre, 'pre-state.json')]
@@ -770,10 +770,10 @@ def summarize(e5, binding, out, destination=None, *, judge=False):
                 if epoch(action.get('startedAt')) is not None:
                     windows.append((epoch(action['startedAt']), epoch(action.get('completedAt') or event['at'])))
         power_path = folder / 'power.json'
-        power = e5.load(power_path) if power_path.exists() else {}
+        power = harness_module.load(power_path) if power_path.exists() else {}
         drain_power_path = folder / 'power-drain-inclusive.json'
-        drain_power = e5.load(drain_power_path) if drain_power_path.exists() else {}
-        collected = e5.load(folder / 'collected.json') if (folder / 'collected.json').exists() else {}
+        drain_power = harness_module.load(drain_power_path) if drain_power_path.exists() else {}
+        collected = harness_module.load(folder / 'collected.json') if (folder / 'collected.json').exists() else {}
         missing_archives = collected.get('missingArchives', {})
         if 'power' in missing_archives:
             power = {}
@@ -848,7 +848,7 @@ def summarize(e5, binding, out, destination=None, *, judge=False):
                 part_within = sum(value is not None and value <= measurement['targetLatencyNanos'] for value in part_latencies)
                 part_summary['workloads'][name] = {'rate': part['rates'][name], 'offered': count, 'clientRows': len(selected), 'missingClientRows': max(0, count - len(selected)), 'httpSuccess': len(successes), 'successNumerator': len(successes), 'successDenominator': count, 'successFraction': len(successes) / count if count else None, 'latencyMS': analysis.stats([value / 1e6 for value in part_latencies if value is not None]), 'missingSLOLatencyRows': sum(value is None for value in part_latencies), 'serviceLatencyMS': analysis.stats([timings[id(r)]['actualLatencyNS'] / 1e6 for r in successes if timings[id(r)]['actualLatencyNS'] is not None]), 'scheduledLatencyMS': analysis.stats([timings[id(r)]['scheduledLatencyNS'] / 1e6 for r in selected if timings[id(r)]['scheduledLatencyNS'] is not None]), 'entranceDelayNS': analysis.stats([timings[id(r)]['entranceDelayNS'] for r in selected]), 'withinSLONumerator': part_within, 'withinSLODenominator': count, 'withinSLOFraction': part_within / count if count and all(value is not None for value in part_latencies) and not indexed['errors'] and fidelity['status'] != 'UNKNOWN' else None, 'latencyScope': metric['latencyScope'], 'producerWindowEpoch': [epoch(start['at']) + lo / 1e9, epoch(start['at']) + hi / 1e9] if start else None, 'generatorQuality': fidelity['generatorQuality']}
                 bounds = part_summary['workloads'][name]['producerWindowEpoch']
-                part_summary['workloads'][name]['producerWindowUTC'] = [e5.dt.datetime.fromtimestamp(t, e5.dt.timezone.utc).isoformat() for t in bounds] if bounds else None
+                part_summary['workloads'][name]['producerWindowUTC'] = [harness_module.dt.datetime.fromtimestamp(t, harness_module.dt.timezone.utc).isoformat() for t in bounds] if bounds else None
                 part_summary['workloads'][name]['windowMeaning'] = 'Frozen scheduled rate interval anchored to actual producer start; not an independently observed boundary event'
         qualities = [m['issuanceFidelity']['generatorQuality']['status'] for m in summary['workloads'].values() if m['offered']]
         summary['generatorQualityStatus'] = 'INVALID_GENERATOR' if 'INVALID_GENERATOR' in qualities else 'UNKNOWN' if 'UNKNOWN' in qualities else 'VALID' if qualities else 'NOT_OFFERED'
@@ -856,7 +856,7 @@ def summarize(e5, binding, out, destination=None, *, judge=False):
             summary['status'] = 'INVALID_GENERATOR'
         summary_folder = stage_folder(destination, stage)
         summary_folder.mkdir(parents=True, exist_ok=True)
-        e5.save(summary_folder / 'summary.json', summary)
+        harness_module.save(summary_folder / 'summary.json', summary)
         stage_summaries.append(summary)
     scheduler_settings = binding.get('schedulerSettings')
     result = {'schema': 'e5-demo-summary.v1', 'schedulerSettings': scheduler_settings, 'missingReasons': {'schedulerSettings': None if scheduler_settings is not None else 'Binding does not contain frozen scheduler settings; current settings are not substituted'}, 'stages': stage_summaries}
@@ -865,8 +865,8 @@ def summarize(e5, binding, out, destination=None, *, judge=False):
     result['generatorQualityStatus'] = quality_status
     result['status'] = quality_status if quality_status in ('INVALID_GENERATOR', 'UNKNOWN') else 'DESCRIPTIVE'
     if binding.get('demoConfig', {}).get('preflight'):
-        result['preflight'] = preflight_result(e5, binding, out, stage_summaries, judge=judge)
-    e5.save(destination / 'summary.json', result)
+        result['preflight'] = preflight_result(harness_module, binding, out, stage_summaries, judge=judge)
+    harness_module.save(destination / 'summary.json', result)
     def fmt(value):
         return '—' if value is None else f'{value:.3f}' if isinstance(value, float) else str(value)
     table = ['# Autonomous workload-pool demo', '', 'SLO latency is gateway elapsedNanos from CHILL receipt to response (03_routing). Scheduled end-to-end and actual client HTTP round trip are reference only; entrance delay is receivedAt minus sentAtUnixNS with cross-host clock uncertainty retained, not clamped. Generator lateness quality is separate; missing policy is UNKNOWN, exceeded policy is INVALID_GENERATOR, not an SLO failure. Offered is the full frozen trace, including unsent requests. SLO is the configured measurementSLO, or captured scheduler SLO when omitted. Energy is shared pool energy, repeated per workload (do not sum rows). Missing evidence is —, not zero.', '', '| Stage | Workload | Rate/s | Success/offered | Success % | p95 ms | p99 ms | SLO p/ms | Within SLO % | Pool J | Active J | Drain pool J | Placement changes | Transition failures | Gap s |', '|---|---|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|']
@@ -905,9 +905,9 @@ def summarize(e5, binding, out, destination=None, *, judge=False):
     return stage_summaries
 
 
-def publish(e5, binding, out, identifier, store_config):
+def publish(harness_module, binding, out, identifier, store_config):
     """Upload raw evidence, then immutable summary; corrections require a new ID."""
-    summaries = summarize(e5, binding, out)
+    summaries = summarize(harness_module, binding, out)
     stages = []
     for summary in summaries:
         if not summary.get('startUTC') or not summary.get('endUTC'):
@@ -930,8 +930,8 @@ def publish(e5, binding, out, identifier, store_config):
                 'missingReasons': {'energy': 'Actual whole/active power coverage incomplete' if summary['energyJ'] is None or summary['activeEnergyJ'] is None else None,
                                   'drainInclusiveEnergy': 'Actual drain-inclusive power coverage incomplete' if summary['drainInclusiveEnergyJ'] is None else None,
                                   'gap': 'First offered window' if summary['gapFromPreviousOfferedWindowSeconds'] is None else None},
-                'limitations': [summary['gapMeaning'], 'Operational demo only; no E5 scientific PASS or workload-attributed energy', *binding['config'].get('demoSkipped', [])]}
-        kpis.update(e5.publication_measurements(binding, summary))
+                'limitations': [summary['gapMeaning'], 'Operational demo only; no evaluation scientific PASS or workload-attributed energy', *binding['config'].get('demoSkipped', [])]}
+        kpis.update(harness_module.publication_measurements(binding, summary))
         kpis['schedulerSettings'] = binding.get('schedulerSettings')
         for key in ('readyGate', 'startBarrier'):
             if key in summary:
@@ -942,7 +942,7 @@ def publish(e5, binding, out, identifier, store_config):
         stage = next(row for row in binding['schedule'] if row['id'] == summary['stage'])
         stages.append({'id': summary['stage'], 'from': summary['startUTC'], 'to': summary['endUTC'], 'kpis': kpis, '_folder': stage_folder(out, stage), '_phase': phase_path(stage_folder(out, stage))})
     status = 'OPERATIONAL_DEMO_COMPLETE' if len(stages) == len(binding['schedule']) and all(stage['kpis']['status'] == 'DRAINED_NOT_EVALUATED' for stage in stages) else 'PARTIAL'
-    return e5.publish_experiment(out, identifier, store_config, stages, status, binding=binding)
+    return harness_module.publish_experiment(out, identifier, store_config, stages, status, binding=binding)
 
 
 
@@ -991,21 +991,21 @@ def self_check():
     with tempfile.TemporaryDirectory(prefix='chill-demo-') as temp:
         root = Path(temp)
         environment = root / 'environment.json'
-        environment.write_text(json.dumps({'paths': {'repository': str(HERE.parents[1]), 'ops': temp, 'campaign': temp, 'd2State': temp}, 'e5': {'operationalRecipe': temp, 'nodes': [], 'excludedNodes': [], 'awsExecutable':temp, 'awsEnvFile':temp}, 'd2': {'repoBin': temp, 'apiBase': 'https://fixture.invalid', 'caFile': temp, 'tokenFile': temp, 'kubectl': ['fixture-kubectl'], 'jobTemplate': temp, 'workloadUID': 'fixture', 'workloadName': 'fixture'}}))
+        environment.write_text(json.dumps({'paths': {'repository': str(HERE.parents[1]), 'ops': temp, 'campaign': temp, 'd2State': temp}, 'evaluation': {'operationalRecipe': temp, 'nodes': [], 'excludedNodes': [], 'awsExecutable':temp, 'awsEnvFile':temp}, 'd2': {'repoBin': temp, 'apiBase': 'https://fixture.invalid', 'caFile': temp, 'tokenFile': temp, 'kubectl': ['fixture-kubectl'], 'jobTemplate': temp, 'workloadUID': 'fixture', 'workloadName': 'fixture'}}))
         with patch.dict(os.environ, {'CHILL_EXPERIMENT_CONFIG': str(environment)}):
-            e5 = module('demo_smoke_e5', HERE / 'e5.py')
-            d = e5.module('demo_smoke_conduct', HERE / 'd2/conduct_before.py')
+            harness_module = module('demo_smoke_harness', HERE / 'conductor.py')
+            d = harness_module.module('demo_smoke_conduct', HERE / 'd2/conduct_before.py')
         # Settings share the configured budget, with one readback and no PUT retry.
-        settings_probe = object.__new__(e5.CPO)
+        settings_probe = object.__new__(harness_module.CPO)
         requested = {'autonomousWorkloads': [], 'excludedNodes': ['held'], 'controls': {'membership': True}}
         for seconds in (5, 129):
             settings_probe.tb = {'apiSeconds': seconds}
             for failure, observed in (
                     (None, requested),
                     (TimeoutError('response timed out'), requested),
-                    (e5.urllib.error.URLError(TimeoutError('response timed out')), requested),
+                    (harness_module.urllib.error.URLError(TimeoutError('response timed out')), requested),
                     (TimeoutError('response timed out'), dict(requested, autonomousWorkloads=['owned'])),
-                    (e5.urllib.error.URLError('connection refused'), requested)):
+                    (harness_module.urllib.error.URLError('connection refused'), requested)):
                 settings_calls = []
                 def settings_api(method, path, body=None, timeout=None):
                     settings_calls.append((method, path, timeout))
@@ -1025,7 +1025,7 @@ def self_check():
                     receipt = settings_probe.put(dict(requested, staticRouting={}, staticRoutingValidatedAt='old', powerObservation={}))
                 except RuntimeError as error:
                     assert timed_out and observed != requested and 'readback mismatch; no retransmission' in str(error)
-                except e5.urllib.error.URLError as error:
+                except harness_module.urllib.error.URLError as error:
                     assert error is failure and not timed_out
                 else:
                     assert observed == requested
@@ -1034,29 +1034,29 @@ def self_check():
                 assert settings_calls == [(method, '/api/v1/scheduler/settings', max(30, seconds)) for method in expected_methods]
         fixture_power = {'sampling': {'Interval': 750000000, 'Duration': 5000000000, 'RequestTimeout': 700000000, 'MaxEvents': 9}, 'coverage': {'MaximumGap': 3000000000, 'MaximumBoundaryDistance': 1000000000, 'MinimumCoverage': .75}}
         config = {'endpoint': 'https://fixture.invalid', 'caFile': '/fixture/ca', 'timeboxes': {'apiSeconds': 1}}
-        (e5.OPS / '.token-collector').write_text('offline-fixture')
+        (harness_module.OPS / '.token-collector').write_text('offline-fixture')
         response = __import__('io').StringIO(json.dumps({'powerObservation': fixture_power}))
         opener = SimpleNamespace(open=lambda request, timeout: response)
-        with patch.object(e5.ssl, 'create_default_context'), patch.object(e5.urllib.request, 'build_opener', return_value=opener):
-            assert e5.power_observation(config) == fixture_power
-        e5.power_observation = lambda c: copy.deepcopy(fixture_power)
+        with patch.object(harness_module.ssl, 'create_default_context'), patch.object(harness_module.urllib.request, 'build_opener', return_value=opener):
+            assert harness_module.power_observation(config) == fixture_power
+        harness_module.power_observation = lambda c: copy.deepcopy(fixture_power)
         template = root / 'job.json'
         template.write_text(json.dumps({'spec': {'template': {'spec': {'restartPolicy': 'Never', 'containers': [{'name': 'load', 'image': 'fixture@sha256:fixture'}]}}}}))
         workloads = [{'name': name, 'uid': name, 'generation': 1, 'slo': {'percentile': 95, 'targetLatencyNanos': 1000000000}, 'jobTemplate': str(template), 'producerEndpoint': 'https://fixture.invalid', 'producerTokenFile': '/fixture/token', 'producerCAFile': '/fixture/ca', 'producerDatasetDir': '/fixture/data', 'fields': ['input'], 'workers': 1, 'gatewayCapSeconds': 2, 'lifetimeSeconds': 1, 'deliverySeconds': .1, 'socketSeconds': 3} for name in ALIASES.values()]
         config = {'stages': [{'id': 'E0', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 0)}, {'id': 'A', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 10000)}, {'id': 'B', 'seconds': .001, 'rates': {'mobilenet': 20000, 'smolvlm2': 10000, 'plc': 10000}}, {'id': 'C', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 10000)}]}
         config['stages'][-1] = {'id': 'C', 'parts': [{'id': 'high', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 20000)}, {'id': 'low', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 10000)}]}
-        stages = schedule(config, e5)
-        evaluation = json.loads((HERE / 'demo-config.e5.example.json').read_text())
+        stages = schedule(config, harness_module)
+        evaluation = json.loads((HERE / 'demo-config.evaluation.example.json').read_text())
         evaluation['producerShards'] = dict.fromkeys(ALIASES, 1)
         evaluation['evaluation'] = {'resources': {'cpu': '2', 'memory': '1Gi'}}
         try:
-            schedule(evaluation, e5)
+            schedule(evaluation, harness_module)
         except ValueError:
             pass
         else:
-            raise AssertionError('Unapproved E5 capacityR accepted')
+            raise AssertionError('Unapproved evaluation capacityR accepted')
         evaluation['capacityR'] = dict.fromkeys(ALIASES, .01)
-        evaluated = schedule(evaluation, e5)
+        evaluated = schedule(evaluation, harness_module)
         assert [s['id'] for s in evaluated] == [f'E5-{i}' for i in range(8)]
         assert sum(s['seconds'] for s in evaluated) == 195 * 60
         assert math.isclose(evaluated[7]['rates'][ALIASES['mobilenet']], .00135)
@@ -1066,102 +1066,102 @@ def self_check():
         assert evaluated[3]['parts'][2]['alpha'] == dict.fromkeys(ALIASES, .9)
         for bad in (None, {}, {'MNV': .5, 'PLC': .5, 'Smol': .5}, {'MNV': -1, 'PLC': 1, 'Smol': 1}, {'MNV': float('nan'), 'PLC': .5, 'Smol': .5}, {'MNV': True, 'PLC': 0, 'Smol': 0}):
             try:
-                schedule(dict(evaluation, poolShares=bad), e5)
+                schedule(dict(evaluation, poolShares=bad), harness_module)
             except ValueError:
                 pass
             else:
                 raise AssertionError('Invalid poolShares accepted')
-        custom = schedule(dict(evaluation, poolShares={'MNV': .5, 'PLC': .25, 'Smol': .25}), e5)
+        custom = schedule(dict(evaluation, poolShares={'MNV': .5, 'PLC': .25, 'Smol': .25}), harness_module)
         assert math.isclose(custom[1]['rates'][ALIASES['mobilenet']], .0015)
         gateway = json.loads((HERE / 'g-check-config.example.json').read_text())
         gateway['capacityR'] = dict.fromkeys(ALIASES, .01)
-        g_stages = schedule(gateway, e5)
+        g_stages = schedule(gateway, harness_module)
         assert len(g_stages) == 1 and g_stages[0]['id'] == 'G-check' and g_stages[0]['seconds'] == 120
         assert len(g_stages[0]['parts']) == 1
         assert g_stages[0]['parts'][0]['alpha'] == dict.fromkeys(ALIASES, 1.2)
         assert math.isclose(g_stages[0]['rates'][ALIASES['plc']], .0012)
-        assert e5.pool_shares({}) == {'MNV': .45, 'PLC': .1, 'Smol': .45}
+        assert harness_module.pool_shares({}) == {'MNV': .45, 'PLC': .1, 'Smol': .45}
         assert gateway['g0Bootstrap'] and gateway['g0Gate']['status'] == 'UNKNOWN'
-        assert e5.g0_evidence_gate({}, .01, required=False)['status'] == 'UNKNOWN'
+        assert harness_module.g0_evidence_gate({}, .01, required=False)['status'] == 'UNKNOWN'
         try:
-            e5.g0_evidence_gate({}, .01)
+            harness_module.g0_evidence_gate({}, .01)
         except ValueError:
             pass
         else:
             raise AssertionError('Missing strict G0 evidence accepted')
-        e5.self_check_g0()
-        e5.self_check_publication_metadata()
+        harness_module.self_check_g0()
+        harness_module.self_check_publication_metadata()
         assert gateway['measurementSLO']['plc'] == {'percentile': 95, 'targetLatencyNanos': 32000000}
         for bad in (None, {}, dict.fromkeys(ALIASES, -1), dict.fromkeys(ALIASES, float('nan'))):
             invalid = dict(evaluation, capacityR=bad)
             try:
-                schedule(invalid, e5)
+                schedule(invalid, harness_module)
             except ValueError:
                 pass
             else:
-                raise AssertionError('Invalid E5 capacityR accepted')
-        tolerant = schedule(dict(config, tolerateArchive=['power', 'power-drain-inclusive']), e5)
+                raise AssertionError('Invalid evaluation capacityR accepted')
+        tolerant = schedule(dict(config, tolerateArchive=['power', 'power-drain-inclusive']), harness_module)
         assert all(s['tolerateArchive'] == ['power', 'power-drain-inclusive'] for s in tolerant)
         override = copy.deepcopy(config)
         override['tolerateArchive'] = ['power']
         override['stages'][1]['tolerateArchive'] = []
-        assert schedule(override, e5)[1]['tolerateArchive'] == []
+        assert schedule(override, harness_module)[1]['tolerateArchive'] == []
         for invalid in ('power', ['requests'], [None]):
             try:
-                schedule(dict(config, tolerateArchive=invalid), e5)
+                schedule(dict(config, tolerateArchive=invalid), harness_module)
             except ValueError:
                 pass
             else:
                 raise AssertionError('Invalid tolerateArchive accepted')
         strict_config = {'approval': {}}
-        e5.require_strict_archives(strict_config)
+        harness_module.require_strict_archives(strict_config)
         for value in ([], ['power'], None, False):
             for forbidden in ({'tolerateArchive': value}, {'smoke': {'tolerateArchive': value}}, {'stages': [{'tolerateArchive': value}]}):
-                config_path = root / 'forbidden-e5.json'
+                config_path = root / 'forbidden-evaluation.json'
                 config_path.write_text(json.dumps(dict(strict_config, **forbidden)))
                 binding_path = root / 'forbidden-binding.json'
                 binding_path.write_text(json.dumps({'schema': 'e5-binding.v1', 'config': forbidden}))
-                for check, path in ((e5.bind, config_path), (e5.load_binding, binding_path)):
+                for check, path in ((harness_module.bind, config_path), (harness_module.load_binding, binding_path)):
                     try:
                         check(path)
                     except ValueError as exc:
-                        assert str(exc) == 'tolerateArchive is diagnostic-only in demo.py; forbidden in normative E5 configuration'
+                        assert str(exc) == 'tolerateArchive is diagnostic-only in demo.py; forbidden in normative evaluation configuration'
                     else:
-                        raise AssertionError('Normative E5 accepted tolerateArchive')
+                        raise AssertionError('Normative evaluation accepted tolerateArchive')
         binding_path.write_text(json.dumps({'schema': 'demo-e5-binding.v1', 'config': {'smoke': {'tolerateArchive': ['power']}}}))
-        assert e5.load_binding(binding_path)['config']['smoke']['tolerateArchive'] == ['power']
+        assert harness_module.load_binding(binding_path)['config']['smoke']['tolerateArchive'] == ['power']
         from chill_loadgen import cli
         assert stages[-1]['seconds'] == .002
         for name in ALIASES.values():
-            expected = cli.arrival_offsets_ns('poisson', 20000, .001, e5.SEEDS[name])
-            expected += [1000000 + x for x in cli.arrival_offsets_ns('poisson', 10000, .001, e5.SEEDS[name])]
+            expected = cli.arrival_offsets_ns('poisson', 20000, .001, harness_module.SEEDS[name])
+            expected += [1000000 + x for x in cli.arrival_offsets_ns('poisson', 10000, .001, harness_module.SEEDS[name])]
             assert stages[-1]['traces'][name]['offsetsNS'] == expected
-            single = cli.arrival_offsets_ns('poisson', 10000, .001, e5.SEEDS[name])
+            single = cli.arrival_offsets_ns('poisson', 10000, .001, harness_module.SEEDS[name])
             assert stages[1]['traces'][name]['offsetsNS'] == single
         for invalid in ([], [None], [dict(config['stages'][0], seconds=0)], [dict(config['stages'][0], rates={'mobilenet': 1})], [config['stages'][0], config['stages'][0]], [dict(config['stages'][0], readyGate=True)]):
             try:
-                schedule({'stages': [{'id': 'bad', 'parts': invalid}]}, e5)
+                schedule({'stages': [{'id': 'bad', 'parts': invalid}]}, harness_module)
             except ValueError:
                 pass
             else:
                 raise AssertionError('Invalid parts accepted')
         try:
-            schedule({'stages': [dict(config['stages'][0], parts=[config['stages'][0]])]}, e5)
+            schedule({'stages': [dict(config['stages'][0], parts=[config['stages'][0]])]}, harness_module)
         except ValueError:
             pass
         else:
             raise AssertionError('Ambiguous stage accepted')
-        cpo = object.__new__(e5.CPO)
+        cpo = object.__new__(harness_module.CPO)
         cpo.out = root / 'run'
         cpo.out.mkdir()
         cpo.a = SimpleNamespace(mode='smoke', command='smoke', stage='E0', row_tag='')
         cpo.c = {'workloads': workloads, 'smoke': stages[0], 'generatorQuality': {'latenessToleranceNS': 50_000_000, 'maxExceedingFraction': 0}}
-        e5.freeze_harness_config(cpo.c)
+        harness_module.freeze_harness_config(cpo.c)
         cpo.b = {'schema': 'demo-e5-binding.v1', 'config': cpo.c, 'schedule': stages, 'sources': {}, 'payload': {w['name']: [] for w in workloads}}
         cpo.tb = dict.fromkeys(('setupSeconds', 'barrierSeconds', 'drainSeconds', 'apiSeconds', 'settleSeconds', 'collectSeconds'), 3)
         cpo.tb['flushSeconds'] = .001
         fixture_token = root / 'fixture-token'
-        fixture_token.write_text('e30.' + e5.base64.urlsafe_b64encode(json.dumps({'exp': e5.time.time() + 86400}).encode()).decode().rstrip('=') + '.signature')
+        fixture_token.write_text('e30.' + harness_module.base64.urlsafe_b64encode(json.dumps({'exp': harness_module.time.time() + 86400}).encode()).decode().rstrip('=') + '.signature')
         cpo.c.update(tokenFile=str(fixture_token), timeboxes=cpo.tb)
         cpo.ws = {w['name']: w for w in workloads}
         cpo.uids = [w['uid'] for w in workloads]
@@ -1228,11 +1228,11 @@ def self_check():
             else:
                 raise AssertionError('Permanently stale canonical UID accepted')
         assert sleeps == [2] * 30 and floor_calls == ['GET'] * 34
-        snapshot = {'at': e5.now(), 'instances': [], 'nodes': [], 'workloads': workloads, 'routing': {}, 'outstanding': [], 'reservations': []}
+        snapshot = {'at': harness_module.now(), 'instances': [], 'nodes': [], 'workloads': workloads, 'routing': {}, 'outstanding': [], 'reservations': []}
         scheduler_actions = []
         cpo.state = lambda: {'snapshot': copy.deepcopy(snapshot), 'actions': copy.deepcopy(scheduler_actions), 'results': None}
         cpo.settings = lambda: copy.deepcopy(settings)
-        cpo.put = lambda value: settings.update(copy.deepcopy(value)) or {'validatedAt': e5.now()}
+        cpo.put = lambda value: settings.update(copy.deepcopy(value)) or {'validatedAt': harness_module.now()}
         cpo.api = lambda *args: {'pending': 0, 'assigned': 0}
         cpo.authorize_native_modes = lambda: None
         cpo.monitor = lambda offset, folder: offset
@@ -1246,7 +1246,7 @@ def self_check():
                 snapshot['instances'], snapshot['routing'] = [], {}
             elif body['kind'] != 'release':
                 raise AssertionError(body)
-            return {'operation': body, 'status': 'complete', 'steps': [], 'endedAt': e5.now()}
+            return {'operation': body, 'status': 'complete', 'steps': [], 'endedAt': harness_module.now()}
         cpo.io.api = operation_fixture
         pods, followers, calls = {}, {}, []
         class Process:
@@ -1257,7 +1257,7 @@ def self_check():
                 self.stdout = os.fdopen(reader, 'rb')
                 trace = next(s for s in stages if s['id'] == cpo.a.stage)['traces'][name]
                 alias = next(alias for alias, canonical in ALIASES.items() if canonical == name)
-                self.emit({'e5Event': 'ready', 'at': e5.now(), 'payload': [], 'offered': trace['offered'], 'arrivalSHA256': trace['arrivalSHA256'], 'barrierSeconds': 3, 'shards': cpo.c['producerShards'][alias]})
+                self.emit({'evaluationEvent': 'ready', 'at': harness_module.now(), 'payload': [], 'offered': trace['offered'], 'arrivalSHA256': trace['arrivalSHA256'], 'barrierSeconds': 3, 'shards': cpo.c['producerShards'][alias]})
             def emit(self, row):
                 try:
                     os.write(self.writer, (json.dumps(row) + '\n').encode())
@@ -1285,23 +1285,23 @@ def self_check():
             if argv[:2] == ['get', 'jobs']:
                 return {'items': []}
             if argv[:2] == ['get', 'job']:
-                name = next(n for n in pods if argv[2].endswith('-' + str(e5.SEEDS[n])))
+                name = next(n for n in pods if argv[2].endswith('-' + str(harness_module.SEEDS[n])))
                 return {'metadata': {'name': argv[2], 'uid': 'job-' + name}}
             if argv[0] == 'create':
                 job = json.loads(stdin)
                 pod_spec = job['spec']['template']['spec']
                 for container in pod_spec['containers'] + pod_spec.get('initContainers', []):
                     assert container['resources']['requests'] == container['resources']['limits'] == cpo.c['producerResources']
-                policy = json.loads(e5.zlib.decompress(e5.base64.b64decode(pod_spec['containers'][0]['args'][0])))
+                policy = json.loads(harness_module.zlib.decompress(harness_module.base64.b64decode(pod_spec['containers'][0]['args'][0])))
                 alias = next(alias for alias, canonical in ALIASES.items() if canonical == pod_spec['containers'][0]['args'][pod_spec['containers'][0]['args'].index('--workload') + 1])
                 assert policy['shards'] == cpo.c['producerShards'][alias]
                 args = job['spec']['template']['spec']['containers'][0]['args']
                 name = args[args.index('--workload') + 1]
                 job['metadata']['uid'] = 'job-' + name
-                pods[name] = {'metadata': {'name': 'pod-' + name, 'uid': 'poduid-' + name, 'ownerReferences': [{'kind': 'Job', 'uid': 'job-' + name}]}, 'spec': {'nodeName': 'fixture'}, 'status': {'phase': 'Running', 'containerStatuses': [{'name': 'load', 'containerID': 'fixture-' + name, 'state': {'running': {'startedAt': e5.now()}}}]}}
+                pods[name] = {'metadata': {'name': 'pod-' + name, 'uid': 'poduid-' + name, 'ownerReferences': [{'kind': 'Job', 'uid': 'job-' + name}]}, 'spec': {'nodeName': 'fixture'}, 'status': {'phase': 'Running', 'containerStatuses': [{'name': 'load', 'containerID': 'fixture-' + name, 'state': {'running': {'startedAt': harness_module.now()}}}]}}
                 return job
             if argv[:2] == ['get', 'pods']:
-                name = next(n for n in pods if argv[3].endswith('-' + str(e5.SEEDS[n])))
+                name = next(n for n in pods if argv[3].endswith('-' + str(harness_module.SEEDS[n])))
                 return {'items': [pods[name]]}
             name = next(n for n in pods if pods[n]['metadata']['name'] == argv[1 if argv[0] == 'exec' else 2])
             if argv[0] == 'get':
@@ -1311,12 +1311,12 @@ def self_check():
                 if '.touch()' in argv[-1]:
                     stage = next(s for s in stages if s['id'] == cpo.a.stage)
                     def emit_offered():
-                        process.emit({'e5Event': 'start', 'at': e5.now(), 'monotonicNS': 1000000000})
+                        process.emit({'evaluationEvent': 'start', 'at': harness_module.now(), 'monotonicNS': 1000000000})
                         for index, offset in enumerate(stage['traces'][name]['offsetsNS']):
                             process.emit({'requestID': name + '-' + str(index), 'requestIndex': index, 'scheduledOffsetNs': offset, 'scheduledMonotonicNS': 1000000000 + offset, 'sentMonotonicNS': 1000000000 + offset, 'finishedMonotonicNS': 1000000000 + offset + 1000, 'sentAtUnixNS': 2000000000 + offset, 'finishedAtUnixNS': 2000000000 + offset + 1000, 'status': 200 if index else 503, 'latencyMs': .001, 'scheduledLatencyMs': .001, 'serviceLatencyMs': .001, 'latenessNs': 0})
-                        process.emit({'e5Event': 'window-end', 'at': e5.now()})
-                        process.emit({'e5Event': 'drained', 'at': e5.now()})
-                    process.emitter = e5.threading.Thread(target=emit_offered, daemon=True)
+                        process.emit({'evaluationEvent': 'window-end', 'at': harness_module.now()})
+                        process.emit({'evaluationEvent': 'drained', 'at': harness_module.now()})
+                    process.emitter = harness_module.threading.Thread(target=emit_offered, daemon=True)
                     process.emitter.start()
                 else:
                     assert '.unlink()' in argv[-1]
@@ -1331,34 +1331,34 @@ def self_check():
             if prefix == 'post':
                 snapshot['instances'] = [{'id': 'native/' + w['name'], 'ownerWorkloadUID': w['uid'], 'workloadUID': w['uid'], 'ready': True, 'node': {'name': 'fixture'}, 'maxBatch': stages.index(next(s for s in stages if s['id'] == cpo.a.stage)) + 1} for w in workloads]
                 snapshot['routing'] = {w['uid']: {'native/' + w['name']: 1} for w in workloads}
-            snapshot['at'] = e5.now()
-            e5.save(folder / (prefix + '-state.json'), cpo.state())
+            snapshot['at'] = harness_module.now()
+            harness_module.save(folder / (prefix + '-state.json'), cpo.state())
         cpo.boundary = boundary
         class FixtureResources:
             def __init__(self, io, owned, api_seconds, evidence):self.owned=owned
             def ready(self, minimum, deadline):return minimum<=2
             def poll(self, deadline):
-                stamp=(e5.dt.datetime.now(e5.dt.timezone.utc)+e5.dt.timedelta(seconds=60)).isoformat()
+                stamp=(harness_module.dt.datetime.now(harness_module.dt.timezone.utc)+harness_module.dt.timedelta(seconds=60)).isoformat()
                 return [{'kind':'cgroup','role':'client','podUID':pod['metadata']['uid'],'containerID':pod['status']['containerStatuses'][0]['containerID'],'at':stamp,'cpuUsageNanos':1,'nrThrottled':0,'throttledNanos':0} for pod in self.owned.values()]
-        e5.ProducerResources=FixtureResources
+        harness_module.ProducerResources=FixtureResources
         cpo.b['config']['harnessRepositoryCommit'] = 'a' * 40
         publication_coverage = {'policy': {'maxGapFraction': .01, 'maxSingleGapSeconds': 30},
                                 'nodeGapSecondsSum': 1, 'maximumGapSeconds': 1, 'maximumNodeGapFraction': .001}
         def collect(folder, phase=None):
-            e5.save(folder / 'collected.json', {'status': 'CAPTURED_NOT_EVALUATED'})
-            e5.save(folder / 'power.json', {'complete': True, 'wholePoolJoules': 10, 'activePoolJoules': 5,
+            harness_module.save(folder / 'collected.json', {'status': 'CAPTURED_NOT_EVALUATED'})
+            harness_module.save(folder / 'power.json', {'complete': True, 'wholePoolJoules': 10, 'activePoolJoules': 5,
                                           'energyCoverage': publication_coverage, 'gapErrorBoundJoules': 2})
-            e5.save(folder / 'power-drain-inclusive.json', {'complete': True, 'wholePoolJoules': 11})
+            harness_module.save(folder / 'power-drain-inclusive.json', {'complete': True, 'wholePoolJoules': 11})
         cpo.collect = collect
-        original_module = e5.module
+        original_module = harness_module.module
         def modules(name, path):
             if name == 'demo_raw':
                 def events(folder):
-                    phase = e5.load(folder / 'phase.json')
+                    phase = harness_module.load(folder / 'phase.json')
                     captured = [{'at': phase['endUTC'], 'action': {'kind': 'route', 'phase': 'complete', 'startedAt': phase['startUTC'], 'completedAt': phase['endUTC']}}]
                     if folder.name == 'smoke-C':
-                        state = copy.deepcopy(e5.load(folder / 'pre-state.json')['snapshot'])
-                        at = (e5.dt.datetime.fromisoformat(phase['startUTC']) + e5.dt.timedelta(seconds=.001)).isoformat()
+                        state = copy.deepcopy(harness_module.load(folder / 'pre-state.json')['snapshot'])
+                        at = (harness_module.dt.datetime.fromisoformat(phase['startUTC']) + harness_module.dt.timedelta(seconds=.001)).isoformat()
                         state['at'] = at
                         for instance in state['instances']:
                             instance['maxBatch'] = 88
@@ -1371,10 +1371,10 @@ def self_check():
                     return {'finals': {r['requestID']: {'outcome': 'completed', 'executionComplete': True, 'elapsedNanos': 1000} for r in clients if r.get('requestID') and r.get('status') == 200}, 'receivedAtNS': {r['requestID']: r['sentAtUnixNS'] - 100 for r in clients if r.get('requestID')}, 'errors': []}
                 return SimpleNamespace(scheduler_events=events, index_requests=requests)
             return original_module(name, path)
-        e5.module = modules
+        harness_module.module = modules
         (root / 'control-alerts.jsonl').write_text('')
-        with patch.object(e5.subprocess, 'Popen', popen):
-            with patch.object(e5, 'power_observation', return_value=dict(fixture_power, coverage=dict(fixture_power['coverage'], MaximumGap=2000000000))):
+        with patch.object(harness_module.subprocess, 'Popen', popen):
+            with patch.object(harness_module, 'power_observation', return_value=dict(fixture_power, coverage=dict(fixture_power['coverage'], MaximumGap=2000000000))):
                 for operation in (cpo.start, cpo.run):
                     try:
                         operation()
@@ -1406,15 +1406,15 @@ def self_check():
                  patch.object(cpo, 'c', dict(cpo.c)), \
                  patch.object(cpo, 'a', SimpleNamespace(mode='smoke', command='smoke', stage=stages[0]['id'], row_tag='')), \
                  patch.dict(snapshot, copy.deepcopy(snapshot), clear=True), \
-                 patch.object(e5.time, 'sleep', no_quiet_sleep):
+                 patch.object(harness_module.time, 'sleep', no_quiet_sleep):
                 run_stage(cpo, stages[0])
-            observed_phase = e5.load(normative_out / 'smoke-E0/phase.json')
+            observed_phase = harness_module.load(normative_out / 'smoke-E0/phase.json')
             assert observed_phase['status'] == 'DRAINED_NOT_EVALUATED'
             for observation in observed_phase['schedulerBoundaryObservations'].values():
                 assert observation['observedUTC'] and observation['snapshotAt']
                 assert observation['reservations'] == observation['transitions'] == 1
             assert 'may continue' in observed_phase['drainScope']
-            summaries = summarize(e5, cpo.b, cpo.out)
+            summaries = summarize(harness_module, cpo.b, cpo.out)
         assert len(summaries) == 4
         for summary in summaries:
             for metric in summary['workloads'].values():
@@ -1424,8 +1424,8 @@ def self_check():
                 assert fidelity['supplied'] == bool(metric['offered'])
                 if metric['offered']:
                     assert fidelity['gapsOver50MS'] == fidelity['sendsLateOver50MS'] == 0
-        with patch.object(e5, 'publish_experiment', return_value={'outcome': 'fixture'}) as publication:
-            assert publish(e5, cpo.b, cpo.out, 'fixture-fidelity', root / 'store.json')['outcome'] == 'fixture'
+        with patch.object(harness_module, 'publish_experiment', return_value={'outcome': 'fixture'}) as publication:
+            assert publish(harness_module, cpo.b, cpo.out, 'fixture-fidelity', root / 'store.json')['outcome'] == 'fixture'
         published_stages = publication.call_args.args[3]
         expected_rules = {'harnessRepositoryCommit': 'a' * 40, 'energyCoverage': publication_coverage['policy'],
                           'evidenceSource': 'api', 'gcMeaning': 'runtime-metrics-delta'}
@@ -1444,7 +1444,7 @@ def self_check():
         next(row for row in records if 'scheduledOffsetNs' in row).pop('sentMonotonicNS')
         client_path.write_text('\n'.join(json.dumps(row) for row in records) + '\n')
         try:
-            unknown = summarize(e5, cpo.b, cpo.out)[1]['workloads'][workloads[0]['name']]
+            unknown = summarize(harness_module, cpo.b, cpo.out)[1]['workloads'][workloads[0]['name']]
             assert unknown['issuanceFidelity']['status'] == 'UNKNOWN' and unknown['transitionFailures'] is None
         finally:
             client_path.write_text(original_client)
@@ -1467,7 +1467,7 @@ def self_check():
                 row.pop('scheduledMonotonicNS')
             client_path.write_text('\n'.join(json.dumps(row) for row in records) + '\n')
             try:
-                metric = summarize(e5, cpo.b, cpo.out)[1]['workloads'][workloads[0]['name']]
+                metric = summarize(harness_module, cpo.b, cpo.out)[1]['workloads'][workloads[0]['name']]
                 baseline = summaries[1]['workloads'][workloads[0]['name']]
                 assert metric['offered'] == metric['withinSLODenominator'] == baseline['offered']
                 if variant == 'late-completion':
@@ -1497,7 +1497,7 @@ def self_check():
             assert high['workloads'][name]['producerWindowUTC'][1] == low['workloads'][name]['producerWindowUTC'][0]
             import base64
             import zlib
-            args = e5.load(cpo.out / 'smoke-C' / ('job-' + name + '.json'))['spec']['template']['spec']['containers'][0]['args']
+            args = harness_module.load(cpo.out / 'smoke-C' / ('job-' + name + '.json'))['spec']['template']['spec']['containers'][0]['args']
             policy = json.loads(zlib.decompress(base64.b64decode(args[0])))
             assert policy['segments'] == [{'rate': 20000, 'seconds': .001}, {'rate': 10000, 'seconds': .001}]
             assert policy['arrivalSHA256'] == stages[-1]['traces'][name]['arrivalSHA256']
@@ -1512,54 +1512,54 @@ def self_check():
             probe_out = root / ('archives-' + label)
             folder = stage_folder(probe_out, stages[1])
             folder.mkdir(parents=True)
-            original = e5.load(stage_folder(cpo.out, stages[1]) / 'phase.json')
+            original = harness_module.load(stage_folder(cpo.out, stages[1]) / 'phase.json')
             original.update(status='STOP', error='Required exact-hour archive/current capture incomplete; preserve private index and stop')
-            e5.save(folder / 'phase.json', original)
+            harness_module.save(folder / 'phase.json', original)
             for name in stages[1]['rates']:
-                e5.save(folder / ('terminal-' + name + '.json'), {'status': {'conditions': [{'type': 'Complete', 'status': 'True'}]}})
+                harness_module.save(folder / ('terminal-' + name + '.json'), {'status': {'conditions': [{'type': 'Complete', 'status': 'True'}]}})
             captured = {'status': 'NOT_READY', 'errors': errors}
-            e5.save(folder / 'archive-collection.json', captured)
-            e5.save(folder / 'raw-source-index.json', {'complete': raw_complete})
+            harness_module.save(folder / 'archive-collection.json', captured)
+            harness_module.save(folder / 'raw-source-index.json', {'complete': raw_complete})
             stage = dict(stages[1], tolerateArchive=allowed)
-            probe = SimpleNamespace(out=probe_out, c={'smoke': stage, 'collection': {}}, b={'schema': 'demo-e5-binding.v1', 'sources': {}, 'schedule': [stage, stages[2]]}, tb={'collectSeconds': 1, 'apiSeconds': 1}, d=SimpleNamespace(K=['fixture'], load=e5.load), io=SimpleNamespace())
-            probe.collect = lambda folder, phase=None: e5.CPO.collect(probe, folder, phase)
-            with patch.object(e5, 'module', return_value=SimpleNamespace(collect=lambda *args: captured)), patch.object(e5.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout='logs')):
+            probe = SimpleNamespace(out=probe_out, c={'smoke': stage, 'collection': {}}, b={'schema': 'demo-e5-binding.v1', 'sources': {}, 'schedule': [stage, stages[2]]}, tb={'collectSeconds': 1, 'apiSeconds': 1}, d=SimpleNamespace(K=['fixture'], load=harness_module.load), io=SimpleNamespace())
+            probe.collect = lambda folder, phase=None: harness_module.CPO.collect(probe, folder, phase)
+            with patch.object(harness_module, 'module', return_value=SimpleNamespace(collect=lambda *args: captured)), patch.object(harness_module.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout='logs')):
                 try:
                     if allowed:
-                        collect_stage(e5, probe, stage)
+                        collect_stage(harness_module, probe, stage)
                     else:
                         probe.collect(folder)
                 except RuntimeError:
                     assert not succeeds
                 else:
                     assert succeeds
-            assert e5.load(folder / 'phase.json') == original
+            assert harness_module.load(folder / 'phase.json') == original
             assert (folder / 'collected.json').exists() == succeeds
             if succeeds:
-                missing = e5.load(folder / 'collected.json')['missingArchives']
+                missing = harness_module.load(folder / 'collected.json')['missingArchives']
                 assert set(missing) == set(allowed)
-                assert e5.load(phase_path(folder))['status'] == 'DRAINED_NOT_EVALUATED'
+                assert harness_module.load(phase_path(folder))['status'] == 'DRAINED_NOT_EVALUATED'
                 (probe_out / 'start-ack.json').write_text('{}')
                 probe.static_placement = lambda: True
                 probe.a = SimpleNamespace()
                 probe.run = lambda: None
                 run_stage(probe, stages[2])
-                e5.save(stage_folder(cpo.out, stages[1]) / 'collected.json', {'missingArchives': missing})
-                summary = summarize(e5, cpo.b, cpo.out)[1]
+                harness_module.save(stage_folder(cpo.out, stages[1]) / 'collected.json', {'missingArchives': missing})
+                summary = summarize(harness_module, cpo.b, cpo.out)[1]
                 assert summary['energyJ'] is None and summary['drainInclusiveEnergyJ'] is None
                 assert summary['missingArchives'] == missing
                 original['error'] = 'Producer log stream failed'
-                e5.save(folder / 'phase.json', original)
+                harness_module.save(folder / 'phase.json', original)
                 (folder / 'collected.json').unlink()
                 try:
-                    collect_stage(e5, probe, stage)
+                    collect_stage(harness_module, probe, stage)
                 except RuntimeError as error:
                     assert 'Only an otherwise completed' in str(error)
                 else:
                     raise AssertionError('Request failure tolerated')
         # Exercise the optional gate through the real zero-load loop, including timeout.
         for gate_ready in (True, False):
-            gated = schedule({'stages': [dict(config['stages'][0], seconds=1 if gate_ready else .01, readyGate=True)]}, e5)[0]
+            gated = schedule({'stages': [dict(config['stages'][0], seconds=1 if gate_ready else .01, readyGate=True)]}, harness_module)[0]
             gate_out = root / ('ready-gate' if gate_ready else 'ready-gate-timeout')
             gate_out.mkdir()
             (gate_out / 'start-ack.json').write_bytes((cpo.out / 'start-ack.json').read_bytes())
@@ -1572,8 +1572,8 @@ def self_check():
                 return copy.deepcopy(ready_state if gate_ready and len(observations) >= 3 else missing_state)
             with patch.object(cpo, 'out', gate_out), patch.object(cpo, 'state', gate_state), patch.dict(cpo.b, {'schedule': [gated]}):
                 run_stage(cpo, gated)
-                gate_phase = e5.load(gate_out / 'smoke-E0/phase.json')
-                gate_summary = summarize(e5, cpo.b, gate_out)[0]
+                gate_phase = harness_module.load(gate_out / 'smoke-E0/phase.json')
+                gate_summary = summarize(harness_module, cpo.b, gate_out)[0]
             evidence = gate_phase['readyGate']
             assert evidence == gate_summary['readyGate']
             assert evidence['timedOut'] is not gate_ready
@@ -1584,17 +1584,17 @@ def self_check():
                 assert epoch(gate_phase['endUTC']) - epoch(gate_phase['startUTC']) < gated['seconds']
             else:
                 assert evidence['missingWorkloadUIDs'] == [cpo.uids[-1]]
-        assert 'readyGate' not in e5.load(cpo.out / 'smoke-E0/phase.json')
+        assert 'readyGate' not in harness_module.load(cpo.out / 'smoke-E0/phase.json')
         for invalid in (dict(config['stages'][0], readyGate='true'), dict(config['stages'][1], readyGate=True)):
             try:
-                schedule({'stages': [invalid]}, e5)
+                schedule({'stages': [invalid]}, harness_module)
             except ValueError:
                 pass
             else:
                 raise AssertionError('Invalid ready gate accepted')
         # Static capture runs the real producers without scheduler writes.
         static_config = {'staticPlacement': True, 'stages': [{'id': 'PLC', 'startBarrier': {'reservations': 0, 'transitions': 0}, 'parts': [{'id': 'low', 'seconds': .001, 'rates': {'mobilenet': 0, 'smolvlm2': 0, 'plc': 60000}}, {'id': 'high', 'seconds': .001, 'rates': {'mobilenet': 0, 'smolvlm2': 0, 'plc': 140000}}]}]}
-        static_stages = schedule(static_config, e5)
+        static_stages = schedule(static_config, harness_module)
         static_out = root / 'static-placement'
         static_out.mkdir()
         static_state = cpo.state()
@@ -1605,56 +1605,56 @@ def self_check():
         static_settings = dict(copy.deepcopy(settings), autonomousWorkloads=[])
         def no_mutation(*args, **kwargs):
             raise AssertionError('Static placement must not mutate scheduler control or routes')
-        with patch.object(cpo, 'out', static_out), patch.object(cpo, 'settings', lambda: copy.deepcopy(static_settings)), patch.object(cpo, 'put', no_mutation), patch.object(cpo.io, 'api', no_mutation), patch.object(cpo, 'state', lambda: copy.deepcopy(static_state)), patch.dict(cpo.b, {'schedule': static_stages, 'demoConfig': static_config}), patch.object(e5.subprocess, 'Popen', popen):
+        with patch.object(cpo, 'out', static_out), patch.object(cpo, 'settings', lambda: copy.deepcopy(static_settings)), patch.object(cpo, 'put', no_mutation), patch.object(cpo.io, 'api', no_mutation), patch.object(cpo, 'state', lambda: copy.deepcopy(static_state)), patch.dict(cpo.b, {'schedule': static_stages, 'demoConfig': static_config}), patch.object(harness_module.subprocess, 'Popen', popen):
             cpo.start()
-            with patch.object(cpo, 'boundary', lambda folder, prefix: e5.save(folder / (prefix + '-state.json'), cpo.state())):
+            with patch.object(cpo, 'boundary', lambda folder, prefix: harness_module.save(folder / (prefix + '-state.json'), cpo.state())):
                 original_stages = stages
                 stages = static_stages
                 try:
                     run_stage(cpo, static_stages[0])
                 finally:
                     stages = original_stages
-            static_summary = summarize(e5, cpo.b, static_out)[0]
+            static_summary = summarize(harness_module, cpo.b, static_out)[0]
             assert static_summary['startBarrier']['observedUTC']
             assert len(static_summary['parts']) == 2
-            assert e5.load(static_out / 'start-ack.json')['staticPlacement']
+            assert harness_module.load(static_out / 'start-ack.json')['staticPlacement']
             cpo.finish()
-            finish_definitions(e5, cpo)
+            finish_definitions(harness_module, cpo)
             assert cpo.state() == manual_before and static_settings['autonomousWorkloads'] == []
             try:
-                resume(e5, cpo)
+                resume(harness_module, cpo)
             except RuntimeError as error:
                 assert 'does not reset' in str(error)
             else:
                 raise AssertionError('Static resume enabled autonomy')
-            failed_static = schedule({'staticPlacement': True, 'stages': [dict(config['stages'][0], id='STATIC-FAIL')]}, e5)[0]
-            with patch.dict(cpo.b, {'schedule': [failed_static]}), patch.object(cpo, 'boundary', lambda folder, prefix: e5.save(folder / (prefix + '-state.json'), cpo.state())), patch.object(cpo, 'request_drain', side_effect=RuntimeError('fixture static drain failure')):
+            failed_static = schedule({'staticPlacement': True, 'stages': [dict(config['stages'][0], id='STATIC-FAIL')]}, harness_module)[0]
+            with patch.dict(cpo.b, {'schedule': [failed_static]}), patch.object(cpo, 'boundary', lambda folder, prefix: harness_module.save(folder / (prefix + '-state.json'), cpo.state())), patch.object(cpo, 'request_drain', side_effect=RuntimeError('fixture static drain failure')):
                 try:
                     run_stage(cpo, failed_static)
                 except RuntimeError as error:
                     assert str(error) == 'fixture static drain failure'
                 else:
                     raise AssertionError('Static failure was swallowed')
-            assert e5.load(static_out / 'smoke-STATIC-FAIL/phase.json')['status'] == 'STOP'
+            assert harness_module.load(static_out / 'smoke-STATIC-FAIL/phase.json')['status'] == 'STOP'
             assert not (static_out / 'smoke-STATIC-FAIL/failed-owned-control-restore.json').exists()
             assert cpo.state() == manual_before
         # Use one snapshot: live completion cannot release stale snapshot state.
         for clears in (True, False):
-            barrier_stage = schedule({'stages': [dict(config['stages'][0], seconds=.001, startBarrier={'reservations': 0, 'transitions': 0})]}, e5)[0]
+            barrier_stage = schedule({'stages': [dict(config['stages'][0], seconds=.001, startBarrier={'reservations': 0, 'transitions': 0})]}, harness_module)[0]
             barrier_out = root / ('barrier-clear' if clears else 'barrier-timeout')
             barrier_out.mkdir()
             (barrier_out / 'start-ack.json').write_bytes((cpo.out / 'start-ack.json').read_bytes())
             removed_barrier = []
             if not clears:
-                e5.save(barrier_out / 'prior/created-producer.json', {'metadata': {'name': 'prior-producer', 'uid': 'prior-uid'}})
-                e5.save(barrier_out / 'prior/phase.json', {'status': 'DRAINED_NOT_EVALUATED'})
+                harness_module.save(barrier_out / 'prior/created-producer.json', {'metadata': {'name': 'prior-producer', 'uid': 'prior-uid'}})
+                harness_module.save(barrier_out / 'prior/phase.json', {'status': 'DRAINED_NOT_EVALUATED'})
             busy = copy.deepcopy(static_state)
             busy['snapshot']['at'] = '2026-10-26T00:00:00Z'
             busy['snapshot']['reservations'] = [{'owner': 'reserved-plan'}]
             busy['snapshot']['actions'] = [{'status': 'cancel'}]
             busy['actions'] = [{'status': 'complete'}]
             busy['results'] = [{'status': 'complete', 'endedAt': '2026-10-26T00:00:01Z'}]
-            waiting = cpo.start_barrier_observation(busy, e5.time.monotonic() + 3, e5.now())
+            waiting = cpo.start_barrier_observation(busy, harness_module.time.monotonic() + 3, harness_module.now())
             assert waiting['snapshotAt'] == busy['snapshot']['at'] and waiting['reservationOwners'] == ['reserved-plan']
             assert waiting['transitions'] == 1 and not waiting['observedUTC']
             observations = []
@@ -1665,7 +1665,7 @@ def self_check():
                     state['snapshot']['reservations'] = []
                 if clears and len(observations) >= 3:
                     state['snapshot']['actions'] = []
-                    stale = cpo.start_barrier_observation(state, e5.time.monotonic() + 3, e5.now())
+                    stale = cpo.start_barrier_observation(state, harness_module.time.monotonic() + 3, harness_module.now())
                     assert stale['reservations'] == stale['transitions'] == 0 and not stale['snapshotFresh'] and not stale['observedUTC']
                 if clears and len(observations) >= 4:
                     state['snapshot']['at'] = '2026-10-26T00:00:02Z'
@@ -1676,15 +1676,15 @@ def self_check():
                     assert len(observations) >= 4
                     assert cpo.native_evidence == busy['results']
                 else:
-                    with patch.object(e5, 'ProducerResources', side_effect=AssertionError('Timed out barrier must not start collection')), patch.object(cpo.io, 'remove_job', lambda name, uid: removed_barrier.append((name, uid)), create=True), patch.object(cpo.io, 'k', side_effect=lambda argv, **kwargs: {'items': []} if argv == ['get', 'jobs', '-o', 'json'] else {'metadata': {'uid': 'prior-uid'}} if argv == ['get', 'job', 'prior-producer', '-o', 'json'] else no_mutation()):
+                    with patch.object(harness_module, 'ProducerResources', side_effect=AssertionError('Timed out barrier must not start collection')), patch.object(cpo.io, 'remove_job', lambda name, uid: removed_barrier.append((name, uid)), create=True), patch.object(cpo.io, 'k', side_effect=lambda argv, **kwargs: {'items': []} if argv == ['get', 'jobs', '-o', 'json'] else {'metadata': {'uid': 'prior-uid'}} if argv == ['get', 'job', 'prior-producer', '-o', 'json'] else no_mutation()):
                         try:
                             run_stage(cpo, barrier_stage)
                         except RuntimeError as error:
                             assert 'start barrier timebox' in str(error)
                         else:
                             raise AssertionError('Busy barrier started load')
-                barrier_phase = e5.load(barrier_out / 'smoke-E0/phase.json')
-                barrier_summary = summarize(e5, cpo.b, barrier_out)[0]
+                barrier_phase = harness_module.load(barrier_out / 'smoke-E0/phase.json')
+                barrier_summary = summarize(harness_module, cpo.b, barrier_out)[0]
                 assert barrier_phase['startBarrier'] == barrier_summary['startBarrier']
                 assert barrier_phase['startBarrier']['timedOut'] is not clears
                 assert barrier_phase['startBarrier']['maximumSeconds'] == cpo.tb['barrierSeconds']
@@ -1696,7 +1696,7 @@ def self_check():
                 assert (barrier_out / 'smoke-E0/start-barrier-state.json').exists()
         for invalid_config in ({'staticPlacement': 'true', 'stages': [config['stages'][0]]}, *({'stages': [dict(config['stages'][0], startBarrier=value)]} for value in (None, {}, {'reservations': False, 'transitions': 0}, {'reservations': 1, 'transitions': 0}, {'reservations': 0, 'transitions': 0, 'seconds': 1})), {'stages': [{'id': 'bad', 'parts': [dict(config['stages'][0], startBarrier={'reservations': 0, 'transitions': 0})]}]}):
             try:
-                schedule(invalid_config, e5)
+                schedule(invalid_config, harness_module)
             except ValueError:
                 pass
             else:
@@ -1707,18 +1707,18 @@ def self_check():
         settings['transitionReserveFraction'] = 0
         settings['scaleDownHeadroomFraction'] = 0
         settings['comparisonPeriodNanos'] = 900000000000
-        summarize(e5, cpo.b, cpo.out)
-        assert e5.load(cpo.out / 'summary.json')['schedulerSettings'] == frozen_settings
-        drained = e5.load(cpo.out / 'smoke-A/phase.json')['demoRequestDrain']
+        summarize(harness_module, cpo.b, cpo.out)
+        assert harness_module.load(cpo.out / 'summary.json')['schedulerSettings'] == frozen_settings
+        drained = harness_module.load(cpo.out / 'smoke-A/phase.json')['demoRequestDrain']
         assert drained['reservations'][0]['owner'] == 'fixture-transition' and drained['actions'][0]['status'] == 'running'
         source_folder = cpo.out / 'smoke-A'
         recovery_out = root / 'collection-recovery'
         recovery_folder = stage_folder(recovery_out, stages[1])
         recovery_folder.mkdir(parents=True)
-        prior = e5.load(source_folder / 'phase.json')
+        prior = harness_module.load(source_folder / 'phase.json')
         prior.update(status='STOP', error='Drain/terminal timebox exceeded; preserve partial evidence, stop', drainedUTC=None)
         prior.pop('demoRequestDrain')
-        e5.save(recovery_folder / 'phase.json', prior)
+        harness_module.save(recovery_folder / 'phase.json', prior)
         for path in source_folder.iterdir():
             if path.is_file() and (path.name == 'pre-state.json' or path.name.endswith('-client.jsonl') or path.name.startswith('terminal-')):
                 (recovery_folder / path.name).write_bytes(path.read_bytes())
@@ -1726,11 +1726,11 @@ def self_check():
         original_phase = (recovery_folder / 'phase.json').read_bytes()
         original_clients = {path.name: path.read_bytes() for path in recovery_folder.glob('*-client.jsonl')}
         with patch.object(cpo, 'out', recovery_out), patch.object(cpo, 'run', side_effect=AssertionError('Collection must not replay load')):
-            collect_stage(e5, cpo, stages[1])
-            recovered = e5.load(phase_path(recovery_folder))
+            collect_stage(harness_module, cpo, stages[1])
+            recovered = harness_module.load(phase_path(recovery_folder))
             assert recovered['status'] == 'DRAINED_NOT_EVALUATED' and recovered['collectionRecovery']['originalStatus'] == 'STOP'
             assert (recovered['startUTC'], recovered['endUTC']) == (prior['startUTC'], prior['endUTC'])
-            assert summarize(e5, cpo.b, recovery_out)[0]['collectionRecovery']['originalStatus'] == 'STOP'
+            assert summarize(harness_module, cpo.b, recovery_out)[0]['collectionRecovery']['originalStatus'] == 'STOP'
             with patch.object(cpo, 'run', return_value=None) as next_stage:
                 run_stage(cpo, stages[2])
                 assert next_stage.call_count == 1
@@ -1738,7 +1738,7 @@ def self_check():
         assert all((recovery_folder / name).read_bytes() == content for name, content in original_clients.items())
         for outstanding, pending in [([{'id': 'unfinished'}], 0), ([], 1)]:
             snapshot['outstanding'] = outstanding
-            with patch.object(cpo, 'api', return_value={'pending': pending}), patch.object(e5.time, 'monotonic', side_effect=[0, 0, 4]), patch.object(e5.time, 'sleep', return_value=None):
+            with patch.object(cpo, 'api', return_value={'pending': pending}), patch.object(harness_module.time, 'monotonic', side_effect=[0, 0, 4]), patch.object(harness_module.time, 'sleep', return_value=None):
                 try:
                     cpo.request_drain(root, {})
                 except RuntimeError as error:
@@ -1746,11 +1746,11 @@ def self_check():
                 else:
                     raise AssertionError('Unfinished requests were ignored')
         snapshot['outstanding'] = []
-        freeze = object.__new__(e5.CPO)
+        freeze = object.__new__(harness_module.CPO)
         freeze.out = root / 'freeze-busy'
         freeze.out.mkdir()
         freeze.uids, freeze.tb = ['frozen-workload'], {'settleSeconds': 3}
-        freeze_state = {'snapshot': {'at': e5.now(), 'instances': [
+        freeze_state = {'snapshot': {'at': harness_module.now(), 'instances': [
             {'id':'instance','node':{'name':'fixture','uid':'node'},'profile':{'id':'profile'},
              'allocation':{'cpus':[1],'memoryBytes':1},'maxBatch':1,'maxWaitNanos':0,'workloadUID':'frozen-workload'}],
             'nodes': [], 'routing': {'frozen-workload': {'instance': 1}}, 'reservations': [{'owner':'transition'}]},
@@ -1758,12 +1758,12 @@ def self_check():
         freeze_settings = {'autonomousWorkloads': list(freeze.uids)}
         freeze.state = lambda: copy.deepcopy(freeze_state)
         freeze.settings = lambda: copy.deepcopy(freeze_settings)
-        freeze.put = lambda value: freeze_settings.update(value) or {'validatedAt':e5.now()}
+        freeze.put = lambda value: freeze_settings.update(value) or {'validatedAt':harness_module.now()}
         freeze.operation = lambda body, prefix: {'status':'complete','actual':{'routing':freeze_state['snapshot']['routing']}}
-        freeze.io = SimpleNamespace(publication_end=lambda result, seconds: (e5.time.monotonic()+seconds, None),
+        freeze.io = SimpleNamespace(publication_end=lambda result, seconds: (harness_module.time.monotonic()+seconds, None),
                                     idle=lambda state: (_ for _ in ()).throw(AssertionError('Freeze must not await quiet')))
         freeze.freeze(at_boundary=True)
-        selection = e5.load(freeze.out / 'static-selection.json')
+        selection = harness_module.load(freeze.out / 'static-selection.json')
         assert selection['schedulerBoundaryObservation']['reservations'] == selection['schedulerBoundaryObservation']['transitions'] == 1
         assert (freeze.out / 'static-native-ack.json').exists() and (freeze.out / 'static-ready.json').exists()
         assert summaries[1]['gapFromPreviousOfferedWindowSeconds'] >= 0
@@ -1775,7 +1775,7 @@ def self_check():
         assert 'p95 ms' in (cpo.out / 'summary.md').read_text()
         assert sum(call[0] == 'create' for call in calls) == 10  # Nine autonomous, one static PLC.
         assert sum(call[0] == 'exec' for call in calls) == 20
-        assert e5.load(cpo.out / 'smoke-E0/pre-state.json')['results'] is None
+        assert harness_module.load(cpo.out / 'smoke-E0/pre-state.json')['results'] is None
         # Reservations can reappear during setup: GO must wait, not just stage entry.
         for go_clears in (True, False):
             go_out = root / ('go-clear' if go_clears else 'go-timeout')
@@ -1800,7 +1800,7 @@ def self_check():
             removed_go = []
             real_producer_deadline = d.producer_barrier_deadline
             try:
-                with patch.object(cpo, 'out', go_out), patch.object(cpo, 'state', go_state), patch.object(cpo, 'settings', lambda: copy.deepcopy(static_settings)), patch.object(cpo, 'put', no_mutation), patch.dict(cpo.b, {'schedule': stages, 'demoConfig': static_config}), patch.object(cpo, 'boundary', lambda folder, prefix: e5.save(folder / (prefix + '-state.json'), cpo.state())), patch.object(e5.subprocess, 'Popen', popen), patch.object(d, 'producer_barrier_deadline', side_effect=lambda row, seconds: real_producer_deadline(row, seconds) if go_clears else e5.time.time() - 1), patch.object(cpo.io, 'remove_job', lambda name, uid: removed_go.append((name, uid)), create=True), patch.object(e5.subprocess, 'run', return_value=SimpleNamespace(stdout='fixture stopped producer', stderr='', returncode=0)):
+                with patch.object(cpo, 'out', go_out), patch.object(cpo, 'state', go_state), patch.object(cpo, 'settings', lambda: copy.deepcopy(static_settings)), patch.object(cpo, 'put', no_mutation), patch.dict(cpo.b, {'schedule': stages, 'demoConfig': static_config}), patch.object(cpo, 'boundary', lambda folder, prefix: harness_module.save(folder / (prefix + '-state.json'), cpo.state())), patch.object(harness_module.subprocess, 'Popen', popen), patch.object(d, 'producer_barrier_deadline', side_effect=lambda row, seconds: real_producer_deadline(row, seconds) if go_clears else harness_module.time.time() - 1), patch.object(cpo.io, 'remove_job', lambda name, uid: removed_go.append((name, uid)), create=True), patch.object(harness_module.subprocess, 'run', return_value=SimpleNamespace(stdout='fixture stopped producer', stderr='', returncode=0)):
                     if go_clears:
                         run_stage(cpo, go_stage)
                     else:
@@ -1810,7 +1810,7 @@ def self_check():
                             assert 'Producer release start barrier timebox' in str(error)
                         else:
                             raise AssertionError('Expired GO barrier released a producer')
-                    go_phase = e5.load(go_folder / 'phase.json')
+                    go_phase = harness_module.load(go_folder / 'phase.json')
                     release = go_phase['startBarrier']['producerRelease'][plc_name]
                     assert release['timedOut'] is not go_clears
                     assert bool(release['observedUTC']) is go_clears
@@ -1824,9 +1824,9 @@ def self_check():
             finally:
                 stages = original_stages
         import ast
-        requested = {arg for arg in e5.load(cpo.out / 'smoke-A/job-image-classification-tight-slo.json')['spec']['template']['spec']['containers'][0]['args'] if arg.startswith('--')}
+        requested = {arg for arg in harness_module.load(cpo.out / 'smoke-A/job-image-classification-tight-slo.json')['spec']['template']['spec']['containers'][0]['args'] if arg.startswith('--')}
         for source_sha in ('e18ac391d4353e5abba03558b163312f2a7b629b', '4fb9bf8b0f8112549cf8d939b911c19ddfc9c54e'):
-            source = e5.subprocess.check_output(['git', '-C', str(e5.REPO), 'show', source_sha + ':load-generator/src/chill_loadgen/cli.py'], text=True)
+            source = harness_module.subprocess.check_output(['git', '-C', str(harness_module.REPO), 'show', source_sha + ':load-generator/src/chill_loadgen/cli.py'], text=True)
             tree = ast.parse(source)
             supported = {arg.value for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == 'add_argument' for arg in node.args if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and arg.value.startswith('--')}
             assert requested & supported == requested, (source_sha, sorted(requested - supported))
@@ -1848,13 +1848,13 @@ def self_check():
         cpo.c['smoke'] = failed_stage
         captured_before_delete = []
         def remove_fixture(job, uid):
-            name = next(n for n in pods if job.endswith('-' + str(e5.SEEDS[n])))
+            name = next(n for n in pods if job.endswith('-' + str(harness_module.SEEDS[n])))
             if '-fail-' in job:
                 path = cpo.out / 'smoke-FAIL' / ('startup-' + name) / ('failed-producer-' + pods[name]['metadata']['uid'] + '.log')
                 assert path.read_text() == 'fixture producer log\\n'
             captured_before_delete.append(uid)
         cpo.io.remove_job = remove_fixture
-        with patch.object(cpo.io, 'wait_load_container', side_effect=RuntimeError('fixture startup terminated')), patch.object(e5.subprocess, 'run', return_value=SimpleNamespace(stdout='fixture producer log\\n', stderr='fixture parser stderr\\n', returncode=0)):
+        with patch.object(cpo.io, 'wait_load_container', side_effect=RuntimeError('fixture startup terminated')), patch.object(harness_module.subprocess, 'run', return_value=SimpleNamespace(stdout='fixture producer log\\n', stderr='fixture parser stderr\\n', returncode=0)):
             try:
                 cpo.run()
             except RuntimeError as error:
@@ -1895,17 +1895,17 @@ def self_check():
                 assert str(error) == 'fixture startup terminated'
             else:
                 raise AssertionError('Producer failure was swallowed')
-        capture_phase = e5.load(cpo.out / 'smoke-CAPTURE-FAIL/phase.json')
+        capture_phase = harness_module.load(cpo.out / 'smoke-CAPTURE-FAIL/phase.json')
         assert len(capture_removed) == 3 and all(row['stopped'] for row in capture_phase['ownedProducerStops'])
         assert len(capture_phase['cleanupErrors']) == 3
-        unknown = object.__new__(e5.CPO)
+        unknown = object.__new__(harness_module.CPO)
         unknown.c = {}
         unknown.a = SimpleNamespace(row_tag='')
         unknown.out = root / 'unknown-cleanup'
         record = unknown.out / 'phase'
         record.mkdir(parents=True)
-        e5.save(record / 'created-fixture.json', {'metadata': {'name': 'fixture', 'uid': 'owned'}})
-        e5.save(record / 'phase.json', {'ownedProducerStops': [{'name': 'fixture', 'uid': 'different', 'stopped': True}]})
+        harness_module.save(record / 'created-fixture.json', {'metadata': {'name': 'fixture', 'uid': 'owned'}})
+        harness_module.save(record / 'phase.json', {'ownedProducerStops': [{'name': 'fixture', 'uid': 'different', 'stopped': True}]})
         unknown.io = SimpleNamespace(k=lambda *args: {'metadata': {'uid': 'foreign'}}, remove_job=lambda *args: (_ for _ in ()).throw(AssertionError('Foreign Job deletion')))
         try:
             unknown.cleanup_jobs()
@@ -1914,17 +1914,17 @@ def self_check():
         else:
             raise AssertionError('Mismatched deletion ACK bypassed exact-UID cleanup')
         fixture_env = json.loads(environment.read_text())
-        fixture_env['e5'].update(plan=temp, producerNode='fixture', powerExecutable=temp, powerReceipt=temp)
+        fixture_env['evaluation'].update(plan=temp, producerNode='fixture', powerExecutable=temp, powerReceipt=temp)
         fixture_env['d2']['producerImage'] = 'fixture@sha256:fixture'
         environment.write_text(json.dumps(fixture_env))
-        e5.E5.update(fixture_env['e5'])
-        e5.ENVIRONMENT['d2'].update(fixture_env['d2'])
+        harness_module.EVALUATION.update(fixture_env['evaluation'])
+        harness_module.ENVIRONMENT['d2'].update(fixture_env['d2'])
         op = {'endpoint': 'https://fixture.invalid', 'caFile': temp, 'tokenFile': temp, 'kubeContext': 'fixture', 'producer': {'endpoint': 'https://fixture.invalid', 'tokenFile': temp, 'caFile': temp, 'datasetDir': '/data'}, 'workloads': {w['name']: {'datasetDir': temp, 'fields': ['input'], 'datasetImage': 'fixture@sha256:fixture', 'datasetImagePath': '/fixture'} for w in workloads}}
         for recipe_workload in op['workloads'].values():
             recipe_workload.update(modelRef='fixture-model', preprocessorRef='fixture-preprocessor', datasetRef='fixture-dataset')
         recipe = root / 'recipe.json'
         recipe.write_text(json.dumps(op))
-        fixture_sources = {'server': e5.subprocess.check_output(['git', '-C', str(e5.REPO), 'rev-parse', '--verify', 'HEAD^{commit}'], text=True).strip(), 'loadgen': '1' * 40, 'power': 'bin/fixture-power'}
+        fixture_sources = {'server': harness_module.subprocess.check_output(['git', '-C', str(harness_module.REPO), 'rev-parse', '--verify', 'HEAD^{commit}'], text=True).strip(), 'loadgen': '1' * 40, 'power': 'bin/fixture-power'}
         source_spec = {'operationalRecipe': str(recipe), 'controlSourceSHA': 'HEAD', 'sources': fixture_sources, 'timeboxes': cpo.tb, 'measurementSLO': {alias: copy.deepcopy(workloads[0]['slo']) for alias in ALIASES}}
         registration_snapshot = copy.deepcopy(snapshot)
         registration_snapshot['workloads'] = [copy.deepcopy(workloads[0])]
@@ -1968,18 +1968,18 @@ def self_check():
                 loaded.Prepare.api = management_fixture
                 loaded.Prepare.controller = lambda self: ({'uid': 'controller'}, {'name': 'serving-entrypoint', 'imageID': 'fixture@sha256:fixture'})
             return loaded
-        with patch.dict(os.environ, {'CHILL_EXPERIMENT_CONFIG': str(environment)}), patch.object(e5, 'module', modules_for_assembly), patch.object(e5.ssl, 'create_default_context', return_value=None), patch.object(d.Conductor, 'api', api_fixture), patch.object(d.Conductor, 'k', side_effect=AssertionError('CHILL preparation must not read Kubernetes')), patch.object(d.Conductor, 'job', return_value={'spec': {'template': {'spec': {'containers': [{'args': ['--workers', '320', '--request-lifetime', '2', '--delivery-margin', '.010', '--timeout', '2.02']}]}}}}):
+        with patch.dict(os.environ, {'CHILL_EXPERIMENT_CONFIG': str(environment)}), patch.object(harness_module, 'module', modules_for_assembly), patch.object(harness_module.ssl, 'create_default_context', return_value=None), patch.object(d.Conductor, 'api', api_fixture), patch.object(d.Conductor, 'k', side_effect=AssertionError('CHILL preparation must not read Kubernetes')), patch.object(d.Conductor, 'job', return_value={'spec': {'template': {'spec': {'containers': [{'args': ['--workers', '320', '--request-lifetime', '2', '--delivery-margin', '.010', '--timeout', '2.02']}]}}}}):
             try:
-                assemble(e5, SimpleNamespace(out=root / 'mismatched-source'), dict(source_spec, sources=dict(fixture_sources, server='0' * 40)))
+                assemble(harness_module, SimpleNamespace(out=root / 'mismatched-source'), dict(source_spec, sources=dict(fixture_sources, server='0' * 40)))
             except ValueError as error:
                 assert 'sources.server must match the resolved controlSourceSHA' in str(error)
             else:
                 raise AssertionError('Mismatched control source accepted')
             assert not (root / 'mismatched-source').exists()
-            assembled = e5.load(assemble(e5, SimpleNamespace(out=root / 'assembly'), source_spec))
+            assembled = harness_module.load(assemble(harness_module, SimpleNamespace(out=root / 'assembly'), source_spec))
             assert assembled['canonicalDefinitionsReused'] == {name: name == workloads[0]['name'] for name in ALIASES.values()}
             before_reuse = len(management_calls)
-            reused = e5.load(assemble(e5, SimpleNamespace(out=root / 'reuse-assembly'), source_spec))
+            reused = harness_module.load(assemble(harness_module, SimpleNamespace(out=root / 'reuse-assembly'), source_spec))
             assert all(reused['canonicalDefinitionsReused'].values())
             assert [w['uid'] for w in reused['workloads']] == [w['uid'] for w in assembled['workloads']]
             assert all(method == 'GET' for method, _ in management_calls[before_reuse:])
@@ -1994,31 +1994,31 @@ def self_check():
                     registered[name]['desired']['spec'][field] = {'name': 'changed'} if field == 'modelRef' else '2s'
                 before_replace = len(management_calls)
                 stale_snapshots.append(copy.deepcopy(registration_snapshot))
-                replaced = e5.load(assemble(e5, SimpleNamespace(out=root / ('replace-' + field)), source_spec))
+                replaced = harness_module.load(assemble(harness_module, SimpleNamespace(out=root / ('replace-' + field)), source_spec))
                 assert replaced['canonicalDefinitionsReused'] == {key: key != name for key in ALIASES.values()}
                 assert next(w['uid'] for w in replaced['workloads'] if w['name'] == name) != before_uid
                 assert [method for method, _ in management_calls[before_replace:] if method != 'GET'] == ['DELETE', 'POST']
             before_static_capture = len(management_calls)
-            static_assembled = e5.load(assemble(e5, SimpleNamespace(out=root / 'static-assembly'), dict(source_spec, staticPlacement=True)))
+            static_assembled = harness_module.load(assemble(harness_module, SimpleNamespace(out=root / 'static-assembly'), dict(source_spec, staticPlacement=True)))
             assert len(static_assembled['workloads']) == 3
             assert all(method == 'GET' for method, _ in management_calls[before_static_capture:])
             cpo.c = replaced
             cpo.uids = [w['uid'] for w in replaced['workloads']]
             cpo.io.http = None
             before_retained = len(management_calls)
-            finish_definitions(e5, cpo)
+            finish_definitions(harness_module, cpo)
             assert len(management_calls) == before_retained and len(registered) == 3
             try:
-                finish_definitions(e5, cpo, delete_definitions=True)
+                finish_definitions(harness_module, cpo, delete_definitions=True)
             except RuntimeError as error:
                 assert 'cleanup must complete' in str(error)
             else:
                 raise AssertionError('Definition deletion before native cleanup was allowed')
-            e5.save(cpo.out / 'finish-complete.json', {'fixture': 'owned native cleanup completed'})
+            harness_module.save(cpo.out / 'finish-complete.json', {'fixture': 'owned native cleanup completed'})
             native_cleaned[0] = True
-            finish_definitions(e5, cpo)
+            finish_definitions(harness_module, cpo)
             assert len(registered) == 3
-            finish_definitions(e5, cpo, delete_definitions=True)
+            finish_definitions(harness_module, cpo, delete_definitions=True)
         assert assembled['demoSkipped'] and assembled['approval']['controlImageDigest'] == 'fixture@sha256:fixture'
         assert assembled['approval']['sources'] == fixture_sources and 'sourceSHA' not in assembled['approval']
         assert len(assembled['workloads']) == 3
@@ -2029,7 +2029,7 @@ def self_check():
         assert (root / 'assembly/register-plc-anomaly.json').exists() and (cpo.out / 'finish-definitions-complete.json').exists()
         # Active owner keep: reservations may clear before the running action.
         for label, clears_at, reset_error in (('idle', 0, None), ('clear', 25, None), ('timeout', None, None), ('failed', 0, 'result'), ('conflict', 0, '409'), ('stale', 2, None), ('snapshot-action', 2, None), ('normative-clear', 2, None), ('normative-timeout', None, None), ('late-state', 2, None)):
-            cleanup = object.__new__(e5.CPO)
+            cleanup = object.__new__(harness_module.CPO)
             cleanup.c = {}
             cleanup.a = SimpleNamespace(row_tag='')
             cleanup.b = {'schema': 'e5-binding.v1' if label.startswith('normative') else 'demo-e5-binding.v1'}
@@ -2040,8 +2040,8 @@ def self_check():
                 cleanup.tb.pop('finishResetWaitSeconds')  # Default 600, independent of the old 20s settle bound.
             cleanup_settings = {'autonomousWorkloads': ['owned', 'foreign']}
             cleanup.settings = lambda: copy.deepcopy(cleanup_settings)
-            cleanup.put = lambda value: cleanup_settings.update(copy.deepcopy(value)) or {'validatedAt': e5.now()}
-            e5.save(cleanup.out / 'initial.json', {'settings': copy.deepcopy(cleanup_settings)})
+            cleanup.put = lambda value: cleanup_settings.update(copy.deepcopy(value)) or {'validatedAt': harness_module.now()}
+            harness_module.save(cleanup.out / 'initial.json', {'settings': copy.deepcopy(cleanup_settings)})
             expected_timeout = clears_at is None or label == 'late-state'
             clock, reset_calls, reads = [0], [], []
             def cleanup_state():
@@ -2050,13 +2050,13 @@ def self_check():
                     clock[0] += 1  # API returns quiet state only after the bound.
                 busy = clears_at is None or clock[0] < clears_at
                 reads.append(clock[0])
-                snapshot_at = '2000-01-01T00:00:00Z' if label == 'stale' and busy else e5.now()
+                snapshot_at = '2000-01-01T00:00:00Z' if label == 'stale' and busy else harness_module.now()
                 return {'snapshot': {'at': snapshot_at, 'reservations': [{'owner': 'active-owner-keep'}] if busy and clock[0] == 0 and label != 'stale' else [],
                                      'actions': [{'status':'cancel'}] if busy and label == 'snapshot-action' else []},
                         'actions': [{'status': 'running'}] if busy and label not in ('stale', 'snapshot-action') else [{'status': 'complete'}]}
             cleanup.state = cleanup_state
             def cleanup_reset(method, path, body, **kwargs):
-                wait = e5.load(cleanup.out / 'finish-reset-wait.json')
+                wait = harness_module.load(cleanup.out / 'finish-reset-wait.json')
                 assert wait['observations'][-1]['elapsedSeconds'] == clock[0]
                 assert not wait['timedOut'] and wait['observations'][-1]['snapshotFresh']
                 reset_calls.append(body)
@@ -2066,7 +2066,7 @@ def self_check():
             cleanup.io = SimpleNamespace(api=cleanup_reset)
             def advance(seconds):
                 clock[0] += seconds
-            with patch.object(e5.time, 'monotonic', lambda: clock[0]), patch.object(e5.time, 'sleep', advance):
+            with patch.object(harness_module.time, 'monotonic', lambda: clock[0]), patch.object(harness_module.time, 'sleep', advance):
                 try:
                     cleanup.finish()
                 except RuntimeError as error:
@@ -2074,7 +2074,7 @@ def self_check():
                 else:
                     assert not expected_timeout and not reset_error
             assert len(reset_calls) == (0 if expected_timeout else 1)
-            wait = e5.load(cleanup.out / 'finish-reset-wait.json')
+            wait = harness_module.load(cleanup.out / 'finish-reset-wait.json')
             assert wait['timeboxSeconds'] == (600 if label == 'clear' else 2)
             assert wait['timedOut'] == expected_timeout
             assert wait['observations'][-1]['transitions'] == (1 if clears_at is None else 0)
@@ -2087,9 +2087,9 @@ def self_check():
                 assert not wait['observations'][0]['snapshotFresh'] and wait['observations'][0]['transitions'] == 0
             # Resume shares clear_owned; it must obey the same gate.
             if label == 'idle':
-                with patch.object(e5.time, 'monotonic', lambda: 0):
+                with patch.object(harness_module.time, 'monotonic', lambda: 0):
                     cleanup.clear_owned('resume-fixture')
-                assert e5.load(cleanup.out / 'resume-fixture-reset-wait.json')['timedOut'] is False
+                assert harness_module.load(cleanup.out / 'resume-fixture-reset-wait.json')['timedOut'] is False
         for invalid in (0, -1, True, '600', float('inf'), float('nan')):
             cleanup.tb['finishResetWaitSeconds'] = invalid
             with patch.object(cleanup, 'settings', side_effect=AssertionError('Invalid wait must not change settings')):
@@ -2099,7 +2099,7 @@ def self_check():
                     pass
                 else:
                     raise AssertionError('Invalid finishResetWaitSeconds accepted')
-        reset = object.__new__(e5.CPO)
+        reset = object.__new__(harness_module.CPO)
         reset.c = {}
         reset.a = SimpleNamespace(row_tag='')
         reset.b = {'schema': 'e5-binding.v1'}
@@ -2115,13 +2115,13 @@ def self_check():
             return failure
         reset.io = SimpleNamespace(api=failed_reset)
         reset.d = d
-        reset.state = lambda: {'snapshot': {'at': e5.now()}, 'actions': [], 'results': []}
+        reset.state = lambda: {'snapshot': {'at': harness_module.now()}, 'actions': [], 'results': []}
         reset.settings = lambda: {'autonomousWorkloads': ['owned']}
         def disable_before_failed_reset(value):
             assert not requests, 'Settings advanced after failed reset'
-            return {'validatedAt': e5.now()}
+            return {'validatedAt': harness_module.now()}
         reset.put = disable_before_failed_reset
-        e5.save(reset.out / 'initial.json', {'settings': {}})
+        harness_module.save(reset.out / 'initial.json', {'settings': {}})
         try:
             reset.finish()
         except RuntimeError as error:
@@ -2129,46 +2129,46 @@ def self_check():
         else:
             raise AssertionError('Failed reset was accepted')
         assert requests == [{'kind': 'reset', 'workloadUIDs': ['owned'], 'reason': 'Approved campaign owned reset: finish'}]
-        assert e5.load(reset.out / 'finish-reset-result.json') == failure
+        assert harness_module.load(reset.out / 'finish-reset-result.json') == failure
         assert not (reset.out / 'finish-complete.json').exists()
         conductor = object.__new__(d.Conductor)
         conductor.out = root / 'conductor-reset'
         conductor.out.mkdir()
         conductor.api = lambda *args, **kwargs: failure
         conductor.put = lambda *args: (_ for _ in ()).throw(AssertionError('D2 advanced after failed reset'))
-        e5.save(conductor.out / 'lifecycle.json', {'originalSettings': {}})
+        harness_module.save(conductor.out / 'lifecycle.json', {'originalSettings': {}})
         try:
             conductor.cleanup()
         except RuntimeError as error:
             assert 'reset failed' in str(error)
         else:
             raise AssertionError('D2 accepted failed reset')
-        assert e5.load(conductor.out / 'cleanup-reset-result.json') == failure
+        assert harness_module.load(conductor.out / 'cleanup-reset-result.json') == failure
         assert not (conductor.out / 'cleanup-complete.json').exists()
         publication_root = root / 'publication-test'
         evidence = publication_root / 'stage'
         evidence.mkdir(parents=True)
-        metadata_name = e5.WORKLOADS[0]
+        metadata_name = harness_module.WORKLOADS[0]
         metadata_definition = {'name': metadata_name, 'uid': 'historical', 'generation': 1,
                                'model': {'uid': 'model', 'generation': 2}, 'preprocessor': {'uid': 'preprocessor', 'generation': 3}}
         metadata_phase = {'startUTC': '2026-10-25T00:00:00Z', 'endUTC': '2026-10-25T00:01:00Z', 'starts': {},
-                          'stage': {'id': 'stage', 'seconds': 60, 'parts': [{'id': 'one', 'seconds': 60, 'alpha': dict.fromkeys(e5.WORKLOADS, .3)}]}}
-        e5.save(evidence / 'phase.json', metadata_phase)
-        e5.save(evidence / 'judgment.json', {'status': 'NOT_READY',
+                          'stage': {'id': 'stage', 'seconds': 60, 'parts': [{'id': 'one', 'seconds': 60, 'alpha': dict.fromkeys(harness_module.WORKLOADS, .3)}]}}
+        harness_module.save(evidence / 'phase.json', metadata_phase)
+        harness_module.save(evidence / 'judgment.json', {'status': 'NOT_READY',
                 'requests': {metadata_name: {'offered': 0, 'deadlineSuccess': 0, 'D1': 'UNMEASURED'}},
                 'power': {'complete': False, 'energyCoverage': publication_coverage, 'gapErrorBoundJoules': None}})
         metadata_binding = copy.deepcopy(cpo.b)
         metadata_binding['config']['workloads'] = [metadata_definition]
         metadata_binding['config']['inputs'] = {'scheduler': str(publication_root / 'scheduler.json')}
-        e5.save(publication_root / 'scheduler.json', {'state': {'snapshot': {'workloads': [metadata_definition]}}})
+        harness_module.save(publication_root / 'scheduler.json', {'state': {'snapshot': {'workloads': [metadata_definition]}}})
         (evidence / 'zero-client.jsonl').write_text('')
         store_config = root / 'store.json'
         store_config.write_text(json.dumps({'logicalStore': 'private-evidence'}))
         record = {'id': 'stage', 'from': '2026-10-25T00:00:00Z', 'to': '2026-10-25T00:01:00Z', 'kpis': {'status': 'observed', 'visibility': 'PRIVATE_OPERATIONAL_ONLY', 'wholePoolJoules': None, 'reason': 'Missing meter evidence'}, '_folder': evidence}
         def upload_fixture(argv, **kwargs):
-            assert argv[:3] == ['go', 'run', './hack/e5/publish']
-            manifest = e5.load(argv[argv.index('--manifest') + 1])
-            summary = e5.load(manifest['summary']['localPath'])
+            assert argv[:3] == ['go', 'run', './hack/evaluation/publish']
+            manifest = harness_module.load(argv[argv.index('--manifest') + 1])
+            summary = harness_module.load(manifest['summary']['localPath'])
             assert summary['schemaVersion'] == 'serving-experiment.v1alpha1'
             assert summary['stages'][0]['kpis']['wholePoolJoules'] is None
             assert summary['stages'][0]['kpis']['energyCoverage'] == publication_coverage
@@ -2177,29 +2177,29 @@ def self_check():
             assert summary['sources'] == [{key: obj[key] for key in ('store', 'key')} for obj in manifest['objects']]
             assert all(Path(obj['localPath']).stat().st_size > 0 for obj in manifest['objects'])
             assert all(source['key'].startswith('serving/experiments.v1alpha1/campaign-1/raw/') for source in summary['sources'])
-            assert e5.load(manifest['objects'][-1]['localPath'])['emptyFiles'] == ['stage/zero-client.jsonl']
+            assert harness_module.load(manifest['objects'][-1]['localPath'])['emptyFiles'] == ['stage/zero-client.jsonl']
             metric = summary['stages'][0]['kpis']['requests'][metadata_name]
             assert metric['offered'] == metric['successDenominator'] == metric['successNumerator'] == 0
             assert metric['workloadUID'] == 'historical' and metric['definitionID'] == 'historical/1/model/2/preprocessor/3'
             assert metric['identitySource'] in summary['sources']
             assert metric['substages'][0]['source'] in summary['sources']
             assert metric['substages'][0]['alpha'] == .3 and metric['substages'][0]['from'] is None
-            assert e5.SUBSTAGE_LIMITATION in summary['stages'][0]['kpis']['limitations']
+            assert harness_module.SUBSTAGE_LIMITATION in summary['stages'][0]['kpis']['limitations']
             return SimpleNamespace(returncode=0, stdout='{"outcome":"Created"}', stderr='')
         campaign_result = {'compositeRun': None, 'limitations': [], 'schedulerSettings': None, 'status': 'NOT_READY'}
-        with patch.object(e5.subprocess, 'run', side_effect=upload_fixture), \
-             patch.object(e5, 'summarize', return_value=campaign_result), \
-             patch.object(e5, 'load_binding', return_value=metadata_binding):
-            assert e5.publish_campaign(root / 'fixture-binding.json', publication_root, 'campaign-1', store_config)['outcome'] == 'Created'
+        with patch.object(harness_module.subprocess, 'run', side_effect=upload_fixture), \
+             patch.object(harness_module, 'summarize', return_value=campaign_result), \
+             patch.object(harness_module, 'load_binding', return_value=metadata_binding):
+            assert harness_module.publish_campaign(root / 'fixture-binding.json', publication_root, 'campaign-1', store_config)['outcome'] == 'Created'
         demo_stage = {'id': 'stage'}
         demo_folder = stage_folder(publication_root, demo_stage)
         demo_folder.mkdir()
         recovered = copy.deepcopy(metadata_phase)
         recovered['stage']['parts'][0].pop('alpha')  # Direct rates must not become alpha.
-        e5.save(demo_folder / 'phase.json', metadata_phase)
-        recovered['stage']['parts'][0]['rates'] = dict.fromkeys(e5.WORKLOADS, 1)
-        e5.save(demo_folder / 'collected-phase.json', recovered)
-        e5.save(demo_folder / 'collected.json', {})
+        harness_module.save(demo_folder / 'phase.json', metadata_phase)
+        recovered['stage']['parts'][0]['rates'] = dict.fromkeys(harness_module.WORKLOADS, 1)
+        harness_module.save(demo_folder / 'collected-phase.json', recovered)
+        harness_module.save(demo_folder / 'collected.json', {})
         metadata_binding['schedule'] = [demo_stage]
         demo_summary = {'stage': 'stage', 'startUTC': recovered['startUTC'], 'endUTC': recovered['endUTC'],
                         'status': 'DRAINED_NOT_EVALUATED', 'energyJ': None, 'activeEnergyJ': None,
@@ -2210,8 +2210,8 @@ def self_check():
                             'rawJoinErrors': [], 'latencyMS': {'samples': 0}, 'transitionFailures': None,
                             'issuanceFidelity': {'reason': 'Not offered'}}}}
         def upload_demo_metadata(argv, **kwargs):
-            manifest = e5.load(argv[argv.index('--manifest') + 1])
-            published = e5.load(manifest['summary']['localPath'])
+            manifest = harness_module.load(argv[argv.index('--manifest') + 1])
+            published = harness_module.load(manifest['summary']['localPath'])
             metric = published['stages'][0]['kpis']['workloads'][metadata_name]
             assert metric['latencyMS'] == {'samples': 0}
             if metric['offered']:
@@ -2226,16 +2226,16 @@ def self_check():
             assert published['stages'][0]['kpis']['wholePoolJoules'] is None
             assert all(not key.startswith('_') for key in published['stages'][0])
             return SimpleNamespace(returncode=0, stdout='{"outcome":"Created"}', stderr='')
-        with patch.object(e5.subprocess, 'run', side_effect=upload_demo_metadata), patch(__name__ + '.summarize', return_value=[demo_summary]):
-            assert publish(e5, metadata_binding, publication_root, 'demo-metadata', store_config)['outcome'] == 'Created'
+        with patch.object(harness_module.subprocess, 'run', side_effect=upload_demo_metadata), patch(__name__ + '.summarize', return_value=[demo_summary]):
+            assert publish(harness_module, metadata_binding, publication_root, 'demo-metadata', store_config)['outcome'] == 'Created'
             demo_summary['workloads'][metadata_name]['offered'] = 1
-            assert publish(e5, metadata_binding, publication_root, 'demo-missing-identity', store_config)['outcome'] == 'Created'
+            assert publish(harness_module, metadata_binding, publication_root, 'demo-missing-identity', store_config)['outcome'] == 'Created'
         # Every returned request ID needs an archived HTTP identity, not just one per UID.
-        metadata_module = e5.module
+        metadata_module = harness_module.module
         client_path = demo_folder / (metadata_name + '-client.jsonl')
         def upload_identity_coverage(argv, **kwargs):
-            manifest = e5.load(argv[argv.index('--manifest') + 1])
-            metric = e5.load(manifest['summary']['localPath'])['stages'][0]['kpis']['workloads'][metadata_name]
+            manifest = harness_module.load(argv[argv.index('--manifest') + 1])
+            metric = harness_module.load(manifest['summary']['localPath'])['stages'][0]['kpis']['workloads'][metadata_name]
             if coverage_case == 'complete':
                 assert metric['workloadUID'] == 'historical' and metric['identitySource'] is not None
             else:
@@ -2251,29 +2251,29 @@ def self_check():
             reader = SimpleNamespace(iter_request_indexes=lambda *args, **kwargs: {'historical': indexed})
             def metadata_modules(name, path):
                 return reader if name == 'publication_requests' else metadata_module(name, path)
-            with patch.object(e5, 'module', side_effect=metadata_modules), \
-                 patch.object(e5.subprocess, 'run', side_effect=upload_identity_coverage), \
+            with patch.object(harness_module, 'module', side_effect=metadata_modules), \
+                 patch.object(harness_module.subprocess, 'run', side_effect=upload_identity_coverage), \
                  patch(__name__ + '.summarize', return_value=[demo_summary]):
-                assert publish(e5, metadata_binding, publication_root, 'demo-identity-'+coverage_case, store_config)['outcome'] == 'Created'
-        with patch.object(e5.subprocess, 'run') as upload:
+                assert publish(harness_module, metadata_binding, publication_root, 'demo-identity-'+coverage_case, store_config)['outcome'] == 'Created'
+        with patch.object(harness_module.subprocess, 'run') as upload:
             try:
-                e5.publish_experiment(publication_root, 'campaign-1', store_config, [record], 'PARTIAL')
+                harness_module.publish_experiment(publication_root, 'campaign-1', store_config, [record], 'PARTIAL')
             except RuntimeError as error:
                 assert 'new ID' in str(error)
             else:
                 raise AssertionError('Existing publication attempt was overwritten')
             upload.assert_not_called()
-        with patch.object(e5.subprocess, 'run', return_value=SimpleNamespace(returncode=1, stdout='', stderr='immutable collision')):
+        with patch.object(harness_module.subprocess, 'run', return_value=SimpleNamespace(returncode=1, stdout='', stderr='immutable collision')):
             try:
-                e5.publish_experiment(publication_root, 'collision', store_config, [record], 'PARTIAL')
+                harness_module.publish_experiment(publication_root, 'collision', store_config, [record], 'PARTIAL')
             except RuntimeError as error:
                 assert 'new ID' in str(error)
             else:
                 raise AssertionError('Remote immutable collision was ignored')
         for invalid in ('../escape', 'bad/name', '.hidden', '비ASCII'):
-            with patch.object(e5.subprocess, 'run') as upload:
+            with patch.object(harness_module.subprocess, 'run') as upload:
                 try:
-                    e5.publish_experiment(publication_root, invalid, store_config, [record], 'PARTIAL')
+                    harness_module.publish_experiment(publication_root, invalid, store_config, [record], 'PARTIAL')
                 except ValueError:
                     pass
                 else:
@@ -2283,44 +2283,44 @@ def self_check():
         frozen_root.mkdir()
         frozen_binding = {'config': {'factors': []}, 'schedulerSettings': frozen_settings, 'schedule': [{'id': 'E5-' + str(i)} for i in range(7)], 'limitations': [], 'accounting': {'d': 'fixture', 'exactCost': 'fixture'}}
         frozen_path = root / 'frozen-binding.json'
-        e5.save(frozen_path, frozen_binding)
-        assert e5.summarize(frozen_path, frozen_root)['schedulerSettings'] == frozen_settings
+        harness_module.save(frozen_path, frozen_binding)
+        assert harness_module.summarize(frozen_path, frozen_root)['schedulerSettings'] == frozen_settings
         del frozen_binding['schedulerSettings']
         historical_path = root / 'historical-binding.json'
-        e5.save(historical_path, frozen_binding)
-        historical = e5.summarize(historical_path, frozen_root)
+        harness_module.save(historical_path, frozen_binding)
+        historical = harness_module.summarize(historical_path, frozen_root)
         assert historical['schedulerSettings'] is None
         assert not any('frozen scheduler settings' in row['reason'] or 'restoration' in row['reason'] for row in historical['missing'])
         # One measurement-continuation regression: collection, driver, CLI and rows.
         coverage_root = root / 'coverage-continuation'
         coverage_folder = coverage_root / 'full-E5-1'
         coverage_folder.mkdir(parents=True)
-        coverage_phase = e5.load(cpo.out / 'smoke-A/phase.json')
-        e5.save(coverage_folder / 'phase.json', coverage_phase)
-        e5.save(coverage_folder / 'raw-source-index.json', {'complete': True})
+        coverage_phase = harness_module.load(cpo.out / 'smoke-A/phase.json')
+        harness_module.save(coverage_folder / 'phase.json', coverage_phase)
+        harness_module.save(coverage_folder / 'raw-source-index.json', {'complete': True})
         gap_power = {'complete':False,'wholePoolJoules':999,'activePoolJoules':888,
                      'reasons':['maximum sample gap exceeds policy']}
-        e5.save(coverage_folder / 'power.json', gap_power)
+        harness_module.save(coverage_folder / 'power.json', gap_power)
         captured_gap = {'status':'NOT_READY','errors':['power: Actual power window incomplete: ["maximum sample gap exceeds policy"]']}
         coverage_probe = SimpleNamespace(out=coverage_root,
             c={'collection':{}},
             b={'schema':'e5-binding.v1','sources':{}},tb={'collectSeconds':1,'apiSeconds':1},
             d=SimpleNamespace(K=['fixture']),io=SimpleNamespace(k=lambda *args:{'items':[{'metadata':{'name':'server'}}]}))
-        with patch.object(e5,'module',return_value=SimpleNamespace(collect=lambda *args:captured_gap)), \
-             patch.object(e5.subprocess,'run',return_value=SimpleNamespace(returncode=0,stdout='logs')):
-            e5.CPO.collect(coverage_probe, coverage_folder)
-        assert e5.load(coverage_folder / 'collected.json')['measurementFailures'] == {'power':captured_gap['errors'][0]}
-        assert e5.reported_power(gap_power)['energyStatus'] == 'UNKNOWN'
+        with patch.object(harness_module,'module',return_value=SimpleNamespace(collect=lambda *args:captured_gap)), \
+             patch.object(harness_module.subprocess,'run',return_value=SimpleNamespace(returncode=0,stdout='logs')):
+            harness_module.CPO.collect(coverage_probe, coverage_folder)
+        assert harness_module.load(coverage_folder / 'collected.json')['measurementFailures'] == {'power':captured_gap['errors'][0]}
+        assert harness_module.reported_power(gap_power)['energyStatus'] == 'UNKNOWN'
         assert gap_power['wholePoolJoules'] == 999  # Reporting never rewrites raw power.
-        with patch.object(e5,'module',return_value=SimpleNamespace(collect=lambda *args:{'status':'NOT_READY','errors':['power: reducer process failed']})):
+        with patch.object(harness_module,'module',return_value=SimpleNamespace(collect=lambda *args:{'status':'NOT_READY','errors':['power: reducer process failed']})):
             try:
-                e5.CPO.collect(coverage_probe, coverage_folder)
+                harness_module.CPO.collect(coverage_probe, coverage_folder)
             except RuntimeError as error:
                 assert 'capture incomplete' in str(error)
             else:
                 raise AssertionError('Operational capture failure was hidden by partial power')
         campaign_rows, finished = [], []
-        campaign = object.__new__(e5.CPO)
+        campaign = object.__new__(harness_module.CPO)
         campaign.out = root / 'measurement-campaign'
         campaign.out.mkdir()
         campaign.a = SimpleNamespace(binding=frozen_path,release=root/'fixture-release.json',row_tag='')
@@ -2330,12 +2330,12 @@ def self_check():
         campaign.finish = lambda:finished.append(True)
         campaign.cleanup_jobs = lambda:None
         verdicts = iter(['MEASURED_DESCRIPTIVE','NOT_READY','FAIL','INCOMPLETE']*4)
-        with patch.object(e5,'judge',side_effect=lambda *args:{'status':next(verdicts)}), \
-             patch.object(e5,'summarize'), patch.object(e5,'collection_manifest'):
+        with patch.object(harness_module,'judge',side_effect=lambda *args:{'status':next(verdicts)}), \
+             patch.object(harness_module,'summarize'), patch.object(harness_module,'collection_manifest'):
             campaign.campaign()
         assert len(campaign_rows) == 14 and finished == [True]
         campaign_rows.clear(); finished.clear()
-        with patch.object(e5,'judge',return_value={'status':'INVALID_GENERATOR'}):
+        with patch.object(harness_module,'judge',return_value={'status':'INVALID_GENERATOR'}):
             try:
                 campaign.campaign()
             except RuntimeError as error:
@@ -2343,7 +2343,7 @@ def self_check():
             else:
                 raise AssertionError('Invalid generator did not stop campaign')
         assert len(campaign_rows) == 1 and not finished
-        with patch.object(campaign,'run',side_effect=RuntimeError('producer failure')), patch.object(e5,'judge') as unused_judge:
+        with patch.object(campaign,'run',side_effect=RuntimeError('producer failure')), patch.object(harness_module,'judge') as unused_judge:
             try:
                 campaign.campaign()
             except RuntimeError as error:
@@ -2352,42 +2352,42 @@ def self_check():
                 raise AssertionError('Operational producer failure was ignored')
             unused_judge.assert_not_called()
         for status in ('FAIL','NOT_READY','INCOMPLETE','MEASURED_DESCRIPTIVE','INVALID_GENERATOR'):
-            with patch.object(e5.sys,'argv',['e5.py','judge','--binding',str(frozen_path),'--out',str(root)]), \
-                 patch.object(e5,'judge',return_value={'status':status}):
-                assert e5.main() == (2 if status == 'INVALID_GENERATOR' else 0)
-        with patch.object(e5.sys,'argv',['e5.py','summarize','--binding',str(frozen_path),'--out',str(root)]), \
-             patch.object(e5,'summarize',return_value={'status':'INCOMPLETE'}):
-            assert e5.main() == 0
+            with patch.object(harness_module.sys,'argv',['conductor.py','judge','--binding',str(frozen_path),'--out',str(root)]), \
+                 patch.object(harness_module,'judge',return_value={'status':status}):
+                assert harness_module.main() == (2 if status == 'INVALID_GENERATOR' else 0)
+        with patch.object(harness_module.sys,'argv',['conductor.py','summarize','--binding',str(frozen_path),'--out',str(root)]), \
+             patch.object(harness_module,'summarize',return_value={'status':'INCOMPLETE'}):
+            assert harness_module.main() == 0
         result_root = root / 'measurement-rows'
         result_root.mkdir()
         result_binding = dict(frozen_binding, schema='e5-binding.v1', schedulerSettings=frozen_settings,
                               schedule=[{'id':'E5-'+str(index)} for index in range(8)])
         result_binding_path = result_root / 'binding.json'
-        e5.save(result_binding_path, result_binding)
+        harness_module.save(result_binding_path, result_binding)
         for mode, ids in (('full',range(8)),('static',range(1,7))):
             for index in ids:
                 folder = result_root / (mode+'-E5-'+str(index))
                 folder.mkdir()
                 status = {1:'NOT_READY',2:'FAIL',3:'INCOMPLETE'}.get(index,'MEASURED_DESCRIPTIVE') if mode == 'full' else 'MEASURED_DESCRIPTIVE'
                 power = gap_power if mode == 'full' and index == 1 else {'complete':True,'wholePoolJoules':20,'activePoolJoules':10}
-                e5.save(folder/'judgment.json',{'status':status,'power':power,'requests':{}})
-                e5.save(folder/'phase.json',{'stage':{'traces':{}}})
-                e5.save(folder/'power-drain-inclusive.json',power)
-        row_summary = e5.summarize(result_binding_path,result_root)
+                harness_module.save(folder/'judgment.json',{'status':status,'power':power,'requests':{}})
+                harness_module.save(folder/'phase.json',{'stage':{'traces':{}}})
+                harness_module.save(folder/'power-drain-inclusive.json',power)
+        row_summary = harness_module.summarize(result_binding_path,result_root)
         assert row_summary['status'] == 'INCOMPLETE'
         assert [row_summary['planRows']['E5-'+str(index)] for index in (1,2,3)] == ['NOT_READY','FAIL','INCOMPLETE']
         assert row_summary['planRows']['E5-S'] == 'INCOMPLETE'
         assert row_summary['fullMatched170minWholePOOLJ'] is None and row_summary['static170minWholePOOLJ'] == 120
         assert row_summary['pairedComparisons'][0]['staticMinusFullWholePOOLJ'] is None
-        assert e5.load(result_root/'full-E5-1/judgment.json')['power']['wholePoolJoules'] == 999
+        assert harness_module.load(result_root/'full-E5-1/judgment.json')['power']['wholePoolJoules'] == 999
         tables = original_module('continuation_tables', HERE/'tables.py')
-        table_text = tables.render(result_root,e5.REPO)
+        table_text = tables.render(result_root,harness_module.REPO)
         assert any(line.startswith('| E5-1') and ' NOT_READY;' in line for line in table_text.splitlines())
         assert 'status: NOT_READY' in table_text and 'maximum sample gap exceeds policy' in table_text
         assert '"energyStatus": "UNKNOWN"' in table_text and '"wholePoolJoules": null' in table_text
         # Approved E5-only gap interpolation, with strict native evidence retained.
         with patch.dict(os.environ, {'CHILL_EXPERIMENT_CONFIG':str(environment)}):
-            energy = original_module('energy_coverage_check',HERE/'e5-archive.py')
+            energy = original_module('energy_coverage_check',HERE/'archive.py')
         import datetime as dt
         base = dt.datetime(2026,10,28,tzinfo=dt.timezone.utc)
         stamp = lambda seconds:(base+dt.timedelta(seconds=seconds)).isoformat().replace('+00:00','Z')
@@ -2406,22 +2406,22 @@ def self_check():
               for offset,owned in ((0,False),(2,True),(7,False))]]
         allowed = {'energyCoverage':{'maxGapFraction':.4,'maxSingleGapSeconds':4}}
         with patch.dict(energy._RAW,{'_manifest':lambda *args:({},[],[]),'_rows':lambda *args:iter(observations)}):
-            measured = energy.e5_power_windows(root,allowed,{'power':native})['power']
+            measured = energy.evaluation_power_windows(root,allowed,{'power':native})['power']
             assert measured['complete'] and measured['wholePoolJoules'] == 50 and measured['activePoolJoules'] == 22.5
             assert measured['nodes'][0]['energyCoverage']['gapSeconds'] == 4
             assert measured['energyCoverage']['maximumGapSeconds'] == 4 and measured['gapErrorBoundJoules'] == 40
             assert measured['strictReasons'] == native['reasons'] and json.dumps(native,sort_keys=True) == untouched
             for policy in ({'maxGapFraction':.399999,'maxSingleGapSeconds':4},
                            {'maxGapFraction':.4,'maxSingleGapSeconds':3.999999},{}):
-                incomplete = energy.e5_power_windows(root,{'energyCoverage':policy},{'power':native})['power']
+                incomplete = energy.evaluation_power_windows(root,{'energyCoverage':policy},{'power':native})['power']
                 assert not incomplete['complete'] and incomplete['wholePoolJoules'] is None and incomplete['gapErrorBoundJoules'] is None
             boundary = copy.deepcopy(native)
             boundary['nodes'][0]['reasons'].append('sample boundary distance exceeds policy')
             boundary['reasons'].append('Node node (node-uid): sample boundary distance exceeds policy')
-            assert not energy.e5_power_windows(root,allowed,{'power':boundary})['power']['complete']
+            assert not energy.evaluation_power_windows(root,allowed,{'power':boundary})['power']['complete']
             observations[1][1]['failures'] = [{'observedAt':stamp(.25)},{'observedAt':stamp(.5)}]
-            assert not energy.e5_power_windows(root,allowed,{'power':native})['power']['complete']
-            with_failures = energy.e5_power_windows(root,{'energyCoverage':{'maxGapFraction':.5,'maxSingleGapSeconds':4}},{'power':native})['power']
+            assert not energy.evaluation_power_windows(root,allowed,{'power':native})['power']['complete']
+            with_failures = energy.evaluation_power_windows(root,{'energyCoverage':{'maxGapFraction':.5,'maxSingleGapSeconds':4}},{'power':native})['power']
             assert with_failures['complete'] and with_failures['nodes'][0]['energyCoverage']['gapSeconds'] == 5
             assert with_failures['gapErrorBoundJoules'] == 50  # Two failures in one interval counted once.
         assert energy.energy_policy({}) == {'maxGapFraction':.01,'maxSingleGapSeconds':30}
@@ -2432,7 +2432,7 @@ def self_check():
             except ValueError:
                 pass
             else:
-                raise AssertionError('Invalid E5 row energy coverage policy accepted')
+                raise AssertionError('Invalid evaluation row energy coverage policy accepted')
         print('PASS demo: campaign lifecycle, continuous parts and per-part success/p95/batch summaries, Ready gate early exit/timeout, static placement without scheduler mutation (including failure), stage-entry and pre-GO barriers clear/timeout, optional lifetime, server reset evidence and failure stop, reset autonomy-off reservation/action wait clear/timeout and single attempt on failure/409; mocked API/kubectl only')
 
 
@@ -2441,10 +2441,10 @@ def main():
     parser.add_argument('command', choices=['prepare', 'preflight', 'start', 'resume', 'stage', 'run', 'collect', 'summary', 'publish', 'finish', 'report'], nargs='?')
     parser.add_argument('directory', type=Path, nargs='?', help='report: retained demo folder (offline)')
     parser.add_argument('--compare', type=Path, nargs='+', action='append', default=[], help='report: retained comparison folder(s); repeatable')
-    parser.add_argument('--config', type=Path, help='Demo JSON; prepare requires explicit sources {server,loadgen,power} for live capture or a validated e5Config approval.sources')
+    parser.add_argument('--config', type=Path, help='Demo JSON; prepare requires explicit sources {server,loadgen,power} for live capture or a validated evaluationConfig approval.sources')
     parser.add_argument('--judge', type=Path, help='preflight: offline retained capture rejudgment; requires fresh --out')
     parser.add_argument('--out', type=Path, help='Fresh absolute external campaign directory; binding.json is stored here')
-    parser.add_argument('--release', type=Path, help='Existing CPO release: executor CampaignOps, command e5-execute, bindingPath, sources {server,loadgen,power}, mainInstructionUTC')
+    parser.add_argument('--release', type=Path, help='Existing CPO release: executor CampaignOps, command evaluation-execute, bindingPath, sources {server,loadgen,power}, mainInstructionUTC')
     parser.add_argument('--stage', help='Configured stage ID; required for stage/collect')
     parser.add_argument('--experiment-id', help='publish: immutable ASCII ID; corrections require a new ID')
     parser.add_argument('--store-config', type=Path, help='publish: private logicalStore/S3 config for existing PutImmutable bridge')
@@ -2491,36 +2491,36 @@ def main():
         parser.error('command and --out required')
     if not os.environ.get('CHILL_EXPERIMENT_CONFIG'):
         parser.error('CHILL_EXPERIMENT_CONFIG must identify the existing external environment JSON')
-    e5 = module('demo_e5', HERE / 'e5.py')
-    if not args.out.is_absolute() or e5.CAMPAIGN.resolve() not in args.out.resolve().parents:
+    harness_module = module('demo_harness', HERE / 'conductor.py')
+    if not args.out.is_absolute() or harness_module.CAMPAIGN.resolve() not in args.out.resolve().parents:
         parser.error('--out must be an absolute directory below paths.campaign')
     if args.command == 'prepare':
         if args.config is None:
             parser.error('prepare requires --config')
-        prepare(e5, args)
+        prepare(harness_module, args)
         return
     if args.command == 'preflight':
         if args.config is None or args.release is None:
             parser.error('preflight requires --config and --release')
-        if e5.load(args.config).get('preflight') is not True:
+        if harness_module.load(args.config).get('preflight') is not True:
             parser.error('preflight requires the standard preflight config (preflight: true)')
-        prepare(e5, args)
+        prepare(harness_module, args)
     binding_path = args.out / 'binding.json'
-    binding = e5.load(binding_path)
+    binding = harness_module.load(binding_path)
     if binding.get('schema') != 'demo-e5-binding.v1':
         raise ValueError('Prepared demo binding required')
     if args.command == 'summary':
-        summarize(e5, binding, args.out)
+        summarize(harness_module, binding, args.out)
         return
     if args.command == 'publish':
         if not args.experiment_id or not args.store_config:
             parser.error('publish requires --experiment-id and --store-config; raw inputs upload before final immutable summary')
-        publish(e5, binding, args.out, args.experiment_id, args.store_config)
+        publish(harness_module, binding, args.out, args.experiment_id, args.store_config)
         return
     if args.release is None:
         parser.error('Live CPO commands require --release')
     cpo_args = argparse.Namespace(binding=binding_path, release=args.release, out=args.out, command='smoke', mode='smoke', stage=args.stage or binding['schedule'][0]['id'], row_tag='', pre_state=None)
-    cpo = e5.CPO(cpo_args)
+    cpo = harness_module.CPO(cpo_args)
     if args.command == 'preflight':
         try:
             cpo.start()
@@ -2528,16 +2528,16 @@ def main():
                 run_stage(cpo, stage)
             cpo.finish()
             cpo.cleanup_jobs()
-            finish_definitions(e5, cpo, delete_definitions=args.delete_definitions)
-            wait_preflight_empty(e5, cpo)
+            finish_definitions(harness_module, cpo, delete_definitions=args.delete_definitions)
+            wait_preflight_empty(harness_module, cpo)
         except Exception as error:
-            e5.save(args.out / 'preflight-STOP.json', {'at': e5.now(), 'error': str(error), 'status': 'FAIL'})
+            harness_module.save(args.out / 'preflight-STOP.json', {'at': harness_module.now(), 'error': str(error), 'status': 'FAIL'})
             raise
         finally:
-            summarize(e5, binding, args.out)
+            summarize(harness_module, binding, args.out)
             if any(args.out.glob('smoke-*/phase.json')):
                 module('demo_timeline', HERE / 'timeline.py').report(args.out, [], None)
-        result = e5.load(args.out / 'summary.json')['preflight']
+        result = harness_module.load(args.out / 'summary.json')['preflight']
         print('Preflight: ' + result['status'])
         if result['status'] != 'PASS':
             raise SystemExit(2)
@@ -2545,30 +2545,30 @@ def main():
     if args.command == 'start':
         cpo.start()
     elif args.command == 'resume':
-        resume(e5, cpo)
+        resume(harness_module, cpo)
     elif args.command in ('stage', 'run'):
         selected = [s for s in binding['schedule'] if s['id'] == args.stage] if args.command == 'stage' else binding['schedule']
         if not selected:
             parser.error('stage requires a configured --stage')
         for stage in selected:
             folder = stage_folder(args.out, stage)
-            if args.command == 'run' and (folder / 'collected.json').exists() and e5.load(phase_path(folder))['status'] == 'DRAINED_NOT_EVALUATED':
+            if args.command == 'run' and (folder / 'collected.json').exists() and harness_module.load(phase_path(folder))['status'] == 'DRAINED_NOT_EVALUATED':
                 continue
             try:
                 run_stage(cpo, stage)
             finally:
-                summarize(e5, binding, args.out)
+                summarize(harness_module, binding, args.out)
     elif args.command == 'collect':
         selected = next((s for s in binding['schedule'] if s['id'] == args.stage), None)
         if selected is None:
             parser.error('collect requires a configured --stage')
         folder = stage_folder(args.out, selected)
-        collect_stage(e5, cpo, selected)
+        collect_stage(harness_module, cpo, selected)
         print('Collected evidence: ' + str(folder / 'collected.json'))
     elif args.command == 'finish':
         cpo.finish()
         cpo.cleanup_jobs()
-        finish_definitions(e5, cpo, delete_definitions=args.delete_definitions)
+        finish_definitions(harness_module, cpo, delete_definitions=args.delete_definitions)
 
 
 if __name__ == '__main__':

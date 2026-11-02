@@ -51,6 +51,6 @@ The cutover exposed additional defects, subsequently addressed:
 - A late probe/log follower could resurrect a retired source; source creation now belongs to Pod-lifecycle observation and late publication rechecks identity.
 - Per-probe namespace-wide Pod listing caused a large performance regression; exact UID-label selection fixed it. See [0004](../postmortems/0004-gateway-pod-list-regression.md).
 
-Limits remain: reservations conservatively cover whole Nodes; an existing owner's frozen target cannot yet grow onto newly released Nodes. Bootstrap timeout does not prevent later Node monopolization. Tick reentry and sequential native ACKs can still add delay. Policy ConfigMap single-authority cleanup and moving cleanup responsibility to finalizer reconciliation remain after evaluation scenario E5.
+Limits remain: reservations conservatively cover whole Nodes; an existing owner's frozen target cannot yet grow onto newly released Nodes. Bootstrap timeout does not prevent later Node monopolization. Tick reentry and sequential native ACKs can still add delay. Policy ConfigMap single-authority cleanup and moving cleanup responsibility to finalizer reconciliation remain after evaluation.
 
 Raw rationale: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/structure-redesign-20261026.md` and `audit-20261024/structure-20261026/{clusters,Research-K1,Research-K2,Research-K3,Research-K4,Research-K5}.md` under that same operations root; large audit payloads are not copied here.

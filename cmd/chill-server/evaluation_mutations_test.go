@@ -56,7 +56,7 @@ func evaluationFixture(t *testing.T) (*evaluationService, httpapi.EvaluationRequ
 			Nodes: []api.EvaluationObjectReference{{Name: "node", UID: "node-uid"}}, Series: "power",
 			Sampling: api.PowerSampling{IntervalNanos: 1}},
 		Judgment: api.Judgment{EnergyCoverage: api.EnergyCoverage{MaxSingleGapSeconds: 1}},
-		Stages: []api.StageTemplate{{ID: "stage", Row: "E5", Mode: api.EvaluationModeFixed,
+		Stages: []api.StageTemplate{{ID: "stage", Row: "evaluation", Mode: api.EvaluationModeFixed,
 			LoadScenarioRef: api.EvaluationObjectReference{Name: "load", UID: "load-uid"},
 			StartState:      api.EvaluationStartState{EvidenceRef: &ref}}},
 	}
@@ -64,7 +64,7 @@ func evaluationFixture(t *testing.T) (*evaluationService, httpapi.EvaluationRequ
 	return service, httpapi.EvaluationRequest{Name: "run", Spec: spec}
 }
 func TestEvaluationPreflightBoundaries(t *testing.T) {
-	for _, fault := range []string{"none", "pool", "e5", "profiling", "digest"} {
+	for _, fault := range []string{"none", "pool", "load-generator", "profiling", "digest"} {
 		t.Run(fault, func(t *testing.T) {
 			service, request := evaluationFixture(t)
 			var object client.Object
@@ -74,9 +74,9 @@ func TestEvaluationPreflightBoundaries(t *testing.T) {
 					Status: api.EvaluationRunStatus{Conditions: []metav1.Condition{{
 						Type: api.EvaluationConditionPoolAcquired, Status: metav1.ConditionTrue,
 					}}}}
-			case "e5":
+			case "load-generator":
 				object = &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
-					Name: "legacy", Namespace: "ns", Labels: map[string]string{"chill.dacs.io/e5": "full"},
+					Name: "load-generator", Namespace: "ns", Labels: map[string]string{"edge.dacs.io/workload-role": "load-generator"},
 				}}
 			case "profiling":
 				object = &api.ProfilingRun{ObjectMeta: metav1.ObjectMeta{Name: "profile", Namespace: "ns"}}

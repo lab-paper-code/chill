@@ -121,7 +121,7 @@ try:
                 assert (lane.phase_out/'diagnostic/request-pages/00000.json').exists()
         finally:
             m.OPS=original_ops;m.subprocess.Popen=original_popen;m.subprocess.run=original_run
-        e5spec=importlib.util.spec_from_file_location('e5_cleanup_check',ROOT.parent/'e5.py')
+        e5spec=importlib.util.spec_from_file_location('e5_cleanup_check',ROOT.parent/'conductor.py')
         e5=importlib.util.module_from_spec(e5spec);e5spec.loader.exec_module(e5);e5.OPS=folder
         for harness,uids in [('d2',[m.UID]),('e5',['a','b','c'])]:
             for name,foreign,failed in [

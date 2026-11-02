@@ -141,7 +141,7 @@
   Cycle 5: `scaleDownHeadroomFraction`은 유한 [0,1], 기본0이며 최종 하강 route·idle 후처리에만 `max(현재 유효수요,WindowMax)×(1+h)`를 요구한다. 실제 양수 정수 weight/각 κ를 검사하고 weight0을 세지 않는다. bridge/reserve 수요·실제 요청 J는 할증하지 않는다. 동일 관측 keep의 해당 UID κ/대기 SLO 미충족+목표 완전 충족·backlog 처리 때만 그 UID timing 예외를 인정한다. 타 UID 하강 편승 금지; partial/held/unknown·예약·소유권·Ready/정확 ACK·peak·bridge·reserve 불변. 최종 증명 전 실행 가능한 후보/target으로 공개하지 않는다. 에너지/leximin/payback/dwell은 유지한다.
 - `SCH-56` 하강 판정은 Kubernetes HPA scale-down stabilization window 방식으로 통일한다. 기존 `scaleDownStabilizationNanos`(기본 300초, 시연 120초)의 지난 기간에 관측된 Workload별 유효 수요(최소 수요 포함)의 최대값을 현재 하강 판정 수요로 사용하며, 그 값이 현재 실제 가용 공급 κ보다 엄격히 작을 때만 축소·에너지 교체에 적격이다. 축소 후보도 이 수요를 감당해야 한다. 빈 Node 새 절전에는 동일한 Workload별 판정을 적용하여 모든 제어 Workload가 비증가(최대 수요≤공급), 하나 이상이 엄격한 여유(최대 수요<공급)를 가져야 한다. 합계 상쇄, 기준률 미만 유지 timer와 별도 전역 timer를 쓰지 않는다. 전체 기간의 유효 관측이 없으면 보류하고, 공백·재시작·설정 변경·UID 교체 뒤 새 관측 기간을 채운다. 0은 추가 기간 대기만 없애며 현재 수요·공급 검사는 유지한다. 기간·관측 범위·최대 수요·공급·허가/보류 이유를 결정에 기록하고 설정을 Run의 `binding.schedulerSettings`에 고정한다.
   회복 예외는 `Observe.Allowed`의 역사 창 의미를 바꾸지 않는다. h0/1·NaN/Inf/범위 밖·W0·공백/재시작·weight0/반올림·idle·양수 reserve 경계를 검사한다. `.25`는 offline 대조값이며 burst/Node 상실 보장이 아니다. API·ConfigMap·Dashboard·sample·결정·Run binding은 동일 설정을 보존한다.
-- `SCH-57` 전환 중 수요 대비 예비 용량 비율을 scheduler 설정으로 제공한다(기본 0, 0=별도 예비 없음, 유한한 0~1). 양수이면 영향을 받는 워크로드마다 실제 준비·ACK된 가용 용량으로 수요와 설정 예비를 감당하고 기존 전환 SLO 검사도 통과해야 한다. 예비를 위한 준비·유지·해제 에너지도 E5 전체 POOL 에너지에 포함하고 비율·판정·미확보 이유를 결정과 `binding.schedulerSettings`에 기록한다.
+- `SCH-57` 전환 중 수요 대비 예비 용량 비율을 scheduler 설정으로 제공한다(기본 0, 0=별도 예비 없음, 유한한 0~1). 양수이면 영향을 받는 워크로드마다 실제 준비·ACK된 가용 용량으로 수요와 설정 예비를 감당하고 기존 전환 SLO 검사도 통과해야 한다. 예비를 위한 준비·유지·해제 에너지도 evaluation 전체 POOL 에너지에 포함하고 비율·판정·미확보 이유를 결정과 `binding.schedulerSettings`에 기록한다.
 - `SCH-58` 에너지 비교 기간 H는 양수인 하나의 scheduler 설정으로 고정하여 같은 판단의 keep과 모든 후보에 동일하게 사용한다. 후보의 전환 시간이나 미선택 후보의 추가·삭제로 H를 늘리지 않으며 사용한 H와 부하 가정을 결정 및 `binding.schedulerSettings`에 기록한다. H는 실제 전환 완료 확인이나 동작 timeout을 대체하지 않는다.
 - `SCH-59` 빈 Node의 새 `Fixed` 절전도 일반 교체와 동일한 keep 대비 에너지 허가를 받는다. 같은 H 안 nominal 이득이 양수이고 기존 minimumGain 문턱 및 payback을 모두 통과해야 하며, Fixed라는 이유로 비용을 공통 경로에서 소거하거나 검사를 면제하지 않는다. 별도 절전 계산기·기간·문턱을 추가하지 않는다. 이미 실행 중인 허가된 동작의 완료 의무는 유지한다.
 
@@ -261,7 +261,7 @@ Serving 평가에서 검증한다.
 - When: B의 시작 허가를 검사하고, 이어 A가 완료·실패·취소로 종료되며 실제 효과가 확인된 경우와 취소·timeout 뒤 원격 효과가 미확인인 경우를 각각 진행한다.
 - Then: B는 공통 허가 지점에서 시작 전에 거절되고 충돌 범위·소유 작업·사유가 제공된다. 실제 효과가 확인된 A는 실패한 경우에도 예약을 해제하여 후속 작업이 현재 실제 상태에서 다시 허가받을 수 있다. 원격 효과가 미확인인 A는 실행 종료 후에도 예약을 유지하여 겹치는 변경을 계속 거절하고, 이후 효과 확인 또는 reset의 실제 정리 완료 뒤에만 해제한다. 해제 후에도 실물 항목·일부 적용 상태·실패 원인은 유지된다.
 - 성공 cleanup 추가 판정 / S4: 최종 route complete 이후 recent 95.3→100.2→97.5/s의 세 제어 주기에서도 예약된 Workload는 Fixed이며 새 target의 route를 원래 owner로 인계하지 않는다. 원래 성공 receipt·stop 안전 의존성과 old Pod/physical/Node의 stop/drain/remove 의무를 보존하고, 원래 DAG와 효과 반환 확인이 끝난 뒤 예약을 해제한다. 같은 owner 안의 기존 인가 route ACK 직렬화와 중간 순증은 유지한다.
-- 중간 순증 추가 판정: old Ready를 유지하고 genesis3만 새 Ready이며 nano가 준비 중인 E5-1 조건에서, 같은 owner 예약 안의 capacity-checked positive 중간 route가 old+genesis3에 적용된다. nano 지연은 순증을 막지 않는다. 같은 Node 중복·미지원 row·양수 목적지 policy ACK/identity 실패·불가한 전환 backlog에서는 current를 보존한다. 최종 DAG·예약 반환·기존 R1 bootstrap/stopped/unroutable/retiring 판정은 유지한다.
+- 중간 순증 추가 판정: old Ready를 유지하고 genesis3만 새 Ready이며 nano가 준비 중인 steady-mixed 조건에서, 같은 owner 예약 안의 capacity-checked positive 중간 route가 old+genesis3에 적용된다. nano 지연은 순증을 막지 않는다. 같은 Node 중복·미지원 row·양수 목적지 policy ACK/identity 실패·불가한 전환 backlog에서는 current를 보존한다. 최종 DAG·예약 반환·기존 R1 bootstrap/stopped/unroutable/retiring 판정은 유지한다.
 - Cycle 7 생명주기 판정 / S3b: 순수 `changedWorkloads=[]` route는 부모·자식·예약을 만들지 않는다. 비어 있지 않은 route·prepare/power/resize는 admission하여 route-only 회복도 전체 NotReady 대기 중 Ready 생존자 subset을 적용할 수 있다. retirement만 있으면 현재 dependency/Ready/exact handoff 충족 시에만 admission하고 그 외에는 다음 Tick에 재계획한다. omission 표식·기존 빈 orphan의 no-effect 반환·미시작 retirement partial 종결은 없으며 성공 ACK 합성·frozen DependsOn/RouteTarget 삭제 없이 완료 consumer 또는 frozen empty 최종 scope 판정을 완료·launch·예약 진단에서 공유한다. 다른 sibling이 진행 중이어도 소비된 bridge를 재실행하거나 부족 proof로 표시하지 않는다. Create 성공/검증 GET의 Pod UID·Node UID·인가 prepare·created/reused 증거는 error·최종 Capture와 독립 보존하고 terminal 공개 전에 owner scope에 편입한다. 같은 RestartPolicyNever UID의 첫 exact container만 terminal 뒤에도 one-shot 결합하며 타 UID/재결합·baseline 변경은 금지한다. late 정상 ACK는 원 실패 receipt·Pod를 보존하고 기존 fresh exact/terminal sibling/power proof 뒤 반환한다. reused/생성 불명은 신규 생성 보상으로 취급하지 않고, 증거/dirty/receipt는 owner 책임 전체 반환까지 GC/reset 경합에도 유지한다. 예약 reason은 blocking action/identity·부족 proof·해소 경로를 결정적으로 제공한다.
 - 요구사항: SCH-20, SCH-24, SCH-26, SCH-41, SCH-50, SCH-51.
 
@@ -293,7 +293,7 @@ Serving 평가에서 검증한다.
 #### SCH-AC-43 — 양수 예비 비율의 전환 SLO와 에너지
 - Given: 양수 예비 비율과 이를 감당할 실측 용량·자원이 있는 전력 변경 후보가 있다.
 - When: 준비되지 않은 공급만 있는 경우와 실제 Ready·ACK 예비가 확보된 경우를 실행한다.
-- Then: 전자는 변경을 허가하지 않고 후자는 수요 대비 예비와 기존 전환 SLO를 만족하며 전환 중 실제 요청 SLO를 확인한다. 비율 0은 추가 예비 제약만 끄며 SLO 검사는 유지한다. 예비의 준비·Serving·해제 소비는 E5 에너지에서 빠지지 않는다.
+- Then: 전자는 변경을 허가하지 않고 후자는 수요 대비 예비와 기존 전환 SLO를 만족하며 전환 중 실제 요청 SLO를 확인한다. 비율 0은 추가 예비 제약만 끄며 SLO 검사는 유지한다. 예비의 준비·Serving·해제 소비는 evaluation 에너지에서 빠지지 않는다.
 - 요구사항: SCH-15, SCH-16, SCH-25, SCH-57.
 
 #### SCH-AC-44 — 후보와 무관한 고정 H
@@ -302,21 +302,21 @@ Serving 평가에서 검증한다.
 - Then: 공통 후보의 H와 [0,H] 비용은 동일하고 H 초과 후보는 기간을 늘리는 대신 명시적 부적격으로 기록한다. 설정·결정·Run binding의 H가 일치한다. 빈 Node Fixed 절전도 동일 keep/minimumGain/payback 경로를 사용하며, jetsono MAXN→15W의 H=600초 이득 −699J·손익분기 약 52분 입력에서는 실행하지 않는다. 양수 이득이어도 minimumGain 또는 payback 미충족이면 실행하지 않는다.
 - 요구사항: SCH-16, SCH-18, SCH-58, SCH-59.
 
-#### SCH-AC-45 — E5 실패 주입의 격리·대체·복구
+#### SCH-AC-45 — evaluation 실패 주입의 격리·대체·복구
 - Given: 세 Workload의 최종 승인된 α=0.3 부하(`rate_w=α×s_w×R_w`), 대체 가능한 Accepted 근거, 정상 Ready/route와 사전 고정한 대상 Pod UID·Node가 있다.
-- When: 15분 E5-7에서 180초에 서빙 Pod 하나를 강제 삭제하고, 360초에 Node 하나를 cordon한 뒤 그 Node의 대상 서빙 Pod를 삭제하며, 600초에 uncordon한다. 기존 공개 API와 kubectl만 사용한다.
+- When: 15분 failure에서 180초에 서빙 Pod 하나를 강제 삭제하고, 360초에 Node 하나를 cordon한 뒤 그 Node의 대상 서빙 Pod를 삭제하며, 600초에 uncordon한다. 기존 공개 API와 kubectl만 사용한다.
 - Then: 삭제 실물과 실패 동작의 대상·원인·시각을 기록하고 소실 용량을 배분에서 격리한다. 남은 가용 자원에서 대체를 선택하고 실제 Ready·ACK 후 편입하며, 복구 Node도 실제 Ready·관측 회복 전에는 용량으로 세지 않는다. 대체 불가/미회복도 원인과 함께 실패 결과로 남긴다. cordon만으로 네트워크 단절이나 기존 Pod 종료를 입증하지 않는다.
 - 집계: 첫 준비 요청을 전체 offered 분모에 유지하고 별도 집단으로 표시한다. Node 차단/복구 구간은 전체 결과를 유지한 채 표시하고 그 구간을 뺀 별도 집계를 병기한다. 원시 요청·전력·동작·route·Node 시각으로 재계산 가능해야 한다.
 - 요구사항: SCH-07, SCH-08, SCH-24, SCH-26, SCH-30, SCH-31.
 
-#### SCH-AC-46 — E5 혼합 POOL 지분 단계와 게이트웨이 구분
+#### SCH-AC-46 — evaluation 혼합 POOL 지분 단계와 게이트웨이 구분
 - Given: Node당 서빙 인스턴스 하나인 전체 POOL과 최종 SLO·모드·자원에 맞는 Node별 κ가 있다. `R_w=Σ_Node max eligible κ_w`는 고립 기준이며 세 R을 동시에 사용할 수 없다.
 - When: 유한한 [0,1]의 `poolShares={MNV:s_M,PLC:s_P,Smol:s_S}`(기본 .45/.1/.45, 합1)을 동결하고 α=0.3/0.5/0.7/0.9/1.2 단계에서 `rate_w=α_w×s_w×R_w`의 포아송 trace를 만든다. burst에서는 Smol의 α만 바꾼다.
 - Then: 잘못된 지분/합은 실행 전에 거절한다. 설정 검증은 `1.2×Σ(s_w×R_w)≤0.8×G`이며 G 입력값·출처와 R·s·α·요청률·trace를 binding에 동결한다. G 미확정은 명시 경고이며 개시 통과가 아니다. α를 혼합 SLO 보장으로 해석하지 않는다. G 확인은 고정 배치·α=1.2 총혼합120초 단1회(계단/최대G 탐색/자동재시도 없음)다. 동결trace 공급, PLC p95≤32ms 및 전체offered 대비32ms deadline성공≥95%, gateway거절/503/timeout/미완료0, cs throttle/restart/OOM0, 누락없는cs CPU/메모리10초표본·동결limit미만이면 PASS, 아니면 FAIL과원시사유다. native/client한계는 gateway실패와 구별하고 자동clip하지 않는다. 통과점은 최대G 또는20%여유 인증을 대신하지 않는다.
-- 고정-cap 제어요소 비교: batching OFF는 현재 Workload의 `(MaxBatch, MaxWait)` 집합만 허가하되 측정·초기화된 cap 변형의 placement/resources/replicas 평가는 유지한다. E5-2 snapshot replay는 과거 compatible 78 중 8만 통과하고 non-keep 적격 0이던 조건에서 고정 cap 후보 평가를 확인하며, E5-5 MNV의 현재 cap `{1,2}`도 둘 다 보존한다. 측정 없는 cap1 생성이나 전체 cap1 강제는 금지한다.
+- 고정-cap 제어요소 비교: batching OFF는 현재 Workload의 `(MaxBatch, MaxWait)` 집합만 허가하되 측정·초기화된 cap 변형의 placement/resources/replicas 평가는 유지한다. burst snapshot replay는 과거 compatible 78 중 8만 통과하고 non-keep 적격 0이던 조건에서 고정 cap 후보 평가를 확인하며, drop-surge MNV의 현재 cap `{1,2}`도 둘 다 보존한다. 측정 없는 cap1 생성이나 전체 cap1 강제는 금지한다.
 - 요구사항: SCH-04, SCH-10, SCH-13, SCH-14, SCH-30, SCH-31.
 
-### 4.2 E5 증거 API 수용 시나리오
+### 4.2 evaluation 증거 API 수용 시나리오
 
 보류된 게이트웨이 분리의 SCH-60~66 / SCH-AC-47~51과 ID를 공유하지 않는다. 아래는 단일 ChillServer의 수용 기준이며, 문서 추가가 구현·배포·검증 완료를 뜻하지 않는다.
 
@@ -370,12 +370,12 @@ Serving 평가에서 검증한다.
 | [전환 실행·실패·피드백](../05_transition_control.md) — 매 주기 분배·증설, 공통 최대 수요 창, 전환 예비·고정 H와 Fixed 본전 | SCH-55~59; SCH-AC-42~44 |
 | 이 문서 3.5 — SCH-48·49의 장부 흡수, Node 보류·ACK 의미 유지, SCH-40 부분 배분 및 SCH-41 중복 실물 reset 유지 | SCH-40, SCH-41, SCH-48, SCH-49, SCH-50, SCH-51, SCH-52; SCH-AC-37~39 |
 | [프로파일링과 Evidence](../00_measurement.md) — 관측 보존과 근거 저장소 투명 조회 | SCH-42 |
-| [프로파일링과 Evidence](../00_measurement.md) — 원시 API, 자원·Pod·장애 기록과 수락된 전력계 선언; [E5 증거 API 계획](../../plans/2026-10-28-e5-evidence-api.md) §1~6 | SCH-67~70; SCH-AC-52~55 |
+| [프로파일링과 Evidence](../00_measurement.md) — 원시 API, 자원·Pod·장애 기록과 수락된 전력계 선언; [evaluation 증거 API 계획](../../plans/2026-10-28-e5-evidence-api.md) §1~6 | SCH-67~70; SCH-AC-52~55 |
 | [워크로드 관리 SRS](../workloads/SRS.md) — WM-22, WM-28의 삭제·이전 등록 정의 보존 | SCH-43 |
 | API 확장 제안(2026-10-25) — B1 측정 CR 조회, B2 실험 결과 조회, B3 축약 상태, B5 작업 예상 시간 | SCH-44, SCH-45, SCH-46, SCH-47 |
 | 이 문서 2.3 — T5는 기존 관측·작업 결과의 전달 방식이므로 별도 시스템 spec 생략 | SCH-37 |
 
-SCH-41·48·49의 기존 전환 계약은 유지한다. 2026-10-26 자원 장부 결정은 시스템 spec에 관측과 분리한 장부 및 예약 범위 밖 계속 판단 규칙을 추가하고, SCH-50~52와 SCH-AC-37~39에서 구체화한다. 새 서비스·저장소·CRD는 도입하지 않으며 기존 Pod·finalizer·controller-runtime·`c.runs`·`o.sources`·DecisionID를 재사용한다. 두 박자 제어는 SCH-55~58로 요구사항을 확정하고 구현은 별도 변경으로 둔다. 정책 ConfigMap 단일화와 finalizer 뒤처리는 E5 뒤의 별도 범위다.
+SCH-41·48·49의 기존 전환 계약은 유지한다. 2026-10-26 자원 장부 결정은 시스템 spec에 관측과 분리한 장부 및 예약 범위 밖 계속 판단 규칙을 추가하고, SCH-50~52와 SCH-AC-37~39에서 구체화한다. 새 서비스·저장소·CRD는 도입하지 않으며 기존 Pod·finalizer·controller-runtime·`c.runs`·`o.sources`·DecisionID를 재사용한다. 두 박자 제어는 SCH-55~58로 요구사항을 확정하고 구현은 별도 변경으로 둔다. 정책 ConfigMap 단일화와 finalizer 뒤처리는 evaluation 뒤의 별도 범위다.
 
 ## 6. 고수준 요구사항과 구현 설계의 구분
 
@@ -412,7 +412,7 @@ Counter·Gauge, Prometheus 구간 집계, Knative 부하 관측·안정화, Envo
 
 ## 8. 보류 제안 — 제어·데이터 평면 분리
 
-**상태: Deferred(2026-10-28 2차 검토).** SCH-60~66 / SCH-AC-47~51은 현재 E5와 다음
+**상태: Deferred(2026-10-28 2차 검토).** SCH-60~66 / SCH-AC-47~51은 현재 evaluation와 다음
 evidence API 작업의 활성 수용 기준이 아니다. 미배선 구현(`e947cd5e`)의 존재는 요구사항
 채택이나 검증 완료를 뜻하지 않는다. 1~7절은 그대로 유지한다. G0 실패를 이유로 이 절을
 선행 적용하지 않는다. 재개 조건은 [ADR 0029](../../adr/0029-gateway-control-data-plane-split.md)가 정하며,
@@ -436,7 +436,7 @@ evidence API 작업의 활성 수용 기준이 아니다. 미배선 구현(`e947
 - `SCH-63` 퇴역 인스턴스를 제외하는 배분표의 applied 확인과 신규 배정 차단 뒤, 그 인스턴스에 요청을 배정할 수 있었던 모든 라우터의 물리 `outstanding=0`을 확인해야 기존 source의 drain 완료·stop·remove를 진행한다. 합계 보고 누락·라우터 연결 종료·readiness 제외·HTTP timeout/cancel을 0으로 간주하지 않는다. 미배정 수락 요청의 대체 경로를 보존하고, 물리 완료는 기존 native 진행/상태 증거로 확인한다. 라우터가 사라져도 미확인 점유와 실물 장부는 남기며 SCH-41 reset도 같은 조건을 따른다.
 - `SCH-64` 적용 미확인·연결 상실·기록 실패 라우터는 신규 유입 자격을 닫고 이유·대상·시각을 제공한다. readiness 제외만으로 기존 연결의 새 추론을 허용하거나 미완료 요청을 폐기하지 않는다. 적용 미확인 라우터가 유입에 남았거나 참여 범위·배분표·요청 기록의 완전성을 입증하지 못한 실험은 무효/검증 실패로 명시하며 조용한 fail-open을 금지한다. 전 라우터 동시 원자 전환은 보장하지 않고, 혼합 버전 구간과 라우터별 적용 시각을 기록한다.
 - `SCH-65` 각 라우터는 고유 `routerID`를 갖는 독립 스트림에 기존 `assigned`/`final` 기록을 쓰고 `requestID`·`planVersion`·정확한 실물 identity를 보존한다. native 전달 전 assigned append 성공, 취소 뒤 물리 완료 추적, 시간별 archive 성공 전 로컬 삭제 금지와 미완료 assigned 보존을 유지한다. 여러 라우터가 같은 파일/불변 객체를 덮어쓰지 않으며, 재시작 전 라우터의 미완료 기록도 복구·조회 범위에 남긴다.
-- `SCH-66` 계획기 부하 λ, 디스패치 점유 d, E5 집계와 Dashboard 조회는 모든 참여 라우터의 로컬/근거 저장소 스트림을 `requestID`로 병합해 요청을 한 번만 센다. 기존 `final > open > assigned` 우선순위, 정의/catalog 해석, 접수 구간 모집단·전체 offered 분모와 오류/미완료 의미를 유지한다. 라우터별 출처·보존 범위·공백을 제공하고 누락·읽기 실패를 무유입 0으로 채우지 않는다. 도착·검증 카운터를 λ에 쓰는 경우 동일 시간창·사건의 라우터 합을 사용하고 재접속/재시작 중복과 스트림 집계의 이중 가산을 막는다.
+- `SCH-66` 계획기 부하 λ, 디스패치 점유 d, evaluation 집계와 Dashboard 조회는 모든 참여 라우터의 로컬/근거 저장소 스트림을 `requestID`로 병합해 요청을 한 번만 센다. 기존 `final > open > assigned` 우선순위, 정의/catalog 해석, 접수 구간 모집단·전체 offered 분모와 오류/미완료 의미를 유지한다. 라우터별 출처·보존 범위·공백을 제공하고 누락·읽기 실패를 무유입 0으로 채우지 않는다. 도착·검증 카운터를 λ에 쓰는 경우 동일 시간창·사건의 라우터 합을 사용하고 재접속/재시작 중복과 스트림 집계의 이중 가산을 막는다.
 
 ### 8.2 추가 수용 기준 (구현 뒤 실행)
 
@@ -466,8 +466,8 @@ evidence API 작업의 활성 수용 기준이 아니다. 미배선 구현(`e947
 
 #### SCH-AC-51 — 다중 스트림 보존·병합 회귀
 - Given: 두 라우터의 assigned/final, archive에만 있는 assigned와 로컬의 늦은 final, 재시작 전 미완료 및 같은 이름의 다른 Workload UID가 있다.
-- When: 로컬 시간 보존 만료·archive 조회·라우터 재시작을 거쳐 λ·d·E5·Dashboard를 집계하고, 한 라우터의 stream 누락과 저장소 오류도 각각 주입한다.
-- Then: 완전한 자료에서는 단일 논리 요청 집합의 요청 수·단계 수·지연·점유 결과와 같고 늦은 final/재전송을 중복 가산하지 않는다. assigned 쓰기 실패 요청은 native에 전달되지 않는다. 삭제된 정의도 원래 UID/catalog로 해석하며 참여 라우터·출처·공백을 표시한다. 누락/오류는 0이나 성공이 아니고 E5 분모에서 사라지지 않는다.
+- When: 로컬 시간 보존 만료·archive 조회·라우터 재시작을 거쳐 λ·d·evaluation·Dashboard를 집계하고, 한 라우터의 stream 누락과 저장소 오류도 각각 주입한다.
+- Then: 완전한 자료에서는 단일 논리 요청 집합의 요청 수·단계 수·지연·점유 결과와 같고 늦은 final/재전송을 중복 가산하지 않는다. assigned 쓰기 실패 요청은 native에 전달되지 않는다. 삭제된 정의도 원래 UID/catalog로 해석하며 참여 라우터·출처·공백을 표시한다. 누락/오류는 0이나 성공이 아니고 evaluation 분모에서 사라지지 않는다.
 - 요구사항: SCH-04, SCH-07, SCH-08, SCH-31, SCH-42, SCH-43, SCH-65, SCH-66.
 
 ### 8.3 추적·변경 기록

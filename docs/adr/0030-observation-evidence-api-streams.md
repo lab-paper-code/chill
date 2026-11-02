@@ -6,7 +6,7 @@ Accepted (2026-10-30) — 문서 계약 채택. 구현·승인 배포·리허설
 
 ## Context
 
-[E5 증거 API 계획](../plans/2026-10-28-e5-evidence-api.md) §1~6은 CHILL 내부 사실을 CHILL API로 수집하도록 바꾼다. 기존 ObservationLog의 요청·판단·정의·관리 기록에 컨테이너 자원과 Pod/observer issue 기록을 추가해야 한다. #213의 보관된 관측은 `serving/observations.v1alpha5/`에 있고, 새 API로 그 실험도 다시 읽어야 한다.
+[evaluation 증거 API 계획](../plans/2026-10-28-e5-evidence-api.md) §1~6은 CHILL 내부 사실을 CHILL API로 수집하도록 바꾼다. 기존 ObservationLog의 요청·판단·정의·관리 기록에 컨테이너 자원과 Pod/observer issue 기록을 추가해야 한다. #213의 보관된 관측은 `serving/observations.v1alpha5/`에 있고, 새 API로 그 실험도 다시 읽어야 한다.
 
 기존 네 stream의 행 의미·encoding은 유지한다. 여기서 저장 버전을 올리면 현재 단일 버전 reader가 #213 보관본을 찾거나 읽지 못한다. 새 stream 두 개를 이유로 기존 실험을 폐기하거나 다중 버전 reader를 만드는 것은 [ADR 0019](0019-durable-stored-contract-compatibility.md)의 비용 원칙에 어긋난다.
 
@@ -24,11 +24,11 @@ Accepted (2026-10-30) — 문서 계약 채택. 구현·승인 배포·리허설
 - 새 stream 등록은 구현 1이 한 곳에서 맡고, 자원/클러스터 생산자는 각각 독립 파일에 붙인다. 저장 형식은 하나이고 병렬 구현을 위해 두 번째 logger나 broker를 만들지 않는다.
 - GC는 `runtime/metrics`의 누적 CPU·사이클 차로 보고하며 기존 gctrace 사이클 분포와 의미가 다르다. 새 publication의 측정 규칙에 출처와 의미를 기록하되 비교 가능성 관문은 만들지 않는다.
 - node-agent 전송 재시도·spool은 없고 실패 구간은 결손이다. 새 기능 배포 전 부재와 수집 실패를 같은 정상 빈 값으로 숨기지 않는다.
-- 원시 전송도 이제 측정 대상 서버에서 일어난다. E5 측정 창 밖에서만 원시 내보내기와 대시보드 과거 조회를 실행하고, 한 번의 리허설에서 추가 CPU 몫을 기록한다.
+- 원시 전송도 이제 측정 대상 서버에서 일어난다. evaluation 측정 창 밖에서만 원시 내보내기와 대시보드 과거 조회를 실행하고, 한 번의 리허설에서 추가 CPU 몫을 기록한다.
 
 ## References
 
 - [Serving 관측 명세](../spec/00_measurement.md#측정의-단위)
 - [Scheduler SRS](../spec/scheduler/SRS.md): SCH-67~70, SCH-AC-52~55
-- [관측 설계 §17](../design/serving/observability-split.md#17-e5-증거-api-2026-10-30): API·행·권한·세 구현 슬라이스
+- [관측 설계 §17](../design/serving/observability-split.md#17-evaluation-증거-api-2026-10-30): API·행·권한·세 구현 슬라이스
 - [ADR 0029](0029-gateway-control-data-plane-split.md): 게이트웨이 분리는 보류이며 이 API에 router 차원을 추가하지 않는다.

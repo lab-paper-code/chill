@@ -136,7 +136,9 @@ Drain은 gate를 닫아도 기존 미배정 요청을 이전 정의로 분배하
 HTTP timeout/연결 종료/Python `execute` 반환은 physical release 증거가 아니다. native `REQUEST_END`(실행 미진입 queue timeout/cancel 포함), 실제 backend 완료 또는 해당 container 종료로만 해제한다. `assignedUnknown`을 waiting/running으로 바꾸지 않고 점유를 유지한다. queued cancel은 제거, running cancel은 실제 완료/종료까지 소유권 유지; persisted `executionComplete`는 restart drain proof다. 낙관 완료·자동 재실행·별도 recovery engine은 없다.
 worker duration은 monotonic, SDK `ObservedAt`은 local receipt, remote UTC는 별도 보존한다. host 시각 차를 duration으로 쓰지 않고 local age/frozen elapsed/measured transport envelope를 쓴다. 개별 SLO·원래 elapsed·UID·request ID와 immutable measured bundle을 전달하고 mutable cap/wait/envelope는 분리한다. actual state에는 profile/decision/cap/적용 시각을 둔다.
 
-### E5의 ChillServer 메모리와 CPU 상한
+<a id="e5의-chillserver-메모리와-cpu-상한"></a>
+
+### evaluation의 ChillServer 메모리와 CPU 상한
 
 완료까지 원본, 배정 후 JSON base64 본문(원본의 4/3)을 보유한다. 상한은 인스턴스 `maxQueueSize`의 합+Workload별 `--queue-limit:1024`; `maxQueueBytes:64MiB`는 아래 설정에서 제한을 더 줄이지 않는다.
 
@@ -147,8 +149,8 @@ worker duration은 monotonic, SDK `ObservedAt`은 local receipt, remote UTC는 �
 | PLC(records) | 21.1/21.2 KB | 49.3 KB | 64 | 0 / 0 | 21.7 MB |
 
 8 Node·`maxReplicas:8`·`maxInstances:16`에서 큰 순(MNV88/Smol22/PLC3.2 MB per instance)으로 채우면 5,632요청, 평균1.20 GB(1.12GiB), 최대 Smol image1.84 GB(1.72GiB)다.
-d9 MNV1,600 보유·working set873MiB·기본약100MiB에서 요청당507KB=보유바이트1.47배(GOGC100 여유/임시 decode). r8 P40 최대488MiB, P2 136MiB. 예상 최악 working set `1.12×1.47+0.48=2.13GiB`, 최대 image3.0GiB; live heap1.60/2.19GiB로 GOMEMLIMIT3GiB 아래, limit4GiB에≥1GiB 여유다. 순환 레코드는 평균 쪽이며 E5 단계마다 working set/GC/gateway CPU를 기록한다.
-CPU는 r8 P40-P2 차4.7mcore/(req/s), d9 최대7.6mcore/(req/s). 과거 G≈220req/s에서 gateway≤1.7core+search workers3+Tick약0.5=5.2core, limit6에0.8 여유. 같은 크기 Smol 입력의 gateway 비용은 MNV와 같고 PLC는 작다. 이는 sample queue/replica/instance 조건의 선행 계산이지 최종 E5 G 보장이 아니다. d는 이 prefetch 깊이로 측정한다([측정 API](measurement-api.md)).
+d9 MNV1,600 보유·working set873MiB·기본약100MiB에서 요청당507KB=보유바이트1.47배(GOGC100 여유/임시 decode). r8 P40 최대488MiB, P2 136MiB. 예상 최악 working set `1.12×1.47+0.48=2.13GiB`, 최대 image3.0GiB; live heap1.60/2.19GiB로 GOMEMLIMIT3GiB 아래, limit4GiB에≥1GiB 여유다. 순환 레코드는 평균 쪽이며 evaluation 단계마다 working set/GC/gateway CPU를 기록한다.
+CPU는 r8 P40-P2 차4.7mcore/(req/s), d9 최대7.6mcore/(req/s). 과거 G≈220req/s에서 gateway≤1.7core+search workers3+Tick약0.5=5.2core, limit6에0.8 여유. 같은 크기 Smol 입력의 gateway 비용은 MNV와 같고 PLC는 작다. 이는 sample queue/replica/instance 조건의 선행 계산이지 최종 evaluation G 보장이 아니다. d는 이 prefetch 깊이로 측정한다([측정 API](measurement-api.md)).
 1s마다 `/gc/heap/live:bytes`를 현재 `debug.SetMemoryLimit`의0.9배와 비교해 atomic 상태를 갱신한다. Accept의 QueueFull 뒤 과부하면 `503 GatewayOverloaded`, `Retry-After:1`; validated 수요와 response_finished(rejected,error)를 남긴다. Workload 큐429와 프로세스 과부하503은 다르다. GOMEMLIMIT 미설정(`MaxInt64`)이면 보호가 걸리지 않는다. 전체 heap 대신 회수 불가 live heap으로 GC 폭주를 피한다. 재측정 G에서 Tick/관측 지연이 남으면 추론 동시 처리 상한을 추가하는 조건부 과제가 남는다.
 
 ## 8. 수정과 삭제 적용
@@ -189,7 +191,7 @@ POOL 전환은 신규 인스턴스 실제 준비/연결 후 route 편입, 제외
 | `namespace,actuationNamespace` | `--serving-namespace,--actuation-namespace`; 빈 값 release namespace |
 | `profileNamespaces:[]` | 반복 `--profile-namespace`; 빈 값 serving namespace. 측정 조회/제출/삭제/profile 범위 |
 | limits CPU6/memory4Gi, `goMemLimit:3GiB` | `GOMAXPROCS=limits.cpu`, 필수 Go 형식 `GOMEMLIMIT=goMemLimit`(memory75%, limit과 함께 변경) |
-| `goDebug:""` | 비면 미설정, E5 `GODEBUG=gctrace=1`(GC마다 stderr1행) |
+| `goDebug:""` | 비면 미설정, evaluation `GODEBUG=gctrace=1`(GC마다 stderr1행) |
 | queue1024/request30s/drain2m | `--queue-limit,--request-timeout,--drain-timeout`; SLO timeout 아님 |
 | source1s/profile1m | source/profile refresh, 관측 upload1분 |
 | maxRequest8388608/maxEvidence67108864/maxQueryEvents1000 | body/evidence/raw page 상한 |

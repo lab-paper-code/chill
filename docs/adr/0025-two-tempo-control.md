@@ -43,7 +43,7 @@ Remove the Fixed exception, rather than introduce another energy calculator. Com
 
 Replace `SchedulerDownState` baseline/previous/downSince/elapsed and `SchedulerTempo.globalSince` with timestamped per-UID demand history. `decision.capacity.workloads[].scaleDown` records rate, windowMax (D), windowNanos (W), supply (actual Ready/ACK C), allowed, reason and optional resetReason. Remove old fields/readers rather than dual-write aliases; old stored records remain historical evidence, not proof under the new rule.
 
-Do not stretch H to accommodate a candidate. Exclude a transition whose common route plus longest post-route chain exceeds H; exactly H remains eligible. H is neither an action timeout nor evidence that the physical action completed. Include reserve preparation, serving and removal energy in whole-POOL E5 energy. Freeze the values in `decision.settings`, search bounds and Run `binding.schedulerSettings`, along with drop/gate and reserve decisions.
+Do not stretch H to accommodate a candidate. Exclude a transition whose common route plus longest post-route chain exceeds H; exactly H remains eligible. H is neither an action timeout nor evidence that the physical action completed. Include reserve preparation, serving and removal energy in whole-POOL evaluation energy. Freeze the values in `decision.settings`, search bounds and Run `binding.schedulerSettings`, along with drop/gate and reserve decisions.
 
 Authoritative detail: [scheduler SRS](../spec/scheduler/SRS.md), SCH-55–59 / AC-42–44, and [planner §15](../design/serving/analytic-planner.md#15-두-박자-후보-허가와-고정-h--sch-5558). Current code: `internal/serving/scheduler_tempo.go` (`Observe` accepts existing capacity rows to measure supply; `Selected` is removed), `scheduler_capacity.go` (candidate comparison/period), `scheduler_reserve.go` (transition supply), and `scheduler.go:SchedulerSettings.Validate` (settings).
 
@@ -59,7 +59,7 @@ Evidence: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/demo-
 
 ## Consequences
 
-E5 comparisons must use the final controller and identical frozen H/settings on both sides. Older measurements cannot be merged as though policy were unchanged. Energy savings may arrive later, and a positive reserve consumes real energy. Neither a configured reserve nor successful analytical checks alone prove SLO.
+evaluation comparisons must use the final controller and identical frozen H/settings on both sides. Older measurements cannot be merged as though policy were unchanged. Energy savings may arrive later, and a positive reserve consumes real energy. Neither a configured reserve nor successful analytical checks alone prove SLO.
 
 The corrected demonstration-setting test admitted reduction **127.96 s** after the load drop (configured 120 s), with high-load MobileNet success **96.52%** and low-load **99.98%**; PLC and SmolVLM2 were 100%. This was not an E5 energy result: two power archives were missing, and diagnostic archive tolerance is forbidden for E5. The earlier 21.97% high-load run also exposed frozen-target and subset routing delays; two-tempo policy alone does not solve every transition loss.
 

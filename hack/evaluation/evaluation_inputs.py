@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build immutable evaluation inputs from an existing frozen E5 binding (offline).
+"""Build immutable evaluation inputs from an existing frozen evaluation binding (offline).
 
 build --binding FILE --environment FILE --out DIR --store STORE --prefix KEY
 writes bundle.json, objects.json and config-values.json. Provision each object
@@ -133,7 +133,7 @@ def build(binding_path, environment_path, out, store, prefix):
     g0=Path(binding['config']['g0Evidence']['binding']).parent/'smoke-G-check'
     for path in (g0/'phase.json',g0/'plc-anomaly-client.jsonl',g0/'raw-source-index.json'):
         freeze(str(path))
-    env = {key:environment['e5'][key] for key in ('nodes','excludedNodes','producerNode','d25Manifest','thermalSlackNodes','runtimeExclusionNote')}
+    env = {key:environment['evaluation'][key] for key in ('nodes','excludedNodes','producerNode','d25Manifest','thermalSlackNodes','runtimeExclusionNote')}
     recipe=out/'files/adapter-recipe.json';save(recipe,{'schemaVersion':'evaluation-recipe.v1alpha1','sources':config['approval']['sources']})
     files['adapter-recipe.json']={'store':store,'key':prefix.rstrip('/')+'/files/adapter-recipe.json','size':recipe.stat().st_size}
     objects.append({**files['adapter-recipe.json'],'localPath':str(recipe.resolve())})

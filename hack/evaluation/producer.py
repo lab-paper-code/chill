@@ -60,29 +60,29 @@ def replay_shards(records, offsets, duration_ns, binding, kw):
             children.append(child)
         ready.wait(timeout=max(0, deadline-time.monotonic()))
         ready_at = dt.datetime.now(dt.timezone.utc)
-        emit({'e5Event':'ready','at':ready_at.isoformat(),'barrierSeconds':binding['barrierSeconds'],
+        emit({'evaluationEvent':'ready','at':ready_at.isoformat(),'barrierSeconds':binding['barrierSeconds'],
               'payload':binding['payload'],'offered':len(offsets),
               'arrivalSHA256':binding['arrivalSHA256'],'shards':count})
-        while not Path('/tmp/e5-start').exists():
+        while not Path('/tmp/evaluation-start').exists():
             if time.monotonic() >= deadline:
                 raise RuntimeError('Finite producer barrier expired; no inference sent')
             time.sleep(.05)
         if time.monotonic() >= deadline:
             raise RuntimeError('Actual producer barrier expired before release; no inference sent')
         start_ns.value = time.monotonic_ns()
-        emit({'e5Event':'start','at':dt.datetime.now(dt.timezone.utc).isoformat(),
+        emit({'evaluationEvent':'start','at':dt.datetime.now(dt.timezone.utc).isoformat(),
               'monotonicNS':start_ns.value,'shards':count})
         release.set()
         remaining = (start_ns.value + duration_ns-time.monotonic_ns()) / 1e9
         if remaining > 0:
             time.sleep(remaining)
-        emit({'e5Event':'window-end','at':dt.datetime.now(dt.timezone.utc).isoformat(),
+        emit({'evaluationEvent':'window-end','at':dt.datetime.now(dt.timezone.utc).isoformat(),
               'monotonicNS':time.monotonic_ns()})
         for child in children:
             child.join()
         if any(child.exitcode != 0 for child in children):
             raise RuntimeError('Producer shard failed; frozen planned population is incomplete')
-        emit({'e5Event':'drained','at':dt.datetime.now(dt.timezone.utc).isoformat(),
+        emit({'evaluationEvent':'drained','at':dt.datetime.now(dt.timezone.utc).isoformat(),
               'monotonicNS':time.monotonic_ns(),'shards':count})
     finally:
         for child in children:
@@ -114,7 +114,7 @@ def main():
         # Preserve the same process/cgroup until CPO saves the real post-end
         # counter and removes the existing start marker. Original Job/watchdog
         # limits still bound this hold; the expired setup barrier is not reused.
-        while Path('/tmp/e5-start').exists():
+        while Path('/tmp/evaluation-start').exists():
             time.sleep(.05)
 
     cli.replay = frozen

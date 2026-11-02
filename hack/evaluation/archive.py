@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""API raw export, strict source reduction and offline E5 row energy."""
+"""API raw export, strict source reduction and offline evaluation row energy."""
 import argparse
 from bisect import bisect_right
 import datetime as dt
@@ -17,11 +17,11 @@ import urllib.request
 HERE = Path(__file__).resolve().parent
 ENVIRONMENT = json.loads(Path(os.environ['CHILL_EXPERIMENT_CONFIG']).read_text())
 PACKAGE = Path(ENVIRONMENT['paths']['campaign'])
-NODES = tuple(ENVIRONMENT['e5']['nodes'])
+NODES = tuple(ENVIRONMENT['evaluation']['nodes'])
 STREAMS = ('requests', 'management', 'scheduler', 'catalog', 'resources', 'cluster')
 PRIVATE = 'PRIVATE_OPERATIONAL_ONLY'
 RAW_PATH = '/api/v1/observations/raw'
-_RAW = runpy.run_path(str(HERE / 'e5-raw.py'), run_name='e5_archive_time')
+_RAW = runpy.run_path(str(HERE / 'raw.py'), run_name='evaluation_archive_time')
 _time_ns = _RAW['_time']
 
 
@@ -156,7 +156,7 @@ def _scope(folder):
 
 
 def energy_policy(collection):
-    """E5 row-only gap allowance; never changes the recorded d/cost policy."""
+    """evaluation row-only gap allowance; never changes the recorded d/cost policy."""
     policy = dict(collection.get('energyCoverage', {}))
     policy.setdefault('maxGapFraction', .01)
     policy.setdefault('maxSingleGapSeconds', 30)
@@ -164,7 +164,7 @@ def energy_policy(collection):
             or not 0 <= policy['maxGapFraction'] <= 1
             or type(policy['maxSingleGapSeconds']) not in (int, float)
             or not math.isfinite(policy['maxSingleGapSeconds']) or policy['maxSingleGapSeconds'] <= 0):
-        raise ValueError('E5 energyCoverage requires 0<=maxGapFraction<=1 and finite maxSingleGapSeconds>0')
+        raise ValueError('evaluation energyCoverage requires 0<=maxGapFraction<=1 and finite maxSingleGapSeconds>0')
     return policy
 
 
@@ -185,11 +185,11 @@ def _energy_integral(points, start, end, active):
     return area(end) - area(start), sum(area(right) - area(left) for left, right in active)
 
 
-def e5_power_windows(folder, collection, powers):
+def evaluation_power_windows(folder, collection, powers):
     """Re-evaluate stored row energy without modifying raw or strict Go results.
 
     Existing native source/identity/boundary errors remain authoritative. Only
-    the strict maximum-gap verdict is replaced by the approved E5 row policy.
+    the strict maximum-gap verdict is replaced by the approved evaluation row policy.
     """
     policy = energy_policy(collection)
     start = min(_time_ns(power['from']) for power in powers.values())
@@ -264,9 +264,9 @@ def e5_power_windows(folder, collection, powers):
                 'observedMinimumWatts':min(inside) if inside else None, 'observedMaximumWatts':max(inside) if inside else None}
             node['gapErrorBoundJoules'] = bound
             if threshold is None or threshold <= 0 or bound is None or len(points) < 2:
-                node['reasons'].append('E5 gap coverage lacks recorded policy or actual window samples')
+                node['reasons'].append('evaluation gap coverage lacks recorded policy or actual window samples')
             if gap_seconds / seconds > policy['maxGapFraction'] or max_gap > policy['maxSingleGapSeconds']:
-                node['reasons'].append('E5 row energy gap allowance exceeded')
+                node['reasons'].append('evaluation row energy gap allowance exceeded')
             node['joules'] = node['meanWatts'] = None
             if not node['reasons'] and not errors:
                 # Native boundary checks already admitted these edge distances.
@@ -353,7 +353,7 @@ def collect(folder, phase, collection, io, timeout_seconds):
     index = {'visibility': PRIVATE, 'complete': False, 'status': 'NOT_READY', 'sources': [], 'errors': [], 'absentStreams': [],
              'requestPopulation': {key: phase.get(key) for key in ('startUTC', 'endUTC', 'drainedUTC')}}
     manifest = {'visibility': PRIVATE, 'status': 'NOT_READY', 'errors': [], 'raw': [],
-                'science': 'UNMEASURED; collection and reducer completeness are not E5 judgment'}
+                'science': 'UNMEASURED; collection and reducer completeness are not evaluation judgment'}
     if (folder / 'obs').exists() or (folder / 'raw-source-index.json').exists():
         manifest['errors'].append('Existing raw outputs: refuse stale-hour mixing or evidence overwrite')
         return manifest

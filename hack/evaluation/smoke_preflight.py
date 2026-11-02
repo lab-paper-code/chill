@@ -27,7 +27,7 @@ def main():
     demo = module('smoke_demo', HERE / 'demo.py')
     with tempfile.TemporaryDirectory(prefix='chill-preflight-') as directory:
         root = Path(directory)
-        raw = module('smoke_preflight_raw', HERE / 'e5-raw.py')
+        raw = module('smoke_preflight_raw', HERE / 'raw.py')
         stamp = '2026-10-27T00:00:00.000000001Z'
         raw_rows = [
             {'workloadUID': 'w', 'requestID': 'assigned-only', 'kind': 'assigned', 'receivedAt': stamp},
@@ -55,14 +55,14 @@ def main():
         else:
             raise AssertionError('Offline raw reader escaped the retained capture')
         environment = root / 'environment.json'
-        environment.write_text(json.dumps({'paths': {'repository': str(HERE.parents[1]), 'ops': directory, 'campaign': directory, 'd2State': directory}, 'e5': {'operationalRecipe': directory, 'nodes': [], 'excludedNodes': []}}))
+        environment.write_text(json.dumps({'paths': {'repository': str(HERE.parents[1]), 'ops': directory, 'campaign': directory, 'd2State': directory}, 'evaluation': {'operationalRecipe': directory, 'nodes': [], 'excludedNodes': []}}))
         with patch.dict(os.environ, CHILL_EXPERIMENT_CONFIG=str(environment)):
-            e5 = module('smoke_preflight_e5', HERE / 'e5.py')
-        e5.self_check_g0()
-        assert e5.g0_evidence_gate({'g0Evidence': {'status': 'UNKNOWN'}}, 1, required=False)['status'] == 'UNKNOWN'
+            harness_module = module('smoke_preflight_harness', HERE / 'conductor.py')
+        harness_module.self_check_g0()
+        assert harness_module.g0_evidence_gate({'g0Evidence': {'status': 'UNKNOWN'}}, 1, required=False)['status'] == 'UNKNOWN'
         g0_run = root / 'synthetic-g0'
         (g0_run / 'run').mkdir(parents=True)
-        rates = dict(zip(e5.WORKLOADS, [.54, .12, .54]))
+        rates = dict(zip(harness_module.WORKLOADS, [.54, .12, .54]))
         slo = {'percentile': 95, 'targetLatencyNanos': 32_000_000}
         witness = {'status': 'FAIL', 'generatorQualityStatus': 'VALID', 'configuredRateTotal': 1.2,
                    'cpuCoresPeak': 1, 'cpu10sSamples': [{'cpuCores': 1}],
@@ -72,20 +72,20 @@ def main():
         frozen = {'schema': 'demo-e5-binding.v1', 'demoConfig': {'measurementSLO': {'plc': slo}},
                   'schedule': [{'id': 'G-check', 'seconds': 120, 'traces': {name: {'offered': 10} for name in rates},
                                 'parts': [{'alpha': dict.fromkeys(['mobilenet', 'plc', 'smolvlm2'], 1.2), 'rates': rates}]}]}
-        e5.save(g0_run / 'g0-verdict.json', witness)
-        e5.save(g0_run / 'run/binding.json', frozen)
+        harness_module.save(g0_run / 'g0-verdict.json', witness)
+        harness_module.save(g0_run / 'run/binding.json', frozen)
         record = {'runID': 'synthetic-g0', 'verdict': str(g0_run / 'g0-verdict.json'),
                   'binding': str(g0_run / 'run/binding.json'), 'csCPULimitCores': 2}
         approved = {'g0Evidence': record, 'workloads': [{'name': name, 'R': 1, 'slo': slo} for name in rates]}
-        gate = e5.g0_evidence_gate(approved, 1)
+        gate = harness_module.g0_evidence_gate(approved, 1)
         assert gate['status'] == 'VALID' and gate['csCPUFraction'] == .5
         assert gate['gatewayVerdict'] == 'PASS' and gate['historicalOverallStatusReference'] == 'FAIL'
         assert gate['smolSLOReference']['SLOVerdict'] == 'FAIL'
-        assert gate['sources']['verdict'] == e5.ref(record['verdict'])
+        assert gate['sources']['verdict'] == harness_module.ref(record['verdict'])
         for invalid in ({}, {'g0Evidence': {'status': 'UNKNOWN'}}, dict(approved, g0Evidence=dict(record, runID='wrong-run')),
                         dict(approved, g0Evidence=dict(record, csCPULimitCores=0))):
             try:
-                e5.g0_evidence_gate(invalid, 1)
+                harness_module.g0_evidence_gate(invalid, 1)
             except ValueError:
                 pass
             else:
@@ -109,8 +109,8 @@ def main():
         assert issuance.issuance_fidelity([client[0]]*3, planned, 100, 100_000_000, stats)['status'] == 'UNKNOWN'
         unsent = issuance.issuance_fidelity([{'requestIndex': 0, 'scheduledOffsetNs': 0, 'error': 'UnsentAtWindowEnd'}], [0], 100, 100_000_000, stats)
         assert unsent['issued'] == 0 and unsent['gapsOver50MS'] == 1
-        spec = e5.load(HERE / 'preflight-config.example.json')
-        schedule = demo.schedule(spec, e5)
+        spec = harness_module.load(HERE / 'preflight-config.example.json')
+        schedule = demo.schedule(spec, harness_module)
         assert schedule[0]['readyGate'] and schedule[0]['seconds'] == 720 and schedule[1]['seconds'] == 60
         assert schedule[0]['startBarrier'] == {'reservations': 0, 'transitions': 0}
         assert 'startBarrier' not in schedule[1]
@@ -126,7 +126,7 @@ def main():
         binding = {'schema': 'demo-e5-binding.v1', 'schedule': schedule, 'config': config, 'demoConfig': spec}
         out = root / 'run'
         out.mkdir()
-        cpo = object.__new__(e5.CPO)
+        cpo = object.__new__(harness_module.CPO)
         cpo.b, cpo.c, cpo.out, cpo.tb = binding, config, out, config['timeboxes']
         cpo.a = SimpleNamespace(command='smoke', mode='smoke', stage='E0')
         for command in (cpo.start, cpo.run):
@@ -138,13 +138,13 @@ def main():
                 raise AssertionError('Expired token passed start/run')
         assert not (out / 'initial.json').exists() and not (out / 'smoke-E0').exists()
         prepare_spec = dict(spec, operationalRecipe=str(root / 'token-config.json'))
-        prepare_spec.pop('e5Config', None)
-        e5.save(root / 'token-config.json', config)
-        e5.save(root / 'prepare-config.json', prepare_spec)
+        prepare_spec.pop('evaluationConfig', None)
+        harness_module.save(root / 'token-config.json', config)
+        harness_module.save(root / 'prepare-config.json', prepare_spec)
         prepare_args = SimpleNamespace(out=root / 'prepare', config=root / 'prepare-config.json')
         with patch.object(demo, 'assemble', side_effect=AssertionError('Expired token reached assembly')):
             try:
-                demo.prepare(e5, prepare_args)
+                demo.prepare(harness_module, prepare_args)
             except ValueError as error:
                 assert 'remaining' in str(error) and 'required' in str(error)
             else:
@@ -155,7 +155,7 @@ def main():
         assert cpo.check_token_lifetime(schedule[1])['requiredSeconds'] == 1095
         with patch.object(demo, 'assemble', side_effect=RuntimeError('Local assembly boundary reached')) as assembly:
             try:
-                demo.prepare(e5, prepare_args)
+                demo.prepare(harness_module, prepare_args)
             except RuntimeError as error:
                 assert str(error) == 'Local assembly boundary reached'
             else:
@@ -167,32 +167,32 @@ def main():
         assert cpo.check_token_lifetime()['requiredSeconds'] == auth.lifetime_budget(schedule + schedule, spec['timeboxes'], 30)
         cpo.b, cpo.c, cpo.a.command = binding, config, 'smoke'
         initial = {'instances': None, 'reservations': None}
-        e5.save(out / 'initial.json', {'state': {'snapshot': initial}})
-        e5.save(out / 'finish-complete.json', {})
+        harness_module.save(out / 'initial.json', {'state': {'snapshot': initial}})
+        harness_module.save(out / 'finish-complete.json', {})
         occupied = {'snapshot': {'instances': [], 'reservations': [{'owner': 'reset'}]}}
         empty = {'snapshot': copy.deepcopy(initial)}
-        with patch.object(cpo, 'state', side_effect=[occupied, empty], create=True), patch.object(e5.time, 'sleep'):
-            demo.wait_preflight_empty(e5, cpo)
+        with patch.object(cpo, 'state', side_effect=[occupied, empty], create=True), patch.object(harness_module.time, 'sleep'):
+            demo.wait_preflight_empty(harness_module, cpo)
         for stage in schedule:
             folder = demo.stage_folder(out, stage)
             folder.mkdir()
             for name in ('power.json', 'power-drain-inclusive.json'):
-                e5.save(folder / name, {'complete': True})
+                harness_module.save(folder / name, {'complete': True})
         stages = [
-            {'stage': 'E0', 'status': 'DRAINED_NOT_EVALUATED', 'readyGate': {'observedUTC': e5.now(), 'missingWorkloadUIDs': [], 'timedOut': False}, 'workloads': {}},
+            {'stage': 'E0', 'status': 'DRAINED_NOT_EVALUATED', 'readyGate': {'observedUTC': harness_module.now(), 'missingWorkloadUIDs': [], 'timedOut': False}, 'workloads': {}},
             {'stage': 'MIX', 'status': 'DRAINED_NOT_EVALUATED', 'workloads': {w['name']: {'offered': 10, 'httpSuccess': 10, 'clientRows': 10} for w in workloads}},
         ]
-        assert demo.preflight_result(e5, binding, out, stages)['status'] == 'PASS'
+        assert demo.preflight_result(harness_module, binding, out, stages)['status'] == 'PASS'
         assert not (out / 'finish-definitions-complete.json').exists()
         # The public JSON contract omits reservations when the list is empty.
         omitted = {'snapshot': {'instances': None}, 'actions': [{'status': 'complete'}]}
-        e5.save(out / 'initial.json', {'state': omitted})
+        harness_module.save(out / 'initial.json', {'state': omitted})
         with patch.object(cpo, 'state', return_value=omitted, create=True):
-            demo.wait_preflight_empty(e5, cpo)
-        assert demo.preflight_result(e5, binding, out, stages)['status'] == 'PASS'
-        assert e5.load(out / 'preflight-final-state.json') == omitted
+            demo.wait_preflight_empty(harness_module, cpo)
+        assert demo.preflight_result(harness_module, binding, out, stages)['status'] == 'PASS'
+        assert harness_module.load(out / 'preflight-final-state.json') == omitted
         def fails(check, rows=stages):
-            result = demo.preflight_result(e5, binding, out, rows)
+            result = demo.preflight_result(harness_module, binding, out, rows)
             assert result['status'] == 'FAIL' and result['checks'][check] == 'FAIL', result
         broken = copy.deepcopy(stages)
         broken[1]['workloads'][workloads[0]['name']]['httpSuccess'] = 9
@@ -204,31 +204,31 @@ def main():
         power = demo.stage_folder(out, schedule[1]) / 'power.json'
         power.unlink()
         fails('powerComplete')
-        e5.save(power, {'complete': True})
-        e5.save(out / 'preflight-final-state.json', occupied)
+        harness_module.save(power, {'complete': True})
+        harness_module.save(out / 'preflight-final-state.json', occupied)
         fails('finalReservations0')
         with patch.object(cpo, 'tb', dict(settleSeconds=0)), patch.object(cpo, 'state', return_value=occupied, create=True):
             try:
-                demo.wait_preflight_empty(e5, cpo)
+                demo.wait_preflight_empty(harness_module, cpo)
             except RuntimeError:
                 pass
             else:
                 raise AssertionError('Final reservations did not stop preflight')
-        e5.save(out / 'preflight-final-state.json', empty)
-        e5.save(out / 'preflight-STOP.json', {})
+        harness_module.save(out / 'preflight-final-state.json', empty)
+        harness_module.save(out / 'preflight-STOP.json', {})
         fails('noStop')
-        e5.save(out / 'preflight-STOP.json', {'error': "'reservations'", 'status': 'FAIL'})
+        harness_module.save(out / 'preflight-STOP.json', {'error': "'reservations'", 'status': 'FAIL'})
         fails('noStop')
-        judged = demo.preflight_result(e5, binding, out, stages, judge=True)
+        judged = demo.preflight_result(harness_module, binding, out, stages, judge=True)
         assert judged['status'] == 'PASS' and judged['resolvedHistoricalStop']['error'] == "'reservations'"
-        e5.save(out / 'preflight-final-state.json', occupied)
-        assert demo.preflight_result(e5, binding, out, stages, judge=True)['status'] == 'FAIL'
-        e5.save(out / 'preflight-final-state.json', dict(omitted, actions=[{'status': 'cancel'}]))
+        harness_module.save(out / 'preflight-final-state.json', occupied)
+        assert demo.preflight_result(harness_module, binding, out, stages, judge=True)['status'] == 'FAIL'
+        harness_module.save(out / 'preflight-final-state.json', dict(omitted, actions=[{'status': 'cancel'}]))
         fails('finalTransitions0')
-        assert demo.preflight_result(e5, binding, out, stages, judge=True)['status'] == 'FAIL'
-        e5.save(out / 'preflight-final-state.json', omitted)
-        e5.save(out / 'preflight-STOP.json', {'error': 'another failure'})
-        assert demo.preflight_result(e5, binding, out, stages, judge=True)['status'] == 'FAIL'
+        assert demo.preflight_result(harness_module, binding, out, stages, judge=True)['status'] == 'FAIL'
+        harness_module.save(out / 'preflight-final-state.json', omitted)
+        harness_module.save(out / 'preflight-STOP.json', {'error': 'another failure'})
+        assert demo.preflight_result(harness_module, binding, out, stages, judge=True)['status'] == 'FAIL'
         (out / 'preflight-STOP.json').unlink()
         (out / 'preflight-final-state.json').unlink()
         fails('finalInstances0')
