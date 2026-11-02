@@ -123,43 +123,13 @@ func TestMeasurementSubmitPreflightBeforeNativeCreate(t *testing.T) {
 	}
 }
 
-func TestMeasurementNamespaceEscapeAndListActualNativeState(t *testing.T) {
-	ctx := context.Background()
-	pending := &api.BatchEnergyOptimization{
-		ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "pending", UID: "pending-uid"},
-	}
-	failed := &api.BatchEnergyOptimization{
-		ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "failed"},
-		Status: api.BatchEnergyOptimizationStatus{
-			Phase: "Failed", Outcome: "CurvePlanResolutionFailed",
-			Conditions: []meta.Condition{{
-				Type: "Done", Status: meta.ConditionFalse, Reason: "ActualFailure", Message: "unsupported actual input",
-			}},
-		},
-	}
-	complete := &api.BatchEnergyOptimization{
-		ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "complete"},
-		Status:     api.BatchEnergyOptimizationStatus{Phase: "Complete", CompletedTrials: 9},
-	}
-	escaped := &api.BatchEnergyOptimization{ObjectMeta: meta.ObjectMeta{Namespace: "outside", Name: "hidden"}}
-	native := fake.NewClientBuilder().WithScheme(measurementScheme(t)).
-		WithObjects(pending, failed, complete, escaped).Build()
-	service := &measurementService{client: native, opts: options{profileNamespaces: []string{"allowed"}}}
-	list, err := service.list(ctx, "allowed")
-	if err != nil || len(list.Items) != 3 {
-		t.Fatalf("native list: %+v %v", list, err)
-	}
-	if list.Items[0].Name != "complete" || list.Items[1].Status.Conditions[0].Reason != "ActualFailure" ||
-		list.Items[2].Status.Phase != "" || list.Items[2].UID != pending.UID {
-		t.Fatalf("native states lost: %+v", list)
-	}
-	if _, err := service.list(ctx, "outside"); !errors.Is(err, servingkube.ErrForbidden) {
-		t.Fatal("namespace list escaped")
-	}
-	if _, err := service.submit(ctx, *escaped, false); !errors.Is(err, servingkube.ErrForbidden) {
+func TestMeasurementMutationNamespaceEscape(t *testing.T) {
+	service := &measurementService{opts: options{profileNamespaces: []string{"allowed"}}}
+	escaped := api.BatchEnergyOptimization{ObjectMeta: meta.ObjectMeta{Namespace: "outside", Name: "hidden"}}
+	if _, err := service.submit(context.Background(), escaped, false); !errors.Is(err, servingkube.ErrForbidden) {
 		t.Fatal("namespace submit escaped before preflight")
 	}
-	if _, err := service.delete(ctx, "outside", "hidden", "uid", "1"); !errors.Is(err, servingkube.ErrForbidden) {
+	if _, err := service.delete(context.Background(), "outside", "hidden", "uid", "1"); !errors.Is(err, servingkube.ErrForbidden) {
 		t.Fatal("namespace delete escaped")
 	}
 }

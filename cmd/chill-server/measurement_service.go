@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"sort"
 	"strings"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -80,22 +79,6 @@ func (o *measurementService) namespace(namespace string) error {
 		return servingkube.ErrForbidden
 	}
 	return nil
-}
-
-func (o *measurementService) list(ctx context.Context, namespace string) (api.BatchEnergyOptimizationList, error) {
-	result := api.BatchEnergyOptimizationList{}
-	if err := o.namespace(namespace); err != nil {
-		return result, err
-	}
-	if err := o.client.List(ctx, &result, client.InNamespace(namespace)); err != nil {
-		return result, err
-	}
-	result.APIVersion, result.Kind = api.GroupVersion.String(), "BatchEnergyOptimizationList"
-	if result.Items == nil {
-		result.Items = []api.BatchEnergyOptimization{}
-	}
-	sort.Slice(result.Items, func(i, j int) bool { return result.Items[i].Name < result.Items[j].Name })
-	return result, nil
 }
 
 func (o *measurementService) preflight(ctx context.Context, task *api.BatchEnergyOptimization) error {

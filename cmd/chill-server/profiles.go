@@ -17,7 +17,6 @@ import (
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,16 +24,6 @@ import (
 )
 
 const preparationUnavailable = "PreparationUnavailable"
-
-// profilesView returns the catalog of the accepted configuration without
-// waiting behind refresh or Tick.
-func (o *schedulerService) profilesView(context.Context) (httpapi.ProfilesView, error) {
-	view := o.profiles.Load()
-	if view == nil {
-		return httpapi.ProfilesView{}, errors.New("scheduler catalog is not loaded")
-	}
-	return *view, nil
-}
 
 // preparations builds one PrepareSpec per profile. A profile that cannot be
 // prepared becomes its own CatalogIssue; the other profiles remain usable.
