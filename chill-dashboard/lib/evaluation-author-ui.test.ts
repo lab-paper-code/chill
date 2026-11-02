@@ -95,6 +95,21 @@ test("invalid stage control JSON prevents stage removal and reordering until rep
   assert.equal(validity.at(-1),true)
 })
 
+test("evaluation load generator resources expose memory only",()=>{
+  const runner=hookRunner(),changes:unknown[]=[]
+  const modules={...primitives,react:runner.react,"@/lib/client":{useChillQuery:()=>({data:{items:[]}})},"@/features/evaluation-request":{}}
+  const {EvaluationSpecEditor}=load("../features/evaluation-author.tsx",modules)
+  const props={spec:{loadGenerator:{resources:{requests:{memory:"256Mi"},limits:{memory:"512Mi"}}}},onChange:(value:unknown)=>changes.push(value)}
+  let tree=elements(runner.render(EvaluationSpecEditor,props))
+  ;(tree.find(element=>element.type==="button"&&element.props.children==="실행 환경")!.props.onClick as ()=>void)()
+  tree=elements(runner.render(EvaluationSpecEditor,props))
+  const fields=tree.filter(element=>Array.isArray(element.props.path)&&element.props.path.slice(0,2).join("/")==="loadGenerator/resources")
+  assert.deepEqual(fields.map(element=>element.props.path),[["loadGenerator","resources","requests","memory"],["loadGenerator","resources","limits","memory"]])
+  const field=fields[0],input=(field.type as (props:Record<string,unknown>)=>unknown)(field.props)
+  ;(elements(input).find(element=>element.type==="input")!.props.onChange as (event:unknown)=>void)({target:{value:"1Gi"}})
+  assert.deepEqual((changes.at(-1) as typeof props.spec).loadGenerator.resources,{requests:{memory:"1Gi"},limits:{memory:"512Mi"}})
+})
+
 test("dedicated author pages restore copy and edit identity from bookmarked URLs",()=>{
   const runner=hookRunner(),spec={question:"frozen input",future:9007199254740993n}
   let params=new URLSearchParams("copy=original"),phase="Pending",uid="old",navigation=""
