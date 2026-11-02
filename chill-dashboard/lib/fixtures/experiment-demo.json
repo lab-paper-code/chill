@@ -153,8 +153,8 @@
         },
         "limitations": [
           "No offered demo requests during per-stage drain/collection/setup; failures in this gap are not measurable by these producers",
-          "Operational demo only; no E5 scientific PASS or workload-attributed energy",
-          "E5 R/kappa capacity binding and G clipping",
+          "Operational demo only; no evaluation scientific PASS or workload-attributed energy",
+          "evaluation R/kappa capacity binding and G clipping",
           "10800-second normative schedule and factor baselines",
           "phase6 scientific approvals/D1/D6/D9 judgment gates",
           "image/source publication and profiling-vs-evaluation metadata Jobs; existing pinned images/datasets reused",

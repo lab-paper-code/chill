@@ -21,7 +21,7 @@ test("R11: sub-display deltas are neutral in both overview and intervals",()=>{
   }
 })
 test("R11: closing a shared interval removes all stage selection parameters",()=>{
-  const params=experimentSelection("?a=run&al=historical&as=full-E5-1&b=run&bs=static-E5-1",{al:"",as:"",b:"",bs:""})
+  const params=experimentSelection("?a=run&al=historical&as=full-steady-mixed&b=run&bs=static-baseline-steady-mixed",{al:"",as:"",b:"",bs:""})
   assert.equal(params.toString(),"a=run")
 })
 import type { SchedulerObservation } from "./read-types.ts"
@@ -596,7 +596,7 @@ test("R3: rapid A/B selections preserve the preceding URL selection and clear on
 })
 
 test("declared comparisons alone populate campaign groups, independent of names or observed rates",()=>{
-  const left={...stage,id:"candidate"},right={...stage,id:"baseline"},unlisted={...stage,id:"full-E5-1"}
+  const left={...stage,id:"candidate"},right={...stage,id:"baseline"},unlisted={...stage,id:"full-steady-mixed"}
   const run=definedRun([left,right,unlisted],[["candidate","baseline"]])
   assert.deepEqual(definitionComparisons(run).map(pair=>[pair.chill.id,pair.control.id]),[["candidate","baseline"]])
   assert.equal(definitionComparisons({...run,stages:[left,left,right]}).length,0)
@@ -704,12 +704,12 @@ test("operator conclusion includes every paired stage and reports energy losses 
 
 test("operator conclusion names the worst service loss and does not treat missing success as zero",()=>{
   const make=(id:string,success:unknown,p95:number):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",kpis:{wholePoolJoules:100,requests:{camera:{deadlineSuccessFraction:success,completedLatencyNS:{p95:p95*1e6}}}}})
-  const run=definedRun([make("full-E5-1",.8,20),make("static-E5-1",.9,10)],[["full-E5-1","static-E5-1"]])
+  const run=definedRun([make("full-steady-mixed",.8,20),make("static-baseline-steady-mixed",.9,10)],[["full-steady-mixed","static-baseline-steady-mixed"]])
   const score=campaignScoreboard(run)
   assert.ok(Math.abs(score.referenceSummary.successDelta!+10)<1e-10)
   assert.equal(score.referenceSummary.p95Ratio,2)
   assert.equal(score.quality[0].service,"camera")
-  assert.equal(campaignScoreboard({...run,stages:[make("full-E5-1",null,20),run.stages[1]]}).referenceSummary.successDelta,null)
+  assert.equal(campaignScoreboard({...run,stages:[make("full-steady-mixed",null,20),run.stages[1]]}).referenceSummary.successDelta,null)
 })
 
 test("declared mismatched stage names retain numeric gains, losses and worst service quality",()=>{
@@ -746,11 +746,11 @@ test("R8: campaign scoreboard separates energy, worst service losses, missing me
     kpis:{wholePoolJoules:energy,measurementRules:{population:"offered"},requests:{camera:{offered:600,deadlineSuccessFraction:success,completedLatencyNS:{p95:p95===null?null:p95*1e6}}}},
   })
   const run=definedRun([
-    make("full-E5-1",90,.8,20),make("static-E5-1",100,.9,10),
-    make("full-E5-2",110,1,5),make("static-E5-2",100,1,5),
-    make("full-E5-3",null,null,null),make("static-E5-3",100,1,10),
+    make("full-steady-mixed",90,.8,20),make("static-baseline-steady-mixed",100,.9,10),
+    make("full-burst",110,1,5),make("static-baseline-burst",100,1,5),
+    make("full-ramp-up",null,null,null),make("static-baseline-ramp-up",100,1,10),
     make("manual",50,1,5),
-  ],[["full-E5-1","static-E5-1"],["full-E5-2","static-E5-2"],["full-E5-3","static-E5-3"]])
+  ],[["full-steady-mixed","static-baseline-steady-mixed"],["full-burst","static-baseline-burst"],["full-ramp-up","static-baseline-ramp-up"]])
   const scoreboard=campaignScoreboard(run)
   assert.deepEqual(scoreboard.energyCounts,{decreased:1,increased:1,equal:0,missing:1,delta:0})
   assert.ok(Math.abs(scoreboard.referenceSummary.successDelta!+10)<1e-10)
@@ -766,7 +766,7 @@ test("R8: campaign scoreboard separates energy, worst service losses, missing me
   const unavailable=campaignScoreboard({...run,stages:[make("manual",50,1,5)]})
   assert.deepEqual(unavailable.summary,{energyPercent:null,successDelta:null,p95Ratio:null})
   assert.equal(unavailable.coverageCounts.unpaired,1)
-  const missing=campaignScoreboard({...run,stages:[make("full-E5-1",null,null,null),make("static-E5-1",100,1,10)]})
+  const missing=campaignScoreboard({...run,stages:[make("full-steady-mixed",null,null,null),make("static-baseline-steady-mixed",100,1,10)]})
   assert.deepEqual(missing.summary,{energyPercent:null,successDelta:null,p95Ratio:null})
 })
 
@@ -809,12 +809,12 @@ test("R9: selected published results use the experiment endpoint without stage f
   assert.equal(evidence.searchParams.get("from"),stage.from)
   assert.equal(evidence.searchParams.get("to"),stage.to)
   assert.equal(relayPlan("GET",evidence.pathname.slice(1).split("/"),evidence.search,config).kind,"query")
-  assert.throws(()=>relayPlan("GET",experimentPath(recorded.publication.id).split("/"),"?stage=E5-3",config),/DashboardQueryInvalid/)
+  assert.throws(()=>relayPlan("GET",experimentPath(recorded.publication.id).split("/"),"?stage=ramp-up",config),/DashboardQueryInvalid/)
 })
 
 test("campaign summary scopes relative energy to available pairs and preserves quality loss",()=>{
   const make=(id:string,joules:number|null,success:number):ExperimentStage=>({...stage,id,kpis:{wholePoolJoules:joules,requests:{camera:{offered:10,deadlineSuccessFraction:success,completedLatencyNS:{p95:1000000}}}}})
-  const run=definedRun([make("full-E5-1",90,.8),make("static-E5-1",100,.9),make("full-E5-2",null,1),make("static-E5-2",100,1)],[["full-E5-1","static-E5-1"],["full-E5-2","static-E5-2"]])
+  const run=definedRun([make("full-steady-mixed",90,.8),make("static-baseline-steady-mixed",100,.9),make("full-burst",null,1),make("static-baseline-burst",100,1)],[["full-steady-mixed","static-baseline-steady-mixed"],["full-burst","static-baseline-burst"]])
   const score=campaignScoreboard(run)
   assert.equal(score.referenceSummary.energyPercent,-10)
   assert.ok(Math.abs(score.referenceSummary.successDelta!+10)<1e-10)
@@ -858,7 +858,7 @@ test("R10: duration validity and scoreboard use the same precision as displayed 
 
 test("R10: scoreboard projects numeric counts and quality deltas without sentence parsing",()=>{
   const make=(id:string,energy:number,success:number,p95:number):ExperimentStage=>({...stage,id,kpis:{wholePoolJoules:energy,requests:{camera:{offered:100,deadlineSuccessFraction:success,completedLatencyNS:{p95:p95*1e6}}}}})
-  const score=campaignScoreboard(definedRun([make("full-E5-1",90,.8,20),make("static-E5-1",100,.9,10)],[["full-E5-1","static-E5-1"]]))
+  const score=campaignScoreboard(definedRun([make("full-steady-mixed",90,.8,20),make("static-baseline-steady-mixed",100,.9,10)],[["full-steady-mixed","static-baseline-steady-mixed"]]))
   assert.deepEqual(score.energyCounts,{decreased:1,increased:0,equal:0,missing:0,delta:-10})
   assert.equal(score.quality[0].unit,"%p")
   assert.ok(Math.abs(score.quality[0].value!+10)<1e-10)
@@ -898,7 +898,7 @@ test("selected-service chart and heatmap share ordered intervals and frozen targ
 
 test("R13: conclusion chips isolate matched definitions and rules from limited reference comparisons",()=>{
   const make=(id:string,energy:number,definition="same"):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:00:10Z",kpis:{wholePoolJoules:energy,measurementRules:{window:10},requests:{camera:{uid:"camera",definitionID:definition,offered:10,deadlineSuccessFraction:1,completedLatencyNS:{p95:1000000}}}}})
-  const run=definedRun([make("full-E5-1",90),make("static-E5-1",100),make("full-E5-2",1,"changed"),make("static-E5-2",100)],[["full-E5-1","static-E5-1"],["full-E5-2","static-E5-2"]])
+  const run=definedRun([make("full-steady-mixed",90),make("static-baseline-steady-mixed",100),make("full-burst",1,"changed"),make("static-baseline-burst",100)],[["full-steady-mixed","static-baseline-steady-mixed"],["full-burst","static-baseline-burst"]])
   const score=campaignScoreboard(run)
   assert.equal(score.summary.energyPercent,-10)
   assert.equal(score.referenceSummary.energyPercent,-99)
@@ -912,9 +912,9 @@ test("R13: conclusion chips isolate matched definitions and rules from limited r
 
 test("R13: matched conclusion prioritizes quality loss and never treats limited gains as a verified improvement",()=>{
   const make=(id:string,energy:number,success=1):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:00:10Z",kpis:{wholePoolJoules:energy,measurementRules:{window:10},requests:{camera:{uid:"camera",definitionID:"same",offered:10,deadlineSuccessFraction:success,completedLatencyNS:{p95:1000000}}}}})
-  const run=definedRun([make("full-E5-1",90),make("static-E5-1",100)],[["full-E5-1","static-E5-1"]])
+  const run=definedRun([make("full-steady-mixed",90),make("static-baseline-steady-mixed",100)],[["full-steady-mixed","static-baseline-steady-mixed"]])
   assert.equal(campaignScoreboard(run).conclusion,"에너지 감소")
-  assert.equal(campaignScoreboard({...run,stages:[make("full-E5-1",90,.8),run.stages[1]]}).conclusion,"SLO 악화")
+  assert.equal(campaignScoreboard({...run,stages:[make("full-steady-mixed",90,.8),run.stages[1]]}).conclusion,"SLO 악화")
   const reference=campaignScoreboard({...run,stages:[{...run.stages[0],kpis:{...run.stages[0].kpis,measurementRules:{window:20},requests:{camera:{uid:"camera",definitionID:"same",offered:10,deadlineSuccessFraction:.8,completedLatencyNS:{p95:1000000}}}}},run.stages[1]]})
   assert.equal(reference.conclusion,"SLO 악화")
   assert.equal(reference.reference,true)
@@ -923,7 +923,7 @@ test("R13: matched conclusion prioritizes quality loss and never treats limited 
 
 test("R13 review: quality-only gains are improvements and no difference requires complete neutral metrics",()=>{
   const make=(id:string,success:number|null,p95:number|null):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:00:10Z",kpis:{wholePoolJoules:100,measurementRules:{window:10},requests:{camera:{uid:"camera",definitionID:"same",offered:10,deadlineSuccessFraction:success,completedLatencyNS:{p95:p95===null?null:p95*1e6}}}}})
-  const conclude=(success:number|null,p95:number|null)=>campaignScoreboard(definedRun([make("full-E5-1",success,p95),make("static-E5-1",.8,20)],[["full-E5-1","static-E5-1"]])).conclusion
+  const conclude=(success:number|null,p95:number|null)=>campaignScoreboard(definedRun([make("full-steady-mixed",success,p95),make("static-baseline-steady-mixed",.8,20)],[["full-steady-mixed","static-baseline-steady-mixed"]])).conclusion
   assert.equal(conclude(.9,20),"SLO 개선")
   assert.equal(conclude(.8,10),"SLO 개선")
   assert.equal(conclude(.9,10),"SLO 개선")
@@ -935,23 +935,23 @@ test("R13 review: quality-only gains are improvements and no difference requires
 test("R13 re-review: a neutral pair cannot erase another matched pair's quality gain",()=>{
   const make=(id:string,success:number|null,p95:number|null):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:00:10Z",kpis:{wholePoolJoules:100,measurementRules:{window:10},requests:{camera:{uid:"camera",definitionID:"same",offered:10,deadlineSuccessFraction:success,completedLatencyNS:{p95:p95===null?null:p95*1e6}}}}})
   for(const [success,p95] of [[.9,20],[.8,10],[.9,10]]) {
-    const stages=[make("full-E5-1",success,p95),make("static-E5-1",.8,20),make("full-E5-2",.8,20),make("static-E5-2",.8,20)]
-    const run=definedRun(stages,[["full-E5-1","static-E5-1"],["full-E5-2","static-E5-2"]]),score=campaignScoreboard(run)
+    const stages=[make("full-steady-mixed",success,p95),make("static-baseline-steady-mixed",.8,20),make("full-burst",.8,20),make("static-baseline-burst",.8,20)]
+    const run=definedRun(stages,[["full-steady-mixed","static-baseline-steady-mixed"],["full-burst","static-baseline-burst"]]),score=campaignScoreboard(run)
     assert.equal(score.summary.successDelta,0)
     assert.equal(score.summary.p95Ratio,1)
     assert.equal(score.conclusion,"SLO 개선")
-    assert.equal(campaignScoreboard({...run,stages:[...stages.slice(0,2),make("full-E5-2",.7,20),stages[3]]}).conclusion,"SLO 악화")
+    assert.equal(campaignScoreboard({...run,stages:[...stages.slice(0,2),make("full-burst",.7,20),stages[3]]}).conclusion,"SLO 악화")
   }
-  const neutral=[make("full-E5-1",.8,20),make("static-E5-1",.8,20)]
-  assert.equal(campaignScoreboard(definedRun([...neutral,make("full-E5-2",null,20),make("static-E5-2",.8,20)],[["full-E5-1","static-E5-1"],["full-E5-2","static-E5-2"]])).conclusion,"결과 부족")
+  const neutral=[make("full-steady-mixed",.8,20),make("static-baseline-steady-mixed",.8,20)]
+  assert.equal(campaignScoreboard(definedRun([...neutral,make("full-burst",null,20),make("static-baseline-burst",.8,20)],[["full-steady-mixed","static-baseline-steady-mixed"],["full-burst","static-baseline-burst"]])).conclusion,"결과 부족")
 })
 
 test("R14: comparison limits count each affected pair by its recorded cause",()=>{
   const make=(id:string):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:00:10Z",kpis:{wholePoolJoules:100,measurementRules:{window:10},requests:{camera:{uid:"camera",definitionID:"same",offered:10,deadlineSuccessFraction:1,completedLatencyNS:{p95:1000000}}}}})
-  const stages=[make("full-E5-1"),make("static-E5-1"),make("full-E5-2"),make("static-E5-2"),make("full-E5-3"),make("static-E5-3")]
+  const stages=[make("full-steady-mixed"),make("static-baseline-steady-mixed"),make("full-burst"),make("static-baseline-burst"),make("full-ramp-up"),make("static-baseline-ramp-up")]
   stages[0].kpis.measurementRules={window:20}
   stages[2].kpis.requests={camera:{uid:"camera",offered:10}}
-  const run=withDefinition(definedRun(stages,[["full-E5-1","static-E5-1"],["full-E5-2","static-E5-2"],["full-E5-3","static-E5-3"]]),definition=>{
+  const run=withDefinition(definedRun(stages,[["full-steady-mixed","static-baseline-steady-mixed"],["full-burst","static-baseline-burst"],["full-ramp-up","static-baseline-ramp-up"]]),definition=>{
     definition.loadScenarios.push({...definition.loadScenarios[0],name:"different-load",uid:"different-load-uid"})
     definition.spec.stages[4].loadScenarioRef={name:"different-load",uid:"different-load-uid"}
   }),counts=campaignScoreboard(run).coverageCounts

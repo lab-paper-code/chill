@@ -178,7 +178,7 @@ scope. Identity changes clear selections; first login retains bookmarked records
 
 `/experiments/results` reads immutable published runs/stages from `GET /api/v1/experiments`
 and `/{id}`. The A/B selectors retain two runs and two stages in the URL. Only
-publisher `kpis.workloads` (demo) and `kpis.requests` (E5) shapes are interpreted;
+publisher `kpis.workloads` (demo) and `kpis.requests` (evaluation) shapes are interpreted;
 original KPIs, numerator/denominator, populations, sources and missing reasons
 remain available. Empty values stay blank, including identities absent from old
 publications; names are never rejoined to current Workloads. Only matching recorded
@@ -231,7 +231,7 @@ The last ten minutes contain only received one-second buckets, capped at 600
 buckets and 1000 events. Pre-connection, resync and measurement gaps are not
 interpolated or zero-filled. The fixture selector exercises empty → first
 configuration → expansion → residual execution during shrink; all are synthetic
-검사용 scenes, not a product recording replay or E5 measurements.
+검사용 scenes, not a product recording replay or evaluation measurements.
 Current SLO is shown as an explicit reference, not drawn backward through old
 buckets whose messages do not carry definition IDs. Explicit gap hatching is
 scope-specific: workload gaps affect request lanes, power/Node gaps affect the
@@ -254,7 +254,7 @@ HOSTNAME=127.0.0.1 PORT=3131 node .next/standalone/server.js
 Use the local synthetic token `s2-local-token`; it has no cluster authority.
 Local-only POST controls `/__fixture/scene?name=empty|first|expand|shrink`,
 `/__fixture/resync` and `/__fixture/cluster` exercise push updates, zero-retention
-resynchronization, and an E5-7-shaped issue event. `/__fixture/status` reports
+resynchronization, and a failure-shaped issue event. `/__fixture/status` reports
 authentication/resume counts and active upstream sockets without credentials.
 No cluster or deployment is involved. Exit the fixture process to remove its
 temporary certificate/key. Run `pnpm test`, `pnpm typecheck` and `pnpm lint` for
@@ -276,7 +276,7 @@ instead of terminating the proxy, and has a runnable proxy regression test.
 | S2-4 | Processed projection only; blank whole/Node power, independent pending/waiting, shared instance symbols; no raw or polling REST reads in the browser trace |
 | S2-5 | Keyboard instance expansion, Node/reservation source facts, query refresh after reauthentication, pinned evidence through a newer decision and refresh, opener/heading/board-lane focus restoration |
 | S2-6 | First-frame auth reached the TLS upstream; a zero-retention reconnect resumed from its exact old checkpoint then received a snapshot and explicit gap; L0/L1 navigation kept the socket; logout removed live payload/DOM and left zero upstream sockets |
-| S2-7 | An event-only E5-7-shaped observer issue appeared immediately with source/reason/previousReason; this is a synthetic local rehearsal, not actual cluster E5-7 acceptance |
+| S2-7 | An event-only failure-shaped observer issue appeared immediately with source/reason/previousReason; this is a synthetic local rehearsal, not actual cluster failure acceptance |
 | S2-8 | 390×844 viewport had scroll width 390; evidence stacked below the board, native Enter/Esc worked, reduced-motion matched with animation `none`, and UTC/KST switched explicitly |
 
 Screenshots from this rehearsal are in `/tmp/chill-dashboard-s2/`, including

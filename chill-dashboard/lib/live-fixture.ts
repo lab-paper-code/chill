@@ -36,7 +36,7 @@ export function fixtureMessages(scene:string, at = new Date().toISOString()):unk
     {type:"delta",seq:7,at:time(-1),workloads,instances:[{...a,routable:{"pool-alpha":false,"pool-beta":true},running:{"pool-alpha":1,"pool-beta":1},observedAt:time(-1)}],removed:{instances:["inst-b"]},routing:{"pool-alpha":{},"pool-beta":{"inst-a":1}},decision:{at:time(-1),state:"TransitionInProgress",reason:"검사용 축소: 잔여 실행을 기다려요",explanation:"검사용 축소: 남은 요청 처리가 끝나면 인스턴스를 정리해요."},actions:[{...action,status:"complete",completedAt:time(-1)}],reservations:[reservation]},
     {type:"event",seq:8,at:time(-1),kind:"action",action:{...action,status:"complete",completedAt:time(-1),phase:"completed",result:{status:"complete"}}},
     metrics(9,-1,metric(0,4,1,3),metric(0,0,0,0)),
-    {type:"event",seq:10,at:time(0),kind:"cluster",cluster:{kind:"issue",at:time(0),event:"issue",source:"observer",reason:"검사용 E5-7 관측 장애",previousReason:"검사용 이전 사유"}},
+    {type:"event",seq:10,at:time(0),kind:"cluster",cluster:{kind:"issue",at:time(0),event:"issue",source:"observer",reason:"검사용 failure 관측 장애",previousReason:"검사용 이전 사유"}},
   )
   return messages
 }

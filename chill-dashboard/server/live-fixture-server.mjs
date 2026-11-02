@@ -88,7 +88,7 @@ const browser = https.createServer({key,cert},(req,res)=>{
       state=applyLiveMessage(state,{type:'snapshot',seq,at:lastAt,...state.snapshot})
       for(const client of wss.clients)client.close(1013)
     }
-    if(req.method==='POST'&&url.pathname==='/__fixture/cluster')publish({type:'event',kind:'cluster',cluster:{kind:'issue',at:new Date().toISOString(),event:'issue',source:'observer',reason:'검사용 E5-7 실시간 장애',previousReason:'검사용 이전 사유'}})
+    if(req.method==='POST'&&url.pathname==='/__fixture/cluster')publish({type:'event',kind:'cluster',cluster:{kind:'issue',at:new Date().toISOString(),event:'issue',source:'observer',reason:'검사용 failure 실시간 장애',previousReason:'검사용 이전 사유'}})
     res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify({scene,authCount,resumes,resyncs,connections:wss.clients.size,seq}));return
   }
   front.emit('request',req,res)
