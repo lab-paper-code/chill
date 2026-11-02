@@ -27,8 +27,13 @@ for kind in ("modelspecs", "deviceclasses", "preprocessors", "datasets"):
         sys.exit("query preflight lacks cluster-scope " + kind + " get")
 for kind in ("preprocessors", "datasets"):
     rules = [r for r in query["rules"] if kind in r.get("resources", [])]
-    if any(set(r["verbs"]) != {"get"} for r in rules):
-        sys.exit("query preflight should only get " + kind)
+    verbs = set().union(*(set(r["verbs"]) for r in rules))
+    if verbs != {"get", "list"}:
+        sys.exit("query inputs require get/list, never writes: " + kind)
+catalog = next(d for d in documents if d.get("kind") == "ClusterRole"
+               and d["metadata"]["name"] == "chill-query-catalog-reader")
+if catalog["rules"] != [{"nonResourceURLs": ["/chill/api/v1/scheduler/catalog-read"], "verbs": ["get"]}]:
+    sys.exit("query catalog grant is not the exact owner GET")
 
 serving = [r for r in roles if r["metadata"]["name"] == "chill-serving-entrypoint"]
 if not serving or not grants(serving[0], "services", "list"):
