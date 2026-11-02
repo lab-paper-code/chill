@@ -29,7 +29,7 @@ selected = a.images.split(",")
 if a.images != "auto" and (len(set(selected)) != len(selected) or any(x not in roles for x in selected)):
     p.error("--images accepts auto or a comma-separated subset of server,profiler,dashboard,node-agent,operator,query; runtime images are forbidden")
 root = pathlib.Path.cwd()
-sys.path.insert(0, str(root / "hack/e5"))
+sys.path.insert(0, str(root / "hack/evaluation"))
 import auth
 if not auth.math.isfinite(a.token_safety_margin_seconds) or a.token_safety_margin_seconds < 0:
     p.error("--token-safety-margin-seconds must be finite and nonnegative")
