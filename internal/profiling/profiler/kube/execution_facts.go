@@ -124,6 +124,7 @@ type resolvedExecutionDeclaration struct {
 	Access              *runtimeAccessContract
 	MetricObserverImage string
 	parseErr            error
+	superseded          int
 }
 
 // declarationSelectionError keeps preflight's original diagnostic while the
@@ -201,7 +202,6 @@ func parseExecutionDeclarations(configMap *corev1.ConfigMap, configMapKey string
 		}
 	}
 
-	seen := make(map[string]struct{}, len(document.Declarations))
 	declarations := make([]resolvedExecutionDeclaration, 0, len(document.Declarations))
 	for index := range document.Declarations {
 		declaration, err := validateExecutionDeclaration(document.Declarations[index])
@@ -209,57 +209,41 @@ func parseExecutionDeclarations(configMap *corev1.ConfigMap, configMapKey string
 			declarations = append(declarations, resolvedExecutionDeclaration{parseErr: fmt.Errorf("validate execution declaration %d: %w", index, err)})
 			break
 		}
-		backends := append([]string(nil), declaration.Runtime.Runtime.Backends...)
-		slices.Sort(backends)
-		identity := declaration.DeviceClass + "\x00" + declaration.Node + "\x00" + declaration.Runtime.Runtime.Family +
-			"\x00" + strings.Join(backends, "\x00")
-		if _, duplicate := seen[identity]; duplicate {
-			declarations = append(declarations, resolvedExecutionDeclaration{parseErr: &declarationSelectionError{
-				code: "RuntimeDeclarationAmbiguous",
-				err: fmt.Errorf("duplicate execution declaration for %s/%s/%s/%s",
-					declaration.DeviceClass, declaration.Node, declaration.Runtime.Runtime.Family, strings.Join(backends, ",")),
-			}})
-			break
-		}
-		seen[identity] = struct{}{}
 		declaration.MetricObserverImage = document.MetricObserverImage
 		declarations = append(declarations, declaration)
 	}
 	return declarations, nil
 }
 
+// The ConfigMap document is one ordered declaration set, not version history.
+// A later matching entry overwrites earlier entries in the same scope.
 func selectParsedExecutionDeclaration(declarations []resolvedExecutionDeclaration, deviceClass, node, runtimeFamily, runtimeBackend string) (resolvedExecutionDeclaration, error) {
-	var selected *resolvedExecutionDeclaration
-	for _, declaration := range declarations {
+	selected, matches := -1, 0
+	for index := range declarations {
+		declaration := &declarations[index]
 		if declaration.parseErr != nil {
 			return resolvedExecutionDeclaration{}, declaration.parseErr
 		}
 		if declaration.DeviceClass == deviceClass && (declaration.Node == "" || declaration.Node == node) &&
 			declaration.Runtime.Runtime.Family == runtimeFamily &&
 			slices.Contains(declaration.Runtime.Runtime.Backends, runtimeBackend) {
-			if selected != nil {
-				return resolvedExecutionDeclaration{}, &declarationSelectionError{
-					code: "RuntimeDeclarationAmbiguous",
-					err: fmt.Errorf("multiple trusted execution declarations for %s on %s/%s/%s",
-						node, deviceClass, runtimeFamily, runtimeBackend),
-				}
-			}
-			copy := declaration
-			copy.Runtime.Runtime.Backends = append([]string(nil), declaration.Runtime.Runtime.Backends...)
-			copy.Runtime.Packages = append([]runtimePackage(nil), declaration.Runtime.Packages...)
-			copy.Host = cloneHostExecutionContract(declaration.Host)
-			copy.Access = cloneRuntimeAccessContract(declaration.Access)
-			selected = &copy
+			selected, matches = index, matches+1
 		}
 	}
-	if selected == nil {
+	if selected < 0 {
 		return resolvedExecutionDeclaration{}, &declarationSelectionError{
 			code: "RuntimeDeclarationMissing",
 			err: fmt.Errorf("no trusted execution declaration for %s on %s/%s/%s",
 				node, deviceClass, runtimeFamily, runtimeBackend),
 		}
 	}
-	return *selected, nil
+	result := declarations[selected]
+	result.superseded = matches - 1
+	result.Runtime.Runtime.Backends = slices.Clone(result.Runtime.Runtime.Backends)
+	result.Runtime.Packages = slices.Clone(result.Runtime.Packages)
+	result.Host = cloneHostExecutionContract(result.Host)
+	result.Access = cloneRuntimeAccessContract(result.Access)
+	return result, nil
 }
 
 func readSingleYAMLDocument(raw []byte) ([]byte, error) {

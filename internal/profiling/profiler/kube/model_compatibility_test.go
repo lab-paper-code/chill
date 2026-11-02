@@ -48,11 +48,11 @@ func TestModelCompatibilityUsesTrustedExactDeclarations(t *testing.T) {
 		{name: "missing key", verdict: "Unknown", reason: "RuntimeDeclarationMissing", mutate: func(objects []client.Object) {
 			objects[2].(*corev1.ConfigMap).Data = nil
 		}},
-		{name: "duplicate declarations", verdict: "Unknown", reason: "RuntimeDeclarationAmbiguous", mutate: func(objects []client.Object) {
+		{name: "duplicate declarations", verdict: "Compatible", mutate: func(objects []client.Object) {
 			facts := validExecutionFacts()
 			objects[2].(*corev1.ConfigMap).Data["execution-facts.yaml"] = facts + facts[strings.Index(facts, "  - deviceClass:"):]
 		}},
-		{name: "overlapping backend declarations", verdict: "Unknown", reason: "RuntimeDeclarationAmbiguous", mutate: func(objects []client.Object) {
+		{name: "overlapping backend declarations", verdict: "Compatible", mutate: func(objects []client.Object) {
 			facts := validExecutionFacts()
 			objects[2].(*corev1.ConfigMap).Data["execution-facts.yaml"] = facts + strings.Replace(facts[strings.Index(facts, "  - deviceClass:"):], `"backends":["ort-cpu"]`, `"backends":["ort-cpu","rknnlite"]`, 1)
 		}},
@@ -76,6 +76,9 @@ func TestModelCompatibilityUsesTrustedExactDeclarations(t *testing.T) {
 				}
 			} else if len(got.Reasons) != 1 || string(got.Reasons[0].Code) != test.reason || got.Reasons[0].Message == "" {
 				t.Fatalf("reasons = %+v", got.Reasons)
+			}
+			if (test.name == "duplicate declarations" || test.name == "overlapping backend declarations") && len(got.Diagnostics) != 1 {
+				t.Fatal("superseded declarations lost their non-blocking diagnostic", got)
 			}
 			if test.verdict == "Unknown" && got.RuntimeDeclaration != nil {
 				t.Fatalf("invented declaration identity: %+v", got.RuntimeDeclaration)

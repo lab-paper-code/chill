@@ -500,7 +500,7 @@ def coverage_condition_matches(observed, required):
 def coverage_required_condition(cell, node, model, declarations):
     execution = next(p for p in model["spec"]["executionPaths"] if p["name"] == cell["executionPath"])
     runtime = execution["runtime"]
-    images = set()
+    image = None
     for declaration in declarations:
         if (declaration["deviceClass"] != cell["deviceClass"]["name"] or
                 declaration.get("node", node) != node):
@@ -508,12 +508,10 @@ def coverage_required_condition(cell, node, model, declarations):
         payload = json.loads(declaration["runtime"]["payload"])
         if (payload["runtime"]["family"] == runtime["family"] and
                 runtime["backend"] in payload["runtime"]["backends"]):
-            images.add(payload["image"])
-    if not images:
+            image = payload["image"]  # last matching declaration overwrites this scope
+    if image is None:
         return None
-    if len(images) != 1:
-        raise ValueError("ambiguous runtime image for " + cell["id"] + "/" + node)
-    return {"runtimeImage": images.pop(), "curveSchema": SHARED_CURVE_SCHEMA,
+    return {"runtimeImage": image, "curveSchema": SHARED_CURVE_SCHEMA,
             "evidenceSchema": SHARED_EVIDENCE_SCHEMA}
 
 
@@ -1168,6 +1166,11 @@ def coverage_self_check():
                                         native_model, declarations, {("device", "path")})
     assert coverage_targets({"completeness": "complete", "cells": [missing]}, policy,
                             {}, {missing["id"]: "actual-node"}) == ([missing], [], [], [])
+    older = copy.deepcopy(declarations[0])
+    newer = copy.deepcopy(older)
+    older["runtime"]["payload"] = json.dumps(dict(json.loads(older["runtime"]["payload"]), image="old-image"))
+    newer["runtime"]["payload"] = json.dumps(dict(json.loads(newer["runtime"]["payload"]), image="new-image"))
+    assert coverage_required_condition(cell, "actual-node", native_model, [older, newer])["runtimeImage"] == "new-image"
     result = {"result": {"curvePlan": {"schemaVersion": SHARED_CURVE_SCHEMA},
                          "completedTrials": [{"evidence": {"schemaVersion": SHARED_EVIDENCE_SCHEMA}}]}}
     assert coverage_shared_result(result)

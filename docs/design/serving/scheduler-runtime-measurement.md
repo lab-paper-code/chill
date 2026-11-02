@@ -50,6 +50,8 @@ profiling/serving은 [같은 공유 실행 계약](../../spec/00_measurement.md#
 
 공통 `MeasurementSelection.ID`는 `namespace/name/UID`(direct profile ID, `/reuse-` 전)다. `MeasurementTime(profileMeasuredAt, conditions)`은 검증 성공 profile의 `MeasuredAt` → BEO `MeasurementComplete.LastTransitionTime` → zero 순이며 creation이나 다른 condition 시각으로 채우지 않는다. failed/partial은 profileMeasuredAt을 zero로 전달한다. `ReplacedMeasurements(sourceID→대상 namespace/name, namespace/name→ID)`가 동일 namespace annotation을 대상 ID 집합으로 바꾼다. Catalog read의 `currentMeasurements`와 Query cell의 `currentMeasurement`는 이 선택을 노출하며 profile 기록·측정값·저장 형식은 바꾸지 않는다.
 
+CHILL은 판단·거절을 최소화하고 선택은 운영자에게 맡긴다. replacement의 spec 차이는 진단으로 표시하고 정상 검증 profile의 사용을 막지 않는다. 대상 부재·자기 참조는 대체 불성립으로 표시하고 무시한다. 동일 scope의 runtime declaration은 ConfigMap 문서 순서의 마지막 matching 항목 하나로 덮어쓰며 모호함 거절은 없다. `ModelCompatibility.Diagnostics`는 앞선 matching 선언 수를 표시하지만 Compatible verdict를 바꾸지 않는다. coverage의 usable/problem 표시는 실행 gate가 아니며 실제 Node/GPU/artifact·write-once·인증·실행 오류 검사는 유지한다. Operation-cost도 검증 profile이 있으면 catalog 진단만으로 거절하지 않는다.
+
 ## Strict fixed-size baseline serving
 
 `SCH-35` 비교 실험 설정이며 기준은 `/home/genesis1/ETRI/donghwan/firstfloor` HANDOFF.md(2026-10-14)의 README.md:74-81·internal/serving/fixed_scheduler.go다.

@@ -799,7 +799,7 @@ func TestObserverUsesDesiredImageNotHistoricalProfile(t *testing.T) {
 			case "materializer":
 				p.Spec.InitContainers[2].Image = profile.Condition.RuntimeImage
 			case "Node":
-				n.UID = "other-node"
+				n.UID = testReplacementUID
 			case "GPU allocation":
 				pr.RuntimeMetadata.GPUUUID = "GPU-measured"
 			}

@@ -3,9 +3,13 @@ package kube
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"math"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -234,5 +238,61 @@ func TestCatalogLatestFailureDoesNotHideHistoryOrReviveSuccess(t *testing.T) {
 	if err != nil || len(view.Profiles) != 1 || len(view.CurrentProfiles()) != 0 || len(view.CurrentMeasurements) != 1 ||
 		view.CurrentMeasurements[0].ID != failed.Namespace+"/"+failed.Name+"/"+string(failed.UID) {
 		t.Fatalf("latest failure fell back or erased history: %+v %v", view, err)
+	}
+}
+
+func TestCatalogOfflinePopulationRemains242(t *testing.T) {
+	directory := os.Getenv("CHILL_PROFILE_BASELINE")
+	if directory == "" {
+		t.Skip("set CHILL_PROFILE_BASELINE to the read-only advisor1-profile-baseline")
+	}
+	raw, err := os.ReadFile(filepath.Join(directory, "after-1702", "profiles.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshot struct {
+		Profiles []serving.Profile `json:"profiles"`
+	}
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := latestConditionProfiles(snapshot.Profiles)
+	if err != nil || len(snapshot.Profiles) != 259 || len(profiles) != 242 {
+		t.Fatalf("public population = %d -> %d: %v", len(snapshot.Profiles), len(profiles), err)
+	}
+	original := make(map[string]serving.Profile, len(snapshot.Profiles))
+	for _, profile := range snapshot.Profiles {
+		original[profile.ID] = profile
+	}
+	for _, profile := range profiles {
+		old := original[profile.ID]
+		if len(profile.Batches) != len(old.Batches) {
+			t.Fatal("batch population changed", profile.ID)
+		}
+		for index, batch := range profile.Batches {
+			if batch.EnergyPerInputJoules != old.Batches[index].EnergyPerInputJoules || batch.MeanWallWatts != old.Batches[index].MeanWallWatts {
+				t.Fatal("historical energy or wall power changed", profile.ID, batch.Batch)
+			}
+		}
+		delete(original, profile.ID)
+	}
+	raw, err = os.ReadFile(filepath.Join(directory, "expected-dropped.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var expected []string
+	if err := json.Unmarshal(raw, &expected); err != nil {
+		t.Fatal(err)
+	}
+	dropped := make(map[string]bool, len(original))
+	want := make(map[string]bool, len(expected))
+	for id := range original {
+		dropped[id] = true
+	}
+	for _, id := range expected {
+		want[id] = true
+	}
+	if !reflect.DeepEqual(dropped, want) {
+		t.Fatalf("coverage-migrate dropped set changed: got %v, want %v", dropped, want)
 	}
 }

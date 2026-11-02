@@ -16,7 +16,7 @@ import (
 
 const replacementSuffix = "-replacement"
 
-func TestReplacementSelectionPreservesOriginalsAndExactTrialPolicy(t *testing.T) {
+func TestReplacementSelectionPreservesOriginalsAndReportsSpecDifferences(t *testing.T) {
 	for _, name := range []string{"jetsono-012-smolvlm-fp32-q4-maxn", "orangepi-017-plc-cpu-q4"} {
 		t.Run(name, func(t *testing.T) {
 			original := edge.BatchEnergyOptimization{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "chill-system"}, Spec: edge.BatchEnergyOptimizationSpec{TrialsPerBatch: 3, RetryLimit: 1, BatchSizes: []int32{1, 2, 4}}}
@@ -28,7 +28,7 @@ func TestReplacementSelectionPreservesOriginalsAndExactTrialPolicy(t *testing.T)
 			replacement.Spec.ActiveProtocol.MetricObservation.DurationSeconds = 1800
 			items := []edge.BatchEnergyOptimization{original, replacement}
 			selection := replacementCampaignSelection(items)
-			if selection[original.Name] == "" || selection[replacement.Name] != "" {
+			if selection[original.Name] == "" || selection[replacement.Name] == "" {
 				t.Fatalf("selection=%+v", selection)
 			}
 			if !reflect.DeepEqual(&items[0], before) {
@@ -37,18 +37,18 @@ func TestReplacementSelectionPreservesOriginalsAndExactTrialPolicy(t *testing.T)
 			items[1].Spec.TrialsPerBatch = 4
 			selection = replacementCampaignSelection(items)
 			if selection[original.Name] == "" || selection[replacement.Name] == "" {
-				t.Fatalf("incoherent trial policy accepted: %+v", selection)
+				t.Fatalf("changed trial policy was not diagnosed: %+v", selection)
 			}
 			items[1] = replacement
 			items[1].Spec.State.TargetNode = "other-node"
 			if replacementCampaignSelection(items)[replacement.Name] == "" {
-				t.Fatal("changed physical state accepted")
+				t.Fatal("changed physical state was not diagnosed")
 			}
 		})
 	}
 }
 
-func TestCatalogReplacementPendingExcludesCurrentOriginalButKeepsHistory(t *testing.T) {
+func TestCatalogReplacementPendingPreservesExistingPublicPopulation(t *testing.T) {
 	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
 	ctx := context.Background()
 	view, err := catalog.Refresh(ctx, []string{source.Namespace})
@@ -68,11 +68,11 @@ func TestCatalogReplacementPendingExcludesCurrentOriginalButKeepsHistory(t *test
 		t.Fatal(err)
 	}
 	view, err = catalog.Refresh(ctx, []string{source.Namespace})
-	if err != nil || len(view.Profiles) != 1 || len(view.CurrentProfiles()) != 0 || len(view.Insufficiencies) != 1 || view.Insufficiencies[0].Code != "ReplacementSelection" {
-		t.Fatalf("pending replacement revived old execution or erased history: %+v error=%v", view, err)
+	if err != nil || len(view.Profiles) != 0 || len(view.CurrentProfiles()) != 0 || len(view.Insufficiencies) != 1 || view.Insufficiencies[0].Code != "ReplacementSelection" {
+		t.Fatalf("pending replacement revived an explicitly replaced profile: %+v error=%v", view, err)
 	}
-	if _, found := catalog.current[source]; !found {
-		t.Fatal("superseded historical profile cache discarded")
+	if _, found := catalog.current[source]; found {
+		t.Fatal("explicitly replaced public profile retained")
 	}
 	actual := &edge.BatchEnergyOptimization{}
 	if err := catalog.store.client.Get(ctx, source, actual); err != nil {
@@ -126,5 +126,46 @@ func TestCatalogReplacementMissingOriginalIsDiagnosticButEvidenceStillRequired(t
 	var retained edge.BatchEnergyOptimizationList
 	if err := catalog.store.client.List(context.Background(), &retained, client.InNamespace(replacement.Namespace)); err != nil || len(retained.Items) != 1 {
 		t.Fatalf("unexpected consumer mutation: %v", err)
+	}
+}
+
+func TestOperatorReplacementDiagnosticsDoNotRejectVerifiedProfile(t *testing.T) {
+	for _, target := range []string{"missing", "self", "different-spec"} {
+		t.Run(target, func(t *testing.T) {
+			catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
+			ctx := context.Background()
+			replacement := &edge.BatchEnergyOptimization{}
+			if err := catalog.store.client.Get(ctx, source, replacement); err != nil {
+				t.Fatal(err)
+			}
+			name := target
+			if target == "self" {
+				name = replacement.Name
+			}
+			if target == "different-spec" {
+				original := replacement.DeepCopy()
+				original.Name, original.UID, original.ResourceVersion = target, "old-uid", ""
+				original.Spec.TrialsPerBatch++
+				original.Status = edge.BatchEnergyOptimizationStatus{Phase: "Failed"}
+				if err := catalog.store.client.Create(ctx, original); err != nil {
+					t.Fatal(err)
+				}
+			}
+			replacement.Annotations = map[string]string{profilederivation.ReplacesMeasurementAnnotation: name}
+			if err := catalog.store.client.Update(ctx, replacement); err != nil {
+				t.Fatal(err)
+			}
+			view, err := catalog.Refresh(ctx, []string{source.Namespace})
+			if err != nil || len(view.CurrentProfiles()) != 1 || len(view.Profiles) != 1 {
+				t.Fatalf("diagnostic blocked verified execution: %+v %v", view, err)
+			}
+			found := false
+			for _, issue := range view.Insufficiencies {
+				found = found || issue.Source == source && issue.Code == "ReplacementSelection"
+			}
+			if !found {
+				t.Fatal("ineffective or changed-spec operator selection was not diagnosed")
+			}
+		})
 	}
 }

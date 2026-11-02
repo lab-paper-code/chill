@@ -177,7 +177,7 @@ func TestKubernetesCandidateResolverReusesRuntimeDeclarationAcrossModels(t *test
 	}
 }
 
-func TestKubernetesCandidateResolverRejectsAmbiguousRuntimeDeclarations(t *testing.T) {
+func TestKubernetesCandidateResolverUsesLastMatchingRuntimeDeclaration(t *testing.T) {
 	objects := validCandidateObjects()
 	config := objects[2].(*corev1.ConfigMap)
 	payload := strings.Replace(
@@ -186,15 +186,24 @@ func TestKubernetesCandidateResolverRejectsAmbiguousRuntimeDeclarations(t *testi
 		`"backends":["ort-cpu","rknnlite"]`,
 		1,
 	)
+	image := "registry.example/chill/runtime@sha256:" + strings.Repeat("f", 64)
+	payload = strings.Replace(payload, testRuntimeImage, image, 1)
 	config.Data["execution-facts.yaml"] += `  - deviceClass: lattepanda-3-delta-8g
     runtime:
       payload: |-
         ` + payload + `
 `
 
-	_, err := newCandidateResolver(t, objects...).ResolveCandidate(context.Background(), validCandidateSelection())
-	if err == nil || !strings.Contains(err.Error(), "multiple trusted execution declarations") {
-		t.Fatalf("ambiguous runtime declarations returned %v", err)
+	resolver := newCandidateResolver(t, objects...)
+	selection := validCandidateSelection()
+	resolved, err := resolver.ResolveCandidate(context.Background(), selection)
+	if err != nil || resolved.RuntimeImage != image {
+		t.Fatalf("last declaration did not overwrite scope: %+v %v", resolved, err)
+	}
+	actual, err := ResolveRuntimeImage(context.Background(), resolver.reader, resolver.options,
+		selection.DeviceClass, selection.Node, resolved.State.RuntimeFamily, resolved.State.Backend)
+	if err != nil || actual != image {
+		t.Fatalf("serving current-image resolver diverged: %s %v", actual, err)
 	}
 }
 
