@@ -274,9 +274,9 @@ func TestCleanupFailureReleasePreservesFailure(t *testing.T) {
 	allocationPresent := true
 	r.HTTP = func(_ context.Context, _ string, _ map[string]string, _ string, value any) error {
 		if allocationPresent {
-			return json.Unmarshal([]byte(`{"snapshot":{"at":"2026-11-01T12:00:00Z","instances":[{"id":"owned","ownerWorkloadUID":"workload-uid"}],"routing":{"workload-uid":{"owned":1}}}}`), value)
+			return json.Unmarshal([]byte(`{"at":"2026-11-01T12:00:00Z","instances":[{"id":"owned","ownerWorkloadUID":"workload-uid"}],"routing":{"workload-uid":{"owned":1}},"poolReturn":{}}`), value)
 		}
-		return json.Unmarshal([]byte(`{"snapshot":{"at":"2026-11-01T12:00:00Z","reservations":[],"outstanding":[],"actions":[]}}`), value)
+		return json.Unmarshal([]byte(`{"at":"2026-11-01T12:00:00Z","poolReturn":{}}`), value)
 	}
 	if !occupied(parent) {
 		t.Fatal("cleanup failure released pool")
@@ -427,7 +427,7 @@ func TestInjectionCordonBeforeUIDDeleteAndNoReplay(t *testing.T) {
 				var body string
 				switch {
 				case strings.Contains(path, "/state"):
-					body = `{"snapshot":{"at":"2026-11-01T12:00:00Z","nodes":[{"node":{"name":"node","uid":"node-uid"},"ready":true}],"instances":[{"id":"instance","workloadUID":"workload-uid","ownerWorkloadUID":"workload-uid","ready":true,"podName":"serving","podUID":"pod-uid","node":{"name":"node","uid":"node-uid"}}],"routing":{"workload-uid":{"instance":1}}}}`
+					body = `{"at":"2026-11-01T12:00:00Z","nodes":[{"node":{"name":"node","uid":"node-uid"},"ready":true}],"instances":[{"id":"instance","workloadUID":"workload-uid","ownerWorkloadUID":"workload-uid","ready":true,"podName":"serving","podUID":"pod-uid","node":{"name":"node","uid":"node-uid"}}],"routing":{"workload-uid":{"instance":1}}}`
 				case strings.Contains(path, "/settings"):
 					body = `{"observationWindowNanos":1000000000}`
 				default:

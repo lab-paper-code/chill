@@ -67,7 +67,7 @@ func fixtureStageExecution(t *testing.T) (Runtime, memoryStore, *api.EvaluationR
 			body = `{"observationWindowNanos":1000000000}`
 		}
 		if strings.Contains(path, "/state") {
-			body = `{"snapshot":{"at":"2026-11-01T12:00:00Z","nodes":[{"node":{"name":"node","uid":"node-uid"},"ready":true}],"instances":[{"id":"instance","workloadUID":"workload-uid","ownerWorkloadUID":"workload-uid","ready":true,"podName":"serving","podUID":"pod-uid","node":{"name":"node","uid":"node-uid"}}],"routing":{"workload-uid":{"instance":1}}}}`
+			body = `{"at":"2026-11-01T12:00:00Z","nodes":[{"node":{"name":"node","uid":"node-uid"},"ready":true}],"instances":[{"id":"instance","workloadUID":"workload-uid","ownerWorkloadUID":"workload-uid","ready":true,"podName":"serving","podUID":"pod-uid","node":{"name":"node","uid":"node-uid"}}],"routing":{"workload-uid":{"instance":1}}}`
 		}
 		return json.Unmarshal([]byte(body), value)
 	}

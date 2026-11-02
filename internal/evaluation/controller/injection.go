@@ -33,24 +33,23 @@ type servingInstance struct {
 	PodUID           types.UID                     `json:"podUID"`
 	Node             api.EvaluationObjectReference `json:"node"`
 }
+
+const schedulerStatePath = "/api/v1/scheduler/state?view=summary"
+
 type schedulerState struct {
-	Snapshot *struct {
-		At    time.Time `json:"at"`
-		Nodes []struct {
-			Node  api.EvaluationObjectReference `json:"node"`
-			Ready bool                          `json:"ready"`
-		} `json:"nodes"`
-		Instances    []servingInstance             `json:"instances"`
-		Routing      map[string]map[string]float64 `json:"routing"`
-		Reservations []any                         `json:"reservations"`
-		Outstanding  []any                         `json:"outstanding"`
-		Actions      []struct {
-			Status string `json:"status"`
-		} `json:"actions"`
-	} `json:"snapshot"`
-	Results []struct {
-		EndedAt time.Time `json:"endedAt"`
-	} `json:"results"`
+	At    time.Time `json:"at"`
+	Nodes []struct {
+		Node  api.EvaluationObjectReference `json:"node"`
+		Ready bool                          `json:"ready"`
+	} `json:"nodes"`
+	Instances  []servingInstance             `json:"instances"`
+	Routing    map[string]map[string]float64 `json:"routing"`
+	PoolReturn *struct {
+		ReservationCount    int       `json:"reservationCount"`
+		OutstandingCount    int       `json:"outstandingCount"`
+		ActiveActionCount   int       `json:"activeActionCount"`
+		LatestResultEndedAt time.Time `json:"latestResultEndedAt"`
+	} `json:"poolReturn"`
 }
 
 func seconds(v map[string]string, key string) time.Duration {
@@ -58,32 +57,22 @@ func seconds(v map[string]string, key string) time.Duration {
 	return time.Duration(n * float64(time.Second))
 }
 func (s schedulerState) fresh(now time.Time, v map[string]string) bool {
-	return s.Snapshot != nil && !s.Snapshot.At.IsZero() && !s.Snapshot.At.After(now) && now.Sub(s.Snapshot.At) <= seconds(v, "injectionSnapshotTTLSeconds")
+	return !s.At.IsZero() && !s.At.After(now) && now.Sub(s.At) <= seconds(v, "injectionSnapshotTTLSeconds")
 }
 func (s schedulerState) returned(now time.Time, v map[string]string) bool {
-	if !s.fresh(now, v) || len(s.Snapshot.Reservations) > 0 || len(s.Snapshot.Outstanding) > 0 {
+	if !s.fresh(now, v) || s.PoolReturn == nil || s.PoolReturn.ReservationCount != 0 || s.PoolReturn.OutstandingCount != 0 || s.PoolReturn.ActiveActionCount != 0 || !s.At.After(s.PoolReturn.LatestResultEndedAt) {
 		return false
 	}
-	for _, instance := range s.Snapshot.Instances {
+	for _, instance := range s.Instances {
 		if instance.OwnerWorkloadUID != "" {
 			return false
 		}
 	}
-	for _, routes := range s.Snapshot.Routing {
+	for _, routes := range s.Routing {
 		for _, weight := range routes {
 			if weight > 0 {
 				return false
 			}
-		}
-	}
-	for _, a := range s.Snapshot.Actions {
-		if a.Status == "running" || a.Status == "cancel" {
-			return false
-		}
-	}
-	for _, result := range s.Results {
-		if !s.Snapshot.At.After(result.EndedAt) {
-			return false
 		}
 	}
 	return true
@@ -286,7 +275,7 @@ func (r *Runtime) selectInjection(ctx context.Context, parent *api.EvaluationRun
 	}
 	v := parent.Status.FrozenConfig.Values
 	state := &schedulerState{}
-	raw, err := r.observeJSON(ctx, parent, "/api/v1/scheduler/state", state)
+	raw, err := r.observeJSON(ctx, parent, schedulerStatePath, state)
 	e.State, e.StateRaw = state, raw
 	if err != nil {
 		return err
@@ -303,8 +292,8 @@ func (r *Runtime) selectInjection(ctx context.Context, parent *api.EvaluationRun
 	if settings.ObservationWindowNanos <= 0 {
 		return fmt.Errorf("%w: observation window missing", errInjectionSelection)
 	}
-	from := state.Snapshot.At.Add(-time.Duration(settings.ObservationWindowNanos))
-	query := url.Values{"from": {from.Format(time.RFC3339Nano)}, "to": {state.Snapshot.At.Format(time.RFC3339Nano)}}
+	from := state.At.Add(-time.Duration(settings.ObservationWindowNanos))
+	query := url.Values{"from": {from.Format(time.RFC3339Nano)}, "to": {state.At.Format(time.RFC3339Nano)}}
 	load := &loadWindow{}
 	raw, err = r.observeJSON(ctx, parent, "/api/v1/observations/load?"+query.Encode(), load)
 	e.Load, e.LoadRaw = load, raw
@@ -312,7 +301,7 @@ func (r *Runtime) selectInjection(ctx context.Context, parent *api.EvaluationRun
 		return err
 	}
 	e.State, e.Load, e.Rejected = state, load, map[string]string{}
-	if !load.From.Equal(from) || !load.To.Equal(state.Snapshot.At) {
+	if !load.From.Equal(from) || !load.To.Equal(state.At) {
 		return fmt.Errorf("%w: load window differs from scheduler snapshot", errInjectionSelection)
 	}
 	allowed := map[string]bool{}
@@ -331,7 +320,7 @@ func (r *Runtime) selectInjection(ctx context.Context, parent *api.EvaluationRun
 		}
 	}
 	nodes := map[string]types.UID{}
-	for _, node := range state.Snapshot.Nodes {
+	for _, node := range state.Nodes {
 		if node.Ready {
 			nodes[node.Node.Name] = node.Node.UID
 		}
@@ -340,8 +329,8 @@ func (r *Runtime) selectInjection(ctx context.Context, parent *api.EvaluationRun
 	for _, w := range load.Workloads {
 		assignments[w.UID] = w.InstanceAssignments
 	}
-	for _, instance := range state.Snapshot.Instances {
-		if !eligible(instance, allowed, nodes, state.Snapshot.Routing, assignments, excluded) {
+	for _, instance := range state.Instances {
+		if !eligible(instance, allowed, nodes, state.Routing, assignments, excluded) {
 			e.Rejected[instance.ID] = "not allowed/owned/ready/positive-route/assigned/live-node or excluded"
 			continue
 		}

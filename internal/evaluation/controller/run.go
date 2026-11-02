@@ -472,7 +472,7 @@ func (r *RunReconciler) release(ctx context.Context, run *api.EvaluationRun, ann
 	// The operator attests prior writers are stopped; independently observe pool return.
 	v := run.Status.FrozenConfig.Values
 	var state schedulerState
-	if err := r.HTTP(ctx, run.Namespace, v, "/api/v1/scheduler/state", &state); err != nil {
+	if err := r.HTTP(ctx, run.Namespace, v, schedulerStatePath, &state); err != nil {
 		return ctrl.Result{}, err
 	}
 	if !state.returned(r.now().Time, v) {

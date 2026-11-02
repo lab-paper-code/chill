@@ -207,9 +207,10 @@ release는 실행 완료(True/False)·CleanupComplete=False·PoolAcquired=True�
 주입은 **EvaluationStage spec의 FaultInjectionPlan**과 **status의 FaultInjectionRecord**다. 자식 controller는 stage 완료 result를 아직 확인하지 않았을 때만 GO 증거의 시각+offsetSeconds로 주입하며 drain 뒤 producer 최소 start로 바꾸지 않는다. 완료 result 확인 후 미수행 계획은 실행하지 않고 `INVALID/InjectionInvalid`로 기록한다(`internal/evaluation/controller/stage.go`, `injection.go`).
 허용 지연 창·snapshot 유효 기간은 `chill-evaluation-config`에서 선택해 실행 시작 시 동결한다. 예정 시각·발송·응답·효과 관측 시각과 개별 producer start를 구분하며 정확한 순간의 효과를 보장하지 않는다.
 재시작/관측 지연으로 허용 창을 놓쳤으면 늦게 수행하지 않고 `INVALID/InjectionInvalid`로 남긴다. full/micro의 과거 offset을 controller 상수로 넣지 않는다.
-직전 GET `/api/v1/scheduler/state`와 같은 관측 창의 `/api/v1/observations/load`를 근거로 선택한다.
+직전 GET `/api/v1/scheduler/state?view=summary`와 같은 관측 창의 `/api/v1/observations/load`를 근거로 선택한다. 주입 evidence의 `state`에는 선택에 실제 사용한 summary 응답 원문을 보관한다. at/nodes/instances/routing 및 Pod UID·stopped가 선택 근거이며 프로파일 원시 표본·planner 후보·operation 결과 본문은 선택 근거에 포함하지 않는다.
 기존 `serving_failure_targets`(`hack/e5/e5.py:334–350`)처럼 workload UID·owner 일치, Ready, routing weight>0, assigned>0, 실제 Pod/Node UID를 요구한다.
 선택 규칙에 서로 다른 Node 조건·동률 정렬(Node/Pod/instance)을 명시하고 원본·후보·탈락 이유·선택 시각을 기록한다.
+운영자 release의 독립적인 POOL 반환 관측도 같은 summary를 사용한다. `poolReturn`의 reservation/outstanding/running·cancel action 개수가 모두 0이고, snapshot at이 latestResultEndedAt보다 뒤이며, 소유 instance와 양수 routing이 없어야 반환으로 인정한다. freshness 및 HTTP 응답의 4MiB 상한은 유지한다. summary는 66,818,306-byte 실측 full state의 profile population을 Profiler에 전송하지 않는다. Profiler 메모리 limit은 `charts/chill/values-profiler.yaml`의 512Mi(기본 values.yaml은 128Mi)이며, 읽는 응답 본문은 종전과 같은 최대 4MiB+1바이트다. 버퍼 성장·JSON 디코드 객체·프로세스의 나머지 메모리는 별도이므로 전체 메모리 사용량 보장이 아니라 큰 full state를 읽거나 상한을 늘리지 않는 근거다.
 controller가 **Kubernetes API**로 Pod 삭제(UID precondition), cordon/uncordon(Node UID 확인·경합 방지 patch)을 수행한다. cordon+삭제는 **cordon 응답 확인 → 같은 선택 Pod UID 삭제** 순서다.
 uncordon은 앞선 주입의 같은 Node에만 적용한다. 실제 요청 method/path/body·응답·예정/실제 offset·시각을 증거로 남긴다.
 조건 불만족·관측 만료·창 이탈이면 명령을 취소하고 해당 stage 주입 평가를 무효로 기록한다. 임의 대상·시각 대체는 없다. 읽기/관측 오류는 오류 반환으로 requeue하며 `RemoteEffectUnknown`으로 확정하지 않는다. 변이 요청 발송 후 효과 불명만 `RemoteEffectUnknown`으로 중단·예약 유지하고 자동 재주입/복구하지 않는다.
