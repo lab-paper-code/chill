@@ -101,6 +101,10 @@ def validate(c):
             fail(key+' must be boolean')
     if any(base_row(r) == 'E5-7' for r in rows) and c.get('failureInjection') is not True:
         fail('E5-7 requires explicit failureInjection:true operator authorization')
+    if 'reservationNodes' in c:
+        nodes = c['reservationNodes']
+        if not isinstance(nodes, list) or not nodes or any(not isinstance(n, str) or not n for n in nodes) or len(nodes) != len(set(nodes)):
+            fail('reservationNodes requires unique participating baseline node names')
     for key in ('restoreOrigins', 'compareOrigins'):
         mapping = c.get(key, {})
         if not isinstance(mapping, dict):
@@ -398,6 +402,8 @@ class Round:
         b['config']['approval']['sources']['server'] = self.c['sourceSHA']
         b['config']['approval']['controlImageDigest'] = entry['image'].split('@')[0].split(':pools-control-')[0]+'@'+entry['digest']
         b['schedulerSettings']['scaleDownHeadroomFraction'] = self.c['h']
+        if 'reservationNodes' in self.c:
+            b['config']['reservationNodes'] = self.c['reservationNodes']
         if 'minimumDemand' in self.c:
             b['schedulerSettings']['minimumDemand'] = self.c['minimumDemand']
         b['roundProvenance'] = {'sourceSHA': self.c['sourceSHA'], 'harnessSHA': sha, 'harness': str(self.harness), 'rateBasis': self.c['rateBasis'], 'measurementRetries': 0}
@@ -464,9 +470,11 @@ class Round:
         self.save(label+'-state.json', state)
         self.save(label+'-settings.json', settings)
         snapshot = state['snapshot']
-        if snapshot.get('instances') or snapshot.get('reservations') or settings.get('autonomousWorkloads'):
-            raise RuntimeError('Final state requires instances0/reservations0/autonomyoff')
-        return {'instances': 0, 'reservations': 0, 'autonomous': False, 'h': settings.get('scaleDownHeadroomFraction')}
+        reservations, ignored = self.e5.stage_scope(snapshot.get('reservations'), self.c.get('reservationNodes'))
+        self.save(label+'-reservation-scope.json', {'reservationNodes': self.c.get('reservationNodes'), 'reservations': reservations, 'ignoredReservations': ignored})
+        if snapshot.get('instances') or reservations or settings.get('autonomousWorkloads'):
+            raise RuntimeError('Final state requires instances0/participating-reservations0/autonomyoff')
+        return {'instances': 0, 'reservations': 0, 'ignoredReservations': ignored, 'autonomous': False, 'h': settings.get('scaleDownHeadroomFraction')}
 
     def reset(self):
         self.cpo = self.controller(row_tag='round'+self.c['rowTag']+'pre')

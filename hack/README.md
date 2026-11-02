@@ -785,6 +785,12 @@ rows use `restoreOriginTag`. Override with e.g.
 R3 comparisons default to unsuffixed E5-3 and E5-7 tag `3b`; explicit
 `"compareOrigins": {"3": {"E5-7": "3b"}}` maps historical exceptions.
 
+Optional `reservationNodes` freezes the actual participating baseline node names
+into the round binding. CPO start/reset and round empty-state gates then wait for
+reservations/transitions on those nodes only; excluded-node reservations/actions
+remain in evidence without releasing their leases. Reservations without node
+scope still block. Omitting this field retains the global gate.
+
 To replay κ once, use `"kappa": {"executable": "/absolute/prebuilt/kappa"}`.
 Its fixed argv is `-mode table -workloads
 image-classification-tight-slo,smolvlm2-vqa,plc-anomaly -margin 29 -window 60

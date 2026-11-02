@@ -667,7 +667,7 @@ def self_check_factor():
     import ast
     from types import SimpleNamespace
     tree=ast.parse(Path(__file__).read_text())
-    selected=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in ('fingerprint','instance_rows','paired_baseline','baseline_settings','restoration_exclusions','full_restore_path','rebound_fingerprint','prepare_body','row_folder','replay_receipt')]
+    selected=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in ('fingerprint','instance_rows','paired_baseline','baseline_settings','restoration_exclusions','full_restore_path','rebound_fingerprint','prepare_body','row_folder','replay_receipt','stage_scope')]
     cpo=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='CPO')
     methods=[n for n in cpo.body if isinstance(n,ast.FunctionDef) and n.name in ('factor','start_barrier_observation','disk_boundary')]
     selected.append(ast.ClassDef(name='CPO',bases=[],keywords=[],body=methods,decorator_list=[]))
@@ -676,6 +676,12 @@ def self_check_factor():
     baseline={'instances':targets,'nodes':[{'node':node,'powerMode':'paired-mode'}],'routing':{'workload':{'2':.5,'32':.5}}}
     ns={'NODES':['node'],'copy':copy,'load':lambda _: {'snapshot':baseline},'need':lambda *args:None,'now':lambda:'now','positive':lambda x:type(x) in (int,float) and math.isfinite(x) and x>0,'RESTORED_SETTINGS_KEYS':RESTORED_SETTINGS_KEYS,'FULL_RESTORE_ROWS':FULL_RESTORE_ROWS,'MICRO_ROWS':MICRO_ROWS}
     exec(compile(ast.fix_missing_locations(ast.Module(body=selected,type_ignores=[])),__file__,'exec'),ns)
+    participating={'owner':'active','nodes':[node]}
+    ignored={'owner':'nano','nodes':[{'name':'jetson-nano'}]}
+    unknown={'owner':'unknown'}
+    assert ns['stage_scope']([participating,ignored,unknown],['node'])==([participating,unknown],[ignored])
+    assert ns['stage_scope']([participating,ignored])==([participating,ignored],[])
+    assert ns['stage_scope']([{'nodes':[node,{'name':'jetson-nano'}]}],['node'])[1]==[]
     ns['load']=lambda _: {'snapshot':baseline,'settings':{'autonomousWorkloads':['workload'],'controls':{'membership':True}}}
     merged=ns['baseline_settings'](Path('pre-state.json'),{'autonomousWorkloads':[],'scaleDownHeadroomFraction':.25,'controls':{'membership':False}})
     assert merged['scaleDownHeadroomFraction']==.25 and merged['autonomousWorkloads']==['workload'] and merged['controls']=={'membership':True}, 'restoration must keep live policy and restore only topology control'
@@ -1221,6 +1227,15 @@ def routing_weights(routing):
 def fingerprint(snapshot, uids):
     return {'instances': sorted([{'id': i['id'], 'node': i['node'], 'profileID': i['profile']['id'], 'allocation': i['allocation'], 'maxBatch': i['maxBatch'], 'maxWaitNanos': i['maxWaitNanos'], 'workloadUID': i['workloadUID']} for i in instance_rows(snapshot['instances']) if i.get('workloadUID') in uids], key=lambda i: i['id']), 'routing': {u: snapshot.get('routing', {}).get(u, {}) for u in uids}, 'modes': {n['node']['name']: n['powerMode'] for n in snapshot['nodes'] if n['node']['name'] in NODES}}
 
+def stage_scope(rows, nodes=None):
+    included, excluded = [], []
+    for row in rows or []:
+        refs = row.get('nodes') or ([row['node']] if row.get('node') else [])
+        outside = nodes is not None and refs and all(ref.get('name') and ref['name'] not in nodes for ref in refs)
+        (excluded if outside else included).append(row)
+    return included, excluded
+
+
 
 def scheduler_boundary_observation(state):
     snapshot = state['snapshot']
@@ -1635,12 +1650,16 @@ class CPO:
         settings.pop('requestTimeout', None)
         return self.api('PUT','/api/v1/scheduler/settings',settings)
     def start_barrier_observation(self,state,deadline,observed):
-        snapshot=state['snapshot']; reservations=snapshot.get('reservations') or []
+        snapshot=state['snapshot']
+        nodes=self.c.get('reservationNodes')
+        reservations,ignored=stage_scope(snapshot.get('reservations'),nodes)
+        actions,ignored_actions=stage_scope(snapshot.get('actions'),nodes)
         completed=[(self.d.epoch(row.get('endedAt')),row.get('endedAt')) for row in state.get('results') or []]
         latest=max((row for row in completed if row[0] is not None),default=(float('-inf'),None))
         at=self.d.epoch(snapshot.get('at'))
         evidence={'snapshotAt':snapshot.get('at'),'reservationOwners':[row.get('owner') for row in reservations],
-                  'reservations':len(reservations),'transitions':sum(a.get('status') in ('running','cancel') for a in snapshot.get('actions') or []),
+                  'reservations':len(reservations),'ignoredReservations':ignored,'reservationNodes':nodes,
+                  'transitions':sum(a.get('status') in ('running','cancel') for a in actions),'ignoredActions':ignored_actions,
                   'latestActionEndedAt':latest[1],'snapshotFresh':at is not None and at>latest[0],
                   'timedOut':time.monotonic()>=deadline,'observedUTC':None}
         if not evidence['timedOut'] and evidence['snapshotFresh'] and evidence['reservations']==0 and evidence['transitions']==0:evidence['observedUTC']=observed
@@ -2039,7 +2058,7 @@ class CPO:
                     if deferred_restore:
                         self.restore()
                         frame=self.state();chosen=selected_fingerprint(self.out)
-                        if fingerprint(frame['snapshot'],self.uids)!=chosen or frame['snapshot'].get('reservations'):raise RuntimeError('Selected static configuration was not retained at actual E5-4 producer release')
+                        if fingerprint(frame['snapshot'],self.uids)!=chosen or stage_scope(frame['snapshot'].get('reservations'),self.c.get('reservationNodes'))[0]:raise RuntimeError('Selected static configuration was not retained at actual E5-4 producer release')
                         save(folder/'actual-start-configuration.json',frame)
                     if targeted:
                         self.authorize_native_modes()
@@ -2345,8 +2364,9 @@ class CPO:
             snapshot_at = self.d.epoch(barrier['snapshotAt'])
             fresh = barrier['snapshotFresh'] and snapshot_at >= self.d.epoch(off_at)
             reservations = barrier['reservations']
-            transitions = barrier['transitions'] + sum(action.get('status') in ('running', 'cancel') for action in state.get('actions') or [])
-            observations.append({'at': now(), 'elapsedSeconds': time.monotonic()-started, 'reservations': reservations, 'transitions': transitions, 'snapshotAt': barrier['snapshotAt'], 'latestActionEndedAt': barrier['latestActionEndedAt'], 'snapshotFresh': fresh})
+            actions, ignored_actions = stage_scope(state.get('actions'), self.c.get('reservationNodes'))
+            transitions = barrier['transitions'] + sum(action.get('status') in ('running', 'cancel') for action in actions)
+            observations.append({'at': now(), 'elapsedSeconds': time.monotonic()-started, 'reservations': reservations, 'ignoredReservations': barrier['ignoredReservations'], 'ignoredActions': ignored_actions, 'transitions': transitions, 'snapshotAt': barrier['snapshotAt'], 'latestActionEndedAt': barrier['latestActionEndedAt'], 'snapshotFresh': fresh})
             remaining = deadline - time.monotonic()
             clear = fresh and not reservations and not transitions
             if clear or remaining <= 0:
