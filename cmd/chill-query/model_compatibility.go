@@ -32,7 +32,7 @@ func newModelCompatibilityQuery(
 			return queryapi.ModelCompatibilitySnapshot{}, err
 		}
 		snapshot := queryapi.ModelCompatibilitySnapshot{
-			Verdict: string(facts.Verdict),
+			Verdict: string(facts.Verdict), Diagnostics: facts.Diagnostics,
 			Inputs: queryapi.ModelCompatibilityInputs{
 				ModelSpec: queryapi.ModelCompatibilityObjectInput{
 					Name: facts.ModelSpec.Name, UID: facts.ModelSpec.UID, ResourceVersion: facts.ModelSpec.ResourceVersion,

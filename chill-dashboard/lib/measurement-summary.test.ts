@@ -59,6 +59,14 @@ test("coverage summaries preserve explicit current measurements and null without
   assert.deepEqual(parseMeasurementJSON(JSON.stringify({cells:[{currentMeasurement:current},{currentMeasurement:null}]})),{cells:[{currentMeasurement:current},{currentMeasurement:null}]})
 })
 
+test("coverage summary diagnostics preserve strings and empty lists without altering verdicts",()=>{
+  const diagnostics=["Last runtime entry selected."]
+  const response={readProjection:{version:"measurement-summary.v1",shapes:[],values:[diagnostics]},cells:[{support:{verdict:"Compatible",reasons:[],diagnostics:"~0"}},{support:{verdict:"Unknown",reasons:[],diagnostics:[]}}]}
+  const restored=parseMeasurementJSON(JSON.stringify(response)) as {cells:{support:{verdict:string;diagnostics:string[]}}[]}
+  assert.deepEqual(restored.cells[0].support,{verdict:"Compatible",reasons:[],diagnostics})
+  assert.deepEqual(restored.cells[1].support,{verdict:"Unknown",reasons:[],diagnostics:[]})
+})
+
 test("invalid and forward references fail rather than inventing evidence",()=>{
   for(const values of [["literal",{source:"~2"}],[{$o:[5,"unknown"]}],[{$o:[0]}]]) {
     assert.throws(()=>restoreMeasurementSummary({readProjection:{version:"measurement-summary.v1",shapes:[["result"]],values},assessment:"~0"}),/미확인/)

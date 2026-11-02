@@ -132,7 +132,7 @@ test("changing a preprocessor clears only inherited datasets, preserving deliber
   assert.equal(requestInputs("model","onnx","image-pre","vqa",context,{dataset:false}).dataset,"vqa")
 })
 
-function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0,bodies:unknown[]=[]) {
+function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0,bodies:unknown[]=[],compatibility:Parameters<typeof coverageHelpers.serverCompatibility>[1]=[]) {
   const source=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(`${source}\nexport { Funnel };`,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
@@ -152,7 +152,7 @@ function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0
     "@/lib/scheduler":{},
     "@/lib/measurement-summary":measurementSummary,
     "@/lib/measurement-coverage":coverageHelpers,
-    "@/features/measurement-coverage":{useModelCompatibility:()=>({})},
+    "@/features/measurement-coverage":{useModelCompatibility:()=>({data:compatibility})},
     "@/components/measurement-navigation":{MeasurementNavigation:()=>null},
     "@/lib/measurements":measurementHelpers,
   }
@@ -411,7 +411,7 @@ test("failed requests retain a separate catalog-unavailable status after their f
 const retainedAssessment:MeasurementAssessment={status:"complete",displayStatus:"usable",label:"측정 완료",reasons:[],execution:null,evidence:{available:true,accepted:true,reasons:[]},checklist:{criteriaMet:null,version:"result-checklist.v1",checks:[]},scope:{schedulerUsed:true,reused:false,facts:[]}}
 const retainedProgress={basis:"requested",target:[4],measured:[4],criteriaMet:[],missing:[],inProgress:[],unknown:[]}
 const retainedRow:ResultRow={id:"retained",rowKind:"direct",profileId:"profile",sourceProfileId:null,batch:4,condition:{metricSource:{nodeName:"node"}},p95Milliseconds:12,latencySampleCount:100,idleWatts:2,activeWatts:3,totalJoulesPerItem:4,incrementalJoulesPerItem:1,confidence:null,activeTrialCount:3,idleTrialCount:3,completedItems:100,completedCalls:25,powerSource:null,assessment:retainedAssessment,sources:[],missingReasons:[],reuse:null}
-const retainedCell:MeasurementCoverageCell={id:"cell",model:{name:condition.model,uid:"model-uid"},deviceClass:{name:condition.deviceClass,uid:"device-uid"},executionPath:condition.path,powerMode:condition.powerMode,currentMeasurement:null,support:{verdict:"Compatible",node:{name:"node",uid:"node-uid"},reasons:[]},assessment:retainedAssessment,variantCount:1,variants:[{id:"variant",condition:{metricSource:{nodeName:"node"}},assessment:retainedAssessment,batchProgress:retainedProgress,resultRows:[retainedRow],requestIds:[],runIds:[],profileIds:["profile"]}],batchProgress:retainedProgress,representative:null,failureSummary:[],history:[]}
+const retainedCell:MeasurementCoverageCell={id:"cell",model:{name:condition.model,uid:"model-uid"},deviceClass:{name:condition.deviceClass,uid:"device-uid"},executionPath:condition.path,powerMode:condition.powerMode,currentMeasurement:null,support:{verdict:"Compatible",node:{name:"node",uid:"node-uid"},reasons:[],diagnostics:[]},assessment:retainedAssessment,variantCount:1,variants:[{id:"variant",condition:{metricSource:{nodeName:"node"}},assessment:retainedAssessment,batchProgress:retainedProgress,resultRows:[retainedRow],requestIds:[],runIds:[],profileIds:["profile"]}],batchProgress:retainedProgress,representative:null,failureSummary:[],history:[]}
 
 test("failed latest requests do not remove independently retained current-use results",()=>{
   assert.deepEqual(requestUsedResults([retainedCell],plan.spec),[retainedRow])
@@ -482,4 +482,14 @@ test("failed request detail renders failure evidence, current results, checks an
   queryError={status:403,data}
   const denied=renderToStaticMarkup(createElement(exports.MeasurementPlanDetails as ComponentType<{namespace:string;name:string}>,{namespace:"ns",name:"source"}))
   assert.doesNotMatch(denied,/NativePreparationFailed/)
+})
+
+test("compatibility diagnostics are displayed without adding a request gate",()=>{
+  const selection={modelSpec:"model",executionPath:"cpu",deviceClass:"class",node:"node"}
+  const object={name:"object",uid:"uid",resourceVersion:"1"}
+  const reads:Parameters<typeof coverageHelpers.serverCompatibility>[1]=[{node:"node",data:{readAt:"2026-11-03T00:00:00Z",selection,inputs:{modelSpec:object,deviceClass:object,node:object,runtimeDeclaration:null},verdict:"Compatible",reasons:[],diagnostics:["Last runtime entry selected."]}}]
+  const html=renderRequest({},"","",0,[],reads)
+  assert.match(html,/aria-label="실행 선언 진단"/)
+  assert.match(html,/node: Last runtime entry selected\./)
+  assert.equal((html.match(/disabled=""/g)??[]).length,(renderRequest().match(/disabled=""/g)??[]).length)
 })

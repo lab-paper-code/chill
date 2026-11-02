@@ -81,11 +81,15 @@ func TestCoverageCellCurrentRepresentativeAndSupport(t *testing.T) {
 }
 
 func TestCoverageCurrentMeasurementSurvivesSummaryProjection(t *testing.T) {
+	diagnostic := "Last entry selected."
 	selected := &profilederivation.MeasurementSelection{
 		ID: "ns/latest/uid", Model: "model", DeviceClass: "class", ExecutionPath: "cpu", PowerMode: "fixed",
 	}
 	payload := MeasurementCoverageResponse{Cells: []MeasurementCoverageCell{
-		{ID: "current", CurrentMeasurement: selected},
+		{
+			ID: "current", CurrentMeasurement: selected,
+			Support: MeasurementSupport{Verdict: MeasurementSupportCompatible, Diagnostics: []string{diagnostic}},
+		},
 		{ID: "empty"},
 	}}
 	raw, err := json.Marshal(payload)
@@ -99,5 +103,24 @@ func TestCoverageCurrentMeasurementSurvivesSummaryProjection(t *testing.T) {
 		current["measuredAt"] != "0001-01-01T00:00:00Z" ||
 		cells[1].(map[string]any)["currentMeasurement"] != nil {
 		t.Fatal("current measurement identity, time or null changed in summary")
+	}
+	support := cells[0].(map[string]any)["support"].(map[string]any)
+	if support["diagnostics"].([]any)[0] != diagnostic || support["verdict"] != MeasurementSupportCompatible {
+		t.Fatal("summary changed non-blocking compatibility diagnostics")
+	}
+}
+
+func TestCompatibilityDiagnosticsDoNotChangeVerdict(t *testing.T) {
+	diagnostic := "Last entry selected."
+	view := BuildModelCompatibility(ModelCompatibilitySnapshot{
+		Verdict: MeasurementSupportCompatible, Diagnostics: []string{diagnostic},
+	})
+	if view.Verdict != MeasurementSupportCompatible || len(view.Reasons) != 0 ||
+		len(view.Diagnostics) != 1 || view.Diagnostics[0] != diagnostic {
+		t.Fatalf("diagnostic changed static support verdict: %+v", view)
+	}
+	empty := BuildModelCompatibility(ModelCompatibilitySnapshot{})
+	if empty.Diagnostics == nil {
+		t.Fatal("compatibility diagnostics must serialize as an empty list, not null")
 	}
 }
