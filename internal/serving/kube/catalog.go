@@ -18,6 +18,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
@@ -423,7 +424,7 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 		if raw.Runtime.Firstfloor != nil {
 			if runtimeMetadata == nil {
 				runtimeMetadata, delivery = raw.Runtime.Firstfloor, raw.RunConfig.Delivery
-			} else if !reflect.DeepEqual(runtimeMetadata.Runtime, raw.Runtime.Firstfloor.Runtime) {
+			} else if !reflect.DeepEqual(sharedRuntimeFacts(runtimeMetadata.Runtime), sharedRuntimeFacts(raw.Runtime.Firstfloor.Runtime)) {
 				return serving.Profile{}, nil, errors.New("firstfloor trials have different actual initialized runner conditions")
 			}
 		}
@@ -459,7 +460,7 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 			if raw.Runtime.Firstfloor == nil {
 				return serving.Profile{}, nil, errors.New("idle firstfloor actual runner facts are missing")
 			}
-			activeFacts, idleFacts := runtimeMetadata.Runtime, raw.Runtime.Firstfloor.Runtime
+			activeFacts, idleFacts := sharedRuntimeFacts(runtimeMetadata.Runtime), sharedRuntimeFacts(raw.Runtime.Firstfloor.Runtime)
 			// Warmup is outside both measurement windows; active protocol performs
 			// warmup and the model-loaded idle protocol performs none.
 			activeFacts.WarmupIterations, idleFacts.WarmupIterations = 0, 0
@@ -553,6 +554,14 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 		uid: campaign.UID, version: campaign.ResourceVersion, profile: cloneCatalogProfile(profile), facts: cloneMeasurementFacts(facts),
 	}
 	return profile, issues, nil
+}
+
+// CPU observations describe shared execution, not a frozen resource allocation.
+// Return a comparison copy without changing the retained raw observations.
+func sharedRuntimeFacts(facts firstfloor.RuntimeMetadata) firstfloor.RuntimeMetadata {
+	facts.CPUAffinity, facts.CPUSet, facts.CgroupCPUMax = nil, "", ""
+	facts.IntraOpThreads, facts.InterOpThreads = 0, 0
+	return facts
 }
 
 // Only mutable ownership is copied; source facts are not decoded or validated

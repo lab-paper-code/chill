@@ -189,6 +189,7 @@ evaluation 전 범위는 Node당 기준 mode의 필수 profile·d·정확 비용
 대상 BEO metadata annotation은 `chill.dacs.io/profile-reuse: '{"sourceProfileID":"chill-system/SOURCE-BEO/SOURCE-UID","maximumRelativeDifference":0.05}'`다. 두 필드 필수, unknown 필드·(0,1) 밖/비유한 허용 차이는 거절한다. 0.05는 계획 여유 25%의 1/5인 screening 권고이지 고정 검증/통계적 SLO·전력 오차 상한이 아니다.
 원본은 같은 namespace의 **직접 측정** catalog profile이며 최신 조건 선택 후 유효해야 한다. 자기 자신·전이 재사용·무효화/삭제/대체되어 catalog에서 빠진 원본은 거절한다. 확인 BEO는 일반 독립 후보가 되지 않는다. 실패 annotation을 지워 짧은 측정을 승격하지 않고 사유/raw 보존 후 새 BEO로 독립 측정한다.
 원본/확인 frozen condition 비교에서 plan 이름·Node UID·meter identity·GPU UUID·활성/유휴 창 길이만 제외한다. DeviceClass·image digest·모델/전처리/데이터셋·mode·accelerator 할당/권한·runtime version·initialized batches는 일치해야 한다. CPU allocation은 frozen 계약에 없고 실제 affinity/cgroup/cpuset/thread 관측값을 자원 보장으로 matching하지 않는다.
+같은 캠페인의 active trial끼리와 idle/active actual runner 비교도 CPU 관측값만 제외하며, 물리 Node·GPU identity·artifact 및 나머지 runtime 사실 검증은 유지한다. 원시 CPU 관측값은 그대로 보존한다.
 확인 활성/유휴 창 각각 ≥30초, 기존 trial≥3, 같은 warmup/settling/관측 interval/timeout/observer image를 유지한다. 원본의 모든 실측 batch가 확인에 있어야 하며 빠진 batch를 추정 추가하지 않는다.
 배치별 서비스 평균은 raw RUNNER SERVICE 표본 평균이다. 활성 평균 벽전력은 trial별 `activeWindowWallJoulesPerItem/idleBaselineSecondsPerItem`(같은 창 총 벽에너지/측정초)의 trial 간 산술 평균이고 유휴는 model-loaded idle baseline이다. 서비스시간으로 전력을 역산하거나 증분 전력을 전체 벽전력으로 비교하지 않는다.
 각 지표의 `abs(target−source)/source`가 모두 설정값 이하면 Accepted, 분모≤0·결측/비유한·조건 불일치·차이 초과면 Rejected/독립 측정이다.

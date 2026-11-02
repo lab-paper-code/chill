@@ -151,11 +151,8 @@ func compareReuseProfiles(source, target serving.Profile, check *serving.Profile
 	if float64(target.Condition.ActiveProtocol.DurationSeconds) < check.MinimumMeasurementSeconds || float64(target.Condition.IdleProtocol.DurationSeconds) < check.MinimumMeasurementSeconds || target.TrialsPerBatch < check.MinimumTrials {
 		return fmt.Errorf("confirmation requires active/idle windows >=%g seconds and >=%d trials", check.MinimumMeasurementSeconds, check.MinimumTrials)
 	}
-	sourceRuntime, targetRuntime := *source.RuntimeMetadata, *target.RuntimeMetadata
+	sourceRuntime, targetRuntime := sharedRuntimeFacts(*source.RuntimeMetadata), sharedRuntimeFacts(*target.RuntimeMetadata)
 	sourceRuntime.GPUUUID, targetRuntime.GPUUUID = "", ""
-	// Confirmation judges shared execution empirically, not by matching CPU masks.
-	sourceRuntime.CPUAffinity, sourceRuntime.CPUSet, sourceRuntime.CgroupCPUMax = targetRuntime.CPUAffinity, targetRuntime.CPUSet, targetRuntime.CgroupCPUMax
-	sourceRuntime.IntraOpThreads, sourceRuntime.InterOpThreads = targetRuntime.IntraOpThreads, targetRuntime.InterOpThreads
 	if !reflect.DeepEqual(sourceRuntime, targetRuntime) {
 		return errors.New("actual runner versions, resources or initialized batch conditions differ")
 	}

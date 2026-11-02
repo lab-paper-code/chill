@@ -90,6 +90,70 @@ func TestCatalogFollowsFrozenPlanAndRawTrials(t *testing.T) {
 		})
 	}
 }
+
+func TestCatalogTrialRuntimeFactsRespectSharedCPU(t *testing.T) {
+	for _, phase := range []batchenergyoptimization.WorkloadMode{batchenergyoptimization.WorkloadModeActive, batchenergyoptimization.WorkloadModeIdle} {
+		for _, tc := range []struct {
+			name   string
+			reason string
+			mutate func(*profilingrun.RuntimeCPU, *firstfloor.RuntimeMetadata, *string)
+		}{
+			{name: "affinity", mutate: func(cpu *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata, _ *string) {
+				cpu.AffinityCPUs = []int{2, 3}
+				native.CPUAffinity = cpu.AffinityCPUs
+			}},
+			{name: "cpuset", mutate: func(cpu *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata, _ *string) {
+				cpu.CPUSetEffective = "0-7"
+				native.CPUSet = cpu.CPUSetEffective
+			}},
+			{name: "quota", mutate: func(cpu *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata, _ *string) {
+				cpu.CgroupCPUMax = "-1 100000"
+				native.CgroupCPUMax = cpu.CgroupCPUMax
+			}},
+			{name: "threads", mutate: func(cpu *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata, _ *string) {
+				cpu.ORTIntraOpThreads, cpu.ORTInterOpThreads = 0, 0
+				native.IntraOpThreads, native.InterOpThreads = 0, 0
+			}},
+			{name: "physical-node", reason: "node", mutate: func(_ *profilingrun.RuntimeCPU, _ *firstfloor.RuntimeMetadata, node *string) {
+				*node = "trial-node-changed"
+			}},
+			{name: "gpu", reason: "runner conditions", mutate: func(_ *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata, _ *string) {
+				native.GPUUUID = "GPU-other"
+			}},
+		} {
+			t.Run(string(phase)+"/"+tc.name, func(t *testing.T) {
+				change := func(index int, active *profilingrun.RuntimeResult, idle *profilingrun.IdleRuntimeResult) {
+					// Keep each raw record internally consistent while changing
+					// only the second trial of the selected population.
+					if phase == batchenergyoptimization.WorkloadModeActive && index == 1 {
+						tc.mutate(&active.CPUContract, &active.Firstfloor.Runtime, &active.NodeName)
+					} else if phase == batchenergyoptimization.WorkloadModeIdle && index == 4 {
+						tc.mutate(&idle.CPUContract, &idle.Firstfloor.Runtime, &idle.NodeName)
+					}
+				}
+				catalog, source, _, _ := catalogEvidenceFixturePolicy(t, 4096, [6]float64{6, 6, 6, 4, 4, 4}, 3, "", change)
+				view, err := catalog.Refresh(context.Background(), []string{source.Namespace})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tc.reason != "" {
+					if len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 ||
+						view.Insufficiencies[0].Code != invalidEvidenceCode ||
+						!strings.Contains(strings.ToLower(view.Insufficiencies[0].Reason), tc.reason) {
+						t.Fatalf("physical identity mismatch was not rejected: %+v", view)
+					}
+					return
+				}
+				if len(view.Profiles) != 1 || len(view.Insufficiencies) != 0 {
+					t.Fatalf("shared CPU observation difference rejected: %+v", view)
+				}
+				// Comparison must not erase the first trial's raw observations.
+				assertCatalogRawProfile(t, view.Profiles[0])
+			})
+		}
+	}
+}
+
 func assertCatalogRawProfile(t *testing.T, profile serving.Profile) {
 	t.Helper()
 	batch := profile.Batches[0]
@@ -156,7 +220,7 @@ func TestCatalogNegativeIncrementalEnergyResolution(t *testing.T) {
 
 func TestCatalogTwoTrialsReloadAndSelectedConfidence(t *testing.T) {
 	for _, confidence := range []string{"", "0.8"} {
-		catalog, source, _, _ := catalogEvidenceFixturePolicy(t, 4096, [6]float64{6, 7, 8, 3, 5, 7}, 2, confidence)
+		catalog, source, _, _ := catalogEvidenceFixturePolicy(t, 4096, [6]float64{6, 7, 8, 3, 5, 7}, 2, confidence, nil)
 		view, err := catalog.Refresh(context.Background(), []string{source.Namespace})
 		if err != nil || len(view.Profiles) != 1 || len(view.Insufficiencies) != 0 {
 			t.Fatalf("two nonzero-variance populations failed retained reload: %+v, %v", view, err)
@@ -176,7 +240,7 @@ func TestCatalogTwoTrialsReloadAndSelectedConfidence(t *testing.T) {
 func TestCatalogSelectedConfidenceChangesNegativeEnergyDecision(t *testing.T) {
 	// At 95% the wide idle uncertainty includes zero; at 10% it excludes zero.
 	for _, confidence := range []string{"", "0.1"} {
-		catalog, source, _, _ := catalogEvidenceFixturePolicy(t, 4096, [6]float64{3.5, 3.5, 3.5, 3, 4, 5}, 3, confidence)
+		catalog, source, _, _ := catalogEvidenceFixturePolicy(t, 4096, [6]float64{3.5, 3.5, 3.5, 3, 4, 5}, 3, confidence, nil)
 		view, err := catalog.Refresh(context.Background(), []string{source.Namespace})
 		if err != nil {
 			t.Fatal(err)
@@ -225,10 +289,10 @@ func catalogEvidenceFixture(t *testing.T, memory uint64) (*Catalog, types.Namesp
 }
 
 func catalogEvidenceFixtureWithPower(t *testing.T, memory uint64, trialWatts [6]float64) (*Catalog, types.NamespacedName, catalogEvidenceObjects, evidencestore.ObjectIdentity) {
-	return catalogEvidenceFixturePolicy(t, memory, trialWatts, 3, "")
+	return catalogEvidenceFixturePolicy(t, memory, trialWatts, 3, "", nil)
 }
 
-func catalogEvidenceFixturePolicy(t *testing.T, memory uint64, trialWatts [6]float64, count int, confidence string) (*Catalog, types.NamespacedName, catalogEvidenceObjects, evidencestore.ObjectIdentity) {
+func catalogEvidenceFixturePolicy(t *testing.T, memory uint64, trialWatts [6]float64, count int, confidence string, change func(int, *profilingrun.RuntimeResult, *profilingrun.IdleRuntimeResult)) (*Catalog, types.NamespacedName, catalogEvidenceObjects, evidencestore.ObjectIdentity) {
 	t.Helper()
 	payload, err := os.ReadFile("../../profiling/profiler/evidence/testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
@@ -297,6 +361,9 @@ func catalogEvidenceFixturePolicy(t *testing.T, memory uint64, trialWatts [6]flo
 		}
 		name := fmt.Sprintf("trial-%d", index)
 		raw, idleRaw, execution := catalogTrialRecords(config, name+"-pod", watts, memory)
+		if change != nil {
+			change(index, &raw.Runtime, &idleRaw.Runtime)
+		}
 		var rawRef batchenergyoptimization.StoredObjectReference
 		if mode == batchenergyoptimization.WorkloadModeIdle {
 			rawRef = put(name+"-raw", profilerevidence.IdleRawMeasurementSchemaVersion, idleRaw)

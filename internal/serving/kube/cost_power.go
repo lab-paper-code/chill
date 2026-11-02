@@ -223,11 +223,9 @@ func validatePowerNativeProfiles(profiles []serving.Profile, node *transitioncos
 		if profile == nil || profile.RuntimeMetadata == nil || profile.Condition.NodeUID != node.NodeUID || instance.Image != profile.Condition.RuntimeImage {
 			return errors.New("power native loaded state lacks matching verified profile/image/physical Node")
 		}
-		actual := instance.State.Metadata.Runtime
-		expected := *profile.RuntimeMetadata
+		actual := sharedRuntimeFacts(instance.State.Metadata.Runtime)
+		expected := sharedRuntimeFacts(*profile.RuntimeMetadata)
 		expected.ModelFiles = deliveredModelFiles(profile.Condition.Artifact.Files)
-		expected.CPUAffinity, expected.CgroupCPUMax, expected.CPUSet = actual.CPUAffinity, actual.CgroupCPUMax, actual.CPUSet
-		expected.IntraOpThreads, expected.InterOpThreads = actual.IntraOpThreads, actual.InterOpThreads
 		if !reflect.DeepEqual(actual, expected) {
 			return errors.New("power actual native runtime/provider/device differs from verified profile")
 		}
