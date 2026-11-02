@@ -21,14 +21,15 @@ Required evidence: setup source and focused reconciler tests. The event edge is
 
 ## Q2. Which implementation resolves a RunConfig?
 
-`RunConfigurationResolver` is declared in
-`internal/profiling/profiler/controller/run_reconciler.go`. Production uses
-`RunConfigResolver` from `run_config_resolver.go`; `run_reconciler_test.go`
-contains a recording fake. `cmd/profiler/controller_setup.go` constructs and
-injects the production implementation.
+`RunConfigResolver.Resolve` in
+`internal/profiling/profiler/controller/run_config_resolver.go` resolves production
+RunConfigs. `cmd/profiler/controller_setup.go` passes that method as the
+`NewRunReconciler` resolve callback; controller tests can supply a recording
+function without a single-implementation resolver interface.
 
-Required evidence: `gopls implementation` must find production and test
-implementations; the composition root determines which one production uses.
+Required evidence: `gopls references` on `RunConfigResolver.Resolve` must find the
+composition root and resolver tests. The constructor call determines which
+callback production uses.
 
 ## Q3. Where is the Evidence Store adapter boundary?
 
@@ -77,8 +78,10 @@ ClusterRoleBinding/chill-profiler-workload-observer
 ConfigMap/chill-profiler-config
 ConfigMap/chill-profiler-facts
 Role/chill-profiler
+Role/chill-profiler-evaluation-watch
 Role/chill-profiler-transition-observer
 RoleBinding/chill-profiler
+RoleBinding/chill-profiler-evaluation-watch
 RoleBinding/chill-profiler-transition-observer
 ServiceAccount/chill-profiler
 ServiceAccount/chill-profiler-transition-observer

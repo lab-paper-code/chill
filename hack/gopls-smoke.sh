@@ -56,13 +56,15 @@ if [[ -n "$diagnostics" ]]; then
   exit 1
 fi
 
-resolver_interface="$(position_of \
-  internal/profiling/profiler/controller/run_reconciler.go \
-  'type RunConfigurationResolver interface' \
-  'RunConfigurationResolver')"
-resolver_implementations="$(gopls_command implementation "$resolver_interface")"
-require_contains resolver-implementation "$resolver_implementations" \
-  'internal/profiling/profiler/controller/run_config_resolver.go'
+resolver_method="$(position_of \
+  internal/profiling/profiler/controller/run_config_resolver.go \
+  'func \(r \*RunConfigResolver\) Resolve' \
+  'Resolve')"
+resolver_references="$(gopls_command references "$resolver_method")"
+require_contains resolver-production-callback "$resolver_references" \
+  'cmd/profiler/controller_setup.go'
+require_contains resolver-test-coverage "$resolver_references" \
+  'internal/profiling/profiler/controller/run_config_resolver_test.go'
 
 setup_call="$(position_of \
   cmd/profiler/controller_setup.go \
