@@ -50,7 +50,6 @@ type WorkloadSummary struct {
 type SupportedInputSummary struct {
 	ExecutionPath string               `json:"executionPath"`
 	Artifact      string               `json:"artifact"`
-	ProfileCount  int                  `json:"profileCount"`
 	Profiles      []SupportedProfileID `json:"profiles"`
 }
 
@@ -67,7 +66,7 @@ func SummarizeWorkloads(views []WorkloadView) []WorkloadSummary {
 			for k, profile := range input.Profiles {
 				profiles[k] = SupportedProfileID{ID: profile.ID}
 			}
-			inputs[j] = SupportedInputSummary{ExecutionPath: input.ExecutionPath, Artifact: input.Artifact, ProfileCount: len(profiles), Profiles: profiles}
+			inputs[j] = SupportedInputSummary{ExecutionPath: input.ExecutionPath, Artifact: input.Artifact, Profiles: profiles}
 		}
 		view.SupportedInputs = nil
 		summaries[i] = WorkloadSummary{WorkloadView: view, SupportedInputs: inputs}
