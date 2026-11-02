@@ -463,10 +463,9 @@ and `--output-dir` for its external tables.
 `hack/measure/gen.py --coverage --output-dir /tmp/coverage-plan-out --preflight`
 reads live coverage/catalog/inventory and retains the inputs and frozen
 `hack/measure/coverage-plan.json` alongside BEO lane manifests; it never creates
-cluster resources. Compatible unmeasured, running and TargetBatchMissing
-insufficient cells are considered, with existing requests filtered by CPU size;
-unknown support and cells without an eligible Node are listed separately.
-The config excludes genesis1/orin-nano (testbed) and genesis2
+cluster resources. Compatible unmeasured, running, problem and TargetBatchMissing
+insufficient cells are considered; unknown support and cells without an eligible
+Node are listed separately. The config excludes genesis1 (testbed) and genesis2
 (hardware failure), so RTX2080Ti cells use genesis3.
 A cell whose only Unknown support reason is `RuntimeDeclarationMissing` is
 included if the first eligible Node has a matching runtime execution declaration
@@ -475,27 +474,30 @@ must match the class architecture and path runtime family/backend; declarations
 for another Node do not count. This recovers genesis3's CUDA amd64 cells without
 admitting impossible architecture/backend combinations. `node-declared-cells.json`
 records the selected Node per recovered cell; other Unknown cells stay excluded.
-Coverage is evaluated against current per-class runtime image identities in
-`profiling.executionDeclarations` from config `runtimeValues`
-(`charts/chill/values-operating.yaml`, read with the existing PyYAML package).
-Cells measured only on obsolete images are treated as unmeasured even if the
-server still calls them usable. CPU size is the frozen table
-`cpuByDeviceClassMode` (whole cores per device class and power mode; `cpuSource`
-records the rule and freeze time). It is never recomputed per plan. A
-current-runtime variant or an existing BEO covers a cell when its CPU request and
-quota are at or above that size; smaller ones are re-measured. New CPU, CUDA and
-RKNN BEOs use the table value for both request and quota; CUDA and RKNN still
-have a host CPU quota, and serving reproduces it just as for CPU execution.
-No result is deleted. Image identities and source SHA-256 are frozen in
-`inputs/current-runtime-images.json`; stale/current-runtime lists explain
-selection. `remeasurement-cells.json` maps retained coverage BEO names/quotas to
-their new cells; old measurements remain available as timing estimates.
+Coverage resolves the current runtime image for the selected class, execution
+path's runtime family/backend and eligible Node from `profiling.executionDeclarations`
+in `runtimeValues` (`charts/chill/values-operating.yaml`, read with PyYAML).
+Target selection and request reuse call the same explicit comparison:
+`runtimeImage`, `curveSchema` and `evidenceSchema`. Completed results must have
+curve-plan v1alpha10 and finalized execution-evidence v1alpha16 (shared CPU
+RunConfig v1alpha18). Their runtime image comes from the verified public profile
+condition, not from a historical cell annotation. A current completed measurement
+is reused; a current in-progress request suppresses duplicate generation; a
+different runtime/version or Failed request does not suppress a new request.
+Pending requests record those three fields in
+`chill.dacs.io/coverage-execution-conditions`; absent/old annotations are not a
+shared-execution claim. There is no old annotation reader or CPU sizing/matching.
+CPU-controlled evidence is not promoted by merely ignoring its CPU fields.
+No result is deleted. `inputs/current-runtime-images.json`,
+`inputs/required-execution-conditions.json`, stale/current-runtime lists and
+`remeasurement-cells.json` explain selection. Source SHA-256 and the deterministic
+request-name hash are provenance/naming, not evidence equality gates. Old
+measurements remain available as timing estimates.
 Protocol inheritance follows the dashboard's exact request → exact profile →
 latest successful same-model → same-path order, but never inherits CPU request,
 quota or affinity, even on the same Node. Catalog contracts resolve inputs.
-Serving Pod request/limit must exactly match the selected profile, so these
-whole-node profiles cannot stand in for smaller scheduler allocations; smaller
-size measurements are intentionally outside this plan change.
+Profiling and serving both use runtime-default shared CPU execution. No CPU
+request, quota or affinity is inherited or generated.
 Three independent sessions, one warmup iteration, all declared artifact batches
 (omit `spec.batchSizes`), or the configured powers-of-two planner batch set
 bounded by runtime maximum when undeclared are used.
@@ -515,6 +517,56 @@ starts this monotone exclusion.
 filtered artifact-declared set also excludes the cell rather than violating the
 server's indivisible declaration contract. There is no SLO-based shortcut,
 second phase, sample-count target, dynamic window extension, or window cap.
+
+`coverage-plan.v2` is a **single cutover** from the old class-wide integer map to
+`memoryMaxBatch` rule records; the generator rejects v1 and has no dual reader.
+Each record preserves the old `maxBatch` (including 0), its original model/class/
+optional-path selector, observed runtime image/path/exact worker memory limit,
+raw observations, source references and `basis` (`observed-failure` versus
+`conservative-exclusion`). A path-specific rule takes precedence over a class
+rule, as before. `null` means **조건 미상**, not a wildcard execution condition.
+Only all three known, matching conditions apply the old cap as
+“측정 불가(메모리)”. A changed or unknown condition instead holds the cell with
+“메모리 제외 정책 재검토 필요” (`conditions-changed`/`conditions-unknown` in
+`batchEstimates[].memoryPolicy`). This does not declare a new combination feasible,
+clear an old value, or automatically remeasure it; an operator must explicitly
+review/change the next policy before an affected request can be emitted.
+`excluded-batches.json`/`excluded-cells.json` retain the whole rule and current
+conditions; `memoryPolicyReviewCellCount` separates these holds from confirmed
+same-condition exclusions. Existing campaigns/feeder frozen plans are untouched.
+
+`runtimeImage` and `memoryLimitBytes` are **not supported top-level coverage-cell,
+coverage query, or BEO-spec overrides**. Runtime identity is a public variant/
+profile condition; the generator resolves required identity from execution
+declarations. The supported worker limit is
+`ExecutionPolicySpec.runtimeMemoryLimitBytes`, selected from the installed
+`chill-profiler-facts` active-path policy (exact class before `*`) and retained in
+`inputs/execution-policies.json`. Missing/ambiguous limits remain unknown; board
+RAM, allocatable percentages or rounded GiB reports are never used to infer bytes.
+The internal `coverage_batch_plan(..., execution_conditions=...)` parameter makes
+these read-only planning facts explicit; no memory/runtime override is sent in a BEO.
+
+Retained Smol rules (all for `smolvlm2-500m-video-instruct`):
+
+| Original selector | maxBatch | Evidence runtime / path / worker limit | Basis and application |
+|---|---:|---|---|
+| lattepanda class | 1 | `3a5a3e0b…a4b6` / CPU FP32 amd64 / exact bytes unknown (reported 5.98Gi) | c9cc020c b2 OOMKilled/137; curve efbfea1d + retained failure summary identify runtime/path; class-wide expansion remains review-only |
+| raspberry-pi class | 1 | unknown / unknown / unknown | c9cc020c precaution copied from lattepanda, not Pi OOM evidence; review-only |
+| xavier class | 1 | unknown / unknown / unknown | c9cc020c precaution; review-only outside specific paths below |
+| orin-nano class | 1 | unknown / unknown / unknown | c9cc020c precaution; review-only outside specific CUDA path |
+| RTX2080Ti class | 2 | `bc690b8c…e4edc` / CUDA amd64 / limit unknown | 89a12080 b4 warmup Softmax RUNTIME_EXCEPTION; curve d3c0089e identifies runtime/path; no proof of host OOM, review-only |
+| orin-nano / CUDA VLM arm64 | 0 | `5d1170a3…4602` / same path / limit unknown | f7394f55; retained Run a74c0aba reports NvMap/FusedMatMul allocation failure, worker exit 3; image from immutable curve 905024f5; review-only until limit established |
+| xavier / CPU FP32 arm64 | 0 | `50684bd2…7d73` / same path / **5665580646 bytes** | 89de4f85; curve 4eb27c55 + Run 77e2b181 raw OOMKilled/limit; applies only to this exact condition, otherwise review |
+| xavier / CUDA VLM arm64 | 0 | `21609797…e631` / same path / limit unknown | 5dc8abb2; curve b7fe27fa + Run 2bcf73ad confirm `start runner: EOF`, not OOM; conservative review-only exclusion |
+
+Full image identities, native Run names/UIDs, immutable curve keys and raw failure
+classification are retained in the policy. The queried xavier CPU/orin CUDA
+failed Runs had no finalized `profiling-runs/<uid>/execution.json` object.
+Runtime images above were recovered from existing immutable campaign curve plans,
+never reconstructed from today's runtime defaults. Original lattepanda/RTX
+failure observations are retained from git and saved coverage summaries; rounded
+limits and missing native/frozen worker envelopes remain unknown.
+
 The active metric observation deadline includes the last in-flight call:
 `windowSeconds + ceil(max(included batch call bounds)) + inherited metric padding`.
 Each known call bound is the slowest same-model/class/batch estimate multiplied
@@ -527,8 +579,8 @@ the measurement duration. Both tolerance and metric duration are frozen in
 RunConfig/curve identity; no storage schema or acceptance rule changes.
 The policy is part of the shared plan hash, so changing these settings renames
 every newly generated cell, not just slow cells; existing requests are skipped
-only under the CPU comparison rules above, never rewritten. A running feeder keeps its frozen plan
-until the operator explicitly replaces it.
+only under the explicit execution-condition comparison above, never rewritten.
+A running feeder keeps its frozen plan until the operator explicitly replaces it.
 Idle uses the inherited fixed window or config `idleSeconds` (10 seconds).
 Reports state: “셀별 정밀도(CI)는 측정 후 기록하며 목표치가 아님”.
 Estimates include active windows, three shared-idle windows and their settling
@@ -542,12 +594,16 @@ config, never hand-edited lane files. Canary/holds remain operator-owned
 feeder-hold policy.
 Check the existing feeder format offline:
 `hack/measure/feeder.py --manifest /tmp/coverage-plan-out/resume-plan.json
---stages 1,2 --check-manifest`. `gen.py --coverage --self-check` is offline.
-Add `--pilot` to emit `pilot/resume-plan.json` and two lane files: one MNV and
-one PLC cell on distinct nodes, minimizing the selected lane sizes. Documents
-reuse their full-plan BEO names. A later generation excludes cells with an
-existing coverage-cell annotation or matching `coverage-` BEO model/class/path/
-mode, retaining names/statuses in `existing-cells.json`.
+--stages 1,2 --check-manifest`. `gen.py --coverage --self-check` is offline and
+exercises `generate_coverage` end to end with read-only API/kubectl fixtures:
+current completion/reuse, pending deduplication, obsolete runtime/version,
+Failed replanning and same/changed/unknown memory conditions. The same consumer
+check also runs under `python3 -m unittest discover -s hack/measure/smoke -p 'test_*.py'`.
+Add `--pilot` to cover each planned runtime family plus the heaviest model on its
+smallest-memory planned node; repeated nodes remain ordered lanes. Documents
+reuse their full-plan BEO names. Cell annotation or `coverage-` model/class/path/
+mode matching is used only after execution conditions match; reused names/statuses
+remain in `existing-cells.json`.
 Feeder GETs existing BEOs before creation: successful
 terminal requests are skipped, active ones are awaited, and failed/refused ones
 stop the lane. A create-race `AlreadyExists` remains a fatal create error;

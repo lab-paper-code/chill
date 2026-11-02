@@ -480,7 +480,7 @@ def coverage_declared_on_node(cell, node, device, model, declarations, has_polic
 
 SHARED_CURVE_SCHEMA = "chill.dacs.io/curve-plan.v1alpha10"
 SHARED_EVIDENCE_SCHEMA = "chill.dacs.io/profiling-execution-evidence.v1alpha16"
-SHARED_CURVE_ANNOTATION = "chill.dacs.io/coverage-curve-schema"
+EXECUTION_CONDITIONS_ANNOTATION = "chill.dacs.io/coverage-execution-conditions"
 
 
 def coverage_shared_result(result):
@@ -491,7 +491,33 @@ def coverage_shared_result(result):
             all(t.get("evidence", {}).get("schemaVersion") == SHARED_EVIDENCE_SCHEMA for t in trials))
 
 
-def coverage_targets(coverage, policy, current_images, node_declared=(), shared_profiles=()):
+def coverage_condition_matches(observed, required):
+    """Compare execution facts, not cell history, hashes or serialized bytes."""
+    return bool(observed and required) and all(observed.get(key) == required.get(key)
+        for key in ("runtimeImage", "curveSchema", "evidenceSchema"))
+
+
+def coverage_required_condition(cell, node, model, declarations):
+    execution = next(p for p in model["spec"]["executionPaths"] if p["name"] == cell["executionPath"])
+    runtime = execution["runtime"]
+    images = set()
+    for declaration in declarations:
+        if (declaration["deviceClass"] != cell["deviceClass"]["name"] or
+                declaration.get("node", node) != node):
+            continue
+        payload = json.loads(declaration["runtime"]["payload"])
+        if (payload["runtime"]["family"] == runtime["family"] and
+                runtime["backend"] in payload["runtime"]["backends"]):
+            images.add(payload["image"])
+    if not images:
+        return None
+    if len(images) != 1:
+        raise ValueError("ambiguous runtime image for " + cell["id"] + "/" + node)
+    return {"runtimeImage": images.pop(), "curveSchema": SHARED_CURVE_SCHEMA,
+            "evidenceSchema": SHARED_EVIDENCE_SCHEMA}
+
+
+def coverage_targets(coverage, policy, required_conditions, node_declared=(), profile_conditions=None):
     targets, unknown, stale, measured_current = [], [], [], []
     if coverage["completeness"] != "complete":
         raise ValueError("incomplete coverage cannot define a complete plan")
@@ -502,12 +528,14 @@ def coverage_targets(coverage, policy, current_images, node_declared=(), shared_
         elif verdict == policy["supportedVerdict"] or cell["id"] in node_declared:
             measured = [v for v in cell.get("variants", []) if
                         v.get("profileIds") or v.get("assessment", {}).get("evidence", {}).get("accepted")]
-            current = [v for v in measured if
-                       v["condition"].get("runtimeImage") in current_images.get(cell["deviceClass"]["name"], [])]
-            if any(set(v.get("profileIds", ())) & set(shared_profiles) for v in current):
+            required = required_conditions.get(cell["id"])
+            current = [v for v in measured if any(coverage_condition_matches(
+                (profile_conditions or {}).get(profile), required) for profile in v.get("profileIds", []))]
+            if current:
                 measured_current.append(cell)
                 continue
-            if measured and not current:
+            if measured and not any(required and v["condition"].get("runtimeImage") ==
+                                    required["runtimeImage"] for v in measured):
                 stale.append(cell)
             if cell["id"] in node_declared or measured or assessment["displayStatus"] in (policy["unmeasuredStatus"], "running", "problem") or (
                     assessment["displayStatus"] == policy["insufficientStatus"] and
@@ -630,7 +658,7 @@ def coverage_timings(results):
     return timings
 
 
-def coverage_existing(cell, plans, policy, shared_completed=()):
+def coverage_existing(cell, plans, policy, required, completed_conditions=None):
     expected = (cell["model"]["name"], cell["deviceClass"]["name"], cell["executionPath"], cell["powerMode"])
     for plan in plans:
         spec = plan.get("spec", {})
@@ -638,10 +666,19 @@ def coverage_existing(cell, plans, policy, shared_completed=()):
         # A Failed request measured nothing; its cell is planned again once the cause is fixed.
         phase = plan.get("status", {}).get("phase")
         if (phase == "Failed" or any(key in spec for key in ("cpuQuota", "cpuAffinity")) or
-                "cpuRequest" in state or
-                (phase == "Complete" and plan["metadata"].get("uid") not in shared_completed) or
-                (phase != "Complete" and plan["metadata"].get("annotations", {}).get(
-                    SHARED_CURVE_ANNOTATION) != SHARED_CURVE_SCHEMA)):
+                "cpuRequest" in state):
+            continue
+        if phase == "Complete":
+            observed = (completed_conditions or {}).get(plan["metadata"].get("uid"))
+        else:
+            encoded = plan["metadata"].get("annotations", {}).get(EXECUTION_CONDITIONS_ANNOTATION, "")
+            try:
+                observed = json.loads(encoded)
+            except (TypeError, ValueError):
+                observed = None
+            if not isinstance(observed, dict):
+                observed = None
+        if not coverage_condition_matches(observed, required):
             continue
         metadata = plan["metadata"]
         if metadata.get("annotations", {}).get(policy["cellAnnotation"]) == cell["id"]:
@@ -729,10 +766,46 @@ def coverage_pilot(lanes, policy, classes):
     return dict(selected)
 
 
-def coverage_batch_plan(cell, batches, timings, policy, declared=False):
+def coverage_memory_rule(cell, execution_conditions, policy):
+    matches = [rule for rule in policy["memoryMaxBatch"] if
+               rule["model"] == cell["model"]["name"] and
+               rule["deviceClass"] == cell["deviceClass"]["name"] and
+               rule["executionPath"] in (None, cell["executionPath"])]
+    if not matches:
+        return None, None
+    exact = [rule for rule in matches if rule["executionPath"] == cell["executionPath"]]
+    selected = exact or matches
+    if len(selected) != 1:
+        raise ValueError("ambiguous memory exclusion for " + cell["id"])
+    rule = selected[0]
+    observed = rule["conditions"]
+    current = dict(execution_conditions or {}, executionPath=cell["executionPath"])
+    if any(observed[key] is not None and current.get(key) is not None and
+           observed[key] != current[key] for key in observed):
+        return rule, "conditions-changed"
+    if any(observed[key] is None or current.get(key) is None for key in observed):
+        return rule, "conditions-unknown"
+    return rule, "applied"
+
+
+def coverage_memory_limit(cell, policies):
+    """Use the installed active worker envelope; never estimate from board RAM."""
+    matches = [p for p in policies if p["deviceClass"] in ("*", cell["deviceClass"]["name"]) and
+               p["executionPath"] == cell["executionPath"] and
+               p["workloadMode"] == "saturated-serial-fixed-batch"]
+    exact = [p for p in matches if p["deviceClass"] == cell["deviceClass"]["name"]]
+    selected = exact or matches
+    if len(selected) != 1:
+        return None
+    limit = selected[0].get("runtimeMemoryLimitBytes")
+    return limit if type(limit) is int and limit > 0 else None
+
+
+def coverage_batch_plan(cell, batches, timings, policy, declared=False, execution_conditions=None):
     model, device = cell["model"]["name"], cell["deviceClass"]["name"]
-    caps = policy["memoryMaxBatch"].get(model, {})
-    memory_max = caps.get(device + "/" + cell["executionPath"], caps.get(device))
+    rule, memory_status = coverage_memory_rule(cell, execution_conditions, policy)
+    memory_max = rule["maxBatch"] if memory_status == "applied" else None
+    review = rule is not None and memory_status != "applied"
     estimates = []
     excluded_from = None
     for batch in sorted(batches):
@@ -744,15 +817,20 @@ def coverage_batch_plan(cell, batches, timings, policy, declared=False):
         if calls is not None and calls < policy["minCallsInWindow"] and excluded_from is None:
             excluded_from = batch
         over_memory = memory_max is not None and batch > memory_max
-        included = excluded_from is None and not over_memory
+        included = excluded_from is None and not over_memory and not review
         estimates.append({"batch": batch, "secondsPerCall": source["secondsPerCall"] if source else None,
                           "estimatedCallsInWindow": calls, "timingSource": source, "included": included,
-                          "reason": None if included else (policy["memoryExcludedBatchReason"] if over_memory
-                                                           else policy["excludedBatchReason"]),
-                          "excludedFromBatch": excluded_from})
+                          "reason": None if included else (
+                              policy["memoryReviewReason"] if review else
+                              policy["memoryExcludedBatchReason"] if over_memory else policy["excludedBatchReason"]),
+                          "excludedFromBatch": excluded_from,
+                          "memoryPolicy": None if rule is None else {
+                              "status": memory_status, "rule": rule, "currentConditions": dict(
+                                  execution_conditions or {}, executionPath=cell["executionPath"])}})
     included = [r["batch"] for r in estimates if r["included"]]
-    reason = None if included else (policy["memoryExcludedBatchReason"] if all(
-        r["reason"] == policy["memoryExcludedBatchReason"] for r in estimates) else policy["excludedBatchReason"])
+    reason = None if included else (
+        policy["memoryReviewReason"] if review else policy["memoryExcludedBatchReason"] if all(
+            r["reason"] == policy["memoryExcludedBatchReason"] for r in estimates) else policy["excludedBatchReason"])
     if declared and included and included != sorted(batches):
         included, reason = [], policy["declaredBatchConflictReason"]
     return included, estimates, reason
@@ -771,6 +849,20 @@ def coverage_active_protocol(active, estimates, policy):
 def generate_coverage(output, policy_path, preflight=False, pilot=False):
     output = output.resolve()
     policy = load(policy_path)
+    if policy["schemaVersion"] != "coverage-plan.v2":
+        raise ValueError("coverage-plan.v2 required; migrate the policy in one cutover")
+    for rule in policy["memoryMaxBatch"]:
+        if (type(rule["maxBatch"]) is not int or rule["maxBatch"] < 0 or
+                set(rule["conditions"]) != {"runtimeImage", "executionPath", "memoryLimitBytes"} or
+                rule["basis"] not in ("observed-failure", "conservative-exclusion") or not rule["observations"]):
+            raise ValueError("invalid memory exclusion rule")
+        conditions = rule["conditions"]
+        if any(conditions[key] is not None and (not isinstance(conditions[key], str) or not conditions[key])
+               for key in ("runtimeImage", "executionPath")):
+            raise ValueError("memory exclusion image/path must be known or null")
+        limit = conditions["memoryLimitBytes"]
+        if limit is not None and (type(limit) is not int or limit < 1):
+            raise ValueError("memory exclusion limit must be positive bytes or null")
     if policy["sessions"] != 3 or policy["warmupIterations"] != 1:
         raise ValueError("coverage requires three independent sessions and one warmup iteration")
     for key in ("windowSeconds", "minCallsInWindow", "idleSeconds"):
@@ -798,14 +890,16 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
         "source": identity(runtime_values), "imagesByDeviceClass": current_images,
         "executionDeclarations": declarations})
     results = []
-    shared_completed, shared_profiles = set(), set()
+    completed_conditions, profile_conditions = {}, {}
     for profile in inputs["profiles"]["profiles"]:
         name = profile["id"].split("/")[1]
         result = coverage_api(namespace + "/batch-energy-optimizations/" + name + "/result")
         results.append(result)
         if coverage_shared_result(result):
-            shared_completed.add(result["campaign"]["uid"])
-            shared_profiles.add(profile["id"])
+            observed = {"runtimeImage": profile["condition"]["runtimeImage"],
+                        "curveSchema": SHARED_CURVE_SCHEMA, "evidenceSchema": SHARED_EVIDENCE_SCHEMA}
+            completed_conditions[result["campaign"]["uid"]] = observed
+            profile_conditions[profile["id"]] = observed
         write_json(output / "inputs" / "results" / (name + ".json"), result)
     timings = coverage_timings(results)
     write_json(output / "timings.json", timings)
@@ -817,6 +911,7 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
                                                 "get", "configmap", "chill-profiler-facts", "-o", "json"]))
     policies = yaml.safe_load(facts["data"]["execution-policies.yaml"])
     policies = policies if isinstance(policies, list) else policies["policies"]
+    write_json(output / "inputs" / "execution-policies.json", facts)
     has_policy = {(p["deviceClass"], p["executionPath"]) for p in policies}
     eligible_by_class = {
         device: sorted(n["name"] for n in c["nodes"] if n["name"] not in policy["excludedNodes"] and
@@ -829,13 +924,18 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
         eligible_by_class[cell["deviceClass"]["name"]] and coverage_declared_on_node(
             cell, eligible_by_class[cell["deviceClass"]["name"]][0], classes[cell["deviceClass"]["name"]],
             models[cell["model"]["name"]], declarations, has_policy)}
+    required_conditions = {
+        cell["id"]: coverage_required_condition(cell, eligible_by_class[cell["deviceClass"]["name"]][0],
+            models[cell["model"]["name"]], declarations)
+        for cell in inputs["coverage"]["cells"] if eligible_by_class[cell["deviceClass"]["name"]]}
+    write_json(output / "inputs" / "required-execution-conditions.json", required_conditions)
     targets, unknown, stale, measured_current = coverage_targets(
-        inputs["coverage"], policy, current_images, node_declared, shared_profiles)
+        inputs["coverage"], policy, required_conditions, node_declared, profile_conditions)
     stale_ids = {cell["id"] for cell in stale}
     write_json(output / "node-declared-cells.json", node_declared)
     existing, excluded_batches, excluded_cells = [], [], []
     plan_hash = hashlib.sha256(json.dumps(
-        [policy, inputs["coverage"]["snapshotId"], current_images], sort_keys=True).encode()).hexdigest()[:12]
+        [policy, inputs["coverage"]["snapshotId"], required_conditions], sort_keys=True).encode()).hexdigest()[:12]
     for cell in targets:
         model, device = cell["model"]["name"], cell["deviceClass"]["name"]
         eligible = eligible_by_class[device]
@@ -847,13 +947,19 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
                             "nodes": classes[device]["nodes"]})
             continue
         node = eligible[0]
-        previous = coverage_existing(cell, inputs["plans"]["items"], policy, shared_completed)
+        required = required_conditions.get(cell["id"])
+        if required is None:
+            no_policy.append(cell["id"])
+            continue
+        previous = coverage_existing(cell, inputs["plans"]["items"], policy, required, completed_conditions)
         if previous:
             existing.append({"cellId": cell["id"], "name": previous["metadata"]["name"],
                              "status": previous.get("status", {}).get("phase")})
             continue
         candidate_batches, declared, artifact = coverage_batches(models[model], cell["executionPath"], policy)
-        batches, estimates, reason = coverage_batch_plan(cell, candidate_batches, timings, policy, declared)
+        batches, estimates, reason = coverage_batch_plan(
+            cell, candidate_batches, timings, policy, declared,
+            dict(required, memoryLimitBytes=coverage_memory_limit(cell, policies)))
         excluded_batches.extend(dict(r, cellId=cell["id"], model=model, node=node)
                                 for r in estimates if not r["included"])
         if reason:
@@ -878,7 +984,8 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
         name = policy["requestNamePrefix"] + plan_hash + "-" + hashlib.sha256(cell["id"].encode()).hexdigest()[:12]
         doc = {"apiVersion": "edge.dacs.io/v1alpha1", "kind": "BatchEnergyOptimization",
                "metadata": {"name": name, "namespace": NS, "annotations": {
-                   policy["cellAnnotation"]: cell["id"], SHARED_CURVE_ANNOTATION: SHARED_CURVE_SCHEMA}}, "spec": spec}
+                   policy["cellAnnotation"]: cell["id"],
+                   EXECUTION_CONDITIONS_ANNOTATION: json.dumps(required, separators=(",", ":"))}}, "spec": spec}
         priority = policy["models"][model]["priority"]
         row = {"cellId": cell["id"], "name": name, "model": model, "node": node, "priority": priority,
                "deviceClass": device,
@@ -895,7 +1002,7 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
             if p["metadata"]["name"].startswith(policy["requestNamePrefix"]) and
             p["metadata"].get("annotations", {}).get(policy["cellAnnotation"]) == cell["id"] and
             p.get("status", {}).get("phase") in ("Complete", "Measuring") and
-            p["metadata"].get("uid") not in shared_completed]
+            not coverage_condition_matches(completed_conditions.get(p["metadata"].get("uid")), required)]
         rows.append(row)
         lanes[node].append((row, doc))
     coverage_manifest(output, lanes, policy)
@@ -908,6 +1015,7 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
                "precisionMeaning": policy["precisionMeaning"],
                "staleRuntimeCellCount": len(stale), "currentRuntimeMeasuredCellCount": len(measured_current),
                "excludedBatchCount": len(excluded_batches), "excludedCellCount": len(excluded_cells),
+               "memoryPolicyReviewCellCount": sum(c["reason"] == policy["memoryReviewReason"] for c in excluded_cells),
                "excludedBatchesByModel": dict(Counter(r["model"] for r in excluded_batches)),
                "excludedCellsByModel": dict(Counter(r["model"] for r in excluded_cells)),
                "unknownTimingBatchCount": sum(r["secondsPerCall"] is None for cell in rows for r in cell["batchEstimates"]),
@@ -971,6 +1079,9 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
 
 
 def coverage_self_check():
+    import runpy
+    import sys
+    runpy.run_path(str(HERE / "smoke" / "test_coverage.py"))["generation_self_check"](sys.modules[__name__])
     policy = load(HERE / "coverage-plan.json")
     model = "mobilenet-v2-050"
     cell = {"id": "cell", "model": {"name": model}, "deviceClass": {"name": "device"},
@@ -986,7 +1097,7 @@ def coverage_self_check():
     other["assessment"]["reasons"] = [{"code": "Unrelated"}]
     running = dict(cell, assessment={"displayStatus": "running", "reasons": []})
     assert coverage_targets({"completeness": "complete", "cells": [cell, partial, running, unknown, unsupported, other]},
-                            policy, {"device": ["current-image"]}) == ([cell, partial, running], [unknown], [], [])
+                            policy, {}) == ([cell, partial, running], [unknown], [], [])
     missing = copy.deepcopy(unknown)
     missing["support"]["reasons"] = [{"code": "RuntimeDeclarationMissing"}]
     missing["assessment"]["displayStatus"] = "unknown"
@@ -1004,19 +1115,7 @@ def coverage_self_check():
     assert not coverage_declared_on_node(missing, "actual-node", dict(device, architecture="arm64"),
                                         native_model, declarations, {("device", "path")})
     assert coverage_targets({"completeness": "complete", "cells": [missing]}, policy,
-                            {"device": []}, {missing["id"]: "actual-node"}) == ([missing], [], [], [])
-    old = copy.deepcopy(cell)
-    old["assessment"]["displayStatus"] = "usable"
-    old["variants"] = [{"condition": {"runtimeImage": "old-image"}, "profileIds": ["old-profile"]}]
-    fresh = copy.deepcopy(old)
-    fresh["id"] = "fresh"
-    fresh["variants"][0]["condition"]["runtimeImage"] = "current-image"
-    selected, _, stale, measured = coverage_targets(
-        {"completeness": "complete", "cells": [old, fresh]}, policy, {"device": ["current-image"]},
-        shared_profiles=["old-profile"])
-    assert selected == stale == [old] and measured == [fresh]
-    assert coverage_targets({"completeness": "complete", "cells": [fresh]}, policy,
-                            {"device": ["current-image"]}) == ([fresh], [], [], [])
+                            {}, {missing["id"]: "actual-node"}) == ([missing], [], [], [])
     result = {"result": {"curvePlan": {"schemaVersion": SHARED_CURVE_SCHEMA},
                          "completedTrials": [{"evidence": {"schemaVersion": SHARED_EVIDENCE_SCHEMA}}]}}
     assert coverage_shared_result(result)
@@ -1107,28 +1206,6 @@ def coverage_self_check():
     assert coverage_timings([{"measurementFacts": facts}])[0]["secondsPerCall"] == .1
     assert coverage_timings([{"measurementFacts": None}]) == []
     assert coverage_batch_plan(cell, [1], [], policy)[0] == [1]
-    previous = {"metadata": {"name": "pilot", "uid": "shared", "annotations": {
-        policy["cellAnnotation"]: cell["id"], SHARED_CURVE_ANNOTATION: SHARED_CURVE_SCHEMA}},
-        "spec": {"state": {}}}
-    assert coverage_existing(cell, [previous], policy) == previous
-    assert coverage_existing(dict(cell, id="different"), [previous], policy) is None
-    previous["status"] = {"phase": "Complete"}
-    assert coverage_existing(cell, [previous], policy) is None
-    assert coverage_existing(cell, [previous], policy, {"shared"}) == previous
-    for key, value in (("cpuQuota", "4"), ("cpuAffinity", [1])):
-        controlled = copy.deepcopy(previous)
-        controlled["spec"][key] = value
-        assert coverage_existing(cell, [controlled], policy, {"shared"}) is None
-    controlled = copy.deepcopy(previous)
-    controlled["spec"]["state"]["cpuRequest"] = "4"
-    assert coverage_existing(cell, [controlled], policy, {"shared"}) is None
-    named = {"metadata": {"name": policy["requestNamePrefix"] + "already-created",
-                          "annotations": {SHARED_CURVE_ANNOTATION: SHARED_CURVE_SCHEMA}}, "spec": {
-        "state": {"candidate": {"modelSpec": model, "deviceClass": "device",
-                                "executionPath": "path", "powerMode": "mode"}}}}
-    assert coverage_existing(cell, [named], policy) == named
-    named["metadata"]["annotations"].clear()
-    assert coverage_existing(cell, [named], policy) is None
     heavy_model = max(policy["models"], key=lambda name: policy["models"][name]["priority"])
     classes = {
         "arm": {"architecture": "arm64", "memory": "64Gi"},
@@ -1166,7 +1243,7 @@ def coverage_self_check():
         lane.append(({"powerMode": "fixed", "model": m, "cellId": str(index)},
                      {"spec": {"state": {"candidate": {"executionPath": "firstfloor-ort-cuda-amd64"}}}}))
     assert [r["cellId"] for r, _ in coverage_lane_order(lane, policy)] == ["1", "2", "4", "6", "0", "3", "5"]
-    print("coverage selection, inheritance, batches, one-call boundary, monotone exclusion and runtime-family pilot checked")
+    print("coverage generation/reuse, scoped memory exclusions, inheritance, batches and runtime-family pilot checked")
 
 
 def self_check():

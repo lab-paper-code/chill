@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "coverage-plan.v1",
+  "schemaVersion": "coverage-plan.v2",
   "source": "Fixed-window planning policy; precision is measured after execution, not a planning target",
   "precisionMeaning": "셀별 정밀도(CI)는 측정 후 기록하며 목표치가 아님",
   "windowSeconds": 60,
@@ -19,19 +19,147 @@
   },
   "excludedBatchReason": "창 안 유의미 추론 불가",
   "memoryExcludedBatchReason": "측정 불가(메모리)",
-  "memoryMaxBatch": {
-    "smolvlm2-500m-video-instruct": {
-      "lattepanda-3-delta-8g": 1,
-      "raspberry-pi-5-8g": 1,
-      "jetson-xavier-nx-8g": 1,
-      "jetson-orin-nano-8g": 1,
-      "edge-server-rtx-2080-ti-64g": 2,
-      "jetson-orin-nano-8g/firstfloor-ort-cuda-vlm-arm64": 0,
-      "jetson-xavier-nx-8g/firstfloor-ort-cpu-arm64": 0,
-      "jetson-xavier-nx-8g/firstfloor-ort-cuda-vlm-arm64": 0
+  "memoryReviewReason": "메모리 제외 정책 재검토 필요",
+  "memoryMaxBatch": [
+    {
+      "model": "smolvlm2-500m-video-instruct",
+      "deviceClass": "lattepanda-3-delta-8g",
+      "executionPath": null,
+      "maxBatch": 1,
+      "conditions": {
+        "runtimeImage": "155.230.35.213:5000/chill/chill-firstfloor@sha256:3a5a3e0ba224dbd40347ec3b8141fbc90233eff1ad9208ed46bec887440ca4b6",
+        "executionPath": "firstfloor-ort-cpu-amd64",
+        "memoryLimitBytes": null
+      },
+      "basis": "observed-failure",
+      "observations": [
+        {"source": "git:c9cc020c", "kind": "OOMKilled", "batch": 2, "exitCode": 137,
+         "detail": "2026-11-01 05:49Z: limit reported as 5.98Gi, b1 peak 5.78Gi; exact limit bytes not recovered. The class-wide cap is broader than this CPU observation."},
+        {"source": "chill-evidence-store:batch-energy-optimizations/efbfea1d-b3cf-44ec-a8c9-5518d9f5a313/curve-plan.json",
+         "kind": "frozen-runtime-condition"},
+        {"source": "ProfilingRun:chill-system/coverage-bfec77d00d18-0da8644b1fc2-active-b2-a2#37a5fe90-6523-492b-9520-338b84e967c0",
+         "kind": "HostOOM", "batch": 2, "exitCode": 137,
+         "detail": "Preserved coverage failure summary identifies this CPU FP32 path; native Run was no longer present when conditions were recovered. Exact worker limit remains 조건 미상."}
+      ]
+    },
+    {
+      "model": "smolvlm2-500m-video-instruct",
+      "deviceClass": "raspberry-pi-5-8g",
+      "executionPath": null,
+      "maxBatch": 1,
+      "conditions": {"runtimeImage": null, "executionPath": null, "memoryLimitBytes": null},
+      "basis": "conservative-exclusion",
+      "observations": [
+        {"source": "git:c9cc020c", "kind": "operational-exclusion",
+         "detail": "Transferred from lattepanda's b2 OOM to other 8GB boards with reported 5.3-6.1Gi limits; no raspberry-specific failure/image/exact limit was established. 조건 미상."}
+      ]
+    },
+    {
+      "model": "smolvlm2-500m-video-instruct",
+      "deviceClass": "jetson-xavier-nx-8g",
+      "executionPath": null,
+      "maxBatch": 1,
+      "conditions": {"runtimeImage": null, "executionPath": null, "memoryLimitBytes": null},
+      "basis": "conservative-exclusion",
+      "observations": [
+        {"source": "git:c9cc020c", "kind": "operational-exclusion",
+         "detail": "Transferred from lattepanda's b2 OOM; original scope does not identify runtime/path/exact memory limit. 조건 미상. Later path-specific observations are separate rules."}
+      ]
+    },
+    {
+      "model": "smolvlm2-500m-video-instruct",
+      "deviceClass": "jetson-orin-nano-8g",
+      "executionPath": null,
+      "maxBatch": 1,
+      "conditions": {"runtimeImage": null, "executionPath": null, "memoryLimitBytes": null},
+      "basis": "conservative-exclusion",
+      "observations": [
+        {"source": "git:c9cc020c", "kind": "operational-exclusion",
+         "detail": "Transferred from lattepanda's b2 OOM; no same-condition orin-nano evidence at introduction. 조건 미상. Later CUDA failure is a separate rule."}
+      ]
+    },
+    {
+      "model": "smolvlm2-500m-video-instruct",
+      "deviceClass": "edge-server-rtx-2080-ti-64g",
+      "executionPath": null,
+      "maxBatch": 2,
+      "conditions": {
+        "runtimeImage": "155.230.35.213:5000/chill/chill-firstfloor@sha256:bc690b8c9583bdf6c2c3d0529ac3bde9bdae4b7399ae6419955d4f58a91e4edc",
+        "executionPath": "firstfloor-ort-cuda-amd64",
+        "memoryLimitBytes": null
+      },
+      "basis": "observed-failure",
+      "observations": [
+        {"source": "git:89a12080", "kind": "runtime-warmup-failure", "batch": 4,
+         "detail": "2026-11-01 13:14Z Softmax RUNTIME_EXCEPTION; not an observed host OOM. Exact worker limit unavailable; class-wide operational cap preserved for review."},
+        {"source": "chill-evidence-store:batch-energy-optimizations/d3c0089e-8ef2-44d9-ac61-14338564bbdf/curve-plan.json",
+         "kind": "frozen-runtime-condition"}
+      ]
+    },
+    {
+      "model": "smolvlm2-500m-video-instruct",
+      "deviceClass": "jetson-orin-nano-8g",
+      "executionPath": "firstfloor-ort-cuda-vlm-arm64",
+      "maxBatch": 0,
+      "conditions": {
+        "runtimeImage": "155.230.35.213:5000/chill/chill-firstfloor@sha256:5d1170a372ea1e445b468a1c40725bc4b077040cc3bd351c12f3a202ea7a4602",
+        "executionPath": "firstfloor-ort-cuda-vlm-arm64",
+        "memoryLimitBytes": null
+      },
+      "basis": "observed-failure",
+      "observations": [
+        {"source": "git:f7394f55", "kind": "runtime-warmup-failure", "batch": 1,
+         "detail": "Whole-combination exclusion is operational policy, not proof that every batch OOMs."},
+        {"source": "chill-evidence-store:batch-energy-optimizations/905024f5-67c6-4b69-b13e-283860d9cda0/curve-plan.json",
+         "kind": "frozen-runtime-condition"},
+        {"source": "ProfilingRun:chill-system/coverage-cd900a1408aa-56ea73e726d2-active-b1-a1#a74c0aba-7cd6-47de-b8d3-ce2bb8179f1c",
+         "kind": "runtime-allocation-failure", "batch": 1, "exitCode": 3,
+         "detail": "Retained runtimeTermination: NvMapMemAllocInternalTagged error 12; FusedMatMul BFCArena allocation failure. Frozen worker memory limit not recovered: 조건 미상."}
+      ]
+    },
+    {
+      "model": "smolvlm2-500m-video-instruct",
+      "deviceClass": "jetson-xavier-nx-8g",
+      "executionPath": "firstfloor-ort-cpu-arm64",
+      "maxBatch": 0,
+      "conditions": {
+        "runtimeImage": "155.230.35.213:5000/chill/chill-firstfloor@sha256:50684bd22fb6f45b2743a050e75624f64b05a99e17246ac52426ff2ff2a87d73",
+        "executionPath": "firstfloor-ort-cpu-arm64",
+        "memoryLimitBytes": 5665580646
+      },
+      "basis": "observed-failure",
+      "observations": [
+        {"source": "git:89de4f85", "kind": "OOMKilled", "batch": 1,
+         "detail": "Whole-combination exclusion retained; no success claim about unexecuted batches."},
+        {"source": "chill-evidence-store:batch-energy-optimizations/4eb27c55-1388-4156-bb90-82c9a12b18f2/curve-plan.json",
+         "kind": "frozen-runtime-condition"},
+        {"source": "ProfilingRun:chill-system/coverage-fe114bc7ad8e-0a8206cfc354-active-b1-a1#77e2b181-8572-46fa-bcd7-482fca97f07c",
+         "kind": "OOMKilled", "batch": 1, "exitCode": 3,
+         "detail": "runtimeTermination.logTail: runtime: OOMKilled; memory limit=5665580646 (5665580646 bytes). Worker exit 3 is distinct from the runtime OOM kill."}
+      ]
+    },
+    {
+      "model": "smolvlm2-500m-video-instruct",
+      "deviceClass": "jetson-xavier-nx-8g",
+      "executionPath": "firstfloor-ort-cuda-vlm-arm64",
+      "maxBatch": 0,
+      "conditions": {
+        "runtimeImage": "155.230.35.213:5000/chill/chill-firstfloor@sha256:216097971c756e030f3ff7efd69e50f4cb35101abfc992416273a8e0a50ae631",
+        "executionPath": "firstfloor-ort-cuda-vlm-arm64",
+        "memoryLimitBytes": null
+      },
+      "basis": "conservative-exclusion",
+      "observations": [
+        {"source": "git:5dc8abb2", "kind": "runtime-start-failure", "batch": 1,
+         "detail": "2026-11-02 02:14Z start runner: EOF; not classified as OOM. Memory exclusion is an operational precaution."},
+        {"source": "chill-evidence-store:batch-energy-optimizations/b7fe27fa-27cb-4d5f-a0ba-caf3bc91a467/curve-plan.json",
+         "kind": "frozen-runtime-condition"},
+        {"source": "ProfilingRun:chill-system/coverage-2e9f503453c3-98bad44f9ced-active-b1-a2#2bcf73ad-5c21-4f0a-93dc-79dc26fe633f",
+         "kind": "runtime-start-failure", "batch": 1, "exitCode": 3,
+         "detail": "Retained runtimeTermination confirms start runner: EOF. No frozen worker memory limit: 조건 미상."}
+      ]
     }
-  },
-  "memoryMaxBatchSource": "lattepanda Smol CPU b2 OOMKilled (exit 137) under the 0.8×allocatable limit 5.98Gi, b1 peak 5.78Gi (2026-11-01 05:49Z); other 8 GB boards have limits 5.3-6.1Gi; RTX 2080 Ti CUDA b4 fails at warmup (Softmax RUNTIME_EXCEPTION, 2026-11-01 13:14Z); orin-nano cuda-vlm fails at b1 the same way (canary 2026-11-01 18:36Z), 0 = whole combination unmeasurable; xavier Smol FP32 CPU b1 OOMKilled under 5.28Gi (2026-11-02 00:13Z); xavier cuda-vlm b1 runner start EOF (canary 2026-11-02 02:14Z)",
+  ],
   "declaredBatchConflictReason": "artifact 선언 batch 집합의 부분 요청 불가",
   "sessions": 3,
   "warmupIterations": 1,
