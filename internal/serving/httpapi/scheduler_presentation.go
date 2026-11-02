@@ -99,6 +99,8 @@ type schedulerReadSnapshot struct {
 	Instances    []schedulerReadInstance    `json:"instances"`
 	Options      []schedulerReadOption      `json:"options"`
 	Reservations []schedulerReadReservation `json:"reservations,omitempty"`
+	ArrivalCount *int                       `json:"arrivalCount,omitempty"`
+	OptionCount  *int                       `json:"optionCount,omitempty"`
 }
 
 type schedulerReadReservation struct {
@@ -148,7 +150,15 @@ type schedulerReadBatch struct {
 }
 
 func (e *schedulerReadEvidence) state(state *servingkube.SchedulerControllerState) schedulerReadState {
-	projected := schedulerReadState{state, e.snapshot(&state.Snapshot), e.decision(&state.Decision)}
+	// The current dashboard reads neither the arrival log nor catalog options.
+	// Keep their counts, without registering profiles reachable only from options.
+	snapshot := state.Snapshot
+	snapshot.Arrivals = nil
+	snapshot.Options = nil
+	projected := schedulerReadState{state, e.snapshot(&snapshot), e.decision(&state.Decision)}
+	arrivals, options := len(state.Snapshot.Arrivals), len(state.Snapshot.Options)
+	projected.Snapshot.ArrivalCount = &arrivals
+	projected.Snapshot.OptionCount = &options
 	for key, value := range e.Profiles {
 		profile := value.(*serving.Profile)
 		batches := make([]schedulerReadBatch, len(profile.Batches))

@@ -86,13 +86,24 @@ drain용 보존 route는 새 요청의 routable로 세지 않는다.
 page/cursor 선택은 바꾸지 않는다. 다른 `view` 값은 `InvalidQuery`로 거절한다.
 compact 응답은 같은 envelope에 `profiles` dictionary를 추가하고, snapshot의 instances/options/
 reservations[].target 및 decision의 keep/target 안 인스턴스의 `profile`만
-`{"$ref":"응답 내 key"}`로 치환한다. nil은 그대로다. dictionary에는 원본 profile 객체를
+`{"$ref":"응답 내 key"}`로 치환한다. nil은 그대로다. history dictionary에는 원본 profile 객체를
 보존한다. profile ID가 key의 기준이며 같은 ID의 다른 보존 값은 별도 suffix key로 남긴다.
 같은 값의 반복만 공유하며 equality는 admission/validation gate가 아니다. 소비자는 이
 필드만 dictionary로 해석한 뒤 기존 화면 계약을 사용한다. SLO, 정책, 설정,
 물리/선택 인스턴스 신원, 사유, 출처와 action acknowledgement 원본은 바꾸지 않는다.
 응답 한 page의 얕은 DTO만 만들며 별도 history scan, raw evidence 복사, decoded cache
 또는 fallback reader는 없다.
+
+현재 `/scheduler?view=compact`, `/scheduler/state?view=compact`는 dashboard에서 읽지 않는
+`snapshot.options`와 `snapshot.arrivals`를 `null`로 투영하고, 정확한 `optionCount`와
+`arrivalCount`를 제공한다. options에만 필요한 profile은 dictionary에 등록하지 않는다.
+현재 instance·decision·reservation이 참조하는 profile은 기존대로 조건·출처·에너지·메모리와
+`batches.durationSampleCount`를 유지하며 raw `durationNanos` 모집단만 보내지 않는다.
+다섯 소비자(`resources`, `scheduler-settings`, `scheduler-transitions`, `scheduler`, `service-hub`)의
+노드·instance·routing·workload·outstanding 요청, decision·SLO·capacity·baseline·cost·action·result는 보존한다.
+무쿼리 full 응답과 history compact, 원본 상태·저장 journal/catalog 계약은 바꾸지 않는다.
+회귀는 500개 option·2,000개 arrival로 8 MiB를 넘는 원본을 두 current envelope 모두 **2 MB 미만**으로
+직렬화하고, 정확한 count·실사용 profile·요청·후보 및 history/원본 보존을 함께 검사한다.
 
 snapshot의 `reservations`는 `{owner,nodes,workloadUIDs,podUIDs,instances,target?,reason?}` 목록이다.
 `target`은 owner의 frozen target이며 실제 상태는 snapshot의 instances/routing에서 읽는다.
