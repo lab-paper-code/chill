@@ -10,8 +10,9 @@ type EvaluationRequest struct {
 	Spec api.EvaluationRunSpec `json:"spec"`
 }
 type EvaluationTemplate struct {
-	Spec    api.EvaluationRunSpec `json:"spec"`
-	Sources map[string]string     `json:"sources"`
+	Spec              api.EvaluationRunSpec `json:"spec"`
+	Sources           map[string]string     `json:"sources"`
+	SourcePublication *EvaluationIdentity   `json:"sourcePublication,omitempty"`
 }
 type EvaluationCheck struct {
 	ID     string `json:"id"`

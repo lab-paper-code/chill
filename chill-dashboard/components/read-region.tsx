@@ -46,11 +46,12 @@ function QueryState({query,children,inlineSource=false}:{query:GateQuery;childre
   const {token} = useSession()
   const denied = query.error?.status === 401 || query.error?.status === 403
   const code = query.error?.data && typeof query.error.data === "object" && "code" in query.error.data && typeof query.error.data.code === "string" ? query.error.data.code : undefined
+  const decodeError=code==="DashboardPrecisionUnsupported"||code==="MeasurementSummaryInvalid"
   // Body codes read as a sentence and next action; status-only errors keep the status sentence. The code stays in 문제 자세히 보기.
   const [sentence, next] = code ? explain(code) : [errorLabels[query.error?.status ?? 0] ?? "정보를 불러오지 못했어요."]
   return <>
     {!token ? <p>먼저 접속해 주세요.</p> : query.isPending && !query.error ? <div className="skeleton" role="status"><span className="sr-only">불러오고 있어요.</span><span /><span /><span /></div> : null}
-    {query.error && <div role="alert" className="notice"><p className="flex items-start gap-2 font-medium"><TriangleAlert className="mt-0.5 size-4 shrink-0 text-fail" aria-hidden="true" />{query.error.unknownOutcome ? "결과를 확인하지 못했어요. 다시 보내기 전에 상태를 확인해 주세요." : code === "DashboardPrecisionUnsupported" ? query.error.body : sentence}</p>{!query.error.unknownOutcome && code !== "DashboardPrecisionUnsupported" && next && <p>{next}</p>}<div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" onClick={() => void query.refetch()} disabled={!token || query.isFetching}><RefreshCw className={query.isFetching ? "animate-spin" : undefined} aria-hidden="true" />다시 불러오기</Button><SourceJSON inline={inlineSource} title="문제 자세히 보기" value={{status:query.error.status,error:query.error.data ?? query.error.body}} /></div>{query.data !== undefined && !denied && <p>아래는 이전에 확인한 정보예요.</p>}</div>}
+    {query.error && <div role="alert" className="notice"><p className="flex items-start gap-2 font-medium"><TriangleAlert className="mt-0.5 size-4 shrink-0 text-fail" aria-hidden="true" />{query.error.unknownOutcome ? "결과를 확인하지 못했어요. 다시 보내기 전에 상태를 확인해 주세요." : decodeError ? query.error.body : sentence}</p>{!query.error.unknownOutcome && !decodeError && next && <p>{next}</p>}<div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" onClick={() => void query.refetch()} disabled={!token || query.isFetching}><RefreshCw className={query.isFetching ? "animate-spin" : undefined} aria-hidden="true" />다시 불러오기</Button><SourceJSON inline={inlineSource} title="문제 자세히 보기" value={{status:query.error.status,error:query.error.data ?? query.error.body}} /></div>{query.data !== undefined && !denied && <p>아래는 이전에 확인한 정보예요.</p>}</div>}
     {token && !denied && query.data !== undefined && children}
   </>
 }

@@ -9,11 +9,14 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
+const measurementViewQuery = "view"
+
 // MeasurementCoverageQuery is transport-owned; the composition root connects
 // this HTTP contract to the shared assessment projection.
 type MeasurementCoverageQuery struct {
 	Batches []int
 	Node    string
+	Summary bool
 }
 
 func ParseMeasurementCoverageQuery(values url.Values) (MeasurementCoverageQuery, error) {
@@ -23,8 +26,15 @@ func ParseMeasurementCoverageQuery(values url.Values) (MeasurementCoverageQuery,
 		Message: "batches는 중복 없는 오름차순 양의 정수, node는 정확한 이름이어야 합니다",
 	}
 	for key, items := range values {
-		if (key != "batches" && key != queryNode) || len(items) != 1 || items[0] == "" {
+		if (key != "batches" && key != queryNode && key != measurementViewQuery) || len(items) != 1 || items[0] == "" {
 			return query, invalid
+		}
+		if key == measurementViewQuery {
+			if items[0] != schedulerSummaryView {
+				return query, invalid
+			}
+			query.Summary = true
+			continue
 		}
 		if key == queryNode {
 			if len(validation.IsDNS1123Subdomain(items[0])) != 0 {

@@ -24,7 +24,7 @@ function harness(query="",responses:Record<string,unknown>={}){
     react:{useState:(value:unknown)=>[typeof value==="function"?value():value,()=>{}],useRef:()=>({current:null}),useEffect:()=>{}},
     "next/link":{default:"a"},"next/navigation":{useSearchParams:()=>params,useRouter:()=>({replace:(url:string)=>urls.push(url)}),usePathname:()=>"/records"},
     "@tanstack/react-query":{useQueryClient:()=>({getQueryState:()=>undefined})},
-    "@/lib/client":{useSession:()=>({token:"token",config:{pageSize:25,maxPageSize:100,maxWindowHours:24}}),useChillQuery:(path:string)=>{calls.push(path);return responses[path]??(path==="v1/workloads"?{data:[{desired:{metadata:{name:"서비스 이름",uid:"service-uid"}}}]}:{data:path.startsWith("v1/observations/scheduler?")?{events:[]}:undefined})}},
+    "@/lib/client":{useSession:()=>({token:"token",config:{pageSize:25,maxPageSize:100,maxWindowHours:24}}),useChillQuery:(path:string)=>{calls.push(path);return responses[path]??(path==="v1/workloads?view=summary"?{data:[{desired:{metadata:{name:"서비스 이름",uid:"service-uid"}}}]}:{data:path.startsWith("v1/observations/scheduler?")?{events:[]}:undefined})}},
     "@/lib/scheduler":scheduler,"@/lib/scheduler-history":history,"@/lib/capacity":capacity,"@/lib/live-display":liveDisplay,"@/lib/date-time":dates,"@/lib/workload-identity":identity,"@/lib/labels":labels,
     "@/components/read-region":{QueryGate:"gate",SourceJSON:"source",SourceExport:"export",StatusBadge:"badge"},
     "@/components/screen":{Screen:"main",Rows:"rows",Row:"row",RowDialog:"dialog",Facts:"facts",Empty:"empty"},
@@ -73,6 +73,21 @@ test("capacity with no returned rows shows purpose-built missing evidence and no
     assert.ok(facts.some(([label,value])=>label==="누락 사유"&&value==="서버 미제공"))
     assert.equal(JSON.stringify(facts).includes("κ"),false)
   }
+})
+
+test("capacity input facts use shared execution without CPU reservations or thread allocations",()=>{
+  const row:capacity.CapacityRow={key:"shared",status:"Built",mu:10,builtAt:"2026-11-01T00:00:00Z",input:{
+    workloadUID:"service-uid",slo:{percentile:99,targetLatencyNanos:100000000},node:{name:"node",uid:"node-uid"},powerMode:"fixed",profileID:"profile",
+    allocation:{gpuUUID:"gpu-uuid",memoryBytes:9007199254740993n},maxBatch:4,completionMarginMS:1,capacityWindowNanos:1000000000,
+    capacityWindows:5,capacityPassingWindows:4,capacityMinimumRequests:100,capacityGridSteps:10,capacityBisectionWidth:.01,capacityTailSamples:20,
+  }}
+  const h=harness("row=shared",{"v1/scheduler/capacity":{data:{rows:[row]},dataUpdatedAt:0}})
+  const tree=h.load("../features/scheduler-capacity.tsx").CapacityEvidence({})
+  const details=nodes(tree).find(node=>typeof node.type==="function"&&node.props.row===row)!
+  const facts=nodes((details.type as (props:Record<string,unknown>)=>Element)(details.props)).filter(node=>node.type==="facts").flatMap(node=>node.props.items as [string,unknown][])
+  assert.ok(facts.some(([label,value])=>label==="GPU UUID"&&value==="gpu-uuid"))
+  assert.ok(facts.some(([label,value])=>label==="메모리"&&value==="9007199254740993 bytes"))
+  assert.equal(facts.some(([label])=>/CPU|스레드/.test(label)),false)
 })
 
 test("whole power shows shared reasons once and retains distinct node reasons and raw export",()=>{

@@ -10,7 +10,7 @@ import * as scheduler from "./scheduler.ts"
 import * as status from "./status.ts"
 import * as coverage from "./measurement-coverage.ts"
 import * as requests from "./measurement-request.ts"
-import type { MeasurementAssessment, OperationCostMeasurement, ProfilesView, ResultRow } from "./read-types.ts"
+import type { MeasurementAssessment, OperationCostMeasurement, ResultRow } from "./read-types.ts"
 
 type Element={type:unknown;props:Record<string,unknown>}
 type Component=(props:Record<string,unknown>)=>unknown
@@ -136,7 +136,7 @@ test("projection selection rejects a same-name replacement UID and closes withou
 
 test("throughput renders actual batch values with current use separate from indeterminate quality",()=>{
   const row={id:"row",batch:1,p95Milliseconds:0,totalJoulesPerItem:null,incrementalJoulesPerItem:2} as ResultRow
-  const profile={id:"frozen-id",nodeName:"device",condition:{logicalModel:"model",deviceClass:"class",powerMode:"mode",artifact:{executionPath:"ort"},cpu:{limit:"1"}},assessment:accepted,resultRows:[row],measuredAt:"2026-11-01T00:00:00Z"} as NonNullable<ProfilesView["profiles"]>[number]
+  const profile={id:"frozen-id",nodeName:"device",condition:{logicalModel:"model",deviceClass:"class",powerMode:"mode",artifact:{executionPath:"ort"}},assessment:accepted,resultRows:[row],measuredAt:"2026-11-01T00:00:00Z"}
   const h=harness("kind=throughput&namespace=ns&node=device",()=>({profiles:[profile],page:{total:7}}))
   const tree=load("../features/scheduler-profiles.tsx",h.modules).SchedulerProfilesPage({})
   const table=elements(tree).find(element=>element.type==="data-table")!,columns=table.props.columns as Column[]
@@ -150,6 +150,7 @@ test("throughput renders actual batch values with current use separate from inde
   assert.equal(text(cell("p95")),"0.00")
   assert.equal(text(cell("totalEnergy")),"미제공")
   assert.equal(text(cell("incrementalEnergy")),"2.0000")
+  assert.doesNotMatch(text(cell("condition")),/CPU|quota|affinity/)
   const server=table.props.server
   assert.ok(server&&typeof server==="object"&&"total" in server)
   assert.equal(server.total,7)

@@ -3,10 +3,10 @@ import { codeText } from "./labels.ts"
 import { nanosToMilliseconds, stringifySchedulerJSON } from "./scheduler.ts"
 import { safeSource } from "./source-export.ts"
 
-export function measurementRequestName(condition:{model:string;node:string;powerMode:string;path:string;cpu:string|null},taken:Set<string>,now=new Date()):string {
+export function measurementRequestName(condition:{model:string;node:string;powerMode:string;path:string},taken:Set<string>,now=new Date()):string {
   const day=`${now.getFullYear()}${String(now.getMonth()+1).padStart(2,"0")}${String(now.getDate()).padStart(2,"0")}`
   const clean=(text:string)=>text.toLowerCase().replace(/[^a-z0-9.-]+/g,"-").replace(/[-.]*\.[-.]*/g,".").replace(/-+/g,"-").slice(0,200).replace(/^[^a-z0-9]+|[^a-z0-9]+$/g,"")
-  const base=clean(`${condition.model}-${condition.node}-${condition.powerMode}-${condition.path}-cpu${condition.cpu??"1"}-${day}`)
+  const base=clean(`${condition.model}-${condition.node}-${condition.powerMode}-${condition.path}-${day}`)
   let name=base
   for(let suffix=2;taken.has(name);suffix++)name=clean(`${base.slice(0,190)}-${suffix}`)
   return name
@@ -63,6 +63,7 @@ export function measurementReasonSummary(reason:string) {
     MeasurementEvidenceMissing:"측정 근거 없음",
     Insufficient:"채택 근거 부족",
     Accepted:"측정 근거 채택",
+    CatalogUnavailable:"카탈로그 조회 불가",
   }
   if(projectionReasons[reason])return projectionReasons[reason]
   if(/No verified catalog profile/i.test(reason))return "현재 조건의 검증된 프로파일 없음"
@@ -131,7 +132,7 @@ export function formatMeasurementTime(value:string|number) {
 }
 export function measurementConditionDiff(before:MeasurementPlanSpec,after:MeasurementPlanSpec) {
   const fields: [string,unknown,unknown][]=[
-    ["CPU",before.cpuQuota,after.cpuQuota],["CPU 코어",before.cpuAffinity,after.cpuAffinity],["배치",before.batchSizes,after.batchSizes],["반복",before.trialsPerBatch,after.trialsPerBatch],["재시도 한도",before.retryLimit,after.retryLimit],
+    ["배치",before.batchSizes,after.batchSizes],["반복",before.trialsPerBatch,after.trialsPerBatch],["재시도 한도",before.retryLimit,after.retryLimit],
     ...Object.keys({...before.state,...after.state}).filter(key=>key!=="candidate").map(key=>[key,(before.state as unknown as Record<string,unknown>)[key],(after.state as unknown as Record<string,unknown>)[key]] as [string,unknown,unknown]),
     ...Object.keys({...before.state.candidate,...after.state.candidate}).map(key=>[key,(before.state.candidate as unknown as Record<string,unknown>)[key],(after.state.candidate as unknown as Record<string,unknown>)[key]] as [string,unknown,unknown]),
     ...(["activeProtocol","idleProtocol"] as const).flatMap(protocol=>Object.keys({...before[protocol],...after[protocol]}).map(key=>[`${protocol==="activeProtocol"?"부하":"유휴"} ${key}`,(before[protocol] as Record<string,unknown>)[key],(after[protocol] as Record<string,unknown>)[key]] as [string,unknown,unknown])),

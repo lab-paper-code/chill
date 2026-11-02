@@ -40,7 +40,7 @@ test("catalog selection pins the exact UID in a Sheet and exposes dedicated edit
   for(const kind of ["models","preprocessors","datasets"]){
     const runner=hooks(),item={metadata:{name:"registered",uid:"original"},spec:kind==="models"?{artifacts:[],executionPaths:[]}:kind==="datasets"?{source:{image:"registry@sha256:1",path:"/data"},fields:[]}:{input:{fields:[]},output:{fields:[]},artifacts:[]}}
     let params=new URLSearchParams({tab:kind,namespace:"selected"})
-    const {CatalogSettingsPage}=load("../features/management.tsx",{...base,react:runner.react,"next/navigation":{useSearchParams:()=>params,useRouter:()=>({replace:(url:string)=>{params=new URL(url,"https://dashboard.test").searchParams}})},"@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/workloads"?[]:{items:[item]}})}})
+    const {CatalogSettingsPage}=load("../features/management.tsx",{...base,react:runner.react,"next/navigation":{useSearchParams:()=>params,useRouter:()=>({replace:(url:string)=>{params=new URL(url,"https://dashboard.test").searchParams}})},"@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/workloads?view=summary"?[]:{items:[item]}})}})
     let tree=elements(runner.render(CatalogSettingsPage,{kind}))
     const table=tree.find(element=>element.type==="table")!
     const columns=table.props.columns as {key:string;value:(item:unknown)=>Tree}[]
@@ -60,7 +60,7 @@ test("catalog selection pins the exact UID in a Sheet and exposes dedicated edit
 
 test("catalog Sheet refuses a same-name replacement instead of exposing its delete actions",()=>{
   const runner=hooks(),current={metadata:{name:"registered",uid:"replacement",resourceVersion:"2"},spec:{artifacts:[],executionPaths:[]}}
-  const {ModelPage}=load("../features/management.tsx",{...base,react:runner.react,"@/lib/client":{useChillMutation:()=>({isPending:false}),useChillQuery:(path:string)=>({data:path==="v1/models/registered"?current:path==="v1/workloads"?[]:{items:[]}})}})
+  const {ModelPage}=load("../features/management.tsx",{...base,react:runner.react,"@/lib/client":{useChillMutation:()=>({isPending:false}),useChillQuery:(path:string)=>({data:path==="v1/models/registered"?current:path==="v1/workloads?view=summary"?[]:{items:[]}})}})
   const tree=runner.render(ModelPage,{name:"registered",expectedUID:"original",embedded:true}) as Tree
   assert.equal(tree.props.uid,"replacement")
   assert.equal(tree.props.kind,"models")
@@ -70,7 +70,7 @@ test("catalog Sheet refuses a same-name replacement instead of exposing its dele
 test("catalog update retains If-Match and original definition and never auto-retries",async()=>{
   for(const kind of ["models","preprocessors","datasets"]){
     const runner=hooks(),sent:unknown[]=[],current={metadata:{name:"registered",uid:"original",resourceVersion:"7"},spec:{future:"original"}}
-    const {ResourceEditor}=load("../features/management.tsx",{...base,react:runner.react,"@/lib/client":{useChillMutation:()=>({isPending:false,mutateAsync:async(input:unknown)=>{sent.push(input);return {status:200,body:"{}",data:current}}}),useChillQuery:(path:string)=>({data:path===`v1/${kind}/registered`?current:path==="v1/workloads"?[]:{items:[]},refetch:async()=>({data:current})})}})
+    const {ResourceEditor}=load("../features/management.tsx",{...base,react:runner.react,"@/lib/client":{useChillMutation:()=>({isPending:false,mutateAsync:async(input:unknown)=>{sent.push(input);return {status:200,body:"{}",data:current}}}),useChillQuery:(path:string)=>({data:path===`v1/${kind}/registered`?current:path==="v1/workloads?view=summary"?[]:{items:[]},refetch:async()=>({data:current})})}})
     runner.render(ResourceEditor,{kind,name:"registered"})
     const editor=runner.render(ResourceEditor,{kind,name:"registered"}) as Tree
     const state=editor.props.r as {source:unknown;submit:(method:string,body:unknown)=>Promise<void>}
@@ -118,12 +118,13 @@ test("operating sections and numeric, boolean and node Sheets follow URL history
     push:(url:string)=>{params=new URL(url,"https://dashboard.test").searchParams;history.push(params.toString())},
     replace:(url:string)=>{params=new URL(url,"https://dashboard.test").searchParams;history[history.length-1]=params.toString()},
   })}
-  const settings={controls:{placement:true},maxReplicas:3,maxInstances:4,maxCPUs:2,servingMemoryBytes:1048576,capacityWindows:5,excludedNodes:["meter"]}
+  const settings={controls:{placement:true},maxReplicas:3,maxInstances:4,servingMemoryBytes:1048576,capacityWindows:5,excludedNodes:["meter"]}
   const runner=hooks()
   const modules={...base,react:runner.react,"next/navigation":navigation,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({isPending:false}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:path==="v1/scheduler/state"?{results:[]}:undefined})}}
   const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",modules)
   let tree=elements(runner.render(SchedulerSettingsPage))
   assert.equal(tree.find(node=>node.type==="select")!.props.value,"limit")
+  assert.deepEqual((tree.find(node=>node.type==="table")!.props.data as {key:string}[]).map(row=>row.key),["servingMemoryBytes","maxReplicas","maxInstances"])
   ;(tree.find(node=>node.type==="select")!.props.onChange as (event:unknown)=>void)({target:{value:"capacity"}})
   assert.equal(params.get("section"),"capacity")
   assert.equal(params.get("namespace"),"kept")
@@ -166,7 +167,7 @@ test("catalog lists prioritize fields, models and numeric counts while retaining
   }
   for(const [kind,spec] of Object.entries(specs)){
     const runner=hooks(),item={metadata:{name:"catalog",uid:"catalog-uid"},spec}
-    const {CatalogSettingsPage}=load("../features/management.tsx",{...base,"@/lib/labels":labels,react:runner.react,"@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/workloads"?[]:{items:[item]}})}})
+    const {CatalogSettingsPage}=load("../features/management.tsx",{...base,"@/lib/labels":labels,react:runner.react,"@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/workloads?view=summary"?[]:{items:[item]}})}})
     const table=elements(runner.render(CatalogSettingsPage,{kind})).find(node=>node.type==="table")!
     const columns=table.props.columns as {key:string;numeric?:boolean;value:(item:unknown)=>unknown}[]
     const definition=columns.find(column=>column.key==="definition")!.value(item)
@@ -257,7 +258,7 @@ test("routing lookup failure remains visible beside its action even with stale s
 
 test("model details use human titles and independent execution limits while retaining raw source",()=>{
   const runner=hooks(),spec={artifacts:[{name:"internal-file",format:"onnx",source:{image:"registry@sha256:abc",architecture:"arm64",files:["/internal/model.onnx"]}}],executionPaths:[{name:"internal-path",artifact:"internal-file",runtime:{backend:"ort-cpu",settings:{firstfloor:{maxBatchSize:8,maxQueueSize:16,deadlinePolicy:"drop"}}}}]}
-  const {ModelSectionPage}=load("../features/management.tsx",{...base,react:runner.react,"@/lib/labels":labels,"@/lib/client":{useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path==="v1/models/model"?{metadata:{name:"model",uid:"uid"},spec}:path==="v1/workloads"?[]:{items:[]}})}})
+  const {ModelSectionPage}=load("../features/management.tsx",{...base,react:runner.react,"@/lib/labels":labels,"@/lib/client":{useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path==="v1/models/model"?{metadata:{name:"model",uid:"uid"},spec}:path==="v1/workloads?view=summary"?[]:{items:[]}})}})
   const tree=elements(runner.render(ModelSectionPage,{name:"model",section:"files"})),dialogs=tree.filter(node=>node.type==="row-dialog")
   assert.ok(dialogs.every(node=>!String(node.props.label).includes("internal-")))
   const rows=tree.filter(node=>node.type==="tr").map(row=>elements(row).filter(cell=>cell.type==="th"||cell.type==="td").map(cell=>cell.props.children))
@@ -269,7 +270,7 @@ test("model details use human titles and independent execution limits while reta
 
 test("preprocessor summary groups exact image references without losing target architecture or path",()=>{
   const runner=hooks(),image="registry@sha256:shared",spec={input:{fields:[]},output:{fields:[]},artifacts:[{target:{model:"model",artifact:"a"},source:{image,architecture:"arm64",path:"/arm"}},{target:{model:"model",artifact:"b"},source:{image,architecture:"amd64",path:"/x86"}},{target:{model:"model",artifact:"c"},source:{image:"registry@sha256:other",architecture:"arm64",path:"/other"}}]}
-  const {CatalogPage}=load("../features/management.tsx",{...base,react:runner.react,"@/lib/client":{useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path==="v1/preprocessors/prep"?{metadata:{name:"prep",uid:"uid"},spec}:path==="v1/workloads"?[]:{items:[]}})}})
+  const {CatalogPage}=load("../features/management.tsx",{...base,react:runner.react,"@/lib/client":{useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path==="v1/preprocessors/prep"?{metadata:{name:"prep",uid:"uid"},spec}:path==="v1/workloads?view=summary"?[]:{items:[]}})}})
   const summary=elements(runner.render(CatalogPage,{kind:"preprocessors",name:"prep"})).find(node=>typeof node.type==="function"&&node.props.spec===spec)!
   const table=elements((summary.type as (props:Record<string,unknown>)=>unknown)(summary.props)).find(node=>node.type==="table")!
   const rows=table.props.data as [string,string][]
@@ -279,7 +280,7 @@ test("preprocessor summary groups exact image references without losing target a
 
 test("model connected services separate names, observed devices and admission without repeating model",()=>{
   const runner=hooks(),view={desired:{metadata:{name:"service",uid:"service-uid"},spec:{modelRef:{name:"model"},preprocessorRef:{name:"prep"},slo:{}}},admission:true}
-  const {ModelSectionPage,CatalogSettingsPage}=load("../features/management.tsx",{...base,react:runner.react,"@/lib/client":{useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path==="v1/models/model"?{metadata:{name:"model",uid:"model-uid"},spec:{artifacts:[],executionPaths:[]}}:path==="v1/workloads"?[view]:path==="v1/pools"?{workloads:[{workload:{uid:"service-uid"},nodes:[{name:"device",uid:"hidden"}]}]}:{items:[]}})}})
+  const {ModelSectionPage,CatalogSettingsPage}=load("../features/management.tsx",{...base,react:runner.react,"@/lib/client":{useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path==="v1/models/model"?{metadata:{name:"model",uid:"model-uid"},spec:{artifacts:[],executionPaths:[]}}:path==="v1/workloads?view=summary"?[view]:path==="v1/pools"?{workloads:[{workload:{uid:"service-uid"},nodes:[{name:"device",uid:"hidden"}]}]}:{items:[]}})}})
   const table=elements(runner.render(ModelSectionPage,{name:"model",section:"services"})).find(node=>node.type==="table")!
   const columns=table.props.columns as {key:string;value:(row:unknown)=>unknown}[]
   assert.deepEqual(columns.map(column=>column.key),["service","devices","admission"])

@@ -25,6 +25,26 @@ The upstream demo records, accounts/avatars, revenue/time series, marketing link
 
 Scheduler history keeps default/ascending unfiltered reads bounded, including explicit `filter=all`, and returns original append offsets. Current-page counts appear only in the summary table. Live incident order preserves nanoseconds and uses descending sequence for equal timestamps; shared power remains explicitly labelled cluster-wide in service details.
 
+### 표시용 읽기 projection
+
+- 서비스 목록은 `GET /api/v1/workloads?view=summary`를 사용한다. `supportedInputs`는 path·artifact·profiles `{id}`만 전송하며 프로파일 수는 `profiles.length`로 계산한다. 원 조건·근거는 무쿼리 목록/단건 조회에 남는다.
+- 커버리지, 측정 요청 목록, 처리 성능 페이지는 각각 `measurement-coverage?view=summary`, `batch-energy-optimizations?view=summary`, `scheduler/profiles?view=summary&limit=50&offset=…`를 사용한다. 필터·정렬·페이지는 기존 순서로 적용하며 선택 프로파일은 기존 `profile=<id>&limit=1`, 요청 결과는 기존 `/{name}/result` 단건으로 읽는다. 쓰기 URL과 무쿼리 응답은 바뀌지 않는다.
+- 측정 요약의 `readProjection`은 `{version:"measurement-summary.v1",values,shapes}`이다. `~N`은 `values[N]`, `{"$o":[S,...values]}`는 `shapes[S]` 필드 순서의 객체다. dictionary 항목은 앞선 항목만 참조하고 최상위 dictionary 문자열은 원문이다(`~123` 같은 원문도 손실 없이 보존). `lib/measurement-summary.ts`가 정밀 정수 파싱 후 한 번 복원한다. 조건·출처·체크·부모/배치 판정을 공유하며 체크 결과·미확인 사유·null·0·페이지 정보는 그대로다.
+- 디코더는 dictionary 항목별 논리적 확장 노드 수·깊이를 메모하고 각 항목과 최종 응답이 **2,000,000노드 / 깊이 64**를 넘으면 반환 전에 거부한다(컨테이너·원시값 각각 1노드, 루트 깊이 1, 반복 참조는 매번 합산). 저장된 운영 GET 8개를 같은 Go projection에 통과시켜 측정한 최대치는 커버리지 **230,362 / 11**, 측정 요청 **180,000 / 9**, 프로파일 **149,331 / 11**로, 노드 약 8.7배·깊이 약 5.8배 여유다. `CHILL_MEASUREMENT_SUMMARY_DIR`에 Go가 생성한 summary JSON들을 두면 `lib/measurement-summary.test.ts`가 실제 응답 통과 회귀를 실행한다.
+- 측정 summary 디코딩 실패는 공통 `decodeResponse` 경계에서 `ApiError(0, 원문 메시지, {code:"MeasurementSummaryInvalid",message})`로 변환한다. 커버리지·측정 요청·프로파일(요청 작성의 페이지 조회 포함)은 같은 오류 계약을 사용하며 화면 첫 오류 문장에 거부 원인을 표시한다. 요청 작성의 프로파일 페이지 순회가 실패하면 빈 이력으로 양식을 열지 않고 조회 오류를 표시한다. 커버리지 상세의 측정 시각 조회 실패도 디코딩 거부 원인을 표시하며 이미 받은 수치 근거는 유지한다.
+- 요약만 제외하는 미사용 필드: 커버리지 `entities/groups` 역색인(집계·셀별 관계는 유지), 측정 요청 `metadata.managedFields/annotations`, 프로파일 `preparations`. 원본 조회·저장 계약·판정 계산은 변경하지 않는다. relay는 해당 GET 목록에만 정확히 `view=summary`를 허용한다.
+- 이미지 버전은 프로파일 유효성 조건이 아니며 원래 기록된 이미지는 보존한다. 기존 `replaces` annotation의 대상 제외를 먼저 적용한 뒤, 셀(model/class/path/powerMode)마다 `measuredAt`이 가장 최신인 측정 하나를 현재로 선택한다. 최신 측정이 실패·partial이어도 그대로 표시하며 옛 성공으로 fallback하지 않는다. 다른 측정은 모두 history와 단건 원본에 보존한다. usable/problem·checklist 판정은 사실·경고 표시용이며 프로파일 선택이나 측정 요청 진행을 차단하지 않는다. 브라우저는 서버의 현재 조건·판정을 다시 판단하지 않는다.
+- 셀의 `currentMeasurement`는 서버가 선택한 `{id,model,deviceClass,executionPath,powerMode,measuredAt}` 또는 `null`이다. 상세는 이 객체의 현재 측정 ID·시각을 그대로 표시하고, variant의 `profileIds`나 프로파일 조회 결과에서 현재 선택을 추정하지 않는다.
+- 측정 요청 목록은 실행 실패 사유가 있어도 `CatalogUnavailable`을 별도의 `카탈로그 상태: 카탈로그 조회 불가`로 표시한다. 카탈로그 조회 실패를 요청 실행 실패로 바꾸거나 숨기지 않는다.
+- 2026-11-02 운영 GET을 로컬 production projection에 적용한 UTF-8 본문 크기: workloads **17,227,584 → 422,048 B**(29개), 커버리지 **9,218,406 → 1,893,956 B**, 측정 요청 **11,941,797 → 1,677,154 B**, 프로파일 `limit=50&offset=100&sort=model&order=asc` **8,550,682 → 921,387 B**. 배포 후 수치가 아니라 같은 운영 원문에 대한 로컬 projection 결과다.
+
+### CPU 공유 실행·전력 표본 계약
+
+측정 요청·프로파일 조건은 CPU 예약량·상한·코어 고정을 받거나 재생성하지 않는다. 요청 작성·복사·조건 그룹과 필터에서도 이 축을 제거한다. 스케줄러 설정의 CPU 수 상한과 할당의 CPU·스레드 표시는 없으며 GPU·메모리 계약만 사용한다. 평가 정의의 부하 발생기 자원 입력은 요청·한도 메모리만 제공한다. 과거 게시·관측 fixture 원문은 변경하지 않는다.
+
+전력 수집 정책은 간격·수집 기간·요청 제한 시간으로 표시하며 삭제된 `MaxEvents` 상한은 타입과 화면에서 사용하지 않는다.
+
+
 ## Runtime
 
 Node 24.21.0; pnpm 10.33.4. Dependencies are frozen in `pnpm-lock.yaml`. `pnpm install --frozen-lockfile`, then `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`. `pnpm start` binds `0.0.0.0:3000`. Next uses `output: standalone`; a standalone image must include `.next/standalone`, `.next/static` and `public` if present and set `HOSTNAME=0.0.0.0`, `PORT=3000`.

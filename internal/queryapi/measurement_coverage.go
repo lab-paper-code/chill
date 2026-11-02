@@ -4,6 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"time"
+
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
 const (
@@ -79,6 +82,7 @@ type MeasurementCoverageVariant struct {
 	RequestIDs    []string                 `json:"requestIds"`
 	RunIDs        []string                 `json:"runIds"`
 	ProfileIDs    []string                 `json:"profileIds"`
+	MeasuredAt    time.Time                `json:"measuredAt"`
 }
 type MeasurementSupport struct {
 	Verdict string                     `json:"verdict"`
@@ -108,19 +112,20 @@ type MeasurementHistory struct {
 	Status    string `json:"status"`
 }
 type MeasurementCoverageCell struct {
-	ID             string                       `json:"id"`
-	Model          MeasurementIdentity          `json:"model"`
-	DeviceClass    MeasurementIdentity          `json:"deviceClass"`
-	ExecutionPath  string                       `json:"executionPath"`
-	PowerMode      string                       `json:"powerMode"`
-	Support        MeasurementSupport           `json:"support"`
-	Assessment     MeasurementAssessment        `json:"assessment"`
-	VariantCount   int                          `json:"variantCount"`
-	Variants       []MeasurementCoverageVariant `json:"variants"`
-	BatchProgress  *MeasurementBatchProgress    `json:"batchProgress"`
-	Representative *MeasurementRepresentative   `json:"representative"`
-	FailureSummary []MeasurementFailure         `json:"failureSummary"`
-	History        []MeasurementHistory         `json:"history"`
+	ID                 string                                  `json:"id"`
+	Model              MeasurementIdentity                     `json:"model"`
+	DeviceClass        MeasurementIdentity                     `json:"deviceClass"`
+	ExecutionPath      string                                  `json:"executionPath"`
+	PowerMode          string                                  `json:"powerMode"`
+	Support            MeasurementSupport                      `json:"support"`
+	Assessment         MeasurementAssessment                   `json:"assessment"`
+	VariantCount       int                                     `json:"variantCount"`
+	Variants           []MeasurementCoverageVariant            `json:"variants"`
+	BatchProgress      *MeasurementBatchProgress               `json:"batchProgress"`
+	Representative     *MeasurementRepresentative              `json:"representative"`
+	FailureSummary     []MeasurementFailure                    `json:"failureSummary"`
+	CurrentMeasurement *profilederivation.MeasurementSelection `json:"currentMeasurement"`
+	History            []MeasurementHistory                    `json:"history"`
 }
 type MeasurementCoverageSourceError struct {
 	Code      string `json:"code"`

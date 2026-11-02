@@ -74,7 +74,7 @@ export function powerPolicyFacts(event:Pick<SchedulerObservation,"powerSampling"
   return [
     ...(sampling?[
       ["표본 간격 (초)",seconds(sampling.Interval)],["수집 기간 (초)",seconds(sampling.Duration)],
-      ["요청 제한 시간 (초)",seconds(sampling.RequestTimeout)],["최대 표본 수 (개)",powerNumber(sampling.MaxEvents)],
+      ["요청 제한 시간 (초)",seconds(sampling.RequestTimeout)],
     ] as [string,string][]:[["표본 수집 정책","미제공"]] as [string,string][]),
     ...(coverage?[
       ["경계 허용 거리 (초)",seconds(coverage.MaximumBoundaryDistance)],["최소 관측 비율 (%)",powerNumber(coverage.MinimumCoverage*100)],

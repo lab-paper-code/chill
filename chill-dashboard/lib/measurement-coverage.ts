@@ -7,12 +7,10 @@ export function deviceLabel(name:string) {
   return name.replace(/^edge-server-/,"").replace(/^jetson-agx-orin-/,"AGX Orin ").replace(/^jetson-orin-nano-/,"Orin Nano ").replace(/-/g," ")
 }
 export function conditionLabel(condition:Record<string,unknown>) {
-  const cpu=condition.cpu as {request?:string;limit?:string;affinityCPUs?:number[]}|undefined
   const source=condition.metricSource as {nodeName?:string}|undefined
-  const state=condition.state as {targetNode?:string;cpuRequest?:string}|undefined
+  const state=condition.state as {targetNode?:string}|undefined
   const active=condition.activeProtocol as {dataset?:{name?:string}|string}|undefined
-  const affinity=cpu?.affinityCPUs??condition.cpuAffinity as number[]|undefined
-  return `Node ${source?.nodeName??state?.targetNode??condition.nodeUID??"미지정"} / CPU ${cpu?.limit||cpu?.request||condition.cpuQuota||state?.cpuRequest||"미지정"}${affinity?.length?` (코어 ${affinity.join(",")})`:""} / 데이터셋 ${typeof active?.dataset==="string"?active.dataset:active?.dataset?.name??"미지정"}`
+  return `Node ${source?.nodeName??state?.targetNode??condition.nodeUID??"미지정"} / 데이터셋 ${typeof active?.dataset==="string"?active.dataset:active?.dataset?.name??"미지정"}`
 }
 export function powerModeLabel(name:string,activeWatts:readonly number[]=[]) {
   const watts=activeWatts.filter(Number.isFinite)
@@ -65,9 +63,8 @@ export function coverageModes(cells:MeasurementCoverageCell[]) {
 }
 export function coverageVariant(cell:MeasurementCoverageCell,id?:string) {
   return cell.variants.find(variant=>variant.id===id)
-    ??cell.variants.find(variant=>!variant.assessment.reasons.some(reason=>reason.code==="PreviousRuntime")&&variant.assessment.displayStatus===cell.assessment.displayStatus)
+    ??cell.variants.find(variant=>variant.assessment.displayStatus===cell.assessment.displayStatus)
     ??cell.variants.find(variant=>variant.id===cell.representative?.variantId)
-    ??cell.variants.find(variant=>!variant.assessment.reasons.some(reason=>reason.code==="PreviousRuntime"))
     ??cell.variants[0]
 }
 export function coverageRepresentative(cell:MeasurementCoverageCell):MeasurementCoverageCell["representative"] {
@@ -76,7 +73,7 @@ export function coverageRepresentative(cell:MeasurementCoverageCell):Measurement
 }
 export function coverageProgress(cell:MeasurementCoverageCell) {
   const variant=coverageVariant(cell)
-  return cell.batchProgress??(variant?.assessment.reasons.some(reason=>reason.code==="PreviousRuntime")?null:variant?.batchProgress??null)
+  return cell.batchProgress??variant?.batchProgress??null
 }
 export const coverageMeasurementStates = {usable:"측정 있음",review:"검토 필요",insufficient:"부족",problem:"문제",running:"진행",unmeasured:"미측정",unknown:"미확인",unsupported:"지원 안 함"}
 export function coverageMeasurementStatus(cell:MeasurementCoverageCell,inventory?:InventoryView):MeasurementDisplayStatus {
@@ -86,7 +83,7 @@ export function coverageMeasurementStatus(cell:MeasurementCoverageCell,inventory
   return progress?.target.length&&!progress.target.every(batch=>progress.measured.includes(batch))?"insufficient":"usable"
 }
 export function coverageQuality(cell:MeasurementCoverageCell) {
-  const assessments=cell.variants.length?cell.variants.filter(variant=>!variant.assessment.reasons.some(reason=>reason.code==="PreviousRuntime")).map(variant=>variant.assessment):[cell.assessment]
+  const assessments=cell.variants.length?cell.variants.map(variant=>variant.assessment):[cell.assessment]
   const checks=assessments.flatMap(assessment=>assessment.checklist?.checks??[])
   const labels:Record<string,string>={ActiveTrials:"실행 반복 부족",IdleTrials:"유휴 반복 부족",IncrementalConfidence:"오차 범위 미확인",ClientLatency:"지연 표본 미확인",PowerSource:"전력 출처 미확인",FrozenPowerWindowPolicy:"전력 기록 기준 미확인",ExactConditionLineage:"측정 조건 연결 미확인",TargetBatch:"배치 근거 미확인",DatasetInputContract:"입력 연결 미확인"}
   const reasons=[...new Map(checks.filter(check=>check.result!=="pass").map(check=>[check.code,{code:check.code,label:labels[check.code]??"기타 품질 확인"}])).values()]
@@ -129,7 +126,7 @@ export function coverageBatchState(progress:BatchProgress|null,batch:number) {
 }
 
 export function coverageProfileQuery(cell:MeasurementCoverageCell) {
-  return new URLSearchParams({model:cell.model.name,deviceClass:cell.deviceClass.name,path:cell.executionPath,powerMode:cell.powerMode,limit:"50"})
+  return new URLSearchParams({view:"summary",model:cell.model.name,deviceClass:cell.deviceClass.name,path:cell.executionPath,powerMode:cell.powerMode,limit:"50"})
 }
 export function coverageFailureHref(failure:MeasurementFailure,namespace:string,returnTo:string) {
   if(failure.runName)return `/measurements/requests?${new URLSearchParams({namespace:failure.runNamespace||namespace,run:failure.runName,uid:failure.runId.split("/").at(-1)??"",returnTo})}`
@@ -172,14 +169,14 @@ export function stableCondition(value:unknown):string {
   return JSON.stringify(value, (_key,item) => typeof item === "bigint" ? item.toString() : item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a],[b]) => a.localeCompare(b))) : item)
 }
 export function planVariant(spec:MeasurementPlanSpec) {
-  return stableCondition({state:spec.state,cpuQuota:spec.cpuQuota,cpuAffinity:spec.cpuAffinity,activeProtocol:spec.activeProtocol,idleProtocol:spec.idleProtocol})
+  return stableCondition({state:spec.state,activeProtocol:spec.activeProtocol,idleProtocol:spec.idleProtocol})
 }
-export type RunSpec = {candidate?:MeasurementPlanSpec["state"]["candidate"];targetNode?:string;cpuRequest?:string;measurement?:{batch?:number;cpuQuota?:string;cpuAffinity?:number[];workloadMode?:string;dataset?:string;[key:string]:unknown};metricObservation?:unknown}
+export type RunSpec = {candidate?:MeasurementPlanSpec["state"]["candidate"];targetNode?:string;measurement?:{batch?:number;workloadMode?:string;dataset?:string;[key:string]:unknown};metricObservation?:unknown}
 export const runSpec = (run:ProfilingRun) => run.spec as RunSpec
 export function runGroupKey(run:ProfilingRun) {
   const spec = runSpec(run), {batch:_batch,...measurement} = spec.measurement ?? {}
   void _batch
-  return stableCondition({namespace:run.namespace,candidate:spec.candidate,targetNode:spec.targetNode,cpuRequest:spec.cpuRequest,measurement,metricObservation:spec.metricObservation})
+  return stableCondition({namespace:run.namespace,candidate:spec.candidate,targetNode:spec.targetNode,measurement,metricObservation:spec.metricObservation})
 }
 export function currentRunCondition(run:ProfilingRun,type:string) {
   return run.status.conditions?.find(condition => condition.type === type && condition.observedGeneration === run.generation)

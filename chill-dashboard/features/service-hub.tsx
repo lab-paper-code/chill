@@ -39,11 +39,11 @@ export function useServiceSignals(view?: WorkloadView): ServiceSignals {
   return { pools, scheduler, observations, instances }
 }
 
-export function ServiceAdmission({ view }: { view: WorkloadView }) {
+export function ServiceAdmission({ view }: { view: Pick<WorkloadView, "admission"> }) {
   return <StatusCell axis="접수 허용" label={view.admission ? "허용" : "차단"} tone={view.admission ? "ok" : "warn"} />
 }
 
-export function ServiceReadiness({ view }: { view: WorkloadView }) {
+export function ServiceReadiness({ view }: { view: Pick<WorkloadView, "reason" | "readiness"> }) {
   const reason = view.reason && statusLabel(view.reason)
   return <><StatusBadge value={view.readiness} />{reason && reason !== statusLabel(view.readiness) && <span className="block text-xs">{reason}</span>}</>
 }

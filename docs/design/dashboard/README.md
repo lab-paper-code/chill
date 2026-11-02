@@ -34,6 +34,7 @@
 | 원본·안전 | RFC3339Nano·정밀 정수·null/0 구별. 외부 문자열/JSON은 텍스트, export 복사본에서 credential 제거. API code/field/reason 보존; 문장은 `lib/labels.ts`, 미등록 원본도 보존. |
 | 입력 | 전처리 input/output의 이름·순서·형식·크기를 모든 모델에 동일 적용. firstfloor 고정, ONNX=ort-cpu/ort-cuda, RKNN=rknnlite(rk3588·선언 batch·FP32 rank-3 입력 하나). 도메인 검증은 서버. |
 | 측정·전환 | immutable Run/campaign 요청은 기존 schema/admission/controller 사용. 프로파일은 검증된 성공 Run/campaign, Evidence는 RetainedLoader 검증 경계. 자원 제외는 실제 drain/actuator 계약. 저장 계약 변경은 ADR 0019 원칙. |
+| 커버리지 현재 조건 | 이미지 버전은 프로파일 유효성 조건이 아니며 원래 기록된 이미지는 보존한다. 기존 `replaces` annotation의 대상 제외를 먼저 적용한 뒤, 셀(model/class/path/powerMode)마다 `measuredAt`이 가장 최신인 측정 하나를 현재로 선택한다. 최신 측정이 실패·partial이어도 그대로 표시하며 옛 성공으로 fallback하지 않는다. 다른 측정은 모두 history와 단건 원본에 보존한다. usable/problem·checklist 판정은 사실·경고 표시용이며 프로파일 선택이나 측정 요청 진행을 차단하지 않는다. 브라우저는 서버의 현재 조건·판정을 재판정하지 않는다. |
 | 시간·성능 경계 | 브라우저 왕복=fetch→완전 본문, X-Chill-Relay-Timing=서버 대기 포함 중계 왕복, BFF 자체 비용 별도. 목표 p95 표시 2초/BFF 100ms; Workload 10·요청 10,000/1시간·동시 5·5초 갱신 기준이며 달성 증거 아님. |
 
 ## 3. 라이브 API 계약 v1
@@ -147,6 +148,16 @@ Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.
 | `GET /observations/power` | 명시적 구간의 전체 및 활성 POOL joules와 평균 W, 노드별 값, `complete`, `reasons`, 로컬 보존보다 앞선 구간의 `gapUntil` | 기록의 전력 조회와 장치 전력 범위에 연결한다. 브라우저에서 적분하지 않는다. |
 | `GET /systems`, `GET /inventory` | ChillSystem의 condition과 이유, DeviceClass와 typed 전력모드 actuator, Node | System, Inventory와 Run 목록은 아래 query handler에서 제공한다. |
 | `GET /experiments`, `GET /experiments/{id}` | 완료된 불변 게시·단계 KPI·출처와 선택적 `outcome`. 목록은 `definition` 대신 선택적 `comparisons`, 단건은 `definition` 제공 | §8 정의 기반 reader. 목록 판정은 comparisons와 목록 KPI만 사용하며 항목별 단건 GET을 하지 않는다. |
+
+#### 표시용 요약 읽기 계약
+
+`GET /workloads?view=summary`는 중복 `supportedInputs`를 path·artifact·profiles `{id}`로 줄인다. 개수는 `profiles.length`를 사용하고 중복 count 필드는 보내지 않는다. 전체 조건·출처는 무쿼리/단건에서 보존한다.
+`GET /namespaces/{namespace}/measurement-coverage?view=summary`, `GET .../batch-energy-optimizations?view=summary`, `GET /scheduler/profiles?view=summary&limit=50&offset=…`는 Query API의 표시용 projection이다. 필터·정렬 후 동일한 페이지를 투영한다. 대시보드 커버리지·측정 목록·요청 작성/복사·처리 성능 목록은 이 명시적 query로 전환하고 선택 프로파일과 요청 결과는 기존 단건 계약을 사용한다.
+
+응답의 `readProjection:{version:"measurement-summary.v1",values,shapes}`에서 `~N`은 `values[N]`, `{"$o":[S,...values]}`는 `shapes[S]` 필드 순서의 객체다. dictionary는 앞선 항목만 참조하며 dictionary 최상위 문자열은 원문이다. 조건·출처·필드명·부모/배치 assessment를 한 번 보내고 참조한다. 정밀 정수·체크 결과·판정·미확인 사유·null·0·페이지는 복원 후 동일하다. 커버리지의 미사용 `entities/groups` 역색인, 요청의 `metadata.managedFields/annotations`, 프로파일의 미사용 `preparations`만 요약에서 제외한다. 커버리지 집계와 셀별 요청·Run·프로파일 관계는 유지한다. 무쿼리 응답, 저장·CRD, 판정/체크 생성은 변경하지 않는다.
+디코더는 dictionary 항목별 논리적 노드 수·깊이를 메모하고 각 항목과 최종 응답의 상한을 2,000,000노드·깊이 64로 제한한다. 반복 참조는 매번 합산하며 인라인 과도한 중첩도 재귀 진입 전에 거부한다. 저장된 운영 GET 8개를 Go projection에 적용한 최대 확장 크기는 커버리지 230,362노드/깊이 11, 측정 요청 180,000/9, 프로파일 149,331/11이다.
+
+2026-11-02 운영 원문을 로컬 projection에 적용한 크기(B): workloads 17,227,584→422,048(29개), 커버리지 9,218,406→1,893,956, 측정 요청 11,941,797→1,677,154, 프로파일 `limit=50&offset=100&sort=model&order=asc` 8,550,682→921,387. 각 표시 응답은 2,000,000 B 미만이다. `internal/queryapi` 회귀는 운영 GET fixture 디렉터리 `CHILL_MEASUREMENT_FIXTURE_DIR`를 제공하면 이 상한과 모든 유지 필드의 round-trip을 함께 검사한다.
 
 ### 연결 예정 API (서버 책임)
 

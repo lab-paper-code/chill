@@ -4,16 +4,16 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useState, type ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { ApiError, useChillMutation, useChillQuery, useSession } from "@/lib/client"
+import { ApiError, decodeResponse, useChillMutation, useChillQuery, useSession } from "@/lib/client"
 import { QueryGate, SourceJSON } from "@/components/read-region"
 import { Screen } from "@/components/screen"
 import { PreflightAnswer, preflightConclusion } from "@/features/read-pages"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import type { DatasetResource, PreprocessorResource, ExecutionPath, ModelList, ModelResource, WorkloadView } from "@/lib/domain"
+import type { DatasetResource, PreprocessorResource, ExecutionPath, ModelList, ModelResource, WorkloadSummary } from "@/lib/domain"
 import type { InventoryClass, InventoryNode, MeasurementMutation, MeasurementPlan, MeasurementPlanList, MeasurementPlanSpec, MeasurementPreflight, MeasurementVariant, ProfilesView } from "@/lib/read-types"
 import { datasetGap, requestNumber, requestBatches, requestDefaults, requestInputs, requestTargetBatches, requestConditionChanges, requestPreflightReason, requestRejectionGuidance, requestCheckCurrent, requestCopySource, requestCopyQuery, requestHref, type RequestRejectionGuidance } from "@/lib/measurement-request"
-import { parseSchedulerJSON } from "@/lib/scheduler"
+import { parseMeasurementJSON } from "@/lib/measurement-summary"
 import { deviceLabel, resolveMeasurementPrefill, serverCompatibility, staticCompatibility, type MeasurementPrefill } from "@/lib/measurement-coverage"
 import { useCoverageInventory, useModelCompatibility, useMeasurementCoverage } from "@/features/measurement-coverage"
 import { MeasurementNavigation } from "@/components/measurement-navigation"
@@ -25,9 +25,8 @@ type Step = typeof steps[number]
 const batchChoices = [1, 2, 4, 8, 16]
 const dns1123 = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/
 
-type Advanced = { warmup: number; activeDuration: number; activeWindow: number; activeInterval: number; activeTimeout: number; settling: number; idleDuration: number; idleWindow: number; idleInterval: number; idleTimeout: number; retryLimit: number; affinity: string }
-type NumberKey = Exclude<keyof Advanced, "affinity">
-const advancedFields: [key: NumberKey, label: string, min: number][] = [
+type Advanced = { warmup: number; activeDuration: number; activeWindow: number; activeInterval: number; activeTimeout: number; settling: number; idleDuration: number; idleWindow: number; idleInterval: number; idleTimeout: number; retryLimit: number }
+const advancedFields: [key: keyof Advanced, label: string, min: number][] = [
   ["warmup", "측정 전 예열 횟수", 0],
   ["activeDuration", "측정 시간 · 초", 1],
   ["activeWindow", "전력 기록 시간 · 초", 1],
@@ -42,11 +41,11 @@ const advancedFields: [key: NumberKey, label: string, min: number][] = [
 ]
 type Protocol = { values: Advanced; from: string | null }
 // model, preprocessor and dataset come from the chosen Workload's spec refs (or a copied plan); the API takes catalog names.
-type Draft = { workload: string; model: string; preprocessor: string; dataset: string; explicitPreprocessor?:boolean; explicitDataset?:boolean; deviceClass: string; node: string; path: string; powerMode: string; batchSizes: number[]; trials: number | null; cpu: string | null; protocol: Protocol | null; name: string | null }
-type Context = { models: ModelResource[]; workloads: WorkloadView[]; classes: InventoryClass[]; plans: MeasurementPlan[]; preprocessors: PreprocessorResource[]; datasets: DatasetResource[]; profiles:ProfilesView["profiles"]; prefill?:boolean }
+type Draft = { workload: string; model: string; preprocessor: string; dataset: string; explicitPreprocessor?:boolean; explicitDataset?:boolean; deviceClass: string; node: string; path: string; powerMode: string; batchSizes: number[]; trials: number | null; protocol: Protocol | null; name: string | null }
+type Context = { models: ModelResource[]; workloads: WorkloadSummary[]; classes: InventoryClass[]; plans: MeasurementPlan[]; preprocessors: PreprocessorResource[]; datasets: DatasetResource[]; profiles:ProfilesView["profiles"]; prefill?:boolean }
 
-const emptyDraft: Draft = { workload: "", model: "", preprocessor: "", dataset: "", deviceClass: "", node: "", path: "", powerMode: "", batchSizes: [], trials: null, cpu: null, protocol: null, name: null }
-const blankAdvanced: Advanced = { warmup: NaN, activeDuration: NaN, activeWindow: NaN, activeInterval: NaN, activeTimeout: NaN, settling: NaN, idleDuration: NaN, idleWindow: NaN, idleInterval: NaN, idleTimeout: NaN, retryLimit: NaN, affinity: "" }
+const emptyDraft: Draft = { workload: "", model: "", preprocessor: "", dataset: "", deviceClass: "", node: "", path: "", powerMode: "", batchSizes: [], trials: null, protocol: null, name: null }
+const blankAdvanced: Advanced = { warmup: NaN, activeDuration: NaN, activeWindow: NaN, activeInterval: NaN, activeTimeout: NaN, settling: NaN, idleDuration: NaN, idleWindow: NaN, idleInterval: NaN, idleTimeout: NaN, retryLimit: NaN }
 function copyAdvanced(spec: MeasurementPlanSpec): Advanced {
   const active = spec.activeProtocol, idle = spec.idleProtocol
   return {
@@ -54,7 +53,7 @@ function copyAdvanced(spec: MeasurementPlanSpec): Advanced {
     activeInterval: active.metricObservation?.intervalMilliseconds ?? NaN, activeTimeout: active.metricObservation?.timeoutMilliseconds ?? NaN,
     settling: idle.settlingDurationSeconds ?? NaN, idleDuration: idle.durationSeconds ?? NaN, idleWindow: idle.metricObservation?.durationSeconds ?? NaN,
     idleInterval: idle.metricObservation?.intervalMilliseconds ?? NaN, idleTimeout: idle.metricObservation?.timeoutMilliseconds ?? NaN,
-    retryLimit: spec.retryLimit, affinity: "",
+    retryLimit: spec.retryLimit,
   }
 }
 function fillDefaults(draft:Draft,context:Context,inherited=false):Draft {
@@ -64,12 +63,7 @@ function fillDefaults(draft:Draft,context:Context,inherited=false):Draft {
   const defaults=requestDefaults(filled,context.plans,context.profiles)
   if(!defaults)return filled
   const spec=defaults.spec
-  return {...filled,node:filled.node||spec.state.targetNode,trials:filled.trials??spec.trialsPerBatch,cpu:filled.cpu??spec.cpuQuota??spec.state.cpuRequest??null,protocol:filled.protocol??{values:copyAdvanced(spec),from:defaults.source}}
-}
-function parseAffinity(text: string): number[] | null {
-  const parts = text.split(/[\s,]+/).filter(Boolean)
-  if (parts.some(part => !/^\d+$/.test(part) || Number(part) > 2147483647)) return null
-  return [...new Set(parts.map(Number))].sort((a, b) => a - b)
+  return {...filled,node:filled.node||spec.state.targetNode,trials:filled.trials??spec.trialsPerBatch,protocol:filled.protocol??{values:copyAdvanced(spec),from:defaults.source}}
 }
 function advancedProblem(values: Advanced) {
   const bad = advancedFields.find(([key, , min]) => !Number.isInteger(values[key]) || values[key] < min || values[key] > 2147483647)
@@ -77,7 +71,6 @@ function advancedProblem(values: Advanced) {
   if (values.retryLimit > 10) return "다시 시도할 횟수는 10번까지 정할 수 있어요."
   if (values.activeTimeout >= values.activeInterval || values.idleTimeout >= values.idleInterval) return "전력 기록 대기 한도는 기록 간격보다 짧아야 해요."
   if (values.activeWindow < values.activeDuration || values.idleWindow < values.idleDuration) return "전력 기록 시간은 측정 시간보다 짧을 수 없어요."
-  if (!parseAffinity(values.affinity)) return "CPU 코어 번호는 0 이상의 정수를 쉼표로 나눠 적어 주세요."
   return ""
 }
 const nodeReason = (node: InventoryNode) => node.ready !== "True" ? "지금 준비되지 않았어요" : node.schedulingDisabled ? "새 작업을 받지 않도록 막혀 있어요" : ""
@@ -102,13 +95,11 @@ function view(d: Draft, { models, classes, plans, preprocessors, datasets }: Con
   const dataset=datasets.find(item=>item.metadata.name===d.dataset)
   const protocol: Protocol = d.protocol ?? { values: blankAdvanced, from: null }
   const trials = d.trials ?? 3
-  const cpu = d.cpu ?? "1"
   const powerMode = cls?.powerModes.length === 1 ? cls.powerModes[0].name : d.powerMode
   const declared = artifact?.derivation?.declaredBatchSizes?.length ? artifact.derivation.declaredBatchSizes : null
   const max = path?.runtime.settings?.firstfloor?.maxBatchSize
   const taken = new Set(plans.map(p => p.metadata.name))
-  const name = d.name ?? (model && node && path ? measurementRequestName({...d,powerMode,cpu}, taken) : "")
-  const affinity = parseAffinity(protocol.values.affinity) ?? []
+  const name = d.name ?? (model && node && path ? measurementRequestName({...d,powerMode}, taken) : "")
   function problem(step: Step): string {
     switch (step) {
       case "workload": return !model?"모델을 선택하세요.":!preprocessor?"전처리기를 선택하세요.":!dataset?"데이터셋을 선택하세요.":datasetGap(dataset.spec,preprocessor.spec)
@@ -123,7 +114,7 @@ function view(d: Draft, { models, classes, plans, preprocessors, datasets }: Con
       case "size":
         if (!declared && (!d.batchSizes.length || (max && d.batchSizes.some(b => b > max)))) return max ? `한 번에 처리할 건수를 ${max}건 이하로 하나 이상 골라 주세요.` : "한 번에 처리할 건수를 하나 이상 골라 주세요."
         if (!Number.isInteger(trials) || trials < 3 || trials > 2147483647) return "반복 횟수는 3번 이상이어야 해요."
-        return /^[1-9]\d*$/.test(cpu) ? "" : "CPU 개수를 골라 주세요."
+        return ""
       case "advanced": return advancedProblem(protocol.values)
       case "name":
         if (!name) return "이름을 적어 주세요."
@@ -132,17 +123,15 @@ function view(d: Draft, { models, classes, plans, preprocessors, datasets }: Con
       case "review": return ""
     }
   }
-  return { model, cls, path, protocol, trials, cpu, powerMode, declared, max, taken, name, affinity, problem }
+  return { model, cls, path, protocol, trials, powerMode, declared, max, taken, name, problem }
 }
 function manifest(d: Draft, context: Context, namespace: string) {
   const v = view(d, context)
   const p = v.protocol.values
   const spec: MeasurementPlanSpec = {
-    state: { candidate: { modelSpec: d.model, preprocessor: d.preprocessor, deviceClass: d.deviceClass, executionPath: d.path, powerMode: v.powerMode }, targetNode: d.node, cpuRequest: v.cpu },
+    state: { candidate: { modelSpec: d.model, preprocessor: d.preprocessor, deviceClass: d.deviceClass, executionPath: d.path, powerMode: v.powerMode }, targetNode: d.node },
     activeProtocol: { warmupIterations: p.warmup, durationSeconds: p.activeDuration, dataset: d.dataset, metricObservation: { intervalMilliseconds: p.activeInterval, timeoutMilliseconds: p.activeTimeout, durationSeconds: p.activeWindow } },
     idleProtocol: { settlingDurationSeconds: p.settling, durationSeconds: p.idleDuration, metricObservation: { intervalMilliseconds: p.idleInterval, timeoutMilliseconds: p.idleTimeout, durationSeconds: p.idleWindow } },
-    cpuQuota: v.cpu,
-    ...(v.affinity.length ? { cpuAffinity: v.affinity } : {}),
     trialsPerBatch: v.trials,
     // The CRD forbids batchSizes when the artifact declares its own set.
     ...(v.declared ? {} : { batchSizes: [...d.batchSizes].sort((a, b) => a - b) }),
@@ -156,7 +145,7 @@ function begin(from: string | null, context: Context) {
   const source = from ? context.plans.find(p => p.metadata.name === from) : undefined
   if (!source) return { draft: emptyDraft, index: 0, error: from ? "복사할 측정을 찾지 못해서 처음부터 골라요." : "", copied: false }
   const s = source.spec
-  const draft: Draft = { workload: "", model: s.state.candidate.modelSpec, preprocessor: s.state.candidate.preprocessor, dataset: s.activeProtocol.dataset ?? "", deviceClass: s.state.candidate.deviceClass, node: s.state.targetNode, path: s.state.candidate.executionPath, powerMode: s.state.candidate.powerMode, batchSizes: s.batchSizes ?? [], trials: s.trialsPerBatch, cpu: s.cpuQuota ?? s.state.cpuRequest ?? null, protocol: { values: copyAdvanced(s), from: source.metadata.name }, name: null }
+  const draft: Draft = { workload: "", model: s.state.candidate.modelSpec, preprocessor: s.state.candidate.preprocessor, dataset: s.activeProtocol.dataset ?? "", deviceClass: s.state.candidate.deviceClass, node: s.state.targetNode, path: s.state.candidate.executionPath, powerMode: s.state.candidate.powerMode, batchSizes: s.batchSizes ?? [], trials: s.trialsPerBatch, protocol: { values: copyAdvanced(s), from: source.metadata.name }, name: null }
   const v = view(draft, context)
   const open = steps.findIndex(step => step !== "name" && step !== "review" && v.problem(step))
   return { draft, index: open < 0 ? steps.indexOf("name") : open, error: open < 0 ? "" : v.problem(steps[open]), copied: true }
@@ -184,17 +173,16 @@ function AdvancedFields({ value, set, showErrors, rejection }: { value: Advanced
       const serverIssue=rejection?.fields.includes(key)?"조건 재확인":"",message=showErrors&&issue?issue:serverIssue
       return <label htmlFor={`measurement-${key}`} key={key} className="grid gap-2 text-sm">{label}<Input id={`measurement-${key}`} aria-invalid={!!message} aria-describedby={message?`measurement-${key}-error`:undefined} type="number" inputMode="numeric" min={min} max={key === "retryLimit" ? 10 : 2147483647} step={1} value={Number.isNaN(value[key]) ? "" : value[key]} onChange={event => set({ ...value, [key]: event.target.valueAsNumber })} />{message&&<span id={`measurement-${key}-error`} className="text-destructive">{message}</span>}</label>
     })}
-    <table aria-label="수치 제약" className="w-full text-left text-xs tabular-nums sm:col-span-2"><thead><tr><th>항목</th><th>최소</th><th>최대</th></tr></thead><tbody>{advancedFields.map(([key,label,min])=><tr key={key}><th className="font-normal">{label}</th><td>{min}</td><td>{key==="retryLimit"?10:"제한 없음"}</td></tr>)}<tr><th className="font-normal">CPU 코어 번호</th><td>0</td><td>제한 없음</td></tr></tbody></table>
-    <label htmlFor="measurement-affinity" className="grid gap-2 text-sm sm:col-span-2">사용할 CPU 코어 번호 · 선택<Input id="measurement-affinity" aria-invalid={showErrors&&!parseAffinity(value.affinity)} inputMode="numeric" value={value.affinity} onChange={event => set({ ...value, affinity: event.target.value })} />{showErrors&&!parseAffinity(value.affinity)&&<span className="text-destructive">코어 번호 형식 확인</span>}</label>
+    <table aria-label="수치 제약" className="w-full text-left text-xs tabular-nums sm:col-span-2"><thead><tr><th>항목</th><th>최소</th><th>최대</th></tr></thead><tbody>{advancedFields.map(([key,label,min])=><tr key={key}><th className="font-normal">{label}</th><td>{min}</td><td>{key==="retryLimit"?10:"제한 없음"}</td></tr>)}</tbody></table>
   </div>
 }
 
 export function MeasurementRequestPage() {
   const { config, token } = useSession(), params = useSearchParams(),router=useRouter()
   const from = params.get("from"),namespace=params.get("namespace")??config.namespace
-  const plans = useChillQuery<MeasurementPlanList>(`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`)
+  const plans = useChillQuery<MeasurementPlanList>(`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations?view=summary`,{decoder:parseMeasurementJSON})
   const models = useChillQuery<ModelList>("v1/models")
-  const workloads = useChillQuery<WorkloadView[]>("v1/workloads")
+  const workloads = useChillQuery<WorkloadSummary[]>("v1/workloads?view=summary")
   const preprocessors = useChillQuery<{items:PreprocessorResource[]}>("v1/preprocessors")
   const datasets = useChillQuery<{items:DatasetResource[]}>("v1/datasets")
   const inventory = useCoverageInventory()
@@ -203,10 +191,10 @@ export function MeasurementRequestPage() {
     const all:NonNullable<ProfilesView["profiles"]>=[]
     let offset=0
     for(;;) {
-      const response=await fetch(`/api/chill/v1/scheduler/profiles?${new URLSearchParams({limit:"50",offset:String(offset)})}`,{headers:{Authorization:`Bearer ${token}`},signal,cache:"no-store",credentials:"omit"})
+      const response=await fetch(`/api/chill/v1/scheduler/profiles?${new URLSearchParams({view:"summary",limit:"50",offset:String(offset)})}`,{headers:{Authorization:`Bearer ${token}`},signal,cache:"no-store",credentials:"omit"})
       const text=await response.text()
       if(!response.ok)throw new ApiError(response.status,text,null)
-      const page=parseSchedulerJSON(text) as ProfilesView
+      const page=decodeResponse(text,parseMeasurementJSON) as ProfilesView
       all.push(...page.profiles??[])
       if(page.page?.nextOffset===undefined)return {...page,profiles:all}
       if(page.page.nextOffset<=offset)throw new ApiError(0,"프로파일 페이지가 전진하지 않습니다",null)
@@ -220,9 +208,9 @@ export function MeasurementRequestPage() {
     if(pinned!==params.toString())router.replace(`/measurements/requests/new?${pinned}`,{scroll:false})
   },[copy?.source,namespace,params,router])
   if(params.get("variantId")&&!coverage.data&&!coverage.error)return <Screen title="측정 요청"><p role="status">선택 조건 조회 중</p></Screen>
-  if (!plans.data || !models.data || !workloads.data || !inventory.data || !preprocessors.data || !datasets.data || profiles.isPending) return <Screen back={back} title="측정 요청">
+  if (!plans.data || !models.data || !workloads.data || !inventory.data || !preprocessors.data || !datasets.data || profiles.isPending || profiles.error) return <Screen back={back} title="측정 요청">
     <MeasurementNavigation active="requests" namespace={namespace}/>
-    <QueryGate query={plans}><QueryGate query={models}><QueryGate query={workloads}><QueryGate query={inventory}><QueryGate query={preprocessors}><QueryGate query={datasets}>{null}</QueryGate></QueryGate></QueryGate></QueryGate></QueryGate></QueryGate>
+    <QueryGate query={plans}><QueryGate query={models}><QueryGate query={workloads}><QueryGate query={inventory}><QueryGate query={preprocessors}><QueryGate query={datasets}><QueryGate query={profiles}>{null}</QueryGate></QueryGate></QueryGate></QueryGate></QueryGate></QueryGate></QueryGate>
   </Screen>
   const prefill = resolveMeasurementPrefill(new URLSearchParams(params), namespace, inventory.data)
   const batches=requestBatches(new URLSearchParams(params));if(batches.error)prefill.errors.push(batches.error)
@@ -331,7 +319,7 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
       <div hidden={stage!==1} className="space-y-5">
       <section id="measurement-batches" className="grid gap-4 border-t pt-5 md:grid-cols-2" aria-label="목표 배치와 반복">
         <fieldset className="space-y-3"><legend className="font-semibold">배치 (건)</legend><div className="flex flex-wrap gap-2">{(v.declared??chips).map(batch=><label key={batch} className="inline-flex min-h-11 items-center gap-2 rounded border px-4"><input type="checkbox" name="batchSizes" value={batch} disabled={!!v.declared} checked={!!v.declared||d.batchSizes.includes(batch)} onChange={event=>update({batchSizes:event.target.checked?[...d.batchSizes,batch].sort((a,b)=>a-b):d.batchSizes.filter(item=>item!==batch)})}/>{batch}</label>)}</div>{v.declared&&<p className="text-sm text-muted-foreground">모델 선언 범위</p>}</fieldset>
-        <div className="space-y-4"><label className="grid gap-2 text-sm">배치별 반복 횟수<Input aria-invalid={!!error&&(!Number.isInteger(v.trials)||v.trials<3||v.trials>2147483647)} aria-describedby={error&&v.problem("size")?"measurement-size-error":undefined} type="number" min={3} value={Number.isFinite(v.trials)?v.trials:""} onChange={event=>update({trials:event.target.valueAsNumber})}/></label><label className="grid gap-2 text-sm">CPU 개수<Input aria-invalid={!!error&&!/^[1-9]\d*$/.test(v.cpu)} aria-describedby={error&&v.problem("size")?"measurement-size-error":undefined} value={v.cpu} onChange={event=>update({cpu:event.target.value})}/></label></div>
+        <label className="grid gap-2 text-sm">배치별 반복 횟수<Input aria-invalid={!!error&&(!Number.isInteger(v.trials)||v.trials<3||v.trials>2147483647)} aria-describedby={error&&v.problem("size")?"measurement-size-error":undefined} type="number" min={3} value={Number.isFinite(v.trials)?v.trials:""} onChange={event=>update({trials:event.target.valueAsNumber})}/></label>
         {error&&v.problem("size")&&<p id="measurement-size-error" tabIndex={-1} className="text-sm text-destructive">{v.problem("size")}</p>}
       </section>
       <details id="measurement-conditions" open={!!v.problem("device")||!!v.problem("run")||undefined} className="space-y-4"><summary className="font-semibold">실행 조건·측정 방식</summary>

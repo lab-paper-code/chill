@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery } from "@/lib/client"
 import type { CurvePlanSpec, MeasurementAssessment, ProfilesView, ResultRow } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
+import { parseMeasurementJSON } from "@/lib/measurement-summary"
 import { executionPathLabel, formatMeasurementNumber, formatMeasurementTime } from "@/lib/measurements"
 import { assessmentReasons, measurementQuality, measurementSchedulerUsed } from "@/lib/measurement-assessment"
 import { STATUS_AXES } from "@/lib/status"
@@ -29,16 +30,17 @@ export const conditionRows = (condition:CurvePlanSpec):[string,string][] => [
 export function SchedulerProfilesPage() {
   const params=useSearchParams(),router=useRouter(),tableState=useServerTable(),trigger=React.useRef<HTMLAnchorElement|null>(null)
   const search=new URLSearchParams(tableState.query)
-  for(const key of ["q","model","deviceClass","node","powerMode","path","cpu","status"]) {const value=params.get(key);if(value)search.set(key,value)}
-  const query=useChillQuery<ProfilesView>(`v1/scheduler/profiles?${search}`,{decoder:parseSchedulerJSON})
+  search.set("view","summary")
+  for(const key of ["q","model","deviceClass","node","powerMode","path","status"]) {const value=params.get(key);if(value)search.set(key,value)}
+  const query=useChillQuery<ProfilesView>(`v1/scheduler/profiles?${search}`,{decoder:parseMeasurementJSON})
   const detail=useChillQuery<ProfilesView>(`v1/scheduler/profiles?${new URLSearchParams({profile:params.get("profile")??"",limit:"1"})}`,{enabled:!!params.get("profile"),decoder:parseSchedulerJSON})
   const selected=detail.data?.profiles?.find(profile=>profile.id===params.get("profile"))??query.data?.profiles?.find(profile=>profile.id===params.get("profile"))
   function href(id:string) {const next=new URLSearchParams(params.toString());next.set("kind","throughput");next.set("profile",id);return `/measurements/results?${next}`}
   return <>
-    <MeasurementFilters editable axes={[{key:"model",label:"모델",values:query.data?.filters?.models??[]},{key:"deviceClass",label:"장치 종류",values:query.data?.filters?.deviceClasses??[]},{key:"node",label:"장치",values:query.data?.filters?.nodes??[]},{key:"powerMode",label:"전력모드",values:query.data?.filters?.powerModes??[]},{key:"path",label:"실행 경로",values:query.data?.filters?.paths??[]},{key:"cpu",label:"CPU quota",values:query.data?.filters?.cpus??[]}]}/>
+    <MeasurementFilters editable axes={[{key:"model",label:"모델",values:query.data?.filters?.models??[]},{key:"deviceClass",label:"장치 종류",values:query.data?.filters?.deviceClasses??[]},{key:"node",label:"장치",values:query.data?.filters?.nodes??[]},{key:"powerMode",label:"전력모드",values:query.data?.filters?.powerModes??[]},{key:"path",label:"실행 경로",values:query.data?.filters?.paths??[]}]}/>
     <QueryGate query={query}><DataTable searchable={false} data={query.data?.profiles??[]} server={{...tableState,total:query.data?.page?.total??0,busy:query.isFetching}} columns={[
       {key:"model",label:"모델",sortValue:p=>p.condition.logicalModel,value:p=><Link className="min-w-0 whitespace-normal [overflow-wrap:anywhere] text-primary underline" href={href(p.id)} scroll={false} onClick={event=>{trigger.current=event.currentTarget}}>{p.condition.logicalModel}</Link>},
-      {key:"condition",label:"장치·조건",value:p=><div className="grid min-w-0 gap-1 text-xs [overflow-wrap:anywhere]"><span>{p.nodeName}</span><span>{p.condition.deviceClass}</span><span>{p.condition.powerMode}</span><span>{executionPathLabel(p.condition.artifact.executionPath)}</span><span>CPU {p.condition.cpu.limit} / {p.condition.cpu.affinityCPUs?.join(", ")??"미기록"}</span>{p.reuse&&<span>재사용 대상 {p.reuse.targetNode.name}</span>}</div>},
+      {key:"condition",label:"장치·조건",value:p=><div className="grid min-w-0 gap-1 text-xs [overflow-wrap:anywhere]"><span>{p.nodeName}</span><span>{p.condition.deviceClass}</span><span>{p.condition.powerMode}</span><span>{executionPathLabel(p.condition.artifact.executionPath)}</span>{p.reuse&&<span>재사용 대상 {p.reuse.targetNode.name}</span>}</div>},
       {key:"batch",label:"배치",unit:"건",numeric:true,value:p=><ProfileBatches rows={p.resultRows} batches={p.batches}/>},
       {key:"p95",label:"p95",unit:"ms",numeric:true,value:p=><ProfileValues rows={p.resultRows} metric="p95Milliseconds"/>},
       {key:"totalEnergy",label:"총 에너지",unit:"J/건",numeric:true,value:p=><ProfileValues rows={p.resultRows} metric="totalJoulesPerItem"/>},
@@ -56,7 +58,7 @@ export function SchedulerProfilesPage() {
             <div className="flex flex-wrap gap-4"><ProfileUse assessment={selected.assessment}/><ProfileQuality assessment={selected.assessment}/></div>
             {measurementQuality([selected.assessment]).state==="unknown"&&<ProfileQualityMissing rows={selected.resultRows??[]}/>}
             <ResultRows rows={selected.resultRows??[]} filename={`chill-profile-${selected.id}.csv`} emptyMessage="미제공"/>
-            <Facts label="동결 조건" items={[...conditionRows(selected.condition),["장치",selected.nodeName],["전력모드",selected.condition.powerMode],["실행 경로",executionPathLabel(selected.condition.artifact.executionPath)],["CPU quota",selected.condition.cpu.limit],["CPU affinity",selected.condition.cpu.affinityCPUs?.join(", ")??"미기록"],["측정 시각",formatMeasurementTime(selected.measuredAt)]]}/>
+            <Facts label="동결 조건" items={[...conditionRows(selected.condition),["장치",selected.nodeName],["전력모드",selected.condition.powerMode],["실행 경로",executionPathLabel(selected.condition.artifact.executionPath)],["측정 시각",formatMeasurementTime(selected.measuredAt)]]}/>
             <details><summary className="min-h-11 cursor-pointer py-2">판정 근거</summary><AssessmentDetails assessment={selected.assessment} rows={selected.resultRows}/></details>
             <details><summary className="min-h-11 cursor-pointer py-2">원본·출처</summary><Facts items={[["프로파일 ID",selected.id],["설정 버전",detail.data?.configVersion??"미제공"]]}/><SourceExport value={selected} filename={`chill-profile-${selected.id}.json`}/><SourceJSON inline value={selected} title="동결 조건·원본 수치"/></details>
           </>:<StatusCell axis="측정" label="미확인" tone="idle" reason="현재 목록에 선택한 프로파일 ID 없음"/>}

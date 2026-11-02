@@ -3,14 +3,20 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 )
@@ -234,6 +240,14 @@ func TestExperimentSummaryMissingIsNotStoreFailure(t *testing.T) {
 			} else if missing || !errors.Is(err, tc.err) {
 				t.Fatalf("store failure hidden: %v", err)
 			}
+			list, err := service.list(context.Background())
+			if tc.err == nil {
+				if err != nil || list.Items == nil || len(list.Items) != 0 {
+					t.Fatalf("missing publication list=%+v err=%v", list, err)
+				}
+			} else if !errors.Is(err, tc.err) {
+				t.Fatalf("list store failure changed: %v", err)
+			}
 		})
 	}
 	store := &experimentMemoryStore{}
@@ -348,5 +362,158 @@ func assertPublicationFields(
 	if string(list.Items[0].Comparisons) != `[{"left":{"stageID":"baseline"},"future":true}]` ||
 		len(detail.Comparisons) != 0 || len(list.Items[1].Comparisons) != 0 || len(list.Items[2].Comparisons) != 0 {
 		t.Fatalf("list-only comparison projection changed: detail=%+v list=%+v", detail, list.Items)
+	}
+}
+
+func TestPublicationSummaryConcurrentS3ReadsAreRequestScoped(t *testing.T) {
+	evaluations, request := evaluationFixture(t)
+	from := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+	older := experimentFixture("older", from)
+	definition, err := json.Marshal(struct {
+		Spec any `json:"spec"`
+	}{request.Spec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	older.Definition = definition
+	newest := experimentFixture("newest-without-definition", from.Add(time.Hour))
+	objects := &experimentMemoryStore{}
+	olderKey := objects.add(t, older)
+	newestKey := objects.add(t, newest)
+
+	var mu sync.Mutex
+	lists := 0
+	reads := map[string]int{}
+	server := httptest.NewServer(publicationS3Handler(t, objects, &mu, &lists, reads))
+	t.Cleanup(server.Close)
+	storage, err := stores3.New(stores3.Config{
+		LogicalStore: "evidence", Bucket: "bucket", Endpoint: server.URL, Region: "region",
+		AccessKeyID: "test", SecretAccessKey: "test", HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evaluations.experiments = &experimentService{
+		reader: storage, lister: storage, store: "evidence", maxBytes: 1 << 20,
+	}
+	evaluations.store = "evidence"
+
+	const pairs = 8
+	start := make(chan struct{})
+	failures := make(chan error, pairs*2)
+	var workers sync.WaitGroup
+	for range pairs {
+		workers.Add(2)
+		go func() {
+			defer workers.Done()
+			<-start
+			result, err := evaluations.template(context.Background())
+			if err != nil {
+				failures <- err
+			} else if result.Sources["harness"] != templateSourcePublication ||
+				result.SourcePublication == nil || result.SourcePublication.UID != older.ID ||
+				result.Spec.Question != request.Spec.Question {
+				failures <- fmt.Errorf("template lost its publication definition: %+v", result)
+			}
+		}()
+		go func() {
+			defer workers.Done()
+			<-start
+			result, err := evaluations.experiments.list(context.Background())
+			if err != nil {
+				failures <- err
+			} else if len(result.Items) != 2 || result.Items[0].ID != newest.ID ||
+				len(result.Items[0].Definition) != 0 || len(result.Items[1].Definition) != 0 {
+				failures <- fmt.Errorf("list projection changed: %+v", result)
+			}
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(failures)
+	for err := range failures {
+		t.Error(err)
+	}
+	mu.Lock()
+	gotLists, gotReads := lists, reads[olderKey]+reads[newestKey]
+	keysRead := len(reads)
+	mu.Unlock()
+	if gotLists != pairs*2 || gotReads != pairs*4 || keysRead != 2 {
+		t.Fatalf("duplicate S3 reads: LIST=%d GET=%d keys=%d, want %d/%d/2",
+			gotLists, gotReads, keysRead, pairs*2, pairs*4)
+	}
+
+	fresh := experimentFixture("fresh", from.Add(2*time.Hour))
+	request.Spec.Question = "fresh publication"
+	fresh.Definition, err = json.Marshal(struct {
+		Spec any `json:"spec"`
+	}{request.Spec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	freshKey := objects.add(t, fresh)
+	mu.Unlock()
+	result, err := evaluations.template(context.Background())
+	if err != nil || result.Sources["harness"] != templateSourcePublication ||
+		result.SourcePublication == nil || result.SourcePublication.UID != fresh.ID ||
+		result.Spec.Question != request.Spec.Question {
+		t.Fatalf("new publication hidden by request reuse: result=%+v err=%v", result, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if lists != pairs*2+1 || reads[olderKey] != pairs*2+1 ||
+		reads[newestKey] != pairs*2+1 || reads[freshKey] != 1 || len(reads) != 3 {
+		t.Fatalf("later request did not read current summaries once: LIST=%d GET=%v", lists, reads)
+	}
+}
+
+func publicationS3Handler(
+	t *testing.T, objects *experimentMemoryStore, mu *sync.Mutex, lists *int, reads map[string]int,
+) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Method != http.MethodGet {
+			t.Errorf("publication read mutated storage: %s", r.Method)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if r.URL.Query().Get("list-type") == "2" {
+			(*lists)++
+			if (r.URL.Path != "/bucket" && r.URL.Path != "/bucket/") ||
+				r.URL.Query().Get("prefix") != httpapi.ExperimentPrefix {
+				t.Errorf("unexpected publication listing: %s", r.URL)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			type listedObject struct {
+				Key  string `xml:"Key"`
+				Size int    `xml:"Size"`
+			}
+			listing := struct {
+				XMLName  xml.Name       `xml:"ListBucketResult"`
+				Contents []listedObject `xml:"Contents"`
+			}{}
+			for key, body := range objects.bodies {
+				listing.Contents = append(listing.Contents, listedObject{Key: key, Size: len(body)})
+			}
+			w.Header().Set("Content-Type", "application/xml")
+			if err := xml.NewEncoder(w).Encode(listing); err != nil {
+				t.Errorf("write S3 listing: %v", err)
+			}
+			return
+		}
+		key := strings.TrimPrefix(r.URL.Path, "/bucket/")
+		reads[key]++
+		body, ok := objects.bodies[key]
+		if !ok || key == r.URL.Path {
+			t.Errorf("read followed non-summary evidence: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, body)
 	}
 }

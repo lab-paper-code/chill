@@ -15,10 +15,11 @@ import { MeasurementNavigation, MeasurementStatus } from "@/components/measureme
 import { MeasurementFilters, useMeasurementCoverage } from "@/features/measurement-coverage"
 import { MeasurementPlanSheet } from "@/features/measurement-plans"
 import { coverageUsageAssessment } from "@/lib/measurement-coverage"
+import { parseMeasurementJSON } from "@/lib/measurement-summary"
 
 export function MeasurementRequestsPage({name,namespace:routeNamespace}:{name?:string;namespace?:string}={}) {
   const params=useSearchParams(),{config}=useSession(),namespace=routeNamespace??params.get("namespace")??config.namespace
-  const query=useChillQuery<MeasurementPlanList>(`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`)
+  const query=useChillQuery<MeasurementPlanList>(`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations?view=summary`,{decoder:parseMeasurementJSON})
   const coverage=useMeasurementCoverage(namespace)
   const plans=(query.data?.items??[]).map(plan=>{const usage=coverageUsageAssessment(coverage.data?.cells??[],plan.spec);return usage&&plan.assessment?{...plan,assessment:{...plan.assessment,scope:usage.scope}}:plan})
   const axes=[{key:"model",label:"모델",values:plans.map(p=>p.spec.state.candidate.modelSpec)},{key:"deviceClass",label:"장치 종류",values:plans.map(p=>p.spec.state.candidate.deviceClass)},{key:"node",label:"Node",values:plans.map(p=>p.spec.state.targetNode)},{key:"powerMode",label:"전력모드",values:plans.map(p=>p.spec.state.candidate.powerMode)},{key:"path",label:"실행 경로",values:plans.map(p=>p.spec.state.candidate.executionPath)}]
@@ -36,7 +37,7 @@ export function MeasurementRequestsPage({name,namespace:routeNamespace}:{name?:s
       {key:"status",label:"측정 / 현재 사용 / 품질",value:p=><MeasurementStatus assessment={p.assessment}/>},
       {key:"completed",label:"완료 회차",unit:"회",numeric:true,value:p=>p.status?.completedTrials??"미제공"},
       {key:"planned",label:"예정 회차",unit:"회",numeric:true,value:()=>"미제공"},
-      {key:"reason",label:"사유",value:p=>{const reasons=p.assessment?.failureSummary?.length?p.assessment.failureSummary:p.assessment?.reasons;return reasons?.length?<ul className="space-y-2">{reasons.map((reason,index)=><li key={index}>{measurementReasonSummary(reason.message||reason.code)}</li>)}</ul>:"미제공"}},
+      {key:"reason",label:"사유",value:p=>{const reasons=p.assessment?.failureSummary?.length?[...p.assessment.failureSummary,...(p.assessment.reasons??[]).filter(reason=>reason.code==="CatalogUnavailable")]:p.assessment?.reasons;return reasons?.length?<ul className="space-y-2">{reasons.map((reason,index)=><li key={index}>{reason.code==="CatalogUnavailable"?`카탈로그 상태: ${measurementReasonSummary(reason.code)}`:measurementReasonSummary(reason.message||reason.code)}</li>)}</ul>:"미제공"}},
       {key:"created",label:"생성 (KST)",sortValue:p=>p.metadata.creationTimestamp,value:p=>formatMeasurementTime(p.metadata.creationTimestamp)},
     ]}/></QueryGate>
     <SourceJSON value={query.data} title="요청 목록 원본"/>

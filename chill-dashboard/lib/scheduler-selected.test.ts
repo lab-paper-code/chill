@@ -22,7 +22,7 @@ test("selected service evidence retains configured percentile, zero prediction, 
   const modules:Record<string,unknown>={
     "react":require("react"),"next/link":{default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
     "next/navigation":{useSearchParams:()=>params,useRouter:()=>({replace:()=>{}})},
-    "@/lib/client":{useSession:()=>({config:{maxWindowHours:24}}),useWorkloadDefinitions:()=>[],useChillQuery:(path:string)=>{calls.push(path);return {data:path==="v1/scheduler"?view:path.startsWith("v1/observations/load?")?load:path==="v1/workloads"?[{desired:{metadata:{uid:definition.uid,name:definition.name}}}]:[],error:null}}},
+    "@/lib/client":{useSession:()=>({config:{maxWindowHours:24}}),useWorkloadDefinitions:()=>[],useChillQuery:(path:string)=>{calls.push(path);return {data:path==="v1/scheduler"?view:path.startsWith("v1/observations/load?")?load:path==="v1/workloads?view=summary"?[{desired:{metadata:{uid:definition.uid,name:definition.name}}}]:[],error:null}}},
     "@/lib/scheduler":scheduler,"@/lib/workload-identity":identity,"@/lib/date-time":dates,
     "@/lib/live-display":liveDisplay,
     "@/features/scheduler-profiles":{},"@/features/scheduler-capacity":{},"@/lib/capacity":{},"@/lib/labels":{statusLabel:(value:string)=>value},"@/lib/source-export":{},

@@ -245,7 +245,7 @@ func (h *Handler) management(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			if id == "" {
-				value, err = h.manager.ListWorkloads(ctx)
+				value, err = h.workloadList(ctx, r.URL.Query().Get("view"))
 			} else {
 				value, err = h.manager.GetWorkload(ctx, id)
 			}
@@ -341,6 +341,20 @@ func (h *Handler) management(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sendJSON(w, status, value)
+}
+
+func (h *Handler) workloadList(ctx context.Context, view string) (any, error) {
+	if view != "" && view != schedulerSummaryView {
+		return nil, &serving.Error{Code: "InvalidQuery", Message: "view must be summary when provided", Field: "view"}
+	}
+	views, err := h.manager.ListWorkloads(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if view == schedulerSummaryView {
+		return servingkube.SummarizeWorkloads(views), nil
+	}
+	return views, nil
 }
 
 func (h *Handler) preprocessors(ctx context.Context, w http.ResponseWriter, r *http.Request, id string) (any, int, error) {

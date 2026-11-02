@@ -14,6 +14,7 @@ import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as coverageHelpers from "./measurement-coverage.ts"
 import * as assessmentHelpers from "./measurement-assessment.ts"
 import * as measurementHelpers from "./measurements.ts"
+import * as measurementSummary from "./measurement-summary.ts"
 
 test("power mode labels identify measured watts rather than inventing a declared limit",()=>{
   assert.equal(powerModeLabel("MODE-1",[10,12]),"MODE-1 · 실측 10.0–12.0 W")
@@ -24,8 +25,8 @@ test("power mode labels identify measured watts rather than inventing a declared
 const model:CoverageModel={name:"model & one",uid:"model-uid",resourceVersion:"1",spec:{artifacts:[{name:"onnx",format:"onnx",source:{image:"image",architecture:"arm64",files:["model.onnx"]}}],executionPaths:[{name:"cpu",artifact:"onnx",runtime:{family:"firstfloor",backend:"ort-cpu"}}]}}
 const cls:InventoryClass={name:"class",uid:"class-uid",resourceVersion:"1",nodeSelector:{},architecture:"arm64",memory:"8Gi",accelerator:"none",powerModes:[{name:"MAXN",actuator:{kind:"Fixed"}},{name:"15W",actuator:{kind:"Fixed"}}],nodes:[{name:"node",uid:"node-uid",resourceVersion:"1",ready:"True",schedulingDisabled:false}]}
 const inventory:InventoryView={readAt:"2026-10-30T00:00:00Z",deviceClassesResourceVersion:"1",nodesResourceVersion:"1",modelSpecsResourceVersion:"1",classes:[cls],models:[model]}
-const plan:MeasurementPlan={metadata:{namespace:"ns",name:"195",uid:"plan-uid",resourceVersion:"1",creationTimestamp:"2026-10-29T00:00:00Z"},spec:{state:{candidate:{modelSpec:model.name,deviceClass:cls.name,executionPath:"cpu",powerMode:"MAXN",preprocessor:"pre"},targetNode:"node",cpuRequest:"1"},activeProtocol:{dataset:"data",durationSeconds:10},idleProtocol:{durationSeconds:10},cpuQuota:"1",trialsPerBatch:3,retryLimit:1,batchSizes:[1]},status:{phase:"Complete",result:{store:"s",key:"result"}}}
-const run:ProfilingRun={namespace:"ns",name:"195b-active",uid:"run-uid",resourceVersion:"1",generation:2,creationTimestamp:"2026-10-30T00:00:00Z",spec:{candidate:plan.spec.state.candidate,targetNode:"node",cpuRequest:"1",measurement:{batch:1,cpuQuota:"1",cpuAffinity:[1],dataset:"data",workloadMode:"active",durationSeconds:10},metricObservation:{durationSeconds:10}},status:{conditions:[{type:"ExecutionComplete",status:"True",observedGeneration:2},{type:"EvidenceVerified",status:"True",observedGeneration:2}],evidence:{store:"s",key:"run"}}}
+const plan:MeasurementPlan={metadata:{namespace:"ns",name:"195",uid:"plan-uid",resourceVersion:"1",creationTimestamp:"2026-10-29T00:00:00Z"},spec:{state:{candidate:{modelSpec:model.name,deviceClass:cls.name,executionPath:"cpu",powerMode:"MAXN",preprocessor:"pre"},targetNode:"node"},activeProtocol:{dataset:"data",durationSeconds:10},idleProtocol:{durationSeconds:10},trialsPerBatch:3,retryLimit:1,batchSizes:[1]},status:{phase:"Complete",result:{store:"s",key:"result"}}}
+const run:ProfilingRun={namespace:"ns",name:"195b-active",uid:"run-uid",resourceVersion:"1",generation:2,creationTimestamp:"2026-10-30T00:00:00Z",spec:{candidate:plan.spec.state.candidate,targetNode:"node",measurement:{batch:1,dataset:"data",workloadMode:"active",durationSeconds:10},metricObservation:{durationSeconds:10}},status:{conditions:[{type:"ExecutionComplete",status:"True",observedGeneration:2},{type:"EvidenceVerified",status:"True",observedGeneration:2}],evidence:{store:"s",key:"run"}}}
 
 test("static declarations prove mismatches but never promise runtime support",()=>{
   const path=model.spec.executionPaths[0]
@@ -35,9 +36,9 @@ test("static declarations prove mismatches but never promise runtime support",()
   assert.equal(staticCompatibility(model,{...path,runtime:{family:"firstfloor",backend:"ort-cuda"}},{...cls,accelerator:"future-cuda-device"}).state,"candidate")
   assert.equal(staticCompatibility(model,{...path,artifact:"missing"},cls).state,"unknown")
 })
-test("run groups retain mode, preprocessing, dataset, CPU affinity and protocol without invented attempts",()=>{
+test("run groups retain mode, preprocessing, dataset and protocol without invented attempts",()=>{
   assert.notEqual(runGroupKey(run),runGroupKey({...run,spec:{...run.spec,candidate:{...plan.spec.state.candidate,powerMode:"15W"}}}))
-  for(const measurement of [{dataset:"other"},{cpuQuota:"2"},{cpuAffinity:[2]},{durationSeconds:11}]) assert.notEqual(runGroupKey(run),runGroupKey({...run,spec:{...run.spec,measurement:{...(run.spec.measurement as object),...measurement}}}))
+  for(const measurement of [{dataset:"other"},{durationSeconds:11}]) assert.notEqual(runGroupKey(run),runGroupKey({...run,spec:{...run.spec,measurement:{...(run.spec.measurement as object),...measurement}}}))
   assert.equal(runGroupKey(run),runGroupKey({...run,spec:{...run.spec,measurement:{...(run.spec.measurement as object),batch:8}}}))
 })
 test("prefill decodes exactly once, rejects duplicate/deleted references, and does not invent multi-Node selection",()=>{
@@ -71,25 +72,25 @@ test("attempts are not invented and return links stay same-origin",()=>{
 })
 test("closing a directly linked cell preserves its matrix and filter context",()=>{
   const cell={id:"cell",model:{uid:"model"},deviceClass:{uid:"class"}}
-  const open=coverageSelection("batches=1,2&cpu=2&variant=old",cell,true)
+  const open=coverageSelection("batches=1,2&node=node&variant=old",cell,true)
   assert.equal(open.get("group"),"model/class")
   assert.equal(open.get("cell"),"cell")
   assert.equal(open.has("variant"),false)
-  const closed=coverageSelection("cell=cell&variant=old&batches=1,2&cpu=2",cell,false)
+  const closed=coverageSelection("cell=cell&variant=old&batches=1,2&node=node",cell,false)
   assert.equal(closed.get("group"),"model/class")
   assert.equal(closed.get("batches"),"1,2")
-  assert.equal(closed.get("cpu"),"2")
+  assert.equal(closed.get("node"),"node")
   assert.equal(closed.has("cell"),false)
   assert.equal(closed.has("variant"),false)
 })
-test("condition choices name Node CPU and dataset without dumping frozen JSON",()=>{
-  assert.equal(conditionLabel({nodeUID:"node-uid",metricSource:{nodeName:"jetsono"},cpu:{limit:"4",affinityCPUs:[2,3]},activeProtocol:{dataset:{name:"images",uid:"dataset-uid"}},runtimeImage:"registry/image@sha256:long"}),"Node jetsono / CPU 4 (코어 2,3) / 데이터셋 images")
-  assert.equal(conditionLabel({}),"Node 미지정 / CPU 미지정 / 데이터셋 미지정")
-  assert.equal(conditionLabel({state:{targetNode:"genesis2",cpuRequest:"2"},cpuQuota:"4",cpuAffinity:[2,3],activeProtocol:{dataset:"images"}}),"Node genesis2 / CPU 4 (코어 2,3) / 데이터셋 images")
+test("condition choices name Node and dataset without dumping frozen JSON",()=>{
+  assert.equal(conditionLabel({nodeUID:"node-uid",metricSource:{nodeName:"jetsono"},activeProtocol:{dataset:{name:"images",uid:"dataset-uid"}},runtimeImage:"registry/image@sha256:long"}),"Node jetsono / 데이터셋 images")
+  assert.equal(conditionLabel({}),"Node 미지정 / 데이터셋 미지정")
+  assert.equal(conditionLabel({state:{targetNode:"genesis2"},activeProtocol:{dataset:"images"}}),"Node genesis2 / 데이터셋 images")
   assert.equal(deviceLabel("jetson-agx-orin-64g"),"AGX Orin 64g")
 })
 
-const cell:MeasurementCoverageCell={id:"cell",model:{name:model.name,uid:model.uid},deviceClass:{name:cls.name,uid:cls.uid},executionPath:"cpu",powerMode:"MAXN",support:{verdict:"Unknown",node:{name:"node",uid:"node-uid"},reasons:[{code:"RuntimeDeclarationMissing",message:"선언 없음"}]},assessment:{status:"unmeasured",displayStatus:"unmeasured",label:"미측정",reasons:[],execution:null,evidence:{available:false,accepted:false,reasons:[]},checklist:{criteriaMet:null,version:"result-checklist.v1",checks:[]},scope:{schedulerUsed:null,reused:false,facts:[]}},variantCount:0,variants:[],batchProgress:{basis:"explicit",target:[1,2,4,8],measured:[1,2],criteriaMet:[1],missing:[4,8],inProgress:[4],unknown:[]},representative:null,failureSummary:[],history:[]}
+const cell:MeasurementCoverageCell={id:"cell",model:{name:model.name,uid:model.uid},deviceClass:{name:cls.name,uid:cls.uid},executionPath:"cpu",powerMode:"MAXN",currentMeasurement:null,support:{verdict:"Unknown",node:{name:"node",uid:"node-uid"},reasons:[{code:"RuntimeDeclarationMissing",message:"선언 없음"}]},assessment:{status:"unmeasured",displayStatus:"unmeasured",label:"미측정",reasons:[],execution:null,evidence:{available:false,accepted:false,reasons:[]},checklist:{criteriaMet:null,version:"result-checklist.v1",checks:[]},scope:{schedulerUsed:null,reused:false,facts:[]}},variantCount:0,variants:[],batchProgress:{basis:"explicit",target:[1,2,4,8],measured:[1,2],criteriaMet:[1],missing:[4,8],inProgress:[4],unknown:[]},representative:null,failureSummary:[],history:[]}
 test("coverage hides proven unsupported paths but retains truly unknown declarations",()=>{
   assert.equal(coveragePathVisible(cell),true)
   assert.equal(coveragePathVisible({...cell,support:{...cell.support,verdict:"Incompatible",reasons:[{code:"RuntimeUnsupported",message:"runtime 미지원"}]}}),false)
@@ -107,14 +108,18 @@ test("batch slots preserve separate evidence, running, missing and unknown state
   assert.equal(coverageVariant(multiple,"first"),first)
 })
 
-test("previous runtime stays selectable without overriding current runtime progress",()=>{
-  const current={id:"current",condition:{},assessment:{...cell.assessment,displayStatus:"usable" as const},batchProgress:{...cell.batchProgress!,measured:cell.batchProgress!.target},resultRows:[],requestIds:[],runIds:[],profileIds:[]}
-  const previous={...current,id:"previous",assessment:{...current.assessment,reasons:[{code:"PreviousRuntime",message:"이전 runtime",sourceIds:[]}]},batchProgress:{...current.batchProgress,measured:[1]}}
-  const mixed={...cell,assessment:current.assessment,batchProgress:null,variants:[previous,current]}
-  assert.equal(coverageVariant(mixed),current)
-  assert.equal(coverageMeasurementStatus(mixed),"usable")
-  assert.equal(coverageVariant(mixed,"previous"),previous)
-  assert.equal(coverageProgress({...mixed,assessment:cell.assessment,variants:[previous]}),null)
+test("current condition variants use status, representative and first fallback without hiding incomplete progress",()=>{
+  const complete={id:"complete",condition:{},assessment:{...cell.assessment,displayStatus:"usable" as const},batchProgress:{...cell.batchProgress!,measured:cell.batchProgress!.target},resultRows:[],requestIds:[],runIds:[],profileIds:[]}
+  const incomplete={...complete,id:"incomplete",batchProgress:{...complete.batchProgress,measured:[1]}}
+  const mixed={...cell,assessment:complete.assessment,batchProgress:null,variants:[incomplete,complete]}
+  assert.equal(coverageVariant(mixed),incomplete)
+  assert.equal(coverageProgress(mixed),incomplete.batchProgress)
+  assert.equal(coverageMeasurementStatus(mixed),"insufficient")
+  assert.equal(coverageVariant(mixed,"complete"),complete)
+  assert.equal(coverageVariant({...mixed,assessment:cell.assessment,representative:{variantId:"complete",batch:1,incrementalJoulesPerItem:1,p95Milliseconds:2}}),complete)
+  assert.equal(coverageVariant({...mixed,assessment:cell.assessment}),incomplete)
+  assert.equal(coverageProgress({...mixed,variants:[incomplete]}),incomplete.batchProgress)
+  assert.equal(coverageMeasurementStatus({...mixed,assessment:{...cell.assessment,displayStatus:"problem"}}),"problem")
 })
 test("coverage requests work for unmeasured cells without exact variants and preserve return filters",()=>{
   const href=new URL(coverageRequestHref(cell,"ns","/measurements?cell=cell&status=unmeasured"),"http://local")
@@ -193,15 +198,16 @@ test("quality reasons come from variant checks, count each cell once and never i
   assert.equal(coverageQuality({...cell,variants:[met]}).label,"기준 충족")
 })
 
-test("cell quality excludes previous runtime checks but retains explicit detail selection",()=>{
+test("all current condition checks affect quality while explicit detail selection remains available",()=>{
   const pass={...cell.assessment,checklist:{...cell.assessment.checklist,criteriaMet:true,checks:[{code:"ActiveTrials",result:"pass" as const,message:"enough",sourceIds:[]}]}}
-  const current={id:"current",condition:{},assessment:pass,batchProgress:cell.batchProgress!,resultRows:[],requestIds:[],runIds:[],profileIds:[]}
-  const previous={...current,id:"previous",assessment:{...pass,reasons:[{code:"PreviousRuntime",message:"이전 runtime",sourceIds:[]}],checklist:{...pass.checklist,criteriaMet:false,checks:[{code:"ActiveTrials",result:"fail" as const,message:"few",sourceIds:[]}]}}}
-  const mixed={...cell,variants:[previous,current]}
-  assert.equal(coverageQuality(mixed).label,"기준 충족")
-  assert.deepEqual(coverageQualityReasons([mixed]),[])
-  assert.equal(coverageVariant(mixed,"previous"),previous)
-  assert.equal(coverageQuality({...cell,variants:[previous]}).label,"판정 불가")
+  const passing={id:"passing",condition:{},assessment:pass,batchProgress:cell.batchProgress!,resultRows:[],requestIds:[],runIds:[],profileIds:[]}
+  const failing={...passing,id:"failing",assessment:{...pass,checklist:{...pass.checklist,criteriaMet:false,checks:[{code:"ActiveTrials",result:"fail" as const,message:"few",sourceIds:[]}]}}}
+  const mixed={...cell,variants:[passing,failing]}
+  assert.equal(coverageQuality(mixed).label,"기준 미충족")
+  assert.deepEqual(coverageQualityReasons([mixed]),[{code:"ActiveTrials",label:"실행 반복 부족",count:1}])
+  assert.equal(coverageVariant(mixed,"failing"),failing)
+  assert.equal(coverageVariant(mixed,"passing"),passing)
+  assert.equal(coverageQuality({...cell,variants:[failing]}).label,"기준 미충족")
 })
 
 test("only explicit failing checks fail quality; absent or unknown evidence stays undecidable",()=>{
@@ -253,6 +259,7 @@ function renderCoverage(query="",extraCells:MeasurementCoverageCell[]=[],freshne
     "@/lib/measurement-assessment":assessmentHelpers,
     "@/lib/measurements":measurementHelpers,
     "@/lib/scheduler":{},
+    "@/lib/measurement-summary":measurementSummary,
     "@/components/measurement-navigation":{MeasurementNavigation:()=>null,MeasurementEvidenceChecks:()=>null},
     "@/components/screen":{Screen:({children,action}:{children?:ReactNode;action?:ReactNode})=>createElement("main",null,createElement("header",null,action),children)},
     "@/components/ui/button":{Button:({children,disabled}:{children?:ReactNode;disabled?:boolean})=>createElement("button",{disabled},children)},
@@ -263,6 +270,29 @@ function renderCoverage(query="",extraCells:MeasurementCoverageCell[]=[],freshne
   runInNewContext(compiled,{exports,require:(name:string)=>name in modules?modules[name]:require(name),URLSearchParams})
   return renderToStaticMarkup(createElement(exports.MeasurementCoveragePage as ComponentType))
 }
+
+test("current measurement identity and time come only from the server even for failed or partial cells",()=>{
+  const current={id:"latest-measurement",model:model.name,deviceClass:cls.name,executionPath:"cpu",powerMode:"MAXN",measuredAt:"2026-11-03T01:02:03Z"}
+  for(const phase of ["failed","partial"] as const)for(const currentMeasurement of [current,null]) {
+    const assessment={...cell.assessment,status:phase,displayStatus:phase==="failed"?"problem" as const:"insufficient" as const,checklist:{...cell.assessment.checklist,criteriaMet:false,checks:[{code:"PowerSource",result:"fail" as const,message:"전력 출처 불일치",sourceIds:[]}]}}
+    const selectedCell:MeasurementCoverageCell={...cell,id:"current-cell",currentMeasurement,assessment,variantCount:1,variants:[{id:"history-variant",condition:{},assessment,batchProgress:cell.batchProgress!,resultRows:[resultRow(30)],profileIds:["older-success"],requestIds:[],runIds:[]}]}
+    const html=renderCoverage("cell=current-cell",[selectedCell])
+    const selected=html.slice(html.indexOf('id="coverage-selected-condition"'))
+    const facts=selected.match(/<table[^>]*aria-label="현재 측정"[^>]*>.*?<\/table>/)?.[0]
+    assert.ok(facts)
+    if(currentMeasurement) {
+      assert.match(facts,/latest-measurement/)
+      assert.match(facts,/<time dateTime="2026-11-03T01:02:03Z">/)
+      assert.ok(facts.includes(measurementHelpers.formatMeasurementTime(current.measuredAt)))
+    } else {
+      assert.match(facts,/없음/)
+      assert.match(facts,/미제공/)
+      assert.doesNotMatch(facts,/<time/)
+    }
+    assert.doesNotMatch(facts,/older-success|history-variant/)
+    assert.match(selected,/<a href="\/measurements\/requests\/new\?/)
+  }
+})
 test("M1–M2 unsupported cells stay visible but only supported cells contribute denominators",()=>{
   const html=renderCoverage()
   assert.equal((html.match(/data-coverage-cell=/g)??[]).length,3)
@@ -346,10 +376,11 @@ test("same-condition request preserves source identities and rejects replaced na
 
 test("coverage keeps active filters visible and omits empty result table headings and repeated absent targets",()=>{
   const noTarget={...cell,id:"no-target",powerMode:"no-target",batchProgress:null}
-  const html=renderCoverage("cell=no-target&status=unmeasured&cpu=2",[noTarget])
+  const html=renderCoverage("cell=no-target&status=unmeasured&node=node",[noTarget])
   assert.match(html,/선택한 필터/)
   assert.match(html,/전체 해제/)
   assert.match(html,/상태: 미측정/)
+  assert.doesNotMatch(html,/CPU 상한|CPU quota|CPU 코어/)
   const result=html.match(/<section><h3>배치별 결과<\/h3>.*?<\/section>/)?.[0]??""
   assert.match(result,/미측정/)
   assert.doesNotMatch(result,/<thead/)

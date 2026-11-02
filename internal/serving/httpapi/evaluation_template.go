@@ -57,6 +57,6 @@ func (h *Handler) evaluationTemplate(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	value.Sources["powerMeasurement"] = "scheduler-settings"
+	value.Sources["powerMeasurement"] = "config"
 	sendJSON(w, http.StatusOK, value)
 }

@@ -45,25 +45,25 @@ export function requestUsedResults(cells:MeasurementCoverageCell[],spec:Measurem
   }).flatMap(variant=>variant.resultRows))
 }
 
-// Reuse actual server values, never invent protocol constants or copy another device's CPU allocation.
+// Reuse actual server values, never invent protocol constants.
 export function requestDefaults(condition:RequestCondition, plans:MeasurementPlan[], profiles:ProfilesView["profiles"]):RequestDefaults|null {
   const same=(model:string,deviceClass:string,node:string,path:string,powerMode:string)=>!!condition.model&&!!condition.deviceClass&&!!condition.path&&!!condition.powerMode&&model===condition.model&&deviceClass===condition.deviceClass&&(!condition.node||node===condition.node)&&path===condition.path&&powerMode===condition.powerMode
   const newest=[...plans].sort((a,b)=>b.metadata.creationTimestamp.localeCompare(a.metadata.creationTimestamp)||a.metadata.name.localeCompare(b.metadata.name))
   const plan=newest.find(plan=>{const s=plan.spec;return same(s.state.candidate.modelSpec,s.state.candidate.deviceClass,s.state.targetNode,s.state.candidate.executionPath,s.state.candidate.powerMode)})
-  if(plan)return {spec:{...plan.spec,cpuAffinity:undefined},source:`기존 요청 ${plan.metadata.name} (${plan.spec.state.candidate.deviceClass}, 동일 조건)`,exact:true}
+  if(plan)return {spec:plan.spec,source:`기존 요청 ${plan.metadata.name} (${plan.spec.state.candidate.deviceClass}, 동일 조건)`,exact:true}
   const profile=profiles?.filter(profile=>{const c=profile.condition;return same(c.logicalModel,c.deviceClass,profile.nodeName,c.artifact.executionPath,c.powerMode)}).sort((a,b)=>b.measuredAt.localeCompare(a.measuredAt)||a.id.localeCompare(b.id))[0]
   if(!profile) {
     const source=newest.find(plan=>plan.status?.phase==="Complete"&&!!condition.model&&plan.spec.state.candidate.modelSpec===condition.model)??newest.find(plan=>plan.status?.phase==="Complete"&&!!condition.path&&plan.spec.state.candidate.executionPath===condition.path)
     if(!source)return null
     const spec=source.spec
-    return {exact:false,source:`기존 요청 ${source.metadata.name} (${spec.state.candidate.deviceClass}, ${spec.state.candidate.modelSpec===condition.model?"같은 모델":"같은 실행 경로"}의 최근 성공 측정 방식)`,spec:{...spec,state:{...spec.state,targetNode:"",cpuRequest:undefined,candidate:{...spec.state.candidate,preprocessor:spec.state.candidate.modelSpec===condition.model?spec.state.candidate.preprocessor:""}},activeProtocol:{...spec.activeProtocol,...(spec.state.candidate.modelSpec===condition.model?{}:{dataset:undefined})},cpuQuota:undefined,cpuAffinity:undefined,batchSizes:undefined,trialsPerBatch:3}}
+    return {exact:false,source:`기존 요청 ${source.metadata.name} (${spec.state.candidate.deviceClass}, ${spec.state.candidate.modelSpec===condition.model?"같은 모델":"같은 실행 경로"}의 최근 성공 측정 방식)`,spec:{...spec,state:{...spec.state,targetNode:"",candidate:{...spec.state.candidate,preprocessor:spec.state.candidate.modelSpec===condition.model?spec.state.candidate.preprocessor:""}},activeProtocol:{...spec.activeProtocol,...(spec.state.candidate.modelSpec===condition.model?{}:{dataset:undefined})},batchSizes:undefined,trialsPerBatch:3}}
   }
   const c=profile.condition,active=c.activeProtocol,idle=c.idleProtocol
   return {exact:true,source:`측정 프로파일 ${profile.id} (동일 조건; 반복 3회는 화면 기본값, 재시도는 직접 지정)`,spec:{
-    state:{candidate:{modelSpec:c.logicalModel,deviceClass:c.deviceClass,executionPath:c.artifact.executionPath,powerMode:c.powerMode,preprocessor:c.preprocessor.name},targetNode:profile.nodeName,cpuRequest:c.cpu.request},
+    state:{candidate:{modelSpec:c.logicalModel,deviceClass:c.deviceClass,executionPath:c.artifact.executionPath,powerMode:c.powerMode,preprocessor:c.preprocessor.name},targetNode:profile.nodeName},
     activeProtocol:{warmupIterations:active.warmupIterations,durationSeconds:active.durationSeconds,dataset:active.dataset?.name,metricObservation:{intervalMilliseconds:active.metricIntervalMilliseconds,timeoutMilliseconds:active.metricTimeoutMilliseconds,durationSeconds:active.metricDurationSeconds}},
     idleProtocol:{settlingDurationSeconds:idle.settlingDurationSeconds,durationSeconds:idle.durationSeconds,metricObservation:{intervalMilliseconds:idle.metricIntervalMilliseconds,timeoutMilliseconds:idle.metricTimeoutMilliseconds,durationSeconds:idle.metricDurationSeconds}},
-    cpuQuota:c.cpu.limit,trialsPerBatch:3,retryLimit:NaN,
+    trialsPerBatch:3,retryLimit:NaN,
   }}
 }
 
@@ -118,7 +118,7 @@ export function requestInputs(model:string,artifact:string,preprocessor:string,d
 // Compare retained facts only: absent fields are unknown, not proof of a change.
 export function requestConditionChanges(previous:Record<string,unknown>,current:Record<string,unknown>|undefined) {
   const changes:{field:string;label:string;before:string;after:string}[]=[]
-  const labels:Record<string,string>={nodeUID:"Node UID","cpu.affinityCPUs":"CPU 코어 고정","cpu.request":"CPU 요청량","cpu.limit":"CPU 상한",runtimeImage:"실행 이미지",powerMode:"전력 모드","artifact.executionPath":"실행 경로","activeProtocol.dataset.name":"데이터셋","preprocessor.name":"전처리기"}
+  const labels:Record<string,string>={nodeUID:"Node UID",runtimeImage:"실행 이미지",powerMode:"전력 모드","artifact.executionPath":"실행 경로","activeProtocol.dataset.name":"데이터셋","preprocessor.name":"전처리기"}
   function compare(before:Record<string,unknown>,after:Record<string,unknown>,prefix="") {
     for(const [key,value] of Object.entries(before)) {
       if(key==="name"&&!prefix||key==="plannedBatchSizes"&&!prefix||value===undefined||value===null||after[key]===undefined||after[key]===null)continue
@@ -151,7 +151,6 @@ export function requestRejectionGuidance(reason:string):RequestRejectionGuidance
   if(/active measurement cannot contain settlingDurationSeconds|curve plan active.*protocol is invalid/i.test(reason))return {target:"measurement-activeDuration",fields:["activeDuration","warmup"],message:"실행 측정 조건 확인",constraints:[["측정 시간 (s)","≥ 1"],["예열 (회)","≥ 0"],["실행 중 안정 시간","미전송"]]}
   if(/batch.*(?:maxBatchSize|positive|valid|supported)|planned batch size/i.test(reason))return {target:"measurement-batches",fields:[],message:"처리 건수 확인",constraints:[["처리 건수","≥ 1 · ≤ 경로 최대 배치"],["모델 선언 배치","전체 선택"]]}
   if(/dataset|preprocessor/i.test(reason))return {target:"request-input-guidance",fields:[],message:"입력 연결 확인",constraints:[["전처리기","모델 파일 연결"],["데이터셋","입력 이름·형식 일치 · 크기 상한 이하"],["UID·이미지 누락","카탈로그 등록 수정"]]}
-  if(/cpu|affinity/i.test(reason))return {target:"measurement-affinity",fields:["affinity"],message:"CPU 조건 확인",constraints:[["CPU 개수","≥ 1"],["코어 번호","≥ 0 · 쉼표 구분 · 미지정 가능"]]}
   if(/power.?mode|target.?node|candidate.*compatible|executionPath/i.test(reason))return {target:"measurement-device",fields:[],message:"실행 장비 조건 확인",constraints:[["실행 노드","준비 상태"],["전력 모드","장치 등록값"],["실행 경로","호환 선언"]]}
   return null
 }

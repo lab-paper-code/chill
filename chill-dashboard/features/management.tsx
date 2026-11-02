@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { backendsByFormat, datatypes, definitionIdentity, formatText, positiveIntegers, resourceHref as href, sloTarget as target, workloadSpec, type ModelResource, type ModelList, type ModelSpec, type ModelArtifact, type ExecutionPath, type TensorContract, fieldFormats, type RawField, type PreprocessorArtifact, type PreprocessorResource, type PreprocessorSpec, type DatasetResource, type DatasetSpec, type WorkloadResource, type WorkloadSpec, type WorkloadView } from "@/lib/domain"
+import type { WorkloadSummary } from "@/lib/domain"
 import { explain } from "@/lib/labels"
 import type { ObservationCohort, PoolsView, SchedulerSettings, SchedulerWorkloadState } from "@/lib/read-types"
 import { parseSchedulerJSON, preciseJSONSupported } from "@/lib/scheduler"
@@ -36,7 +37,7 @@ const emptyArtifact = (): ModelArtifact => ({ name: "", format: "", source: { im
 const emptyPath = (): ExecutionPath => ({ name: "", artifact: "", runtime: { family: "firstfloor", backend: "", settings: { firstfloor: { maxBatchSize: 1, maxQueueSize: 1, deadlinePolicy: "keep" } } } })
 type Referenced = Exclude<Kind, "workloads">
 // Services that use a catalog object by name, by applied definition, or as an in-flight change target.
-const connected = (list: WorkloadView[] | undefined, kind: Referenced, name: string, uid?: string) => list?.filter(w => {
+const connected = (list: WorkloadSummary[] | undefined, kind: Referenced, name: string, uid?: string) => list?.filter(w => {
   const spec = w.desired.spec, applied = w.appliedDefinition, status = w.desired.status?.appliedDefinition
   const [desired, ...uids] = kind === "models" ? [spec.modelRef.name, applied?.model.uid, status?.modelRef.uid]
     : kind === "preprocessors" ? [spec.preprocessorRef.name, applied?.preprocessor.uid, status?.preprocessorRef.uid]
@@ -239,7 +240,7 @@ const impactNotes: Record<Referenced, string> = {
   preprocessors: "전처리기를 바꾸면 연결된 서비스는 새 요청을 잠시 멈추고 기존 요청을 마무리한 뒤 새 전처리기를 적용해요. 연결된 서비스의 데이터셋과 필드가 맞지 않게 되는 변경과 쓰는 서비스가 있는 전처리기의 삭제는 거절돼요.",
   datasets: "데이터셋을 바꿔도 서비스는 멈추지 않고, 이후 측정부터 새 내용을 써요. 연결된 서비스의 전처리기와 필드가 맞지 않게 되는 변경과 쓰는 서비스가 있는 데이터셋의 삭제는 거절돼요.",
 }
-function Impact({ kind, affected }: { kind: Referenced; affected: WorkloadView[] | undefined }) {
+function Impact({ kind, affected }: { kind: Referenced; affected: WorkloadSummary[] | undefined }) {
   return <>
     {affected === undefined ? <p role="status">연결 서비스 미확인</p> : <DataTable searchable={false} data={affected} columns={[{key:"name",label:"연결 서비스",value:view=><Link href={href("workloads",view.desired.metadata.name,view.desired.metadata.uid)}>{view.desired.metadata.name}</Link>},{key:"admission",label:"접수 허용",value:view=><ServiceAdmission view={view}/>}]}/>}
     <details><summary className="min-h-11 cursor-pointer py-2">변경·삭제 제약</summary>{impactNotes[kind]}</details>
@@ -247,7 +248,7 @@ function Impact({ kind, affected }: { kind: Referenced; affected: WorkloadView[]
 }
 // Who still uses a registration: services, and for models the Preprocessors targeting it. An unknown uid stays "".
 type Users = { workloads: { name: string; uid: string }[]; preprocessors: { name: string; uid: string }[] }
-const usersOf = (affected: WorkloadView[] | undefined, preprocessors: PreprocessorResource[] = []): Users => ({
+const usersOf = (affected: WorkloadSummary[] | undefined, preprocessors: PreprocessorResource[] = []): Users => ({
   workloads: (affected ?? []).map(w => ({ name: w.desired.metadata.name, uid: w.desired.metadata.uid })),
   preprocessors: preprocessors.map(p => ({ name: p.metadata.name, uid: p.metadata.uid })),
 })
@@ -272,7 +273,7 @@ function DeleteRow({ kind, r, users, open }: { kind: Kind; r: ResourceState; use
   return <RowDialog label="삭제" hint="쓰는 곳이 있어서 지금은 지울 수 없어요" title={`${josa(who(users), ["이", "가"])} 쓰고 있어서 지울 수 없어요`} description={unblock(kind, users)}><UserRows users={users} /></RowDialog>
 }
 // 409 reference refusals from serving/kube manager.go carry Go %v name lists: "Workloads [a b] and Preprocessors [c]".
-function refusal(failure: { code?: string; message?: string } | null, workloads: WorkloadView[] | undefined): Users | undefined {
+function refusal(failure: { code?: string; message?: string } | null, workloads: WorkloadSummary[] | undefined): Users | undefined {
   const code = failure?.code ?? ""
   const expected = code === "ModelReferenced" ? 2 : ["PreprocessorReferenced", "DatasetReferenced", "ModelArtifactReferenced"].includes(code) ? 1 : 0
   const lists = (failure?.message?.match(/\[[^\]]*\]/g) ?? []).map(list => list.slice(1, -1).split(" ").filter(Boolean))
@@ -287,7 +288,7 @@ function useResource(kind: Kind, name?: string, pinnedUID?:string) {
   const queryClient = useQueryClient()
   const params=useSearchParams(),expectedUID = pinnedUID??params.get("uid")
   const path = `v1/${kind}${name ? `/${encodeURIComponent(name)}` : ""}`
-  const workloads = useChillQuery<WorkloadView[]>("v1/workloads", { poll: !!name && kind !== "workloads" })
+  const workloads = useChillQuery<WorkloadSummary[]>("v1/workloads?view=summary", { poll: !!name && kind !== "workloads" })
   const detail = useChillQuery<Resource>(path, { enabled: !!name, poll: !!name })
   const mutation = useChillMutation()
   const [baseline, setBaseline] = useState<Resource | undefined>()
@@ -317,7 +318,7 @@ function useResource(kind: Kind, name?: string, pinnedUID?:string) {
         const metadata = unwrap(response.data as Resource).metadata
         if (metadata?.uid === source?.metadata.uid) { setBaseline(response.data as Resource); setVersion(metadata.resourceVersion) }
       }
-      await Promise.all([queryClient.invalidateQueries({ queryKey: ["chill", "v1/models"] }), queryClient.invalidateQueries({ queryKey: ["chill", "v1/workloads"] }), queryClient.invalidateQueries({ queryKey: ["chill", "v1/preprocessors"] }), queryClient.invalidateQueries({ queryKey: ["chill", "v1/datasets"] }), name ? detail.refetch() : Promise.resolve()])
+      await Promise.all([queryClient.invalidateQueries({ queryKey: ["chill", "v1/models"] }), queryClient.invalidateQueries({ queryKey: ["chill", "v1/workloads?view=summary"] }), queryClient.invalidateQueries({ queryKey: ["chill", "v1/preprocessors"] }), queryClient.invalidateQueries({ queryKey: ["chill", "v1/datasets"] }), name ? detail.refetch() : Promise.resolve()])
     } catch (error) {
       if (error instanceof ApiError && error.unknownOutcome && method === "DELETE") setDeletedUID(source?.metadata.uid ?? null)
       if (error instanceof ApiError && error.status === 409 && (error.data as { code?: string } | null)?.code === "ResourceVersionConflict") { setConflict(true); await detail.refetch() }
@@ -390,7 +391,7 @@ function Deleted({ kind, name, uid, r }: { kind: Kind; name: string; uid: string
 }
 
 export function ServicesPage() {
-  const workloads = useChillQuery<WorkloadView[]>("v1/workloads")
+  const workloads = useChillQuery<WorkloadSummary[]>("v1/workloads?view=summary")
   const settings = useChillQuery<SchedulerSettings>("v1/scheduler/settings", { decoder: parseSchedulerJSON })
   const params = useSearchParams(), router = useRouter()
   const filter = params.get("filter") ?? "all", returnTo = `/workloads?${params}`
@@ -556,7 +557,7 @@ export function ModelSectionPage({ name, section }: { name: string; section: "fi
 
 export function CatalogSettingsPage({kind}:{kind:Referenced}) {
   const list=useChillQuery<{items:(ModelResource|Catalog)[]}>(`v1/${kind}`)
-  const workloads=useChillQuery<WorkloadView[]>("v1/workloads")
+  const workloads=useChillQuery<WorkloadSummary[]>("v1/workloads?view=summary")
   const params=useSearchParams(),router=useRouter()
   const selected=params.get("name")?{name:params.get("name")!,uid:params.get("uid")??""}:null
   const label=kind==="preprocessors"?"입력 처리":kindLabel(kind)

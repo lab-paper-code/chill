@@ -32,7 +32,7 @@ function harness(query="", responses: Record<string, unknown>={}) {
     "next/navigation": { useSearchParams: () => new URLSearchParams(query), useRouter: () => ({replace:(path:string)=>replacements.push(path)}) },
     "@tanstack/react-query": { useQueryClient: () => ({}) },
     "@/lib/domain": domain, "@/lib/labels": labels, "@/lib/scheduler": scheduler,
-    "@/lib/client": { useSession: () => ({config:{inferTimeoutMs:129000,maxRequestBytes:8388608,pageSize:25}}), useChillQuery: (path: string) => { paths.push(path); return responses[path] ?? { data: path === "v1/workloads" ? [idle] : path.endsWith("/idle") ? idle : undefined, error: null } }, useChillMutation: () => ({ isPending: false }) },
+    "@/lib/client": { useSession: () => ({config:{inferTimeoutMs:129000,maxRequestBytes:8388608,pageSize:25}}), useChillQuery: (path: string) => { paths.push(path); return responses[path] ?? { data: path === "v1/workloads?view=summary" ? [idle] : path.endsWith("/idle") ? idle : undefined, error: null } }, useChillMutation: () => ({ isPending: false }) },
     "@/components/status-cell": { StatusCell: "status-cell" },
     "@/components/data-table": { DataTable: "data-table" },
     "@/components/screen": { Screen: "main", Rows: "rows", RowDialog: "row-dialog", Facts: "facts" },
@@ -64,7 +64,7 @@ test("idle admission remains permission, not actual traffic, in service list and
     assert.equal(cell.type,h.hub.ServiceAdmission)
     assert.equal(h.hub.ServiceAdmission(cell.props).props.label,"허용")
   }
-  assert.ok(h.paths.includes("v1/workloads"))
+  assert.ok(h.paths.includes("v1/workloads?view=summary"))
   assert.ok(h.paths.includes("v1/workloads/idle"))
 })
 

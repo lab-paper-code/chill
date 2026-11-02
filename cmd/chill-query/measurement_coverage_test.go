@@ -32,7 +32,7 @@ func TestCoverageProblemWithoutFailedRequestHasNextAction(t *testing.T) {
 	}
 }
 
-func TestCoverageNeverUnionsDifferentFrozenVariants(t *testing.T) {
+func TestCoverageLatestCellNeverUnionsHistoricalBatches(t *testing.T) {
 	now := time.Now().UTC()
 	base := &measurementCoverageBase{
 		checked: map[string]time.Time{}, failures: map[string]error{}, catalog: httpapi.ProfilesView{},
@@ -101,6 +101,7 @@ func TestCoverageNeverUnionsDifferentFrozenVariants(t *testing.T) {
 		base.requests.Items = append(base.requests.Items, task)
 		base.catalog.Profiles = append(base.catalog.Profiles, serving.Profile{
 			ID: id, Condition: condition, Batches: []serving.BatchProfile{{Batch: batch}},
+			MeasuredAt: time.Unix(int64(index+1), 0),
 		})
 		base.catalog.MeasurementFacts[id] = facts
 	}
@@ -109,8 +110,10 @@ func TestCoverageNeverUnionsDifferentFrozenVariants(t *testing.T) {
 		t.Fatalf("cells %d", len(got.Cells))
 	}
 	cell := got.Cells[0]
-	if cell.VariantCount != 2 || cell.BatchProgress != nil || cell.Representative != nil {
-		t.Fatalf("multiple conditions exposed union: %+v", cell)
+	if cell.VariantCount != 1 || cell.BatchProgress == nil || cell.Representative == nil ||
+		cell.CurrentMeasurement == nil || cell.CurrentMeasurement.ID != coverageRequestID(base.requests.Items[1]) ||
+		len(cell.History) != 2 || len(got.Entities.Profiles) != 2 {
+		t.Fatalf("latest selection lost its history or current batch facts: %+v", cell)
 	}
 	if cell.Assessment.Status != "partial" || *got.Summary.CompleteCellCount != 0 {
 		t.Fatalf("fake complete across protocol conditions: %+v", cell.Assessment)
@@ -189,16 +192,17 @@ func TestCoverageKeepsReviewChecksAcrossVariantAndCell(t *testing.T) {
 	}
 }
 
-func TestCoverageCountsOnlyDeclaredRuntimeVariants(t *testing.T) {
+func TestCoverageCountsMeasurementsRegardlessOfRuntimeImage(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		images   []string
 		missing  []bool
 		expected string
 	}{
-		{"previous insufficient and current usable", []string{"old", "current"}, []bool{true, false}, "usable"},
-		{"previous only", []string{"old"}, []bool{true}, "unmeasured"},
-		{"current insufficient and current usable", []string{"current", "current"}, []bool{true, false}, "insufficient"},
+		{"different image insufficient", []string{"old"}, []bool{true}, "insufficient"},
+		{"different image usable", []string{"old"}, []bool{false}, "usable"},
+		{"same condition latest usable", []string{"old", "current"}, []bool{true, false}, "usable"},
+		{"same condition latest insufficient", []string{"old", "current"}, []bool{false, true}, "insufficient"},
 		{"current usable", []string{"current"}, []bool{false}, "usable"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -212,16 +216,14 @@ func TestCoverageCountsOnlyDeclaredRuntimeVariants(t *testing.T) {
 				Support: queryapi.MeasurementSupport{Verdict: "Compatible"},
 				History: []queryapi.MeasurementHistory{{RequestID: "request"}},
 			}
-			if test.name == "previous only" {
-				cell.Support.Verdict = queryapi.MeasurementSupportUnknown
-			}
 			for i, image := range test.images {
 				progress := queryapi.MeasurementBatchProgress{Target: []int{1, 2}, Measured: []int{1, 2}}
 				if test.missing[i] {
 					progress.Measured = []int{1}
 				}
 				cell.Variants = append(cell.Variants, queryapi.MeasurementCoverageVariant{
-					Condition:  profilederivation.CurvePlanSpec{RuntimeImage: image},
+					ID: image, Condition: profilederivation.CurvePlanSpec{RuntimeImage: image},
+					MeasuredAt: time.Unix(int64(i+1), 0),
 					ProfileIDs: []string{"profile"}, BatchProgress: progress,
 				})
 			}
@@ -230,23 +232,15 @@ func TestCoverageCountsOnlyDeclaredRuntimeVariants(t *testing.T) {
 			if cell.Assessment.DisplayStatus != test.expected {
 				t.Fatalf("display status = %q, want %q", cell.Assessment.DisplayStatus, test.expected)
 			}
-			if len(cell.Variants) != len(test.images) {
-				t.Fatal("previous runtime evidence must remain visible")
-			}
-			if test.images[0] == "old" {
-				found := false
-				for _, reason := range cell.Variants[0].Assessment.Reasons {
-					found = found || reason.Code == coveragePreviousRuntime
-				}
-				if !found {
-					t.Fatal("previous runtime variant is not labelled")
-				}
+			if len(cell.Variants) != 1 ||
+				cell.Variants[0].Condition.(profilederivation.CurvePlanSpec).RuntimeImage != test.images[len(test.images)-1] {
+				t.Fatal("latest measurement must retain its recorded runtime image")
 			}
 		})
 	}
 }
 
-func TestCoverageUnreadDeclarationsDoNotMarkPreviousRuntime(t *testing.T) {
+func TestCoverageUnreadDeclarationsPreserveMeasurements(t *testing.T) {
 	for _, failure := range []string{"CompatibilityReadFailed", "source unavailable"} {
 		t.Run(failure, func(t *testing.T) {
 			base := &measurementCoverageBase{
@@ -275,11 +269,6 @@ func TestCoverageUnreadDeclarationsDoNotMarkPreviousRuntime(t *testing.T) {
 			p.assessCell(&cell)
 			if cell.Assessment.DisplayStatus != "insufficient" || cell.Support.Verdict != "Unknown" {
 				t.Fatalf("unread declarations replaced retained measurement: %+v", cell)
-			}
-			for _, reason := range cell.Variants[0].Assessment.Reasons {
-				if reason.Code == coveragePreviousRuntime {
-					t.Fatal("unread declarations cannot prove a previous runtime")
-				}
 			}
 		})
 	}
@@ -318,5 +307,82 @@ func TestCoverageDatasetContractOnlyFailsProvenMismatch(t *testing.T) {
 	condition.ActiveProtocol.Dataset.UID = "replaced-data"
 	if check := coverageDatasetCheck(base, condition); check.Result != "unknown" {
 		t.Fatalf("changed identity must not invent mismatch: %+v", check)
+	}
+}
+
+func TestCoverageCurrentFailedMeasurementIsNotHiddenByOldProfiles(t *testing.T) {
+	base := coverageSizeBase()
+	failed := *base.requests.Items[0].DeepCopy()
+	failed.Name, failed.UID = "latest-failed", "latest-failed-uid"
+	failed.Status.Phase = string(api.MeasurementPhaseFailed)
+	failed.Status.Conditions = []meta.Condition{{
+		Type: "MeasurementComplete", Status: meta.ConditionFalse, ObservedGeneration: failed.Generation,
+		LastTransitionTime: meta.NewTime(time.Unix(1000, 0)), Reason: "RetryLimitExhausted",
+	}}
+	base.requests.Items = append(base.requests.Items, failed)
+	response := buildMeasurementCoverage(base, coverageSizeNamespace, httpapi.MeasurementCoverageQuery{})
+	candidate := failed.Spec.State.Candidate
+	id := coverageCellID(candidate.ModelSpec, candidate.DeviceClass, candidate.ExecutionPath, candidate.PowerMode)
+	for _, cell := range response.Cells {
+		if cell.ID != id {
+			continue
+		}
+		if cell.CurrentMeasurement == nil || cell.CurrentMeasurement.ID != coverageRequestID(failed) ||
+			cell.Assessment.Status != queryapi.MeasurementFailed || cell.Assessment.Evidence.Accepted ||
+			cell.Assessment.DisplayStatus != queryapi.MeasurementProblem || cell.VariantCount != 1 {
+			t.Fatalf("latest failure was hidden by retained successful profiles: %+v", cell)
+		}
+		if len(response.Entities.Profiles) != 80 || len(base.catalog.MeasurementFacts) != 80 {
+			t.Fatal("current failure selection deleted historical profile evidence")
+		}
+		// Existing operator replacement annotations precede recency, without a
+		// second override mechanism or a preference for successful evidence.
+		base.requests.Items[0].Annotations = map[string]string{
+			profilederivation.ReplacesMeasurementAnnotation: failed.Name,
+		}
+		replaced := buildMeasurementCoverage(base, coverageSizeNamespace, httpapi.MeasurementCoverageQuery{})
+		for _, selected := range replaced.Cells {
+			if selected.ID == id && (selected.CurrentMeasurement == nil ||
+				selected.CurrentMeasurement.ID == coverageRequestID(failed)) {
+				t.Fatal("explicit replacement did not precede recency")
+			}
+		}
+		return
+	}
+	t.Fatal("latest failed measurement cell not found")
+}
+
+func TestCoverageMeasurementTimeUsesOnlyCurrentTerminalEvidence(t *testing.T) {
+	task := api.BatchEnergyOptimization{
+		ObjectMeta: meta.ObjectMeta{
+			Generation: 2, CreationTimestamp: meta.NewTime(time.Unix(9000, 0)),
+		},
+		Status: api.BatchEnergyOptimizationStatus{
+			Phase: string(api.MeasurementPhaseFailed), ObservedGeneration: 2,
+			Conditions: []meta.Condition{{
+				Type: "MeasurementComplete", ObservedGeneration: 2,
+				LastTransitionTime: meta.NewTime(time.Unix(2, 0)),
+			}},
+		},
+	}
+	if got := coverageMeasurementTime(task, time.Unix(1, 0)); !got.Equal(time.Unix(2, 0)) {
+		t.Fatal("failed measurement used an old success instead of terminal time")
+	}
+	task.Status.Phase = string(api.MeasurementPhaseComplete)
+	if got := coverageMeasurementTime(task, time.Unix(1, 0)); !got.Equal(time.Unix(1, 0)) {
+		t.Fatal("verified raw profile completion time lost precedence")
+	}
+	task.Status.Phase = "Measuring"
+	if !coverageMeasurementTime(task, time.Time{}).IsZero() {
+		t.Fatal("nonterminal measurement invented a completion time")
+	}
+	task.Status.Phase, task.Status.ObservedGeneration = string(api.MeasurementPhaseFailed), 1
+	if !coverageMeasurementTime(task, time.Time{}).IsZero() {
+		t.Fatal("stale generation invented a current completion time")
+	}
+	task.Status.ObservedGeneration = 2
+	task.Status.Conditions[0].ObservedGeneration = 1
+	if !coverageMeasurementTime(task, time.Time{}).IsZero() {
+		t.Fatal("stale condition invented a current completion time")
 	}
 }

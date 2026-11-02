@@ -20,7 +20,7 @@ test("records renders real journal rows and exact server page scope without a hu
   Object.assign(modules["@/components/screen"] as object,{Row:()=>null})
   const api=modules["@/lib/client"] as {useChillQuery:(path:string,options?:{enabled?:boolean})=>unknown}
   const originalQuery=api.useChillQuery
-  api.useChillQuery=(path,options)=>path==="v1/workloads"?{data:[]}:originalQuery(path,options)
+  api.useChillQuery=(path,options)=>path==="v1/workloads?view=summary"?{data:[]}:originalQuery(path,options)
   modules["@/components/records-navigation"]=load("../components/records-navigation.tsx",modules)
   const exports=load("../features/scheduler-history.tsx",modules)
   const html=renderToStaticMarkup(createElement(exports.SchedulerHistoryPage as ()=>ReactNode))

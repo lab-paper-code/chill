@@ -120,7 +120,13 @@ func (o *measurementService) coverage(
 		}
 	}
 	response := buildMeasurementCoverage(base, namespace, query)
-	payload, err := json.Marshal(response)
+	var payload json.RawMessage
+	var err error
+	if query.Summary {
+		payload, err = queryapi.MeasurementSummaryJSON(response, false)
+	} else {
+		payload, err = json.Marshal(response)
+	}
 	if err == nil && int64(len(payload)) > o.opts.maxRequestBytes {
 		return nil, &serving.Error{Code: "CoverageUnavailable", Message: "커버리지 응답이 크기 한도를 초과했습니다"}
 	}

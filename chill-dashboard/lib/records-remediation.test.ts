@@ -27,7 +27,7 @@ test("scheduler changes cannot be intercepted by an unconditional Next redirect"
 
 test("power journal queries ignore workload UID while retaining its navigation context",()=>{
   const params=new URLSearchParams("kind=power&uid=service&from=2026-10-31T01:00:00.123456789Z&to=2026-10-31T02:00:00.987654321Z&limit=17&cursor=81"),calls:string[]=[]
-  const modules=modulesFor(params,(path,options)=>{if(options?.enabled===false)return {};if(path==="v1/workloads")return {data:[]};calls.push(path);return {data:{events:[]},isSuccess:true}})
+  const modules=modulesFor(params,(path,options)=>{if(options?.enabled===false)return {};if(path==="v1/workloads?view=summary")return {data:[]};calls.push(path);return {data:{events:[]},isSuccess:true}})
   const exports=load("../features/scheduler-history.tsx",modules)
   renderToStaticMarkup(createElement(exports.SchedulerHistoryPage as ()=>ReactNode))
   const query=new URL(calls[0],"https://dashboard.invalid").searchParams
@@ -38,7 +38,7 @@ test("power journal queries ignore workload UID while retaining its navigation c
 test("request and management navigation preserves all repeated cohort filters",()=>{
   for(const changes of [false,true]){
     const params=new URLSearchParams(`kind=${changes?"judgments":"requests"}&scope=${changes?"management":"requests"}&uid=service&from=start&to=end&limit=17&cursor=opaque&definition=a&definition=b&outcome=completed&outcome=timeout`)
-    const modules=modulesFor(params,path=>({data:path==="v1/workloads"?[]:{uid:"service",definitions:[],outcomes:{},requests:[],management:[],cohorts:[],total:0}}))
+    const modules=modulesFor(params,path=>({data:path==="v1/workloads?view=summary"?[]:{uid:"service",definitions:[],outcomes:{},requests:[],management:[],cohorts:[],total:0}}))
     const exports=load("../features/observations.tsx",modules)
     const html=renderToStaticMarkup(createElement(exports.ObservationsPage as (props:{changes:boolean})=>ReactNode,{changes}))
     const targetLabel=changes?"같은 기간 서비스 요청":"같은 기간 서비스 변경"
@@ -50,7 +50,7 @@ test("request and management navigation preserves all repeated cohort filters",(
 
 test("incomplete historical references never mount current-state evidence",()=>{
   for(const search of ["view=history&id=same&from=start&to=end","view=history&id=same&node=node","id=same&offset=17&from=start&to=end"]){
-    const modules=modulesFor(new URLSearchParams(search),path=>({data:path==="v1/workloads"?[]:{events:[]},isSuccess:true}))
+    const modules=modulesFor(new URLSearchParams(search),path=>({data:path==="v1/workloads?view=summary"?[]:{events:[]},isSuccess:true}))
     const exports=load("../features/scheduler-history.tsx",modules)
     const html=renderToStaticMarkup(createElement(exports.SchedulerHistoryPage as ()=>ReactNode))
     assert.match(html,/기록 식별자 미확인/);assert.doesNotMatch(html,/현재 동작 대체/)
@@ -66,6 +66,7 @@ test("identity changes retain request and power API kinds and their own cursor",
       let state=0
       class Client {async cancelQueries(){}clear(){}getDefaultOptions(){return {}}}
       const modules={react:{createContext:()=>({}),useState:(initial:unknown)=>{const index=state++;return [index===2?"old-token":typeof initial==="function"?(initial as ()=>unknown)():initial,()=>{}]},useEffect:()=>{},useCallback:(callback:(value:string)=>Promise<void>)=>{callbacks.push(callback);return callback}},"@tanstack/react-query":{QueryClient:Client,QueryCache:class{},MutationCache:class{}},"next/navigation":{useRouter:()=>({replace:(value:string)=>urls.push(value)})},"@/components/ui/button":{},"@/components/ui/input":{},"@/components/ui/dialog":{},"@/components/brand":{},"lucide-react":{},"@/lib/scheduler":{},"@/lib/session-token":{}}
+      Object.assign(modules,{"@/lib/measurement-summary":{}})
       const exports=load("../lib/client.tsx",modules)
       ;(exports.SessionProvider as (props:{children:null})=>unknown)({children:null})
       await callbacks[0]("new-token")

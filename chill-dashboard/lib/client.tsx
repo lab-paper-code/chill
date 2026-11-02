@@ -12,12 +12,20 @@ import { KeyRound } from "lucide-react"
 import type { ObservationResult } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { readTabToken, storeTabToken } from "@/lib/session-token"
+import { parseMeasurementJSON } from "@/lib/measurement-summary"
 
 export type RelayResponse = { status: number; body: string; data: unknown; requestID: string | null; workloadUID: string | null; relayTiming: string | null; browserRTT: number }
 export class ApiError extends Error {
   constructor(public status: number, public body: string, public data: unknown, public unknownOutcome = false, public requestID: string | null = null, public workloadUID: string | null = null, public relayTiming: string | null = null, public browserRTT: number | null = null) {
     super(status ? `HTTP ${status}` : "결과 미확인 · 응답 미수신")
     this.name = "ApiError"
+  }
+}
+export function decodeResponse(body:string,decoder:(body:string)=>unknown):unknown {
+  try {return decoder(body)}
+  catch(error) {
+    const message=error instanceof Error?error.message:"응답 해석 실패"
+    throw new ApiError(0,message,{code:decoder===parseMeasurementJSON?"MeasurementSummaryInvalid":"DashboardPrecisionUnsupported",message})
   }
 }
 const Session = React.createContext<{token:string; config:PublicConfig; epoch:number; signals:Set<AbortController>} | null>(null)
@@ -162,8 +170,7 @@ export function useChillQuery<T>(path:string,options:{enabled?:boolean;poll?:boo
   const visible = React.useSyncExternalStore(subscribeVisibility,() => document.visibilityState === "visible",() => true)
   const query = useQuery<T,ApiError>({queryKey:["chill",path],enabled:!!token && options.enabled !== false,queryFn:async ({signal}) => {
     const response = await relay(path,token,signal)
-    try { return (options.decoder ? options.decoder(response.body) : response.data) as T }
-    catch (error) { throw new ApiError(0,error instanceof Error ? error.message : "응답 해석 실패", {code:"DashboardPrecisionUnsupported",message:error instanceof Error ? error.message : "응답 해석 실패"}) }
+    return (options.decoder ? decodeResponse(response.body,options.decoder) : response.data) as T
   },retry:false,refetchOnWindowFocus:false,refetchOnReconnect:false,refetchInterval:query => options.poll && visible && ![401,403].includes(query.state.error?.status ?? 0) ? config.pollIntervalMs : false,refetchIntervalInBackground:false})
   return {...query,data:query.error && [401,403].includes(query.error.status) ? undefined : query.data}
 }
@@ -173,8 +180,7 @@ export function useChillQueries<T>(paths:readonly string[],options:{enabled?:boo
     queryKey:["chill",path],enabled:!!token&&options.enabled!==false,
     queryFn:async ({signal}:{signal:AbortSignal}):Promise<T>=>{
       const response=await relay(path,token,signal)
-      try {return (options.decoder?options.decoder(response.body):response.data) as T}
-      catch(error){throw new ApiError(0,error instanceof Error?error.message:"응답 해석 실패",{code:"DashboardPrecisionUnsupported"})}
+      return (options.decoder?decodeResponse(response.body,options.decoder):response.data) as T
     },
     staleTime:Infinity,
   }))}).map(query=>({...query,data:query.error instanceof ApiError&&[401,403].includes(query.error.status)?undefined:query.data}))
