@@ -117,17 +117,22 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view Catalo
 		if err := c.store.client.List(ctx, campaigns, client.InNamespace(namespace)); err != nil {
 			return CatalogView{}, err
 		}
-		excluded := replacementCampaignSelection(campaigns.Items)
+		for i := range campaigns.Items {
+			campaign := &campaigns.Items[i]
+			id := campaign.Namespace + "/" + campaign.Name + "/" + string(campaign.UID)
+			names[campaign.Namespace+"/"+campaign.Name] = id
+			if name := campaign.Annotations[profilederivation.ReplacesMeasurementAnnotation]; name != "" && campaign.DeletionTimestamp == nil {
+				replacements[id] = campaign.Namespace + "/" + name
+			}
+		}
+		replaced := profilederivation.ReplacedMeasurements(replacements, names)
+		replacementDiagnostics := replacementCampaignSelection(campaigns.Items)
 		for i := range campaigns.Items {
 			campaign := &campaigns.Items[i]
 			revisions = append(revisions, campaign.Namespace+"/"+campaign.Name+"/"+string(campaign.UID)+"/"+campaign.ResourceVersion)
 			id := campaign.Namespace + "/" + campaign.Name + "/" + string(campaign.UID)
-			names[campaign.Namespace+"/"+campaign.Name] = id
 			if campaign.DeletionTimestamp != nil {
 				continue
-			}
-			if name := campaign.Annotations[profilederivation.ReplacesMeasurementAnnotation]; name != "" {
-				replacements[id] = campaign.Namespace + "/" + name
 			}
 			state := campaign.Spec.State.Candidate
 			candidateIndex := len(candidates)
@@ -135,12 +140,12 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view Catalo
 				ID: id, Model: state.ModelSpec, DeviceClass: state.DeviceClass, ExecutionPath: state.ExecutionPath, PowerMode: state.PowerMode,
 				MeasuredAt: profilederivation.MeasurementTime(time.Time{}, campaign.Status.Conditions),
 			})
-			if campaign.DeletionTimestamp != nil || campaign.Status.Phase != catalogCompletePhase || campaign.Status.ObservedGeneration != campaign.Generation {
-				continue
-			}
 			source := types.NamespacedName{Namespace: campaign.Namespace, Name: campaign.Name}
-			if reason, excluded := excluded[campaign.Name]; excluded {
+			if reason := replacementDiagnostics[campaign.Name]; reason != "" {
 				view.Insufficiencies = append(view.Insufficiencies, CatalogIssue{Source: source, Code: "ReplacementSelection", Reason: reason})
+			}
+			if replaced[id] || campaign.Status.Phase != catalogCompletePhase || campaign.Status.ObservedGeneration != campaign.Generation {
+				continue
 			}
 			if reason, invalid := campaign.Annotations[profilingrun.InvalidAnnotation]; invalid {
 				view.Insufficiencies = append(view.Insufficiencies, CatalogIssue{Source: source, Code: measurementInvalidCode, Reason: reason})
@@ -192,10 +197,10 @@ func (c *Catalog) SourceStatus() (time.Time, string, string) {
 	return c.sourceCheckedAt, c.sourceError, c.revision
 }
 
-// A replacement is one new coherent campaign, never a splice of selected old
-// trials. Keep originals intact but unavailable to consumers while it runs.
+// Operator replacement is selection, not a second admission policy. Differences
+// and ineffective annotations are diagnostics; normal evidence safety remains.
 func replacementCampaignSelection(campaigns []edgev1alpha1.BatchEnergyOptimization) map[string]string {
-	excluded := make(map[string]string)
+	diagnostics := make(map[string]string)
 	byName := make(map[string]*edgev1alpha1.BatchEnergyOptimization, len(campaigns))
 	for i := range campaigns {
 		byName[campaigns[i].Name] = &campaigns[i]
@@ -206,23 +211,17 @@ func replacementCampaignSelection(campaigns []edgev1alpha1.BatchEnergyOptimizati
 		if name == "" || replacement.DeletionTimestamp != nil {
 			continue
 		}
-		excluded[name] = "superseded by " + replacement.Name + "; original evidence retained"
 		original := byName[name]
 		if original == nil || original == replacement {
-			excluded[replacement.Name] = "replacement must name a distinct existing campaign"
+			diagnostics[replacement.Name] = "replacement ignored: target must be a distinct existing campaign"
 			continue
 		}
-		oldSpec, newSpec := original.Spec, replacement.Spec
-		// Only measurement windows/capture protocol are renewed. Preserve the
-		// dataset, warmup and all physical/search/exact-trial conditions.
-		oldSpec.ActiveProtocol.DurationSeconds, newSpec.ActiveProtocol.DurationSeconds = 0, 0
-		oldSpec.ActiveProtocol.MetricObservation, newSpec.ActiveProtocol.MetricObservation = edgev1alpha1.ProfilingRunMetricObservationSpec{}, edgev1alpha1.ProfilingRunMetricObservationSpec{}
-		oldSpec.IdleProtocol, newSpec.IdleProtocol = edgev1alpha1.IdleProtocolSpec{}, edgev1alpha1.IdleProtocolSpec{}
-		if !reflect.DeepEqual(oldSpec, newSpec) {
-			excluded[replacement.Name] = "replacement changes physical state, CPU, batch domain or trial policy"
+		diagnostics[name] = "superseded by " + replacement.Name + "; original evidence retained"
+		if !reflect.DeepEqual(original.Spec, replacement.Spec) {
+			diagnostics[replacement.Name] = "operator replacement changes specification; selection retained as declared"
 		}
 	}
-	return excluded
+	return diagnostics
 }
 
 func completeNativeProfile(profile serving.Profile) bool {

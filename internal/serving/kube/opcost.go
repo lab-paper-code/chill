@@ -50,14 +50,14 @@ func measurementProfile(namespace, name, node string, in admissionInputs) (profi
 		return nil, refusedNodeMismatch, name + " " + beo.Spec.State.TargetNode, false
 	}
 	source := types.NamespacedName{Namespace: namespace, Name: name}
-	if i := slices.IndexFunc(in.config.CatalogIssues, func(issue CatalogIssue) bool { return issue.Source == source }); i >= 0 {
-		return nil, refusedProfileMissing, name + " " + in.config.CatalogIssues[i].Code, false
-	}
 	id := source.String() + "/" + string(beo.UID)
 	i := slices.IndexFunc(in.profiles, func(p serving.Profile) bool {
 		return p.ID == id || p.Reuse != nil && p.Reuse.Outcome == measurementAccepted && p.Reuse.ConfirmationProfileID == id
 	})
 	if i < 0 {
+		if i := slices.IndexFunc(in.config.CatalogIssues, func(issue CatalogIssue) bool { return issue.Source == source }); i >= 0 {
+			return nil, refusedProfileMissing, name + " " + in.config.CatalogIssues[i].Code, false
+		}
 		return nil, "", "", true
 	}
 	if _, prepared := in.config.Preparations[in.profiles[i].ID]; !prepared {
