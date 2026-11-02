@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,7 +20,7 @@ import (
 	ktesting "k8s.io/client-go/testing"
 )
 
-func TestConsoleChillServerAuthenticatesBeforePrivateLeg(t *testing.T) {
+func TestQueryAPIChillServerAuthenticatesBeforePrivateLeg(t *testing.T) {
 	for _, tc := range []struct {
 		name                                                                       string
 		tokenFailure, invalid, denied, sarFailure, evaluationFailure, unconfigured bool
@@ -100,7 +101,7 @@ func TestConsoleChillServerAuthenticatesBeforePrivateLeg(t *testing.T) {
 				origin = ""
 			}
 			chillServer, err := composeChillServer(http.NotFoundHandler(), &servingkube.Authorizer{Client: client},
-				options{consoleURL: origin, requestTimeout: time.Second, maxRequestBytes: 1024})
+				options{queryURL: origin, requestTimeout: time.Second, maxRequestBytes: 1024})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -123,10 +124,10 @@ func TestConsoleChillServerAuthenticatesBeforePrivateLeg(t *testing.T) {
 			}
 			if tc.want == http.StatusConflict {
 				if privateCalls.Load() != 1 {
-					t.Fatal("authorized query did not reach private Console")
+					t.Fatal("authorized query did not reach private QueryAPI")
 				}
 			} else if privateCalls.Load() != 0 {
-				t.Fatal("failed authorization reached private Console")
+				t.Fatal("failed authorization reached private QueryAPI")
 			}
 			if (tc.invalid || tc.tokenFailure) && sarCalls != 0 {
 				t.Fatal("invalid identity reached authorization")
@@ -135,10 +136,10 @@ func TestConsoleChillServerAuthenticatesBeforePrivateLeg(t *testing.T) {
 	}
 }
 
-func TestConsoleChillServerDoesNotFollowRedirectsOrArbitraryOrigins(t *testing.T) {
+func TestQueryAPIChillServerDoesNotFollowRedirectsOrArbitraryOrigins(t *testing.T) {
 	for _, origin := range []string{
-		"https://user:secret@console", "http://console/path", "http://console?upstream=other",
-		"http://console#fragment", "file:///secret",
+		"https://user:secret@query", "http://query/path", "http://query?upstream=other",
+		"http://query#fragment", "file:///secret",
 	} {
 		if _, err := privateOrigin(origin); err == nil {
 			t.Fatalf("accepted arbitrary origin %q", origin)
@@ -147,12 +148,12 @@ func TestConsoleChillServerDoesNotFollowRedirectsOrArbitraryOrigins(t *testing.T
 	var redirectTargetCalls atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { redirectTargetCalls.Add(1) }))
 	defer target.Close()
-	console := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	query := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Location", target.URL)
 		w.WriteHeader(http.StatusTemporaryRedirect)
 		_, _ = w.Write([]byte("original redirect body"))
 	}))
-	defer console.Close()
+	defer query.Close()
 	client := fake.NewSimpleClientset()
 	client.PrependReactor("create", "tokenreviews", func(ktesting.Action) (bool, runtime.Object, error) {
 		return true, &authenticationv1.TokenReview{Status: authenticationv1.TokenReviewStatus{
@@ -165,7 +166,7 @@ func TestConsoleChillServerDoesNotFollowRedirectsOrArbitraryOrigins(t *testing.T
 		}, nil
 	})
 	chillServer, err := composeChillServer(http.NotFoundHandler(), &servingkube.Authorizer{Client: client},
-		options{consoleURL: console.URL, requestTimeout: time.Second, maxRequestBytes: 1024})
+		options{queryURL: query.URL, requestTimeout: time.Second, maxRequestBytes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,5 +249,70 @@ func TestDashboardGatewayPreservesLiveUpgradeOriginAndHost(t *testing.T) {
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusSwitchingProtocols {
 		t.Fatalf("upgrade status=%d", response.StatusCode)
+	}
+}
+
+func TestQueryReadResourceGrantsPrecedeBackendAndCache(t *testing.T) {
+	cases := []struct {
+		path      string
+		resources []string
+		name      string
+	}{
+		{"/measurement-coverage", []string{"batchenergyoptimizations", "profilingruns"}, ""},
+		{"/batch-energy-optimizations", []string{"batchenergyoptimizations"}, ""},
+		{"/operation-cost-measurements", []string{"operationcostmeasurements"}, ""},
+		{"/operation-cost-measurements/item", []string{"operationcostmeasurements"}, "item"},
+		{"/dispatch-occupancy-measurements", []string{"dispatchoccupancymeasurements"}, ""},
+		{"/dispatch-occupancy-measurements/item", []string{"dispatchoccupancymeasurements"}, "item"},
+	}
+	for _, tc := range cases {
+		for _, denied := range append([]string{"url", ""}, tc.resources...) {
+			t.Run(tc.path+"/deny="+denied, func(t *testing.T) {
+				calls := 0
+				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { calls++; w.WriteHeader(http.StatusOK) }))
+				defer upstream.Close()
+				kube := fake.NewSimpleClientset()
+				kube.PrependReactor("create", "tokenreviews", func(ktesting.Action) (bool, runtime.Object, error) {
+					return true, &authenticationv1.TokenReview{Status: authenticationv1.TokenReviewStatus{Authenticated: true, User: authenticationv1.UserInfo{Username: "caller", UID: "caller-uid", Groups: []string{"operators"}, Extra: map[string]authenticationv1.ExtraValue{"tenant": {"reviewed"}}}}}, nil
+				})
+				reviews := 0
+				kube.PrependReactor("create", "subjectaccessreviews", func(action ktesting.Action) (bool, runtime.Object, error) {
+					review := action.(ktesting.CreateAction).GetObject().(*authorizationv1.SubjectAccessReview)
+					if review.Spec.User != "caller" || review.Spec.UID != "caller-uid" || len(review.Spec.Groups) != 1 || review.Spec.Groups[0] != "operators" || review.Spec.Extra["tenant"][0] != "reviewed" {
+						t.Fatal("native permission replaced caller with service identity")
+					}
+					allowed := denied != "url"
+					if resource := review.Spec.ResourceAttributes; resource != nil {
+						reviews++
+						verb := "list"
+						if tc.name != "" {
+							verb = "get"
+						}
+						if resource.Namespace != "allowed" || resource.Name != tc.name || resource.Verb != verb || resource.Group != "edge.dacs.io" || resource.Version != "v1alpha1" || !slices.Contains(tc.resources, resource.Resource) {
+							t.Fatalf("wrong query resource grant: %+v", resource)
+						}
+						allowed = resource.Resource != denied
+					}
+					return true, &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: allowed}}, nil
+				})
+				opts := options{queryURL: upstream.URL, servingNamespace: "allowed", requestTimeout: time.Second, maxRequestBytes: 1024}
+				handler, err := composeChillServer(http.NotFoundHandler(), &servingkube.Authorizer{Client: kube}, opts, &measurementService{opts: opts})
+				if err != nil {
+					t.Fatal(err)
+				}
+				request := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/allowed"+tc.path, nil)
+				request.Header.Set("Authorization", "Bearer token")
+				request.Header.Set("X-Remote-User", "forged")
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, request)
+				if denied == "" {
+					if response.Code != http.StatusOK || calls != 1 || reviews != len(tc.resources) {
+						t.Fatalf("allowed query failed: %d calls=%d reviews=%d", response.Code, calls, reviews)
+					}
+				} else if response.Code != http.StatusForbidden || calls != 0 {
+					t.Fatalf("denial reached backend: %d calls=%d", response.Code, calls)
+				}
+			})
+		}
 	}
 }

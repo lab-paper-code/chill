@@ -34,9 +34,9 @@ type profilingRunsOptions struct {
 
 type profilingRunShowOptions struct {
 	readOptions
-	namespace      string
-	name           string
-	consoleService string
+	namespace    string
+	name         string
+	queryService string
 }
 
 func parseInventoryOptions(args []string, stderr io.Writer) (inventoryOptions, error) {
@@ -83,8 +83,8 @@ func parseProfilingRunShowOptions(args []string, stderr io.Writer) (profilingRun
 	flags.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig file")
 	flags.StringVar(&opts.context, "context", "", "kubeconfig context override")
 	flags.StringVarP(&opts.output, "output", "o", outputFormatTable, "output format: table or json")
-	flags.StringVarP(&opts.namespace, "namespace", "n", "", "ProfilingRun and Console Service namespace")
-	flags.StringVar(&opts.consoleService, "console-service", "chill-console", "CHILL Console ClusterIP Service name")
+	flags.StringVarP(&opts.namespace, "namespace", "n", "", "ProfilingRun and Query API Service namespace")
+	flags.StringVar(&opts.queryService, "query-service", "chill-query", "CHILL Query API ClusterIP Service name")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
 			return profilingRunShowOptions{}, flag.ErrHelp
@@ -99,8 +99,8 @@ func parseProfilingRunShowOptions(args []string, stderr io.Writer) (profilingRun
 		return profilingRunShowOptions{}, fmt.Errorf("%w: output must be table or json", errUsage)
 	}
 	values := map[string]string{
-		"ProfilingRun name":    opts.name,
-		"Console Service name": opts.consoleService,
+		"ProfilingRun name":      opts.name,
+		"Query API Service name": opts.queryService,
 	}
 	for label, value := range values {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {

@@ -236,7 +236,7 @@ CampaignOps 한 명만 클러스터를 변경한다. 아래는 **실증 성공 �
 
 `GET /api/v1/model-compatibility?modelSpec=<name>&executionPath=<name>&deviceClass=<name>&node=<name>`
 한 건을 읽는다. 네 query는 각각 정확히 한 번 필수이며 추가/중복 query, 빈 값·잘못된 이름은 400이다.
-Console query 경계가 이름/참조·Node의 class selector membership과 사실 입력의 구조·의미를 검증한다.
+Query API query 경계가 이름/참조·Node의 class selector membership과 사실 입력의 구조·의미를 검증한다.
 ModelSpec/DeviceClass/Node 미존재는 404, 권한 거부는 403, 사실 조회 실패는 503이다.
 누락·모순된 runtime 선언은 성공 응답의 `Unknown`이며 빈 지원 목록이나 `Incompatible`로 숨기지 않는다.
 설정된 fact-source ConfigMap/키 자체의 부재도 선언 부재로 `Unknown`이다.
@@ -257,7 +257,7 @@ strict 선언 해석 실패·불완전한 RKNN 설치 계약은 `RuntimeDeclarat
 
 `candidate_resolver.go`와 `execution_facts.go`의 **동일 trusted fact-source, class/Node scope,
 strict declaration 해석** 및 `modelcompat.Evaluate`를 재사용한다. 필요한 읽기 부분만 기존 kube
-adapter에서 공유하고 Console에는 composition-root callback으로 연결한다. Console/serving이
+adapter에서 공유하고 Query API에는 composition-root callback으로 연결한다. Query API/serving이
 profiler controller를 import하거나 별도 runtime 지원 registry·backend 이름 추측표를 만들지 않는다.
 실행 선언 선택은 기존의 유일한 해당 class/Node/family/backend 규칙을 유지한다. 후보 없음은
 Unknown이다. 기존 resolver가 선택한 선언의 명시적 충돌과 artifact architecture 충돌만 Incompatible이다.
@@ -270,10 +270,10 @@ power mode가 다른 열은 같은 정적 결과를 재사용할 수 있지만 �
 Unknown을 ‘지원 확인 불가 — 이유’로 쓰며 증거 상태와 독립 표시한다.
 최종 측정 요청은 기존 dry-run/preflight/admission을 그대로 통과해야 한다.
 
-구현: Console query callback은 기존 `KubernetesCandidateResolver.ResolveModelCompatibility`를
+구현: Query API query callback은 기존 `KubernetesCandidateResolver.ResolveModelCompatibility`를
 연결한다. Profiler preflight와 동일 selector/strict decoder/정적 비교 및 RKNN 선언 요건을
 공유하며, 기존 preflight의 성공·거절 흐름은 바꾸지 않는다. public proxy의 정확
-`/chill/api/v1/model-compatibility` GET grant만 추가하며 기존 Console fact-source 읽기 권한을 쓴다.
+`/chill/api/v1/model-compatibility` GET grant만 추가하며 기존 Query API fact-source 읽기 권한을 쓴다.
 
 R3 추가: `GET /api/v1/model-compatibility-matrix`는 query 없이 전체 inventory의
 모델×실행 경로×DeviceClass를 한 번 조회한다. 응답은 `{readAt,scope,rows}`이며 각 row는
@@ -331,12 +331,12 @@ CI는 기존 shared-idle variance와 Welch–Satterthwaite/Gonum Student-t 계�
 서로 다른 batch/조건, excluded trial, 재사용 확인 trial을 섞지 않는다. trial별 p95 평균이나
 기존 point의 ‘trial p99 중 최댓값’을 p95로 이름만 바꾸지 않는다.
 
-Console composition root의 읽기 callback은 **저장된 result.completedTrials와 curvePlan만**
+Query API composition root의 읽기 callback은 **저장된 result.completedTrials와 curvePlan만**
 따라 기존 verified evidence loader → `profiler/projection` → `DeriveIdleBaseline`,
 `VerifyCurvePlan`, `DeriveCurve`를 재사용한다. `statistics.go`의 percentile을 사용하는
 좁은 summary 함수를 같은 derivation package에 둔다. 새 통계 구현·quality gate·검색 재실행,
 현재 catalog 최신 profile 선택, CR status/result mutation은 없다.
-Console transport가 profiler controller를 import하지 않으며 기존 port/callback 조립 패턴을 따른다.
+Query API transport가 profiler controller를 import하지 않으며 기존 port/callback 조립 패턴을 따른다.
 
 검증은 저장 자료가 verified 타입으로 들어오는 경계 한 번이다. result의 Run namespace/name/UID,
 owner UID·completed reference, plan의 정확 조건과 raw lineage를 기존 검증기로 연결하고 downstream은
@@ -344,7 +344,7 @@ owner UID·completed reference, plan의 정확 조건과 raw lineage를 기존 �
 실제 다운로드의 기존 유한 크기 제한은 유지하되 payload 재인코딩을 identity 판정에 쓰지 않는다.
 요청 취소/기존 timeout을 지키며 목록·커버리지 전체에 통계를 일괄 로드하지 않는다.
 
-구현(2026-10-30): `cmd/console/measurement_statistics.go`가 retained loader의 동결 store
+구현(2026-10-30): `cmd/chill-query/measurement_statistics.go`가 retained loader의 동결 store
 binding과 기존 Run/원시 검증을 사용한다. `Curve.Statistics()`는 같은 empirical percentile
 구현을 재사용하며 공유 idle와 해당 batch의 active 원시·execution, curve-plan만 `sources`에 넣는다.
 curve-plan 단일 객체와 retained evidence 객체는 각각 64 MiB로 읽기를 제한한다. 현재 Secret/권한
@@ -399,16 +399,17 @@ publication·catalog 채택·admission·통계 추정 정책은 변경하지 않
 
 ### 13.1 소유권과 중복 I/O 제거
 
-집계는 **ChillServer**, 정적 호환성/개별 보존 결과 조회는 **Console** 소유다.
-catalog의 atomic 읽기 snapshot(`measurementCatalogView`)과 기존 namespaced measurement reader를 조합한다.
-스케줄러 실제 채택 여부는 별도 기존 `profilesView`의 ID 집합으로 확인한다.
-Console에 스케줄러/catalog를 새로 만들거나 ChillServer가 채택 profile 전체를 Console `/result`로 크롤링하지 않는다.
+집계·공개 profile 조립·목록 assessment·정적 호환성·보존 결과 조회는 **Query API** 소유다.
+ChillServer는 인증·권한·namespace 제한 후 완성된 응답을 opaque 중계한다.
+Serving의 atomic catalog/adopted profile 사실은 인증된 `/api/v1/scheduler/catalog-read`에서
+`serving/kube.CatalogRead`로 제공한다. raw duration·전체 measurementFacts를 보내지 않고
+명시적 profile 요약·필요한 bounded reporting input·source 시각/revision·adopted ID만 넘긴다.
+Query API는 scheduler/catalog를 새로 만들거나 채택 profile 전체의 `/result`를 크롤링하지 않는다.
 
 ```text
-브라우저 GET 1회 → BFF → ChillServer 인증 + URL/namespace SAR → coverage snapshot
-  ↑ catalog가 이미 읽은 verified trial의 measurementFacts / resultRows
-  ↑ namespace BEO·Run metadata / inventory / Console의 정적 지원 snapshot
-catalog 밖 단건 상세만 → 기존 Console /result → retained loader·같은 통계 helper
+브라우저 GET → BFF → ChillServer TokenReview + URL/namespace SAR → Query API 완성 응답
+  ↑ serving owner typed catalog read / namespace BEO·Run metadata / 기존 inventory·정적 지원
+catalog 밖 단건 → Query API /result → retained loader·같은 통계 helper
 ```
 
 - `internal/serving/kube/catalog.go:readProfile`은 이미 result/curve-plan/active·idle raw를 읽는다.
@@ -417,7 +418,7 @@ catalog 밖 단건 상세만 → 기존 Console /result → retained loader·같
   기존 `catalogBatch.add`가 client vector를 버리기 전에 pooled client p95를 산출해야 하며 native duration으로 대체하지 않는다.
 - `CatalogView`의 메모리 sidecar `measurementFacts`(profile/result identity key)에 보존하고
   `ProfilesView` snapshot과 함께 publish한다. immutable NativeBundle/CR/result JSON에는 새 필드를 쓰지 않는다.
-  현재 catalog에 없는 superseded·scope 밖 단건은 기존 Console result GET에서 같은 helper로 계산한다.
+  현재 catalog에 없는 superseded·scope 밖 단건은 기존 Query API result GET에서 같은 helper로 계산한다.
   이 단건 비용을 전체 coverage 준비의 선행 조건으로 만들지 않는다.
   검증된 catalog 읽기 projection은 비용 source 갱신 전에 publish하여 비용 source 장애가
   BEO 커버리지를 막지 않는다. 이는 스케줄러 채택을 앞당기지 않으며, 아직 채택하지 않은
@@ -425,23 +426,23 @@ catalog 밖 단건 상세만 → 기존 Console /result → retained loader·같
 - catalog 제공 경계에 **마지막 source 확인 성공 시각·마지막 오류·revision**을 추가한다.
   정상 무변경 refresh의 조기 반환도 성공 확인 시각을 갱신하고 실패는 마지막 성공 시각을 유지한다.
   atomic pointer를 지금 읽은 시각이나 configVersion만으로 fresh를 선언하지 않는다.
-- Console 호환성 행렬은 한 호출 안에서 inventory LIST 객체를 seed한 **Get memo reader**를 사용한다.
+- Query API 호환성 행렬은 한 호출 안에서 inventory LIST 객체를 seed한 **Get memo reader**를 사용한다.
   model/class/Node/ConfigMap의 고유 identity별 Get을 한 번만 수행하고 fact-source ConfigMap은 한 번만 strict 파싱한다.
   기존 selector/`selectExecutionDeclaration`/modelcompat 판정과 취소를 유지하며 **8개 동시 resolver 안은 삭제**한다.
   대표뿐 아니라 해당 inventory의 모든 실제 Node 판정을 같은 입력 snapshot에서 계산해 두므로
   `node` 선택 GET에 새 resolver I/O가 없다. 입력 UID/RV가 달라지면 다시 계산하며 heartbeat를 지원 변경으로 과장하지 않는다.
   기존 공개 matrix의 `rows`는 대표 Node 의미를 유지한다. 같은 응답의 새 `nodeRows[]`는
   B1 응답 shape로 model/path/class/실제 Node 각각의 판정을 제공하며 coverage만 이를 index한다.
-- `cmd/console`에 `--kube-api-qps`, `--kube-api-burst`를 추가하고 양수·유한 범위를 검증해 REST config에 적용한다.
+- `cmd/chill-query`에 `--kube-api-qps`, `--kube-api-burst`를 추가하고 양수·유한 범위를 검증해 REST config에 적용한다.
   기본값은 기존 ChillServer와 같은 200/400, 배포에서는 실제 설정과 API-server 부하를 기록한다.
   높은 QPS는 memo/단일 파싱의 대체가 아니며 기본 client QPS에 대한 패널 간 다른 추정을 성능 근거로 쓰지 않는다.
-  구현 설정은 Helm `console.kubeAPIQPS`/`console.kubeAPIBurst`에 노출한다. 행렬 composition root는
+  구현 설정은 Helm `query.kubeAPIQPS`/`query.kubeAPIBurst`에 노출한다. 행렬 composition root는
   inventory LIST seed와 fact-source GET의 UID/RV 집합이 같으면 기존 `rows`/`nodeRows`를 재사용한다.
   성공 조회 시각만 바뀐 경우 지원 판정을 재계산하지 않는다. 성능·배포 수용은 §13.6의 별도 실측 대상이다.
 - Run은 namespace LIST 한 번에서 UID/owner index를 만든다. 공개 page마다 전체 LIST를 반복하지 않는다.
   owner는 §12.2의 정확 controller UID 규칙이다. operation/occupancy 전체 evidence scan은 coverage에 넣지 않는다.
-- 순수 공통 판정/DTO는 `internal/operatorconsole/measurement_coverage*.go`에 둔다.
-  `internal/serving/httpapi`는 operatorconsole을 직접 import하지 않는다. `cmd/chill-server` adapter가
+- 순수 공통 판정/DTO는 `internal/queryapi/measurement_coverage*.go`에 둔다.
+  `internal/serving/httpapi`는 queryapi을 직접 import하지 않는다. `cmd/chill-query` adapter가
   공통 판정을 transport DTO에 연결한다. 기존 package 방향과 `.go-arch-lint.yml`은 변경할 필요가 없다.
   기존 목록·단건에도 동일 reducer의 assessment를 전달하므로 단건 조회가 전체 coverage grant/준비에 종속되지 않는다.
 
@@ -500,7 +501,7 @@ operationCosts/dispatchOccupancies는 coverage index에서 제외한다. 기존 
 Run 상세도 기존 허용 조회 경로에서 assessment를 얻을 수 있어야 하며 aggregate grant를 강제하지 않는다.
 모든 entities의 status는 서버의 화면 displayStatus이며 label도 서버 값이다. 원본 phase/세부 사유는 기존 단건에서 읽는다.
 catalog 내부 메모리 facts 타입은 기존 serving 경계에 두고 cmd adapter에서 공통 HTTP DTO로 변환한다.
-catalog/kube가 operatorconsole transport를 import하도록 package 예외를 추가하지 않는다.
+catalog/kube가 queryapi transport를 import하도록 package 예외를 추가하지 않는다.
 
 **Cell**: model UID × class UID × path × mode다. 각 이름/UID와 `support`, `assessment`,
 `variantCount`, `variants`, nullable `batchProgress`/`representative`, `failureSummary`, `history`를 갖는다.
@@ -525,13 +526,13 @@ failureSummary는 정확 request/Run identity·batch·code·exitCode·최대 160
 
 6차 보정: Run UID는 `runId`, 직접 상세 링크는 `runNamespace`/`runName`과 함께 사용한다.
 정확 controller 소유 회차만 최신순으로 결합하며 runtime 종료 로그의 오류 한 줄(최대 160자)과
-exitCode를 셀·요청 entity·요청 목록 assessment·Console 요청 상세 assessment의 `failureSummary`에 제공한다.
+exitCode를 셀·요청 entity·요청 목록 assessment·Query API 요청 상세 assessment의 `failureSummary`에 제공한다.
 실패 요청의 미게시 결과 사유는 `RequestFailed`이며 대기 상태로 해석하지 않는다.
 
 `GET /api/v1/scheduler/profiles`는 `limit`(기본 25, 최대 50), `offset`, 정확 이름
 `model`/`deviceClass`, 정확 ID `profile`을 서버에서 먼저 적용하고 `page`와 전체 선택지
 `filters:{models,deviceClasses}`를 반환한다. `resultRows`/assessment/동결 조건/출처는 유지하되
-원시 `durationNanos`, 내부 `measurementFacts` 전체 맵, `preparations`는 공개 응답에서 제외한다.
+원시 `durationNanos`와 내부 `measurementFacts` 전체 맵은 공개 응답과 중간 직렬화에서 제외한다. `preparations` restore 계약은 보존한다.
 스케줄러 메모리·원본 표본은 변경하지 않는다. 프로파일 선택은 페이지와 별도 `profile` 조회로 가능하다.
 회차 목록도 q/condition 외 model/deviceClass/node/path/powerMode/cpu/status/parentUID/group을
 전체 snapshot에 적용한 뒤 페이지를 나눈다. group은 batch를 제외한 기존 조건 JSON의 의미 비교다.
@@ -542,9 +543,9 @@ exitCode를 셀·요청 entity·요청 목록 assessment·Console 요청 상세 
 실제 6차 조사에서 과거 Complete 두 건의 S3 GET `NoSuchKey`(404)가 전체 목록 503을 유발했고,
 최근 보존된 단건은 200이었다. 누락 파일을 재생성하거나 상태를 성공으로 덮어쓰지 않는다.
 
-Console 사전 검사의 cluster-scope 권한은 기존 ModelSpec/DeviceClass/Node GET에
-Preprocessor/Dataset **GET만** 보충한다. namespaced fact-source ConfigMap과 BEO 목록 권한은
-기존 범위를 재사용하며 쓰기·새 list 권한은 추가하지 않는다.
+Query API 사전 검사의 cluster-scope 권한은 기존 ModelSpec/DeviceClass/Node GET에
+Preprocessor/Dataset GET·LIST와 namespaced 비용/점유 GET·LIST를 조회 소유권에 맞게 둔다. fact-source ConfigMap과 BEO 목록 권한은
+기존 제한 범위를 재사용하며 쓰기 권한은 추가하지 않는다. Serving catalog read는 전용 정확 non-resource GET grant를 사용한다.
 
 ### 13.4 단일 판정과 화면 상태
 
@@ -613,11 +614,11 @@ CI는 증분 J/item에만 적용하고 평균±halfWidth의 음수 하한/0폭�
 각각 rowKind/Node/profile/source/reuse 상대 차이를 둔다. 원본 에너지와 대상 W를 섞은 총 J는 null이다.
 두 행이 대상의 독립 전체 실측인 것처럼 내보내지 않는다.
 
-catalog 밖 단건 Console `/result`는 기존 result/statistics를 유지하고 nullable
+catalog 밖 단건 Query API `/result`는 기존 result/statistics를 유지하고 nullable
 `measurementFacts`와 `measurementFactsReason`을 형제로 제공한다.
 facts는 `{request,resultReference,condition,pointPolicy,batches:[ResultRow의 사실 필드]}`다.
 NoPublishedResult/RetainedEvidenceMissing/StatisticsNotRecorded와 실제 권한·transport·identity 오류를 구별한다.
-채택 profile 상세는 coverage/catalog의 같은 resultRows를 재사용하고 Console 중복 로드를 하지 않는다.
+채택 profile 상세는 coverage/catalog의 같은 resultRows를 재사용하고 Query API 중복 로드를 하지 않는다.
 raw/vector/log/Secret은 응답에 넣지 않는다. 기존 8MiB 한도는 유지하며 넘는 자료를 몰래 잘라 정상으로 표시하지 않는다.
 
 구현: 공통 `AssessMeasurement`가 개별 요청/Run/동작 비용/점유와 커버리지의 상태·label을
@@ -651,7 +652,7 @@ subsetAllowed인 경로에만 **‘부족 배치만 요청’**을 쓴다. 모�
 ### 13.6 cache·신선도·성능 수용
 
 namespace별 프로세스 메모리 base snapshot 한 개, atomic 교체, namespace당 갱신 한 번만 둔다.
-진입/명시 갱신에서 30초 fresh TTL을 적용하고 stale 최대 5분, 별도 DB/Console crawler/worker pool은 없다.
+진입/명시 갱신에서 30초 fresh TTL을 적용하고 stale 최대 5분, 별도 DB/Query API crawler/worker pool은 없다.
 지원 snapshot은 입력 identity/RV가 바뀔 때만 재계산한다. catalog는 기존 refresh 흐름과 성공 확인 시각을 쓴다.
 동일 서버 namespace TTL 안의 여러 탭은 한 갱신을 공유하고 브라우저 **30초 polling은 하지 않는다**.
 재진입/명시적 갱신만 GET한다. 최초 GET이 warming이면 Retry-After 후 한 번의 완료 확인을 허용하되

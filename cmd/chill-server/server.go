@@ -172,16 +172,11 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return err
 	}
-	handlerConfig.ListMeasurements = measurements.list
-	handlerConfig.AssessMeasurements = measurements.assessList
-	handlerConfig.MeasurementCoverage = measurements.coverage
-	handlerConfig.DecorateProfiles = measurements.decorateProfiles
+
+	handlerConfig.ReadCatalog = scheduler.readCatalog
 	handlerConfig.SubmitMeasurement = measurements.submit
 	handlerConfig.DeleteMeasurement = measurements.delete
-	handlerConfig.ListOperationCostMeasurements = measurements.listOperationCosts
-	handlerConfig.GetOperationCostMeasurement = measurements.getOperationCost
-	handlerConfig.ListDispatchOccupancyMeasurements = measurements.listDispatchOccupancies
-	handlerConfig.GetDispatchOccupancyMeasurement = measurements.getDispatchOccupancy
+
 	experiments := &experimentService{
 		reader: objects, lister: objects, store: opts.storeName, maxBytes: opts.maxRequestBytes,
 	}
@@ -265,7 +260,7 @@ func initializeServing(ctx context.Context, opts *options,
 		handlerConfig.RefreshScheduler = scheduler.refreshLocked
 		handlerConfig.SchedulerMeters = scheduler.schedulerMeters
 		handlerConfig.OperatingPower = scheduler.operatingPower
-		handlerConfig.Profiles = scheduler.profilesView
+
 	}
 	return nil
 }

@@ -16,7 +16,7 @@ func TestServiceProxyEvidencePassportQueryUsesKubernetesServiceProxy(t *testing.
 	t.Parallel()
 	passport := testEvidencePassport()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		want := "/api/v1/namespaces/chill-system/services/chill-console:http/proxy" +
+		want := "/api/v1/namespaces/chill-system/services/chill-query:http/proxy" +
 			"/api/v1/namespaces/chill-system/profiling-runs/cpu-run/evidence-passport"
 		if request.Method != http.MethodGet || request.URL.Path != want {
 			t.Fatalf("request = %s %s, want GET %s", request.Method, request.URL.Path, want)
@@ -33,7 +33,7 @@ func TestServiceProxyEvidencePassportQueryUsesKubernetesServiceProxy(t *testing.
 	}
 	query := &serviceProxyEvidencePassportQuery{
 		restClient: clientset.CoreV1().RESTClient(), namespace: "chill-system",
-		service: "chill-console", run: "cpu-run",
+		service: "chill-query", run: "cpu-run",
 	}
 	got, err := query.Read(context.Background())
 	if err != nil {
@@ -83,7 +83,7 @@ func TestServiceProxyEvidencePassportQueryRejectsUnexpectedIdentityAndOversize(t
 			}
 			query := &serviceProxyEvidencePassportQuery{
 				restClient: clientset.CoreV1().RESTClient(), namespace: "chill-system",
-				service: "chill-console", run: "cpu-run",
+				service: "chill-query", run: "cpu-run",
 			}
 			_, err = query.Read(context.Background())
 			if err == nil || !strings.Contains(err.Error(), test.match) {
@@ -111,7 +111,7 @@ func TestEvidencePassportQueryRejectsWrongAPIVersion(t *testing.T) {
 	}
 	query := &serviceProxyEvidencePassportQuery{
 		restClient: clientset.CoreV1().RESTClient(), namespace: "chill-system",
-		service: "chill-console", run: "cpu-run",
+		service: "chill-query", run: "cpu-run",
 	}
 	_, err = query.Read(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "unexpected Evidence Passport identity") {

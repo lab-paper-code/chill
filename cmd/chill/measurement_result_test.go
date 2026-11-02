@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lab-paper-code/chill/internal/operatorconsole"
+	"github.com/lab-paper-code/chill/internal/queryapi"
 )
 
 // Stream large JSON strings without allocating a second full response fixture.
@@ -40,7 +40,7 @@ func TestMeasurementResultResponseSizeBoundary(t *testing.T) {
 				_, _ = fmt.Fprintf(w, `{"apiVersion":%q,"kind":"BatchEnergyOptimizationResult",`+
 					`"campaign":{"namespace":"ns","name":"task","phase":"Complete"},`+
 					`"result":{"schemaVersion":"test","detail":"`,
-					operatorconsole.BatchEnergyOptimizationResultAPIVersion)
+					queryapi.BatchEnergyOptimizationResultAPIVersion)
 				_, _ = io.CopyN(w, resultDetailReader{}, test.detailBytes)
 				_, _ = io.WriteString(w, `"}}`)
 			}))

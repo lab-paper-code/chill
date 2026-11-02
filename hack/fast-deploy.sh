@@ -23,11 +23,11 @@ p.add_argument("--token-safety-margin-seconds", type=float, default=120)
 a = p.parse_args()
 if not re.fullmatch(r"[0-9]+", a.control):
     p.error("--control must contain digits")
-roles = {"server": ("servingEntrypoint", "serving-entrypoint"), "profiler": ("profiler", "profiler"), "dashboard": ("dashboard", "dashboard"), "node-agent": ("nodeAgent", "node-agent"), "operator": ("operator", "operator"), "console": ("console", "console")}
-dockerfiles = {"server": "chill-server", "profiler": "profiler", "dashboard": "dashboard", "node-agent": "node-agent", "operator": "operator", "console": "console"}
+roles = {"server": ("servingEntrypoint", "serving-entrypoint"), "profiler": ("profiler", "profiler"), "dashboard": ("dashboard", "dashboard"), "node-agent": ("nodeAgent", "node-agent"), "operator": ("operator", "operator"), "query": ("query", "query-api")}
+dockerfiles = {"server": "chill-server", "profiler": "profiler", "dashboard": "dashboard", "node-agent": "node-agent", "operator": "operator", "query": "chill-query"}
 selected = a.images.split(",")
 if a.images != "auto" and (len(set(selected)) != len(selected) or any(x not in roles for x in selected)):
-    p.error("--images accepts auto or a comma-separated subset of server,profiler,dashboard,node-agent,operator,console; runtime images are forbidden")
+    p.error("--images accepts auto or a comma-separated subset of server,profiler,dashboard,node-agent,operator,query; runtime images are forbidden")
 root = pathlib.Path.cwd()
 sys.path.insert(0, str(root / "hack/e5"))
 import auth
@@ -93,7 +93,7 @@ def prebuilt_publication(path):
 if a.self_check:
     server = {"files": ["go.mod", "go.sum", "build/docker/chill-server.Dockerfile"], "targets": ["./cmd/chill-server"], "directories": ["cmd/chill-server", "internal/serving"]}
     profiler = {"files": ["go.mod", "go.sum", "build/docker/profiler.Dockerfile"], "targets": ["./cmd/profiler", "./cmd/transition-observer"], "directories": ["cmd/profiler", "cmd/transition-observer", "internal/profiling"]}
-    paths = ["internal/serving/reset.go", "internal/serving/reset_test.go", "cmd/console/main.go"]
+    paths = ["internal/serving/reset.go", "internal/serving/reset_test.go", "cmd/chill-query/main.go"]
     assert affected(paths, server) == [paths[0]] and affected(paths, profiler) == []
     assert affected(["cmd/transition-observer/main.go"], profiler)
     assert not affected(["internal/serving/unrelated/other.go"], server)
@@ -409,7 +409,7 @@ auto_dirty_tag="false"
 operator_image="${OPERATOR_IMG:-}"
 node_agent_image="${NODE_AGENT_IMG:-}"
 profiler_image="${PROFILER_IMG:-}"
-console_image="${CONSOLE_IMG:-}"
+query_image="${QUERY_IMG:-}"
 metric_observer_image="${METRIC_OBSERVER_IMG:-}"
 workload_observer_image="${WORKLOAD_OBSERVER_IMG:-}"
 serving_entrypoint_image="${SERVING_ENTRYPOINT_IMG:-}"
@@ -453,7 +453,7 @@ Options:
   --tag TAG                    Image tag. Default: sha-<git-sha>[-dirty-<UTC timestamp>]
   --platforms LIST             Buildx platforms. Default: ${platforms}
   --components NAME            all, operator, node-agent,
-                               profiler, console, metric-observer,
+                               profiler, query, metric-observer,
                                workload-observer, serving-entrypoint, or
                                dashboard. Default: ${components}
   --push-mode MODE             auto, registry-direct, docker, buildx, ctr-plain-http, or none. Default: ${push_mode}
@@ -472,7 +472,7 @@ Environment:
   OPERATOR_IMG                 Full operator image ref. Overrides registry/tag defaults.
   NODE_AGENT_IMG               Full node-agent image ref. Overrides registry/tag defaults.
   PROFILER_IMG                 Full Profiler image ref. Overrides registry/tag defaults.
-  CONSOLE_IMG                  Full Console API image ref. Overrides registry/tag defaults.
+  QUERY_IMG                  Full Query API API image ref. Overrides registry/tag defaults.
   METRIC_OBSERVER_IMG          Full MetricObserver image ref. Overrides registry/tag defaults.
   WORKLOAD_OBSERVER_IMG        Full WorkloadObserver image ref. Overrides registry/tag defaults.
   SERVING_ENTRYPOINT_IMG       Full inference entry point image ref. Overrides registry/tag defaults.
@@ -626,7 +626,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "${components}" in
-all|operator|node-agent|profiler|console|metric-observer|workload-observer|serving-entrypoint|dashboard) ;;
+all|operator|node-agent|profiler|query|metric-observer|workload-observer|serving-entrypoint|dashboard) ;;
 *)
 	echo "unsupported --components value: ${components}" >&2
 	exit 1
@@ -664,7 +664,7 @@ operator_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/compo
 node_agent_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=node-agent"
 node_agent_actuation_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=node-agent-actuation"
 profiler_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=profiler"
-console_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=operator-console"
+query_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=query-api"
 serving_entrypoint_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=serving-entrypoint"
 dashboard_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=dashboard"
 
@@ -672,7 +672,7 @@ component_selected() {
 	local component="$1"
 	if [[ "${components}" == "all" ]]; then
 		case "${component}" in
-		operator|node-agent|profiler|console) return 0 ;;
+		operator|node-agent|profiler|query) return 0 ;;
 		*) return 1 ;;
 		esac
 	fi
@@ -698,9 +698,9 @@ deployed_image() {
 			-l "${profiler_selector}" \
 			-o jsonpath='{.items[0].spec.template.spec.containers[0].image}' 2>/dev/null || true)"
 		;;
-	console)
+	query)
 		image="$("${kubectl_bin}" -n "${release_namespace}" get deployment \
-			-l "${console_selector}" \
+			-l "${query_selector}" \
 			-o jsonpath='{.items[0].spec.template.spec.containers[0].image}' 2>/dev/null || true)"
 		;;
 	esac
@@ -733,8 +733,8 @@ fi
 if [[ -z "${profiler_image}" ]] && component_selected profiler; then
 	profiler_image="${registry}/${image_namespace}/chill-profiler:${image_tag}"
 fi
-if [[ -z "${console_image}" ]] && component_selected console; then
-	console_image="${registry}/${image_namespace}/chill-console:${image_tag}"
+if [[ -z "${query_image}" ]] && component_selected query; then
+	query_image="${registry}/${image_namespace}/chill-query:${image_tag}"
 fi
 if [[ -z "${metric_observer_image}" ]] && component_selected metric-observer; then
 	metric_observer_image="${registry}/${image_namespace}/chill-metric-observer:${image_tag}"
@@ -755,8 +755,8 @@ split_image_ref "${node_agent_image}" "node-agent"
 if [[ -n "${profiler_image}" ]]; then
 	split_image_ref "${profiler_image}" "profiler"
 fi
-if [[ -n "${console_image}" ]]; then
-	split_image_ref "${console_image}" "console"
+if [[ -n "${query_image}" ]]; then
+	split_image_ref "${query_image}" "query"
 fi
 if [[ -n "${metric_observer_image}" ]]; then
 	split_image_ref "${metric_observer_image}" "metric-observer"
@@ -772,12 +772,12 @@ if [[ -n "${dashboard_image}" ]]; then
 fi
 
 if [[ -n "${extra_helm_set}" ]]; then
-	helm_set="${extra_helm_set} --set operator.image.pullPolicy=${pull_policy} --set nodeAgent.image.pullPolicy=${pull_policy} --set profiler.image.pullPolicy=${pull_policy} --set console.image.pullPolicy=${pull_policy}"
+	helm_set="${extra_helm_set} --set operator.image.pullPolicy=${pull_policy} --set nodeAgent.image.pullPolicy=${pull_policy} --set profiler.image.pullPolicy=${pull_policy} --set query.image.pullPolicy=${pull_policy}"
 else
-	helm_set="--set operator.image.pullPolicy=${pull_policy} --set nodeAgent.image.pullPolicy=${pull_policy} --set profiler.image.pullPolicy=${pull_policy} --set console.image.pullPolicy=${pull_policy}"
+	helm_set="--set operator.image.pullPolicy=${pull_policy} --set nodeAgent.image.pullPolicy=${pull_policy} --set profiler.image.pullPolicy=${pull_policy} --set query.image.pullPolicy=${pull_policy}"
 fi
-if [[ -n "${console_image}" ]]; then
-	helm_set="${helm_set} --set console.enabled=true"
+if [[ -n "${query_image}" ]]; then
+	helm_set="${helm_set} --set query.enabled=true"
 fi
 helm_set="${helm_set} --set servingEntrypoint.image.pullPolicy=${pull_policy} --set dashboard.image.pullPolicy=${pull_policy}"
 if [[ -n "${dashboard_image}" ]]; then
@@ -810,7 +810,7 @@ echo "chart: ${chart}"
 echo "operator image: ${operator_image}"
 echo "node-agent image: ${node_agent_image}"
 echo "profiler image: ${profiler_image:-chart default}"
-echo "console image: ${console_image:-disabled}"
+echo "query image: ${query_image:-disabled}"
 echo "metric-observer image: ${metric_observer_image:-not selected}"
 echo "workload-observer image: ${workload_observer_image:-not selected}"
 echo "serving-entrypoint image: ${serving_entrypoint_image:-not selected}"
@@ -960,10 +960,10 @@ run_selected_components() {
 		pids+=("$!")
 		names+=("profiler")
 	fi
-	if component_selected console; then
-		"${function_name}" "build/docker/console.Dockerfile" "${console_image}" &
+	if component_selected query; then
+		"${function_name}" "build/docker/chill-query.Dockerfile" "${query_image}" &
 		pids+=("$!")
-		names+=("console")
+		names+=("query")
 	fi
 	if component_selected metric-observer; then
 		"${function_name}" "build/docker/metric-observer.Dockerfile" "${metric_observer_image}" &
@@ -1018,11 +1018,11 @@ run_ctr_plain_http_components() {
 		pids+=("$!")
 		names+=("profiler")
 	fi
-	if component_selected console; then
-		ctr_plain_http_build_push_one console \
-			"build/docker/console.Dockerfile" "${console_image}" &
+	if component_selected query; then
+		ctr_plain_http_build_push_one query \
+			"build/docker/chill-query.Dockerfile" "${query_image}" &
 		pids+=("$!")
-		names+=("console")
+		names+=("query")
 	fi
 	if component_selected metric-observer; then
 		ctr_plain_http_build_push_one metric-observer \
@@ -1131,7 +1131,7 @@ if ! is_true "${skip_deploy}"; then
 		"OPERATOR_IMG=${operator_image}"
 		"NODE_AGENT_IMG=${node_agent_image}"
 		"PROFILER_IMG=${profiler_image}"
-		"CONSOLE_IMG=${console_image}"
+		"QUERY_IMG=${query_image}"
 		"SERVING_ENTRYPOINT_IMG=${serving_entrypoint_image}"
 		"DASHBOARD_IMG=${dashboard_image}"
 	)
@@ -1157,9 +1157,9 @@ if ! is_true "${skip_deploy}"; then
 		run "${kubectl_bin}" -n "${release_namespace}" rollout status daemonset \
 			-l "${node_agent_actuation_selector}" "--timeout=${timeout}"
 	fi
-	if "${kubectl_bin}" -n "${release_namespace}" get deployment -l "${console_selector}" -o name 2>/dev/null | grep -q .; then
+	if "${kubectl_bin}" -n "${release_namespace}" get deployment -l "${query_selector}" -o name 2>/dev/null | grep -q .; then
 		run "${kubectl_bin}" -n "${release_namespace}" rollout status deployment \
-			-l "${console_selector}" "--timeout=${timeout}"
+			-l "${query_selector}" "--timeout=${timeout}"
 	fi
 	if "${kubectl_bin}" -n "${release_namespace}" get deployment -l "${serving_entrypoint_selector}" -o name 2>/dev/null | grep -q .; then
 		run "${kubectl_bin}" -n "${release_namespace}" rollout status deployment \
@@ -1176,7 +1176,7 @@ echo "commit: $(git rev-parse --short HEAD 2>/dev/null || printf unknown)"
 echo "operator image: ${operator_image}"
 echo "node-agent image: ${node_agent_image}"
 echo "profiler image: ${profiler_image:-chart default}"
-echo "console image: ${console_image:-disabled}"
+echo "query image: ${query_image:-disabled}"
 echo "metric-observer image: ${metric_observer_image:-not selected}"
 echo "workload-observer image: ${workload_observer_image:-not selected}"
 echo "serving-entrypoint image: ${serving_entrypoint_image:-not selected}"
@@ -1190,7 +1190,7 @@ try "${kubectl_bin}" -n "${release_namespace}" rollout status deployment -l "${o
 try "${kubectl_bin}" -n "${release_namespace}" rollout status daemonset -l "${node_agent_selector}" "--timeout=${timeout}"
 try "${kubectl_bin}" -n "${release_namespace}" rollout status daemonset -l "${node_agent_actuation_selector}" "--timeout=${timeout}"
 try "${kubectl_bin}" -n "${release_namespace}" rollout status deployment -l "${profiler_selector}" "--timeout=${timeout}"
-try "${kubectl_bin}" -n "${release_namespace}" rollout status deployment -l "${console_selector}" "--timeout=${timeout}"
+try "${kubectl_bin}" -n "${release_namespace}" rollout status deployment -l "${query_selector}" "--timeout=${timeout}"
 try "${kubectl_bin}" -n "${release_namespace}" rollout status deployment -l "${serving_entrypoint_selector}" "--timeout=${timeout}"
 try "${kubectl_bin}" -n "${release_namespace}" rollout status deployment -l "${dashboard_selector}" "--timeout=${timeout}"
 try "${kubectl_bin}" -n "${release_namespace}" get events \
@@ -1201,7 +1201,7 @@ if [[ "${observe_mode}" == "full" ]]; then
 	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${node_agent_selector}" --all-containers=true --tail=120 --prefix
 	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${node_agent_actuation_selector}" --all-containers=true --tail=120 --prefix
 	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${profiler_selector}" --all-containers=true --tail=120 --prefix
-	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${console_selector}" --all-containers=true --tail=120 --prefix
+	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${query_selector}" --all-containers=true --tail=120 --prefix
 	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${serving_entrypoint_selector}" --all-containers=true --tail=120 --prefix
 	try "${kubectl_bin}" -n "${release_namespace}" logs -l "${dashboard_selector}" --all-containers=true --tail=120 --prefix
 fi

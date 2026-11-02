@@ -12,7 +12,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/deviceclass"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"github.com/lab-paper-code/chill/internal/operatorconsole"
+	"github.com/lab-paper-code/chill/internal/queryapi"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -56,8 +56,8 @@ func TestExecuteInventoryWritesStructuredJSON(t *testing.T) {
 	if err := execute(context.Background(), []string{"inventory", "-o", "json"}, &stdout, io.Discard, deps); err != nil {
 		t.Fatalf("execute() error = %v", err)
 	}
-	// The CLI must emit the shared Console view, not a shape of its own.
-	var document operatorconsole.InventoryView
+	// The CLI must emit the shared Query API view, not a shape of its own.
+	var document queryapi.InventoryView
 	if err := json.Unmarshal([]byte(stdout.String()), &document); err != nil {
 		t.Fatalf("decode output: %v\n%s", err, stdout.String())
 	}
@@ -114,8 +114,8 @@ func TestExecuteSystemWritesStructuredJSON(t *testing.T) {
 	if err := execute(context.Background(), []string{"system", "-o", "json"}, &stdout, io.Discard, deps); err != nil {
 		t.Fatalf("execute() error = %v", err)
 	}
-	// The CLI must emit the shared Console view, not a shape of its own.
-	var document operatorconsole.SystemsView
+	// The CLI must emit the shared Query API view, not a shape of its own.
+	var document queryapi.SystemsView
 	if err := json.Unmarshal([]byte(stdout.String()), &document); err != nil {
 		t.Fatalf("decode output: %v\n%s", err, stdout.String())
 	}
@@ -166,8 +166,8 @@ func TestExecuteProfilingRunsWritesStructuredJSON(t *testing.T) {
 	if err := execute(context.Background(), []string{"runs", "-A", "-o", "json"}, &stdout, io.Discard, deps); err != nil {
 		t.Fatalf("execute() error = %v", err)
 	}
-	// The CLI must emit the shared Console view, not a shape of its own.
-	var document operatorconsole.ProfilingRunsView
+	// The CLI must emit the shared Query API view, not a shape of its own.
+	var document queryapi.ProfilingRunsView
 	if err := json.Unmarshal([]byte(stdout.String()), &document); err != nil {
 		t.Fatalf("decode output: %v\n%s", err, stdout.String())
 	}
@@ -182,7 +182,7 @@ func TestExecuteProfilingRunShowWritesReadableEvidencePassport(t *testing.T) {
 	passport := testEvidencePassport()
 	query := &fakeEvidencePassportQuery{passport: passport}
 	deps := dependencies{newRunShowQuery: func(opts profilingRunShowOptions) (evidencePassportQuery, error) {
-		if opts.namespace != "chill-system" || opts.name != "cpu-run" || opts.consoleService != "chill-console" {
+		if opts.namespace != "chill-system" || opts.name != "cpu-run" || opts.queryService != "chill-query" {
 			t.Fatalf("options = %#v", opts)
 		}
 		return query, nil
@@ -216,7 +216,7 @@ func TestExecuteProfilingRunShowWritesJSON(t *testing.T) {
 	if err := execute(context.Background(), args, &stdout, io.Discard, deps); err != nil {
 		t.Fatal(err)
 	}
-	var got operatorconsole.EvidencePassport
+	var got queryapi.EvidencePassport
 	if err := json.Unmarshal([]byte(stdout.String()), &got); err != nil {
 		t.Fatal(err)
 	}
@@ -307,51 +307,51 @@ func TestExecuteProfilingRunsPreservesQueryFailure(t *testing.T) {
 }
 
 type fakeInventoryQuery struct {
-	snapshot operatorconsole.InventorySnapshot
+	snapshot queryapi.InventorySnapshot
 	err      error
 	calls    int
 }
 
 type fakeSystemQuery struct {
-	snapshot operatorconsole.SystemSnapshot
+	snapshot queryapi.SystemSnapshot
 	err      error
 	calls    int
 }
 
 type fakeProfilingRunsQuery struct {
-	snapshot operatorconsole.ProfilingRunsSnapshot
+	snapshot queryapi.ProfilingRunsSnapshot
 	err      error
 	calls    int
 }
 
 type fakeEvidencePassportQuery struct {
-	passport operatorconsole.EvidencePassport
+	passport queryapi.EvidencePassport
 	err      error
 	calls    int
 }
 
-func (q *fakeEvidencePassportQuery) Read(context.Context) (operatorconsole.EvidencePassport, error) {
+func (q *fakeEvidencePassportQuery) Read(context.Context) (queryapi.EvidencePassport, error) {
 	q.calls++
 	return q.passport, q.err
 }
 
-func (q *fakeProfilingRunsQuery) Read(context.Context) (operatorconsole.ProfilingRunsSnapshot, error) {
+func (q *fakeProfilingRunsQuery) Read(context.Context) (queryapi.ProfilingRunsSnapshot, error) {
 	q.calls++
 	return q.snapshot, q.err
 }
 
-func (q *fakeSystemQuery) Read(context.Context) (operatorconsole.SystemSnapshot, error) {
+func (q *fakeSystemQuery) Read(context.Context) (queryapi.SystemSnapshot, error) {
 	q.calls++
 	return q.snapshot, q.err
 }
 
-func (q *fakeInventoryQuery) Read(context.Context) (operatorconsole.InventorySnapshot, error) {
+func (q *fakeInventoryQuery) Read(context.Context) (queryapi.InventorySnapshot, error) {
 	q.calls++
 	return q.snapshot, q.err
 }
 
-func testInventorySnapshot() operatorconsole.InventorySnapshot {
-	return operatorconsole.InventorySnapshot{
+func testInventorySnapshot() queryapi.InventorySnapshot {
+	return queryapi.InventorySnapshot{
 		ReadAt:                       time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
 		DeviceClassesResourceVersion: "classes-rv",
 		NodesResourceVersion:         "nodes-rv",
@@ -388,8 +388,8 @@ func testInventorySnapshot() operatorconsole.InventorySnapshot {
 	}
 }
 
-func testSystemSnapshot() operatorconsole.SystemSnapshot {
-	return operatorconsole.SystemSnapshot{
+func testSystemSnapshot() queryapi.SystemSnapshot {
+	return queryapi.SystemSnapshot{
 		ReadAt:          time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
 		ResourceVersion: "systems-rv",
 		Systems: []edgev1alpha1.ChillSystem{{
@@ -416,8 +416,8 @@ func testSystemSnapshot() operatorconsole.SystemSnapshot {
 	}
 }
 
-func testProfilingRunsSnapshot() operatorconsole.ProfilingRunsSnapshot {
-	return operatorconsole.ProfilingRunsSnapshot{
+func testProfilingRunsSnapshot() queryapi.ProfilingRunsSnapshot {
+	return queryapi.ProfilingRunsSnapshot{
 		ReadAt: time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC), ResourceVersion: "runs-rv",
 		Namespace: "chill-system",
 		Runs: []edgev1alpha1.ProfilingRun{{
@@ -450,12 +450,12 @@ func testProfilingRunsSnapshot() operatorconsole.ProfilingRunsSnapshot {
 	}
 }
 
-func testEvidencePassport() operatorconsole.EvidencePassport {
-	return operatorconsole.EvidencePassport{
-		APIVersion: operatorconsole.EvidencePassportAPIVersion,
+func testEvidencePassport() queryapi.EvidencePassport {
+	return queryapi.EvidencePassport{
+		APIVersion: queryapi.EvidencePassportAPIVersion,
 		Kind:       "EvidencePassport",
 		ReadAt:     time.Date(2026, 7, 20, 2, 0, 0, 0, time.UTC),
-		Run: operatorconsole.EvidencePassportRun{
+		Run: queryapi.EvidencePassportRun{
 			Namespace: "chill-system", Name: "cpu-run", UID: "run-uid", Generation: 1,
 			Spec: edgev1alpha1.ProfilingRunSpec{
 				MeasurementStateSpec: edgev1alpha1.MeasurementStateSpec{
@@ -471,7 +471,7 @@ func testEvidencePassport() operatorconsole.EvidencePassport {
 				Reason: "EvidenceVerified",
 			}},
 		},
-		Evidence: operatorconsole.EvidencePassportLineage{
+		Evidence: queryapi.EvidencePassportLineage{
 			FinalizedAt: time.Date(2026, 7, 20, 1, 1, 0, 0, time.UTC),
 			Final: evidencestore.ObjectIdentity{
 				Store: "chill-evidence", Key: "execution.json",
@@ -482,29 +482,29 @@ func testEvidencePassport() operatorconsole.EvidencePassport {
 				Size: 8000,
 			},
 		},
-		Measurement: operatorconsole.EvidencePassportMeasurement{
-			Runtime: operatorconsole.EvidencePassportRuntime{
+		Measurement: queryapi.EvidencePassportMeasurement{
+			Runtime: queryapi.EvidencePassportRuntime{
 				Family: "onnxruntime", Version: "1.16.0", Provider: "CPUExecutionProvider", Architecture: "x86_64",
 				Batch: 1, WarmupIterations: 20, ElapsedSeconds: 30.001,
 				CompletedCalls: 5630, CompletedItems: 5630, ThroughputItems: 188.009,
-				Latency: operatorconsole.EvidencePassportLatency{Count: 5630, Mean: 5.319, P50: 5.179, P95: 5.978, P99: 7.889},
+				Latency: queryapi.EvidencePassportLatency{Count: 5630, Mean: 5.319, P50: 5.179, P95: 5.978, P99: 7.889},
 			},
-			Power: operatorconsole.EvidencePassportPower{
-				Source: operatorconsole.EvidencePassportPowerSource{
+			Power: queryapi.EvidencePassportPower{
+				Source: queryapi.EvidencePassportPowerSource{
 					Kind: "edge-metrics", NodeName: "lattepanda", Metric: "watts",
 				},
 				ObservationSeconds: 31, Samples: 31,
-				Watts:                 &operatorconsole.EvidencePassportWatts{Minimum: 8.1, Mean: 18.184, Maximum: 19.7},
+				Watts:                 &queryapi.EvidencePassportWatts{Minimum: 8.1, Mean: 18.184, Maximum: 19.7},
 				SourceTimestampAbsent: true,
 			},
-			Thermal: operatorconsole.EvidencePassportThermal{
+			Thermal: queryapi.EvidencePassportThermal{
 				Samples: 31, ObservationAvailableSamples: 31,
-				CPUCoreThrottleEvents:     &operatorconsole.EvidencePassportCounter{Samples: 31, First: 7, Last: 7},
-				MaximumTemperatureCelsius: &operatorconsole.EvidencePassportRange{Samples: 31, Minimum: 41, Maximum: 45},
+				CPUCoreThrottleEvents:     &queryapi.EvidencePassportCounter{Samples: 31, First: 7, Last: 7},
+				MaximumTemperatureCelsius: &queryapi.EvidencePassportRange{Samples: 31, Minimum: 41, Maximum: 45},
 			},
-			Workload: &operatorconsole.EvidencePassportWorkload{
+			Workload: &queryapi.EvidencePassportWorkload{
 				NodeName: "lattepanda", Continuous: true, InitialActivePods: 3, FinalActivePods: 3,
-				CoResidents: []operatorconsole.EvidencePassportWorkloadCoResident{
+				CoResidents: []queryapi.EvidencePassportWorkloadCoResident{
 					{Namespace: "monitoring", Name: "edge-metrics", UID: "metrics-uid"},
 					{Namespace: "fastdds-test", Name: "fastdds", UID: "fastdds-uid", Changed: true},
 				},

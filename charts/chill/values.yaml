@@ -451,15 +451,15 @@ powerActuation:
       settlingDurationSeconds: 10
       maxActuationDurationSeconds: 60
 
-console:
+query:
   enabled: false
   replicaCount: 1
   image:
-    repository: daclab/chill-console
+    repository: daclab/chill-query
     tag: ""
     pullPolicy: IfNotPresent
   port: 8080
-  # Console memoizes matrix reads; these are client rate limits, not concurrency.
+  # Query API memoizes matrix reads; these are client rate limits, not concurrency.
   kubeAPIQPS: 200
   kubeAPIBurst: 400
   nodeSelector: {}
@@ -544,7 +544,7 @@ servingEntrypoint:
     maxErrors: 256
     directoryInterval: 1m
     # Exact Helm release/component scope; workload clients and unrelated tenants are excluded.
-    controlComponents: [operator, profiler, evidence-store, serving-entrypoint, node-agent, node-agent-actuation, dashboard, operator-console, metric-observer, workload-observer, transition-observer]
+    controlComponents: [operator, profiler, evidence-store, serving-entrypoint, node-agent, node-agent-actuation, dashboard, query-api, metric-observer, workload-observer, transition-observer]
   # One finite capture in a fresh private child of the existing writable mount.
   diagnostic:
     directory: ""

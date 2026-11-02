@@ -98,7 +98,7 @@ func parseProfileQuery(values url.Values) (int, int, error) {
 	return limit, offset, nil
 }
 
-func pageProfiles(view ProfilesView, values url.Values) (ProfilesView, error) {
+func PageProfiles(view ProfilesView, values url.Values) (ProfilesView, error) {
 	limit, offset, err := parseProfileQuery(values)
 	if err != nil {
 		return ProfilesView{}, err
@@ -203,40 +203,6 @@ func profileField(profile serving.Profile, status, key string) string {
 	return ""
 }
 
-func (h *Handler) schedulerProfiles(w http.ResponseWriter, r *http.Request) {
-	if err := h.authorize(r); err != nil {
-		sendError(w, err)
-		return
-	}
-	if h.config.Profiles == nil {
-		sendError(w, &serving.Error{Code: "SchedulerUnavailable", Message: "scheduler is not enabled"})
-		return
-	}
-	view, err := h.config.Profiles(r.Context())
-	if err != nil {
-		sendError(w, err)
-		return
-	}
-	values, err := url.ParseQuery(r.URL.RawQuery)
-	if err == nil {
-		view, err = pageProfiles(view, values)
-	}
-	if err != nil {
-		sendError(w, &serving.Error{Code: "InvalidQuery", Message: "invalid profile query"})
-		return
-	}
-	if h.config.DecorateProfiles != nil {
-		projected, err := h.config.DecorateProfiles(r.Context(), view)
-		if err != nil {
-			sendError(w, err)
-			return
-		}
-		sendJSON(w, http.StatusOK, projected)
-		return
-	}
-	sendJSON(w, http.StatusOK, view)
-}
-
 // schedulerCapacity returns the capacity rows the autonomous Workloads need;
 // a row still being computed is CapacityPending.
 func (h *Handler) schedulerCapacity(w http.ResponseWriter, r *http.Request) {
@@ -251,4 +217,21 @@ func (h *Handler) schedulerCapacity(w http.ResponseWriter, r *http.Request) {
 	sendJSON(w, http.StatusOK, struct {
 		Rows []serving.CapacityRow `json:"rows"`
 	}{h.config.Scheduler.Capacity()})
+}
+
+func (h *Handler) catalogRead(w http.ResponseWriter, r *http.Request) {
+	if err := h.authorize(r); err != nil {
+		sendError(w, err)
+		return
+	}
+	if h.config.ReadCatalog == nil {
+		sendError(w, &serving.Error{Code: "SchedulerUnavailable", Message: "scheduler is not enabled"})
+		return
+	}
+	value, err := h.config.ReadCatalog(r.Context())
+	if err != nil {
+		sendError(w, err)
+		return
+	}
+	sendJSON(w, http.StatusOK, value)
 }

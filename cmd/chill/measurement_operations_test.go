@@ -156,8 +156,8 @@ func TestOwnerMutationFlagsRejectBeforeClientCreation(t *testing.T) {
 		{"measurements", "delete", "task", "--if-match", "rv"},
 		{"measurements", "delete", "task", "--uid", "uid"},
 		{"measurements", "list", "-A"},
-		{"measurements", "submit", "-f", "task.yaml", "--console-service", "old-console"},
-		{preflightCommand, "-f", "task.yaml", "--console-service", "old-console"},
+		{"measurements", "submit", "-f", "task.yaml", "--query-service", "old-query"},
+		{preflightCommand, "-f", "task.yaml", "--query-service", "old-query"},
 	} {
 		called := false
 		deps := dependencies{

@@ -8,11 +8,11 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/operatorconsole"
+	"github.com/lab-paper-code/chill/internal/queryapi"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func writeProfilingRuns(writer io.Writer, output string, view operatorconsole.ProfilingRunsView) error {
+func writeProfilingRuns(writer io.Writer, output string, view queryapi.ProfilingRunsView) error {
 	if output == outputFormatJSON {
 		encoder := json.NewEncoder(writer)
 		encoder.SetIndent("", "  ")
@@ -21,7 +21,7 @@ func writeProfilingRuns(writer io.Writer, output string, view operatorconsole.Pr
 	return writeProfilingRunsTable(writer, view)
 }
 
-func writeProfilingRunsTable(writer io.Writer, view operatorconsole.ProfilingRunsView) error {
+func writeProfilingRunsTable(writer io.Writer, view queryapi.ProfilingRunsView) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
 	scope := view.Namespace
 	if view.AllNamespaces {

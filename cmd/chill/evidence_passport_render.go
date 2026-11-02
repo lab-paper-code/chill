@@ -9,7 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/operatorconsole"
+	"github.com/lab-paper-code/chill/internal/queryapi"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -18,7 +18,7 @@ const (
 	unavailableValue = "unavailable"
 )
 
-func writeEvidencePassport(writer io.Writer, output string, passport operatorconsole.EvidencePassport) error {
+func writeEvidencePassport(writer io.Writer, output string, passport queryapi.EvidencePassport) error {
 	if output == outputFormatJSON {
 		encoder := json.NewEncoder(writer)
 		encoder.SetIndent("", "  ")
@@ -27,7 +27,7 @@ func writeEvidencePassport(writer io.Writer, output string, passport operatorcon
 	return writeEvidencePassportTable(writer, passport)
 }
 
-func writeEvidencePassportTable(writer io.Writer, passport operatorconsole.EvidencePassport) error {
+func writeEvidencePassportTable(writer io.Writer, passport queryapi.EvidencePassport) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
 	run := passport.Run
 	if err := writePassportSection(table, "RUN", [][2]string{
@@ -213,6 +213,6 @@ func formatWatts(value float64) string {
 	return fmt.Sprintf("%.3f W", value)
 }
 
-func formatCounter(counter *operatorconsole.EvidencePassportCounter) string {
+func formatCounter(counter *queryapi.EvidencePassportCounter) string {
 	return fmt.Sprintf("%d -> %d (%d samples)", counter.First, counter.Last, counter.Samples)
 }

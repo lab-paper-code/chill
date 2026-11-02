@@ -5,10 +5,10 @@
 # Secret values are NOT included. Provision referenced Secrets, evidence store,
 # serving-scheduler ConfigMap and existing observation PVC before deployment.
 # Control tags reproduce revision 74; runtimes: 1dee80bf; observers: 93c7b814ece1.
-console:
+query:
   enabled: true
   image:
-    repository: 155.230.35.213:5000/chill/chill-console
+    repository: 155.230.35.213:5000/chill/chill-query
     tag: pools-e96b075
   nodeSelector:
     kubernetes.io/hostname: genesis1

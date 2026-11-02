@@ -20,15 +20,15 @@ roles = [d for d in documents if d.get("kind") == "Role"
 def grants(role, resource, verb):
     return any(resource in r.get("resources", []) and verb in r.get("verbs", []) for r in role.get("rules", []))
 
-console = next(d for d in documents if d.get("kind") == "ClusterRole"
-               and d["metadata"]["name"] == "chill-console-preflight-reader")
+query = next(d for d in documents if d.get("kind") == "ClusterRole"
+               and d["metadata"]["name"] == "chill-query-preflight-reader")
 for kind in ("modelspecs", "deviceclasses", "preprocessors", "datasets"):
-    if not grants(console, kind, "get"):
-        sys.exit("console preflight lacks cluster-scope " + kind + " get")
+    if not grants(query, kind, "get"):
+        sys.exit("query preflight lacks cluster-scope " + kind + " get")
 for kind in ("preprocessors", "datasets"):
-    rules = [r for r in console["rules"] if kind in r.get("resources", [])]
+    rules = [r for r in query["rules"] if kind in r.get("resources", [])]
     if any(set(r["verbs"]) != {"get"} for r in rules):
-        sys.exit("console preflight should only get " + kind)
+        sys.exit("query preflight should only get " + kind)
 
 serving = [r for r in roles if r["metadata"]["name"] == "chill-serving-entrypoint"]
 if not serving or not grants(serving[0], "services", "list"):
@@ -45,7 +45,7 @@ PY
 }
 
 # ChillServer is opt-in; render it in both profiles with the scheduler configured.
-serving=(--set servingEntrypoint.enabled=true --set console.enabled=true --set servingEntrypoint.tls.secretName=chill-tls
+serving=(--set servingEntrypoint.enabled=true --set query.enabled=true --set servingEntrypoint.tls.secretName=chill-tls
 	--set evidenceStore.connection.bucket=chill --set evidenceStore.connection.region=local
 	--set servingEntrypoint.scheduler.configMap=chill-scheduler)
 check "${serving[@]}"

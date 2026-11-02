@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/operatorconsole"
+	"github.com/lab-paper-code/chill/internal/queryapi"
 )
 
 const preflightTestNamespace = "chill-system"
@@ -133,24 +133,24 @@ func TestExecutePreflightWritesJSONRoundTrip(t *testing.T) {
 }
 
 type fakeBatchEnergyOptimizationPreflightQuery struct {
-	preflight operatorconsole.BatchEnergyOptimizationPreflight
+	preflight queryapi.BatchEnergyOptimizationPreflight
 	err       error
 	calls     int
 }
 
 func (q *fakeBatchEnergyOptimizationPreflightQuery) Read(
 	context.Context,
-) (operatorconsole.BatchEnergyOptimizationPreflight, error) {
+) (queryapi.BatchEnergyOptimizationPreflight, error) {
 	q.calls++
 	return q.preflight, q.err
 }
 
-func testBatchEnergyOptimizationPreflight(resolves bool) operatorconsole.BatchEnergyOptimizationPreflight {
-	preflight := operatorconsole.BatchEnergyOptimizationPreflight{
-		APIVersion: operatorconsole.BatchEnergyOptimizationPreflightAPIVersion,
+func testBatchEnergyOptimizationPreflight(resolves bool) queryapi.BatchEnergyOptimizationPreflight {
+	preflight := queryapi.BatchEnergyOptimizationPreflight{
+		APIVersion: queryapi.BatchEnergyOptimizationPreflightAPIVersion,
 		Kind:       "BatchEnergyOptimizationPreflight",
 		ReadAt:     time.Date(2026, 8, 19, 1, 2, 3, 4, time.UTC),
-		Campaign: operatorconsole.BatchEnergyOptimizationPreflightCampaign{
+		Campaign: queryapi.BatchEnergyOptimizationPreflightCampaign{
 			Namespace: preflightTestNamespace,
 			Name:      "hourly-curve",
 		},

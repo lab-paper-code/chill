@@ -1,0 +1,334 @@
+{{- if .Values.query.enabled }}
+{{- $name := include "chill.queryName" . -}}
+{{- $labels := include "chill.labels" . -}}
+{{- if .Values.query.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "chill.queryServiceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: query-api
+    {{- $labels | nindent 4 }}
+---
+{{- end }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: query-api
+    {{- $labels | nindent 4 }}
+rules:
+  - apiGroups: ["edge.dacs.io"]
+    resources: ["profilingruns", "batchenergyoptimizations", "operationcostmeasurements", "dispatchoccupancymeasurements"]
+    verbs: ["get", "list"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - {{ printf "%s-evidence-store-credentials" (include "chill.systemName" .) | quote }}
+    verbs: ["get"]
+  # The Evidence Store resolver reads the allocated Service address.
+  - apiGroups: [""]
+    resources: ["services"]
+    resourceNames:
+      - {{ printf "%s-evidence-store" (include "chill.systemName" .) | quote }}
+    verbs: ["get"]
+  # Preflight reports a missing Profiler fact source as a reason, so the
+  # Query API must be allowed to attempt that read in every deployment profile.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames:
+      - {{ include "chill.profilerFactSourceName" . | quote }}
+    verbs: ["get"]
+  {{- if .Values.evidenceStore.enabled }}
+  # A campaign result is written by the controller rather than by a measurement
+  # Job, so its delivery contract is read from the Evidence Store operand
+  # configuration instead of being recovered from a Job.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames:
+      - {{ .Values.evidenceStore.configRef.name | quote }}
+    verbs: ["get"]
+  {{- end }}
+{{- if .Values.evidenceStore.enabled }}
+---
+# The ChillSystem is cluster-scoped, so reading which Evidence Store a campaign
+# result was delivered to needs a cluster-scoped grant. chill-query-viewer is
+# the grant an operator binds to a person; it binds to nobody by default and
+# carries more than the Query API itself needs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}-system-reader
+  labels:
+    app.kubernetes.io/component: query-api
+    {{- $labels | nindent 4 }}
+rules:
+  - apiGroups: ["edge.dacs.io"]
+    resources: ["chillsystems"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}-system-reader
+  labels:
+    app.kubernetes.io/component: query-api
+    {{- $labels | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}-system-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "chill.queryServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+---
+# Resolving a campaign intent reads cluster-scoped model, device class,
+# preprocessor, dataset, and target Node inputs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}-preflight-reader
+  labels:
+    app.kubernetes.io/component: query-api
+    {{- $labels | nindent 4 }}
+rules:
+  - apiGroups: ["edge.dacs.io"]
+    resources: ["modelspecs", "deviceclasses", "preprocessors", "datasets"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get"]
+  - apiGroups: ["edge.dacs.io"]
+    resources: ["chillsystems", "deviceclasses", "modelspecs", "preprocessors", "datasets"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}-preflight-reader
+  labels:
+    app.kubernetes.io/component: query-api
+    {{- $labels | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}-preflight-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "chill.queryServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: query-api
+    {{- $labels | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "chill.queryServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: query-api
+    {{- $labels | nindent 4 }}
+spec:
+  replicas: {{ .Values.query.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "chill.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: query-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "chill.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: query-api
+        edge.dacs.io/workload-role: system
+    spec:
+      serviceAccountName: {{ include "chill.queryServiceAccountName" . }}
+      securityContext:
+{{- toYaml .Values.query.podSecurityContext | nindent 8 }}
+      containers:
+        - name: query
+          image: {{ include "chill.queryImage" . | quote }}
+          imagePullPolicy: {{ .Values.query.image.pullPolicy }}
+          args:
+            - {{ printf "--bind-address=:%v" .Values.query.port | quote }}
+            - {{ printf "--kube-api-qps=%v" .Values.query.kubeAPIQPS | quote }}
+            - {{ printf "--kube-api-burst=%v" .Values.query.kubeAPIBurst | quote }}
+            - {{ printf "--system-name=%s" (include "chill.systemName" .) | quote }}
+            - {{ printf "--serving-namespace=%s" (default .Release.Namespace .Values.servingEntrypoint.namespace) | quote }}
+            - {{ printf "--store-name=%s" (default (printf "%s-evidence-store" (include "chill.systemName" .)) .Values.evidenceStore.connection.name) | quote }}
+            - {{ printf "--max-request-bytes=%s" (.Values.servingEntrypoint.maxRequestBytes | toJson) | quote }}
+            - {{ printf "--max-evidence-bytes=%s" (.Values.servingEntrypoint.maxEvidenceBytes | toJson) | quote }}
+            - {{ printf "--request-timeout=%s" .Values.servingEntrypoint.requestTimeout | quote }}
+            {{- range .Values.servingEntrypoint.profileNamespaces }}
+            - {{ printf "--profile-namespace=%s" . | quote }}
+            {{- end }}
+            {{- if .Values.servingEntrypoint.enabled }}
+            - {{ printf "--serving-url=https://%s.%s.svc:%v" (include "chill.servingEntrypointName" .) .Release.Namespace .Values.servingEntrypoint.port | quote }}
+            - "--serving-ca-file=/etc/chill/serving-ca/ca.crt"
+            {{- end }}
+            # The Query API starts without the Profiler so preflight can explain
+            # an absent fact source instead of making startup depend on it.
+            - {{ printf "--fact-source-config-map=%s" (include "chill.profilerFactSourceName" .) | quote }}
+            - {{ printf "--execution-facts-key=%s" .Values.profiler.factSource.executionFactsKey | quote }}
+            - {{ printf "--metric-sources-key=%s" .Values.profiler.factSource.metricSourcesKey | quote }}
+            - {{ printf "--workload-observation-key=%s" .Values.profiler.factSource.workloadObservationKey | quote }}
+            - {{ printf "--actuation-policies-key=%s" .Values.profiler.factSource.actuationPoliciesKey | quote }}
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: http
+              containerPort: {{ .Values.query.port }}
+              protocol: TCP
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+{{- toYaml .Values.query.resources | nindent 12 }}
+          securityContext:
+{{- toYaml .Values.query.securityContext | nindent 12 }}
+          volumeMounts:
+            {{- if .Values.servingEntrypoint.enabled }}
+            - name: serving-ca
+              mountPath: /etc/chill/serving-ca
+              readOnly: true
+            {{- end }}
+            - name: evidence-staging
+              mountPath: /var/run/chill/evidence
+      volumes:
+        {{- if .Values.servingEntrypoint.enabled }}
+        - name: serving-ca
+          secret:
+            secretName: {{ .Values.servingEntrypoint.tls.secretName | quote }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
+        - name: evidence-staging
+          emptyDir:
+            sizeLimit: 128Mi
+      nodeSelector:
+{{- toYaml .Values.query.nodeSelector | nindent 8 }}
+      {{- with .Values.query.affinity }}
+      affinity:
+{{- toYaml . | nindent 8 }}
+      {{- end }}
+      tolerations:
+{{- toYaml .Values.query.tolerations | nindent 8 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: query-api
+    {{- $labels | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ include "chill.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: query-api
+  ports:
+    - name: http
+      port: {{ .Values.query.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}
+
+{{- if and .Values.query.enabled .Values.servingEntrypoint.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "chill.queryName" . }}-catalog-reader
+rules:
+  - nonResourceURLs: ["/chill/api/v1/scheduler/catalog-read"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "chill.queryName" . }}-catalog-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "chill.queryName" . }}-catalog-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "chill.queryServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+
+
+{{- if .Values.query.enabled }}
+{{- $root := . }}
+{{- $servingNamespace := default .Release.Namespace .Values.servingEntrypoint.namespace }}
+{{- range (default (list $servingNamespace) .Values.servingEntrypoint.profileNamespaces) }}
+{{- if ne . $root.Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "chill.queryName" $root }}-measurements
+  namespace: {{ . }}
+rules:
+  - apiGroups: ["edge.dacs.io"]
+    resources: ["profilingruns", "batchenergyoptimizations", "operationcostmeasurements", "dispatchoccupancymeasurements"]
+    verbs: ["get", "list"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "chill.queryName" $root }}-measurements
+  namespace: {{ . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "chill.queryName" $root }}-measurements
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "chill.queryServiceAccountName" $root }}
+    namespace: {{ $root.Release.Namespace }}
+{{- end }}
+{{- end }}
+{{- end }}
+

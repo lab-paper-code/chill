@@ -17,7 +17,7 @@ import (
 type options struct {
 	bindAddress, servingNamespace, tlsCert, tlsKey, observationDirectory             string
 	storeName, storeEndpoint, storeBucket, storeRegion                               string
-	consoleURL, dashboardURL                                                         string
+	queryURL, dashboardURL                                                           string
 	storeCredentialsSecret                                                           string
 	kube                                                                             kubeconfig.Options
 	kubeAPIQPS                                                                       float64
@@ -88,8 +88,8 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 		"Delay from listener bind to the one 420s numeric window.")
 	f.DurationVar(&o.diagnosticTraceOffset, "diagnostic-trace-offset", 0,
 		"Offset within the numeric window for at most 30s/32MiB of Go trace; maximum 390s.")
-	f.StringVar(&o.consoleURL, "console-url", "",
-		"Optional fixed private Console HTTP(S) origin; query and evidence routes require it.")
+	f.StringVar(&o.queryURL, "query-url", "",
+		"Optional fixed private QueryAPI HTTP(S) origin; query and evidence routes require it.")
 	f.StringVar(&o.dashboardURL, "dashboard-url", "",
 		"Optional fixed private Dashboard origin served on this HTTPS listener outside ChillServer API routes.")
 	f.StringVar(&o.storeName, "store-name", "", "Logical Evidence Store name.")
@@ -203,7 +203,7 @@ func (o options) validate() error {
 			return errors.New("request, operation, drain, refresh and observation durations must be positive")
 		}
 	}
-	if _, err := privateOrigin(o.consoleURL); err != nil {
+	if _, err := privateOrigin(o.queryURL); err != nil {
 		return err
 	}
 	if _, err := privateOrigin(o.dashboardURL); err != nil {

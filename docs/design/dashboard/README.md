@@ -12,7 +12,7 @@
 | 스택 | Next.js App Router·React·TypeScript·Tailwind·shadcn/ui. 공식 `templates/next-app`/`dashboard-01`, MIT commit `e8c3143b1cd191280befcd6c9538284bb43399a8`; 복사 범위와 저작권 고지 보존. |
 | 버전 기준 | Next 16.3.6, React/DOM 19.3.0, TypeScript ^5, Tailwind ^4, Node 24.21.0, pnpm 10.33.4. 실제 정확한 의존성은 lockfile. TanStack Table v9, Recharts 3.8.0, Query 5.104.1, Go coder/websocket v1.8.13, Node ws 8.18.3. |
 | HTTP | 브라우저 → same-origin `/api/chill/v1/...` Route Handler → 고정 HTTPS ChillServer `/api/v1/...`. `CHILL_BASE_URL`, `NODE_EXTRA_CA_CERTS`는 서버 전용. CA·hostname 검증, redirect 상태 보존. |
-| 공개 진입점 | `cmd/chill-server`가 Serving과 인증된 Console 조회를 조립. `--dashboard-url`은 API/health 외 화면·정적 자산·BFF를 private Dashboard로 중계. ingress 없는 테스트는 HTTPS NodePort 31104; chart 기본은 ClusterIP. |
+| 공개 진입점 | `cmd/chill-server`가 Serving과 인증된 Query API 조회를 조립. `--dashboard-url`은 API/health 외 화면·정적 자산·BFF를 private Dashboard로 중계. ingress 없는 테스트는 HTTPS NodePort 31104; chart 기본은 ClusterIP. |
 | WebSocket | WSS `/api/live` → Node `server/live-proxy.mjs` :3000 → 고정 HTTPS `/api/v1/live`; 일반 HTTP는 자식 `.next/standalone/server.js` loopback :3001. Next custom server 없음; 실패/SIGTERM은 두 프로세스 종료. Upgrade의 원래 Origin/Host 보존. |
 | 업무 소유권 | 인증·도메인 검증·변경 선언·진행·판단·통계·Evidence는 ChillServer 뒤 CHILL이 소유. 웹은 Kubernetes·firstfloor·S3·Node를 직접 호출하지 않음. |
 | 상태 | 사용자별 탭 QueryClient의 서버 cache, 로컬 폼, URL 대상/UID/필터/기간. 신원 변경·logout은 socket/timer 종료 → 요청 취소·cache clear·QueryClient 교체·민감 폼 remount. 늦은 callback은 이전 cache에서 종료. |
@@ -24,7 +24,7 @@
 | 항목 | 현행 계약 |
 |---|---|
 | 신원 | 기존 Kubernetes bearer를 탭 메모리와 버전·system 단위 sessionStorage에 보관한다. hydration 후 복원하며 저장 거부는 메모리 전용. 신원 변경·logout·401/4401은 저장분·요청·cache·socket을 같은 epoch로 정리한다. 403/4403·서비스 장애는 만료가 아니며 목적 URL을 유지한다. 복제 탭 토큰은 별도이고 새 창은 noopener다. BFF는 원본 Authorization 전달; ChillServer TokenReview + 정확한 verb/path SAR로 신원을 검증한다. |
-| 권한 | 401 누락/무효, 403 실제 SAR 거부, 503 review 통신·권한·evaluation 오류. non-resource path는 `/chill` 접두사. Console private leg의 서버 identity는 사용자 SAR를 대체하지 않음. |
+| 권한 | 401 누락/무효, 403 실제 SAR 거부, 503 review 통신·권한·evaluation 오류. non-resource path는 `/chill` 접두사. Query API private leg의 서버 identity는 사용자 SAR를 대체하지 않음. |
 | HTTP 제한 | method/path allowlist; Authorization·If-Match·Content-Type·추론 timeout·필요 CHILL identity header만 전달. 요청/완전한 응답 각각 8 MiB, 응답 header 16 KiB. 상태·요청 ID·Workload UID 보존, no-store. |
 | 초기 웹 설정 | page 50/최대 200, 기본 구간 1시간/최대 24시간, 갱신 5초, 조회 timeout 10초/변경 60초. 추론은 사용자 timeout과 서버 상한 및 중계 여유 사용. WS 연결 수명에 HTTP 한도를 재사용하지 않음. |
 | 변경 | 작성→전후 정의·제공된 영향 확인→제출→원본 조회. Model/Workload If-Match=metadata.resourceVersion. 409 최신 baseline 명시 채택 시 draft 유지, 같은 UID만 제출. 201/202/실제 완료 구분; 삭제는 원래 UID 제거 확인. 응답 미수신은 결과 미확인, 원본 조회 후 명시 재제출. |
@@ -123,8 +123,8 @@ runtime workload readiness의 읽기 시각만 바뀐 것은 상태 변화로 �
 
 ## 4. API 소유권과 연결 현황
 
-Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.go), Console 정본:
-[read handler](../../../internal/operatorconsole/readapi/handler.go). BFF allowlist는 `chill-dashboard/lib/relay.ts`.
+Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.go), Query API 정본:
+[read handler](../../../internal/queryapi/readapi/handler.go). BFF allowlist는 `chill-dashboard/lib/relay.ts`.
 아래는 `/api/v1` 하위 경로다. 기능별 지원과 호출 권한은 별도다.
 | method와 `/api/v1` 하위 경로 | 현재 제공 범위 | 웹 연결과 필요한 보완 |
 |---|---|---|
@@ -152,7 +152,7 @@ Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.
 
 |---|---|---|
 | `GET /systems`의 `capabilities` | 기능별 `{name, available, reason}` | System 조회는 구현됐다. `capabilities` 필드는 ChillServer 조회 대기다. |
-| `GET /profiling/options` | 모델과 경로, 장비와 Node, 전력모드, 입력 및 측정과 관측 정책의 선택 항목과 sourceRef | 기존 선언과 configured fact resolver를 사용하는 Console 조회가 필요하다. |
+| `GET /profiling/options` | 모델과 경로, 장비와 Node, 전력모드, 입력 및 측정과 관측 정책의 선택 항목과 sourceRef | 기존 선언과 configured fact resolver를 사용하는 Query API 조회가 필요하다. |
 | `GET, POST /namespaces/{namespace}/profiling-runs`, `GET .../profiling-runs/{name}` | 생성 입력 `{name, spec}`, Run identity와 immutable spec, 실제 status와 시각 | bounded GET 목록 구현 완료. exact detail과 인증된 create adapter는 연결 준비 중이다. |
 | `GET .../batch-energy-optimizations/{name}` | immutable campaign spec, child Run 및 trial 참조, 실제 진행과 result 참조 | 목록, 접수와 삭제는 Serving에서 제공한다. 단건 진행 조회가 필요하다. |
 | `GET, POST /namespaces/{namespace}/power-mode-transition-costs`, `GET .../power-mode-transition-costs/{name}` | DB-FR-32 조회와 같은 원본, 측정 요청 입력 | 기존 전환 비용 측정과 NodeActuator를 재사용한다. 조회와 create adapter가 필요하다. |

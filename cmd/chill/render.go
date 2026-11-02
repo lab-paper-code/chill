@@ -9,10 +9,10 @@ import (
 	"text/tabwriter"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/operatorconsole"
+	"github.com/lab-paper-code/chill/internal/queryapi"
 )
 
-func writeInventory(writer io.Writer, output string, view operatorconsole.InventoryView) error {
+func writeInventory(writer io.Writer, output string, view queryapi.InventoryView) error {
 	if output == outputFormatJSON {
 		encoder := json.NewEncoder(writer)
 		encoder.SetIndent("", "  ")
@@ -21,7 +21,7 @@ func writeInventory(writer io.Writer, output string, view operatorconsole.Invent
 	return writeInventoryTable(writer, view)
 }
 
-func writeInventoryTable(writer io.Writer, view operatorconsole.InventoryView) error {
+func writeInventoryTable(writer io.Writer, view queryapi.InventoryView) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
 	if _, err := fmt.Fprintf(table, "READ_AT\t%s\nDEVICECLASSES_RV\t%s\nNODES_RV\t%s\nMODELSPECS_RV\t%s\n\n",
 		view.ReadAt, display(view.DeviceClassesResourceVersion), display(view.NodesResourceVersion),

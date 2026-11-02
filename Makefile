@@ -8,7 +8,7 @@ OPERATOR_IMG ?= $(IMG)
 NODE_AGENT_IMG ?= $(IMAGE_NAMESPACE)/chill-node-agent:$(IMAGE_TAG)
 PROFILER_IMG ?= $(IMAGE_NAMESPACE)/chill-profiler:$(IMAGE_TAG)
 EVALUATION_HARNESS_IMG ?= $(IMAGE_NAMESPACE)/chill-evaluation-harness:$(IMAGE_TAG)
-CONSOLE_IMG ?= $(IMAGE_NAMESPACE)/chill-console:$(IMAGE_TAG)
+QUERY_IMG ?= $(IMAGE_NAMESPACE)/chill-query:$(IMAGE_TAG)
 METRIC_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-metric-observer:$(IMAGE_TAG)
 WORKLOAD_OBSERVER_IMG ?= $(IMAGE_NAMESPACE)/chill-workload-observer:$(IMAGE_TAG)
 SERVING_ENTRYPOINT_IMG ?= $(IMAGE_NAMESPACE)/chill-serving-entrypoint:$(IMAGE_TAG)
@@ -67,7 +67,7 @@ FAST_DEPLOY_ARGS ?=
 RUN_NAMESPACE ?= $(HELM_NAMESPACE)
 RUN_ARGS ?=
 HELM_FLOW = ./hack/helm-release-flow.sh
-HELM_FLOW_IMAGE_VARIABLES = OPERATOR_IMG NODE_AGENT_IMG PROFILER_IMG CONSOLE_IMG SERVING_ENTRYPOINT_IMG DASHBOARD_IMG
+HELM_FLOW_IMAGE_VARIABLES = OPERATOR_IMG NODE_AGENT_IMG PROFILER_IMG QUERY_IMG SERVING_ENTRYPOINT_IMG DASHBOARD_IMG
 helm_flow_image_assignment = $(if $(and $(strip $(HELM_VALUES)),$(filter file,$(origin $(1)))),,$(1)="$($(1))")
 HELM_FLOW_IMAGE_ENV = $(foreach variable,$(HELM_FLOW_IMAGE_VARIABLES),$(call helm_flow_image_assignment,$(variable)))
 HELM_FLOW_ENV = LOCALBIN="$(LOCALBIN)" CHILL_SCHEDULER_CONFIGMAP_FILE="$(CHILL_SCHEDULER_CONFIGMAP_FILE)" HELM=$(HELM) KUBECTL=$(KUBECTL) KUBECONFORM=$(KUBECONFORM) KUBECONFORM_FLAGS="$(KUBECONFORM_FLAGS)" HELM_RELEASE=$(HELM_RELEASE) HELM_NAMESPACE=$(HELM_NAMESPACE) HELM_CHART=$(HELM_CHART) HELM_TIMEOUT=$(HELM_TIMEOUT) HELM_VALUES="$(HELM_VALUES)" HELM_SET="$(HELM_SET)" $(HELM_FLOW_IMAGE_ENV)
@@ -346,7 +346,7 @@ build: manifests generate fmt vet ## Build CHILL component binaries.
 	go build -o bin/node-agent ./cmd/node-agent
 	go build -o bin/profiler ./cmd/profiler
 	go build -o bin/transition-observer ./cmd/transition-observer
-	go build -o bin/console ./cmd/console
+	go build -o bin/chill-query ./cmd/chill-query
 	go build -o bin/metric-observer ./cmd/metric-observer
 	go build -o bin/measurement-worker ./cmd/measurement-worker
 	go build -o bin/chill-server ./cmd/chill-server
@@ -379,9 +379,9 @@ docker-build-profiler: ## Build the Profiler image.
 docker-build-evaluation-harness: ## Build the EvaluationRun procedure harness image.
 	$(CONTAINER_TOOL) build -f build/docker/evaluation-harness.Dockerfile -t $(EVALUATION_HARNESS_IMG) .
 
-.PHONY: docker-build-console
-docker-build-console: ## Build the Console API image.
-	$(CONTAINER_TOOL) build -f build/docker/console.Dockerfile -t $(CONSOLE_IMG) .
+.PHONY: docker-build-query
+docker-build-query: ## Build the Query API image.
+	$(CONTAINER_TOOL) build -f build/docker/chill-query.Dockerfile -t $(QUERY_IMG) .
 
 .PHONY: docker-build-metric-observer
 docker-build-metric-observer: ## Build the MetricObserver image.
@@ -455,7 +455,7 @@ docker-build-load-generator: ## Build the dispatch-occupancy load generator imag
 	$(CONTAINER_TOOL) build -f build/docker/load-generator.Dockerfile -t $(LOAD_GENERATOR_IMG) .
 
 .PHONY: docker-build-all
-docker-build-all: docker-build-operator docker-build-node-agent docker-build-profiler docker-build-console docker-build-metric-observer docker-build-chill-server docker-build-dashboard docker-build-load-generator ## Build all component images.
+docker-build-all: docker-build-operator docker-build-node-agent docker-build-profiler docker-build-query docker-build-metric-observer docker-build-chill-server docker-build-dashboard docker-build-load-generator ## Build all component images.
 
 .PHONY: docker-push
 docker-push: docker-push-operator ## Push the operator image.
@@ -472,9 +472,9 @@ docker-push-node-agent: ## Push the node-agent image.
 docker-push-profiler: ## Push the Profiler image.
 	$(CONTAINER_TOOL) push $(PROFILER_IMG)
 
-.PHONY: docker-push-console
-docker-push-console: ## Push the Console API image.
-	$(CONTAINER_TOOL) push $(CONSOLE_IMG)
+.PHONY: docker-push-query
+docker-push-query: ## Push the Query API image.
+	$(CONTAINER_TOOL) push $(QUERY_IMG)
 
 .PHONY: docker-push-dashboard
 docker-push-dashboard: ## Push the independent Dashboard image.
@@ -489,7 +489,7 @@ docker-push-metric-observer: ## Push the MetricObserver image.
 	$(CONTAINER_TOOL) push $(METRIC_OBSERVER_IMG)
 
 .PHONY: docker-push-all
-docker-push-all: docker-push-operator docker-push-node-agent docker-push-profiler docker-push-console docker-push-metric-observer ## Push all component images.
+docker-push-all: docker-push-operator docker-push-node-agent docker-push-profiler docker-push-query docker-push-metric-observer ## Push all component images.
 
 # PLATFORMS defines the target platforms for images built to provide support to multiple
 # architectures. (i.e. make docker-buildx-all OPERATOR_IMG=myregistry/chill/operator:0.0.1 NODE_AGENT_IMG=myregistry/chill/node-agent:0.0.1). To use this option you need to:
@@ -519,11 +519,11 @@ docker-buildx-profiler: ## Build and push the Profiler image for cross-platform 
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/profiler.Dockerfile --tag $(PROFILER_IMG) .
 
-.PHONY: docker-buildx-console
-docker-buildx-console: ## Build and push the Console API image for cross-platform support.
+.PHONY: docker-buildx-query
+docker-buildx-query: ## Build and push the Query API image for cross-platform support.
 	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER) --buildkitd-config hack/buildkitd.toml
 	$(CONTAINER_TOOL) buildx use $(BUILDX_BUILDER)
-	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/console.Dockerfile --tag $(CONSOLE_IMG) .
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/chill-query.Dockerfile --tag $(QUERY_IMG) .
 
 .PHONY: docker-buildx-metric-observer
 docker-buildx-metric-observer: ## Build and push the MetricObserver image for cross-platform support.
@@ -550,7 +550,7 @@ docker-buildx-dashboard: ## Build and push the Dashboard image for cross-platfor
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) -f build/docker/dashboard.Dockerfile --tag $(DASHBOARD_IMG) .
 
 .PHONY: docker-buildx-all
-docker-buildx-all: docker-buildx-operator docker-buildx-node-agent docker-buildx-profiler docker-buildx-console docker-buildx-metric-observer docker-buildx-workload-observer ## Build and push all component images for their supported platforms.
+docker-buildx-all: docker-buildx-operator docker-buildx-node-agent docker-buildx-profiler docker-buildx-query docker-buildx-metric-observer docker-buildx-workload-observer ## Build and push all component images for their supported platforms.
 
 .PHONY: fast-deploy
 fast-deploy: ## Build, push, reset-deploy, and observe CHILL in the current testbed.

@@ -39,9 +39,9 @@ components:
       - internal/metadata
       - internal/nodeprobe
   device-class: { in: internal/deviceclass }
-  operator-console: { in: internal/operatorconsole }
-  operator-console-readapi: { in: internal/operatorconsole/readapi }
-  operator-console-kube: { in: internal/operatorconsole/kube }
+  query-api: { in: internal/queryapi }
+  query-api-readapi: { in: internal/queryapi/readapi }
+  query-api-kube: { in: internal/queryapi/kube }
   operator: { in: internal/operator/** }
   evidence-core: { in: internal/evidencestore }
   evidence-kube: { in: internal/evidencestore/kube }
@@ -137,22 +137,22 @@ deps:
       - api
       - platform-core
 
-  operator-console-kube:
+  query-api-kube:
     mayDependOn:
       - api
       - batch-energy-optimization-core
       - device-class
       - evidence-core
-      - operator-console
+      - query-api
       - profile-derivation
       - profiler-evidence
 
-  operator-console-readapi:
+  query-api-readapi:
     mayDependOn:
       - api
-      - operator-console
+      - query-api
 
-  operator-console:
+  query-api:
     mayDependOn:
       - api
       - batch-energy-optimization-core

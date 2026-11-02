@@ -7,24 +7,24 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/lab-paper-code/chill/internal/operatorconsole"
-	consolekube "github.com/lab-paper-code/chill/internal/operatorconsole/kube"
+	"github.com/lab-paper-code/chill/internal/queryapi"
+	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
 )
 
 type inventoryQuery interface {
-	Read(context.Context) (operatorconsole.InventorySnapshot, error)
+	Read(context.Context) (queryapi.InventorySnapshot, error)
 }
 
 type systemQuery interface {
-	Read(context.Context) (operatorconsole.SystemSnapshot, error)
+	Read(context.Context) (queryapi.SystemSnapshot, error)
 }
 
 type profilingRunsQuery interface {
-	Read(context.Context) (operatorconsole.ProfilingRunsSnapshot, error)
+	Read(context.Context) (queryapi.ProfilingRunsSnapshot, error)
 }
 
 type batchEnergyOptimizationPreflightQuery interface {
-	Read(context.Context) (operatorconsole.BatchEnergyOptimizationPreflight, error)
+	Read(context.Context) (queryapi.BatchEnergyOptimizationPreflight, error)
 }
 
 type dependencies struct {
@@ -90,7 +90,7 @@ func executeInventory(ctx context.Context, args []string, stdout, stderr io.Writ
 	if err != nil {
 		return fmt.Errorf("read inventory: %w", err)
 	}
-	if err := writeInventory(stdout, opts.output, operatorconsole.BuildInventory(snapshot)); err != nil {
+	if err := writeInventory(stdout, opts.output, queryapi.BuildInventory(snapshot)); err != nil {
 		return fmt.Errorf("write inventory: %w", err)
 	}
 	return nil
@@ -112,7 +112,7 @@ func executeSystem(ctx context.Context, args []string, stdout, stderr io.Writer,
 	if err != nil {
 		return fmt.Errorf("read systems: %w", err)
 	}
-	if err := writeSystems(stdout, opts.output, operatorconsole.BuildSystems(snapshot)); err != nil {
+	if err := writeSystems(stdout, opts.output, queryapi.BuildSystems(snapshot)); err != nil {
 		return fmt.Errorf("write systems: %w", err)
 	}
 	return nil
@@ -137,7 +137,7 @@ func executeProfilingRuns(ctx context.Context, args []string, stdout, stderr io.
 	if err != nil {
 		return fmt.Errorf("read ProfilingRuns: %w", err)
 	}
-	if err := writeProfilingRuns(stdout, opts.output, operatorconsole.BuildProfilingRuns(snapshot)); err != nil {
+	if err := writeProfilingRuns(stdout, opts.output, queryapi.BuildProfilingRuns(snapshot)); err != nil {
 		return fmt.Errorf("write ProfilingRuns: %w", err)
 	}
 	return nil
@@ -207,7 +207,7 @@ func writeUsage(writer io.Writer) error {
 		return err
 	}
 	if _, err := fmt.Fprintln(writer,
-		"  kubectl chill runs show NAME [-n NAMESPACE] [--console-service NAME] [-o table|json]"); err != nil {
+		"  kubectl chill runs show NAME [-n NAMESPACE] [--query-service NAME] [-o table|json]"); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(writer,
@@ -231,7 +231,7 @@ func newInventoryQuery(opts inventoryOptions) (inventoryQuery, error) {
 	if err != nil {
 		return nil, err
 	}
-	query, err := consolekube.NewKubernetesInventoryQuery(kubeClient)
+	query, err := querykube.NewKubernetesInventoryQuery(kubeClient)
 	if err != nil {
 		return nil, fmt.Errorf("construct read-through query: %w", err)
 	}
@@ -243,7 +243,7 @@ func newSystemQuery(opts systemOptions) (systemQuery, error) {
 	if err != nil {
 		return nil, err
 	}
-	query, err := consolekube.NewKubernetesSystemQuery(kubeClient)
+	query, err := querykube.NewKubernetesSystemQuery(kubeClient)
 	if err != nil {
 		return nil, fmt.Errorf("construct read-through query: %w", err)
 	}
@@ -261,7 +261,7 @@ func newProfilingRunsQuery(opts profilingRunsOptions) (profilingRunsQuery, error
 	} else if namespace == "" {
 		namespace = defaultNamespace
 	}
-	query, err := consolekube.NewKubernetesProfilingRunsQuery(kubeClient, namespace)
+	query, err := querykube.NewKubernetesProfilingRunsQuery(kubeClient, namespace)
 	if err != nil {
 		return nil, fmt.Errorf("construct read-through query: %w", err)
 	}

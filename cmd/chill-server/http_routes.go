@@ -28,9 +28,9 @@ func privateOrigin(raw string) (*url.URL, error) {
 	return origin, nil
 }
 
-const consoleUnavailableCode = "ConsoleUnavailable"
+const queryUnavailableCode = "ConsoleUnavailable"
 
-func consoleError(w http.ResponseWriter, status int, code string) {
+func queryError(w http.ResponseWriter, status int, code string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
@@ -39,12 +39,12 @@ func consoleError(w http.ResponseWriter, status int, code string) {
 	}{code})
 }
 
-// composeChillServer is the only cross-domain assembly. The Console's existing
+// composeChillServer is the only cross-domain assembly. The QueryAPI's existing
 // retained-evidence and production preflight composition stays authoritative.
 func composeChillServer(
 	serving http.Handler, authorizer *servingkube.Authorizer, opts options, measurements ...*measurementService,
 ) (http.Handler, error) {
-	origin, err := privateOrigin(opts.consoleURL)
+	origin, err := privateOrigin(opts.queryURL)
 	if err != nil {
 		return nil, err
 	}
@@ -52,44 +52,48 @@ func composeChillServer(
 	if len(measurements) != 0 {
 		measurement = measurements[0]
 	}
-	console := consoleReadHandler(origin, measurement)
+	query := queryReadHandler(origin)
 	authenticated := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), opts.requestTimeout)
 		defer cancel()
 		r = r.WithContext(ctx)
 		scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
 		if !ok || !strings.EqualFold(scheme, "Bearer") || token == "" {
-			consoleError(w, http.StatusUnauthorized, "Unauthenticated")
+			queryError(w, http.StatusUnauthorized, "Unauthenticated")
 			return
 		}
 		principal, err := authorizer.Authorize(ctx, token, r.Method, r.URL.Path)
 		if err != nil {
-			consoleAuthorizationError(w, err)
+			queryAuthorizationError(w, err)
 			return
 		}
-		if err := authorizePreflightList(ctx, r, measurement, authorizer, principal); err != nil {
-			consoleAuthorizationError(w, err)
+		if err := authorizeQueryResources(ctx, r, measurement, authorizer, principal); err != nil {
+			queryAuthorizationError(w, err)
 			return
 		}
 		deadline, _ := ctx.Deadline()
 		controller := http.NewResponseController(w)
 		if err := controller.SetReadDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
-			consoleError(w, http.StatusServiceUnavailable, consoleUnavailableCode)
+			queryError(w, http.StatusServiceUnavailable, queryUnavailableCode)
 			return
 		}
 		if err := controller.SetWriteDeadline(deadline.Add(opts.requestTimeout)); err != nil &&
 			!errors.Is(err, http.ErrNotSupported) {
-			consoleError(w, http.StatusServiceUnavailable, consoleUnavailableCode)
+			queryError(w, http.StatusServiceUnavailable, queryUnavailableCode)
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, opts.maxRequestBytes)
-		if measurement != nil && measurement.servePendingPassport(w, r) {
-			return
-		}
-		console.ServeHTTP(w, r)
+		query.ServeHTTP(w, r)
 	})
 	mux := http.NewServeMux()
 	for _, route := range []string{
+		"GET /api/v1/scheduler/profiles",
+		"GET /api/v1/namespaces/{namespace}/measurement-coverage",
+		"GET /api/v1/namespaces/{namespace}/batch-energy-optimizations",
+		"GET /api/v1/namespaces/{namespace}/operation-cost-measurements",
+		"GET /api/v1/namespaces/{namespace}/operation-cost-measurements/{name}",
+		"GET /api/v1/namespaces/{namespace}/dispatch-occupancy-measurements",
+		"GET /api/v1/namespaces/{namespace}/dispatch-occupancy-measurements/{name}",
 		"GET /api/v1/systems",
 		"GET /api/v1/inventory",
 		"GET /api/v1/model-compatibility",
@@ -111,7 +115,7 @@ func composeChillServer(
 		// Do not SetURL/replace Host: the BFF validates the browser's TLS origin.
 		web = httputil.NewSingleHostReverseProxy(webOrigin)
 		web.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, _ error) {
-			consoleError(w, http.StatusBadGateway, "DashboardUnavailable")
+			queryError(w, http.StatusBadGateway, "DashboardUnavailable")
 		}
 	}
 	mux.Handle("/", serving)
@@ -123,7 +127,7 @@ func composeChillServer(
 		// Prevent mux path-clean redirects from creating a different auth target.
 		// RawPath also excludes escaped separators from namespace/name segments.
 		if r.URL.RawPath != "" || path.Clean(r.URL.Path) != r.URL.Path {
-			consoleError(w, http.StatusBadRequest, "InvalidPath")
+			queryError(w, http.StatusBadRequest, "InvalidPath")
 			return
 		}
 		mux.ServeHTTP(w, r)
@@ -135,24 +139,39 @@ func isMeasurementPreflight(request *http.Request) bool {
 		strings.HasSuffix(request.URL.Path, "/batch-energy-optimizations/preflight")
 }
 
-func authorizePreflightList(
-	ctx context.Context, request *http.Request, measurement *measurementService,
-	authorizer *servingkube.Authorizer, principal servingkube.Principal,
-) error {
-	if measurement == nil || !isMeasurementPreflight(request) {
-		return nil
-	}
+func authorizeQueryResources(ctx context.Context, request *http.Request, measurement *measurementService, authorizer *servingkube.Authorizer, principal servingkube.Principal) error {
 	namespace := request.PathValue("namespace")
-	if err := measurement.namespace(namespace); err != nil {
-		return err
+	if namespace != "" && measurement != nil {
+		if err := measurement.namespace(namespace); err != nil {
+			return err
+		}
 	}
-	return authorizer.AuthorizeResource(ctx, principal, authorizationv1.ResourceAttributes{
-		Namespace: namespace, Verb: "list", Group: "edge.dacs.io", Version: "v1alpha1",
-		Resource: "batchenergyoptimizations",
-	})
+	resources := []string{}
+	resourceVerb := "list"
+	switch {
+	case isMeasurementPreflight(request):
+		resources = []string{"batchenergyoptimizations"}
+	case strings.HasSuffix(request.URL.Path, "/measurement-coverage"):
+		resources = []string{"batchenergyoptimizations", "profilingruns"}
+	case strings.HasSuffix(request.URL.Path, "/batch-energy-optimizations"):
+		resources = []string{"batchenergyoptimizations"}
+	case strings.Contains(request.URL.Path, "/operation-cost-measurements"):
+		resources = []string{"operationcostmeasurements"}
+	case strings.Contains(request.URL.Path, "/dispatch-occupancy-measurements"):
+		resources = []string{"dispatchoccupancymeasurements"}
+	}
+	if request.PathValue("name") != "" {
+		resourceVerb = "get"
+	}
+	for _, resource := range resources {
+		if err := authorizer.AuthorizeResource(ctx, principal, authorizationv1.ResourceAttributes{Namespace: namespace, Verb: resourceVerb, Group: "edge.dacs.io", Version: "v1alpha1", Resource: resource, Name: request.PathValue("name")}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func consoleAuthorizationError(writer http.ResponseWriter, err error) {
+func queryAuthorizationError(writer http.ResponseWriter, err error) {
 	status, code := http.StatusServiceUnavailable, "AuthorizationUnavailable"
 	if errors.Is(err, servingkube.ErrUnauthenticated) {
 		status, code = http.StatusUnauthorized, "Unauthenticated"
@@ -160,5 +179,5 @@ func consoleAuthorizationError(writer http.ResponseWriter, err error) {
 	if errors.Is(err, servingkube.ErrForbidden) {
 		status, code = http.StatusForbidden, "Forbidden"
 	}
-	consoleError(writer, status, code)
+	queryError(writer, status, code)
 }

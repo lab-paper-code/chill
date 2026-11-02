@@ -17,7 +17,7 @@ extra_set="${HELM_SET:-}"
 operator_image="${OPERATOR_IMG:-}"
 node_agent_image="${NODE_AGENT_IMG:-}"
 profiler_image="${PROFILER_IMG:-}"
-console_image="${CONSOLE_IMG:-}"
+query_image="${QUERY_IMG:-}"
 serving_entrypoint_image="${SERVING_ENTRYPOINT_IMG:-}"
 dashboard_image="${DASHBOARD_IMG:-}"
 system_name="${CHILL_SYSTEM_NAME:-}"
@@ -44,7 +44,7 @@ Environment:
   OPERATOR_IMG           Optional operator image repository:tag.
   NODE_AGENT_IMG         Optional node-agent image repository:tag.
   PROFILER_IMG           Optional Profiler image repository:tag.
-  CONSOLE_IMG            Optional Console API image repository:tag.
+  QUERY_IMG            Optional Query API API image repository:tag.
   SERVING_ENTRYPOINT_IMG Optional serving entrypoint image repository:tag.
   DASHBOARD_IMG          Optional Dashboard image repository:tag.
   CHILL_SCHEDULER_CONFIGMAP_FILE Selected external scheduler ConfigMap manifest, kept outside the repository.
@@ -91,7 +91,7 @@ render_validate() {
 	append_image_values args operator "${operator_image}"
 	append_image_values args nodeAgent "${node_agent_image}"
 	append_image_values args profiler "${profiler_image}"
-	append_image_values args console "${console_image}"
+	append_image_values args query "${query_image}"
 	append_image_values args servingEntrypoint "${serving_entrypoint_image}"
 	append_image_values args dashboard "${dashboard_image}"
 
@@ -144,7 +144,7 @@ install_release() {
 	append_image_values args operator "${operator_image}"
 	append_image_values args nodeAgent "${node_agent_image}"
 	append_image_values args profiler "${profiler_image}"
-	append_image_values args console "${console_image}"
+	append_image_values args query "${query_image}"
 	append_image_values args servingEntrypoint "${serving_entrypoint_image}"
 	append_image_values args dashboard "${dashboard_image}"
 	echo "==> install"

@@ -18,7 +18,7 @@ func TestProfilePagingFiltersBeforeSlicingWithoutMutatingCatalog(t *testing.T) {
 		}
 		view.Profiles = append(view.Profiles, p)
 	}
-	got, err := pageProfiles(view, url.Values{"model": {"model"}, "deviceClass": {"device"}, "limit": {"1"}})
+	got, err := PageProfiles(view, url.Values{"model": {"model"}, "deviceClass": {"device"}, "limit": {"1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,12 +28,12 @@ func TestProfilePagingFiltersBeforeSlicingWithoutMutatingCatalog(t *testing.T) {
 	if view.Profiles[0].ID != "c" {
 		t.Fatal("query reordered shared scheduler catalog")
 	}
-	got, err = pageProfiles(view, url.Values{"profile": {"c"}})
+	got, err = PageProfiles(view, url.Values{"profile": {"c"}})
 	if err != nil || len(got.Profiles) != 1 || got.Profiles[0].ID != "c" {
 		t.Fatalf("exact profile: %+v %v", got, err)
 	}
 	for _, values := range []url.Values{{"limit": {"51"}}, {"offset": {"-1"}}, {"model": {"a", "b"}}, {"unexpected": {"x"}}} {
-		if _, err := pageProfiles(view, values); err == nil {
+		if _, err := PageProfiles(view, values); err == nil {
 			t.Fatalf("invalid query accepted: %v", values)
 		}
 	}
@@ -62,21 +62,21 @@ func TestProfileSortAndEveryFilterPrecedePagination(t *testing.T) {
 			if order == "desc" {
 				want = "a"
 			}
-			got, err := pageProfiles(view, url.Values{"sort": {key}, "order": {order}, "limit": {"1"}, "offset": {"1"}})
+			got, err := PageProfiles(view, url.Values{"sort": {key}, "order": {order}, "limit": {"1"}, "offset": {"1"}})
 			if err != nil || len(got.Profiles) != 1 || got.Profiles[0].ID != want || got.Page.Total != 3 {
 				t.Fatalf("%s %s: %+v %v", key, order, got, err)
 			}
 		}
 	}
 	for key, value := range map[string]string{"q": "z", "model": "z", "deviceClass": "z", "node": "z", "powerMode": "z", "path": "z", "cpu": "10", "status": "usable"} {
-		got, err := pageProfiles(view, url.Values{key: {value}, "limit": {"1"}})
+		got, err := PageProfiles(view, url.Values{key: {value}, "limit": {"1"}})
 		if err != nil || len(got.Profiles) != 1 || got.Profiles[0].ID != "z" || got.Page.Total != 1 || len(got.Filters.Nodes) != 2 || len(got.Filters.Statuses) != 2 {
 			t.Fatalf("%s global filter: %+v %v", key, got, err)
 		}
 	}
 	for _, query := range []string{"sort=unknown", "sort=", "sort=class", "sort=model&sort=model", "sort=model&order=DESC", "sort=model&order=", "sort=model&order=asc&order=desc", "order=asc"} {
 		values, _ := url.ParseQuery(query)
-		if _, err := pageProfiles(view, values); err == nil {
+		if _, err := PageProfiles(view, values); err == nil {
 			t.Fatalf("invalid sort accepted: %s", query)
 		}
 	}

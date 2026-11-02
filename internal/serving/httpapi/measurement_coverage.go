@@ -1,16 +1,11 @@
 package httpapi
 
 import (
-	"errors"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
-	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
-	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
@@ -21,7 +16,7 @@ type MeasurementCoverageQuery struct {
 	Node    string
 }
 
-func parseMeasurementCoverageQuery(values url.Values) (MeasurementCoverageQuery, error) {
+func ParseMeasurementCoverageQuery(values url.Values) (MeasurementCoverageQuery, error) {
 	query := MeasurementCoverageQuery{Batches: []int{}}
 	invalid := &serving.Error{
 		Code:    "InvalidCoverageQuery",
@@ -49,55 +44,4 @@ func parseMeasurementCoverageQuery(values url.Values) (MeasurementCoverageQuery,
 		}
 	}
 	return query, nil
-}
-
-func (h *Handler) measurementCoverage(w http.ResponseWriter, r *http.Request) {
-	// Both URL grant and native namespace grants precede every cache access.
-	if err := h.authorize(r); err != nil {
-		sendError(w, err)
-		return
-	}
-	namespace := r.PathValue("namespace")
-	if len(validation.IsDNS1123Label(namespace)) != 0 {
-		sendError(w, &serving.Error{
-			Code: "InvalidCoverageQuery", Message: "유효한 namespace가 필요합니다",
-		})
-		return
-	}
-	principal := servingkube.PrincipalFromContext(r.Context())
-	for _, resource := range []string{"batchenergyoptimizations", "profilingruns"} {
-		if err := h.authorizer.AuthorizeResource(r.Context(), principal, authorizationv1.ResourceAttributes{
-			Namespace: namespace, Verb: "list", Group: api.GroupVersion.Group,
-			Version: api.GroupVersion.Version, Resource: resource,
-		}); err != nil {
-			sendError(w, err)
-			return
-		}
-	}
-	values, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil {
-		sendError(w, &serving.Error{
-			Code: "InvalidCoverageQuery", Message: "유효한 query가 필요합니다",
-		})
-		return
-	}
-	query, err := parseMeasurementCoverageQuery(values)
-	if err != nil {
-		sendError(w, err)
-		return
-	}
-	if h.config.MeasurementCoverage == nil {
-		sendError(w, measurementUnavailable())
-		return
-	}
-	value, err := h.config.MeasurementCoverage(r.Context(), namespace, query)
-	if err != nil {
-		var domain *serving.Error
-		if errors.As(err, &domain) && domain.Code == "CoverageWarming" {
-			w.Header().Set("Retry-After", "2")
-		}
-		sendError(w, err)
-		return
-	}
-	sendJSON(w, http.StatusOK, value)
 }

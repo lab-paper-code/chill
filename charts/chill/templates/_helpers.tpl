@@ -163,24 +163,24 @@ signatures.yaml
 {{- end -}}
 {{- end -}}
 
-{{- define "chill.consoleName" -}}
-{{- printf "%s-console" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- define "chill.queryName" -}}
+{{- printf "%s-query" (include "chill.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "chill.consoleServiceAccountName" -}}
-{{- if .Values.console.serviceAccount.create -}}
-{{- default (include "chill.consoleName" .) .Values.console.serviceAccount.name -}}
+{{- define "chill.queryServiceAccountName" -}}
+{{- if .Values.query.serviceAccount.create -}}
+{{- default (include "chill.queryName" .) .Values.query.serviceAccount.name -}}
 {{- else -}}
-{{- default "default" .Values.console.serviceAccount.name -}}
+{{- default "default" .Values.query.serviceAccount.name -}}
 {{- end -}}
 {{- end -}}
 
-{{- define "chill.consoleImage" -}}
-{{- printf "%s:%s" .Values.console.image.repository (include "chill.consoleImageTag" .) -}}
+{{- define "chill.queryImage" -}}
+{{- printf "%s:%s" .Values.query.image.repository (include "chill.queryImageTag" .) -}}
 {{- end -}}
 
-{{- define "chill.consoleImageTag" -}}
-{{- default .Chart.AppVersion .Values.console.image.tag -}}
+{{- define "chill.queryImageTag" -}}
+{{- default .Chart.AppVersion .Values.query.image.tag -}}
 {{- end -}}
 
 {{- define "chill.servingEntrypointName" -}}

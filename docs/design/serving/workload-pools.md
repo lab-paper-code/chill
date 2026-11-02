@@ -72,7 +72,7 @@ profile 변경은 영향받는 d/비용/baseline 목록을 함께 남긴다. 정
 
 ### 외부 Pod
 
-NodeActuator는 외부 Pod 운영을 소유하지 않는다. 측정 전력은 노드 전체, scheduler는 예산/사유를 기록한다. label `edge.dacs.io/workload-role`: serving-instance(Serving), transition-observer(transition attempt), system(operator의 store/bootstrap/agent/profiler/discovery 및 chart operator/entrypoint/console/dashboard/predelete, runtime-declarations probe). selector는 바꾸지 않는다.
+NodeActuator는 외부 Pod 운영을 소유하지 않는다. 측정 전력은 노드 전체, scheduler는 예산/사유를 기록한다. label `edge.dacs.io/workload-role`: serving-instance(Serving), transition-observer(transition attempt), system(operator의 store/bootstrap/agent/profiler/discovery 및 chart operator/entrypoint/query/dashboard/predelete, runtime-declarations probe). selector는 바꾸지 않는다.
 profiling observer도 label을 보존하며 profiling/전환/operation은 구조화한 workloadobserver.Pod 목록을 기록한다. Dashboard는 역할 label 없는 Pod를 비CHILL로 표시한다(`SCH-34`,`DB-FR-34`).
 
 ## 4. 스케줄러 판단

@@ -22,7 +22,7 @@ configured raw store/key/bounded size. `active-regression-live-ad7b84f` complete
 and historical `wall-power-v2` acceptance. Causal metric/workload end fence was
 live-verified with three sequential same-RunConfig Runs. These verify the earlier
 Run/Job/immutable-evidence path, not current simplified semantic schemas, which
-remain unverified live. Idle Operator Console Evidence Passport remains separate
+remain unverified live. Idle Operator Query API Evidence Passport remains separate
 from its active-only projection.
 
 Firstfloor's 1-second readiness timeout formerly leaked onto the kept-alive

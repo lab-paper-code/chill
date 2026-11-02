@@ -25,7 +25,7 @@ const (
 )
 
 func TestMeasurementCallerResourceDenialNeverInvokesService(t *testing.T) {
-	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodDelete} {
+	for _, method := range []string{http.MethodPost, http.MethodDelete} {
 		for _, denyPath := range []bool{false, true} {
 			t.Run(method+map[bool]string{false: "/resource-denial", true: "/path-denial"}[denyPath], func(t *testing.T) {
 				kube := fake.NewSimpleClientset()
@@ -57,10 +57,6 @@ func TestMeasurementCallerResourceDenialNeverInvokesService(t *testing.T) {
 				serviceCalls := 0
 				handler := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, config: HandlerConfig{
 					MaxRequestBytes: 1 << 20,
-					ListMeasurements: func(context.Context, string) (api.BatchEnergyOptimizationList, error) {
-						serviceCalls++
-						return api.BatchEnergyOptimizationList{}, nil
-					},
 					SubmitMeasurement: func(context.Context, api.BatchEnergyOptimization, bool) (MeasurementMutationResult, error) {
 						serviceCalls++
 						return MeasurementMutationResult{}, nil

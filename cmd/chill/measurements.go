@@ -12,12 +12,12 @@ import (
 	"text/tabwriter"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/operatorconsole"
+	"github.com/lab-paper-code/chill/internal/queryapi"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 )
 
 // The producer accepts 64 MiB sealed results; allow another 4 MiB for
-// the task/status projection envelope. Console JSON does not expand HTML escaping.
+// the task/status projection envelope. Query API JSON does not expand HTML escaping.
 const maximumMeasurementResultBytes int64 = (64 + 4) << 20
 
 const measurementDeletionRequested = "DeletionRequested"
@@ -25,7 +25,7 @@ const measurementDeletionRequested = "DeletionRequested"
 type measurementOperations interface {
 	Submit(context.Context) (httpapi.MeasurementMutationResult, error)
 	List(context.Context) (edgev1alpha1.BatchEnergyOptimizationList, error)
-	Show(context.Context) (operatorconsole.BatchEnergyOptimizationResult, error)
+	Show(context.Context) (queryapi.BatchEnergyOptimizationResult, error)
 	Delete(context.Context) (httpapi.MeasurementMutationResult, error)
 }
 
@@ -94,13 +94,13 @@ func (q *measurementClient) List(ctx context.Context) (edgev1alpha1.BatchEnergyO
 	return tasks, err
 }
 
-func (q *measurementClient) Show(ctx context.Context) (operatorconsole.BatchEnergyOptimizationResult, error) {
-	var result operatorconsole.BatchEnergyOptimizationResult
+func (q *measurementClient) Show(ctx context.Context) (queryapi.BatchEnergyOptimizationResult, error) {
+	var result queryapi.BatchEnergyOptimizationResult
 	path := q.path() + "/" + url.PathEscape(q.opts.name) + "/result"
 	if err := q.read(ctx, http.MethodGet, path, nil, "", maximumMeasurementResultBytes, &result); err != nil {
 		return result, err
 	}
-	if result.APIVersion != operatorconsole.BatchEnergyOptimizationResultAPIVersion ||
+	if result.APIVersion != queryapi.BatchEnergyOptimizationResultAPIVersion ||
 		result.Kind != "BatchEnergyOptimizationResult" ||
 		result.Campaign.Namespace != q.opts.namespace || result.Campaign.Name != q.opts.name {
 		return result, errors.New("owner returned an unexpected measurement task identity")

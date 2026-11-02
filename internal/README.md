@@ -11,7 +11,7 @@ treating every directory under `internal/` as an equal entry point.
 | Profiling | [`profiling/`](profiling/) | Immutable Runs, batch campaigns, derivation, evidence admission, and Job execution |
 | System operator | [`operator/`](operator/) | `ChillSystem` reconciliation and operand desired state |
 | Node actuation | [`nodeactuator/`](nodeactuator/) | One verified Node power-state transition |
-| Operator console | [`operatorconsole/`](operatorconsole/) | Read models, Kubernetes queries, and the read-only HTTP API |
+| Operator query | [`queryapi/`](queryapi/) | Read models, Kubernetes queries, and the read-only HTTP API |
 | Evidence storage | [`evidencestore/`](evidencestore/) | Immutable object identity, verification, and storage adapters |
 | Device facts | [`deviceclass/`](deviceclass/) and [`modelcompat/`](modelcompat/) | Stable hardware facts and pure static model/input/native-setting compatibility |
 | Observation | [`metricobserver/`](metricobserver/) and [`workloadobserver/`](workloadobserver/) | Bounded metric and workload evidence collection |

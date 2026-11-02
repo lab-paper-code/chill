@@ -33,12 +33,7 @@ func (o *schedulerService) profilesView(context.Context) (httpapi.ProfilesView, 
 	if view == nil {
 		return httpapi.ProfilesView{}, errors.New("scheduler catalog is not loaded")
 	}
-	result := *view
-	result.DisplayStatus = func(profile serving.Profile) string {
-		assessment, _ := assessCatalogProfile(*view, profile)
-		return assessment.DisplayStatus
-	}
-	return result, nil
+	return *view, nil
 }
 
 // preparations builds one PrepareSpec per profile. A profile that cannot be
@@ -256,4 +251,21 @@ func (o *schedulerService) measuredPreparation(
 		return servingkube.PrepareSpec{}, err
 	}
 	return spec, nil
+}
+
+// readCatalog projects only query inputs; the scheduler remains the source of truth.
+func (o *schedulerService) readCatalog(ctx context.Context) (servingkube.CatalogRead, error) {
+	view, err := o.measurementCatalogView(ctx)
+	if err != nil {
+		return servingkube.CatalogRead{}, err
+	}
+	adopted := []string{}
+	var preparations map[string]servingkube.PrepareSpec
+	if current := o.profiles.Load(); current != nil {
+		for _, p := range current.Profiles {
+			adopted = append(adopted, p.ID)
+		}
+		preparations = current.Preparations
+	}
+	return servingkube.ProjectCatalogRead(view.CatalogView, view.ConfigVersion, preparations, adopted), nil
 }

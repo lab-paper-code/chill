@@ -106,7 +106,7 @@ const guides: Record<string, Guide> = {
   MeasurementEvidenceMissing: ["운영에 필요한 측정 기록이 모자라요.", "필요한 크기를 포함해 다시 측정해 주세요."],
   MemoryEvidenceMissing: ["메모리 사용량 기록이 없는 측정이에요.", "다시 측정해 주세요."],
 
-  // Console errors: internal/operatorconsole/readapi/queries.go, handler.go
+  // Query API errors: internal/queryapi/readapi/queries.go, handler.go
   SystemsUnavailable: ["시스템 상태를 읽지 못했어요.", "잠시 후 다시 시도해 주세요."],
   InventoryUnavailable: ["장비 목록을 읽지 못했어요.", "잠시 후 다시 시도해 주세요."],
   ProfilingRunsUnavailable: ["측정 회차 목록을 읽지 못했어요.", "잠시 후 다시 시도해 주세요."],

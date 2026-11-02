@@ -948,8 +948,8 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
         write_json(output / "pilot" / "summary.json", summary["pilot"])
     if preflight:
         # Audited read-only: readapi/handler.go -> kube preflight query (client.Reader)
-        # -> cmd/console/run.go projector.Project; projected transitions are discarded.
-        # chill-server enrichment only lists requests and reads catalog/evidence.
+        # -> cmd/chill-query/run.go projector.Project; projected transitions are discarded.
+        # Query API assembly only lists requests and reads typed catalog/evidence.
         checks = []
         for model in sorted(summary["cellsByModel"]):
             doc = next(d for lane in lanes.values() for r, d in lane if r["model"] == model)

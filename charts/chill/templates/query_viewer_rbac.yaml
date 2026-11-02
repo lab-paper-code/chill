@@ -1,0 +1,38 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "chill.fullname" . }}-query-viewer
+  labels:
+    app.kubernetes.io/component: query-api
+    {{- include "chill.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - edge.dacs.io
+    resources:
+      - chillsystems
+      - deviceclasses
+      - modelspecs
+      - profilingruns
+      - batchenergyoptimizations
+    verbs:
+      - get
+      - list
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - get
+      - list
+  - apiGroups:
+      - ""
+    resources:
+      - services/proxy
+    resourceNames:
+      - {{ printf "%s:http" (include "chill.queryName" .) }}
+    verbs:
+      - get
+  - nonResourceURLs:
+      - {{ printf "/chill/api/v1/namespaces/%s/measurement-coverage" .Release.Namespace | quote }}
+    verbs:
+      - get

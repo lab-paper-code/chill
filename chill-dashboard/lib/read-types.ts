@@ -132,7 +132,7 @@ export type MeasurementPlanSpec = {state:{candidate:{modelSpec:string;preprocess
 export type MeasurementPlan = {apiVersion?:string;kind?:string;metadata:{name:string;namespace:string;uid:string;resourceVersion:string;creationTimestamp:string;labels?:Record<string,string>};spec:MeasurementPlanSpec;status?:{phase?:"Measuring"|"Complete"|"Failed"|string;completedTrials?:number;outcome?:string;conditions?:Condition[];result?:unknown}} & {assessment?:MeasurementAssessment}
 export type MeasurementPlanList = {items:MeasurementPlan[]|null}
 export type MeasurementMutation = {request:"Accepted"|"NOT_SUBMITTED"|"DeletionRequested"|string;task:MeasurementPlan|null;evidenceDeleted?:boolean;deletedEvidence?:{store:string;key:string}[]}
-// internal/operatorconsole/batch_energy_optimization_preflight_view.go: plan only when resolves, reason only when not.
+// internal/queryapi/batch_energy_optimization_preflight_view.go: plan only when resolves, reason only when not.
 export type MeasurementPreflight = {apiVersion:string;kind:string;readAt:string;campaign:{namespace:string;name:string;spec:MeasurementPlanSpec};resolves:boolean;reason?:string;plan?:{schemaVersion:string;shared:CurvePlanSpec}} & {batchPlan?:MeasurementBatchPlan}
 
 // internal/serving/httpapi/measurement_projections.go: safe projections, not full CRs.

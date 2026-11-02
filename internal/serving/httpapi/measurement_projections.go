@@ -1,16 +1,11 @@
 package httpapi
 
 import (
-	"context"
 	"encoding/json"
-	"net/http"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
-	authorizationv1 "k8s.io/api/authorization/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
@@ -138,50 +133,4 @@ func ProjectDispatchOccupancyMeasurement(cr api.DispatchOccupancyMeasurement) Me
 	}
 	p.Status = status
 	return p
-}
-func (h *Handler) operationCostMeasurements(w http.ResponseWriter, r *http.Request) {
-	h.measurementProjectionRead(w, r, "operationcostmeasurements", h.config.ListOperationCostMeasurements, h.config.GetOperationCostMeasurement)
-}
-func (h *Handler) dispatchOccupancyMeasurements(w http.ResponseWriter, r *http.Request) {
-	h.measurementProjectionRead(w, r, "dispatchoccupancymeasurements", h.config.ListDispatchOccupancyMeasurements, h.config.GetDispatchOccupancyMeasurement)
-}
-func (h *Handler) measurementProjectionRead(w http.ResponseWriter, r *http.Request, resource string,
-	list func(context.Context, string) (MeasurementProjectionList, error), get func(context.Context, string, string) (MeasurementProjection, error)) {
-	if err := h.authorize(r); err != nil {
-		sendError(w, err)
-		return
-	}
-	namespace, name := r.PathValue("namespace"), r.PathValue("name")
-	if len(validation.IsDNS1123Label(namespace)) != 0 || (name != "" && len(validation.IsDNS1123Subdomain(name)) != 0) {
-		sendError(w, &serving.Error{Code: "InvalidInput", Message: "valid measurement namespace and name are required"})
-		return
-	}
-	verb := measurementListVerb
-	if name != "" {
-		verb = measurementGetVerb
-	}
-	if err := h.authorizer.AuthorizeResource(r.Context(), servingkube.PrincipalFromContext(r.Context()), authorizationv1.ResourceAttributes{Namespace: namespace, Name: name, Verb: verb, Group: api.GroupVersion.Group, Version: api.GroupVersion.Version, Resource: resource}); err != nil {
-		sendError(w, err)
-		return
-	}
-	var value any
-	var err error
-	if name == "" {
-		if list == nil {
-			err = measurementUnavailable()
-		} else {
-			value, err = list(r.Context(), namespace)
-		}
-	} else {
-		if get == nil {
-			err = measurementUnavailable()
-		} else {
-			value, err = get(r.Context(), namespace, name)
-		}
-	}
-	if err != nil {
-		sendError(w, err)
-		return
-	}
-	sendJSON(w, http.StatusOK, value)
 }

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/operatorconsole"
+	"github.com/lab-paper-code/chill/internal/queryapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	batch "k8s.io/api/batch/v1"
 	core "k8s.io/api/core/v1"
@@ -51,7 +51,7 @@ func TestMeasurementSubmitPreflightBeforeNativeCreate(t *testing.T) {
 				TypeMeta:   meta.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "BatchEnergyOptimization"},
 				ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "task"},
 			}
-			console := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			query := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				preflights++
 				if r.Method != http.MethodPost || r.Header.Get("Authorization") != "" ||
 					r.URL.Path != "/api/v1/namespaces/allowed/batch-energy-optimizations/preflight" {
@@ -65,10 +65,10 @@ func TestMeasurementSubmitPreflightBeforeNativeCreate(t *testing.T) {
 				if mode == "wrong identity" {
 					name = "another"
 				}
-				result := operatorconsole.BatchEnergyOptimizationPreflight{
-					APIVersion: operatorconsole.BatchEnergyOptimizationPreflightAPIVersion,
+				result := queryapi.BatchEnergyOptimizationPreflight{
+					APIVersion: queryapi.BatchEnergyOptimizationPreflightAPIVersion,
 					Kind:       "BatchEnergyOptimizationPreflight",
-					Campaign: operatorconsole.BatchEnergyOptimizationPreflightCampaign{
+					Campaign: queryapi.BatchEnergyOptimizationPreflightCampaign{
 						Namespace: task.Namespace, Name: name,
 					},
 					Resolves: mode != "reject", Reason: "actual unresolved input",
@@ -77,7 +77,7 @@ func TestMeasurementSubmitPreflightBeforeNativeCreate(t *testing.T) {
 					t.Error(err)
 				}
 			}))
-			defer console.Close()
+			defer query.Close()
 			native := fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithInterceptorFuncs(interceptor.Funcs{
 				Create: func(ctx context.Context, c client.WithWatch, object client.Object, opts ...client.CreateOption) error {
 					creates++
@@ -97,7 +97,7 @@ func TestMeasurementSubmitPreflightBeforeNativeCreate(t *testing.T) {
 					return c.Create(ctx, object, opts...)
 				},
 			}).Build()
-			opts := options{servingNamespace: "allowed", consoleURL: console.URL, requestTimeout: time.Second}
+			opts := options{servingNamespace: "allowed", queryURL: query.URL, requestTimeout: time.Second}
 			service, err := newMeasurementService(native, kubefake.NewSimpleClientset(), nil, nil, opts)
 			if err != nil {
 				t.Fatal(err)
@@ -187,7 +187,7 @@ func TestMeasurementDeleteFencesIdentityAndNativeFinalizerLifecycle(t *testing.T
 			ctx := context.Background()
 			task := terminalDeletionTask()
 			if mode == "active measurement" {
-				task.Status.Phase = measurementPhaseMeasuring
+				task.Status.Phase = string(api.MeasurementPhaseMeasuring)
 			}
 			if mode == measurementFinalizerTest {
 				task.Finalizers = []string{"external/finalizer"}

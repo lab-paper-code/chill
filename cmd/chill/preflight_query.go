@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"os"
 
-	"github.com/lab-paper-code/chill/internal/operatorconsole"
+	"github.com/lab-paper-code/chill/internal/queryapi"
 	"sigs.k8s.io/yaml"
 )
 
@@ -73,14 +73,14 @@ func readBatchEnergyOptimizationManifest(path string) ([]byte, string, error) {
 
 func (q *ownerBatchEnergyOptimizationPreflightQuery) Read(
 	ctx context.Context,
-) (operatorconsole.BatchEnergyOptimizationPreflight, error) {
-	var preflight operatorconsole.BatchEnergyOptimizationPreflight
+) (queryapi.BatchEnergyOptimizationPreflight, error) {
+	var preflight queryapi.BatchEnergyOptimizationPreflight
 	path := "/api/v1/namespaces/" + url.PathEscape(q.opts.namespace) + "/batch-energy-optimizations/preflight"
 	if err := q.read(ctx, http.MethodPost, path, q.manifest, "",
 		maximumBatchEnergyOptimizationPreflightBytes, &preflight); err != nil {
 		return preflight, err
 	}
-	if preflight.APIVersion != operatorconsole.BatchEnergyOptimizationPreflightAPIVersion ||
+	if preflight.APIVersion != queryapi.BatchEnergyOptimizationPreflightAPIVersion ||
 		preflight.Kind != "BatchEnergyOptimizationPreflight" || preflight.Campaign.Namespace != q.opts.namespace {
 		return preflight, errors.New("owner returned an unexpected preflight identity")
 	}

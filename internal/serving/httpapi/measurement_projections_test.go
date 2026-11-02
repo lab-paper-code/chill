@@ -1,21 +1,13 @@
 package httpapi
 
 import (
-	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
-	authentication "k8s.io/api/authentication/v1"
-	authorization "k8s.io/api/authorization/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/kubernetes/fake"
-	ktesting "k8s.io/client-go/testing"
 )
 
 func TestMeasurementProjectionWhitelistAndOriginalReferences(t *testing.T) {
@@ -82,65 +74,5 @@ func TestMeasurementProjectionWhitelistAndOriginalReferences(t *testing.T) {
 	}
 	if status.Steps[1].FromPowerMode != "" || status.Steps[1].ToPowerMode != "" || status.Steps[1].Model != "" {
 		t.Fatalf("invented missing metadata: %+v", status.Steps[1])
-	}
-}
-
-func TestMeasurementProjectionListGetCallerAuthorization(t *testing.T) {
-	for _, resource := range []string{"operationcostmeasurements", "dispatchoccupancymeasurements"} {
-		for _, name := range []string{"", "measurement"} {
-			for _, allowed := range []bool{false, true} {
-				t.Run(resource+"/"+name+map[bool]string{false: "/denied", true: "/allowed"}[allowed], func(t *testing.T) {
-					kube := fake.NewSimpleClientset()
-					kube.PrependReactor("create", "tokenreviews", func(ktesting.Action) (bool, runtime.Object, error) {
-						return true, &authentication.TokenReview{Status: authentication.TokenReviewStatus{Authenticated: true, User: authentication.UserInfo{Username: "caller"}}}, nil
-					})
-					resourceCalls := 0
-					kube.PrependReactor("create", "subjectaccessreviews", func(action ktesting.Action) (bool, runtime.Object, error) {
-						review := action.(ktesting.CreateAction).GetObject().(*authorization.SubjectAccessReview)
-						permit := true
-						if r := review.Spec.ResourceAttributes; r != nil {
-							resourceCalls++
-							verb := "list"
-							if name != "" {
-								verb = "get"
-							}
-							if review.Spec.User != "caller" || r.Namespace != "allowed" || r.Name != name || r.Resource != resource || r.Verb != verb {
-								t.Fatalf("wrong caller SAR: %+v", review.Spec)
-							}
-							permit = allowed
-						}
-						return true, &authorization.SubjectAccessReview{Status: authorization.SubjectAccessReviewStatus{Allowed: permit}}, nil
-					})
-					h := &Handler{authorizer: &servingkube.Authorizer{Client: kube}}
-					r := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/allowed/measurements", nil)
-					r.Header.Set("Authorization", "Bearer caller-token")
-					r.SetPathValue("namespace", "allowed")
-					r.SetPathValue("name", name)
-					calls := 0
-					list := func(context.Context, string) (MeasurementProjectionList, error) {
-						calls++
-						return MeasurementProjectionList{Items: []MeasurementProjection{}}, nil
-					}
-					get := func(context.Context, string, string) (MeasurementProjection, error) {
-						calls++
-						return MeasurementProjection{}, nil
-					}
-					w := httptest.NewRecorder()
-					h.measurementProjectionRead(w, r, resource, list, get)
-					expected := http.StatusForbidden
-					expectedCalls := 0
-					if allowed {
-						expected = http.StatusOK
-						expectedCalls = 1
-					}
-					if w.Code != expected || calls != expectedCalls || resourceCalls != 1 {
-						t.Fatalf("code=%d calls=%d SARs=%d", w.Code, calls, resourceCalls)
-					}
-					if allowed && name == "" && strings.TrimSpace(w.Body.String()) != `{"items":[]}` {
-						t.Fatalf("empty list: %s", w.Body.String())
-					}
-				})
-			}
-		}
 	}
 }

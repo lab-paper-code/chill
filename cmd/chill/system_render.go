@@ -8,11 +8,11 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/operatorconsole"
+	"github.com/lab-paper-code/chill/internal/queryapi"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func writeSystems(writer io.Writer, output string, view operatorconsole.SystemsView) error {
+func writeSystems(writer io.Writer, output string, view queryapi.SystemsView) error {
 	if output == outputFormatJSON {
 		encoder := json.NewEncoder(writer)
 		encoder.SetIndent("", "  ")
@@ -21,7 +21,7 @@ func writeSystems(writer io.Writer, output string, view operatorconsole.SystemsV
 	return writeSystemsTable(writer, view)
 }
 
-func writeSystemsTable(writer io.Writer, view operatorconsole.SystemsView) error {
+func writeSystemsTable(writer io.Writer, view queryapi.SystemsView) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
 	if _, err := fmt.Fprintf(table, "READ_AT\t%s\nCHILLSYSTEMS_RV\t%s\n\n",
 		view.ReadAt, display(view.ResourceVersion)); err != nil {

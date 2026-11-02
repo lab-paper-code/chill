@@ -14,11 +14,11 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"github.com/lab-paper-code/chill/internal/operatorconsole"
+	"github.com/lab-paper-code/chill/internal/queryapi"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
-	"golang.org/x/sync/errgroup"
+
 	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,17 +29,18 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+const measurementPhaseMeasuring = string(api.MeasurementPhaseMeasuring)
+
 // The measurement service removes only source-proven, unreferenced measurement
 // evidence before requesting native deletion. Native GC/finalizers stay native.
 type measurementService struct {
-	client        client.Client
-	scheduler     *schedulerService
-	kube          kubernetes.Interface
-	objects       measurementObjects
-	opts          options
-	console       *url.URL
-	http          *http.Client
-	coverageCache measurementCoverageCache
+	client    client.Client
+	scheduler *schedulerService
+	kube      kubernetes.Interface
+	objects   measurementObjects
+	opts      options
+	query     *url.URL
+	http      *http.Client
 }
 
 type measurementObjects interface {
@@ -54,12 +55,12 @@ func newMeasurementService(
 	objects measurementObjects,
 	opts options,
 ) (*measurementService, error) {
-	origin, err := privateOrigin(opts.consoleURL)
+	origin, err := privateOrigin(opts.queryURL)
 	if err != nil {
 		return nil, err
 	}
 	return &measurementService{
-		client: native, kube: kube, scheduler: scheduler, objects: objects, opts: opts, console: origin,
+		client: native, kube: kube, scheduler: scheduler, objects: objects, opts: opts, query: origin,
 		http: &http.Client{
 			Timeout:       opts.requestTimeout,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -97,115 +98,18 @@ func (o *measurementService) list(ctx context.Context, namespace string) (api.Ba
 	return result, nil
 }
 
-func (o *measurementService) listOperationCosts(
-	ctx context.Context, namespace string,
-) (httpapi.MeasurementProjectionList, error) {
-	result := httpapi.MeasurementProjectionList{Items: []httpapi.MeasurementProjection{}}
-	if err := o.namespace(namespace); err != nil {
-		return result, err
-	}
-	var list api.OperationCostMeasurementList
-	if err := o.client.List(ctx, &list, client.InNamespace(namespace)); err != nil {
-		return result, err
-	}
-	sort.Slice(list.Items, func(i, j int) bool { return list.Items[i].Name < list.Items[j].Name })
-	result.Items = make([]httpapi.MeasurementProjection, len(list.Items))
-	group, readCtx := errgroup.WithContext(ctx)
-	group.SetLimit(8)
-	for i, cr := range list.Items {
-		group.Go(func() error {
-			projection, err := o.projectOperationCost(readCtx, cr)
-			if err == nil {
-				result.Items[i] = projection
-			}
-			return err
-		})
-	}
-	if err := group.Wait(); err != nil {
-		return httpapi.MeasurementProjectionList{}, err
-	}
-	return result, nil
-}
-
-func (o *measurementService) getOperationCost(
-	ctx context.Context, namespace, name string,
-) (httpapi.MeasurementProjection, error) {
-	if err := o.namespace(namespace); err != nil {
-		return httpapi.MeasurementProjection{}, err
-	}
-	var cr api.OperationCostMeasurement
-	if err := o.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &cr); err != nil {
-		return httpapi.MeasurementProjection{}, err
-	}
-	return o.projectOperationCost(ctx, cr)
-}
-
-func (o *measurementService) projectOperationCost(
-	ctx context.Context,
-	cr api.OperationCostMeasurement,
-) (httpapi.MeasurementProjection, error) {
-	steps, err := servingkube.LoadOperationCostSteps(
-		ctx,
-		cr,
-		o.objects,
-		o.opts.storeName,
-		o.opts.maxEvidenceBytes,
-	)
-	if err != nil {
-		return httpapi.MeasurementProjection{}, err
-	}
-	projection := httpapi.ProjectOperationCostMeasurement(cr, o.opts.storeName, steps)
-	projection.Assessment, err = json.Marshal(assessOperationCost(cr, steps))
-	return projection, err
-}
-
-func (o *measurementService) listDispatchOccupancies(
-	ctx context.Context, namespace string,
-) (httpapi.MeasurementProjectionList, error) {
-	result := httpapi.MeasurementProjectionList{Items: []httpapi.MeasurementProjection{}}
-	if err := o.namespace(namespace); err != nil {
-		return result, err
-	}
-	var list api.DispatchOccupancyMeasurementList
-	if err := o.client.List(ctx, &list, client.InNamespace(namespace)); err != nil {
-		return result, err
-	}
-	sort.Slice(list.Items, func(i, j int) bool { return list.Items[i].Name < list.Items[j].Name })
-	for _, cr := range list.Items {
-		projection, err := o.projectDispatchOccupancy(ctx, cr)
-		if err != nil {
-			return httpapi.MeasurementProjectionList{}, err
-		}
-		result.Items = append(result.Items, projection)
-	}
-	return result, nil
-}
-
-func (o *measurementService) getDispatchOccupancy(
-	ctx context.Context, namespace, name string,
-) (httpapi.MeasurementProjection, error) {
-	if err := o.namespace(namespace); err != nil {
-		return httpapi.MeasurementProjection{}, err
-	}
-	var cr api.DispatchOccupancyMeasurement
-	if err := o.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &cr); err != nil {
-		return httpapi.MeasurementProjection{}, err
-	}
-	return o.projectDispatchOccupancy(ctx, cr)
-}
-
 func (o *measurementService) preflight(ctx context.Context, task *api.BatchEnergyOptimization) error {
 	unavailable := &serving.Error{
-		Code: "MeasurementPreflightUnavailable", Message: "production Console preflight is unavailable",
+		Code: "MeasurementPreflightUnavailable", Message: "production QueryAPI preflight is unavailable",
 	}
-	if o.console == nil {
+	if o.query == nil {
 		return unavailable
 	}
 	body, err := json.Marshal(task)
 	if err != nil {
 		return err
 	}
-	target := *o.console
+	target := *o.query
 	target.Path = "/api/v1/namespaces/" + task.Namespace + "/batch-energy-optimizations/preflight"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(body))
 	if err != nil {
@@ -223,9 +127,9 @@ func (o *measurementService) preflight(ctx context.Context, task *api.BatchEnerg
 		response.StatusCode != http.StatusOK || len(payload) > maximumPreflightBytes {
 		return unavailable
 	}
-	var result operatorconsole.BatchEnergyOptimizationPreflight
+	var result queryapi.BatchEnergyOptimizationPreflight
 	if json.Unmarshal(payload, &result) != nil ||
-		result.APIVersion != operatorconsole.BatchEnergyOptimizationPreflightAPIVersion ||
+		result.APIVersion != queryapi.BatchEnergyOptimizationPreflightAPIVersion ||
 		result.Kind != "BatchEnergyOptimizationPreflight" ||
 		result.Campaign.Namespace != task.Namespace || result.Campaign.Name != task.Name {
 		return unavailable
@@ -282,7 +186,7 @@ func (o *measurementService) delete(
 		resource := schema.GroupResource{Group: api.GroupVersion.Group, Resource: "batchenergyoptimizations"}
 		return result, apierrors.NewConflict(resource, name, errors.New("native UID or resourceVersion changed"))
 	}
-	if task.Status.Phase == measurementPhaseMeasuring {
+	if task.Status.Phase == string(api.MeasurementPhaseMeasuring) {
 		return result, &serving.Error{Code: "MeasurementInUse", Message: "an active measurement cannot be deleted"}
 	}
 	pods, err := o.kube.CoreV1().Pods(o.opts.servingNamespace).List(ctx, meta.ListOptions{})

@@ -17,9 +17,9 @@ components=(
   entrypoints
   platform-core
   device-class
-  operator-console
-  operator-console-readapi
-  operator-console-kube
+  query-api
+  query-api-readapi
+  query-api-kube
   operator
   evidence-core
   evidence-kube
@@ -71,9 +71,9 @@ component_for() {
       echo platform-core
       ;;
     internal/deviceclass) echo device-class ;;
-    internal/operatorconsole) echo operator-console ;;
-    internal/operatorconsole/readapi) echo operator-console-readapi ;;
-    internal/operatorconsole/kube) echo operator-console-kube ;;
+    internal/queryapi) echo query-api ;;
+    internal/queryapi/readapi) echo query-api-readapi ;;
+    internal/queryapi/kube) echo query-api-kube ;;
     internal/operator/*) echo operator ;;
     internal/evidencestore) echo evidence-core ;;
     internal/evidencestore/kube) echo evidence-kube ;;

@@ -34,7 +34,7 @@ make helm-uninstall
 When `HELM_VALUES` names a values file, that file owns component image values;
 Makefile-generated image defaults do not override it. An exact component image
 can still be overridden explicitly through `OPERATOR_IMG`, `NODE_AGENT_IMG`,
-`PROFILER_IMG`, or `CONSOLE_IMG` in the command environment or Make command
+`PROFILER_IMG`, or `QUERY_IMG` in the command environment or Make command
 line.
 
 `make helm-uninstall` treats runtime cleanup as CHILL's responsibility: it
@@ -551,8 +551,8 @@ stop the lane. A create-race `AlreadyExists` remains a fatal create error;
 feeder never applies or overwrites an existing BEO.
 Optional preflight checks one sample per model. Its audited route calls
 `client.Reader` and the pure curve-plan projector, discarding transitions
-(`internal/operatorconsole/kube/batch_energy_optimization_preflight_query.go`,
-`cmd/console/run.go`); server enrichment only reads catalog/evidence. It does
+(`internal/queryapi/kube/batch_energy_optimization_preflight_query.go`,
+`cmd/chill-query/run.go`); Query API assembly only reads catalog/evidence. It does
 not submit a BEO or execute an actuator.
 
 `hack/measure/smoke/smoke.py NODE OUTDIR WL=PROFILE:DATASET` retains prepare,

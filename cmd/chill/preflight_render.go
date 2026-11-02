@@ -9,13 +9,13 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/operatorconsole"
+	"github.com/lab-paper-code/chill/internal/queryapi"
 )
 
 func writeBatchEnergyOptimizationPreflight(
 	writer io.Writer,
 	output string,
-	preflight operatorconsole.BatchEnergyOptimizationPreflight,
+	preflight queryapi.BatchEnergyOptimizationPreflight,
 ) error {
 	if output == outputFormatJSON {
 		encoder := json.NewEncoder(writer)
@@ -27,7 +27,7 @@ func writeBatchEnergyOptimizationPreflight(
 
 func writeBatchEnergyOptimizationPreflightTable(
 	writer io.Writer,
-	preflight operatorconsole.BatchEnergyOptimizationPreflight,
+	preflight queryapi.BatchEnergyOptimizationPreflight,
 ) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
 	resolves := "no"

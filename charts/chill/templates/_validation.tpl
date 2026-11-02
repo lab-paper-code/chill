@@ -4,7 +4,7 @@
 {{- $nodeAgentImageTag := include "chill.nodeAgentImageTag" . -}}
 {{- $operatorImageTag := include "chill.operatorImageTag" . -}}
 {{- $profilerImageTag := include "chill.profilerImageTag" . -}}
-{{- $consoleImageTag := include "chill.consoleImageTag" . -}}
+{{- $queryImageTag := include "chill.queryImageTag" . -}}
 {{- $servingEntrypointImageTag := include "chill.servingEntrypointImageTag" . -}}
 {{- if empty (include "chill.systemName" .) -}}
 {{- fail "system.name or release name must not be empty" -}}
@@ -12,21 +12,21 @@
 {{- if and .Values.evidenceStore.enabled (empty .Values.evidenceStore.configRef.name) -}}
 {{- fail "evidenceStore.configRef.name must not be empty when evidenceStore.enabled=true" -}}
 {{- end -}}
-{{- if .Values.console.enabled -}}
-{{- if lt (int .Values.console.replicaCount) 1 -}}
-{{- fail "console.replicaCount must be positive when console.enabled=true" -}}
+{{- if .Values.query.enabled -}}
+{{- if lt (int .Values.query.replicaCount) 1 -}}
+{{- fail "query.replicaCount must be positive when query.enabled=true" -}}
 {{- end -}}
-{{- if empty .Values.console.image.repository -}}
-{{- fail "console.image.repository must not be empty when console.enabled=true" -}}
+{{- if empty .Values.query.image.repository -}}
+{{- fail "query.image.repository must not be empty when query.enabled=true" -}}
 {{- end -}}
-{{- if empty $consoleImageTag -}}
-{{- fail "console.image.tag or Chart.appVersion must not be empty when console.enabled=true" -}}
+{{- if empty $queryImageTag -}}
+{{- fail "query.image.tag or Chart.appVersion must not be empty when query.enabled=true" -}}
 {{- end -}}
-{{- if or (lt (int .Values.console.port) 1) (gt (int .Values.console.port) 65535) -}}
-{{- fail "console.port must be between 1 and 65535 when console.enabled=true" -}}
+{{- if or (lt (int .Values.query.port) 1) (gt (int .Values.query.port) 65535) -}}
+{{- fail "query.port must be between 1 and 65535 when query.enabled=true" -}}
 {{- end -}}
-{{- if and (not .Values.console.serviceAccount.create) (empty .Values.console.serviceAccount.name) -}}
-{{- fail "console.serviceAccount.name must be set when console.serviceAccount.create=false" -}}
+{{- if and (not .Values.query.serviceAccount.create) (empty .Values.query.serviceAccount.name) -}}
+{{- fail "query.serviceAccount.name must be set when query.serviceAccount.create=false" -}}
 {{- end -}}
 {{- end -}}
 {{- if .Values.servingEntrypoint.enabled -}}

@@ -38,36 +38,30 @@ type HandlerConfig struct {
 	RefreshScheduler                                           func(context.Context) error
 	SchedulerMeters                                            func() []servingkube.MeterDeclaration
 	ReceiveResources                                           func(context.Context, serving.ResourceBatch) ([]serving.ResourceTarget, error)
-	Profiles                                                   func(context.Context) (ProfilesView, error)
-	DecorateProfiles                                           func(context.Context, ProfilesView) (json.RawMessage, error)
-	ListMeasurements                                           func(context.Context, string) (api.BatchEnergyOptimizationList, error)
-	AssessMeasurements                                         func(context.Context, api.BatchEnergyOptimizationList) ([]json.RawMessage, error)
-	MeasurementCoverage                                        func(context.Context, string, MeasurementCoverageQuery) (json.RawMessage, error)
-	SubmitMeasurement                                          func(context.Context, api.BatchEnergyOptimization, bool) (MeasurementMutationResult, error)
-	DeleteMeasurement                                          func(context.Context, string, string, string, string) (MeasurementMutationResult, error)
-	OperatingPower                                             func(context.Context, time.Time, time.Time, int) (serving.OperatingPowerWindow, error)
-	ListExperiments                                            func(context.Context) (ExperimentList, error)
-	GetExperiment                                              func(context.Context, string) (ExperimentSummary, error)
-	ListActiveEvaluations                                      func(context.Context) (ActiveEvaluationList, error)
-	ListEvaluations                                            func(context.Context) (EvaluationList, error)
-	GetEvaluation                                              func(context.Context, string) (EvaluationView, error)
-	PreflightEvaluation                                        func(context.Context, EvaluationRequest) (EvaluationPreflight, error)
-	CreateEvaluation                                           func(context.Context, EvaluationRequest, string) (EvaluationIdentity, error)
-	ReplaceEvaluation                                          func(context.Context, string, string, EvaluationRequest, string) (EvaluationIdentity, error)
-	DeleteEvaluation                                           func(context.Context, string, string, string) (EvaluationIdentity, error)
-	ReleaseEvaluation                                          func(context.Context, string, EvaluationReleaseRequest, string) (EvaluationIdentity, error)
-	GetEvaluationTemplate                                      func(context.Context) (EvaluationTemplate, error)
-	ListLoadScenarios                                          func(context.Context) (LoadScenarioList, error)
-	GetLoadScenario                                            func(context.Context, string) (LoadScenarioView, error)
-	PreflightLoadScenario                                      func(context.Context, LoadScenarioRequest) (LoadScenarioPreflight, error)
-	CreateLoadScenario                                         func(context.Context, LoadScenarioRequest, string) (EvaluationIdentity, error)
-	ReplaceLoadScenario                                        func(context.Context, string, string, LoadScenarioRequest, string) (EvaluationIdentity, error)
-	DeleteLoadScenario                                         func(context.Context, string, string) (EvaluationIdentity, error)
-	ListEvaluationInputs                                       func(context.Context) (EvaluationInputList, error)
-	ListOperationCostMeasurements                              func(context.Context, string) (MeasurementProjectionList, error)
-	GetOperationCostMeasurement                                func(context.Context, string, string) (MeasurementProjection, error)
-	ListDispatchOccupancyMeasurements                          func(context.Context, string) (MeasurementProjectionList, error)
-	GetDispatchOccupancyMeasurement                            func(context.Context, string, string) (MeasurementProjection, error)
+
+	ReadCatalog func(context.Context) (servingkube.CatalogRead, error)
+
+	SubmitMeasurement     func(context.Context, api.BatchEnergyOptimization, bool) (MeasurementMutationResult, error)
+	DeleteMeasurement     func(context.Context, string, string, string, string) (MeasurementMutationResult, error)
+	OperatingPower        func(context.Context, time.Time, time.Time, int) (serving.OperatingPowerWindow, error)
+	ListExperiments       func(context.Context) (ExperimentList, error)
+	GetExperiment         func(context.Context, string) (ExperimentSummary, error)
+	ListActiveEvaluations func(context.Context) (ActiveEvaluationList, error)
+	ListEvaluations       func(context.Context) (EvaluationList, error)
+	GetEvaluation         func(context.Context, string) (EvaluationView, error)
+	PreflightEvaluation   func(context.Context, EvaluationRequest) (EvaluationPreflight, error)
+	CreateEvaluation      func(context.Context, EvaluationRequest, string) (EvaluationIdentity, error)
+	ReplaceEvaluation     func(context.Context, string, string, EvaluationRequest, string) (EvaluationIdentity, error)
+	DeleteEvaluation      func(context.Context, string, string, string) (EvaluationIdentity, error)
+	ReleaseEvaluation     func(context.Context, string, EvaluationReleaseRequest, string) (EvaluationIdentity, error)
+	GetEvaluationTemplate func(context.Context) (EvaluationTemplate, error)
+	ListLoadScenarios     func(context.Context) (LoadScenarioList, error)
+	GetLoadScenario       func(context.Context, string) (LoadScenarioView, error)
+	PreflightLoadScenario func(context.Context, LoadScenarioRequest) (LoadScenarioPreflight, error)
+	CreateLoadScenario    func(context.Context, LoadScenarioRequest, string) (EvaluationIdentity, error)
+	ReplaceLoadScenario   func(context.Context, string, string, LoadScenarioRequest, string) (EvaluationIdentity, error)
+	DeleteLoadScenario    func(context.Context, string, string) (EvaluationIdentity, error)
+	ListEvaluationInputs  func(context.Context) (EvaluationInputList, error)
 }
 type Handler struct {
 	manager        *servingkube.Manager
@@ -132,11 +126,10 @@ func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authoriz
 	h.mux.HandleFunc("GET /api/v1/scheduler/state", h.scheduler)
 	h.mux.HandleFunc("PUT /api/v1/scheduler/settings", h.scheduler)
 	h.mux.HandleFunc("PUT /api/v1/scheduler", h.scheduler)
-	h.mux.HandleFunc("GET /api/v1/scheduler/profiles", h.schedulerProfiles)
+	h.mux.HandleFunc("GET /api/v1/scheduler/catalog-read", h.catalogRead)
 	h.mux.HandleFunc("GET /api/v1/scheduler/capacity", h.schedulerCapacity)
 	h.mux.HandleFunc("POST "+manualOperationsPath, h.operations)
-	h.mux.HandleFunc("GET /api/v1/namespaces/{namespace}/batch-energy-optimizations", h.measurements)
-	h.mux.HandleFunc("GET /api/v1/namespaces/{namespace}/measurement-coverage", h.measurementCoverage)
+
 	h.mux.HandleFunc("POST /api/v1/namespaces/{namespace}/batch-energy-optimizations", h.measurements)
 	h.mux.HandleFunc("DELETE /api/v1/namespaces/{namespace}/batch-energy-optimizations/{name}", h.measurements)
 	h.mux.HandleFunc("GET /api/v1/observations/load", h.schedulerObservations)
@@ -155,10 +148,7 @@ func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authoriz
 	h.mux.HandleFunc("DELETE /api/v1/evaluations/{name}", h.evaluations)
 	h.mux.HandleFunc("POST /api/v1/evaluations/{name}/release", h.evaluations)
 	h.registerEvaluationLoadRoutes()
-	h.mux.HandleFunc("GET /api/v1/namespaces/{namespace}/operation-cost-measurements", h.operationCostMeasurements)
-	h.mux.HandleFunc("GET /api/v1/namespaces/{namespace}/operation-cost-measurements/{name}", h.operationCostMeasurements)
-	h.mux.HandleFunc("GET /api/v1/namespaces/{namespace}/dispatch-occupancy-measurements", h.dispatchOccupancyMeasurements)
-	h.mux.HandleFunc("GET /api/v1/namespaces/{namespace}/dispatch-occupancy-measurements/{name}", h.dispatchOccupancyMeasurements)
+
 	return h, nil
 }
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -774,3 +764,6 @@ func sendError(w http.ResponseWriter, cause error) {
 		ctrl.Log.Error(err, "deliver HTTP error response")
 	}
 }
+
+// SendQueryError preserves the serving HTTP error contract at the query boundary.
+func SendQueryError(w http.ResponseWriter, err error) { sendError(w, err) }

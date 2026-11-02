@@ -97,8 +97,8 @@ spec:
             - {{ printf "--diagnostic-trace-offset=%s" .traceOffset | quote }}
             {{- end }}
             {{- end }}
-            {{- if .Values.console.enabled }}
-            - {{ printf "--console-url=http://%s.%s.svc.cluster.local:%v" (include "chill.consoleName" .) .Release.Namespace .Values.console.port | quote }}
+            {{- if .Values.query.enabled }}
+            - {{ printf "--query-url=http://%s.%s.svc.cluster.local:%v" (include "chill.queryName" .) .Release.Namespace .Values.query.port | quote }}
             {{- end }}
             {{- if .Values.dashboard.enabled }}
             - {{ printf "--dashboard-url=http://%s.%s.svc.cluster.local:%v" (include "chill.dashboardName" .) .Release.Namespace .Values.dashboard.port | quote }}
