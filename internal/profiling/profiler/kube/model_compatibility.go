@@ -33,6 +33,7 @@ type ModelCompatibility struct {
 	RuntimeDeclaration           *profilingrun.CandidateReportRuntimeInput
 	Verdict                      modelcompat.Verdict
 	Reasons                      []ModelCompatibilityReason
+	Diagnostics                  []string
 }
 
 // ResolveModelCompatibility reads the same installation-time fact source as
@@ -115,6 +116,9 @@ func (r *KubernetesCandidateResolver) ResolveModelCompatibility(
 	view.RuntimeDeclaration = &profilingrun.CandidateReportRuntimeInput{
 		Namespace: configMap.Namespace, Name: configMap.Name, UID: string(configMap.UID),
 		ResourceVersion: configMap.ResourceVersion, Key: r.options.ConfigMapKey, Image: declaration.Runtime.Image,
+	}
+	if declaration.superseded > 0 {
+		view.Diagnostics = []string{fmt.Sprintf("%d matching execution declarations superseded; last document entry selected", declaration.superseded)}
 	}
 	result := evaluateStaticCandidate(modelPath, artifact, deviceClass, declaration)
 	view.Verdict = result.Verdict

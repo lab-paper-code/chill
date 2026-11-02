@@ -157,7 +157,7 @@ func validateOccupancyProfile(s edge.DispatchOccupancyMeasurementSpec, profile *
 		}
 	}
 	if c.Confidence >= 1 || c.RelativePrecision >= 1 || c.IdleBase > 1 || p.ProfileID != profile.ID ||
-		p.RuntimeImage != profile.Condition.RuntimeImage || p.Workload.Name != w.Name || p.Workload.UID != string(w.UID) ||
+		p.Workload.Name != w.Name || p.Workload.UID != string(w.UID) ||
 		p.Workload.Generation != w.Generation || p.Workload.SLO.Percentile != w.Spec.SLO.Percentile ||
 		p.Workload.SLO.TargetLatencyNanos != w.Spec.SLO.TargetLatency.Duration.Nanoseconds() {
 		return errors.New("frozen profile/runtime or Workload identity changed")

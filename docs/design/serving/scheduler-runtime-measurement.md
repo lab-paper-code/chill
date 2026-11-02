@@ -41,10 +41,16 @@ raw repetition은 client `latencyMs`, runner service/backend call duration, actu
 | batch domain | Serving 초기화/native 최대는 validated runtime metadata, dispatch/policy cap은 measured domain. initialized `[1,2]`, measured `[1]`이면 초기화는 유지하고 선택은 `[1]`만. |
 | RKNN delivery | raw RunConfig delivery를 preparation에 그대로 사용. ConfigMap delivery.json→`--delivery-json /config/delivery.json`; Job과 같은 `profilingrun.ProjectRuntimeDelivery`로 library/driver/platform/device hostPath·privileged/supplemental group/allocation resource 투영. ORT thread 미사용이므로 측정/배치 threads=0. |
 
-latest successful profile은 frozen node/model/artifact/runtime/input/resources/power/protocol 조건별 최신 성공이다. source SLO와 무관하게 matching execution profile을 재사용하고 독립 option 오류/누락 이유를 남긴다. ORT/RKNN reference는 고유 owner/실행 조건으로 firstfloor evidence와 구별한다.
+공개 profile 목록은 CPU·이미지를 제외한 frozen condition별 최신 성공 기록을 유지한다. 실행 선택은 별도로 셀(model, class, path, powerMode)마다 최신 측정 하나이며 failed/partial도 후보다. 최신 실패를 과거 성공으로 대체하지 않는다. `derivation.CurrentMeasurements(candidates, replaced)`를 Serving과 Query가 같이 호출하고, 운영자의 `chill.dacs.io/replaces-batch-energy-optimization`은 recency 전에 적용한다. 새 override나 다중 버전 선택 구조는 없다.
 strict stored schema 변경은 caller/fixture/generated schema를 작업 단위로 함께 갱신한다. 구 testbed 정리는 ADR0019 절차, 진행 campaign stored 변경은 해당 campaign 정리 후다.
 Catalog는 refresh마다 현재 Campaign native UID/resourceVersion/terminal 적격성을 읽고 Campaign당 검증 entry1개만 유지한다. 같은 immutable source는 raw 재다운로드/재도출하지 않고 caller mutable slice/map/pointer는 분리 반환한다. UID/RV 변경·pending·삭제는 entry를 버리고 필요하면 전체 evidence 재검증, 오류에 이전 success fallback 없음. control tick/profile ticker/GET의 중복 raw reload만 제거하며 native refresh/시각/freshness는 바꾸지 않는다.
 profiling/serving은 [같은 공유 실행 계약](../../spec/00_measurement.md#측정의-단위)을 쓴다. CPU request/limit·quota·명시 affinity/pinning과 quota-threads 결합은 없다. ORT 기본·자동 thread 설정의 실제 readback(0 포함), affinity/cpuset/cgroup quota·사용량·throttling은 관측으로 보존한다. Node/backend/GPU UUID/initialized batch/raw와 메모리 안전 검사는 유지한다. 과거 CPU 통제 profile/κ는 공유 실행 근거로 재사용하지 않고 단일 저장 계약 cutover 뒤 새 조건으로 측정한다.
+
+이미지 버전은 profile 유효 조건이 아니다(사용자 결정, ADR 0019 예외). PrepareInstance의 worker와 profile materializer는 현재 Profiler execution-facts ConfigMap의 class/Node/runtime family/backend 선언에서 읽은 이미지 하나로 실행한다(`--execution-facts-key`). observer는 과거 profile 이미지가 아니라 현재 desired 이미지와 실제 worker·materializer의 일치를 확인한다. Node/GPU/artifact·메모리 안전 검사는 유지한다. profile/raw의 RuntimeImage와 저장 형식은 그대로이며 latest-condition 묶음, reuse, 비용/occupancy 및 κ 키는 이미지 이력을 비교하지 않는다. 위험: 다른 이미지에서 잰 측정값이 현재 이미지의 근거로 쓰인다.
+
+공통 `MeasurementSelection.ID`는 `namespace/name/UID`(direct profile ID, `/reuse-` 전)다. `MeasurementTime(profileMeasuredAt, conditions)`은 검증 성공 profile의 `MeasuredAt` → BEO `MeasurementComplete.LastTransitionTime` → zero 순이며 creation이나 다른 condition 시각으로 채우지 않는다. failed/partial은 profileMeasuredAt을 zero로 전달한다. `ReplacedMeasurements(sourceID→대상 namespace/name, namespace/name→ID)`가 동일 namespace annotation을 대상 ID 집합으로 바꾼다. Catalog read의 `currentMeasurements`와 Query cell의 `currentMeasurement`는 이 선택을 노출하며 profile 기록·측정값·저장 형식은 바꾸지 않는다.
+
+CHILL은 판단·거절을 최소화하고 선택은 운영자에게 맡긴다. replacement의 spec 차이는 진단으로 표시하고 정상 검증 profile의 사용을 막지 않는다. 대상 부재·자기 참조는 대체 불성립으로 표시하고 무시한다. 동일 scope의 runtime declaration은 ConfigMap 문서 순서의 마지막 matching 항목 하나로 덮어쓰며 모호함 거절은 없다. `ModelCompatibility.Diagnostics`는 앞선 matching 선언 수를 표시하지만 Compatible verdict를 바꾸지 않는다. coverage의 usable/problem 표시는 실행 gate가 아니며 실제 Node/GPU/artifact·write-once·인증·실행 오류 검사는 유지한다. Operation-cost도 검증 profile이 있으면 catalog 진단만으로 거절하지 않는다.
 
 ## Strict fixed-size baseline serving
 

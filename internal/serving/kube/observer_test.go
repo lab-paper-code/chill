@@ -16,6 +16,7 @@ import (
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	appsv1 "k8s.io/api/apps/v1"
@@ -60,7 +61,7 @@ func observerServiceFixture(pod *corev1.Pod) *corev1.Service {
 
 func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 	pod, node, profile, class := observerSourceFixture()
-	spec, err := sourceSpec(pod, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080")
+	spec, err := sourceSpec(pod, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,13 +70,13 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 	}
 	routed := pod.DeepCopy()
 	routed.Annotations[ServingRoutingAnnotation] = `{"tight":2}`
-	if spec, err = sourceSpec(routed, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080"); err != nil || !maps.Equal(spec.Routing, map[string]int32{"tight": 2}) {
+	if spec, err = sourceSpec(routed, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage); err != nil || !maps.Equal(spec.Routing, map[string]int32{"tight": 2}) {
 		t.Fatalf("applied routing not restored: %+v %v", spec.Routing, err)
 	}
 	opaque := pod.DeepCopy()
 	opaque.Status.ContainerStatuses[0].ImageID = "opaque-runtime-image"
 	opaque.Status.InitContainerStatuses[0].ImageID = "opaque-artifact-image"
-	if _, err = sourceSpec(opaque, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080"); err != nil {
+	if _, err = sourceSpec(opaque, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage); err != nil {
 		t.Fatal("actual ImageID was incorrectly used as a digest admission gate", err)
 	}
 	cases := []struct {
@@ -125,14 +126,14 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			p, n, pr, c := observerSourceFixture()
 			tc.change(p, n, &pr)
-			if _, e := sourceSpec(p, n, &pr, []edgev1alpha1.DeviceClass{c}, "http://10.96.0.10:8080"); e == nil {
+			if _, e := sourceSpec(p, n, &pr, []edgev1alpha1.DeviceClass{c}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage); e == nil {
 				t.Fatal("unconfirmed source became eligible")
 			}
 		})
 	}
 	restarted := pod.DeepCopy()
 	restarted.Status.ContainerStatuses[0].ContainerID = "containerd://replacement"
-	replacement, err := sourceSpec(restarted, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080")
+	replacement, err := sourceSpec(restarted, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,6 +173,30 @@ func TestObserverPowerUsesActualReadBack(t *testing.T) {
 	}
 }
 
+func testExecutionFacts() *corev1.ConfigMap {
+	_, _, profile, _ := observerSourceFixture()
+	payload, _ := json.Marshal(map[string]any{
+		"schemaVersion": "chill.dacs.io/runtime-declaration.v1alpha2", "image": profile.Condition.RuntimeImage,
+		"architecture": "amd64", "runtime": map[string]any{"family": "firstfloor", "backends": []string{"CPUExecutionProvider", "ort-cpu", "rknnlite"}},
+		"verification": "exact-image-runtime-inspection-v1",
+	})
+	document, _ := json.Marshal(map[string]any{
+		"schemaVersion": "chill.dacs.io/profiler-execution-facts.v1alpha8", "metricObserverImage": profile.Condition.RuntimeImage,
+		"declarations": []any{map[string]any{"deviceClass": "cpu", "runtime": map[string]string{"payload": string(payload)}}},
+	})
+	return &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "execution-facts", Namespace: "chill-system", UID: "facts-uid", ResourceVersion: "1"},
+		Data: map[string]string{"execution-facts.yaml": string(document)}}
+}
+
+func testObserverConfig(store *Store) ObserverConfig {
+	return ObserverConfig{Namespace: "chill-system", RuntimeImage: func(ctx context.Context, profile *serving.Profile) (string, error) {
+		c := profile.Condition
+		return profilerkube.ResolveRuntimeImage(ctx, store.client, profilerkube.CandidateResolverOptions{
+			Namespace: "chill-system", ConfigMapName: "execution-facts", ConfigMapKey: "execution-facts.yaml",
+		}, c.DeviceClass, profile.NodeName, c.RuntimeFamily, c.Backend)
+	}}
+}
+
 func newTestObserver(t *testing.T, objects ...client.Object) *Observer {
 	t.Helper()
 	scheme := runtime.NewScheme()
@@ -180,9 +205,10 @@ func newTestObserver(t *testing.T, objects ...client.Object) *Observer {
 			t.Fatal(err)
 		}
 	}
+	objects = append(objects, testExecutionFacts())
 	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&corev1.Pod{}).WithObjects(objects...).Build()}
 	manager, _ := newManagerHarness(t)
-	observer, err := NewObserver(store, kubefake.NewSimpleClientset(), manager.runtime, &firstfloor.Client{}, ObserverConfig{Namespace: "chill-system"})
+	observer, err := NewObserver(store, kubefake.NewSimpleClientset(), manager.runtime, &firstfloor.Client{}, testObserverConfig(store))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -753,5 +779,33 @@ func TestObserverCleanupFollowsActualDeploymentOwnerChain(t *testing.T) {
 	}
 	if err = observer.store.client.Get(context.Background(), client.ObjectKeyFromObject(replicaSet), &appsv1.ReplicaSet{}); err != nil {
 		t.Fatal("RS was directly deleted instead of left to native Deployment GC", err)
+	}
+}
+
+func TestObserverUsesDesiredImageNotHistoricalProfile(t *testing.T) {
+	pod, node, profile, class := observerSourceFixture()
+	desired := pod.Spec.Containers[0].Image
+	profile.Condition.RuntimeImage = "registry/native@sha256:" + strings.Repeat("b", 64)
+	if _, err := sourceSpec(pod, node, &profile, []edgev1alpha1.DeviceClass{class}, "", desired); err != nil {
+		t.Fatal("historical image blocked current declaration", err)
+	}
+	for _, name := range []string{"worker", "materializer", "Node", "GPU allocation"} {
+		t.Run(name, func(t *testing.T) {
+			p, n := pod.DeepCopy(), node.DeepCopy()
+			pr := cloneCatalogProfile(profile)
+			switch name {
+			case "worker":
+				p.Spec.Containers[0].Image = profile.Condition.RuntimeImage
+			case "materializer":
+				p.Spec.InitContainers[2].Image = profile.Condition.RuntimeImage
+			case "Node":
+				n.UID = testReplacementUID
+			case "GPU allocation":
+				pr.RuntimeMetadata.GPUUUID = "GPU-measured"
+			}
+			if _, err := sourceSpec(p, n, &pr, []edgev1alpha1.DeviceClass{class}, "", desired); err == nil {
+				t.Fatal("desired image or physical safety mismatch accepted")
+			}
+		})
 	}
 }
