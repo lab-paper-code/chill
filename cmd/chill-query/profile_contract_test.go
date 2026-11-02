@@ -6,9 +6,11 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
@@ -30,7 +32,8 @@ func TestTypedProfileReadNeverEncodesExcludedRawArrays(t *testing.T) {
 	preparations := map[string]servingkube.PrepareSpec{
 		profile.ID: {Name: "restore", Instance: serving.SchedulerInstance{Profile: &profile, ProfileID: profile.ID}},
 	}
-	wire, err := json.Marshal(servingkube.ProjectCatalogRead(owner, "rv", preparations, []string{profile.ID}))
+	snapshot := servingkube.ProjectCatalogSnapshot(owner, "rv", preparations)
+	wire, err := json.Marshal(servingkube.CatalogRead{CatalogSnapshot: snapshot, Accepted: &snapshot})
 	if err != nil {
 		t.Fatalf("owner serialized excluded raw data: %v", err)
 	}
@@ -90,25 +93,106 @@ func TestTypedProfileReadNeverEncodesExcludedRawArrays(t *testing.T) {
 }
 
 func TestAcceptedCatalogProfilesRemainVisibleWithNewerReportingFacts(t *testing.T) {
-	profile := serving.Profile{ID: "prior-adopted"}
-	read := servingkube.ProjectCatalogRead(
-		servingkube.CatalogView{Profiles: []serving.Profile{profile}},
-		"accepted-config",
-		map[string]servingkube.PrepareSpec{profile.ID: {Name: "accepted-preparation"}},
-		[]string{profile.ID},
-	)
-	read.Reporting = []servingkube.CatalogReportingInput{{ProfileID: "new-unadopted"}}
-	service := &measurementService{catalog: func(context.Context) (servingkube.CatalogRead, error) { return read, nil }}
-	mux := http.NewServeMux()
-	service.register(mux)
-	response := httptest.NewRecorder()
-	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/profiles", nil))
-	var got profileResponse
-	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
-		t.Fatal(err)
-	}
-	if response.Code != http.StatusOK || got.ConfigVersion != read.ConfigVersion || len(got.Profiles) != 1 ||
-		got.Profiles[0].ID != profile.ID || got.Preparations[profile.ID].Name != "accepted-preparation" {
-		t.Fatalf("newer reporting hid the accepted profile or restoration data: %s", response.Body.String())
+	for _, mode := range []string{"missing latest", "conflicting latest", "missing accepted"} {
+		t.Run(mode, func(t *testing.T) {
+			targetEnergy, sourceEnergy, freshEnergy := 3.0, 7.0, 99.0
+			reuse := &serving.ProfileReuseCheck{
+				SourceProfileID: "allowed/source/uid", ConfirmationProfileID: "allowed/target/uid",
+				Outcome: measurementVerdictAccepted,
+			}
+			profile := serving.Profile{
+				ID: reuse.ConfirmationProfileID, Reuse: reuse, Batches: []serving.BatchProfile{{Batch: 1}},
+			}
+			accepted := httpapi.ProfilesView{
+				ConfigVersion: "accepted-config",
+				CatalogView: servingkube.CatalogView{
+					Profiles: []serving.Profile{profile},
+					Insufficiencies: []servingkube.CatalogIssue{
+						{Code: "PreparationUnavailable", Reason: "accepted diagnostic"},
+					},
+					ReuseChecks: []serving.ProfileReuseCheck{*reuse},
+					MeasurementFacts: map[string]serving.MeasurementFacts{
+						profile.ID: {
+							Batches: []profilederivation.MeasurementBatchFacts{
+								{Batch: 1, TotalJoulesPerItem: &targetEnergy},
+							},
+						},
+						reuse.SourceProfileID: {
+							Batches: []profilederivation.MeasurementBatchFacts{
+								{Batch: 1, TotalJoulesPerItem: &sourceEnergy},
+							},
+						},
+					},
+				},
+				Preparations: map[string]servingkube.PrepareSpec{profile.ID: {Name: "accepted-preparation"}},
+			}
+			latest := servingkube.CatalogView{
+				Insufficiencies: []servingkube.CatalogIssue{
+					{Code: "LatestOnlyDiagnostic", Reason: "current reporting"},
+				},
+				MeasurementFacts: map[string]serving.MeasurementFacts{},
+			}
+			if mode != "missing latest" {
+				latest.MeasurementFacts[profile.ID] = serving.MeasurementFacts{
+					Batches: []profilederivation.MeasurementBatchFacts{{Batch: 1, TotalJoulesPerItem: &freshEnergy}},
+				}
+			}
+			if mode == "missing accepted" {
+				delete(accepted.MeasurementFacts, profile.ID)
+			}
+			expected, err := (&measurementService{}).buildProfiles(context.Background(), accepted)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Compare decoded wire values, including the existing omitempty rules.
+			before, err := json.Marshal(expected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var expectedWire profileResponse
+			if err := json.Unmarshal(before, &expectedWire); err != nil {
+				t.Fatal(err)
+			}
+			selected := servingkube.ProjectCatalogSnapshot(
+				accepted.CatalogView, accepted.ConfigVersion, accepted.Preparations,
+			)
+			raw, err := json.Marshal(servingkube.CatalogRead{
+				CatalogSnapshot: servingkube.ProjectCatalogSnapshot(latest, "latest-config", nil), Accepted: &selected,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var read servingkube.CatalogRead
+			if err := json.Unmarshal(raw, &read); err != nil {
+				t.Fatal(err)
+			}
+			service := &measurementService{
+				catalog: func(context.Context) (servingkube.CatalogRead, error) { return read, nil },
+			}
+			mux := http.NewServeMux()
+			service.register(mux)
+			response := httptest.NewRecorder()
+			mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/profiles", nil))
+			var got profileResponse
+			if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != http.StatusOK || got.ConfigVersion != accepted.ConfigVersion ||
+				!reflect.DeepEqual(got.Insufficiencies, accepted.Insufficiencies) ||
+				!reflect.DeepEqual(got.ReuseChecks, accepted.ReuseChecks) ||
+				got.Preparations[profile.ID].Name != "accepted-preparation" {
+				t.Fatalf("accepted catalog metadata changed: %s", response.Body.String())
+			}
+			if !reflect.DeepEqual(got.Profiles, expectedWire.Profiles) {
+				t.Fatalf("accepted resultRows/assessment changed or used latest facts: %s", response.Body.String())
+			}
+			wantRows := 2
+			if mode == "missing accepted" {
+				wantRows = 1 // the accepted source population remains; latest facts cannot repair the target.
+			}
+			if len(got.Profiles) != 1 || len(got.Profiles[0].ResultRows) != wantRows {
+				t.Fatalf("accepted result populations disappeared: %s", response.Body.String())
+			}
+		})
 	}
 }

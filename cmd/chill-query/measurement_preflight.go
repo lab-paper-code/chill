@@ -60,15 +60,11 @@ func (o *measurementService) preflightCatalogEvidence(
 	if err != nil {
 		return nil, false
 	}
-	adopted := map[string]bool{}
-	for _, id := range read.Adopted {
-		adopted[id] = true
-	}
-	catalog := catalogView(read)
+	catalog := adoptedCatalogView(read)
 
 	evidence := []queryapi.MeasurementPreflightEvidence{}
 	for _, profile := range catalog.Profiles {
-		if !adopted[profile.ID] || !strings.HasPrefix(profile.ID, namespace+"/") {
+		if !strings.HasPrefix(profile.ID, namespace+"/") {
 			continue
 		}
 		source := strings.Split(profile.ID, "/")

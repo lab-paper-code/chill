@@ -28,7 +28,7 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 		Status:     api.BatchEnergyOptimizationStatus{Phase: "Complete", ObservedGeneration: 1},
 	}
 	view := httpapi.ProfilesView{}
-	if got := assessMeasurementRequest(task, view); got.Evidence.Accepted ||
+	if got := assessMeasurementRequest(task, view, view); got.Evidence.Accepted ||
 		got.DisplayStatus == queryapi.MeasurementUsable {
 		t.Fatalf("phase accepted without evidence: %+v", got)
 	}
@@ -36,29 +36,29 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 		ID: "allowed/old/old-uid", Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: "result"},
 		Batches: []serving.BatchProfile{{Batch: 1}},
 	}}
-	if got := assessMeasurementRequest(task, view); got.Status != queryapi.MeasurementPartial ||
+	if got := assessMeasurementRequest(task, view, view); got.Status != queryapi.MeasurementPartial ||
 		!got.Evidence.Accepted {
 		t.Fatalf("partial accepted profile: %+v", got)
 	}
 	task.Spec.BatchSizes = []int32{1}
-	if got := assessMeasurementRequest(task, view); got.Status != queryapi.MeasurementComplete ||
+	if got := assessMeasurementRequest(task, view, view); got.Status != queryapi.MeasurementComplete ||
 		got.Scope.SchedulerUsed == nil || !*got.Scope.SchedulerUsed {
 		t.Fatalf("published evidence: %+v", got)
 	}
 	newer := task
 	newer.Name, newer.UID, newer.Status.Phase = "newer", "newer-uid", string(api.MeasurementPhaseFailed)
-	if got := assessMeasurementRequest(newer, view); got.Status != queryapi.MeasurementFailed ||
+	if got := assessMeasurementRequest(newer, view, view); got.Status != queryapi.MeasurementFailed ||
 		got.Evidence.Accepted {
 		t.Fatalf("new request borrowed old evidence: %+v", got)
 	}
-	if got := assessMeasurementRequest(task, view); !got.Evidence.Accepted {
+	if got := assessMeasurementRequest(task, view, view); !got.Evidence.Accepted {
 		t.Fatal("new failure hid old accepted evidence")
 	}
 	view.Insufficiencies = []servingkube.CatalogIssue{{
 		Source: types.NamespacedName{Namespace: task.Namespace, Name: task.Name},
 		Code:   "InvalidEvidence", Reason: "real validation failure",
 	}}
-	if got := assessMeasurementRequest(task, view); got.DisplayStatus != queryapi.MeasurementProblem {
+	if got := assessMeasurementRequest(task, view, view); got.DisplayStatus != queryapi.MeasurementProblem {
 		t.Fatalf("catalog issue ignored: %+v", got)
 	}
 	view.Profiles = nil
@@ -73,7 +73,7 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 		Source: types.NamespacedName{Namespace: task.Namespace, Name: task.Name},
 		Code:   "ReplacementSelection", Reason: "superseded by newer; original evidence retained",
 	}}
-	if got := assessMeasurementRequest(task, view); got.DisplayStatus != queryapi.MeasurementReview ||
+	if got := assessMeasurementRequest(task, view, view); got.DisplayStatus != queryapi.MeasurementReview ||
 		!got.Evidence.Accepted || got.Scope.SchedulerUsed == nil || *got.Scope.SchedulerUsed {
 		t.Fatalf("superseded verified result lost review or became scheduler-used: %+v", got)
 	}
@@ -252,7 +252,9 @@ func TestNativeRequestListSurvivesUnavailableCatalog(t *testing.T) {
 					Spec: api.BatchEnergyOptimizationSpec{BatchSizes: []int32{1, 4}},
 					Status: api.BatchEnergyOptimizationStatus{
 						Phase: phase, ObservedGeneration: 2, CompletedTrials: 3,
-						Conditions: []meta.Condition{{Type: "Progress", Status: meta.ConditionTrue, Reason: "NativeFact"}},
+						Conditions: []meta.Condition{
+							{Type: "Progress", Status: meta.ConditionTrue, Reason: "NativeFact"},
+						},
 					},
 				}
 				opts := options{servingNamespace: task.Namespace, requestTimeout: time.Second, maxRequestBytes: 1 << 20}
@@ -311,5 +313,33 @@ func TestNativeRequestListSurvivesUnavailableCatalog(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestUnadoptedAcceptedFactsNeverRepairCurrentRequestAssessment(t *testing.T) {
+	task := api.BatchEnergyOptimization{
+		ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "old", UID: "old-uid", Generation: 1},
+		Spec:       api.BatchEnergyOptimizationSpec{BatchSizes: []int32{1}},
+		Status:     api.BatchEnergyOptimizationStatus{Phase: "Complete", ObservedGeneration: 1},
+	}
+	accepted := httpapi.ProfilesView{CatalogView: servingkube.CatalogView{
+		MeasurementFacts: map[string]serving.MeasurementFacts{"old-unadopted": {
+			Request: profilederivation.MeasurementRequestReference{
+				Namespace: task.Namespace, Name: task.Name, UID: string(task.UID),
+			},
+			ResultReference: profilederivation.RawEvidenceIdentity{Store: "evidence", Key: "old-result"},
+			Batches:         []profilederivation.MeasurementBatchFacts{{Batch: 1}},
+		}},
+	}}
+	latest := httpapi.ProfilesView{CatalogView: servingkube.CatalogView{
+		Insufficiencies: []servingkube.CatalogIssue{{
+			Source: types.NamespacedName{Namespace: task.Namespace, Name: task.Name},
+			Code:   "InvalidEvidence", Reason: "current evidence rejected",
+		}},
+	}}
+	got := assessMeasurementRequest(task, accepted, latest)
+	if got.Evidence.Accepted || got.Evidence.Available || got.Scope.SchedulerUsed != nil ||
+		got.DisplayStatus != queryapi.MeasurementProblem {
+		t.Fatalf("old unadopted facts replaced current rejection: %+v", got)
 	}
 }

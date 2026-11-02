@@ -201,7 +201,7 @@ func (o *measurementService) readCoverage(
 	}()
 	go func() {
 		read, err := o.catalog(ctx)
-		value := catalogView(read)
+		value := catalogView(read.CatalogSnapshot)
 		at := read.SourceCheckedAt
 		if err == nil && at.IsZero() {
 			err = errors.New("catalog source has not been confirmed")
@@ -209,8 +209,10 @@ func (o *measurementService) readCoverage(
 		if err == nil {
 			next.catalog = value
 			next.adopted = map[string]bool{}
-			for _, id := range read.Adopted {
-				next.adopted[id] = true
+			if read.Accepted != nil {
+				for _, profile := range read.Accepted.Profiles {
+					next.adopted[profile.ID] = true
+				}
 			}
 			if value.SourceError != "" {
 				err = errors.New(value.SourceError)

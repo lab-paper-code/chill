@@ -115,7 +115,14 @@ type CatalogReportingInput struct {
 	Batches         []derivation.MeasurementBatchFacts     `json:"batches"`
 }
 
+// CatalogRead carries independent verified reporting and accepted scheduler snapshots.
+// Accepted is never merged into current reporting or used to repair missing facts.
 type CatalogRead struct {
+	CatalogSnapshot
+	Accepted *CatalogSnapshot `json:"accepted"`
+}
+
+type CatalogSnapshot struct {
 	ConfigVersion   string                        `json:"configVersion"`
 	Profiles        []ProfileSummary              `json:"profiles"`
 	Insufficiencies []CatalogIssue                `json:"insufficiencies"`
@@ -125,19 +132,17 @@ type CatalogRead struct {
 	SourceCheckedAt time.Time                     `json:"sourceCheckedAt"`
 	SourceError     string                        `json:"sourceError"`
 	Revision        string                        `json:"revision"`
-	Adopted         []string                      `json:"adopted"`
 }
 
-func ProjectCatalogRead(
+func ProjectCatalogSnapshot(
 	view CatalogView,
 	configVersion string,
 	preparations map[string]PrepareSpec,
-	adopted []string,
-) CatalogRead {
-	out := CatalogRead{ConfigVersion: configVersion, Profiles: make([]ProfileSummary, 0, len(view.Profiles)),
+) CatalogSnapshot {
+	out := CatalogSnapshot{ConfigVersion: configVersion, Profiles: make([]ProfileSummary, 0, len(view.Profiles)),
 		Insufficiencies: view.Insufficiencies, ReuseChecks: view.ReuseChecks, Preparations: SummarizePreparations(preparations),
 		Reporting: make([]CatalogReportingInput, 0, len(view.MeasurementFacts)), SourceCheckedAt: view.SourceCheckedAt,
-		SourceError: view.SourceError, Revision: view.Revision, Adopted: adopted}
+		SourceError: view.SourceError, Revision: view.Revision}
 	for _, p := range view.Profiles {
 		out.Profiles = append(out.Profiles, SummarizeProfile(p))
 	}
@@ -150,7 +155,7 @@ func ProjectCatalogRead(
 }
 
 // View materializes only query inputs; no scheduler/raw profile can be recovered.
-func (c CatalogRead) CatalogView() CatalogView {
+func (c CatalogSnapshot) CatalogView() CatalogView {
 	out := CatalogView{}
 	out.Insufficiencies, out.ReuseChecks = c.Insufficiencies, c.ReuseChecks
 	out.SourceCheckedAt, out.SourceError, out.Revision = c.SourceCheckedAt, c.SourceError, c.Revision

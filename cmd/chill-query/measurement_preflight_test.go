@@ -59,12 +59,8 @@ func TestPreflightEnrichmentUsesExactCatalogAndCurrentSourceSpec(t *testing.T) {
 			if active {
 				profiles = nil
 			}
-			read := servingkube.ProjectCatalogRead(
-				servingkube.CatalogView{Profiles: profiles},
-				"",
-				nil,
-				[]string{profileID},
-			)
+			accepted := servingkube.ProjectCatalogSnapshot(servingkube.CatalogView{Profiles: profiles}, "", nil)
+			read := servingkube.CatalogRead{Accepted: &accepted}
 
 			service := &measurementService{
 				client:  fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(request).Build(),

@@ -175,7 +175,7 @@ func (o *measurementService) readEvidence(ctx context.Context, location evidence
 	return raw, nil
 }
 
-func catalogView(read servingkube.CatalogRead) httpapi.ProfilesView {
+func catalogView(read servingkube.CatalogSnapshot) httpapi.ProfilesView {
 	out := httpapi.ProfilesView{
 		ConfigVersion: read.ConfigVersion,
 		CatalogView:   read.CatalogView(),

@@ -7,12 +7,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
@@ -82,25 +84,37 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 			schedulerConfigKey: "config", maxRequestBytes: 1 << 20,
 		},
 	}
+	acceptedEnergy := 3.0
 	adopted := &httpapi.ProfilesView{
 		ConfigVersion: "accepted-config",
 		CatalogView: servingkube.CatalogView{
-			Profiles: []serving.Profile{{ID: "prior-adopted"}}, Revision: "prior",
-			MeasurementFacts: map[string]serving.MeasurementFacts{"accepted-only": {}},
+			Profiles: []serving.Profile{{ID: "accepted-only", Batches: []serving.BatchProfile{{Batch: 1}}}},
+			Revision: "prior",
+			MeasurementFacts: map[string]serving.MeasurementFacts{"accepted-only": {
+				PointPolicy: profilederivation.PointPolicy{MinimumTrials: 1},
+				Batches:     []profilederivation.MeasurementBatchFacts{{Batch: 1, TotalJoulesPerItem: &acceptedEnergy}},
+			}},
+			Insufficiencies: []servingkube.CatalogIssue{
+				{Code: preparationUnavailable, Reason: "accepted preparation failed"},
+			},
 		},
-		Preparations: map[string]servingkube.PrepareSpec{"prior-adopted": {Name: "accepted-preparation"}},
+		Preparations: map[string]servingkube.PrepareSpec{"accepted-only": {Name: "accepted-preparation"}},
 	}
 	service.profiles.Store(adopted)
 	ctx := context.Background()
 	if err := service.refresh(ctx); err == nil || err.Error() != "cost source unavailable" {
 		t.Fatalf("cost failure was hidden: %v", err)
 	}
+	published := *service.catalogRead.Load()
+	published.Insufficiencies = []servingkube.CatalogIssue{{Code: "LatestOnlyDiagnostic", Reason: "current reporting"}}
+	published.MeasurementFacts = map[string]serving.MeasurementFacts{"latest-only": {}}
+	service.catalogRead.Store(&published)
 	first, err := service.measurementCatalogView(ctx)
 	if err != nil || first.SourceCheckedAt.IsZero() || first.SourceError != "" || first.Revision == "prior" ||
 		len(first.Profiles) != 0 || first.MeasurementFacts == nil || service.profiles.Load() != adopted {
 		t.Fatalf("cost failure hid new verified catalog or changed adoption: %+v error=%v", first, err)
 	}
-	assertAcceptedCatalogRead(t, service, adopted, first.SourceCheckedAt)
+	assertAcceptedCatalogRead(t, service, adopted, first)
 	if err := service.refresh(ctx); err == nil {
 		t.Fatal("cost source unexpectedly succeeded")
 	}
@@ -118,11 +132,11 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 		t.Fatalf("failed refresh changed retained catalog check/facts/adoption: %+v error=%v reads=%d",
 			stale, err, objects.rawReads.Load())
 	}
-	assertAcceptedCatalogRead(t, service, adopted, stale.SourceCheckedAt)
+	assertAcceptedCatalogRead(t, service, adopted, stale)
 }
 
 func assertAcceptedCatalogRead(
-	t *testing.T, service *schedulerService, adopted *httpapi.ProfilesView, checkedAt time.Time,
+	t *testing.T, service *schedulerService, adopted *httpapi.ProfilesView, latest httpapi.ProfilesView,
 ) {
 	t.Helper()
 	read, err := service.readCatalog(context.Background())
@@ -137,14 +151,24 @@ func assertAcceptedCatalogRead(
 	if err := json.Unmarshal(wire, &queryRead); err != nil {
 		t.Fatal(err)
 	}
-	if queryRead.ConfigVersion != adopted.ConfigVersion || len(queryRead.Profiles) != 1 ||
-		queryRead.Profiles[0].ID != adopted.Profiles[0].ID || len(queryRead.Adopted) != 1 ||
-		queryRead.Adopted[0] != queryRead.Profiles[0].ID ||
-		queryRead.Preparations[queryRead.Adopted[0]].Name != "accepted-preparation" {
-		t.Fatalf("query catalog mixed verified and adopted snapshots: %s", wire)
+	accepted := queryRead.Accepted
+	if accepted == nil {
+		t.Fatalf("accepted snapshot disappeared: %s", wire)
 	}
-	if len(queryRead.Reporting) != 0 || queryRead.SourceCheckedAt != checkedAt {
-		t.Fatalf("accepted profiles replaced independently refreshed reporting facts: %s", wire)
+	if accepted.ConfigVersion != adopted.ConfigVersion || len(accepted.Profiles) != 1 ||
+		accepted.Profiles[0].ID != adopted.Profiles[0].ID ||
+		accepted.Preparations[accepted.Profiles[0].ID].Name != "accepted-preparation" {
+		t.Fatalf("query catalog mixed verified and accepted snapshots: %s", wire)
+	}
+	if !reflect.DeepEqual(accepted.Insufficiencies, adopted.Insufficiencies) ||
+		!reflect.DeepEqual(accepted.ReuseChecks, adopted.ReuseChecks) ||
+		!reflect.DeepEqual(accepted.CatalogView().MeasurementFacts, adopted.MeasurementFacts) {
+		t.Fatalf("accepted diagnostics/reuse/reporting facts disappeared: %s", wire)
+	}
+	if queryRead.ConfigVersion != latest.ConfigVersion || queryRead.SourceCheckedAt != latest.SourceCheckedAt ||
+		!reflect.DeepEqual(queryRead.Insufficiencies, latest.Insufficiencies) ||
+		!reflect.DeepEqual(queryRead.CatalogView().MeasurementFacts, latest.MeasurementFacts) {
+		t.Fatalf("accepted snapshot replaced independently refreshed reporting: %s", wire)
 	}
 }
 

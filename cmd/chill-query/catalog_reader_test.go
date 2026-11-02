@@ -28,7 +28,10 @@ func TestServingCatalogReadUsesPinnedTLSServiceTokenAndNoRedirects(t *testing.T)
 			w.WriteHeader(http.StatusTemporaryRedirect)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(servingkube.CatalogRead{ConfigVersion: "rv", Adopted: []string{"profile"}})
+		_ = json.NewEncoder(w).Encode(servingkube.CatalogRead{
+			CatalogSnapshot: servingkube.CatalogSnapshot{ConfigVersion: "rv"},
+			Accepted:        &servingkube.CatalogSnapshot{Profiles: []servingkube.ProfileSummary{{ID: "profile"}}},
+		})
 	}))
 	defer owner.Close()
 	directory := t.TempDir()
@@ -54,7 +57,7 @@ func TestServingCatalogReadUsesPinnedTLSServiceTokenAndNoRedirects(t *testing.T)
 		t.Fatal(err)
 	}
 	got, err := read(context.Background())
-	if err != nil || got.ConfigVersion != "rv" || len(got.Adopted) != 1 || calls != 1 {
+	if err != nil || got.ConfigVersion != "rv" || got.Accepted == nil || len(got.Accepted.Profiles) != 1 || calls != 1 {
 		t.Fatalf("typed owner read = %+v %v calls=%d", got, err, calls)
 	}
 	redirect = true

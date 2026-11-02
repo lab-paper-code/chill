@@ -20,7 +20,8 @@ Dashboard·CLI는 같은 권한·검증·비동기 결과 의미를 사용하되
 - ChillServer의 조회 중계는 TokenReview/SAR·namespace 제한·전달·transport 오류만 처리한다. backend 장애를 pending/측정 실패로 바꾸거나 Kubernetes를 재조회해 본문을 수선하지 않는다.
 - Serving의 인증된 `GET /api/v1/scheduler/catalog-read`는 `serving/kube.CatalogRead`만 제공한다. 공유 scheduler/catalog의 조회 projection이며 새 catalog·poller·장부가 아니다. 공개 profiles 경로와 달라 순환 중계가 없다.
 - `ProfileSummary`와 bounded reporting input은 공개 필드/요약값만 읽는다. 원시 duration 배열·전체 내부 measurementFacts는 어느 HTTP 중간에도 직렬화하지 않는다. preparations의 restore 필드는 typed instance/profile 요약으로 보존하고 scheduler 원본은 변경하지 않는다.
-- catalog-read의 profile 목록·configVersion·Adopted·preparations는 같은 accepted snapshot에서 가져온다. 비용 입력 갱신이 실패해도 채택 중인 profile은 조회에서 사라지지 않으며 coverage용 verified reporting facts의 독립 갱신은 유지한다.
+- catalog-read는 최신 verified reporting snapshot과 독립된 `accepted` snapshot을 운반한다. `accepted`에는 채택된 profile 본문·configVersion·Insufficiencies(PreparationUnavailable 포함)·reuse·preparations·해당 시점의 bounded reporting facts를 함께 보존한다. 공개 profiles의 기존 진단·resultRows·assessment는 accepted에서만 계산하고, coverage의 facts·source 진단은 최신 snapshot만 사용한다.
+- 새 `accepted` 필드는 내부 owner→Query 전송에만 필요하며 공개 profiles 응답에는 새 필드를 추가하지 않는다. 단일 profile ID에 이전/최신 facts가 충돌하거나 어느 한쪽에서 빠져도 합치거나 fallback하지 않는다. BEO 목록의 채택된 요청 평가는 accepted facts를 쓰고, 미채택 요청의 retained evidence는 현재 reporting에서만 찾는다.
 - 공개 오류 코드는 계약이므로 `ConsoleUnavailable`/`ConsoleTimeout`과 기존 `console.chill.dacs.io/v1alpha1` wire API version을 유지한다. 실행·배포·설정·Go 이름이나 alias는 아니다.
 - Query API는 Service 직접 접근도 TokenReview·URL/native SAR로 검증한다. ChillServer는 원 사용자 bearer만 전달하고 identity header는 전달·신뢰하지 않는다. CLI runs show도 기존 ownerClient HTTPS·bearer 경로를 재사용한다. native detail은 이름이 `preflight`여도 `get NAME` SAR을 요구하며 `list` 예외는 POST campaign preflight 경로에만 적용한다.
 - namespace coverage cache는 기존 30초 fresh/최대 5분 stale 정책을 그대로 Query API에 둔다. 큰 조회의 CPU/RSS/응답 크기와 serving 영향은 live 성능 수용이 필요하며 프로세스 분리만으로 간섭 부재를 주장하지 않는다.

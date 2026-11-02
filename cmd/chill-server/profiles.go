@@ -206,7 +206,9 @@ func (o *schedulerService) measuredPreparation(
 				"--model-dir", "/model", "--preprocessor", "/preprocessor",
 				"--warmup-iterations", strconv.Itoa(runtime.WarmupIterations),
 			},
-			RunnerTimeoutMS: int(o.opts.operationTimeout / time.Millisecond), MaxQueueRequests: int(settings.MaxQueueSize),
+			RunnerTimeoutMS: int(
+				o.opts.operationTimeout / time.Millisecond,
+			), MaxQueueRequests: int(settings.MaxQueueSize),
 			MaxQueueBytes:   int(queueBytes),
 			MaxRequestBytes: int(min(o.opts.maxRequestBytes, int64(native.MaxFrameBytes))),
 			Mode:            "serving", BatchSizes: slices.Clone(runtime.InitializedBatches),
@@ -239,16 +241,12 @@ func (o *schedulerService) readCatalog(ctx context.Context) (servingkube.Catalog
 	if err != nil {
 		return servingkube.CatalogRead{}, err
 	}
-	adopted := []string{}
-	var preparations map[string]servingkube.PrepareSpec
-	if current := o.profiles.Load(); current != nil {
-		// Profiles, configuration and restoration data belong to one accepted
-		// snapshot; independently refreshed reporting facts still feed coverage.
-		view.Profiles, view.ConfigVersion = current.Profiles, current.ConfigVersion
-		for _, p := range current.Profiles {
-			adopted = append(adopted, p.ID)
-		}
-		preparations = current.Preparations
+	read := servingkube.CatalogRead{
+		CatalogSnapshot: servingkube.ProjectCatalogSnapshot(view.CatalogView, view.ConfigVersion, nil),
 	}
-	return servingkube.ProjectCatalogRead(view.CatalogView, view.ConfigVersion, preparations, adopted), nil
+	if current := o.profiles.Load(); current != nil {
+		accepted := servingkube.ProjectCatalogSnapshot(current.CatalogView, current.ConfigVersion, current.Preparations)
+		read.Accepted = &accepted
+	}
+	return read, nil
 }

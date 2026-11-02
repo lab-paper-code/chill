@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/queryapi"
+	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -111,11 +113,20 @@ func TestReadCoverageReturnsSnapshotWhenAllSixSourcesSucceed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	view.Insufficiencies = []servingkube.CatalogIssue{{Code: "LatestOnlyDiagnostic", Reason: "current reporting"}}
+	view.MeasurementFacts = map[string]serving.MeasurementFacts{"latest-only": {}}
+	accepted := servingkube.ProjectCatalogSnapshot(servingkube.CatalogView{
+		Profiles:         []serving.Profile{{ID: "accepted-only"}},
+		Insufficiencies:  []servingkube.CatalogIssue{{Code: "PreparationUnavailable", Reason: "accepted diagnostic"}},
+		MeasurementFacts: map[string]serving.MeasurementFacts{"accepted-only": {}},
+	}, "accepted-config", nil)
 	service := &measurementService{
 		client: fake.NewClientBuilder().WithScheme(measurementScheme(t)).Build(),
 		opts:   options{maxRequestBytes: 8 << 20},
 		catalog: func(context.Context) (servingkube.CatalogRead, error) {
-			return servingkube.ProjectCatalogRead(view, "", nil, nil), nil
+			return servingkube.CatalogRead{
+				CatalogSnapshot: servingkube.ProjectCatalogSnapshot(view, "latest-config", nil), Accepted: &accepted,
+			}, nil
 		},
 		inventory: func(context.Context) (queryapi.InventoryView, error) { return base.inventory, nil },
 		compatibility: func(context.Context) (queryapi.ModelCompatibilityMatrixView, error) {
@@ -129,5 +140,10 @@ func TestReadCoverageReturnsSnapshotWhenAllSixSourcesSucceed(t *testing.T) {
 	}
 	if len(got.checked) != 6 || len(got.failures) != 0 || len(got.inventory.Models) == 0 {
 		t.Fatalf("incomplete source snapshot: checked=%v failures=%v", got.checked, got.failures)
+	}
+	if !reflect.DeepEqual(got.catalog.MeasurementFacts, view.MeasurementFacts) ||
+		!reflect.DeepEqual(got.catalog.Insufficiencies, view.Insufficiencies) ||
+		got.catalog.ConfigVersion != "latest-config" || !got.adopted["accepted-only"] {
+		t.Fatalf("coverage mixed accepted facts/diagnostics into current reporting: %+v", got.catalog)
 	}
 }

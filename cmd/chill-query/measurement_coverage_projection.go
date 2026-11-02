@@ -275,7 +275,7 @@ func (p *coverageProjection) addRequest(task api.BatchEnergyOptimization) {
 	id := coverageCellID(candidate.ModelSpec, candidate.DeviceClass, candidate.ExecutionPath, candidate.PowerMode)
 	index, exists := p.indices[id]
 	requestID := coverageRequestID(task)
-	assessment := assessMeasurementRequest(task, p.base.catalog)
+	assessment := assessMeasurementRequest(task, p.base.catalog, p.base.catalog)
 	failures := queryapi.MeasurementRequestFailures(task, p.owners[string(task.UID)], assessment)
 	if assessment.Evidence.Accepted {
 		used := false

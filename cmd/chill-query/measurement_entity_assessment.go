@@ -28,6 +28,7 @@ func (o *measurementService) assessList(
 		return nil, err
 	}
 	view := httpapi.ProfilesView{}
+	reporting := httpapi.ProfilesView{}
 	var catalogUnavailable queryapi.MeasurementReason
 	if o.catalog != nil {
 		snapshot, err := o.catalog(ctx)
@@ -35,6 +36,7 @@ func (o *measurementService) assessList(
 			catalogUnavailable = queryapi.MeasurementReason{Code: "CatalogUnavailable", Message: err.Error()}
 		} else {
 			view = adoptedCatalogView(snapshot)
+			reporting = catalogView(snapshot.CatalogSnapshot)
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -50,7 +52,7 @@ func (o *measurementService) assessList(
 	assessments := make([]json.RawMessage, len(list.Items))
 	for i, task := range list.Items {
 		var err error
-		assessment := assessMeasurementRequest(task, view)
+		assessment := assessMeasurementRequest(task, view, reporting)
 		if catalogUnavailable.Code != "" {
 			assessment.Reasons = append(assessment.Reasons, catalogUnavailable)
 		}
@@ -66,7 +68,7 @@ func (o *measurementService) assessList(
 // Each request retains its own execution state. A newer failed request never
 // erases an older request's still-published catalog evidence.
 func assessMeasurementRequest(
-	task api.BatchEnergyOptimization, view httpapi.ProfilesView,
+	task api.BatchEnergyOptimization, view, reporting httpapi.ProfilesView,
 ) queryapi.MeasurementAssessment {
 	input := queryapi.MeasurementAssessmentInput{
 		Execution: &queryapi.MeasurementExecution{
@@ -109,6 +111,9 @@ func assessMeasurementRequest(
 		}
 	}
 	if !input.Accepted {
+		// Retained-but-unadopted evidence comes only from current reporting.
+		// Never promote an old accepted snapshot into the latest facts.
+		view = reporting
 		for _, facts := range view.MeasurementFacts {
 			if facts.Request.Namespace != task.Namespace || facts.Request.Name != task.Name ||
 				facts.Request.UID != string(task.UID) || facts.ResultReference.Key == "" || len(facts.Batches) == 0 {

@@ -98,7 +98,7 @@ func TestR6FailureSummaryClassifiesOwnedRuntimeLog(t *testing.T) {
 		requests: api.BatchEnergyOptimizationList{Items: []api.BatchEnergyOptimization{task}},
 		runs:     api.ProfilingRunList{Items: []api.ProfilingRun{run}},
 	}
-	assessment := assessMeasurementRequest(task, httpapi.ProfilesView{})
+	assessment := assessMeasurementRequest(task, httpapi.ProfilesView{}, httpapi.ProfilesView{})
 	failures := queryapi.MeasurementRequestFailures(task, coverageOwnedRuns(base)[string(task.UID)], assessment)
 	projection := coverageProjection{
 		base: base, owners: coverageOwnedRuns(base),

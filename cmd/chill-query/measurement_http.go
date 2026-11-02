@@ -116,19 +116,10 @@ func (o *measurementService) register(mux *http.ServeMux) {
 }
 
 func adoptedCatalogView(read servingkube.CatalogRead) httpapi.ProfilesView {
-	view := catalogView(read)
-	adopted := map[string]bool{}
-	for _, id := range read.Adopted {
-		adopted[id] = true
+	if read.Accepted == nil {
+		return httpapi.ProfilesView{}
 	}
-	selected := make([]serving.Profile, 0, len(read.Adopted))
-	for _, p := range view.Profiles {
-		if adopted[p.ID] {
-			selected = append(selected, p)
-		}
-	}
-	view.Profiles = selected
-	return view
+	return catalogView(*read.Accepted)
 }
 
 func writeMeasurement(w http.ResponseWriter, value any) {
