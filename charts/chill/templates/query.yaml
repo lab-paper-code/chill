@@ -235,7 +235,7 @@ spec:
           secret:
             secretName: {{ .Values.servingEntrypoint.tls.secretName | quote }}
             items:
-              - key: ca.crt
+              - key: tls.crt
                 path: ca.crt
         {{- end }}
         - name: evidence-staging
