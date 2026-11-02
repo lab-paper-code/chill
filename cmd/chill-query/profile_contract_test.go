@@ -88,3 +88,27 @@ func TestTypedProfileReadNeverEncodesExcludedRawArrays(t *testing.T) {
 		response.Body.Len(),
 	)
 }
+
+func TestAcceptedCatalogProfilesRemainVisibleWithNewerReportingFacts(t *testing.T) {
+	profile := serving.Profile{ID: "prior-adopted"}
+	read := servingkube.ProjectCatalogRead(
+		servingkube.CatalogView{Profiles: []serving.Profile{profile}},
+		"accepted-config",
+		map[string]servingkube.PrepareSpec{profile.ID: {Name: "accepted-preparation"}},
+		[]string{profile.ID},
+	)
+	read.Reporting = []servingkube.CatalogReportingInput{{ProfileID: "new-unadopted"}}
+	service := &measurementService{catalog: func(context.Context) (servingkube.CatalogRead, error) { return read, nil }}
+	mux := http.NewServeMux()
+	service.register(mux)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/profiles", nil))
+	var got profileResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || got.ConfigVersion != read.ConfigVersion || len(got.Profiles) != 1 ||
+		got.Profiles[0].ID != profile.ID || got.Preparations[profile.ID].Name != "accepted-preparation" {
+		t.Fatalf("newer reporting hid the accepted profile or restoration data: %s", response.Body.String())
+	}
+}

@@ -242,6 +242,9 @@ func (o *schedulerService) readCatalog(ctx context.Context) (servingkube.Catalog
 	adopted := []string{}
 	var preparations map[string]servingkube.PrepareSpec
 	if current := o.profiles.Load(); current != nil {
+		// Profiles, configuration and restoration data belong to one accepted
+		// snapshot; independently refreshed reporting facts still feed coverage.
+		view.Profiles, view.ConfigVersion = current.Profiles, current.ConfigVersion
 		for _, p := range current.Profiles {
 			adopted = append(adopted, p.ID)
 		}

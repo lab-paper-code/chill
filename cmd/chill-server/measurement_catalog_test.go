@@ -82,9 +82,14 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 			schedulerConfigKey: "config", maxRequestBytes: 1 << 20,
 		},
 	}
-	adopted := &httpapi.ProfilesView{CatalogView: servingkube.CatalogView{
-		Profiles: []serving.Profile{{ID: "prior-adopted"}}, Revision: "prior",
-	}}
+	adopted := &httpapi.ProfilesView{
+		ConfigVersion: "accepted-config",
+		CatalogView: servingkube.CatalogView{
+			Profiles: []serving.Profile{{ID: "prior-adopted"}}, Revision: "prior",
+			MeasurementFacts: map[string]serving.MeasurementFacts{"accepted-only": {}},
+		},
+		Preparations: map[string]servingkube.PrepareSpec{"prior-adopted": {Name: "accepted-preparation"}},
+	}
 	service.profiles.Store(adopted)
 	ctx := context.Background()
 	if err := service.refresh(ctx); err == nil || err.Error() != "cost source unavailable" {
@@ -95,6 +100,7 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 		len(first.Profiles) != 0 || first.MeasurementFacts == nil || service.profiles.Load() != adopted {
 		t.Fatalf("cost failure hid new verified catalog or changed adoption: %+v error=%v", first, err)
 	}
+	assertAcceptedCatalogRead(t, service, adopted, first.SourceCheckedAt)
 	if err := service.refresh(ctx); err == nil {
 		t.Fatal("cost source unexpectedly succeeded")
 	}
@@ -111,6 +117,34 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 		stale.Revision != second.Revision || service.profiles.Load() != adopted || objects.rawReads.Load() != 0 {
 		t.Fatalf("failed refresh changed retained catalog check/facts/adoption: %+v error=%v reads=%d",
 			stale, err, objects.rawReads.Load())
+	}
+	assertAcceptedCatalogRead(t, service, adopted, stale.SourceCheckedAt)
+}
+
+func assertAcceptedCatalogRead(
+	t *testing.T, service *schedulerService, adopted *httpapi.ProfilesView, checkedAt time.Time,
+) {
+	t.Helper()
+	read, err := service.readCatalog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := json.Marshal(read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var queryRead servingkube.CatalogRead
+	if err := json.Unmarshal(wire, &queryRead); err != nil {
+		t.Fatal(err)
+	}
+	if queryRead.ConfigVersion != adopted.ConfigVersion || len(queryRead.Profiles) != 1 ||
+		queryRead.Profiles[0].ID != adopted.Profiles[0].ID || len(queryRead.Adopted) != 1 ||
+		queryRead.Adopted[0] != queryRead.Profiles[0].ID ||
+		queryRead.Preparations[queryRead.Adopted[0]].Name != "accepted-preparation" {
+		t.Fatalf("query catalog mixed verified and adopted snapshots: %s", wire)
+	}
+	if len(queryRead.Reporting) != 0 || queryRead.SourceCheckedAt != checkedAt {
+		t.Fatalf("accepted profiles replaced independently refreshed reporting facts: %s", wire)
 	}
 }
 
