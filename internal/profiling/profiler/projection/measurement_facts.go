@@ -14,9 +14,12 @@ func MeasurementPowerSource(source metricobserver.SourceIdentity) profilederivat
 }
 
 func MeasurementQuality(config profilingrun.RunConfig, metrics metricobserver.Result, start, end time.Time, protocol profilederivation.CurveProtocolContract) profilederivation.MeasurementTrialQuality {
+	// RunConfig and CurveProtocolContract freeze capture settings, not power
+	// window acceptance criteria. Successful collection cannot imply a pass.
 	return profilederivation.MeasurementTrialQuality{
 		WorkloadMode: config.Measurement.WorkloadMode, Protocol: protocol,
 		WindowSeconds: end.Sub(start).Seconds(), SuccessfulSamples: len(metrics.Samples), ReadFailures: len(metrics.Failures),
 		MaximumSampleGapSeconds: metrics.Summary.MaximumSampleGapSeconds, SourceTimestampAbsent: metrics.Summary.SourceTimestampAbsent,
+		PolicyReason: "PolicyUnset",
 	}
 }

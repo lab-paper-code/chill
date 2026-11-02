@@ -630,9 +630,12 @@ raw/vector/log/Secret은 응답에 넣지 않는다. 기존 8MiB 한도는 유�
 
 구현: 공통 `AssessMeasurement`가 개별 요청/Run/동작 비용/점유와 커버리지의 상태·label을
 산출한다. `MeasurementResultRow`는 catalog와 retained 단건의 같은 사실을 투영하며,
-공유 idle 반복과 active 반복을 별도로 센다. 저장된 protocol에 표본/gap/실패 **판정 정책**이
-없으면 `FrozenPowerWindowPolicy`는 unknown이다. 현재 관측값에 새 정책을 소급해
-기준 충족으로 만들지 않는다. timestamp 부재/node-wall은 이 unknown의 원인이 아니다.
+공유 idle 반복과 active 반복을 별도로 센다. 현재 frozen `RunConfig`와 curve-plan의 protocol에는
+수집 설정만 있고 표본/gap/실패 **판정 정책**이 없다. 공통 quality 응답 projection은
+`policyPassed:null, policyReason:"PolicyUnset"`으로 **정책 미설정**을 명시하며
+`FrozenPowerWindowPolicy`는 unknown을 유지한다. 이는 기준이 있는데 평가를 생략했다는 뜻이나
+불합격이 아니다. 저장 계약·원본 evidence·관측 수치는 바꾸지 않으며, 현재 관측값에 새 정책을
+소급해 기준 충족으로 만들지 않는다. timestamp 부재/node-wall은 이 unknown의 원인이 아니다.
 정상 superseded의 이미 검증한 메모리 facts는 현재 스케줄러 미사용으로 보존하며,
 읽기 전 replacement 제외에는 확인하지 않은 과거 facts를 만들어 넣지 않는다.
 

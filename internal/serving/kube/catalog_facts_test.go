@@ -100,6 +100,11 @@ func assertCatalogMeasurementBatchFacts(t *testing.T, row profilederivation.Meas
 	if row.PowerSource.Kind == "" || !row.Quality[0].SourceTimestampAbsent || row.Quality[0].PolicyPassed != nil {
 		t.Fatalf("source/capture facts invented a quality policy: %+v", row)
 	}
+	for _, quality := range row.Quality {
+		if quality.PolicyPassed != nil || quality.PolicyReason != "PolicyUnset" {
+			t.Fatalf("missing frozen power policy was not distinguished: %+v", quality)
+		}
+	}
 }
 
 func TestCatalogMeasurementFactsPreserveObservedZero(t *testing.T) {
