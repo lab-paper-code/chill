@@ -49,7 +49,7 @@ function definitionFixture(stages:ExperimentStage[],pairs:DeclaredPair[]=[]) {
       question:"같은 부하에서 선언한 제어 구성의 성공률·지연·에너지는 어떻게 다른가?",
       target:{components:[{name:"scheduler",resource:{apiVersion:"apps/v1",kind:"Deployment",namespace:"research",name:"chill-scheduler"},...image}]},
       harness:{...image},
-      loadGenerator:{...image,resources:{requests:{cpu:"1",memory:"256Mi"},limits:{cpu:"1",memory:"256Mi"}},shards:{camera:1},barrier:{maxStartSkewNanos:1000000,minimumReadySamples:1}},
+      loadGenerator:{...image,resources:{requests:{memory:"256Mi"},limits:{memory:"256Mi"}},shards:{camera:1},barrier:{maxStartSkewNanos:1000000,minimumReadySamples:1}},
       powerMeasurement:{meters:[{id:"meter-1",sourceIdentity:"lab-meter-1"}],nodes:[{name:"worker-1",uid:"worker-1-uid"}],series:"power_watts",sampling:{intervalNanos:1000000000}},
       control:{scaleDownHeadroomFraction:.1,minimumDemand:{camera:0},controls:{...controls}},
       judgment:{generatorQuality:{latenessToleranceNanos:1000000,maxExceedingFraction:.01},energyCoverage:{maxGapFraction:.01,maxSingleGapSeconds:30}},
