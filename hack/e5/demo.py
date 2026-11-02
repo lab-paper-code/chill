@@ -1325,7 +1325,7 @@ def self_check():
                 return {}
             raise AssertionError(argv)
         cpo.io.k = kubectl
-        cpo.io.wait_load_container = lambda job, folder, deadline: next(pod for pod in pods.values() if pod['metadata']['ownerReferences'][0]['uid'] == job[1])
+        cpo.io.wait_load_container = lambda job, folder, deadline, alive=None: next(pod for pod in pods.values() if pod['metadata']['ownerReferences'][0]['uid'] == job[1])
         cpo.io.assert_producer_startable = lambda *args, **kwargs: None
         cpo.io.wait_job_complete = lambda *args: {'status': {'conditions': [{'type': 'Complete', 'status': 'True'}]}}
         def boundary(folder, prefix):
