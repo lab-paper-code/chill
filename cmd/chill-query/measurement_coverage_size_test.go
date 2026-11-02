@@ -56,8 +56,10 @@ func TestMeasurementCoverageCampaignFitsResponseBudget(t *testing.T) {
 			coverageSizeAssertVariant(t, base, variant, seen)
 		}
 	}
-	if rows != 240 || len(seen) != 240 || history != 90 {
-		t.Fatalf("projection truncated: rows=%d unique=%d history=%d", rows, len(seen), history)
+	// Eighty retained profiles cover four cells. Each cell exposes only its
+	// current measurement's three batches; all requests and facts survive.
+	if rows != 12 || len(seen) != 12 || history != 90 || len(base.catalog.MeasurementFacts) != 80 {
+		t.Fatalf("current conditions or retained history changed: rows=%d unique=%d history=%d", rows, len(seen), history)
 	}
 }
 
@@ -146,7 +148,9 @@ func coverageSizeAddProfile(base *measurementCoverageBase, task api.BatchEnergyO
 		Condition:   condition,
 		PointPolicy: profilederivation.PointPolicy{Version: "point-policy.v2", MinimumTrials: 3, ConfidenceLevel: .95},
 	}
-	profile := serving.Profile{ID: id, Condition: condition, NodeName: coverageSizeNode}
+	profile := serving.Profile{
+		ID: id, Condition: condition, NodeName: coverageSizeNode, MeasuredAt: time.Unix(int64(index+1), 0),
+	}
 	for _, batch := range []int{1, 4, 8} {
 		facts.Batches = append(facts.Batches, coverageSizeBatch(task, condition, batch))
 		profile.Batches = append(profile.Batches, serving.BatchProfile{Batch: batch})
@@ -357,7 +361,7 @@ func TestMeasurementCoverageChecklistKeepsRequestedBatchProvenance(t *testing.T)
 			}
 		}
 	}
-	if rows != 240 {
-		t.Fatalf("goal projection truncated result rows: %d", rows)
+	if rows != 12 {
+		t.Fatalf("goal projection changed current-measurement result rows: %d", rows)
 	}
 }
