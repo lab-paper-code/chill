@@ -112,7 +112,7 @@ function LoadEvidence() {
   const selectedUID=params.get("uid")??params.get("workload")??(params.get("open")?.startsWith("service:")?params.get("open")!.slice(8):"")
   const [draft,setDraft]=React.useState(submitted),[validation,setValidation]=React.useState("")
   const query=useChillQuery<LoadWindow>(`v1/observations/load?${new URLSearchParams(submitted)}`,{decoder:parseSchedulerJSON})
-  const workloads=useChillQuery<WorkloadChoice[]>("v1/workloads"),data=query.data
+  const workloads=useChillQuery<WorkloadChoice[]>("v1/workloads?view=summary"),data=query.data
   const recordUIDs=[...(data?.workloads?.map(row=>row.uid)??[]),selectedUID].filter(Boolean)
   const definitions=useWorkloadDefinitions(recordUIDs,submitted)
   const choices=resolveWorkloadIdentities(workloads.data,definitions,[],recordUIDs)

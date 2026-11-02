@@ -6,7 +6,7 @@ import { usePathname, useRouter, useSearchParams, type ReadonlyURLSearchParams }
 import type { QueryObserverBaseResult } from "@tanstack/react-query"
 import { useChillQuery, useSession, type ApiError } from "@/lib/client"
 import type { SchedulerObservation, SchedulerObservationPage, SchedulerObservationSummary, SchedulerObservationSummaryPage } from "@/lib/read-types"
-import type { WorkloadView } from "@/lib/domain"
+import type { WorkloadSummary } from "@/lib/domain"
 import { parseSchedulerJSON, nanosToMilliseconds } from "@/lib/scheduler"
 import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerComparisonParams, schedulerHistoryNodeMatches, schedulerHistoryKindMatches, groupHistoryKeeps, type SchedulerRecordRef } from "@/lib/scheduler-history"
 import { gapNotice, utcDateTime } from "@/lib/date-time"
@@ -109,7 +109,7 @@ function RecordDetails({row}:{row:SchedulerHistoryRow}){
 
 export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean}){
   const history=useSchedulerHistory(settingsOnly?"settings":"decision-action"),router=useRouter(),pathname=usePathname(),params=history.params
-  const workloads=useChillQuery<WorkloadView[]>("v1/workloads")
+  const workloads=useChillQuery<WorkloadSummary[]>("v1/workloads?view=summary")
   const uid=params.get("uid")??"",serviceName=workloads.data?.find(row=>row.desired.metadata.uid===uid)?.desired.metadata.name
   const filter=settingsOnly?"settings":params.get("filter")??"decision-action",filterNode=params.get("filterNode")??""
   const rows=groupHistoryKeeps(history.rows.filter(row=>schedulerHistoryKindMatches(filter,row.ref.kind)&&schedulerHistoryNodeMatches(filterNode,row.event)))

@@ -34,7 +34,7 @@ function PartsPreview({spec}:{spec:Spec}) {
 }
 function LoadSpecEditor({spec,onChange,onValidityChange}:{spec:Spec;onChange:(spec:Spec)=>void;onValidityChange:(valid:boolean)=>void}) {
   const [tab,setTab]=useState("parts"),[invalid,setInvalid]=useState(false),parts=records(spec.parts),workloads=records(spec.workloads)
-  const registered=useChillQuery<{desired:{metadata:{name:string;uid:string;generation?:number}}}[]>("v1/workloads"),services=registered.data?.map(item=>item.desired.metadata)??[]
+  const registered=useChillQuery<{desired:{metadata:{name:string;uid:string;generation?:number}}}[]>("v1/workloads?view=summary"),services=registered.data?.map(item=>item.desired.metadata)??[]
   return <div className="grid min-w-0 gap-4"><div className="flex flex-wrap gap-2" role="group" aria-label="부하 편집 항목">{[["parts","구간"],["workloads","서비스·도착 분포"],["inputs","입력 객체"],["json","JSON"]].map(([key,label])=><Button key={key} type="button" disabled={invalid&&key!==tab} aria-pressed={tab===key} variant={tab===key?"default":"outline"} onClick={()=>setTab(key)}>{label}</Button>)}</div>
     {tab==="json"&&<AuthorJSON label="부하 정의 원문" value={spec} onChange={onChange} onValidityChange={valid=>{setInvalid(!valid);onValidityChange(valid)}}/>}
     {tab==="parts"&&<><PartsPreview spec={spec}/>{parts.map((part,index)=>{

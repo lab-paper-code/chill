@@ -40,6 +40,41 @@ type WorkloadView struct {
 	ObservedAt      time.Time              `json:"observedAt"`
 }
 
+// WorkloadSummary keeps management state while omitting repeated profile evidence.
+// GetWorkload and the unqueried list retain the complete measured input contract.
+type WorkloadSummary struct {
+	WorkloadView
+	SupportedInputs []SupportedInputSummary `json:"supportedInputs"`
+}
+
+type SupportedInputSummary struct {
+	ExecutionPath string               `json:"executionPath"`
+	Artifact      string               `json:"artifact"`
+	ProfileCount  int                  `json:"profileCount"`
+	Profiles      []SupportedProfileID `json:"profiles"`
+}
+
+type SupportedProfileID struct {
+	ID string `json:"id"`
+}
+
+func SummarizeWorkloads(views []WorkloadView) []WorkloadSummary {
+	summaries := make([]WorkloadSummary, len(views))
+	for i, view := range views {
+		inputs := make([]SupportedInputSummary, len(view.SupportedInputs))
+		for j, input := range view.SupportedInputs {
+			profiles := make([]SupportedProfileID, len(input.Profiles))
+			for k, profile := range input.Profiles {
+				profiles[k] = SupportedProfileID{ID: profile.ID}
+			}
+			inputs[j] = SupportedInputSummary{ExecutionPath: input.ExecutionPath, Artifact: input.Artifact, ProfileCount: len(profiles), Profiles: profiles}
+		}
+		view.SupportedInputs = nil
+		summaries[i] = WorkloadSummary{WorkloadView: view, SupportedInputs: inputs}
+	}
+	return summaries
+}
+
 func (m *Manager) view(w *api.Workload) WorkloadView {
 	status := m.status(w)
 	view := WorkloadView{Desired: w.DeepCopy(), SupportedInputs: []SupportedInput{}, Operation: status.Operation,
