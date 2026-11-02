@@ -2,7 +2,7 @@
 
 ## 1. 목적·상태·기준점
 
-- 조사일: 2026-11-02. **조사 완료, 수정 미실행. CPU best-effort 공유 실행은 사용자의 핵심 목표이며, R1–R8은 그 목표 아래 검토할 구조 개선 후보**다. 이 문서는 구현·배포·live 검증 완료를 의미하지 않는다.
+- 조사일: 2026-11-02. **조사 완료, 수정 미실행. CPU best-effort 공유 실행과 Query API로의 조회 책임 분리는 사용자의 핵심 방향이며, R1–R8은 그 방향 아래 검토할 구조 개선 후보**다. 이 문서는 구현·배포·live 검증 완료를 의미하지 않는다.
 - 사용자 요청: CHILL을 전반적으로 살펴 장기 유지보수·확장성을 떨어뜨리는 임시 덧대기 의심 코드/커밋, Config·상수·특정 case에 의존하지만 구조적으로 개선 가능한 지점을 탐색하고 도구를 적극 활용한다.
 - 전달 목적: 다른 수정 담당 세션이 조사 의도·근거·불확실성·보존 계약을 잃지 않고 작업 범위를 정할 수 있게 한다. 요청은 문서화이며 코드 수정·배포·외부 세션 연락은 포함하지 않는다.
 - 조사 시작 HEAD: `ce9495ea`; 조사 중 `29fe9046`이 추가됐다. 문서화 시 확인한 HEAD: `29fe90467f0e22b734e33ba3ea9b796f79a66d0c` (`test(evaluation): assert summary reads without fake response limits`). 작업 트리가 동시에 변경되고 있으므로 아래는 해당 조사 시점의 관측이다.
@@ -21,6 +21,12 @@ CHILL의 모든 연산은 **CPU를 예약·제한·고정하지 않는 best-effo
 - **안전 경계:** CPU 독점 장부는 제거하되 Pod/Node 소유·반환 증명, 필요한 GPU 할당·장치 신원, 메모리 안전 경계를 함께 삭제하지 않는다. CPU 공유를 이유로 효과 불명 작업의 예약을 자동 반환하지 않는다.
 - **용어:** 여기서 best-effort는 CPU 공유 실행 원칙이다. Kubernetes `BestEffort` QoS는 모든 container 및 Pod 수준의 CPU·memory request/limit이 없어야 한다. 메모리 request/limit을 유지하는 Pod는 `Burstable`일 수 있으며, QoS 이름을 맞추려고 메모리 제한까지 제거하지 않는다([공식 기준](https://kubernetes.io/docs/concepts/workloads/pods/pod-qos/)).
 - **완료 기준:** 모든 실행 경로의 선언·기본값·admission 적용 후에도 CPU request/limit과 명시 pinning이 없고, quota/affinity 필수 검증이나 CPU 독점 matching 때문에 실행이 막히지 않는다. Profiling/serving은 같은 공유 실행 정책을 사용하며 실제 실행 조건과 성능을 증거로 남긴다.
+
+### Core — Query API가 운영·측정 조회를 끝까지 소유
+
+**Console은 화면이 아니라 운영·측정 조회 backend다. 독립 프로세스를 유지하고 `CHILL Query API` / `chill-query`로 명명하며, ChillServer에 분산된 조회 조립·응답 해석 책임을 가져온다.** Dashboard는 표시·입력, Query API는 완성된 조회 응답, ChillServer는 공개 인증·권한 경계와 serving 실행·제어를 맡는다.
+
+목표는 이름 변경이나 서버 수 축소가 아니라 **ChillServer가 조회 응답 본문을 해석·수선하지 않도록 소유권을 정리하는 것**이다. 기존 도메인 계산·검증과 원본 상태의 소유자는 유지한다. Query API를 새 실행기·범용 query engine·두 번째 serving 장부로 만들지 않는다. 구체적인 이관 범위·이름·삭제 대상·수용 기준은 R5를 따른다.
 
 **핵심 결론:** 상수의 개수보다 **같은 사실의 판단 책임이 여러 경계로 나뉘고, 다른 수명의 상태를 같은 결과로 취급하는 구조**가 우선 문제다. 후보 8개 중 R1–R3은 실제 구현을 호출한 오프라인 smoke로 현상까지 확인했다. 나머지는 소스·기존 테스트·이력에 근거한 구조 후보이며 확인하지 않은 운영 장애를 주장하지 않는다.
 
@@ -166,8 +172,8 @@ CHILL의 모든 연산은 **CPU를 예약·제한·고정하지 않는 best-effo
 
 ### 개선 방향
 
-1. **외부 응답 계약을 명시한다.** 기존 소비자가 필요로 하는 catalog 필드와 profile 요약을 typed public response에 정의한다. `preparations`를 포함한 restore 계약을 확인하고 누락 없이 반영한다.
-2. **필요한 값만 직접 담는다.** 내부 catalog에서 공개할 필드와 요약값을 응답 구조로 옮기고 JSON 직렬화는 한 번만 한다. 원본 전체를 JSON으로 변환한 뒤 map에서 삭제·교체하는 중간 경로를 없앤다.
+1. **외부 응답 계약을 명시한다.** 기존 소비자가 필요로 하는 catalog 필드와 profile 요약을 typed public response에 정의하고, R5의 Query API가 조회용 응답 구성을 소유한다. `preparations`를 포함한 restore 계약을 확인하고 누락 없이 반영한다.
+2. **필요한 값만 직접 담는다.** Catalog 소유자가 공개할 필드와 요약값을 명시적 읽기 계약으로 제공하고 Query API가 이를 응답으로 조립한다. 원본 전체를 JSON으로 변환한 뒤 map에서 삭제·교체하는 중간 경로를 없앤다. 프로세스 사이에서 내부 raw catalog 전체를 전달한 뒤 덜어내는 구조로 옮기지 않는다. 각 HTTP 경계는 필요한 구조만 한 번 직렬화한다.
 3. **내부 원본은 보존한다.** raw samples/measurementFacts와 scheduler 원본은 그대로 유지한다. 내부 필드 추가가 자동으로 외부 응답에 포함되지 않게 한다.
 4. **소비 경로를 끝까지 확인한다.** production의 undecorated 응답 경로가 필요한지는 references와 실제 소비자로 판단한다. 필요하면 같은 명시적 공개 계약을 사용하고, 불필요함이 확인된 경로만 제거한다. 새 범용 serializer나 projection framework는 필요하지 않다.
 
@@ -179,16 +185,48 @@ CHILL의 모든 연산은 **CPU를 예약·제한·고정하지 않는 best-effo
 - [`measurement_r6_test.go:18`](../../cmd/chill-server/measurement_r6_test.go#L18)는 raw duration 100,000개로 최종 응답 제외·preparations 유지·원본 무변경을 확인하지만 중간 allocation은 검사하지 않는다. 수정 후에는 실제 응답 경로에서 계약 보존과 불필요한 중간 처리가 사라졌는지 함께 확인한다.
 - 실제 `decorateProfiles` 호출 Go overlay smoke는 §11의 작업 트리 컴파일 오류로 실행에 도달하지 못했다. allocation/CPU 개선 수치나 성능 benchmark 결과는 없다.
 
-## 7. R5 — Console 도메인 응답을 ChillServer HTTP proxy가 수선
+## 7. R5 — Console을 Query API로 재정의하고 조회 응답의 소유권을 모음
 
-**우선순위: 중간. 소스·커밋 확인, 운영 장애 재현 아님.**
+**우선순위: 높음. 사용자 방향: 독립 조회 backend 유지·책임 강화·명칭 정리. 현행 경로는 소스 확인, 이관·배포 검증은 미실행.**
 
-- 위치: [`measurement_reads.go:77`](../../cmd/chill-server/measurement_reads.go#L77) `servePendingPassport`, [`:125`](../../cmd/chill-server/measurement_reads.go#L125) `addMeasurementResultMetadata`, `enrichMeasurementResultError`/`writeMeasurementResultError`.
+**핵심: 조회 서버가 있는데도 ChillServer가 데이터를 다시 읽어 응답을 고치고 있다. Query API가 조회를 완성하고, ChillServer는 그 응답의 도메인 내용을 해석하지 않게 한다.** Dashboard가 생겼으므로 조회 기능이 불필요해진 것이 아니다. 화면과 조회 backend의 역할은 다르다.
+
+### 현재 역할·문제의 근거
+
+- [`cmd/console/run.go:163`](../../cmd/console/run.go#L163) `buildHandler`는 system/inventory·모델 호환성·ProfilingRun·Evidence Passport·측정 결과/통계·preflight 조회를 조립한다. [`main.go:41`](../../cmd/console/main.go#L41)는 이를 독립 HTTP 서버로 실행한다.
+- [`http_routes.go:92`](../../cmd/chill-server/http_routes.go#L92)는 일부 공개 조회를 Console로 중계한다. Dashboard도 [`relay.ts:57`](../../chill-dashboard/lib/relay.ts#L57) 등의 경로로 그 기능을 사용하며, CLI의 [`evidence_passport_query.go:47`](../../cmd/chill/evidence_passport_query.go#L47)는 Console Service를 직접 경유한다.
 - Console query는 evidence 부재/읽기 오류에서 native metadata snapshot도 잃는다: [`evidence_passport_query.go:65`](../../internal/operatorconsole/kube/evidence_passport_query.go#L65), [`batch_energy_optimization_result_query.go:74`](../../internal/operatorconsole/kube/batch_energy_optimization_result_query.go#L74).
-- 이를 보완하려고 entrypoint proxy가 Kubernetes를 다시 읽어 같은 passport/result wire model·assessment·null field 규칙을 별도 조립한다. Dashboard와 CLI가 다른 화면을 가진다는 의도적 분리와는 다른 문제다.
-- `80373c67` diff가 이 response repair 파일을 추가한다. 정상·pending·evidence error·transport error가 다른 projection 경로를 가져 필드/의미 변경 시 함께 고쳐야 한다.
-- 권고: 기존 operatorconsole typed view에 native metadata/pending/error builder를 두고 query가 evidence 실패에도 metadata를 보존하게 한다. Console 자체에 접속하지 못하는 fallback은 같은 builder로 유지할 수 있다.
-- 수용 기준: pending의 202, stale/invalid/published evidence의 verified reader 사용, 원 HTTP error/status, 인증·namespace 권한, 실패 campaign 신원·진행·조건 노출, 증거 미합성을 보존한다. 기존 `measurement_reads_test.go` 요구를 참고한다.
+- 이를 보완하려고 [`measurement_reads.go:77`](../../cmd/chill-server/measurement_reads.go#L77) `servePendingPassport`와 `addMeasurementResultMetadata`/`enrichMeasurementResultError` 등이 Kubernetes를 다시 읽고 같은 passport/result 응답·assessment·null 규칙을 재구성한다. `80373c67`이 이 response repair 계층을 추가한다.
+- 정상·pending·evidence error·transport error의 응답 구성이 갈라져 있어 필드·의미 변경이 여러 경로로 전파된다. 문제는 서버 분리 자체가 아니라 조회 응답을 끝까지 책임지는 소유자가 불명확하다는 점이다.
+
+### 목표 책임 경계
+
+| 소유자 | 책임 | 넘지 않을 경계 |
+|---|---|---|
+| ChillServer | 공개 진입점의 인증·권한·라우팅, 추론 접수/전달, serving 제어·변경 실행 | 조회 응답을 위해 별도 Kubernetes 재조회·assessment 재판정·본문 수선하지 않음 |
+| Query API | 운영·측정 조회 조립, evidence 읽기·검증 연결, 통계 조회, read-only preflight, 공개 조회 모델과 pending/error 표현 | 추론·노드 제어·측정 실행·원본 변경을 소유하지 않음 |
+| 기존 도메인 패키지 | 측정 판정·통계·호환성·evidence 검증 규칙의 권위 있는 구현 | HTTP·화면별 응답 때문에 규칙을 복제하지 않음 |
+| Dashboard | 표시·입력·사용자 상호작용 | Kubernetes/S3 직접 접근·도메인 계산 재구현하지 않음 |
+
+Preflight는 POST여도 실제 변경을 일으키지 않는 조회다. 반면 요청 생성·삭제·실행은 별도 변경 경계에 남긴다. Serving runtime의 요청·routing·예약 상태와 immutable evidence는 기존 소유자가 정본이며 Query API가 재구성한 두 번째 장부로 대체하지 않는다. Live 기록·발행·순서·recovery 계약은 이 작업에 편승해 옮기지 않는다.
+
+### 이관·이름·삭제 범위
+
+1. **독립 조회 backend를 유지하고 명명한다.** 제품/역할 이름은 `CHILL Query API`, 실행·배포 이름은 `chill-query`, 실행 root는 `cmd/chill-query`를 목표로 한다. `cmd/chill` CLI와 Dashboard는 별개다. `internal/operatorconsole` 계열은 필요한 view/query/adapter를 보존하며 Query API 책임에 맞는 패키지 이름으로 정리한다. 이름만 바꾸고 기능 전체를 삭제하지 않는다.
+2. **조회 시작부터 최종 응답까지 책임진다.** Pending passport·evidence 오류의 native metadata·실패/진행 assessment를 Query API의 typed builder/query가 구성한다. Evidence가 없거나 읽히지 않아도 관측한 실행 상태는 잃지 않고, 없는 증거를 합성하지 않는다.
+3. **ChillServer의 조회 조립을 이관한다.** `measurement_reads.go`의 도메인 응답 수선, 측정 결과·coverage 조회 조립, R4의 public profile 응답 구성이 대상이다. `measurement_*` 파일을 일괄 이동하지 말고 변경 실행·admission과 조회를 분리한다. 계산은 기존 Go 도메인 함수를 재사용한다.
+4. **원본은 명시적 읽기 계약으로 받는다.** Serving 소유 사실은 기존 공개 읽기 경로를 재사용하고 R4처럼 필요한 projection만 제공한다. Query API 경로를 ChillServer가 다시 Query API로 보내는 순환 호출을 만들지 않는다. 새 polling/cache·snapshot 저장소·일반 query protocol을 선제 도입하지 않는다.
+5. **응답 수선과 중복 fallback을 삭제한다.** ChillServer에 남는 중계는 인증·전달·transport 오류 처리만 한다. Query API 접속 실패를 이유로 Kubernetes를 재조회해 도메인 응답을 만드는 fallback은 두지 않는다. Backend 연결 실패와 원본 evidence 실패를 구분한다.
+6. **한 번에 이름과 소비자를 이행한다.** 바이너리/image·Helm Service/Deployment·SA/RBAC·설정/flags·build/deploy 도구·CLI Service 조회·테스트·문서를 함께 정리한다. 불필요한 Console 전용 이름·중복 경로·alias/shim은 제거한다. 공개 API path·응답 schema·오류 계약은 단순 rename에 편승해 변경하지 않는다. 권한은 소유 책임에 맞게 재배치하며 맹목적으로 넓히지 않는다.
+
+### 수정 수용 기준
+
+- 이름 변경만이 아니라 ChillServer의 조회 재조회·도메인 본문 수정이 사라지고 Query API가 정상/pending/evidence 오류 응답을 일관되게 완성한다.
+- Pending의 202, stale/invalid/published evidence의 verified reader 사용, evidence 오류의 원 status/reason, 실패 campaign 신원·진행·조건, raw 미합성을 보존한다. Transport 실패를 측정 실패나 pending으로 꾸미지 않는다.
+- TokenReview/SAR·namespace 제한과 사용자 권한 의미를 유지한다. Private backend에 도달했다는 사실을 사용자 권한 승인으로 간주하지 않고, 임의 identity header를 신뢰하지 않는다.
+- Dashboard와 CLI가 같은 조회 의미를 사용하고 Console Service·기존 실행 이름의 잔존 의존성이 없다. 기존 `measurement_reads_test.go` 등의 의미 있는 시나리오는 새 소유 경계에서 검증한다.
+- Serving runtime·evidence·도메인 규칙의 정본이 중복되지 않는다. 큰 evidence/통계 조회의 자원 소비는 독립 조회 backend에서 관측하고 serving 영향과 장애 경계를 확인한다. 분리만으로 자원 간섭이 없다고 주장하지 않는다.
+- Go import 방향·architecture mapping, default/Profiler Helm profile, 명시적 Query API 경유 조회, 인증 거부·backend 불능·evidence 불능·pending 경로와 CLI 소비를 검증한다. 현재는 `go list`·`gopls` 참조·`go run ./cmd/console --help`로 기존 역할과 실행 진입점만 확인했으며 live 통합 검증 결과는 없다.
 
 ## 8. R6 — Idle batch 정책과 logical identity가 생성·검증·이름 파싱에 분산
 
@@ -292,7 +330,7 @@ CHILL의 모든 연산은 **CPU를 예약·제한·고정하지 않는 best-effo
 ## 14. 수정 담당 세션의 실행 경계·완료 조건
 
 1. 먼저 `git status --short`와 해당 symbol의 현행 source/references를 확인한다. 조사 후 다른 세션이 수정한 후보는 중복 수정하지 말고 결과·증거를 대조한다. 줄 번호나 과거 subject만으로 현행 결함을 단정하지 않는다.
-2. Core CPU 공유 실행을 우선 계약으로 정하고 R1·R2의 cache/matching·관련 실행 검증을 함께 정리한다. CPU table/YAML만 지우고 quota·affinity 필수 검증이나 독점 CPU 장부를 남기는 부분 이행은 완료가 아니다. 이후 R3–R8은 독립적인 작은 책임 경계 정리로 진행하며, 전체 재작성·통합 설정 계층·새 프레임워크로 확대하지 않는다.
+2. Core CPU 공유 실행과 Query API 조회 책임 분리를 각 관련 slice의 우선 계약으로 삼는다. R1·R2는 CPU table/YAML만 지우고 quota·affinity 검증·독점 CPU 장부를 남기면 완료가 아니다. R4·R5는 조회 projection·응답 수선을 Query API 소유로 정리하고, ChillServer로 합치거나 이름만 바꾸는 부분 이행을 하지 않는다. 독립적인 수정은 작은 책임 경계로 끝내며 전체 재작성·통합 설정 계층·새 프레임워크로 확대하지 않는다.
 3. bug 경로는 변경 전/후 같은 소비자 시나리오로 확인한다. 상수·배선·source text를 재고정하는 테스트 대신 복구 전이·조건 일치·경계 수용·오류 보존을 확인한다. 테스트만으로 실제 경로 smoke를 대체하지 않는다.
 4. Go 동작 수정은 focused test 후 `make lint`, `make test`; production package/internal import 변화는 `make arch-check`; golden semantic 경로 변경은 `make gopls-check` 또는 해당 gate를 적용한다. API/generated 계약은 `make manifests generate`, Helm은 명시적 profile render 등 저장소 규칙을 따른다.
 5. 저장 evidence/object 계약을 바꿔야 한다면 의존 캠페인 없는 단일 cutover로 한정한다. 원시 archive·과거 publication·실행 기록을 수정/삭제/재게시하지 않고 dual reader/alias/shim/digest 재검증 관문을 추가하지 않는다.
