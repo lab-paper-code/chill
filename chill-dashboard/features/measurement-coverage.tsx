@@ -5,8 +5,8 @@ import { useEffect, useRef } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { ApiError, useChillQuery, useSession } from "@/lib/client"
 import { coverageQuality, coverageQualityReasons, coverageFilterVisible, coverageSupportReasons, coverageMeasurementStatus, coverageMeasurementStates, coverageFailureHref, coverageProfileQuery, measurementAge, coverageSelection, coveragePathVisible, coverageWatts, coverageModes, coverageVariant, coverageProgress, coverageBatchState, coverageRequestHref, coverageScopeCounts, deviceLabel, conditionLabel, type CompatibilityRead } from "@/lib/measurement-coverage"
-import type { BatchProgress, InventoryView, MeasurementPlanList, ModelCompatibility, MeasurementCoverageResponse, MeasurementCoverageCell, ProfilesView, RunsView } from "@/lib/read-types"
-import { parseSchedulerJSON } from "@/lib/scheduler"
+import type { BatchProgress, InventoryView, MeasurementPlanList, ModelCompatibility, MeasurementCoverageSummaryResponse as MeasurementCoverageResponse, MeasurementCoverageCell, ProfilesView, RunsView } from "@/lib/read-types"
+import { parseMeasurementJSON } from "@/lib/measurement-summary"
 import { MeasurementNavigation, MeasurementEvidenceChecks } from "@/components/measurement-navigation"
 import { measurementUsage, measurementSchedulerUsed, measurementQuality } from "@/lib/measurement-assessment"
 import { Screen } from "@/components/screen"
@@ -20,7 +20,7 @@ async function readPage<T>(path:string,token:string,signal:AbortSignal):Promise<
   const response=await fetch(`/api/chill/${path}`,{headers:{Authorization:`Bearer ${token}`},signal,cache:"no-store",credentials:"omit"})
   const body=await response.text()
   if(!response.ok) throw new ApiError(response.status,body,null)
-  return parseSchedulerJSON(body) as T
+  return parseMeasurementJSON(body) as T
 }
 export function useCoverageInventory() {
   const {token,config}=useSession()
@@ -73,14 +73,14 @@ export function MeasurementFilters({axes,states=true,dates=false,editable=false}
 
 export function useMeasurementCoverage(namespace:string,enabled=true) {
   const {token}=useSession(),params=useSearchParams()
-  const query=new URLSearchParams()
+  const query=new URLSearchParams({view:"summary"})
   for(const key of ["batches","node"]) {const value=params.get(key);if(value)query.set(key,value)}
   const path=`v1/namespaces/${encodeURIComponent(namespace)}/measurement-coverage${query.size?`?${query}`:""}`
   const result=useQuery<MeasurementCoverageResponse,ApiError>({queryKey:["chill",path],enabled,retry:(attempt,error)=>error.status===503&&attempt<2,retryDelay:2000,refetchOnMount:"always",queryFn:async({signal})=>{
     const response=await fetch(`/api/chill/${path}`,{headers:{Authorization:`Bearer ${token}`},signal,cache:"no-store",credentials:"omit"})
     const text=await response.text();let data:unknown;try{data=JSON.parse(text)}catch{data=null}
     if(!response.ok)throw new ApiError(response.status,text,data)
-    return parseSchedulerJSON(text) as MeasurementCoverageResponse
+    return parseMeasurementJSON(text) as MeasurementCoverageResponse
   }})
   return {...result,data:result.error?undefined:result.data}
 }
@@ -222,7 +222,7 @@ function CoverageDetail({cell,namespace,close,visible}:{cell:MeasurementCoverage
   }})
   const running=coverageMeasurementStatus(cell)==="running"
   const runs=useChillQuery<RunsView>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs?${new URLSearchParams({model:cell.model.name,deviceClass:cell.deviceClass.name,path:cell.executionPath,powerMode:cell.powerMode,limit:"200",...(running?{}:{status:"problem"})})}`,{enabled:running||cell.failureSummary.length>0})
-  const requests=useChillQuery<MeasurementPlanList>(`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`,{enabled:cell.failureSummary.some(failure=>!failure.runName)})
+  const requests=useChillQuery<MeasurementPlanList>(`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations?view=summary`,{enabled:cell.failureSummary.some(failure=>!failure.runName),decoder:parseMeasurementJSON})
   const currentRuns=(runs.data?.runs??[]).filter(run=>variant?.runIds.includes(`${run.namespace}/${run.name}/${run.uid}`))
   const completeRuns=currentRuns.filter(run=>run.status.conditions?.some(condition=>condition.type==="ExecutionComplete"&&condition.status==="True"&&condition.observedGeneration===run.generation)).length
   const stage=currentRuns.flatMap(run=>run.status.conditions?.filter(condition=>condition.observedGeneration===run.generation)??[]).find(condition=>condition.type==="ExecutionComplete"&&condition.status==="Unknown")?.reason

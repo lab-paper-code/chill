@@ -25,6 +25,15 @@ The upstream demo records, accounts/avatars, revenue/time series, marketing link
 
 Scheduler history keeps default/ascending unfiltered reads bounded, including explicit `filter=all`, and returns original append offsets. Current-page counts appear only in the summary table. Live incident order preserves nanoseconds and uses descending sequence for equal timestamps; shared power remains explicitly labelled cluster-wide in service details.
 
+### 표시용 읽기 projection
+
+- 서비스 목록은 `GET /api/v1/workloads?view=summary`를 사용한다. `supportedInputs`는 path·artifact·profileCount·profiles `{id}`만 전송하며 원 조건·근거는 무쿼리 목록/단건 조회에 남는다.
+- 커버리지, 측정 요청 목록, 처리 성능 페이지는 각각 `measurement-coverage?view=summary`, `batch-energy-optimizations?view=summary`, `scheduler/profiles?view=summary&limit=50&offset=…`를 사용한다. 필터·정렬·페이지는 기존 순서로 적용하며 선택 프로파일은 기존 `profile=<id>&limit=1`, 요청 결과는 기존 `/{name}/result` 단건으로 읽는다. 쓰기 URL과 무쿼리 응답은 바뀌지 않는다.
+- 측정 요약의 `readProjection`은 `{version:"measurement-summary.v1",values,shapes}`이다. `~N`은 `values[N]`, `{"$o":[S,...values]}`는 `shapes[S]` 필드 순서의 객체다. dictionary 항목은 앞선 항목만 참조하고 최상위 dictionary 문자열은 원문이다(`~123` 같은 원문도 손실 없이 보존). `lib/measurement-summary.ts`가 정밀 정수 파싱 후 한 번 복원한다. 조건·출처·체크·부모/배치 판정을 공유하며 체크 결과·미확인 사유·null·0·페이지 정보는 그대로다.
+- 요약만 제외하는 미사용 필드: 커버리지 `entities/groups` 역색인(집계·셀별 관계는 유지), 측정 요청 `metadata.managedFields/annotations`, 프로파일 `preparations`. 원본 조회·저장 계약·판정 계산은 변경하지 않는다. relay는 해당 GET 목록에만 정확히 `view=summary`를 허용한다.
+- 2026-11-02 운영 GET을 로컬 production projection에 적용한 UTF-8 본문 크기: workloads **17,227,584 → 422,048 B**(29개), 커버리지 **9,218,406 → 1,893,956 B**, 측정 요청 **11,941,797 → 1,677,154 B**, 프로파일 `limit=50&offset=100&sort=model&order=asc` **8,550,682 → 921,387 B**. 배포 후 수치가 아니라 같은 운영 원문에 대한 로컬 projection 결과다.
+
+
 ## Runtime
 
 Node 24.21.0; pnpm 10.33.4. Dependencies are frozen in `pnpm-lock.yaml`. `pnpm install --frozen-lockfile`, then `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`. `pnpm start` binds `0.0.0.0:3000`. Next uses `output: standalone`; a standalone image must include `.next/standalone`, `.next/static` and `public` if present and set `HOSTNAME=0.0.0.0`, `PORT=3000`.

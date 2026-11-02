@@ -14,6 +14,7 @@ import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as coverageHelpers from "./measurement-coverage.ts"
 import * as assessmentHelpers from "./measurement-assessment.ts"
 import * as measurementHelpers from "./measurements.ts"
+import * as measurementSummary from "./measurement-summary.ts"
 
 test("power mode labels identify measured watts rather than inventing a declared limit",()=>{
   assert.equal(powerModeLabel("MODE-1",[10,12]),"MODE-1 · 실측 10.0–12.0 W")
@@ -253,6 +254,7 @@ function renderCoverage(query="",extraCells:MeasurementCoverageCell[]=[],freshne
     "@/lib/measurement-assessment":assessmentHelpers,
     "@/lib/measurements":measurementHelpers,
     "@/lib/scheduler":{},
+    "@/lib/measurement-summary":measurementSummary,
     "@/components/measurement-navigation":{MeasurementNavigation:()=>null,MeasurementEvidenceChecks:()=>null},
     "@/components/screen":{Screen:({children,action}:{children?:ReactNode;action?:ReactNode})=>createElement("main",null,createElement("header",null,action),children)},
     "@/components/ui/button":{Button:({children,disabled}:{children?:ReactNode;disabled?:boolean})=>createElement("button",{disabled},children)},

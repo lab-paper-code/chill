@@ -42,9 +42,9 @@ export function relayPlan(method: string, segments: string[], search: string, co
   if (!segments.length || segments.some(part => part.length > 253 || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(part))) throw new RelayFailure("DashboardRouteNotAllowed", 404)
   const route = segments.join("/")
   let methods: string[] = []
-  let query: "none" | "page" | "inputs" | "profiles" | "runs" | "observations" | "event" | "load" | "schedulerHistory" | "dryRun" | "uid" | "compatibility" | "coverage" | "preflight" = "none"
+  let query: "none" | "summary" | "page" | "inputs" | "profiles" | "runs" | "observations" | "event" | "load" | "schedulerHistory" | "dryRun" | "uid" | "compatibility" | "coverage" | "preflight" = "none"
   let kind: RelayPlan["kind"] = "query"
-  if (/^v1\/(models|workloads|preprocessors|datasets)$/.test(route)) methods = ["GET", "POST"]
+  if (/^v1\/(models|workloads|preprocessors|datasets)$/.test(route)) { methods = ["GET", "POST"]; if(route==="v1/workloads"&&method==="GET")query="summary" }
   else if (/^v1\/(models|workloads|preprocessors|datasets)\/[^/]+$/.test(route)) methods = ["GET", "PUT", "DELETE"]
   else if (/^v1\/workloads\/[^/]+\/infer$/.test(route)) { methods = ["POST"]; kind = "infer" }
   else if (/^v1\/pools(?:\/[^/]+)?$/.test(route)) methods = ["GET"]
@@ -74,7 +74,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   else if (/^v1\/namespaces\/[^/]+\/profiling-runs$/.test(route)) { methods = ["GET"]; query = "runs" }
   else if (/^v1\/namespaces\/[^/]+\/profiling-runs\/[^/]+\/evidence-passport$/.test(route) || /^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/[^/]+\/result$/.test(route)) methods = ["GET"]
   else if (/^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/preflight$/.test(route)) { methods = ["POST"]; query = "preflight" }
-  else if (/^v1\/namespaces\/[^/]+\/batch-energy-optimizations$/.test(route)) { methods = ["GET", "POST"]; if (method === "POST") query = "dryRun" }
+  else if (/^v1\/namespaces\/[^/]+\/batch-energy-optimizations$/.test(route)) { methods = ["GET", "POST"]; query = method === "POST" ? "dryRun" : "summary" }
   else if (/^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/[^/]+$/.test(route)) { methods = ["DELETE"]; query = "uid" }
   if (!methods.length) throw new RelayFailure("DashboardRouteNotAllowed", 404)
   if (!methods.includes(method)) throw new RelayFailure("DashboardMethodNotAllowed", 405)
@@ -86,6 +86,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   // History lists default to summaries; selected records explicitly request compact evidence.
   const compact = method === "GET" && (query === "schedulerHistory" || route === "v1/scheduler" || route === "v1/scheduler/state")
   const allowed = compact ? ["view"] : []
+  if (query === "summary" || query === "coverage" || query === "profiles") allowed.push("view")
   if (query === "coverage") allowed.push("batches","node")
   if (query === "inputs") allowed.push("kind","set","offset","limit")
   if (query === "preflight") allowed.push("variantId")
@@ -115,7 +116,8 @@ export function relayPlan(method: string, segments: string[], search: string, co
       } else if (key === "condition") {
         if (Buffer.byteLength(value) > 128 || !/^[^=]+=(True|False|Unknown)$/.test(value)) throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (key === "view") {
-        if (value !== "compact" && !(value === "summary" && (route === "v1/scheduler/state" || query === "schedulerHistory"))) throw new RelayFailure("DashboardQueryInvalid", 400)
+        const summary=route==="v1/scheduler/state"||query==="schedulerHistory"||query==="summary"||query==="coverage"||query==="profiles"
+        if (!(value==="summary"&&summary) && !(value==="compact"&&compact)) throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (key === "dryRun") {
         if (value !== "All") throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (Buffer.byteLength(value) > (key === "group" ? 16384 : key === "outcome" ? 64 : query === "inputs" && key === "set" ? 512 : 256) || (key !== "q" && !value)) throw new RelayFailure("DashboardQueryInvalid", 400)

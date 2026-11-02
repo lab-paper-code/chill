@@ -18,6 +18,11 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+const (
+	measurementSummaryView = "summary"
+	measurementViewQuery   = "view"
+)
+
 func (o *measurementService) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/scheduler/profiles", func(w http.ResponseWriter, r *http.Request) {
 		read, err := o.catalog(r.Context())
@@ -38,6 +43,15 @@ func (o *measurementService) register(mux *http.ServeMux) {
 		payload, err := o.buildProfiles(r.Context(), view)
 		if err != nil {
 			httpapi.SendQueryError(w, err)
+			return
+		}
+		if values.Get(measurementViewQuery) == measurementSummaryView {
+			summary, err := queryapi.MeasurementSummaryJSON(payload, true)
+			if err != nil {
+				httpapi.SendQueryError(w, err)
+				return
+			}
+			writeMeasurement(w, summary)
 			return
 		}
 		writeMeasurement(w, payload)
@@ -69,6 +83,19 @@ func (o *measurementService) register(mux *http.ServeMux) {
 	mux.HandleFunc(
 		"GET /api/v1/namespaces/{namespace}/batch-energy-optimizations",
 		func(w http.ResponseWriter, r *http.Request) {
+			values, err := url.ParseQuery(r.URL.RawQuery)
+			if err == nil {
+				for key, items := range values {
+					if key != measurementViewQuery || len(items) != 1 || items[0] != measurementSummaryView {
+						err = &serving.Error{Code: "InvalidQuery", Message: "invalid measurement list view"}
+						break
+					}
+				}
+			}
+			if err != nil {
+				httpapi.SendQueryError(w, &serving.Error{Code: "InvalidQuery", Message: "invalid measurement list query"})
+				return
+			}
 			list, err := o.list(r.Context(), r.PathValue("namespace"))
 			if err != nil {
 				httpapi.SendQueryError(w, err)
@@ -79,7 +106,17 @@ func (o *measurementService) register(mux *http.ServeMux) {
 				httpapi.SendQueryError(w, err)
 				return
 			}
-			writeMeasurement(w, projectMeasurementList(list, assessments))
+			payload := projectMeasurementList(list, assessments)
+			if values.Get(measurementViewQuery) == measurementSummaryView {
+				summary, err := queryapi.MeasurementSummaryJSON(payload, false)
+				if err != nil {
+					httpapi.SendQueryError(w, err)
+					return
+				}
+				writeMeasurement(w, summary)
+				return
+			}
+			writeMeasurement(w, payload)
 
 		},
 	)
