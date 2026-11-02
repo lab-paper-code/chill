@@ -520,3 +520,40 @@ func assertCreatedChildContext(t *testing.T, body string, expected []api.Evaluat
 		t.Fatalf("incorrect child cleanup/uncertainty context: %s", body)
 	}
 }
+
+func TestEvaluationJobsShareCPUAndRejectInjectedControls(t *testing.T) {
+	r, _, parent, stage := fixtureStageExecution(t)
+	job, err := r.job(context.Background(), stage, parent, stage, api.EvaluationStepStage, &api.EvaluationProcedure{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := job.Spec.Template.Spec
+	if pod.Affinity != nil {
+		t.Fatal("evaluation stage Job must not carry affinity")
+	}
+	for _, container := range append(pod.Containers, pod.InitContainers...) {
+		for _, resources := range []corev1.ResourceList{container.Resources.Requests, container.Resources.Limits} {
+			if _, present := resources[corev1.ResourceCPU]; present {
+				t.Fatalf("CPU resource on %s", container.Name)
+			}
+		}
+	}
+	for _, field := range []string{"requests", "limits", "affinity"} {
+		t.Run(field, func(t *testing.T) {
+			injected := job.DeepCopy()
+			if field == "affinity" {
+				injected.Spec.Template.Spec.Affinity = &corev1.Affinity{}
+			} else {
+				resources := corev1.ResourceList{corev1.ResourceCPU: {}}
+				if field == "requests" {
+					injected.Spec.Template.Spec.Containers[0].Resources.Requests = resources
+				} else {
+					injected.Spec.Template.Spec.Containers[0].Resources.Limits = resources
+				}
+			}
+			if sameJob(injected, job) {
+				t.Fatal("adopted CPU-controlled Job must be rejected, including zero quantities")
+			}
+		})
+	}
+}

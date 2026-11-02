@@ -137,7 +137,7 @@ try:
                 if harness=='d2':m.save(lane.out/'lifecycle.json',{'originalSettings':initial})
                 else:
                     lane.uids=uids;lane.tb={'settleSeconds':194}
-                    lane.b={'schema':'e5-binding.v1'};lane.d=m
+                    lane.b={'schema':'e5-binding.v2'};lane.d=m
                     e5.save(lane.out/'initial.json',{'settings':initial})
                 def api(method,path,body=None,**kwargs):
                     if method=='GET':

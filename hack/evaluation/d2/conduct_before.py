@@ -88,6 +88,12 @@ def assert_producer_running(pod, expected_pod):
     expected=[c for c in expected_pod.get('status',{}).get('containerStatuses',[]) if c.get('name')=='load']
     if pod['metadata']['uid']!=expected_pod['metadata']['uid'] or pod.get('status',{}).get('phase')!='Running' or len(current)!=1 or len(expected)!=1 or not current[0].get('state',{}).get('running') or not expected[0].get('containerID') or current[0].get('containerID')!=expected[0]['containerID']:
         raise RuntimeError('Actual bound producer Pod/container is not running')
+    spec=pod.get('spec', {})
+    if spec.get('affinity'):
+        raise RuntimeError('Admitted producer must not carry affinity')
+    for resources in [spec.get('resources', {}), *(c.get('resources', {}) for group in ('containers', 'initContainers') for c in spec.get(group, []))]:
+        if any('cpu' in resources.get(field, {}) for field in ('requests', 'limits')):
+            raise RuntimeError('Admitted producer must not carry CPU requests or limits')
 
 def client_end_counter_rows(rows, pod_uid, container_id, end_utc):
     """Select a real, complete exact-client counter; never synthesize an endpoint."""

@@ -59,24 +59,20 @@ def freeze_producer_config(config):
         shards=config['producerShards']
         if set(shards)!=set(PRODUCER_ALIASES) or any(type(value) is not int or value<1 for value in shards.values()):
             raise ValueError('Evaluation shards require positive counts for each workload')
-        config['producerResources']=copy.deepcopy(config['evaluation']['resources'])
+        resources = config['evaluation']['resources']
+        if (not isinstance(resources, dict) or set(resources) - {'requests', 'limits'} or
+                any(not isinstance(values, dict) or 'cpu' in values for values in resources.values())):
+            raise ValueError('Evaluation producer resources must not contain CPU requests or limits')
+        config['producerResources']=copy.deepcopy(resources)
         config['producerShards']=dict(shards)
         return
-    resources = config.get('producerResources', {'cpu': '2', 'memory': '1Gi'})
-    if not isinstance(resources, dict) or set(resources) != {'cpu', 'memory'}:
-        raise ValueError('producerResources requires cpu and memory quantity strings')
-    for name, pattern in (
-        ('cpu', r'([0-9]+(?:\.[0-9]+)?|\.[0-9]+)(m?)'),
-        ('memory', r'([0-9]+(?:\.[0-9]+)?|\.[0-9]+)([EPTGMK]i|[EPTGMkKmun]|[eE][+-]?[0-9]+)?'),
-    ):
-        value = resources[name]
-        match = re.fullmatch(pattern, value) if isinstance(value, str) else None
-        if not match or not any(digit in '123456789' for digit in match[1]):
-            raise ValueError('producerResources.' + name + ' requires a positive Kubernetes quantity string')
-        if name == 'cpu':
-            fractional = match[1].partition('.')[2].rstrip('0')
-            if len(fractional) > (0 if match[2] else 3):
-                raise ValueError('producerResources.cpu requires precision of at least one millicore')
+    resources = config.get('producerResources', {'memory': '1Gi'})
+    if not isinstance(resources, dict) or set(resources) != {'memory'}:
+        raise ValueError('producerResources requires only a memory quantity string; CPU is shared')
+    value = resources['memory']
+    match = re.fullmatch(r'([0-9]+(?:\.[0-9]+)?|\.[0-9]+)([EPTGMK]i|[EPTGMkKmun]|[eE][+-]?[0-9]+)?', value) if isinstance(value, str) else None
+    if not match or not any(digit in '123456789' for digit in match[1]):
+        raise ValueError('producerResources.memory requires a positive Kubernetes quantity string')
     shards = config.get('producerShards', {'mobilenet': 3, 'plc': 1, 'smolvlm2': 1})
     if not isinstance(shards, dict) or set(shards) != set(PRODUCER_ALIASES) or any(type(v) is not int or v < 1 for v in shards.values()):
         raise ValueError('producerShards requires positive integer mobilenet/plc/smolvlm2 counts')
@@ -84,10 +80,12 @@ def freeze_producer_config(config):
 
 
 def set_producer_resources(pod, config):
+    pod.pop('affinity', None)
     for container in pod['containers'] + pod.get('initContainers', []):
         resources = container.setdefault('resources', {})
         for field in ('requests', 'limits'):
-            resources.setdefault(field, {}).update(config['producerResources'])
+            resources.setdefault(field, {}).pop('cpu', None)
+            resources[field].update(config['producerResources'])
 
 
 def approval_sources(approval):
@@ -127,9 +125,10 @@ def validate_g0_evidence(evidence, verdict, binding, weighted_capacity, expected
     try:
         duration = evidence.get('durationSeconds', 120)
         alpha = evidence.get('alpha', 1.2)
-        maximum_cpu = evidence.get('maximumCPUFraction', 1)
-        if not finite(duration) or duration <= 0 or not finite(alpha) or not finite(maximum_cpu) or not 0 < maximum_cpu <= 1:
-            raise ValueError('Invalid G0 duration/alpha/CPU policy')
+        if 'csCPULimitCores' in evidence or 'maximumCPUFraction' in evidence:
+            raise ValueError('CPU limit fraction belongs to the retired controlled-CPU G0 contract')
+        if not finite(duration) or duration <= 0 or not finite(alpha):
+            raise ValueError('Invalid G0 duration/alpha policy')
         if verdict['generatorQualityStatus'] != 'VALID':
             raise ValueError('G0 requires generator VALID')
         if not finite(weighted_capacity) or weighted_capacity <= 0 or not matches(verdict['configuredRateTotal'], alpha * weighted_capacity):
@@ -137,7 +136,7 @@ def validate_g0_evidence(evidence, verdict, binding, weighted_capacity, expected
         if set(expected_rates) != {'image-classification-tight-slo', 'plc-anomaly', 'smolvlm2-vqa'}:
             raise ValueError('G0 requires all three final workload rates')
         stages = binding['schedule']
-        if binding['schema'] != 'demo-e5-binding.v1' or len(stages) != 1 or stages[0]['id'] != 'G-check' or stages[0]['seconds'] != duration or len(stages[0]['parts']) != 1:
+        if binding['schema'] != 'demo-e5-binding.v2' or len(stages) != 1 or stages[0]['id'] != 'G-check' or stages[0]['seconds'] != duration or len(stages[0]['parts']) != 1:
             raise ValueError('G0 requires the frozen one-shot G-check duration')
         part = stages[0]['parts'][0]
         if set(part['alpha']) != {'mobilenet', 'plc', 'smolvlm2'} or any(not matches(v, alpha) for v in part['alpha'].values()):
@@ -150,12 +149,25 @@ def validate_g0_evidence(evidence, verdict, binding, weighted_capacity, expected
                 raise ValueError('G0 recorded workload rate differs from final approved mix')
             if type(row['planned']) is not int or row['planned'] <= 0 or type(row['issued']) is not int or row['planned'] != row['issued'] or row['planned'] != stages[0]['traces'][name]['offered'] or row['supplied'] is not True or row['quality']['status'] != 'VALID':
                 raise ValueError('G0 requires complete frozen planned=offered=issued supply and generator VALID')
-        limit, peak = evidence['csCPULimitCores'], verdict['cpuCoresPeak']
-        if not finite(limit) or limit <= 0 or not finite(peak) or peak / limit >= maximum_cpu:
-            raise ValueError('G0 cs CPU fraction exceeds selected strict maximum')
-        samples = verdict['cpu10sSamples']
-        if not samples or any(not finite(row['cpuCores']) or row['cpuCores'] > peak for row in samples):
-            raise ValueError('G0 CPU samples missing or inconsistent with recorded peak')
+        if verdict['schema'] != 'g0-verdict.v2':
+            raise ValueError('G0 requires shared-CPU verdict v2; historical judgments are not reinterpreted')
+        peak, samples = verdict['cpuCoresPeak'], verdict['cpu10sSamples']
+        server, gateway = verdict['server'], verdict['gateway']
+        if any(type(server[key]) is not int or server[key] != 0 for key in ('missingSamples', 'restarts', 'oomKills')):
+            raise ValueError('G0 server samples missing, restarted or OOM-killed')
+        if any(type(gateway[key]) is not int or gateway[key] != 0 for key in ('rejected', 'unavailable', 'timeouts', 'incomplete')):
+            raise ValueError('G0 gateway rejection/503/timeout/incomplete')
+        memory_limit = server['memoryLimitBytes']
+        if not finite(memory_limit) or memory_limit <= 0 or not finite(verdict['memoryBytesPeak']) or verdict['memoryBytesPeak'] >= memory_limit:
+            raise ValueError('G0 memory peak must remain below its frozen safety limit')
+        if (not finite(peak) or len(samples) != math.ceil(duration / 10) or
+                [row['bin'] for row in samples] != list(range(math.ceil(duration / 10))) or
+                any(type(row['samples']) is not int or row['samples'] < 1 or
+                    not row['podUID'] or not row['containerID'] or
+                    not finite(row['cpuCores']) or row['cpuCores'] > peak or
+                    not finite(row['memoryBytesMax']) or row['memoryBytesMax'] > verdict['memoryBytesPeak'] or
+                    row['nrThrottledDelta'] != 0 or row['throttledNanosDelta'] != 0 for row in samples)):
+            raise ValueError('G0 CPU/memory 10s observations missing, inconsistent or throttled')
         plc = verdict['workloads']['plc-anomaly']
         recorded_slo = binding['demoConfig']['measurementSLO']['plc']
         if plc_slo != recorded_slo or not finite(plc_slo['percentile']) or not 0 < plc_slo['percentile'] <= 100 or not finite(plc_slo['targetLatencyNanos']) or plc_slo['targetLatencyNanos'] <= 0:
@@ -163,6 +175,8 @@ def validate_g0_evidence(evidence, verdict, binding, weighted_capacity, expected
         latency = plc['receiptLatencyMS']['p'+format(plc_slo['percentile'], 'g')]
         if not finite(latency) or latency * 1e6 > plc_slo['targetLatencyNanos']:
             raise ValueError('G0 PLC receive-origin selected percentile exceeds approved SLO')
+        if not finite(plc['withinSLOFraction']) or plc['withinSLOFraction'] < plc_slo['percentile'] / 100:
+            raise ValueError('G0 PLC deadline success over the full offered population is below approved percentile')
     except (KeyError, TypeError, IndexError, AttributeError) as error:
         raise ValueError('Incomplete G0 evidence: ' + str(error)) from error
 
@@ -172,12 +186,17 @@ def self_check_g0():
     names = ['image-classification-tight-slo', 'plc-anomaly', 'smolvlm2-vqa']
     rates = dict(zip(names, [.54, .12, .54]))
     slo = {'percentile': 95, 'targetLatencyNanos': 32_000_000}
-    evidence = {'csCPULimitCores': 2}
-    verdict = {'status': 'PASS', 'generatorQualityStatus': 'VALID', 'configuredRateTotal': 1.2,
-               'cpuCoresPeak': 1, 'cpu10sSamples': [{'cpuCores': 1}],
+    evidence = {}
+    verdict = {'schema': 'g0-verdict.v2', 'status': 'PASS', 'generatorQualityStatus': 'VALID', 'configuredRateTotal': 1.2,
+               'server': {'missingSamples': 0, 'restarts': 0, 'oomKills': 0, 'memoryLimitBytes': 100},
+               'gateway': dict.fromkeys(('rejected', 'unavailable', 'timeouts', 'incomplete'), 0),
+               'memoryBytesPeak': 50, 'cpuCoresPeak': 100,
+               'cpu10sSamples': [{'bin': i, 'samples': 10, 'podUID': 'pod', 'containerID': 'container',
+                                 'cpuCores': 100, 'memoryBytesMax': 50, 'nrThrottledDelta': 0,
+                                 'throttledNanosDelta': 0} for i in range(12)],
                'workloads': {name: {'rate': rate, 'planned': 10, 'issued': 10, 'supplied': True, 'quality': {'status': 'VALID'}} for name, rate in rates.items()}}
-    verdict['workloads']['plc-anomaly']['receiptLatencyMS'] = {'p95': 20}
-    binding = {'schema': 'demo-e5-binding.v1', 'demoConfig': {'measurementSLO': {'plc': slo}},
+    verdict['workloads']['plc-anomaly'].update(receiptLatencyMS={'p95': 20}, withinSLOFraction=1)
+    binding = {'schema': 'demo-e5-binding.v2', 'demoConfig': {'measurementSLO': {'plc': slo}},
                'schedule': [{'id': 'G-check', 'seconds': 120, 'traces': {name: {'offered': 10} for name in names}, 'parts': [{'alpha': dict.fromkeys(['mobilenet', 'plc', 'smolvlm2'], 1.2), 'rates': rates}]}]}
     validate_g0_evidence(evidence, verdict, binding, 1, rates, slo)
     smol_failure = copy.deepcopy(verdict)
@@ -187,8 +206,21 @@ def self_check_g0():
     bad_cases = [({}, evidence, binding),
                  (dict(verdict, generatorQualityStatus='UNKNOWN'), evidence, binding),
                  (dict(verdict, configuredRateTotal=1.3), evidence, binding),
-                 (dict(verdict, cpuCoresPeak=2), evidence, binding), (verdict, {}, binding), (verdict, evidence, {})]
-    for field, value in [('issued', 9), ('supplied', False), ('rate', .13), ('quality', {'status': 'INVALID_GENERATOR'}), ('receiptLatencyMS', {'p95': 33})]:
+                 (dict(verdict, schema='old'), evidence, binding),
+                 (dict(verdict, cpu10sSamples=[]), evidence, binding),
+                 (verdict, {'csCPULimitCores': 2}, binding), (verdict, evidence, {})]
+    for section, keys in (('server', ('missingSamples', 'restarts', 'oomKills')),
+                          ('gateway', ('rejected', 'unavailable', 'timeouts', 'incomplete'))):
+        for key in keys:
+            bad = copy.deepcopy(verdict)
+            bad[section][key] = 1
+            bad_cases.append((bad, evidence, binding))
+    for field, value in (('memoryBytesPeak', 100), ('cpu10sSamples', [])):
+        bad_cases.append((dict(verdict, **{field: value}), evidence, binding))
+    bad = copy.deepcopy(verdict)
+    bad['cpu10sSamples'][0]['nrThrottledDelta'] = 1
+    bad_cases.append((bad, evidence, binding))
+    for field, value in [('issued', 9), ('supplied', False), ('rate', .13), ('quality', {'status': 'INVALID_GENERATOR'}), ('receiptLatencyMS', {'p95': 33}), ('withinSLOFraction', .94)]:
         bad = copy.deepcopy(verdict)
         bad['workloads']['plc-anomaly'][field] = value
         bad_cases.append((bad, evidence, binding))
@@ -219,7 +251,8 @@ def self_check_g0():
     for name, rate in selected_rates.items():
         observed['workloads'][name]['rate'] = rate
     observed['workloads']['plc-anomaly']['receiptLatencyMS']['p90'] = 9999
-    chosen = dict(evidence, durationSeconds=37, alpha=.8, maximumCPUFraction=.75,
+    observed['cpu10sSamples'] = observed['cpu10sSamples'][:4]
+    chosen = dict(evidence, durationSeconds=37, alpha=.8,
                   runID='G', verdict='/fixture/G/verdict.json', binding='/fixture/G/run/binding.json')
     documents = {chosen['binding']: selected, chosen['verdict']: observed,
                  '/fixture/G/run/smoke-G-check/phase.json': {'startUTC': 'start', 'endUTC': 'end'}}
@@ -232,7 +265,7 @@ def self_check_g0():
     with patch.dict(globals(), load=lambda path: copy.deepcopy(documents[str(path)]),
                     ref=lambda path: {'path': path}, module=lambda name,path: raw if name == 'g0_raw' else analysis):
         gate = g0_evidence_gate({'g0Evidence': chosen}, 1, expected_rates=selected_rates, plc_slo=selected_slo)
-    assert gate['status'] == 'VALID' and gate['csCPUFraction'] == .5
+    assert gate['status'] == 'VALID' and gate['cpuCoresPeak'] == 100 and 'csCPUFraction' not in gate
 
 
 def normative_stage_specs(burst_low_seconds):
@@ -479,12 +512,12 @@ def profiling_evaluation_separation(workload, payload):
 
 
 def self_check():
-    settings = {'maxCPUs': 3, 'staticRouting': {}, 'staticRoutingValidatedAt': 'read-only',
+    settings = {'maxReplicas': 3, 'staticRouting': {}, 'staticRoutingValidatedAt': 'read-only',
                 'powerObservation': {}, 'meters': [{'id': 'accepted-meter'}], 'requestTimeout': 30_000_000_000}
     writer = object.__new__(CPO)
     writer.api = lambda method, path, body: (method, path, body)
     method, path, body = writer.put(settings)
-    assert (method, path, body) == ('PUT', '/api/v1/scheduler/settings', {'maxCPUs': 3})
+    assert (method, path, body) == ('PUT', '/api/v1/scheduler/settings', {'maxReplicas': 3})
     assert 'meters' in settings and 'staticRouting' in settings
     import io
     import tempfile
@@ -539,13 +572,13 @@ def self_check():
     assert analysis.issuance_fidelity([dict(rows[0],issued=False,error='ThreadStartError')],[0],100,50_000_000,analysis.stats,policy)['issued']==0
     config = {}
     freeze_producer_config(config)
-    assert config == {'producerResources': {'cpu': '2', 'memory': '1Gi'}, 'producerShards': {'mobilenet': 3, 'plc': 1, 'smolvlm2': 1}}
+    assert config == {'producerResources': {'memory': '1Gi'}, 'producerShards': {'mobilenet': 3, 'plc': 1, 'smolvlm2': 1}}
     for key, invalid in (
         ('producerResources', None), ('producerResources', {}),
         ('producerResources', {'cpu': '0', 'memory': '1Gi'}),
         ('producerResources', {'cpu': '0.0001', 'memory': '1Gi'}),
-        ('producerResources', {'cpu': '2', 'memory': '-1Gi'}),
-        ('producerResources', {'cpu': 2, 'memory': '1Gi'}),
+        ('producerResources', {'memory': '-1Gi'}),
+        ('producerResources', {'memory': 2}),
         ('producerShards', None), ('producerShards', {}),
         ('producerShards', {'mobilenet': True, 'plc': 1, 'smolvlm2': 1}),
         ('producerShards', {'mobilenet': 0, 'plc': 1, 'smolvlm2': 1}),
@@ -556,7 +589,7 @@ def self_check():
             pass
         else:
             raise AssertionError('Invalid ' + key + ' accepted')
-    custom = {'producerResources': {'cpu': '1500m', 'memory': '512Mi'}, 'producerShards': dict.fromkeys(PRODUCER_ALIASES, 2)}
+    custom = {'producerResources': {'memory': '512Mi'}, 'producerShards': dict.fromkeys(PRODUCER_ALIASES, 2)}
     freeze_producer_config(custom)
     pod = {'containers': [{'name': 'load'}, {'name': 'sidecar', 'resources': {'requests': {'cpu': '1'}, 'limits': {'memory': '2Gi'}}}], 'initContainers': [{'name': 'dataset'}]}
     set_producer_resources(pod, custom)
@@ -1082,11 +1115,10 @@ def g0_evidence_gate(config, weighted_capacity, *, required=True, expected_rates
             raise ValueError('Frozen g0Evidence required; UNKNOWN is not evaluation approval')
         return {'status': 'UNKNOWN', 'sources': {}}
     if not isinstance(evidence, dict):
-        raise ValueError('g0Evidence requires a runID, verdict, binding and csCPULimitCores record')
-    need(evidence, ['runID', 'verdict', 'binding', 'csCPULimitCores'], 'g0Evidence')
+        raise ValueError('g0Evidence requires a runID, verdict and binding record')
+    need(evidence, ['runID', 'verdict', 'binding'], 'g0Evidence')
     evidence.setdefault('durationSeconds', 120)
     evidence.setdefault('alpha', 1.2)
-    evidence.setdefault('maximumCPUFraction', 1)
     sources = {key: ref(evidence[key]) for key in ('verdict', 'binding')}
     verdict, binding = load(evidence['verdict']), load(evidence['binding'])
     if not isinstance(evidence['runID'], str) or not evidence['runID'].strip() or Path(evidence['verdict']).parent.name != evidence['runID']:
@@ -1113,7 +1145,7 @@ def g0_evidence_gate(config, weighted_capacity, *, required=True, expected_rates
     verdict['workloads']['plc-anomaly']['receiptLatencyMS']['p'+format(plc_slo['percentile'], 'g')] = values[max(0, math.ceil(len(values)*plc_slo['percentile']/100)-1)]/1e6
     validate_g0_evidence(evidence, verdict, binding, weighted_capacity, expected_rates, plc_slo)
     return {'status': 'VALID', 'gatewayVerdict': 'PASS', 'runID': evidence['runID'],
-            'csCPUFraction': verdict['cpuCoresPeak'] / evidence['csCPULimitCores'],
+            'cpuCoresPeak': verdict['cpuCoresPeak'],
             'historicalOverallStatusReference': verdict.get('status'),
             'smolSLOReference': {key: verdict['workloads']['smolvlm2-vqa'].get(key)
                                  for key in ('SLOVerdict','successFraction','withinSLOFraction')},
@@ -1132,7 +1164,9 @@ def require_strict_archives(config):
 
 def load_binding(path):
     binding = load(path)
-    if binding.get('schema') != 'demo-e5-binding.v1': require_strict_archives(binding)
+    if binding.get('schema') not in ('e5-binding.v2', 'demo-e5-binding.v2'):
+        raise ValueError('Current shared-CPU binding required; retained historical bindings are not executable')
+    if binding.get('schema') != 'demo-e5-binding.v2': require_strict_archives(binding)
     return binding
 
 
@@ -1586,7 +1620,7 @@ def bind(path):
     c['harnessRepositoryCommit']=c['evaluation']['sourceSHA'] if c.get('evaluation') else subprocess.check_output(['git','-C',str(REPO),'rev-parse','HEAD'],text=True).strip()
     c['tokenLifetime'] = token_preflight(c, schedule)
     canonical_schedule = [row for row in schedule if row['id'] in NORMATIVE_ROWS]
-    return {'schema': 'e5-binding.v1', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': now(), 'schedulerSettings': settings, 'config': c, 'sources': refs, 'kappa': kappa, 'payload': payload, 'schedule': schedule, 'rowOrder': ['E5-0','E5-1','E5-2','E5-3','E5-S','E5-4','E5-5','E5-6','E5-7'], 'fullSeconds': sum(row['seconds'] for row in canonical_schedule), 'staticSeconds': sum(row['seconds'] for row in canonical_schedule if row['id'] not in ('E5-0','E5-7')), 'factorSeconds': sum(row['seconds'] for row in canonical_schedule if row['id'] in ('E5-2','E5-5'))*c['N'], 'accounting': {'d': '34/34 approved new-rule evidence; d25 closure subset frozen separately', 'exactCost': '69/69 historical exact-cost coverage, not current candidate count', 'evaluation': '0/7', 'planRows': '0/9', 'failureScenario': 'E5-7 scheduled; actual manual operator evidence required'}, 'limitations': ['B-only timing uncertainty; no profile statistical CI/global95 guarantee', 'D04/D09/D14/D23/D33 known systematic profile-serving bias; causal shares unknown', 'Profiling/evaluation record-ID separation and pinned-carrier equality UNKNOWN where actual enumeration is absent; host evaluation matches the retained producer payload', 'Single paired seed set is a case study, not three independent repetitions', EVALUATION['runtimeExclusionNote']]}
+    return {'schema': 'e5-binding.v2', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': now(), 'schedulerSettings': settings, 'config': c, 'sources': refs, 'kappa': kappa, 'payload': payload, 'schedule': schedule, 'rowOrder': ['E5-0','E5-1','E5-2','E5-3','E5-S','E5-4','E5-5','E5-6','E5-7'], 'fullSeconds': sum(row['seconds'] for row in canonical_schedule), 'staticSeconds': sum(row['seconds'] for row in canonical_schedule if row['id'] not in ('E5-0','E5-7')), 'factorSeconds': sum(row['seconds'] for row in canonical_schedule if row['id'] in ('E5-2','E5-5'))*c['N'], 'accounting': {'d': '34/34 approved new-rule evidence; d25 closure subset frozen separately', 'exactCost': '69/69 historical exact-cost coverage, not current candidate count', 'evaluation': '0/7', 'planRows': '0/9', 'failureScenario': 'E5-7 scheduled; actual manual operator evidence required'}, 'limitations': ['B-only timing uncertainty; no profile statistical CI/global95 guarantee', 'D04/D09/D14/D23/D33 known systematic profile-serving bias; causal shares unknown', 'Profiling/evaluation record-ID separation and pinned-carrier equality UNKNOWN where actual enumeration is absent; host evaluation matches the retained producer payload', 'Single paired seed set is a case study, not three independent repetitions', EVALUATION['runtimeExclusionNote']]}
 
 
 class CPO:
@@ -1693,7 +1727,7 @@ class CPO:
         self.native_mode_authorized_since=now()
         save(self.out/('native-mode-authorization'+('-'+self.a.row_tag if self.a.row_tag else '')+'.json'),{'authorizedSinceUTC':self.native_mode_authorized_since,'release':str(self.a.release),'meaning':'Actual pre-enable authorization fence; not a settings/native success ACK'})
     def static_placement(self):
-        return self.b.get('schema')=='demo-e5-binding.v1' and self.b.get('demoConfig',{}).get('staticPlacement') is True
+        return self.b.get('schema')=='demo-e5-binding.v2' and self.b.get('demoConfig',{}).get('staticPlacement') is True
     def check_power_observation(self):
         if power_observation(self.c) != self.b['schedulerSettings']['powerObservation']:
             raise RuntimeError('Operating power observation differs from frozen binding; no evaluation load')
@@ -1708,7 +1742,7 @@ class CPO:
         if static:
             if settings.get('autonomousWorkloads'):raise RuntimeError('Static placement requires autonomy already off')
         elif s['snapshot']['instances'] or settings.get('autonomousWorkloads') or settings.get('staticRouting'): raise RuntimeError('Canonical three must start at zero; unrelated serving present')
-        if self.b.get('schema') == 'demo-e5-binding.v1' and not static:
+        if self.b.get('schema') == 'demo-e5-binding.v2' and not static:
             frozen = self.b.get('schedulerSettings', {}).get('minimumDemand')
             if frozen is None or settings.get('minimumDemand') != frozen or any(w['uid'] not in frozen for w in self.c['workloads']):
                 raise RuntimeError('minimumDemand differs from frozen canonical UID readback; no demo start')
@@ -1813,7 +1847,10 @@ class CPO:
             spec['parallelism']=spec['completions']=1
         pod=spec['template']['spec']
         if self.c.get('evaluation'):
-            for container in pod['containers']+pod.get('initContainers', []): container['resources']=copy.deepcopy(self.c['evaluation']['resources'])
+            freeze_producer_config(self.c)
+            pod.pop('affinity', None)
+            for container in pod['containers']+pod.get('initContainers', []):
+                container['resources']=copy.deepcopy(self.c['evaluation']['resources'])
         else: set_producer_resources(pod,self.c)
         alias=next(alias for alias,canonical in PRODUCER_ALIASES.items() if canonical==name)
         container=pod['containers'][0]; policy={'payload':self.b['payload'][name], 'arrivalSHA256':trace['arrivalSHA256'], 'offered':trace['offered'], 'shards':self.c['producerShards'][alias], 'barrierSeconds':self.tb['barrierSeconds'], 'segments': [{'rate':part['rates'][name], 'seconds':part['seconds']} for part in stage['parts']]}
@@ -1823,7 +1860,7 @@ class CPO:
         if len(encoded)>120000: raise RuntimeError('Full frozen payload identity exceeds safe exec argument size; no payload subset is silently dropped')
         container['args']=[encoded,'replay','--endpoint',w['producerEndpoint'],'--token-file',w['producerTokenFile'],'--ca-file',w['producerCAFile'],'--workload',name,'--dataset-dir',w['producerDatasetDir'],'--fields',','.join(w['fields']),'--arrivals',w['arrivals'],'--seed',str(w['seed']),'--workers',str(w['workers']),'--duration',str(stage['seconds']),'--rate',str(stage['rates'][name]),'--workload-slo',str(w['slo']['targetLatencyNanos']/1e9),'--gateway-timeout',str(w['gatewayCapSeconds']),'--delivery-margin',str(w['deliverySeconds']),'--timeout',str(w['socketSeconds'])]
         if w.get('lifetimeSeconds') is not None:container['args']+=['--request-lifetime',str(w['lifetimeSeconds'])]
-        if self.b.get('schema')=='demo-e5-binding.v1':
+        if self.b.get('schema')=='demo-e5-binding.v2':
             # The pinned D2 producer predates these flags; demo prepare checks the same budgets on the host.
             for flag in ('--workload-slo','--gateway-timeout'):
                 index=container['args'].index(flag);del container['args'][index:index+2]
@@ -1839,7 +1876,7 @@ class CPO:
         if self.a.command == 'campaign':
             stages = stages + [s for s in stages if s['id'] != 'E5-0'] + [
                 s for _ in self.c['factors'] for s in self.b['schedule'] if s['id'] in ('E5-2', 'E5-5')]
-        elif self.b.get('schema') != 'demo-e5-binding.v1' and self.a.command == 'smoke':
+        elif self.b.get('schema') != 'demo-e5-binding.v2' and self.a.command == 'smoke':
             stages = [self.c['smoke']]
         elif stage is not None:
             stages = [stage] if self.c.get('evaluation') else stages[stages.index(stage):] if stage in stages else [stage]
@@ -1906,7 +1943,7 @@ class CPO:
             alert_offset=alert_path.stat().st_size
         folder.mkdir(); self.io.a.phase='evaluation-'+self.a.mode+'-'+st['id']; self.io.a.command=self.a.command; self.io.phase_out=folder
         barrier=None
-        if self.b.get('schema')=='demo-e5-binding.v1' and 'startBarrier' in st:
+        if self.b.get('schema')=='demo-e5-binding.v2' and 'startBarrier' in st:
             deadline=time.monotonic()+self.tb['barrierSeconds']
             barrier={'maximumSeconds':self.tb['barrierSeconds'],'observedUTC':None,'timedOut':False}
             try:
@@ -1953,7 +1990,7 @@ class CPO:
                     phase['goUTC']=phase['startUTC']
                     self.record_go(folder,jobs,pods,phase['goUTC'])
                     save(folder/'phase.json',phase)
-            ready_gate=self.b.get('schema')=='demo-e5-binding.v1' and st.get('readyGate') is True
+            ready_gate=self.b.get('schema')=='demo-e5-binding.v2' and st.get('readyGate') is True
             if ready_gate:
                 if jobs:raise RuntimeError('Ready gate requires a zero-load stage')
                 phase['readyGate']={'maximumSeconds':st['seconds'],'observedUTC':None,'timedOut':False,'missingWorkloadUIDs':list(self.uids)}
@@ -2077,7 +2114,7 @@ class CPO:
                 if len(phase['starts'])!=len(jobs): raise RuntimeError('Missing actual producer start')
                 phase['startUTC']=min(x['at'] for x in phase['starts'].values()); phase['endUTC']=max((dt.datetime.fromisoformat(x['at'])+dt.timedelta(seconds=st['seconds'])).isoformat() for x in phase['starts'].values())
             else: phase['endUTC']=now()
-            if self.b.get('schema')=='demo-e5-binding.v1':phase['drainedUTC']=self.request_drain(folder,phase)
+            if self.b.get('schema')=='demo-e5-binding.v2':phase['drainedUTC']=self.request_drain(folder,phase)
             else:phase['drainedUTC']=now()
             phase['drainScope']='Producer/request drain only; scheduler reservations and transitions may continue into the next stage'
             self.boundary(folder,'post')
@@ -2143,7 +2180,7 @@ class CPO:
         phase=load(folder/'phase.json') if phase is None else phase; start,end=phase['startUTC'],phase['endUTC']
         if not start or not end: raise RuntimeError('Actual interval required')
         collector=module('evaluationarchive',HERE/'archive.py')
-        tolerated=set(self.c.get('smoke',{}).get('tolerateArchive',[])) & {'power','power-drain-inclusive'} if self.b.get('schema')=='demo-e5-binding.v1' else set()
+        tolerated=set(self.c.get('smoke',{}).get('tolerateArchive',[])) & {'power','power-drain-inclusive'} if self.b.get('schema')=='demo-e5-binding.v2' else set()
         prior=folder/'archive-collection.json'
         captured=load(prior) if tolerated and prior.exists() else collector.collect(folder,phase,self.c['collection'],self.io,self.tb['collectSeconds'])
         missing={}; measurement_failures={}

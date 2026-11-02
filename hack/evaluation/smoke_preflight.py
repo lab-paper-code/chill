@@ -64,32 +64,50 @@ def main():
         (g0_run / 'run').mkdir(parents=True)
         rates = dict(zip(harness_module.WORKLOADS, [.54, .12, .54]))
         slo = {'percentile': 95, 'targetLatencyNanos': 32_000_000}
-        witness = {'status': 'FAIL', 'generatorQualityStatus': 'VALID', 'configuredRateTotal': 1.2,
-                   'cpuCoresPeak': 1, 'cpu10sSamples': [{'cpuCores': 1}],
+        witness = {'schema': 'g0-verdict.v2', 'status': 'FAIL', 'generatorQualityStatus': 'VALID', 'configuredRateTotal': 1.2,
+                   'server': {'missingSamples': 0, 'restarts': 0, 'oomKills': 0, 'memoryLimitBytes': 100},
+                   'gateway': dict.fromkeys(('rejected', 'unavailable', 'timeouts', 'incomplete'), 0),
+                   'memoryBytesPeak': 50, 'cpuCoresPeak': 100,
+                   'cpu10sSamples': [{'bin': i, 'samples': 10, 'podUID': 'pod', 'containerID': 'container',
+                                     'cpuCores': 100, 'memoryBytesMax': 50,
+                                     'nrThrottledDelta': 0, 'throttledNanosDelta': 0} for i in range(12)],
                    'workloads': {name: {'rate': rate, 'planned': 10, 'issued': 10, 'supplied': True, 'quality': {'status': 'VALID'}} for name, rate in rates.items()}}
-        witness['workloads']['plc-anomaly']['receiptLatencyMS'] = {'p95': 20}
+        witness['workloads']['plc-anomaly'].update(receiptLatencyMS={'p95': 20}, withinSLOFraction=1)
         witness['workloads']['smolvlm2-vqa'].update(SLOVerdict='FAIL', successFraction=.4)
-        frozen = {'schema': 'demo-e5-binding.v1', 'demoConfig': {'measurementSLO': {'plc': slo}},
+        frozen = {'schema': 'demo-e5-binding.v2', 'demoConfig': {'measurementSLO': {'plc': slo}},
                   'schedule': [{'id': 'G-check', 'seconds': 120, 'traces': {name: {'offered': 10} for name in rates},
                                 'parts': [{'alpha': dict.fromkeys(['mobilenet', 'plc', 'smolvlm2'], 1.2), 'rates': rates}]}]}
+        frozen['config'] = {'workloads': [{'name': 'plc-anomaly', 'uid': 'synthetic-plc'}]}
+        folder = g0_run / 'run/smoke-G-check'
+        harness_module.save(folder / 'phase.json', {'startUTC': '2026-10-27T00:00:00Z', 'endUTC': '2026-10-27T00:02:00Z'})
+        (folder / 'plc-anomaly-client.jsonl').write_text(''.join(json.dumps({'requestID': str(i)})+'\n' for i in range(10)))
         harness_module.save(g0_run / 'g0-verdict.json', witness)
         harness_module.save(g0_run / 'run/binding.json', frozen)
         record = {'runID': 'synthetic-g0', 'verdict': str(g0_run / 'g0-verdict.json'),
-                  'binding': str(g0_run / 'run/binding.json'), 'csCPULimitCores': 2}
+                  'binding': str(g0_run / 'run/binding.json')}
         approved = {'g0Evidence': record, 'workloads': [{'name': name, 'R': 1, 'slo': slo} for name in rates]}
-        gate = harness_module.g0_evidence_gate(approved, 1)
-        assert gate['status'] == 'VALID' and gate['csCPUFraction'] == .5
-        assert gate['gatewayVerdict'] == 'PASS' and gate['historicalOverallStatusReference'] == 'FAIL'
-        assert gate['smolSLOReference']['SLOVerdict'] == 'FAIL'
-        assert gate['sources']['verdict'] == harness_module.ref(record['verdict'])
-        for invalid in ({}, {'g0Evidence': {'status': 'UNKNOWN'}}, dict(approved, g0Evidence=dict(record, runID='wrong-run')),
-                        dict(approved, g0Evidence=dict(record, csCPULimitCores=0))):
-            try:
-                harness_module.g0_evidence_gate(invalid, 1)
-            except ValueError:
-                pass
-            else:
-                raise AssertionError('Invalid frozen G0 evidence accepted')
+        # Synthetic raw-index adapter only; actual percentile and G0 gate are exercised.
+        original_module = harness_module.module
+        indexed = {'errors': [], 'finals': {str(i): {'outcome': 'completed', 'executionComplete': True,
+                   'elapsedNanos': 20_000_000} for i in range(10)}}
+        def g0_modules(name, path):
+            if name == 'g0_raw':
+                return SimpleNamespace(index_requests=lambda *args: copy.deepcopy(indexed))
+            return original_module(name, path)
+        with patch.object(harness_module, 'module', side_effect=g0_modules):
+            gate = harness_module.g0_evidence_gate(approved, 1)
+            assert gate['status'] == 'VALID' and gate['cpuCoresPeak'] == 100 and 'csCPUFraction' not in gate
+            assert gate['gatewayVerdict'] == 'PASS' and gate['historicalOverallStatusReference'] == 'FAIL'
+            assert gate['smolSLOReference']['SLOVerdict'] == 'FAIL'
+            assert gate['sources']['verdict'] == harness_module.ref(record['verdict'])
+            for invalid in ({}, {'g0Evidence': {'status': 'UNKNOWN'}}, dict(approved, g0Evidence=dict(record, runID='wrong-run')),
+                            dict(approved, g0Evidence=dict(record, csCPULimitCores=0))):
+                try:
+                    harness_module.g0_evidence_gate(invalid, 1)
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError('Invalid frozen G0 evidence accepted')
         issuance = module('smoke_issuance_stats', HERE / 'd2' / 'analyze_before.py')
         stats = issuance.stats
         planned = [0, 10_000_000, 20_000_000]
@@ -123,12 +141,12 @@ def main():
         token.write_text(jwt(1))
         workloads = [{'name': name, 'uid': name} for name in demo.ALIASES.values()]
         config = {'tokenFile': str(token), 'timeboxes': spec['timeboxes'], 'tokenSafetyMarginSeconds': 30, 'workloads': workloads, 'smoke': schedule[0]}
-        binding = {'schema': 'demo-e5-binding.v1', 'schedule': schedule, 'config': config, 'demoConfig': spec}
+        binding = {'schema': 'demo-e5-binding.v2', 'schedule': schedule, 'config': config, 'demoConfig': spec}
         out = root / 'run'
         out.mkdir()
         cpo = object.__new__(harness_module.CPO)
         cpo.b, cpo.c, cpo.out, cpo.tb = binding, config, out, config['timeboxes']
-        cpo.a = SimpleNamespace(command='smoke', mode='smoke', stage='E0')
+        cpo.a = SimpleNamespace(command='smoke', mode='smoke', stage='E0', row_tag='')
         for command in (cpo.start, cpo.run):
             try:
                 command()
@@ -161,7 +179,7 @@ def main():
             else:
                 raise AssertionError('Prepare did not reach its local assembly boundary')
             assembly.assert_called_once()  # 2820s is allowed when the real token covers it.
-        cpo.b = dict(binding, schema='e5-binding.v1')
+        cpo.b = dict(binding, schema='e5-binding.v2')
         cpo.a.command = 'campaign'
         cpo.c = dict(config, factors=[{'name': 'one'}])
         assert cpo.check_token_lifetime()['requiredSeconds'] == auth.lifetime_budget(schedule + schedule, spec['timeboxes'], 30)

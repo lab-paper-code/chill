@@ -222,6 +222,9 @@ def replacement_beo(original, name, tail, evidence):
     doc = copy.deepcopy(original)
     doc["metadata"]["name"] = name
     spec = doc["spec"]
+    for field in ("cpuQuota", "cpuAffinity"):
+        spec.pop(field, None)
+    spec["state"].pop("cpuRequest", None)
     for mode in ("activeProtocol", "idleProtocol"):
         protocol = spec[mode]
         # Finite watchdog is distinct from the nominal measurement duration.
@@ -284,7 +287,7 @@ def generate(output):
             "capturedPolicy": identity(CAPTURED_VALUES),
             "observedB2Seconds": handling["captureCause"]["ninthBatchSeconds"] if is012 else None,
             "frozenInputIdentity": original012 if is012 else reference017["inputIdentity"],
-            "identityScope": "original012 trial" if is012 else "same-node/model/runtime q1 reference; q4 CPU preserved from original spec"}
+            "identityScope": "original012 trial" if is012 else "historical same-node/model/runtime q1 reference; new replacement uses shared CPU"}
         replacement_docs.append(replacement_beo(by_name[old], new, POLICY["observerReadyTimeoutSeconds"], evidence))
     for d in replacement_docs:
         write_docs(output / "replacements" / (d["metadata"]["name"] + ".yaml"), [d])
@@ -475,23 +478,20 @@ def coverage_declared_on_node(cell, node, device, model, declarations, has_polic
     return False
 
 
-def coverage_cpu(policy, device, mode):
-    """Frozen (request, quota) whole cores per (device class, power mode); never recomputed per plan.
-    An int means request == quota; {"request", "quota"} splits them (request schedules, quota uses the online cores)."""
-    value = policy["cpuByDeviceClassMode"][device][mode]
-    return (str(value["request"]), str(value["quota"])) if isinstance(value, dict) else (str(value), str(value))
+SHARED_CURVE_SCHEMA = "chill.dacs.io/curve-plan.v1alpha10"
+SHARED_EVIDENCE_SCHEMA = "chill.dacs.io/profiling-execution-evidence.v1alpha16"
+SHARED_CURVE_ANNOTATION = "chill.dacs.io/coverage-curve-schema"
 
 
-def coverage_cpu_matches(cell, cpu, policy):
-    """A request and quota at or above the frozen sizes cover the cell; smaller ones are re-measured."""
-    request, quota = coverage_cpu(policy, cell["deviceClass"]["name"], cell["powerMode"])
-    def quantity(value):
-        return Decimal(value[:-1]) / 1000 if value.endswith("m") else Decimal(value)
-    return all(cpu.get(key) not in (None, "") and quantity(str(cpu[key])) >= Decimal(expected)
-               for key, expected in (("request", request), ("limit", quota)))
+def coverage_shared_result(result):
+    """Current finalized evidence seals RunConfig v1alpha18; old CPU runs never cover shared cells."""
+    record = result.get("result") or {}
+    trials = record.get("completedTrials") or []
+    return (record.get("curvePlan", {}).get("schemaVersion") == SHARED_CURVE_SCHEMA and bool(trials) and
+            all(t.get("evidence", {}).get("schemaVersion") == SHARED_EVIDENCE_SCHEMA for t in trials))
 
 
-def coverage_targets(coverage, policy, current_images, node_declared=()):
+def coverage_targets(coverage, policy, current_images, node_declared=(), shared_profiles=()):
     targets, unknown, stale, measured_current = [], [], [], []
     if coverage["completeness"] != "complete":
         raise ValueError("incomplete coverage cannot define a complete plan")
@@ -504,7 +504,7 @@ def coverage_targets(coverage, policy, current_images, node_declared=()):
                         v.get("profileIds") or v.get("assessment", {}).get("evidence", {}).get("accepted")]
             current = [v for v in measured if
                        v["condition"].get("runtimeImage") in current_images.get(cell["deviceClass"]["name"], [])]
-            if any(coverage_cpu_matches(cell, v["condition"].get("cpu", {}), policy) for v in current):
+            if any(set(v.get("profileIds", ())) & set(shared_profiles) for v in current):
                 measured_current.append(cell)
                 continue
             if measured and not current:
@@ -630,14 +630,18 @@ def coverage_timings(results):
     return timings
 
 
-def coverage_existing(cell, plans, policy):
+def coverage_existing(cell, plans, policy, shared_completed=()):
     expected = (cell["model"]["name"], cell["deviceClass"]["name"], cell["executionPath"], cell["powerMode"])
     for plan in plans:
         spec = plan.get("spec", {})
         state = spec.get("state", {})
         # A Failed request measured nothing; its cell is planned again once the cause is fixed.
-        if plan.get("status", {}).get("phase") == "Failed" or not coverage_cpu_matches(
-                cell, {"request": state.get("cpuRequest", ""), "limit": spec.get("cpuQuota", "")}, policy):
+        phase = plan.get("status", {}).get("phase")
+        if (phase == "Failed" or any(key in spec for key in ("cpuQuota", "cpuAffinity")) or
+                "cpuRequest" in state or
+                (phase == "Complete" and plan["metadata"].get("uid") not in shared_completed) or
+                (phase != "Complete" and plan["metadata"].get("annotations", {}).get(
+                    SHARED_CURVE_ANNOTATION) != SHARED_CURVE_SCHEMA)):
             continue
         metadata = plan["metadata"]
         if metadata.get("annotations", {}).get(policy["cellAnnotation"]) == cell["id"]:
@@ -775,11 +779,6 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
     for key in ("callDurationEstimateMultiplier", "unknownCallDurationSeconds"):
         if type(policy[key]) not in (int, float) or not math.isfinite(policy[key]) or policy[key] < 1:
             raise ValueError(key + " must be finite and at least one")
-    for device, modes in policy["cpuByDeviceClassMode"].items():
-        for mode, cpu in modes.items():
-            sizes = (cpu["request"], cpu["quota"]) if isinstance(cpu, dict) else (cpu, cpu)
-            if any(type(v) is not int or v < 1 for v in sizes) or sizes[0] > sizes[1]:
-                raise ValueError(device + "/" + mode + ": CPU request/quota must be whole cores with request <= quota")
     namespace = "/api/v1/namespaces/" + NS
     inputs = {}
     for name, path in (
@@ -799,10 +798,14 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
         "source": identity(runtime_values), "imagesByDeviceClass": current_images,
         "executionDeclarations": declarations})
     results = []
+    shared_completed, shared_profiles = set(), set()
     for profile in inputs["profiles"]["profiles"]:
         name = profile["id"].split("/")[1]
         result = coverage_api(namespace + "/batch-energy-optimizations/" + name + "/result")
         results.append(result)
+        if coverage_shared_result(result):
+            shared_completed.add(result["campaign"]["uid"])
+            shared_profiles.add(profile["id"])
         write_json(output / "inputs" / "results" / (name + ".json"), result)
     timings = coverage_timings(results)
     write_json(output / "timings.json", timings)
@@ -827,7 +830,7 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
             cell, eligible_by_class[cell["deviceClass"]["name"]][0], classes[cell["deviceClass"]["name"]],
             models[cell["model"]["name"]], declarations, has_policy)}
     targets, unknown, stale, measured_current = coverage_targets(
-        inputs["coverage"], policy, current_images, node_declared)
+        inputs["coverage"], policy, current_images, node_declared, shared_profiles)
     stale_ids = {cell["id"] for cell in stale}
     write_json(output / "node-declared-cells.json", node_declared)
     existing, excluded_batches, excluded_cells = [], [], []
@@ -844,7 +847,7 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
                             "nodes": classes[device]["nodes"]})
             continue
         node = eligible[0]
-        previous = coverage_existing(cell, inputs["plans"]["items"], policy)
+        previous = coverage_existing(cell, inputs["plans"]["items"], policy, shared_completed)
         if previous:
             existing.append({"cellId": cell["id"], "name": previous["metadata"]["name"],
                              "status": previous.get("status", {}).get("phase")})
@@ -859,7 +862,6 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
             continue
         spec, inherited = coverage_defaults(cell, node, inputs["plans"]["items"], inputs["profiles"]["profiles"])
         spec["state"]["targetNode"] = node
-        spec["state"]["cpuRequest"], spec["cpuQuota"] = coverage_cpu(policy, device, cell["powerMode"])
         spec["state"]["candidate"].update(modelSpec=model, deviceClass=device,
                                          executionPath=cell["executionPath"], powerMode=cell["powerMode"])
         spec.pop("batchSizes", None)
@@ -876,10 +878,10 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
         name = policy["requestNamePrefix"] + plan_hash + "-" + hashlib.sha256(cell["id"].encode()).hexdigest()[:12]
         doc = {"apiVersion": "edge.dacs.io/v1alpha1", "kind": "BatchEnergyOptimization",
                "metadata": {"name": name, "namespace": NS, "annotations": {
-                   policy["cellAnnotation"]: cell["id"]}}, "spec": spec}
+                   policy["cellAnnotation"]: cell["id"], SHARED_CURVE_ANNOTATION: SHARED_CURVE_SCHEMA}}, "spec": spec}
         priority = policy["models"][model]["priority"]
         row = {"cellId": cell["id"], "name": name, "model": model, "node": node, "priority": priority,
-               "deviceClass": device, "cpuRequest": spec["state"]["cpuRequest"], "cpuQuota": spec["cpuQuota"],
+               "deviceClass": device,
                "powerMode": cell["powerMode"], "inheritedProtocol": inherited, "batches": batches,
                "activeSecondsPerSession": seconds, "candidateBatches": candidate_batches, "batchEstimates": estimates,
                "activeSeconds": seconds * len(batches) * policy["sessions"],
@@ -888,14 +890,12 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
         row["runtimeMeasurementMissing"] = cell["id"] in stale_ids
         row["estimatedSeconds"] = row["activeSeconds"] + row["idleSeconds"] + row["runCount"] * policy["runOverheadSeconds"]
         row["remeasures"] = [
-            {"name": p["metadata"]["name"], "cpuQuota": p["spec"].get("cpuQuota"),
-             "phase": p.get("status", {}).get("phase")}
+            {"name": p["metadata"]["name"], "phase": p.get("status", {}).get("phase")}
             for p in inputs["plans"]["items"]
             if p["metadata"]["name"].startswith(policy["requestNamePrefix"]) and
             p["metadata"].get("annotations", {}).get(policy["cellAnnotation"]) == cell["id"] and
             p.get("status", {}).get("phase") in ("Complete", "Measuring") and
-            not coverage_cpu_matches(cell, {"request": p["spec"]["state"]["cpuRequest"],
-                                           "limit": p["spec"].get("cpuQuota", "")}, policy)]
+            p["metadata"].get("uid") not in shared_completed]
         rows.append(row)
         lanes[node].append((row, doc))
     coverage_manifest(output, lanes, policy)
@@ -913,7 +913,6 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
                "unknownTimingBatchCount": sum(r["secondsPerCall"] is None for cell in rows for r in cell["batchEstimates"]),
                "estimateMeaning": f"active + shared idle (including settling) + {policy['runOverheadSeconds']}s/run; excludes variable load/warmup and feeder polling",
                "lanes": {node: {"cellCount": len(lane),
-                                  "cpuQuotaCounts": dict(Counter(r["cpuQuota"] for r, _ in lane)),
                                   "activeSeconds": sum(r["activeSeconds"] for r, _ in lane),
                                   "idleSeconds": sum(r["idleSeconds"] for r, _ in lane),
                                   "runCount": sum(r["runCount"] for r, _ in lane),
@@ -973,7 +972,6 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
 
 def coverage_self_check():
     policy = load(HERE / "coverage-plan.json")
-    policy["cpuByDeviceClassMode"] = dict(policy["cpuByDeviceClassMode"], device={"mode": 4})
     model = "mobilenet-v2-050"
     cell = {"id": "cell", "model": {"name": model}, "deviceClass": {"name": "device"},
             "executionPath": "path", "powerMode": "mode", "support": {"verdict": "Compatible"},
@@ -1013,14 +1011,21 @@ def coverage_self_check():
     fresh = copy.deepcopy(old)
     fresh["id"] = "fresh"
     fresh["variants"][0]["condition"]["runtimeImage"] = "current-image"
-    fresh["variants"][0]["condition"]["cpu"] = {"request": "4", "limit": "4"}
     selected, _, stale, measured = coverage_targets(
-        {"completeness": "complete", "cells": [old, fresh]}, policy, {"device": ["current-image"]})
+        {"completeness": "complete", "cells": [old, fresh]}, policy, {"device": ["current-image"]},
+        shared_profiles=["old-profile"])
     assert selected == stale == [old] and measured == [fresh]
-    small = copy.deepcopy(fresh)
-    small["variants"][0]["condition"]["cpu"] = {"request": "1", "limit": "1"}
-    assert coverage_targets({"completeness": "complete", "cells": [small]}, policy,
-                            {"device": ["current-image"]}) == ([small], [], [], [])
+    assert coverage_targets({"completeness": "complete", "cells": [fresh]}, policy,
+                            {"device": ["current-image"]}) == ([fresh], [], [], [])
+    result = {"result": {"curvePlan": {"schemaVersion": SHARED_CURVE_SCHEMA},
+                         "completedTrials": [{"evidence": {"schemaVersion": SHARED_EVIDENCE_SCHEMA}}]}}
+    assert coverage_shared_result(result)
+    old_result = copy.deepcopy(result)
+    old_result["result"]["curvePlan"]["schemaVersion"] = "chill.dacs.io/curve-plan.v1alpha9"
+    assert not coverage_shared_result(old_result)
+    old_result = copy.deepcopy(result)
+    old_result["result"]["completedTrials"][0]["evidence"]["schemaVersion"] = "chill.dacs.io/profiling-execution-evidence.v1alpha15"
+    assert not coverage_shared_result(old_result)
     assert coverage_runtime_images(HERE.parents[1] / policy["runtimeValues"])
     plan = {"metadata": {"name": "old", "creationTimestamp": "2026-01-01"},
             "status": {"phase": "Complete"},
@@ -1102,28 +1107,28 @@ def coverage_self_check():
     assert coverage_timings([{"measurementFacts": facts}])[0]["secondsPerCall"] == .1
     assert coverage_timings([{"measurementFacts": None}]) == []
     assert coverage_batch_plan(cell, [1], [], policy)[0] == [1]
-    previous = {"metadata": {"name": "pilot", "annotations": {
-        policy["cellAnnotation"]: cell["id"]}},
-        "spec": {"state": {"cpuRequest": "4000m"}, "cpuQuota": "4"}}
+    previous = {"metadata": {"name": "pilot", "uid": "shared", "annotations": {
+        policy["cellAnnotation"]: cell["id"], SHARED_CURVE_ANNOTATION: SHARED_CURVE_SCHEMA}},
+        "spec": {"state": {}}}
     assert coverage_existing(cell, [previous], policy) == previous
     assert coverage_existing(dict(cell, id="different"), [previous], policy) is None
-    named = {"metadata": {"name": policy["requestNamePrefix"] + "already-created"}, "spec": {
-        "cpuQuota": "4", "state": {"cpuRequest": "4", "candidate": {
-            "modelSpec": model, "deviceClass": "device", "executionPath": "path", "powerMode": "mode"}}}}
+    previous["status"] = {"phase": "Complete"}
+    assert coverage_existing(cell, [previous], policy) is None
+    assert coverage_existing(cell, [previous], policy, {"shared"}) == previous
+    for key, value in (("cpuQuota", "4"), ("cpuAffinity", [1])):
+        controlled = copy.deepcopy(previous)
+        controlled["spec"][key] = value
+        assert coverage_existing(cell, [controlled], policy, {"shared"}) is None
+    controlled = copy.deepcopy(previous)
+    controlled["spec"]["state"]["cpuRequest"] = "4"
+    assert coverage_existing(cell, [controlled], policy, {"shared"}) is None
+    named = {"metadata": {"name": policy["requestNamePrefix"] + "already-created",
+                          "annotations": {SHARED_CURVE_ANNOTATION: SHARED_CURVE_SCHEMA}}, "spec": {
+        "state": {"candidate": {"modelSpec": model, "deviceClass": "device",
+                                "executionPath": "path", "powerMode": "mode"}}}}
     assert coverage_existing(cell, [named], policy) == named
-    wrong = copy.deepcopy(named)
-    wrong["spec"]["cpuQuota"] = "1"
-    assert coverage_existing(cell, [wrong], policy) is None
-    wrong["spec"]["cpuQuota"] = "4"
-    wrong["spec"]["state"]["cpuRequest"] = "1"
-    assert coverage_existing(cell, [wrong], policy) is None
-    for path in ("firstfloor-ort-cuda-arm64", "firstfloor-rknnlite"):
-        accelerated = dict(cell, executionPath=path)
-        annotated = copy.deepcopy(wrong)
-        annotated["metadata"]["annotations"] = {policy["cellAnnotation"]: cell["id"]}
-        assert coverage_existing(accelerated, [annotated], policy) is None
-        annotated["spec"]["state"]["cpuRequest"] = "4"
-        assert coverage_existing(accelerated, [annotated], policy) == annotated
+    named["metadata"]["annotations"].clear()
+    assert coverage_existing(cell, [named], policy) is None
     heavy_model = max(policy["models"], key=lambda name: policy["models"][name]["priority"])
     classes = {
         "arm": {"architecture": "arm64", "memory": "64Gi"},

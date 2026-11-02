@@ -71,6 +71,8 @@ def validate(bundle):
 def build(binding_path, environment_path, out, store, prefix):
     if out.exists(): raise ValueError('Output exists; no overwrite')
     binding, environment = load(binding_path), load(environment_path)
+    if binding.get('schema') not in ('e5-binding.v2', 'demo-e5-binding.v2'):
+        raise ValueError('FrozenInputInvalid: current shared-CPU binding required; no historical conversion')
     config = copy.deepcopy(binding['config'])
     operational = {key: config.pop(key) for key in list(config) if key in OPERATIONAL}
     for key in LEGACY_OPERATIONAL-OPERATIONAL: config.pop(key,None)
@@ -80,6 +82,11 @@ def build(binding_path, environment_path, out, store, prefix):
     for workload in config['workloads']:
         operational['workloads'][workload['name']] = {key:workload.pop(key) for key in list(workload) if key in WORKLOAD_OPERATIONAL}
         template=load(workload['jobTemplate']);pod=copy.deepcopy(template['spec']['template']['spec'])
+        pod.pop('affinity', None)
+        for group in ('containers', 'initContainers'):
+            for container in pod.get(group, []):
+                for field in ('requests', 'limits'):
+                    container.get('resources', {}).get(field, {}).pop('cpu', None)
         identities={group:[{'name':container['name'],'image':container['image']} for container in pod.get(group,[])] for group in ('containers','initContainers')}
         for group in identities:
             for container in pod.get(group,[]): container.pop('image')
@@ -95,7 +102,7 @@ def build(binding_path, environment_path, out, store, prefix):
     files, objects, visiting = {}, [], set()
     def freeze(value, metadata=False):
         if isinstance(value, dict):
-            if value.get('schema') in ('e5-binding.v1','demo-e5-binding.v1'):
+            if value.get('schema') in ('e5-binding.v2','demo-e5-binding.v2'):
                 value={**{key:value[key] for key in ('schema','schedule','payload','schedulerSettings') if key in value},'demoConfig':{'measurementSLO':value.get('demoConfig',{}).get('measurementSLO')},'config':{'workloads':[{key:workload[key] for key in ('name','uid')} for workload in value['config']['workloads']]}}
             return {key:freeze(child,metadata) for key,child in value.items() if key not in ('tokenFile','collectorTokenFile','producerTokenFile','caFile','producerCAFile','kubeContext')}
         if isinstance(value, list): return [freeze(child,metadata) for child in value]

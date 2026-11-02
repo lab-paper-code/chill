@@ -90,7 +90,7 @@ class AdapterTests(unittest.TestCase):
     @patch.object(evaluation,'load',return_value={'spec':{'template':{'spec':{'containers':[{'name':'load','image':'load@sha256:test'}]}}}})
     def test_envelope_and_operational_boundary(self,unused_load,unused_save):
         base={'collection':{},'approval':{'sources':{'loadgen':'a'*40,'power':'bin/observation-power-source-d39c9576'}},'workloads':[{'name':name,'R':1,'jobTemplate':'/work/template.json'} for name in NAMES]}
-        spec={'row':'E5-5m','mode':'controls-disabled','harness':{'sourceSHA':'a'*40},'control':{'controls':{'membership':False}},'judgment':{'generatorQuality':{'latenessToleranceNanos':1,'maxExceedingFraction':0},'energyCoverage':{'maxGapFraction':.01,'maxSingleGapSeconds':30}},'loadGenerator':{'shards':dict.fromkeys(NAMES,2),'resources':{'requests':{'cpu':'1','memory':'1Gi'},'limits':{'cpu':'2','memory':'2Gi'}}}}
+        spec={'row':'E5-5m','mode':'controls-disabled','harness':{'sourceSHA':'a'*40},'control':{'controls':{'membership':False}},'judgment':{'generatorQuality':{'latenessToleranceNanos':1,'maxExceedingFraction':0},'energyCoverage':{'maxGapFraction':.01,'maxSingleGapSeconds':30}},'loadGenerator':{'shards':dict.fromkeys(NAMES,2),'resources':{'requests':{'memory':'1Gi'},'limits':{'memory':'2Gi'}}}}
         spec['loadGenerator'].update(image='load@sha256:test',sourceSHA='a'*40,barrier={'minimumReadySamples':2,'maxStartSkewNanos':1000000000})
         scenario={'spec':{'arrivalDistribution':dict.fromkeys(NAMES,'fixed'),'parts':[{'id':'steady','durationSeconds':10,'rates':dict.fromkeys(NAMES,3)}]},'seeds':dict.fromkeys(NAMES,1),'workloads':[{'name':name,'uid':str(index),'generation':4,'slo':{'percentile':95,'targetLatencyNanos':100}} for index,name in enumerate(NAMES)]}
         execution={'runUID':'run','stageUID':'stage','stageID':'different-id','namespace':'test'}
@@ -107,6 +107,59 @@ class AdapterTests(unittest.TestCase):
         for forbidden in ('inputs','approval','stages','evaluation'):
             bad=copy.deepcopy(config);bad['operational']=json.dumps(dict(operational,**{forbidden:{}}))
             with self.assertRaisesRegex(ValueError,'FrozenInputInvalid'): evaluation.stage_config(base,spec,scenario,execution,bad,Path('/work'))
+    def test_producer_jobs_share_cpu_with_memory_and_cgroup_observation(self):
+        harness = self.harness_module
+        name = NAMES[0]
+        workload = dict(name=name, jobTemplate='template', producerEndpoint='https://local',
+                        producerTokenFile='token', producerCAFile='ca', producerDatasetDir='data',
+                        fields=['input'], arrivals='fixed', seed=1, workers=2,
+                        slo={'targetLatencyNanos': 100}, gatewayCapSeconds=1, deliverySeconds=1, socketSeconds=2)
+        stage = {'id': 'row', 'seconds': 1, 'rates': {name: 1},
+                 'parts': [{'rates': {name: 1}, 'seconds': 1}],
+                 'traces': {name: {'seed': 1, 'arrivalSHA256': 'trace', 'offered': 1}}}
+        template = {'spec': {'template': {'spec': {'affinity': {'nodeAffinity': {}},
+                    'containers': [{'name': 'load', 'resources': {'requests': {'cpu': '1'}}}],
+                    'initContainers': [{'name': 'dataset', 'resources': {'limits': {'cpu': '2'}}}]}}}}
+        for evaluation_mode in (False, True):
+            controller = object.__new__(harness.CPO)
+            controller.ws = {name: workload}
+            controller.a = SimpleNamespace(mode='auto', row_tag='')
+            controller.tb = dict.fromkeys(('setupSeconds', 'barrierSeconds', 'drainSeconds', 'collectSeconds'), 1)
+            controller.c = {'namespace': 'test'}
+            if evaluation_mode:
+                controller.c.update(producerShards=dict.fromkeys(harness.PRODUCER_ALIASES, 1),
+                    evaluation={'resources': {'requests': {'memory': '1Gi'}, 'limits': {'memory': '2Gi'}},
+                                'execution': {'runUID': 'run', 'stageUID': 'stage', 'stageID': 'id', 'stageName': 'stage'}})
+            harness.freeze_producer_config(controller.c)
+            controller.b = {'schema': 'e5-binding.v2', 'payload': {name: []}}
+            with patch.object(harness, 'load', side_effect=lambda path: copy.deepcopy(template)), patch.object(harness, 'save'):
+                job = controller.job(name, stage, Path('output'))
+            pod = job['spec']['template']['spec']
+            self.assertNotIn('affinity', pod)
+            for container in pod['containers'] + pod['initContainers']:
+                for field in ('requests', 'limits'):
+                    self.assertNotIn('cpu', container['resources'][field])
+                    self.assertIn('memory', container['resources'][field])
+            if evaluation_mode:
+                controller.c['evaluation']['resources']['requests']['cpu'] = '0'
+                with self.assertRaisesRegex(ValueError, 'CPU'):
+                    harness.freeze_producer_config(controller.c)
+        self.assertEqual(self.bind.allocations_fit(
+            {'reserved': {'memoryBytes': 1}, 'memoryBytes': 3, 'gpuUUIDs': ['gpu']},
+            {'memoryBytes': 2, 'gpuUUID': 'gpu'}), [])
+        self.assertIn('MemoryBudgetInfeasible', self.bind.allocations_fit(
+            {'reserved': {'memoryBytes': 2}, 'memoryBytes': 3},
+            {'memoryBytes': 2}))
+        admitted = {'metadata': {'uid': 'pod'}, 'spec': pod,
+                    'status': {'phase': 'Running', 'containerStatuses': [
+                        {'name': 'load', 'containerID': 'container', 'state': {'running': {}}}]}}
+        admitted['status']['containerStatuses'][0]['state']['running']['startedAt'] = 'observed'
+        self.conductor.assert_producer_running(admitted, admitted)
+        for field in ('requests', 'limits'):
+            injected = copy.deepcopy(admitted)
+            injected['spec']['initContainers'][0]['resources'][field]['cpu'] = '0'
+            with self.assertRaisesRegex(RuntimeError, 'CPU'):
+                self.conductor.assert_producer_running(injected, admitted)
     def test_result_and_exit_mapping(self):
         execution={'runUID':'run','stageUID':'stage','stageID':'id'}
         for status,expected in [('MEASURED_DESCRIPTIVE',0),('FAIL',0),('INVALID_GENERATOR',2),('NOT_READY',2)]:
@@ -496,7 +549,7 @@ def offline_bundle(directory):
         for path in (inputs/'files').rglob('*.json'): evaluation.save(path,evaluation.expand(evaluation.load(path),inputs))
         base=evaluation.expand(bundle['config'],inputs);scientific=evaluation.expand(bundle['environment'],inputs)
         operational=evaluation.load(directory/'config-values.json')['operational']
-        resource={'cpu':'2','memory':'1Gi'}
+        resource={'memory':'1Gi'}
         scheduler=evaluation.load(base['inputs']['scheduler']);control={key:scheduler['settings'][key] for key in ('controls','minimumDemand','scaleDownHeadroomFraction')}
         spec={'row':'E5-5m','mode':'autonomous','control':control,'harness':{'sourceSHA':'a'*40},'loadGenerator':{'image':evaluation.load(base['workloads'][0]['jobTemplate'])['spec']['template']['spec']['containers'][0]['image'],'sourceSHA':base['approval']['sources']['loadgen'],'resources':{'requests':resource,'limits':resource},'shards':{name:1 for name in NAMES},'barrier':{'minimumReadySamples':2,'maxStartSkewNanos':1000000000}},'judgment':{'generatorQuality':{'latenessToleranceNanos':50000000,'maxExceedingFraction':.01},'energyCoverage':{'maxGapFraction':.01,'maxSingleGapSeconds':30}}}
         scenario={'spec':{'arrivalDistribution':dict.fromkeys(NAMES,'poisson'),'parts':[{'id':'one','durationSeconds':60,'rates':dict.fromkeys(NAMES,1)}]},'seeds':evaluation.load(directory/'seeds.json'),'workloads':base['workloads']}

@@ -87,7 +87,7 @@ Node sample/batch cadence와 transitionObserver.activeDeadlineOverheadSeconds=18
 | stages[].id/seconds/alpha/parts | 기존 example 표현; id 식별자, seconds finite >0, alpha finite ≥0, parts도 기존 구조 유지 | bind schedule 생성→producer stage/part rates·offset→analyze 단계 모집단 |
 | workloads별 seed/arrivals | uint64; 지원 도착 방식 | trace/producer 생성→binding seed 및 check 대조 |
 | 기존 generatorQuality | lateness 시간 ≥0, fraction [0,1] | generator 원시 품질 집계→analyze 수용 |
-| g0Evidence.durationSeconds/alpha/maximumCPUFraction | finite >0 / ≥0 / (0,1] | one-shot G-check 실행 입력→선택 입력과 evidence 대조; stageCount 없음 |
+| g0Evidence.durationSeconds/alpha | finite >0 / ≥0 | one-shot shared-CPU G-check 실행 입력→선택 입력과 evidence 대조; CPU fraction 정책 없음 |
 | 기존 workload SLO percentile | (0,100] | 요청 지연 원시에서 선택 percentile 계산→G0/분석 수용; p95 필드 이름만 바꾸지 않음 |
 | inputs.maximumIdleNanosPerRequest | finite ≥0, ns/request | 입력 closure 검증→분석 eligibility |
 | failureInjectionRunbook | 기존 문서 구조 | 입력 config 우선, 누락 때만 example 기본 선택→binding 보존→운영자 주입·분석 |
@@ -108,12 +108,12 @@ DELAY_TOLERANCE_NS=10ms는 delayed 표시 방법론 C다. --delay-tolerance나 �
 | stages[].id/seconds/alpha/parts | 기존 `normative_stage_specs(burstLowSeconds)`의 8개 evaluation row/12개 part: 600,1800,900,1800,900,1200,3600,900초; 기존 α 그대로 | bind → 연속 part trace/producer → judge; 명시 part ID 보존. demo의 필수 stages는 기존대로 |
 | seeds | canonical MNV101/PLC202/Smol303 | bind trace·smoke·workload.seed·Job 이름/인자·check |
 | arrivals | canonical workload별 poisson | bind trace·workload.arrivals·producer의 모든 segment; fixed도 허용 |
-| g0Evidence.durationSeconds / alpha / maximumCPUFraction | 120 / 1.2 / 1 | one-shot G-check schedule·rates·엄격한 CPU fraction 상한 검증; demo bootstrap도 선택 duration/alpha 소비 |
+| g0Evidence.durationSeconds / alpha | 120 / 1.2 | one-shot G-check schedule·rates 검증; CPU peak는 absolute 관측으로만 보고, 판정에 쓰지 않음 |
 | workloads[].slo.percentile | 기존 필수 Workload SLO 입력, 별도 덮어쓰기 없음(현재 PLC95) | G0는 client requestID로 조인한 raw `elapsedNanos`의 nearest-rank 선택 분위수, judge도 선택 SLO 소비 |
 | inputs.maximumIdleNanosPerRequest | 1000000 ns/request | d25 closure 검증, `d25Acceptance` → 분석 eligibility |
 | burstLowMaximumSeconds / collection.maximumDurationSeconds | 900 / 4200초 | burst 입력·각 schedule row의 setup+seconds+drain+flush 검사; 최장3600초 리터럴 제거 |
 | timeboxes.maxActuationSeconds / nativeCallerSeconds / nativeFutureAllowanceSeconds | 900 / 960 / 15초 | native release/호출 timeout·alert freshness(900+15 유도), caller>actuation |
-| producerResources / producerShards | cpu2,memory1Gi / MNV3,PLC1,Smol1 | producer requests/limits·process 분할 |
+| producerResources / producerShards | memory1Gi / MNV3,PLC1,Smol1 | producer memory requests/limits·process 분할; CPU key 불가. EvaluationRun은 동결된 memory resources 사용 |
 | poolShares | MNV.45,PLC.1,Smol.45 | workload별 intended/actual rate |
 | failureSelectSnapshotTTLSeconds | 15초 | 장애 선택 snapshot age/expiry |
 | tokenSafetyMarginSeconds | 60초 | bind·각 실행 token lifetime 사전 점검 |
@@ -148,6 +148,12 @@ DELAY_TOLERANCE_NS=10ms는 delayed 표시 방법론 C다. --delay-tolerance나 �
 ### 저장 계약
 
 ADR0030에 따라 prefix/version v1alpha5를 유지한다. 새 stream·관측 디렉터리 cutover는 없다. archive/publication #213~#225는 수정·삭제·재게시하지 않는다. 과거 행의 새 필드 부재는 당시 기록되지 않은 사실이며 현재 기본값으로 소급 채우지 않는다. 새 CapacityInput은 새 κ 키를 쓴다. ADR0019의 정리는 읽을 수 없어진 영향 작업용 CR/파생 객체를 열거해 운영자가 수행하며 과학 원시 archive와 구별한다. reader는 단일 버전, 과거 필드 부재의 의미 규칙만 명시한다. dual decoder/migration/alias는 없다.
+
+CPU 공유 실행 cutover는 `e5-binding.v2`, `demo-e5-binding.v2`, `d2-before-binding.v2`만 실행한다. 이전 binding reader/alias는 없으며 원시·publication·기존 판정 기록은 수정하거나 재해석하지 않는다. CPU request/limit/affinity와 독점 matching은 제거하되 메모리/GPU/Node UID/물리 반환·producer cgroup usage/throttling 관측은 유지한다.
+
+G0 기록은 `schema: g0-verdict.v2`다. 기존 workload supply/rate/quality/receiptLatencyMS/withinSLOFraction과 `cpuCoresPeak`/`memoryBytesPeak`를 보존한다. `server`는 같은 실행에서 기록한 `memoryLimitBytes`, `missingSamples`, `restarts`, `oomKills`; `gateway`는 원시 요청의 `rejected`, `unavailable`(503), `timeouts`, `incomplete` 수를 담는다. `cpu10sSamples`는 순서대로 `bin`, 양수 `samples`, 실제 `podUID`/`containerID`, `cpuCores`, `memoryBytesMax`, `nrThrottledDelta`, `throttledNanosDelta`를 담는다. 관측 누락/정체성 누락/메모리 한계 도달/재시작/OOM/게이트웨이 실패/CS throttling은 거절한다. `csCPULimitCores`, `maximumCPUFraction`, `csCPUFraction`은 폐기했고 absolute CPU peak의 크기는 합격 조건이 아니다. 새 G0는 이 기록을 새 shared binding과 함께 남겨야 하며 과거 G0로 채우지 않는다.
+
+Coverage generator는 curve-plan v1alpha10과 finalized execution-evidence v1alpha16(내부 RunConfig v1alpha18)의 결과만 공유 CPU 완료로 센다. 신규 pending 요청은 `chill.dacs.io/coverage-curve-schema` annotation에 curve 버전을 기록한다. CPU 통제/버전 없는 과거 완료·진행 요청은 현재 공유 실행을 생략할 근거가 아니다. 나머지 coverage targets↔existing 조건 일치와 메모리 제외 정책 범위는 후속 R2/R7 작업이다.
 
 ### 기본값과 검증 근거
 

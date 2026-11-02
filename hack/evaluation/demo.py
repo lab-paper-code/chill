@@ -124,7 +124,7 @@ def schedule(config, harness_module):
     harness_module.freeze_producer_config(dict(config))
     harness_module.freeze_arrivals(config)
     g0 = config.setdefault('g0Evidence', {'status': 'UNKNOWN'})
-    for key, value in (('durationSeconds', 120), ('alpha', 1.2), ('maximumCPUFraction', 1)):
+    for key, value in (('durationSeconds', 120), ('alpha', 1.2)):
         g0.setdefault(key, value)
     if 'staticPlacement' in config and type(config['staticPlacement']) is not bool:
         raise ValueError('staticPlacement must be a boolean')
@@ -529,7 +529,7 @@ def prepare(harness_module, args):
         sources['job-' + w['name']] = harness_module.ref(w['jobTemplate'])
     c['smoke'] = stages[0]
     c['harnessRepositoryCommit'] = harness_module.subprocess.check_output(['git', '-C', str(harness_module.REPO), 'rev-parse', 'HEAD'], text=True).strip()
-    binding = {'schema': 'demo-e5-binding.v1', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': harness_module.now(), 'schedulerSettings': scheduler_settings, 'canonicalDefinitionsReused': c.get('canonicalDefinitionsReused', {}), 'config': c, 'sources': sources, 'payload': payload, 'schedule': stages, 'demoConfig': spec}
+    binding = {'schema': 'demo-e5-binding.v2', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': harness_module.now(), 'schedulerSettings': scheduler_settings, 'canonicalDefinitionsReused': c.get('canonicalDefinitionsReused', {}), 'config': c, 'sources': sources, 'payload': payload, 'schedule': stages, 'demoConfig': spec}
     harness_module.save(target, binding)
     print(str(target))
 
@@ -1048,7 +1048,7 @@ def self_check():
         stages = schedule(config, harness_module)
         evaluation = json.loads((HERE / 'demo-config.evaluation.example.json').read_text())
         evaluation['producerShards'] = dict.fromkeys(ALIASES, 1)
-        evaluation['evaluation'] = {'resources': {'cpu': '2', 'memory': '1Gi'}}
+        evaluation['evaluation'] = {'resources': {'requests': {'memory': '1Gi'}, 'limits': {'memory': '1Gi'}}}
         try:
             schedule(evaluation, harness_module)
         except ValueError:
@@ -1120,7 +1120,7 @@ def self_check():
                 config_path = root / 'forbidden-evaluation.json'
                 config_path.write_text(json.dumps(dict(strict_config, **forbidden)))
                 binding_path = root / 'forbidden-binding.json'
-                binding_path.write_text(json.dumps({'schema': 'e5-binding.v1', 'config': forbidden}))
+                binding_path.write_text(json.dumps({'schema': 'e5-binding.v2', 'config': forbidden}))
                 for check, path in ((harness_module.bind, config_path), (harness_module.load_binding, binding_path)):
                     try:
                         check(path)
@@ -1128,7 +1128,7 @@ def self_check():
                         assert str(exc) == 'tolerateArchive is diagnostic-only in demo.py; forbidden in normative evaluation configuration'
                     else:
                         raise AssertionError('Normative evaluation accepted tolerateArchive')
-        binding_path.write_text(json.dumps({'schema': 'demo-e5-binding.v1', 'config': {'smoke': {'tolerateArchive': ['power']}}}))
+        binding_path.write_text(json.dumps({'schema': 'demo-e5-binding.v2', 'config': {'smoke': {'tolerateArchive': ['power']}}}))
         assert harness_module.load_binding(binding_path)['config']['smoke']['tolerateArchive'] == ['power']
         from chill_loadgen import cli
         assert stages[-1]['seconds'] == .002
@@ -1157,7 +1157,7 @@ def self_check():
         cpo.a = SimpleNamespace(mode='smoke', command='smoke', stage='E0', row_tag='')
         cpo.c = {'workloads': workloads, 'smoke': stages[0], 'generatorQuality': {'latenessToleranceNS': 50_000_000, 'maxExceedingFraction': 0}}
         harness_module.freeze_harness_config(cpo.c)
-        cpo.b = {'schema': 'demo-e5-binding.v1', 'config': cpo.c, 'schedule': stages, 'sources': {}, 'payload': {w['name']: [] for w in workloads}}
+        cpo.b = {'schema': 'demo-e5-binding.v2', 'config': cpo.c, 'schedule': stages, 'sources': {}, 'payload': {w['name']: [] for w in workloads}}
         cpo.tb = dict.fromkeys(('setupSeconds', 'barrierSeconds', 'drainSeconds', 'apiSeconds', 'settleSeconds', 'collectSeconds'), 3)
         cpo.tb['flushSeconds'] = .001
         fixture_token = root / 'fixture-token'
@@ -1290,8 +1290,11 @@ def self_check():
             if argv[0] == 'create':
                 job = json.loads(stdin)
                 pod_spec = job['spec']['template']['spec']
+                assert 'affinity' not in pod_spec
                 for container in pod_spec['containers'] + pod_spec.get('initContainers', []):
                     assert container['resources']['requests'] == container['resources']['limits'] == cpo.c['producerResources']
+                    assert 'cpu' not in container['resources']['requests']
+                    assert 'cpu' not in container['resources']['limits']
                 policy = json.loads(harness_module.zlib.decompress(harness_module.base64.b64decode(pod_spec['containers'][0]['args'][0])))
                 alias = next(alias for alias, canonical in ALIASES.items() if canonical == pod_spec['containers'][0]['args'][pod_spec['containers'][0]['args'].index('--workload') + 1])
                 assert policy['shards'] == cpo.c['producerShards'][alias]
@@ -1402,7 +1405,7 @@ def self_check():
             def no_quiet_sleep(seconds):
                 assert seconds < 1, 'Stage attempted scheduler-quiet polling'
             with patch.object(cpo, 'out', normative_out), \
-                 patch.object(cpo, 'b', dict(cpo.b, schema='e5-binding.v1')), \
+                 patch.object(cpo, 'b', dict(cpo.b, schema='e5-binding.v2')), \
                  patch.object(cpo, 'c', dict(cpo.c)), \
                  patch.object(cpo, 'a', SimpleNamespace(mode='smoke', command='smoke', stage=stages[0]['id'], row_tag='')), \
                  patch.dict(snapshot, copy.deepcopy(snapshot), clear=True), \
@@ -1521,7 +1524,7 @@ def self_check():
             harness_module.save(folder / 'archive-collection.json', captured)
             harness_module.save(folder / 'raw-source-index.json', {'complete': raw_complete})
             stage = dict(stages[1], tolerateArchive=allowed)
-            probe = SimpleNamespace(out=probe_out, c={'smoke': stage, 'collection': {}}, b={'schema': 'demo-e5-binding.v1', 'sources': {}, 'schedule': [stage, stages[2]]}, tb={'collectSeconds': 1, 'apiSeconds': 1}, d=SimpleNamespace(K=['fixture'], load=harness_module.load), io=SimpleNamespace())
+            probe = SimpleNamespace(out=probe_out, c={'smoke': stage, 'collection': {}}, b={'schema': 'demo-e5-binding.v2', 'sources': {}, 'schedule': [stage, stages[2]]}, tb={'collectSeconds': 1, 'apiSeconds': 1}, d=SimpleNamespace(K=['fixture'], load=harness_module.load), io=SimpleNamespace())
             probe.collect = lambda folder, phase=None: harness_module.CPO.collect(probe, folder, phase)
             with patch.object(harness_module, 'module', return_value=SimpleNamespace(collect=lambda *args: captured)), patch.object(harness_module.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout='logs')):
                 try:
@@ -1836,13 +1839,13 @@ def self_check():
         assert (cpo.out / 'smoke-E0/phase.json').exists()
         normative = root / 'normative-job'
         normative.mkdir()
-        cpo.b['schema'] = 'e5-binding.v1'
+        cpo.b['schema'] = 'e5-binding.v2'
         scientific_job = cpo.job(workloads[0]['name'], stages[1], normative)
         assert {'--workload-slo', '--gateway-timeout'} <= set(scientific_job['spec']['template']['spec']['containers'][0]['args'])
         workloads[0].pop('lifetimeSeconds')
         optional_job = cpo.job(workloads[0]['name'], stages[1], normative)
         assert '--request-lifetime' not in optional_job['spec']['template']['spec']['containers'][0]['args']
-        cpo.b['schema'] = 'demo-e5-binding.v1'
+        cpo.b['schema'] = 'demo-e5-binding.v2'
         failed_stage = copy.deepcopy(stages[1])
         failed_stage['id'] = cpo.a.stage = 'FAIL'
         cpo.c['smoke'] = failed_stage
@@ -2032,7 +2035,7 @@ def self_check():
             cleanup = object.__new__(harness_module.CPO)
             cleanup.c = {}
             cleanup.a = SimpleNamespace(row_tag='')
-            cleanup.b = {'schema': 'e5-binding.v1' if label.startswith('normative') else 'demo-e5-binding.v1'}
+            cleanup.b = {'schema': 'e5-binding.v2' if label.startswith('normative') else 'demo-e5-binding.v2'}
             cleanup.out = root / ('cleanup-wait-' + label)
             cleanup.out.mkdir()
             cleanup.uids, cleanup.tb, cleanup.d = ['owned'], {'settleSeconds': 20, 'finishResetWaitSeconds': 2}, d
@@ -2102,7 +2105,7 @@ def self_check():
         reset = object.__new__(harness_module.CPO)
         reset.c = {}
         reset.a = SimpleNamespace(row_tag='')
-        reset.b = {'schema': 'e5-binding.v1'}
+        reset.b = {'schema': 'e5-binding.v2'}
         reset.out = root / 'reset'
         reset.out.mkdir()
         reset.uids, reset.tb = ['owned'], {'settleSeconds': 194}
@@ -2281,7 +2284,7 @@ def self_check():
                 upload.assert_not_called()
         frozen_root = root / 'frozen-settings'
         frozen_root.mkdir()
-        frozen_binding = {'config': {'factors': []}, 'schedulerSettings': frozen_settings, 'schedule': [{'id': 'E5-' + str(i)} for i in range(7)], 'limitations': [], 'accounting': {'d': 'fixture', 'exactCost': 'fixture'}}
+        frozen_binding = {'schema': 'e5-binding.v2', 'config': {'factors': []}, 'schedulerSettings': frozen_settings, 'schedule': [{'id': 'E5-' + str(i)} for i in range(7)], 'limitations': [], 'accounting': {'d': 'fixture', 'exactCost': 'fixture'}}
         frozen_path = root / 'frozen-binding.json'
         harness_module.save(frozen_path, frozen_binding)
         assert harness_module.summarize(frozen_path, frozen_root)['schedulerSettings'] == frozen_settings
@@ -2304,7 +2307,7 @@ def self_check():
         captured_gap = {'status':'NOT_READY','errors':['power: Actual power window incomplete: ["maximum sample gap exceeds policy"]']}
         coverage_probe = SimpleNamespace(out=coverage_root,
             c={'collection':{}},
-            b={'schema':'e5-binding.v1','sources':{}},tb={'collectSeconds':1,'apiSeconds':1},
+            b={'schema':'e5-binding.v2','sources':{}},tb={'collectSeconds':1,'apiSeconds':1},
             d=SimpleNamespace(K=['fixture']),io=SimpleNamespace(k=lambda *args:{'items':[{'metadata':{'name':'server'}}]}))
         with patch.object(harness_module,'module',return_value=SimpleNamespace(collect=lambda *args:captured_gap)), \
              patch.object(harness_module.subprocess,'run',return_value=SimpleNamespace(returncode=0,stdout='logs')):
@@ -2360,7 +2363,7 @@ def self_check():
             assert harness_module.main() == 0
         result_root = root / 'measurement-rows'
         result_root.mkdir()
-        result_binding = dict(frozen_binding, schema='e5-binding.v1', schedulerSettings=frozen_settings,
+        result_binding = dict(frozen_binding, schema='e5-binding.v2', schedulerSettings=frozen_settings,
                               schedule=[{'id':'E5-'+str(index)} for index in range(8)])
         result_binding_path = result_root / 'binding.json'
         harness_module.save(result_binding_path, result_binding)
@@ -2478,7 +2481,7 @@ def main():
                                   load=lambda path: json.loads(Path(path).read_text()),
                                   save=lambda path, value: Path(path).write_text(json.dumps(value, indent=2) + '\n'))
         binding = offline.load(source / 'binding.json')
-        if binding.get('schema') != 'demo-e5-binding.v1' or not binding.get('demoConfig', {}).get('preflight'):
+        if binding.get('schema') != 'demo-e5-binding.v2' or not binding.get('demoConfig', {}).get('preflight'):
             parser.error('--judge requires a retained preflight binding')
         destination.mkdir(parents=True, exist_ok=False)
         summarize(offline, binding, source, destination, judge=True)
@@ -2507,7 +2510,7 @@ def main():
         prepare(harness_module, args)
     binding_path = args.out / 'binding.json'
     binding = harness_module.load(binding_path)
-    if binding.get('schema') != 'demo-e5-binding.v1':
+    if binding.get('schema') != 'demo-e5-binding.v2':
         raise ValueError('Prepared demo binding required')
     if args.command == 'summary':
         summarize(harness_module, binding, args.out)

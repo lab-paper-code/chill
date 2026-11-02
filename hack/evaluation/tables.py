@@ -133,7 +133,9 @@ def render(root, repo, *, evaluation=None):
     if not (root / 'binding.json').exists() and (root / 'run/binding.json').exists():
         root = root / 'run'
     binding = load(root / 'binding.json')
-    operational = binding.get('schema') == 'demo-e5-binding.v1'
+    if binding.get('schema') not in ('demo-e5-binding.v2', 'e5-binding.v2'):
+        raise ValueError('Current shared-CPU binding required; historical judgments are not reinterpreted')
+    operational = binding.get('schema') == 'demo-e5-binding.v2'
     summary = {} if operational else load(root / 'e5-summary.json')
     if summary.get('evaluation'): return render_evaluation(summary['stages'],summary['results'])
     spec = table_lines(repo / 'docs/spec/README.md', '| 시나리오 | 새 ID | 관찰할 내용 |')
@@ -281,7 +283,7 @@ def self_check(repo):
     import tempfile
     with tempfile.TemporaryDirectory() as folder:
         root = Path(folder)
-        (root / 'binding.json').write_text(json.dumps({'schema':'demo-e5-binding.v1',
+        (root / 'binding.json').write_text(json.dumps({'schema':'demo-e5-binding.v2',
             'schedulerSettings':{'excludedNodes':['genesis1','orin-nano','genesis2']}}))
         stage = root / 'smoke-check'
         stage.mkdir()
@@ -293,7 +295,7 @@ def self_check(repo):
         assert '"min": -7' in text and '"max": 11' in text and '"p99": 3' in text
         assert '"SLOVerdict": "INVALID_GENERATOR"' in text
         assert 'genesis2 하드웨어 결함으로 제외' in text and '"energyBelowResolution": null' in text
-        (root / 'binding.json').write_text('{"schema":"e5-binding.v1"}')
+        (root / 'binding.json').write_text('{"schema":"e5-binding.v2"}')
         (root / 'e5-summary.json').write_text(json.dumps({
             'planRows': {'E5-7': 'MEASURED'},
             'specScenarios': {'node-serving-control-failure': 'MEASURED'},
@@ -309,7 +311,7 @@ def self_check(repo):
         assert 'below-resolution-profile' in text and '"energyBelowResolution": true' in text
         # Synthetic presentation fixture: completed-only p95 passes, planned D1 fails.
         workload = 'mnv-fixture'
-        (root/'binding.json').write_text(json.dumps({'schema':'e5-binding.v1','config':{'workloads':[
+        (root/'binding.json').write_text(json.dumps({'schema':'e5-binding.v2','config':{'workloads':[
             {'name':workload,'slo':{'percentile':95,'targetLatencyNanos':1_000_000_000}}]}}))
         metric = {'offered':100,'outcomes':{'completed':90,'error':6,'timeout':1,'rejected':1,'canceled':1,'unfinished-or-no-final':1},
                   'gatewayCompletedLatencyNS':{'samples':90,'p95':400_000_000},'D1':'FAIL',

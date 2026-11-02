@@ -115,10 +115,14 @@ def stage_config(base,spec,scenario,execution,config,root):
     aliases={'mobilenet':'image-classification-tight-slo','plc':'plc-anomaly','smolvlm2':'smolvlm2-vqa'}
     value['producerShards']={alias:spec['loadGenerator']['shards'][name] for alias,name in aliases.items()}
     resources=spec['loadGenerator']['resources'];value['producerResources']=copy.deepcopy(resources)
+    if (not isinstance(resources, dict) or set(resources) - {'requests', 'limits'} or
+            any(not isinstance(values, dict) or 'cpu' in values for values in resources.values())):
+        raise ValueError('FrozenInputInvalid: producer CPU requests/limits are not supported')
     for workload in value['workloads']:
         operation=operational['workloads'][workload['name']]
         workload.update({key:child for key,child in operation.items() if key!='podSpec'})
         template=load(workload['jobTemplate']);pod=copy.deepcopy(operation['podSpec'])
+        pod.pop('affinity', None)
         for group in ('containers','initContainers'):
             images={container['name']:container['image'] for container in template['spec']['template']['spec'].get(group,[])}
             if set(images)!={container['name'] for container in pod.get(group,[])}:
@@ -126,6 +130,7 @@ def stage_config(base,spec,scenario,execution,config,root):
             for container in pod.get(group,[]):
                 if 'image' in container: raise ValueError('FrozenInputInvalid: operational template cannot override images')
                 container['image']=images[container['name']]
+                container['resources']=copy.deepcopy(resources)
         template['spec']['template']['spec']=pod
         destination=root/('producer-template-'+workload['name']+'.json');save(destination,template)
         workload['jobTemplate']=str(destination)

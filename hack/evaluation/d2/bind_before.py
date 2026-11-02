@@ -59,7 +59,7 @@ def measured_condition(instance, profile, batch):
     return canonical([instance['node'], c.get('artifact'), c.get('runtimeFamily'),
                       c.get('backend'), c.get('runtimeImage'), c.get('preprocessor'),
                       (c.get('activeProtocol') or {}).get('dataset'), c.get('powerMode'),
-                      c.get('cpu'), c.get('firstfloor'), c.get('runtimeAccess'),
+                      c.get('firstfloor'), c.get('runtimeAccess'),
                       c.get('plannedBatchSizes'), instance['allocation'], batch, instance['maxWaitNanos']])
 
 
@@ -70,34 +70,18 @@ def measured_stamp(profile):
     return stamp[:19], stamp[19:-1].lstrip('.').ljust(9, '0')
 
 
-def allocations_fit(node, allocation, cpus):
+def allocations_fit(node, allocation):
     reasons = []
-    used_cpu, used_gpu = set(), set()
-    budget = quota = memory = 0
+    used_gpu = set()
+    memory = 0
     for a in [node['reserved'], *(node.get('nonServing') or []), allocation]:
-        require(a, ('memoryBytes', 'cpuCount', 'cpuReserved'), 'budget allocation')
-        mask = a.get('cpus') or []  # Go nil slice is the observed empty CPU set.
-        count = a['cpuCount'] or len(mask)
+        require(a, ('memoryBytes',), 'budget allocation')
         memory += a['memoryBytes']
-        if count < 0:
-            reasons.append('UnknownCPUAllocationCount')
-        if a['cpuReserved']:
-            quota += count
-        else:
-            budget += count
-            if count > len(mask):
-                reasons.append('UnknownExclusiveCPUAffinity')
-            for cpu in mask:
-                if cpu not in cpus or cpu in used_cpu:
-                    reasons.append('ExclusiveCPUInfeasible')
-                used_cpu.add(cpu)
         gpu = a.get('gpuUUID')
         if gpu:
             if gpu not in (node.get('gpuUUIDs') or []) or gpu in used_gpu:
                 reasons.append('ExclusiveGPUInfeasible')
             used_gpu.add(gpu)
-    if budget > len(cpus) or quota > len(node['reserved'].get('cpus') or []):
-        reasons.append('CPUBudgetInfeasible')
     if memory > node['memoryBytes']:
         reasons.append('MemoryBudgetInfeasible')
     return reasons
@@ -108,11 +92,12 @@ def eligibility(instance, profile, node, kube, settings, batch):
     require(instance, ('id', 'node', 'allocation', 'maxBatch', 'capacity', 'weight', 'maxWaitNanos'), 'option.instance')
     require(profile, ('id', 'condition', 'batches', 'evidence', 'runtimeMetadata'), 'profile')
     condition, runtime, a = profile['condition'], profile['runtimeMetadata'], instance['allocation']
-    require(condition, ('nodeUID', 'powerMode', 'runtimeFamily', 'runtimeImage', 'backend', 'cpu', 'firstfloor', 'logicalModel'), 'profile.condition')
-    require(runtime, ('runtime', 'cpuAffinity', 'intraOpThreads', 'initializedBatches'), 'runtimeMetadata')
-    require(a, ('cpus', 'memoryBytes', 'threads', 'cpuCount', 'cpuReserved'), 'allocation')
-    require(node, ('node', 'ready', 'powerMode', 'cpus', 'memoryBytes', 'reserved'), 'scheduler node')
-    require(condition['cpu'], ('affinityCPUs', 'ortIntraOpThreads', 'request', 'limit'), 'condition.cpu')
+    require(condition, ('nodeUID', 'powerMode', 'runtimeFamily', 'runtimeImage', 'backend', 'firstfloor', 'logicalModel'), 'profile.condition')
+    require(runtime, ('runtime', 'initializedBatches'), 'runtimeMetadata')
+    require(a, ('memoryBytes',), 'allocation')
+    require(node, ('node', 'ready', 'powerMode', 'memoryBytes', 'reserved'), 'scheduler node')
+    if 'cpu' in condition or any(key in a for key in ('cpus', 'threads', 'cpuCount', 'cpuReserved')):
+        raise ValueError('CPU-controlled profile/allocation cannot bind shared evaluation')
     require(condition['firstfloor'], ('maxBatchSize', 'maxQueueSize', 'deadlinePolicy'), 'condition.firstfloor')
     reasons = []
     if node['node'] != instance['node'] or condition['nodeUID'] != instance['node']['uid']:
@@ -137,26 +122,14 @@ def eligibility(instance, profile, node, kube, settings, batch):
             continue
         if reason != 'PowerModeUnavailable' or condition['powerMode'] != node['powerMode']:
             reasons.append('NodeReason:' + reason)
-    cpus = node['cpus']
-    if condition['powerMode'] != node['powerMode']:
-        cpus = (node.get('modeCPUs') or {}).get(condition['powerMode'])
-        if cpus is None:
-            reasons.append('PlacementInventoryMissing:targetModeCPUs')
     if condition['runtimeFamily'] != 'firstfloor' or condition['backend'] != runtime['runtime']:
         reasons.append('NativeRuntimeMismatch')
     if not condition['runtimeImage'] or '@sha256:' not in condition['runtimeImage']:
         reasons.append('NativeRuntimeImageNotPinned')
     if runtime.get('synthetic') is not False:
         reasons.append('NativeRuntimeSyntheticOrUnknown')
-    if sorted(a['cpus']) != sorted(runtime['cpuAffinity']) or sorted(a['cpus']) != sorted(condition['cpu']['affinityCPUs']):
-        reasons.append('MeasuredAffinityMismatch')
-    no_threads = a['threads'] == 0 and condition['backend'] == 'rknnlite'
-    if not a['cpus'] or (not no_threads and not 1 <= a['threads'] <= len(a['cpus'])) or a['threads'] != runtime['intraOpThreads'] or a['threads'] != condition['cpu']['ortIntraOpThreads']:
-        reasons.append('CPUThreadAllocationMismatch')
     if a.get('gpuUUID', '') != runtime.get('gpuUUID', ''):
         reasons.append('RuntimeGPUUUIDMismatch')
-    if len(a['cpus']) > settings['maxCPUs']:
-        reasons.append('MaxCPUsExceeded')
     if instance['capacity'] < 1 or instance['weight'] < 0 or instance['maxWaitNanos'] < 0:
         reasons.append('MissingQueueOrTransportEvidence')
     if instance['capacity'] != condition['firstfloor']['maxQueueSize']:
@@ -176,13 +149,12 @@ def eligibility(instance, profile, node, kube, settings, batch):
     memory = max((b['memoryBytes'] for b in batches), default=0)
     if not memory or memory + settings['servingMemoryBytes'] > a['memoryBytes']:
         reasons.append('MeasuredMemoryInfeasible')
-    if cpus is not None:
-        reasons.extend(allocations_fit(node, a, cpus))
+    reasons.extend(allocations_fit(node, a))
     return sorted(set(reasons))
 
 
 def bind(args):
-    result = {'schema': 'd2-before-binding.v1', 'workload': {'name': NAME, 'uid': UID, 'slo': SLO},
+    result = {'schema': 'd2-before-binding.v2', 'workload': {'name': NAME, 'uid': UID, 'slo': SLO},
               'beforeSha': BEFORE_SHA, 'settings': None, 'selected': [], 'sumKappa': None,
               'autonomousRate': None, 'rates': [], 'inputs': {}, 'prerequisites': [],
               'errors': [], 'exclusions': [], 'nativePolicyRealizations': [],
@@ -205,7 +177,7 @@ def bind(args):
         scheduler = docs['scheduler']
         require(scheduler, ('settings',), 'full scheduler GET')
         settings = result['settings'] = {**scheduler['settings'], **capacity_settings(scheduler['settings'])}
-        require(settings, (*SETTINGS, 'maxCPUs', 'servingMemoryBytes'), 'scheduler.settings')
+        require(settings, (*SETTINGS, 'servingMemoryBytes'), 'scheduler.settings')
         if 'state' in scheduler:
             require(scheduler['state'], ('snapshot',), 'scheduler.state')
             snapshot = scheduler['state']['snapshot']

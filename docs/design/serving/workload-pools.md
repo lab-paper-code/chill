@@ -38,8 +38,8 @@ serving Pod는 nodeName을 써 kube-scheduler 검사를 우회하므로 capture�
 
 | 사유 | 조건 / 처리 |
 |---|---|
-| PlacementInventoryMissing | online CPU 없음/불가, 측정 GPU>allocatable, 예약이 inventory 밖 / 배치만 제외, 전력·에너지는 유지 |
-| PlacementBudgetUnavailable | 외부 Pod GPU 소유 불명 또는 CPU 요청>예약 / 같음 |
+| PlacementInventoryMissing | 측정 GPU>allocatable 또는 GPU 예약이 inventory 밖 / 배치만 제외, 전력·에너지는 유지. online CPU 부재는 해당하지 않음 |
+| PlacementBudgetUnavailable | 외부 Pod GPU 소유 불명 또는 memory 산술 overflow / 해당 Node만 배치 제외 |
 | PowerModeUnavailable | 현재 모드 불명, 요청 가능 모드 없음(DeviceClass 비고정+actuation policy), 또는 lowest가 요청 불가 / 현재 유지 |
 | InstanceUnavailable | native/profile 조회 불가 / 해당 Node 배치·내림·전력 제외, 다른 Node 계획 계속 |
 
@@ -130,7 +130,8 @@ E1은 최초 구성/무부하/부하/완료여유(`SCH-AC-24`), E2는 Disabled/�
 MNV=image-classification-tight-slo p95≤1s, PLC=plc-anomaly/Dataset plc-extruder-01-windows, Smol=smolvlm2-vqa/vqav2-val-subset. PLC/Smol 목표는 D2후 d/m/dump의 fastest b1/가장 넓은 지연간격으로 제안, κ>0 Node≥절반/가장느린2 κ0를 p95/p99/계산시간으로 확인 후 동결한다. 실제 평가 SLO는 p95≤1000/36/7034ms(MNV/PLC/Smol)였다.
 `R_w=최종SLO의 Node별최대κ 합`(hack/kappa -mode slo), 단1인스턴스여서 고립 R을 동시 달성 못한다. `rate_w=α_w×s_w×R_w`, 기본 shares MNV0.45/PLC0.1/Smol0.45, 각유한[0,1]/합1(오차≤1e-9), α∈{0.3,0.5,0.7,0.9,1.2}. 혼합 feasible 보장 아님. `1.2Σ(sR)≤0.8G` 검증, G/출처/R/s/α/rate/trace binding 동결, G미정은 경고이지 개시통과 아님/자동clip없음.
 Poisson replay 동시3개, seeds101/202/303/arrival trace/payload ID/profiling·evaluation subset을 사전 고정/paired 재사용한다. 모든 caller는 실제 UID/generation/SLO/cap과 --workload-slo/--gateway-timeout/--request-lifetime/--delivery-margin/--timeout을 명시한다. MNV 예 SLO1/cap129/L2/delivery0.010/socket2.02s; PLC/Smol은 실측으로 고정한다.
-G-check는 고정배치 α1.2 총혼합120s 단1회, 계단/최대G탐색/retry없음. PLC p95≤32ms·전체offered deadline32ms성공≥95%, frozen trace 공급, gateway거절/503/timeout/incomplete0, CS throttle/restart/OOM0, 누락없는 CPU/메모리10s표본·frozen limit미만 모두 필요하다. 실패는 원사유, native/client한계 구분; 통과가 최대G/20%여유 자동인증은 아니며 위부등식 별도다.
+현재 공유 실행 G-check는 고정배치 α1.2 총혼합120s 단1회, 계단/최대G탐색/retry없음. PLC p95≤32ms·전체offered deadline32ms성공≥95%, frozen trace 공급, gateway거절/503/timeout/incomplete0, CS throttle/restart/OOM0, 누락없는 CPU/메모리10s표본·frozen 메모리limit미만 모두 필요하다. CPU peak는 absolute cores 관측으로만 보고하며 판정에 쓰지 않는다. 실패는 원사유, native/client한계 구분; 통과가 최대G/20%여유 자동인증은 아니며 위부등식 별도다.
+CPU best-effort 공유 실행 전환으로 limit 분모가 사라짐: CPU fraction/물리 코어수 대체 분모/새 고정 여유계수 없이 새 공유 실행 G0를 측정하며 과거 판정을 재해석하지 않는다.
 위 과거 평가 입력·수치는 그대로 보존한다.
 원래 L/senderElapsed를 전달해 `native remaining=L−senderElapsed−m`, SLO/L 분리·m1회. signed d/max(d,0) 둘 다 보존한다. D04/D09/D14/D23/D33의 profile포함95%구간<0은 known systematic profile-vs-serving bias, 원인별 기여 미확정/Accepted와 max0 유지, 보정/d 대안은 M5다([수치](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/smol-systematic-bias-20261024.json), [관측/가설](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/smol-systematic-bias-20261024.txt)).
 입력 보수 rev72/e18ac=exact profile13 prepare/remove26steps+empty10창+native up2=8roots/38steps, fresh empty는 기준8+Jetsono/Jetsonx lowest2. sampling1s/request timeout800ms/max raw gap3s/watchdog2250s/empty300s. loaded idle13/전체19mode 확장은 범위 밖이다.
