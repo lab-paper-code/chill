@@ -7,12 +7,10 @@ export function deviceLabel(name:string) {
   return name.replace(/^edge-server-/,"").replace(/^jetson-agx-orin-/,"AGX Orin ").replace(/^jetson-orin-nano-/,"Orin Nano ").replace(/-/g," ")
 }
 export function conditionLabel(condition:Record<string,unknown>) {
-  const cpu=condition.cpu as {request?:string;limit?:string;affinityCPUs?:number[]}|undefined
   const source=condition.metricSource as {nodeName?:string}|undefined
-  const state=condition.state as {targetNode?:string;cpuRequest?:string}|undefined
+  const state=condition.state as {targetNode?:string}|undefined
   const active=condition.activeProtocol as {dataset?:{name?:string}|string}|undefined
-  const affinity=cpu?.affinityCPUs??condition.cpuAffinity as number[]|undefined
-  return `Node ${source?.nodeName??state?.targetNode??condition.nodeUID??"미지정"} / CPU ${cpu?.limit||cpu?.request||condition.cpuQuota||state?.cpuRequest||"미지정"}${affinity?.length?` (코어 ${affinity.join(",")})`:""} / 데이터셋 ${typeof active?.dataset==="string"?active.dataset:active?.dataset?.name??"미지정"}`
+  return `Node ${source?.nodeName??state?.targetNode??condition.nodeUID??"미지정"} / 데이터셋 ${typeof active?.dataset==="string"?active.dataset:active?.dataset?.name??"미지정"}`
 }
 export function powerModeLabel(name:string,activeWatts:readonly number[]=[]) {
   const watts=activeWatts.filter(Number.isFinite)
@@ -172,14 +170,14 @@ export function stableCondition(value:unknown):string {
   return JSON.stringify(value, (_key,item) => typeof item === "bigint" ? item.toString() : item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a],[b]) => a.localeCompare(b))) : item)
 }
 export function planVariant(spec:MeasurementPlanSpec) {
-  return stableCondition({state:spec.state,cpuQuota:spec.cpuQuota,cpuAffinity:spec.cpuAffinity,activeProtocol:spec.activeProtocol,idleProtocol:spec.idleProtocol})
+  return stableCondition({state:spec.state,activeProtocol:spec.activeProtocol,idleProtocol:spec.idleProtocol})
 }
-export type RunSpec = {candidate?:MeasurementPlanSpec["state"]["candidate"];targetNode?:string;cpuRequest?:string;measurement?:{batch?:number;cpuQuota?:string;cpuAffinity?:number[];workloadMode?:string;dataset?:string;[key:string]:unknown};metricObservation?:unknown}
+export type RunSpec = {candidate?:MeasurementPlanSpec["state"]["candidate"];targetNode?:string;measurement?:{batch?:number;workloadMode?:string;dataset?:string;[key:string]:unknown};metricObservation?:unknown}
 export const runSpec = (run:ProfilingRun) => run.spec as RunSpec
 export function runGroupKey(run:ProfilingRun) {
   const spec = runSpec(run), {batch:_batch,...measurement} = spec.measurement ?? {}
   void _batch
-  return stableCondition({namespace:run.namespace,candidate:spec.candidate,targetNode:spec.targetNode,cpuRequest:spec.cpuRequest,measurement,metricObservation:spec.metricObservation})
+  return stableCondition({namespace:run.namespace,candidate:spec.candidate,targetNode:spec.targetNode,measurement,metricObservation:spec.metricObservation})
 }
 export function currentRunCondition(run:ProfilingRun,type:string) {
   return run.status.conditions?.find(condition => condition.type === type && condition.observedGeneration === run.generation)

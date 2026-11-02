@@ -4,7 +4,7 @@ import { capacityComparison, capacityPath, capacityPercentile, capacityPolling, 
 
 const input:CapacityInput={
   workloadUID:"workload-uid",slo:{percentile:99,targetLatencyNanos:100000000},node:{name:"node-a",uid:"node-uid"},powerMode:"mode-a",profileID:"profile-id",
-  allocation:{cpus:null,memoryBytes:9007199254740993n,threads:2,cpuCount:2,cpuReserved:false},maxBatch:4,
+  allocation:{memoryBytes:9007199254740993n},maxBatch:4,
   completionMarginMS:2.5,capacityWindowNanos:9007199254740993n,capacityWindows:5,capacityPassingWindows:4,capacityMinimumRequests:100,
   capacityGridSteps:10,capacityBisectionWidth:0.01,capacityTailSamples:20,
   dispatchOccupancy:{node:{name:"node-a",uid:"node-uid"},powerMode:"mode-a",runtimeImage:"image@sha256:abc",model:"model",perRequestNanos:0,source:"measurement identity: kept verbatim"},

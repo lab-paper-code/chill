@@ -15,7 +15,7 @@ import * as measurementHelpers from "./measurements.ts"
 import * as measurementSummary from "./measurement-summary.ts"
 
 const condition={model:"model & one",deviceClass:"device",node:"node",path:"cuda",powerMode:"MAXN"}
-const plan:MeasurementPlan={metadata:{name:"source",namespace:"ns",uid:"uid",resourceVersion:"1",creationTimestamp:"2026-10-30T00:00:00Z"},spec:{state:{candidate:{modelSpec:condition.model,deviceClass:condition.deviceClass,preprocessor:"pre",executionPath:condition.path,powerMode:condition.powerMode},targetNode:condition.node,cpuRequest:"2"},activeProtocol:{warmupIterations:5,durationSeconds:10,dataset:"data",metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},trialsPerBatch:3,retryLimit:1}}
+const plan:MeasurementPlan={metadata:{name:"source",namespace:"ns",uid:"uid",resourceVersion:"1",creationTimestamp:"2026-10-30T00:00:00Z"},spec:{state:{candidate:{modelSpec:condition.model,deviceClass:condition.deviceClass,preprocessor:"pre",executionPath:condition.path,powerMode:condition.powerMode},targetNode:condition.node},activeProtocol:{warmupIterations:5,durationSeconds:10,dataset:"data",metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},trialsPerBatch:3,retryLimit:1}}
 
 test("request query batches decode, deduplicate and sort without accepting malformed values",()=>{
   const query=new URLSearchParams({...condition,batches:"8,1,4,1"})
@@ -28,35 +28,28 @@ test("request query batches decode, deduplicate and sort without accepting malfo
 test("default protocol comes from newest server request with the same condition, never another mode or Node",()=>{
   const newer={...plan,metadata:{...plan.metadata,name:"newer",creationTimestamp:"2026-10-31T00:00:00Z"},spec:{...plan.spec,retryLimit:2}}
   const selected=requestDefaults(condition,[plan,newer],[])
-  assert.deepEqual(selected?.spec,{...newer.spec,cpuAffinity:undefined})
+  assert.deepEqual(selected?.spec,newer.spec)
   assert.match(selected?.source??"",/newer/)
   for(const patch of [{model:"other"},{deviceClass:"other"},{node:"other"},{path:"cpu"},{powerMode:"15W"}])assert.equal(requestDefaults({...condition,...patch},[plan],[]),null)
   assert.equal(requestDefaults({...condition,node:""},[plan],[])?.spec.state.targetNode,"node")
   assert.equal(plan.spec.activeProtocol.dataset,"data")
 })
 
-test("catalog fallback retains measured protocol and identifies unprovided retry policy",()=>{
-  const profiles=[{id:"profile",nodeName:"node",measuredAt:"2026-10-30T00:00:00Z",condition:{logicalModel:condition.model,deviceClass:condition.deviceClass,powerMode:condition.powerMode,artifact:{executionPath:condition.path},preprocessor:{name:"pre"},cpu:{request:"2",limit:"2",affinityCPUs:[1]},activeProtocol:{warmupIterations:5,durationSeconds:10,dataset:{name:"data"},metricIntervalMilliseconds:1000,metricTimeoutMilliseconds:500,metricDurationSeconds:11},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricIntervalMilliseconds:1000,metricTimeoutMilliseconds:500,metricDurationSeconds:11}}}] as unknown as ProfilesView["profiles"]
+test("CPU-free catalog fallback retains measured protocol and identifies unprovided retry policy",()=>{
+  const profiles=[{id:"profile",nodeName:"node",measuredAt:"2026-10-30T00:00:00Z",condition:{logicalModel:condition.model,deviceClass:condition.deviceClass,powerMode:condition.powerMode,artifact:{executionPath:condition.path},preprocessor:{name:"pre"},activeProtocol:{warmupIterations:5,durationSeconds:10,dataset:{name:"data"},metricIntervalMilliseconds:1000,metricTimeoutMilliseconds:500,metricDurationSeconds:11},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricIntervalMilliseconds:1000,metricTimeoutMilliseconds:500,metricDurationSeconds:11}}}] as unknown as ProfilesView["profiles"]
   const selected=requestDefaults(condition,[],profiles)
-  assert.deepEqual(selected?.spec.activeProtocol,plan.spec.activeProtocol)
-  assert.deepEqual(selected?.spec.idleProtocol,plan.spec.idleProtocol)
-  assert.equal(Number.isNaN(selected?.spec.retryLimit),true)
+  assert.deepEqual(selected?.spec,{...plan.spec,retryLimit:NaN})
   assert.match(selected?.source??"",/profile/)
   assert.equal(requestDefaults({...condition,path:"cpu"},[],profiles),null)
 })
 
-test("unmeasured targets reuse successful protocol without copying another device's CPU, batches or affinity",()=>{
-  const success={...plan,status:{phase:"Complete"},spec:{...plan.spec,cpuQuota:"8",cpuAffinity:[5,6],batchSizes:[16]}}
+test("unmeasured targets reuse successful protocol without copying another device's batches or Node",()=>{
+  const success={...plan,status:{phase:"Complete"},spec:{...plan.spec,batchSizes:[16]}}
   const otherTarget={...condition,deviceClass:"arm-board",node:"arm-node",path:"arm-cpu",powerMode:"15W"}
   const defaults=requestDefaults(otherTarget,[success],[])
   assert.equal(defaults?.exact,false)
   assert.match(defaults?.source??"",/source.*device.*같은 모델/)
-  assert.deepEqual(defaults?.spec.activeProtocol,plan.spec.activeProtocol)
-  assert.equal(defaults?.spec.cpuQuota,undefined)
-  assert.equal(defaults?.spec.cpuAffinity,undefined)
-  assert.equal(defaults?.spec.state.cpuRequest,undefined)
-  assert.equal(defaults?.spec.batchSizes,undefined)
-  assert.equal(defaults?.spec.state.targetNode,"")
+  assert.deepEqual(defaults?.spec,{...plan.spec,state:{...plan.spec.state,targetNode:""},batchSizes:undefined})
   const pathOnly=requestDefaults({...condition,model:"new-model"},[success],[])
   assert.match(pathOnly?.source??"",/같은 실행 경로/)
   assert.equal(requestDefaults({...otherTarget,model:"new-model"},[success],[]),null)
@@ -114,11 +107,11 @@ test("empty datasets explain the required contract and missing summary values us
 })
 
 test("frozen condition explanation lists only observed changed fields, not missing facts",()=>{
-  const before={nodeUID:"old",cpu:{limit:"2",affinityCPUs:[1,2]},activeProtocol:{dataset:{name:"vqa"}},runtimeImage:"same",preprocessor:{name:"image"}}
-  const after={nodeUID:"new",cpu:{limit:"2",affinityCPUs:[3,4]},activeProtocol:{dataset:{name:"images"}},runtimeImage:"same"}
+  const before={nodeUID:"old",activeProtocol:{dataset:{name:"vqa"}},runtimeImage:"same",preprocessor:{name:"image"}}
+  const after={nodeUID:"new",activeProtocol:{dataset:{name:"images"}},runtimeImage:"same"}
   const changes=requestConditionChanges(before,after)
-  assert.deepEqual(changes.map(change=>change.field),["nodeUID","cpu.affinityCPUs","activeProtocol.dataset.name"])
-  assert.deepEqual(changes[1],{field:"cpu.affinityCPUs",label:"CPU 코어 고정",before:"[1,2]",after:"[3,4]"})
+  assert.deepEqual(changes.map(change=>change.field),["nodeUID","activeProtocol.dataset.name"])
+  assert.deepEqual(changes[1],{field:"activeProtocol.dataset.name",label:"데이터셋",before:"vqa",after:"images"})
   assert.deepEqual(requestConditionChanges(before,undefined),[])
   assert.match(requestPreflightReason({code:"VariantConditionChanged",message:"English warning"}),/기존.*제외.*확인/)
   assert.match(requestPreflightReason({code:"ImmutableImagesUnconfirmed",message:"English warning"}),/이미지.*확인/)
@@ -139,7 +132,7 @@ test("changing a preprocessor clears only inherited datasets, preserving deliber
   assert.equal(requestInputs("model","onnx","image-pre","vqa",context,{dataset:false}).dataset,"vqa")
 })
 
-function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0) {
+function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0,bodies:unknown[]=[]) {
   const source=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(`${source}\nexport { Funnel };`,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
@@ -149,7 +142,7 @@ function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0
     "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
     "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams(query)},
     "@/lib/client":{useChillMutation:()=>({isPending:false})},
-    "@/components/read-region":{SourceJSON:()=>null},
+    "@/components/read-region":{SourceJSON:({inline,value}:{inline?:boolean;value:unknown})=>{if(inline)bodies.push(value);return null}},
     "@/components/screen":{Screen:container,Rows:container,RowDialog:()=>null},
     "@/features/read-pages":{},
     "@/features/resources":{powerModeText:()=>"고정"},
@@ -178,6 +171,7 @@ test("request Funnel renders the undeclared-batch branch without a stale conditi
   assert.match(html,/>배치 \(건\)</)
   assert.doesNotMatch(html,/NaN/)
   assert.match(html,/<th>예열 \(회\)<\/th>/)
+  assert.doesNotMatch(html,/CPU 개수|CPU 코어|measurement-affinity/)
   assert.match(html,/<td>—<\/td>/)
   assert.match(html,/<details id="measurement-conditions" open=""/)
   assert.match(html,/href="\/datasets\/new"/)
@@ -202,6 +196,21 @@ test("copied request and selected variant keep their dataset instead of the newe
     const html=renderRequest(props)
     assert.match(html,/<option value="data" selected="">data<\/option>/)
     assert.doesNotMatch(html,/<option value="new-data" selected=""/)
+  }
+})
+
+test("new and copied requests construct CPU-free manifests with the complete measured protocol",()=>{
+  const source={...plan,spec:{...plan.spec,batchSizes:[1,4]}}
+  const context={models:[],workloads:[],classes:[],profiles:[],plans:[source],preprocessors:[{metadata:{name:"pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:condition.model,artifact:"onnx"}}]}}],datasets:[{metadata:{name:"data"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512}]}}]}
+  const prefill={active:true,values:condition,node:condition.node,errors:[],returnTo:"/measurements"}
+  for(const props of [{context,prefill},{context,from:"source"}]) {
+    const bodies:unknown[]=[]
+    renderRequest(props,"batches=4,1","",1,bodies)
+    const body=JSON.parse(JSON.stringify(bodies.at(-1)))
+    assert.equal(body.apiVersion,"edge.dacs.io/v1alpha1")
+    assert.equal(body.kind,"BatchEnergyOptimization")
+    assert.equal(body.metadata.namespace,"ns")
+    assert.deepEqual(body.spec,source.spec)
   }
 })
 
@@ -376,7 +385,7 @@ test("request and run summaries translate dynamic reasons and retain unknown tex
   assert.match(requests,/현재 조건의 검증된 프로파일 없음/)
   assert.doesNotMatch(requests,/Private English reason/)
   assert.match(requests,/data-url-state="true"/)
-  const run={namespace:"ns",name:"round",uid:"run",creationTimestamp:"2026-11-01",generation:1,spec:{candidate:plan.spec.state.candidate,targetNode:"node",measurement:{batch:4,workloadMode:"private-protocol",cpuQuota:"2",dataset:"data"}},status:{},assessment:{...assessment,reasons:[{...reason,message:"private unknown reason"}]}}
+  const run={namespace:"ns",name:"round",uid:"run",creationTimestamp:"2026-11-01",generation:1,spec:{candidate:plan.spec.state.candidate,targetNode:"node",measurement:{batch:4,workloadMode:"private-protocol",dataset:"data"}},status:{},assessment:{...assessment,reasons:[{...reason,message:"private unknown reason"}]}}
   const runs=renderRequestList("runs",run)
   assert.ok((runs.match(/<th>/g)??[]).length<=5)
   assert.match(runs,/기타 부하 방식/)

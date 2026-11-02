@@ -75,6 +75,21 @@ test("capacity with no returned rows shows purpose-built missing evidence and no
   }
 })
 
+test("capacity input facts use shared execution without CPU reservations or thread allocations",()=>{
+  const row:capacity.CapacityRow={key:"shared",status:"Built",mu:10,builtAt:"2026-11-01T00:00:00Z",input:{
+    workloadUID:"service-uid",slo:{percentile:99,targetLatencyNanos:100000000},node:{name:"node",uid:"node-uid"},powerMode:"fixed",profileID:"profile",
+    allocation:{gpuUUID:"gpu-uuid",memoryBytes:9007199254740993n},maxBatch:4,completionMarginMS:1,capacityWindowNanos:1000000000,
+    capacityWindows:5,capacityPassingWindows:4,capacityMinimumRequests:100,capacityGridSteps:10,capacityBisectionWidth:.01,capacityTailSamples:20,
+  }}
+  const h=harness("row=shared",{"v1/scheduler/capacity":{data:{rows:[row]},dataUpdatedAt:0}})
+  const tree=h.load("../features/scheduler-capacity.tsx").CapacityEvidence({})
+  const details=nodes(tree).find(node=>typeof node.type==="function"&&node.props.row===row)!
+  const facts=nodes((details.type as (props:Record<string,unknown>)=>Element)(details.props)).filter(node=>node.type==="facts").flatMap(node=>node.props.items as [string,unknown][])
+  assert.ok(facts.some(([label,value])=>label==="GPU UUID"&&value==="gpu-uuid"))
+  assert.ok(facts.some(([label,value])=>label==="메모리"&&value==="9007199254740993 bytes"))
+  assert.equal(facts.some(([label])=>/CPU|스레드/.test(label)),false)
+})
+
 test("whole power shows shared reasons once and retains distinct node reasons and raw export",()=>{
   const data={from:"2026-11-01T00:00:00Z",to:"2026-11-01T01:00:00Z",complete:false,wholePoolJoules:null,wholePoolMeanWatts:null,activePoolJoules:null,activePoolMeanWatts:null,reasons:["shared"],nodes:Array.from({length:10},(_,index)=>({
     node:{name:`node-${index}`},joules:null,meanWatts:null,reasons:["shared","all-nodes",...(index===0?["only-a"]:[])],
