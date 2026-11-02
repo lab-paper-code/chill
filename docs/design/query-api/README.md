@@ -19,6 +19,6 @@ Dashboard·CLI는 같은 권한·검증·비동기 결과 의미를 사용하되
 - Serving의 인증된 `GET /api/v1/scheduler/catalog-read`는 `serving/kube.CatalogRead`만 제공한다. 공유 scheduler/catalog의 조회 projection이며 새 catalog·poller·장부가 아니다. 공개 profiles 경로와 달라 순환 중계가 없다.
 - `ProfileSummary`와 bounded reporting input은 공개 필드/요약값만 읽는다. 원시 duration 배열·전체 내부 measurementFacts는 어느 HTTP 중간에도 직렬화하지 않는다. preparations의 restore 필드는 typed instance/profile 요약으로 보존하고 scheduler 원본은 변경하지 않는다.
 - 공개 오류 코드는 계약이므로 `ConsoleUnavailable`/`ConsoleTimeout`과 기존 `console.chill.dacs.io/v1alpha1` wire API version을 유지한다. 실행·배포·설정·Go 이름이나 alias는 아니다.
-- Query API의 Service는 private read backend다. 공개 사용자 승인 정본은 ChillServer TokenReview/SAR이며 identity header를 전달·신뢰하지 않는다. CLI의 Kubernetes Service proxy는 기존 Kubernetes proxy 권한 경계를 사용한다.
+- Query API는 Service 직접 접근도 TokenReview·URL/native SAR로 검증한다. ChillServer는 원 사용자 bearer만 전달하고 identity header는 전달·신뢰하지 않는다. CLI runs show도 기존 ownerClient HTTPS·bearer 경로를 재사용한다.
 - namespace coverage cache는 기존 30초 fresh/최대 5분 stale 정책을 그대로 Query API에 둔다. 큰 조회의 CPU/RSS/응답 크기와 serving 영향은 live 성능 수용이 필요하며 프로세스 분리만으로 간섭 부재를 주장하지 않는다.
 

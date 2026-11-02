@@ -135,6 +135,7 @@ func composeChillServer(
 			queryError(w, http.StatusBadRequest, "InvalidPath")
 			return
 		}
+		r = r.WithContext(context.WithValue(r.Context(), queryBearerContextKey{}, r.Header.Get("Authorization")))
 		mux.ServeHTTP(w, r)
 	}), nil
 }

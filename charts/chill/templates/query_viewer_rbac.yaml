@@ -1,3 +1,5 @@
+{{- $servingNamespace := default .Release.Namespace .Values.servingEntrypoint.namespace -}}
+{{- $profileNamespaces := default (list $servingNamespace) .Values.servingEntrypoint.profileNamespaces -}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -6,33 +8,32 @@ metadata:
     app.kubernetes.io/component: query
     {{- include "chill.labels" . | nindent 4 }}
 rules:
-  - apiGroups:
-      - edge.dacs.io
-    resources:
-      - chillsystems
-      - deviceclasses
-      - modelspecs
-      - profilingruns
-      - batchenergyoptimizations
-    verbs:
-      - get
-      - list
-  - apiGroups:
-      - ""
-    resources:
-      - nodes
-    verbs:
-      - get
-      - list
-  - apiGroups:
-      - ""
-    resources:
-      - services/proxy
-    resourceNames:
-      - {{ printf "%s:http" (include "chill.queryName" .) }}
-    verbs:
-      - get
+  - apiGroups: ["edge.dacs.io"]
+    resources: ["chillsystems", "deviceclasses", "modelspecs", "profilingruns", "batchenergyoptimizations", "operationcostmeasurements", "dispatchoccupancymeasurements"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
   - nonResourceURLs:
-      - {{ printf "/chill/api/v1/namespaces/%s/measurement-coverage" .Release.Namespace | quote }}
-    verbs:
-      - get
+      - /chill/api/v1/systems
+      - /chill/api/v1/inventory
+      - /chill/api/v1/model-compatibility
+      - /chill/api/v1/model-compatibility-matrix
+      - /chill/api/v1/scheduler/profiles
+      {{- range $profileNamespaces }}
+      - {{ printf "/chill/api/v1/namespaces/%s/profiling-runs" . | quote }}
+      - {{ printf "/chill/api/v1/namespaces/%s/profiling-runs/*" . | quote }}
+      - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations" . | quote }}
+      - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations/*" . | quote }}
+      - {{ printf "/chill/api/v1/namespaces/%s/measurement-coverage" . | quote }}
+      - {{ printf "/chill/api/v1/namespaces/%s/operation-cost-measurements" . | quote }}
+      - {{ printf "/chill/api/v1/namespaces/%s/operation-cost-measurements/*" . | quote }}
+      - {{ printf "/chill/api/v1/namespaces/%s/dispatch-occupancy-measurements" . | quote }}
+      - {{ printf "/chill/api/v1/namespaces/%s/dispatch-occupancy-measurements/*" . | quote }}
+      {{- end }}
+    verbs: ["get"]
+  - nonResourceURLs:
+      {{- range $profileNamespaces }}
+      - {{ printf "/chill/api/v1/namespaces/%s/batch-energy-optimizations/preflight" . | quote }}
+      {{- end }}
+    verbs: ["post"]

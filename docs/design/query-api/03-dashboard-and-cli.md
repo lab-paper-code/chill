@@ -137,7 +137,7 @@ All measurement/profile commands and standalone `preflight -f FILE` accept these
 connection flags; none accept `--query-service` or mutate Kubernetes directly.
 Standalone preflight retains its structured resolving/rejected plan and reason;
 `resolves:false` prints that result and exits nonzero without submitting anything.
-Only the separate `runs show` command retains its existing Query API Service-proxy transport.
+`runs show` also uses the same authenticated ChillServer HTTPS transport and owner connection flags; the Service-proxy credential bypass is removed.
 Commands honor `--kubeconfig`, `--context`, `-n` and `-o table|json`. Without a namespace
 override, submit/preflight use the manifest namespace then the kubeconfig namespace;
 other commands use the kubeconfig namespace.
@@ -161,11 +161,11 @@ other commands use the kubeconfig namespace.
 `internal/queryapi` Kubernetes query adapter는 `DeviceClassList`, `NodeList`, `ModelSpecList`를 읽는다. selector는 DeviceClass/Node에만 적용하며 모델 선언은 그대로 둔다. 세 LIST의 resourceVersion·조회 완료 시각은 각각 보존하고 원자적 cross-resource snapshot이라고 주장하지 않는다.
 `kubectl chill inventory`의 table/JSON은 같은 snapshot으로 class capability·일치 Node·Ready·scheduling-disabled·artifact/runtime 요구사항·원본 resourceVersion을 표시하며 ModelSpec/DeviceClass compatibility를 계산하지 않는다.
 `kubectl chill runs`는 kubeconfig 현재 namespace가 기본이며 `-n`/`-A`로 지정한다. namespace로 ChillSystem 소유를 추론하지 않고 Run immutable spec·status·resourceVersion을 보존한다.
-Helm의 unbound query viewer ClusterRole은 이 조회 경로의 ChillSystem·DeviceClass·ModelSpec·ProfilingRun·Node get/list와 Query API Service proxy만 제공하며 사용자·그룹 binding은 관리자가 소유한다.
+Helm의 unbound query viewer ClusterRole은 명시한 Query URL과 native read만 허용한다. 사용자·그룹 binding은 관리자가 소유하며 Query SA의 auth-delegator 권한은 caller TokenReview/SAR 검증에만 사용한다.
 
 ### Evidence Passport와 전송 경계
 
-`kubectl chill runs show`는 Kubernetes Service proxy로 in-cluster Query API read API를 호출한다. Query API은 Run exact-read 후 해당 Job에 동결된 Evidence Store binding으로 final/raw를 읽고 schema 및 Run·Job·Pod·Node 연결을 검증해 bounded Passport를 조회 시점에 만든다.
+`kubectl chill runs show`는 기존 ownerClient의 TLS 검증·bearer 인증을 재사용해 ChillServer HTTPS를 호출한다. ChillServer는 bearer를 Query API로 전달하고 Query API도 TokenReview·URL/native SAR로 재검증한다. Query API는 Run exact-read 후 frozen Evidence Store binding으로 bounded Passport를 구성한다.
 원시 latency/power 배열·저장소 endpoint·credential은 CLI로 보내지 않는다. WorkloadObserver evidence가 있으면 연속성·관찰 경계·초기/최종 active Pod 수·material event 수·co-resident identity를 투영한다.
 frozen workload contract에 따라 동시 CHILL 측정과 측정 중 외부 Pod 변경을 구분하고 안정적으로 공존한 외부 Pod도 숨기지 않는다. admission verdict를 다시 계산하지 않는다.
 기본 상태 조회는 kubeconfig·사용자 RBAC로 원본을 직접 읽고, credential·다중 원본 검증이 필요한 Passport만 Query API read API를 사용한다. Dashboard도 같은 의미를 소비하며 별도 Evidence Store 경로나 영속 projection을 만들지 않는다.

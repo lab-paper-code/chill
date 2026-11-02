@@ -6,10 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
+	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
@@ -163,7 +162,9 @@ func newCampaignPreflightQuery(
 	return preflights, nil
 }
 
-func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
+func buildHandler(
+	reader client.Reader, opts options, authorizer *servingkube.Authorizer,
+) (http.Handler, error) {
 	if opts.servingNamespace == "" {
 		opts.servingNamespace = opts.namespace
 	}
@@ -240,18 +241,7 @@ func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
 	mux.Handle("GET /api/v1/model-compatibility-matrix", queries)
 	mux.Handle("GET /api/v1/namespaces/{namespace}/profiling-runs", queries)
 	mux.Handle("/", handler)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), opts.requestTimeout)
-		defer cancel()
-		parts := strings.Split(r.URL.Path, "/")
-		if len(parts) > 4 && parts[3] == "namespaces" {
-			if err := measurements.namespace(parts[4]); err != nil {
-				httpapi.SendQueryError(w, err)
-				return
-			}
-		}
-		mux.ServeHTTP(w, r.WithContext(ctx))
-	}), nil
+	return authenticatedQueryHandler(mux, authorizer, opts), nil
 }
 
 // campaignResultObjectReader opens one stored object using the Evidence Store

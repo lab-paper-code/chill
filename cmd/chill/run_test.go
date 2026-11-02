@@ -181,8 +181,8 @@ func TestExecuteProfilingRunsWritesStructuredJSON(t *testing.T) {
 func TestExecuteProfilingRunShowWritesReadableEvidencePassport(t *testing.T) {
 	passport := testEvidencePassport()
 	query := &fakeEvidencePassportQuery{passport: passport}
-	deps := dependencies{newRunShowQuery: func(opts profilingRunShowOptions) (evidencePassportQuery, error) {
-		if opts.namespace != "chill-system" || opts.name != "cpu-run" || opts.queryService != "chill-query" {
+	deps := dependencies{newRunShowQuery: func(opts operationOptions) (evidencePassportQuery, error) {
+		if opts.namespace != "chill-system" || opts.name != "cpu-run" || opts.servingService != "chill-serving-entrypoint" {
 			t.Fatalf("options = %#v", opts)
 		}
 		return query, nil
@@ -208,7 +208,7 @@ func TestExecuteProfilingRunShowWritesReadableEvidencePassport(t *testing.T) {
 }
 
 func TestExecuteProfilingRunShowWritesJSON(t *testing.T) {
-	deps := dependencies{newRunShowQuery: func(profilingRunShowOptions) (evidencePassportQuery, error) {
+	deps := dependencies{newRunShowQuery: func(operationOptions) (evidencePassportQuery, error) {
 		return &fakeEvidencePassportQuery{passport: testEvidencePassport()}, nil
 	}}
 	var stdout strings.Builder

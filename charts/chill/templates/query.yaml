@@ -332,3 +332,20 @@ subjects:
 {{- end }}
 {{- end }}
 
+
+{{- if .Values.query.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "chill.queryName" . }}-authorization
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "chill.queryServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+

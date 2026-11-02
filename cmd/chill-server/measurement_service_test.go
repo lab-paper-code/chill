@@ -53,7 +53,7 @@ func TestMeasurementSubmitPreflightBeforeNativeCreate(t *testing.T) {
 			}
 			query := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				preflights++
-				if r.Method != http.MethodPost || r.Header.Get("Authorization") != "" ||
+				if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer mutation-caller" ||
 					r.URL.Path != "/api/v1/namespaces/allowed/batch-energy-optimizations/preflight" {
 					t.Fatal("unexpected preflight transport")
 				}
@@ -102,7 +102,8 @@ func TestMeasurementSubmitPreflightBeforeNativeCreate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := service.submit(context.Background(), task, mode == measurementDryRunTest)
+			ctx := context.WithValue(context.Background(), queryBearerContextKey{}, "Bearer mutation-caller")
+			result, err := service.submit(ctx, task, mode == measurementDryRunTest)
 			accepted := mode == measurementAcceptedTest || mode == measurementDryRunTest
 			if (err == nil) != accepted || (creates == 1) != accepted || preflights != 1 {
 				t.Fatalf("result=%+v err=%v preflights=%d creates=%d", result, err, preflights, creates)

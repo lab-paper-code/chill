@@ -5,9 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"strings"
-
-	"github.com/spf13/pflag"
 )
 
 var errUsage = errors.New("invalid command usage")
@@ -30,13 +27,6 @@ type profilingRunsOptions struct {
 	readOptions
 	namespace     string
 	allNamespaces bool
-}
-
-type profilingRunShowOptions struct {
-	readOptions
-	namespace    string
-	name         string
-	queryService string
 }
 
 func parseInventoryOptions(args []string, stderr io.Writer) (inventoryOptions, error) {
@@ -72,40 +62,6 @@ func parseProfilingRunsOptions(args []string, stderr io.Writer) (profilingRunsOp
 	}
 	if opts.allNamespaces && opts.namespace != "" {
 		return profilingRunsOptions{}, fmt.Errorf("%w: namespace and all-namespaces cannot be used together", errUsage)
-	}
-	return opts, nil
-}
-
-func parseProfilingRunShowOptions(args []string, stderr io.Writer) (profilingRunShowOptions, error) {
-	opts := profilingRunShowOptions{}
-	flags := pflag.NewFlagSet("kubectl chill runs show", pflag.ContinueOnError)
-	flags.SetOutput(stderr)
-	flags.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig file")
-	flags.StringVar(&opts.context, "context", "", "kubeconfig context override")
-	flags.StringVarP(&opts.output, "output", "o", outputFormatTable, "output format: table or json")
-	flags.StringVarP(&opts.namespace, "namespace", "n", "", "ProfilingRun and Query API Service namespace")
-	flags.StringVar(&opts.queryService, "query-service", "chill-query", "CHILL Query API ClusterIP Service name")
-	if err := flags.Parse(args); err != nil {
-		if errors.Is(err, pflag.ErrHelp) {
-			return profilingRunShowOptions{}, flag.ErrHelp
-		}
-		return profilingRunShowOptions{}, fmt.Errorf("%w: %v", errUsage, err)
-	}
-	if flags.NArg() != 1 {
-		return profilingRunShowOptions{}, fmt.Errorf("%w: runs show requires exactly one ProfilingRun name", errUsage)
-	}
-	opts.name = flags.Arg(0)
-	if opts.output != outputFormatTable && opts.output != outputFormatJSON {
-		return profilingRunShowOptions{}, fmt.Errorf("%w: output must be table or json", errUsage)
-	}
-	values := map[string]string{
-		"ProfilingRun name":      opts.name,
-		"Query API Service name": opts.queryService,
-	}
-	for label, value := range values {
-		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
-			return profilingRunShowOptions{}, fmt.Errorf("%w: %s is required without surrounding whitespace", errUsage, label)
-		}
 	}
 	return opts, nil
 }

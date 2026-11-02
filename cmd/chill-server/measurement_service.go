@@ -30,6 +30,8 @@ import (
 
 // The measurement service removes only source-proven, unreferenced measurement
 // evidence before requesting native deletion. Native GC/finalizers stay native.
+type queryBearerContextKey struct{}
+
 type measurementService struct {
 	client    client.Client
 	scheduler *schedulerService
@@ -97,6 +99,9 @@ func (o *measurementService) preflight(ctx context.Context, task *api.BatchEnerg
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if authorization, ok := ctx.Value(queryBearerContextKey{}).(string); ok {
+		req.Header.Set("Authorization", authorization)
+	}
 	response, err := o.http.Do(req)
 	if err != nil {
 		return unavailable

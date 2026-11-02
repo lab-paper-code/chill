@@ -4,6 +4,9 @@ import (
 	"flag"
 	"os"
 
+	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"k8s.io/client-go/kubernetes"
+
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -38,9 +41,14 @@ func main() {
 		log.Error(err, "construct Kubernetes reader")
 		os.Exit(1)
 	}
-	handler, err := buildHandler(reader, opts)
+	reviews, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		log.Error(err, "construct Query API API")
+		log.Error(err, "construct query authorization client")
+		os.Exit(1)
+	}
+	handler, err := buildHandler(reader, opts, &servingkube.Authorizer{Client: reviews})
+	if err != nil {
+		log.Error(err, "construct Query API HTTP handler")
 		os.Exit(1)
 	}
 	log.Info("starting Query API read API", "bindAddress", opts.bindAddress)

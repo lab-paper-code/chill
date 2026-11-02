@@ -23,7 +23,7 @@ func queryReadHandler(origin *url.URL) http.Handler {
 			proxy.Out.Header = make(http.Header)
 			proxy.Out.URL.User = nil
 			proxy.Out.URL.RawQuery = proxy.In.URL.RawQuery
-			for _, key := range []string{"Accept", "Content-Type"} {
+			for _, key := range []string{"Accept", "Content-Type", "Authorization"} {
 				if value := proxy.In.Header.Get(key); value != "" {
 					proxy.Out.Header.Set(key, value)
 				}

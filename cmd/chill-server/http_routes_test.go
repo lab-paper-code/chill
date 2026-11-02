@@ -51,11 +51,14 @@ func TestQueryAPIChillServerAuthenticatesBeforePrivateLeg(t *testing.T) {
 			var privateCalls atomic.Int32
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				privateCalls.Add(1)
+				if r.Header.Get("Authorization") != "Bearer private-token" {
+					t.Error("caller bearer not forwarded to Query API")
+				}
 				if r.URL.RequestURI() != target {
 					t.Errorf("private query changed: %s", r.URL.RequestURI())
 				}
 				for _, key := range []string{
-					"Authorization", "Cookie", "Impersonate-User", "Impersonate-Uid",
+					"Cookie", "Impersonate-User", "Impersonate-Uid",
 					"X-Chill-Actor", "X-Remote-User", "X-Forwarded-User", "Forwarded",
 				} {
 					if r.Header.Get(key) != "" {

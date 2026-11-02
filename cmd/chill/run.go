@@ -31,7 +31,7 @@ type dependencies struct {
 	newInventoryQuery func(inventoryOptions) (inventoryQuery, error)
 	newSystemQuery    func(systemOptions) (systemQuery, error)
 	newRunsQuery      func(profilingRunsOptions) (profilingRunsQuery, error)
-	newRunShowQuery   func(profilingRunShowOptions) (evidencePassportQuery, error)
+	newRunShowQuery   func(operationOptions) (evidencePassportQuery, error)
 	newPreflightQuery func(operationOptions) (batchEnergyOptimizationPreflightQuery, error)
 	newMeasurements   func(operationOptions) (measurementOperations, error)
 	newProfiles       func(operationOptions) (*profileClient, error)
@@ -144,7 +144,7 @@ func executeProfilingRuns(ctx context.Context, args []string, stdout, stderr io.
 }
 
 func executeProfilingRunShow(ctx context.Context, args []string, stdout, stderr io.Writer, deps dependencies) error {
-	opts, err := parseProfilingRunShowOptions(args, stderr)
+	opts, err := parseOperationOptions("runs", operationShow, args, stderr)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -207,7 +207,7 @@ func writeUsage(writer io.Writer) error {
 		return err
 	}
 	if _, err := fmt.Fprintln(writer,
-		"  kubectl chill runs show NAME [-n NAMESPACE] [--query-service NAME] [-o table|json]"); err != nil {
+		"  kubectl chill runs show NAME [-n NAMESPACE] [--serving-url HTTPS_ORIGIN] [-o table|json]"); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(writer,

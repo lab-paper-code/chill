@@ -27,7 +27,7 @@ func TestPublicPreflightRequiresNamespaceListBeforePrivateRead(t *testing.T) {
 			calls := 0
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
-				if r.URL.RawQuery != "variantId=selected" || r.Header.Get("Authorization") != "" {
+				if r.URL.RawQuery != "variantId=selected" || r.Header.Get("Authorization") != "Bearer token" {
 					t.Error("preflight display context or private authentication boundary changed")
 				}
 				snapshot := queryapi.BatchEnergyOptimizationPreflightSnapshot{

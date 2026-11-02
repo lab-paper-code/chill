@@ -58,14 +58,19 @@ func TestQueryAPICompatibilityRouteUsesProductionResolver(t *testing.T) {
 	otherNode.Name, otherNode.UID = "z-node", "z-node-uid"
 	base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(model, class, node, otherNode).Build()
 	reader := &countingCompatibilityReader{Reader: base, gets: make(map[string]int)}
-	handler, err := buildHandler(reader, options{systemName: "chill", namespace: "chill-system", tempDir: t.TempDir(),
+	secured, err := buildHandler(reader, options{systemName: "chill", namespace: "chill-system", tempDir: t.TempDir(),
 		requestTimeout: time.Second, maxRequestBytes: 8 << 20, maxEvidenceBytes: 64 << 20,
 		factSourceConfigMap: "facts", executionFactsKey: "execution", metricSourcesKey: "metrics",
 		workloadObservationKey: "workload", actuationPoliciesKey: "actuation",
-	})
+	}, queryTestAuthorizer(t))
 	if err != nil {
 		t.Fatal(err)
 	}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Header.Set("Authorization", "Bearer allowed")
+		secured.ServeHTTP(w, r)
+	})
+
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet,
 		"/api/v1/model-compatibility?modelSpec=model&executionPath=ort-cpu&deviceClass=class&node=node", nil))
