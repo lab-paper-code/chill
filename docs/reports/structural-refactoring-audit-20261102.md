@@ -354,17 +354,12 @@ Run 쪽에 새 종료 사유를 추가하면서 캠페인 목록만 수정하고
 - 실시간 publication도 committed observation 표현의 pure projector를 재사용하는 방향을 고려할 수 있다. commit-before-publish·정확한 timestamp·동시 event·bounded replay/snapshot barrier를 보존해야 한다.
 - 현재 재접속 불일치를 실행 재현하지 않았고 관련 커밋의 도입 인과도 이번 주요 후보만큼 diff 검증하지 않았다. 우선 수정 대상으로 확정하지 않는다.
 
-## 13. 의도적 정책·이미 해결된 항목: 재도입/과잉 정리 금지
+## 13. 수정 시 보존할 핵심 경계
 
-- **장비 조건:** hardware signature, 실제 clock readback, settling, runtime host contract, node별 memory envelope는 필요한 입력이다. NVIDIA locked range를 조회할 수 없는 제약에서 관측과 의도를 구별하는 코드도 필요하다.
-- **측정 policy:** confidence·reuse·window·seed·chosen method는 실제 소유자의 frozen 입력으로 유지한다. protocol/packaging constant까지 전부 Config로 옮기지 않는다. Gonum 기반 통계를 자작 근사로 대체하지 않는다.
-- **Producer 수집:** ADR 0032의 2026-11-02 개정은 API-only resources, 정확한 Pod UID/load containerID, 닫힌 분 지연과 API 예산을 근거로 setup=405초를 승인했다. 단순 timeout 부풀리기·E5 전용 서버 라벨로 분류하지 않는다.
-- **Fixed-only reset:** `120165f8`이 readiness 검사 전에 적용 불가능한 lowering을 제외했다. 현행 미수정 버그로 다시 등록하지 않는다.
-- **제거된 debt:** ksafe/replay shim은 `e9400973`, cleanup reservation bypass는 `3a8b2e89`에서 제거됐다. 삭제된 코드를 현행 후보로 집계하거나 되살리지 않는다.
-- **Scheduler summary:** `6267972a`/`ce9495ea`/`29fe9046`의 summary projection과 테스트 변경을 읽었다. scheduler 응답의 4MiB cap 문제를 현행 미수정 장애로 주장하지 않는다.
-- **예약·반환 증명:** owner/UID/container/readback·route receipt는 서로 다른 물리 사실을 보호한다. terminal status·timeout·Pod 목록 부재만으로 반납시키지 않는다.
-- **Bridge/ACK:** 긴 후속 수정 이력만으로 남은 부채라고 판단하지 않았다. 현행 dependenciesComplete/handoffScope·completed consumer 기반 생략 bridge 판단에 이미 정리가 반영돼 있다.
-- **범용화 금지:** workload observer end fence와 metric polling을 같은 lifecycle로 통합하거나, 새로운 service/workflow engine/epoch/fence/recovery framework를 이 보고서 근거만으로 도입하지 않는다. 승인 대기 [architecture rethink](../design/architecture-rethink/README.md)는 현행 채택 계약이 아니다.
+- **장비 조건:** 실제 장비 신원·clock readback·안정화 시간·runtime host contract·메모리 안전 경계는 필요한 입력이다. CPU 할당을 제거해도 실제 실행 환경의 확인까지 없애지 않는다.
+- **측정 의미:** 측정 시간·신뢰수준·재사용 조건·seed 등 선택한 실험 조건과 증거를 보존한다. 프로토콜 상수까지 모두 설정으로 노출하거나 검증된 통계를 자작 근사로 바꾸지 않는다.
+- **물리 자원 반환:** timeout·작업 종결 표시·Pod 목록 부재만으로 자원을 비었다고 판단하지 않는다. 실제 대상 UID/container와 효과·종료 확인에 필요한 근거를 유지한다.
+- **범위 제한:** 각 후보의 책임 경계를 정리하되, 새 범용 workflow·복구 framework나 별도 장부로 확대하지 않는다. 서로 다른 관측·실행 절차를 형태가 비슷하다는 이유만으로 통합하지 않는다.
 
 ## 14. 수정 담당 세션의 실행 경계·완료 조건
 
