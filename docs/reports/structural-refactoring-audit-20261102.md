@@ -228,17 +228,35 @@ Preflight는 POST여도 실제 변경을 일으키지 않는 조회다. 반면 �
 - Serving runtime·evidence·도메인 규칙의 정본이 중복되지 않는다. 큰 evidence/통계 조회의 자원 소비는 독립 조회 backend에서 관측하고 serving 영향과 장애 경계를 확인한다. 분리만으로 자원 간섭이 없다고 주장하지 않는다.
 - Go import 방향·architecture mapping, default/Profiler Helm profile, 명시적 Query API 경유 조회, 인증 거부·backend 불능·evidence 불능·pending 경로와 CLI 소비를 검증한다. 현재는 `go list`·`gopls` 참조·`go run ./cmd/console --help`로 기존 역할과 실행 진입점만 확인했으며 live 통합 검증 결과는 없다.
 
-## 8. R6 — Idle batch 정책과 logical identity가 생성·검증·이름 파싱에 분산
+## 8. R6 — 측정 역할과 실제 실행 batch를 섞어 이름으로 의미를 복원
 
-**우선순위: 중간. 소스·후속 수정 diff 확인.**
+**우선순위: 중간. 소스·후속 수정 diff 확인. 운영 장애 실행 재현 없음.**
 
-- [`run_builder.go:73`](../../internal/profiling/campaign/controller/run_builder.go#L73)는 execution path로 ORT idle physical batch=1/RKNN 예외를 결정한다.
-- [`curve_plan.go:145`](../../internal/profiling/profiler/projection/curve_plan.go#L145)는 runtime family/backend로 같은 규칙을 재판단한다.
-- [`campaign/controller/projection.go:79`](../../internal/profiling/campaign/controller/projection.go#L79)는 logical batch와 physical batch가 달라진 결과를 Run 이름에서 logical batch를 복원해 보완한다.
-- `188c4ed6`이 idle batch=1과 name round-trip을 추가하고 `be1c543e`가 curve projection을 후속 수정한다. ORT/RKNN 차이는 필요한 정책이며 삭제 대상은 아니다.
-- 권고: runtime/capability 계약 기준의 physical idle-batch 규칙을 한 곳으로 모은다. 캠페인의 단일 baseline identity와 실제 측정 batch도 개념적으로 구분한다. mutable label을 새 정본으로 쓰거나 범용 실험 framework를 추가하지 않는다.
-- 수용 기준: ORT CPU/CUDA와 고정-artifact RKNN 각각의 physical batch, planned logical identity, name 기반 idempotency, evidence 검증이 일치한다. 새 execution path 추가가 서로 다른 분류식의 동시 수정으로 이어지지 않아야 한다.
-- 기존 근거: `TestBuildIdleRunSeparatesMeasurementBatchFromTrialIdentity`, `TestCurvePlanIdleBatchPolicy`. 저장 계약 변경이 필요하면 캠페인 사이 단일 cutover 범위를 먼저 정한다.
+**핵심: “실험에서 무엇을 위한 측정인가”와 “실제로 어떤 batch 조건으로 실행했는가”는 다른 정보다.** 현재는 두 의미를 같은 batch 식별로 다루다가 값이 달라지자 Run 이름에서 실험상의 의미를 복원한다.
+
+### 직관적인 예와 현재 경로
+
+Active 측정은 실제 추론할 때의 전력·성능을, idle 측정은 모델을 올려두고 추론하지 않을 때의 기본 전력을 관측한다. 두 관측으로 추론 때문에 추가된 에너지를 구분한다.
+
+캠페인의 logical batch가 4인 idle trial을 예로 들면, **실험상의 식별은 batch 4에 연결되지만 ORT의 실제 idle 실행 조건은 batch 1**이다. 현재 코드는 Run의 실제 batch를 1로 설정한 뒤, 결과를 캠페인 trial로 되돌릴 때 이름의 `idle-b4` 부분을 읽어 logical batch 4를 복원한다. 이름이 단순한 객체 식별자뿐 아니라 실제 batch와 다른 실험 의미의 저장소가 된 셈이다.
+
+- [`run_builder.go:73`](../../internal/profiling/campaign/controller/run_builder.go#L73)는 execution path를 보고 ORT idle batch=1/RKNN 예외를 결정한다.
+- [`curve_plan.go:145`](../../internal/profiling/profiler/projection/curve_plan.go#L145)는 runtime family/backend를 보고 같은 batch 규칙을 다시 판단한다.
+- [`campaign/controller/projection.go:79`](../../internal/profiling/campaign/controller/projection.go#L79)는 Run 이름에서 logical batch를 복원한다.
+- `188c4ed6`은 idle batch=1과 이름 기반 복원을 추가하고 `be1c543e`는 curve projection을 후속 수정한다. 생성 규칙·검증 규칙·실험 식별 복원을 함께 맞춰야 하는 변경 전파의 근거다.
+
+### 개선 방향
+
+1. **측정 역할과 실행 조건을 구분한다.** 캠페인의 idle baseline/trial identity와 실제 실행 batch를 명확히 다룬다. 실제 batch 하나에 두 의미를 얹거나, 빠진 의미를 이름에서 추측해 보충하지 않는다. 그렇다고 독립 생명주기 없는 새 CR·범용 실험 framework를 추가할 필요는 없다.
+2. **Idle 실행 batch 규칙을 한 곳에서 결정한다.** Runtime/capability 계약을 기준으로 생성과 검증이 같은 규칙을 사용한다. ORT CPU/CUDA의 idle batch 1과 고정 batch artifact를 사용하는 RKNN의 필요한 차이는 유지한다.
+3. **이름은 결정적인 객체 식별에 사용한다.** 재조회·중복 생성 방지를 위한 이름의 역할은 유지하되, 실험상의 측정 역할을 복원하는 별도 정본으로 삼지 않는다. Mutable label을 대신 정본으로 만드는 것도 피한다.
+
+### 수정 수용 기준
+
+- 실험상의 baseline/trial 식별과 실제 실행 batch가 구분되며, Run 생성·캠페인 결과 조립·evidence 검증이 같은 의미를 사용한다.
+- 새로운 execution path를 추가할 때 서로 다른 분류식과 이름 parser를 각각 수정하지 않아도 된다. ORT/RKNN의 실제 측정 조건과 evidence 검증을 약화하지 않는다.
+- 기존 `TestBuildIdleRunSeparatesMeasurementBatchFromTrialIdentity`, `TestCurvePlanIdleBatchPolicy`는 현재 의미를 확인하는 근거다. 수정 검증은 이름 문자열 형식의 재고정보다 측정 역할·실제 batch·결정적 재조회·검증의 일치를 확인한다.
+- 저장 계약 변경이 필요하면 의존 캠페인 사이 단일 cutover로 한정한다. 기존 과학 원시·실행 기록을 수정하거나 호환 reader/alias를 추가하지 않는다.
 
 ## 9. R7 — 메모리 실패 근거보다 넓게 적용되는 제외표
 
