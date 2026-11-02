@@ -1,4 +1,4 @@
-package derivation
+package profilederivation
 
 import (
 	"slices"
