@@ -555,3 +555,5 @@
 - problem 11셀 분류 완료(`O/deployB/ksafe-ab-20261102/problem-classification.csv`): 성공 대체 BEO가 있는 과거 실패 6셀은 재측정 불필요(RTX Smol은 b4만 메모리 제외), 메모리 측정 불가 4셀(orin-nano cuda-vlm, xavier FP32 CPU 2모드, xavier cuda-vlm), nano INT8 CPU 1셀은 관측 timeout이며 메모리 증거 없음·노드 복구 전 제외한다.
 
 - 2026-11-02: κsafe A/B 중단(round-34만 관찰, F_run 33175, nano 제외 시작 상태 영향). κsafe revert + S4 삭제(`81448d64`, 리플레이 4 stage newBadTicks 0)를 server control-309로 배포. E5는 nano 재부팅 뒤 원본 시작 상태로 진행(사용자 결정).
+
+- 2026-11-02: E5 EvaluationRun API 첫 실검증. POST /api/v1/evaluations/load-scenarios가 403 → 코드 결함이 아니라 chill-evaluation-operator ClusterRole을 바인딩한 주체가 없었음(설계상 운영자가 바인딩). 전용 SA chill-system/chill-evaluation-runner를 만들어 chill-evaluation-operator와 chill-serving-manager를 바인딩함(label chill.dacs.io/purpose=e5-evaluation-api, 토큰 O/.token-evaluation 48h). chart 밖 live RBAC이므로 E5 뒤 정리 여부를 정한다.
