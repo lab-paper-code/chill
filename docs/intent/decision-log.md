@@ -525,3 +525,11 @@
 - 규칙: 매 보고 전에 같은 점검 스크립트를 실행하고, 그 출력만 근거로 쓴다. 점검 항목은 feeder 프로세스, 제어 Pod 6종 Running, 디스크, Pending/Terminating 측정 Pod, 셀 시간 초과(생성기 예상 2배), 같은 셀 evidence 저장 실패 3회, lane별 진행이다. 하나라도 이상하면 "정상"이라고 쓰지 않고 그 항목을 먼저 분류한다.
 - 상시 감시: 실패 셀, lane 정지, 노드 유휴, 제어 Pod·디스크 80%, Pending/Terminating 10분, 셀 2배 초과·evidence 실패 3회.
 - 측정 중인 노드에서 시스템 Pod를 재시작하지 않는다(먼저 pause). 보류는 lane 끝 셀에만 쓴다.
+
+## 2026-11-02 — 측정 불가(메모리) 조합, E5 모드 우선, 서버 응답 한도
+
+- 측정 불가(메모리)로 기록하는 조합(`memoryMaxBatch` 값 0): orin-nano cuda-vlm(b1 warmup Softmax RUNTIME_EXCEPTION), xavier Smol FP32 CPU(b1 OOMKilled, limit 5.28Gi). 두 경우 모두 노드는 멈추지 않았다.
+- jetsonx lane에서 E5가 쓰는 전력 모드(2CORE 3종, AGX 15W)를 먼저 잰다(`laneFirstPowerModes`).
+- 커버리지 응답이 server `maxRequestBytes` 8MiB를 넘어 503이 났다 → 32MiB로 올렸다(control-308, overlay `values-server-maxrequest-32Mi.yaml`).
+- API 토큰이 만료돼 401이 났다(19:49Z) → chill-dashboard-user 토큰을 72h로 재발급했다(만료 11/05 00:05Z).
+- jetson-nano는 다시 응답하지 않는다(ssh session 정지, actuation agent 0/1, handback이 MAXN 미도달로 재시도 중). 사용자 지시대로 계속 제외한다.
