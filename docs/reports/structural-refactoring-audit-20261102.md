@@ -269,16 +269,37 @@ Active 측정은 실제 추론할 때의 전력·성능을, idle 측정은 모�
 - 권고: 진행 중 캠페인의 frozen policy는 유지한다. 다음 캠페인에서는 기존 실패 관측을 해당 image/경로/자원 조건과 연결하고, 조건이 바뀌면 재평가할 수 있도록 제외 범위를 명시한다. 기존 값 자동 해제·임의 메모리 추정·자동 재측정은 제안하지 않는다.
 - 수용 기준: 같은 조건에서 확인된 제외는 유지하고, 다른 조건에 옛 실패가 무조건 전파되지 않는다. OOM/원시 실패와 운영상 보수적 제외를 구분해 근거를 보존하며 실행하지 않은 조합을 성공 가능으로 꾸미지 않는다.
 
-## 10. R8 — ProfilingRun terminal 의미를 부모별 문자열 목록으로 복제
+## 10. R8 — 같은 측정의 종료 여부를 상위 작업들이 각자 정의
 
-**우선순위: 중간. 현재 정체 실행 재현 없음.**
+**우선순위: 중간. 소스·이력 확인. 현재 운영 정체를 실행 재현한 것은 아님.**
+
+**핵심: 하위 Run이 “더 기다려도 진행되지 않는 실패로 끝났는가”를 상위 작업들이 같은 문자열 목록으로 따로 판단한다. 상태의 의미는 한 곳에서 정의하고, 그 이후 행동은 각 상위 작업이 결정해야 한다.**
+
+### 여기서 부모와 terminal이 뜻하는 것
+
+- `ProfilingRun`은 개별 측정 실행이다. 이를 조합하는 batch-energy 캠페인과 idle-baseline 측정 같은 상위 작업을 여기서 부모라고 부른다.
+- Terminal은 **실행이 끝났음**을 뜻하며 성공만을 의미하지 않는다. 이 후보의 초점은 실패로 끝난 Run을 계속 기다릴 상태와 구별하는 공통 규칙이다.
+- 부모는 Run을 보고 “계속 기다릴 것인가, 이 시도는 끝났으니 다음 처리를 할 것인가”를 판단한다. 현재 두 부모가 `JobFailed`, `ExecutionLost`, `EvidenceInvalid` 등의 종료 사유 목록을 각각 갖고 있다.
+
+### 왜 문제가 되는가
+
+Run 쪽에 새 종료 사유를 추가하면서 캠페인 목록만 수정하고 idle-baseline 목록은 빠뜨렸다고 가정해 보자. 캠페인은 “실패로 끝났다”고 판단하지만 idle-baseline은 “내가 아는 종료 사유가 아니니 아직 기다리자”고 해석할 수 있다. **같은 Run 상태를 소비자에 따라 다르게 해석하는 변경 누락 위험**이다. 이 예시는 위험 설명이며 현재 발생한 장애를 주장하지 않는다.
 
 - 위치: [`campaign/controller/projection.go:126`](../../internal/profiling/campaign/controller/projection.go#L126) `isTerminalReason`, [`idlebaseline/controller/reconciler.go:222`](../../internal/profiling/idlebaseline/controller/reconciler.go#L222) `runTerminal`.
 - 같은 일곱 reason을 중복 소유한다: `InvalidRunSpec`, `ExecutionPolicyInvalid`, `ActuationPolicyInvalid`, `ExecutionLost`, `JobFailed`, `RequiredStateNotConfirmed`, `EvidenceInvalid`.
-- blame와 diff: 과거 batchsaturation 소비자에 `b8ea7e64`가 EvidenceInvalid, `530b90e3`가 RequiredStateNotConfirmed를 반영했다. `ec63d406`은 idle-baseline controller 도입이며 같은 분류가 두 소비자에 남는다. 다른 hash의 비슷한 subject를 정확한 현행 줄의 도입 커밋으로 혼동하지 않는다.
-- 권고: Run의 terminal condition 해석만 기존 profiling 계약 경계 한 곳에 둔다. campaign/idle-baseline의 서로 다른 lifecycle은 합치지 않는다. generation/Job 존재를 다루는 더 좁은 `terminalPreJobFailureCurrent`까지 무조건 같은 helper로 바꾸지 않는다.
-- 위험은 새 reason 추가 때 한쪽이 pending으로 남거나 retry/exclusion/result publication이 달라지는 변경 전파다. 현재 운영 정체를 관측했다는 뜻은 아니다.
-- 수용 기준: producer가 정의한 terminal 조건이 두 부모에서 일관되게 해석되며, evidence 우선 처리와 pending/nonterminal·generation 의미를 보존한다. source 문자열 복사 여부를 검사하는 테스트 대신 상태 전이를 검증한다.
+- Blame와 diff: 과거 batchsaturation 소비자에 `b8ea7e64`가 EvidenceInvalid, `530b90e3`가 RequiredStateNotConfirmed를 반영했다. `ec63d406`은 idle-baseline controller 도입이며 같은 분류가 두 소비자에 남는다. 다른 hash의 비슷한 subject를 정확한 현행 줄의 도입 커밋으로 혼동하지 않는다.
+
+### 개선 방향
+
+1. **Run 상태의 공통 의미를 한 곳에서 제공한다.** 실패로 끝난 조건의 해석을 기존 profiling 계약 경계에 두고 부모들이 이를 사용한다. 단순히 reason 상수를 한 파일로 옮긴 뒤 부모마다 종료 사유 목록을 계속 나열하는 것으로 끝내지 않는다.
+2. **종료 후 행동은 부모가 소유한다.** 공통 규칙은 “이 시도는 실패로 끝났다”까지만 답한다. 재시도·제외·다음 시도·완료·결과 게시는 각 캠페인/idle-baseline 정책으로 판단한다. 서로 다른 lifecycle을 하나의 상태 머신으로 통합하지 않는다.
+3. **질문이 다른 검사는 구분한다.** Generation/Job 존재를 함께 확인하는 `terminalPreJobFailureCurrent` 같은 좁은 검사를 이름이 비슷하다는 이유로 같은 helper로 바꾸지 않는다.
+
+### 수정 수용 기준
+
+- 같은 Run의 종료 조건을 두 부모가 일관되게 해석하고, 종료 사유 추가 때 부모별 목록을 따로 갱신할 필요가 없다.
+- Evidence 우선 처리, pending/nonterminal 구분, generation 의미와 각 부모의 재시도·결과 게시 정책을 보존한다. 공통 종료 해석이 같은 후속 행동을 강제하지 않는다.
+- 검증은 성공 증거가 있는 Run·진행 중 Run·실패로 끝난 Run에 대한 부모의 상태 전이를 확인한다. Source 문자열 복사 여부나 reason 목록 자체를 재고정하는 테스트로 대체하지 않는다.
 
 ## 11. 실제 실행 증거·재구성 방법·실패한 검증
 
