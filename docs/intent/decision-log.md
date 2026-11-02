@@ -553,3 +553,5 @@
 - round34 workflow COMPLETE/관찰 FAIL(재측정0): F_run=33175, F_warm=2757, 전체 POOL=52128.70585130198J(complete), M=40102, D1 MNV/PLC=FAIL·Smol=OBSERVED_THRESHOLD_MET(`O/deployB/ksafe-ab-20261102/round-34-raw-summary.json`). 시작 MNV는 rasp5 b1 하나이며 첫 60초 실패를 운영 구간과 분리한다. 대조군·중앙값·κsafe 효과 판정은 없음.
 - 03:42Z 정리 확인: 측정/serving/producer Pod 0, E5 Pod/Job label 0, 참여 노드 measurement taint 0, scheduler instances0/autonomyoff. 옛 terminal E5 Job 4개·Failed profiler control-291 Pod도 백업 후 삭제. 제외된 nano의 기존 MAXN 의도·measurement taint·handback 예약 1개는 승인대로 보존(전역 0이라고 보고하지 않음). live server control-308 `233ccc6d6b934aa0791f107d9faf9cbe9e17e28a`, Pod Ready/restarts0 및 HTTP200 확인(`O/deployB/ksafe-ab-20261102/final-cleanup.json`).
 - problem 11셀 분류 완료(`O/deployB/ksafe-ab-20261102/problem-classification.csv`): 성공 대체 BEO가 있는 과거 실패 6셀은 재측정 불필요(RTX Smol은 b4만 메모리 제외), 메모리 측정 불가 4셀(orin-nano cuda-vlm, xavier FP32 CPU 2모드, xavier cuda-vlm), nano INT8 CPU 1셀은 관측 timeout이며 메모리 증거 없음·노드 복구 전 제외한다.
+
+- 2026-11-02: κsafe A/B 중단(round-34만 관찰, F_run 33175, nano 제외 시작 상태 영향). κsafe revert + S4 삭제(`81448d64`, 리플레이 4 stage newBadTicks 0)를 server control-309로 배포. E5는 nano 재부팅 뒤 원본 시작 상태로 진행(사용자 결정).
