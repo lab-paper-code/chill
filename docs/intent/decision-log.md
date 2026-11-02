@@ -533,3 +533,9 @@
 - 커버리지 응답이 server `maxRequestBytes` 8MiB를 넘어 503이 났다 → 32MiB로 올렸다(control-308, overlay `values-server-maxrequest-32Mi.yaml`).
 - API 토큰이 만료돼 401이 났다(19:49Z) → chill-dashboard-user 토큰을 72h로 재발급했다(만료 11/05 00:05Z).
 - jetson-nano는 다시 응답하지 않는다(ssh session 정지, actuation agent 0/1, handback이 MAXN 미도달로 재시도 중). 사용자 지시대로 계속 제외한다.
+
+## 2026-11-02 — 커버리지 캠페인 종료(11:20 KST)
+
+- 커버리지 API: usable 132 / supported 162, problem 11, unmeasured 31(jetson-nano 14 제외 + 측정 불가(메모리) 조합), running 0.
+- 측정 불가(메모리): xavier cuda-vlm(canary b1 runner EOF), orin-nano cuda-vlm, xavier Smol FP32 CPU, Smol CUDA RTX b4.
+- jetson-nano: 응답 없음, 제외(재부팅 뒤 MAXN 7셀만 측정 가능).
