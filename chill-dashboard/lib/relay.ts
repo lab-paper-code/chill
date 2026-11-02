@@ -98,7 +98,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
     if (!allowed.includes(key) || (values.length > 1 && key !== "definition" && key !== "outcome") || values.length > 32 || values.some(value => /[\x00-\x1f\x7f\ufffd]/.test(value))) throw new RelayFailure("DashboardQueryInvalid", 400)
     for (const value of values) {
       if (["limit", "offset", "cursor"].includes(key)) {
-        const max = key === "limit" ? (query === "profiles"?50:config.maxPageSize) : key === "offset" ? 1000000 : Number.MAX_SAFE_INTEGER
+        const max = key === "limit" ? (query === "profiles" || query === "inputs" ? 50 : config.maxPageSize) : key === "offset" ? 1000000 : Number.MAX_SAFE_INTEGER
         if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) > max || (key === "limit" && Number(value) < 1)) throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (key === "sort") {
         const keys = query === "profiles" ? ["model","deviceClass","node","powerMode","path","cpu","created","status"] : ["name","created","model","powerMode","status"]
@@ -118,7 +118,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
         if (value !== "compact" && !(value === "summary" && (route === "v1/scheduler/state" || query === "schedulerHistory"))) throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (key === "dryRun") {
         if (value !== "All") throw new RelayFailure("DashboardQueryInvalid", 400)
-      } else if (Buffer.byteLength(value) > (key === "group" ? 16384 : key === "outcome" ? 64 : 256) || (key !== "q" && !value)) throw new RelayFailure("DashboardQueryInvalid", 400)
+      } else if (Buffer.byteLength(value) > (key === "group" ? 16384 : key === "outcome" ? 64 : query === "inputs" && key === "set" ? 512 : 256) || (key !== "q" && !value)) throw new RelayFailure("DashboardQueryInvalid", 400)
     }
   }
   if (params.has("order") && query !== "schedulerHistory" && !params.has("sort")) throw new RelayFailure("DashboardQueryInvalid", 400)

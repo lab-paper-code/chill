@@ -218,7 +218,7 @@ test("R17: load parts expose every service rate as labeled fields without a wide
 
 test("R17b: author help uses constraint rows and evidence options use server names",()=>{
   const runner=hookRunner(),input={kind:"seed",store:"internal-store",key:"experiments/private-seed.json",size:512,name:"실험 난수",set:"실험 묶음"}
-  const {AuthorHelp,EvidencePicker}=load("../features/evaluation-author.tsx",{...primitives,react:{...runner.react,useId:()=>"inputs"},"@/lib/client":{useChillQuery:()=>({data:{items:[input],page:{offset:0,limit:25,total:1}}})},"@/components/ui/tooltip":{TooltipProvider:"div",Tooltip:"div",TooltipTrigger:"div",TooltipContent:"aside"}})
+  const {AuthorHelp,EvidencePicker}=load("../features/evaluation-author.tsx",{...primitives,react:{...runner.react,useId:()=>"inputs"},"@/lib/client":{useSession:()=>({config:{maxPageSize:200}}),useChillQuery:()=>({data:{items:[input],page:{offset:0,limit:25,total:1}}})},"@/components/ui/tooltip":{TooltipProvider:"div",Tooltip:"div",TooltipTrigger:"div",TooltipContent:"aside"}})
   const help=elements(runner.render(AuthorHelp))
   assert.ok(help.some(element=>element.type==="table"))
   const picker=elements(runner.render(EvidencePicker,{label:"난수",value:input,onChange:()=>{}}))
@@ -274,9 +274,10 @@ test("R17b: template missing inputs stay visible while copied question text is f
 
 test("evidence picker filters and pages on the server and preserves off-page selections",()=>{
   const runner=hookRunner(),paths:string[]=[],changes:unknown[]=[]
+  let maxPageSize=200
   const first={store:"s",key:"one",size:1,kind:"seed",set:"set-a",name:"서버 이름"}
   const second={store:"s",key:"two",size:2,kind:"seed",set:"set-b",name:""}
-  const {EvidencePicker}=load("../features/evaluation-author.tsx",{...primitives,react:{...runner.react,useId:()=>"sets"},"@/lib/client":{useChillQuery:(path:string)=>{
+  const {EvidencePicker}=load("../features/evaluation-author.tsx",{...primitives,react:{...runner.react,useId:()=>"sets"},"@/lib/client":{useSession:()=>({config:{maxPageSize}}),useChillQuery:(path:string)=>{
     paths.push(path)
     const params=new URLSearchParams(path.split("?")[1])
     return {data:{items:params.get("offset")==="7"?[second]:[first],page:{offset:Number(params.get("offset")??0),limit:25,total:30,nextOffset:params.get("offset")==="7"?undefined:7}}}
@@ -303,4 +304,7 @@ test("evidence picker filters and pages on the server and preserves off-page sel
   ;(tree.find(item=>item.props.label==="입력 종류")!.props.onChange as (value:string)=>void)("payload")
   runner.render(EvidencePicker,props)
   assert.equal(new URLSearchParams(paths.at(-1)!.split("?")[1]).get("kind"),"payload")
+  maxPageSize=10
+  runner.render(EvidencePicker,props)
+  assert.equal(new URLSearchParams(paths.at(-1)!.split("?")[1]).get("limit"),"10")
 })

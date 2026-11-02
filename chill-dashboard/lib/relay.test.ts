@@ -135,11 +135,13 @@ test("evaluation relay permits only contracted operations with conditional stop"
 })
 
 test("evaluation inputs accepts single server filters and bounded explicit pages",()=>{
-  const config=serverConfig({CHILL_BASE_URL:"https://chill.example",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"chill",CHILL_MAX_PAGE_SIZE:"50"})
+  for(const maxPageSize of [200,20]) {
+  const config=serverConfig({CHILL_BASE_URL:"https://chill.example",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"chill",CHILL_PAGE_SIZE:"20",CHILL_MAX_PAGE_SIZE:String(maxPageSize)})
   const plan=(search:string)=>relayPlan("GET",["v1","evaluations","inputs"],search,config).path
   assert.equal(plan(""),"/api/v1/evaluations/inputs")
-  for(const search of ["?kind=seed&set=evaluation-enable-20261101&offset=0&limit=25","?kind=payload","?set=한글","?offset=2","?limit=2","?kind=future-kind"]) assert.equal(plan(search),`/api/v1/evaluations/inputs?${new URLSearchParams(search)}`)
-  for(const search of ["?kind=seed&kind=payload","?set=a&set=b","?offset=0&offset=1","?limit=2&limit=3","?limit=0","?limit=51","?offset=-1","?offset=1000001","?offset=1.5","?kind=","?set=","?kind=%00","?unknown=a",`?set=${"a".repeat(257)}`]) assert.throws(()=>plan(search),/DashboardQueryInvalid/)
+  for(const search of ["?kind=seed&set=evaluation-enable-20261101&offset=0&limit=25","?kind=payload","?set=한글","?offset=2","?limit=2","?limit=25","?limit=50","?kind=future-kind",`?set=${"a".repeat(512)}`,`?set=${"한".repeat(170)}`]) assert.equal(plan(search),`/api/v1/evaluations/inputs?${new URLSearchParams(search)}`)
+  for(const search of ["?kind=seed&kind=payload","?set=a&set=b","?offset=0&offset=1","?limit=2&limit=3","?limit=0","?limit=51","?offset=-1","?offset=1000001","?offset=1.5","?kind=","?set=","?kind=%00","?unknown=a",`?set=${"a".repeat(513)}`,`?set=${"한".repeat(171)}`,`?kind=${"a".repeat(257)}`]) assert.throws(()=>plan(search),/DashboardQueryInvalid/)
+  }
 })
 
 test("scheduler consumer routes enforce exact methods and bounded observation queries", () => {

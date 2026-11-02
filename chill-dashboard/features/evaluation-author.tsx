@@ -4,7 +4,7 @@ import { useEffect, useId, useState, type ReactNode } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Screen } from "@/components/screen"
-import { useChillQuery } from "@/lib/client"
+import { useChillQuery, useSession } from "@/lib/client"
 import { QueryGate } from "@/components/read-region"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -44,7 +44,8 @@ export function AuthorJSON({label,value,onChange,onValidityChange,disabled=false
 export function EvidencePicker({label,value,onChange}:{label:string;value:unknown;onChange:(value:Spec|undefined)=>void}) {
   const defaultKind=label.includes("난수")?"seed":label.includes("번들")?"payload":label.includes("요청률")?"rateBasis":label.includes("분배")?"kappa":label.includes("요청 시각")?"other":""
   const [kind,setKind]=useState(defaultKind),[set,setSet]=useState(""),[offsets,setOffsets]=useState([0]),[chosen,setChosen]=useState<EvidenceInput|null>(null),setList=useId()
-  const params=new URLSearchParams({limit:"25",offset:String(offsets.at(-1)??0)})
+  const {config}=useSession()
+  const params=new URLSearchParams({limit:String(Math.min(25,config.maxPageSize)),offset:String(offsets.at(-1)??0)})
   if(kind)params.set("kind",kind)
   if(set)params.set("set",set)
   const query=useChillQuery<{items:EvidenceInput[];page:{offset:number;limit:number;total:number;nextOffset?:number}}>(`v1/evaluations/inputs?${params}`,{decoder:parseSchedulerJSON})
