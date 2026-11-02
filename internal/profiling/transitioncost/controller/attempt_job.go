@@ -14,6 +14,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/component"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -68,6 +69,7 @@ type attemptPayload struct {
 	PowerObservation attemptPowerObservation      `json:"powerObservation"`
 	TransitionFacts  attemptTransitionFacts       `json:"transitionFacts"`
 	RawLocation      evidencestore.ObjectLocation `json:"rawLocation"`
+	MaxResultBytes   int64                        `json:"maxResultBytes"`
 }
 
 type attemptPowerSource struct {
@@ -81,7 +83,6 @@ type attemptPowerObservation struct {
 	IntervalMilliseconds       int64 `json:"intervalMilliseconds"`
 	DurationMilliseconds       int64 `json:"durationMilliseconds"`
 	RequestTimeoutMilliseconds int64 `json:"requestTimeoutMilliseconds"`
-	MaxEvents                  int   `json:"maxEvents"`
 }
 
 type attemptTransitionFacts struct {
@@ -108,11 +109,12 @@ func BuildAttemptJob(
 	options AttemptJobOptions,
 	scheme *runtime.Scheme,
 ) (*batchv1.Job, error) {
+	request.Prepared.PowerSource.NodeName = request.Prepared.TargetNode.Name
 	direction, err := validateAttemptJobRequest(request, options, scheme)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := encodeAttemptPayload(request, direction)
+	payload, err := encodeAttemptPayload(request, direction, options.WorkspaceBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -224,13 +226,26 @@ func validateAttemptJobRequest(
 	if options.CoordinationBytes < 1 || options.WorkspaceBytes < 1 {
 		return PreparedDirection{}, errors.New("coordination and workspace byte limits must be positive")
 	}
+	if err := request.Prepared.PowerRequest.Validate(); err != nil {
+		return PreparedDirection{}, fmt.Errorf("validate transition power schedule: %w", err)
+	}
+	// Production transition Jobs have no explicit memory limit. The kubelet
+	// supplies limits.memory (node allocatable when absent) via downward API;
+	// the command admits the full envelope before its first read/readiness.
+	if memory := options.Resources.Limits.Memory().Value(); memory > 0 {
+		if _, err := metricobserver.RequiredCapacity(request.Prepared.PowerRequest, request.Prepared.PowerSource,
+			metricobserver.Limits{MaxResultBytes: options.WorkspaceBytes, MemoryBudgetBytes: memory}, false); err != nil {
+			return PreparedDirection{}, fmt.Errorf("admit transition power observation: %w", err)
+		}
+	}
 	return request.Prepared.Directions[request.DirectionIndex], nil
 }
 
-func encodeAttemptPayload(request AttemptJobRequest, direction PreparedDirection) ([]byte, error) {
+func encodeAttemptPayload(request AttemptJobRequest, direction PreparedDirection, maxResultBytes int64) ([]byte, error) {
 	power := request.Prepared.PowerRequest
 	payload, err := json.Marshal(attemptPayload{
-		SchemaVersion: transitionAttemptSchemaVersion,
+		SchemaVersion:  transitionAttemptSchemaVersion,
+		MaxResultBytes: maxResultBytes,
 		PowerSource: attemptPowerSource{
 			Kind: request.Prepared.PowerSource.Kind, Endpoint: request.Prepared.PowerSource.Endpoint,
 			Metric:       request.Prepared.PowerSource.Metric,
@@ -238,7 +253,7 @@ func encodeAttemptPayload(request AttemptJobRequest, direction PreparedDirection
 		},
 		PowerObservation: attemptPowerObservation{
 			IntervalMilliseconds: power.Interval.Milliseconds(), DurationMilliseconds: power.Duration.Milliseconds(),
-			RequestTimeoutMilliseconds: power.RequestTimeout.Milliseconds(), MaxEvents: power.MaxEvents,
+			RequestTimeoutMilliseconds: power.RequestTimeout.Milliseconds(),
 		},
 		TransitionFacts: attemptTransitionFacts{
 			Namespace:       request.Prepared.Namespace,
@@ -279,6 +294,12 @@ func attemptContainer(
 		},
 		Env: []corev1.EnvVar{
 			{Name: transitionAttemptJSONEnvName, Value: payload},
+			{Name: "CHILL_OBSERVER_MEMORY_LIMIT_BYTES", ValueFrom: &corev1.EnvVarSource{
+				ResourceFieldRef: &corev1.ResourceFieldSelector{
+					ContainerName: transitionObserverContainerName, Resource: "limits.memory",
+					Divisor: resource.MustParse("1"),
+				},
+			}},
 			secretAttemptEnv("AWS_ACCESS_KEY_ID", binding.CredentialsSecretName, component.EvidenceStoreAccessKeyKey),
 			secretAttemptEnv("AWS_SECRET_ACCESS_KEY", binding.CredentialsSecretName, component.EvidenceStoreSecretKeyKey),
 		},

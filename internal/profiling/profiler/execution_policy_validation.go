@@ -62,7 +62,6 @@ func (p ExecutionPolicy) Validate() error {
 		"workloadEndFenceTimeoutSeconds": p.WorkloadEndFenceTimeoutSeconds,
 		"workloadResultTimeoutSeconds":   p.WorkloadResultTimeoutSeconds,
 		"maxLatencySamples":              p.MaxLatencySamples,
-		"maxMetricEvents":                p.MaxMetricEvents,
 		"maxWorkloadEvents":              p.MaxWorkloadEvents,
 	} {
 		if value < 1 {

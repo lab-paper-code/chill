@@ -49,7 +49,7 @@ func controllerExecutionPolicySpec(workloadMode string) profiler.ExecutionPolicy
 		WorkloadResultTimeoutSeconds: 30,
 		MaxLatencySamples:            1_000_000, MaxInputBytes: 64 * mebibyte,
 		MaxRuntimeResultBytes: 32 * mebibyte, MaxMetricResultBytes: 8 * mebibyte,
-		MaxMetricEvents: 50_000, MaxWorkloadEvents: 10_000,
+		MaxWorkloadEvents:         10_000,
 		MaxWorkloadResultBytes:    8 * mebibyte,
 		RuntimeMemoryRequestBytes: 128 * mebibyte, RuntimeMemoryLimitBytes: 1024 * mebibyte,
 		ObserverMemoryRequestBytes: 16 * mebibyte, ObserverMemoryLimitBytes: 64 * mebibyte,

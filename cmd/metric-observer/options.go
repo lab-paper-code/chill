@@ -23,7 +23,7 @@ type options struct {
 	metricResultPath  string
 	startWaitTimeout  time.Duration
 	endWaitTimeout    time.Duration
-	maxEvents         int
+	memoryBudgetBytes int64
 	maxResultBytes    int64
 	runtimeFailedPath string
 }
@@ -37,7 +37,7 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	set.StringVar(&o.runtimeFailedPath, "runtime-failed-file", defaultRuntimeFailedPath, "runtime-failed signal path")
 	set.DurationVar(&o.startWaitTimeout, "start-wait-timeout", 0, "Job-derived maximum wait for measurement-start")
 	set.DurationVar(&o.endWaitTimeout, "end-wait-timeout", 0, "Job-derived maximum wait for measurement-end")
-	set.IntVar(&o.maxEvents, "max-events", 0, "Job-derived maximum retained sample and failure events")
+	set.Int64Var(&o.memoryBudgetBytes, "memory-budget-bytes", 0, "Job-derived existing container memory limit for evidence admission")
 	set.Int64Var(&o.maxResultBytes, "max-result-bytes", 0, "Job-derived maximum serialized metric result bytes")
 }
 
@@ -51,8 +51,8 @@ func (o options) validate() error {
 	if o.endWaitTimeout <= 0 {
 		return errors.New("end wait timeout must be supplied by the Job execution contract")
 	}
-	if o.maxEvents < 1 {
-		return errors.New("maximum retained events must be supplied by the Job execution contract")
+	if o.memoryBudgetBytes < 1 {
+		return errors.New("memory budget bytes must be supplied by the Job execution contract")
 	}
 	if o.maxResultBytes < 1 {
 		return errors.New("maximum result bytes must be supplied by the Job execution contract")

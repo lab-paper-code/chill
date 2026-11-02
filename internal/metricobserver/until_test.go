@@ -20,11 +20,11 @@ func TestObserveUntilRequiresRealFinalRead(t *testing.T) {
 				}
 				return Reading{Watts: float64(reads)}, nil
 			}}
-			observer, err := New(source)
+			observer, err := New(source, testLimits())
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := observer.ObserveUntil(context.Background(), Request{Interval: 20 * time.Millisecond, Duration: 80 * time.Millisecond, RequestTimeout: time.Millisecond, MaxEvents: 7}, end, func() { close(end) })
+			result, err := observer.ObserveUntil(context.Background(), Request{Interval: 20 * time.Millisecond, Duration: 80 * time.Millisecond, RequestTimeout: time.Millisecond}, end, func() { close(end) })
 			if (err != nil) != finalFailure {
 				t.Fatalf("error=%v finalFailure=%v", err, finalFailure)
 			}
@@ -55,11 +55,11 @@ func TestObserveUntilRetriesFinalReadWithinWatchdog(t *testing.T) {
 				}
 				return Reading{Watts: float64(reads)}, nil
 			}}
-			observer, err := New(source)
+			observer, err := New(source, testLimits())
 			if err != nil {
 				t.Fatal(err)
 			}
-			request := Request{Interval: 20 * time.Millisecond, Duration: time.Second, RequestTimeout: time.Millisecond, MaxEvents: 53}
+			request := Request{Interval: 20 * time.Millisecond, Duration: time.Second, RequestTimeout: time.Millisecond}
 			result, err := observer.ObserveUntil(context.Background(), request, end, func() { close(end) })
 			if err != nil {
 				t.Fatalf("final read did not recover: %v", err)
@@ -81,11 +81,11 @@ func TestObserveUntilRetriesFinalReadWithinWatchdog(t *testing.T) {
 }
 
 func TestObserveUntilWatchdogFailsWithoutProducerEnd(t *testing.T) {
-	observer, err := New(&fakeSource{read: func(context.Context) (Reading, error) { return Reading{Watts: 1}, nil }})
+	observer, err := New(&fakeSource{read: func(context.Context) (Reading, error) { return Reading{Watts: 1}, nil }}, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := observer.ObserveUntil(context.Background(), Request{Interval: 10 * time.Millisecond, Duration: 30 * time.Millisecond, RequestTimeout: time.Millisecond, MaxEvents: 6}, make(chan struct{}), func() {})
+	result, err := observer.ObserveUntil(context.Background(), Request{Interval: 10 * time.Millisecond, Duration: 30 * time.Millisecond, RequestTimeout: time.Millisecond}, make(chan struct{}), func() {})
 	if !errors.Is(err, context.DeadlineExceeded) || len(result.Samples) == 0 {
 		t.Fatalf("watchdog result=%+v error=%v", result, err)
 	}

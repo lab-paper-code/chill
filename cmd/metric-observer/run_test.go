@@ -37,8 +37,8 @@ func TestExecuteRequiresMeasurementEndBeforePublishingResult(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "wait for measurement-end") {
 		t.Fatalf("expected bounded measurement-end failure, got %v", err)
 	}
-	if _, statErr := os.Stat(options.metricResultPath); !os.IsNotExist(statErr) {
-		t.Fatalf("missing measurement-end produced a metric result: %v", statErr)
+	if _, statErr := os.Stat(options.metricResultPath); statErr != nil {
+		t.Fatalf("missing measurement-end discarded partial evidence: %v", statErr)
 	}
 }
 
@@ -46,7 +46,7 @@ func TestExecuteFailsPromptlyWhenRuntimeFails(t *testing.T) {
 	directory := t.TempDir()
 	writeTestRunConfig(t, directory, "http://127.0.0.1:1/metrics")
 	options := testOptions(directory)
-	options.endWaitTimeout = 10 * time.Minute
+	options.endWaitTimeout = 2 * time.Second
 	go func() {
 		time.Sleep(time.Second)
 		_ = worker.PublishSignal(options.runtimeFailedPath)
@@ -110,8 +110,16 @@ func TestExecutePublishesPowerDespiteThermalTimeoutAndFinalRetries(t *testing.T)
 				if !errors.Is(err, context.DeadlineExceeded) || powerReads.Load() < 3 {
 					t.Fatalf("watchdog error=%v powerReads=%d", err, powerReads.Load())
 				}
-				if _, statErr := os.Stat(opts.metricResultPath); !os.IsNotExist(statErr) {
-					t.Fatalf("failed final reads published result: %v", statErr)
+				payload, readErr := os.ReadFile(opts.metricResultPath)
+				if readErr != nil {
+					t.Fatalf("failed final reads discarded evidence: %v", readErr)
+				}
+				var partial metricobserver.Result
+				if err := json.Unmarshal(payload, &partial); err != nil {
+					t.Fatal(err)
+				}
+				if len(partial.Samples) == 0 || len(partial.Failures) == 0 {
+					t.Fatalf("partial evidence missing: %+v", partial)
 				}
 				return
 			}
@@ -189,6 +197,32 @@ func TestExecuteRejectsInvalidRunConfigBeforePublishingReady(t *testing.T) {
 	}
 }
 
+func TestExecuteRejectsByteCapacityBeforeReadinessAndSourceRead(t *testing.T) {
+	for _, memory := range []bool{false, true} {
+		directory := t.TempDir()
+		var reads atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reads.Add(1) }))
+		writeTestRunConfig(t, directory, server.URL)
+		opts := testOptions(directory)
+		if memory {
+			opts.memoryBudgetBytes = 1
+		} else {
+			opts.maxResultBytes = 1
+		}
+		err := execute(context.Background(), opts, server.Client(), time.Second, time.Millisecond)
+		server.Close()
+		if err == nil || !strings.Contains(err.Error(), "byte budget") {
+			t.Fatalf("capacity error=%v", err)
+		}
+		if reads.Load() != 0 {
+			t.Fatal("resource rejection performed a source read")
+		}
+		if _, err := os.Stat(opts.readyPath); !os.IsNotExist(err) {
+			t.Fatal("resource rejection published readiness")
+		}
+	}
+}
+
 func TestExecutePublishesReadyBeforeBoundedStartWait(t *testing.T) {
 	directory := t.TempDir()
 	writeTestRunConfig(t, directory, "http://127.0.0.1:1/metrics")
@@ -251,7 +285,7 @@ func testOptions(directory string) options {
 		readyPath: filepath.Join(directory, "observer-ready"), startPath: filepath.Join(directory, "measurement-start"),
 		endPath:          filepath.Join(directory, "measurement-end"),
 		metricResultPath: filepath.Join(directory, "metric-result.json"), startWaitTimeout: time.Second,
-		endWaitTimeout: time.Second, maxEvents: 100, runtimeFailedPath: filepath.Join(directory, "runtime-failed"),
+		endWaitTimeout: time.Second, memoryBudgetBytes: 48 << 20, runtimeFailedPath: filepath.Join(directory, "runtime-failed"),
 		maxResultBytes: 8 << 20,
 	}
 }

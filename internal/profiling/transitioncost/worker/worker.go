@@ -177,6 +177,7 @@ func combine(raw transitioncost.RawObservation, power metricobserver.Result) tra
 			RequestLatencySeconds: failure.RequestLatencySeconds,
 			Reason:                string(failure.Reason),
 			Message:               failure.Message,
+			MessageBytes:          failure.MessageBytes,
 		}
 	}
 	return raw

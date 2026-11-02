@@ -274,20 +274,12 @@ func setupTransitionCostController(
 	opts options,
 	shared *profilerControllerShared,
 ) error {
-	deadlineOverhead := time.Duration(opts.transitionObserverDeadlineOverheadSeconds) * time.Second
 	logicalStore := component.EvidenceStoreServiceName(opts.systemName)
 	err := transitioncontroller.SetupWithManager(mgr, transitioncontroller.SetupOptions{
 		Nodes: shared.nodes, Metrics: shared.power, ActuationPolicies: shared.actuationPolicies,
 		StoreBindings: shared.stores, Evidence: shared.evidence, EvidenceStore: logicalStore,
-		ObserverNodeName: opts.transitionObserverNodeName,
-		AttemptJob: transitioncontroller.AttemptJobOptions{
-			ObserverImage:          opts.transitionObserverImage,
-			ImagePullPolicy:        corev1.PullPolicy(opts.transitionObserverPullPolicy),
-			ServiceAccountName:     opts.transitionObserverServiceAccount,
-			ActiveDeadlineOverhead: deadlineOverhead,
-			CoordinationBytes:      opts.transitionMaximumObjectBytes,
-			WorkspaceBytes:         opts.transitionMaximumObjectBytes,
-		},
+		ObserverNodeName:          opts.transitionObserverNodeName,
+		AttemptJob:                transitionAttemptJobOptions(opts),
 		MaximumObjectBytes:        opts.transitionMaximumObjectBytes,
 		FailedJobRetentionSeconds: int32(opts.failedJobRetentionSeconds),
 	})
@@ -295,6 +287,17 @@ func setupTransitionCostController(
 		return fmt.Errorf("set up PowerModeTransitionCost controller: %w", err)
 	}
 	return nil
+}
+
+func transitionAttemptJobOptions(opts options) transitioncontroller.AttemptJobOptions {
+	return transitioncontroller.AttemptJobOptions{
+		ObserverImage:          opts.transitionObserverImage,
+		ImagePullPolicy:        corev1.PullPolicy(opts.transitionObserverPullPolicy),
+		ServiceAccountName:     opts.transitionObserverServiceAccount,
+		ActiveDeadlineOverhead: time.Duration(opts.transitionObserverDeadlineOverheadSeconds) * time.Second,
+		CoordinationBytes:      opts.transitionMaximumObjectBytes,
+		WorkspaceBytes:         opts.transitionMaximumObjectBytes,
+	}
 }
 
 type currentEvidenceStore struct {

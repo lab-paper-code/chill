@@ -46,7 +46,7 @@ func runLateTailSmoke(t *testing.T, binary string) {
 	directory := t.TempDir()
 	writeTestRunConfig(t, directory, server.URL)
 	opts := testOptions(directory)
-	opts.endWaitTimeout, opts.maxEvents = 2*time.Second, 103
+	opts.endWaitTimeout = 2 * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	completion := make(chan error, 1)
@@ -57,7 +57,7 @@ func runLateTailSmoke(t *testing.T, binary string) {
 			"--run-config="+opts.runConfig, "--ready-file="+opts.readyPath,
 			"--start-signal-file="+opts.startPath, "--end-signal-file="+opts.endPath,
 			"--runtime-failed-file="+opts.runtimeFailedPath, "--result-file="+opts.metricResultPath,
-			"--start-wait-timeout=1s", "--end-wait-timeout=2s", "--max-events=103", "--max-result-bytes=8388608")
+			"--start-wait-timeout=1s", "--end-wait-timeout=2s", "--memory-budget-bytes=50331648", "--max-result-bytes=8388608")
 		go func() {
 			output, err := command.CombinedOutput()
 			if err != nil {
@@ -101,10 +101,10 @@ func runLateTailSmoke(t *testing.T, binary string) {
 	if tail == 0 {
 		t.Fatal("nominal-window tail contains no real power samples")
 	}
-	if result.Summary.Attempts > opts.maxEvents || int64(len(payload)) > opts.maxResultBytes {
+	if int64(len(payload)) > opts.maxResultBytes {
 		t.Fatal("result exceeds projected capacity")
 	}
-	t.Logf("nominal=1s actual=%s tailSamples=%d final=%s events=%d/%d bytes=%d/%d",
+	t.Logf("nominal=1s actual=%s tailSamples=%d final=%s events=%d bytes=%d/%d",
 		ended.Sub(started), tail, result.Samples[len(result.Samples)-1].ObservedAt,
-		result.Summary.Attempts, opts.maxEvents, len(payload), opts.maxResultBytes)
+		result.Summary.Attempts, len(payload), opts.maxResultBytes)
 }

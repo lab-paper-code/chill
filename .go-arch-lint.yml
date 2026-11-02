@@ -271,6 +271,7 @@ deps:
   profiler-app:
     mayDependOn:
       - evidence-core
+      - metric-core
       - node-actuator-core
       - profiling-run
 

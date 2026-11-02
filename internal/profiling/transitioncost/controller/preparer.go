@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -324,21 +323,8 @@ func prepareObservation(
 }
 
 func preparePowerRequest(interval, timeout, duration time.Duration) (metricobserver.Request, error) {
-	events, err := retainedEventCount(duration, interval)
-	if err != nil {
-		return metricobserver.Request{}, err
-	}
-	return metricobserver.Request{
-		Interval: interval, Duration: duration, RequestTimeout: timeout, MaxEvents: events,
-	}, nil
-}
-
-func retainedEventCount(duration, interval time.Duration) (int, error) {
-	events := uint64(duration/interval) + 2
-	if events > uint64(math.MaxInt) {
-		return 0, errors.New("power observation event count overflows int")
-	}
-	return int(events), nil
+	request := metricobserver.Request{Interval: interval, Duration: duration, RequestTimeout: timeout}
+	return request, request.Validate()
 }
 
 func clean(value string) bool {

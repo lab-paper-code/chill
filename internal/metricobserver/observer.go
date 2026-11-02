@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -18,18 +19,20 @@ type Source interface {
 // Observer performs bounded polling against one source.
 type Observer struct {
 	source Source
+	limits Limits
 	now    func() time.Time
 }
 
 var errEventBudgetExceeded = errors.New("metric observation event budget exceeded")
 
 // New returns an Observer for source.
-func New(source Source) (*Observer, error) {
+func New(source Source, limits Limits) (*Observer, error) {
 	if source == nil {
 		return nil, errors.New("source is required")
 	}
 	return &Observer{
 		source: source,
+		limits: limits,
 		now: func() time.Time {
 			return time.Now().UTC()
 		},
@@ -47,12 +50,6 @@ func (r Request) Validate() error {
 		return errors.New("request timeout must be positive")
 	case r.RequestTimeout >= r.Interval:
 		return errors.New("request timeout must be shorter than interval")
-	case r.MaxEvents < 1:
-		return errors.New("maximum retained events must be positive")
-	case uint64(r.Duration/r.Interval)+2 > uint64(r.MaxEvents):
-		// One immediate read plus every possible ticker delivery, including a
-		// delivery racing the duration deadline, must fit before work starts.
-		return errors.New("maximum retained events cannot cover the observation window")
 	default:
 		return nil
 	}
@@ -71,8 +68,9 @@ func (o *Observer) Observe(
 	if onFirstSample == nil {
 		return Result{}, errors.New("first sample callback is required")
 	}
-	if err := request.Validate(); err != nil {
-		return Result{}, fmt.Errorf("validate observation request: %w", err)
+	capacity, err := RequiredCapacity(request, o.source.Identity(), o.limits, false)
+	if err != nil {
+		return Result{}, fmt.Errorf("admit observation request: %w", err)
 	}
 
 	observationCtx, cancel := context.WithTimeout(ctx, request.Duration)
@@ -80,7 +78,7 @@ func (o *Observer) Observe(
 	ticker := time.NewTicker(request.Interval)
 	defer ticker.Stop()
 
-	return o.observe(observationCtx, request.RequestTimeout, request.MaxEvents, ticker.C, onFirstSample)
+	return o.observe(observationCtx, request.RequestTimeout, capacity.Events, ticker.C, onFirstSample)
 }
 
 // ObserveUntil samples through the producer's end signal and then retries a real
@@ -95,20 +93,18 @@ func (o *Observer) ObserveUntil(
 	if end == nil || onFirstSample == nil {
 		return Result{}, errors.New("end signal and first sample callback are required")
 	}
-	if err := request.Validate(); err != nil {
-		return Result{}, fmt.Errorf("validate observation request: %w", err)
-	}
-	if uint64(request.Duration/request.Interval)+3 > uint64(request.MaxEvents) {
-		return Result{}, errors.New("maximum retained events cannot cover the final read")
+	capacity, err := RequiredCapacity(request, o.source.Identity(), o.limits, true)
+	if err != nil {
+		return Result{}, fmt.Errorf("admit observation request: %w", err)
 	}
 	observationCtx, cancel := context.WithTimeout(ctx, request.Duration)
 	defer cancel()
 	ticker := time.NewTicker(request.Interval)
 	defer ticker.Stop()
-	result := Result{Source: o.source.Identity(), StartedAt: o.now()}
+	result := o.start(capacity.Events)
 	reported := false
 	sample := func() error {
-		err := o.sample(observationCtx, request.RequestTimeout, request.MaxEvents, &result)
+		err := o.sample(observationCtx, request.RequestTimeout, capacity.Events, &result)
 		if !reported && len(result.Samples) > 0 {
 			reported = true
 			onFirstSample()
@@ -153,7 +149,7 @@ func (o *Observer) observe(
 	ticks <-chan time.Time,
 	onFirstSample func(),
 ) (Result, error) {
-	result := Result{Source: o.source.Identity(), StartedAt: o.now()}
+	result := o.start(maxEvents)
 	firstSampleReported := false
 	sample := func() error {
 		err := o.sample(ctx, requestTimeout, maxEvents, &result)
@@ -181,6 +177,13 @@ func (o *Observer) observe(
 	}
 }
 
+func (o *Observer) start(events int) Result {
+	// Each read can produce at most one sample and one failure. Allocate once;
+	// retaining a thermal failure must never steal the power sample's slot.
+	return Result{Source: o.source.Identity(), StartedAt: o.now(),
+		Samples: make([]Sample, 0, (events+1)/2), Failures: make([]Failure, 0, (events+1)/2)}
+}
+
 func (o *Observer) finish(result Result) Result {
 	result.EndedAt = o.now()
 	result.Summary = Summarize(result)
@@ -191,7 +194,8 @@ func (o *Observer) sample(ctx context.Context, timeout time.Duration, maxEvents 
 	if ctx.Err() != nil {
 		return nil
 	}
-	if len(result.Samples)+len(result.Failures) >= maxEvents {
+	if len(result.Samples)+len(result.Failures) >= maxEvents ||
+		len(result.Samples) >= cap(result.Samples) || len(result.Failures) >= cap(result.Failures) {
 		return errEventBudgetExceeded
 	}
 	started := o.now()
@@ -209,26 +213,34 @@ func (o *Observer) sample(ctx context.Context, timeout time.Duration, maxEvents 
 		if deadline, ok := ctx.Deadline(); ok && !observedAt.Before(deadline) {
 			return nil
 		}
-		result.Failures = append(result.Failures, Failure{
-			ObservedAt:            observedAt,
-			RequestLatencySeconds: latency.Seconds(),
-			Reason:                classify(err),
-			Message:               err.Error(),
-		})
-		return nil
+		failure, boundErr := boundedFailure(observedAt, latency, err)
+		result.Failures = append(result.Failures, failure)
+		return boundErr
 	}
 	var thermal *ThermalReading
 	if reading.ThermalError != nil {
 		if len(result.Samples)+len(result.Failures)+2 > maxEvents {
 			return errEventBudgetExceeded
 		}
-		result.Failures = append(result.Failures, Failure{
-			ObservedAt:            observedAt,
-			RequestLatencySeconds: latency.Seconds(),
-			Reason:                classify(reading.ThermalError),
-			Message:               reading.ThermalError.Error(),
-		})
+		failure, boundErr := boundedFailure(observedAt, latency, reading.ThermalError)
+		result.Failures = append(result.Failures, failure)
+		// Preserve power even when its auxiliary diagnostic exceeds the bound.
+		if boundErr != nil {
+			result.Samples = append(result.Samples, Sample{ObservedAt: observedAt,
+				Watts: reading.Watts, RequestLatencySeconds: latency.Seconds()})
+			return boundErr
+		}
 	} else {
+		if err := checkThermal(reading.Thermal, result.Source); err != nil {
+			failure, boundErr := boundedFailure(observedAt, latency, err)
+			result.Failures = append(result.Failures, failure)
+			result.Samples = append(result.Samples, Sample{ObservedAt: observedAt,
+				Watts: reading.Watts, RequestLatencySeconds: latency.Seconds()})
+			if boundErr != nil {
+				return boundErr
+			}
+			return err
+		}
 		thermal = cloneThermalReading(reading.Thermal)
 	}
 	result.Samples = append(result.Samples, Sample{
@@ -249,6 +261,10 @@ func cloneThermalReading(reading ThermalReading) *ThermalReading {
 	copy.Latched = clonePointer(reading.Latched)
 	copy.MaximumTemperatureCelsius = clonePointer(reading.MaximumTemperatureCelsius)
 	copy.Issues = append([]MetricIssue(nil), reading.Issues...)
+	for i := range copy.Issues {
+		copy.Issues[i].Metric = strings.Clone(copy.Issues[i].Metric)
+		copy.Issues[i].Message = strings.Clone(copy.Issues[i].Message)
+	}
 	return &copy
 }
 

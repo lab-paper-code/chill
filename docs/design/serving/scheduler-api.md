@@ -28,7 +28,7 @@ HTTPS ChillServer는 `--serving-scheduler-configmap=<name>`과
 | `staticRoutingValidatedAt` | 읽기 전용 선언 변경 출처. 설정 PUT이 아니라 배분 작업의 검증 시각과 연결한다. 실제 성공 여부는 작업의 ACK와 `actual.routing` readback으로 확인한다 |
 | wall meter | 구성 필드가 없다. Profiler facts `metricSources`(schema `v1alpha6`)의 항목마다 `{id: meterID, node: 그 이름의 live Node와 UID, scope: node-exclusive-wall, source: 전력 부분}`을 만든다. Node가 없는 항목은 meter가 없다 |
 | 전력 요청 | 별도 구성 필드 없음. DeviceClass의 비Fixed actuator·Profiler actuation policy가 요청 가능 모드를 정한다. 동작 시작에 Node mode label과 requested-at을 같은 optimistic patch로 쓰고 policy 기한 내 success·독립readback을 확인한다([현행 Node 전력 계약](../platform/node-agent.md#3-노드-전력모드-node-label과-generation)). NodeActuation은 제거됨 |
-| `powerObservation` | 기존 sampler의 `Interval/Duration/RequestTimeout/MaxEvents`와 적분 coverage의 `MaximumBoundaryDistance/MinimumCoverage/MaximumGap` |
+| `powerObservation` | sampler의 `Interval/Duration/RequestTimeout`와 적분 coverage의 `MaximumBoundaryDistance/MinimumCoverage/MaximumGap`. 기록 필요량은 observer가 도출하며 별도 기록 개수 설정은 없다 |
 
 profile 후보, profile ID별 `PrepareSpec`, 원자 동작 비용과 power mode 비용은 조건마다 최신
 완료 측정에서 도출하며 구성 필드가 없다. 측정 기록의 store key는

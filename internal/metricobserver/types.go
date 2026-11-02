@@ -40,9 +40,13 @@ type Request struct {
 	Interval       time.Duration
 	Duration       time.Duration
 	RequestTimeout time.Duration
-	// MaxEvents bounds the combined number of retained samples and failures.
-	// Job composition derives it from the frozen observation window.
-	MaxEvents int
+}
+
+// Limits is the existing worker byte envelope, supplied by the composition
+// root rather than stored as an experiment/sampling setting.
+type Limits struct {
+	MaxResultBytes    int64 `json:"maxResultBytes"`
+	MemoryBudgetBytes int64 `json:"memoryBudgetBytes"`
 }
 
 // Reading is one successfully parsed source response. Power is required by the
@@ -90,6 +94,9 @@ type Failure struct {
 	RequestLatencySeconds float64       `json:"requestLatencySeconds"`
 	Reason                FailureReason `json:"reason"`
 	Message               string        `json:"message"`
+	// MessageBytes records the original length when an oversized diagnostic
+	// explicitly fails observation; Message then contains its bounded prefix.
+	MessageBytes int `json:"messageBytes,omitempty"`
 }
 
 // Summary contains facts derived only from a Result's samples and failures.

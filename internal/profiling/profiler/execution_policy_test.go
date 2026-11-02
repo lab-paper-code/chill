@@ -1,11 +1,9 @@
 package profiler
 
 import (
-	"encoding/json"
 	"testing"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"sigs.k8s.io/yaml"
 )
@@ -21,9 +19,6 @@ func TestDeriveExecutionPlanBindsOneCoherentCPUORTEnvelope(t *testing.T) {
 	}
 	if plan.Policy != testConfiguredActivePolicy || plan.PolicyVersion != testConfiguredActivePolicy {
 		t.Fatalf("unexpected policy identity: %#v", plan)
-	}
-	if plan.MaxMetricEvents != 68 {
-		t.Fatalf("MaxMetricEvents = %d, want 68 (power plus possible thermal failure)", plan.MaxMetricEvents)
 	}
 	if plan.ActiveDeadline != 211*time.Second || plan.AttemptTimeout != 181*time.Second {
 		t.Fatalf("unexpected timing envelope: %#v", plan)
@@ -165,36 +160,25 @@ func TestCaptureWatchdogAlignsEventsResultAndOuterEnvelopes(t *testing.T) {
 	frozen.Policy.ObserverStartOverheadSeconds = 1160
 	frozen.Policy.AttemptTimeoutOverheadSeconds = 1235
 	frozen.Policy.ActiveDeadlineOverheadSeconds = 1265
+	// A representative success-only result fits, but worst-case diagnostics
+	// do not: refuse before starting, without shortening the schedule.
+	if _, err := DeriveExecutionPlan(config, frozen); err == nil {
+		t.Fatal("worst-case diagnostics were not included in admission")
+	}
+	// An explicitly selected larger envelope admits the identical schedule.
+	frozen.Policy.MaxMetricResultBytes = 16 << 20
+	frozen.Policy.ObserverMemoryLimitBytes = 128 << 20
 	plan, err := DeriveExecutionPlan(config, frozen)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.MetricObservationTimeout != 1762*time.Second || plan.MaxMetricEvents != 3530 ||
+	if plan.MetricObservationTimeout != 1762*time.Second ||
 		plan.AttemptTimeout != 2997*time.Second || plan.ActiveDeadline != 3027*time.Second ||
 		plan.MetricResultTimeout != 1192*time.Second {
 		t.Fatalf("misaligned capture envelope: %+v", plan)
 	}
-	// Serialized capacity evidence uses a representative fully typed sample at
-	// every admitted event. Source errors remain bounded by the result writer;
-	// this calculation is not a worst-case bound on arbitrary error strings/RSS.
-	available, active, latched := true, false, false
-	counter, temperature := uint64(1234), 80.5
-	start := time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC)
-	result := metricobserver.Result{Source: metricobserver.SourceIdentity{Kind: config.Metrics.SourceKind, Endpoint: config.Metrics.Endpoint, Metric: config.Metrics.PowerMetric}, StartedAt: start}
-	result.Samples = make([]metricobserver.Sample, plan.MaxMetricEvents)
-	for i := range result.Samples {
-		result.Samples[i] = metricobserver.Sample{ObservedAt: start.Add(time.Duration(i) * time.Second), Watts: 123.456, RequestLatencySeconds: .248723980,
-			Thermal: &metricobserver.ThermalReading{ObservationAvailable: &available, Active: &active, Latched: &latched, CPUCoreThrottleEvents: &counter, CPUPackageThrottleEvents: &counter, MaximumTemperatureCelsius: &temperature}}
+	if plan.MaxMetricResultBytes != frozen.Policy.MaxMetricResultBytes ||
+		plan.ObserverMemoryLimitBytes != frozen.Policy.ObserverMemoryLimitBytes {
+		t.Fatalf("resource limits were changed: %+v", plan)
 	}
-	result.EndedAt = result.Samples[len(result.Samples)-1].ObservedAt.Add(time.Millisecond)
-	result.Summary = metricobserver.Summarize(result)
-	payload, err := json.Marshal(result)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if int64(len(payload)) > plan.MaxMetricResultBytes {
-		t.Fatalf("representative %d-event result=%d exceeds %d", plan.MaxMetricEvents, len(payload), plan.MaxMetricResultBytes)
-	}
-	t.Logf("watchdog=%s events=%d/%d representativeJSON=%d/%d observerMemoryLimit=%d attempt=%s Job=%s",
-		plan.MetricObservationTimeout, plan.MaxMetricEvents, frozen.Policy.MaxMetricEvents, len(payload), plan.MaxMetricResultBytes, plan.ObserverMemoryLimitBytes, plan.AttemptTimeout, plan.ActiveDeadline)
 }

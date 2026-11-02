@@ -35,7 +35,6 @@ type ExecutionPolicySpec struct {
 	MaxInputBytes          int64 `json:"maxInputBytes"`
 	MaxRuntimeResultBytes  int64 `json:"maxRuntimeResultBytes"`
 	MaxMetricResultBytes   int64 `json:"maxMetricResultBytes"`
-	MaxMetricEvents        int   `json:"maxMetricEvents"`
 	MaxWorkloadEvents      int   `json:"maxWorkloadEvents"`
 	MaxWorkloadResultBytes int64 `json:"maxWorkloadResultBytes"`
 

@@ -261,7 +261,7 @@ func metricObserverContainer(
 			"--run-config=" + runConfig,
 			"--start-wait-timeout=" + plan.ObserverStartTimeout.String(),
 			"--end-wait-timeout=" + plan.MetricObservationTimeout.String(),
-			"--max-events=" + strconv.Itoa(plan.MaxMetricEvents),
+			"--memory-budget-bytes=" + strconv.FormatInt(plan.ObserverMemoryLimitBytes, 10),
 			"--max-result-bytes=" + strconv.FormatInt(plan.MaxMetricResultBytes, 10),
 		},
 		Resources: corev1.ResourceRequirements{

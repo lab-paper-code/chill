@@ -118,7 +118,7 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 		t.Fatalf("Evidence Store credentials were not projected by Secret reference: %#v", runtimeContainer.Env)
 	}
 	observer := findContainer(t, pod.Containers, "metric-observer")
-	assertArgument(t, observer.Args, "--max-events=68")
+	assertArgument(t, observer.Args, "--memory-budget-bytes=67108864")
 	assertArgument(t, observer.Args, "--end-wait-timeout=31s")
 	assertArgument(t, observer.Args, "--max-result-bytes=8388608")
 	workloads := findContainer(t, pod.Containers, "workload-observer")

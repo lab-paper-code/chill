@@ -75,4 +75,10 @@ Measurement Jobs cap runtime and artifact/preprocessor/dataset copy-init memory 
 ## Dependency rule
 Ownership: DeviceClass stable hardware; ModelSpec immutable artifact/path requirements; Kubernetes placement/allocation/lifecycle; Helm install identity/RBAC; CHILL frozen decisions/evidence/derivation. Pure leaves import no Kubernetes/CHILL API/controller-runtime; adapters depend inward. No generic ExecutionContract/plugin framework, compatibility status controller or implicit scheduler authorization.
 
+Profiler execution-plan admission depends inward on the plain MetricObserver
+core for schedule-derived retained/serialized byte requirements. The observer
+owns record accounting; Profiler supplies the selected existing result and
+container-memory limits. Kubernetes adapters only deliver that envelope.
+
+
 evaluation (`SCH-08`, `SCH-31`, `SCH-42`): normative binding and all consumers reject `tolerateArchive` anywhere, regardless of value; required capture is fail-closed. Only `hack/evaluation/demo.py` diagnostic `demo-e5-binding.v2` trials may tolerate explicitly named missing power archives, retaining missing provenance/null energy: **진단 전용, evaluation 금지**. Offline check: `python3 hack/evaluation/demo.py --self-check`.

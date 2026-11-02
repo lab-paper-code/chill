@@ -1032,7 +1032,7 @@ def self_check():
                     assert receipt == ({'appliedByReadback': True, 'settings': observed} if timed_out else {'validatedAt': 'fixture'})
                 expected_methods = ['PUT', 'GET'] if timed_out else ['PUT']
                 assert settings_calls == [(method, '/api/v1/scheduler/settings', max(30, seconds)) for method in expected_methods]
-        fixture_power = {'sampling': {'Interval': 750000000, 'Duration': 5000000000, 'RequestTimeout': 700000000, 'MaxEvents': 9}, 'coverage': {'MaximumGap': 3000000000, 'MaximumBoundaryDistance': 1000000000, 'MinimumCoverage': .75}}
+        fixture_power = {'sampling': {'Interval': 750000000, 'Duration': 5000000000, 'RequestTimeout': 700000000}, 'coverage': {'MaximumGap': 3000000000, 'MaximumBoundaryDistance': 1000000000, 'MinimumCoverage': .75}}
         config = {'endpoint': 'https://fixture.invalid', 'caFile': '/fixture/ca', 'timeboxes': {'apiSeconds': 1}}
         (harness_module.OPS / '.token-collector').write_text('offline-fixture')
         response = __import__('io').StringIO(json.dumps({'powerObservation': fixture_power}))

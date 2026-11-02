@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -30,6 +31,7 @@ type options struct {
 	tempDir                                    string
 	accessKeyID, secretAccessKey, sessionToken string
 	maxContractBytes                           int64
+	memoryLimitBytes                           int64
 	probeReadyFile                             bool
 }
 
@@ -55,6 +57,9 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	o.accessKeyID = os.Getenv("AWS_ACCESS_KEY_ID")
 	o.secretAccessKey = os.Getenv("AWS_SECRET_ACCESS_KEY")
 	o.sessionToken = os.Getenv("AWS_SESSION_TOKEN")
+	if limit, err := strconv.ParseInt(os.Getenv("CHILL_OBSERVER_MEMORY_LIMIT_BYTES"), 10, 64); err == nil {
+		o.memoryLimitBytes = limit
+	}
 }
 
 func (o options) validate() error {
@@ -69,6 +74,9 @@ func (o options) validate() error {
 	}
 	if o.maxContractBytes < 1 {
 		return errors.New("maximum contract bytes must be supplied by the Job")
+	}
+	if o.memoryLimitBytes <= 0 {
+		return errors.New("positive memory bytes must be supplied by the limits.memory downward API")
 	}
 	if err := validateAbsolutePath("termination message", o.terminationPath); err != nil {
 		return err
@@ -125,7 +133,12 @@ func buildComponents(opts options, attempt attemptContract) (components, error) 
 	if err != nil {
 		return components{}, err
 	}
-	power, err := metricobserver.New(source)
+	limits := attempt.limits
+	limits.MemoryBudgetBytes = opts.memoryLimitBytes
+	if _, err := metricobserver.RequiredCapacity(attempt.powerRequest, source.Identity(), limits, false); err != nil {
+		return components{}, fmt.Errorf("admit transition observation before readiness: %w", err)
+	}
+	power, err := metricobserver.New(source, limits)
 	if err != nil {
 		return components{}, err
 	}

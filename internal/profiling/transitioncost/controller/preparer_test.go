@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"errors"
-	"math"
 	"testing"
 	"time"
 
@@ -122,7 +121,7 @@ func TestPreparerFreezesTransitionMaterialAndObservationInputs(t *testing.T) {
 		prepared.FactObservationTimeout != 960*time.Second ||
 		prepared.PowerRequest != (metricobserver.Request{
 			Interval: 500 * time.Millisecond, RequestTimeout: 100 * time.Millisecond,
-			Duration: 960*time.Second + 500*time.Millisecond, MaxEvents: 1923,
+			Duration: 960*time.Second + 500*time.Millisecond,
 		}) {
 		t.Fatalf("prepared observation schedule = power:%+v poll:%v timeout:%v",
 			prepared.PowerRequest, prepared.FactPollInterval,
@@ -356,12 +355,6 @@ func TestPreparerStopsAtResolverFailure(t *testing.T) {
 	}
 	if metrics.calls != 1 || len(baselines.calls) != 1 {
 		t.Fatalf("resolver calls = metrics:%d baselines:%d", metrics.calls, len(baselines.calls))
-	}
-}
-
-func TestRetainedEventCountRejectsIntOverflow(t *testing.T) {
-	if _, err := retainedEventCount(time.Duration(math.MaxInt64), time.Nanosecond); err == nil {
-		t.Fatal("overflowing retained event count was accepted")
 	}
 }
 

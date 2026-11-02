@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +16,30 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
 	transitionworker "github.com/lab-paper-code/chill/internal/profiling/transitioncost/worker"
 )
+
+func TestOptionsUseDownwardMemoryInsteadOfNewConfiguration(t *testing.T) {
+	t.Setenv("CHILL_TRANSITION_ATTEMPT_JSON", "{}")
+	for _, value := range []string{"67108864", "", "0", "-1", "invalid", "9223372036854775808"} {
+		t.Setenv("CHILL_OBSERVER_MEMORY_LIMIT_BYTES", value)
+		opts := options{}
+		opts.bindFlags(flag.NewFlagSet("transition-observer", flag.ContinueOnError))
+		opts.maxContractBytes = 2
+		if err := opts.validate(); (err == nil) != (value == "67108864") {
+			t.Fatalf("downward memory %q validation=%v", value, err)
+		}
+	}
+}
+
+func TestBuildComponentsRejectsMemoryBeforeKubernetesAndSourceRead(t *testing.T) {
+	attempt, err := validAttemptWire().contract()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = buildComponents(options{memoryLimitBytes: 1}, attempt)
+	if err == nil || !strings.Contains(err.Error(), "memory byte budget") {
+		t.Fatalf("pre-read resource rejection=%v", err)
+	}
+}
 
 func TestExecuteLoadsBeforeBuildingExternalComponents(t *testing.T) {
 	buildCalls := 0

@@ -3,7 +3,6 @@ package metricobserver
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -11,13 +10,13 @@ import (
 )
 
 func TestNewRejectsNilSource(t *testing.T) {
-	if _, err := New(nil); err == nil {
+	if _, err := New(nil, testLimits()); err == nil {
 		t.Fatal("New() error = nil, want source validation error")
 	}
 }
 
 func TestNewUsesUTCReceiptTime(t *testing.T) {
-	observer, err := New(&fakeSource{})
+	observer, err := New(&fakeSource{}, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,19 +27,17 @@ func TestNewUsesUTCReceiptTime(t *testing.T) {
 
 func TestRequestValidate(t *testing.T) {
 	valid := Request{
-		Interval: time.Second, Duration: time.Minute, RequestTimeout: 500 * time.Millisecond, MaxEvents: 62,
+		Interval: time.Second, Duration: time.Minute, RequestTimeout: 500 * time.Millisecond,
 	}
 	tests := []struct {
 		name    string
 		request Request
 	}{
-		{name: "zero interval", request: Request{Duration: valid.Duration, RequestTimeout: valid.RequestTimeout, MaxEvents: valid.MaxEvents}},
-		{name: "zero duration", request: Request{Interval: valid.Interval, RequestTimeout: valid.RequestTimeout, MaxEvents: valid.MaxEvents}},
-		{name: "zero timeout", request: Request{Interval: valid.Interval, Duration: valid.Duration, MaxEvents: valid.MaxEvents}},
-		{name: "timeout equals interval", request: Request{Interval: valid.Interval, Duration: valid.Duration, RequestTimeout: valid.Interval, MaxEvents: valid.MaxEvents}},
-		{name: "timeout exceeds interval", request: Request{Interval: valid.Interval, Duration: valid.Duration, RequestTimeout: 2 * valid.Interval, MaxEvents: valid.MaxEvents}},
-		{name: "zero event budget", request: Request{Interval: valid.Interval, Duration: valid.Duration, RequestTimeout: valid.RequestTimeout}},
-		{name: "event budget cannot cover window", request: Request{Interval: valid.Interval, Duration: valid.Duration, RequestTimeout: valid.RequestTimeout, MaxEvents: 61}},
+		{name: "zero interval", request: Request{Duration: valid.Duration, RequestTimeout: valid.RequestTimeout}},
+		{name: "zero duration", request: Request{Interval: valid.Interval, RequestTimeout: valid.RequestTimeout}},
+		{name: "zero timeout", request: Request{Interval: valid.Interval, Duration: valid.Duration}},
+		{name: "timeout equals interval", request: Request{Interval: valid.Interval, Duration: valid.Duration, RequestTimeout: valid.Interval}},
+		{name: "timeout exceeds interval", request: Request{Interval: valid.Interval, Duration: valid.Duration, RequestTimeout: 2 * valid.Interval}},
 	}
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("valid request error = %v", err)
@@ -60,7 +57,7 @@ func TestObservePreservesImmediateAndRepeatedSamples(t *testing.T) {
 		{Watts: 4.2, Thermal: ThermalReading{ObservationAvailable: boolPointer(true), Active: &active}},
 		{Watts: 4.2, Thermal: ThermalReading{ObservationAvailable: boolPointer(true), Active: &active}},
 	}}
-	observer, err := New(source)
+	observer, err := New(source, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +75,7 @@ func TestObservePreservesImmediateAndRepeatedSamples(t *testing.T) {
 	close(ticks)
 
 	firstSamples := 0
-	result, err := observer.observe(context.Background(), time.Second, 2, ticks, func() {
+	result, err := observer.observe(context.Background(), time.Second, 4, ticks, func() {
 		firstSamples++
 	})
 	if err != nil {
@@ -113,7 +110,7 @@ func TestObserveReportsFirstSampleAfterFailedRead(t *testing.T) {
 		values: []Reading{{}, {Watts: 4.2}},
 		errs:   []error{errors.New("temporarily unavailable")},
 	}
-	observer, err := New(source)
+	observer, err := New(source, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +127,7 @@ func TestObserveReportsFirstSampleAfterFailedRead(t *testing.T) {
 	close(ticks)
 
 	firstSamples := 0
-	result, observeErr := observer.observe(context.Background(), time.Second, 2, ticks, func() {
+	result, observeErr := observer.observe(context.Background(), time.Second, 4, ticks, func() {
 		firstSamples++
 	})
 	if observeErr != nil {
@@ -145,13 +142,13 @@ func TestObserveReportsFirstSampleAfterFailedRead(t *testing.T) {
 func TestObserveRetainsSampleWhenFirstSampleCallbackCancels(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	source := &fakeSource{values: []Reading{{Watts: 4.2}}}
-	observer, err := New(source)
+	observer, err := New(source, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	result, observeErr := observer.Observe(ctx, Request{
-		Interval: time.Second, Duration: time.Minute, RequestTimeout: 500 * time.Millisecond, MaxEvents: 62,
+		Interval: time.Second, Duration: time.Minute, RequestTimeout: 500 * time.Millisecond,
 	}, cancel)
 	if observeErr != nil {
 		t.Fatal(observeErr)
@@ -163,13 +160,13 @@ func TestObserveRetainsSampleWhenFirstSampleCallbackCancels(t *testing.T) {
 
 func TestObserveRejectsNilFirstSampleCallbackBeforeSourceRead(t *testing.T) {
 	source := &fakeSource{values: []Reading{{Watts: 4.2}}}
-	observer, err := New(source)
+	observer, err := New(source, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	_, observeErr := observer.Observe(context.Background(), Request{
-		Interval: time.Second, Duration: 2 * time.Second, RequestTimeout: 500 * time.Millisecond, MaxEvents: 4,
+		Interval: time.Second, Duration: 2 * time.Second, RequestTimeout: 500 * time.Millisecond,
 	}, nil)
 	if observeErr == nil || !strings.Contains(observeErr.Error(), "first sample callback") {
 		t.Fatalf("Observe() error = %v, want callback validation error", observeErr)
@@ -179,16 +176,16 @@ func TestObserveRejectsNilFirstSampleCallbackBeforeSourceRead(t *testing.T) {
 	}
 }
 
-func TestObserveRejectsInsufficientEventCapacityBeforeSourceRead(t *testing.T) {
+func TestObserveRejectsInsufficientResultCapacityBeforeSourceRead(t *testing.T) {
 	source := &fakeSource{values: []Reading{{Watts: 4.2}}}
-	observer, err := New(source)
+	observer, err := New(source, Limits{MaxResultBytes: 1, MemoryBudgetBytes: testLimits().MemoryBudgetBytes})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = observer.Observe(context.Background(), Request{
-		Interval: time.Second, Duration: time.Minute, RequestTimeout: 500 * time.Millisecond, MaxEvents: 61,
+		Interval: time.Second, Duration: time.Minute, RequestTimeout: 500 * time.Millisecond,
 	}, func() {})
-	if err == nil || !strings.Contains(err.Error(), "cannot cover") {
+	if err == nil || !strings.Contains(err.Error(), "result byte budget") {
 		t.Fatalf("Observe() error = %v, want preflight capacity rejection", err)
 	}
 	if source.reads != 0 {
@@ -210,7 +207,7 @@ func TestObserveClassifiesSourceFailures(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			source := &fakeSource{errs: []error{test.err}}
-			observer, err := New(source)
+			observer, err := New(source, testLimits())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -234,12 +231,12 @@ func TestObserveDoesNotTurnCancellationIntoSourceFailure(t *testing.T) {
 		cancel()
 		return Reading{}, context.Canceled
 	}}
-	observer, err := New(source)
+	observer, err := New(source, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
 	result, err := observer.Observe(ctx, Request{
-		Interval: time.Second, Duration: time.Minute, RequestTimeout: 500 * time.Millisecond, MaxEvents: 62,
+		Interval: time.Second, Duration: time.Minute, RequestTimeout: 500 * time.Millisecond,
 	}, func() {})
 	if err != nil {
 		t.Fatal(err)
@@ -251,7 +248,7 @@ func TestObserveDoesNotTurnCancellationIntoSourceFailure(t *testing.T) {
 
 func TestObserveEnforcesProducerEventCap(t *testing.T) {
 	source := &fakeSource{values: []Reading{{Watts: 1}, {Watts: 2}}}
-	observer, err := New(source)
+	observer, err := New(source, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,37 +268,38 @@ func TestObserveEnforcesProducerEventCap(t *testing.T) {
 	}
 }
 
-func TestObserveThermalFailureRetainsPowerWithinEventCap(t *testing.T) {
-	for _, maxEvents := range []int{1, 2, 4} {
-		t.Run(fmt.Sprintf("capacity %d", maxEvents), func(t *testing.T) {
-			source := &fakeSource{read: func(context.Context) (Reading, error) {
-				return Reading{Watts: 5.2, ThermalError: context.DeadlineExceeded}, nil
-			}}
-			observer, err := New(source)
-			if err != nil {
-				t.Fatal(err)
-			}
-			ticks := make(chan time.Time, 1)
-			ticks <- time.Now()
-			close(ticks)
-			callbacks := 0
-			result, err := observer.observe(context.Background(), time.Second, maxEvents, ticks, func() { callbacks++ })
-			if (err == nil) != (maxEvents == 4) || (err != nil && !errors.Is(err, errEventBudgetExceeded)) {
-				t.Fatalf("event cap error=%v capacity=%d", err, maxEvents)
-			}
-			if len(result.Samples) != maxEvents/2 || len(result.Failures) != maxEvents/2 ||
-				result.Summary.Attempts > maxEvents || (callbacks == 1) != (maxEvents >= 2) {
-				t.Fatalf("callbacks=%d result=%+v", callbacks, result)
-			}
-			for i, sample := range result.Samples {
-				if sample.Watts != 5.2 || sample.Thermal != nil || result.Failures[i].Reason != FailureReasonTimeout {
-					t.Fatalf("sample=%+v failure=%+v", sample, result.Failures[i])
-				}
-			}
-			if err := result.Validate(); err != nil {
-				t.Fatal(err)
-			}
-		})
+func TestObserveThermalFailurePreservesCompleteWindow(t *testing.T) {
+	source := &fakeSource{read: func(context.Context) (Reading, error) {
+		return Reading{Watts: 5.2, ThermalError: context.DeadlineExceeded}, nil
+	}}
+	observer, err := New(source, testLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := Request{Interval: 20 * time.Millisecond, Duration: 200 * time.Millisecond,
+		RequestTimeout: time.Millisecond}
+	capacity, err := RequiredCapacity(request, source.Identity(), testLimits(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callbacks := 0
+	result, err := observer.Observe(context.Background(), request, func() { callbacks++ })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.EndedAt.Sub(result.StartedAt) < request.Duration ||
+		len(result.Samples) < int(request.Duration/request.Interval) ||
+		len(result.Samples) != len(result.Failures) ||
+		result.Summary.Attempts > capacity.Events || callbacks != 1 {
+		t.Fatalf("incomplete thermal-failure window: capacity=%+v result=%+v callbacks=%d", capacity, result, callbacks)
+	}
+	for i, sample := range result.Samples {
+		if sample.Watts != 5.2 || sample.Thermal != nil || result.Failures[i].Reason != FailureReasonTimeout {
+			t.Fatalf("sample=%+v failure=%+v", sample, result.Failures[i])
+		}
+	}
+	if err := result.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }
 

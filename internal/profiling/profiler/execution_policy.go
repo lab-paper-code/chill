@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
@@ -28,7 +29,6 @@ type ExecutionPlan struct {
 	MaxInputBytes          int64
 	MaxRuntimeResultBytes  int64
 	MaxMetricResultBytes   int64
-	MaxMetricEvents        int
 	MaxWorkloadEvents      int
 	MaxWorkloadResultBytes int64
 
@@ -67,11 +67,27 @@ func DeriveExecutionPlan(
 	metricDuration := time.Duration(config.Metrics.DurationSeconds) * time.Second
 	settlingDuration := time.Duration(config.Measurement.SettlingDurationSeconds) * time.Second
 	interval := time.Duration(config.Metrics.IntervalMilliseconds) * time.Millisecond
-	// Each tick can retain power plus a thermal failure; the final read shares
-	// the watchdog cadence, with one extra immediate attempt after producer end.
-	maxEvents64 := 2 * (int64(metricDuration/interval) + 3)
-	if maxEvents64 < 1 || maxEvents64 > int64(policy.MaxMetricEvents) || maxEvents64 > int64(^uint(0)>>1) {
-		return ExecutionPlan{}, errors.New("metric observation schedule exceeds worker event capacity")
+	metrics := config.Metrics
+	thermal := metricobserver.ThermalMetricIdentity{
+		ObservationAvailable: metrics.ThermalMetrics.ObservationAvailable,
+		Active:               metrics.ThermalMetrics.Active, Latched: metrics.ThermalMetrics.Latched,
+		CPUCoreThrottleEvents:     metrics.ThermalMetrics.CPUCoreThrottleEvents,
+		CPUPackageThrottleEvents:  metrics.ThermalMetrics.CPUPackageThrottleEvents,
+		MaximumTemperatureCelsius: metrics.ThermalMetrics.MaximumTemperatureCelsius,
+	}
+	_, err := metricobserver.RequiredCapacity(metricobserver.Request{
+		Duration: metricDuration, Interval: interval,
+		RequestTimeout: time.Duration(metrics.TimeoutMilliseconds) * time.Millisecond,
+	}, metricobserver.SourceIdentity{
+		Kind: metrics.SourceKind, Endpoint: metrics.Endpoint, Metric: metrics.PowerMetric,
+		NodeName: metrics.NodeName, MetricLabels: metrics.MetricLabels,
+		ThermalEndpoint: metrics.ThermalEndpoint, ThermalMetrics: &thermal,
+	}, metricobserver.Limits{
+		MaxResultBytes:    policy.MaxMetricResultBytes,
+		MemoryBudgetBytes: policy.ObserverMemoryLimitBytes,
+	}, true)
+	if err != nil {
+		return ExecutionPlan{}, fmt.Errorf("admit metric observation: %w", err)
 	}
 
 	plan := ExecutionPlan{
@@ -95,7 +111,6 @@ func DeriveExecutionPlan(
 		MaxInputBytes:          policy.MaxInputBytes,
 		MaxRuntimeResultBytes:  policy.MaxRuntimeResultBytes,
 		MaxMetricResultBytes:   policy.MaxMetricResultBytes,
-		MaxMetricEvents:        int(maxEvents64),
 		MaxWorkloadEvents:      policy.MaxWorkloadEvents,
 		MaxWorkloadResultBytes: policy.MaxWorkloadResultBytes,
 

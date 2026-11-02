@@ -380,7 +380,7 @@ func sendPowerAttempt(
 func validPowerRequest() metricobserver.Request {
 	return metricobserver.Request{
 		Interval: time.Second, Duration: time.Minute,
-		RequestTimeout: 500 * time.Millisecond, MaxEvents: 62,
+		RequestTimeout: 500 * time.Millisecond,
 	}
 }
 

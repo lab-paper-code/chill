@@ -21,6 +21,7 @@ type attemptContract struct {
 	powerRequest metricobserver.Request
 	facts        transitionkube.Request
 	rawLocation  evidencestore.ObjectLocation
+	limits       metricobserver.Limits
 }
 
 type attemptWire struct {
@@ -29,6 +30,7 @@ type attemptWire struct {
 	PowerObservation powerObservationWire         `json:"powerObservation"`
 	TransitionFacts  transitionFactsWire          `json:"transitionFacts"`
 	RawLocation      evidencestore.ObjectLocation `json:"rawLocation"`
+	MaxResultBytes   int64                        `json:"maxResultBytes"`
 }
 
 type powerSourceWire struct {
@@ -42,7 +44,6 @@ type powerObservationWire struct {
 	IntervalMilliseconds       milliseconds `json:"intervalMilliseconds"`
 	DurationMilliseconds       milliseconds `json:"durationMilliseconds"`
 	RequestTimeoutMilliseconds milliseconds `json:"requestTimeoutMilliseconds"`
-	MaxEvents                  int          `json:"maxEvents"`
 }
 
 type transitionFactsWire struct {
@@ -106,7 +107,6 @@ func (w attemptWire) contract() (attemptContract, error) {
 		Interval:       time.Duration(w.PowerObservation.IntervalMilliseconds),
 		Duration:       time.Duration(w.PowerObservation.DurationMilliseconds),
 		RequestTimeout: time.Duration(w.PowerObservation.RequestTimeoutMilliseconds),
-		MaxEvents:      w.PowerObservation.MaxEvents,
 	}
 	if err := powerRequest.Validate(); err != nil {
 		return attemptContract{}, fmt.Errorf("validate power observation schedule: %w", err)
@@ -137,5 +137,6 @@ func (w attemptWire) contract() (attemptContract, error) {
 			Settling:           time.Duration(w.TransitionFacts.SettlingMilliseconds),
 		},
 		rawLocation: w.RawLocation,
+		limits:      metricobserver.Limits{MaxResultBytes: w.MaxResultBytes},
 	}, nil
 }

@@ -9,7 +9,7 @@ import (
 func TestOptionsValidateRequiredBindings(t *testing.T) {
 	valid := options{
 		runConfig:        `{}`,
-		startWaitTimeout: time.Minute, endWaitTimeout: time.Minute, maxEvents: 100,
+		startWaitTimeout: time.Minute, endWaitTimeout: time.Minute, memoryBudgetBytes: 48 << 20,
 		maxResultBytes: 8 << 20,
 	}
 	if err := valid.validate(); err != nil {
@@ -25,14 +25,14 @@ func TestOptionsValidateRequiredBindings(t *testing.T) {
 		t.Fatalf("expected missing end wait timeout rejection, got %v", err)
 	}
 	valid.endWaitTimeout = time.Minute
-	valid.maxEvents = 0
+	valid.memoryBudgetBytes = 0
 	if err := valid.validate(); err == nil || !strings.Contains(err.Error(), "supplied by the Job") {
-		t.Fatalf("expected missing event budget rejection, got %v", err)
+		t.Fatalf("expected missing memory budget rejection, got %v", err)
 	}
 }
 
 func TestOptionsRequireFrozenResultCapacity(t *testing.T) {
-	opts := options{runConfig: `{}`, startWaitTimeout: time.Second, endWaitTimeout: time.Second, maxEvents: 100}
+	opts := options{runConfig: `{}`, startWaitTimeout: time.Second, endWaitTimeout: time.Second, memoryBudgetBytes: 48 << 20}
 	if err := opts.validate(); err == nil || !strings.Contains(err.Error(), "maximum result bytes") {
 		t.Fatalf("missing result capacity accepted: %v", err)
 	}

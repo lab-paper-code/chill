@@ -160,7 +160,6 @@ profiling:
     maxInputBytes: 67108864
     maxRuntimeResultBytes: 33554432
     maxMetricResultBytes: 8388608
-    maxMetricEvents: 50000
     maxWorkloadEvents: 10000
     maxWorkloadResultBytes: 8388608
     runtimeMemoryRequestBytes: 134217728

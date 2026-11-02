@@ -14,6 +14,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/transitioncost"
 	transitioncontroller "github.com/lab-paper-code/chill/internal/profiling/transitioncost/controller"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -95,7 +96,7 @@ func TestAttemptJobInlineContractLoadsThroughCurrentConsumer(t *testing.T) {
 		},
 		PowerRequest: metricobserver.Request{
 			Interval: 100 * time.Millisecond, Duration: 65 * time.Second,
-			RequestTimeout: 50 * time.Millisecond, MaxEvents: 652,
+			RequestTimeout: 50 * time.Millisecond,
 		},
 		FactPollInterval: 50 * time.Millisecond, FactObservationTimeout: 64 * time.Second,
 		Directions: directions,
@@ -114,7 +115,11 @@ func TestAttemptJobInlineContractLoadsThroughCurrentConsumer(t *testing.T) {
 			ObserverImage: "registry/transition-observer@sha256:fixture", ImagePullPolicy: corev1.PullIfNotPresent,
 			ServiceAccountName:     "transition-observer",
 			ActiveDeadlineOverhead: time.Second,
-			CoordinationBytes:      1024, WorkspaceBytes: 4096,
+			CoordinationBytes:      1024, WorkspaceBytes: 8 << 20,
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("16Mi")},
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Mi")},
+			},
 		},
 		scheme,
 	)
@@ -144,14 +149,15 @@ func TestAttemptJobInlineContractLoadsThroughCurrentConsumer(t *testing.T) {
 
 func validAttemptWire() attemptWire {
 	return attemptWire{
-		SchemaVersion: attemptSchemaVersion,
+		SchemaVersion:  attemptSchemaVersion,
+		MaxResultBytes: 8 << 20,
 		PowerSource: powerSourceWire{
 			Kind: "edge-metrics", Endpoint: "http://metrics/prometheus", Metric: "power_watts",
 			MetricLabels: map[string]string{"device": "target"},
 		},
 		PowerObservation: powerObservationWire{
 			IntervalMilliseconds: 100, DurationMilliseconds: 5000,
-			RequestTimeoutMilliseconds: 50, MaxEvents: 52,
+			RequestTimeoutMilliseconds: 50,
 		},
 		TransitionFacts: transitionFactsWire{
 			Namespace: "measure", SourcePowerMode: "low", TargetPowerMode: "high",

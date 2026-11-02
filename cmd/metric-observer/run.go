@@ -58,9 +58,18 @@ func execute(
 	if err != nil {
 		return fmt.Errorf("construct metric source from RunConfig: %w", err)
 	}
-	observer, err := metricobserver.New(source)
+	limits := metricobserver.Limits{MaxResultBytes: opts.maxResultBytes, MemoryBudgetBytes: opts.memoryBudgetBytes}
+	observer, err := metricobserver.New(source, limits)
 	if err != nil {
 		return err
+	}
+	request := metricobserver.Request{
+		Interval:       time.Duration(metrics.IntervalMilliseconds) * time.Millisecond,
+		Duration:       opts.endWaitTimeout,
+		RequestTimeout: time.Duration(metrics.TimeoutMilliseconds) * time.Millisecond,
+	}
+	if _, err := metricobserver.RequiredCapacity(request, source.Identity(), limits, true); err != nil {
+		return fmt.Errorf("admit metric observation before readiness: %w", err)
 	}
 	if err := worker.PublishSignal(opts.readyPath); err != nil {
 		return fmt.Errorf("publish observer-ready: %w", err)
@@ -82,23 +91,22 @@ func execute(
 			cancelObservation()
 		}
 	}()
-	result, err := observer.ObserveUntil(observationCtx, metricobserver.Request{
-		Interval:       time.Duration(metrics.IntervalMilliseconds) * time.Millisecond,
-		Duration:       opts.endWaitTimeout,
-		RequestTimeout: time.Duration(metrics.TimeoutMilliseconds) * time.Millisecond,
-		MaxEvents:      opts.maxEvents,
-	}, end, func() {})
+	result, err := observer.ObserveUntil(observationCtx, request, end, func() {})
+	// Publish partial evidence before returning any runtime failure. A failed
+	// observer never signals successful completion to the coordinator.
+	if !result.StartedAt.IsZero() {
+		if publishErr := worker.PublishMetricResult(opts.metricResultPath, opts.maxResultBytes, result); publishErr != nil {
+			err = errors.Join(err, publishErr)
+		}
+	}
 	if cause := context.Cause(ctx); cause != nil {
-		return fmt.Errorf("metric observation interrupted: %w", cause)
+		return fmt.Errorf("metric observation interrupted: %w", errors.Join(cause, err))
 	}
 	cancelObservation()
 	if endErr := <-endResult; endErr != nil {
-		return fmt.Errorf("wait for measurement-end: %w", endErr)
+		return fmt.Errorf("wait for measurement-end: %w", errors.Join(endErr, err))
 	}
 	if err != nil {
-		return err
-	}
-	if err := worker.PublishMetricResult(opts.metricResultPath, opts.maxResultBytes, result); err != nil {
 		return err
 	}
 	thermal := summarizeThermal(result)

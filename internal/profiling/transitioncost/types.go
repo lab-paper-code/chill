@@ -135,6 +135,7 @@ type PowerReadFailure struct {
 	RequestLatencySeconds float64   `json:"requestLatencySeconds"`
 	Reason                string    `json:"reason"`
 	Message               string    `json:"message"`
+	MessageBytes          int       `json:"messageBytes,omitempty"`
 }
 
 // ProcessIdentity is the exact serving process/container incarnation.
