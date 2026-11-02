@@ -45,7 +45,8 @@ CLASSES = [
     ("jetson-xavier-nx-8g", "arm64", "CUDA_L4T_R35_IMAGE", ("jetsonx",), [VIDEO_GID]),
     ("jetson-orin-nano-8g", "arm64", "CUDA_L4T_R36_IMAGE", ("orin-nano",), [VIDEO_GID]),
     ("lattepanda-3-delta-8g", "amd64", None, (), []),
-    ("edge-server-rtx-2080-ti-64g", "amd64", "CUDA_AMD64_IMAGE", ("genesis2", "genesis3"), []),
+    # genesis2 GPU allocatable is 0 (gpu-feature-discovery CrashLoop); restore after recovery.
+    ("edge-server-rtx-2080-ti-64g", "amd64", "CUDA_AMD64_IMAGE", ("genesis3",), []),
 ]
 RKNN_CLASS, RKNN_NODE = "orangepi-5-plus-16g", "orangepi"
 # The RKNN host boundary is the Orange Pi installation; the probe reads the
