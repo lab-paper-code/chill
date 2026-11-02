@@ -570,6 +570,7 @@ class Harness:
             if isinstance(error,(FileNotFoundError,KeyError)): reason='MissingInput'
             elif isinstance(error,json.JSONDecodeError): reason='FrozenInputInvalid'
             save(self.root/(step+'-error.json'),{'at':now(),'reason':reason,'error':str(error)})
+            print(step+' failed: '+reason+': '+str(error),flush=True)
         try:
             for path in sorted(self.root.rglob('*')):
                 if not path.is_file() or path.is_symlink() or not path.stat().st_size or 'results' in path.relative_to(self.root).parts: continue

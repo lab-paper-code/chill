@@ -32,5 +32,7 @@ COPY docs/spec/README.md docs/spec/README.md
 COPY docs/design/serving/workload-pools.md docs/design/serving/workload-pools.md
 COPY --from=builder /out/ bin/
 RUN pip install --no-cache-dir ./load-generator && python3 -c 'import hashlib,json,pathlib; p=pathlib.Path("/opt/e5/bin/observation-power-source-d39c9576"); p.with_suffix(".receipt.json").write_text(json.dumps({"sourceSHA":"d39c9576f5b2f4ee6a48034e6b95eba28e43cd4e","executable":str(p),"sha256":hashlib.sha256(p.read_bytes()).hexdigest(),"buildExitCode":0,"buildArgv":["go","build","./hack/observations/power"]}))'
+# ssh refuses to run for a uid without a passwd entry (producer cgroup sampler).
+RUN groupadd -g 65532 evaluation && useradd -u 65532 -g 65532 -d /tmp -M -s /usr/sbin/nologin evaluation
 USER 65532:65532
 ENTRYPOINT ["python3", "/opt/e5/hack/e5/evaluation.py"]

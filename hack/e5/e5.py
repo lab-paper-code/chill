@@ -1808,7 +1808,7 @@ class CPO:
             if h['node'] != E5['producerNode']: continue
             argv=[sys.executable,'-u','-'] if h.get('local') else h['ssh']
             if not h.get('local') and argv[-3:] != ['python3','-u','-']: raise RuntimeError('Verified existing producer SSH python sampler argv required')
-            output=(folder/(h['node']+'-cgroup.jsonl')).open('w'); error=open(os.devnull,'w')
+            output=(folder/(h['node']+'-cgroup.jsonl')).open('w'); error=(folder/(h['node']+'-cgroup.stderr')).open('w')
             current=[{'id':status.get('containerID','').split('://')[-1],
                       'metadata':{'name':status['name'],'attempt':status.get('restartCount')},
                       'labels':{'io.kubernetes.pod.namespace':pod['metadata']['namespace'],
