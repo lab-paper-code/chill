@@ -38,19 +38,21 @@ type ModelCompatibilityReason struct {
 }
 
 type ModelCompatibilitySnapshot struct {
-	ReadAt    time.Time
-	Selection ModelCompatibilitySelection
-	Inputs    ModelCompatibilityInputs
-	Verdict   string
-	Reasons   []ModelCompatibilityReason
+	ReadAt      time.Time
+	Selection   ModelCompatibilitySelection
+	Inputs      ModelCompatibilityInputs
+	Verdict     string
+	Reasons     []ModelCompatibilityReason
+	Diagnostics []string
 }
 
 type ModelCompatibilityView struct {
-	ReadAt    string                      `json:"readAt"`
-	Selection ModelCompatibilitySelection `json:"selection"`
-	Inputs    ModelCompatibilityInputs    `json:"inputs"`
-	Verdict   string                      `json:"verdict"`
-	Reasons   []ModelCompatibilityReason  `json:"reasons"`
+	ReadAt      string                      `json:"readAt"`
+	Selection   ModelCompatibilitySelection `json:"selection"`
+	Inputs      ModelCompatibilityInputs    `json:"inputs"`
+	Verdict     string                      `json:"verdict"`
+	Reasons     []ModelCompatibilityReason  `json:"reasons"`
+	Diagnostics []string                    `json:"diagnostics"`
 }
 
 type ModelCompatibilityMatrixView struct {
@@ -65,8 +67,12 @@ func BuildModelCompatibility(snapshot ModelCompatibilitySnapshot) ModelCompatibi
 	if reasons == nil {
 		reasons = []ModelCompatibilityReason{}
 	}
+	diagnostics := snapshot.Diagnostics
+	if diagnostics == nil {
+		diagnostics = []string{}
+	}
 	return ModelCompatibilityView{
 		ReadAt: snapshot.ReadAt.UTC().Format(time.RFC3339Nano), Selection: snapshot.Selection,
-		Inputs: snapshot.Inputs, Verdict: snapshot.Verdict, Reasons: reasons,
+		Inputs: snapshot.Inputs, Verdict: snapshot.Verdict, Reasons: reasons, Diagnostics: diagnostics,
 	}
 }

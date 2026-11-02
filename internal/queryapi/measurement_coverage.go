@@ -85,9 +85,10 @@ type MeasurementCoverageVariant struct {
 	MeasuredAt    time.Time                `json:"measuredAt"`
 }
 type MeasurementSupport struct {
-	Verdict string                     `json:"verdict"`
-	Node    *MeasurementIdentity       `json:"node"`
-	Reasons []ModelCompatibilityReason `json:"reasons"`
+	Verdict     string                     `json:"verdict"`
+	Node        *MeasurementIdentity       `json:"node"`
+	Reasons     []ModelCompatibilityReason `json:"reasons"`
+	Diagnostics []string                   `json:"diagnostics"`
 }
 type MeasurementRepresentative struct {
 	VariantID                string   `json:"variantId"`

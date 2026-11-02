@@ -26,11 +26,12 @@ func TestCoverageCellCurrentFailureNeverFallsBackToOldSuccess(t *testing.T) {
 				History: []MeasurementHistory{{RequestID: "old"}, {RequestID: "current"}},
 				Variants: []MeasurementCoverageVariant{
 					{
-						ID: "old", Condition: map[string]any{"runtimeImage": "old"},
+						ID: "old-condition", RequestIDs: []string{"old"}, Condition: map[string]any{"runtimeImage": "old"},
 						Assessment: AssessMeasurement(MeasurementAssessmentInput{Accepted: true, Available: true}),
 					},
 					{
-						ID: "current", Condition: map[string]any{"runtimeImage": "recorded"},
+						ID: "current-condition", RequestIDs: []string{"current"},
+						Condition:  map[string]any{"runtimeImage": "recorded"},
 						Assessment: AssessMeasurement(test.input),
 					},
 				},
@@ -38,7 +39,7 @@ func TestCoverageCellCurrentFailureNeverFallsBackToOldSuccess(t *testing.T) {
 			before, _ := json.Marshal(cell)
 			got := AssessMeasurementCoverageCell(cell, &profilederivation.MeasurementSelection{ID: "current"}, true)
 			if got.Assessment.DisplayStatus != test.want || got.VariantCount != 1 ||
-				got.Variants[0].ID != "current" || len(got.History) != 2 ||
+				got.Variants[0].ID != "current-condition" || len(got.History) != 2 ||
 				got.CurrentMeasurement == nil || got.CurrentMeasurement.ID != "current" {
 				t.Fatalf("current problem hidden by old success: %+v", got)
 			}
@@ -54,7 +55,8 @@ func TestCoverageCellCurrentRepresentativeAndSupport(t *testing.T) {
 	cell := MeasurementCoverageCell{
 		Support: MeasurementSupport{Verdict: MeasurementSupportUnknown},
 		Variants: []MeasurementCoverageVariant{{
-			ID: "current", Assessment: AssessMeasurement(MeasurementAssessmentInput{Accepted: true, Available: true}),
+			ID: "condition", RequestIDs: []string{"current"},
+			Assessment:    AssessMeasurement(MeasurementAssessmentInput{Accepted: true, Available: true}),
 			BatchProgress: MeasurementBatchProgress{Target: []int{1}, Measured: []int{1}},
 			ResultRows:    []ResultRow{{RowKind: ResultRowSourceReference, Batch: 8}, {Batch: 1}},
 		}},
@@ -79,11 +81,15 @@ func TestCoverageCellCurrentRepresentativeAndSupport(t *testing.T) {
 }
 
 func TestCoverageCurrentMeasurementSurvivesSummaryProjection(t *testing.T) {
+	diagnostic := "Last entry selected."
 	selected := &profilederivation.MeasurementSelection{
 		ID: "ns/latest/uid", Model: "model", DeviceClass: "class", ExecutionPath: "cpu", PowerMode: "fixed",
 	}
 	payload := MeasurementCoverageResponse{Cells: []MeasurementCoverageCell{
-		{ID: "current", CurrentMeasurement: selected},
+		{
+			ID: "current", CurrentMeasurement: selected,
+			Support: MeasurementSupport{Verdict: MeasurementSupportCompatible, Diagnostics: []string{diagnostic}},
+		},
 		{ID: "empty"},
 	}}
 	raw, err := json.Marshal(payload)
@@ -97,5 +103,24 @@ func TestCoverageCurrentMeasurementSurvivesSummaryProjection(t *testing.T) {
 		current["measuredAt"] != "0001-01-01T00:00:00Z" ||
 		cells[1].(map[string]any)["currentMeasurement"] != nil {
 		t.Fatal("current measurement identity, time or null changed in summary")
+	}
+	support := cells[0].(map[string]any)["support"].(map[string]any)
+	if support["diagnostics"].([]any)[0] != diagnostic || support["verdict"] != MeasurementSupportCompatible {
+		t.Fatal("summary changed non-blocking compatibility diagnostics")
+	}
+}
+
+func TestCompatibilityDiagnosticsDoNotChangeVerdict(t *testing.T) {
+	diagnostic := "Last entry selected."
+	view := BuildModelCompatibility(ModelCompatibilitySnapshot{
+		Verdict: MeasurementSupportCompatible, Diagnostics: []string{diagnostic},
+	})
+	if view.Verdict != MeasurementSupportCompatible || len(view.Reasons) != 0 ||
+		len(view.Diagnostics) != 1 || view.Diagnostics[0] != diagnostic {
+		t.Fatalf("diagnostic changed static support verdict: %+v", view)
+	}
+	empty := BuildModelCompatibility(ModelCompatibilitySnapshot{})
+	if empty.Diagnostics == nil {
+		t.Fatal("compatibility diagnostics must serialize as an empty list, not null")
 	}
 }
