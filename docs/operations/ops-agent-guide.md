@@ -16,14 +16,14 @@ recipe의 전체 작성 예제와 단일 계약은
 ```sh
 hack/fast-deploy.sh run /absolute/private/recipe.json --dry-run
 hack/fast-deploy.sh run /absolute/private/recipe.json --inspect --evidence /absolute/private/new-inspection
-# 아래 실행은 현재 cutover 완료 및 별도 Main 승인 후 advisor-3의 deploy main만 수행:
+# 아래 실제 실행은 별도 승인 후 배포 담당 세션 main만 수행:
 hack/fast-deploy.sh run /absolute/private/recipe.json --execute --evidence /absolute/private/new-deployment
 # chart drift가 있다면 검토한 inspection의 chart-diff.txt 원본을 정확히 승인:
 # --chart-diff-approved /absolute/private/reviewed-chart-diff.txt
 ```
 
-- 기본값과 `--dry-run`은 로컬 계획만 출력한다. 클러스터/레지스트리 접근, 빌드, 잠금, 증거 쓰기가 없다. `--dry-run`을 빼는 것은 실행 승인이 아니다.
-- `--inspect`는 명시한 kubeconfig/context의 Helm values/manifest/hooks와 source chart를 읽어 렌더한다. custom phase 명령, 빌드/발행, 클러스터 쓰기를 하지 않는다. inspect와 execute 모두 존재하지 않는 새 `--evidence` 경로가 필수다.
+- 기본값과 `--dry-run`은 로컬 계획만 출력한다. 클러스터/레지스트리 접근, 이미지 빌드, 잠금, 영구 증거 쓰기가 없다. 선택한 coverage projector는 로컬에서 Go 컴파일한다. `--dry-run`을 빼는 것은 실행 승인이 아니다.
+- `--inspect`는 명시한 kubeconfig/context의 Helm values/manifest/hooks와 source chart를 읽어 렌더한다. custom phase 명령, 이미지 빌드/발행, 클러스터 쓰기를 하지 않는다. 실제 startup validator와 coverage projector는 로컬 컴파일할 수 있다. inspect와 execute 모두 존재하지 않는 새 `--evidence` 경로가 필수다.
 - `--execute`만 배포/발행을 허용한다. source(또는 `--source SHA`), kubeconfig, context, namespace, release, registry, apiEnvironment, 양의 현재 `expectedRevision`·`minFreeBytes`, 비어 있지 않은 `images`를 명시한다. 소스는 full commit으로 해석하고 `git archive`로 고정한다. 과거 문서의 SHA/revision/승인은 현재 승인이 아니다.
 - Python3/PyYAML/git/tar가 필요하고, 해당 실행 단계는 Helm, kubectl, curl, 빌드 시 Docker buildx를 사용한다. registry HTTP 사용은 `registryScheme: "http"`로 명시한다. 인증은 기존 도구 설정을 사용하고 credential을 recipe/buildArgs/argv에 넣지 않는다.
 - execute는 `/tmp/chill-heavy.lock` 배타 잠금을 획득한다. inspect는 잠금을 잡지 않는다. `minFreeBytes`와 `maxDiskUsedPercent`(기본 85)를 확인한다. `pruneBuiltImages: true`는 현재 source SHA label로 한정한 Docker image prune만 허용한다. 관련 없는 이미지/cache/data 정리는 허용하지 않는다.
@@ -37,19 +37,20 @@ hack/fast-deploy.sh run /absolute/private/recipe.json --execute --evidence /abso
 - 새 private evidence에는 recipe/source, 명령 로그, live values/manifest/hooks, retained objects, publication, render/chart diff, before/after API, readiness, 실패 기록을 보존한다. 민감한 운영 데이터를 공개 저장소에 올리지 않는다. 실패 시 자동 restore/rollback/retry/resume은 없다. 결론과 증거 절대경로를 보고한다.
 - 현재 첫 live 사용은 server/query/dashboard 및 FirstFloor 6종의 실제 dashboard 9-role 선택이다. FirstFloor build/publication → 별도 고정 승인 exact-image probe → 측정된 declaration activation을 모두 수행한다. 향후 미활성 발행에만 명시 `publicationOnly`를 사용하며 이번 활성화를 대체하지 않는다. 특정 profile을 임의 blocker로 삼지 않는다. 실패/부분 측정은 이전 성공값으로 대체하지 않고 진단에 보존한다. 실제 data/backup 손실·보안·인증/토큰·CLI 오류 gate는 유지한다.
 - `queryService: "chill-query"`는 private port-forward로 직접 401/인증 200을 확인한다. `dashboardCheck: true`는 HTTP 200 HTML만 확인하며 browser 시험이 아니다.
-- `timings.json`에 단계/명령의 실제 시간을 보존한다. warming 동안 coverage를 profiles보다 먼저 확인하여 반복 profile 조회를 피한다. 측정하지 않은 전체 성능 향상을 주장하지 않는다.
+- `performance.json`·`command-timings.jsonl`에 단계/명령의 실제 시간을 보존한다. warming 동안 coverage를 profiles보다 먼저 확인하여 반복 profile 조회를 피한다. 측정하지 않은 전체 성능 향상을 주장하지 않는다.
 - `baselineDirectory`로 원본 동결 baseline의 259 profiles 대비 손실 17을 보고할 수 있다. 현재 before 242와 after 진단은 별도로 보존하며 historical raw evidence를 고치지 않는다. `READY`는 operational Pod/API와 필수 단계 완료이지 experiment PASS가 아니다. 진단의 `passed: false`/errors도 숨기지 않는다.
 - Default A는 `measuredAt` 최신 cell과 결정적 동률 처리를 사용하며 operator의 기존 replacement annotation을 우선한다. 이전 성공으로 fallback하지 않는다. 새 allow-flag 체계를 만들지 않는다.
 - custom phase의 current context는 발행 전과 각 phase 전 recipe context와 같아야 한다. token-bearing kubeconfig를 flatten/capture하지 않는다.
 - 원본 source chart drift의 `--chart-diff-approved`와 별개로 generatedValues 최종 렌더를 신뢰된 image overlay+검증된 built-in runtime probe 출력과 비교한다. 그 외 config 변경은 quiesce 전에 정확한 별도 `--staged-diff-approved FILE`/`stagedDiffApproved` 승인이 필요하다. 임의 override를 probe 출력으로 간주하지 않는다.
 - strict current-before/after 기록과 원본 frozen 259/승인 손실 17의 four-criterion 보고를 분리한다. coverage 불명은 `null`/source-incomplete 진단이며 0으로 추측하거나 배포를 막지 않는다.
-- tracked 첫 recipe는 `hack/deploy/plans/dashboard-reads-20261103.json`이다. source는 승인된 실제 `--source`로 고정한다. pre-cutover revision은 현재 승인이 아니며 deploy main이 실제 post-cutover revision 확인 후에만 갱신한다.
+- tracked 첫 recipe는 `hack/deploy/plans/dashboard-reads-20261103.json`이다. source는 승인된 실제 `--source`로 고정한다. main이 확인한 post-cutover revision 178·control-315를 기록하며, 이후 revision이 바뀌면 새 검토가 필요하다.
 - `make test-deploy`는 저장소 회귀 진입점이며 `make test`에도 포함된다.
-- CRD는 Helm/chart 단독 소유다. 별도 SSA apply/wait나 ownership patch를 하지 않는다. chart에서 제거할 CRD는 이전 release manifest와 live CRD 양쪽에 이미 `helm.sh/resource-policy: keep`가 있어야 한다. 도구가 자동으로 keep를 추가하지 않으며 관련 이전 필드/shim도 없다.
+- CRD는 Helm/chart 단독 소유다. 별도 SSA apply/wait나 ownership patch를 하지 않는다. chart에서 제거할 CRD는 live CRD에 이미 `helm.sh/resource-policy: keep`가 있어야 한다(Helm 3.19.2 삭제 경로의 실제 조회 대상). 도구가 자동으로 keep를 추가하지 않는다.
 - `checkConfiguration: true`는 선택 source의 실제 chill-server offline validator를 한 번 빌드하고 실제 flags/live JSON 또는 명시 `schedulerConfigMapFile`로 외부 scheduler ConfigMap을 검사한다. 첫 dashboard recipe에 활성화한다. 실제 config/CLI 오류는 blocking이며 과학 진단과 다르다. prebuilt round에는 기본 Go 빌드를 추가하지 않는다.
 - `waitFor`에 Deployment/DaemonSet을 명시하면 readiness 예산 내 rollout status를 기다린다. 첫 recipe는 operator/profiler 및 DaemonSet 3개를 포함하며 실제 phase/command timing으로 대기 시간을 보고한다.
+- 첫 전환의 `inspectionCells`는 개별 판정된 variant 배열, `inspectionRequests`는 함께 캡처한 native BEO다. inspect는 최신 native BEO·public profiles/coverage를 읽어 같은 생산 선택/판정 함수로 수치를 계산한다. native ID/실행 상태가 바뀌었으면 선택·예상 수치는 null/unavailable로 표시하며 과거 성공을 대신 보여 주거나 배포를 막지 않는다. annotation 변경은 기존 override 규칙대로 적용한다. 지정한 snapshot에 대한 조건부 예상이며 raw 재검증·하드웨어 동등성 증명이 아니다. 과거 근거·선언을 복제하지 않는다.
 
-첫 live 사용은 현재 cutover 이후 advisor-3의 deploy main 단독 실행만 허용한다.
+첫 live 사용은 배포 담당 세션 main 단독 실행만 허용한다.
 여기의 절차나 회귀 검사는 live 승인 자체가 아니며 browser/hardware/campaign/과학
 결과 성공을 의미하지 않는다. 로컬 회귀 명령(이 문서 수정 중 실행하지 않음):
 `python3 -B hack/deploy/test_deploy.py`,

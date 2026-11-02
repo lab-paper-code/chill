@@ -7,6 +7,7 @@
   "registryScheme": "http",
   "apiEnvironment": "/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/inputs/environment.json",
   "expectedRevision": 178,
+  "tag": "pools-control-315",
   "minFreeBytes": 310000000000,
   "maxDiskUsedPercent": 85,
   "pruneBuiltImages": true,
@@ -38,6 +39,8 @@
   ],
   "dashboardCheck": true,
   "baselineDirectory": "/home/genesis1/.cache/advisor1-profile-baseline/base",
+  "inspectionCells": "/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/runtime-cut/runtime-cut-c-baseline-cells.json",
+  "inspectionRequests": "/home/genesis1/.cache/chill-assets/ops/pools-deploy/deployB/refactor-cutover-20261103/cutover-crs.json",
   "allowedLostProfileIDs": [
     "chill-system/genesis2-006-mnv2-cpu-q1/c152a8e5-d88a-412d-968b-d1c02f64cbaa",
     "chill-system/genesis2-014-plc-cpu-q1/fcbd95e1-3263-4ffc-8cfb-ece8ac84c51d",

@@ -57,8 +57,9 @@ hack/fast-deploy.sh run /absolute/private/recipe.json --inspect --evidence /abso
 hack/fast-deploy.sh run /absolute/private/recipe.json --execute --evidence /absolute/private/new-deployment
 ```
 
-The default is local-only dry-run: no cluster/registry access, build, lock or
-evidence writes. `--inspect` reads the explicit cluster and renders its live
+The default is local-only dry-run: no cluster/registry access, image build, lock
+or persistent evidence writes. An optional coverage projector compiles locally.
+`--inspect` reads the explicit cluster and renders its live
 values plus the pinned source chart; it never publishes, mutates the cluster,
 or executes custom phase commands. Inspect and execute require a **new**
 evidence directory. `--execute` alone authorizes publication and mutation;
@@ -202,6 +203,20 @@ security failures and CLI errors remain blocking.
 Default A selects the latest cell by `measuredAt` with a deterministic tie;
 the operator's existing replacement annotation has priority. Failed/partial
 measurement results remain visible rather than selecting an old success.
+
+For the first transition, `inspectionCells` names the retained, individually
+assessed variant array; `inspectionRequests` is its companion native BEO
+snapshot, also used for offline dry-run. `--inspect` reads fresh native BEO
+annotations/conditions plus current public profiles/coverage. If native
+identities or execution state changed since that snapshot, projection is
+unavailable (null counts/selections), not an old-success fallback or a deploy
+blocker; refresh the assessed inputs. Annotation-only changes still apply.
+The local Go adapter uses
+the selected application source's production selection/assessment functions
+through Go's file overlay; it neither changes that archive nor copies new
+declarations into historical evidence. This is a conditional projection over
+the named assessment snapshot, not fresh raw revalidation or hardware/runtime
+equivalence. Requests without assessed variants and source incompleteness stay visible.
 Additional `apiChecks` use objects such as
 `{"path": "/api/v1/scheduler/state", "maxBytes": 1048576}` and require HTTP
 200 with body size strictly **less than** `maxBytes`. The existing environment's
@@ -219,8 +234,8 @@ HTML, not a browser interaction test. Neither substitutes for hardware or
 measurement acceptance.
 The tracked first-use recipe is
 `hack/deploy/plans/dashboard-reads-20261103.json`; pass its actual approved
-source using `--source`. Its pre-cutover expected revision is not post-cutover
-approval: only deploy main updates it after confirming the actual live revision.
+source using `--source`. The declaration records main's confirmed post-cutover
+revision 178 and control-315 tag; a later live revision requires a new review.
 
 Keep all evidence private: live values, manifests, retained objects, commands,
 publication, renders, before/after API captures and failure records can contain
@@ -228,7 +243,7 @@ operational data. Execute shares `/tmp/chill-heavy.lock`; inspect does not.
 The disk gates require `minFreeBytes` and `maxDiskUsedPercent` (default 85).
 `pruneBuiltImages: true` permits only Docker image pruning scoped to the current
 source SHA label; it never authorizes unrelated image/cache/data pruning.
-`timings.json` retains measured stage/command durations. Coverage is checked
+`performance.json` and `command-timings.jsonl` retain measured stage/command durations. Coverage is checked
 before profiles to avoid repeated profile captures while warming; this is not
 evidence of a global speedup.
 See [the operations guide](../docs/operations/ops-agent-guide.md) for operational

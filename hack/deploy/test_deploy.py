@@ -116,7 +116,8 @@ class DeploymentCLI(unittest.TestCase):
                 if self.path == '/':
                     self.send_response(200); self.send_header('Content-Type', 'text/html'); self.end_headers(); self.wfile.write(b'<!doctype html><html><body>CHILL</body></html>'); return
                 if self.path.endswith('measurement-coverage'):
-                    body = {'summary': {'countsByDisplayStatus': {'usable': 2}}, 'sources': [{'complete': True}]}
+                    unknown = json.loads((cls.directory / 'state.json').read_text()).get('unknownCoverage', False)
+                    body = {'summary': {'countsByDisplayStatus': {'usable': None if unknown else 2}}, 'sources': [{'complete': not unknown}]}
                 elif self.path == '/api/v1/scheduler/profiles':
                     state = json.loads((cls.directory / 'state.json').read_text())
                     metric = 4 if state.get('upgraded') and state.get('changeMetrics') else 3
@@ -233,6 +234,22 @@ class DeploymentCLI(unittest.TestCase):
         self.assertTrue(status['ready'])
         self.assertFalse(status['diagnostics']['passed'])
         self.assertFalse(status['retainedRecords']['passed'])
+
+    def test_unknown_coverage_remains_diagnostic_before_and_after_upgrade(self):
+        self.state(unknownCoverage=True)
+        frozen = self.directory / 'incomplete-baseline'
+        frozen.mkdir()
+        (frozen / 'profiles.json').write_text(json.dumps({'profiles': [{'id': 'profile-1', 'assessment': {'displayStatus': 'usable'}, 'batches': [{'batch': 1, 'energyPerInputJoules': 3, 'meanWallWatts': 5}]}]}))
+        (frozen / 'coverage.json').write_text(json.dumps({'summary': {'countsByDisplayStatus': {'usable': None}}, 'sources': [{'complete': False}]}))
+        self.recipe.update(baselineDirectory=str(frozen), expectedProfileCount=1)
+        self.cli('--execute', '--evidence', str(self.out))
+        state = json.loads((self.out / 'state.json').read_text())
+        self.assertTrue(state['ready'])
+        for report in (state['preDeployDiagnostics'], state['diagnostics']):
+            self.assertFalse(report['passed'])
+            self.assertIsNone(report['coverageUsableAfter'])
+            self.assertEqual(report['after'], 1)
+            self.assertTrue(report['checks']['expectedProfileCount'])
 
     def test_shared_heavy_lock_stops_before_cluster(self):
         with (self.directory / 'heavy.lock').open('a') as lock:

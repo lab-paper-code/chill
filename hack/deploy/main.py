@@ -20,6 +20,7 @@ import yaml
 import acceptance
 import images
 import configuration
+import inspection
 
 ROOT = Path(__file__).resolve().parents[2]
 PHASES = ('preflight', 'stage', 'quiesce', 'migrate', 'configure', 'accept')
@@ -29,7 +30,8 @@ FIELDS = {'source', 'context', 'kubeconfig', 'namespace', 'release', 'registry',
           'apiChecks', 'chartDiffApproved', 'readinessSeconds', 'buildSeconds',
           'helm', 'kubectl', 'lock', 'generatedValues', 'maxDiskUsedPercent', 'pruneBuiltImages',
           'queryService', 'dashboardCheck', 'runtimeDeclarations', 'runtimeInspectionSeconds', 'publicationOnly',
-          'baselineDirectory', 'expectedProfileCount', 'stagedDiffApproved', 'checkConfiguration', 'schedulerConfigMapFile', 'waitFor'}
+          'baselineDirectory', 'expectedProfileCount', 'stagedDiffApproved', 'checkConfiguration', 'schedulerConfigMapFile', 'waitFor',
+          'inspectionCells', 'inspectionRequests'}
 
 
 def dump(path, value):
@@ -75,7 +77,7 @@ def load(path, source):
     generated = recipe.setdefault('generatedValues', [])
     if not isinstance(generated, list) or any(not isinstance(x, str) or not x or Path(x).is_absolute() or '..' in Path(x).parts for x in generated):
         raise ValueError('generatedValues must name evidence-relative files')
-    for field in ('kubeconfig', 'apiEnvironment', 'chartDiffApproved', 'stagedDiffApproved', 'baselineDirectory'):
+    for field in ('kubeconfig', 'apiEnvironment', 'chartDiffApproved', 'stagedDiffApproved', 'baselineDirectory', 'inspectionCells', 'inspectionRequests'):
         if field in recipe:
             recipe[field] = str(Path(recipe[field]).expanduser().resolve())
     recipe['values'] = [str(Path(x).expanduser().resolve()) if Path(x).is_absolute() else x for x in values]
@@ -367,7 +369,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             baseline = acceptance.load_baseline(frozen)
             current = acceptance.capture(config, recipe['namespace'], out / 'before')
             report = acceptance.compare(baseline, current, recipe['allowedLostProfileIDs'], out / 'pre-deploy-acceptance', recipe.get('expectedCoverageUsable'))
-            report['checks']['expectedProfileCount'] = recipe.get('expectedProfileCount', report['after']) == report['after']
+            report['checks']['expectedProfileCount'] = 'expectedProfileCount' not in recipe or report.get('after') == recipe['expectedProfileCount']
             report['passed'] = report['passed'] and report['checks']['expectedProfileCount']
             dump(out / 'pre-deploy-acceptance/acceptance.json', report)
             state['preDeployDiagnostics'] = report
@@ -377,10 +379,17 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
                 (frozen_out / name).write_bytes((Path(frozen) / name).read_bytes())
         if inspect:
             check_configuration(out / 'render-before.yaml')
+            if recipe.get('inspectionCells'):
+                if not frozen:
+                    acceptance.capture(config, recipe['namespace'], out / 'before')
+                requests = out / 'inspection-requests.json'
+                requests.write_bytes(run.run(kube + ['get', 'batchenergyoptimizations', '-o', 'json'], 'inspection-requests.json'))
+                state['coverageProjection'] = inspection.project(recipe, src, out, run.run, out / 'before/profiles.json', out / 'before/coverage.json', requests)
+                print('COVERAGE PROJECTION: ' + json.dumps({key: state['coverageProjection'][key] for key in ('profileRecordsInput', 'countsByDisplayStatus', 'selectedCells', 'currentFailedMeasurements')}))
             state['crdRetention'] = crd_retention(live, before, kube, run.run, out)
             state.setdefault('chartApproved', True)
             dump(out / 'state.json', state)
-            print('INSPECTED (no builds/cluster writes): ' + str(out))
+            print('INSPECTED (no image publication/cluster writes; local Go helpers may compile): ' + str(out))
             return
         if not frozen:
             baseline = acceptance.capture(config, recipe['namespace'], out / 'before')
@@ -475,7 +484,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
                 attempt += 1
                 time.sleep(min(5, max(0, deadline - time.monotonic())))
         report = acceptance.compare(baseline, snapshot, recipe['allowedLostProfileIDs'], accept_out, recipe.get('expectedCoverageUsable'))
-        report['checks']['expectedProfileCount'] = recipe.get('expectedProfileCount', report['after']) == report['after']
+        report['checks']['expectedProfileCount'] = 'expectedProfileCount' not in recipe or report.get('after') == recipe['expectedProfileCount']
         report['passed'] = report['passed'] and report['checks']['expectedProfileCount']
         dump(accept_out / 'acceptance.json', report)
         state['diagnostics'] = report
@@ -523,7 +532,7 @@ def main():
     parser.add_argument('--source', help='immutable deployment commit; overrides recipe source')
     parser.add_argument('--evidence', type=Path, help='new evidence directory; existing directories are never resumed')
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument('--dry-run', action='store_true', help='default: local plan only, no network/build/lock/evidence writes')
+    mode.add_argument('--dry-run', action='store_true', help='default: local plan/projection, no network/image builds/lock/persistent evidence writes')
     mode.add_argument('--inspect', action='store_true', help='read-only cluster/chart inspection, no custom phase commands or publication')
     mode.add_argument('--execute', action='store_true', help='main-only explicit cluster mutation/publication authorization')
     parser.add_argument('--chart-diff-approved', type=Path)
@@ -532,7 +541,7 @@ def main():
     try:
         recipe = load(args.recipe, args.source)
         if not args.execute and not args.inspect:
-            print('LOCAL PLAN ONLY; no cluster/network/build/lock/evidence writes')
+            print('LOCAL PLAN ONLY; no cluster/network/image builds/lock/persistent evidence writes; optional Go projection compiles locally')
             with tempfile.TemporaryDirectory(prefix='chill-deploy-plan-') as temporary:
                 directory = Path(temporary)
                 tar = directory / 'source.tar'
@@ -541,7 +550,15 @@ def main():
                 src.mkdir()
                 subprocess.run(['tar', '-xf', tar, '-C', src], check=True)
                 planned = images.plan(recipe, recipe['source'], src, Path('/PLAN'))
-            print(json.dumps({'sourceSHA': recipe['source'], 'phases': ['preflight', 'backup', 'render-review', 'publish-images', 'stage', 'configuration-check', 'crd-retention', 'quiesce', 'migrate', 'configure', 'upgrade', 'readiness', 'accept'], 'recipe': recipe, 'images': planned}, indent=2, default=str))
+                projection = None
+                if recipe.get('inspectionCells'):
+                    if not recipe.get('inspectionRequests') or not recipe.get('baselineDirectory'):
+                        raise ValueError('local projection requires inspectionRequests and baselineDirectory captured inputs')
+                    def local_run(argv, name, timeout=120, cwd=None, env=None):
+                        return subprocess.check_output(argv, timeout=timeout, cwd=cwd, env=env)
+                    frozen = Path(recipe['baselineDirectory'])
+                    projection = inspection.project(recipe, src, directory, local_run, frozen / 'profiles.json', frozen / 'coverage.json', recipe['inspectionRequests'])
+            print(json.dumps({'sourceSHA': recipe['source'], 'phases': ['preflight', 'backup', 'render-review', 'publish-images', 'stage', 'configuration-check', 'crd-retention', 'quiesce', 'migrate', 'configure', 'upgrade', 'readiness', 'accept'], 'recipe': recipe, 'images': planned, 'coverageProjection': projection}, indent=2, default=str))
             return 0
         if not args.evidence:
             parser.error('--evidence new-directory required for inspect/execute')

@@ -403,6 +403,9 @@ def compare(before, after, allowed_lost_ids=(), out=None, expected_coverage_usab
                     if _numeric(aa[batch][field]) != _numeric(bb[batch][field]):
                         changes.append({'id': identity, 'batch': batch, 'field': field,
                                         'before': aa[batch][field], 'after': bb[batch][field]})
+        report.update({'before': len(old), 'after': len(new), 'actualLost': sorted(lost),
+                       'allowedLost': sorted(allowed), 'unexpected': sorted(added),
+                       'numericChanges': changes, 'notUsable': unusable})
         old_usable, new_usable = _coverage(before), _coverage(after)
         report.update({'coverageUsableBefore': old_usable, 'coverageUsableAfter': new_usable,
                        'coverageSourcesBefore': before['coverage'].get('sources', []),
@@ -415,11 +418,7 @@ def compare(before, after, allowed_lost_ids=(), out=None, expected_coverage_usab
             raise ValueError('expected_coverage_usable must be a nonnegative integer')
         coverage_ok = (new_usable >= old_usable if expected_coverage_usable is None
                        else new_usable == expected_coverage_usable)
-        report.update({'before': len(old), 'after': len(new), 'actualLost': sorted(lost),
-                       'allowedLost': sorted(allowed), 'unexpected': sorted(added),
-                       'numericChanges': changes, 'notUsable': unusable,
-                       'coverageUsableBefore': old_usable, 'coverageUsableAfter': new_usable,
-                       'expectedCoverageUsable': expected_coverage_usable})
+        report['expectedCoverageUsable'] = expected_coverage_usable
         report['checks'].update({'profileIdentitiesPreserved': lost == allowed and not added,
                                  'batchMeasurementsPreserved': not changes,
                                  'profilesUsable': not unusable, 'coverageUsablePreserved': coverage_ok})
