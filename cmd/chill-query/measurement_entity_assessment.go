@@ -150,7 +150,7 @@ func assessMeasurementRequest(
 	}
 	for _, issue := range view.Insufficiencies {
 		if issue.Source.Namespace == task.Namespace && issue.Source.Name == task.Name {
-			if issue.Code == "ReplacementSelection" && strings.HasPrefix(issue.Reason, "superseded by ") {
+			if issue.Code == "ReplacementSelection" {
 				input.Reasons = append(input.Reasons, queryapi.MeasurementReason{
 					Code: issue.Code, Message: issue.Reason, SourceIDs: []string{id},
 				})

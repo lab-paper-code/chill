@@ -197,6 +197,7 @@ func coverageNewCell(
 		History: []queryapi.MeasurementHistory{},
 		Support: queryapi.MeasurementSupport{
 			Verdict: queryapi.MeasurementSupportUnknown, Reasons: []queryapi.ModelCompatibilityReason{},
+			Diagnostics: []string{},
 		},
 	}
 	row, found := support[strings.Join([]string{group.Model.Name, group.DeviceClass.Name, path}, "/")]
@@ -207,6 +208,7 @@ func coverageNewCell(
 		return cell
 	}
 	cell.Support.Verdict, cell.Support.Reasons = row.Verdict, row.Reasons
+	cell.Support.Diagnostics = row.Diagnostics
 	if row.Inputs.Node.Name != "" {
 		cell.Support.Node = &queryapi.MeasurementIdentity{Name: row.Inputs.Node.Name, UID: row.Inputs.Node.UID}
 	}

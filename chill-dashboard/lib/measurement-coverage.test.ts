@@ -55,7 +55,7 @@ test("prefill decodes exactly once, rejects duplicate/deleted references, and do
 })
 test("server support is Node-scoped, independent of evidence and does not invent admission",()=>{
   const selection={modelSpec:model.name,executionPath:"cpu",deviceClass:cls.name,node:"node"}
-  const data:ModelCompatibility={readAt:"2026-10-30T00:00:00Z",selection,inputs:{modelSpec:{name:model.name,uid:model.uid,resourceVersion:"1"},deviceClass:{name:cls.name,uid:cls.uid,resourceVersion:"1"},node:{name:"node",uid:"node-uid",resourceVersion:"1"},runtimeDeclaration:null},verdict:"Compatible",reasons:[]}
+  const data:ModelCompatibility={readAt:"2026-10-30T00:00:00Z",selection,inputs:{modelSpec:{name:model.name,uid:model.uid,resourceVersion:"1"},deviceClass:{name:cls.name,uid:cls.uid,resourceVersion:"1"},node:{name:"node",uid:"node-uid",resourceVersion:"1"},runtimeDeclaration:null},verdict:"Compatible",reasons:[],diagnostics:[]}
   const fallback=staticCompatibility(model,model.spec.executionPaths[0],cls)
   assert.match(serverCompatibility(fallback,[{node:"node",data}]).reason,/admission 보장 아님/)
   assert.equal(serverCompatibility(fallback,[{node:"node",data:{...data,verdict:"Unknown",reasons:[{kind:"Unknown",code:"RuntimeDeclarationMissing",message:"선언 없음"}]}}]).state,"unknown")
@@ -90,7 +90,7 @@ test("condition choices name Node and dataset without dumping frozen JSON",()=>{
   assert.equal(deviceLabel("jetson-agx-orin-64g"),"AGX Orin 64g")
 })
 
-const cell:MeasurementCoverageCell={id:"cell",model:{name:model.name,uid:model.uid},deviceClass:{name:cls.name,uid:cls.uid},executionPath:"cpu",powerMode:"MAXN",currentMeasurement:null,support:{verdict:"Unknown",node:{name:"node",uid:"node-uid"},reasons:[{code:"RuntimeDeclarationMissing",message:"선언 없음"}]},assessment:{status:"unmeasured",displayStatus:"unmeasured",label:"미측정",reasons:[],execution:null,evidence:{available:false,accepted:false,reasons:[]},checklist:{criteriaMet:null,version:"result-checklist.v1",checks:[]},scope:{schedulerUsed:null,reused:false,facts:[]}},variantCount:0,variants:[],batchProgress:{basis:"explicit",target:[1,2,4,8],measured:[1,2],criteriaMet:[1],missing:[4,8],inProgress:[4],unknown:[]},representative:null,failureSummary:[],history:[]}
+const cell:MeasurementCoverageCell={id:"cell",model:{name:model.name,uid:model.uid},deviceClass:{name:cls.name,uid:cls.uid},executionPath:"cpu",powerMode:"MAXN",currentMeasurement:null,support:{verdict:"Unknown",node:{name:"node",uid:"node-uid"},reasons:[{code:"RuntimeDeclarationMissing",message:"선언 없음"}],diagnostics:[]},assessment:{status:"unmeasured",displayStatus:"unmeasured",label:"미측정",reasons:[],execution:null,evidence:{available:false,accepted:false,reasons:[]},checklist:{criteriaMet:null,version:"result-checklist.v1",checks:[]},scope:{schedulerUsed:null,reused:false,facts:[]}},variantCount:0,variants:[],batchProgress:{basis:"explicit",target:[1,2,4,8],measured:[1,2],criteriaMet:[1],missing:[4,8],inProgress:[4],unknown:[]},representative:null,failureSummary:[],history:[]}
 test("coverage hides proven unsupported paths but retains truly unknown declarations",()=>{
   assert.equal(coveragePathVisible(cell),true)
   assert.equal(coveragePathVisible({...cell,support:{...cell.support,verdict:"Incompatible",reasons:[{code:"RuntimeUnsupported",message:"runtime 미지원"}]}}),false)
@@ -292,6 +292,15 @@ test("current measurement identity and time come only from the server even for f
     assert.doesNotMatch(facts,/older-success|history-variant/)
     assert.match(selected,/<a href="\/measurements\/requests\/new\?/)
   }
+})
+test("execution declaration diagnostics remain visible without changing cell status or request actions",()=>{
+  const selected={...cell,id:"diagnostic-cell",support:{...cell.support,verdict:"Compatible" as const,reasons:[],diagnostics:["Multiple runtime entries matched; last entry selected."]}}
+  const html=renderCoverage("cell=diagnostic-cell",[selected])
+  const detail=html.slice(html.indexOf('id="coverage-selected-condition"'))
+  assert.match(detail,/aria-label="실행 선언 진단"/)
+  assert.match(detail,/Multiple runtime entries matched; last entry selected\./)
+  assert.equal(coverageMeasurementStatus(selected),cell.assessment.displayStatus)
+  assert.match(detail,/<a href="\/measurements\/requests\/new\?/)
 })
 test("M1–M2 unsupported cells stay visible but only supported cells contribute denominators",()=>{
   const html=renderCoverage()

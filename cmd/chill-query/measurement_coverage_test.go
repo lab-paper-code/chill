@@ -386,6 +386,27 @@ func TestCoverageMeasurementTimeUsesOnlyCurrentTerminalEvidence(t *testing.T) {
 		t.Fatal("stale condition invented a current completion time")
 	}
 }
+
+func TestCoveragePreservesNonBlockingCompatibilityDiagnostics(t *testing.T) {
+	cell := coverageNewCell(queryapi.MeasurementCoverageGroup{
+		Model: queryapi.MeasurementIdentity{Name: "model"}, DeviceClass: queryapi.MeasurementIdentity{Name: "class"},
+	}, "cpu", "fixed", map[string]queryapi.ModelCompatibilityView{
+		"model/class/cpu": {
+			Verdict: queryapi.MeasurementSupportCompatible, Diagnostics: []string{"Last entry selected."},
+		},
+	})
+	cell.Variants = []queryapi.MeasurementCoverageVariant{{
+		ID: "condition", ProfileIDs: []string{"profile"}, RequestIDs: []string{"request"},
+	}}
+	projection := coverageProjection{base: &measurementCoverageBase{}, adopted: map[string]bool{"profile": true}}
+	projection.assessCell(&cell)
+	if cell.Support.Verdict != queryapi.MeasurementSupportCompatible || len(cell.Support.Reasons) != 0 ||
+		len(cell.Support.Diagnostics) != 1 || cell.Support.Diagnostics[0] != "Last entry selected." ||
+		cell.Assessment.DisplayStatus != queryapi.MeasurementUsable {
+		t.Fatalf("diagnostic was lost or blocked current evidence: %+v", cell)
+	}
+}
+
 func TestCoverageConditionIdentitySurvivesSameConditionPreflight(t *testing.T) {
 	plan := measurementPreflightTestPlan(t)
 	cell := queryapi.MeasurementCoverageCell{}

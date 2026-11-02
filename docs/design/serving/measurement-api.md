@@ -109,7 +109,7 @@
 
 `Observer.ObserveUntil(ctx,Request,end,onFirstSample)`는 실제 producer end 뒤 final read까지 수집한다. Duration은 유한 watchdog, 표본 예산은 `floor(watchdog/interval)+3`이다. standalone `--end-wait-timeout`은 `RunConfig.Metrics.DurationSeconds`, `--max-result-bytes`는 frozen policy `MaxMetricResultBytes`다.
 profiler는 별도 `mgr.GetAPIReader`로 recorded Job을 조회한다. 실제 API NotFound는 `ExecutionLost`, transport 오류는 retry이며 cache의 일시 NotFound로 replacement를 만들지 않는다.
-BEO annotation `chill.dacs.io/replaces-batch-energy-optimization`은 같은 namespace 원본 이름이다. pending 동안에도 원본을 catalog에서 제외하되 raw/status를 보존한다. 대체는 정상 verifiedComplete의 state/CPU/batch/exact trial 계약을 충족한다.
+BEO annotation `chill.dacs.io/replaces-batch-energy-optimization`은 같은 namespace 원본 이름이다. 최신 시각 선택 전에 대상을 현재 측정에서 제외하되 raw/status·이력 증거는 보존한다. 대상 부재·자기참조·측정 조건 변경은 비차단 진단이며 운영자 선택을 별도 품질 거절로 바꾸지 않는다. 실제 실행·증거의 정상 안전 계약은 유지한다.
 012/017 coherent replacement와 원 trial/status를 보존한다. 원본017 Granted/Measuring은 비실행 보존 예외다. execution/serving Pod/power pending 0·정확 NodeUID/RV/holder·orphan runtime 확인 후 CampaignOps가 old UID stale 측정 taint만 정리하며 root/status/Runs/retained Jobs/raw는 남기고 대체는 정상 admission을 따른다. observer 검사는 실제 late producer tail/final sample/event/result byte 근거를 연결한다.
 
 ## 5. 측정 admission
@@ -245,7 +245,7 @@ strict 선언 해석 실패·불완전한 RKNN 설치 계약은 `RuntimeDeclarat
 선택되지 않은 path와 class selector에 속하지 않는 Node 조합은 400이며, API identity가 깨진
 저장 객체·권한 외 API 읽기 오류는 판정으로 위장하지 않고 503이다.
 
-응답은 `{readAt,selection,inputs,verdict,reasons}`다.
+응답은 `{readAt,selection,inputs,verdict,reasons,diagnostics}`다.
 
 | 필드 | 계약 |
 |---|---|
@@ -254,14 +254,16 @@ strict 선언 해석 실패·불완전한 RKNN 설치 계약은 `RuntimeDeclarat
 | `inputs.modelSpec`, `inputs.deviceClass`, `inputs.node` | 각각 `{name,uid,resourceVersion}` |
 | `inputs.runtimeDeclaration` | `{namespace,name,uid,resourceVersion,key,image}` 또는 null. 선택 실패 시 image를 꾸미지 않음 |
 | `verdict` | 기존 `modelcompat`의 `Compatible`, `Incompatible`, `Unknown` |
-| `reasons[]` | `{kind,code,message}`. 기존 `Conflict`/`Unknown`·reason code 재사용. artifact supply architecture 불일치는 `ArtifactArchitectureMismatch`; 선언 부재/모호함/무효는 `RuntimeDeclarationMissing`/`RuntimeDeclarationAmbiguous`/`RuntimeDeclarationInvalid`. Compatible이면 빈 배열 |
+| `reasons[]` | `{kind,code,message}`. 기존 `Conflict`/`Unknown`·reason code 재사용. artifact supply architecture 불일치는 `ArtifactArchitectureMismatch`; 선언 부재/무효는 `RuntimeDeclarationMissing`/`RuntimeDeclarationInvalid`. Compatible이면 빈 배열 |
+| `diagnostics[]` | 비차단 문자열 진단. 같은 scope의 선언이 여러 개면 ConfigMap document의 마지막 일치 entry를 선택하고 이 사실을 표시한다. reasons·verdict·요청 가능 여부는 바꾸지 않음 |
 
 `candidate_resolver.go`와 `execution_facts.go`의 **동일 trusted fact-source, class/Node scope,
 strict declaration 해석** 및 `modelcompat.Evaluate`를 재사용한다. 필요한 읽기 부분만 기존 kube
 adapter에서 공유하고 Query API에는 composition-root callback으로 연결한다. Query API/serving이
 profiler controller를 import하거나 별도 runtime 지원 registry·backend 이름 추측표를 만들지 않는다.
-실행 선언 선택은 기존의 유일한 해당 class/Node/family/backend 규칙을 유지한다. 후보 없음은
-Unknown이다. 기존 resolver가 선택한 선언의 명시적 충돌과 artifact architecture 충돌만 Incompatible이다.
+실행 선언은 해당 class/Node/family/backend scope에서 선택한다. 여러 entry가 맞으면 ConfigMap document의
+마지막 entry가 현재 선언이며 비차단 diagnostics로 알린다. 후보 없음은 Unknown이다.
+선택한 선언의 명시적 충돌과 artifact architecture 충돌만 Incompatible이다.
 같은 class의 여러 Node 판정은 각각 조회하며 Node-bound GPU 선언을 class 전체로 확장하지 않는다.
 
 이 판정은 **현재 선언에 근거한 정적 runtime 지원**이다. 실제 runtime probe, 현재 Node Ready,
@@ -506,7 +508,7 @@ catalog/kube가 queryapi transport를 import하도록 package 예외를 추가�
 
 **Cell**: model UID × class UID × path × mode다. 각 이름/UID와 `support`, `assessment`,
 `variantCount`, `variants`, nullable `currentMeasurement`/`batchProgress`/`representative`, `failureSummary`, `history`를 갖는다.
-support는 `{verdict:"Compatible"|"Incompatible"|"Unknown",node:{name,uid}|null,reasons:[]}`다.
+support는 `{verdict:"Compatible"|"Incompatible"|"Unknown",node:{name,uid}|null,reasons:[],diagnostics:[]}`다.
 기본 현재 선택은 셀(model/class/path/powerMode)별 `measuredAt` 최신 하나(A)다.
 `currentMeasurement={id,model,deviceClass,executionPath,powerMode,measuredAt}`는 공통
 `derivation.CurrentMeasurements` 결과 그대로이며 후보 부재 시 null이다. 동률은 ID 사전순 최소다.
