@@ -12,40 +12,35 @@ import (
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 )
 
-// Model the server's two views and the unchanged bounded HTTP adapter.
-func largeSchedulerResponse(path string, summary string, value any) error {
-	body := summary
-	if path != schedulerStatePath {
-		body = `{"snapshot":{"options":[{"profile":{"padding":"` + strings.Repeat("x", int(maximumResultBytes)) + `"}}]}}`
+func decodeSchedulerSummary(path string, summary string, value any) error {
+	if path != "/api/v1/scheduler/state?view=summary" {
+		return fmt.Errorf("expected scheduler summary request, got %q", path)
 	}
-	if int64(len(body)) > maximumResultBytes {
-		return fmt.Errorf("Chill response exceeds limit")
-	}
-	return json.Unmarshal([]byte(body), value)
+	return json.Unmarshal([]byte(summary), value)
 }
 
-func TestReleaseLargeSchedulerState(t *testing.T) {
+func TestReleaseRequestsSchedulerSummary(t *testing.T) {
 	parent := fixtureRun("large-state")
 	startRun(parent)
 	condition(&parent.Status.Conditions, 1, api.EvaluationConditionPoolAcquired, metav1.ConditionTrue, "Acquired", "")
 	condition(&parent.Status.Conditions, 1, api.EvaluationConditionCleanupComplete, metav1.ConditionFalse, api.EvaluationReasonReturnTimeout, "")
 	r, _ := fixtureRuntime(t, parent)
 	r.HTTP = func(_ context.Context, _ string, _ map[string]string, path string, value any) error {
-		return largeSchedulerResponse(path, `{"at":"2026-11-01T12:00:00Z","poolReturn":{"reservationCount":0,"outstandingCount":0,"activeActionCount":0,"latestResultEndedAt":"2026-11-01T11:59:59Z"}}`, value)
+		return decodeSchedulerSummary(path, `{"at":"2026-11-01T12:00:00Z","poolReturn":{"reservationCount":0,"outstandingCount":0,"activeActionCount":0,"latestResultEndedAt":"2026-11-01T11:59:59Z"}}`, value)
 	}
 	annotation := `{"reason":"writers stopped and pool returned","at":"2026-11-01T12:00:00Z"}`
 	if _, err := (&RunReconciler{Runtime: r}).release(context.Background(), parent, annotation); err != nil {
 		t.Fatal(err)
 	}
 	if occupied(parent) || isTrue(parent.Status.Conditions, api.EvaluationConditionPoolAcquired) || len(parent.Status.ReleaseRecords) != 1 {
-		t.Fatal("large scheduler state prevented pool release")
+		t.Fatal("scheduler summary prevented pool release")
 	}
 	if isTrue(parent.Status.Conditions, api.EvaluationConditionCleanupComplete) {
 		t.Fatal("operator release erased cleanup failure")
 	}
 }
 
-func TestInjectionLargeSchedulerStateKeepsSummaryEvidence(t *testing.T) {
+func TestInjectionSummaryKeepsEvidence(t *testing.T) {
 	r, _, parent, stage := fixtureStageExecution(t)
 	baseHTTP := r.HTTP
 	var summary json.RawMessage
@@ -54,7 +49,7 @@ func TestInjectionLargeSchedulerStateKeepsSummaryEvidence(t *testing.T) {
 	}
 	r.HTTP = func(ctx context.Context, namespace string, config map[string]string, path string, value any) error {
 		if strings.Contains(path, "/scheduler/state") {
-			return largeSchedulerResponse(path, string(summary), value)
+			return decodeSchedulerSummary(path, string(summary), value)
 		}
 		return baseHTTP(ctx, namespace, config, path, value)
 	}
