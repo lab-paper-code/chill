@@ -150,8 +150,14 @@ test-helm-release-flow: ## Verify values-file and explicit image precedence in t
 test-serving-entrypoint-rbac: ## Verify the rendered ChillServer grants measurement admission needs.
 	HELM=$(HELM) ./hack/serving-entrypoint-rbac-test.sh
 
+.PHONY: test-deploy
+test-deploy: ## Exercise the deployment CLI offline with process-backed tools and TLS fixtures.
+	python3 -B -m unittest discover -s hack/deploy -p 'test_*.py'
+	python3 -B -m unittest discover -s hack/evaluation -p test_round_deploy.py
+	python3 -B hack/evaluation/round.py --self-check
+
 .PHONY: test
-test: manifests generate fmt vet envtest test-runtime test-artifact-tools test-loadgen test-helm-release-flow test-serving-entrypoint-rbac test-deployment-config ## Run tests.
+test: manifests generate fmt vet envtest test-runtime test-artifact-tools test-loadgen test-helm-release-flow test-serving-entrypoint-rbac test-deployment-config test-deploy ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
@@ -553,7 +559,7 @@ docker-buildx-dashboard: ## Build and push the Dashboard image for cross-platfor
 docker-buildx-all: docker-buildx-operator docker-buildx-node-agent docker-buildx-profiler docker-buildx-query docker-buildx-metric-observer docker-buildx-workload-observer ## Build and push all component images for their supported platforms.
 
 .PHONY: fast-deploy
-fast-deploy: ## Build, push, reset-deploy, and observe CHILL in the current testbed.
+fast-deploy: ## Plan, inspect, or explicitly execute a recipe-driven roll-forward deployment.
 	./hack/fast-deploy.sh $(FAST_DEPLOY_ARGS)
 
 .PHONY: build-installer

@@ -2,6 +2,11 @@
 """Released, one-shot evaluation round orchestration. No implicit measurement retries.
 
 Configuration and resume semantics are documented in hack/README.md.
+Round configuration pins deployment.context/kubeconfig/release/registry/expectedRevision;
+the server-only publication must carry the deploy tool's complete prebuilt receipt.
+The environment's kubectl argv must explicitly pin that same context and kubeconfig,
+so deployment, frozen harness Jobs, and failure-injection helpers share one target.
+Each changed digest executes a run recipe into a fresh attempt-owned evidence path.
 --self-check is entirely offline and does not require experiment configuration.
 """
 import argparse
@@ -66,7 +71,7 @@ def validate(c):
         fail('Round JSON object required')
     required = ('sourceSHA', 'rows', 'rowTag', 'restoreOriginTag', 'h', 'rateBasis',
                 'compareTags', 'environment', 'binding', 'release', 'run', 'evidence',
-                'control', 'publication', 'minimumFreeBytes', 'kappa')
+                'deployment', 'publication', 'minimumFreeBytes', 'kappa')
     for key in required:
         if key not in c:
             fail('Round requires '+key)
@@ -81,8 +86,20 @@ def validate(c):
         fail('h requires a finite fraction in [0,1]')
     if type(c['minimumFreeBytes']) is not int or c['minimumFreeBytes'] < 310_000_000_000:
         fail('minimumFreeBytes must be at least the existing evaluation 310 GB boundary')
-    if not isinstance(c['control'], str) or not c['control'].isdigit():
-        fail('control requires decimal digits')
+    deployment = c['deployment']
+    fields = {'context', 'kubeconfig', 'release', 'registry', 'expectedRevision'}
+    if not isinstance(deployment, dict) or not fields <= deployment.keys() or set(deployment) - fields - {'registryScheme'}:
+        fail('deployment requires context/kubeconfig/release/registry/expectedRevision and optional registryScheme')
+    if any(not isinstance(deployment[k], str) or not deployment[k] for k in fields - {'expectedRevision'}):
+        fail('deployment target fields must be nonempty strings')
+    if not Path(deployment['kubeconfig']).is_absolute():
+        fail('deployment kubeconfig must be absolute')
+    if type(deployment['expectedRevision']) is not int or deployment['expectedRevision'] <= 0:
+        fail('deployment expectedRevision requires a positive integer')
+    if deployment.get('registryScheme', 'https') not in ('http', 'https'):
+        fail('deployment registryScheme requires http or https')
+    if 'control' in c:
+        fail('control is obsolete; pin deployment.expectedRevision explicitly')
     basis = c['rateBasis']
     if not isinstance(basis, dict) or basis.get('tag') != '3' or 'binding' not in basis:
         fail('rateBasis requires tag "3" and its frozen binding path')
@@ -118,6 +135,25 @@ def validate(c):
     return c
 
 
+def check_deployment_target(c, environment):
+    # The frozen harness and failure-injection helpers consume this argv unchanged.
+    argv = environment['d2']['kubectl']
+    if not isinstance(argv, list) or not argv or any(not isinstance(x, str) or not x for x in argv):
+        fail('environment d2.kubectl requires an executable argv')
+    if any(x.split('=', 1)[0] in ('--server', '-s', '--cluster') for x in argv[1:]):
+        fail('environment d2.kubectl must not override the pinned context target')
+    for field in ('context', 'kubeconfig'):
+        flag = '--'+field
+        values = []
+        for index, argument in enumerate(argv[1:], 1):
+            if argument == flag:
+                values.append(argv[index+1] if index+1 < len(argv) else '')
+            elif argument.startswith(flag+'='):
+                values.append(argument.split('=', 1)[1])
+        if len(values) != 1 or values[0] != c['deployment'][field]:
+            fail('environment d2.kubectl '+flag+' must match deployment.'+field)
+
+
 def steps(rows):
     return ['0', '1', '2', '3', '4'] + [f'5:{row}:{part}' for row in rows for part in ('factor', 'headroom', 'stage', 'judge', 'guard', 'cleanup')] + ['6', '7']
 
@@ -151,6 +187,7 @@ class Round:
     def __init__(self, c, resume=None, advance_tag=False, until=None):
         self.c = validate(c)
         self.env = load(c['environment'])
+        check_deployment_target(c, self.env)
         self.repo = Path(self.env['paths']['repository'])
         self.ops = Path(self.env['paths']['ops'])
         self.run = Path(c['run'])
@@ -346,6 +383,21 @@ class Round:
             records[filename].update(renewed=True, serviceAccount=account, backup=str(backup) if backup.exists() else None)
         self.save('token-preflight.json', records)
 
+    def deployment_recipe(self):
+        check_deployment_target(self.c, self.env)
+        publication = load(self.c['publication'])
+        if publication.get('sourceSHA') != self.c['sourceSHA'] or set(publication.get('roles', {})) != {'server'} or publication.get('runtimeBuilds') != 0:
+            fail('Prebuilt server-only publication with matching sourceSHA/runtimeBuilds:0 required')
+        recipe = dict(self.c['deployment'], source=self.c['sourceSHA'],
+                      namespace=self.env['d2'].get('namespace', 'chill-system'),
+                      apiEnvironment=self.c['environment'], minFreeBytes=self.c['minimumFreeBytes'],
+                      images=[{'role': 'server', 'prebuilt': self.c['publication']}])
+        # The same receipt boundary applies even when the live digest skips deployment.
+        images = module('round_deploy_images', self.repo/'hack/deploy/images.py')
+        images.plan(recipe, self.c['sourceSHA'], self.repo, self.attempt/'deployment')
+        self.publication = publication
+        return recipe
+
     def preflight(self):
         self.disk('preflight-disk')
         sha = self.c.get('harnessSHA', self.c['sourceSHA'])
@@ -396,14 +448,10 @@ class Round:
                 fail('Original restoration pre-state/pre-settings missing: '+str(prior))
             if self.used_tag(row, self.state['rowTags'][row]):
                 fail('Row tag already attempted: '+row+'; preserve it, use explicit resume/new tag before load only')
-        self.publication = load(self.c['publication'])
-        if self.publication.get('sourceSHA') != self.c['sourceSHA'] or set(self.publication.get('roles', {})) != {'server'} or self.publication.get('runtimeBuilds') != 0:
-            fail('Prebuilt server-only publication with matching sourceSHA/runtimeBuilds:0 required')
+        self.deployment_recipe()
         entry = self.publication['roles']['server']
-        if not re.fullmatch('sha256:[0-9a-f]{64}', entry.get('digest', '')):
-            fail('Publication digest missing')
         b['config']['approval']['sources']['server'] = self.c['sourceSHA']
-        b['config']['approval']['controlImageDigest'] = entry['image'].split('@')[0].split(':pools-control-')[0]+'@'+entry['digest']
+        b['config']['approval']['controlImageDigest'] = entry['image'].split('@')[0].rsplit(':', 1)[0]+'@'+entry['digest']
         b['schedulerSettings']['scaleDownHeadroomFraction'] = self.c['h']
         if 'reservationNodes' in self.c:
             b['config']['reservationNodes'] = self.c['reservationNodes']
@@ -438,18 +486,20 @@ class Round:
         return self.run/('full-'+base_row(row)+('-'+suffix if suffix else ''))/'pre-state.json'
 
     def deploy(self):
-        self.publication = load(self.c['publication'])
+        recipe = self.deployment_recipe()
         before = self.templates('deployment-before')
         pods = self.cluster('pods', 'pods-before')
         expected = self.publication['roles']['server']
         servers = [s for p in pods['items'] if not p['metadata'].get('deletionTimestamp') for s in p.get('status', {}).get('containerStatuses', []) if any(c['name'] == s['name'] and 'chill-serving-entrypoint' in c['image'] for c in p['spec'].get('containers', []))]
         same = bool(servers) and all(s.get('imageID', '').endswith(tuple([expected['digest'], *expected.get('platformDigests', [])])) for s in servers)
         if not same:
-            path = self.command([self.repo/'hack/fast-deploy.sh', 'upgrade', '--source', self.c['sourceSHA'], '--control', self.c['control'], '--images', 'server', '--prebuilt-images', self.c['publication']], 'fast-deploy', timeout=1500)
+            recipe_path = self.save('deployment-recipe.json', recipe)
+            evidence = self.attempt/'deployment'
+            path = self.command([self.repo/'hack/fast-deploy.sh', 'run', recipe_path, '--source', self.c['sourceSHA'], '--execute', '--evidence', evidence], 'fast-deploy', timeout=1500)
             match = re.search(r'^READY: (.+)$', path.read_text(), re.M)
-            if not match:
-                fail('fast-deploy did not retain a READY evidence path')
-            self.state['deploymentEvidence'] = match[1]
+            if not match or Path(match[1]) != evidence or load(evidence/'state.json').get('ready') is not True:
+                fail('fast-deploy did not retain READY evidence for this attempt')
+            self.state['deploymentEvidence'] = str(evidence)
         self.restarts = self.server_status('pods-ready')
         after = self.templates('deployment-after')
         normalized = copy.deepcopy(after)
@@ -751,7 +801,7 @@ def self_check():
     original_load = load
     assert all((HERE / filename).is_file() for filename in PACKAGE_FILENAMES.values())
     assert PACKAGE_FILENAMES['e5.py'] == 'conductor.py'
-    fixture = dict(sourceSHA='a'*40, rows=['E5-5', 'E5-7', 'E5-6', 'E5-3'], rowTag='8d', restoreOriginTag='223', h=.25, rateBasis={'tag': '3', 'binding': '/ops/r3.json'}, compareTags=['3', '7'], environment='/ops/environment.json', binding='/ops/input.json', release='/ops/release.json', run='/ops/run', evidence='/ops/evidence', control='265', publication='/ops/publication.json', minimumFreeBytes=310_000_000_000, kappa={'reuseRows': '/ops/kappa.json'}, failureInjection=True)
+    fixture = dict(sourceSHA='a'*40, rows=['E5-5', 'E5-7', 'E5-6', 'E5-3'], rowTag='8d', restoreOriginTag='223', h=.25, rateBasis={'tag': '3', 'binding': '/ops/r3.json'}, compareTags=['3', '7'], environment='/ops/environment.json', binding='/ops/input.json', release='/ops/release.json', run='/ops/run', evidence='/ops/evidence', deployment={'context': 'testbed', 'kubeconfig': '/ops/kubeconfig', 'release': 'chill', 'registry': 'registry.invalid/chill', 'expectedRevision': 265}, publication='/ops/publication.json', minimumFreeBytes=310_000_000_000, kappa={'reuseRows': '/ops/kappa.json'}, failureInjection=True)
     validate(fixture)
     assert steps(fixture['rows'])[:8] == ['0', '1', '2', '3', '4', '5:E5-5:factor', '5:E5-5:headroom', '5:E5-5:stage']
     assert steps(fixture['rows'])[-2:] == ['6', '7']
@@ -764,6 +814,17 @@ def self_check():
             pass
         else:
             raise AssertionError('Invalid input accepted: '+key)
+    for deployment in ({}, dict(fixture['deployment'], expectedRevision=True),
+                       dict(fixture['deployment'], expectedRevision=0),
+                       dict(fixture['deployment'], kubeconfig='relative'),
+                       dict(fixture['deployment'], registryScheme='ftp'),
+                       dict(fixture['deployment'], chartDiffApproved='/ops/approval')):
+        try:
+            validate(dict(fixture, deployment=deployment))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('Invalid deployment target accepted')
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         judgment = {'status': 'INVALID_GENERATOR', 'requests': {'w': {'D1': 'INVALID_GENERATOR'}}, 'power': {'complete': False, 'wholePoolJoules': None}, 'failureScenarioEvidence': None, 'Tick': {'events': [{'huge': 'not read'}]}}
@@ -778,7 +839,7 @@ def self_check():
         assert sections(p)['judgmentRef'] == str(p)+'.gz'
         c = dict(fixture, rows=['E5-5'], failureInjection=False, environment=str(root/'env.json'), run=str(root/'run'), evidence=str(root/'evidence'))
         Path(c['run']).mkdir()
-        Path(c['environment']).write_text(json.dumps({'paths': {'repository': temp, 'ops': temp}, 'd2': {'kubectl': ['offline-kubectl']}}))
+        Path(c['environment']).write_text(json.dumps({'paths': {'repository': temp, 'ops': temp}, 'd2': {'kubectl': ['offline-kubectl', '--kubeconfig', c['deployment']['kubeconfig'], '--context', c['deployment']['context']]}}))
         runner = Round(c)
         repeated = Round(c, until='0')
         assert repeated.attempt != runner.attempt and repeated.attempt.is_dir()

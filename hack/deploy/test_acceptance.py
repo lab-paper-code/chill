@@ -1,0 +1,326 @@
+"""Local acceptance regression checks; only the slow-drip test uses loopback."""
+import copy
+from decimal import Decimal
+import http.server
+import importlib.util
+import io
+import json
+import os
+from pathlib import Path
+import tempfile
+import threading
+import time
+import unittest
+from unittest.mock import patch
+
+
+_spec = importlib.util.spec_from_file_location('deploy_acceptance', Path(__file__).with_name('acceptance.py'))
+acceptance = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(acceptance)
+
+
+def snapshot():
+    return {
+        'profiles': {'profiles': [
+            {'id': identity, 'assessment': {'displayStatus': 'usable'},
+             'batches': [{'batch': 1, 'energyPerInputJoules': Decimal('0.123456789012345678901'),
+                          'meanWallWatts': Decimal('5.000000000000000001')}]}
+            for identity in ('p1', 'p2')]},
+        'coverage': {'summary': {'countsByDisplayStatus': {'usable': 2}},
+                     'sources': [{'complete': True, 'error': None}]},
+    }
+
+
+class AcceptanceChecks(unittest.TestCase):
+    def test_decimal_preservation(self):
+        before = snapshot()
+        after = copy.deepcopy(before)
+        after['profiles']['profiles'][0]['batches'][0]['energyPerInputJoules'] = Decimal('0.1234567890123456789010')
+        self.assertTrue(acceptance.compare(before, after)['passed'])
+        after['profiles']['profiles'][0]['batches'][0]['energyPerInputJoules'] = Decimal('0.123456789012345678902')
+        self.assertFalse(acceptance.compare(before, after)['passed'])
+
+    def test_duplicate_identities(self):
+        for kind in ('profile', 'batch'):
+            with self.subTest(kind=kind):
+                after = snapshot()
+                rows = after['profiles']['profiles']
+                if kind == 'batch':
+                    rows = rows[0]['batches']
+                rows.append(copy.deepcopy(rows[0]))
+                report = acceptance.compare(snapshot(), after)
+                self.assertFalse(report['passed'])
+                self.assertTrue(report['errors'])
+
+    def test_exact_declared_loss(self):
+        before = snapshot()
+        after = snapshot()
+        after['profiles']['profiles'].pop()
+        self.assertFalse(acceptance.compare(before, after)['passed'])
+        self.assertTrue(acceptance.compare(before, after, ['p2'])['passed'])
+        self.assertFalse(acceptance.compare(before, before, ['p2'])['passed'])
+        self.assertFalse(acceptance.compare(before, after, ['p1', 'p2'])['passed'])
+
+    def test_missing_measurement_and_status(self):
+        for field in ('energyPerInputJoules', 'meanWallWatts'):
+            after = snapshot()
+            del after['profiles']['profiles'][0]['batches'][0][field]
+            report = acceptance.compare(snapshot(), after)
+            self.assertFalse(report['passed'])
+            self.assertTrue(report['errors'])
+        after = snapshot()
+        after['profiles']['profiles'][0]['assessment']['displayStatus'] = 'unknown'
+        self.assertFalse(acceptance.compare(snapshot(), after)['passed'])
+
+    def test_coverage_completeness_and_target(self):
+        after = snapshot()
+        after['coverage']['sources'][0]['complete'] = False
+        report = acceptance.compare(snapshot(), after)
+        self.assertFalse(report['passed'])
+        self.assertFalse(report['checks']['coverageSourcesComplete'])
+        self.assertEqual(report['coverageSourcesAfter'], after['coverage']['sources'])
+        after = snapshot()
+        after['coverage']['summary']['countsByDisplayStatus']['usable'] = 1
+        self.assertFalse(acceptance.compare(snapshot(), after)['passed'])
+        self.assertTrue(acceptance.compare(snapshot(), after, expected_coverage_usable=1)['passed'])
+
+    def test_explicit_environment_precedence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'ca').write_text('fixture')
+            (root / 'token').write_text('fixture')
+            config = root / 'environment.json'
+            config.write_text(json.dumps({'d2': {'apiBase': 'https://fixture.invalid',
+                                                  'caFile': 'ca', 'tokenFile': 'token'}}))
+            with patch.dict(os.environ, {'CHILL_EXPERIMENT_CONFIG': str(root / 'missing')}):
+                self.assertEqual(acceptance.load_config(config)['caFile'], str(root / 'ca'))
+
+    def test_bounded_private_route_evidence(self):
+        class Response(io.BytesIO):
+            status = 200
+            headers = {'Content-Type': 'application/json'}
+            def read(self, size=-1):
+                if size < 0:
+                    raise AssertionError('Unbounded route response read')
+                return super().read(size)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            token = root / 'token'
+            token.write_text('original-bearer')
+            config = {'apiBase': 'https://fixture.invalid', 'caFile': 'unused', 'tokenFile': token}
+            with patch.object(acceptance.ssl, 'create_default_context'), patch.object(
+                    acceptance.urllib.request, 'build_opener') as opener:
+                for limit, passes in ((3, True), (2, False), (1, False)):
+                    opener.return_value.open.return_value = Response(b'{}')
+                    out = root / str(limit)
+                    checks = [{'path': '/api/v1/workloads?view=summary', 'maxBytes': limit}]
+                    if passes:
+                        acceptance.check_routes(config, checks, out)
+                    else:
+                        with self.assertRaises(ValueError):
+                            acceptance.check_routes(config, checks, out)
+                    receipt = json.loads((out / 'api-checks.json').read_text())[0]
+                    self.assertEqual(receipt['passed'], passes)
+                    self.assertEqual(receipt['status'], '200')
+                    self.assertEqual((out / 'route-000.json').stat().st_mode & 0o777, 0o600)
+                    request = opener.return_value.open.call_args[0][0]
+                    self.assertEqual(request.get_header('Authorization'), 'Bearer original-bearer')
+                with self.assertRaises(ValueError):
+                    acceptance.request_json(config, '//other.invalid/api/v1/workloads', root / 'bad.json')
+
+    def test_query_statuses_and_process_cleanup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            token = root / 'token'
+            token.write_text('original-bearer')
+            config = {'tokenFile': token}
+            for statuses, passes in (((401, 200), True), ((200,), False), ((401, 401), False)):
+                with self.subTest(statuses=statuses), patch.object(
+                        acceptance.subprocess, 'Popen') as popen, patch.object(
+                        acceptance, '_forward_port', return_value=12345), patch.object(
+                        acceptance, '_fetch', side_effect=[(s, {}, b'{}') for s in statuses]) as fetch, patch.object(
+                        acceptance.os, 'killpg') as killpg:
+                    out = root / '-'.join(map(str, statuses))
+                    if passes:
+                        result = acceptance.check_query(config, ['kubectl', '--context', 'fixture'],
+                                                        'chill-system', out)
+                        self.assertTrue(result['passed'])
+                        unauthenticated = fetch.call_args_list[0][0][0]
+                        authenticated = fetch.call_args_list[1][0][0]
+                        self.assertIsNone(unauthenticated.get_header('Authorization'))
+                        self.assertEqual(authenticated.get_header('Authorization'), 'Bearer original-bearer')
+                    else:
+                        with self.assertRaises(ValueError):
+                            acceptance.check_query(config, ['kubectl'], 'chill-system', out)
+                    killpg.assert_called_once_with(popen.return_value.pid, acceptance.signal.SIGTERM)
+                    popen.return_value.wait.assert_called_once_with(timeout=2)
+                    self.assertTrue(popen.call_args.kwargs['start_new_session'])
+                    self.assertNotIn('original-bearer', str(popen.call_args))
+                    self.assertEqual(json.loads((out / 'query-check.json').read_text())['passed'], passes)
+
+    def test_dashboard_requires_html_http_200(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            token = root / 'token'
+            token.write_text('original-bearer')
+            config = {'apiBase': 'https://fixture.invalid', 'caFile': 'unused', 'tokenFile': token}
+            cases = [(200, 'text/html; charset=utf-8', b'<!doctype html><html></html>', True),
+                     (200, 'application/json', b'{}', False),
+                     (200, 'text/html', b'', False),
+                     (302, 'text/html', b'<html></html>', False)]
+            for number, (status, content_type, body, passes) in enumerate(cases):
+                with patch.object(acceptance.ssl, 'create_default_context'), patch.object(
+                        acceptance, '_fetch', return_value=(status, {'Content-Type': content_type}, body)):
+                    out = root / str(number)
+                    if passes:
+                        self.assertTrue(acceptance.check_dashboard(config, out)['passed'])
+                    else:
+                        with self.assertRaises(ValueError):
+                            acceptance.check_dashboard(config, out)
+                    self.assertEqual(json.loads((out / 'dashboard-check.json').read_text())['passed'], passes)
+
+    def test_capture_waits_for_coverage_before_fetching_profiles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            with patch.object(acceptance, 'request_json', side_effect=ValueError('CoverageWarming')) as request:
+                with self.assertRaisesRegex(ValueError, 'CoverageWarming'):
+                    acceptance.capture({}, 'chill-system', out, timeout=7)
+                request.assert_called_once_with(
+                    {}, '/api/v1/namespaces/chill-system/measurement-coverage', out / 'coverage.json', 7)
+            expected = snapshot()
+            with patch.object(acceptance, 'request_json', side_effect=[
+                    expected['coverage'], expected['profiles']]) as request:
+                self.assertEqual(acceptance.capture({}, 'chill-system', out, timeout=7), expected)
+                self.assertEqual([call.args[1] for call in request.call_args_list], [
+                    '/api/v1/namespaces/chill-system/measurement-coverage', '/api/v1/scheduler/profiles'])
+
+    def test_partial_scientific_snapshot_is_not_an_operational_failure(self):
+        partial = snapshot()
+        partial['profiles']['profiles'][0]['batches'] = []
+        partial['coverage']['summary']['countsByDisplayStatus']['usable'] = None
+        for complete, error in ((False, None), (True, {'code': 'Unavailable', 'retryable': True})):
+            with self.subTest(complete=complete, error=error), tempfile.TemporaryDirectory() as directory:
+                partial['coverage']['sources'][0].update({'complete': complete, 'error': error})
+                with patch.object(acceptance, 'request_json', side_effect=[
+                        partial['coverage'], partial['profiles']]):
+                    self.assertEqual(acceptance.capture({}, 'chill-system', directory), partial)
+                status = json.loads((Path(directory) / 'snapshot-status.json').read_text())
+                self.assertTrue(status['valid'])
+                self.assertFalse(status['coverageSourcesComplete'])
+                report = acceptance.compare(snapshot(), partial)
+                self.assertFalse(report['passed'])
+                self.assertIsNone(report['coverageUsableAfter'])
+                self.assertTrue(report['errors'])
+
+    def test_strict_current_record_preservation(self):
+        before = snapshot()
+        for profile in before['profiles']['profiles']:
+            profile.update({
+                'reference': {'store': 'store', 'key': 'result', 'size': 3},
+                'evidence': [{'store': 'store', 'key': 'raw', 'size': 5}],
+                'nodeName': 'measured-node', 'condition': {
+                    'runtimeImage': 'registry/runtime@sha256:historical',
+                    'cpu': {'policy': 'ConfiguredCPUQuota', 'request': '3'},
+                    'artifact': {'image': 'registry/artifact@sha256:historical'}},
+                'confidenceLevel': Decimal('0.95'), 'idleBaselineWatts': Decimal('7.1234567890123456789'),
+                'measuredAt': '2026-11-02T01:33:29Z', 'metricSource': {'kind': 'edge-metrics'},
+                'runtimeMetadata': {'cpuAffinity': [0, 1], 'intraOpThreads': 3},
+            })
+            profile['batches'][0]['memoryBytes'] = 1234
+            profile['batches'][0]['durationNanos'] = [Decimal('1234.56789')]
+        after = copy.deepcopy(before)
+        after['profiles']['profiles'][0]['assessment']['scope'] = {'schedulerUsed': False}
+        after['profiles']['profiles'][0]['assessment']['currentCompatibility'] = 'changed'
+        self.assertTrue(acceptance.compare_records(before, after)['passed'])
+        paths = [('condition', 'runtimeImage'), ('condition', 'artifact', 'image'),
+                 ('reference', 'key'), ('evidence', 0, 'key'), ('idleBaselineWatts',),
+                 ('batches', 0, 'memoryBytes'), ('batches', 0, 'durationNanos', 0),
+                 ('runtimeMetadata', 'intraOpThreads'), ('measuredAt',)]
+        for path in paths:
+            with self.subTest(path=path):
+                changed = copy.deepcopy(before)
+                row = changed['profiles']['profiles'][0]
+                for key in path[:-1]:
+                    row = row[key]
+                value = row[path[-1]]
+                row[path[-1]] = value + 1 if isinstance(value, (int, Decimal)) else value + '-changed'
+                self.assertFalse(acceptance.compare_records(before, changed)['passed'])
+        migrated = copy.deepcopy(before)
+        for profile in migrated['profiles']['profiles']:
+            del profile['condition']['cpu']
+            profile['evidence'][0]['key'] = 'raw.sharedcpu'
+        self.assertTrue(acceptance.compare(before, migrated)['passed'])
+        self.assertFalse(acceptance.compare_records(before, migrated)['passed'])
+
+    def test_elapsed_deadline_restores_existing_alarm(self):
+        signal = acceptance.signal
+        handler = signal.getsignal(signal.SIGALRM)
+        timer = signal.getitimer(signal.ITIMER_REAL)
+        def previous(signum, frame):
+            raise AssertionError('Previous timer unexpectedly fired')
+        try:
+            signal.signal(signal.SIGALRM, previous)
+            signal.setitimer(signal.ITIMER_REAL, 5, 2)
+            with acceptance._elapsed_deadline(0.5):
+                pass
+            self.assertIs(signal.getsignal(signal.SIGALRM), previous)
+            remaining, interval = signal.getitimer(signal.ITIMER_REAL)
+            self.assertGreater(remaining, 4)
+            self.assertLessEqual(remaining, 5)
+            self.assertEqual(interval, 2)
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, handler)
+            signal.setitimer(signal.ITIMER_REAL, *timer)
+        errors = []
+        def unsupported_thread():
+            try:
+                with acceptance._elapsed_deadline(1):
+                    pass
+            except ValueError as error:
+                errors.append(str(error))
+        worker = threading.Thread(target=unsupported_thread)
+        worker.start()
+        worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(errors), 1)
+        self.assertIn('main thread', errors[0])
+
+    def test_slow_drip_body_hits_elapsed_deadline(self):
+        stop = threading.Event()
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header('Content-Length', '1024')
+                self.end_headers()
+                try:
+                    while not stop.wait(0.01):
+                        self.wfile.write(b' ')
+                        self.wfile.flush()
+                except OSError:
+                    pass
+        server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
+        worker = threading.Thread(target=server.serve_forever)
+        worker.start()
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                opener = acceptance.urllib.request.build_opener(
+                    acceptance.auth.NoRedirect(), acceptance.urllib.request.ProxyHandler({}))
+                request = acceptance.urllib.request.Request('http://127.0.0.1:%s/' % server.server_port)
+                started = time.monotonic()
+                with self.assertRaises(ValueError):
+                    acceptance._fetch(request, opener, Path(directory) / 'drip.json', timeout=0.15)
+                self.assertLess(time.monotonic() - started, 1.5)
+        finally:
+            stop.set()
+            server.shutdown()
+            server.server_close()
+            worker.join(timeout=2)
+            self.assertFalse(worker.is_alive())
+
+
+if __name__ == '__main__':
+    unittest.main()

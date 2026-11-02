@@ -2,41 +2,58 @@
 
 - **증거 먼저:** 기존 `O=/home/genesis1/.cache/chill-assets/ops/pools-deploy` 기록과 라이브 값의 출처를 확인한다. 명령·실패 원형을 보존하며 관측과 추론을 구분한다.
 - **공용 잠금:** 배포/빌드는 `/tmp/chill-heavy.lock`의 배타 잠금을 공유한다. 점유 중이면 중단한다. 다른 운영자의 작업과 겹쳐 실행하지 않는다.
-- **시간 상한:** 명령은 제한 시간 안에 종료한다. upgrade는 의존 패키지 조회당 120초, 빌드당 1800초, Helm 8분, 후속 Ready/API 확인 루프 전체 480초다. Pod 조회 timeout과 sleep도 남은 시간으로 제한하며 API 요청은 `min(10초, 남은 시간)`의 curl 전체 요청 제한을 쓴다. 기한이 지난 HTTP 200도 성공 처리하지 않는다. 시간 초과의 stdout/stderr도 보존한다. 실패 시 증거 경로를 보고하고 멈춘다.
-- **금지:** 강제 삭제, finalizer 제거, 자동 재시도, 암묵적인 reset/rollback 금지. 실패 후 재실행은 원인을 검토하고 별도 control 번호로 명시적으로 수행한다.
+- **시간 상한:** 배포 명령은 제한 시간 안에 종료한다. recipe의 `buildSeconds` 기본 1800초, Helm 8분(프로세스 제한 510초), `readinessSeconds` 기본 480초이며 각 사용자 명령에 양의 `seconds`를 명시한다. timeout의 stdout/stderr도 보존하고 실패 시 증거 경로를 보고한 뒤 멈춘다.
+- **금지:** 강제 삭제, finalizer 제거, 자동 재시도, 암묵적인 reset/rollback 금지. 실패 후에는 부분 상태와 증거를 검토하고 새 recipe/새 증거 디렉터리로 명시적인 roll-forward만 수행한다.
 - **측정 progress 캡처:** CR 생성 직후 `python3 hack/measure/capture-progress.py --node NODE --measurement CR_NAME --output-dir /tmp/NEW --wait-for-pod 300 --capture-load`를 실행한다(또는 백그라운드 선실행 후 CR 생성). CR의 Workload 소유 Pod를 2초 간격으로 최대 300초 기다리고 첫 행부터 timestamped follow를 시작한 뒤 `READY`를 출력한다.
 
-## 업그레이드 전용 배포
+## Recipe 기반 roll-forward 배포
+
+기존 `hack/fast-deploy.sh` 구현을 `hack/deploy/main.py`의 얇은 실행기로
+**교체**했다. 이전 배포 모드나 플래그를 보존하는 shim은 없다.
+recipe의 전체 작성 예제와 단일 계약은
+[hack README](../../hack/README.md#recipe-driven-roll-forward-deployment)를 따른다.
 
 ```sh
-hack/fast-deploy.sh upgrade --source <commit> --control <NNN> --dry-run
-hack/fast-deploy.sh upgrade --source <commit> --control <NNN>
-# 범위를 명시하려면 --images server,node-agent,dashboard (profiler,operator,query도 허용)
-# chart 변경은 사전 검토한 canonical live→source diff 파일과 정확히 같을 때만 승인
-# --chart-diff-approved /absolute/approved-chart-diff.txt (기본값은 chart 변경 거부)
-# 전용 raw 수집 SA는 기본 off; --values overlay로 servingEntrypoint.evidenceCollector.enabled=true
-# 명시 --values도 chart diff의 정확일치 승인 범위에 포함되며 원본을 보존한다(SCH-67).
-# node-agent config schema가 달라지면 DS 소유 operator도 같은 승인 묶음에서 배포한다.
-# 승인된 chart diff가 있으면 이미지 변경0도 허용(이미지 재빌드 없는 values/RBAC 전환).
-# 로컬 회귀 확인: 이미지별 변경 경로 선택 및 HTTP 200/남은 deadline gate
-hack/fast-deploy.sh upgrade --source HEAD --control 0 --self-check
+hack/fast-deploy.sh run /absolute/private/recipe.json --dry-run
+hack/fast-deploy.sh run /absolute/private/recipe.json --inspect --evidence /absolute/private/new-inspection
+# 아래 실행은 현재 cutover 완료 및 별도 Main 승인 후 advisor-3의 deploy main만 수행:
+hack/fast-deploy.sh run /absolute/private/recipe.json --execute --evidence /absolute/private/new-deployment
+# chart drift가 있다면 검토한 inspection의 chart-diff.txt 원본을 정확히 승인:
+# --chart-diff-approved /absolute/private/reviewed-chart-diff.txt
 ```
 
-`--dry-run`은 고정 소스를 임시 디렉터리에 펼쳐 실제 Dockerfile의 Go build 대상과 `go list -deps` 의존 디렉터리를 출력한 뒤 로컬 계획만 표시한다. 클러스터·레지스트리 조회, 이미지 빌드, 잠금, 운영 증거 파일 변경은 하지 않는다. 임시 소스는 자동 삭제되며 Go 모듈 cache는 채워질 수 있다. 라이브 태그는 조회하지 않으므로 최종 이미지 선택은 실제 실행의 `source-diff.json`에서 확인한다. Python3, git, tar, 소스의 Go toolchain이 필요하며 실제 실행에는 추가로 PyYAML, curl, Docker buildx의 `chill-builder`, `/usr/local/bin/helm`, `/usr/bin/kubectl`이 필요하다. Docker는 기존 인증 설정을 사용한다. Helm과 kubectl 모두 `--kubeconfig /home/genesis1/.kube/config`와 `kubernetes-admin@kubernetes` context를 명시하므로 direnv의 개발용 `KUBECONFIG`에 의존하지 않는다. 대상은 `chill-system/chill`, 레지스트리는 `155.230.35.213:5000/chill`이다. control-178의 성공 방식대로 buildx output에 `registry.insecure=true`를 지정해 발행하고, manifest는 같은 레지스트리의 HTTP API로 조회해 digest를 확인한다.
+- 기본값과 `--dry-run`은 로컬 계획만 출력한다. 클러스터/레지스트리 접근, 빌드, 잠금, 증거 쓰기가 없다. `--dry-run`을 빼는 것은 실행 승인이 아니다.
+- `--inspect`는 명시한 kubeconfig/context의 Helm values/manifest/hooks와 source chart를 읽어 렌더한다. custom phase 명령, 빌드/발행, 클러스터 쓰기를 하지 않는다. inspect와 execute 모두 존재하지 않는 새 `--evidence` 경로가 필수다.
+- `--execute`만 배포/발행을 허용한다. source(또는 `--source SHA`), kubeconfig, context, namespace, release, registry, apiEnvironment, 양의 현재 `expectedRevision`·`minFreeBytes`, 비어 있지 않은 `images`를 명시한다. 소스는 full commit으로 해석하고 `git archive`로 고정한다. 과거 문서의 SHA/revision/승인은 현재 승인이 아니다.
+- Python3/PyYAML/git/tar가 필요하고, 해당 실행 단계는 Helm, kubectl, curl, 빌드 시 Docker buildx를 사용한다. registry HTTP 사용은 `registryScheme: "http"`로 명시한다. 인증은 기존 도구 설정을 사용하고 credential을 recipe/buildArgs/argv에 넣지 않는다.
+- execute는 `/tmp/chill-heavy.lock` 배타 잠금을 획득한다. inspect는 잠금을 잡지 않는다. `minFreeBytes`와 `maxDiskUsedPercent`(기본 85)를 확인한다. `pruneBuiltImages: true`는 현재 source SHA label로 한정한 Docker image prune만 허용한다. 관련 없는 이미지/cache/data 정리는 허용하지 않는다.
+- 기본 live **user values** 위에 명시 source values를 합치고 Helm `--reset-values`를 사용한다. `--reuse-values`나 계산된 `--all` defaults의 동결이 아니다. `replaceValues: true`는 완전한 명시 values가 있을 때만 사용한다. live→source chart diff는 기본 거부하며 `--chart-diff-approved FILE` 내용이 현재 `chart-diff.txt`와 정확히 같아야 한다. server-side dry-run과 revision 재검사를 거친다.
+- 고정 명령 phase는 `preflight`, `stage`, `quiesce`, `migrate`, `configure`, `accept`다. 명령은 `{argv: [...], seconds: 양의정수, source: 선택적 toolSources 키}`이며 shell 해석은 없다. 실제 검토한 script만 사용한다. 별도 버전 migration/tool은 `toolSources`의 commit과 `{tool:NAME}` 경로로 고정한다.
+- `stage`는 evidence 상대 경로로 선언한 `generatedValues`를 생성한다. 입력은 최종 렌더와 quiesce **이전**에 동결한다. 후속 단계가 동결 입력/기록을 고쳐서는 안 된다. runtime/harness 활성화는 실제 declaration/new-input values와 stage/accept가 필요하다. FirstFloor 6종은 `runtimeDeclarations: true`의 고정 구현을 사용할 수 있다(inspection 기본 3600초, `runtimeInspectionSeconds`). configure나 runtime probe를 추측하지 않는다.
+- 16개 source role과 플랫폼/빌드 인자는 `images.py` catalog 및 hack README에 명시되어 있다. 이미지는 자동 선택하지 않는다. Query는 server와 별도 image다. node-agent schema 변경 시 소유 operator도 검토한 명시 선택에 포함한다. runtime/harness 발행만으로 설치·실행 성공을 주장하지 않는다.
+- prebuilt는 `images` 항목의 `{"role": "server", "prebuilt": "/absolute/private/publication.json"}`로 지정한다. sourceSHA, Dockerfile/buildArgs, platforms, digest/platformDigests/platformReceipts가 일치해야 하며 registry manifest/config의 OCI source revision을 다시 확인한다. prebuilt를 재빌드하지 않으며 chart에는 digest로 고정한다.
+- Pod spec의 선언 이미지/container name으로 식별하고 같은 이름의 status, Ready, restartCount 0, 발행 index/platform digest의 imageID를 확인한다. CRI status의 image 문자열을 선언 이미지 대신 쓰지 않는다.
+- API 환경 파일은 기존 `d2.apiBase`, `d2.caFile`, `d2.tokenFile`을 사용한다. CA/TLS/Bearer와 토큰 잔여 수명을 확인하며 원문 token은 로그/argv에 남기지 않는다. profile ID/수, 숫자 batch, usable coverage 및 측정 비교는 report-only이며 그 차이만으로 배포를 막지 않는다. `expectedProfileCount`·`expectedCoverageUsable`은 보고 목표다. `/api/v1/` 상대경로의 `apiChecks`는 HTTP 200과 응답 크기 `< maxBytes`를 요구한다.
+- 새 private evidence에는 recipe/source, 명령 로그, live values/manifest/hooks, retained objects, publication, render/chart diff, before/after API, readiness, 실패 기록을 보존한다. 민감한 운영 데이터를 공개 저장소에 올리지 않는다. 실패 시 자동 restore/rollback/retry/resume은 없다. 결론과 증거 절대경로를 보고한다.
+- 현재 첫 live 사용은 server/query/dashboard 및 FirstFloor 6종의 실제 dashboard 9-role 선택이다. FirstFloor build/publication → 별도 고정 승인 exact-image probe → 측정된 declaration activation을 모두 수행한다. 향후 미활성 발행에만 명시 `publicationOnly`를 사용하며 이번 활성화를 대체하지 않는다. 특정 profile을 임의 blocker로 삼지 않는다. 실패/부분 측정은 이전 성공값으로 대체하지 않고 진단에 보존한다. 실제 data/backup 손실·보안·인증/토큰·CLI 오류 gate는 유지한다.
+- `queryService: "chill-query"`는 private port-forward로 직접 401/인증 200을 확인한다. `dashboardCheck: true`는 HTTP 200 HTML만 확인하며 browser 시험이 아니다.
+- `timings.json`에 단계/명령의 실제 시간을 보존한다. warming 동안 coverage를 profiles보다 먼저 확인하여 반복 profile 조회를 피한다. 측정하지 않은 전체 성능 향상을 주장하지 않는다.
+- `baselineDirectory`로 원본 동결 baseline의 259 profiles 대비 손실 17을 보고할 수 있다. 현재 before 242와 after 진단은 별도로 보존하며 historical raw evidence를 고치지 않는다. `READY`는 operational Pod/API와 필수 단계 완료이지 experiment PASS가 아니다. 진단의 `passed: false`/errors도 숨기지 않는다.
+- Default A는 `measuredAt` 최신 cell과 결정적 동률 처리를 사용하며 operator의 기존 replacement annotation을 우선한다. 이전 성공으로 fallback하지 않는다. 새 allow-flag 체계를 만들지 않는다.
+- custom phase의 current context는 발행 전과 각 phase 전 recipe context와 같아야 한다. token-bearing kubeconfig를 flatten/capture하지 않는다.
+- 원본 source chart drift의 `--chart-diff-approved`와 별개로 generatedValues 최종 렌더를 신뢰된 image overlay+검증된 built-in runtime probe 출력과 비교한다. 그 외 config 변경은 quiesce 전에 정확한 별도 `--staged-diff-approved FILE`/`stagedDiffApproved` 승인이 필요하다. 임의 override를 probe 출력으로 간주하지 않는다.
+- strict current-before/after 기록과 원본 frozen 259/승인 손실 17의 four-criterion 보고를 분리한다. coverage 불명은 `null`/source-incomplete 진단이며 0으로 추측하거나 배포를 막지 않는다.
+- tracked 첫 recipe는 `hack/deploy/plans/dashboard-reads-20261103.json`이다. source는 승인된 실제 `--source`로 고정한다. pre-cutover revision은 현재 승인이 아니며 deploy main이 실제 post-cutover revision 확인 후에만 갱신한다.
+- `make test-deploy`는 저장소 회귀 진입점이며 `make test`에도 포함된다.
+- CRD는 Helm/chart 단독 소유다. 별도 SSA apply/wait나 ownership patch를 하지 않는다. chart에서 제거할 CRD는 이전 release manifest와 live CRD 양쪽에 이미 `helm.sh/resource-policy: keep`가 있어야 한다. 도구가 자동으로 keep를 추가하지 않으며 관련 이전 필드/shim도 없다.
+- `checkConfiguration: true`는 선택 source의 실제 chill-server offline validator를 한 번 빌드하고 실제 flags/live JSON 또는 명시 `schedulerConfigMapFile`로 외부 scheduler ConfigMap을 검사한다. 첫 dashboard recipe에 활성화한다. 실제 config/CLI 오류는 blocking이며 과학 진단과 다르다. prebuilt round에는 기본 Go 빌드를 추가하지 않는다.
+- `waitFor`에 Deployment/DaemonSet을 명시하면 readiness 예산 내 rollout status를 기다린다. 첫 recipe는 operator/profiler 및 DaemonSet 3개를 포함하며 실제 phase/command timing으로 대기 시간을 보고한다.
 
-`upgrade --prebuilt-images /absolute/images.json`은 위 기본 빌드 경로를 바꾸지 않는 별도 입력이다. `sourceSHA`, `runtimeBuilds:0`, 여섯 제어 role만 허용하며 `roles.<role>.image`는 동일 레지스트리의 `pools-control-<숫자>-<SHA12>` 태그, `digest`는 sha256, `platformDigests`는 발행 manifest의 실제 플랫폼 digest 목록이어야 한다. 지정된 role을 그대로 선택하며 Go 의존 조회·Docker·이미지 빌드는 실행하지 않는다. 레지스트리 원문 digest, 플랫폼(일반 amd64, node-agent amd64+arm64), 각 이미지 config의 OCI revision 전체 SHA를 다시 검증한다. Helm에는 `repository:tag@sha256:...`로 고정하므로 chart 수정 없이 immutable digest를 적용한다. tag가 다른 digest로 이동했다면 중단한다.
-
-prebuilt와 함께 쓰는 `--dry-run`은 기본 계획 전용 dry-run과 달리 **라이브 Helm values/manifest/hooks 및 레지스트리를 읽고 실제 Helm template을 렌더**한다. token·측정 heavy lock·Go/Docker·kubectl apply·helm upgrade는 사용하지 않는다. 이미지 외 overlay 변경 금지 gate를 적용하고, 기존 태그 방식 렌더와 digest 고정 렌더가 이미지 digest 외 동일한지도 검사한다. 미승인 live→source chart drift는 dry-run에서만 경고하고 `chart-diff.txt` 및 `dry-run.json`의 `chartApproved:false`로 남긴 뒤 렌더 비교를 계속한다(실제 upgrade는 여전히 정확 승인 없이는 중단). 증거는 `O/g2gate/<SHA>/deploy-control-<NNN>-<UTC>[-dry-run]/`에 남으며 `prebuilt-render-comparison.json`, `dry-run.json`(실행하지 않은 upgrade argv), tagged/pinned render를 포함한다. 실제 prebuilt upgrade는 기존 token 사전 확인·server dry-run·Helm wait·Ready/API gate와 성공 영수증을 재사용한다. genesis2 발행 및 genesis1 래퍼 사용법은 외부 운영 도구 `O/tools/G2.md`를 따른다. 실제 upgrade 시점 승인은 Main이 결정한다.
-
-Pod 이미지 식별은 **Pod spec의 선언 이미지와 container name**으로 수행한다. CRI가 digest 고정 이미지의 `status.containerStatuses[].image`에 태그 대신 config digest를 보고할 수 있으므로 이 문자열은 식별에 쓰지 않는다. 같은 이름의 status가 반드시 있어야 하며 기존 Ready·재시작0·`status.imageID`의 발행 index/platform digest 일치 검증을 모두 유지한다. `--self-check`는 digest-pinned/기존 tagged 입력과 status 누락·다른 이름·다른 선언 이미지·잘못된 imageID·재시작·종료 중 Pod의 거부를 검사한다.
-
-소스는 `git archive`로 고정한다. auto는 라이브 Helm 이미지 태그 끝의 소스 SHA를 해석해 경로 차이를 비교한다. 해석 불가 시 추측하지 않고 중단한다. server는 Dockerfile의 `cmd/chill-server`, profiler는 **`cmd/profiler`와 `cmd/transition-observer` 두 바이너리**, node-agent는 `cmd/node-agent`, operator는 `cmd/main.go`, query는 `cmd/chill-query`의 CGO 비활성화 `go list -mod=readonly -deps` 결과 중 저장소 안의 패키지 디렉터리만 사용한다. 해당 디렉터리 바로 아래 변경 파일(`*_test.go` 제외), `go.mod`, `go.sum`, 해당 Dockerfile이 빌드 선택 근거다. 모든 `cmd/`, `internal/`, `api/` 하위 경로를 통째로 공유하지 않는다. dashboard는 `chill-dashboard/` 및 해당 Dockerfile을 사용한다. `source-diff.json`은 이미지별 이전 SHA, 실제 build 대상, 의존 디렉터리/공통 입력 파일 목록과 일치한 변경 경로를 보존한다. 제어 이미지 여섯 종류만 허용하며 runtime 7종은 빌드할 수 없다. node-agent는 모든 Node를 위해 linux/amd64·linux/arm64를 함께 발행하고 나머지는 linux/amd64다. 라이브 values 위에 변경 이미지 overlay만 적용한다. chart 변경은 빌드 전에 canonical 객체 JSON의 live→source unified diff를 `chart-diff.txt`에 보존·표시하며, `--chart-diff-approved` 파일 내용이 정확히 일치할 때만 허용한다(기본 거부). 이미지 overlay가 소스 chart에 이미지 외 변경을 더하면 여전히 거부한다. 전체 live→upgrade `render-diff.{json,txt}`와 승인 원본도 보존한다. registry digest → 렌더 객체 목록/차이 → server-side dry-run → upgrade → Pod Ready/재시작0/digest 및 인증 API200 순으로 진행한다. 실행 imageID는 발행 index 또는 해당 플랫폼 child digest와 일치해야 한다. 기존 옵션 전용 reset-deploy 경로는 변경하지 않는다.
-
-Query API는 ChillServer의 별도 프록시 upstream이다. Query API 코드가 바뀌면 `--images query`를 포함해야 하며 server 이미지 갱신만으로 Query API가 갱신되지 않는다.
-
-실제 upgrade 전에 CampaignOps와 같은 `CHILL_EXPERIMENT_CONFIG=/absolute/environment.json`을 설정한다. 기존 `hack/e5/d2/conduct_before.py`의 실제 호출 계약인 `d2.apiBase`(HTTPS origin), `d2.caFile`, `d2.tokenFile`을 그대로 사용한다. 새 토큰 발급이나 인증 우회 없이 해당 CA로 TLS/hostname을 검증하고 `Authorization: Bearer <파일 토큰>`으로 `GET /api/v1/scheduler/state`를 호출한다. redirect는 따라가지 않으며 **HTTP 200과 curl 성공 및 남은 deadline**이 모두 있어야 READY다. 연결 거부/비200은 480초 안에서 다시 관측한다. 토큰은 argv/증거 로그 대신 curl의 비공개 stdin으로만 전달한다. 이 API gate는 server를 이번에 빌드하지 않은 경우에도 적용된다. profiler/dashboard 자체의 앱 API gate는 없고 Pod Ready를 사용한다.
-
-증거는 `O/deployB/control-<NNN>-<UTC date>/`의 `commands.log`, `source-diff.json`, `live-values.json`, `post-values.json`, `publication.json`, `render-diff.{json,txt}`, `server-dry-run.log`, `readiness.json`, `application-readiness.jsonl`에 남고 성공하면 `O/deploy-log.md`에 한 줄 추가한다. `readiness.json`은 Pod gate와 마지막 API status/exitCode/오류를 나눠 기록하고 `application-readiness.jsonl`은 관측 이력을 보존한다(응답 본문/토큰 미보존). 실패는 `failure.json`을 보존한다. **보고는 결론 한 줄 + 증거 절대 경로**로 끝낸다. 배포 명령 성공만으로 업무 시나리오의 성공을 주장하지 않는다.
+첫 live 사용은 현재 cutover 이후 advisor-3의 deploy main 단독 실행만 허용한다.
+여기의 절차나 회귀 검사는 live 승인 자체가 아니며 browser/hardware/campaign/과학
+결과 성공을 의미하지 않는다. 로컬 회귀 명령(이 문서 수정 중 실행하지 않음):
+`python3 -B hack/deploy/test_deploy.py`,
+`python3 -B hack/deploy/test_acceptance.py`.
 
 ## E5 각 실행 직전 표준 절차
 
@@ -58,9 +75,9 @@ CHILL_EXPERIMENT_CONFIG="$ENV" python3 hack/evaluation/demo.py preflight --confi
 
 **시작 전 토큰 만료 검사:** E5 `CPO.start/run`과 demo prepare/start/run은 같은 `hack/evaluation/auth.py`를 사용한다. 예상 실행 시간은 남은 단계 초 합 + 각 단계별 timeboxes 합 + `tokenSafetyMarginSeconds`(생략 시 60초)이며 campaign 시작은 정적 기준선/제어요소 단계도 포함한다. ServiceAccount JWT의 `exp`를 읽어 남은 시간이 예산보다 짧으면 API 변경/부하 시작 전에 거부한다. 이는 수명 검사이며 서명/권한 검증을 대체하지 않는다. JWT 형식이 아니거나 exp가 없으면 기존 CA·Bearer·redirect 금지로 scheduler state를 GET하여 **HTTP 200 + `X-Token-Expires-At`의 timezone 포함 시각**을 대안 증거로 요구한다. 서버가 만료 시각을 제공하지 않으면 추측하거나 무기한 토큰으로 처리하지 않고 거부한다. 토큰 신규 발급·TokenReview POST는 하지 않는다.
 
-binding의 `config.tokenLifetime.expiresUTC`와 실행별 `token-preflight-*.json`에 검사 시각/만료 시각/남은 초/필요 초/출처만 기록한다(토큰 원문 미기록). upgrade도 이미지별 빌드 1800초 합 + Helm 510초 + readiness 480초 + `--token-safety-margin-seconds`(기본 120초)로 시작 검사하고 Helm 직전 재검사한다. `--images auto`는 세 이미지를 보수적으로 계산한다. `token-preflight.json`·`token-pre-upgrade.json`에 만료 증거를 남긴다.
+binding의 `config.tokenLifetime.expiresUTC`와 실행별 `token-preflight-*.json`에 검사 시각/만료 시각/남은 초/필요 초/출처만 기록한다(토큰 원문 미기록). 배포는 명시 이미지 빌드 예산, Helm 510초, readiness 예산, 사용자 phase 예산과 여유를 포함하여 사전 확인하고 변경 직전 다시 확인한다. 배포의 실제 고정 예산/증거 계약은 `hack/deploy/main.py`와 `acceptance.py`가 소유한다.
 
-로컬 회귀 확인(클러스터 접근/쓰기 없음): `python3 hack/evaluation/smoke_preflight.py`, 기존 전체 lifecycle 확인은 `python3 hack/evaluation/demo.py --self-check`, upgrade 확인은 `hack/fast-deploy.sh upgrade --source HEAD --control 0 --self-check`.
+로컬 회귀 확인(클러스터 접근/쓰기 없음): `python3 hack/evaluation/smoke_preflight.py`, 기존 전체 lifecycle 확인은 `python3 hack/evaluation/demo.py --self-check`, 배포 확인은 `python3 -B hack/deploy/test_deploy.py`와 `python3 -B hack/deploy/test_acceptance.py`다.
 
 ## genesis1 디스크 압박과 CloudCore 배치 (2026-10-30)
 

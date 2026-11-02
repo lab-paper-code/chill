@@ -45,16 +45,210 @@ with hooks disabled. The chart hook remains only as a safety net for direct
 `make helm-purge-crds` is intentionally guarded and requires
 `CONFIRM_PURGE_CRDS=chill`.
 
-## Control-only upgrade
+## Recipe-driven roll-forward deployment
 
-`hack/fast-deploy.sh upgrade --source <commit> --control <NNN> --dry-run`
-prints a local-only deployment plan. Remove `--dry-run` to publish changed
-control images and upgrade the existing release without uninstall/reset.
-`--images auto` (default) compares live image source commits; an explicit
-subset of `server,profiler,dashboard` is also accepted. Runtime image builds
-are forbidden. See [the operations guide](../docs/operations/ops-agent-guide.md)
-for the shared lock, evidence files, prerequisites and stop conditions.
-Upgrade and evaluation/demo start/run reject tokens shorter-lived than their stage/timebox budget plus safety margin (`--token-safety-margin-seconds`, default 120s for upgrade; `tokenSafetyMarginSeconds`, default 60s for evaluation/demo); JWT `exp` or authenticated `X-Token-Expires-At` evidence and expiry UTC are retained without token bytes.
+`hack/fast-deploy.sh` is the existing entry point, **replaced**, not extended
+with a parallel deployment implementation. It is a thin runner for
+`hack/deploy/main.py`; the only interface is:
+
+```sh
+hack/fast-deploy.sh run /absolute/private/recipe.json --dry-run
+hack/fast-deploy.sh run /absolute/private/recipe.json --inspect --evidence /absolute/private/new-inspection
+hack/fast-deploy.sh run /absolute/private/recipe.json --execute --evidence /absolute/private/new-deployment
+```
+
+The default is local-only dry-run: no cluster/registry access, build, lock or
+evidence writes. `--inspect` reads the explicit cluster and renders its live
+values plus the pinned source chart; it never publishes, mutates the cluster,
+or executes custom phase commands. Inspect and execute require a **new**
+evidence directory. `--execute` alone authorizes publication and mutation;
+removing `--dry-run` does not. `--source SHA` overrides the recipe source.
+There are no legacy deployment modes, reset, rollback, resume, or compatibility
+flags. Failure means STOP, retain evidence, then review a fresh roll-forward.
+
+### Ordinary control update recipe
+
+This local recipe writer uses the actual reviewed source and current deployed
+revision, not an example SHA/revision masquerading as approval. Set
+`DEPLOY_SOURCE` to the approved full commit, `DEPLOY_REVISION` to the reviewed
+current Helm revision, `DEPLOY_RECIPE` to a private JSON output path, and
+`DEPLOY_API_ENVIRONMENT` to the existing private environment JSON. These are
+operator inputs from the current cutover review, not values to guess.
+
+```sh
+python3 - <<'PY'
+import json, os
+from pathlib import Path
+os.umask(0o077)
+recipe = {
+    "source": os.environ["DEPLOY_SOURCE"],
+    "context": "kubernetes-admin@kubernetes",
+    "kubeconfig": "/home/genesis1/.kube/config",
+    "namespace": "chill-system",
+    "release": "chill",
+    "registry": "155.230.35.213:5000/chill",
+    "registryScheme": "http",
+    "apiEnvironment": os.environ["DEPLOY_API_ENVIRONMENT"],
+    "expectedRevision": int(os.environ["DEPLOY_REVISION"]),
+    "minFreeBytes": 310000000000,
+    "images": ["server"],
+    "values": [],
+    "replaceValues": False,
+    "generatedValues": [],
+    "toolSources": {},
+    "commands": {},
+    "allowedLostProfileIDs": [],
+    "apiChecks": []
+}
+with Path(os.environ["DEPLOY_RECIPE"]).open("x") as out:
+    json.dump(recipe, out, indent=2)
+    out.write("\n")
+PY
+```
+
+The target above is the known testbed, **not** permission to deploy there.
+First live use is only after the current cutover, with advisor-3's deploy main
+as the sole live actor. This documentation/change performs no live operation.
+
+### Sources, phases, and acceptance
+
+The fixed command phases are `preflight`, `stage`, `quiesce`, `migrate`,
+`configure`, `accept`. Each optional command is
+`{"argv": ["python3", "{source}/path/to/reviewed-script.py"], "seconds": 120}`;
+the path must identify a real reviewed script in the selected commit, not a
+generic migration inferred by the tool. There is no shell interpolation.
+Supported substitutions are `{source}`, `{evidence}`, `{namespace}`,
+`{release}`, and `{tool:NAME}`. For separately versioned tooling, freeze its
+full Git commit in `toolSources.NAME`, select `"source": "NAME"` on the
+command, and invoke its script through `{tool:NAME}`. This separates deployment
+source from migration/tool source rather than executing a mutable checkout.
+The current context must match the recipe context before publication and before
+every custom phase. This check does not flatten or capture token-bearing
+kubeconfig content.
+
+`stage` creates explicitly listed `generatedValues` files relative to the
+new evidence directory. The runner freezes those inputs before final rendering
+and **before quiesce**; later phases must not rewrite frozen inputs or records.
+Use these inputs for new runtime declarations and harness new-input values.
+Runtime/harness activation requires explicit stage/generatedValues and accept
+scripts, or the fixed `runtimeDeclarations: true` implementation for all six
+FirstFloor roles together. The latter runs the existing inspector in a separate
+fixed, approved exact-image probe stage after publication, before measured
+declaration activation (`runtimeInspectionSeconds`, default 3600). It does not
+guess probes or treat publication as readiness. Retain partial runtime,
+profile and measurement diagnostics without falling back to an older successful
+result; do not invent a profile-specific deployment blocker.
+For future deliberately unactivated builds, `publicationOnly` must explicitly
+list those selected roles. It is not allowed to replace the required activation
+in this first live use. State-changing quiesce/migrate/configure commands
+require explicit acceptance.
+
+The execution gates are explicit target/revision and disk/token preflight,
+private backups, chart review, publication with registry provenance checks,
+stage/frozen final render and server dry-run, quiesce/migrate, configure,
+Helm update, Pod readiness, and acceptance. Helm/chart is the sole CRD owner:
+there is no separate SSA CRD apply/wait phase or compatibility field.
+Before removing a CRD from the chart, both the previous Helm release manifest
+and live CRD must already carry `helm.sh/resource-policy: keep`. This is a
+data-preservation gate; the tool never patches ownership or adds keep
+automatically. The default uses
+live **user** values plus explicit source values with Helm `--reset-values`;
+it is not `--reuse-values` and does not freeze computed `--all` defaults.
+`replaceValues: true` instead supplies complete explicit values.
+Unapproved chart drift stops: review inspection's `chart-diff.txt`,
+then pass that exact reviewed file with `--chart-diff-approved FILE`.
+An old SHA, old revision, or a different diff is not approval.
+Generated-values changes have a separate gate: compare the final render against
+the trusted verified-image overlay plus validated built-in runtime-probe output.
+Any other configuration change requires an exact separate
+`--staged-diff-approved FILE` (or recipe `stagedDiffApproved`) before quiesce.
+Base source-chart approval does not approve staged configuration changes;
+dynamic probe output is validated by the built-in path, not an arbitrary
+override.
+
+`images` is an explicit selection, never automatic change detection. The
+source role catalog has all 16 roles:
+`server`, `profiler`, `dashboard`, `node-agent`, `operator`, `query`,
+`metric-observer`, `workload-observer`, `load-generator`, `evaluation-harness`,
+`firstfloor`, `firstfloor-cuda`, `firstfloor-l4t-r32`, `firstfloor-l4t-r35`,
+`firstfloor-l4t-r36`, `firstfloor-rknn`. Dockerfiles, variant build arguments,
+platform defaults and Helm mappings come from `hack/deploy/images.py`.
+In particular Query is a separate upstream image; updating server does not
+update Query. Runtime/harness roles have no inferred Helm image mapping.
+Per-image objects may specify `role`, `platforms`, `buildArgs`, or
+`prebuilt: "/absolute/private/publication.json"` instead of a role string.
+Prebuilt receipts must carry matching `sourceSHA` and role provenance:
+`dockerfile`, `buildArgs`, `platforms`, `digest`, `platformDigests`, and
+`platformReceipts`. Execution verifies registry manifests/platform configs and
+OCI source revision before using digest-pinned images; it does not rebuild
+prebuilt inputs. Credentials do not belong in recipes, argv, or build args.
+
+Authenticated API checks and operational readiness are deployment gates;
+profile IDs/counts, numeric batch values, usable coverage and measurement
+comparisons are **report-only diagnostics**, not experiment PASS or reasons
+alone to reject an operational deployment. Keep diagnostic `passed: false`
+and errors visible. `expectedProfileCount` and `expectedCoverageUsable` are
+report targets, not rejection knobs. Optional `baselineDirectory` points to
+the original frozen baseline: report its 259 profiles and the 17-profile loss
+separately from the current 242-profile before/after comparison; never rewrite
+historical raw evidence or hide the difference behind an older success.
+Retain strict current-before/current-after records separately from the original
+frozen-baseline four-criterion report with its approved 17-profile loss.
+Unknown coverage counts are `null` with source-incomplete diagnostics, not
+guessed zeroes or deployment blockers.
+There is no new allow-flag framework. Actual data/backup loss, auth/token,
+security failures and CLI errors remain blocking.
+
+Default A selects the latest cell by `measuredAt` with a deterministic tie;
+the operator's existing replacement annotation has priority. Failed/partial
+measurement results remain visible rather than selecting an old success.
+Additional `apiChecks` use objects such as
+`{"path": "/api/v1/scheduler/state", "maxBytes": 1048576}` and require HTTP
+200 with body size strictly **less than** `maxBytes`. The existing environment's
+`d2.apiBase`, `d2.caFile`, and `d2.tokenFile` supply HTTPS/CA/Bearer auth.
+`READY` means operational Pods/APIs and required steps completed, not browser,
+hardware, campaign or scientific-result acceptance.
+
+The current first live use is the actual dashboard nine-role selection:
+`server`, `query`, `dashboard`, and all six FirstFloor roles. It must include
+FirstFloor build/publication → separate fixed approved exact-image probes →
+measured declaration activation, not publication-only receipts.
+`queryService: "chill-query"` adds direct unauthenticated 401/authenticated 200
+checks through a private port-forward. `dashboardCheck: true` requires HTTP 200
+HTML, not a browser interaction test. Neither substitutes for hardware or
+measurement acceptance.
+The tracked first-use recipe is
+`hack/deploy/plans/dashboard-reads-20261103.json`; pass its actual approved
+source using `--source`. Its pre-cutover expected revision is not post-cutover
+approval: only deploy main updates it after confirming the actual live revision.
+
+Keep all evidence private: live values, manifests, retained objects, commands,
+publication, renders, before/after API captures and failure records can contain
+operational data. Execute shares `/tmp/chill-heavy.lock`; inspect does not.
+The disk gates require `minFreeBytes` and `maxDiskUsedPercent` (default 85).
+`pruneBuiltImages: true` permits only Docker image pruning scoped to the current
+source SHA label; it never authorizes unrelated image/cache/data pruning.
+`timings.json` retains measured stage/command durations. Coverage is checked
+before profiles to avoid repeated profile captures while warming; this is not
+evidence of a global speedup.
+See [the operations guide](../docs/operations/ops-agent-guide.md) for operational
+limits. Repository-local regression checks (not run by writing these docs):
+`python3 -B hack/deploy/test_deploy.py` and
+`python3 -B hack/deploy/test_acceptance.py`. `make test-deploy` is the
+repository Make entry point and is included in `make test`.
+
+Optional `checkConfiguration: true` runs the fixed `configuration.py` check:
+build the selected source's actual `chill-server` offline validator once, then
+validate the selected external scheduler ConfigMap through the real CLI flags
+and live JSON, or explicit `schedulerConfigMapFile`. The dashboard first-use
+recipe enables this check. Invalid actual configuration/CLI execution blocks;
+it is not a scientific diagnostic. Prebuilt evaluation-round deployment does
+not set it and introduces no default Go build.
+
+Optional `waitFor` explicitly names Deployment/DaemonSet resources whose
+rollout status must complete within the readiness budget. The first-use recipe
+includes operator, profiler and three DaemonSets. Actual phase/command timings
+can expose those waits; no performance result is inferred from configuration.
 
 ### E5 #222/#223 static replay
 
@@ -794,7 +988,7 @@ environment JSON (module constants) but makes no cluster or network calls.
 ### One-command evaluation round
 
 `python3 -B hack/evaluation/round.py --round /absolute/private/round.json` runs the
-released server-only upgrade, initial owned reset, headroom PUT/readback, κ,
+released server-only roll-forward, initial owned reset, headroom PUT/readback, κ,
 ordered factor → headroom GET → stage/first-load-tick check → judge → guards →
 cleanup, comparison tables, and final finish/empty-state readback. It reuses
 `conductor.CPO`, `conductor.py` commands, token lifetime checks, and table formatters; raw
@@ -802,8 +996,10 @@ latency/D1/energy judgments are not recomputed or weakened. Run only outside an
 active measurement window and under an actual Main-approved release.
 예정 대체: 현재 `round.py`·로컬 binding·운영자 장애 주입은 유지하되, [실험 실행 설계](../docs/design/profiling/experiment-execution.md) / [실험 SRS](../docs/spec/experiments/SRS.md)에 따른 정의·독립 실행으로 대체할 예정이다.
 
-The private input JSON has these fields (all filesystem paths are absolute;
-replace the illustrative paths/SHAs with actual approved inputs):
+The private input JSON uses the fields below **plus the required `deployment`
+object described after the example**. All filesystem paths are absolute;
+replace illustrative paths/SHAs with approved inputs. The example deliberately
+contains no guessed live deployment revision and is not ready to execute.
 
 ```json
 {
@@ -819,7 +1015,6 @@ replace the illustrative paths/SHAs with actual approved inputs):
   "release": "/ops/campaign/run/release-round-9.json",
   "run": "/ops/campaign/run",
   "evidence": "/ops/deployB/round-9",
-  "control": "265",
   "publication": "/ops/prebuilt/server-publication.json",
   "minimumFreeBytes": 310000000000,
   "kappa": {"reuseRows": "/ops/deployB/prior/kappa-rows.json"},
@@ -827,6 +1022,22 @@ replace the illustrative paths/SHAs with actual approved inputs):
   "failureInjection": true
 }
 ```
+Add `deployment` with actual reviewed `context`, `kubeconfig`, `release`,
+`registry`, and positive `expectedRevision`; optional `registryScheme` is
+`http` or `https` (default). Do not copy a revision from an old control record.
+Namespace comes from the existing environment's `d2.namespace` (default
+`chill-system`), API environment from `environment`, source from `sourceSHA`,
+and free-byte floor from `minimumFreeBytes`. The old control-number input is
+removed, not translated into a new invocation. The round writes a fixed
+server-only prebuilt deployment recipe under each attempt and calls
+`fast-deploy.sh run` with explicit source, execute and new evidence arguments.
+The existing environment's `d2.kubectl` argv must explicitly pin exactly one
+`--context` and one `--kubeconfig` agreeing with `deployment`. Both paired and
+`--flag=value` forms are accepted; missing, duplicate or mismatched pins and
+`--server`/`--cluster` overrides are rejected before evidence construction or
+deployment. Round, harness and failure helpers reuse that original argv
+unchanged; no alternate environment file is synthesized.
+
 
 `environment.paths.ops` is the actual external ops root, **not** literal `/ops`.
 `run` is the existing campaign containing original snapshots and `initial.json`.
@@ -838,10 +1049,15 @@ The pre-existing approved release must name that exact generated `bindingPath`,
 `executor: "CampaignOps"`, `command: "evaluation-execute"`, `mainInstructionUTC`, and
 explicit `sources: {server, loadgen, power}`; legacy single `sourceSHA` releases
 are rejected. It never fabricates approval. The server publication must have
-the matching SHA, only `roles.server`, verified digest/platform receipts, and
-`runtimeBuilds: 0`; fast-deploy uses `--prebuilt-images` and never builds on the
-host. A matching live digest skips upgrade, not Ready/API/restartCount gates.
-Any chart drift stops; the runner does not accept chart-change approval.
+the matching SHA, only `roles.server`, `runtimeBuilds: 0`, and complete build
+provenance (`dockerfile`, `buildArgs`, `platforms`, `digest`,
+`platformDigests`, `platformReceipts`). The round supplies the receipt as the
+server image's `prebuilt` input to the recipe-driven `fast-deploy.sh run`
+interface, with an explicit current revision and new private evidence.
+No image is rebuilt on the host. A matching live digest skips execute only,
+not local validation of the full publication receipt. When deployment runs,
+Ready/API/restartCount and registry provenance gates apply.
+Any chart drift stops; the round does not accept chart approval.
 
 Optional `harnessSHA` selects a different full commit for the frozen
 `ops/harness/evaluation-<sha>` tree (default `sourceSHA`). Missing trees are created

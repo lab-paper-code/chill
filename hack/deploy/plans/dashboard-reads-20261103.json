@@ -1,0 +1,83 @@
+{
+  "context": "kubernetes-admin@kubernetes",
+  "kubeconfig": "/home/genesis1/.kube/config",
+  "namespace": "chill-system",
+  "release": "chill",
+  "registry": "155.230.35.213:5000/chill",
+  "registryScheme": "http",
+  "apiEnvironment": "/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/inputs/environment.json",
+  "expectedRevision": 178,
+  "minFreeBytes": 310000000000,
+  "maxDiskUsedPercent": 85,
+  "pruneBuiltImages": true,
+  "images": [
+    "server",
+    "query",
+    "dashboard",
+    "firstfloor",
+    "firstfloor-cuda",
+    "firstfloor-l4t-r32",
+    "firstfloor-l4t-r35",
+    "firstfloor-l4t-r36",
+    "firstfloor-rknn"
+  ],
+  "values": [],
+  "checkConfiguration": true,
+  "runtimeDeclarations": true,
+  "runtimeInspectionSeconds": 3600,
+  "queryService": "chill-query",
+  "waitFor": [
+    "deployment/chill-operator",
+    "deployment/chill-profiler",
+    "deployment/chill-query",
+    "deployment/chill-serving-entrypoint",
+    "deployment/chill-dashboard",
+    "daemonset/chill-node-agent",
+    "daemonset/chill-node-agent-actuation",
+    "daemonset/chill-node-agent-actuation-nvidia"
+  ],
+  "dashboardCheck": true,
+  "baselineDirectory": "/home/genesis1/.cache/advisor1-profile-baseline/base",
+  "allowedLostProfileIDs": [
+    "chill-system/genesis2-006-mnv2-cpu-q1/c152a8e5-d88a-412d-968b-d1c02f64cbaa",
+    "chill-system/genesis2-014-plc-cpu-q1/fcbd95e1-3263-4ffc-8cfb-ece8ac84c51d",
+    "chill-system/genesis2-020-plc-cpu-q2/d471ce53-45fa-42a0-9f04-4957d8de5a1e",
+    "chill-system/genesis3-006-mnv2-cpu-q1/7f8f1400-67d9-4242-8dce-9b5638afb133",
+    "chill-system/genesis3-008-mnv2-cpu-q2/25a10c6c-120d-457e-b734-c76c7ddc7e69",
+    "chill-system/genesis3-014-plc-cpu-q1/98ea7a4d-069b-4cbf-a796-79e78aaa631a",
+    "chill-system/genesis3-022-plc-cpu-q2/82d20914-3c78-42e3-831c-f2ef1a5deea8",
+    "chill-system/jetson-nano-012-plc-cpu-q1-maxn/12dad1f0-b2d2-49f7-a682-262c19e636bc",
+    "chill-system/jetson-nano-019-plc-cpu-q2-maxn/10f7a9d6-4d52-4d44-aed8-3770bb56e469",
+    "chill-system/jetson-nano-903-smolvlm-int8-q1-maxn/253eb4e8-b19c-457b-8d6c-a6ac27798500",
+    "chill-system/lattepanda-006-mnv2-cpu-q1/c9471b66-2986-47be-890f-5ab83d8b7425",
+    "chill-system/lattepanda-011-plc-cpu-q1/2669500c-737f-48ea-aa83-82bbe46605cf",
+    "chill-system/orangepi-012-plc-cpu-q1/f136179e-87fc-4444-9e47-28ba1acd3a2a",
+    "chill-system/orangepi-954-mnv2-cpu-q2-approved/70f61064-4a06-47a8-83c2-735f63afe94c",
+    "chill-system/rasp5-006-mnv2-cpu-q1/f45d7ba7-eee4-45c7-ac32-e35616e6671c",
+    "chill-system/rasp5-011-plc-cpu-q1/5bc8c918-4d0d-4483-9ea2-d560f8ffc46b",
+    "chill-system/rasp5-015-plc-cpu-q2/ec198f0f-2073-40d6-b074-4989af942303"
+  ],
+  "expectedProfileCount": 242,
+  "apiChecks": [
+    {
+      "path": "/api/v1/workloads?view=summary",
+      "maxBytes": 8388608
+    },
+    {
+      "path": "/api/v1/namespaces/chill-system/measurement-coverage?view=summary",
+      "maxBytes": 8388608
+    },
+    {
+      "path": "/api/v1/namespaces/chill-system/batch-energy-optimizations?view=summary",
+      "maxBytes": 8388608
+    },
+    {
+      "path": "/api/v1/scheduler/profiles?view=summary&limit=50",
+      "maxBytes": 8388608
+    },
+    {
+      "path": "/api/v1/evaluations/template",
+      "maxBytes": 8388608
+    }
+  ]
+}
