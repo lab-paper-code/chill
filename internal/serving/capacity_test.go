@@ -52,13 +52,14 @@ func TestCapacityRowKappaIsFixedAndRepeatable(t *testing.T) {
 }
 
 func TestCapacityTableRecoversCurrentPlacementWithoutPoisoningMeasuredRow(t *testing.T) {
+	const gpuUUID = "gpu"
 	for _, resource := range []string{"memory", "device"} {
 		t.Run(resource, func(t *testing.T) {
 			settings, snapshot := capacityFixture()
 			if resource == "device" {
-				snapshot.Instances[0].Allocation.GPUUUID = "gpu"
-				snapshot.Options[0].Instance.Allocation.GPUUUID = "gpu"
-				snapshot.Nodes[0].GPUUUIDs = []string{"gpu"}
+				snapshot.Instances[0].Allocation.GPUUUID = gpuUUID
+				snapshot.Options[0].Instance.Allocation.GPUUUID = gpuUUID
+				snapshot.Nodes[0].GPUUUIDs = []string{gpuUUID}
 			}
 			healthy := snapshot.Nodes[0]
 			if resource == "memory" {

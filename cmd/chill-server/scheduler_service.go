@@ -84,7 +84,9 @@ func newSchedulerService(ctx context.Context, store *servingkube.Store, kube kub
 		servingkube.OperationConfig{
 			Namespace:    opts.servingNamespace,
 			PollInterval: opts.sourceInterval,
-			MetricLimits: metricobserver.Limits{MaxResultBytes: opts.maxEvidenceBytes, MemoryBudgetBytes: debug.SetMemoryLimit(-1)},
+			MetricLimits: metricobserver.Limits{
+				MaxResultBytes: opts.maxEvidenceBytes, MemoryBudgetBytes: debug.SetMemoryLimit(-1),
+			},
 		})
 	if err != nil {
 		return nil, err
@@ -196,7 +198,9 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	if config.PowerObservation != nil {
 		limits := metricobserver.Limits{MaxResultBytes: o.opts.maxEvidenceBytes, MemoryBudgetBytes: debug.SetMemoryLimit(-1)}
 		for _, meter := range config.Meters {
-			if _, err := metricobserver.RequiredCapacity(config.PowerObservation.Sampling, meter.Source, limits, false); err != nil {
+			if _, err := metricobserver.RequiredCapacity(
+				config.PowerObservation.Sampling, meter.Source, limits, false,
+			); err != nil {
 				return fmt.Errorf("admit scheduler power observation for %s: %w", meter.ID, err)
 			}
 		}
@@ -443,7 +447,9 @@ func (o *schedulerService) restartPower(config schedulerConfiguration) {
 			if o.live != nil {
 				source = livePowerSource{Source: source, metrics: o.live.metrics, nodeUID: meter.Node.UID}
 			}
-			if _, err := metricobserver.RequiredCapacity(config.PowerObservation.Sampling, source.Identity(), limits, false); err != nil {
+			if _, err := metricobserver.RequiredCapacity(
+				config.PowerObservation.Sampling, source.Identity(), limits, false,
+			); err != nil {
 				ctrl.Log.Error(err, "admit scheduler power observation")
 				return
 			}

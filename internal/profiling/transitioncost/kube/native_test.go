@@ -2,10 +2,11 @@ package kube
 
 import (
 	"context"
-	core "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"strings"
 	"testing"
+
+	core "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 func TestNativeObservationRejectsAdmissionInjectedCPUIncludingZero(t *testing.T) {

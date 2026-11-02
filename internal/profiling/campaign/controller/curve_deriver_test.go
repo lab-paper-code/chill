@@ -570,7 +570,7 @@ func curveFixtureIdleEvidence(
 			MeasurementStartedAt:      started.Format(time.RFC3339Nano),
 			MeasurementEndedAt:        started.Add(30 * time.Second).Format(time.RFC3339Nano),
 			MeasurementElapsedSeconds: 30, ModelResidentAtEnd: true,
-			CPUContract: curveFixtureRuntimeCPU(config),
+			CPUContract: curveFixtureRuntimeCPU(),
 			DerivedContract: profilingrun.DerivedContract{
 				Backend: config.State.Backend, Provider: config.State.Backend, NodeSnapshot: config.TargetNode,
 			},
@@ -633,7 +633,7 @@ func curveFixtureActiveRaw(
 			MeasurementStartedAt:      started.Format(time.RFC3339Nano),
 			MeasurementEndedAt:        started.Add(30 * time.Second).Format(time.RFC3339Nano),
 			MeasurementElapsedSeconds: 30, TargetDurationSeconds: &targetDuration,
-			CPUContract: curveFixtureRuntimeCPU(config),
+			CPUContract: curveFixtureRuntimeCPU(),
 			DerivedContract: profilingrun.DerivedContract{
 				Backend: config.State.Backend, Provider: config.State.Backend, NodeSnapshot: config.TargetNode,
 			},
@@ -683,7 +683,7 @@ func curveFixtureActiveRaw(
 	return raw
 }
 
-func curveFixtureRuntimeCPU(config profilingrun.RunConfig) profilingrun.RuntimeCPU {
+func curveFixtureRuntimeCPU() profilingrun.RuntimeCPU {
 	return profilingrun.RuntimeCPU{
 		CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 0,
 		ORTInterOpThreads: 0, AffinityCPUCount: 4,

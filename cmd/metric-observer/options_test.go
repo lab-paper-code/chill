@@ -32,7 +32,9 @@ func TestOptionsValidateRequiredBindings(t *testing.T) {
 }
 
 func TestOptionsRequireFrozenResultCapacity(t *testing.T) {
-	opts := options{runConfig: `{}`, startWaitTimeout: time.Second, endWaitTimeout: time.Second, memoryBudgetBytes: 48 << 20}
+	opts := options{
+		runConfig: `{}`, startWaitTimeout: time.Second, endWaitTimeout: time.Second, memoryBudgetBytes: 48 << 20,
+	}
 	if err := opts.validate(); err == nil || !strings.Contains(err.Error(), "maximum result bytes") {
 		t.Fatalf("missing result capacity accepted: %v", err)
 	}

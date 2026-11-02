@@ -14,7 +14,7 @@ const (
 	fixtureMemorySource = "cgroup-v2-memory.peak:runtime-container-lifetime"
 )
 
-func fixtureRuntimeCPU(config profilingrun.RunConfig) profilingrun.RuntimeCPU {
+func fixtureRuntimeCPU() profilingrun.RuntimeCPU {
 	return profilingrun.RuntimeCPU{
 		CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 0,
 		ORTInterOpThreads: 0, AffinityCPUCount: 4,
@@ -29,7 +29,7 @@ func fixtureFirstfloorEvidence(
 	if executions > 0 {
 		counts[strconv.Itoa(config.Measurement.Batch)] = executions
 	}
-	cpu := fixtureRuntimeCPU(config)
+	cpu := fixtureRuntimeCPU()
 	return &profilingrun.FirstfloorRuntimeEvidence{
 		Mode: "profiling", ModelInstanceCount: 1, MaxBatchSize: 4, MaxQueueSize: 32,
 		DeadlinePolicy: modelcompat.EffectiveDeadlinePolicy(config.State.Firstfloor.DeadlinePolicy),
@@ -49,7 +49,7 @@ func fixtureFirstfloorEvidence(
 func applyFirstfloorIdleRuntime(config profilingrun.RunConfig, result *profilingrun.IdleRuntimeResult) {
 	result.Provider, result.AvailableProviders = fixtureCPUProvider, []string{fixtureCPUProvider}
 	result.DerivedContract.Provider = fixtureCPUProvider
-	result.CPUContract = fixtureRuntimeCPU(config)
+	result.CPUContract = fixtureRuntimeCPU()
 	result.MemoryBytes, result.MemorySource = fixtureMemoryBytes, fixtureMemorySource
 	result.Firstfloor = fixtureFirstfloorEvidence(config, result.RuntimeVersion, 0)
 }

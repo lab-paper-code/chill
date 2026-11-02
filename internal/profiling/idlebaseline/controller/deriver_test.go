@@ -139,7 +139,7 @@ func deriverIdleEvidence(
 			MeasurementStartedAt:      started.Format(time.RFC3339Nano),
 			MeasurementEndedAt:        started.Add(30 * time.Second).Format(time.RFC3339Nano),
 			MeasurementElapsedSeconds: 30, ModelResidentAtEnd: true,
-			CPUContract: deriverRuntimeCPU(config),
+			CPUContract: deriverRuntimeCPU(),
 			DerivedContract: profilingrun.DerivedContract{
 				Backend: config.State.Backend, Provider: config.State.Backend, NodeSnapshot: config.TargetNode,
 			},
@@ -244,7 +244,7 @@ func deriverExecution(
 	}
 }
 
-func deriverRuntimeCPU(config profilingrun.RunConfig) profilingrun.RuntimeCPU {
+func deriverRuntimeCPU() profilingrun.RuntimeCPU {
 	return profilingrun.RuntimeCPU{
 		CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 0,
 		ORTInterOpThreads: 0, AffinityCPUCount: 4,

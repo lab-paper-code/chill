@@ -413,7 +413,7 @@ func idleRuntimeResult(config profilingrun.RunConfig, podUID string) profilingru
 		MeasurementElapsedSeconds:    float64(config.Measurement.DurationSeconds),
 		InferenceCountAfterModelLoad: 0,
 		ModelResidentAtEnd:           true,
-		CPUContract:                  testRuntimeCPU(config),
+		CPUContract:                  testRuntimeCPU(),
 		DerivedContract: profilingrun.DerivedContract{
 			Backend: config.State.Backend, Provider: testCPUProvider,
 			NodeSnapshot: config.TargetNode,
@@ -429,7 +429,7 @@ const (
 	testMemorySource = "cgroup-v2-memory.peak:runtime-container-lifetime"
 )
 
-func testRuntimeCPU(config profilingrun.RunConfig) profilingrun.RuntimeCPU {
+func testRuntimeCPU() profilingrun.RuntimeCPU {
 	return profilingrun.RuntimeCPU{
 		CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 0,
 		ORTInterOpThreads: 0, AffinityCPUCount: 4,
@@ -444,7 +444,7 @@ func testFirstfloorEvidence(
 	if executions > 0 {
 		counts[strconv.Itoa(config.Measurement.Batch)] = executions
 	}
-	cpu := testRuntimeCPU(config)
+	cpu := testRuntimeCPU()
 	return &profilingrun.FirstfloorRuntimeEvidence{
 		Mode: "profiling", ModelInstanceCount: 1, MaxBatchSize: 4, MaxQueueSize: 32,
 		DeadlinePolicy: modelcompat.EffectiveDeadlinePolicy(config.State.Firstfloor.DeadlinePolicy),
@@ -477,7 +477,7 @@ func runtimeResult(config profilingrun.RunConfig, podUID string) profilingrun.Ru
 		MeasurementStartedAt:      started.Format(time.RFC3339Nano),
 		MeasurementEndedAt:        started.Add(30 * time.Second).Format(time.RFC3339Nano),
 		MeasurementElapsedSeconds: 30, TargetDurationSeconds: &targetDuration,
-		CPUContract: testRuntimeCPU(config),
+		CPUContract: testRuntimeCPU(),
 		DerivedContract: profilingrun.DerivedContract{
 			Backend: config.State.Backend, Provider: testCPUProvider,
 			NodeSnapshot: config.TargetNode,

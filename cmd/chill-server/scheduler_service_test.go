@@ -25,7 +25,8 @@ import (
 )
 
 func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) {
-	settings := serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
+	settings := serving.SchedulerSettings{
+		ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 		MaxObservationAge: time.Second, MaxReplicas: 1,
 		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
 		CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
@@ -275,12 +276,26 @@ func TestSchedulerPowerUsesExistingEvidenceEnvelopeBeforeSourceReads(t *testing.
 		if accepted {
 			service.opts.maxEvidenceBytes = 64 << 20
 		}
-		source := metricobserver.SourceIdentity{Kind: "edge-metrics", NodeName: "node", Endpoint: server.URL, Metric: "wall_watts",
+		source := metricobserver.SourceIdentity{
+			Kind: "edge-metrics", NodeName: "node", Endpoint: server.URL, Metric: "wall_watts",
 			MetricLabels: map[string]string{"hostname": "node", "device_type": "fixture"}}
 		start := time.Now().UTC()
-		service.restartPower(schedulerConfiguration{Meters: []servingkube.MeterDeclaration{{ID: "meter", Node: serving.NodeReference{Name: "node", UID: "uid"}, Scope: "node-exclusive-wall", Source: source}},
-			PowerObservation: &powerObservationConfig{Sampling: metricobserver.Request{Interval: 20 * time.Millisecond, Duration: 200 * time.Millisecond, RequestTimeout: 10 * time.Millisecond},
-				Coverage: powerwindow.Policy{MaximumBoundaryDistance: 100 * time.Millisecond, MaximumGap: 100 * time.Millisecond, MinimumCoverage: 1}}})
+		service.restartPower(schedulerConfiguration{
+			Meters: []servingkube.MeterDeclaration{{
+				ID: "meter", Node: serving.NodeReference{Name: "node", UID: "uid"},
+				Scope: "node-exclusive-wall", Source: source,
+			}},
+			PowerObservation: &powerObservationConfig{
+				Sampling: metricobserver.Request{
+					Interval: 20 * time.Millisecond, Duration: 200 * time.Millisecond,
+					RequestTimeout: 10 * time.Millisecond,
+				},
+				Coverage: powerwindow.Policy{
+					MaximumBoundaryDistance: 100 * time.Millisecond,
+					MaximumGap:              100 * time.Millisecond, MinimumCoverage: 1,
+				},
+			},
+		})
 		timedOut := false
 		if accepted {
 			select {
@@ -299,7 +314,10 @@ func TestSchedulerPowerUsesExistingEvidenceEnvelopeBeforeSourceReads(t *testing.
 			t.Error("undersized evidence envelope read the source")
 		}
 		if accepted {
-			events, _, _, _, readErr := log.SchedulerObservationPage(context.Background(), start, time.Now().UTC().Add(time.Second), 10, 0, serving.SchedulerObservationSelection{})
+			events, _, _, _, readErr := log.SchedulerObservationPage(
+				context.Background(), start, time.Now().UTC().Add(time.Second),
+				10, 0, serving.SchedulerObservationSelection{},
+			)
 			if readErr != nil || len(events) != 1 || events[0].Power == nil || len(events[0].Power.Samples) == 0 {
 				t.Errorf("power evidence lost: events=%+v error=%v", events, readErr)
 			}

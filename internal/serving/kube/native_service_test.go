@@ -318,19 +318,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	if err := manager.store.client.Get(ctx, key, pod); err != nil {
 		t.Fatal(err)
 	}
-	for _, containers := range [][]core.Container{pod.Spec.Containers, pod.Spec.InitContainers} {
-		for _, container := range containers {
-			if _, present := container.Resources.Requests[core.ResourceCPU]; present {
-				t.Fatal("prepared Pod requested CPU", container.Name)
-			}
-			if _, present := container.Resources.Limits[core.ResourceCPU]; present {
-				t.Fatal("prepared Pod limited CPU", container.Name)
-			}
-			if container.Resources.Requests.Memory().Value() != int64(spec.MemoryBytes) || container.Resources.Limits.Memory().Value() != int64(spec.MemoryBytes) {
-				t.Fatal("shared CPU removed bounded memory", container.Name)
-			}
-		}
-	}
+	assertPreparedPodResources(t, pod, spec.MemoryBytes)
 	pod.Annotations[ServingPolicyAnnotation] = "bootstrap"
 	if err := manager.store.client.Update(ctx, pod); err != nil {
 		t.Fatal(err)
@@ -405,6 +393,24 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 			t.Fatalf("remove instance %q, want %q; status %+v", removed, physical, m.Status)
 		}
 	})
+}
+
+func assertPreparedPodResources(t *testing.T, pod *core.Pod, memoryBytes uint64) {
+	t.Helper()
+	for _, containers := range [][]core.Container{pod.Spec.Containers, pod.Spec.InitContainers} {
+		for _, container := range containers {
+			if _, present := container.Resources.Requests[core.ResourceCPU]; present {
+				t.Fatal("prepared Pod requested CPU", container.Name)
+			}
+			if _, present := container.Resources.Limits[core.ResourceCPU]; present {
+				t.Fatal("prepared Pod limited CPU", container.Name)
+			}
+			if container.Resources.Requests.Memory().Value() != int64(memoryBytes) ||
+				container.Resources.Limits.Memory().Value() != int64(memoryBytes) {
+				t.Fatal("shared CPU removed bounded memory", container.Name)
+			}
+		}
+	}
 }
 
 func TestCUDAPreparationReproducesMeasuredSupplementalGroups(t *testing.T) {

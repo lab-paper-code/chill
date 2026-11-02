@@ -37,7 +37,8 @@ func (o *options) bindFlags(set *flag.FlagSet) {
 	set.StringVar(&o.runtimeFailedPath, "runtime-failed-file", defaultRuntimeFailedPath, "runtime-failed signal path")
 	set.DurationVar(&o.startWaitTimeout, "start-wait-timeout", 0, "Job-derived maximum wait for measurement-start")
 	set.DurationVar(&o.endWaitTimeout, "end-wait-timeout", 0, "Job-derived maximum wait for measurement-end")
-	set.Int64Var(&o.memoryBudgetBytes, "memory-budget-bytes", 0, "Job-derived existing container memory limit for evidence admission")
+	set.Int64Var(&o.memoryBudgetBytes, "memory-budget-bytes", 0,
+		"Job-derived existing container memory limit for evidence admission")
 	set.Int64Var(&o.maxResultBytes, "max-result-bytes", 0, "Job-derived maximum serialized metric result bytes")
 }
 

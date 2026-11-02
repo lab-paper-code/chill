@@ -377,11 +377,7 @@ func TestMeasureCollectsActualExpandedSupportAndRetainsRealBracketFailure(t *tes
 			}
 			continue
 		}
-		raw, readErr := os.ReadFile(filepath.Join(writer.directory, receipt.Object.Key))
-		var retained OperationMeasurement
-		if receipt.Object.Key == "" || readErr != nil || json.Unmarshal(raw, &retained) != nil || retained.Request.Operation.ID != request.Operation.ID || retained.Verdict != record.Verdict {
-			t.Fatalf("physical action/raw evidence lost: %+v receipt %+v, read %v, measure %v", record, receipt, readErr, err)
-		}
+		assertRetainedOperationMeasurement(t, writer.directory, receipt, request, record, err)
 		if mode == "operation timeout" {
 			if !errors.Is(err, context.DeadlineExceeded) || record.Result.Status != nativeOperationFailed || record.Verdict != operationFailed {
 				t.Fatalf("finite physical operation budget not enforced: %+v, %v", record, err)
@@ -401,5 +397,18 @@ func TestMeasureCollectsActualExpandedSupportAndRetainsRealBracketFailure(t *tes
 		if err != nil || record.Verdict != measurementAccepted || first.After(record.Result.StartedAt.Add(-5*time.Millisecond)) || last.Before(record.Result.EndedAt.Add(5*time.Millisecond)) || record.EnergyUncertaintyJoules == nil || *record.EnergyUncertaintyJoules != 0 {
 			t.Fatalf("real expanded support missing: %+v, %v", record, err)
 		}
+	}
+}
+
+func assertRetainedOperationMeasurement(
+	t *testing.T, directory string, receipt evidencestore.Receipt,
+	request MeasurementRequest, record OperationMeasurement, err error,
+) {
+	t.Helper()
+	raw, readErr := os.ReadFile(filepath.Join(directory, receipt.Object.Key))
+	var retained OperationMeasurement
+	if receipt.Object.Key == "" || readErr != nil || json.Unmarshal(raw, &retained) != nil ||
+		retained.Request.Operation.ID != request.Operation.ID || retained.Verdict != record.Verdict {
+		t.Fatalf("physical action/raw evidence lost: %+v receipt %+v, read %v, measure %v", record, receipt, readErr, err)
 	}
 }

@@ -138,29 +138,34 @@ func TestExecutePublishesPowerDespiteThermalTimeoutAndFinalRetries(t *testing.T)
 				len(result.Failures) != finalFailures+2 || result.Summary.Attempts != 2*int(thermalReads.Load())+finalFailures {
 				t.Fatalf("power=%d thermal=%d result=%+v", powerReads.Load(), thermalReads.Load(), result)
 			}
-			for _, sample := range result.Samples {
-				if sample.Watts != 5.2 || sample.Thermal != nil {
-					t.Fatalf("power lost or thermal fabricated: %+v", sample)
-				}
-			}
-			var timeouts, unavailable int
-			for _, failure := range result.Failures {
-				switch failure.Reason {
-				case metricobserver.FailureReasonTimeout:
-					timeouts++
-				case metricobserver.FailureReasonSourceRead:
-					unavailable++
-				default:
-					t.Fatalf("unexpected failure: %+v", failure)
-				}
-			}
-			if timeouts != 2 || unavailable != finalFailures {
-				t.Fatalf("timeouts=%d unavailable=%d", timeouts, unavailable)
-			}
-			if err := result.Validate(); err != nil {
-				t.Fatal(err)
-			}
+			assertPowerResultAfterThermalTimeout(t, result, finalFailures)
 		})
+	}
+}
+
+func assertPowerResultAfterThermalTimeout(t *testing.T, result metricobserver.Result, finalFailures int) {
+	t.Helper()
+	for _, sample := range result.Samples {
+		if sample.Watts != 5.2 || sample.Thermal != nil {
+			t.Fatalf("power lost or thermal fabricated: %+v", sample)
+		}
+	}
+	var timeouts, unavailable int
+	for _, failure := range result.Failures {
+		switch failure.Reason {
+		case metricobserver.FailureReasonTimeout:
+			timeouts++
+		case metricobserver.FailureReasonSourceRead:
+			unavailable++
+		default:
+			t.Fatalf("unexpected failure: %+v", failure)
+		}
+	}
+	if timeouts != 2 || unavailable != finalFailures {
+		t.Fatalf("timeouts=%d unavailable=%d", timeouts, unavailable)
+	}
+	if err := result.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -285,7 +290,8 @@ func testOptions(directory string) options {
 		readyPath: filepath.Join(directory, "observer-ready"), startPath: filepath.Join(directory, "measurement-start"),
 		endPath:          filepath.Join(directory, "measurement-end"),
 		metricResultPath: filepath.Join(directory, "metric-result.json"), startWaitTimeout: time.Second,
-		endWaitTimeout: time.Second, memoryBudgetBytes: 48 << 20, runtimeFailedPath: filepath.Join(directory, "runtime-failed"),
-		maxResultBytes: 8 << 20,
+		endWaitTimeout: time.Second, memoryBudgetBytes: 48 << 20,
+		runtimeFailedPath: filepath.Join(directory, "runtime-failed"),
+		maxResultBytes:    8 << 20,
 	}
 }
