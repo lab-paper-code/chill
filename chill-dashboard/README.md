@@ -35,6 +35,12 @@ Scheduler history keeps default/ascending unfiltered reads bounded, including ex
 - 요약만 제외하는 미사용 필드: 커버리지 `entities/groups` 역색인(집계·셀별 관계는 유지), 측정 요청 `metadata.managedFields/annotations`, 프로파일 `preparations`. 원본 조회·저장 계약·판정 계산은 변경하지 않는다. relay는 해당 GET 목록에만 정확히 `view=summary`를 허용한다.
 - 2026-11-02 운영 GET을 로컬 production projection에 적용한 UTF-8 본문 크기: workloads **17,227,584 → 422,048 B**(29개), 커버리지 **9,218,406 → 1,893,956 B**, 측정 요청 **11,941,797 → 1,677,154 B**, 프로파일 `limit=50&offset=100&sort=model&order=asc` **8,550,682 → 921,387 B**. 배포 후 수치가 아니라 같은 운영 원문에 대한 로컬 projection 결과다.
 
+### CPU 공유 실행·전력 표본 계약
+
+측정 요청·프로파일 조건은 CPU 예약량·상한·코어 고정을 받거나 재생성하지 않는다. 요청 작성·복사·조건 그룹과 필터에서도 이 축을 제거한다. 스케줄러 설정의 CPU 수 상한과 할당의 CPU·스레드 표시는 없으며 GPU·메모리 계약만 사용한다. 과거 관측 fixture 원문은 변경하지 않는다.
+
+전력 수집 정책은 간격·수집 기간·요청 제한 시간으로 표시하며 삭제된 `MaxEvents` 상한은 타입과 화면에서 사용하지 않는다.
+
 
 ## Runtime
 

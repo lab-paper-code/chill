@@ -24,7 +24,7 @@ const columns = (parent?:{name:string;uid:string},returnTo?:string) => [
 
 function RunDetails({run}:{run:ProfilingRun}) {
   const s=runSpec(run)
-  const facts:[string,string][]=[["모델",s.candidate?.modelSpec??"미제공"],["장치 종류",s.candidate?.deviceClass??"미제공"],["실행 장비",s.targetNode??"미제공"],["전력모드",s.candidate?.powerMode??"미제공"],["실행 경로",s.candidate?.executionPath?executionPathLabel(s.candidate.executionPath):"미제공"],["부하 방식",workloadModeLabel(s.measurement?.workloadMode)],["CPU 상한",s.measurement?.cpuQuota??"미제공"],["CPU 코어",s.measurement?.cpuAffinity?.join(", ")??"코어 미지정"],["데이터셋",s.measurement?.dataset??"미제공"],["생성 (KST)",formatMeasurementTime(run.creationTimestamp)],["저장 영역",run.namespace],["UID",run.uid]]
+  const facts:[string,string][]=[["모델",s.candidate?.modelSpec??"미제공"],["장치 종류",s.candidate?.deviceClass??"미제공"],["실행 장비",s.targetNode??"미제공"],["전력모드",s.candidate?.powerMode??"미제공"],["실행 경로",s.candidate?.executionPath?executionPathLabel(s.candidate.executionPath):"미제공"],["부하 방식",workloadModeLabel(s.measurement?.workloadMode)],["데이터셋",s.measurement?.dataset??"미제공"],["생성 (KST)",formatMeasurementTime(run.creationTimestamp)],["저장 영역",run.namespace],["UID",run.uid]]
   return <div className="min-w-0 space-y-2 whitespace-normal text-sm"><dl>{facts.map(([label,value])=><div className="grid gap-1 border-b py-2" key={label}><dt className="font-medium">{label}</dt><dd className="break-all">{value}</dd></div>)}</dl><details><summary className="min-h-11 cursor-pointer py-2">실행 경로·부하 방식·사유 원문</summary><dl><dt>실행 경로 원문</dt><dd className="break-all">{s.candidate?.executionPath??"미제공"}</dd><dt>부하 방식 원문</dt><dd className="break-all">{s.measurement?.workloadMode??"미제공"}</dd></dl><SourceJSON inline value={run.assessment?.reasons} title="사유 원문"/></details></div>
 }
 
@@ -39,13 +39,13 @@ export function MeasurementChildRuns({namespace,parent}:{namespace:string;parent
 export function MeasurementRunsPage() {
   const params=useSearchParams(),{config}=useSession(),namespace=params.get("namespace")??config.namespace,tableState=useServerTable()
   const search=new URLSearchParams(tableState.query)
-  for(const key of ["q","condition","model","deviceClass","node","path","powerMode","cpu","status","group","parentUID"]) {const value=params.get(key);if(value)search.set(key,value)}
+  for(const key of ["q","condition","model","deviceClass","node","path","powerMode","status","group","parentUID"]) {const value=params.get(key);if(value)search.set(key,value)}
   const query=useChillQuery<RunsView>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs?${search}`)
   const runs=query.data?.runs??[]
   return <Screen width="data" actionPlacement="header" title="측정 요청" action={<Button variant="outline" disabled={query.isFetching} onClick={()=>void query.refetch()}>갱신</Button>}>
     <MeasurementNavigation active="requests" namespace={namespace}/>
     <div className="flex min-h-11 items-center gap-4"><Link className="underline" href={`/measurements/requests?${new URLSearchParams({namespace})}`}>요청 목록</Link><h2 className="font-semibold">전체 회차 검색</h2></div>
-    <MeasurementFilters editable axes={[["model","모델"],["deviceClass","장치 종류"],["node","Node"],["path","실행 경로"],["powerMode","전력모드"],["cpu","CPU quota"]].map(([key,label])=>({key,label,values:runs.flatMap(run=>{const s=runSpec(run);const value=({model:s.candidate?.modelSpec,deviceClass:s.candidate?.deviceClass,node:s.targetNode,path:s.candidate?.executionPath,powerMode:s.candidate?.powerMode,cpu:s.measurement?.cpuQuota} as Record<string,string|undefined>)[key];return value?[value]:[]})}))}/>
+    <MeasurementFilters editable axes={[["model","모델"],["deviceClass","장치 종류"],["node","Node"],["path","실행 경로"],["powerMode","전력모드"]].map(([key,label])=>({key,label,values:runs.flatMap(run=>{const s=runSpec(run);const value=({model:s.candidate?.modelSpec,deviceClass:s.candidate?.deviceClass,node:s.targetNode,path:s.candidate?.executionPath,powerMode:s.candidate?.powerMode} as Record<string,string|undefined>)[key];return value?[value]:[]})}))}/>
     <QueryGate query={query}><DataTable searchable={false} data={runs} server={{...tableState,total:query.data?.page?.total??0,busy:query.isFetching}} columns={columns(undefined,`/measurements/requests?${params}`)}/></QueryGate>
     <SourceExport value={query.data} filename="chill-measurement-runs.json"/><SourceJSON value={query.data} title="현재 페이지 회차 원본"/>
   </Screen>

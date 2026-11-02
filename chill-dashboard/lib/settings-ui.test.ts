@@ -118,12 +118,13 @@ test("operating sections and numeric, boolean and node Sheets follow URL history
     push:(url:string)=>{params=new URL(url,"https://dashboard.test").searchParams;history.push(params.toString())},
     replace:(url:string)=>{params=new URL(url,"https://dashboard.test").searchParams;history[history.length-1]=params.toString()},
   })}
-  const settings={controls:{placement:true},maxReplicas:3,maxInstances:4,maxCPUs:2,servingMemoryBytes:1048576,capacityWindows:5,excludedNodes:["meter"]}
+  const settings={controls:{placement:true},maxReplicas:3,maxInstances:4,servingMemoryBytes:1048576,capacityWindows:5,excludedNodes:["meter"]}
   const runner=hooks()
   const modules={...base,react:runner.react,"next/navigation":navigation,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({isPending:false}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:path==="v1/scheduler/state"?{results:[]}:undefined})}}
   const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",modules)
   let tree=elements(runner.render(SchedulerSettingsPage))
   assert.equal(tree.find(node=>node.type==="select")!.props.value,"limit")
+  assert.deepEqual((tree.find(node=>node.type==="table")!.props.data as {key:string}[]).map(row=>row.key),["servingMemoryBytes","maxReplicas","maxInstances"])
   ;(tree.find(node=>node.type==="select")!.props.onChange as (event:unknown)=>void)({target:{value:"capacity"}})
   assert.equal(params.get("section"),"capacity")
   assert.equal(params.get("namespace"),"kept")

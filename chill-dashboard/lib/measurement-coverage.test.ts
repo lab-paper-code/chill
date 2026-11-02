@@ -25,8 +25,8 @@ test("power mode labels identify measured watts rather than inventing a declared
 const model:CoverageModel={name:"model & one",uid:"model-uid",resourceVersion:"1",spec:{artifacts:[{name:"onnx",format:"onnx",source:{image:"image",architecture:"arm64",files:["model.onnx"]}}],executionPaths:[{name:"cpu",artifact:"onnx",runtime:{family:"firstfloor",backend:"ort-cpu"}}]}}
 const cls:InventoryClass={name:"class",uid:"class-uid",resourceVersion:"1",nodeSelector:{},architecture:"arm64",memory:"8Gi",accelerator:"none",powerModes:[{name:"MAXN",actuator:{kind:"Fixed"}},{name:"15W",actuator:{kind:"Fixed"}}],nodes:[{name:"node",uid:"node-uid",resourceVersion:"1",ready:"True",schedulingDisabled:false}]}
 const inventory:InventoryView={readAt:"2026-10-30T00:00:00Z",deviceClassesResourceVersion:"1",nodesResourceVersion:"1",modelSpecsResourceVersion:"1",classes:[cls],models:[model]}
-const plan:MeasurementPlan={metadata:{namespace:"ns",name:"195",uid:"plan-uid",resourceVersion:"1",creationTimestamp:"2026-10-29T00:00:00Z"},spec:{state:{candidate:{modelSpec:model.name,deviceClass:cls.name,executionPath:"cpu",powerMode:"MAXN",preprocessor:"pre"},targetNode:"node",cpuRequest:"1"},activeProtocol:{dataset:"data",durationSeconds:10},idleProtocol:{durationSeconds:10},cpuQuota:"1",trialsPerBatch:3,retryLimit:1,batchSizes:[1]},status:{phase:"Complete",result:{store:"s",key:"result"}}}
-const run:ProfilingRun={namespace:"ns",name:"195b-active",uid:"run-uid",resourceVersion:"1",generation:2,creationTimestamp:"2026-10-30T00:00:00Z",spec:{candidate:plan.spec.state.candidate,targetNode:"node",cpuRequest:"1",measurement:{batch:1,cpuQuota:"1",cpuAffinity:[1],dataset:"data",workloadMode:"active",durationSeconds:10},metricObservation:{durationSeconds:10}},status:{conditions:[{type:"ExecutionComplete",status:"True",observedGeneration:2},{type:"EvidenceVerified",status:"True",observedGeneration:2}],evidence:{store:"s",key:"run"}}}
+const plan:MeasurementPlan={metadata:{namespace:"ns",name:"195",uid:"plan-uid",resourceVersion:"1",creationTimestamp:"2026-10-29T00:00:00Z"},spec:{state:{candidate:{modelSpec:model.name,deviceClass:cls.name,executionPath:"cpu",powerMode:"MAXN",preprocessor:"pre"},targetNode:"node"},activeProtocol:{dataset:"data",durationSeconds:10},idleProtocol:{durationSeconds:10},trialsPerBatch:3,retryLimit:1,batchSizes:[1]},status:{phase:"Complete",result:{store:"s",key:"result"}}}
+const run:ProfilingRun={namespace:"ns",name:"195b-active",uid:"run-uid",resourceVersion:"1",generation:2,creationTimestamp:"2026-10-30T00:00:00Z",spec:{candidate:plan.spec.state.candidate,targetNode:"node",measurement:{batch:1,dataset:"data",workloadMode:"active",durationSeconds:10},metricObservation:{durationSeconds:10}},status:{conditions:[{type:"ExecutionComplete",status:"True",observedGeneration:2},{type:"EvidenceVerified",status:"True",observedGeneration:2}],evidence:{store:"s",key:"run"}}}
 
 test("static declarations prove mismatches but never promise runtime support",()=>{
   const path=model.spec.executionPaths[0]
@@ -36,9 +36,9 @@ test("static declarations prove mismatches but never promise runtime support",()
   assert.equal(staticCompatibility(model,{...path,runtime:{family:"firstfloor",backend:"ort-cuda"}},{...cls,accelerator:"future-cuda-device"}).state,"candidate")
   assert.equal(staticCompatibility(model,{...path,artifact:"missing"},cls).state,"unknown")
 })
-test("run groups retain mode, preprocessing, dataset, CPU affinity and protocol without invented attempts",()=>{
+test("run groups retain mode, preprocessing, dataset and protocol without invented attempts",()=>{
   assert.notEqual(runGroupKey(run),runGroupKey({...run,spec:{...run.spec,candidate:{...plan.spec.state.candidate,powerMode:"15W"}}}))
-  for(const measurement of [{dataset:"other"},{cpuQuota:"2"},{cpuAffinity:[2]},{durationSeconds:11}]) assert.notEqual(runGroupKey(run),runGroupKey({...run,spec:{...run.spec,measurement:{...(run.spec.measurement as object),...measurement}}}))
+  for(const measurement of [{dataset:"other"},{durationSeconds:11}]) assert.notEqual(runGroupKey(run),runGroupKey({...run,spec:{...run.spec,measurement:{...(run.spec.measurement as object),...measurement}}}))
   assert.equal(runGroupKey(run),runGroupKey({...run,spec:{...run.spec,measurement:{...(run.spec.measurement as object),batch:8}}}))
 })
 test("prefill decodes exactly once, rejects duplicate/deleted references, and does not invent multi-Node selection",()=>{
@@ -72,21 +72,21 @@ test("attempts are not invented and return links stay same-origin",()=>{
 })
 test("closing a directly linked cell preserves its matrix and filter context",()=>{
   const cell={id:"cell",model:{uid:"model"},deviceClass:{uid:"class"}}
-  const open=coverageSelection("batches=1,2&cpu=2&variant=old",cell,true)
+  const open=coverageSelection("batches=1,2&node=node&variant=old",cell,true)
   assert.equal(open.get("group"),"model/class")
   assert.equal(open.get("cell"),"cell")
   assert.equal(open.has("variant"),false)
-  const closed=coverageSelection("cell=cell&variant=old&batches=1,2&cpu=2",cell,false)
+  const closed=coverageSelection("cell=cell&variant=old&batches=1,2&node=node",cell,false)
   assert.equal(closed.get("group"),"model/class")
   assert.equal(closed.get("batches"),"1,2")
-  assert.equal(closed.get("cpu"),"2")
+  assert.equal(closed.get("node"),"node")
   assert.equal(closed.has("cell"),false)
   assert.equal(closed.has("variant"),false)
 })
-test("condition choices name Node CPU and dataset without dumping frozen JSON",()=>{
-  assert.equal(conditionLabel({nodeUID:"node-uid",metricSource:{nodeName:"jetsono"},cpu:{limit:"4",affinityCPUs:[2,3]},activeProtocol:{dataset:{name:"images",uid:"dataset-uid"}},runtimeImage:"registry/image@sha256:long"}),"Node jetsono / CPU 4 (코어 2,3) / 데이터셋 images")
-  assert.equal(conditionLabel({}),"Node 미지정 / CPU 미지정 / 데이터셋 미지정")
-  assert.equal(conditionLabel({state:{targetNode:"genesis2",cpuRequest:"2"},cpuQuota:"4",cpuAffinity:[2,3],activeProtocol:{dataset:"images"}}),"Node genesis2 / CPU 4 (코어 2,3) / 데이터셋 images")
+test("condition choices name Node and dataset without dumping frozen JSON",()=>{
+  assert.equal(conditionLabel({nodeUID:"node-uid",metricSource:{nodeName:"jetsono"},activeProtocol:{dataset:{name:"images",uid:"dataset-uid"}},runtimeImage:"registry/image@sha256:long"}),"Node jetsono / 데이터셋 images")
+  assert.equal(conditionLabel({}),"Node 미지정 / 데이터셋 미지정")
+  assert.equal(conditionLabel({state:{targetNode:"genesis2"},activeProtocol:{dataset:"images"}}),"Node genesis2 / 데이터셋 images")
   assert.equal(deviceLabel("jetson-agx-orin-64g"),"AGX Orin 64g")
 })
 
@@ -348,10 +348,11 @@ test("same-condition request preserves source identities and rejects replaced na
 
 test("coverage keeps active filters visible and omits empty result table headings and repeated absent targets",()=>{
   const noTarget={...cell,id:"no-target",powerMode:"no-target",batchProgress:null}
-  const html=renderCoverage("cell=no-target&status=unmeasured&cpu=2",[noTarget])
+  const html=renderCoverage("cell=no-target&status=unmeasured&node=node",[noTarget])
   assert.match(html,/선택한 필터/)
   assert.match(html,/전체 해제/)
   assert.match(html,/상태: 미측정/)
+  assert.doesNotMatch(html,/CPU 상한|CPU quota|CPU 코어/)
   const result=html.match(/<section><h3>배치별 결과<\/h3>.*?<\/section>/)?.[0]??""
   assert.match(result,/미측정/)
   assert.doesNotMatch(result,/<thead/)

@@ -91,8 +91,8 @@ export function relayPlan(method: string, segments: string[], search: string, co
   if (query === "inputs") allowed.push("kind","set","offset","limit")
   if (query === "preflight") allowed.push("variantId")
   if (query === "event") allowed.push("at")
-  if (query === "profiles") allowed.push("limit","offset","model","deviceClass","profile","q","node","powerMode","path","cpu","status","sort","order")
-  if (query === "runs") allowed.push("model","deviceClass","node","path","powerMode","cpu","status","group","parentUID","sort","order")
+  if (query === "profiles") allowed.push("limit","offset","model","deviceClass","profile","q","node","powerMode","path","status","sort","order")
+  if (query === "runs") allowed.push("model","deviceClass","node","path","powerMode","status","group","parentUID","sort","order")
   allowed.push(...(query === "compatibility" ? ["modelSpec", "executionPath", "deviceClass", "node"] : query === "observations" ? ["from", "to", "limit", "cursor", "definition", "outcome"] : query === "load" ? ["from", "to"] : query === "schedulerHistory" ? ["from", "to", "limit", "cursor", "order", "filter", "uid"] : query === "page" ? ["limit", "offset", "q"] : query === "runs" ? ["limit", "offset", "q", "condition"] : query === "dryRun" ? ["dryRun"] : query === "uid" ? ["uid"] : []))
   for (const key of new Set(params.keys())) {
     const values = params.getAll(key)
@@ -102,7 +102,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
         const max = key === "limit" ? (query === "profiles" || query === "inputs" ? 50 : config.maxPageSize) : key === "offset" ? 1000000 : Number.MAX_SAFE_INTEGER
         if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) > max || (key === "limit" && Number(value) < 1)) throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (key === "sort") {
-        const keys = query === "profiles" ? ["model","deviceClass","node","powerMode","path","cpu","created","status"] : ["name","created","model","powerMode","status"]
+        const keys = query === "profiles" ? ["model","deviceClass","node","powerMode","path","created","status"] : ["name","created","model","powerMode","status"]
         if (!keys.includes(value)) throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (key === "order") {
         if (value !== "asc" && value !== "desc") throw new RelayFailure("DashboardQueryInvalid", 400)

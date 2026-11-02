@@ -40,11 +40,11 @@ test("CSV retains row identity, source references and exact numbers while escapi
   assert.ok(csv.includes('""lower"":-1'))
   assert.ok(csv.includes('"source"'))
 })
-test("request identity includes mode, complete path and CPU and only changes suffix for collisions",()=>{
-  const condition={model:"model",node:"node",powerMode:"mode",path:"runtime-backend",cpu:"2"}
+test("request identity includes mode and complete path without CPU reservation and only changes suffix for collisions",()=>{
+  const condition={model:"model",node:"node",powerMode:"mode",path:"runtime-backend"}
   const now=new Date(2026,9,30),taken=new Set<string>()
   const name=measurementRequestName(condition,taken,now)
-  assert.equal(name,"model-node-mode-runtime-backend-cpu2-20261030")
+  assert.equal(name,"model-node-mode-runtime-backend-20261030")
   taken.add(name)
   assert.equal(measurementRequestName(condition,taken,now),`${name}-2`)
   const pinned=name
@@ -212,10 +212,10 @@ test("measurement timestamps retain the explicit timezone",()=>{
   assert.match(formatMeasurementTime("2026-10-30T00:00:00Z"),/9:00:00.*KST/)
 })
 
-test("retry condition diff includes CPU and protocol changes while summaries retain original reasons separately",()=>{
-  const spec={state:{candidate:{modelSpec:"m",preprocessor:"p",deviceClass:"d",executionPath:"cpu",powerMode:"MAXN"},targetNode:"n",cpuRequest:"1"},cpuQuota:"1",trialsPerBatch:3,batchSizes:[1,2],retryLimit:1,activeProtocol:{durationSeconds:10,dataset:"set"},idleProtocol:{durationSeconds:10}}
+test("CPU-free retry condition diff includes batch and protocol changes while summaries retain original reasons separately",()=>{
+  const spec={state:{candidate:{modelSpec:"m",preprocessor:"p",deviceClass:"d",executionPath:"cpu",powerMode:"MAXN"},targetNode:"n"},trialsPerBatch:3,batchSizes:[1,2],retryLimit:1,activeProtocol:{durationSeconds:10,dataset:"set"},idleProtocol:{durationSeconds:10}}
   assert.deepEqual(measurementConditionDiff(spec,spec),[])
-  assert.deepEqual(measurementConditionDiff(spec,{...spec,cpuQuota:"2",activeProtocol:{...spec.activeProtocol,durationSeconds:20}}),["CPU: 1 → 2","부하 durationSeconds: 10 → 20"])
+  assert.deepEqual(measurementConditionDiff(spec,{...spec,batchSizes:[1,2,4],activeProtocol:{...spec.activeProtocol,durationSeconds:20}}),["배치: [1,2] → [1,2,4]","부하 durationSeconds: 10 → 20"])
   assert.match(measurementReasonSummary("context deadline exceeded"),/시간.*초과/)
   assert.match(measurementReasonSummary("cost requires exactly one proven primitive state effect"),/단일 상태 변경/)
 })

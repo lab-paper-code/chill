@@ -79,7 +79,7 @@ export function MeasurementCheckPage() {
 }
 
 // Fields the passport carries but the shared read type leaves open.
-type RunSpec = {candidate?:{modelSpec?:string;preprocessor?:string;deviceClass?:string;executionPath?:string;powerMode?:string};targetNode?:string;measurement?:{cpuQuota?:string;cpuAffinity?:number[];durationSeconds?:number;dataset?:string}}
+type RunSpec = {candidate?:{modelSpec?:string;preprocessor?:string;deviceClass?:string;executionPath?:string;powerMode?:string};targetNode?:string;measurement?:{durationSeconds?:number;dataset?:string}}
 type Thermal = {observationAvailableSamples?:number;activeSamples?:number;latchedSamples?:number;maximumTemperatureCelsius?:{maximum?:number};issues?:unknown}
 type Coresidence = {continuous?:boolean;initialActivePods?:number;finalActivePods?:number;materialEvents?:number;coResidents?:{namespace:string;name:string;chillPlaced:boolean}[]}
 const plain=(code:string)=>codeText[code]?.[0]??"등록 실행 환경"
@@ -116,7 +116,6 @@ function PassportSummary({data}:{data:Passport}) {
       ["장비",spec.targetNode??p.source.nodeName??"정보 없음"],
       ["장치 종류",spec.candidate?.deviceClass??"정보 없음"],
       ["측정한 실행 환경",`${plain(r.provider)} / ${plain(r.family)} ${r.version} / ${r.architecture}`],
-      ["CPU",spec.measurement?.cpuQuota?`${spec.measurement.cpuQuota}개${spec.measurement.cpuAffinity?.length?` (코어 ${spec.measurement.cpuAffinity.join(", ")})`:""}`:"제한 없음"],
       ["예열",`${r.warmupIterations}번 실행 후 측정`],
     ]}/>
     <Facts label="관측 사실" items={[

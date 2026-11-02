@@ -39,10 +39,10 @@ test("power display rounds only presented values and translates duration policie
   assert.equal(powerNumber(0),"0")
   assert.equal(powerNumber(undefined),"미제공")
   assert.deepEqual(powerPolicyFacts({
-    powerSampling:{Interval:500000000n,Duration:5000898121n,RequestTimeout:1000000000n,MaxEvents:20},
+    powerSampling:{Interval:500000000n,Duration:5000898121n,RequestTimeout:1000000000n},
     powerCoverage:{MaximumBoundaryDistance:1000000000n,MinimumCoverage:0.9,MaximumGap:758787895n},
   }),[
-    ["표본 간격 (초)","0.5"],["수집 기간 (초)","5.001"],["요청 제한 시간 (초)","1"],["최대 표본 수 (개)","20"],
+    ["표본 간격 (초)","0.5"],["수집 기간 (초)","5.001"],["요청 제한 시간 (초)","1"],
     ["경계 허용 거리 (초)","1"],["최소 관측 비율 (%)","90"],["최대 표본 간격 기준 (초)","0.759"],
   ])
 })

@@ -110,12 +110,11 @@ export function MeasurementCoveragePage() {
     (!params.get("status")||params.get("status")==="unsupported"||coverageMeasurementStatus(cell,inventory.data)===params.get("status"))&&
     (!params.get("path")||cell.executionPath===params.get("path"))&&
     (!params.get("powerMode")||cell.powerMode===params.get("powerMode"))&&
-    (!params.get("cpu")||cell.variants.some(variant=>String((variant.condition.cpu as {limit?:unknown}|undefined)?.limit??"")===params.get("cpu")))&&
     (!params.get("q")||`${cell.deviceClass.name} ${cell.executionPath} ${cell.powerMode}`.toLowerCase().includes(params.get("q")!.toLowerCase())))
   const classes=[...new Map(cells.map(cell=>[cell.deviceClass.uid,cell.deviceClass])).values()].sort((a,b)=>a.name.localeCompare(b.name))
   const batches=[...new Set([1,2,4,8,16,32,...(data?.scope.targetBatches??[])])].sort((a,b)=>a-b)
   const targets=params.get("batches")?.split(",").map(Number)??[]
-  const filterLabels:Record<string,string>={deviceClass:"장치",path:"실행 경로",powerMode:"전력모드",status:"상태",supportReason:"지원 사유",node:"장비",cpu:"CPU 상한",q:"검색",batches:"목표 배치"}
+  const filterLabels:Record<string,string>={deviceClass:"장치",path:"실행 경로",powerMode:"전력모드",status:"상태",supportReason:"지원 사유",node:"장비",q:"검색",batches:"목표 배치"}
   const activeFilters=Object.entries(filterLabels).flatMap(([key,label])=>{const value=params.get(key);return value?[[key,label,key==="status"?coverageStates[value as keyof typeof coverageStates]??"기타 상태":key==="path"?executionPathLabel(value):key==="deviceClass"?deviceLabel(value):key==="supportReason"?"선택한 사유":value]]:[]})
   return <Screen title="측정" width="data" actionPlacement="header" action={<div className="flex gap-2"><Button asChild><Link href={`/measurements/requests/new?${new URLSearchParams({namespace})}`}>측정 요청</Link></Button><Button variant="outline" disabled={query.isFetching} onClick={()=>void query.refetch()}>갱신</Button></div>}>
     <MeasurementNavigation active="coverage" namespace={namespace}/>
@@ -127,7 +126,7 @@ export function MeasurementCoveragePage() {
         <label className="grid gap-1 text-sm">장치<select className="h-11 rounded-md border bg-background px-2" value={params.get("deviceClass")??""} onChange={event=>update("deviceClass",event.target.value)}><option value="">전체 장치</option>{[...new Set(data.cells.filter(cell=>cell.model.name===model).map(cell=>cell.deviceClass.name))].sort().map(name=><option key={name} value={name}>{deviceLabel(name)}</option>)}</select></label>
         <details className="coverage-filter-panel"><summary className="min-h-11 cursor-pointer py-2">목표 배치·세부 필터</summary><div className="coverage-filter-content">
           <fieldset className="coverage-targets"><legend>목표 배치</legend><Button variant={!targets.length?"default":"outline"} onClick={()=>update("batches","")}>요청 범위</Button>{batches.map(batch=><Button key={batch} variant={targets.includes(batch)?"default":"outline"} aria-pressed={targets.includes(batch)} onClick={()=>update("batches",(targets.includes(batch)?targets.filter(value=>value!==batch):[...targets,batch]).sort((a,b)=>a-b).join(","))}>{batch}</Button>)}</fieldset>
-          <MeasurementFilters axes={[{key:"path",label:"실행 경로",values:data.cells.filter(cell=>cell.model.name===model&&coveragePathVisible(cell,inventory.data)).map(cell=>cell.executionPath)},{key:"powerMode",label:"전력모드",values:data.cells.map(cell=>cell.powerMode)}]}/><div className="grid gap-3 sm:grid-cols-2"><label>장비<Input value={params.get("node")??""} onChange={event=>update("node",event.target.value)}/></label><label>CPU 상한<Input value={params.get("cpu")??""} onChange={event=>update("cpu",event.target.value)}/></label></div>
+          <MeasurementFilters axes={[{key:"path",label:"실행 경로",values:data.cells.filter(cell=>cell.model.name===model&&coveragePathVisible(cell,inventory.data)).map(cell=>cell.executionPath)},{key:"powerMode",label:"전력모드",values:data.cells.map(cell=>cell.powerMode)}]}/><label className="grid gap-3">장비<Input value={params.get("node")??""} onChange={event=>update("node",event.target.value)}/></label>
         </div></details>
       </div>
       {activeFilters.length>0&&<nav aria-label="선택한 필터" className="flex flex-wrap gap-2">{activeFilters.map(([key,label,value])=><Button key={key} variant="outline" onClick={()=>update(key,"")}>{label}: {value} · 해제</Button>)}<Button variant="ghost" onClick={()=>{const next=new URLSearchParams(params.toString());for(const key of [...Object.keys(filterLabels),"cell","variant","group"])next.delete(key);router.replace(`?${next}`,{scroll:false})}}>전체 해제</Button></nav>}
@@ -175,7 +174,7 @@ function UnsupportedReasons({cells}:{cells:MeasurementCoverageCell[]}) {
     const group=groups.get(reason.code)
     if(group)group.count++;else groups.set(reason.code,{label,count:1})
   }
-  return <table className="w-full text-left text-sm tabular-nums"><thead><tr><th>지원 불가 사유</th><th>조합 (개)</th></tr></thead><tbody>{[...groups].map(([key,group])=>{const query=new URLSearchParams(params.toString());query.set("status","unsupported");query.set("supportReason",key);for(const filter of ["deviceClass","path","powerMode","cpu","q","cell","variant"])query.delete(filter);return <tr key={key}><th className="font-normal"><Link className="inline-flex min-h-11 items-center text-primary underline" href={`/measurements?${query}`}>{group.label}</Link></th><td>{group.count}</td></tr>})}</tbody></table>
+  return <table className="w-full text-left text-sm tabular-nums"><thead><tr><th>지원 불가 사유</th><th>조합 (개)</th></tr></thead><tbody>{[...groups].map(([key,group])=>{const query=new URLSearchParams(params.toString());query.set("status","unsupported");query.set("supportReason",key);for(const filter of ["deviceClass","path","powerMode","q","cell","variant"])query.delete(filter);return <tr key={key}><th className="font-normal"><Link className="inline-flex min-h-11 items-center text-primary underline" href={`/measurements?${query}`}>{group.label}</Link></th><td>{group.count}</td></tr>})}</tbody></table>
 }
 const batchSymbols={measured:"▧",running:"◷",missing:"□",unknown:"?",outside:"—"}
 function BatchBar({progress}:{progress:BatchProgress|null}) {
