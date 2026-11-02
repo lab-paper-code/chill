@@ -9,12 +9,22 @@ import (
 
 // Summary deliberately does not embed scheduler inputs or evidence bodies.
 type schedulerSummary struct {
-	At        time.Time                   `json:"at"`
-	Nodes     []schedulerSummaryNode      `json:"nodes"`
-	Instances []schedulerSummaryInstance  `json:"instances"`
-	Routing   map[string]map[string]int32 `json:"routing"`
-	Decision  schedulerSummaryDecision    `json:"decision"`
-	Actions   []schedulerSummaryAction    `json:"actions"`
+	At         time.Time                   `json:"at"`
+	Nodes      []schedulerSummaryNode      `json:"nodes"`
+	Instances  []schedulerSummaryInstance  `json:"instances"`
+	Routing    map[string]map[string]int32 `json:"routing"`
+	Decision   schedulerSummaryDecision    `json:"decision"`
+	Actions    []schedulerSummaryAction    `json:"actions"`
+	PoolReturn schedulerSummaryPoolReturn  `json:"poolReturn"`
+}
+
+// Pool return needs absence counts and the newest completed operation, not
+// reservation targets, outstanding request definitions, or operation evidence.
+type schedulerSummaryPoolReturn struct {
+	ReservationCount    int       `json:"reservationCount"`
+	OutstandingCount    int       `json:"outstandingCount"`
+	ActiveActionCount   int       `json:"activeActionCount"`
+	LatestResultEndedAt time.Time `json:"latestResultEndedAt"`
 }
 type schedulerSummaryNode struct {
 	Node        serving.NodeReference `json:"node"`
@@ -33,6 +43,9 @@ type schedulerSummaryInstance struct {
 	Ready            bool                  `json:"ready"`
 	Routable         map[string]bool       `json:"routable"`
 	Reasons          []string              `json:"reasons"`
+	Stopped          bool                  `json:"stopped"`
+	PodName          string                `json:"podName"`
+	PodUID           string                `json:"podUID"`
 }
 type schedulerSummaryDecision struct {
 	ID       string    `json:"id"`
@@ -62,6 +75,18 @@ func summarizeScheduler(state *servingkube.SchedulerControllerState) schedulerSu
 		Decision:  schedulerSummaryDecision{At: state.Decision.At, Status: state.Decision.Status, Reasons: state.Decision.Reasons},
 		Actions:   make([]schedulerSummaryAction, 0),
 	}
+	result.PoolReturn.ReservationCount = len(state.Snapshot.Reservations)
+	result.PoolReturn.OutstandingCount = len(state.Snapshot.Outstanding)
+	for _, action := range state.Snapshot.Actions {
+		if action.Status == "running" || action.Status == "cancel" {
+			result.PoolReturn.ActiveActionCount++
+		}
+	}
+	for _, operation := range state.Results {
+		if operation.EndedAt.After(result.PoolReturn.LatestResultEndedAt) {
+			result.PoolReturn.LatestResultEndedAt = operation.EndedAt
+		}
+	}
 	if !state.Decision.At.IsZero() {
 		result.Decision.ID = state.Decision.At.UTC().Format(time.RFC3339Nano)
 	}
@@ -76,7 +101,12 @@ func summarizeScheduler(state *servingkube.SchedulerControllerState) schedulerSu
 		if profileID == "" && instance.Profile != nil {
 			profileID = instance.Profile.ID
 		}
-		result.Instances = append(result.Instances, schedulerSummaryInstance{instance.ID, instance.TargetID, instance.Node, instance.OwnerWorkloadUID, instance.WorkloadUID, profileID, instance.Ready, instance.Routable, instance.Reasons})
+		result.Instances = append(result.Instances, schedulerSummaryInstance{
+			ID: instance.ID, TargetID: instance.TargetID, Node: instance.Node,
+			OwnerWorkloadUID: instance.OwnerWorkloadUID, WorkloadUID: instance.WorkloadUID,
+			ProfileID: profileID, Ready: instance.Ready, Routable: instance.Routable, Reasons: instance.Reasons,
+			Stopped: instance.Stopped, PodName: instance.PodName, PodUID: instance.PodUID,
+		})
 	}
 	for _, action := range state.Actions {
 		if action.Status != "starting" && action.Status != "running" {
