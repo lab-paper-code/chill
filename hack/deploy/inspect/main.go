@@ -83,6 +83,22 @@ func measurementTime(task measurementTask, profileTime time.Time) time.Time {
 	return result
 }
 
+func changedExecutions(tasks, assessedTasks measurementList) []string {
+	actual, assessed := executionStates(tasks), executionStates(assessedTasks)
+	changed := make([]string, 0)
+	for id, state := range actual {
+		if previous, ok := assessed[id]; !ok || !reflect.DeepEqual(state, previous) {
+			changed = append(changed, id)
+		}
+	}
+	for id := range assessed {
+		if _, ok := actual[id]; !ok {
+			changed = append(changed, id)
+		}
+	}
+	return changed
+}
+
 func inspect(cellsPath, requestsPath, profilesPath, coveragePath, assessedRequestsPath string) (map[string]any, error) {
 	var cells []queryapi.MeasurementCoverageCell
 	var tasks, assessedTasks measurementList
@@ -122,18 +138,7 @@ func inspect(cellsPath, requestsPath, profilesPath, coveragePath, assessedReques
 		sourceOK[source.Kind] = source.Complete && source.Error == nil
 	}
 	sourcesComplete := sourceOK["BEO"] && sourceOK["Run"]
-	actual, assessed := executionStates(tasks), executionStates(assessedTasks)
-	changed := make([]string, 0)
-	for id, state := range actual {
-		if previous, ok := assessed[id]; !ok || !reflect.DeepEqual(state, previous) {
-			changed = append(changed, id)
-		}
-	}
-	for id := range assessed {
-		if _, ok := actual[id]; !ok {
-			changed = append(changed, id)
-		}
-	}
+	changed := changedExecutions(tasks, assessedTasks)
 	if len(changed) > 0 {
 		sort.Strings(changed)
 		return map[string]any{
