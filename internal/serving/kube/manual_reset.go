@@ -409,15 +409,16 @@ func (c *SchedulerController) resetLowerNodes(ctx context.Context, nodes []servi
 			continue
 		}
 		class := nodeClass(node, classes.Items)
+		// A Fixed-only class has no lower mode to request, so its readiness cannot affect the reset outcome.
+		if class != nil && !slices.ContainsFunc(class.Spec.PowerModes, func(mode edge.PowerMode) bool { return mode.Actuator.Kind != edge.PowerModeActuatorFixed }) {
+			result.Progress = append(result.Progress, node.Name+": power skipped; fixed-only device class")
+			continue
+		}
 		mode := readBackMode(node, class)
 		if class == nil || mode == "" || !slices.ContainsFunc(node.Status.Conditions, func(condition core.NodeCondition) bool {
 			return condition.Type == core.NodeReady && condition.Status == core.ConditionTrue
 		}) {
 			return errors.New("reset requires actual Node mode and Ready readback")
-		}
-		if !slices.ContainsFunc(class.Spec.PowerModes, func(mode edge.PowerMode) bool { return mode.Actuator.Kind != edge.PowerModeActuatorFixed }) {
-			result.Progress = append(result.Progress, node.Name+": power skipped; fixed mode "+mode)
-			continue
 		}
 		lowest := serving.SchedulerLowestMode(config.Baselines, ref)
 		if lowest == "" {

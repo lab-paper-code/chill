@@ -652,6 +652,29 @@ func TestResetRetriesPowerReturnAfterPodsDisappearAC33(t *testing.T) {
 	}
 }
 
+// A Fixed-only Node has no lower mode, so a transient NotReady edge Node must not fail the reset.
+func TestResetSkipsFixedOnlyNodeWhileNotReady(t *testing.T) {
+	h := newResetHarness(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	node, err := h.kube.CoreV1().Nodes().Get(ctx, testNode.Name, meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyIndex := slices.IndexFunc(node.Status.Conditions, func(condition core.NodeCondition) bool { return condition.Type == core.NodeReady })
+	node.Status.Conditions[readyIndex].Status = core.ConditionFalse
+	if _, err := h.kube.CoreV1().Nodes().Update(ctx, node, meta.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := h.controller.ExecuteManual(ctx, h.request())
+	if err != nil || result.Status != nativeOperationComplete || result.Error != "" {
+		t.Fatalf("Fixed-only NotReady Node failed reset: %+v err=%v", result, err)
+	}
+	if !slices.ContainsFunc(result.Progress, func(line string) bool { return strings.HasSuffix(line, "power skipped; fixed-only device class") }) {
+		t.Fatalf("Fixed-only skip not recorded: %v", result.Progress)
+	}
+}
+
 func TestResetPendingPowerTargetsRespectCurrentScopeAndOwnership(t *testing.T) {
 	for _, exclude := range []string{"workload", "node UID", "excluded", "measurement", "foreign Pod"} {
 		t.Run(exclude, func(t *testing.T) {
