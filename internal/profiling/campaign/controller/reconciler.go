@@ -106,10 +106,7 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 		parent, runs, transition, curvePlan.PlannedBatchSizes(), transitionMaterial != nil,
 	)
 	if err != nil {
-		if !errors.Is(err, errInvalidCampaignTrial) {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{}, r.patchStatus(ctx, parent, failedStatus(parent, terminalReasonInvalidCampaignRun, err.Error()))
+		return ctrl.Result{}, r.handleTrialProjectionFailure(ctx, parent, err)
 	}
 
 	config, policy, err := projectEnergyObjectivePolicy(parent)
@@ -184,6 +181,19 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 		return ctrl.Result{Requeue: true}, nil
 	}
 	return requeueFor(decision, transition), nil
+}
+
+// handleTrialProjectionFailure records only immutable trial-contract failures
+// as terminal; ownership collisions and other projection errors remain errors.
+func (r *BatchEnergyOptimizationReconciler) handleTrialProjectionFailure(
+	ctx context.Context,
+	parent *edgev1alpha1.BatchEnergyOptimization,
+	err error,
+) error {
+	if !errors.Is(err, errInvalidCampaignTrial) {
+		return err
+	}
+	return r.patchStatus(ctx, parent, failedStatus(parent, terminalReasonInvalidCampaignRun, err.Error()))
 }
 
 // requeueFor polls the Node while its power mode settles and backs off other
