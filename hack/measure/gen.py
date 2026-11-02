@@ -21,7 +21,7 @@ import subprocess
 import urllib.error
 import urllib.request
 from collections import Counter, defaultdict
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import yaml
@@ -788,8 +788,8 @@ def coverage_memory_rule(cell, execution_conditions, policy):
     return rule, "applied"
 
 
-def coverage_memory_limit(cell, policies):
-    """Use the installed active worker envelope; never estimate from board RAM."""
+def coverage_memory_limit(cell, policies, node, memory_fraction):
+    """Mirror ExecutionJobs' min(policy, int64(float64(allocatable.Value()) * fraction))."""
     matches = [p for p in policies if p["deviceClass"] in ("*", cell["deviceClass"]["name"]) and
                p["executionPath"] == cell["executionPath"] and
                p["workloadMode"] == "saturated-serial-fixed-batch"]
@@ -798,7 +798,22 @@ def coverage_memory_limit(cell, policies):
     if len(selected) != 1:
         return None
     limit = selected[0].get("runtimeMemoryLimitBytes")
-    return limit if type(limit) is int and limit > 0 else None
+    if (type(limit) is not int or limit <= 0 or type(memory_fraction) not in (int, float) or
+            not math.isfinite(memory_fraction) or not 0 < memory_fraction < 1):
+        return None
+    memory = node.get("status", {}).get("allocatable", {}).get("memory")
+    if not isinstance(memory, str):
+        return None
+    try:
+        allocatable = coverage_memory(memory)
+        if not allocatable.is_finite() or allocatable <= 0:
+            return None
+        # Quantity.Value rounds positive fractional bytes up; Go then uses float64 and truncates.
+        allocatable_bytes = math.ceil(allocatable)
+        node_limit = int(float(allocatable_bytes) * memory_fraction)
+    except (InvalidOperation, ValueError, OverflowError):
+        return None
+    return min(limit, node_limit) if node_limit > 0 else None
 
 
 def coverage_batch_plan(cell, batches, timings, policy, declared=False, execution_conditions=None):
@@ -912,6 +927,27 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
     policies = yaml.safe_load(facts["data"]["execution-policies.yaml"])
     policies = policies if isinstance(policies, list) else policies["policies"]
     write_json(output / "inputs" / "execution-policies.json", facts)
+    memory_inputs = {}
+    kubectl = [ENV["kubectl"], "--kubeconfig", ENV["kubeconfig"], "--context", ENV["kubeContext"], "-n", NS]
+    for key, args in (
+            ("nodes", ["get", "nodes", "-o", "json"]),
+            ("profilerDeployments", ["get", "deployments", "-l", "app.kubernetes.io/component=profiler", "-o", "json"])):
+        try:
+            memory_inputs[key] = json.loads(subprocess.check_output(kubectl + args))
+        except subprocess.CalledProcessError as error:
+            memory_inputs[key] = {"readError": str(error)}
+    write_json(output / "inputs" / "memory-limit-inputs.json", memory_inputs)
+    nodes = {n["metadata"]["name"]: n for n in memory_inputs["nodes"].get("items", [])}
+    fractions = [
+        arg.split("=", 1)[1]
+        for deployment in memory_inputs["profilerDeployments"].get("items", [])
+        for container in deployment["spec"]["template"]["spec"]["containers"]
+        if "--fact-source-config-map=chill-profiler-facts" in container.get("args", [])
+        for arg in container["args"] if arg.startswith("--measurement-memory-fraction=")]
+    try:
+        memory_fraction = float(fractions[0]) if len(fractions) == 1 else None
+    except ValueError:
+        memory_fraction = None
     has_policy = {(p["deviceClass"], p["executionPath"]) for p in policies}
     eligible_by_class = {
         device: sorted(n["name"] for n in c["nodes"] if n["name"] not in policy["excludedNodes"] and
@@ -957,9 +993,15 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
                              "status": previous.get("status", {}).get("phase")})
             continue
         candidate_batches, declared, artifact = coverage_batches(models[model], cell["executionPath"], policy)
+        node_memory = nodes.get(node, {})
+        inventory_node = next(n for n in classes[device]["nodes"] if n["name"] == node)
+        if not inventory_node.get("uid") or node_memory.get("metadata", {}).get("uid") != inventory_node["uid"]:
+            node_memory = {}
+        memory_limit = coverage_memory_limit(cell, policies, node_memory, memory_fraction)
         batches, estimates, reason = coverage_batch_plan(
             cell, candidate_batches, timings, policy, declared,
-            dict(required, memoryLimitBytes=coverage_memory_limit(cell, policies)))
+            dict(required, memoryLimitBytes=memory_limit,
+                 memoryLimitStatus="confirmed" if memory_limit is not None else "unconfirmed"))
         excluded_batches.extend(dict(r, cellId=cell["id"], model=model, node=node)
                                 for r in estimates if not r["included"])
         if reason:

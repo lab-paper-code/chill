@@ -538,11 +538,21 @@ same-condition exclusions. Existing campaigns/feeder frozen plans are untouched.
 `runtimeImage` and `memoryLimitBytes` are **not supported top-level coverage-cell,
 coverage query, or BEO-spec overrides**. Runtime identity is a public variant/
 profile condition; the generator resolves required identity from execution
-declarations. The supported worker limit is
-`ExecutionPolicySpec.runtimeMemoryLimitBytes`, selected from the installed
-`chill-profiler-facts` active-path policy (exact class before `*`) and retained in
-`inputs/execution-policies.json`. Missing/ambiguous limits remain unknown; board
-RAM, allocatable percentages or rounded GiB reports are never used to infer bytes.
+declarations. `ExecutionPolicySpec.runtimeMemoryLimitBytes` is an upper envelope,
+selected from the installed `chill-profiler-facts` active-path policy (exact class
+before `*`) and retained in `inputs/execution-policies.json`. The compared limit
+mirrors the worker: `min(policyLimit, int(float(Node allocatable bytes) * measurementMemoryFraction))`.
+Allocatable is read from the actual Node with the inventory UID checked; the
+configured fraction is read from the installed profiler Deployment arguments
+bound to that same facts ConfigMap. `inputs/memory-limit-inputs.json` retains
+both snapshots. Positive fractional allocatable bytes are rounded up as in
+Kubernetes `Quantity.Value()`, before the worker's float64 multiply/truncation.
+Missing/ambiguous/invalid inputs produce a null limit and
+`memoryLimitStatus: unconfirmed` (확정 불가), never a fallback to the policy ceiling.
+Board RAM and rounded GiB reports are not substitutes for actual Node allocatable.
+For the retained Xavier `6915992Ki`, policy ceiling 16GiB and configured fraction
+0.8, this gives **5665580646 bytes**, preserving the same-condition cap rather
+than incorrectly reporting a change from a 16GiB worker limit.
 The internal `coverage_batch_plan(..., execution_conditions=...)` parameter makes
 these read-only planning facts explicit; no memory/runtime override is sent in a BEO.
 

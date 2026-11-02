@@ -26,11 +26,13 @@ def load_generator():
 
 def generate_case(gen, image='old-runtime', phase='Complete', curve=None, evidence=None,
                   annotated=True, controlled=False, prefix=True, memory_policy=None, cell_annotation=True,
-                  variant=True):
+                  variant=True, allocatable='20Gi', memory_fraction=0.8, policy_limit=17179869184,
+                  model='mobilenet-v2-050', device='raspberry-pi-5-8g', runtime_image='new-runtime',
+                  node_uid='node-uid'):
     """Exercise generate_coverage, not just its independent selection helpers."""
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
-        model, device, path = 'mobilenet-v2-050', 'raspberry-pi-5-8g', 'firstfloor-ort-cpu-arm64'
+        path = 'firstfloor-ort-cpu-arm64'
         cell = {'id': 'cell', 'model': {'name': model}, 'deviceClass': {'name': device},
                 'executionPath': path, 'powerMode': 'fixed', 'support': {'verdict': 'Compatible'},
                 'assessment': {'displayStatus': 'usable' if phase == 'Complete' else 'problem', 'reasons': []},
@@ -67,7 +69,7 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
             'profiles': {'profiles': [{'id': 'ns/coverage-old-runtime/uid', 'condition': {'runtimeImage': image}}]
                         if phase == 'Complete' else []},
             'inventory': {'classes': [{'name': device, 'architecture': 'arm64', 'memory': '8Gi',
-                'nodes': [{'name': 'node', 'ready': 'True', 'schedulingDisabled': False}]}]},
+                'nodes': [{'name': 'node', 'uid': 'node-uid', 'ready': 'True', 'schedulingDisabled': False}]}]},
             'models': {'items': [{'metadata': {'name': model}, 'spec': {
                 'executionPaths': [{'name': path, 'artifact': 'artifact', 'runtime': {'family': 'firstfloor',
                     'backend': 'ort-cpu', 'settings': {'firstfloor': {'maxBatchSize': 2}}}}],
@@ -77,7 +79,7 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
             'datasets': {'items': [{'metadata': {'name': 'dataset'}, 'spec': {'fields': []}}]}}
         values = root / 'runtime.json'
         values.write_text(json.dumps({'profiling': {'executionDeclarations': [{'deviceClass': device,
-            'runtime': {'payload': json.dumps({'image': 'new-runtime', 'architecture': 'arm64',
+            'runtime': {'payload': json.dumps({'image': runtime_image, 'architecture': 'arm64',
                 'runtime': {'family': 'firstfloor', 'backends': ['ort-cpu']}})}}]}}))
         policy = gen.load(gen.HERE / 'coverage-plan.json')
         policy['runtimeValues'] = str(values)
@@ -87,7 +89,21 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
         policy_path.write_text(json.dumps(policy))
         facts = {'data': {'execution-policies.yaml': json.dumps({'policies': [{
             'deviceClass': device, 'executionPath': path, 'workloadMode': 'saturated-serial-fixed-batch',
-            'runtimeMemoryLimitBytes': 17179869184}]})}}
+            'runtimeMemoryLimitBytes': policy_limit}]})}}
+        nodes = {'items': [{'metadata': {'name': 'node', 'uid': node_uid},
+                            'status': {'allocatable': {} if allocatable is None else {'memory': allocatable}}}]}
+        args = ['--fact-source-config-map=chill-profiler-facts']
+        if memory_fraction is not None:
+            args.append('--measurement-memory-fraction=' + str(memory_fraction))
+        deployments = {'items': [{'spec': {'template': {'spec': {'containers': [{'args': args}]}}}}]}
+
+        def kubectl(command):
+            if 'nodes' in command:
+                return json.dumps(nodes).encode()
+            if 'deployments' in command:
+                return json.dumps(deployments).encode()
+            assert command[-4:] == ['configmap', 'chill-profiler-facts', '-o', 'json']
+            return json.dumps(facts).encode()
 
         def api(url, body=None):
             assert body is None, 'generation must not submit or preflight requests'
@@ -95,7 +111,7 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
 
         output = root / 'out'
         with patch.object(gen, 'coverage_api', side_effect=api), \
-                patch.object(gen.subprocess, 'check_output', return_value=json.dumps(facts).encode()), \
+                patch.object(gen.subprocess, 'check_output', side_effect=kubectl), \
                 contextlib.redirect_stdout(io.StringIO()):
             gen.generate_coverage(output, policy_path)
         return {name: json.loads((output / (name + '.json')).read_text()) for name in
@@ -144,6 +160,28 @@ def generation_self_check(gen):
         state = changed['excluded-batches'][0]['memoryPolicy']
         assert state['status'] == ('conditions-unknown' if value is None else 'conditions-changed')
         assert state['rule']['conditions'][key] == value  # old cap and evidence are never cleared
+    # Retained failure-investigation/nodes.json: Xavier allocatable is 6915992Ki, not board RAM.
+    xavier = next(r for r in gen.load(gen.HERE / 'coverage-plan.json')['memoryMaxBatch'] if
+                  r['deviceClass'] == 'jetson-xavier-nx-8g' and r['executionPath'] == 'firstfloor-ort-cpu-arm64')
+    inputs = {'phase': 'Failed', 'model': xavier['model'], 'device': xavier['deviceClass'],
+              'runtime_image': xavier['conditions']['runtimeImage'], 'allocatable': '6915992Ki'}
+    same_xavier = generate_case(gen, **inputs)
+    state = same_xavier['excluded-batches'][0]['memoryPolicy']
+    assert state['status'] == 'applied' and state['currentConditions']['memoryLimitBytes'] == 5665580646
+    assert state['currentConditions']['memoryLimitStatus'] == 'confirmed'
+    assert same_xavier['summary']['manifestCellCount'] == 0
+    changed_xavier = generate_case(gen, **dict(inputs, allocatable='8Gi'))
+    assert changed_xavier['excluded-batches'][0]['memoryPolicy']['status'] == 'conditions-changed'
+    for missing in ({'allocatable': None}, {'allocatable': 'invalid'}, {'memory_fraction': None},
+                    {'memory_fraction': 0}, {'node_uid': 'different-node-uid'}):
+        unknown = generate_case(gen, **dict(inputs, **missing))
+        state = unknown['excluded-batches'][0]['memoryPolicy']
+        assert state['status'] == 'conditions-unknown'
+        assert state['currentConditions']['memoryLimitStatus'] == 'unconfirmed'
+    lower_policy = copy.deepcopy(rule)
+    lower_policy['conditions']['memoryLimitBytes'] = 1024
+    lower = generate_case(gen, phase='Failed', memory_policy=[lower_policy], policy_limit=1024)
+    assert lower['excluded-batches'][0]['memoryPolicy']['status'] == 'applied'
 
 
 class CoverageGenerationTest(unittest.TestCase):
