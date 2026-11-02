@@ -579,7 +579,7 @@ servingEntrypoint:
     kubernetes.io/hostname: genesis1
   observationStorage:
     directory: /data/pools-61c6eb8
-    # SCH-42 archive 조회와 E5 S3 fallback 사용; 로컬 버퍼는 기본 2h로 복원.
+    # SCH-42 archive 조회와 evaluation S3 fallback 사용; 로컬 버퍼는 기본 2h로 복원.
     retention: 2h
     size: 128Gi
     storageClassName: rook-cephfs

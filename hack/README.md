@@ -54,11 +54,14 @@ control images and upgrade the existing release without uninstall/reset.
 subset of `server,profiler,dashboard` is also accepted. Runtime image builds
 are forbidden. See [the operations guide](../docs/operations/ops-agent-guide.md)
 for the shared lock, evidence files, prerequisites and stop conditions.
-Upgrade and E5/demo start/run reject tokens shorter-lived than their stage/timebox budget plus safety margin (`--token-safety-margin-seconds`, default 120s for upgrade; `tokenSafetyMarginSeconds`, default 60s for E5/demo); JWT `exp` or authenticated `X-Token-Expires-At` evidence and expiry UTC are retained without token bytes.
+Upgrade and evaluation/demo start/run reject tokens shorter-lived than their stage/timebox budget plus safety margin (`--token-safety-margin-seconds`, default 120s for upgrade; `tokenSafetyMarginSeconds`, default 60s for evaluation/demo); JWT `exp` or authenticated `X-Token-Expires-At` evidence and expiry UTC are retained without token bytes.
 
 ### E5 #222/#223 static replay
 
-Reuse `e5.py factor --mode static --stage E5-3 --pre-state <static-selection.json>
+Historical #222/#223 release names and evidence IDs below are retained; they are
+not reissued by this rename. New authorizations use `evaluation-execute`.
+
+Reuse `conductor.py factor --mode static --stage E5-3 --pre-state <static-selection.json>
 --row-tag 223`; this is the existing paired pre-state prepare/ACK path, not a
 campaign resume engine. Both a factor `pre-state.json` snapshot and the frozen
 selection's `state.snapshot` are read by the same baseline reader. The selected
@@ -88,47 +91,47 @@ the loops on a failed stage or invalid-generator judgment. These are existing
 stage/restore/finish commands, with no automatic retry or factor experiment.
 
 ```sh
-set -e; export CHILL_EXPERIMENT_CONFIG=/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/inputs/environment-212.json; Run=/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-222-full; Release=${CHILL_E5_RELEASE_223:?Main-approved release required}; e5() { nice -n 19 python3 -B hack/e5/e5.py "$@" --binding "$Run/binding.json" --release "$Release"; }; e5 factor --out "$Run" --mode static --stage E5-3 --pre-state "$Run/static-selection.json" --row-tag 223
+set -e; export CHILL_EXPERIMENT_CONFIG=/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/inputs/environment-212.json; Run=/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-222-full; Release=${CHILL_E5_RELEASE_223:?Main-approved release required}; e5() { nice -n 19 python3 -B hack/evaluation/conductor.py "$@" --binding "$Run/binding.json" --release "$Release"; }; e5 factor --out "$Run" --mode static --stage E5-3 --pre-state "$Run/static-selection.json" --row-tag 223
 for n in 3 4 5 6; do e5 stage --out "$Run" --mode static --stage "E5-$n" --row-tag 223; e5 judge --out "$Run/static-E5-$n-223"; done
 e5 restore --out "$Run" --row-tag 223
 for n in 4 5 6 7; do e5 stage --out "$Run" --mode full --stage "E5-$n" --row-tag 223; e5 judge --out "$Run/full-E5-$n-223"; done
-e5 finish --out "$Run" --row-tag 223; e5 cleanup-jobs --out "$Run" --row-tag 223; e5 summarize --out "$Run"; nice -n 19 python3 -B hack/e5/e5.py tables "$Run" | tee "$Run/tables-223.txt"
+e5 finish --out "$Run" --row-tag 223; e5 cleanup-jobs --out "$Run" --row-tag 223; e5 summarize --out "$Run"; nice -n 19 python3 -B hack/evaluation/conductor.py tables "$Run" | tee "$Run/tables-223.txt"
 ```
 
 
-### E5 micro rows
+### Evaluation micro rows
 
 **미니 행은 반복 검증용, 정본 표는 전체 행.** `micro=true` 결과는 별도 비교
-표/`e5-summary.json.microRows`에만 표시하며 정본 E5-0..7·E5-S 및 시나리오
+표/`e5-summary.json.microRows`에만 표시하며 정본 prepare-idle~failure·static-baseline 및 시나리오
 완주 수에는 포함하지 않는다. D1·완료-only p95·POOL 에너지/공백 오차 판정은
 동일한 raw 규칙을 사용한다. 동일 길이 고정 trace가 없으면 에너지 Δ는 N/A다.
 전체 길이 정본 에너지와 짧은 행 에너지를 빼서 절감으로 표시하지 않는다.
 
-`hack/e5/micro-stages.example.json`의 `stages`를 기존 전체 행 뒤에 추가한다.
+`hack/evaluation/micro-stages.example.json`의 `stages`를 기존 전체 행 뒤에 추가한다.
 실제 bind 입력은 3회차의 R·payload·seed·arrival·poolShares를 그대로 사용하고,
 기존 `stages`에 이 미니 행 정의만 덧붙인다
-(`rate_w = alpha_w × s_w × R_w`). `CHILL_EXPERIMENT_CONFIG`의 `e5.stages`도
+(`rate_w = alpha_w × s_w × R_w`). `CHILL_EXPERIMENT_CONFIG`의 `evaluation.stages`도
 bind 입력에 `stages`가 없을 때만 적용된다. 운영 복사본은
 `inputs/environment-micro.json`이며 기존 `environment-212.json`은 바꾸지 않는다.
 
-| 행 | 부하 창 | 복원 원본 |
-|---|---|---|
-| E5-5m | α=.3 180s → α=.9 300s | full-E5-5-223/pre-state.json |
-| E5-7m | α=.3 360s; 120s 후 serving Pod 주입 1건 | full-E5-7-223/pre-state.json |
-| E5-3m | α=.5 180s → α=.9 300s | full-E5-3-223/pre-state.json |
-| E5-6m | α=.3 600s soak | full-E5-6-223/pre-state.json |
+| 행 (저장 ID) | 현재 이름 | 부하 창 | 복원 원본 |
+|---|---|---|---|
+| E5-5m | drop-surge-micro | α=.3 180s → α=.9 300s | full-E5-5-223/pre-state.json |
+| E5-7m | failure-micro | α=.3 360s; 120s 후 serving Pod 주입 1건 | full-E5-7-223/pre-state.json |
+| E5-3m | ramp-up-micro | α=.5 180s → α=.9 300s | full-E5-3-223/pre-state.json |
+| E5-6m | soak-micro | α=.3 600s soak | full-E5-6-223/pre-state.json |
 
 행별 `factor --mode full --stage E5-5m --pre-state "$Run/full-E5-5-223/pre-state.json"
 --row-tag <fresh-tag>` 후 같은 stage/tag의 `stage`·`judge`를 사용한다.
 micro 행은 성공한 해당 복원 receipt가 필수이며 기존 재시도/덮어쓰기 금지는 그대로다.
-E5-7m은 stage의 `failureInjectionRunbook.steps`를 사용하며 `failure-select`는
+failure-micro는 stage의 `failureInjectionRunbook.steps`를 사용하며 `failure-select`는
 양의 route/assigned 및 실제 UID가 확인된 Pod 1건의 명령만 출력한다. 실행은
 운영자만 수행하고 실제 명령·시각·응답을 `failure-events.json`에 기록한다.
 이 설정은 측정을 실행하지 않는다. 네트워크 없는 산식·허용 목록·복원 원본·주입
-자가 검사는 `python3 -B hack/e5/e5.py self-check-micro`, 표 격리는
-`python3 -B hack/e5/e5.py tables --self-check`다.
+자가 검사는 `python3 -B hack/evaluation/conductor.py self-check-micro`, 표 격리는
+`python3 -B hack/evaluation/conductor.py tables --self-check`다.
 
-### E5 targeted full replay
+### Evaluation targeted full replay
 
 `factor --mode full --stage E5-{1,3,5,6,7} --pre-state <original-row/pre-state.json>
 --row-tag 3` reuses the same reset/prepare/native-mode/route ACK path (#237 adds E5-3).
@@ -163,9 +166,9 @@ request bodies, exclusions, expected fingerprint and factor → stage → judge 
 Use the original `full-E5-1/pre-state.json` and
 `full-E5-{5,6,7}-223/pre-state.json` inputs; no copied or fabricated start state.
 
-E5-7 injection is **operator-only**, as in the first actual run. During its
+failure injection is **operator-only**, as in the first actual run. During its
 offered window, immediately before the recommended 180s delete and 360s
-cordon/delete, run `e5 failure-select --out "$Run" --mode full --stage E5-7
+cordon/delete, run `conductor.py failure-select --out "$Run" --mode full --stage E5-7
 --row-tag 3 --failure-kind delete-serving-pod` and then the same command with
 `--failure-kind cordon-delete`. Selection only performs GETs and emits
 `operatorCommands`/`operatorArgv`; it never executes them. Execute the emitted
@@ -194,15 +197,15 @@ license to use a stale target.
 
 CampaignOps order (five shell lines; existing frozen component release/binding
 for R1~R6+R4b+C1+C2 must be supplied, never reuse the old rev104 source release).
-Use a separate operator shell for the E5-7 selection/injections while line 3
+Use a separate operator shell for the failure selection/injections while line 3
 runs. Every row must finish before advancing; no automatic retries:
 
 ```sh
-set -e; export CHILL_EXPERIMENT_CONFIG=/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/inputs/environment-212.json; Run=/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-222-full; Binding=${CHILL_E5_BINDING_3:?Main-approved C1+C2 binding required}; Release=${CHILL_E5_RELEASE_3:?Main-approved release required}; e5() { nice -n 19 python3 -B hack/e5/e5.py "$@" --binding "$Binding" --release "$Release"; }
-for n in 1 5 6; do suffix=-223; test "$n" != 1 || suffix=; e5 factor --out "$Run" --mode full --stage "E5-$n" --pre-state "$Run/full-E5-$n$suffix/pre-state.json" --row-tag 3; e5 stage --out "$Run" --mode full --stage "E5-$n" --row-tag 3; e5 judge --out "$Run/full-E5-$n-3"; done
-e5 factor --out "$Run" --mode full --stage E5-7 --pre-state "$Run/full-E5-7-223/pre-state.json" --row-tag 3; e5 stage --out "$Run" --mode full --stage E5-7 --row-tag 3
-e5 judge --out "$Run/full-E5-7-3"
-e5 finish --out "$Run" --row-tag 3; e5 cleanup-jobs --out "$Run" --row-tag 3; e5 summarize --out "$Run"; nice -n 19 python3 -B hack/e5/e5.py tables "$Run" | tee "$Run/tables-3.txt"
+set -e; export CHILL_EXPERIMENT_CONFIG=/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/inputs/environment-212.json; Run=/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/d-20261027/control-222-full; Binding=${CHILL_E5_BINDING_3:?Main-approved C1+C2 binding required}; Release=${CHILL_E5_RELEASE_3:?Main-approved release required}; evaluation() { nice -n 19 python3 -B hack/evaluation/conductor.py "$@" --binding "$Binding" --release "$Release"; }
+for n in 1 5 6; do suffix=-223; test "$n" != 1 || suffix=; evaluation factor --out "$Run" --mode full --stage "E5-$n" --pre-state "$Run/full-E5-$n$suffix/pre-state.json" --row-tag 3; evaluation stage --out "$Run" --mode full --stage "E5-$n" --row-tag 3; evaluation judge --out "$Run/full-E5-$n-3"; done
+evaluation factor --out "$Run" --mode full --stage E5-7 --pre-state "$Run/full-E5-7-223/pre-state.json" --row-tag 3; evaluation stage --out "$Run" --mode full --stage E5-7 --row-tag 3
+evaluation judge --out "$Run/full-E5-7-3"
+evaluation finish --out "$Run" --row-tag 3; evaluation cleanup-jobs --out "$Run" --row-tag 3; evaluation summarize --out "$Run"; nice -n 19 python3 -B hack/evaluation/conductor.py tables "$Run" | tee "$Run/tables-3.txt"
 ```
 
 
@@ -263,7 +266,7 @@ list and validate the render with
 
 ### Required pre-deployment decision + guard replay gate
 
-**배포 전 필수:** `hack/e5/replay-gate.py`를 보존한 E5-3/5/7 및 회귀
+**배포 전 필수:** `hack/evaluation/replay-gate.py`를 보존한 ramp-up/drop-surge/failure 및 회귀
 stage 전체에 실행하고 `summary.json`의 `verdict=PASS`를 배포 증거에 첨부한다.
 판정은 **기준 소스 대비**다: 첫 `--source`(또는 `--reference`)가 기준이며 후보는 stage마다 나빠진 tick·공급 증가 거부가 기준을 넘지 않으면 PASS(기록 자체의 population mismatch로 생기는 잔여 bad tick은 기준에도 같이 나타난다). 불일치 자체는 실패가 아니다. 배포 전 기준은 **현재 live 서버 소스**로 둔다.
 나빠진 tick은 (1) keep κ가 수요보다 부족한 상황의 기록된 공급 증가 target을
@@ -272,7 +275,7 @@ stage 전체에 실행하고 `summary.json`의 `verdict=PASS`를 배포 증거�
 공급이 증가하면 포함하고, origin tick당 한 번만 센다.
 
 ```sh
-python3 -B hack/e5/replay-gate.py --source HEAD \
+python3 -B hack/evaluation/replay-gate.py --source HEAD \
   --stage /ops/campaign/full-E5-3-7 --stage /ops/campaign/full-E5-5-7 \
   --stage /ops/campaign/full-E5-7-7 --stage /ops/campaign/full-E5-5-8d \
   --rows /ops/deployB/control/kappa-rows.json \
@@ -312,24 +315,24 @@ compare JSONL의 recordedCounts/replayCounts 및 populationMismatch를 함께 �
 다음 tick 검증은 동결 target+기록 관측의 반사실 진단이며 completion callback,
 실행기 owner 취소 또는 closed-loop 클러스터 시뮬레이션을 대체하지 않는다.
 끝부분은 남은 tick까지만 검증한다. 클러스터 접근은 하지 않는다.
-최소 회귀 검사는 `python3 -B hack/e5/replay-gate.py --self-check`와
+최소 회귀 검사는 `python3 -B hack/evaluation/replay-gate.py --self-check`와
 `go test ./hack/kappa`다.
 
 
 ## Experiment controllers
 
-New experiment Python starts under `hack/`. `hack/e5/` owns the campaign
-controller and its analysis helpers, `hack/e5/d2/` owns the D2 binding,
+New experiment Python starts under `hack/`. `hack/evaluation/` owns the campaign
+controller and its analysis helpers, `hack/evaluation/d2/` owns the D2 binding,
 conductor, cgroup sampler, native-mode request and offline analyzer, and
 `hack/measure/` owns measurement preparation, generation and analysis.
 CampaignOps owns testbed mutations and image publication.
 
 Set `CHILL_EXPERIMENT_CONFIG` to an absolute external JSON file before invoking
-these tools. Its top-level objects are `paths`, `d2`, `e5` and `measure`.
+these tools. Its top-level objects are `paths`, `d2`, `evaluation` and `measure`.
 Optional `samples` holds complete environment-specific registration/measurement
 documents keyed by their existing repository-relative sample paths; select them
 explicitly using the [sample procedures](../config/samples/README.md#environment-specific-inputs).
-E5 binds `d2.namespace` (default `chill-system`) and the selected experiment
+Evaluation binds `d2.namespace` (default `chill-system`) and the selected experiment
 policies into `binding.config`; later execution/analysis consumes that binding.
 The [configuration ownership table](../docs/design/serving/configuration-hardcoding.md#슬라이스-5-구현과-기본값)
 lists the stage/arrival/G0/timebox keys and their unchanged defaults.
@@ -345,9 +348,9 @@ explicit CLI inputs. For example:
 
 ```sh
 export CHILL_EXPERIMENT_CONFIG=/path/to/external/environment.json
-python3 /path/to/checkout/hack/e5/d2/analyze_before.py \
+python3 /path/to/checkout/hack/evaluation/d2/analyze_before.py \
   --phase-dir /path/to/retained/phase --out /path/to/external/summary.json
-python3 /path/to/checkout/hack/e5/d2/bind_before.py \
+python3 /path/to/checkout/hack/evaluation/d2/bind_before.py \
   --scheduler /path/to/scheduler.json --capacity /path/to/capacity.json \
   --nodes /path/to/nodes.json --pods /path/to/pods.json \
   --out /path/to/external/binding.json
@@ -388,10 +391,10 @@ Exit status is nonzero if any violation or incomplete replacement was recorded.
 
 
 `conduct_before.py` is an imported helper module, not a standalone command.
-E5 and demo construct its `Conductor` without the retired D2 constructor and
+Evaluation and demo construct its `Conductor` without the retired D2 constructor and
 provide the approved binding, output, authentication and journal context.
 The shared API, publication, producer and cleanup helpers remain available.
-The D2 cleanup helper, E5 finish and demo resume commands submit one explicit scheduler
+The D2 cleanup helper, evaluation finish and demo resume commands submit one explicit scheduler
 `reset` with their captured Workload UIDs and a required reason, retain the returned
 step/native ACK evidence, and stop on failure without a client retry or resume
 state machine. The server owns autonomy removal, unroute/drain/removal, release,
@@ -401,7 +404,7 @@ physical modes. Subsequent input-settings restoration excludes the read-only
 `route`/`unroute`/`release` operations and preserve unrelated UID declarations.
 Request lifetime is optional: an unset value omits `--request-lifetime`, rather
 than synthesizing zero or a client deadline. Socket budgets remain explicit.
-E5 and demo `publish --experiment-id ID --store-config /private/store.json`
+Evaluation and demo `publish --experiment-id ID --store-config /private/store.json`
 upload private raw evidence first through the existing PutImmutable bridge, then
 the final `serving/experiments.v1alpha1/ID/summary.json`. Existing IDs cannot be
 overwritten; corrections require a new ID. `native_mode_request.py` remains the
@@ -413,7 +416,7 @@ separately approved baseline-preparation path, not cleanup sequencing.
 records and bounded local fixtures; the component-throttle smoke writes to
 `d2.smokeOutput`.
 
-E5 collects CHILL facts only through authenticated APIs using the collector
+Evaluation collects CHILL facts only through authenticated APIs using the collector
 service-account token at `paths.ops/.token-collector`. After drain, resource-batch
 support and the next closed-minute boundary, the raw exporter supplies
 `definitions`, `requests`, `management`, `scheduler`, `catalog`, `resources` and
@@ -426,19 +429,19 @@ writes. The additional collector processed-GET permissions, `requestTimeout`
 and `podName` require the next approved deployment, not a live RBAC patch.
 
 The external producer-only `client` cgroup sampler retains stage-entry identity,
-start readiness and post-end counter release. STOP monitoring and operator E5-7
+start readiness and post-end counter release. STOP monitoring and operator failure
 commands remain unchanged. Missing counters remain unknown, not zero. Capture
 receipts (`capture-identity`, `s3-hour-list-*`, `upload.log`, `collector-status`,
 `*-collector.stderr`) are no longer produced or judged.
 
 Reports identify GC as `runtime-metrics-delta` (window cumulative CPU/cycle
-difference, not a gctrace cycle distribution), and E5-7 recovery as
+difference, not a gctrace cycle distribution), and failure recovery as
 `scheduler`/`cluster` evidence. D1, latency and energy formulas are unchanged.
-Never export raw observations or query historical dashboard data during an E5
+Never export raw observations or query historical dashboard data during an evaluation
 measurement window. Historical publications are not rewritten.
 
-`hack/e5/e5.py check-preparation --out /path/to/external/preparation.json`
-checks the retained preparation inputs. `hack/e5/e5-wire.py execute` takes
+`hack/evaluation/conductor.py check-preparation --out /path/to/external/preparation.json`
+checks the retained preparation inputs. `hack/evaluation/wire.py execute` takes
 the approved `--numbers`, `--release` and fresh external `--out` directory;
 its archive, raw-collection and producer helpers live alongside it.
 
@@ -566,31 +569,31 @@ Record the repository harness commit alongside the actual control-image
 source and immutable image identities in operational execution metadata.
 CampaignOps switches active callers after the current conductor exits and
 confirms that every consumer uses repository entrypoints. Historical receipts
-and raw records retain their original provenance. At the approved E5 pilot
+and raw records retain their original provenance. At the approved evaluation pilot
 stage, run the existing `smokeSeconds` lifecycle through cleanup with the
 repository controller, retain its logs and handback proof, and exclude that
-smoke from scientific results before full E5.
+smoke from scientific results before full evaluation.
 
-### Short autonomous demo (not the normative E5 study)
+### Short autonomous demo (not the normative evaluation study)
 
-`hack/e5/demo.py` reuses `CPO.start/run/collect/finish`, the existing producer
+`hack/evaluation/demo.py` reuses `CPO.start/run/collect/finish`, the existing producer
 Job template, Poisson arrival generator/seeds, authenticated API, raw archive
 collector and prebuilt power reducer. It does not call the R/G/10800-second
 scientific binding/judgment gates. The example
-`hack/e5/demo-config.example.json` selects E0/A/B/C and explicit request timing.
-With no `e5Config`, `prepare` reads the existing environment's operational
+`hack/evaluation/demo-config.example.json` selects E0/A/B/C and explicit request timing.
+With no `evaluationConfig`, `prepare` reads the existing environment's operational
 recipe and captures scheduler state, nodes, pods, Ready serving-image digest
-and gateway cap. It reuses `e5-wire.Prepare.canonical()` to create missing
+and gateway cap. It reuses `wire.Prepare.canonical()` to create missing
 canonical Workloads from the recipe's exact model/preprocessor/dataset
 references and configured SLO, preserving existing definitions/SLOs without
 PUTs. Registration ACKs and applied UID/generation/SLO are retained before
-binding. It reuses `e5-wire.template()` plus existing D2 producer arguments and
-explicit `requestTiming` overrides, saving `demo-e5-config.json` and
+binding. It reuses `wire.template()` plus existing D2 producer arguments and
+explicit `requestTiming` overrides, saving `demo-evaluation-config.json` and
 `binding.json`. This registration is CampaignOps-only, under Main's release.
 `controlSourceSHA` is Main's helm-revision source claim, resolved in git and
 kept distinct from the observed image digest; it is not inferred from image
 bytes. `demoSkipped` names every bypassed scientific gate. An optional
-`e5Config` can still name an already assembled raw E5 config.
+`evaluationConfig` can still name an already assembled raw evaluation config.
 Copy the example outside the repository if changing its inputs. Rates and
 reporting-only `measurementSLO` are demonstration choices, not capacity claims.
 Existing scheduler SLOs are captured and never changed; new canonical
@@ -601,13 +604,13 @@ CampaignOps alone executes live commands, with the existing safety monitor
 running and all instances/autonomy/static routes initially empty:
 
 ```sh
-DEMO=/absolute/path/to/checkout/hack/e5/demo.py
+DEMO=/absolute/path/to/checkout/hack/evaluation/demo.py
 CONFIG=/absolute/path/to/external/demo-config.json
 OUT=/absolute/path/below/paths.campaign/demo-run
 RELEASE=/absolute/path/to/external/demo-release.json
 python3 "$DEMO" prepare --config "$CONFIG" --out "$OUT"
 # Main issues the existing CPO release JSON:
-# {"executor":"CampaignOps","command":"e5-execute",
+# {"executor":"CampaignOps","command":"evaluation-execute",
 #  "bindingPath":"<OUT>/binding.json","sourceSHA":"<binding config approval.sourceSHA>",
 #  "mainInstructionUTC":"<actual authorization UTC>"}
 python3 "$DEMO" start --out "$OUT" --release "$RELEASE"
@@ -652,7 +655,7 @@ The scheduler's explicit JSON `results: null` is an empty Go result slice for
 consumer iteration/concatenation; retained raw state keeps the original null.
 Demo Jobs omit `--workload-slo` and `--gateway-timeout`, which the pinned D2
 producer predates; prepare still checks actual SLO/lifetime/gateway/socket
-budgets on the host. Normative E5 Jobs retain their flags. Self-check compares
+budgets on the host. Normative evaluation Jobs retain their flags. Self-check compares
 generated demo options with immutable e18ac/4fb CLI parser option sets using
 AST, without running an image. On producer failure, exact Job-owned Pod logs,
 stderr and identity receipts are saved under `startup-<workload>/` before
@@ -664,15 +667,15 @@ Demo stage boundaries and resume wait only for zero scheduler outstanding
 requests and zero per-Workload pending requests. They retain
 `demoRequestDrain.inProgressTarget/actions` and `request-drain-state.json`
 without waiting for the planner to become idle. Resume additionally requires
-owned Ready instances and positive routes. Normative E5 and final owned
+owned Ready instances and positive routes. Normative evaluation and final owned
 cleanup retain their original global-idle waits.
 
-`tolerateArchive` is **diagnostic-only (진단 전용, E5 금지)** in `demo.py`.
+`tolerateArchive` is **diagnostic-only (진단 전용, 정본 evaluation 금지)** in `demo.py`.
 Its top-level or stage-level list may name only `power` and
 `power-drain-inclusive`; a stage list overrides the top-level list (`[]`
 restores strict capture). Missing archives retain original NOT_READY evidence,
 explicit `missingArchives` and null energy, never a successful energy result.
-Normative `e5.py` rejects the key anywhere in its config or binding, including
+Normative `conductor.py` rejects the key anywhere in its config or binding, including
 empty/false/null values, rather than silently ignoring it.
 
 For an otherwise completed producer window stopped only by the former
@@ -711,20 +714,20 @@ per-UID `minimumDemand`. JSON summaries and immutable published stage KPIs
 retain that frozen input, not current settings. Older bindings without it show
 null and an explicit missing reason; their immutable records are not rewritten.
 
-`python3 hack/e5/demo.py --help` and `--self-check` work without environment
+`python3 hack/evaluation/demo.py --help` and `--self-check` work without environment
 configuration. The latter runs the real CPO producer stage loop against local
 pipes and mocked API/kubectl, with no cluster access, image builds or full tests.
 
-`python3 hack/e5/e5.py self-check` needs `CHILL_EXPERIMENT_CONFIG` pointing at an
+`python3 hack/evaluation/conductor.py self-check` needs `CHILL_EXPERIMENT_CONFIG` pointing at an
 environment JSON (module constants) but makes no cluster or network calls.
 
-### One-command E5 round
+### One-command evaluation round
 
-`python3 -B hack/e5/round.py --round /absolute/private/round.json` runs the
+`python3 -B hack/evaluation/round.py --round /absolute/private/round.json` runs the
 released server-only upgrade, initial owned reset, headroom PUT/readback, κ,
 ordered factor → headroom GET → stage/first-load-tick check → judge → guards →
 cleanup, comparison tables, and final finish/empty-state readback. It reuses
-`e5.CPO`, `e5.py` commands, token lifetime checks, and table formatters; raw
+`conductor.CPO`, `conductor.py` commands, token lifetime checks, and table formatters; raw
 latency/D1/energy judgments are not recomputed or weakened. Run only outside an
 active measurement window and under an actual Main-approved release.
 예정 대체: 현재 `round.py`·로컬 binding·운영자 장애 주입은 유지하되, [실험 실행 설계](../docs/design/profiling/experiment-execution.md) / [실험 SRS](../docs/spec/experiments/SRS.md)에 따른 정의·독립 실행으로 대체할 예정이다.
@@ -758,11 +761,11 @@ replace the illustrative paths/SHAs with actual approved inputs):
 `environment.paths.ops` is the actual external ops root, **not** literal `/ops`.
 `run` is the existing campaign containing original snapshots and `initial.json`.
 Do **not** create `evidence` or any `full-E5-*-TAG` directories: the runner and
-E5 controller own creation. The runner writes `run/binding-round-9.json` from
+evaluation controller own creation. The runner writes `run/binding-round-9.json` from
 the supplied binding, preserving R3 payloads, seeds, rates, traces, and κ while
 freezing the selected harness package references and new server provenance.
 The pre-existing approved release must name that exact generated `bindingPath`,
-`executor: "CampaignOps"`, `command: "e5-execute"`, `mainInstructionUTC`, and
+`executor: "CampaignOps"`, `command: "evaluation-execute"`, `mainInstructionUTC`, and
 explicit `sources: {server, loadgen, power}`; legacy single `sourceSHA` releases
 are rejected. It never fabricates approval. The server publication must have
 the matching SHA, only `roles.server`, verified digest/platform receipts, and
@@ -771,7 +774,7 @@ host. A matching live digest skips upgrade, not Ready/API/restartCount gates.
 Any chart drift stops; the runner does not accept chart-change approval.
 
 Optional `harnessSHA` selects a different full commit for the frozen
-`ops/harness/e5-<sha>` tree (default `sourceSHA`). Missing trees are created
+`ops/harness/evaluation-<sha>` tree (default `sourceSHA`). Missing trees are created
 atomically from `git archive`; existing Python files are compared with that
 commit before use. Bind micro schedules beforehand; rows `E5-{3,5,6,7}m` must
 carry `micro: true` and `restoreStage` in the supplied binding, with their own
@@ -797,13 +800,13 @@ records a hash/reference and zero replays. Both require positive Built rows
 for all canonical workloads.
 
 Preflight renews insufficient-lifetime/expired credentials using only the
-existing `chill-dashboard-user` and `chill-e5-evidence-collector` service
+existing `chill-dashboard-user` and `chill-evaluation-evidence-collector` service
 accounts in the configured namespace. `.token`/`.token-collector` are replaced
 atomically with mode 0600; originals remain in `.bak` (later backups receive a
 timestamp). Tokens never enter evidence or argv. Initial reservation/action
 wait is 600s; only `takeoverAfter600Seconds: true` authorizes one direct reset
 after the original timeout evidence is preserved. No other recovery or retry
-is implicit. E5-7 requires `failureInjection: true`, executes only fresh
+is implicit. failure requires `failureInjection: true`, executes only fresh
 `failure-select` operator argv, and retains actual commands/results/timestamps;
 STOP does not silently uncordon or reset physical state.
 
@@ -840,7 +843,7 @@ For example, `--until 1` stops after deployment; continue with the identical
 round JSON and `--resume-from 2`. Early stops do not run later steps or `finish`
 and therefore do not imply final empty-state verification.
 
-`python3 -B hack/e5/round.py --self-check` checks input validation, ordering,
+`python3 -B hack/evaluation/round.py --self-check` checks input validation, ordering,
 STOP boundaries and compressed judgment projection entirely offline, without
 environment configuration, Go, image builds, deployment or network requests.
 

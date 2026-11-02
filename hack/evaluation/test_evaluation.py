@@ -95,7 +95,7 @@ class AdapterTests(unittest.TestCase):
         scenario={'spec':{'arrivalDistribution':dict.fromkeys(NAMES,'fixed'),'parts':[{'id':'steady','durationSeconds':10,'rates':dict.fromkeys(NAMES,3)}]},'seeds':dict.fromkeys(NAMES,1),'workloads':[{'name':name,'uid':str(index),'generation':4,'slo':{'percentile':95,'targetLatencyNanos':100}} for index,name in enumerate(NAMES)]}
         execution={'runUID':'run','stageUID':'stage','stageID':'different-id','namespace':'test'}
         operational={'timeboxes':{'drainSeconds':20},'workloads':{name:{'podSpec':{'restartPolicy':'Never','containers':[{'name':'load'}]}} for name in NAMES},'collection':{'maximumDurationSeconds':100}}
-        config={'e5Operational':json.dumps(operational),'chillAPIURL':'https://chill','jobActiveDeadlineSeconds':'120','minimumFreeBytes':'123'}
+        config={'operational':json.dumps(operational),'chillAPIURL':'https://chill','jobActiveDeadlineSeconds':'120','minimumFreeBytes':'123'}
         value=evaluation.stage_config(base,spec,scenario,execution,config,Path('/work/campaign/run/stages/different-id'))
         self.assertEqual(value['stages'][0]['id'],'E5-5m')
         self.assertEqual(value['evaluation']['execution']['stageID'],'different-id')
@@ -105,7 +105,7 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(value['workloads'][0]['generation'],4)
         self.assertNotIn('evaluation',base)
         for forbidden in ('inputs','approval','stages','evaluation'):
-            bad=copy.deepcopy(config);bad['e5Operational']=json.dumps(dict(operational,**{forbidden:{}}))
+            bad=copy.deepcopy(config);bad['operational']=json.dumps(dict(operational,**{forbidden:{}}))
             with self.assertRaisesRegex(ValueError,'FrozenInputInvalid'): evaluation.stage_config(base,spec,scenario,execution,bad,Path('/work'))
     def test_result_and_exit_mapping(self):
         execution={'runUID':'run','stageUID':'stage','stageID':'id'}
@@ -224,7 +224,7 @@ class AdapterTests(unittest.TestCase):
     def test_evaluation_rejects_unused_legacy_allowances(self):
         for operation in ({'failureSelectSnapshotTTLSeconds':15},{'timeboxes':{'nativeFutureAllowanceSeconds':15}}):
             with self.assertRaisesRegex(ValueError,'FrozenInputInvalid'):
-                evaluation.stage_config({}, {}, {}, {}, {'e5Operational':json.dumps(operation)},Path('/work'))
+                evaluation.stage_config({}, {}, {}, {}, {'operational':json.dumps(operation)},Path('/work'))
         self.assertNotIn('failureSelectSnapshotTTLSeconds',evaluation_inputs.OPERATIONAL)
     def test_publish_outcome_failed_stage_and_unperformed_injection(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -495,12 +495,12 @@ def offline_bundle(directory):
         work=Path(temporary);inputs=work/'inputs';shutil.copytree(directory/'files',inputs/'files')
         for path in (inputs/'files').rglob('*.json'): evaluation.save(path,evaluation.expand(evaluation.load(path),inputs))
         base=evaluation.expand(bundle['config'],inputs);scientific=evaluation.expand(bundle['environment'],inputs)
-        operational=evaluation.load(directory/'config-values.json')['e5Operational']
+        operational=evaluation.load(directory/'config-values.json')['operational']
         resource={'cpu':'2','memory':'1Gi'}
         scheduler=evaluation.load(base['inputs']['scheduler']);control={key:scheduler['settings'][key] for key in ('controls','minimumDemand','scaleDownHeadroomFraction')}
         spec={'row':'E5-5m','mode':'autonomous','control':control,'harness':{'sourceSHA':'a'*40},'loadGenerator':{'image':evaluation.load(base['workloads'][0]['jobTemplate'])['spec']['template']['spec']['containers'][0]['image'],'sourceSHA':base['approval']['sources']['loadgen'],'resources':{'requests':resource,'limits':resource},'shards':{name:1 for name in NAMES},'barrier':{'minimumReadySamples':2,'maxStartSkewNanos':1000000000}},'judgment':{'generatorQuality':{'latenessToleranceNanos':50000000,'maxExceedingFraction':.01},'energyCoverage':{'maxGapFraction':.01,'maxSingleGapSeconds':30}}}
         scenario={'spec':{'arrivalDistribution':dict.fromkeys(NAMES,'poisson'),'parts':[{'id':'one','durationSeconds':60,'rates':dict.fromkeys(NAMES,1)}]},'seeds':evaluation.load(directory/'seeds.json'),'workloads':base['workloads']}
-        execution={'runUID':'offline','namespace':'test'};config={'namespace':'test','e5Operational':operational,'chillAPIURL':'https://offline.invalid','minimumFreeBytes':'1','jobActiveDeadlineSeconds':'7200'}
+        execution={'runUID':'offline','namespace':'test'};config={'namespace':'test','operational':operational,'chillAPIURL':'https://offline.invalid','minimumFreeBytes':'1','jobActiveDeadlineSeconds':'7200'}
         run=work/'campaign/run';root=run/'stages/offline';root.mkdir(parents=True)
         evaluation.environment(run,config,scientific,base['workloads'])
         harness=evaluation.module('offline_bundle_harness',Path(__file__).parent/'conductor.py')

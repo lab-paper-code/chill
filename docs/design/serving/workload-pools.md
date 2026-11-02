@@ -109,7 +109,7 @@ Dashboard는 Workload 활성 POOL/측정/가용·공유 표시·노드 사유, W
 G2 [소비자 감사](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/g2-current-consumer-inventory.json): catalog legacy49(비용35/baseline14), E5 ranking9, frozen E5 후보 energy legacy0(전체 prefix 정리와 별개). ranking9 unknown/fresh10 입구를 유지한다.
 ranking9 재측정 승인2roots/18steps, actual lowest 조건부 직접전환 포함 상한4roots/22steps. root마다 raw/소비/반환 후 다음 root. 대체9 확인+검증 외부 backup 절대경로/개수 대조 뒤 raw80keys(old9 포함)/terminal OCM6 정리를 연속 실행한다. strict reader 로컬 cutover는 병렬 완결, 새 source 적용은 대체/backup/정리/Timing 없는 소비0 뒤이며 첫 BEFORE 전 공통 입력 동결. 완료 근거는 [측정 API 저장 계약](measurement-api.md)에 둔다.
 D2는 관측된 gateway tail holder/work, cache/transport/payload/search 병목만 보수하며 durability/physical ownership/HTTP 성공·원 architecture 경계를 유지한다. production mapping/negative fixture, kind SCH-AC24/25/26 범위를 조율한다. runtime7/자원/evidence store 고정, 일반 이미지 분리/CRD통합/NodeActuation정리/추가planner·CI·known bias/d 대안/상시trace/무관cleanup은 M5다.
-요청 lifetime는 실제 HandlerConfig 상한과 admission 시작 전에 대조한다. E5 caller는 SLO/cap/L/delivery/socket 명시, `L≥SLO,cap≥L,socket>L+delivery`, native 남은 수명을 일치시킨다. warmup60s/본창360s/cap3600s 승인값은 한 원천에서 generator/API/admission/controller/Run이 소비하고 실측 preparation 예산을 별도로 둔다.
+요청 lifetime는 실제 HandlerConfig 상한과 admission 시작 전에 대조한다. evaluation caller는 SLO/cap/L/delivery/socket 명시, `L≥SLO,cap≥L,socket>L+delivery`, native 남은 수명을 일치시킨다. warmup60s/본창360s/cap3600s 승인값은 한 원천에서 generator/API/admission/controller/Run이 소비하고 실측 preparation 예산을 별도로 둔다.
 Runtime은 physical capacity 예약 후 소유권 잠금 밖 assignment 저장/native 시작, final row도 호출자 잠금 밖 저장, shutdown은 final 종료를 기다린다. 메모리 fold/디스크 writer 잠금 분리, 완전 행 rollback/저장실패 fail-closed, 동일 불변 profile pointer 시간별 catalog 직렬화 생략을 유지한다.
 알려진 수리 뒤 fresh D2 승인1회/최종 rollout≤1회, 동일 AFTER tail/G가 PLC SLO를 만족하면 진단0회, 잔여 tail이 막을 때만 진단 rollout≤1회다. 승인 단계 사이 재승인 대기 없이 새 조건/판정/범위만 승인받는다.
 진단은 실제 PRIMARY native8의420s창: `--diagnostic-directory` 새 절대 private 경로, Helm diagnostic.directory/startDelay/traceOffset→동일 flags, 기존 /data mount. 빈 경로 비활성은 요청별 clock/ID변환/할당0. start-delay는 bind→numeric창, trace-offset은0..390s다.
@@ -118,13 +118,13 @@ numeric ring16MiB/64byte event, Go trace 저장32MiB/30s. native반환·mutex at
 ## 9. 검증 계획
 
 계약 검사는 원래 lifetime−senderElapsed−m1회, native완료+m replay, owner/binding/unowned 소속, 전체 Node/사유·비교집합 공통항, Disabled고정/최소1/Node당1/직접이동, Fixed최저선행·빈재진입비용, 조건별 최신/부분실패/나열실패 유지, 수동route 보호, taint격리·직전거절·toleration/측정runner보호, 역할Pod·외부예산/NodeReady, m누락거부/0수락을 다룬다. 실행 완료/PASS 주장이 아니다.
-E1은 최초 구성/무부하/부하/완료여유(`SCH-AC-24`), E2는 Disabled/근거없음/Controlled 공존(`SCH-AC-25`), E3은 측정격리/Pod/evidence/자연반환(`SCH-AC-26`), E4는 직접이동 DAG/비용/소속(`SCH-AC-22`), E5는 혼합 SLO/비교·전체에너지/residual을 확인한다. live는 [AGENTS](../../../AGENTS.md)의 승인 조건, window/결정/측정 상태/메모리/PVC를 보존한다.
+E1은 최초 구성/무부하/부하/완료여유(`SCH-AC-24`), E2는 Disabled/근거없음/Controlled 공존(`SCH-AC-25`), E3은 측정격리/Pod/evidence/자연반환(`SCH-AC-26`), E4는 직접이동 DAG/비용/소속(`SCH-AC-22`), evaluation은 혼합 SLO/비교·전체에너지/residual을 확인한다. live는 [AGENTS](../../../AGENTS.md)의 승인 조건, window/결정/측정 상태/메모리/PVC를 보존한다.
 
 ### 9.2 실클러스터 E2E
 
-정량 결과의 권위는 [명세 평가 표](../../spec/README.md#실클러스터-검증과-평가)와 [평가 보고서](../../reports/e5-evaluation-20261030.md), 원시 정본이다. 반복된 거대3회차 표 대신 아래 조건/결론/출처를 유지한다. 제어요소12행/rev102 식별력 한계는 [명세 비교](../../spec/README.md#제어요소-비교), 7행 커버리지는 [E5 평가 보고서](../../reports/e5-evaluation-20261030.md)가 원본이다.
+정량 결과의 권위는 [명세 평가 표](../../spec/README.md#실클러스터-검증과-평가)와 [평가 보고서](../../reports/e5-evaluation-20261030.md), 원시 정본이다. 반복된 거대3회차 표 대신 아래 조건/결론/출처를 유지한다. 제어요소12행/rev102 식별력 한계는 [명세 비교](../../spec/README.md#제어요소-비교), 7행 커버리지는 [평가 보고서](../../reports/e5-evaluation-20261030.md)가 원본이다.
 
-#### E5 입력·입구
+#### evaluation 입력·입구
 
 초기 후보8 Node=genesis2/genesis3/lattepanda/rasp5/orangepi/jetsono/jetsonx/jetson-nano, 제외genesis1(게이트웨이)/orin-nano(DNS 해결 전). 실제 평가는 genesis2 Xid79 제외7 Node다. 노드당1 serving, canonical Workload3은 인스턴스0에서 시작하며 측정용 정리·실제 UID·m을 확인한다.
 MNV=image-classification-tight-slo p95≤1s, PLC=plc-anomaly/Dataset plc-extruder-01-windows, Smol=smolvlm2-vqa/vqav2-val-subset. PLC/Smol 목표는 D2후 d/m/dump의 fastest b1/가장 넓은 지연간격으로 제안, κ>0 Node≥절반/가장느린2 κ0를 p95/p99/계산시간으로 확인 후 동결한다. 실제 평가 SLO는 p95≤1000/36/7034ms(MNV/PLC/Smol)였다.
@@ -152,24 +152,26 @@ producer/HTTP/native outstanding/pending/measurement/action/handback0 뒤 frozen
 sourceSHA/digest/dump/UID/자원·MNV자율Tick/no-controlTick/혼합3search를 기록한다. G는 전완료·무throttle 마지막 단계, native/client/capacity 선한계는 bound/원인. gateway CPU=(stagecores−idlecores)/rate, 지연/거절/만료/incomplete와 GatewayOverloaded rejected/error+503을 사유별 보고한다.
 CS/genesis1 edgemesh cgroup1s/restart15s/thermal5s 전후 동일, 실제 server6CPU/4GiB/GOMEMLIMIT3072MiB/gctrace1/timeout129s/drain164s/grace194s·Flush/scraper cadence를 보존한다. query는 단계경계, drain뒤 같은 archive/Prometheus, source별κ는 load없는 동일dump에서 순차다.
 
-#### E5 단계·분모
+#### evaluation 단계·분모
 
-| 단계 | 시간/부하 | 관측·요구사항 |
-|---|---|---|
-| E5-0 | 10분/0 | 첫 인스턴스·나머지lowest·무부하전력, SCH-AC-24 |
-| E5-1 | 30분/모두α0.3 | 일정·동시혼합/분포·결과·에너지·예측/관측, SCH-AC-23, [아키텍처 검토](../architecture-rethink/README.md) |
-| E5-2 | 15분/Smol0.3→0.9,나머지0.3 | burst·소유권재배치·모든SLO/Jetson지연, SCH-AC-21 |
-| E5-3 | 30분/0.5,0.7,0.9 각10분 | 증가·확장·κ_new/B/W/큐, SCH-AC-15 |
-| E5-4 | 15분/1.2 | overload/최대초과량·결과/구성, SCH-AC-16 |
-| E5-5 | 20분/0.3→0.9 각10분 | 급감/재급증·축소/idle/전환J·U2 KEEP/readback, SCH-AC-15 |
-| E5-6 | 60분/0.3 | soak·예측/비교집합/전체에너지·residual |
-| E5-7 | 15분/0.3 | 180s Pod삭제/360s cordon+삭제/600s uncordon, SCH-AC-45 |
-| E5-S | 170분/E5-1..6 동일seed/rate | E5-3끝α0.9의 실제구성/mode/route 고정 비교, SCH-AC-20 |
+저장된 단계 ID는 유지하고, 현재 시나리오 이름은 새 ID로 표시한다.
 
-full195+static170=365분, 최초 N2(membership-off/replicas-off) E5-2/5 비교70분 포함435분, reset/settling/warmup/drain/flush/추가seed 별도. 실제 control-216 집합12행은 명세를 따른다(최초N2와 구분).
-E5-S는 state snapshot의3UID를 autonomous에서 제거+staticRouting/reason 한 PUT, validatedAt=ConfigMap staticRoutingValidatedAt=operation.settingsValidatedAt을 기록한다. E5-1..6 후3UID복원+staticRouting:{}+reason PUT, 선언삭제는 동작 생성 없이 기존분배를 다음 판단이 이어받아 E5-4로 간다.
+| 단계 | 새 ID | 시간/부하 | 관측·요구사항 |
+|---|---|---|---|
+| E5-0 | prepare-idle | 10분/0 | 첫 인스턴스·나머지lowest·무부하전력, SCH-AC-24 |
+| E5-1 | steady-mixed | 30분/모두α0.3 | 일정·동시혼합/분포·결과·에너지·예측/관측, SCH-AC-23, [아키텍처 검토](../architecture-rethink/README.md) |
+| E5-2 | burst | 15분/Smol0.3→0.9,나머지0.3 | burst·소유권재배치·모든SLO/Jetson지연, SCH-AC-21 |
+| E5-3 | ramp-up | 30분/0.5,0.7,0.9 각10분 | 증가·확장·κ_new/B/W/큐, SCH-AC-15 |
+| E5-4 | overload | 15분/1.2 | overload/최대초과량·결과/구성, SCH-AC-16 |
+| E5-5 | drop-surge | 20분/0.3→0.9 각10분 | 급감/재급증·축소/idle/전환J·U2 KEEP/readback, SCH-AC-15 |
+| E5-6 | soak | 60분/0.3 | soak·예측/비교집합/전체에너지·residual |
+| E5-7 | failure | 15분/0.3 | 180s Pod삭제/360s cordon+삭제/600s uncordon, SCH-AC-45 |
+| E5-S | static-baseline | 170분/steady-mixed~soak 동일seed/rate | ramp-up 끝α0.9의 실제구성/mode/route 고정 비교, SCH-AC-20 |
+
+full195+static170=365분, 최초 N2(membership-off/replicas-off) burst/drop-surge 비교70분 포함435분, reset/settling/warmup/drain/flush/추가seed 별도. 실제 control-216 집합12행은 명세를 따른다(최초N2와 구분).
+static-baseline은 state snapshot의3UID를 autonomous에서 제거+staticRouting/reason 한 PUT, validatedAt=ConfigMap staticRoutingValidatedAt=operation.settingsValidatedAt을 기록한다. steady-mixed~soak 후3UID복원+staticRouting:{}+reason PUT, 선언삭제는 동작 생성 없이 기존분배를 다음 판단이 이어받아 overload로 간다.
 U2 최소는 jetsono MAXN↔MODE_15W/jetsonx MODE_15W_6CORE↔MODE_15W_4CORE/jetson-nano MAXN↔5W, 세 모델CPUq1/B1. [모드 계획](../../plans/2026-10-27-power-mode-coverage.md)의 근거5종 Accepted만 후보; 부족을κ0/강제mode로 바꾸지 않고 KEEP은 차단근거이지 절감성공아님.
-E5-2는 genesis2/3 SmolCUDA OOM제외 유지, 측정 MNV/PLC CUDA 또는 Smol CPU/Jetsono SmolCUDA 비교, CPU유지·GPU승자를 성공조건으로 두지 않는다.
+burst는 genesis2/3 SmolCUDA OOM제외 유지, 측정 MNV/PLC CUDA 또는 Smol CPU/Jetsono SmolCUDA 비교, CPU유지·GPU승자를 성공조건으로 두지 않는다.
 모든 유효 offered가 분모, 전환/1분창 SLO·완료/실패/만료/drain/censoring/incomplete/표본수를 유지한다. 첫준비→첫routeACK와 차단명령→uncordon후 실제Ready/관측/route복구는 전체분모+별도집단/제외집계도 분모·실패와 병기, 미복구는 단계끝, 사후유리창 선택없음.
 Tick p50/p99·CS CPU/RSS/GC/PVC·edgemesh CPU/memory/throttle/restart, 검색 neighborhood/evaluated/durationNanos/budgetCut/evaluationElapsedNanos를 기록한다. 예산은 controlIntervalNanos/2(10s→5s), tick cgroup cpuacct.usage/cpu.stat nr_throttled/throttled_time차, 검색안/밖의 gateway(종단−native) p99, 1분SLO/검색유무·workers/최종G/TransitionGainWithinUncertainty keep을 연결한다. workers3/G≈220은 선행값이지 최종G아님.
 thermal5s active/latched/unknown, 사전온도bin <60/60–70/70–80/≥80°C, 미관측bin 일반화 제한. placement/resource결합·routing안전/no-op·batching고정B/deadline차·power U2만으로 독립기여를 주장하지 않는다. 사후threshold/seed/집단 선택없음. demo-config capacityR는 최종승인뒤, failure runbook은 운영자 직렬/자동실행없음, preflight는 연구장애증명아님.

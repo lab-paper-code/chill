@@ -102,7 +102,7 @@ controller가 실험 시작 시 직접 GET하여 실제값과 ConfigMap 이름·
 | `jobActiveDeadlineSeconds` | Job 예산 `21600`; 최소 `540`초 |
 | `injectionWindowSeconds`, `injectionSnapshotTTLSeconds` | 주입 허용 창·관측 유효 기간: 각각 `5`초 |
 | `finishResetWaitSeconds`, `factorAckWaitSeconds`, `drainTimeoutSeconds` | 하네스 대기 상한: `600`, `120`, `600`초 |
-| `e5Operational` | JSON 객체, 기본 `{"timeboxes":{"setupSeconds":405}}`. 허용 키는 `timeboxes`, `tokenSafetyMarginSeconds`, `failureSelectSnapshotTTLSeconds`, `collection.maximumDurationSeconds`, `workloads[name].{producerEndpoint,producerTokenFile,producerCAFile,producerDatasetDir,deliverySeconds,socketSeconds,gatewayCapSeconds,workers,lifetimeSeconds,podSpec}`뿐 |
+| `operational` | JSON 객체, 기본 `{"timeboxes":{"setupSeconds":405}}`. 허용 키는 `timeboxes`, `tokenSafetyMarginSeconds`, `failureSelectSnapshotTTLSeconds`, `collection.maximumDurationSeconds`, `workloads[name].{producerEndpoint,producerTokenFile,producerCAFile,producerDatasetDir,deliverySeconds,socketSeconds,gatewayCapSeconds,workers,lifetimeSeconds,podSpec}`뿐 |
 | `chillAPIURL`, `caSecret` | ChillServer URL·TLS CA Secret |
 | `evidenceEndpoint`, `evidenceBucket`, `evidenceRegion`, `evidenceCredentialsSecret` | 증거 store 접속·전용 자격 Secret |
 
@@ -229,7 +229,7 @@ prepare에서 LoadScenario·카탈로그를 **한 번만** name+UID(Workload는 
 형태는 `{schemaVersion, config, environment, files: {name: EvidenceRef}, payload}`다.
 `config`는 기존 conductor bind의 scheduler/capacity/d25/ranking/cost/bias/gateway/producer 및 templates/data 과학 입력이고 `payload`는 순서·recordID·필드 바이트 신원이다.
 파일 참조는 `$files/<name>`으로 쓰며 prepare가 `/work/inputs/` 아래 materialize하고 적용 Workload·LoadScenario snapshot과 함께 보존한다.
-endpoint·Secret·시간 상한·실행 호스트 경로는 번들 설정에 넣지 않고 동결 ConfigMap의 허용된 `e5Operational` 운영 키에서만 읽는다.
+endpoint·Secret·시간 상한·실행 호스트 경로는 번들 설정에 넣지 않고 동결 ConfigMap의 허용된 `operational` 운영 키에서만 읽는다.
 prepare는 필수 키 누락을 `MissingInput`, 알 수 없는 키·잘못된 의미를 `FrozenInputInvalid`로 거절하고 자식은 동결 snapshot만 사용한다.
 `evaluation_inputs.py build --round FILE --attempt DIR --out DIR --store STORE --prefix KEY`는 기존 기록에서 번들·named files·업로드 목록·운영값 파일을 오프라인 생성하며 업로드하지 않는다.
 seedRef는 workloadName→uint64, traceRefs는 workload별 ordered offsetsNS 배열, rateBasisRef는 workloadName→pool-weighted R, kappaRef는 기존 capacity rows JSON이다.
@@ -313,7 +313,7 @@ Node 필드/label 범위는 RBAC 자체가 아니라 코드에서 제한한다. 
 ## 12. 결정(2026-11-02 사용자 개정)
 
 - **2026-11-02 producer cgroup을 node-agent raw로(사용자 결정)** 전환한다. 종전의 “node-agent 대체 불가”는 당시 producer 대상 미선택에 대한 관측이며 영구 제약이 아니므로 폐기한다. §5의 자원 전용 일반 라벨 계약으로 대상을 확장한다.
-- 닫힌 분만 반환하는 기존 API의 지연을 감수하며 새 API·SSH 폴백은 없다. 기본 node-agent batch 10초에서 target 갱신 ≤10초 + 표본 2개 ≤2초 + 업로드 ≤10초 + 분 닫힘 ≤60초 = **≤82초**(정상 통신 가정). 기존 setup 194초를 전부 startup에 쓸 수 있으므로 194초 안에 추가 관측 대기를 보장할 수 없다. chart의 `e5Operational.timeboxes.setupSeconds`만 **405초 = 194 + 82 + 기존 API 상한 129**로 올린다. ready 이후 300초 producer barrier 안에서도 82+129=211초다. 이미지 pull·API 장애의 무한 완료는 보장하지 않으며 전체 setup 상한을 넘으면 GO 없이 실패한다.
+- 닫힌 분만 반환하는 기존 API의 지연을 감수하며 새 API·SSH 폴백은 없다. 기본 node-agent batch 10초에서 target 갱신 ≤10초 + 표본 2개 ≤2초 + 업로드 ≤10초 + 분 닫힘 ≤60초 = **≤82초**(정상 통신 가정). 기존 setup 194초를 전부 startup에 쓸 수 있으므로 194초 안에 추가 관측 대기를 보장할 수 없다. chart의 `operational.timeboxes.setupSeconds`만 **405초 = 194 + 82 + 기존 API 상한 129**로 올린다. ready 이후 300초 producer barrier 안에서도 82+129=211초다. 이미지 pull·API 장애의 무한 완료는 보장하지 않으며 전체 setup 상한을 넘으면 GO 없이 실패한다.
 - 종료 표본은 기존 drain + collect 상한 안에서 기다리고 producer Job activeDeadline에도 기존 collect 상한을 포함한다. 최종 collect는 기존대로 한 번 수행한다. 폴링은 UTC 분마다 한 번, 같은 닫힌 분은 재계수하지 않는다.
 - 하위 모델 분해(2026-10-31)는 §3과 [ADR 0032 개정 이력](../../adr/0032-experiment-execution-boundary.md#개정-이력)을 따른다. 독립 D2가 쓰는 `sample_cgroups.py`는 유지한다.
 - FaultInjection·프로파일·Snapshot 등 별도 CR 기각 근거는 [ADR 0032 대안](../../adr/0032-experiment-execution-boundary.md#context)을 따른다. §1의 범위 밖 범용 workflow는 도입하지 않는다.

@@ -53,10 +53,10 @@
 | `spec.batchEnergyOptimization` | option의 BEO. mode/runtime image/model은 profile의 `condition.powerMode`, `runtimeImage`, `logicalModel` |
 | `spec.workload` | 요청 경로를 줄 Workload 이름. 그 Dataset의 `evaluation` 부분집합을 전송 |
 | `spec.batch` | 고정 B(≥1), 인스턴스를 `fixedBatchSize:B`로 준비(`SCH-35`) |
-| `spec.supplyMode` | d는 고정 outstanding `closed-loop`, E5는 `poisson`. `workers=K`, 대기 batch q와 계산 입력을 conditions에 고정 |
+| `spec.supplyMode` | d는 고정 outstanding `closed-loop`, evaluation은 `poisson`. `workers=K`, 대기 batch q와 계산 입력을 conditions에 고정 |
 | `spec.warmupSeconds`, `durationSeconds`, `minimumBatches`, `maximumIdleFraction` | profile 유도 W_load·본창 T·표본 N·식별된 idle 허용 비율. idle 비율은 [0,1] 설정값, 승인값 0.05(고정값 검증 아님). 동결 `maximumIdleBaseFraction` 승인 상한도 0.05이며 profile로 더 엄격하게 역산하지 않음 |
 | closed-loop 시간 하한/상한 | `conditions.inputsJSON.coefficients`의 `loadPreparationFloorSeconds`, `windowFloorSeconds`, `plannedElapsedCapSeconds`를 한 번 동결·소비. 승인값 60/360/3600 s, preparation 예산은 별도. legacy Poisson duration 60 s는 독립 구조 계약 |
-| `spec.requestLifetimeSeconds`, `deliveryMarginMillis`, `drainSeconds`, `preparationSeconds`, `jobSetupSeconds`, `collectionSeconds`, `plannedElapsedSeconds` | profile·SLO·실제 준비·batch tail·전달·수집 예산에서 계산. L≥SLO, gateway cap≥L, native count/decoded bytes 공동 조건. d/E5 socket은 L+delivery보다 엄격히 큼(최소 +1 ms) |
+| `spec.requestLifetimeSeconds`, `deliveryMarginMillis`, `drainSeconds`, `preparationSeconds`, `jobSetupSeconds`, `collectionSeconds`, `plannedElapsedSeconds` | profile·SLO·실제 준비·batch tail·전달·수집 예산에서 계산. L≥SLO, gateway cap≥L, native count/decoded bytes 공동 조건. d/evaluation socket은 L+delivery보다 엄격히 큼(최소 +1 ms) |
 | `spec.conditions` | `profileID`, `inputsJSON`, `waitingBatches`, `maximumIdleNanosPerRequest`, `minimumCycles`: 정확한 profile·모든 입력·승인 계수·q·idle 1 ms/요청·필수 cycle 및 하한/cap 설정 원천을 불변 고정 |
 | `status` | `phase`(2장과 같은 넷), `reason`, `powerMode`, `perRequestNanos`, `throughput`(십진 문자열 req/s), `result`(`ProfilingRunEvidenceReference`) |
 
@@ -68,7 +68,7 @@
 - 전체 elapsed는 `preparation+setup+warmup+duration+ceil(L+deliveryMarginMillis/1000)+drain+collection`이며 `plannedElapsedSeconds` 이하, 동결 cap(승인 3600 s) 이하다. generator는 `supplyExtensionSeconds=ceil(L+deliveryMarginMillis/1000)`를 known 합과 새 `conditions.inputsJSON.computed`에 예약하고 미관측 setup/collection 잔여에서 차감해 합을 3600 s로 맞춘다.
 - 기존 record/terminal CR/동결 입력, 물리 batch 기준 warmup·본창, Poisson 공급 시간은 바꾸지 않는다. HTTP 만료 후 native 미완료 근거는 unknown이다. 반환은 label의 Job을 Background 삭제해 부하 Pod를 정리한다.
 - `nodeName`은 ChillServer Pod의 노드(downward API `spec.nodeName`, env `NODE_NAME`)다. scheduler/NoSchedule taint를 거치지 않으며 gateway 노드에 두어 다른 측정 노드 전력에 부하를 섞지 않는다.
-- init `dataset`은 Dataset image의 `sh -ec 'cp -R "$1"/. /data/' -- <path>/evaluation`이다. Workload/Dataset 원시 입력을 실제 FQDN·CA·projected token·기존 release ServiceAccount의 공통 TLS gateway로 보낸다. d는 closed-loop K와 L header/socket 여유, E5는 Poisson이다.
+- init `dataset`은 Dataset image의 `sh -ec 'cp -R "$1"/. /data/' -- <path>/evaluation`이다. Workload/Dataset 원시 입력을 실제 FQDN·CA·projected token·기존 release ServiceAccount의 공통 TLS gateway로 보낸다. d는 closed-loop K와 L header/socket 여유, evaluation은 Poisson이다.
 - ServiceAccount `<fullname>-load-generator`, image는 `load-generator/`를 담은 `build/docker/load-generator.Dockerfile`, base Python 3.12다. live 인증서에 Subject/Authority Key Identifier가 없어 3.13+ 기본 strict 검증이 거절할 수 있다 `[추론]`.
 
 **물리 측정량.** `d=연속 native batch 시작 span/(physical cycles×B)−profileMean/B`의 signed 전체 값을 보존한다. batch는 Node·Pod UID·container ID·BatchID·member로 연결한다. readiness는 B개 member queued 시각의 최댓값, actor 대기는 `runningNanos−queuedNanos`다.
@@ -82,7 +82,7 @@
 - 기존 q/batch-tail/prefix 수명 검사·native waiting count/decoded bytes 공동 조건·SLO·gateway cap을 유지한다. 큰 K를 생성 후 bytes 초과 거절하지 않고 세 cap의 최솟값을 생성한다. 공급은 K<B일 때만 불가능하며, 다른 실행 조건/전체 cap 불만족도 실행 전에 보고하고 L/예산을 늘리지 않는다.
 - 계수·하한/상한은 한 설정 원천에서 읽고 generator/API/admission/controller가 같은 동결 조건을 소비한다. 준비 시간과 부하 warmup의 의미·예산은 별도 기록한다.
 
-**수명·유휴 상한.** admission은 L을 실제 `HandlerConfig.RequestTimeout`과 대조해 초과 CR을 실행 전에 거절한다. caller는 L/delivery를 명시하고 `socketTimeoutMillis>=L*1000+deliveryMarginMillis+1`로 설정한다. gateway가 원래 L/sender 경과를 전달하고 native는 `L−senderElapsed−completionMargin`을 쓰며 m은 한 번 차감한다(E5 Poisson도 동일).
+**수명·유휴 상한.** admission은 L을 실제 `HandlerConfig.RequestTimeout`과 대조해 초과 CR을 실행 전에 거절한다. caller는 L/delivery를 명시하고 `socketTimeoutMillis>=L*1000+deliveryMarginMillis+1`로 설정한다. gateway가 원래 L/sender 경과를 전달하고 native는 `L−senderElapsed−completionMargin`을 쓰며 m은 한 번 차감한다(evaluation Poisson도 동일).
 유한 physical drain·전체 3600 s 예산(`e8e018e2`)·공급 연장 예약을 유지한다. 예산 불충족을 보고하며 연장 축소/cap 초과 실행은 하지 않는다. Accepted/동결 입력은 불변이고 묵시적 재실행은 없다. 새 K는 Accepted10의 K와 같은 불변량이 아니며 비교는 실제 근거로 한다.
 식별된 idle 비율은 설정 `maximumIdleFraction` 이하여야 한다. 승인 0.05는 계획 여유 25%(1.25−1)의 1/5이며 signed d를 바꾸지 않는다. 초과는 producer/요청 경로 한계로 보고하고 K·L·margin·cap 튜닝/자동 재측정으로 통과시키지 않는다.
 
@@ -96,7 +96,7 @@
 - 초기 Measuring patch와 부하 시작 전 실패 terminal status는 취소 run과 분리한 최대 30 s publication context로 저장한다. handback은 parent context를 쓰며 status 저장 예산으로 측정창을 확대하지 않는다.
 
 **근거 지위.** mobilenet CPU 8개/GPU 2개는 새 규칙 미재인증 legacy이며 실제 대체 Accepted 전까지 소비한다. U2 CPU 8개/GPU 전체 5개/PLC 12개의 새 규칙 측정은 D2 뒤 25개 범위다. D01 Insufficient와 `rasp5-944` 진단은 보존한다. U3 D04/D09 새 immutable record가 실제 consumer source를 대체하며 옛 Smol CPU 2개 raw/status는 보존한다.
-**Smol 해석.** D04/D09/D14/D23/D33의 profile 포함 95% 근사구간은 0 아래이며 E5의 알려진 systematic profile-versus-serving bias다. profile/NodeUID/model/B1/mode/runtime 일치와 harness/warmup/timing envelope/시간 분리는 관측 사실이다. 실효 thread/affinity·입력/전처리 경계·열/주파수/throttling·clock의 원인별 기여는 미확정 가설이다. signed raw·원 Accepted·`max(d,0)`을 유지하고 bias 보정/d 추정정책 대안은 M5 후보다. 수치·원시는 [bias JSON](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/smol-systematic-bias-20261024.json), [해석 근거](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/smol-systematic-bias-20261024.txt)를 따른다.
+**Smol 해석.** D04/D09/D14/D23/D33의 profile 포함 95% 근사구간은 0 아래이며 evaluation의 알려진 systematic profile-versus-serving bias다. profile/NodeUID/model/B1/mode/runtime 일치와 harness/warmup/timing envelope/시간 분리는 관측 사실이다. 실효 thread/affinity·입력/전처리 경계·열/주파수/throttling·clock의 원인별 기여는 미확정 가설이다. signed raw·원 Accepted·`max(d,0)`을 유지하고 bias 보정/d 추정정책 대안은 M5 후보다. 수치·원시는 [bias JSON](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/smol-systematic-bias-20261024.json), [해석 근거](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/smol-systematic-bias-20261024.txt)를 따른다.
 
 ## 4. 계획기의 d 수집
 
@@ -146,7 +146,7 @@ ChillServer는 두 kind 목록/status patch, release namespace Job create/get/li
 
 별도 Run API/저장소 없이 기존 캠페인 binding/summary와 scheduler 판단/관측 기록을 쓴다.
 `minimumDemand`는 Workload **UID**→최소 req/s map이다(이름/model ID 아님). 빈 UID·음수·NaN·무한대는 거절하며 map/UID 생략은 0이다. 유효 수요는 `max(관측 수요,minimumDemand[UID])`; 관측은 장기/최근 도착률·미완료 기여를 포함한다([계획기 §3](analytic-planner.md#3-판정과-순서)). 유휴 제거·교체 회수에도 하한을 적용하며 무부하에도 그 용량을 유지한다.
-선택값은 판단/관측에 동결하여 이후 설정 변경이 과거 하한을 바꾸지 않는다. `hack/e5/e5.py`/`demo.py` 새 binding은 scheduler 입력 참조와 전체 `schedulerSettings`(minimumDemand 포함)를 동결하고 `e5-summary.json`/demo `summary.json` 및 immutable 결과의 단계별 `kpis.schedulerSettings`에 같은 값을 남긴다. 과거 binding 누락은 null/사유이며 현재값/가짜 0으로 채우지 않는다.
+선택값은 판단/관측에 동결하여 이후 설정 변경이 과거 하한을 바꾸지 않는다. `hack/evaluation/conductor.py`/`demo.py` 새 binding은 scheduler 입력 참조와 전체 `schedulerSettings`(minimumDemand 포함)를 동결하고 `e5-summary.json`/demo `summary.json` 및 immutable 결과의 단계별 `kpis.schedulerSettings`에 같은 값을 남긴다. 과거 binding 누락은 null/사유이며 현재값/가짜 0으로 채우지 않는다.
 실행 중 실제값은 `initial.json`, 경계별 `pre-settings.json`/`post-settings.json`, `static-selection.json`, `decision.settings`에 저장한다. binding은 입력 동결 시점이며 이후 변경은 판단/경계 기록으로 확인한다. `decision.capacity.workloads[]`에 `minimumDemand`(미설정 명시적 0), 최종 하한 적용 `rate`(req/s)를 함께 쓰고 관측 도착률은 덮어쓰지 않는다.
 
 **G2 근거·승인 경계.** B=0만으로 계약 세대를 판별하지 않고 실제 immutable 참조/Timing을 조사한다. [소비자 목록](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/g2-current-consumer-inventory.json)은 catalog 비용 177개 중 35개, baseline 80개 중 14개에 Timing이 없음을 확인했다. 49개 중 E5 선택 노드 empty ranking legacy 9개의 불확실성은 unknown이다. 동결 E5 identity/mode 후보 에너지 입력 legacy는 0개이나 실행된 선택/전체 prefix 정리 완료를 뜻하지 않는다. 최신 선택 전 객체를 읽으므로 superseded/terminal CR 참조도 정확한 정리 목록에 포함한다.
@@ -173,7 +173,7 @@ generator가 실측 profile/SLO·승인 계수로 d의 N/K/L·준비·본창·se
 
 ## 10. 캠페인 범위와 증거
 
-E5 전 범위는 Node당 기준 mode의 필수 profile·d·정확 비용이며 mode 확장은 E5 뒤 별도 범위다. runtime 7종 digest와 원본012/017 raw/status·replacement 출처를 보존한다(017 비실행 Measuring/Granted 예외). 실행 순서/E5 입구는 [POOL 검증 계획](workload-pools.md#9-검증-계획)을 따른다.
+evaluation 전 범위는 Node당 기준 mode의 필수 profile·d·정확 비용이며 mode 확장은 evaluation 뒤 별도 범위다. runtime 7종 digest와 원본012/017 raw/status·replacement 출처를 보존한다(017 비실행 Measuring/Granted 예외). 실행 순서/evaluation 입구는 [POOL 검증 계획](workload-pools.md#9-검증-계획)을 따른다.
 조건 생성기·승인 원문·manifest·profile/runtime/NodeUID/source SHA·원시 위치를 선별하며 `.token`·Secret 스냅샷·전체 캐시 백업은 저장소/증거 인덱스에서 제외한다.
 - d 결정(`O/intent/intent-archive-20261030.tar.gz:d-measurement-decision.md`)
 - 조건 생성기 provenance: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/gen.py` (원래 실행 위치; 현재 파일 부재)

@@ -76,7 +76,7 @@ evaluation:
     factorAckWaitSeconds: "120"
     drainTimeoutSeconds: "600"
     # Include bounded drain/producer settings required by the operational recipe.
-    e5Operational: '{"timeboxes":{"setupSeconds":405}}'
+    operational: '{"timeboxes":{"setupSeconds":405}}'
     chillAPIURL: https://chill-serving-entrypoint.chill-system.svc:8080
     caSecret: chill-dashboard-tls
     evidenceEndpoint: http://chill-evidence-store.chill-system.svc.cluster.local.:9000

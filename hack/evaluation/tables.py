@@ -138,7 +138,7 @@ def render(root, repo, *, evaluation=None):
     if summary.get('evaluation'): return render_evaluation(summary['stages'],summary['results'])
     spec = table_lines(repo / 'docs/spec/README.md', '| 시나리오 | 새 ID | 관찰할 내용 |')
     # workload-pools is a design document in this repository, not a spec file.
-    pools = table_lines(repo / 'docs/design/serving/workload-pools.md', '| 단계 | 시간/부하 | 관측·요구사항 |')
+    pools = table_lines(repo / 'docs/design/serving/workload-pools.md', '| 단계 | 새 ID | 시간/부하 | 관측·요구사항 |')
     scenarios = ['steady', 'gradual-up-and-down', 'burst', 'post-transition-drop-resurge',
                  'mixed-heterogeneous', 'pool-overload', 'node-serving-control-failure']
     title = f'# evaluation table rows: {cell(root.name)}'

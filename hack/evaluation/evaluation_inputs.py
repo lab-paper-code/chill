@@ -152,7 +152,7 @@ def build(binding_path, environment_path, out, store, prefix):
         objects.append({**reference,'localPath':str(path.resolve())});refs[field]=reference
     save(out/'load-scenario-inputs.json',refs)
     save(out/'objects.json',objects)
-    save(out/'config-values.json',{'e5Operational':json.dumps(operational, separators=(',',':'))})
+    save(out/'config-values.json',{'operational':json.dumps(operational, separators=(',',':'))})
 
 
 def main():

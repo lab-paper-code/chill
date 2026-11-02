@@ -16,7 +16,7 @@ import (
 const ExperimentSchemaVersion = "serving-experiment.v1alpha1"
 const ExperimentPrefix = "serving/experiments.v1alpha1/"
 
-// ExperimentSummary is the immutable publisher's summary, not a live E5 evaluation.
+// ExperimentSummary is the immutable publisher's summary, not a live evaluation.
 // KPIs retain the publisher's populations, nulls, reasons and private limitations.
 type ExperimentSummary struct {
 	SchemaVersion string             `json:"schemaVersion"`

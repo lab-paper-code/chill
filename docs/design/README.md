@@ -9,7 +9,7 @@ flat list of equally authoritative files.
 |---|---|---|
 | Runtime, artifact, and profiling | [profiling/README.md](profiling/README.md) | Active component contracts and retained measurement facts; completed plans are summaries |
 | Serving | [serving/README.md](serving/README.md) | Active Workload/runtime/κ planner/measurement/operations contracts and qualified evidence |
-| Serving evidence API | [serving/observability-split.md §17](serving/observability-split.md#17-e5-증거-api-2026-10-30) | Raw export, resources/cluster streams, read-only meters and deployment/acceptance boundary (ADR 0030) |
+| Serving evidence API | [serving/observability-split.md §17](serving/observability-split.md#17-evaluation-증거-api-2026-10-30) | Raw export, resources/cluster streams, read-only meters and deployment/acceptance boundary (ADR 0030) |
 | Query API | [query-api/README.md](query-api/README.md) | Active query backend and distinct Dashboard/CLI responsibilities; requirements stay in SRS |
 | Dashboard implementation | [dashboard/README.md](dashboard/README.md) | Active web/API/live ownership and acceptance boundary |
 | Code intelligence and architecture analysis | [code-intelligence/README.md](code-intelligence/README.md) | Semantic navigation, package boundaries, optional indexing and Helm topology evidence |

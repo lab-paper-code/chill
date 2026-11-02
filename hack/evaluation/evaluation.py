@@ -84,13 +84,13 @@ def environment(run,config,scientific,workloads):
 
 
 def stage_config(base,spec,scenario,execution,config,root):
-    value=copy.deepcopy(base);operational=json.loads(config['e5Operational'])
+    value=copy.deepcopy(base);operational=json.loads(config['operational'])
     rules=module('evaluation_input_rules',HERE/'evaluation_inputs.py')
     timebox_keys={'setupSeconds','barrierSeconds','drainSeconds','flushSeconds','collectSeconds','apiSeconds','settleSeconds','finishResetWaitSeconds','powerDownSeconds','factorAckWaitSeconds','maxActuationSeconds','nativeCallerSeconds'}
     if set(operational.get('timeboxes',{}))-timebox_keys:
         raise ValueError('FrozenInputInvalid: unknown operational timebox fields')
     if set(operational)-(rules.OPERATIONAL|{'workloads','collection'}):
-        raise ValueError('FrozenInputInvalid: unknown e5Operational fields')
+        raise ValueError('FrozenInputInvalid: unknown operational fields')
     if set(operational.get('collection',{}))-{'maximumDurationSeconds'}:
         raise ValueError('FrozenInputInvalid: unknown operational collection fields')
     for workload in operational.get('workloads',{}).values():
