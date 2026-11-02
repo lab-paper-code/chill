@@ -15,8 +15,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-const measurementPreflightTestPath = "/api/v1/namespaces/allowed/batch-energy-optimizations/preflight"
-
 func TestPreflightEnrichmentUsesExactCatalogAndCurrentSourceSpec(t *testing.T) {
 	plan := measurementPreflightTestPlan(t)
 	modes := []string{
@@ -55,11 +53,18 @@ func TestPreflightEnrichmentUsesExactCatalogAndCurrentSourceSpec(t *testing.T) {
 					request.Status.ObservedGeneration = 0
 				}
 			}
-			profiles := []serving.Profile{{ID: profileID, Condition: plan.Shared(), Batches: []serving.BatchProfile{{Batch: 1}}}}
+			profiles := []serving.Profile{
+				{ID: profileID, Condition: plan.Shared(), Batches: []serving.BatchProfile{{Batch: 1}}},
+			}
 			if active {
 				profiles = nil
 			}
-			read := servingkube.ProjectCatalogRead(servingkube.CatalogView{Profiles: profiles}, "", nil, []string{profileID})
+			read := servingkube.ProjectCatalogRead(
+				servingkube.CatalogView{Profiles: profiles},
+				"",
+				nil,
+				[]string{profileID},
+			)
 
 			service := &measurementService{
 				client:  fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(request).Build(),
@@ -73,7 +78,9 @@ func TestPreflightEnrichmentUsesExactCatalogAndCurrentSourceSpec(t *testing.T) {
 				service.objects = &operationProjectionStore{payload: raw}
 			}
 			snapshot.VariantID = queryapi.MeasurementVariantID(plan.Shared())
-			view, err = queryapi.BuildBatchEnergyOptimizationPreflight(service.completePreflight(context.Background(), snapshot))
+			view, err = queryapi.BuildBatchEnergyOptimizationPreflight(
+				service.completePreflight(context.Background(), snapshot),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}

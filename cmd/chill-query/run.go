@@ -208,12 +208,20 @@ func buildHandler(reader client.Reader, opts options) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	resolver, err := profilerkube.NewKubernetesEvidenceStoreResolver(reader, profilerkube.EvidenceStoreResolverOptions{SystemName: opts.systemName, Namespace: opts.namespace})
+	resolver, err := profilerkube.NewKubernetesEvidenceStoreResolver(
+		reader,
+		profilerkube.EvidenceStoreResolverOptions{SystemName: opts.systemName, Namespace: opts.namespace},
+	)
 	if err != nil {
 		return nil, err
 	}
 	measurements := &measurementService{client: reader, opts: opts, catalog: catalog,
-		objects: campaignResultObjectReader{reader: reader, resolver: resolver, namespace: opts.namespace, tempDir: opts.tempDir},
+		objects: campaignResultObjectReader{
+			reader:    reader,
+			resolver:  resolver,
+			namespace: opts.namespace,
+			tempDir:   opts.tempDir,
+		},
 		inventory: func(ctx context.Context) (queryapi.InventoryView, error) {
 			snapshot, err := inventory.Read(ctx)
 			return queryapi.BuildInventory(snapshot), err
@@ -307,14 +315,21 @@ func serve(ctx context.Context, opts options, handler http.Handler) error {
 	}
 }
 
-func (r campaignResultObjectReader) Open(ctx context.Context, identity evidencestore.ObjectIdentity) (io.ReadCloser, error) {
+func (r campaignResultObjectReader) Open(
+	ctx context.Context,
+	identity evidencestore.ObjectIdentity,
+) (io.ReadCloser, error) {
 	store, err := r.store(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return store.Open(ctx, identity)
 }
-func (r campaignResultObjectReader) OpenLocation(ctx context.Context, location evidencestore.ObjectLocation) (io.ReadCloser, error) {
+
+func (r campaignResultObjectReader) OpenLocation(
+	ctx context.Context,
+	location evidencestore.ObjectLocation,
+) (io.ReadCloser, error) {
 	store, err := r.store(ctx)
 	if err != nil {
 		return nil, err

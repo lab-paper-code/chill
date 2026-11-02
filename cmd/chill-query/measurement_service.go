@@ -176,7 +176,11 @@ func (o *measurementService) readEvidence(ctx context.Context, location evidence
 }
 
 func catalogView(read servingkube.CatalogRead) httpapi.ProfilesView {
-	out := httpapi.ProfilesView{ConfigVersion: read.ConfigVersion, CatalogView: read.CatalogView(), Preparations: map[string]servingkube.PrepareSpec{}}
+	out := httpapi.ProfilesView{
+		ConfigVersion: read.ConfigVersion,
+		CatalogView:   read.CatalogView(),
+		Preparations:  map[string]servingkube.PrepareSpec{},
+	}
 	for id, p := range read.Preparations {
 		spec := p.PrepareSpec
 		spec.Instance = p.Instance.SchedulerInstance

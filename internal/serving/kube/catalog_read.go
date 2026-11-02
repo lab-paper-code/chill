@@ -42,7 +42,16 @@ func SummarizeProfile(p serving.Profile) ProfileSummary {
 		IdleBaselineWatts: p.IdleBaselineWatts, MeasuredAt: p.MeasuredAt, RuntimeMetadata: p.RuntimeMetadata,
 		MetricSource: p.MetricSource, Reuse: p.Reuse, Batches: make([]ProfileBatchSummary, 0, len(p.Batches))}
 	for _, b := range p.Batches {
-		out.Batches = append(out.Batches, ProfileBatchSummary{b.Batch, b.EnergyPerInputJoules, b.EnergyBelowResolution, b.MemoryBytes, b.MeanWallWatts})
+		out.Batches = append(
+			out.Batches,
+			ProfileBatchSummary{
+				b.Batch,
+				b.EnergyPerInputJoules,
+				b.EnergyBelowResolution,
+				b.MemoryBytes,
+				b.MeanWallWatts,
+			},
+		)
 	}
 	return out
 }
@@ -53,7 +62,16 @@ func (p ProfileSummary) Profile() serving.Profile {
 		IdleBaselineWatts: p.IdleBaselineWatts, MeasuredAt: p.MeasuredAt, RuntimeMetadata: p.RuntimeMetadata,
 		MetricSource: p.MetricSource, Reuse: p.Reuse, Batches: make([]serving.BatchProfile, 0, len(p.Batches))}
 	for _, b := range p.Batches {
-		out.Batches = append(out.Batches, serving.BatchProfile{Batch: b.Batch, EnergyPerInputJoules: b.EnergyPerInputJoules, EnergyBelowResolution: b.EnergyBelowResolution, MemoryBytes: b.MemoryBytes, MeanWallWatts: b.MeanWallWatts})
+		out.Batches = append(
+			out.Batches,
+			serving.BatchProfile{
+				Batch:                 b.Batch,
+				EnergyPerInputJoules:  b.EnergyPerInputJoules,
+				EnergyBelowResolution: b.EnergyBelowResolution,
+				MemoryBytes:           b.MemoryBytes,
+				MeanWallWatts:         b.MeanWallWatts,
+			},
+		)
 	}
 	return out
 }
@@ -110,7 +128,12 @@ type CatalogRead struct {
 	Adopted         []string                      `json:"adopted"`
 }
 
-func ProjectCatalogRead(view CatalogView, configVersion string, preparations map[string]PrepareSpec, adopted []string) CatalogRead {
+func ProjectCatalogRead(
+	view CatalogView,
+	configVersion string,
+	preparations map[string]PrepareSpec,
+	adopted []string,
+) CatalogRead {
 	out := CatalogRead{ConfigVersion: configVersion, Profiles: make([]ProfileSummary, 0, len(view.Profiles)),
 		Insufficiencies: view.Insufficiencies, ReuseChecks: view.ReuseChecks, Preparations: SummarizePreparations(preparations),
 		Reporting: make([]CatalogReportingInput, 0, len(view.MeasurementFacts)), SourceCheckedAt: view.SourceCheckedAt,

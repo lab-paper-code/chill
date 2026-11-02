@@ -17,8 +17,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-const measurementReadNullJSON = "null"
-
 func TestMeasurementEvidenceReadsPreserveSuccessAndAuthentication(t *testing.T) {
 	const published = `{"kind":"BatchEnergyOptimizationResult","result":{"outcome":"MinimumFound"}}`
 	calls := 0
@@ -52,7 +50,12 @@ func TestMeasurementEvidenceReadsPreserveSuccessAndAuthentication(t *testing.T) 
 func measurementReadHandler(t *testing.T, origin string, objects ...client.Object) http.Handler {
 	t.Helper()
 	native := fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(objects...).Build()
-	opts := options{servingNamespace: "allowed", queryURL: origin, requestTimeout: time.Second, maxRequestBytes: 1 << 20}
+	opts := options{
+		servingNamespace: "allowed",
+		queryURL:         origin,
+		requestTimeout:   time.Second,
+		maxRequestBytes:  1 << 20,
+	}
 	service, err := newMeasurementService(native, nil, nil, nil, opts)
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +83,11 @@ func TestQueryBackendDownDoesNotReadNativeMeasurementMetadata(t *testing.T) {
 	origin := upstream.URL
 	upstream.Close()
 	handler := measurementReadHandler(t, origin)
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/allowed/batch-energy-optimizations/request/result", nil)
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/namespaces/allowed/batch-energy-optimizations/request/result",
+		nil,
+	)
 	request.Header.Set("Authorization", "Bearer token")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -88,7 +95,10 @@ func TestQueryBackendDownDoesNotReadNativeMeasurementMetadata(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if response.Code != http.StatusBadGateway || string(body["code"]) != `"ConsoleUnavailable"` || body["campaign"] != nil || body["assessment"] != nil || body["evidenceError"] != nil {
+	if response.Code != http.StatusBadGateway || string(body["code"]) != `"ConsoleUnavailable"` ||
+		body["campaign"] != nil ||
+		body["assessment"] != nil ||
+		body["evidenceError"] != nil {
 		t.Fatalf("backend-down was disguised as native evidence failure: %d %s", response.Code, response.Body.String())
 	}
 	t.Logf("backend-down: status=%d body=%s", response.Code, response.Body.String())

@@ -332,7 +332,12 @@ func TestMeasurementOperationProjectionParallelReadsPreserveOrder(t *testing.T) 
 		t.Fatal(err)
 	}
 	if len(list.Items) != count || len(storage.reads) != count || maximum.Load() < 2 || maximum.Load() > 8 {
-		t.Fatalf("unexpected list/read/concurrency counts: %d/%d/%d", len(list.Items), len(storage.reads), maximum.Load())
+		t.Fatalf(
+			"unexpected list/read/concurrency counts: %d/%d/%d",
+			len(list.Items),
+			len(storage.reads),
+			maximum.Load(),
+		)
 	}
 	for i, item := range list.Items {
 		if want := fmt.Sprintf("measurement-%02d", i); item.Metadata.Name != want {

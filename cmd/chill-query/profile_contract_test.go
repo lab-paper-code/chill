@@ -19,9 +19,17 @@ func TestTypedProfileReadNeverEncodesExcludedRawArrays(t *testing.T) {
 	// JSON cannot encode this value. Success proves the actual owner/query HTTP
 	// projections never visit the excluded latency vector, even temporarily.
 	samples[0] = math.NaN()
-	profile := serving.Profile{ID: "allowed/request/uid", Batches: []serving.BatchProfile{{Batch: 1, DurationNanos: samples, MemoryBytes: 1024}}}
-	owner := servingkube.CatalogView{Profiles: []serving.Profile{profile}, MeasurementFacts: map[string]serving.MeasurementFacts{"unselected": {}}}
-	preparations := map[string]servingkube.PrepareSpec{profile.ID: {Name: "restore", Instance: serving.SchedulerInstance{Profile: &profile, ProfileID: profile.ID}}}
+	profile := serving.Profile{
+		ID:      "allowed/request/uid",
+		Batches: []serving.BatchProfile{{Batch: 1, DurationNanos: samples, MemoryBytes: 1024}},
+	}
+	owner := servingkube.CatalogView{
+		Profiles:         []serving.Profile{profile},
+		MeasurementFacts: map[string]serving.MeasurementFacts{"unselected": {}},
+	}
+	preparations := map[string]servingkube.PrepareSpec{
+		profile.ID: {Name: "restore", Instance: serving.SchedulerInstance{Profile: &profile, ProfileID: profile.ID}},
+	}
 	wire, err := json.Marshal(servingkube.ProjectCatalogRead(owner, "rv", preparations, []string{profile.ID}))
 	if err != nil {
 		t.Fatalf("owner serialized excluded raw data: %v", err)
@@ -34,7 +42,10 @@ func TestTypedProfileReadNeverEncodesExcludedRawArrays(t *testing.T) {
 	mux := http.NewServeMux()
 	service.register(mux)
 	response := httptest.NewRecorder()
-	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/profiles?profile="+profile.ID+"&limit=1", nil))
+	mux.ServeHTTP(
+		response,
+		httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/profiles?profile="+profile.ID+"&limit=1", nil),
+	)
 	if response.Code != http.StatusOK {
 		t.Fatalf("public projection failed: %d %s", response.Code, response.Body.String())
 	}
@@ -57,11 +68,23 @@ func TestTypedProfileReadNeverEncodesExcludedRawArrays(t *testing.T) {
 		t.Fatal(err)
 	}
 	restored := got.Preparations[profile.ID]
-	if got.ConfigVersion != "rv" || len(got.Profiles) != 1 || got.Profiles[0].ID != profile.ID || got.Page == nil || got.Page.Total != 1 || restored.Name != "restore" || restored.Instance.Profile == nil || restored.Instance.Profile.ID != profile.ID || restored.Instance.Profile.Batches[0].MemoryBytes != 1024 {
+	if got.ConfigVersion != "rv" || len(got.Profiles) != 1 || got.Profiles[0].ID != profile.ID || got.Page == nil ||
+		got.Page.Total != 1 ||
+		restored.Name != "restore" ||
+		restored.Instance.Profile == nil ||
+		restored.Instance.Profile.ID != profile.ID ||
+		restored.Instance.Profile.Batches[0].MemoryBytes != 1024 {
 		t.Fatalf("profile paging/restore contract lost: %s", response.Body.String())
 	}
-	if len(profile.Batches[0].DurationNanos) != 100000 || !math.IsNaN(profile.Batches[0].DurationNanos[0]) || owner.MeasurementFacts == nil || preparations[profile.ID].Instance.Profile != &profile {
+	if len(profile.Batches[0].DurationNanos) != 100000 || !math.IsNaN(profile.Batches[0].DurationNanos[0]) ||
+		owner.MeasurementFacts == nil ||
+		preparations[profile.ID].Instance.Profile != &profile {
 		t.Fatal("read projection mutated scheduler originals")
 	}
-	t.Logf("typed-profile: rawSamples=%d ownerBytes=%d publicBytes=%d preparations=1 rawEncoded=false", len(samples), len(wire), response.Body.Len())
+	t.Logf(
+		"typed-profile: rawSamples=%d ownerBytes=%d publicBytes=%d preparations=1 rawEncoded=false",
+		len(samples),
+		len(wire),
+		response.Body.Len(),
+	)
 }

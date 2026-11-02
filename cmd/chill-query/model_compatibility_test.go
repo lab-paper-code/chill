@@ -29,9 +29,11 @@ func TestQueryAPICompatibilityRouteUsesProductionResolver(t *testing.T) {
 	model := &edgev1alpha1.ModelSpec{
 		ObjectMeta: metav1.ObjectMeta{Name: "model", UID: "model-uid", ResourceVersion: "10"},
 		Spec: edgev1alpha1.ModelSpecSpec{
-			Artifacts: []edgev1alpha1.ModelArtifact{{Name: "onnx", Format: "onnx", Source: edgev1alpha1.ModelArtifactSource{
-				Image: "registry.example/model:v1", Architecture: "amd64", Files: []string{"/artifact/model.onnx"},
-			}}},
+			Artifacts: []edgev1alpha1.ModelArtifact{
+				{Name: "onnx", Format: "onnx", Source: edgev1alpha1.ModelArtifactSource{
+					Image: "registry.example/model:v1", Architecture: "amd64", Files: []string{"/artifact/model.onnx"},
+				}},
+			},
 			ExecutionPaths: []edgev1alpha1.ModelExecutionPath{{
 				Name: "ort-cpu", Artifact: "onnx", Runtime: edgev1alpha1.ModelRuntimeRequirement{
 					Family: "firstfloor", Backend: "ort-cpu",
@@ -44,7 +46,10 @@ func TestQueryAPICompatibilityRouteUsesProductionResolver(t *testing.T) {
 	}
 	class := &edgev1alpha1.DeviceClass{
 		ObjectMeta: metav1.ObjectMeta{Name: "class", UID: "class-uid", ResourceVersion: "11"},
-		Spec:       edgev1alpha1.DeviceClassSpec{Architecture: "amd64", NodeSelector: map[string]string{"class": "class"}},
+		Spec: edgev1alpha1.DeviceClassSpec{
+			Architecture: "amd64",
+			NodeSelector: map[string]string{"class": "class"},
+		},
 	}
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
 		Name: "node", UID: "node-uid", ResourceVersion: "12", Labels: map[string]string{"class": "class"},

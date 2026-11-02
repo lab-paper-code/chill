@@ -17,13 +17,21 @@ import (
 const measurementPhaseMeasuring = "Measuring"
 
 // completePreflight combines source reads before the single HTTP encoding.
-func (o *measurementService) completePreflight(ctx context.Context, snapshot queryapi.BatchEnergyOptimizationPreflightSnapshot) queryapi.BatchEnergyOptimizationPreflightSnapshot {
+func (o *measurementService) completePreflight(
+	ctx context.Context,
+	snapshot queryapi.BatchEnergyOptimizationPreflightSnapshot,
+) queryapi.BatchEnergyOptimizationPreflightSnapshot {
 	if snapshot.Plan.SchemaVersion() == "" {
 		return snapshot
 	}
 	requests, listErr := o.list(ctx, snapshot.Campaign.Namespace)
 	snapshot.RequestsComplete = listErr == nil
-	catalogEvidence, confirmed := o.preflightCatalogEvidence(ctx, snapshot.Campaign.Namespace, snapshot.Campaign.Spec, requests.Items)
+	catalogEvidence, confirmed := o.preflightCatalogEvidence(
+		ctx,
+		snapshot.Campaign.Namespace,
+		snapshot.Campaign.Spec,
+		requests.Items,
+	)
 	active, reasons := o.preflightActiveEvidence(ctx, snapshot.Campaign.Spec, requests.Items)
 	snapshot.ExactEvidence = append(catalogEvidence, active...)
 	snapshot.BatchPlanReasons = append(snapshot.BatchPlanReasons, reasons...)

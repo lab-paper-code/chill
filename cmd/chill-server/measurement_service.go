@@ -28,8 +28,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const measurementPhaseMeasuring = string(api.MeasurementPhaseMeasuring)
-
 // The measurement service removes only source-proven, unreferenced measurement
 // evidence before requesting native deletion. Native GC/finalizers stay native.
 type measurementService struct {
@@ -154,7 +152,10 @@ func (o *measurementService) delete(
 		return result, err
 	}
 	if uid == "" || version == "" {
-		return result, &serving.Error{Code: "ResourceVersionRequired", Message: "native UID and resourceVersion are required"}
+		return result, &serving.Error{
+			Code:    "ResourceVersionRequired",
+			Message: "native UID and resourceVersion are required",
+		}
 	}
 	if o.scheduler != nil {
 		o.scheduler.lock.Lock()

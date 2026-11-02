@@ -118,7 +118,12 @@ func assessMeasurementRequest(
 			}
 			for _, batch := range facts.Batches {
 				measured[batch.Batch] = true
-				assessment := queryapi.AssessMeasurementBatch(batch, facts.PointPolicy.MinimumTrials, input.Reused, false)
+				assessment := queryapi.AssessMeasurementBatch(
+					batch,
+					facts.PointPolicy.MinimumTrials,
+					input.Reused,
+					false,
+				)
 				input.Checks = append(input.Checks, assessment.Checklist.Checks...)
 				input.Problems = append(input.Problems, assessment.Reasons...)
 			}
@@ -187,7 +192,10 @@ func assessOperationCost(
 			})
 		}
 	}
-	input.Facts = append(input.Facts, "OperationCostMeasurement has immutable spec and no observedGeneration status field")
+	input.Facts = append(
+		input.Facts,
+		"OperationCostMeasurement has immutable spec and no observedGeneration status field",
+	)
 	return queryapi.AssessMeasurement(input)
 }
 
@@ -313,9 +321,19 @@ func (o *measurementService) buildProfiles(ctx context.Context, view httpapi.Pro
 			if strings.HasPrefix(sourceID, targetNamespace+"/") {
 				if sourceFacts, found := view.MeasurementFacts[sourceID]; found {
 					for _, batch := range sourceFacts.Batches {
-						row := coverageResultRow(serving.Profile{ID: sourceID}, sourceFacts, batch, queryapi.ResultRowSourceReference)
+						row := coverageResultRow(
+							serving.Profile{ID: sourceID},
+							sourceFacts,
+							batch,
+							queryapi.ResultRowSourceReference,
+						)
 						row.Reuse = profile.Reuse
-						row.Assessment = queryapi.AssessMeasurementBatch(batch, sourceFacts.PointPolicy.MinimumTrials, false, false)
+						row.Assessment = queryapi.AssessMeasurementBatch(
+							batch,
+							sourceFacts.PointPolicy.MinimumTrials,
+							false,
+							false,
+						)
 						rows = append(rows, row)
 					}
 				}
@@ -323,7 +341,15 @@ func (o *measurementService) buildProfiles(ctx context.Context, view httpapi.Pro
 		}
 		profiles = append(profiles, profileProjection{servingkube.SummarizeProfile(profile), assessment, rows})
 	}
-	return profileResponse{view.ConfigVersion, profiles, view.Insufficiencies, view.ReuseChecks, servingkube.SummarizePreparations(view.Preparations), view.Page, view.Filters}, nil
+	return profileResponse{
+		view.ConfigVersion,
+		profiles,
+		view.Insufficiencies,
+		view.ReuseChecks,
+		servingkube.SummarizePreparations(view.Preparations),
+		view.Page,
+		view.Filters,
+	}, nil
 }
 
 func assessCatalogProfile(

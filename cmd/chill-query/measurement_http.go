@@ -42,66 +42,75 @@ func (o *measurementService) register(mux *http.ServeMux) {
 		}
 		writeMeasurement(w, payload)
 	})
-	mux.HandleFunc("GET /api/v1/namespaces/{namespace}/measurement-coverage", func(w http.ResponseWriter, r *http.Request) {
-		values, err := url.ParseQuery(r.URL.RawQuery)
-		var query httpapi.MeasurementCoverageQuery
-		if err == nil {
-			query, err = httpapi.ParseMeasurementCoverageQuery(values)
-		}
-		if err != nil {
-			httpapi.SendQueryError(w, &serving.Error{Code: "InvalidCoverageQuery", Message: "유효한 query가 필요합니다"})
-			return
-		}
-		payload, err := o.coverage(r.Context(), r.PathValue("namespace"), query)
-		if err != nil {
-			var domain *serving.Error
-			if errors.As(err, &domain) && domain.Code == "CoverageWarming" {
-				w.Header().Set("Retry-After", "2")
+	mux.HandleFunc(
+		"GET /api/v1/namespaces/{namespace}/measurement-coverage",
+		func(w http.ResponseWriter, r *http.Request) {
+			values, err := url.ParseQuery(r.URL.RawQuery)
+			var query httpapi.MeasurementCoverageQuery
+			if err == nil {
+				query, err = httpapi.ParseMeasurementCoverageQuery(values)
 			}
-			httpapi.SendQueryError(w, err)
-			return
-		}
-		writeMeasurement(w, payload)
-	})
-	mux.HandleFunc("GET /api/v1/namespaces/{namespace}/batch-energy-optimizations", func(w http.ResponseWriter, r *http.Request) {
-		list, err := o.list(r.Context(), r.PathValue("namespace"))
-		if err != nil {
-			httpapi.SendQueryError(w, err)
-			return
-		}
-		assessments, err := o.assessList(r.Context(), list)
-		if err != nil {
-			httpapi.SendQueryError(w, err)
-			return
-		}
-		writeMeasurement(w, projectMeasurementList(list, assessments))
+			if err != nil {
+				httpapi.SendQueryError(w, &serving.Error{Code: "InvalidCoverageQuery", Message: "유효한 query가 필요합니다"})
+				return
+			}
+			payload, err := o.coverage(r.Context(), r.PathValue("namespace"), query)
+			if err != nil {
+				var domain *serving.Error
+				if errors.As(err, &domain) && domain.Code == "CoverageWarming" {
+					w.Header().Set("Retry-After", "2")
+				}
+				httpapi.SendQueryError(w, err)
+				return
+			}
+			writeMeasurement(w, payload)
+		},
+	)
+	mux.HandleFunc(
+		"GET /api/v1/namespaces/{namespace}/batch-energy-optimizations",
+		func(w http.ResponseWriter, r *http.Request) {
+			list, err := o.list(r.Context(), r.PathValue("namespace"))
+			if err != nil {
+				httpapi.SendQueryError(w, err)
+				return
+			}
+			assessments, err := o.assessList(r.Context(), list)
+			if err != nil {
+				httpapi.SendQueryError(w, err)
+				return
+			}
+			writeMeasurement(w, projectMeasurementList(list, assessments))
 
-	})
+		},
+	)
 	for _, resource := range []string{"operation-cost-measurements", "dispatch-occupancy-measurements"} {
 		for _, suffix := range []string{"", "/{name}"} {
-			mux.HandleFunc("GET /api/v1/namespaces/{namespace}/"+resource+suffix, func(w http.ResponseWriter, r *http.Request) {
-				namespace, name := r.PathValue("namespace"), r.PathValue("name")
-				var value any
-				var err error
-				if resource == "operation-cost-measurements" {
-					if name == "" {
-						value, err = o.listOperationCosts(r.Context(), namespace)
+			mux.HandleFunc(
+				"GET /api/v1/namespaces/{namespace}/"+resource+suffix,
+				func(w http.ResponseWriter, r *http.Request) {
+					namespace, name := r.PathValue("namespace"), r.PathValue("name")
+					var value any
+					var err error
+					if resource == "operation-cost-measurements" {
+						if name == "" {
+							value, err = o.listOperationCosts(r.Context(), namespace)
+						} else {
+							value, err = o.getOperationCost(r.Context(), namespace, name)
+						}
 					} else {
-						value, err = o.getOperationCost(r.Context(), namespace, name)
+						if name == "" {
+							value, err = o.listDispatchOccupancies(r.Context(), namespace)
+						} else {
+							value, err = o.getDispatchOccupancy(r.Context(), namespace, name)
+						}
 					}
-				} else {
-					if name == "" {
-						value, err = o.listDispatchOccupancies(r.Context(), namespace)
-					} else {
-						value, err = o.getDispatchOccupancy(r.Context(), namespace, name)
+					if err != nil {
+						httpapi.SendQueryError(w, err)
+						return
 					}
-				}
-				if err != nil {
-					httpapi.SendQueryError(w, err)
-					return
-				}
-				writeMeasurement(w, value)
-			})
+					writeMeasurement(w, value)
+				},
+			)
 		}
 	}
 }
@@ -134,19 +143,30 @@ func writeMeasurement(w http.ResponseWriter, value any) {
 
 func newServingCatalogReader(opts options) (func(context.Context) (servingkube.CatalogRead, error), error) {
 	origin, err := url.Parse(opts.servingURL)
-	if err != nil || (opts.servingURL != "" && (origin.Scheme != "https" || origin.Host == "" || origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" || (origin.Path != "" && origin.Path != "/"))) {
+	if err != nil ||
+		(opts.servingURL != "" && (origin.Scheme != "https" || origin.Host == "" || origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" || (origin.Path != "" && origin.Path != "/"))) {
 		return nil, errors.New("serving URL must be one fixed HTTPS origin")
 	}
-	config := &rest.Config{BearerTokenFile: opts.servingTokenFile, TLSClientConfig: rest.TLSClientConfig{CAFile: opts.servingCAFile}}
+	config := &rest.Config{
+		BearerTokenFile: opts.servingTokenFile,
+		TLSClientConfig: rest.TLSClientConfig{CAFile: opts.servingCAFile},
+	}
 	transport, err := rest.TransportFor(config)
 	if err != nil {
 		return nil, err
 	}
-	client := &http.Client{Transport: transport, Timeout: opts.requestTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return func(ctx context.Context) (servingkube.CatalogRead, error) {
-		var value servingkube.CatalogRead
+	client := &http.Client{
+		Transport:     transport,
+		Timeout:       opts.requestTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	return func(ctx context.Context) (value servingkube.CatalogRead, retErr error) {
+
 		if strings.TrimSpace(opts.servingURL) == "" {
-			return value, &serving.Error{Code: "SchedulerUnavailable", Message: "serving catalog origin is not configured"}
+			return value, &serving.Error{
+				Code:    "SchedulerUnavailable",
+				Message: "serving catalog origin is not configured",
+			}
 		}
 		target := *origin
 		target.Path = "/api/v1/scheduler/catalog-read"
@@ -158,7 +178,7 @@ func newServingCatalogReader(opts options) (func(context.Context) (servingkube.C
 		if err != nil {
 			return value, &serving.Error{Code: "SchedulerUnavailable", Message: "serving catalog is unavailable"}
 		}
-		defer response.Body.Close()
+		defer func() { retErr = errors.Join(retErr, response.Body.Close()) }()
 		if response.StatusCode != http.StatusOK {
 			return value, &serving.Error{Code: "SchedulerUnavailable", Message: "serving catalog read was rejected"}
 		}
@@ -180,7 +200,10 @@ type measurementPreflightReader struct {
 	measurements *measurementService
 }
 
-func (p measurementPreflightReader) Read(ctx context.Context, campaign *api.BatchEnergyOptimization) (queryapi.BatchEnergyOptimizationPreflightSnapshot, error) {
+func (p measurementPreflightReader) Read(
+	ctx context.Context,
+	campaign *api.BatchEnergyOptimization,
+) (queryapi.BatchEnergyOptimizationPreflightSnapshot, error) {
 	snapshot, err := p.read(ctx, campaign)
 	if err != nil {
 		return snapshot, err

@@ -49,7 +49,11 @@ type BatchEnergyOptimizationResultError struct {
 	EvidenceError EvidenceReadError `json:"evidenceError"`
 }
 
-func BuildBatchEnergyOptimizationResultError(snapshot BatchEnergyOptimizationResultSnapshot, status int, code, reason string) BatchEnergyOptimizationResultError {
+func BuildBatchEnergyOptimizationResultError(
+	snapshot BatchEnergyOptimizationResultSnapshot,
+	status int,
+	code, reason string,
+) BatchEnergyOptimizationResultError {
 	task := snapshot.Campaign
 	var stored *evidencestore.ObjectIdentity
 	if ref := task.Status.Result; ref != nil {
@@ -64,10 +68,19 @@ func BuildBatchEnergyOptimizationResultError(snapshot BatchEnergyOptimizationRes
 	return BatchEnergyOptimizationResultError{
 		BatchEnergyOptimizationResult: BatchEnergyOptimizationResult{
 			APIVersion: BatchEnergyOptimizationResultAPIVersion, Kind: "BatchEnergyOptimizationResult", ReadAt: snapshot.ReadAt.UTC(),
-			Campaign: BatchEnergyOptimizationResultCampaign{Namespace: task.Namespace, Name: task.Name, UID: string(task.UID),
-				ResourceVersion: task.ResourceVersion, Generation: task.Generation, Spec: task.Spec,
-				Phase: task.Status.Phase, Outcome: task.Status.Outcome, CompletedTrials: task.Status.CompletedTrials,
-				Conditions: task.Status.Conditions, StoredResult: stored},
+			Campaign: BatchEnergyOptimizationResultCampaign{
+				Namespace:       task.Namespace,
+				Name:            task.Name,
+				UID:             string(task.UID),
+				ResourceVersion: task.ResourceVersion,
+				Generation:      task.Generation,
+				Spec:            task.Spec,
+				Phase:           task.Status.Phase,
+				Outcome:         task.Status.Outcome,
+				CompletedTrials: task.Status.CompletedTrials,
+				Conditions:      task.Status.Conditions,
+				StoredResult:    stored,
+			},
 			Assessment: assessment, StatisticsReason: &unavailable, MeasurementFactsReason: &unavailable, ResultRows: []ResultRow{},
 		}, Code: code, Reason: reason, EvidenceError: EvidenceReadError{Code: code, Status: status},
 	}

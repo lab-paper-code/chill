@@ -50,21 +50,25 @@ func TestPublicPreflightRequiresNamespaceListBeforePrivateRead(t *testing.T) {
 				}}, nil
 			})
 			resourceReviews := 0
-			native.PrependReactor("create", "subjectaccessreviews", func(action ktesting.Action) (bool, runtime.Object, error) {
-				review := action.(ktesting.CreateAction).GetObject().(*authorizationv1.SubjectAccessReview)
-				permitted := true
-				if resource := review.Spec.ResourceAttributes; resource != nil {
-					resourceReviews++
-					if resource.Namespace != "allowed" || resource.Group != "edge.dacs.io" ||
-						resource.Resource != "batchenergyoptimizations" || resource.Verb != "list" {
-						t.Errorf("wrong preflight resource authorization: %#v", resource)
+			native.PrependReactor(
+				"create",
+				"subjectaccessreviews",
+				func(action ktesting.Action) (bool, runtime.Object, error) {
+					review := action.(ktesting.CreateAction).GetObject().(*authorizationv1.SubjectAccessReview)
+					permitted := true
+					if resource := review.Spec.ResourceAttributes; resource != nil {
+						resourceReviews++
+						if resource.Namespace != "allowed" || resource.Group != "edge.dacs.io" ||
+							resource.Resource != "batchenergyoptimizations" || resource.Verb != queryListVerb {
+							t.Errorf("wrong preflight resource authorization: %#v", resource)
+						}
+						permitted = allowed
 					}
-					permitted = allowed
-				}
-				return true, &authorizationv1.SubjectAccessReview{
-					Status: authorizationv1.SubjectAccessReviewStatus{Allowed: permitted},
-				}, nil
-			})
+					return true, &authorizationv1.SubjectAccessReview{
+						Status: authorizationv1.SubjectAccessReviewStatus{Allowed: permitted},
+					}, nil
+				},
+			)
 			opts := options{
 				queryURL: upstream.URL, servingNamespace: "allowed", requestTimeout: time.Second, maxRequestBytes: 1024,
 			}
@@ -85,7 +89,13 @@ func TestPublicPreflightRequiresNamespaceListBeforePrivateRead(t *testing.T) {
 				wantStatus, wantCalls = http.StatusOK, 1
 			}
 			if response.Code != wantStatus || calls != wantCalls || resourceReviews != 1 {
-				t.Fatalf("status=%d calls=%d reviews=%d body=%s", response.Code, calls, resourceReviews, response.Body.String())
+				t.Fatalf(
+					"status=%d calls=%d reviews=%d body=%s",
+					response.Code,
+					calls,
+					resourceReviews,
+					response.Body.String(),
+				)
 			}
 		})
 	}

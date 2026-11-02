@@ -32,7 +32,12 @@ func TestProfileListStatusMatchesDecoratedAssessmentWithoutClusterReads(t *testi
 	for index, profile := range decorated.Profiles {
 		status := listed.DisplayStatus(listed.Profiles[index])
 		if status != profile.Assessment.DisplayStatus || status == "" {
-			t.Fatalf("%s list status %q differs from assessment %q", profile.ID, status, profile.Assessment.DisplayStatus)
+			t.Fatalf(
+				"%s list status %q differs from assessment %q",
+				profile.ID,
+				status,
+				profile.Assessment.DisplayStatus,
+			)
 		}
 	}
 }

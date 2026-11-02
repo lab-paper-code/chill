@@ -80,22 +80,26 @@ func TestQueryAPIChillServerAuthenticatesBeforePrivateLeg(t *testing.T) {
 				}}, nil
 			})
 			sarCalls := 0
-			client.PrependReactor("create", "subjectaccessreviews", func(action ktesting.Action) (bool, runtime.Object, error) {
-				sarCalls++
-				spec := action.(ktesting.CreateAction).GetObject().(*authorizationv1.SubjectAccessReview).Spec
-				if spec.User != "reviewed-user" || spec.UID != "reviewed-uid" ||
-					spec.NonResourceAttributes.Path != "/chill"+targetPath || spec.NonResourceAttributes.Verb != "get" {
-					t.Errorf("unverified or wrong authorization target: %+v", spec)
-				}
-				if tc.sarFailure {
-					return true, nil, errors.New("private-token credential outage")
-				}
-				status := authorizationv1.SubjectAccessReviewStatus{Allowed: !tc.denied, Denied: tc.denied}
-				if tc.evaluationFailure {
-					status.EvaluationError = "private-token evaluation unavailable"
-				}
-				return true, &authorizationv1.SubjectAccessReview{Status: status}, nil
-			})
+			client.PrependReactor(
+				"create",
+				"subjectaccessreviews",
+				func(action ktesting.Action) (bool, runtime.Object, error) {
+					sarCalls++
+					spec := action.(ktesting.CreateAction).GetObject().(*authorizationv1.SubjectAccessReview).Spec
+					if spec.User != "reviewed-user" || spec.UID != "reviewed-uid" ||
+						spec.NonResourceAttributes.Path != "/chill"+targetPath || spec.NonResourceAttributes.Verb != queryGetVerb {
+						t.Errorf("unverified or wrong authorization target: %+v", spec)
+					}
+					if tc.sarFailure {
+						return true, nil, errors.New("private-token credential outage")
+					}
+					status := authorizationv1.SubjectAccessReviewStatus{Allowed: !tc.denied, Denied: tc.denied}
+					if tc.evaluationFailure {
+						status.EvaluationError = "private-token evaluation unavailable"
+					}
+					return true, &authorizationv1.SubjectAccessReview{Status: status}, nil
+				},
+			)
 			origin := upstream.URL
 			if tc.unconfigured {
 				origin = ""
@@ -146,7 +150,9 @@ func TestQueryAPIChillServerDoesNotFollowRedirectsOrArbitraryOrigins(t *testing.
 		}
 	}
 	var redirectTargetCalls atomic.Int32
-	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { redirectTargetCalls.Add(1) }))
+	target := httptest.NewServer(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { redirectTargetCalls.Add(1) }),
+	)
 	defer target.Close()
 	query := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Location", target.URL)
@@ -191,7 +197,11 @@ func TestDashboardGatewayCannotReplaceChillServerAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chillServer, err := composeChillServer(native, authorizer, options{dashboardURL: web.URL, requestTimeout: time.Second})
+	chillServer, err := composeChillServer(
+		native,
+		authorizer,
+		options{dashboardURL: web.URL, requestTimeout: time.Second},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,10 +235,16 @@ func TestDashboardGatewayPreservesLiveUpgradeOriginAndHost(t *testing.T) {
 			return
 		}
 		defer func() { _ = conn.Close() }()
-		_, _ = conn.Write([]byte("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n"))
+		_, _ = conn.Write(
+			[]byte("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n"),
+		)
 	}))
 	defer web.Close()
-	handler, err := composeChillServer(http.NotFoundHandler(), &servingkube.Authorizer{}, options{dashboardURL: web.URL})
+	handler, err := composeChillServer(
+		http.NotFoundHandler(),
+		&servingkube.Authorizer{},
+		options{dashboardURL: web.URL},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,34 +285,70 @@ func TestQueryReadResourceGrantsPrecedeBackendAndCache(t *testing.T) {
 		for _, denied := range append([]string{"url", ""}, tc.resources...) {
 			t.Run(tc.path+"/deny="+denied, func(t *testing.T) {
 				calls := 0
-				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { calls++; w.WriteHeader(http.StatusOK) }))
+				upstream := httptest.NewServer(
+					http.HandlerFunc(
+						func(w http.ResponseWriter, _ *http.Request) { calls++; w.WriteHeader(http.StatusOK) },
+					),
+				)
 				defer upstream.Close()
 				kube := fake.NewSimpleClientset()
 				kube.PrependReactor("create", "tokenreviews", func(ktesting.Action) (bool, runtime.Object, error) {
-					return true, &authenticationv1.TokenReview{Status: authenticationv1.TokenReviewStatus{Authenticated: true, User: authenticationv1.UserInfo{Username: "caller", UID: "caller-uid", Groups: []string{"operators"}, Extra: map[string]authenticationv1.ExtraValue{"tenant": {"reviewed"}}}}}, nil
+					return true, &authenticationv1.TokenReview{
+						Status: authenticationv1.TokenReviewStatus{
+							Authenticated: true,
+							User: authenticationv1.UserInfo{
+								Username: "caller",
+								UID:      "caller-uid",
+								Groups:   []string{"operators"},
+								Extra:    map[string]authenticationv1.ExtraValue{"tenant": {"reviewed"}},
+							},
+						},
+					}, nil
 				})
 				reviews := 0
-				kube.PrependReactor("create", "subjectaccessreviews", func(action ktesting.Action) (bool, runtime.Object, error) {
-					review := action.(ktesting.CreateAction).GetObject().(*authorizationv1.SubjectAccessReview)
-					if review.Spec.User != "caller" || review.Spec.UID != "caller-uid" || len(review.Spec.Groups) != 1 || review.Spec.Groups[0] != "operators" || review.Spec.Extra["tenant"][0] != "reviewed" {
-						t.Fatal("native permission replaced caller with service identity")
-					}
-					allowed := denied != "url"
-					if resource := review.Spec.ResourceAttributes; resource != nil {
-						reviews++
-						verb := "list"
-						if tc.name != "" {
-							verb = "get"
+				kube.PrependReactor(
+					"create",
+					"subjectaccessreviews",
+					func(action ktesting.Action) (bool, runtime.Object, error) {
+						review := action.(ktesting.CreateAction).GetObject().(*authorizationv1.SubjectAccessReview)
+						if review.Spec.User != "caller" || review.Spec.UID != "caller-uid" ||
+							len(review.Spec.Groups) != 1 ||
+							review.Spec.Groups[0] != "operators" ||
+							review.Spec.Extra["tenant"][0] != "reviewed" {
+							t.Fatal("native permission replaced caller with service identity")
 						}
-						if resource.Namespace != "allowed" || resource.Name != tc.name || resource.Verb != verb || resource.Group != "edge.dacs.io" || resource.Version != "v1alpha1" || !slices.Contains(tc.resources, resource.Resource) {
-							t.Fatalf("wrong query resource grant: %+v", resource)
+						allowed := denied != "url"
+						if resource := review.Spec.ResourceAttributes; resource != nil {
+							reviews++
+							verb := queryListVerb
+							if tc.name != "" {
+								verb = queryGetVerb
+							}
+							if resource.Namespace != "allowed" || resource.Name != tc.name || resource.Verb != verb ||
+								resource.Group != "edge.dacs.io" ||
+								resource.Version != "v1alpha1" ||
+								!slices.Contains(tc.resources, resource.Resource) {
+								t.Fatalf("wrong query resource grant: %+v", resource)
+							}
+							allowed = resource.Resource != denied
 						}
-						allowed = resource.Resource != denied
-					}
-					return true, &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: allowed}}, nil
-				})
-				opts := options{queryURL: upstream.URL, servingNamespace: "allowed", requestTimeout: time.Second, maxRequestBytes: 1024}
-				handler, err := composeChillServer(http.NotFoundHandler(), &servingkube.Authorizer{Client: kube}, opts, &measurementService{opts: opts})
+						return true, &authorizationv1.SubjectAccessReview{
+							Status: authorizationv1.SubjectAccessReviewStatus{Allowed: allowed},
+						}, nil
+					},
+				)
+				opts := options{
+					queryURL:         upstream.URL,
+					servingNamespace: "allowed",
+					requestTimeout:   time.Second,
+					maxRequestBytes:  1024,
+				}
+				handler, err := composeChillServer(
+					http.NotFoundHandler(),
+					&servingkube.Authorizer{Client: kube},
+					opts,
+					&measurementService{opts: opts},
+				)
 				if err != nil {
 					t.Fatal(err)
 				}

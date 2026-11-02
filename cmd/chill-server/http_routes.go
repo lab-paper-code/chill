@@ -23,12 +23,16 @@ func privateOrigin(raw string) (*url.URL, error) {
 		(origin.Scheme != "http" && origin.Scheme != "https") || origin.Host == "" || origin.Hostname() == "" ||
 		origin.User != nil || (origin.Path != "" && origin.Path != "/") || origin.RawPath != "" ||
 		origin.RawQuery != "" || origin.ForceQuery || origin.Fragment != "" {
-		return nil, errors.New("private URL must be one fixed HTTP(S) origin without credentials, path, query or fragment")
+		return nil, errors.New(
+			"private URL must be one fixed HTTP(S) origin without credentials, path, query or fragment",
+		)
 	}
 	return origin, nil
 }
 
 const queryUnavailableCode = "ConsoleUnavailable"
+const queryListVerb = "list"
+const queryGetVerb = "get"
 
 func queryError(w http.ResponseWriter, status int, code string) {
 	w.Header().Set("Content-Type", "application/json")
@@ -120,7 +124,8 @@ func composeChillServer(
 	}
 	mux.Handle("/", serving)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if web != nil && !strings.HasPrefix(r.URL.Path, "/api/v1") && r.URL.Path != "/healthz" && r.URL.Path != "/readyz" {
+		if web != nil && !strings.HasPrefix(r.URL.Path, "/api/v1") && r.URL.Path != "/healthz" &&
+			r.URL.Path != "/readyz" {
 			web.ServeHTTP(w, r)
 			return
 		}
@@ -139,7 +144,13 @@ func isMeasurementPreflight(request *http.Request) bool {
 		strings.HasSuffix(request.URL.Path, "/batch-energy-optimizations/preflight")
 }
 
-func authorizeQueryResources(ctx context.Context, request *http.Request, measurement *measurementService, authorizer *servingkube.Authorizer, principal servingkube.Principal) error {
+func authorizeQueryResources(
+	ctx context.Context,
+	request *http.Request,
+	measurement *measurementService,
+	authorizer *servingkube.Authorizer,
+	principal servingkube.Principal,
+) error {
 	namespace := request.PathValue("namespace")
 	if namespace != "" && measurement != nil {
 		if err := measurement.namespace(namespace); err != nil {
@@ -147,7 +158,7 @@ func authorizeQueryResources(ctx context.Context, request *http.Request, measure
 		}
 	}
 	resources := []string{}
-	resourceVerb := "list"
+	resourceVerb := queryListVerb
 	switch {
 	case isMeasurementPreflight(request):
 		resources = []string{"batchenergyoptimizations"}
@@ -161,7 +172,7 @@ func authorizeQueryResources(ctx context.Context, request *http.Request, measure
 		resources = []string{"dispatchoccupancymeasurements"}
 	}
 	if request.PathValue("name") != "" {
-		resourceVerb = "get"
+		resourceVerb = queryGetVerb
 	}
 	for _, resource := range resources {
 		if err := authorizer.AuthorizeResource(ctx, principal, authorizationv1.ResourceAttributes{Namespace: namespace, Verb: resourceVerb, Group: "edge.dacs.io", Version: "v1alpha1", Resource: resource, Name: request.PathValue("name")}); err != nil {

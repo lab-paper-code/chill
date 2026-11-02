@@ -32,9 +32,23 @@ type options struct {
 func (o *options) bindFlags(flags *flag.FlagSet) {
 	flags.StringVar(&o.servingURL, "serving-url", "", "Fixed HTTPS serving owner origin for typed catalog reads.")
 	flags.StringVar(&o.servingCAFile, "serving-ca-file", "", "CA file for the serving owner.")
-	flags.StringVar(&o.servingTokenFile, "serving-token-file", "/var/run/secrets/kubernetes.io/serviceaccount/token", "Token file for authenticated serving-owner reads.")
-	flags.StringVar(&o.servingNamespace, "serving-namespace", "", "Allowed measurement namespace; defaults to management namespace.")
-	flags.Func("profile-namespace", "Allowed measurement namespace (repeatable).", func(s string) error { o.profileNamespaces = append(o.profileNamespaces, s); return nil })
+	flags.StringVar(
+		&o.servingTokenFile,
+		"serving-token-file",
+		"/var/run/secrets/kubernetes.io/serviceaccount/token",
+		"Token file for authenticated serving-owner reads.",
+	)
+	flags.StringVar(
+		&o.servingNamespace,
+		"serving-namespace",
+		"",
+		"Allowed measurement namespace; defaults to management namespace.",
+	)
+	flags.Func(
+		"profile-namespace",
+		"Allowed measurement namespace (repeatable).",
+		func(s string) error { o.profileNamespaces = append(o.profileNamespaces, s); return nil },
+	)
 	flags.StringVar(&o.storeName, "store-name", "", "Logical Evidence Store used by measurement projections.")
 	flags.DurationVar(&o.requestTimeout, "request-timeout", 30*time.Second, "Deadline for query source reads.")
 	flags.Int64Var(&o.maxRequestBytes, "max-request-bytes", 8<<20, "Maximum query response bytes.")

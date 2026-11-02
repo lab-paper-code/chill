@@ -85,10 +85,16 @@ func TestCoverageNeverUnionsDifferentFrozenVariants(t *testing.T) {
 		condition := profilederivation.CurvePlanSpec{
 			LogicalModel: "model", DeviceClass: "class", NodeUID: "node-uid", PowerMode: "fixed",
 			RuntimeImage: "current",
-			CPU:          profilederivation.CurveCPUContract{Request: []string{"1", "2"}[index]}, PlannedBatchSizes: []int{1, 2},
+			CPU: profilederivation.CurveCPUContract{
+				Request: []string{"1", "2"}[index],
+			}, PlannedBatchSizes: []int{1, 2},
 		}
 		facts := serving.MeasurementFacts{
-			Request:   profilederivation.MeasurementRequestReference{Namespace: "allowed", Name: name, UID: string(uid)},
+			Request: profilederivation.MeasurementRequestReference{
+				Namespace: "allowed",
+				Name:      name,
+				UID:       string(uid),
+			},
 			Condition: condition, Batches: []profilederivation.MeasurementBatchFacts{{
 				Batch: batch, IncrementalJoulesPerItem: &zero, P95Milliseconds: &zero,
 			}},
@@ -143,7 +149,11 @@ func TestCoverageFreshNamespaceSharedByFiveCallers(t *testing.T) {
 	results := make(chan error, 5)
 	for range 5 {
 		go func() {
-			_, err := service.coverage(context.Background(), "allowed", httpapi.MeasurementCoverageQuery{Batches: []int{1, 2}})
+			_, err := service.coverage(
+				context.Background(),
+				"allowed",
+				httpapi.MeasurementCoverageQuery{Batches: []int{1, 2}},
+			)
 			results <- err
 		}()
 	}

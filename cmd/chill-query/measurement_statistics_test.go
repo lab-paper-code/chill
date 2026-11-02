@@ -307,7 +307,11 @@ func TestMeasurementFactsExcludeFailedIdleTrials(t *testing.T) {
 	}
 	row := statistics.MeasurementFacts.Batches[0]
 	if row.ActiveTrialCount != 2 || row.IdleTrialCount != 2 || len(row.Quality) != 4 || len(objects.reads) != 9 {
-		t.Fatalf("excluded failed idle became an independent repetition or extra raw read: %+v reads=%v", row, objects.reads)
+		t.Fatalf(
+			"excluded failed idle became an independent repetition or extra raw read: %+v reads=%v",
+			row,
+			objects.reads,
+		)
 	}
 }
 

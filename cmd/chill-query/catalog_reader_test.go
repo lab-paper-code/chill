@@ -19,7 +19,8 @@ func TestServingCatalogReadUsesPinnedTLSServiceTokenAndNoRedirects(t *testing.T)
 	redirect := false
 	owner := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if r.URL.Path != "/api/v1/scheduler/catalog-read" || r.Header.Get("Authorization") != "Bearer query-service-token" {
+		if r.URL.Path != "/api/v1/scheduler/catalog-read" ||
+			r.Header.Get("Authorization") != "Bearer query-service-token" {
 			t.Error("owner read lost its exact path or service identity")
 		}
 		if redirect {
@@ -39,7 +40,15 @@ func TestServingCatalogReadUsesPinnedTLSServiceTokenAndNoRedirects(t *testing.T)
 	if err := os.WriteFile(token, []byte("query-service-token"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	read, err := newServingCatalogReader(options{servingURL: owner.URL, servingCAFile: certificate, servingTokenFile: token, requestTimeout: time.Second, maxRequestBytes: 1 << 20})
+	read, err := newServingCatalogReader(
+		options{
+			servingURL:       owner.URL,
+			servingCAFile:    certificate,
+			servingTokenFile: token,
+			requestTimeout:   time.Second,
+			maxRequestBytes:  1 << 20,
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

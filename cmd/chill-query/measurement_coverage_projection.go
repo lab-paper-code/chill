@@ -117,7 +117,10 @@ func (p *coverageProjection) addSources() {
 		case "compatibility":
 			for _, row := range p.base.compatibility.NodeRows {
 				if row.Inputs.RuntimeDeclaration != nil {
-					source.ResourceVersions = append(source.ResourceVersions, row.Inputs.RuntimeDeclaration.ResourceVersion)
+					source.ResourceVersions = append(
+						source.ResourceVersions,
+						row.Inputs.RuntimeDeclaration.ResourceVersion,
+					)
 				}
 			}
 			slices.Sort(source.ResourceVersions)

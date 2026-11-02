@@ -9,7 +9,23 @@ import (
 )
 
 func TestMeasurementListAssessmentPreservesNativeWireShape(t *testing.T) {
-	list := api.BatchEnergyOptimizationList{TypeMeta: meta.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "BatchEnergyOptimizationList"}, ListMeta: meta.ListMeta{ResourceVersion: "list-rv"}, Items: []api.BatchEnergyOptimization{{TypeMeta: meta.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "BatchEnergyOptimization"}, ObjectMeta: meta.ObjectMeta{Namespace: "ns", Name: "request", UID: "uid", ResourceVersion: "item-rv", Generation: 2}, Status: api.BatchEnergyOptimizationStatus{Phase: "Failed", ObservedGeneration: 2}}}}
+	list := api.BatchEnergyOptimizationList{
+		TypeMeta: meta.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "BatchEnergyOptimizationList"},
+		ListMeta: meta.ListMeta{ResourceVersion: "list-rv"},
+		Items: []api.BatchEnergyOptimization{
+			{
+				TypeMeta: meta.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "BatchEnergyOptimization"},
+				ObjectMeta: meta.ObjectMeta{
+					Namespace:       "ns",
+					Name:            "request",
+					UID:             "uid",
+					ResourceVersion: "item-rv",
+					Generation:      2,
+				},
+				Status: api.BatchEnergyOptimizationStatus{Phase: "Failed", ObservedGeneration: 2},
+			},
+		},
+	}
 	assessment := json.RawMessage(`{"status":"failed","displayStatus":"problem","label":"problem"}`)
 	raw, err := json.Marshal(projectMeasurementList(list, []json.RawMessage{assessment}))
 	if err != nil {
@@ -19,7 +35,11 @@ func TestMeasurementListAssessmentPreservesNativeWireShape(t *testing.T) {
 	if err := json.Unmarshal(raw, &native); err != nil {
 		t.Fatal(err)
 	}
-	if native.Kind != list.Kind || native.APIVersion != list.APIVersion || native.ResourceVersion != "list-rv" || len(native.Items) != 1 || native.Items[0].UID != "uid" || native.Items[0].Generation != 2 || native.Items[0].Status.Phase != "Failed" {
+	if native.Kind != list.Kind || native.APIVersion != list.APIVersion || native.ResourceVersion != "list-rv" ||
+		len(native.Items) != 1 ||
+		native.Items[0].UID != "uid" ||
+		native.Items[0].Generation != 2 ||
+		native.Items[0].Status.Phase != "Failed" {
 		t.Fatalf("native fields lost: %s", raw)
 	}
 	var augmented struct {

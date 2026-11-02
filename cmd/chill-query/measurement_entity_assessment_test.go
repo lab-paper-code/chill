@@ -38,7 +38,7 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 		t.Fatalf("partial accepted profile: %+v", got)
 	}
 	task.Spec.BatchSizes = []int32{1}
-	if got := assessMeasurementRequest(task, view); got.Status != "complete" ||
+	if got := assessMeasurementRequest(task, view); got.Status != queryapi.MeasurementComplete ||
 		got.Scope.SchedulerUsed == nil || !*got.Scope.SchedulerUsed {
 		t.Fatalf("published evidence: %+v", got)
 	}
@@ -92,7 +92,7 @@ func TestOperationAssessmentRequiresStoredAcceptedSteps(t *testing.T) {
 	steps := []servingkube.OperationStepProjection{{
 		OperationID: "uid.0.idle", DurationNanos: &duration, WallJoules: &joules,
 	}}
-	if got := assessOperationCost(cr, steps); got.Status != "complete" ||
+	if got := assessOperationCost(cr, steps); got.Status != queryapi.MeasurementComplete ||
 		!got.Evidence.Accepted || got.Execution.ObservedGeneration != 0 {
 		t.Fatalf("verified operation: %+v", got)
 	}
@@ -146,7 +146,7 @@ func TestOccupancyAssessmentReadsExactRecordAndPreservesNegativeD(t *testing.T) 
 		if err := json.Unmarshal(detail.Assessment, &assessment); err != nil {
 			t.Fatal(err)
 		}
-		want := "complete"
+		want := queryapi.MeasurementComplete
 		if d < 0 {
 			want = queryapi.MeasurementWarning
 		}
@@ -191,7 +191,7 @@ func TestProfilesDecorationPreservesWireFieldsWithoutInventingRows(t *testing.T)
 	}
 	if result.ConfigVersion != "rv" || len(result.Profiles) != 1 || result.Profiles[0].ID != "profile" ||
 		result.Profiles[0].ResultRows == nil || len(result.Profiles[0].ResultRows) != 0 ||
-		result.Profiles[0].Assessment.Status != "complete" ||
+		result.Profiles[0].Assessment.Status != queryapi.MeasurementComplete ||
 		len(result.Profiles[0].Assessment.Checklist.Checks) != 1 ||
 		result.Profiles[0].Assessment.Checklist.Checks[0].Result != queryapi.MeasurementUnknown {
 		t.Fatalf("decorated profile: %s", raw)
@@ -207,8 +207,12 @@ func TestProfilesReuseRowsKeepBothActualPopulations(t *testing.T) {
 	view := httpapi.ProfilesView{}
 	view.Profiles = []serving.Profile{{ID: "derived", Reuse: reuse}}
 	view.MeasurementFacts = map[string]serving.MeasurementFacts{
-		"derived":             {Batches: []profilederivation.MeasurementBatchFacts{{Batch: 1, TotalJoulesPerItem: &targetJ}}},
-		reuse.SourceProfileID: {Batches: []profilederivation.MeasurementBatchFacts{{Batch: 1, TotalJoulesPerItem: &sourceJ}}},
+		"derived": {
+			Batches: []profilederivation.MeasurementBatchFacts{{Batch: 1, TotalJoulesPerItem: &targetJ}},
+		},
+		reuse.SourceProfileID: {
+			Batches: []profilederivation.MeasurementBatchFacts{{Batch: 1, TotalJoulesPerItem: &sourceJ}},
+		},
 	}
 	raw, err := (&measurementService{}).profilePayload(context.Background(), view)
 	if err != nil {
