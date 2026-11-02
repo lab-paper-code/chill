@@ -8,7 +8,7 @@ metadata:
   name: {{ include "chill.queryServiceAccountName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    app.kubernetes.io/component: query-api
+    app.kubernetes.io/component: query
     {{- $labels | nindent 4 }}
 ---
 {{- end }}
@@ -18,7 +18,7 @@ metadata:
   name: {{ $name }}
   namespace: {{ .Release.Namespace }}
   labels:
-    app.kubernetes.io/component: query-api
+    app.kubernetes.io/component: query
     {{- $labels | nindent 4 }}
 rules:
   - apiGroups: ["edge.dacs.io"]
@@ -66,7 +66,7 @@ kind: ClusterRole
 metadata:
   name: {{ $name }}-system-reader
   labels:
-    app.kubernetes.io/component: query-api
+    app.kubernetes.io/component: query
     {{- $labels | nindent 4 }}
 rules:
   - apiGroups: ["edge.dacs.io"]
@@ -78,7 +78,7 @@ kind: ClusterRoleBinding
 metadata:
   name: {{ $name }}-system-reader
   labels:
-    app.kubernetes.io/component: query-api
+    app.kubernetes.io/component: query
     {{- $labels | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -97,7 +97,7 @@ kind: ClusterRole
 metadata:
   name: {{ $name }}-preflight-reader
   labels:
-    app.kubernetes.io/component: query-api
+    app.kubernetes.io/component: query
     {{- $labels | nindent 4 }}
 rules:
   - apiGroups: ["edge.dacs.io"]
@@ -118,7 +118,7 @@ kind: ClusterRoleBinding
 metadata:
   name: {{ $name }}-preflight-reader
   labels:
-    app.kubernetes.io/component: query-api
+    app.kubernetes.io/component: query
     {{- $labels | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -135,7 +135,7 @@ metadata:
   name: {{ $name }}
   namespace: {{ .Release.Namespace }}
   labels:
-    app.kubernetes.io/component: query-api
+    app.kubernetes.io/component: query
     {{- $labels | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -152,7 +152,7 @@ metadata:
   name: {{ $name }}
   namespace: {{ .Release.Namespace }}
   labels:
-    app.kubernetes.io/component: query-api
+    app.kubernetes.io/component: query
     {{- $labels | nindent 4 }}
 spec:
   replicas: {{ .Values.query.replicaCount }}
@@ -160,13 +160,13 @@ spec:
     matchLabels:
       app.kubernetes.io/name: {{ include "chill.name" . }}
       app.kubernetes.io/instance: {{ .Release.Name }}
-      app.kubernetes.io/component: query-api
+      app.kubernetes.io/component: query
   template:
     metadata:
       labels:
         app.kubernetes.io/name: {{ include "chill.name" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
-        app.kubernetes.io/component: query-api
+        app.kubernetes.io/component: query
         edge.dacs.io/workload-role: system
     spec:
       serviceAccountName: {{ include "chill.queryServiceAccountName" . }}
@@ -256,14 +256,14 @@ metadata:
   name: {{ $name }}
   namespace: {{ .Release.Namespace }}
   labels:
-    app.kubernetes.io/component: query-api
+    app.kubernetes.io/component: query
     {{- $labels | nindent 4 }}
 spec:
   type: ClusterIP
   selector:
     app.kubernetes.io/name: {{ include "chill.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/component: query-api
+    app.kubernetes.io/component: query
   ports:
     - name: http
       port: {{ .Values.query.port }}

@@ -3,7 +3,7 @@ kind: ClusterRole
 metadata:
   name: {{ include "chill.fullname" . }}-query-viewer
   labels:
-    app.kubernetes.io/component: query-api
+    app.kubernetes.io/component: query
     {{- include "chill.labels" . | nindent 4 }}
 rules:
   - apiGroups:

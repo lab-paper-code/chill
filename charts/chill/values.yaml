@@ -544,7 +544,7 @@ servingEntrypoint:
     maxErrors: 256
     directoryInterval: 1m
     # Exact Helm release/component scope; workload clients and unrelated tenants are excluded.
-    controlComponents: [operator, profiler, evidence-store, serving-entrypoint, node-agent, node-agent-actuation, dashboard, query-api, metric-observer, workload-observer, transition-observer]
+    controlComponents: [operator, profiler, evidence-store, serving-entrypoint, node-agent, node-agent-actuation, dashboard, query, metric-observer, workload-observer, transition-observer]
   # One finite capture in a fresh private child of the existing writable mount.
   diagnostic:
     directory: ""

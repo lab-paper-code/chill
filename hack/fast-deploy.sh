@@ -23,7 +23,7 @@ p.add_argument("--token-safety-margin-seconds", type=float, default=120)
 a = p.parse_args()
 if not re.fullmatch(r"[0-9]+", a.control):
     p.error("--control must contain digits")
-roles = {"server": ("servingEntrypoint", "serving-entrypoint"), "profiler": ("profiler", "profiler"), "dashboard": ("dashboard", "dashboard"), "node-agent": ("nodeAgent", "node-agent"), "operator": ("operator", "operator"), "query": ("query", "query-api")}
+roles = {"server": ("servingEntrypoint", "serving-entrypoint"), "profiler": ("profiler", "profiler"), "dashboard": ("dashboard", "dashboard"), "node-agent": ("nodeAgent", "node-agent"), "operator": ("operator", "operator"), "query": ("query", "query")}
 dockerfiles = {"server": "chill-server", "profiler": "profiler", "dashboard": "dashboard", "node-agent": "node-agent", "operator": "operator", "query": "chill-query"}
 selected = a.images.split(",")
 if a.images != "auto" and (len(set(selected)) != len(selected) or any(x not in roles for x in selected)):
@@ -98,6 +98,9 @@ if a.self_check:
     assert affected(["cmd/transition-observer/main.go"], profiler)
     assert not affected(["internal/serving/unrelated/other.go"], server)
     assert affected(["go.mod"], server) and affected(["go.mod"], profiler)
+    query_inputs = build_inputs(root, "query")
+    assert query_inputs["targets"] == ["./cmd/chill-query"]
+    assert affected(["cmd/chill-query/main.go"], query_inputs)
     assert affected(["chill-dashboard/app/page.tsx"], {"files": [], "targets": [], "directories": ["chill-dashboard"]})
     import yaml
     assert chart_difference([], []) == ""
@@ -664,7 +667,7 @@ operator_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/compo
 node_agent_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=node-agent"
 node_agent_actuation_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=node-agent-actuation"
 profiler_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=profiler"
-query_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=query-api"
+query_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=query"
 serving_entrypoint_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=serving-entrypoint"
 dashboard_selector="app.kubernetes.io/instance=${release},app.kubernetes.io/component=dashboard"
 
