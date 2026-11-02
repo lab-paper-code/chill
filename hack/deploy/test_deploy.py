@@ -30,7 +30,7 @@ def argument(flag):return args[args.index(flag)+1]
 def document(image):
  return {'apiVersion':'apps/v1','kind':'Deployment','metadata':{'name':'chill-serving-entrypoint','namespace':'review'},'spec':{'template':{'spec':{'containers':[{'name':'server','image':image}]}}}}
 if name=='docker':
- if 'prune' in args:sys.exit(0)
+ if args[:2]==['buildx','du']:print('Total: 20GB');sys.exit(0)
  if state.get('failBuild'):sys.exit(17)
  image=argument('--output').split('name=',1)[1].split(',',1)[0]; host,path=image.split('/',1); repo,tag=path.rsplit(':',1)
  revision=argument('--label').split('=',1)[1]; manifests=[]
@@ -74,6 +74,10 @@ if name=='helm':
  sys.exit(0)
 if name=='kubectl':
  if 'current-context' in args:print(state.get('currentContext','isolated-review'));sys.exit(0)
+ if 'get' in args and 'profilingruns,batchenergyoptimizations,modelloadedidlebaselines,dispatchoccupancymeasurements,evaluationruns' in args and '--all-namespaces' in args:
+  state['inflightChecks']=state.get('inflightChecks',0)+1;save()
+  items=[{'kind':'DispatchOccupancyMeasurement','metadata':{'name':'active','namespace':'another-chill-ns'},'status':{'phase':'Running'}}] if state.get('inflightAt')==state['inflightChecks'] else []
+  print(json.dumps({'items':items}));sys.exit(0)
  if 'port-forward' in args:
   import http.server
   class Query(http.server.BaseHTTPRequestHandler):
@@ -273,16 +277,18 @@ class DeploymentCLI(unittest.TestCase):
         self.assertTrue((self.out / 'staged-values-0.yaml').exists())
         self.assertFalse(any('upgrade' in x for x in self.calls()))
 
-    def test_disk_guard_and_scoped_prune(self):
+    def test_disk_guard_prevents_cluster_and_build(self):
         self.recipe['minFreeBytes'] = 2 ** 63
         self.cli('--execute', '--evidence', str(self.out), expected=1)
         self.assertEqual(self.calls(), [])
-        self.recipe['minFreeBytes'] = 1
-        self.recipe['pruneBuiltImages'] = True
-        self.cli('--execute', '--evidence', str(self.out) + '-prune')
-        prune = [x for x in self.calls() if x[0] == 'docker' and 'prune' in x]
-        self.assertEqual(len(prune), 1)
-        self.assertIn('label=org.opencontainers.image.revision=' + self.sha, prune[0])
+
+    def test_inflight_work_blocks_before_publication_or_upgrade(self):
+        for check, expected_build in ((1, False), (2, True)):
+            self.state(inflightAt=check)
+            self.cli('--execute', '--evidence', str(self.out) + '-' + str(check), expected=1)
+            self.assertEqual(any(call[0] == 'docker' and 'build' in call for call in self.calls()), expected_build)
+            self.assertFalse(any(call[0] == 'helm' and 'upgrade' in call for call in self.calls()))
+            (self.directory / 'calls.jsonl').write_text('')
 
     def test_context_mismatch_rejects_custom_phase_before_publication(self):
         self.state(currentContext='other-cluster')

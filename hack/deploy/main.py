@@ -21,6 +21,7 @@ import acceptance
 import images
 import configuration
 import inspection
+import inflight
 
 ROOT = Path(__file__).resolve().parents[2]
 PHASES = ('preflight', 'stage', 'quiesce', 'migrate', 'configure', 'accept')
@@ -28,7 +29,7 @@ FIELDS = {'source', 'context', 'kubeconfig', 'namespace', 'release', 'registry',
           'builder', 'tag', 'images', 'values', 'replaceValues', 'apiEnvironment', 'expectedRevision',
           'minFreeBytes', 'commands', 'toolSources', 'allowedLostProfileIDs', 'expectedCoverageUsable',
           'apiChecks', 'chartDiffApproved', 'readinessSeconds', 'buildSeconds',
-          'helm', 'kubectl', 'lock', 'generatedValues', 'maxDiskUsedPercent', 'pruneBuiltImages',
+          'helm', 'kubectl', 'lock', 'generatedValues', 'maxDiskUsedPercent',
           'queryService', 'dashboardCheck', 'runtimeDeclarations', 'runtimeInspectionSeconds', 'publicationOnly',
           'baselineDirectory', 'expectedProfileCount', 'stagedDiffApproved', 'checkConfiguration', 'schedulerConfigMapFile', 'waitFor',
           'inspectionCells', 'inspectionRequests'}
@@ -54,7 +55,7 @@ def load(path, source):
     for field in ('namespace', 'release'):
         if not re.fullmatch(r'[a-z0-9][a-z0-9.-]*', recipe[field]):
             raise ValueError('invalid ' + field)
-    for field in ('replaceValues', 'pruneBuiltImages', 'dashboardCheck', 'runtimeDeclarations', 'checkConfiguration'):
+    for field in ('replaceValues', 'dashboardCheck', 'runtimeDeclarations', 'checkConfiguration'):
         if field in recipe and type(recipe[field]) is not bool:
             raise ValueError(field + ' must be boolean')
     positive(recipe.get('expectedRevision'), 'expectedRevision')
@@ -326,6 +327,10 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         run.cwd = src
         stage('preflight')
         revision()
+        state['inflightPreflight'] = inflight.check(kube, run.run, out, 'inflight-preflight')
+        if recipe.get('runtimeDeclarations'):
+            import runtime
+            state['probeNodesPreflight'] = runtime.check_nodes(src, out, kube, run.run, 'preflight')
         config = acceptance.load_config(recipe['apiEnvironment'])
         budget = 120 + recipe['readinessSeconds'] + 510 + len(recipe['images']) * recipe['buildSeconds'] + sum(x['seconds'] for steps in recipe['commands'].values() for x in steps)
         budget += (recipe.get('runtimeInspectionSeconds', 3600) if recipe.get('runtimeDeclarations') else 0) + 60 * (len(recipe['apiChecks']) + 2)
@@ -340,7 +345,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         live = run.run(helm + ['get', 'manifest', recipe['release']], 'live-manifest.yaml')
         hooks = run.run(helm + ['get', 'hooks', recipe['release']], 'live-hooks.yaml')
         if not inspect:
-            for resource, name in [('crd', 'crds.yaml'), ('configmaps', 'configmaps.json'), ('deployments,daemonsets,services,serviceaccounts,roles,rolebindings', 'resources.json'), ('profilingruns,batchenergyoptimizations,modelloadedidlebaselines,dispatchoccupancymeasurements,evaluationruns', 'retained-objects.json'), ('jobs', 'jobs.json')]:
+            for resource, name in [('crd', 'crds.yaml'), ('configmaps', 'configmaps.json'), ('deployments,daemonsets,services,serviceaccounts,roles,rolebindings', 'resources.json')]:
                 run.run(kube + ['get', resource, '-o', 'json'], name)
         flags = [] if recipe.get('replaceValues') else ['-f', str(out / 'live-values.json')]
         for index, value in enumerate(recipe['values']):
@@ -396,15 +401,18 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         current_before = current if frozen else baseline
         stage('publish-images')
         planned = images.plan(recipe, recipe['source'], src, out)
+        builders = sorted({item['builder'] for item in planned if 'prebuilt' not in item})
+        for builder in builders:
+            run.run(['docker', 'buildx', 'du', '--builder', builder], 'build-cache-' + builder + '-before.txt')
         def build_run(argv, name, timeout=120):
             disk()
             result = run.run(argv, name, timeout=recipe['buildSeconds'] if 'buildx' in list(map(str, argv)) else timeout)
             if 'buildx' in list(map(str, argv)):
-                if recipe.get('pruneBuiltImages'):
-                    run.run(['docker', 'image', 'prune', '--force', '--filter', 'label=org.opencontainers.image.revision=' + recipe['source']], 'prune-built-images.log', timeout=120)
                 disk()
             return result
         publication = images.build(planned, recipe['source'], src, out, build_run)
+        for builder in builders:
+            run.run(['docker', 'buildx', 'du', '--builder', builder], 'build-cache-' + builder + '-after.txt')
         dump(out / 'publication.json', publication)
         overlay = images.overlay(publication)
         stage('stage')
@@ -445,6 +453,8 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             commands(phase)
         stage('configure')
         commands('configure')
+        revision()
+        state['inflightPreUpgrade'] = inflight.check(kube, run.run, out, 'inflight-pre-upgrade')
         stage('upgrade')
         run.run(helm + ['upgrade', recipe['release'], chart, '--reset-values', *final_flags, '--wait', '--timeout', '8m'], 'upgrade.log', timeout=510)
         stage('readiness')

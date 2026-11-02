@@ -62,6 +62,58 @@ def _inspector(source):
     return path, module
 
 
+def check_nodes(source, out, kube, run, label):
+    """Stop before probing if an actual source-defined target cannot run."""
+    kube = [str(arg) for arg in kube]
+    _argument(kube, ("--kubeconfig",))
+    _argument(kube, ("--context",))
+    _argument(kube, ("--namespace", "-n"))
+    _, inspector = _inspector(source)
+    targets = {inspector.CPU[architecture][1]: False
+               for _, architecture, _, _, _ in inspector.CLASSES}
+    targets[inspector.RKNN_NODE] = False
+    for _, _, cuda_variable, nodes, _ in inspector.CLASSES:
+        if cuda_variable:
+            for node in nodes:
+                targets[node] = True
+    report = {"nodes": [], "failures": []}
+    try:
+        raw = run(kube + ["--request-timeout=30s", "get", "nodes", "-o", "json"],
+                  label + "-nodes-raw.json", timeout=40)
+        document = json.loads(raw)
+        if not isinstance(document, dict) or not isinstance(document.get("items"), list):
+            raise ValueError("Node response must contain an items list")
+        actual = {item["metadata"]["name"]: item for item in document["items"]}
+        for name, gpu_required in sorted(targets.items()):
+            node = actual.get(name)
+            status = node.get("status", {}) if node else {}
+            ready = next((condition.get("status") for condition in status.get("conditions", [])
+                          if condition.get("type") == "Ready"), None)
+            gpu = status.get("allocatable", {}).get("nvidia.com/gpu", "0")
+            report["nodes"].append({"name": name, "present": node is not None,
+                                    "ready": ready, "gpuRequired": gpu_required,
+                                    "gpuAllocatable": gpu})
+            if node is None:
+                report["failures"].append(name + ": missing Node")
+            elif ready != "True":
+                report["failures"].append(name + ": Ready is not True")
+            if node is not None and gpu_required:
+                try:
+                    usable = int(gpu) >= 1
+                except (ValueError, TypeError):
+                    usable = False
+                if not usable:
+                    report["failures"].append(name + ": nvidia.com/gpu allocatable must be >=1")
+    except Exception as error:
+        report["failures"].append("unable to read probe Nodes: " + str(error))
+        raise
+    finally:
+        (Path(out) / (label + "-nodes.json")).write_text(json.dumps(report, indent=2) + "\n")
+    if report["failures"]:
+        raise ValueError("runtime probe Nodes unavailable: " + "; ".join(report["failures"]))
+    return report
+
+
 def _validate(raw, inspector, references):
     document = yaml.safe_load(raw)
     if not isinstance(document, dict) or set(document) != {"profiling"} or not isinstance(document["profiling"], dict) or set(document["profiling"]) != {"executionDeclarations"}:
@@ -75,8 +127,8 @@ def _validate(raw, inspector, references):
             for node in cuda_nodes:
                 expected.add((device_class, node, "ort-cuda", architecture, references[cuda_variable]))
     expected.add((inspector.RKNN_CLASS, "", "rknnlite", "arm64", references["RKNN_IMAGE"]))
-    if len(expected) != 15 or not isinstance(declarations, list) or len(declarations) != len(expected):
-        raise ValueError("runtime inspector must provide all 15 source-defined declarations")
+    if not isinstance(declarations, list) or len(declarations) != len(expected):
+        raise ValueError("runtime inspector must provide all source-defined declarations")
     found = set()
     for declaration in declarations:
         if not isinstance(declaration, dict) or not isinstance(declaration.get("runtime"), dict):
@@ -146,6 +198,7 @@ def stage(publication, source, out, kube, run, timeout=3600):
     script, inspector = _inspector(source)
     environment = dict(os.environ, **references)
     environment.update({"KUBECTL": str(wrapper), "NAMESPACE": namespace, "INSPECT_TIMEOUT_SECONDS": str(timeout)})
+    check_nodes(source, out, kube, run, "runtime-stage")
     try:
         raw = run([sys.executable, str(script)], "runtime-inspection.yaml", timeout=timeout, env=environment)
         _validate(raw, inspector, references)

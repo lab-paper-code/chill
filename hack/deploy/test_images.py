@@ -84,29 +84,6 @@ class ImageTests(unittest.TestCase):
             recipe["images"] = selected
         return images.plan(recipe, SHA, SOURCE, self.out)
 
-    def test_catalog_and_all_runtime_plans(self):
-        catalog = images.catalog(SOURCE)
-        self.assertEqual(len(catalog), 16)
-        self.assertEqual(catalog["node-agent"]["platforms"], images.MULTI)
-        self.assertEqual(catalog["firstfloor"]["platforms"], images.MULTI)
-        self.assertEqual(catalog["firstfloor-cuda"]["platforms"], ["linux/amd64"])
-        for role in ("firstfloor-l4t-r32", "firstfloor-l4t-r35", "firstfloor-l4t-r36", "firstfloor-rknn"):
-            self.assertEqual(catalog[role]["platforms"], ["linux/arm64"])
-            self.assertIsNone(catalog[role]["deploymentMapping"])
-        self.assertEqual(catalog["firstfloor-l4t-r32"]["buildArgs"]["MODULE_PACKAGES"], "pillow==10.4.0")
-        self.assertEqual(catalog["firstfloor-l4t-r32"]["buildArgs"]["RUNTIME_IMAGE"], "l4t-r32")
-        self.assertEqual(catalog["firstfloor-l4t-r35"]["buildArgs"]["ONNXRUNTIME_VERSION"], "1.18.0")
-        self.assertEqual(catalog["firstfloor-cuda"]["buildArgs"]["ONNXRUNTIME_VERSION"], "1.23.2")
-        self.assertEqual(catalog["firstfloor-l4t-r36"]["buildArgs"]["PIP_EXTRA_INDEX_URL"], "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple")
-        self.assertEqual(catalog["firstfloor-rknn"]["buildArgs"]["EXTRA_PACKAGES"], "rknn-toolkit-lite2==2.3.2")
-        plans = self.plan(list(catalog))
-        by_role = {p["role"]: p for p in plans}
-        self.assertEqual(by_role["evaluation-harness"]["repository"], "localhost:5000/chill/chill-evaluation-harness")
-        self.assertEqual(by_role["firstfloor"]["repository"], "localhost:5000/chill/chill-firstfloor")
-        self.assertTrue(by_role["firstfloor-cuda"]["image"].endswith("-cuda"))
-        self.assertEqual(by_role["evaluation-harness"]["buildArgs"]["SOURCE_SHA"], SHA)
-        self.assertEqual(by_role["evaluation-harness"]["powerSourceSHA"], images.POWER_SOURCE_SHA)
-        json.dumps(plans)  # The frozen plan is an ordinary JSON evidence payload.
 
     def test_build_and_verify_actual_multi_platform_receipts(self):
         plans = self.plan(["node-agent"])

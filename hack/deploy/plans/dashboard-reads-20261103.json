@@ -1,4 +1,5 @@
 {
+  "source": "1b81e0d5090ce12bd70a49608b4e10ed20482162",
   "context": "kubernetes-admin@kubernetes",
   "kubeconfig": "/home/genesis1/.kube/config",
   "namespace": "chill-system",
@@ -10,9 +11,9 @@
   "tag": "pools-control-315",
   "minFreeBytes": 310000000000,
   "maxDiskUsedPercent": 85,
-  "pruneBuiltImages": true,
   "images": [
     "server",
+    "profiler",
     "query",
     "dashboard",
     "firstfloor",

@@ -108,8 +108,8 @@ PY
 ```
 
 The target above is the known testbed, **not** permission to deploy there.
-First live use is only after the current cutover, with advisor-3's deploy main
-as the sole live actor. This documentation/change performs no live operation.
+First live use is only after the current cutover, with deployment session
+`main` as the sole live actor. This change performs no live operation.
 
 ### Sources, phases, and acceptance
 
@@ -224,8 +224,17 @@ Additional `apiChecks` use objects such as
 `READY` means operational Pods/APIs and required steps completed, not browser,
 hardware, campaign or scientific-result acceptance.
 
-The current first live use is the actual dashboard nine-role selection:
-`server`, `query`, `dashboard`, and all six FirstFloor roles. It must include
+The corrected runbook zero-work gate reads the five measurement CR kinds and
+owned native Jobs across all namespaces at preflight and immediately before
+upgrade. Terminal DOMs need no `spec.conditions`. Incomplete/unfrozen work,
+pending cleanup and deleting roots stop deployment without draining/deleting
+anything. This prevents measurement loss, not low-quality science.
+Runtime activation also checks source-defined probe targets at preflight and
+immediately before probing: Ready must be True; CUDA targets need at least one
+allocatable GPU. No retry, node repair or foreign-Pod action is automatic.
+
+The current first live use is the actual dashboard ten-role selection:
+`server`, `profiler`, `query`, `dashboard`, and all six FirstFloor roles. It includes
 FirstFloor build/publication → separate fixed approved exact-image probes →
 measured declaration activation, not publication-only receipts.
 `queryService: "chill-query"` adds direct unauthenticated 401/authenticated 200
@@ -233,16 +242,17 @@ checks through a private port-forward. `dashboardCheck: true` requires HTTP 200
 HTML, not a browser interaction test. Neither substitutes for hardware or
 measurement acceptance.
 The tracked first-use recipe is
-`hack/deploy/plans/dashboard-reads-20261103.json`; pass its actual approved
-source using `--source`. The declaration records main's confirmed post-cutover
+`hack/deploy/plans/dashboard-reads-20261103.json`; its application source is
+pinned to 1b81e0d5 and may be explicitly changed with approved `--source`.
+The declaration records main's confirmed post-cutover
 revision 178 and control-315 tag; a later live revision requires a new review.
 
 Keep all evidence private: live values, manifests, retained objects, commands,
 publication, renders, before/after API captures and failure records can contain
 operational data. Execute shares `/tmp/chill-heavy.lock`; inspect does not.
 The disk gates require `minFreeBytes` and `maxDiskUsedPercent` (default 85).
-`pruneBuiltImages: true` permits only Docker image pruning scoped to the current
-source SHA label; it never authorizes unrelated image/cache/data pruning.
+Builds record `docker buildx du` before/after on their actual builders; the
+runner does not prune unrelated or supposedly local images/cache/data.
 `performance.json` and `command-timings.jsonl` retain measured stage/command durations. Coverage is checked
 before profiles to avoid repeated profile captures while warming; this is not
 evidence of a global speedup.
