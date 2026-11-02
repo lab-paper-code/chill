@@ -48,6 +48,17 @@ fact-observer and combined raw-artifact overhead still belong to that Job, not
 to the reusable metric buffer estimate. These limits enter the observer
 constructor, never the sampling request, chart, CRD, or RunConfig as new settings.
 
+ChillServer supplies both operation-cost and periodic scheduler power observers
+with its existing `maxEvidenceBytes` object ceiling and the Go memory limit
+queried by `debug.SetMemoryLimit(-1)`, the same configured `GOMEMLIMIT` already
+used by its overload guard. The deployment sets that soft limit below the
+container memory limit. `OperationConfig.MetricLimits` only delivers this
+process envelope; sampling records gain no resource fields. This is a bound on
+the metric component, not an estimate of all operation-state or hourly archive
+metadata. Refresh/operation admission refuses an oversized schedule before
+source reads or physical actions; it does not adjust duration or interval.
+
+
 Byte admission marshals the actual source identity and schema-shaped maximum
 records, including six thermal issues, scalar pointers, counters, JSON escaping
 (up to six bytes per input byte), UTC timestamps, and numeric formatting room.

@@ -237,7 +237,7 @@ func TestSchedulerRawPageDecodesOnlySelectedPayloads(t *testing.T) {
 			Error:    "retained action detail", Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "action", Size: 123}},
 		},
 		Power: power, Node: &node, Meter: "meter", PowerScope: "node",
-		PowerSampling: &metricobserver.Request{Interval: time.Second, Duration: time.Minute, RequestTimeout: time.Second, MaxEvents: 100},
+		PowerSampling: &metricobserver.Request{Interval: time.Second, Duration: time.Minute, RequestTimeout: time.Second},
 		PowerCoverage: &powerwindow.Policy{MaximumBoundaryDistance: time.Second, MinimumCoverage: 0.9, MaximumGap: 2 * time.Second},
 		PowerJoules:   &joules, PowerError: "retained power detail",
 	}

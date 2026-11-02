@@ -120,7 +120,7 @@ func TestOperationCostRunsDeclaredStepsInOrder(t *testing.T) {
 	if prepare.Prepare == nil || !strings.HasPrefix(prepare.Prepare.Instance.Profile.ID, "chill-system/beo/") || remove.Instance != "pod-uid/containerd://prepared" || idle.IdleDuration != 120*time.Second {
 		t.Fatalf("prepare %+v remove %q idle %s", prepare.Prepare, remove.Instance, idle.IdleDuration)
 	}
-	if idle.OperationBudget != 900*time.Second || idle.Sampling.Duration != 906015961194*time.Nanosecond || idle.Sampling.MaxEvents != 909 || idle.Timing == nil || idle.Timing.ChangeIntervalP95Seconds != "1.0339932335" || idle.Coverage.MaximumGap != 3*time.Second {
+	if idle.OperationBudget != 900*time.Second || idle.Sampling.Duration != 906015961194*time.Nanosecond || idle.Timing == nil || idle.Timing.ChangeIntervalP95Seconds != "1.0339932335" || idle.Coverage.MaximumGap != 3*time.Second {
 		t.Fatalf("sampling %+v coverage %+v timing %+v budget %s", idle.Sampling, idle.Coverage, idle.Timing, idle.OperationBudget)
 	}
 }

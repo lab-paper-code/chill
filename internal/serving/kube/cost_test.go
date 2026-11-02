@@ -56,7 +56,7 @@ func costTestRecord(t *testing.T, id, mode string, end time.Time) (string, []byt
 	record := OperationMeasurement{
 		SchemaVersion: OperationMeasurementSchema, Verdict: measurementInsufficient,
 		Request: MeasurementRequest{Operation: operation, Meter: costTestMeter, Store: "store",
-			Sampling:        metricobserver.Request{Interval: time.Second, Duration: 5*time.Second + time.Millisecond, RequestTimeout: time.Millisecond, MaxEvents: 8},
+			Sampling:        metricobserver.Request{Interval: time.Second, Duration: 5*time.Second + time.Millisecond, RequestTimeout: time.Millisecond},
 			Timing:          &edgev1alpha1.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "synthetic empirical fixture"},
 			OperationBudget: time.Second, Coverage: powerwindow.Policy{MaximumGap: time.Second}},
 		Result: OperationResult{Operation: operation, Status: nativeOperationComplete, StartedAt: start, EndedAt: end,

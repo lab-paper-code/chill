@@ -87,7 +87,10 @@ func (o *Operations) Measure(ctx context.Context, request MeasurementRequest, so
 	if err := validateMeasurementRequest(request, source, writer); err != nil {
 		return record, evidencestore.Receipt{}, err
 	}
-	observer, err := metricobserver.New(source)
+	if _, err := metricobserver.RequiredCapacity(request.Sampling, source.Identity(), o.config.MetricLimits, true); err != nil {
+		return record, evidencestore.Receipt{}, fmt.Errorf("admit operation power observation: %w", err)
+	}
+	observer, err := metricobserver.New(source, o.config.MetricLimits)
 	if err != nil {
 		return record, evidencestore.Receipt{}, err
 	}

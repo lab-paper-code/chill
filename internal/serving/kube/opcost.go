@@ -147,7 +147,7 @@ func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.Oper
 	base := MeasurementRequest{
 		Timing: observation.Timing, OperationBudget: duration,
 		Sampling: metricobserver.Request{Interval: interval, Duration: watchdog,
-			RequestTimeout: timeout, MaxEvents: int(watchdog/interval) + 3},
+			RequestTimeout: timeout},
 		Coverage: powerwindow.Policy{MaximumGap: time.Duration(observation.MaximumGapMilliseconds) * time.Millisecond},
 	}
 	phase, reason := edge.MeasurementPhaseComplete, ""

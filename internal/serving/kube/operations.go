@@ -18,6 +18,7 @@ import (
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
@@ -161,6 +162,8 @@ type OperationConfig struct {
 	Namespace    string
 	PollInterval time.Duration
 	Measurement  bool
+	// MetricLimits is process delivery state, not a stored sampling setting.
+	MetricLimits metricobserver.Limits
 }
 
 // ErrNodeInMeasurement rejects a Workload action on a measurement POOL Node.

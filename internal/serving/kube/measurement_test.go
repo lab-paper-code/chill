@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -345,9 +346,10 @@ func (source *measurementTestSource) ReadMetrics(context.Context) (metricobserve
 }
 
 func TestMeasureCollectsActualExpandedSupportAndRetainsRealBracketFailure(t *testing.T) {
-	for _, mode := range []string{"valid", "read failure", "operation timeout"} {
+	for _, mode := range []string{"valid", "read failure", "operation timeout", "result capacity", "memory capacity"} {
 		fail := mode == "read failure"
 		h := newAdmissionHarness(t)
+		h.controller.measurement.config.MetricLimits = metricobserver.Limits{MaxResultBytes: 64 << 20, MemoryBudgetBytes: 256 << 20}
 		_, _, _, class := observerSourceFixture()
 		h.create(&class)
 		source := &measurementTestSource{identity: metricobserver.SourceIdentity{Kind: "fixture", NodeName: testNode.Name, Endpoint: "http://meter", Metric: "power"}, failAfterFirst: fail}
@@ -355,13 +357,26 @@ func TestMeasureCollectsActualExpandedSupportAndRetainsRealBracketFailure(t *tes
 		request := MeasurementRequest{Operation: Operation{ID: "idle", Kind: operationIdle, Node: testNode},
 			Meter: MeterDeclaration{ID: "meter", Node: testNode, Scope: measurementWallScope, Source: source.Identity()}, Store: "evidence",
 			Timing:          &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "0.005", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "empirical fixture"},
-			Sampling:        metricobserver.Request{Interval: 2 * time.Millisecond, RequestTimeout: time.Millisecond, Duration: time.Second, MaxEvents: 503},
+			Sampling:        metricobserver.Request{Interval: 2 * time.Millisecond, RequestTimeout: time.Millisecond, Duration: time.Second},
 			OperationBudget: 500 * time.Millisecond, IdleDuration: 20 * time.Millisecond, Coverage: powerwindow.Policy{MaximumGap: 10 * time.Millisecond}}
 		if mode == "operation timeout" {
 			request.OperationBudget = 10 * time.Millisecond
 			request.IdleDuration = 500 * time.Millisecond
 		}
+		if mode == "result capacity" {
+			h.controller.measurement.config.MetricLimits.MaxResultBytes = 1
+		}
+		if mode == "memory capacity" {
+			h.controller.measurement.config.MetricLimits.MemoryBudgetBytes = 1
+		}
 		record, receipt, err := h.controller.measurement.Measure(context.Background(), request, source, writer, nil)
+		if strings.HasSuffix(mode, "capacity") {
+			if err == nil || !strings.Contains(err.Error(), "byte budget") || source.reads != 0 ||
+				!record.Result.StartedAt.IsZero() || receipt.Object.Key != "" {
+				t.Fatalf("resource rejection started observation/action: reads=%d record=%+v receipt=%+v error=%v", source.reads, record, receipt, err)
+			}
+			continue
+		}
 		raw, readErr := os.ReadFile(filepath.Join(writer.directory, receipt.Object.Key))
 		var retained OperationMeasurement
 		if receipt.Object.Key == "" || readErr != nil || json.Unmarshal(raw, &retained) != nil || retained.Request.Operation.ID != request.Operation.ID || retained.Verdict != record.Verdict {

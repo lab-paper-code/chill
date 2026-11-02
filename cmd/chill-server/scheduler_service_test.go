@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -249,5 +252,61 @@ func TestRejectedSchedulerRefreshPreservesPublishedConfiguration(t *testing.T) {
 	}
 	if got := service.schedulerMeters(); len(got) != 1 || got[0].ID != "accepted-meter" {
 		t.Fatalf("settings projected a rejected meter declaration: %+v", got)
+	}
+}
+
+func TestSchedulerPowerUsesExistingEvidenceEnvelopeBeforeSourceReads(t *testing.T) {
+	for _, accepted := range []bool{false, true} {
+		var calls atomic.Int32
+		secondRead := make(chan struct{})
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if calls.Add(1) == 2 {
+				close(secondRead)
+			}
+			_, _ = w.Write([]byte("# TYPE wall_watts gauge\nwall_watts{hostname=\"node\",device_type=\"fixture\"} 5\n"))
+		}))
+		log, err := serving.NewObservationLog(serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence",
+			Retention: time.Hour, Writer: schedulerPowerArchive{directory: t.TempDir()}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		service := &schedulerService{ctx: ctx, observationLog: log, opts: options{maxEvidenceBytes: 1}}
+		if accepted {
+			service.opts.maxEvidenceBytes = 64 << 20
+		}
+		source := metricobserver.SourceIdentity{Kind: "edge-metrics", NodeName: "node", Endpoint: server.URL, Metric: "wall_watts",
+			MetricLabels: map[string]string{"hostname": "node", "device_type": "fixture"}}
+		start := time.Now().UTC()
+		service.restartPower(schedulerConfiguration{Meters: []servingkube.MeterDeclaration{{ID: "meter", Node: serving.NodeReference{Name: "node", UID: "uid"}, Scope: "node-exclusive-wall", Source: source}},
+			PowerObservation: &powerObservationConfig{Sampling: metricobserver.Request{Interval: 20 * time.Millisecond, Duration: 200 * time.Millisecond, RequestTimeout: 10 * time.Millisecond},
+				Coverage: powerwindow.Policy{MaximumBoundaryDistance: 100 * time.Millisecond, MaximumGap: 100 * time.Millisecond, MinimumCoverage: 1}}})
+		timedOut := false
+		if accepted {
+			select {
+			case <-secondRead:
+			case <-ctx.Done():
+				timedOut = true
+			}
+		}
+		cancel()
+		service.powerCancel()
+		service.powerWG.Wait()
+		if timedOut {
+			t.Error("admitted power schedule never read the source")
+		}
+		if !accepted && calls.Load() != 0 {
+			t.Error("undersized evidence envelope read the source")
+		}
+		if accepted {
+			events, _, _, _, readErr := log.SchedulerObservationPage(context.Background(), start, time.Now().UTC().Add(time.Second), 10, 0, serving.SchedulerObservationSelection{})
+			if readErr != nil || len(events) != 1 || events[0].Power == nil || len(events[0].Power.Samples) == 0 {
+				t.Errorf("power evidence lost: events=%+v error=%v", events, readErr)
+			}
+		}
+		if err := log.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+		server.Close()
 	}
 }
