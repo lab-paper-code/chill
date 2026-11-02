@@ -1,4 +1,11 @@
 {{- define "chill.validateValues" -}}
+{{- range $name, $component := dict "operator" .Values.operator "profiler" .Values.profiler "query" .Values.query "servingEntrypoint" .Values.servingEntrypoint "dashboard" .Values.dashboard "nodeAgent" .Values.nodeAgent "actuationAgent" .Values.nodeAgent.actuation -}}
+{{- range $kind := list "requests" "limits" -}}
+{{- if hasKey (default dict (index (default dict $component.resources) $kind)) "cpu" -}}
+{{- fail (printf "%s.resources.%s.cpu is not supported: CHILL shares CPU without reservations or limits" $name $kind) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- $nodeAgentPlaceholderRepository := "chill/node-agent" -}}
 {{- $nodeAgentPlaceholderTag := "latest" -}}
 {{- $nodeAgentImageTag := include "chill.nodeAgentImageTag" . -}}

@@ -169,12 +169,6 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
-            # Go 1.22 sizes GOMAXPROCS from host cores; κ capacity rows run GOMAXPROCS-parallel.
-            - name: GOMAXPROCS
-              valueFrom:
-                resourceFieldRef:
-                  resource: limits.cpu
-                  divisor: "1"
             # Go soft memory limit below resources.limits.memory; the overload guard compares the live heap against it.
             - name: GOMEMLIMIT
               value: {{ required "servingEntrypoint.goMemLimit is required" .Values.servingEntrypoint.goMemLimit | quote }}

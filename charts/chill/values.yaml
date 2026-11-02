@@ -43,10 +43,8 @@ operator:
   tolerations: []
   resources:
     limits:
-      cpu: 500m
       memory: 128Mi
     requests:
-      cpu: 10m
       memory: 64Mi
   podSecurityContext:
     runAsNonRoot: true
@@ -108,10 +106,8 @@ profiler:
   tolerations: []
   resources:
     limits:
-      cpu: 200m
       memory: 128Mi
     requests:
-      cpu: 10m
       memory: 64Mi
   podSecurityContext:
     runAsNonRoot: true
@@ -171,18 +167,12 @@ profiling:
     # Runtime/copy-init upper envelope, also capped by Node allocatable times
     # profiler.measurementMemoryFraction. Both use runtimeMemoryRequestBytes.
     runtimeMemoryLimitBytes: 17179869184
-    observerCPURequest: 5m
-    observerCPULimit: 100m
     observerMemoryRequestBytes: 16777216
     observerMemoryLimitBytes: 67108864
-    workloadObserverCPURequest: 5m
-    workloadObserverCPULimit: 100m
     workloadObserverMemoryRequestBytes: 33554432
     workloadObserverMemoryLimitBytes: 134217728
     coordinationReserveBytes: 1048576
     workspaceBytes: 134217728
-  # The runtime CPU quota is not part of these envelopes: the AllocatableCPUQuota
-  # policy derives it from the measured Node at run time, for every path alike.
   # A CUDA envelope selects nothing on its own; the measured Node also needs its
   # own CUDA declaration, which names the Node and carries its GPU UUID and the
   # nvidia.com/gpu resource.
@@ -467,10 +457,8 @@ query:
   tolerations: []
   resources:
     limits:
-      cpu: 200m
       memory: 128Mi
     requests:
-      cpu: 10m
       memory: 64Mi
   podSecurityContext:
     runAsNonRoot: true
@@ -563,10 +551,8 @@ servingEntrypoint:
   tolerations: []
   resources:
     limits:
-      cpu: "6"
       memory: 4Gi
     requests:
-      cpu: 10m
       memory: 64Mi
   # GOMEMLIMIT of ChillServer (Go syntax, e.g. 3GiB), kept at 75% of resources.limits.memory.
   goMemLimit: 3GiB
@@ -629,10 +615,8 @@ dashboard:
   tolerations: []
   resources:
     limits:
-      cpu: "1"
       memory: 512Mi
     requests:
-      cpu: 10m
       memory: 128Mi
   podSecurityContext:
     runAsNonRoot: true
@@ -990,10 +974,8 @@ nodeAgent:
       effect: NoSchedule
   resources:
     limits:
-      cpu: 100m
       memory: 64Mi
     requests:
-      cpu: 5m
       memory: 32Mi
   podSecurityContext:
     runAsNonRoot: true
@@ -1106,10 +1088,8 @@ nodeAgent:
         effect: NoSchedule
     resources:
       limits:
-        cpu: 100m
         memory: 64Mi
       requests:
-        cpu: 10m
         memory: 32Mi
     podSecurityContext:
       runAsUser: 0

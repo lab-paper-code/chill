@@ -19,7 +19,7 @@ configmap = {
     "data": {"scheduler.json": json.dumps({"settings": {
         "observationWindowNanos": 1000000000, "controlIntervalNanos": 1000000000,
         "comparisonPeriodNanos": 1000000000, "maxObservationAgeNanos": 1000000000,
-        "maxReplicas": 1, "maxInstances": 1, "maxCPUs": 2, "completionMarginMS": 0,
+        "maxReplicas": 1, "maxInstances": 1, "completionMarginMS": 0,
         "capacityWindowNanos": 1000000000, "capacityWindows": 1,
         "capacityPassingWindows": 1, "capacityMinimumRequests": 1, "planSearchWorkers": 3,
     }})},
@@ -41,6 +41,15 @@ render = subprocess.check_output([
     "--set-string", f"servingEntrypoint.scheduler.configMap={name}",
     "--set-string", f"servingEntrypoint.scheduler.key={key}",
 ], cwd=root, text=True)
+# Reject CPU re-injection at the chart boundary, including explicit zero quantities.
+for component in ("operator", "profiler", "query", "servingEntrypoint", "dashboard", "nodeAgent", "nodeAgent.actuation"):
+    for kind in ("requests", "limits"):
+        result = subprocess.run([
+            os.environ.get("HELM", "helm"), "template", "cpu-check", str(root / "charts/chill"),
+            "--set-string", f"{component}.resources.{kind}.cpu=0",
+        ], cwd=root, capture_output=True, text=True)
+        assert result.returncode != 0 and "CPU without reservations or limits" in result.stderr, result.stderr
+print("chart rejects CPU requests/limits for all seven platform components")
 binary = str(Path(args.binary).resolve())
 with tempfile.TemporaryDirectory(prefix="chill-config-check-") as temporary:
     manifest = Path(temporary) / "render.yaml"
