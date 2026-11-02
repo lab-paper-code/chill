@@ -201,7 +201,7 @@ test("R17: list rows do not expose rerun or removal until a run is selected",()=
 
 test("R17: load parts expose every service rate as labeled fields without a wide table",()=>{
   const runner=hookRunner(),source={name:"load",uid:"load-uid",spec:{parts:[{id:"zero",durationSeconds:1,rates:{camera:0,plc:0}}],workloads:[{name:"camera",uid:"camera-uid"},{name:"plc",uid:"plc-uid"}]},inUse:["original"]}
-  const modules={...primitives,react:runner.react,"@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/workloads"?[]:source}),useChillMutation:()=>({isPending:false})},"@/features/evaluation-author":{AuthorSelect:"select",AuthorField:"input",AuthorJSON:"textarea",AuthorHelp:"help",EvidencePicker:"select",useUnsavedAuthor:()=>{}}}
+  const modules={...primitives,react:runner.react,"@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/workloads?view=summary"?[]:source}),useChillMutation:()=>({isPending:false})},"@/features/evaluation-author":{AuthorSelect:"select",AuthorField:"input",AuthorJSON:"textarea",AuthorHelp:"help",EvidencePicker:"select",useUnsavedAuthor:()=>{}}}
   const {LoadScenarioAuthorPage}=load("../features/load-scenario-author.tsx",modules)
   const page=elements(runner.render(LoadScenarioAuthorPage,{name:"load"}))
   const editor=page.find(element=>element.props.editing===true)!
@@ -256,7 +256,7 @@ test("R17b: result detail keeps outcome independent and labels every mobile comp
 })
 
 test("R17b: template missing inputs stay visible while copied question text is folded as original",async()=>{
-  const runner=hookRunner(),modules={...primitives,react:{...runner.react,useEffect:()=>{}},"@/lib/client":{useChillQuery:()=>({data:{items:[]},refetch:async()=>({data:{spec:{question:""},sources:{target:"none",harness:"config"}}})})},"@/features/evaluation-request":{EvaluationPermission:"permission",EvaluationSubmit:"submit"}}
+  const runner=hookRunner(),modules={...primitives,react:{...runner.react,useEffect:()=>{}},"@/lib/client":{useChillQuery:()=>({data:{items:[]},refetch:async()=>({data:{spec:{question:""},sources:{target:"none",harness:"latestPublication"},sourcePublication:{uid:"published-uid",name:"published-name"}}})})},"@/features/evaluation-request":{EvaluationPermission:"permission",EvaluationSubmit:"submit"}}
   const {EvaluationAuthor}=load("../features/evaluation-author.tsx",modules)
   let tree=elements(runner.render(EvaluationAuthor))
   await (tree.find(element=>element.type==="button"&&element.props.children==="빈 템플릿")!.props.onClick as ()=>Promise<void>)()
@@ -264,6 +264,9 @@ test("R17b: template missing inputs stay visible while copied question text is f
   tree=elements(runner.render(EvaluationAuthor))
   assert.ok(tree.some(element=>element.type==="table"&&element.props["aria-label"]==="입력 필요 항목"))
   assert.ok(tree.some(element=>element.props.children==="대상 구성요소"))
+  assert.ok(tree.some(element=>element.props.children==="최근 게시"))
+  assert.ok(tree.some(element=>element.type==="dd"&&element.props.children==="published-uid"))
+  assert.ok(tree.some(element=>element.type==="dd"&&element.props.children==="published-name"))
   const copied=hookRunner(),copyModules={...modules,react:{...copied.react,useEffect:()=>{}}}
   const CopyAuthor=load("../features/evaluation-author.tsx",copyModules).EvaluationAuthor
   const copyTree=elements(copied.render(CopyAuthor,{initialName:"source",initialSpec:{question:"Retained English question"}}))

@@ -11,35 +11,40 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+const (
+	templateSourceLive        = "live"
+	templateSourcePublication = "latestPublication"
+	templateSourceNone        = "none"
+)
+
 func (s *evaluationService) template(ctx context.Context) (httpapi.EvaluationTemplate, error) {
 	result := httpapi.EvaluationTemplate{Sources: map[string]string{
-		"target": "none", "powerMeasurement": "none", "evidenceStore": "config",
-		"harness": "none", "loadGenerator": "none", "judgment": "none", "control": "none",
+		"target": templateSourceNone, "powerMeasurement": templateSourceNone, "evidenceStore": "config",
+		"harness": templateSourceNone, "loadGenerator": templateSourceNone,
+		"judgment": templateSourceNone, "control": templateSourceNone,
 	}}
 	result.Spec.EvidenceStore = s.store
-	publications, err := s.experiments.list(ctx)
+	publications, err := s.experiments.listSummaries(ctx)
 	if err != nil {
 		return result, err
 	}
 	for _, publication := range publications.Items {
-		detail, err := s.experiments.get(ctx, publication.ID)
-		if err != nil {
-			return result, err
-		}
-		if len(detail.Definition) == 0 {
+		if len(publication.Definition) == 0 {
 			continue
 		}
 		var definition struct {
-			Spec api.EvaluationRunSpec `json:"spec"`
+			Run  httpapi.EvaluationIdentity `json:"run"`
+			Spec api.EvaluationRunSpec      `json:"spec"`
 		}
-		if err := json.Unmarshal(detail.Definition, &definition); err != nil {
+		if err := json.Unmarshal(publication.Definition, &definition); err != nil {
 			return result, err
 		}
 		result.Spec = definition.Spec
 		result.Spec.EvidenceStore = s.store
 		for _, key := range []string{"harness", "loadGenerator", "judgment", "control"} {
-			result.Sources[key] = "publication/" + publication.ID
+			result.Sources[key] = templateSourcePublication
 		}
+		result.SourcePublication = &httpapi.EvaluationIdentity{UID: publication.ID, Name: definition.Run.Name}
 		break
 	}
 	if len(result.Spec.Target.Components) == 0 {
@@ -79,7 +84,7 @@ func (s *evaluationService) template(ctx context.Context) (httpapi.EvaluationTem
 		digest := imageDigest(live.LiveImageIDs[0])
 		repository := strings.Split(component.Image, "@")[0]
 		component.Image = repository + "@" + digest
-		result.Sources["target"] = "live"
+		result.Sources["target"] = templateSourceLive
 	}
 	return result, nil
 }
