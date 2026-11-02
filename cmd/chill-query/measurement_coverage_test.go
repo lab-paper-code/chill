@@ -84,10 +84,9 @@ func TestCoverageNeverUnionsDifferentFrozenVariants(t *testing.T) {
 		batch := index + 1
 		condition := profilederivation.CurvePlanSpec{
 			LogicalModel: "model", DeviceClass: "class", NodeUID: "node-uid", PowerMode: "fixed",
-			RuntimeImage: "current",
-			CPU: profilederivation.CurveCPUContract{
-				Request: []string{"1", "2"}[index],
-			}, PlannedBatchSizes: []int{1, 2},
+			RuntimeImage:      "current",
+			ActiveProtocol:    profilederivation.CurveProtocolContract{WarmupIterations: index + 1},
+			PlannedBatchSizes: []int{1, 2},
 		}
 		facts := serving.MeasurementFacts{
 			Request: profilederivation.MeasurementRequestReference{
@@ -114,7 +113,7 @@ func TestCoverageNeverUnionsDifferentFrozenVariants(t *testing.T) {
 		t.Fatalf("multiple conditions exposed union: %+v", cell)
 	}
 	if cell.Assessment.Status != "partial" || *got.Summary.CompleteCellCount != 0 {
-		t.Fatalf("fake complete across CPU conditions: %+v", cell.Assessment)
+		t.Fatalf("fake complete across protocol conditions: %+v", cell.Assessment)
 	}
 	for _, variant := range cell.Variants {
 		if len(variant.BatchProgress.Measured) != 1 || len(variant.BatchProgress.Missing) != 1 {

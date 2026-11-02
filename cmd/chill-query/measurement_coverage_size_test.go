@@ -161,7 +161,7 @@ func coverageSizeCondition(task api.BatchEnergyOptimization, group int) profiled
 		Dataset: &profilederivation.CurveDatasetContract{
 			Name: "imagenet-validation", UID: "dataset-uid",
 		},
-		WarmupIterations: 10, SettlingDurationSeconds: 5, DurationSeconds: 30, DurationToleranceSeconds: 2,
+		WarmupIterations: 10 + group, SettlingDurationSeconds: 5, DurationSeconds: 30, DurationToleranceSeconds: 2,
 		MetricIntervalMilliseconds: 100, MetricTimeoutMilliseconds: 1000, MetricDurationSeconds: 30,
 		MetricObserverImage:   "registry.example.org/chill/power-observer:20261030",
 		WorkloadObserverImage: "registry.example.org/chill/workload-observer:20261030",
@@ -173,10 +173,6 @@ func coverageSizeCondition(task api.BatchEnergyOptimization, group int) profiled
 		Name: fmt.Sprintf("frozen-condition-%02d", group), LogicalModel: task.Spec.State.Candidate.ModelSpec,
 		DeviceClass: coverageSizeClass, NodeUID: coverageSizeNodeUID, RuntimeFamily: "onnxruntime", Backend: "cpu",
 		RuntimeImage: "registry.example.org/chill/onnxruntime:1.20.1", PowerMode: task.Spec.State.Candidate.PowerMode,
-		CPU: profilederivation.CurveCPUContract{
-			Policy: "fixed", PolicyVersion: "cpu.v1", Request: fmt.Sprint(group + 1), Limit: fmt.Sprint(group + 1),
-			ORTIntraOpThreads: 1, ORTInterOpThreads: 1,
-		},
 		MetricSource: profilederivation.CurveMetricSourceContract{
 			SourceKind: coverageSizePowerSource, NodeName: coverageSizeNode, Endpoint: "http://edge-meter:9100/metrics",
 			PowerMetric: "node_wall_power_watts",

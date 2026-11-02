@@ -193,9 +193,6 @@ func batchEnergyOptimizationPreflightQueryPlan(t *testing.T) profilederivation.C
 		DeviceClass: "orangepi-5-plus-16g",
 		NodeUID:     "node-uid", RuntimeFamily: "rknnlite", Backend: "not-applicable",
 		RuntimeImage: "registry.example/chill/runtime:v1", PowerMode: "fixed",
-		CPU: profilederivation.CurveCPUContract{
-			Policy: "allocatable", PolicyVersion: "v1", Request: "7", Limit: "8",
-		},
 		MetricSource: profilederivation.CurveMetricSourceContract{
 			SourceKind: "prometheus", NodeName: "orangepi", Endpoint: "http://metrics",
 			PowerMetric: "power_watts",
