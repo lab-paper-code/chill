@@ -1816,7 +1816,10 @@ class CPO:
                                 'io.kubernetes.pod.uid':pod['metadata']['uid']}}
                      for pod in pods if pod['spec'].get('nodeName')==h['node']
                      for status in pod.get('status',{}).get('containerStatuses',[])]
-            host_source=source.replace('initial=None\n','initial='+repr(current)+'\n',1)
+            # A restricted producer key may force `python3 -u -`, dropping client argv; carry the arguments in the program itself.
+            header='node, duration, phase = sys.argv[1], float(sys.argv[2]), sys.argv[3]'
+            if header not in source: raise RuntimeError('Sampler argument header changed')
+            host_source=source.replace('initial=None\n','initial='+repr(current)+'\n',1).replace(header,'node, duration, phase = '+repr((h['node'],float(seconds),self.a.stage))[1:-1],1)
             p=subprocess.Popen(argv+[h['node'],str(seconds),self.a.stage],stdin=subprocess.PIPE,stdout=output,stderr=error,text=True); p.stdin.write(host_source); p.stdin.close(); children.append((p,output,error))
         return children
     def producer_job_name(self,name,stage):
@@ -1996,6 +1999,11 @@ class CPO:
                         save(folder/'ready-gate-state.json',{'observedUTC':observed,'state':state})
                         save(folder/'phase.json',phase)
                         break
+                if not released:
+                    for sampler,output,error in children:
+                        if sampler.poll() is not None:
+                            error.flush()
+                            raise RuntimeError('Producer telemetry sampler exited before GO (code '+str(sampler.returncode)+'): '+Path(error.name).read_text()[-500:].strip())
                 if not released and time.monotonic()>deadline: raise RuntimeError('Producer setup timebox exceeded')
                 for key,_ in sel.select(timeout=min(.2,max(0,end-time.monotonic())) if ready_gate else .2):
                     name,log=key.data;lines,buffers[name],eof=self.d.read_stream_lines(key.fileobj,buffers[name])
