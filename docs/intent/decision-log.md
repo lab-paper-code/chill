@@ -539,3 +539,9 @@
 - 커버리지 API: usable 132 / supported 162, problem 11, unmeasured 31(jetson-nano 14 제외 + 측정 불가(메모리) 조합), running 0.
 - 측정 불가(메모리): xavier cuda-vlm(canary b1 runner EOF), orin-nano cuda-vlm, xavier Smol FP32 CPU, Smol CUDA RTX b4.
 - jetson-nano: 응답 없음, 제외(재부팅 뒤 MAXN 7셀만 측정 가능).
+
+## 2026-11-02 — κsafe 동일 HEAD A/B 비교 기준
+
+- `deploy-20261102-noksafe-head`는 HEAD `43b12db7`에서 `7dba68d7`·`8c546048`을 역적용했다(`a78a2cde`); replay 전용 guard 충돌과 API shim은 pre-κsafe로 해소했으며 server 경로 diff는 두 커밋 합산의 정확한 역과 동일하다. control-308 `233ccc6d`와 HEAD의 server 경로 차이는 없다.
+- Main 승인: 원본 `C/full-E5-3-7`은 보존하고 공통 baseline `O/campaign/v2/ksafe-ab-20261102/full-E5-3-223`에서 응답 없는 nano만 제외한다(pre-state SHA256 `ab5800fb587e0d8f7582dbe844dda87f903af8eef4400c1bdb10a55e7fc5bb91`, fingerprint는 `O/deployB/ksafe-ab-20261102/baseline-provenance.json`에 보존). nano의 MNV b2가 빠져 초기 MNV route는 rasp5 b1 하나로 모이며 F_warm 해석에 명시한다. 이번 6회만 비교하고 옛 round 13~26과 섞지 않는다.
+- 실패한 profilingrun Pod 7개를 증거 보존 후 삭제했다(Error·OOMKilled·UnexpectedAdmissionError); 커버리지 problem 11셀 원본은 `O/deployB/ksafe-ab-20261102/problem-classification-evidence.json`에 보존했다. 재측정은 하지 않는다.
