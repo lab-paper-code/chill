@@ -141,14 +141,15 @@ func countCoverageFailedRequests(
 		if !request.Failed {
 			continue
 		}
-		resolved := false
+		current := false
 		for _, id := range request.CellIDs {
-			resolved = resolved || cells[id].Assessment.DisplayStatus == queryapi.MeasurementUsable
+			selected := cells[id].CurrentMeasurement
+			current = current || selected != nil && request.ID == selected.ID
 		}
-		if resolved {
-			*summary.HistoricalFailedRequestCount++
-		} else {
+		if current {
 			*summary.CurrentFailedRequestCount++
+		} else {
+			*summary.HistoricalFailedRequestCount++
 		}
 	}
 }

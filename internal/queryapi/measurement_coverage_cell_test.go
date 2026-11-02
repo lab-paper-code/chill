@@ -26,11 +26,12 @@ func TestCoverageCellCurrentFailureNeverFallsBackToOldSuccess(t *testing.T) {
 				History: []MeasurementHistory{{RequestID: "old"}, {RequestID: "current"}},
 				Variants: []MeasurementCoverageVariant{
 					{
-						ID: "old", Condition: map[string]any{"runtimeImage": "old"},
+						ID: "old-condition", RequestIDs: []string{"old"}, Condition: map[string]any{"runtimeImage": "old"},
 						Assessment: AssessMeasurement(MeasurementAssessmentInput{Accepted: true, Available: true}),
 					},
 					{
-						ID: "current", Condition: map[string]any{"runtimeImage": "recorded"},
+						ID: "current-condition", RequestIDs: []string{"current"},
+						Condition:  map[string]any{"runtimeImage": "recorded"},
 						Assessment: AssessMeasurement(test.input),
 					},
 				},
@@ -38,7 +39,7 @@ func TestCoverageCellCurrentFailureNeverFallsBackToOldSuccess(t *testing.T) {
 			before, _ := json.Marshal(cell)
 			got := AssessMeasurementCoverageCell(cell, &profilederivation.MeasurementSelection{ID: "current"}, true)
 			if got.Assessment.DisplayStatus != test.want || got.VariantCount != 1 ||
-				got.Variants[0].ID != "current" || len(got.History) != 2 ||
+				got.Variants[0].ID != "current-condition" || len(got.History) != 2 ||
 				got.CurrentMeasurement == nil || got.CurrentMeasurement.ID != "current" {
 				t.Fatalf("current problem hidden by old success: %+v", got)
 			}
@@ -54,7 +55,8 @@ func TestCoverageCellCurrentRepresentativeAndSupport(t *testing.T) {
 	cell := MeasurementCoverageCell{
 		Support: MeasurementSupport{Verdict: MeasurementSupportUnknown},
 		Variants: []MeasurementCoverageVariant{{
-			ID: "current", Assessment: AssessMeasurement(MeasurementAssessmentInput{Accepted: true, Available: true}),
+			ID: "condition", RequestIDs: []string{"current"},
+			Assessment:    AssessMeasurement(MeasurementAssessmentInput{Accepted: true, Available: true}),
 			BatchProgress: MeasurementBatchProgress{Target: []int{1}, Measured: []int{1}},
 			ResultRows:    []ResultRow{{RowKind: ResultRowSourceReference, Batch: 8}, {Batch: 1}},
 		}},

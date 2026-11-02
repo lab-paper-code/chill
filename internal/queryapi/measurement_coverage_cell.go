@@ -1,9 +1,13 @@
 package queryapi
 
-import profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+import (
+	"slices"
+
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+)
 
 // AssessMeasurementCoverageCell assesses the selected current variant without
-// falling back to older successes. selected is the shared selector's result,
+// falling back to older successes. selected identifies a variant through RequestIDs,
 // or nil when no candidate is current. Input slices and request history are retained.
 func AssessMeasurementCoverageCell(
 	cell MeasurementCoverageCell, selected *profilederivation.MeasurementSelection, sourcesComplete bool,
@@ -14,7 +18,7 @@ func AssessMeasurementCoverageCell(
 	})
 	if selected != nil {
 		for _, variant := range cell.Variants {
-			if variant.ID == selected.ID {
+			if slices.Contains(variant.RequestIDs, selected.ID) {
 				current = []MeasurementCoverageVariant{variant}
 				cell.Assessment = variant.Assessment
 				break

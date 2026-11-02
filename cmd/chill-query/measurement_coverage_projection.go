@@ -444,8 +444,11 @@ func (p *coverageProjection) assessCell(cell *queryapi.MeasurementCoverageCell) 
 	for i := range cell.Variants {
 		variant := &cell.Variants[i]
 		p.assessVariant(variant)
+		if len(variant.RequestIDs) == 0 {
+			continue
+		}
 		candidates = append(candidates, profilederivation.MeasurementSelection{
-			ID: variant.ID, Model: cell.Model.Name, DeviceClass: cell.DeviceClass.Name,
+			ID: variant.RequestIDs[0], Model: cell.Model.Name, DeviceClass: cell.DeviceClass.Name,
 			ExecutionPath: cell.ExecutionPath, PowerMode: cell.PowerMode, MeasuredAt: variant.MeasuredAt,
 		})
 	}
@@ -506,16 +509,19 @@ func (p *coverageProjection) assessVariant(variant *queryapi.MeasurementCoverage
 	variant.Assessment = queryapi.AssessMeasurement(input)
 }
 
+// Keep repeat measurements separate until current selection. The public variant
+// ID remains the frozen-condition fingerprint used by request preflight.
 func coverageFindVariant(
-	cell *queryapi.MeasurementCoverageCell, id string, condition any, basis string,
+	cell *queryapi.MeasurementCoverageCell, measurementID string, condition any, basis string,
 ) *queryapi.MeasurementCoverageVariant {
 	for i := range cell.Variants {
-		if cell.Variants[i].ID == id {
+		if slices.Contains(cell.Variants[i].RequestIDs, measurementID) {
 			return &cell.Variants[i]
 		}
 	}
 	cell.Variants = append(cell.Variants, queryapi.MeasurementCoverageVariant{
-		ID: id, Condition: condition, ResultRows: []queryapi.ResultRow{}, RequestIDs: []string{},
+		ID: queryapi.MeasurementVariantID(condition), Condition: condition,
+		ResultRows: []queryapi.ResultRow{}, RequestIDs: []string{},
 		RunIDs: []string{}, ProfileIDs: []string{},
 		BatchProgress: queryapi.MeasurementBatchProgress{
 			Basis: basis, Target: []int{}, Measured: []int{}, CriteriaMet: []int{}, Missing: []int{},
