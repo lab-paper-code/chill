@@ -32,6 +32,7 @@ func experimentHandler(t *testing.T, allowed bool, config HandlerConfig) *Handle
 			(!loadPost && (review.Spec.NonResourceAttributes.Verb != measurementGetVerb ||
 				(review.Spec.NonResourceAttributes.Path != "/chill/api/v1/experiments" &&
 					review.Spec.NonResourceAttributes.Path != "/chill/api/v1/experiments/run-1" &&
+					review.Spec.NonResourceAttributes.Path != "/chill/api/v1/evaluations/inputs" &&
 					review.Spec.NonResourceAttributes.Path != "/chill/api/v1/evaluations/active"))) {
 			t.Fatalf("incorrect experiment non-resource authorization: %+v", review.Spec)
 		}

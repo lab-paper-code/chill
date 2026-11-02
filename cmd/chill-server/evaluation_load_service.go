@@ -244,8 +244,10 @@ func (s *evaluationLoadService) inputs(ctx context.Context) (httpapi.EvaluationI
 			strings.HasPrefix(relative, "/") || strings.HasSuffix(relative, "/") {
 			continue
 		}
+		set, _, _ := strings.Cut(relative, "/")
 		result.Items = append(result.Items, httpapi.EvaluationInput{
 			Store: obj.Store, Key: obj.Key, Size: obj.Size, Kind: evaluationInputKind(obj.Key),
+			Set: set, Name: set + " / " + path.Base(obj.Key),
 		})
 	}
 	sort.Slice(result.Items, func(i, j int) bool { return result.Items[i].Key < result.Items[j].Key })

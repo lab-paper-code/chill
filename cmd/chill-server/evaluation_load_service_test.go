@@ -102,6 +102,10 @@ func TestEvaluationInputKinds(t *testing.T) {
 	if err != nil || len(result.Items) != 1 {
 		t.Fatalf("inputs=%+v error=%v", result, err)
 	}
+	if got := result.Items[0]; got.Set != "set" || got.Name != "set / bundle.json" ||
+		got.Store != "s" || got.Key != "experiments/_inputs/set/bundle.json" || got.Size != 1 || got.Kind != "payload" {
+		t.Fatalf("input metadata=%+v", got)
+	}
 }
 
 type loadUIDClient struct{ client.Client }

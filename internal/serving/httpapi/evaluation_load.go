@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"net/http"
+	"net/url"
+	"strings"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -36,9 +38,58 @@ type EvaluationInput struct {
 	Key   string `json:"key"`
 	Size  int64  `json:"size"`
 	Kind  string `json:"kind"`
+	Set   string `json:"set"`
+	Name  string `json:"name"`
 }
 type EvaluationInputList struct {
 	Items []EvaluationInput `json:"items"`
+	Page  ProfilePage       `json:"page"`
+}
+
+const evaluationInputOtherKind = "other"
+
+func pageEvaluationInputs(list EvaluationInputList, values url.Values) (EvaluationInputList, error) {
+	paging := url.Values{}
+	for key, values := range values {
+		if len(values) != 1 || len(values[0]) > 512 {
+			return EvaluationInputList{}, &serving.Error{Code: "InvalidQuery", Message: "invalid input query"}
+		}
+		switch key {
+		case profileLimitQuery, profileOffsetQuery:
+			paging[key] = values
+		case "kind":
+			switch values[0] {
+			case "payload", "seed", "rateBasis", "kappa", evaluationInputOtherKind:
+			default:
+				return EvaluationInputList{}, &serving.Error{Code: "InvalidQuery", Message: "invalid input kind"}
+			}
+		case "set":
+			if values[0] == "" || values[0] == "." || values[0] == ".." || strings.ContainsAny(values[0], "/\\") {
+				return EvaluationInputList{}, &serving.Error{Code: "InvalidQuery", Message: "invalid input set"}
+			}
+		default:
+			return EvaluationInputList{}, &serving.Error{Code: "InvalidQuery", Message: "unknown input query"}
+		}
+	}
+	limit, offset, err := parseProfileQuery(paging)
+	if err != nil {
+		return EvaluationInputList{}, err
+	}
+	items := make([]EvaluationInput, 0)
+	for _, item := range list.Items {
+		if (values.Get("kind") == "" || item.Kind == values.Get("kind")) &&
+			(values.Get("set") == "" || item.Set == values.Get("set")) {
+			items = append(items, item)
+		}
+	}
+	start := min(offset, len(items))
+	end := min(start+limit, len(items))
+	list.Page = ProfilePage{Offset: offset, Limit: limit, Total: len(items)}
+	if end < len(items) {
+		list.Page.NextOffset = &end
+	}
+	list.Items = items[start:end]
+	return list, nil
 }
 
 func (h *Handler) registerEvaluationLoadRoutes() {
@@ -86,7 +137,11 @@ func (h *Handler) evaluationLoads(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		switch {
 		case r.URL.Path == "/api/v1/evaluations/inputs":
-			value, err = h.config.ListEvaluationInputs(r.Context())
+			var inputs EvaluationInputList
+			inputs, err = h.config.ListEvaluationInputs(r.Context())
+			if err == nil {
+				value, err = pageEvaluationInputs(inputs, r.URL.Query())
+			}
 		case name == "":
 			value, err = h.config.ListLoadScenarios(r.Context())
 		default:
