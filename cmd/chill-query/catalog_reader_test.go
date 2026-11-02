@@ -34,7 +34,8 @@ func TestServingCatalogReadUsesPinnedTLSServiceTokenAndNoRedirects(t *testing.T)
 	directory := t.TempDir()
 	certificate := filepath.Join(directory, "serving.crt")
 	token := filepath.Join(directory, "token")
-	if err := os.WriteFile(certificate, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: owner.Certificate().Raw}), 0600); err != nil {
+	certificatePEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: owner.Certificate().Raw})
+	if err := os.WriteFile(certificate, certificatePEM, 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(token, []byte("query-service-token"), 0600); err != nil {

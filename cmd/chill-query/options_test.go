@@ -14,7 +14,8 @@ func validOptions() options {
 		factSourceConfigMap: "chill-profiler-facts",
 		executionFactsKey:   "execution-facts.yaml", metricSourcesKey: "metric-sources.yaml",
 		workloadObservationKey: "workload-observation.yaml", actuationPoliciesKey: "actuation-policies.yaml",
-		kubeAPIQPS: 200, kubeAPIBurst: 400, requestTimeout: 30 * time.Second, maxRequestBytes: 8 << 20, maxEvidenceBytes: 64 << 20,
+		kubeAPIQPS: 200, kubeAPIBurst: 400,
+		requestTimeout: 30 * time.Second, maxRequestBytes: 8 << 20, maxEvidenceBytes: 64 << 20,
 	}
 }
 

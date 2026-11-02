@@ -144,7 +144,8 @@ func writeMeasurement(w http.ResponseWriter, value any) {
 func newServingCatalogReader(opts options) (func(context.Context) (servingkube.CatalogRead, error), error) {
 	origin, err := url.Parse(opts.servingURL)
 	if err != nil ||
-		(opts.servingURL != "" && (origin.Scheme != "https" || origin.Host == "" || origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" || (origin.Path != "" && origin.Path != "/"))) {
+		(opts.servingURL != "" && (origin.Scheme != "https" || origin.Host == "" || origin.User != nil ||
+			origin.RawQuery != "" || origin.Fragment != "" || (origin.Path != "" && origin.Path != "/"))) {
 		return nil, errors.New("serving URL must be one fixed HTTPS origin")
 	}
 	config := &rest.Config{
@@ -196,7 +197,9 @@ func newServingCatalogReader(opts options) (func(context.Context) (servingkube.C
 
 // A typed adapter completes preflight before readapi encodes the response.
 type measurementPreflightReader struct {
-	read         func(context.Context, *api.BatchEnergyOptimization) (queryapi.BatchEnergyOptimizationPreflightSnapshot, error)
+	read func(context.Context, *api.BatchEnergyOptimization) (
+		queryapi.BatchEnergyOptimizationPreflightSnapshot, error,
+	)
 	measurements *measurementService
 }
 

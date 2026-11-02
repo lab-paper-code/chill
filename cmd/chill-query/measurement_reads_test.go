@@ -66,7 +66,9 @@ func evidenceReadHandler(t *testing.T, loader *failingPassportLoader, objects ..
 }
 
 func TestMeasurementPassportPendingIsNotAnEvidenceConnectionFailure(t *testing.T) {
-	for _, state := range []string{"running", "pending", "failed", "previous generation", "invalid evidence", "published"} {
+	for _, state := range []string{
+		"running", "pending", "failed", "previous generation", "invalid evidence", "published",
+	} {
 		t.Run(state, func(t *testing.T) {
 			run := &api.ProfilingRun{
 				ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "run", UID: "run-uid", Generation: 2},
@@ -115,7 +117,9 @@ func TestMeasurementPassportPendingIsNotAnEvidenceConnectionFailure(t *testing.T
 				t,
 				loader,
 				run,
-			).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/allowed/profiling-runs/run/evidence-passport", nil))
+			).ServeHTTP(response, httptest.NewRequest(
+				http.MethodGet, "/api/v1/namespaces/allowed/profiling-runs/run/evidence-passport", nil,
+			))
 			var body queryapi.EvidencePassportState
 			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 				t.Fatal(err)
@@ -177,7 +181,9 @@ func TestMeasurementResultFailureRetainsNativeRequestWithoutInventingEvidence(t 
 				t,
 				&failingPassportLoader{},
 				task,
-			).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/allowed/batch-energy-optimizations/request/result", nil))
+			).ServeHTTP(response, httptest.NewRequest(
+				http.MethodGet, "/api/v1/namespaces/allowed/batch-energy-optimizations/request/result", nil,
+			))
 			var body queryapi.BatchEnergyOptimizationResultError
 			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 				t.Fatal(err)

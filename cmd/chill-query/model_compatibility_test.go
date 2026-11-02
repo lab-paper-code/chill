@@ -59,7 +59,8 @@ func TestQueryAPICompatibilityRouteUsesProductionResolver(t *testing.T) {
 	base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(model, class, node, otherNode).Build()
 	reader := &countingCompatibilityReader{Reader: base, gets: make(map[string]int)}
 	handler, err := buildHandler(reader, options{systemName: "chill", namespace: "chill-system", tempDir: t.TempDir(),
-		requestTimeout: time.Second, maxRequestBytes: 8 << 20, maxEvidenceBytes: 64 << 20, factSourceConfigMap: "facts", executionFactsKey: "execution", metricSourcesKey: "metrics",
+		requestTimeout: time.Second, maxRequestBytes: 8 << 20, maxEvidenceBytes: 64 << 20,
+		factSourceConfigMap: "facts", executionFactsKey: "execution", metricSourcesKey: "metrics",
 		workloadObservationKey: "workload", actuationPoliciesKey: "actuation",
 	})
 	if err != nil {

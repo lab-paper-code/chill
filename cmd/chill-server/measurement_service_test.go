@@ -129,7 +129,8 @@ func TestMeasurementMutationNamespaceEscape(t *testing.T) {
 	if _, err := service.submit(context.Background(), escaped, false); !errors.Is(err, servingkube.ErrForbidden) {
 		t.Fatal("namespace submit escaped before preflight")
 	}
-	if _, err := service.delete(context.Background(), "outside", "hidden", "uid", "1"); !errors.Is(err, servingkube.ErrForbidden) {
+	_, err := service.delete(context.Background(), "outside", "hidden", "uid", "1")
+	if !errors.Is(err, servingkube.ErrForbidden) {
 		t.Fatal("namespace delete escaped")
 	}
 }

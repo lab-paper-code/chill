@@ -117,8 +117,10 @@ func TestReadCoverageReturnsSnapshotWhenAllSixSourcesSucceed(t *testing.T) {
 		catalog: func(context.Context) (servingkube.CatalogRead, error) {
 			return servingkube.ProjectCatalogRead(view, "", nil, nil), nil
 		},
-		inventory:     func(context.Context) (queryapi.InventoryView, error) { return base.inventory, nil },
-		compatibility: func(context.Context) (queryapi.ModelCompatibilityMatrixView, error) { return base.compatibility, nil },
+		inventory: func(context.Context) (queryapi.InventoryView, error) { return base.inventory, nil },
+		compatibility: func(context.Context) (queryapi.ModelCompatibilityMatrixView, error) {
+			return base.compatibility, nil
+		},
 	}
 
 	got, err := service.readCoverage(context.Background(), "allowed", nil)

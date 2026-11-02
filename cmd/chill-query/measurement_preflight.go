@@ -37,7 +37,9 @@ func (o *measurementService) completePreflight(
 	snapshot.BatchPlanReasons = append(snapshot.BatchPlanReasons, reasons...)
 	if !confirmed {
 		snapshot.BatchPlanReasons = append(snapshot.BatchPlanReasons, queryapi.MeasurementBatchPlanReason{
-			Code: "CatalogUnconfirmed", Message: "The current adopted catalog is unavailable; no measured batch exclusions are confirmed."})
+			Code:    "CatalogUnconfirmed",
+			Message: "The current adopted catalog is unavailable; no measured batch exclusions are confirmed.",
+		})
 	}
 	return snapshot
 }

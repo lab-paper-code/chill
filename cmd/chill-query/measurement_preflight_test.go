@@ -68,7 +68,8 @@ func TestPreflightEnrichmentUsesExactCatalogAndCurrentSourceSpec(t *testing.T) {
 
 			service := &measurementService{
 				client:  fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(request).Build(),
-				catalog: func(context.Context) (servingkube.CatalogRead, error) { return read, nil }, opts: options{servingNamespace: "allowed", storeName: "evidence", maxEvidenceBytes: 1 << 20},
+				catalog: func(context.Context) (servingkube.CatalogRead, error) { return read, nil },
+				opts:    options{servingNamespace: "allowed", storeName: "evidence", maxEvidenceBytes: 1 << 20},
 			}
 			if active && mode != "active missing plan" {
 				raw, err := plan.CanonicalJSON()

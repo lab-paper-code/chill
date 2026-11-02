@@ -175,7 +175,10 @@ func authorizeQueryResources(
 		resourceVerb = queryGetVerb
 	}
 	for _, resource := range resources {
-		if err := authorizer.AuthorizeResource(ctx, principal, authorizationv1.ResourceAttributes{Namespace: namespace, Verb: resourceVerb, Group: "edge.dacs.io", Version: "v1alpha1", Resource: resource, Name: request.PathValue("name")}); err != nil {
+		if err := authorizer.AuthorizeResource(ctx, principal, authorizationv1.ResourceAttributes{
+			Namespace: namespace, Verb: resourceVerb, Group: "edge.dacs.io", Version: "v1alpha1",
+			Resource: resource, Name: request.PathValue("name"),
+		}); err != nil {
 			return err
 		}
 	}
