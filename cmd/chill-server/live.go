@@ -277,9 +277,6 @@ func liveDecisionExplanation(d serving.SchedulerDecision) string {
 
 func liveReservationExplanation(r serving.SchedulerReservation) string {
 	explanation := "이전 변경이 장치와 서비스 자원을 예약하고 있어요. 실행과 자원 반환 확인이 끝날 때까지 다른 변경에서 사용하지 않아요."
-	if len(r.RouteOnly) > 0 {
-		explanation = "이전 변경의 인스턴스 정리를 위해 자원을 예약하고 있어요. 준비된 인스턴스 사이의 요청 배분만 바꿀 수 있어요."
-	}
 	if r.Reason != "" {
 		explanation += " " + liveReasonExplanation(r.Reason)
 	}

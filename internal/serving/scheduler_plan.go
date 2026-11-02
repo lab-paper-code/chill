@@ -703,20 +703,12 @@ func schedulerReservedNode(snapshot SchedulerSnapshot, node NodeReference) bool 
 
 func schedulerFixedReason(snapshot SchedulerSnapshot, uid string) string {
 	for _, reservation := range snapshot.Reservations {
-		if slices.Contains(reservation.WorkloadUIDs, uid) && len(reservation.RouteOnly[uid]) == 0 {
+		if slices.Contains(reservation.WorkloadUIDs, uid) {
 			return "ReservedScope:" + reservation.Owner
 		}
 	}
 	for _, instance := range snapshot.Instances {
 		if (instance.WorkloadUID == uid || instance.OwnerWorkloadUID == uid) && !instance.Ready && !instance.Stopped && !instance.Terminated {
-			if slices.ContainsFunc(snapshot.Reservations, func(r SchedulerReservation) bool {
-				return len(r.RouteOnly[uid]) > 0 && r.Target != nil &&
-					slices.ContainsFunc(r.Target.Actions, func(a Action) bool {
-						return a.Kind == schedulerActionStop && a.Instance == instance.ID && a.Node == instance.Node
-					})
-			}) {
-				continue // An unconfirmed retiree remains owned, never route capacity.
-			}
 			return "UnconfirmedInstance:" + instance.ID
 		}
 	}

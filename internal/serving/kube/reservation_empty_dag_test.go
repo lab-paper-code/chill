@@ -22,7 +22,7 @@ func TestEmptyRouteAdmissionAC38(t *testing.T) {
 			}
 			c.launch(target, SchedulerControllerConfig{})
 			if kind == "" || kind == operationStop {
-				if len(c.runs) != 0 || len(c.reservationsLocked(c.state.Snapshot)) != 0 {
+				if len(c.runs) != 0 || len(c.reservationsLocked()) != 0 {
 					t.Fatal("empty route/unproved retirement acquired ownership")
 				}
 			} else {
@@ -43,7 +43,7 @@ func TestEmptyRouteAdmissionReplansWithoutOwnershipAC38(t *testing.T) {
 	for range 2 {
 		c.launch(target, SchedulerControllerConfig{})
 		c.reconcileSnapshot(c.state.Snapshot, time.Now(), time.Minute)
-		if len(c.runs) != 0 || len(c.reservationsLocked(c.state.Snapshot)) != 0 {
+		if len(c.runs) != 0 || len(c.reservationsLocked()) != 0 {
 			t.Fatal("empty declaration left a parent, child, or reservation")
 		}
 	}
@@ -110,7 +110,7 @@ func TestEmptyRouteNotReadyAndRetirementAC38(t *testing.T) {
 		target.Actions = append(target.Actions, serving.Action{ID: "retire", Kind: operationStop, DependsOn: []string{"noop"}})
 		c.launch(target, SchedulerControllerConfig{})
 		c.reconcileSnapshot(c.state.Snapshot, time.Now(), time.Minute)
-		if len(c.runs) != 0 || len(c.reservationsLocked(c.state.Snapshot)) != 0 {
+		if len(c.runs) != 0 || len(c.reservationsLocked()) != 0 {
 			t.Fatalf("ready=%d: unproved retirement acquired ownership", ready)
 		}
 	}
@@ -123,7 +123,7 @@ func TestReservationReasonsDeterministicAC38(t *testing.T) {
 	}
 	want := "a: missing proof; z: missing proof"
 	for range 100 {
-		if got := c.reservationsLocked(serving.SchedulerSnapshot{})[0].Reason; got != want {
+		if got := c.reservationsLocked()[0].Reason; got != want {
 			t.Fatalf("nondeterministic blocker %q", got)
 		}
 	}
@@ -138,7 +138,7 @@ func TestStateReportsCurrentReservations(t *testing.T) {
 	}
 	c := &SchedulerController{runs: map[string]*actionRun{"reset": run}}
 	c.state.Snapshot = serving.SchedulerSnapshot{At: at}
-	c.state.Snapshot.Reservations = c.reservationsLocked(c.state.Snapshot)
+	c.state.Snapshot.Reservations = c.reservationsLocked()
 	c.state.Decision.At = at
 	for _, status := range []string{nativeOperationRunning, nativeOperationPartial, nativeOperationComplete} {
 		run.action.Status = status

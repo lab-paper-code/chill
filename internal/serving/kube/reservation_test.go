@@ -466,7 +466,7 @@ func mutateTerminalPreparationEvidence(evidence string, nodes []core.Node, pods 
 	}
 }
 
-func TestFailedCleanupAdoptsRegisteredRouteRefreshReceiptAC38(t *testing.T) {
+func TestFailedOwnerAdoptsRegisteredRouteReceiptAC38(t *testing.T) {
 	for _, evidence := range []string{"registered", "unregistered", staleEvidence, "active", "other-owner"} {
 		t.Run(evidence, func(t *testing.T) {
 			pod, node, profile, _ := observerSourceFixture()
@@ -489,8 +489,8 @@ func TestFailedCleanupAdoptsRegisteredRouteRefreshReceiptAC38(t *testing.T) {
 			refresh := &actionRun{owner: target.ID, scope: scope, action: serving.Action{ID: "refresh", Kind: operationRoute, Status: nativeOperationComplete},
 				result: &OperationResult{Operation: Operation{Kind: operationRoute, WorkloadUID: "workload", Target: refreshTarget},
 					Status: nativeOperationComplete, EndedAt: ended}}
-			parent := &actionRun{owner: target.ID, reserved: true, scope: scope, cleanup: true, cleanupRoutes: map[string]*actionRun{"workload": refresh},
-				routeReceipts: map[string]*actionRun{"workload": refresh},
+			parent := &actionRun{owner: target.ID, reserved: true, scope: scope,
+				routeReceipts: map[string]*actionRun{refresh.action.ID: refresh},
 				action:        serving.Action{Kind: transitionRunKind, Status: nativeOperationFailed},
 				result:        &OperationResult{Operation: Operation{Kind: transitionRunKind, Target: target}, Status: nativeOperationFailed, EndedAt: ended.Add(time.Second), Error: "cleanup failed"}}
 			handoff.proofParent, cleanup.proofParent, refresh.proofParent = parent, parent, parent

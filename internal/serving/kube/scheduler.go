@@ -89,8 +89,6 @@ type actionRun struct {
 	returnObserved       bool
 	prepareIdentity      string
 	inheritedReservation bool
-	cleanup              bool
-	cleanupRoutes        map[string]*actionRun
 	routeReceipts        map[string]*actionRun
 	mayTouch             map[string]bool
 	proofParent          *actionRun
@@ -242,7 +240,7 @@ func (c *SchedulerController) State() SchedulerControllerState {
 	defer c.mu.Unlock()
 	result := c.state
 	result.Actions = c.actionsLocked(time.Now())
-	result.Snapshot.Reservations = c.reservationsLocked(result.Snapshot)
+	result.Snapshot.Reservations = c.reservationsLocked()
 	result.Results = append([]OperationResult(nil), c.state.Results...)
 	result.CostIssues = c.config.CostIssues
 	return result
@@ -461,7 +459,7 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 		}
 	}
 	snapshot.Actions = c.actionsLocked(now)
-	snapshot.Reservations = c.reservationsLocked(snapshot)
+	snapshot.Reservations = c.reservationsLocked()
 	snapshot.Replacements = slices.Clone(c.replacements)
 	return snapshot, lost
 }
@@ -517,9 +515,6 @@ func (c *SchedulerController) reconcileOwnersLocked(snapshot serving.SchedulerSn
 			continue
 		}
 		target := parent.result.Operation.Target
-		if !parent.cleanup {
-			parent.cleanup = c.cleanupReadyLocked(parent, snapshot)
-		}
 		failedEffects, failed := c.failTargetLocked(snapshot, target, now)
 		lost = append(lost, failedEffects...)
 		if failed {
@@ -554,17 +549,7 @@ func (c *SchedulerController) reconcileOwnersLocked(snapshot serving.SchedulerSn
 func (c *SchedulerController) failTargetLocked(snapshot serving.SchedulerSnapshot, goal *serving.SchedulerCandidate, now time.Time) ([]OperationResult, bool) {
 	var lost []OperationResult
 	failed := false
-	actions := goal.Actions
-	parent := c.runs[transitionRunKind+"/"+goal.ID]
-	if parent != nil && len(parent.cleanupRoutes) > 0 {
-		actions = slices.Clone(actions)
-		for _, refresh := range parent.cleanupRoutes {
-			if !slices.ContainsFunc(actions, func(a serving.Action) bool { return a.ID == refresh.action.ID }) {
-				actions = append(actions, refresh.action)
-			}
-		}
-	}
-	for _, desired := range actions {
+	for _, desired := range goal.Actions {
 		if desired.From == readySubsetRoute || desired.From == externalActionSource {
 			continue
 		}
@@ -572,24 +557,8 @@ func (c *SchedulerController) failTargetLocked(snapshot serving.SchedulerSnapsho
 		if run == nil || run.action.Status == nativeOperationRunning || run.action.Status == nativeOperationCancel || run.result == nil {
 			continue
 		}
-		proof := run
-		if desired.Kind == operationRoute && parent != nil && len(parent.cleanupRoutes) > 0 && run.result.Operation.Target != nil {
-			var uids []string
-			for uid := range run.result.Operation.Target.Routing {
-				if run.result.Operation.controlsWorkload(uid) && (parent.cleanupRoutes[uid] == nil || parent.cleanupRoutes[uid] == run) {
-					uids = append(uids, uid)
-				}
-			}
-			if len(uids) == 0 {
-				continue // Only these UIDs' newer ACKs superseded this receipt.
-			}
-			scopedRun, scopedResult := *run, *run.result
-			scopedResult.Operation.Target = controlledTarget(Operation{Target: run.result.Operation.Target, WorkloadUIDs: uids})
-			scopedRun.result = &scopedResult
-			proof = &scopedRun
-		}
 		// Fixed lowering is undone by the goal's own raise of the same Node.
-		if desired.RouteTarget == nil && !desired.Fixed && run.result.Status == nativeOperationComplete && !c.actionEffectPresent(snapshot, proof) && !c.actionEffectUnknown(snapshot, proof) {
+		if desired.RouteTarget == nil && !desired.Fixed && run.result.Status == nativeOperationComplete && !c.actionEffectPresent(snapshot, run) && !c.actionEffectUnknown(snapshot, run) {
 			result := *run.result
 			result.Status, result.Error, result.EndedAt = nativeOperationFailed, "completed effect lost", now
 			run.result, run.action.Status, run.action.Reason = &result, nativeOperationFailed, result.Error
@@ -951,19 +920,12 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.launchFailedPreparationCleanupLocked(config)
-	parents := c.launchRunningParentsLocked(config, false)
+	c.launchRunningParentsLocked(config, false)
 	if len(target.Actions) == 0 {
 		return
 	}
 	id := transitionRunKind + "/" + target.ID
 	if c.runs[id] != nil {
-		return
-	}
-	target, refreshes := c.cleanupTargetsLocked(target, parents)
-	for _, refresh := range refreshes {
-		c.launchTargetLocked(refresh, config)
-	}
-	if len(target.Actions) == 0 {
 		return
 	}
 	if !slices.ContainsFunc(target.Actions, func(action serving.Action) bool {

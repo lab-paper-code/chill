@@ -383,7 +383,7 @@ func testReadySubsetACKAndSkippedBridgeProgress(t *testing.T, pendingSibling boo
 	if parent.action.Status != wantStatus || parent.reserved != pendingSibling {
 		t.Fatalf("owner status=%s reserved=%t, want status=%s reserved=%t", parent.action.Status, parent.reserved, wantStatus, pendingSibling)
 	}
-	for _, reservation := range c.reservationsLocked(c.state.Snapshot) {
+	for _, reservation := range c.reservationsLocked() {
 		if strings.Contains(reservation.Reason, bridge.ID+":") {
 			t.Fatalf("consumed bridge reported missing proof: %s", reservation.Reason)
 		}
