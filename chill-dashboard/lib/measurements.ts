@@ -63,6 +63,7 @@ export function measurementReasonSummary(reason:string) {
     MeasurementEvidenceMissing:"측정 근거 없음",
     Insufficient:"채택 근거 부족",
     Accepted:"측정 근거 채택",
+    CatalogUnavailable:"카탈로그 조회 불가",
   }
   if(projectionReasons[reason])return projectionReasons[reason]
   if(/No verified catalog profile/i.test(reason))return "현재 조건의 검증된 프로파일 없음"

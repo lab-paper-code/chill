@@ -398,6 +398,16 @@ test("request and run summaries translate dynamic reasons and retain unknown tex
   assert.match(runs,/데이터셋/)
 })
 
+test("failed requests retain a separate catalog-unavailable status after their failure reason",()=>{
+  const failure={code:"MeasurementFailed",message:"native preparation Pod failed"}
+  const catalog={code:"CatalogUnavailable",message:"serving catalog is unavailable"}
+  const html=renderRequestList("requests",{...plan,status:{phase:"Failed"},assessment:{...retainedAssessment,reasons:[catalog],failureSummary:[failure]}})
+  assert.match(html,/<li>모델 준비 실패<\/li><li>카탈로그 상태: 카탈로그 조회 불가<\/li>/)
+  assert.doesNotMatch(html,/상세 사유: 원문|serving catalog is unavailable/)
+  const complete=renderRequestList("requests",{...plan,assessment:{...retainedAssessment,reasons:[catalog]}})
+  assert.match(complete,/카탈로그 상태: 카탈로그 조회 불가/)
+})
+
 const retainedAssessment:MeasurementAssessment={status:"complete",displayStatus:"usable",label:"측정 완료",reasons:[],execution:null,evidence:{available:true,accepted:true,reasons:[]},checklist:{criteriaMet:null,version:"result-checklist.v1",checks:[]},scope:{schedulerUsed:true,reused:false,facts:[]}}
 const retainedProgress={basis:"requested",target:[4],measured:[4],criteriaMet:[],missing:[],inProgress:[],unknown:[]}
 const retainedRow:ResultRow={id:"retained",rowKind:"direct",profileId:"profile",sourceProfileId:null,batch:4,condition:{metricSource:{nodeName:"node"}},p95Milliseconds:12,latencySampleCount:100,idleWatts:2,activeWatts:3,totalJoulesPerItem:4,incrementalJoulesPerItem:1,confidence:null,activeTrialCount:3,idleTrialCount:3,completedItems:100,completedCalls:25,powerSource:null,assessment:retainedAssessment,sources:[],missingReasons:[],reuse:null}

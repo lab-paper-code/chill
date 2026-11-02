@@ -37,7 +37,7 @@ export function MeasurementRequestsPage({name,namespace:routeNamespace}:{name?:s
       {key:"status",label:"측정 / 현재 사용 / 품질",value:p=><MeasurementStatus assessment={p.assessment}/>},
       {key:"completed",label:"완료 회차",unit:"회",numeric:true,value:p=>p.status?.completedTrials??"미제공"},
       {key:"planned",label:"예정 회차",unit:"회",numeric:true,value:()=>"미제공"},
-      {key:"reason",label:"사유",value:p=>{const reasons=p.assessment?.failureSummary?.length?p.assessment.failureSummary:p.assessment?.reasons;return reasons?.length?<ul className="space-y-2">{reasons.map((reason,index)=><li key={index}>{measurementReasonSummary(reason.message||reason.code)}</li>)}</ul>:"미제공"}},
+      {key:"reason",label:"사유",value:p=>{const reasons=p.assessment?.failureSummary?.length?[...p.assessment.failureSummary,...(p.assessment.reasons??[]).filter(reason=>reason.code==="CatalogUnavailable")]:p.assessment?.reasons;return reasons?.length?<ul className="space-y-2">{reasons.map((reason,index)=><li key={index}>{reason.code==="CatalogUnavailable"?`카탈로그 상태: ${measurementReasonSummary(reason.code)}`:measurementReasonSummary(reason.message||reason.code)}</li>)}</ul>:"미제공"}},
       {key:"created",label:"생성 (KST)",sortValue:p=>p.metadata.creationTimestamp,value:p=>formatMeasurementTime(p.metadata.creationTimestamp)},
     ]}/></QueryGate>
     <SourceJSON value={query.data} title="요청 목록 원본"/>
