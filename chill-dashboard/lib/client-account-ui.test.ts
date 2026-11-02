@@ -18,6 +18,7 @@ test("access form exposes token storage and expiry as facts without changing aut
     "@/components/ui/dialog":{Dialog:wrap,DialogContent:wrap,DialogDescription:wrap,DialogHeader:wrap,DialogTitle:wrap,DialogTrigger:wrap},
     "@/components/brand":{BrandMark:()=>null,FinField:()=>null},"lucide-react":{KeyRound:()=>null},
     "@/lib/scheduler":{},"@/lib/session-token":{},
+    "@/lib/measurement-summary":{},
   }
   const source=readFileSync(new URL("./client.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText

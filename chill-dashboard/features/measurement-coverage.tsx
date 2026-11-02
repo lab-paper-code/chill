@@ -3,7 +3,7 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useRef } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { ApiError, useChillQuery, useSession } from "@/lib/client"
+import { ApiError, decodeResponse, useChillQuery, useSession } from "@/lib/client"
 import { coverageQuality, coverageQualityReasons, coverageFilterVisible, coverageSupportReasons, coverageMeasurementStatus, coverageMeasurementStates, coverageFailureHref, coverageProfileQuery, measurementAge, coverageSelection, coveragePathVisible, coverageWatts, coverageModes, coverageVariant, coverageProgress, coverageBatchState, coverageRequestHref, coverageScopeCounts, deviceLabel, conditionLabel, type CompatibilityRead } from "@/lib/measurement-coverage"
 import type { BatchProgress, InventoryView, MeasurementPlanList, ModelCompatibility, MeasurementCoverageSummaryResponse as MeasurementCoverageResponse, MeasurementCoverageCell, ProfilesView, RunsView } from "@/lib/read-types"
 import { parseMeasurementJSON } from "@/lib/measurement-summary"
@@ -20,7 +20,7 @@ async function readPage<T>(path:string,token:string,signal:AbortSignal):Promise<
   const response=await fetch(`/api/chill/${path}`,{headers:{Authorization:`Bearer ${token}`},signal,cache:"no-store",credentials:"omit"})
   const body=await response.text()
   if(!response.ok) throw new ApiError(response.status,body,null)
-  return parseMeasurementJSON(body) as T
+  return decodeResponse(body,parseMeasurementJSON) as T
 }
 export function useCoverageInventory() {
   const {token,config}=useSession()
@@ -80,12 +80,13 @@ export function useMeasurementCoverage(namespace:string,enabled=true) {
     const response=await fetch(`/api/chill/${path}`,{headers:{Authorization:`Bearer ${token}`},signal,cache:"no-store",credentials:"omit"})
     const text=await response.text();let data:unknown;try{data=JSON.parse(text)}catch{data=null}
     if(!response.ok)throw new ApiError(response.status,text,data)
-    return parseMeasurementJSON(text) as MeasurementCoverageResponse
+    return decodeResponse(text,parseMeasurementJSON) as MeasurementCoverageResponse
   }})
   return {...result,data:result.error?undefined:result.data}
 }
 export function CoverageError({error,retry}:{error:ApiError|null;retry:()=>void}) {
-  return <section role={error?"alert":"status"} className="coverage-message"><p>{error?error.status===503?"서버가 커버리지를 아직 준비하지 못했습니다. 잠시 후 다시 조회하세요.":`커버리지 조회 실패 (HTTP ${error.status})로 운영 가능 범위와 다음 조치를 확인할 수 없습니다.`:"서버에서 커버리지를 준비 중입니다. 준비되지 않으면 자동으로 다시 조회합니다."}</p>{error&&<><p>{error.status===404?"서버의 커버리지 기능 배포 상태를 관리자에게 확인하세요.":"측정 요청 목록은 별도로 확인할 수 있습니다."}</p><details><summary>오류 코드·원문</summary><pre className="whitespace-pre-wrap break-all">{error.body}</pre></details><Button variant="outline" onClick={retry}>다시 조회</Button><Link href="/measurements/requests">측정 요청 목록 확인</Link></>}</section>
+  const summaryInvalid=(error?.data as {code?:unknown}|null)?.code==="MeasurementSummaryInvalid"
+  return <section role={error?"alert":"status"} className="coverage-message"><p>{error?summaryInvalid?error.body:error.status===503?"서버가 커버리지를 아직 준비하지 못했습니다. 잠시 후 다시 조회하세요.":`커버리지 조회 실패 (HTTP ${error.status})로 운영 가능 범위와 다음 조치를 확인할 수 없습니다.`:"서버에서 커버리지를 준비 중입니다. 준비되지 않으면 자동으로 다시 조회합니다."}</p>{error&&<><p>{error.status===404?"서버의 커버리지 기능 배포 상태를 관리자에게 확인하세요.":"측정 요청 목록은 별도로 확인할 수 있습니다."}</p><details><summary>오류 코드·원문</summary><pre className="whitespace-pre-wrap break-all">{error.body}</pre></details><Button variant="outline" onClick={retry}>다시 조회</Button><Link href="/measurements/requests">측정 요청 목록 확인</Link></>}</section>
 }
 export function MeasurementCoveragePage() {
   const params=useSearchParams(),router=useRouter(),{config}=useSession(),namespace=params.get("namespace")??config.namespace
