@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"encoding/json"
-	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 )
 
 // Reuse the real catalog's valid synthetic fixture instead of maintaining a
@@ -27,45 +28,12 @@ func TestSyntheticCatalogMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(scratch)
-	archive := exec.Command("git", "archive", "9ccff96e")
-	archive.Dir = root
-	rd, err := archive.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = archive.Start(); err != nil {
-		t.Fatal(err)
-	}
-	tr := tar.NewReader(rd)
-	for {
-		h, err := tr.Next()
-		if err == io.EOF {
-			break
+	t.Cleanup(func() {
+		if err := os.RemoveAll(scratch); err != nil {
+			t.Error(err)
 		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		if h.Typeflag != tar.TypeReg {
-			continue
-		}
-		p := filepath.Join(scratch, h.Name)
-		if err = os.MkdirAll(filepath.Dir(p), 0700); err != nil {
-			t.Fatal(err)
-		}
-		f, err := os.Create(p)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = io.Copy(f, tr)
-		_ = f.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err = archive.Wait(); err != nil {
-		t.Fatal(err)
-	}
+	})
+	extractSyntheticCatalogRepository(t, root, scratch)
 	callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var fixture struct {
 			Objects map[string][]byte `json:"objects"`
@@ -152,6 +120,9 @@ func TestSyntheticCatalogMigration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("catalog migration: %v\n%s", err, output)
 	}
+}
+
+func TestTransformPreservesNumericLexemesAndRuntimeCPU(t *testing.T) {
 	// json.RawMessage preserves numeric lexemes, including exponent and trailing zeroes.
 	b := []byte(`{"schemaVersion":"chill.dacs.io/profiling-raw-measurement.v1alpha8","runConfig":{"schemaVersion":"chill.dacs.io/profiling-run-config.v1alpha17","cpu":{}},"runtime":{"schemaVersion":"chill.dacs.io/batch-characterization.v1alpha8","cpuContract":{"cgroupCPUMax":"400000 100000","ortIntraOpThreads":4,"ortInterOpThreads":1,"processCPUSeconds":1.2300e+04},"repetitionResults":[{"latencyMs":[0.000100,2e-03]}]}}`)
 	converted, err := transform(b)
@@ -168,6 +139,9 @@ func TestSyntheticCatalogMigration(t *testing.T) {
 	if !bytes.Equal(child(old, "runtime")["cpuContract"], child(next, "runtime")["cpuContract"]) {
 		t.Fatal("runtime CPU observations changed")
 	}
+}
+
+func TestExpectedProfilesGroupsOnlyCPUChanges(t *testing.T) {
 	full := []object{
 		{"id": encode("old"), "measuredAt": encode("2026-10-22T00:00:00Z"), "condition": json.RawMessage(`{"runtimeImage":"same","cpu":{"limit":"1"}}`), "metricSource": encode(object{})},
 		{"id": encode("new"), "measuredAt": encode("2026-10-24T00:00:00Z"), "condition": json.RawMessage(`{"runtimeImage":"same","cpu":{"limit":"4"}}`), "metricSource": encode(object{})},
@@ -180,6 +154,48 @@ func TestSyntheticCatalogMigration(t *testing.T) {
 	selected, merges, err = expectedProfiles(full)
 	if err != nil || len(selected) != 2 || len(merges) != 0 {
 		t.Fatal("runtime image was incorrectly ignored", err, selected, merges)
+	}
+}
+
+func extractSyntheticCatalogRepository(t *testing.T, root, scratch string) {
+	t.Helper()
+	archive := exec.Command("git", "archive", "9ccff96e")
+	archive.Dir = root
+	rd, err := archive.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = archive.Start(); err != nil {
+		t.Fatal(err)
+	}
+	tr := tar.NewReader(rd)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h.Typeflag != tar.TypeReg {
+			continue
+		}
+		p := filepath.Join(scratch, h.Name)
+		if err = os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+			t.Fatal(err)
+		}
+		f, err := os.Create(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = io.Copy(f, tr)
+		_ = f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = archive.Wait(); err != nil {
+		t.Fatal(err)
 	}
 }
 

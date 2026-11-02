@@ -39,12 +39,12 @@ func TestProposeSLOSplitsFastFromSlowNodes(t *testing.T) {
 	snap := serving.SchedulerSnapshot{}
 	option := func(node string, d bool, uid string, samples ...float64) {
 		ref := serving.NodeReference{Name: node, UID: node + "-uid"}
-		// Each option has its own runtime image, so a d matches one option.
-		cond := profilederivation.CurvePlanSpec{PowerMode: "fixed", RuntimeImage: fmt.Sprint("image-", len(snap.Options)), LogicalModel: "plc"}
+		// Power mode scopes d; image differences are measurement history only.
+		cond := profilederivation.CurvePlanSpec{PowerMode: fmt.Sprint("mode-", len(snap.Options)), RuntimeImage: "current-image", LogicalModel: "plc"}
 		p := &serving.Profile{ID: node, Condition: cond, Batches: []serving.BatchProfile{{Batch: 1, DurationNanos: samples}, {Batch: 2, DurationNanos: []float64{1}}}}
 		snap.Options = append(snap.Options, serving.SchedulerOption{Instance: serving.SchedulerInstance{Node: ref, Profile: p, MaxBatch: 2}, CompatibleUIDs: []string{uid}})
 		if d {
-			snap.DispatchOccupancy = append(snap.DispatchOccupancy, serving.DispatchOccupancy{Node: ref, PowerMode: "fixed", RuntimeImage: cond.RuntimeImage, Model: "plc", PerRequest: time.Millisecond})
+			snap.DispatchOccupancy = append(snap.DispatchOccupancy, serving.DispatchOccupancy{Node: ref, PowerMode: cond.PowerMode, RuntimeImage: "historical-image", Model: "plc", PerRequest: time.Millisecond})
 		}
 	}
 	spread := make([]float64, 100)

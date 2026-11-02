@@ -1,5 +1,6 @@
 // coverage-migrate is disposable tooling for the d4cbc15b -> 9ccff96e cutover.
 // Run from the repository root: GOTMPDIR="$PWD/hack" go run ./hack/coverage-migrate --help
+// Read/response close and scratch cleanup failures are returned to the caller.
 package main
 
 import (
@@ -49,7 +50,11 @@ func str(m object, k string) string     { var s string; _ = json.Unmarshal(m[k],
 func child(m object, k string) object   { v, _ := decode(m[k]); return v }
 func items(m object, k string) []object { var v []object; _ = json.Unmarshal(m[k], &v); return v }
 
-const domain = "chill.dacs.io/"
+const (
+	domain                           = "chill.dacs.io/"
+	profilingRunsResource            = "profilingruns"
+	batchEnergyOptimizationsResource = "batchenergyoptimizations"
+)
 
 var versions = map[string]string{
 	domain + "profiling-run-config.v1alpha17":             domain + "profiling-run-config.v1alpha18",
@@ -159,19 +164,19 @@ type migrator struct {
 	rawCount, executionCount, planCount, resultCount, observed, missing int
 }
 
-func (m *migrator) get(path string) ([]byte, error) {
+func (m *migrator) get(path string) (b []byte, err error) {
 	res, err := m.kube.Get(m.host + path)
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
-	b, err := io.ReadAll(res.Body)
+	defer func() { err = errors.Join(err, res.Body.Close()) }()
+	b, err = io.ReadAll(res.Body)
 	if res.StatusCode != 200 {
 		return nil, fmt.Errorf("GET %s: %s", path, res.Status)
 	}
 	return b, err
 }
-func (m *migrator) read(r reference) ([]byte, error) {
+func (m *migrator) read(r reference) (b []byte, err error) {
 	if !strings.HasPrefix(r.Key, m.prefix) {
 		return nil, fmt.Errorf("key %s outside prefix %s", r.Key, m.prefix)
 	}
@@ -179,8 +184,8 @@ func (m *migrator) read(r reference) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rd.Close()
-	b, err := io.ReadAll(io.LimitReader(rd, 64<<20+1))
+	defer func() { err = errors.Join(err, rd.Close()) }()
+	b, err = io.ReadAll(io.LimitReader(rd, 64<<20+1))
 	if len(b) > 64<<20 {
 		return nil, errors.New("object exceeds catalog's 64 MiB bound")
 	}
@@ -368,9 +373,9 @@ func resourcePath(resource, ns string) string {
 // For a partial/full rerun, load the old catalog through the original immutable
 // roots. This only rewinds the in-memory verification snapshot, never the CRDs.
 func (m *migrator) originalStatuses(snapshot map[string]object) error {
-	for _, resource := range []string{"profilingruns", "batchenergyoptimizations"} {
+	for _, resource := range []string{profilingRunsResource, batchEnergyOptimizationsResource} {
 		field := "evidence"
-		if resource == "batchenergyoptimizations" {
+		if resource == batchEnergyOptimizationsResource {
 			field = "result"
 		}
 		objects := items(snapshot[resource], "items")
@@ -399,10 +404,10 @@ func (m *migrator) originalStatuses(snapshot map[string]object) error {
 	return nil
 }
 func (m *migrator) snapshot() error {
-	for _, resource := range []string{"profilingruns", "batchenergyoptimizations", "modelloadedidlebaselines", "modelspecs", "deviceclasses", "datasets", "preprocessors", "nodes", "configmaps"} {
+	for _, resource := range []string{profilingRunsResource, batchEnergyOptimizationsResource, "modelloadedidlebaselines", "modelspecs", "deviceclasses", "datasets", "preprocessors", "nodes", "configmaps"} {
 		ns := ""
 		switch resource {
-		case "profilingruns", "batchenergyoptimizations", "modelloadedidlebaselines", "configmaps":
+		case profilingRunsResource, batchEnergyOptimizationsResource, "modelloadedidlebaselines", "configmaps":
 			ns = m.namespace
 		}
 		b, err := m.get(resourcePath(resource, ns))
@@ -418,7 +423,7 @@ func (m *migrator) snapshot() error {
 	return nil
 }
 func (m *migrator) prepare() {
-	for _, resource := range []string{"profilingruns", "batchenergyoptimizations"} {
+	for _, resource := range []string{profilingRunsResource, batchEnergyOptimizationsResource} {
 		list := m.lists[resource]
 		objects := items(list, "items")
 		withRef := 0
@@ -426,7 +431,7 @@ func (m *migrator) prepare() {
 			meta := child(obj, "metadata")
 			status := child(obj, "status")
 			field := "evidence"
-			if resource != "profilingruns" {
+			if resource != profilingRunsResource {
 				field = "result"
 			}
 			r := ref(status[field])
@@ -434,7 +439,7 @@ func (m *migrator) prepare() {
 				continue
 			}
 			withRef++
-			if strings.HasSuffix(r.Key, ".shared-cpu.json") || (resource == "profilingruns" && r.SchemaVersion == domain+"profiling-execution-evidence.v1alpha16") {
+			if strings.HasSuffix(r.Key, ".shared-cpu.json") || (resource == profilingRunsResource && r.SchemaVersion == domain+"profiling-execution-evidence.v1alpha16") {
 				continue
 			}
 			next, err := m.convert(r)
@@ -682,7 +687,7 @@ func (m *migrator) saveBackup() error {
 	}
 	return closeErr
 }
-func (m *migrator) patch(s statusBackup, status json.RawMessage) error {
+func (m *migrator) patch(s statusBackup, status json.RawMessage) (err error) {
 	path := resourcePath(s.Resource, m.namespace) + "/" + s.Name
 	b, err := m.get(path)
 	if err != nil {
@@ -706,7 +711,7 @@ func (m *migrator) patch(s statusBackup, status json.RawMessage) error {
 		}
 		return errors.New("status changed since backup; refusing overwrite")
 	}
-	patch := encode([]map[string]any{{"op": "test", "path": "/metadata/resourceVersion", "value": str(meta, "resourceVersion")}, {"op": "replace", "path": "/status", "value": json.RawMessage(status)}})
+	patch := encode([]map[string]any{{"op": "test", "path": "/metadata/resourceVersion", "value": str(meta, "resourceVersion")}, {"op": "replace", "path": "/status", "value": status}})
 	req, err := http.NewRequest("PATCH", m.host+path+"/status", bytes.NewReader(patch))
 	if err != nil {
 		return err
@@ -716,7 +721,7 @@ func (m *migrator) patch(s statusBackup, status json.RawMessage) error {
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
+	defer func() { err = errors.Join(err, res.Body.Close()) }()
 	if res.StatusCode != 200 {
 		b, _ := io.ReadAll(res.Body)
 		return fmt.Errorf("patch: %s %s", res.Status, b)
@@ -791,10 +796,10 @@ func (m *migrator) writeObjects() {
 	for _, s := range m.changes {
 		status, _ := decode(s.After)
 		root := ref(status["result"])
-		if s.Resource == "profilingruns" {
+		if s.Resource == profilingRunsResource {
 			root = ref(status["evidence"])
 		}
-		if s.Resource == "batchenergyoptimizations" {
+		if s.Resource == batchEnergyOptimizationsResource {
 			old, _ := decode(s.Status)
 			if c, ok := m.mappings[mapKey(ref(old["result"]))]; ok {
 				b, err := m.converted(c)
@@ -827,7 +832,7 @@ func main() {
 		os.Exit(1)
 	}
 }
-func run() error {
+func run() (err error) {
 	var namespace, endpoint, prefix, backupPath, failPath, restore, baseline string
 	var apply, dry bool
 	var free, capacity int64
@@ -882,67 +887,9 @@ A predicted usage >=86% fails apply (the store previously failed at 86%).`)
 		_ = os.WriteFile(failPath, []byte(text), 0600)
 	}()
 	if restore != "" {
-		b, err := os.ReadFile(restore)
-		if err != nil {
-			return err
-		}
-		var saved backup
-		if err = json.Unmarshal(b, &saved); err != nil {
-			return err
-		}
-		if saved.Namespace != namespace {
-			return errors.New("backup namespace mismatch")
-		}
-		fmt.Printf("restore statuses=%d dry_run=%t\n", len(saved.Statuses), !apply)
-		if apply {
-			for i := len(saved.Statuses) - 1; i >= 0; i-- {
-				s := saved.Statuses[i]
-				if err := m.patch(s, s.Status); err != nil {
-					m.fail(s.Resource+"/"+s.Name, err)
-				}
-			}
-		}
-		if len(m.failures) > 0 {
-			return errors.New("restore failures")
-		}
-		return nil
+		return m.restoreStatuses(restore)
 	}
-	deployment, err := m.get("/apis/apps/v1/namespaces/" + namespace + "/deployments/chill-serving-entrypoint")
-	if err != nil {
-		return err
-	}
-	dep, _ := decode(deployment)
-	containers := items(child(child(child(dep, "spec"), "template"), "spec"), "containers")
-	args := map[string]string{}
-	for _, container := range containers {
-		var aa []string
-		_ = json.Unmarshal(container["args"], &aa)
-		for _, arg := range aa {
-			p := strings.SplitN(strings.TrimPrefix(arg, "--"), "=", 2)
-			if len(p) == 2 {
-				args[p[0]] = p[1]
-			}
-		}
-	}
-	if endpoint == "" {
-		endpoint = args["store-endpoint"]
-	}
-	secretBytes, err := m.get("/api/v1/namespaces/" + namespace + "/secrets/" + args["store-credentials-secret"])
-	if err != nil {
-		return err
-	}
-	var secret struct {
-		Data map[string][]byte `json:"data"`
-	}
-	if err = json.Unmarshal(secretBytes, &secret); err != nil {
-		return err
-	}
-	tempDir, err := filepath.Abs("hack")
-	if err != nil {
-		return err
-	}
-	m.store, err = stores3.New(stores3.Config{LogicalStore: args["store-name"], Bucket: args["store-bucket"], Region: args["store-region"], Endpoint: endpoint, AccessKeyID: string(secret.Data["access-key"]), SecretAccessKey: string(secret.Data["secret-key"]), TempDir: tempDir})
-	if err != nil {
+	if err := m.configureStore(); err != nil {
 		return err
 	}
 	root, err := os.Getwd()
@@ -953,7 +900,7 @@ A predicted usage >=86% fails apply (the store previously failed at 86%).`)
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(scratch)
+	defer func() { err = errors.Join(err, os.RemoveAll(scratch)) }()
 	oldBinary, err := verifier(root, "d4cbc15b", scratch)
 	if err != nil {
 		return err
@@ -996,35 +943,7 @@ A predicted usage >=86% fails apply (the store previously failed at 86%).`)
 	if err := m.compareBaseline(baseline, after); err != nil {
 		return fmt.Errorf("captured live baseline: %w", err)
 	}
-	mismatches, missingProfiles := 0, 0
-	for id, b := range before.Batches {
-		a, ok := after.Batches[id]
-		if !ok {
-			missingProfiles++
-			if m.merges[id] == "" {
-				m.fail("profile/"+id, errors.New("profile omitted by new catalog selection"))
-			}
-			continue
-		}
-		if !equalJSON(b, a) {
-			mismatches++
-			m.fail("profile/"+id, errors.New("batch duration samples/energy changed"))
-		}
-	}
-	for id := range after.Batches {
-		if _, ok := before.Batches[id]; !ok {
-			m.fail("profile/"+id, errors.New("unexpected new profile"))
-		}
-	}
-	if before.Usable != 132 || after.Usable != before.Usable {
-		m.fail("coverage", fmt.Errorf("usable before=%d after=%d expected=132", before.Usable, after.Usable))
-	}
-	if !equalJSON(encode(before.Issues), encode(after.Issues)) {
-		m.fail("catalog", errors.New("catalog issues differ"))
-	}
-	if before.Retained != after.Retained {
-		m.fail("catalog", fmt.Errorf("retained measurement facts changed: %d -> %d", before.Retained, after.Retained))
-	}
+	mismatches, missingProfiles := m.compareCatalogs(before, after)
 	var disk int64
 	_ = filepath.Walk(scratch, func(_ string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() {
@@ -1053,4 +972,103 @@ A predicted usage >=86% fails apply (the store previously failed at 86%).`)
 	}
 	fmt.Printf("dry_run=%t statuses_to_update=%d failures=%d backup=%s\n", !apply, len(m.changes), len(m.failures), backupPath)
 	return nil
+}
+
+func (m *migrator) restoreStatuses(path string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var saved backup
+	if err = json.Unmarshal(b, &saved); err != nil {
+		return err
+	}
+	if saved.Namespace != m.namespace {
+		return errors.New("backup namespace mismatch")
+	}
+	fmt.Printf("restore statuses=%d dry_run=%t\n", len(saved.Statuses), !m.apply)
+	if m.apply {
+		for i := len(saved.Statuses) - 1; i >= 0; i-- {
+			s := saved.Statuses[i]
+			if err := m.patch(s, s.Status); err != nil {
+				m.fail(s.Resource+"/"+s.Name, err)
+			}
+		}
+	}
+	if len(m.failures) > 0 {
+		return errors.New("restore failures")
+	}
+	return nil
+}
+
+func (m *migrator) compareCatalogs(before, after verification) (mismatches, missingProfiles int) {
+	for id, b := range before.Batches {
+		a, ok := after.Batches[id]
+		if !ok {
+			missingProfiles++
+			if m.merges[id] == "" {
+				m.fail("profile/"+id, errors.New("profile omitted by new catalog selection"))
+			}
+			continue
+		}
+		if !equalJSON(b, a) {
+			mismatches++
+			m.fail("profile/"+id, errors.New("batch duration samples/energy changed"))
+		}
+	}
+	for id := range after.Batches {
+		if _, ok := before.Batches[id]; !ok {
+			m.fail("profile/"+id, errors.New("unexpected new profile"))
+		}
+	}
+	if before.Usable != 132 || after.Usable != before.Usable {
+		m.fail("coverage", fmt.Errorf("usable before=%d after=%d expected=132", before.Usable, after.Usable))
+	}
+	if !equalJSON(encode(before.Issues), encode(after.Issues)) {
+		m.fail("catalog", errors.New("catalog issues differ"))
+	}
+	if before.Retained != after.Retained {
+		m.fail("catalog", fmt.Errorf("retained measurement facts changed: %d -> %d", before.Retained, after.Retained))
+	}
+	return mismatches, missingProfiles
+}
+
+func (m *migrator) configureStore() error {
+	deployment, err := m.get("/apis/apps/v1/namespaces/" + m.namespace + "/deployments/chill-serving-entrypoint")
+	if err != nil {
+		return err
+	}
+	dep, _ := decode(deployment)
+	containers := items(child(child(child(dep, "spec"), "template"), "spec"), "containers")
+	args := map[string]string{}
+	for _, container := range containers {
+		var aa []string
+		_ = json.Unmarshal(container["args"], &aa)
+		for _, arg := range aa {
+			p := strings.SplitN(strings.TrimPrefix(arg, "--"), "=", 2)
+			if len(p) == 2 {
+				args[p[0]] = p[1]
+			}
+		}
+	}
+	endpoint := m.endpoint
+	if endpoint == "" {
+		endpoint = args["store-endpoint"]
+	}
+	secretBytes, err := m.get("/api/v1/namespaces/" + m.namespace + "/secrets/" + args["store-credentials-secret"])
+	if err != nil {
+		return err
+	}
+	var secret struct {
+		Data map[string][]byte `json:"data"`
+	}
+	if err = json.Unmarshal(secretBytes, &secret); err != nil {
+		return err
+	}
+	tempDir, err := filepath.Abs("hack")
+	if err != nil {
+		return err
+	}
+	m.store, err = stores3.New(stores3.Config{LogicalStore: args["store-name"], Bucket: args["store-bucket"], Region: args["store-region"], Endpoint: endpoint, AccessKeyID: string(secret.Data["access-key"]), SecretAccessKey: string(secret.Data["secret-key"]), TempDir: tempDir})
+	return err
 }
