@@ -1333,7 +1333,7 @@ def self_check():
             e5.save(folder / (prefix + '-state.json'), cpo.state())
         cpo.boundary = boundary
         class FixtureResources:
-            def __init__(self, io, owned, api_seconds):self.owned=owned
+            def __init__(self, io, owned, api_seconds, evidence):self.owned=owned
             def ready(self, minimum, deadline):return minimum<=2
             def poll(self, deadline):
                 stamp=(e5.dt.datetime.now(e5.dt.timezone.utc)+e5.dt.timedelta(seconds=60)).isoformat()
