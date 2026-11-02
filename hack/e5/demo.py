@@ -1047,6 +1047,8 @@ def self_check():
         config['stages'][-1] = {'id': 'C', 'parts': [{'id': 'high', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 20000)}, {'id': 'low', 'seconds': .001, 'rates': dict.fromkeys(ALIASES, 10000)}]}
         stages = schedule(config, e5)
         evaluation = json.loads((HERE / 'demo-config.e5.example.json').read_text())
+        evaluation['producerShards'] = dict.fromkeys(ALIASES, 1)
+        evaluation['evaluation'] = {'resources': {'cpu': '2', 'memory': '1Gi'}}
         try:
             schedule(evaluation, e5)
         except ValueError:
@@ -1897,6 +1899,7 @@ def self_check():
         assert len(capture_removed) == 3 and all(row['stopped'] for row in capture_phase['ownedProducerStops'])
         assert len(capture_phase['cleanupErrors']) == 3
         unknown = object.__new__(e5.CPO)
+        unknown.c = {}
         unknown.a = SimpleNamespace(row_tag='')
         unknown.out = root / 'unknown-cleanup'
         record = unknown.out / 'phase'
@@ -2027,6 +2030,7 @@ def self_check():
         # Active owner keep: reservations may clear before the running action.
         for label, clears_at, reset_error in (('idle', 0, None), ('clear', 25, None), ('timeout', None, None), ('failed', 0, 'result'), ('conflict', 0, '409'), ('stale', 2, None), ('snapshot-action', 2, None), ('normative-clear', 2, None), ('normative-timeout', None, None), ('late-state', 2, None)):
             cleanup = object.__new__(e5.CPO)
+            cleanup.c = {}
             cleanup.a = SimpleNamespace(row_tag='')
             cleanup.b = {'schema': 'e5-binding.v1' if label.startswith('normative') else 'demo-e5-binding.v1'}
             cleanup.out = root / ('cleanup-wait-' + label)
@@ -2096,6 +2100,7 @@ def self_check():
                 else:
                     raise AssertionError('Invalid finishResetWaitSeconds accepted')
         reset = object.__new__(e5.CPO)
+        reset.c = {}
         reset.a = SimpleNamespace(row_tag='')
         reset.b = {'schema': 'e5-binding.v1'}
         reset.out = root / 'reset'
