@@ -136,6 +136,7 @@ type PowerReadFailure struct {
 	Reason                string    `json:"reason"`
 	Message               string    `json:"message"`
 	MessageBytes          int       `json:"messageBytes,omitempty"`
+	MessageTruncated      bool      `json:"messageTruncated,omitempty"`
 }
 
 // ProcessIdentity is the exact serving process/container incarnation.

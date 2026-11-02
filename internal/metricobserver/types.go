@@ -73,9 +73,11 @@ type ThermalReading struct {
 // MetricIssue preserves a missing or invalid typed metric without converting
 // a successful power scrape into a whole-request failure.
 type MetricIssue struct {
-	Metric  string        `json:"metric"`
-	Reason  FailureReason `json:"reason"`
-	Message string        `json:"message"`
+	Metric           string        `json:"metric"`
+	Reason           FailureReason `json:"reason"`
+	Message          string        `json:"message"`
+	MessageBytes     int           `json:"messageBytes,omitempty"`
+	MessageTruncated bool          `json:"messageTruncated,omitempty"`
 }
 
 // Sample is one successfully received typed metric reading.
@@ -94,9 +96,9 @@ type Failure struct {
 	RequestLatencySeconds float64       `json:"requestLatencySeconds"`
 	Reason                FailureReason `json:"reason"`
 	Message               string        `json:"message"`
-	// MessageBytes records the original length when an oversized diagnostic
-	// explicitly fails observation; Message then contains its bounded prefix.
-	MessageBytes int `json:"messageBytes,omitempty"`
+	// MessageBytes and MessageTruncated explicitly identify a retained prefix.
+	MessageBytes     int  `json:"messageBytes,omitempty"`
+	MessageTruncated bool `json:"messageTruncated,omitempty"`
 }
 
 // Summary contains facts derived only from a Result's samples and failures.

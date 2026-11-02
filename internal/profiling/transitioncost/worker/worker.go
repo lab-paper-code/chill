@@ -178,6 +178,7 @@ func combine(raw transitioncost.RawObservation, power metricobserver.Result) tra
 			Reason:                string(failure.Reason),
 			Message:               failure.Message,
 			MessageBytes:          failure.MessageBytes,
+			MessageTruncated:      failure.MessageTruncated,
 		}
 	}
 	return raw

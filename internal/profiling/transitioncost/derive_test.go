@@ -392,6 +392,17 @@ func TestDeriveRetainsFailedPowerReadsWhenWindowQualityIsSufficient(t *testing.T
 	}
 }
 
+func TestDeriveRetainsExplicitlyTruncatedPowerDiagnostics(t *testing.T) {
+	frozen, raw, policy := validInputs()
+	raw.PowerFailures = []transitioncost.PowerReadFailure{{ObservedAt: testTime(5), RequestLatencySeconds: 0.125,
+		Reason: "RequestTimeout", MessageBytes: 140, MessageTruncated: true}}
+	result, err := transitioncost.Derive(frozen, raw, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertOutcome(t, result, transitioncost.VerdictAccepted, transitioncost.ReasonAccepted)
+}
+
 func TestDeriveRejectsExcessiveBoundaryUncertainty(t *testing.T) {
 	frozen, raw, policy := validInputs()
 	raw.MarkerBrackets.ApplyStartedAt.LastAbsentReceivedAt = testTimeMillis(1949)

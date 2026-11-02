@@ -160,14 +160,6 @@ func TestCaptureWatchdogAlignsEventsResultAndOuterEnvelopes(t *testing.T) {
 	frozen.Policy.ObserverStartOverheadSeconds = 1160
 	frozen.Policy.AttemptTimeoutOverheadSeconds = 1235
 	frozen.Policy.ActiveDeadlineOverheadSeconds = 1265
-	// A representative success-only result fits, but worst-case diagnostics
-	// do not: refuse before starting, without shortening the schedule.
-	if _, err := DeriveExecutionPlan(config, frozen); err == nil {
-		t.Fatal("worst-case diagnostics were not included in admission")
-	}
-	// An explicitly selected larger envelope admits the identical schedule.
-	frozen.Policy.MaxMetricResultBytes = 16 << 20
-	frozen.Policy.ObserverMemoryLimitBytes = 128 << 20
 	plan, err := DeriveExecutionPlan(config, frozen)
 	if err != nil {
 		t.Fatal(err)

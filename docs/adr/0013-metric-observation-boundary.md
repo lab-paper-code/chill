@@ -59,18 +59,20 @@ It does not use an unexplained bytes/event multiplier.
 
 The adapter's HTTP response body is capped at 1 MiB, but diagnostics had **no
 length cap**: transport errors include caller-owned URLs and parser errors can
-include response text. Retained diagnostic messages now have a 128-byte protocol
-bound, not an experiment setting. A larger message **fails observation** and
-retains its prefix plus original byte length (`messageBytes`); thermal failures
-still retain power. Typed thermal issues are bounded to the six metric slots,
-the configured metric-name length, and the same diagnostic limit. Unexpected
-oversize issues also fail explicitly. No successful result silently truncates
-diagnostics. This minimal guard bounds retained/serialized evidence, not the
-upstream allocation needed to obtain an arbitrary `error.Error()` string.
+include response text. Diagnostic slots are derived from the remaining result
+and memory budgets after fixed records, identities and serialization costs.
+Each input byte reserves up to six encoded JSON bytes and one retained byte.
+Long messages keep a bounded prefix, original byte length (`messageBytes`) and
+`messageTruncated: true`; diagnostic length never interrupts the power window.
+The same explicit metadata applies to thermal metric issue messages. A slot
+can contain zero prefix bytes if only fixed records fit: failure class, original
+length and the truncation marker still remain. Typed issues are bounded to the
+six metric slots and configured metric-name length. This bounds retained and
+serialized evidence, not the upstream allocation of `error.Error()` strings.
 
 Insufficient bytes reject the original schedule before work starts. Duration,
-interval and evidence are not reduced to fit. Runtime capacity/diagnostic
-failures return partial evidence, and the metric command atomically publishes it
+interval and sample/failure records are not reduced to fit. Unexpected runtime
+capacity or schema failures return partial evidence, and the metric command publishes it
 before exiting unsuccessfully; the coordinator still requires successful
 observer completion. WorkloadObserver's independent material-Pod-event limit
 (`maxWorkloadEvents`, delivered as its own `--max-events`) is unchanged: Pod watch

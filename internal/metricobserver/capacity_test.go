@@ -62,27 +62,40 @@ func TestCapacityCoversActualReadOutcomes(t *testing.T) {
 	}
 }
 
-func TestCapacityAdmitsExactByteBoundaries(t *testing.T) {
+func TestCapacityDerivesDiagnosticSlotsFromBothByteEnvelopes(t *testing.T) {
 	request := capacityRequest()
 	source := (&fakeSource{}).Identity()
 	limits := testLimits()
-	need, err := RequiredCapacity(request, source, limits, true)
+	full, err := RequiredCapacity(request, source, limits, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	limits.MaxResultBytes = need.ResultBytes
-	limits.MemoryBudgetBytes = need.MemoryBytes
-	if _, err := RequiredCapacity(request, source, limits, true); err != nil {
-		t.Fatalf("exact envelope refused: %v", err)
+	for _, memory := range []bool{false, true} {
+		reduced := limits
+		if memory {
+			reduced.MemoryBudgetBytes = full.MemoryBytes / 2
+		} else {
+			reduced.MaxResultBytes = full.ResultBytes / 2
+		}
+		need, err := RequiredCapacity(request, source, reduced, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if need.DiagnosticBytes >= full.DiagnosticBytes || need.Reads != full.Reads ||
+			need.ResultBytes > reduced.MaxResultBytes || need.MemoryBytes > reduced.MemoryBudgetBytes {
+			t.Fatalf("diagnostics did not adapt without changing the schedule: full=%+v reduced=%+v", full, need)
+		}
 	}
-	limits.MaxResultBytes--
-	if _, err := RequiredCapacity(request, source, limits, true); err == nil {
-		t.Fatal("undersized result accepted")
-	}
-	limits.MaxResultBytes++
-	limits.MemoryBudgetBytes--
-	if _, err := RequiredCapacity(request, source, limits, true); err == nil {
-		t.Fatal("undersized memory accepted")
+	for _, memory := range []bool{false, true} {
+		undersized := limits
+		if memory {
+			undersized.MemoryBudgetBytes = 1
+		} else {
+			undersized.MaxResultBytes = 1
+		}
+		if _, err := RequiredCapacity(request, source, undersized, true); err == nil {
+			t.Fatal("undersized fixed records accepted")
+		}
 	}
 	request = capacityRequest()
 	request.Duration = time.Duration(math.MaxInt64)
@@ -110,7 +123,7 @@ func TestCapacityReservesFinalReadAndCadencedRetries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if until.Reads <= ordinary.Reads || until.ResultBytes <= ordinary.ResultBytes {
+	if until.Reads <= ordinary.Reads || until.DiagnosticBytes >= ordinary.DiagnosticBytes {
 		t.Fatal("final read is not reserved")
 	}
 	observer, _ := New(source, testLimits())
@@ -123,30 +136,80 @@ func TestCapacityReservesFinalReadAndCadencedRetries(t *testing.T) {
 	}
 }
 
-func TestOversizeDiagnosticFailsWithPowerAndPrefixEvidence(t *testing.T) {
-	for _, thermal := range []bool{false, true} {
-		message := strings.Repeat("untrusted diagnostic ", maximumDiagnosticBytes)
+func TestLongThermalDiagnosticsNeverShortenPowerWindow(t *testing.T) {
+	for _, truncated := range []bool{false, true} {
+		request := Request{Interval: 20 * time.Millisecond, Duration: 200 * time.Millisecond, RequestTimeout: time.Millisecond}
+		identity := (&fakeSource{}).Identity()
+		capacity, err := RequiredCapacity(request, identity, testLimits(), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// This mirrors a connection-refused diagnostic for a real-length URL.
+		message := "read thermal endpoint: Get \"http://155.230.34.243:9102/metrics\": dial tcp 155.230.34.243:9102: connect: connection refused; auxiliary endpoint unavailable"
+		if truncated {
+			message += strings.Repeat("x", capacity.DiagnosticBytes+1)
+		}
 		source := &fakeSource{read: func(context.Context) (Reading, error) {
-			if thermal {
-				return Reading{Watts: 5, ThermalError: errors.New(message)}, nil
-			}
-			return Reading{}, errors.New(message)
+			return Reading{Watts: 5, ThermalError: errors.New(message)}, nil
 		}}
 		observer, _ := New(source, testLimits())
-		result, err := observer.Observe(context.Background(), capacityRequest(), func() {})
-		if err == nil {
-			t.Fatal("oversize diagnostic silently succeeded")
+		result, err := observer.Observe(context.Background(), request, func() {})
+		if err != nil || result.EndedAt.Sub(result.StartedAt) < request.Duration ||
+			len(result.Samples) == 0 || len(result.Failures) != len(result.Samples) {
+			t.Fatalf("long diagnostic interrupted power window: error=%v result=%+v", err, result)
 		}
-		if len(result.Failures) != 1 || result.Failures[0].MessageBytes != len(message) ||
-			result.Failures[0].Message != message[:maximumDiagnosticBytes] {
-			t.Fatalf("diagnostic evidence lost: %+v", result)
-		}
-		if thermal && (len(result.Samples) != 1 || result.Samples[0].Watts != 5) {
-			t.Fatal("power lost with oversized thermal error")
+		for _, failure := range result.Failures {
+			if failure.MessageTruncated != truncated || (truncated && (failure.MessageBytes != len(message) || failure.Message != message[:capacity.DiagnosticBytes])) ||
+				(!truncated && (failure.Message != message || failure.MessageBytes != 0)) {
+				t.Fatalf("diagnostic prefix metadata lost: %+v", failure)
+			}
 		}
 		if err := result.Validate(); err != nil {
 			t.Fatal(err)
 		}
+		payload, _ := json.Marshal(result)
+		if int64(len(payload)) > capacity.ResultBytes {
+			t.Fatal("truncated diagnostics exceeded result bound")
+		}
+	}
+}
+
+func TestZeroDiagnosticSlotStillPreservesFailureEvidence(t *testing.T) {
+	request := capacityRequest()
+	source := &fakeSource{read: func(context.Context) (Reading, error) { return Reading{}, errors.New("source unavailable") }}
+	limits := testLimits()
+	// Find the fixed-record boundary behaviorally, not by copying accounting.
+	low, high := int64(1), limits.MaxResultBytes
+	for low < high {
+		mid := low + (high-low)/2
+		candidate := limits
+		candidate.MaxResultBytes = mid
+		if _, err := RequiredCapacity(request, source.Identity(), candidate, false); err != nil {
+			low = mid + 1
+		} else {
+			high = mid
+		}
+	}
+	limits.MaxResultBytes = low
+	capacity, err := RequiredCapacity(request, source.Identity(), limits, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capacity.DiagnosticBytes != 0 {
+		t.Fatal("fixed-record boundary did not consume diagnostic space")
+	}
+	observer, _ := New(source, limits)
+	result, err := observer.Observe(context.Background(), request, func() {})
+	if err != nil || len(result.Failures) == 0 {
+		t.Fatalf("failure evidence lost: %v %+v", err, result)
+	}
+	for _, failure := range result.Failures {
+		if failure.Message != "" || !failure.MessageTruncated || failure.MessageBytes == 0 {
+			t.Fatalf("missing truncation evidence: %+v", failure)
+		}
+	}
+	if err := result.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -159,6 +222,11 @@ func TestCapacityBoundsEscapedDiagnosticsAndThermalIssues(t *testing.T) {
 		t.Fatal(err)
 	}
 	sample, failure := largestRecords(identity)
+	sample.Thermal.Issues = append([]MetricIssue(nil), sample.Thermal.Issues...)
+	for i := range sample.Thermal.Issues {
+		sample.Thermal.Issues[i].Message = strings.Repeat("\x00", need.DiagnosticBytes)
+	}
+	failure.Message = strings.Repeat("\x00", need.DiagnosticBytes)
 	result := Result{Source: identity, StartedAt: sample.ObservedAt, EndedAt: sample.ObservedAt}
 	for range need.Reads {
 		result.Samples = append(result.Samples, sample)

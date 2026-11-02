@@ -87,7 +87,7 @@ func validateFailures(failures []Failure, started, ended time.Time) error {
 			(!previous.IsZero() && failure.ObservedAt.Before(previous)) {
 			return errors.New("metric failures are outside the observation window or out of order")
 		}
-		if invalidNonNegative(failure.RequestLatencySeconds) || strings.TrimSpace(failure.Message) == "" {
+		if invalidNonNegative(failure.RequestLatencySeconds) || !validDiagnostic(failure.Message, failure.MessageBytes, failure.MessageTruncated) {
 			return errors.New("metric failure latency and message are invalid")
 		}
 		switch failure.Reason {
@@ -98,6 +98,13 @@ func validateFailures(failures []Failure, started, ended time.Time) error {
 		previous = failure.ObservedAt
 	}
 	return nil
+}
+
+func validDiagnostic(message string, originalBytes int, truncated bool) bool {
+	if truncated {
+		return originalBytes > 0
+	}
+	return originalBytes == 0 && strings.TrimSpace(message) != ""
 }
 
 func validateThermalReading(reading *ThermalReading) error {
@@ -111,7 +118,7 @@ func validateThermalReading(reading *ThermalReading) error {
 	seen := make(map[string]struct{}, len(reading.Issues))
 	for _, issue := range reading.Issues {
 		if strings.TrimSpace(issue.Metric) == "" || strings.TrimSpace(issue.Metric) != issue.Metric ||
-			strings.TrimSpace(issue.Message) == "" {
+			!validDiagnostic(issue.Message, issue.MessageBytes, issue.MessageTruncated) {
 			return errors.New("thermal metric issue is invalid")
 		}
 		if issue.Reason != FailureReasonMetricMissing && issue.Reason != FailureReasonInvalidReading {

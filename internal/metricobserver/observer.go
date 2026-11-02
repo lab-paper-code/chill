@@ -78,7 +78,7 @@ func (o *Observer) Observe(
 	ticker := time.NewTicker(request.Interval)
 	defer ticker.Stop()
 
-	return o.observe(observationCtx, request.RequestTimeout, capacity.Events, ticker.C, onFirstSample)
+	return o.observe(observationCtx, request.RequestTimeout, capacity.Events, capacity.DiagnosticBytes, ticker.C, onFirstSample)
 }
 
 // ObserveUntil samples through the producer's end signal and then retries a real
@@ -104,7 +104,7 @@ func (o *Observer) ObserveUntil(
 	result := o.start(capacity.Events)
 	reported := false
 	sample := func() error {
-		err := o.sample(observationCtx, request.RequestTimeout, capacity.Events, &result)
+		err := o.sample(observationCtx, request.RequestTimeout, capacity.Events, capacity.DiagnosticBytes, &result)
 		if !reported && len(result.Samples) > 0 {
 			reported = true
 			onFirstSample()
@@ -146,13 +146,14 @@ func (o *Observer) observe(
 	ctx context.Context,
 	requestTimeout time.Duration,
 	maxEvents int,
+	diagnosticBytes int,
 	ticks <-chan time.Time,
 	onFirstSample func(),
 ) (Result, error) {
 	result := o.start(maxEvents)
 	firstSampleReported := false
 	sample := func() error {
-		err := o.sample(ctx, requestTimeout, maxEvents, &result)
+		err := o.sample(ctx, requestTimeout, maxEvents, diagnosticBytes, &result)
 		if !firstSampleReported && len(result.Samples) > 0 {
 			firstSampleReported = true
 			onFirstSample()
@@ -190,7 +191,7 @@ func (o *Observer) finish(result Result) Result {
 	return result
 }
 
-func (o *Observer) sample(ctx context.Context, timeout time.Duration, maxEvents int, result *Result) error {
+func (o *Observer) sample(ctx context.Context, timeout time.Duration, maxEvents, diagnosticBytes int, result *Result) error {
 	if ctx.Err() != nil {
 		return nil
 	}
@@ -213,35 +214,24 @@ func (o *Observer) sample(ctx context.Context, timeout time.Duration, maxEvents 
 		if deadline, ok := ctx.Deadline(); ok && !observedAt.Before(deadline) {
 			return nil
 		}
-		failure, boundErr := boundedFailure(observedAt, latency, err)
-		result.Failures = append(result.Failures, failure)
-		return boundErr
+		result.Failures = append(result.Failures, boundedFailure(observedAt, latency, err, diagnosticBytes))
+		return nil
 	}
 	var thermal *ThermalReading
 	if reading.ThermalError != nil {
 		if len(result.Samples)+len(result.Failures)+2 > maxEvents {
 			return errEventBudgetExceeded
 		}
-		failure, boundErr := boundedFailure(observedAt, latency, reading.ThermalError)
-		result.Failures = append(result.Failures, failure)
-		// Preserve power even when its auxiliary diagnostic exceeds the bound.
-		if boundErr != nil {
-			result.Samples = append(result.Samples, Sample{ObservedAt: observedAt,
-				Watts: reading.Watts, RequestLatencySeconds: latency.Seconds()})
-			return boundErr
-		}
+		result.Failures = append(result.Failures, boundedFailure(observedAt, latency, reading.ThermalError, diagnosticBytes))
 	} else {
 		if err := checkThermal(reading.Thermal, result.Source); err != nil {
-			failure, boundErr := boundedFailure(observedAt, latency, err)
+			failure := boundedFailure(observedAt, latency, err, diagnosticBytes)
 			result.Failures = append(result.Failures, failure)
 			result.Samples = append(result.Samples, Sample{ObservedAt: observedAt,
 				Watts: reading.Watts, RequestLatencySeconds: latency.Seconds()})
-			if boundErr != nil {
-				return boundErr
-			}
 			return err
 		}
-		thermal = cloneThermalReading(reading.Thermal)
+		thermal = cloneThermalReading(reading.Thermal, diagnosticBytes)
 	}
 	result.Samples = append(result.Samples, Sample{
 		ObservedAt:            observedAt,
@@ -252,7 +242,7 @@ func (o *Observer) sample(ctx context.Context, timeout time.Duration, maxEvents 
 	return nil
 }
 
-func cloneThermalReading(reading ThermalReading) *ThermalReading {
+func cloneThermalReading(reading ThermalReading, diagnosticBytes int) *ThermalReading {
 	copy := reading
 	copy.ObservationAvailable = clonePointer(reading.ObservationAvailable)
 	copy.Active = clonePointer(reading.Active)
@@ -263,7 +253,8 @@ func cloneThermalReading(reading ThermalReading) *ThermalReading {
 	copy.Issues = append([]MetricIssue(nil), reading.Issues...)
 	for i := range copy.Issues {
 		copy.Issues[i].Metric = strings.Clone(copy.Issues[i].Metric)
-		copy.Issues[i].Message = strings.Clone(copy.Issues[i].Message)
+		copy.Issues[i].Message, copy.Issues[i].MessageBytes, copy.Issues[i].MessageTruncated =
+			boundedMessage(copy.Issues[i].Message, diagnosticBytes)
 	}
 	return &copy
 }

@@ -10,18 +10,18 @@ import (
 	"unsafe"
 )
 
-// Diagnostics have no upstream length bound (HTTP errors can include URLs and
-// parser errors can include response text). Oversize diagnostics fail explicitly;
-// a prefix plus original byte length remains evidence, never a silent success.
-const maximumDiagnosticBytes = 128
+// Diagnostic slots come from the result and memory envelopes. A long transport
+// or parser message is retained with explicit truncation metadata; its length
+// never decides whether an otherwise valid observation window can finish.
 const maximumThermalIssues = 6 // one per typed thermal metric
 
 // Capacity is derived by the observer, never an experiment input.
 type Capacity struct {
-	Reads       int
-	Events      int
-	ResultBytes int64
-	MemoryBytes int64
+	Reads           int
+	Events          int
+	ResultBytes     int64
+	MemoryBytes     int64
+	DiagnosticBytes int
 }
 
 // RequiredCapacity admits the complete schedule against the existing worker
@@ -68,7 +68,7 @@ func RequiredCapacity(r Request, source SourceIdentity, limits Limits, until boo
 	perReadMemory := int64(unsafe.Sizeof(Sample{})+unsafe.Sizeof(Failure{})+unsafe.Sizeof(ThermalReading{})) +
 		6*int64(unsafe.Sizeof(uint64(0))) + // separately allocated scalar pointers, including bool allocator rounding
 		maximumThermalIssues*int64(unsafe.Sizeof(MetricIssue{})) +
-		int64(maximumThermalIssues*(maximumDiagnosticBytes+maximumMetricBytes(source))+maximumDiagnosticBytes) +
+		int64(maximumThermalIssues*maximumMetricBytes(source)) +
 		2*int64(unsafe.Sizeof(float64(0))) // Summarize sort scratch
 	// Fixed-capacity slices avoid append growth. Include worst-case JSON string
 	// storage, encoder growth (up to 2x) and returned Marshal copy; 4x also leaves
@@ -78,7 +78,20 @@ func RequiredCapacity(r Request, source SourceIdentity, limits Limits, until boo
 		reads > (limits.MemoryBudgetBytes-baseMemory-4*resultBytes)/perReadMemory {
 		return Capacity{}, errors.New("metric observation schedule exceeds memory byte budget")
 	}
-	return Capacity{Reads: int(reads), Events: int(2 * reads), ResultBytes: resultBytes, MemoryBytes: baseMemory + 4*resultBytes + reads*perReadMemory}, nil
+	memoryBytes := baseMemory + 4*resultBytes + reads*perReadMemory
+	diagnosticsPerRead := int64(1) // one source/thermal endpoint failure
+	if source.ThermalMetrics != nil {
+		diagnosticsPerRead += maximumThermalIssues
+	}
+	slots := reads * diagnosticsPerRead
+	// Every diagnostic byte costs at most six JSON bytes, one retained byte,
+	// and four encoder/copy bytes per encoded byte. Neither is bytes/event.
+	diagnosticBytes := min((limits.MaxResultBytes-resultBytes)/(6*slots),
+		(limits.MemoryBudgetBytes-memoryBytes)/(25*slots))
+	resultBytes += 6 * slots * diagnosticBytes
+	memoryBytes += 25 * slots * diagnosticBytes
+	return Capacity{Reads: int(reads), Events: int(2 * reads), ResultBytes: resultBytes,
+		MemoryBytes: memoryBytes, DiagnosticBytes: int(diagnosticBytes)}, nil
 }
 
 func maximumMetricBytes(source SourceIdentity) int {
@@ -104,21 +117,25 @@ func largestRecords(source SourceIdentity) (Sample, Failure) {
 		issues = 0
 	}
 	for range issues {
-		thermal.Issues = append(thermal.Issues, MetricIssue{Metric: strings.Repeat("\x00", maximumMetricBytes(source)), Reason: FailureReasonInvalidReading, Message: strings.Repeat("\x00", maximumDiagnosticBytes)})
+		thermal.Issues = append(thermal.Issues, MetricIssue{Metric: strings.Repeat("\x00", maximumMetricBytes(source)),
+			Reason: FailureReasonInvalidReading, MessageBytes: math.MaxInt, MessageTruncated: true})
 	}
-	return Sample{ObservedAt: stamp, Watts: -math.MaxFloat64, Thermal: thermal, RequestLatencySeconds: -math.MaxFloat64}, Failure{ObservedAt: stamp, RequestLatencySeconds: -math.MaxFloat64, Reason: FailureReasonSourceRead, Message: strings.Repeat("\x00", maximumDiagnosticBytes), MessageBytes: math.MaxInt}
+	return Sample{ObservedAt: stamp, Watts: -math.MaxFloat64, Thermal: thermal, RequestLatencySeconds: -math.MaxFloat64},
+		Failure{ObservedAt: stamp, RequestLatencySeconds: -math.MaxFloat64, Reason: FailureReasonSourceRead,
+			MessageBytes: math.MaxInt, MessageTruncated: true}
 }
 
-func boundedFailure(at time.Time, latency time.Duration, err error) (Failure, error) {
-	message := err.Error()
-	failure := Failure{ObservedAt: at, RequestLatencySeconds: latency.Seconds(), Reason: classify(err)}
-	if len(message) > maximumDiagnosticBytes {
-		failure.MessageBytes = len(message)
-		failure.Message = strings.Clone(message[:maximumDiagnosticBytes])
-		return failure, errors.New("metric diagnostic exceeds retained byte bound (prefix and original length preserved)")
+func boundedFailure(at time.Time, latency time.Duration, err error, maximum int) Failure {
+	message, originalBytes, truncated := boundedMessage(err.Error(), maximum)
+	return Failure{ObservedAt: at, RequestLatencySeconds: latency.Seconds(), Reason: classify(err),
+		Message: message, MessageBytes: originalBytes, MessageTruncated: truncated}
+}
+
+func boundedMessage(message string, maximum int) (string, int, bool) {
+	if len(message) > maximum {
+		return strings.Clone(message[:maximum]), len(message), true
 	}
-	failure.Message = strings.Clone(message)
-	return failure, nil
+	return strings.Clone(message), 0, false
 }
 
 func checkThermal(reading ThermalReading, source SourceIdentity) error {
@@ -128,9 +145,6 @@ func checkThermal(reading ThermalReading, source SourceIdentity) error {
 	for _, issue := range reading.Issues {
 		if len(issue.Metric) > maximumMetricBytes(source) {
 			return errors.New(issue.Metric)
-		}
-		if len(issue.Message) > maximumDiagnosticBytes {
-			return errors.New(issue.Message)
 		}
 	}
 	return validateThermalReading(&reading)

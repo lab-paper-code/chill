@@ -370,9 +370,13 @@ func validateFailure(failure *Failure, start, end time.Time) string {
 }
 
 func validatePowerReadFailure(failure PowerReadFailure, start, end time.Time) string {
+	validMessage := validText(failure.Message) && failure.MessageBytes == 0
+	if failure.MessageTruncated {
+		validMessage = failure.MessageBytes > 0
+	}
 	if failure.ObservedAt.IsZero() || !within(failure.ObservedAt, start, end) ||
 		!finiteNonNegative(failure.RequestLatencySeconds) || !validText(failure.Reason) ||
-		!validText(failure.Message) {
+		!validMessage {
 		return "is malformed or outside coverage"
 	}
 	return ""

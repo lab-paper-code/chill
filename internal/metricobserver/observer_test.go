@@ -75,7 +75,7 @@ func TestObservePreservesImmediateAndRepeatedSamples(t *testing.T) {
 	close(ticks)
 
 	firstSamples := 0
-	result, err := observer.observe(context.Background(), time.Second, 4, ticks, func() {
+	result, err := observer.observe(context.Background(), time.Second, 4, int(testLimits().MaxResultBytes), ticks, func() {
 		firstSamples++
 	})
 	if err != nil {
@@ -127,7 +127,7 @@ func TestObserveReportsFirstSampleAfterFailedRead(t *testing.T) {
 	close(ticks)
 
 	firstSamples := 0
-	result, observeErr := observer.observe(context.Background(), time.Second, 4, ticks, func() {
+	result, observeErr := observer.observe(context.Background(), time.Second, 4, int(testLimits().MaxResultBytes), ticks, func() {
 		firstSamples++
 	})
 	if observeErr != nil {
@@ -214,7 +214,7 @@ func TestObserveClassifiesSourceFailures(t *testing.T) {
 			observer.now = sequenceClock(t, []time.Time{time.Unix(0, 0), time.Unix(0, 0), time.Unix(0, int64(time.Millisecond)), time.Unix(0, int64(time.Second))})
 			ticks := make(chan time.Time)
 			close(ticks)
-			result, observeErr := observer.observe(context.Background(), time.Second, 1, ticks, func() {})
+			result, observeErr := observer.observe(context.Background(), time.Second, 1, int(testLimits().MaxResultBytes), ticks, func() {})
 			if observeErr != nil {
 				t.Fatal(observeErr)
 			}
@@ -259,7 +259,7 @@ func TestObserveEnforcesProducerEventCap(t *testing.T) {
 	ticks <- time.Unix(1, 0)
 	close(ticks)
 
-	result, err := observer.observe(context.Background(), time.Second, 1, ticks, func() {})
+	result, err := observer.observe(context.Background(), time.Second, 1, int(testLimits().MaxResultBytes), ticks, func() {})
 	if !errors.Is(err, errEventBudgetExceeded) {
 		t.Fatalf("observe error = %v, want event budget failure", err)
 	}
