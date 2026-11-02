@@ -37,6 +37,8 @@ const (
 
 const terminalReasonEnergyObjectivePolicyMismatch = "EnergyObjectivePolicyMismatch"
 
+const terminalReasonInvalidCampaignRun = "InvalidCampaignRun"
+
 // BatchEnergyOptimizationReconciler reconstructs campaign progress from the immutable
 // parent spec and the currently owned ProfilingRuns on every call.
 type BatchEnergyOptimizationReconciler struct {
@@ -104,7 +106,7 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 		parent, runs, transition, curvePlan.PlannedBatchSizes(), transitionMaterial != nil,
 	)
 	if err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, r.patchStatus(ctx, parent, failedStatus(parent, terminalReasonInvalidCampaignRun, err.Error()))
 	}
 
 	config, policy, err := projectEnergyObjectivePolicy(parent)
@@ -144,7 +146,7 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 			return ctrl.Result{}, errors.New("CreateRun decision omitted its measurement")
 		}
 		attempt := nextAttempt(*decision.Run, snapshot.Trials)
-		run, buildErr := BuildRun(parent, *decision.Run, attempt)
+		run, buildErr := BuildRun(parent, *decision.Run, attempt, curvePlan.Shared().Backend)
 		if buildErr != nil {
 			return ctrl.Result{}, fmt.Errorf("build ProfilingRun: %w", buildErr)
 		}
@@ -430,6 +432,7 @@ func terminalCampaignStatusCurrent(parent *edgev1alpha1.BatchEnergyOptimization)
 			return condition.Reason == terminalReasonTransitionFailed ||
 				condition.Reason == terminalReasonRetryLimitExhausted ||
 				condition.Reason == terminalReasonEnergyObjectivePolicyMismatch ||
+				condition.Reason == terminalReasonInvalidCampaignRun ||
 				condition.Reason == profiler.ResolutionReasonInvalidRunSpec ||
 				condition.Reason == profiler.ResolutionReasonExecutionPolicyInvalid ||
 				condition.Reason == profiler.ResolutionReasonActuationPolicyInvalid

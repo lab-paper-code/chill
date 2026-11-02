@@ -12,7 +12,7 @@ func TestProjectSnapshotReadsValuesFromImmutableRunFieldsNotLabels(t *testing.T)
 	parent := testParent()
 	run, err := BuildRun(parent, batchenergyoptimization.Measurement{
 		WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2,
-	}, 1)
+	}, 1, "ort-cpu")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -37,7 +37,7 @@ func TestProjectSnapshotRejectsAForeignRun(t *testing.T) {
 	parent := testParent()
 	run, _ := BuildRun(parent, batchenergyoptimization.Measurement{
 		WorkloadMode: batchenergyoptimization.WorkloadModeIdle, Batch: 1,
-	}, 1)
+	}, 1, "ort-cpu")
 	run.OwnerReferences[0].UID = "someone-else"
 	if _, err := ProjectSnapshot(parent, []edgev1alpha1.ProfilingRun{*run}, nil, []int{1}, false); err == nil {
 		t.Fatal("a Run owned by another object was completed")
@@ -52,7 +52,7 @@ func TestTerminallyInvalidRunsExhaustTheExistingRetryPath(t *testing.T) {
 	}
 	runs := make([]edgev1alpha1.ProfilingRun, 0, 2)
 	for attempt := 1; attempt <= 2; attempt++ {
-		run, err := BuildRun(parent, measurement, attempt)
+		run, err := BuildRun(parent, measurement, attempt, "ort-cpu")
 		if err != nil {
 			t.Fatalf("build attempt %d: %v", attempt, err)
 		}
@@ -96,7 +96,7 @@ func TestRunOutcomeDrivesCampaignTransition(t *testing.T) {
 			parent := testParent()
 			run, err := BuildRun(parent, batchenergyoptimization.Measurement{
 				WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 1,
-			}, 1)
+			}, 1, "ort-cpu")
 			if err != nil {
 				t.Fatal(err)
 			}

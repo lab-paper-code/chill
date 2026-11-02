@@ -50,8 +50,8 @@ func IsMeasurementWorkload(ownerKind string, labels map[string]string) bool {
 // IdleExecutionBatch selects the actual model-loaded idle batch. ORT loads a
 // batch-one model without inference; RKNN retains its fixed artifact batch.
 // Logical campaign identity is not an execution condition.
-func IdleExecutionBatch(executionPath string, logicalBatch int) int {
-	if executionPath == RKNNLiteExecutionPath {
+func IdleExecutionBatch(backend string, logicalBatch int) int {
+	if backend == FirstfloorRKNNLiteBackend {
 		return logicalBatch
 	}
 	return 1

@@ -177,7 +177,7 @@ func (p *CurvePlanProjector) prepareCurveRunConfigsAndTransition(
 	active, err := p.prepare(ctx, parent, batchenergyoptimization.Measurement{
 		WorkloadMode: batchenergyoptimization.WorkloadModeActive,
 		Batch:        plannedBatchSizes[0],
-	})
+	}, "")
 	if err != nil {
 		return profiler.PreparedRun{}, profiler.PreparedRun{}, nil, fmt.Errorf("prepare active curve-plan RunConfig: %w", err)
 	}
@@ -192,7 +192,7 @@ func (p *CurvePlanProjector) prepareCurveRunConfigsAndTransition(
 	idle, err := p.prepare(ctx, parent, batchenergyoptimization.Measurement{
 		WorkloadMode: batchenergyoptimization.WorkloadModeIdle,
 		Batch:        plannedBatchSizes[0],
-	})
+	}, active.RunConfig.State.Backend)
 	if err != nil {
 		return profiler.PreparedRun{}, profiler.PreparedRun{}, nil, fmt.Errorf("prepare idle curve-plan RunConfig: %w", err)
 	}
@@ -312,7 +312,7 @@ func (s *CurvePlanSource) recoverTransition(
 	active, err := s.projector.prepare(ctx, parent, batchenergyoptimization.Measurement{
 		WorkloadMode: batchenergyoptimization.WorkloadModeActive,
 		Batch:        batches[0],
-	})
+	}, "")
 	if err != nil {
 		return nil, fmt.Errorf("prepare active curve-plan RunConfig: %w", err)
 	}
@@ -370,8 +370,9 @@ func (p *CurvePlanProjector) prepare(
 	ctx context.Context,
 	parent *edgev1alpha1.BatchEnergyOptimization,
 	measurement batchenergyoptimization.Measurement,
+	backend string,
 ) (profiler.PreparedRun, error) {
-	run, err := BuildRun(parent, measurement, 1)
+	run, err := BuildRun(parent, measurement, 1, backend)
 	if err != nil {
 		return profiler.PreparedRun{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, err)
 	}

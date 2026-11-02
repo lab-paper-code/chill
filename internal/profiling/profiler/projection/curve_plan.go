@@ -142,7 +142,7 @@ func validateCurvePlanRunConfigs(
 	); err != nil {
 		return fmt.Errorf("active curve state: %w", err)
 	}
-	idleBatch := profilingrun.IdleExecutionBatch(idle.Candidate.ExecutionPath, spec.PlannedBatchSizes[0])
+	idleBatch := profilingrun.IdleExecutionBatch(idle.State.Backend, spec.PlannedBatchSizes[0])
 	if idle.Measurement.Batch != idleBatch {
 		return fmt.Errorf("idle curve state batch %d does not match required batch %d", idle.Measurement.Batch, idleBatch)
 	}

@@ -420,7 +420,7 @@ func buildCampaignRun(
 	attempt int,
 ) *edgev1alpha1.ProfilingRun {
 	t.Helper()
-	run, err := batchcontroller.BuildRun(parent, measurement, attempt)
+	run, err := batchcontroller.BuildRun(parent, measurement, attempt, "ort-cpu")
 	if err != nil {
 		t.Fatal(err)
 	}

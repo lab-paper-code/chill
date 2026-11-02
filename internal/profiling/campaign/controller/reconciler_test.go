@@ -107,6 +107,54 @@ func TestTerminalCampaignReplayDoesNotRecreateEvidenceButResolverFailureStillRet
 	}
 }
 
+func TestCampaignInvalidChildContractStopsWithVisibleFailure(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		mutate  func(*api.ProfilingRun)
+		message string
+	}{
+		{"missing identity", func(run *api.ProfilingRun) { run.Spec.CampaignTrial = nil }, "requires a positive logical batch"},
+		{"contradictory identity", func(run *api.ProfilingRun) { run.Spec.CampaignTrial.Batch = 99 }, "disagrees with its logical trial"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			parent, objects, _, dependencies := newPolicyMismatchCampaignFixture(t, false)
+			test.mutate(objects[1].(*api.ProfilingRun))
+			scheme := runtime.NewScheme()
+			if err := api.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			native := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(parent).WithObjects(objects...).Build()
+			reconciler, err := NewBatchEnergyOptimizationReconciler(native, dependencies.Resolve, dependencies.Derive, dependencies.Write)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}
+			result, err := reconciler.Reconcile(context.Background(), request)
+			if err != nil || result != (ctrl.Result{}) {
+				t.Fatalf("result=%+v err=%v", result, err)
+			}
+			updated := &api.BatchEnergyOptimization{}
+			if err := native.Get(context.Background(), request.NamespacedName, updated); err != nil {
+				t.Fatal(err)
+			}
+			if updated.Status.Phase != batchEnergyOptimizationPhaseFailed ||
+				updated.Status.Outcome != terminalReasonInvalidCampaignRun ||
+				updated.Status.ObservedGeneration != parent.Generation || len(updated.Status.Conditions) != 1 {
+				t.Fatalf("status=%+v", updated.Status)
+			}
+			condition := updated.Status.Conditions[0]
+			if condition.Status != metav1.ConditionFalse || condition.Reason != terminalReasonInvalidCampaignRun ||
+				!strings.Contains(condition.Message, test.message) {
+				t.Fatalf("condition=%+v", condition)
+			}
+			result, err = reconciler.Reconcile(context.Background(), request)
+			if err != nil || result != (ctrl.Result{}) || dependencies.resolves != 1 || dependencies.writes != 0 {
+				t.Fatalf("terminal replay: result=%+v err=%v resolves=%d writes=%d", result, err, dependencies.resolves, dependencies.writes)
+			}
+		})
+	}
+}
+
 func TestCampaignCurvePlanFailureClassification(t *testing.T) {
 	for _, test := range []struct {
 		name             string

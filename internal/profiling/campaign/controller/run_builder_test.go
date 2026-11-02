@@ -21,17 +21,22 @@ func TestRunNameIsDeterministic(t *testing.T) {
 }
 
 func TestBuildIdleRunSeparatesMeasurementBatchFromTrialIdentity(t *testing.T) {
-	for _, path := range []string{"ort-cpu", "ort-cuda", profilingrun.RKNNLiteExecutionPath} {
-		t.Run(path, func(t *testing.T) {
+	for _, test := range []struct{ path, backend string }{
+		{"ort-cpu", profilingrun.FirstfloorORTCPUBackend},
+		{"ort-cuda", profilingrun.FirstfloorORTCUDABackend},
+		{profilingrun.RKNNLiteExecutionPath, profilingrun.FirstfloorRKNNLiteBackend},
+		{"rknn-bs4", profilingrun.FirstfloorRKNNLiteBackend},
+	} {
+		t.Run(test.path, func(t *testing.T) {
 			parent := testParent()
-			parent.Spec.State.Candidate.ExecutionPath = path
+			parent.Spec.State.Candidate.ExecutionPath = test.path
 			measurement := batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeIdle, Batch: 4}
-			run, err := BuildRun(parent, measurement, 2)
+			run, err := BuildRun(parent, measurement, 2, test.backend)
 			if err != nil {
 				t.Fatal(err)
 			}
 			want := int32(1)
-			if path == profilingrun.RKNNLiteExecutionPath {
+			if test.backend == profilingrun.FirstfloorRKNNLiteBackend {
 				want = 4
 			}
 			if run.Spec.Measurement.Batch != want {
@@ -40,7 +45,7 @@ func TestBuildIdleRunSeparatesMeasurementBatchFromTrialIdentity(t *testing.T) {
 			if run.Spec.CampaignTrial == nil || run.Spec.CampaignTrial.Batch != 4 || run.Spec.CampaignTrial.Attempt != 2 {
 				t.Fatalf("logical identity = %+v", run.Spec.CampaignTrial)
 			}
-			repeated, err := BuildRun(parent, measurement, 2)
+			repeated, err := BuildRun(parent, measurement, 2, test.backend)
 			if err != nil || repeated.Name != run.Name {
 				t.Fatalf("deterministic requery = %+v, error = %v", repeated, err)
 			}
@@ -63,13 +68,13 @@ func TestCampaignProjectionRejectsMissingOrContradictoryTrialIdentity(t *testing
 		func(run *edgev1alpha1.ProfilingRun) { run.Spec.CampaignTrial = nil },
 		func(run *edgev1alpha1.ProfilingRun) { run.Spec.CampaignTrial.Batch = 0 },
 		func(run *edgev1alpha1.ProfilingRun) { run.Spec.CampaignTrial.Attempt = 0 },
-		func(run *edgev1alpha1.ProfilingRun) { run.Spec.Measurement.Batch = 4 },
+		func(run *edgev1alpha1.ProfilingRun) { run.Spec.Measurement.WorkloadMode = activeWorkloadMode },
 		func(run *edgev1alpha1.ProfilingRun) { run.Spec.CampaignTrial.Batch = 8 },
 	} {
 		parent := testParent()
 		run, err := BuildRun(parent, batchenergyoptimization.Measurement{
 			WorkloadMode: batchenergyoptimization.WorkloadModeIdle, Batch: 4,
-		}, 2)
+		}, 2, "ort-cpu")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -84,7 +89,7 @@ func TestBuildRunFillsTheIdleUnionFields(t *testing.T) {
 	parent := testParent()
 	run, err := BuildRun(parent, batchenergyoptimization.Measurement{
 		WorkloadMode: batchenergyoptimization.WorkloadModeIdle, Batch: 1,
-	}, 1)
+	}, 1, "ort-cpu")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -108,7 +113,7 @@ func TestBuildRunUsesTheActiveProtocol(t *testing.T) {
 	parent := testParent()
 	run, err := BuildRun(parent, batchenergyoptimization.Measurement{
 		WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2,
-	}, 1)
+	}, 1, "ort-cpu")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -128,7 +133,7 @@ func TestBuildRunCopiesCPUSelectionsIntoEveryWorkload(t *testing.T) {
 	for _, mode := range []batchenergyoptimization.WorkloadMode{
 		batchenergyoptimization.WorkloadModeActive, batchenergyoptimization.WorkloadModeIdle,
 	} {
-		run, err := BuildRun(parent, batchenergyoptimization.Measurement{WorkloadMode: mode, Batch: 1}, 1)
+		run, err := BuildRun(parent, batchenergyoptimization.Measurement{WorkloadMode: mode, Batch: 1}, 1, "ort-cpu")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -153,7 +158,7 @@ func TestBuildRunPreservesDefaultCPUSelections(t *testing.T) {
 	for _, mode := range []batchenergyoptimization.WorkloadMode{
 		batchenergyoptimization.WorkloadModeActive, batchenergyoptimization.WorkloadModeIdle,
 	} {
-		run, err := BuildRun(testParent(), batchenergyoptimization.Measurement{WorkloadMode: mode, Batch: 1}, 1)
+		run, err := BuildRun(testParent(), batchenergyoptimization.Measurement{WorkloadMode: mode, Batch: 1}, 1, "ort-cpu")
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -32,6 +32,7 @@ func BuildRun(
 	parent *edgev1alpha1.BatchEnergyOptimization,
 	measurement batchenergyoptimization.Measurement,
 	attempt int,
+	backend string,
 ) (*edgev1alpha1.ProfilingRun, error) {
 	if parent == nil {
 		return nil, errors.New("a parent BatchEnergyOptimization is required")
@@ -64,7 +65,7 @@ func BuildRun(
 		protocol := parent.Spec.IdleProtocol
 		settling := protocol.SettlingDurationSeconds
 		spec.Measurement = edgev1alpha1.ProfilingRunMeasurementSpec{
-			Batch:                    int32(profilingrun.IdleExecutionBatch(parent.Spec.State.Candidate.ExecutionPath, measurement.Batch)),
+			Batch:                    int32(profilingrun.IdleExecutionBatch(backend, measurement.Batch)),
 			WarmupIterations:         0,
 			SettlingDurationSeconds:  &settling,
 			DurationSeconds:          protocol.DurationSeconds,

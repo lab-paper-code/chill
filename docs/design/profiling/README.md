@@ -34,7 +34,7 @@ Retired Plan 5 experiments remain conclusions, not current APIs: 12 retained idl
 
 | Contract | Ownership / status |
 |---|---|
-| [Experiment execution](experiment-execution.md) | E5 immutable definition, profiler orchestration, harness Job and publication — design |
+| [Experiment execution](experiment-execution.md) | evaluation immutable definition, profiler orchestration, harness Job and publication — design |
 | [Measurement Worker](components/measurement-worker.md) | firstfloor Job-local execution, synchronization, raw-write/receipt — active |
 | [Evidence Store](components/evidence-store.md) | Immutable object storage, independent verification, operator lifecycle — active |
 | [MetricObserver](components/metric-observer.md) | Bounded typed power/thermal observation, no derivation policy — active |
@@ -54,13 +54,16 @@ replace the Profiler's current-generation pre-Job failure check.
 Campaign Runs now freeze `spec.campaignTrial.batch` and `.attempt`; workload mode
 in `spec.measurement` identifies active versus idle, and `measurement.batch`
 remains the actual execution batch. Names provide deterministic object lookup,
-not logical-batch/attempt recovery. Run generation, campaign result projection,
-and verified curve-state checking share `profiling/run.IdleExecutionBatch`:
-ORT CPU/CUDA use idle batch 1; RKNN retains the fixed artifact batch.
+not logical-batch/attempt recovery. Run generation and verified curve-state
+checking share `profiling/run.IdleExecutionBatch` with the resolved backend,
+never the execution-path name: ORT CPU/CUDA use idle batch 1; RKNN retains the
+fixed artifact batch even when its path has a model-specific name.
 This is a **저장 계약 변경** (stored-object contract cutover): use new campaign
 identities between dependent measurements. Old campaign children without the
-identity are rejected; there is no name/label fallback, migration, or dual
-reader. Historical raw/finalized evidence and publications are not rewritten;
+identity or with contradictory trial identity stop the parent with terminal
+`Failed/InvalidCampaignRun`, including the child and cause in its condition.
+There is no name/label fallback, migration, or dual reader. Historical
+raw/finalized evidence and publications are not rewritten;
 RunConfig/evidence numeric execution contracts are unchanged by this change.
 
 Serving configurations must be measured, not inferred. CPU request is separate from optional positive whole-core quota and physical affinity; quotas/masks distinguish measurements, inter-op threads=1, affinity alone records `ExclusivityClaimed=false`. Memory is placement-feasibility evidence, not a limit sweep. On cgroup v2 without `memory.peak`, timestamped `memory.current` samples cover active/idle windows at a scheduling target interval; retained maxima can miss spikes and are not kernel high-water/absolute bounds. GPU UUID/RKNN ABI and actual backend remain execution observations.
@@ -70,4 +73,4 @@ Measurement Jobs cap runtime and artifact/preprocessor/dataset copy-init memory 
 ## Dependency rule
 Ownership: DeviceClass stable hardware; ModelSpec immutable artifact/path requirements; Kubernetes placement/allocation/lifecycle; Helm install identity/RBAC; CHILL frozen decisions/evidence/derivation. Pure leaves import no Kubernetes/CHILL API/controller-runtime; adapters depend inward. No generic ExecutionContract/plugin framework, compatibility status controller or implicit scheduler authorization.
 
-E5 (`SCH-08`, `SCH-31`, `SCH-42`): normative binding and all consumers reject `tolerateArchive` anywhere, regardless of value; required capture is fail-closed. Only `hack/e5/demo.py` diagnostic `demo-e5-binding.v1` trials may tolerate explicitly named missing power archives, retaining missing provenance/null energy: **진단 전용, E5 금지**. Offline check: `python3 hack/e5/demo.py --self-check` (not run by this documentation change).
+evaluation (`SCH-08`, `SCH-31`, `SCH-42`): normative binding and all consumers reject `tolerateArchive` anywhere, regardless of value; required capture is fail-closed. Only `hack/evaluation/demo.py` diagnostic `demo-e5-binding.v1` trials may tolerate explicitly named missing power archives, retaining missing provenance/null energy: **진단 전용, evaluation 금지**. Offline check: `python3 hack/evaluation/demo.py --self-check` (not run by this documentation change).

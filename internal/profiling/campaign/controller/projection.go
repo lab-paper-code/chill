@@ -6,7 +6,6 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
-	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -73,13 +72,11 @@ func projectTrial(parentName string, run *edgev1alpha1.ProfilingRun) (batchenerg
 		return batchenergyoptimization.Trial{}, errors.New("campaign Run requires a positive logical batch and attempt")
 	}
 	var mode batchenergyoptimization.WorkloadMode
-	executionBatch := int(identity.Batch)
 	switch run.Spec.Measurement.WorkloadMode {
 	case activeWorkloadMode:
 		mode = batchenergyoptimization.WorkloadModeActive
 	case idleWorkloadMode:
 		mode = batchenergyoptimization.WorkloadModeIdle
-		executionBatch = profilingrun.IdleExecutionBatch(run.Spec.Candidate.ExecutionPath, int(identity.Batch))
 	default:
 		return batchenergyoptimization.Trial{}, errors.New("campaign Run has an unsupported workload mode")
 	}
@@ -87,7 +84,9 @@ func projectTrial(parentName string, run *edgev1alpha1.ProfilingRun) (batchenerg
 		WorkloadMode: mode, Batch: int(identity.Batch),
 	}
 	attempt := int(identity.Attempt)
-	if int(run.Spec.Measurement.Batch) != executionBatch {
+	// Idle execution batch is checked against the resolved backend at the
+	// verified curve-state boundary, not inferred from this object's path name.
+	if mode == batchenergyoptimization.WorkloadModeActive && run.Spec.Measurement.Batch != identity.Batch {
 		return batchenergyoptimization.Trial{}, errors.New("campaign Run execution batch disagrees with its logical trial")
 	}
 	if run.Name != RunName(parentName, measurement, attempt) {

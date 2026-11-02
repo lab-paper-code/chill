@@ -271,7 +271,7 @@ func resultWriterRun(
 	uid types.UID,
 ) *edgev1alpha1.ProfilingRun {
 	t.Helper()
-	run, err := BuildRun(parent, measurement, attempt)
+	run, err := BuildRun(parent, measurement, attempt, "ort-cpu")
 	if err != nil {
 		t.Fatal(err)
 	}
