@@ -224,7 +224,7 @@ func TestCostEvidenceReadsLatestAcceptedOccupancy(t *testing.T) {
 	objects := &costTestObjects{objects: map[string][]byte{}, opens: map[string]int{}}
 	put := func(name, mode, verdict string, d int64, measuredAt time.Time) string {
 		record := DispatchOccupancyRecord{SchemaVersion: DispatchOccupancySchema, Node: testNode, PowerMode: mode, RuntimeImage: "image", Model: "m",
-			PerRequestNanos: d, Verdict: verdict, MeasuredAt: measuredAt}
+			ProfileID: "profile-" + mode, PerRequestNanos: d, Verdict: verdict, MeasuredAt: measuredAt}
 		raw, err := json.Marshal(record)
 		if err != nil {
 			t.Fatal(err)
@@ -241,7 +241,7 @@ func TestCostEvidenceReadsLatestAcceptedOccupancy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, err := evidence.Refresh(context.Background(), nil, nil, nil)
+	view, err := evidence.Refresh(context.Background(), nil, nil, []serving.Profile{{ID: "profile-max"}, {ID: "profile-low"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,6 +252,56 @@ func TestCostEvidenceReadsLatestAcceptedOccupancy(t *testing.T) {
 	if len(got) != 2 || got["max"].Source != newest || got["max"].PerRequest != 9_410_000 || got["max"].Node != testNode ||
 		got["low"].PerRequest != 0 || got["low"].Source != negative {
 		t.Fatalf("occupancy %+v", view.DispatchOccupancy)
+	}
+}
+
+func TestCostEvidenceExcludesControlledOccupancyFromSharedCapacity(t *testing.T) {
+	at := time.Unix(2000, 0).UTC()
+	objects := &costTestObjects{objects: map[string][]byte{}, opens: map[string]int{}}
+	put := func(name, profileID string, d int64, measuredAt time.Time) string {
+		t.Helper()
+		record := DispatchOccupancyRecord{SchemaVersion: DispatchOccupancySchema, Node: testNode, PowerMode: "max", RuntimeImage: "image", Model: "m",
+			ProfileID: profileID, PerRequestNanos: d, Verdict: measurementAccepted, MeasuredAt: measuredAt}
+		raw, err := json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		key := DispatchOccupancyPrefix + "node-uid/" + name + ".json"
+		objects.objects[key] = raw
+		return key
+	}
+	// The current catalog admits only shared-execution profiles. The old
+	// controlled profile has a different immutable ID despite the same tuple.
+	profile := serving.Profile{ID: "shared-profile"}
+	profile.Condition.PowerMode = "max"
+	profile.Condition.RuntimeImage = "image"
+	profile.Condition.LogicalModel = "m"
+	option := serving.SchedulerOption{Instance: serving.SchedulerInstance{Node: testNode, Profile: &profile}}
+	workload := &serving.Definition{UID: "workload"}
+	put("controlled", "controlled-profile", 9_410_000, at.Add(time.Hour))
+	evidence, err := NewCostEvidence(&Store{client: fake.NewClientBuilder().Build()}, objects, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := evidence.Refresh(context.Background(), nil, nil, []serving.Profile{profile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := serving.NewCapacityInput(serving.SchedulerSettings{}, view.DispatchOccupancy, option, workload)
+	if input.DispatchOccupancy != nil {
+		t.Fatalf("controlled occupancy reached shared capacity input: %+v", input.DispatchOccupancy)
+	}
+	// Filter eligibility before latest selection, including on cache hits:
+	// even a newer controlled record must not hide the shared measurement.
+	shared := put("shared", profile.ID, 2_000_000, at)
+	view, err = evidence.Refresh(context.Background(), nil, nil, []serving.Profile{profile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input = serving.NewCapacityInput(serving.SchedulerSettings{}, view.DispatchOccupancy, option, workload)
+	if len(view.DispatchOccupancy) != 1 || input.DispatchOccupancy == nil ||
+		input.DispatchOccupancy.Source != shared || input.DispatchOccupancy.PerRequest != 2*time.Millisecond {
+		t.Fatalf("shared capacity input did not recover: %+v", input.DispatchOccupancy)
 	}
 }
 

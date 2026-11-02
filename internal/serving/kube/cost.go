@@ -145,7 +145,7 @@ func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, meters 
 	if err = e.refreshPower(ctx, namespaces, meters, profiles, &view); err != nil {
 		return CostView{}, err
 	}
-	if err = e.refreshOccupancy(ctx, &view); err != nil {
+	if err = e.refreshOccupancy(ctx, profiles, &view); err != nil {
 		return CostView{}, err
 	}
 	view.Costs = latestCosts(view.Costs)
@@ -202,12 +202,18 @@ func (e *CostEvidence) refreshPower(ctx context.Context, namespaces []string, me
 	return nil
 }
 
-// refreshOccupancy keeps the latest accepted dispatch occupancy record per
-// Node, power mode, runtime image and model; a negative d counts as 0.
-func (e *CostEvidence) refreshOccupancy(ctx context.Context, view *CostView) error {
+// refreshOccupancy keeps the latest accepted shared-execution occupancy record
+// per Node, power mode, runtime image and model; a negative d counts as 0.
+func (e *CostEvidence) refreshOccupancy(ctx context.Context, profiles []serving.Profile, view *CostView) error {
 	identities, err := e.objects.List(ctx, DispatchOccupancyPrefix)
 	if err != nil {
 		return err
+	}
+	// The catalog admits only current shared-execution evidence. Matching the
+	// tuple alone would also admit historical controlled-execution records.
+	sharedProfiles := make(map[string]bool, len(profiles))
+	for i := range profiles {
+		sharedProfiles[profiles[i].ID] = true
 	}
 	listed := map[evidencestore.ObjectIdentity]bool{}
 	type measured struct {
@@ -231,7 +237,7 @@ func (e *CostEvidence) refreshOccupancy(ctx context.Context, view *CostView) err
 			}
 			e.occupancy[identity] = record
 		}
-		if record.Verdict == measurementAccepted {
+		if record.Verdict == measurementAccepted && sharedProfiles[record.ProfileID] {
 			accepted = append(accepted, measured{record: record, key: identity.Key})
 		}
 	}

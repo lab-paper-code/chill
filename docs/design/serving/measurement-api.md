@@ -100,7 +100,7 @@
 
 ## 4. 계획기의 d 수집
 
-- `CostEvidence.Refresh`는 `serving/dispatch-occupancy/`를 prefix 목록/불변 identity cache로 읽고 `Accepted` 중 (Node UID, mode, runtime image, model)별 최신 `measuredAt`을 선택한다. 동률은 key 순(`latestBy` 규칙)이다.
+- `CostEvidence.Refresh`는 `serving/dispatch-occupancy/`를 prefix 목록/불변 identity cache로 읽는다. `Accepted`이면서 기록의 `profileID`가 현재 catalog의 검증된 공유 실행 profile인 근거만 (Node UID, mode, runtime image, model)별 최신 `measuredAt` 선택에 참여한다. 과거 quota/thread 제어 profile의 d는 tuple이 같아도 새 κ 입력이 되지 않는다. 동률은 key 순(`latestBy` 규칙)이며 원 기록은 보존한다.
 - `serving.DispatchOccupancy{node{name,uid},powerMode,runtimeImage,model,perRequestNanos,source}`에서 source는 record key, `perRequestNanos=max(d,0)`(사용자 결정 A7)이다. 음수 d는 원 record/key로 조회한다.
 - controller 설정을 거쳐 snapshot `dispatchOccupancy`에 싣고 `dispatchOccupancy(i)`는 option의 Node UID/profile mode/runtime/model **모두** 일치하는 항목만 찾는다. `NewCapacityInput`과 replay가 이를 쓰며 행 key에 항목이 포함되어 source 변경 시 재계산한다.
 - 미측정 mode option은 `MissingDispatchOccupancy`다. 같은 Node/mode/runtime/model option은 d를 공유한다. 상세 용량 소비는 [계획기](analytic-planner.md)를 따른다.
@@ -534,7 +534,7 @@ exitCode를 셀·요청 entity·요청 목록 assessment·Query API 요청 상�
 `filters:{models,deviceClasses}`를 반환한다. `resultRows`/assessment/동결 조건/출처는 유지하되
 원시 `durationNanos`와 내부 `measurementFacts` 전체 맵은 공개 응답과 중간 직렬화에서 제외한다. `preparations` restore 계약은 보존한다.
 스케줄러 메모리·원본 표본은 변경하지 않는다. 프로파일 선택은 페이지와 별도 `profile` 조회로 가능하다.
-회차 목록도 q/condition 외 model/deviceClass/node/path/powerMode/cpu/status/parentUID/group을
+회차 목록도 q/condition 외 model/deviceClass/node/path/powerMode/status/parentUID/group을
 전체 snapshot에 적용한 뒤 페이지를 나눈다. group은 batch를 제외한 기존 조건 JSON의 의미 비교다.
 
 분배 점유는 한 보존 파일의 누락·해석 실패가 목록 전체 503이 되지 않는다.
