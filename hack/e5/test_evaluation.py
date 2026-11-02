@@ -72,6 +72,17 @@ class AdapterTests(unittest.TestCase):
         row['samples']=[{'sampledAt':'2026-11-02T00:00:01Z','containers':[other,wrong_container]}]
         telemetry.minute=None
         self.assertFalse(telemetry.ready(2,deadline))
+        import urllib.error
+        def not_ready(client,path,deadline):
+            raise urllib.error.HTTPError(path,409,'Conflict',None,io.BytesIO(b'{"code":"ObservationNotReady"}'))
+        archive._raw_get=not_ready
+        telemetry.minute=None
+        self.assertFalse(telemetry.ready(2,deadline))
+        def other_conflict(client,path,deadline):
+            raise urllib.error.HTTPError(path,409,'Conflict',None,io.BytesIO(b'{"code":"Other"}'))
+        archive._raw_get=other_conflict
+        telemetry.minute=None
+        with self.assertRaises(urllib.error.HTTPError):telemetry.ready(2,deadline)
     @patch.object(evaluation,'save')
     @patch.object(evaluation,'load',return_value={'spec':{'template':{'spec':{'containers':[{'name':'load','image':'load@sha256:test'}]}}}})
     def test_envelope_and_operational_boundary(self,unused_load,unused_save):

@@ -1808,10 +1808,8 @@ class CPO:
             labels={**job['metadata']['labels'],'edge.dacs.io/evaluation-run-uid':execution['runUID'],'edge.dacs.io/evaluation-stage':execution['stageID'],'edge.dacs.io/evaluation-step':'stage'}
             job['metadata']['labels']=labels
             job['metadata']['ownerReferences']=[{'apiVersion':'edge.dacs.io/v1alpha1','kind':'EvaluationStage','name':execution['stageName'],'uid':execution['stageUID'],'controller':True,'blockOwnerDeletion':True}]
-            job['spec']['template']['metadata']={'labels':labels}
         spec=job['spec']; spec.pop('selector',None); spec.pop('manualSelector',None); spec['backoffLimit']=0; spec['activeDeadlineSeconds']=math.ceil(self.tb['setupSeconds']+self.tb['barrierSeconds']+stage['seconds']+self.tb['drainSeconds']+self.tb['collectSeconds']); spec['template']['metadata']={'labels':dict(job['metadata']['labels'])}
         if self.c.get('evaluation'):
-            spec['template']['metadata']['labels'].update(labels)
             spec['parallelism']=spec['completions']=1
         pod=spec['template']['spec']
         if self.c.get('evaluation'):
@@ -2441,7 +2439,12 @@ class ProducerResources:
                         self.archive._remaining(deadline)
                         resources.append({'row':json.loads(line),'sourceRef':{'endpoint':endpoint,'line':index}})
             except urllib.error.HTTPError as error:
-                if error.code!=404:raise
+                # 404: hour absent; 409 ObservationNotReady: current hour has no closed minute yet. Both mean "not yet".
+                if error.code==409:
+                    try: code=json.loads(error.read()).get('code')
+                    except ValueError: code=None
+                    if code!='ObservationNotReady':raise
+                elif error.code!=404:raise
         self.archive._remaining(deadline)
         self.rows=[row for row in resource_telemetry(resources,[],[],self.pods)[0] if row['role']=='client']
         self.minute=minute
