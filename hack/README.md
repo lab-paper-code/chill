@@ -491,8 +491,8 @@ CPU-controlled evidence is not promoted by merely ignoring its CPU fields.
 No result is deleted. `inputs/current-runtime-images.json`,
 `inputs/required-execution-conditions.json`, stale/current-runtime lists and
 `remeasurement-cells.json` explain selection. Source SHA-256 and the deterministic
-request-name hash are provenance/naming, not evidence equality gates. Old
-measurements remain available as timing estimates.
+request-name hash are provenance/naming, not evidence equality gates. Historical
+results remain in the captured inputs, but are not timing bounds for different conditions.
 Protocol inheritance follows the dashboard's exact request → exact profile →
 latest successful same-model → same-path order, but never inherits CPU request,
 quota or affinity, even on the same Node. Catalog contracts resolve inputs.
@@ -506,12 +506,16 @@ window (default 60 seconds), independently repeated three times. Start with
 the full planner batch set, then retain a batch only if its same-model/class
 measured time allows `floor(windowSeconds / secondsPerCall) >= minCallsInWindow`
 (default one call). The conservative time is the slowest measurement of that
-exact batch on the same device class, including client overhead. Without such
-a timing the batch remains included unless a smaller batch was already
-excluded. Once any batch fails the threshold, all larger batches in the same
-cell are excluded, even with unknown or apparently faster timings.
-`excludedFromBatch` records the first failure. Another device's timing never
-starts this monotone exclusion.
+exact model/class/path/batch, including client overhead, whose runtime image and
+curve/evidence versions match the cell's required execution conditions through
+the same `coverage_condition_matches` predicate as target/reuse selection.
+`timings.json` retains those execution conditions per timing; old CPU-controlled
+curve/evidence versions are not timing evidence for shared execution. Without a
+matching timing the batch remains included unless a smaller batch was already
+excluded by a matching timing. Once a matching batch fails the threshold, all
+larger batches in the same cell are excluded, even with unknown or apparently
+faster timings. `excludedFromBatch` records the first failure. Another device,
+path, runtime or evidence version never starts this monotone exclusion.
 `excluded-batches.json` records “창 안 유의미 추론 불가”; if no batches survive,
 `excluded-cells.json` records the cell and no BEO is emitted. A partially
 filtered artifact-declared set also excludes the cell rather than violating the
@@ -579,7 +583,7 @@ limits and missing native/frozen worker envelopes remain unknown.
 
 The active metric observation deadline includes the last in-flight call:
 `windowSeconds + ceil(max(included batch call bounds)) + inherited metric padding`.
-Each known call bound is the slowest same-model/class/batch estimate multiplied
+Each known call bound is the slowest same-condition model/class/path/batch estimate multiplied
 by config `callDurationEstimateMultiplier` (2); unknown timings use config
 `unknownCallDurationSeconds` (600). Excluded batches do not inflate the deadline.
 This changes observer/worker budgets, not the runtime's 60-second start window,

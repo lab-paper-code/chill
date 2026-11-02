@@ -28,7 +28,7 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
                   annotated=True, controlled=False, prefix=True, memory_policy=None, cell_annotation=True,
                   variant=True, allocatable='20Gi', memory_fraction=0.8, policy_limit=17179869184,
                   model='mobilenet-v2-050', device='raspberry-pi-5-8g', runtime_image='new-runtime',
-                  node_uid='node-uid'):
+                  node_uid='node-uid', timing_seconds=None):
     """Exercise generate_coverage, not just its independent selection helpers."""
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
@@ -63,11 +63,18 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
         result = {'campaign': {'uid': 'uid'}, 'result': {
             'curvePlan': {'schemaVersion': conditions['curveSchema']},
             'completedTrials': [{'evidence': {'schemaVersion': conditions['evidenceSchema']}}]}}
+        if timing_seconds is not None:
+            result['measurementFacts'] = {
+                'condition': {'logicalModel': model, 'deviceClass': device, 'runtimeImage': image,
+                              'artifact': {'executionPath': path}, 'powerMode': 'fixed'},
+                'request': {'name': previous['metadata']['name'], 'uid': 'uid'},
+                'batches': [{'batch': 1, 'completedCalls': 1, 'quality': [
+                    {'workloadMode': 'saturated-serial-fixed-batch', 'windowSeconds': timing_seconds}]}]}
         inputs = {
             'measurement-coverage': {'completeness': 'complete', 'snapshotId': 'snapshot', 'cells': [cell]},
             'batch-energy-optimizations': {'items': [previous]},
             'profiles': {'profiles': [{'id': 'ns/coverage-old-runtime/uid', 'condition': {'runtimeImage': image}}]
-                        if phase == 'Complete' else []},
+                        if phase == 'Complete' or timing_seconds is not None else []},
             'inventory': {'classes': [{'name': device, 'architecture': 'arm64', 'memory': '8Gi',
                 'nodes': [{'name': 'node', 'uid': 'node-uid', 'ready': 'True', 'schedulingDisabled': False}]}]},
             'models': {'items': [{'metadata': {'name': model}, 'spec': {
@@ -182,6 +189,21 @@ def generation_self_check(gen):
     lower_policy['conditions']['memoryLimitBytes'] = 1024
     lower = generate_case(gen, phase='Failed', memory_policy=[lower_policy], policy_limit=1024)
     assert lower['excluded-batches'][0]['memoryPolicy']['status'] == 'applied'
+    timing_generation_self_check(gen)
+
+
+def timing_generation_self_check(gen):
+    for obsolete in ({'image': 'old-runtime'}, {'image': 'new-runtime', 'curve': 'old-curve'},
+                     {'image': 'new-runtime', 'evidence': 'old-evidence'}):
+        planned = generate_case(gen, timing_seconds=61, **obsolete)
+        assert planned['summary']['manifestCellCount'] == 1, planned['excluded-cells']
+        assert planned['cells'][0]['batches'] == [1, 2]
+        assert all(row['timingSource'] is None for row in planned['cells'][0]['batchEstimates'])
+    current = generate_case(gen, phase='Failed', image='new-runtime', timing_seconds=61)
+    assert current['summary']['manifestCellCount'] == 0
+    assert [r['batch'] for r in current['excluded-batches']] == [1, 2]
+    assert all(r['reason'] == gen.load(gen.HERE / 'coverage-plan.json')['excludedBatchReason']
+               for r in current['excluded-batches'])
 
 
 class CoverageGenerationTest(unittest.TestCase):

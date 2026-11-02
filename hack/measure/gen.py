@@ -642,9 +642,12 @@ def coverage_timings(results):
     timings = []
     for result in results:
         facts = result.get("measurementFacts")
-        if not facts:
+        if not facts or not coverage_shared_result(result):
             continue
         condition = facts["condition"]
+        execution_conditions = {"runtimeImage": condition.get("runtimeImage"),
+                                "curveSchema": SHARED_CURVE_SCHEMA,
+                                "evidenceSchema": SHARED_EVIDENCE_SCHEMA}
         for batch in facts["batches"]:
             active = [q for q in batch["quality"] if q["workloadMode"] == "saturated-serial-fixed-batch"]
             calls = batch.get("completedCalls", 0)
@@ -654,7 +657,7 @@ def coverage_timings(results):
                                 "batch": batch["batch"], "secondsPerCall": seconds / calls,
                                 "executionPath": condition["artifact"]["executionPath"],
                                 "powerMode": condition["powerMode"], "sourceUID": facts["request"]["uid"],
-                                "source": facts["request"]["name"]})
+                                "source": facts["request"]["name"], "executionConditions": execution_conditions})
     return timings
 
 
@@ -826,7 +829,8 @@ def coverage_batch_plan(cell, batches, timings, policy, declared=False, executio
     for batch in sorted(batches):
         # CPU and accelerator paths of one model differ by orders of magnitude; never borrow across paths.
         measured = [r for r in timings if r["model"] == model and r["deviceClass"] == device and
-                    r["batch"] == batch and r.get("executionPath") == cell["executionPath"]]
+                    r["batch"] == batch and r.get("executionPath") == cell["executionPath"] and
+                    coverage_condition_matches(r.get("executionConditions"), execution_conditions)]
         source = max(measured, key=lambda r: r["secondsPerCall"]) if measured else None
         calls = math.floor(policy["windowSeconds"] / source["secondsPerCall"]) if source else None
         if calls is not None and calls < policy["minCallsInWindow"] and excluded_from is None:
@@ -1207,29 +1211,39 @@ def coverage_self_check():
     assert coverage_batches(catalog, "path", policy) == ([1, 2, 4], False, "artifact")
     catalog["spec"]["executionPaths"][0]["runtime"]["settings"]["firstfloor"]["maxBatchSize"] = 3
     assert coverage_batches(catalog, "path", policy) == ([1, 2], False, "artifact")
+    execution_conditions = {"runtimeImage": "current-runtime", "curveSchema": SHARED_CURVE_SCHEMA,
+                            "evidenceSchema": SHARED_EVIDENCE_SCHEMA}
     timings = [{"model": model, "deviceClass": device, "batch": batch, "secondsPerCall": seconds,
-                "executionPath": "path", "source": device} for device, batch, seconds in
+                "executionPath": "path", "source": device, "executionConditions": execution_conditions}
+               for device, batch, seconds in
                [("device", 1, .1), ("device", 4, .4), ("slow", 16, 10)]]
     other_path = dict(timings[0], executionPath="other", secondsPerCall=600)
-    assert coverage_batch_plan(cell, [1], timings + [other_path], policy)[1][0]["secondsPerCall"] == .1  # never borrow another path
-    included, estimates, reason = coverage_batch_plan(cell, [1, 3, 16], timings, policy)
+    assert coverage_batch_plan(cell, [1], timings + [other_path], policy,
+                               execution_conditions=execution_conditions)[1][0]["secondsPerCall"] == .1
+    included, estimates, reason = coverage_batch_plan(
+        cell, [1, 3, 16], timings, policy, execution_conditions=execution_conditions)
     assert included == [1, 3, 16] and reason is None
     assert estimates[-1]["secondsPerCall"] is None  # another class is not grounds for exclusion
     assert estimates[1]["estimatedCallsInWindow"] is None
     slow = dict(timings[0], secondsPerCall=60)
-    assert coverage_batch_plan(cell, [1], [slow], policy)[0] == [1]  # exactly one call
+    assert coverage_batch_plan(cell, [1], [slow], policy, execution_conditions=execution_conditions)[0] == [1]
     slow["secondsPerCall"] = 60.001
-    included, estimates, reason = coverage_batch_plan(cell, [1], [slow], policy)
+    included, estimates, reason = coverage_batch_plan(
+        cell, [1], [slow], policy, execution_conditions=execution_conditions)
     assert included == [] and reason == policy["excludedBatchReason"] and estimates[0]["estimatedCallsInWindow"] == 0
-    included, estimates, reason = coverage_batch_plan(cell, [1, 2], [slow], policy)
+    included, estimates, reason = coverage_batch_plan(
+        cell, [1, 2], [slow], policy, execution_conditions=execution_conditions)
     assert included == [] and estimates[1]["secondsPerCall"] is None and estimates[1]["excludedFromBatch"] == 1
     fast = timings[0]
     mixed = [fast, dict(fast, batch=2, secondsPerCall=61), dict(fast, batch=4, secondsPerCall=.1)]
-    included, estimates, reason = coverage_batch_plan(cell, [4, 1, 2], mixed, policy)
+    included, estimates, reason = coverage_batch_plan(
+        cell, [4, 1, 2], mixed, policy, execution_conditions=execution_conditions)
     assert included == [1] and estimates[-1]["excludedFromBatch"] == 2 and estimates[-1]["estimatedCallsInWindow"] == 600
-    assert coverage_batch_plan(cell, [1, 2, 4], mixed, policy, declared=True)[2] == policy["declaredBatchConflictReason"]
+    assert coverage_batch_plan(cell, [1, 2, 4], mixed, policy, declared=True,
+                               execution_conditions=execution_conditions)[2] == policy["declaredBatchConflictReason"]
     two_calls = dict(policy, minCallsInWindow=2)
-    assert coverage_batch_plan(cell, [1], [dict(fast, secondsPerCall=40)], two_calls)[0] == []
+    assert coverage_batch_plan(cell, [1], [dict(fast, secondsPerCall=40)], two_calls,
+                               execution_conditions=execution_conditions)[0] == []
     active = {"durationSeconds": 60, "durationToleranceSeconds": 0,
               "metricObservation": {"durationSeconds": 62}}
     coverage_active_protocol(active, [{"included": True, "secondsPerCall": 37.294},
@@ -1240,12 +1254,15 @@ def coverage_self_check():
     coverage_active_protocol(active, [{"included": True, "secondsPerCall": None}], policy)
     assert active["metricObservation"]["durationSeconds"] == 662
     facts = {"condition": {"logicalModel": model, "deviceClass": "device", "artifact": {"executionPath": "path"},
-                          "powerMode": "mode"},
+                          "powerMode": "mode", "runtimeImage": execution_conditions["runtimeImage"]},
              "request": {"name": "source", "uid": "source-uid"},
              "batches": [{"batch": 1, "completedCalls": 100, "quality": [
                  {"workloadMode": "saturated-serial-fixed-batch", "windowSeconds": 10},
                  {"workloadMode": "idle-model-loaded", "windowSeconds": 500}]}]}
-    assert coverage_timings([{"measurementFacts": facts}])[0]["secondsPerCall"] == .1
+    timed_result = dict(result, measurementFacts=facts)
+    assert coverage_timings([timed_result])[0]["secondsPerCall"] == .1
+    assert coverage_timings([timed_result])[0]["executionConditions"] == execution_conditions
+    assert coverage_timings([dict(old_result, measurementFacts=facts)]) == []
     assert coverage_timings([{"measurementFacts": None}]) == []
     assert coverage_batch_plan(cell, [1], [], policy)[0] == [1]
     heavy_model = max(policy["models"], key=lambda name: policy["models"][name]["priority"])
