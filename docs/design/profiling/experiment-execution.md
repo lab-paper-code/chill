@@ -89,7 +89,7 @@ SLO·서버 버전·스위치는 LoadScenario에 넣지 않는다. Workload gene
 `environment*.json`의 토큰·CA·endpoint·host path는 spec 밖이다. release namespace의 고정 ConfigMap `chill-evaluation-config`와 Secret·Job 전달 binding으로 주입한다.
 `binding`의 과학적 조건은 위 필드·불변 입력으로 옮기고 `control` 번호·로컬 실행 폴더는 신원으로 쓰지 않는다.
 `preparationStatus`/`scoreboardInputs` 같은 운영 보조 파일을 필수 실행 계약으로 승격하지 않는다.
-대기/정리 상한·Job 실행 예산·수집 크기/용량 한계·SA/Secret 이름·SSH 접속값·StorageClass/PVC 크기·API URL 등 운영 값은 **ConfigMap `chill-evaluation-config`**에서 선택한다.
+대기/정리 상한·Job 실행 예산·수집 크기/용량 한계·SA/Secret 이름·StorageClass/PVC 크기·API URL 등 운영 값은 **ConfigMap `chill-evaluation-config`**에서 선택한다.
 controller가 실험 시작 시 직접 GET하여 실제값과 ConfigMap 이름·UID·resourceVersion을 `status.frozenConfig`와 실행 증거에 동결한다. operator·profiler flag는 변경하지 않는다.
 [ADR 0031](../../adr/0031-configuration-ownership-and-freezing.md)에 따라 실행 중 재조회로 값을 바꾸지 않는다. 프로토콜 상수는 policy knob로 만들지 않는다.
 
@@ -102,10 +102,9 @@ controller가 실험 시작 시 직접 GET하여 실제값과 ConfigMap 이름·
 | `jobActiveDeadlineSeconds` | Job 예산 `21600`; 최소 `540`초 |
 | `injectionWindowSeconds`, `injectionSnapshotTTLSeconds` | 주입 허용 창·관측 유효 기간: 각각 `5`초 |
 | `finishResetWaitSeconds`, `factorAckWaitSeconds`, `drainTimeoutSeconds` | 하네스 대기 상한: `600`, `120`, `600`초 |
-| `e5Operational` | JSON 객체, 기본 `{}`. 허용 키는 `timeboxes`, `tokenSafetyMarginSeconds`, `failureSelectSnapshotTTLSeconds`, `collection.maximumDurationSeconds`, `workloads[name].{producerEndpoint,producerTokenFile,producerCAFile,producerDatasetDir,deliverySeconds,socketSeconds,gatewayCapSeconds,workers,lifetimeSeconds,podSpec}`뿐 |
+| `e5Operational` | JSON 객체, 기본 `{"timeboxes":{"setupSeconds":405}}`. 허용 키는 `timeboxes`, `tokenSafetyMarginSeconds`, `failureSelectSnapshotTTLSeconds`, `collection.maximumDurationSeconds`, `workloads[name].{producerEndpoint,producerTokenFile,producerCAFile,producerDatasetDir,deliverySeconds,socketSeconds,gatewayCapSeconds,workers,lifetimeSeconds,podSpec}`뿐 |
 | `chillAPIURL`, `caSecret` | ChillServer URL·TLS CA Secret |
 | `evidenceEndpoint`, `evidenceBucket`, `evidenceRegion`, `evidenceCredentialsSecret` | 증거 store 접속·전용 자격 Secret |
-| `producerSSHSecret`, `sshNode`, `sshHost`, `sshUser`, `sshPort`, `sshHostKeyAlias` | producer SSH binding; user·host-key alias 기본 빈 값, port `22` |
 
 ## 4. Status와 condition
 
@@ -143,9 +142,9 @@ Job NotFound는 정확한 UID·조회 사실을 보존한다. 다른 UID를 삭�
 |---|---|---|---|
 | 준비 / 하네스 사전 검사 | Deployment/Pod 상태, GET settings/state/workloads/profiles, 입력 증거·토큰 수명 | `Round.preflight` `hack/e5/round.py:374`, `guard:565`; `CPO.check_token_lifetime` `hack/e5/e5.py:1768–1779` | 신원·입력·장비·용량·수집기·토큰 만료 오류면 부하 미시작; 배포 안 함 |
 | 복원 / `factor` | GET/PUT settings, GET state, POST operations reset/unroute/prepare/route; Node 전력모드 label patch | `CPO.factor` `hack/e5/e5.py:2137–2221`, `native_mode:2252–2257`; `Round.headroom` `hack/e5/round.py:526` | ACK/readback·Decision.Settings·Node UID/generation 기록; 불확실 명령 재전송 금지 |
-| 부하 / `stage` | workload별 Job/Pod 생성·logs·pods/exec GO; infer는 loadgen이 호출 | `CPO.job` `hack/e5/e5.py:1743–1761`, `run:1780–1976`, `sampler:1717–1741` | 선택 Pod UID·개별 start·부분 GO 기록; 교체 Pod GO/부하 재발행 없음 |
+| 부하 / `stage` | workload별 Job/Pod 생성·logs·pods/exec GO; infer는 loadgen이 호출 | `CPO.job`, `CPO.run`, `ProducerResources` (`hack/e5/e5.py`) | 선택 Pod UID·개별 start·부분 GO 기록; 교체 Pod GO/부하 재발행 없음 |
 | drain / 같은 `stage` | 기존 producer 종료 로그·counter·종료 신호, state/workloads | `CPO.request_drain` `hack/e5/e5.py:1587–1597`, `run:1977–1995` | 상한 초과·상태 불명은 중단·예약 유지; 요청 drain≠풀 반환 |
-| 수집 / 같은 `stage` | GET `/api/v1/observations/raw?hour=…`, `/raw/definitions`, `/raw/{hour}/{kind}` | `CPO.collect` `hack/e5/e5.py:2064`; `collect` `hack/e5/e5-archive.py:346–413` | API-only 유지; host/S3 관측 raw 수집 fallback 없음. 생성기 cgroup 표본은 아래 별도 경계 |
+| 수집 / 같은 `stage` | GET `/api/v1/observations/raw?hour=…`, `/raw/definitions`, `/raw/{hour}/{kind}` | `CPO.collect` (`hack/e5/e5.py`); `collect` (`hack/e5/e5-archive.py`) | API-only 유지; producer도 동일 resources raw 사용, host/S3 관측 raw 수집 fallback 없음 |
 | 판정 / `judge` | 저장된 client/raw·동결 설정으로 기존 계산·증거 저장 | `judge` `hack/e5/e5.py:2401`; `_reduce` `hack/e5/e5-archive.py:300` | 누락·계산 불능을 0/PASS로 바꾸지 않음; 수행 오류와 원 판정 FAIL/INVALID 구분 |
 | 단계 정리 / `cleanup-jobs` | 자신이 만든 producer Job의 정확한 UID만 삭제 | `CPO.cleanup_jobs` `hack/e5/e5.py:2258–2269`; `Round.execute` `hack/e5/round.py:743` | UID 불일치·정리 실패는 잔류 기록·중단; 매 stage 원 설정 복구/reset 안 함 |
 | 실험 끝 / `finish` 1회 | 원 제어 설정 복구, owned reset·state 반환 대기 | `CPO.finish` `hack/e5/e5.py:2272`; `Round.finish` `hack/e5/round.py:695`, `execute:732` | 상한 초과면 CleanupComplete=False·점유 유지; 이미 완료된 측정 판정은 게시 가능 |
@@ -159,9 +158,10 @@ Job NotFound는 정확한 UID·조회 사실을 보존한다. 다른 UID를 삭�
 하네스 Job은 실행별 RWX 작업 PVC의 같은 경로에서 앞 절차 산출을 이어받는다. 각 절차 종료 시 그 절차의 새 산출·시점 스냅샷을 `experiments/<UID>/...`에 conditional create로 저장하고 검증된 작은 결과 참조를 기록한다. 가변 phase/commands 파일은 절차별 다른 key로 보존하며 덮어쓰지 않는다. PVC 손실은 자동 재측정/새 Job 복원을 허용하지 않고 ExecutionLost/증거 실패로 남긴다.
 PVC는 가변 작업 상태, store는 불변 증거 정본이다. controller는 반환 미확인 동안 Job/PVC를 의도적으로 정리하지 않으며 증거 업로드 실패 시 PVC를 보존한다. GC 지원 범위는 §6과 같다.
 controller와 Job의 단계 증거는 `experiments/<UID>/stages/<stageID>/...`에 `ImmutableWriter`로 저장한다. 기존 publish bridge는 중간 저장/전달에 쓰지 않는다.
-부하 Job은 재시작과 무관하게 sampler·GO·drain·수집을 계속한다. 주입용 GO 시각은 한 번 쓰는 진행 증거로 노출하고 실제 producer별 시작과 구분한다.
-실행 중 genesis1 producer cgroup 표본은 사전 GO 검사·종료 counter·판정에 필요하며 현재 SSH + sudo crictl을 쓴다(`hack/e5/e5.py:1717–1741,1919–1938`).
-node-agent는 producer Pod를 대상으로 선택하지 않고 공개 raw에도 해당 UID 표본이 없어 대체 불가로 확인했다(§12). stage Job은 명시 SSH Secret `chill-evaluation-producer-ssh`로 기존 sampler를 실행하며 표본 생성을 사후 raw 수집으로 대신하지 않는다.
+부하 Job은 서버 재시작과 무관하게 GO·drain·수집을 계속한다. 주입용 GO 시각은 한 번 쓰는 진행 증거로 노출하고 실제 producer별 시작과 구분한다.
+실행 중 producer cgroup 표본은 node-agent가 수집하고 기존 `/api/v1/observations/raw/{hour}/resources`의 닫힌 분을 하네스가 폴링한다. GO 전 `minimumReadySamples`개 완전한 counter와 종료 이후 실제 counter를 **자신이 만든 Pod UID + load containerID**로만 고른다. 다른 Pod·다른 컨테이너는 client로 분류하지 않으며, cgroup을 찾지 못한 errors/표본 누락은 readiness 우회가 아니라 상한 내 관측 대기 후 실패다.
+자원 대상 계약은 **서버 namespace + `edge.dacs.io/workload-role=load-generator`**다. 이름·값은 서버 `resources.go`와 Python `e5.py`의 계약 상수로 한 곳씩 선언하며 producer Pod template이 붙인다. resourceReceiver만 기존 대상과 OR하고 cluster observer의 선택은 바꾸지 않는다. 다른 실험 도구도 같은 일반 라벨을 쓸 수 있고 서버는 E5 라벨을 알지 않는다.
+판정도 API resources adapter만 사용하며 local client cgroup 병합·SSH sampler·Secret·호스트 계정·sudo crictl 요구를 제거한다. 종료 counter 증거를 저장한 후 기존 start marker를 제거한다. 마지막 collect의 기존 raw 수집을 재사용하며 별도 종료 수집 경로는 만들지 않는다. 저장 resources 형식은 ADR 0019에 따라 그대로다.
 최종 단발 표·게시 Job은 기록된 판정·정리 결과만 표현한다. 정리 실패도 세 축을 구분해 게시하며 후속 측정/복구를 시작하지 않는다.
 `summarize`(`hack/e5/e5.py:2589`)·`render`(`hack/e5/tables.py:72`)를 재사용하고 `Round.reports`(`hack/e5/round.py:654`)의 필요한 표 조립만 기존 tables 경계로 옮긴다.
 
@@ -171,8 +171,8 @@ node-agent는 producer Pod를 대상으로 선택하지 않고 공개 raw에도 
 - 입력 CM `eval-<runUID32>-input`에는 `snapshot-ref.json`의 snapshotRef만 담는다. 큰 입력 snapshot 본문은 store/PVC에 두며 CM에 복제하지 않는다(`internal/evaluation/controller/run.go`).
 - 결과 JSON: `{schemaVersion:"evaluation-step.v1alpha1",runUID,generation,stageUID?,stageID?,step,execution:{status,reason},measurement:{verdict,reason}?,cleanup:{status,reason}?,startedAt,finishedAt,artifacts:[{store,key,size}]}`. 로컬 `results/prepare.json`, `results/stages/<id>/<step>.json`, `results/{finish,publish}.json`은 편의 사본이며 store result를 독립 load한다. 큰 judgment는 artifact다.
 - exit code: **0**=절차·필수 불변 업로드 완료(PASS 아님), **1**=수행/입력/관측/업로드 오류 또는 효과 불명, **2**=명시 측정 INVALID 등 판정 완료(result 있음). Job 성공/실패나 exit 2만으로 MeasurementPassed를 정하지 않으며 신호·Pod 교체·Job retry로 자동 재실행하지 않는다.
-- Job 이름: 부모는 `eval-<runUID lowercase without hyphens>-<prepare|finish|publish>`, 자식은 `eval-<stageUID lowercase without hyphens>-<factor|stage|judge|cleanup>`(≤63자, cleanup argv는 cleanup-jobs). producer도 Stage UID+workload ordinal로 결정한다. labels는 `edge.dacs.io/evaluation-run-uid`, `edge.dacs.io/evaluation-stage`(stageID 또는 run), `edge.dacs.io/evaluation-step`, `edge.dacs.io/workload-role=system`이며 단계에는 stage UID도 기록한다. 소유자 UID·동결 args/image/SA/PVC/spec/config 확인 후 채택한다.
-- SA: `chill-evaluation-action`은 prepare/factor/stage/cleanup/finish, `chill-evaluation-publish`는 judge/publish(automount=false)에 사용한다. stage만 SSH Secret을 mount하며 모든 Job은 backoffLimit=0, parallelism/completions=1, restartPolicy=Never, bounded activeDeadlineSeconds다.
+- Job 이름: 부모는 `eval-<runUID lowercase without hyphens>-<prepare|finish|publish>`, 자식은 `eval-<stageUID lowercase without hyphens>-<factor|stage|judge|cleanup>`(≤63자, cleanup argv는 cleanup-jobs). producer도 Stage UID+workload ordinal로 결정한다. labels는 `edge.dacs.io/evaluation-run-uid`, `edge.dacs.io/evaluation-stage`(stageID 또는 run), `edge.dacs.io/evaluation-step`이며 하네스 Job은 `edge.dacs.io/workload-role=system`, producer Pod는 `edge.dacs.io/workload-role=load-generator`다. 단계에는 stage UID도 기록한다. 소유자 UID·동결 args/image/SA/PVC/spec/config 확인 후 채택한다.
+- SA: `chill-evaluation-action`은 prepare/factor/stage/cleanup/finish, `chill-evaluation-publish`는 judge/publish(automount=false)에 사용한다. SSH Secret은 필요 없으며 모든 Job은 backoffLimit=0, parallelism/completions=1, restartPolicy=Never, bounded activeDeadlineSeconds다.
 - action SA는 projected token을 사용하며 `expirationSeconds=activeDeadlineSeconds+60`이다(최소 token 수명 600초에 맞춰 deadline 최소 540초). 하네스는 회전된 token을 요청마다 다시 읽으며 최초 읽은 문자열을 재사용하지 않는다.
 - store key: `experiments/<runUID>/preparation/...`, `/stages/<stageID>/<step>/...`, `/finish/...`. 단계 GO는 `/stages/<stageID>/go.json`, 주입 응답은 `/stages/<stageID>/injections/<id>/result.json`이다. **child UID는 경로에 넣지 않고 result에 기록**한다. 가변 파일은 절차별 snapshot key, 작은 result는 마지막 쓰기이며 충돌은 실패다. 최종 bridge는 `serving/experiments.v1alpha1/<runUID>/{execution.json,evidence-index.json,summary.json}`만 쓰며 summary가 마지막이다.
 
@@ -272,7 +272,6 @@ ChillServer는 objects Reader/Lister로 완료 게시를 기존 `/api/v1/experim
 | profiler | 기존 leader election Lease 권한, `chill-evaluation-config` GET·immutable spec/config ConfigMap create/get·실행 PVC create/get/list/watch·Secret 전달 | 시작 시 직접 GET·동결, operator·profiler flag 변경 없음; 별도 실험 Lease 없음; Secret 본문은 status/증거 비노출 |
 | 단계 하네스 Job | 기존 loadgen Jobs create/get/list/watch/delete, Pod get/list/watch/logs·pods/exec create, ChillServer settings/state/operations·raw GET 인증; action SA를 기존 scheduler-editor ClusterRole과 serving namespace ConfigMap update Role에 각각 bind | stage producer 생성/GO/정리·API 수집 주체; 정확한 UID·namespace만 |
 | 복원 하네스 Job | Nodes get/patch: 기존 전력모드 요청 label·generation 관련 annotation | `chill.dacs.io/power-mode` 경로 재사용(`hack/e5/e5.py:2175,2252–2257`); host 전력 명령 금지 |
-| stage Job의 cgroup sampler | genesis1 SSH/sudo crictl용 Secret `chill-evaluation-producer-ssh`(`ssh-privatekey`, `known_hosts`)·실행 권한 | node-agent 대체 불가 확인(§12); producer cgroup 범위만, 관측 raw host 수집과 구분 |
 | 판정·표·게시 Job | 입력/실행 증거 read·immutable write·최종 게시 쓰기 | 계산 Job에는 Kubernetes mutation·관측 archive 직접 수집·DeleteObject 권한 없음 |
 | loadgen Job / 조회자 | 기존 infer·dataset / 세 CR get/list/watch·기존 게시 조회 인가 | ChillServer SA에는 세 CR 읽기 추가 없음 |
 
@@ -310,8 +309,11 @@ Node 필드/label 범위는 RBAC 자체가 아니라 코드에서 제한한다. 
 | EXP-14 | §8 Run UID 게시·definition=부모 spec+해석 부하 snapshot·실제 자식은 execution·과거 불변 |
 | EXP-15 | §8·10 완료 게시 Dashboard/진행 중 kubectl·명시적 관계/SLO·reader 우선·과거 미기록 |
 
-## 12. 결정(2026-10-31)
+## 12. 결정(2026-11-02 사용자 개정)
 
-- cgroup 표본·kind 경계는 §1·5, 하위 모델 분해(2026-10-31)는 §3과 [ADR 0032 개정 이력](../../adr/0032-experiment-execution-boundary.md#개정-이력)을 따른다.
+- **2026-11-02 producer cgroup을 node-agent raw로(사용자 결정)** 전환한다. 종전의 “node-agent 대체 불가”는 당시 producer 대상 미선택에 대한 관측이며 영구 제약이 아니므로 폐기한다. §5의 자원 전용 일반 라벨 계약으로 대상을 확장한다.
+- 닫힌 분만 반환하는 기존 API의 지연을 감수하며 새 API·SSH 폴백은 없다. 기본 node-agent batch 10초에서 target 갱신 ≤10초 + 표본 2개 ≤2초 + 업로드 ≤10초 + 분 닫힘 ≤60초 = **≤82초**(정상 통신 가정). 기존 setup 194초를 전부 startup에 쓸 수 있으므로 194초 안에 추가 관측 대기를 보장할 수 없다. chart의 `e5Operational.timeboxes.setupSeconds`만 **405초 = 194 + 82 + 기존 API 상한 129**로 올린다. ready 이후 300초 producer barrier 안에서도 82+129=211초다. 이미지 pull·API 장애의 무한 완료는 보장하지 않으며 전체 setup 상한을 넘으면 GO 없이 실패한다.
+- 종료 표본은 기존 drain + collect 상한 안에서 기다리고 producer Job activeDeadline에도 기존 collect 상한을 포함한다. 최종 collect는 기존대로 한 번 수행한다. 폴링은 UTC 분마다 한 번, 같은 닫힌 분은 재계수하지 않는다.
+- 하위 모델 분해(2026-10-31)는 §3과 [ADR 0032 개정 이력](../../adr/0032-experiment-execution-boundary.md#개정-이력)을 따른다. 독립 D2가 쓰는 `sample_cgroups.py`는 유지한다.
 - FaultInjection·프로파일·Snapshot 등 별도 CR 기각 근거는 [ADR 0032 대안](../../adr/0032-experiment-execution-boundary.md#context)을 따른다. §1의 범위 밖 범용 workflow는 도입하지 않는다.
 - 하네스 이미지의 Dockerfile 전용 `.dockerignore`는 `hack/e5`·과학 정의 문서를 포함한다. 루트 제어 이미지용 제외 규칙을 공유하지 않으며 실제 BuildKit 빌드로 입력 포함을 검증한다.

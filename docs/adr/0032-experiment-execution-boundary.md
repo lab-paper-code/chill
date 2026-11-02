@@ -47,6 +47,12 @@ E5의 조건·순서·비교 관계는 CHILL 밖 `.cache/chill-assets/ops/pools-
 
 ## 개정 이력
 
+### 2026-11-02 producer cgroup을 node-agent raw로(사용자 결정)
+
+- E5의 SSH sampler·producer SSH Secret·호스트 계정/authorized_keys·sudo crictl 요구를 제거한다. node-agent가 producer cgroup을 수집하고 기존 resources raw의 닫힌 분을 폴링하여 정확한 Pod UID/load containerID로 GO 전·종료 counter·판정을 연결한다. 별도 API·폴백·local client 병합은 없다.
+- 서버 namespace의 일반 계약 라벨 `edge.dacs.io/workload-role=load-generator`는 **자원 표본만** 선택한다. cluster observer 선택은 유지하고 서버는 E5 전용 라벨에 결합하지 않는다.
+- 과거 “node-agent 대체 불가” 결정을 폐기한다. 닫힌 분 지연 ≤82초 + 기존 API 상한 129초를 기존 startup 예산 194초에 더해 chart setup 기본을 405초로 조정한다. 근거·상한·실패 의미는 [실행 설계 §12](../design/profiling/experiment-execution.md#12-결정2026-11-02-사용자-개정)를 따른다. raw 저장 형식/ADR 0019는 변경하지 않으며 D2 sampler 도구는 유지한다.
+
 ### 2026-10-31 (사용자 승인) 하위 데이터 모델 분해
 
 - `LoadScenario` CR은 재사용 가능한 불변 부하 정의이며 실행 status나 consumer ownerReference를 두지 않는다.
