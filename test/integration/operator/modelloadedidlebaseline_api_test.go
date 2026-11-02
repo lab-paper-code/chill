@@ -8,7 +8,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -48,15 +47,6 @@ var _ = Describe("ModelLoadedIdleBaseline API", func() {
 		Entry("active-style zero batch", func(request *edgev1alpha1.ModelLoadedIdleBaseline) {
 			request.Spec.Batch = 0
 		}),
-		Entry("non-positive CPU quota", func(request *edgev1alpha1.ModelLoadedIdleBaseline) {
-			request.Spec.CPUQuota = resource.MustParse("0")
-		}),
-		Entry("fractional CPU quota", func(request *edgev1alpha1.ModelLoadedIdleBaseline) {
-			request.Spec.CPUQuota = resource.MustParse("500m")
-		}),
-		Entry("CPU request above quota", func(request *edgev1alpha1.ModelLoadedIdleBaseline) {
-			request.Spec.State.CPURequest = resource.MustParse("5")
-		}),
 		Entry("confidence outside the open interval", func(request *edgev1alpha1.ModelLoadedIdleBaseline) {
 			request.Spec.PointPolicy.ConfidenceLevel = "1.0"
 		}),
@@ -87,10 +77,9 @@ func validModelLoadedIdleBaseline(name string) *edgev1alpha1.ModelLoadedIdleBase
 					ModelSpec: "mobilenet-v2-050", DeviceClass: "lattepanda-3-delta-8g",
 					ExecutionPath: "ort-cpu", PowerMode: "fixed", Preprocessor: "mobilenet-imagenet",
 				},
-				TargetNode: "lattepanda", CPURequest: resource.MustParse("100m"),
+				TargetNode: "lattepanda",
 			},
-			CPUQuota: resource.MustParse("4"),
-			Batch:    1,
+			Batch: 1,
 			Protocol: edgev1alpha1.IdleProtocolSpec{
 				SettlingDurationSeconds: 60, DurationSeconds: 30,
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{

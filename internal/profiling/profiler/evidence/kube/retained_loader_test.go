@@ -344,8 +344,8 @@ func retainedEvidenceObjects(t *testing.T, idle bool) (retainedObjects, evidence
 	start := observation.Job.Status.CompletionTime.Time.Add(-30 * time.Second)
 	podUID := string(observation.Pod.UID)
 	cpu := profilingrun.RuntimeCPU{
-		CgroupCPUMax: "400000 100000", ORTIntraOpThreads: config.CPU.ORTIntraOpThreads,
-		ORTInterOpThreads: config.CPU.ORTInterOpThreads, AffinityCPUCount: config.CPU.ORTIntraOpThreads,
+		CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 0,
+		ORTInterOpThreads: 0, AffinityCPUCount: 4,
 		AffinityCPUs: []int{0, 1, 2, 3}, CPUSetEffective: "0-3",
 	}
 	const (

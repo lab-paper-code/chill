@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	IdleRuntimeResultSchemaVersion = "chill.dacs.io/model-loaded-idle-runtime.v1alpha6"
+	IdleRuntimeResultSchemaVersion = "chill.dacs.io/model-loaded-idle-runtime.v1alpha7"
 )
 
 // IdleRuntimeResult contains runtime-owned facts for one model-loaded idle
@@ -119,7 +119,7 @@ func validateBoundIdleRuntime(config RunConfig, podUID string, result IdleRuntim
 	if err := validateIdleRuntimePathEvidence(config, result); err != nil {
 		return err
 	}
-	if err := validateCPUQuota(config.CPU.Limit, result.CPUContract.CgroupCPUMax); err != nil {
+	if err := validateCPUObservation(result.CPUContract.CgroupCPUMax); err != nil {
 		return err
 	}
 	if result.DerivedContract.NodeSnapshot.UID != config.TargetNode.UID {
@@ -134,10 +134,6 @@ func validateBoundIdleRuntime(config RunConfig, podUID string, result IdleRuntim
 func validateIdleRuntimePathEvidence(config RunConfig, result IdleRuntimeResult) error {
 	if strings.TrimSpace(result.CPUContract.CPUSetEffective) == "" || result.CPUContract.AffinityCPUCount < 1 {
 		return errors.New("idle runtime CPU evidence is incomplete")
-	}
-	if len(config.CPU.AffinityCPUs) != 0 && (!slices.Equal(config.CPU.AffinityCPUs, result.CPUContract.AffinityCPUs) ||
-		result.CPUContract.AffinityCPUCount != len(config.CPU.AffinityCPUs)) {
-		return errors.New("idle actual CPU affinity differs from requested frozen CPU IDs")
 	}
 	if !IsSupportedFirstfloorRunConfig(config) {
 		return errors.New("idle runtime result requires a supported firstfloor RunConfig")

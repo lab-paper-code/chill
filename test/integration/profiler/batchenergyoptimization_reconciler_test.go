@@ -13,7 +13,6 @@ import (
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -346,7 +345,7 @@ func createBatchEnergyOptimization(
 					ModelSpec: "mobilenet-v2-050", DeviceClass: "lattepanda-3-delta-8g",
 					ExecutionPath: "ort-cpu", PowerMode: "fixed", Preprocessor: "mobilenet-imagenet",
 				},
-				TargetNode: "lattepanda", CPURequest: resource.MustParse("100m"),
+				TargetNode: "lattepanda",
 			},
 			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{
 				WarmupIterations: 20, DurationSeconds: 30,
@@ -593,9 +592,6 @@ func integrationCurvePlan(t *testing.T) profilederivation.CurvePlan {
 		Name: "integration-curve", LogicalModel: "mobilenet-v2-050",
 		DeviceClass: "lattepanda-3-delta-8g", NodeUID: "node-uid",
 		RuntimeFamily: "ort", Backend: "cpu", RuntimeImage: image("runtime", "c"), PowerMode: "fixed",
-		CPU: profilederivation.CurveCPUContract{
-			Policy: "allocatable", PolicyVersion: "v1", Request: "100m", Limit: "1",
-		},
 		MetricSource: profilederivation.CurveMetricSourceContract{
 			SourceKind: "prometheus", NodeName: "lattepanda", Endpoint: "http://metrics",
 			PowerMetric: "power_watts",

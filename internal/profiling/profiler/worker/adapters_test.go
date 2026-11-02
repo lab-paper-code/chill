@@ -94,7 +94,6 @@ func TestFirstfloorRequestMatchesPythonContract(t *testing.T) {
 	rknn.State.Artifact, rknn.State.ArtifactFiles = "model-rk3588-bs1", []string{"/artifact/model.rknn"}
 	rknn.State.Preprocessor.Architecture = "arm64"
 	rknn.TargetNode.Architecture = "arm64"
-	rknn.CPU.ORTIntraOpThreads, rknn.CPU.ORTInterOpThreads = 0, 0
 	rknn.Delivery = profilingrun.CandidateRuntimeDelivery{
 		ArtifactCapability: &profilingrun.CandidateArtifactCapability{
 			TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1},

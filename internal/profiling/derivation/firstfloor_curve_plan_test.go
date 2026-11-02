@@ -2,7 +2,6 @@ package profilederivation
 
 import (
 	"bytes"
-	"slices"
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/modelcompat"
@@ -67,65 +66,17 @@ func TestFirstfloorCurveFreezesGPUAllocation(t *testing.T) {
 	}
 }
 
-func TestFirstfloorCurveAffinityCanonicalIdentityAndClones(t *testing.T) {
-	shared := validCurvePlanSpec()
-	shared.RuntimeFamily, shared.Backend = "firstfloor", "ort-cpu"
-	shared.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 4, MaxQueueSize: 32}
-	shared.CPU.ORTIntraOpThreads, shared.CPU.ORTInterOpThreads = 2, 1
-	shared.CPU.AffinityCPUs = []int{31, 8}
-	plan, err := NewCurvePlan(shared)
+func TestSharedCurveRejectsOldFrozenCPUAllocation(t *testing.T) {
+	plan, err := NewCurvePlan(validCurvePlanSpec())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(shared.CPU.AffinityCPUs, []int{31, 8}) ||
-		!slices.Equal(plan.Shared().CPU.AffinityCPUs, []int{8, 31}) {
-		t.Fatal("curve construction did not sort a detached mask")
-	}
-	canonical, err := plan.CanonicalJSON()
+	payload, err := plan.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
-	shared.CPU.AffinityCPUs[0] = 99
-	copy := plan.Shared()
-	copy.CPU.AffinityCPUs[0] = 9
-	if !slices.Equal(plan.Shared().CPU.AffinityCPUs, []int{8, 31}) {
-		t.Fatal("frozen curve affinity aliases caller masks")
-	}
-	decoded, err := DecodeCurvePlan(canonical)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(decoded.Shared().CPU.AffinityCPUs, []int{8, 31}) {
-		t.Fatal("curve reconstruction lost affinity")
-	}
-	other, err := NewCurvePlan(copy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	otherJSON, err := other.CanonicalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Equal(canonical, otherJSON) {
-		t.Fatal("CPU mask replacement retained curve identity")
-	}
-	state := testVerifiedState(plan)
-	verified, err := VerifyCurvePlan(plan, state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state.Shared.CPU.AffinityCPUs[0] = 9
-	if verified.state.Shared.CPU.AffinityCPUs[0] != 8 {
-		t.Fatal("verified curve aliases supplied affinity")
-	}
-	if _, err := VerifyCurvePlan(plan, state); err == nil {
-		t.Fatal("verified curve accepted a different exact mask")
-	}
-	for _, mask := range [][]int{{-1, 8}, {8, 8}, {8}} {
-		invalid := plan.Shared()
-		invalid.CPU.AffinityCPUs = mask
-		if _, err := NewCurvePlan(invalid); err == nil {
-			t.Fatalf("invalid curve affinity accepted: %v", mask)
-		}
+	payload = bytes.Replace(payload, []byte(`"shared":{`), []byte(`"shared":{"cpu":{"limit":"4"},`), 1)
+	if _, err := DecodeCurvePlan(payload); err == nil {
+		t.Fatal("old quota-controlled curve was accepted as shared evidence")
 	}
 }

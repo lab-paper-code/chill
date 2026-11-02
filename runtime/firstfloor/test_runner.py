@@ -34,7 +34,7 @@ def serve(batches, max_new_tokens=0, preprocessor=FIXTURE, tail=b"", warmup_batc
     source = BytesIO(init + b"".join(infer_frame(i + 1, values) for i, values in enumerate(batches)) + tail)
     destination = BytesIO()
     options = SimpleNamespace(runtime="echo", preprocessor=str(preprocessor), model_dir=None, delay_ms=0,
-                              warmup_iterations=1, cpu_affinity=None, intra_op_threads=1, gpu_uuid=None,
+                              warmup_iterations=1, gpu_uuid=None,
                               delivery_json=None, warmup_batch=warmup_batch)
     error = None
     try:
@@ -119,19 +119,24 @@ class RunnerContractTest(unittest.TestCase):
         class Options:
             def __init__(self):
                 self.entries = state["entries"] = {}
+                self.intra_op_num_threads = 0
+                self.inter_op_num_threads = 0
 
             def add_session_config_entry(self, key, value):
                 self.entries[key] = value
 
         class Session:
             def __init__(self, path, sess_options, providers):
-                pass
+                self.settings = sess_options
 
             def disable_fallback(self):
                 pass
 
             def get_providers(self):
                 return state["chain"]
+
+            def get_session_options(self):
+                return self.settings
 
         class Driver:
             def cuInit(self, flags):
@@ -155,7 +160,7 @@ class RunnerContractTest(unittest.TestCase):
 
         def sessions(runtime, chain):
             state["chain"] = chain
-            options = SimpleNamespace(runtime=runtime, gpu_uuid=uuid_text, intra_op_threads=1)
+            options = SimpleNamespace(runtime=runtime, gpu_uuid=uuid_text)
             metadata = {}
             runner.ort_sessions(options, [Path("model.onnx")], metadata)
             return metadata
@@ -164,6 +169,8 @@ class RunnerContractTest(unittest.TestCase):
                 mock.patch("ctypes.CDLL", return_value=Driver()):
             # CUDA sessions keep ORT's CPU-preferred shape nodes; no CPU-fallback ban is configured.
             self.assertEqual(sessions("ort-cuda", [cuda, cpu])["providers"], [cuda, cpu])
+            self.assertEqual(sessions("ort-cpu", [cpu])["intraOpThreads"], 0)
+            self.assertEqual(sessions("ort-cpu", [cpu])["interOpThreads"], 0)
             self.assertNotIn("session.disable_cpu_ep_fallback", state["entries"])
             self.assertEqual(sessions("ort-cpu", [cpu])["providers"], [cpu])
             for runtime, chain in (("ort-cuda", [cuda]), ("ort-cuda", [cpu]), ("ort-cpu", [cuda, cpu])):

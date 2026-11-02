@@ -607,10 +607,6 @@ func (p *fakeCurvePlanPreparer) Prepare(
 			Name: request.TargetNode, UID: p.nodeUID, ResourceVersion: "10",
 			Architecture: p.report.DeviceClassFacts.Architecture, AllocatableCPU: "4",
 		},
-		CPU: profilingrun.CPUContract{
-			Policy: "AllocatableCPUQuota", PolicyVersion: "v1", Request: request.CPURequest, Limit: "4",
-			ORTIntraOpThreads: 4, ORTInterOpThreads: 1,
-		},
 		Measurement: request.Measurement,
 		Metrics: profilingrun.MetricContract{
 			SourceKind: "edge-metrics", NodeName: request.TargetNode,

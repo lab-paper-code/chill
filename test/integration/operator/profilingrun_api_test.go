@@ -8,7 +8,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -27,16 +26,6 @@ var _ = Describe("ProfilingRun API", func() {
 		ctx := context.Background()
 		run := validProfilingRun(uniqueProfilingRunName("idle"))
 		configureIdleProfilingRun(run)
-
-		Expect(k8sClient.Create(ctx, run)).To(Succeed())
-		DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
-	})
-
-	It("accepts a configured whole-core CPU quota", func() {
-		ctx := context.Background()
-		run := validProfilingRun(uniqueProfilingRunName("configured-cpu-quota"))
-		quota := resource.MustParse("4")
-		run.Spec.Measurement.CPUQuota = &quota
 
 		Expect(k8sClient.Create(ctx, run)).To(Succeed())
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, run) })
@@ -80,18 +69,6 @@ var _ = Describe("ProfilingRun API", func() {
 		}),
 		Entry("zero batch", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.Measurement.Batch = 0
-		}),
-		Entry("non-positive CPU request", func(run *edgev1alpha1.ProfilingRun) {
-			run.Spec.CPURequest = resource.MustParse("-1")
-		}),
-		Entry("fractional CPU quota", func(run *edgev1alpha1.ProfilingRun) {
-			quota := resource.MustParse("500m")
-			run.Spec.Measurement.CPUQuota = &quota
-		}),
-		Entry("CPU request above quota", func(run *edgev1alpha1.ProfilingRun) {
-			quota := resource.MustParse("1")
-			run.Spec.Measurement.CPUQuota = &quota
-			run.Spec.CPURequest = resource.MustParse("2")
 		}),
 		Entry("power timeout not below interval", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.MetricObservation.TimeoutMilliseconds = run.Spec.MetricObservation.IntervalMilliseconds
@@ -161,7 +138,6 @@ func validProfilingRun(name string) *edgev1alpha1.ProfilingRun {
 					PowerMode:     "fixed",
 				},
 				TargetNode: "lattepanda",
-				CPURequest: resource.MustParse("100m"),
 			},
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: 1, WarmupIterations: 20, DurationSeconds: 30,

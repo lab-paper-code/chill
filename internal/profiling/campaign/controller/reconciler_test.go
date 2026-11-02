@@ -163,8 +163,6 @@ func TestCampaignCurvePlanFailureClassification(t *testing.T) {
 		preparedArtifact string
 		terminal         bool
 	}{
-		{name: "CPU request exceeds allocatable", failure: fmt.Errorf("%w: request 5, allocatable 4", profiler.ErrCPURequestExceedsAllocatable), terminal: true},
-		{name: "CPU quota exceeds allocatable", failure: fmt.Errorf("%w: quota 5, allocatable 4", profiler.ErrCPUQuotaExceedsAllocatable), terminal: true},
 		{name: "conflicting batch inputs", mutate: func(parent *api.BatchEnergyOptimization) { parent.Spec.BatchSizes = []int32{1, 2} }, terminal: true},
 		{name: "invalid protocol", mutate: func(parent *api.BatchEnergyOptimization) { parent.Spec.ActiveProtocol.DurationSeconds = 0 }, terminal: true},
 		{name: "temporary resolver failure", failure: errors.New("resolver temporarily unavailable")},

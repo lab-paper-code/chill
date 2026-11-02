@@ -60,11 +60,7 @@ func TestRawMeasurementCanonicalJSONAndValidation(t *testing.T) {
 	}
 }
 
-func TestCompositeMetricSourcePinsCurrentRawSchemas(t *testing.T) {
-	if RawMeasurementSchemaVersion != "chill.dacs.io/profiling-raw-measurement.v1alpha8" ||
-		IdleRawMeasurementSchemaVersion != "chill.dacs.io/model-loaded-idle-raw-measurement.v1alpha6" {
-		t.Fatalf("raw schemas changed: active=%q idle=%q", RawMeasurementSchemaVersion, IdleRawMeasurementSchemaVersion)
-	}
+func TestCompositeMetricSourceRejectsRetiredRawSchemas(t *testing.T) {
 	config := loadRunConfig(t)
 	active := validRaw(t, config)
 	active.SchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha5"
@@ -203,10 +199,6 @@ func TestRawMeasurementBindsCompositeMetricSourceToRunConfig(t *testing.T) {
 
 func TestActuatedExecutionEvidenceBindsIndependentTargetReadBack(t *testing.T) {
 	t.Parallel()
-	const expectedSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha15"
-	if ExecutionEvidenceSchemaVersion != expectedSchemaVersion {
-		t.Fatalf("execution evidence schemaVersion = %q, want %q", ExecutionEvidenceSchemaVersion, expectedSchemaVersion)
-	}
 	config, raw, execution := validActuatedExecutionEvidence(t)
 	payload, err := execution.CanonicalJSON(raw)
 	if err != nil {
@@ -572,9 +564,9 @@ func validRaw(t *testing.T, config profilingrun.RunConfig) RawMeasurement {
 			TargetDurationSeconds:     &targetDuration,
 			CPUContract: profilingrun.RuntimeCPU{
 				CgroupCPUMax:       "400000 100000",
-				ORTIntraOpThreads:  config.CPU.ORTIntraOpThreads,
-				ORTInterOpThreads:  config.CPU.ORTInterOpThreads,
-				AffinityCPUCount:   config.CPU.ORTIntraOpThreads,
+				ORTIntraOpThreads:  0,
+				ORTInterOpThreads:  0,
+				AffinityCPUCount:   4,
 				CPUSetEffective:    "0-3",
 				CgroupCPUStatDelta: map[string]int{"user_usec": 1, "system_usec": 2},
 			},
@@ -681,9 +673,9 @@ func validIdleRaw(t *testing.T, config profilingrun.RunConfig) IdleRawMeasuremen
 			MeasurementEndedAt:        started.Add(30 * time.Second).UTC().Format(time.RFC3339Nano),
 			MeasurementElapsedSeconds: 30, ModelResidentAtEnd: true,
 			CPUContract: profilingrun.RuntimeCPU{
-				CgroupCPUMax: "400000 100000", ORTIntraOpThreads: config.CPU.ORTIntraOpThreads,
-				ORTInterOpThreads: config.CPU.ORTInterOpThreads,
-				AffinityCPUCount:  config.CPU.ORTIntraOpThreads, CPUSetEffective: "0-3",
+				CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 0,
+				ORTInterOpThreads: 0,
+				AffinityCPUCount:  4, CPUSetEffective: "0-3",
 			},
 			DerivedContract: profilingrun.DerivedContract{
 				Backend: config.State.Backend, Provider: config.State.Backend,

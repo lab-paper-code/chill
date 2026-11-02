@@ -107,7 +107,6 @@ func (r VerifiedIdleRuntimeResult) Record() (IdleRuntimeResult, error) {
 
 func cloneRunConfig(source RunConfig) RunConfig {
 	result := source
-	result.CPU.AffinityCPUs = slices.Clone(source.CPU.AffinityCPUs)
 	result.State.Firstfloor = modelcompat.CloneFirstfloorRuntimeSettings(source.State.Firstfloor)
 	result.State.HostContract = cloneCandidateHostContract(source.State.HostContract)
 	result.State.ArtifactFiles = slices.Clone(source.State.ArtifactFiles)

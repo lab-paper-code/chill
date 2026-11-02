@@ -16,12 +16,12 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha17"
-RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha8"
-DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha2"
+RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha18"
+RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha9"
+DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha3"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
 IDLE_WORKLOAD = "idle-model-loaded"
-IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha6"
+IDLE_RESULT_SCHEMA = "chill.dacs.io/model-loaded-idle-runtime.v1alpha7"
 MAX_REQUEST_BYTES = 1 << 20
 SIGNAL_POLL_SECONDS = 0.01
 
@@ -295,7 +295,6 @@ def validate_request(
         "images",
         "delivery",
         "targetNode",
-        "cpu",
         "measurement",
         "metrics",
         "workload",
@@ -341,55 +340,15 @@ def validate_request(
     target = require_object(run_config["targetNode"], "run_config.targetNode")
     require_fields(
         target,
-        {"name", "uid", "resourceVersion", "architecture", "allocatableCPU"},
+        {"name", "uid", "resourceVersion", "architecture"} |
+        ({"allocatableCPU"} if "allocatableCPU" in target else set()),
         "run_config.targetNode",
     )
-    for field in ("name", "uid", "resourceVersion", "architecture", "allocatableCPU"):
+    for field in target:
         require_string(target[field], f"run_config.targetNode.{field}")
     if scheduled_node_name != target["name"]:
         raise ContractError("scheduled Node does not match the RunConfig target Node")
 
-    cpu = require_object(run_config["cpu"], "run_config.cpu")
-    require_fields(
-        cpu,
-        {
-            "policy",
-            "policyVersion",
-            "request",
-            "limit",
-            "ortIntraOpThreads",
-            "ortInterOpThreads",
-            "exclusivityClaimed",
-        } | ({"affinityCPUs"} if "affinityCPUs" in cpu else set()),
-        "run_config.cpu",
-    )
-    if cpu["policyVersion"] != "v1" or cpu["exclusivityClaimed"] is not False:
-        raise ContractError("unsupported CPU policy")
-    rknn = backend == "rknnlite"
-    require_integer(cpu["ortIntraOpThreads"], "run_config.cpu.ortIntraOpThreads", 0 if rknn else 1)
-    if cpu["ortInterOpThreads"] != (0 if rknn else 1) or (
-        rknn and cpu["ortIntraOpThreads"] != 0
-    ):
-        raise ContractError("runtime thread counts do not match the backend contract")
-    requested_cpu_affinity(cpu)
-    limit = require_string(cpu["limit"], "run_config.cpu.limit")
-    if cpu["policy"] == "AllocatableCPUQuota":
-        if limit != target["allocatableCPU"]:
-            raise ContractError("CPU limit does not match the RunConfig allocatable CPU")
-    elif cpu["policy"] == "ConfiguredCPUQuota":
-        try:
-            limit_cores = int(limit)
-            allocatable_cores = int(target["allocatableCPU"])
-        except ValueError as error:
-            raise ContractError(
-                "configured CPU quota requires whole-core values"
-            ) from error
-        if limit_cores < 1 or limit_cores > allocatable_cores:
-            raise ContractError("configured CPU quota is outside Node allocatable CPU")
-        if not rknn and cpu["ortIntraOpThreads"] != limit_cores:
-            raise ContractError("ORT intra-op threads do not match configured CPU quota")
-    else:
-        raise ContractError("unsupported CPU policy")
 
     common_measurement_fields = {
         "batch",
@@ -660,14 +619,13 @@ def read_cpu_environment(root: Path = CGROUP_ROOT) -> tuple[str, list[int], str]
     fields = cpu_max.split()
     if len(fields) != 2:
         raise ContractError("cgroup CPU quota/period is malformed")
-    if fields[0] in {"max", "-1"}:
-        raise ContractError("cgroup CPU quota is unlimited")
     try:
-        quota, period = map(int, fields)
+        period = int(fields[1])
+        quota = None if fields[0] in {"max", "-1"} else int(fields[0])
     except ValueError as error:
         raise ContractError("cgroup CPU quota/period is malformed") from error
-    if quota < 1 or period < 1:
-        raise ContractError("cgroup CPU quota/period must be positive")
+    if period < 1 or (quota is not None and quota < 1):
+        raise ContractError("cgroup CPU quota/period must be positive or unlimited")
     cpuset = read_required_text(cpuset_path, "effective CPU set")
     for item in cpuset.split(","):
         parts = item.split("-")
@@ -679,56 +637,6 @@ def read_cpu_environment(root: Path = CGROUP_ROOT) -> tuple[str, list[int], str]
         raise ContractError("process CPU affinity is unavailable")
     return cpu_max, sorted(os.sched_getaffinity(0)), cpuset
 
-
-def requested_cpu_affinity(cpu: dict[str, Any]) -> list[int] | None:
-    if "affinityCPUs" not in cpu:
-        return None
-    values = cpu["affinityCPUs"]
-    if (not isinstance(values, list) or not values or
-            any(type(value) is not int or value < 0 for value in values) or
-            len(set(values)) != len(values)):
-        raise ContractError("CPU affinity must contain unique nonnegative explicit CPU IDs")
-    if len(values) < cpu["ortIntraOpThreads"]:
-        raise ContractError("requested CPU affinity is smaller than the ORT thread contract")
-    return sorted(values)
-
-
-def apply_cpu_affinity(run_config: dict[str, Any]) -> None:
-    requested = requested_cpu_affinity(run_config["cpu"])
-    if requested is None:
-        return
-    if not hasattr(os, "sched_getaffinity") or not hasattr(os, "sched_setaffinity"):
-        raise ContractError("process CPU affinity is unavailable")
-    if not set(requested).issubset(os.sched_getaffinity(0)):
-        raise ContractError("requested CPU affinity exceeds actual allowed CPU inventory")
-    try:
-        os.sched_setaffinity(0, requested)
-    except OSError as error:
-        raise ContractError("could not apply requested process CPU affinity") from error
-    if sorted(os.sched_getaffinity(0)) != requested:
-        raise ContractError("actual process CPU affinity differs from requested CPU mask")
-
-
-def validate_cpu_contract(
-    run_config: dict[str, Any], root: Path = CGROUP_ROOT
-) -> tuple[str, list[int], str]:
-    cpu = run_config["cpu"]
-    cpu_max, affinity, cpuset = read_cpu_environment(root)
-    quota, period = map(int, cpu_max.split())
-    try:
-        expected = int(cpu["limit"])
-    except ValueError as error:
-        raise ContractError("RunConfig CPU limit is malformed") from error
-    if expected < 1 or quota // period != expected or quota % period != 0:
-        raise ContractError("cgroup CPU quota does not match the RunConfig limit")
-    requested = requested_cpu_affinity(cpu)
-    if requested is not None and affinity != requested:
-        raise ContractError("actual process CPU affinity differs from requested CPU mask")
-    if len(affinity) < cpu["ortIntraOpThreads"]:
-        raise ContractError(
-            "process CPU affinity is smaller than the ORT thread contract"
-        )
-    return cpu_max, affinity, cpuset
 
 
 def normalize_architecture(value: str) -> str:
@@ -762,34 +670,15 @@ def measurement_complete(
 def derived_contract(
     run_config: dict[str, Any], provider: str = "CPUExecutionProvider"
 ) -> dict[str, Any]:
-    cpu = run_config["cpu"]
     return {
         "schemaVersion": DERIVED_CONTRACT_SCHEMA,
         "backend": run_config["state"]["backend"],
         "provider": provider,
         "nodeSnapshot": run_config["targetNode"],
-        "cpu": {
-            "budgetSource": (
-                "ProfilingRunMeasurementCPUQuota"
-                if cpu["policy"] == "ConfiguredCPUQuota"
-                else "KubernetesNodeStatusAllocatable"
-            ),
-            "exclusivityClaimed": cpu["exclusivityClaimed"],
-            "limit": cpu["limit"],
-            "observedAllocatable": run_config["targetNode"]["allocatableCPU"],
-            "policy": cpu["policy"],
-            "policyVersion": cpu["policyVersion"],
-        },
-        "runtimeOptions": {
-            "interOpThreads": cpu["ortInterOpThreads"],
-            "intraOpThreads": cpu["ortIntraOpThreads"],
-        },
-        "scheduling": {"cpuRequest": cpu["request"], "status": "RequestedNotExclusive"},
     }
 
 
 def runtime_cpu_evidence(
-    cpu: dict[str, Any],
     cpu_max: str,
     affinity: list[int],
     cpuset: str,
@@ -800,8 +689,6 @@ def runtime_cpu_evidence(
     return {
         "osCPUCount": os.cpu_count(),
         "cgroupCPUMax": cpu_max,
-        "ortIntraOpThreads": cpu["ortIntraOpThreads"],
-        "ortInterOpThreads": cpu["ortInterOpThreads"],
         "affinityCPUCount": len(affinity),
         "affinityCPUs": affinity,
         "cpusetCPUsEffective": cpuset,
@@ -826,7 +713,7 @@ def execute_idle(
     memory_sampler: MemorySampler | None = None,
 ) -> dict[str, Any]:
     run_config = request["runConfig"]
-    state, measurement, cpu = run_config["state"], run_config["measurement"], run_config["cpu"]
+    state, measurement = run_config["state"], run_config["measurement"]
     for ready_path in request["observerReadyPaths"]:
         wait_for_signal(
             Path(ready_path), request["observerReadyTimeoutMilliseconds"] / 1000.0
@@ -895,7 +782,6 @@ def execute_idle(
         "inferenceCountAfterModelLoad": 0,
         "modelResidentAtEnd": model_resident_at_end,
         "cpuContract": runtime_cpu_evidence(
-            cpu,
             cpu_max,
             affinity,
             cpuset,
@@ -929,7 +815,7 @@ def execute_loaded(
 ) -> dict[str, Any]:
     """Measure a loaded session whose startup and warm-up completed before the window."""
     run_config = request["runConfig"]
-    state, measurement, cpu = run_config["state"], run_config["measurement"], run_config["cpu"]
+    state, measurement = run_config["state"], run_config["measurement"]
 
     for ready_path in request["observerReadyPaths"]:
         wait_for_signal(
@@ -997,7 +883,6 @@ def execute_loaded(
         "measurementEndedAt": measurement_ended_at,
         "measurementElapsedSecondsMonotonic": round(measurement_elapsed, 6),
         "cpuContract": runtime_cpu_evidence(
-            cpu,
             cpu_max,
             affinity,
             cpuset,

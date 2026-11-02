@@ -141,6 +141,8 @@ type TargetIdentity struct {
 }
 
 // Generator defines scientific load-generator identity and release conditions.
+// +kubebuilder:validation:XValidation:rule="!has(self.resources.requests) || !('cpu' in self.resources.requests)",message="generator CPU requests are not supported"
+// +kubebuilder:validation:XValidation:rule="!has(self.resources.limits) || !('cpu' in self.resources.limits)",message="generator CPU limits are not supported"
 type Generator struct {
 	EvaluationImage `json:",inline"`
 	Resources       corev1.ResourceRequirements `json:"resources"`
@@ -452,6 +454,9 @@ func validateEvaluationGenerator(generator Generator) error {
 		}
 	}
 	for _, resources := range []corev1.ResourceList{generator.Resources.Requests, generator.Resources.Limits} {
+		if _, present := resources[corev1.ResourceCPU]; present {
+			return fmt.Errorf("generator CPU resources are not supported")
+		}
 		for _, quantity := range resources {
 			if quantity.Sign() < 0 {
 				return fmt.Errorf("negative generator resources")

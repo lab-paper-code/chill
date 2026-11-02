@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	ExecutionEvidenceSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha15"
+	ExecutionEvidenceSchemaVersion = "chill.dacs.io/profiling-execution-evidence.v1alpha16"
 )
 
 // ExecutionEvidence is finalized after the worker exits. It references rather

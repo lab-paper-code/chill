@@ -503,9 +503,6 @@ func validCurvePlanSpec() CurvePlanSpec {
 		DeviceClass: "orangepi-5-plus-16g",
 		NodeUID:     "node-uid", RuntimeFamily: "rknnlite", Backend: "not-applicable",
 		RuntimeImage: testImage("runtime", "5"), PowerMode: "fixed",
-		CPU: CurveCPUContract{
-			Policy: "allocatable", PolicyVersion: "v1", Request: "7", Limit: "8",
-		},
 		MetricSource: CurveMetricSourceContract{
 			SourceKind: "prometheus", NodeName: "orangepi", Endpoint: "http://metrics",
 			PowerMetric: "power_watts",

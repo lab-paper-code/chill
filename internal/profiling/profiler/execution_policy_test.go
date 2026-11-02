@@ -118,13 +118,11 @@ func TestDeriveExecutionPlanUsesFrozenConfiguredEnvelope(t *testing.T) {
 		t.Fatal(err)
 	}
 	frozen.Policy.MaxLatencySamples = 2048
-	frozen.Policy.ObserverCPURequest = "10m"
-	frozen.Policy.ObserverCPULimit = "200m"
 	plan, err := DeriveExecutionPlan(config, frozen)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.MaxLatencySamples != 2048 || plan.ObserverCPURequest != "10m" || plan.ObserverCPULimit != "200m" {
+	if plan.MaxLatencySamples != 2048 {
 		t.Fatalf("configured execution envelope was not projected: %#v", plan)
 	}
 	if plan.PolicyVersion != frozen.Policy.Name {

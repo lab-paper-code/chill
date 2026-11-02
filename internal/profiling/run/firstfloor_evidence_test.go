@@ -196,32 +196,30 @@ func TestFirstfloorCUDARejectsCPUFallbackAndWrongWholeGPU(t *testing.T) {
 	}
 }
 
-func TestFirstfloorEvidenceBindsRequestedCPUIdsNotOnlyQuota(t *testing.T) {
+func TestFirstfloorEvidenceRecordsSharedCPUEnvironment(t *testing.T) {
 	config := firstfloorRunConfig()
-	config.CPU.AffinityCPUs = []int{0, 1, 2, 3}
-	result := firstfloorResult(config)
-	if err := ValidateRuntime(config, "pod-uid", result); err != nil {
-		t.Fatal(err)
-	}
-	idleNative := *result.Firstfloor
-	idleNative.ExecutionCount, idleNative.InferenceCount = 0, 0
-	idleNative.BatchExecutionCounts = map[string]uint64{}
-	idle := IdleRuntimeResult{CPUContract: result.CPUContract, Firstfloor: &idleNative,
-		MemoryBytes: result.MemoryBytes, MemorySource: result.MemorySource, Provider: result.Provider,
-		AvailableProviders: result.AvailableProviders, DerivedContract: result.DerivedContract, RuntimeVersion: result.RuntimeVersion}
-	if err := validateIdleRuntimePathEvidence(config, idle); err != nil {
-		t.Fatal(err)
-	}
-	// Quota, threads and metadata remain internally consistent, but the
-	// actual mask no longer matches the selected immutable placement.
-	result.CPUContract.AffinityCPUs = []int{0, 1, 2, 4}
-	result.Firstfloor.Runtime.CPUAffinity = []int{0, 1, 2, 4}
-	if err := ValidateRuntime(config, "pod-uid", result); err == nil {
-		t.Fatal("requested CPU placement silently changed")
-	}
-	idle.CPUContract.AffinityCPUs = []int{0, 1, 2, 4}
-	idle.Firstfloor.Runtime.CPUAffinity = []int{0, 1, 2, 4}
-	if err := validateIdleRuntimePathEvidence(config, idle); err == nil {
-		t.Fatal("idle ignored frozen CPU placement")
+	for _, quota := range []string{"max 100000", "-1 100000", "150000 100000"} {
+		result := firstfloorResult(config)
+		result.CPUContract.CgroupCPUMax = quota
+		result.Firstfloor.Runtime.CgroupCPUMax = quota
+		result.CPUContract.ORTIntraOpThreads, result.CPUContract.ORTInterOpThreads = 0, 0
+		result.Firstfloor.Runtime.IntraOpThreads, result.Firstfloor.Runtime.InterOpThreads = 0, 0
+		result.CPUContract.AffinityCPUs = []int{0, 1, 2, 4}
+		result.Firstfloor.Runtime.CPUAffinity = []int{0, 1, 2, 4}
+		if err := ValidateRuntime(config, "pod-uid", result); err != nil {
+			t.Fatalf("shared observation %q was rejected: %v", quota, err)
+		}
+		idleNative := *result.Firstfloor
+		idleNative.ExecutionCount, idleNative.InferenceCount = 0, 0
+		idleNative.BatchExecutionCounts = map[string]uint64{}
+		idle := IdleRuntimeResult{CPUContract: result.CPUContract, Firstfloor: &idleNative,
+			MemoryBytes: result.MemoryBytes, MemorySource: result.MemorySource, Provider: result.Provider,
+			AvailableProviders: result.AvailableProviders, DerivedContract: result.DerivedContract, RuntimeVersion: result.RuntimeVersion}
+		if err := validateIdleRuntimePathEvidence(config, idle); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateCPUObservation(quota); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

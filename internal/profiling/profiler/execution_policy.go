@@ -34,12 +34,8 @@ type ExecutionPlan struct {
 
 	RuntimeMemoryRequestBytes          int64
 	RuntimeMemoryLimitBytes            int64
-	ObserverCPURequest                 string
-	ObserverCPULimit                   string
 	ObserverMemoryRequestBytes         int64
 	ObserverMemoryLimitBytes           int64
-	WorkloadObserverCPURequest         string
-	WorkloadObserverCPULimit           string
 	WorkloadObserverMemoryRequestBytes int64
 	WorkloadObserverMemoryLimitBytes   int64
 	CoordinationBytes                  int64
@@ -47,7 +43,7 @@ type ExecutionPlan struct {
 }
 
 // DeriveExecutionPlan combines a selected worker envelope with Run-derived
-// durations. CPU request and limit remain Node-specific RunConfig facts.
+// durations. CPU scheduling and thread counts are left to the platform/runtime.
 func DeriveExecutionPlan(
 	config profilingrun.RunConfig,
 	frozen FrozenExecutionPolicy,
@@ -105,12 +101,8 @@ func DeriveExecutionPlan(
 
 		RuntimeMemoryRequestBytes:          policy.RuntimeMemoryRequestBytes,
 		RuntimeMemoryLimitBytes:            policy.RuntimeMemoryLimitBytes,
-		ObserverCPURequest:                 policy.ObserverCPURequest,
-		ObserverCPULimit:                   policy.ObserverCPULimit,
 		ObserverMemoryRequestBytes:         policy.ObserverMemoryRequestBytes,
 		ObserverMemoryLimitBytes:           policy.ObserverMemoryLimitBytes,
-		WorkloadObserverCPURequest:         policy.WorkloadObserverCPURequest,
-		WorkloadObserverCPULimit:           policy.WorkloadObserverCPULimit,
 		WorkloadObserverMemoryRequestBytes: policy.WorkloadObserverMemoryRequestBytes,
 		WorkloadObserverMemoryLimitBytes:   policy.WorkloadObserverMemoryLimitBytes,
 		CoordinationBytes: policy.MaxMetricResultBytes + policy.MaxWorkloadResultBytes +

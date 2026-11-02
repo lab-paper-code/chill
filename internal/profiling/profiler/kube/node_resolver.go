@@ -58,11 +58,9 @@ func (r *KubernetesNodeResolver) ResolveNode(
 	if node.UID == "" || node.ResourceVersion == "" {
 		return profilingrun.NodeSnapshot{}, fmt.Errorf("selected Node %q has incomplete API identity", selection.Name)
 	}
-	allocatableCPU := node.Status.Allocatable.Cpu()
-	if allocatableCPU == nil || allocatableCPU.Sign() <= 0 {
-		return profilingrun.NodeSnapshot{}, fmt.Errorf(
-			"selected Node %q has no positive allocatable CPU", selection.Name,
-		)
+	var allocatableCPU string
+	if value, present := node.Status.Allocatable[corev1.ResourceCPU]; present {
+		allocatableCPU = value.String()
 	}
 
 	return profilingrun.NodeSnapshot{
@@ -70,7 +68,7 @@ func (r *KubernetesNodeResolver) ResolveNode(
 		UID:             string(node.UID),
 		ResourceVersion: node.ResourceVersion,
 		Architecture:    architecture,
-		AllocatableCPU:  allocatableCPU.String(),
+		AllocatableCPU:  allocatableCPU,
 	}, nil
 }
 

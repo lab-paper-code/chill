@@ -33,7 +33,7 @@ for record in ("r0", "r1", "r2"):
 request["datasetPath"] = str(work / "dataset")
 for ready in request["observerReadyPaths"] + [request["workloadWindowReadyPath"]]:
     Path(ready).write_text("signal\n")
-CPU_MAX, AFFINITY, CPUSET = "400000 100000", [0, 1, 2, 3], "0-3"
+CPU_MAX, AFFINITY, CPUSET = "max 100000", [0, 1, 2, 3], "0-3"
 
 class FakeActor(measurement.FirstfloorSession):
     counter = 0
@@ -50,8 +50,8 @@ class FakeActor(measurement.FirstfloorSession):
                                 "inputs": state["preprocessor"]["inputs"], "outputs": state["preprocessor"]["outputs"],
                                 "providers": ["CPUExecutionProvider"], "availableProviders": ["CPUExecutionProvider"],
                                 "device": "cpu", "cpuAffinity": AFFINITY,
-                                "intraOpThreads": run["cpu"]["ortIntraOpThreads"],
-                                "interOpThreads": run["cpu"]["ortInterOpThreads"],
+                                "intraOpThreads": 0,
+                                "interOpThreads": 0,
                                 "initializedBatches": measurement.initialized_batches(run),
                                 "warmupIterations": run["measurement"]["warmupIterations"], "synthetic": False,
                                 "cgroupCPUMax": CPU_MAX, "cpuSet": CPUSET}}
@@ -70,8 +70,7 @@ process = mock.Mock(poll=mock.Mock(return_value=None))
 with mock.patch.object(measurement, "FirstfloorSession", FakeActor), \
         mock.patch.object(measurement.subprocess, "Popen", return_value=process), \
         mock.patch.object(measurement, "memory_peak", return_value=(123456, "cgroup-v2-memory.peak:runtime-container-lifetime")), \
-        mock.patch.object(common, "cpu_stat", return_value={"usage_usec": 1}), \
-        mock.patch.object(common, "validate_cpu_contract", return_value=(CPU_MAX, AFFINITY, CPUSET)):
+        mock.patch.object(common, "cpu_stat", return_value={"usage_usec": 1}):
     result = measurement.execute_sampled(request, work, run, "x86_64", CPU_MAX, AFFINITY, CPUSET, None)
 json.dump(result, sys.stdout, allow_nan=False)
 `

@@ -44,12 +44,6 @@ func TestCurrentRKNNLiteRunConfigOmitsORTThreadSettings(t *testing.T) {
 	if strings.Contains(string(payload), "ortIntraOpThreads") || strings.Contains(string(payload), "ortInterOpThreads") {
 		t.Fatalf("RKNNLite config retained ORT-only CPU settings: %s", payload)
 	}
-	withORTSettings := config
-	withORTSettings.CPU.ORTIntraOpThreads = 4
-	withORTSettings.CPU.ORTInterOpThreads = 1
-	if err := withORTSettings.Validate(); err == nil || !strings.Contains(err.Error(), "ONNX Runtime thread") {
-		t.Fatalf("RKNNLite config accepted ORT-only settings: %v", err)
-	}
 }
 
 func TestCurrentRunConfigValidatesTypedActuation(t *testing.T) {
@@ -228,21 +222,19 @@ func TestRunConfigRejectsUnknownImageField(t *testing.T) {
 	}
 }
 
-func TestRunConfigRejectsCPURequestAboveSelectedLimit(t *testing.T) {
+func TestSharedRunConfigNeedsNoAllocatableCPUAndRejectsOldAllocation(t *testing.T) {
 	config := validRunConfig()
-	config.CPU.Request = "5"
-	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "must not exceed") {
-		t.Fatalf("expected CPU request/limit rejection, got %v", err)
-	}
-}
-
-func TestRunConfigAcceptsConfiguredCPUQuotaBelowAllocatable(t *testing.T) {
-	config := validRunConfig()
-	config.TargetNode.AllocatableCPU = "12"
-	config.CPU.Policy = ConfiguredCPUQuotaPolicy
-	config.CPU.Limit = "4"
+	config.TargetNode.AllocatableCPU = ""
 	if err := config.Validate(); err != nil {
-		t.Fatalf("configured CPU quota was rejected: %v", err)
+		t.Fatalf("shared execution requires no CPU allocation: %v", err)
+	}
+	payload, err := config.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload = []byte(strings.TrimSuffix(string(payload), "}") + `,"cpu":{"limit":"4"}}`)
+	if _, err := decodeTestRunConfig(payload); err == nil {
+		t.Fatal("old frozen CPU allocation was accepted")
 	}
 }
 
@@ -250,12 +242,6 @@ func TestRunConfigRejectsCompatibilityAndPolicyDrift(t *testing.T) {
 	tests := []func(*RunConfig){
 		func(i *RunConfig) { i.Candidate.Verdict = "Unknown" },
 		func(i *RunConfig) { i.TargetNode.ResourceVersion = "" },
-		func(i *RunConfig) { i.CPU.Policy = "unknown" },
-		func(i *RunConfig) { i.CPU.PolicyVersion = "v2" },
-		func(i *RunConfig) { i.CPU.Policy = ConfiguredCPUQuotaPolicy; i.CPU.Limit = "500m" },
-		func(i *RunConfig) { i.CPU.Policy = ConfiguredCPUQuotaPolicy; i.CPU.Limit = "5" },
-		func(i *RunConfig) { i.CPU.ORTIntraOpThreads = 2 },
-		func(i *RunConfig) { i.CPU.ExclusivityClaimed = true },
 		func(i *RunConfig) { i.Metrics.NodeName = testDifferentIdentity },
 	}
 	for _, mutate := range tests {
@@ -434,14 +420,6 @@ func validRunConfig() RunConfig {
 			ResourceVersion: "1",
 			Architecture:    "amd64",
 			AllocatableCPU:  "4",
-		},
-		CPU: CPUContract{
-			Policy:            AllocatableCPUQuotaPolicy,
-			PolicyVersion:     CPUQuotaPolicyVersion,
-			Request:           "100m",
-			Limit:             "4",
-			ORTIntraOpThreads: 4,
-			ORTInterOpThreads: 1,
 		},
 		Measurement: MeasurementContract{
 			Batch:            1,

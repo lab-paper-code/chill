@@ -134,16 +134,17 @@ type Progress struct {
 	Outcome           string    `json:"outcome,omitempty"`
 }
 type RuntimeMetadata struct {
-	Runtime            string          `json:"runtime"`
-	RuntimeVersion     string          `json:"runtimeVersion"`
-	NumpyVersion       string          `json:"numpyVersion"`
-	ModelFiles         []string        `json:"modelFiles"`
-	Inputs             []string        `json:"inputs"`
-	Outputs            []string        `json:"outputs"`
-	Providers          []string        `json:"providers"`
-	Device             string          `json:"device"`
-	GPUUUID            string          `json:"gpuUUID,omitempty"`
-	CPUAffinity        []int           `json:"cpuAffinity"`
+	Runtime        string   `json:"runtime"`
+	RuntimeVersion string   `json:"runtimeVersion"`
+	NumpyVersion   string   `json:"numpyVersion"`
+	ModelFiles     []string `json:"modelFiles"`
+	Inputs         []string `json:"inputs"`
+	Outputs        []string `json:"outputs"`
+	Providers      []string `json:"providers"`
+	Device         string   `json:"device"`
+	GPUUUID        string   `json:"gpuUUID,omitempty"`
+	CPUAffinity    []int    `json:"cpuAffinity"`
+	// Applied ORT session settings; zero means runtime automatic/default, not one thread.
 	IntraOpThreads     int             `json:"intraOpThreads"`
 	InterOpThreads     int             `json:"interOpThreads"`
 	InitializedBatches []int           `json:"initializedBatches"`

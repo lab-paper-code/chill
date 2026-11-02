@@ -81,15 +81,6 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "architecture": "amd64",
                 "allocatableCPU": "4",
             },
-            "cpu": {
-                "policy": "AllocatableCPUQuota",
-                "policyVersion": "v1",
-                "request": "100m",
-                "limit": "4",
-                "ortIntraOpThreads": 4,
-                "ortInterOpThreads": 1,
-                "exclusivityClaimed": False,
-            },
             "measurement": {
                 "batch": 1,
                 "warmupIterations": 2,
@@ -183,25 +174,13 @@ class RunnerTest(unittest.TestCase):
             model.write_bytes(b"model")
             validate(valid_request(model))
 
-    def test_validate_request_accepts_configured_cpu_quota(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            model = Path(directory) / "model.onnx"
-            model.write_bytes(b"model")
-            request = valid_request(model)
-            request["runConfig"]["targetNode"]["allocatableCPU"] = "12"
-            request["runConfig"]["cpu"].update(
-                {
-                    "policy": "ConfiguredCPUQuota",
-                    "limit": "4",
-                    "ortIntraOpThreads": 4,
-                }
-            )
-
+    def test_shared_request_rejects_old_cpu_contract(self) -> None:
+        request = valid_request(Path("/model/model.onnx"))
+        del request["runConfig"]["targetNode"]["allocatableCPU"]
+        validate(request)
+        request["runConfig"]["cpu"] = {"limit": "4"}
+        with self.assertRaisesRegex(runner.ContractError, "unknown=.*cpu"):
             validate(request)
-            self.assertEqual(
-                runner.derived_contract(request["runConfig"])["cpu"]["budgetSource"],
-                "ProfilingRunMeasurementCPUQuota",
-            )
 
     def test_validate_request_binds_current_actuation_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -308,24 +287,6 @@ class RunnerTest(unittest.TestCase):
         with self.assertRaisesRegex(runner.ContractError, "runtime result exceeds"):
             runner.encode_result({"samples": [1, 2, 3]}, 1)
 
-    def test_optional_affinity_request_and_actual_cpu_contract(self) -> None:
-        request = valid_request(Path("/model/model.onnx"))
-        cpu = request["runConfig"]["cpu"]
-        cpu["affinityCPUs"] = list(range(100, 100 + cpu["ortIntraOpThreads"]))
-        validate(request)
-        for invalid in (None, [], [True], [-1], [100, 100]):
-            with self.subTest(invalid=invalid):
-                cpu["affinityCPUs"] = invalid
-                with self.assertRaises(runner.ContractError):
-                    validate(request)
-        run = {"cpu": {"limit": "2", "ortIntraOpThreads": 2, "affinityCPUs": [17, 9]}}
-        with mock.patch.object(runner, "read_cpu_environment", return_value=("200000 100000", [9, 17], "9,17,31")):
-            self.assertEqual(runner.validate_cpu_contract(run), ("200000 100000", [9, 17], "9,17,31"))
-        with mock.patch.object(runner, "read_cpu_environment", return_value=("200000 100000", [9, 17, 31], "9,17,31")):
-            with self.assertRaisesRegex(runner.ContractError, "differs from requested"):
-                runner.validate_cpu_contract(run)
-            del run["cpu"]["affinityCPUs"]
-            self.assertEqual(runner.validate_cpu_contract(run)[1], [9, 17, 31])
 
     def test_cpu_contract_reads_cgroup_v2(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -333,16 +294,23 @@ class RunnerTest(unittest.TestCase):
             (root / "cpu.max").write_text("400000 100000\n", encoding="utf-8")
             (root / "cpu.stat").write_text("usage_usec 20\n", encoding="utf-8")
             (root / "cpuset.cpus.effective").write_text("0-3\n", encoding="utf-8")
-            run_config = {"cpu": {"limit": "4", "ortIntraOpThreads": 4}}
             with mock.patch.object(
                 runner.os, "sched_getaffinity", return_value={0, 1, 2, 3}
             ):
-                cpu_max, affinity, cpuset = runner.validate_cpu_contract(run_config, root)
+                cpu_max, affinity, cpuset = runner.read_cpu_environment(root)
 
             self.assertEqual(cpu_max, "400000 100000")
             self.assertEqual(affinity, [0, 1, 2, 3])
             self.assertEqual(cpuset, "0-3")
             self.assertEqual(runner.cpu_stat(root), {"usage_usec": 20})
+            for quota in ("max 100000", "150000 100000"):
+                (root / "cpu.max").write_text(quota + "\n", encoding="utf-8")
+                with mock.patch.object(runner.os, "sched_getaffinity", return_value={0, 1, 2, 3}):
+                    self.assertEqual(runner.read_cpu_environment(root), (quota, [0, 1, 2, 3], "0-3"))
+            for quota in ("max 0", "-2 100000", "max invalid", "400000"):
+                (root / "cpu.max").write_text(quota + "\n", encoding="utf-8")
+                with self.assertRaises(runner.ContractError):
+                    runner.read_cpu_environment(root)
 
     def test_cpu_contract_normalizes_cgroup_v1(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -357,13 +325,10 @@ class RunnerTest(unittest.TestCase):
                 "nr_periods 7\nnr_throttled 2\nthrottled_time 30\n", encoding="utf-8"
             )
             (cpuset / "cpuset.cpus").write_text("0-11\n", encoding="utf-8")
-            run_config = {"cpu": {"limit": "12", "ortIntraOpThreads": 12}}
             with mock.patch.object(
                 runner.os, "sched_getaffinity", return_value=set(range(12))
             ):
-                cpu_max, affinity, cpuset_value = runner.validate_cpu_contract(
-                    run_config, root
-                )
+                cpu_max, affinity, cpuset_value = runner.read_cpu_environment(root)
 
             self.assertEqual(cpu_max, "1200000 100000")
             self.assertEqual(affinity, list(range(12)))
@@ -372,15 +337,16 @@ class RunnerTest(unittest.TestCase):
                 runner.cpu_stat(root),
                 {"nr_periods": 7, "nr_throttled": 2, "throttled_time": 30},
             )
+            (cpu / "cpu.cfs_quota_us").write_text("-1\n", encoding="utf-8")
+            with mock.patch.object(runner.os, "sched_getaffinity", return_value=set(range(12))):
+                self.assertEqual(runner.read_cpu_environment(root)[0], "-1 100000")
 
     def test_cpu_contract_rejects_unknown_cgroup_layout(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(
                 runner.ContractError, "supported cgroup CPU controller"
             ):
-                runner.validate_cpu_contract(
-                    {"cpu": {"limit": "4", "ortIntraOpThreads": 4}}, Path(directory)
-                )
+                runner.read_cpu_environment(Path(directory))
 
     def test_publish_immutable_refuses_replacement(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -1,7 +1,6 @@
 package v1alpha1
 
 import (
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -29,22 +28,9 @@ type ModelLoadedIdleBaselinePointPolicySpec struct {
 
 // ModelLoadedIdleBaselineSpec requests one measured idle-power aggregate.
 // +kubebuilder:validation:XValidation:rule="self.attemptLimit >= self.pointPolicy.minimumRuns",message="attemptLimit must cover minimumRuns"
-// +kubebuilder:validation:XValidation:rule="quantity(self.cpuQuota).compareTo(quantity('0')) > 0",message="cpuQuota must be positive"
-// +kubebuilder:validation:XValidation:rule="quantity(self.cpuQuota).isInteger()",message="cpuQuota must be a whole number of CPU cores"
-// +kubebuilder:validation:XValidation:rule="quantity(self.state.cpuRequest).compareTo(quantity(self.cpuQuota)) <= 0",message="state.cpuRequest must not exceed cpuQuota"
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ModelLoadedIdleBaseline spec is immutable"
 type ModelLoadedIdleBaselineSpec struct {
 	State MeasurementStateSpec `json:"state"`
-
-	// CPUQuota fixes the whole-core runtime quota for each owned idle Run.
-	CPUQuota resource.Quantity `json:"cpuQuota"`
-
-	// CPUAffinity selects explicit firstfloor CPU IDs for every owned idle Run.
-	// +optional
-	// +kubebuilder:validation:MinItems=1
-	// +kubebuilder:validation:items:Minimum=0
-	// +listType=set
-	CPUAffinity []int32 `json:"cpuAffinity,omitempty"`
 
 	// +kubebuilder:validation:Minimum=1
 	Batch int32 `json:"batch"`

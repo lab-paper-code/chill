@@ -29,6 +29,15 @@ func TestKubernetesNodeResolverFreezesExactMatchingNode(t *testing.T) {
 	}
 }
 
+func TestKubernetesNodeResolverDoesNotRequireAllocatableCPU(t *testing.T) {
+	node := validNode()
+	node.Status.Allocatable = nil
+	snapshot, err := newNodeResolver(t, node).ResolveNode(context.Background(), validNodeSelection())
+	if err != nil || snapshot.AllocatableCPU != "" {
+		t.Fatalf("shared execution inferred or required CPU capacity: %+v, %v", snapshot, err)
+	}
+}
+
 func TestKubernetesNodeResolverFailsClosed(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -57,11 +66,6 @@ func TestKubernetesNodeResolverFailsClosed(t *testing.T) {
 			name: "missing identity", mutate: func(node *corev1.Node) {
 				node.UID = ""
 			}, match: "incomplete API identity",
-		},
-		{
-			name: "missing allocatable CPU", mutate: func(node *corev1.Node) {
-				node.Status.Allocatable = nil
-			}, match: "no positive allocatable CPU",
 		},
 	}
 

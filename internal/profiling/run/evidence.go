@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha8"
+	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha9"
 
 	RKNNLiteCoreMask      = "NPU_CORE_0"
 	RKNNLiteInputLayout   = "NHWC"
@@ -70,8 +70,8 @@ type RuntimeResult struct {
 type RuntimeCPU struct {
 	OSCPUCount         int            `json:"osCPUCount"`
 	CgroupCPUMax       string         `json:"cgroupCPUMax"`
-	ORTIntraOpThreads  int            `json:"ortIntraOpThreads,omitempty"`
-	ORTInterOpThreads  int            `json:"ortInterOpThreads,omitempty"`
+	ORTIntraOpThreads  int            `json:"ortIntraOpThreads"`
+	ORTInterOpThreads  int            `json:"ortInterOpThreads"`
 	AffinityCPUCount   int            `json:"affinityCPUCount"`
 	AffinityCPUs       []int          `json:"affinityCPUs"`
 	CPUSetEffective    string         `json:"cpusetCPUsEffective"`
@@ -79,13 +79,10 @@ type RuntimeCPU struct {
 	CgroupCPUStatDelta map[string]int `json:"cgroupCPUStatDelta"`
 }
 type DerivedContract struct {
-	SchemaVersion  string          `json:"schemaVersion"`
-	Backend        string          `json:"backend,omitempty"`
-	Provider       string          `json:"provider,omitempty"`
-	NodeSnapshot   NodeSnapshot    `json:"nodeSnapshot"`
-	CPU            json.RawMessage `json:"cpu"`
-	RuntimeOptions json.RawMessage `json:"runtimeOptions"`
-	Scheduling     json.RawMessage `json:"scheduling"`
+	SchemaVersion string       `json:"schemaVersion"`
+	Backend       string       `json:"backend,omitempty"`
+	Provider      string       `json:"provider,omitempty"`
+	NodeSnapshot  NodeSnapshot `json:"nodeSnapshot"`
 }
 
 // FirstfloorRuntimeEvidence binds the actual initialized actor and native runner.
@@ -228,7 +225,7 @@ func validateBoundRuntime(config RunConfig, podUID string, result RuntimeResult)
 	if err := validateRuntimePathEvidence(config, result); err != nil {
 		return err
 	}
-	if err := validateCPUQuota(config.CPU.Limit, result.CPUContract.CgroupCPUMax); err != nil {
+	if err := validateCPUObservation(result.CPUContract.CgroupCPUMax); err != nil {
 		return err
 	}
 	if result.DerivedContract.NodeSnapshot.UID != config.TargetNode.UID {
@@ -264,10 +261,6 @@ func validateBoundRuntime(config RunConfig, podUID string, result RuntimeResult)
 func validateRuntimePathEvidence(config RunConfig, result RuntimeResult) error {
 	if strings.TrimSpace(result.CPUContract.CPUSetEffective) == "" || result.CPUContract.AffinityCPUCount < 1 {
 		return errors.New("effective CPU evidence is incomplete")
-	}
-	if len(config.CPU.AffinityCPUs) != 0 && (!slices.Equal(config.CPU.AffinityCPUs, result.CPUContract.AffinityCPUs) ||
-		result.CPUContract.AffinityCPUCount != len(config.CPU.AffinityCPUs)) {
-		return errors.New("runtime actual CPU affinity differs from requested frozen CPU IDs")
 	}
 	if !IsSupportedFirstfloorRunConfig(config) {
 		return errors.New("runtime result requires a supported firstfloor RunConfig")
@@ -422,10 +415,9 @@ func validateFirstfloorBackend(config RunConfig, evidence *FirstfloorRuntimeEvid
 	}
 	if rknn != nil || provider != expected || !contains(providers, expected) ||
 		len(evidence.Runtime.Providers) == 0 || evidence.Runtime.Providers[0] != expected ||
-		evidence.Runtime.Device != device || evidence.Runtime.IntraOpThreads != config.CPU.ORTIntraOpThreads ||
-		evidence.Runtime.InterOpThreads != config.CPU.ORTInterOpThreads ||
-		cpu.ORTIntraOpThreads != config.CPU.ORTIntraOpThreads || cpu.ORTInterOpThreads != config.CPU.ORTInterOpThreads {
-		return errors.New("firstfloor actual provider/device/threads mismatch")
+		evidence.Runtime.Device != device || evidence.Runtime.IntraOpThreads < 0 || evidence.Runtime.InterOpThreads < 0 ||
+		cpu.ORTIntraOpThreads != evidence.Runtime.IntraOpThreads || cpu.ORTInterOpThreads != evidence.Runtime.InterOpThreads {
+		return errors.New("firstfloor actual provider/device/thread observations mismatch")
 	}
 	if config.State.Backend == FirstfloorORTCUDABackend {
 		access := config.Delivery.RuntimeAccess
@@ -547,20 +539,22 @@ func normalizeArchitecture(value string) string {
 	}
 }
 
-func validateCPUQuota(limit, cpuMax string) error {
-	cores, err := strconv.ParseInt(limit, 10, 64)
-	if err != nil || cores < 1 {
-		return errors.New("RunConfig CPU limit is not a positive integer core count")
-	}
+// validateCPUObservation checks the recorded controller value, not a CPU allocation.
+// Both cgroup v2 "max" and cgroup v1 "-1" are normal unlimited observations.
+func validateCPUObservation(cpuMax string) error {
 	fields := strings.Fields(cpuMax)
-	if len(fields) != 2 || fields[0] == "max" {
-		return errors.New("runtime cgroup CPU quota is missing or unlimited")
+	if len(fields) != 2 {
+		return errors.New("runtime cgroup CPU quota/period is malformed")
 	}
-	quota, quotaErr := strconv.ParseInt(fields[0], 10, 64)
-	period, periodErr := strconv.ParseInt(fields[1], 10, 64)
-	if quotaErr != nil || periodErr != nil || quota < 1 || period < 1 ||
-		quota/period != cores || quota%period != 0 {
-		return errors.New("runtime cgroup CPU quota does not match the RunConfig limit")
+	period, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil || period < 1 {
+		return errors.New("runtime cgroup CPU period must be positive")
+	}
+	if fields[0] != "max" && fields[0] != "-1" {
+		quota, err := strconv.ParseInt(fields[0], 10, 64)
+		if err != nil || quota < 1 {
+			return errors.New("runtime cgroup CPU quota is malformed")
+		}
 	}
 	return nil
 }

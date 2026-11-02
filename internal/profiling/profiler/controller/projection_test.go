@@ -3,19 +3,16 @@ package controller
 import (
 	"encoding/json"
 	"os"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -28,7 +25,7 @@ func TestProjectRequestMapsOnlyCallerSelectedPolicy(t *testing.T) {
 	}
 	if request.Preparation.Candidate.ModelSpec != run.Spec.Candidate.ModelSpec ||
 		request.Preparation.Candidate.PowerMode != run.Spec.Candidate.PowerMode ||
-		request.Preparation.TargetNode != run.Spec.TargetNode || request.Preparation.CPURequest != "100m" ||
+		request.Preparation.TargetNode != run.Spec.TargetNode ||
 		request.Preparation.Measurement.Batch != 1 || request.Preparation.Metrics.IntervalMilliseconds != 1000 {
 		t.Fatalf("ProfilingRun request projection drifted: %#v", request)
 	}
@@ -67,62 +64,11 @@ func TestProjectRequestPreservesIdleSettlingContract(t *testing.T) {
 	}
 }
 
-func TestProjectRequestMovesCPUQuotaOnlyToPreparationSelection(t *testing.T) {
-	run := testRun()
-	quota := resource.MustParse("4")
-	run.Spec.Measurement.CPUQuota = &quota
-
-	request, err := ProjectRequest(run.Spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if request.Preparation.CPUQuota != "4" {
-		t.Fatalf("projected CPU quota = %q", request.Preparation.CPUQuota)
-	}
-}
-
-func TestProjectRequestAffinityMatchesFrozenReconstruction(t *testing.T) {
-	run := testRun()
-	run.Spec.Measurement.CPUAffinity = []int32{31, 12, 10, 8}
-	request, err := ProjectRequest(run.Spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(request.Preparation.CPUAffinity, []int{8, 10, 12, 31}) ||
-		!slices.Equal(run.Spec.Measurement.CPUAffinity, []int32{31, 12, 10, 8}) {
-		t.Fatal("projection did not canonicalize a detached copy")
-	}
-	config := testRunConfig(t)
-	config.State.RuntimeFamily = profilingrun.FirstfloorRuntimeFamily
-	config.State.Backend = profilingrun.FirstfloorORTCPUBackend
-	config.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 4, MaxQueueSize: 32}
-	config.CPU.AffinityCPUs = slices.Clone(request.Preparation.CPUAffinity)
-	prepared := profiler.PreparedRun{RunConfig: config}
-	if err := validatePreparedForRun(run, prepared); err != nil {
-		t.Fatalf("unsorted API mask did not match canonical frozen mask: %v", err)
-	}
-	reconstructed := preparationFromRunConfig(config)
-	reconstructed.CPUAffinity[0] = 9
-	if config.CPU.AffinityCPUs[0] != 8 {
-		t.Fatal("request reconstruction aliases frozen affinity")
-	}
-	prepared.RunConfig.CPU.AffinityCPUs = []int{9, 10, 12, 31}
-	if err := validatePreparedForRun(run, prepared); err == nil {
-		t.Fatal("different exact mask passed RunConfig reconstruction")
-	}
-	for _, mask := range [][]int32{{-1, 8}, {8, 8}} {
-		run.Spec.Measurement.CPUAffinity = mask
-		if _, err := ProjectRequest(run.Spec); err == nil {
-			t.Fatalf("invalid API mask accepted: %v", mask)
-		}
-	}
-}
-
 func TestProjectRequestRejectsSemanticInvalidity(t *testing.T) {
 	run := testRun()
-	run.Spec.CPURequest = resource.MustParse("-1")
+	run.Spec.Measurement.Batch = 0
 	if _, err := ProjectRequest(run.Spec); err == nil {
-		t.Fatal("expected negative CPU request rejection")
+		t.Fatal("expected invalid batch rejection")
 	}
 }
 
@@ -298,7 +244,6 @@ func testRun() *edgev1alpha1.ProfilingRun {
 					Preprocessor:  "mobilenet-imagenet",
 				},
 				TargetNode: "lattepanda",
-				CPURequest: resource.MustParse("100m"),
 			},
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: 1, WarmupIterations: 20, DurationSeconds: 30,
@@ -321,7 +266,7 @@ func testRunConfig(t *testing.T) profilingrun.RunConfig {
 	if err := json.Unmarshal(payload, &config); err != nil {
 		t.Fatal(err)
 	}
-	// Historical raw fixture is preserved; this helper builds a current request.
+	// Current wire fixture omits tolerance; API projection applies the protocol default.
 	config.Measurement.DurationToleranceSeconds = .5
 	return config
 }

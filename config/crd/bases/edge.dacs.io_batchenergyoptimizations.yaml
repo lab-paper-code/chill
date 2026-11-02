@@ -129,24 +129,6 @@ spec:
                 x-kubernetes-validations:
                 - message: batchSizes must be in ascending order
                   rule: self.isSorted()
-              cpuAffinity:
-                description: CPUAffinity selects explicit firstfloor CPU IDs for every
-                  owned Run.
-                items:
-                  format: int32
-                  minimum: 0
-                  type: integer
-                minItems: 1
-                type: array
-                x-kubernetes-list-type: set
-              cpuQuota:
-                anyOf:
-                - type: integer
-                - type: string
-                description: CPUQuota optionally fixes the whole-core runtime quota
-                  for every owned Run.
-                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                x-kubernetes-int-or-string: true
               idleProtocol:
                 properties:
                   durationSeconds:
@@ -259,14 +241,6 @@ spec:
                     - powerMode
                     - preprocessor
                     type: object
-                  cpuRequest:
-                    anyOf:
-                    - type: integer
-                    - type: string
-                    description: CPURequest is the non-exclusive scheduling request
-                      for the runtime container.
-                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                    x-kubernetes-int-or-string: true
                   targetNode:
                     description: TargetNode names the Kubernetes Node on which the
                       Run is requested.
@@ -275,7 +249,6 @@ spec:
                     type: string
                 required:
                 - candidate
-                - cpuRequest
                 - targetNode
                 type: object
               trialsPerBatch:
@@ -295,14 +268,6 @@ spec:
             x-kubernetes-validations:
             - message: BatchEnergyOptimization spec is immutable
               rule: self == oldSelf
-            - message: cpuQuota must be positive
-              rule: '!has(self.cpuQuota) || quantity(self.cpuQuota).compareTo(quantity(''0''))
-                > 0'
-            - message: cpuQuota must be a whole number of CPU cores
-              rule: '!has(self.cpuQuota) || quantity(self.cpuQuota).isInteger()'
-            - message: state.cpuRequest must not exceed cpuQuota
-              rule: '!has(self.cpuQuota) || quantity(self.state.cpuRequest).compareTo(quantity(self.cpuQuota))
-                <= 0'
           status:
             properties:
               completedTrials:

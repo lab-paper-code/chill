@@ -87,6 +87,17 @@ durable Node power-mode request-generation/readback/transition handoff, not a
 NodeActuation CRD or Lease. Settling duration uses the common measurement protocol
 and execution provenance, not a parallel execution type.
 
+Shared CPU cutover: RunConfig v1alpha18 has no CPU allocation object. Jobs carry
+no CPU requests/limits and the runner accepts no affinity or thread override.
+ORT SessionOptions defaults are unchanged; session readback records 0 for automatic
+thread selection, not a fixed single thread. Actual cgroup quota (v2 `max`, v1 `-1`
+included), cpuset/affinity, usage and throttling remain runtime evidence. Active
+runtime/raw v1alpha9, idle runtime/raw v1alpha7 and finalized v1alpha16 are deployed
+together after dependent campaigns finish. Old controlled evidence/publications
+are not rewritten or admitted through a compatibility reader. Memory/GPU/Node
+identity, ownership and physical-return checks remain mandatory.
+
+
 Store delivery is not scientific input: logical store, internal endpoint/bucket/
 region, immutable credential Secret reference and deterministic raw key. Profiler
 startup knows owning `ChillSystem`; Job creation exact-reads its enabled store
@@ -126,8 +137,8 @@ cross-container protocol or retained store.
 | `workload-result.json` | Complete atomic result after causal status fence |
 | `runtime-failed` | Runtime failure; observers end all waits/watch and exit failed |
 
-Runtime: strict config validation; verify Pod UID, Node, artifact, CPU/runtime/
-provider/output-validation capability; bounded wait for both preflight readiness
+Runtime: strict config validation; verify Pod UID, Node, artifact, runtime/
+provider/output-validation capability and observe actual CPU environment; bounded wait for both preflight readiness
 signals; active warm-up or loaded-model idle settling; request/await retained
 workload window; emit start; one duration-based measurement; emit end; bounded
 wait for both results; check new source/identity/summary/timestamp/coverage

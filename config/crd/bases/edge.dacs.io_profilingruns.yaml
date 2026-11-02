@@ -113,14 +113,6 @@ spec:
                 - powerMode
                 - preprocessor
                 type: object
-              cpuRequest:
-                anyOf:
-                - type: integer
-                - type: string
-                description: CPURequest is the non-exclusive scheduling request for
-                  the runtime container.
-                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                x-kubernetes-int-or-string: true
               measurement:
                 description: Measurement fixes the single-Run workload and measurement
                   window.
@@ -129,26 +121,6 @@ spec:
                     format: int32
                     minimum: 1
                     type: integer
-                  cpuAffinity:
-                    description: |-
-                      CPUAffinity optionally selects explicit Linux CPU IDs for firstfloor execution.
-                      It does not reserve CPUs or claim exclusivity.
-                    items:
-                      format: int32
-                      minimum: 0
-                      type: integer
-                    minItems: 1
-                    type: array
-                    x-kubernetes-list-type: set
-                  cpuQuota:
-                    anyOf:
-                    - type: integer
-                    - type: string
-                    description: |-
-                      CPUQuota optionally selects a configured whole-core runtime quota. It is
-                      consumed while freezing the Run and is not duplicated in MeasurementContract.
-                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                    x-kubernetes-int-or-string: true
                   dataset:
                     description: |-
                       Dataset names the cluster-scoped Dataset whose profiling records active
@@ -196,11 +168,6 @@ spec:
                   rule: 'self.workloadMode == ''idle-model-loaded'' ? self.warmupIterations
                     == 0 && has(self.settlingDurationSeconds) && !has(self.dataset)
                     : !has(self.settlingDurationSeconds) && has(self.dataset)'
-                - message: cpuQuota must be positive
-                  rule: '!has(self.cpuQuota) || quantity(self.cpuQuota).compareTo(quantity(''0''))
-                    > 0'
-                - message: cpuQuota must be a whole number of CPU cores
-                  rule: '!has(self.cpuQuota) || quantity(self.cpuQuota).isInteger()'
               metricObservation:
                 description: MetricObservation fixes polling behavior. The source
                   is resolved from TargetNode.
@@ -233,7 +200,6 @@ spec:
                 type: string
             required:
             - candidate
-            - cpuRequest
             - measurement
             - metricObservation
             - targetNode
@@ -243,11 +209,6 @@ spec:
               rule: self == oldSelf
             - message: metricObservation.durationSeconds must cover measurement.durationSeconds
               rule: self.metricObservation.durationSeconds >= self.measurement.durationSeconds
-            - message: cpuRequest must be positive
-              rule: quantity(self.cpuRequest).compareTo(quantity('0')) > 0
-            - message: cpuRequest must not exceed measurement.cpuQuota
-              rule: '!has(self.measurement.cpuQuota) || quantity(self.cpuRequest).compareTo(quantity(self.measurement.cpuQuota))
-                <= 0'
           status:
             description: ProfilingRunStatus contains compact, reconstructable Run
               outcomes.

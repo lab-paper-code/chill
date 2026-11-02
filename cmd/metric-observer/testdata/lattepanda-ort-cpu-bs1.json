@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "chill.dacs.io/profiling-run-config.v1alpha17",
+  "schemaVersion": "chill.dacs.io/profiling-run-config.v1alpha18",
   "candidate": {
     "inputs": {
       "modelSpec": {
@@ -58,15 +58,6 @@
     "resourceVersion": "1",
     "architecture": "amd64",
     "allocatableCPU": "4"
-  },
-  "cpu": {
-    "policy": "AllocatableCPUQuota",
-    "policyVersion": "v1",
-    "request": "100m",
-    "limit": "4",
-    "ortIntraOpThreads": 4,
-    "ortInterOpThreads": 1,
-    "exclusivityClaimed": false
   },
   "measurement": {
     "batch": 1,

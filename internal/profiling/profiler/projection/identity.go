@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	stateIdentitySchemaVersion               = "chill.dacs.io/execution-state-identity.v1alpha6"
+	stateIdentitySchemaVersion               = "chill.dacs.io/execution-state-identity.v1alpha7"
 	environmentIdentitySchemaVersion         = "chill.dacs.io/external-environment-identity.v1alpha1"
 	measurementProtocolIdentitySchemaVersion = "chill.dacs.io/measurement-protocol-identity.v1alpha2"
 )
@@ -43,11 +43,10 @@ func ProjectRunIdentities(config profilingrun.RunConfig, nodeUID string) (RunIde
 		State        profilingrun.ExecutionState     `json:"state"`
 		RuntimeImage string                          `json:"runtimeImage"`
 		NodeUID      string                          `json:"nodeUID"`
-		CPU          profilingrun.CPUContract        `json:"cpu"`
 		MetricSource metricSourceIdentity            `json:"metricSource"`
 		Actuation    *profilingrun.ActuationContract `json:"actuation,omitempty"`
 	}{
-		State: config.State, RuntimeImage: config.Images.Runtime, NodeUID: nodeUID, CPU: config.CPU,
+		State: config.State, RuntimeImage: config.Images.Runtime, NodeUID: nodeUID,
 		Actuation: config.Actuation,
 		MetricSource: metricSourceIdentity{
 			SourceKind: config.Metrics.SourceKind, NodeName: config.Metrics.NodeName,

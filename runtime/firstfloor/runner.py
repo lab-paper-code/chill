@@ -195,8 +195,6 @@ def ort_sessions(options, files, metadata):
     if provider not in available:
         raise ValueError(f"required {provider} unavailable")
     settings = ort.SessionOptions()
-    settings.intra_op_num_threads = options.intra_op_threads
-    settings.inter_op_num_threads = 1
     providers, expected = [provider], [provider]
     if options.runtime == "ort-cuda":
         if not options.gpu_uuid or os.environ.get("CUDA_VISIBLE_DEVICES") != options.gpu_uuid:
@@ -229,6 +227,8 @@ def ort_sessions(options, files, metadata):
         selected = session.get_providers()
         if selected != expected:
             raise ValueError(f"unexpected providers/fallback {selected} for {path.name}")
+        applied = session.get_session_options()
+        metadata.update(intraOpThreads=applied.intra_op_num_threads, interOpThreads=applied.inter_op_num_threads)
         sessions[path.stem] = session
     metadata.update(runtimeVersion=ort.__version__, providers=expected, availableProviders=available)
     return sessions
@@ -269,13 +269,6 @@ def run(options, source, destination):
     batch_id = 0
     try:
         contract = read_init(source)
-        if options.cpu_affinity:
-            requested = {int(v) for v in options.cpu_affinity.split(",")}
-            if not requested or min(requested) < 0 or not requested.issubset(os.sched_getaffinity(0)):
-                raise ValueError("requested CPU affinity exceeds actual allocated cpuset")
-            os.sched_setaffinity(0, requested)
-            if os.sched_getaffinity(0) != requested:
-                raise ValueError("actual CPU affinity differs from requested allocation")
         import numpy as np
 
         if options.runtime == "echo":
@@ -291,7 +284,7 @@ def run(options, source, destination):
         metadata = {"runtime": options.runtime, "runtimeVersion": "synthetic", "numpyVersion": np.__version__,
                     "modelFiles": [os.path.abspath(p) for p in files], "inputs": inputs, "outputs": outputs,
                     "providers": [], "device": "synthetic", "cpuAffinity": affinity,
-                    "intraOpThreads": options.intra_op_threads, "interOpThreads": 1,
+                    "intraOpThreads": 0, "interOpThreads": 0,
                     "initializedBatches": batches, "warmupIterations": options.warmup_iterations,
                     "synthetic": options.runtime == "echo", "cgroupCPUMax": cpu_max, "cpuSet": cpuset}
         if options.runtime in ("ort-cpu", "ort-cuda"):
@@ -366,14 +359,12 @@ if __name__ == "__main__":
     parser.add_argument("--preprocessor", required=True, help="Directory holding preprocessor.py.")
     parser.add_argument("--gpu-uuid")
     parser.add_argument("--delivery-json")
-    parser.add_argument("--intra-op-threads", type=int, default=1)
-    parser.add_argument("--cpu-affinity", help="Exact comma-separated CPU IDs within the allocated cpuset.")
     parser.add_argument("--warmup-iterations", type=int, default=20)
     parser.add_argument("--warmup-batch", type=int, help="Profiling-only fixed K; serving warms every initialized batch.")
     parser.add_argument("--delay-ms", type=float, default=0, help="Synthetic sleep inside the echo infer stage.")
     options = parser.parse_args()
-    if options.delay_ms < 0 or options.intra_op_threads < (0 if options.runtime == "rknnlite" else 1) or options.warmup_iterations < 0:
-        parser.error("nonnegative delay/warmup and positive ORT threads required")
+    if options.delay_ms < 0 or options.warmup_iterations < 0:
+        parser.error("nonnegative delay and warmup required")
     if (options.runtime == "echo") == bool(options.model_dir) or options.runtime != "echo" and options.delay_ms:
         parser.error("native execution requires --model-dir and rejects synthetic delay; echo takes no model")
     # Preserve a private IPC descriptor before redirecting native SDK stdout.

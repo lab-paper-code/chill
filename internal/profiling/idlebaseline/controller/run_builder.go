@@ -27,7 +27,6 @@ func buildRun(parent *edgev1alpha1.ModelLoadedIdleBaseline, attempt int32) (*edg
 		return nil, errors.New("idle baseline attempt must be positive")
 	}
 	settling := parent.Spec.Protocol.SettlingDurationSeconds
-	cpuQuota := parent.Spec.CPUQuota.DeepCopy()
 	return &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      runName(parent.Name, attempt),
@@ -44,8 +43,6 @@ func buildRun(parent *edgev1alpha1.ModelLoadedIdleBaseline, attempt int32) (*edg
 			MeasurementStateSpec: parent.Spec.State,
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: parent.Spec.Batch, WarmupIterations: 0,
-				CPUQuota:                 &cpuQuota,
-				CPUAffinity:              append([]int32(nil), parent.Spec.CPUAffinity...),
 				SettlingDurationSeconds:  &settling,
 				DurationSeconds:          parent.Spec.Protocol.DurationSeconds,
 				DurationToleranceSeconds: parent.Spec.Protocol.DurationToleranceSeconds,

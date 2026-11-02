@@ -12,7 +12,6 @@ spec:
       preprocessor: mobilenet-imagenet
       powerMode: fixed
     targetNode: example-node
-    cpuRequest: 100m
   activeProtocol:
     warmupIterations: 20
     durationSeconds: 30

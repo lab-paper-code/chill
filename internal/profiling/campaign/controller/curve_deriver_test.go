@@ -685,8 +685,8 @@ func curveFixtureActiveRaw(
 
 func curveFixtureRuntimeCPU(config profilingrun.RunConfig) profilingrun.RuntimeCPU {
 	return profilingrun.RuntimeCPU{
-		CgroupCPUMax: "400000 100000", ORTIntraOpThreads: config.CPU.ORTIntraOpThreads,
-		ORTInterOpThreads: config.CPU.ORTInterOpThreads, AffinityCPUCount: config.CPU.ORTIntraOpThreads,
+		CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 0,
+		ORTInterOpThreads: 0, AffinityCPUCount: 4,
 		CPUSetEffective: "0-3", CgroupCPUStatDelta: map[string]int{"user_usec": 1, "system_usec": 2},
 	}
 }

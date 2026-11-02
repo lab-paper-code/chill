@@ -41,7 +41,6 @@ func ProjectCurvePlanSpec(
 		RuntimeAccess:  projectCurveRuntimeAccess(active.Delivery.RuntimeAccess),
 		RuntimeImage:   active.Images.Runtime,
 		PowerMode:      active.State.PowerMode,
-		CPU:            projectCurveCPU(active.CPU),
 		MetricSource:   projectCurveMetricSource(active.Metrics),
 		ActiveProtocol: activeProtocol,
 		IdleProtocol:   idleProtocol,
@@ -155,8 +154,7 @@ func validateCurvePlanRunConfigs(
 }
 
 func validateCurvePlanSharedRunFacts(active, idle profilingrun.RunConfig) error {
-	if active.TargetNode.Architecture != idle.TargetNode.Architecture ||
-		active.TargetNode.AllocatableCPU != idle.TargetNode.AllocatableCPU {
+	if active.TargetNode.Architecture != idle.TargetNode.Architecture {
 		return errors.New("active and idle recorded candidate or Node snapshots disagree")
 	}
 	if active.Candidate.Inputs.ModelSpec.UID != idle.Candidate.Inputs.ModelSpec.UID ||
@@ -202,13 +200,8 @@ func validateCurvePlanRunConfig(
 	if !reflect.DeepEqual(projectCurvePreprocessor(config.State.Preprocessor), spec.Preprocessor) {
 		return errors.New("RunConfig contradicts curve-plan preprocessor facts")
 	}
-	cpu := config.CPU
-	if cpu.Policy != spec.CPU.Policy || cpu.PolicyVersion != spec.CPU.PolicyVersion ||
-		cpu.Request != spec.CPU.Request || cpu.Limit != spec.CPU.Limit ||
-		cpu.ORTIntraOpThreads != spec.CPU.ORTIntraOpThreads || cpu.ORTInterOpThreads != spec.CPU.ORTInterOpThreads ||
-		cpu.ExclusivityClaimed != spec.CPU.ExclusivityClaimed || !slices.Equal(cpu.AffinityCPUs, spec.CPU.AffinityCPUs) ||
-		projectCurveMetricSource(config.Metrics) != spec.MetricSource {
-		return errors.New("RunConfig contradicts curve-plan CPU or metric-source facts")
+	if projectCurveMetricSource(config.Metrics) != spec.MetricSource {
+		return errors.New("RunConfig contradicts curve-plan metric-source facts")
 	}
 	projectedProtocol, err := projectCurveProtocol(config)
 	if err != nil {
@@ -242,15 +235,6 @@ func projectCurveRuntimeAccess(access *profilingrun.CandidateReportRuntimeAccess
 	return &profilederivation.CurveRuntimeAccessContract{
 		Privileged: access.Privileged, SupplementalGroups: append([]int64(nil), access.SupplementalGroups...),
 		Resources: maps.Clone(access.Resources), GPUUUID: access.GPUUUID,
-	}
-}
-
-func projectCurveCPU(cpu profilingrun.CPUContract) profilederivation.CurveCPUContract {
-	return profilederivation.CurveCPUContract{
-		Policy: cpu.Policy, PolicyVersion: cpu.PolicyVersion, Request: cpu.Request, Limit: cpu.Limit,
-		ORTIntraOpThreads: cpu.ORTIntraOpThreads, ORTInterOpThreads: cpu.ORTInterOpThreads,
-		AffinityCPUs:       append([]int(nil), cpu.AffinityCPUs...),
-		ExclusivityClaimed: cpu.ExclusivityClaimed,
 	}
 }
 

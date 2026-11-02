@@ -91,12 +91,13 @@ func TestProjectCurvePlanSpecRoundTripsThroughRunConfigValidation(t *testing.T) 
 	}
 }
 
-func TestCurveCPUProjectionPreservesExactDetachedAffinityAndStateIdentity(t *testing.T) {
+func TestCurveAndStateIdentityDoNotRequireCPUCapacity(t *testing.T) {
 	active := curvePlanRunConfig()
 	active.State.RuntimeFamily, active.State.Backend = profilingrun.FirstfloorRuntimeFamily, profilingrun.FirstfloorORTCPUBackend
 	active.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 4, MaxQueueSize: 32}
-	active.CPU.AffinityCPUs = []int{8, 10, 12, 31}
 	idle := active
+	active.TargetNode.AllocatableCPU = ""
+	idle.TargetNode.AllocatableCPU = "12"
 	idle.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
@@ -108,26 +109,20 @@ func TestCurveCPUProjectionPreservesExactDetachedAffinityAndStateIdentity(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(spec.CPU.AffinityCPUs, []int{8, 10, 12, 31}) {
-		t.Fatal("curve CPU projection lost affinity")
-	}
 	before, err := ProjectRunIdentities(active, active.TargetNode.UID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	active.CPU.AffinityCPUs[0] = 9
-	if spec.CPU.AffinityCPUs[0] != 8 {
-		t.Fatal("curve CPU projection aliases frozen RunConfig")
-	}
+	active.TargetNode.AllocatableCPU = "2"
 	after, err := ProjectRunIdentities(active, active.TargetNode.UID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if before.StateIdentity == after.StateIdentity || before.MeasurementProtocolIdentity != after.MeasurementProtocolIdentity {
-		t.Fatal("affinity did not change only the execution-state identity")
+	if before.StateIdentity != after.StateIdentity || before.MeasurementProtocolIdentity != after.MeasurementProtocolIdentity {
+		t.Fatal("observed CPU capacity changed frozen execution identity")
 	}
-	if err := validateCurvePlanRunConfig(active, active.TargetNode.UID, spec, spec.ActiveProtocol); err == nil {
-		t.Fatal("curve accepted a different exact CPU mask")
+	if err := validateCurvePlanRunConfig(active, active.TargetNode.UID, spec, spec.ActiveProtocol); err != nil {
+		t.Fatalf("observed CPU capacity blocked curve execution: %v", err)
 	}
 }
 
@@ -193,12 +188,6 @@ func TestProjectCurvePlanSpecRejectsActiveIdleDisagreement(t *testing.T) {
 			},
 		},
 		{
-			name: "Node allocatable CPU",
-			mutate: func(idle *profilingrun.RunConfig) {
-				idle.TargetNode.AllocatableCPU = "different-allocatable-cpu"
-			},
-		},
-		{
 			name: "wall-power labels",
 			mutate: func(idle *profilingrun.RunConfig) {
 				idle.Metrics.MetricLabels = map[string]string{"meter": "different"}
@@ -260,7 +249,6 @@ func TestVerifiedCurvePlanRunConfigProjectionBindsObservableFacts(t *testing.T) 
 		RuntimeFamily: active.State.RuntimeFamily, Backend: active.State.Backend,
 		Firstfloor:   modelcompat.CloneFirstfloorRuntimeSettings(active.State.Firstfloor),
 		RuntimeImage: active.Images.Runtime, PowerMode: active.State.PowerMode,
-		CPU:            projectCurveCPU(active.CPU),
 		MetricSource:   projectCurveMetricSource(active.Metrics),
 		ActiveProtocol: activeProtocol, IdleProtocol: idleProtocol,
 		Artifact: profilederivation.CurveArtifactContract{
@@ -318,7 +306,7 @@ func TestVerifiedCurvePlanUsesBatchOneORTIdleWitness(t *testing.T) {
 		RuntimeFamily: active.State.RuntimeFamily, Backend: active.State.Backend,
 		Firstfloor:   modelcompat.CloneFirstfloorRuntimeSettings(active.State.Firstfloor),
 		RuntimeImage: active.Images.Runtime, PowerMode: active.State.PowerMode,
-		CPU: projectCurveCPU(active.CPU), MetricSource: projectCurveMetricSource(active.Metrics),
+		MetricSource:   projectCurveMetricSource(active.Metrics),
 		ActiveProtocol: activeProtocol, IdleProtocol: idleProtocol,
 		Artifact: profilederivation.CurveArtifactContract{
 			ExecutionPath: active.Candidate.ExecutionPath, Name: active.State.Artifact,
@@ -375,7 +363,6 @@ func curvePlanRunConfig() profilingrun.RunConfig {
 	config.Images = profilingrun.Images{
 		Runtime: "runtime", Artifact: "artifact", MetricObserver: "metric", WorkloadObserver: "workload",
 	}
-	config.CPU.Request = "3"
 	config.Measurement.Batch = 1
 	config.Delivery.ArtifactCapability = &profilingrun.CandidateArtifactCapability{
 		Tensors: []modelcompat.InputTensor{

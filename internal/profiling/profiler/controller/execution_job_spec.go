@@ -198,11 +198,9 @@ func runtimeContainer(
 	config := prepared.RunConfig
 	resources := corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse(config.CPU.Request),
 			corev1.ResourceMemory: *resource.NewQuantity(plan.RuntimeMemoryRequestBytes, resource.BinarySI),
 		},
 		Limits: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse(config.CPU.Limit),
 			corev1.ResourceMemory: *resource.NewQuantity(plan.RuntimeMemoryLimitBytes, resource.BinarySI),
 		},
 	}
@@ -268,11 +266,9 @@ func metricObserverContainer(
 		},
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse(plan.ObserverCPURequest),
 				corev1.ResourceMemory: *resource.NewQuantity(plan.ObserverMemoryRequestBytes, resource.BinarySI),
 			},
 			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse(plan.ObserverCPULimit),
 				corev1.ResourceMemory: *resource.NewQuantity(plan.ObserverMemoryLimitBytes, resource.BinarySI),
 			},
 		},
@@ -313,11 +309,9 @@ func workloadObserverContainer(
 		},
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse(plan.WorkloadObserverCPURequest),
 				corev1.ResourceMemory: *resource.NewQuantity(plan.WorkloadObserverMemoryRequestBytes, resource.BinarySI),
 			},
 			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse(plan.WorkloadObserverCPULimit),
 				corev1.ResourceMemory: *resource.NewQuantity(plan.WorkloadObserverMemoryLimitBytes, resource.BinarySI),
 			},
 		},

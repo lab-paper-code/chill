@@ -28,7 +28,6 @@ class MeasurementBoundaryTest(unittest.TestCase):
                                           "firstfloor": {"maxBatchSize": 4, "maxQueueSize": 8},
                                           "preprocessor": dict(PREPROCESSOR)},
                                  "measurement": {"batch": 1, "warmupIterations": 0},
-                                 "cpu": {"ortIntraOpThreads": 1},
                                  "delivery": {"artifactCapability": {}}}}
         settings = request["runConfig"]["state"]["firstfloor"]
         config = measurement.worker_config(request)
@@ -40,6 +39,8 @@ class MeasurementBoundaryTest(unittest.TestCase):
         self.assertEqual(command[command.index("--warmup-batch") + 1], "1")
         self.assertEqual(command[command.index("--preprocessor") + 1], "/preprocessor")
         self.assertNotIn("--model", command)
+        self.assertNotIn("--intra-op-threads", command)
+        self.assertNotIn("--cpu-affinity", command)
         request["runConfig"]["state"]["preprocessor"]["maxNewTokens"] = 32
         self.assertEqual(measurement.worker_config(request)["maxNewTokens"], 32)
         for policy in ("drop", "keep", "defer"):
@@ -50,44 +51,6 @@ class MeasurementBoundaryTest(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(measurement.common.ContractError):
                 measurement.worker_config(request)
 
-    def test_explicit_cpu_mask_validates_actual_inventory_and_applies_exactly(self):
-        common = measurement.common
-        run = {"cpu": {"ortIntraOpThreads": 2, "affinityCPUs": [17, 9]}}
-        self.assertEqual(common.requested_cpu_affinity(run["cpu"]), [9, 17])
-        for invalid in (None, [], [9, 9], [-1, 9], [True, 9], ["9", 17], [9]):
-            with self.subTest(invalid=invalid), self.assertRaises(common.ContractError):
-                common.requested_cpu_affinity(dict(run["cpu"], affinityCPUs=invalid))
-        with mock.patch.object(common.os, "sched_getaffinity", side_effect=[{9, 17, 31}, {9, 17}]), \
-                mock.patch.object(common.os, "sched_setaffinity") as apply:
-            common.apply_cpu_affinity(run)
-            apply.assert_called_once_with(0, [9, 17])
-        with mock.patch.object(common.os, "sched_getaffinity", return_value={9, 31}), \
-                mock.patch.object(common.os, "sched_setaffinity") as apply:
-            with self.assertRaisesRegex(common.ContractError, "actual allowed CPU inventory"):
-                common.apply_cpu_affinity(run)
-            apply.assert_not_called()
-        with mock.patch.object(common, "os", SimpleNamespace()):
-            with self.assertRaisesRegex(common.ContractError, "unavailable"):
-                common.apply_cpu_affinity(run)
-            common.apply_cpu_affinity({"cpu": {"ortIntraOpThreads": 2}})
-        with mock.patch.object(common.os, "sched_getaffinity", return_value={9, 17, 31}), \
-                mock.patch.object(common.os, "sched_setaffinity"):
-            with self.assertRaisesRegex(common.ContractError, "differs from requested"):
-                common.apply_cpu_affinity(run)
-
-    @unittest.skipUnless(hasattr(os, "sched_getaffinity"), "Linux CPU affinity required")
-    def test_explicit_cpu_mask_applies_in_real_child_only(self):
-        before = os.sched_getaffinity(0)
-        script = (
-            "import os; import measurement; "
-            "selected = [max(os.sched_getaffinity(0))]; "
-            "run = {'cpu': {'ortIntraOpThreads': 1, 'affinityCPUs': selected}}; "
-            "measurement.common.apply_cpu_affinity(run); "
-            "assert sorted(os.sched_getaffinity(0)) == selected"
-        )
-        subprocess.run([sys.executable, "-c", script],
-                       cwd=Path(measurement.__file__).parent, check=True)
-        self.assertEqual(os.sched_getaffinity(0), before)
 
 
     def test_sparse_actual_initialized_batches_do_not_fabricate_batch_one(self):
@@ -175,7 +138,6 @@ class MeasurementBoundaryTest(unittest.TestCase):
                                           "artifactFiles": ["/artifact/onnx/vision.onnx", "/artifact/onnx/decoder.onnx"],
                                           "preprocessor": dict(PREPROCESSOR, inputs=["image", "question"], outputs=["answer"])},
                                  "measurement": {"batch": 4, "warmupIterations": 2},
-                                 "cpu": {"ortIntraOpThreads": 2, "ortInterOpThreads": 1},
                                  "delivery": {"artifactCapability": {"declaredBatchSizes": [1, 2, 4]},
                                               "runtimeAccess": {"gpuUUID": "GPU-actual", "resources": {"nvidia.com/gpu": "1"}}}}}
         actual = {"runtime": "ort-cuda", "runtimeVersion": "1.20.0", "numpyVersion": "2.1.0",
@@ -199,13 +161,12 @@ class MeasurementBoundaryTest(unittest.TestCase):
                                               request, "200000 100000", [0, 1], "0-1")
         request["runConfig"]["state"]["firstfloor"].pop("deadlinePolicy")
         metadata["policy"]["deadlinePolicy"] = "keep"
-        request["runConfig"]["cpu"]["affinityCPUs"] = [1, 0]
         self.assertEqual(measurement.validate_metadata(metadata, request, "200000 100000", [0, 1], "0-1")["gpuUUID"], "GPU-actual")
-        with self.assertRaisesRegex(measurement.common.ContractError, "frozen requested"):
+        with self.assertRaisesRegex(measurement.common.ContractError, "actual initialized batches"):
             measurement.validate_metadata(metadata, request, "200000 100000", [0, 1, 2], "0-2")
         for changes in ({"providers": ["CPUExecutionProvider"]}, {"device": "cpu"},
                         {"gpuUUID": "MIG-actual"}, {"gpuUUID": "GPU-other"}, {"synthetic": True},
-                        {"initializedBatches": [1, 4]}, {"cpuAffinity": [0]}, {"intraOpThreads": 1},
+                        {"initializedBatches": [1, 4]}, {"cpuAffinity": [0]}, {"intraOpThreads": -1},
                         {"cgroupCPUMax": "100000 100000"}, {"modelFiles": ["/model/vision.onnx", "/model/decoder.onnx"]},
                         {"modelFiles": ["/model/vision.onnx"]}, {"inputs": ["question", "image"]}, {"outputs": ["label"]},
                         {"warmupIterations": 0}, {"availableProviders": []}):

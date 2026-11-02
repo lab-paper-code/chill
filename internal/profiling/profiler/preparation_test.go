@@ -88,7 +88,7 @@ func TestPreparerFreezesPreprocessorAndActiveDataset(t *testing.T) {
 	}
 }
 
-func TestPreparerFreezesConfiguredQuotaForORTAndRKNNLite(t *testing.T) {
+func TestPreparerFreezesSharedExecutionForORTAndRKNNLite(t *testing.T) {
 	for _, runtimePath := range []string{"ort", "rknn"} {
 		t.Run(runtimePath, func(t *testing.T) {
 			var expected profilingrun.RunConfig
@@ -99,14 +99,7 @@ func TestPreparerFreezesConfiguredQuotaForORTAndRKNNLite(t *testing.T) {
 				expected, candidateBytes = rknnPreparationFixture(t)
 			}
 			expected.TargetNode.AllocatableCPU = "12"
-			expected.CPU.Policy = profilingrun.ConfiguredCPUQuotaPolicy
-			expected.CPU.PolicyVersion = profilingrun.CPUQuotaPolicyVersion
-			expected.CPU.Limit = "4"
-			if runtimePath == "ort" {
-				expected.CPU.ORTIntraOpThreads = 4
-			}
 			request := fixtureRequest(expected)
-			request.CPUQuota = "4"
 
 			prepared, err := newFixturePreparer(t, fixtureResolvers(expected, candidateBytes)).Prepare(
 				context.Background(), request,
@@ -115,7 +108,7 @@ func TestPreparerFreezesConfiguredQuotaForORTAndRKNNLite(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !reflect.DeepEqual(prepared.RunConfig, expected) {
-				t.Fatalf("configured CPU quota config drifted\nwant: %#v\n got: %#v", expected, prepared.RunConfig)
+				t.Fatalf("shared execution config drifted\nwant: %#v\n got: %#v", expected, prepared.RunConfig)
 			}
 		})
 	}
@@ -133,9 +126,8 @@ func TestPreparerFreezesExplicitRKNNLitePathWithoutORTSettings(t *testing.T) {
 	if !reflect.DeepEqual(prepared.RunConfig, expected) {
 		t.Fatalf("prepared RKNNLite config drifted\nwant: %#v\n got: %#v", expected, prepared.RunConfig)
 	}
-	if prepared.RunConfig.CPU.ORTIntraOpThreads != 0 || prepared.RunConfig.CPU.ORTInterOpThreads != 0 ||
-		!profilingrun.IsSupportedFirstfloorRunConfig(prepared.RunConfig) {
-		t.Fatalf("RKNNLite worker CPU contract drifted: %#v", prepared.RunConfig.CPU)
+	if !profilingrun.IsSupportedFirstfloorRunConfig(prepared.RunConfig) {
+		t.Fatalf("RKNNLite worker runtime contract drifted: %#v", prepared.RunConfig)
 	}
 	if prepared.RunConfig.Candidate.ExecutionPath != "rknnlite-bs2" || prepared.RunConfig.Measurement.Batch != 2 {
 		t.Fatalf("artifact-specific path or batch drifted: %#v", prepared.RunConfig)
@@ -473,36 +465,16 @@ func TestPreparerPreservesResolverFailureAndStops(t *testing.T) {
 	}
 }
 
-func TestPreparerRejectsCPURequestAboveNodeCapacityBeforeMetricResolution(t *testing.T) {
+func TestPreparerDoesNotRequireNodeCPUCapacity(t *testing.T) {
 	expected, candidateBytes := preparationFixture(t)
+	expected.TargetNode.AllocatableCPU = ""
 	resolvers := fixtureResolvers(expected, candidateBytes)
-	preparer := newFixturePreparer(t, resolvers)
-	request := fixtureRequest(expected)
-	request.CPURequest = "5"
-
-	_, err := preparer.Prepare(context.Background(), request)
-	if !errors.Is(err, ErrCPURequestExceedsAllocatable) {
-		t.Fatalf("expected CPU capacity rejection, got %v", err)
+	prepared, err := newFixturePreparer(t, resolvers).Prepare(context.Background(), fixtureRequest(expected))
+	if err != nil {
+		t.Fatalf("shared preparation was blocked by absent allocatable CPU: %v", err)
 	}
-	if resolvers.candidate.calls != 1 || resolvers.node.calls != 1 || resolvers.metrics.calls != 0 ||
-		resolvers.workloads.calls != 0 {
-		t.Fatalf("unexpected resolver calls: candidate=%d node=%d metrics=%d workloads=%d",
-			resolvers.candidate.calls, resolvers.node.calls, resolvers.metrics.calls, resolvers.workloads.calls)
-	}
-}
-
-func TestPreparerRejectsCPUQuotaAboveNodeCapacityBeforeMetricResolution(t *testing.T) {
-	expected, candidateBytes := preparationFixture(t)
-	resolvers := fixtureResolvers(expected, candidateBytes)
-	request := fixtureRequest(expected)
-	request.CPUQuota = "5"
-
-	_, err := newFixturePreparer(t, resolvers).Prepare(context.Background(), request)
-	if !errors.Is(err, ErrCPUQuotaExceedsAllocatable) {
-		t.Fatalf("expected CPU quota capacity rejection, got %v", err)
-	}
-	if resolvers.metrics.calls != 0 || resolvers.workloads.calls != 0 {
-		t.Fatal("CPU quota capacity rejection reached downstream resolvers")
+	if prepared.RunConfig.TargetNode.AllocatableCPU != "" || resolvers.metrics.calls != 1 || resolvers.workloads.calls != 1 {
+		t.Fatal("shared execution inferred CPU allocation or skipped observation resolution")
 	}
 }
 
@@ -513,15 +485,6 @@ func TestPreparerRejectsInvalidRequestBeforeResolution(t *testing.T) {
 		mutate func(*PreparationRequest)
 	}{
 		{name: "zero batch", mutate: func(request *PreparationRequest) { request.Measurement.Batch = 0 }},
-		{name: "invalid CPU request", mutate: func(request *PreparationRequest) {
-			request.CPURequest = "not-a-quantity"
-		}},
-		{name: "fractional CPU quota", mutate: func(request *PreparationRequest) {
-			request.CPUQuota = "500m"
-		}},
-		{name: "CPU request above quota", mutate: func(request *PreparationRequest) {
-			request.CPURequest, request.CPUQuota = "2", "1"
-		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			resolvers := fixtureResolvers(expected, candidateBytes)
@@ -567,7 +530,6 @@ func fixtureRequest(config profilingrun.RunConfig) PreparationRequest {
 			Preprocessor:  config.State.Preprocessor.Name,
 		},
 		TargetNode:  config.TargetNode.Name,
-		CPURequest:  config.CPU.Request,
 		Measurement: measurement,
 		Metrics: MetricObservationPolicy{
 			IntervalMilliseconds: config.Metrics.IntervalMilliseconds,
@@ -621,9 +583,6 @@ func rknnPreparationFixture(t *testing.T) (profilingrun.RunConfig, []byte) {
 	config.TargetNode.Architecture = testARM64Architecture
 	config.State.Preprocessor.Architecture = testARM64Architecture
 	config.TargetNode.AllocatableCPU = "8"
-	config.CPU.Limit = "8"
-	config.CPU.ORTIntraOpThreads = 0
-	config.CPU.ORTInterOpThreads = 0
 	config.Metrics.NodeName = config.TargetNode.Name
 	config.Measurement.Batch = 2
 

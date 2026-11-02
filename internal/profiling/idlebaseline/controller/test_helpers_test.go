@@ -9,7 +9,6 @@ import (
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	idlebaseline "github.com/lab-paper-code/chill/internal/profiling/idlebaseline"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -26,10 +25,9 @@ func testBaselineParent() *edgev1alpha1.ModelLoadedIdleBaseline {
 					ModelSpec: "model-a", DeviceClass: "class-a", ExecutionPath: "runtime-a", PowerMode: "mode-a",
 					Preprocessor: "preprocessor-a",
 				},
-				TargetNode: "node-a", CPURequest: resource.MustParse("100m"),
+				TargetNode: "node-a",
 			},
-			CPUQuota: resource.MustParse("4"),
-			Batch:    1,
+			Batch: 1,
 			Protocol: edgev1alpha1.IdleProtocolSpec{
 				SettlingDurationSeconds: 60, DurationSeconds: 30,
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{

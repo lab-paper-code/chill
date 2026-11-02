@@ -380,11 +380,7 @@ func (p *CurvePlanProjector) prepare(
 	if err != nil {
 		return profiler.PreparedRun{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, err)
 	}
-	prepared, err := p.preparer.Prepare(ctx, requested.Preparation)
-	if errors.Is(err, profiler.ErrCPURequestExceedsAllocatable) || errors.Is(err, profiler.ErrCPUQuotaExceedsAllocatable) {
-		return profiler.PreparedRun{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, err)
-	}
-	return prepared, err
+	return p.preparer.Prepare(ctx, requested.Preparation)
 }
 
 func (p *CurvePlanProjector) resolveArtifact(

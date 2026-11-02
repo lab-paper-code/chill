@@ -16,8 +16,8 @@ const (
 
 func fixtureRuntimeCPU(config profilingrun.RunConfig) profilingrun.RuntimeCPU {
 	return profilingrun.RuntimeCPU{
-		CgroupCPUMax: "400000 100000", ORTIntraOpThreads: config.CPU.ORTIntraOpThreads,
-		ORTInterOpThreads: config.CPU.ORTInterOpThreads, AffinityCPUCount: 4,
+		CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 0,
+		ORTInterOpThreads: 0, AffinityCPUCount: 4,
 		AffinityCPUs: []int{0, 1, 2, 3}, CPUSetEffective: "0-3",
 	}
 }

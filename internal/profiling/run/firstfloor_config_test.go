@@ -3,7 +3,6 @@ package profilingrun
 import (
 	"bytes"
 	"encoding/json"
-	"slices"
 	"strings"
 	"testing"
 
@@ -26,8 +25,6 @@ func firstfloorFrozenConfig(backend string) RunConfig {
 		config.Delivery = rknnDeliveryForTest(2, &host)
 		config.State.ArtifactFiles = []string{"/artifact/mobilenet-v2-050-rk3588-bs2.rknn"}
 		config.Measurement.Batch = 2
-		config.CPU.ORTIntraOpThreads = 0
-		config.CPU.ORTInterOpThreads = 0
 	}
 	return config
 }
@@ -92,7 +89,6 @@ func TestFirstfloorFrozenBackendRequirements(t *testing.T) {
 		{"zero queue", FirstfloorORTCPUBackend, func(c *RunConfig) { c.State.Firstfloor.MaxQueueSize = 0 }},
 		{"oversized batch", FirstfloorORTCPUBackend, func(c *RunConfig) { c.Measurement.Batch = 5 }},
 		{"unknown backend", FirstfloorORTCPUBackend, func(c *RunConfig) { c.State.Backend = "python" }},
-		{"wrong threads", FirstfloorORTCUDABackend, func(c *RunConfig) { c.CPU.ORTIntraOpThreads = 1 }},
 		{"missing CUDA access", FirstfloorORTCUDABackend, func(c *RunConfig) { c.Delivery.RuntimeAccess = nil }},
 		{"missing CUDA UUID", FirstfloorORTCUDABackend, func(c *RunConfig) { c.Delivery.RuntimeAccess.GPUUUID = "" }},
 		{"CUDA index is not UUID", FirstfloorORTCUDABackend, func(c *RunConfig) { c.Delivery.RuntimeAccess.GPUUUID = "0" }},
@@ -102,7 +98,6 @@ func TestFirstfloorFrozenBackendRequirements(t *testing.T) {
 		{"RKNN missing access", FirstfloorRKNNLiteBackend, func(c *RunConfig) { c.Delivery.RuntimeAccess = nil }},
 		{"RKNN undeclared batch", FirstfloorRKNNLiteBackend, func(c *RunConfig) { c.Measurement.Batch = 1 }},
 		{"RKNN unsupported shape", FirstfloorRKNNLiteBackend, func(c *RunConfig) { c.Delivery.ArtifactCapability.Tensors[0].SampleShape = []int32{224, 224} }},
-		{"RKNN ORT threads", FirstfloorRKNNLiteBackend, func(c *RunConfig) { c.CPU.ORTInterOpThreads = 1 }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			config := firstfloorFrozenConfig(test.backend)
@@ -132,62 +127,5 @@ func TestFrozenGPUAccessIsDetached(t *testing.T) {
 	config.Delivery.RuntimeAccess.Resources["nvidia.com/gpu"] = "2"
 	if copy.Delivery.RuntimeAccess.Resources["nvidia.com/gpu"] != "1" {
 		t.Fatal("frozen GPU allocation aliases caller resources")
-	}
-}
-
-func TestFirstfloorFrozenAffinityValidationIdentityAndCopies(t *testing.T) {
-	config := firstfloorFrozenConfig(FirstfloorORTCPUBackend)
-	config.CPU.AffinityCPUs = []int{8, 10, 12, 31}
-	canonical, err := config.CanonicalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	verified, err := ValidateRunConfig(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	config.CPU.AffinityCPUs[0] = 9
-	record, err := verified.Record()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(record.CPU.AffinityCPUs, []int{8, 10, 12, 31}) {
-		t.Fatal("verified RunConfig aliases the supplied mask")
-	}
-	record.CPU.AffinityCPUs[0] = 9
-	frozen, err := verified.Record()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if frozen.CPU.AffinityCPUs[0] != 8 {
-		t.Fatal("verified RunConfig exposes its mask")
-	}
-	changedJSON, err := config.CanonicalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Equal(canonical, changedJSON) {
-		t.Fatal("CPU mask replacement retained frozen identity")
-	}
-	var reconstructed RunConfig
-	if err := json.Unmarshal(canonical, &reconstructed); err != nil {
-		t.Fatal(err)
-	}
-	if err := reconstructed.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(reconstructed.CPU.AffinityCPUs, frozen.CPU.AffinityCPUs) {
-		t.Fatal("RunConfig reconstruction lost the explicit mask")
-	}
-	for _, mask := range [][]int{{-1, 10, 12, 31}, {8, 8, 12, 31}, {31, 12, 10, 8}, {8}} {
-		reconstructed.CPU.AffinityCPUs = mask
-		if err := reconstructed.Validate(); err == nil {
-			t.Fatalf("invalid frozen mask accepted: %v", mask)
-		}
-	}
-	reference := validRunConfig()
-	reference.CPU.AffinityCPUs = []int{8, 10, 12, 31}
-	if err := reference.Validate(); err == nil {
-		t.Fatal("explicit reference producer affinity accepted")
 	}
 }

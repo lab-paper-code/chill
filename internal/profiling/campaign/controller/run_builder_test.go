@@ -1,13 +1,11 @@
 package controller
 
 import (
-	"slices"
 	"testing"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -125,49 +123,6 @@ func TestBuildRunUsesTheActiveProtocol(t *testing.T) {
 	}
 }
 
-func TestBuildRunCopiesCPUSelectionsIntoEveryWorkload(t *testing.T) {
-	parent := testParent()
-	parent.Spec.CPUAffinity = []int32{31, 8}
-	quota := resource.MustParse("2")
-	parent.Spec.CPUQuota = &quota
-	for _, mode := range []batchenergyoptimization.WorkloadMode{
-		batchenergyoptimization.WorkloadModeActive, batchenergyoptimization.WorkloadModeIdle,
-	} {
-		run, err := BuildRun(parent, batchenergyoptimization.Measurement{WorkloadMode: mode, Batch: 1}, 1, "ort-cpu")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !slices.Equal(run.Spec.Measurement.CPUAffinity, parent.Spec.CPUAffinity) {
-			t.Fatal("owned Run lost the source affinity")
-		}
-		if run.Spec.Measurement.CPUQuota == nil || run.Spec.Measurement.CPUQuota.Cmp(quota) != 0 {
-			t.Fatal("owned Run lost the source quota")
-		}
-		run.Spec.Measurement.CPUQuota.Set(3)
-		if parent.Spec.CPUQuota.String() != "2" {
-			t.Fatal("owned Run quota aliases the source")
-		}
-		run.Spec.Measurement.CPUAffinity[0] = 99
-		if parent.Spec.CPUAffinity[0] != 31 {
-			t.Fatal("owned Run affinity aliases the source")
-		}
-	}
-}
-
-func TestBuildRunPreservesDefaultCPUSelections(t *testing.T) {
-	for _, mode := range []batchenergyoptimization.WorkloadMode{
-		batchenergyoptimization.WorkloadModeActive, batchenergyoptimization.WorkloadModeIdle,
-	} {
-		run, err := BuildRun(testParent(), batchenergyoptimization.Measurement{WorkloadMode: mode, Batch: 1}, 1, "ort-cpu")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if run.Spec.Measurement.CPUQuota != nil || run.Spec.Measurement.CPUAffinity != nil {
-			t.Fatal("default campaign inferred a quota or CPU IDs")
-		}
-	}
-}
-
 func testParent() *edgev1alpha1.BatchEnergyOptimization {
 	return &edgev1alpha1.BatchEnergyOptimization{
 		ObjectMeta: metav1.ObjectMeta{
@@ -179,7 +134,7 @@ func testParent() *edgev1alpha1.BatchEnergyOptimization {
 					ModelSpec: "mobilenet-v2-050", DeviceClass: "jetson-agx-orin-64g",
 					ExecutionPath: "ort-cpu", PowerMode: "MODE_50W", Preprocessor: "mobilenet-imagenet",
 				},
-				TargetNode: "jetsono", CPURequest: resource.MustParse("100m"),
+				TargetNode: "jetsono",
 			},
 			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{
 				WarmupIterations: 20, DurationSeconds: 75,

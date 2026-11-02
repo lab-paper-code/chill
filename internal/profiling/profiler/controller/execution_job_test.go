@@ -100,9 +100,18 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 	assertArgument(t, runtimeContainer.Args, "--workload-result-timeout=30s")
 	assertArgument(t, runtimeContainer.Args, "--max-workload-result-bytes=8388608")
 	assertArgument(t, runtimeContainer.Args, "--raw-object-key=profiling-runs/"+string(run.UID)+"/raw.json")
-	if runtimeContainer.Resources.Limits.Cpu().String() != prepared.RunConfig.CPU.Limit ||
-		runtimeContainer.Resources.Requests.Cpu().String() != prepared.RunConfig.CPU.Request {
-		t.Fatalf("runtime CPU contract drifted: %#v", runtimeContainer.Resources)
+	for _, container := range append(slices.Clone(pod.InitContainers), pod.Containers...) {
+		for _, resources := range []corev1.ResourceList{container.Resources.Requests, container.Resources.Limits} {
+			if _, present := resources[corev1.ResourceCPU]; present {
+				t.Fatalf("container %s carries CPU resources: %#v", container.Name, container.Resources)
+			}
+		}
+		if container.Resources.Requests.Memory().Sign() <= 0 || container.Resources.Limits.Memory().Sign() <= 0 {
+			t.Fatalf("container %s lost its memory envelope", container.Name)
+		}
+	}
+	if pod.Affinity != nil {
+		t.Fatal("profiling Job carries affinity")
 	}
 	if !hasSecretEnv(runtimeContainer.Env, "AWS_ACCESS_KEY_ID", binding.CredentialsSecretName, component.EvidenceStoreAccessKeyKey) ||
 		!hasSecretEnv(runtimeContainer.Env, "AWS_SECRET_ACCESS_KEY", binding.CredentialsSecretName, component.EvidenceStoreSecretKeyKey) {
@@ -591,9 +600,6 @@ func currentRKNNPreparedRun(t *testing.T, resourceName string) profiler.Prepared
 	config.TargetNode.Architecture = testARM64Architecture
 	config.State.Preprocessor.Architecture = testARM64Architecture
 	config.TargetNode.AllocatableCPU = "8"
-	config.CPU.Limit = "8"
-	config.CPU.ORTIntraOpThreads = 0
-	config.CPU.ORTInterOpThreads = 0
 	config.Metrics.NodeName = config.TargetNode.Name
 
 	host := profilingrun.CandidateReportHostContract{

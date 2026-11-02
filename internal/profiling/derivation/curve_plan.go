@@ -17,24 +17,11 @@ import (
 )
 
 const (
-	curvePlanSchemaVersion = "chill.dacs.io/curve-plan.v1alpha9"
+	curvePlanSchemaVersion = "chill.dacs.io/curve-plan.v1alpha10"
 	curveRuntimeFirstfloor = "firstfloor"
 	curveBackendORTCUDA    = "ort-cuda"
 	curveBackendORTCPU     = "ort-cpu"
 )
-
-// CurveCPUContract is the execution CPU contract shared by every planned batch.
-// It is deliberately Kubernetes-free.
-type CurveCPUContract struct {
-	Policy             string `json:"policy"`
-	PolicyVersion      string `json:"policyVersion"`
-	Request            string `json:"request"`
-	Limit              string `json:"limit"`
-	ORTIntraOpThreads  int    `json:"ortIntraOpThreads"`
-	ORTInterOpThreads  int    `json:"ortInterOpThreads"`
-	AffinityCPUs       []int  `json:"affinityCPUs,omitempty"`
-	ExclusivityClaimed bool   `json:"exclusivityClaimed"`
-}
 
 // CurveRuntimeAccessContract freezes accelerator delivery and physical GPU identity.
 type CurveRuntimeAccessContract struct {
@@ -118,7 +105,6 @@ type CurvePlanSpec struct {
 	RuntimeAccess     *CurveRuntimeAccessContract     `json:"runtimeAccess,omitempty"`
 	RuntimeImage      string                          `json:"runtimeImage"`
 	PowerMode         string                          `json:"powerMode"`
-	CPU               CurveCPUContract                `json:"cpu"`
 	MetricSource      CurveMetricSourceContract       `json:"metricSource"`
 	ActiveProtocol    CurveProtocolContract           `json:"activeProtocol"`
 	IdleProtocol      CurveProtocolContract           `json:"idleProtocol"`
@@ -142,7 +128,6 @@ type CurvePlan struct {
 func NewCurvePlan(spec CurvePlanSpec) (CurvePlan, error) {
 	spec = CloneCurvePlanSpec(spec)
 	sort.Ints(spec.PlannedBatchSizes)
-	sort.Ints(spec.CPU.AffinityCPUs)
 	if err := validateCurvePlanSpec(spec); err != nil {
 		return CurvePlan{}, err
 	}
@@ -260,9 +245,6 @@ func validateCurvePlanSpec(shared CurvePlanSpec) error {
 	if err := validateCurveRuntime(shared); err != nil {
 		return err
 	}
-	if err := validateCurveCPU(shared.CPU); err != nil {
-		return err
-	}
 	if err := validateCurveMetricSource(shared.MetricSource); err != nil {
 		return err
 	}
@@ -354,29 +336,6 @@ func validateCurveRuntime(shared CurvePlanSpec) error {
 	} else if shared.Firstfloor != nil {
 		return errors.New("non-firstfloor curve plan cannot contain firstfloor settings")
 	}
-	if len(shared.CPU.AffinityCPUs) > 0 && shared.RuntimeFamily != curveRuntimeFirstfloor {
-		return errors.New("explicit CPU affinity requires firstfloor execution")
-	}
-	return nil
-}
-
-func validateCurveCPU(cpu CurveCPUContract) error {
-	for _, value := range []string{cpu.Policy, cpu.PolicyVersion, cpu.Request, cpu.Limit} {
-		if !cleanCurveValue(value) {
-			return errors.New("curve plan CPU contract is incomplete")
-		}
-	}
-	if cpu.ORTIntraOpThreads < 0 || cpu.ORTInterOpThreads < 0 {
-		return errors.New("curve plan CPU thread counts cannot be negative")
-	}
-	for index, cpuID := range cpu.AffinityCPUs {
-		if cpuID < 0 || (index > 0 && cpuID <= cpu.AffinityCPUs[index-1]) {
-			return errors.New("curve plan CPU affinity IDs must be nonnegative, unique, and sorted")
-		}
-	}
-	if len(cpu.AffinityCPUs) > 0 && len(cpu.AffinityCPUs) < cpu.ORTIntraOpThreads {
-		return errors.New("curve plan CPU affinity mask is smaller than the ONNX Runtime thread count")
-	}
 	return nil
 }
 
@@ -440,7 +399,6 @@ func cleanCurvePath(value string) bool {
 // CloneCurvePlanSpec separates caller-owned mutable execution conditions.
 func CloneCurvePlanSpec(shared CurvePlanSpec) CurvePlanSpec {
 	shared.PlannedBatchSizes = append([]int(nil), shared.PlannedBatchSizes...)
-	shared.CPU.AffinityCPUs = slices.Clone(shared.CPU.AffinityCPUs)
 	shared.Artifact.Files = slices.Clone(shared.Artifact.Files)
 	shared.Preprocessor.Inputs = slices.Clone(shared.Preprocessor.Inputs)
 	shared.Preprocessor.Outputs = slices.Clone(shared.Preprocessor.Outputs)

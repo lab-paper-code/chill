@@ -9,12 +9,10 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/prometheus/common/model"
-	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 const inputDatatypeFP32 = "FP32"
@@ -50,9 +48,6 @@ func (i RunConfig) Validate() error {
 		"targetNode.uid":             i.TargetNode.UID,
 		"targetNode.resourceVersion": i.TargetNode.ResourceVersion,
 		"targetNode.architecture":    i.TargetNode.Architecture,
-		"targetNode.allocatableCPU":  i.TargetNode.AllocatableCPU,
-		"cpu.policy":                 i.CPU.Policy,
-		"cpu.policyVersion":          i.CPU.PolicyVersion,
 		"measurement.workloadMode":   i.Measurement.WorkloadMode,
 		"metrics.sourceKind":         i.Metrics.SourceKind,
 		"metrics.nodeName":           i.Metrics.NodeName,
@@ -85,9 +80,6 @@ func (i RunConfig) Validate() error {
 		return errors.New("metrics.thermalEndpoint is required without surrounding whitespace")
 	}
 	if err := i.Metrics.ValidateMetricIdentities(); err != nil {
-		return err
-	}
-	if err := i.validateCPUContract(); err != nil {
 		return err
 	}
 	if i.Measurement.Batch < 1 || i.Measurement.WarmupIterations < 0 || i.Measurement.DurationSeconds < 1 {
@@ -343,74 +335,6 @@ func isRKNNExecution(i RunConfig) bool {
 func hasExecutionPath(i RunConfig) bool {
 	return i.Candidate.ExecutionPath != "" &&
 		strings.TrimSpace(i.Candidate.ExecutionPath) == i.Candidate.ExecutionPath
-}
-
-func (i RunConfig) validateCPUContract() error {
-	if i.CPU.ExclusivityClaimed {
-		return errors.New("CPU quota policy must not claim Node exclusivity")
-	}
-	if i.CPU.PolicyVersion != CPUQuotaPolicyVersion {
-		return errors.New("unsupported CPU quota policy version")
-	}
-	if len(i.CPU.AffinityCPUs) > 0 {
-		if i.State.RuntimeFamily != FirstfloorRuntimeFamily {
-			return errors.New("explicit CPU affinity requires firstfloor execution")
-		}
-		for index, cpu := range i.CPU.AffinityCPUs {
-			if cpu < 0 || (index > 0 && cpu <= i.CPU.AffinityCPUs[index-1]) {
-				return errors.New("CPU affinity IDs must be nonnegative, unique, and sorted")
-			}
-		}
-		if len(i.CPU.AffinityCPUs) < i.CPU.ORTIntraOpThreads {
-			return errors.New("CPU affinity mask is smaller than the selected ONNX Runtime thread count")
-		}
-	}
-	requestCPU, err := resource.ParseQuantity(i.CPU.Request)
-	if err != nil || requestCPU.Sign() <= 0 {
-		return errors.New("CPU request must be a positive Kubernetes quantity")
-	}
-	limitCPU, err := resource.ParseQuantity(i.CPU.Limit)
-	if err != nil || limitCPU.Sign() <= 0 {
-		return errors.New("CPU limit must be a positive Kubernetes quantity")
-	}
-	if requestCPU.Cmp(limitCPU) > 0 {
-		return errors.New("CPU request must not exceed CPU limit")
-	}
-	var threadCount int
-	switch i.CPU.Policy {
-	case AllocatableCPUQuotaPolicy:
-		threadCount, err = strconv.Atoi(i.TargetNode.AllocatableCPU)
-		if err != nil || threadCount < 1 {
-			return errors.New("target allocatableCPU must be a positive integer")
-		}
-		if i.CPU.Limit != i.TargetNode.AllocatableCPU {
-			return errors.New("CPU contract does not match the AllocatableCPUQuota policy")
-		}
-	case ConfiguredCPUQuotaPolicy:
-		threadCount, err = strconv.Atoi(i.CPU.Limit)
-		if err != nil || threadCount < 1 {
-			return errors.New("configured CPU quota must be a positive whole-core count")
-		}
-		allocatableCPU, parseErr := resource.ParseQuantity(i.TargetNode.AllocatableCPU)
-		if parseErr != nil || allocatableCPU.Sign() <= 0 {
-			return errors.New("target allocatableCPU must be a positive Kubernetes quantity")
-		}
-		if limitCPU.Cmp(allocatableCPU) > 0 {
-			return errors.New("configured CPU quota exceeds target allocatableCPU")
-		}
-	default:
-		return errors.New("unsupported CPU quota policy")
-	}
-	if isRKNNExecution(i) {
-		if i.CPU.ORTIntraOpThreads != 0 || i.CPU.ORTInterOpThreads != 0 {
-			return errors.New("RKNNLite CPU contract cannot contain ONNX Runtime thread settings")
-		}
-		return nil
-	}
-	if i.CPU.ORTIntraOpThreads != threadCount || i.CPU.ORTInterOpThreads != 1 {
-		return errors.New("CPU contract does not match the selected CPU quota policy")
-	}
-	return nil
 }
 
 func validateCandidateInputs(inputs CandidateReportInputs) error {

@@ -136,12 +136,6 @@ func TestValidateRuntimeRejectsCPUExecutionDrift(t *testing.T) {
 		mutate func(*RuntimeResult)
 	}{
 		{name: "architecture", mutate: func(result *RuntimeResult) { result.Architecture = "aarch64" }},
-		{name: "smaller quota", mutate: func(result *RuntimeResult) {
-			result.CPUContract.CgroupCPUMax = "200000 100000"
-		}},
-		{name: "unlimited quota", mutate: func(result *RuntimeResult) {
-			result.CPUContract.CgroupCPUMax = "max 100000"
-		}},
 		{name: "malformed quota", mutate: func(result *RuntimeResult) {
 			result.CPUContract.CgroupCPUMax = "400000"
 		}},

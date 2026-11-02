@@ -39,18 +39,14 @@ type ExecutionPolicySpec struct {
 	MaxWorkloadEvents      int   `json:"maxWorkloadEvents"`
 	MaxWorkloadResultBytes int64 `json:"maxWorkloadResultBytes"`
 
-	RuntimeMemoryRequestBytes          int64  `json:"runtimeMemoryRequestBytes"`
-	RuntimeMemoryLimitBytes            int64  `json:"runtimeMemoryLimitBytes"`
-	ObserverCPURequest                 string `json:"observerCPURequest"`
-	ObserverCPULimit                   string `json:"observerCPULimit"`
-	ObserverMemoryRequestBytes         int64  `json:"observerMemoryRequestBytes"`
-	ObserverMemoryLimitBytes           int64  `json:"observerMemoryLimitBytes"`
-	WorkloadObserverCPURequest         string `json:"workloadObserverCPURequest"`
-	WorkloadObserverCPULimit           string `json:"workloadObserverCPULimit"`
-	WorkloadObserverMemoryRequestBytes int64  `json:"workloadObserverMemoryRequestBytes"`
-	WorkloadObserverMemoryLimitBytes   int64  `json:"workloadObserverMemoryLimitBytes"`
-	CoordinationReserveBytes           int64  `json:"coordinationReserveBytes"`
-	WorkspaceBytes                     int64  `json:"workspaceBytes"`
+	RuntimeMemoryRequestBytes          int64 `json:"runtimeMemoryRequestBytes"`
+	RuntimeMemoryLimitBytes            int64 `json:"runtimeMemoryLimitBytes"`
+	ObserverMemoryRequestBytes         int64 `json:"observerMemoryRequestBytes"`
+	ObserverMemoryLimitBytes           int64 `json:"observerMemoryLimitBytes"`
+	WorkloadObserverMemoryRequestBytes int64 `json:"workloadObserverMemoryRequestBytes"`
+	WorkloadObserverMemoryLimitBytes   int64 `json:"workloadObserverMemoryLimitBytes"`
+	CoordinationReserveBytes           int64 `json:"coordinationReserveBytes"`
+	WorkspaceBytes                     int64 `json:"workspaceBytes"`
 }
 
 // ExecutionPolicy is the selected worker envelope retained on the immutable

@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"slices"
 	"strings"
 	"testing"
 )
@@ -17,7 +16,6 @@ func TestBuildRunCreatesOnlyOneModelLoadedIdleExecution(t *testing.T) {
 		measurement.WorkloadMode != idleWorkloadMode || measurement.Batch != parent.Spec.Batch ||
 		measurement.WarmupIterations != 0 || measurement.SettlingDurationSeconds == nil ||
 		*measurement.SettlingDurationSeconds != parent.Spec.Protocol.SettlingDurationSeconds ||
-		measurement.CPUQuota == nil || measurement.CPUQuota.Cmp(parent.Spec.CPUQuota) != 0 ||
 		measurement.Dataset != "" ||
 		len(run.OwnerReferences) != 1 || run.OwnerReferences[0].Kind != "ModelLoadedIdleBaseline" ||
 		run.OwnerReferences[0].UID != parent.UID {
@@ -34,21 +32,5 @@ func TestBuildRunUsesExactLongestParentNameAndUIDLabel(t *testing.T) {
 	}
 	if len(run.Name) != 253 || run.Labels[labelIdleBaselineUID] != string(parent.UID) {
 		t.Fatalf("long child identity = name length %d labels %#v", len(run.Name), run.Labels)
-	}
-}
-
-func TestBuildRunCopiesSourceAffinity(t *testing.T) {
-	parent := testBaselineParent()
-	parent.Spec.CPUAffinity = []int32{31, 8}
-	run, err := buildRun(parent, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(run.Spec.Measurement.CPUAffinity, parent.Spec.CPUAffinity) {
-		t.Fatal("owned idle Run lost source affinity")
-	}
-	run.Spec.Measurement.CPUAffinity[0] = 99
-	if parent.Spec.CPUAffinity[0] != 31 {
-		t.Fatal("owned idle Run affinity aliases the source")
 	}
 }

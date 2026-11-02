@@ -70,24 +70,6 @@ spec:
                 format: int32
                 minimum: 1
                 type: integer
-              cpuAffinity:
-                description: CPUAffinity selects explicit firstfloor CPU IDs for every
-                  owned idle Run.
-                items:
-                  format: int32
-                  minimum: 0
-                  type: integer
-                minItems: 1
-                type: array
-                x-kubernetes-list-type: set
-              cpuQuota:
-                anyOf:
-                - type: integer
-                - type: string
-                description: CPUQuota fixes the whole-core runtime quota for each
-                  owned idle Run.
-                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                x-kubernetes-int-or-string: true
               pointPolicy:
                 description: ModelLoadedIdleBaselinePointPolicySpec fixes the aggregate
                   estimator inputs.
@@ -207,14 +189,6 @@ spec:
                     - powerMode
                     - preprocessor
                     type: object
-                  cpuRequest:
-                    anyOf:
-                    - type: integer
-                    - type: string
-                    description: CPURequest is the non-exclusive scheduling request
-                      for the runtime container.
-                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                    x-kubernetes-int-or-string: true
                   targetNode:
                     description: TargetNode names the Kubernetes Node on which the
                       Run is requested.
@@ -223,13 +197,11 @@ spec:
                     type: string
                 required:
                 - candidate
-                - cpuRequest
                 - targetNode
                 type: object
             required:
             - attemptLimit
             - batch
-            - cpuQuota
             - pointPolicy
             - protocol
             - state
@@ -237,13 +209,6 @@ spec:
             x-kubernetes-validations:
             - message: attemptLimit must cover minimumRuns
               rule: self.attemptLimit >= self.pointPolicy.minimumRuns
-            - message: cpuQuota must be positive
-              rule: quantity(self.cpuQuota).compareTo(quantity('0')) > 0
-            - message: cpuQuota must be a whole number of CPU cores
-              rule: quantity(self.cpuQuota).isInteger()
-            - message: state.cpuRequest must not exceed cpuQuota
-              rule: quantity(self.state.cpuRequest).compareTo(quantity(self.cpuQuota))
-                <= 0
             - message: ModelLoadedIdleBaseline spec is immutable
               rule: self == oldSelf
           status:

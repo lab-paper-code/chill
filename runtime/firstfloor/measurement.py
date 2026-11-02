@@ -53,10 +53,6 @@ def validate_request(request: dict[str, Any]) -> None:
     backend = state.get("backend")
     if backend not in PROVIDERS:
         raise common.ContractError("unsupported firstfloor backend")
-    if backend == "rknnlite" and isinstance(run.get("cpu"), dict):
-        # Go omits zero ORT thread counts for RKNN RunConfigs.
-        run["cpu"].setdefault("ortIntraOpThreads", 0)
-        run["cpu"].setdefault("ortInterOpThreads", 0)
     common.validate_request(request, REQUEST_SCHEMA, backend)
     settings = common.require_object(state["firstfloor"], "state.firstfloor")
     common.require_fields(settings, {"maxBatchSize", "maxQueueSize"} |
@@ -169,10 +165,7 @@ def validate_rknn_facts(facts: dict[str, Any], delivery: dict[str, Any]) -> None
 def validate_metadata(metadata: dict[str, Any], request: dict[str, Any], cpu_max: str,
                       affinity: list[int], cpuset: str) -> dict[str, Any]:
     run = request["runConfig"]
-    state, cpu = run["state"], run["cpu"]
-    requested = common.requested_cpu_affinity(cpu)
-    if requested is not None and affinity != requested:
-        raise common.ContractError("measurement CPU affinity differs from frozen requested CPU mask")
+    state = run["state"]
     actual = common.require_object(metadata.get("runtime"), "actual runtime metadata")
     backend = state["backend"]
     policy = common.require_object(metadata.get("policy"), "actual actor policy")
@@ -194,9 +187,9 @@ def validate_metadata(metadata: dict[str, Any], request: dict[str, Any], cpu_max
     if (actual.get("modelFiles") != model_files or actual.get("inputs") != preprocessor["inputs"] or
             actual.get("outputs") != preprocessor["outputs"]):
         raise common.ContractError("actual model files/input/output metadata differs from frozen declarations")
-    if (actual.get("intraOpThreads") != cpu["ortIntraOpThreads"] or
-            actual.get("interOpThreads") != cpu["ortInterOpThreads"] or
-            actual.get("cpuAffinity") != affinity or actual.get("initializedBatches") != initialized_batches(run) or
+    for field in ("intraOpThreads", "interOpThreads"):
+        common.require_integer(actual.get(field), f"actual {field}", 0)
+    if (actual.get("cpuAffinity") != affinity or actual.get("initializedBatches") != initialized_batches(run) or
             actual.get("warmupIterations") != run["measurement"]["warmupIterations"]):
         raise common.ContractError("actual initialized batches, warmup, affinity or threads differ from frozen conditions")
     providers = actual.get("providers")
@@ -322,12 +315,8 @@ def worker_config(request: dict[str, Any]) -> dict[str, Any]:
     preprocessor = run["state"]["preprocessor"]
     command = [sys.executable, str(Path(__file__).with_name("runner.py")), "--runtime", backend,
                "--model-dir", request["modelDirectory"], "--preprocessor", request["preprocessorPath"],
-               "--intra-op-threads", str(run["cpu"]["ortIntraOpThreads"]),
                "--warmup-iterations", str(run["measurement"]["warmupIterations"]),
                "--warmup-batch", str(run["measurement"]["batch"])]
-    affinity = common.requested_cpu_affinity(run["cpu"])
-    if affinity is not None:
-        command += ["--cpu-affinity", ",".join(map(str, affinity))]
     if backend == "ort-cuda":
         command += ["--gpu-uuid", run["delivery"]["runtimeAccess"]["gpuUUID"]]
     config = {"model": run["state"]["model"], "mode": "profiling",
@@ -348,8 +337,7 @@ def execute(request: dict[str, Any], workspace: Path) -> dict[str, Any]:
     architecture = platform.machine()
     if common.normalize_architecture(architecture) != common.normalize_architecture(run["targetNode"]["architecture"]):
         raise common.ContractError("actual architecture differs from frozen Node")
-    common.apply_cpu_affinity(run)
-    cpu_max, affinity, cpuset = common.validate_cpu_contract(run)
+    cpu_max, affinity, cpuset = common.read_cpu_environment()
     sampler = memory_sampler(run)
     try:
         return execute_sampled(request, workspace, run, architecture, cpu_max, affinity, cpuset, sampler)
@@ -406,8 +394,6 @@ def execute_sampled(request: dict[str, Any], workspace: Path, run: dict[str, Any
             if any(observed[key] - session.baseline[key] != executions for key in observed):
                 raise common.ContractError("actual actor execution/request counters disagree with completed fixed-K samples")
             after = validate_metadata(session.metadata(), request, cpu_max, affinity, cpuset)
-            if common.validate_cpu_contract(run) != (cpu_max, affinity, cpuset):
-                raise common.ContractError("measurement cgroup quota/affinity changed during the window")
             if after != actual or process.poll() is not None:
                 raise common.ContractError("native model/runtime conditions changed during measurement")
             result["firstfloor"] = {"runtime": actual, "mode": "profiling", "modelInstanceCount": 1,
@@ -419,6 +405,8 @@ def execute_sampled(request: dict[str, Any], workspace: Path, run: dict[str, Any
             if sampler is None:
                 result["memoryBytes"], result["memorySource"] = memory_peak()
             result["derivedExecutionContract"] = common.derived_contract(run, PROVIDERS[run["state"]["backend"]])
+            result["cpuContract"]["ortIntraOpThreads"] = actual["intraOpThreads"]
+            result["cpuContract"]["ortInterOpThreads"] = actual["interOpThreads"]
             if run["state"]["backend"] == "rknnlite":
                 facts = actual["rknn"]
                 # Active K comes from actual completed actor samples; idle K was actually queried during initialization.
@@ -443,7 +431,6 @@ def main() -> None:
     try:
         request = common.decode_request(sys.stdin.buffer)
         validate_request(request)
-        common.apply_cpu_affinity(request["runConfig"])
         result = execute(request, arguments.result_file.parent)
         common.publish_immutable(arguments.result_file, common.encode_result(result, request["maxResultBytes"]))
     except (common.ContractError, OSError, ValueError, http.client.HTTPException) as error:

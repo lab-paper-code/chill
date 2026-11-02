@@ -11,11 +11,7 @@ import (
 )
 
 const (
-	RunConfigSchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha17"
-
-	AllocatableCPUQuotaPolicy = "AllocatableCPUQuota"
-	ConfiguredCPUQuotaPolicy  = "ConfiguredCPUQuota"
-	CPUQuotaPolicyVersion     = "v1"
+	RunConfigSchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha18"
 
 	SaturatedSerialFixedBatchWorkloadMode = "saturated-serial-fixed-batch"
 	IdleModelLoadedWorkloadMode           = "idle-model-loaded"
@@ -42,7 +38,6 @@ type RunConfig struct {
 	Images        Images                   `json:"images"`
 	Delivery      CandidateRuntimeDelivery `json:"delivery"`
 	TargetNode    NodeSnapshot             `json:"targetNode"`
-	CPU           CPUContract              `json:"cpu"`
 	Measurement   MeasurementContract      `json:"measurement"`
 	Metrics       MetricContract           `json:"metrics"`
 	Workload      WorkloadContract         `json:"workload"`
@@ -136,18 +131,7 @@ type NodeSnapshot struct {
 	UID             string `json:"uid"`
 	ResourceVersion string `json:"resourceVersion"`
 	Architecture    string `json:"architecture"`
-	AllocatableCPU  string `json:"allocatableCPU"`
-}
-
-type CPUContract struct {
-	Policy             string `json:"policy"`
-	PolicyVersion      string `json:"policyVersion"`
-	Request            string `json:"request"`
-	Limit              string `json:"limit"`
-	ORTIntraOpThreads  int    `json:"ortIntraOpThreads,omitempty"`
-	ORTInterOpThreads  int    `json:"ortInterOpThreads,omitempty"`
-	AffinityCPUs       []int  `json:"affinityCPUs,omitempty"`
-	ExclusivityClaimed bool   `json:"exclusivityClaimed"`
+	AllocatableCPU  string `json:"allocatableCPU,omitempty"`
 }
 
 // ActuationContract binds a non-fixed selected power mode to the typed target

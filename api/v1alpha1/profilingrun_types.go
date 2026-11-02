@@ -1,7 +1,6 @@
 package v1alpha1
 
 import (
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -23,17 +22,12 @@ type MeasurementStateSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	TargetNode string `json:"targetNode"`
-
-	// CPURequest is the non-exclusive scheduling request for the runtime container.
-	CPURequest resource.Quantity `json:"cpuRequest"`
 }
 
 // ProfilingRunSpec requests exactly one immutable profiling execution.
 // Materially different inputs require a new ProfilingRun.
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ProfilingRun spec is immutable"
 // +kubebuilder:validation:XValidation:rule="self.metricObservation.durationSeconds >= self.measurement.durationSeconds",message="metricObservation.durationSeconds must cover measurement.durationSeconds"
-// +kubebuilder:validation:XValidation:rule="quantity(self.cpuRequest).compareTo(quantity('0')) > 0",message="cpuRequest must be positive"
-// +kubebuilder:validation:XValidation:rule="!has(self.measurement.cpuQuota) || quantity(self.cpuRequest).compareTo(quantity(self.measurement.cpuQuota)) <= 0",message="cpuRequest must not exceed measurement.cpuQuota"
 type ProfilingRunSpec struct {
 	MeasurementStateSpec `json:",inline"`
 
@@ -91,27 +85,12 @@ type ProfilingRunCandidateSpec struct {
 
 // +kubebuilder:validation:XValidation:rule="!has(self.durationToleranceSeconds) || self.durationToleranceSeconds < double(self.durationSeconds)",message="duration tolerance must be less than duration"
 // +kubebuilder:validation:XValidation:rule="self.workloadMode == 'idle-model-loaded' ? self.warmupIterations == 0 && has(self.settlingDurationSeconds) && !has(self.dataset) : !has(self.settlingDurationSeconds) && has(self.dataset)",message="measurement fields must match the selected workloadMode"
-// +kubebuilder:validation:XValidation:rule="!has(self.cpuQuota) || quantity(self.cpuQuota).compareTo(quantity('0')) > 0",message="cpuQuota must be positive"
-// +kubebuilder:validation:XValidation:rule="!has(self.cpuQuota) || quantity(self.cpuQuota).isInteger()",message="cpuQuota must be a whole number of CPU cores"
 type ProfilingRunMeasurementSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	Batch int32 `json:"batch"`
 
 	// +kubebuilder:validation:Minimum=0
 	WarmupIterations int32 `json:"warmupIterations"`
-
-	// CPUQuota optionally selects a configured whole-core runtime quota. It is
-	// consumed while freezing the Run and is not duplicated in MeasurementContract.
-	// +optional
-	CPUQuota *resource.Quantity `json:"cpuQuota,omitempty"`
-
-	// CPUAffinity optionally selects explicit Linux CPU IDs for firstfloor execution.
-	// It does not reserve CPUs or claim exclusivity.
-	// +optional
-	// +kubebuilder:validation:MinItems=1
-	// +kubebuilder:validation:items:Minimum=0
-	// +listType=set
-	CPUAffinity []int32 `json:"cpuAffinity,omitempty"`
 
 	// SettlingDurationSeconds is required only for model-loaded idle. The
 	// runtime loads the model before this observer-independent settling period.

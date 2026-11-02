@@ -22,7 +22,6 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -685,12 +684,10 @@ func resolvedRun(
 			MaxInputBytes: 64 * mebibyte, MaxRuntimeResultBytes: 32 * mebibyte,
 			MaxMetricResultBytes: 8 * mebibyte, MaxMetricEvents: 50_000,
 			MaxWorkloadEvents: 10_000, MaxWorkloadResultBytes: 8 * mebibyte,
-			RuntimeMemoryRequestBytes: 128 * mebibyte,
-			RuntimeMemoryLimitBytes:   1024 * mebibyte,
-			ObserverCPURequest:        "5m", ObserverCPULimit: "100m",
-			ObserverMemoryRequestBytes: 16 * mebibyte,
-			ObserverMemoryLimitBytes:   64 * mebibyte,
-			WorkloadObserverCPURequest: "5m", WorkloadObserverCPULimit: "100m",
+			RuntimeMemoryRequestBytes:          128 * mebibyte,
+			RuntimeMemoryLimitBytes:            1024 * mebibyte,
+			ObserverMemoryRequestBytes:         16 * mebibyte,
+			ObserverMemoryLimitBytes:           64 * mebibyte,
 			WorkloadObserverMemoryRequestBytes: 32 * mebibyte,
 			WorkloadObserverMemoryLimitBytes:   128 * mebibyte,
 			CoordinationReserveBytes:           mebibyte, WorkspaceBytes: 128 * mebibyte,
@@ -727,7 +724,6 @@ func validRun() *edgev1alpha1.ProfilingRun {
 					ExecutionPath: "ort-cpu", PowerMode: "fixed", Preprocessor: "mobilenet-imagenet",
 				},
 				TargetNode: "lattepanda",
-				CPURequest: resource.MustParse("100m"),
 			},
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: 1, WarmupIterations: 20, DurationSeconds: 30,

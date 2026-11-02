@@ -16,8 +16,8 @@ func applyFirstfloorRuntime(config profilingrun.RunConfig, result *profilingrun.
 	result.DerivedContract.Provider = fixtureCPUProvider
 	stat := result.CPUContract.CgroupCPUStatDelta
 	result.CPUContract = profilingrun.RuntimeCPU{
-		CgroupCPUMax: "400000 100000", ORTIntraOpThreads: config.CPU.ORTIntraOpThreads,
-		ORTInterOpThreads: config.CPU.ORTInterOpThreads, AffinityCPUCount: 4,
+		CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 0,
+		ORTInterOpThreads: 0, AffinityCPUCount: 4,
 		AffinityCPUs: []int{0, 1, 2, 3}, CPUSetEffective: "0-3", CgroupCPUStatDelta: stat,
 	}
 	result.MemoryBytes, result.MemorySource = 123456, "cgroup-v2-memory.peak:runtime-container-lifetime"

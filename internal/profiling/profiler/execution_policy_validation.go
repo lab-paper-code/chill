@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
-	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 var executionPolicyNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
@@ -117,28 +116,6 @@ func (p ExecutionPolicy) Validate() error {
 	if p.MaxMetricResultBytes > math.MaxInt64-p.MaxWorkloadResultBytes ||
 		p.MaxMetricResultBytes+p.MaxWorkloadResultBytes > math.MaxInt64-p.CoordinationReserveBytes {
 		return errors.New("execution-policy coordination capacity overflows int64")
-	}
-	if err := validateExecutionPolicyCPU("observer", p.ObserverCPURequest, p.ObserverCPULimit); err != nil {
-		return err
-	}
-	return validateExecutionPolicyCPU(
-		"workload observer",
-		p.WorkloadObserverCPURequest,
-		p.WorkloadObserverCPULimit,
-	)
-}
-
-func validateExecutionPolicyCPU(name, requestValue, limitValue string) error {
-	request, err := resource.ParseQuantity(requestValue)
-	if err != nil || request.Sign() <= 0 {
-		return fmt.Errorf("execution-policy %s CPU request must be a positive Kubernetes quantity", name)
-	}
-	limit, err := resource.ParseQuantity(limitValue)
-	if err != nil || limit.Sign() <= 0 {
-		return fmt.Errorf("execution-policy %s CPU limit must be a positive Kubernetes quantity", name)
-	}
-	if request.Cmp(limit) > 0 {
-		return fmt.Errorf("execution-policy %s CPU request must not exceed its limit", name)
 	}
 	return nil
 }

@@ -58,16 +58,16 @@ native Kubernetes workload intent → identified Run observation/evidence.
 | Outcomes | Carrier-reference verification, load/init, selected-batch execution, output-validation outcome **and method/strength**. CPU inference success without shape checks must not equal RKNN/Jetson `(batch, 1000)` checks. |
 | Resolved evidence | Actual Node, measurement start/end, runtime-specific attachments on the same Run. Node selector/affinity intent differs from actual `spec.nodeName`. |
 | Batch | Artifact/runtime-path capability, one selected attempted batch, and campaign search range/strategy are three separate concepts. Only the selected batch is common Run correlation. |
-| Desired vs observed | Requested provider vs registration/graph assignment; CPU limit/threads vs cgroup/affinity/throttling; requested GPU vs successful allocation; desired power vs read-back; expected component relation vs observed identities/load outcome. Observation exposes mismatch, never rewrites desired intent. |
-| Runtime-specific desired state | CPU quota/thread/request/topology/co-location policy; RKNN direct backend/core mask/layout/shape evidence/toolkit-library-driver relation; Jetson provider options/engine-profile/cache lifecycle/ORT-TensorRT-CUDA-L4T-driver relation/graph fallback and precision. |
+| Desired vs observed | Requested provider vs registration/graph assignment; runtime-default applied threads and actual cgroup/cpuset/affinity/throttling; requested GPU vs successful allocation; desired power vs read-back; expected component relation vs observed identities/load outcome. CPU observations are not desired allocation or matching authority. |
+| Runtime-specific desired state | Shared CPU execution without request/limit/quota/pinning or quota-derived thread overrides; RKNN direct backend/core mask/layout/shape evidence/toolkit-library-driver relation; Jetson provider options/engine-profile/cache lifecycle/ORT-TensorRT-CUDA-L4T-driver relation/graph fallback and precision. |
 
 Do not flatten provider, runtimeVersion, precision, supportedBatches,
 computeDevice/resourceCount, exclusive, cache, parallelism, powerMode, or node
-into apparently equivalent fields. RKNNLite is not an ORT provider; CPU quota,
-NPU exposure, and GPU allocation enforce different things. TensorRT engines
-are runtime-derived/device-profile-bound, unlike predeployment RKNN files.
-Native Pod requests/limits/selectors/affinity/tolerations/volumes/access belong
-in RunConfig, not `deviceKind`, `deviceCount`, or `exclusive=true` equivalents.
+into apparently equivalent fields. RKNNLite is not an ORT provider; NPU exposure
+and GPU allocation enforce different things. TensorRT engines are
+runtime-derived/device-profile-bound, unlike predeployment RKNN files.
+Native Pod memory/GPU resources, placement selectors/tolerations/volumes/access
+remain runtime delivery facts; CPU allocation and pinning are absent.
 
 ## Provenance contract
 
@@ -81,13 +81,13 @@ Provenance constrains claim meaning; `Declared`, `Observed`, `Derived`, or
 | Verification depth | Preserve declared-only, identified-image packaging, matched object identity, API observation, confirmed Pod allocation, availability, initialized/loaded, selected-batch execution, shape/semantic validation, and graph-assignment distinctions. |
 | Scope | Artifact, runtime image, Node snapshot, Pod/Run, process/session, selected artifact+batch, or compiled engine/profile. Selected-batch success is not artifact-wide batch support; a session provider list is not future Node capability. |
 | Mutable time/version | Snapshot/version context plus observation time; time does not replace resourceVersion/content identity. Distinguish producer/device time, observer receipt time, and no source timestamp. MetricObserver receipt time is never a Shelly device measurement time. Immutable content needs stable owner/reference, not redundant per-value timestamps. |
-| Derivation | Rule/policy identity and version, all material input evidence/snapshots, and atomically produced output group. `derivedAt` alone is not reproducibility/currentness. Changed Node resourceVersion requires a new current CPU derivation; old results remain history. |
+| Derivation | Rule/policy identity and version, all material input evidence/snapshots, and atomically produced output group. `derivedAt` alone is not reproducibility/currentness. Current memory/GPU/ownership feasibility is distinct from immutable profiling evidence; changing CPU capacity does not trigger CPU allocation derivation. Old controlled results remain history, not shared-execution evidence. |
 | Unknown | Result/epistemic state, not provenance kind. Name required claim and cause: absent source, self-declared/untrusted source, stale/mismatched identity, unsupported comparison, ambiguity/conflict, or verification failure. These are requirements, not final reason enums. Required unknown/unrecognized forms fail closed. |
-| Grouping | One provenance header and typed values per uniform snapshot/rule/scope/lifecycle group. Split differing authorities/scopes; do not wrap every scalar or duplicate provenance on CPU limit/intra/inter siblings. |
+| Grouping | One provenance header and typed values per uniform snapshot/rule/scope/lifecycle group. Split differing authorities/scopes; do not wrap every scalar in an allocation policy. |
 
-Example grouping: Node UID/resourceVersion/observedAt + consumed allocatable
-fields → CPU rule/version + snapshot reference + limit/thread outputs →
-Run/Pod/container/image/window + quota/affinity/runtime/throttling evidence.
+Example grouping: Node UID/resourceVersion + runtime image/backend/batch →
+Run/Pod/container/image/window + applied runtime-default session settings and
+actual quota/affinity/cpuset/usage/throttling evidence.
 A runtime self-report is not supply-chain attestation; verifying the model
 file does not verify adjacent metadata/image; hostPath presence does not
 identify a library or prove ABI. Changed image resolution under the same tag

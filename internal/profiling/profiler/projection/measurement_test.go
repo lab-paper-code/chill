@@ -157,7 +157,6 @@ func projectionRunConfig() profilingrun.RunConfig {
 			ArtifactCapability: &profilingrun.CandidateArtifactCapability{},
 		},
 		TargetNode: profilingrun.NodeSnapshot{Name: "lattepanda", UID: "node-uid"},
-		CPU:        profilingrun.CPUContract{Policy: "allocatable", PolicyVersion: "v1", Limit: "4"},
 		Measurement: profilingrun.MeasurementContract{
 			Batch: 2, WarmupIterations: 20, DurationSeconds: 30, WorkloadMode: "saturated",
 			Dataset: &profilingrun.DatasetContract{
@@ -278,9 +277,9 @@ func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 			MeasurementElapsedSeconds: 30,
 			TargetDurationSeconds:     &targetDuration,
 			CPUContract: profilingrun.RuntimeCPU{
-				CgroupCPUMax: "400000 100000", ORTIntraOpThreads: config.CPU.ORTIntraOpThreads,
-				ORTInterOpThreads: config.CPU.ORTInterOpThreads,
-				AffinityCPUCount:  config.CPU.ORTIntraOpThreads,
+				CgroupCPUMax: "400000 100000", ORTIntraOpThreads: 0,
+				ORTInterOpThreads: 0,
+				AffinityCPUCount:  4,
 				CPUSetEffective:   "0-3",
 				CgroupCPUStatDelta: map[string]int{
 					"user_usec": 1, "system_usec": 2,

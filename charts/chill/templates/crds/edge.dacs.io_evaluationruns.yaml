@@ -330,6 +330,11 @@ spec:
                 - shards
                 - sourceSHA
                 type: object
+                x-kubernetes-validations:
+                - message: generator CPU requests are not supported
+                  rule: '!has(self.resources.requests) || !(''cpu'' in self.resources.requests)'
+                - message: generator CPU limits are not supported
+                  rule: '!has(self.resources.limits) || !(''cpu'' in self.resources.limits)'
               powerMeasurement:
                 properties:
                   meters:
