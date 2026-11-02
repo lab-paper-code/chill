@@ -12,6 +12,8 @@
   "requestNamePrefix": "coverage-",
   "runtimeValues": "charts/chill/values-operating.yaml",
   "laneLastExecutionPaths": ["firstfloor-ort-cuda-vlm-arm64"],
+  "laneFirstPowerModes": ["MODE_10W_2CORE", "MODE_15W_2CORE", "MODE_20W_2CORE", "MODE_15W"],
+  "laneFirstPowerModesSource": "power modes the E5 runs used (control-222 E5 result JSON); measured first so an interrupted campaign still covers E5",
   "laneLastModelExecutionPaths": {
     "smolvlm2-500m-video-instruct": ["firstfloor-ort-cuda-amd64"]
   },

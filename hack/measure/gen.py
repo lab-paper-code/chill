@@ -654,6 +654,7 @@ def coverage_lane_order(lane, policy):
         pair[1]["spec"]["state"]["candidate"]["executionPath"] in policy["laneLastExecutionPaths"] or
         pair[1]["spec"]["state"]["candidate"]["executionPath"] in
         policy["laneLastModelExecutionPaths"].get(pair[0]["model"], []),
+        pair[0]["powerMode"] not in policy["laneFirstPowerModes"],
         pair[0]["powerMode"], pair[0]["model"], pair[0]["cellId"]))
 
 
