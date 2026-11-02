@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -84,5 +85,28 @@ func TestEvaluationInputsPaging(t *testing.T) {
 				t.Fatalf("status=%d body=%s", response.Code, response.Body)
 			}
 		})
+	}
+}
+
+func TestEvaluationInputsWithoutPagingReturnsWholeList(t *testing.T) {
+	items := make([]EvaluationInput, 30)
+	for i := range items {
+		items[i] = EvaluationInput{Kind: "seed", Set: "demo"}
+	}
+	for _, query := range []url.Values{{}, {"kind": {"seed"}, "set": {"demo"}}} {
+		got, err := pageEvaluationInputs(EvaluationInputList{Items: items}, query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Items) != len(items) || got.Page.Total != len(items) || got.Page.NextOffset != nil {
+			t.Fatalf("whole-list query %v returned %+v", query, got)
+		}
+	}
+	got, err := pageEvaluationInputs(EvaluationInputList{Items: items}, url.Values{"offset": {"0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Items) != 25 || got.Page.Total != 30 || got.Page.NextOffset == nil || *got.Page.NextOffset != 25 {
+		t.Fatalf("explicit paging returned %+v", got)
 	}
 }

@@ -85,6 +85,11 @@ func pageEvaluationInputs(list EvaluationInputList, values url.Values) (Evaluati
 	start := min(offset, len(items))
 	end := min(start+limit, len(items))
 	list.Page = ProfilePage{Offset: offset, Limit: limit, Total: len(items)}
+	// Preserve whole-list consumers until they explicitly request pagination.
+	if !values.Has(profileLimitQuery) && !values.Has(profileOffsetQuery) {
+		list.Items = items
+		return list, nil
+	}
 	if end < len(items) {
 		list.Page.NextOffset = &end
 	}
