@@ -220,8 +220,8 @@ func validatePowerNativeProfiles(profiles []serving.Profile, node *transitioncos
 				break
 			}
 		}
-		if profile == nil || profile.RuntimeMetadata == nil || profile.Condition.NodeUID != node.NodeUID || instance.Image != profile.Condition.RuntimeImage {
-			return errors.New("power native loaded state lacks matching verified profile/image/physical Node")
+		if profile == nil || profile.RuntimeMetadata == nil || profile.Condition.NodeUID != node.NodeUID {
+			return errors.New("power native loaded state lacks matching verified profile/physical Node")
 		}
 		actual := sharedRuntimeFacts(instance.State.Metadata.Runtime)
 		expected := sharedRuntimeFacts(*profile.RuntimeMetadata)

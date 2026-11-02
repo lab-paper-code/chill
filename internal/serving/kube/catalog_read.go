@@ -123,15 +123,16 @@ type CatalogRead struct {
 }
 
 type CatalogSnapshot struct {
-	ConfigVersion   string                        `json:"configVersion"`
-	Profiles        []ProfileSummary              `json:"profiles"`
-	Insufficiencies []CatalogIssue                `json:"insufficiencies"`
-	ReuseChecks     []serving.ProfileReuseCheck   `json:"reuseChecks,omitempty"`
-	Preparations    map[string]PreparationSummary `json:"preparations"`
-	Reporting       []CatalogReportingInput       `json:"reporting"`
-	SourceCheckedAt time.Time                     `json:"sourceCheckedAt"`
-	SourceError     string                        `json:"sourceError"`
-	Revision        string                        `json:"revision"`
+	ConfigVersion       string                            `json:"configVersion"`
+	Profiles            []ProfileSummary                  `json:"profiles"`
+	CurrentMeasurements []derivation.MeasurementSelection `json:"currentMeasurements"`
+	Insufficiencies     []CatalogIssue                    `json:"insufficiencies"`
+	ReuseChecks         []serving.ProfileReuseCheck       `json:"reuseChecks,omitempty"`
+	Preparations        map[string]PreparationSummary     `json:"preparations"`
+	Reporting           []CatalogReportingInput           `json:"reporting"`
+	SourceCheckedAt     time.Time                         `json:"sourceCheckedAt"`
+	SourceError         string                            `json:"sourceError"`
+	Revision            string                            `json:"revision"`
 }
 
 func ProjectCatalogSnapshot(
@@ -141,7 +142,8 @@ func ProjectCatalogSnapshot(
 ) CatalogSnapshot {
 	out := CatalogSnapshot{ConfigVersion: configVersion, Profiles: make([]ProfileSummary, 0, len(view.Profiles)),
 		Insufficiencies: view.Insufficiencies, ReuseChecks: view.ReuseChecks, Preparations: SummarizePreparations(preparations),
-		Reporting: make([]CatalogReportingInput, 0, len(view.MeasurementFacts)), SourceCheckedAt: view.SourceCheckedAt,
+		CurrentMeasurements: view.CurrentMeasurements,
+		Reporting:           make([]CatalogReportingInput, 0, len(view.MeasurementFacts)), SourceCheckedAt: view.SourceCheckedAt,
 		SourceError: view.SourceError, Revision: view.Revision}
 	for _, p := range view.Profiles {
 		out.Profiles = append(out.Profiles, SummarizeProfile(p))

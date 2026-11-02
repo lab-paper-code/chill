@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -23,7 +24,7 @@ func TestReplacementSelectionPreservesOriginalsAndExactTrialPolicy(t *testing.T)
 			before := original.DeepCopy()
 			replacement := *original.DeepCopy()
 			replacement.Name += replacementSuffix
-			replacement.Annotations = map[string]string{replacesCampaignAnnotation: original.Name}
+			replacement.Annotations = map[string]string{profilederivation.ReplacesMeasurementAnnotation: original.Name}
 			replacement.Spec.ActiveProtocol.MetricObservation.DurationSeconds = 1800
 			items := []edge.BatchEnergyOptimization{original, replacement}
 			selection := replacementCampaignSelection(items)
@@ -47,7 +48,7 @@ func TestReplacementSelectionPreservesOriginalsAndExactTrialPolicy(t *testing.T)
 	}
 }
 
-func TestCatalogReplacementPendingExcludesCachedOriginalWithoutMutation(t *testing.T) {
+func TestCatalogReplacementPendingExcludesCurrentOriginalButKeepsHistory(t *testing.T) {
 	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
 	ctx := context.Background()
 	view, err := catalog.Refresh(ctx, []string{source.Namespace})
@@ -61,17 +62,17 @@ func TestCatalogReplacementPendingExcludesCachedOriginalWithoutMutation(t *testi
 	before := original.DeepCopy()
 	replacement := original.DeepCopy()
 	replacement.Name, replacement.UID, replacement.ResourceVersion = "coherent-replacement", "replacement-uid", ""
-	replacement.Annotations = map[string]string{replacesCampaignAnnotation: original.Name}
+	replacement.Annotations = map[string]string{profilederivation.ReplacesMeasurementAnnotation: original.Name}
 	replacement.Status = edge.BatchEnergyOptimizationStatus{Phase: "Measuring"}
 	if err := catalog.store.client.Create(ctx, replacement); err != nil {
 		t.Fatal(err)
 	}
 	view, err = catalog.Refresh(ctx, []string{source.Namespace})
-	if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 || view.Insufficiencies[0].Code != "ReplacementSelection" {
-		t.Fatalf("pending replacement used old profile: %+v error=%v", view, err)
+	if err != nil || len(view.Profiles) != 1 || len(view.CurrentProfiles()) != 0 || len(view.Insufficiencies) != 1 || view.Insufficiencies[0].Code != "ReplacementSelection" {
+		t.Fatalf("pending replacement revived old execution or erased history: %+v error=%v", view, err)
 	}
-	if _, found := catalog.current[source]; found {
-		t.Fatal("superseded cached profile retained")
+	if _, found := catalog.current[source]; !found {
+		t.Fatal("superseded historical profile cache discarded")
 	}
 	actual := &edge.BatchEnergyOptimization{}
 	if err := catalog.store.client.Get(ctx, source, actual); err != nil {
@@ -97,7 +98,7 @@ func TestCatalogReplacementStillRequiresNormalVerifiedEvidence(t *testing.T) {
 	if err := catalog.store.client.Create(ctx, original); err != nil {
 		t.Fatal(err)
 	}
-	replacement.Annotations = map[string]string{replacesCampaignAnnotation: original.Name}
+	replacement.Annotations = map[string]string{profilederivation.ReplacesMeasurementAnnotation: original.Name}
 	if err := catalog.store.client.Update(ctx, replacement); err != nil {
 		t.Fatal(err)
 	}
@@ -107,19 +108,19 @@ func TestCatalogReplacementStillRequiresNormalVerifiedEvidence(t *testing.T) {
 	}
 }
 
-func TestCatalogReplacementMissingOriginalFailsClosed(t *testing.T) {
+func TestCatalogReplacementMissingOriginalIsDiagnosticButEvidenceStillRequired(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := edge.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	replacement := &edge.BatchEnergyOptimization{ObjectMeta: metav1.ObjectMeta{Name: "replacement", Namespace: "chill-system", Generation: 1, Annotations: map[string]string{replacesCampaignAnnotation: "missing"}}, Status: edge.BatchEnergyOptimizationStatus{Phase: "Complete", ObservedGeneration: 1}}
+	replacement := &edge.BatchEnergyOptimization{ObjectMeta: metav1.ObjectMeta{Name: "replacement", Namespace: "chill-system", Generation: 1, Annotations: map[string]string{profilederivation.ReplacesMeasurementAnnotation: "missing"}}, Status: edge.BatchEnergyOptimizationStatus{Phase: "Complete", ObservedGeneration: 1}}
 	objects := &catalogTestObjects{}
 	catalog, err := NewCatalog(&Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(replacement).Build()}, objects, 1024)
 	if err != nil {
 		t.Fatal(err)
 	}
 	view, err := catalog.Refresh(context.Background(), []string{replacement.Namespace})
-	if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 || objects.opens != 0 {
+	if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 2 || objects.opens != 0 {
 		t.Fatalf("missing original=%+v error=%v", view, err)
 	}
 	var retained edge.BatchEnergyOptimizationList

@@ -34,6 +34,7 @@ type options struct {
 	profileObjectSize                                                                int64
 	schedulerConfigMap, schedulerConfigKey                                           string
 	factsNamespace, factsConfigMap, actuationPoliciesKey, metricSourcesKey           string
+	executionFactsKey                                                                string
 	diagnosticDirectory                                                              string
 	checkDeploymentManifest, schedulerConfigMapFile                                  string
 	diagnosticStartDelay, diagnosticTraceOffset                                      time.Duration
@@ -114,6 +115,8 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 		"Actuation policy catalog key in the Profiler facts ConfigMap.")
 	f.StringVar(&o.metricSourcesKey, "metric-sources-key", "metric-sources.yaml",
 		"Metric source key in the Profiler facts ConfigMap.")
+	f.StringVar(&o.executionFactsKey, "execution-facts-key", "execution-facts.yaml",
+		"Current runtime declaration key in the Profiler facts ConfigMap.")
 	f.StringVar(&o.kube.APIServer, "kube-api-server", "", "Explicit Kubernetes API endpoint; otherwise in-cluster.")
 	f.StringVar(&o.kube.TokenFile, "kube-token-file", "", "Kubernetes service-account token file.")
 	f.StringVar(&o.kube.CAFile, "kube-ca-file", "", "Kubernetes API CA file.")
@@ -237,6 +240,7 @@ func (o options) validateFacts() error {
 	if o.factsConfigMap != "" && (len(validation.IsDNS1123Label(o.factsNamespace)) != 0 ||
 		len(validation.IsDNS1123Subdomain(o.factsConfigMap)) != 0 ||
 		len(validation.IsConfigMapKey(o.actuationPoliciesKey)) != 0 ||
+		len(validation.IsConfigMapKey(o.executionFactsKey)) != 0 ||
 		len(validation.IsConfigMapKey(o.metricSourcesKey)) != 0) {
 		return errors.New("valid Profiler facts namespace, ConfigMap name and keys are required")
 	}

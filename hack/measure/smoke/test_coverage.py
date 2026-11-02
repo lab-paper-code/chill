@@ -28,7 +28,8 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
                   annotated=True, controlled=False, prefix=True, memory_policy=None, cell_annotation=True,
                   variant=True, allocatable='20Gi', memory_fraction=0.8, policy_limit=17179869184,
                   model='mobilenet-v2-050', device='raspberry-pi-5-8g', runtime_image='new-runtime',
-                  node_uid='node-uid', timing_seconds=None, power_mode='fixed', timing_power_mode=None):
+                  node_uid='node-uid', timing_seconds=None, power_mode='fixed', timing_power_mode=None,
+                  selection_available=True, current_id=None, display_status=None):
     """Exercise generate_coverage, not just its independent selection helpers."""
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
@@ -39,6 +40,14 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
                 'assessment': {'displayStatus': 'usable' if phase == 'Complete' else 'problem', 'reasons': []},
                 'variants': [{'condition': {'runtimeImage': image}, 'profileIds': ['ns/coverage-old-runtime/uid']}]
                             if phase == 'Complete' else []}
+        cell['currentMeasurement'] = {'id': current_id or 'ns/coverage-old-runtime/uid',
+                                      'measuredAt': '2026-01-01T00:00:00Z'}
+        if source_mode != power_mode:
+            cell['currentMeasurement'] = None  # timing belongs to another logical cell
+        if display_status:
+            cell['assessment']['displayStatus'] = display_status
+        if not selection_available:
+            del cell['currentMeasurement']
         if not variant:
             cell['variants'] = []
             cell['assessment']['displayStatus'] = 'unmeasured'
@@ -50,7 +59,7 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
         if annotated:
             annotations['chill.dacs.io/coverage-execution-conditions'] = json.dumps(conditions)
         previous = {'metadata': {'name': ('coverage-' if prefix else 'pilot-') + 'old-runtime', 'uid': 'uid',
-                                'creationTimestamp': '2026-01-01', 'annotations': annotations},
+                                'creationTimestamp': '2026-01-01', 'annotations': annotations, 'namespace': 'ns'},
                     'status': {'phase': phase}, 'spec': {
                         'state': {'targetNode': 'node', 'candidate': {'modelSpec': model, 'deviceClass': device,
                                   'executionPath': path, 'powerMode': source_mode, 'preprocessor': 'pre'}},
@@ -130,28 +139,32 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
 
 def generation_self_check(gen):
     old = generate_case(gen)
-    assert old['summary']['staleRuntimeCellCount'] == 1
-    assert old['summary']['manifestCellCount'] == 1 and not old['existing-cells']
-    assert old['resume-plan']['cells'][0]['batches'] == [1, 2]
+    assert old['summary']['staleRuntimeCellCount'] == 0
+    assert old['summary']['manifestCellCount'] == 0
+    assert old['summary']['currentRuntimeMeasuredCellCount'] == 1
     current = generate_case(gen, image='new-runtime')
     assert current['summary']['currentRuntimeMeasuredCellCount'] == 1
     complete = generate_case(gen, image='new-runtime', variant=False)
-    assert complete['summary']['manifestCellCount'] == 0 and len(complete['existing-cells']) == 1
+    assert complete['summary']['manifestCellCount'] == 0 and complete['summary']['currentRuntimeMeasuredCellCount'] == 1
     assert current['summary']['manifestCellCount'] == 0
     for phase in ('Measuring', ''):
         running = generate_case(gen, image='new-runtime', phase=phase)
         assert running['summary']['manifestCellCount'] == 0 and len(running['existing-cells']) == 1
         stale = generate_case(gen, phase=phase)
-        assert stale['summary']['manifestCellCount'] == 1 and not stale['existing-cells']
+        assert stale['summary']['manifestCellCount'] == 0 and len(stale['existing-cells']) == 1
     assert generate_case(gen, image='new-runtime', phase='Failed')['summary']['manifestCellCount'] == 1
     assert generate_case(gen, image='new-runtime', phase='Measuring', annotated=False)['summary']['manifestCellCount'] == 1
     assert generate_case(gen, image='new-runtime', curve='old-curve')['summary']['manifestCellCount'] == 1
     assert generate_case(gen, image='new-runtime', evidence='old-evidence')['summary']['manifestCellCount'] == 1
-    assert generate_case(gen, controlled=True)['summary']['manifestCellCount'] == 1
+    assert generate_case(gen, controlled=True)['summary']['manifestCellCount'] == 0  # migrated shared evidence, CPU history is not a condition
     fallback = generate_case(gen, image='new-runtime', phase='Measuring', cell_annotation=False)
     assert fallback['existing-cells']
     assert generate_case(gen, image='new-runtime', phase='Measuring', curve='old-curve')['summary']['manifestCellCount'] == 1
     assert generate_case(gen, image='new-runtime', phase='Measuring', evidence='old-evidence')['summary']['manifestCellCount'] == 1
+    assert generate_case(gen, selection_available=False)['summary']['manifestCellCount'] == 0
+    latest_failed = generate_case(gen, current_id='ns/newer-failed/failed-uid')
+    assert latest_failed['summary']['manifestCellCount'] == 1 and not latest_failed['existing-cells']
+    assert generate_case(gen, phase='Failed', display_status='insufficient')['summary']['manifestCellCount'] == 1
     rule = {'model': 'mobilenet-v2-050', 'deviceClass': 'raspberry-pi-5-8g', 'executionPath': None,
             'maxBatch': 1, 'conditions': {'runtimeImage': 'new-runtime',
                 'executionPath': 'firstfloor-ort-cpu-arm64', 'memoryLimitBytes': 17179869184},
@@ -196,12 +209,15 @@ def generation_self_check(gen):
 
 
 def timing_generation_self_check(gen):
-    for obsolete in ({'image': 'old-runtime'}, {'image': 'new-runtime', 'curve': 'old-curve'},
+    for obsolete in ({'image': 'new-runtime', 'curve': 'old-curve'},
                      {'image': 'new-runtime', 'evidence': 'old-evidence'}):
         planned = generate_case(gen, timing_seconds=61, **obsolete)
         assert planned['summary']['manifestCellCount'] == 1, planned['excluded-cells']
         assert planned['cells'][0]['batches'] == [1, 2]
         assert all(row['timingSource'] is None for row in planned['cells'][0]['batchEstimates'])
+    historical = generate_case(gen, phase='Failed', image='old-runtime', timing_seconds=61)
+    assert historical['summary']['manifestCellCount'] == 0
+    assert [r['batch'] for r in historical['excluded-batches']] == [1, 2]
     current = generate_case(gen, phase='Failed', image='new-runtime', timing_seconds=61)
     assert current['summary']['manifestCellCount'] == 0
     assert [r['batch'] for r in current['excluded-batches']] == [1, 2]

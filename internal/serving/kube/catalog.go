@@ -36,8 +36,6 @@ import (
 const invalidEvidenceCode = "InvalidEvidence"
 const catalogCompletePhase = "Complete"
 
-const replacesCampaignAnnotation = "chill.dacs.io/replaces-batch-energy-optimization"
-
 // Catalog lists native Campaigns and retains one verified terminal profile per
 // name/UID/resourceVersion. Inference never reads campaigns or downloads
 // evidence; callers own the mutable parts of each returned view.
@@ -71,13 +69,14 @@ type CatalogIssue struct {
 }
 
 type CatalogView struct {
-	Profiles         []serving.Profile                   `json:"profiles"`
-	Insufficiencies  []CatalogIssue                      `json:"insufficiencies"`
-	ReuseChecks      []serving.ProfileReuseCheck         `json:"reuseChecks,omitempty"`
-	MeasurementFacts map[string]serving.MeasurementFacts `json:"measurementFacts"`
-	SourceCheckedAt  time.Time                           `json:"-"`
-	SourceError      string                              `json:"-"`
-	Revision         string                              `json:"-"`
+	Profiles            []serving.Profile                        `json:"profiles"`
+	CurrentMeasurements []profilederivation.MeasurementSelection `json:"currentMeasurements"`
+	Insufficiencies     []CatalogIssue                           `json:"insufficiencies"`
+	ReuseChecks         []serving.ProfileReuseCheck              `json:"reuseChecks,omitempty"`
+	MeasurementFacts    map[string]serving.MeasurementFacts      `json:"measurementFacts"`
+	SourceCheckedAt     time.Time                                `json:"-"`
+	SourceError         string                                   `json:"-"`
+	Revision            string                                   `json:"-"`
 }
 
 func NewCatalog(store *Store, objects evidencestore.LocationReader, maxObjectBytes int64) (*Catalog, error) {
@@ -111,6 +110,8 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view Catalo
 	var revisions []string
 	seen := map[types.NamespacedName]struct{}{}
 	reuseRequests := map[string]string{}
+	var candidates []profilederivation.MeasurementSelection
+	names, replacements := map[string]string{}, map[string]string{}
 	for _, namespace := range namespaces {
 		campaigns := &edgev1alpha1.BatchEnergyOptimizationList{}
 		if err := c.store.client.List(ctx, campaigns, client.InNamespace(namespace)); err != nil {
@@ -120,13 +121,26 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view Catalo
 		for i := range campaigns.Items {
 			campaign := &campaigns.Items[i]
 			revisions = append(revisions, campaign.Namespace+"/"+campaign.Name+"/"+string(campaign.UID)+"/"+campaign.ResourceVersion)
+			id := campaign.Namespace + "/" + campaign.Name + "/" + string(campaign.UID)
+			names[campaign.Namespace+"/"+campaign.Name] = id
+			if campaign.DeletionTimestamp != nil {
+				continue
+			}
+			if name := campaign.Annotations[profilederivation.ReplacesMeasurementAnnotation]; name != "" {
+				replacements[id] = campaign.Namespace + "/" + name
+			}
+			state := campaign.Spec.State.Candidate
+			candidateIndex := len(candidates)
+			candidates = append(candidates, profilederivation.MeasurementSelection{
+				ID: id, Model: state.ModelSpec, DeviceClass: state.DeviceClass, ExecutionPath: state.ExecutionPath, PowerMode: state.PowerMode,
+				MeasuredAt: profilederivation.MeasurementTime(time.Time{}, campaign.Status.Conditions),
+			})
 			if campaign.DeletionTimestamp != nil || campaign.Status.Phase != catalogCompletePhase || campaign.Status.ObservedGeneration != campaign.Generation {
 				continue
 			}
 			source := types.NamespacedName{Namespace: campaign.Namespace, Name: campaign.Name}
 			if reason, excluded := excluded[campaign.Name]; excluded {
 				view.Insufficiencies = append(view.Insufficiencies, CatalogIssue{Source: source, Code: "ReplacementSelection", Reason: reason})
-				continue
 			}
 			if reason, invalid := campaign.Annotations[profilingrun.InvalidAnnotation]; invalid {
 				view.Insufficiencies = append(view.Insufficiencies, CatalogIssue{Source: source, Code: measurementInvalidCode, Reason: reason})
@@ -145,6 +159,7 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view Catalo
 				continue
 			}
 			view.Insufficiencies = append(view.Insufficiencies, issues...)
+			candidates[candidateIndex].MeasuredAt = profilederivation.MeasurementTime(profile.MeasuredAt, campaign.Status.Conditions)
 			if len(profile.Batches) > 0 {
 				view.Profiles = append(view.Profiles, profile)
 				view.MeasurementFacts[profile.ID] = cloneMeasurementFacts(c.current[source].facts)
@@ -163,6 +178,7 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view Catalo
 	if err != nil {
 		return CatalogView{}, err
 	}
+	view.CurrentMeasurements = profilederivation.CurrentMeasurements(candidates, profilederivation.ReplacedMeasurements(replacements, names))
 	slices.Sort(revisions)
 	view.Revision = fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(revisions, "\x00"))))
 	view.SourceCheckedAt = time.Now().UTC()
@@ -186,7 +202,7 @@ func replacementCampaignSelection(campaigns []edgev1alpha1.BatchEnergyOptimizati
 	}
 	for i := range campaigns {
 		replacement := &campaigns[i]
-		name := replacement.Annotations[replacesCampaignAnnotation]
+		name := replacement.Annotations[profilederivation.ReplacesMeasurementAnnotation]
 		if name == "" || replacement.DeletionTimestamp != nil {
 			continue
 		}
@@ -237,6 +253,7 @@ func latestConditionProfiles(profiles []serving.Profile) ([]serving.Profile, err
 		condition := profile.Condition
 		condition.Name = ""
 		condition.PlannedBatchSizes = nil
+		condition.RuntimeImage = ""
 		payload, err := json.Marshal(struct {
 			Condition    profilederivation.CurvePlanSpec `json:"condition"`
 			MetricSource metricobserver.SourceIdentity   `json:"metricSource"`
@@ -257,6 +274,26 @@ func latestConditionProfiles(profiles []serving.Profile) ([]serving.Profile, err
 		result = append(result, profile)
 	}
 	return result, nil
+}
+
+// CurrentProfiles is the executable selection, separate from public history.
+// A latest failed measurement has no profile, so cannot revive an old success.
+func (view CatalogView) CurrentProfiles() []serving.Profile {
+	current := make(map[string]bool, len(view.CurrentMeasurements))
+	for _, measurement := range view.CurrentMeasurements {
+		current[measurement.ID] = true
+	}
+	profiles := make([]serving.Profile, 0, len(current))
+	for _, profile := range view.Profiles {
+		id := profile.ID
+		if profile.Reuse != nil {
+			id = profile.Reuse.ConfirmationProfileID
+		}
+		if current[id] {
+			profiles = append(profiles, profile)
+		}
+	}
+	return profiles
 }
 
 //nolint:gocyclo // This refresh boundary follows the explicit ordered campaign, plan, Run, and raw-evidence checks.

@@ -74,7 +74,7 @@ func dispatchOccupancy(measured []DispatchOccupancy, i SchedulerInstance) *Dispa
 	}
 	for _, o := range measured {
 		if o.Node.UID == i.Node.UID && o.PowerMode == i.Profile.Condition.PowerMode &&
-			o.RuntimeImage == i.Profile.Condition.RuntimeImage && o.Model == i.Profile.Condition.LogicalModel {
+			o.Model == i.Profile.Condition.LogicalModel {
 			return &o
 		}
 	}

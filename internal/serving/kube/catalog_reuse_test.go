@@ -131,7 +131,6 @@ func TestProfileReuseRejectsUnconfirmedConditionsAndDifferences(t *testing.T) {
 		mutate func(*serving.Profile, *serving.Profile)
 	}{
 		{"device-family", func(_, p *serving.Profile) { p.Condition.DeviceClass += "-different" }},
-		{"runtime-image", func(_, p *serving.Profile) { p.Condition.RuntimeImage += "-other-image" }},
 		{"power-mode", func(_, p *serving.Profile) { p.Condition.PowerMode = "different" }},
 		{"runner-version", func(_, p *serving.Profile) { p.RuntimeMetadata.RuntimeVersion += "-other-version" }},
 		{"short-window", func(_, p *serving.Profile) { p.Condition.ActiveProtocol.DurationSeconds = 29 }},
@@ -386,5 +385,14 @@ func TestProfileReuseSelectedMinimumsAndIdentity(t *testing.T) {
 		if _, err := decodeProfileReuseRequest(raw); err == nil {
 			t.Fatal("invalid minimum accepted")
 		}
+	}
+}
+
+func TestProfileReuseIgnoresHistoricalRuntimeImage(t *testing.T) {
+	source, target := reuseProfilesFixture(t)
+	target.Condition.RuntimeImage += "-new-image"
+	check := serving.ProfileReuseCheck{MaximumRelativeDifference: .05, MinimumMeasurementSeconds: 30, MinimumTrials: 3}
+	if err := compareReuseProfiles(source, target, &check); err != nil {
+		t.Fatal("historical image blocked otherwise verified reuse", err)
 	}
 }

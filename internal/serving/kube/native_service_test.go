@@ -249,7 +249,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 		return false, nil, nil
 	})
 	// Share API state between the uncached writer and native observer.
-	manager.store.client = fake.NewClientBuilder().WithScheme(manager.store.client.Scheme()).WithStatusSubresource(&edge.OperationCostMeasurement{}).WithObjects(&class, node.DeepCopy()).WithInterceptorFuncs(interceptor.Funcs{
+	manager.store.client = fake.NewClientBuilder().WithScheme(manager.store.client.Scheme()).WithStatusSubresource(&edge.OperationCostMeasurement{}).WithObjects(testExecutionFacts(), &class, node.DeepCopy()).WithInterceptorFuncs(interceptor.Funcs{
 		Create: func(ctx context.Context, c client.WithWatch, object client.Object, opts ...client.CreateOption) error {
 			if pod, ok := object.(*core.Pod); ok {
 				pod.UID = fixture.UID
@@ -417,6 +417,8 @@ func TestCUDAPreparationReproducesMeasuredSupplementalGroups(t *testing.T) {
 	ctx := context.Background()
 	_, node, profile, _ := observerSourceFixture()
 	profile.Condition.RuntimeAccess = &profilederivation.CurveRuntimeAccessContract{SupplementalGroups: []int64{44}}
+	desiredImage := profile.Condition.RuntimeImage
+	profile.Condition.RuntimeImage = "registry/native@sha256:" + strings.Repeat("b", 64)
 	var err error
 	scheme := runtime.NewScheme()
 	if err = core.AddToScheme(scheme); err != nil {
@@ -456,6 +458,9 @@ func TestCUDAPreparationReproducesMeasuredSupplementalGroups(t *testing.T) {
 	}
 	if pod.Spec.SecurityContext == nil || !reflect.DeepEqual(pod.Spec.SecurityContext.SupplementalGroups, []int64{44}) {
 		t.Fatalf("measured supplemental groups were not reproduced: %+v", pod.Spec.SecurityContext)
+	}
+	if pod.Spec.Containers[0].Image != desiredImage || pod.Spec.InitContainers[2].Image != desiredImage || profile.Condition.RuntimeImage == desiredImage {
+		t.Fatal("prepare did not use the current declaration for worker/materializer while retaining historical image")
 	}
 }
 
@@ -687,7 +692,7 @@ func TestMeasuredPowerChangeOnEmptyMeasurementNode(t *testing.T) {
 	node.Annotations[chillmeta.PowerActuator] = nvpModel0
 	kube := kubefake.NewSimpleClientset(node)
 	// The fake agent settles every requested mode at once.
-	manager.store.client = &nodeAPI{Client: fake.NewClientBuilder().WithScheme(manager.store.client.Scheme()).WithObjects(&class).Build(), kube: kube, agent: settleAgent(&class)}
+	manager.store.client = &nodeAPI{Client: fake.NewClientBuilder().WithScheme(manager.store.client.Scheme()).WithObjects(testExecutionFacts(), &class).Build(), kube: kube, agent: settleAgent(&class)}
 	manager.observer.kube = kube
 	operations, err := NewOperations(manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
 		OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond, Measurement: true})

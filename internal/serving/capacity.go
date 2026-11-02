@@ -42,8 +42,8 @@ type CapacityInput struct {
 	GridSteps          int                 `json:"capacityGridSteps"`
 	BisectionWidth     float64             `json:"capacityBisectionWidth"`
 	TailSamples        int                 `json:"capacityTailSamples"`
-	// DispatchOccupancy is the measurement for the option's Node, power mode,
-	// runtime image and model; without one the row has no kappa.
+	// DispatchOccupancy is the measurement for the option's Node, power mode
+	// and model; RuntimeImage is retained only as measurement history.
 	DispatchOccupancy *DispatchOccupancy `json:"dispatchOccupancy,omitempty"`
 }
 
@@ -109,6 +109,11 @@ func NewCapacityInput(settings SchedulerSettings, occupancy []DispatchOccupancy,
 // Key is the stable row key of the input.
 func (in CapacityInput) Key() string {
 	// The CPU-sharing cutover must not reuse controlled-execution archive keys.
+	if in.DispatchOccupancy != nil {
+		occupancy := *in.DispatchOccupancy
+		occupancy.RuntimeImage = ""
+		in.DispatchOccupancy = &occupancy
+	}
 	data, _ := json.Marshal(in)
 	sum := sha256.Sum256(data)
 	return "shared-cpu/" + hex.EncodeToString(sum[:12])

@@ -255,8 +255,8 @@ func TestCapacityRowWithoutOccupancyHasNoKappa(t *testing.T) {
 	}
 	snap.DispatchOccupancy[0].PowerMode = snap.Instances[0].Profile.Condition.PowerMode
 	snap.DispatchOccupancy[0].RuntimeImage = "registry/model@sha256:other"
-	if row := capacityBuildForTest(t, s, snap); row.Kappa != nil {
-		t.Fatalf("an occupancy measured on another runtime image gave kappa: %+v", row)
+	if row := capacityBuildForTest(t, s, snap); row.Kappa == nil {
+		t.Fatalf("historical runtime image blocked occupancy kappa: %+v", row)
 	}
 	snap.DispatchOccupancy[0].RuntimeImage = snap.Instances[0].Profile.Condition.RuntimeImage
 	snap.DispatchOccupancy[0].Model = "other-model"
@@ -607,5 +607,18 @@ func TestCapacityConfiguredNumerics(t *testing.T) {
 		if invalid.Validate() == nil {
 			t.Fatal("invalid numerical policy accepted")
 		}
+	}
+}
+
+func TestCapacityKeyIgnoresOccupancyImageHistory(t *testing.T) {
+	in := CapacityInput{ProfileID: "profile", DispatchOccupancy: &DispatchOccupancy{RuntimeImage: "old-image", Model: "model"}}
+	key := in.Key()
+	in.DispatchOccupancy.RuntimeImage = "new-image"
+	if key != in.Key() || in.DispatchOccupancy.RuntimeImage != "new-image" {
+		t.Fatal("runtime image changed cache identity or key erased measurement history")
+	}
+	in.DispatchOccupancy.Model = "other-model"
+	if key == in.Key() {
+		t.Fatal("model condition disappeared from capacity key")
 	}
 }
