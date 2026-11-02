@@ -10,10 +10,10 @@ import { Screen } from "@/components/screen"
 import { PreflightAnswer, preflightConclusion } from "@/features/read-pages"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import type { DatasetResource, PreprocessorResource, ExecutionPath, ModelList, ModelResource, WorkloadView } from "@/lib/domain"
+import type { DatasetResource, PreprocessorResource, ExecutionPath, ModelList, ModelResource, WorkloadSummary } from "@/lib/domain"
 import type { InventoryClass, InventoryNode, MeasurementMutation, MeasurementPlan, MeasurementPlanList, MeasurementPlanSpec, MeasurementPreflight, MeasurementVariant, ProfilesView } from "@/lib/read-types"
 import { datasetGap, requestNumber, requestBatches, requestDefaults, requestInputs, requestTargetBatches, requestConditionChanges, requestPreflightReason, requestRejectionGuidance, requestCheckCurrent, requestCopySource, requestCopyQuery, requestHref, type RequestRejectionGuidance } from "@/lib/measurement-request"
-import { parseSchedulerJSON } from "@/lib/scheduler"
+import { parseMeasurementJSON } from "@/lib/measurement-summary"
 import { deviceLabel, resolveMeasurementPrefill, serverCompatibility, staticCompatibility, type MeasurementPrefill } from "@/lib/measurement-coverage"
 import { useCoverageInventory, useModelCompatibility, useMeasurementCoverage } from "@/features/measurement-coverage"
 import { MeasurementNavigation } from "@/components/measurement-navigation"
@@ -43,7 +43,7 @@ const advancedFields: [key: NumberKey, label: string, min: number][] = [
 type Protocol = { values: Advanced; from: string | null }
 // model, preprocessor and dataset come from the chosen Workload's spec refs (or a copied plan); the API takes catalog names.
 type Draft = { workload: string; model: string; preprocessor: string; dataset: string; explicitPreprocessor?:boolean; explicitDataset?:boolean; deviceClass: string; node: string; path: string; powerMode: string; batchSizes: number[]; trials: number | null; cpu: string | null; protocol: Protocol | null; name: string | null }
-type Context = { models: ModelResource[]; workloads: WorkloadView[]; classes: InventoryClass[]; plans: MeasurementPlan[]; preprocessors: PreprocessorResource[]; datasets: DatasetResource[]; profiles:ProfilesView["profiles"]; prefill?:boolean }
+type Context = { models: ModelResource[]; workloads: WorkloadSummary[]; classes: InventoryClass[]; plans: MeasurementPlan[]; preprocessors: PreprocessorResource[]; datasets: DatasetResource[]; profiles:ProfilesView["profiles"]; prefill?:boolean }
 
 const emptyDraft: Draft = { workload: "", model: "", preprocessor: "", dataset: "", deviceClass: "", node: "", path: "", powerMode: "", batchSizes: [], trials: null, cpu: null, protocol: null, name: null }
 const blankAdvanced: Advanced = { warmup: NaN, activeDuration: NaN, activeWindow: NaN, activeInterval: NaN, activeTimeout: NaN, settling: NaN, idleDuration: NaN, idleWindow: NaN, idleInterval: NaN, idleTimeout: NaN, retryLimit: NaN, affinity: "" }
@@ -192,9 +192,9 @@ function AdvancedFields({ value, set, showErrors, rejection }: { value: Advanced
 export function MeasurementRequestPage() {
   const { config, token } = useSession(), params = useSearchParams(),router=useRouter()
   const from = params.get("from"),namespace=params.get("namespace")??config.namespace
-  const plans = useChillQuery<MeasurementPlanList>(`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`)
+  const plans = useChillQuery<MeasurementPlanList>(`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations?view=summary`,{decoder:parseMeasurementJSON})
   const models = useChillQuery<ModelList>("v1/models")
-  const workloads = useChillQuery<WorkloadView[]>("v1/workloads")
+  const workloads = useChillQuery<WorkloadSummary[]>("v1/workloads?view=summary")
   const preprocessors = useChillQuery<{items:PreprocessorResource[]}>("v1/preprocessors")
   const datasets = useChillQuery<{items:DatasetResource[]}>("v1/datasets")
   const inventory = useCoverageInventory()
@@ -203,10 +203,10 @@ export function MeasurementRequestPage() {
     const all:NonNullable<ProfilesView["profiles"]>=[]
     let offset=0
     for(;;) {
-      const response=await fetch(`/api/chill/v1/scheduler/profiles?${new URLSearchParams({limit:"50",offset:String(offset)})}`,{headers:{Authorization:`Bearer ${token}`},signal,cache:"no-store",credentials:"omit"})
+      const response=await fetch(`/api/chill/v1/scheduler/profiles?${new URLSearchParams({view:"summary",limit:"50",offset:String(offset)})}`,{headers:{Authorization:`Bearer ${token}`},signal,cache:"no-store",credentials:"omit"})
       const text=await response.text()
       if(!response.ok)throw new ApiError(response.status,text,null)
-      const page=parseSchedulerJSON(text) as ProfilesView
+      const page=parseMeasurementJSON(text) as ProfilesView
       all.push(...page.profiles??[])
       if(page.page?.nextOffset===undefined)return {...page,profiles:all}
       if(page.page.nextOffset<=offset)throw new ApiError(0,"프로파일 페이지가 전진하지 않습니다",null)

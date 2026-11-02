@@ -12,6 +12,7 @@ import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as requestHelpers from "./measurement-request.ts"
 import * as coverageHelpers from "./measurement-coverage.ts"
 import * as measurementHelpers from "./measurements.ts"
+import * as measurementSummary from "./measurement-summary.ts"
 
 const condition={model:"model & one",deviceClass:"device",node:"node",path:"cuda",powerMode:"MAXN"}
 const plan:MeasurementPlan={metadata:{name:"source",namespace:"ns",uid:"uid",resourceVersion:"1",creationTimestamp:"2026-10-30T00:00:00Z"},spec:{state:{candidate:{modelSpec:condition.model,deviceClass:condition.deviceClass,preprocessor:"pre",executionPath:condition.path,powerMode:condition.powerMode},targetNode:condition.node,cpuRequest:"2"},activeProtocol:{warmupIterations:5,durationSeconds:10,dataset:"data",metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},trialsPerBatch:3,retryLimit:1}}
@@ -156,6 +157,7 @@ function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0
     "@/components/ui/input":{Input:()=>null},
     "@/lib/measurement-request":requestHelpers,
     "@/lib/scheduler":{},
+    "@/lib/measurement-summary":measurementSummary,
     "@/lib/measurement-coverage":coverageHelpers,
     "@/features/measurement-coverage":{useModelCompatibility:()=>({})},
     "@/components/measurement-navigation":{MeasurementNavigation:()=>null},
@@ -353,6 +355,7 @@ function renderRequestList(kind:"requests"|"runs",record:unknown) {
     "@/lib/measurements":measurementHelpers,
     "@/lib/measurement-request":requestHelpers,
     "@/lib/measurement-coverage":coverageHelpers,
+    "@/lib/measurement-summary":measurementSummary,
     "@/features/measurement-coverage":{MeasurementFilters:()=>null,useMeasurementCoverage:()=>({})},
     "@/features/measurement-plans":{MeasurementPlanSheet:()=>null},
     "@/components/read-region":{QueryGate:container,SourceJSON:({inline,value}:{inline?:boolean;value:unknown})=>inline?createElement("pre",null,JSON.stringify(value)):null,SourceExport:()=>null},
@@ -415,6 +418,7 @@ test("failed request detail renders failure evidence, current results, checks an
     "@/lib/measurement-coverage":coverageHelpers,
     "@/lib/measurements":measurementHelpers,
     "@/lib/scheduler":{},
+    "@/lib/measurement-summary":measurementSummary,
     "@/features/measurement-coverage":{useMeasurementCoverage:()=>({data:{cells:[{...retainedCell,assessment}]}})},
     "@/features/measurement-runs":{MeasurementChildRuns:()=>createElement("p",null,"child-rounds")},
     "@/components/read-region":{QueryGate:container,SourceJSON:()=>null,SourceExport:()=>null},

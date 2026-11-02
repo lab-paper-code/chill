@@ -148,6 +148,15 @@ Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.
 | `GET /systems`, `GET /inventory` | ChillSystem의 condition과 이유, DeviceClass와 typed 전력모드 actuator, Node | System, Inventory와 Run 목록은 아래 query handler에서 제공한다. |
 | `GET /experiments`, `GET /experiments/{id}` | 완료된 불변 게시·단계 KPI·출처와 선택적 `outcome`. 목록은 `definition` 대신 선택적 `comparisons`, 단건은 `definition` 제공 | §8 정의 기반 reader. 목록 판정은 comparisons와 목록 KPI만 사용하며 항목별 단건 GET을 하지 않는다. |
 
+#### 표시용 요약 읽기 계약
+
+`GET /workloads?view=summary`는 중복 `supportedInputs`를 path·artifact·profileCount·profiles `{id}`로 줄인다. 전체 조건·출처는 무쿼리/단건에서 보존한다.
+`GET /namespaces/{namespace}/measurement-coverage?view=summary`, `GET .../batch-energy-optimizations?view=summary`, `GET /scheduler/profiles?view=summary&limit=50&offset=…`는 Query API의 표시용 projection이다. 필터·정렬 후 동일한 페이지를 투영한다. 대시보드 커버리지·측정 목록·요청 작성/복사·처리 성능 목록은 이 명시적 query로 전환하고 선택 프로파일과 요청 결과는 기존 단건 계약을 사용한다.
+
+응답의 `readProjection:{version:"measurement-summary.v1",values,shapes}`에서 `~N`은 `values[N]`, `{"$o":[S,...values]}`는 `shapes[S]` 필드 순서의 객체다. dictionary는 앞선 항목만 참조하며 dictionary 최상위 문자열은 원문이다. 조건·출처·필드명·부모/배치 assessment를 한 번 보내고 참조한다. 정밀 정수·체크 결과·판정·미확인 사유·null·0·페이지는 복원 후 동일하다. 커버리지의 미사용 `entities/groups` 역색인, 요청의 `metadata.managedFields/annotations`, 프로파일의 미사용 `preparations`만 요약에서 제외한다. 커버리지 집계와 셀별 요청·Run·프로파일 관계는 유지한다. 무쿼리 응답, 저장·CRD, 판정/체크 생성은 변경하지 않는다.
+
+2026-11-02 운영 원문을 로컬 projection에 적용한 크기(B): workloads 17,227,584→422,048(29개), 커버리지 9,218,406→1,893,956, 측정 요청 11,941,797→1,677,154, 프로파일 `limit=50&offset=100&sort=model&order=asc` 8,550,682→921,387. 각 표시 응답은 2,000,000 B 미만이다. `internal/queryapi` 회귀는 운영 GET fixture 디렉터리 `CHILL_MEASUREMENT_FIXTURE_DIR`를 제공하면 이 상한과 모든 유지 필드의 round-trip을 함께 검사한다.
+
 ### 연결 예정 API (서버 책임)
 
 |---|---|---|

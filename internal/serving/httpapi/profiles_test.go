@@ -84,3 +84,17 @@ func TestProfileSortAndEveryFilterPrecedePagination(t *testing.T) {
 		t.Fatal("sort mutated shared catalog")
 	}
 }
+
+func TestProfileSummaryPreservesSelectionAndPaging(t *testing.T) {
+	view := ProfilesView{}
+	view.Profiles = []serving.Profile{{ID: "b"}, {ID: "a"}}
+	got, err := PageProfiles(view, url.Values{"view": {"summary"}, "limit": {"1"}, "offset": {"1"}})
+	if err != nil || got.Page.Total != 2 || got.Page.Offset != 1 || len(got.Profiles) != 1 || got.Profiles[0].ID != "b" {
+		t.Fatalf("summary page lost selection: %+v %v", got, err)
+	}
+	for _, values := range []url.Values{{"view": {""}}, {"view": {"compact"}}, {"view": {"full"}}, {"view": {"summary", "summary"}}} {
+		if _, err := PageProfiles(view, values); err == nil {
+			t.Fatalf("invalid summary query accepted: %v", values)
+		}
+	}
+}

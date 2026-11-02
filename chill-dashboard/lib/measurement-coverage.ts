@@ -129,7 +129,7 @@ export function coverageBatchState(progress:BatchProgress|null,batch:number) {
 }
 
 export function coverageProfileQuery(cell:MeasurementCoverageCell) {
-  return new URLSearchParams({model:cell.model.name,deviceClass:cell.deviceClass.name,path:cell.executionPath,powerMode:cell.powerMode,limit:"50"})
+  return new URLSearchParams({view:"summary",model:cell.model.name,deviceClass:cell.deviceClass.name,path:cell.executionPath,powerMode:cell.powerMode,limit:"50"})
 }
 export function coverageFailureHref(failure:MeasurementFailure,namespace:string,returnTo:string) {
   if(failure.runName)return `/measurements/requests?${new URLSearchParams({namespace:failure.runNamespace||namespace,run:failure.runName,uid:failure.runId.split("/").at(-1)??"",returnTo})}`

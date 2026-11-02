@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery } from "@/lib/client"
 import type { CurvePlanSpec, MeasurementAssessment, ProfilesView, ResultRow } from "@/lib/read-types"
 import { parseSchedulerJSON } from "@/lib/scheduler"
+import { parseMeasurementJSON } from "@/lib/measurement-summary"
 import { executionPathLabel, formatMeasurementNumber, formatMeasurementTime } from "@/lib/measurements"
 import { assessmentReasons, measurementQuality, measurementSchedulerUsed } from "@/lib/measurement-assessment"
 import { STATUS_AXES } from "@/lib/status"
@@ -29,8 +30,9 @@ export const conditionRows = (condition:CurvePlanSpec):[string,string][] => [
 export function SchedulerProfilesPage() {
   const params=useSearchParams(),router=useRouter(),tableState=useServerTable(),trigger=React.useRef<HTMLAnchorElement|null>(null)
   const search=new URLSearchParams(tableState.query)
+  search.set("view","summary")
   for(const key of ["q","model","deviceClass","node","powerMode","path","cpu","status"]) {const value=params.get(key);if(value)search.set(key,value)}
-  const query=useChillQuery<ProfilesView>(`v1/scheduler/profiles?${search}`,{decoder:parseSchedulerJSON})
+  const query=useChillQuery<ProfilesView>(`v1/scheduler/profiles?${search}`,{decoder:parseMeasurementJSON})
   const detail=useChillQuery<ProfilesView>(`v1/scheduler/profiles?${new URLSearchParams({profile:params.get("profile")??"",limit:"1"})}`,{enabled:!!params.get("profile"),decoder:parseSchedulerJSON})
   const selected=detail.data?.profiles?.find(profile=>profile.id===params.get("profile"))??query.data?.profiles?.find(profile=>profile.id===params.get("profile"))
   function href(id:string) {const next=new URLSearchParams(params.toString());next.set("kind","throughput");next.set("profile",id);return `/measurements/results?${next}`}

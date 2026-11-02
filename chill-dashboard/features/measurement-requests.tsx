@@ -15,10 +15,11 @@ import { MeasurementNavigation, MeasurementStatus } from "@/components/measureme
 import { MeasurementFilters, useMeasurementCoverage } from "@/features/measurement-coverage"
 import { MeasurementPlanSheet } from "@/features/measurement-plans"
 import { coverageUsageAssessment } from "@/lib/measurement-coverage"
+import { parseMeasurementJSON } from "@/lib/measurement-summary"
 
 export function MeasurementRequestsPage({name,namespace:routeNamespace}:{name?:string;namespace?:string}={}) {
   const params=useSearchParams(),{config}=useSession(),namespace=routeNamespace??params.get("namespace")??config.namespace
-  const query=useChillQuery<MeasurementPlanList>(`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`)
+  const query=useChillQuery<MeasurementPlanList>(`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations?view=summary`,{decoder:parseMeasurementJSON})
   const coverage=useMeasurementCoverage(namespace)
   const plans=(query.data?.items??[]).map(plan=>{const usage=coverageUsageAssessment(coverage.data?.cells??[],plan.spec);return usage&&plan.assessment?{...plan,assessment:{...plan.assessment,scope:usage.scope}}:plan})
   const axes=[{key:"model",label:"모델",values:plans.map(p=>p.spec.state.candidate.modelSpec)},{key:"deviceClass",label:"장치 종류",values:plans.map(p=>p.spec.state.candidate.deviceClass)},{key:"node",label:"Node",values:plans.map(p=>p.spec.state.targetNode)},{key:"powerMode",label:"전력모드",values:plans.map(p=>p.spec.state.candidate.powerMode)},{key:"path",label:"실행 경로",values:plans.map(p=>p.spec.state.candidate.executionPath)}]

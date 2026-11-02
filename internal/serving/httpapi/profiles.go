@@ -61,6 +61,10 @@ func parseProfileQuery(values url.Values) (int, int, error) {
 			return 0, 0, &serving.Error{Code: "InvalidQuery", Message: "invalid profile query"}
 		}
 		switch key {
+		case measurementViewQuery:
+			if value[0] != schedulerSummaryView {
+				return 0, 0, &serving.Error{Code: "InvalidQuery", Message: "invalid profile view"}
+			}
 		case profileLimitQuery, profileOffsetQuery:
 			n, err := strconv.Atoi(value[0])
 			if err != nil || (key == profileLimitQuery && (n < 1 || n > 50)) ||
