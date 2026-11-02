@@ -26,16 +26,21 @@ func queryTestAuthorizer(t *testing.T) *servingkube.Authorizer {
 		if token == "denied" {
 			user = "denied-user"
 		}
-		return true, &authn.TokenReview{Status: authn.TokenReviewStatus{Authenticated: token != "invalid", User: authn.UserInfo{
-			Username: user, UID: "caller-uid", Groups: []string{"operators"}, Extra: map[string]authn.ExtraValue{"tenant": {"reviewed"}},
-		}}}, nil
+		return true, &authn.TokenReview{
+			Status: authn.TokenReviewStatus{Authenticated: token != "invalid", User: authn.UserInfo{
+				Username: user, UID: "caller-uid", Groups: []string{"operators"}, Extra: map[string]authn.ExtraValue{"tenant": {"reviewed"}},
+			}},
+		}, nil
 	})
 	client.PrependReactor("create", "subjectaccessreviews", func(action ktesting.Action) (bool, runtime.Object, error) {
 		spec := action.(ktesting.CreateAction).GetObject().(*authz.SubjectAccessReview).Spec
-		if spec.UID != "caller-uid" || len(spec.Groups) != 1 || spec.Groups[0] != "operators" || spec.Extra["tenant"][0] != "reviewed" {
+		if spec.UID != "caller-uid" || len(spec.Groups) != 1 || spec.Groups[0] != "operators" ||
+			spec.Extra["tenant"][0] != "reviewed" {
 			t.Error("query replaced reviewed identity with service identity or untrusted headers")
 		}
-		return true, &authz.SubjectAccessReview{Status: authz.SubjectAccessReviewStatus{Allowed: spec.User == "reviewed-user"}}, nil
+		return true, &authz.SubjectAccessReview{
+			Status: authz.SubjectAccessReviewStatus{Allowed: spec.User == "reviewed-user"},
+		}, nil
 	})
 	return &servingkube.Authorizer{Client: client}
 }
@@ -66,7 +71,9 @@ func TestEveryQueryRouteAuthenticatesDirectServiceRequests(t *testing.T) {
 		} {
 			t.Run(route.path+"/"+state.token, func(t *testing.T) {
 				calls := 0
-				backend := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { calls++; w.WriteHeader(http.StatusOK) })
+				backend := http.HandlerFunc(
+					func(w http.ResponseWriter, _ *http.Request) { calls++; w.WriteHeader(http.StatusOK) },
+				)
 				handler := authenticatedQueryHandler(backend, queryTestAuthorizer(t), options{
 					servingNamespace: "allowed", requestTimeout: time.Second,
 				})
@@ -79,7 +86,12 @@ func TestEveryQueryRouteAuthenticatesDirectServiceRequests(t *testing.T) {
 				response := httptest.NewRecorder()
 				handler.ServeHTTP(response, request)
 				if response.Code != state.status || (calls == 1) != (state.status == http.StatusOK) {
-					t.Fatalf("direct query authorization: status=%d calls=%d body=%s", response.Code, calls, response.Body.String())
+					t.Fatalf(
+						"direct query authorization: status=%d calls=%d body=%s",
+						response.Code,
+						calls,
+						response.Body.String(),
+					)
 				}
 			})
 		}
@@ -94,12 +106,17 @@ func TestDirectQueryPreservesNamespaceAndNativeGrants(t *testing.T) {
 				authorizer.Client.(*kubefake.Clientset).PrependReactor("create", "subjectaccessreviews",
 					func(action ktesting.Action) (bool, runtime.Object, error) {
 						spec := action.(ktesting.CreateAction).GetObject().(*authz.SubjectAccessReview).Spec
-						return true, &authz.SubjectAccessReview{Status: authz.SubjectAccessReviewStatus{Allowed: spec.ResourceAttributes == nil}}, nil
+						return true, &authz.SubjectAccessReview{
+							Status: authz.SubjectAccessReviewStatus{Allowed: spec.ResourceAttributes == nil},
+						}, nil
 					})
 			}
 			calls := 0
-			handler := authenticatedQueryHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }), authorizer,
-				options{servingNamespace: "allowed", requestTimeout: time.Second})
+			handler := authenticatedQueryHandler(
+				http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }),
+				authorizer,
+				options{servingNamespace: "allowed", requestTimeout: time.Second},
+			)
 			namespace := "allowed"
 			if mode == "namespace" {
 				namespace = "outside"

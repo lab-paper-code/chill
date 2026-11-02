@@ -8,11 +8,14 @@ import (
 	"testing"
 )
 
+const passportCallerBearer = "Bearer caller-token"
+
 func TestEvidencePassportUsesAuthenticatedOwnerHTTPS(t *testing.T) {
 	passport := testEvidencePassport()
 	owner := operationTestOwner(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/namespaces/chill-system/profiling-runs/cpu-run/evidence-passport" ||
-			r.Header.Get("Authorization") != "Bearer caller-token" {
+		if r.Method != http.MethodGet ||
+			r.URL.Path != "/api/v1/namespaces/chill-system/profiling-runs/cpu-run/evidence-passport" ||
+			r.Header.Get("Authorization") != passportCallerBearer {
 			t.Errorf("wrong passport authentication boundary: %s %s", r.Method, r.URL)
 		}
 		if err := json.NewEncoder(w).Encode(passport); err != nil {
@@ -23,13 +26,14 @@ func TestEvidencePassportUsesAuthenticatedOwnerHTTPS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Run.UID != passport.Run.UID || got.Measurement.Runtime.Latency.P99 != passport.Measurement.Runtime.Latency.P99 {
+	if got.Run.UID != passport.Run.UID ||
+		got.Measurement.Runtime.Latency.P99 != passport.Measurement.Runtime.Latency.P99 {
 		t.Fatalf("passport=%+v", got)
 	}
 }
 
 func TestEvidencePassportOwnerRejectsWrongIdentityOversizeAndDenial(t *testing.T) {
-	for _, mode := range []string{"identity", "api-version", "oversize", "denied"} {
+	for _, mode := range []string{"identity", "api-version", "oversize", "forbidden"} {
 		t.Run(mode, func(t *testing.T) {
 			passport := testEvidencePassport()
 			if mode == "identity" {
@@ -39,7 +43,7 @@ func TestEvidencePassportOwnerRejectsWrongIdentityOversizeAndDenial(t *testing.T
 				passport.APIVersion = "future"
 			}
 			owner := operationTestOwner(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				if mode == "denied" {
+				if mode == "forbidden" {
 					w.WriteHeader(http.StatusForbidden)
 					return
 				}
