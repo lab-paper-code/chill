@@ -5,8 +5,6 @@ package controller
 import (
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
@@ -30,19 +28,6 @@ func RunName(parent string, measurement batchenergyoptimization.Measurement, att
 	return fmt.Sprintf("%s-%s-b%d-a%d", parent, measurement.WorkloadMode, measurement.Batch, attempt)
 }
 
-func attemptFromRunName(parent string, measurement batchenergyoptimization.Measurement, name string) (int, error) {
-	prefix := strings.TrimSuffix(RunName(parent, measurement, 0), "0")
-	encoded, found := strings.CutPrefix(name, prefix)
-	if !found {
-		return 0, errors.New("Run name does not match its BatchEnergyOptimization measurement")
-	}
-	attempt, err := strconv.Atoi(encoded)
-	if err != nil || attempt < 1 || RunName(parent, measurement, attempt) != name {
-		return 0, errors.New("Run name has no usable attempt")
-	}
-	return attempt, nil
-}
-
 func BuildRun(
 	parent *edgev1alpha1.BatchEnergyOptimization,
 	measurement batchenergyoptimization.Measurement,
@@ -57,7 +42,12 @@ func BuildRun(
 	if attempt < 1 {
 		return nil, errors.New("attempt must be positive")
 	}
-	spec := edgev1alpha1.ProfilingRunSpec{MeasurementStateSpec: parent.Spec.State}
+	spec := edgev1alpha1.ProfilingRunSpec{
+		MeasurementStateSpec: parent.Spec.State,
+		CampaignTrial: &edgev1alpha1.ProfilingRunCampaignTrialSpec{
+			Batch: int32(measurement.Batch), Attempt: int32(attempt),
+		},
+	}
 	switch measurement.WorkloadMode {
 	case batchenergyoptimization.WorkloadModeActive:
 		protocol := parent.Spec.ActiveProtocol
@@ -74,15 +64,12 @@ func BuildRun(
 		protocol := parent.Spec.IdleProtocol
 		settling := protocol.SettlingDurationSeconds
 		spec.Measurement = edgev1alpha1.ProfilingRunMeasurementSpec{
-			Batch:                    int32(measurement.Batch),
+			Batch:                    int32(profilingrun.IdleExecutionBatch(parent.Spec.State.Candidate.ExecutionPath, measurement.Batch)),
 			WarmupIterations:         0,
 			SettlingDurationSeconds:  &settling,
 			DurationSeconds:          protocol.DurationSeconds,
 			DurationToleranceSeconds: protocol.DurationToleranceSeconds,
 			WorkloadMode:             idleWorkloadMode,
-		}
-		if parent.Spec.State.Candidate.ExecutionPath != profilingrun.RKNNLiteExecutionPath {
-			spec.Measurement.Batch = 1
 		}
 		spec.MetricObservation = protocol.MetricObservation
 	}

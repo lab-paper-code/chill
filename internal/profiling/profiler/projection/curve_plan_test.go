@@ -25,6 +25,10 @@ func TestCurvePlanIdleBatchPolicy(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			active := curvePlanRunConfig()
 			active.State.RuntimeFamily, active.State.Backend = profilingrun.FirstfloorRuntimeFamily, backend
+			active.Candidate.ExecutionPath = backend
+			if backend == profilingrun.FirstfloorRKNNLiteBackend {
+				active.Candidate.ExecutionPath = profilingrun.RKNNLiteExecutionPath
+			}
 			active.Measurement.Batch = 4
 			idle := active
 			wantBatch := 1

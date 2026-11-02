@@ -40,8 +40,23 @@ type ProfilingRunSpec struct {
 	// Measurement fixes the single-Run workload and measurement window.
 	Measurement ProfilingRunMeasurementSpec `json:"measurement"`
 
+	// CampaignTrial identifies the experiment's logical batch and attempt,
+	// independently of Measurement.Batch (the actual execution batch).
+	// Required by BatchEnergyOptimization-owned Runs; absent for standalone Runs.
+	// +optional
+	CampaignTrial *ProfilingRunCampaignTrialSpec `json:"campaignTrial,omitempty"`
+
 	// MetricObservation fixes polling behavior. The source is resolved from TargetNode.
 	MetricObservation ProfilingRunMetricObservationSpec `json:"metricObservation"`
+}
+
+type ProfilingRunCampaignTrialSpec struct {
+	// Batch is the logical batch whose active trial or idle baseline this Run measures.
+	// +kubebuilder:validation:Minimum=1
+	Batch int32 `json:"batch"`
+
+	// +kubebuilder:validation:Minimum=1
+	Attempt int32 `json:"attempt"`
 }
 
 type ProfilingRunCandidateSpec struct {
@@ -176,24 +191,43 @@ type ProfilingRunStatus struct {
 	RuntimeTermination *ProfilingRunRuntimeTermination `json:"runtimeTermination,omitempty"`
 }
 
+// HasTerminalFailure reports whether this attempt ended in a known execution
+// or evidence failure. It does not choose the parent's next action.
+func (s ProfilingRunStatus) HasTerminalFailure() bool {
+	for _, condition := range s.Conditions {
+		if isProfilingRunTerminalFailure(condition) {
+			return true
+		}
+	}
+	return false
+}
+
 // TerminalFailureReasons interprets failed execution/evidence conditions for
 // parent controllers. Evidence precedence and retry/publication policy remain
 // with the caller. Immutable Runs retain the parents' existing generation semantics.
 func (s ProfilingRunStatus) TerminalFailureReasons() []string {
 	var reasons []string
 	for _, condition := range s.Conditions {
-		if condition.Status != metav1.ConditionFalse ||
-			(condition.Type != ProfilingRunConditionExecutionComplete &&
-				condition.Type != ProfilingRunConditionEvidenceVerified) {
-			continue
-		}
-		switch condition.Reason {
-		case "InvalidRunSpec", "ExecutionPolicyInvalid", "ActuationPolicyInvalid",
-			"ExecutionLost", "JobFailed", "RequiredStateNotConfirmed", "EvidenceInvalid":
+		if isProfilingRunTerminalFailure(condition) {
 			reasons = append(reasons, condition.Reason)
 		}
 	}
 	return reasons
+}
+
+func isProfilingRunTerminalFailure(condition metav1.Condition) bool {
+	if condition.Status != metav1.ConditionFalse ||
+		(condition.Type != ProfilingRunConditionExecutionComplete &&
+			condition.Type != ProfilingRunConditionEvidenceVerified) {
+		return false
+	}
+	switch condition.Reason {
+	case "InvalidRunSpec", "ExecutionPolicyInvalid", "ActuationPolicyInvalid",
+		"ExecutionLost", "JobFailed", "RequiredStateNotConfirmed", "EvidenceInvalid":
+		return true
+	default:
+		return false
+	}
 }
 
 // ProfilingRunObjectReference is deliberately smaller than corev1.ObjectReference.

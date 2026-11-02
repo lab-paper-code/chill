@@ -21,7 +21,7 @@ func TestRunNameIsDeterministic(t *testing.T) {
 }
 
 func TestBuildIdleRunSeparatesMeasurementBatchFromTrialIdentity(t *testing.T) {
-	for _, path := range []string{"ort-cpu", profilingrun.RKNNLiteExecutionPath} {
+	for _, path := range []string{"ort-cpu", "ort-cuda", profilingrun.RKNNLiteExecutionPath} {
 		t.Run(path, func(t *testing.T) {
 			parent := testParent()
 			parent.Spec.State.Candidate.ExecutionPath = path
@@ -37,11 +37,46 @@ func TestBuildIdleRunSeparatesMeasurementBatchFromTrialIdentity(t *testing.T) {
 			if run.Spec.Measurement.Batch != want {
 				t.Fatalf("measurement batch = %d, want %d", run.Spec.Measurement.Batch, want)
 			}
+			if run.Spec.CampaignTrial == nil || run.Spec.CampaignTrial.Batch != 4 || run.Spec.CampaignTrial.Attempt != 2 {
+				t.Fatalf("logical identity = %+v", run.Spec.CampaignTrial)
+			}
+			repeated, err := BuildRun(parent, measurement, 2)
+			if err != nil || repeated.Name != run.Name {
+				t.Fatalf("deterministic requery = %+v, error = %v", repeated, err)
+			}
+			run.Labels[labelBatch], run.Labels[labelAttempt] = "99", "99"
 			trial, err := projectOwnedTrial(parent, run)
 			if err != nil || trial.Measurement != measurement || trial.Attempt != 2 {
 				t.Fatalf("projected trial = %+v, error = %v", trial, err)
 			}
+			run.Status.Evidence = &edgev1alpha1.ProfilingRunEvidenceReference{Key: "verified"}
+			completed, _, err := projectResultTrials(parent, []edgev1alpha1.ProfilingRun{*run})
+			if err != nil || len(completed) != 1 || completed[0].Measurement.Batch != 4 {
+				t.Fatalf("result lost logical identity: %+v, error = %v", completed, err)
+			}
 		})
+	}
+}
+
+func TestCampaignProjectionRejectsMissingOrContradictoryTrialIdentity(t *testing.T) {
+	for _, mutate := range []func(*edgev1alpha1.ProfilingRun){
+		func(run *edgev1alpha1.ProfilingRun) { run.Spec.CampaignTrial = nil },
+		func(run *edgev1alpha1.ProfilingRun) { run.Spec.CampaignTrial.Batch = 0 },
+		func(run *edgev1alpha1.ProfilingRun) { run.Spec.CampaignTrial.Attempt = 0 },
+		func(run *edgev1alpha1.ProfilingRun) { run.Spec.Measurement.Batch = 4 },
+		func(run *edgev1alpha1.ProfilingRun) { run.Spec.CampaignTrial.Batch = 8 },
+	} {
+		parent := testParent()
+		run, err := BuildRun(parent, batchenergyoptimization.Measurement{
+			WorkloadMode: batchenergyoptimization.WorkloadModeIdle, Batch: 4,
+		}, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutate(run)
+		if _, err := projectOwnedTrial(parent, run); err == nil {
+			t.Fatalf("accepted missing/contradictory identity: %+v", run.Spec)
+		}
 	}
 }
 

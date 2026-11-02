@@ -3,17 +3,16 @@ package controller
 import (
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // ProjectSnapshot verifies ownership and projects each child. Labels select
-// candidate children; projected measurement and attempt values come from the
-// immutable Run spec and name. transition is the Node's projected power mode.
+// candidate children; measurement and attempt values come from the immutable
+// Run spec. transition is the Node's projected power mode.
 func ProjectSnapshot(
 	parent *edgev1alpha1.BatchEnergyOptimization,
 	runs []edgev1alpha1.ProfilingRun,
@@ -69,27 +68,30 @@ func controlledByParent(parent *edgev1alpha1.BatchEnergyOptimization, object met
 }
 
 func projectTrial(parentName string, run *edgev1alpha1.ProfilingRun) (batchenergyoptimization.Trial, error) {
-	mode := batchenergyoptimization.WorkloadModeActive
-	if run.Spec.Measurement.WorkloadMode == idleWorkloadMode {
+	identity := run.Spec.CampaignTrial
+	if identity == nil || identity.Batch < 1 || identity.Attempt < 1 {
+		return batchenergyoptimization.Trial{}, errors.New("campaign Run requires a positive logical batch and attempt")
+	}
+	var mode batchenergyoptimization.WorkloadMode
+	executionBatch := int(identity.Batch)
+	switch run.Spec.Measurement.WorkloadMode {
+	case activeWorkloadMode:
+		mode = batchenergyoptimization.WorkloadModeActive
+	case idleWorkloadMode:
 		mode = batchenergyoptimization.WorkloadModeIdle
+		executionBatch = profilingrun.IdleExecutionBatch(run.Spec.Candidate.ExecutionPath, int(identity.Batch))
+	default:
+		return batchenergyoptimization.Trial{}, errors.New("campaign Run has an unsupported workload mode")
 	}
 	measurement := batchenergyoptimization.Measurement{
-		WorkloadMode: mode, Batch: int(run.Spec.Measurement.Batch),
+		WorkloadMode: mode, Batch: int(identity.Batch),
 	}
-	if mode == batchenergyoptimization.WorkloadModeIdle {
-		// Idle trial identity retains the planned batch; its measurement batch
-		// is independently fixed at 1 except for RKNN.
-		encoded := strings.TrimPrefix(run.Name, parentName+"-idle-b")
-		batch, _, found := strings.Cut(encoded, "-a")
-		value, err := strconv.Atoi(batch)
-		if !found || err != nil || value < 1 {
-			return batchenergyoptimization.Trial{}, errors.New("idle Run name has no usable batch")
-		}
-		measurement.Batch = value
+	attempt := int(identity.Attempt)
+	if int(run.Spec.Measurement.Batch) != executionBatch {
+		return batchenergyoptimization.Trial{}, errors.New("campaign Run execution batch disagrees with its logical trial")
 	}
-	attempt, err := attemptFromRunName(parentName, measurement, run.Name)
-	if err != nil {
-		return batchenergyoptimization.Trial{}, err
+	if run.Name != RunName(parentName, measurement, attempt) {
+		return batchenergyoptimization.Trial{}, errors.New("Run name does not match its immutable campaign trial")
 	}
 	trial := batchenergyoptimization.Trial{
 		Measurement: measurement,
@@ -100,7 +102,7 @@ func projectTrial(parentName string, run *edgev1alpha1.ProfilingRun) (batchenerg
 		trial.Verdict = batchenergyoptimization.VerdictCompleted
 		return trial, nil
 	}
-	if len(run.Status.TerminalFailureReasons()) > 0 {
+	if run.Status.HasTerminalFailure() {
 		trial.Verdict = batchenergyoptimization.VerdictFailed
 	}
 	return trial, nil

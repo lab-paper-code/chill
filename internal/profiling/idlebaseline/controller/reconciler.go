@@ -212,7 +212,7 @@ func projectRuns(runs []edgev1alpha1.ProfilingRun) (
 			accepted = append(accepted, run)
 			continue
 		}
-		if len(run.Status.TerminalFailureReasons()) == 0 {
+		if !run.Status.HasTerminalFailure() {
 			pending = append(pending, run)
 		}
 	}

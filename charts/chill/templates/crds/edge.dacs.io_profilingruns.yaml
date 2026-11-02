@@ -55,6 +55,26 @@ spec:
               ProfilingRunSpec requests exactly one immutable profiling execution.
               Materially different inputs require a new ProfilingRun.
             properties:
+              campaignTrial:
+                description: |-
+                  CampaignTrial identifies the experiment's logical batch and attempt,
+                  independently of Measurement.Batch (the actual execution batch).
+                  Required by BatchEnergyOptimization-owned Runs; absent for standalone Runs.
+                properties:
+                  attempt:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  batch:
+                    description: Batch is the logical batch whose active trial or
+                      idle baseline this Run measures.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                required:
+                - attempt
+                - batch
+                type: object
               candidate:
                 description: Candidate selects one static catalog execution path.
                 properties:

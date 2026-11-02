@@ -45,11 +45,23 @@ Profiling uses firstfloor with dataset `profiling` raw records and preprocessor 
 
 Evidence v1alpha15 binds actual execution/transition facts; permanent contradiction is `EvidenceInvalid`. Verified reference completes a Run independently of Job existence. Successful Jobs receive Background deletion only after final evidence/reference + frozen non-secret store binding + `jobCleanup: Pending` are recorded; deletion records `Done`. Failed Jobs receive post-outcome diagnostic TTL via `profiler.failedJobRetentionSeconds` / `--failed-job-retention-seconds` (default **86400**, inclusive **1..604800**). Transition attempts follow immutable-finalization eligibility; restart retries cleanup, but markerless old terminal objects are never swept or given a new TTL. Evidence itself is not automatically garbage-collected; old Runs without binding recover from their recorded owned Job.
 
-Parent controllers share `ProfilingRunStatus.TerminalFailureReasons` for failed
+Parent controllers share the `ProfilingRunStatus` terminal-failure interpreter for
 execution/evidence interpretation. Verified evidence takes precedence; pending
 Runs remain pending. Campaign retries/result publication and idle-baseline
 attempt limits/publication remain separate parent policies. This does not
 replace the Profiler's current-generation pre-Job failure check.
+
+Campaign Runs now freeze `spec.campaignTrial.batch` and `.attempt`; workload mode
+in `spec.measurement` identifies active versus idle, and `measurement.batch`
+remains the actual execution batch. Names provide deterministic object lookup,
+not logical-batch/attempt recovery. Run generation, campaign result projection,
+and verified curve-state checking share `profiling/run.IdleExecutionBatch`:
+ORT CPU/CUDA use idle batch 1; RKNN retains the fixed artifact batch.
+This is a **저장 계약 변경** (stored-object contract cutover): use new campaign
+identities between dependent measurements. Old campaign children without the
+identity are rejected; there is no name/label fallback, migration, or dual
+reader. Historical raw/finalized evidence and publications are not rewritten;
+RunConfig/evidence numeric execution contracts are unchanged by this change.
 
 Serving configurations must be measured, not inferred. CPU request is separate from optional positive whole-core quota and physical affinity; quotas/masks distinguish measurements, inter-op threads=1, affinity alone records `ExclusivityClaimed=false`. Memory is placement-feasibility evidence, not a limit sweep. On cgroup v2 without `memory.peak`, timestamped `memory.current` samples cover active/idle windows at a scheduling target interval; retained maxima can miss spikes and are not kernel high-water/absolute bounds. GPU UUID/RKNN ABI and actual backend remain execution observations.
 

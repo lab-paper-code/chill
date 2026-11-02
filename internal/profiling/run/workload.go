@@ -46,3 +46,13 @@ func (c WorkloadContract) LabelKeys() ([]string, error) {
 func IsMeasurementWorkload(ownerKind string, labels map[string]string) bool {
 	return ownerKind == "Job" && labels[MeasurementWorkloadLabelKey] == MeasurementWorkloadLabelValue
 }
+
+// IdleExecutionBatch selects the actual model-loaded idle batch. ORT loads a
+// batch-one model without inference; RKNN retains its fixed artifact batch.
+// Logical campaign identity is not an execution condition.
+func IdleExecutionBatch(executionPath string, logicalBatch int) int {
+	if executionPath == RKNNLiteExecutionPath {
+		return logicalBatch
+	}
+	return 1
+}
