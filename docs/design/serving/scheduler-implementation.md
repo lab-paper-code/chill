@@ -114,8 +114,7 @@ bridge stage는 기존 routing을 복제하고 현재 UID만 변경한다. 목�
 
 route/source release는 Node·UID·실물 합집합 예약을 쓴다. 같은 owner 의존성은 ACK까지 유지하고 독립 범위는 병행한다. running/native noncancelable 작업은 종료까지 보존한다. 비자율 `staticRouting`도 같은 예약/기록(sourceConfigRV·대기 이유·actual readback)을 쓴다.
 ConfigMap/annotation은 desired이고 `Actual.Native`는 실제 ACK만 담는다. 뒤 destination 실패는 앞 ACK/actual routing을 보존해 partial이며 미확인을 완료로 채우지 않는다. `edge.dacs.io/serving-routing`은 UID별 **선언한** weights만 기록하고 accepted 요청용 old memory route는 제외한다. scheduler prepare는 `{}`, owned manual prepare는 owner seed, route는 전체 instance·stop/drain은 해당 instance annotation을 갱신한다. 자율 종료/재시작 뒤도 마지막 Pod 정적 분배를 복구하며 serving source는 annotation이 있고 UID를 하나 이하 가리키는 Pod다.
-최종 handoff ACK·actual effect·모든 prepare 완료 후 `reservations[].routeOnly`는 정확한 현재 Ready 목적지에 한해 cleanup 중 weights 변경을 허용한다. 퇴역 source는 κ/route에서 제외하며 새 prepare/power/batch/resource/정책 변경은 금지한다. route는 원래 owner의 직렬 자식이고 old Pod/physical/Node·stop/drain/remove 의무·frozen target·성공 receipt를 보존한다. 최신 receipt는 제어한 UID 효과만 대체하고 타 UID/이미 갱신 UID의 최신 proof는 각각 검사한다. 실패/효과 소실은 owner 실패·미확인 책임 예약이다.
-cleanup UID route와 독립 prepare/power/retire가 한 전역 target에 있으면 UID route는 원래 owner로, 나머지는 독립 DAG로 분리한다. cleanup에 다른 UID prepare 대기를 물리지 않는다(SCH-20/AC-38).
+최종 handoff 뒤에도 원래 owner의 old Pod/physical/Node·stop/drain/remove 의무와 frozen target·성공 receipt를 보존한다. 정리 중 새 target의 weights 변경은 일반 예약 충돌로 거절하며, 원래 DAG의 중간 route와 Ready-subset 전진만 기존 인가 범위에서 계속한다(SCH-20/AC-38).
 모든 계획은 같은 고정 H=`comparisonPeriodNanos`로 비교한다. 각 action duration은 measured trial 최대, 공통 route+최장 post>H는 `TransitionExceedsHorizon`(=H 허용)이다. [0,H] 에너지는 loaded baseline+평균 atomic wall joules이며 atomic 구간은 baseline을 **대체**한다. `target-baseline-delta`는 차감 전력×시간을 더해 wall joules로 바꾼다. profile incremental/input은 route 시각 전후 배정으로 더하고 `search.comparedNodes` 밖 동일 Node는 소거한다.
 선택은 켜진 UID별 κ_new≥λ, λ≤κ_ret 또는 W≤L−m을 정확한 합으로 판정한다. 전체 충족 해는 에너지/keep/logical key 순이며 미충족의 현행 leximin 순서는 [계획기](analytic-planner.md)가 원본이다. 충족 해가 없으면 `Overload/NoPlanMeetsSLO`다. 0 부하 active UID도 instance≥1이어야 한다. keep/전체 빈 집합에서 Node 2개, 이어 3개 이하 변경 이웃 탐색을 `planSearchWorkers`로 제어 주기 절반 안에 수행하며 목록 정렬로 입력 순서에 독립적이다.
 nominal 이득이 operation/선택 baseline의 조건부 B 민감도 문턱 이하면 keep이다. 공유 immutable 근거는 부호 상쇄하되 profile 통계오차/BEO idle fallback CI는 문턱 밖이다. weights는 낮은 incremental energy부터 λ를 채운 κ 배정을 합1000 정수로 반올림한다. 몫>κ를 옮길 수 없으면 `RouteWeightExceedsCapacity`로 최종 미충족이다. keep도 weights를 재계산하고 weight-only target은 route 하나다.
@@ -171,7 +170,7 @@ PrepareInstance는 `(Pod UID, Node UID, 인가 DecisionID, created/reused)` 증�
 Node/UID/실물 하나라도 타 owner와 겹치면 거절/대기한다. 같은 owner는 DAG 의존 순서다. 새 동명 UID는 옛 예약을 상속하지 않는다. 독립 범위 불명이면 관련 범위를 넓히되 모든 route/UID 전역 lock으로 돌아가지 않는다.
 해제는 goroutine 종료가 아니다. reset 첫 disable ConfigMap conflict/확정 거절/쓰기 전 실패는 effect 전 반환이지만 첫 write timeout은 unknown이고 앞 단계 성공 뒤 거절은 전체 반환 근거가 아니다. 시작 뒤 실제 효과/cleanup 확인 범위만 반환하고 후속 DAG 자원은 계속 예약한다. 실패/취소/timeout/기록 실패의 원격 불명은 실행만 terminal로 하고 재관측까지 예약한다.
 terminal failed/partial manual route/unroute/release는 종료 이후 fresh capture로 exact UID/container·Pod/native Ready와 요청 ACK 또는 exact 이전 정책을 확인하면 Pod 유지한 채 반환한다. mismatch/unready/stale/교체는 안 되며 Pod 부재+해당 Node power 비대기 proof도 유지한다. sibling receipt/보상 정리는 [수동 실행 계약](scheduler-operations.md)의 SCH-AC-38을 따른다.
-`routeOnly`는 해제가 아니라 같은 owner의 제한적 weights 변경이다. route 실행 중 다음 route, 퇴역 source/새 physical/정책 변경/reset은 금지한다. unknown은 빈 자원도 전역 중지도 아니며 finalizer 책임 이동을 선행하지 않는다.
+unknown은 빈 자원도 전역 중지도 아니며 finalizer 책임 이동을 선행하지 않는다.
 
 #### ③ 예약 범위만 고정한 단일 계획기 — SCH-52
 

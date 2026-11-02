@@ -35,7 +35,7 @@ func (c *SchedulerController) Continue(ctx context.Context, now time.Time) error
 	return nil
 }
 
-func (c *SchedulerController) launchRunningParentsLocked(config SchedulerControllerConfig, continuation bool) []*actionRun {
+func (c *SchedulerController) launchRunningParentsLocked(config SchedulerControllerConfig, continuation bool) {
 	parents := []*actionRun{}
 	for _, run := range c.runs {
 		if run.action.Kind == transitionRunKind && run.action.Status == nativeOperationRunning {
@@ -56,5 +56,4 @@ func (c *SchedulerController) launchRunningParentsLocked(config SchedulerControl
 		}
 		c.launchTargetLocked(*parent.result.Operation.Target, config)
 	}
-	return parents
 }

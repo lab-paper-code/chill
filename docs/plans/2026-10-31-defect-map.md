@@ -60,3 +60,9 @@
 - 비교 기준(10~12): 5m 이미지 M2692/3928/3806·F1992/1689/2064, PLC M191/241/212·F0, Smol0/0; J57529.93/57480.32/57177.63. 7m 이미지0/0, PLC M66/60/41·F0, Smol M5/F0·D1 FAIL; J37597.99/37448.29/37935.00. 위 구간표의 어느 창이 늘었는지도 함께 판정한다.
 - 사전 판정: 입력/설정/주입/전력 불일치는 비교 불가. 각 workload의 M·D1→행별 J 순으로 보고, 과거 M 상한 또는 새로운 F/D1 악화가 있으면 채택 확대를 멈추고 해당 구간 조사; 과거 범위 안이면 **비회귀와 양립하는 1회 관측**이지 동등성/확정 개선 증명 아님. Smol D1 FAIL 유지도 해결로 세지 않는다. J는 M 비악화 때만 평가하고 과거 범위 밖 증가를 비용으로 명시한다(단1회로 통계 확정 금지).
 - 수행: 기존 archive 읽기·nice -n19 python 집계만. 제품 수정·빌드·테스트·클러스터 변경·신규 측정 없음.
+
+## S4 삭제 범위 — 2026-11-02
+- 정의: [결정 로그](../intent/decision-log.md)의 S1~S4 중 S4는 **cleanup route 우회로 제거**다. 최종 handoff가 끝나도 정리 owner의 예약은 원래 DAG/효과 책임이 끝날 때까지 유지한다. 새 가드는 추가하지 않는다.
+- 삭제 전 `origin/main` 기준: `internal/serving/kube/reservation.go:109-116,150-159,233-254,568-570,604-690`(cleanup owner 인계·Ready 목적지 허가), `scheduler.go:92-93,520-522,557-590,962-968`(cleanup 상태·supersession·target 분할), `target_scope.go:142-202`(cleanup target 분할).
+- 계획/API 연결: `internal/serving/scheduler.go:342-344`, `scheduler_plan.go:706,712-719`, `scheduler_capacity.go:733-737,939-945`의 route-only 특례와 `cmd/chill-server/live.go:280-282`의 설명을 삭제한다. 해당 경로 전용 followup 테스트는 삭제하고 planner Fixed·충돌 거절·퇴역 완료 후 반환 회귀로 교체한다.
+- 유지: 원래 인가 DAG·Ready-subset/bridge·route ACK 직렬화, 공통 routeReceipts·known-effect/untouched/late binding·보상 퇴역·reset 반환 증거. κsafe 3커밋은 별도 revert 커밋으로 되돌리고, 두 변경을 같은 후보의 리플레이/clean Go gate와 리뷰 2종으로 판정한다.

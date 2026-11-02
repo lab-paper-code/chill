@@ -65,7 +65,7 @@ snapshot의 작은 DTO는 다음과 같다. 아래 `?`는 생략 가능, `null`�
   판단 identity는 원본 RFC3339Nano `decision.at`이다. `SchedulerDecision`에 없는 id 필드를
   새 원본 식별자로 가정하지 않는다. 근거는 선택한 `decision.at`의 journal 구간 조회다.
 - `reservations[]:{owner,nodes:[{uid,name}],workloadUIDs:[uid],podUIDs:[uid],instances:[id],reason,explanation}`는
-  판단 snapshot의 `SchedulerReservation`(`internal/serving/scheduler.go`)에서 `target`·`routeOnly`를 뺀 것이다.
+  판단 snapshot의 `SchedulerReservation`(`internal/serving/scheduler.go`)에서 `target`을 뺀 것이다.
   `reason`은 원본 코드(미제공 시 빈 문자열), `explanation`은 확인된 예약 사실의 운영 문장이다.
   빈 배열이 예약 해제를 나타낸다. 작업 종결로 해제를 추정하지 않는다.
 - `actions[]:{id,kind,node:{uid,name},workloadUID,status,startedAt,completedAt?,expectedSeconds:number|null,expectedSource:{costID,reference,statistic:"mean",trialCount}|null}`.
