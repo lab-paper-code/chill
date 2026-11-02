@@ -512,9 +512,17 @@ func (p *capacityPlanner) idle(i SchedulerInstance) bool {
 	return !p.partial && i.UnroutedSince != nil && p.snapshot.At.Sub(*i.UnroutedSince) >= p.settings.ObservationWindow && !p.held(i)
 }
 
-// kappa uses the shared planning envelope and retains the original policy row.
+// kappa looks up the row of option variant o for Workload w.
 func (p *capacityPlanner) kappa(o SchedulerOption, w int) (float64, string, string) {
-	return CapacityPlanningKappa(NewCapacityInput(p.settings, p.snapshot.DispatchOccupancy, o, p.ws[w].d), p.rows)
+	key := NewCapacityInput(p.settings, p.snapshot.DispatchOccupancy, o, p.ws[w].d).Key()
+	row, ok := p.rows[key]
+	switch {
+	case !ok || row.Status == CapacityPending:
+		return 0, key, CapacityPending
+	case row.Kappa == nil:
+		return 0, key, CapacityRejected
+	}
+	return *row.Kappa, key, ""
 }
 
 func capacityInputEnergy(i SchedulerInstance) float64 {
