@@ -1817,9 +1817,7 @@ class CPO:
                      for pod in pods if pod['spec'].get('nodeName')==h['node']
                      for status in pod.get('status',{}).get('containerStatuses',[])]
             # A restricted producer key may force `python3 -u -`, dropping client argv; carry the arguments in the program itself.
-            header='node, duration, phase = sys.argv[1], float(sys.argv[2]), sys.argv[3]'
-            if header not in source: raise RuntimeError('Sampler argument header changed')
-            host_source=source.replace('initial=None\n','initial='+repr(current)+'\n',1).replace(header,'node, duration, phase = '+repr((h['node'],float(seconds),self.a.stage))[1:-1],1)
+            host_source='import sys; sys.argv[1:]='+repr([h['node'],str(seconds),self.a.stage])+'\n'+source.replace('initial=None\n','initial='+repr(current)+'\n',1)
             p=subprocess.Popen(argv+[h['node'],str(seconds),self.a.stage],stdin=subprocess.PIPE,stdout=output,stderr=error,text=True); p.stdin.write(host_source); p.stdin.close(); children.append((p,output,error))
         return children
     def producer_job_name(self,name,stage):
@@ -1962,13 +1960,18 @@ class CPO:
         phase['schedulerBoundaryObservations']={'start':scheduler_boundary_observation(pre_state)}
         self.native_evidence=(pre_state.get('results') or [])+[load(path) for root in (self.out,self.out.parent/'smoke-run') for path in root.glob('*-mode/result.json')]
         save(folder/'phase.json',phase); sel=selectors.DefaultSelector(); buffers={};pods={};deadline=time.monotonic()+self.tb['setupSeconds']
+        def samplers_alive():
+            for sampler,output,error in children:
+                if sampler.poll() is not None:
+                    error.flush()
+                    raise RuntimeError('Producer telemetry sampler exited before GO (code '+str(sampler.returncode)+'): '+Path(error.name).read_text()[-500:].strip())
         try:
             for name,rate in st['rates'].items():
                 if not rate: continue
                 created=self.io.k(['create','-f','-','-o','json'],stdin=json.dumps(self.job(name,st,folder))); jobs.append((name,created['metadata']['name'],created['metadata']['uid'])); save(folder/('created-'+name+'.json'),created)
             for name,job,uid in jobs:
                 startup=folder/('startup-'+name);startup.mkdir()
-                pod=self.io.wait_load_container((job,uid),startup,deadline);pods[name]=pod
+                pod=self.io.wait_load_container((job,uid),startup,deadline,alive=samplers_alive);pods[name]=pod
                 log=(folder/(name+'-client.jsonl')).open('w');err=(folder/(name+'-log.stderr')).open('w')
                 p=subprocess.Popen(self.d.K+['logs','-f','pod/'+pod['metadata']['name'],'-c','load'],stdout=subprocess.PIPE,stderr=err,bufsize=0);os.set_blocking(p.stdout.fileno(),False);streams.append((p,log,err));buffers[name]=b'';sel.register(p.stdout,selectors.EVENT_READ,(name,log))
             ready=set();window_ended=set();drained=set();counter_released=set();released=not jobs
@@ -1999,11 +2002,7 @@ class CPO:
                         save(folder/'ready-gate-state.json',{'observedUTC':observed,'state':state})
                         save(folder/'phase.json',phase)
                         break
-                if not released:
-                    for sampler,output,error in children:
-                        if sampler.poll() is not None:
-                            error.flush()
-                            raise RuntimeError('Producer telemetry sampler exited before GO (code '+str(sampler.returncode)+'): '+Path(error.name).read_text()[-500:].strip())
+                if not released: samplers_alive()
                 if not released and time.monotonic()>deadline: raise RuntimeError('Producer setup timebox exceeded')
                 for key,_ in sel.select(timeout=min(.2,max(0,end-time.monotonic())) if ready_gate else .2):
                     name,log=key.data;lines,buffers[name],eof=self.d.read_stream_lines(key.fileobj,buffers[name])

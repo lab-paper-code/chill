@@ -803,8 +803,9 @@ class Conductor:
             time.sleep(1)
         raise RuntimeError('Exact owned Job/Pods deletion did not complete within existing60s bound')
 
-    def wait_load_container(self, jobref, folder, deadline):
+    def wait_load_container(self, jobref, folder, deadline, alive=None):
         while time.monotonic()<deadline:
+            if alive: alive()
             pods=self.k(['get','pods','-l','job-name='+jobref[0],'-o','json'])['items']
             if not pods:
                 time.sleep(1);continue
