@@ -243,8 +243,11 @@ one probe Pod per image in `chill-system` on a Node of the target class, with
 the measurement Job's user, groups, privilege, and `nvidia.com/gpu` request. It
 builds each payload from the architecture, ONNX Runtime providers, and package
 versions read inside the image, reads the GPU UUID through the CUDA driver on
-every GPU Node (`jetson-nano`, `jetsono`, `jetsonx`, `orin-nano`, `genesis2`, `genesis3`), and
-reads the RKNPU driver version and device-tree token on `orangepi`. Every
+every eligible GPU Node (`jetson-nano`, `jetsono`, `jetsonx`, `orin-nano`, `genesis3`), and
+reads the RKNPU driver version and device-tree token on `orangepi`. `genesis2` is
+temporarily omitted because GPU allocatable is 0 (`gpu-feature-discovery` CrashLoop);
+restore its probe after GPU recovery. With all image variables set, this yields
+14 declarations instead of 15. Every
 DeviceClass receives one class-level CPU declaration; each GPU Node receives its
 own CUDA declaration with `node` set, because the GPU UUID names that Node's
 device, and `orangepi-5-plus-16g` adds its RKNN declaration, each when the image
