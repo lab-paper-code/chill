@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
+	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
@@ -234,5 +237,79 @@ func TestProfilesReuseRowsKeepBothActualPopulations(t *testing.T) {
 		rows[0].SourceProfileID == nil || *rows[0].SourceProfileID != reuse.SourceProfileID ||
 		rows[0].Reuse == nil || got.Profiles[0].Assessment.Status == queryapi.MeasurementCriteriaMet {
 		t.Fatalf("reuse populations mixed: %s", raw)
+	}
+}
+
+func TestNativeRequestListSurvivesUnavailableCatalog(t *testing.T) {
+	for _, source := range []string{"standalone", "backend-down", "configuration"} {
+		for _, phase := range []string{string(api.MeasurementPhaseComplete), string(api.MeasurementPhaseFailed)} {
+			t.Run(source+"/"+phase, func(t *testing.T) {
+				task := &api.BatchEnergyOptimization{
+					ObjectMeta: meta.ObjectMeta{
+						Namespace: "native-list", Name: "request", UID: "native-uid",
+						Generation: 2, ResourceVersion: "native-version",
+					},
+					Spec: api.BatchEnergyOptimizationSpec{BatchSizes: []int32{1, 4}},
+					Status: api.BatchEnergyOptimizationStatus{
+						Phase: phase, ObservedGeneration: 2, CompletedTrials: 3,
+						Conditions: []meta.Condition{{Type: "Progress", Status: meta.ConditionTrue, Reason: "NativeFact"}},
+					},
+				}
+				opts := options{servingNamespace: task.Namespace, requestTimeout: time.Second, maxRequestBytes: 1 << 20}
+				if source == "backend-down" {
+					owner := httptest.NewTLSServer(http.NotFoundHandler())
+					opts.servingURL = owner.URL
+					owner.Close()
+				}
+				catalog, err := newServingCatalogReader(opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if source == "configuration" {
+					catalog = func(context.Context) (servingkube.CatalogRead, error) {
+						return servingkube.CatalogRead{}, &serving.Error{
+							Code: "InvalidInput", Message: "catalog configuration unavailable",
+						}
+					}
+				}
+				service := &measurementService{
+					client:  fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(task).Build(),
+					catalog: catalog, opts: opts,
+				}
+				mux := http.NewServeMux()
+				service.register(mux)
+				response := httptest.NewRecorder()
+				path := "/api/v1/namespaces/" + task.Namespace + "/batch-energy-optimizations"
+				mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+				if response.Code != http.StatusOK {
+					t.Fatalf("catalog failure hid native facts: %d %s", response.Code, response.Body.String())
+				}
+				var got struct {
+					Items []struct {
+						api.BatchEnergyOptimization
+						Assessment queryapi.MeasurementAssessment `json:"assessment"`
+					} `json:"items"`
+				}
+				if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
+					t.Fatal(err)
+				}
+				if len(got.Items) != 1 || got.Items[0].UID != task.UID ||
+					got.Items[0].ResourceVersion != task.ResourceVersion ||
+					!reflect.DeepEqual(got.Items[0].Spec, task.Spec) ||
+					!reflect.DeepEqual(got.Items[0].Status, task.Status) {
+					t.Fatalf("native request metadata/spec/status changed: %s", response.Body.String())
+				}
+				assessment := got.Items[0].Assessment
+				unavailable := false
+				for _, reason := range assessment.Reasons {
+					unavailable = unavailable || reason.Code == "CatalogUnavailable" && reason.Message != ""
+				}
+				if !unavailable || assessment.Evidence.Available || assessment.Evidence.Accepted ||
+					assessment.Scope.SchedulerUsed != nil || assessment.Execution == nil ||
+					assessment.Execution.Phase != phase {
+					t.Fatalf("unavailable catalog became accepted evidence or erased execution: %+v", assessment)
+				}
+			})
+		}
 	}
 }

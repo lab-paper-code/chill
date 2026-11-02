@@ -28,12 +28,17 @@ func (o *measurementService) assessList(
 		return nil, err
 	}
 	view := httpapi.ProfilesView{}
+	var catalogUnavailable queryapi.MeasurementReason
 	if o.catalog != nil {
 		snapshot, err := o.catalog(ctx)
 		if err != nil {
-			return nil, err
+			catalogUnavailable = queryapi.MeasurementReason{Code: "CatalogUnavailable", Message: err.Error()}
+		} else {
+			view = adoptedCatalogView(snapshot)
 		}
-		view = adoptedCatalogView(snapshot)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	base := &measurementCoverageBase{requests: list}
 	if len(list.Items) > 0 {
@@ -46,6 +51,9 @@ func (o *measurementService) assessList(
 	for i, task := range list.Items {
 		var err error
 		assessment := assessMeasurementRequest(task, view)
+		if catalogUnavailable.Code != "" {
+			assessment.Reasons = append(assessment.Reasons, catalogUnavailable)
+		}
 		assessment.FailureSummary = queryapi.MeasurementRequestFailures(task, owners[string(task.UID)], assessment)
 		assessments[i], err = json.Marshal(assessment)
 		if err != nil {
