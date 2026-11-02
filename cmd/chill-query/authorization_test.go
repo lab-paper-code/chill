@@ -76,7 +76,7 @@ func TestEveryQueryRouteAuthenticatesDirectServiceRequests(t *testing.T) {
 					func(w http.ResponseWriter, _ *http.Request) { calls++; w.WriteHeader(http.StatusOK) },
 				)
 				handler := authenticatedQueryHandler(backend, queryTestAuthorizer(t), options{
-					servingNamespace: "allowed", requestTimeout: time.Second,
+					servingNamespace: queryAllowedNamespace, requestTimeout: time.Second,
 				})
 				request := httptest.NewRequest(route.method, route.path, nil)
 				request.Header.Set("X-Remote-User", "cluster-admin")
@@ -116,9 +116,9 @@ func TestDirectQueryPreservesNamespaceAndNativeGrants(t *testing.T) {
 			handler := authenticatedQueryHandler(
 				http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }),
 				authorizer,
-				options{servingNamespace: "allowed", requestTimeout: time.Second},
+				options{servingNamespace: queryAllowedNamespace, requestTimeout: time.Second},
 			)
-			namespace := "allowed"
+			namespace := queryAllowedNamespace
 			if mode == "namespace" {
 				namespace = "outside"
 			}
@@ -167,14 +167,19 @@ func TestQueryCompositionRejectsDirectAnonymousAccess(t *testing.T) {
 	}
 }
 
-const resourceNamedPreflight = "preflight"
+const (
+	resourceNamedPreflight = "preflight"
+	queryAllowedNamespace  = "allowed"
+)
 
 func TestPreflightNamedDetailsRequireGetSAR(t *testing.T) {
 	for _, route := range []struct{ method, path, resource, verb, name string }{
 		{http.MethodGet, "profiling-runs/preflight/evidence-passport", "profilingruns", "get", resourceNamedPreflight},
-		{http.MethodGet, "batch-energy-optimizations/preflight/result", "batchenergyoptimizations", "get", resourceNamedPreflight},
+		{http.MethodGet, "batch-energy-optimizations/preflight/result",
+			"batchenergyoptimizations", "get", resourceNamedPreflight},
 		{http.MethodGet, "operation-cost-measurements/preflight", "operationcostmeasurements", "get", resourceNamedPreflight},
-		{http.MethodGet, "dispatch-occupancy-measurements/preflight", "dispatchoccupancymeasurements", "get", resourceNamedPreflight},
+		{http.MethodGet, "dispatch-occupancy-measurements/preflight",
+			"dispatchoccupancymeasurements", "get", resourceNamedPreflight},
 		{http.MethodGet, "batch-energy-optimizations/preflight", "batchenergyoptimizations", "get", resourceNamedPreflight},
 		{http.MethodPost, "batch-energy-optimizations/preflight", "batchenergyoptimizations", "list", ""},
 	} {
@@ -187,7 +192,7 @@ func TestPreflightNamedDetailsRequireGetSAR(t *testing.T) {
 					if attrs := spec.ResourceAttributes; attrs != nil {
 						reviews++
 						if attrs.Verb != route.verb || attrs.Name != route.name || attrs.Resource != route.resource ||
-							attrs.Namespace != "allowed" {
+							attrs.Namespace != queryAllowedNamespace {
 							t.Errorf("incorrect detail/preflight SAR: %+v", attrs)
 						}
 					}
@@ -196,7 +201,7 @@ func TestPreflightNamedDetailsRequireGetSAR(t *testing.T) {
 			handler := authenticatedQueryHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				calls++
 				w.WriteHeader(http.StatusOK)
-			}), authorizer, options{servingNamespace: "allowed", requestTimeout: time.Second})
+			}), authorizer, options{servingNamespace: queryAllowedNamespace, requestTimeout: time.Second})
 			request := httptest.NewRequest(route.method, "/api/v1/namespaces/allowed/"+route.path, nil)
 			request.Header.Set("Authorization", "Bearer allowed")
 			response := httptest.NewRecorder()
@@ -227,7 +232,7 @@ func TestListOnlyCallerCannotReadPreflightNamedDetails(t *testing.T) {
 				})
 			calls := 0
 			handler := authenticatedQueryHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }),
-				authorizer, options{servingNamespace: "allowed", requestTimeout: time.Second})
+				authorizer, options{servingNamespace: queryAllowedNamespace, requestTimeout: time.Second})
 			request := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/allowed/"+route, nil)
 			request.Header.Set("Authorization", "Bearer allowed")
 			response := httptest.NewRecorder()
