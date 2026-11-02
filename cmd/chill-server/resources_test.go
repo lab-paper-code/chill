@@ -16,6 +16,27 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
+func TestLoadGeneratorResourcePodSelected(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Namespace: "system",
+		Labels:    map[string]string{loadGeneratorRoleLabel: loadGeneratorRole},
+	}}
+	if !loadGeneratorResourcePodSelected(pod, "system") {
+		t.Fatal("load generator not selected")
+	}
+	if loadGeneratorResourcePodSelected(pod, "other") {
+		t.Fatal("load generator outside server namespace selected")
+	}
+	delete(pod.Labels, loadGeneratorRoleLabel)
+	if loadGeneratorResourcePodSelected(pod, "system") {
+		t.Fatal("Pod without role selected")
+	}
+	pod.Labels[loadGeneratorRoleLabel] = "system"
+	if loadGeneratorResourcePodSelected(pod, "system") {
+		t.Fatal("different role selected")
+	}
+}
+
 // SCH-AC-53: replacement accepts the last issued identity, never aliases UIDs.
 func TestResourcesHandshakeReplacementAndRestart(t *testing.T) {
 	ctx := context.Background()

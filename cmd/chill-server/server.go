@@ -141,7 +141,10 @@ func run(ctx context.Context, opts options) (retErr error) {
 		MaxQueryEvents: opts.maxQueryEvents,
 		Live:           publisher.hub,
 		ReceiveResources: (&resourceReceiver{
-			kube: kube, log: observationLog, namespace: corev1.NamespaceAll, selectPod: selectedPod,
+			kube: kube, log: observationLog, namespace: corev1.NamespaceAll,
+			selectPod: func(pod *corev1.Pod) bool {
+				return selectedPod(pod) || loadGeneratorResourcePodSelected(pod, podNamespace)
+			},
 			maxSamples: opts.resourceMaxSamples, maxContainers: opts.resourceMaxContainers,
 			maxThermal: opts.resourceMaxThermal, maxErrors: opts.resourceMaxErrors,
 		}).receive,

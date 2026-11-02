@@ -48,6 +48,13 @@ func resourcePodSelected(pod *corev1.Pod, namespace, release string, components 
 	return false
 }
 
+const loadGeneratorRoleLabel = "edge.dacs.io/workload-role"
+const loadGeneratorRole = "load-generator"
+
+func loadGeneratorResourcePodSelected(pod *corev1.Pod, namespace string) bool {
+	return pod.Namespace == namespace && pod.Labels[loadGeneratorRoleLabel] == loadGeneratorRole
+}
+
 func (s *resourceReceiver) receive(ctx context.Context, batch serving.ResourceBatch) ([]serving.ResourceTarget, error) {
 	invalid := func(message string) error {
 		return &serving.Error{Code: "InvalidBody", Message: message, Field: "resources"}
