@@ -9,6 +9,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+var errInvalidCampaignTrial = errors.New("invalid campaign trial identity")
+
 // ProjectSnapshot verifies ownership and projects each child. Labels select
 // candidate children; measurement and attempt values come from the immutable
 // Run spec. transition is the Node's projected power mode.
@@ -69,7 +71,7 @@ func controlledByParent(parent *edgev1alpha1.BatchEnergyOptimization, object met
 func projectTrial(parentName string, run *edgev1alpha1.ProfilingRun) (batchenergyoptimization.Trial, error) {
 	identity := run.Spec.CampaignTrial
 	if identity == nil || identity.Batch < 1 || identity.Attempt < 1 {
-		return batchenergyoptimization.Trial{}, errors.New("campaign Run requires a positive logical batch and attempt")
+		return batchenergyoptimization.Trial{}, fmt.Errorf("%w: campaign Run requires a positive logical batch and attempt", errInvalidCampaignTrial)
 	}
 	var mode batchenergyoptimization.WorkloadMode
 	switch run.Spec.Measurement.WorkloadMode {
@@ -87,10 +89,10 @@ func projectTrial(parentName string, run *edgev1alpha1.ProfilingRun) (batchenerg
 	// Idle execution batch is checked against the resolved backend at the
 	// verified curve-state boundary, not inferred from this object's path name.
 	if mode == batchenergyoptimization.WorkloadModeActive && run.Spec.Measurement.Batch != identity.Batch {
-		return batchenergyoptimization.Trial{}, errors.New("campaign Run execution batch disagrees with its logical trial")
+		return batchenergyoptimization.Trial{}, fmt.Errorf("%w: campaign Run execution batch disagrees with its logical trial", errInvalidCampaignTrial)
 	}
 	if run.Name != RunName(parentName, measurement, attempt) {
-		return batchenergyoptimization.Trial{}, errors.New("Run name does not match its immutable campaign trial")
+		return batchenergyoptimization.Trial{}, fmt.Errorf("%w: Run name does not match its immutable campaign trial", errInvalidCampaignTrial)
 	}
 	trial := batchenergyoptimization.Trial{
 		Measurement: measurement,

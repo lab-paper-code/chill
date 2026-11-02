@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"testing"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -39,8 +40,9 @@ func TestProjectSnapshotRejectsAForeignRun(t *testing.T) {
 		WorkloadMode: batchenergyoptimization.WorkloadModeIdle, Batch: 1,
 	}, 1, "ort-cpu")
 	run.OwnerReferences[0].UID = "someone-else"
-	if _, err := ProjectSnapshot(parent, []edgev1alpha1.ProfilingRun{*run}, nil, []int{1}, false); err == nil {
-		t.Fatal("a Run owned by another object was completed")
+	_, err := ProjectSnapshot(parent, []edgev1alpha1.ProfilingRun{*run}, nil, []int{1}, false)
+	if err == nil || errors.Is(err, errInvalidCampaignTrial) {
+		t.Fatalf("foreign owner must remain a reconciliation error, got %v", err)
 	}
 }
 

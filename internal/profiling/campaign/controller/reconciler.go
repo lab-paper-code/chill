@@ -106,6 +106,9 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 		parent, runs, transition, curvePlan.PlannedBatchSizes(), transitionMaterial != nil,
 	)
 	if err != nil {
+		if !errors.Is(err, errInvalidCampaignTrial) {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{}, r.patchStatus(ctx, parent, failedStatus(parent, terminalReasonInvalidCampaignRun, err.Error()))
 	}
 
