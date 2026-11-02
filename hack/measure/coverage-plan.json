@@ -27,10 +27,11 @@
       "jetson-orin-nano-8g": 1,
       "edge-server-rtx-2080-ti-64g": 2,
       "jetson-orin-nano-8g/firstfloor-ort-cuda-vlm-arm64": 0,
-      "jetson-xavier-nx-8g/firstfloor-ort-cpu-arm64": 0
+      "jetson-xavier-nx-8g/firstfloor-ort-cpu-arm64": 0,
+      "jetson-xavier-nx-8g/firstfloor-ort-cuda-vlm-arm64": 0
     }
   },
-  "memoryMaxBatchSource": "lattepanda Smol CPU b2 OOMKilled (exit 137) under the 0.8×allocatable limit 5.98Gi, b1 peak 5.78Gi (2026-11-01 05:49Z); other 8 GB boards have limits 5.3-6.1Gi; RTX 2080 Ti CUDA b4 fails at warmup (Softmax RUNTIME_EXCEPTION, 2026-11-01 13:14Z); orin-nano cuda-vlm fails at b1 the same way (canary 2026-11-01 18:36Z), 0 = whole combination unmeasurable; xavier Smol FP32 CPU b1 OOMKilled under 5.28Gi (2026-11-02 00:13Z)",
+  "memoryMaxBatchSource": "lattepanda Smol CPU b2 OOMKilled (exit 137) under the 0.8×allocatable limit 5.98Gi, b1 peak 5.78Gi (2026-11-01 05:49Z); other 8 GB boards have limits 5.3-6.1Gi; RTX 2080 Ti CUDA b4 fails at warmup (Softmax RUNTIME_EXCEPTION, 2026-11-01 13:14Z); orin-nano cuda-vlm fails at b1 the same way (canary 2026-11-01 18:36Z), 0 = whole combination unmeasurable; xavier Smol FP32 CPU b1 OOMKilled under 5.28Gi (2026-11-02 00:13Z); xavier cuda-vlm b1 runner start EOF (canary 2026-11-02 02:14Z)",
   "declaredBatchConflictReason": "artifact 선언 batch 집합의 부분 요청 불가",
   "sessions": 3,
   "warmupIterations": 1,
