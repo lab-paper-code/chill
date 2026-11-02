@@ -20,7 +20,7 @@ position_of() {
   local source
   local prefix
 
-  line="$(rg -n -m1 "$pattern" "$file" | cut -d: -f1)"
+  line="$(grep -n -m1 -E "$pattern" "$file" | cut -d: -f1)"
   source="$(sed -n "${line}p" "$file")"
   prefix="${source%"$symbol"*}"
   printf '%s:%s:%s\n' "$file" "$line" "$((${#prefix} + 1))"
@@ -63,8 +63,13 @@ resolver_method="$(position_of \
 resolver_references="$(gopls_command references "$resolver_method")"
 require_contains resolver-production-callback "$resolver_references" \
   'cmd/profiler/controller_setup.go'
-require_contains resolver-test-coverage "$resolver_references" \
-  'internal/profiling/profiler/controller/run_config_resolver_test.go'
+resolver_call="$(position_of \
+  cmd/profiler/controller_setup.go \
+  'resolver\.Resolve' \
+  'Resolve')"
+resolver_definition="$(gopls_command definition "$resolver_call")"
+require_contains resolver-production-definition "$resolver_definition" \
+  'internal/profiling/profiler/controller/run_config_resolver.go'
 
 setup_call="$(position_of \
   cmd/profiler/controller_setup.go \

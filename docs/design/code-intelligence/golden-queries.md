@@ -24,12 +24,12 @@ Required evidence: setup source and focused reconciler tests. The event edge is
 `RunConfigResolver.Resolve` in
 `internal/profiling/profiler/controller/run_config_resolver.go` resolves production
 RunConfigs. `cmd/profiler/controller_setup.go` passes that method as the
-`NewRunReconciler` resolve callback; controller tests can supply a recording
-function without a single-implementation resolver interface.
+`NewRunReconciler` resolve callback, rather than constructing a
+single-implementation resolver interface.
 
 Required evidence: `gopls references` on `RunConfigResolver.Resolve` must find the
-composition root and resolver tests. The constructor call determines which
-callback production uses.
+composition root, and `gopls definition` on that callback argument must resolve
+the production method. The constructor call determines the callback in use.
 
 ## Q3. Where is the Evidence Store adapter boundary?
 
