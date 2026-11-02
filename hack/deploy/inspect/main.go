@@ -20,7 +20,7 @@ import (
 )
 
 type measurementTask struct {
-	metav1.TypeMeta   `json:",inline"`
+	Kind              string `json:"kind"`
 	metav1.ObjectMeta `json:"metadata"`
 	Status            struct {
 		Phase              string             `json:"phase"`
