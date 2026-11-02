@@ -157,6 +157,8 @@ Coverage generator의 대상 선택·요청 재사용·timing 범위는 curve/ev
 
 현재 셀 판정은 Query `currentMeasurement`(id/model/class/path/powerMode/measuredAt)만 참조하고, 과거 variants/profileIds에서 성공을 찾지 않는다. 필드가 없는 옛 응답은 판정 불가로 셀을 보류하며 `unknown-support.json.selectionReason`에 기록한다. `usable`/`problem`/`insufficient`는 표시이고 실행 거절 조건이 아니다. 실제 schema·Node/GPU/artifact·메모리 안전 조건은 별도다.
 
+executionDeclarations는 같은 scope(class/Node/family/backend)에서 문서 순서 마지막 matching 선언 하나가 현재 값이다. duplicate/overlap은 새 버전 목록을 만들거나 RuntimeDeclarationAmbiguous로 거절하지 않고 마지막 값으로 덮어쓰며, compatible 조회에는 superseded 선언 진단만 남긴다. generator도 같은 순서를 사용한다.
+
 ### 기본값과 검증 근거
 
 settings 생략/명시20/.005/100은 변경 전 fixture의 μ1000/κ959.375·Grid/Bisection판정과 대조한다(키동일성 아님). CI.95의 평균/분산/자유도/음수거절·해상도, reuse30초/3회/상대차, CRtrial3/target5·active2/idle2, 기존 schedule/seed/fallback, timeout30/129초·poll1/2/5초를 유지한다.

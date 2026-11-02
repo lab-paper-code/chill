@@ -199,6 +199,7 @@ func TestOperationCostRefusalsLetTheNextRootGo(t *testing.T) {
 			o.controller.mu.Lock()
 			if test.issue {
 				o.controller.config.CatalogIssues = []CatalogIssue{{Source: types.NamespacedName{Namespace: "chill-system", Name: "beo"}, Code: "MeasurementEvidenceMissing"}}
+				o.controller.observer.SetProfiles(nil)
 			}
 			o.controller.mu.Unlock()
 			refused := opcostRoot("refused", time.Now().Add(-time.Minute), test.step)
@@ -278,5 +279,19 @@ func TestOperationCostStopsOnActualOperationFailure(t *testing.T) {
 	o.admit()
 	if status := o.status(m); status.Phase != edge.MeasurementPhaseFailed || len(status.Steps) != 2 || len(o.measured) != 2 {
 		t.Fatalf("actual failure did not terminate sequence: %+v", status)
+	}
+}
+
+func TestOperationCostDoesNotTreatCatalogDiagnosticsAsRefusal(t *testing.T) {
+	o := newOpcostHarness(t)
+	o.controller.mu.Lock()
+	o.controller.config.CatalogIssues = []CatalogIssue{{Source: types.NamespacedName{Namespace: "chill-system", Name: "beo"},
+		Code: "ReplacementSelection", Reason: "operator replacement changes specification; selection retained as declared"}}
+	o.controller.mu.Unlock()
+	m := opcostRoot("cost", time.Now(), lane()...)
+	o.create(m)
+	o.admit()
+	if !strings.HasPrefix(o.admission(m), "Granted ") {
+		t.Fatal("presentation diagnosis refused a verified prepared profile", o.admission(m))
 	}
 }
