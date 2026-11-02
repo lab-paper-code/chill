@@ -74,7 +74,9 @@ func authorizeQueryRead(
 	case "dispatch-occupancy-measurements":
 		resources = []string{"dispatchoccupancymeasurements"}
 	}
-	if len(parts) > 6 && parts[6] != "preflight" {
+	isPreflight := r.Method == http.MethodPost && len(parts) == 7 &&
+		parts[5] == "batch-energy-optimizations" && parts[6] == "preflight"
+	if len(parts) > 6 && !isPreflight {
 		verb, name = "get", parts[6]
 	}
 	for _, resource := range resources {

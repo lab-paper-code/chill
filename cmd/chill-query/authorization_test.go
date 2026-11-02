@@ -166,3 +166,75 @@ func TestQueryCompositionRejectsDirectAnonymousAccess(t *testing.T) {
 		t.Fatal("health probe requires user credentials")
 	}
 }
+
+const resourceNamedPreflight = "preflight"
+
+func TestPreflightNamedDetailsRequireGetSAR(t *testing.T) {
+	for _, route := range []struct{ method, path, resource, verb, name string }{
+		{http.MethodGet, "profiling-runs/preflight/evidence-passport", "profilingruns", "get", resourceNamedPreflight},
+		{http.MethodGet, "batch-energy-optimizations/preflight/result", "batchenergyoptimizations", "get", resourceNamedPreflight},
+		{http.MethodGet, "operation-cost-measurements/preflight", "operationcostmeasurements", "get", resourceNamedPreflight},
+		{http.MethodGet, "dispatch-occupancy-measurements/preflight", "dispatchoccupancymeasurements", "get", resourceNamedPreflight},
+		{http.MethodGet, "batch-energy-optimizations/preflight", "batchenergyoptimizations", "get", resourceNamedPreflight},
+		{http.MethodPost, "batch-energy-optimizations/preflight", "batchenergyoptimizations", "list", ""},
+	} {
+		t.Run(route.method+"/"+route.path, func(t *testing.T) {
+			authorizer := queryTestAuthorizer(t)
+			reviews, calls := 0, 0
+			authorizer.Client.(*kubefake.Clientset).PrependReactor("create", "subjectaccessreviews",
+				func(action ktesting.Action) (bool, runtime.Object, error) {
+					spec := action.(ktesting.CreateAction).GetObject().(*authz.SubjectAccessReview).Spec
+					if attrs := spec.ResourceAttributes; attrs != nil {
+						reviews++
+						if attrs.Verb != route.verb || attrs.Name != route.name || attrs.Resource != route.resource ||
+							attrs.Namespace != "allowed" {
+							t.Errorf("incorrect detail/preflight SAR: %+v", attrs)
+						}
+					}
+					return true, &authz.SubjectAccessReview{Status: authz.SubjectAccessReviewStatus{Allowed: true}}, nil
+				})
+			handler := authenticatedQueryHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls++
+				w.WriteHeader(http.StatusOK)
+			}), authorizer, options{servingNamespace: "allowed", requestTimeout: time.Second})
+			request := httptest.NewRequest(route.method, "/api/v1/namespaces/allowed/"+route.path, nil)
+			request.Header.Set("Authorization", "Bearer allowed")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusOK || reviews != 1 || calls != 1 {
+				t.Fatalf("status=%d native reviews=%d backend calls=%d", response.Code, reviews, calls)
+			}
+		})
+	}
+}
+
+func TestListOnlyCallerCannotReadPreflightNamedDetails(t *testing.T) {
+	for _, route := range []string{
+		"profiling-runs/preflight/evidence-passport",
+		"batch-energy-optimizations/preflight/result",
+		"operation-cost-measurements/preflight",
+		"dispatch-occupancy-measurements/preflight",
+	} {
+		t.Run(route, func(t *testing.T) {
+			authorizer := queryTestAuthorizer(t)
+			authorizer.Client.(*kubefake.Clientset).PrependReactor("create", "subjectaccessreviews",
+				func(action ktesting.Action) (bool, runtime.Object, error) {
+					spec := action.(ktesting.CreateAction).GetObject().(*authz.SubjectAccessReview).Spec
+					allowed := spec.ResourceAttributes == nil || spec.ResourceAttributes.Verb == "list"
+					return true, &authz.SubjectAccessReview{
+						Status: authz.SubjectAccessReviewStatus{Allowed: allowed},
+					}, nil
+				})
+			calls := 0
+			handler := authenticatedQueryHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }),
+				authorizer, options{servingNamespace: "allowed", requestTimeout: time.Second})
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/allowed/"+route, nil)
+			request.Header.Set("Authorization", "Bearer allowed")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusForbidden || calls != 0 {
+				t.Fatalf("list-only caller read named detail: status=%d backend calls=%d", response.Code, calls)
+			}
+		})
+	}
+}
