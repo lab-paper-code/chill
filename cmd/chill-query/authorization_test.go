@@ -28,7 +28,8 @@ func queryTestAuthorizer(t *testing.T) *servingkube.Authorizer {
 		}
 		return true, &authn.TokenReview{
 			Status: authn.TokenReviewStatus{Authenticated: token != "invalid", User: authn.UserInfo{
-				Username: user, UID: "caller-uid", Groups: []string{"operators"}, Extra: map[string]authn.ExtraValue{"tenant": {"reviewed"}},
+				Username: user, UID: "caller-uid", Groups: []string{"operators"},
+				Extra: map[string]authn.ExtraValue{"tenant": {"reviewed"}},
 			}},
 		}, nil
 	})
