@@ -492,9 +492,9 @@ def coverage_shared_result(result):
 
 
 def coverage_condition_matches(observed, required):
-    """Compare execution facts, not cell history, hashes or serialized bytes."""
+    """Compare execution validity; image identity remains historical metadata."""
     return bool(observed and required) and all(observed.get(key) == required.get(key)
-        for key in ("runtimeImage", "curveSchema", "evidenceSchema"))
+        for key in ("curveSchema", "evidenceSchema"))
 
 
 def coverage_required_condition(cell, node, model, declarations):
@@ -522,25 +522,23 @@ def coverage_targets(coverage, policy, required_conditions, node_declared=(), pr
     if coverage["completeness"] != "complete":
         raise ValueError("incomplete coverage cannot define a complete plan")
     for cell in coverage["cells"]:
-        verdict, assessment = cell["support"]["verdict"], cell["assessment"]
-        if verdict == policy["unknownVerdict"] and cell["id"] not in node_declared:
+        verdict = cell["support"]["verdict"]
+        if "currentMeasurement" not in cell:
+            unknown.append(dict(cell, selectionReason="currentMeasurement unavailable; cell held"))
+        elif verdict == policy["unknownVerdict"] and cell["id"] not in node_declared:
             unknown.append(cell)
         elif verdict == policy["supportedVerdict"] or cell["id"] in node_declared:
-            measured = [v for v in cell.get("variants", []) if
-                        v.get("profileIds") or v.get("assessment", {}).get("evidence", {}).get("accepted")]
             required = required_conditions.get(cell["id"])
-            current = [v for v in measured if any(coverage_condition_matches(
-                (profile_conditions or {}).get(profile), required) for profile in v.get("profileIds", []))]
-            if current:
+            selected = cell["currentMeasurement"]
+            observed = (profile_conditions or {}).get(selected["id"]) if selected else None
+            if coverage_condition_matches(observed, required):
                 measured_current.append(cell)
                 continue
-            if measured and not any(required and v["condition"].get("runtimeImage") ==
-                                    required["runtimeImage"] for v in measured):
+            if selected and observed:
                 stale.append(cell)
-            if cell["id"] in node_declared or measured or assessment["displayStatus"] in (policy["unmeasuredStatus"], "running", "problem") or (
-                    assessment["displayStatus"] == policy["insufficientStatus"] and
-                    any(r["code"] == policy["missingBatchReason"] for r in assessment["reasons"])):
-                targets.append(cell)
+            # Coverage presentation (usable/problem/insufficient) is diagnostic,
+            # not an execution gate or permission to revive historical success.
+            targets.append(cell)
     return targets, unknown, stale, measured_current
 
 
@@ -670,6 +668,10 @@ def coverage_existing(cell, plans, policy, required, completed_conditions=None):
         phase = plan.get("status", {}).get("phase")
         if (phase == "Failed" or any(key in spec for key in ("cpuQuota", "cpuAffinity")) or
                 "cpuRequest" in state):
+            continue
+        selected = cell.get("currentMeasurement")
+        if phase == "Complete" and (not selected or selected["id"] != "/".join(
+                plan["metadata"].get(key, "") for key in ("namespace", "name", "uid"))):
             continue
         if phase == "Complete":
             observed = (completed_conditions or {}).get(plan["metadata"].get("uid"))
@@ -915,7 +917,9 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
         name = profile["id"].split("/")[1]
         result = coverage_api(namespace + "/batch-energy-optimizations/" + name + "/result")
         results.append(result)
-        if coverage_shared_result(result):
+        campaign = next((p for p in inputs["plans"]["items"]
+                         if p["metadata"].get("uid") == result["campaign"]["uid"]), {})
+        if coverage_shared_result(result) and campaign.get("status", {}).get("phase") == "Complete":
             observed = {"runtimeImage": profile["condition"]["runtimeImage"],
                         "curveSchema": SHARED_CURVE_SCHEMA, "evidenceSchema": SHARED_EVIDENCE_SCHEMA}
             completed_conditions[result["campaign"]["uid"]] = observed
@@ -1134,6 +1138,7 @@ def coverage_self_check():
     cell = {"id": "cell", "model": {"name": model}, "deviceClass": {"name": "device"},
             "executionPath": "path", "powerMode": "mode", "support": {"verdict": "Compatible"},
             "assessment": {"displayStatus": "unmeasured", "reasons": []}}
+    cell["currentMeasurement"] = None
     partial = copy.deepcopy(cell)
     partial["assessment"] = {"displayStatus": "insufficient", "reasons": [{"code": "TargetBatchMissing"}]}
     unknown = copy.deepcopy(cell)
@@ -1144,7 +1149,7 @@ def coverage_self_check():
     other["assessment"]["reasons"] = [{"code": "Unrelated"}]
     running = dict(cell, assessment={"displayStatus": "running", "reasons": []})
     assert coverage_targets({"completeness": "complete", "cells": [cell, partial, running, unknown, unsupported, other]},
-                            policy, {}) == ([cell, partial, running], [unknown], [], [])
+                            policy, {}) == ([cell, partial, running, other], [unknown], [], [])
     missing = copy.deepcopy(unknown)
     missing["support"]["reasons"] = [{"code": "RuntimeDeclarationMissing"}]
     missing["assessment"]["displayStatus"] = "unknown"
@@ -1214,6 +1219,9 @@ def coverage_self_check():
     assert coverage_batches(catalog, "path", policy) == ([1, 2], False, "artifact")
     execution_conditions = {"runtimeImage": "current-runtime", "curveSchema": SHARED_CURVE_SCHEMA,
                             "evidenceSchema": SHARED_EVIDENCE_SCHEMA}
+    historical_conditions = dict(execution_conditions, runtimeImage="historical-runtime")
+    assert coverage_condition_matches(historical_conditions, execution_conditions)
+    assert not coverage_condition_matches(dict(historical_conditions, curveSchema="old-schema"), execution_conditions)
     timings = [{"model": model, "deviceClass": device, "batch": batch, "secondsPerCall": seconds,
                 "executionPath": "path", "powerMode": cell["powerMode"], "source": device,
                 "executionConditions": execution_conditions}
@@ -1223,6 +1231,9 @@ def coverage_self_check():
                    for key in ("model", "deviceClass", "executionPath", "powerMode")]
     assert coverage_batch_plan(cell, [1], timings + other_cells, policy,
                                execution_conditions=execution_conditions)[1][0]["secondsPerCall"] == .1
+    historical_timing = dict(timings[0], executionConditions=historical_conditions, secondsPerCall=.2)
+    assert coverage_batch_plan(cell, [1], [historical_timing], policy,
+                               execution_conditions=execution_conditions)[1][0]["secondsPerCall"] == .2
     included, estimates, reason = coverage_batch_plan(
         cell, [1, 3, 16], timings, policy, execution_conditions=execution_conditions)
     assert included == [1, 3, 16] and reason is None

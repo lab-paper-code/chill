@@ -43,7 +43,7 @@ current request/observation contract: [Node agent section 3](../../../platform/n
 | Run failure | Drift, admission mutation, pressure, image/host ABI mismatch, load/init/build or invalid output affect the frozen Run. Only a separately established trusted static conflict and evaluator rerun can change compatibility. |
 | Apparently conflicting results | Compatible plus Run failure is possible; Unknown plus diagnostic success proves only that selected point. Incompatible plus success requires investigation of inputs/provenance/Run identity and reevaluation, not overwriting the verdict. |
 | Reason composition | Keep static conflict/missing-fact, decision-policy/input, Kubernetes, Run mismatch/failure, and numeric/evidence reasons distinct. Expose the first blocked gate and prior results, not one generic compatible/eligible/reason string. |
-| Staleness | Re-read current Kubernetes eligibility; material declaration/snapshot changes stale a pre-Run decision. Run evidence remains immutable history. Profile reuse requires the exact execution-state identity; image/provider/power drift prevents reuse without deleting history. |
+| Staleness | Re-read current Kubernetes eligibility; material declaration/snapshot changes stale a pre-Run decision. Run evidence remains immutable history. By user decision (ADR 0019 exception), historical profile runtime image versions do not gate reuse: execution and materialization use the current declaration image, checked against the actual containers. Node/GPU/artifact/provider/power safety remains checked. Measurements from another image may therefore support the current image. |
 
 ## Shared nucleus, not a rich ExecutionContract
 

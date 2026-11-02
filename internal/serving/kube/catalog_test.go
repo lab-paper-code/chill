@@ -96,6 +96,7 @@ func TestCatalogLatestSuccessUsesFrozenConditionAndSourceCompletion(t *testing.T
 	newer := old
 	newer.ID, newer.MeasuredAt, newer.Condition.Name = "new-campaign/uid", now.Add(time.Hour), "new-plan"
 	newer.Condition.PlannedBatchSizes = []int{1, 2, 4}
+	newer.Condition.RuntimeImage = "current-runtime"
 	otherNode := old
 	otherNode.ID, otherNode.Condition.NodeUID = "other-node/uid", "node-b"
 	otherMeter := old
@@ -105,7 +106,7 @@ func TestCatalogLatestSuccessUsesFrozenConditionAndSourceCompletion(t *testing.T
 	otherRuntime.ID = "other-runtime/uid"
 	otherRuntime.Condition.RuntimeImage = "new-runtime"
 	result, err := latestConditionProfiles([]serving.Profile{newer, old, otherNode, otherMeter, otherRuntime})
-	if err != nil || len(result) != 4 || result[0].ID != newer.ID || result[1].ID != otherNode.ID || result[2].ID != otherMeter.ID || result[3].ID != otherRuntime.ID {
+	if err != nil || len(result) != 3 || result[0].ID != newer.ID || result[1].ID != otherNode.ID || result[2].ID != otherMeter.ID || result[0].Condition.RuntimeImage != "current-runtime" {
 		t.Fatalf("latest source matching changed identity/scope: %+v %v", result, err)
 	}
 }
@@ -209,4 +210,29 @@ type catalogTestObjects struct {
 func (s *catalogTestObjects) OpenLocation(context.Context, evidencestore.ObjectLocation) (io.ReadCloser, error) {
 	s.opens++
 	return io.NopCloser(bytes.NewReader(s.payload)), nil
+}
+
+func TestCatalogLatestFailureDoesNotHideHistoryOrReviveSuccess(t *testing.T) {
+	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
+	ctx := context.Background()
+	before, err := catalog.Refresh(ctx, []string{source.Namespace})
+	if err != nil || len(before.CurrentProfiles()) != 1 {
+		t.Fatalf("fixture current selection: %+v %v", before.CurrentMeasurements, err)
+	}
+	original := &edgev1alpha1.BatchEnergyOptimization{}
+	if err := catalog.store.client.Get(ctx, source, original); err != nil {
+		t.Fatal(err)
+	}
+	failed := original.DeepCopy()
+	failed.Name, failed.UID, failed.ResourceVersion = "newer-failure", "failed-uid", ""
+	failed.Status = edgev1alpha1.BatchEnergyOptimizationStatus{Phase: "Failed", ObservedGeneration: failed.Generation,
+		Conditions: []metav1.Condition{{Type: "MeasurementComplete", LastTransitionTime: metav1.NewTime(before.Profiles[0].MeasuredAt.Add(time.Hour))}}}
+	if err := catalog.store.client.Create(ctx, failed); err != nil {
+		t.Fatal(err)
+	}
+	view, err := catalog.Refresh(ctx, []string{source.Namespace})
+	if err != nil || len(view.Profiles) != 1 || len(view.CurrentProfiles()) != 0 || len(view.CurrentMeasurements) != 1 ||
+		view.CurrentMeasurements[0].ID != failed.Namespace+"/"+failed.Name+"/"+string(failed.UID) {
+		t.Fatalf("latest failure fell back or erased history: %+v %v", view, err)
+	}
 }

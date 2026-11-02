@@ -3,6 +3,7 @@ package kube
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,8 +15,10 @@ import (
 
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
 
@@ -133,6 +136,21 @@ type declarationSelectionError struct {
 func (e *declarationSelectionError) Error() string { return e.err.Error() }
 
 func (e *declarationSelectionError) Unwrap() error { return e.err }
+
+// ResolveRuntimeImage reads the single current declaration for this execution
+// scope. Replacing the ConfigMap changes future execution, not stored evidence.
+func ResolveRuntimeImage(ctx context.Context, reader client.Reader, options CandidateResolverOptions, deviceClass, node, family, backend string) (string, error) {
+	config := &corev1.ConfigMap{}
+	key := types.NamespacedName{Namespace: options.Namespace, Name: options.ConfigMapName}
+	if err := reader.Get(ctx, key, config); err != nil {
+		return "", fmt.Errorf("get execution fact-source ConfigMap %s: %w", key, err)
+	}
+	declaration, err := selectExecutionDeclaration(config, options.ConfigMapKey, deviceClass, node, family, backend)
+	if err != nil {
+		return "", err
+	}
+	return declaration.Runtime.Image, nil
+}
 
 // selectExecutionDeclaration returns the one declaration for deviceClass and
 // the runtime family/backend that applies to node: a Node-bound declaration
