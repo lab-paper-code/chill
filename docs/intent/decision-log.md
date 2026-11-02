@@ -561,3 +561,5 @@
 
 - 2026-11-02 08:10Z: EvaluationRun r2 stage 실패 후 profiler가 evidence를 /tmp(read-only)에 쓰려다 계속 실패한다(`internal/evaluation/controller/adapters.go:30` TempDir 누락). Run이 pool과 measured 인스턴스 5개를 쥔 채 멈춰 있다. 상세는 O/campaign/v2/evaluation-api-defects-20261102.md.
 - 2026-11-02 08:51Z: EvaluationRun r3(하네스 `656677dc`, digest `ae82ef33…`)도 측정 전 stage 중단: producer sampler `sys.argv` 요구(`hack/e5/d2/sample_cgroups.py:17`, 호출 `hack/e5/e5.py:1820`)와 운영 SSH forced-command(`/home/genesis1/.ssh/authorized_keys:5`) 불일치로 cgroup 0줄·IndexError → setup timebox(`e5.py:1999`). 재시도/round.py/코드변경/배포 없이 실패 게시(schema `serving-experiment.v1alpha1`, `serving/experiments.v1alpha1/4473d3f3-6e41-4831-baea-30456992edad/summary.json`); pool Returned·CleanupComplete=True·instances/측정 Pod/taint 모두 0. 상세 `O/campaign/v2/evaluation-api-defects-20261102.md`, 증거 `evaluation-api-20261102/r3-*`.
+
+- 2026-11-02 09:20Z: E5 API r4는 부하·drain까지 끝났으나 harness가 의도적으로 terminate한 SSH sampler의 종료 코드 255를 실패로 판정해 STOP(e5.py:2130@71bd49e8; harness 이미지 ssh가 SIGTERM에 255). 재현 probe 확인. 측정 판정 전 도구 결함이라 재측정 예외. 상세는 O/campaign/v2/evaluation-api-defects-20261102.md.
