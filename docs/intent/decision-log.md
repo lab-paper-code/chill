@@ -558,3 +558,5 @@
 
 - 2026-11-02: E5 EvaluationRun API 첫 실검증. POST /api/v1/evaluations/load-scenarios가 403 → 코드 결함이 아니라 chill-evaluation-operator ClusterRole을 바인딩한 주체가 없었음(설계상 운영자가 바인딩). 전용 SA chill-system/chill-evaluation-runner를 만들어 chill-evaluation-operator와 chill-serving-manager를 바인딩함(label chill.dacs.io/purpose=e5-evaluation-api, 토큰 O/.token-evaluation 48h). chart 밖 live RBAC이므로 E5 뒤 정리 여부를 정한다.
 - 2026-11-02: EvaluationRun 사전 중단 2건은 자격 증명 미바인딩·KsafeAB의 nano 제외 잔류와 구 하네스(`58ab2ecc`) 게시 오류이며 부하 0회·측정 재시도 0회다. 지원 settings PUT으로 nano 제외만 제거했다. API 간극: `ControlSettings`에 `excludedNodes`가 없어 장비 제외 범위를 Run spec으로 선언할 수 없다(`api/v1alpha1/evaluationrun_types.go:191-199`); 하네스는 Run spec에 고정되므로 Main 승인으로 `57a2eca6` 포함 이미지만 새로 build/push하고 새 Run에서 재개한다(chart diff 0). 상세 `O/campaign/v2/evaluation-api-defects-20261102.md`.
+
+- 2026-11-02 08:10Z: EvaluationRun r2 stage 실패 후 profiler가 evidence를 /tmp(read-only)에 쓰려다 계속 실패한다(`internal/evaluation/controller/adapters.go:30` TempDir 누락). Run이 pool과 measured 인스턴스 5개를 쥔 채 멈춰 있다. 상세는 O/campaign/v2/evaluation-api-defects-20261102.md.
