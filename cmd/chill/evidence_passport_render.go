@@ -18,7 +18,7 @@ const (
 	unavailableValue = "unavailable"
 )
 
-func writeEvidencePassport(writer io.Writer, output string, passport queryapi.EvidencePassport) error {
+func writeEvidencePassport(writer io.Writer, output string, passport queryapi.EvidencePassportState) error {
 	if output == outputFormatJSON {
 		encoder := json.NewEncoder(writer)
 		encoder.SetIndent("", "  ")
@@ -27,7 +27,7 @@ func writeEvidencePassport(writer io.Writer, output string, passport queryapi.Ev
 	return writeEvidencePassportTable(writer, passport)
 }
 
-func writeEvidencePassportTable(writer io.Writer, passport queryapi.EvidencePassport) error {
+func writeEvidencePassportTable(writer io.Writer, passport queryapi.EvidencePassportState) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
 	run := passport.Run
 	if err := writePassportSection(table, "RUN", [][2]string{
@@ -44,6 +44,18 @@ func writeEvidencePassportTable(writer io.Writer, passport queryapi.EvidencePass
 		{"Power mode", run.Spec.Candidate.PowerMode},
 	}); err != nil {
 		return err
+	}
+	if passport.Code != "" {
+		if err := writePassportSection(table, "EVIDENCE STATUS", [][2]string{
+			{"Code", passport.Code},
+			{"Status", passport.Assessment.DisplayStatus},
+			{"Reason", passport.Reason},
+			{"Evidence", unavailableValue},
+			{"Measurement", unavailableValue},
+		}); err != nil {
+			return err
+		}
+		return table.Flush()
 	}
 
 	runtime := passport.Measurement.Runtime

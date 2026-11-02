@@ -17,7 +17,7 @@ type EvidencePassportState struct {
 	APIVersion  string                       `json:"apiVersion"`
 	Kind        string                       `json:"kind"`
 	ReadAt      time.Time                    `json:"readAt"`
-	Code        string                       `json:"code"`
+	Code        string                       `json:"code,omitempty"`
 	Reason      string                       `json:"reason,omitempty"`
 	Run         EvidencePassportRun          `json:"run"`
 	Assessment  MeasurementAssessment        `json:"assessment"`

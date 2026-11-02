@@ -15,6 +15,7 @@ Dashboard·CLI는 같은 권한·검증·비동기 결과 의미를 사용하되
 ## 조회 소유 경계 (2026-11-02)
 
 - Query API가 profile·coverage·요청 목록·측정 결과·preflight·Evidence Passport의 정상/pending/evidence 오류 응답을 완성한다. 기존 도메인 판정과 verified evidence reader를 재사용한다.
+- CLI runs show는 Query의 EvidencePassportState를 공유해 HTTP 202의 pending code·native Run metadata와 evidence/measurement의 null을 JSON에 보존한다. table은 pending 상태를 표시하고 미완료 측정을 0으로 출력하지 않는다.
 - ChillServer의 조회 중계는 TokenReview/SAR·namespace 제한·전달·transport 오류만 처리한다. backend 장애를 pending/측정 실패로 바꾸거나 Kubernetes를 재조회해 본문을 수선하지 않는다.
 - Serving의 인증된 `GET /api/v1/scheduler/catalog-read`는 `serving/kube.CatalogRead`만 제공한다. 공유 scheduler/catalog의 조회 projection이며 새 catalog·poller·장부가 아니다. 공개 profiles 경로와 달라 순환 중계가 없다.
 - `ProfileSummary`와 bounded reporting input은 공개 필드/요약값만 읽는다. 원시 duration 배열·전체 내부 measurementFacts는 어느 HTTP 중간에도 직렬화하지 않는다. preparations의 restore 필드는 typed instance/profile 요약으로 보존하고 scheduler 원본은 변경하지 않는다.

@@ -223,6 +223,13 @@ func TestExecuteProfilingRunShowWritesJSON(t *testing.T) {
 	if got.Kind != "EvidencePassport" || got.Run.Name != "cpu-run" || got.Measurement.Power.Watts == nil {
 		t.Fatalf("passport = %#v", got)
 	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(stdout.String()), &document); err != nil {
+		t.Fatal(err)
+	}
+	if _, hasCode := document["code"]; hasCode {
+		t.Fatal("completed passport acquired a pending/error code field")
+	}
 }
 
 func TestExecuteRejectsInvalidUsageBeforeConstructingQuery(t *testing.T) {
@@ -325,12 +332,12 @@ type fakeProfilingRunsQuery struct {
 }
 
 type fakeEvidencePassportQuery struct {
-	passport queryapi.EvidencePassport
+	passport queryapi.EvidencePassportState
 	err      error
 	calls    int
 }
 
-func (q *fakeEvidencePassportQuery) Read(context.Context) (queryapi.EvidencePassport, error) {
+func (q *fakeEvidencePassportQuery) Read(context.Context) (queryapi.EvidencePassportState, error) {
 	q.calls++
 	return q.passport, q.err
 }
@@ -449,8 +456,8 @@ func testProfilingRunsSnapshot() queryapi.ProfilingRunsSnapshot {
 	}
 }
 
-func testEvidencePassport() queryapi.EvidencePassport {
-	return queryapi.EvidencePassport{
+func testEvidencePassport() queryapi.EvidencePassportState {
+	return queryapi.EvidencePassportState{
 		APIVersion: queryapi.EvidencePassportAPIVersion,
 		Kind:       "EvidencePassport",
 		ReadAt:     time.Date(2026, 7, 20, 2, 0, 0, 0, time.UTC),
@@ -470,7 +477,7 @@ func testEvidencePassport() queryapi.EvidencePassport {
 				Reason: "EvidenceVerified",
 			}},
 		},
-		Evidence: queryapi.EvidencePassportLineage{
+		Evidence: &queryapi.EvidencePassportLineage{
 			FinalizedAt: time.Date(2026, 7, 20, 1, 1, 0, 0, time.UTC),
 			Final: evidencestore.ObjectIdentity{
 				Store: "chill-evidence", Key: "execution.json",
@@ -481,7 +488,7 @@ func testEvidencePassport() queryapi.EvidencePassport {
 				Size: 8000,
 			},
 		},
-		Measurement: queryapi.EvidencePassportMeasurement{
+		Measurement: &queryapi.EvidencePassportMeasurement{
 			Runtime: queryapi.EvidencePassportRuntime{
 				Family: "onnxruntime", Version: "1.16.0", Provider: "CPUExecutionProvider", Architecture: "x86_64",
 				Batch: 1, WarmupIterations: 20, ElapsedSeconds: 30.001,

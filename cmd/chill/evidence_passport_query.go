@@ -12,7 +12,7 @@ import (
 const maximumEvidencePassportBytes int64 = 4 << 20
 
 type evidencePassportQuery interface {
-	Read(context.Context) (queryapi.EvidencePassport, error)
+	Read(context.Context) (queryapi.EvidencePassportState, error)
 }
 
 type ownerEvidencePassportQuery struct{ *ownerClient }
@@ -32,8 +32,8 @@ func newEvidencePassportQuery(opts operationOptions) (evidencePassportQuery, err
 	return &ownerEvidencePassportQuery{owner}, nil
 }
 
-func (q *ownerEvidencePassportQuery) Read(ctx context.Context) (queryapi.EvidencePassport, error) {
-	var passport queryapi.EvidencePassport
+func (q *ownerEvidencePassportQuery) Read(ctx context.Context) (queryapi.EvidencePassportState, error) {
+	var passport queryapi.EvidencePassportState
 	path := "/api/v1/namespaces/" + url.PathEscape(q.opts.namespace) + "/profiling-runs/" +
 		url.PathEscape(q.opts.name) + "/evidence-passport"
 	if err := q.read(ctx, http.MethodGet, path, nil, "", maximumEvidencePassportBytes, &passport); err != nil {
@@ -42,6 +42,9 @@ func (q *ownerEvidencePassportQuery) Read(ctx context.Context) (queryapi.Evidenc
 	if passport.APIVersion != queryapi.EvidencePassportAPIVersion || passport.Kind != "EvidencePassport" ||
 		passport.Run.Namespace != q.opts.namespace || passport.Run.Name != q.opts.name {
 		return passport, errors.New("owner returned an unexpected Evidence Passport identity")
+	}
+	if passport.Code == "" && (passport.Evidence == nil || passport.Measurement == nil) {
+		return passport, errors.New("owner returned a passport without evidence or pending state")
 	}
 	return passport, nil
 }
