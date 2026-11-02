@@ -503,10 +503,10 @@ Three independent sessions, one warmup iteration, all declared artifact batches
 bounded by runtime maximum when undeclared are used.
 Every model and included batch uses the same config `windowSeconds` active
 window (default 60 seconds), independently repeated three times. Start with
-the full planner batch set, then retain a batch only if its same-model/class
+the full planner batch set, then retain a batch only if its same-cell
 measured time allows `floor(windowSeconds / secondsPerCall) >= minCallsInWindow`
 (default one call). The conservative time is the slowest measurement of that
-exact model/class/path/batch, including client overhead, whose runtime image and
+exact model/class/path/power-mode/batch, including client overhead, whose runtime image and
 curve/evidence versions match the cell's required execution conditions through
 the same `coverage_condition_matches` predicate as target/reuse selection.
 `timings.json` retains those execution conditions per timing; old CPU-controlled
@@ -514,8 +514,8 @@ curve/evidence versions are not timing evidence for shared execution. Without a
 matching timing the batch remains included unless a smaller batch was already
 excluded by a matching timing. Once a matching batch fails the threshold, all
 larger batches in the same cell are excluded, even with unknown or apparently
-faster timings. `excludedFromBatch` records the first failure. Another device,
-path, runtime or evidence version never starts this monotone exclusion.
+faster timings. `excludedFromBatch` records the first failure. Another model,
+device class, path, power mode, runtime or evidence version never starts this monotone exclusion.
 `excluded-batches.json` records “창 안 유의미 추론 불가”; if no batches survive,
 `excluded-cells.json` records the cell and no BEO is emitted. A partially
 filtered artifact-declared set also excludes the cell rather than violating the
@@ -583,7 +583,7 @@ limits and missing native/frozen worker envelopes remain unknown.
 
 The active metric observation deadline includes the last in-flight call:
 `windowSeconds + ceil(max(included batch call bounds)) + inherited metric padding`.
-Each known call bound is the slowest same-condition model/class/path/batch estimate multiplied
+Each known call bound is the slowest same-condition model/class/path/power-mode/batch estimate multiplied
 by config `callDurationEstimateMultiplier` (2); unknown timings use config
 `unknownCallDurationSeconds` (600). Excluded batches do not inflate the deadline.
 This changes observer/worker budgets, not the runtime's 60-second start window,

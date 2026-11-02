@@ -28,13 +28,14 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
                   annotated=True, controlled=False, prefix=True, memory_policy=None, cell_annotation=True,
                   variant=True, allocatable='20Gi', memory_fraction=0.8, policy_limit=17179869184,
                   model='mobilenet-v2-050', device='raspberry-pi-5-8g', runtime_image='new-runtime',
-                  node_uid='node-uid', timing_seconds=None):
+                  node_uid='node-uid', timing_seconds=None, power_mode='fixed', timing_power_mode=None):
     """Exercise generate_coverage, not just its independent selection helpers."""
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         path = 'firstfloor-ort-cpu-arm64'
+        source_mode = power_mode if timing_power_mode is None else timing_power_mode
         cell = {'id': 'cell', 'model': {'name': model}, 'deviceClass': {'name': device},
-                'executionPath': path, 'powerMode': 'fixed', 'support': {'verdict': 'Compatible'},
+                'executionPath': path, 'powerMode': power_mode, 'support': {'verdict': 'Compatible'},
                 'assessment': {'displayStatus': 'usable' if phase == 'Complete' else 'problem', 'reasons': []},
                 'variants': [{'condition': {'runtimeImage': image}, 'profileIds': ['ns/coverage-old-runtime/uid']}]
                             if phase == 'Complete' else []}
@@ -52,7 +53,7 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
                                 'creationTimestamp': '2026-01-01', 'annotations': annotations},
                     'status': {'phase': phase}, 'spec': {
                         'state': {'targetNode': 'node', 'candidate': {'modelSpec': model, 'deviceClass': device,
-                                  'executionPath': path, 'powerMode': 'fixed', 'preprocessor': 'pre'}},
+                                  'executionPath': path, 'powerMode': source_mode, 'preprocessor': 'pre'}},
                         'activeProtocol': {'durationSeconds': 60, 'dataset': 'dataset',
                                            'metricObservation': {'durationSeconds': 62}},
                         'idleProtocol': {'durationSeconds': 10, 'metricObservation': {'durationSeconds': 12}},
@@ -66,14 +67,16 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
         if timing_seconds is not None:
             result['measurementFacts'] = {
                 'condition': {'logicalModel': model, 'deviceClass': device, 'runtimeImage': image,
-                              'artifact': {'executionPath': path}, 'powerMode': 'fixed'},
+                              'artifact': {'executionPath': path}, 'powerMode': source_mode},
                 'request': {'name': previous['metadata']['name'], 'uid': 'uid'},
                 'batches': [{'batch': 1, 'completedCalls': 1, 'quality': [
                     {'workloadMode': 'saturated-serial-fixed-batch', 'windowSeconds': timing_seconds}]}]}
         inputs = {
             'measurement-coverage': {'completeness': 'complete', 'snapshotId': 'snapshot', 'cells': [cell]},
             'batch-energy-optimizations': {'items': [previous]},
-            'profiles': {'profiles': [{'id': 'ns/coverage-old-runtime/uid', 'condition': {'runtimeImage': image}}]
+            'profiles': {'profiles': [{'id': 'ns/coverage-old-runtime/uid', 'nodeName': 'node',
+                'measuredAt': '2026-01-01', 'condition': {'runtimeImage': image, 'logicalModel': model,
+                'deviceClass': device, 'artifact': {'executionPath': path}, 'powerMode': source_mode}}]
                         if phase == 'Complete' or timing_seconds is not None else []},
             'inventory': {'classes': [{'name': device, 'architecture': 'arm64', 'memory': '8Gi',
                 'nodes': [{'name': 'node', 'uid': 'node-uid', 'ready': 'True', 'schedulingDisabled': False}]}]},
@@ -204,6 +207,16 @@ def timing_generation_self_check(gen):
     assert [r['batch'] for r in current['excluded-batches']] == [1, 2]
     assert all(r['reason'] == gen.load(gen.HERE / 'coverage-plan.json')['excludedBatchReason']
                for r in current['excluded-batches'])
+    higher_mode = generate_case(gen, image='new-runtime', timing_seconds=61,
+        power_mode='high', timing_power_mode='low', variant=False, cell_annotation=False)
+    assert higher_mode['summary']['manifestCellCount'] == 1, higher_mode['excluded-cells']
+    assert higher_mode['cells'][0]['batches'] == [1, 2]
+    assert all(row['timingSource'] is None for row in higher_mode['cells'][0]['batchEstimates'])
+    same_mode = generate_case(gen, phase='Failed', image='new-runtime', timing_seconds=61,
+                             power_mode='high', timing_power_mode='high')
+    assert [r['batch'] for r in same_mode['excluded-batches']] == [1, 2]
+    assert all(r['timingSource'] is None or r['timingSource']['powerMode'] == 'high'
+               for r in same_mode['excluded-batches'])
 
 
 class CoverageGenerationTest(unittest.TestCase):

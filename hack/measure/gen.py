@@ -830,6 +830,7 @@ def coverage_batch_plan(cell, batches, timings, policy, declared=False, executio
         # CPU and accelerator paths of one model differ by orders of magnitude; never borrow across paths.
         measured = [r for r in timings if r["model"] == model and r["deviceClass"] == device and
                     r["batch"] == batch and r.get("executionPath") == cell["executionPath"] and
+                    r.get("powerMode") == cell["powerMode"] and
                     coverage_condition_matches(r.get("executionConditions"), execution_conditions)]
         source = max(measured, key=lambda r: r["secondsPerCall"]) if measured else None
         calls = math.floor(policy["windowSeconds"] / source["secondsPerCall"]) if source else None
@@ -1214,11 +1215,13 @@ def coverage_self_check():
     execution_conditions = {"runtimeImage": "current-runtime", "curveSchema": SHARED_CURVE_SCHEMA,
                             "evidenceSchema": SHARED_EVIDENCE_SCHEMA}
     timings = [{"model": model, "deviceClass": device, "batch": batch, "secondsPerCall": seconds,
-                "executionPath": "path", "source": device, "executionConditions": execution_conditions}
+                "executionPath": "path", "powerMode": cell["powerMode"], "source": device,
+                "executionConditions": execution_conditions}
                for device, batch, seconds in
                [("device", 1, .1), ("device", 4, .4), ("slow", 16, 10)]]
-    other_path = dict(timings[0], executionPath="other", secondsPerCall=600)
-    assert coverage_batch_plan(cell, [1], timings + [other_path], policy,
+    other_cells = [dict(timings[0], **{key: "other"}, secondsPerCall=600)
+                   for key in ("model", "deviceClass", "executionPath", "powerMode")]
+    assert coverage_batch_plan(cell, [1], timings + other_cells, policy,
                                execution_conditions=execution_conditions)[1][0]["secondsPerCall"] == .1
     included, estimates, reason = coverage_batch_plan(
         cell, [1, 3, 16], timings, policy, execution_conditions=execution_conditions)
