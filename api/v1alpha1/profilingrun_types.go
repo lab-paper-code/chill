@@ -176,6 +176,26 @@ type ProfilingRunStatus struct {
 	RuntimeTermination *ProfilingRunRuntimeTermination `json:"runtimeTermination,omitempty"`
 }
 
+// TerminalFailureReasons interprets failed execution/evidence conditions for
+// parent controllers. Evidence precedence and retry/publication policy remain
+// with the caller. Immutable Runs retain the parents' existing generation semantics.
+func (s ProfilingRunStatus) TerminalFailureReasons() []string {
+	var reasons []string
+	for _, condition := range s.Conditions {
+		if condition.Status != metav1.ConditionFalse ||
+			(condition.Type != ProfilingRunConditionExecutionComplete &&
+				condition.Type != ProfilingRunConditionEvidenceVerified) {
+			continue
+		}
+		switch condition.Reason {
+		case "InvalidRunSpec", "ExecutionPolicyInvalid", "ActuationPolicyInvalid",
+			"ExecutionLost", "JobFailed", "RequiredStateNotConfirmed", "EvidenceInvalid":
+			reasons = append(reasons, condition.Reason)
+		}
+	}
+	return reasons
+}
+
 // ProfilingRunObjectReference is deliberately smaller than corev1.ObjectReference.
 type ProfilingRunObjectReference struct {
 	// +kubebuilder:validation:MinLength=1

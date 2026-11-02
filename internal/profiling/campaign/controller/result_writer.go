@@ -133,7 +133,7 @@ func projectResultTrials(
 }
 
 func exclusionReasons(run *edgev1alpha1.ProfilingRun) ([]string, error) {
-	reasons := terminalFailureReasons(run.Status.Conditions)
+	reasons := run.Status.TerminalFailureReasons()
 	if len(reasons) == 0 {
 		return nil, fmt.Errorf(
 			"failed ProfilingRun %q violates the terminal-reason projection invariant", run.Name,

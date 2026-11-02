@@ -212,27 +212,11 @@ func projectRuns(runs []edgev1alpha1.ProfilingRun) (
 			accepted = append(accepted, run)
 			continue
 		}
-		if !runTerminal(run.Status.Conditions) {
+		if len(run.Status.TerminalFailureReasons()) == 0 {
 			pending = append(pending, run)
 		}
 	}
 	return accepted, pending
-}
-
-func runTerminal(conditions []metav1.Condition) bool {
-	for _, condition := range conditions {
-		if condition.Status != metav1.ConditionFalse ||
-			(condition.Type != "ExecutionComplete" &&
-				condition.Type != edgev1alpha1.ProfilingRunConditionEvidenceVerified) {
-			continue
-		}
-		switch condition.Reason {
-		case "InvalidRunSpec", "ExecutionPolicyInvalid", "ActuationPolicyInvalid",
-			"ExecutionLost", "JobFailed", "RequiredStateNotConfirmed", "EvidenceInvalid":
-			return true
-		}
-	}
-	return false
 }
 
 func (r *Reconciler) ensureRun(

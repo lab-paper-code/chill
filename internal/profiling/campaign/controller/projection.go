@@ -100,40 +100,8 @@ func projectTrial(parentName string, run *edgev1alpha1.ProfilingRun) (batchenerg
 		trial.Verdict = batchenergyoptimization.VerdictCompleted
 		return trial, nil
 	}
-	if len(terminalFailureReasons(run.Status.Conditions)) > 0 {
+	if len(run.Status.TerminalFailureReasons()) > 0 {
 		trial.Verdict = batchenergyoptimization.VerdictFailed
 	}
 	return trial, nil
-}
-
-func terminalFailureReasons(conditions []metav1.Condition) []string {
-	reasons := make([]string, 0, len(conditions))
-	for _, condition := range conditions {
-		if !isTrialProjectionConditionType(condition.Type) ||
-			condition.Status != metav1.ConditionFalse || !isTerminalReason(condition.Reason) {
-			continue
-		}
-		reasons = append(reasons, condition.Reason)
-	}
-	return reasons
-}
-
-func isTrialProjectionConditionType(conditionType string) bool {
-	return conditionType == "ExecutionComplete" ||
-		conditionType == edgev1alpha1.ProfilingRunConditionEvidenceVerified
-}
-
-func isTerminalReason(reason string) bool {
-	switch reason {
-	case "InvalidRunSpec",
-		"ExecutionPolicyInvalid",
-		"ActuationPolicyInvalid",
-		"ExecutionLost",
-		"JobFailed",
-		"RequiredStateNotConfirmed",
-		"EvidenceInvalid":
-		return true
-	default:
-		return false
-	}
 }

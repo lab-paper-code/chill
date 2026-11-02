@@ -205,16 +205,52 @@ func TestUIDSelectorExcludesChildrenFromRecreatedSameNameParent(t *testing.T) {
 	}
 }
 
-func TestRunTerminalIgnoresTerminalReasonOnUnrelatedCondition(t *testing.T) {
-	if runTerminal([]metav1.Condition{{
-		Type: "Unrelated", Status: metav1.ConditionFalse, Reason: "JobFailed",
-	}}) {
-		t.Fatal("unrelated condition terminated an idle baseline attempt")
-	}
-	if !runTerminal([]metav1.Condition{{
-		Type: "ExecutionComplete", Status: metav1.ConditionFalse, Reason: "JobFailed",
-	}}) {
-		t.Fatal("owned execution terminal condition was ignored")
+func TestRunOutcomeDrivesBaselineTransition(t *testing.T) {
+	for _, test := range []struct {
+		name                         string
+		evidence                     bool
+		conditionType, reason, phase string
+		completed                    int32
+		writes                       int
+	}{
+		{"verified evidence wins", true, "ExecutionComplete", "JobFailed", edgev1alpha1.ModelLoadedIdleBaselinePhaseComplete, 3, 1},
+		{"running", false, "ExecutionComplete", "JobRunning", edgev1alpha1.ModelLoadedIdleBaselinePhaseMeasuring, 2, 0},
+		{"unrelated condition", false, "Unrelated", "JobFailed", edgev1alpha1.ModelLoadedIdleBaselinePhaseMeasuring, 2, 0},
+		{"failed evidence", false, "EvidenceVerified", "EvidenceInvalid", edgev1alpha1.ModelLoadedIdleBaselinePhaseInsufficient, 2, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			parent := testBaselineParent()
+			parent.Spec.AttemptLimit = 3
+			objects := []client.Object{parent}
+			for attempt := int32(1); attempt <= 3; attempt++ {
+				run := acceptedRun(t, parent, attempt)
+				if attempt == 3 {
+					run.Generation = 2
+					run.Status.Conditions = []metav1.Condition{{
+						Type: test.conditionType, Status: metav1.ConditionFalse, Reason: test.reason,
+						ObservedGeneration: 1,
+					}}
+					if !test.evidence {
+						run.Status.Evidence = nil
+					}
+				}
+				objects = append(objects, &run)
+			}
+			kube := baselineFakeClient(t, objects...)
+			writer := &fakeBaselineResultWriter{reference: testResultReference()}
+			reconciler := newTestReconciler(t, kube,
+				&fakeBaselineDeriver{baseline: testDerivedBaseline(t, 3), references: testFinalReferences(3)}, writer)
+			if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}); err != nil {
+				t.Fatal(err)
+			}
+			updated := &edgev1alpha1.ModelLoadedIdleBaseline{}
+			if err := kube.Get(context.Background(), client.ObjectKeyFromObject(parent), updated); err != nil {
+				t.Fatal(err)
+			}
+			if updated.Status.Phase != test.phase || updated.Status.CompletedRuns != test.completed || writer.writes != test.writes {
+				t.Fatalf("status=%+v writes=%d", updated.Status, writer.writes)
+			}
+		})
 	}
 }
 

@@ -80,9 +80,52 @@ func TestTerminallyInvalidRunsExhaustTheExistingRetryPath(t *testing.T) {
 	}
 }
 
-func TestRequiredStateNotConfirmedIsTerminal(t *testing.T) {
-	if !isTerminalReason("RequiredStateNotConfirmed") {
-		t.Fatal("RequiredStateNotConfirmed was not classified as terminal")
+func TestRunOutcomeDrivesCampaignTransition(t *testing.T) {
+	for _, test := range []struct {
+		name                  string
+		evidence              bool
+		conditionType, reason string
+		verdict               batchenergyoptimization.Verdict
+	}{
+		{"verified evidence wins", true, "ExecutionComplete", "JobFailed", batchenergyoptimization.VerdictCompleted},
+		{"running", false, "ExecutionComplete", "JobRunning", batchenergyoptimization.VerdictPending},
+		{"unrelated condition", false, "Unrelated", "JobFailed", batchenergyoptimization.VerdictPending},
+		{"failed execution", false, "ExecutionComplete", "RequiredStateNotConfirmed", batchenergyoptimization.VerdictFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			parent := testParent()
+			run, err := BuildRun(parent, batchenergyoptimization.Measurement{
+				WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 1,
+			}, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			run.Generation = 2
+			run.Status.Conditions = []metav1.Condition{{
+				Type: test.conditionType, Status: metav1.ConditionFalse, Reason: test.reason,
+				ObservedGeneration: 1,
+			}}
+			if test.evidence {
+				run.Status.Evidence = &edgev1alpha1.ProfilingRunEvidenceReference{Key: "verified"}
+			}
+			snapshot, err := ProjectSnapshot(parent, []edgev1alpha1.ProfilingRun{*run}, nil, []int{1}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if snapshot.Trials[0].Verdict != test.verdict {
+				t.Fatalf("trial = %+v", snapshot.Trials[0])
+			}
+			decision, err := batchenergyoptimization.Decide(snapshot, terminalTrialMethod{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.verdict == batchenergyoptimization.VerdictPending && decision.Action != batchenergyoptimization.ActionWait {
+				t.Fatalf("pending Run advanced campaign: %+v", decision)
+			}
+			if test.verdict == batchenergyoptimization.VerdictFailed && decision.Action != batchenergyoptimization.ActionCreateRun {
+				t.Fatalf("failed attempt did not retry: %+v", decision)
+			}
+		})
 	}
 }
 
