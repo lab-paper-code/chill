@@ -41,9 +41,20 @@ func TestWorkloadSummaryPreservesStateAndBoundsRepeatedEvidence(t *testing.T) {
 	if err := json.Unmarshal(encoded, &summaryWire); err != nil {
 		t.Fatal(err)
 	}
+	for _, workload := range summaryWire {
+		var inputs []map[string]json.RawMessage
+		if err := json.Unmarshal(workload["supportedInputs"], &inputs); err != nil {
+			t.Fatal(err)
+		}
+		for _, input := range inputs {
+			if _, duplicate := input["profileCount"]; duplicate {
+				t.Fatal("profileCount duplicates the profiles array length")
+			}
+		}
+	}
 	for i := range summary {
 		input := summary[i].SupportedInputs[0]
-		if input.ExecutionPath != "summary-path" || input.Artifact != "onnx" || input.ProfileCount != 259 || len(input.Profiles) != 259 {
+		if input.ExecutionPath != "summary-path" || input.Artifact != "onnx" || len(input.Profiles) != 259 {
 			t.Fatalf("input contract lost: %+v", input)
 		}
 		for j, profile := range input.Profiles {

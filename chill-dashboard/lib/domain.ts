@@ -42,7 +42,7 @@ export type AppliedDefinition = {
 export type ObjectIdentity = { store: string; key: string; size: number }
 export type SupportedInput = { executionPath: string; artifact: string; profiles: { id: string; reference: ObjectIdentity; evidence: ObjectIdentity[]; condition: unknown }[] }
 export type WorkloadView = { desired: WorkloadResource; appliedDefinition?: AppliedDefinition; supportedInputs: SupportedInput[]; admission: boolean; readiness: string; reason: string; pending: number; assigned: number; operation?: Operation; observedAt: string }
-export type WorkloadSummary = Omit<WorkloadView, "supportedInputs"> & { supportedInputs: { executionPath: string; artifact: string; profileCount: number; profiles: { id: string }[] }[] }
+export type WorkloadSummary = Omit<WorkloadView, "supportedInputs"> & { supportedInputs: { executionPath: string; artifact: string; profiles: { id: string }[] }[] }
 // Native Response JSON verbatim from POST /api/v1/workloads/{name}/infer.
 type InferenceOutput = { outputs: { name: string; data: string[] }[] }
 
