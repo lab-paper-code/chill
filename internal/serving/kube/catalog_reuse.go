@@ -126,6 +126,7 @@ func decodeProfileReuseRequest(raw string) (profileReuseRequest, error) {
 
 func reuseCondition(condition profilederivation.CurvePlanSpec) profilederivation.CurvePlanSpec {
 	condition.Name, condition.NodeUID = "", ""
+	condition.RuntimeImage = ""
 	condition.MetricSource = profilederivation.CurveMetricSourceContract{}
 	condition.ActiveProtocol.DurationSeconds, condition.ActiveProtocol.MetricDurationSeconds = 0, 0
 	condition.IdleProtocol.DurationSeconds, condition.IdleProtocol.MetricDurationSeconds = 0, 0

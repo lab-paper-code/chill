@@ -887,6 +887,7 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State)) (
 	if _, err := kube.CoreV1().Nodes().Create(ctx, slow, meta.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
+	objects = append(objects, testExecutionFacts())
 	manager.store.client = fake.NewClientBuilder().WithScheme(manager.store.client.Scheme()).WithObjects(objects...).WithInterceptorFuncs(interceptor.Funcs{
 		Patch: func(ctx context.Context, c client.WithWatch, object client.Object, patch client.Patch, opts ...client.PatchOption) error {
 			if err := c.Patch(ctx, object, patch, opts...); err != nil {

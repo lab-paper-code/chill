@@ -231,6 +231,9 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	for _, p := range view.Profiles {
 		sources = append(sources, p.ID)
 	}
+	for _, measurement := range view.CurrentMeasurements {
+		sources = append(sources, "current:"+measurement.ID+"/"+measurement.MeasuredAt.Format(time.RFC3339Nano))
+	}
 	for _, issue := range costs.Issues {
 		sources = append(sources, issue.Code+":"+issue.Source)
 	}
@@ -250,7 +253,7 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	if o.controller != nil && cm.ResourceVersion == o.resourceVersion && signature == o.sources {
 		return nil
 	}
-	preparations, issues := o.preparations(ctx, config, view.Profiles)
+	preparations, issues := o.preparations(ctx, config, view.CurrentProfiles())
 	view.Insufficiencies = append(view.Insufficiencies, issues...)
 	controllerConfig := servingkube.SchedulerControllerConfig{
 		Settings:          config.Settings,

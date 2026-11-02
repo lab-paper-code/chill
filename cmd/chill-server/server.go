@@ -12,6 +12,7 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/kubeconfig"
+	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
@@ -123,7 +124,13 @@ func run(ctx context.Context, opts options) (retErr error) {
 	transport.MaxIdleConns, transport.MaxIdleConnsPerHost, transport.IdleConnTimeout = 0, 256, 30*time.Second
 	native := &firstfloor.Client{HTTPClient: &http.Client{Transport: transport}, Diagnostics: recorder}
 	observer, err := servingkube.NewObserver(store, kube, execution, native, servingkube.ObserverConfig{
-		Namespace:        opts.servingNamespace,
+		Namespace: opts.servingNamespace,
+		RuntimeImage: func(ctx context.Context, profile *serving.Profile) (string, error) {
+			c := profile.Condition
+			return profilerkube.ResolveRuntimeImage(ctx, store.Client(), profilerkube.CandidateResolverOptions{
+				Namespace: opts.factsNamespace, ConfigMapName: opts.factsConfigMap, ConfigMapKey: opts.executionFactsKey,
+			}, c.DeviceClass, profile.NodeName, c.RuntimeFamily, c.Backend)
+		},
 		OnCluster:        func(row serving.ClusterObservation) error { return recordCluster(observationLog, publisher, row) },
 		SelectClusterPod: selectedPod,
 	})

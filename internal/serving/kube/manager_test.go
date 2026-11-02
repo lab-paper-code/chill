@@ -103,7 +103,7 @@ func newManagerHarness(t *testing.T) (*Manager, serving.ObservationLogConfig) {
 			t.Fatal(err)
 		}
 	}
-	store := &Store{client: &managerAPI{Client: fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&api.Workload{}, &corev1.Pod{}, &api.OperationCostMeasurement{}, &api.DispatchOccupancyMeasurement{}).Build()}}
+	store := &Store{client: &managerAPI{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(testExecutionFacts()).WithStatusSubresource(&api.Workload{}, &corev1.Pod{}, &api.OperationCostMeasurement{}, &api.DispatchOccupancyMeasurement{}).Build()}}
 	config := serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: managerArchive{t.TempDir()}}
 	observationLog, err := serving.NewObservationLog(config)
 	if err != nil {
@@ -113,7 +113,7 @@ func newManagerHarness(t *testing.T) (*Manager, serving.ObservationLogConfig) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer, err := NewObserver(store, kubefake.NewSimpleClientset(), rt, &firstfloor.Client{HTTPClient: &http.Client{Timeout: time.Second}}, ObserverConfig{Namespace: "chill-system"})
+	observer, err := NewObserver(store, kubefake.NewSimpleClientset(), rt, &firstfloor.Client{HTTPClient: &http.Client{Timeout: time.Second}}, testObserverConfig(store))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -463,7 +463,7 @@ func TestManagerInterruptedOperationIsTerminalUntilExplicitPut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer, err := NewObserver(m.store, kubefake.NewSimpleClientset(), rt, &firstfloor.Client{HTTPClient: &http.Client{Timeout: time.Second}}, ObserverConfig{Namespace: "chill-system"})
+	observer, err := NewObserver(m.store, kubefake.NewSimpleClientset(), rt, &firstfloor.Client{HTTPClient: &http.Client{Timeout: time.Second}}, testObserverConfig(m.store))
 	if err != nil {
 		t.Fatal(err)
 	}

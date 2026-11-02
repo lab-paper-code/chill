@@ -49,6 +49,7 @@ const (
 
 type ObserverConfig struct {
 	Namespace        string
+	RuntimeImage     func(context.Context, *serving.Profile) (string, error)
 	OnCluster        func(serving.ClusterObservation) error
 	SelectClusterPod func(*corev1.Pod) bool
 }
@@ -488,7 +489,11 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 		instance, publish := o.sourceUnavailable(pod, errors.New("Pod is not labelled as a serving instance"))
 		return instance, publish, nil
 	}
-	spec, err := sourceSpec(pod, node, profile, classes, "")
+	desiredImage, err := o.currentRuntimeImage(ctx, profile)
+	var spec firstfloor.Spec
+	if err == nil {
+		spec, err = sourceSpec(pod, node, profile, classes, "", desiredImage)
+	}
 	if err == nil {
 		err = ownershipErr
 	}
@@ -621,7 +626,14 @@ func workloadOwner(owners []metav1.OwnerReference) string {
 	return ""
 }
 
-func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass, endpoint string) (firstfloor.Spec, error) {
+func (o *Observer) currentRuntimeImage(ctx context.Context, profile *serving.Profile) (string, error) {
+	if profile == nil || o.config.RuntimeImage == nil {
+		return "", errors.New("selected catalog profile and current execution declaration resolver required")
+	}
+	return o.config.RuntimeImage(ctx, profile)
+}
+
+func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass, endpoint, desiredImage string) (firstfloor.Spec, error) {
 	var empty firstfloor.Spec
 	if err := validateSourcePlacement(pod, node, profile, classes); err != nil {
 		return empty, err
@@ -642,7 +654,7 @@ func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, cl
 	if len(routing) > 1 {
 		return empty, errors.New("applied serving routing must name at most one Workload")
 	}
-	if err := validateSourceContainers(pod, condition); err != nil {
+	if err := validateSourceContainers(pod, condition, desiredImage); err != nil {
 		return empty, err
 	}
 	runtime := &pod.Spec.Containers[0]
@@ -704,7 +716,7 @@ func deliveredModelFiles(files []string) []string {
 	return delivered
 }
 
-func validateSourceContainers(pod *corev1.Pod, condition *profilederivation.CurvePlanSpec) error {
+func validateSourceContainers(pod *corev1.Pod, condition *profilederivation.CurvePlanSpec, desiredImage string) error {
 	if len(pod.Spec.Containers) != 1 || len(pod.Spec.InitContainers) != 3 || len(pod.Spec.EphemeralContainers) != 0 || pod.Spec.HostNetwork {
 		return errors.New("native source requires isolated firstfloor runner, artifact, preprocessor and immutable profile init containers")
 	}
@@ -720,7 +732,7 @@ func validateSourceContainers(pod *corev1.Pod, condition *profilederivation.Curv
 	}
 	runtime, artifact, preprocessor, bundle := pod.Spec.Containers[0], pod.Spec.InitContainers[0], pod.Spec.InitContainers[1], pod.Spec.InitContainers[2]
 	status := firstfloorStatus(pod)
-	if runtime.Name != firstfloorContainerName || artifact.Name != "artifact" || preprocessor.Name != "preprocessor" || bundle.Name != profileInitContainerName || status == nil || status.State.Running == nil || !status.Ready || status.ContainerID == "" || !observedImage(runtime.Image, status.ImageID, condition.RuntimeImage) {
+	if runtime.Name != firstfloorContainerName || artifact.Name != "artifact" || preprocessor.Name != "preprocessor" || bundle.Name != profileInitContainerName || status == nil || status.State.Running == nil || !status.Ready || status.ContainerID == "" || !observedImage(runtime.Image, status.ImageID, desiredImage) {
 		return errors.New("actual immutable native runtime image/container unavailable")
 	}
 	if !initCompleted(pod, artifact, condition.Artifact.Image) {
@@ -740,7 +752,7 @@ func validateSourceContainers(pod *corev1.Pod, condition *profilederivation.Curv
 	if !slices.Equal(preprocessor.Command, []string{"sh", "-ec"}) || !slices.Equal(preprocessor.Args, []string{`cp -R "$1"/. /chill-preprocessor/`, "--", condition.Preprocessor.Path}) || !sharedProjection(pod, preprocessor, runtime, "/chill-preprocessor", "/preprocessor") {
 		return errors.New("preprocessor must use the verified read-only shared-volume projection")
 	}
-	if !initCompleted(pod, bundle, condition.RuntimeImage) {
+	if !initCompleted(pod, bundle, desiredImage) {
 		return errors.New("immutable profile materialization unconfirmed")
 	}
 	return nil
