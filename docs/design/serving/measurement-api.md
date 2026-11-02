@@ -510,6 +510,8 @@ support는 `{verdict:"Compatible"|"Incompatible"|"Unknown",node:{name,uid}|null,
 기본 현재 선택은 셀(model/class/path/powerMode)별 `measuredAt` 최신 하나(A)다.
 `currentMeasurement={id,model,deviceClass,executionPath,powerMode,measuredAt}`는 공통
 `derivation.CurrentMeasurements` 결과 그대로이며 후보 부재 시 null이다. 동률은 ID 사전순 최소다.
+`currentMeasurement.id`는 namespace/name/BEO UID이고, `variant.id`는 preflight에 전달할 동결 조건
+fingerprint다. `variant.requestIds`가 두 identity를 연결하며 같은 조건의 반복 측정도 선택 전에는 합치지 않는다.
 현재 variant `{id,condition,measuredAt,assessment,batchProgress,resultRows,requestIds,runIds,profileIds}`만
 셀 상태·대표값·배치 집계에 사용한다. 최신이 failed/partial이면 그대로 표시하며 과거 성공으로 대체하지 않는다.
 `batchProgress={basis,target,measured,criteriaMet,missing,inProgress,unknown}`은 현재 측정의 batch 정수 배열이다.
