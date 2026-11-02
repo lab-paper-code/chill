@@ -90,7 +90,7 @@ test("condition choices name Node and dataset without dumping frozen JSON",()=>{
   assert.equal(deviceLabel("jetson-agx-orin-64g"),"AGX Orin 64g")
 })
 
-const cell:MeasurementCoverageCell={id:"cell",model:{name:model.name,uid:model.uid},deviceClass:{name:cls.name,uid:cls.uid},executionPath:"cpu",powerMode:"MAXN",support:{verdict:"Unknown",node:{name:"node",uid:"node-uid"},reasons:[{code:"RuntimeDeclarationMissing",message:"선언 없음"}]},assessment:{status:"unmeasured",displayStatus:"unmeasured",label:"미측정",reasons:[],execution:null,evidence:{available:false,accepted:false,reasons:[]},checklist:{criteriaMet:null,version:"result-checklist.v1",checks:[]},scope:{schedulerUsed:null,reused:false,facts:[]}},variantCount:0,variants:[],batchProgress:{basis:"explicit",target:[1,2,4,8],measured:[1,2],criteriaMet:[1],missing:[4,8],inProgress:[4],unknown:[]},representative:null,failureSummary:[],history:[]}
+const cell:MeasurementCoverageCell={id:"cell",model:{name:model.name,uid:model.uid},deviceClass:{name:cls.name,uid:cls.uid},executionPath:"cpu",powerMode:"MAXN",currentMeasurement:null,support:{verdict:"Unknown",node:{name:"node",uid:"node-uid"},reasons:[{code:"RuntimeDeclarationMissing",message:"선언 없음"}]},assessment:{status:"unmeasured",displayStatus:"unmeasured",label:"미측정",reasons:[],execution:null,evidence:{available:false,accepted:false,reasons:[]},checklist:{criteriaMet:null,version:"result-checklist.v1",checks:[]},scope:{schedulerUsed:null,reused:false,facts:[]}},variantCount:0,variants:[],batchProgress:{basis:"explicit",target:[1,2,4,8],measured:[1,2],criteriaMet:[1],missing:[4,8],inProgress:[4],unknown:[]},representative:null,failureSummary:[],history:[]}
 test("coverage hides proven unsupported paths but retains truly unknown declarations",()=>{
   assert.equal(coveragePathVisible(cell),true)
   assert.equal(coveragePathVisible({...cell,support:{...cell.support,verdict:"Incompatible",reasons:[{code:"RuntimeUnsupported",message:"runtime 미지원"}]}}),false)
@@ -108,14 +108,18 @@ test("batch slots preserve separate evidence, running, missing and unknown state
   assert.equal(coverageVariant(multiple,"first"),first)
 })
 
-test("previous runtime stays selectable without overriding current runtime progress",()=>{
-  const current={id:"current",condition:{},assessment:{...cell.assessment,displayStatus:"usable" as const},batchProgress:{...cell.batchProgress!,measured:cell.batchProgress!.target},resultRows:[],requestIds:[],runIds:[],profileIds:[]}
-  const previous={...current,id:"previous",assessment:{...current.assessment,reasons:[{code:"PreviousRuntime",message:"이전 runtime",sourceIds:[]}]},batchProgress:{...current.batchProgress,measured:[1]}}
-  const mixed={...cell,assessment:current.assessment,batchProgress:null,variants:[previous,current]}
-  assert.equal(coverageVariant(mixed),current)
-  assert.equal(coverageMeasurementStatus(mixed),"usable")
-  assert.equal(coverageVariant(mixed,"previous"),previous)
-  assert.equal(coverageProgress({...mixed,assessment:cell.assessment,variants:[previous]}),null)
+test("current condition variants use status, representative and first fallback without hiding incomplete progress",()=>{
+  const complete={id:"complete",condition:{},assessment:{...cell.assessment,displayStatus:"usable" as const},batchProgress:{...cell.batchProgress!,measured:cell.batchProgress!.target},resultRows:[],requestIds:[],runIds:[],profileIds:[]}
+  const incomplete={...complete,id:"incomplete",batchProgress:{...complete.batchProgress,measured:[1]}}
+  const mixed={...cell,assessment:complete.assessment,batchProgress:null,variants:[incomplete,complete]}
+  assert.equal(coverageVariant(mixed),incomplete)
+  assert.equal(coverageProgress(mixed),incomplete.batchProgress)
+  assert.equal(coverageMeasurementStatus(mixed),"insufficient")
+  assert.equal(coverageVariant(mixed,"complete"),complete)
+  assert.equal(coverageVariant({...mixed,assessment:cell.assessment,representative:{variantId:"complete",batch:1,incrementalJoulesPerItem:1,p95Milliseconds:2}}),complete)
+  assert.equal(coverageVariant({...mixed,assessment:cell.assessment}),incomplete)
+  assert.equal(coverageProgress({...mixed,variants:[incomplete]}),incomplete.batchProgress)
+  assert.equal(coverageMeasurementStatus({...mixed,assessment:{...cell.assessment,displayStatus:"problem"}}),"problem")
 })
 test("coverage requests work for unmeasured cells without exact variants and preserve return filters",()=>{
   const href=new URL(coverageRequestHref(cell,"ns","/measurements?cell=cell&status=unmeasured"),"http://local")
@@ -194,15 +198,16 @@ test("quality reasons come from variant checks, count each cell once and never i
   assert.equal(coverageQuality({...cell,variants:[met]}).label,"기준 충족")
 })
 
-test("cell quality excludes previous runtime checks but retains explicit detail selection",()=>{
+test("all current condition checks affect quality while explicit detail selection remains available",()=>{
   const pass={...cell.assessment,checklist:{...cell.assessment.checklist,criteriaMet:true,checks:[{code:"ActiveTrials",result:"pass" as const,message:"enough",sourceIds:[]}]}}
-  const current={id:"current",condition:{},assessment:pass,batchProgress:cell.batchProgress!,resultRows:[],requestIds:[],runIds:[],profileIds:[]}
-  const previous={...current,id:"previous",assessment:{...pass,reasons:[{code:"PreviousRuntime",message:"이전 runtime",sourceIds:[]}],checklist:{...pass.checklist,criteriaMet:false,checks:[{code:"ActiveTrials",result:"fail" as const,message:"few",sourceIds:[]}]}}}
-  const mixed={...cell,variants:[previous,current]}
-  assert.equal(coverageQuality(mixed).label,"기준 충족")
-  assert.deepEqual(coverageQualityReasons([mixed]),[])
-  assert.equal(coverageVariant(mixed,"previous"),previous)
-  assert.equal(coverageQuality({...cell,variants:[previous]}).label,"판정 불가")
+  const passing={id:"passing",condition:{},assessment:pass,batchProgress:cell.batchProgress!,resultRows:[],requestIds:[],runIds:[],profileIds:[]}
+  const failing={...passing,id:"failing",assessment:{...pass,checklist:{...pass.checklist,criteriaMet:false,checks:[{code:"ActiveTrials",result:"fail" as const,message:"few",sourceIds:[]}]}}}
+  const mixed={...cell,variants:[passing,failing]}
+  assert.equal(coverageQuality(mixed).label,"기준 미충족")
+  assert.deepEqual(coverageQualityReasons([mixed]),[{code:"ActiveTrials",label:"실행 반복 부족",count:1}])
+  assert.equal(coverageVariant(mixed,"failing"),failing)
+  assert.equal(coverageVariant(mixed,"passing"),passing)
+  assert.equal(coverageQuality({...cell,variants:[failing]}).label,"기준 미충족")
 })
 
 test("only explicit failing checks fail quality; absent or unknown evidence stays undecidable",()=>{
@@ -265,6 +270,29 @@ function renderCoverage(query="",extraCells:MeasurementCoverageCell[]=[],freshne
   runInNewContext(compiled,{exports,require:(name:string)=>name in modules?modules[name]:require(name),URLSearchParams})
   return renderToStaticMarkup(createElement(exports.MeasurementCoveragePage as ComponentType))
 }
+
+test("current measurement identity and time come only from the server even for failed or partial cells",()=>{
+  const current={id:"latest-measurement",model:model.name,deviceClass:cls.name,executionPath:"cpu",powerMode:"MAXN",measuredAt:"2026-11-03T01:02:03Z"}
+  for(const phase of ["failed","partial"] as const)for(const currentMeasurement of [current,null]) {
+    const assessment={...cell.assessment,status:phase,displayStatus:phase==="failed"?"problem" as const:"insufficient" as const,checklist:{...cell.assessment.checklist,criteriaMet:false,checks:[{code:"PowerSource",result:"fail" as const,message:"전력 출처 불일치",sourceIds:[]}]}}
+    const selectedCell:MeasurementCoverageCell={...cell,id:"current-cell",currentMeasurement,assessment,variantCount:1,variants:[{id:"history-variant",condition:{},assessment,batchProgress:cell.batchProgress!,resultRows:[resultRow(30)],profileIds:["older-success"],requestIds:[],runIds:[]}]}
+    const html=renderCoverage("cell=current-cell",[selectedCell])
+    const selected=html.slice(html.indexOf('id="coverage-selected-condition"'))
+    const facts=selected.match(/<table[^>]*aria-label="현재 측정"[^>]*>.*?<\/table>/)?.[0]
+    assert.ok(facts)
+    if(currentMeasurement) {
+      assert.match(facts,/latest-measurement/)
+      assert.match(facts,/<time dateTime="2026-11-03T01:02:03Z">/)
+      assert.ok(facts.includes(measurementHelpers.formatMeasurementTime(current.measuredAt)))
+    } else {
+      assert.match(facts,/없음/)
+      assert.match(facts,/미제공/)
+      assert.doesNotMatch(facts,/<time/)
+    }
+    assert.doesNotMatch(facts,/older-success|history-variant/)
+    assert.match(selected,/<a href="\/measurements\/requests\/new\?/)
+  }
+})
 test("M1–M2 unsupported cells stay visible but only supported cells contribute denominators",()=>{
   const html=renderCoverage()
   assert.equal((html.match(/data-coverage-cell=/g)??[]).length,3)

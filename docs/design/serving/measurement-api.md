@@ -505,23 +505,25 @@ catalog 내부 메모리 facts 타입은 기존 serving 경계에 두고 cmd ada
 catalog/kube가 queryapi transport를 import하도록 package 예외를 추가하지 않는다.
 
 **Cell**: model UID × class UID × path × mode다. 각 이름/UID와 `support`, `assessment`,
-`variantCount`, `variants`, nullable `batchProgress`/`representative`, `failureSummary`, `history`를 갖는다.
+`variantCount`, `variants`, nullable `currentMeasurement`/`batchProgress`/`representative`, `failureSummary`, `history`를 갖는다.
 support는 `{verdict:"Compatible"|"Incompatible"|"Unknown",node:{name,uid}|null,reasons:[]}`다.
-variant는 frozen Node/image/artifact/path/dataset/preprocessor UID·공유 runtime/protocol/metricSource까지
-같은 조건의 `{id,condition,assessment,batchProgress,resultRows,requestIds,runIds,profileIds}`다.
-`batchProgress={basis,target,measured,criteriaMet,missing,inProgress,unknown}`이며 각 집합은 batch 정수 배열이다.
-**variant가 2개 이상이면 Cell.batchProgress와 representative는 null**, ‘조건 k개’만 표시한다.
-합집합/교집합으로 가짜 완성 조건을 만들지 않는다. variant 선택 후에만 그 batch/대표값을 보인다.
-대표값은 `{variantId,batch,incrementalJoulesPerItem,p95Milliseconds}`로 같은 실제 batch에 한정한다.
-현재 차트 실행 선언의 runtime 이미지 목록은 기존 compatibility `NodeRows`의
-`inputs.runtimeDeclaration.image`를 재사용한다. profile condition의 `RuntimeImage`가
-이 목록에 없으면 variant와 결과 행은 보존하되 `assessment.reasons`의 `PreviousRuntime`
-(`이전 runtime`)으로 구분하고 셀 상태·품질·부족 batch 조치 집계에서 제외한다.
-현재 runtime variant가 없는 셀은 이전 측정만으로 시도/완료를 추정하지 않고 미측정으로 본다.
-현재 runtime variant끼리의 판정과 batch 비합산 규칙, 저장 CR·증거 계약은 바꾸지 않는다.
-compatibility source 또는 Node별 선언 조회(`CompatibilityReadFailed`)가 실패하면
-이미지 부재를 확정하지 않는다. 이때 `PreviousRuntime`으로 분류하지 않고 기존 variant 판정과
-support Unknown을 보존한다. 상세에서는 이전 runtime variant도 계속 선택할 수 있다.
+기본 현재 선택은 셀(model/class/path/powerMode)별 `measuredAt` 최신 하나(A)다.
+`currentMeasurement={id,model,deviceClass,executionPath,powerMode,measuredAt}`는 공통
+`derivation.CurrentMeasurements` 결과 그대로이며 후보 부재 시 null이다. 동률은 ID 사전순 최소다.
+현재 variant `{id,condition,measuredAt,assessment,batchProgress,resultRows,requestIds,runIds,profileIds}`만
+셀 상태·대표값·배치 집계에 사용한다. 최신이 failed/partial이면 그대로 표시하며 과거 성공으로 대체하지 않는다.
+`batchProgress={basis,target,measured,criteriaMet,missing,inProgress,unknown}`은 현재 측정의 batch 정수 배열이다.
+대표값 `{variantId,batch,incrementalJoulesPerItem,p95Milliseconds}`도 같은 실제 batch에 한정한다.
+runtime 이미지 버전은 profile 유효 조건이 아니다. 기록된 `RuntimeImage`는 당시 값 그대로 보존한다.
+CPU quota/affinity는 현재 선택 키가 아니다. 과거 측정은 `history`와 기존 profile/raw 단건 조회에 남고,
+공개 profile 기록과 셀의 현재 선택은 분리한다. 현재/이전 이미지 선택 분기는 없다.
+시각은 검증된 Complete profile의 raw 실행 완료 시각, 없으면 현재 generation terminal BEO의
+`MeasurementComplete` condition LastTransitionTime이며 둘 다 없으면 zero다. 생성 시각을 대신 쓰지 않는다.
+`chill.dacs.io/replaces-batch-energy-optimization`의 같은 namespace 대상은 최신 선택보다 먼저 제외한다.
+coverage 캡처에 없는 annotation은 기존 BEO 목록의 `metadata.annotations`에서 읽는다.
+선언 미독 시 support Unknown을 보존하고 확인된 지원 선언 충돌은 `CurrentDeclarationConflict`로 표시한다.
+usable/problem 평가는 사실 표시이며 서빙·profile 선택·요청 진행의 추가 거절 조건으로 쓰지 않는다.
+worker 실행에는 현재 class/node/backend 선언의 최신 이미지를 쓴다.
 failureSummary는 정확 request/Run identity·batch·code·exitCode·최대 160자 한 줄 원인·후속 relation만,
 긴 diff/log는 기존 상세에 둔다. 정확 후속만 verified-follow-up, 유사 조건은 related-candidate다.
 

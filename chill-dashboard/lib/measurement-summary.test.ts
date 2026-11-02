@@ -3,6 +3,7 @@ import test from "node:test"
 import { restoreMeasurementSummary, parseMeasurementJSON } from "./measurement-summary.ts"
 import { readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
+import type { MeasurementCoverageCell } from "./read-types.ts"
 
 test("measurement summaries reject exponential DAGs and excessive expanded depth",()=>{
   const envelope=(values:unknown[],body:unknown="~"+(values.length-1))=>({readProjection:{version:"measurement-summary.v1",values,shapes:[]},body})
@@ -47,6 +48,15 @@ test("measurement summaries share sources and retain checks, uncertainty, zero, 
   assert.equal(restored.completedItems,18446744073709551615n)
   assert.deepEqual(restored.page,response.page)
   assert.equal("readProjection" in restored,false)
+})
+
+test("coverage summaries preserve explicit current measurements and null without inferring from history",()=>{
+  const current={id:"latest-failed",model:"model",deviceClass:"class",executionPath:"cpu",powerMode:"MAXN",measuredAt:"2026-11-03T01:02:03Z"}
+  const response={readProjection:{version:"measurement-summary.v1",shapes:[["id","model","deviceClass","executionPath","powerMode","measuredAt"]],values:[{$o:[0,current.id,current.model,current.deviceClass,current.executionPath,current.powerMode,current.measuredAt]}]},cells:[{currentMeasurement:"~0",assessment:{displayStatus:"problem"},variants:[{profileIds:["older-success"]}]},{currentMeasurement:null,assessment:{displayStatus:"insufficient"},variants:[{profileIds:["other-profile"]}]}]}
+  const restored=parseMeasurementJSON(JSON.stringify(response)) as {cells:Pick<MeasurementCoverageCell,"currentMeasurement">[]}
+  assert.deepEqual(restored.cells[0].currentMeasurement,current)
+  assert.equal(restored.cells[1].currentMeasurement,null)
+  assert.deepEqual(parseMeasurementJSON(JSON.stringify({cells:[{currentMeasurement:current},{currentMeasurement:null}]})),{cells:[{currentMeasurement:current},{currentMeasurement:null}]})
 })
 
 test("invalid and forward references fail rather than inventing evidence",()=>{

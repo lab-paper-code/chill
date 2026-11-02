@@ -16,8 +16,6 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-const coveragePreviousRuntime = "PreviousRuntime"
-
 func coverageCellID(model, class, path, mode string) string {
 	return strings.Join([]string{model, class, path, mode}, "/")
 }
@@ -43,6 +41,7 @@ type coverageProjection struct {
 	owners    map[string][]api.ProfilingRun
 	profiles  map[string][]serving.Profile
 	adopted   map[string]bool
+	replaced  map[string]bool
 }
 
 func buildMeasurementCoverage(
@@ -218,6 +217,17 @@ func (p *coverageProjection) indexEvidence() {
 	p.owners = coverageOwnedRuns(p.base)
 	p.profiles = map[string][]serving.Profile{}
 	p.adopted = map[string]bool{}
+	byName := make(map[string]string, len(p.base.requests.Items))
+	replacements := map[string]string{}
+	for _, task := range p.base.requests.Items {
+		id := coverageRequestID(task)
+		byName[task.Namespace+"/"+task.Name] = id
+		if name := task.Annotations[profilederivation.ReplacesMeasurementAnnotation]; name != "" &&
+			task.DeletionTimestamp == nil {
+			replacements[id] = task.Namespace + "/" + name
+		}
+	}
+	p.replaced = profilederivation.ReplacedMeasurements(replacements, byName)
 	for _, profile := range p.base.catalog.Profiles {
 		if facts, ok := p.base.catalog.MeasurementFacts[profile.ID]; ok {
 			id := facts.Request.Namespace + "/" + facts.Request.Name + "/" + facts.Request.UID
@@ -316,12 +326,10 @@ func (p *coverageProjection) addPlannedVariant(
 	cell *queryapi.MeasurementCoverageCell, task api.BatchEnergyOptimization,
 	assessment queryapi.MeasurementAssessment,
 ) {
-	variant := coverageFindVariant(cell, queryapi.MeasurementVariantID(task.Spec), task.Spec, p.out.Scope.GoalBasis)
+	variant := coverageFindVariant(cell, coverageRequestID(task), task.Spec, p.out.Scope.GoalBasis)
+	variant.MeasuredAt = coverageMeasurementTime(task, time.Time{})
 	variant.RequestIDs = append(variant.RequestIDs, coverageRequestID(task))
-	if variant.Assessment.Status == "" || assessment.DisplayStatus == queryapi.MeasurementProblem ||
-		assessment.Status == queryapi.MeasurementRunning {
-		variant.Assessment = assessment
-	}
+	variant.Assessment = assessment
 	variant.Assessment.Reasons = append(variant.Assessment.Reasons, coverageReason(
 		"PlannedConditionUnconfirmed", "요청 spec만 확인했으며 동결 실행 조건의 중복 여부는 검사에서 확인해야 합니다",
 	))
@@ -335,12 +343,28 @@ func (p *coverageProjection) addPlannedVariant(
 	}
 }
 
+func coverageMeasurementTime(task api.BatchEnergyOptimization, measuredAt time.Time) time.Time {
+	if task.Status.Phase != string(api.MeasurementPhaseComplete) {
+		measuredAt = time.Time{}
+	}
+	if (task.Status.Phase == string(api.MeasurementPhaseComplete) ||
+		task.Status.Phase == string(api.MeasurementPhaseFailed)) &&
+		task.Status.ObservedGeneration == task.Generation {
+		for i, condition := range task.Status.Conditions {
+			if condition.Type == "MeasurementComplete" && condition.ObservedGeneration == task.Generation {
+				return profilederivation.MeasurementTime(measuredAt, task.Status.Conditions[i:i+1])
+			}
+		}
+	}
+	return profilederivation.MeasurementTime(measuredAt, nil)
+}
+
 func (p *coverageProjection) addProfile(
 	cell *queryapi.MeasurementCoverageCell, task api.BatchEnergyOptimization, profile serving.Profile,
 ) {
 	facts := p.base.catalog.MeasurementFacts[profile.ID]
-	variant := coverageFindVariant(cell, queryapi.MeasurementVariantID(facts.Condition),
-		facts.Condition, p.out.Scope.GoalBasis)
+	variant := coverageFindVariant(cell, coverageRequestID(task), facts.Condition, p.out.Scope.GoalBasis)
+	variant.MeasuredAt = coverageMeasurementTime(task, profile.MeasuredAt)
 	variant.RequestIDs = append(variant.RequestIDs, coverageRequestID(task))
 	variant.ProfileIDs = append(variant.ProfileIDs, profile.ID)
 	variant.BatchProgress.Target = coverageBatches(append(
@@ -416,64 +440,21 @@ func (p *coverageProjection) addRuns() {
 }
 
 func (p *coverageProjection) assessCell(cell *queryapi.MeasurementCoverageCell) {
-	declarationsRead := p.base.failures["compatibility"] == nil && len(p.base.compatibility.NodeRows) > 0 &&
-		!slices.ContainsFunc(p.base.compatibility.NodeRows, func(row queryapi.ModelCompatibilityView) bool {
-			return slices.ContainsFunc(row.Reasons, func(reason queryapi.ModelCompatibilityReason) bool {
-				return reason.Code == "CompatibilityReadFailed"
-			})
-		})
-	children := make([]queryapi.MeasurementAssessment, 0, len(cell.Variants))
-	var current *queryapi.MeasurementCoverageVariant
+	candidates := make([]profilederivation.MeasurementSelection, 0, len(cell.Variants))
 	for i := range cell.Variants {
 		variant := &cell.Variants[i]
 		p.assessVariant(variant)
-		if condition, ok := variant.Condition.(profilederivation.CurvePlanSpec); ok && declarationsRead {
-			declared := slices.ContainsFunc(p.base.compatibility.NodeRows,
-				func(row queryapi.ModelCompatibilityView) bool {
-					return condition.RuntimeImage != "" && row.Inputs.RuntimeDeclaration != nil &&
-						row.Inputs.RuntimeDeclaration.Image == condition.RuntimeImage
-				})
-			if !declared {
-				variant.Assessment.Reasons = append(variant.Assessment.Reasons, coverageReason(
-					coveragePreviousRuntime, "이전 runtime · 현재 실행 선언에 없어 셀 집계에서 제외",
-				))
-				continue
-			}
-		}
-		current = variant
-		children = append(children, variant.Assessment)
-	}
-	cell.VariantCount = len(cell.Variants)
-	if len(cell.Variants) == 1 && len(children) == 1 {
-		variant := current
-		cell.BatchProgress = &variant.BatchProgress
-		for _, row := range variant.ResultRows {
-			if row.RowKind == queryapi.ResultRowSourceReference {
-				continue
-			}
-			cell.Representative = &queryapi.MeasurementRepresentative{
-				VariantID: variant.ID, Batch: row.Batch, IncrementalJoulesPerItem: row.IncrementalJoulesPerItem,
-				P95Milliseconds: row.P95Milliseconds,
-			}
-			break
-		}
-	}
-	support := cell.Support.Verdict
-	if len(cell.Variants) > 0 && len(children) == 0 {
-		// Retained measurements on removed runtimes do not constitute a current attempt.
-		support = queryapi.MeasurementSupportCompatible
-	}
-	cell.Assessment = queryapi.AssessMeasurement(queryapi.MeasurementAssessmentInput{
-		Children: children, Support: support, Attempted: len(children) > 0 && len(cell.History) > 0,
-		SourcesComplete: p.base.failures["BEO"] == nil && p.base.failures["Run"] == nil,
-	})
-	if cell.Support.Verdict == queryapi.MeasurementSupportIncompatible && cell.Assessment.Evidence.Accepted {
-		cell.Assessment = queryapi.AssessMeasurement(queryapi.MeasurementAssessmentInput{
-			Accepted: true, Available: true, Problems: []queryapi.MeasurementReason{
-				coverageReason("CurrentDeclarationConflict", "보존 측정과 현재 지원 선언이 일치하지 않습니다"),
-			},
+		candidates = append(candidates, profilederivation.MeasurementSelection{
+			ID: variant.ID, Model: cell.Model.Name, DeviceClass: cell.DeviceClass.Name,
+			ExecutionPath: cell.ExecutionPath, PowerMode: cell.PowerMode, MeasuredAt: variant.MeasuredAt,
 		})
 	}
+	var current *profilederivation.MeasurementSelection
+	if selected := profilederivation.CurrentMeasurements(candidates, p.replaced); len(selected) > 0 {
+		current = &selected[0]
+	}
+	*cell = queryapi.AssessMeasurementCoverageCell(*cell, current,
+		p.base.failures["BEO"] == nil && p.base.failures["Run"] == nil)
 }
 
 func (p *coverageProjection) assessVariant(variant *queryapi.MeasurementCoverageVariant) {
