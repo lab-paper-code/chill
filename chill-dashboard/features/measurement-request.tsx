@@ -4,7 +4,7 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useState, type ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { ApiError, useChillMutation, useChillQuery, useSession } from "@/lib/client"
+import { ApiError, decodeResponse, useChillMutation, useChillQuery, useSession } from "@/lib/client"
 import { QueryGate, SourceJSON } from "@/components/read-region"
 import { Screen } from "@/components/screen"
 import { PreflightAnswer, preflightConclusion } from "@/features/read-pages"
@@ -206,7 +206,7 @@ export function MeasurementRequestPage() {
       const response=await fetch(`/api/chill/v1/scheduler/profiles?${new URLSearchParams({view:"summary",limit:"50",offset:String(offset)})}`,{headers:{Authorization:`Bearer ${token}`},signal,cache:"no-store",credentials:"omit"})
       const text=await response.text()
       if(!response.ok)throw new ApiError(response.status,text,null)
-      const page=parseMeasurementJSON(text) as ProfilesView
+      const page=decodeResponse(text,parseMeasurementJSON) as ProfilesView
       all.push(...page.profiles??[])
       if(page.page?.nextOffset===undefined)return {...page,profiles:all}
       if(page.page.nextOffset<=offset)throw new ApiError(0,"프로파일 페이지가 전진하지 않습니다",null)

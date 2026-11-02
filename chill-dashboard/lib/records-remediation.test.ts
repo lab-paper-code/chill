@@ -66,6 +66,7 @@ test("identity changes retain request and power API kinds and their own cursor",
       let state=0
       class Client {async cancelQueries(){}clear(){}getDefaultOptions(){return {}}}
       const modules={react:{createContext:()=>({}),useState:(initial:unknown)=>{const index=state++;return [index===2?"old-token":typeof initial==="function"?(initial as ()=>unknown)():initial,()=>{}]},useEffect:()=>{},useCallback:(callback:(value:string)=>Promise<void>)=>{callbacks.push(callback);return callback}},"@tanstack/react-query":{QueryClient:Client,QueryCache:class{},MutationCache:class{}},"next/navigation":{useRouter:()=>({replace:(value:string)=>urls.push(value)})},"@/components/ui/button":{},"@/components/ui/input":{},"@/components/ui/dialog":{},"@/components/brand":{},"lucide-react":{},"@/lib/scheduler":{},"@/lib/session-token":{}}
+      Object.assign(modules,{"@/lib/measurement-summary":{}})
       const exports=load("../lib/client.tsx",modules)
       ;(exports.SessionProvider as (props:{children:null})=>unknown)({children:null})
       await callbacks[0]("new-token")
