@@ -21,4 +21,5 @@ Dashboard·CLI는 같은 권한·검증·비동기 결과 의미를 사용하되
 - 공개 오류 코드는 계약이므로 `ConsoleUnavailable`/`ConsoleTimeout`과 기존 `console.chill.dacs.io/v1alpha1` wire API version을 유지한다. 실행·배포·설정·Go 이름이나 alias는 아니다.
 - Query API는 Service 직접 접근도 TokenReview·URL/native SAR로 검증한다. ChillServer는 원 사용자 bearer만 전달하고 identity header는 전달·신뢰하지 않는다. CLI runs show도 기존 ownerClient HTTPS·bearer 경로를 재사용한다. native detail은 이름이 `preflight`여도 `get NAME` SAR을 요구하며 `list` 예외는 POST campaign preflight 경로에만 적용한다.
 - namespace coverage cache는 기존 30초 fresh/최대 5분 stale 정책을 그대로 Query API에 둔다. 큰 조회의 CPU/RSS/응답 크기와 serving 영향은 live 성능 수용이 필요하며 프로세스 분리만으로 간섭 부재를 주장하지 않는다.
+- 공유 CPU cutover 뒤 ProfilingRun 목록과 profile 목록은 CPU quota/request/affinity 필터·정렬 입력을 받지 않는다. `cpu` 쿼리는 InvalidQuery이며 CPU 환경은 실행 관측으로만 보존한다. `cmd/chill`에는 해당 CPU 필터 플래그가 없다. Query evidence 검증은 Node·mode·dataset/protocol·메모리/GPU·원시 신원을 유지하고 삭제된 frozen CPU 계약을 다시 요구하지 않는다.
 

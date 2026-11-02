@@ -108,7 +108,7 @@ func (q *listQuery) parseRunFilter(key, value string) bool {
 			return false
 		}
 		q.condition = value
-	case "model", "deviceClass", queryNode, "path", "powerMode", "cpu", queryRunStatus, "parentUID", "group":
+	case "model", "deviceClass", queryNode, "path", "powerMode", queryRunStatus, "parentUID", "group":
 		if len(value) > 2048 {
 			return false
 		}

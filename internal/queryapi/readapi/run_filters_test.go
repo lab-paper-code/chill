@@ -11,7 +11,6 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/queryapi"
-	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -24,15 +23,13 @@ func TestRunFiltersApplyToEntireSnapshotBeforePagination(t *testing.T) {
 	}
 	selected.Spec.Candidate = api.ProfilingRunCandidateSpec{ModelSpec: "model", DeviceClass: "device", ExecutionPath: "path", PowerMode: "mode"}
 	selected.Spec.TargetNode = "node"
-	quota := resource.MustParse("2")
-	selected.Spec.Measurement.CPUQuota = &quota
 	snapshot := queryapi.ProfilingRunsSnapshot{Namespace: "ns"}
 	for range 30 {
 		snapshot.Runs = append(snapshot.Runs, api.ProfilingRun{ObjectMeta: meta.ObjectMeta{Namespace: "ns", Name: "other"}})
 	}
 	snapshot.Runs = append(snapshot.Runs, selected)
 	handler := NewQueryHandler(QueryReaders{ProfilingRuns: func(context.Context, string) (queryapi.ProfilingRunsSnapshot, error) { return snapshot, nil }})
-	for key, value := range map[string]string{"model": "model", "deviceClass": "device", "node": "node", "path": "path", "powerMode": "mode", "cpu": "2", "status": "problem", "parentUID": "parent-uid"} {
+	for key, value := range map[string]string{"model": "model", "deviceClass": "device", "node": "node", "path": "path", "powerMode": "mode", "status": "problem", "parentUID": "parent-uid"} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/ns/profiling-runs?limit=1&"+url.Values{key: {value}}.Encode(), nil))
 		var got struct {
@@ -108,7 +105,7 @@ func TestRunSortPrecedesPaginationAndRejectsInvalidQueries(t *testing.T) {
 		}
 	}
 	before := calls
-	for _, query := range []string{"sort=unknown", "sort=", "sort=node", "sort=name&sort=name", "sort=name&order=DESC", "sort=name&order=", "sort=name&order=asc&order=desc", "order=asc"} {
+	for _, query := range []string{"cpu=2", "sort=unknown", "sort=", "sort=node", "sort=name&sort=name", "sort=name&order=DESC", "sort=name&order=", "sort=name&order=asc&order=desc", "order=asc"} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/ns/profiling-runs?"+query, nil))
 		if response.Code != http.StatusBadRequest {

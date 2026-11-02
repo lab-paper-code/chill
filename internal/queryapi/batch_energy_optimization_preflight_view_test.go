@@ -164,7 +164,6 @@ func TestPreflightBatchPlanExactEvidenceAndChangedConditions(t *testing.T) {
 	id := MeasurementVariantID(spec)
 	for name, change := range map[string]func(*profilederivation.CurvePlanSpec){
 		"exact":         func(*profilederivation.CurvePlanSpec) {},
-		"CPU":           func(s *profilederivation.CurvePlanSpec) { s.CPU.Request = "6" },
 		"dataset UID":   func(s *profilederivation.CurvePlanSpec) { s.ActiveProtocol.Dataset.UID = "new-uid" },
 		"protocol":      func(s *profilederivation.CurvePlanSpec) { s.ActiveProtocol.WarmupIterations++ },
 		"metric source": func(s *profilederivation.CurvePlanSpec) { s.MetricSource.Endpoint = "http://new-metrics" },

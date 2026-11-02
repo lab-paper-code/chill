@@ -30,7 +30,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -397,7 +396,6 @@ func statisticsFixture(
 			IdleProtocol: api.IdleProtocolSpec{SettlingDurationSeconds: 60, DurationSeconds: 30},
 		},
 	}
-	cr.Spec.State.CPURequest = resource.MustParse(base.CPU.Request)
 	metricProtocol := api.ProfilingRunMetricObservationSpec{
 		IntervalMilliseconds: int32(base.Metrics.IntervalMilliseconds),
 		TimeoutMilliseconds:  int32(base.Metrics.TimeoutMilliseconds),
@@ -591,9 +589,9 @@ func statisticsTrial(
 	start := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
 	end := start.Add(30 * time.Second)
 	cpu := runconfig.RuntimeCPU{
-		CgroupCPUMax:      "400000 100000",
-		ORTIntraOpThreads: config.CPU.ORTIntraOpThreads,
-		ORTInterOpThreads: config.CPU.ORTInterOpThreads,
+		CgroupCPUMax:      "max 100000",
+		ORTIntraOpThreads: 0,
+		ORTInterOpThreads: 0,
 		AffinityCPUCount:  4,
 		AffinityCPUs:      []int{0, 1, 2, 3},
 		CPUSetEffective:   "0-3",

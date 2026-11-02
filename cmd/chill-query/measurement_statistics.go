@@ -21,7 +21,6 @@ import (
 	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -99,8 +98,7 @@ func readMeasurementStatistics(
 	shared := plan.Shared()
 	if spec.CurvePlan.SchemaVersion != plan.SchemaVersion() || shared.DeviceClass != state.Candidate.DeviceClass ||
 		shared.Artifact.ExecutionPath != state.Candidate.ExecutionPath || shared.PowerMode != state.Candidate.PowerMode ||
-		shared.MetricSource.NodeName != state.TargetNode ||
-		shared.CPU.Request != state.CPURequest.String() {
+		shared.MetricSource.NodeName != state.TargetNode {
 		return nil, errors.New("curve plan contradicts campaign measurement state")
 	}
 	var active []evidence.VerifiedEvidence
@@ -297,7 +295,6 @@ func validateStatisticsRun(
 	}
 	if run.Spec.MeasurementStateSpec.Candidate != cr.Spec.State.Candidate ||
 		run.Spec.TargetNode != cr.Spec.State.TargetNode ||
-		run.Spec.CPURequest.Cmp(cr.Spec.State.CPURequest) != 0 ||
 		int(run.Spec.Measurement.Batch) != ref.Measurement.Batch {
 		return errors.New("completed Run measurement contradicts result")
 	}
@@ -336,27 +333,8 @@ func validateStatisticsRunConfig(run *api.ProfilingRun, config runconfig.RunConf
 		config.State.PowerMode != run.Spec.Candidate.PowerMode ||
 		config.TargetNode.Name != run.Spec.TargetNode ||
 		config.Measurement.Batch != int(measurement.Batch) ||
-		config.Measurement.WorkloadMode != measurement.WorkloadMode ||
-		config.CPU.Request != run.Spec.CPURequest.String() {
+		config.Measurement.WorkloadMode != measurement.WorkloadMode {
 		return errors.New("stored RunConfig contradicts completed Run state")
-	}
-	if measurement.CPUQuota == nil {
-		if config.CPU.Policy != runconfig.AllocatableCPUQuotaPolicy {
-			return errors.New("stored CPU policy contradicts completed Run")
-		}
-	} else {
-		quota, err := resource.ParseQuantity(config.CPU.Limit)
-		if err != nil || config.CPU.Policy != runconfig.ConfiguredCPUQuotaPolicy || quota.Cmp(*measurement.CPUQuota) != 0 {
-			return errors.New("stored CPU quota contradicts completed Run")
-		}
-	}
-	if len(config.CPU.AffinityCPUs) != len(measurement.CPUAffinity) {
-		return errors.New("stored CPU affinity contradicts completed Run")
-	}
-	for _, cpu := range measurement.CPUAffinity {
-		if !slices.Contains(config.CPU.AffinityCPUs, int(cpu)) {
-			return errors.New("stored CPU affinity contradicts completed Run")
-		}
 	}
 	if config.Measurement.WarmupIterations != int(measurement.WarmupIterations) ||
 		config.Measurement.DurationSeconds != int(measurement.DurationSeconds) ||
@@ -455,11 +433,6 @@ func validateStatisticsRunProtocol(
 	mode campaign.WorkloadMode,
 ) error {
 	measurement := run.Spec.Measurement
-	if (measurement.CPUQuota == nil) != (cr.Spec.CPUQuota == nil) ||
-		(measurement.CPUQuota != nil && measurement.CPUQuota.Cmp(*cr.Spec.CPUQuota) != 0) ||
-		!slices.Equal(measurement.CPUAffinity, cr.Spec.CPUAffinity) {
-		return errors.New("completed Run CPU protocol contradicts campaign")
-	}
 	if mode == campaign.WorkloadModeIdle {
 		protocol := cr.Spec.IdleProtocol
 		if measurement.WarmupIterations != 0 || measurement.SettlingDurationSeconds == nil ||

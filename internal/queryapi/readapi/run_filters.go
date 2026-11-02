@@ -21,12 +21,8 @@ func canonicalRunGroup(raw string) (string, bool) {
 
 func matchesRunFilters(run api.ProfilingRun, filters map[string]string) bool {
 	candidate := run.Spec.Candidate
-	cpu := ""
-	if run.Spec.Measurement.CPUQuota != nil {
-		cpu = run.Spec.Measurement.CPUQuota.String()
-	}
 	values := map[string]string{"model": candidate.ModelSpec, "deviceClass": candidate.DeviceClass,
-		queryNode: run.Spec.TargetNode, "path": candidate.ExecutionPath, "powerMode": candidate.PowerMode, "cpu": cpu}
+		queryNode: run.Spec.TargetNode, "path": candidate.ExecutionPath, "powerMode": candidate.PowerMode}
 	for key, value := range values {
 		if filters[key] != "" && filters[key] != value {
 			return false
