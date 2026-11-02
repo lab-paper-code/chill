@@ -2413,7 +2413,7 @@ def reported_power(power):
 
 class ProducerResources:
     """Poll closed raw minutes using the existing authenticated archive client."""
-    def __init__(self, io, pods, api_seconds, evidence=None):
+    def __init__(self, io, pods, api_seconds, evidence):
         self.io,self.pods,self.api_seconds,self.evidence=io,list(pods.values()),api_seconds,evidence
         self.archive=module('e5_producer_archive',HERE/'e5-archive.py')
         self.first=dt.datetime.now(dt.timezone.utc).replace(minute=0,second=0,microsecond=0)
@@ -2449,7 +2449,7 @@ class ProducerResources:
         self.rows=[row for row in resource_telemetry(resources,[],[],self.pods)[0] if row['role']=='client']
         self.minute=minute
         # Retained even when the stage later fails, so the uploaded artifacts show what readiness/end-counter saw.
-        if self.evidence: save(self.evidence,{'at':now(),'rows':self.rows})
+        save(self.evidence,{'at':now(),'rows':self.rows})
         return self.rows
 
     def ready(self, minimum, deadline):

@@ -58,12 +58,15 @@ class AdapterTests(unittest.TestCase):
             response.headers['Content-Type']='application/x-ndjson'
             return response
         archive._raw_get=raw_get
+        saved=[]
         with patch.object(self.e5,'module',return_value=archive):
-            telemetry=self.e5.ProducerResources(object(),{'workload':pod},129)
+            telemetry=self.e5.ProducerResources(object(),{'workload':pod},129,Path('producer-resources.json'))
+        save_patch=patch.object(self.e5,'save',side_effect=lambda path,value:saved.append((path,value)));save_patch.start();self.addCleanup(save_patch.stop)
         deadline=self.e5.time.monotonic()+10
         self.assertTrue(telemetry.ready(2,deadline))
         self.assertEqual(len(telemetry.rows),2)
         self.assertTrue(all(item['podUID']=='producer' and item['containerID']=='containerd://load' for item in telemetry.rows))
+        self.assertEqual(len(saved[-1][1]['rows']),2)
         self.assertEqual(calls,['/api/v1/observations/raw/20261102T00/resources'])
         self.assertFalse(telemetry.ready(3,deadline))
         self.assertEqual(len(calls),1)
