@@ -21,6 +21,52 @@ import (
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
+func TestMeasurementQualityDistinguishesUnsetPolicyWithoutJudgingObservations(t *testing.T) {
+	start := time.Date(2026, 11, 1, 8, 18, 26, 0, time.UTC)
+	for _, mode := range []string{profilingrun.SaturatedSerialFixedBatchWorkloadMode, profilingrun.IdleModelLoadedWorkloadMode} {
+		t.Run(mode, func(t *testing.T) {
+			config := projectionRunConfigWithWorkloadContract()
+			config.Measurement.WorkloadMode = mode
+			if mode == profilingrun.IdleModelLoadedWorkloadMode {
+				config.Measurement.Dataset = nil
+			}
+			protocol, err := projectCurveProtocol(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, metrics := range []metricobserver.Result{
+				{
+					Samples: []metricobserver.Sample{{ObservedAt: start, Watts: 4}, {ObservedAt: start.Add(time.Second), Watts: 6}},
+					Summary: metricobserver.Summary{MaximumSampleGapSeconds: 1, SourceTimestampAbsent: true},
+				},
+				{
+					Failures: []metricobserver.Failure{{ObservedAt: start, Reason: metricobserver.FailureReasonTimeout}},
+					Summary:  metricobserver.Summary{MaximumSampleGapSeconds: 30},
+				},
+			} {
+				quality := MeasurementQuality(config, metrics, start, start.Add(30*time.Second), protocol)
+				if quality.PolicyPassed != nil || quality.PolicyReason != "PolicyUnset" {
+					t.Fatalf("capture settings or observations invented an acceptance policy: %+v", quality)
+				}
+				if quality.WorkloadMode != mode || quality.Protocol != protocol ||
+					quality.WindowSeconds != 30 || quality.SuccessfulSamples != len(metrics.Samples) ||
+					quality.ReadFailures != len(metrics.Failures) ||
+					quality.MaximumSampleGapSeconds != metrics.Summary.MaximumSampleGapSeconds ||
+					quality.SourceTimestampAbsent != metrics.Summary.SourceTimestampAbsent {
+					t.Fatalf("quality projection changed frozen settings or measured facts: %+v", quality)
+				}
+				wire, err := json.Marshal(quality)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Contains(wire, []byte(`"policyPassed":null`)) || !bytes.Contains(wire, []byte(`"policyReason":"PolicyUnset"`)) {
+					t.Fatalf("response lost the unset-policy distinction: %s", wire)
+				}
+			}
+		})
+	}
+}
+
 func TestProjectionRequiresVerifiedEvidence(t *testing.T) {
 	t.Parallel()
 	if _, err := Trial(profilerevidence.VerifiedEvidence{}); err == nil {

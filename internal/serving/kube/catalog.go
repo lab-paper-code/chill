@@ -26,6 +26,7 @@ import (
 	profilerprojection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
+	"golang.org/x/sync/errgroup"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -35,6 +36,10 @@ import (
 
 const invalidEvidenceCode = "InvalidEvidence"
 const catalogCompletePhase = "Complete"
+
+// ponytail: eight trials per window cap store connections and transient decode
+// buffers; tune only with store load/memory measurements, not campaign size.
+const catalogTrialConcurrency = 8
 
 // Catalog lists native Campaigns and retains one verified terminal profile per
 // name/UID/resourceVersion. Inference never reads campaigns or downloads
@@ -357,59 +362,44 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	seenRuns := make(map[types.NamespacedName]struct{}, len(resultSpec.CompletedTrials))
 	seenRaw := make(map[evidencestore.ObjectLocation]struct{}, len(resultSpec.CompletedTrials))
 	seenPods := make(map[string]struct{}, len(resultSpec.CompletedTrials))
-	for _, reference := range resultSpec.CompletedTrials {
-		runKey := types.NamespacedName{Namespace: reference.Run.Namespace, Name: reference.Run.Name}
-		if _, duplicate := seenRuns[runKey]; duplicate {
-			return serving.Profile{}, nil, fmt.Errorf("completed Run %s appears more than once", runKey)
-		}
-		seenRuns[runKey] = struct{}{}
-		run := &edgev1alpha1.ProfilingRun{}
-		if err := c.store.client.Get(ctx, runKey, run); err != nil {
-			return serving.Profile{}, nil, fmt.Errorf("get completed Run %s: %w", runKey, err)
-		}
-		if err := validateCatalogRun(campaign, run, reference); err != nil {
-			return serving.Profile{}, nil, fmt.Errorf("completed Run %s: %w", runKey, err)
-		}
-		identity := storedObjectIdentity(reference.Evidence)
-		var execution profilerevidence.ExecutionEvidence
-		if reference.Measurement.WorkloadMode == batchenergyoptimization.WorkloadModeIdle {
-			verified, loadErr := c.loader.LoadIdle(ctx, identity)
-			if loadErr != nil {
-				return serving.Profile{}, nil, fmt.Errorf("load idle Run %s: %w", runKey, loadErr)
+	for start := 0; start < len(resultSpec.CompletedTrials); start += catalogTrialConcurrency {
+		references := resultSpec.CompletedTrials[start:min(start+catalogTrialConcurrency, len(resultSpec.CompletedTrials))]
+		trials := c.readCompletedTrials(ctx, campaign, references)
+		for index, reference := range references {
+			runKey := types.NamespacedName{Namespace: reference.Run.Namespace, Name: reference.Run.Name}
+			if _, duplicate := seenRuns[runKey]; duplicate {
+				return serving.Profile{}, nil, fmt.Errorf("completed Run %s appears more than once", runKey)
 			}
-			execution, _, err = verified.Records()
-			idle = append(idle, verified)
-		} else {
-			verified, loadErr := c.loader.Load(ctx, identity)
-			if loadErr != nil {
-				return serving.Profile{}, nil, fmt.Errorf("load active Run %s: %w", runKey, loadErr)
+			seenRuns[runKey] = struct{}{}
+			trial := &trials[index]
+			if trial.err != nil {
+				return serving.Profile{}, nil, trial.err
 			}
-			execution, _, err = verified.Records()
-			active = append(active, verified)
-		}
-		if err != nil {
-			return serving.Profile{}, nil, err
-		}
-		if err := validateCatalogExecution(run, execution); err != nil {
-			return serving.Profile{}, nil, fmt.Errorf("completed Run %s: %w", runKey, err)
-		}
-		if execution.Terminal.Job.CompletionTime.After(measuredAt) {
-			measuredAt = execution.Terminal.Job.CompletionTime
-		}
-		if _, duplicate := seenRaw[execution.RawMeasurement.Location()]; duplicate {
-			return serving.Profile{}, nil, errors.New("completed trials reuse one raw measurement object")
-		}
-		seenRaw[execution.RawMeasurement.Location()] = struct{}{}
-		if _, duplicate := seenPods[execution.Terminal.Pod.UID]; duplicate {
-			return serving.Profile{}, nil, errors.New("completed trials reuse one execution Pod")
-		}
-		seenPods[execution.Terminal.Pod.UID] = struct{}{}
-		evidenceReferences = append(evidenceReferences, identity, execution.RawMeasurement)
-		if reference.Measurement.WorkloadMode == batchenergyoptimization.WorkloadModeIdle {
-			idleSources = append(idleSources, identity, execution.RawMeasurement)
-		} else {
-			batch := reference.Measurement.Batch
-			activeSources[batch] = append(activeSources[batch], identity, execution.RawMeasurement)
+			identity := storedObjectIdentity(reference.Evidence)
+			execution := trial.execution
+			if reference.Measurement.WorkloadMode == batchenergyoptimization.WorkloadModeIdle {
+				idle = append(idle, trial.idle)
+			} else {
+				active = append(active, trial.active)
+			}
+			if execution.Terminal.Job.CompletionTime.After(measuredAt) {
+				measuredAt = execution.Terminal.Job.CompletionTime
+			}
+			if _, duplicate := seenRaw[execution.RawMeasurement.Location()]; duplicate {
+				return serving.Profile{}, nil, errors.New("completed trials reuse one raw measurement object")
+			}
+			seenRaw[execution.RawMeasurement.Location()] = struct{}{}
+			if _, duplicate := seenPods[execution.Terminal.Pod.UID]; duplicate {
+				return serving.Profile{}, nil, errors.New("completed trials reuse one execution Pod")
+			}
+			seenPods[execution.Terminal.Pod.UID] = struct{}{}
+			evidenceReferences = append(evidenceReferences, identity, execution.RawMeasurement)
+			if reference.Measurement.WorkloadMode == batchenergyoptimization.WorkloadModeIdle {
+				idleSources = append(idleSources, identity, execution.RawMeasurement)
+			} else {
+				batch := reference.Measurement.Batch
+				activeSources[batch] = append(activeSources[batch], identity, execution.RawMeasurement)
+			}
 		}
 	}
 	if len(active) == 0 || len(idle) == 0 {
@@ -590,6 +580,66 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 		uid: campaign.UID, version: campaign.ResourceVersion, profile: cloneCatalogProfile(profile), facts: cloneMeasurementFacts(facts),
 	}
 	return profile, issues, nil
+}
+
+type catalogTrial struct {
+	active    profilerevidence.VerifiedEvidence
+	idle      profilerevidence.VerifiedIdleEvidence
+	execution profilerevidence.ExecutionEvidence
+	err       error
+}
+
+// Each worker owns one slot; ordered reduction above preserves diagnostics,
+// duplicate detection and profile lineage regardless of completion order.
+func (c *Catalog) readCompletedTrials(ctx context.Context, campaign *edgev1alpha1.BatchEnergyOptimization,
+	references []batchenergyoptimization.CompletedTrialReference,
+) []catalogTrial {
+	trials := make([]catalogTrial, len(references))
+	var group errgroup.Group
+	group.SetLimit(catalogTrialConcurrency)
+	for index, reference := range references {
+		group.Go(func() error {
+			trials[index] = c.readCompletedTrial(ctx, campaign, reference)
+			return nil // Keep errors in input order, not goroutine completion order.
+		})
+	}
+	_ = group.Wait()
+	return trials
+}
+
+func (c *Catalog) readCompletedTrial(ctx context.Context, campaign *edgev1alpha1.BatchEnergyOptimization,
+	reference batchenergyoptimization.CompletedTrialReference,
+) (trial catalogTrial) {
+	runKey := types.NamespacedName{Namespace: reference.Run.Namespace, Name: reference.Run.Name}
+	run := &edgev1alpha1.ProfilingRun{}
+	if err := c.store.client.Get(ctx, runKey, run); err != nil {
+		trial.err = fmt.Errorf("get completed Run %s: %w", runKey, err)
+		return trial
+	}
+	if err := validateCatalogRun(campaign, run, reference); err != nil {
+		trial.err = fmt.Errorf("completed Run %s: %w", runKey, err)
+		return trial
+	}
+	identity := storedObjectIdentity(reference.Evidence)
+	if reference.Measurement.WorkloadMode == batchenergyoptimization.WorkloadModeIdle {
+		trial.idle, trial.err = c.loader.LoadIdle(ctx, identity)
+		if trial.err == nil {
+			trial.execution, _, trial.err = trial.idle.Records()
+		}
+	} else {
+		trial.active, trial.err = c.loader.Load(ctx, identity)
+		if trial.err == nil {
+			trial.execution, _, trial.err = trial.active.Records()
+		}
+	}
+	if trial.err != nil {
+		trial.err = fmt.Errorf("load %s Run %s: %w", reference.Measurement.WorkloadMode, runKey, trial.err)
+		return trial
+	}
+	if err := validateCatalogExecution(run, trial.execution); err != nil {
+		trial.err = fmt.Errorf("completed Run %s: %w", runKey, err)
+	}
+	return trial
 }
 
 // CPU observations describe shared execution, not a frozen resource allocation.

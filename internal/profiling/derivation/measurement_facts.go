@@ -35,6 +35,7 @@ type MeasurementTrialQuality struct {
 	MaximumSampleGapSeconds float64               `json:"maximumSampleGapSeconds"`
 	SourceTimestampAbsent   bool                  `json:"sourceTimestampAbsent"`
 	PolicyPassed            *bool                 `json:"policyPassed"`
+	PolicyReason            string                `json:"policyReason,omitempty"`
 }
 
 type MeasurementBatchFacts struct {
