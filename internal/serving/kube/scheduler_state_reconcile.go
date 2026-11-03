@@ -108,7 +108,7 @@ func (c *reservationState) reconcileSnapshot(snapshot serving.SchedulerSnapshot,
 	c.freezePreparingExecutorsLocked(snapshot)
 	lost = c.reconcileOwnersLocked(snapshot, now, gap, runtime)
 	cutoff := now.Add(-observationWindow)
-	c.retireRunsLocked(cutoff)
+	c.retireRunsLocked(cutoff, snapshot)
 	snapshot.Actions = c.actionsLocked(now)
 	snapshot.Reservations = c.reservationsLocked()
 	snapshot.Replacements = slices.Clone(c.replacements)

@@ -367,13 +367,23 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 			plan.record.Reason = schedulerPlanInfeasibleResources
 			return plan
 		}
-		// A failed preparation stays in the actions for one observation window.
-		if !slices.ContainsFunc(current, func(old SchedulerInstance) bool { return old.ID == i.ID }) &&
-			slices.ContainsFunc(p.snapshot.Actions, func(a Action) bool {
-				return a.Kind == schedulerActionPrepare && a.Status == schedulerActionFailed && a.Node == node.Node && a.To == schedulerState(i)
-			}) {
-			plan.record.Reason = schedulerPlanPreparationFailed
-			return plan
+		if !slices.ContainsFunc(current, func(old SchedulerInstance) bool { return old.ID == i.ID }) {
+			for _, action := range p.snapshot.Actions {
+				if action.Kind != schedulerActionPrepare || action.Node != node.Node {
+					continue
+				}
+				failure := action.PreparationFailure
+				if failure != nil && failure.Matches(node, i) {
+					if plan.record.PreparationFailure == nil || failure.RepeatCount > plan.record.PreparationFailure.RepeatCount ||
+						failure.Classification == PreparationDeterministic || failure.Classification == PreparationPromoted {
+						plan.record.PreparationFailure = failure
+					}
+					if failure.Classification == PreparationDeterministic || failure.Classification == PreparationPromoted {
+						plan.record.Reason = schedulerPlanPreparationFailed
+						return plan
+					}
+				}
+			}
 		}
 	}
 	stopped, removedPre := p.chain(n, plan)

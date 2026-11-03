@@ -59,6 +59,11 @@ func (o *SchedulerService) preparation(
 	if err != nil {
 		return spec, err
 	}
+	spec.Instance.RuntimeImage, err = o.observer.CurrentRuntimeImage(ctx, &profile)
+	if err != nil {
+		return spec, err
+	}
+	spec.Instance.RunnerCommand = spec.Config.RunnerCommand
 	raw, err := json.Marshal(profile.NativeBundle())
 	if err != nil {
 		return spec, err

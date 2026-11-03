@@ -1,7 +1,9 @@
 package state
 
 import (
+	"errors"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
@@ -89,15 +91,17 @@ type Operation struct {
 }
 
 type OperationState struct {
-	At        time.Time                   `json:"at"`
-	Node      serving.NodeReference       `json:"node"`
-	PowerMode string                      `json:"powerMode"`
-	Instances []serving.InstanceState     `json:"instances"`
-	Native    map[string]native.State     `json:"native"`
-	Pods      []workloadobserver.Pod      `json:"pods"`
-	States    []string                    `json:"states"`
-	Reasons   []string                    `json:"reasons,omitempty"`
-	Routing   map[string]map[string]int32 `json:"routing,omitempty"`
+	At                  time.Time                   `json:"at"`
+	Node                serving.NodeReference       `json:"node"`
+	PowerMode           string                      `json:"powerMode"`
+	NodeMemoryBytes     uint64                      `json:"nodeMemoryBytes"`
+	NodeReadyTransition time.Time                   `json:"nodeReadyTransition,omitempty"`
+	Instances           []serving.InstanceState     `json:"instances"`
+	Native              map[string]native.State     `json:"native"`
+	Pods                []workloadobserver.Pod      `json:"pods"`
+	States              []string                    `json:"states"`
+	Reasons             []string                    `json:"reasons,omitempty"`
+	Routing             map[string]map[string]int32 `json:"routing,omitempty"`
 }
 
 type OperationStep struct {
@@ -113,10 +117,13 @@ type OperationStep struct {
 // PreparationEvidence survives a canceled final Capture. Spec remains the
 // authority for slot, owner and policy; these are the API-confirmed identities.
 type PreparationEvidence struct {
-	PodUID     string `json:"podUID"`
-	NodeUID    string `json:"nodeUID"`
-	DecisionID string `json:"decisionID"`
-	Created    bool   `json:"created"`
+	PodUID        string                                 `json:"podUID"`
+	NodeUID       string                                 `json:"nodeUID"`
+	DecisionID    string                                 `json:"decisionID"`
+	Created       bool                                   `json:"created"`
+	RuntimeImage  string                                 `json:"runtimeImage,omitempty"`
+	RunnerCommand []string                               `json:"runnerCommand,omitempty"`
+	Failure       *serving.PreparationFailureObservation `json:"failure,omitempty"`
 }
 
 type OperationResult struct {
@@ -133,4 +140,45 @@ type OperationResult struct {
 	Preparation *PreparationEvidence    `json:"preparation,omitempty"`
 	// Only a confirmed pre-effect failure permits immediate reservation return.
 	EffectsNotStarted bool `json:"-"`
+}
+
+// PreparationFailure retains a failed start independently of action history.
+// Cancellation is not evidence that the selected physical inputs cannot start.
+func (r OperationResult) PreparationFailure(snapshot serving.SchedulerSnapshot) *serving.PreparationFailure {
+	if r.Operation.Prepare == nil || r.Preparation == nil || r.Preparation.PodUID == "" ||
+		(r.Status != NativeOperationFailed && r.Status != NativeOperationPartial && r.Status != NativeOperationComplete) {
+		return nil
+	}
+	observation := r.Preparation.Failure
+	terminalFailure := false
+	for _, actual := range snapshot.Instances {
+		if actual.PodUID == r.Preparation.PodUID && actual.Terminated && actual.StartupFailure != nil {
+			terminalFailure = true
+			if observation == nil || observation.Classification == serving.PreparationUnknownTransient || r.Status == NativeOperationComplete {
+				observation = actual.StartupFailure
+			}
+		}
+	}
+	if r.Status == NativeOperationComplete && (!terminalFailure || observation.Classification == serving.PreparationTransient) {
+		return nil
+	}
+	if observation == nil {
+		if strings.Contains(r.Error, "context canceled") {
+			return nil
+		}
+		failure, failed := ClassifyPreparationFailure(nil, nil, nil, errors.New(r.Error), true)
+		if !failed {
+			return nil
+		}
+		observation = &failure
+	}
+	observed := *observation
+	if observed.NodeReadyTransition.IsZero() {
+		observed.NodeReadyTransition = r.Before.NodeReadyTransition
+	}
+	wanted := r.Operation.Prepare.Instance
+	wanted.Allocation.MemoryBytes = r.Operation.Prepare.MemoryBytes
+	wanted.RuntimeImage = r.Preparation.RuntimeImage
+	wanted.RunnerCommand = r.Preparation.RunnerCommand
+	return serving.NewPreparationFailure(wanted, r.Before.NodeMemoryBytes, r.Preparation.PodUID, observed)
 }
