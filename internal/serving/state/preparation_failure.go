@@ -45,7 +45,6 @@ func ClassifyPreparationFailure(pod *core.Pod, node *core.Node, events []core.Ev
 	if node != nil {
 		for _, condition := range node.Status.Conditions {
 			if condition.Type == core.NodeReady {
-				observation.NodeReadyTransition = condition.LastTransitionTime.Time
 				unavailable = condition.Status != core.ConditionTrue
 				if unavailable {
 					observation.Reason = fmt.Sprintf("%s; NodeReady=%s: %s", observation.Reason, condition.Status, condition.Reason)

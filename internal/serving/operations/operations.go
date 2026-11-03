@@ -81,12 +81,6 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (s
 	if string(current.UID) != node.UID {
 		return s, errors.New("physical Node identity changed")
 	}
-	s.NodeMemoryBytes = uint64(current.Status.Allocatable.Memory().Value())
-	for _, condition := range current.Status.Conditions {
-		if condition.Type == core.NodeReady {
-			s.NodeReadyTransition = condition.LastTransitionTime.Time
-		}
-	}
 	var classes edge.DeviceClassList
 	if err = o.Store.Client().List(ctx, &classes); err != nil {
 		return s, err
