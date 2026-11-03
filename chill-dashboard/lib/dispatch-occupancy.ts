@@ -1,9 +1,10 @@
-import type { CoverageOccupancy, DispatchOccupancyMeasurement, MeasurementCoverageCell, OccupancyMutation, OccupancyRequest, WireInteger } from "./read-types.ts"
+import type { CoverageOccupancy, DispatchOccupancyMeasurement, MeasurementCoverageCell, OccupancyEstimate, OccupancyMutation, OccupancyRequest, WireInteger } from "./read-types.ts"
 import { formatMeasurementNumber, occupancyReason, significant } from "./measurements.ts"
 
 export const occupancyStates={none:"없음",measuring:"측정 중",failed:"실패",present:"있음"} as const
 export const occupancyPhase=(phase?:string|null)=>({Measuring:"측정 중",Complete:"완료",Insufficient:"근거 부족",Failed:"실패"}[phase??""]??(phase?"미확인":"대기"))
 export const occupancyRunning=(data:DispatchOccupancyMeasurement)=>!data.phase||data.phase==="Measuring"
+export const occupancyDirect=(data:DispatchOccupancyMeasurement)=>data.schemaVersion==="chill.dacs.io/dispatch-occupancy-measurement.v1alpha2"||data.estimate!=null||(data.minimumPairs??0)>0
 export function occupancyDisplayReason(data:DispatchOccupancyMeasurement) {
   const result=data.d
   return occupancyReason({assessment:data.assessment,status:{reason:data.reason??data.status.reason,perRequestNanos:result?.perRequestNanos??undefined,throughput:result?.throughput==null?undefined:String(result.throughput)}})
@@ -15,6 +16,20 @@ export function occupancyMilliseconds(value?:WireInteger|null) {
 }
 export function occupancyNumber(value?:number|null,percent=false) {
   return value==null||!Number.isFinite(value)||value<0||percent&&value>1?"미제공":percent?formatMeasurementNumber(value*100,"%"):significant(value)
+}
+export const occupancyStatistic=(value?:number|null)=>value==null||!Number.isFinite(value)?"미제공":formatMeasurementNumber(value/1e6,"ms")
+export function occupancyMatches(row:OccupancyEstimate,cell:MeasurementCoverageCell,tuple:CoverageOccupancy) {
+  return row.node.uid===tuple.node.uid&&row.model===cell.model.name&&row.powerMode===cell.powerMode&&row.executionPath===cell.executionPath&&row.batch===tuple.batch&&row.profile.profileID===tuple.profileID
+}
+export function occupancyObservationPath(from:string,to:string,maximumSeconds:number|undefined) {
+  if(![from,to].every(value=>/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)))return null
+  const start=Date.parse(from),end=Date.parse(to)
+  if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||maximumSeconds!==undefined&&end-start>maximumSeconds*1000)return null
+  return `v1/observations/occupancy?${new URLSearchParams({from,to})}`
+}
+export function occupancyObservationLimit(error:{status:number;data:unknown}|null) {
+  const value=error?.status===400&&error.data&&typeof error.data==="object"&&"maximumWindowSeconds" in error.data?error.data.maximumWindowSeconds:undefined
+  return typeof value==="number"&&Number.isSafeInteger(value)&&value>0?value:undefined
 }
 export function occupancyReasonLabel(reason:string) {
   return reason==="ProfileSuperseded"?"이전 프로파일 측정":reason==="EvidenceInvalid"?"점유시간 근거 검증 실패":reason?occupancyReason({status:{reason}}):"해당 없음"

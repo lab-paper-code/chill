@@ -7,7 +7,7 @@ import * as occupancy from "./dispatch-occupancy.ts"
 import * as measurements from "./measurements.ts"
 import * as scheduler from "./scheduler.ts"
 import * as summary from "./measurement-summary.ts"
-import type { CoverageOccupancy, DispatchOccupancyMeasurement, MeasurementCoverageCell, OccupancyMutation, OccupancyTask } from "./read-types.ts"
+import type { CoverageOccupancy, DispatchOccupancyMeasurement, MeasurementCoverageCell, OccupancyEstimate, OccupancyMutation, OccupancyTask } from "./read-types.ts"
 
 type Element={type:unknown;props:Record<string,unknown>}
 type Component=(props:Record<string,unknown>)=>unknown
@@ -232,6 +232,73 @@ test("dry-run shows only the returned native closed-loop fact, never a configura
     assert.equal(values.has("공급 방식"),false)
     assert.equal(values.get("공급 방식 (서버 고정)"),supplyMode==="closed-loop"?"closed-loop":"미제공")
     assert.equal(nodes(tree).some(node=>["input","select"].includes(String(node.type))),false)
+  }
+})
+
+test("W8 short bursts show returned pair facts without saturation sizing or idle criteria",()=>{
+  const h=harness(),feature=load("../features/dispatch-occupancy-request.tsx",h.modules)
+  const tree=feature.OccupancyProtocol({task:{...task,spec:{...task.spec,minimumPairs:10,conditions:{inputsJSON:'{"computed":{"saturationSizing":{"requiredWorkers":999}}}'}}}})
+  assert.match(text(tree),/짧은 버스트/)
+  assert.match(text(tree),/최소 쌍/)
+  assert.match(text(tree),/배치 \(건\)/)
+  assert.doesNotMatch(text(tree),/유휴|포화|필요 송신자/)
+})
+
+test("W8 observation identity matching excludes every mismatched key but not runtime images",()=>{
+  const cell={model:{name:"model"},powerMode:"fixed",executionPath:"cpu"} as MeasurementCoverageCell
+  const tuple={node:{uid:"node-uid"},batch:4,profileID:"profile"} as CoverageOccupancy
+  const row={node:{uid:"node-uid"},model:"model",powerMode:"fixed",executionPath:"cpu",batch:4,profile:{profileID:"profile"},runtimeImage:"old"} as OccupancyEstimate
+  assert.equal(occupancy.occupancyMatches(row,cell,tuple),true)
+  assert.equal(occupancy.occupancyMatches({...row,runtimeImage:"different"},cell,tuple),true)
+  for(const changed of [{node:{name:"node",uid:"recreated"}},{model:"other"},{powerMode:"other"},{executionPath:"other"},{batch:8},{profile:{...row.profile,profileID:"other"}}])assert.equal(occupancy.occupancyMatches({...row,...changed},cell,tuple),false)
+  const start="2026-11-03T00:00:00Z",end="2026-11-03T00:01:00Z"
+  assert.ok(occupancy.occupancyObservationPath(start,end,60))
+  for(const [from,to,max] of [[start,end,59],[start,start,60],["bad",end,60]] as const)assert.equal(occupancy.occupancyObservationPath(from,to,max),null)
+})
+
+for(const maximumWindowSeconds of [undefined,60])test(`W8 period rejection preserves applied facts with server cap ${maximumWindowSeconds??"absent"}`,()=>{
+  const h=harness(),paths:string[]=[]
+  const window={start:"2026-11-03T00:00:00.000000001Z",end:"2026-11-03T00:01:00.000000001Z"}
+  const statistics={median:-1000000,p25:-2000000,p75:0,iqr:2000000,p10:-3000000,p90:1000000,mean:-500000,negativeFraction:0.75}
+  const row={node:{name:"node",uid:"node-uid"},model:"model",powerMode:"fixed",executionPath:"cpu",batch:4,profile:{profileID:"profile"},runtimeImage:"display-image",window,pairs:10,statistics}
+  const cell={model:{name:"model"},powerMode:"fixed",executionPath:"cpu",occupancy:[{node:row.node,batch:4,profileID:"profile",schedulerD:{source:"measured",value:1,pairs:10,window,updatedAt:window.end}}]} as MeasurementCoverageCell
+  let response:{data:unknown;error:unknown}={data:{window,rows:[row,{...row,node:{name:"recreated",uid:"wrong"}}]},error:null}
+  Object.assign(h.modules.react as object,{useEffect:(effect:()=>void)=>effect()})
+  h.modules["./measurement-coverage.css"]={}
+  h.modules["@tanstack/react-query"]={}
+  h.modules["@/lib/client"]={useChillQuery:(path:string)=>{paths.push(path);return {...response,isFetching:false,refetch(){}}}}
+  const feature=load("../features/measurement-coverage.tsx",h.modules)
+  const render=()=>h.render(feature.CoverageOccupancyPeriod,{cell})
+  render();let tree=render()
+  const first=new URL(paths[0],"https://dashboard.invalid")
+  assert.equal(first.searchParams.get("from"),window.start)
+  assert.equal(first.searchParams.get("to"),window.end)
+  assert.match(text(tree),/display-image/)
+  assert.doesNotMatch(text(tree),/recreated/)
+  const inputs=nodes(tree).filter(node=>node.type==="input")
+  ;(inputs[1].props.onChange as (event:unknown)=>void)({target:{value:"2026-11-03T00:02:00Z"}})
+  tree=render();click(tree,"관측 조회")
+  response={data:undefined,error:{status:400,data:{code:"OccupancyWindowExceeded",message:"window too long",...(maximumWindowSeconds===undefined?{}:{maximumWindowSeconds})},body:'{"code":"OccupancyWindowExceeded","message":"window too long"}'}}
+  render();tree=render()
+  assert.match(text(tree),/OccupancyWindowExceeded/)
+  assert.match(text(tree),/window too long/)
+  assert.match(text(tree),/적용 구간 2026-11-03T00:00:00\.000000001Z/)
+  assert.match(text(tree),/display-image/)
+  assert.equal(button(tree,"관측 조회").props.disabled,maximumWindowSeconds!==undefined)
+  if(maximumWindowSeconds!==undefined)assert.match(text(tree),/최대 60 s/)
+  else assert.doesNotMatch(text(tree),/최대 \d+ s/)
+})
+
+test("W8 DOM renders signed observed facts without scalar fallback or saturation verdicts",()=>{
+  const h=harness(),feature=load("../features/measurement-projections.tsx",h.modules,["OccupancyResult"])
+  for(const estimate of [null,{pairs:10,statistics:{median:-1000000.5,iqr:2000000,p10:-3000000,p90:1000000,negativeFraction:0.75},window:{start:"start",end:"end"}}]) {
+    const projected={...dom,schemaVersion:"chill.dacs.io/dispatch-occupancy-measurement.v1alpha2",phase:"Complete",minimumPairs:10,estimate,d:{perRequestNanos:999000000,throughput:123,idleFraction:.5,verdict:"Accepted"}}
+    const tree=h.render(feature.OccupancyResult,{data:projected})
+    assert.match(text(tree),/관측 d\(B\)/)
+    assert.match(text(tree),/IQR/)
+    assert.doesNotMatch(text(tree),/유휴|포화|판정|Accepted|999\.00|미검증/)
+    if(estimate){assert.match(text(tree),/-1\.00/);assert.match(text(tree),/75\.00/)}
+    else assert.match(text(tree),/미제공/)
   }
 })
 

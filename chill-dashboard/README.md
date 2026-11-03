@@ -42,13 +42,13 @@ Scheduler history keeps default/ascending unfiltered reads bounded, including ex
 
 측정은 서비스와 함께 사이드바의 **운영 영역**에 속한다. `/measurements/requests/new?kind=dispatch-occupancy`에서 셀에 대응하는 BEO·워크로드·Node·배치만 선택한다. `POST /api/v1/namespaces/{ns}/dispatch-occupancy-measurements?dryRun=All` 응답의 완성된 `task.spec`를 읽기 전용 표로 보여 주며, 프로토콜 필드를 요청 본문에 넣지 않는다. 검사 입력 identity가 바뀌면 제출을 막는다. `NOT_SUBMITTED`는 미제출, `OccupancyInfeasible`은 측정 조건 불충족, `OccupancyPolicyUnavailable`은 측정 정책 사용 불가다. 응답 미수신은 자동 재제출하지 않고 동일 이름의 접수 기록을 조회한다.
 
-읽기 전용 프로토콜 표는 동결된 `task.spec.conditions.inputsJSON` 문자열을 `parseSchedulerJSON`으로 정밀 파싱한 `computed.saturationSizing`을 표시한다. 선택/필요 송신자, 송신자·바이트·수명 한도와 제한 요인, 가득 찬 대기 배치, 재충전·잔여 유휴 시간, 예상/최대 유휴 비율을 그대로 읽으며 큰 정수도 손실 없이 유지한다. 누락·null·읽을 수 없는 입력은 `미제공`이고 현재 정책으로 재산정하지 않는다. 출처 메타데이터는 기존 정책·입력 근거 원본 disclosure에 남고 입력·제출 계약은 바뀌지 않는다.
+새 프로토콜(`minimumPairs > 0`)은 짧은 버스트의 배치·최소 쌍·예열·측정 구간·동시 송신자·요청 수명·드레인·프로파일 ID를 서버 응답 그대로 표시한다. 공급 방식은 native `closed-loop` 사실이며 사용자가 설정하지 않는다. 새 프로토콜에는 유휴·포화 기준과 `saturationSizing` 행이 없다. 구형 dry-run의 동결된 `conditions.inputsJSON` 포화 산정은 기존 표시를 유지하며 정책·입력 원본은 disclosure에서 확인한다.
 
-커버리지 셀의 `occupancy[]`는 Node UID·profileID·배치별 없음/측정 중/실패/있음을 표시하고 없음·실패에서 해당 조건의 d 요청으로 이동한다. `adopted:null`은 채택 미확인으로 유지한다. `/measurements/results?kind=dispatch-occupancy`의 목록·Sheet는 phase·사유·evidence 측정 구간·경과와 signed d(ms/요청)·처리량·유휴 비율·판정을 표시하며 대기/측정 중에 주기 갱신한다. 삭제는 영구 삭제 확인 후 UID 쿼리와 `If-Match: resourceVersion`을 전달한다. Measuring은 비활성이고 409는 최신 상태 조회로 연결한다. 실행 중단/취소 API는 없다.
+커버리지 셀의 Node UID·profileID·배치별 `occupancy[]`는 두 근거를 분리한다. **스케줄러 d**는 `schedulerD` provenance의 측정/DOM/기본값 출처·값·쌍·갱신 시각이고, **관측 d(B)**는 `observedD`의 signed 중앙값·IQR·p10/p90·음수 비율·쌍이다. 단위는 원래 ns/request이며 화면에서 ms/요청으로 변환한다. 음수는 그대로 표시하며 채택·품질 판정을 만들지 않는다. 구형 `d`·`adopted`만으로 스케줄러 사용 값을 복원하지 않는다. DOM 외에도 서버가 제공한 스케줄러/관측 tuple을 그대로 표시하고 Node×배치 항목을 브라우저에서 만들지 않는다.
 
-`occupancy[]`는 실제 DOM tuple만 포함한다. 빈 배열은 d 없음이며 Node×배치 항목을 브라우저에서 만들지 않는다. `ProfileSuperseded`는 원자료가 있는 이전 프로파일, `EvidenceInvalid`는 Complete 근거 검증 실패다. 같은 tuple은 서버의 present > measuring > failed > none 및 동률 생성 시각 최신 선택을 그대로 표시한다.
+셀 상세의 기간 조회는 `GET /api/v1/observations/occupancy?from=&to=`만 사용하며 기본 구간은 `schedulerD.window`를 나노초 문자열까지 그대로 전달한다. RFC3339 시작·종료 시각을 직접 바꿀 수 있다. 모델·전력모드·실행 경로 및 Node UID·배치·profileID가 정확히 일치하는 행만 표시하며 runtimeImage는 표시 전용이다. 서버가 구간을 거부하면 원래 HTTP 상태·code/message 본문을 표시하고 이전 적용 구간·결과를 유지한다. 400 본문에 양의 정수 `maximumWindowSeconds`가 있으면 이후 선택에 그 상한을 적용하며, 없으면 임의 기본 상한을 만들지 않는다.
 
-채택 tri-state는 서버의 실제 선택 카탈로그와 연결된다. Node UID·profileID·배치·evidence store/key와 현재 셀의 모델·전력모드·실행 경로 identity가 일치하면 `true`(채택), 조회 가능한 카탈로그의 빈 선택은 `false`(미채택), 필드 누락·카탈로그 오류는 `null`(채택 미확인)이다. runtimeImage는 유효성 키가 아니며 카탈로그 checkedAt/error는 기존 freshness에 반영한다.
+`/measurements/results?kind=dispatch-occupancy`는 대기/측정 중에 갱신한다. v1alpha2/`minimumPairs`/estimate 근거가 있는 새 DOM은 짧은 버스트의 signed 통계·쌍·최소 쌍·완료 배치/요청 사실만 표시하고, 유휴·포화·scalar d·판정으로 되돌리지 않는다. 구형 evidence 표시는 그대로다. 삭제는 영구 삭제 확인 후 UID 쿼리와 `If-Match: resourceVersion`을 전달한다. Measuring은 비활성이고 409는 최신 상태 조회로 연결한다. 실행 중단/취소 API는 없다.
 
 셀별 d 요청은 부분 커버리지에서도 항상 제공하며 호환성 대표 Node를 넘기지 않는다. 요청 화면은 BEO의 실제 `targetNode`로 Node를 제한한다. 선택적 요청 이름도 검사 identity에 포함되므로 같은 조건의 재측정은 새 이름으로 검사해 과거 실패를 보존한다. profile 의존 조회가 실패해도 종류 선택은 가능하지만 진행 중·결과 미확인 요청에서는 전환을 막는다.
 
