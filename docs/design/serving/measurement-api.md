@@ -583,7 +583,8 @@ fingerprint다. `variant.requestIds`가 두 identity를 연결하며 같은 조�
 셀 상태·대표값·배치 집계에 사용한다. 최신이 failed/partial이면 그대로 표시하며 과거 성공으로 대체하지 않는다.
 `batchProgress={basis,target,measured,criteriaMet,missing,inProgress,unknown}`은 현재 측정의 batch 정수 배열이다.
 대표값 `{variantId,batch,incrementalJoulesPerItem,p95Milliseconds}`도 같은 실제 batch에 한정한다.
-runtime 이미지 버전은 profile 유효 조건이 아니다. 기록된 `RuntimeImage`는 당시 값 그대로 보존한다.
+이미지 버전은 profile 유효 조건이 아니다. runtime·artifact·preprocessor·observer 이미지의
+당시 원문은 보존하되 variant fingerprint와 preflight 기측정 배치 비교에서 제외한다.
 CPU quota/affinity는 현재 선택 키가 아니다. 과거 측정은 `history`와 기존 profile/raw 단건 조회에 남고,
 공개 profile 기록과 셀의 현재 선택은 분리한다. 현재/이전 이미지 선택 분기는 없다.
 시각은 검증된 Complete profile의 raw 실행 완료 시각, 없으면 현재 generation terminal BEO의
@@ -593,7 +594,9 @@ coverage 캡처에 없는 annotation은 기존 BEO 목록의 `metadata.annotatio
 선언 미독 시 support Unknown을 보존하고 확인된 지원 선언 충돌은 `CurrentDeclarationConflict`로 표시한다.
 usable/problem 평가는 사실 표시이며 서빙·profile 선택·요청 진행의 추가 거절 조건으로 쓰지 않는다.
 worker 실행에는 현재 class/node/backend 선언의 최신 이미지를 쓴다.
-failureSummary는 정확 request/Run identity·batch·code·exitCode·최대 160자 한 줄 원인·후속 relation만,
+failureSummary는 정확 request/Run identity·batch·code·exitCode·최대 160자 한 줄 원인·후속 relation,
+선택적 `firstErrorLine`(ANSI 제거·최대 160자)과 `firstErrorTime`(로그에 적힌 시각 원문)을 제공한다.
+첫 ERROR/FATAL/panic/error= 줄만 보여 주며 경고를 원인으로 추정하거나 시각·시간대를 생성하지 않는다.
 긴 diff/log는 기존 상세에 둔다. 정확 후속만 verified-follow-up, 유사 조건은 related-candidate다.
 
 6차 보정: Run UID는 `runId`, 직접 상세 링크는 `runNamespace`/`runName`과 함께 사용한다.
@@ -655,8 +658,8 @@ coverage는 위 variant 체크리스트 중복 제거를 사용하며 별도 `$r
 세부 실행 상태는 별도 배지 벽으로 노출하지 않고 사유 행/용어 도움말 한 곳에서 설명한다.
 superseded와 notInCatalogScope는 정상 측정 결과의 `complete`+보조 사실이며 ‘현재 스케줄러 미사용’을 명시한다.
 실제 rejected/깨진 근거와 혼동하지 않는다. 완료 수 complete+criteria_met, 기준 충족 수는 부분집합,
-재사용 완료 수는 따로 표시한다. 이전 유효 결과 뒤 새 실패는 기존 complete를 유지하고 최근 시도 실패를 병기한다.
-실패 요청 자체는 failed, 후속 포함 셀은 다른 범위임을 명시한다. idle 3회를 active 3회로 세지 않는다.
+재사용 완료 수는 따로 표시한다. 새 실패가 최신 현재 측정이면 셀도 그 실패를 유지한다.
+이전 성공은 history에 남기며 현재 사용으로 승격하지 않는다. idle 3회를 active 3회로 세지 않는다.
 여러 자식은 실제 문제→부족→검토 필요→전부 기준 충족→전부 complete 순으로 요약하고, 판정 불가 자식은
 미확인 수/범위를 보존한다. unknown 통계·시각 부재만으로 채택 결과의 상태를 내리지 않는다.
 
@@ -666,8 +669,9 @@ superseded와 notInCatalogScope는 정상 측정 결과의 `complete`+보조 사
 `과거 측정`으로 표시한다. 상세는 서버의 `label`(예: 사용 가능)을 그대로 측정 상태에 두고,
 품질 판정·현재 사용을 독립 축으로 표시한다. 품질 unknown을 서버 사용 가능의 대체 판정으로 쓰지 않는다.
 
-요청 단건 `/batch-energy-optimizations/{name}/result`의 현재 사용도 accepted catalog의
-`currentMeasurements[].id`를 요청 `namespace/name/UID`와 정확히 대조한다. 재사용 확인 결과는
+요청 목록과 단건 `/batch-energy-optimizations/{name}/result`의 현재 사용은 accepted catalog에
+해당 게시 profile이 존재하고 `currentMeasurements[].id`가 요청 `namespace/name/UID`와 정확히
+일치할 때만 true다. 최신 실패가 현재로 선택되어도 게시 profile이 없으면 false다. 재사용은
 확인 요청 자신의 identity로 대조하며 원본 참조 행의 현재 사용을 상속하지 않는다.
 catalog/선택 정보를 읽을 수 없으면 `scope.schedulerUsed:null`이며 조건 일치로 false/true를
 추정하지 않는다. 이는 조회 시점의 선택 사실이고 봉인된 결과·그 기준 시각은 바꾸지 않는다.
@@ -725,13 +729,14 @@ coverage 집계는 측정 근거가 있는 조합만 품질 분모에 넣고 정
 기존 preflight 응답에 표시용 `batchPlan`을 추가한다:
 `{variantId,conditionMatch,requestedBatches,requestableBatches,plannedBatches,measuredBatches,inProgressBatches,
 missingBatches,subsetAllowed,searchMayStopEarly,reasons}`.
-conditionMatch는 exact/planned-only/unknown이다. frozen image/조건 미확정은 exact로 승격하지 않는다.
+conditionMatch는 exact/planned-only/unknown이다. 이미지 외 측정 조건 미확정은 exact로 승격하지 않는다.
 셀에서 variantId를 전달하고 입력을 그대로 유지할 때만 그 missing을 초깃값으로 쓴다.
 CPU/dataset/protocol 등 변경·선언 UID 변경은 이전 자동 제외/검사를 무효화한다.
 검사에서 서버가 최신 요청 spec/정확 profile을 대조하고 planned-only 중복은 별도 사실로 보인다.
 전달은 `POST .../preflight?variantId=<id>`의 선택 query이며 native CR 본문에 새 필드를 넣지 않는다.
-preflight exact는 보존 CurvePlanSpec의 실제 identity·immutable image digest와 현재 요청
-spec(배치 선택 제외)이 모두 일치할 때만 제공한다. 이 저장 계약에 없는
+preflight exact는 보존 CurvePlanSpec의 이미지 이외 실제 identity와 현재 요청
+spec(배치 선택 제외)이 모두 일치할 때 제공한다. 이미지 tag/digest 차이나 불변 digest 부재로
+측정 배치를 무효화하지 않는다. 이 저장 계약에 없는
 ModelSpec/DeviceClass/preprocessor 선언 UID를 과거 값으로 추정하지 않으며,
 해당 lineage는 확인되지 않은 한계로 reasons에 명시한다.
 진행 batch는 UID-bound 동결 curve-plan까지 일치한 현재 실행에서만 세며,

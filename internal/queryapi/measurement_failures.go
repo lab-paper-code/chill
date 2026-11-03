@@ -15,6 +15,8 @@ var (
 	powerObservationTimeout = regexp.MustCompile(`(?m)(metric observation|metric result|metric[- ]observer|power observation|observe power)[^\n]*(timeout|timed out|deadline exceeded)|(timeout|timed out|deadline exceeded)[^\n]*(metric observation|metric result|metric[- ]observer|power observation|observe power)`)
 	imagePullFailure        = regexp.MustCompile(`imagepullbackoff|errimagepull|image pull failed|failed to pull image|failed to pull and unpack image`)
 	runtimeExecutionFailure = regexp.MustCompile(`runtimefailed|runtime failed|runtime container failed|runtimeerror:|execute firstfloor measurement:|segmentation fault|illegal instruction`)
+	runtimeFirstError       = regexp.MustCompile(`(?m)^[^\n]*(?:\bERROR\b|\bFATAL\b|\bpanic:|\berror=)[^\n]*`)
+	runtimeErrorTime        = regexp.MustCompile(`^(?:\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}|\d{4}-\d{2}-\d{2}T[0-9:.]+(?:Z|[+-]\d{2}:\d{2}))`)
 )
 
 // MeasurementRequestFailures joins only exact native controller owners.

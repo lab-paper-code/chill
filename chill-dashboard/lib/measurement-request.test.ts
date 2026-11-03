@@ -114,7 +114,6 @@ test("frozen condition explanation lists only observed changed fields, not missi
   assert.deepEqual(changes[1],{field:"activeProtocol.dataset.name",label:"데이터셋",before:"vqa",after:"images"})
   assert.deepEqual(requestConditionChanges(before,undefined),[])
   assert.match(requestPreflightReason({code:"VariantConditionChanged",message:"English warning"}),/기존.*제외.*확인/)
-  assert.match(requestPreflightReason({code:"ImmutableImagesUnconfirmed",message:"English warning"}),/이미지.*확인/)
   assert.equal(requestPreflightReason({code:"FutureReason",message:"서버 상세"}),"서버 상세")
 })
 

@@ -90,7 +90,7 @@ func assessMeasurementRequest(
 			continue
 		}
 		input.Accepted, input.Available, input.Reused = true, true, reused
-		used := true
+		used := measurementProfileCurrent(view, profile)
 		input.SchedulerUsed = &used
 		input.Facts = append(input.Facts,
 			"Catalog profile: "+profile.ID,
@@ -104,7 +104,7 @@ func assessMeasurementRequest(
 				planned = facts.Condition.PlannedBatchSizes
 			}
 			for _, batch := range facts.Batches {
-				assessment := queryapi.AssessMeasurementBatch(batch, facts.PointPolicy.MinimumTrials, reused, true)
+				assessment := queryapi.AssessMeasurementBatch(batch, facts.PointPolicy.MinimumTrials, reused, used)
 				input.Checks = append(input.Checks, assessment.Checklist.Checks...)
 				input.Problems = append(input.Problems, assessment.Reasons...)
 			}
@@ -368,17 +368,7 @@ func (o *measurementService) buildProfiles(ctx context.Context, view httpapi.Pro
 func assessCatalogProfile(
 	view httpapi.ProfilesView, profile serving.Profile,
 ) (queryapi.MeasurementAssessment, []queryapi.ResultRow) {
-	id := profile.ID
-	if profile.Reuse != nil {
-		id = profile.Reuse.ConfirmationProfileID
-	}
-	used := false
-	for _, current := range view.CurrentMeasurements {
-		if current.ID == id {
-			used = true
-			break
-		}
-	}
+	used := measurementProfileCurrent(view, profile)
 	input := queryapi.MeasurementAssessmentInput{
 		Accepted: true, Available: true, Reused: profile.Reuse != nil, SchedulerUsed: &used,
 		Facts: []string{
@@ -411,4 +401,17 @@ func assessCatalogProfile(
 		}}
 	}
 	return queryapi.AssessMeasurement(input), rows
+}
+
+func measurementProfileCurrent(view httpapi.ProfilesView, profile serving.Profile) bool {
+	id := profile.ID
+	if profile.Reuse != nil {
+		id = profile.Reuse.ConfirmationProfileID
+	}
+	for _, current := range view.CurrentMeasurements {
+		if current.ID == id {
+			return true
+		}
+	}
+	return false
 }

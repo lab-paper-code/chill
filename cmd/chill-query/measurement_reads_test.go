@@ -230,6 +230,7 @@ func TestR18RequestResultJoinsOnlyExactAcceptedSelection(t *testing.T) {
 		name       string
 		currentIDs []string
 		noAccepted bool
+		noProfile  bool
 		catalogErr error
 		want       *bool
 	}{
@@ -248,6 +249,7 @@ func TestR18RequestResultJoinsOnlyExactAcceptedSelection(t *testing.T) {
 		},
 		{name: "reuse profile is not confirmation identity", currentIDs: []string{id + "/reuse-target"}, want: &unselected},
 		{name: "known empty selection", currentIDs: []string{}, want: &unselected},
+		{name: "selected failed request without profile", currentIDs: []string{id}, noProfile: true, want: &unselected},
 		{name: "selection facts missing"},
 		{name: "accepted catalog missing", currentIDs: []string{id}, noAccepted: true},
 		{name: "catalog unavailable", catalogErr: errors.New("owner unavailable")},
@@ -266,6 +268,9 @@ func TestR18RequestResultJoinsOnlyExactAcceptedSelection(t *testing.T) {
 				}
 			}
 			accepted := &servingkube.CatalogSnapshot{CurrentMeasurements: current}
+			if !tc.noProfile {
+				accepted.Profiles = []servingkube.ProfileSummary{{ID: id}}
+			}
 			if tc.noAccepted {
 				accepted = nil
 			}

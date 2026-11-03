@@ -190,7 +190,7 @@ func TestPreflightBatchPlanExactEvidenceAndChangedConditions(t *testing.T) {
 			if !got.SubsetAllowed || !got.SearchMayStopEarly {
 				t.Fatalf("batch selection flags = %#v", got)
 			}
-			if name == MeasurementConditionExact {
+			if name == MeasurementConditionExact || name == "mutable image" {
 				if got.ConditionMatch != MeasurementConditionExact || got.VariantID == nil || *got.VariantID != id ||
 					!reflect.DeepEqual(got.MeasuredBatches, []int{1}) || !reflect.DeepEqual(got.MissingBatches, []int{2, 4}) {
 					t.Fatalf("exact batch plan = %#v", got)
@@ -250,5 +250,37 @@ func batchEnergyOptimizationPreflightProtocol(mode string) profilederivation.Cur
 		MetricObserverImage:        "registry.example/chill/metric-observer:v1",
 		WorkloadObserverImage:      "registry.example/chill/workload-observer:v1",
 		WorkloadSchemaVersion:      "chill.dacs.io/workload-contract.v1alpha1",
+	}
+}
+
+func TestR19ImageVersionsDoNotInvalidateMeasuredBatches(t *testing.T) {
+	original := batchEnergyOptimizationPreflightPlan(t)
+	spec := original.Shared()
+	spec.RuntimeImage = "registry.example/runtime:new"
+	spec.Artifact.Image = "registry.example/artifact:new"
+	spec.Preprocessor.Image = "registry.example/preprocessor:new"
+	spec.ActiveProtocol.MetricObserverImage = "registry.example/metric:new"
+	spec.ActiveProtocol.WorkloadObserverImage = "registry.example/workload:new"
+	spec.IdleProtocol.MetricObserverImage = "registry.example/metric:other"
+	spec.IdleProtocol.WorkloadObserverImage = "registry.example/workload:other"
+	plan, err := profilederivation.NewCurvePlan(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := BuildMeasurementBatchPlan(BatchEnergyOptimizationPreflightSnapshot{
+		Plan: plan, RequestsComplete: true, VariantID: MeasurementVariantID(original.Shared()),
+		ExactEvidence: []MeasurementPreflightEvidence{{Condition: original.Shared(), Batches: []int{1, 2, 4}}},
+	})
+	if got.ConditionMatch != MeasurementConditionExact || got.VariantID == nil ||
+		!reflect.DeepEqual(got.MeasuredBatches, []int{1, 2, 4}) || len(got.MissingBatches) != 0 {
+		t.Fatalf("image versions invalidated measured batches: %+v", got)
+	}
+	for _, reason := range got.Reasons {
+		if reason.Code == "ImmutableImagesUnconfirmed" || reason.Code == "VariantConditionChanged" {
+			t.Fatalf("image validity gate survived: %+v", reason)
+		}
+	}
+	if original.Shared().RuntimeImage == spec.RuntimeImage {
+		t.Fatal("condition normalization mutated frozen evidence")
 	}
 }

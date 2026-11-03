@@ -97,16 +97,18 @@ type MeasurementRepresentative struct {
 	P95Milliseconds          *float64 `json:"p95Milliseconds"`
 }
 type MeasurementFailure struct {
-	RequestID    string `json:"requestId"`
-	RunID        string `json:"runId"`
-	RunNamespace string `json:"runNamespace"`
-	RunName      string `json:"runName"`
-	Batch        *int   `json:"batch"`
-	Code         string `json:"code"`
-	Label        string `json:"label"`
-	ExitCode     *int   `json:"exitCode"`
-	Message      string `json:"message"`
-	Relation     string `json:"relation"`
+	RequestID      string `json:"requestId"`
+	RunID          string `json:"runId"`
+	RunNamespace   string `json:"runNamespace"`
+	RunName        string `json:"runName"`
+	Batch          *int   `json:"batch"`
+	Code           string `json:"code"`
+	Label          string `json:"label"`
+	ExitCode       *int   `json:"exitCode"`
+	Message        string `json:"message"`
+	FirstErrorLine string `json:"firstErrorLine,omitempty"`
+	FirstErrorTime string `json:"firstErrorTime,omitempty"`
+	Relation       string `json:"relation"`
 }
 type MeasurementHistory struct {
 	RequestID string `json:"requestId"`
@@ -212,14 +214,24 @@ type MeasurementCoverageResponse struct {
 	NextActions       []MeasurementNextAction     `json:"nextActions"`
 }
 
-// MeasurementVariantID uses frozen condition facts, not request names or batch
-// goals. Keeping this shared lets preflight invalidate changed conditions.
+// MeasurementVariantID uses measured conditions, not request goals or image
+// versions. Frozen image references remain provenance, not profile validity gates.
 func MeasurementVariantID(condition any) string {
 	raw, _ := json.Marshal(condition)
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(raw, &fields) == nil {
 		delete(fields, "name")
 		delete(fields, "plannedBatchSizes")
+		delete(fields, "runtimeImage")
+		for _, field := range []string{"artifact", "preprocessor", "activeProtocol", "idleProtocol"} {
+			var nested map[string]json.RawMessage
+			if json.Unmarshal(fields[field], &nested) == nil && nested != nil {
+				delete(nested, "image")
+				delete(nested, "metricObserverImage")
+				delete(nested, "workloadObserverImage")
+				fields[field], _ = json.Marshal(nested)
+			}
+		}
 		raw, _ = json.Marshal(fields)
 	}
 	sum := sha256.Sum256(raw)

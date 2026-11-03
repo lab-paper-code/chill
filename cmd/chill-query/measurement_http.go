@@ -261,8 +261,13 @@ func (p measurementResultReader) Read(
 	}
 	used := false
 	id := coverageRequestID(snapshot.Campaign)
-	for _, current := range read.Accepted.CurrentMeasurements {
-		if current.ID == id {
+	view := adoptedCatalogView(read)
+	for _, profile := range view.Profiles {
+		profileID := profile.ID
+		if profile.Reuse != nil {
+			profileID = profile.Reuse.ConfirmationProfileID
+		}
+		if profileID == id && measurementProfileCurrent(view, profile) {
 			used = true
 			break
 		}

@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button"
 import { StatusCell } from "@/components/status-cell"
 import { MeasurementNavigation, MeasurementStatus } from "@/components/measurement-navigation"
 import { MeasurementFilters } from "@/features/measurement-coverage"
-import { MeasurementPlanSheet } from "@/features/measurement-plans"
+import { FirstMeasurementError, MeasurementPlanSheet } from "@/features/measurement-plans"
 import { parseMeasurementJSON } from "@/lib/measurement-summary"
 
 export function MeasurementRequestsPage({name,namespace:routeNamespace}:{name?:string;namespace?:string}={}) {
@@ -35,7 +35,7 @@ export function MeasurementRequestsPage({name,namespace:routeNamespace}:{name?:s
       {key:"status",label:"측정 / 현재 사용 / 품질",value:p=><MeasurementStatus assessment={p.assessment}/>},
       {key:"completed",label:"완료 회차",unit:"회",numeric:true,value:p=>p.status?.completedTrials??"미제공"},
       {key:"planned",label:"예정 회차",unit:"회",numeric:true,value:()=>"미제공"},
-      {key:"reason",label:"사유",value:p=>{const reasons=p.assessment?.failureSummary?.length?[...p.assessment.failureSummary,...(p.assessment.reasons??[]).filter(reason=>reason.code==="CatalogUnavailable")]:p.assessment?.reasons;const labels=[...new Set(reasons?.map(reason=>reason.code==="CatalogUnavailable"?`카탈로그 상태: ${measurementReasonSummary(reason.code)}`:measurementReasonSummary(reason.message||reason.code)))];return labels.length?<ul className="space-y-2">{labels.map(label=><li key={label}>{label}</li>)}</ul>:"미제공"}},
+      {key:"reason",label:"사유",value:p=>{const first=p.assessment?.failureSummary?.find(failure=>failure.firstErrorLine);const reasons=p.assessment?.failureSummary?.length?[...p.assessment.failureSummary,...(p.assessment.reasons??[]).filter(reason=>reason.code==="CatalogUnavailable")]:p.assessment?.reasons;const labels=[...new Set(reasons?.filter(reason=>!first||reason.code==="CatalogUnavailable").map(reason=>reason.code==="CatalogUnavailable"?`카탈로그 상태: ${measurementReasonSummary(reason.code)}`:measurementReasonSummary(reason.message||reason.code)))];return <>{first&&<FirstMeasurementError failure={first}/>} {labels.length?<ul className="space-y-2">{labels.map(label=><li key={label}>{label}</li>)}</ul>:!first&&"미제공"}</>}},
       {key:"created",label:"생성 (KST)",sortValue:p=>p.metadata.creationTimestamp,value:p=>formatMeasurementTime(p.metadata.creationTimestamp)},
     ]}/></QueryGate>
     <SourceJSON value={query.data} title="요청 목록 원본"/>

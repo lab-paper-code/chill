@@ -131,6 +131,16 @@ func AssessProfilingRun(run edgev1alpha1.ProfilingRun) MeasurementAssessment {
 		}
 		if termination := run.Status.RuntimeTermination; termination != nil {
 			failure.ExitCode = ptr.To(int(termination.ExitCode))
+			failure.FirstErrorLine = runtimeFirstError.FindString(runtimeLogANSI.ReplaceAllString(termination.LogTail, ""))
+			count := 0
+			for offset := range failure.FirstErrorLine {
+				if count == 160 {
+					failure.FirstErrorLine = failure.FirstErrorLine[:offset]
+					break
+				}
+				count++
+			}
+			failure.FirstErrorTime = runtimeErrorTime.FindString(failure.FirstErrorLine)
 		}
 		assessment.FailureSummary = []MeasurementFailure{failure}
 	}

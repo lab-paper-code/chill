@@ -5,7 +5,7 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
 import { ApiError, useChillMutation, useChillQuery } from "@/lib/client"
-import type { CampaignResult, MeasurementAssessment, MeasurementMutation, MeasurementPlanList, MeasurementPlanSpec, ResultRow } from "@/lib/read-types"
+import type { CampaignResult, MeasurementAssessment, MeasurementFailure, MeasurementMutation, MeasurementPlanList, MeasurementPlanSpec, ResultRow } from "@/lib/read-types"
 import { executionPathLabel, formatMeasurementNumber as number, measurementCheckText, measurementReasonSummary, resultRowsCSV, safeMeasurementReturn } from "@/lib/measurements"
 import { assessmentReasons } from "@/lib/measurement-assessment"
 import { requestExecutionStatus, requestFailureFacts, requestHref, requestRunHref, requestUsedResults } from "@/lib/measurement-request"
@@ -24,6 +24,12 @@ import { MeasurementChildRuns } from "@/features/measurement-runs"
 
 const plansPath = (namespace:string) => `v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`
 type ResultBody = {excludedTrials?:{run:{namespace:string;name:string;uid:string};reasons?:string[]}[]}
+
+export function FirstMeasurementError({failure}:{failure?:MeasurementFailure}) {
+  if(!failure?.firstErrorLine)return null
+  const line=failure.firstErrorTime?failure.firstErrorLine.slice(failure.firstErrorTime.length).trim():failure.firstErrorLine
+  return <div aria-label="첫 오류 원문" className="space-y-1">{failure.firstErrorTime&&<time className="block">{failure.firstErrorTime}</time>}<code className="block whitespace-normal break-words" title={failure.firstErrorLine}>{line}</code></div>
+}
 
 export function AssessmentDetails({assessment,rows=[]}:{assessment?:MeasurementAssessment|null;rows?:ResultRow[]}) {
   if (!assessment) return <p className="notice">서버 판정 미제공 · 스케줄러 사용 여부 미확인</p>
@@ -114,6 +120,7 @@ export function MeasurementPlanDetails({namespace,name}:{namespace:string;name:s
       <details><summary className="min-h-11 cursor-pointer py-2 text-sm">요청 조건</summary><Facts items={[["모델",spec.state.candidate.modelSpec],["장치 종류",spec.state.candidate.deviceClass],["장비",spec.state.targetNode],["전력모드",spec.state.candidate.powerMode],["실행 경로",executionPathLabel(spec.state.candidate.executionPath)],["배치 (건)",spec.batchSizes?.join(", ")??"선언 범위"],["반복 (회)",spec.trialsPerBatch],["데이터셋",spec.activeProtocol.dataset??"미제공"],["실행 측정 (s)",spec.activeProtocol.durationSeconds??"미제공"],["예열 (회)",spec.activeProtocol.warmupIterations??"미제공"],["유휴 측정 (s)",spec.idleProtocol.durationSeconds??"미제공"]]}/></details>
       {campaign.phase==="Failed"&&<section role="alert" className="space-y-2 border border-destructive/40 p-4">
         <h2 className="font-semibold text-destructive">실패 근거</h2>
+        <FirstMeasurementError failure={data?.assessment?.failureSummary?.find(failure=>failure.firstErrorLine)}/>
         <ul className="space-y-2 text-sm">{(data?.assessment?.failureSummary??[]).map((failure,index)=><li key={index}>{measurementReasonSummary(failure.message||failure.code)}</li>)}</ul>
         <details><summary className="min-h-11 cursor-pointer py-2">서버 실패 사유·연결 회차 원문</summary>
         <table aria-label="실패 원인·연결 회차" className="w-full text-left text-sm"><tbody>

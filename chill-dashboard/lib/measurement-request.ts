@@ -134,7 +134,6 @@ export function requestConditionChanges(previous:Record<string,unknown>,current:
 export function requestPreflightReason(reason:{code:string;message:string}) {
   const messages:Record<string,string>={
     VariantConditionChanged:"기존 결과와 현재 동결 실행 조건의 일치를 확인하지 못해 기존 배치 제외를 적용하지 않았어요. 기존 결과가 삭제되거나 미측정으로 바뀐 것은 아니며, 이 요청에서의 재사용만 확인되지 않았어요.",
-    ImmutableImagesUnconfirmed:"실행·모델·전처리기 이미지의 불변 식별자를 모두 확인하지 못했어요. 현재는 요청 조건만 확인되어 기존 결과 재사용을 확정할 수 없어요.",
     DeclarationUIDsNotRetained:"보관된 동결 식별자는 일치하지만 당시 모델·장치 종류·전처리기 선언 UID가 남아 있지 않아요.",
     DeclaredBatchSizes:"모델 파일에 처리 건수 집합이 지정되어 있어 일부 건수만 선택할 수 없어요.",
     PlannedRequestOverlap:"같은 요청 조건으로 계획된 기존 요청이 있어요. 계획의 중복만으로 실제 실행이나 측정 완료를 확인할 수는 없어요.",
