@@ -99,10 +99,12 @@ func TestR6FailureSummaryClassifiesOwnedRuntimeLog(t *testing.T) {
 		runs:     api.ProfilingRunList{Items: []api.ProfilingRun{run}},
 	}
 	assessment := assessMeasurementRequest(task, httpapi.ProfilesView{}, httpapi.ProfilesView{})
-	failures := queryapi.MeasurementRequestFailures(task, coverageOwnedRuns(base)[string(task.UID)], assessment)
+	failures := queryapi.MeasurementRequestFailures(
+		task, queryapi.CoverageOwnedRuns(base.requests.Items, base.runs.Items)[string(task.UID)], assessment,
+	)
 	projection := coverageProjection{
-		base: base, owners: coverageOwnedRuns(base),
-		indices: map[string]int{coverageCellID("", "", "", ""): 0},
+		base: base, owners: queryapi.CoverageOwnedRuns(base.requests.Items, base.runs.Items),
+		indices: map[string]int{queryapi.CoverageCellID("", "", "", ""): 0},
 		out:     queryapi.MeasurementCoverageResponse{Cells: []queryapi.MeasurementCoverageCell{{}}},
 	}
 	projection.addRequest(task)

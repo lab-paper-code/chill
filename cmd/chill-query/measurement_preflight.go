@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 
+	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
+
 	"errors"
 
 	"strings"
@@ -24,7 +26,7 @@ func (o *measurementService) completePreflight(
 	if snapshot.Plan.SchemaVersion() == "" {
 		return snapshot
 	}
-	requests, listErr := o.list(ctx, snapshot.Campaign.Namespace)
+	requests, listErr := querykube.ListMeasurementRequests(ctx, o.client, snapshot.Campaign.Namespace, o.namespace)
 	snapshot.RequestsComplete = listErr == nil
 	catalogEvidence, confirmed := o.preflightCatalogEvidence(
 		ctx,

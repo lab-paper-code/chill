@@ -6,6 +6,8 @@ import (
 	"errors"
 	"testing"
 
+	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
+
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -58,7 +60,7 @@ func TestMeasurementNamespaceEscapeAndListActualNativeState(t *testing.T) {
 	native := fake.NewClientBuilder().WithScheme(measurementScheme(t)).
 		WithObjects(pending, failed, complete, escaped).Build()
 	service := &measurementService{client: native, opts: options{profileNamespaces: []string{"allowed"}}}
-	list, err := service.list(ctx, "allowed")
+	list, err := querykube.ListMeasurementRequests(ctx, service.client, "allowed", service.namespace)
 	if err != nil || len(list.Items) != 3 {
 		t.Fatalf("native list: %+v %v", list, err)
 	}
@@ -66,7 +68,9 @@ func TestMeasurementNamespaceEscapeAndListActualNativeState(t *testing.T) {
 		list.Items[2].Status.Phase != "" || list.Items[2].UID != pending.UID {
 		t.Fatalf("native states lost: %+v", list)
 	}
-	if _, err := service.list(ctx, "outside"); !errors.Is(err, servingkube.ErrForbidden) {
+	if _, err := querykube.ListMeasurementRequests(
+		ctx, service.client, "outside", service.namespace,
+	); !errors.Is(err, servingkube.ErrForbidden) {
 		t.Fatal("namespace list escaped")
 	}
 }

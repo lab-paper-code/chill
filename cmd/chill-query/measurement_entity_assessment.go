@@ -48,7 +48,7 @@ func (o *measurementService) assessList(
 			return nil, err
 		}
 	}
-	owners := coverageOwnedRuns(base)
+	owners := queryapi.CoverageOwnedRuns(base.requests.Items, base.runs.Items)
 	assessments := make([]json.RawMessage, len(list.Items))
 	for i, task := range list.Items {
 		var err error

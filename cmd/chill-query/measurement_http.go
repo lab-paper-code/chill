@@ -7,15 +7,16 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
+
+	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/queryapi"
+	"github.com/lab-paper-code/chill/internal/queryapi/readapi"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
-	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 )
 
@@ -38,7 +39,7 @@ func (o *measurementService) register(mux *http.ServeMux) {
 		values, err := url.ParseQuery(r.URL.RawQuery)
 		sharePaths := false
 		if err == nil {
-			sharePaths, err = measurementSummaryVersion(values)
+			sharePaths, err = readapi.MeasurementSummaryVersion(values)
 		}
 		if err == nil {
 			view, err = httpapi.PageProfiles(view, values)
@@ -58,10 +59,10 @@ func (o *measurementService) register(mux *http.ServeMux) {
 				httpapi.SendQueryError(w, err)
 				return
 			}
-			writeMeasurement(w, summary)
+			readapi.WriteMeasurement(w, summary)
 			return
 		}
-		writeMeasurement(w, payload)
+		readapi.WriteMeasurement(w, payload)
 	})
 	mux.HandleFunc(
 		"GET /api/v1/namespaces/{namespace}/measurement-coverage",
@@ -69,7 +70,7 @@ func (o *measurementService) register(mux *http.ServeMux) {
 			values, err := url.ParseQuery(r.URL.RawQuery)
 			sharePaths := false
 			if err == nil {
-				sharePaths, err = measurementSummaryVersion(values)
+				sharePaths, err = readapi.MeasurementSummaryVersion(values)
 			}
 			var query httpapi.MeasurementCoverageQuery
 			if err == nil {
@@ -88,7 +89,7 @@ func (o *measurementService) register(mux *http.ServeMux) {
 				httpapi.SendQueryError(w, err)
 				return
 			}
-			writeMeasurement(w, payload)
+			readapi.WriteMeasurement(w, payload)
 		},
 	)
 	mux.HandleFunc(
@@ -97,17 +98,17 @@ func (o *measurementService) register(mux *http.ServeMux) {
 			values, err := url.ParseQuery(r.URL.RawQuery)
 			sharePaths := false
 			if err == nil {
-				sharePaths, err = measurementSummaryVersion(values)
+				sharePaths, err = readapi.MeasurementSummaryVersion(values)
 			}
-			var page *httpapi.ProfilePage
+			var page *readapi.Page
 			if err == nil {
-				page, err = measurementListPage(values)
+				page, err = readapi.MeasurementListPage(values)
 			}
 			if err != nil {
 				httpapi.SendQueryError(w, &serving.Error{Code: "InvalidQuery", Message: "invalid measurement list query"})
 				return
 			}
-			list, err := o.list(r.Context(), r.PathValue("namespace"))
+			list, err := querykube.ListMeasurementRequests(r.Context(), o.client, r.PathValue("namespace"), o.namespace)
 			if err != nil {
 				httpapi.SendQueryError(w, err)
 				return
@@ -126,17 +127,17 @@ func (o *measurementService) register(mux *http.ServeMux) {
 				httpapi.SendQueryError(w, err)
 				return
 			}
-			payload := projectMeasurementList(list, assessments, page)
+			payload := readapi.ProjectMeasurementList(list, assessments, page)
 			if values.Get(measurementViewQuery) == measurementSummaryView {
 				summary, err := queryapi.MeasurementSummaryJSON(payload, false, sharePaths)
 				if err != nil {
 					httpapi.SendQueryError(w, err)
 					return
 				}
-				writeMeasurement(w, summary)
+				readapi.WriteMeasurement(w, summary)
 				return
 			}
-			writeMeasurement(w, payload)
+			readapi.WriteMeasurement(w, payload)
 
 		},
 	)
@@ -165,7 +166,7 @@ func (o *measurementService) register(mux *http.ServeMux) {
 						httpapi.SendQueryError(w, err)
 						return
 					}
-					writeMeasurement(w, value)
+					readapi.WriteMeasurement(w, value)
 				},
 			)
 		}
@@ -177,16 +178,6 @@ func adoptedCatalogView(read servingkube.CatalogRead) httpapi.ProfilesView {
 		return httpapi.ProfilesView{}
 	}
 	return catalogView(*read.Accepted)
-}
-
-func writeMeasurement(w http.ResponseWriter, value any) {
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "application/json")
-	if raw, ok := value.(json.RawMessage); ok {
-		_, _ = w.Write(raw)
-		return
-	}
-	_ = json.NewEncoder(w).Encode(value)
 }
 
 func newServingCatalogReader(opts options) (func(context.Context) (servingkube.CatalogRead, error), error) {
@@ -280,7 +271,7 @@ func (p measurementResultReader) Read(
 		return snapshot, nil
 	}
 	used := false
-	id := coverageRequestID(snapshot.Campaign)
+	id := queryapi.CoverageRequestID(snapshot.Campaign)
 	view := adoptedCatalogView(read)
 	for _, profile := range view.Profiles {
 		profileID := profile.ID
@@ -294,70 +285,4 @@ func (p measurementResultReader) Read(
 	}
 	snapshot.SchedulerUsed = &used
 	return snapshot, nil
-}
-
-// Keep the native Kubernetes list and each complete CR intact; assessment is
-// only an additional read-projection field.
-func projectMeasurementList(
-	list api.BatchEnergyOptimizationList, assessments []json.RawMessage, page *httpapi.ProfilePage,
-) any {
-	type item struct {
-		api.BatchEnergyOptimization
-		Assessment json.RawMessage `json:"assessment"`
-	}
-	items := make([]item, len(list.Items))
-	for i := range list.Items {
-		items[i] = item{list.Items[i], assessments[i]}
-	}
-	return struct {
-		meta.TypeMeta `json:",inline"`
-		meta.ListMeta `json:"metadata,omitempty"`
-		Items         []item               `json:"items"`
-		Page          *httpapi.ProfilePage `json:"page,omitempty"`
-	}{list.TypeMeta, list.ListMeta, items, page}
-}
-
-func measurementListPage(values url.Values) (*httpapi.ProfilePage, error) {
-	page := &httpapi.ProfilePage{Limit: 25}
-	for key, items := range values {
-		if len(items) != 1 {
-			return nil, errors.New("repeated measurement list query")
-		}
-		switch key {
-		case measurementViewQuery:
-			if items[0] != measurementSummaryView {
-				return nil, errors.New("invalid measurement list view")
-			}
-		case measurementLimitQuery, measurementOffsetQuery:
-			n, err := strconv.Atoi(items[0])
-			if err != nil || strconv.Itoa(n) != items[0] ||
-				key == measurementLimitQuery && (n < 1 || n > 50) ||
-				key == measurementOffsetQuery && (n < 0 || n > 1000000) {
-				return nil, errors.New("limit must be 1–50 and offset 0–1000000")
-			}
-			if key == measurementLimitQuery {
-				page.Limit = n
-			} else {
-				page.Offset = n
-			}
-		default:
-			return nil, errors.New("unknown measurement list query")
-		}
-	}
-	if !values.Has(measurementLimitQuery) && !values.Has(measurementOffsetQuery) {
-		return nil, nil
-	}
-	return page, nil
-}
-
-func measurementSummaryVersion(values url.Values) (bool, error) {
-	if !values.Has("summary") {
-		return false, nil
-	}
-	if len(values["summary"]) != 1 || values.Get("summary") != "v2" ||
-		len(values[measurementViewQuery]) != 1 || values.Get(measurementViewQuery) != measurementSummaryView {
-		return false, errors.New("summary=v2 requires view=summary")
-	}
-	values.Del("summary")
-	return true, nil
 }

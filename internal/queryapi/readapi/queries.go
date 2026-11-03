@@ -24,7 +24,7 @@ type QueryReaders struct {
 	ModelCompatibilityMatrix func(context.Context) (queryapi.ModelCompatibilityMatrixView, error)
 }
 
-type queryPage struct {
+type Page struct {
 	Offset     int  `json:"offset"`
 	Limit      int  `json:"limit"`
 	Total      int  `json:"total"`
@@ -126,10 +126,10 @@ func (q *listQuery) parseRunFilter(key, value string) bool {
 	return true
 }
 
-func pageBounds(total int, q listQuery) (int, int, queryPage) {
+func pageBounds(total int, q listQuery) (int, int, Page) {
 	start := min(q.offset, total)
 	end := min(start+q.limit, total)
-	page := queryPage{Offset: q.offset, Limit: q.limit, Total: total}
+	page := Page{Offset: q.offset, Limit: q.limit, Total: total}
 	if end < total {
 		page.NextOffset = &end
 	}
@@ -179,7 +179,7 @@ func NewQueryHandler(readers QueryReaders) http.Handler {
 		snapshot.Systems = selected[start:end]
 		writeJSON(w, struct {
 			queryapi.SystemsView
-			Page queryPage `json:"page"`
+			Page Page `json:"page"`
 		}{queryapi.BuildSystems(snapshot), page})
 	})
 	mux.HandleFunc("GET /api/v1/inventory", func(w http.ResponseWriter, r *http.Request) {
@@ -214,8 +214,8 @@ func NewQueryHandler(readers QueryReaders) http.Handler {
 		snapshot.Classes, snapshot.Models = classes[classStart:classEnd], models[modelStart:modelEnd]
 		writeJSON(w, struct {
 			queryapi.InventoryView
-			ClassPage queryPage `json:"classPage"`
-			ModelPage queryPage `json:"modelPage"`
+			ClassPage Page `json:"classPage"`
+			ModelPage Page `json:"modelPage"`
 		}{queryapi.BuildInventory(snapshot), classPage, modelPage})
 	})
 	mux.HandleFunc("GET /api/v1/namespaces/{namespace}/profiling-runs", func(w http.ResponseWriter, r *http.Request) {
@@ -246,7 +246,7 @@ func NewQueryHandler(readers QueryReaders) http.Handler {
 		snapshot.Namespace, snapshot.Runs = namespace, selected[start:end]
 		writeJSON(w, struct {
 			queryapi.ProfilingRunsView
-			Page queryPage `json:"page"`
+			Page Page `json:"page"`
 		}{queryapi.BuildProfilingRuns(snapshot), page})
 	})
 	return mux

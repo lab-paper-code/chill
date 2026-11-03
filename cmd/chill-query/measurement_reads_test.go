@@ -224,7 +224,7 @@ func TestMeasurementResultFailureRetainsNativeRequestWithoutInventingEvidence(t 
 func TestR18RequestResultJoinsOnlyExactAcceptedSelection(t *testing.T) {
 	request, record, _, _, _ := statisticsFixture(t)
 	request.Status.Phase = "Complete"
-	id := coverageRequestID(*request)
+	id := queryapi.CoverageRequestID(*request)
 	selected, unselected := true, false
 	for _, tc := range []struct {
 		name       string

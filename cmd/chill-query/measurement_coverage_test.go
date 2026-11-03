@@ -14,24 +14,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-func TestCoverageProblemWithoutFailedRequestHasNextAction(t *testing.T) {
-	out := queryapi.MeasurementCoverageResponse{}
-	cell := queryapi.MeasurementCoverageCell{
-		ID: "conflict",
-		Assessment: queryapi.MeasurementAssessment{
-			DisplayStatus: queryapi.MeasurementProblem,
-			Reasons: []queryapi.MeasurementReason{{
-				Code: "CurrentDeclarationConflict", Message: "현재 선언과 측정이 다릅니다",
-			}},
-		},
-	}
-	addCoverageActions(&out, cell, map[string]int{})
-	if len(out.NextActions) != 1 || out.NextActions[0].ReasonCode != "CurrentDeclarationConflict" ||
-		out.NextActions[0].CellID != cell.ID {
-		t.Fatalf("problem must remain actionable without a failed request: %#v", out.NextActions)
-	}
-}
-
 func TestCoverageLatestCellNeverUnionsHistoricalBatches(t *testing.T) {
 	now := time.Now().UTC()
 	base := &measurementCoverageBase{
@@ -80,7 +62,7 @@ func TestCoverageLatestCellNeverUnionsHistoricalBatches(t *testing.T) {
 			},
 			Status: api.BatchEnergyOptimizationStatus{Phase: "Complete", ObservedGeneration: 1},
 		}
-		id := coverageRequestID(task)
+		id := queryapi.CoverageRequestID(task)
 		batch := index + 1
 		condition := profilederivation.CurvePlanSpec{
 			LogicalModel: "model", DeviceClass: "class", NodeUID: "node-uid", PowerMode: "fixed",
@@ -111,7 +93,7 @@ func TestCoverageLatestCellNeverUnionsHistoricalBatches(t *testing.T) {
 	}
 	cell := got.Cells[0]
 	if cell.VariantCount != 1 || cell.BatchProgress == nil || cell.Representative == nil ||
-		cell.CurrentMeasurement == nil || cell.CurrentMeasurement.ID != coverageRequestID(base.requests.Items[1]) ||
+		cell.CurrentMeasurement == nil || cell.CurrentMeasurement.ID != queryapi.CoverageRequestID(base.requests.Items[1]) ||
 		len(cell.History) != 2 || len(got.Entities.Profiles) != 2 {
 		t.Fatalf("latest selection lost its history or current batch facts: %+v", cell)
 	}
@@ -322,12 +304,12 @@ func TestCoverageCurrentFailedMeasurementIsNotHiddenByOldProfiles(t *testing.T) 
 	base.requests.Items = append(base.requests.Items, failed)
 	response := buildMeasurementCoverage(base, coverageSizeNamespace, httpapi.MeasurementCoverageQuery{})
 	candidate := failed.Spec.State.Candidate
-	id := coverageCellID(candidate.ModelSpec, candidate.DeviceClass, candidate.ExecutionPath, candidate.PowerMode)
+	id := queryapi.CoverageCellID(candidate.ModelSpec, candidate.DeviceClass, candidate.ExecutionPath, candidate.PowerMode)
 	for _, cell := range response.Cells {
 		if cell.ID != id {
 			continue
 		}
-		if cell.CurrentMeasurement == nil || cell.CurrentMeasurement.ID != coverageRequestID(failed) ||
+		if cell.CurrentMeasurement == nil || cell.CurrentMeasurement.ID != queryapi.CoverageRequestID(failed) ||
 			cell.Assessment.Status != queryapi.MeasurementFailed || cell.Assessment.Evidence.Accepted ||
 			cell.Assessment.DisplayStatus != queryapi.MeasurementProblem || cell.VariantCount != 1 {
 			t.Fatalf("latest failure was hidden by retained successful profiles: %+v", cell)
@@ -343,7 +325,7 @@ func TestCoverageCurrentFailedMeasurementIsNotHiddenByOldProfiles(t *testing.T) 
 		replaced := buildMeasurementCoverage(base, coverageSizeNamespace, httpapi.MeasurementCoverageQuery{})
 		for _, selected := range replaced.Cells {
 			if selected.ID == id && (selected.CurrentMeasurement == nil ||
-				selected.CurrentMeasurement.ID == coverageRequestID(failed)) {
+				selected.CurrentMeasurement.ID == queryapi.CoverageRequestID(failed)) {
 				t.Fatal("explicit replacement did not precede recency")
 			}
 		}
@@ -365,30 +347,30 @@ func TestCoverageMeasurementTimeUsesOnlyCurrentTerminalEvidence(t *testing.T) {
 			}},
 		},
 	}
-	if got := coverageMeasurementTime(task, time.Unix(1, 0)); !got.Equal(time.Unix(2, 0)) {
+	if got := queryapi.CoverageMeasurementTime(task, time.Unix(1, 0)); !got.Equal(time.Unix(2, 0)) {
 		t.Fatal("failed measurement used an old success instead of terminal time")
 	}
 	task.Status.Phase = string(api.MeasurementPhaseComplete)
-	if got := coverageMeasurementTime(task, time.Unix(1, 0)); !got.Equal(time.Unix(1, 0)) {
+	if got := queryapi.CoverageMeasurementTime(task, time.Unix(1, 0)); !got.Equal(time.Unix(1, 0)) {
 		t.Fatal("verified raw profile completion time lost precedence")
 	}
 	task.Status.Phase = "Measuring"
-	if !coverageMeasurementTime(task, time.Time{}).IsZero() {
+	if !queryapi.CoverageMeasurementTime(task, time.Time{}).IsZero() {
 		t.Fatal("nonterminal measurement invented a completion time")
 	}
 	task.Status.Phase, task.Status.ObservedGeneration = string(api.MeasurementPhaseFailed), 1
-	if !coverageMeasurementTime(task, time.Time{}).IsZero() {
+	if !queryapi.CoverageMeasurementTime(task, time.Time{}).IsZero() {
 		t.Fatal("stale generation invented a current completion time")
 	}
 	task.Status.ObservedGeneration = 2
 	task.Status.Conditions[0].ObservedGeneration = 1
-	if !coverageMeasurementTime(task, time.Time{}).IsZero() {
+	if !queryapi.CoverageMeasurementTime(task, time.Time{}).IsZero() {
 		t.Fatal("stale condition invented a current completion time")
 	}
 }
 
 func TestCoveragePreservesNonBlockingCompatibilityDiagnostics(t *testing.T) {
-	cell := coverageNewCell(queryapi.MeasurementCoverageGroup{
+	cell := queryapi.CoverageNewCell(queryapi.MeasurementCoverageGroup{
 		Model: queryapi.MeasurementIdentity{Name: "model"}, DeviceClass: queryapi.MeasurementIdentity{Name: "class"},
 	}, "cpu", "fixed", map[string]queryapi.ModelCompatibilityView{
 		"model/class/cpu": {
@@ -411,7 +393,7 @@ func TestCoverageConditionIdentitySurvivesSameConditionPreflight(t *testing.T) {
 	plan := measurementPreflightTestPlan(t)
 	cell := queryapi.MeasurementCoverageCell{}
 	measurementID := "ns/measurement/uid"
-	variant := coverageFindVariant(&cell, measurementID, plan.Shared(), "requested")
+	variant := queryapi.CoverageFindVariant(&cell, measurementID, plan.Shared(), "requested")
 	variant.RequestIDs = append(variant.RequestIDs, measurementID)
 	if variant.ID == measurementID || variant.ID != queryapi.MeasurementVariantID(plan.Shared()) {
 		t.Fatal("condition identity was replaced by measurement identity")
@@ -431,33 +413,5 @@ func TestCoverageConditionIdentitySurvivesSameConditionPreflight(t *testing.T) {
 	}
 	if view.BatchPlan.VariantID == nil || *view.BatchPlan.VariantID != variant.ID {
 		t.Fatal("preflight did not retain the condition identity from coverage")
-	}
-}
-
-func TestCoverageFailedRequestHistoryUsesCurrentIdentityNotCellStatus(t *testing.T) {
-	current, historical := 0, 0
-	summary := queryapi.MeasurementCoverageSummary{
-		CurrentFailedRequestCount: &current, HistoricalFailedRequestCount: &historical,
-	}
-	cells := map[string]queryapi.MeasurementCoverageCell{
-		"nano-int8": {
-			CurrentMeasurement: &profilederivation.MeasurementSelection{ID: "latest-partial"},
-			Assessment:         queryapi.MeasurementAssessment{DisplayStatus: queryapi.MeasurementInsufficient},
-		},
-	}
-	requests := []queryapi.MeasurementEntity{}
-	for _, id := range []string{"old-failure-1", "old-failure-2", "old-failure-3"} {
-		requests = append(requests, queryapi.MeasurementEntity{ID: id, Failed: true, CellIDs: []string{"nano-int8"}})
-	}
-	for _, id := range []string{"current-failure-1", "current-failure-2", "current-failure-3", "current-failure-4"} {
-		cells[id] = queryapi.MeasurementCoverageCell{
-			CurrentMeasurement: &profilederivation.MeasurementSelection{ID: id},
-			Assessment:         queryapi.MeasurementAssessment{DisplayStatus: queryapi.MeasurementProblem},
-		}
-		requests = append(requests, queryapi.MeasurementEntity{ID: id, Failed: true, CellIDs: []string{id}})
-	}
-	countCoverageFailedRequests(&summary, requests, cells)
-	if current != 4 || historical != 3 {
-		t.Fatalf("latest partial changed older failures into current failures: current=%d historical=%d", current, historical)
 	}
 }

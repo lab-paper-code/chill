@@ -27,3 +27,11 @@ Dashboard·CLI는 같은 권한·검증·비동기 결과 의미를 사용하되
 - namespace coverage cache는 기존 30초 fresh/최대 5분 stale 정책을 그대로 Query API에 둔다. 큰 조회의 CPU/RSS/응답 크기와 serving 영향은 live 성능 수용이 필요하며 프로세스 분리만으로 간섭 부재를 주장하지 않는다.
 - 공유 CPU cutover 뒤 ProfilingRun 목록과 profile 목록은 CPU quota/request/affinity 필터·정렬 입력을 받지 않는다. `cpu` 쿼리는 InvalidQuery이며 CPU 환경은 실행 관측으로만 보존한다. `cmd/chill`에는 해당 CPU 필터 플래그가 없다. Query evidence 검증은 Node·mode·dataset/protocol·메모리/GPU·원시 신원을 유지하고 삭제된 frozen CPU 계약을 다시 요구하지 않는다.
 
+## Go 구현 소유권 (2026-11-04)
+
+- `internal/queryapi`는 serving 타입과 무관한 cell·variant 생성, 요청/run 소유 UID 연결, 측정 시각, summary·checklist compaction을 소유한다. 입력은 기존 query DTO·native CR·source 실패 map이며 serving DTO를 복제하지 않는다.
+- 기존 `internal/queryapi/kube`는 native BEO 목록 조회·빈 목록 초기화·정렬을 소유한다. composition root의 namespace 권한 판정 callback을 먼저 실행하므로 기존 금지 오류와 HTTP 의미를 유지한다.
+- 기존 `internal/queryapi/readapi`는 measurement query 해석·pagination envelope·JSON encoding을 소유한다. 기존 목록용 `Page` DTO를 공유하며 옛 함수·re-export는 남기지 않는다.
+- **경계상 cmd 어댑터로 유지:** serving catalog-read·profile/operation/occupancy record 변환과 판정, serving 의존 coverage snapshot·cache/병렬 refresh·셀/variant source 연결, typed preflight/result adapter·route 등록, campaign statistics. `internal/queryapi`와 하위 패키지는 `internal/serving`을 import하지 않으며 `.go-arch-lint.yml`의 기존 의존 방향을 그대로 유지한다.
+- coverage의 30초 refresh·5분 stale 허용, namespace 공유 cache/lock·deadline·실패 보존, query key·pagination·summary 크기 제한·HTTP 계약은 이동 전 의미를 유지한다. 순수 helper의 회귀는 구현 소유 패키지로 이동하고 serving 경계·HTTP·동시성 회귀는 composition root에 유지한다.
+

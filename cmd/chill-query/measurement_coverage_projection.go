@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -15,22 +14,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	"k8s.io/utils/ptr"
 )
-
-func coverageCellID(model, class, path, mode string) string {
-	return strings.Join([]string{model, class, path, mode}, "/")
-}
-func coverageRequestID(task api.BatchEnergyOptimization) string {
-	return task.Namespace + "/" + task.Name + "/" + string(task.UID)
-}
-func coverageBatches(values []int) []int {
-	out := append([]int{}, values...)
-	sort.Ints(out)
-	return slices.Compact(out)
-}
-func coverageContains(values []int, batch int) bool { return slices.Contains(values, batch) }
-func coverageReason(code, message string) queryapi.MeasurementReason {
-	return queryapi.MeasurementReason{Code: code, Message: message, SourceIDs: []string{}}
-}
 
 type coverageProjection struct {
 	base      *measurementCoverageBase
@@ -61,8 +44,8 @@ func buildMeasurementCoverage(
 		p.assessCell(&p.out.Cells[i])
 		p.addOccupancy(&p.out.Cells[i])
 	}
-	coverageSummarize(&p.out, base)
-	compactCoverageResponse(&p.out)
+	queryapi.SummarizeMeasurementCoverage(&p.out, base.failures)
+	queryapi.CompactMeasurementCoverage(&p.out)
 	return p.out
 }
 
@@ -186,7 +169,7 @@ func (p *coverageProjection) addCells() {
 			}
 			for _, path := range model.Spec.ExecutionPaths {
 				for _, mode := range class.PowerModes {
-					cell := coverageNewCell(group, path.Name, mode.Name, support)
+					cell := queryapi.CoverageNewCell(group, path.Name, mode.Name, support)
 					p.indices[cell.ID] = len(p.out.Cells)
 					p.out.Cells = append(p.out.Cells, cell)
 					group.CellIDs = append(group.CellIDs, cell.ID)
@@ -197,43 +180,14 @@ func (p *coverageProjection) addCells() {
 	}
 }
 
-func coverageNewCell(
-	group queryapi.MeasurementCoverageGroup, path, mode string,
-	support map[string]queryapi.ModelCompatibilityView,
-) queryapi.MeasurementCoverageCell {
-	cell := queryapi.MeasurementCoverageCell{
-		ID:    coverageCellID(group.Model.Name, group.DeviceClass.Name, path, mode),
-		Model: group.Model, DeviceClass: group.DeviceClass, ExecutionPath: path, PowerMode: mode,
-		Variants: []queryapi.MeasurementCoverageVariant{}, FailureSummary: []queryapi.MeasurementFailure{},
-		History: []queryapi.MeasurementHistory{},
-		Support: queryapi.MeasurementSupport{
-			Verdict: queryapi.MeasurementSupportUnknown, Reasons: []queryapi.ModelCompatibilityReason{},
-			Diagnostics: []string{},
-		},
-	}
-	row, found := support[strings.Join([]string{group.Model.Name, group.DeviceClass.Name, path}, "/")]
-	if !found {
-		cell.Support.Reasons = append(cell.Support.Reasons, queryapi.ModelCompatibilityReason{
-			Kind: queryapi.MeasurementSupportUnknown, Code: "SupportInputMissing", Message: "선택 Node의 지원 입력을 확인할 수 없습니다",
-		})
-		return cell
-	}
-	cell.Support.Verdict, cell.Support.Reasons = row.Verdict, row.Reasons
-	cell.Support.Diagnostics = row.Diagnostics
-	if row.Inputs.Node.Name != "" {
-		cell.Support.Node = &queryapi.MeasurementIdentity{Name: row.Inputs.Node.Name, UID: row.Inputs.Node.UID}
-	}
-	return cell
-}
-
 func (p *coverageProjection) indexEvidence() {
-	p.owners = coverageOwnedRuns(p.base)
+	p.owners = queryapi.CoverageOwnedRuns(p.base.requests.Items, p.base.runs.Items)
 	p.profiles = map[string][]serving.Profile{}
 	p.adopted = map[string]bool{}
 	byName := make(map[string]string, len(p.base.requests.Items))
 	replacements := map[string]string{}
 	for _, task := range p.base.requests.Items {
-		id := coverageRequestID(task)
+		id := queryapi.CoverageRequestID(task)
 		byName[task.Namespace+"/"+task.Name] = id
 		if name := task.Annotations[profilederivation.ReplacesMeasurementAnnotation]; name != "" &&
 			task.DeletionTimestamp == nil {
@@ -266,38 +220,14 @@ func (p *coverageProjection) indexEvidence() {
 	}
 }
 
-func coverageOwnedRuns(base *measurementCoverageBase) map[string][]api.ProfilingRun {
-	owners := map[string][]api.ProfilingRun{}
-	requests := map[string]api.BatchEnergyOptimization{}
-	for _, task := range base.requests.Items {
-		requests[string(task.UID)] = task
-	}
-	for _, run := range base.runs.Items {
-		for _, owner := range run.OwnerReferences {
-			task, exists := requests[string(owner.UID)]
-			if !exists || run.Namespace != task.Namespace || owner.Name != task.Name {
-				continue
-			}
-			if owner.Controller == nil || !*owner.Controller || owner.APIVersion != api.GroupVersion.String() {
-				continue
-			}
-			if owner.Kind == "BatchEnergyOptimization" {
-				owners[string(owner.UID)] = append(owners[string(owner.UID)], run)
-				break
-			}
-		}
-	}
-	return owners
-}
-
 func (p *coverageProjection) addRequest(task api.BatchEnergyOptimization) {
 	if p.query.Node != "" && task.Spec.State.TargetNode != p.query.Node {
 		return
 	}
 	candidate := task.Spec.State.Candidate
-	id := coverageCellID(candidate.ModelSpec, candidate.DeviceClass, candidate.ExecutionPath, candidate.PowerMode)
+	id := queryapi.CoverageCellID(candidate.ModelSpec, candidate.DeviceClass, candidate.ExecutionPath, candidate.PowerMode)
 	index, exists := p.indices[id]
-	requestID := coverageRequestID(task)
+	requestID := queryapi.CoverageRequestID(task)
 	assessment := assessMeasurementRequest(task, p.base.catalog, p.base.catalog)
 	failures := queryapi.MeasurementRequestFailures(task, p.owners[string(task.UID)], assessment)
 	if assessment.Evidence.Accepted {
@@ -339,48 +269,32 @@ func (p *coverageProjection) addPlannedVariant(
 	cell *queryapi.MeasurementCoverageCell, task api.BatchEnergyOptimization,
 	assessment queryapi.MeasurementAssessment,
 ) {
-	variant := coverageFindVariant(cell, coverageRequestID(task), task.Spec, p.out.Scope.GoalBasis)
-	variant.MeasuredAt = coverageMeasurementTime(task, time.Time{})
-	variant.RequestIDs = append(variant.RequestIDs, coverageRequestID(task))
+	variant := queryapi.CoverageFindVariant(cell, queryapi.CoverageRequestID(task), task.Spec, p.out.Scope.GoalBasis)
+	variant.MeasuredAt = queryapi.CoverageMeasurementTime(task, time.Time{})
+	variant.RequestIDs = append(variant.RequestIDs, queryapi.CoverageRequestID(task))
 	variant.Assessment = assessment
-	variant.Assessment.Reasons = append(variant.Assessment.Reasons, coverageReason(
+	variant.Assessment.Reasons = append(variant.Assessment.Reasons, queryapi.CoverageReason(
 		"PlannedConditionUnconfirmed", "요청 spec만 확인했으며 동결 실행 조건의 중복 여부는 검사에서 확인해야 합니다",
 	))
 	targets := make([]int, 0, len(task.Spec.BatchSizes))
 	for _, batch := range task.Spec.BatchSizes {
 		targets = append(targets, int(batch))
 	}
-	variant.BatchProgress.Target = coverageBatches(append(variant.BatchProgress.Target, targets...))
+	variant.BatchProgress.Target = queryapi.CoverageBatches(append(variant.BatchProgress.Target, targets...))
 	for _, run := range p.owners[string(task.UID)] {
 		variant.RunIDs = append(variant.RunIDs, string(run.UID))
 	}
-}
-
-func coverageMeasurementTime(task api.BatchEnergyOptimization, measuredAt time.Time) time.Time {
-	if task.Status.Phase != string(api.MeasurementPhaseComplete) {
-		measuredAt = time.Time{}
-	}
-	if (task.Status.Phase == string(api.MeasurementPhaseComplete) ||
-		task.Status.Phase == string(api.MeasurementPhaseFailed)) &&
-		task.Status.ObservedGeneration == task.Generation {
-		for i, condition := range task.Status.Conditions {
-			if condition.Type == "MeasurementComplete" && condition.ObservedGeneration == task.Generation {
-				return profilederivation.MeasurementTime(measuredAt, task.Status.Conditions[i:i+1])
-			}
-		}
-	}
-	return profilederivation.MeasurementTime(measuredAt, nil)
 }
 
 func (p *coverageProjection) addProfile(
 	cell *queryapi.MeasurementCoverageCell, task api.BatchEnergyOptimization, profile serving.Profile,
 ) {
 	facts := p.base.catalog.MeasurementFacts[profile.ID]
-	variant := coverageFindVariant(cell, coverageRequestID(task), facts.Condition, p.out.Scope.GoalBasis)
-	variant.MeasuredAt = coverageMeasurementTime(task, profile.MeasuredAt)
-	variant.RequestIDs = append(variant.RequestIDs, coverageRequestID(task))
+	variant := queryapi.CoverageFindVariant(cell, queryapi.CoverageRequestID(task), facts.Condition, p.out.Scope.GoalBasis)
+	variant.MeasuredAt = queryapi.CoverageMeasurementTime(task, profile.MeasuredAt)
+	variant.RequestIDs = append(variant.RequestIDs, queryapi.CoverageRequestID(task))
 	variant.ProfileIDs = append(variant.ProfileIDs, profile.ID)
-	variant.BatchProgress.Target = coverageBatches(append(
+	variant.BatchProgress.Target = queryapi.CoverageBatches(append(
 		variant.BatchProgress.Target, facts.Condition.PlannedBatchSizes...,
 	))
 	for _, run := range p.owners[string(task.UID)] {
@@ -440,7 +354,9 @@ func (p *coverageProjection) addRuns() {
 			continue
 		}
 		candidate := run.Spec.Candidate
-		id := coverageCellID(candidate.ModelSpec, candidate.DeviceClass, candidate.ExecutionPath, candidate.PowerMode)
+		id := queryapi.CoverageCellID(
+			candidate.ModelSpec, candidate.DeviceClass, candidate.ExecutionPath, candidate.PowerMode,
+		)
 		cellIDs := []string{}
 		if _, exists := p.indices[id]; exists {
 			cellIDs = append(cellIDs, id)
@@ -478,12 +394,12 @@ func (p *coverageProjection) assessVariant(variant *queryapi.MeasurementCoverage
 	if len(p.query.Batches) > 0 {
 		progress.Target = append([]int{}, p.query.Batches...)
 	}
-	progress.Target = coverageBatches(progress.Target)
-	progress.Measured = coverageBatches(progress.Measured)
-	progress.CriteriaMet = coverageBatches(progress.CriteriaMet)
-	progress.InProgress = coverageBatches(progress.InProgress)
+	progress.Target = queryapi.CoverageBatches(progress.Target)
+	progress.Measured = queryapi.CoverageBatches(progress.Measured)
+	progress.CriteriaMet = queryapi.CoverageBatches(progress.CriteriaMet)
+	progress.InProgress = queryapi.CoverageBatches(progress.InProgress)
 	for _, batch := range progress.Target {
-		if coverageContains(progress.Measured, batch) {
+		if queryapi.CoverageContains(progress.Measured, batch) {
 			continue
 		}
 		if len(variant.ProfileIDs) == 0 {
@@ -501,7 +417,7 @@ func (p *coverageProjection) assessVariant(variant *queryapi.MeasurementCoverage
 		used = used || p.adopted[id]
 	}
 	for _, row := range variant.ResultRows {
-		if row.RowKind != queryapi.ResultRowSourceReference && coverageContains(progress.Target, row.Batch) {
+		if row.RowKind != queryapi.ResultRowSourceReference && queryapi.CoverageContains(progress.Target, row.Batch) {
 			assessment := row.Assessment
 			checks = append(checks, assessment)
 		}
@@ -520,28 +436,6 @@ func (p *coverageProjection) assessVariant(variant *queryapi.MeasurementCoverage
 		}
 	}
 	variant.Assessment = queryapi.AssessMeasurement(input)
-}
-
-// Keep repeat measurements separate until current selection. The public variant
-// ID remains the frozen-condition fingerprint used by request preflight.
-func coverageFindVariant(
-	cell *queryapi.MeasurementCoverageCell, measurementID string, condition any, basis string,
-) *queryapi.MeasurementCoverageVariant {
-	for i := range cell.Variants {
-		if slices.Contains(cell.Variants[i].RequestIDs, measurementID) {
-			return &cell.Variants[i]
-		}
-	}
-	cell.Variants = append(cell.Variants, queryapi.MeasurementCoverageVariant{
-		ID: queryapi.MeasurementVariantID(condition), Condition: condition,
-		ResultRows: []queryapi.ResultRow{}, RequestIDs: []string{},
-		RunIDs: []string{}, ProfileIDs: []string{},
-		BatchProgress: queryapi.MeasurementBatchProgress{
-			Basis: basis, Target: []int{}, Measured: []int{}, CriteriaMet: []int{}, Missing: []int{},
-			InProgress: []int{}, Unknown: []int{},
-		},
-	})
-	return &cell.Variants[len(cell.Variants)-1]
 }
 
 func coverageResultRow(
