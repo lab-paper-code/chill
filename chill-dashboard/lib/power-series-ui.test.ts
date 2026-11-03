@@ -117,6 +117,50 @@ test("records power interval renders bucket timeline independently from period s
   assert.equal(contains(tree),true)
 })
 
+test("power interval keeps meter zero, incomplete evidence and pool aggregates independent",()=>{
+  const from="2026-11-01T00:00:00Z",to="2026-11-01T00:01:00Z"
+  const sourceIdentity={kind:"edge-metrics",endpoint:"http://meter",metric:"wall_watts",metricLabels:{node:"worker"}}
+  const node={node:{name:"worker",uid:"worker-uid"},meter:"meter-1",scope:"node-exclusive-wall",meterJoules:0,meterComplete:true,gapSeconds:0,gapFraction:0,sourceIdentity,joules:null,meanWatts:null,samples:2,readFailures:0,maximumSampleGapSeconds:60,sourceTimestampAbsent:false,reasons:[] as string[]}
+  const data={from,to,scope:"whole-pool-wall",nodes:[node],wholePoolJoules:125,wholePoolMeanWatts:2,activePoolJoules:null,activePoolMeanWatts:null,complete:false,reasons:[] as string[]}
+  let exported:unknown
+  const screen=load("../features/scheduler.tsx",{
+    "./power-series":{PowerTimeline:()=>null},
+    "@/lib/client":{useChillQuery:()=>({data})},
+    "@/lib/live-display":displayHelpers,
+    "@/components/data-table":{DataTable:({data,columns}:{data:unknown[];columns:{key:string;label:string;value:(row:unknown)=>ReactNode}[]})=>createElement("table",{},data.map((row,index)=>createElement("tr",{key:index},columns.map(column=>createElement("td",{"data-column":column.key,key:column.key},column.value(row))))))},
+    "@/components/screen":{Facts:({items}:{items:[string,ReactNode][]})=>createElement("dl",{},items.map(([label,value])=>createElement("div",{key:label},label,": ",value)))},
+    "@/components/read-region":{QueryGate:({children}:{children:ReactNode})=>children,SourceJSON:({value}:{value:unknown})=>createElement("pre",{},JSON.stringify(value)),SourceExport:({value}:{value:unknown})=>{exported=value;return null},StatusBadge:()=>null},
+  })
+  const render=()=>renderToStaticMarkup(createElement(screen.PowerInterval,{from,to}))
+  let html=render()
+  assert.match(html,/data-column="meterEnergy"[^]*?>0 J<\/span>/)
+  assert.match(html,/data-column="energy">미제공/)
+  assert.match(html,/data-column="meterComplete"[^]*?>완전<\/span>/)
+  assert.match(html,/전체 실행 그룹 J: 125 J/)
+  assert.match(html,/활성 실행 그룹 J: 미제공/)
+  assert.match(html,/0 s[^]*?0%/)
+  assert.match(html,/60 s/)
+  assert.match(html,/http:\/\/meter/)
+  assert.ok(exported&&typeof exported==="object"&&"result" in exported)
+  assert.equal(exported.result,data)
+  for(const reason of ["selected raw observation count exceeds query bound","meter source identity changes within selected observations","meter source identity is unavailable in raw observations"]){
+    Object.assign(node,{meterJoules:null,meterComplete:false,gapSeconds:7,gapFraction:.25,reasons:[reason]})
+    html=render()
+    assert.match(html,/data-column="meterEnergy"[^]*?>미제공<\/span>/)
+    assert.match(html,/data-column="meterComplete"[^]*?>불완전<\/span>/)
+    assert.match(html,/7 s[^]*?25%/)
+    assert.ok(html.includes(reason))
+  }
+  Object.assign(node,{sourceIdentity:{kind:"",endpoint:"",metric:""}})
+  assert.match(render(),/data-column="source">미제공/)
+  Object.assign(node,{sourceIdentity:{kind:"edge-metrics",endpoint:"http://partial-source",metric:""}})
+  assert.match(render(),/http:\/\/partial-source/)
+  data.nodes=[]
+  html=render()
+  assert.match(html,/기대 장치·계측 범위 미제공/)
+  assert.doesNotMatch(html,/data-column="meterComplete"/)
+})
+
 test("device power presents one observation range and no explanatory paragraph",()=>{
   const query={error:null,isPending:false,refetch:()=>{}},state={...initialLiveState(),status:"fixture" as const}
   const chart=load("../features/power-series.tsx",{"@/lib/power-series":powerSeries,"@/lib/live-display":displayHelpers})

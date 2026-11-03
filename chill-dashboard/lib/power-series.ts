@@ -40,7 +40,7 @@ export function powerSeriesPaths(from:string,to:string,bucket:PowerBucket="5s"):
 }
 
 const windowKeys=["scope","wholePoolJoules","wholePoolMeanWatts","activePoolJoules","activePoolMeanWatts","complete","readFailures","maximumSampleGapSeconds","reasons","gapUntil","coverage"] as const
-const nodeKeys=["node","meter","scope","joules","meanWatts","samples","readFailures","maximumSampleGapSeconds","sourceTimestampAbsent","observedSamples","firstObservedAt","lastObservedAt","reasons"] as const
+const nodeKeys=["node","meter","scope","meterJoules","meterComplete","gapSeconds","gapFraction","sourceIdentity","joules","meanWatts","samples","readFailures","maximumSampleGapSeconds","sourceTimestampAbsent","observedSamples","firstObservedAt","lastObservedAt","reasons"] as const
 const optionalNodeKeys:Record<string,true>={observedSamples:true,firstObservedAt:true,lastObservedAt:true}
 function record(value:unknown):value is Record<string,unknown> {return !!value&&typeof value==="object"&&!Array.isArray(value)}
 

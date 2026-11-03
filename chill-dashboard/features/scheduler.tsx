@@ -162,9 +162,15 @@ export function PowerInterval({from,to}:{from:string;to:string}) {
     <DataTable data={data.nodes??[]} columns={[
       {key:"node",label:"기대 장치",value:row=>row.node.name},
       {key:"scope",label:"계측 범위",value:()=>"노드 단독 벽전력"},
+      {key:"meter",label:"계측기",value:row=>row.meter||"미제공"},
+      {key:"meterEnergy",label:"계측 에너지",value:row=><span title="계측기 표본만으로 적분한 에너지입니다. 실행 그룹 소속 집계와 별개입니다.">{measuredEnergy(row.meterJoules)}</span>},
+      {key:"meterComplete",label:"계측 완전성",value:row=><span title="서버가 판정한 계측기 구간 완전성입니다. 전체·활성 실행 그룹 완전성과 다를 수 있습니다.">{row.meterComplete===true?"완전":row.meterComplete===false?"불완전":"미제공"}</span>},
       {key:"energy",label:"실측 에너지",value:row=>measuredEnergy(row.joules)},
       {key:"power",label:"평균 전력",value:row=>watts(row.meanWatts)},
       {key:"samples",label:"표본 수",value:row=>row.samples},
+      {key:"gap",label:"공백",value:row=><span title="적분에서 제외된 공백 시간과 요청 구간 대비 비율입니다.">{row.gapSeconds==null?"미제공":`${row.gapSeconds} s`} / {row.gapFraction==null?"미제공":`${row.gapFraction*100}%`}</span>},
+      {key:"maximumGap",label:"최대 간격",value:row=><span title="실제 계측 표본 사이 최대 간격입니다.">{row.maximumSampleGapSeconds==null?"미제공":`${row.maximumSampleGapSeconds} s`}</span>},
+      {key:"source",label:"계측 출처",value:row=>row.sourceIdentity&&Object.values(row.sourceIdentity).some(value=>value!==""&&value!==undefined)?<details><summary>{row.sourceIdentity.metric||"일부 제공"}</summary><SourceJSON inline value={row.sourceIdentity}/></details>:"미제공"},
       {key:"coverage",label:"시각 기준·공백",value:row=>{const reasons=row.reasons?.filter(reason=>!commonReasons.has(reason))??[];return <>{row.sourceTimestampAbsent?"수집 시각":"원본 시각"}{reasons.length>0&&<Lines values={reasons}/>}</>}},
     ]}/>{!data.nodes?.length&&<p>기대 장치·계측 범위 미제공</p>}
     <SourceExport filename="chill-operating-power.json" value={{source:"v1/observations/power",conditions:{from,to},result:data}}/><SourceJSON title="정확한 구간의 집계 원본" value={data}/>

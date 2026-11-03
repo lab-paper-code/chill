@@ -40,6 +40,9 @@ function columns(from:string,to:string,count:number) {
     nodes:{
       node:Array.from({length:count},()=>[{uid:"missing",name:"노드"}]),meter:Array.from({length:count},()=>["meter"]),
       scope:Array.from({length:count},()=>["node-exclusive-wall"]),joules:Array.from({length:count},()=>[null]),
+      meterJoules:Array.from({length:count},()=>[null as number|null]),meterComplete:Array.from({length:count},()=>[false]),
+      gapSeconds:Array.from({length:count},()=>[5]),gapFraction:Array.from({length:count},()=>[1]),
+      sourceIdentity:Array.from({length:count},()=>[{kind:"edge-metrics",endpoint:"http://meter",metric:"wall_watts"}]),
       meanWatts:Array.from({length:count},()=>[null]),samples:Array.from({length:count},()=>[0]),
       readFailures:Array.from({length:count},()=>[3]),maximumSampleGapSeconds:Array.from({length:count},()=>[.761647874]),
       sourceTimestampAbsent:Array.from({length:count},()=>[true]),observedSamples:Array.from({length:count},()=>[null]),
@@ -62,6 +65,10 @@ test("columns decoder restores real DTO rows losslessly, including nanosecond cl
   wire.nodes.observedSamples[0][0]=0 as never
   wire.nodes.firstObservedAt[0][0]=from as never
   wire.nodes.lastObservedAt[0][0]=to as never
+  wire.nodes.meterJoules[1][0]=0
+  wire.nodes.meterComplete[1][0]=true
+  wire.nodes.gapSeconds[1][0]=0
+  wire.nodes.gapFraction[1][0]=0
   for(const column of Object.values(wire.nodes)){column[3]=null as never;column[4]=[]}
   const decoded=power.parsePowerSeriesJSON(stringifySchedulerJSON(wire))
   assert.equal(decoded.from,from)
@@ -76,11 +83,16 @@ test("columns decoder restores real DTO rows losslessly, including nanosecond cl
     activePoolJoules:0,activePoolMeanWatts:0,complete:false,readFailures:3,maximumSampleGapSeconds:.761647874,
     reasons:["no observed samples in bucket"],gapUntil:to,coverage:wire.windows.coverage[0],
     nodes:[{node:{uid:"missing",name:"노드"},meter:"meter",scope:"node-exclusive-wall",joules:null,meanWatts:null,
+      meterJoules:null,meterComplete:false,gapSeconds:5,gapFraction:1,sourceIdentity:wire.nodes.sourceIdentity[0][0],
       samples:9007199254740993n,readFailures:3,maximumSampleGapSeconds:.761647874,sourceTimestampAbsent:true,
       observedSamples:0,firstObservedAt:from,lastObservedAt:to,reasons:["missing source"]}],
   })
   assert.equal(decoded.buckets[1].wholePoolMeanWatts,0)
   assert.equal(decoded.buckets[1].complete,true)
+  assert.equal(decoded.buckets[1].nodes![0].meterJoules,0)
+  assert.equal(decoded.buckets[1].nodes![0].meterComplete,true)
+  assert.equal(decoded.buckets[1].nodes![0].gapSeconds,0)
+  assert.equal(decoded.buckets[1].nodes![0].gapFraction,0)
   assert.equal("gapUntil" in decoded.buckets[1],false)
   assert.equal("observedSamples" in decoded.buckets[1].nodes![0],false)
   assert.equal(decoded.buckets[2].reasons,null)
