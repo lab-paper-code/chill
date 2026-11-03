@@ -1,6 +1,10 @@
 package serving
 
-import "time"
+import (
+	"time"
+
+	"github.com/lab-paper-code/chill/internal/metricobserver"
+)
 
 // OperatingPowerColumns is the opt-in columnar encoding of a power series.
 // Every outer array is indexed by bucket. Node arrays retain the original node
@@ -29,19 +33,24 @@ type OperatingPowerWindowColumns struct {
 }
 
 type OperatingPowerNodeColumns struct {
-	Node                    [][]NodeReference `json:"node"`
-	Meter                   [][]string        `json:"meter"`
-	Scope                   [][]string        `json:"scope"`
-	Joules                  [][]*float64      `json:"joules"`
-	MeanWatts               [][]*float64      `json:"meanWatts"`
-	Samples                 [][]int           `json:"samples"`
-	ReadFailures            [][]int           `json:"readFailures"`
-	MaximumSampleGapSeconds [][]float64       `json:"maximumSampleGapSeconds"`
-	SourceTimestampAbsent   [][]bool          `json:"sourceTimestampAbsent"`
-	ObservedSamples         [][]*int          `json:"observedSamples"`
-	FirstObservedAt         [][]*time.Time    `json:"firstObservedAt"`
-	LastObservedAt          [][]*time.Time    `json:"lastObservedAt"`
-	Reasons                 [][][]string      `json:"reasons"`
+	Node                    [][]NodeReference                 `json:"node"`
+	Meter                   [][]string                        `json:"meter"`
+	Scope                   [][]string                        `json:"scope"`
+	MeterJoules             [][]*float64                      `json:"meterJoules"`
+	MeterComplete           [][]bool                          `json:"meterComplete"`
+	GapSeconds              [][]float64                       `json:"gapSeconds"`
+	GapFraction             [][]float64                       `json:"gapFraction"`
+	SourceIdentity          [][]metricobserver.SourceIdentity `json:"sourceIdentity"`
+	Joules                  [][]*float64                      `json:"joules"`
+	MeanWatts               [][]*float64                      `json:"meanWatts"`
+	Samples                 [][]int                           `json:"samples"`
+	ReadFailures            [][]int                           `json:"readFailures"`
+	MaximumSampleGapSeconds [][]float64                       `json:"maximumSampleGapSeconds"`
+	SourceTimestampAbsent   [][]bool                          `json:"sourceTimestampAbsent"`
+	ObservedSamples         [][]*int                          `json:"observedSamples"`
+	FirstObservedAt         [][]*time.Time                    `json:"firstObservedAt"`
+	LastObservedAt          [][]*time.Time                    `json:"lastObservedAt"`
+	Reasons                 [][][]string                      `json:"reasons"`
 }
 
 // Columns retains every measured value. Bucket i starts at
@@ -66,6 +75,11 @@ func (s OperatingPowerSeries) Columns() OperatingPowerColumns {
 	n.Node = make([][]NodeReference, count)
 	n.Meter = make([][]string, count)
 	n.Scope = make([][]string, count)
+	n.MeterJoules = make([][]*float64, count)
+	n.MeterComplete = make([][]bool, count)
+	n.GapSeconds = make([][]float64, count)
+	n.GapFraction = make([][]float64, count)
+	n.SourceIdentity = make([][]metricobserver.SourceIdentity, count)
 	n.Joules = make([][]*float64, count)
 	n.MeanWatts = make([][]*float64, count)
 	n.Samples = make([][]int, count)
@@ -88,6 +102,11 @@ func (s OperatingPowerSeries) Columns() OperatingPowerColumns {
 		n.Node[i] = make([]NodeReference, length)
 		n.Meter[i] = make([]string, length)
 		n.Scope[i] = make([]string, length)
+		n.MeterJoules[i] = make([]*float64, length)
+		n.MeterComplete[i] = make([]bool, length)
+		n.GapSeconds[i] = make([]float64, length)
+		n.GapFraction[i] = make([]float64, length)
+		n.SourceIdentity[i] = make([]metricobserver.SourceIdentity, length)
 		n.Joules[i] = make([]*float64, length)
 		n.MeanWatts[i] = make([]*float64, length)
 		n.Samples[i] = make([]int, length)
@@ -100,6 +119,8 @@ func (s OperatingPowerSeries) Columns() OperatingPowerColumns {
 		n.Reasons[i] = make([][]string, length)
 		for j, node := range b.Nodes {
 			n.Node[i][j], n.Meter[i][j], n.Scope[i][j] = node.Node, node.Meter, node.Scope
+			n.MeterJoules[i][j], n.MeterComplete[i][j] = node.MeterJoules, node.MeterComplete
+			n.GapSeconds[i][j], n.GapFraction[i][j], n.SourceIdentity[i][j] = node.GapSeconds, node.GapFraction, node.SourceIdentity
 			n.Joules[i][j], n.MeanWatts[i][j], n.Samples[i][j] = node.Joules, node.MeanWatts, node.Samples
 			n.ReadFailures[i][j], n.MaximumSampleGapSeconds[i][j] = node.ReadFailures, node.MaximumSampleGapSeconds
 			n.SourceTimestampAbsent[i][j], n.ObservedSamples[i][j] = node.SourceTimestampAbsent, node.ObservedSamples

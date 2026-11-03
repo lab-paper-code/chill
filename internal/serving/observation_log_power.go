@@ -22,19 +22,24 @@ type OperatingPowerMeter struct {
 }
 
 type OperatingNodePower struct {
-	Node                    NodeReference `json:"node"`
-	Meter                   string        `json:"meter"`
-	Scope                   string        `json:"scope"`
-	Joules                  *float64      `json:"joules"`
-	MeanWatts               *float64      `json:"meanWatts"`
-	Samples                 int           `json:"samples"`
-	ReadFailures            int           `json:"readFailures"`
-	MaximumSampleGapSeconds float64       `json:"maximumSampleGapSeconds"`
-	SourceTimestampAbsent   bool          `json:"sourceTimestampAbsent"`
-	ObservedSamples         *int          `json:"observedSamples,omitempty"`
-	FirstObservedAt         *time.Time    `json:"firstObservedAt,omitempty"`
-	LastObservedAt          *time.Time    `json:"lastObservedAt,omitempty"`
-	Reasons                 []string      `json:"reasons"`
+	Node                    NodeReference                 `json:"node"`
+	Meter                   string                        `json:"meter"`
+	Scope                   string                        `json:"scope"`
+	MeterJoules             *float64                      `json:"meterJoules"`
+	MeterComplete           bool                          `json:"meterComplete"`
+	GapSeconds              float64                       `json:"gapSeconds"`
+	GapFraction             float64                       `json:"gapFraction"`
+	SourceIdentity          metricobserver.SourceIdentity `json:"sourceIdentity"`
+	Joules                  *float64                      `json:"joules"`
+	MeanWatts               *float64                      `json:"meanWatts"`
+	Samples                 int                           `json:"samples"`
+	ReadFailures            int                           `json:"readFailures"`
+	MaximumSampleGapSeconds float64                       `json:"maximumSampleGapSeconds"`
+	SourceTimestampAbsent   bool                          `json:"sourceTimestampAbsent"`
+	ObservedSamples         *int                          `json:"observedSamples,omitempty"`
+	FirstObservedAt         *time.Time                    `json:"firstObservedAt,omitempty"`
+	LastObservedAt          *time.Time                    `json:"lastObservedAt,omitempty"`
+	Reasons                 []string                      `json:"reasons"`
 }
 
 type OperatingPowerWindow struct {
@@ -339,7 +344,7 @@ func configuredOperatingMeters(result *OperatingPowerWindow, meters []OperatingP
 			continue
 		}
 		byUID[meter.Node.UID] = len(result.Nodes)
-		node := OperatingNodePower{Node: meter.Node, Meter: meter.Meter, Scope: "node-exclusive-wall", Reasons: []string{}}
+		node := OperatingNodePower{Node: meter.Node, Meter: meter.Meter, Scope: "node-exclusive-wall", SourceIdentity: meter.Source, Reasons: []string{}}
 		if meter.Node.UID == "" || meter.Node.Name == "" || meter.Meter == "" || meter.Scope != "node-exclusive-wall" || meter.Source.Kind == "" || meter.Source.Endpoint == "" || meter.Source.Metric == "" {
 			node.Reasons = append(node.Reasons, "configured meter lacks exclusive whole-node identity/scope")
 		}
@@ -515,6 +520,8 @@ func integrateOperatingNode(node *OperatingNodePower, raw *operatingPowerHistory
 	for index := 1; index < len(points); index++ {
 		node.MaximumSampleGapSeconds = max(node.MaximumSampleGapSeconds, points[index].ObservedAt.Sub(points[index-1].ObservedAt).Seconds())
 	}
+	node.GapSeconds = operatingMeterGap(points, from, to, raw.policy, raw.hasPolicy)
+	node.GapFraction = node.GapSeconds / to.Sub(from).Seconds()
 	var joules float64
 	if !raw.hasPolicy {
 		node.Reasons = append(node.Reasons, "no retained raw samples with coverage policy")
@@ -525,6 +532,10 @@ func integrateOperatingNode(node *OperatingNodePower, raw *operatingPowerHistory
 			node.Reasons = append(node.Reasons, coverageErr.Error())
 		}
 	}
+	if raw.hasPolicy && len(node.Reasons) == 0 {
+		node.MeterJoules = &joules
+		node.MeterComplete = true
+	}
 	// Global incomplete history also invalidates individual reported totals.
 	if !rawComplete {
 		node.Reasons = append(node.Reasons, "raw history for selected interval is incomplete")
@@ -534,6 +545,22 @@ func integrateOperatingNode(node *OperatingNodePower, raw *operatingPowerHistory
 		node.Joules, node.MeanWatts = &joules, &watts
 	}
 	return points
+}
+
+// operatingMeterGap counts boundary time without samples and source intervals
+// that exceed the recorded maximum gap, clipped to the requested window.
+func operatingMeterGap(points []powerwindow.Sample, from, to time.Time, policy powerwindow.Policy, hasPolicy bool) float64 {
+	if len(points) == 0 || !hasPolicy {
+		return to.Sub(from).Seconds()
+	}
+	gap := max(time.Duration(0), minTime(to, points[0].ObservedAt).Sub(from))
+	gap += max(time.Duration(0), to.Sub(maxTime(from, points[len(points)-1].ObservedAt)))
+	for i := 1; i < len(points); i++ {
+		if points[i].ObservedAt.Sub(points[i-1].ObservedAt) > policy.MaximumGap {
+			gap += max(time.Duration(0), minTime(to, points[i].ObservedAt).Sub(maxTime(from, points[i-1].ObservedAt)))
+		}
+	}
+	return min(gap, to.Sub(from)).Seconds()
 }
 
 func integrateOperatingSamples(points []powerwindow.Sample, from, to time.Time, policy powerwindow.Policy) ([]powerwindow.Sample, float64, error) {

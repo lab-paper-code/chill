@@ -104,6 +104,13 @@ func TestOperatingPowerSameIntervalAndActualMembership(t *testing.T) {
 			if len(got.Nodes) != 2 {
 				t.Fatalf("physical Node double-counted: %+v", got.Nodes)
 			}
+			if scenario.missingMembership {
+				for _, node := range got.Nodes {
+					if !node.MeterComplete || node.MeterJoules == nil || node.GapSeconds != 0 || node.GapFraction != 0 {
+						t.Fatalf("meter facts depend on scheduler membership: %+v", node)
+					}
+				}
+			}
 			if scenario.measured {
 				assertMeasuredOperatingPower(t, got, scenario)
 			} else {

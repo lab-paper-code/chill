@@ -71,6 +71,8 @@ GOMEMLIMIT3072MiB/limit4Gi 유지(rev96 확인). 관측 heap최대880MiB와 soft
 | SchedulerObservationPage | scheduler[from,to], 기존 limit에서 종료 |
 파일 이름을 색인으로 envelope 먼저 decode하고 필요한 본문만 읽으며 참조는 해당 시간 catalog로 푼다. archive 이후 실제 없는 범위만 gapUntil/coverage gaps이고 power complete=false를 유지한다. SchedulerHistoryWindow는 현재 없고 도착 경로는 LoadWindow의 Arrivals다. Tick60s는1~2분 파일·5req/s<1MB(이전3.3~6.7MB); 메모리는 선택 요청 수 비례, 기본2h/5req/s는36k행≈47MB다.
 
+Node meter-only facts (period, bucket, and matching columns): `meterJoules` (number|null) and `meterComplete` use the existing trapezoidal integration and recorded meter coverage policy, independently of scheduler membership and stream completeness. `sourceIdentity` is the declared meter source object. `gapSeconds` counts uncovered boundary time plus clipped intervals exceeding the recorded maximum gap; `gapFraction` is that duration divided by the requested window (0..1). Without samples or a recorded policy the entire window is uncovered. `maximumSampleGapSeconds` retains its existing meaning. Existing `joules`, reasons, `complete`, and whole/active pool totals are unchanged; no CR input is added.
+
 #### 전력 bucket 이력 (R18)
 `GET /api/v1/observations/power?from=<RFC3339Nano>&to=<RFC3339Nano>&bucket=5s`는 `{from,to,bucketNanos:5000000000,buckets:[OperatingPowerWindow...]}`를 반환한다. `bucket` 미지정 시 기존 기간 집계 응답·상한·단위·의미는 변경하지 않는다. bucket 조회만 범위 최대1h, bucket 1s–1h, 최대900개이며 초과/빈 duration/잘못된 값은400 InvalidQuery다. 전체 조회의 기존 raw observation 상한 초과도400이며 새 설정은 없다.
 경계는 UTC에서 `time.Time.Truncate(bucket)`로 정렬하고 첫/끝 bucket은 요청 from/to로 자른다. 각 bucket은 기존 whole/active POOL 및 Node의 J·평균W, meter/node identity, coverage·실패·이유를 유지한다. 한 번 확보한 committed local/archive 원자료를 기존 적분/멤버십 reducer로 계산하며, 기간 평균을 반복하거나 메모리 live history를 사용하지 않는다.
