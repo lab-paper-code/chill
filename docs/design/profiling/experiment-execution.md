@@ -200,6 +200,19 @@ stage의 `control` 부재는 원래와 같이 공통 `control` 상속이며 임�
 현재 Workload·설정을 읽어서 과거 결손을 보충하지 않는다. 소비자는 선택 필드로 읽어야 하며,
 기존 상세 hydrate 경로는 계속 유효하다.
 
+새 게시물의 `stages[].kpis.requests[name].workloadUID,definitionID,identitySource`는
+동결 `input-snapshot.json`의 적용 Workload(`name,uid,generation,slo`; 위 `sloSources`와
+같은 신원)와 실제 offered 요청의 raw `workloadUID/definitionID`가 일치할 때만 채운다.
+`actualGatewayIdentities`는 기존 정수 건수이며 정의 신원 목록이 아니다. 두 publisher는
+기존 raw request index로 실제 client requestID 전체의 receipt coverage와 단일 정의를
+확인한다. 혼합·누락·불완전한 기록은 null과 사유를 유지하며, 잘못된 인자 타입 같은
+프로그램 오류를 `Historical definition identity not recorded`로 숨기지 않는다.
+`identitySource`는 실제 동결 snapshot의 store 참조이며 현재 Workload/name 재조회로
+채우지 않는다. 기존 `serving-experiment.v1alpha1`의 KPI·definition 내부 필드를 사용하는
+버그 수정으로 `e5-summary.v1`, `e5-judgment.v1`, binding v2 저장 계약을 바꾸지 않는다.
+bridge/reader의 외곽 unknown-field 거절은 유지하고, 원래 JSON 객체로 보존하는 KPI·definition
+내부에는 새 strict 스키마를 만들지 않는다. 이미 게시된 과거 null은 수정·재게시하지 않는다.
+
 ## 6. 상호 배제와 재시작
 
 **전제: profiler leader election을 켠다.** 바이너리 `--leader-elect` 기본은 false지만 Helm `profiler.leaderElection`은 true다.

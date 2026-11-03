@@ -444,7 +444,7 @@ class AdapterTests(unittest.TestCase):
             result=self.cleanup_failure_result(Path(directory))
             self.assertEqual(result['execution']['status'],'Failed')
             self.assertEqual(result['residuals'],[{'kind':'Job','name':'producer','uid':'exact-uid','reason':'DeleteFailed'}])
-    def publish_single_stage(self,overrides,child_refs=None):
+    def publish_single_stage(self,overrides,child_refs=None,measured=None):
         with tempfile.TemporaryDirectory() as directory:
             run=Path(directory)/'campaign/run';run.mkdir(parents=True)
             complete={'execution':{'status':'Complete','reason':'ProcedureComplete'},'cleanup':{'status':'Complete','reason':'ProcedureComplete'},'artifacts':[]}
@@ -460,11 +460,62 @@ class AdapterTests(unittest.TestCase):
             harness.execution={'runUID':'run','runName':'name','childRefs':[{'stageID':'only','uid':'child','cleanup':{'status':'Complete','reason':'ProcedureComplete'},'uncertain':False}] if child_refs is None else child_refs}
             harness.store=SimpleNamespace(name='store',get=get)
             harness.snapshot={'runSpec':{'stages':[{'id':'only','failureInjection':[{'id':'fault','action':'delete-serving-pod','offsetSeconds':1}]}]},'initial':{'at':'start'},'bindings':{'only':{}},'scenarios':{}}
+            tables=SimpleNamespace(render=lambda *args,**kw:'')
+            if measured is not None:
+                workload={'name':'service','uid':'historical','generation':1,
+                          'model':{'uid':'model','generation':2},'preprocessor':{'uid':'preprocessor','generation':3},
+                          'slo':{'percentile':95,'targetLatencyNanos':1000000000}}
+                bound={'config':{'workloads':[workload]},'schedulerSettings':{},'limitations':[]}
+                harness.snapshot['bindings']['only']=bound
+                harness.snapshot['runSpec']['stages'][0]['loadScenarioRef']={'uid':'scenario'}
+                harness.snapshot['scenarios']={'scenario':{'workloads':[workload],'ref':{'name':'load','uid':'scenario'},'spec':{}}}
+                harness.execution['inputSnapshotRef']={'store':'store','key':'experiments/run/run/prepare/input-snapshot.json'}
+                folder=run/'stages/only/measured';folder.mkdir(parents=True)
+                evaluation.save(folder/'phase.json',{'startUTC':'2026-11-03T00:00:00Z','endUTC':'2026-11-03T00:00:01Z'})
+                (folder/'service-client.jsonl').write_text(json.dumps({'requestID':'request','scheduledOffsetNs':0})+'\n')
+                projection=evaluation.module('identity_test_tables',evaluation.HERE/'tables.py')
+                judgment={'status':'FAIL','requests':{'service':{'offered':1,'deadlineSuccess':0,
+                    'actualGatewayIdentities':1}},'power':{'energyCoverage':{'policy':{}}}}
+                tables.sections=lambda path:judgment
+                tables.publication_requests=projection.publication_requests
             temporary=evaluation.tempfile.TemporaryDirectory
             env=dict.fromkeys(('CHILL_EVIDENCE_BUCKET','CHILL_EVIDENCE_ENDPOINT','CHILL_EVIDENCE_REGION','AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY'),'test')
-            with patch.object(evaluation,'module',return_value=SimpleNamespace(render=lambda *args,**kw:'')),patch.dict(os.environ,env),patch.object(evaluation.tempfile,'TemporaryDirectory',side_effect=lambda **kw:temporary(dir=run)),patch.object(evaluation.subprocess,'run',return_value=SimpleNamespace(returncode=0)),patch.object(self.harness_module,'OPS',run):
+            with patch.object(evaluation,'module',return_value=tables),patch.dict(os.environ,env),patch.object(evaluation.tempfile,'TemporaryDirectory',side_effect=lambda **kw:temporary(dir=run)),patch.object(evaluation.subprocess,'run',return_value=SimpleNamespace(returncode=0)),patch.object(self.harness_module,'OPS',run):
                 harness.publish()
-            return evaluation.load(run/'publication-summary.json')['outcome']
+            summary=evaluation.load(run/'publication-summary.json')
+            return summary if measured is not None else summary['outcome']
+    def test_publish_observed_identity_not_gateway_count(self):
+        original_module=self.harness_module.module
+        for case in ('complete','mixed','missing','partial'):
+            indexed={'errors':[],'receivedAtNS':{'request':1},'identities':[
+                {'workloadUID':'historical','definitionID':'historical/1/model/2/preprocessor/3'}]}
+            if case=='mixed':
+                indexed['identities'].append({'workloadUID':'historical','definitionID':'historical/2/model/2/preprocessor/3'})
+            elif case=='missing':
+                indexed['identities']=[]
+            elif case=='partial':
+                indexed['receivedAtNS']={}
+            raw=SimpleNamespace(iter_request_indexes=lambda *args,**kw:{'historical':indexed})
+            with self.subTest(case=case),patch.object(self.harness_module,'module',
+                    side_effect=lambda name,path:raw if path.name=='raw.py' else original_module(name,path)):
+                summary=self.publish_single_stage({},measured=True)
+            metric=summary['stages'][0]['kpis']['requests']['service']
+            self.assertEqual(metric['actualGatewayIdentities'],1)
+            self.assertEqual(metric['offered'],1)
+            if case=='complete':
+                self.assertEqual(metric['workloadUID'],'historical')
+                self.assertEqual(metric['definitionID'],'historical/1/model/2/preprocessor/3')
+                self.assertEqual(metric['identitySource'],{'store':'store','key':'experiments/run/run/prepare/input-snapshot.json'})
+                self.assertIsNone(metric['missingReasons']['identity'])
+            else:
+                self.assertIsNone(metric['workloadUID'])
+                self.assertIsNone(metric['definitionID'])
+                self.assertIsNone(metric['identitySource'])
+                self.assertTrue(metric['missingReasons']['identity'])
+        workload=summary['definition']['workloads'][0]
+        with self.assertRaises(TypeError):
+            self.harness_module.publication_metadata({'config':{'workloads':[workload]}},{},
+                'service',{'workloads':[workload]},{'store':'store','key':'snapshot'},None,1)
     def test_publish_unjudged_measurement_keeps_reason(self):
         outcome=self.publish_single_stage({'stages/only/judge/result.json':None})
         self.assertEqual(outcome['measurement'],{'verdict':'NOT_EVALUATED','reason':'NotStarted'})
