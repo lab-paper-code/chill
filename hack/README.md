@@ -421,6 +421,32 @@ select the existing record fields. Actual record order/IDs/bytes/hash are Ready
 evidence, not host inputs. Every generator Pod uses the frozen
 `loadGenerator.nodeName` verbatim. Memory and shard/barrier declarations remain.
 
+At prepare start, freeze the participating nodes' Running/Pending Pod facts in
+`environment-start.json` and `snapshot.environmentStart`: namespace, name, UID,
+assigned node, phase and ownerReference summary. Participating nodes are exactly
+`powerMeasurement.nodes` plus `loadGenerator.nodeName`. Existing system, tenant
+and ownerless Pods are environmental evidence, not a preparation rejection.
+
+At the existing prepare/factor/stage monitoring boundaries, stop only for new
+active Pod UIDs absent from that baseline and not exempt below. Write every
+offending Pod to `environment-intrusions.json` before STOP. Each cross-namespace
+Pod query uses `spec.nodeName`; terminal Pods and nonparticipating nodes are
+ignored. Pod names, ages, release labels and namespace allowlists play no role.
+
+New evaluator Pods are exempt only when their direct Job owner UID matches a
+live Job controlled by this Run or its known Stage UIDs. No ancestor walk or
+release-identity classifier is used. New serving Pods for the current scenario's
+frozen Workload UIDs are normal target autoscaling: use the controller's unique
+`edge.dacs.io/v1alpha1` Workload ownerReference predicate (a08fda9d). DaemonSet
+and static/mirror Pods are also exempt as persistent node infrastructure.
+No ReplicaSet/StatefulSet/CronJob ancestor-read grants are needed.
+
+The separate nonterminal load-generator Job exclusion remains in force:
+DOM and E5 share the generator node, so an already-running foreign generator is
+structural generator contention even when its Pod was present at Run start.
+Target readiness still uses the explicitly declared resource's nonempty
+Kubernetes selector, including matchExpressions, never a namespace-wide guess.
+
 `hack/measure/` remains separate measurement tooling. Keep operational
 credentials and evidence outside the checkout; never copy token contents into
 publications.

@@ -63,6 +63,40 @@ def kubectl(namespace,*args):
     return json.loads(result.stdout)
 
 
+def pod_environment(items, nodes):
+    """Freeze only active Pods actually assigned to participating nodes."""
+    return [{'namespace': pod['metadata']['namespace'], 'name': pod['metadata']['name'],
+             'uid': pod['metadata']['uid'], 'node': pod['spec']['nodeName'], 'phase': pod['status']['phase'],
+             'ownerReferences': [{key: ref[key] for key in ('apiVersion', 'kind', 'name', 'uid', 'controller') if key in ref}
+                                 for ref in pod['metadata'].get('ownerReferences', [])],
+             'mirror': 'kubernetes.io/config.mirror' in pod['metadata'].get('annotations', {})}
+            for pod in items if pod.get('spec', {}).get('nodeName') in nodes and
+            pod.get('status', {}).get('phase') in ('Running', 'Pending')]
+
+
+def competing_pods(current, baseline, job_uids, workload_uids, run_namespace):
+    """Resident UIDs are environment facts, not an ownership/namespace guess."""
+    initial = {pod['uid'] for pod in baseline}
+    intruders = []
+    for pod in current:
+        if pod['uid'] in initial or pod['mirror']:
+            continue
+        refs = pod['ownerReferences']
+        if any(ref.get('apiVersion') == 'apps/v1' and ref.get('kind') == 'DaemonSet' for ref in refs):
+            continue
+        if pod['namespace'] == run_namespace and any(ref.get('apiVersion') == 'batch/v1' and
+                ref.get('kind') == 'Job' and ref.get('uid') in job_uids for ref in refs):
+            continue
+        # Normal target autoscaling belongs to the measured system. Reuse the
+        # controller's unique Workload owner-reference predicate (a08fda9d).
+        workloads = [ref for ref in refs if ref.get('kind') == 'Workload' and
+                     ref.get('apiVersion') == 'edge.dacs.io/v1alpha1']
+        if len(workloads) == 1 and workloads[0].get('uid') in workload_uids:
+            continue
+        intruders.append(pod)
+    return intruders
+
+
 def environment(run, scientific):
     work = run.parent.parent
     env = {'paths': {'repository': str(REPO), 'ops': str(work), 'campaign': str(run.parent), 'inputs': str(work / 'inputs')},
@@ -183,7 +217,10 @@ class Harness:
         usage=os.statvfs(self.run)
         if usage.f_bavail*usage.f_frsize<int(self.config['minimumFreeBytes']):
             raise ValueError('EvidenceCapacityInsufficient: workspace free bytes')
+        self.environment_start = {'capturedAt': now(), 'pods': self.participant_pods(self.spec)}
+        save(self.root / 'environment-start.json', self.environment_start)
         scenarios = {}
+        self.scenarios = scenarios
         self.harness_module = module('evaluation_harness', HERE / 'conductor.py')
         if self.spec['harness']['sourceSHA'] != os.environ.get('CHILL_HARNESS_SOURCE_SHA'):
             raise ValueError('IdentityMismatch: harness source differs from image revision')
@@ -252,7 +289,8 @@ class Harness:
             bindings[template['id']] = self.harness_module.bind(path)
         snapshot = {'schemaVersion': 'evaluation-snapshot.v2alpha1', 'inputsVersion': 'evaluation-inputs.v2alpha1',
                     'runUID': self.execution['runUID'], 'runSpec': self.spec, 'scenarios': scenarios,
-                    'environment': scientific, 'bindings': bindings, 'targets': targets, 'generatorNode': self.generator_node,
+                    'environment': scientific, 'environmentStart': self.environment_start,
+                    'bindings': bindings, 'targets': targets, 'generatorNode': self.generator_node,
                     'preparedAt': started, 'config': self.config}
         path=self.inputs/'snapshot.json';save(path,snapshot)
         ref=self.upload(path,'experiments/'+self.execution['runUID']+'/run/prepare/input-snapshot.json')
@@ -269,8 +307,22 @@ class Harness:
                              if item['name'] == component['name']), None)
             if expected and obj['metadata']['uid'] != expected['uid']:
                 raise ValueError('IdentityMismatch: external target resource recreated')
-            selector = obj['spec'].get('selector', {}).get('matchLabels', {})
-            pods = {'items': [obj]} if obj['kind'] == 'Pod' else kubectl(resource['namespace'], 'get', 'pods', '-l', ','.join(k + '=' + v for k, v in selector.items()))
+            if obj['kind'] == 'Pod':
+                pods = {'items': [obj]}
+            else:
+                selector = obj['spec'].get('selector', {})
+                terms = [key + '=' + value for key, value in selector.get('matchLabels', {}).items()]
+                for expression in selector.get('matchExpressions', []):
+                    key, operator = expression['key'], expression['operator']
+                    if operator in ('In', 'NotIn'):
+                        terms.append(key + (' in (' if operator == 'In' else ' notin (') + ','.join(expression['values']) + ')')
+                    elif operator in ('Exists', 'DoesNotExist'):
+                        terms.append(('!' if operator == 'DoesNotExist' else '') + key)
+                    else:
+                        raise ValueError('FrozenInputInvalid: unsupported target selector operator')
+                if not terms:
+                    raise RuntimeError('TargetUnavailable: declared target has no Pod selector')
+                pods = kubectl(resource['namespace'], 'get', 'pods', '-l', ','.join(terms))
             current = [pod for pod in pods['items'] if not pod['metadata'].get('deletionTimestamp')]
             if not current:
                 raise RuntimeError('TargetUnavailable: no target Pods')
@@ -278,13 +330,13 @@ class Harness:
                 statuses = pod.get('status', {}).get('containerStatuses', [])
                 if not statuses or any(not status.get('ready') for status in statuses) or not any(c['type'] == 'Ready' and c['status'] == 'True' for c in pod.get('status', {}).get('conditions', [])):
                     raise RuntimeError('TargetUnavailable: target Pod not Ready')
-            identities.append({'name': component['name'], 'uid': obj['metadata']['uid'],
+            identities.append({'name': component['name'], 'uid': obj['metadata']['uid'], 'resource': resource,
                                'pods': [{'uid': pod['metadata']['uid'], 'containers': pod.get('status', {}).get('containerStatuses', [])} for pod in current]})
         return identities
 
-    def check_fleet(self, spec):
+    def participant_pods(self, spec):
         nodes = list(spec['powerMeasurement']['nodes'])
-        generator = getattr(self, 'snapshot', {}).get('generatorNode')
+        generator = getattr(self, 'snapshot', {}).get('generatorNode', getattr(self, 'generator_node', None))
         if generator is None:
             node = kubectl(self.execution['namespace'], 'get', 'node', spec['loadGenerator']['nodeName'])
             generator = {key: node['metadata'][key] for key in ('name', 'uid')}
@@ -296,24 +348,34 @@ class Harness:
                 raise ValueError('IdentityMismatch: participating Node UID')
             if not any(c['type'] == 'Ready' and c['status'] == 'True' for c in node.get('status', {}).get('conditions', [])):
                 raise RuntimeError('TargetUnavailable: participating Node NotReady')
-        owners = {self.execution['runUID'], self.execution.get('stageUID')}
-        owners.update(child['uid'] for child in self.execution.get('childRefs', []))
-        jobs = kubectl(self.execution['namespace'], 'get', 'jobs', '-l', 'edge.dacs.io/evaluation-run-uid=' + self.execution['runUID'])['items']
-        job_uids = {job['metadata']['uid'] for job in jobs if job['metadata'].get('labels', {}).get('edge.dacs.io/evaluation-run-uid') == self.execution['runUID']
-                    and any(owner.get('uid') in owners for owner in job['metadata'].get('ownerReferences', []))}
-        pods = kubectl(self.execution['namespace'], 'get', 'pods', '--all-namespaces')['items']
-        for pod in pods:
-            meta = pod['metadata']
-            labels = meta.get('labels', {})
-            own = labels.get('edge.dacs.io/evaluation-run-uid') == self.execution['runUID'] and any(
-                owner.get('uid') in job_uids | owners
-                for owner in meta.get('ownerReferences', []))
-            if own:
-                continue
-            fleet = meta['name'].startswith(('vib-', 'bff-')) or any(key in ('baseline-fleet', 'vib-fleet-run') or key.startswith(('vib-', 'bff-')) for key in labels)
-            external = meta.get('namespace') not in ('kube-system', 'chill-system') and meta.get('creationTimestamp', '') >= '2026-11-02T00:00:00Z'
-            if fleet or external:
-                raise RuntimeError('TargetUnavailable: external fleet Pod ' + meta['name'])
+        result = []
+        for name in sorted({pin['name'] for pin in nodes}):
+            items = kubectl(self.execution['namespace'], 'get', 'pods', '--all-namespaces',
+                            '--field-selector', 'spec.nodeName=' + name)['items']
+            result.extend(pod_environment(items, {name}))
+        return result
+
+    def check_fleet(self, spec):
+        current = self.participant_pods(spec)
+        baseline = self.snapshot['environmentStart'] if hasattr(self, 'snapshot') else self.environment_start
+        stages = {uid for uid in [self.execution.get('stageUID'),
+                                 *(child['uid'] for child in self.execution.get('childRefs', []))] if uid}
+        jobs = kubectl(self.execution['namespace'], 'get', 'jobs', '-l',
+                       'edge.dacs.io/evaluation-run-uid=' + self.execution['runUID'])['items']
+        job_uids = {job['metadata']['uid'] for job in jobs
+                    if job['metadata'].get('labels', {}).get('edge.dacs.io/evaluation-run-uid') == self.execution['runUID'] and
+                    any(ref.get('apiVersion') == 'edge.dacs.io/v1alpha1' and ref.get('controller') is True and
+                        ((ref.get('kind') == 'EvaluationRun' and ref.get('uid') == self.execution['runUID']) or
+                         (ref.get('kind') == 'EvaluationStage' and ref.get('uid') in stages))
+                        for ref in job['metadata'].get('ownerReferences', []))}
+        scenarios = self.snapshot['scenarios'] if hasattr(self, 'snapshot') else self.scenarios
+        workload_uids = {workload['uid'] for workload in scenarios[spec['loadScenarioRef']['uid']]['spec']['workloads']}
+        intruders = competing_pods(current, baseline['pods'], job_uids, workload_uids, self.execution['namespace'])
+        if intruders:
+            save(self.root / 'environment-intrusions.json',
+                 {'detectedAt': now(), 'baselineCapturedAt': baseline['capturedAt'], 'pods': intruders})
+            raise RuntimeError('TargetUnavailable: new competing Pods on participating nodes: ' +
+                               ', '.join(pod['namespace'] + '/' + pod['name'] + ' uid=' + pod['uid'] for pod in intruders))
     def open_snapshot(self):
         path=self.inputs/'snapshot.json'
         reference=self.execution.get('inputSnapshotRef') or self.spec.get('inputSnapshotRef')

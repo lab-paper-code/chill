@@ -546,6 +546,8 @@ class CPO:
         for frozen in self.b['sources'].values():
             if ref(frozen['path']) != frozen:
                 raise RuntimeError('IdentityMismatch: evaluator source changed')
+        # DOM and E5 share the generator node. Another live generator Job is a
+        # structural source of generator contention, even if its Pod predates Run.
         active = self.io.k(['get', 'jobs', '-l', 'edge.dacs.io/workload-role=load-generator', '-o', 'json'])['items']
         if any(not self.owned(job) and not any(c['type'] in ('Complete', 'Failed') and c['status'] == 'True'
                                               for c in job.get('status', {}).get('conditions', [])) for job in active):
