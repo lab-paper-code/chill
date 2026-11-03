@@ -278,6 +278,7 @@ export async function relay(request: Request, segments: string[]): Promise<Respo
       const value = result.headers[name]
       if (typeof value === "string") responseHeaders.set(name, value)
     }
+    if(plan.path==="/api/v1/scheduler/settings"&&typeof result.headers.etag==="string")responseHeaders.set("ETag",result.headers.etag)
     const bytes = new Uint8Array(result.body.buffer as ArrayBuffer, result.body.byteOffset, result.body.byteLength)
     return new Response([204, 205, 304].includes(result.status) ? null : bytes, { status: result.status, headers: responseHeaders })
   } catch (error) {

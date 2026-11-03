@@ -159,8 +159,9 @@ retain integer literals while removing credentials.
 | 고급 | 구성 탐색 동시 계산 수 |
 
 항목 정의는 `lib/scheduler-settings.ts` 한 곳에 둔다. 실험 화면은 아직 이 정의에 연결하지 않는다(W1 계약 대기). 최소 수요는 서비스 UID별 0 이상 유한한 req/s이며 상한은 없다. 미설정과 0은 별개이고, 현재 서비스 목록에 없는 UID도 운영자가 해제하기 전에는 유지한다. 초기 용량 대기는 0~1시간이며 ns 정밀도를 보존한다.
-저장은 작성값 누적 → 현재 설정 재조회 → 변경 전/후 표 → 운영자 확인 → 직전 재조회 → 전체 설정 PUT 순서다. 새 최소 수요 등 동시 변경은 제출을 차단하고 작성값을 유지한다. HTTP 409·권한 거부·결과 미확인도 자동 재제출하지 않는다. GET에 함께 온 `staticRouting`·`powerObservation`·`meters`·`requestTimeout`은 설정 PUT에서 제외한다. 요청 분배 변경은 별도 scheduler operations 계약을 유지한다.
-서버 계약 근거(origin/main `dba32979`): `internal/serving/scheduler.go:17-51,409-512`(필드·검증·기본값), `internal/serving/httpapi/scheduler.go:60-78,99-175,196-215`(GET 부가 읽기 전용 값·전체 PUT·감사·적용·ConfigMap 갱신). 이 GET/PUT은 `resourceVersion`·`If-Match`를 제공/검증하지 않는다. ConfigMap Update 자체는 읽은 버전으로 충돌하지만 HTTP 클라이언트의 읽기-쓰기 사이 원자적 충돌 방지는 아니다. 완전한 방지가 필요하면 해당 핸들러에 GET 버전 제공 + PUT 조건부 버전 검증을 추가해야 한다(서버 변경은 이번 범위 밖).
+저장은 작성값 누적 → 현재 설정 재조회 → 변경 전/후 표 → 운영자 확인 → 직전 재조회 → 전체 설정 PUT 순서다. 서비스 편집 Sheet는 첫 입력 전에는 GET과 동기화하고, 첫 입력 시 실제 표시한 설정과 ETag를 함께 고정한다. 이후 설정·버전 변경은 제출을 차단하고 작성값을 유지한다. 최소 수요의 현재값도 서비스명·req/s 소형 표로 표시하며 미설정과 0을 구분한다.
+W1 서버 계약: GET `/api/v1/scheduler/settings`의 `ETag: "<ConfigMap resourceVersion>"`를 보관하여 PUT `If-Match`에 그대로 보내며 성공 응답의 새 ETag로 갱신한다. 버전은 ConfigMap 전체의 버전이므로 설정 외 변경에도 바뀐다. 409 `SettingsConflict`는 재조회 후 작성값을 보존한 충돌 비교로 이동하고, 428 `SettingsPreconditionRequired`는 `버전 없음`과 명시적 재조회 동작을 제공한다. 자동 재제출은 없다. ETag 없는 구 서버에는 If-Match 없이 보내며, 그때만 원자적 동시 변경 방지 불가 도움말을 한 곳에 제공한다. 이 대시보드는 W1 서버보다 먼저 또는 함께 배포해야 한다.
+PUT 본문 계약은 변경하지 않는다. `internal/serving/scheduler.go:17-51,409-512`의 SchedulerSettings 필드만 보내고 GET 부가 읽기 전용 필드 `staticRouting`·`powerObservation`·`meters`·`requestTimeout`은 절대 보내지 않는다. 원래 전체 PUT·검증·감사·적용·ConfigMap 갱신 근거는 `internal/serving/httpapi/scheduler.go:60-78,99-175,196-215`이며, W1 변경은 버전 헤더와 428/409 계약이다. 요청 분배 변경은 별도 scheduler operations 계약을 유지한다.
 구 최상위 목록은 설정 탭으로 이동하며 등록·상세·수정 전용 경로와 변경 충돌/결과 미확인 안전 계약은 유지한다.
 
 별도 개요·링크 허브·측정 6탭은 폐지한다. 요청 실패와 기존 사용 결과, 현재 사용과 품질, 실행 종료와 측정 통과·정리는 독립이다.

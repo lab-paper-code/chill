@@ -21,7 +21,7 @@ function elements(node:unknown):Tree[] {
 function hooks() {
   let values:unknown[]=[];let cursor=0
   const states=new Map<unknown,unknown[]>()
-  return {react:{useState(initial:unknown){const index=cursor++;if(!Object.hasOwn(values,index))values[index]=typeof initial==="function"?initial():initial;const state=values;return [state[index],(next:unknown)=>{state[index]=typeof next==="function"?next(state[index]):next}]},useRef:()=>({current:null}),useEffect:()=>{},useId:()=>"field"},render(Component:(props:Record<string,unknown>)=>unknown,props:Record<string,unknown>={}){cursor=0;if(!states.has(Component))states.set(Component,[]);values=states.get(Component)!;return Component(props)}}
+  return {react:{useState(initial:unknown){const index=cursor++;if(!Object.hasOwn(values,index))values[index]=typeof initial==="function"?initial():initial;const state=values;return [state[index],(next:unknown)=>{state[index]=typeof next==="function"?next(state[index]):next}]},useRef(initial:unknown){const index=cursor++;if(!Object.hasOwn(values,index))values[index]={current:initial};return values[index]},useEffect:()=>{},useId:()=>"field"},render(Component:(props:Record<string,unknown>)=>unknown,props:Record<string,unknown>={}){cursor=0;if(!states.has(Component))states.set(Component,[]);values=states.get(Component)!;return Component(props)}}
 }
 function load(path:string,modules:Record<string,unknown>):Record<string,(props:Record<string,unknown>)=>unknown> {
   const compiled=transpileModule(readFileSync(new URL(path,import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
@@ -404,10 +404,10 @@ test("minimum demand removal is distinct from an explicit zero",()=>{
   assert.deepEqual(saved,[{known:0}])
 })
 
-test("settings conflict and uncertain outcomes retain draft and never automatically resubmit",()=>{
+test("settings conflict and uncertain outcomes retain draft and never automatically resubmit",async()=>{
   for(const error of [{status:409,unknownOutcome:false},{status:504,unknownOutcome:true}]){
     const runner=hooks(),settings={controls:{},excludedNodes:[]},sent:unknown[]=[],mutation:{error?:typeof error;mutateAsync:(input:unknown)=>Promise<void>;reset:()=>void}={mutateAsync:async input=>{sent.push(input)},reset:()=>{delete mutation.error}}
-    const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>mutation,useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:undefined})}})
+    const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>mutation,useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:undefined,refetch:async()=>({data:settings})})}})
     let tree=elements(runner.render(SchedulerSettingsPage))
     ;(tree.find(node=>node.props.editKey==="excludedNodes")!.props.save as (value:string[])=>void)(["meter"])
     mutation.error=error
@@ -416,8 +416,135 @@ test("settings conflict and uncertain outcomes retain draft and never automatica
     assert.equal(sent.length,0)
     if(error.status===409){
       ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)()
+      await settle()
       tree=elements(runner.render(SchedulerSettingsPage))
-      assert.equal((tree.find(node=>node.type==="main")!.props.action as Tree).props.children,"변경 1건 검토")
+      assert.ok(tree.some(node=>node.type==="button"&&node.props.children==="최신 값을 기준으로 다시 검토하기"))
     } else assert.ok(JSON.stringify(tree).includes("자동 재제출"))
   }
+})
+
+test("settings writer passes the exact ETag only as If-Match metadata and returns the new ETag",async()=>{
+  const {putSchedulerSettings}=load("../features/scheduler-settings.tsx",{...base,"@/lib/client":{}})
+  const sent:{body:string;version?:string}[]=[]
+  const writer=putSchedulerSettings as unknown as (mutate:(input:{body:string;version?:string})=>Promise<{body:string;etag?:string}>,client:{invalidateQueries:()=>Promise<void>},settings:unknown,version?:string)=>Promise<{etag:string|null}>
+  const result=await writer(async input=>{sent.push(input);return {body:'{"appliedAt":"2026-11-03T00:00:00Z"}',etag:'"8"'}},{invalidateQueries:async()=>{}},{controls:{},excludedNodes:[],staticRouting:{},powerObservation:{},meters:[],requestTimeout:1},'"7"')
+  assert.equal(sent[0].version,'"7"')
+  const body=JSON.parse(sent[0].body)
+  assert.deepEqual(Object.keys(body).sort(),["controls","excludedNodes"])
+  assert.equal(result.etag,'"8"')
+})
+
+test("untouched service Sheets follow GET, while edited Sheets preserve the displayed snapshot and ETag",()=>{
+  for(const dirty of [false,true]){
+    const runner=hooks(),initial={controls:{},minimumDemand:{known:.3}},latest={...initial,minimumDemand:{known:.3,other:40}},saved:unknown[][]=[]
+    const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?initial:undefined})}})
+    const editor=elements(runner.render(SchedulerSettingsPage)).find(node=>node.props.editKey==="minimumDemand")!,Component=editor.type as (props:Record<string,unknown>)=>unknown
+    const props={...editor.props,version:'"7"',services:[{uid:"known",name:"A"},{uid:"other",name:"B"}],save:(...args:unknown[])=>saved.push(args)}
+    let tree=elements(runner.render(Component,props))
+    if(dirty)(tree.find(node=>node.type==="input"&&node.props["aria-label"]==="A 최소 수요 req/s")!.props.onChange as (event:unknown)=>void)({target:{value:".75"}})
+    const refreshed={...props,initial:latest,version:'"8"'}
+    tree=elements(runner.render(Component,refreshed))
+    assert.equal(tree.some(node=>node.type==="input"&&node.props["aria-label"]==="B 최소 수요 req/s"),!dirty)
+    ;(tree.find(node=>node.type==="form")!.props.onSubmit as (event:unknown)=>void)({preventDefault(){}})
+    assert.deepEqual(saved[0],[dirty?{known:.75}:{known:.3,other:40},dirty?initial:latest,dirty?'"7"':'"8"'])
+  }
+})
+
+test("minimum demand values are visible in the current table without opening an editor",()=>{
+  const runner=hooks(),settings={controls:{},minimumDemand:{known:0,other:.3}}
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:path==="v1/workloads?view=summary"?[{desired:{metadata:{uid:"known",name:"카메라"}}}]:undefined})}})
+  const tree=elements(runner.render(SchedulerSettingsPage)),tables=tree.filter(node=>node.type==="table")
+  assert.ok(tables.some(table=>elements(table).some(node=>node.type==="th"&&node.props.children==="req/s")))
+  const cells=tables.flatMap(table=>elements(table).filter(node=>node.type==="td").map(node=>node.props.children))
+  assert.ok(cells.includes(0));assert.ok(cells.includes(.3))
+})
+
+test("an edited service Sheet cannot adopt a newer GET baseline or ETag behind the operator",async()=>{
+  const runner=hooks(),original={controls:{},minimumDemand:{known:.3}},sent:unknown[]=[]
+  let current:typeof original&{minimumDemand:Record<string,number>}=original,tag='"7"',publish:((response:{etag:string})=>void)|undefined
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({mutateAsync:async(input:unknown)=>{sent.push(input)}}),useChillQuery:(path:string,options?:{onResponse?:(response:{etag:string})=>void})=>{
+    if(path==="v1/scheduler/settings"){publish=options?.onResponse;publish?.({etag:tag});return {data:current,refetch:async()=>{publish?.({etag:tag});return {data:current}}}}
+    return {refetch:async()=>({})}
+  }}})
+  runner.render(SchedulerSettingsPage)
+  let tree=elements(runner.render(SchedulerSettingsPage)),editor=tree.find(node=>node.props.editKey==="minimumDemand")!
+  const Component=editor.type as (props:Record<string,unknown>)=>unknown
+  let form=elements(runner.render(Component,editor.props))
+  ;(form.find(node=>node.type==="input")!.props.onChange as (event:unknown)=>void)({target:{value:".75"}})
+  current={...original,minimumDemand:{known:.3,other:40}};tag='"8"';publish?.({etag:tag})
+  tree=elements(runner.render(SchedulerSettingsPage));editor=tree.find(node=>node.props.editKey==="minimumDemand")!
+  form=elements(runner.render(Component,editor.props))
+  ;(form.find(node=>node.type==="form")!.props.onSubmit as (event:unknown)=>void)({preventDefault(){}})
+  tree=elements(runner.render(SchedulerSettingsPage))
+  ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)()
+  await settle()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  assert.equal(sent.length,0)
+  assert.ok(tree.some(node=>node.type==="button"&&node.props.children==="최신 값을 기준으로 다시 검토하기"))
+  assert.ok(!tree.some(node=>node.type==="button"&&node.props.children==="설정 적용하기"))
+})
+
+test("versioned settings use their baseline ETag, refresh on 409 and require explicit recovery on 428",async()=>{
+  for(const status of [200,409,428]){
+    const runner=hooks(),initial={controls:{},excludedNodes:[]},sent:{version?:string;body:string}[]=[]
+    let tag:string|null=status===428?null:'"7"',reads=0
+    class ApiError extends Error {status:number;unknownOutcome=false;constructor(){super();this.status=status}}
+    const mutation:{error?:ApiError;reset:()=>void;mutateAsync:(input:{version?:string;body:string})=>Promise<{body:string;etag:string}>}={reset:()=>{delete mutation.error},mutateAsync:async input=>{
+      sent.push(input);tag='"8"'
+      if(status!==200){mutation.error=new ApiError();throw mutation.error}
+      return {body:'{"appliedAt":"2026-11-03T00:00:00Z"}',etag:tag}
+    }}
+    const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{ApiError,useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>mutation,useChillQuery:(path:string,options?:{onResponse?:(response:{etag:string|null})=>void})=>{
+      if(path==="v1/scheduler/settings"){if(!reads){reads++;options?.onResponse?.({etag:tag})}return {data:initial,refetch:async()=>{reads++;options?.onResponse?.({etag:tag});return {data:initial}}}}
+      return {refetch:async()=>({})}
+    }}})
+    let tree=elements(runner.render(SchedulerSettingsPage))
+    ;(tree.find(node=>node.props.editKey==="excludedNodes")!.props.save as (value:string[])=>void)(["meter"])
+    tree=elements(runner.render(SchedulerSettingsPage))
+    ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)()
+    await settle()
+    tree=elements(runner.render(SchedulerSettingsPage))
+    const warnings=tree.filter(node=>typeof node.props.help==="string"&&node.props.help.includes("동시 변경을 완전히"))
+    assert.equal(warnings.length,status===428?1:0)
+    ;(tree.find(node=>node.type==="button"&&node.props.children==="설정 적용하기")!.props.onClick as ()=>void)()
+    await settle()
+    tree=elements(runner.render(SchedulerSettingsPage))
+    assert.equal(sent.length,1)
+    assert.equal(sent[0].version,status===428?undefined:'"7"')
+    assert.deepEqual(JSON.parse(sent[0].body),{controls:{},excludedNodes:["meter"]})
+    if(status===200){
+      assert.equal(tree.find(node=>node.type==="main")!.props.title,"설정 적용 완료")
+      ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)()
+      tree=elements(runner.render(SchedulerSettingsPage))
+      assert.equal(tree.find(node=>node.props.editKey==="minimumDemand")!.props.version,'"8"')
+    } else if(status===409){
+      assert.ok(reads>=4,"conflict triggers GET after the rejected PUT")
+      assert.ok(tree.some(node=>node.type==="button"&&node.props.children==="최신 값을 기준으로 다시 검토하기"))
+    } else {
+      assert.equal(tree.find(node=>node.type==="main")!.props.title,"버전 없음")
+      ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)()
+      await settle()
+      tree=elements(runner.render(SchedulerSettingsPage))
+      assert.ok(tree.some(node=>node.type==="button"&&node.props.children==="최신 값을 기준으로 다시 검토하기"))
+    }
+    assert.equal(sent.length,1,"recovery never resubmits")
+  }
+})
+
+test("a ConfigMap-only ETag change blocks an otherwise identical settings body",async()=>{
+  const runner=hooks(),settings={controls:{},excludedNodes:[]},sent:unknown[]=[]
+  let tag='"7"'
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({mutateAsync:async(input:unknown)=>{sent.push(input)}}),useChillQuery:(path:string,options?:{onResponse?:(response:{etag:string})=>void})=>{
+    if(path==="v1/scheduler/settings"){options?.onResponse?.({etag:tag});return {data:settings,refetch:async()=>{options?.onResponse?.({etag:tag});return {data:settings}}}}
+    return {refetch:async()=>({})}
+  }}})
+  let tree=elements(runner.render(SchedulerSettingsPage))
+  ;(tree.find(node=>node.props.editKey==="excludedNodes")!.props.save as (value:string[])=>void)(["meter"])
+  tag='"8"'
+  tree=elements(runner.render(SchedulerSettingsPage))
+  ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)()
+  await settle()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  assert.equal(sent.length,0)
+  assert.ok(tree.some(node=>node.type==="button"&&node.props.children==="최신 값을 기준으로 다시 검토하기"))
 })

@@ -66,12 +66,12 @@ export function SettingsSummary({settings}:{settings:SchedulerSettings}) {
 }
 
 // The settings page is the only caller. Only editable fields cross the PUT boundary.
-export async function putSchedulerSettings(mutate:(input:ChillMutationInput)=>Promise<RelayResponse>,client:QueryClient,settings:SchedulerSettings) {
+export async function putSchedulerSettings(mutate:(input:ChillMutationInput)=>Promise<RelayResponse>,client:QueryClient,settings:SchedulerSettings,version?:string|null) {
   const body=Object.fromEntries(editableSettingKeys.filter(key=>Object.hasOwn(settings,key)).map(key=>[key,settings[key]]))
-  const response=await mutate({path:"v1/scheduler/settings",method:"PUT",body:stringifySchedulerJSON(body)})
+  const response=await mutate({path:"v1/scheduler/settings",method:"PUT",body:stringifySchedulerJSON(body),...(version?{version}:{})})
   const applied=parseSchedulerJSON(response.body) as SchedulerSettingsChange
   await client.invalidateQueries({predicate:query=>typeof query.queryKey[1]==="string"&&(query.queryKey[1].startsWith("v1/scheduler")||query.queryKey[1].startsWith("v1/observations/scheduler"))})
-  return applied
+  return {change:applied,etag:response.etag??null}
 }
 
 function FieldHelp({help}:{help:string}) {
@@ -79,14 +79,18 @@ function FieldHelp({help}:{help:string}) {
 }
 
 type ServiceChoice={uid:string;name:string}
-function ServiceSettingsEdit({editKey,label,help,initial,services,loadError,disabled,changed,save}:{editKey:"autonomousWorkloads"|"minimumDemand";label:string;help:string;initial:SchedulerSettings;services:ServiceChoice[];loadError?:string;disabled:boolean;changed:boolean;save:(value:string[]|Record<string,number>)=>void}) {
+function ServiceSettingsEdit({editKey,label,help,initial,version=null,services,loadError,disabled,changed,save}:{editKey:"autonomousWorkloads"|"minimumDemand";label:string;help:string;initial:SchedulerSettings;version?:string|null;services:ServiceChoice[];loadError?:string;disabled:boolean;changed:boolean;save:(value:string[]|Record<string,number>,source:SchedulerSettings,version:string|null)=>void}) {
   const params=useSearchParams(),router=useRouter(),open=params.get("edit")===editKey
-  const [selected,setSelected]=React.useState(initial.autonomousWorkloads??[]),[demand,setDemand]=React.useState<Record<string,string>>(Object.fromEntries(Object.entries(initial.minimumDemand??{}).map(([uid,rate])=>[uid,String(rate)]))),[error,setError]=React.useState("")
+  const [draft,setDraft]=React.useState<{settings:SchedulerSettings;version:string|null;selected:string[];demand:Record<string,string>}|null>(null),[error,setError]=React.useState("")
+  // Until the first input, GET updates remain visible. Afterwards this exact settings/version pair is fixed.
+  const form=draft??{settings:initial,version,selected:initial.autonomousWorkloads??[],demand:Object.fromEntries(Object.entries(initial.minimumDemand??{}).map(([uid,rate])=>[uid,String(rate)]))}
+  const {selected,demand}=form
+  function update(change:{selected?:string[];demand?:Record<string,string>}) {setDraft({...form,...change})}
   function setOpen(next:boolean) {
     const query=new URLSearchParams(params.toString())
     if(next)query.set("edit",editKey);else query.delete("edit")
     router[next?"push":"replace"](`/settings?${query}`,{scroll:false})
-    setSelected(initial.autonomousWorkloads??[]);setDemand(Object.fromEntries(Object.entries(initial.minimumDemand??{}).map(([uid,rate])=>[uid,String(rate)])));setError("")
+    setDraft(null);setError("")
   }
   const known=new Map(services.map(service=>[service.uid,service.name]))
   const uids=editKey==="autonomousWorkloads"?[...new Set([...services.map(service=>service.uid),...selected])]:Object.keys(demand)
@@ -94,7 +98,7 @@ function ServiceSettingsEdit({editKey,label,help,initial,services,loadError,disa
   if(focused&&uids.includes(focused))uids.splice(0,0,...uids.splice(uids.indexOf(focused),1))
   return <Sheet open={open} onOpenChange={setOpen}><SheetTrigger asChild><Button variant="outline" disabled={disabled} aria-label={`${label} 수정`}>수정{changed?" · 변경":""}</Button></SheetTrigger><SheetContent className="w-full overflow-y-auto sm:max-w-2xl" aria-describedby={undefined}><SheetHeader><SheetTitle>{label}</SheetTitle></SheetHeader>
     <form className="grid gap-4 px-4 pb-6" onSubmit={event=>{event.preventDefault();try {
-      if(editKey==="autonomousWorkloads")save(selected)
+      if(editKey==="autonomousWorkloads")save(selected,form.settings,form.version)
       else {
         const rates:Record<string,number>={}
         for(const [uid,text] of Object.entries(demand)) {
@@ -102,18 +106,18 @@ function ServiceSettingsEdit({editKey,label,help,initial,services,loadError,disa
           if(!uid||!text.trim()||!Number.isFinite(rate)||rate<0)throw new Error("최소 수요는 0 이상의 유한한 req/s로 적어 주세요.")
           rates[uid]=rate
         }
-        save(rates)
+        save(rates,form.settings,form.version)
       }
       setOpen(false)
     } catch(caught) {setError(caught instanceof Error?caught.message:"값을 확인해 주세요.")}}}>
       <FieldHelp help={help}/>
       {loadError&&<p role="status">{loadError} · 저장된 서비스 항목은 유지돼요.</p>}
       <table className="w-full text-left text-sm"><thead><tr><th className="p-2">서비스</th><th className="p-2">{editKey==="autonomousWorkloads"?"CHILL 자동 운영":"최소 수요 req/s"}</th>{editKey==="minimumDemand"&&<th>작업</th>}</tr></thead><tbody>{uids.map((uid,index)=><tr key={uid} className={`border-t ${uid===focused?"bg-muted":""}`}><th scope="row" className="p-2 font-normal"><span title={uid}>{known.get(uid)??`현재 목록에 없는 서비스 ${index+1}`}</span></th>
-        <td className="p-2">{editKey==="autonomousWorkloads"?<label className="flex min-h-11 items-center gap-2"><input aria-label={`${known.get(uid)??uid} CHILL 자동 운영`} type="checkbox" checked={selected.includes(uid)} onChange={event=>setSelected(event.target.checked?[...selected,uid]:selected.filter(item=>item!==uid))}/>{selected.includes(uid)?"켜짐":"꺼짐"}</label>:<Input aria-label={`${known.get(uid)??uid} 최소 수요 req/s`} type="number" min={0} step="any" required value={demand[uid]} onChange={event=>{setDemand({...demand,[uid]:event.target.value});setError("")}}/>}</td>
-        {editKey==="minimumDemand"&&<td><Button type="button" variant="outline" onClick={()=>{const next={...demand};delete next[uid];setDemand(next)}}>미설정으로</Button></td>}
+        <td className="p-2">{editKey==="autonomousWorkloads"?<label className="flex min-h-11 items-center gap-2"><input aria-label={`${known.get(uid)??uid} CHILL 자동 운영`} type="checkbox" checked={selected.includes(uid)} onChange={event=>update({selected:event.target.checked?[...selected,uid]:selected.filter(item=>item!==uid)})}/>{selected.includes(uid)?"켜짐":"꺼짐"}</label>:<Input aria-label={`${known.get(uid)??uid} 최소 수요 req/s`} type="number" min={0} step="any" required value={demand[uid]} onChange={event=>{update({demand:{...demand,[uid]:event.target.value}});setError("")}}/>}</td>
+        {editKey==="minimumDemand"&&<td><Button type="button" variant="outline" onClick={()=>{const next={...demand};delete next[uid];update({demand:next})}}>미설정으로</Button></td>}
       </tr>)}</tbody></table>
       {!uids.length&&<p>설정된 서비스 없음</p>}
-      {editKey==="minimumDemand"&&<label className="grid gap-2">최소 수요 서비스 추가<select className="min-h-11 w-full rounded-md border bg-background px-2" value="" onChange={event=>{if(event.target.value)setDemand({...demand,[event.target.value]:""})}}><option value="">서비스 선택</option>{services.filter(service=>!Object.hasOwn(demand,service.uid)).map(service=><option key={service.uid} value={service.uid}>{service.name}</option>)}</select></label>}
+      {editKey==="minimumDemand"&&<label className="grid gap-2">최소 수요 서비스 추가<select className="min-h-11 w-full rounded-md border bg-background px-2" value="" onChange={event=>{if(event.target.value)update({demand:{...demand,[event.target.value]:""}})}}><option value="">서비스 선택</option>{services.filter(service=>!Object.hasOwn(demand,service.uid)).map(service=><option key={service.uid} value={service.uid}>{service.name}</option>)}</select></label>}
       {error&&<p role="alert">{error}</p>}
       <Button type="submit" disabled={disabled}>바꾸기</Button>
     </form>
@@ -198,7 +202,10 @@ function RoutingEdit({initial,snapshot,disabled,apply}:{initial?:Routing;snapsho
 export function SchedulerSettingsPage() {
   const params=useSearchParams(),router=useRouter()
   const section=params.get("section"),category:Field["group"]|"controls"|"targets"=section==="cycle"||section==="limit"||section==="controls"||section==="capacity"||section==="advanced"?section:"targets"
-  const settings=useChillQuery<SchedulerSettings>("v1/scheduler/settings",{decoder:parseSchedulerJSON,poll:true})
+  const etag=React.useRef<string|null>(null),[readVersion,setReadVersion]=React.useState<string|null>(null)
+  const [baselineVersion,setBaselineVersion]=React.useState<string|null>(null),latestVersion=React.useRef<string|null>(null)
+  const versioned=readVersion!==null
+  const settings=useChillQuery<SchedulerSettings>("v1/scheduler/settings",{decoder:parseSchedulerJSON,poll:true,onResponse:response=>{etag.current=response.etag??null;setReadVersion(response.etag??null)}})
   const state=useChillQuery<SchedulerControllerState>("v1/scheduler/state",{decoder:parseSchedulerJSON})
   const pools=useChillQuery<PoolsView>("v1/pools",{enabled:params.get("edit")==="excludedNodes"})
   const workloads=useChillQuery<{desired:{metadata:ServiceChoice}}[]>("v1/workloads?view=summary")
@@ -235,29 +242,33 @@ export function SchedulerSettingsPage() {
   const back:[string,string]=["/settings","설정"]
 
   // Edits accumulate on the draft; the first edit pins the baseline used for the concurrency check.
-  function edit(change:(base:SchedulerSettings)=>SchedulerSettings) {
-    const next=change(count?draft!:settings.data!)
+  function edit(change:(base:SchedulerSettings)=>SchedulerSettings,source=settings.data!,version=etag.current) {
+    const next=change(count?draft!:source)
     if(next.capacityPassingWindows!==undefined&&next.capacityWindows!==undefined&&BigInt(next.capacityPassingWindows)>BigInt(next.capacityWindows))throw new Error("용량 충족 창 수는 용량 계산 창 수 이하여야 해요.")
-    if(!count)setBaseline(settings.data!)
+    if(!count){setBaseline(source);setBaselineVersion(version)}
     setDraft(next)
   }
-  async function inspect() {
+  async function inspect(conflict=false) {
     if(blocked||!draft||!baseline)return
     setReviewOpen(true);setReviewing(true);setReview(null);setLatest(null);setCheckError("");setResult(null)
     try {
       const [current]=await Promise.all([settings.refetch(),state.refetch()])
       if(current.error||!current.data){setCheckError("현재 설정을 불러오지 못했어요. 바꾼 값은 그대로 있어요.");return}
-      if(!settingsEqual(baseline,current.data)){setLatest(current.data);return}
+      if(conflict||baselineVersion!==etag.current||!settingsEqual(baseline,current.data)){latestVersion.current=etag.current;setLatest(current.data);return}
       setReview(draft)
     } finally {setReviewing(false)}
   }
-  async function submit(selected:SchedulerSettings) {
+  async function submit(selected:SchedulerSettings,version:string|null) {
     saving.current=true;setSubmittedAt(new Date().toISOString());setRecoveryStarted(0);setHistoryWindow(null);setResult(null);setResponseError(null)
     try {
-      const applied=await putSchedulerSettings(mutation.mutateAsync,client,selected)
-      setResult(applied)
+      const applied=await putSchedulerSettings(mutation.mutateAsync,client,selected,version)
+      etag.current=applied.etag;setReadVersion(applied.etag)
+      setResult(applied.change)
       setBaseline(null);setDraft(null)
-    } catch(error) {if(!(error instanceof ApiError))setResponseError("적용 응답을 해석하지 못했어요. 현재 설정과 최근 변경 기록을 확인해 주세요.")}
+    } catch(error) {
+      if(error instanceof ApiError&&error.status===409){mutation.reset();await inspect(true)}
+      else if(!(error instanceof ApiError))setResponseError("적용 응답을 해석하지 못했어요. 현재 설정과 최근 변경 기록을 확인해 주세요.")
+    }
     finally {saving.current=false}
   }
   async function save() {
@@ -266,9 +277,9 @@ export function SchedulerSettingsPage() {
     try {
       const current=await settings.refetch()
       if(current.error||!current.data){setCheckError("현재 설정을 불러오지 못했어요. 작성값은 유지돼요.");return}
-      if(!settingsEqual(baseline,current.data)){setLatest(current.data);setReview(null);return}
+      if(baselineVersion!==etag.current||!settingsEqual(baseline,current.data)){latestVersion.current=etag.current;setLatest(current.data);setReview(null);return}
       const selected=review;setReview(null);setReviewOpen(false)
-      await submit(selected)
+      await submit(selected,baselineVersion)
     } finally {setReviewing(false)}
   }
   async function applyRouting(before:Routing,after:Routing,reason:string) {
@@ -321,9 +332,9 @@ export function SchedulerSettingsPage() {
   </Screen>
 
   if(mutation.error||responseError) {
-    const message=mutation.error?.status===409?"동시 변경 충돌 · 작성값은 유지돼요. 현재 설정을 다시 조회한 뒤 검토해 주세요.":mutation.error?.status===403?"조회 권한과 별도로 설정 변경 권한과 설정 저장소(ConfigMap) 수정 권한이 모두 필요해요.":responseError??serverError?.message??mutation.error?.body
+    const message=mutation.error?.status===428?"버전 없음 · 현재 설정을 다시 조회한 뒤 검토해 주세요. 작성값은 유지돼요.":mutation.error?.status===409?"동시 변경 충돌 · 작성값은 유지돼요. 현재 설정을 다시 조회한 뒤 검토해 주세요.":mutation.error?.status===403?"조회 권한과 별도로 설정 변경 권한과 설정 저장소(ConfigMap) 수정 권한이 모두 필요해요.":responseError??serverError?.message??mutation.error?.body
     const field=serverError?.field&&(fields.find(item=>item.key===serverError.field)?.label??({settings:"운영 설정 전체",staticRouting:"요청 분배",reason:"분배 선택 이유"} as Record<string,string>)[serverError.field]??serverError.field)
-    if(!unknown)return <Screen back={back} title={mutation.error?.status===409?"설정 변경 충돌":mutation.error?.status===403?"변경 권한 없음":"설정 적용 실패"} action={<Button onClick={()=>mutation.reset()}>다시 수정하기</Button>}>
+    if(!unknown)return <Screen back={back} title={mutation.error?.status===428?"버전 없음":mutation.error?.status===409?"설정 변경 충돌":mutation.error?.status===403?"변경 권한 없음":"설정 적용 실패"} action={<Button onClick={()=>{const status=mutation.error?.status;mutation.reset();if(status===409||status===428)void inspect(status===409)}}>{mutation.error?.status===409||mutation.error?.status===428?"현재 설정 다시 조회하기":"다시 수정하기"}</Button>}>
       <Facts items={[["원인",message??"미제공"],["작성값","유지"],...(field?[["관련 항목",field] as [string,string]]:[])]}/>
     </Screen>
     const events=(history.data?.events??[]).filter(event=>event.settings)
@@ -359,7 +370,11 @@ export function SchedulerSettingsPage() {
     {!precise&&<strong role="alert">큰 정수 처리 미지원 · 설정 변경 차단</strong>}
     <label className="grid max-w-sm gap-2 text-sm">운영 설정 범위<select className="min-h-11 rounded-md border bg-background px-3" value={category} onChange={event=>{const query=new URLSearchParams(params.toString());query.set("section",event.target.value);query.delete("edit");router.push(`/settings?${query}`,{scroll:false})}}>{([["targets","서비스·장비"],["cycle","판단 주기와 범위"],["limit","자원 한도"],["controls","자동 조정 항목"],["capacity","용량 설정"],["advanced","고급"]] as const).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
     <QueryGate query={settings}>{shown&&<>
-      <section aria-label="현재값·정의 표">{category==="targets"?<table className="w-full text-left text-sm"><thead><tr><th className="p-3">항목</th><th className="p-3">{count?"작성값":"현재값"}</th><th className="p-3">작업</th></tr></thead><tbody>{settingTargets.map(target=><tr key={target.key} className="border-t"><th scope="row" className="p-3 font-normal">{target.label}</th><td className="p-3">{target.key==="autonomousWorkloads"?(shown.autonomousWorkloads?.map(uid=>serviceNames[uid]??uid).join(", ")||"없음"):target.key==="excludedNodes"?excludedNodes(shown):Object.keys(shown.minimumDemand??{}).length?`${Object.keys(shown.minimumDemand!).length}개 서비스`:"미설정"}</td><td className="p-3">{target.key==="excludedNodes"?<EditRow editKey={target.key} label={target.label} help={target.help} changed={!!count&&String(baseline!.excludedNodes??[])!==String(shown.excludedNodes??[])} initial={shown.excludedNodes??[]} nodeNames={knownNodeNames} save={value=>edit(base=>({...base,excludedNodes:value as string[]}))} disabled={blocked}/>:<ServiceSettingsEdit editKey={target.key} label={target.label} help={target.help} initial={shown} services={services} loadError={workloads.error?"서비스 목록 조회 실패":!workloads.data?"서비스 목록 조회 중":undefined} changed={!!count&&stringifySchedulerJSON(baseline![target.key])!==stringifySchedulerJSON(shown[target.key])} disabled={blocked} save={value=>edit(base=>({...base,[target.key]:value}))}/>}</td></tr>)}</tbody></table>:category==="controls"?<DataTable data={controls} columns={[
+      <section aria-label="현재값·정의 표">{category==="targets"?<table className="w-full text-left text-sm"><thead><tr><th className="p-3">항목</th><th className="p-3">{count?"작성값":"현재값"}</th><th className="p-3">작업</th></tr></thead><tbody>{settingTargets.map(target=><tr key={target.key} className="border-t">
+        <th scope="row" className="p-3 font-normal">{target.label}</th>
+        <td className="p-3">{target.key==="autonomousWorkloads"?(shown.autonomousWorkloads?.map(uid=>serviceNames[uid]??uid).join(", ")||"없음"):target.key==="excludedNodes"?excludedNodes(shown):services.length||Object.keys(shown.minimumDemand??{}).length?<table aria-label="서비스별 최소 수요" className="text-left text-sm"><thead><tr><th className="pr-4 font-normal">서비스</th><th className="text-right font-normal">req/s</th></tr></thead><tbody>{[...new Set([...services.map(service=>service.uid),...Object.keys(shown.minimumDemand??{})])].map(uid=><tr key={uid}><th scope="row" className="pr-4 font-normal">{serviceNames[uid]??uid}</th><td className="text-right tabular-nums">{shown.minimumDemand?.[uid]??"미설정"}</td></tr>)}</tbody></table>:"미설정"}</td>
+        <td className="p-3">{target.key==="excludedNodes"?<EditRow editKey={target.key} label={target.label} help={target.help} changed={!!count&&String(baseline!.excludedNodes??[])!==String(shown.excludedNodes??[])} initial={shown.excludedNodes??[]} nodeNames={knownNodeNames} save={value=>edit(base=>({...base,excludedNodes:value as string[]}))} disabled={blocked}/>:<ServiceSettingsEdit editKey={target.key} label={target.label} help={target.help} initial={shown} version={count?baselineVersion:readVersion} services={services} loadError={workloads.error?"서비스 목록 조회 실패":!workloads.data?"서비스 목록 조회 중":undefined} changed={!!count&&stringifySchedulerJSON(baseline![target.key])!==stringifySchedulerJSON(shown[target.key])} disabled={blocked} save={(value,source,version)=>edit(base=>({...base,[target.key]:value}),source,version)}/>}</td>
+      </tr>)}</tbody></table>:category==="controls"?<DataTable data={controls} columns={[
         {key:"name",label:"항목",value:control=>control.label},
         {key:"value",label:"현재값",value:control=>onOff(shown.controls[control.key])},
         {key:"edit",label:"작업",value:control=><EditRow editKey={`controls.${control.key}`} label={control.label} help={`운영 판단에서 ${control.label}도 함께 조정해요.`} changed={!!count&&baseline!.controls[control.key]!==shown.controls[control.key]} initial={shown.controls[control.key]} save={value=>edit(base=>({...base,controls:{...base.controls,[control.key]:value as boolean}}))} disabled={blocked}/>},
@@ -380,15 +395,16 @@ export function SchedulerSettingsPage() {
       </Rows></details>
     </>}</QueryGate>
     <Dialog open={reviewOpen} onOpenChange={open=>{if(!open){setReviewOpen(false);setReview(null)}}}><DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-xl" onCloseAutoFocus={event=>{event.preventDefault();reviewLauncher.current?.focus()}}>
-      <DialogHeader><DialogTitle>{latest?"다른 사람이 먼저 설정을 바꿨어요":`변경 ${count}건을 적용할까요?`}</DialogTitle><DialogDescription>{latest?"최신 값과 작성값을 비교해요. 작성값은 유지돼요.":"운영 설정 전체를 저장해요. 서버는 버전 조건부 저장을 지원하지 않아 동시 변경을 완전히 막을 수 없어요."}</DialogDescription></DialogHeader>
+      <DialogHeader><DialogTitle>{latest?"다른 사람이 먼저 설정을 바꿨어요":`변경 ${count}건을 적용할까요?`}</DialogTitle><DialogDescription>{latest?"설정 변경 충돌 · 작성값 유지":"운영 설정 전체 저장"}</DialogDescription></DialogHeader>
+      {!versioned&&<FieldHelp help="서버는 버전 조건부 저장을 지원하지 않아 동시 변경을 완전히 막을 수 없어요."/>}
       {reviewing&&<p role="status">현재 설정을 다시 확인하고 있어요.</p>}
       {checkError&&<p role="alert">{checkError}</p>}
-      {latest&&draft&&<><SettingChanges before={latest} after={draft} names={serviceNames}/><Button onClick={()=>{setBaseline(latest);setLatest(null);setReviewOpen(false)}}>최신 값을 기준으로 다시 검토하기</Button></>}
+      {latest&&draft&&<><SettingChanges before={latest} after={draft} names={serviceNames}/><Button onClick={()=>{setBaseline(latest);setBaselineVersion(latestVersion.current);setLatest(null);setReviewOpen(false)}}>최신 값을 기준으로 다시 검토하기</Button></>}
       {review&&baseline&&<>
         <SettingChanges before={baseline} after={review} names={serviceNames}/>
         <h3>마지막으로 확인한 노드</h3>
         {state.isSuccess?(state.data?.snapshot.nodes?.length?<p>{state.data.snapshot.nodes.map(node=>node.node.name).join(", ")}</p>:<p>확인된 노드가 없어요.</p>):<p>노드 목록을 불러오지 못했어요.</p>}
-        <p className="text-sm text-muted-foreground">마지막 구성 관측에 있던 노드예요. 영향 예측은 아니에요. 적용 직전에 다시 확인해도 동시 변경을 완전히 막지는 못해요.</p>
+        <p className="text-sm text-muted-foreground">마지막 구성 관측의 노드 · 영향 예측 아님</p>
         <SourceJSON inline title="변경 원본" value={{before:baseline,after:review}}/>
         <Button onClick={()=>void save()} disabled={blocked}>설정 적용하기</Button>
       </>}
