@@ -52,6 +52,7 @@ components=(
   profiler-kube
   profiler-worker
   serving-core
+  serving-observation
   serving-httpapi
   serving-application
   serving-live
@@ -112,6 +113,7 @@ component_for() {
     internal/profiling/profiler/kube) echo profiler-kube ;;
     internal/profiling/profiler/worker) echo profiler-worker ;;
     internal/serving) echo serving-core ;;
+    internal/serving/observation) echo serving-observation ;;
     internal/serving/httpapi) echo serving-httpapi ;;
     internal/serving/application) echo serving-application ;;
     internal/serving/live) echo serving-live ;;

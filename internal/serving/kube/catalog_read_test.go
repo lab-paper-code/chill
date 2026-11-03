@@ -14,6 +14,7 @@ import (
 const catalogOccupancyPath = "cpu"
 
 func TestCatalogOccupancyProjectsOnlyExistingSchedulerSelection(t *testing.T) {
+	const missingSource = "missing"
 	profile := serving.Profile{ID: "current"}
 	profile.Condition.Artifact.ExecutionPath = catalogOccupancyPath
 	identity := evidencestore.ObjectIdentity{
@@ -51,9 +52,9 @@ func TestCatalogOccupancyProjectsOnlyExistingSchedulerSelection(t *testing.T) {
 			Source:       identity.Key,
 		},
 	}
-	rows, err := evidence.OccupancySelections(selected, []serving.Profile{profile})
-	if err != nil || len(rows) != 1 {
-		t.Fatalf("selection projection: %+v %v", rows, err)
+	rows, skipped := evidence.OccupancySelections(selected, []serving.Profile{profile})
+	if len(skipped) != 0 || len(rows) != 1 {
+		t.Fatalf("selection projection: %+v skipped=%+v", rows, skipped)
 	}
 	expected := OccupancySelection{
 		Node:          record.Node,
@@ -81,13 +82,59 @@ func TestCatalogOccupancyProjectsOnlyExistingSchedulerSelection(t *testing.T) {
 	if err = json.Unmarshal(raw, &wire); err != nil || !reflect.DeepEqual(wire.Accepted.Occupancy, rows) {
 		t.Fatalf("private wire lost occupancy: %s %v", raw, err)
 	}
-	empty, err := evidence.OccupancySelections(nil, []serving.Profile{profile})
-	if err != nil || len(empty) != 0 {
+	empty, skipped := evidence.OccupancySelections(nil, []serving.Profile{profile})
+	if len(skipped) != 0 || len(empty) != 0 {
 		t.Fatal("unselected records appeared adopted")
 	}
-	selected[0].Source = "missing"
-	if _, err = evidence.OccupancySelections(selected, []serving.Profile{profile}); err == nil {
-		t.Fatal("missing selected provenance fabricated")
+	selected[0].RuntimeImage = "new-image"
+	selected[0].PerRequest = time.Second
+	selected[0].ProfileID = "another-internal-id"
+	rows, skipped = evidence.OccupancySelections(selected, []serving.Profile{profile})
+	if len(rows) != 1 || len(skipped) != 0 || rows[0] != expected {
+		t.Fatalf("reporting reapplied image/value/profile admission: %+v %+v", rows, skipped)
+	}
+	for _, path := range []string{"", "record-path"} {
+		record.ExecutionPath = path
+		rows, skipped = evidence.OccupancySelections(selected, nil)
+		if len(rows) != 1 || len(skipped) != 0 || rows[0].ExecutionPath != path || rows[0].ProfileID != record.ProfileID {
+			t.Fatalf("retired profile lost evidence row: %+v %+v", rows, skipped)
+		}
+	}
+	rows, skipped = evidence.OccupancySelections(selected, []serving.Profile{profile})
+	if len(rows) != 1 || len(skipped) != 0 || rows[0].ExecutionPath != "record-path" {
+		t.Fatalf("profile replaced record execution path: %+v %+v", rows, skipped)
+	}
+	selected[0].Source = missingSource
+	rows, skipped = evidence.OccupancySelections(selected, []serving.Profile{profile})
+	wantSkip := OccupancySkipped{Source: missingSource, Node: record.Node, Model: record.Model,
+		PowerMode: record.PowerMode, ProfileID: selected[0].ProfileID, Reason: "noMatchingEvidence"}
+	if len(rows) != 0 || !reflect.DeepEqual(skipped, []OccupancySkipped{wantSkip}) {
+		t.Fatalf("missing provenance was not recorded: %+v %+v", rows, skipped)
+	}
+	selected[0].Source = identity.Key
+	duplicate := identity
+	duplicate.Store = "duplicate-store"
+	evidence.occupancy[duplicate] = record
+	rows, skipped = evidence.OccupancySelections(selected, []serving.Profile{profile})
+	wantSkip.Source, wantSkip.Reason = identity.Key, "ambiguousEvidence(2)"
+	if len(rows) != 0 || !reflect.DeepEqual(skipped, []OccupancySkipped{wantSkip}) {
+		t.Fatalf("ambiguous provenance was not recorded: %+v %+v", rows, skipped)
+	}
+	raw, err = json.Marshal(CatalogSnapshot{OccupancySkipped: skipped})
+	var projected CatalogSnapshot
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(raw, &projected); err != nil || !reflect.DeepEqual(projected.OccupancySkipped, skipped) {
+		t.Fatalf("snapshot lost skipped selections: %s %v", raw, err)
+	}
+	// One unprojectable selection must not hide a valid sibling.
+	delete(evidence.occupancy, duplicate)
+	selected = append(selected, selected[0])
+	selected[0].Source = missingSource
+	rows, skipped = evidence.OccupancySelections(selected, nil)
+	if len(rows) != 1 || len(skipped) != 1 || skipped[0].Reason != "noMatchingEvidence" {
+		t.Fatalf("partial projection lost valid sibling: %+v %+v", rows, skipped)
 	}
 }
 

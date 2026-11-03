@@ -22,7 +22,7 @@ function load<T>(path:string,modules:Record<string,unknown>,extra:Record<string,
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const exports:Record<string,unknown>={}
   modules={"lucide-react":{TriangleAlert:()=>null,RefreshCw:()=>null,Braces:()=>null},...modules}
-  runInNewContext(compiled,{exports,Error,URLSearchParams,...extra,require:(name:string)=>name in modules?modules[name]:name.startsWith("@/")||name.endsWith(".css")?{}:require(name)})
+  runInNewContext(compiled,{exports,Error,URLSearchParams,...extra,require:(name:string)=>name==="@/hooks/use-measurement-data"?{...load<object>("../hooks/use-measurement-data.ts",modules,extra),...modules[name] as object}:name in modules?modules[name]:name.startsWith("@/")||name.endsWith(".css")?{}:require(name)})
   return exports as T
 }
 
@@ -38,7 +38,7 @@ test("summary decoding failures retain a common API error and visible cause for 
     "@/lib/scheduler":scheduler,
     "@/lib/measurement-summary":summary,
   },{fetch:async()=>({ok:true,status:200,text:async()=>body,headers:new Headers()}),performance})
-  const coverage=load<{useMeasurementCoverage:(namespace:string)=>unknown;CoverageError:React.ComponentType<{error:unknown;retry:()=>void}>}>("../features/measurement-coverage.tsx",{
+  const coverage=load<{CoverageError:React.ComponentType<{error:unknown;retry:()=>void}>}>("../features/measurement-coverage.tsx",{
     "@/lib/client":client,"@/lib/measurement-summary":summary,
     "@tanstack/react-query":{useQuery:capture},
     "next/navigation":{useSearchParams:()=>new URLSearchParams()},
@@ -52,7 +52,7 @@ test("summary decoding failures retain a common API error and visible cause for 
     "@/components/ui/dialog":Object.fromEntries(["Dialog","DialogContent","DialogDescription","DialogHeader","DialogTitle","DialogTrigger"].map(key=>[key,container])),
   })
   for(const kind of ["coverage","beo","profiles"]) {
-    if(kind==="coverage")coverage.useMeasurementCoverage("ns")
+    if(kind==="coverage")load<{useMeasurementCoverage:(namespace:string)=>unknown}>("../hooks/use-measurement-data.ts",{"@/lib/client":client,"@/lib/measurement-summary":summary,"@tanstack/react-query":{useQuery:capture},"next/navigation":{useSearchParams:()=>new URLSearchParams()}}).useMeasurementCoverage("ns")
     else client.useChillQuery(kind,{decoder:summary.parseMeasurementJSON})
     let error:Error&{status?:number;body?:string;data?:{code?:string}}|undefined
     try {await queryFn!({signal:new AbortController().signal})}catch(caught){error=caught as typeof error}
@@ -102,7 +102,7 @@ test("paged request defaults and coverage timestamps render second-page summary 
       "@/components/read-region":region,"@/components/screen":{Screen:container},
       "@/components/measurement-navigation":{MeasurementNavigation:()=>null,MeasurementEvidenceChecks:()=>null},
       "@/components/ui/button":{Button:container},"@/components/ui/input":{Input:()=>null},
-      "@/features/measurement-coverage":{useMeasurementPlans:()=>({data:{items:[]}}),useCoverageInventory:()=>({data:{classes:[],models:[]}}),useMeasurementCoverage:()=>({}),useModelCompatibility:()=>({})},
+      "@/hooks/use-measurement-data":{useMeasurementPlans:()=>({data:{items:[]}}),useCoverageInventory:()=>({data:{classes:[],models:[]}}),useMeasurementCoverage:()=>({}),useModelCompatibility:()=>({})},
       "@/features/dispatch-occupancy-request":{MeasurementKindSelector:()=>null},
     }
     let element:React.ReactElement

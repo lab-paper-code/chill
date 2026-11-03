@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 const rawObservationsPath = "/api/v1/observations/raw"
@@ -48,7 +49,7 @@ func (h *Handler) rawObservations(w http.ResponseWriter, r *http.Request) {
 		invalid()
 		return
 	}
-	var raw serving.RawObservation
+	var raw observation.RawObservation
 	var err error
 	path := strings.TrimPrefix(r.URL.Path, rawObservationsPath+"/")
 	if path == "definitions" {

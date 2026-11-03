@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -19,12 +20,12 @@ import (
 
 type resourceReceiver struct {
 	kube                                             kubernetes.Interface
-	log                                              *serving.ObservationLog
+	log                                              *observation.ObservationLog
 	namespace                                        string
 	selectPod                                        func(*corev1.Pod) bool
 	maxSamples, maxContainers, maxThermal, maxErrors int
 	mu                                               sync.Mutex
-	issued                                           map[serving.NodeReference]map[serving.ResourceTarget]bool
+	issued                                           map[serving.NodeReference]map[observation.ResourceTarget]bool
 }
 
 // resourcePodSelected confines serving Pods to this system's namespace and
@@ -55,7 +56,9 @@ func loadGeneratorResourcePodSelected(pod *corev1.Pod, namespace string) bool {
 	return pod.Namespace == namespace && pod.Labels[loadGeneratorRoleLabel] == loadGeneratorRole
 }
 
-func (s *resourceReceiver) receive(ctx context.Context, batch serving.ResourceBatch) ([]serving.ResourceTarget, error) {
+func (s *resourceReceiver) receive(
+	ctx context.Context, batch observation.ResourceBatch,
+) ([]observation.ResourceTarget, error) {
 	invalid := func(message string) error {
 		return &serving.Error{Code: "InvalidBody", Message: message, Field: "resources"}
 	}
@@ -86,8 +89,8 @@ func (s *resourceReceiver) receive(ctx context.Context, batch serving.ResourceBa
 	if err != nil {
 		return nil, err
 	}
-	targets := []serving.ResourceTarget{}
-	next := map[serving.ResourceTarget]bool{}
+	targets := []observation.ResourceTarget{}
+	next := map[observation.ResourceTarget]bool{}
 	for i := range pods.Items {
 		pod := &pods.Items[i]
 		if pod.UID == "" || !s.selectPod(pod) {
@@ -100,7 +103,7 @@ func (s *resourceReceiver) receive(ctx context.Context, batch serving.ResourceBa
 				if status.ContainerID == "" || status.State.Running == nil {
 					continue
 				}
-				target := serving.ResourceTarget{PodUID: string(pod.UID), ContainerID: status.ContainerID}
+				target := observation.ResourceTarget{PodUID: string(pod.UID), ContainerID: status.ContainerID}
 				if !next[target] {
 					next[target] = true
 					targets = append(targets, target)
@@ -113,7 +116,7 @@ func (s *resourceReceiver) receive(ctx context.Context, batch serving.ResourceBa
 	}
 	if len(batch.Samples) > 0 {
 		received := time.Now().UTC()
-		row := serving.ResourceObservation{
+		row := observation.ResourceObservation{
 			Kind: "node", Node: &batch.Node, ReceivedAt: &received, Samples: batch.Samples,
 		}
 		if err := s.log.ResourcesRecord(row); err != nil {
@@ -121,14 +124,14 @@ func (s *resourceReceiver) receive(ctx context.Context, batch serving.ResourceBa
 		}
 	}
 	if s.issued == nil {
-		s.issued = map[serving.NodeReference]map[serving.ResourceTarget]bool{}
+		s.issued = map[serving.NodeReference]map[observation.ResourceTarget]bool{}
 	}
 	s.issued[batch.Node] = next
 	return targets, nil
 }
 
 func (s *resourceReceiver) validateResourceSample(
-	sample serving.ResourceSample, previous map[serving.ResourceTarget]bool,
+	sample observation.ResourceSample, previous map[observation.ResourceTarget]bool,
 ) error {
 	invalid := func(message string) error {
 		return &serving.Error{Code: "InvalidBody", Message: message, Field: "resources"}
@@ -138,7 +141,7 @@ func (s *resourceReceiver) validateResourceSample(
 		len(sample.Errors) > s.maxErrors {
 		return invalid("invalid resource sample time or array bounds")
 	}
-	seen := map[serving.ResourceTarget]bool{}
+	seen := map[observation.ResourceTarget]bool{}
 	for _, container := range sample.Containers {
 		if !previous[container.ResourceTarget] || seen[container.ResourceTarget] ||
 			(container.CgroupVersion != 1 && container.CgroupVersion != 2) ||
@@ -166,7 +169,7 @@ func (s *resourceReceiver) validateResourceSample(
 }
 
 type processResources struct {
-	log               *serving.ObservationLog
+	log               *observation.ObservationLog
 	directory, podUID string
 	started           time.Time
 	directoryInterval time.Duration
@@ -175,7 +178,7 @@ type processResources struct {
 }
 
 func newProcessResources(
-	log *serving.ObservationLog, directory, podUID string, started time.Time, directoryInterval time.Duration,
+	log *observation.ObservationLog, directory, podUID string, started time.Time, directoryInterval time.Duration,
 ) *processResources {
 	return &processResources{
 		log: log, directory: directory, podUID: podUID, started: started, directoryInterval: directoryInterval,
@@ -191,7 +194,7 @@ func (p *processResources) record(at time.Time) error {
 	if math.IsNaN(cpu) || math.IsInf(cpu, 0) {
 		return fmt.Errorf("invalid GC CPU metric")
 	}
-	row := serving.ResourceObservation{
+	row := observation.ResourceObservation{
 		Kind: "server", At: &at, PodUID: p.podUID, ProcessStartedAt: &p.started, GCCPUSeconds: &cpu, GCCycles: &cycles,
 	}
 	if !at.Before(p.nextDirectory) {
@@ -212,7 +215,9 @@ func (p *processResources) record(at time.Time) error {
 			return nil
 		})
 		if err != nil {
-			row.Errors = []serving.ResourceError{{Target: p.directory, Field: "observationDirectoryBytes", Reason: err.Error()}}
+			row.Errors = []observation.ResourceError{{
+				Target: p.directory, Field: "observationDirectoryBytes", Reason: err.Error(),
+			}}
 		} else {
 			row.ObservationDirectoryBytes = &total
 		}

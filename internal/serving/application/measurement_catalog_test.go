@@ -109,6 +109,7 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 				Size:  100,
 			},
 		}},
+		OccupancySkipped: []servingkube.OccupancySkipped{{Source: "missing", ProfileID: "retired", Reason: "noMatchingEvidence"}},
 	}
 	service.Profiles.Store(adopted)
 	ctx := context.Background()
@@ -167,6 +168,9 @@ func assertAcceptedCatalogRead(
 	}
 	if !reflect.DeepEqual(accepted.Occupancy, adopted.Occupancy) || len(queryRead.Occupancy) != 0 {
 		t.Fatalf("selected occupancy mixed with reporting or lost accepted provenance: %s", wire)
+	}
+	if !reflect.DeepEqual(accepted.OccupancySkipped, adopted.OccupancySkipped) || len(queryRead.OccupancySkipped) != 0 {
+		t.Fatalf("skipped occupancy diagnostics lost or mixed with reporting: %s", wire)
 	}
 	if accepted.ConfigVersion != adopted.ConfigVersion || len(accepted.Profiles) != 1 ||
 		accepted.Profiles[0].ID != adopted.Profiles[0].ID ||

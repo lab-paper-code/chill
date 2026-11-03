@@ -35,7 +35,7 @@ function load(file:string,modules:Record<string,unknown>):Record<string,Componen
   const source=readFileSync(new URL(file,import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const exports={}
-  new Function("require","exports",compiled)((name:string)=>Object.hasOwn(modules,name)?modules[name]:name.startsWith("@/")?{}:require(name),exports)
+  new Function("require","exports",compiled)((name:string)=>Object.hasOwn(modules,name)?modules[name]:name==="@/hooks/use-measurement-data"?load("../hooks/use-measurement-data.ts",modules):name.startsWith("@/")?{}:require(name),exports)
   return exports
 }
 function harness(search:string,respond:(path:string)=>unknown) {
@@ -57,7 +57,7 @@ function harness(search:string,respond:(path:string)=>unknown) {
     "@/components/ui/dialog":{Dialog:"dialog",DialogContent:"dialog-content",DialogHeader:"dialog-header",DialogTitle:"dialog-title",DialogDescription:"dialog-description"},
     "@/components/measurement-navigation":{MeasurementNavigation:"measurement-nav",measurementStates:{usable:"측정 충족",problem:"문제",unknown:"미확인"}},
     "@/features/measurement-plans":{AssessmentDetails:"assessment-details",ResultRows:"result-rows"},
-    "@/features/measurement-coverage":{MeasurementFilters:"measurement-filters"},
+    "@/components/measurement-filters":{MeasurementFilters:"measurement-filters"},
     "@/features/scheduler-profiles":{SchedulerProfilesPage:"throughput-results"},
   }
   return {modules,params,pushes,replacements,paths,refreshes}
@@ -248,31 +248,6 @@ test("standalone plan verification states its stored-plan and non-submission rol
   assert.deepEqual(facts.props.items,[["대상","저장된 계획 파일"],["동작","검사만"],["측정 제출","없음"]])
 })
 
-test("editable execution path filters accept off-page identifiers and deduplicate suggestions",()=>{
-  const h=harness("namespace=ns&path=off-page-path&node=device&page=3&offset=50&profile=selected",()=>undefined)
-  const filters=load("../features/measurement-coverage.tsx",{...h.modules,"./measurement-coverage.css":{}}).MeasurementFilters
-  const paths=["firstfloor-ort-cuda-arm64","firstfloor-rnn-ort-cuda-arm64","firstfloor-vlm-ort-cuda-arm64"]
-  const axes=[{key:"path",label:"실행 경로",values:[...paths,paths[0],""]}]
-  const tree=filters({editable:true,states:false,axes})
-  const input=elements(tree).find(element=>element.type==="input"&&element.props.list==="measurement-path")!
-  assert.ok(input)
-  assert.equal(input.props.value,"off-page-path")
-  assert.equal(elements(tree).some(element=>element.type==="select"),false)
-  const suggestions=elements(elements(tree).find(element=>element.type==="datalist"))
-    .filter(element=>element.type==="option")
-  assert.deepEqual(suggestions.map(element=>element.props.value),paths)
-  assert.equal(new Set(suggestions.map(text)).size,paths.length)
-  ;(input.props.onChange as (event:{target:{value:string}})=>void)({target:{value:"another-page-path"}})
-  const next=new URL(h.replacements[0],"https://dashboard.invalid").searchParams
-  assert.equal(next.get("path"),"another-page-path")
-  assert.equal(next.get("namespace"),"ns")
-  assert.equal(next.get("node"),"device")
-  for(const key of ["page","offset","profile"])assert.equal(next.has(key),false)
-  const select=elements(filters({states:false,axes})).find(element=>element.type==="select")!
-  const options=elements(select).filter(element=>element.type==="option")
-  assert.equal(options.filter(element=>element.props.value===paths[0]).length,1)
-  assert.equal(options.filter(element=>element.props.value==="off-page-path").length,1)
-})
 
 test("selected cost product shows comparison insufficiency once outside individual transition values",()=>{
   const h=harness("kind=operation-cost&namespace=ns&measurement=cost&uid=original",path=>path.endsWith("/cost")?measurement:{items:[measurement]})
@@ -349,7 +324,7 @@ test("R18 request status retains its own catalog identity instead of same-target
   const h=harness("uid=old",()=>({campaign:{uid:"old",name:"request",phase:"Complete",spec},assessment:own,resultRows:[]}))
   Object.assign(h.modules,{
     "@/lib/measurement-request":requests,
-    "@/features/measurement-coverage":{useMeasurementPlans:()=>({}),useMeasurementCoverage:()=>({data:{cells:[]}})},
+    "@/hooks/use-measurement-data":{useMeasurementPlans:()=>({}),useMeasurementCoverage:()=>({data:{cells:[]}})},
     "@/components/measurement-navigation":{MeasurementStatus:"measurement-status"},
   })
   const tree=load("../features/measurement-plans.tsx",h.modules).MeasurementPlanDetails({namespace:"ns",name:"request"})

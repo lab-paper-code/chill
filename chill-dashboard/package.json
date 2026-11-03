@@ -11,7 +11,7 @@
     "start": "node server/live-proxy.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test lib/*.test.ts server/*.test.mjs",
+    "test": "node --experimental-strip-types --test lib/*.test.ts hooks/*.test.ts components/*.test.ts server/*.test.mjs",
     "test:live": "node --test server/*.test.mjs",
     "fixture:live": "node --experimental-strip-types server/live-fixture-server.mjs"
   },

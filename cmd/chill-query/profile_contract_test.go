@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	"github.com/lab-paper-code/chill/internal/queryapi"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
@@ -99,7 +100,7 @@ func TestAcceptedCatalogProfilesRemainVisibleWithNewerReportingFacts(t *testing.
 			targetEnergy, sourceEnergy, freshEnergy := 3.0, 7.0, 99.0
 			reuse := &serving.ProfileReuseCheck{
 				SourceProfileID: "allowed/source/uid", ConfirmationProfileID: "allowed/target/uid",
-				Outcome: measurementVerdictAccepted,
+				Outcome: queryapi.MeasurementVerdictAccepted,
 			}
 			profile := serving.Profile{
 				ID: reuse.ConfirmationProfileID, Reuse: reuse, Batches: []serving.BatchProfile{{Batch: 1}},

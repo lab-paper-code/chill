@@ -13,7 +13,7 @@ func AssessMeasurementBatch(
 	check := func(code string, pass bool, message string) MeasurementCheck {
 		result := MeasurementUnknown
 		if pass {
-			result = "pass"
+			result = measurementCheckPassed
 		}
 		return MeasurementCheck{Code: code, Result: result, Message: message, SourceIDs: []string{}}
 	}

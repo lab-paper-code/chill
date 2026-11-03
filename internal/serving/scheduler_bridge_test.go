@@ -99,11 +99,6 @@ func TestCapacityBridgeQueuedIngressReplayAC45(t *testing.T) {
 	if len(decision.Capacity.BridgeStages) != 1 || actions[stage].RouteTarget == nil || len(actions[stage].RouteTarget.Actions) != 0 {
 		t.Fatal("bridge lost its immutable, acyclic capacity witness")
 	}
-	refs := observationReferences{}
-	stored := refs.candidate(*decision.Target)
-	if stored.Actions[stage].RouteTarget.Instances[0].Profile != nil || actions[stage].RouteTarget.Instances[0].Profile == nil {
-		t.Fatal("nested bridge catalog projection leaked or mutated live profiles")
-	}
 	state := schedulerReplayState{settings: s, snap: snap, c: *decision.Target, routeCredits: map[string][]int64{}, rng: rand.New(rand.NewPCG(1, 0)), out: schedulerReplayResult{definitions: map[string]*Definition{}}}
 	state.initializeInstances()
 	state.initializeActions()

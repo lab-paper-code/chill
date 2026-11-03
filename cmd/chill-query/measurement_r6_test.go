@@ -9,6 +9,7 @@ import (
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/queryapi"
+	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -94,19 +95,22 @@ func TestR6FailureSummaryClassifiesOwnedRuntimeLog(t *testing.T) {
 			},
 		},
 	}
-	base := &measurementCoverageBase{
-		requests: api.BatchEnergyOptimizationList{Items: []api.BatchEnergyOptimization{task}},
-		runs:     api.ProfilingRunList{Items: []api.ProfilingRun{run}},
+	base := &queryapi.CoverageBase{
+		Requests: api.BatchEnergyOptimizationList{Items: []api.BatchEnergyOptimization{task}},
+		Runs:     api.ProfilingRunList{Items: []api.ProfilingRun{run}},
+		Inventory: queryapi.InventoryView{
+			Models: []queryapi.InventoryModelView{
+				{Spec: api.ModelSpecSpec{ExecutionPaths: []api.ModelExecutionPath{{}}}},
+			},
+			Classes: []queryapi.InventoryClassView{{PowerModes: []queryapi.InventoryPowerModeView{{}}}},
+		},
 	}
-	assessment := assessMeasurementRequest(task, httpapi.ProfilesView{}, httpapi.ProfilesView{})
-	failures := queryapi.MeasurementRequestFailures(task, coverageOwnedRuns(base)[string(task.UID)], assessment)
-	projection := coverageProjection{
-		base: base, owners: coverageOwnedRuns(base),
-		indices: map[string]int{coverageCellID("", "", "", ""): 0},
-		out:     queryapi.MeasurementCoverageResponse{Cells: []queryapi.MeasurementCoverageCell{{}}},
-	}
-	projection.addRequest(task)
-	cell := projection.out.Cells[0]
+	assessment := queryapi.AssessMeasurementRequest(task, queryapi.CoverageCatalog{}, queryapi.CoverageCatalog{})
+	failures := queryapi.MeasurementRequestFailures(
+		task, queryapi.CoverageOwnedRuns(base.Requests.Items, base.Runs.Items)[string(task.UID)], assessment,
+	)
+	projection := queryapi.BuildMeasurementCoverage(base, task.Namespace, queryapi.CoverageQuery{})
+	cell := projection.Cells[0]
 	snapshot := queryapi.BatchEnergyOptimizationResultSnapshot{Campaign: task, FailedRuns: []api.ProfilingRun{run}}
 	detail, err := queryapi.BuildBatchEnergyOptimizationResult(snapshot)
 	if err != nil || detail.Assessment.DisplayStatus != queryapi.MeasurementProblem ||
@@ -132,7 +136,12 @@ func TestR6FailureSummaryClassifiesOwnedRuntimeLog(t *testing.T) {
 	service := &measurementService{
 		client: fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(&run).Build(),
 	}
-	list, err := service.assessList(context.Background(), base.requests)
+	list, err := querykube.AssessMeasurementRequests(
+		context.Background(),
+		service.client,
+		queryCatalogSource(service.catalog),
+		base.Requests,
+	)
 	if err != nil || len(list) != 1 {
 		t.Fatalf("request list assessment = %s, %v", list, err)
 	}
@@ -141,7 +150,7 @@ func TestR6FailureSummaryClassifiesOwnedRuntimeLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, summary := range [][]queryapi.MeasurementFailure{
-		failures, projection.out.Entities.Requests[0].FailureSummary,
+		failures, projection.Entities.Requests[0].FailureSummary,
 		listAssessment.FailureSummary, detail.Assessment.FailureSummary,
 		queryapi.AssessProfilingRun(run).FailureSummary,
 	} {

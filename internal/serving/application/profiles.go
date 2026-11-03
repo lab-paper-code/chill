@@ -253,6 +253,7 @@ func (o *SchedulerService) ReadCatalog(ctx context.Context) (servingkube.Catalog
 	if current != nil {
 		accepted := servingkube.ProjectCatalogSnapshot(current.CatalogView, current.ConfigVersion, current.Preparations)
 		accepted.Occupancy = current.Occupancy
+		accepted.OccupancySkipped = current.OccupancySkipped
 		if occupancy != nil {
 			accepted.DispatchOccupancy = occupancy.selected
 			accepted.OccupancyEstimates = occupancy.estimates

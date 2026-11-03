@@ -7,9 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,12 +24,15 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	campaign "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	campaignevidence "github.com/lab-paper-code/chill/internal/profiling/campaign/evidence"
 	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	evidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	evidencekube "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence/kube"
 	projection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 	runconfig "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/queryapi"
+	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
+	"github.com/lab-paper-code/chill/internal/queryapi/readapi"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -39,7 +45,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+const statisticsResultUnavailableCode = "BatchEnergyOptimizationResultUnavailable"
+
 type statisticsObjects struct {
+	mu       sync.Mutex
 	payloads map[evidencestore.ObjectLocation][]byte
 	err      error
 	reads    []evidencestore.ObjectLocation
@@ -59,6 +68,8 @@ func (s *statisticsObjects) OpenLocation(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.reads = append(s.reads, loc)
 	if s.err != nil {
 		return nil, s.err
@@ -236,7 +247,8 @@ func TestMeasurementStatisticsRejectsForeignRunAndCorruption(t *testing.T) {
 		}
 	}
 	cr, record, objects, reader, loader := statisticsFixture(t)
-	plan := statisticsObjectIdentity(record.Spec().CurvePlan)
+	ref := record.Spec().CurvePlan
+	plan := evidencestore.ObjectIdentity{Store: ref.Store, Key: ref.Key, Size: ref.Size}
 	objects.payloads[plan.Location()] = bytes.Repeat([]byte("x"), int(plan.Size))
 	if _, reason, err := newMeasurementStatistics(reader, objects, loader)(context.Background(), cr, record); err == nil ||
 		reason != nil {
@@ -311,6 +323,261 @@ func TestMeasurementFactsExcludeFailedIdleTrials(t *testing.T) {
 			row,
 			objects.reads,
 		)
+	}
+}
+
+func TestMeasurementStatisticsReaderReasonsHTTP(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		trial  int
+		mutate func(*api.ProfilingRun)
+		reason string
+	}{
+		{"Run UID", 0, func(r *api.ProfilingRun) { r.UID = "replacement" },
+			"completed Run identity or campaign ownership mismatch"},
+		{"owner UID", 0, func(r *api.ProfilingRun) { r.OwnerReferences[0].UID = "foreign" },
+			"completed Run identity or campaign ownership mismatch"},
+		{"owner kind before batch", 0, func(r *api.ProfilingRun) {
+			r.OwnerReferences[0].Kind = "Other"
+			r.Spec.Measurement.Batch++
+		}, "completed Run identity or campaign ownership mismatch"},
+		{"owner API version", 0, func(r *api.ProfilingRun) { r.OwnerReferences[0].APIVersion = "other/v1" },
+			"completed Run identity or campaign ownership mismatch"},
+		{"batch", 0, func(r *api.ProfilingRun) { r.Spec.Measurement.Batch++ },
+			"completed Run measurement contradicts result"},
+		{"unsupported active", 0, func(r *api.ProfilingRun) { r.Spec.Measurement.WorkloadMode = "unsupported" },
+			"completed Run workload mode is unsupported"},
+		{"unsupported idle", 2, func(r *api.ProfilingRun) { r.Spec.Measurement.WorkloadMode = "unsupported" },
+			"completed Run workload mode is unsupported"},
+		{"mode reference", 0, func(r *api.ProfilingRun) { r.Spec.Measurement.WorkloadMode = "idle-model-loaded" },
+			"completed Run workload mode contradicts result"},
+		{"completion", 0, func(r *api.ProfilingRun) { r.Status.Conditions = nil },
+			"completed Run lacks current verified completion"},
+		{"completion before evidence and protocol", 0, func(r *api.ProfilingRun) {
+			r.Status.Conditions[0].ObservedGeneration++
+			r.Status.Evidence = nil
+			r.Spec.Measurement.DurationSeconds++
+		}, "completed Run lacks current verified completion"},
+		{"absent evidence before protocol", 0, func(r *api.ProfilingRun) {
+			r.Status.Evidence = nil
+			r.Spec.Measurement.DurationSeconds++
+		}, "completed evidence reference is absent from Run"},
+		{"evidence identity before protocol", 0, func(r *api.ProfilingRun) {
+			r.Status.Evidence.Key = "different-key"
+			r.Spec.Measurement.DurationSeconds++
+		}, "completed evidence reference contradicts Run"},
+		{"evidence schema", 0, func(r *api.ProfilingRun) { r.Status.Evidence.SchemaVersion = "different-schema" },
+			"completed evidence reference contradicts Run"},
+		{"active protocol", 0, func(r *api.ProfilingRun) { r.Spec.Measurement.DurationSeconds++ },
+			"completed active Run protocol contradicts campaign"},
+		{"idle protocol", 2, func(r *api.ProfilingRun) { r.Spec.Measurement.DurationSeconds++ },
+			"completed idle Run protocol contradicts campaign"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cr, record, objects, reader, loader := statisticsFixture(t)
+			ref := record.Spec().CompletedTrials[tc.trial]
+			run := &api.ProfilingRun{}
+			if err := reader.Get(context.Background(), client.ObjectKey{
+				Namespace: ref.Run.Namespace, Name: ref.Run.Name,
+			}, run); err != nil {
+				t.Fatal(err)
+			}
+			tc.mutate(run)
+			if err := reader.Update(context.Background(), run); err != nil {
+				t.Fatal(err)
+			}
+			response := statisticsHTTPResponse(t, cr, record, objects, reader, loader)
+			var body queryapi.BatchEnergyOptimizationResultError
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			wantReason := fmt.Sprintf("read BatchEnergyOptimization %s/%s statistics: %s", cr.Namespace, cr.Name, tc.reason)
+			if response.Code != http.StatusBadGateway ||
+				body.Code != statisticsResultUnavailableCode ||
+				body.EvidenceError.Code != body.Code || body.EvidenceError.Status != response.Code ||
+				body.Reason != wantReason || body.Campaign.UID != string(cr.UID) ||
+				body.Result != nil || body.Statistics != nil || body.MeasurementFacts != nil {
+				t.Fatalf("response changed: status=%d body=%s; want reason %q", response.Code, response.Body.String(), wantReason)
+			}
+		})
+	}
+}
+
+func TestMeasurementStatisticsSameNameDifferentUIDHTTP(t *testing.T) {
+	cr, record, objects, reader, loader := statisticsFixture(t)
+	spec := record.Spec()
+	originalUID := spec.CompletedTrials[0].Run.UID
+	spec.CompletedTrials[1] = spec.CompletedTrials[0]
+	spec.CompletedTrials[1].Run.UID += "-replacement"
+	var err error
+	record, err = campaign.NewResultRecord(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Spec().CompletedTrials[0].Run.UID != originalUID {
+		t.Fatal("regression requires the valid Run reference before the same-name replacement")
+	}
+	response := statisticsHTTPResponse(t, cr, record, objects, reader, loader)
+	var body queryapi.BatchEnergyOptimizationResultError
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	wantReason := fmt.Sprintf(
+		"read BatchEnergyOptimization %s/%s statistics: completed Run identity or campaign ownership mismatch",
+		cr.Namespace, cr.Name,
+	)
+	if response.Code != http.StatusBadGateway || body.Code != statisticsResultUnavailableCode ||
+		body.EvidenceError.Code != body.Code || body.EvidenceError.Status != response.Code ||
+		body.Reason != wantReason || body.Campaign.UID != string(cr.UID) ||
+		body.Result != nil || body.Statistics != nil || body.MeasurementFacts != nil {
+		t.Fatalf("replacement Run response changed: status=%d body=%s; want reason %q",
+			response.Code, response.Body.String(), wantReason)
+	}
+}
+
+func TestMeasurementStatisticsReportingPolicyHTTP(t *testing.T) {
+	for _, tc := range []string{
+		"original status", "different status schema", "missing Run", "missing raw", "missing credentials", "not recorded",
+	} {
+		t.Run(tc, func(t *testing.T) {
+			cr, record, objects, reader, loader := statisticsFixture(t)
+			var wantReason string
+			switch tc {
+			case "different status schema":
+				cr.Status.Result.SchemaVersion = "different"
+			case "missing Run":
+				ref := record.Spec().CompletedTrials[0]
+				if err := reader.Delete(context.Background(), &api.ProfilingRun{
+					ObjectMeta: metav1.ObjectMeta{Namespace: ref.Run.Namespace, Name: ref.Run.Name},
+				}); err != nil {
+					t.Fatal(err)
+				}
+				wantReason = statisticsEvidenceMissingReason
+			case "missing raw":
+				ref := record.Spec().CompletedTrials[0]
+				delete(objects.payloads, evidencestore.ObjectLocation{Store: ref.Evidence.Store, Key: ref.Run.Name + "/raw"})
+				wantReason = statisticsEvidenceMissingReason
+			case "missing credentials":
+				if err := reader.Delete(context.Background(), &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Namespace: cr.Namespace, Name: "credentials"},
+				}); err != nil {
+					t.Fatal(err)
+				}
+			case "not recorded":
+				spec := record.Spec()
+				spec.CompletedTrials = nil
+				var err error
+				record, err = campaign.NewResultRecord(spec)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantReason = statisticsNotRecordedReason
+			}
+			response := statisticsHTTPResponse(t, cr, record, objects, reader, loader)
+			if tc == "missing credentials" {
+				var body queryapi.BatchEnergyOptimizationResultError
+				if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+					t.Fatal(err)
+				}
+				if response.Code != http.StatusNotFound || body.Code != statisticsResultUnavailableCode ||
+					body.Result != nil || !strings.Contains(body.Reason, `secrets "credentials" not found`) {
+					t.Fatalf("credentials failure hidden: %d %s", response.Code, response.Body.String())
+				}
+				return
+			}
+			assertStatisticsReportingResponse(t, response, record, wantReason)
+		})
+	}
+}
+
+func assertStatisticsReportingResponse(
+	t *testing.T,
+	response *httptest.ResponseRecorder,
+	record campaign.ResultRecord,
+	wantReason string,
+) {
+	t.Helper()
+	var body queryapi.BatchEnergyOptimizationResult
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || body.Result == nil ||
+		!reflect.DeepEqual(body.Result.ResultRecordSpec, record.Spec()) {
+		t.Fatalf("reporting result changed: %d %s", response.Code, response.Body.String())
+	}
+	if wantReason != "" {
+		if body.Statistics != nil || body.MeasurementFacts != nil ||
+			body.StatisticsReason == nil || *body.StatisticsReason != wantReason ||
+			body.MeasurementFactsReason == nil || *body.MeasurementFactsReason != wantReason {
+			t.Fatalf("reporting reason changed: %s", response.Body.String())
+		}
+	} else if body.Statistics == nil || len(body.Statistics.Batches) != 1 ||
+		body.StatisticsReason != nil || body.MeasurementFactsReason != nil ||
+		body.Statistics.Batches[0].ActiveTrialCount != 2 || body.Statistics.Batches[0].IdleTrialCount != 2 ||
+		body.Statistics.Batches[0].LatencySampleCount != 42 {
+		t.Fatalf("statistics changed: %s", response.Body.String())
+	}
+}
+
+func statisticsHTTPResponse(
+	t *testing.T,
+	cr *api.BatchEnergyOptimization,
+	record campaign.ResultRecord,
+	objects *statisticsObjects,
+	reader client.Client,
+	loader *evidencekube.RetainedLoader,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	payload, err := record.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects.payloads[evidencestore.ObjectLocation{Store: cr.Status.Result.Store, Key: cr.Status.Result.Key}] = payload
+	cr.Status.Result.Size = int64(len(payload))
+	cr.Status.Phase = string(api.MeasurementPhaseComplete)
+	if err := reader.Create(context.Background(), cr); err != nil {
+		t.Fatal(err)
+	}
+	results, err := querykube.NewKubernetesBatchEnergyOptimizationResultQuery(
+		reader, objects, newMeasurementStatistics(reader, objects, loader),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	passports, err := querykube.NewKubernetesEvidencePassportQuery(reader, &failingPassportLoader{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := readapi.NewHandler(passports, results, unusedPreflightReader{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/v1/namespaces/%s/batch-energy-optimizations/%s/result", cr.Namespace, cr.Name), nil))
+	return response
+}
+
+func TestStatisticsCampaignErrorPreservesCauses(t *testing.T) {
+	for _, cause := range []error{
+		campaignevidence.ErrRunEvidenceAbsent, campaignevidence.ErrRunEvidenceMismatch,
+		campaignevidence.ErrUnsupportedWorkloadMode, campaignevidence.ErrActiveProtocolMismatch,
+	} {
+		err := statisticsCampaignError(fmt.Errorf("completed Run namespace/name: %w", cause))
+		if !errors.Is(err, cause) {
+			t.Fatalf("lost shared cause %v: %v", cause, err)
+		}
+	}
+	for _, prefix := range []string{
+		"read frozen curve plan: ", "get completed Run namespace/name: ",
+		"load active Run namespace/name: ", "load idle Run namespace/name: ",
+	} {
+		cause := apierrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "credentials", errors.New("denied"))
+		err := statisticsCampaignError(fmt.Errorf("%s%w", prefix, cause))
+		var status *apierrors.StatusError
+		if err != cause || !errors.As(err, &status) || !apierrors.IsForbidden(err) {
+			t.Fatalf("dependency error changed: %v", err)
+		}
 	}
 }
 

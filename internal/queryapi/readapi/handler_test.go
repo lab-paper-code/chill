@@ -682,7 +682,7 @@ func TestQueryHandlerBoundsRealNamespaceProjection(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, base+"?q=MEASURE&condition=EvidenceVerified%3DTrue&limit=1&offset=1", nil))
 	var body struct {
 		queryapi.ProfilingRunsView
-		Page queryPage `json:"page"`
+		Page Page `json:"page"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)

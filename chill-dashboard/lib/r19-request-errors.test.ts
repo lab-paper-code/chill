@@ -30,7 +30,7 @@ function render(kind:"list"|"detail") {
   "@tanstack/react-query":{useQueryClient:()=>({})},
   "@/lib/client":{useSession:()=>({config:{namespace:"ns"}}),useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path.endsWith("/result")?{campaign:{...plan.metadata,spec:plan.spec,phase:"Failed"},assessment,result:null,resultRows:[]}:{items:[plan]}})},
   "@/lib/measurements":measurements,"@/lib/measurement-request":requests,"@/lib/measurement-assessment":{assessmentReasons:()=>[]},
-  "@/features/measurement-coverage":{MeasurementFilters:()=>null,useMeasurementPlans:()=>({data:{items:[plan]}}),useMeasurementCoverage:()=>({data:{cells:[]}})},
+  "@/components/measurement-filters":{MeasurementFilters:()=>null},"@/hooks/use-measurement-data":{useMeasurementPlans:()=>({data:{items:[plan]}}),useMeasurementCoverage:()=>({data:{cells:[]}})},
   "@/features/measurement-runs":{MeasurementChildRuns:()=>null},
   "@/components/read-region":{QueryGate:container,SourceJSON:()=>null,SourceExport:()=>null},
   "@/components/screen":{Screen:container,Facts:()=>null,Rows:container},"@/components/ui/button":{Button:container},

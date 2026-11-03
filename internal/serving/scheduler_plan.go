@@ -102,7 +102,7 @@ func schedulerSearchPopulation(ctx context.Context, settings SchedulerSettings, 
 	if snapshot.ObservedSince.After(search.WindowStart) {
 		search.WindowStart = snapshot.ObservedSince
 	}
-	search.RecentWindowStart = maxTime(search.WindowStart, search.WindowEnd.Add(-settings.ControlInterval))
+	search.RecentWindowStart = LaterTime(search.WindowStart, search.WindowEnd.Add(-settings.ControlInterval))
 	loads := map[string]*SchedulerLoad{}
 	for _, a := range snapshot.Arrivals {
 		if ctx.Err() != nil {

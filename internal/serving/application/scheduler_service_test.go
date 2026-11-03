@@ -19,6 +19,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	corev1 "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -176,7 +177,7 @@ func (a schedulerPowerArchive) PutImmutable(
 }
 
 func TestOperatingPowerReadsAcceptedConfigurationWhileServiceIsBusy(t *testing.T) {
-	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
+	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
 		Writer: schedulerPowerArchive{directory: t.TempDir()},
 	})
@@ -190,7 +191,7 @@ func TestOperatingPowerReadsAcceptedConfigurationWhileServiceIsBusy(t *testing.T
 	})
 	from := time.Now().UTC()
 	to := from.Add(time.Second)
-	if err = observationLog.SchedulerRecord(serving.SchedulerObservation{
+	if err = observationLog.SchedulerRecord(observation.SchedulerObservation{
 		At: from, Snapshot: &serving.SchedulerSnapshot{At: from},
 	}); err != nil {
 		t.Fatal(err)
@@ -207,7 +208,7 @@ func TestOperatingPowerReadsAcceptedConfigurationWhileServiceIsBusy(t *testing.T
 		power := metricobserver.Result{Source: source, StartedAt: from, EndedAt: to,
 			Samples: []metricobserver.Sample{{ObservedAt: from, Watts: watts}, {ObservedAt: to, Watts: watts}},
 		}
-		if err = observationLog.SchedulerRecord(serving.SchedulerObservation{
+		if err = observationLog.SchedulerRecord(observation.SchedulerObservation{
 			At: to, Power: &power, PowerCoverage: &policy, Node: &node, Meter: meter.ID, PowerScope: meter.Scope,
 		}); err != nil {
 			t.Fatal(err)
@@ -221,7 +222,7 @@ func TestOperatingPowerReadsAcceptedConfigurationWhileServiceIsBusy(t *testing.T
 	for index, config := range configurations {
 		service.configuration.Store(config)
 		type response struct {
-			result serving.OperatingPowerWindow
+			result observation.OperatingPowerWindow
 			err    error
 		}
 		done := make(chan response, 1)
@@ -278,7 +279,7 @@ func TestSchedulerPowerUsesExistingEvidenceEnvelopeBeforeSourceReads(t *testing.
 			}
 			_, _ = w.Write([]byte("# TYPE wall_watts gauge\nwall_watts{hostname=\"node\",device_type=\"fixture\"} 5\n"))
 		}))
-		log, err := serving.NewObservationLog(serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence",
+		log, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence",
 			Retention: time.Hour, Writer: schedulerPowerArchive{directory: t.TempDir()}})
 		if err != nil {
 			t.Fatal(err)
@@ -328,7 +329,7 @@ func TestSchedulerPowerUsesExistingEvidenceEnvelopeBeforeSourceReads(t *testing.
 		if accepted {
 			events, _, _, _, readErr := log.SchedulerObservationPage(
 				context.Background(), start, time.Now().UTC().Add(time.Second),
-				10, 0, serving.SchedulerObservationSelection{},
+				10, 0, observation.SchedulerObservationSelection{},
 			)
 			if readErr != nil || len(events) != 1 || events[0].Power == nil || len(events[0].Power.Samples) == 0 {
 				t.Errorf("power evidence lost: events=%+v error=%v", events, readErr)

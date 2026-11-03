@@ -21,6 +21,7 @@ import (
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/live"
 	"github.com/lab-paper-code/chill/internal/serving/management"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -41,13 +42,13 @@ type HandlerConfig struct {
 	MaxQueryEvents   int
 	Live             *live.Hub
 	// OnMutationAction publishes only after the mutation audit is durably committed.
-	OnMutationAction                                           func(serving.SchedulerActionObservation, time.Time)
+	OnMutationAction                                           func(observation.SchedulerActionObservation, time.Time)
 	Scheduler                                                  *servingkube.SchedulerController
 	SchedulerConfigMap, SchedulerConfigKey, SchedulerNamespace string
 	SchedulerLock                                              *sync.Mutex
-	ChangeSchedulerSettings                                    func(context.Context, application.SettingsInput, string, bool, string, string) (serving.SchedulerSettingsChange, string, error)
+	ChangeSchedulerSettings                                    func(context.Context, application.SettingsInput, string, bool, string, string) (observation.SchedulerSettingsChange, string, error)
 	SchedulerMeters                                            func() []servingkube.MeterDeclaration
-	ReceiveResources                                           func(context.Context, serving.ResourceBatch) ([]serving.ResourceTarget, error)
+	ReceiveResources                                           func(context.Context, observation.ResourceBatch) ([]observation.ResourceTarget, error)
 
 	ReadCatalog           func(context.Context) (servingkube.CatalogRead, error)
 	OccupancyObservations OccupancyObservationReader
@@ -57,8 +58,8 @@ type HandlerConfig struct {
 	BuildOccupancy        func(context.Context, string, measurement.OccupancyIntent) (*api.DispatchOccupancyMeasurement, error)
 	SubmitOccupancy       func(context.Context, api.DispatchOccupancyMeasurement, bool) (measurement.OccupancyMutationResult, error)
 	DeleteOccupancy       func(context.Context, string, string, string, string) (measurement.OccupancyMutationResult, error)
-	OperatingPower        func(context.Context, time.Time, time.Time, int) (serving.OperatingPowerWindow, error)
-	OperatingPowerSeries  func(context.Context, time.Time, time.Time, time.Duration, int) (serving.OperatingPowerSeries, error)
+	OperatingPower        func(context.Context, time.Time, time.Time, int) (observation.OperatingPowerWindow, error)
+	OperatingPowerSeries  func(context.Context, time.Time, time.Time, time.Duration, int) (observation.OperatingPowerSeries, error)
 	ListExperiments       func(context.Context) (ExperimentList, error)
 	GetExperiment         func(context.Context, string) (ExperimentSummary, error)
 	ListActiveEvaluations func(context.Context) (ActiveEvaluationList, error)
@@ -82,13 +83,13 @@ type Handler struct {
 	manager        *management.Manager
 	runtime        *serving.Runtime
 	authorizer     *servingkube.Authorizer
-	observationLog *serving.ObservationLog
+	observationLog *observation.ObservationLog
 	observer       *servingkube.Observer
 	config         HandlerConfig
 	mux            *http.ServeMux
 }
 
-func NewHandler(manager *management.Manager, runtime *serving.Runtime, authorizer *servingkube.Authorizer, observationLog *serving.ObservationLog, observer *servingkube.Observer, config HandlerConfig) (*Handler, error) {
+func NewHandler(manager *management.Manager, runtime *serving.Runtime, authorizer *servingkube.Authorizer, observationLog *observation.ObservationLog, observer *servingkube.Observer, config HandlerConfig) (*Handler, error) {
 	if manager == nil || runtime == nil || authorizer == nil || observationLog == nil || observer == nil || config.MaxRequestBytes <= 0 || config.RequestTimeout <= 0 || config.OperationTimeout <= 0 || config.MaxQueryEvents <= 0 {
 		return nil, errors.New("concrete management/runtime/auth/observation dependencies and positive HTTP bounds are required")
 	}

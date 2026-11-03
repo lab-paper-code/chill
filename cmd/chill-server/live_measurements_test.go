@@ -20,6 +20,7 @@ import (
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/live"
 	"github.com/lab-paper-code/chill/internal/serving/management"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	authentication "k8s.io/api/authentication/v1"
 	authorization "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -93,7 +94,7 @@ func testMeasurementMutationEventsMatchHistoryAndReplay(t *testing.T, occupancy 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	publisher := newLivePublisher(ctx)
-	log, err := serving.NewObservationLog(serving.ObservationLogConfig{
+	log, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
 		Writer: schedulerPowerArchive{directory: t.TempDir()},
 	})
@@ -118,7 +119,7 @@ func testMeasurementMutationEventsMatchHistoryAndReplay(t *testing.T, occupancy 
 	config := httpapi.HandlerConfig{
 		MaxRequestBytes: 1 << 20, RequestTimeout: time.Second, OperationTimeout: time.Second, MaxQueryEvents: 100,
 		Live: publisher.hub,
-		OnMutationAction: func(action serving.SchedulerActionObservation, at time.Time) {
+		OnMutationAction: func(action observation.SchedulerActionObservation, at time.Time) {
 			records, err := log.EventObservations(ctx, at, 10)
 			if err != nil || len(records) != 1 || !reflect.DeepEqual(records[0].Action, &action) {
 				t.Fatalf("publication preceded durable commit: %+v err=%v", records, err)

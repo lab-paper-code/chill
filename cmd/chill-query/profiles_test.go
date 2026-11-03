@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/lab-paper-code/chill/internal/queryapi"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 )
@@ -13,7 +14,10 @@ func TestProfileListStatusMatchesDecoratedAssessmentWithoutClusterReads(t *testi
 	view := httpapi.ProfilesView{}
 	view.Profiles = []serving.Profile{{ID: "missing-facts"}, {ID: "reused", Reuse: &serving.ProfileReuseCheck{}}}
 	listed := view
-	listed.DisplayStatus = func(p serving.Profile) string { a, _ := assessCatalogProfile(view, p); return a.DisplayStatus }
+	listed.DisplayStatus = func(p serving.Profile) string {
+		a, _ := queryapi.AssessCatalogProfile(queryCoverageCatalog(view), queryCoverageProfile(p))
+		return a.DisplayStatus
+	}
 	raw, err := (&measurementService{}).profilePayload(context.Background(), listed)
 	if err != nil {
 		t.Fatal(err)

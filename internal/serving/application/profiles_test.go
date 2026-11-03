@@ -19,6 +19,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	core "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -230,7 +231,7 @@ func TestGeneratedPreparationRejectsUnrepresentableMeasuredRuntimeAccess(t *test
 func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 	const acceptedVersion = "accepted-config"
 	ctx := context.Background()
-	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
+	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
 		Writer: schedulerPowerArchive{directory: t.TempDir()},
 	})
@@ -450,7 +451,7 @@ func schedulerTestConfiguration() SchedulerConfiguration {
 func schedulerTestService(t *testing.T, config SchedulerConfiguration) *SchedulerService {
 	t.Helper()
 	ctx := context.Background()
-	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
+	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
 		Writer: schedulerPowerArchive{directory: t.TempDir()},
 	})

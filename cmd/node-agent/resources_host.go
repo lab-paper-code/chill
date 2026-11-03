@@ -10,32 +10,32 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 // SampleResources resolves Kubernetes identities against the read-only host
 // cgroupfs tree; /proc paths may be relative to the agent's cgroup namespace.
-func SampleResources(root string, targets []serving.ResourceTarget, at time.Time) serving.ResourceSample {
-	sample := serving.ResourceSample{
-		SampledAt: at, Containers: []serving.ContainerResources{}, Thermal: []serving.ThermalResource{},
+func SampleResources(root string, targets []observation.ResourceTarget, at time.Time) observation.ResourceSample {
+	sample := observation.ResourceSample{
+		SampledAt: at, Containers: []observation.ContainerResources{}, Thermal: []observation.ThermalResource{},
 	}
 	paths, version, failures := resourceCgroupPaths(root, targets)
 	sample.Errors = append(sample.Errors, failures...)
 	for i, target := range targets {
 		if len(paths[i]) == 0 {
-			sample.Errors = append(sample.Errors, serving.ResourceError{
+			sample.Errors = append(sample.Errors, observation.ResourceError{
 				Target: target.PodUID + "/" + target.ContainerID, Field: "cgroup",
 				Reason: "matching Pod UID/containerID directory not found in host cgroupfs",
 			})
 			continue
 		}
-		row := serving.ContainerResources{ResourceTarget: target, CgroupVersion: version}
+		row := observation.ContainerResources{ResourceTarget: target, CgroupVersion: version}
 		readContainerResources(&row, paths[i])
 		sample.Containers = append(sample.Containers, row)
 	}
 	zones, err := filepath.Glob(filepath.Join(root, "sys/class/thermal/thermal_zone*"))
 	if err != nil || len(zones) == 0 {
-		sample.Errors = append(sample.Errors, serving.ResourceError{
+		sample.Errors = append(sample.Errors, observation.ResourceError{
 			Target: "host", Field: "thermal", Reason: "thermal sensors unavailable",
 		})
 	}
@@ -56,14 +56,14 @@ func SampleResources(root string, targets []serving.ResourceTarget, at time.Time
 			continue
 		}
 		sensor := strings.TrimPrefix(zone, root) + ":" + strings.TrimSpace(string(kind))
-		sample.Thermal = append(sample.Thermal, serving.ThermalResource{Sensor: sensor, MilliCelsius: temperature})
+		sample.Thermal = append(sample.Thermal, observation.ThermalResource{Sensor: sensor, MilliCelsius: temperature})
 	}
 	return sample
 }
 
 func resourceCgroupPaths(
-	root string, targets []serving.ResourceTarget,
-) ([]map[string]string, int, []serving.ResourceError) {
+	root string, targets []observation.ResourceTarget,
+) ([]map[string]string, int, []observation.ResourceError) {
 	paths := make([]map[string]string, len(targets))
 	if len(targets) == 0 {
 		return paths, 0, nil
@@ -71,10 +71,10 @@ func resourceCgroupPaths(
 	base := filepath.Join(root, "sys/fs/cgroup")
 	entries, err := os.ReadDir(base)
 	if err != nil {
-		return paths, 0, []serving.ResourceError{resourceError("host", "cgroup", err)}
+		return paths, 0, []observation.ResourceError{resourceError("host", "cgroup", err)}
 	}
 	hierarchies, version := resourceCgroupHierarchies(base, entries)
-	var failures []serving.ResourceError
+	var failures []observation.ResourceError
 	for hierarchy, controllers := range hierarchies {
 		err := filepath.WalkDir(hierarchy, func(path string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
@@ -180,15 +180,15 @@ func matchesResourceContainer(name, containerID string) bool {
 	return ok && id != "" && (name == id || name == "cri-containerd-"+id+".scope" ||
 		name == "crio-"+id+".scope" || name == "docker-"+id+".scope")
 }
-func resourceError(target, field string, err error) serving.ResourceError {
-	return serving.ResourceError{Target: target, Field: field, Reason: err.Error()}
+func resourceError(target, field string, err error) observation.ResourceError {
+	return observation.ResourceError{Target: target, Field: field, Reason: err.Error()}
 }
 
-func readContainerResources(row *serving.ContainerResources, paths map[string]string) {
+func readContainerResources(row *observation.ContainerResources, paths map[string]string) {
 	read := func(controller, file, field string) *uint64 {
 		path := paths[controller]
 		if path == "" {
-			row.Errors = append(row.Errors, serving.ResourceError{
+			row.Errors = append(row.Errors, observation.ResourceError{
 				Target: row.ContainerID, Field: field, Reason: "controller unavailable",
 			})
 			return nil
@@ -208,7 +208,7 @@ func readContainerResources(row *serving.ContainerResources, paths map[string]st
 	stat := func(controller string, keys map[string]**uint64, scales map[string]uint64) {
 		if paths[controller] == "" {
 			for field := range keys {
-				row.Errors = append(row.Errors, serving.ResourceError{
+				row.Errors = append(row.Errors, observation.ResourceError{
 					Target: row.ContainerID, Field: field, Reason: "controller unavailable",
 				})
 			}

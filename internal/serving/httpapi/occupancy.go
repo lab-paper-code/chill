@@ -7,6 +7,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving/measurement"
 
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
@@ -14,7 +15,7 @@ import (
 func (h *Handler) submitOccupancy(
 	w http.ResponseWriter,
 	r *http.Request,
-) (measurement.OccupancyMutationResult, *serving.SchedulerActionObservation, error) {
+) (measurement.OccupancyMutationResult, *observation.SchedulerActionObservation, error) {
 	var intent measurement.OccupancyIntent
 	if err := h.decode(w, r, &intent); err != nil {
 		return measurement.OccupancyMutationResult{}, nil, err
@@ -56,7 +57,7 @@ func (h *Handler) submitOccupancy(
 
 func (h *Handler) deleteOccupancy(
 	r *http.Request,
-) (measurement.OccupancyMutationResult, *serving.SchedulerActionObservation, error) {
+) (measurement.OccupancyMutationResult, *observation.SchedulerActionObservation, error) {
 	version, err := precondition(r)
 	if err != nil {
 		return measurement.OccupancyMutationResult{}, nil, err

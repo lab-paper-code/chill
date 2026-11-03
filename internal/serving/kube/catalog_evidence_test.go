@@ -34,6 +34,49 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+// Reuse the real retained-evidence fixture: the first reference must finish
+// verification successfully before the second reference's UID failure wins.
+func TestCampaignReaderTrialIdentityPrecedesRepeatedRunName(t *testing.T) {
+	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
+	ctx := context.Background()
+	cr := &edgev1alpha1.BatchEnergyOptimization{}
+	if err := catalog.store.client.Get(ctx, source, cr); err != nil {
+		t.Fatal(err)
+	}
+	retained, err := catalog.evidence.Read(ctx, cr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := retained.Result.Spec()
+	first := spec.CompletedTrials[0]
+	spec.CompletedTrials = []batchenergyoptimization.CompletedTrialReference{first}
+	retained.Result, err = batchenergyoptimization.NewResultRecord(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalog.evidence.ReadTrials(ctx, cr, retained); err != nil {
+		t.Fatalf("first current Run reference did not verify: %v", err)
+	}
+	stale := first
+	stale.Run.UID = "other-run-uid"
+	spec.CompletedTrials = append(spec.CompletedTrials, stale)
+	retained.Result, err = batchenergyoptimization.NewResultRecord(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retained.Result.Spec().CompletedTrials[0].Run.UID != first.Run.UID {
+		t.Fatal("test requires the current Run reference first")
+	}
+	trials, err := catalog.evidence.ReadTrials(ctx, cr, retained)
+	want := fmt.Sprintf("completed Run %s/%s: Run identity or campaign ownership mismatch", first.Run.Namespace, first.Run.Name)
+	if err == nil || err.Error() != want {
+		t.Fatalf("repeated name masked the second reference's UID failure: %v", err)
+	}
+	if len(trials.Active) != 0 || len(trials.Idle) != 0 || len(trials.Evidence) != 0 {
+		t.Fatalf("invalid second reference returned partial trials: %+v", trials)
+	}
+}
+
 func TestCatalogFollowsFrozenPlanAndRawTrials(t *testing.T) {
 	for _, memory := range []uint64{4096, 0} {
 		t.Run(fmt.Sprint(memory), func(t *testing.T) {

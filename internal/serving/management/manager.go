@@ -13,6 +13,7 @@ import (
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/modelcatalog"
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -84,7 +85,7 @@ type Manager struct {
 	mu             sync.Mutex
 	store          workloadStore
 	runtime        *serving.Runtime
-	observationLog *serving.ObservationLog
+	observationLog *observation.ObservationLog
 	observer       workloadObserver
 	reservations   deletionReserver
 	config         ManagerConfig
@@ -97,7 +98,7 @@ type Manager struct {
 	deletionChecks map[types.UID]*api.Workload
 }
 
-func NewManager(reservations deletionReserver, store workloadStore, runtime *serving.Runtime, observationLog *serving.ObservationLog, observer workloadObserver, config ManagerConfig) (*Manager, error) {
+func NewManager(reservations deletionReserver, store workloadStore, runtime *serving.Runtime, observationLog *observation.ObservationLog, observer workloadObserver, config ManagerConfig) (*Manager, error) {
 	if nilDependency(reservations) || nilDependency(store) || store.Client() == nil || runtime == nil || observationLog == nil || nilDependency(observer) || config.Actor == nil || config.DrainTimeout <= 0 {
 		return nil, errors.New("native store, runtime, observation log, observer and positive drain timeout are required")
 	}

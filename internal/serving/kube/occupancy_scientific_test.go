@@ -12,6 +12,7 @@ import (
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -129,7 +130,7 @@ func TestBurstFrozenProfileIdentity(t *testing.T) {
 
 func TestBurstWarmupOriginJoinsLateNativeReceiptCohort(t *testing.T) {
 	ctx := context.Background()
-	log, err := serving.NewObservationLog(serving.ObservationLogConfig{
+	log, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: managerArchive{t.TempDir()},
 	})
 	if err != nil {

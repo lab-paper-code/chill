@@ -2,10 +2,11 @@
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
-import { useQuery } from "@tanstack/react-query"
-import { ApiError, decodeResponse, relay, warmingRetry, warmingDelay, isCoverageWarming, useChillQuery, useSession } from "@/lib/client"
-import { coverageQuality, coverageQualityReasons, coverageFilterVisible, coverageSupportReasons, coverageMeasurementStatus, coverageMeasurementStates, coverageFailureHref, coverageProfileQuery, measurementAge, coverageSelection, coveragePathVisible, coverageWatts, coverageModes, coverageVariant, coverageProgress, coverageBatchState, coverageRequestHref, coverageScopeCounts, deviceLabel, conditionLabel, type CompatibilityRead } from "@/lib/measurement-coverage"
-import type { BatchProgress, OccupancyObservations, OccupancyStatistics, InventoryView, MeasurementPlanList, ModelCompatibility, MeasurementCoverageSummaryResponse as MeasurementCoverageResponse, MeasurementCoverageCell, ProfilesView, RunsView } from "@/lib/read-types"
+import { ApiError, isCoverageWarming, useChillQuery, useSession } from "@/lib/client"
+import { coverageQuality, coverageQualityReasons, coverageFilterVisible, coverageSupportReasons, coverageMeasurementStatus, coverageMeasurementStates, coverageFailureHref, measurementAge, coverageSelection, coveragePathVisible, coverageWatts, coverageModes, coverageVariant, coverageProgress, coverageBatchState, coverageRequestHref, coverageScopeCounts, deviceLabel, conditionLabel } from "@/lib/measurement-coverage"
+import type { BatchProgress, OccupancyObservations, OccupancyStatistics, InventoryView, MeasurementCoverageSummaryResponse as MeasurementCoverageResponse, MeasurementCoverageCell } from "@/lib/read-types"
+import { useCoverageInventory, useMeasurementPlans, useMeasurementCoverage, useCoverageProfiles, useCoverageRuns } from "@/hooks/use-measurement-data"
+import { MeasurementFilters } from "@/components/measurement-filters"
 import { parseMeasurementJSON } from "@/lib/measurement-summary"
 import { MeasurementNavigation, MeasurementEvidenceChecks } from "@/components/measurement-navigation"
 import { measurementUsage, measurementSchedulerUsed, measurementQuality } from "@/lib/measurement-assessment"
@@ -17,84 +18,6 @@ const coverageStates=coverageMeasurementStates
 import { executionPathLabel, measurementReasonSummary, formatMeasurementNumber as number, formatMeasurementTime } from "@/lib/measurements"
 import { coverageOccupancyRequestHref, occupancyStates, occupancySummary, occupancyMilliseconds, occupancyNumber, occupancyStatistic, occupancyMatches, occupancyObservationPath, occupancyObservationLimit, occupancyReasonLabel, occupancyResultHref, occupancyRequestHref } from "@/lib/dispatch-occupancy"
 import "./measurement-coverage.css"
-async function readPage<T>(path:string,token:string,signal:AbortSignal):Promise<T> {
-  const response=await relay(path,token,signal)
-  return decodeResponse(response.body,parseMeasurementJSON) as T
-}
-export function useMeasurementPlans(namespace:string,enabled=true) {
-  const {token}=useSession()
-  const path=`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`
-  const query=useQuery<MeasurementPlanList,ApiError>({queryKey:["chill",path,"pages"],enabled:!!token&&enabled,retry:warmingRetry,retryDelay:warmingDelay,queryFn:async({signal})=>{
-    const items:NonNullable<MeasurementPlanList["items"]>=[]
-    let offset=0
-    for(;;) {
-      const page=await readPage<MeasurementPlanList>(`${path}?${new URLSearchParams({view:"summary",summary:"v2",limit:"50",offset:String(offset)})}`,token,signal)
-      if(!page.page)return page
-      items.push(...page.items??[])
-      if(page.page?.nextOffset===undefined)return {...page,items}
-      if(page.page.nextOffset<=offset)throw new ApiError(0,"측정 요청 페이지가 전진하지 않아요",null)
-      offset=page.page.nextOffset
-    }
-  }})
-  return {...query,data:query.error&&[401,403].includes(query.error.status)?undefined:query.data}
-}
-export function useCoverageInventory() {
-  const {token,config}=useSession()
-  const query=useQuery<InventoryView,ApiError>({queryKey:["chill","coverage-inventory"],queryFn:async({signal})=>{
-    const classes=new Map<string,InventoryView["classes"][number]>(),models=new Map<string,InventoryView["models"][number]>(),seen=new Set<number>(),pending=[0],pages:InventoryView[]=[]
-    while(pending.length) {
-      const offset=pending.shift()!
-      if(seen.has(offset)) continue
-      seen.add(offset)
-      const page=await readPage<InventoryView>(`v1/inventory?${new URLSearchParams({limit:String(config.maxPageSize),offset:String(offset)})}`,token,signal)
-      pages.push(page)
-      for(const cls of page.classes) classes.set(cls.uid,cls)
-      for(const model of page.models) models.set(model.uid,model)
-      for(const next of [page.classPage?.nextOffset,page.modelPage?.nextOffset]) if(next!==undefined) {if(next<=offset) throw new ApiError(0,"inventory 페이지가 전진하지 않아요",null);pending.push(next)}
-    }
-    return {...pages[0],classes:[...classes.values()],models:[...models.values()],classPage:undefined,modelPage:undefined,sourcePages:pages.map(({classes:_classes,models:_models,...page})=>{void _classes;void _models;return page})}
-  }})
-  return {...query,data:query.error&&[401,403].includes(query.error.status)?undefined:query.data}
-}
-export function useModelCompatibility(modelSpec:string,executionPath:string,deviceClass:string,nodes:{name:string;uid:string;resourceVersion:string}[],modelUID?:string,classUID?:string) {
-  const {token}=useSession()
-  return useQuery({queryKey:["chill","model-compatibility",modelSpec,modelUID,executionPath,deviceClass,classUID,nodes],enabled:!!token&&!!modelSpec&&!!executionPath&&!!deviceClass&&nodes.length>0,retry:false,queryFn:async({signal})=>{
-    const reads:CompatibilityRead[]=[]
-    // Only an opened cell's Nodes (or the single request Node), one GET at a time; power modes share this query.
-    for (const node of nodes) {
-      const selection={modelSpec,executionPath,deviceClass,node:node.name}
-      try {
-        const data=await readPage<ModelCompatibility>(`v1/model-compatibility?${new URLSearchParams(selection)}`,token,signal)
-        if (Object.entries(selection).some(([key,value])=>data.selection[key as keyof typeof selection]!==value)||data.inputs.node.uid!==node.uid||(modelUID&&data.inputs.modelSpec.uid!==modelUID)||(classUID&&data.inputs.deviceClass.uid!==classUID)) throw new Error("현재 선택 identity와 응답이 달라요")
-        reads.push({node:node.name,selection,data})
-      } catch(error) {
-        if(signal.aborted) throw error
-        reads.push({node:node.name,selection,error:error instanceof Error?error.message:"호환성 조회 실패"})
-      }
-    }
-    return reads
-  }})
-}
-
-
-export function MeasurementFilters({axes,states=true,dates=false,editable=false}:{axes:{key:string;label:string;values:string[]}[];states?:boolean;dates?:boolean;editable?:boolean}) {
-  const params=useSearchParams(),router=useRouter()
-  function set(key:string,value:string) {const next=new URLSearchParams(params.toString());if(value)next.set(key,value);else next.delete(key);if(key==="status")next.delete("supportReason");next.delete("page");next.delete("offset");next.delete("profile");router.replace(`?${next}`,{scroll:false})}
-  return <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{axes.map(axis=><label key={axis.key} className="grid min-w-0 gap-1 text-sm">{axis.label}{editable?<><Input className="h-11 min-w-0" list={`measurement-${axis.key}`} placeholder="전체 · 이름 입력" value={params.get(axis.key)??""} onChange={event=>set(axis.key,event.target.value)}/><datalist id={`measurement-${axis.key}`}>{[...new Set(axis.values)].filter(Boolean).sort().map(value=><option key={value} value={value}>{axis.key==="path"?executionPathLabel(value):value}</option>)}</datalist></>:<select className="h-11 min-w-0 rounded-md border bg-background px-2" value={params.get(axis.key)??""} onChange={event=>set(axis.key,event.target.value)}><option value="">전체</option>{[...new Set([...axis.values,...(params.get(axis.key)?[params.get(axis.key)!]:[])])].filter(Boolean).sort().map((value,index)=><option key={value} value={value}>{axis.key==="path"?executionPathLabel(value,index):axis.key==="deviceClass"?deviceLabel(value):value}</option>)}</select>}</label>)}
-    {states&&<label className="grid gap-1 text-sm">상태<select className="h-11 rounded-md border bg-background px-2" value={params.get("status")??""} onChange={event=>set("status",event.target.value)}><option value="">전체</option>{Object.entries(coverageStates).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label>}
-    {dates&&["from","to"].map((key,index)=><label key={key} className="grid gap-1 text-sm">생성일 {index?"종료":"시작"} · KST<Input className="h-11" type="date" value={params.get(key)??""} onChange={event=>set(key,event.target.value)}/></label>)}
-    <label className="col-span-2 grid min-w-0 gap-1 text-sm lg:col-span-1">이름 검색<Input className="h-11" value={params.get("q")??""} onChange={event=>set("q",event.target.value)}/></label>
-  </div>
-}
-
-export function useMeasurementCoverage(namespace:string,enabled=true) {
-  const {token,config}=useSession(),params=useSearchParams()
-  const query=new URLSearchParams({view:"summary",summary:"v2"})
-  for(const key of ["batches","node"]) {const value=params.get(key);if(value)query.set(key,value)}
-  const path=`v1/namespaces/${encodeURIComponent(namespace)}/measurement-coverage${query.size?`?${query}`:""}`
-  const result=useQuery<MeasurementCoverageResponse,ApiError>({queryKey:["chill",path],enabled,retry:warmingRetry,retryDelay:warmingDelay,refetchOnMount:"always",refetchInterval:query=>query.state.error&&[401,403].includes(query.state.error.status)?false:query.state.data?.cells.some(cell=>cell.occupancy?.some(row=>row.state==="measuring"))?config.pollIntervalMs:false,queryFn:({signal})=>readPage<MeasurementCoverageResponse>(path,token,signal)})
-  return {...result,data:result.error?undefined:result.data}
-}
 export function CoverageError({error,retry}:{error:ApiError|null;retry:()=>void}) {
   const summaryInvalid=(error?.data as {code?:unknown}|null)?.code==="MeasurementSummaryInvalid",warming=!!error&&isCoverageWarming(error)
   return <section role={error&&!warming?"alert":"status"} className="coverage-message"><p>{warming?"초기화 중":error?summaryInvalid?error.body:`커버리지 조회 실패 (HTTP ${error.status})`:"조회 중"}</p>{error&&!warming&&<><details><summary>오류 코드·원문</summary><pre className="whitespace-pre-wrap break-all">{error.body}</pre></details><Button variant="outline" onClick={retry}>다시 조회</Button><Link href="/measurements/requests">측정 요청 목록</Link></>}</section>
@@ -246,25 +169,13 @@ export function CoverageOccupancyPeriod({cell}:{cell:MeasurementCoverageCell}) {
   </div>
 }
 function CoverageDetail({cell,namespace,close,visible}:{cell:MeasurementCoverageCell;namespace:string;close:()=>void;visible:boolean}) {
-  const params=useSearchParams(),panel=useRef<HTMLDivElement>(null),{token}=useSession()
+  const params=useSearchParams(),panel=useRef<HTMLDivElement>(null)
   const variant=coverageVariant(cell,params.get("variant")??undefined)
   const progress=variant?.batchProgress??coverageProgress(cell),rows=variant?.resultRows??[],returnTo=`/measurements?${params}`
-  const filters=coverageProfileQuery(cell)
   const requests=useMeasurementPlans(namespace,cell.failureSummary.some(failure=>!failure.runName))
-  const profiles=useQuery<ProfilesView,ApiError>({queryKey:["chill","coverage-profile-times",filters.toString()],enabled:!!token&&rows.length>0,retry:warmingRetry,retryDelay:warmingDelay,queryFn:async({signal})=>{
-    const all:NonNullable<ProfilesView["profiles"]>=[]
-    let offset=0
-    for(;;) {
-      filters.set("offset",String(offset))
-      const page=await readPage<ProfilesView>(`v1/scheduler/profiles?${filters}`,token,signal)
-      all.push(...page.profiles??[])
-      if(page.page?.nextOffset===undefined)return {...page,profiles:all}
-      if(page.page.nextOffset<=offset)throw new ApiError(0,"프로파일 페이지가 전진하지 않습니다",null)
-      offset=page.page.nextOffset
-    }
-  }})
+  const profiles=useCoverageProfiles(cell,rows.length>0)
   const running=coverageMeasurementStatus(cell)==="running"
-  const runs=useChillQuery<RunsView>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs?${new URLSearchParams({model:cell.model.name,deviceClass:cell.deviceClass.name,path:cell.executionPath,powerMode:cell.powerMode,limit:"200",...(running?{}:{status:"problem"})})}`,{enabled:running||cell.failureSummary.length>0})
+  const runs=useCoverageRuns(cell,namespace)
   const currentRuns=(runs.data?.runs??[]).filter(run=>variant?.runIds.includes(`${run.namespace}/${run.name}/${run.uid}`))
   const completeRuns=currentRuns.filter(run=>run.status.conditions?.some(condition=>condition.type==="ExecutionComplete"&&condition.status==="True"&&condition.observedGeneration===run.generation)).length
   const stage=currentRuns.flatMap(run=>run.status.conditions?.filter(condition=>condition.observedGeneration===run.generation)??[]).find(condition=>condition.type==="ExecutionComplete"&&condition.status==="Unknown")?.reason

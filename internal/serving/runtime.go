@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"maps"
+	"reflect"
 	"slices"
 	"sort"
 	"sync/atomic"
@@ -14,9 +15,20 @@ import (
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
+// RuntimeObservation is the synchronous persistence boundary used by Runtime.
+// Storage depends on serving's domain records, so Runtime must not depend on
+// the concrete storage package.
+type RuntimeObservation interface {
+	RuntimeFacts() (map[string]*Definition, []RequestRow)
+	DefinitionRecord(*Definition) error
+	RequestEvent(RequestEvent) error
+	RequestClosed(string) error
+	RecordNativeSupplement(RequestEvent) error
+}
+
 type RuntimeConfig struct {
 	QueueLimit     int
-	ObservationLog *ObservationLog
+	ObservationLog RuntimeObservation
 	Diagnostics    *Diagnostics
 	// OnChange is a nonblocking notification, called under the runtime lock.
 	OnChange func()
@@ -86,7 +98,7 @@ type runtimeWorkload struct {
 // The owner lock protects routing and physical ownership, never observation
 // filesystem work. An assigned call reserves capacity while its row is stored.
 type Runtime struct {
-	mu                diagnosticMutex
+	mu                DiagnosticLock
 	config            RuntimeConfig
 	ctx               context.Context
 	cancel            context.CancelFunc
@@ -109,13 +121,14 @@ type Runtime struct {
 }
 
 func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
-	if config.QueueLimit <= 0 || config.ObservationLog == nil {
+	observation := reflect.ValueOf(config.ObservationLog)
+	if config.QueueLimit <= 0 || !observation.IsValid() || observation.Kind() == reflect.Pointer && observation.IsNil() {
 		return nil, errors.New("positive queue limit and observation log are required")
 	}
 	backendCtx, cancel := context.WithCancel(ctx)
 	r := &Runtime{config: config, ctx: backendCtx, cancel: cancel, workloads: map[string]*runtimeWorkload{}, names: map[string]string{}, instances: map[string]*runtimeInstance{}, calls: map[string]*Call{}, definitions: map[string]*Definition{}, changed: make(chan struct{}, 1)}
-	r.mu.recorder, r.mu.id = config.Diagnostics, 1
-	definitions, pending := config.ObservationLog.runtimeFacts()
+	r.mu.Recorder, r.mu.ID = config.Diagnostics, 1
+	definitions, pending := config.ObservationLog.RuntimeFacts()
 	r.definitions = definitions
 	// Assigned rows without a final row are observed to completion, never
 	// executed again; each closes with one incomplete final row.
@@ -216,7 +229,7 @@ func (r *Runtime) Receive(name string, at time.Time) (Receipt, error) {
 	}
 	c := &Call{receipt: receipt}
 	if err := r.event(c, phaseReceived, "", ""); err != nil {
-		return receipt, failure(observationUnavailableCode, "cannot persist request receipt")
+		return receipt, failure(ObservationUnavailableCode, "cannot persist request receipt")
 	}
 	if receipt.UID == "" {
 		return receipt, failure("WorkloadNotFound", "workload %q is not registered", name)
@@ -250,7 +263,7 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 	}
 	validatedAt := time.Now()
 	if err := r.config.ObservationLog.RequestEvent(RequestEvent{RequestID: receipt.ID, WorkloadName: receipt.Name, WorkloadUID: receipt.UID, Definition: d.Identity(), Kind: "validated", At: validatedAt.UTC(), ReceivedAt: receipt.ReceivedAt, ElapsedNanos: validatedAt.Sub(receipt.ReceivedAt).Nanoseconds(), SLO: &d.SLO, LifetimeNanos: lifetime}); err != nil {
-		return nil, failure(observationUnavailableCode, "cannot persist validated compute demand")
+		return nil, failure(ObservationUnavailableCode, "cannot persist validated compute demand")
 	}
 	r.mu.LockRequest(receipt.ID)
 	defer r.mu.Unlock()
@@ -265,7 +278,7 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 		return nil, failure(w.reason, "new requests are stopped: %s", w.reason)
 	}
 	if r.observationError != nil {
-		return nil, failure(observationUnavailableCode, "request observation log is unavailable")
+		return nil, failure(ObservationUnavailableCode, "request observation log is unavailable")
 	}
 	if w.definition.Identity() != d.Identity() {
 		return nil, failure("DefinitionChanged", "applied definition changed before acceptance")
@@ -284,7 +297,7 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 	}
 	c := &Call{runtime: r, receipt: receipt, definition: w.definition, identity: w.identity, input: input, reply: make(chan callResult, 1)}
 	if err := r.event(c, phaseAccepted, "", ""); err != nil {
-		return nil, failure(observationUnavailableCode, "cannot persist request acceptance")
+		return nil, failure(ObservationUnavailableCode, "cannot persist request acceptance")
 	}
 	w.calls[receipt.ID] = c
 	r.calls[receipt.ID] = c
@@ -392,9 +405,9 @@ func (r *Runtime) removeQueuedLocked(c *Call) {
 }
 
 func (r *Runtime) chooseLocked(route inputRoute) *routeEntry {
-	if r.mu.recorder.Active() {
-		r.mu.mark(DiagnosticChoose, DiagnosticBegin)
-		defer r.mu.mark(DiagnosticChoose, DiagnosticEnd)
+	if r.mu.Recorder.Active() {
+		r.mu.Mark(DiagnosticChoose, DiagnosticBegin)
+		defer r.mu.Mark(DiagnosticChoose, DiagnosticEnd)
 	}
 	for index, entry := range route.entries {
 		route.available[index] = entry.instance.State.Ready && !entry.instance.State.Stopped && !entry.instance.State.Terminated && entry.instance.outstanding < entry.instance.Capacity
@@ -407,9 +420,9 @@ func (r *Runtime) chooseLocked(route inputRoute) *routeEntry {
 }
 
 func (r *Runtime) dispatchLocked() {
-	if r.mu.recorder.Active() {
-		r.mu.mark(DiagnosticDispatch, DiagnosticBegin)
-		defer r.mu.mark(DiagnosticDispatch, DiagnosticEnd)
+	if r.mu.Recorder.Active() {
+		r.mu.Mark(DiagnosticDispatch, DiagnosticBegin)
+		defer r.mu.Mark(DiagnosticDispatch, DiagnosticEnd)
 	}
 	// The ingress owner promptly distributes accepted samples to ready capacity.
 	// The firstfloor actor owns actual compatible batching and additional wait.
@@ -453,7 +466,7 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 	var err error
 	if persistErr != nil {
 		result.Finished = true // No native exchange began or can still execute.
-		err = failure(observationUnavailableCode, "cannot persist assignment")
+		err = failure(ObservationUnavailableCode, "cannot persist assignment")
 	} else if c.backendContext.Err() != nil {
 		result.Finished = true
 		err = failure("RequestCanceled", "caller canceled before native dispatch")
@@ -503,11 +516,11 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 	if result.Finished && !c.backendDone {
 		c.backendDone = true
 		if eventErr := r.eventAt(c, "backend_finished", "", "", finishedAt); eventErr != nil {
-			err = failure(observationUnavailableCode, "cannot persist native completion")
+			err = failure(ObservationUnavailableCode, "cannot persist native completion")
 		}
 	}
 	if eventErr := r.eventAt(c, eventBackendExchangeFinished, outcome, code, finishedAt); eventErr != nil {
-		err = failure(observationUnavailableCode, "cannot persist backend exchange outcome")
+		err = failure(ObservationUnavailableCode, "cannot persist backend exchange outcome")
 	}
 	r.releaseLocked(c)
 	if c.reply != nil {
@@ -520,9 +533,9 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 }
 
 func (r *Runtime) releaseLocked(c *Call) {
-	if r.mu.recorder.Active() {
-		r.mu.mark(DiagnosticRelease, DiagnosticBegin)
-		defer r.mu.mark(DiagnosticRelease, DiagnosticEnd)
+	if r.mu.Recorder.Active() {
+		r.mu.Mark(DiagnosticRelease, DiagnosticBegin)
+		defer r.mu.Mark(DiagnosticRelease, DiagnosticEnd)
 	}
 	if c.backendDone {
 		r.pruneInstanceBindingsLocked()
@@ -727,7 +740,7 @@ func (r *Runtime) OpenAdmission(uid string) error {
 		return failure("WorkloadNotFound", "registration is not applied")
 	}
 	if r.observationError != nil {
-		return failure(observationUnavailableCode, "request observation log is unavailable")
+		return failure(ObservationUnavailableCode, "request observation log is unavailable")
 	}
 	w.stopped = false
 	w.reason = ""
@@ -944,9 +957,9 @@ func (r *Runtime) RetirePod(uid string) error {
 // native state read after that exchange does not hold them: nothing will
 // execute or report them. A held call waits for its native completion.
 func (r *Runtime) finishAbsentLocked(state InstanceState) {
-	if r.mu.recorder.Active() {
-		r.mu.mark(DiagnosticAbsent, DiagnosticBegin)
-		defer r.mu.mark(DiagnosticAbsent, DiagnosticEnd)
+	if r.mu.Recorder.Active() {
+		r.mu.Mark(DiagnosticAbsent, DiagnosticBegin)
+		defer r.mu.Mark(DiagnosticAbsent, DiagnosticEnd)
 	}
 	if state.Native == nil {
 		return
@@ -1000,9 +1013,9 @@ func (r *Runtime) rebuildLocked() {
 }
 
 func (r *Runtime) pruneInstanceBindingsLocked() {
-	if r.mu.recorder.Active() {
-		r.mu.mark(DiagnosticPrune, DiagnosticBegin)
-		defer r.mu.mark(DiagnosticPrune, DiagnosticEnd)
+	if r.mu.Recorder.Active() {
+		r.mu.Mark(DiagnosticPrune, DiagnosticBegin)
+		defer r.mu.Mark(DiagnosticPrune, DiagnosticEnd)
 	}
 	for _, i := range r.instances {
 		for uid := range i.bindings {
@@ -1024,9 +1037,9 @@ func (r *Runtime) pruneInstanceBindingsLocked() {
 }
 
 func (r *Runtime) rebuildWorkloadRoutesLocked() {
-	if r.mu.recorder.Active() {
-		r.mu.mark(DiagnosticRebuild, DiagnosticBegin)
-		defer r.mu.mark(DiagnosticRebuild, DiagnosticEnd)
+	if r.mu.Recorder.Active() {
+		r.mu.Mark(DiagnosticRebuild, DiagnosticBegin)
+		defer r.mu.Mark(DiagnosticRebuild, DiagnosticEnd)
 	}
 	for uid, w := range r.workloads {
 		previous := w.route
@@ -1088,7 +1101,7 @@ func (r *Runtime) workloadStateLocked(w *runtimeWorkload) WorkloadState {
 	if !w.stopped {
 		switch {
 		case r.observationError != nil:
-			state.Reason = observationUnavailableCode
+			state.Reason = ObservationUnavailableCode
 		case w.definition.Dataset == nil:
 			state.Reason = "MissingDataset"
 		case !evidence:

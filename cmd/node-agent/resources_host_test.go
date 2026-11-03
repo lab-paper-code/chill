@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 // SCH-AC-53: discover real kubelet directories even with a private cgroup namespace.
 func TestResourceCgroupVersionsAndMissingPeak(t *testing.T) {
-	target := serving.ResourceTarget{PodUID: "aa-bb", ContainerID: "containerd://deadbeef"}
+	target := observation.ResourceTarget{PodUID: "aa-bb", ContainerID: "containerd://deadbeef"}
 	for _, driver := range []string{"cgroupfs", "systemd"} {
 		for _, mode := range []string{"v1", "hybrid", "unified", "unified-submount"} {
 			t.Run(driver+"/"+mode, func(t *testing.T) {
@@ -53,7 +53,7 @@ func TestResourceCgroupVersionsAndMissingPeak(t *testing.T) {
 				writeHostFile(t, root, "sys/class/thermal/thermal_zone4/type", "chip\n")
 				writeHostFile(t, root, "sys/class/thermal/thermal_zone4/temp", "42000\n")
 				at := time.Date(2026, 10, 30, 1, 2, 3, 0, time.UTC)
-				sample := SampleResources(root, []serving.ResourceTarget{target}, at)
+				sample := SampleResources(root, []observation.ResourceTarget{target}, at)
 				if len(sample.Containers) != 1 {
 					t.Fatalf("sample=%+v", sample)
 				}
@@ -81,7 +81,7 @@ func TestResourceCgroupVersionsAndMissingPeak(t *testing.T) {
 // A namespace-relative process record, a partial identity, or a different pod
 // must never attribute root/other-container counters to the requested target.
 func TestResourceCgroupMissingIdentity(t *testing.T) {
-	target := serving.ResourceTarget{PodUID: "aa-bb", ContainerID: "containerd://deadbeef"}
+	target := observation.ResourceTarget{PodUID: "aa-bb", ContainerID: "containerd://deadbeef"}
 	for _, group := range []string{
 		"", "kubepods/burstable/podaa-bb/deadbeef1", "kubepods/burstable/podaa-bb1/deadbeef",
 		"kubepods/burstable/podother/deadbeef", "podaa-bb/deadbeef",
@@ -92,7 +92,7 @@ func TestResourceCgroupMissingIdentity(t *testing.T) {
 			writeHostFile(t, root, "sys/fs/cgroup/cgroup.controllers", "cpu memory\n")
 			writeHostFile(t, root, filepath.Join("sys/fs/cgroup", group, "cpu.stat"), "usage_usec 999\n")
 			writeHostFile(t, root, "proc/77/cgroup", "0::/\n")
-			sample := SampleResources(root, []serving.ResourceTarget{target}, time.Now().UTC())
+			sample := SampleResources(root, []observation.ResourceTarget{target}, time.Now().UTC())
 			if len(sample.Containers) != 0 {
 				t.Fatalf("unmatched counters accepted: %+v", sample.Containers)
 			}
@@ -107,7 +107,7 @@ func TestResourceCgroupMissingIdentity(t *testing.T) {
 }
 
 func TestResourceCgroupHybridMissingControllers(t *testing.T) {
-	target := serving.ResourceTarget{PodUID: "aa-bb", ContainerID: "containerd://deadbeef"}
+	target := observation.ResourceTarget{PodUID: "aa-bb", ContainerID: "containerd://deadbeef"}
 	for _, memoryPresent := range []bool{false, true} {
 		t.Run(fmt.Sprint(memoryPresent), func(t *testing.T) {
 			root := t.TempDir()
@@ -119,7 +119,7 @@ func TestResourceCgroupHybridMissingControllers(t *testing.T) {
 			if memoryPresent {
 				writeHostFile(t, root, base+"memory/"+group+"memory.usage_in_bytes", "13\n")
 			}
-			sample := SampleResources(root, []serving.ResourceTarget{target}, time.Now().UTC())
+			sample := SampleResources(root, []observation.ResourceTarget{target}, time.Now().UTC())
 			if !memoryPresent {
 				if len(sample.Containers) != 0 {
 					t.Fatalf("hybrid fell back to v2: %+v", sample)
@@ -140,7 +140,7 @@ func TestResourceCgroupHybridMissingControllers(t *testing.T) {
 
 func TestResourceCgroupSplitControllersAndTargets(t *testing.T) {
 	root := t.TempDir() // No /proc mount is needed for discovery.
-	targets := []serving.ResourceTarget{
+	targets := []observation.ResourceTarget{
 		{PodUID: "aa-bb", ContainerID: "docker://deadbeef"},
 		{PodUID: "aa-bb", ContainerID: "cri-o://other"},
 		{PodUID: "cc-dd", ContainerID: "containerd://gone"},

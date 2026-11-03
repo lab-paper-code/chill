@@ -8,6 +8,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 func TestSchedulerCurrentProjectionBoundsRawProfileSamples(t *testing.T) {
@@ -125,7 +126,7 @@ func TestSchedulerCurrentProjectionBoundsUnusedPopulations(t *testing.T) {
 		t.Fatal("current read mutated the raw state")
 	}
 	history := newSchedulerReadEvidence()
-	records := history.observations([]serving.SchedulerObservation{{Snapshot: &state.Snapshot}})
+	records := history.observations([]observation.SchedulerObservation{{Snapshot: &state.Snapshot}})
 	if len(records[0].Snapshot.Options) != 500 || len(records[0].Snapshot.Arrivals) != 2_000 || len(history.Profiles) != 501 {
 		t.Fatal("current read changed retained history evidence")
 	}

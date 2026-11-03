@@ -67,6 +67,7 @@ type DispatchOccupancyRecord struct {
 	PowerMode        string                `json:"powerMode"`
 	RuntimeImage     string                `json:"runtimeImage"`
 	Model            string                `json:"model"`
+	ExecutionPath    string                `json:"executionPath,omitempty"`
 	ProfileID        string                `json:"profileID"`
 	Batch            int                   `json:"batch"`
 	ProfileMeanNanos float64               `json:"profileMeanNanos"`

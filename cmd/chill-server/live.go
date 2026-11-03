@@ -13,6 +13,7 @@ import (
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/live"
 	"github.com/lab-paper-code/chill/internal/serving/management"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -281,7 +282,7 @@ func liveReservationExplanation(r serving.SchedulerReservation) string {
 	}
 	return explanation
 }
-func (p *livePublisher) action(action serving.SchedulerActionObservation, recordedAt time.Time) {
+func (p *livePublisher) action(action observation.SchedulerActionObservation, recordedAt time.Time) {
 	event, err := httpapi.ProjectAction(action)
 	if err != nil {
 		ctrl.Log.Error(err, "project recorded live action")

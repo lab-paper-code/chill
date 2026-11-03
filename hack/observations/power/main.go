@@ -21,6 +21,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 func main() {
@@ -40,12 +41,12 @@ func main() {
 	end, endErr := time.Parse(time.RFC3339Nano, *to)
 	meters, metersErr := derivedMeters(*settings, *state, *nodeNames)
 	if err = errors.Join(err, endErr, metersErr); err == nil {
-		var result serving.OperatingPowerWindow
+		var result observation.OperatingPowerWindow
 		if result, err = run(*dir, meters, start, end, *maximumGap); err == nil {
 			encoder := json.NewEncoder(os.Stdout)
 			encoder.SetIndent("", "  ")
 			response := struct {
-				serving.OperatingPowerWindow
+				observation.OperatingPowerWindow
 				PolicyOverride map[string]float64 `json:"policyOverride,omitempty"`
 			}{OperatingPowerWindow: result}
 			if *maximumGap > 0 {
@@ -61,7 +62,7 @@ func main() {
 }
 
 // derivedMeters consumes API facts directly; it never synthesizes Kubernetes Nodes.
-func derivedMeters(settingsFile, stateFile, nodeNames string) ([]serving.OperatingPowerMeter, error) {
+func derivedMeters(settingsFile, stateFile, nodeNames string) ([]observation.OperatingPowerMeter, error) {
 	raw, err := os.ReadFile(settingsFile)
 	if err != nil {
 		return nil, err
@@ -109,13 +110,13 @@ func derivedMeters(settingsFile, stateFile, nodeNames string) ([]serving.Operati
 			selected[name] = true
 		}
 	}
-	meters := make([]serving.OperatingPowerMeter, 0, len(settings.Meters))
+	meters := make([]observation.OperatingPowerMeter, 0, len(settings.Meters))
 	for _, meter := range settings.Meters {
 		if uid := uids[meter.Node.Name]; uid != "" && (len(selected) == 0 || selected[meter.Node.Name]) {
 			if uid != meter.Node.UID || meter.ID == "" || meter.Scope != "node-exclusive-wall" {
 				return nil, errors.New("settings meter does not match its actual Node reference or wall scope")
 			}
-			meters = append(meters, serving.OperatingPowerMeter{
+			meters = append(meters, observation.OperatingPowerMeter{
 				Node: meter.Node, Meter: meter.ID, Scope: meter.Scope, Source: meter.Source,
 			})
 		}
@@ -128,38 +129,38 @@ func derivedMeters(settingsFile, stateFile, nodeNames string) ([]serving.Operati
 
 // run reads [from-1m, to+1m] as the server does, so every hour it touches
 // must be exported; the collector adds the hour on each side.
-func run(dir string, meters []serving.OperatingPowerMeter, from, to time.Time, maximumGap time.Duration) (serving.OperatingPowerWindow, error) {
+func run(dir string, meters []observation.OperatingPowerMeter, from, to time.Time, maximumGap time.Duration) (observation.OperatingPowerWindow, error) {
 	last := to.Add(time.Minute)
 	for hour := from.Add(-time.Minute).UTC().Truncate(time.Hour); !hour.After(last); hour = hour.Add(time.Hour) {
 		if _, err := os.Stat(filepath.Join(dir, hour.Format("20060102T15"), "scheduler.jsonl.gz")); err != nil {
-			return serving.OperatingPowerWindow{}, fmt.Errorf("power boundary hour not fetched: %w", err)
+			return observation.OperatingPowerWindow{}, fmt.Errorf("power boundary hour not fetched: %w", err)
 		}
 	}
 	catalogs, err := filepath.Glob(filepath.Join(dir, "*", "catalog.jsonl.gz"))
 	if err != nil {
-		return serving.OperatingPowerWindow{}, err
+		return observation.OperatingPowerWindow{}, err
 	}
-	catalog := &serving.ObservationCatalog{}
+	catalog := &observation.ObservationCatalog{}
 	for _, name := range catalogs {
 		if err := eachLine(name, func(raw []byte) error {
-			var row serving.CatalogRow
+			var row observation.CatalogRow
 			if err := json.Unmarshal(raw, &row); err != nil {
 				return err
 			}
 			catalog.Add(row)
 			return nil
 		}); err != nil {
-			return serving.OperatingPowerWindow{}, err
+			return observation.OperatingPowerWindow{}, err
 		}
 	}
 	schedulers, err := filepath.Glob(filepath.Join(dir, "*", "scheduler.jsonl.gz"))
 	if err != nil {
-		return serving.OperatingPowerWindow{}, err
+		return observation.OperatingPowerWindow{}, err
 	}
-	records := func(yield func(*serving.SchedulerObservation) error) error {
+	records := func(yield func(*observation.SchedulerObservation) error) error {
 		for _, name := range schedulers {
 			if err := eachLine(name, func(raw []byte) error {
-				record, err := serving.OperatingPowerRecord(raw, catalog)
+				record, err := observation.OperatingPowerRecord(raw, catalog)
 				if err != nil {
 					return err
 				}
@@ -175,7 +176,7 @@ func run(dir string, meters []serving.OperatingPowerMeter, from, to time.Time, m
 		}
 		return nil
 	}
-	return serving.ReduceOperatingPower(from, to, meters, 1<<30, records)
+	return observation.ReduceOperatingPower(from, to, meters, 1<<30, records)
 }
 
 func eachLine(name string, visit func([]byte) error) (result error) {

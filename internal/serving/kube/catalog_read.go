@@ -138,37 +138,57 @@ type OccupancySelection struct {
 	Evidence      evidencestore.ObjectIdentity `json:"evidence"`
 }
 
+// OccupancySkipped reports a selection whose cached evidence cannot be projected.
+type OccupancySkipped struct {
+	Source    string                `json:"source"`
+	Node      serving.NodeReference `json:"node"`
+	Model     string                `json:"model"`
+	PowerMode string                `json:"powerMode"`
+	ProfileID string                `json:"profileID"`
+	Reason    string                `json:"reason"`
+}
+
 // OccupancySelections joins the existing scheduler selection to its cached source.
 // The cache belongs to the same Refresh; no store read or selection rule is repeated.
-func (e *CostEvidence) OccupancySelections(selected []serving.DispatchOccupancy, profiles []serving.Profile) ([]OccupancySelection, error) {
+func (e *CostEvidence) OccupancySelections(selected []serving.DispatchOccupancy, profiles []serving.Profile) ([]OccupancySelection, []OccupancySkipped) {
 	out := make([]OccupancySelection, 0, len(selected))
+	var skipped []OccupancySkipped
 	for _, selection := range selected {
 		var candidate OccupancySelection
 		matches := 0
 		for identity, record := range e.occupancy {
 			if identity.Key != selection.Source || record.Node != selection.Node ||
 				record.PowerMode != selection.PowerMode || record.Model != selection.Model ||
-				record.RuntimeImage != selection.RuntimeImage || record.Verdict != servingstate.MeasurementAccepted ||
-				time.Duration(max(record.PerRequestNanos, 0)) != selection.PerRequest {
+				record.Verdict != servingstate.MeasurementAccepted {
 				continue
 			}
-			index := slices.IndexFunc(profiles, func(p serving.Profile) bool { return p.ID == record.ProfileID })
-			if index < 0 {
-				continue
+			executionPath := record.ExecutionPath
+			if executionPath == "" {
+				if index := slices.IndexFunc(profiles, func(p serving.Profile) bool { return p.ID == record.ProfileID }); index >= 0 {
+					executionPath = profiles[index].Condition.Artifact.ExecutionPath
+				}
 			}
 			matches++
 			candidate = OccupancySelection{
 				Node: record.Node, PowerMode: record.PowerMode, Model: record.Model, RuntimeImage: record.RuntimeImage,
-				ExecutionPath: profiles[index].Condition.Artifact.ExecutionPath,
+				ExecutionPath: executionPath,
 				ProfileID:     record.ProfileID, Batch: record.Batch, Evidence: identity,
 			}
 		}
 		if matches != 1 {
-			return nil, fmt.Errorf("selected occupancy source %s has %d matching evidence identities", selection.Source, matches)
+			reason := "noMatchingEvidence"
+			if matches > 1 {
+				reason = fmt.Sprintf("ambiguousEvidence(%d)", matches)
+			}
+			skipped = append(skipped, OccupancySkipped{
+				Source: selection.Source, Node: selection.Node, Model: selection.Model,
+				PowerMode: selection.PowerMode, ProfileID: selection.ProfileID, Reason: reason,
+			})
+			continue
 		}
 		out = append(out, candidate)
 	}
-	return out, nil
+	return out, skipped
 }
 
 type CatalogSnapshot struct {
@@ -183,6 +203,7 @@ type CatalogSnapshot struct {
 	SourceError         string                            `json:"sourceError"`
 	Revision            string                            `json:"revision"`
 	Occupancy           []OccupancySelection              `json:"occupancy"`
+	OccupancySkipped    []OccupancySkipped                `json:"occupancySkipped,omitempty"`
 	// DispatchOccupancy is the same resolved immutable source list captured by
 	// the scheduler: exact measured B, legacy DOM, or configured default.
 	DispatchOccupancy []serving.DispatchOccupancy `json:"dispatchOccupancy"`

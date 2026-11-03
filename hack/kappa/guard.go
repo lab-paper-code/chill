@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 const replayJSONL = "jsonl"
@@ -133,7 +134,7 @@ type replayReader struct {
 	base            serving.SchedulerSettings
 	margin          float64
 	profiles        map[string]*serving.Profile
-	catalog         *serving.ObservationCatalog
+	catalog         *observation.ObservationCatalog
 	arrivals        []replayArrival
 	restoreArrivals bool
 	definitions     map[string]*serving.Definition
@@ -151,14 +152,14 @@ func hydrateReplayInstances(xs []serving.SchedulerInstance, profiles map[string]
 	return nil
 }
 
-func readReplayCatalog(name string) (*serving.ObservationCatalog, map[string]*serving.Definition, error) {
+func readReplayCatalog(name string) (*observation.ObservationCatalog, map[string]*serving.Definition, error) {
 	definitions := map[string]*serving.Definition{}
 	if name == "" {
 		return nil, definitions, nil
 	}
-	catalog := &serving.ObservationCatalog{}
+	catalog := &observation.ObservationCatalog{}
 	err := scanReplayFile(name, func(raw []byte) error {
-		var row serving.CatalogRow
+		var row observation.CatalogRow
 		if err := json.Unmarshal(raw, &row); err != nil {
 			return err
 		}
@@ -189,7 +190,7 @@ func (reader *replayReader) readTick() (*replayTick, error) {
 			return nil, err
 		}
 		if reader.catalog != nil {
-			event, err := serving.DecodeSchedulerLine(reader.scanner.Bytes(), reader.catalog)
+			event, err := observation.DecodeSchedulerLine(reader.scanner.Bytes(), reader.catalog)
 			if err != nil {
 				return nil, err
 			}

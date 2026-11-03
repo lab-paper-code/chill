@@ -13,6 +13,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/queryapi"
+	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
@@ -30,8 +31,13 @@ func TestR18HistoricalProfilesUseOnlyCurrentMeasurement(t *testing.T) {
 		if id == "ns/current/uid/reuse-target" {
 			profile.Reuse = &serving.ProfileReuseCheck{ConfirmationProfileID: "ns/current/uid"}
 		}
-		view.MeasurementFacts[id] = serving.MeasurementFacts{Batches: []profilederivation.MeasurementBatchFacts{{Batch: 1}}}
-		assessment, rows := assessCatalogProfile(view, profile)
+		view.MeasurementFacts[id] = serving.MeasurementFacts{
+			Batches: []profilederivation.MeasurementBatchFacts{{Batch: 1}},
+		}
+		assessment, rows := queryapi.AssessCatalogProfile(
+			queryCoverageCatalog(view),
+			queryCoverageProfile(profile),
+		)
 		want := id != "ns/old/uid"
 		if assessment.Scope.SchedulerUsed == nil || *assessment.Scope.SchedulerUsed != want {
 			t.Fatalf("%s current use=%+v want=%v", id, assessment.Scope, want)
@@ -43,7 +49,10 @@ func TestR18HistoricalProfilesUseOnlyCurrentMeasurement(t *testing.T) {
 		}
 	}
 	view.CurrentMeasurements = []profilederivation.MeasurementSelection{{ID: "ns/newest-failed/uid"}}
-	got, _ := assessCatalogProfile(view, serving.Profile{ID: "ns/current/uid"})
+	got, _ := queryapi.AssessCatalogProfile(
+		queryCoverageCatalog(view),
+		queryCoverageProfile(serving.Profile{ID: "ns/current/uid"}),
+	)
 	if got.Scope.SchedulerUsed == nil || *got.Scope.SchedulerUsed {
 		t.Fatal("latest failed measurement revived historical success")
 	}
@@ -65,7 +74,9 @@ func TestR18SnapshotProfilesEndpointRetainsCurrentSelection(t *testing.T) {
 			if err := json.Unmarshal(raw, &read); err != nil {
 				t.Fatal(err)
 			}
-			service := &measurementService{catalog: func(context.Context) (servingkube.CatalogRead, error) { return read, nil }}
+			service := &measurementService{
+				catalog: func(context.Context) (servingkube.CatalogRead, error) { return read, nil },
+			}
 			mux := http.NewServeMux()
 			service.register(mux)
 			response := httptest.NewRecorder()
@@ -94,7 +105,11 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 		Status:     api.BatchEnergyOptimizationStatus{Phase: "Complete", ObservedGeneration: 1},
 	}
 	view := httpapi.ProfilesView{}
-	if got := assessMeasurementRequest(task, view, view); got.Evidence.Accepted ||
+	if got := queryapi.AssessMeasurementRequest(
+		task,
+		queryCoverageCatalog(view),
+		queryCoverageCatalog(view),
+	); got.Evidence.Accepted ||
 		got.DisplayStatus == queryapi.MeasurementUsable {
 		t.Fatalf("phase accepted without evidence: %+v", got)
 	}
@@ -103,22 +118,38 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 		Batches: []serving.BatchProfile{{Batch: 1}},
 	}}
 	view.CurrentMeasurements = []profilederivation.MeasurementSelection{{ID: "allowed/old/old-uid"}}
-	if got := assessMeasurementRequest(task, view, view); got.Status != queryapi.MeasurementPartial ||
+	if got := queryapi.AssessMeasurementRequest(
+		task,
+		queryCoverageCatalog(view),
+		queryCoverageCatalog(view),
+	); got.Status != queryapi.MeasurementPartial ||
 		!got.Evidence.Accepted {
 		t.Fatalf("partial accepted profile: %+v", got)
 	}
 	task.Spec.BatchSizes = []int32{1}
-	if got := assessMeasurementRequest(task, view, view); got.Status != queryapi.MeasurementComplete ||
+	if got := queryapi.AssessMeasurementRequest(
+		task,
+		queryCoverageCatalog(view),
+		queryCoverageCatalog(view),
+	); got.Status != queryapi.MeasurementComplete ||
 		got.Scope.SchedulerUsed == nil || !*got.Scope.SchedulerUsed {
 		t.Fatalf("published evidence: %+v", got)
 	}
 	newer := task
 	newer.Name, newer.UID, newer.Status.Phase = "newer", "newer-uid", string(api.MeasurementPhaseFailed)
-	if got := assessMeasurementRequest(newer, view, view); got.Status != queryapi.MeasurementFailed ||
+	if got := queryapi.AssessMeasurementRequest(
+		newer,
+		queryCoverageCatalog(view),
+		queryCoverageCatalog(view),
+	); got.Status != queryapi.MeasurementFailed ||
 		got.Evidence.Accepted {
 		t.Fatalf("new request borrowed old evidence: %+v", got)
 	}
-	if got := assessMeasurementRequest(task, view, view); !got.Evidence.Accepted {
+	if got := queryapi.AssessMeasurementRequest(
+		task,
+		queryCoverageCatalog(view),
+		queryCoverageCatalog(view),
+	); !got.Evidence.Accepted {
 		t.Fatal("new failure hid old accepted evidence")
 	}
 	for _, diagnostic := range []string{
@@ -130,7 +161,11 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 			Source: types.NamespacedName{Namespace: task.Namespace, Name: task.Name},
 			Code:   "ReplacementSelection", Reason: diagnostic,
 		}}
-		got := assessMeasurementRequest(task, view, view)
+		got := queryapi.AssessMeasurementRequest(
+			task,
+			queryCoverageCatalog(view),
+			queryCoverageCatalog(view),
+		)
 		if got.Status != queryapi.MeasurementComplete || len(got.Reasons) != 1 ||
 			got.Reasons[0].Message != diagnostic {
 			t.Fatalf("operator replacement diagnostic became a rejection: %+v", got)
@@ -140,7 +175,11 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 		Source: types.NamespacedName{Namespace: task.Namespace, Name: task.Name},
 		Code:   "InvalidEvidence", Reason: "real validation failure",
 	}}
-	if got := assessMeasurementRequest(task, view, view); got.DisplayStatus != queryapi.MeasurementProblem {
+	if got := queryapi.AssessMeasurementRequest(
+		task,
+		queryCoverageCatalog(view),
+		queryCoverageCatalog(view),
+	); got.DisplayStatus != queryapi.MeasurementProblem {
 		t.Fatalf("catalog issue ignored: %+v", got)
 	}
 	view.Profiles = nil
@@ -155,7 +194,11 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 		Source: types.NamespacedName{Namespace: task.Namespace, Name: task.Name},
 		Code:   "ReplacementSelection", Reason: "superseded by newer; original evidence retained",
 	}}
-	if got := assessMeasurementRequest(task, view, view); got.DisplayStatus != queryapi.MeasurementReview ||
+	if got := queryapi.AssessMeasurementRequest(
+		task,
+		queryCoverageCatalog(view),
+		queryCoverageCatalog(view),
+	); got.DisplayStatus != queryapi.MeasurementReview ||
 		!got.Evidence.Accepted || got.Scope.SchedulerUsed == nil || *got.Scope.SchedulerUsed {
 		t.Fatalf("superseded verified result lost review or became scheduler-used: %+v", got)
 	}
@@ -167,23 +210,34 @@ func TestOperationAssessmentRequiresStoredAcceptedSteps(t *testing.T) {
 		Spec:       api.OperationCostMeasurementSpec{Steps: []api.OperationCostStep{{Name: "idle"}}},
 		Status: api.OperationCostMeasurementStatus{
 			Phase: api.MeasurementPhaseComplete,
-			Steps: []api.OperationCostStepStatus{{Name: "idle", Key: "stored", Verdict: measurementVerdictAccepted}},
+			Steps: []api.OperationCostStepStatus{
+				{Name: "idle", Key: "stored", Verdict: queryapi.MeasurementVerdictAccepted},
+			},
 		},
 	}
-	if got := assessOperationCost(cr, []servingkube.OperationStepProjection{{}}); got.Evidence.Accepted {
+	if got := queryapi.AssessOperationCost(
+		cr,
+		queryOperationSteps([]servingkube.OperationStepProjection{{}}),
+	); got.Evidence.Accepted {
 		t.Fatalf("status-only step accepted: %+v", got)
 	}
 	duration, joules := int64(100), 4.0
 	steps := []servingkube.OperationStepProjection{{
 		OperationID: "uid.0.idle", DurationNanos: &duration, WallJoules: &joules,
 	}}
-	if got := assessOperationCost(cr, steps); got.Status != queryapi.MeasurementComplete ||
+	if got := queryapi.AssessOperationCost(
+		cr,
+		queryOperationSteps(steps),
+	); got.Status != queryapi.MeasurementComplete ||
 		!got.Evidence.Accepted || got.Execution.ObservedGeneration != 0 {
 		t.Fatalf("verified operation: %+v", got)
 	}
 	cr.Status.Phase = api.MeasurementPhaseFailed
 	cr.Status.Steps[0].Verdict = string(api.MeasurementPhaseFailed)
-	if got := assessOperationCost(cr, steps); got.Status != queryapi.MeasurementFailed || got.Evidence.Accepted {
+	if got := queryapi.AssessOperationCost(
+		cr,
+		queryOperationSteps(steps),
+	); got.Status != queryapi.MeasurementFailed || got.Evidence.Accepted {
 		t.Fatalf("failed operation: %+v", got)
 	}
 }
@@ -205,7 +259,7 @@ func TestOccupancyAssessmentReadsExactRecordAndPreservesNegativeD(t *testing.T) 
 		record := servingkube.DispatchOccupancyRecord{
 			SchemaVersion: servingkube.DispatchOccupancySchema,
 			Node:          serving.NodeReference{Name: "node", UID: "node-uid"}, Batch: 1,
-			PerRequestNanos: d, Throughput: 10, Conditions: cr.Spec, Verdict: measurementVerdictAccepted,
+			PerRequestNanos: d, Throughput: 10, Conditions: cr.Spec, Verdict: queryapi.MeasurementVerdictAccepted,
 		}
 		record.Window.Start, record.Window.End = time.Unix(100, 0).UTC(), time.Unix(200, 0).UTC()
 		raw, err := json.Marshal(record)
@@ -285,11 +339,14 @@ func assertOccupancyRejectedEvidence(
 	if err != nil {
 		t.Fatal(err)
 	}
-	mismatched, err := service.projectDispatchOccupancy(context.Background(), cr)
+	projection, err := querykube.ProjectDispatchOccupancy(
+		context.Background(), service.objects, service.opts.maxEvidenceBytes, cr, decodeOccupancyEvidence,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mismatched.record != nil || mismatched.MeasurementWindow != nil ||
+	mismatched := dispatchOccupancyHTTPProjection(cr, projection)
+	if projection.Record != nil || mismatched.MeasurementWindow != nil ||
 		mismatched.Evidence == nil ||
 		mismatched.D == nil || *mismatched.D.PerRequestNanos != d {
 		t.Fatal("foreign evidence became verified or hid recorded status/reference")
@@ -343,7 +400,7 @@ func TestProfilesReuseRowsKeepBothActualPopulations(t *testing.T) {
 	targetJ, sourceJ := 3.0, 7.0
 	reuse := &serving.ProfileReuseCheck{
 		SourceProfileID: "allowed/source/uid", ConfirmationProfileID: "allowed/target/uid",
-		Outcome: measurementVerdictAccepted,
+		Outcome: queryapi.MeasurementVerdictAccepted,
 	}
 	view := httpapi.ProfilesView{}
 	view.Profiles = []serving.Profile{{ID: "derived", Reuse: reuse}}
@@ -475,7 +532,11 @@ func TestUnadoptedAcceptedFactsNeverRepairCurrentRequestAssessment(t *testing.T)
 			Code:   "InvalidEvidence", Reason: "current evidence rejected",
 		}},
 	}}
-	got := assessMeasurementRequest(task, accepted, latest)
+	got := queryapi.AssessMeasurementRequest(
+		task,
+		queryCoverageCatalog(accepted),
+		queryCoverageCatalog(latest),
+	)
 	if got.Evidence.Accepted || got.Evidence.Available || got.Scope.SchedulerUsed != nil ||
 		got.DisplayStatus != queryapi.MeasurementProblem {
 		t.Fatalf("old unadopted facts replaced current rejection: %+v", got)
@@ -495,7 +556,11 @@ func TestR19RequestAssessmentUsesCurrentMeasurementIdentity(t *testing.T) {
 			ObjectMeta: meta.ObjectMeta{Namespace: "ns", Name: name, UID: "uid"},
 			Spec:       api.BatchEnergyOptimizationSpec{BatchSizes: []int32{1}},
 		}
-		got := assessMeasurementRequest(task, view, view)
+		got := queryapi.AssessMeasurementRequest(
+			task,
+			queryCoverageCatalog(view),
+			queryCoverageCatalog(view),
+		)
 		if got.Scope.SchedulerUsed == nil || *got.Scope.SchedulerUsed != (name == "current") {
 			t.Fatalf("%s scheduler scope=%+v", name, got.Scope)
 		}
@@ -505,23 +570,55 @@ func TestR19RequestAssessmentUsesCurrentMeasurementIdentity(t *testing.T) {
 		ObjectMeta: meta.ObjectMeta{Namespace: "ns", Name: "current", UID: "uid"},
 		Spec:       api.BatchEnergyOptimizationSpec{BatchSizes: []int32{1}},
 	}
-	if got := assessMeasurementRequest(task, view, view); got.Scope.SchedulerUsed == nil || *got.Scope.SchedulerUsed {
+	if got := queryapi.AssessMeasurementRequest(
+		task,
+		queryCoverageCatalog(view),
+		queryCoverageCatalog(view),
+	); got.Scope.SchedulerUsed == nil || *got.Scope.SchedulerUsed {
 		t.Fatalf("latest failure revived old evidence: %+v", got.Scope)
 	}
 	view.Profiles = []serving.Profile{{
 		ID: "ns/source/source-uid/reuse-target", Batches: []serving.BatchProfile{{Batch: 1}},
 		Reuse: &serving.ProfileReuseCheck{
-			ConfirmationProfileID: "ns/confirmation/confirmation-uid", Outcome: measurementVerdictAccepted,
+			ConfirmationProfileID: "ns/confirmation/confirmation-uid", Outcome: queryapi.MeasurementVerdictAccepted,
 		},
 	}}
 	view.CurrentMeasurements = []profilederivation.MeasurementSelection{{ID: "ns/confirmation/confirmation-uid"}}
 	task.Name, task.UID = "confirmation", "confirmation-uid"
-	if got := assessMeasurementRequest(task, view, view); !got.Scope.Reused ||
+	if got := queryapi.AssessMeasurementRequest(
+		task,
+		queryCoverageCatalog(view),
+		queryCoverageCatalog(view),
+	); !got.Scope.Reused ||
 		got.Scope.SchedulerUsed == nil || !*got.Scope.SchedulerUsed {
 		t.Fatalf("confirmation identity lost: %+v", got.Scope)
 	}
 	task.Name, task.UID = "source", "source-uid"
-	if got := assessMeasurementRequest(task, view, view); got.Scope.SchedulerUsed != nil && *got.Scope.SchedulerUsed {
+	if got := queryapi.AssessMeasurementRequest(
+		task,
+		queryCoverageCatalog(view),
+		queryCoverageCatalog(view),
+	); got.Scope.SchedulerUsed != nil && *got.Scope.SchedulerUsed {
 		t.Fatalf("source reference became confirmation: %+v", got.Scope)
+	}
+}
+
+func TestOperationAssessmentInputConversionPreservesConsultedFacts(t *testing.T) {
+	if queryOperationSteps(nil) != nil {
+		t.Fatal("nil operation evidence became an empty slice")
+	}
+	if got := queryOperationSteps([]servingkube.OperationStepProjection{}); got == nil || len(got) != 0 {
+		t.Fatal("an empty operation evidence slice changed shape")
+	}
+	duration, joules := int64(-9223372036854775807), 0.0
+	source := []servingkube.OperationStepProjection{
+		{OperationID: "operation/uid", DurationNanos: &duration, WallJoules: &joules, Reason: "retained reason"},
+		{},
+	}
+	got := queryOperationSteps(source)
+	if len(got) != 2 || got[0].OperationID != source[0].OperationID ||
+		got[0].DurationNanos != &duration || got[0].WallJoules != &joules || got[0].Reason != source[0].Reason ||
+		got[1].DurationNanos != nil || got[1].WallJoules != nil || got[1].OperationID != "" || got[1].Reason != "" {
+		t.Fatalf("operation evidence input changed: %+v", got)
 	}
 }

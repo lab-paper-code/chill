@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
-import { MeasurementFilters } from "@/features/measurement-coverage"
+import { MeasurementFilters } from "@/components/measurement-filters"
 import { useChillQuery, useSession } from "@/lib/client"
 import { currentRunCondition, runAttempt, runSpec } from "@/lib/measurement-coverage"
 import { executionPathLabel, formatMeasurementTime, measurementReasonSummary, workloadModeLabel } from "@/lib/measurements"

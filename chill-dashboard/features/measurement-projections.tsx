@@ -20,7 +20,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { MeasurementNavigation, measurementStates } from "@/components/measurement-navigation"
 import { AssessmentDetails, ResultRows } from "@/features/measurement-plans"
-import { MeasurementFilters } from "@/features/measurement-coverage"
+import { MeasurementFilters } from "@/components/measurement-filters"
 import { SchedulerProfilesPage } from "@/features/scheduler-profiles"
 import { occupancyDirect, occupancyDisplayReason, occupancyElapsed, occupancyMilliseconds, occupancyStatistic, occupancyNumber, occupancyPhase, occupancyRunning, occupancyRequestHref } from "@/lib/dispatch-occupancy"
 

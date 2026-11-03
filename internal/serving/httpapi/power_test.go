@@ -13,6 +13,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -53,7 +54,7 @@ func TestOperatingPowerRequiresReviewedReadAndExplicitInterval(t *testing.T) {
 				}
 				return true, &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: scenario.name != "denied"}}, nil
 			})
-			observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
+			observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -68,22 +69,22 @@ func TestOperatingPowerRequiresReviewedReadAndExplicitInterval(t *testing.T) {
 			source := metricobserver.SourceIdentity{Kind: "edge-metrics", Endpoint: "http://meter/metrics", Metric: "wall_watts"}
 			power := metricobserver.Result{Source: source, StartedAt: from, EndedAt: to, Samples: []metricobserver.Sample{{ObservedAt: from, Watts: 0}, {ObservedAt: to, Watts: 0}}}
 			policy := powerwindow.Policy{MaximumGap: time.Second, MinimumCoverage: 1}
-			if err := observationLog.SchedulerRecord(serving.SchedulerObservation{At: to, Node: &node, Meter: "wall", PowerScope: "node-exclusive-wall", Power: &power, PowerCoverage: &policy}); err != nil {
+			if err := observationLog.SchedulerRecord(observation.SchedulerObservation{At: to, Node: &node, Meter: "wall", PowerScope: "node-exclusive-wall", Power: &power, PowerCoverage: &policy}); err != nil {
 				t.Fatal(err)
 			}
 			snapshot := serving.SchedulerSnapshot{At: from}
-			if err := observationLog.SchedulerRecord(serving.SchedulerObservation{At: from, Snapshot: &snapshot}); err != nil {
+			if err := observationLog.SchedulerRecord(observation.SchedulerObservation{At: from, Snapshot: &snapshot}); err != nil {
 				t.Fatal(err)
 			}
 			calls := 0
-			meters := []serving.OperatingPowerMeter{{Node: node, Meter: "wall", Scope: "node-exclusive-wall", Source: source}}
+			meters := []observation.OperatingPowerMeter{{Node: node, Meter: "wall", Scope: "node-exclusive-wall", Source: source}}
 			handler := &Handler{authorizer: &servingkube.Authorizer{Client: client}, config: HandlerConfig{
 				MaxQueryEvents: 10,
-				OperatingPower: func(ctx context.Context, from, to time.Time, limit int) (serving.OperatingPowerWindow, error) {
+				OperatingPower: func(ctx context.Context, from, to time.Time, limit int) (observation.OperatingPowerWindow, error) {
 					calls++
 					return observationLog.OperatingPower(ctx, from, to, meters, limit)
 				},
-				OperatingPowerSeries: func(ctx context.Context, from, to time.Time, bucket time.Duration, limit int) (serving.OperatingPowerSeries, error) {
+				OperatingPowerSeries: func(ctx context.Context, from, to time.Time, bucket time.Duration, limit int) (observation.OperatingPowerSeries, error) {
 					calls++
 					return observationLog.OperatingPowerSeries(ctx, from, to, bucket, meters, limit)
 				},
@@ -113,7 +114,7 @@ func TestOperatingPowerRequiresReviewedReadAndExplicitInterval(t *testing.T) {
 				assertPowerSeriesResponse(t, response.Body.Bytes(), from, to)
 				return
 			}
-			var got serving.OperatingPowerWindow
+			var got observation.OperatingPowerWindow
 			if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
 				t.Fatal(err)
 			}
@@ -126,7 +127,7 @@ func TestOperatingPowerRequiresReviewedReadAndExplicitInterval(t *testing.T) {
 
 func assertPowerSeriesResponse(t *testing.T, raw []byte, from, to time.Time) {
 	t.Helper()
-	var got serving.OperatingPowerSeries
+	var got observation.OperatingPowerSeries
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +138,7 @@ func assertPowerSeriesResponse(t *testing.T, raw []byte, from, to time.Time) {
 
 func assertPowerColumnsResponse(t *testing.T, raw []byte, from, to time.Time) {
 	t.Helper()
-	var got serving.OperatingPowerColumns
+	var got observation.OperatingPowerColumns
 	if err := json.Unmarshal(raw, &got); err != nil || got.Format != powerColumnsFormat ||
 		!got.From.Equal(from) || !got.To.Equal(to) || got.BucketNanos != time.Second ||
 		len(got.Nodes.Node) == 0 || *got.Nodes.ObservedSamples[0][0] != 1 {

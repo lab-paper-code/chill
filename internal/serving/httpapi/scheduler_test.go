@@ -25,6 +25,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	core "k8s.io/api/core/v1"
@@ -77,7 +78,7 @@ func (a settingsArchive) PutImmutable(
 }
 
 func settingsServiceForTest(
-	t *testing.T, kube kubernetes.Interface, observationLog *serving.ObservationLog, settings serving.SchedulerSettings,
+	t *testing.T, kube kubernetes.Interface, observationLog *observation.ObservationLog, settings serving.SchedulerSettings,
 	refreshFailure, completionAppendFailure bool,
 ) (*application.SchedulerService, *serving.Runtime, *atomic.Int32) {
 	t.Helper()
@@ -268,7 +269,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 				}
 				return false, nil, nil
 			})
-			observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
+			observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -355,20 +356,20 @@ func assertSchedulerSettingsUnapplied(
 }
 
 func assertSchedulerSettingsRefreshFailed(
-	t *testing.T, observationLog *serving.ObservationLog, controller *servingkube.SchedulerController, refreshes int,
+	t *testing.T, observationLog *observation.ObservationLog, controller *servingkube.SchedulerController, refreshes int,
 ) {
 	t.Helper()
 	if refreshes != 1 || len(controller.Settings().AutonomousWorkloads) != 0 {
 		t.Fatal("post-persistence refresh failure enabled the previously accepted catalog")
 	}
-	records, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), time.Now().Add(-time.Minute), time.Now().Add(time.Second), 10, 0, serving.SchedulerObservationSelection{})
+	records, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), time.Now().Add(-time.Minute), time.Now().Add(time.Second), 10, 0, observation.SchedulerObservationSelection{})
 	if err != nil || len(records) != 2 || records[1].Settings.AppliedAt != nil || records[1].Settings.Error == "" {
 		t.Fatalf("refresh failure audit claimed application: %+v %v", records, err)
 	}
 }
 
 func assertSchedulerSettingsAudit(t *testing.T, persisted *core.ConfigMap, response []byte,
-	observationLog *serving.ObservationLog, before, after serving.SchedulerSettings,
+	observationLog *observation.ObservationLog, before, after serving.SchedulerSettings,
 ) {
 	t.Helper()
 	var saved struct {
@@ -380,7 +381,7 @@ func assertSchedulerSettingsAudit(t *testing.T, persisted *core.ConfigMap, respo
 	if !reflect.DeepEqual(saved.Reserved, map[string]serving.SchedulerAllocation{"node": {MemoryBytes: 1024}}) {
 		t.Fatal("operator configuration lost")
 	}
-	var applied serving.SchedulerSettingsChange
+	var applied observation.SchedulerSettingsChange
 	if err := json.Unmarshal(response, &applied); err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +389,7 @@ func assertSchedulerSettingsAudit(t *testing.T, persisted *core.ConfigMap, respo
 		!reflect.DeepEqual(applied.Before, before) || !reflect.DeepEqual(applied.After, after) || applied.AppliedAt == nil {
 		t.Fatalf("missing actual audit result: %+v", applied)
 	}
-	records, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), applied.ValidatedAt.Add(-time.Second), time.Now().Add(time.Second), 10, 0, serving.SchedulerObservationSelection{})
+	records, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), applied.ValidatedAt.Add(-time.Second), time.Now().Add(time.Second), 10, 0, observation.SchedulerObservationSelection{})
 	if err != nil || len(records) != 2 || records[0].Settings.AppliedAt != nil || records[1].Settings.AppliedAt == nil {
 		t.Fatalf("intent/application ledger=%+v error=%v", records, err)
 	}
@@ -410,9 +411,9 @@ func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *test
 	candidate := serving.SchedulerCandidate{ID: "selected", Instances: instances}
 	decision := serving.SchedulerDecision{Keep: candidate, Target: &candidate}
 	snapshot := serving.SchedulerSnapshot{Instances: instances, Options: []serving.SchedulerOption{{Instance: instances[0]}}, Reservations: []serving.SchedulerReservation{{Owner: candidate.ID, Target: &candidate}}}
-	event := serving.SchedulerObservation{At: at, Decision: &decision, Snapshot: &snapshot}
+	event := observation.SchedulerObservation{At: at, Decision: &decision, Snapshot: &snapshot}
 	evidence := newSchedulerReadEvidence()
-	projected := evidence.observations([]serving.SchedulerObservation{event})
+	projected := evidence.observations([]observation.SchedulerObservation{event})
 	got := projected[0].Decision.Target.Instances
 	if !reflect.DeepEqual(got[0].Reasons, instances[0].Reasons) ||
 		!reflect.DeepEqual(projected[0].Snapshot.Instances[0].Reasons, instances[0].Reasons) {
@@ -484,7 +485,7 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 		updates++
 		return false, nil, nil
 	})
-	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
+	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -588,7 +589,7 @@ func TestSchedulerCompactQueryRejectsAmbiguousViews(t *testing.T) {
 }
 
 func TestPoolsShowMeasurementNodeAndWorkloadActivePool(t *testing.T) {
-	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
+	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -669,7 +670,7 @@ func TestSchedulerSettingsETagPreconditions(t *testing.T) {
 		}
 		return true, updated, nil
 	})
-	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
+	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()},
 	})
 	if err != nil {
@@ -753,7 +754,7 @@ func assertSettingsResponseFrozen(t *testing.T, handler *Handler, service *appli
 	var responseVersion, laterVersion string
 	handler.config.ChangeSchedulerSettings = func(ctx context.Context, input application.SettingsInput,
 		version string, valid bool, username, uid string,
-	) (serving.SchedulerSettingsChange, string, error) {
+	) (observation.SchedulerSettingsChange, string, error) {
 		change, version, err := service.ChangeSchedulerSettings(ctx, input, version, valid, username, uid)
 		if err != nil {
 			return change, version, err
@@ -768,7 +769,7 @@ func assertSettingsResponseFrozen(t *testing.T, handler *Handler, service *appli
 		return change, version, err
 	}
 	frozen := request(http.MethodPut, latestETag)
-	var change serving.SchedulerSettingsChange
+	var change observation.SchedulerSettingsChange
 	if err := json.Unmarshal(frozen.Body.Bytes(), &change); err != nil {
 		t.Fatal(err)
 	}

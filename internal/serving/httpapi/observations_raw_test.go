@@ -17,6 +17,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -52,7 +53,7 @@ func (a *rawHTTPArchive) Open(context.Context, evidencestore.ObjectIdentity) (io
 func rawHTTPHandler(t *testing.T, archive *rawHTTPArchive, allowed bool) *Handler {
 	t.Helper()
 	archive.settingsArchive.directory = t.TempDir()
-	log, err := serving.NewObservationLog(serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: archive})
+	log, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: archive})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,11 +204,11 @@ func TestSchedulerHistorySelectionQueries(t *testing.T) {
 	h := rawHTTPHandler(t, &rawHTTPArchive{}, true)
 	from := time.Now().UTC().Add(-time.Second)
 	to := from.Add(time.Minute)
-	for _, event := range []serving.SchedulerObservation{
-		{At: from.Add(3 * time.Second), Action: &serving.SchedulerActionObservation{ID: "new", Expected: json.RawMessage(`{"workloadUID":"w"}`)}},
+	for _, event := range []observation.SchedulerObservation{
+		{At: from.Add(3 * time.Second), Action: &observation.SchedulerActionObservation{ID: "new", Expected: json.RawMessage(`{"workloadUID":"w"}`)}},
 		{At: from, Snapshot: &serving.SchedulerSnapshot{Workloads: []*serving.Definition{{UID: "w", Generation: 1}}}},
 		{At: from.Add(time.Second), Decision: &serving.SchedulerDecision{Status: "old", Workloads: []serving.SchedulerWorkloadState{{UID: "w"}}}},
-		{At: from.Add(4 * time.Second), Action: &serving.SchedulerActionObservation{ID: "other", Expected: json.RawMessage(`{"workloadUID":"other"}`)}},
+		{At: from.Add(4 * time.Second), Action: &observation.SchedulerActionObservation{ID: "other", Expected: json.RawMessage(`{"workloadUID":"other"}`)}},
 	} {
 		if err := h.observationLog.SchedulerRecord(event); err != nil {
 			t.Fatal(err)
@@ -219,7 +220,7 @@ func TestSchedulerHistorySelectionQueries(t *testing.T) {
 			path := base + "&limit=1&order=desc&filter=decision-action&uid=w&cursor=" + strconv.Itoa(cursor) + view
 			response := rawHTTPRequest(h, path)
 			var result struct {
-				Events     []serving.SchedulerObservation
+				Events     []observation.SchedulerObservation
 				NextCursor string
 			}
 			if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || response.Code != http.StatusOK ||
@@ -248,7 +249,7 @@ func TestSchedulerHistorySummaryBoundsPayloadAndPreservesRecordIdentity(t *testi
 	from := time.Now().UTC()
 	to := from.Add(time.Minute)
 	for i := range 3 {
-		if err := h.observationLog.SchedulerRecord(serving.SchedulerObservation{
+		if err := h.observationLog.SchedulerRecord(observation.SchedulerObservation{
 			At:       from.Add(time.Duration(i) * time.Second),
 			Decision: &serving.SchedulerDecision{At: from, Status: "Keep"},
 			Snapshot: &serving.SchedulerSnapshot{At: from, Reasons: []string{strings.Repeat("large retained evidence", 30000)}},

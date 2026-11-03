@@ -471,3 +471,59 @@ publication 검증은 기존 Python self-check/recorded-data 검사와 Go opaque
 기존 `demo.py --self-check`가 읽는 E5 정본 표의 현재 헤더(`시간/부하`)에 맞춰
 `tables.py`의 선택자도 수정했다. 이는 보고 표 탐색 회귀 수정이며 측정/게시 계약 변경이 아니다.
 raw export·대시보드 과거 조회는 §17/ADR0030대로 evaluation 측정 창 밖에서 수행한다.
+
+## 19. Observation ownership boundary (2026-11-04)
+
+`internal/serving/observation` owns the observation-directory process lock,
+request/catalog append and restoration, capture/readback, archive publication
+and retention, query projection, and operating-power reduction.
+`AcquireObservationOwnership` keeps the same file, flock protocol, wait logging,
+and lifetime: the server retains the owner file until shutdown. The existing
+append, request, capture, and publication locks moved with the concrete log;
+there is no second lock, ledger, or writer.
+
+Runtime now depends on the inward `serving.RuntimeObservation` contract:
+`RuntimeFacts`, `DefinitionRecord`, `RequestEvent`, `RequestClosed`, and
+`RecordNativeSupplement`. Each call remains synchronous at the original call
+site; restoration still consumes the same pending rows once. The interface is
+required for the dependency direction: observation storage consumes serving's
+domain records, while runtime must not import that storage implementation.
+`observation.ObservationLog` implements that contract directly. All concrete
+constructors and storage consumers import observation; serving does not import
+observation, and no compatibility aliases or forwarding implementation remain.
+
+The inward domain retains `Definition`, `RequestEvent`, `RequestRow`,
+`ObservationCoverage`/source/gap, and the scheduler records already consumed
+by planning and runtime. The custom `SchedulerDownState.UnmarshalJSON` remains
+with its domain type, with the same maximum-demand evidence requirements.
+Storage-only result, catalog, scheduler-observation envelope, cluster/resource,
+archive, raw-query, and power-query types live in observation.
+
+The new boundary requires exports for row folding/acceptance and its three
+storage-used transient fields, coverage-gap calculation, the shared occupancy row kinds,
+interval/time comparison, selected scheduler occupancy, and the existing
+diagnostic lock. Transient fields have `json:"-"`, preserving their former
+private-field exclusion; the existing diagnostic lock instance, ID, scopes,
+and metadata format are unchanged. No production export exists just for tests.
+Storage names the unchanged `completed`/`incomplete` wire values locally;
+private runtime/planner enum callers are neither moved nor compatibility-aliased.
+
+The observation architecture component depends only on serving-core,
+evidence-core, metric-core, and power-window; application, HTTP, and Kubernetes
+adapters may consume it. Serving-core no longer depends on power-window.
+
+Runtime whitebox tests use a constructor hook declared only in `_test.go`;
+external `serving_test` registers the real filesystem-backed observation log.
+An absent hook fails explicitly. A test-owned synchronous gate checks that
+runtime state and reservations remain available while persistence is blocked,
+and the storage-owned concurrency test independently blocks the actual writer
+lock and checks that folded assignments do not hold the request lock.
+Both checks retain assignment-before-native-execution and final-row ordering.
+Filesystem fault tests create real minute-path conflicts, not a fake recorder.
+Cross-owner restart checks use public runtime state/inventory; capture lock
+checks decode the public diagnostic event stream instead of private buffers.
+Historical-hour capacity/readback checks moved with storage and keep their
+existing private clock there; no production clock option was introduced.
+The bridge profile-projection invariant is exercised externally against the
+actual persisted scheduler line, with the original live-profile check intact.
+

@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 func (h *Handler) resources(w http.ResponseWriter, r *http.Request) {
@@ -11,7 +12,7 @@ func (h *Handler) resources(w http.ResponseWriter, r *http.Request) {
 		sendError(w, err)
 		return
 	}
-	var batch serving.ResourceBatch
+	var batch observation.ResourceBatch
 	if err := h.decode(w, r, &batch); err != nil {
 		sendError(w, err)
 		return
@@ -26,9 +27,9 @@ func (h *Handler) resources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if targets == nil {
-		targets = []serving.ResourceTarget{}
+		targets = []observation.ResourceTarget{}
 	}
 	sendJSON(w, http.StatusOK, struct {
-		Targets []serving.ResourceTarget `json:"targets"`
+		Targets []observation.ResourceTarget `json:"targets"`
 	}{targets})
 }

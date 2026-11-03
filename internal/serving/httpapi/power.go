@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 const powerColumnsFormat = "columns"
@@ -37,7 +38,7 @@ func (h *Handler) operatingPower(w http.ResponseWriter, r *http.Request) {
 			sendError(w, &serving.Error{Code: "InvalidQuery", Message: "bucket must be a Go duration between 1s and 1h"})
 			return
 		}
-		if _, err := serving.PowerBucketCount(from, to, bucket); err != nil {
+		if _, err := observation.PowerBucketCount(from, to, bucket); err != nil {
 			sendError(w, err)
 			return
 		}

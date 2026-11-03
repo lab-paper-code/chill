@@ -17,6 +17,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 type nopWriter struct{}
@@ -30,8 +31,8 @@ func (nopWriter) PutImmutable(
 // The tool and the ChillServer integrate the same records to the same joules.
 func TestPowerMatchesServerOperatingPower(t *testing.T) {
 	directory := t.TempDir()
-	config := serving.ObservationLogConfig{Directory: directory, Store: "evidence", Retention: 2 * time.Hour, Writer: nopWriter{}}
-	log, err := serving.NewObservationLog(config)
+	config := observation.ObservationLogConfig{Directory: directory, Store: "evidence", Retention: 2 * time.Hour, Writer: nopWriter{}}
+	log, err := observation.NewObservationLog(config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +44,7 @@ func TestPowerMatchesServerOperatingPower(t *testing.T) {
 		Endpoint: "http://meter:18766/prometheus?hostname=node", Metric: "wall_watts", MetricLabels: map[string]string{"hostname": "node"}}
 	instance := serving.SchedulerInstance{ID: "i", Node: node, Ready: true, WorkloadUID: "w"}
 	snapshot := serving.SchedulerSnapshot{At: from.Add(-time.Second), Instances: []serving.SchedulerInstance{instance}}
-	if err := log.SchedulerRecord(serving.SchedulerObservation{At: snapshot.At, Snapshot: &snapshot}); err != nil {
+	if err := log.SchedulerRecord(observation.SchedulerObservation{At: snapshot.At, Snapshot: &snapshot}); err != nil {
 		t.Fatal(err)
 	}
 	policy := powerwindow.Policy{MaximumBoundaryDistance: time.Second, MinimumCoverage: 1, MaximumGap: 2 * time.Second}
@@ -54,7 +55,7 @@ func TestPowerMatchesServerOperatingPower(t *testing.T) {
 			at := start.Add(time.Duration(s) * time.Second)
 			power.Samples = append(power.Samples, metricobserver.Sample{ObservedAt: at, Watts: 10 + at.Sub(from).Seconds()})
 		}
-		event := serving.SchedulerObservation{
+		event := observation.SchedulerObservation{
 			At: power.EndedAt, Power: power, Node: &node, Meter: "wall",
 			PowerScope: "node-exclusive-wall", PowerCoverage: &policy,
 		}
@@ -101,7 +102,7 @@ func TestPowerMatchesServerOperatingPower(t *testing.T) {
 	}
 }
 
-func derivedTestMeters(t *testing.T, node serving.NodeReference, source metricobserver.SourceIdentity) []serving.OperatingPowerMeter {
+func derivedTestMeters(t *testing.T, node serving.NodeReference, source metricobserver.SourceIdentity) []observation.OperatingPowerMeter {
 	t.Helper()
 	// Accepted settings meters and actual state references name the same meter set.
 	files := t.TempDir()

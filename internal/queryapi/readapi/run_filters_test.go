@@ -34,7 +34,7 @@ func TestRunFiltersApplyToEntireSnapshotBeforePagination(t *testing.T) {
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/ns/profiling-runs?limit=1&"+url.Values{key: {value}}.Encode(), nil))
 		var got struct {
 			queryapi.ProfilingRunsView
-			Page queryPage `json:"page"`
+			Page Page `json:"page"`
 		}
 		if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
 			t.Fatal(err)
@@ -94,7 +94,7 @@ func TestRunSortPrecedesPaginationAndRejectsInvalidQueries(t *testing.T) {
 			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/ns/profiling-runs?sort="+key+"&order="+order+"&limit=1&offset=1", nil))
 			var got struct {
 				queryapi.ProfilingRunsView
-				Page queryPage `json:"page"`
+				Page Page `json:"page"`
 			}
 			if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
 				t.Fatal(err)

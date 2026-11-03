@@ -8,6 +8,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/live"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 type observationEvent struct {
@@ -26,7 +27,7 @@ func (h *Handler) observationEvents(w http.ResponseWriter, r *http.Request) {
 		sendError(w, &serving.Error{Code: "InvalidQuery", Message: "invalid event query"})
 		return
 	}
-	var records []serving.RecordedEvent
+	var records []observation.RecordedEvent
 	var next string
 	var coverage *serving.ObservationCoverage
 	var from, to time.Time
@@ -99,7 +100,7 @@ func eventRangeQuery(query url.Values, maximum int) (time.Time, time.Time, int, 
 	if text := query.Get("limit"); text != "" {
 		limit, err = strconv.Atoi(text)
 	}
-	if fromErr != nil || toErr != nil || from.IsZero() || !from.Before(to) || to.Sub(from) > serving.EventObservationWindow || err != nil || limit <= 0 || limit > maximum {
+	if fromErr != nil || toErr != nil || from.IsZero() || !from.Before(to) || to.Sub(from) > observation.EventObservationWindow || err != nil || limit <= 0 || limit > maximum {
 		return from, to, 0, invalid
 	}
 	return from, to, limit, nil

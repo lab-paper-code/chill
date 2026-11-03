@@ -74,6 +74,7 @@ components:
   profiler-kube: { in: internal/profiling/profiler/kube }
   profiler-worker: { in: internal/profiling/profiler/worker }
   serving-core: { in: internal/serving }
+  serving-observation: { in: internal/serving/observation }
   serving-httpapi: { in: internal/serving/httpapi }
   serving-application: { in: internal/serving/application }
   serving-live: { in: internal/serving/live }
@@ -171,6 +172,7 @@ deps:
     mayDependOn:
       - api
       - batch-energy-optimization-core
+      - campaign-evidence
       - device-class
       - evidence-core
       - metric-core
@@ -334,6 +336,7 @@ deps:
     mayDependOn:
       - serving-core
       - serving-state
+      - serving-observation
       - serving-measurement
       - serving-kube
       - evidence-core
@@ -351,6 +354,7 @@ deps:
     mayDependOn:
       - serving-core
       - serving-state
+      - serving-observation
       - api
       - serving-kube
       - serving-live
@@ -381,6 +385,12 @@ deps:
       - evidence-core
       - profile-derivation
       - firstfloor
+      - metric-core
+
+  serving-observation:
+    mayDependOn:
+      - serving-core
+      - evidence-core
       - metric-core
       - power-window
 
@@ -422,6 +432,8 @@ deps:
       - profiling-run
       - serving-core
       - serving-state
+      - serving-observation
+      - serving-management
       - serving-firstfloor
       - firstfloor
       - evidence-kube

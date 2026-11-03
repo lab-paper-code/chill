@@ -27,6 +27,7 @@ import (
 	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -60,7 +61,7 @@ type SchedulerService struct {
 	execution                *serving.Runtime
 	observer                 *servingkube.Observer
 	objects                  *stores3.Store
-	observationLog           *serving.ObservationLog
+	observationLog           *observation.ObservationLog
 	live                     *Live
 	opts                     Options
 	GatewayRequestTimeout    time.Duration
@@ -210,10 +211,7 @@ func (o *SchedulerService) refreshLocked(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	occupancy, err := o.costs.OccupancySelections(costs.DispatchOccupancy, view.Profiles)
-	if err != nil {
-		return err
-	}
+	occupancy, skipped := o.costs.OccupancySelections(costs.DispatchOccupancy, view.Profiles)
 	sources := costs.Sources
 	sources = append(sources, "profiler-facts:"+factsVersion)
 	for _, meter := range config.Meters {
@@ -275,7 +273,7 @@ func (o *SchedulerService) refreshLocked(ctx context.Context) (err error) {
 	published := ProfilesView{
 		ConfigVersion: cm.ResourceVersion, CatalogView: view,
 		Preparations: make(map[string]servingstate.PrepareSpec, len(preparations)),
-		Occupancy:    occupancy,
+		Occupancy:    occupancy, OccupancySkipped: skipped,
 	}
 	for id, spec := range preparations {
 		spec.Instance.Profile = nil // the profile body is in Profiles
@@ -366,22 +364,22 @@ func (o *SchedulerService) SchedulerMeters() []servingkube.MeterDeclaration {
 
 func (o *SchedulerService) OperatingPower(
 	ctx context.Context, from, to time.Time, limit int,
-) (serving.OperatingPowerWindow, error) {
+) (observation.OperatingPowerWindow, error) {
 	return o.observationLog.OperatingPower(ctx, from, to, o.operatingPowerMeters(), limit)
 }
 
 func (o *SchedulerService) OperatingPowerSeries(
 	ctx context.Context, from, to time.Time, bucket time.Duration, limit int,
-) (serving.OperatingPowerSeries, error) {
+) (observation.OperatingPowerSeries, error) {
 	return o.observationLog.OperatingPowerSeries(ctx, from, to, bucket, o.operatingPowerMeters(), limit)
 }
 
-func (o *SchedulerService) operatingPowerMeters() []serving.OperatingPowerMeter {
+func (o *SchedulerService) operatingPowerMeters() []observation.OperatingPowerMeter {
 	// Capture one accepted configuration without waiting behind refresh or Tick.
 	config := o.configuration.Load()
-	meters := make([]serving.OperatingPowerMeter, len(config.Meters))
+	meters := make([]observation.OperatingPowerMeter, len(config.Meters))
 	for index, meter := range config.Meters {
-		meters[index] = serving.OperatingPowerMeter{
+		meters[index] = observation.OperatingPowerMeter{
 			Node: meter.Node, Meter: meter.ID, Scope: meter.Scope, Source: meter.Source,
 		}
 	}
@@ -391,7 +389,7 @@ func (o *SchedulerService) operatingPowerMeters() []serving.OperatingPowerMeter 
 func (o *SchedulerService) RecordDecision(
 	decision serving.SchedulerDecision, snapshot serving.SchedulerSnapshot,
 ) error {
-	if err := o.observationLog.SchedulerRecord(serving.SchedulerObservation{
+	if err := o.observationLog.SchedulerRecord(observation.SchedulerObservation{
 		At: decision.At, Decision: &decision, Snapshot: &snapshot,
 	}); err != nil {
 		return err
@@ -410,7 +408,7 @@ func (o *SchedulerService) RecordAction(result servingstate.OperationResult) err
 	if err != nil {
 		return err
 	}
-	event := serving.SchedulerActionObservation{
+	event := observation.SchedulerActionObservation{
 		ID: result.Operation.ID, Kind: result.Operation.Kind, Node: result.Operation.Node,
 		Instance: result.Operation.Instance, Phase: result.Status, StartedAt: result.StartedAt,
 		Expected: expected, Actual: actual, Error: result.Error,
@@ -420,7 +418,7 @@ func (o *SchedulerService) RecordAction(result servingstate.OperationResult) err
 		event.CompletedAt = &result.EndedAt
 	}
 	recordedAt := time.Now().UTC()
-	if err := o.observationLog.SchedulerRecord(serving.SchedulerObservation{
+	if err := o.observationLog.SchedulerRecord(observation.SchedulerObservation{
 		At: recordedAt, Action: &event,
 	}); err != nil {
 		return err
@@ -479,7 +477,7 @@ func (o *SchedulerService) restartPower(config SchedulerConfiguration) {
 				joules, coverageErr := powerwindow.Integrate(powerwindow.Window{
 					Start: result.StartedAt, End: result.EndedAt, Samples: samples,
 				}, coverage)
-				event := serving.SchedulerObservation{
+				event := observation.SchedulerObservation{
 					At: result.EndedAt, Power: &result, Node: &meter.Node, Meter: meter.ID,
 					PowerScope: meter.Scope, PowerSampling: &sampling, PowerCoverage: &coverage,
 				}

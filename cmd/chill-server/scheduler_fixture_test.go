@@ -19,6 +19,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving/application"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -72,7 +73,7 @@ func schedulerTestConfiguration() application.SchedulerConfiguration {
 func schedulerTestDependencies(t *testing.T, config application.SchedulerConfiguration) application.Dependencies {
 	t.Helper()
 	ctx := context.Background()
-	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
+	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
 		Writer: schedulerPowerArchive{directory: t.TempDir()},
 	})

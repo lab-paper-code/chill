@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/serving"
+	observationstore "github.com/lab-paper-code/chill/internal/serving/observation"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -32,17 +32,17 @@ func clusterTime(t metav1.Time) *time.Time {
 	return &at
 }
 
-func clusterTermination(t *corev1.ContainerStateTerminated) *serving.ClusterTermination {
+func clusterTermination(t *corev1.ContainerStateTerminated) *observationstore.ClusterTermination {
 	if t == nil {
 		return nil
 	}
-	return &serving.ClusterTermination{Reason: t.Reason, ExitCode: t.ExitCode, StartedAt: clusterTime(t.StartedAt), FinishedAt: clusterTime(t.FinishedAt)}
+	return &observationstore.ClusterTermination{Reason: t.Reason, ExitCode: t.ExitCode, StartedAt: clusterTime(t.StartedAt), FinishedAt: clusterTime(t.FinishedAt)}
 }
 
-func clusterContainers(containers []corev1.Container, statuses []corev1.ContainerStatus) []serving.ClusterContainer {
-	result := make([]serving.ClusterContainer, 0, len(containers))
+func clusterContainers(containers []corev1.Container, statuses []corev1.ContainerStatus) []observationstore.ClusterContainer {
+	result := make([]observationstore.ClusterContainer, 0, len(containers))
 	for _, container := range containers {
-		row := serving.ClusterContainer{Name: container.Name}
+		row := observationstore.ClusterContainer{Name: container.Name}
 		for _, s := range statuses {
 			if s.Name != container.Name {
 				continue
@@ -60,8 +60,8 @@ func clusterContainers(containers []corev1.Container, statuses []corev1.Containe
 	return result
 }
 
-func clusterPod(p *corev1.Pod) serving.ClusterPod {
-	row := serving.ClusterPod{Namespace: p.Namespace, Name: p.Name, UID: string(p.UID), Node: p.Spec.NodeName, CreatedAt: clusterTime(p.CreationTimestamp), Phase: string(p.Status.Phase), InitContainers: clusterContainers(p.Spec.InitContainers, p.Status.InitContainerStatuses), Containers: clusterContainers(p.Spec.Containers, p.Status.ContainerStatuses)}
+func clusterPod(p *corev1.Pod) observationstore.ClusterPod {
+	row := observationstore.ClusterPod{Namespace: p.Namespace, Name: p.Name, UID: string(p.UID), Node: p.Spec.NodeName, CreatedAt: clusterTime(p.CreationTimestamp), Phase: string(p.Status.Phase), InitContainers: clusterContainers(p.Spec.InitContainers, p.Status.InitContainerStatuses), Containers: clusterContainers(p.Spec.Containers, p.Status.ContainerStatuses)}
 	if p.DeletionTimestamp != nil {
 		row.DeletedAt = clusterTime(*p.DeletionTimestamp)
 	}
@@ -110,13 +110,13 @@ func (o *Observer) observeClusterPod(p *corev1.Pod, event string) {
 	if kind != clusterEventDeleted && seen && reflect.DeepEqual(previous, row) {
 		return
 	}
-	observation := serving.ClusterObservation{Kind: "pod", At: time.Now().UTC(), Event: kind, Pod: &row}
+	observation := observationstore.ClusterObservation{Kind: "pod", At: time.Now().UTC(), Event: kind, Pod: &row}
 	if err := o.config.OnCluster(observation); err != nil {
 		ctrllog.Log.WithName("observer").Error(err, "record cluster Pod observation", "podUID", p.UID)
 		return
 	}
 	if o.clusterPods == nil {
-		o.clusterPods = map[types.UID]serving.ClusterPod{}
+		o.clusterPods = map[types.UID]observationstore.ClusterPod{}
 	}
 	if kind == clusterEventDeleted {
 		delete(o.clusterPods, p.UID)
@@ -136,7 +136,7 @@ func (o *Observer) recordIssueLocked(source string, at time.Time) {
 	if !active && !recorded || active && recorded && current.Reason == previous.Reason {
 		return
 	}
-	row := serving.ClusterObservation{Kind: "issue", At: at, Source: source, Event: "raised", Reason: current.Reason}
+	row := observationstore.ClusterObservation{Kind: "issue", At: at, Source: source, Event: "raised", Reason: current.Reason}
 	if recorded {
 		row.PreviousReason = previous.Reason
 		if active {

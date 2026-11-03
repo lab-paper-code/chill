@@ -186,9 +186,9 @@ func ResolveDispatchOccupancy(settings SchedulerSettings, occupancy []DispatchOc
 	return &o
 }
 
-// schedulerSelectedOccupancy records each exact cell actually used by a decision,
+// SchedulerSelectedOccupancy records each exact cell actually used by a decision,
 // including option-only pools, without mutating incoming evidence.
-func schedulerSelectedOccupancy(settings SchedulerSettings, snapshot SchedulerSnapshot) []DispatchOccupancy {
+func SchedulerSelectedOccupancy(settings SchedulerSettings, snapshot SchedulerSnapshot) []DispatchOccupancy {
 	if len(snapshot.Instances) == 0 && len(snapshot.Options) == 0 {
 		return slices.Clone(snapshot.DispatchOccupancy)
 	}

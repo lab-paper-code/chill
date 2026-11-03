@@ -10,7 +10,7 @@ import (
 func TestShutdownCannotReopenAdmission(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := newRuntimeTestLog(RuntimeTestObservationConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,14 +39,14 @@ func TestShutdownCannotReopenAdmission(t *testing.T) {
 
 func TestAssignmentPersistenceDoesNotHoldRuntimeOrRequestState(t *testing.T) {
 	r, instance, _ := routingRuntime(t, map[string]int32{"w1": 1})
-	log := r.config.ObservationLog
+	log := r.config.ObservationLog.(*runtimeTestLog)
 	_, snapshot := schedulerFixture()
 	definition := snapshot.Workloads[0]
 	executed := make(chan Dispatch, 1)
 	r.mu.Lock()
 	r.instances[instance.ID].Execute = func(_ context.Context, dispatch Dispatch) (BackendResult, error) {
 		rows := readRequestRows(t, log.config.Directory)
-		if len(rows) != 1 || rows[0].Kind != requestRowAssigned || rows[0].RequestID != dispatch.RequestID {
+		if len(rows) != 1 || rows[0].Kind != RequestRowAssigned || rows[0].RequestID != dispatch.RequestID {
 			t.Errorf("native execution lacks its durable assignment: %+v", rows)
 		}
 		executed <- dispatch
@@ -120,14 +120,14 @@ func TestAssignmentPersistenceDoesNotHoldRuntimeOrRequestState(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows := readRequestRows(t, log.config.Directory)
-	if len(rows) != 2 || rows[0].Kind != requestRowAssigned || rows[1].Kind != requestRowFinal {
+	if len(rows) != 2 || rows[0].Kind != RequestRowAssigned || rows[1].Kind != RequestRowFinal {
 		t.Fatalf("assignment/final durability changed: %+v", rows)
 	}
 }
 
 func TestFinalPersistenceDoesNotHoldRuntimeOrRequestState(t *testing.T) {
 	r, _, _ := routingRuntime(t, map[string]int32{"w1": 1})
-	log := r.config.ObservationLog
+	log := r.config.ObservationLog.(*runtimeTestLog)
 	_, snapshot := schedulerFixture()
 	definition := snapshot.Workloads[0]
 	receipt, err := r.Receive(definition.Name, time.Now())
@@ -186,14 +186,14 @@ func TestFinalPersistenceDoesNotHoldRuntimeOrRequestState(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows := readRequestRows(t, log.config.Directory)
-	if len(rows) != 2 || rows[1].Kind != requestRowFinal {
+	if len(rows) != 2 || rows[1].Kind != RequestRowFinal {
 		t.Fatalf("final append lost after releasing Runtime.mu: %+v", rows)
 	}
 }
 
 func TestCanceledPendingAssignmentNeverExecutes(t *testing.T) {
 	r, instance, _ := routingRuntime(t, map[string]int32{"w1": 1})
-	log := r.config.ObservationLog
+	log := r.config.ObservationLog.(*runtimeTestLog)
 	_, snapshot := schedulerFixture()
 	definition := snapshot.Workloads[0]
 	executed := make(chan struct{}, 1)

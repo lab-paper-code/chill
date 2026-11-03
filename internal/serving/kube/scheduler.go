@@ -15,6 +15,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -79,7 +80,7 @@ type SchedulerController struct {
 	operations *Operations
 	// measurement acts only on measurement POOL Nodes: operation measurements and hand-back.
 	measurement           *Operations
-	observationLog        *serving.ObservationLog
+	observationLog        *observation.ObservationLog
 	capacity              *serving.CapacityTable
 	config                SchedulerControllerConfig
 	bootstrapStartedAt    time.Time
@@ -103,7 +104,7 @@ type SchedulerController struct {
 
 // NewSchedulerController configures control without taking ownership of routing.
 // The composition root freezes routing after restoring the actual baseline.
-func NewSchedulerController(cluster *ClusterState, store *Store, kube kubernetes.Interface, runtime *serving.Runtime, observer *Observer, operations *Operations, observationLog *serving.ObservationLog, config SchedulerControllerConfig) (*SchedulerController, error) {
+func NewSchedulerController(cluster *ClusterState, store *Store, kube kubernetes.Interface, runtime *serving.Runtime, observer *Observer, operations *Operations, observationLog *observation.ObservationLog, config SchedulerControllerConfig) (*SchedulerController, error) {
 	if cluster == nil || store == nil || kube == nil || runtime == nil || observer == nil || operations == nil || observationLog == nil {
 		return nil, errors.New("scheduler requires actual Kubernetes, runtime, observer, operation and observation log owners")
 	}

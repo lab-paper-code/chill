@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -86,14 +87,14 @@ func runResourceAgent(ctx context.Context, kube kubernetes.Interface, opts optio
 		return err
 	}
 	identity := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-	send := func(samples []serving.ResourceSample) ([]serving.ResourceTarget, error) {
-		return sendResourceBatch(ctx, client, config, serving.ResourceBatch{Node: identity, Samples: samples})
+	send := func(samples []observation.ResourceSample) ([]observation.ResourceTarget, error) {
+		return sendResourceBatch(ctx, client, config, observation.ResourceBatch{Node: identity, Samples: samples})
 	}
-	targets, err := send([]serving.ResourceSample{})
+	targets, err := send([]observation.ResourceSample{})
 	if err != nil {
 		log.Printf("resource handshake failed: %v", err)
 	}
-	samples := make([]serving.ResourceSample, 0, int(batchInterval/sampleInterval)+1)
+	samples := make([]observation.ResourceSample, 0, int(batchInterval/sampleInterval)+1)
 	sampleTick, batchTick := time.NewTicker(sampleInterval), time.NewTicker(batchInterval)
 	defer sampleTick.Stop()
 	defer batchTick.Stop()
@@ -118,10 +119,10 @@ func runResourceAgent(ctx context.Context, kube kubernetes.Interface, opts optio
 	}
 }
 func sendResourceBatch(
-	ctx context.Context, client *http.Client, config resourceAgentConfig, batch serving.ResourceBatch,
-) ([]serving.ResourceTarget, error) {
+	ctx context.Context, client *http.Client, config resourceAgentConfig, batch observation.ResourceBatch,
+) ([]observation.ResourceTarget, error) {
 	if batch.Samples == nil {
-		batch.Samples = []serving.ResourceSample{}
+		batch.Samples = []observation.ResourceSample{}
 	}
 	body, err := json.Marshal(batch)
 	if err != nil {
@@ -153,13 +154,13 @@ func sendResourceBatch(
 		return nil, fmt.Errorf("resources reply exceeds bound")
 	}
 	var reply struct {
-		Targets []serving.ResourceTarget `json:"targets"`
+		Targets []observation.ResourceTarget `json:"targets"`
 	}
 	if err := json.Unmarshal(raw, &reply); err != nil {
 		return nil, err
 	}
 	if reply.Targets == nil {
-		reply.Targets = []serving.ResourceTarget{}
+		reply.Targets = []observation.ResourceTarget{}
 	}
 	return reply.Targets, nil
 }

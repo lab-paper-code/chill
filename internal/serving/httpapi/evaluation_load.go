@@ -9,6 +9,7 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -165,7 +166,7 @@ func (h *Handler) evaluationLoads(w http.ResponseWriter, r *http.Request) {
 			if name == "" {
 				name = request.Name
 			}
-			var audit *serving.SchedulerActionObservation
+			var audit *observation.SchedulerActionObservation
 			audit, err = h.beginEvaluationAudit(r, name, uid)
 			if err == nil {
 				actor, _ := servingkube.PrincipalFromContext(r.Context()).Actor()

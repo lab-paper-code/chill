@@ -1,0 +1,252 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+import { requestInputs } from "../lib/measurement-request.ts"
+import type { MeasurementPlan } from "../lib/read-types.ts"
+import { readFileSync } from "node:fs"
+import { createRequire } from "node:module"
+import { runInNewContext } from "node:vm"
+import { createElement } from "react"
+import type { ComponentType, ReactNode } from "react"
+import { renderToStaticMarkup } from "react-dom/server"
+import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
+import * as requestHelpers from "../lib/measurement-request.ts"
+import * as coverageHelpers from "../lib/measurement-coverage.ts"
+import * as measurementHelpers from "../lib/measurements.ts"
+import * as measurementSummary from "../lib/measurement-summary.ts"
+
+const condition={model:"model & one",deviceClass:"device",node:"node",path:"cuda",powerMode:"MAXN"}
+const plan:MeasurementPlan={metadata:{name:"source",namespace:"ns",uid:"uid",resourceVersion:"1",creationTimestamp:"2026-10-30T00:00:00Z"},spec:{state:{candidate:{modelSpec:condition.model,deviceClass:condition.deviceClass,preprocessor:"pre",executionPath:condition.path,powerMode:condition.powerMode},targetNode:condition.node},activeProtocol:{warmupIterations:5,durationSeconds:10,dataset:"data",metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},trialsPerBatch:3,retryLimit:1}}
+
+function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0,bodies:unknown[]=[],compatibility:Parameters<typeof coverageHelpers.serverCompatibility>[1]=[],mutations:Record<string,unknown>[]=[] ,patch?:Record<string,unknown>,unknown=false) {
+  const source=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
+  const compiled=transpileModule(`${source}\nexport { Funnel };`,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
+  const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
+  let mutationIndex=0,stateIndex=0
+  const modules:Record<string,unknown>={
+    "react":{...require("react"),useState:(initial:unknown)=>{const index=stateIndex++,state=require("react").useState(initial);if(index===3&&unknown)return [true,state[1]];if(patch&&state[0]&&typeof state[0]==="object"&&"workload" in state[0])return [requestHelpers.fillDefaults({...state[0],...patch} as requestHelpers.Draft,props.context as requestHelpers.Context),state[1]];return initial===""?[error,state[1]]:initial===0?[stage,state[1]]:state}},
+    "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
+    "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams(query)},
+    "@/lib/client":{useChillMutation:()=>mutations[mutationIndex++]??({isPending:false}),isCoverageWarming:()=>false},
+    "@/components/read-region":{SourceJSON:({inline,value}:{inline?:boolean;value:unknown})=>{if(inline)bodies.push(value);return null}},
+    "@/components/screen":{Screen:container,Rows:container,RowDialog:()=>null},
+    "@/features/read-pages":{preflightConclusion:()=>"형식 검사 통과",PreflightAnswer:()=>null},
+    "@/features/resources":{powerModeText:()=>"고정"},
+    "@/components/ui/button":{Button:({children,disabled,"aria-current":current}:{children?:ReactNode;disabled?:boolean;"aria-current"?:"step"})=>createElement("button",{disabled,"aria-current":current},children)},
+    "@/components/ui/input":{Input:()=>null},
+    "@/lib/measurement-request":requestHelpers,
+    "@/lib/scheduler":{},
+    "@/lib/measurement-summary":measurementSummary,
+    "@/lib/measurement-coverage":coverageHelpers,
+    "@/hooks/use-measurement-data":{useModelCompatibility:()=>({data:compatibility})},
+    "@/components/measurement-navigation":{MeasurementNavigation:()=>null},
+    "@/features/dispatch-occupancy-request":{MeasurementKindSelector:({disabled}:{disabled?:boolean})=>createElement("select",{"aria-label":"측정 종류",disabled},createElement("option",{value:"dispatch-occupancy"},"d · 분배 점유시간"))},
+    "@/lib/measurements":measurementHelpers,
+  }
+  const submission:Record<string,unknown>={}
+  const submissionCode=transpileModule(readFileSync(new URL("../hooks/use-measurement-submission.ts",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS}}).outputText
+  runInNewContext(submissionCode,{exports:submission,require:(name:string)=>name in modules?modules[name]:require(name),URLSearchParams})
+  modules["@/hooks/use-measurement-submission"]=submission
+  runInNewContext(compiled,{exports,require:(name:string)=>name in modules?modules[name]:require(name),URLSearchParams})
+  const Funnel=exports.Funnel as ComponentType<Record<string,unknown>>
+  return renderToStaticMarkup(createElement(Funnel,{
+    namespace:"ns",from:null,checking:false,refetchPlans:async()=>({error:null}),
+    context:{models:[],workloads:[],classes:[],plans:[],preprocessors:[],datasets:[],profiles:[]},
+    prefill:{active:false,values:{},errors:[],returnTo:"/measurements",node:""},
+    ...props,
+  }))
+}
+
+test("request Funnel renders the undeclared-batch branch without a stale condition variable",()=>{
+  const html=renderRequest()
+  assert.match(html,/>배치 \(건\)</)
+  assert.doesNotMatch(html,/NaN/)
+  assert.match(html,/<th>예열 \(회\)<\/th>/)
+  assert.doesNotMatch(html,/CPU 개수|CPU 코어|measurement-affinity/)
+  assert.match(html,/<td>—<\/td>/)
+  assert.match(html,/<details id="measurement-conditions" open=""/)
+  assert.match(html,/href="\/datasets\/new"/)
+})
+
+test("unmeasured request leaves a surplus-field-only dataset unselected and required",()=>{
+  const context={models:[{metadata:{name:"opaque-id",uid:"model"},spec:{artifacts:[],executionPaths:[{name:"cpu",artifact:"onnx",runtime:{family:"firstfloor",backend:"ort-cpu"}}]}}],workloads:[],classes:[],plans:[],profiles:[],preprocessors:[{metadata:{name:"image-pre",uid:"pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:"opaque-id",artifact:"onnx"}}]}}],datasets:[{metadata:{name:"vqa",uid:"data"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512},{name:"question",format:"UTF8",maxBytes:512}]}}]}
+  const html=renderRequest({context,prefill:{active:true,values:{model:"opaque-id",path:"cpu",deviceClass:"",powerMode:""},node:"",errors:[],returnTo:"/measurements"}})
+  assert.match(html,/데이터셋<select required=""/)
+  assert.match(html,/<option value="" selected="">데이터셋 선택<\/option>/)
+  assert.doesNotMatch(html,/<option value="vqa" selected=""/)
+  assert.match(html,/<details id="measurement-conditions" open=""/)
+})
+
+test("copied request and selected variant keep their dataset instead of the newest same-model dataset",()=>{
+  const newer={...plan,metadata:{...plan.metadata,name:"newer",uid:"newer-uid",creationTimestamp:"2026-11-01T00:00:00Z"},spec:{...plan.spec,activeProtocol:{...plan.spec.activeProtocol,dataset:"new-data"}}}
+  const context={models:[],workloads:[],classes:[],profiles:[],plans:[plan,newer],preprocessors:[{metadata:{name:"pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:condition.model,artifact:"onnx"}}]}}],datasets:["data","new-data"].map(name=>({metadata:{name},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512}]}}))} as unknown as Parameters<typeof requestInputs>[4]
+  assert.equal(requestInputs(condition.model,"onnx","pre","data",context,{preprocessor:true,dataset:true}).dataset,"data")
+  assert.equal(requestInputs(condition.model,"onnx","pre","",context,{preprocessor:true,dataset:true}).dataset,"new-data")
+  const selected={requestIds:["ns/source/uid"],batchProgress:{target:[1],measured:[],missing:[1]}}
+  for(const props of [{context,from:"source"},{context,selected}]) {
+    const html=renderRequest(props)
+    assert.match(html,/<option value="data" selected="">data<\/option>/)
+    assert.doesNotMatch(html,/<option value="new-data" selected=""/)
+  }
+})
+
+test("new and copied requests construct CPU-free manifests with the complete measured protocol",()=>{
+  const source={...plan,spec:{...plan.spec,batchSizes:[1,4],pointPolicy:{confidenceLevel:"0.9"},activeProtocol:{...plan.spec.activeProtocol,durationToleranceSeconds:0.5},idleProtocol:{...plan.spec.idleProtocol,durationToleranceSeconds:0.25}}}
+  const context={models:[],workloads:[],classes:[],profiles:[],plans:[source],preprocessors:[{metadata:{name:"pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:condition.model,artifact:"onnx"}}]}}],datasets:[{metadata:{name:"data"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512}]}}]}
+  const prefill={active:true,values:condition,node:condition.node,errors:[],returnTo:"/measurements"}
+  for(const props of [{context,prefill},{context,from:"source"}]) {
+    const bodies:unknown[]=[]
+    renderRequest(props,"batches=4,1","",1,bodies)
+    const body=JSON.parse(JSON.stringify(bodies.at(-1)))
+    assert.equal(body.apiVersion,"edge.dacs.io/v1alpha1")
+    assert.equal(body.kind,"BatchEnergyOptimization")
+    assert.equal(body.metadata.namespace,"ns")
+    assert.deepEqual(body.spec,source.spec)
+  }
+})
+
+test("preflight success and admission transport failure identify their own checks without HTTP zero",()=>{
+  const html=renderRequest({},"","",2,[],[],[{error:{status:0,data:null,body:"No response"}},{data:{status:200,data:{resolves:true}}},{}])
+  assert.match(html,/접수 검사/)
+  assert.match(html,/실행 계획 검사/)
+  assert.match(html,/응답 미수신/)
+  assert.match(html,/HTTP 200/)
+  assert.match(html,/형식 검사 통과/)
+  assert.doesNotMatch(html,/HTTP 0|연결 상태를 확인/)
+})
+
+test("editing a copied name or batch preserves the original protocol instead of a newer same-target request",()=>{
+  const original={...plan,spec:{...plan.spec,pointPolicy:{confidenceLevel:"0.9"},activeProtocol:{...plan.spec.activeProtocol,durationToleranceSeconds:0.5}}}
+  const newer={...original,metadata:{...original.metadata,name:"newer",uid:"newer",creationTimestamp:"2026-11-02"},spec:{...original.spec,pointPolicy:{confidenceLevel:"0.99"},activeProtocol:{...original.spec.activeProtocol,durationSeconds:99,durationToleranceSeconds:1}}}
+  const context={models:[],workloads:[],classes:[],profiles:[],plans:[original,newer],preprocessors:[{metadata:{name:"pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:condition.model,artifact:"onnx"}}]}}],datasets:[{metadata:{name:"data"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512}]}}]}
+  for(const patch of [{name:"copy-edited"},{batchSizes:[4]},{trials:5}]) {
+    const bodies:unknown[]=[]
+    renderRequest({context,from:"source"},"from=source","",1,bodies,[],[],patch)
+    const body=JSON.parse(JSON.stringify(bodies.at(-1)))
+    assert.deepEqual(body.spec.activeProtocol,original.spec.activeProtocol)
+    assert.deepEqual(body.spec.pointPolicy,original.spec.pointPolicy)
+  }
+})
+
+test("required batches stay outside collapsed conditions and validation appears once",()=>{
+  const issue="한 번에 처리할 건수를 하나 이상 골라 주세요."
+  const html=renderRequest({},"",issue)
+  const beforeBatches=html.slice(0,html.indexOf('id="measurement-batches"'))
+  const detailTags=beforeBatches.match(/<\/?details\b[^>]*>/g)??[]
+  const collapsed=detailTags.reduce((count,tag)=>count+(tag.startsWith("</")?-1:1),0)
+  assert.equal(collapsed,0)
+  assert.equal(html.split(issue).length-1,1)
+  assert.match(html,/href="#measurement-size-error"/)
+  assert.doesNotMatch(html,/>2147483647</)
+  assert.match(html,/>제한 없음</)
+})
+
+test("variant prefill chooses missing batches while explicit URL batches, including empty, win",()=>{
+  const context={models:[],workloads:[],classes:[],plans:[plan],preprocessors:[],datasets:[],profiles:[]}
+  const selected={requestIds:["ns/source/uid"],batchProgress:{target:[1,2,4,8],measured:[1,2],missing:[4,8]}}
+  const props={context,selected}
+  const checked=(html:string)=>[...html.matchAll(/<input\b[^>]*>/g)].map(match=>match[0]).filter(input=>input.includes('checked=""')&&input.includes('name="batchSizes"')).map(input=>Number(input.match(/\bvalue="(\d+)"/)?.[1]))
+  for(const draft of [props,{...props,context:{...context,plans:[]},prefill:{active:true,values:condition,errors:[],returnTo:"/measurements",node:condition.node}}]) {
+    assert.deepEqual(checked(renderRequest(draft)),[4,8])
+    assert.deepEqual(checked(renderRequest(draft,"batches=2")),[2])
+    assert.deepEqual(checked(renderRequest(draft,"batches=")),[])
+    assert.deepEqual(checked(renderRequest({...draft,selected:{...selected,batchProgress:{...selected.batchProgress,missing:[]}}})),[])
+  }
+})
+test("creation stages keep target, conditions and check submission distinct",()=>{
+  const target=renderRequest()
+  assert.match(target,/aria-label="요청 단계"/)
+  assert.match(target,/aria-current="step">대상/)
+  assert.doesNotMatch(target,/>요청 범위 검사</)
+  const review=renderRequest({},"","",2)
+  assert.match(review,/aria-label="검사·제출"/)
+  assert.match(review,/>요청 범위 검사</)
+})
+test("copied source identity is reviewable without a UID query and replacement blocks submission",()=>{
+  const context={models:[],workloads:[],classes:[],plans:[plan],preprocessors:[],datasets:[],profiles:[]}
+  const html=renderRequest({context,from:"source"},"from=source","",2)
+  assert.match(html,/원본 저장 영역<\/th><td[^>]*>ns</)
+  assert.match(html,/원본 UID<\/th><td[^>]*>uid</)
+  const mismatch=renderRequest({context,from:"source"},"from=source&fromUID=old","",2)
+  assert.match(mismatch,/복사 원본.*식별자/)
+  assert.match(mismatch,/<button disabled="">요청 범위 검사<\/button>/)
+})
+
+test("advanced timing shows actual measurement and observation windows without inventing warmup seconds",()=>{
+  const context={models:[],workloads:[],classes:[],plans:[plan],preprocessors:[],datasets:[],profiles:[]}
+  const html=renderRequest({context,from:"source"},"from=source","",1)
+  assert.match(html,/aria-label="측정 시간과 전력 기록 창"/)
+  assert.match(html,/실행 측정<\/th><td[^>]*>10<\/td><td[^>]*>11<\/td>/)
+  assert.match(html,/유휴 측정<\/th><td[^>]*>10<\/td><td[^>]*>11<\/td>/)
+  assert.match(html,/예열 시간.*미제공/)
+  const unknown=renderRequest()
+  assert.doesNotMatch(unknown,/width:NaN|width:Infinity/)
+})
+test("compatibility diagnostics are displayed without adding a request gate",()=>{
+  const selection={modelSpec:"model",executionPath:"cpu",deviceClass:"class",node:"node"}
+  const object={name:"object",uid:"uid",resourceVersion:"1"}
+  const reads:Parameters<typeof coverageHelpers.serverCompatibility>[1]=[{node:"node",data:{readAt:"2026-11-03T00:00:00Z",selection,inputs:{modelSpec:object,deviceClass:object,node:object,runtimeDeclaration:null},verdict:"Compatible",reasons:[],diagnostics:["Last runtime entry selected."]}}]
+  const html=renderRequest({},"","",0,[],reads)
+  assert.match(html,/aria-label="실행 선언 진단"/)
+  assert.match(html,/node: Last runtime entry selected\./)
+  assert.equal((html.match(/disabled=""/g)??[]).length,(renderRequest().match(/disabled=""/g)??[]).length)
+})
+test("P2 profile kind selector survives profile-only dependency failures and coverage loading",()=>{
+  const source=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
+  const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const require=createRequire(import.meta.url)
+  for(const dependency of ["v1/preprocessors","v1/datasets","profiles","coverage"]) {
+    const exports:Record<string,unknown>={}
+    const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
+    const modules:Record<string,unknown>={
+      "next/navigation":{useSearchParams:()=>new URLSearchParams(dependency==="coverage"?"variantId=selected":""),useRouter:()=>({replace:()=>{}})},
+      "@tanstack/react-query":{useQuery:()=>dependency==="profiles"?{error:{status:503},isPending:false}:{data:{profiles:[]},isPending:false}},
+      "@/lib/client":{useSession:()=>({config:{namespace:"ns"},token:"fixture"}),useChillQuery:(path:string)=>path===dependency?{error:{status:503}}:{data:{items:[]}}},
+      "@/hooks/use-measurement-data":{useMeasurementPlans:()=>({data:{items:[]}}),useCoverageInventory:()=>({data:{classes:[]}}),useMeasurementCoverage:()=>({})},
+      "@/components/read-region":{QueryGate:({query,children}:{query:{error?:unknown};children?:ReactNode})=>query.error?createElement("p",null,"조회 실패"):children},
+      "@/components/screen":{Screen:container},
+      "@/components/measurement-navigation":{MeasurementNavigation:()=>null},
+      "@/features/dispatch-occupancy-request":{MeasurementKindSelector:({disabled}:{disabled?:boolean})=>createElement("select",{"aria-label":"측정 종류",disabled},createElement("option",{value:"dispatch-occupancy"},"d · 분배 점유시간"))},
+    }
+    runInNewContext(compiled,{exports,require:(name:string)=>name in modules?modules[name]:name.startsWith("@/")?{}:require(name),URLSearchParams})
+    const html=renderToStaticMarkup(createElement(exports.MeasurementRequestPage as ComponentType))
+    assert.match(html,/<select aria-label="측정 종류">/,dependency)
+    assert.match(html,/value="dispatch-occupancy"/,dependency)
+  }
+})
+
+test("P2 profile kind transition remains blocked during all mutations and unknown submission",()=>{
+  assert.match(renderRequest(),/<select aria-label="측정 종류">/)
+  for(let index=0;index<3;index++) {
+    const mutations=Array.from({length:3},(_,position)=>({isPending:position===index}))
+    assert.match(renderRequest({},"","",0,[],[],mutations),/<select aria-label="측정 종류" disabled="">/)
+  }
+  assert.match(renderRequest({},"","",0,[],[],[],undefined,true),/<select aria-label="측정 종류" disabled="">/)
+})
+
+test("control323 review: failed list refresh keeps the same Funnel, pinned draft name and unknown-submit block",()=>{
+  const require=createRequire(import.meta.url)
+  const code=transpileModule(readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const plans={data:{items:[plan]},error:null as {status:number}|null,isFetching:false,refetch:async()=>({error:null})}
+  const modules:Record<string,unknown>={
+    react:{...require("react"),useEffect:()=>{}},
+    "next/navigation":{useSearchParams:()=>new URLSearchParams("namespace=ns"),useRouter:()=>({})},
+    "@tanstack/react-query":{useQuery:()=>({data:{profiles:[]}})},
+    "@/lib/client":{useSession:()=>({token:"fixture",config:{namespace:"ns"}}),useChillQuery:(path:string)=>({data:path.startsWith("v1/workloads")?[]:{items:[]}})},
+    "@/lib/measurement-request":requestHelpers,"@/lib/measurement-coverage":coverageHelpers,
+    "@/hooks/use-measurement-data":{useMeasurementPlans:()=>plans,useCoverageInventory:()=>({data:{classes:[],models:[]}}),useMeasurementCoverage:()=>({})},
+  }
+  const exports={} as {MeasurementRequestPage:()=>{type:unknown;key:unknown;props:{plansError:unknown}}}
+  new Function("require","exports",code)((name:string)=>modules[name]??(name.startsWith("@/")?{}:require(name)),exports)
+  const before=exports.MeasurementRequestPage()
+  plans.error={status:503}
+  const after=exports.MeasurementRequestPage()
+  assert.equal(after.type,before.type,"refresh errors must not replace Funnel with a loading/error Screen")
+  assert.equal(after.key,before.key,"React must retain the existing draft and unknown-submit state")
+  assert.equal(after.props.plansError,plans.error)
+  const context={models:[],workloads:[],classes:[],profiles:[],plans:[plan],preprocessors:[],datasets:[]}
+  const html=renderRequest({context,from:"source",plansError:plans.error},"from=source","",2,[],[],[],{name:"fixed-unknown-name"},true)
+  assert.match(html,/측정 요청 목록 갱신 실패 \(HTTP 503\)/)
+  assert.match(html,/fixed-unknown-name: 자동 재제출·이름 변경 차단/)
+  assert.match(html,/<button[^>]*disabled=""[^>]*>측정 요청<\/button>/)
+})

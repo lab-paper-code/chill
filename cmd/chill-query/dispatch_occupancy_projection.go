@@ -1,114 +1,99 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
-	"math"
-	"reflect"
-	"strconv"
 	"strings"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/queryapi"
+	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 )
 
-const measurementVerdictObserved = "Observed"
-
 type dispatchOccupancyProjection struct {
 	httpapi.MeasurementProjection
 	queryapi.DispatchOccupancyProgress
-	record *servingkube.DispatchOccupancyRecord
-	burst  *servingkube.BurstOccupancyRecord
 }
 type dispatchOccupancyProjectionList struct {
 	Items []dispatchOccupancyProjection `json:"items"`
 }
 
-func finiteOccupancyValue(value float64) *float64 {
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return nil
-	}
-	return &value
-}
-
-func occupancyProgress(cr api.DispatchOccupancyMeasurement) queryapi.DispatchOccupancyProgress {
-	out := queryapi.DispatchOccupancyProgress{
-		Name: cr.Name, UID: string(cr.UID), BatchEnergyOptimization: cr.Spec.BatchEnergyOptimization,
-		Workload: cr.Spec.Workload, Batch: int(cr.Spec.Batch), ProfileID: cr.Spec.Conditions.ProfileID,
-		Reason: cr.Status.Reason, CreatedAt: cr.CreationTimestamp.Time,
-		MinimumPairs: int(cr.Spec.MinimumPairs),
-	}
-	if cr.Status.Phase != "" {
-		phase := string(cr.Status.Phase)
-		out.Phase = &phase
-	}
-	if ref := cr.Status.Result; ref != nil {
-		out.Evidence = &queryapi.OccupancyEvidence{Store: ref.Store, Key: ref.Key, Size: ref.Size}
-	}
-	if cr.Status.PerRequestNanos != nil && (cr.Status.Result == nil ||
-		!strings.HasPrefix(cr.Status.Result.Key, servingkube.BurstOccupancyPrefix)) {
-		out.D = &queryapi.OccupancyValue{PerRequestNanos: cr.Status.PerRequestNanos}
-		if value, err := strconv.ParseFloat(cr.Status.Throughput, 64); err == nil {
-			out.D.Throughput = finiteOccupancyValue(value)
-		}
-	}
-	return out
-}
-
-func projectBurstOccupancy(
-	cr api.DispatchOccupancyMeasurement, projection dispatchOccupancyProjection,
-	input queryapi.MeasurementAssessmentInput, raw []byte,
+func (o *measurementService) projectDispatchOccupancy(
+	ctx context.Context,
+	cr api.DispatchOccupancyMeasurement,
 ) (dispatchOccupancyProjection, error) {
-	projection.D = nil
-	var record servingkube.BurstOccupancyRecord
-	if err := json.Unmarshal(raw, &record); err != nil {
-		input.Problems = append(input.Problems, queryapi.MeasurementReason{
-			Code: "OccupancyEvidenceInvalid", Message: "Stored burst evidence cannot be decoded",
-			SourceIDs: []string{cr.Status.Result.Key},
-		})
-	} else {
-		input.Available = true
-		matches := record.SchemaVersion == servingkube.BurstOccupancySchema &&
-			record.Node.Name == cr.Spec.Node && record.Node.UID != "" &&
-			cr.Status.Result.Key == servingkube.BurstOccupancyPrefix+record.Node.UID+"/"+string(cr.UID)+".json" &&
-			reflect.DeepEqual(record.Conditions, cr.Spec) && record.Batch == int(cr.Spec.Batch) &&
-			(cr.Spec.Conditions.ProfileID == "" || record.ProfileID == cr.Spec.Conditions.ProfileID) &&
-			(record.Verdict == measurementVerdictObserved || record.Verdict == "Insufficient")
-		if estimate := record.Estimate; estimate != nil {
-			matches = matches && estimate.Node == record.Node && estimate.Model == record.Model &&
-				estimate.PowerMode == record.PowerMode && estimate.Profile.ProfileID == record.ProfileID &&
-				estimate.Batch == record.Batch
-		}
-		if matches {
-			input.Observed = record.Verdict == measurementVerdictObserved
-			projection.burst = &record
-			projection.SchemaVersion, projection.Verdict = record.SchemaVersion, record.Verdict
-			projection.ProfileID, projection.Estimate = record.ProfileID, queryOccupancyEstimate(record.Estimate)
-			if record.Estimate != nil {
-				window := record.Estimate.Window
-				projection.MeasurementWindow = &queryapi.OccupancyMeasurementWindow{Start: window.Start, End: window.End}
-				input.Facts = append(input.Facts, fmt.Sprintf(
-					"Observed signed ns/request estimate: %d adjacent pairs; minimumPairs: %d",
-					record.Estimate.Pairs, record.Conditions.MinimumPairs))
-			}
-			for _, reason := range record.Reasons {
-				input.Reasons = append(input.Reasons, queryapi.MeasurementReason{
-					Code: reason, Message: reason, SourceIDs: []string{cr.Status.Result.Key},
-				})
-			}
-		} else {
-			input.Problems = append(input.Problems, queryapi.MeasurementReason{
-				Code: "OccupancyEvidenceMismatch", Message: "Stored burst evidence does not match this request",
-				SourceIDs: []string{cr.Status.Result.Key},
-			})
-		}
+	projection, err := querykube.ProjectDispatchOccupancy(
+		ctx,
+		o.objects,
+		o.opts.maxEvidenceBytes,
+		cr,
+		decodeOccupancyEvidence,
+	)
+	return dispatchOccupancyHTTPProjection(cr, projection), err
+}
+
+func dispatchOccupancyHTTPProjection(
+	cr api.DispatchOccupancyMeasurement,
+	projection queryapi.OccupancyEvidenceProjection,
+) dispatchOccupancyProjection {
+	envelope := httpapi.ProjectDispatchOccupancyMeasurement(cr)
+	if cr.Spec.MinimumPairs > 0 {
+		envelope.Conditions = cr.Spec
 	}
-	var err error
-	projection.Assessment, err = json.Marshal(queryapi.AssessMeasurement(input))
-	return projection, err
+	envelope.Assessment = projection.Assessment
+	return dispatchOccupancyProjection{
+		MeasurementProjection: envelope, DispatchOccupancyProgress: projection.DispatchOccupancyProgress,
+	}
+}
+
+// decodeOccupancyEvidence adapts the retained serving wire format, including
+// validation of fields that queries do not otherwise consume.
+func decodeOccupancyEvidence(
+	cr api.DispatchOccupancyMeasurement,
+	raw []byte,
+) (queryapi.DecodedOccupancyEvidence, error) {
+	var header struct {
+		SchemaVersion   string `json:"schemaVersion"`
+		PerRequestNanos *int64 `json:"perRequestNanos"`
+	}
+	out := queryapi.DecodedOccupancyEvidence{}
+	headerErr := json.Unmarshal(raw, &header)
+	out.HasPerRequestNanos = header.PerRequestNanos != nil
+	if headerErr == nil && (header.SchemaVersion == servingkube.BurstOccupancySchema ||
+		strings.HasPrefix(cr.Status.Result.Key, servingkube.BurstOccupancyPrefix)) {
+		out.Burst = true
+		var record servingkube.BurstOccupancyRecord
+		if err := json.Unmarshal(raw, &record); err != nil {
+			return out, err
+		}
+		out.Record = queryapi.OccupancyEvidenceRecord{
+			OccupancyRecordFacts: queryapi.OccupancyRecordFacts{
+				Node: queryapi.MeasurementIdentity(record.Node), Model: record.Model, PowerMode: record.PowerMode,
+				ProfileID: record.ProfileID, Verdict: record.Verdict, Estimate: queryOccupancyEstimate(record.Estimate),
+			},
+			SchemaVersion: record.SchemaVersion, Batch: record.Batch, Conditions: record.Conditions, Reasons: record.Reasons,
+		}
+		return out, nil
+	}
+	var record servingkube.DispatchOccupancyRecord
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return out, err
+	}
+	out.Record = queryapi.OccupancyEvidenceRecord{
+		OccupancyRecordFacts: queryapi.OccupancyRecordFacts{
+			Node: queryapi.MeasurementIdentity(record.Node), Model: record.Model, PowerMode: record.PowerMode,
+			ProfileID: record.ProfileID, Verdict: record.Verdict,
+		},
+		SchemaVersion: record.SchemaVersion, Batch: record.Batch, Conditions: record.Conditions,
+		Window:          queryapi.OccupancyMeasurementWindow{Start: record.Window.Start, End: record.Window.End},
+		PerRequestNanos: record.PerRequestNanos, Throughput: record.Throughput, IdleFraction: record.IdleFraction,
+		Cycles: record.Cycles, IdleIdentified: record.IdleIdentified,
+		PrecisionTargetMet: record.PrecisionTargetMet, Reasons: record.Reasons,
+	}
+	return out, nil
 }
 
 func queryOccupancyEstimate(value *serving.OccupancyEstimate) *queryapi.OccupancyEstimate {

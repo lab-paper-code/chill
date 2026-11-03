@@ -17,7 +17,7 @@ import { DataTable, useServerTable } from "@/components/data-table"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
 import { AssessmentDetails, ResultRows } from "@/features/measurement-plans"
-import { MeasurementFilters } from "@/features/measurement-coverage"
+import { MeasurementFilters } from "@/components/measurement-filters"
 
 export const conditionRows = (condition:CurvePlanSpec):[string,string][] => [
   ["모델 파일", `${condition.logicalModel} / ${condition.artifact.name}`],

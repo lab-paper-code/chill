@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 func TestSchedulerCaptureReusesImmutableProfileReferences(t *testing.T) {
@@ -18,7 +19,7 @@ func TestSchedulerCaptureReusesImmutableProfileReferences(t *testing.T) {
 	ctx := context.Background()
 	diagnostics := serving.NewDiagnostics()
 	directory := t.TempDir()
-	log, err := serving.NewObservationLog(serving.ObservationLogConfig{Directory: directory, Diagnostics: diagnostics,
+	log, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: directory, Diagnostics: diagnostics,
 		Store: "evidence", Retention: 2 * time.Hour, Writer: managerArchive{t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +54,7 @@ func TestSchedulerCaptureReusesImmutableProfileReferences(t *testing.T) {
 	record := func(stage int, snapshot serving.SchedulerSnapshot) {
 		t.Helper()
 		diagnostics.Mark(serving.DiagnosticTraceAnchor, serving.DiagnosticBegin, "", int64(stage))
-		if err := log.SchedulerRecord(serving.SchedulerObservation{At: snapshot.At, Snapshot: &snapshot}); err != nil {
+		if err := log.SchedulerRecord(observation.SchedulerObservation{At: snapshot.At, Snapshot: &snapshot}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -118,7 +119,7 @@ func assertPersistedSchedulerProfiles(t *testing.T, directory string, original, 
 			t.Fatal(err)
 		}
 		for _, line := range bytes.Split(bytes.TrimSpace(data), []byte{'\n'}) {
-			var row serving.CatalogRow
+			var row observation.CatalogRow
 			if err := json.Unmarshal(line, &row); err != nil {
 				t.Fatal(err)
 			}

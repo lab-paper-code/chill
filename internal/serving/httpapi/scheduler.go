@@ -13,6 +13,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
@@ -97,8 +98,8 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 	sendJSON(w, http.StatusOK, change)
 }
 
-func schedulerObservationSelectionQuery(query url.Values) (serving.SchedulerObservationSelection, error) {
-	selection := serving.SchedulerObservationSelection{}
+func schedulerObservationSelectionQuery(query url.Values) (observation.SchedulerObservationSelection, error) {
+	selection := observation.SchedulerObservationSelection{}
 	for _, key := range []string{"order", "filter", "uid"} {
 		values, present := query[key]
 		if !present {
@@ -228,12 +229,12 @@ func (h *Handler) schedulerObservations(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	sendJSON(w, http.StatusOK, struct {
-		From       time.Time                      `json:"from"`
-		To         time.Time                      `json:"to"`
-		Events     []serving.SchedulerObservation `json:"events"`
-		NextCursor string                         `json:"nextCursor,omitempty"`
-		GapUntil   *time.Time                     `json:"gapUntil,omitempty"`
-		Coverage   serving.ObservationCoverage    `json:"coverage"`
+		From       time.Time                          `json:"from"`
+		To         time.Time                          `json:"to"`
+		Events     []observation.SchedulerObservation `json:"events"`
+		NextCursor string                             `json:"nextCursor,omitempty"`
+		GapUntil   *time.Time                         `json:"gapUntil,omitempty"`
+		Coverage   serving.ObservationCoverage        `json:"coverage"`
 	}{from, to, records, next, gapUntil, coverage})
 }
 

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/live"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 // SCH-AC-54: startup identity is recorded before projection; failed appends emit nothing.
@@ -16,7 +16,7 @@ func TestClusterPublishesOnlyCommittedRows(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	p := newLivePublisher(ctx)
-	log, err := serving.NewObservationLog(serving.ObservationLogConfig{
+	log, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
 		Writer: schedulerPowerArchive{directory: t.TempDir()},
 	})

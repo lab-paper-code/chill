@@ -11,6 +11,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/live"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 func TestObservationEventsRecoverSimultaneousCommittedFacts(t *testing.T) {
@@ -18,16 +19,16 @@ func TestObservationEventsRecoverSimultaneousCommittedFacts(t *testing.T) {
 	h.mux.HandleFunc("GET /api/v1/observations/events", h.observationEvents)
 	at := time.Now().UTC()
 	seconds := 15.0
-	action := &serving.SchedulerActionObservation{ID: "operation", Kind: "power", Node: serving.NodeReference{Name: "edge", UID: "node-uid"}, Phase: "failed", StartedAt: at.Add(-time.Minute), CompletedAt: &at, Error: "power-mode-timeout", ExpectedSeconds: &seconds}
-	if err := h.observationLog.SchedulerRecord(serving.SchedulerObservation{At: at, Action: action}); err != nil {
+	action := &observation.SchedulerActionObservation{ID: "operation", Kind: "power", Node: serving.NodeReference{Name: "edge", UID: "node-uid"}, Phase: "failed", StartedAt: at.Add(-time.Minute), CompletedAt: &at, Error: "power-mode-timeout", ExpectedSeconds: &seconds}
+	if err := h.observationLog.SchedulerRecord(observation.SchedulerObservation{At: at, Action: action}); err != nil {
 		t.Fatal(err)
 	}
-	cluster := serving.ClusterObservation{Kind: "issue", At: at, Event: "raised", Source: "pod-watch", Reason: "not-serving", Pod: &serving.ClusterPod{UID: "pod-uid", Name: "worker", Node: "edge"}}
+	cluster := observation.ClusterObservation{Kind: "issue", At: at, Event: "raised", Source: "pod-watch", Reason: "not-serving", Pod: &observation.ClusterPod{UID: "pod-uid", Name: "worker", Node: "edge"}}
 	if err := h.observationLog.ClusterRecord(cluster); err != nil {
 		t.Fatal(err)
 	}
 	// Unrelated snapshot payload must not be resolved through its catalog.
-	if err := h.observationLog.SchedulerRecord(serving.SchedulerObservation{At: at.Add(time.Nanosecond), Snapshot: &serving.SchedulerSnapshot{At: at}}); err != nil {
+	if err := h.observationLog.SchedulerRecord(observation.SchedulerObservation{At: at.Add(time.Nanosecond), Snapshot: &serving.SchedulerSnapshot{At: at}}); err != nil {
 		t.Fatal(err)
 	}
 	response := rawHTTPRequest(h, "/api/v1/observations/events?"+url.Values{"at": {at.Format(time.RFC3339Nano)}}.Encode())
@@ -73,7 +74,7 @@ func TestObservationEventRangePagesAreStableCommittedPrefixes(t *testing.T) {
 	from := time.Now().UTC().Add(-time.Minute)
 	to := from.Add(time.Minute)
 	// Commit in a different order from event time, including identical times.
-	for _, row := range []serving.ClusterObservation{
+	for _, row := range []observation.ClusterObservation{
 		{Kind: "issue", At: from.Add(time.Second), Event: "raised", Source: "second", Reason: "fact"},
 		{Kind: "issue", At: from, Event: "raised", Source: "first", Reason: "fact"},
 		{Kind: "issue", At: to, Event: "raised", Source: "excluded", Reason: "fact"},
@@ -82,7 +83,7 @@ func TestObservationEventRangePagesAreStableCommittedPrefixes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := h.observationLog.SchedulerRecord(serving.SchedulerObservation{At: from, Action: &serving.SchedulerActionObservation{ID: "power-operation", Kind: "power", StartedAt: from}}); err != nil {
+	if err := h.observationLog.SchedulerRecord(observation.SchedulerObservation{At: from, Action: &observation.SchedulerActionObservation{ID: "power-operation", Kind: "power", StartedAt: from}}); err != nil {
 		t.Fatal(err)
 	}
 	query := url.Values{"from": {from.Format(time.RFC3339Nano)}, "to": {to.Format(time.RFC3339Nano)}, "limit": {"1"}}
@@ -105,7 +106,7 @@ func TestObservationEventRangePagesAreStableCommittedPrefixes(t *testing.T) {
 		}
 		if pageNumber == 0 {
 			// Later appends cannot move cursor positions or enter this read.
-			if err := h.observationLog.ClusterRecord(serving.ClusterObservation{Kind: "issue", At: from.Add(500 * time.Millisecond), Event: "raised", Source: "later-commit", Reason: "fact"}); err != nil {
+			if err := h.observationLog.ClusterRecord(observation.ClusterObservation{Kind: "issue", At: from.Add(500 * time.Millisecond), Event: "raised", Source: "later-commit", Reason: "fact"}); err != nil {
 				t.Fatal(err)
 			}
 		}

@@ -105,6 +105,50 @@ never filled from a prior accepted snapshot. A failed cost refresh retains the
 earlier `accepted` snapshot with its own revision; Query must compare current
 profile identity and evidence before claiming adoption.
 
+This join is reporting, never admission: source object key + Node + model +
+power mode + Accepted verdict identify the cached record. Runtime image,
+per-request value and current profile ID equality are not validity gates.
+An absent current profile still projects the retained row; executionPath uses
+the record when available, otherwise its profile, otherwise the empty string.
+Unprojectable selections do not fail Refresh or initialization:
+`accepted.occupancySkipped[]` (omitted when empty) records
+`{source,node,model,powerMode,profileID,reason}`, with reason
+`noMatchingEvidence` or `ambiguousEvidence(n)`. Other selected rows survive.
+
+Refresh boundary audit: catalog profile/trial/state/runtime comparison failures
+already become per-source `InvalidEvidence` insufficiencies; profile reuse
+comparison failures become `ReuseChecks` plus `ProfileReuseRejected`; preparation
+failures become `PreparationUnavailable`; operation/power/occupancy record
+validation failures become `CostIssue`. None aborts the complete refresh.
+Remaining fatal boundaries are required Kubernetes/store listings, cancellation,
+required configuration decode/validation and physical meter binding, power
+observation resource admission, immutable reuse-check persistence, and JSON
+encoding of frozen conditions/reuse checks (non-finite/corrupt internal facts).
+These are IO, integrity or resource-safety failures, not profile/image/CPU/state/
+per-request equality gates.
+
+The fixed abort was `kube/catalog_read.go`'s `matches != 1` return, reached from
+`application/scheduler_service.go:211`; missing current profiles no longer
+erase otherwise identified evidence. No other exact-match failure aborts these
+refresh entrypoints. The retained fatal error-return sites (16 including
+propagation sites, not 16 independent root causes) are:
+
+| File under `internal/serving/` | Lines | Kept fatal, reason |
+|---|---|---|
+| `application/scheduler_service.go` | 173, 177, 181 | required scheduler/facts reads and configuration decode/validation |
+| `application/scheduler_service.go` | 189 | power-observation memory/capacity safety |
+| `application/scheduler_service.go` | 199, 209 | propagate catalog/cost source failures below |
+| `application/scheduler_service.go` | 202 | immutable reuse-check persistence/encoding/bound failure (`application/profiles.go:87,90,96`) |
+| `application/scheduler_service.go` | 233, 264 | reuse-check JSON integrity; controller settings/physical meter binding integrity |
+| `kube/catalog.go` | 126, 169, 192 | campaign listing IO; cancellation; frozen-condition encoding integrity (`catalog.go:269`) |
+| `kube/cost.go` | 108, 112, 153, 156 | operation, sequence, power-CR and occupancy source listings (`cost.go:195,243,287`) |
+
+Existing nonfatal equality paths remain per-source diagnostics:
+`kube/catalog.go:166–172,346–428` (trial/runtime/CPU/state bindings),
+`kube/catalog_reuse.go:72–98,141–190` (source ID and reuse comparisons),
+`kube/cost.go:124–138,215–226,256–263,382–419` (record/state/cost bindings),
+and `application/profiles.go:35–42` (preparation failures).
+
 `accepted.dispatchOccupancy[]` is the same immutable list supplied to scheduler
 capture and decisions, with one exact Node/profile/path/batch entry and
 `perRequestNanos` plus `provenance:{source,pairs,window?,updatedAt,value}`.

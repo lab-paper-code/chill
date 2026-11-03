@@ -14,6 +14,7 @@ import (
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	authentication "k8s.io/api/authentication/v1"
 	authorization "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -136,7 +137,7 @@ func TestMeasurementObservationLogPreservesReviewedActorAndActualMutationPhase(t
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			started := time.Now().UTC().Add(-time.Second)
-			observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
+			observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -163,7 +164,7 @@ func TestMeasurementObservationLogPreservesReviewedActorAndActualMutationPhase(t
 			calls := 0
 			assertStarted := func() {
 				calls++
-				events, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), started, time.Now().UTC().Add(time.Second), 10, 0, serving.SchedulerObservationSelection{})
+				events, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), started, time.Now().UTC().Add(time.Second), 10, 0, observation.SchedulerObservationSelection{})
 				if err != nil || len(events) != 1 || events[0].Action == nil ||
 					events[0].Action.Phase != "validated" {
 					t.Fatal("mutation began without its durable validated actor/target record")
@@ -214,7 +215,7 @@ func TestMeasurementObservationLogPreservesReviewedActorAndActualMutationPhase(t
 				}
 				return
 			}
-			events, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), started, time.Now().UTC().Add(time.Second), 10, 0, serving.SchedulerObservationSelection{})
+			events, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), started, time.Now().UTC().Add(time.Second), 10, 0, observation.SchedulerObservationSelection{})
 			if err != nil || w.Code != tc.status || calls != 1 || len(events) != 2 {
 				t.Fatalf("audit/response mismatch code=%d events=%+v err=%v", w.Code, events, err)
 			}
@@ -224,7 +225,7 @@ func TestMeasurementObservationLogPreservesReviewedActorAndActualMutationPhase(t
 	}
 }
 
-func assertMeasurementAuditActor(t *testing.T, events []serving.SchedulerObservation, method string) {
+func assertMeasurementAuditActor(t *testing.T, events []observation.SchedulerObservation, method string) {
 	t.Helper()
 	for _, event := range events {
 		if event.Action == nil {
@@ -247,7 +248,7 @@ func assertMeasurementAuditActor(t *testing.T, events []serving.SchedulerObserva
 }
 
 func assertMeasurementAuditResult(
-	t *testing.T, action *serving.SchedulerActionObservation, phase, failure string, partial bool,
+	t *testing.T, action *observation.SchedulerActionObservation, phase, failure string, partial bool,
 ) {
 	t.Helper()
 	if action == nil || action.Phase != phase || action.CompletedAt == nil || action.Error != failure {

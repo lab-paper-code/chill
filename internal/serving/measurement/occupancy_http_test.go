@@ -21,6 +21,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/management"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	authentication "k8s.io/api/authentication/v1"
 	authorization "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -39,7 +40,7 @@ func TestOccupancyLocalHTTPSDryRunThenCreate(t *testing.T) {
 			Status: authorization.SubjectAccessReviewStatus{Allowed: true},
 		}, nil
 	})
-	log, err := serving.NewObservationLog(serving.ObservationLogConfig{
+	log, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: time.Hour,
 		Writer: testArchive{directory: t.TempDir()},
 	})

@@ -15,6 +15,7 @@ Dashboard·CLI는 같은 권한·검증·비동기 결과 의미를 사용하되
 ## 조회 소유 경계 (2026-11-02)
 
 - Query API가 profile·coverage·요청 목록·측정 결과·preflight·Evidence Passport의 정상/pending/evidence 오류 응답을 완성한다. 기존 도메인 판정과 verified evidence reader를 재사용한다.
+- retained BEO 통계는 `internal/profiling/campaign/evidence.Reader.LoadPlan`·`ReadTrials`로 frozen plan·completed Run·evidence 신원을 공통 검증한다. Query는 Serving 상태 수용을 요구하는 `ReadPlan` 대신 `LoadPlan`을 사용하며, 통계·point policy·quality facts·빈 입력 판정은 계속 Query가 소유한다. `query-api` → `campaign-evidence` 의존만 허용하고 `internal/serving` 의존은 추가하지 않는다. Query adapter는 owner Kind/APIVersion 검사, missing Run과 retained Job/Secret 오류 구분, 기존 HTTP reason 매핑을 보존한다.
 - CLI runs show는 Query의 EvidencePassportState를 공유해 HTTP 202의 pending code·native Run metadata와 evidence/measurement의 null을 JSON에 보존한다. table은 pending 상태를 표시하고 미완료 측정을 0으로 출력하지 않는다.
 - BEO 목록의 native metadata/spec/status는 catalog 의존성 실패와 독립적으로 반환한다. owner 미설정·transport·configuration 오류는 evidence를 승인하지 않는 unavailable assessment reason으로 표시하며 native 사실이나 실행 실패를 지우지 않는다.
 - ChillServer의 조회 중계는 TokenReview/SAR·namespace 제한·전달·transport 오류만 처리한다. backend 장애를 pending/측정 실패로 바꾸거나 Kubernetes를 재조회해 본문을 수선하지 않는다.
@@ -26,4 +27,12 @@ Dashboard·CLI는 같은 권한·검증·비동기 결과 의미를 사용하되
 - Query API는 Service 직접 접근도 TokenReview·URL/native SAR로 검증한다. ChillServer는 원 사용자 bearer만 전달하고 identity header는 전달·신뢰하지 않는다. CLI runs show도 기존 ownerClient HTTPS·bearer 경로를 재사용한다. native detail은 이름이 `preflight`여도 `get NAME` SAR을 요구하며 `list` 예외는 POST campaign preflight 경로에만 적용한다.
 - namespace coverage cache는 기존 30초 fresh/최대 5분 stale 정책을 그대로 Query API에 둔다. 큰 조회의 CPU/RSS/응답 크기와 serving 영향은 live 성능 수용이 필요하며 프로세스 분리만으로 간섭 부재를 주장하지 않는다.
 - 공유 CPU cutover 뒤 ProfilingRun 목록과 profile 목록은 CPU quota/request/affinity 필터·정렬 입력을 받지 않는다. `cpu` 쿼리는 InvalidQuery이며 CPU 환경은 실행 관측으로만 보존한다. `cmd/chill`에는 해당 CPU 필터 플래그가 없다. Query evidence 검증은 Node·mode·dataset/protocol·메모리/GPU·원시 신원을 유지하고 삭제된 frozen CPU 계약을 다시 요구하지 않는다.
+
+## Go 구현 소유권 (2026-11-04)
+
+- `internal/queryapi`는 Query 소유 catalog/profile/occupancy 입력으로 coverage cell·variant·현재 측정 선택·summary·checklist compaction을 조립한다. 요청/profile/operation/occupancy evidence의 판정도 순수 함수로 소유하며 저장된 UID·동결 조건·signed 수치·nil/0 의미를 바꾸지 않는다.
+- 기존 `internal/queryapi/kube`는 namespace coverage cache·병렬 source refresh·실패 보존·native measurement 조회·bounded evidence 읽기와 preflight/result selection use case를 소유한다. `CatalogSource.Read`는 coverage에 필요한 Query 소유 읽기 타입만 반환한다. namespace 권한 callback, 30초 fresh·5분 stale, 단일 namespace refresh의 락·deadline·실패 보존 순서는 이전과 같다.
+- 기존 `internal/queryapi/readapi`는 measurement query 해석·pagination envelope·JSON encoding을 소유한다. 목록용 `Page` DTO를 공유하며 옛 함수·re-export·미사용 pagination 상수는 남기지 않는다.
+- `cmd/chill-query`는 구성·조립·namespace/HTTP 오류 및 serving 응답의 어댑터만 소유한다. serving catalog 클라이언트의 필요한 필드를 `CoverageCatalogRead`로 변환하고, profile/operation/occupancy HTTP envelope를 기존 계약으로 변환한다. occupancy source decoder 포트는 원 serving record를 한 번 완전히 디코딩한 뒤 판정에 필요한 필드만 반환하므로 사용하지 않는 필드의 잘못된 타입도 이전처럼 거부한다. serving 타입 전체를 복제하지 않으며 `internal/queryapi/**`는 serving을 import하지 않는다. `.go-arch-lint.yml` 의존 방향도 그대로다.
+- campaign statistics evidence 조회인 `cmd/chill-query/measurement_statistics.go`는 별도 campaign evidence Reader 계약 cutover인 #4에 속하므로 이번 이동에서 제외한다. query key·pagination·응답 크기·HTTP 계약은 유지하며 cache/판정 회귀는 내부 소유 패키지, serving 변환의 JSON·값 동일성 회귀는 composition root에서 검증한다.
 

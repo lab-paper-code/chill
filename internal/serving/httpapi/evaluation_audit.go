@@ -8,9 +8,10 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
-func (h *Handler) beginEvaluationAudit(r *http.Request, name, uid string) (*serving.SchedulerActionObservation, error) {
+func (h *Handler) beginEvaluationAudit(r *http.Request, name, uid string) (*observation.SchedulerActionObservation, error) {
 	if h.observationLog == nil {
 		return nil, &serving.Error{Code: "EvaluationAuditUnavailable", Message: "durable evaluation audit is unavailable"}
 	}
@@ -26,7 +27,7 @@ func (h *Handler) beginEvaluationAudit(r *http.Request, name, uid string) (*serv
 	if err != nil {
 		return nil, err
 	}
-	action := &serving.SchedulerActionObservation{
+	action := &observation.SchedulerActionObservation{
 		ID:   "evaluation/" + r.Method + "/" + name + "/" + now.Format(time.RFC3339Nano),
 		Kind: "evaluation-" + strings.ToLower(r.Method), Phase: "validated", StartedAt: now, Expected: expected,
 	}
@@ -36,7 +37,7 @@ func (h *Handler) beginEvaluationAudit(r *http.Request, name, uid string) (*serv
 	return action, nil
 }
 func (h *Handler) finishEvaluationAudit(
-	action *serving.SchedulerActionObservation, value any, mutationErr error,
+	action *observation.SchedulerActionObservation, value any, mutationErr error,
 ) error {
 	now := time.Now().UTC()
 	action.CompletedAt = &now
