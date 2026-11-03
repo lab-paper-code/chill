@@ -205,3 +205,18 @@ test("pool mean power never substitutes a plan or zero for missing or invalid me
     assert.doesNotMatch(html,/풀 평균 전력 (?:0|100)(?:\.0)? W/)
   }
 })
+
+test("final and provisional SLOs preserve fractional percentiles and large wire nanoseconds",()=>{
+  const Component=components.ExperimentStageResults as ComponentType<Record<string,unknown>>
+  for(const targetLatencyNanos of [400000,9007199254740993n,undefined]) {
+    const slo={percentile:99.5,targetLatencyNanos}
+    const measured={...stage("fractional"),kpis:{requests:{camera:{}}}}
+    const publication={...run,stages:[measured],definition:{workloads:[{name:"camera",slo}],spec:{stages:[]},loadScenarios:[]}}
+    for(const props of [{run:publication,stage:measured},{provisional:{workloads:{camera:{slo}}}}]) {
+      const html=renderToStaticMarkup(createElement(Component,props))
+      assert.match(html,/p99\.5 · /)
+      assert.doesNotMatch(html,/p100 · /)
+      assert.ok(html.includes(targetLatencyNanos===undefined?"p99.5 · 미기록 ms":`p99.5 · ${measurements.formatMeasurementDuration(targetLatencyNanos)}`))
+    }
+  }
+})

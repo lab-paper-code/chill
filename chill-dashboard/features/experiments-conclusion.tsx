@@ -96,7 +96,7 @@ export function ExperimentStageResults({run,stage,provisional,service="",onSelec
   })):experimentServiceResults(stage,run)).filter(({row})=>!service||row.name===service)
   const parts=[...new Set(results.flatMap(({row})=>row.substages?.flatMap(part=>typeof part.id==="string"?[part.id]:[])??[]))]
   const outcomes=[["completed","완료","bg-ok"],["timeout","시간 초과","bg-heat"],["error","오류","bg-destructive"],["unfinished-or-no-final","미완료","bg-muted-foreground"]] as const
-  const sloText=(slo:unknown)=>{const value=object(slo);return Object.keys(value).length?`p${resultNumber(value.percentile)} · ${resultNumber(finite(value.targetLatencyNanos)===null?null:Number(value.targetLatencyNanos)/1e6,"ms")} ms`:"미기록"}
+  const sloText=(slo:unknown)=>{const value=object(slo),target=value.targetLatencyNanos;return Object.keys(value).length?`p${finite(value.percentile)??"미기록"} · ${typeof target==="number"||typeof target==="bigint"?formatMeasurementDuration(target):"미기록 ms"}`:"미기록"}
   return <div className="min-w-0 space-y-4">
     {provisional&&<header className="space-y-1"><h2 className="font-semibold">실행 중 · 잠정</h2><p className="text-sm tabular-nums">asOf {resultTime(provisional.asOf)} · 집계 마감 {resultTime(provisional.closedThrough)} (KST)</p><p className="text-xs text-muted-foreground">현재 요청은 집계 마감까지의 예정 도착입니다. 결과 대기·미발행 포함은 진행 중 요청을 포함하며 이후 성공으로 바뀔 수 있습니다. 요청 배출 전에는 판정하지 않습니다.</p></header>}
     <div className="overflow-x-auto">
