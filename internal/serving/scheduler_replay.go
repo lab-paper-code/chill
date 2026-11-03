@@ -64,7 +64,7 @@ type schedulerReplayInstance struct {
 	outstanding  int
 	policy       firstfloor.Policy
 	arrivalTimes map[string][]float64
-	occupancy    float64 // measured dispatch occupancy per request (ns); 0 without a measurement
+	occupancy    float64 // selected DOM or configured extra ns/request
 }
 type schedulerReplayAction struct {
 	action   Action
@@ -568,7 +568,7 @@ func (s *schedulerReplayState) initializeInstances() {
 		if i.Profile != nil {
 			x.policy = schedulerPolicy(i)
 		}
-		if o := dispatchOccupancy(s.snap.DispatchOccupancy, i); o != nil {
+		if o := dispatchOccupancy(s.settings, s.snap.DispatchOccupancy, i); o != nil {
 			x.occupancy = float64(o.PerRequest)
 		}
 		s.instances = append(s.instances, x)

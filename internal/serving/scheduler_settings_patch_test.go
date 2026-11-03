@@ -18,6 +18,9 @@ func TestValidateSchedulerSettingsPatch(t *testing.T) {
 		{"one switch", `{"controls":{"power":false}}`, false},
 		{"public numeric setting", `{"maxReplicas":3}`, false},
 		{"public map", `{"minimumDemand":{"work-uid":2}}`, false},
+		{"dispatch default", `{"defaultDispatchOccupancyNanos":2000000}`, false},
+		{"zero dispatch default", `{"defaultDispatchOccupancyNanos":0}`, false},
+		{"negative dispatch default", `{"defaultDispatchOccupancyNanos":-1}`, true},
 		{"unknown", `{"mystery":true}`, true},
 		{"unknown null", `{"mystery":null}`, true},
 		{"unknown nested", `{"controls":{"mystery":true}}`, true},
@@ -82,5 +85,19 @@ func TestSettingsPatchMatchesPUTDecode(t *testing.T) {
 				t.Fatalf("preflight=%+v PUT=%+v", preflight, put)
 			}
 		})
+	}
+}
+
+func TestDispatchOccupancySettingsPreservesConfiguredValue(t *testing.T) {
+	current, _ := schedulerFixture()
+	settings, err := ValidateSchedulerSettingsPatch(current, []byte(`{"defaultDispatchOccupancyNanos":2000000}`))
+	if err != nil || settings.DefaultDispatchOccupancyNanos != 2000000 {
+		t.Fatalf("configured d not preserved at settings boundary: %+v %v", settings, err)
+	}
+	// Legacy inputs remain valid; the decode boundary adds no compiled policy.
+	margin := current.CompletionMarginMS
+	legacy, err := (SchedulerSettingsInput{SchedulerSettings: current, CompletionMarginMS: &margin}).Settings()
+	if err != nil || legacy.DefaultDispatchOccupancyNanos != 0 {
+		t.Fatalf("additive settings introduced a compiled default: %+v %v", legacy, err)
 	}
 }

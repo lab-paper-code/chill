@@ -19,11 +19,11 @@ Tick은 κ 합, 노드 계획과 두 출발점의 이웃 탐색으로 구성을 
 
 ## 2. 용량표
 
-**행.** 키는 option(노드, 모드, 할당, profile ID), 배치 상한 b, SLO(백분위 p, 목표 L), 완료 여유 m, 디스패치 점유 d와 그 출처, 용량표 설정이다. deadlinePolicy는 profile이 정한다. 행은 입력, κ, μ(b 이하 배치의 `b / (평균 실행시간 + b × d)` 최댓값), 격자 판정 결과, 창별 백분위 지연을 담는다.
+**행.** 키는 option(노드, 모드, 할당, profile ID), 배치 상한 b, SLO(백분위 p, 목표 L), 완료 여유 m, 수치 디스패치 점유 d, 용량표 설정이다. 출처는 입력에 보존하되 수치 키에서 제외한다. deadlinePolicy는 profile이 정한다. 행은 입력, κ, μ(b 이하 배치의 `b / (평균 실행시간 + b × d)` 최댓값), 격자 판정 결과, 창별 백분위 지연을 담는다.
 
 **판정.** option 인스턴스 하나만 있는 keep snapshot에 요청률 λ의 포아송 도착을 넣고 `schedulerReplayEstimate`를 읽는다. 재생은 profile 실행시간 표본에 `배치 크기 × d`를 더하고 firstfloor `ChooseBatch`를 사용한다. 저장소와 배포 runtime의 표본 선택 동등성은 `TestPolicyFastPathsMatchDeployed`로 대조한다. 백분위 지연(m 포함) ≤ L이고 timeout·만료가0이면 창은 충족이다. 창은 빈 상태에서 시작하고 요청 수는 `max(capacityMinimumRequests, ceil(capacityTailSamples/(1−p/100)), ceil(λ×capacityWindow))`다(p는0~100 백분위). p=100은 현재 별도 분기를 유지한다. seed1~capacityWindows 중 capacityPassingWindows 이상 충족하면 λ가 충족이다. 같은 seed 간격을 λ로 나누므로 판정은 결정적이다.
 
-**κ.** 요청 수와 배칭이 λ에 따라 바뀌므로 단조성을 가정하지 않는다. `G=capacityGridSteps`, `λ_k=(k/G)μ`(k=1~G)를 전부 판정한다. 충족 앞부분/미충족 뒷부분으로 나뉠 때 마지막 충족과 다음 격자 사이를 `capacityBisectionWidth×μ`까지 이분 탐색한다. K=0이면 κ0, K=G이면 κ=μ다. 미충족 뒤 충족이면 NonMonotone으로 κ가 없고 CapacityRejected다. 디스패치 점유가 없으면 MissingDispatchOccupancy로 재생 없이 거절한다. 격자 결과는 행에 보존한다. 격자·이분 폭·tail은 코드 상수가 아니라 기존 settings의 추가3개이며 기본20/.005/100을 유지한다. 모두 CapacityInput/용량 행에 포함하고 기본값도 새 입력 키로 재계산한다([설정 설계](configuration-hardcoding.md#3-serving-settings와-요청별-reuse)).
+**κ.** 요청 수와 배칭이 λ에 따라 바뀌므로 단조성을 가정하지 않는다. `G=capacityGridSteps`, `λ_k=(k/G)μ`(k=1~G)를 전부 판정한다. 충족 앞부분/미충족 뒷부분으로 나뉠 때 마지막 충족과 다음 격자 사이를 `capacityBisectionWidth×μ`까지 이분 탐색한다. K=0이면 κ0, K=G이면 κ=μ다. 미충족 뒤 충족이면 NonMonotone으로 κ가 없고 CapacityRejected다. d 측정이 없으면 설정 fallback으로 계산하며 미측정 자체는 거절 사유가 아니다. 격자 결과는 행에 보존한다. 격자·이분 폭·tail은 코드 상수가 아니라 기존 settings의 추가3개이며 기본20/.005/100을 유지한다. 모두 CapacityInput/용량 행에 포함하고 기본값도 새 입력 키로 재계산한다([설정 설계](configuration-hardcoding.md#3-serving-settings와-요청별-reuse)).
 
 계획·keep·retained·정수 routing과 replay 공급은 선택한 정책 행의 κ를 그대로 쓴다. b1 붕괴는 runtime `56ef4f7b`의 배치 선택 수정으로 해결했으므로 별도 `min(κpolicy, κb1)` envelope는 적용하지 않는다.
 
@@ -37,8 +37,9 @@ Tick은 κ 합, 노드 계획과 두 출발점의 이웃 탐색으로 구성을 
 
 **디스패치 점유.** d는 firstfloor 인스턴스가 요청 하나마다 profile 실행시간 밖에서 더 점유되는 시간이다. 포화한 인스턴스 하나가 배치 b로 낸 지속 처리율 X에서 `d = 1/X − (배치 b의 profile 평균 실행시간)/b`다. d에는 배치 사이 actor 시간(결과 전달, 다음 배치 선택, runner 호출 준비)과 같은 Pod CPU를 쓰는 요청 수신과 응답 처리로 늘어난 runner 실행시간이 함께 들어간다. rasp5 q1(m4 r3 Q2, 15:46~15:51)은 b1로 26.88 req/s, 요청당 37.20 ms였다. Q2 행 전체에서 실측 `serviceMS` 평균은 약 34.5 ms, 실행 기록 사이 간격은 평균 약 3.1 ms다. profile b1 평균은 27.79 ms라 d = 9.41 ms다.
 - 기준은 profile 평균이며 fixed `B/(profileMean+B×signed d)=X`다. max0 투영에는 등식이 그대로 성립하지 않는다. rasp5 양수d는 μ26.88/κ25.3(m29)/25.1(m139)이고, service p50 30.7ms 기준 d6.5ms는 μ29.2/κ27.7로 X를 넘었다. profile 평균·signed 추정·정책 출처를 보존한다.
-- 값은 DispatchOccupancyMeasurement가 쓴 record다([measurement-api](measurement-api.md) 3, 4장). `CostEvidence.Refresh`는 `Accepted` record 중 (Node UID, 전력모드, model)마다 최신 `measuredAt` 하나를 snapshot `dispatchOccupancy`에 싣는다. 저장된 `runtimeImage`는 과거 기록으로 유지하지만 매칭·κ 캐시 키에서는 제외한다. `perRequestNanos`는 max(d, 0)이고 source는 record key이며 새 측정은 행을 다시 계산하게 한다.
-- option의 Node UID, profile의 `condition.powerMode`, `condition.logicalModel`이 같은 항목을 쓴다. d는 model의 원시 입출력 크기와 전력모드마다 잰다. 같은 노드·모드·model의 다른 option과 배치는 같은 d를 쓴다. 맞는 항목이 없으면 `MissingDispatchOccupancy`로 κ가 없으며 용량표와 재생은 같은 항목을 쓴다. 이미지 변경만으로 기존 측정을 무효화하지 않는다.
+- `CostEvidence.Refresh` retains legacy Accepted DOM records and the previous Node UID/power-mode/model match across profiles and batches. Runtime image stays historical evidence, not a matching or numerical-key condition. A matching DOM value always wins over the configured fallback.
+- Without matching DOM, `settings.defaultDispatchOccupancyNanos` supplies d in **ns/request**, including explicit zero. It is additive at the settings JSON boundary, rejects negatives, and has no compiled policy default. The sample config chooses **2,000,000 ns/request (2 ms)** as a conservative heuristic, not a measured guarantee; the single known B cell was about 0.2 ms and its DOM about 0.27 ms, not a universal calibration.
+- `CapacityInput.dispatchOccupancy.provenance{source,value}` records `dom` or `default` and operational ns/request, while the existing `source` retains the DOM record key. Recorded decision `Snapshot.dispatchOccupancy` contains the same resolved source/value for each node/mode/model represented by its current instances or options, including option-only empty pools; recording does not mutate incoming evidence. Source/provenance-only changes do not invalidate numerical κ; returned rows retain current provenance. Throughput uses `b/(profileMean(b)+b×d)` and replay adds `actual batch size×d` once per started batch. The configured value is not a batch-total overhead.
 - 새 occupancy CR은 명시적 설정 W/K/L/D/minimumPairs를 동결한 짧은 closed-loop fixed-B burst다. shared native backlogged-pair estimator의 signed 통계는 별도 `serving/dispatch-occupancy-observations/` v1alpha2에 `Observed`/`Insufficient`로 남기며 κ 입력이 아니다. 기존 `serving/dispatch-occupancy/` v1alpha1 Accepted d와 `CostEvidence` 소비는 그대로 보존한다. 새 관측→scheduler admission 및 옛 근거 삭제는 별도 승인 전환이다([measurement-api](measurement-api.md) 3, 4장).
 
 **검증된 모양.** 이분 탐색에 쓰지 않은 seed 21~40에서 0.9κ는 모든 option이 20/20, 1.0κ는 16~20/20, 1.2κ는 0/20이다. κ는 절벽의 무릎이다. d 없이 profile 실행시간만 재생한 E1 tight(p95 1 s, m 139 ms) κ: rasp5 q1 34.3, jetsonx 18.3, orangepi 8.1, jetsono 48.1~49.7, orin-nano 38.9~41.3 req/s. rasp5 q1은 실측 처리율 26.9 req/s에서 34.3이 과대임이 드러났고, d를 넣은 값은 위 문단의 25.3이다.
@@ -53,7 +54,7 @@ Tick은 κ 합, 노드 계획과 두 출발점의 이웃 탐색으로 구성을 
 
 **계산 시간과 이전 행.** 재생은 미완료 도착을 훑고 다음 도착은 정렬목록 선두, Definition.Identity는 도착 원형당1회, 배치는 정렬 분위수 색인·재사용 공간을 쓴다. E1 tight38행 단일코어1,386초; m4/r7 합성d114행은 GOMAXPROCS12에서132초/CPU804초였다. 최종 evaluation는 같은 dump로 source별 측정한다. worker는 동일키 마지막 capacity-row-built를 로컬 management→archive 최신순으로 찾아 previous로 쓰고 계산 후 교체하며 없으면 CapacityPending이다.
 
-**κ와 현재 실행 가능성(R1).** BuildCapacityRow는 profile·SLO·dispatch occupancy·수치 정책과 모의 도착만 사용한다. 현재 Node snapshot/baseline/readiness/CPU inventory/예약/GPU inventory/memory 가용성은 입력이 아니며 Ready를 덮어 통과시키지 않는다. 장치·메모리 부재 중에도 κ는 계산·재사용하고 planner/prepare가 현재 상태로 실행을 거절한다. 복구 뒤 같은 key/κ로 다시 배치 판단한다. MissingDispatchOccupancy/NonMonotone/수치 오류와 κ=0의 의미는 유지한다.
+**κ와 현재 실행 가능성(R1).** BuildCapacityRow는 profile·SLO·선택한 dispatch occupancy·수치 정책과 모의 도착만 사용한다. 현재 Node snapshot/baseline/readiness/CPU inventory/예약/GPU inventory/memory 가용성은 입력이 아니며 Ready를 덮어 통과시키지 않는다. 장치·메모리 부재 중에도 κ는 계산·재사용하고 planner/prepare가 현재 상태로 실행을 거절한다. 복구 뒤 같은 key/κ로 다시 배치 판단한다. NonMonotone/수치 오류와 κ=0의 의미는 유지한다.
 공유 실행 key는 `shared-cpu/` namespace다. local/archived management의 이전 controlled key는 새 계산의 previous 행이 될 수 없으며 원본 archive를 변경하지 않는다. 새 namespace 안에서는 같은 측정 조건의 previous/pending·취소·수치 재사용을 유지한다. TTL/retry knob나 changing snapshot 전체 hash는 없다.
 
 **imagenet.** imagenet(p99 100 ms)은 E1 설정 m 139 ms에서 모든 option의 κ가 0이었다(m > 목표 100 ms, `hack/kappa`). 이 Workload는 꺼진 채로 두므로 행을 계산하지 않는다.
@@ -181,7 +182,7 @@ Timing이 없는 비용의 미기록 B를 관측한 0으로 취급하지 않는�
 ## 8. 측정·검사와 실행 경계
 
 - profile/runtime/측정 계약 변경은 해당 NodeUID/mode/model의 d, 정확 profile prepare/remove, loaded/unloaded baseline·전력 전환 비용을 열거하고 대표1건의 생성→raw→projection→계획 소비→실물 반환 뒤 대량 수집한다.
-- 과거 mobilenet CPU8/GPU2 및 D2/Smol 원시·status·publication은 그대로 보존한다. CPU request/quota/affinity를 선택했던 실행은 새 공유 실행과 동등한 profile/κ로 소비하지 않는다. 의존 캠페인 종료 뒤 strict 계약을 단일 전환하고 새 조건에서 측정한다. d 없으면 MissingDispatchOccupancy, 정확 비용 없으면 MissingOperationCost다.
+- 과거 mobilenet CPU8/GPU2 및 D2/Smol 원시·status·publication은 그대로 보존한다. CPU request/quota/affinity를 선택했던 실행은 새 공유 실행과 동등한 profile/κ로 소비하지 않는다. 의존 캠페인 종료 뒤 strict 계약을 단일 전환하고 새 조건에서 측정한다. d 없으면 설정 fallback, 정확 비용 없으면 MissingOperationCost다.
 - signed d와 max0 정책은 구분한다. Smol D04/D09/D14/D23/D33의 profile 포함95% 근사구간<0은 systematic profile-versus-serving bias이며 인과 기여 미확정; identity·harness/warmup/timing/시점 차이는 남기고 보정·추정정책은 M5 후보다. 근거: `ops/pools-deploy/audit-20261024/smol-systematic-bias-20261024.{json,txt}`.
 - `E±B`, `B=S+G`는 [측정 API](measurement-api.md)를 따른다. minimumGain은 선택 evidence B만 전파하며 profile 통계·BEO fallback CI·시점/센서/모델 오차를 포괄하는 global95% 보장이 아니다.
 - 검사 계약: 재생 결정성/NonMonotone/창·m·SLO 경계, 입력별 재계산/previous/pending, 현재 memory·장치 부재→복구와 동일 κ 재사용, κ_new/κ_ret/B/W·make-before-break, 노드단일소유·전력모드, brute force/k3/빈 출발/replica/예산·동률, 동일H 에너지·signed 상쇄·문턱 equality/keep infeasible, weight1000·ACK·budgetCut을 확인한다. 이 목록은 새 source의 통과 기록이 아니다.
@@ -299,6 +300,6 @@ DeviceClass만 맞는 원본을 후보에 직접 넣지 않는다. 재사용 pro
 `/reuse-<source·허용값의 SHA256>` 파생 ID이며 행 key·불변 startup bundle·정확 비용 참조에도 이 ID를 쓴다.
 서비스 분포·증분 에너지는 원본, idle/meter·runtime/GPU UUID는 대상 확인 근거다.
 `profile.reuse`에 source/confirmation/result와 실제 차이를 기록한다.
-대상 d와 정확 비용이 없으면 기존 MissingDispatchOccupancy/MissingEvidence를 유지한다.
+대상 d가 없으면 설정 fallback으로 κ를 계산하며 정확 비용이 없으면 기존 MissingEvidence를 유지한다.
 프로파일 공유가 d·prepare/remove·mode cost의 암묵적 공유나 κ 적격을 뜻하지 않는다.
 

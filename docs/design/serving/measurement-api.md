@@ -271,9 +271,9 @@ minute drift do not establish universal stationarity or scheduler admission.
 ## 4. 계획기의 d 수집
 
 - `CostEvidence.Refresh`는 `serving/dispatch-occupancy/`를 prefix 목록/불변 identity cache로 읽는다. `Accepted`이면서 기록의 `profileID`가 현재 catalog의 검증된 공유 실행 profile인 근거만 (Node UID, mode, runtime image, model)별 최신 `measuredAt` 선택에 참여한다. 과거 quota/thread 제어 profile의 d는 tuple이 같아도 새 κ 입력이 되지 않는다. 동률은 key 순(`latestBy` 규칙)이며 원 기록은 보존한다.
-- `serving.DispatchOccupancy{node{name,uid},powerMode,runtimeImage,model,perRequestNanos,source}`에서 source는 record key, `perRequestNanos=max(d,0)`(사용자 결정 A7)이다. 음수 d는 원 record/key로 조회한다.
-- controller 설정을 거쳐 snapshot `dispatchOccupancy`에 싣고 `dispatchOccupancy(i)`는 option의 Node UID/profile mode/runtime/model **모두** 일치하는 항목만 찾는다. `NewCapacityInput`과 replay가 이를 쓰며 행 key에 항목이 포함되어 source 변경 시 재계산한다.
-- 미측정 mode option은 `MissingDispatchOccupancy`다. 같은 Node/mode/runtime/model option은 d를 공유한다. 상세 용량 소비는 [계획기](analytic-planner.md)를 따른다.
+- `serving.DispatchOccupancy` retains the DOM record key in `source`, with `perRequestNanos=max(d,0)`; signed facts remain in the original record. Selection adds `provenance{source:dom|default,value}` to the capacity input.
+- Legacy accepted DOM keeps Node UID/profile power-mode/model matching across profiles and batches; runtime image is history, not a matching/key constraint. Matching DOM always has priority.
+- Without matching DOM, configured `settings.defaultDispatchOccupancyNanos` supplies ns/request and the row is computed rather than rejected. Source/provenance-only changes reuse numerical capacity; value changes invalidate it. New Observed burst evidence remains separate and is not adopted by this fallback change. 상세 용량 소비는 [계획기](analytic-planner.md)를 따른다.
 
 ### 4.1 observer와 coherent replacement
 

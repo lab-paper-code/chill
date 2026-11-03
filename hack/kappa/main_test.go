@@ -31,9 +31,9 @@ func TestDecodeSnapshotUsesCurrentWorkloadUID(t *testing.T) {
 }
 
 // Synthetic PLC-like Nodes, margin 1 ms and d 1 ms: the b1 latency is the p99
-// sample + 2 ms, the fastest option per Node counts, and options without d or
-// for another Workload do not. The widest gap with at least half passing and
-// two failing lies between lp (5 ms) and r5 (10 ms), so L = 7.1 ms.
+// sample + 2 ms, the fastest option per Node counts. The unmeasured fast option
+// uses configured d=20ms rather than disappearing or assuming zero. The widest
+// gap with at least half passing and two failing is lp/r5, so L = 7.1 ms.
 func TestProposeSLOSplitsFastFromSlowNodes(t *testing.T) {
 	w := &serving.Definition{Name: "plc", UID: "w"}
 	snap := serving.SchedulerSnapshot{}
@@ -61,7 +61,8 @@ func TestProposeSLOSplitsFastFromSlowNodes(t *testing.T) {
 	option("op", true, "w", spread...)
 	option("jn", true, "w", 14e6)
 
-	latency := nodeLatencies(snap, 1, w, 0.99)
+	settings := serving.SchedulerSettings{CompletionMarginMS: 1, DefaultDispatchOccupancyNanos: int64(20 * time.Millisecond)}
+	latency := nodeLatencies(settings, snap, w, 0.99)
 	want := map[string]float64{"g2": 3, "g3": 4, "lp": 5, "r5": 10, "op": 11.9, "jn": 16}
 	if len(latency) != len(want) {
 		t.Fatalf("latency %v, want %v", latency, want)

@@ -125,6 +125,9 @@ func (l *ObservationLog) SchedulerRecord(event SchedulerObservation) error {
 	}
 	if s := event.Snapshot; s != nil {
 		recorded := *s
+		if event.Decision != nil {
+			recorded.DispatchOccupancy = schedulerSelectedOccupancy(event.Decision.Settings, *s)
+		}
 		recorded.Instances = refs.instances(s.Instances)
 		recorded.Actions = refs.actions(s.Actions)
 		// Window counts stay in Decision.Search; the request stream holds arrivals.

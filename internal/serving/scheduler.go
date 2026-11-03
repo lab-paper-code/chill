@@ -48,6 +48,9 @@ type SchedulerSettings struct {
 	CapacityGridSteps       int           `json:"capacityGridSteps"`
 	CapacityBisectionWidth  float64       `json:"capacityBisectionWidth"`
 	CapacityTailSamples     int           `json:"capacityTailSamples"`
+	// DefaultDispatchOccupancyNanos is configured ns/request when no legacy DOM
+	// measurement matches. Throughput and replay add batch size × d once.
+	DefaultDispatchOccupancyNanos int64 `json:"defaultDispatchOccupancyNanos"`
 	// PlanSearchWorkers bounds the goroutines that evaluate plan sets at once;
 	// the search itself ends within half of ControlInterval.
 	PlanSearchWorkers int               `json:"planSearchWorkers"`
@@ -85,34 +88,77 @@ func ValidateSchedulerSettingsPatch(current SchedulerSettings, patch json.RawMes
 	return settings.Settings()
 }
 
-// DispatchOccupancy is the measured time per request that an instance of
-// Model on Node in PowerMode running RuntimeImage stays busy beyond its profile
-// service samples: 1/X − (the profile's mean service at batch b)/b, where X is
-// the sustained completions per second of one saturated instance at batch b,
-// and 0 when that is negative. Capacity replay adds it per request to every
-// batch it starts; Source names the measurement record.
+// DispatchOccupancy is the operational time per request an instance stays busy
+// beyond its profile service samples. Accepted legacy DOM has priority over the
+// configured default. Throughput/replay add batch size × PerRequest once.
+// Source retains the DOM record key; Provenance identifies the selected value.
 type DispatchOccupancy struct {
-	Node         NodeReference `json:"node"`
-	PowerMode    string        `json:"powerMode"`
-	RuntimeImage string        `json:"runtimeImage"`
-	Model        string        `json:"model"`
-	PerRequest   time.Duration `json:"perRequestNanos"`
-	Source       string        `json:"source"`
+	Node         NodeReference                `json:"node"`
+	PowerMode    string                       `json:"powerMode"`
+	RuntimeImage string                       `json:"runtimeImage"`
+	Model        string                       `json:"model"`
+	PerRequest   time.Duration                `json:"perRequestNanos"`
+	Source       string                       `json:"source"`
+	Provenance   *DispatchOccupancyProvenance `json:"provenance,omitempty"`
 }
 
-// dispatchOccupancy is the measurement for instance i's Node, power mode,
-// runtime image and model, or nil when none exists.
-func dispatchOccupancy(measured []DispatchOccupancy, i SchedulerInstance) *DispatchOccupancy {
+// DispatchOccupancyProvenance distinguishes a DOM measurement from configured
+// fallback without claiming that the fallback is a measured bound.
+type DispatchOccupancyProvenance struct {
+	Source string `json:"source"` // dom or default
+	Value  int64  `json:"value"`  // operational ns/request
+}
+
+const (
+	occupancySourceDOM     = "dom"
+	occupancySourceDefault = "default"
+)
+
+// dispatchOccupancy keeps legacy Node UID/mode/model matching unchanged and
+// supplies the configured default when no measurement matches.
+func dispatchOccupancy(settings SchedulerSettings, measured []DispatchOccupancy, i SchedulerInstance) *DispatchOccupancy {
 	if i.Profile == nil {
 		return nil
 	}
 	for _, o := range measured {
 		if o.Node.UID == i.Node.UID && o.PowerMode == i.Profile.Condition.PowerMode &&
 			o.Model == i.Profile.Condition.LogicalModel {
+			o.PerRequest = max(o.PerRequest, 0)
+			o.Provenance = &DispatchOccupancyProvenance{Source: occupancySourceDOM, Value: int64(o.PerRequest)}
 			return &o
 		}
 	}
-	return nil
+	c := &i.Profile.Condition
+	return &DispatchOccupancy{
+		Node: i.Node, PowerMode: c.PowerMode, RuntimeImage: c.RuntimeImage, Model: c.LogicalModel,
+		PerRequest: time.Duration(settings.DefaultDispatchOccupancyNanos),
+		Provenance: &DispatchOccupancyProvenance{Source: occupancySourceDefault, Value: settings.DefaultDispatchOccupancyNanos},
+	}
+}
+
+// schedulerSelectedOccupancy records the actual DOM/default choice for every
+// node/mode/model represented by a decision, without changing incoming evidence.
+func schedulerSelectedOccupancy(settings SchedulerSettings, snapshot SchedulerSnapshot) []DispatchOccupancy {
+	var selected []DispatchOccupancy
+	seen := map[[3]string]bool{}
+	add := func(i SchedulerInstance) {
+		if i.Profile == nil {
+			return
+		}
+		key := [3]string{i.Node.UID, i.Profile.Condition.PowerMode, i.Profile.Condition.LogicalModel}
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		selected = append(selected, *dispatchOccupancy(settings, snapshot.DispatchOccupancy, i))
+	}
+	for _, i := range snapshot.Instances {
+		add(i)
+	}
+	for _, o := range snapshot.Options {
+		add(o.Instance)
+	}
+	return selected
 }
 
 type SchedulerControls struct {
@@ -464,6 +510,9 @@ func (s SchedulerSettings) Validate() error {
 	}
 	if math.IsNaN(s.CompletionMarginMS) || math.IsInf(s.CompletionMarginMS, 0) || s.CompletionMarginMS < 0 {
 		return fmt.Errorf("completionMarginMS must be finite and nonnegative")
+	}
+	if s.DefaultDispatchOccupancyNanos < 0 {
+		return fmt.Errorf("defaultDispatchOccupancyNanos must be nonnegative")
 	}
 	for uid, rate := range s.MinimumDemand {
 		if uid == "" || !schedulerFinite(rate) || rate < 0 {

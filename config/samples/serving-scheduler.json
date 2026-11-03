@@ -18,6 +18,7 @@
     "capacityGridSteps": 20,
     "capacityBisectionWidth": 0.005,
     "capacityTailSamples": 100,
+    "defaultDispatchOccupancyNanos": 2000000,
     "planSearchWorkers": 3,
     "autonomousWorkloads": [],
     "excludedNodes": [],

@@ -247,7 +247,7 @@ func slo(settings serving.SchedulerSettings, snapshot serving.SchedulerSnapshot)
 		if !slices.Contains(settings.AutonomousWorkloads, w.UID) {
 			continue
 		}
-		latency := nodeLatencies(snapshot, settings.CompletionMarginMS, w, 0.99)
+		latency := nodeLatencies(settings, snapshot, w, 0.99)
 		target, err := proposeSLO(latency)
 		if err != nil {
 			return fmt.Errorf("%s: %w", w.Name, err)
@@ -300,20 +300,20 @@ func kappaCell(kappa map[string]float64, node string) string {
 }
 
 // nodeLatencies is the lowest b1 latency (ms) per Node over the options of
-// Workload w that have a dispatch occupancy: the q quantile of the b1
-// execution samples plus d plus the completion margin.
-func nodeLatencies(snapshot serving.SchedulerSnapshot, marginMS float64, w *serving.Definition, q float64) map[string]float64 {
+// Workload w: the q quantile of the b1 execution samples plus selected DOM or
+// configured default d plus the completion margin.
+func nodeLatencies(settings serving.SchedulerSettings, snapshot serving.SchedulerSnapshot, w *serving.Definition, q float64) map[string]float64 {
 	out := map[string]float64{}
 	for _, o := range snapshot.Options {
 		if !slices.Contains(o.CompatibleUIDs, w.UID) || o.Instance.Profile == nil {
 			continue
 		}
-		d := serving.NewCapacityInput(serving.SchedulerSettings{}, snapshot.DispatchOccupancy, o, w).DispatchOccupancy
+		d := serving.NewCapacityInput(settings, snapshot.DispatchOccupancy, o, w).DispatchOccupancy
 		for _, b := range o.Instance.Profile.Batches {
 			if b.Batch != 1 || len(b.DurationNanos) == 0 || d == nil {
 				continue
 			}
-			ms := (quantile(b.DurationNanos, q)+float64(d.PerRequest))/1e6 + marginMS
+			ms := (quantile(b.DurationNanos, q)+float64(d.PerRequest))/1e6 + settings.CompletionMarginMS
 			if old, ok := out[o.Instance.Node.Name]; !ok || ms < old {
 				out[o.Instance.Node.Name] = ms
 			}

@@ -226,9 +226,12 @@ func TestCostEvidenceExcludesControlledOccupancyFromSharedCapacity(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := serving.NewCapacityInput(serving.SchedulerSettings{}, view.DispatchOccupancy, option, workload)
-	if input.DispatchOccupancy != nil {
-		t.Fatalf("controlled occupancy reached shared capacity input: %+v", input.DispatchOccupancy)
+	settings := serving.SchedulerSettings{DefaultDispatchOccupancyNanos: int64(time.Millisecond)}
+	input := serving.NewCapacityInput(settings, view.DispatchOccupancy, option, workload)
+	if len(view.DispatchOccupancy) != 0 || input.DispatchOccupancy == nil ||
+		input.DispatchOccupancy.Source != "" || input.DispatchOccupancy.Provenance.Source != "default" ||
+		input.DispatchOccupancy.PerRequest != time.Millisecond {
+		t.Fatalf("controlled occupancy did not use configured fallback: %+v", input.DispatchOccupancy)
 	}
 	// Filter eligibility before latest selection, including on cache hits:
 	// even a newer controlled record must not hide the shared measurement.
