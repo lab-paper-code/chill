@@ -16,12 +16,7 @@ func (p *capacityPlanner) reserveAvailable(id, uid string) bool {
 	})
 }
 
-func (p *capacityPlanner) transitionConstraints(choice []int, route float64) (string, []SchedulerTransitionReserve) {
-	for n, j := range choice {
-		if plan := p.plans[n][j]; !plan.keep && route+plan.postMax > p.period {
-			return schedulerTransitionHorizon, nil
-		}
-	}
+func (p *capacityPlanner) transitionConstraints(choice []int) (string, []SchedulerTransitionReserve) {
 	records := p.transitionReserve(choice)
 	for _, record := range records {
 		if !record.Allowed {

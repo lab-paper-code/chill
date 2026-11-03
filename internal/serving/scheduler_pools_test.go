@@ -168,7 +168,7 @@ func TestSchedulerComparedNodesLimitEnergyAndBaselineNeeds(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.MaxReplicas = 1
 	base := snap.Instances[0]
-	poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
+	empty := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
 	poolsAddNode(&snap, "n3", nil)
 	move := poolsAddNode(&snap, "n4", map[string]float64{"fixed": 10})
 	eco := poolsAddNode(&snap, "n5", map[string]float64{"fixed": 10})
@@ -182,16 +182,16 @@ func TestSchedulerComparedNodesLimitEnergyAndBaselineNeeds(t *testing.T) {
 		poolsCost(schedulerActionPrepare, eco, "unloaded", schedulerState(raised), schedulerTestEcoMode),
 	}
 	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
-	if want := []NodeReference{base.Node, move}; !slices.Equal(d.Search.ComparedNodes, want) {
+	if want := []NodeReference{base.Node, empty, move, eco}; !slices.Equal(d.Search.ComparedNodes, want) {
 		t.Fatalf("ComparedNodes %v, want %v", d.Search.ComparedNodes, want)
 	}
 	if d.Keep.ExpectedJoules == nil || d.Target == nil {
 		t.Fatalf("a Node without baseline outside ComparedNodes stopped the decision: %+v", d)
 	}
 	if !slices.ContainsFunc(poolsPlans(d, eco), func(p SchedulerNodePlan) bool {
-		return strings.HasPrefix(p.Reason, "MissingUnloadedNodeBaseline:n5:"+schedulerTestEcoMode)
+		return p.Eligible && len(p.IdleCosts) != 0
 	}) {
-		t.Fatalf("eco plan without its mode's baseline was not excluded: %+v", poolsPlans(d, eco))
+		t.Fatalf("eco plan omitted measured/default idle estimates: %+v", poolsPlans(d, eco))
 	}
 }
 
@@ -300,8 +300,8 @@ func TestSchedulerDirectMoveBetweenActivePools(t *testing.T) {
 	snap.ScaleDown["w2"] = SchedulerDownState{}
 	blocked := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
 	for _, plan := range poolsPlans(blocked, shared) {
-		if plan.Key == "profile-other-cpu@n2-fixed/b1/w1" && (plan.Eligible || plan.Reason != "ScaleDownStabilizing") {
-			t.Fatalf("mixed plan bypassed removed Workload's gate: %+v", plan)
+		if plan.Key == "profile-other-cpu@n2-fixed/b1/w1" && (!plan.Eligible || !slices.Contains(plan.RequiresRecovery, "w2") || plan.KappaRetained["w2"] == 0) {
+			t.Fatalf("mixed plan lost the serving Workload's recovery dependency: %+v", plan)
 		}
 	}
 }
@@ -338,8 +338,8 @@ func TestSchedulerAvailableNodeSavingAndReentry(t *testing.T) {
 		t.Fatalf("re-entry did not use the empty-Node raise and the target-mode prepare: %+v", plans)
 	}
 	snap.Costs = []OperationCost{loaded, prepare}
-	if !slices.ContainsFunc(poolsPlans(capacityDecideForTest(t, s, snap, rows), reentry), func(p SchedulerNodePlan) bool { return p.Reason == schedulerPlanMissingOperationCost }) {
-		t.Fatal("re-entry without the empty-Node raise cost was not excluded")
+	if !slices.ContainsFunc(poolsPlans(capacityDecideForTest(t, s, snap, rows), reentry), func(p SchedulerNodePlan) bool { return p.Eligible && len(p.ActionCosts) > 0 }) {
+		t.Fatal("re-entry without an exact raise measurement lost its estimated plan")
 	}
 }
 

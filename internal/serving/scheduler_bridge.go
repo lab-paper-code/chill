@@ -111,7 +111,7 @@ func (b *schedulerBridgeCompiler) initialize() (string, string) {
 			}
 		}
 	}
-	b.out.actions = schedulerPlan(p.snapshot, b.goal)
+	b.out.actions = schedulerPlan(p.settings, p.snapshot, b.goal)
 	byID, final := map[string]int{}, ""
 	for k, a := range b.out.actions {
 		byID[a.ID] = k
@@ -260,10 +260,7 @@ func (b *schedulerBridgeCompiler) resolve() {
 				continue
 			}
 			if a.Status != schedulerActionComplete && (a.Kind == schedulerActionPrepare || a.Kind == schedulerActionRemove || a.Kind == schedulerActionPower) {
-				_, longest, _, valid := capacityOperationCost(schedulerCost(b.p.snapshot.Costs, a.CostID))
-				if !valid {
-					continue
-				}
+				_, longest, _ := actionOperationCost(b.p.settings, b.p.snapshot.Costs, a)
 				at += longest
 			}
 			b.ends[a.ID] = at
@@ -418,7 +415,7 @@ func (p *capacityPlanner) bridgeFlow(uid string, rate float64, routing map[strin
 	return kappa, served
 }
 
-func (p *capacityPlanner) bridgeRequestJoules(b *schedulerBridgeSchedule, w capacityWorkload, finalMean, route float64) float64 {
+func (p *capacityPlanner) bridgeRequestJoules(b *schedulerBridgeSchedule, w capacityWorkload, finalMean, route, window float64) float64 {
 	power := func(weights map[string]int32) float64 {
 		units, served, watts := 0.0, 0.0, 0.0
 		for _, weight := range weights {
@@ -450,7 +447,7 @@ func (p *capacityPlanner) bridgeRequestJoules(b *schedulerBridgeSchedule, w capa
 			}
 		}
 	}
-	return joules + power(weights)*(route-at) + w.rate*finalMean*(p.period-route)
+	return joules + power(weights)*(route-at) + w.rate*finalMean*(window-route)
 }
 
 func (b *schedulerBridgeSchedule) nodeJoules(plan *capacityPlan, n int, r, t float64) float64 {
@@ -461,9 +458,9 @@ func (b *schedulerBridgeSchedule) nodeJoules(plan *capacityPlan, n int, r, t flo
 	return joules
 }
 
-func (b *schedulerBridgeSchedule) actionsFor(snapshot SchedulerSnapshot, target SchedulerCandidate) []Action {
+func (b *schedulerBridgeSchedule) actionsFor(settings SchedulerSettings, snapshot SchedulerSnapshot, target SchedulerCandidate) []Action {
 	if b == nil {
-		return schedulerPlan(snapshot, target)
+		return schedulerPlan(settings, snapshot, target)
 	}
 	actions := slices.Clone(b.actions)
 	for k := range actions {

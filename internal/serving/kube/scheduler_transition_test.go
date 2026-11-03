@@ -677,8 +677,8 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			if err := c.runtime.ApplySchedulerTarget(serving.SchedulerCandidate{Instances: []serving.SchedulerInstance{old}, Routing: snapshot.Routing}); err != nil {
 				t.Fatal(err)
 			}
-			c.config.Settings = serving.SchedulerSettings{ObservationWindow: time.Minute, ControlInterval: time.Second, MaxObservationAge: time.Minute,
-				MinimumDemand: map[string]float64{uid: 23.383333}, Controls: serving.SchedulerControls{Routing: true}}
+			c.config.Settings = withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Minute, ControlInterval: time.Second, MaxObservationAge: time.Minute,
+				MinimumDemand: map[string]float64{uid: 23.383333}, Controls: serving.SchedulerControls{Routing: true}})
 			rows := []serving.CapacityRow{}
 			for n, i := range []serving.SchedulerInstance{old, added} {
 				in := serving.NewCapacityInput(c.config.Settings, nil, serving.SchedulerOption{Instance: i}, snapshot.Workloads[0])
@@ -961,10 +961,10 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State)) (
 	controller := &SchedulerController{
 		ctx: ctx, store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer,
 		operations: operations, observationLog: manager.observationLog, capacity: serving.NewCapacityTable(1, nil, nil), runs: map[string]*actionRun{},
-		config: SchedulerControllerConfig{Settings: serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
+		config: SchedulerControllerConfig{Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 			MaxObservationAge: time.Minute, MaxReplicas: 3, MaxInstances: 3, CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 			CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
-			AutonomousWorkloads: []string{d.UID}}},
+			AutonomousWorkloads: []string{d.UID}})},
 	}
 	return controller, prepared
 }

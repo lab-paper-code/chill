@@ -219,7 +219,8 @@ func schedulerOptionCondition(o SchedulerOption) string {
 		return ""
 	}
 	p := i.Profile
-	// A top-level *CurveDatasetContract prints its value (&{name uid}), not its address.
+	// Artifact and input contracts are executable semantics, not runtime-image
+	// measurement validity. Preserve their option partition.
 	return fmt.Sprint(i.Node, p.Condition.Artifact, p.Condition.RuntimeFamily, p.Condition.Backend, p.Condition.Preprocessor, p.Condition.ActiveProtocol.Dataset, p.Condition.PowerMode, p.Condition.Firstfloor, p.Condition.RuntimeAccess, p.Condition.PlannedBatchSizes, i.Allocation, i.MaxBatch, i.MaxWait)
 }
 
@@ -276,8 +277,8 @@ func schedulerProfileMatches(d *Definition, p *Profile) bool {
 	return d != nil && profilePath(d, p) != nil
 }
 
-func schedulerPlan(snap SchedulerSnapshot, c SchedulerCandidate) []Action {
-	p := schedulerPlanState{snap: snap, target: &c, actions: []Action{}, nodeTail: map[string]string{}, prepares: []string{}, stops: map[string]string{}}
+func schedulerPlan(settings SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate) []Action {
+	p := schedulerPlanState{settings: settings, snap: snap, target: &c, actions: []Action{}, nodeTail: map[string]string{}, prepares: []string{}, stops: map[string]string{}}
 	p.changeNodes(c)
 	p.prepareTargets(c)
 	// Candidate ordinals and rolling witness text are not operation identity.
@@ -293,11 +294,13 @@ func schedulerPlan(snap SchedulerSnapshot, c SchedulerCandidate) []Action {
 	return p.actions
 }
 
-// selectCosts picks each operation cost by the key replay checks: the Node
-// power mode for prepare and remove, the loaded state for power.
+// selectCosts uses the nearest measured operation: exact cell, Node, device
+// class, then configured default. Representation changes never veto a plan.
 func (p *schedulerPlanState) selectCosts() {
 	modes := map[NodeReference]string{}
 	loaded := map[NodeReference][]string{}
+	identities := schedulerMeasurementIdentities(p.snap, p.target)
+	classes := measurementDeviceClasses(p.snap, p.target)
 	for _, n := range p.snap.Nodes {
 		modes[n.Node] = n.PowerMode
 	}
@@ -309,6 +312,7 @@ func (p *schedulerPlanState) selectCosts() {
 		if a.Status == schedulerActionPlanned || a.Status == "" {
 			a.CostID = ""
 			a.ExpectedSeconds, a.ExpectedSource = nil, nil
+			a.CostProvenance = nil
 		}
 		mode := modes[a.Node]
 		matches := func(cost OperationCost) bool { return cost.PowerMode == mode }
@@ -321,35 +325,66 @@ func (p *schedulerPlanState) selectCosts() {
 			}
 		case schedulerActionPower:
 			state := slices.Clone(loaded[a.Node])
-			matches = func(cost OperationCost) bool { return schedulerEqualState(state, cost.BeforeState) }
+			matches = func(cost OperationCost) bool {
+				return measurementEqualState(state, cost.BeforeState, identities) && measurementEqualState(state, cost.TargetState, identities)
+			}
 			modes[a.Node] = a.To
 		default:
 			continue
 		}
-		for _, cost := range p.snap.Costs {
-			if a.CostID == "" && cost.Node == a.Node && cost.Kind == a.Kind && schedulerCostState(cost.From) == schedulerCostState(a.From) &&
-				schedulerCostState(cost.To) == schedulerCostState(a.To) && matches(cost) {
-				a.CostID = cost.ID
+		var selected *OperationCost
+		selectedRank := 3
+		for j := range p.snap.Costs {
+			cost := &p.snap.Costs[j]
+			if cost.Kind != a.Kind {
+				continue
+			}
+			if _, _, _, ok := capacityOperationCost(cost); !ok || cost.Reference.Validate() != nil {
+				continue
+			}
+			class := cost.DeviceClass
+			if class == "" {
+				class = classes[cost.Node.UID]
+			}
+			rank := measurementRank(cost.Node.UID, class, a.Node.UID, classes[a.Node.UID],
+				measurementOperationMatches(*cost, *a, identities) && matches(*cost))
+			if rank < 3 && (selected == nil || measurementPreferred(rank, cost.MeasuredAt, cost.ID, selectedRank, selected.MeasuredAt, selected.ID)) {
+				selected, selectedRank = cost, rank
 			}
 		}
-		if a.Status == schedulerActionPlanned || a.Status == "" {
-			cost := schedulerCost(p.snap.Costs, a.CostID)
+		if selected != nil && (a.Status == schedulerActionPlanned || a.Status == "") {
+			a.CostID = selected.ID
+			a.CostProvenance = &OperationCostProvenance{Source: measurementSource(selectedRank), CostRef: selected.ID}
+		}
+		cost := schedulerCost(p.snap.Costs, a.CostID)
+		_, _, _, measuredValid := capacityOperationCost(cost)
+		if a.Status == schedulerActionPlanned || a.Status == "" || !measuredValid && (a.CostProvenance == nil || a.CostProvenance.Source != operationSourceDefault) {
 			if mean, _, _, ok := capacityOperationCost(cost); ok {
 				a.ExpectedSeconds = &mean
 				a.ExpectedSource = &ActionExpectedSource{CostID: cost.ID, Reference: cost.Reference, Statistic: "mean", TrialCount: len(cost.Trials)}
+				if a.CostProvenance == nil {
+					a.CostProvenance = &OperationCostProvenance{Source: operationSourceNode, CostRef: cost.ID}
+				}
+			} else {
+				value := p.settings.DefaultOperationCost[a.Kind]
+				a.ExpectedSource = nil
+				a.CostID = ""
+				a.ExpectedSeconds = &value.Seconds
+				a.CostProvenance = &OperationCostProvenance{Source: operationSourceDefault, Value: &value}
 			}
 		}
 	}
 }
 
 // EstimateAction selects a duration using the same measured conditions as planning.
-func EstimateAction(snapshot SchedulerSnapshot, action Action) Action {
-	p := schedulerPlanState{snap: snapshot, actions: []Action{action}}
+func EstimateAction(settings SchedulerSettings, snapshot SchedulerSnapshot, action Action) Action {
+	p := schedulerPlanState{settings: settings, snap: snapshot, actions: []Action{action}}
 	p.selectCosts()
 	return p.actions[0]
 }
 
 type schedulerPlanState struct {
+	settings SchedulerSettings
 	snap     SchedulerSnapshot
 	target   *SchedulerCandidate
 	actions  []Action
@@ -378,6 +413,7 @@ func (p *schedulerPlanState) add(kind string, node NodeReference, id, from, to s
 			a.Cancelable = old.Cancelable
 			a.Reason = old.Reason
 			a.ExpectedSeconds, a.ExpectedSource = old.ExpectedSeconds, old.ExpectedSource
+			a.CostProvenance = old.CostProvenance
 			if old.CostID != "" {
 				a.CostID = old.CostID
 			}

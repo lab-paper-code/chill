@@ -528,24 +528,20 @@ func (s *schedulerReplayState) accumulateEnergy(until float64) bool {
 					active = append(active, i.config)
 				}
 			}
-			watts, meter, sources, assumptions, reason := schedulerBaseline(s.snap.Baselines, n, active, s.snap.Options)
-			if reason != "" {
-				s.out.reasons = append(s.out.reasons, reason)
-				return false
-			}
+			watts, meter, sources, assumptions := schedulerBaseline(s.settings, s.snap.Baselines, n, active, s.snap.Options)
 			if owner, ok := meterSeen[meter]; ok && owner != n.Node.UID {
 				s.out.reasons = append(s.out.reasons, "NonDistinctNodeMeter:"+meter)
 				return false
 			}
 			meterSeen[meter] = n.Node.UID
-			s.out.sources = appendUnique(s.out.sources, sources...)
+			s.out.sources = appendUnique(s.out.sources, sources.References...)
 			s.out.assumptions = appendUnique(s.out.assumptions, assumptions...)
 			rate := watts / 1e9
 			count := 0
 			for _, a := range s.actions {
 				if a.started && !a.done && a.action.Node == n.Node {
 					cost := schedulerCost(s.snap.Costs, a.action.CostID)
-					if cost.Meter != meter {
+					if a.action.CostProvenance != nil && a.action.CostProvenance.Source == operationSourceExact && cost.Meter != meter {
 						s.out.reasons = append(s.out.reasons, "OperationMeterMismatch:"+a.action.ID)
 						return false
 					}

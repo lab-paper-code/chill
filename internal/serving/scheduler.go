@@ -51,6 +51,10 @@ type SchedulerSettings struct {
 	CapacityTailSamples     int           `json:"capacityTailSamples"`
 	// Dispatch occupancy defaults to configured ns/request when no measured/DOM d exists.
 	DefaultDispatchOccupancyNanos int64 `json:"defaultDispatchOccupancyNanos"`
+	// DefaultOperationCost supplies whole-wall costs for unmeasured operations.
+	// Every operation kind and DefaultIdlePower must be configured explicitly.
+	DefaultOperationCost map[string]OperationCostValue `json:"defaultOperationCost,omitempty"`
+	DefaultIdlePower     *IdlePowerDefault             `json:"defaultIdlePower,omitempty"`
 	// PlanSearchWorkers bounds the goroutines that evaluate plan sets at once;
 	// the search itself ends within half of ControlInterval.
 	PlanSearchWorkers int               `json:"planSearchWorkers"`
@@ -333,11 +337,13 @@ type SchedulerArrival struct {
 	Outcome     string        `json:"outcome,omitempty"`
 }
 type NodeBaseline struct {
-	ID        string        `json:"id"`
-	Node      NodeReference `json:"node"`
-	PowerMode string        `json:"powerMode"`
-	State     []string      `json:"state"` // sorted profile ID + allocation identity, once per physical instance
-	Watts     float64       `json:"watts"`
+	ID              string            `json:"id"`
+	Node            NodeReference     `json:"node"`
+	DeviceClass     string            `json:"deviceClass,omitempty"`
+	PowerMode       string            `json:"powerMode"`
+	State           []string          `json:"state"` // sorted profile ID + allocation identity, once per physical instance
+	StateIdentities map[string]string `json:"stateIdentities,omitempty"`
+	Watts           float64           `json:"watts"`
 	// WattsUncertainty is the deterministic shift/gap half-width, not a confidence interval.
 	WattsUncertainty float64                      `json:"wattsUncertainty,omitempty"`
 	Meter            string                       `json:"meter"`
@@ -355,6 +361,7 @@ type OperationTrial struct {
 type OperationCost struct {
 	ID                  string                       `json:"id"`
 	Node                NodeReference                `json:"node"`
+	DeviceClass         string                       `json:"deviceClass,omitempty"`
 	Kind                string                       `json:"kind"`
 	From                string                       `json:"from"`
 	To                  string                       `json:"to"`
@@ -370,6 +377,8 @@ type OperationCost struct {
 	BeforeBaselineWatts *float64                     `json:"beforeBaselineWatts,omitempty"`
 	// MeasuredAt selects the latest cost per condition.
 	MeasuredAt time.Time `json:"measuredAt"`
+	// StateIdentities resolves historical profile IDs to measurement cells.
+	StateIdentities map[string]string `json:"stateIdentities,omitempty"`
 }
 
 // ActionExpectedSource identifies the measured trials behind an action duration.
@@ -380,16 +389,17 @@ type ActionExpectedSource struct {
 	TrialCount int                          `json:"trialCount"`
 }
 type Action struct {
-	ID              string                `json:"id"`
-	Kind            string                `json:"kind"` // prepare, route, stop, drain, remove, power
-	Node            NodeReference         `json:"node"`
-	Instance        string                `json:"instance,omitempty"`
-	From            string                `json:"from,omitempty"`
-	To              string                `json:"to,omitempty"`
-	DependsOn       []string              `json:"dependsOn"`
-	CostID          string                `json:"costID,omitempty"`
-	ExpectedSeconds *float64              `json:"expectedSeconds"`
-	ExpectedSource  *ActionExpectedSource `json:"expectedSource"`
+	ID              string                   `json:"id"`
+	Kind            string                   `json:"kind"` // prepare, route, stop, drain, remove, power
+	Node            NodeReference            `json:"node"`
+	Instance        string                   `json:"instance,omitempty"`
+	From            string                   `json:"from,omitempty"`
+	To              string                   `json:"to,omitempty"`
+	DependsOn       []string                 `json:"dependsOn"`
+	CostID          string                   `json:"costID,omitempty"`
+	CostProvenance  *OperationCostProvenance `json:"costProvenance,omitempty"`
+	ExpectedSeconds *float64                 `json:"expectedSeconds"`
+	ExpectedSource  *ActionExpectedSource    `json:"expectedSource"`
 	// RouteTarget freezes an intermediate ACK handoff without replacing the
 	// final goal. It contains no Actions and only routes already-prepared peers.
 	RouteTarget *SchedulerCandidate `json:"routeTarget,omitempty"`
@@ -569,6 +579,9 @@ func (s SchedulerSettings) Validate() error {
 	}
 	if s.DefaultDispatchOccupancyNanos < 0 {
 		return fmt.Errorf("defaultDispatchOccupancyNanos must be nonnegative")
+	}
+	if err := s.validateEstimateDefaults(); err != nil {
+		return err
 	}
 	for uid, rate := range s.MinimumDemand {
 		if uid == "" || !schedulerFinite(rate) || rate < 0 {
