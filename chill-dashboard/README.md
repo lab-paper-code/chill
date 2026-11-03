@@ -163,7 +163,7 @@ retain integer literals while removing credentials.
 | 고급 | 구성 탐색 동시 계산 수 |
 
 항목 정의는 `lib/scheduler-settings.ts` 한 곳에 둔다. 실험의 전역·단계 운영 설정 패치도 같은 항목 정의와 ms↔ns 정밀 변환을 사용한다. 최소 수요는 서비스 UID별 0 이상 유한한 req/s이며 상한은 없다. 미설정과 0은 별개이고, 현재 서비스 목록에 없는 UID도 운영자가 해제하기 전에는 유지한다. 초기 용량 대기는 0~1시간이며 ns 정밀도를 보존한다.
-실험 운영 설정 패치의 상태·항목 선택·값 변환 UI는 `features/settings-patch-editor.tsx`가 담당한다. 공용 작성 필드와 원문 JSON·이탈 경고는 `components/evaluation-author-fields.tsx`에서 실험·부하 작성 화면이 직접 가져온다. 설정 항목 정의와 ms↔ns 변환 구현은 기존 `lib/scheduler-settings.ts`·`lib/scheduler.ts`를 그대로 재사용한다.
+실험 운영 설정 패치의 상태·항목 선택·값 변환 UI는 `features/settings-patch-editor.tsx`가 담당한다. 공용 작성 필드와 원문 JSON·이탈 경고·입력 근거 선택(`EvidencePicker`)·작성 도움말(`AuthorHelp`)은 `components/evaluation-author-fields.tsx`에서 실험·부하 작성 화면이 직접 가져오며, 부하 작성 화면은 실험 작성 feature를 import하지 않는다. 설정 항목 정의와 ms↔ns 변환 구현은 기존 `lib/scheduler-settings.ts`·`lib/scheduler.ts`를 그대로 재사용한다.
 저장은 작성값 누적 → 현재 설정 재조회 → 변경 전/후 표 → 운영자 확인 → 직전 재조회 → 전체 설정 PUT 순서다. 서비스 편집 Sheet는 첫 입력 전에는 GET과 동기화하고, 첫 입력 시 실제 표시한 설정과 ETag를 함께 고정한다. 이후 설정·버전 변경은 제출을 차단하고 작성값을 유지한다. 최소 수요의 현재값도 서비스명·req/s 소형 표로 표시하며 미설정과 0을 구분한다.
 조회 설정과 ETag는 하나의 스냅샷으로 보관한다. 성공 PUT 뒤 재조회한 최신 스냅샷을 이전 PUT 응답의 ETag로 덮어쓰지 않으며, 결과 미확인 복구에서 현재값을 채택할 때도 설정과 ETag를 함께 기준으로 삼는다.
 PUT 성공 뒤 GET 재조회가 실패하면 편집 필드는 `change.after`로 전체 교체한다(생략된 편집 필드는 미설정). 이전 스냅샷에서는 GET 전용 `staticRouting`·`powerObservation`·`meters`·`requestTimeout` 네 값만 유지한다. 분배 선언을 아직 GET으로 확인하지 못했으면 `조회 필요`와 비활성 동작을 표시하며, 성공 GET에서 확인한 빈 선언과 구분한다.

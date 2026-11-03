@@ -94,7 +94,7 @@ test("load PUT denial preserves operator permission status and keeps the draft e
     throw new ApiError(403,"Forbidden",null)
   }}),useChillQuery:(path:string)=>({data:path==="v1/evaluations/load-scenarios/load"?source:undefined,refetch:async()=>{gets++;return {data:source,error:null}}})}
   const parent=hookRunner(),child=hookRunner()
-  const modules={...primitives,react:parent.react,"@/lib/client":client,"@/components/evaluation-author-fields":{AuthorSelect:"select",AuthorField:"input",AuthorJSON:"textarea",useUnsavedAuthor:()=>{}},"@/features/evaluation-author":{AuthorHelp:"help",EvidencePicker:"select"}}
+  const modules={...primitives,react:parent.react,"@/lib/client":client,"@/components/evaluation-author-fields":{AuthorSelect:"select",AuthorField:"input",AuthorJSON:"textarea",AuthorHelp:"help",EvidencePicker:"select",useUnsavedAuthor:()=>{}}}
   const {LoadScenarioAuthorPage}=load("../features/load-scenario-author.tsx",modules)
   const editor=elements(parent.render(LoadScenarioAuthorPage,{name:"load"})).find(element=>element.props.editing===true&&typeof element.props.onSaved==="function")!
   // The child shares the module's mocked React bindings, but has an independent hook state.
@@ -247,7 +247,7 @@ test("R17: list rows do not expose rerun or removal until a run is selected",()=
 
 test("R17: load parts expose every service rate as labeled fields without a wide table",()=>{
   const runner=hookRunner(),source={name:"load",uid:"load-uid",spec:{parts:[{id:"zero",durationSeconds:1,rates:{camera:0,plc:0}}],workloads:[{name:"camera",uid:"camera-uid"},{name:"plc",uid:"plc-uid"}]},inUse:["original"]}
-  const modules={...primitives,react:runner.react,"@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/workloads?view=summary"?[]:source}),useChillMutation:()=>({isPending:false})},"@/components/evaluation-author-fields":{AuthorSelect:"select",AuthorField:"input",AuthorJSON:"textarea",useUnsavedAuthor:()=>{}},"@/features/evaluation-author":{AuthorHelp:"help",EvidencePicker:"select"}}
+  const modules={...primitives,react:runner.react,"@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/workloads?view=summary"?[]:source}),useChillMutation:()=>({isPending:false})},"@/components/evaluation-author-fields":{AuthorSelect:"select",AuthorField:"input",AuthorJSON:"textarea",AuthorHelp:"help",EvidencePicker:"select",useUnsavedAuthor:()=>{}}}
   const {LoadScenarioAuthorPage}=load("../features/load-scenario-author.tsx",modules)
   const page=elements(runner.render(LoadScenarioAuthorPage,{name:"load"}))
   const editor=page.find(element=>element.props.editing===true)!
@@ -264,7 +264,7 @@ test("R17: load parts expose every service rate as labeled fields without a wide
 
 test("R17b: author help uses constraint rows and evidence options use server names",()=>{
   const runner=hookRunner(),input={kind:"trace",store:"internal-store",key:"experiments/private-trace.json",size:512,name:"요청 시각",set:"부하 설정"}
-  const {AuthorHelp,EvidencePicker}=load("../features/evaluation-author.tsx",{...primitives,react:{...runner.react,useId:()=>"inputs"},"@/lib/client":{useSession:()=>({config:{maxPageSize:200}}),useChillQuery:()=>({data:{items:[input],page:{offset:0,limit:25,total:1}}})},"@/components/ui/tooltip":{TooltipProvider:"div",Tooltip:"div",TooltipTrigger:"div",TooltipContent:"aside"}})
+  const {AuthorHelp,EvidencePicker}=load("../components/evaluation-author-fields.tsx",{...primitives,react:{...runner.react,useId:()=>"inputs"},"@/lib/client":{useSession:()=>({config:{maxPageSize:200}}),useChillQuery:()=>({data:{items:[input],page:{offset:0,limit:25,total:1}}})},"@/components/ui/tooltip":{TooltipProvider:"div",Tooltip:"div",TooltipTrigger:"div",TooltipContent:"aside"}})
   const help=elements(runner.render(AuthorHelp))
   assert.ok(help.some(element=>element.type==="table"))
   const picker=elements(runner.render(EvidencePicker,{label:"요청 시각",value:input,onChange:()=>{}}))
@@ -331,7 +331,7 @@ test("evidence picker filters and pages on the server and preserves off-page sel
   let maxPageSize=200
   const first={store:"s",key:"one",size:1,kind:"trace",set:"scenario-a",name:"서버 이름"}
   const second={store:"s",key:"two",size:2,kind:"trace",set:"scenario-b",name:""}
-  const {EvidencePicker}=load("../features/evaluation-author.tsx",{...primitives,react:{...runner.react,useId:()=>"sets"},"@/lib/client":{useSession:()=>({config:{maxPageSize}}),useChillQuery:(path:string)=>{
+  const {EvidencePicker}=load("../components/evaluation-author-fields.tsx",{...primitives,react:{...runner.react,useId:()=>"sets"},"@/lib/client":{useSession:()=>({config:{maxPageSize}}),useChillQuery:(path:string)=>{
     paths.push(path)
     const params=new URLSearchParams(path.split("?")[1])
     return {data:{items:params.get("offset")==="7"?[second]:[first],page:{offset:Number(params.get("offset")??0),limit:25,total:30,nextOffset:params.get("offset")==="7"?undefined:7}}}
