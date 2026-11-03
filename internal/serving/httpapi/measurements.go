@@ -208,5 +208,11 @@ func (h *Handler) recordMutationAudit(action *serving.SchedulerActionObservation
 	if action.CompletedAt != nil {
 		at = *action.CompletedAt
 	}
-	return h.observationLog.SchedulerRecord(serving.SchedulerObservation{At: at, Action: action})
+	if err := h.observationLog.SchedulerRecord(serving.SchedulerObservation{At: at, Action: action}); err != nil {
+		return err
+	}
+	if h.config.OnMutationAction != nil {
+		h.config.OnMutationAction(*action, at)
+	}
+	return nil
 }

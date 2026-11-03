@@ -12,7 +12,10 @@ export function measurementUsage(assessment?:MeasurementAssessment|null) {
 export function measurementQuality(assessments:(MeasurementAssessment|null|undefined)[]) {
   const failed=assessments.some(assessment=>assessment?.checklist?.checks?.some(check=>check.result==="fail"))
   const passed=assessments.length>0&&assessments.every(assessment=>assessment?.checklist?.criteriaMet===true&&assessment.checklist.checks.length>0&&assessment.checklist.checks.every(check=>check.result==="pass"))
-  return {label:failed?"기준 미충족":passed?"기준 충족":"판정 불가",state:failed?"fail":passed?"pass":"unknown"}
+  const checks=assessments.flatMap(assessment=>assessment?.checklist?.checks??[])
+  const noEvidence=assessments.length>0&&assessments.every(assessment=>assessment?.evidence?.available===false)&&checks.length===0
+  const policyUnset=checks.some(check=>check.result==="unknown"&&check.reason==="PolicyUnset")
+  return {label:failed?"기준 미충족":passed?"기준 충족":noEvidence?"측정 근거 없음":policyUnset?"정책 미설정":"판정 불가",state:failed?"fail":passed?"pass":"unknown"}
 }
 
 export type MeasurementEvidenceCheck={label:string;value:string|number;unit:string}
@@ -28,7 +31,7 @@ export function measurementEvidenceChecks(assessment?:MeasurementAssessment|null
     notes.push({label:"노드 전체 전력",value:row?.powerSource?.kind&&row.powerSource.nodeName?"장치 단독 전력 아님":"출처·범위 미제공",unit:""})
     notes.push({label:"데이터셋 메모 · 용도 일치 미검증",value:String(protocol?.dataset?.name??row?.condition.dataset??"상세 조건"),unit:""})
   }
-  for(const check of checks.filter(check=>check.result!=="pass"&&!(check.code==="IncrementalConfidence"&&measured)))notes.push({label:measurementCheckText(check),value:check.result==="fail"?"불일치":check.result==="unknown"?"미확인":"참고",unit:""})
+  for(const check of checks.filter(check=>check.result!=="pass"&&!(check.code==="IncrementalConfidence"&&measured)))notes.push({label:measurementCheckText(check),value:check.result==="fail"?"불일치":check.reason==="PolicyUnset"?"정책 미설정":check.result==="unknown"?"미확인":"참고",unit:""})
   return [...new Map(notes.map(note=>[`${note.label}/${note.value}/${note.unit}`,note])).values()]
 }
 

@@ -22,7 +22,8 @@ export function measurementUncertainty(row:ResultRow|undefined):string {
   const relative=typeof mean==="number"&&Number.isFinite(mean)&&mean!==0?100*ci.halfWidth/Math.abs(mean):null
   return `${formatMeasurementNumber(ci.level*100)}% 오차 범위 ${relative!==null&&Number.isFinite(relative)?`±${formatMeasurementNumber(relative,"%")}% (평균 대비)`:`±${formatMeasurementNumber(ci.halfWidth,"J/건")} J/건`}`
 }
-export function measurementCheckText(check:{code:string;message:string}):string {
+export function measurementCheckText(check:{code:string;message:string;reason?:string}):string {
+  if(check.reason==="PolicyUnset")return "정책 미설정"
   const labels:Record<string,string>={
     ExactConditionLineage:"측정 당시 조건과 원본 결과의 연결",TargetBatch:"이 배치의 실제 측정",
     ActiveTrials:"작업을 실행한 독립 반복 횟수",IdleTrials:"작업 없이 잰 반복 횟수",

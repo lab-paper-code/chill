@@ -5,10 +5,9 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
 import { ApiError, useChillMutation, useChillQuery } from "@/lib/client"
-import type { CampaignResult, MeasurementAssessment, MeasurementMutation, MeasurementPlanList, MeasurementPlanSpec, ResultRow } from "@/lib/read-types"
+import type { CampaignResult, MeasurementAssessment, MeasurementFailure, MeasurementMutation, MeasurementPlanList, MeasurementPlanSpec, ResultRow } from "@/lib/read-types"
 import { executionPathLabel, formatMeasurementNumber as number, measurementCheckText, measurementReasonSummary, resultRowsCSV, safeMeasurementReturn } from "@/lib/measurements"
 import { assessmentReasons } from "@/lib/measurement-assessment"
-import { coverageUsageAssessment } from "@/lib/measurement-coverage"
 import { requestExecutionStatus, requestFailureFacts, requestHref, requestRunHref, requestUsedResults } from "@/lib/measurement-request"
 import { useMeasurementCoverage } from "@/features/measurement-coverage"
 import { parseSchedulerJSON } from "@/lib/scheduler"
@@ -26,6 +25,12 @@ import { MeasurementChildRuns } from "@/features/measurement-runs"
 const plansPath = (namespace:string) => `v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`
 type ResultBody = {excludedTrials?:{run:{namespace:string;name:string;uid:string};reasons?:string[]}[]}
 
+export function FirstMeasurementError({failure}:{failure?:MeasurementFailure}) {
+  if(!failure?.firstErrorLine)return null
+  const line=failure.firstErrorTime?failure.firstErrorLine.slice(failure.firstErrorTime.length).trim():failure.firstErrorLine
+  return <div aria-label="첫 오류 원문" className="space-y-1">{failure.firstErrorTime&&<time className="block">{failure.firstErrorTime}</time>}<code className="block whitespace-normal break-words" title={failure.firstErrorLine}>{line}</code></div>
+}
+
 export function AssessmentDetails({assessment,rows=[]}:{assessment?:MeasurementAssessment|null;rows?:ResultRow[]}) {
   if (!assessment) return <p className="notice">서버 판정 미제공 · 스케줄러 사용 여부 미확인</p>
   const reasons=assessmentReasons(assessment),checks=assessment.checklist?.checks??[]
@@ -37,7 +42,7 @@ export function AssessmentDetails({assessment,rows=[]}:{assessment?:MeasurementA
     {!reasons.length&&!checks.length&&<p className="text-sm text-muted-foreground">상세 판정 사유·확인 항목 미제공</p>}
     {(checks.length>0||assessment.reasons?.length>0)&&<details><summary className="min-h-11 cursor-pointer py-2 text-sm">서버 확인 항목·사유 원문</summary>
       {!!assessment.reasons?.length&&<ul className="space-y-2 break-words text-sm">{assessment.reasons.map((reason,index)=><li key={index}>{reason.code}: {reason.message.replace(/\s*\(FixtureOnly\)/g,"")}</li>)}</ul>}
-      {checks.length>0&&<div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>확인 항목</TableHead><TableHead>서버 결과</TableHead><TableHead>사유</TableHead></TableRow></TableHeader><TableBody>{checks.map((check,index)=><TableRow key={index}><TableCell>{check.code}</TableCell><TableCell>{{pass:"확인",fail:"불일치",warn:"참고",unknown:"미확인"}[check.result]}</TableCell><TableCell className="whitespace-normal">{measurementCheckText(check)}</TableCell></TableRow>)}</TableBody></Table></div>}
+      {checks.length>0&&<div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>확인 항목</TableHead><TableHead>서버 결과</TableHead><TableHead>사유</TableHead></TableRow></TableHeader><TableBody>{checks.map((check,index)=><TableRow key={index}><TableCell>{check.code}</TableCell><TableCell>{check.result==="unknown"&&check.reason==="PolicyUnset"?"정책 미설정":{pass:"확인",fail:"불일치",warn:"참고",unknown:"미확인"}[check.result]}</TableCell><TableCell className="whitespace-normal">{measurementCheckText({code:check.code,message:check.message})}</TableCell></TableRow>)}</TableBody></Table></div>}
     </details>}
   </section>
 }
@@ -95,8 +100,6 @@ export function MeasurementPlanDetails({namespace,name}:{namespace:string;name:s
   const data=denied?undefined:query.data??(errorData?.campaign?errorData as CampaignResult:stored?{campaign:{...stored.metadata,...stored.status,spec:stored.spec},assessment:stored.assessment,resultRows:[],result:null}:undefined)
   const campaign=data?.campaign,spec=campaign?.spec as MeasurementPlanSpec|undefined
   const coverage=useMeasurementCoverage(namespace)
-  const usage=spec?coverageUsageAssessment(coverage.data?.cells??[],spec):undefined
-  const assessment=data?.assessment&&usage?{...data.assessment,scope:usage.scope}:data?.assessment
   const other=!!campaign&&!!expectedUID&&campaign.uid!==expectedUID
   if(deleted)return <section role="status"><h2>측정 삭제 완료</h2><SourceJSON value={deleted}/></section>
   const result=data?.result as ResultBody|null|undefined
@@ -112,11 +115,12 @@ export function MeasurementPlanDetails({namespace,name}:{namespace:string;name:s
     {query.error&&!denied&&data&&<section role="alert" className="border border-destructive/40 p-3"><StatusCell axis="관측 상태" label={`결과 조회 실패 · HTTP ${query.error.status}`} tone="fail"/><SourceJSON value={query.error.data??query.error.body} title="결과 조회 오류 원문"/><span className="text-sm">요청 상태와 결과 파일 조회는 별도</span></section>}
     {!data&&<QueryGate query={query}>{null}</QueryGate>}
     {campaign&&spec&&!other&&<>
-      <div className="flex flex-wrap gap-3"><StatusCell axis="실행" label={requestExecutionStatus(campaign.phase)} tone={campaign.phase==="Failed"?"fail":"idle"}/><MeasurementStatus assessment={assessment}/></div>
+      <div className="flex flex-wrap gap-3"><StatusCell axis="실행" label={requestExecutionStatus(campaign.phase)} tone={campaign.phase==="Failed"?"fail":"idle"}/><MeasurementStatus assessment={data?.assessment}/></div>
       <table aria-label="요청 진행" className="w-full text-left text-sm tabular-nums"><tbody><tr><th className="py-2 font-medium">완료 회차 (회)</th><td>{campaign.completedTrials??"미제공"}</td></tr><tr><th className="py-2 font-medium">예정 회차 (회)</th><td>미제공</td></tr><tr><th className="py-2 font-medium">현재 단계</th><td>{requestExecutionStatus(campaign.phase)}</td></tr><tr><th className="py-2 font-medium">현재 세부 실행 단계</th><td>미제공</td></tr></tbody></table>
       <details><summary className="min-h-11 cursor-pointer py-2 text-sm">요청 조건</summary><Facts items={[["모델",spec.state.candidate.modelSpec],["장치 종류",spec.state.candidate.deviceClass],["장비",spec.state.targetNode],["전력모드",spec.state.candidate.powerMode],["실행 경로",executionPathLabel(spec.state.candidate.executionPath)],["배치 (건)",spec.batchSizes?.join(", ")??"선언 범위"],["반복 (회)",spec.trialsPerBatch],["데이터셋",spec.activeProtocol.dataset??"미제공"],["실행 측정 (s)",spec.activeProtocol.durationSeconds??"미제공"],["예열 (회)",spec.activeProtocol.warmupIterations??"미제공"],["유휴 측정 (s)",spec.idleProtocol.durationSeconds??"미제공"]]}/></details>
       {campaign.phase==="Failed"&&<section role="alert" className="space-y-2 border border-destructive/40 p-4">
         <h2 className="font-semibold text-destructive">실패 근거</h2>
+        <FirstMeasurementError failure={data?.assessment?.failureSummary?.find(failure=>failure.firstErrorLine)}/>
         <ul className="space-y-2 text-sm">{(data?.assessment?.failureSummary??[]).map((failure,index)=><li key={index}>{measurementReasonSummary(failure.message||failure.code)}</li>)}</ul>
         <details><summary className="min-h-11 cursor-pointer py-2">서버 실패 사유·연결 회차 원문</summary>
         <table aria-label="실패 원인·연결 회차" className="w-full text-left text-sm"><tbody>

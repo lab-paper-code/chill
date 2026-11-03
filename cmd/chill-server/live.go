@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"slices"
 	"strings"
 	"sync"
@@ -10,12 +9,11 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/live"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
-
-const liveOperationComplete = "complete"
 
 // livePublisher projects committed callback arguments. It never polls REST or
 // rereads the controller from a decision/action callback.
@@ -282,31 +280,15 @@ func liveReservationExplanation(r serving.SchedulerReservation) string {
 	}
 	return explanation
 }
-func (p *livePublisher) action(r servingkube.OperationResult, recordedAt time.Time) {
+func (p *livePublisher) action(action serving.SchedulerActionObservation, recordedAt time.Time) {
+	event, err := httpapi.ProjectAction(action)
+	if err != nil {
+		ctrl.Log.Error(err, "project recorded live action")
+		return
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	uid := r.Operation.WorkloadUID
-	if uid == "" && r.Operation.Prepare != nil && r.Operation.Prepare.Owner != nil {
-		uid = r.Operation.Prepare.Owner.UID
-	}
-	a := live.Action{
-		ID: r.Operation.ID, Kind: r.Operation.Kind, Node: liveNode(r.Operation.Node), WorkloadUID: uid, Status: r.Status,
-		StartedAt: liveAt(r.StartedAt), ExpectedSeconds: r.Operation.ExpectedSeconds}
-	if source := r.Operation.ExpectedSource; source != nil {
-		ref, _ := json.Marshal(source.Reference)
-		a.ExpectedSource = &live.ExpectedSource{
-			CostID: source.CostID, Reference: ref, Statistic: source.Statistic, TrialCount: source.TrialCount,
-		}
-	}
-	phase := "started"
-	if !r.EndedAt.IsZero() {
-		at := liveAt(r.EndedAt)
-		a.CompletedAt = &at
-		phase = "completed"
-		if r.Status != liveOperationComplete {
-			phase = "failed"
-		}
-	}
+	a := event.Action
 	index := slices.IndexFunc(p.actions, func(old live.Action) bool { return old.Key() == a.Key() })
 	if index < 0 {
 		p.actions = append(p.actions, a)
@@ -320,10 +302,6 @@ func (p *livePublisher) action(r servingkube.OperationResult, recordedAt time.Ti
 		p.actions = slices.Clone(p.actions[1:])
 	}
 	rows := []live.Action{a}
-	event := &live.ActionEvent{Action: a, Phase: phase}
-	if phase != "started" {
-		event.Result = &live.ActionResult{Status: r.Status, Error: r.Error}
-	}
 	p.publish(recordedAt, live.Delta{Actions: &rows, Removed: removed}, &live.Event{Kind: "action", Action: event})
 }
 func (p *livePublisher) request(event serving.RequestEvent) {

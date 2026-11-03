@@ -1,3 +1,5 @@
+import type { OperatingPower } from "./read-types.ts"
+
 export type LiveWorkload = {
   uid:string; name:string; model:string; definitionID:string|null
   slo:{percentile:number;targetLatencyNanos:number}; autonomous:boolean; admission:boolean; pending:number
@@ -20,18 +22,27 @@ type Envelope = {seq:number;at:string}
 export type LiveMetrics = Envelope & {type:"metrics";bucketAt:string;workloads:Record<string,LiveMetric>;nodes:Record<string,{watts:number|null;observedAt:string|null}>;pool:{wholeWatts:number|null;activeWatts:number|null};gaps?:LiveGap[]}
 export type LiveCluster = {kind:"pod"|"issue";at:string;event:string;pod?:{uid:string;namespace?:string;name?:string;node?:string;phase?:string;ready?:string};source?:string;reason?:string;previousReason?:string}
 export type LiveActionEvent = LiveAction & {phase:"started"|"completed"|"failed";result?:{status:string;error?:string}}
-export type LiveEvent = Envelope & ({type:"event";kind:"decision";decision:LiveDecision;action?:never;cluster?:never}|{type:"event";kind:"action";action:LiveActionEvent;decision?:never;cluster?:never}|{type:"event";kind:"cluster";cluster:LiveCluster;decision?:never;action?:never})
+export type LiveEvent = {at:string;seq?:number} & ({type:"event";kind:"decision";decision:LiveDecision;action?:never;cluster?:never}|{type:"event";kind:"action";action:LiveActionEvent;decision?:never;cluster?:never}|{type:"event";kind:"cluster";cluster:LiveCluster;decision?:never;action?:never})
 export type LiveSnapshot = {workloads:LiveWorkload[];nodes:LiveNode[];instances:LiveInstance[];routing:Record<string,Record<string,number>>;decision:LiveDecision|null;actions:LiveAction[];reservations:LiveReservation[]}
 export type LiveDelta = Partial<LiveSnapshot> & {removed?:{instances?:string[];actions?:string[]}}
-export type LiveMessage = (Envelope & {type:"hello";protocol:"chill-live/1";serverAt:string;retainFrom:number}) | (Envelope & {type:"snapshot"} & LiveSnapshot) | (Envelope & {type:"delta"} & LiveDelta) | LiveMetrics | LiveEvent | (Envelope & {type:"heartbeat";serverAt:string})
+export type LiveSequenceRange = {fromSeq:number;toSeq:number}
+export type LiveResumeHistory = {
+  reason:"fresh"|"checkpoint-unmatched";replayed:false
+  requested:{afterSeq:number;throughSeq:number;at?:string}
+  retained:{events:LiveSequenceRange|null;power:LiveSequenceRange|null}
+  gaps:(LiveSequenceRange & {scope:"events"|"power";reason:"NoRetainedFrames"})[]
+}
+export type RecordedLivePage = {events:LiveEvent[];from:string;to:string;nextCursor?:string;coverage:OperatingPower["coverage"]}
+export type LiveMessage = (Envelope & {type:"hello";protocol:"chill-live/1";serverAt:string;retainFrom:number}) | (Envelope & {type:"snapshot";history?:LiveResumeHistory} & LiveSnapshot) | (Envelope & {type:"delta"} & LiveDelta) | LiveMetrics | (Envelope & LiveEvent) | (Envelope & {type:"heartbeat";serverAt:string})
 export type LiveState = {
   snapshot:LiveSnapshot|null;checkpoint:Envelope|null;metrics:LiveMetrics[];events:LiveEvent[];gaps:LiveGap[]
   lastReceivedAt:number|null;lastObservedAt:string|null;lastPower:{bucketAt:string;watts:number}|null;status:string
   powerScale:number
   definitions:Record<string,LiveWorkload>;resyncRequired:boolean;historyGaps:LiveGap[]
+  resumeHistory:LiveResumeHistory|null;eventArchive:Omit<RecordedLivePage,"events"> & {partial:boolean}|null;eventArchiveError:string|null
 }
 export function initialLiveState():LiveState {
-  return {snapshot:null,checkpoint:null,metrics:[],events:[],gaps:[],lastReceivedAt:null,lastObservedAt:null,lastPower:null,powerScale:1,status:"idle",definitions:{},resyncRequired:false,historyGaps:[]}
+  return {snapshot:null,checkpoint:null,metrics:[],events:[],gaps:[],lastReceivedAt:null,lastObservedAt:null,lastPower:null,powerScale:1,status:"idle",definitions:{},resyncRequired:false,historyGaps:[],resumeHistory:null,eventArchive:null,eventArchiveError:null}
 }
 
 function invalid():never { throw new Error("Invalid chill-live/1 message") }
@@ -126,6 +137,71 @@ function cluster(value:unknown):LiveCluster {
   }
   return result
 }
+function sequenceRange(value:unknown):LiveSequenceRange {
+  const row=object(value);keys(row,["fromSeq","toSeq"])
+  const fromSeq=count(row.fromSeq),toSeq=count(row.toSeq)
+  return fromSeq > 0 && fromSeq <= toSeq ? {fromSeq,toSeq} : invalid()
+}
+function resumeHistory(value:unknown):LiveResumeHistory {
+  const row=object(value);keys(row,["reason","replayed","requested","retained","gaps"])
+  if ((row.reason!=="fresh" && row.reason!=="checkpoint-unmatched") || row.replayed!==false) return invalid()
+  const requested=object(row.requested),retained=object(row.retained)
+  keys(requested,["afterSeq","throughSeq","at"]);keys(retained,["events","power"])
+  const result:LiveResumeHistory={reason:row.reason,replayed:false,requested:{afterSeq:count(requested.afterSeq),throughSeq:count(requested.throughSeq),...(requested.at===undefined?{}:{at:timestamp(requested.at)})},retained:{events:nullable(retained.events,sequenceRange),power:nullable(retained.power,sequenceRange)},gaps:array(row.gaps,value=>{
+    const row=object(value);keys(row,["fromSeq","toSeq","scope","reason"])
+    if ((row.scope!=="events" && row.scope!=="power") || row.reason!=="NoRetainedFrames") return invalid()
+    return {...sequenceRange({fromSeq:row.fromSeq,toSeq:row.toSeq}),scope:row.scope,reason:row.reason}
+  })}
+  if (Object.values(result.retained).some(range=>range && range.toSeq>result.requested.throughSeq) || result.gaps.some(gap=>gap.fromSeq<=result.requested.afterSeq || gap.toSeq>result.requested.throughSeq)) return invalid()
+  return result
+}
+function eventPayload(row:Record<string,unknown>):LiveEvent {
+  const base={type:"event" as const,at:timestamp(row.at)}
+  if (row.kind==="decision" && row.action===undefined && row.cluster===undefined) return {...base,kind:"decision",decision:decision(row.decision)}
+  if (row.kind==="cluster" && row.action===undefined && row.decision===undefined) return {...base,kind:"cluster",cluster:cluster(row.cluster)}
+  if (row.kind!=="action" || row.cluster!==undefined || row.decision!==undefined) return invalid()
+  const payload=object(row.action),parsed=action(payload,true),phase=payload.phase
+  if (phase!=="started" && phase!=="completed" && phase!=="failed") return invalid()
+  const result:LiveActionEvent={...parsed,phase}
+  if (payload.result!==undefined) {const row=object(payload.result);keys(row,["status","error"]);result.result={status:text(row.status),...(row.error===undefined?{}:{error:text(row.error)})}}
+  return {...base,kind:"action",action:result}
+}
+/** Archive rows have no live envelope and cannot advance its checkpoint. */
+export function parseRecordedLiveEvent(value:unknown):LiveEvent|null {
+  try {
+    const row=object(value);keys(row,["type","at","kind","action","cluster"])
+    if (row.type!=="event") return null
+    return eventPayload(row)
+  } catch {return null}
+}
+export function parseRecordedLivePage(value:unknown):RecordedLivePage|null {
+  try {
+    const row=object(value);keys(row,["events","from","to","nextCursor","coverage"])
+    const from=timestamp(row.from),to=timestamp(row.to)
+    if (compareAt(from,to)>=0 || Date.parse(to)-Date.parse(from)>86_400_000) return null
+    const events=array(row.events,value=>{
+      const event=parseRecordedLiveEvent(value)
+      return event && compareAt(event.at,from)>=0 && compareAt(event.at,to)<0 ? event : invalid()
+    })
+    if (events.length>100) return null
+    const coverage=object(row.coverage);keys(coverage,["from","to","sources","gaps"])
+    const bounds=(row:Record<string,unknown>)=>{
+      const from=timestamp(row.from),to=timestamp(row.to)
+      return compareAt(from,to)<=0 ? {from,to} : invalid()
+    }
+    const availableFrom=nullable(coverage.from,timestamp),availableTo=nullable(coverage.to,timestamp)
+    if (availableFrom && availableTo && compareAt(availableFrom,availableTo)>0) return null
+    const nextCursor=row.nextCursor===undefined?undefined:text(row.nextCursor)
+    if (nextCursor==="") return null
+    return {from,to,events,...(nextCursor===undefined?{}:{nextCursor}),coverage:{from:availableFrom,to:availableTo,sources:nullable(coverage.sources,value=>array(value,value=>{
+      const row=object(value);keys(row,["from","to","stream","source","store","key"])
+      return {...bounds(row),stream:text(row.stream),source:text(row.source),...(row.store===undefined?{}:{store:text(row.store)}),...(row.key===undefined?{}:{key:text(row.key)})}
+    })),gaps:nullable(coverage.gaps,value=>array(value,value=>{
+      const row=object(value);keys(row,["from","to","stream","reason"])
+      return {...bounds(row),stream:text(row.stream),reason:text(row.reason)}
+    }))}}
+  } catch {return null}
+}
 /** Reject malformed frames before they enter the authenticated Query cache. */
 export function parseLiveMessage(input:string|unknown):LiveMessage|null {
   try {
@@ -142,7 +218,7 @@ export function parseLiveMessage(input:string|unknown):LiveMessage|null {
         if (row.protocol !== "chill-live/1" || retainFrom > base.seq+1 || retainFrom === 0) return null
         return {...base,type:"hello",protocol:"chill-live/1",serverAt:timestamp(row.serverAt),retainFrom}
       }
-      case "snapshot": keys(row,[...allowed,...snapshotKeys]);return {...base,type:"snapshot",...projection(row,true)} as LiveMessage
+      case "snapshot": keys(row,[...allowed,...snapshotKeys,"history"]);return {...base,type:"snapshot",...projection(row,true),...(row.history===undefined?{}:{history:resumeHistory(row.history)})} as LiveMessage
       case "delta": {
         keys(row,[...allowed,...snapshotKeys,"removed"])
         const result:LiveDelta=projection(row,false)
@@ -166,14 +242,7 @@ export function parseLiveMessage(input:string|unknown):LiveMessage|null {
       }
       case "event": {
         keys(row,[...allowed,"kind","decision","action","cluster"])
-        if (row.kind === "decision" && row.action === undefined && row.cluster === undefined) return {...base,type:"event",kind:"decision",decision:decision(row.decision)}
-        if (row.kind === "cluster" && row.action === undefined && row.decision === undefined) return {...base,type:"event",kind:"cluster",cluster:cluster(row.cluster)}
-        if (row.kind !== "action" || row.cluster !== undefined || row.decision !== undefined) return null
-        const payload=object(row.action),parsed=action(payload,true),phase=payload.phase
-        if (phase !== "started" && phase !== "completed" && phase !== "failed") return null
-        const result:LiveActionEvent={...parsed,phase}
-        if (payload.result !== undefined) { const row=object(payload.result);keys(row,["status","error"]);result.result={status:text(row.status),...(row.error === undefined ? {} : {error:text(row.error)})} }
-        return {...base,type:"event",kind:"action",action:result}
+        return {...eventPayload(row),...base} as Envelope & LiveEvent
       }
       case "heartbeat": keys(row,[...allowed,"serverAt"]);return {...base,type:"heartbeat",serverAt:timestamp(row.serverAt)}
       default:return null
@@ -193,8 +262,9 @@ function observed(message:LiveMessage):(string|null|undefined)[] {
   if (message.type === "event") return [message.kind === "decision" ? message.decision.at : message.kind === "cluster" ? message.cluster.at : message.action.completedAt ?? message.action.startedAt]
   return [...(message.workloads ?? []).map(row=>row.readiness.observedAt),...(message.nodes ?? []).map(row=>row.observedAt),...(message.instances ?? []).map(row=>row.observedAt),...(message.actions ?? []).map(row=>row.completedAt ?? row.startedAt),message.decision?.at]
 }
-function eventKey(event:LiveEvent):string {
-  return event.kind === "decision" ? JSON.stringify(["decision",event.decision.at]) : event.kind === "action" ? JSON.stringify(["action",liveActionKey(event.action),event.action.phase]) : JSON.stringify(["cluster",event.cluster])
+/** Payload identity is shared by archive/live overlap and rendering; seq is transport-only. */
+export function eventKey(event:LiveEvent):string {
+  return JSON.stringify([event.kind,event.kind==="decision"?event.decision:event.kind==="action"?event.action:event.cluster],(_key,value)=>value && typeof value==="object" && !Array.isArray(value) ? Object.fromEntries(Object.keys(value).sort().map(key=>[key,value[key]])) : value)
 }
 function upsert<T>(previous:T[],rows:T[]|undefined,key:(row:T)=>string,removed:string[]=[]):T[] {
   if (!rows && !removed.length) return previous
@@ -206,17 +276,41 @@ function upsert<T>(previous:T[],rows:T[]|undefined,key:(row:T)=>string,removed:s
 function addGap(gaps:LiveGap[],row:LiveGap):LiveGap[] {
   return gaps.some(old=>old.from===row.from && old.to===row.to && old.scope===row.scope && old.reason===row.reason) ? gaps : [...gaps,row]
 }
+function mergeEvents(state:LiveState,rows:LiveEvent[]):Pick<LiveState,"events"|"historyGaps"> {
+  const merged=new Map(state.events.map(row=>[eventKey(row),row]))
+  for (const row of rows) {
+    const key=eventKey(row),previous=merged.get(key)
+    if (!previous || row.seq!==undefined) merged.set(key,row)
+  }
+  let events=[...merged.values()].sort((a,b)=>compareAt(a.at,b.at)||(a.seq??0)-(b.seq??0)),historyGaps=state.historyGaps
+  if (events.length>1000) {
+    const important=events.filter(row=>row.kind!=="decision"||row.decision.state!=="Keep").slice(-30)
+    const protectedEvents=new Set(important),recent=new Set(events.filter(row=>!protectedEvents.has(row)).slice(-(1000-important.length)))
+    const removed=events.filter(row=>!protectedEvents.has(row)&&!recent.has(row)),previous=historyGaps.find(row=>row.scope==="events" && row.reason==="event history limit")
+    historyGaps=historyGaps.filter(row=>row!==previous)
+    historyGaps=addGap(historyGaps,{from:previous && compareAt(previous.from,removed[0].at)<0 ? previous.from : removed[0].at,to:events[events.indexOf(removed.at(-1)!)+1].at,scope:"events",reason:"event history limit"})
+    events=events.filter(row=>protectedEvents.has(row)||recent.has(row))
+  }
+  return {events,historyGaps}
+}
+export function applyRecordedLivePage(state:LiveState,page:RecordedLivePage,first:boolean):LiveState {
+  const {events:rows,...archive}=page,merged=mergeEvents(state,rows),old=first?null:state.eventArchive?.coverage
+  const combine=<T,>(previous:T[]|null|undefined,next:T[]|null):T[]|null=>previous?.length ? [...new Map([...previous,...next??[]].map(row=>[JSON.stringify(row),row])).values()] : next
+  const coverage=old ? {from:latestCoverageFrom(old.from,archive.coverage.from),to:latestAt(old.to,[archive.coverage.to]),sources:combine(old.sources,archive.coverage.sources),gaps:combine(old.gaps,archive.coverage.gaps)} : archive.coverage
+  return {...state,...merged,gaps:state.metrics.reduce((gaps,row)=>(row.gaps??[]).reduce(addGap,gaps),merged.historyGaps),eventArchive:{...archive,coverage,partial:archive.nextCursor!==undefined},eventArchiveError:null}
+}
+function latestCoverageFrom(a:string|null,b:string|null):string|null {return !a ? b : !b || compareAt(a,b)<0 ? a : b}
 /** Messages passed here have already crossed parseLiveMessage once. */
 export function applyLiveMessage(state:LiveState,message:LiveMessage,receivedAt=Date.now()):LiveState {
   if (message.type === "hello") return {...state,lastReceivedAt:receivedAt,status:"resuming"}
   const checkpoint=state.checkpoint
-  if (message.type === "snapshot" && checkpoint?.seq === message.seq && checkpoint.at === message.at) return {...state,lastReceivedAt:receivedAt,status:"live",resyncRequired:false}
+  if (message.type === "snapshot" && checkpoint?.seq === message.seq && checkpoint.at === message.at) return {...state,...(message.history?{resumeHistory:message.history}:{}),lastReceivedAt:receivedAt,status:"live",resyncRequired:false}
   if (message.type !== "snapshot" && checkpoint && message.seq <= checkpoint.seq) return {...state,lastReceivedAt:receivedAt}
   if (message.type !== "snapshot" && (state.resyncRequired || !checkpoint || !state.snapshot || message.seq !== checkpoint.seq+1)) return {...state,lastReceivedAt:receivedAt,status:"resuming",resyncRequired:true}
   let snapshot=state.snapshot,metrics=state.metrics,events=state.events,historyGaps=state.historyGaps,definitions=state.definitions,lastPower=state.lastPower,powerScale=state.powerScale
   if (message.type === "snapshot") {
     const {workloads,nodes,instances,routing,decision,actions,reservations}=message
-    if (checkpoint && (checkpoint.seq !== message.seq || checkpoint.at !== message.at)) {
+    if (!message.history && checkpoint && (checkpoint.seq !== message.seq || checkpoint.at !== message.at)) {
       const from=compareAt(checkpoint.at,message.at)<=0 ? checkpoint.at : message.at,to=compareAt(checkpoint.at,message.at)<=0 ? message.at : checkpoint.at
       historyGaps=addGap(historyGaps,{from,to,scope:"all",reason:"resume history unavailable"})
     }
@@ -236,24 +330,15 @@ export function applyLiveMessage(state:LiveState,message:LiveMessage,receivedAt=
         if(row.pool.wholeWatts!=null){lastPower={bucketAt:row.bucketAt,watts:row.pool.wholeWatts};break}
       }
     }
-  } else if (message.type === "event" && !events.some(row=>eventKey(row)===eventKey(message))) {
-    events=[...events,message]
-    if (events.length > 1000) {
-      const important=events.filter(row=>row.kind!=="decision"||row.decision.state!=="Keep").slice(-30)
-      const protectedEvents=new Set(important)
-      const recent=new Set(events.filter(row=>!protectedEvents.has(row)).slice(-(1000-important.length)))
-      const removed=events.filter(row=>!protectedEvents.has(row)&&!recent.has(row)),previous=historyGaps.find(row=>row.scope==="events" && row.reason==="event history limit")
-      historyGaps=historyGaps.filter(row=>row!==previous)
-      historyGaps=addGap(historyGaps,{from:previous?.from ?? removed[0].at,to:events[events.indexOf(removed.at(-1)!)+1].at,scope:"events",reason:"event history limit"})
-      events=events.filter(row=>protectedEvents.has(row)||recent.has(row))
-    }
+  } else if (message.type === "event") {
+    ({events,historyGaps}=mergeEvents(state,[message]))
   }
   if ((message.type === "snapshot" || message.type === "delta") && message.workloads) {
     definitions={...definitions}
     for (const row of message.workloads) definitions[JSON.stringify([row.uid,row.definitionID])]=row
   }
   const gaps=metrics===state.metrics && historyGaps===state.historyGaps ? state.gaps : metrics.reduce((gaps,row)=>(row.gaps ?? []).reduce(addGap,gaps),historyGaps)
-  return {...state,snapshot,metrics,events,historyGaps,definitions,lastPower,powerScale,gaps,checkpoint:{seq:message.seq,at:message.at},lastReceivedAt:receivedAt,lastObservedAt:latestAt(state.lastObservedAt,observed(message)),status:"live",resyncRequired:false}
+  return {...state,snapshot,metrics,events,historyGaps,definitions,lastPower,powerScale,gaps,...(message.type==="snapshot" && message.history?{resumeHistory:message.history}:{}),checkpoint:{seq:message.seq,at:message.at},lastReceivedAt:receivedAt,lastObservedAt:latestAt(state.lastObservedAt,observed(message)),status:"live",resyncRequired:false}
 }
 
 export type LiveConnection = {reconnect:()=>void;close:()=>void}

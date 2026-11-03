@@ -27,6 +27,36 @@ const (
 	coverageSizePowerSource = "node-wall"
 )
 
+func TestR18CompactChecklistRetainsDifferentUnknownReasons(t *testing.T) {
+	variant := queryapi.MeasurementCoverageVariant{
+		BatchProgress: queryapi.MeasurementBatchProgress{Target: []int{1, 2}},
+		ResultRows: []queryapi.ResultRow{
+			{
+				ID: "unset", Batch: 1,
+				Assessment: queryapi.MeasurementAssessment{
+					Checklist: queryapi.MeasurementChecklist{Checks: []queryapi.MeasurementCheck{{
+						Code: "FrozenPowerWindowPolicy", Result: "unknown", Reason: "PolicyUnset", Message: "policy",
+					}}},
+				},
+			},
+			{
+				ID: "unknown", Batch: 2,
+				Assessment: queryapi.MeasurementAssessment{
+					Checklist: queryapi.MeasurementChecklist{Checks: []queryapi.MeasurementCheck{{
+						Code: "FrozenPowerWindowPolicy", Result: "unknown", Message: "policy",
+					}}},
+				},
+			},
+		},
+	}
+	checks := coverageVariantChecklist(&variant)
+	if len(checks) != 2 || checks[0].Reason != "PolicyUnset" || checks[1].Reason != "" ||
+		!reflect.DeepEqual(checks[0].SourceIDs, []string{"unset"}) ||
+		!reflect.DeepEqual(checks[1].SourceIDs, []string{"unknown"}) {
+		t.Fatalf("different unknown causes merged: %+v", checks)
+	}
+}
+
 func TestMeasurementCoverageCampaignFitsResponseBudget(t *testing.T) {
 	base := coverageSizeBase()
 	got := buildMeasurementCoverage(base, coverageSizeNamespace, httpapi.MeasurementCoverageQuery{})

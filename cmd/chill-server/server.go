@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -164,10 +166,6 @@ func run(ctx context.Context, opts options) (retErr error) {
 		return fmt.Errorf("initialize scheduler service: %w", err)
 	}
 	defer scheduler.Close()
-	if err := initializeServing(ctx, &opts, observer, manager, execution,
-		publisher, scheduler, &handlerConfig); err != nil {
-		return err
-	}
 	// HTTP-boundary calls (reviews, settings ConfigMap) take their own client
 	// budget so ingress and control calls never queue behind each other.
 	reviews, err := kubernetes.NewForConfig(config)
@@ -183,6 +181,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	handlerConfig.ReadCatalog = scheduler.readCatalog
 	handlerConfig.SubmitMeasurement = measurements.submit
 	handlerConfig.DeleteMeasurement = measurements.delete
+	handlerConfig.OnMutationAction = publisher.action
 
 	experiments := &experimentService{
 		reader: objects, lister: objects, store: opts.storeName, maxBytes: opts.maxRequestBytes,
@@ -220,7 +219,40 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return err
 	}
-	return serve(ctx, opts, chillServer, execution, observer, manager, observationLog, scheduler, diagnostics)
+	warming := &initializingHandler{initial: chillServer, ready: make(chan struct{})}
+	initialize := func(initializeCtx context.Context) (http.Handler, error) {
+		if err := initializeServing(initializeCtx, &opts, observer, manager, execution,
+			publisher, scheduler, &handlerConfig); err != nil {
+			return nil, err
+		}
+		handler, err := httpapi.NewHandler(manager, execution, authorizer, observationLog, observer, handlerConfig)
+		if err != nil {
+			return nil, err
+		}
+		return composeChillServer(handler, authorizer, opts, measurements)
+	}
+	return serve(ctx, opts, warming, execution, observer, manager, observationLog, scheduler, diagnostics, initialize)
+}
+
+// Health and the dashboard remain reachable while state-dependent APIs warm.
+// Closing ready publishes initialized to requests without a mutable HandlerConfig.
+type initializingHandler struct {
+	initial, initialized http.Handler
+	ready                chan struct{}
+}
+
+func (h *initializingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	select {
+	case <-h.ready:
+		h.initialized.ServeHTTP(w, r)
+	default:
+		if strings.HasPrefix(r.URL.Path, "/api/v1") {
+			w.Header().Set("Retry-After", "2")
+			httpapi.SendQueryError(w, &serving.Error{Code: "CoverageWarming", Message: "serving initialization is not complete"})
+			return
+		}
+		h.initial.ServeHTTP(w, r)
+	}
 }
 
 func removeStagedObservationArchives() {
@@ -238,6 +270,14 @@ func initializeServing(ctx context.Context, opts *options,
 	publisher *livePublisher, scheduler *schedulerService,
 	handlerConfig *httpapi.HandlerConfig,
 ) error {
+	if scheduler != nil {
+		refreshCtx, cancel := context.WithTimeout(ctx, opts.operationTimeout)
+		err := scheduler.refresh(refreshCtx)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("initialize scheduler service: %w", err)
+		}
+	}
 	initializeCtx, cancelInitialize := context.WithTimeout(ctx, opts.requestTimeout)
 	err := observer.Refresh(initializeCtx)
 	if err == nil {
@@ -267,18 +307,25 @@ func initializeServing(ctx context.Context, opts *options,
 		handlerConfig.RefreshScheduler = scheduler.refreshLocked
 		handlerConfig.SchedulerMeters = scheduler.schedulerMeters
 		handlerConfig.OperatingPower = scheduler.operatingPower
+		handlerConfig.OperatingPowerSeries = scheduler.operatingPowerSeries
 
 	}
 	return nil
 }
 
-func serve(ctx context.Context, opts options, chillServer http.Handler, execution *serving.Runtime,
+func serve(ctx context.Context, opts options, chillServer *initializingHandler, execution *serving.Runtime,
 	observer *servingkube.Observer, manager *servingkube.Manager,
 	observationLog *serving.ObservationLog, scheduler *schedulerService, diagnostics *diagnosticSession,
+	initialize func(context.Context) (http.Handler, error),
 ) error {
+	certificate, err := tls.LoadX509KeyPair(opts.tlsCert, opts.tlsKey)
+	if err != nil {
+		return err
+	}
 	server := &http.Server{
 		Addr: opts.bindAddress, Handler: chillServer,
 		ReadHeaderTimeout: opts.requestTimeout, IdleTimeout: opts.requestTimeout,
+		TLSConfig: &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12},
 	}
 	serverErrors := make(chan error, 2)
 	listener, err := net.Listen("tcp", opts.bindAddress)
@@ -291,9 +338,20 @@ func serve(ctx context.Context, opts options, chillServer http.Handler, executio
 		return err
 	}
 	defer closePprof()
-	go func() { serverErrors <- server.ServeTLS(listener, opts.tlsCert, opts.tlsKey) }()
+	go func() { serverErrors <- server.ServeTLS(listener, "", "") }()
 	diagnostics.listenerBound()
-	scheduler.Start()
+	initializeCtx, cancelInitialize := context.WithCancel(ctx)
+	initialized := make(chan error, 1)
+	go func() {
+		handler, err := initialize(initializeCtx)
+		if err == nil {
+			chillServer.initialized = handler
+			close(chillServer.ready) // Publish only the complete handler configuration.
+		}
+		initialized <- err
+	}()
+	ready := false
+	initializePending := true
 	sourceTicker := time.NewTicker(opts.sourceInterval)
 	defer sourceTicker.Stop()
 	profileTicker := time.NewTicker(opts.profileInterval)
@@ -307,9 +365,20 @@ loop:
 		select {
 		case serveError = <-serverErrors:
 			break loop
+		case err := <-initialized:
+			initializePending = false
+			if err != nil {
+				serveError = err
+				break loop
+			}
+			ready = true
+			scheduler.Start()
 		case <-ctx.Done():
 			break loop
 		case <-sourceTicker.C:
+			if !ready {
+				continue
+			}
 			callCtx, cancel := context.WithTimeout(ctx, opts.requestTimeout)
 			sourceErr := observer.Refresh(callCtx)
 			cancel()
@@ -323,6 +392,9 @@ loop:
 			}
 			cancel()
 		case <-profileTicker.C:
+			if !ready {
+				continue
+			}
 			callCtx, cancel := context.WithTimeout(ctx, opts.requestTimeout)
 			if scheduler != nil {
 				if err := scheduler.refresh(callCtx); err != nil {
@@ -333,6 +405,10 @@ loop:
 		case <-archiveTicker.C:
 			archiveInBackground(ctx, archiving, opts.requestTimeout, observationLog.Flush)
 		}
+	}
+	cancelInitialize()
+	if initializePending {
+		serveError = errors.Join(serveError, <-initialized)
 	}
 	archiving <- struct{}{} // The running Flush ends before Close archives.
 	scheduler.Close()

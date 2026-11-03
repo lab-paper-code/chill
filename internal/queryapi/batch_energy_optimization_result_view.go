@@ -25,6 +25,9 @@ type BatchEnergyOptimizationResultSnapshot struct {
 	MeasurementFacts       *profilederivation.MeasurementFacts
 	MeasurementFactsReason *string
 	FailedRuns             []edgev1alpha1.ProfilingRun
+	// SchedulerUsed is nil when the accepted catalog could not be read.
+	// It is a read-time selection fact, not part of the sealed result.
+	SchedulerUsed *bool
 }
 
 const BatchEnergyOptimizationResultAPIVersion = "console.chill.dacs.io/v1alpha1"
@@ -126,8 +129,16 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 	accepted := result != nil && campaign.Status.Phase == "Complete"
 	reused := campaign.Annotations["chill.dacs.io/profile-reuse"] != ""
 	rows := []ResultRow{}
+	var children []MeasurementAssessment
 	if facts != nil {
-		rows = MeasurementResultRows(*facts, campaign.Namespace+"/"+campaign.Name+"/"+string(campaign.UID), reused, false)
+		used := snapshot.SchedulerUsed != nil && *snapshot.SchedulerUsed
+		rows = MeasurementResultRows(*facts, campaign.Namespace+"/"+campaign.Name+"/"+string(campaign.UID), reused, used)
+		for i := range rows {
+			rows[i].Assessment.Scope.SchedulerUsed = snapshot.SchedulerUsed
+			if accepted {
+				children = append(children, rows[i].Assessment)
+			}
+		}
 	}
 	if reused {
 		var reference struct {
@@ -150,12 +161,6 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 			}
 		}
 	}
-	var children []MeasurementAssessment
-	if accepted && facts != nil {
-		for _, batch := range facts.Batches {
-			children = append(children, AssessMeasurementBatch(batch, facts.PointPolicy.MinimumTrials, reused, false))
-		}
-	}
 	view := BatchEnergyOptimizationResult{
 		APIVersion: BatchEnergyOptimizationResultAPIVersion,
 		Kind:       "BatchEnergyOptimizationResult",
@@ -175,7 +180,8 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 		Assessment: AssessMeasurement(MeasurementAssessmentInput{
 			Execution: &MeasurementExecution{Phase: campaign.Status.Phase, Generation: campaign.Generation, ObservedGeneration: campaign.Status.ObservedGeneration},
 			Available: result != nil, Accepted: accepted,
-			Reused: reused, Attempted: true, SourcesComplete: true, Children: children,
+			Reused: reused, SchedulerUsed: snapshot.SchedulerUsed,
+			Attempted: true, SourcesComplete: true, Children: children,
 		}),
 	}
 	view.Assessment.FailureSummary = MeasurementRequestFailures(*campaign, snapshot.FailedRuns, view.Assessment)

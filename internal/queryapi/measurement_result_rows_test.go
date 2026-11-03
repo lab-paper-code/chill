@@ -83,3 +83,46 @@ func TestRetainedResultSeparatesReuseConfirmationAndSourceReference(t *testing.T
 		t.Fatalf("source reference forged target physical condition: %+v", source.Condition)
 	}
 }
+
+func TestR18PowerPolicyReasonPreservesUnknownAndFailure(t *testing.T) {
+	failed, passed := false, true
+	for _, tc := range []struct {
+		name, reason, result string
+		policy               *bool
+	}{
+		{"unset", "PolicyUnset", "unknown", nil},
+		{"unknown", "", "unknown", nil},
+		{"failed", "WindowGapExceeded", "fail", &failed},
+		{"passed", "", "pass", &passed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			facts := profilederivation.MeasurementBatchFacts{
+				Quality: []profilederivation.MeasurementTrialQuality{{PolicyPassed: tc.policy, PolicyReason: tc.reason}},
+			}
+			assessment := AssessMeasurementBatch(facts, 3, false, true)
+			raw, err := json.Marshal(assessment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wire struct {
+				Checklist struct {
+					Checks []map[string]any `json:"checks"`
+				} `json:"checklist"`
+			}
+			if err := json.Unmarshal(raw, &wire); err != nil {
+				t.Fatal(err)
+			}
+			for _, check := range wire.Checklist.Checks {
+				if check["code"] != "FrozenPowerWindowPolicy" {
+					continue
+				}
+				reason, _ := check["reason"].(string)
+				if check["result"] != tc.result || reason != tc.reason {
+					t.Fatalf("policy distinction lost: %+v", check)
+				}
+				return
+			}
+			t.Fatal("power policy check missing")
+		})
+	}
+}

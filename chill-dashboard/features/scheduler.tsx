@@ -17,14 +17,15 @@ import { statusLabel } from "@/lib/labels"
 import { Facts } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { resolveWorkloadIdentities, type IdentityWorkload } from "@/lib/workload-identity"
-import { liveReason } from "@/lib/live-display"
+import { liveReason, candidatePlans, candidateEvaluation } from "@/lib/live-display"
+import { PowerTimeline } from "./power-series"
 
-export const judgmentLabels:Record<string,string>={Pending:"판단 대기",Keep:"현재 구성 유지",Feasible:"목표 충족",Overload:"예상 부하가 목표 초과",InfeasibleLifetime:"요청 유효기간 충족 어려움",InfeasibleResources:"자원 조건 충족 어려움",InfeasibleTransition:"변경 조건 충족 어려움",ExecutionError:"실행 오류 확인"}
+export const judgmentLabels:Record<string,string>={Pending:"판단 대기",Keep:"현재 구성 유지",Feasible:"실행 가능",Overload:"예상 부하가 목표 초과",InfeasibleLifetime:"요청 유효기간 충족 어려움",InfeasibleResources:"자원 조건 충족 어려움",InfeasibleTransition:"변경 조건 충족 어려움",ExecutionError:"실행 오류 확인"}
 export const judgmentTones:Record<string,Tone>={Keep:"ok",Feasible:"ok",Pending:"idle",Overload:"warn",InfeasibleLifetime:"warn",InfeasibleResources:"warn",InfeasibleTransition:"warn",ExecutionError:"fail"}
 export const actionKinds:Record<string,string>={prepare:"실행 준비",route:"요청 분배 변경",unroute:"요청 분배 해제",release:"자원 예약 해제",reset:"서비스 초기화",stop:"요청 접수 중지",drain:"기존 요청 마무리",remove:"인스턴스 제거",power:"전력모드 변경",resize:"인스턴스 교체","measurement-handback":"측정 장치 반환","manual-static-routing":"설정한 요청 분배 적용"}
 // internal/serving/kube/static_routing.go: a configuration-sourced route has no single node (empty NodeRef).
 export const actionNodeName=(node:{name:string;uid:string})=>node.uid?node.name||"이름 미제공":"전체 노드"
-export const actionStatuses:Record<string,string>={planned:"계획됨",starting:"시작 기록",running:"실행 중",complete:"완료",failed:"실패",cancel:"취소",partial:"일부 변경 관측"}
+export const actionStatuses:Record<string,string>={planned:"계획됨",starting:"시작 기록",running:"실행 중",complete:"완료",failed:"실패",cancel:"취소",partial:"일부 변경 관측",NOT_SUBMITTED:"사전 검사 · 미제출"}
 export const actionTones:Record<string,Tone>={complete:"ok",failed:"fail",partial:"warn",running:"info",starting:"info"}
 const observed=(at?:string)=>!!at&&!at.startsWith("0001-")
 const joules=(value:number)=>value>=1000?`${(value/1000).toLocaleString("ko-KR",{maximumFractionDigits:2})} kJ`:`${value.toLocaleString("ko-KR",{maximumFractionDigits:1})} J`
@@ -34,7 +35,7 @@ const ms=(value:WireInteger)=>`${nanosToMilliseconds(value)} ms`
 const energy=(value:number|null)=>value==null?"미제공":`${value} J`
 const reasonLabels:Record<string,string>={MissingPoolInventory:"실행 그룹의 노드 관측이 필요합니다.",MissingImmutableDefinition:"요청의 고정 서비스 정의가 필요합니다.",NoFullyEvaluableCandidateWithinReportedBounds:"제공된 탐색 범위에서 전체 계산을 마친 후보를 기다립니다.",NoResourceFeasibleCandidateWithinReportedBounds:"제공된 탐색 범위에서 자원 조건을 충족하는 후보가 필요합니다.",NoReadyTransitionWithinReportedBounds:"제공된 탐색 범위에서 실행 가능한 변경을 기다립니다.",EvaluatedCandidatesExceedSLOWithinReportedSearchBounds:"계산한 후보의 예상 지연이 서비스 목표를 초과합니다.",UnevaluableCandidatesRemainPending:"추가 근거를 기다리는 후보가 있습니다.",ExplicitRequestLifetimeCapacityExceeded:"요청 유효기간 안의 처리 용량을 확인합니다.",ObservedOperationExecutionError:"관측된 변경 실행 오류를 확인합니다."}
 
-function Lines({values}:{values?:string[]|null}) {return values?.length?<ul className="list-inside list-disc">{values.map((value,index)=><li key={index}>{reasonLabels[value]??liveReason(value)}</li>)}</ul>:<p>제공된 항목 없음</p>}
+function Lines({values}:{values?:string[]|null}) {return values?.length?<ul className="list-inside list-disc">{values.map((value,index)=><li key={index} title={value}>{value.endsWith("sample boundary distance exceeds policy")?`구간 경계 표본 부족${value.startsWith("Node ")?` · ${value.slice(5).split(" (")[0]}`:""}`:value.endsWith("maximum sample gap exceeds policy")?`표본 간격 기준 초과${value.startsWith("Node ")?` · ${value.slice(5).split(" (")[0]}`:""}`:reasonLabels[value]??liveReason(value)}</li>)}</ul>:<p>제공된 항목 없음</p>}
 function Allocation({value}:{value:SchedulerAllocation}) {return <span>GPU {value.gpuUUID||"없음"}, 메모리 {String(value.memoryBytes)} bytes</span>}
 function ObservationLink({uid,definition,from,to,children}:{uid:string;definition?:string;from:string;to:string;children:React.ReactNode}) {
   if(!uid||!from||!to||from.startsWith("0001-")||to.startsWith("0001-"))return <span>{children}</span>
@@ -43,7 +44,9 @@ function ObservationLink({uid,definition,from,to,children}:{uid:string;definitio
 }
 function ServiceName({uid,snapshot}:{uid:string;snapshot:SchedulerSnapshot}) {return <span>{resolveWorkloadIdentities([],[],snapshot.workloads,[uid]).get(uid)!} <small className="break-all">({uid})</small></span>}
 function SLOs({candidate,decision,snapshot}:{candidate:SchedulerCandidate;decision:SchedulerDecision;snapshot:SchedulerSnapshot}) {
-  return <><p>예상 에너지 {energy(candidate.expectedJoules)}. 예상 지연은 반복 비교 결과이며 실측과 구분합니다.</p>{candidate.expectedJoules==null&&<Lines values={candidate.reasons}/>}<div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th>서비스</th><th>예상 지연</th><th>목표</th><th>표본 수</th><th>목표 초과 비율</th><th>예상 결과</th></tr></thead><tbody>{candidate.slo?.map((row,index)=><tr key={index}><td><ObservationLink uid={row.uid} definition={row.definition} from={decision.search.windowStart} to={decision.search.windowEnd}><ServiceName uid={row.uid} snapshot={snapshot}/></ObservationLink><small className="block break-all">{row.definition}</small></td><td>{row.expectedNanos==null?"계산값 없음":`${Number(row.expectedNanos) / 1e6} ms`} ({row.percentile}% 기준)</td><td>{ms(row.targetNanos)}</td><td>{row.samples}</td><td>{row.normalizedExceedance}</td><td>{Object.entries(row.predictedOutcomes??{}).map(([key,value])=>`${key}: ${value}`).join(", ")||"제공 없음"}</td></tr>)}</tbody></table></div>{!candidate.slo?.length&&<p>서비스별 예상값 제공 없음</p>}</>
+  return <><Facts items={[["예상 에너지",energy(candidate.expectedJoules)],["성능 평가",candidateEvaluation(candidate)]]}/>{candidate.expectedJoules==null&&<Lines values={candidate.reasons}/>}
+    {!!candidate.slo?.length&&<div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th>서비스</th><th>예상 지연</th><th>목표</th><th>표본 수</th><th>목표 초과 비율</th><th>예상 결과</th></tr></thead><tbody>{candidate.slo.map((row,index)=><tr key={index}><td><ObservationLink uid={row.uid} definition={row.definition} from={decision.search.windowStart} to={decision.search.windowEnd}><ServiceName uid={row.uid} snapshot={snapshot}/></ObservationLink><small className="block break-all">{row.definition}</small></td><td>{row.expectedNanos==null?"계산값 없음":`${Number(row.expectedNanos) / 1e6} ms`} ({row.percentile}% 기준)</td><td>{ms(row.targetNanos)}</td><td>{row.samples}</td><td>{row.normalizedExceedance}</td><td>{Object.entries(row.predictedOutcomes??{}).map(([key,value])=>`${key}: ${value}`).join(", ")||"제공 없음"}</td></tr>)}</tbody></table></div>}
+  </>
 }
 function Configuration({nodes,instances,routing,snapshot}:{nodes?:SchedulerNode[]|null;instances?:SchedulerInstance[]|null;routing:SchedulerCandidate["routing"];snapshot:SchedulerSnapshot}) {
   return <><h3>노드</h3>{nodes?.length?nodes.map(node=><section key={node.node.uid} className="space-y-2 rounded border p-3"><h4>{node.node.name}{node.measurement&&" / 측정 중"}</h4><p className="break-all">노드 UID {node.node.uid}</p><p>준비 {node.ready?"완료":"확인 대기"} / 전력모드 {node.powerMode||"제공 없음"} / 관측 {time(node.observedAt)}</p>{!!node.reasons?.length&&<Lines values={node.reasons}/>}<p>전체 GPU {node.gpuUUIDs?.join(", ")||"없음"}, 메모리 {String(node.memoryBytes)} bytes</p><p>예약: <Allocation value={node.reserved}/></p><h5>서비스 외 할당</h5>{node.nonServing?.map((allocation,index)=><p key={index}><Allocation value={allocation}/></p>)}{!node.nonServing?.length&&<p>제공된 할당 없음</p>}</section>):<p>제공된 노드 없음</p>}
@@ -81,7 +84,7 @@ function CurrentEvidence({kind}:{kind:"candidates"|"estimates"}) {
   const view=selection?.view??query.data
   const uid=params.get("uid")??params.get("workload")??(params.get("open")?.startsWith("service:")?params.get("open")!.slice(8):"")
   const decision=view?.state.decision,snapshot=view?.state.snapshot
-  const candidates=decision&&observed(decision.at)?[decision.keep,...(decision.target?[decision.target]:[])].filter((candidate,index,all)=>candidate.id&&all.findIndex(row=>row.id===candidate.id)===index):[]
+  const candidates=decision&&observed(decision.at)?candidatePlans(decision.keep,decision.target).filter(candidate=>candidate.id):[]
   const services=(snapshot?.workloads??[]).filter((row):row is SchedulerDefinition=>!!row&&(!uid||row.uid===uid))
   return <section className="space-y-4"><h3>{kind==="candidates"?"구성·후보 근거":"응답 목표 예상"}</h3><QueryGate query={query}>{view&&decision&&snapshot&&<>
     <Facts items={[["판단 시각",time(decision.at)],["구성 관측",time(snapshot.at)],["입력 시작",time(decision.search.windowStart)],["입력 종료",time(decision.search.windowEnd)]]}/>
@@ -152,7 +155,7 @@ export function PowerInterval({from,to}:{from:string;to:string}) {
   const data=query.data,measuredEnergy=(value:number|null)=>value==null?"미제공":joules(value),watts=(value:number|null)=>value==null?"미제공":`${value.toLocaleString("ko-KR",{maximumFractionDigits:2})} W`
   const nodes=data?.nodes??[],commonReasons=new Set(data?.reasons??[])
   if(nodes.length>1)for(const reason of nodes[0].reasons??[])if(nodes.every(row=>row.reasons?.includes(reason)))commonReasons.add(reason)
-  return <QueryGate query={query}>{data&&<div className="space-y-4">
+  return <><PowerTimeline from={from} to={to}/><QueryGate query={query}>{data&&<div className="space-y-4">
     <Facts items={[["집계 시작",time(data.from)],["집계 종료",time(data.to)],["전력 범위","노드 벽전력"],["집계",data.complete?"계측 집계 완료":"관측 공백 있음"],["전체 실행 그룹 J",measuredEnergy(data.wholePoolJoules)],["전체 평균 W",watts(data.wholePoolMeanWatts)],["활성 실행 그룹 J",measuredEnergy(data.activePoolJoules)],["활성 평균 W",watts(data.activePoolMeanWatts)],["원본 시각 없는 장치 개",(data.nodes??[]).filter(row=>row.sourceTimestampAbsent).length]]}/>
     {data.nodes?.some(row=>row.sourceTimestampAbsent)&&<StatusBadge tone="warn">수집 시각 기준 · 신선도 미확인</StatusBadge>}
     {commonReasons.size>0&&<div role="status"><h3>측정 공백과 집계 사유</h3><Lines values={Array.from(commonReasons)}/></div>}{data.gapUntil&&<p role="status">{gapNotice(data.gapUntil)}</p>}
@@ -165,5 +168,5 @@ export function PowerInterval({from,to}:{from:string;to:string}) {
       {key:"coverage",label:"시각 기준·공백",value:row=>{const reasons=row.reasons?.filter(reason=>!commonReasons.has(reason))??[];return <>{row.sourceTimestampAbsent?"수집 시각":"원본 시각"}{reasons.length>0&&<Lines values={reasons}/>}</>}},
     ]}/>{!data.nodes?.length&&<p>기대 장치·계측 범위 미제공</p>}
     <SourceExport filename="chill-operating-power.json" value={{source:"v1/observations/power",conditions:{from,to},result:data}}/><SourceJSON title="정확한 구간의 집계 원본" value={data}/>
-  </div>}</QueryGate>
+  </div>}</QueryGate></>
 }

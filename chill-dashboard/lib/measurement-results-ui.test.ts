@@ -201,7 +201,8 @@ test("pending run evidence is not presented as a connection failure",()=>{
   const refresh=elements(tree).find(element=>element.type==="button"&&text(element)==="근거 확인")!
   assert.ok(refresh,"pending evidence needs an explicit refresh path")
   ;(refresh.props.onClick as ()=>void)()
-  assert.ok(h.refreshes.some(path=>path.endsWith("/evidence-passport")))
+  assert.ok(h.refreshes.some(path=>path.includes("/profiling-runs?")))
+  assert.ok(!h.refreshes.some(path=>path.endsWith("/evidence-passport")))
 })
 
 test("failed occupancy values remain visible only as unverified raw data",()=>{
@@ -286,23 +287,19 @@ test("selected cost product shows comparison insufficiency once outside individu
   assert.match(text(individual),/미제공/)
 })
 
-test("selected throughput explains absent quality fields without inventing sample counts or criteria",()=>{
+test("selected throughput preserves supplied observations and server assessment without inventing absent criteria",()=>{
   for(const state of ["unknown","pass","fail"]) {
     const assessmentValue={...accepted,checklist:{criteriaMet:state==="pass"?true:null,checks:state==="unknown"?[]:[{code:"Recorded",result:state,message:"",sourceIds:[]}]}}
     const row={id:"row",batch:2,activeTrialCount:0,idleTrialCount:null,latencySampleCount:17} as ResultRow
-    const profile={id:"selected",nodeName:"device",condition:{logicalModel:"model",artifact:{name:"artifact",executionPath:"ort"},preprocessor:{name:""},activeProtocol:{},cpu:{limit:"1"}},assessment:assessmentValue,resultRows:[row]}
+    const profile={id:"selected",nodeName:"device",condition:{logicalModel:"model",artifact:{name:"artifact",executionPath:"ort"},preprocessor:{name:""},activeProtocol:{}},assessment:assessmentValue,resultRows:[row]}
     const h=harness("kind=throughput&profile=selected",()=>({profiles:[profile]}))
     const tree=load("../features/scheduler-profiles.tsx",h.modules).SchedulerProfilesPage({})
-    const evidence=elements(tree).find(element=>typeof element.type==="function"&&element.props.rows===profile.resultRows&&text(element).includes("품질 판정 불가 · 기준·표본 제공 여부"))
-    assert.equal(!!evidence,state==="unknown")
-    if(!evidence)continue
-    const rendered=(evidence.type as Component)(evidence.props)
-    const rows=elements(rendered).filter(element=>element.type==="tr").slice(1)
-    const cells=rows.map(row=>elements(row).filter(element=>element.type==="th"||element.type==="td").map(text))
-    for(const label of ["허용 오차 반폭 기준","최소 활성·유휴 반복 수 기준","최소 지연 표본 수 기준","p95 신뢰구간"])assert.deepEqual(cells.find(row=>row[0]===label),[label,"미제공","현재 조회 계약에 해당 필드 없음"])
-    assert.deepEqual(cells.find(row=>row[0]==="배치 2 · 활성 반복 수"),["배치 2 · 활성 반복 수","0","관측 표본 수 · 충족 기준 미제공"])
-    assert.deepEqual(cells.find(row=>row[0]==="배치 2 · 유휴 반복 수"),["배치 2 · 유휴 반복 수","미제공","조회 결과에 값 없음"])
-    assert.deepEqual(cells.find(row=>row[0]==="배치 2 · 지연 표본 수"),["배치 2 · 지연 표본 수","17","관측 표본 수 · 충족 기준 미제공"])
+    const values=elements(tree).find(element=>element.type==="result-rows")!
+    const details=elements(tree).find(element=>element.type==="assessment-details")!
+    assert.equal(values.props.rows,profile.resultRows)
+    assert.equal(details.props.assessment,assessmentValue)
+    assert.equal(details.props.rows,profile.resultRows)
+    assert.doesNotMatch(text(tree),/현재 조회 계약에 해당 필드 없음|기준·표본 미제공/)
   }
 })
 
@@ -315,4 +312,43 @@ test("namespace form pattern compiles with HTML v flag and enforces DNS labels",
   assert.equal(pattern.test("BAD_NAMESPACE"),false)
   assert.equal(pattern.test("chill-system"),true)
   for(const invalid of ["-chill","chill-","a_b","a.b"])assert.equal(pattern.test(invalid),false)
+})
+
+test("R18 selected result retains server usable assessment alongside policy-unset quality and historical use",()=>{
+  const assessmentValue={...accepted,status:"complete",label:"사용 가능",evidence:{available:true,accepted:true,reasons:[]},scope:{schedulerUsed:false},checklist:{criteriaMet:false,checks:[{code:"FrozenPowerWindowPolicy",result:"unknown",reason:"PolicyUnset",message:"policy",sourceIds:[]}]}}
+  const profile={id:"historical",nodeName:"device",condition:{logicalModel:"model",artifact:{name:"artifact",executionPath:"ort"},preprocessor:{name:""},activeProtocol:{}},assessment:assessmentValue,resultRows:[]}
+  const h=harness("kind=throughput&profile=historical",()=>({profiles:[profile]}))
+  const tree=load("../features/scheduler-profiles.tsx",h.modules).SchedulerProfilesPage({})
+  const rendered=text(tree)
+  assert.ok(elements(tree).some(element=>element.type==="status-cell"&&element.props.axis==="측정"&&element.props.label==="사용 가능"))
+  const statuses=elements(tree).filter(element=>typeof element.type==="function"&&element.props.assessment===assessmentValue).map(element=>(element.type as Component)(element.props) as Element)
+  assert.ok(statuses.some(element=>element.props.axis==="품질 판정"&&element.props.label==="정책 미설정"))
+  assert.ok(statuses.some(element=>element.props.axis==="현재 사용"&&element.props.label==="과거 측정"))
+  assert.doesNotMatch(rendered,/현재 조회 계약에 해당 필드 없음|기준·표본 미제공/)
+})
+
+test("R18 AssessmentDetails check table renders PolicyUnset as 정책 미설정",()=>{
+  const h=harness("",()=>undefined)
+  Object.assign(h.modules,{
+    "@/components/measurement-navigation":{MeasurementEvidenceChecks:()=>null},
+    "@/components/ui/table":Object.fromEntries(["Table","TableHeader","TableRow","TableHead","TableBody","TableCell"].map(name=>[name,name])),
+  })
+  const tree=load("../features/measurement-plans.tsx",h.modules).AssessmentDetails({assessment:{...accepted,checklist:{criteriaMet:false,checks:[{code:"FrozenPowerWindowPolicy",result:"unknown",reason:"PolicyUnset",message:"policy",sourceIds:[]}]}}})
+  const row=elements(tree).find(element=>element.type==="TableRow"&&text(element).includes("FrozenPowerWindowPolicy"))!
+  assert.match(text(row),/정책 미설정/)
+  assert.doesNotMatch(text(row),/미확인/)
+})
+
+test("R18 request status retains its own catalog identity instead of same-target coverage scope",()=>{
+  const own={...accepted,scope:{schedulerUsed:false}}
+  const spec={state:{candidate:{modelSpec:"model",deviceClass:"class",executionPath:"cpu",powerMode:"fixed"},targetNode:"node"},activeProtocol:{},idleProtocol:{}}
+  const h=harness("uid=old",()=>({campaign:{uid:"old",name:"request",phase:"Complete",spec},assessment:own,resultRows:[]}))
+  Object.assign(h.modules,{
+    "@/lib/measurement-request":requests,
+    "@/features/measurement-coverage":{useMeasurementCoverage:()=>({data:{cells:[]}})},
+    "@/components/measurement-navigation":{MeasurementStatus:"measurement-status"},
+  })
+  const tree=load("../features/measurement-plans.tsx",h.modules).MeasurementPlanDetails({namespace:"ns",name:"request"})
+  const status=elements(tree).find(element=>element.type==="measurement-status")!
+  assert.equal(status.props.assessment,own)
 })

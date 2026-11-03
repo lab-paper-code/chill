@@ -100,6 +100,9 @@ const (
 	NodePlacementInventoryMissing  = "PlacementInventoryMissing"
 	NodePlacementBudgetUnavailable = "PlacementBudgetUnavailable"
 	NodePowerModeUnavailable       = "PowerModeUnavailable"
+	// Refinements accompany PowerModeUnavailable; its planning gate is unchanged.
+	NodePowerModeObservationUnavailable = "PowerModeObservationUnavailable"
+	NodePowerTransitionUnavailable      = "PowerTransitionUnavailable"
 	// NodeInstanceUnavailable: a CHILL serving instance on the Node has no
 	// readable native or profile state. The Node keeps its state; other Nodes
 	// are still planned.

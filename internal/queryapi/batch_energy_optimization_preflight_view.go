@@ -149,9 +149,8 @@ func BuildMeasurementBatchPlan(snapshot BatchEnergyOptimizationPreflightSnapshot
 	}
 	condition := snapshot.Plan.Shared()
 	id := MeasurementVariantID(condition)
-	immutable := measurementPreflightImagesPinned(condition)
 	for _, evidence := range snapshot.ExactEvidence {
-		if immutable && MeasurementVariantID(evidence.Condition) == id {
+		if MeasurementVariantID(evidence.Condition) == id {
 			result.ConditionMatch = MeasurementConditionExact
 			for _, batch := range evidence.Batches {
 				if slices.Contains(result.PlannedBatches, batch) {
@@ -192,12 +191,6 @@ func BuildMeasurementBatchPlan(snapshot BatchEnergyOptimizationPreflightSnapshot
 			})
 		}
 	}
-	if !immutable {
-		result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{
-			Code:    "ImmutableImagesUnconfirmed",
-			Message: "Image references are not all immutable digests; projected conditions are planned-only.",
-		})
-	}
 	for _, request := range snapshot.Requests {
 		if request.Plan.SchemaVersion() != "" && MeasurementVariantID(request.Plan.Shared()) == id {
 			result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{
@@ -223,18 +216,4 @@ func BuildMeasurementBatchPlan(snapshot BatchEnergyOptimizationPreflightSnapshot
 		}
 	}
 	return result
-}
-
-func measurementPreflightImagesPinned(condition profilederivation.CurvePlanSpec) bool {
-	for _, image := range []string{
-		condition.RuntimeImage, condition.Artifact.Image, condition.Preprocessor.Image,
-		condition.ActiveProtocol.MetricObserverImage, condition.ActiveProtocol.WorkloadObserverImage,
-		condition.IdleProtocol.MetricObserverImage, condition.IdleProtocol.WorkloadObserverImage,
-	} {
-		_, digest, found := strings.Cut(image, "@sha256:")
-		if !found || len(digest) != 64 || strings.Trim(digest, "0123456789abcdef") != "" {
-			return false
-		}
-	}
-	return true
 }

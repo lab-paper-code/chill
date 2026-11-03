@@ -5,7 +5,7 @@ import Link from "next/link"
 import type { UseQueryResult } from "@tanstack/react-query"
 import type { ApiError } from "@/lib/client"
 import { useChillQuery } from "@/lib/client"
-import type { ObservationResult, PoolsView, SchedulerView } from "@/lib/read-types"
+import type { ObservationResult, PoolsView, SchedulerSettings, SchedulerView } from "@/lib/read-types"
 import { resourceHref, type WorkloadView } from "@/lib/domain"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/read-region"
@@ -43,7 +43,13 @@ export function ServiceAdmission({ view }: { view: Pick<WorkloadView, "admission
   return <StatusCell axis="접수 허용" label={view.admission ? "허용" : "차단"} tone={view.admission ? "ok" : "warn"} />
 }
 
-export function ServiceReadiness({ view }: { view: Pick<WorkloadView, "reason" | "readiness"> }) {
+export function ServiceReadiness({ view }: { view: Pick<WorkloadView, "desired" | "reason" | "readiness"> }) {
+  const settings=useChillQuery<SchedulerSettings>("v1/scheduler/settings",{enabled:view.readiness==="Preparing"})
+  const pools=useChillQuery<PoolsView>("v1/pools",{enabled:view.readiness==="Preparing"})
+  const pool=pools.data?.workloads?.find(row=>row.workload.uid===view.desired.metadata.uid)
+  if(view.readiness==="Preparing"&&!settings.error&&settings.data&&!pools.error&&!pools.data?.issues?.length&&
+    !settings.data.autonomousWorkloads?.includes(view.desired.metadata.uid)&&Array.isArray(pool?.instances)&&!pool.instances.some(row=>!row.stopped))
+    return <StatusCell axis="배치" label="미배치 · 자동제어 꺼짐" tone="idle"/>
   const reason = view.reason && statusLabel(view.reason)
   return <><StatusBadge value={view.readiness} />{reason && reason !== statusLabel(view.readiness) && <span className="block text-xs">{reason}</span>}</>
 }

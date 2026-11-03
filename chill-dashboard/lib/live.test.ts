@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { test, type TestContext } from "node:test"
 import { applyLiveMessage, connectLive, initialLiveState, isLiveActionActive, liveActionKey, parseLiveMessage, type LiveMetric, type LiveSnapshot, type LiveState } from "./live.ts"
 import { fixtureMessages } from "./live-fixture.ts"
+import * as live from "./live.ts"
 
 const at="2026-10-30T12:00:00.123456789Z"
 const time=(seconds:number)=>new Date(Date.parse("2026-10-30T12:00:00Z")+seconds*1000).toISOString()
@@ -370,4 +371,71 @@ test("malformed payload closes the connection before data can enter the cache",t
   assert.equal(FakeSocket.sockets.length,1)
   connection.reconnect()
   assert.equal(FakeSocket.sockets.length,2)
+})
+
+test("snapshot history preserves fresh/unmatched retention metadata without seeding observations",()=>{
+  const baseline=apply(initialLiveState(),snapshot(10)).snapshot
+  const empty={reason:"fresh",replayed:false,requested:{afterSeq:0,throughSeq:0},retained:{events:null,power:null},gaps:[]}
+  const unmatched={reason:"checkpoint-unmatched",replayed:false,requested:{afterSeq:2,throughSeq:10,at},retained:{events:{fromSeq:5,toSeq:7},power:null},gaps:[{fromSeq:3,toSeq:4,scope:"events",reason:"NoRetainedFrames"},{fromSeq:3,toSeq:10,scope:"power",reason:"NoRetainedFrames"}]}
+  for(const history of [empty,unmatched,{...unmatched,requested:{afterSeq:11,throughSeq:10,at},gaps:[]}]){
+    const message=parseLiveMessage({...snapshot(10),history})
+    assert.ok(message?.type==="snapshot")
+    assert.deepEqual(message.history,history)
+    const state=applyLiveMessage(initialLiveState(),message)
+    assert.deepEqual(state.resumeHistory,history)
+    assert.deepEqual(state.snapshot,baseline)
+    assert.deepEqual(state.events,[])
+    assert.deepEqual(state.metrics,[])
+    assert.deepEqual(state.gaps,[],"inclusive sequence bounds are not observation-time gaps")
+  }
+  assert.ok(parseLiveMessage(snapshot()),"history remains optional")
+})
+
+test("history validates nested types and inclusive ranges without treating bounds as event counts",()=>{
+  const history={reason:"fresh",replayed:false,requested:{afterSeq:0,throughSeq:10},retained:{events:{fromSeq:2,toSeq:2},power:null},gaps:[{fromSeq:1,toSeq:1,scope:"events",reason:"NoRetainedFrames"}]}
+  assert.ok(parseLiveMessage({...snapshot(10),history}))
+  for(const invalid of [
+    {...history,reason:"unknown"},{...history,replayed:true},{...history,retained:{events:null}},
+    {...history,requested:{afterSeq:-1,throughSeq:10}},{...history,requested:{afterSeq:0,throughSeq:10,at:"bad"}},
+    {...history,retained:{events:{fromSeq:3,toSeq:2},power:null}},
+    {...history,retained:{events:{fromSeq:0,toSeq:2},power:null}},
+    {...history,retained:{events:{fromSeq:2,toSeq:11},power:null}},
+    {...history,gaps:[{fromSeq:1,toSeq:11,scope:"events",reason:"NoRetainedFrames"}]},
+    {...history,gaps:[{fromSeq:2,toSeq:1,scope:"events",reason:"NoRetainedFrames"}]},
+    {...history,gaps:[{fromSeq:1,toSeq:1,scope:"events",reason:"invented"}]},
+    {...history,gaps:[{fromSeq:1,toSeq:1,scope:"unknown",reason:"NoRetainedFrames"}]},
+    {...history,gaps:null},{...history,unknown:true},
+  ])assert.equal(parseLiveMessage({...snapshot(10),history:invalid}),null)
+})
+
+test("recorded events reuse payload validation without inventing a websocket sequence",()=>{
+  assert.equal(typeof live.parseRecordedLiveEvent,"function")
+  const recorded={type:"event",at,kind:"cluster",cluster:{kind:"pod",at,event:"changed",pod:{uid:"p",ready:"True"}}}
+  const parsed=live.parseRecordedLiveEvent(recorded)
+  assert.ok(parsed)
+  assert.equal(Object.hasOwn(parsed,"seq"),false)
+  assert.equal(parseLiveMessage(recorded),null,"WS events still require the envelope sequence")
+  assert.equal(live.parseRecordedLiveEvent({...recorded,seq:1}),null)
+  assert.equal(live.parseRecordedLiveEvent({...recorded,cluster:{...recorded.cluster,pod:{uid:"p",ready:true}}}),null)
+  assert.equal(live.parseRecordedLiveEvent({type:"event",at,kind:"action",action:{...action,phase:"completed",result:{status:"complete"}}})?.kind,"action")
+})
+
+test("retention metadata suppresses the legacy inferred time gap even on a changed checkpoint",()=>{
+  const history={reason:"checkpoint-unmatched",replayed:false,requested:{afterSeq:2,throughSeq:20,at},retained:{events:null,power:null},gaps:[{fromSeq:3,toSeq:20,scope:"events",reason:"NoRetainedFrames"}]}
+  let state=apply(initialLiveState(),snapshot(2))
+  state=apply(state,{...snapshot(20,{},time(30)),history})
+  assert.deepEqual(state.historyGaps,[])
+  assert.deepEqual(state.gaps,[])
+  assert.deepEqual(state.resumeHistory,history)
+  const baseline=state.snapshot
+  state=apply(state,{...snapshot(20,{workloads:[]},time(30)),history:{...history,gaps:[]}})
+  assert.equal(state.snapshot,baseline,"duplicate metadata cannot replace current snapshot data")
+  assert.deepEqual(state.resumeHistory,{...history,gaps:[]})
+})
+
+test("payload event identity ignores transport sequence, arrival time and object insertion order",()=>{
+  const left=live.parseRecordedLiveEvent({type:"event",at,kind:"action",action:{...action,phase:"started",expectedSeconds:3,expectedSource:{costID:"c",reference:{kind:"Cost",name:"sample"},statistic:"mean",trialCount:1}}})!
+  const right=live.parseRecordedLiveEvent({type:"event",at:time(1),kind:"action",action:{...action,phase:"started",expectedSeconds:3,expectedSource:{costID:"c",reference:{name:"sample",kind:"Cost"},statistic:"mean",trialCount:1}}})!
+  assert.equal(live.eventKey(left),live.eventKey({...right,seq:9}))
+  if(right.kind==="action")assert.notEqual(live.eventKey(left),live.eventKey({...right,action:{...right.action,status:"failed"}}))
 })

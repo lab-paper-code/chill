@@ -28,7 +28,7 @@ test("historical failures stay errors across result list and detail; retry refet
   let queries:Array<{error:Error|null;data?:Experiment;isPending:boolean;refetch?:()=>void}>=[],params=new URLSearchParams(),retried:number[]=[],buttons:Array<()=>void>=[]
   const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
   const Button=({children,onClick,...props}:{children?:ReactNode;onClick?:()=>void})=>{if(onClick)buttons.push(onClick);return createElement("button",props,children)}
-  const client={ApiError,useChillQueries:(paths:string[])=>queries.slice(0,paths.length),useSession:()=>({config:{namespace:"test"}}),useChillQuery:(path:string)=>({data:path==="v1/experiments"?{items:[run]}:run,error:null,isFetching:false,refetch:()=>{}})}
+  const client={ApiError,useChillQueries:(paths:string[])=>queries.slice(0,paths.length),useSession:()=>({config:{namespace:"test",maxPageSize:25}}),useChillQuery:(path:string)=>({data:path.startsWith("v1/experiments?")?{items:[run]}:run,error:null,isFetching:false,refetch:()=>{}})}
   const modules:Record<string,unknown>={
     "@/lib/client":client,"@/lib/experiments":helpers,"@/lib/measurements":measurements,
     "next/link":{default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},"next/navigation":{useSearchParams:()=>params},

@@ -114,7 +114,6 @@ test("frozen condition explanation lists only observed changed fields, not missi
   assert.deepEqual(changes[1],{field:"activeProtocol.dataset.name",label:"데이터셋",before:"vqa",after:"images"})
   assert.deepEqual(requestConditionChanges(before,undefined),[])
   assert.match(requestPreflightReason({code:"VariantConditionChanged",message:"English warning"}),/기존.*제외.*확인/)
-  assert.match(requestPreflightReason({code:"ImmutableImagesUnconfirmed",message:"English warning"}),/이미지.*확인/)
   assert.equal(requestPreflightReason({code:"FutureReason",message:"서버 상세"}),"서버 상세")
 })
 
@@ -132,19 +131,20 @@ test("changing a preprocessor clears only inherited datasets, preserving deliber
   assert.equal(requestInputs("model","onnx","image-pre","vqa",context,{dataset:false}).dataset,"vqa")
 })
 
-function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0,bodies:unknown[]=[],compatibility:Parameters<typeof coverageHelpers.serverCompatibility>[1]=[]) {
+function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0,bodies:unknown[]=[],compatibility:Parameters<typeof coverageHelpers.serverCompatibility>[1]=[],mutations:Record<string,unknown>[]=[] ,patch?:Record<string,unknown>) {
   const source=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
-  const compiled=transpileModule(`${source}\nexport { Funnel };`,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const compiled=transpileModule(`${source}\nexport { Funnel, fillDefaults };`,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
   const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
+  let mutationIndex=0
   const modules:Record<string,unknown>={
-    "react":{...require("react"),useState:(initial:unknown)=>{const state=require("react").useState(initial);return initial===""?[error,state[1]]:initial===0?[stage,state[1]]:state}},
+    "react":{...require("react"),useState:(initial:unknown)=>{const state=require("react").useState(initial);if(patch&&state[0]&&typeof state[0]==="object"&&"workload" in state[0])return [(exports.fillDefaults as (draft:unknown,context:unknown)=>unknown)({...state[0],...patch},props.context),state[1]];return initial===""?[error,state[1]]:initial===0?[stage,state[1]]:state}},
     "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
     "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams(query)},
-    "@/lib/client":{useChillMutation:()=>({isPending:false})},
+    "@/lib/client":{useChillMutation:()=>mutations[mutationIndex++]??({isPending:false}),isCoverageWarming:()=>false},
     "@/components/read-region":{SourceJSON:({inline,value}:{inline?:boolean;value:unknown})=>{if(inline)bodies.push(value);return null}},
     "@/components/screen":{Screen:container,Rows:container,RowDialog:()=>null},
-    "@/features/read-pages":{},
+    "@/features/read-pages":{preflightConclusion:()=>"형식 검사 통과",PreflightAnswer:()=>null},
     "@/features/resources":{powerModeText:()=>"고정"},
     "@/components/ui/button":{Button:({children,disabled,"aria-current":current}:{children?:ReactNode;disabled?:boolean;"aria-current"?:"step"})=>createElement("button",{disabled,"aria-current":current},children)},
     "@/components/ui/input":{Input:()=>null},
@@ -200,7 +200,7 @@ test("copied request and selected variant keep their dataset instead of the newe
 })
 
 test("new and copied requests construct CPU-free manifests with the complete measured protocol",()=>{
-  const source={...plan,spec:{...plan.spec,batchSizes:[1,4]}}
+  const source={...plan,spec:{...plan.spec,batchSizes:[1,4],pointPolicy:{confidenceLevel:"0.9"},activeProtocol:{...plan.spec.activeProtocol,durationToleranceSeconds:0.5},idleProtocol:{...plan.spec.idleProtocol,durationToleranceSeconds:0.25}}}
   const context={models:[],workloads:[],classes:[],profiles:[],plans:[source],preprocessors:[{metadata:{name:"pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:condition.model,artifact:"onnx"}}]}}],datasets:[{metadata:{name:"data"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512}]}}]}
   const prefill={active:true,values:condition,node:condition.node,errors:[],returnTo:"/measurements"}
   for(const props of [{context,prefill},{context,from:"source"}]) {
@@ -211,6 +211,29 @@ test("new and copied requests construct CPU-free manifests with the complete mea
     assert.equal(body.kind,"BatchEnergyOptimization")
     assert.equal(body.metadata.namespace,"ns")
     assert.deepEqual(body.spec,source.spec)
+  }
+})
+
+test("preflight success and admission transport failure identify their own checks without HTTP zero",()=>{
+  const html=renderRequest({},"","",2,[],[],[{error:{status:0,data:null,body:"No response"}},{data:{status:200,data:{resolves:true}}},{}])
+  assert.match(html,/접수 검사/)
+  assert.match(html,/실행 계획 검사/)
+  assert.match(html,/응답 미수신/)
+  assert.match(html,/HTTP 200/)
+  assert.match(html,/형식 검사 통과/)
+  assert.doesNotMatch(html,/HTTP 0|연결 상태를 확인/)
+})
+
+test("editing a copied name or batch preserves the original protocol instead of a newer same-target request",()=>{
+  const original={...plan,spec:{...plan.spec,pointPolicy:{confidenceLevel:"0.9"},activeProtocol:{...plan.spec.activeProtocol,durationToleranceSeconds:0.5}}}
+  const newer={...original,metadata:{...original.metadata,name:"newer",uid:"newer",creationTimestamp:"2026-11-02"},spec:{...original.spec,pointPolicy:{confidenceLevel:"0.99"},activeProtocol:{...original.spec.activeProtocol,durationSeconds:99,durationToleranceSeconds:1}}}
+  const context={models:[],workloads:[],classes:[],profiles:[],plans:[original,newer],preprocessors:[{metadata:{name:"pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:condition.model,artifact:"onnx"}}]}}],datasets:[{metadata:{name:"data"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512}]}}]}
+  for(const patch of [{name:"copy-edited"},{batchSizes:[4]},{trials:5}]) {
+    const bodies:unknown[]=[]
+    renderRequest({context,from:"source"},"from=source","",1,bodies,[],[],patch)
+    const body=JSON.parse(JSON.stringify(bodies.at(-1)))
+    assert.deepEqual(body.spec.activeProtocol,original.spec.activeProtocol)
+    assert.deepEqual(body.spec.pointPolicy,original.spec.pointPolicy)
   }
 })
 
@@ -351,7 +374,7 @@ test("advanced timing shows actual measurement and observation windows without i
   assert.doesNotMatch(unknown,/width:NaN|width:Infinity/)
 })
 
-function renderRequestList(kind:"requests"|"runs",record:unknown) {
+function renderRequestList(kind:"requests"|"runs",record:unknown,cells:MeasurementCoverageCell[]=[]) {
   const source=readFileSync(new URL(`../features/measurement-${kind}.tsx`,import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
@@ -365,14 +388,14 @@ function renderRequestList(kind:"requests"|"runs",record:unknown) {
     "@/lib/measurement-request":requestHelpers,
     "@/lib/measurement-coverage":coverageHelpers,
     "@/lib/measurement-summary":measurementSummary,
-    "@/features/measurement-coverage":{MeasurementFilters:()=>null,useMeasurementCoverage:()=>({})},
+    "@/features/measurement-coverage":{MeasurementFilters:()=>null,useMeasurementCoverage:()=>({data:{cells}})},
     "@/features/measurement-plans":{MeasurementPlanSheet:()=>null},
     "@/components/read-region":{QueryGate:container,SourceJSON:({inline,value}:{inline?:boolean;value:unknown})=>inline?createElement("pre",null,JSON.stringify(value)):null,SourceExport:()=>null},
     "@/components/screen":{Screen:container},
     "@/components/data-table":{DataTable:table,useServerTable:()=>({query:""})},
     "@/components/ui/button":{Button:container},
     "@/components/status-cell":{StatusCell:({label}:{label:string})=>createElement("span",null,label)},
-    "@/components/measurement-navigation":{MeasurementNavigation:()=>null,MeasurementStatus:()=>createElement("span",null,"상태")},
+    "@/components/measurement-navigation":{MeasurementNavigation:()=>null,MeasurementStatus:({assessment}:{assessment?:MeasurementAssessment})=>createElement("span",null,assessment?.scope.schedulerUsed?"사용 중":"미사용")},
   }
   runInNewContext(compiled,{exports,require:(name:string)=>name in modules?modules[name]:require(name),URLSearchParams})
   return renderToStaticMarkup(createElement(exports[kind==="requests"?"MeasurementRequestsPage":"MeasurementRunsPage"] as ComponentType))
@@ -406,6 +429,12 @@ test("failed requests retain a separate catalog-unavailable status after their f
   assert.doesNotMatch(html,/상세 사유: 원문|serving catalog is unavailable/)
   const complete=renderRequestList("requests",{...plan,assessment:{...retainedAssessment,reasons:[catalog]}})
   assert.match(complete,/카탈로그 상태: 카탈로그 조회 불가/)
+})
+
+test("request rows show each normalized failure cause once",()=>{
+  const failure={code:"MeasurementFailed",message:"native preparation Pod failed"}
+  const html=renderRequestList("requests",{...plan,status:{phase:"Failed"},assessment:{...retainedAssessment,failureSummary:[failure,{...failure,runId:"another-run"}]}})
+  assert.equal(html.split("모델 준비 실패").length-1,1)
 })
 
 const retainedAssessment:MeasurementAssessment={status:"complete",displayStatus:"usable",label:"측정 완료",reasons:[],execution:null,evidence:{available:true,accepted:true,reasons:[]},checklist:{criteriaMet:null,version:"result-checklist.v1",checks:[]},scope:{schedulerUsed:true,reused:false,facts:[]}}
@@ -492,4 +521,10 @@ test("compatibility diagnostics are displayed without adding a request gate",()=
   assert.match(html,/aria-label="실행 선언 진단"/)
   assert.match(html,/node: Last runtime entry selected\./)
   assert.equal((html.match(/disabled=""/g)??[]).length,(renderRequest().match(/disabled=""/g)??[]).length)
+})
+
+test("historical request rows retain their own usage instead of inheriting another current result in the same cell",()=>{
+  const html=renderRequestList("requests",{...plan,assessment:{...retainedAssessment,scope:{...retainedAssessment.scope,schedulerUsed:false}}},[retainedCell])
+  assert.match(html,/>미사용</)
+  assert.doesNotMatch(html,/>사용 중</)
 })

@@ -39,9 +39,13 @@ func TestLiveOnlyPublishesRecordedDecisionAndActionIdentity(t *testing.T) {
 		Operation: servingkube.Operation{ID: "same", Kind: "prepare", Node: serving.NodeReference{UID: "node"}},
 		StartedAt: at, Status: "running",
 	}
-	p.action(result, at)
+	if err := service.recordAction(result); err != nil {
+		t.Fatal(err)
+	}
 	result.StartedAt = at.Add(time.Second)
-	p.action(result, at.Add(time.Second))
+	if err := service.recordAction(result); err != nil {
+		t.Fatal(err)
+	}
 	sub, err := p.hub.Subscribe(0, "")
 	if err != nil {
 		t.Fatal(err)
@@ -257,16 +261,18 @@ func TestLiveDecisionReservationsAndNodeAvailability(t *testing.T) {
 	}
 	p.decision(decision, snapshot)
 	noProjection(t, sub)
-	result := servingkube.OperationResult{
-		Operation: servingkube.Operation{ID: "operation", Kind: "prepare", Node: node, WorkloadUID: "a"},
-		StartedAt: at, Status: "running",
+	result := serving.SchedulerActionObservation{
+		ID: "operation", Kind: "prepare", Node: node,
+		Expected:  json.RawMessage(`{"workloadUID":"a"}`),
+		StartedAt: at, Phase: "running",
 	}
 	p.action(result, at)
 	_ = nextProjection(t, sub)
 	_ = nextProjection(t, sub)
 	p.action(result, at)
 	noProjection(t, sub)
-	result.Status, result.EndedAt = liveOperationComplete, at.Add(time.Second)
+	ended := at.Add(time.Second)
+	result.Phase, result.CompletedAt = "complete", &ended
 	p.action(result, at.Add(time.Second))
 	_ = nextProjection(t, sub)
 	_ = nextProjection(t, sub)

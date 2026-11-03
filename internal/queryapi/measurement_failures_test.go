@@ -116,3 +116,33 @@ func TestMeasurementFailureClassificationIsSharedAndSafe(t *testing.T) {
 		})
 	}
 }
+
+func TestR19FailureSummaryRetainsFirstConcreteLogError(t *testing.T) {
+	first := `2026/11/02 02:14:41 ERROR serving worker stopped node=jetsonx error="start runner: EOF"`
+	run := api.ProfilingRun{
+		ObjectMeta: metav1.ObjectMeta{Generation: 1},
+		Status: api.ProfilingRunStatus{
+			ObservedGeneration: 1,
+			Conditions: []metav1.Condition{{
+				Type: api.ProfilingRunConditionExecutionComplete, Status: metav1.ConditionFalse,
+				Reason: "JobFailed", ObservedGeneration: 1,
+			}},
+			RuntimeTermination: &api.ProfilingRunRuntimeTermination{
+				ExitCode: 3, LogTail: "dependency warning\n" + first +
+					"\n2026-11-02T02:14:42.027723Z ERROR serving-worker exited before readiness: 1",
+			},
+		},
+	}
+	raw, err := json.Marshal(AssessProfilingRun(run).FailureSummary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var failures []map[string]any
+	if err := json.Unmarshal(raw, &failures); err != nil {
+		t.Fatal(err)
+	}
+	if len(failures) != 1 || failures[0]["firstErrorLine"] != first ||
+		failures[0]["firstErrorTime"] != "2026/11/02 02:14:41" {
+		t.Fatalf("first error source lost or inferred: %s", raw)
+	}
+}

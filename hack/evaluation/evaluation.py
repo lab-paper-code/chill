@@ -459,11 +459,9 @@ class Harness:
                 bound=self.snapshot['bindings'][sid];requests=tables.publication_requests(judgment)
                 definitions={'workloads':self.snapshot['scenarios'][template['loadScenarioRef']['uid']]['workloads']}
                 phase_source=next(({key:ref[key] for key in ('store','key')} for ref in artifacts if ref['key'].endswith('/stage/artifacts/measured/phase.json') and '/stages/'+sid+'/' in ref['key']),None)
-                for name,row in requests.items():
-                    metadata,reasons=self.harness_module.publication_metadata(bound,phase,name,definitions,{'store':self.store.name,'key':publication_prefix+'execution.json'},phase_source,row.get('actualGatewayIdentities',[]))
-                    if row.get('offered') and not row.get('actualGatewayIdentities'):
-                        metadata.update(workloadUID=None,definitionID=None,identitySource=None);reasons['identity']='Observed request identity absent'
-                    row.update(metadata);row['missingReasons'].update(reasons)
+                self.harness_module.publication_stage_metadata(bound,phase,definitions,
+                    self.execution.get('inputSnapshotRef') or self.spec.get('inputSnapshotRef'),
+                    phase_source,scope/'measured',self.run,requests)
                 power=judgment.get('power') or {}
                 kpis={'status':judgment['status'],'requests':requests,'wholePoolJoules':power.get('wholePoolJoules') if power.get('complete') else None,'activePoolJoules':power.get('activePoolJoules') if power.get('complete') else None,'power':{key:power.get(key) for key in ('complete','wholePoolJoules','activePoolJoules','energyCoverage','gapErrorBoundJoules')},'schedulerSettings':bound['schedulerSettings'],'limitations':bound['limitations']}
                 kpis.update(self.harness_module.publication_measurements(bound,power))

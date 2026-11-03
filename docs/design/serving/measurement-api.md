@@ -37,6 +37,106 @@
 `readFailures`는 노드별 창 안 실패 횟수, `maximumSampleGapSeconds`는 경계 support를 포함한 인접 실제 표본 최대 간격이며 창 요약은 각각 노드 합계·노드 최대값이다. 정책을 만족하면 실패가 있어도 complete, 초과 gap은 불완전이다.
 단발 실패 공백 ≤2.52 s, 연속 두 번 실패 공백 ≥3.2 s의 운영 근거에 따른 설정이며 정확 비용 등 다른 측정 정책은 바꾸지 않는다. 오프라인 `hack/observations/power --maximum-gap 3s`는 보존 정책을 수정하지 않는 명시적 재평가이고 `policyOverride.maximumGapSeconds`로 표시한다.
 
+#### 운영 전력 시간 구간 API
+
+`GET /api/v1/observations/power?from=<RFC3339Nano>&to=<RFC3339Nano>&bucket=5s`
+는 `{from,to,bucketNanos,buckets: OperatingPowerWindow[]}`를 반환한다.
+`bucketNanos`는 Go duration의 정수 나노초 값이다. `bucket`을 생략한 요청은 기존
+기간 요약 `OperatingPowerWindow` 하나를 반환하며 시간축 데이터가 아니다.
+
+`format=columns`를 bucket과 함께 명시하면 무손실
+`{from,to,bucketNanos,format:"columns",windows,nodes}`를 반환한다. windows의 각 열은
+bucket index, nodes의 각 열은 bucket index 안의 원래 node 순서다. 값·null/빈 배열·complete·
+reasons·coverage는 원래 bucket과 같다. 시각은 `max(from, truncateUTC(from,bucket)+i*bucket)`부터
+`min(to, truncateUTC(from,bucket)+(i+1)*bucket)`까지 정수 나노초로 복원한다.
+columns 요청에 구 서버의 buckets 응답이나 다른 형식이 오면 `형식 불일치` 오류를 표시한다.
+없는 windows를 빈 배열로 바꿔 빈 차트 성공으로 처리하지 않는다.
+라이브 추세도 decodeResponse를 거친 `ApiError.body`의 보존된 파싱 원인으로 이를 표시한다.
+공통 ApiError.message의 응답 미수신 문구로 형식 오류를 판별하지 않으며 원인은 tooltip에 보존한다.
+
+- 시간 구간 요청은 `from < to`, 최대 1시간, bucket 폭 1초~1시간, 최대 900구간이다.
+  경계는 UTC duration 배수에 맞추고 첫·끝 구간은 요청 범위로 자른다. 따라서
+  정렬되지 않은 15분/1초 요청은 901구간이 되어 거절될 수 있다.
+  잘못된 폭·범위·개수 또는 전체 raw observation bound 초과는 `InvalidQuery`다.
+- 각 bucket은 실제 `from`, `to`, `scope`, `nodes`, `wholePoolJoules`,
+  `wholePoolMeanWatts`, `activePoolJoules`, `activePoolMeanWatts`, `complete`,
+  `readFailures`, `maximumSampleGapSeconds`, `reasons`, `coverage`, 선택적 `gapUntil`을 가진다.
+  `coverage`는 `{from,to,sources,gaps}`이며 source·gap의 원래 시간과 stream을 보존한다.
+  노드 행은 `node{name,uid}`, `meter`, `scope`, `joules`, `meanWatts`, `samples`,
+  `readFailures`, `maximumSampleGapSeconds`, `sourceTimestampAbsent`, `reasons`와
+  bucket 전용 `observedSamples`, 선택적 `firstObservedAt`, `lastObservedAt`을 가진다.
+- `samples`는 적분 경계를 지지하는 창 밖 표본을 포함할 수 있다.
+  `observedSamples`는 **실제 수신 시각이 `[bucket.from,bucket.to)` 안인 표본 수**다.
+  `firstObservedAt`/`lastObservedAt`은 그 실제 표본의 시각이며 평균값의 측정 시각을
+  새로 생성하지 않는다. 경계 support만 있고 내부 표본이 없으면 `observedSamples=0`,
+  노드 `joules`/`meanWatts`와 전체·활성 집계는 `null`, `complete=false`,
+  사유는 `no observed samples in bucket`이다. 관측 0 W/J는 숫자 0으로 유지한다.
+- 기간 요약과 bucket은 같은 meter·coverage·사다리꼴 적분·물리 membership 규칙을 쓴다.
+  불완전 여부·실패 횟수와 실제 숫자는 각각 보존하며 `null`을 0으로 치환하지 않는다.
+
+대시보드 운영/장치 추세는 진입 때 최근 15분·5초 평균을 한 번 조회하고,
+실시간 1초 구간을 이어 붙인다. 실시간 구간과 겹치는 이력 구간은 제외하며,
+각 구간의 실제 폭·시각을 유지한다. 5초 평균을 1초 표본 다섯 개로 복제하지 않는다.
+관측 공백과 누락 시간은 선을 끊는다. 보관하는 실시간 구간도 15분·900개 이하로 제한한다.
+기록 화면의 시간축은 bucket API로 조회하며 기간 요약/장치별 요약 표와 독립이다.
+화면의 폭 선택은 1·5·30·60·300·3600초 중 해당 기간에 허용되는 것만 선택할 수 있다.
+1시간 밖의 기간 기록/요약은 유지하되 시간축 요청은 보내지 않고 기간 축소를 안내한다.
+시간축 bucket 요청은 `format=columns`를 사용한다. 1시간·5초 해상도도 유지하며 UTC bucket
+경계에서 최대 15분 요청으로 나눈다. 첫·끝 clipped bucket을 중복하거나 나누지 않고 각 응답을
+합친다. 1시간 폭처럼 15분보다 큰 단일 bucket은 쪼개지 않는다. 일부 chunk의 오류·대기는 전체
+시간축의 오류·대기로 표시하며 성공한 chunk만 전체 자료인 것처럼 표시하지 않는다.
+운영의 최근 15분 seed와 별도 기간 요약의 의미는 바꾸지 않는다.
+relay는 power endpoint에만 숫자형 Go duration(`s`, `m`, `h`; 소수 허용)의 `bucket`을
+허용하고 같은 폭·UTC 정렬 개수·범위 제한을 적용한다. load endpoint에는 허용하지 않는다.
+
+#### 실험 게시물 페이지·적용 SLO 출처
+
+`GET /api/v1/experiments?offset=0&limit=5`는 기존 항목(facts 포함)을 유지한
+`{items,page:{offset,limit,total,nextOffset?}}`다. 서버는 offset 0~1,000,000,
+limit 1~50(기본 25)을 허용하고 둘 중 하나라도 명시하면 page를 제공한다.
+마지막/범위 밖 페이지에는 nextOffset이 없다. 대시보드 결과·복사 목록은 5개씩 조회하며
+실제 nextOffset을 따라가고 선택한 게시·명시적 과거 비교 단건만 조회한다.
+page가 없는 구 서버의 items는 전체 목록으로 취급하고 가짜 nextOffset을 만들지 않는다.
+
+serving-experiment.v1alpha1의 요청 KPI에 기록된 workloadUID·definitionID·
+identitySource `{store,key}`가 모두 있어야 단계 적용 SLO를 연결한다. identitySource는
+게시 sources에 있고 UID와 definitionID가 동결 정의의 모델/전처리기 세대까지 일치해야 한다.
+단계 적용 표의 p95 제한은 유지한다. 과거 null identity는 이름이나 현재 구성으로 보충하지 않는다.
+별도 정의 출처 표는 기록된 분위수·목표 지연을 p90/p99도 포함해 그대로 보여 준다.
+
+#### 운영 사건 범위 조회·재연결 보존 상태
+
+`GET /api/v1/observations/events?from=<RFC3339Nano>&to=<RFC3339Nano>&limit=100`
+는 `[from,to)`의 보존 사건을 `{events,from,to,coverage,nextCursor?}`로 반환한다.
+기존 정확 시점 `?at=<RFC3339Nano>`는 유지하며 범위 인자와 혼용하지 않는다.
+범위는 양수·최대 24시간, `limit`은 기본 100·최대 500이며 서버 `MaxQueryEvents`가
+더 작으면 그 값이 상한이다. 잘못된 인자·범위·cursor는 `400 InvalidQuery`다.
+`coverage={from,to,sources,gaps}`의 출처·공백과 원래 timestamp를 보존한다.
+
+사건은 시각·stream·append 위치 순이다. `nextCursor`는 불투명 base64url 값이며
+다음 요청에 동일 `from/to`와 함께 전달한다. 첫 조회의 committed prefix를 고정하므로
+페이지 사이 새 append가 기존 페이지에 끼어들지 않는다. 새 사실을 포함하려면 새 조회를
+시작한다. 대시보드 seed는 유한 페이지 상한을 두며 상한에 도달한 응답을 전체 기록으로
+표시하지 않는다. archive 사건에 WebSocket `seq`가 없으므로 가짜 sequence를 부여하지
+않고, 실제 사건 identity로 실시간 사건과 중복 제거한다.
+
+`chill-live/1`의 snapshot은 선택적 `history`를 제공한다:
+`{reason,replayed:false,requested:{afterSeq,throughSeq,at?},retained:{events,power},gaps}`.
+`reason`은 `fresh` 또는 `checkpoint-unmatched`이며 unmatched 요청의 `at`은 그대로
+유지한다. `retained.events/power`는 `{fromSeq,toSeq}` 또는 `null`이고 양끝을 포함하는
+보존 frame 범위다. `gaps[]`는 `{fromSeq,toSeq,scope,reason:"NoRetainedFrames"}`다.
+이 범위는 연속 event-time/전력 표본 coverage나 손실 사건 수를 뜻하지 않는다.
+snapshot에 과거 사건·전력 bucket을 재생했다는 뜻도 아니다. 클라이언트는 이 필드가 있는
+프레임을 수용·보존하고 gap을 **보존 공백** 상태어로만 표시한다. sequence 차이를
+손실 건수·미관측 초 수로 환산하거나 전력 공백을 생성하지 않는다.
+측정·실험 mutation의 audit는 durable commit 뒤 같은 projector로 WS action event에도
+발행한다. 생성·삭제는 validated 시작과 종결 사건을 각각 보낸다. phase는
+started/completed/failed를 유지하며, 오류 없는 NOT_SUBMITTED는 completed와
+`status/result.status:"NOT_SUBMITTED"`다. completed만으로 성공을 세지 않고
+`사전 검사 · 미제출` 중립 상태로 표시한다. 실제 error가 있으면 failed를 유지한다.
+
+
+
 ### 2.2 계획기 불확실성
 
 `OperationTrial.energyUncertaintyJoules`, `NodeBaseline.wattsUncertainty=B/실제 측정초`를 cost projection에 전달하되 nominal 평균은 유지한다. `SchedulerNodePlan.energyUncertaintyJoules`는 사슬 민감도, `SchedulerCapacity.gainUncertaintyJoules`는 B-only minimumGain 문턱이다.
@@ -518,7 +618,8 @@ fingerprint다. `variant.requestIds`가 두 identity를 연결하며 같은 조�
 셀 상태·대표값·배치 집계에 사용한다. 최신이 failed/partial이면 그대로 표시하며 과거 성공으로 대체하지 않는다.
 `batchProgress={basis,target,measured,criteriaMet,missing,inProgress,unknown}`은 현재 측정의 batch 정수 배열이다.
 대표값 `{variantId,batch,incrementalJoulesPerItem,p95Milliseconds}`도 같은 실제 batch에 한정한다.
-runtime 이미지 버전은 profile 유효 조건이 아니다. 기록된 `RuntimeImage`는 당시 값 그대로 보존한다.
+이미지 버전은 profile 유효 조건이 아니다. runtime·artifact·preprocessor·observer 이미지의
+당시 원문은 보존하되 variant fingerprint와 preflight 기측정 배치 비교에서 제외한다.
 CPU quota/affinity는 현재 선택 키가 아니다. 과거 측정은 `history`와 기존 profile/raw 단건 조회에 남고,
 공개 profile 기록과 셀의 현재 선택은 분리한다. 현재/이전 이미지 선택 분기는 없다.
 시각은 검증된 Complete profile의 raw 실행 완료 시각, 없으면 현재 generation terminal BEO의
@@ -528,7 +629,9 @@ coverage 캡처에 없는 annotation은 기존 BEO 목록의 `metadata.annotatio
 선언 미독 시 support Unknown을 보존하고 확인된 지원 선언 충돌은 `CurrentDeclarationConflict`로 표시한다.
 usable/problem 평가는 사실 표시이며 서빙·profile 선택·요청 진행의 추가 거절 조건으로 쓰지 않는다.
 worker 실행에는 현재 class/node/backend 선언의 최신 이미지를 쓴다.
-failureSummary는 정확 request/Run identity·batch·code·exitCode·최대 160자 한 줄 원인·후속 relation만,
+failureSummary는 정확 request/Run identity·batch·code·exitCode·최대 160자 한 줄 원인·후속 relation,
+선택적 `firstErrorLine`(ANSI 제거·최대 160자)과 `firstErrorTime`(로그에 적힌 시각 원문)을 제공한다.
+첫 ERROR/FATAL/panic/error= 줄만 보여 주며 경고를 원인으로 추정하거나 시각·시간대를 생성하지 않는다.
 긴 diff/log는 기존 상세에 둔다. 정확 후속만 verified-follow-up, 유사 조건은 related-candidate다.
 
 6차 보정: Run UID는 `runId`, 직접 상세 링크는 `runNamespace`/`runName`과 함께 사용한다.
@@ -558,11 +661,11 @@ Preprocessor/Dataset GET·LIST와 namespaced 비용/점유 GET·LIST를 조회 �
 
 `MeasurementAssessment={status,displayStatus,label,reasons,execution,evidence,checklist,scope}`다.
 execution은 원문 phase/generation/observedGeneration, evidence는 available/accepted와 사유,
-checklist는 `{criteriaMet:true|false|null,version:"result-checklist.v1",checks:[{code,result,message,sourceIds}]}`다.
+checklist는 `{criteriaMet:true|false|null,version:"result-checklist.v1",checks:[{code,result,reason?,message,sourceIds}]}`다.
 check result는 pass/warn/fail/unknown이다. **서버가 displayStatus와 label까지 제공**하며 UI는 다시 매핑하지 않는다.
 
 coverage 응답에서는 **variant.assessment.checklist.checks에만** 전체 체크리스트를 한 번 둔다.
-동일 `(code,result,message)` 항목은 variant 안에서 합치고 `sourceIds`는 해당 항목에 기여한
+동일 `(code,result,reason,message)` 항목은 variant 안에서 합치고 `sourceIds`는 해당 항목에 기여한
 정확한 `ResultRow.id` 집합이다. 원본 기록은 해당 `resultRows[].sources`로 찾아간다.
 Cell과 ResultRow의 assessment는 status/displayStatus/label, execution/evidence, reasons/scope와
 checklist의 criteriaMet/version을 유지하되 `checks:[]`로 요약한다. 이 compact projection은
@@ -590,10 +693,23 @@ coverage는 위 variant 체크리스트 중복 제거를 사용하며 별도 `$r
 세부 실행 상태는 별도 배지 벽으로 노출하지 않고 사유 행/용어 도움말 한 곳에서 설명한다.
 superseded와 notInCatalogScope는 정상 측정 결과의 `complete`+보조 사실이며 ‘현재 스케줄러 미사용’을 명시한다.
 실제 rejected/깨진 근거와 혼동하지 않는다. 완료 수 complete+criteria_met, 기준 충족 수는 부분집합,
-재사용 완료 수는 따로 표시한다. 이전 유효 결과 뒤 새 실패는 기존 complete를 유지하고 최근 시도 실패를 병기한다.
-실패 요청 자체는 failed, 후속 포함 셀은 다른 범위임을 명시한다. idle 3회를 active 3회로 세지 않는다.
+재사용 완료 수는 따로 표시한다. 새 실패가 최신 현재 측정이면 셀도 그 실패를 유지한다.
+이전 성공은 history에 남기며 현재 사용으로 승격하지 않는다. idle 3회를 active 3회로 세지 않는다.
 여러 자식은 실제 문제→부족→검토 필요→전부 기준 충족→전부 complete 순으로 요약하고, 판정 불가 자식은
 미확인 수/범위를 보존한다. unknown 통계·시각 부재만으로 채택 결과의 상태를 내리지 않는다.
+
+처리 성능 결과 목록·상세의 `scope.schedulerUsed`는 catalog의 `currentMeasurements[].id`와
+정확히 일치하는 profile에만 true다. reuse는 `confirmationProfileID`로 대조한다.
+조건이 같은 과거 profile, 최신 실패 때문에 선택되지 않은 과거 성공은 false이며 화면에는
+`과거 측정`으로 표시한다. 상세는 서버의 `label`(예: 사용 가능)을 그대로 측정 상태에 두고,
+품질 판정·현재 사용을 독립 축으로 표시한다. 품질 unknown을 서버 사용 가능의 대체 판정으로 쓰지 않는다.
+
+요청 목록과 단건 `/batch-energy-optimizations/{name}/result`의 현재 사용은 accepted catalog에
+해당 게시 profile이 존재하고 `currentMeasurements[].id`가 요청 `namespace/name/UID`와 정확히
+일치할 때만 true다. 최신 실패가 현재로 선택되어도 게시 profile이 없으면 false다. 재사용은
+확인 요청 자신의 identity로 대조하며 원본 참조 행의 현재 사용을 상속하지 않는다.
+catalog/선택 정보를 읽을 수 없으면 `scope.schedulerUsed:null`이며 조건 일치로 false/true를
+추정하지 않는다. 이는 조회 시점의 선택 사실이고 봉인된 결과·그 기준 시각은 바꾸지 않는다.
 
 **결과 체크리스트 v1**: 정확 조건/lineage, 목표 batch 충족, 독립 active/shared idle 각각
 `max(3,동결 MinimumTrials)` 반복, 유한한 기존 CI/level(0폭 허용), pooled client p95·N>1,
@@ -636,19 +752,26 @@ raw/vector/log/Secret은 응답에 넣지 않는다. 기존 8MiB 한도는 유�
 `FrozenPowerWindowPolicy`는 unknown을 유지한다. 이는 기준이 있는데 평가를 생략했다는 뜻이나
 불합격이 아니다. 저장 계약·원본 evidence·관측 수치는 바꾸지 않으며, 현재 관측값에 새 정책을
 소급해 기준 충족으로 만들지 않는다. timestamp 부재/node-wall은 이 unknown의 원인이 아니다.
+이 `policyReason`은 Query 체크의 `reason`으로 전달한다. `PolicyUnset`은
+`result:"unknown",reason:"PolicyUnset"`이며 화면의 `정책 미설정`이다.
+사유 없는 null 판정은 일반 미확인, 명시적 false는 기준 미충족으로 유지한다.
+coverage 집계는 측정 근거가 있는 조합만 품질 분모에 넣고 정책 미설정·그 밖의 품질 미확인을
+구분한다. 측정 근거 없는 조합은 별도 수로 표시한다(예: 근거 있는 48 중 정책 미설정 48,
+측정 근거 없음 5). 체크가 없다는 이유로 기준·반복·표본 전체가 없다고 추정하지 않는다.
 정상 superseded의 이미 검증한 메모리 facts는 현재 스케줄러 미사용으로 보존하며,
 읽기 전 replacement 제외에는 확인하지 않은 과거 facts를 만들어 넣지 않는다.
 
 기존 preflight 응답에 표시용 `batchPlan`을 추가한다:
 `{variantId,conditionMatch,requestedBatches,requestableBatches,plannedBatches,measuredBatches,inProgressBatches,
 missingBatches,subsetAllowed,searchMayStopEarly,reasons}`.
-conditionMatch는 exact/planned-only/unknown이다. frozen image/조건 미확정은 exact로 승격하지 않는다.
+conditionMatch는 exact/planned-only/unknown이다. 이미지 외 측정 조건 미확정은 exact로 승격하지 않는다.
 셀에서 variantId를 전달하고 입력을 그대로 유지할 때만 그 missing을 초깃값으로 쓴다.
 CPU/dataset/protocol 등 변경·선언 UID 변경은 이전 자동 제외/검사를 무효화한다.
 검사에서 서버가 최신 요청 spec/정확 profile을 대조하고 planned-only 중복은 별도 사실로 보인다.
 전달은 `POST .../preflight?variantId=<id>`의 선택 query이며 native CR 본문에 새 필드를 넣지 않는다.
-preflight exact는 보존 CurvePlanSpec의 실제 identity·immutable image digest와 현재 요청
-spec(배치 선택 제외)이 모두 일치할 때만 제공한다. 이 저장 계약에 없는
+preflight exact는 보존 CurvePlanSpec의 이미지 이외 실제 identity와 현재 요청
+spec(배치 선택 제외)이 모두 일치할 때 제공한다. 이미지 tag/digest 차이나 불변 digest 부재로
+측정 배치를 무효화하지 않는다. 이 저장 계약에 없는
 ModelSpec/DeviceClass/preprocessor 선언 UID를 과거 값으로 추정하지 않으며,
 해당 lineage는 확인되지 않은 한계로 reasons에 명시한다.
 진행 batch는 UID-bound 동결 curve-plan까지 일치한 현재 실행에서만 세며,
@@ -665,8 +788,18 @@ namespace별 프로세스 메모리 base snapshot 한 개, atomic 교체, namesp
 진입/명시 갱신에서 30초 fresh TTL을 적용하고 stale 최대 5분, 별도 DB/Query API crawler/worker pool은 없다.
 지원 snapshot은 입력 identity/RV가 바뀔 때만 재계산한다. catalog는 기존 refresh 흐름과 성공 확인 시각을 쓴다.
 동일 서버 namespace TTL 안의 여러 탭은 한 갱신을 공유하고 브라우저 **30초 polling은 하지 않는다**.
-재진입/명시적 갱신만 GET한다. 최초 GET이 warming이면 Retry-After 후 한 번의 완료 확인을 허용하되
-지속 warming은 오류와 명시 재시도이며 숨은 무기한 polling으로 바꾸지 않는다.
+재진입/명시적 갱신만 GET한다. 공통 조회·변경 경계에서는 HTTP 503이며 정확히
+`CoverageWarming` 코드인 응답만 `Retry-After`(1–5초, 기본 2초)로 최대 180회 재시도한다.
+변경 요청은 실행 전 초기화 gate의 명시적 거부인 이 응답만 대상이며 일반 503과
+응답이 불확실한 mutation은 자동 재시도하지 않는다. 컴포넌트 unmount 또는 session
+변경은 대기 구간을 포함한 요청 수명을 취소하고 다음 HTTP 시도 전에 동일 token/session을
+다시 확인한다. 한도 소진 후에는 초기화 중 상태와 명시 재조회를 제공하며 무기한 polling하지 않는다.
+운영 화면의 기간 사건 seed도 같은 warming 정책을 적용한다. 재시도 중에는 `초기화 중`을
+표시하고, 고정 from/to/cursor와 성공 페이지 최대 5개를 유지한다. 이동·세션 변경은 같은
+AbortSignal로 HTTP와 Retry-After 대기를 함께 취소한다.
+사건 seed의 오류·초기화 재시도 소진 안내에는 `다시 조회` 동작을 제공한다. 사용자가 실행하면
+이전 seed 수명을 취소하고 새 최근 구간 seed를 시작한다. 각 seed 안의 고정 범위·cursor,
+5페이지 상한과 유한 warming 재시도는 그대로 유지한다.
 source 실패는 partial/stale와 기존 dataAsOf를 유지한다. 지원 실패면 분모 null,
 목록 불완전이면 미측정 수 null, catalog 오래됨이면 현재 사용 판정을 stale로 표시한다.
 단건 비용/점유 장애가 무관한 coverage를 막지 않는다. 인증 변경/401/403 후 이전 cache 표시 금지다.

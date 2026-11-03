@@ -29,9 +29,11 @@ type HandlerConfig struct {
 	MaxRequestBytes int64
 	RequestTimeout  time.Duration
 	// OperationTimeout bounds an operation measurement sequence or manual operation.
-	OperationTimeout                                           time.Duration
-	MaxQueryEvents                                             int
-	Live                                                       *live.Hub
+	OperationTimeout time.Duration
+	MaxQueryEvents   int
+	Live             *live.Hub
+	// OnMutationAction publishes only after the mutation audit is durably committed.
+	OnMutationAction                                           func(serving.SchedulerActionObservation, time.Time)
 	Scheduler                                                  *servingkube.SchedulerController
 	SchedulerConfigMap, SchedulerConfigKey, SchedulerNamespace string
 	SchedulerLock                                              *sync.Mutex
@@ -44,6 +46,7 @@ type HandlerConfig struct {
 	SubmitMeasurement     func(context.Context, api.BatchEnergyOptimization, bool) (MeasurementMutationResult, error)
 	DeleteMeasurement     func(context.Context, string, string, string, string) (MeasurementMutationResult, error)
 	OperatingPower        func(context.Context, time.Time, time.Time, int) (serving.OperatingPowerWindow, error)
+	OperatingPowerSeries  func(context.Context, time.Time, time.Time, time.Duration, int) (serving.OperatingPowerSeries, error)
 	ListExperiments       func(context.Context) (ExperimentList, error)
 	GetExperiment         func(context.Context, string) (ExperimentSummary, error)
 	ListActiveEvaluations func(context.Context) (ActiveEvaluationList, error)

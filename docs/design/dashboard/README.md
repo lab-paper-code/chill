@@ -30,12 +30,17 @@
 | 변경 | 작성→전후 정의·제공된 영향 확인→제출→원본 조회. Model/Workload If-Match=metadata.resourceVersion. 409 최신 baseline 명시 채택 시 draft 유지, 같은 UID만 제출. 201/202/실제 완료 구분; 삭제는 원래 UID 제거 확인. 응답 미수신은 결과 미확인, 원본 조회 후 명시 재제출. |
 | 설정 | 전체 SchedulerSettings 마지막 적용값이 현재 설정. duration 네 필드·Serving 메모리·반복 비교/탐색 상한·seed·boolean 아홉 필드. seed/int64·메모리/uint64·duration은 reviver 원문/JSON.rawJSON으로 보존, ms→ns 정확 변환. 지원 브라우저만 저장. appliedAt은 저장/Runtime 적용 시각; 버전 조건·영향 예측은 서버 대기. |
 | 설정 권한 | unbound scheduler-editor ClusterRole과 serving namespace Role을 관리자가 binding. Role은 지정 ConfigMap 하나 update만 허용. |
-| 조회 | retry/focus/reconnect refetch=false, AbortSignal로 이동/logout 취소. 보이는 운영자 영역만 제한 polling; 라이브는 push. 401/403 payload 숨김. 독립 Query로 미지원·빈 값·실패·오래됨·동작 실패 분리. |
+| 조회 | 일반 오류는 자동 retry하지 않으며 focus/reconnect refetch=false. 공통 조회·변경 경계에서만 HTTP 503이고 `code`가 정확히 `CoverageWarming`인 응답을 최대 180회 재시도한다(Retry-After 1–5초, 기본 2초). 일반 503과 응답 미수신·전송 결과 미확인 변경은 재시도하지 않는다. AbortSignal로 이동/logout 취소. 보이는 운영자 영역만 제한 polling; 라이브는 push. 401/403 payload 숨김. 독립 Query로 미지원·빈 값·실패·오래됨·동작 실패 분리. |
 | 원본·안전 | RFC3339Nano·정밀 정수·null/0 구별. 외부 문자열/JSON은 텍스트, export 복사본에서 credential 제거. API code/field/reason 보존; 문장은 `lib/labels.ts`, 미등록 원본도 보존. |
 | 입력 | 전처리 input/output의 이름·순서·형식·크기를 모든 모델에 동일 적용. firstfloor 고정, ONNX=ort-cpu/ort-cuda, RKNN=rknnlite(rk3588·선언 batch·FP32 rank-3 입력 하나). 도메인 검증은 서버. |
 | 측정·전환 | immutable Run/campaign 요청은 기존 schema/admission/controller 사용. 프로파일은 검증된 성공 Run/campaign, Evidence는 RetainedLoader 검증 경계. 자원 제외는 실제 drain/actuator 계약. 저장 계약 변경은 ADR 0019 원칙. |
 | 커버리지 현재 조건 | 이미지 버전은 프로파일 유효성 조건이 아니며 원래 기록된 이미지는 보존한다. 기존 `replaces` annotation의 대상 제외를 먼저 적용한 뒤, 셀(model/class/path/powerMode)마다 `measuredAt`이 가장 최신인 측정 하나를 현재로 선택한다. 최신 측정이 실패·partial이어도 그대로 표시하며 옛 성공으로 fallback하지 않는다. 다른 측정은 모두 history와 단건 원본에 보존한다. usable/problem·checklist 판정은 사실·경고 표시용이며 프로파일 선택이나 측정 요청 진행을 차단하지 않는다. 브라우저는 서버의 현재 조건·판정을 재판정하지 않는다. |
 | 시간·성능 경계 | 브라우저 왕복=fetch→완전 본문, X-Chill-Relay-Timing=서버 대기 포함 중계 왕복, BFF 자체 비용 별도. 목표 p95 표시 2초/BFF 100ms; Workload 10·요청 10,000/1시간·동시 5·5초 갱신 기준이며 달성 증거 아님. |
+| R19 측정 사용 | 채택 catalog에 존재하며 셀의 currentMeasurement identity와 일치하는 요청·profile만 사용 중이다. 최신 실패는 셀의 현재로 남되 게시 profile이 없으면 사용 중이 아니다. reuse 확인 요청과 원본 참조는 별개다. 이미지 버전은 preflight 기측정 배치 유효 조건에서도 제외한다. |
+| R19 목록 밀도 | 실험 목록은 이름·정책·실행/측정·핵심 원값만 기본 표시하고 질문·UID·출처·규칙은 접는다. 이름 없는 링크는 실제 ID다. 정의 출처 표는 기록된 분위수(p90/p95/p99 등)와 목표 지연을 그대로 표시한다. 단계 적용 p95는 기록된 workloadUID·definitionID·identitySource가 동결 정의와 일치할 때만 연결한다. |
+| R19 운영 사실 | audit durable commit 뒤 측정·실험 mutation의 WS action을 이력과 같은 projector로 수신한다. 오류 없는 NOT_SUBMITTED는 phase=completed여도 `사전 검사 · 미제출` 중립이며 실패·장치 점검에서 제외한다. 실제 오류는 실패로 남긴다. 비서빙 Pod 사건은 묶고 실제 서비스 문제는 남긴다. 판단 수는 현재 접속의 수신 범위이며 선택 사건→기록은 identity·기간을 유지한다. |
+| R19 자료·사유 | 유휴 회차에는 처리 성능 passport를 자동 요청하지 않는다. 전력 경계·결과 제한은 한국어 코드 라벨과 원문 tooltip, J/W null은 그대로다. 최초 오류는 logTail의 첫 구체 오류 줄·기록 시각만 표시하며 다른 실패 코드 라벨·catalog 오류도 중복 제거해 보존한다. |
+| R19 경량 조회 | 실험 결과·복사 목록은 offset/limit 페이지와 nextOffset을 소비한다(최대 50, 기본 25). page가 없는 구 서버 items는 전체 목록이다. 전력 bucket은 무손실 format=columns, 1시간·5초도 해상도 변경 없이 UTC bucket 경계의 최대 15분 chunk로 조회한다. 일부 chunk 실패·대기를 전체 자료 성공으로 바꾸지 않으며 columns 외 응답은 형식 불일치로 표시한다. |
 
 ## 3. 라이브 API 계약 v1
 
@@ -45,7 +50,7 @@
 | type | 공통 필드 외 payload | 발행 |
 |---|---|---|
 | `hello` | `protocol:"chill-live/1"`, `serverAt`, `retainFrom`(재개 가능한 최소 seq, 빈 버퍼면 head+1) | 상류 인증 성공 후 한 번 |
-| `snapshot` | `workloads`, `nodes`, `instances`, `routing`, `decision`, `actions`, `reservations` 전체 | 최초 접속, 재동기화 |
+| `snapshot` | `workloads`, `nodes`, `instances`, `routing`, `decision`, `actions`, `reservations` 전체, 선택적 `history` 보존 메타데이터 | 최초 접속, 재동기화 |
 | `delta` | snapshot 키의 부분집합; `removed?:{instances?:[id],actions?:[actionKey]}` | 상태 변화 |
 | `event` | `kind:"decision"`와 `decision`, `kind:"action"`와 `action`, 또는 `kind:"cluster"`와 `cluster` | 판단, 작업 시작·종결, 기록된 Pod·observer issue 사건 |
 | `metrics` | `bucketAt`(UTC 초 시작), `workloads:{uid:Metric}`, `nodes:{uid:{watts:number|null,observedAt:string|null}}`, `pool:{wholeWatts:number|null,activeWatts:number|null}`, `gaps?:[{from,to,scope,reason}]` | 매초, 같은 버킷 수정 시 전체 대체 |
@@ -102,6 +107,17 @@ runtime workload readiness의 읽기 시각만 바뀐 것은 상태 변화로 �
 | producer | cmd/chill-server 조립, internal/serving/live hub; OnDecision은 동일 capture, OnAction은 원본 결과, RequestEvent 반영 성공 뒤 집계, 기존 power Source adapter 사용. callback은 메모리만 갱신, socket/REST/S3 대기·새 수집 루프·서버 REST polling 없음. |
 | client | 탭 QueryClient의 chill-live reducer: checkpoint/snapshot/metricsByBucket/events/gaps/lastReceivedAt/lastObservedAt. 최근600초·1000사건과 시작 baseline/bounded delta; 상한 유실 명시. 화면 일시정지는 선택 snapshot·시각을 고정하고 수신 계속, live 복귀 최신 baseline. 숨긴 탭의 의도된 수신 중지는 별도 `paused-hidden` 상태이며 다시 보이면 재연결한다. |
 
+snapshot의 `history`는 `reason:fresh|checkpoint-unmatched`, `replayed:false`,
+`requested:{afterSeq,throughSeq,at?}`, `retained:{events,power}`와 `gaps`를 보존한다.
+retained 범위는 nullable `{fromSeq,toSeq}`(양끝 포함), gap 사유는 `NoRetainedFrames`다.
+보존 공백은 상태어 **보존 공백**으로만 표시하고 sequence 차이를 손실 건수·시간으로
+환산하지 않는다. 이 메타데이터가 있으면 구 재연결 시각 차이로 센서 공백을 만들지 않는다.
+운영 재진입은 `/observations/events?from&to&limit=100`으로 최근 15분을 최대
+5페이지·500건 seed한다. 동일 from/to와 불투명 cursor를 사용하고 archive/실시간 사건을
+실제 identity로 중복 제거한다. archive에는 실시간 순번을 만들지 않으며 coverage 출처·공백과
+미조회 페이지 여부를 유지한다. 전력은 별도의 최대 1시간·900구간 bucket 계약을 사용한다.
+
+
 ### 3.1 운영 판독표
 
 기본 진입점 `/`는 운영 판독 / 서비스 상태 / 진행·사건의 세 영역이다.
@@ -147,7 +163,7 @@ Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.
 | `GET /observations/scheduler` | 판단, snapshot, 설정 변경, action과 전력 관측의 보관 중인 append-order 페이지 | from/to, bounded limit와 cursor를 사용한다. 응답은 페이지 항목과 nextCursor로 구성된다. relay는 이 경로와 `GET /scheduler`, `/scheduler/state`, `/scheduler/profiles`를 ChillServer `view=compact`로 읽고, 화면 파싱 전에 공유된 `profile`과 `completionMeasurement` `$ref`를 응답 dictionary로 복원해 full 응답과 같은 값을 쓴다. 응답 상한은 그대로다. |
 | `GET /observations/power` | 명시적 구간의 전체 및 활성 POOL joules와 평균 W, 노드별 값, `complete`, `reasons`, 로컬 보존보다 앞선 구간의 `gapUntil` | 기록의 전력 조회와 장치 전력 범위에 연결한다. 브라우저에서 적분하지 않는다. |
 | `GET /systems`, `GET /inventory` | ChillSystem의 condition과 이유, DeviceClass와 typed 전력모드 actuator, Node | System, Inventory와 Run 목록은 아래 query handler에서 제공한다. |
-| `GET /experiments`, `GET /experiments/{id}` | 완료된 불변 게시·단계 KPI·출처와 선택적 `outcome`. 목록은 `definition` 대신 선택적 `comparisons`, 단건은 `definition` 제공 | §8 정의 기반 reader. 목록 판정은 comparisons와 목록 KPI만 사용하며 항목별 단건 GET을 하지 않는다. |
+| `GET /experiments`, `GET /experiments/{id}` | 완료된 불변 게시·단계 KPI·출처와 선택적 `outcome`. 목록은 `definition` 대신 선택적 `comparisons`, `facts`(이름·질문·제어 정책·단계 mode/row/loadScenarioRef·SLO 출처·부하 출처), 단건은 `definition` 제공 | §8 정의 기반 reader. 결과 화면을 포함해 목록 항목별 단건 N+1 조회는 금지한다. 목록의 이름·정책·SLO·부하는 기록된 `facts`만 사용하며 없으면 미기록이다. 목록에 없는 명시적 과거 비교 대상만 필요한 불변 게시 단건을 조회한다. |
 
 #### 표시용 요약 읽기 계약
 
@@ -313,7 +329,11 @@ SRS DB-FR-50~52·56·65는 변경, DB-FR-67은 폐기 이력, DB-FR-68~70은 공
 게시 목록의 `comparisons`, 단건 `definition.spec.comparisons`만 비교 관계로 사용하며 단계는 ID로 연결한다.
 suffix·요청률 유사성 fallback은 사용하지 않는다. 정책은 기록 정의, SLO는 기록 정의·실행 결과에서만 읽고 현재 Workload로 소급하지 않는다.
 과거 대상은 publicationID·stageID, 서비스는 workloadUID로 연결한다. 정의 없는 과거 게시의 비교는 미기록이다.
-목록 판정 때문에 항목별 단건을 전수 조회하지 않는다. 대상이 목록에 없을 때만 필요한 게시 단건을 캐시 조회한다.
+결과 화면을 포함해 목록 항목별 단건 전수 조회는 하지 않는다. 이름·질문·제어 정책(sourceIDs 포함)·정확한 단계 mode·SLO·부하 출처는 선택적 목록 `facts`를 그대로 사용하며, 없으면 미기록이다. 요약에서 가짜 EvaluationDefinition을 재구성하거나 현재 등록값·이름으로 과거 사실을 추론하지 않는다. 명시적 과거 비교 대상이 목록에 없을 때만 필요한 게시 단건을 캐시 조회한다. 과거 게시 원문은 변경하지 않는다.
+측정 규칙은 실제 게시의 실행기 소스 버전·전력 결손 비율 상한(%)·단일 전력 공백 상한(s)·근거 출처·GC 집계 방식을 한국어 항목/값/단위 표로 표시하고 미등록 규칙과 원문은 게시 JSON에 보존한다. 구간 Sheet의 정책은 단계 요약에 한 번, SLO는 서비스 성능 표에 한 번 표시하며 공유 서비스 정의 표는 식별자·정의만 담는다.
+목록 facts의 제어 값은 명시적 true/false만 켬/끔이며 누락은 미기록이다. 단계 mode는 기존
+정책 라벨로, 부하·SLO 출처는 이름/UID별 한국어 행으로 표시한다. control/참조 객체의 JSON은
+게시 원본에만 두며 SLO nanoseconds는 number와 정밀 bigint 모두 공통 시간 formatter로 표시한다.
 
 | 비교 조건 | 표시 |
 |---|---|

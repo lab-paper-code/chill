@@ -3,7 +3,7 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useRef } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { ApiError, decodeResponse, useChillQuery, useSession } from "@/lib/client"
+import { ApiError, decodeResponse, relay, warmingRetry, warmingDelay, isCoverageWarming, useChillQuery, useSession } from "@/lib/client"
 import { coverageQuality, coverageQualityReasons, coverageFilterVisible, coverageSupportReasons, coverageMeasurementStatus, coverageMeasurementStates, coverageFailureHref, coverageProfileQuery, measurementAge, coverageSelection, coveragePathVisible, coverageWatts, coverageModes, coverageVariant, coverageProgress, coverageBatchState, coverageRequestHref, coverageScopeCounts, deviceLabel, conditionLabel, type CompatibilityRead } from "@/lib/measurement-coverage"
 import type { BatchProgress, InventoryView, MeasurementPlanList, ModelCompatibility, MeasurementCoverageSummaryResponse as MeasurementCoverageResponse, MeasurementCoverageCell, ProfilesView, RunsView } from "@/lib/read-types"
 import { parseMeasurementJSON } from "@/lib/measurement-summary"
@@ -17,10 +17,8 @@ const coverageStates=coverageMeasurementStates
 import { executionPathLabel, measurementReasonSummary, formatMeasurementNumber as number, formatMeasurementTime } from "@/lib/measurements"
 import "./measurement-coverage.css"
 async function readPage<T>(path:string,token:string,signal:AbortSignal):Promise<T> {
-  const response=await fetch(`/api/chill/${path}`,{headers:{Authorization:`Bearer ${token}`},signal,cache:"no-store",credentials:"omit"})
-  const body=await response.text()
-  if(!response.ok) throw new ApiError(response.status,body,null)
-  return decodeResponse(body,parseMeasurementJSON) as T
+  const response=await relay(path,token,signal)
+  return decodeResponse(response.body,parseMeasurementJSON) as T
 }
 export function useCoverageInventory() {
   const {token,config}=useSession()
@@ -76,17 +74,12 @@ export function useMeasurementCoverage(namespace:string,enabled=true) {
   const query=new URLSearchParams({view:"summary"})
   for(const key of ["batches","node"]) {const value=params.get(key);if(value)query.set(key,value)}
   const path=`v1/namespaces/${encodeURIComponent(namespace)}/measurement-coverage${query.size?`?${query}`:""}`
-  const result=useQuery<MeasurementCoverageResponse,ApiError>({queryKey:["chill",path],enabled,retry:(attempt,error)=>error.status===503&&attempt<2,retryDelay:2000,refetchOnMount:"always",queryFn:async({signal})=>{
-    const response=await fetch(`/api/chill/${path}`,{headers:{Authorization:`Bearer ${token}`},signal,cache:"no-store",credentials:"omit"})
-    const text=await response.text();let data:unknown;try{data=JSON.parse(text)}catch{data=null}
-    if(!response.ok)throw new ApiError(response.status,text,data)
-    return decodeResponse(text,parseMeasurementJSON) as MeasurementCoverageResponse
-  }})
+  const result=useQuery<MeasurementCoverageResponse,ApiError>({queryKey:["chill",path],enabled,retry:warmingRetry,retryDelay:warmingDelay,refetchOnMount:"always",queryFn:({signal})=>readPage<MeasurementCoverageResponse>(path,token,signal)})
   return {...result,data:result.error?undefined:result.data}
 }
 export function CoverageError({error,retry}:{error:ApiError|null;retry:()=>void}) {
-  const summaryInvalid=(error?.data as {code?:unknown}|null)?.code==="MeasurementSummaryInvalid"
-  return <section role={error?"alert":"status"} className="coverage-message"><p>{error?summaryInvalid?error.body:error.status===503?"서버가 커버리지를 아직 준비하지 못했습니다. 잠시 후 다시 조회하세요.":`커버리지 조회 실패 (HTTP ${error.status})로 운영 가능 범위와 다음 조치를 확인할 수 없습니다.`:"서버에서 커버리지를 준비 중입니다. 준비되지 않으면 자동으로 다시 조회합니다."}</p>{error&&<><p>{error.status===404?"서버의 커버리지 기능 배포 상태를 관리자에게 확인하세요.":"측정 요청 목록은 별도로 확인할 수 있습니다."}</p><details><summary>오류 코드·원문</summary><pre className="whitespace-pre-wrap break-all">{error.body}</pre></details><Button variant="outline" onClick={retry}>다시 조회</Button><Link href="/measurements/requests">측정 요청 목록 확인</Link></>}</section>
+  const summaryInvalid=(error?.data as {code?:unknown}|null)?.code==="MeasurementSummaryInvalid",warming=!!error&&isCoverageWarming(error)
+  return <section role={error&&!warming?"alert":"status"} className="coverage-message"><p>{warming?"초기화 중":error?summaryInvalid?error.body:`커버리지 조회 실패 (HTTP ${error.status})`:"조회 중"}</p>{error&&!warming&&<><details><summary>오류 코드·원문</summary><pre className="whitespace-pre-wrap break-all">{error.body}</pre></details><Button variant="outline" onClick={retry}>다시 조회</Button><Link href="/measurements/requests">측정 요청 목록</Link></>}</section>
 }
 export function MeasurementCoveragePage() {
   const params=useSearchParams(),router=useRouter(),{config}=useSession(),namespace=params.get("namespace")??config.namespace
@@ -156,16 +149,20 @@ export function MeasurementCoveragePage() {
 }
 function CoverageCounts({cells,inventory}:{cells:MeasurementCoverageCell[];inventory?:InventoryView}) {
   const counts=coverageScopeCounts(cells,inventory)
+  const allPolicyUnset=counts.policyUnsetCells>0&&counts.policyUnsetCells===counts.cells-counts.noEvidenceCells
   const metrics=[
     ["측정 있음 / 지원 조합",`${counts.measuredCells}/${counts.cells}`],
     ["배치 측정 / 목표",counts.targetBatches?`${counts.measuredBatches}/${counts.targetBatches}`:"목표 미제공"],
     ["현재 사용 / 지원 조합",`${counts.usedCells}/${counts.cells}`],
-    ["품질 판정 불가 / 지원 조합",`${counts.unknownQualityCells}/${counts.cells}`],
+    ...(!allPolicyUnset?[["정책 미설정 / 측정 근거",`${counts.policyUnsetCells}/${counts.cells-counts.noEvidenceCells}`],["품질 미확인 / 측정 근거",`${counts.unknownQualityCells-counts.policyUnsetCells}/${counts.cells-counts.noEvidenceCells}`]]:[]),
+    ["측정 근거 없음 (조합)",String(counts.noEvidenceCells)],
     ["문제 / 지원 조합",`${counts.failedCells}/${counts.cells}`],
     ["지원 안 함 (집계 제외)",String(counts.unsupportedCells)],
     ...(counts.missingTargetCells?[["목표 미제공 (조합)",String(counts.missingTargetCells)]]:[]),
   ]
-  return <div className="coverage-summary"><table className="w-full text-left text-sm tabular-nums" aria-label="선택 범위 집계"><thead><tr>{metrics.map(([label])=><th key={label}>{label}</th>)}</tr></thead><tbody><tr>{metrics.map(([label,value])=><td key={label} data-label={label}>{value}</td>)}</tr></tbody></table><details><summary className="min-h-11 cursor-pointer py-2 text-sm">집계 축·품질 근거</summary><table className="w-full text-left text-sm"><tbody><tr><th scope="row">측정</th><td>표의 측정 있음·문제 상태와 동일한 조합 기준</td></tr><tr><th scope="row">현재 사용</th><td>스케줄러 참조 여부 · 품질 판정과 별개</td></tr><tr><th scope="row">실패 요청</th><td><Link className="underline" href="/measurements/requests?status=problem">요청별 실패 기록</Link></td></tr>{coverageQualityReasons(cells.filter(cell=>coveragePathVisible(cell,inventory))).map(reason=><tr key={reason.code}><th scope="row">{reason.label}</th><td>{reason.count} 조합</td></tr>)}</tbody></table></details></div>
+  // Keep the common policy state separate from measured coverage and current use.
+  const policyStatus=allPolicyUnset?<p role="status" title={`PolicyUnset · ${counts.policyUnsetCells}/${counts.cells-counts.noEvidenceCells} · 품질 판정 기준 미설정이며 측정 근거 부재나 현재 사용 차단을 뜻하지 않습니다.`}>전체 정책 미설정</p>:null
+  return <div className="coverage-summary">{policyStatus}<table className="w-full text-left text-sm tabular-nums" aria-label="선택 범위 집계"><thead><tr>{metrics.map(([label])=><th key={label}>{label}</th>)}</tr></thead><tbody><tr>{metrics.map(([label,value])=><td key={label} data-label={label}>{value}</td>)}</tr></tbody></table><details><summary className="min-h-11 cursor-pointer py-2 text-sm">집계 축·품질 근거</summary><table className="w-full text-left text-sm"><tbody><tr><th scope="row">측정</th><td>표의 측정 있음·문제 상태와 동일한 조합 기준</td></tr><tr><th scope="row">현재 사용</th><td>스케줄러 참조 여부 · 품질 판정과 별개</td></tr><tr><th scope="row">실패 요청</th><td><Link className="underline" href="/measurements/requests?status=problem">요청별 실패 기록</Link></td></tr>{coverageQualityReasons(cells.filter(cell=>coveragePathVisible(cell,inventory))).map(reason=><tr key={reason.code}><th scope="row">{reason.label}</th><td>{reason.count} 조합</td></tr>)}</tbody></table></details></div>
 }
 function UnsupportedReasons({cells}:{cells:MeasurementCoverageCell[]}) {
   const params=useSearchParams(),groups=new Map<string,{label:string;count:number}>()
@@ -208,7 +205,7 @@ function CoverageDetail({cell,namespace,close,visible}:{cell:MeasurementCoverage
   const variant=coverageVariant(cell,params.get("variant")??undefined)
   const progress=variant?.batchProgress??coverageProgress(cell),rows=variant?.resultRows??[],returnTo=`/measurements?${params}`
   const filters=coverageProfileQuery(cell)
-  const profiles=useQuery<ProfilesView,ApiError>({queryKey:["chill","coverage-profile-times",filters.toString()],enabled:!!token&&rows.length>0,retry:false,queryFn:async({signal})=>{
+  const profiles=useQuery<ProfilesView,ApiError>({queryKey:["chill","coverage-profile-times",filters.toString()],enabled:!!token&&rows.length>0,retry:warmingRetry,retryDelay:warmingDelay,queryFn:async({signal})=>{
     const all:NonNullable<ProfilesView["profiles"]>=[]
     let offset=0
     for(;;) {
@@ -244,9 +241,9 @@ function CoverageDetail({cell,namespace,close,visible}:{cell:MeasurementCoverage
     <details className="coverage-condition-verdict"><summary>추가 확인</summary><MeasurementEvidenceChecks assessment={assessment} rows={rows}/></details>
     <div className="flex flex-wrap gap-3"><Button asChild><Link href={coverageRequestHref(cell,namespace,returnTo,variant?.id,params.get("batches")?.split(",").map(Number)??[])}>동일 조건 요청</Link></Button><Button variant="outline" asChild><Link href={`/measurements/requests?${new URLSearchParams({namespace,model:cell.model.name,deviceClass:cell.deviceClass.name,path:cell.executionPath,powerMode:cell.powerMode,view:"runs"})}`}>실행 기록</Link></Button></div>
     <details><summary>선택 조건·배치 범위</summary><BatchBar progress={progress}/><table className="w-full text-left text-sm"><thead><tr><th>목표 배치 (건)</th><th>부족 배치 (건)</th></tr></thead><tbody><tr><td>{progress?.target.join(", ")||"미지정"}</td><td>{progress?.missing.join(", ")||"없음"}</td></tr></tbody></table>{variant&&<p className="text-xs">{conditionLabel(variant.condition)}</p>}</details>
-    <div className="text-sm">{measured.length?<p>실제 측정 <time dateTime={measured.at(-1)}>{formatMeasurementTime(measured.at(-1)!)}</time> / {measurementAge(measured.at(-1)!)}</p>:profiles.isPending&&rows.length?<p>측정 시각 조회 중</p>:profiles.error?<><p role="alert">{(profiles.error.data as {code?:unknown}|null)?.code==="MeasurementSummaryInvalid"?profiles.error.body:`측정 시각 조회 실패 (HTTP ${profiles.error.status})`} · 수치 근거는 유지합니다.</p><Button variant="outline" onClick={()=>void profiles.refetch()}>측정 시각 다시 조회</Button></>:<p>측정 시각 미기록 또는 현재 프로파일에 없음</p>}</div>
+    <div className="text-sm">{measured.length?<p>실제 측정 <time dateTime={measured.at(-1)}>{formatMeasurementTime(measured.at(-1)!)}</time> / {measurementAge(measured.at(-1)!)}</p>:isCoverageWarming(profiles.error??profiles.failureReason)?<p role="status">초기화 중</p>:profiles.isPending&&rows.length?<p>측정 시각 조회 중</p>:profiles.error?<><p role="alert">{(profiles.error.data as {code?:unknown}|null)?.code==="MeasurementSummaryInvalid"?profiles.error.body:`측정 시각 조회 실패 (HTTP ${profiles.error.status})`} · 수치 근거는 유지합니다.</p><Button variant="outline" onClick={()=>void profiles.refetch()}>측정 시각 다시 조회</Button></>:<p>측정 시각 미기록 또는 현재 프로파일에 없음</p>}</div>
     {cell.failureSummary.length>0&&<section><h3>실패 기록</h3>{[...new Map(cell.failureSummary.map(failure=>[failure.runId||`${failure.requestId}/${failure.code}`,failure])).values()].map((failure,index)=>{const run=runs.data?.runs.find(run=>run.uid===failure.runId.split("/").at(-1));const [requestNamespace,requestName,requestUID]=failure.requestId.split("/");const request=requests.data?.items?.find(item=>item.metadata.namespace===requestNamespace&&item.metadata.name===requestName&&item.metadata.uid===requestUID);const conditions=run?run.status.conditions?.filter(condition=>condition.observedGeneration===run.generation):request?.status?.conditions;const at=conditions?.filter(condition=>condition.status==="False").map(condition=>condition.lastTransitionTime).filter((value):value is string=>!!value).sort().at(-1);return <div key={index} className="coverage-failure"><strong>{measurementReasonSummary(failure.label||failure.message||failure.code)}</strong><Link href={coverageFailureHref(failure,namespace,returnTo)}>{failure.runName?"실패 회차 확인":"실패 요청 사유 확인"}</Link><table className="w-full text-left text-sm"><tbody><tr><th scope="row">실패 판정 시각</th><td>{at?formatMeasurementTime(at):"미기록 또는 조회 범위 밖"}</td></tr><tr><th scope="row">사유</th><td>{measurementReasonSummary(conditions?.find(condition=>condition.status==="False")?.message||failure.message)}</td></tr></tbody></table><details><summary className="min-h-11 cursor-pointer py-2">실패 원문</summary><pre className="whitespace-pre-wrap break-words">{JSON.stringify({failure,conditions},null,2)}</pre></details></div>})}</section>}
-    <details><summary>근거 확인</summary><table className="coverage-results"><thead><tr><th>항목</th><th>판정</th></tr></thead><tbody>{(assessment.checklist?.checks??[]).map(check=><tr key={check.code}><th className="font-normal">{measurementReasonSummary(check.message)}</th><td>{{pass:"확인",warn:"주의",fail:"불일치",unknown:"미확인"}[check.result]}</td></tr>)}</tbody></table></details>
+    <details><summary>근거 확인</summary><table className="coverage-results"><thead><tr><th>항목</th><th>판정</th></tr></thead><tbody>{(assessment.checklist?.checks??[]).map((check,index)=><tr key={`${check.code}/${index}`}><th className="font-normal">{measurementReasonSummary(check.message)}</th><td>{check.result==="unknown"&&check.reason==="PolicyUnset"?"정책 미설정":{pass:"확인",warn:"주의",fail:"불일치",unknown:"미확인"}[check.result]}</td></tr>)}</tbody></table></details>
     <details><summary>원문</summary><pre className="whitespace-pre-wrap break-all text-xs">{JSON.stringify({executionPath:cell.executionPath,currentMeasurement:cell.currentMeasurement,condition:variant?.condition,rows,support:cell.support,history:cell.history,assessment,runs:runs.data},null,2)}</pre></details>
   </div>
 }

@@ -4,7 +4,7 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useState, type ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { ApiError, decodeResponse, useChillMutation, useChillQuery, useSession } from "@/lib/client"
+import { ApiError, decodeResponse, relay, warmingRetry, warmingDelay, isCoverageWarming, useChillMutation, useChillQuery, useSession } from "@/lib/client"
 import { QueryGate, SourceJSON } from "@/components/read-region"
 import { Screen } from "@/components/screen"
 import { PreflightAnswer, preflightConclusion } from "@/features/read-pages"
@@ -39,7 +39,7 @@ const advancedFields: [key: keyof Advanced, label: string, min: number][] = [
   ["idleTimeout", "쉬는 상태 전력 기록 대기 한도 · 밀리초", 1],
   ["retryLimit", "실패하면 다시 시도할 횟수", 0],
 ]
-type Protocol = { values: Advanced; from: string | null }
+type Protocol = { values: Advanced; from: string | null; spec?:MeasurementPlanSpec; target?:string; copied?:boolean }
 // model, preprocessor and dataset come from the chosen Workload's spec refs (or a copied plan); the API takes catalog names.
 type Draft = { workload: string; model: string; preprocessor: string; dataset: string; explicitPreprocessor?:boolean; explicitDataset?:boolean; deviceClass: string; node: string; path: string; powerMode: string; batchSizes: number[]; trials: number | null; protocol: Protocol | null; name: string | null }
 type Context = { models: ModelResource[]; workloads: WorkloadSummary[]; classes: InventoryClass[]; plans: MeasurementPlan[]; preprocessors: PreprocessorResource[]; datasets: DatasetResource[]; profiles:ProfilesView["profiles"]; prefill?:boolean }
@@ -60,10 +60,12 @@ function fillDefaults(draft:Draft,context:Context,inherited=false):Draft {
   const artifact=context.models.find(model=>model.metadata.name===draft.model)?.spec.executionPaths.find(path=>path.name===draft.path)?.artifact??""
   const inputs=requestInputs(draft.model,artifact,draft.preprocessor,draft.dataset,context,{preprocessor:inherited||!draft.explicitPreprocessor,dataset:inherited||!draft.explicitDataset})
   const filled={...draft,preprocessor:inputs.preprocessor,dataset:inputs.dataset}
+  const target=JSON.stringify([filled.model,filled.deviceClass,filled.node,filled.path,filled.powerMode])
+  if(filled.protocol&&(filled.protocol.copied||filled.protocol.from===null||filled.protocol.target===target))return filled
   const defaults=requestDefaults(filled,context.plans,context.profiles)
   if(!defaults)return filled
   const spec=defaults.spec
-  return {...filled,node:filled.node||spec.state.targetNode,trials:filled.trials??spec.trialsPerBatch,protocol:filled.protocol??{values:copyAdvanced(spec),from:defaults.source}}
+  return {...filled,node:filled.node||spec.state.targetNode,trials:filled.trials??spec.trialsPerBatch,protocol:{values:copyAdvanced(spec),from:defaults.source,spec,target:JSON.stringify([filled.model,filled.deviceClass,filled.node||spec.state.targetNode,filled.path,filled.powerMode])}}
 }
 function advancedProblem(values: Advanced) {
   const bad = advancedFields.find(([key, , min]) => !Number.isInteger(values[key]) || values[key] < min || values[key] > 2147483647)
@@ -130,12 +132,13 @@ function manifest(d: Draft, context: Context, namespace: string) {
   const p = v.protocol.values
   const spec: MeasurementPlanSpec = {
     state: { candidate: { modelSpec: d.model, preprocessor: d.preprocessor, deviceClass: d.deviceClass, executionPath: d.path, powerMode: v.powerMode }, targetNode: d.node },
-    activeProtocol: { warmupIterations: p.warmup, durationSeconds: p.activeDuration, dataset: d.dataset, metricObservation: { intervalMilliseconds: p.activeInterval, timeoutMilliseconds: p.activeTimeout, durationSeconds: p.activeWindow } },
-    idleProtocol: { settlingDurationSeconds: p.settling, durationSeconds: p.idleDuration, metricObservation: { intervalMilliseconds: p.idleInterval, timeoutMilliseconds: p.idleTimeout, durationSeconds: p.idleWindow } },
+    activeProtocol: { ...v.protocol.spec?.activeProtocol, warmupIterations: p.warmup, durationSeconds: p.activeDuration, dataset: d.dataset, metricObservation: { intervalMilliseconds: p.activeInterval, timeoutMilliseconds: p.activeTimeout, durationSeconds: p.activeWindow } },
+    idleProtocol: { ...v.protocol.spec?.idleProtocol, settlingDurationSeconds: p.settling, durationSeconds: p.idleDuration, metricObservation: { intervalMilliseconds: p.idleInterval, timeoutMilliseconds: p.idleTimeout, durationSeconds: p.idleWindow } },
     trialsPerBatch: v.trials,
     // The CRD forbids batchSizes when the artifact declares its own set.
     ...(v.declared ? {} : { batchSizes: [...d.batchSizes].sort((a, b) => a - b) }),
     retryLimit: p.retryLimit,
+    ...(v.protocol.spec?.pointPolicy?{pointPolicy:v.protocol.spec.pointPolicy}:{}),
   }
   return { apiVersion: "edge.dacs.io/v1alpha1", kind: "BatchEnergyOptimization", metadata: { name: v.name, namespace }, spec }
 }
@@ -145,7 +148,7 @@ function begin(from: string | null, context: Context) {
   const source = from ? context.plans.find(p => p.metadata.name === from) : undefined
   if (!source) return { draft: emptyDraft, index: 0, error: from ? "복사할 측정을 찾지 못해서 처음부터 골라요." : "", copied: false }
   const s = source.spec
-  const draft: Draft = { workload: "", model: s.state.candidate.modelSpec, preprocessor: s.state.candidate.preprocessor, dataset: s.activeProtocol.dataset ?? "", deviceClass: s.state.candidate.deviceClass, node: s.state.targetNode, path: s.state.candidate.executionPath, powerMode: s.state.candidate.powerMode, batchSizes: s.batchSizes ?? [], trials: s.trialsPerBatch, protocol: { values: copyAdvanced(s), from: source.metadata.name }, name: null }
+  const draft: Draft = { workload: "", model: s.state.candidate.modelSpec, preprocessor: s.state.candidate.preprocessor, dataset: s.activeProtocol.dataset ?? "", deviceClass: s.state.candidate.deviceClass, node: s.state.targetNode, path: s.state.candidate.executionPath, powerMode: s.state.candidate.powerMode, batchSizes: s.batchSizes ?? [], trials: s.trialsPerBatch, protocol: { values: copyAdvanced(s), from: source.metadata.name, spec:s, copied:true }, name: null }
   const v = view(draft, context)
   const open = steps.findIndex(step => step !== "name" && step !== "review" && v.problem(step))
   return { draft, index: open < 0 ? steps.indexOf("name") : open, error: open < 0 ? "" : v.problem(steps[open]), copied: true }
@@ -187,14 +190,12 @@ export function MeasurementRequestPage() {
   const datasets = useChillQuery<{items:DatasetResource[]}>("v1/datasets")
   const inventory = useCoverageInventory()
   const coverage=useMeasurementCoverage(namespace,!!params.get("variantId"))
-  const profiles=useQuery<ProfilesView,ApiError>({queryKey:["chill","request-profile-history"],enabled:!!token,queryFn:async({signal})=>{
+  const profiles=useQuery<ProfilesView,ApiError>({queryKey:["chill","request-profile-history"],enabled:!!token,retry:warmingRetry,retryDelay:warmingDelay,queryFn:async({signal})=>{
     const all:NonNullable<ProfilesView["profiles"]>=[]
     let offset=0
     for(;;) {
-      const response=await fetch(`/api/chill/v1/scheduler/profiles?${new URLSearchParams({view:"summary",limit:"50",offset:String(offset)})}`,{headers:{Authorization:`Bearer ${token}`},signal,cache:"no-store",credentials:"omit"})
-      const text=await response.text()
-      if(!response.ok)throw new ApiError(response.status,text,null)
-      const page=decodeResponse(text,parseMeasurementJSON) as ProfilesView
+      const response=await relay(`v1/scheduler/profiles?${new URLSearchParams({view:"summary",limit:"50",offset:String(offset)})}`,token,signal)
+      const page=decodeResponse(response.body,parseMeasurementJSON) as ProfilesView
       all.push(...page.profiles??[])
       if(page.page?.nextOffset===undefined)return {...page,profiles:all}
       if(page.page.nextOffset<=offset)throw new ApiError(0,"프로파일 페이지가 전진하지 않습니다",null)
@@ -312,6 +313,7 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
           const spec=workload.desired.spec,changed=spec.modelRef.name!==d.model
           update({workload:workload.desired.metadata.name,model:spec.modelRef.name,preprocessor:spec.preprocessorRef.name,dataset:spec.datasetRef?.name??"",...(changed&&!context.models.find(model=>model.metadata.name===spec.modelRef.name)?.spec.executionPaths.some(path=>path.name===d.path)?{path:""}:{})})
         }}><option value="">직접 조건 지정</option>{context.workloads.filter(workload=>!d.model||workload.desired.spec.modelRef.name===d.model).map(workload=><option key={workload.desired.metadata.uid} value={workload.desired.metadata.name}>{workload.desired.metadata.name}</option>)}</select></label>
+        {v.protocol.from&&<table aria-label="가져온 측정 방식" className="w-full text-left text-xs"><tbody><tr><th>측정 방식 출처</th><td>{v.protocol.from}</td></tr><tr><th>복사 범위</th><td>측정 시간·수집 간격·품질 기준</td></tr><tr><th>대상 장치</th><td>{d.deviceClass||"미선택"}</td></tr></tbody></table>}
         <label className="grid gap-2 text-sm">전처리기<select required aria-invalid={!!error&&!d.preprocessor} aria-describedby={error&&v.problem("workload")?"measurement-workload-error":undefined} className="min-h-11 rounded border bg-background p-2" value={d.preprocessor} onChange={event=>update({preprocessor:event.target.value})}><option value="">전처리기 선택</option>{context.preprocessors.map(item=><option key={item.metadata.uid} value={item.metadata.name}>{item.metadata.name}</option>)}</select></label><label className="grid gap-2 text-sm">데이터셋<select required aria-invalid={!!error&&!d.dataset} aria-describedby={`request-input-guidance${error&&v.problem("workload")?" measurement-workload-error":""}`} className="min-h-11 rounded border bg-background p-2" value={d.dataset} onChange={event=>update({dataset:event.target.value})}><option value="">데이터셋 선택</option>{context.datasets.map(item=>{const gap=datasetGap(item.spec,preprocessor?.spec);return <option key={item.metadata.uid} value={item.metadata.name} disabled={!!gap}>{item.metadata.name}{gap?` · ${gap}`:""}</option>})}</select></label>{inputs.warning&&<details id="request-input-guidance" className="text-sm"><summary>입력 계약 확인 필요</summary><p>{inputs.warning}</p>{(!inputs.dataset||noCompatibleDataset)&&<Link className="underline" href="/datasets/new">데이터셋 등록</Link>}</details>}</div>
       {!inputs.warning&&<span id="request-input-guidance" className="sr-only">입력 계약 일치</span>}
       {error&&v.problem("workload")&&<p id="measurement-workload-error" tabIndex={-1} className="text-sm text-destructive">{v.problem("workload")}</p>}
@@ -334,7 +336,7 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
           {!!support.data?.some(read=>read.data?.diagnostics?.length)&&<ul aria-label="실행 선언 진단" className="list-inside list-disc text-sm">{support.data.flatMap(read=>(read.data?.diagnostics??[]).map((diagnostic,index)=><li key={`${read.node}/${index}`}>{read.node}: {diagnostic}</li>))}</ul>}
         </div>
       </section>
-      <section className="space-y-3 border-t pt-5" aria-label="실제 측정 기본값"><h2 className="font-semibold">측정 방식</h2><table className="w-full text-right text-sm tabular-nums"><thead><tr><th>예열 (회)</th><th>실행 측정 (s)</th><th>유휴 측정 (s)</th><th>배치별 반복 (회)</th></tr></thead><tbody><tr><td>{requestNumber(v.protocol.values.warmup)}</td><td>{requestNumber(v.protocol.values.activeDuration)}</td><td>{requestNumber(v.protocol.values.idleDuration)}</td><td>{requestNumber(v.trials)}</td></tr></tbody></table><details id="measurement-advanced"><summary className="min-h-11 cursor-pointer py-2">고급 측정 설정</summary>{!d.protocol&&<p role="status" className="text-sm">측정 방식 미제공</p>}<AdvancedFields showErrors={!!error} rejection={rejection} value={v.protocol.values} set={values=>update({protocol:{values,from:"직접 입력"}})}/>{error&&v.problem("advanced")&&<p id="measurement-advanced-error" tabIndex={-1} className="text-sm text-destructive">{v.problem("advanced")}</p>}<p className="text-xs text-muted-foreground">출처: {v.protocol.from??"직접 입력"}</p></details></section>
+      <section className="space-y-3 border-t pt-5" aria-label="실제 측정 기본값"><h2 className="font-semibold">측정 방식</h2><table className="w-full text-right text-sm tabular-nums"><thead><tr><th>예열 (회)</th><th>실행 측정 (s)</th><th>유휴 측정 (s)</th><th>배치별 반복 (회)</th></tr></thead><tbody><tr><td>{requestNumber(v.protocol.values.warmup)}</td><td>{requestNumber(v.protocol.values.activeDuration)}</td><td>{requestNumber(v.protocol.values.idleDuration)}</td><td>{requestNumber(v.trials)}</td></tr></tbody></table><details id="measurement-advanced"><summary className="min-h-11 cursor-pointer py-2">고급 측정 설정</summary>{!d.protocol&&<p role="status" className="text-sm">측정 방식 미제공</p>}<AdvancedFields showErrors={!!error} rejection={rejection} value={v.protocol.values} set={values=>update({protocol:{values,from:null,spec:v.protocol.spec}})}/>{error&&v.problem("advanced")&&<p id="measurement-advanced-error" tabIndex={-1} className="text-sm text-destructive">{v.problem("advanced")}</p>}</details></section>
       <label className="grid gap-2 border-t pt-5 text-sm">요청 이름 (검사한 이름 고정)<Input aria-invalid={!!error&&!!v.problem("name")} aria-describedby={error&&v.problem("name")?"measurement-name-error":undefined} value={v.name} maxLength={200} onChange={event=>update({name:event.target.value})}/>{error&&v.problem("name")&&<span id="measurement-name-error" tabIndex={-1} className="text-destructive">{v.problem("name")}</span>}</label>
       </details>
       </div>
@@ -342,16 +344,17 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
     <div id="measurement-errors" tabIndex={-1} role={error||blocked?"alert":undefined} className={error||blocked||dry.error||pre.error||send.error?"space-y-2":"hidden"}>
       {prefill.errors.map(issue=><p key={issue} className="text-destructive">{issue}</p>)}{error&&(invalidStep?<a className="text-destructive underline" href={`#measurement-${invalidStep==="device"?"run":invalidStep}-error`}>입력 조건 확인</a>:<p className="text-destructive">{error}</p>)}
       {copyError&&!prefill.errors.includes(copyError)&&<p className="text-destructive">{copyError}</p>}
-      {[dry.error,rejectedReason?null:pre.error,send.error].filter((item):item is ApiError=>!!item).map((item,index)=><p key={index} className="text-destructive">HTTP {item.status} / {failure(item).code??"응답 코드 없음"}: {failure(item).message}</p>)}
+      {send.error&&<p className="text-destructive">{isCoverageWarming(send.error)?"초기화 중":send.error.status?`제출 · HTTP ${send.error.status} / ${failure(send.error).code??"응답 코드 없음"}: ${failure(send.error).message}`:"제출 · 응답 미수신"}</p>}
     </div>
+    {(dry.data||dry.error||pre.data||pre.error)&&<table aria-label="검사 응답" className="w-full text-left text-sm"><thead><tr><th>검사</th><th>서버 응답</th><th>결과</th></tr></thead><tbody>{[["접수 검사",dry],["실행 계획 검사",pre]].map(([label,query])=>{const check=query as typeof dry;return <tr key={String(label)}><th className="font-normal">{String(label)}</th><td>{check.data?`HTTP ${check.data.status}`:check.error?.status?`HTTP ${check.error.status}`:check.error?"응답 미수신":"검사 중"}</td><td>{isCoverageWarming(check.error)?"초기화 중":check.error?"검사 미완료":check.data?label==="접수 검사"?(admitted?"형식 검사 통과":"응답 확인"):answer?.resolves?"실행 계획 확인":"실행 계획 미확정":"대기"}</td></tr>})}</tbody></table>}
     {rejectedReason&&<section id="measurement-rejection" tabIndex={-1} role="alert" className="notice space-y-2 text-sm"><h2 className="font-semibold">사전검사 거부</h2>{rejection?<><a className="underline" href={`#${rejection.target}`}>{rejection.message}</a><table aria-label="거부 조건" className="w-full text-left tabular-nums"><thead><tr><th>항목</th><th>제약</th></tr></thead><tbody>{rejection.constraints.map(([label,value])=><tr key={label}><th className="font-normal">{label}</th><td>{value}</td></tr>)}</tbody></table></>:<span>수정 필드 미제공</span>}<details><summary className="min-h-11 cursor-pointer py-2">서버 거부 사유 원문</summary><pre className="whitespace-pre-wrap break-words">{rejectedReason}</pre></details></section>}
     {verdict?.state==="unknown"&&!showUnknown&&<p className="text-sm text-muted-foreground">지원 미확인 · 명시 검사 동의 필요</p>}
     {!error&&remaining.length>0&&<details className="rounded border p-3 text-sm"><summary>검사 전 미입력 조건</summary><ul className="list-inside list-disc">{remaining.map(({step,issue})=><li key={step}>{issue}</li>)}</ul></details>}
     {selected&&<details className="space-y-3 rounded border p-4 text-sm"><summary>이전 결과·재사용 조건</summary><table className="w-full text-left tabular-nums"><thead><tr><th>이전 목표 배치 (건)</th><th>기측정 배치 (건)</th><th>이번 선택 배치 (건)</th></tr></thead><tbody><tr><td>{selected.batchProgress.target.join(", ")||"미기록"}</td><td>{selected.batchProgress.measured.join(", ")||"없음"}</td><td>{d.batchSizes.join(", ")||"미지정"}</td></tr></tbody></table><p>{!answer?"재사용 미검사":answer.batchPlan?.conditionMatch==="exact"?"동결 실행 조건 일치":"기존 결과 유지 · 재사용 미확인"}</p>{changes.length>0&&<table className="w-full text-left"><thead><tr><th>변경 필드</th><th>이전</th><th>현재</th></tr></thead><tbody>{changes.map(change=><tr key={change.field}><th className="font-normal">{change.label}</th><td>{change.before}</td><td>{change.after}</td></tr>)}</tbody></table>}</details>}
     {explanation&&<section className="space-y-4 border-t pt-5"><h2 className="font-semibold">{preflightConclusion(explanation)}</h2><PreflightAnswer answer={explanation}/></section>}
     {pre.error&&<table className="w-full text-left text-sm"><thead><tr><th>서빙 영향 · 서비스 (개)</th><th>예상 점유 · 최소 (s)</th></tr></thead><tbody><tr><td>미확인</td><td>미확인</td></tr></tbody></table>}
-    {stage===2&&<section aria-label="검사·제출" className="space-y-3"><table className="w-full text-left text-sm"><caption className="text-left font-semibold">제출 전 검토</caption><tbody>{[["요청",v.name],["모델",d.model],["Node",d.node],["전력모드",v.powerMode],["실행 경로",d.path?executionPathLabel(d.path):"미제공"],["전처리기",d.preprocessor],["데이터셋",d.dataset],["조건 출처",v.protocol.from??"직접 입력"],["원본 요청",copiedIdentity?.name??source?.metadata.name??from??"복사 안 함"],["원본 저장 영역",copiedIdentity?.namespace??source?.metadata.namespace??(from?"미확인":"해당 없음")],["원본 UID",copiedIdentity?.uid??source?.metadata.uid??(from?"미확인":"해당 없음")]].map(([label,value])=><tr key={label}><th className="py-2 font-medium">{label}</th><td className="break-all">{value||"미제공"}</td></tr>)}</tbody></table><p role="status" className="text-sm font-semibold">미제출</p></section>}
+    {stage===2&&<section aria-label="검사·제출" className="space-y-3"><table className="w-full text-left text-sm"><caption className="text-left font-semibold">제출 전 검토</caption><tbody>{[["요청",v.name],["모델",d.model],["장치 종류",d.deviceClass],["Node",d.node],["전력모드",v.powerMode],["실행 경로",d.path?executionPathLabel(d.path):"미제공"],["전처리기",d.preprocessor],["데이터셋",d.dataset],["측정 방식 출처",v.protocol.from??"직접 입력"],["원본 요청",copiedIdentity?.name??source?.metadata.name??from??"복사 안 함"],["원본 저장 영역",copiedIdentity?.namespace??source?.metadata.namespace??(from?"미확인":"해당 없음")],["원본 UID",copiedIdentity?.uid??source?.metadata.uid??(from?"미확인":"해당 없음")]].map(([label,value])=><tr key={label}><th className="py-2 font-medium">{label}</th><td className="break-all">{value||"미제공"}</td></tr>)}</tbody></table><p role="status" className="text-sm font-semibold">미제출</p></section>}
     <div className="flex flex-wrap gap-2">{stage>0&&<Button variant="outline" disabled={unknown||pending||send.isPending} onClick={()=>setStage(stage-1)}>이전</Button>}{stage<2?<Button disabled={blocked||unknown||pending||send.isPending} onClick={next}>다음</Button>:<><Button variant="outline" disabled={blocked||pending||unknown||send.isPending} onClick={verify}>{pending?"검사 중":"요청 범위 검사"}</Button><Button disabled={!passed||blocked||send.isPending||unknown} onClick={submit}>측정 요청</Button></>}</div>
-    <details><summary className="min-h-11 cursor-pointer py-2">보낼 요청 원본</summary><SourceJSON inline value={manifest(d,context,namespace)}/></details>{(answer||pre.error)&&<details><summary className="min-h-11 cursor-pointer py-2">검사 원본</summary><SourceJSON inline value={answer??pre.error?.data}/></details>}
+    <details><summary className="min-h-11 cursor-pointer py-2">보낼 요청 원본</summary><SourceJSON inline value={manifest(d,context,namespace)}/></details>{(answer||pre.error||dry.error)&&<details><summary className="min-h-11 cursor-pointer py-2">검사 원본</summary><SourceJSON inline value={{접수검사:dry.data??dry.error,실행계획검사:answer??pre.error}}/></details>}
   </Screen>
 }

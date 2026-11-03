@@ -3,6 +3,25 @@ import test from "node:test"
 import { serverConfig, publicConfig } from "./server-config.ts"
 import { boundedBody, relay, relayPlan } from "./relay.ts"
 
+test("power buckets alone accept bounded numeric Go durations and aligned bucket counts",()=>{
+  const config=serverConfig({CHILL_BASE_URL:"https://chill.example",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"chill"})
+  const range="from=2026-11-01T00:00:00.500Z&to=2026-11-01T00:15:00.500Z"
+  for(const bucket of ["5s","1m","0.5m","1h"])assert.equal(new URL(relayPlan("GET",["v1","observations","power"],`?${range}&bucket=${bucket}`,config).path,"https://local").searchParams.get("bucket"),bucket)
+  for(const bucket of ["","0s","1ms","2h","NaNs","1s","5s&bucket=5s"])assert.throws(()=>relayPlan("GET",["v1","observations","power"],`?${range}&bucket=${bucket}`,config),/DashboardQueryInvalid/)
+  assert.throws(()=>relayPlan("GET",["v1","observations","load"],`?${range}&bucket=5s`,config),/DashboardQueryInvalid/)
+  assert.throws(()=>relayPlan("GET",["v1","observations","power"],"?from=2026-11-01T00:00:00Z&to=2026-11-01T01:00:01Z&bucket=5s",config),/DashboardQueryInvalid/)
+  assert.doesNotThrow(()=>relayPlan("GET",["v1","observations","power"],`?${range}`,config))
+})
+
+test("event history accepts bounded opaque cursors without mixing exact-time reads",()=>{
+  const config=serverConfig({CHILL_BASE_URL:"https://chill.example",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"chill"})
+  const route=["v1","observations","events"],range="from=2026-11-01T00:00:00Z&to=2026-11-02T00:00:00Z"
+  const cursor="opaque+/==:checkpoint"+"x".repeat(700)
+  assert.equal(new URL(relayPlan("GET",route,`?${range}&limit=500&cursor=${encodeURIComponent(cursor)}`,config).path,"https://local").searchParams.get("cursor"),cursor)
+  assert.doesNotThrow(()=>relayPlan("GET",route,"?at=2026-11-01T00:00:00Z",config))
+  for(const suffix of ["&limit=501","&limit=0","&at=2026-11-01T00:00:00Z","&cursor="+ "x".repeat(4097)])assert.throws(()=>relayPlan("GET",route,`?${range}${suffix}`,config),/DashboardQueryInvalid/)
+  for(const query of ["?at=2026-11-01T00:00:00Z&limit=1","?from=2026-11-01T00:00:00Z","?from=2026-11-01T00:00:00Z&to=2026-11-02T00:00:01Z"])assert.throws(()=>relayPlan("GET",route,query,config),/DashboardQueryInvalid/)
+})
 test("fixed-chill-server relay enforces path, origin, body and credential boundaries", async () => {
   const env = {
     CHILL_BASE_URL: "https://chill.example:8443", CHILL_NAMESPACE: "research", CHILL_SYSTEM_NAME: "chill",
@@ -295,4 +314,16 @@ test("compatibility matrix is a selection-free read-only projection",()=>{
   assert.equal(relayPlan("GET",path,"",config).path,"/api/v1/model-compatibility-matrix")
   assert.throws(()=>relayPlan("GET",path,"?node=node",config),/DashboardQueryInvalid/)
   assert.throws(()=>relayPlan("POST",path,"",config),/DashboardMethodNotAllowed/)
+})
+
+test("R19 new contracts: relay permits only bounded experiment pages and columnar bucket power",()=>{
+  const config=serverConfig({CHILL_BASE_URL:"https://chill.example",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"chill"})
+  const experiments=["v1","experiments"],power=["v1","observations","power"]
+  assert.equal(relayPlan("GET",experiments,"?offset=25&limit=25",config).path,"/api/v1/experiments?offset=25&limit=25")
+  assert.equal(relayPlan("GET",experiments,"",config).path,"/api/v1/experiments")
+  for(const query of ["?limit=51","?limit=0","?offset=1000001","?offset=-1","?limit=25&limit=25","?q=name"])assert.throws(()=>relayPlan("GET",experiments,query,config),/DashboardQueryInvalid/)
+  assert.throws(()=>relayPlan("GET",["v1","experiments","selected"],"?offset=0&limit=1",config),/DashboardQueryInvalid/)
+  const range="?from=2026-11-03T03:00:00Z&to=2026-11-03T03:15:00Z"
+  assert.match(relayPlan("GET",power,range+"&bucket=5s&format=columns",config).path,/format=columns/)
+  for(const suffix of ["&format=columns","&bucket=5s&format=rows","&bucket=5s&format=columns&format=columns"])assert.throws(()=>relayPlan("GET",power,range+suffix,config),/DashboardQueryInvalid/)
 })

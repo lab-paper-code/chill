@@ -8,7 +8,8 @@ export type ExperimentStage = {id:string;from:string;to:string;kpis:Published}
 export type OutcomeAxis = {status?:string;verdict?:string;reason?:string;residuals?:{kind:string;name:string;reason:string}[]}
 export type InjectionOutcome = {id:string;action?:string;outcome?:"Executed"|"Cancelled"|"Invalid";reason?:string;scheduledOffsetSeconds?:number;actualOffsetSeconds?:number}
 export type ExperimentOutcome = {execution?:OutcomeAxis;measurement?:OutcomeAxis;cleanup?:OutcomeAxis;stages?:{id:string;execution?:OutcomeAxis;measurement?:OutcomeAxis;cleanup?:OutcomeAxis;injections?:InjectionOutcome[]}[]}
-export type Experiment = {schemaVersion:string;id:string;from:string;to:string;status:string;stages:ExperimentStage[];sources:{store:string;key:string}[];definition?:EvaluationDefinition;comparisons?:EvaluationComparison[];outcome?:ExperimentOutcome}
+export type ExperimentFacts = {name?:string;question?:string;control?:Published;stages?:{id:string;row?:string;mode?:string;control?:Published;loadScenarioRef?:Published}[];sloSources?:{name:string;uid:string;generation?:unknown;slo?:Published}[];loadSources?:{name:string;uid:string}[]}
+export type Experiment = {schemaVersion:string;id:string;from:string;to:string;status:string;stages:ExperimentStage[];sources:{store:string;key:string}[];facts?:ExperimentFacts;definition?:EvaluationDefinition;comparisons?:EvaluationComparison[];outcome?:ExperimentOutcome}
 export function decodeExperiment(text:string):Experiment {
   return readExperiment(parseSchedulerJSON(text))
 }
@@ -19,6 +20,13 @@ function readExperiment(value:unknown):Experiment {
 export function decodeExperiments(text:string):{items:Experiment[]} {
   const list=object(parseSchedulerJSON(text))
   return {...list,items:Array.isArray(list.items)?list.items.map(readExperiment):[]}
+}
+export type ExperimentPage = {items:Experiment[];page?:{offset:number;limit:number;total:number;nextOffset?:number}}
+export function decodeExperimentPage(text:string):ExperimentPage {
+  const list=decodeExperiments(text),page=object(object(list).page)
+  if(!Object.hasOwn(list,"page"))return list
+  if(!Number.isSafeInteger(page.offset)||Number(page.offset)<0||!Number.isSafeInteger(page.limit)||Number(page.limit)<1||Number(page.limit)>50||!Number.isSafeInteger(page.total)||Number(page.total)<0||list.items.length>Number(page.limit)||(page.nextOffset!==undefined&&(!Number.isSafeInteger(page.nextOffset)||Number(page.nextOffset)<=Number(page.offset))))throw new Error("실험 목록 페이지 정보 미제공")
+  return {...list,page} as ExperimentPage
 }
 export const object = (value:unknown):Published => value && typeof value === "object" && !Array.isArray(value) ? value as Published : {}
 function readOutcome(value:unknown):ExperimentOutcome|undefined {
@@ -217,19 +225,25 @@ export function comparisonValidity(a:ExperimentStage,b:ExperimentStage,leftRun?:
     limited:rulesMissing||!!ruleKeys.length||!sameDisplayedDuration(a,b)||!rows.length||unknown>0||changed>0||sameLoad!==true,
   }
 }
-export function definitionStage(run:Experiment,stage:ExperimentStage) {
+export function definitionStage(run:Experiment,stage:Pick<ExperimentStage,"id">) {
   if(run.stages.filter(s=>s.id===stage.id).length!==1)return undefined
   return run.definition?.spec.stages.find(s=>s.id===stage.id)
 }
-export function definitionPolicy(stage:ExperimentStage,run:Experiment):string {
-  const spec=definitionStage(run,stage)
+export const experimentControlLabels={placement:"배치",resources:"자원",replicas:"복제본",routing:"라우팅",batching:"배칭",power:"전력",membership:"구성원"}
+export function definitionPolicy(stage:Pick<ExperimentStage,"id">,run:Experiment):string {
+  const matches=run.facts?.stages?.filter(item=>item.id===stage.id)
+  const spec=run.facts?(matches?.length===1?matches[0]:undefined):definitionStage(run,stage)
   if(!spec)return "미기록"
   if(spec.mode==="autonomous")return "자동 운영"
   if(spec.mode==="fixed")return "고정 구성"
-  const labels={placement:"배치",resources:"자원",replicas:"복제본",routing:"라우팅",batching:"배칭",power:"전력",membership:"구성원"}
-  const controls=(spec.control??run.definition!.spec.control).controls
-  const disabled=Object.entries(labels).filter(([key])=>!controls[key as keyof typeof controls]).map(([,label])=>label)
-  return `제어요소 끔${disabled.length?` · ${disabled.join(", ")}`:""}`
+  if(spec.mode!=="controls-disabled")return "미기록"
+  const control=spec.control??run.facts?.control??run.definition?.spec.control
+  if(!control)return "미기록"
+  const controls=object(control.controls)
+  const disabled=Object.entries(experimentControlLabels).filter(([key])=>controls[key]===false).map(([,label])=>label)
+  const missing=Object.entries(experimentControlLabels).filter(([key])=>typeof controls[key]!=="boolean").map(([,label])=>label)
+  const label=disabled.length?`제어요소 끔 · ${disabled.join(", ")}`:"제어요소"
+  return `${label}${missing.length?` · 미기록: ${missing.join(", ")}`:disabled.length?"":" · 모두 켬"}`
 }
 export function stageLabel(stage:ExperimentStage,run:Experiment):string {
   const spec=definitionStage(run,stage)
@@ -274,10 +288,17 @@ export function commitExperimentSelection(location:Pick<Location,"search">,histo
   history.replaceState(null,"",`/experiments/results?${experimentSelection(location.search,values)}`)
 }
 export function frozenP95SLO(row:ExperimentRow,run?:Experiment):number|null {
-  const uid=row.original.workloadUID
-  if(typeof uid!=="string"||!uid)return null
-  const workload=run?.definition?.workloads.find(w=>w.uid===uid)
-  return workload?.slo.percentile===95?Number(workload.slo.targetLatencyNanos)/1e6:null
+  const {workloadUID:uid,definitionID,identitySource}=row.original
+  if(typeof uid!=="string"||!uid||typeof definitionID!=="string"||!definitionID)return null
+  const source=object(identitySource)
+  if(typeof source.store!=="string"||typeof source.key!=="string"||!run?.sources.some(item=>item.store===source.store&&item.key===source.key))return null
+  const workloads=run.definition?.workloads.filter(w=>w.uid===uid)
+  const workload=workloads?.length===1?workloads[0]:undefined
+  const definition=object(workload),model=object(definition.model),preprocessor=object(definition.preprocessor)
+  const parts=[definition.uid,definition.generation,model.uid,model.generation,preprocessor.uid,preprocessor.generation]
+  if(parts.some(value=>value===undefined||value===null)||definitionID!==parts.map(String).join("/"))return null
+  const slo=workload?.slo
+  return slo?.percentile===95&&(typeof slo.targetLatencyNanos==="number"||typeof slo.targetLatencyNanos==="bigint")?Number(slo.targetLatencyNanos)/1e6:null
 }
 
 export function serviceDelta(a:ExperimentRow|undefined,b:ExperimentRow|undefined) {
@@ -376,13 +397,16 @@ export function experimentDifference(value:number|null,baseline=0,higherIsBetter
 }
 
 export function experimentChartData(run:Experiment,service:string,runs:Experiment[]=[run]) {
-  return experimentHeatmap(run,runs).map((row,index)=>{
+  return experimentHeatmap(run,runs).flatMap((row,index)=>{
     const own=experimentRows(row.stage).filter(item=>item.name===service),other=row.other?experimentRows(row.other).filter(item=>item.name===service):[]
-    return {id:row.id,interval:index+1,rate:stageRate(row.stage,row.leftRun,service),observedRate:observedStageRate(row.stage,service),leftLabel:stageLabel(row.stage,row.leftRun),rightLabel:row.other?stageLabel(row.other,row.rightRun):"비교 없음",
+    const parts=stageLoadParts(row.stage,row.leftRun)
+    const base={id:row.id,interval:index+1 as number|string,rate:stageRate(row.stage,row.leftRun,service),observedRate:observedStageRate(row.stage,service),leftLabel:stageLabel(row.stage,row.leftRun),rightLabel:row.other?stageLabel(row.other,row.rightRun):"비교 없음",
       leftP95:own.length===1?resultMetric(own[0],"p95").value:null,
       rightP95:other.length===1?resultMetric(other[0],"p95").value:null,
       leftSLO:own.length===1?frozenP95SLO(own[0],row.leftRun):null,
       rightSLO:other.length===1?frozenP95SLO(other[0],row.rightRun):null}
+    if(parts.length<2)return [base]
+    return parts.map(part=>({...base,interval:`${row.id} / ${part.id}`,rate:part.rates?(service?part.rates[service]??null:Object.values(part.rates).reduce((sum,value)=>sum+value,0)):null,observedRate:null,leftP95:null,rightP95:null}))
   })
 }
 
@@ -406,7 +430,7 @@ export function publishedVerdict(stage:ExperimentStage):string {
   return status==="FAIL"?"요청 목표 미달":status.includes("NOT_READY")?"판정 근거 부족":status.includes("NOT_EVALUATED")?"아직 판정하지 않음":status.includes("DESCRIPTIVE")?"게시된 관측 결과":status
 }
 
-export function stageLoadLabel(stage:ExperimentStage,run:Experiment):string {
-  const spec=definitionStage(run,stage),scenario=run.definition?.loadScenarios.find(s=>s.uid===spec?.loadScenarioRef.uid)
-  return scenario?scenario.spec.parts.map(part=>`${part.id}: ${Object.entries(part.rates??part.alpha??{}).map(([name,value])=>`${name} ${part.rates?`${value} req/s`:`α ${value}`}`).join(", ")}`).join(" / "):"미기록"
+export function stageLoadParts(stage:ExperimentStage,run:Experiment) {
+  const spec=definitionStage(run,stage)
+  return run.definition?.loadScenarios.find(s=>s.uid===spec?.loadScenarioRef.uid)?.spec.parts??[]
 }

@@ -2907,6 +2907,9 @@ def publication_metadata(binding, phase, name, snapshot, identity_source, phase_
                       definition['preprocessor']['generation'])
             if any(value is None or value == '' for value in values):
                 raise KeyError('definition identity')
+        except KeyError:
+            reasons['identity'] = 'Historical definition identity not recorded'
+        else:
             candidate = '/'.join(map(str, values))
             if (any(frozen.get(key) != definition.get(key) for key in ('uid', 'generation'))
                     or frozen.get('definitionID', candidate) != candidate
@@ -2916,8 +2919,6 @@ def publication_metadata(binding, phase, name, snapshot, identity_source, phase_
                 reasons['identity'] = 'Historical identity source not published'
             else:
                 uid, definition_id = definition['uid'], candidate
-        except (KeyError, TypeError):
-            reasons['identity'] = 'Historical definition identity not recorded'
     reasons.setdefault('identity', None)
     parts = (phase.get('stage') or {}).get('parts')
     substages = None
@@ -2971,6 +2972,34 @@ def publication_metadata(binding, phase, name, snapshot, identity_source, phase_
         reasons['substageSource'] = 'Frozen phase source not published' if phase_source is None else None
     return {'workloadUID': uid, 'definitionID': definition_id,
             'identitySource': identity_source if uid is not None else None, 'substages': substages}, reasons
+
+
+def publication_stage_metadata(binding, phase, snapshot, identity_source, phase_source, folder, root, rows):
+    """Join frozen definitions only to the recorded offered request population."""
+    raw = module('publication_requests', HERE/'raw.py')
+    analysis = module('publication_analysis', D2/'analyze_before.py')
+    configured = {w['name']: w for w in binding['config'].get('workloads', [])}
+    ids, client_errors = {}, {}
+    for name in rows:
+        path = folder/(name+'-client.jsonl')
+        client_input = analysis.Inputs(folder)
+        clients = client_input.jsonlines(path) if path.exists() else []
+        if name in configured and configured[name].get('uid'):
+            ids[configured[name]['uid']] = [row['requestID'] for row in clients if row.get('requestID') and 'scheduledOffsetNs' in row]
+        client_errors[name] = bool(client_input.errors)
+    indexes = raw.iter_request_indexes(folder, ids, phase['startUTC'], phase['endUTC'], ids, approved_root=root) if ids else {}
+    for name, row in rows.items():
+        uid = configured.get(name, {}).get('uid')
+        indexed = indexes.get(uid, {})
+        metadata, reasons = publication_metadata(binding, phase, name, snapshot, identity_source,
+            phase_source, indexed.get('identities', ()))
+        if client_errors[name] or row.get('offered') and (
+                indexed.get('errors') or not indexed.get('identities')
+                or not set(ids.get(uid, ())).issubset(indexed.get('receivedAtNS', {}))):
+            metadata.update(workloadUID=None, definitionID=None, identitySource=None)
+            reasons['identity'] = 'Historical KPI population identity coverage incomplete; frozen target is not an observed definition'
+        row.update(metadata)
+        row.setdefault('missingReasons', {}).update(reasons)
 
 def self_check_publication_metadata():
     """Small offline contract check shared by both publisher self-checks."""
@@ -3105,34 +3134,12 @@ def publish_experiment(root, identifier, store_config, stages, status, *, bindin
             identity_source = {'store': store, 'key': prefix+'raw/frozen/scheduler.json'}
             objects.append({**identity_source, 'localPath': str(path)})
         sources = {Path(obj['localPath']).resolve(): {key: obj[key] for key in ('store', 'key')} for obj in objects}
-        raw = module('publication_requests', HERE/'raw.py')
-        analysis = module('publication_analysis', D2/'analyze_before.py')
         for stage in stages:
             phase_path = stage.get('_phase', stage['_folder']/'phase.json')
             phase = load(phase_path)
             rows = stage['kpis'].get('requests', stage['kpis'].get('workloads', {}))
-            configured = {w['name']: w for w in binding['config'].get('workloads', [])}
-            ids, client_errors = {}, {}
-            for name in rows:
-                path = stage['_folder']/(name+'-client.jsonl')
-                client_input = analysis.Inputs(stage['_folder'])
-                clients = client_input.jsonlines(path) if path.exists() else []
-                if name in configured and configured[name].get('uid'):
-                    ids[configured[name]['uid']] = [row['requestID'] for row in clients if row.get('requestID') and 'scheduledOffsetNs' in row]
-                client_errors[name] = bool(client_input.errors)
-            indexes = raw.iter_request_indexes(stage['_folder'], ids, phase['startUTC'], phase['endUTC'], ids, approved_root=root) if ids else {}
-            for name, row in rows.items():
-                indexed = indexes.get(configured.get(name, {}).get('uid'), {})
-                metadata, reasons = publication_metadata(binding, phase, name, snapshot, identity_source,
-                    sources.get(Path(phase_path).resolve()), indexed.get('identities', ()))
-                uid = configured.get(name, {}).get('uid')
-                if client_errors[name] or row.get('offered') and (
-                        indexed.get('errors') or not indexed.get('identities')
-                        or not set(ids.get(uid, ())).issubset(indexed.get('receivedAtNS', {}))):
-                    metadata.update(workloadUID=None, definitionID=None, identitySource=None)
-                    reasons['identity'] = 'Historical KPI population identity coverage incomplete; frozen target is not an observed definition'
-                row.update(metadata)
-                row.setdefault('missingReasons', {}).update(reasons)
+            publication_stage_metadata(binding, phase, snapshot, identity_source,
+                sources.get(Path(phase_path).resolve()), stage['_folder'], root, rows)
             stage['kpis']['limitations'] = [*stage['kpis'].get('limitations', []), SUBSTAGE_LIMITATION]
     inventory=destination/'raw-inventory.json'
     save(inventory,{'schemaVersion':'serving-experiment-raw-inventory.v1alpha1','emptyFiles':empty,'objects':[{'store':row['store'],'key':row['key']} for row in objects]})

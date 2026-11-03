@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"time"
@@ -28,7 +29,39 @@ type ExperimentSummary struct {
 	Sources       []ExperimentSource `json:"sources"`
 	Definition    json.RawMessage    `json:"definition,omitempty"`
 	Comparisons   json.RawMessage    `json:"comparisons,omitempty"`
+	Facts         *ExperimentFacts   `json:"facts,omitempty"` // List-only projection; never published to the store.
 	Outcome       json.RawMessage    `json:"outcome,omitempty"`
+}
+
+// ExperimentFacts projects only recorded definition fields before list responses
+// omit the full definition. Missing facts stay absent, not inferred from live state.
+type ExperimentFacts struct {
+	Name        string                 `json:"name,omitempty"`
+	Question    string                 `json:"question,omitempty"`
+	Control     json.RawMessage        `json:"control,omitempty"`
+	Stages      []ExperimentPolicyFact `json:"stages,omitempty"`
+	SLOSources  []ExperimentSLOSource  `json:"sloSources,omitempty"`
+	LoadSources []ExperimentLoadSource `json:"loadSources,omitempty"`
+}
+
+type ExperimentPolicyFact struct {
+	ID              string          `json:"id"`
+	Row             string          `json:"row,omitempty"`
+	Mode            string          `json:"mode,omitempty"`
+	Control         json.RawMessage `json:"control,omitempty"`
+	LoadScenarioRef json.RawMessage `json:"loadScenarioRef,omitempty"`
+}
+
+type ExperimentSLOSource struct {
+	Name       string          `json:"name"`
+	UID        string          `json:"uid"`
+	Generation json.RawMessage `json:"generation,omitempty"`
+	SLO        json.RawMessage `json:"slo,omitempty"`
+}
+
+type ExperimentLoadSource struct {
+	Name string `json:"name"`
+	UID  string `json:"uid"`
 }
 
 type ExperimentStage struct {
@@ -45,6 +78,31 @@ type ExperimentSource struct {
 
 type ExperimentList struct {
 	Items []ExperimentSummary `json:"items"`
+	Page  *ProfilePage        `json:"page,omitempty"`
+}
+
+// pageExperiments preserves whole-list callers unless paging is explicit.
+func pageExperiments(list ExperimentList, values url.Values) (ExperimentList, error) {
+	for key := range values {
+		if key != profileLimitQuery && key != profileOffsetQuery {
+			return ExperimentList{}, &serving.Error{Code: "InvalidQuery", Message: "unknown experiment query"}
+		}
+	}
+	limit, offset, err := parseProfileQuery(values)
+	if err != nil {
+		return ExperimentList{}, err
+	}
+	if !values.Has(profileLimitQuery) && !values.Has(profileOffsetQuery) {
+		return list, nil
+	}
+	start := min(offset, len(list.Items))
+	end := min(start+limit, len(list.Items))
+	list.Page = &ProfilePage{Offset: offset, Limit: limit, Total: len(list.Items)}
+	if end < len(list.Items) {
+		list.Page.NextOffset = &end
+	}
+	list.Items = list.Items[start:end]
+	return list, nil
 }
 
 // ValidExperimentID permits only one unescaped, non-traversing object-key element.
@@ -120,7 +178,14 @@ func (h *Handler) experiments(w http.ResponseWriter, r *http.Request) {
 	var value any
 	var err error
 	if id == "" && h.config.ListExperiments != nil {
-		value, err = h.config.ListExperiments(r.Context())
+		var list ExperimentList
+		// Validate before the immutable store is read.
+		if _, err = pageExperiments(ExperimentList{}, r.URL.Query()); err == nil {
+			list, err = h.config.ListExperiments(r.Context())
+			if err == nil {
+				value, err = pageExperiments(list, r.URL.Query())
+			}
+		}
 	} else if id != "" && h.config.GetExperiment != nil {
 		value, err = h.config.GetExperiment(r.Context(), id)
 	} else {

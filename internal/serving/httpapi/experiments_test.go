@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -192,6 +193,64 @@ func TestExperimentsPreserveOptionalDefinition(t *testing.T) {
 			if string(body["outcome"]) != string(definition) {
 				t.Fatalf("outcome=%s want=%s", body["outcome"], definition)
 			}
+		}
+	}
+}
+
+func TestExperimentsPagination(t *testing.T) {
+	items := []ExperimentSummary{
+		{ID: "new", Facts: &ExperimentFacts{Name: "frozen"}, Outcome: json.RawMessage(`{"joules":null}`)},
+		{ID: "middle", Stages: []ExperimentStage{{ID: "stage", KPIs: json.RawMessage(`{"count":42}`)}}},
+		{ID: "old"},
+	}
+	for _, tc := range []struct {
+		query                     string
+		start, count, limit, next int
+	}{
+		{"", 0, 3, 0, 0},
+		{"?limit=2", 0, 2, 2, 2},
+		{"?limit=2&offset=2", 2, 1, 2, 0},
+		{"?limit=2&offset=3", 3, 0, 2, 0},
+		{"?limit=2&offset=4", 4, 0, 2, 0},
+		{"?offset=1", 1, 2, 25, 0},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			h := experimentHandler(t, true, HandlerConfig{ListExperiments: func(context.Context) (ExperimentList, error) {
+				return ExperimentList{Items: items}, nil
+			}})
+			r := httptest.NewRequest(http.MethodGet, "/api/v1/experiments"+tc.query, nil)
+			r.Header.Set("Authorization", "Bearer caller")
+			w := httptest.NewRecorder()
+			h.experiments(w, r)
+			var got ExperimentList
+			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != http.StatusOK {
+				t.Fatalf("code=%d body=%s err=%v", w.Code, w.Body.String(), err)
+			}
+			start := min(tc.start, len(items))
+			if !reflect.DeepEqual(got.Items, items[start:start+tc.count]) {
+				t.Fatalf("items=%+v", got.Items)
+			}
+			if tc.query == "" {
+				if got.Page != nil {
+					t.Fatal("legacy response gained page")
+				}
+			} else if got.Page == nil || got.Page.Offset != tc.start || got.Page.Limit != tc.limit || got.Page.Total != len(items) ||
+				(tc.next == 0) != (got.Page.NextOffset == nil) || tc.next != 0 && *got.Page.NextOffset != tc.next {
+				t.Fatalf("page=%+v", got.Page)
+			}
+		})
+	}
+	for _, query := range []string{"?limit=0", "?limit=51", "?offset=-1", "?offset=1000001", "?limit=x", "?offset=", "?limit=1&limit=2", "?view=summary", "?model=x"} {
+		h := experimentHandler(t, true, HandlerConfig{ListExperiments: func(context.Context) (ExperimentList, error) {
+			t.Fatal("invalid query reached store")
+			return ExperimentList{}, nil
+		}})
+		r := httptest.NewRequest(http.MethodGet, "/api/v1/experiments"+query, nil)
+		r.Header.Set("Authorization", "Bearer caller")
+		w := httptest.NewRecorder()
+		h.experiments(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("query=%s code=%d", query, w.Code)
 		}
 	}
 }

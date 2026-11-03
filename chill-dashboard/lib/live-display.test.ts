@@ -2,13 +2,13 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { LiveAction, LiveInstance, LiveMetric, LiveMetrics, LiveSnapshot, LiveWorkload } from "./live.ts"
 import { changeListStatus, actionProgress, actionOrigin, scopeSnapshot, scopeEvents, recentEvents, liveFresh, belongsToPool, displayNumber, duration, elapsed, instanceSymbol, isStale, ratio, receivedLabel, routingShare, terminalCount, workloadLabel, workloadQueue, servicePriority, trendSegments, boardVerdict } from "./live-display.ts"
-import { sloLatency, minuteMetrics, incidentFlow, incidentSummary, serviceRows, powerWindow, decisionReason, gapEpisodes, liveReason, displayTime } from "./live-display.ts"
+import { sloLatency, minuteMetrics, incidentFlow, incidentSummary, serviceRows, decisionReason, gapEpisodes, liveReason, displayTime } from "./live-display.ts"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { createElement, type ComponentType, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
-import { compareAt, initialLiveState, type LiveState } from "./live.ts"
+import { compareAt, eventKey, initialLiveState, type LiveState } from "./live.ts"
 import * as displayHelpers from "./live-display.ts"
 import { decisionRange } from "./experiments.ts"
 
@@ -297,20 +297,6 @@ test("event history loss cannot recover from metrics or disappear as a short gap
   assert.equal(gapEpisodes([gap],now,metrics)[0].recovered,false)
   assert.equal(incidentFlow([],[gap],now,false,metrics).length,1)
 })
-test("power windows use retained completed buckets, not component clocks or mount time",()=>{
-  const end=Date.parse("2026-10-30T12:01:00Z")
-  const rows:LiveMetrics[]=Array.from({length:60},(_,i)=>({type:"metrics",seq:i+1,at:new Date(end-59000+i*1000).toISOString(),bucketAt:new Date(end-60000+i*1000).toISOString(),workloads:{},nodes:{n:{watts:i===10?null:20,observedAt:at}},pool:{wholeWatts:i===10?null:20,activeWatts:null}}))
-  const desktop=powerWindow(rows),remounted=powerWindow([...rows])
-  assert.deepEqual(remounted,desktop)
-  assert.equal(desktop.expected,60)
-  assert.equal(desktop.nodes.n,59)
-  assert.equal(desktop.observed,59)
-  assert.equal(desktop.segments.length,2)
-  const sparse=powerWindow([rows[0],rows[59]])
-  assert.equal(sparse.expected,60)
-  assert.equal(sparse.observed,2)
-  assert.deepEqual(powerWindow([]),{end:0,expected:0,observed:0,nodes:{},segments:[]})
-})
 test("operations board keeps independent axes, idle summary, service placement and selected-time evidence",()=>{
   const pool={...workload,pending:0},zero={...metric,received:0,completed:0,failed:0,withinSLO:0,latencySamples:0}
   const snapshot:LiveSnapshot={workloads:Array.from({length:29},(_,i)=>({...pool,uid:`service-${i}`,name:`서비스-${i}`})),nodes:[{uid:"n",name:"장치",powerMode:"고정",ready:true,measurement:false,observedAt:at}],instances:[],routing:{},decision:{at,state:"Keep",reason:"",explanation:""},actions:[],reservations:[]}
@@ -319,6 +305,7 @@ test("operations board keeps independent axes, idle summary, service placement a
   const require=createRequire(import.meta.url)
   let query=new URLSearchParams(),experiment="활성 없음"
   let archived:LiveState["events"]=[]
+  let recordedDecision:Record<string,unknown>|undefined
   const compile=(path:string,modules:Record<string,unknown>)=>{
     const exports:Record<string,ComponentType<Record<string,unknown>>>={}
     const source=readFileSync(new URL(path,import.meta.url),"utf8")
@@ -335,22 +322,24 @@ test("operations board keeps independent axes, idle summary, service placement a
   const modules:Record<string,unknown>={
     "next/link":{default:({children,...props}:Record<string,unknown>)=>createElement("a",props,children as string)},
     "next/navigation":{usePathname:()=>"/",useSearchParams:()=>query,useRouter:()=>({push:(url:string)=>{query=new URL(url,"http://local").searchParams},replace:(url:string)=>{query=new URL(url,"http://local").searchParams}})},
-    "@/lib/client":{useSession:()=>({epoch:1,config:{liveFixture:false}}),useChillQuery:(path:string)=>path.startsWith("v1/observations/events")?{data:{events:archived}}:{}},
+    "@/lib/client":{useSession:()=>({epoch:1,config:{liveFixture:false}}),useChillQuery:(path:string)=>path.startsWith("v1/observations/events")?{data:{events:archived}}:path.startsWith("v1/observations/scheduler?")&&recordedDecision?{data:{events:[{at,decision:recordedDecision}]}}:{}},
     "@/lib/use-live":{useLive:()=>({state,status:"fixture",reconnect:()=>{}})},
     "@/lib/live-display":displayHelpers,"@/lib/experiments":{decisionRange},
-    "@/lib/live":{compareAt},
+    "@/lib/live":{compareAt,eventKey},
     "@/components/status-cell":status,
     "@/lib/status":{STATUS_AXES:{serviceImpact:"서비스 영향",performance:"성능 판정",observation:"관측 상태"}},
     "@/components/ui/sheet":{Sheet:({open,children}:{open:boolean;children:ReactNode})=>open?createElement("div",{"data-sheet":true},children):null,SheetContent:wrap,SheetHeader:wrap,SheetTitle:wrap},
     "./evaluation-active":{EvaluationStatusCell:()=>createElement(status.StatusCell,{axis:"실험 상태",label:experiment,tone:"info"})},
     "@/lib/evaluation-active":{evaluationInjectionMatch:()=>false},
     "@/lib/scheduler":{stringifySchedulerJSON:JSON.stringify},"@/lib/source-export":{safeSource:(value:unknown)=>value},
-    "./scheduler":{judgmentLabels:{Keep:"구성 유지"},actionKinds:{power:"전력모드 변경"},actionStatuses:{},actionNodeName:(node:{name:string})=>node.name,SchedulerEvidence:({kind}:{kind:string})=>createElement("section",{"data-evidence":kind},kind)},
+    "./scheduler":{judgmentLabels:{Keep:"구성 유지",Feasible:"실행 가능"},actionKinds:{power:"전력모드 변경"},actionStatuses:{},actionNodeName:(node:{name:string})=>node.name,SchedulerEvidence:({kind}:{kind:string})=>createElement("section",{"data-evidence":kind},kind)},
     "./live-board.css":{},
+    "./power-series":{LivePowerTrend:()=>null},
   }
   const board=compile("../features/live-board.tsx",modules)
   const render=()=>renderToStaticMarkup(createElement(board.LiveBoardPage,{}))
   const idle=render()
+  assert.match(idle,/최근 5분 · 현재 접속 수신 판단/)
   assert.match(idle,/유휴 서비스 집계/)
   assert.match(idle,/접수 허용 개/)
   assert.match(idle,/자동제어 개/)
@@ -359,6 +348,16 @@ test("operations board keeps independent axes, idle summary, service placement a
   assert.match(idle,/새로고침 시 실시간 복귀/)
   assert.match(idle,/서비스별 위치/)
   assert.doesNotMatch(idle,/live-node-power|data-sheet/)
+  const keep={id:"keep",keep:true,status:"Feasible",expectedJoules:0,slo:[],nodes:[],instances:[]}
+  recordedDecision={at,status:"Keep",workloads:[],keep,target:structuredClone(keep),search:{windowStart:at,windowEnd:at,received:0,accepted:0,computeInputs:0,examined:0}}
+  query=new URLSearchParams({at})
+  const candidateEvidence=render()
+  assert.match(candidateEvidence,/실행 가능/)
+  assert.match(candidateEvidence,/평가 대상 없음/)
+  assert.match(candidateEvidence,/변경 없음/)
+  assert.equal((candidateEvidence.match(/<h3>유지안<\/h3>/g)??[]).length,1)
+  assert.doesNotMatch(candidateEvidence,/목표 충족/)
+  recordedDecision=undefined
   query=new URLSearchParams({services:"확인 필요"})
   assert.match(render(),/해당 서비스 없음/)
   assert.doesNotMatch(render(),/유휴 서비스 집계/)

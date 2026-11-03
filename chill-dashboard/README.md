@@ -139,9 +139,11 @@ redirect: `/scheduler`, `/operations/flow` → `/`; `/resources`, `/pools` → `
 
 Bearer tokens use versioned, system-scoped sessionStorage in the current tab; storage denial falls back to memory. Refresh restores the session after configuration hydration. “이 탭에서 토큰 지우기”, identity changes and HTTP 401 / WS 4401 clear that tab's token, queries, requests and live connection. HTTP 403 / WS 4403 and service failures retain the destination URL and do not expire the token. Duplicated/restored tabs may inherit storage; clearing a tab does not revoke the bearer or other tabs.
 
-Coverage consumes the exact namespaced aggregate GET with only `batches` and `node` upstream; other filters stay in the URL/browser. Entry and explicit refresh fetch snapshots without periodic polling. A first `CoverageWarming` response permits one Retry-After completion check. Server assessments and exact variant result rows are preserved without browser rejudgment or all-Run crawling. The selected result follows the common DetailSheet contract.
+Coverage consumes the exact namespaced aggregate GET with only `batches` and `node` upstream; other filters stay in the URL/browser. Entry and explicit refresh fetch snapshots without periodic polling. All reads share bounded `503 CoverageWarming` retries (up to 180 retries; numeric Retry-After clamped to 1–5 seconds, default 2 seconds) and the `초기화 중` status; other 503 responses are not retried. The exact pre-handler warm-up rejection also permits mutation retries; transport-uncertain mutations are never retried. Server assessments and exact variant result rows are preserved without browser rejudgment or all-Run crawling. The selected result follows the common DetailSheet contract.
+Mutation retries remain bound to the mounted hook and the original token/session epoch. Unmount, logout or identity replacement cancels the complete retry lifetime, including Retry-After waits; the retry predicate and the next HTTP attempt both check that lifetime.
 범위의 측정 있음·문제 집계는 셀과 같은 정의를 쓰고 지원 안 함 제외 수를 별도로 표시한다. 현재 사용(스케줄러 참조)과 품질 판정은 독립이다. 목표 부재는 상단 한 번, 활성 필터·전체 해제는 접힘 밖에 표시한다. 셀 선택은 뒤로가기로 닫히며, `urlState`를 명시한 주 목록의 `page/limit/sort/order/search`만 새로고침에도 유지된다. 상세·편집 표는 독립 로컬 상태다. 390px에서는 집계·목록을 라벨/값 행으로 재배치한다. 같은 ID/프로파일·배치 결과는 중복하지 않으며 다른 보관 결과는 별도 객체다. 회차 상세는 고정 제목과 성능 표를 우선하고 202 근거 대기에서 재조회할 수 있다. 실제 첫 배치를 대표값으로 명시하며 전체 배치는 접힌 표로 보존한다. 변경 비용은 실제 중앙–최대 범위와 수치 표, 실패 분배는 미검증 원자료로 제공한다.
 복사 출처 namespace·UID를 관측값으로 고정하고 동명 교체를 차단한다. 측정/기록 창은 실제 시간값만 시각화하고 예정 회차·세부 단계 계약 부재는 미제공이다. 저장 계획 검사는 새 요청 제출과 구별한다. 카탈로그 상세의 내부 식별자는 원문에, 형식·실행 한도·연결 서비스의 장치/접수는 독립 행에 표시한다.
+새 요청의 접수(dry-run) 검사와 실행 계획(preflight) 검사는 각각의 HTTP 수신 상태·결과를 표시한다. HTTP 0은 만들지 않으며 응답 미수신은 해당 검사에만 귀속한다. 제출은 두 검사가 같은 입력에서 통과해야 가능하다. 복사한 측정 방식은 전력 수집 설정뿐 아니라 활성/유휴 `durationToleranceSeconds`와 `pointPolicy`도 보존한다. 자동 상속 방식의 재선택은 실제 대상 변경에만 적용한다. 명시 복사한 프로토콜과 직접 수정한 방식은 유지하며, 이름·배치·반복 편집으로 최신 방식에 교체하지 않는다. 다른 장치의 방식은 대상 조건이 아니라 `측정 방식 출처`로 표시한다. 실패 목록의 같은 정규화 사유는 한 행에서 한 번만 표시하며 원문은 보존한다.
 
 Real Model/Workload CRUD and version preconditions, one independent raw-sample inference (JPEG fields from a file, UTF8 fields from text, sent as base64 `BYTES` and answered with output fields decoded by format), current POOL state, System/Inventory/ProfilingRun bounded queries, verified Passport with per-batch dataset record IDs, units and stage times, sealed campaign result and read-only preflight are wired. Observation selection preserves UID, original UTC `from`/`to`, repeated definition/outcome filters and cursor; cohort statistics remain the server's whole-window values, separate from raw paging. JSON exports preserve source identity/conditions/units and redact credentials. Changes uses the real per-Workload management observations; absence of a broader feed is disclosed.
 
@@ -160,6 +162,16 @@ the browser used an isolated ChillServer-contract fixture and performed no live 
 `/operations/devices`는 전력 추세와 이름순 장치·배치 표 두 영역이다. 계측 범위와 구성 범위를
 구분하고 사양·전력모드·측정/가용/제외 역할·준비/제외 사유·실제 할당은 선택 Sheet에서 조회한다.
 구 POOL 상세 링크는 `workload` 범위와 `open` 선택을 분리하며 장치 선택은 `node`로 장치 화면에 매핑한다.
+`Feasible`은 `실행 가능`이며 SLO 충족 판정이 아니다. 후보의 서비스 평가 항목이 없으면
+`평가 대상 없음`을 표시하고 동일 후보 ID의 유지안·목표는 한 번만 표시한다.
+`Preparing`·자동제어 꺼짐·현재 인스턴스 없음이 함께 관측되면 홈·서비스 관측·목록은
+`미배치 · 자동제어 꺼짐`을 공유한다. 고정(`fixed`) 장치의 `PowerModeUnavailable`은
+장치 확인에서 제외하며, 제외 노드와 `PlacementInventoryMissing`은 사유를 유지한다.
+진행·사건은 최근 5분 실제 수신 판단 수·유지 수·마지막 시각과 관측된 파드 준비 전이를 표시한다.
+운영 재진입 시 `observations/events?from&to&limit=100`으로 최근 15분을 최대 5페이지·500건까지 읽고 실제 사건 identity로 실시간 사건과 합친다. archive에 WebSocket 순번을 생성하지 않는다. 미조회 페이지는 일부 표시, coverage·snapshot.history의 보존 공백은 `보존 공백` 상태어로 유지하며 손실 건수를 추정하지 않는다.
+전력 추세는 `observations/power?from&to&bucket=5s`의 최근 15분·실제 5초 구간 평균을 실시간 1초 관측에 연결한다. null은 선을 끊고 실제 0은 0으로 유지하며 5초 평균을 1초 표본으로 복제하지 않는다.
+기록 전력 탭은 bucket 시간축과 기간 에너지·평균 W/노드별 요약을 분리한다. 시계열 범위는 최대 1시간·900구간이며 더 긴 기간의 요약과 원자료는 유지한다.
+현재 페이지의 원자료 표·페이지 이동은 접는다. 페이지 J를 전체 구간 에너지로 합산하지 않는다.
 Automatic application and evaluated judgment are separate; keep/target J and SLO are
 predictions, not measurements. Load preserves the submitted window in the page URL
 independently of the draft. ChillServer omits arrivals from load responses, so load
@@ -207,6 +219,7 @@ UID/definition rows align across runs. Offered counts, server receipt cohorts an
 live terminal buckets are explicitly distinct. Shared POOL energy is not summed
 across rows; published gap bounds render as `value ± bound J`, with energyCoverage.
 Different measurementRules retain numbers and display “측정 규칙 다름”.
+R18: 목록은 선택적 `facts`의 이름·정책·SLO·부하 출처를 직접 표시하고 없으면 미기록이다. 목록 항목별 상세 hydration은 하지 않으며 명시적 과거 비교 대상이 목록에 없을 때만 그 publication을 조회한다. 비교 상대가 없으면 차이 대신 측정 원값을 먼저 표시하며, 계획 부하는 구간×서비스 표(소수 둘째 자리)와 하위 구간별 막대로 표시한다. 단계 전체 p95·발행률을 하위 구간의 실측값으로 복제하지 않는다. `SLOFailed`는 `SLO 미충족`이고 수집 실패와 구분한다. 과거 게시에 실제 없는 정의는 추정하지 않는다.
 현재 reader는 [DB-FR-66](../docs/spec/dashboard/SRS.md)에 따라 게시 단건의 `definition.spec.comparisons`와 목록의 `comparisons`로 비교 관계를 읽고 단계 ID·서비스 UID·publicationID로 연결한다. suffix·요청률 유사성 fallback은 사용하지 않는다. 정의 없는 과거 게시는 비교 미기록, 실제 대상 부재는 대상 게시 없음, 권한/서버/timeout은 대상 조회 실패로 구분한다. 정책·SLO는 기록된 정의·실행 결과에서만 읽는다. 비교 상태·제한·일치/참고/대응 없음 건수는 차이보다 먼저 표시하며 참고 비교는 동일 조건 성과 집계와 분리한다. 상세는 조건 → 원값 → 사건 → 원본이다.
 실행은 `/experiments`, 부하 설정은 `/experiments/load-scenarios`다. 작성·수정은 각각 `/experiments/new`, `/experiments/[name]/edit`, `/experiments/load-scenarios/new`, `/experiments/load-scenarios/[name]/edit` 전용 페이지다. 원본은 `copy` 또는 `publication`, 수정 UID는 `uid` query로 복원한다. 목록 시각은 KST이며 결과 표는 비교 상태·구간 수·실행/측정/정리·차이·제한을 한 행에 제공한다. 구간 Sheet의 사건은 조건·원값 뒤에 배치한다.
 Evidence lookup uses the exact nanosecond `decision.at` interval through the
@@ -248,9 +261,10 @@ Node power is from metrics, never node state. Pre-assignment `pending` and nativ
 post-assignment `waiting` stay separate. Completing an action never releases a
 reservation; the next reservation projection is authoritative.
 
-The last ten minutes contain only received one-second buckets, capped at 600
-buckets and 1000 events. Pre-connection, resync and measurement gaps are not
-interpolated or zero-filled. The fixture selector exercises empty → first
+The request metric reducer keeps received one-second buckets for ten minutes, capped at 600,
+and retains at most 1000 live events. Power charts independently merge bounded 15-minute
+archive intervals with actual live intervals. No pre-connection, resync or measurement gap
+is interpolated or zero-filled. The fixture selector exercises empty → first
 configuration → expansion → residual execution during shrink; all are synthetic
 검사용 scenes, not a product recording replay or evaluation measurements.
 Current SLO is shown as an explicit reference, not drawn backward through old

@@ -18,6 +18,7 @@ import { SnapshotDetails, CandidateDetails, judgmentLabels, actionKinds, actionN
 import { SettingsSummary } from "./scheduler-settings"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { RecordsNavigation, RecordsRange } from "@/components/records-navigation"
+import { candidatePlans } from "@/lib/live-display"
 
 export function SchedulerIntervalEvents({from,to}:{from:string;to:string}) {
   const params=new URLSearchParams({from,to,view:"summary",filter:"decision-action",order:"asc",limit:"10"})
@@ -88,18 +89,20 @@ export function SchedulerPowerPage() {
       <RowDialog open={nodeOpen} onOpenChange={setNodeOpen} label="노드 변경" title="노드 고르기" description="불러온 기록에만 적용돼요. 실행 그룹 전체 집계는 바뀌지 않아요.">
         <fieldset className="grid gap-2">{nodeChoices.map(([uid,name])=><label key={uid} className="flex items-center gap-2"><input type="radio" name="node" checked={node===uid} onChange={()=>{const next=new URLSearchParams(params.toString());if(uid)next.set("filterNode",uid);else next.delete("filterNode");router.replace(`/records?${next}`);setNodeOpen(false)}}/>{name}{uid&&<span className="break-all text-xs text-muted-foreground">{uid}</span>}</label>)}</fieldset>
       </RowDialog>
-      <RowDialog label="실행 그룹 전체 전력" hint="고른 기간의 전체·활성 실행 그룹 소비" title="실행 그룹 전체 전력" description="고른 기간 전체의 실측 소비예요. 노드 고르기와 페이지는 여기에 적용되지 않아요."><PowerInterval from={history.submitted.from} to={history.submitted.to}/></RowDialog>
       <Row href={`/records?${new URLSearchParams(history.submitted)}`} label="같은 기간 판단 기록"/>
       {history.query.data&&<RowDialog label="자료 내보내기" title="자료 내보내기" description="지금 불러온 전력 기록을 파일로 받아요.">
         <SourceExport filename="scheduler-power-page-summary.json" value={{projection:"summary",scope:"현재 페이지",source:"v1/observations/scheduler",from:history.submitted.from,to:history.submitted.to,cursor:history.cursor,filterNode:node,rows}}/>
       </RowDialog>}
     </HistoryControls>
+    <section aria-label="기간 전력 관측"><PowerInterval from={history.submitted.from} to={history.submitted.to}/></section>
     <QueryGate query={history.query}>{history.query.data&&<>
+      <details><summary className="min-h-11 cursor-pointer py-2">전력 원자료 · 현재 페이지 {rows.length}건</summary>
       {rows.length?<div className="rounded-lg border"><table className="block w-full text-sm sm:table"><thead className="hidden sm:table-header-group"><tr>{["시각 KST","노드","실측 에너지 (J)","근거"].map(label=><th key={label} className="p-3 text-left">{label}</th>)}</tr></thead><tbody className="block sm:table-row-group">{rows.map(row=><tr key={row.ref.offset} className="grid gap-1 border-t p-3 first:border-t-0 sm:table-row sm:p-0"><td className="min-w-0 sm:p-3"><span className="text-muted-foreground sm:hidden">시각 KST </span>{when(row.event.at)}</td><td className="min-w-0 [overflow-wrap:anywhere] sm:p-3"><span className="text-muted-foreground sm:hidden">노드 </span>{row.event.node?.name??"미기록"}</td><td className="tabular-nums sm:p-3 sm:text-right"><span className="text-muted-foreground sm:hidden">실측 에너지 (J) </span>{powerNumber(row.event.powerJoules)}</td><td className="sm:p-3"><Button variant="outline" onClick={()=>{
         opener.current=document.activeElement as HTMLElement|null
         router.push(`/records?${new URLSearchParams({...Object.fromEntries(params),...Object.fromEntries(schedulerRecordParams(row.ref))})}`,{scroll:false})
       }}>근거</Button></td></tr>)}</tbody></table></div>:<Empty title="기록 없음"/>}
       <HistoryPaging history={history}/>
+      </details>
     </>}</QueryGate>
     <Sheet open={["offset","at","id"].some(key=>params.has(key))} onOpenChange={open=>{if(!open){const next=schedulerPageParams(new URLSearchParams(params.toString()),params.get("cursor")??undefined);next.set("kind","power");router.replace(`/records?${next}`,{scroll:false})}}}>
       <SheetContent className="w-full overflow-y-auto p-6 sm:max-w-3xl" onCloseAutoFocus={event=>{
@@ -126,7 +129,7 @@ function StoredDetails({event}:{event:SchedulerObservation}) {
   const {decision,snapshot}=event
   if(!decision)return null
   const view:SchedulerView|undefined=snapshot?{settings:decision.settings,state:{snapshot,decision,actions:snapshot.actions,results:null}}:undefined
-  return <>{snapshot?<details><summary>초기 구성</summary><SnapshotDetails snapshot={snapshot}/></details>:<p>초기 구성 미기록</p>}{view&&[decision.keep,decision.target].filter((candidate):candidate is SchedulerCandidate=>!!candidate).map((candidate,index)=><details key={`${candidate.id}-${index}`}><summary>{candidate.keep?"유지안 근거":"목표 근거"}</summary><CandidateDetails candidate={candidate} view={view}/></details>)}</>
+  return <>{snapshot?<details><summary>초기 구성</summary><SnapshotDetails snapshot={snapshot}/></details>:<p>초기 구성 미기록</p>}{view&&candidatePlans(decision.keep,decision.target).map(candidate=><details key={candidate.id}><summary>{candidate.keep?"유지안 근거":"목표 근거"}</summary><CandidateDetails candidate={candidate} view={view}/></details>)}</>
 }
 function ActualSummary({data}:{data:ObservationResult}) {
   return <><p>전체 구간 {data.from} ~ {data.to}</p><p>전체 {data.total}건 / 선택 조건 {data.selected}건</p><p>모집단 {data.samplePopulation} / 방법 {data.quantileMethod}</p>{Object.entries(data.outcomes).map(([outcome,count])=><p key={outcome}>{outcome}: {count}건</p>)}{data.cohorts.length?data.cohorts.map(cohort=><p key={cohort.definition} className="break-all">정의 {cohort.definition} / 전체 {cohort.total}건 / 지연 표본 {cohort.sampleCount}개 / {cohort.percentile===undefined?"백분위 미제공":`${cohort.percentile}%`} 지연 {cohort.quantileNanos==null?"값 없음":`${Number(cohort.quantileNanos)/1e6} ms`} / 목표 {cohort.targetLatencyNanos==null?"미제공":`${nanosToMilliseconds(cohort.targetLatencyNanos)} ms`}</p>):<p>제공된 집계가 없어 지연 값을 계산하지 않아요.</p>}{data.gapUntil?<p role="status">{gapNotice(data.gapUntil)}</p>:null}</>

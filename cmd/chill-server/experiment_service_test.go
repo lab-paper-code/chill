@@ -150,6 +150,59 @@ func TestExperimentSummaryReadPreservesPublishedEvidenceAndSorts(t *testing.T) {
 	}
 }
 
+func TestExperimentListRetainsFrozenFactsWithoutDefinition(t *testing.T) {
+	from := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+	recorded := experimentFixture("recorded", from)
+	recorded.Definition = json.RawMessage(`{
+		"run":{"name":"recorded-name","uid":"recorded"},
+		"spec":{"question":"recorded question","control":{"controls":{"power":false},"future":true},
+			"stages":[{"id":"full-E5-2","row":"E5-2","mode":"controls-disabled",
+				"control":{"controls":{"power":true}},
+				"loadScenarioRef":{"name":"frozen-load","uid":"load-old"},"failureInjection":[{"id":"omit"}]}]},
+		"workloads":[{"name":"service","uid":"workload-old","generation":9007199254740993,
+			"slo":{"percentile":95,"targetLatencyNanos":9007199254740993},"model":{"large":"omit"}}],
+		"loadScenarios":[{"name":"frozen-load","uid":"load-old","spec":{"parts":[{"large":"omit"}]}}]
+	}`)
+	store := &experimentMemoryStore{}
+	store.add(t, recorded)
+	store.add(t, experimentFixture("historical-without-definition", from.Add(-time.Hour)))
+	service := &experimentService{reader: store, lister: store, store: "evidence", maxBytes: 1 << 20}
+	list, err := service.list(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := list.Items[0]
+	facts := item.Facts
+	if len(item.Definition) != 0 || facts == nil ||
+		facts.Name != "recorded-name" || facts.Question != "recorded question" ||
+		string(facts.Control) != `{"controls":{"power":false},"future":true}` ||
+		len(facts.Stages) != 1 || facts.Stages[0].Mode != "controls-disabled" ||
+		string(facts.Stages[0].Control) != `{"controls":{"power":true}}` ||
+		string(facts.Stages[0].LoadScenarioRef) != `{"name":"frozen-load","uid":"load-old"}` ||
+		len(facts.SLOSources) != 1 || facts.SLOSources[0].UID != "workload-old" ||
+		string(facts.SLOSources[0].Generation) != "9007199254740993" ||
+		string(facts.SLOSources[0].SLO) != `{"percentile":95,"targetLatencyNanos":9007199254740993}` ||
+		len(facts.LoadSources) != 1 || facts.LoadSources[0].UID != "load-old" {
+		t.Fatalf("frozen facts lost or changed after definition projection: %+v", item)
+	}
+	body, err := json.Marshal(list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), `"definition"`) || strings.Contains(string(body), `"omit"`) ||
+		strings.Count(string(body), `"facts"`) != 1 || list.Items[1].Facts != nil {
+		t.Fatalf("list leaked full definition or invented historical metadata: %s", body)
+	}
+	wantDefinition, err := json.Marshal(recorded.Definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err := service.get(context.Background(), recorded.ID)
+	if err != nil || string(detail.Definition) != string(wantDefinition) || detail.Facts != nil {
+		t.Fatalf("immutable stored summary changed: %+v err=%v", detail, err)
+	}
+}
+
 func TestExperimentMetadataIsOpaqueForBothPublishersAndHistoricalSummaries(t *testing.T) {
 	for _, shape := range []string{"requests", "workloads", "historical-213"} {
 		t.Run(shape, func(t *testing.T) {

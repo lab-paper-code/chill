@@ -1,5 +1,6 @@
-import { compareAt, isLiveActionActive, type LiveAction, type LiveEvent, type LiveInstance, type LiveMetric, type LiveMetrics, type LiveSnapshot, type LiveState, type LiveWorkload } from "./live.ts"
+import { compareAt, eventKey, isLiveActionActive, type LiveAction, type LiveActionEvent, type LiveEvent, type LiveInstance, type LiveMetric, type LiveMetrics, type LiveSnapshot, type LiveState, type LiveWorkload } from "./live.ts"
 import { STATUS_AXES, type StatusValue } from "./status.ts"
+import type { SchedulerCandidate } from "./read-types.ts"
 
 export const instanceSymbols = [
   ["×", "제거"], ["◌", "분배 해제 뒤 잔여 실행"], ["●", "실제 처리"],
@@ -23,6 +24,9 @@ export function receivedLabel(metric:LiveMetric|undefined):string {
 }
 export function isStale(at:string|null|undefined,now:number):boolean {
   return !at || !Number.isFinite(Date.parse(at)) || now-Date.parse(at)>5000
+}
+export function workloadReadiness(workload:LiveWorkload,instances:LiveInstance[]):string {
+  return workload.readiness.reason==="Preparing"&&!workload.autonomous&&!instances.some(row=>belongsToPool(row,workload.uid)&&!row.stopped)?"미배치 · 자동제어 꺼짐":workload.readiness.ready?"준비됨":liveReason(workload.readiness.reason)
 }
 export function workloadLabel(workload:LiveWorkload,instances:LiveInstance[],metric:LiveMetric|undefined,now:number):string {
   const rows=instances.filter(instance=>belongsToPool(instance,workload.uid))
@@ -113,13 +117,6 @@ export function serviceRows(snapshot:LiveSnapshot,metrics:Record<string,LiveMetr
     return {workload,metric,queued,changes,priority,idle,status}
   }).sort((a,b)=>a.priority-b.priority||(b.metric?.received??0)-(a.metric?.received??0)||a.workload.name.localeCompare(b.workload.name))
 }
-/** Latest completed reducer bucket anchors both trend and completeness across consumers. */
-export function powerWindow(metrics:LiveMetrics[]) {
-  const end=metrics.length?Date.parse(metrics.at(-1)!.bucketAt)+1000:0,start=Math.max(end-300000,metrics.length?Date.parse(metrics[0].bucketAt):end)
-  const recent=metrics.filter(row=>Date.parse(row.bucketAt)>=start&&Date.parse(row.bucketAt)<end),nodes:Record<string,number>={}
-  for(const row of recent)for(const [uid,node] of Object.entries(row.nodes))if(node.watts!=null)nodes[uid]=(nodes[uid]??0)+1
-  return {end,expected:Math.max(0,Math.floor((end-start)/1000)),observed:recent.filter(row=>row.pool.wholeWatts!=null).length,nodes,segments:trendSegments(recent.map(row=>({at:Date.parse(row.bucketAt),value:row.pool.wholeWatts})),end)}
-}
 export function minuteMetrics(metrics:LiveMetrics[],uid:string,end:number):LiveMetric[] {
   const windowEnd=Math.floor(end/1000)*1000
   return metrics.filter(row=>Date.parse(row.bucketAt)>=windowEnd-60000&&Date.parse(row.bucketAt)<windowEnd).flatMap(row=>row.workloads[uid]?[row.workloads[uid]]:[])
@@ -145,6 +142,30 @@ export function boardVerdict(rows:ServiceRow[],fresh:boolean,ongoingGap:boolean,
 }
 export function decisionReason(reason:string|null|undefined,automation:boolean[]):string {
   return automation.length>0&&automation.every(enabled=>!enabled)?"자동제어 대상 없음":liveReason(reason)
+}
+export function candidatePlans(keep:SchedulerCandidate,target:SchedulerCandidate|null):SchedulerCandidate[] {
+  return target&&target.id!==keep.id?[keep,target]:[keep]
+}
+export function candidateEvaluation(candidate:SchedulerCandidate):string {
+  return candidate.slo?.length?`평가 대상 ${candidate.slo.length}개`:"평가 대상 없음"
+}
+/** Retained, distinct server judgments only; no estimate of unseen decisions. */
+export function decisionActivity(events:LiveEvent[],now:number) {
+  const decisions=new Map(events.filter(event=>event.kind==="decision"&&Date.parse(event.at)>=now-300000&&Date.parse(event.at)<=now).map(event=>[event.decision!.at,event.decision!]))
+  const rows=[...decisions.values()].sort((a,b)=>compareAt(a.at,b.at))
+  return {count:rows.length,kept:rows.filter(row=>row.state==="Keep").length,lastAt:rows.at(-1)?.at??null}
+}
+export function retentionNotice(state:LiveState,zone:"UTC"|"KST"):string {
+  const gaps=state.eventArchive?.coverage.gaps??[],hasGap=!!(gaps.length||state.resumeHistory?.gaps.length)
+  const ranges=[...new Set(gaps.map(gap=>`${displayTime(gap.from,zone)}–${displayTime(gap.to,zone)}`))]
+  if(ranges.length&&state.resumeHistory?.gaps.length)ranges.push("재연결 기간 미제공")
+  return [hasGap?`보존 공백 · ${ranges.join(" / ")||"기간 미제공"}`:null,state.eventArchive?.partial?"최근 사건 일부만 표시":null].filter(Boolean).join(" · ")
+}
+export function clusterResult(events:LiveEvent[]):string {
+  const rows=events.filter(event=>event.kind==="cluster").sort((a,b)=>compareAt(a.at,b.at)),first=rows[0]?.cluster,last=rows.at(-1)?.cluster
+  const ready=(value:string|undefined)=>value==="True"?"예":value==="False"?"아니오":"미확인"
+  return first?.pod?.ready&&last?.pod?.ready&&first.pod.ready!==last.pod.ready?`준비 ${ready(first.pod.ready)} → ${ready(last.pod.ready)} (${duration((Date.parse(rows.at(-1)!.at)-Date.parse(rows[0].at))/1000)})`:
+    `${liveReason(last?.pod?.phase)}${last?.pod?.ready?` · 준비 ${ready(last.pod.ready)}`:""}`
 }
 /** Points use elapsed time, never stitch absent seconds into a continuous trend. */
 export function trendSegments(points:{at:number;value:number|null}[],end:number):string[] {
@@ -190,9 +211,9 @@ export function gapEpisodes(gaps:LiveState["gaps"],now:number,metrics:LiveMetric
     return {...gap,seconds:Math.max(0,(Date.parse(gap.to)-Date.parse(gap.from))/1000),recovered,lost}
   })
 }
-export function incidentHistoryHref(uid?:string,at?:string,node?:string):string {
+export function incidentHistoryHref(uid?:string,at?:string,node?:string,identity?:string):string {
   const end=at?Date.parse(at):Date.now(),range={from:new Date(end-300000).toISOString(),to:new Date(end+(at?300000:0)).toISOString()}
-  return `/records?${new URLSearchParams({...range,order:"asc",filter:"decision-action",...(uid?{uid}:{}),...(node?{filterNode:node}:{}),...(at?{eventAt:at}:{})})}`
+  return `/records?${new URLSearchParams({...range,order:"asc",filter:"decision-action",...(uid?{uid}:{}),...(node?{filterNode:node}:{}),...(at?{eventAt:at}:{}),...(identity?{open:`event:${identity}`}:{})})}`
 }
 export function reservationReason(reason:string):string {
   const labels=[
@@ -210,28 +231,49 @@ export function incidentDiagnosis(reason:string|null|undefined) {
   if(reason?.includes("Pod is not labelled as a serving instance"))return {reason:"서비스 인스턴스가 아닌 파드",check:"파드 역할·측정 작업 확인"}
   return {reason:liveReason(reason),check:reason?"장치·변경 원본 확인":"조치 근거 미제공"}
 }
+export function isMeasurementPrecheck(action:LiveActionEvent):boolean {
+  return (action.result?.status??action.status)==="NOT_SUBMITTED"&&!action.result?.error
+}
+export function isActionFailure(action:LiveActionEvent):boolean {
+  return action.phase==="failed"&&!isMeasurementPrecheck(action)
+}
+export function actionEventResult(action:LiveActionEvent):string {
+  return isMeasurementPrecheck(action)?"사전 검사 · 미제출":action.phase==="started"?"시작":action.phase==="completed"?"완료":"실패"
+}
 export function groupIncidentEvents(events:LiveEvent[]) {
   const rows:{event:LiveEvent;count:number;from:string;members:LiveEvent[]}[]=[],failures=new Map<string,typeof rows[number]>()
   for(const event of events){
-    const key=event.kind==="action"&&event.action.phase==="failed"?JSON.stringify([event.action.node.uid,event.action.workloadUID,event.action.kind,event.action.phase,event.action.result?.status,event.action.result?.error]):
-      event.kind==="cluster"?JSON.stringify([event.cluster.kind,event.cluster.pod?.uid??event.cluster.source,event.cluster.event,event.cluster.pod?.phase,event.cluster.reason]):null
+    const key=event.kind==="action"&&isActionFailure(event.action)?JSON.stringify([event.action.node.uid,event.action.workloadUID,event.action.kind,event.action.phase,event.action.result?.status,event.action.result?.error]):
+      event.kind==="cluster"?JSON.stringify([event.cluster.kind,event.cluster.reason?.includes("Pod is not labelled as a serving instance")?"nonserving-pods":event.cluster.pod?.uid??event.cluster.source,event.cluster.event,event.cluster.pod?.phase,event.cluster.reason]):null
     const previous=key?failures.get(key):undefined
     if(previous){previous.event=event;previous.count++;previous.members.push(event)}
     else {const row={event,count:1,from:event.at,members:[event]};rows.push(row);if(key)failures.set(key,row)}
   }
   return rows
 }
+export function deviceReasons(reasons:string[],powerMode:string):string[] {
+  const detailed=reasons.includes("PowerModeObservationUnavailable")||reasons.includes("PowerTransitionUnavailable")
+  return reasons.filter(reason=>reason==="PowerModeUnavailable"?!detailed&&powerMode.toLowerCase()!=="fixed":
+    reason==="PowerModeObservationUnavailable"||reason==="PowerTransitionUnavailable"?powerMode.toLowerCase()!=="fixed":true)
+}
 export function deviceAlerts(snapshot:LiveSnapshot|null,events:LiveEvent[]) {
   const alerts=new Map<string,{uid:string;name:string;reason:string}>()
-  for(const node of snapshot?.nodes??[])if(!node.ready||node.reasons?.some(reason=>reason!=="ExcludedNode"))alerts.set(node.uid,{uid:node.uid,name:node.name,reason:node.reasons?.length?node.reasons.map(liveReason).join(" / "):"준비 미확인"})
+  for(const node of snapshot?.nodes??[]) {
+    const reasons=deviceReasons(node.reasons??[],node.powerMode)
+    if(!node.ready||reasons.length)alerts.set(node.uid,{uid:node.uid,name:node.name,reason:reasons.length?reasons.map(liveReason).join(" / "):"준비 미확인"})
+  }
   const latest=new Map<string,LiveEvent>()
-  for(const event of events)if(event.kind==="action")latest.set(JSON.stringify([event.action.node.uid,event.action.kind]),event)
-  for(const event of latest.values())if(event.kind==="action"&&event.action.phase==="failed")alerts.set(event.action.node.uid,{...event.action.node,reason:incidentDiagnosis(event.action.result?.error).reason})
+  for(const event of events)if(event.kind==="action"&&event.action.node.uid&&event.action.status!=="validated"&&!isMeasurementPrecheck(event.action))latest.set(JSON.stringify([event.action.node.uid,event.action.kind]),event)
+  for(const event of latest.values())if(event.kind==="action"&&isActionFailure(event.action))alerts.set(event.action.node.uid,{...event.action.node,reason:incidentDiagnosis(event.action.result?.error).reason})
   return [...alerts.values()]
 }
 export function liveReason(reason:string|null|undefined):string {
   if(!reason)return "미제공"
   if(reason==="PowerModeUnavailable")return "전력모드 확인 불가"
+  if(reason==="PowerModeObservationUnavailable")return "전력모드 관측 불가"
+  if(reason==="PowerTransitionUnavailable")return "전력 전환 근거 없음"
+  if(reason==="PlacementInventoryMissing")return "배치 인벤토리 없음"
+  if(reason==="Feasible")return "실행 가능"
   if(reason.includes("await fresh exact")||reason.includes("creation-outcome-unknown")||reason.includes("identity-awaiting-container")||reason.includes("dependency/Ready/handoff"))return reservationReason(reason)
   if(reason.includes("did not reach power mode"))return "전력모드 전환 시간 초과"
   if(reason.includes("Pod is not labelled as a serving instance"))return "서비스 인스턴스가 아닌 파드"
@@ -241,10 +283,10 @@ export function liveReason(reason:string|null|undefined):string {
 
 export function incidentFlow(events:LiveEvent[],gaps:LiveState["gaps"],now:number,keep=false,metrics:LiveMetrics[]=[]) {
   const incidents=[
-    ...groupIncidentEvents(events.filter(event=>Date.parse(event.at)<=now&&(keep||event.kind!=="decision"||event.decision.state!=="Keep"))).map(row=>({kind:"event" as const,at:row.event.at,key:`event:${row.event.seq}`,...row})),
+    ...groupIncidentEvents(events.filter(event=>Date.parse(event.at)<=now&&(keep||event.kind!=="decision"||event.decision.state!=="Keep"))).map(row=>({kind:"event" as const,at:row.event.at,key:`event:${row.event.seq??eventKey(row.event)}`,...row})),
     ...gapEpisodes(gaps,now,metrics).filter(gap=>gap.lost||!gap.recovered||gap.seconds>=5).map(gap=>({kind:"gap" as const,at:gap.from,key:`gap:${gap.scope}:${gap.from}:${gap.reason}`,gap})),
   ]
-  return incidents.sort((a,b)=>compareAt(b.at,a.at)||(b.kind==="event"?b.event.seq:0)-(a.kind==="event"?a.event.seq:0)).slice(0,30)
+  return incidents.sort((a,b)=>compareAt(b.at,a.at)||(b.kind==="event"?b.event.seq??0:0)-(a.kind==="event"?a.event.seq??0:0)).slice(0,30)
 }
 /** The badge counts only incidents present in the same rendered list. */
 export function incidentSummary(events:LiveEvent[],gaps:LiveState["gaps"],now:number,metrics:LiveMetrics[]=[]) {

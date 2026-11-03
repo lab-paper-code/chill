@@ -21,6 +21,72 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+func TestR18HistoricalProfilesUseOnlyCurrentMeasurement(t *testing.T) {
+	view := httpapi.ProfilesView{}
+	view.CurrentMeasurements = []profilederivation.MeasurementSelection{{ID: "ns/current/uid"}}
+	view.MeasurementFacts = map[string]serving.MeasurementFacts{}
+	for _, id := range []string{"ns/old/uid", "ns/current/uid", "ns/current/uid/reuse-target"} {
+		profile := serving.Profile{ID: id}
+		if id == "ns/current/uid/reuse-target" {
+			profile.Reuse = &serving.ProfileReuseCheck{ConfirmationProfileID: "ns/current/uid"}
+		}
+		view.MeasurementFacts[id] = serving.MeasurementFacts{Batches: []profilederivation.MeasurementBatchFacts{{Batch: 1}}}
+		assessment, rows := assessCatalogProfile(view, profile)
+		want := id != "ns/old/uid"
+		if assessment.Scope.SchedulerUsed == nil || *assessment.Scope.SchedulerUsed != want {
+			t.Fatalf("%s current use=%+v want=%v", id, assessment.Scope, want)
+		}
+		for _, row := range rows {
+			if row.Assessment.Scope.SchedulerUsed == nil || *row.Assessment.Scope.SchedulerUsed != want {
+				t.Fatalf("%s batch use differs", id)
+			}
+		}
+	}
+	view.CurrentMeasurements = []profilederivation.MeasurementSelection{{ID: "ns/newest-failed/uid"}}
+	got, _ := assessCatalogProfile(view, serving.Profile{ID: "ns/current/uid"})
+	if got.Scope.SchedulerUsed == nil || *got.Scope.SchedulerUsed {
+		t.Fatal("latest failed measurement revived historical success")
+	}
+}
+
+func TestR18SnapshotProfilesEndpointRetainsCurrentSelection(t *testing.T) {
+	for _, current := range []string{"ns/current/uid", "ns/newest-failed/uid"} {
+		t.Run(current, func(t *testing.T) {
+			owner := servingkube.CatalogView{
+				Profiles:            []serving.Profile{{ID: "ns/old/uid"}, {ID: "ns/current/uid"}},
+				CurrentMeasurements: []profilederivation.MeasurementSelection{{ID: current}},
+			}
+			snapshot := servingkube.ProjectCatalogSnapshot(owner, "rv", nil)
+			raw, err := json.Marshal(servingkube.CatalogRead{CatalogSnapshot: snapshot, Accepted: &snapshot})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var read servingkube.CatalogRead
+			if err := json.Unmarshal(raw, &read); err != nil {
+				t.Fatal(err)
+			}
+			service := &measurementService{catalog: func(context.Context) (servingkube.CatalogRead, error) { return read, nil }}
+			mux := http.NewServeMux()
+			service.register(mux)
+			response := httptest.NewRecorder()
+			mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/profiles", nil))
+			var got profileResponse
+			if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != http.StatusOK || len(got.Profiles) != 2 {
+				t.Fatalf("profiles response: %d %s", response.Code, response.Body.String())
+			}
+			for _, profile := range got.Profiles {
+				used := profile.Assessment.Scope.SchedulerUsed
+				if used == nil || *used != (profile.ID == current) {
+					t.Fatalf("snapshot current=%s profile=%s schedulerUsed=%v", current, profile.ID, used)
+				}
+			}
+		})
+	}
+}
+
 func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 	task := api.BatchEnergyOptimization{
 		ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "old", UID: "old-uid", Generation: 1},
@@ -36,6 +102,7 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 		ID: "allowed/old/old-uid", Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: "result"},
 		Batches: []serving.BatchProfile{{Batch: 1}},
 	}}
+	view.CurrentMeasurements = []profilederivation.MeasurementSelection{{ID: "allowed/old/old-uid"}}
 	if got := assessMeasurementRequest(task, view, view); got.Status != queryapi.MeasurementPartial ||
 		!got.Evidence.Accepted {
 		t.Fatalf("partial accepted profile: %+v", got)
@@ -356,5 +423,49 @@ func TestUnadoptedAcceptedFactsNeverRepairCurrentRequestAssessment(t *testing.T)
 	if got.Evidence.Accepted || got.Evidence.Available || got.Scope.SchedulerUsed != nil ||
 		got.DisplayStatus != queryapi.MeasurementProblem {
 		t.Fatalf("old unadopted facts replaced current rejection: %+v", got)
+	}
+}
+
+func TestR19RequestAssessmentUsesCurrentMeasurementIdentity(t *testing.T) {
+	view := httpapi.ProfilesView{}
+	view.CurrentMeasurements = []profilederivation.MeasurementSelection{{ID: "ns/current/uid"}}
+	for _, name := range []string{"old", "current", "other"} {
+		view.Profiles = append(view.Profiles, serving.Profile{
+			ID: "ns/" + name + "/uid", Batches: []serving.BatchProfile{{Batch: 1}},
+		})
+	}
+	for _, name := range []string{"old", "current", "other"} {
+		task := api.BatchEnergyOptimization{
+			ObjectMeta: meta.ObjectMeta{Namespace: "ns", Name: name, UID: "uid"},
+			Spec:       api.BatchEnergyOptimizationSpec{BatchSizes: []int32{1}},
+		}
+		got := assessMeasurementRequest(task, view, view)
+		if got.Scope.SchedulerUsed == nil || *got.Scope.SchedulerUsed != (name == "current") {
+			t.Fatalf("%s scheduler scope=%+v", name, got.Scope)
+		}
+	}
+	view.CurrentMeasurements = []profilederivation.MeasurementSelection{{ID: "ns/latest-failed/uid"}}
+	task := api.BatchEnergyOptimization{
+		ObjectMeta: meta.ObjectMeta{Namespace: "ns", Name: "current", UID: "uid"},
+		Spec:       api.BatchEnergyOptimizationSpec{BatchSizes: []int32{1}},
+	}
+	if got := assessMeasurementRequest(task, view, view); got.Scope.SchedulerUsed == nil || *got.Scope.SchedulerUsed {
+		t.Fatalf("latest failure revived old evidence: %+v", got.Scope)
+	}
+	view.Profiles = []serving.Profile{{
+		ID: "ns/source/source-uid/reuse-target", Batches: []serving.BatchProfile{{Batch: 1}},
+		Reuse: &serving.ProfileReuseCheck{
+			ConfirmationProfileID: "ns/confirmation/confirmation-uid", Outcome: measurementVerdictAccepted,
+		},
+	}}
+	view.CurrentMeasurements = []profilederivation.MeasurementSelection{{ID: "ns/confirmation/confirmation-uid"}}
+	task.Name, task.UID = "confirmation", "confirmation-uid"
+	if got := assessMeasurementRequest(task, view, view); !got.Scope.Reused ||
+		got.Scope.SchedulerUsed == nil || !*got.Scope.SchedulerUsed {
+		t.Fatalf("confirmation identity lost: %+v", got.Scope)
+	}
+	task.Name, task.UID = "source", "source-uid"
+	if got := assessMeasurementRequest(task, view, view); got.Scope.SchedulerUsed != nil && *got.Scope.SchedulerUsed {
+		t.Fatalf("source reference became confirmation: %+v", got.Scope)
 	}
 }

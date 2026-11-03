@@ -70,6 +70,19 @@ GOMEMLIMIT3072MiB/limit4Gi 유지(rev96 확인). 관측 heap최대880MiB와 soft
 | OperatingPower | scheduler[from−1분,to+1분], 기준 snapshot은 from부터 거꾸로 첫 snapshot 분까지; maximumBoundaryDistance≤1분, meter catalog coverage 사용 |
 | SchedulerObservationPage | scheduler[from,to], 기존 limit에서 종료 |
 파일 이름을 색인으로 envelope 먼저 decode하고 필요한 본문만 읽으며 참조는 해당 시간 catalog로 푼다. archive 이후 실제 없는 범위만 gapUntil/coverage gaps이고 power complete=false를 유지한다. SchedulerHistoryWindow는 현재 없고 도착 경로는 LoadWindow의 Arrivals다. Tick60s는1~2분 파일·5req/s<1MB(이전3.3~6.7MB); 메모리는 선택 요청 수 비례, 기본2h/5req/s는36k행≈47MB다.
+
+#### 전력 bucket 이력 (R18)
+`GET /api/v1/observations/power?from=<RFC3339Nano>&to=<RFC3339Nano>&bucket=5s`는 `{from,to,bucketNanos:5000000000,buckets:[OperatingPowerWindow...]}`를 반환한다. `bucket` 미지정 시 기존 기간 집계 응답·상한·단위·의미는 변경하지 않는다. bucket 조회만 범위 최대1h, bucket 1s–1h, 최대900개이며 초과/빈 duration/잘못된 값은400 InvalidQuery다. 전체 조회의 기존 raw observation 상한 초과도400이며 새 설정은 없다.
+경계는 UTC에서 `time.Time.Truncate(bucket)`로 정렬하고 첫/끝 bucket은 요청 from/to로 자른다. 각 bucket은 기존 whole/active POOL 및 Node의 J·평균W, meter/node identity, coverage·실패·이유를 유지한다. 한 번 확보한 committed local/archive 원자료를 기존 적분/멤버십 reducer로 계산하며, 기간 평균을 반복하거나 메모리 live history를 사용하지 않는다.
+Node의 기존 `samples`는 적분에 사용한 실제 경계 지원 표본도 포함한다. bucket에서만 추가하는 `observedSamples`는 해당 `[from,to)` 안의 중복 제거한 실제 표본 수이고 `firstObservedAt`/`lastObservedAt`은 그 실제 UTC 시각이다(표본 없으면 시각 필드 생략). 경계 표본은 다음 bucket에만 센다. bucket 안 표본이 없는 Node의 J/W는null이고 해당 POOL 합계도null/complete=false이며0·이웃 평균으로 채우지 않는다. 실측0은0이다. 경계 interpolation은 기존 recorded coverage policy만 따르며, 빈 bucket이 없고 동일 coverage가 충족된 구간은 bucket J의 합이 기간 집계 J와 일치한다(평균W는 시간 가중).
+
+R19 opt-in columns: `GET /api/v1/observations/power?from=<RFC3339Nano>&to=<RFC3339Nano>&bucket=5s&format=columns`는 `{from,to,bucketNanos,format:"columns",windows:{scope:[...],wholePoolJoules:[...],...,coverage:[...]},nodes:{node:[[...]],meter:[[...]],...,reasons:[[[...]]]}}`다. windows의 모든 열은 bucket 순서이며 기존 OperatingPowerWindow에서 from/to/nodes를 제외한 **모든** 필드를 같은 이름으로 담는다. nodes의 모든 열은 `[bucket index][그 bucket의 node 순서]`이고 기존 OperatingNodePower의 **모든** 필드다. 동일 node 개수·순서를 가정하거나 UID/name을 합치지 않는다. null node collection과 []도 유지하며 optional 시각/observedSamples/gapUntil의 부재는 해당 열 null로 표현한다(기존 행으로 복원할 때 해당 optional 키를 생략).
+
+시각은 손실 없이 복원한다: `aligned=UTC(from).Truncate(bucketNanos)`, bucket i의 from=`max(from,aligned+i*bucketNanos)`, to=`min(to,aligned+(i+1)*bucketNanos)`다. 표본 시각은 기존 RFC3339Nano 문자열 그대로이고 숫자 반올림·보간·bucket 생략·해상도 변경이 없다. complete, null J/W, 실제0, reasons, readFailures, coverage.sources/gaps는 원래 reducer 결과다. format 생략 시 기존 buckets 및 bucket 없는 기간 집계가 그대로이며 format은 columns만 허용하고 bucket이 필수다. 미지원·중복 query/format·빈 format은400 InvalidQuery다.
+
+control316-network.json의 10 Node·15분·5초 **181 bucket**을 이 열 계약으로 재배열한 압축 해제 JSON 크기 `[추정: Python JSON 재인코딩, 운영 새 API 실측 아님]`: 9개 캡처는 기존863,927–927,104B → **495,113–573,586B**, 1,000,000B 미만이다. 예를 들어 요청720은866,590→498,222B다. float JSON의 언어별 최단표현 차이는 가능하며 Go 회귀에서도 동일181 bucket×10 Node·나노초 시각·null/0/실패를 포함한 fixture를1MB 미만 및 원표현 왕복 동등으로 검사한다. 1시간721 bucket 캡처는3,560,757/3,561,027→2,105,189/2,105,459B `[동일 추정]`여서 **1시간 전체를1MB 미만으로 보장하지 않는다**. 더 긴 범위도 몰래 줄이지 않는다. Query/BFF는 format 허용 후 명시 선택하고 위 열을 원 bucket으로 복원해야 하며 기존 Dashboard는 선택 전까지 기존 응답을 받는다.
+
+
 ### 6.2 투명한 로컬·archive 읽기 (`SCH-42`)
 ObservationArchive=기존 evidencestore.Reader+Lister와 CapacityRecords의 readArchivedStream gzip scanner를 재사용한다. 같은 v1alpha5 prefix/네 stream, cmd/chill-server의 objects를 쓰며 새 저장 형식·TSDB·옛 reader는 없다.
 capture가 mu 아래 로컬 시간/fd/크기를 확보→잠금 밖 List로 필요한 UTC 시간 선택→오름차순 scan한다. **시간 디렉터리 단위 로컬 우선**, 없는 시간만 archive+그 catalog를 읽고 로컬 stream 부재를 archive로 보충하지 않는다. fd 확보 뒤 삭제도 중복/누락을 만들지 않는다. requestID final>open>assigned로 archive assigned/늦은 로컬 final을 병합하고 scheduler/management/power는 같은 시간을 두 소스로 더하지 않는다. page는 합친 시간순 append에 offset/limit, errObservationStop은 archive에서도 정상 종료다.
@@ -77,6 +90,30 @@ capture가 mu 아래 로컬 시간/fd/크기를 확보→잠금 밖 List로 필�
 빈 stream은 archive 객체를 안 쓰므로 필요한 시간/stream 부재는 StreamUnavailable이며 0건 단정/새 manifest는 없다. catalog 누락·gzip/JSON 오류·List/Open 실패는 조회 오류다. power 경계/기준 snapshot 부재는 기존 complete=false/이유, 읽기 전용 오류는 쓰기 readyz를 내리지 않는다.
 Query/LoadWindow/SchedulerObservationPage/OperatingPower/ScanOccupancyRows는 첫 인자 context.Context를 받고 HTTP RequestTimeout/취소 또는 controller capture ctx를 List/Open/scan까지 전달한다. 네트워크는 mu 밖, 기존 limit 유지, 최근 창이 로컬에 모두 있으면 archive 호출은 없다. workload는 정의 병합 후 aggregate/page, load는 단계별 집계, scheduler full/compact는 catalog 복원+coverage, power는 더 오래된 archive 기준 snapshot/catalog까지 역탐색하고 기존 ReduceOperatingPower를 쓴다.
 검사 경계: 로컬/archive 동시 존재·삭제 전후 동일 수/단계/page/J와 출처, late-final 1회 집계, 페이지·삭제 UID·power 앞뒤 표본/오래된 snapshot·내부 누락·store 오류/취소/gzip 종료·조회 중 삭제다.
+
+#### 사건 범위 조회 (R18)
+
+`GET /api/v1/observations/events?from=<RFC3339Nano>&to=<RFC3339Nano>&limit=100&cursor=<nextCursor>`는 committed scheduler action/cluster 행만 `[from,to)`로 읽는다. 두 시각은 필수이며 최대 24시간, limit 기본 100·최대 500(기존 MaxQueryEvents가 더 작으면 그 값)이다. 범위 없는 기존 `?at=` 정확 시점 조회와 `{events:[...]}` 응답은 그대로다. 범위 응답은 `{from,to,events,nextCursor?,coverage}`이며 events의 종류·대상·원시 at·실패/예상시간을 유지한다. 미지원/중복/빈 파라미터, at 혼용, 잘못된 시각/범위/limit/cursor는 400이다.
+
+순서는 실제 event at → stream → append hour/행 위치이며 동일 시각의 서로 다른 사건도 보존한다. 기존 nextCursor 관례를 재사용하되 값은 opaque base64url이다. cursor는 첫 조회의 stream별 committed prefix와 from/to를 담아 나중 append로 페이지가 이동하지 않는다. 같은 from/to로 이어 읽고 끝의 nextCursor 부재에서 멈춘다. 뒤늦게 기록된 사건은 새 범위 조회에서 읽는다. 새 저장 계약이나 서버 pagination 세션은 없고, 페이지 메모리는 limit+1 행으로 한정된다. 로컬/archive 선택·취소·coverage.sources/gaps는 기존 reader를 따른다. 보존 자료 자체가 사라지면 coverage 공백을 표시하며 사건이 없었다고 단정하지 않는다.
+
+#### 라이브 resume 보존 범위 (R18)
+
+fresh(`from=0`) 또는 `(seq,at)` 불일치 resume의 snapshot에는 `history:{reason:"fresh"|"checkpoint-unmatched",replayed:false,requested:{afterSeq,at?,throughSeq},retained:{events:{fromSeq,toSeq}|null,power:{fromSeq,toSeq}|null},gaps:[{scope:"events"|"power",fromSeq,toSeq,reason:"NoRetainedFrames"}]}`를 추가한다. 기존 snapshot 필드는 그대로다. requested는 받은 checkpoint와 snapshot head이고 비교 대상은 현재 hub의 정수 sequence `(afterSeq,throughSeq]`다. 미래 checkpoint처럼 afterSeq≥head면 이 구간이 비어 gaps=[]이며 reason은 여전히 불일치다. 재시작의 이전 sequence를 현재 hub의 동일 sequence와 동일 사건이라고 해석하지 않는다.
+
+retained는 실제 ring의 event/metrics 프레임 각각 첫·마지막 sequence(양끝 포함)다. 한 종류도 없으면 null, 빈 hub는 둘 다 null·gaps=[]다. gaps는 요청 sequence 구간에서 해당 보존 외곽 범위를 뺀 앞·뒤 구간이며 없으면 []다. 이는 그 범위에서 보존 프레임을 제공할 수 없다는 사실이지, 그 초에 관측·사건이 발생했다는 주장이나 손실 건수가 아니다. sequence 사이 다른 종류 프레임의 정상 interleave는 공백으로 만들지 않는다. 전력 표본 null/실제 bucket 시각/내부 공백은 원 metrics의 bucketAt/nodes/gaps가 권위다. 이 메타데이터는 과거 payload 자체를 snapshot에 넣거나 보존 연속성·시간 길이를 보장하지 않는다(`replayed:false`). 사건 복원은 위 bounded REST 범위를 사용한다.
+
+일치한 resume의 bounded replay는 기존과 동일하며 별도 history 응답을 삽입하지 않는다. snapshot 선택/구독 등록은 같은 hub 잠금에서 처리하며 기존 600프레임/8MiB ring·602프레임/2MiB 큐·1MiB 프레임 상한, slow-consumer snapshot barrier, 저장 commit 성공 후 publish 순서를 유지한다.
+
+#### 측정 mutation의 라이브 사건 (R19)
+
+측정 POST/DELETE의 `validated`와 실제 종결 audit는 `SchedulerRecord`의 durable commit 성공 뒤 `HandlerConfig.OnMutationAction`으로 기존 live action publisher에 전달한다. evaluation mutation도 같은 audit 저장 경로를 사용한다. 저장 실패에는 callback/WS 발행이 없으며 최종 audit 저장 실패의 기존 오류 응답을 유지한다. decision의 commit-before-publish 순서와 같은 방식이며 새 event bus/outbox/설정은 없다.
+
+`httpapi.ProjectAction`은 committed `SchedulerActionObservation` 한 행을 라이브와 `/api/v1/observations/events` 양쪽에서 동일하게 투영한다. projector는 serving core/kube와 live DTO를 함께 읽을 수 있는 HTTP adapter에 두며, 독립 `serving-live` 패키지는 core/kube를 import하지 않는다. 원본 phase/status·시작/종료 시각·오류·Node/Workload identity·예상 시간 출처를 유지한다. live snapshot의 최근 action 100개, 기존 sequence·bounded replay·ring/큐 상한을 그대로 사용하며 REST 이력을 라이브에서 재구성하지 않는다.
+
+오류 없는 `NOT_SUBMITTED`는 `phase=completed` + `status=NOT_SUBMITTED`(`result.status`도 동일)로 표현하는 **중립 종결**이며, 성공 여부는 원본 `status`로 판정한다. 실행 성공이나 제출 완료를 뜻하지 않는다. 실제 error가 있는 `NOT_SUBMITTED`는 failed이고 complete·partial·failed·기타 terminal 상태의 기존 투영은 바꾸지 않는다. 새 phase/키 없이 동일 projector를 쓰므로 과거 committed 이력과 라이브/재접속 replay도 같은 의미다. 소비자는 phase만 보고 성공으로 세지 말고 status로 사전 검사를 구분한다.
+
+
 ### 6.3 측정 CR 두 종류의 읽기 projection (API B1, `SCH-44`, `DB-FR-45`)
 GET `/api/v1/namespaces/{namespace}/operation-cost-measurements[/{name}]`, `.../dispatch-occupancy-measurements[/{name}]`: 목록 `{items:[projection]}` 이름순/빈[], 상세 projection/없으면404. whitelist=`{kind,metadata:{namespace,name,uid,resourceVersion,creationTimestamp},node,conditions,status,references}`. cost status=`{phase,reason,steps:[{name,key,verdict}]}`, occupancy=`{phase,reason,powerMode,perRequestNanos,throughput,result}`; 실패/미완료/결과 없음은 그대로,0 대체 없음.
 conditions: occupancy `{workload,batchEnergyOptimization,batch,supplyMode,warmupSeconds,durationSeconds,workers}`, cost `{steps:[{name,kind,powerMode?,batchEnergyOptimization?,idleDurationSeconds?}]}`만 원 spec에서 복사한다. 참조는 CR namespace 안, 미지정은 미지정이며 inputsJSON/전체spec/raw는 비노출이다. references=`{cr:{apiVersion,kind,namespace,name,uid},evidence:[{store,key}]}`; 실제 status.steps[].key/result만 사용, 결과 없으면[], 추측 key/임의 URL/호스트 경로 없음. UID로 재생성을 구분하고 기존 객체 권한을 따른다.
@@ -86,6 +123,9 @@ GET `/api/v1/experiments`는 `{items:[summary]}`(from내림차순/id순), `/{id}
 evaluation summarize의 실제 phase 경계/KPI/출처를 `serving/experiments.v1alpha1/{id}/summary.json`에 PutImmutable한다. 원자료 먼저·최종 요약 마지막1회, 정정은 새ID다. 서버는 기존 objects Reader/Lister로 읽기만 하며 실행/재계산·새DB·캠페인 API가 없다. 안전한 단일 id·prefix 제한·non-resource GET authorize/HTTP ctx를 따른다.
 `go run ./hack/evaluation/publish --config <private-store.json> --manifest <private-manifest.json>`: config=`logicalStore,bucket,endpoint,region,accessKeyID,secretAccessKey`(선택sessionToken,tempDir), 공개 응답 금지. manifest `{store,key,localPath}`는 같은 실험 prefix 원자료/summary만 허용한다. 원자료도 Created만 허용하여 부분 중단 후 Existing이면 즉시 충돌/새ID이며 digest/내용 비교로 동일 실행을 추정하지 않는다. 요약 없는 실행은 완료 목록 제외; 목록/상세 일치·덮어쓰기·404/store 실패·권한/이탈·실패 보존이 검사 경계다.
 현재 불변 게시 조회 계약은 유지한다.
+
+R19 목록 페이지: `GET /api/v1/experiments?offset=0&limit=2`는 기존 정렬·행 전체(facts, comparisons, outcome, stages/KPI, sources)를 보존하며 `{items:[...],page:{offset:0,limit:2,total:11,nextOffset:2}}`를 반환한다. 마지막/범위 밖 페이지에는 nextOffset이 없고 범위 밖 items는 []다. limit 1–50(생략25), offset 0–1000000(생략0)은 기존 profiles/evaluations inputs와 같은 계약이며 중복·빈·잘못된 값·미지원 query는400 InvalidQuery다. 둘 다 생략하면 page 없이 기존 전체 목록이다. 별도 summary view로 사실/KPI를 제거하지 않으며 단건 정의도 그대로다. 읽을 때마다 store에서 목록을 새로 읽으므로 동시 새 publication이 생기면 offset이 이동할 수 있다. 11건/1,646,436B 관측에서 limit=2는 평균 크기 기준 약299KB `[추정]`이며 개별 행 크기 상한을 보장하지 않는다. Query/BFF 허용 query와 모든 목록 소비자는 이 명시 페이지 계약을 채택한 후 nextOffset이 없어질 때까지 필요한 범위를 읽어야 한다; 이 서버 변경만으로 기존 Dashboard 트래픽이 줄지는 않는다.
+
 ### 6.5 축약 상태 조회 (API B3, `SCH-46`)
 GET `/api/v1/scheduler/state?view=summary`=`{at,nodes,instances,routing,decision:{id,at,status,reasons,targetID},actions}`. 노드 식별/전력모드/ready/measurement/reasons, 인스턴스 식별/node/소유·배분UID/profileID/ready/routable/이유, planned/running action ID/종류/상태/의존/elapsedNanos/예상 시간만 포함한다. decision.id는 기존 판단 UTC RFC3339Nano, routable은 UID별 서버readback(T2)이며 UI 추론 없음.
 scheduler_summary.go 독립 whitelist DTO를 같은 controller 상태에서 투영한다. 원 struct embed/전체JSON 생성 후 삭제는 안 하며 profile/κ/options/costs/후보/과거results/raw는 제외한다. summary는/state만 허용·BFF 기본compact/full 의미와 권한 유지. 검사: 원본 ID/노드/배분/action 일치, 큰 options에 크기 비례 없음, 잘못/중복view 거절·비노출이다.

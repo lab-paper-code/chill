@@ -30,6 +30,8 @@ function harness(query="",responses:Record<string,unknown>={}){
     "@/components/screen":{Screen:"main",Rows:"rows",Row:"row",RowDialog:"dialog",Facts:"facts",Empty:"empty"},
     "@/components/data-table":{DataTable:"table"},"@/components/ui/button":{Button:"button"},"@/components/ui/input":{Input:"input"},
     "@/components/ui/sheet":{},"@/components/records-navigation":{RecordsNavigation:"navigation",RecordsRange:"range"},
+    "@/components/ui/chart":{ChartContainer:"chart",ChartTooltip:"tooltip",ChartTooltipContent:"tooltip-content"},
+    recharts:{BarChart:"bar-chart",Bar:"bar",CartesianGrid:"chart-grid",XAxis:"x-axis",YAxis:"y-axis"},
   }
   function load(file:string){
     const exports:Record<string,(props:Record<string,unknown>)=>Element>={}

@@ -1,7 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { MutationCache, QueryCache, QueryClient, QueryClientProvider, useMutation, useQueries, useQuery } from "@tanstack/react-query"
+import { MutationCache, QueryCache, QueryClient, QueryClientProvider, useIsFetching, useIsMutating, useMutation, useQueries, useQuery } from "@tanstack/react-query"
+import type { UseQueryOptions } from "@tanstack/react-query"
 import { useRouter } from "next/navigation"
 import type { PublicConfig } from "@/lib/server-config"
 import { Button } from "@/components/ui/button"
@@ -16,10 +17,22 @@ import { parseMeasurementJSON } from "@/lib/measurement-summary"
 
 export type RelayResponse = { status: number; body: string; data: unknown; requestID: string | null; workloadUID: string | null; relayTiming: string | null; browserRTT: number }
 export class ApiError extends Error {
-  constructor(public status: number, public body: string, public data: unknown, public unknownOutcome = false, public requestID: string | null = null, public workloadUID: string | null = null, public relayTiming: string | null = null, public browserRTT: number | null = null) {
-    super(status ? `HTTP ${status}` : "결과 미확인 · 응답 미수신")
+  constructor(public status: number, public body: string, public data: unknown, public unknownOutcome = false, public requestID: string | null = null, public workloadUID: string | null = null, public relayTiming: string | null = null, public browserRTT: number | null = null, public retryAfter: number = 2) {
+    super(isCoverageWarming({status,data}) ? "초기화 중" : status ? `HTTP ${status}` : "결과 미확인 · 응답 미수신")
     this.name = "ApiError"
   }
+}
+export function isCoverageWarming(error:unknown):boolean {
+  const value=error as {status?:number;data?:{code?:unknown}}|null
+  return value?.status===503&&value.data?.code==="CoverageWarming"
+}
+export const warmingRetry=(attempt:number,error:unknown)=>isCoverageWarming(error)&&attempt<180
+export const warmingDelay=(_attempt:number,error:unknown)=>Math.min(5,Math.max(1,error instanceof ApiError&&Number.isFinite(error.retryAfter)?error.retryAfter:2))*1000
+
+function InitializationStatus() {
+  const queries=useIsFetching({predicate:query=>isCoverageWarming(query.state.fetchFailureReason)})
+  const mutations=useIsMutating({predicate:mutation=>isCoverageWarming(mutation.state.failureReason)})
+  return queries+mutations>0?<div role="status" className="notice">초기화 중</div>:null
 }
 export function decodeResponse(body:string,decoder:(body:string)=>unknown):unknown {
   try {return decoder(body)}
@@ -41,7 +54,7 @@ function clearUnauthorized(error:Error) {
 
 export function SessionProvider({children}: {children:React.ReactNode}) {
   const router = useRouter()
-  const [client,setClient] = React.useState(() => new QueryClient({queryCache:new QueryCache({onError:clearUnauthorized}),mutationCache:new MutationCache({onError:clearUnauthorized}),defaultOptions:{queries:{retry:false,refetchOnWindowFocus:false,refetchOnReconnect:false},mutations:{retry:false}}}))
+  const [client,setClient] = React.useState(() => new QueryClient({queryCache:new QueryCache({onError:clearUnauthorized}),mutationCache:new MutationCache({onError:clearUnauthorized}),defaultOptions:{queries:{retry:warmingRetry,retryDelay:warmingDelay,refetchOnWindowFocus:false,refetchOnReconnect:false},mutations:{retry:warmingRetry,retryDelay:warmingDelay}}}))
   const [signals] = React.useState(() => new Set<AbortController>())
   const [token,setToken] = React.useState("")
   const [epoch,setEpoch] = React.useState(0)
@@ -121,7 +134,7 @@ export function SessionProvider({children}: {children:React.ReactNode}) {
       <main className="login-form" id="main-content"><h2>접속하기</h2>{signInForm}{configError && <p role="alert">접속 설정을 불러오지 못했어요. 잠시 후 다시 확인해 주세요.</p>}</main>
     </div> : config && <Session.Provider value={{token,config,epoch,signals}}>
       <Account.Provider value={{open:accountOpen,setOpen:open => {setAccountOpen(open); if (!open) setDraft("")},form:signInForm,signOut:() => void changeIdentity("")}}>
-        <React.Fragment key={epoch}>{children}</React.Fragment>
+        <React.Fragment key={epoch}><InitializationStatus/>{children}</React.Fragment>
       </Account.Provider>
     </Session.Provider>}
   </QueryClientProvider>
@@ -140,7 +153,7 @@ export function AccountControl() {
   </Dialog>
 }
 
-async function relay(path:string,token:string,signal:AbortSignal,method="GET",body?:unknown,version?:string,timeout?:string):Promise<RelayResponse> {
+export async function relay(path:string,token:string,signal:AbortSignal,method="GET",body?:unknown,version?:string,timeout?:string):Promise<RelayResponse> {
   let response:Response | null = null
   let text:string
   const started = performance.now()
@@ -155,7 +168,8 @@ async function relay(path:string,token:string,signal:AbortSignal,method="GET",bo
   try {data = text ? JSON.parse(text) : null} catch { /* native response may be plain text */ }
   if (!response.ok) {
     const unknown = method !== "GET" && !!(data && typeof data === "object" && "unknownOutcome" in data && data.unknownOutcome)
-    throw new ApiError(response.status,text,data,unknown,response.headers.get("X-Chill-Request-ID"),response.headers.get("X-Chill-Workload-UID"),response.headers.get("X-Chill-Relay-Timing"),browserRTT)
+    const retryAfter=response.headers.get("Retry-After"),seconds=retryAfter===null?2:Number(retryAfter)
+    throw new ApiError(response.status,text,data,unknown,response.headers.get("X-Chill-Request-ID"),response.headers.get("X-Chill-Workload-UID"),response.headers.get("X-Chill-Relay-Timing"),browserRTT,Number.isFinite(seconds)?seconds:2)
   }
   return {status:response.status,body:text,data,requestID:response.headers.get("X-Chill-Request-ID"),workloadUID:response.headers.get("X-Chill-Workload-UID"),relayTiming:response.headers.get("X-Chill-Relay-Timing"),browserRTT}
 }
@@ -171,12 +185,12 @@ export function useChillQuery<T>(path:string,options:{enabled?:boolean;poll?:boo
   const query = useQuery<T,ApiError>({queryKey:["chill",path],enabled:!!token && options.enabled !== false,queryFn:async ({signal}) => {
     const response = await relay(path,token,signal)
     return (options.decoder ? decodeResponse(response.body,options.decoder) : response.data) as T
-  },retry:false,refetchOnWindowFocus:false,refetchOnReconnect:false,refetchInterval:query => options.poll && visible && ![401,403].includes(query.state.error?.status ?? 0) ? config.pollIntervalMs : false,refetchIntervalInBackground:false})
+  },retry:warmingRetry,retryDelay:warmingDelay,refetchOnWindowFocus:false,refetchOnReconnect:false,refetchInterval:query => options.poll && visible && ![401,403].includes(query.state.error?.status ?? 0) ? config.pollIntervalMs : false,refetchIntervalInBackground:false})
   return {...query,data:query.error && [401,403].includes(query.error.status) ? undefined : query.data}
 }
 export function useChillQueries<T>(paths:readonly string[],options:{enabled?:boolean;decoder?:(body:string)=>unknown}={}) {
   const {token}=useSession()
-  return useQueries({queries:[...new Set(paths)].map(path=>({
+  return useQueries<Array<UseQueryOptions<T,ApiError>>>({queries:[...new Set(paths)].map(path=>({
     queryKey:["chill",path],enabled:!!token&&options.enabled!==false,
     queryFn:async ({signal}:{signal:AbortSignal}):Promise<T>=>{
       const response=await relay(path,token,signal)
@@ -199,12 +213,18 @@ export function useWorkloadDefinitions(uids:readonly string[],range:{from:string
 }
 export type ChillMutationInput = {path:string;method:"POST"|"PUT"|"DELETE";body?:unknown;version?:string;timeout?:string}
 export function useChillMutation() {
-  const {token,signals} = useSession()
-  return useMutation<RelayResponse,ApiError,ChillMutationInput>({retry:false,mutationFn:async input => {
+  const {token,epoch,signals} = useSession()
+  const scope=React.useRef<{token:string;epoch:number;controller:AbortController}|null>(null)
+  React.useEffect(()=>{
+    const current={token,epoch,controller:new AbortController()}
+    scope.current=current
+    signals.add(current.controller)
+    return ()=>{current.controller.abort();signals.delete(current.controller)}
+  },[token,epoch,signals])
+  const active=()=>!!scope.current&&!scope.current.controller.signal.aborted&&scope.current.token===token&&scope.current.epoch===epoch
+  return useMutation<RelayResponse,ApiError,ChillMutationInput>({retry:(attempt,error)=>active()&&warmingRetry(attempt,error),retryDelay:warmingDelay,mutationFn:async input => {
+    if(!active())throw new ApiError(0,"요청 취소됨",null)
     if (!token) throw new ApiError(401,"인증 필요",null)
-    const controller = new AbortController()
-    signals.add(controller)
-    try { return await relay(input.path,token,controller.signal,input.method,input.body,input.version,input.timeout) }
-    finally {signals.delete(controller)}
+    return relay(input.path,token,scope.current!.controller.signal,input.method,input.body,input.version,input.timeout)
   }})
 }

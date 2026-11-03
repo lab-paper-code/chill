@@ -25,6 +25,8 @@ test("selected service evidence retains configured percentile, zero prediction, 
     "@/lib/client":{useSession:()=>({config:{maxWindowHours:24}}),useWorkloadDefinitions:()=>[],useChillQuery:(path:string)=>{calls.push(path);return {data:path==="v1/scheduler"?view:path.startsWith("v1/observations/load?")?load:path==="v1/workloads?view=summary"?[{desired:{metadata:{uid:definition.uid,name:definition.name}}}]:[],error:null}}},
     "@/lib/scheduler":scheduler,"@/lib/workload-identity":identity,"@/lib/date-time":dates,
     "@/lib/live-display":liveDisplay,
+    "@/components/ui/chart":{},"recharts":{},
+    "./power-series":{PowerTimeline:()=>null},
     "@/features/scheduler-profiles":{},"@/features/scheduler-capacity":{},"@/lib/capacity":{},"@/lib/labels":{statusLabel:(value:string)=>value},"@/lib/source-export":{},
     "@/components/read-region":{QueryGate:container,SourceJSON:()=>null,SourceExport:()=>null,StatusBadge:container},
     "@/components/ui/button":{Button:container},"@/components/screen":{Facts:()=>null},
@@ -59,6 +61,8 @@ test("snapshot deep links freeze the first response and require explicit latest 
     "@/lib/client":{useChillQuery:()=>({data})},"@/lib/scheduler":scheduler,
     "@/lib/labels":{},"@/lib/capacity":{},"@/lib/date-time":{},"@/lib/workload-identity":{},
     "@/lib/live-display":liveDisplay,
+    "@/components/ui/chart":{},"recharts":{},
+    "./power-series":{PowerTimeline:()=>null},
     "@/features/scheduler-profiles":{},"@/features/scheduler-capacity":{},
     "@/components/read-region":{},"@/components/screen":{},"@/components/ui/button":{},
     "@/components/data-table":{},"@/lib/source-export":{},"next/link":{},
@@ -91,4 +95,38 @@ test("snapshot deep links freeze the first response and require explicit latest 
   tree=render()
   assert.equal(nodes(tree).find(node=>typeof node.type==="function"&&node.type.name==="SnapshotDetails")?.props.snapshot,latest.state.snapshot)
   assert.equal(nodes(tree).some(node=>node.props.children==="새 판단 수신"),false)
+})
+
+test("power overview preserves server interval aggregates and zero versus unavailable node watts",()=>{
+  const require=createRequire(import.meta.url),calls:string[]=[]
+  const power={from:"2026-11-03T00:00:00Z",to:"2026-11-03T00:05:00Z",complete:false,wholePoolJoules:68560,wholePoolMeanWatts:228.55,activePoolJoules:0,activePoolMeanWatts:0,reasons:[],nodes:[
+    {node:{uid:"a",name:"고정"},joules:0,meanWatts:0,samples:300,reasons:[],sourceTimestampAbsent:false},
+    {node:{uid:"b",name:"미관측"},joules:null,meanWatts:null,samples:0,reasons:[],sourceTimestampAbsent:false},
+  ]}
+  const wrap=({children}:{children?:ReactNode})=>createElement("div",null,children)
+  const modules:Record<string,unknown>={
+    "next/link":{default:wrap},"next/navigation":{},"@/lib/client":{useChillQuery:(path:string)=>{calls.push(path);return {data:power}}},
+    "@/lib/scheduler":scheduler,"@/lib/live-display":liveDisplay,"@/lib/workload-identity":identity,"@/lib/date-time":dates,
+    "@/features/scheduler-profiles":{},"@/features/scheduler-capacity":{},"@/lib/capacity":{},"@/lib/labels":{},"@/lib/source-export":{},
+    "@/components/read-region":{QueryGate:wrap,SourceJSON:()=>null,SourceExport:()=>null,StatusBadge:wrap},
+    "@/components/screen":{Facts:({items}:{items:[string,ReactNode][]})=>createElement("dl",null,items.map(([label,value])=>createElement("div",{key:label},label,":",value)))},
+    "@/components/data-table":{DataTable:({data,columns}:{data:unknown[];columns:{key:string;value:(row:unknown)=>ReactNode}[]})=>createElement("table",null,createElement("tbody",null,data.map((row,index)=>createElement("tr",{key:index},columns.map(column=>createElement("td",{key:column.key},column.value(row)))))))},
+    "@/components/ui/button":{Button:wrap},"@/components/ui/chart":{ChartContainer:wrap,ChartTooltip:()=>null,ChartTooltipContent:()=>null},
+    recharts:{BarChart:wrap,Bar:()=>null,CartesianGrid:()=>null,XAxis:()=>null,YAxis:()=>null},
+    "./power-series":{PowerTimeline:()=>null},
+  }
+  const exports:Record<string,unknown>={}
+  const compiled=transpileModule(readFileSync(new URL("../features/scheduler.tsx",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  new Function("require","exports",compiled)((name:string)=>name in modules?modules[name]:require(name),exports)
+  const {PowerInterval}=exports as typeof Screen
+  const html=renderToStaticMarkup(createElement(PowerInterval,{from:power.from,to:power.to}))
+  assert.match(html,/68\.56 kJ/)
+  assert.match(html,/228\.55 W/)
+  assert.match(html,/0 W/)
+  assert.match(html,/미제공/)
+  assert.match(html,/관측 공백 있음/)
+  assert.doesNotMatch(html,/노드별 평균 전력/)
+  const request=new URL(calls[0],"https://dashboard.invalid")
+  assert.equal(request.searchParams.get("from"),power.from)
+  assert.equal(request.searchParams.get("to"),power.to)
 })

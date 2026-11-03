@@ -37,6 +37,7 @@ type MeasurementCheck struct {
 	Code      string   `json:"code"`
 	Result    string   `json:"result"`
 	Message   string   `json:"message"`
+	Reason    string   `json:"reason,omitempty"`
 	SourceIDs []string `json:"sourceIds"`
 }
 type MeasurementChecklist struct {

@@ -242,6 +242,40 @@ func (p measurementPreflightReader) Read(
 	return p.measurements.completePreflight(ctx, snapshot), nil
 }
 
+// Result selection comes from the accepted catalog, never a condition-matched cell.
+type measurementResultReader struct {
+	read         func(context.Context, string, string) (queryapi.BatchEnergyOptimizationResultSnapshot, error)
+	measurements *measurementService
+}
+
+func (p measurementResultReader) Read(
+	ctx context.Context, namespace, name string,
+) (queryapi.BatchEnergyOptimizationResultSnapshot, error) {
+	snapshot, err := p.read(ctx, namespace, name)
+	if err != nil || p.measurements.catalog == nil {
+		return snapshot, err
+	}
+	read, err := p.measurements.catalog(ctx)
+	if err != nil || read.Accepted == nil || read.Accepted.CurrentMeasurements == nil {
+		return snapshot, nil
+	}
+	used := false
+	id := coverageRequestID(snapshot.Campaign)
+	view := adoptedCatalogView(read)
+	for _, profile := range view.Profiles {
+		profileID := profile.ID
+		if profile.Reuse != nil {
+			profileID = profile.Reuse.ConfirmationProfileID
+		}
+		if profileID == id && measurementProfileCurrent(view, profile) {
+			used = true
+			break
+		}
+	}
+	snapshot.SchedulerUsed = &used
+	return snapshot, nil
+}
+
 // Keep the native Kubernetes list and each complete CR intact; assessment is
 // only an additional read-projection field.
 func projectMeasurementList(list api.BatchEnergyOptimizationList, assessments []json.RawMessage) any {
