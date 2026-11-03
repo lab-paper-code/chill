@@ -6,28 +6,27 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	evidences3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	campaign "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	campaignevidence "github.com/lab-paper-code/chill/internal/profiling/campaign/evidence"
 	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	evidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	evidencekube "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence/kube"
 	projection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
-	runconfig "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/queryapi"
 	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const statisticsEvidenceMissingReason = "RetainedEvidenceMissing"
+const statisticsNotRecordedReason = "StatisticsNotRecorded"
 
 func newRetainedEvidenceLoader(
 	reader client.Reader,
@@ -60,7 +59,7 @@ func newMeasurementStatistics(
 			return nil, &reason, nil
 		}
 		if errors.Is(err, errStatisticsNotRecorded) {
-			reason := "StatisticsNotRecorded"
+			reason := statisticsNotRecordedReason
 			return nil, &reason, nil
 		}
 		return statistics, nil, err
@@ -78,85 +77,35 @@ func readMeasurementStatistics(
 	cr *api.BatchEnergyOptimization,
 	result campaign.ResultRecord,
 ) (*queryapi.BatchEnergyOptimizationStatistics, error) {
-	spec := result.Spec()
-	state := cr.Spec.State
-	if spec.MeasurementState != (campaign.ResultMeasurementState{
-		TargetNode: state.TargetNode, ModelSpec: state.Candidate.ModelSpec, DeviceClass: state.Candidate.DeviceClass,
-		ExecutionPath: state.Candidate.ExecutionPath, PowerMode: state.Candidate.PowerMode,
-	}) {
-		return nil, errors.New("result contradicts campaign measurement state")
+	retainedReader := campaignevidence.Reader{
+		Runs: statisticsRuns{Reader: reader},
+		ReadObject: func(ctx context.Context, id evidencestore.ObjectIdentity) ([]byte, error) {
+			return readStatisticsObject(ctx, objects, id)
+		},
+		LoadActive: func(
+			ctx context.Context, run *api.ProfilingRun, id evidencestore.ObjectIdentity,
+		) (evidence.VerifiedEvidence, error) {
+			retained, err := loader.Load(ctx, run, id)
+			return retained.ForDerivation(), err
+		},
+		LoadIdle: func(
+			ctx context.Context, run *api.ProfilingRun, id evidencestore.ObjectIdentity,
+		) (evidence.VerifiedIdleEvidence, error) {
+			retained, err := loader.LoadIdle(ctx, run, id)
+			return retained.ForDerivation(), err
+		},
 	}
-	planIdentity := statisticsObjectIdentity(spec.CurvePlan)
-	payload, err := readStatisticsObject(ctx, objects, planIdentity)
+	retained, err := retainedReader.LoadPlan(ctx, cr, result)
 	if err != nil {
-		return nil, err
+		return nil, statisticsCampaignError(err)
 	}
-	plan, err := derivation.DecodeCurvePlan(payload)
+	trials, err := retainedReader.ReadTrials(ctx, cr, retained)
 	if err != nil {
-		return nil, err
+		return nil, statisticsCampaignError(err)
 	}
-	shared := plan.Shared()
-	if spec.CurvePlan.SchemaVersion != plan.SchemaVersion() || shared.DeviceClass != state.Candidate.DeviceClass ||
-		shared.Artifact.ExecutionPath != state.Candidate.ExecutionPath || shared.PowerMode != state.Candidate.PowerMode ||
-		shared.MetricSource.NodeName != state.TargetNode {
-		return nil, errors.New("curve plan contradicts campaign measurement state")
-	}
-	var active []evidence.VerifiedEvidence
-	var idle []evidence.VerifiedIdleEvidence
-	activeSources := make(map[int][]evidencestore.ObjectIdentity)
-	idleSources := []evidencestore.ObjectIdentity{planIdentity}
-	seenRaw := make(map[evidencestore.ObjectLocation]bool)
-	seenPods := make(map[string]bool)
-	for _, ref := range spec.CompletedTrials {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		run := &api.ProfilingRun{}
-		if err := reader.Get(ctx, types.NamespacedName{Namespace: ref.Run.Namespace, Name: ref.Run.Name}, run); err != nil {
-			if apierrors.IsNotFound(err) {
-				return nil, fmt.Errorf("%w: %w", errStatisticsRunMissing, err)
-			}
-			return nil, err
-		}
-		if err := validateStatisticsRun(cr, run, ref); err != nil {
-			return nil, err
-		}
-		identity := statisticsObjectIdentity(ref.Evidence)
-		var execution evidence.ExecutionEvidence
-		if ref.Measurement.WorkloadMode == campaign.WorkloadModeIdle {
-			retained, err := loader.LoadIdle(ctx, run, identity)
-			if err != nil {
-				return nil, err
-			}
-			verified := retained.ForDerivation()
-			execution, _, err = verified.Records()
-			if err != nil {
-				return nil, err
-			}
-			idle = append(idle, verified)
-			idleSources = append(idleSources, identity, execution.RawMeasurement)
-		} else {
-			retained, err := loader.Load(ctx, run, identity)
-			if err != nil {
-				return nil, err
-			}
-			verified := retained.ForDerivation()
-			execution, _, err = verified.Records()
-			if err != nil {
-				return nil, err
-			}
-			active = append(active, verified)
-			batch := ref.Measurement.Batch
-			activeSources[batch] = append(activeSources[batch], identity, execution.RawMeasurement)
-		}
-		if err := validateStatisticsRunConfig(run, execution.RunConfig); err != nil {
-			return nil, err
-		}
-		if seenRaw[execution.RawMeasurement.Location()] || seenPods[execution.Terminal.Pod.UID] {
-			return nil, errors.New("completed trials reuse raw evidence or execution Pod")
-		}
-		seenRaw[execution.RawMeasurement.Location()], seenPods[execution.Terminal.Pod.UID] = true, true
-	}
+	plan, shared := retained.Plan, retained.Plan.Shared()
+	active, idle := trials.Active, trials.Idle
+	activeSources, idleSources := trials.ActiveSources, trials.IdleSources
 	if len(active) == 0 || len(idle) == 0 {
 		return nil, errStatisticsNotRecorded
 	}
@@ -174,7 +123,7 @@ func readMeasurementStatistics(
 				UID:       string(cr.UID),
 			},
 			ResultReference: derivation.RawEvidenceIdentity{
-				Store: cr.Status.Result.Store, Key: cr.Status.Result.Key, Size: cr.Status.Result.Size,
+				Store: retained.ResultIdentity.Store, Key: retained.ResultIdentity.Key, Size: retained.ResultIdentity.Size,
 			},
 			Condition: shared,
 			PointPolicy: derivation.PointPolicy{
@@ -255,10 +204,6 @@ func addRetainedMeasurementCaptureFacts(
 	return nil
 }
 
-func statisticsObjectIdentity(ref campaign.StoredObjectReference) evidencestore.ObjectIdentity {
-	return evidencestore.ObjectIdentity{Store: ref.Store, Key: ref.Key, Size: ref.Size}
-}
-
 func readStatisticsObject(
 	ctx context.Context,
 	objects evidencestore.Reader,
@@ -282,81 +227,91 @@ func readStatisticsObject(
 	return payload, nil
 }
 
-func validateStatisticsRun(
-	cr *api.BatchEnergyOptimization,
-	run *api.ProfilingRun,
-	ref campaign.CompletedTrialReference,
-) error {
-	owner := metav1.GetControllerOf(run)
-	if run.Namespace != cr.Namespace || string(run.UID) != ref.Run.UID || owner == nil ||
-		owner.UID != cr.UID || owner.Kind != "BatchEnergyOptimization" || owner.APIVersion != api.GroupVersion.String() ||
-		run.DeletionTimestamp != nil {
-		return errors.New("completed Run identity or campaign ownership mismatch")
-	}
-	if run.Spec.MeasurementStateSpec.Candidate != cr.Spec.State.Candidate ||
-		run.Spec.TargetNode != cr.Spec.State.TargetNode ||
-		int(run.Spec.Measurement.Batch) != ref.Measurement.Batch {
-		return errors.New("completed Run measurement contradicts result")
-	}
-	mode := campaign.WorkloadModeActive
-	if run.Spec.Measurement.WorkloadMode == "idle-model-loaded" {
-		mode = campaign.WorkloadModeIdle
-	} else if run.Spec.Measurement.WorkloadMode != "saturated-serial-fixed-batch" {
-		return errors.New("completed Run workload mode is unsupported")
-	}
-	if mode != ref.Measurement.WorkloadMode {
-		return errors.New("completed Run workload mode contradicts result")
-	}
-	for _, kind := range []string{api.ProfilingRunConditionExecutionComplete, api.ProfilingRunConditionEvidenceVerified} {
-		condition := meta.FindStatusCondition(run.Status.Conditions, kind)
-		if condition == nil || condition.Status != metav1.ConditionTrue ||
-			condition.ObservedGeneration != run.Generation {
-			return errors.New("completed Run lacks current verified completion")
-		}
-	}
-	if run.Status.Evidence == nil {
-		return errors.New("completed evidence reference is absent from Run")
-	}
-	retained := run.Status.Evidence
-	identity := evidencestore.ObjectIdentity{Store: retained.Store, Key: retained.Key, Size: retained.Size}
-	if identity != statisticsObjectIdentity(ref.Evidence) || retained.SchemaVersion != ref.Evidence.SchemaVersion {
-		return errors.New("completed evidence reference contradicts Run")
-	}
-	return validateStatisticsRunProtocol(cr, run, mode)
-}
+// statisticsRuns adds only Query's stricter owner kind/version and missing-Run
+// distinction. Retained Job/Secret lookup still uses the original reader.
+type statisticsRuns struct{ client.Reader }
 
-func validateStatisticsRunConfig(run *api.ProfilingRun, config runconfig.RunConfig) error {
-	measurement := run.Spec.Measurement
-	if config.Candidate.Inputs.ModelSpec.Name != run.Spec.Candidate.ModelSpec ||
-		config.State.DeviceClass != run.Spec.Candidate.DeviceClass ||
-		config.Candidate.ExecutionPath != run.Spec.Candidate.ExecutionPath ||
-		config.State.PowerMode != run.Spec.Candidate.PowerMode ||
-		config.TargetNode.Name != run.Spec.TargetNode ||
-		config.Measurement.Batch != int(measurement.Batch) ||
-		config.Measurement.WorkloadMode != measurement.WorkloadMode {
-		return errors.New("stored RunConfig contradicts completed Run state")
+func (r statisticsRuns) Get(
+	ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption,
+) error {
+	if err := r.Reader.Get(ctx, key, obj, opts...); err != nil {
+		if apierrors.IsNotFound(err) {
+			return fmt.Errorf("%w: %w", errStatisticsRunMissing, err)
+		}
+		return err
 	}
-	if config.Measurement.WarmupIterations != int(measurement.WarmupIterations) ||
-		config.Measurement.DurationSeconds != int(measurement.DurationSeconds) ||
-		config.Measurement.SettlingDurationSeconds != int(
-			ptr.Deref(measurement.SettlingDurationSeconds, 0),
-		) ||
-		config.Measurement.DurationToleranceSeconds != 0 &&
-			config.Measurement.DurationToleranceSeconds != ptr.Deref(
-				measurement.DurationToleranceSeconds,
-				.5,
-			) ||
-		(config.Measurement.Dataset == nil) != (measurement.Dataset == "") ||
-		(config.Measurement.Dataset != nil && config.Measurement.Dataset.Name != measurement.Dataset) ||
-		config.Metrics.IntervalMilliseconds != int(
-			run.Spec.MetricObservation.IntervalMilliseconds,
-		) ||
-		config.Metrics.TimeoutMilliseconds != int(run.Spec.MetricObservation.TimeoutMilliseconds) ||
-		config.Metrics.DurationSeconds != int(run.Spec.MetricObservation.DurationSeconds) {
-		return errors.New("stored RunConfig contradicts completed Run protocol")
+	owner := metav1.GetControllerOf(obj)
+	if owner == nil || owner.Kind != "BatchEnergyOptimization" || owner.APIVersion != api.GroupVersion.String() {
+		return errors.New("completed Run identity or campaign ownership mismatch")
 	}
 	return nil
 }
+
+// statisticsCampaignError keeps Query's public reasons while the common reader
+// owns reconstruction and validation. Dependency errors retain their identities.
+func statisticsCampaignError(err error) error {
+	message := err.Error()
+	cause := errors.Unwrap(err)
+	if cause != nil {
+		switch {
+		case strings.HasPrefix(message, "read frozen curve plan: "),
+			strings.HasPrefix(message, "get completed Run "),
+			strings.HasPrefix(message, "load active Run "),
+			strings.HasPrefix(message, "load idle Run "):
+			return cause
+		case strings.HasPrefix(message, "completed Run "):
+			err = cause
+		}
+	}
+	var reason string
+	switch {
+	case errors.Is(err, campaignevidence.ErrRunEvidenceAbsent):
+		reason = "completed evidence reference is absent from Run"
+	case errors.Is(err, campaignevidence.ErrRunEvidenceMismatch):
+		reason = "completed evidence reference contradicts Run"
+	case errors.Is(err, campaignevidence.ErrUnsupportedWorkloadMode):
+		reason = "completed Run workload mode is unsupported"
+	case errors.Is(err, campaignevidence.ErrActiveProtocolMismatch):
+		reason = "completed active Run protocol contradicts campaign"
+	default:
+		switch err.Error() {
+		case "terminal result contradicts campaign measurement state":
+			reason = "result contradicts campaign measurement state"
+		case "frozen curve plan contradicts campaign measurement state":
+			reason = "curve plan contradicts campaign measurement state"
+		case "Run identity or campaign ownership mismatch":
+			reason = "completed Run identity or campaign ownership mismatch"
+		case "Run measurement state or batch contradicts completed trial reference":
+			reason = "completed Run measurement contradicts result"
+		case "Run workload mode contradicts completed trial reference":
+			reason = "completed Run workload mode contradicts result"
+		case "Run has no current completed execution and verified evidence":
+			reason = "completed Run lacks current verified completion"
+		case "idle Run protocol contradicts campaign":
+			reason = "completed idle Run protocol contradicts campaign"
+		case "stored RunConfig contradicts completed Run spec":
+			reason = "stored RunConfig contradicts completed Run state"
+		case "completed trials reuse one raw measurement object", "completed trials reuse one execution Pod":
+			reason = "completed trials reuse raw evidence or execution Pod"
+		default:
+			if strings.HasPrefix(message, "completed Run ") && strings.HasSuffix(message, " appears more than once") {
+				reason = "completed trials reuse raw evidence or execution Pod"
+			}
+		}
+	}
+	if reason == "" {
+		return err
+	}
+	return statisticsEvidenceError{error: err, reason: reason}
+}
+
+type statisticsEvidenceError struct {
+	error
+	reason string
+}
+
+func (e statisticsEvidenceError) Error() string { return e.reason }
+func (e statisticsEvidenceError) Unwrap() error { return e.error }
 
 func deriveMeasurementCurve(
 	cr *api.BatchEnergyOptimization,
@@ -425,37 +380,4 @@ func deriveMeasurementCurve(
 		return derivation.Curve{}, err
 	}
 	return curve, nil
-}
-
-func validateStatisticsRunProtocol(
-	cr *api.BatchEnergyOptimization,
-	run *api.ProfilingRun,
-	mode campaign.WorkloadMode,
-) error {
-	measurement := run.Spec.Measurement
-	if mode == campaign.WorkloadModeIdle {
-		protocol := cr.Spec.IdleProtocol
-		if measurement.WarmupIterations != 0 || measurement.SettlingDurationSeconds == nil ||
-			*measurement.SettlingDurationSeconds != protocol.SettlingDurationSeconds ||
-			measurement.DurationSeconds != protocol.DurationSeconds || measurement.Dataset != "" ||
-			ptr.Deref(
-				measurement.DurationToleranceSeconds,
-				.5,
-			) != ptr.Deref(
-				protocol.DurationToleranceSeconds,
-				.5,
-			) ||
-			run.Spec.MetricObservation != protocol.MetricObservation {
-			return errors.New("completed idle Run protocol contradicts campaign")
-		}
-	} else {
-		protocol := cr.Spec.ActiveProtocol
-		if measurement.SettlingDurationSeconds != nil || measurement.WarmupIterations != protocol.WarmupIterations ||
-			measurement.DurationSeconds != protocol.DurationSeconds || measurement.Dataset != protocol.Dataset ||
-			ptr.Deref(measurement.DurationToleranceSeconds, .5) != ptr.Deref(protocol.DurationToleranceSeconds, .5) ||
-			run.Spec.MetricObservation != protocol.MetricObservation {
-			return errors.New("completed active Run protocol contradicts campaign")
-		}
-	}
-	return nil
 }

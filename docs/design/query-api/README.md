@@ -15,6 +15,7 @@ Dashboard·CLI는 같은 권한·검증·비동기 결과 의미를 사용하되
 ## 조회 소유 경계 (2026-11-02)
 
 - Query API가 profile·coverage·요청 목록·측정 결과·preflight·Evidence Passport의 정상/pending/evidence 오류 응답을 완성한다. 기존 도메인 판정과 verified evidence reader를 재사용한다.
+- retained BEO 통계는 `internal/profiling/campaign/evidence.Reader.LoadPlan`·`ReadTrials`로 frozen plan·completed Run·evidence 신원을 공통 검증한다. Query는 Serving 상태 수용을 요구하는 `ReadPlan` 대신 `LoadPlan`을 사용하며, 통계·point policy·quality facts·빈 입력 판정은 계속 Query가 소유한다. `query-api` → `campaign-evidence` 의존만 허용하고 `internal/serving` 의존은 추가하지 않는다. Query adapter는 owner Kind/APIVersion 검사, missing Run과 retained Job/Secret 오류 구분, 기존 HTTP reason 매핑을 보존한다.
 - CLI runs show는 Query의 EvidencePassportState를 공유해 HTTP 202의 pending code·native Run metadata와 evidence/measurement의 null을 JSON에 보존한다. table은 pending 상태를 표시하고 미완료 측정을 0으로 출력하지 않는다.
 - BEO 목록의 native metadata/spec/status는 catalog 의존성 실패와 독립적으로 반환한다. owner 미설정·transport·configuration 오류는 evidence를 승인하지 않는 unavailable assessment reason으로 표시하며 native 사실이나 실행 실패를 지우지 않는다.
 - ChillServer의 조회 중계는 TokenReview/SAR·namespace 제한·전달·transport 오류만 처리한다. backend 장애를 pending/측정 실패로 바꾸거나 Kubernetes를 재조회해 본문을 수선하지 않는다.

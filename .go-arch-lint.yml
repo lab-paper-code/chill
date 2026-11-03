@@ -170,6 +170,7 @@ deps:
     mayDependOn:
       - api
       - batch-energy-optimization-core
+      - campaign-evidence
       - device-class
       - evidence-core
       - metric-core
