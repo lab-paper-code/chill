@@ -95,13 +95,7 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) (evi
 		pod = existing
 	}
 	evidence = &PreparationEvidence{PodUID: string(pod.UID), NodeUID: node.UID, DecisionID: decisionID, Created: created}
-	o.observer.mu.Lock()
-	o.observer.restoreSources([]core.Pod{*pod})
-	if source := o.observer.sources[string(pod.UID)]; source != nil {
-		source.instance.State.Node = spec.Instance.Node
-	}
-	err = o.observer.publishLedger(nil)
-	o.observer.mu.Unlock()
+	err = o.observer.publishPreparedSource(pod, spec.Instance.Node)
 	if err != nil {
 		return evidence, err
 	}

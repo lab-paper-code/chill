@@ -31,9 +31,7 @@ func (o *Operations) StopInstance(ctx context.Context, id string) error {
 	if err := o.wait(ctx, func() (bool, error) { return o.runtime.StopSchedulerInstance(id) }); err != nil {
 		return err
 	}
-	o.observer.mu.Lock()
-	o.observer.removingInstances[id] = true
-	o.observer.mu.Unlock()
+	o.observer.markRemoving(id)
 	return o.persistRouting(ctx, id, nil)
 }
 
@@ -131,11 +129,7 @@ func (o *Operations) finishInstanceRemoval(ctx context.Context, pod *core.Pod) e
 		if current.UID != pod.UID {
 			return false, errors.New("Pod identity changed")
 		}
-		o.observer.mu.Lock()
-		o.observer.observeTermination(current)
-		source := o.observer.sources[string(pod.UID)]
-		stopped := source != nil && source.stopped
-		o.observer.mu.Unlock()
+		stopped := o.observer.observeRemovalStopped(current)
 		if !stopped || !podTerminated(current) {
 			return false, nil
 		}
@@ -155,34 +149,11 @@ func (o *Operations) finishInstanceRemoval(ctx context.Context, pod *core.Pod) e
 		if e = o.store.client.Delete(ctx, cm); e != nil && !apierrors.IsNotFound(e) {
 			return false, e
 		}
-		o.observer.mu.Lock()
-		defer o.observer.mu.Unlock()
-		if source := o.observer.sources[string(pod.UID)]; source != nil {
-			source.instance.State.Stopped = true
-		}
-		if e = o.observer.publishLedger(nil); e != nil {
+		if e = o.observer.retireRemovedSource(pod.UID, o.runtime); e != nil {
 			return false, e
 		}
-		if e = o.runtime.RetirePod(string(pod.UID)); e != nil {
-			return false, e
-		}
-		delete(o.observer.sources, string(pod.UID))
 		return true, nil
 	})
-}
-
-func (o *Observer) restoreRemovalSource(pod *core.Pod, id, containerID string) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	status := firstfloorStatus(pod)
-	if id != "" && (status == nil || status.ContainerID != containerID) || id == "" && !podTerminated(pod) && !podAwaitingExecutor(pod) {
-		return errors.New("physical source changed before removal")
-	}
-	if source := o.sources[string(pod.UID)]; id == "" && source != nil && source.containerID != "" && !source.stopped {
-		return errors.New("retained physical executor requires exact removal identity")
-	}
-	o.restoreSources([]core.Pod{*pod})
-	return nil
 }
 
 // patchSourceFinalizer changes only our primitive-list member. The API server
@@ -222,15 +193,12 @@ func (o *Operations) ChangePower(ctx context.Context, node serving.NodeReference
 	if err != nil {
 		return err
 	}
-	o.observer.mu.Lock()
-	o.observer.movingNodes[node.UID] = true
-	err = o.observer.detachNodeLocked(ctx, node.UID)
-	o.observer.mu.Unlock()
+	err = o.observer.beginNodeMove(ctx, node.UID)
 	if err != nil {
 		return err
 	}
 	// Every native instance on this Node is affected; never treat a mode as per UID.
-	defer func() { o.observer.mu.Lock(); delete(o.observer.movingNodes, node.UID); o.observer.mu.Unlock() }()
+	defer o.observer.clearNodeMove(node.UID)
 	before, err := o.Capture(ctx, node)
 	if err != nil {
 		return err
@@ -249,9 +217,7 @@ func (o *Operations) ChangePower(ctx context.Context, node serving.NodeReference
 	if err := o.waitPowerState(ctx, node, before); err != nil {
 		return err
 	}
-	o.observer.mu.Lock()
-	delete(o.observer.movingNodes, node.UID)
-	o.observer.mu.Unlock()
+	o.observer.clearNodeMove(node.UID)
 	return o.observer.Refresh(ctx)
 }
 

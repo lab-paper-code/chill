@@ -83,18 +83,7 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 		return applyErr
 	}
 	weights, _ := o.runtime.SchedulerRouting()
-	o.observer.mu.Lock()
-	for uid, route := range weights {
-		if !result.Operation.controlsWorkload(uid) {
-			continue
-		}
-		for id, weight := range route {
-			if weight > 0 {
-				delete(o.observer.removingInstances, id)
-			}
-		}
-	}
-	o.observer.mu.Unlock()
+	o.observer.clearRoutedRemovals(result.Operation, weights)
 	// Explicit manual declarations must not overwrite the Pod defaults release restores.
 	if result.Operation.WorkloadUID == "" {
 		if err := o.persistRouting(ctx, "", result.Operation.WorkloadUIDs); err != nil {
