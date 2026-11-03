@@ -1,4 +1,5 @@
 import type { SchedulerSettings } from "./read-types.ts"
+import { editableSettingKeys } from "./scheduler-settings.ts"
 
 type NativeJSON = { rawJSON?: (text: string) => unknown; parse: (text: string, reviver?: (key: string, value: unknown, context?: {source?: string}) => unknown) => unknown }
 const native = JSON as NativeJSON
@@ -68,7 +69,10 @@ export function marginMilliseconds(text: string): number {
 }
 
 export function settingsEqual(a: SchedulerSettings, b: SchedulerSettings): boolean {
-  return (Object.keys(a) as (keyof SchedulerSettings)[]).every(key => key === "controls"
-    ? (Object.keys(a.controls) as (keyof SchedulerSettings["controls"])[]).every(control => a.controls[control] === b.controls[control])
-    : stringifySchedulerJSON(a[key]) === stringifySchedulerJSON(b[key]))
+  return editableSettingKeys.every(key => {
+    if(key==="controls")return [...new Set([...Object.keys(a.controls),...Object.keys(b.controls)])].every(control=>a.controls[control as keyof SchedulerSettings["controls"]]===b.controls[control as keyof SchedulerSettings["controls"]])
+    if(key==="minimumDemand")return [...new Set([...Object.keys(a.minimumDemand??{}),...Object.keys(b.minimumDemand??{})])].every(uid=>a.minimumDemand?.[uid]===b.minimumDemand?.[uid])
+    if(key==="autonomousWorkloads"||key==="excludedNodes"){const left=new Set(a[key]??[]),right=new Set(b[key]??[]);return left.size===right.size&&[...left].every(value=>right.has(value))}
+    return stringifySchedulerJSON(a[key])===stringifySchedulerJSON(b[key])
+  })
 }

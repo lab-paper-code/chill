@@ -86,7 +86,7 @@ function RecordDetails({row}:{row:SchedulerHistoryRow}){
     <Facts items={[["종류",kinds[row.ref.kind]??"기타 기록"],["사건 시각 KST",when(event.at)],["보관 순서",row.ref.offset]]}/>
     {decision&&<>
       <h3 className="font-semibold" title={decision.status}>판단: {judgmentLabels[decision.status]??"판단 미확인"}</h3>
-      <Facts items={[["판단 시각 KST",when(decision.at)],["자동제어 서비스",`${decision.settings.autonomousWorkloads?.length??0}개`],["입력 관측 KST",`${when(decision.search.windowStart)} ~ ${when(decision.search.windowEnd)}`],["에너지 비교 기간",decision.capacity?`${nanosToMilliseconds(decision.capacity.periodNanos)} ms`:"기록 없음"],["사유",decision.reasons?.length?decision.reasons.map(reason=><span key={reason} title={reason}>{liveReason(reason)} </span>):"미제공"]]}/>
+      <Facts items={[["판단 시각 KST",when(decision.at)],["CHILL 자동 운영 서비스",`${decision.settings.autonomousWorkloads?.length??0}개`],["입력 관측 KST",`${when(decision.search.windowStart)} ~ ${when(decision.search.windowEnd)}`],["에너지 비교 기간",decision.capacity?`${nanosToMilliseconds(decision.capacity.periodNanos)} ms`:"기록 없음"],["사유",decision.reasons?.length?decision.reasons.map(reason=><span key={reason} title={reason}>{liveReason(reason)} </span>):"미제공"]]}/>
       {view?<>{candidatePlans(decision.keep,decision.target).map(candidate=><details key={candidate.id}><summary>{candidate.keep?"유지안 근거":"선택 목표 근거"}</summary><CandidateDetails candidate={candidate} view={view}/></details>)}</>:<p>같은 기록에 실제 구성이 없어요. 후보 원본은 아래 원본에서 확인해요.</p>}
     </>}
     {snapshot&&<details><summary>기록의 실제 구성</summary><SnapshotDetails snapshot={snapshot}/></details>}

@@ -77,3 +77,24 @@ test("poll predicates receive a failed detail status while retaining the cached 
   assert.equal(interval({state:{data:pending,error:new exports.ApiError(404,"missing",null)}}),false)
   assert.equal(interval({state:{data:pending,error:new exports.ApiError(503,"unavailable",null)}}),5000)
 })
+
+test("client transport preserves settings ETags and conditional headers, including legacy absence and 409/428",async()=>{
+  const previous=globalThis.fetch,sent:RequestInit[]=[],signal=new AbortController().signal
+  let status=200,tag:string|undefined='"7"'
+  globalThis.fetch=async(_input,init)=>{sent.push(init!);return Response.json(status===200?{controls:{}}:{code:status===409?"SettingsConflict":"SettingsPreconditionRequired"},{status,headers:tag?{ETag:tag}:{}})}
+  try {
+    const read=await exports.relay("v1/scheduler/settings","test-token",signal)
+    assert.equal(read.etag,'"7"')
+    tag='"8"'
+    assert.equal((await exports.relay("v1/scheduler/settings","test-token",signal,"PUT",'{"controls":{}}',read.etag!)).etag,'"8"')
+    assert.equal(new Headers(sent.at(-1)!.headers).get("If-Match"),'"7"')
+    assert.equal(sent.at(-1)!.body,'{"controls":{}}')
+    tag=undefined
+    const legacy=await exports.relay("v1/scheduler/settings","test-token",signal)
+    assert.equal(legacy.etag,null)
+    await exports.relay("v1/scheduler/settings","test-token",signal,"PUT",'{"controls":{}}')
+    assert.equal(new Headers(sent.at(-1)!.headers).has("If-Match"),false)
+    for(status of [409,428])await assert.rejects(exports.relay("v1/scheduler/settings","test-token",signal,"PUT",'{"controls":{}}'),error=>error instanceof exports.ApiError&&error.status===status&&!error.unknownOutcome)
+    assert.equal(sent.length,6)
+  } finally {globalThis.fetch=previous}
+})

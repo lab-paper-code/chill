@@ -26,7 +26,7 @@ export function isStale(at:string|null|undefined,now:number):boolean {
   return !at || !Number.isFinite(Date.parse(at)) || now-Date.parse(at)>5000
 }
 export function workloadReadiness(workload:LiveWorkload,instances:LiveInstance[]):string {
-  return workload.readiness.reason==="Preparing"&&!workload.autonomous&&!instances.some(row=>belongsToPool(row,workload.uid)&&!row.stopped)?"미배치 · 자동제어 꺼짐":workload.readiness.ready?"준비됨":liveReason(workload.readiness.reason)
+  return workload.readiness.reason==="Preparing"&&!workload.autonomous&&!instances.some(row=>belongsToPool(row,workload.uid)&&!row.stopped)?"미배치 · CHILL 자동 운영 꺼짐":workload.readiness.ready?"준비됨":liveReason(workload.readiness.reason)
 }
 export function workloadLabel(workload:LiveWorkload,instances:LiveInstance[],metric:LiveMetric|undefined,now:number):string {
   const rows=instances.filter(instance=>belongsToPool(instance,workload.uid))
@@ -141,7 +141,7 @@ export function boardVerdict(rows:ServiceRow[],fresh:boolean,ongoingGap:boolean,
   return {axis:STATUS_AXES.serviceImpact,...impact(),observation}
 }
 export function decisionReason(reason:string|null|undefined,automation:boolean[]):string {
-  return automation.length>0&&automation.every(enabled=>!enabled)?"자동제어 대상 없음":liveReason(reason)
+  return automation.length>0&&automation.every(enabled=>!enabled)?"CHILL 자동 운영 대상 없음":liveReason(reason)
 }
 export function candidatePlans(keep:SchedulerCandidate,target:SchedulerCandidate|null):SchedulerCandidate[] {
   return target&&target.id!==keep.id?[keep,target]:[keep]
@@ -277,7 +277,7 @@ export function liveReason(reason:string|null|undefined):string {
   if(reason.includes("await fresh exact")||reason.includes("creation-outcome-unknown")||reason.includes("identity-awaiting-container")||reason.includes("dependency/Ready/handoff"))return reservationReason(reason)
   if(reason.includes("did not reach power mode"))return "전력모드 전환 시간 초과"
   if(reason.includes("Pod is not labelled as a serving instance"))return "서비스 인스턴스가 아닌 파드"
-  const labels:Record<string,string>={Running:"실행 중",Pending:"대기",Failed:"실패",Succeeded:"완료",Unknown:"미확인",created:"생성",observed:"관측",changed:"변경",deleted:"삭제","server-start":"서버 시작",raised:"문제 감지",resolved:"해소",ObservationUnavailable:"관측 기록 사용 불가",ShuttingDown:"종료 중",ExcludedNode:"제외 노드",Keep:"유지","power sample unavailable":"전력 표본 누락","resume history unavailable":"재연결 기록 공백","event history limit":"사건 보관 한도",Disabled:"자동제어 꺼짐",NotReady:"준비 안 됨",Ready:"준비됨",MissingDataset:"데이터셋 없음",MissingEvidence:"측정 근거 없음",Preparing:"배치 준비 중",RestartDrain:"재시작 후 요청 정리",AppliedDefinitionUnavailable:"적용된 서비스 정의 없음",ReservedScope:"변경 자원 예약 중",PartialObservationWindow:"관측 시간 부족",BootstrapCapacityPending:"초기 처리 용량 계산 대기",CapacityPending:"처리 용량 계산 대기",NoPlanMeetsSLO:"SLO 충족 구성 없음",EvaluatedCandidatesExceedSLOWithinReportedSearchBounds:"검토 구성 SLO 초과",MissingOperationCost:"변경 비용 근거 없음",HeldAfterOverload:"부하 증가 후 구성 유지",DemandIncreasing:"유입 증가",ReplacementUnpaid:"교체 비용 미회수",ReplacementDwell:"교체 후 최소 유지",TransitionGainWithinUncertainty:"절감량 오차 범위 이내",IdleInstanceRemoved:"유휴 인스턴스 제거",ObservedOperationExecutionError:"변경 실행 오류",PreparationFailed:"배치 준비 실패"}
+  const labels:Record<string,string>={Running:"실행 중",Pending:"대기",Failed:"실패",Succeeded:"완료",Unknown:"미확인",created:"생성",observed:"관측",changed:"변경",deleted:"삭제","server-start":"서버 시작",raised:"문제 감지",resolved:"해소",ObservationUnavailable:"관측 기록 사용 불가",ShuttingDown:"종료 중",ExcludedNode:"제외 노드",Keep:"유지","power sample unavailable":"전력 표본 누락","resume history unavailable":"재연결 기록 공백","event history limit":"사건 보관 한도",Disabled:"CHILL 자동 운영 꺼짐",NotReady:"준비 안 됨",Ready:"준비됨",MissingDataset:"데이터셋 없음",MissingEvidence:"측정 근거 없음",Preparing:"배치 준비 중",RestartDrain:"재시작 후 요청 정리",AppliedDefinitionUnavailable:"적용된 서비스 정의 없음",ReservedScope:"변경 자원 예약 중",PartialObservationWindow:"관측 시간 부족",BootstrapCapacityPending:"초기 처리 용량 계산 대기",CapacityPending:"처리 용량 계산 대기",NoPlanMeetsSLO:"SLO 충족 구성 없음",EvaluatedCandidatesExceedSLOWithinReportedSearchBounds:"검토 구성 SLO 초과",MissingOperationCost:"변경 비용 근거 없음",HeldAfterOverload:"부하 증가 후 구성 유지",DemandIncreasing:"유입 증가",ReplacementUnpaid:"교체 비용 미회수",ReplacementDwell:"교체 후 최소 유지",TransitionGainWithinUncertainty:"절감량 오차 범위 이내",IdleInstanceRemoved:"유휴 인스턴스 제거",ObservedOperationExecutionError:"변경 실행 오류",PreparationFailed:"배치 준비 실패"}
   return reason.split("; ").map(part=>{const separator=part.indexOf(":"),code=separator<0?part:part.slice(0,separator);return labels[code]??(/[a-z]/i.test(part)?"상세 사유 원본 참조":part)}).join("; ")
 }
 

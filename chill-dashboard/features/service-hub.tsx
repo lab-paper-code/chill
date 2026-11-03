@@ -49,7 +49,7 @@ export function ServiceReadiness({ view }: { view: Pick<WorkloadView, "desired" 
   const pool=pools.data?.workloads?.find(row=>row.workload.uid===view.desired.metadata.uid)
   if(view.readiness==="Preparing"&&!settings.error&&settings.data&&!pools.error&&!pools.data?.issues?.length&&
     !settings.data.autonomousWorkloads?.includes(view.desired.metadata.uid)&&Array.isArray(pool?.instances)&&!pool.instances.some(row=>!row.stopped))
-    return <StatusCell axis="배치" label="미배치 · 자동제어 꺼짐" tone="idle"/>
+    return <StatusCell axis="배치" label="미배치 · CHILL 자동 운영 꺼짐" tone="idle"/>
   const reason = view.reason && statusLabel(view.reason)
   return <><StatusBadge value={view.readiness} />{reason && reason !== statusLabel(view.readiness) && <span className="block text-xs">{reason}</span>}</>
 }

@@ -287,7 +287,8 @@ SRS DB-FR-50~52·56·65는 변경, DB-FR-67은 폐기 이력, DB-FR-68~70은 공
 | `/settings` 설정 | 어떤 값·카탈로그가 적용되는가? 운영 설정 / 모델 / 입력 처리 / 데이터셋의 선택·현재값·연결/영향 |
 
 설정 구현은 `features/settings.tsx`에서 `tab=configuration|models|preprocessors|datasets`를 선택한다.
-운영 설정은 범위 선택·현재값 표·연결 작업의 세 영역과 값 수정 Sheet를 사용한다. `section=cycle|limit|controls|capacity|advanced`, `edit=<설정 key>|controls.<key>|excludedNodes`를 URL에 보존한다. 선택 열기는 push, 닫기는 replace다.
+운영 설정은 범위 선택·현재값 표·연결 작업의 세 영역과 값 수정 Sheet를 사용한다. 기본은 `section=targets`이며 `section=targets|cycle|limit|controls|capacity|advanced`, `edit=<설정 key>|controls.<key>`를 URL에 보존한다. 선택 열기는 push, 닫기는 replace다. 서비스·장비 범위에는 CHILL 자동 운영 서비스(`autonomousWorkloads`), 최소 수요(`minimumDemand`), 계획 제외 장비(`excludedNodes`)를 접히지 않은 편집 항목으로 둔다. 최소 수요는 서비스명·req/s 소형 표이며 미설정과 명시적 0을 구분한다.
+서비스 편집 Sheet는 첫 입력 전 새 GET을 반영하고 첫 입력 시 표시한 설정·ETag를 함께 고정한다. 검토·적용 직전 재조회에서 설정 또는 버전이 다르면 작성값을 보존한 충돌 비교로 이동한다. W1 GET settings의 `ETag: "<ConfigMap resourceVersion>"`를 PUT `If-Match`로 그대로 보내고 성공 응답의 새 ETag로 갱신한다. ConfigMap 전체 버전이므로 다른 선언 변경에도 충돌할 수 있다. 409 `SettingsConflict`는 재조회·충돌 비교, 428 `SettingsPreconditionRequired`는 `버전 없음`·명시적 재조회이며 자동 재제출하지 않는다. 구 서버에 ETag가 없으면 If-Match를 보내지 않고 동시 변경 한계 도움말을 한 곳에 표시한다. ETag가 있으면 그 한계 설명은 숨긴다. GET의 읽기 전용 `staticRouting`·`powerObservation`·`meters`·`requestTimeout`은 PUT 본문에 포함하지 않는다.
 요청 분배는 서비스×인스턴스×int32 가중치 표와 접힌 원문을 함께 편집한다. 새 요청 차단은 빈 객체, 기본 분배 복귀는 서비스 제거이며 순차 적용·첫 실패 중단 계약은 바꾸지 않는다.
 카탈로그는 검색 가능한 표에서 모델 파일·실행 방식 수, 입력 처리 대상 모델 수, 데이터셋 필드·연결 서비스 수를 우선 제공한다. 보관 주소·해시는 접힌 원문에 보존하며 이름·UID 고정 Sheet에서 정의·영향·수정/삭제/원본을 제공한다.
 설정의 제외 장비는 관측된 이름 선택과 미등록 기존 이름 편집을 함께 제공한다. 분배 조회 실패는 오래된 값과 별도로 HTTP·원본 코드를 표시한다. 카탈로그 상세는 형식·처리 방식 제목, 중복 없는 공통 이미지 참조와 대상별 조건, 실제 배치·대기 한도 표를 제공한다.
@@ -297,7 +298,7 @@ SRS DB-FR-50~52·56·65는 변경, DB-FR-67은 폐기 이력, DB-FR-68~70은 공
 각 사실은 정본 한 곳만 소유한다. 연관 화면은 같은 KPI 묶음을 복제하지 않고 대상·기간·namespace·UID를 보존한 링크를 제공한다.
 서비스 상세의 `현재 관측`은 운영으로 연결하며 접수 허용을 실제 유입으로 번역하지 않는다.
 동일 축의 값은 같은 UID·시각일 때만 공통 계산 결과를 공유한다. 서비스 관리는 WebSocket 없이 관리 API로 동작한다.
-서비스 구현은 `features/management.tsx`의 목록 관리 표와 통합 상세다. 상세는 적용 상태·정의/설정·배치/연결 세 영역이며, `features/service-hub.tsx`는 관리 API 조회·정의·배치 표시만 소유한다. 옛 세부 화면 export는 제거하고 세부 경로는 통합 영역으로 이동한다. 등록·수정·삭제의 UID/버전·충돌·결과 미확인 계약과 자동제어 설정 재조회 후 변경 계약은 유지한다. 접수 허용 렌더 회귀는 `lib/service-ui.test.ts`가 목록·상세의 무부하 서비스로 확인한다.
+서비스 구현은 `features/management.tsx`의 목록 관리 표와 통합 상세다. 상세는 적용 상태·정의/설정·배치/연결 세 영역이며, `features/service-hub.tsx`는 관리 API 조회·정의·배치 표시만 소유한다. 옛 세부 화면 export는 제거하고 세부 경로는 통합 영역으로 이동한다. 등록·수정·삭제의 UID/버전·충돌·결과 미확인 계약은 유지한다. 서비스 화면의 설정 PUT은 제거하며 CHILL 자동 운영 값은 `/settings?section=targets&edit=autonomousWorkloads&workload=<UID>`로 이동한다. 운영 보드·목록·상세·필터는 `CHILL 자동 운영`·`변경 작업 진행`을 공유한다. 진행 중 변경 작업이 없으면 목록 진행 열을 숨기고 혼합 목록의 비진행 값은 흐리게 표시한다. 접수 허용·바로가기·진행 열 렌더 회귀는 `lib/service-ui.test.ts`가 확인한다.
 서비스 분배 표의 장치·인스턴스·준비·가중치는 동일한 scheduler snapshot에서 읽고 서비스 UID/라우팅 관계로 제한한다. 가중치 영은 보존하며 미제공은 별도로 표시한다. `/pools`의 배치 관측은 자체 관측 시각이 있는 상세로 유지하고 분배 snapshot과 시각 일치를 요구하거나 서로의 행을 결합하지 않는다.
 측정 범위는 전체 모델 요약과 선택 행렬을 적층하지 않는다. ‘측정 있음’·‘문제’ 집계는 셀과 동일한 상태 함수를 사용하며 실패 요청 총수가 아니다. 지원 안 함은 지원 조합 분모에서 제외하되 제외 수를 별도로 표시한다. 현재 사용은 스케줄러 참조, 품질은 독립 판정이다. 조합/배치 분모와 미측정·미확인을 보존한다.
 목표 배치 미제공은 범위 집계에서 한 번 표시하고 해당 셀에 진행률을 만들지 않는다. 활성 필터·개별/전체 해제는 접힘 밖에 둔다. 셀 열기는 push로 이력을 남기고 상세 필터는 표를 밀어내지 않는 패널이다. `DataTable`의 `urlState`를 명시한 주 목록만 `page/limit/sort/order/search`를 URL로 복원한다. 상세·편집 표와 자식 회차는 독립 로컬 상태이며 좁은 폭에서는 모든 열을 라벨/값 행으로 재배치한다.

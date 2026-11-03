@@ -15,7 +15,7 @@ import { parseSchedulerJSON } from "@/lib/scheduler"
 import { readTabToken, storeTabToken } from "@/lib/session-token"
 import { parseMeasurementJSON } from "@/lib/measurement-summary"
 
-export type RelayResponse = { status: number; body: string; data: unknown; requestID: string | null; workloadUID: string | null; relayTiming: string | null; browserRTT: number }
+export type RelayResponse = { status: number; body: string; data: unknown; requestID: string | null; workloadUID: string | null; relayTiming: string | null; browserRTT: number; etag?:string|null }
 export class ApiError extends Error {
   constructor(public status: number, public body: string, public data: unknown, public unknownOutcome = false, public requestID: string | null = null, public workloadUID: string | null = null, public relayTiming: string | null = null, public browserRTT: number | null = null, public retryAfter: number = 2) {
     super(isCoverageWarming({status,data}) ? "초기화 중" : status ? `HTTP ${status}` : "결과 미확인 · 응답 미수신")
@@ -171,7 +171,7 @@ export async function relay(path:string,token:string,signal:AbortSignal,method="
     const retryAfter=response.headers.get("Retry-After"),seconds=retryAfter===null?2:Number(retryAfter)
     throw new ApiError(response.status,text,data,unknown,response.headers.get("X-Chill-Request-ID"),response.headers.get("X-Chill-Workload-UID"),response.headers.get("X-Chill-Relay-Timing"),browserRTT,Number.isFinite(seconds)?seconds:2)
   }
-  return {status:response.status,body:text,data,requestID:response.headers.get("X-Chill-Request-ID"),workloadUID:response.headers.get("X-Chill-Workload-UID"),relayTiming:response.headers.get("X-Chill-Relay-Timing"),browserRTT}
+  return {status:response.status,body:text,data,requestID:response.headers.get("X-Chill-Request-ID"),workloadUID:response.headers.get("X-Chill-Workload-UID"),relayTiming:response.headers.get("X-Chill-Relay-Timing"),browserRTT,etag:response.headers.get("ETag")}
 }
 
 function subscribeVisibility(notify:()=>void) {
@@ -179,12 +179,14 @@ function subscribeVisibility(notify:()=>void) {
   return () => document.removeEventListener("visibilitychange",notify)
 }
 
-export function useChillQuery<T>(path:string,options:{enabled?:boolean;poll?:boolean|((data:T|undefined,error:ApiError|null)=>boolean);decoder?:(body:string)=>unknown}={}) {
+export function useChillQuery<T>(path:string,options:{enabled?:boolean;poll?:boolean|((data:T|undefined,error:ApiError|null)=>boolean);decoder?:(body:string)=>unknown;onResponse?:(response:RelayResponse,data:T)=>void}={}) {
   const {token,config} = useSession()
   const visible = React.useSyncExternalStore(subscribeVisibility,() => document.visibilityState === "visible",() => true)
   const query = useQuery<T,ApiError>({queryKey:["chill",path],enabled:!!token && options.enabled !== false,queryFn:async ({signal}) => {
     const response = await relay(path,token,signal)
-    return (options.decoder ? decodeResponse(response.body,options.decoder) : response.data) as T
+    const data=(options.decoder ? decodeResponse(response.body,options.decoder) : response.data) as T
+    options.onResponse?.(response,data)
+    return data
   },retry:warmingRetry,retryDelay:warmingDelay,refetchOnWindowFocus:false,refetchOnReconnect:false,refetchInterval:query => (typeof options.poll==="function"?options.poll(query.state.data,query.state.error):options.poll) && visible && ![401,403].includes(query.state.error?.status ?? 0) ? config.pollIntervalMs : false,refetchIntervalInBackground:false})
   return {...query,data:query.error && [401,403].includes(query.error.status) ? undefined : query.data}
 }

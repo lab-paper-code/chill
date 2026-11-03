@@ -38,6 +38,8 @@ test("review detects control or exact integer changes across numeric representat
   assert.equal(settingsEqual(current,{...current,servingMemoryBytes:18446744073709551614n}),false)
   assert.equal(settingsEqual(current,{...current,controls:{...current.controls,power:true}}),false)
   assert.equal(settingsEqual(current,{...current,excludedNodes:["rasp5","genesis2"]}),false)
+  assert.equal(settingsEqual({...current,autonomousWorkloads:["a","a"]},{...current,autonomousWorkloads:["a","b"]}),false)
+  assert.equal(settingsEqual({...current,autonomousWorkloads:["a","a"]},{...current,autonomousWorkloads:["a"]}),true)
 })
 
 test("compact scheduler reads restore shared evidence into the full response", () => {
