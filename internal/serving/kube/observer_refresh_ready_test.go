@@ -1,6 +1,7 @@
 package kube
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"context"
 	"runtime"
 	"slices"
@@ -45,7 +46,7 @@ func TestObserverRefreshRetainsReadyUntilProbeOutcome(t *testing.T) {
 			if err := c.observer.Refresh(ctx); err != nil {
 				t.Fatal(err)
 			}
-			before := schedulerPhysicalState("a-pod/containerd://running", c.runtime.Instances())
+			before := servingstate.SchedulerPhysicalState("a-pod/containerd://running", c.runtime.Instances())
 			if before == nil || !before.Ready {
 				t.Fatal("fixture lacks Ready A")
 			}
@@ -65,7 +66,7 @@ func TestObserverRefreshRetainsReadyUntilProbeOutcome(t *testing.T) {
 			}
 			defer close(release)
 			for {
-				a := schedulerPhysicalState(before.ID, c.runtime.Instances())
+				a := servingstate.SchedulerPhysicalState(before.ID, c.runtime.Instances())
 				if a != nil && a.AttemptedAt.After(before.AttemptedAt) {
 					break
 				}
@@ -97,7 +98,7 @@ func TestObserverRefreshRetainsReadyUntilProbeOutcome(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal(ctx.Err())
 			}
-			b := schedulerPhysicalState("b-pod/containerd://running", c.runtime.Instances())
+			b := servingstate.SchedulerPhysicalState("b-pod/containerd://running", c.runtime.Instances())
 			if b == nil || b.Ready != (outcome == "success") {
 				t.Fatalf("wrong probe outcome: %+v", b)
 			}
@@ -169,17 +170,17 @@ func TestObserverWatchInvalidationRecoversThroughTickAC37(t *testing.T) {
 			w.Modify(pod) // Ready events alone must not restore eligibility.
 			w.Stop()
 			c.observer.wg.Add(1)
-			c.observer.watchPods(w)
-			if err := c.observer.publishLedger(nil); err != nil {
+			c.observer.WatchPods(w)
+			if err := c.observer.PublishLedger(nil); err != nil {
 				t.Fatal(err)
 			}
-			if state := schedulerPhysicalState("a-pod/containerd://running", c.runtime.Instances()); state == nil || state.Ready {
+			if state := servingstate.SchedulerPhysicalState("a-pod/containerd://running", c.runtime.Instances()); state == nil || state.Ready {
 				t.Fatalf("watch failed closed: %+v", state)
 			}
 			if _, err := c.Tick(ctx, time.Now()); err != nil {
 				t.Fatal(err)
 			}
-			state := schedulerPhysicalState("a-pod/containerd://running", c.runtime.Instances())
+			state := servingstate.SchedulerPhysicalState("a-pod/containerd://running", c.runtime.Instances())
 			if state == nil || !state.Ready {
 				t.Fatalf("Tick did not restore dispatch: %+v", state)
 			}
@@ -240,7 +241,7 @@ func TestTickCaptureDuringIndependentRefreshRetainsReady(t *testing.T) {
 		t.Fatal(ctx.Err())
 	}
 	armed.Store(false)
-	before := schedulerPhysicalState("a-pod/containerd://running", c.runtime.Instances())
+	before := servingstate.SchedulerPhysicalState("a-pod/containerd://running", c.runtime.Instances())
 	if before == nil {
 		t.Fatal("fixture lacks A")
 	}
@@ -253,7 +254,7 @@ func TestTickCaptureDuringIndependentRefreshRetainsReady(t *testing.T) {
 		t.Fatal(ctx.Err())
 	}
 	for {
-		a := schedulerPhysicalState(before.ID, c.runtime.Instances())
+		a := servingstate.SchedulerPhysicalState(before.ID, c.runtime.Instances())
 		if a != nil && a.AttemptedAt.After(before.AttemptedAt) {
 			break
 		}
@@ -311,7 +312,7 @@ func TestObserverRelabelledSourceClosesDispatch(t *testing.T) {
 	if err := c.observer.Refresh(ctx); err != nil {
 		t.Fatal(err)
 	}
-	state := schedulerPhysicalState("a-pod/containerd://running", c.runtime.Instances())
+	state := servingstate.SchedulerPhysicalState("a-pod/containerd://running", c.runtime.Instances())
 	if state == nil || state.Ready || !strings.Contains(state.Reason, "not labelled") {
 		t.Fatalf("label mismatch did not fail closed: %+v", state)
 	}
@@ -373,7 +374,7 @@ func TestObserverNativeFailureClosesDispatchBeforePodVerification(t *testing.T) 
 			if err := c.observer.Refresh(ctx); err != nil {
 				t.Fatal(err)
 			}
-			before := schedulerPhysicalState("a-pod/containerd://running", c.runtime.Instances())
+			before := servingstate.SchedulerPhysicalState("a-pod/containerd://running", c.runtime.Instances())
 			if before == nil {
 				t.Fatal("fixture lacks A")
 			}
@@ -402,13 +403,13 @@ func TestObserverNativeFailureClosesDispatchBeforePodVerification(t *testing.T) 
 			}
 			// B's HTTP outcome is already known, but identity verification is
 			// deliberately outstanding. Dispatch must already be closed.
-			b := schedulerPhysicalState("b-pod/containerd://running", c.runtime.Instances())
+			b := servingstate.SchedulerPhysicalState("b-pod/containerd://running", c.runtime.Instances())
 			if b == nil || b.Ready {
 				t.Fatalf("native failure left dispatch enabled: %+v", b)
 			}
 			releaseA <- struct{}{}
 			for {
-				a := schedulerPhysicalState(before.ID, c.runtime.Instances())
+				a := servingstate.SchedulerPhysicalState(before.ID, c.runtime.Instances())
 				if a != nil && a.AttemptedAt.After(before.AttemptedAt) {
 					break
 				}
@@ -419,7 +420,7 @@ func TestObserverNativeFailureClosesDispatchBeforePodVerification(t *testing.T) 
 					runtime.Gosched()
 				}
 			}
-			b = schedulerPhysicalState("b-pod/containerd://running", c.runtime.Instances())
+			b = servingstate.SchedulerPhysicalState("b-pod/containerd://running", c.runtime.Instances())
 			if b == nil || b.Ready {
 				t.Fatalf("A publication re-enabled failed B: %+v", b)
 			}
@@ -432,7 +433,7 @@ func TestObserverNativeFailureClosesDispatchBeforePodVerification(t *testing.T) 
 			case <-ctx.Done():
 				t.Fatal(ctx.Err())
 			}
-			b = schedulerPhysicalState("b-pod/containerd://running", c.runtime.Instances())
+			b = servingstate.SchedulerPhysicalState("b-pod/containerd://running", c.runtime.Instances())
 			if b == nil || b.Ready || b.Native == nil {
 				t.Fatalf("verified failure lost native evidence: %+v", b)
 			}

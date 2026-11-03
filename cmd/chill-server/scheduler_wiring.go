@@ -1,6 +1,7 @@
 package main
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"context"
 	"runtime/debug"
 	"time"
@@ -18,9 +19,9 @@ import (
 )
 
 func newSchedulerService(
-	ctx context.Context, cluster *servingkube.ClusterState, store *servingkube.Store,
+	ctx context.Context, cluster *servingstate.ClusterState, store *servingkube.Store,
 	kube, settingsKube kubernetes.Interface,
-	execution *serving.Runtime, observer *servingkube.Observer, objects *stores3.Store,
+	execution *serving.Runtime, observer *servingstate.Observer, objects *stores3.Store,
 	observationLog *observation.ObservationLog, opts options,
 	gatewayRequestTimeout time.Duration, publisher *livePublisher,
 ) (*application.SchedulerService, error) {

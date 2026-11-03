@@ -1,6 +1,7 @@
 package main
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -131,8 +132,8 @@ func run(ctx context.Context, opts options) (retErr error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns, transport.MaxIdleConnsPerHost, transport.IdleConnTimeout = 0, 256, 30*time.Second
 	native := &firstfloor.Client{HTTPClient: &http.Client{Transport: transport}, Diagnostics: recorder}
-	cluster := servingkube.NewClusterState(store, kube, opts.servingNamespace)
-	observer, err := servingkube.NewObserver(cluster, store, kube, execution, native, servingkube.ObserverConfig{
+	cluster := servingstate.NewClusterState(store, kube, opts.servingNamespace)
+	observer, err := servingstate.NewObserver(cluster, store, kube, execution, native, servingstate.ObserverConfig{
 		Namespace: opts.servingNamespace,
 		RuntimeImage: func(ctx context.Context, profile *serving.Profile) (string, error) {
 			c := profile.Condition
@@ -262,7 +263,7 @@ func removeStagedObservationArchives() {
 }
 
 func initializeServing(ctx context.Context, opts *options,
-	observer *servingkube.Observer, manager *management.Manager, execution *serving.Runtime,
+	observer *servingstate.Observer, manager *management.Manager, execution *serving.Runtime,
 	publisher *livePublisher, scheduler *application.SchedulerService,
 	handlerConfig *httpapi.HandlerConfig,
 ) error {
@@ -310,7 +311,7 @@ func initializeServing(ctx context.Context, opts *options,
 }
 
 func serve(ctx context.Context, opts options, chillServer *initializingHandler, execution *serving.Runtime,
-	observer *servingkube.Observer, manager *management.Manager,
+	observer *servingstate.Observer, manager *management.Manager,
 	observationLog *observation.ObservationLog, scheduler *application.SchedulerService, diagnostics *diagnosticSession,
 	initialize func(context.Context) (http.Handler, error),
 ) error {

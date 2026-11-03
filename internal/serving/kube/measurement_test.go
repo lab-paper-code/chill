@@ -50,7 +50,7 @@ func TestOperationCostUsesActualSingleStateEffectAndWholeWallWindow(t *testing.T
 		SchemaVersion: servingops.OperationMeasurementSchema, Verdict: servingops.MeasurementInsufficient,
 		Request: servingops.MeasurementRequest{
 			Operation: servingstate.Operation{ID: "prepare", Kind: servingstate.OperationPrepare, Node: serving.NodeReference{Name: "node", UID: "uid"}},
-			Meter:     servingops.MeterDeclaration{ID: "meter", Scope: servingstate.MeasurementWallScope},
+			Meter:     servingstate.MeterDeclaration{ID: "meter", Scope: servingstate.MeasurementWallScope},
 			Timing:    &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "synthetic empirical fixture"},
 			Coverage:  powerwindow.Policy{MaximumGap: time.Second},
 		},
@@ -92,7 +92,7 @@ func TestPowerCostUsesEmptyNodeModeChange(t *testing.T) {
 		SchemaVersion: servingops.OperationMeasurementSchema, Verdict: servingops.MeasurementInsufficient,
 		Request: servingops.MeasurementRequest{
 			Operation: servingstate.Operation{ID: "raise", Kind: servingstate.OperationPower, Node: serving.NodeReference{Name: "node", UID: "uid"}},
-			Meter:     servingops.MeterDeclaration{ID: "meter", Scope: servingstate.MeasurementWallScope},
+			Meter:     servingstate.MeterDeclaration{ID: "meter", Scope: servingstate.MeasurementWallScope},
 			Timing:    &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "synthetic empirical fixture"},
 			Coverage:  powerwindow.Policy{MaximumGap: time.Second},
 		},
@@ -202,7 +202,7 @@ func timingMeasurementFixture() servingops.OperationMeasurement {
 	operation := servingstate.Operation{ID: "remove", Kind: servingstate.OperationRemove, Node: testNode}
 	record := servingops.OperationMeasurement{
 		SchemaVersion: servingops.OperationMeasurementSchema, Verdict: servingops.MeasurementInsufficient,
-		Request: servingops.MeasurementRequest{Operation: operation, Meter: servingops.MeterDeclaration{ID: "meter", Scope: servingstate.MeasurementWallScope},
+		Request: servingops.MeasurementRequest{Operation: operation, Meter: servingstate.MeterDeclaration{ID: "meter", Scope: servingstate.MeasurementWallScope},
 			Timing:   &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "empirical fixture"},
 			Coverage: powerwindow.Policy{MaximumGap: 3 * time.Second}},
 		Result: servingstate.OperationResult{Operation: operation, Status: servingstate.NativeOperationComplete, StartedAt: start, EndedAt: start.Add(time.Second),
@@ -344,7 +344,7 @@ func TestMeasureCollectsActualExpandedSupportAndRetainsRealBracketFailure(t *tes
 		source := &measurementTestSource{identity: metricobserver.SourceIdentity{Kind: "fixture", NodeName: testNode.Name, Endpoint: "http://meter", Metric: "power"}, failAfterFirst: fail}
 		writer := managerArchive{directory: t.TempDir()}
 		request := servingops.MeasurementRequest{Operation: servingstate.Operation{ID: "idle", Kind: servingstate.OperationIdle, Node: testNode},
-			Meter: servingops.MeterDeclaration{ID: "meter", Node: testNode, Scope: servingstate.MeasurementWallScope, Source: source.Identity()}, Store: "evidence",
+			Meter: servingstate.MeterDeclaration{ID: "meter", Node: testNode, Scope: servingstate.MeasurementWallScope, Source: source.Identity()}, Store: "evidence",
 			Timing:          &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "0.005", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "empirical fixture"},
 			Sampling:        metricobserver.Request{Interval: 2 * time.Millisecond, RequestTimeout: time.Millisecond, Duration: time.Second},
 			OperationBudget: 500 * time.Millisecond, IdleDuration: 20 * time.Millisecond, Coverage: powerwindow.Policy{MaximumGap: 10 * time.Millisecond}}

@@ -108,8 +108,8 @@ type managerHarness struct {
 	store          *Store
 	runtime        *serving.Runtime
 	observationLog *observation.ObservationLog
-	observer       *Observer
-	reservations   *ClusterState
+	observer       *servingstate.Observer
+	reservations   *servingstate.ClusterState
 }
 
 func newManagerHarness(t *testing.T) (*managerHarness, observation.ObservationLogConfig) {
@@ -132,8 +132,8 @@ func newManagerHarness(t *testing.T) (*managerHarness, observation.ObservationLo
 		t.Fatal(err)
 	}
 	kube := kubefake.NewSimpleClientset()
-	cluster := NewClusterState(store, kube, testObserverConfig(store).Namespace)
-	observer, err := NewObserver(cluster, store, kube, rt, &firstfloor.Client{HTTPClient: &http.Client{Timeout: time.Second}}, testObserverConfig(store))
+	cluster := servingstate.NewClusterState(store, kube, testObserverConfig(store).Namespace)
+	observer, err := servingstate.NewObserver(cluster, store, kube, rt, &firstfloor.Client{HTTPClient: &http.Client{Timeout: time.Second}}, testObserverConfig(store))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -486,8 +486,8 @@ func TestManagerInterruptedOperationIsTerminalUntilExplicitPut(t *testing.T) {
 		t.Fatal(err)
 	}
 	kube := kubefake.NewSimpleClientset()
-	cluster := NewClusterState(m.store, kube, testObserverConfig(m.store).Namespace)
-	observer, err := NewObserver(cluster, m.store, kube, rt, &firstfloor.Client{HTTPClient: &http.Client{Timeout: time.Second}}, testObserverConfig(m.store))
+	cluster := servingstate.NewClusterState(m.store, kube, testObserverConfig(m.store).Namespace)
+	observer, err := servingstate.NewObserver(cluster, m.store, kube, rt, &firstfloor.Client{HTTPClient: &http.Client{Timeout: time.Second}}, testObserverConfig(m.store))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -718,9 +718,9 @@ func TestManagerDeleteAfterPhysicalRemovalHoldsReservationUntil404(t *testing.T)
 		t.Fatal(err)
 	}
 	o := m.observer
-	o.restoreSources([]corev1.Pod{*pod})
+	o.RestoreSources([]corev1.Pod{*pod})
 	o.sources[string(pod.UID)].instance.State.Node = serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-	if err := o.publishLedger(nil); err != nil {
+	if err := o.PublishLedger(nil); err != nil {
 		t.Fatal(err)
 	}
 	pod.Status.Phase = corev1.PodSucceeded
@@ -749,7 +749,7 @@ func TestManagerDeleteAfterPhysicalRemovalHoldsReservationUntil404(t *testing.T)
 	controller := &m.reservations.reservation
 	// A prior operation on this Workload conflicts even after all Pods vanished.
 	controller.mu.Lock()
-	held := controller.reserveRun("held", &actionRun{action: serving.Action{Status: servingstate.NativeOperationRunning}}, servingstate.Operation{WorkloadUID: string(w.Desired.UID)})
+	held := controller.ReserveRun("held", &servingstate.ActionRun{action: serving.Action{Status: servingstate.NativeOperationRunning}}, servingstate.Operation{WorkloadUID: string(w.Desired.UID)})
 	controller.mu.Unlock()
 	if !held {
 		t.Fatal("failed to reserve test operation")
@@ -767,7 +767,7 @@ func TestManagerDeleteAfterPhysicalRemovalHoldsReservationUntil404(t *testing.T)
 	if err != nil || current.DeletionTimestamp == nil || len(current.Finalizers) == 0 {
 		t.Fatalf("DELETE did not retain finalizer: %v, %v", current, err)
 	}
-	if err := controller.authorize(servingstate.Operation{WorkloadUID: string(w.Desired.UID)}); err == nil {
+	if err := controller.Authorize(servingstate.Operation{WorkloadUID: string(w.Desired.UID)}); err == nil {
 		t.Fatal("deletion released scope before finalizer and 404")
 	}
 	if err := m.Advance(ctx); err != nil {
@@ -776,7 +776,7 @@ func TestManagerDeleteAfterPhysicalRemovalHoldsReservationUntil404(t *testing.T)
 	if _, err := m.GetWorkload(ctx, w.Desired.Name); !apierrors.IsNotFound(err) {
 		t.Fatalf("deleted Workload = %v", err)
 	}
-	if err := controller.authorize(servingstate.Operation{WorkloadUID: string(w.Desired.UID)}); err != nil {
+	if err := controller.Authorize(servingstate.Operation{WorkloadUID: string(w.Desired.UID)}); err != nil {
 		t.Fatal("404 retained deletion reservation", err)
 	}
 }

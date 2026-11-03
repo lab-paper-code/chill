@@ -29,10 +29,10 @@ func TestCreatedUIDLateBindingReturnsAC38(t *testing.T) {
 			target := serving.SchedulerCandidate{ID: "raw-create-cancel", Instances: []serving.SchedulerInstance{wanted}, Actions: []serving.Action{action}}
 			ended := time.Now().Add(-time.Second)
 			evidence := &servingstate.PreparationEvidence{PodUID: string(pod.UID), NodeUID: ref.UID, DecisionID: target.ID, Created: mode != reusedEvidence}
-			child := &actionRun{owner: target.ID, action: action, reserved: true, scope: resourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{"workload"}}, result: &servingstate.OperationResult{Status: servingstate.NativeOperationPartial, Error: context.Canceled.Error(), EndedAt: ended, Preparation: evidence, Operation: servingstate.Operation{Kind: servingstate.OperationPrepare, Node: ref, WorkloadUIDs: []string{"workload"}, Prepare: &servingstate.PrepareSpec{Instance: wanted, Owner: &serving.WorkloadReference{UID: "workload"}, Config: native.Config{Policy: native.Policy{DecisionID: target.ID}}}}}}
-			parent := &actionRun{owner: target.ID, reserved: true, returnObserved: true, scope: child.scope, action: serving.Action{ID: transitionRunKind + "/" + target.ID, Kind: transitionRunKind, Status: servingstate.NativeOperationFailed}, result: &servingstate.OperationResult{Status: servingstate.NativeOperationFailed, EndedAt: ended, Operation: servingstate.Operation{Target: &target, WorkloadUIDs: []string{"workload"}}}}
+			child := &servingstate.ActionRun{owner: target.ID, action: action, reserved: true, scope: servingstate.ResourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{"workload"}}, result: &servingstate.OperationResult{Status: servingstate.NativeOperationPartial, Error: context.Canceled.Error(), EndedAt: ended, Preparation: evidence, Operation: servingstate.Operation{Kind: servingstate.OperationPrepare, Node: ref, WorkloadUIDs: []string{"workload"}, Prepare: &servingstate.PrepareSpec{Instance: wanted, Owner: &serving.WorkloadReference{UID: "workload"}, Config: native.Config{Policy: native.Policy{DecisionID: target.ID}}}}}}
+			parent := &servingstate.ActionRun{owner: target.ID, reserved: true, returnObserved: true, scope: child.scope, action: serving.Action{ID: servingstate.TransitionRunKind + "/" + target.ID, Kind: servingstate.TransitionRunKind, Status: servingstate.NativeOperationFailed}, result: &servingstate.OperationResult{Status: servingstate.NativeOperationFailed, EndedAt: ended, Operation: servingstate.Operation{Target: &target, WorkloadUIDs: []string{"workload"}}}}
 			child.proofParent = parent
-			c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{parent.action.ID: parent, action.ID: child}}}
+			c := &SchedulerController{reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{parent.action.ID: parent, action.ID: child}}}
 			actual := wanted
 			actual.PodUID = string(pod.UID)
 			actual.ID = servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
@@ -52,7 +52,7 @@ func TestCreatedUIDLateBindingReturnsAC38(t *testing.T) {
 				p.ID = "replacement-profile"
 				actual.Profile = &p
 			}
-			c.freezePreparingExecutorsLocked(serving.SchedulerSnapshot{Instances: []serving.SchedulerInstance{actual}})
+			c.FreezePreparingExecutorsLocked(serving.SchedulerSnapshot{Instances: []serving.SchedulerInstance{actual}})
 			accepted := mode == "create-confirmed" || mode == reusedEvidence
 			if (child.prepareIdentity != "") != accepted {
 				t.Fatalf("identity acceptance %q", child.prepareIdentity)
@@ -65,7 +65,7 @@ func TestCreatedUIDLateBindingReturnsAC38(t *testing.T) {
 			}
 			replacement := actual
 			replacement.ID += "replacement"
-			c.freezePreparingExecutorsLocked(serving.SchedulerSnapshot{Instances: []serving.SchedulerInstance{replacement}})
+			c.FreezePreparingExecutorsLocked(serving.SchedulerSnapshot{Instances: []serving.SchedulerInstance{replacement}})
 			if child.prepareIdentity != actual.ID {
 				t.Fatal("container rebound")
 			}
@@ -74,15 +74,15 @@ func TestCreatedUIDLateBindingReturnsAC38(t *testing.T) {
 			}
 			observed := time.Now()
 			physical := serving.InstanceState{ID: actual.ID, PodUID: actual.PodUID, TargetID: wanted.ID, Node: ref, Ready: true, ObservedAt: observed, Native: &native.State{Ready: true, Metadata: native.Metadata{ProfileID: profile.ID, DecisionID: target.ID, Policy: native.Policy{ProfileID: profile.ID, DecisionID: target.ID, MaxBatchSize: 2}}}}
-			c.releaseObservedScopes([]core.Node{*node}, []core.Pod{*pod}, []serving.InstanceState{physical}, observed)
-			c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+			c.ReleaseObservedScopes([]core.Node{*node}, []core.Pod{*pod}, []serving.InstanceState{physical}, observed)
+			c.ReconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 			if parent.reserved || child.reserved {
 				t.Fatal("late exact ACK did not return ownership")
 			}
 			if child.result.Status != servingstate.NativeOperationPartial || child.result.Error != context.Canceled.Error() {
 				t.Fatal("late ACK rewrote original failure")
 			}
-			if mode == reusedEvidence && preparationCreatedSource(child, physical) {
+			if mode == reusedEvidence && servingstate.PreparationCreatedSource(child, physical) {
 				t.Fatal("reused Pod became compensation source")
 			}
 		})

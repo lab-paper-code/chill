@@ -48,7 +48,7 @@ func newOpcostHarness(t *testing.T) *opcostHarness {
 	h.controller.observer.SetProfiles([]serving.Profile{profile})
 	h.controller.mu.Lock()
 	h.controller.config.Preparations = map[string]servingstate.PrepareSpec{profile.ID: spec}
-	h.controller.config.Meters = []servingops.MeterDeclaration{{ID: "wall", Node: testNode, Scope: servingstate.MeasurementWallScope}}
+	h.controller.config.Meters = []servingstate.MeterDeclaration{{ID: "wall", Node: testNode, Scope: servingstate.MeasurementWallScope}}
 	for _, m := range class.Spec.PowerModes {
 		h.controller.config.PowerPolicies = append(h.controller.config.PowerPolicies, nodeactuator.ActuationPolicySpec{Name: m.Name, DeviceClass: class.Name,
 			PowerMode: m.Name, ActuatorKind: string(m.Actuator.Kind), SettlingDurationSeconds: 1, MaxActuationDurationSeconds: 60})

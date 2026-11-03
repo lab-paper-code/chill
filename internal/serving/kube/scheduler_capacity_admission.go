@@ -47,7 +47,7 @@ func ValidatePreparationCapacity(
 	inventory.Reasons = nil
 	inventory.MemoryBytes = uint64(memory)
 	var snapshot serving.SchedulerSnapshot
-	captureNodePods(&snapshot, &inventory, node, pods, nil, nil)
+	servingstate.CaptureNodePods(&snapshot, &inventory, node, pods, nil, nil)
 	if len(inventory.Reasons) != 0 {
 		return fmt.Errorf("preparation non-serving admission: %s", strings.Join(inventory.Reasons, "; "))
 	}

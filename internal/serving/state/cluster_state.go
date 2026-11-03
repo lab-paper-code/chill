@@ -1,38 +1,37 @@
-package kube
+package state
 
 import (
-	"context"
-	"sync"
-	"time"
-
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
-
-	"github.com/lab-paper-code/chill/internal/serving"
-	"k8s.io/client-go/kubernetes"
+	context "context"
+	serving "github.com/lab-paper-code/chill/internal/serving"
+	kubernetes "k8s.io/client-go/kubernetes"
+	sync "sync"
+	time "time"
 )
 
 // ClusterState is the one shared reservation and removal authority. The
 // composition root constructs it before the owners that observe or act on it.
 type ClusterState struct {
-	reservation reservationState
-	observation observerState
-	store       *Store
+	reservation ReservationState
+	observation ObserverState
+	store       objectStore
 	kube        kubernetes.Interface
 	namespace   string
 }
 
-func NewClusterState(store *Store, kube kubernetes.Interface, namespace string) *ClusterState {
+func NewClusterState(store objectStore, kube kubernetes.Interface, namespace string) *ClusterState {
 	return &ClusterState{store: store, kube: kube, namespace: namespace,
-		reservation: reservationState{runs: map[string]*actionRun{}},
-		observation: observerState{removingInstances: map[string]bool{}}}
+		reservation: ReservationState{runs: map[string]*ActionRun{}},
+		observation: ObserverState{removingInstances: map[string]bool{}}}
 }
 
-// reservationState owns the existing scheduler locks and the single run ledger.
+func (s *ClusterState) Reservations() *ReservationState { return &s.reservation }
+
+// ReservationState owns the existing scheduler locks and the single run ledger.
 // Calls that need both locks acquire tickMu before mu.
-type reservationState struct {
+type ReservationState struct {
 	mu                    sync.Mutex
 	tickMu                sync.Mutex
-	runs                  map[string]*actionRun
+	runs                  map[string]*ActionRun
 	state                 SchedulerControllerState
 	replacements          []serving.SchedulerReplacement
 	replacementObservedAt time.Time
@@ -42,27 +41,36 @@ type reservationState struct {
 	unrouted, overloaded map[string]time.Time
 }
 
-// observerState keeps the existing native-source mutex distinct from the
+// LockState and UnlockState serialize the ledger and controller configuration
+// with the existing shared mutex; they do not return or replace that mutex.
+func (s *ReservationState) LockState()   { s.mu.Lock() }
+func (s *ReservationState) UnlockState() { s.mu.Unlock() }
+
+// LockTick and UnlockTick retain the existing outer control serialization.
+func (s *ReservationState) LockTick()   { s.tickMu.Lock() }
+func (s *ReservationState) UnlockTick() { s.tickMu.Unlock() }
+
+// ObserverState keeps the existing native-source mutex distinct from the
 // reservation locks. Removal markers share this mutex with source publication.
-type observerState struct {
+type ObserverState struct {
 	mu                sync.Mutex
 	removingInstances map[string]bool
 }
 
-type actionRun struct {
+type ActionRun struct {
 	action               serving.Action
-	result               *servingstate.OperationResult
+	result               *OperationResult
 	cancel               context.CancelFunc
 	started              time.Time
-	scope                resourceScope
+	scope                ResourceScope
 	owner                string
 	reserved             bool
 	returnObserved       bool
 	prepareIdentity      string
 	inheritedReservation bool
-	routeReceipts        map[string]*actionRun
+	routeReceipts        map[string]*ActionRun
 	mayTouch             map[string]bool
-	proofParent          *actionRun
+	proofParent          *ActionRun
 	replacements         []serving.SchedulerReplacement
 	admittedControls     serving.SchedulerControls
 }
@@ -73,7 +81,7 @@ func (s *ClusterState) MarkRemoving(id string) {
 	s.observation.mu.Unlock()
 }
 
-func (s *ClusterState) ClearRoutedRemovals(operation servingstate.Operation, weights map[string]map[string]int32) {
+func (s *ClusterState) ClearRoutedRemovals(operation Operation, weights map[string]map[string]int32) {
 	s.observation.mu.Lock()
 	for uid, route := range weights {
 		if !operation.ControlsWorkload(uid) {

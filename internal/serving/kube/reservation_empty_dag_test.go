@@ -16,7 +16,7 @@ import (
 func TestEmptyRouteAdmissionAC38(t *testing.T) {
 	for _, kind := range []string{"", servingstate.OperationPrepare, servingstate.OperationPower, servingstate.OperationResize, servingstate.OperationStop} {
 		t.Run(kind, func(t *testing.T) {
-			c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}, runtime: &serving.Runtime{}}
+			c := &SchedulerController{reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{}}, runtime: &serving.Runtime{}}
 			route := serving.Action{ID: "empty-route", Kind: servingstate.OperationRoute}
 			target := serving.SchedulerCandidate{ID: "raw-empty", Actions: []serving.Action{route}}
 			if kind != "" {
@@ -24,11 +24,11 @@ func TestEmptyRouteAdmissionAC38(t *testing.T) {
 			}
 			c.launch(target, SchedulerControllerConfig{})
 			if kind == "" || kind == servingstate.OperationStop {
-				if len(c.runs) != 0 || len(c.reservationsLocked()) != 0 {
+				if len(c.runs) != 0 || len(c.ReservationsLocked()) != 0 {
 					t.Fatal("empty route/unproved retirement acquired ownership")
 				}
 			} else {
-				if c.runs[transitionRunKind+"/"+target.ID] == nil {
+				if c.runs[servingstate.TransitionRunKind+"/"+target.ID] == nil {
 					t.Fatal("pending physical duty was discarded")
 				}
 				if c.runs["waiting-duty"] != nil {
@@ -41,17 +41,17 @@ func TestEmptyRouteAdmissionAC38(t *testing.T) {
 
 func TestEmptyRouteAdmissionReplansWithoutOwnershipAC38(t *testing.T) {
 	target := serving.SchedulerCandidate{ID: "empty-replan", Actions: []serving.Action{{ID: "empty-route", Kind: servingstate.OperationRoute}}}
-	c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}, runtime: &serving.Runtime{}}
+	c := &SchedulerController{reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{}}, runtime: &serving.Runtime{}}
 	for range 2 {
 		c.launch(target, SchedulerControllerConfig{})
-		c.reconcileSnapshot(c.state.Snapshot, time.Now(), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
-		if len(c.runs) != 0 || len(c.reservationsLocked()) != 0 {
+		c.ReconcileSnapshot(c.state.Snapshot, time.Now(), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+		if len(c.runs) != 0 || len(c.ReservationsLocked()) != 0 {
 			t.Fatal("empty declaration left a parent, child, or reservation")
 		}
 	}
 	target.Actions = append(target.Actions, serving.Action{ID: "prepare", Kind: servingstate.OperationPrepare, DependsOn: []string{"empty-route"}})
 	c.launch(target, SchedulerControllerConfig{})
-	if c.runs[transitionRunKind+"/"+target.ID] == nil || c.runs["prepare"] != nil {
+	if c.runs[servingstate.TransitionRunKind+"/"+target.ID] == nil || c.runs["prepare"] != nil {
 		t.Fatal("new physical work was not admitted with its frozen dependency")
 	}
 }
@@ -83,12 +83,12 @@ func TestRouteAdmissionAppliesReadySurvivorSubsetS3b(t *testing.T) {
 	c.state.Snapshot = snapshot
 	c.launch(target, c.config)
 	c.wg.Wait()
-	if c.runs[transitionRunKind+"/"+target.ID] == nil || c.runs["route"] != nil {
+	if c.runs[servingstate.TransitionRunKind+"/"+target.ID] == nil || c.runs["route"] != nil {
 		t.Fatal("route-only recovery was not admitted while its full route waited")
 	}
-	var subset *actionRun
+	var subset *servingstate.ActionRun
 	for _, run := range c.runs {
-		if run.action.From == readySubsetRoute {
+		if run.action.From == servingstate.ReadySubsetRoute {
 			subset = run
 		}
 	}
@@ -100,7 +100,7 @@ func TestRouteAdmissionAppliesReadySurvivorSubsetS3b(t *testing.T) {
 
 func TestEmptyRouteNotReadyAndRetirementAC38(t *testing.T) {
 	for _, ready := range []int{0, 1, 2} {
-		c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}, runtime: &serving.Runtime{}}
+		c := &SchedulerController{reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{}}, runtime: &serving.Runtime{}}
 		instances := []serving.SchedulerInstance{{ID: "a", WorkloadUID: "w", Ready: ready > 0}, {ID: "b", WorkloadUID: "w", Ready: ready > 1}}
 		routing := map[string]map[string]int32{"w": {"a": 500, "b": 500}}
 		c.state.Snapshot = serving.SchedulerSnapshot{Instances: instances, Routing: routing}
@@ -111,21 +111,21 @@ func TestEmptyRouteNotReadyAndRetirementAC38(t *testing.T) {
 		}
 		target.Actions = append(target.Actions, serving.Action{ID: "retire", Kind: servingstate.OperationStop, DependsOn: []string{"noop"}})
 		c.launch(target, SchedulerControllerConfig{})
-		c.reconcileSnapshot(c.state.Snapshot, time.Now(), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
-		if len(c.runs) != 0 || len(c.reservationsLocked()) != 0 {
+		c.ReconcileSnapshot(c.state.Snapshot, time.Now(), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+		if len(c.runs) != 0 || len(c.ReservationsLocked()) != 0 {
 			t.Fatalf("ready=%d: unproved retirement acquired ownership", ready)
 		}
 	}
 }
 
 func TestReservationReasonsDeterministicAC38(t *testing.T) {
-	c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}}
+	c := &SchedulerController{reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{}}}
 	for _, id := range []string{"z", "a"} {
-		c.runs[id] = &actionRun{owner: "owner", reserved: true, action: serving.Action{ID: id, Reason: "missing proof"}}
+		c.runs[id] = &servingstate.ActionRun{owner: "owner", reserved: true, action: serving.Action{ID: id, Reason: "missing proof"}}
 	}
 	want := "a: missing proof; z: missing proof"
 	for range 100 {
-		if got := c.reservationsLocked()[0].Reason; got != want {
+		if got := c.ReservationsLocked()[0].Reason; got != want {
 			t.Fatalf("nondeterministic blocker %q", got)
 		}
 	}
@@ -133,14 +133,14 @@ func TestReservationReasonsDeterministicAC38(t *testing.T) {
 
 func TestStateReportsCurrentReservations(t *testing.T) {
 	at := time.Now().Add(-time.Minute).UTC()
-	run := &actionRun{
+	run := &servingstate.ActionRun{
 		owner: "manual-reset:test", reserved: true,
 		action: serving.Action{ID: "reset", Status: servingstate.NativeOperationRunning},
-		scope:  resourceScope{Nodes: []serving.NodeReference{{Name: "node"}}},
+		scope:  servingstate.ResourceScope{Nodes: []serving.NodeReference{{Name: "node"}}},
 	}
-	c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{"reset": run}}}
+	c := &SchedulerController{reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{"reset": run}}}
 	c.state.Snapshot = serving.SchedulerSnapshot{At: at}
-	c.state.Snapshot.Reservations = c.reservationsLocked()
+	c.state.Snapshot.Reservations = c.ReservationsLocked()
 	c.state.Decision.At = at
 	for _, status := range []string{servingstate.NativeOperationRunning, servingstate.NativeOperationPartial, servingstate.NativeOperationComplete} {
 		run.action.Status = status

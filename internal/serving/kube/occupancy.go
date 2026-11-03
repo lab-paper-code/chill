@@ -224,7 +224,7 @@ func (c *SchedulerController) occupancyRefusal(ctx context.Context, m *edge.Disp
 		return plan, refusedWorkloadMissing, m.Spec.Workload, false
 	}
 	plan.workload = &workload
-	if err := c.authorize(servingstate.Operation{WorkloadUID: string(workload.UID)}); err != nil {
+	if err := c.Authorize(servingstate.Operation{WorkloadUID: string(workload.UID)}); err != nil {
 		return plan, "", "", true
 	}
 	if m.Spec.SupplyMode == occupancyClosedLoop && (m.Spec.Conditions.ProfileID != plan.profile.ID ||
@@ -257,7 +257,7 @@ func (c *SchedulerController) occupancyRefusal(ctx context.Context, m *edge.Disp
 	}
 	mode := plan.profile.Condition.PowerMode
 	plan.powered = servingstate.ReadBackMode(node, servingstate.NodeClass(node, in.classes)) == mode
-	maxActuation, ok := nodePowerTargets(node, in.classes, in.config.PowerPolicies)[mode]
+	maxActuation, ok := servingstate.NodePowerTargets(node, in.classes, in.config.PowerPolicies)[mode]
 	if !plan.powered && !ok {
 		return plan, refusedPowerModeUnknown, mode, false
 	}

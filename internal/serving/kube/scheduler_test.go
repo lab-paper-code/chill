@@ -51,7 +51,7 @@ func withSchedulerEstimateFixture(settings serving.SchedulerSettings) serving.Sc
 
 // schedulerCaptureClockController serves one Node and one instance; onLiveNodes
 // runs when capture lists the Nodes, after its observer refresh.
-func schedulerCaptureClockController(t *testing.T, onLiveNodes func(*Observer)) *SchedulerController {
+func schedulerCaptureClockController(t *testing.T, onLiveNodes func(*servingstate.Observer)) *SchedulerController {
 	t.Helper()
 	manager, _ := newManagerHarness(t)
 	pod, node, profile, class := observerSourceFixture()
@@ -78,7 +78,7 @@ func schedulerCaptureClockController(t *testing.T, onLiveNodes func(*Observer)) 
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/state"):
 			actual := *profile.RuntimeMetadata
-			actual.ModelFiles = deliveredModelFiles(profile.Condition.Artifact.Files)
+			actual.ModelFiles = servingstate.DeliveredModelFiles(profile.Condition.Artifact.Files)
 			response = native.State{At: time.Now().UTC(), Ready: true, Metadata: native.Metadata{
 				Model: "chill_model", Mode: "serving", ProfileID: profile.ID, AppliedAt: time.Now().UTC(),
 				Runtime: actual, MaxQueueRequests: 4, MaxBatchSize: 1, ModelInstanceCount: 1,
@@ -119,12 +119,12 @@ func schedulerCaptureClockController(t *testing.T, onLiveNodes func(*Observer)) 
 		t.Fatal(err)
 	}
 	manager.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
-	return &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, observationLog: manager.observationLog, reservationState: &reservationState{runs: map[string]*actionRun{}}, config: SchedulerControllerConfig{
+	return &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, observationLog: manager.observationLog, reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{}}, config: SchedulerControllerConfig{
 		Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxObservationAge: maxAge, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100}),
 	}}
 }
 
-func schedulerCaptureClockState(t *testing.T, controller *SchedulerController) SchedulerControllerState {
+func schedulerCaptureClockState(t *testing.T, controller *SchedulerController) servingstate.SchedulerControllerState {
 	t.Helper()
 	state := controller.State()
 	snapshot := state.Snapshot
@@ -182,7 +182,7 @@ func TestSchedulerCaptureKeepsHistoricalCutoffSeparateFromLiveSourceAge(t *testi
 }
 
 func TestSchedulerCaptureSlowLiveReadRemainsStale(t *testing.T) {
-	controller := schedulerCaptureClockController(t, func(*Observer) { time.Sleep(2 * time.Second) })
+	controller := schedulerCaptureClockController(t, func(*servingstate.Observer) { time.Sleep(2 * time.Second) })
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if _, err := controller.Tick(ctx, time.Now().Add(-10*time.Second)); err != nil {
@@ -209,7 +209,7 @@ func TestSchedulerCaptureSlowLiveReadRemainsStale(t *testing.T) {
 // observer state before the Node list.
 func TestSchedulerCaptureDoesNotAgeNodesBehindObserverRefresh(t *testing.T) {
 	release := make(chan struct{})
-	controller := schedulerCaptureClockController(t, func(o *Observer) {
+	controller := schedulerCaptureClockController(t, func(o *servingstate.Observer) {
 		held := make(chan struct{})
 		go func() {
 			o.mu.Lock()
@@ -491,7 +491,7 @@ func TestScheduledPreparationOwnsItsWorkload(t *testing.T) {
 
 func TestSchedulerLaunchReservesFixedAndNonFixedDAGs(t *testing.T) {
 	for _, fixed := range []bool{true, false} {
-		controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), reservationState: &reservationState{runs: map[string]*actionRun{}}}
+		controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{}}}
 		// Completed actions are skipped, so launch starts no operation.
 		controller.launch(serving.SchedulerCandidate{ID: "keep", Keep: true, Actions: []serving.Action{
 			{ID: "lower", Kind: servingstate.OperationPower, Fixed: fixed, Status: servingstate.NativeOperationComplete},
@@ -563,11 +563,11 @@ func TestRemoveRejectsPhysicalInstanceOnDifferentNodeBeforeMutation(t *testing.T
 func TestPreparedSlotCompletionExpiresWhenActualInstanceRemoved(t *testing.T) {
 	manager, _ := newManagerHarness(t)
 	observer := manager.observer
-	controller := &SchedulerController{reservationState: &reservationState{}, capacity: serving.NewCapacityTable(1, nil, nil), runtime: observer.runtime}
+	controller := &SchedulerController{reservationState: &servingstate.ReservationState{}, capacity: serving.NewCapacityTable(1, nil, nil), runtime: observer.runtime}
 	profile := &serving.Profile{ID: "profile"}
 	node := serving.NodeReference{Name: "node", UID: "node-uid"}
-	run := &actionRun{action: serving.Action{Kind: "prepare", Instance: "slot", Node: node}, result: &servingstate.OperationResult{Status: "complete", Operation: servingstate.Operation{Prepare: &servingstate.PrepareSpec{Instance: serving.SchedulerInstance{ID: "slot", Node: node, Profile: profile}}}}}
-	if controller.actionEffectPresent(serving.SchedulerSnapshot{}, run, controller.runtime) {
+	run := &servingstate.ActionRun{action: serving.Action{Kind: "prepare", Instance: "slot", Node: node}, result: &servingstate.OperationResult{Status: "complete", Operation: servingstate.Operation{Prepare: &servingstate.PrepareSpec{Instance: serving.SchedulerInstance{ID: "slot", Node: node, Profile: profile}}}}}
+	if controller.ActionEffectPresent(serving.SchedulerSnapshot{}, run, controller.runtime) {
 		t.Fatal("history treated as current prepared effect")
 	}
 	instance := serving.ReadyInstance{State: serving.InstanceState{ID: "pod/container", TargetID: "slot", Node: node, Profile: profile.ID, Ready: true, Native: &native.State{Ready: true}}, Profile: profile, Capacity: 1, Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
@@ -577,19 +577,19 @@ func TestPreparedSlotCompletionExpiresWhenActualInstanceRemoved(t *testing.T) {
 	if err := observer.runtime.InstallInstances([]serving.ReadyInstance{instance}); err != nil {
 		t.Fatal(err)
 	}
-	if !controller.actionEffectPresent(serving.SchedulerSnapshot{}, run, controller.runtime) {
+	if !controller.ActionEffectPresent(serving.SchedulerSnapshot{}, run, controller.runtime) {
 		t.Fatal("actual prepared slot not recognized")
 	}
 	if err := observer.runtime.ConfirmInstanceStopped(instance.State.ID); err != nil {
 		t.Fatal(err)
 	}
-	if controller.actionEffectPresent(serving.SchedulerSnapshot{}, run, controller.runtime) {
+	if controller.ActionEffectPresent(serving.SchedulerSnapshot{}, run, controller.runtime) {
 		t.Fatal("terminal executor retained a successful prepare effect")
 	}
 	if err := observer.runtime.RetirePod("pod"); err != nil {
 		t.Fatal(err)
 	}
-	if controller.actionEffectPresent(serving.SchedulerSnapshot{}, run, controller.runtime) {
+	if controller.ActionEffectPresent(serving.SchedulerSnapshot{}, run, controller.runtime) {
 		t.Fatal("removed deterministic slot falsely reused old completion")
 	}
 }
@@ -599,7 +599,7 @@ func TestPodBudgetAccountsForInitSidecarsAndOverhead(t *testing.T) {
 		return core.ResourceRequirements{Requests: core.ResourceList{core.ResourceCPU: resource.MustParse(cpu), core.ResourceMemory: resource.MustParse(memory)}}
 	}
 	pod := &core.Pod{Spec: core.PodSpec{Containers: []core.Container{{Resources: resources("500m", "100")}}, InitContainers: []core.Container{{Resources: resources("200m", "20"), RestartPolicy: &always}, {Resources: resources("2", "300")}}, Overhead: core.ResourceList{core.ResourceCPU: resource.MustParse("100m"), core.ResourceMemory: resource.MustParse("10")}}}
-	memory, gpu := podBudget(pod)
+	memory, gpu := servingstate.PodBudget(pod)
 	if memory != 330 || gpu {
 		t.Fatal("Kubernetes effective memory/device request budget miscounted", memory, gpu)
 	}
@@ -635,7 +635,7 @@ func TestCaptureNodePodsAggregatesNonServingBudget(t *testing.T) {
 			pods.Items = append(pods.Items, core.Pod{ObjectMeta: meta.ObjectMeta{UID: "native-pod", Labels: map[string]string{"app.kubernetes.io/component": servingstate.ServingInstanceComponent}}, Spec: core.PodSpec{NodeName: node.Name, Containers: []core.Container{{Name: servingstate.FirstfloorContainerName, Resources: core.ResourceRequirements{Requests: core.ResourceList{core.ResourceCPU: resource.MustParse("2"), core.ResourceMemory: resource.MustParse("500")}}}}}, Status: core.PodStatus{ContainerStatuses: []core.ContainerStatus{{Name: servingstate.FirstfloorContainerName, ContainerID: "container"}}}})
 			physical := map[string]serving.InstanceState{"native-pod/container": {ID: "native-pod/container", Node: sn.Node, Profile: "profile", Native: &native.State{}}}
 			snapshot := serving.SchedulerSnapshot{At: at}
-			captureNodePods(&snapshot, &sn, node, pods, physical, map[string]*serving.Profile{"profile": {ID: "profile"}})
+			servingstate.CaptureNodePods(&snapshot, &sn, node, pods, physical, map[string]*serving.Profile{"profile": {ID: "profile"}})
 			if !sn.Ready || slices.Contains(sn.Reasons, serving.NodePlacementBudgetUnavailable) == tc.available || len(sn.NonServing) != 1 || len(snapshot.Instances) != 1 {
 				t.Fatal("incorrect readiness or physical classification", sn, snapshot.Instances)
 			}
@@ -661,7 +661,7 @@ func TestCaptureNodePodsRejectsMemoryOverflow(t *testing.T) {
 		pods.Items = append(pods.Items, core.Pod{Spec: core.PodSpec{NodeName: node.Name, Containers: []core.Container{{Resources: core.ResourceRequirements{Requests: core.ResourceList{core.ResourceMemory: *resource.NewQuantity(math.MaxInt64, resource.BinarySI)}}}}}})
 	}
 	snapshot := serving.SchedulerSnapshot{}
-	captureNodePods(&snapshot, &sn, node, pods, nil, nil)
+	servingstate.CaptureNodePods(&snapshot, &sn, node, pods, nil, nil)
 	if !slices.Contains(sn.Reasons, serving.NodePlacementBudgetUnavailable) {
 		t.Fatal("overflowing effective memory requests became an available node")
 	}
@@ -684,7 +684,7 @@ func TestNonServingGPUOwnershipQuarantinesOnlyItsNode(t *testing.T) {
 		Status: core.PodStatus{Phase: core.PodRunning},
 	}}}
 	snapshot := serving.SchedulerSnapshot{}
-	captureNodePods(&snapshot, &state, node, pods, nil, nil)
+	servingstate.CaptureNodePods(&snapshot, &state, node, pods, nil, nil)
 	if !state.Ready || !slices.Contains(state.Reasons, serving.NodePlacementBudgetUnavailable) || len(snapshot.Reasons) != 0 {
 		t.Fatalf("node-local GPU uncertainty became a global evaluation gap: node=%+v reasons=%v", state, snapshot.Reasons)
 	}
@@ -701,19 +701,19 @@ func TestBindProfileMeterUsesWallQuantityIdentity(t *testing.T) {
 	}
 	for _, test := range []struct {
 		name   string
-		mutate func(*servingops.MeterDeclaration)
+		mutate func(*servingstate.MeterDeclaration)
 		binds  bool
 	}{
 		{name: "same wall series without thermal metadata", binds: true},
-		{name: "different power endpoint", mutate: func(m *servingops.MeterDeclaration) { m.Source.Endpoint = "http://other/metrics" }},
-		{name: "different power labels", mutate: func(m *servingops.MeterDeclaration) {
+		{name: "different power endpoint", mutate: func(m *servingstate.MeterDeclaration) { m.Source.Endpoint = "http://other/metrics" }},
+		{name: "different power labels", mutate: func(m *servingstate.MeterDeclaration) {
 			m.Source.MetricLabels = map[string]string{"hostname": "another-host"}
 		}},
-		{name: "different power metric", mutate: func(m *servingops.MeterDeclaration) { m.Source.Metric = "device_watts" }},
-		{name: "different source kind", mutate: func(m *servingops.MeterDeclaration) { m.Source.Kind = "another-power-source" }},
-		{name: "different source node", mutate: func(m *servingops.MeterDeclaration) { m.Source.NodeName = "another-node" }},
-		{name: "different physical node", mutate: func(m *servingops.MeterDeclaration) { m.Node.UID = "unrelated-node-uid" }},
-		{name: "different scope", mutate: func(m *servingops.MeterDeclaration) { m.Scope = "device" }},
+		{name: "different power metric", mutate: func(m *servingstate.MeterDeclaration) { m.Source.Metric = "device_watts" }},
+		{name: "different source kind", mutate: func(m *servingstate.MeterDeclaration) { m.Source.Kind = "another-power-source" }},
+		{name: "different source node", mutate: func(m *servingstate.MeterDeclaration) { m.Source.NodeName = "another-node" }},
+		{name: "different physical node", mutate: func(m *servingstate.MeterDeclaration) { m.Node.UID = "unrelated-node-uid" }},
+		{name: "different scope", mutate: func(m *servingstate.MeterDeclaration) { m.Scope = "device" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			profileSource := source
@@ -722,11 +722,11 @@ func TestBindProfileMeterUsesWallQuantityIdentity(t *testing.T) {
 			instance := serving.SchedulerInstance{
 				Node: node, Profile: &serving.Profile{MetricSource: profileSource},
 			}
-			meter := servingops.MeterDeclaration{ID: "wall-meter", Node: node, Scope: servingstate.MeasurementWallScope, Source: source}
+			meter := servingstate.MeterDeclaration{ID: "wall-meter", Node: node, Scope: servingstate.MeasurementWallScope, Source: source}
 			if test.mutate != nil {
 				test.mutate(&meter)
 			}
-			bindProfileMeter(&instance, []servingops.MeterDeclaration{meter})
+			servingstate.BindProfileMeter(&instance, []servingstate.MeterDeclaration{meter})
 			if got := instance.IdleMeter == meter.ID && instance.IdleScope == servingstate.MeasurementWallScope; got != test.binds {
 				t.Fatalf("wall quantity binding = %v, want %v: %+v", got, test.binds, instance)
 			}
@@ -741,9 +741,9 @@ func TestBindProfileMeterUsesWallQuantityIdentity(t *testing.T) {
 // The controller records when each instance lost its route weight and holds
 // an instance prepared while keep was in Overload for one window after Ready.
 func TestSchedulerControllerAnnotatesUnroutedAndHeldInstances(t *testing.T) {
-	c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}}
+	c := &SchedulerController{reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{}}}
 	t0, window := time.Unix(1000, 0).UTC(), time.Minute
-	c.markOverloadPrepares(serving.SchedulerDecision{Keep: serving.SchedulerCandidate{Status: serving.SchedulerStatusOverload},
+	c.MarkOverloadPrepares(serving.SchedulerDecision{Keep: serving.SchedulerCandidate{Status: serving.SchedulerStatusOverload},
 		Target: &serving.SchedulerCandidate{Actions: []serving.Action{{Kind: servingstate.OperationPrepare, Instance: "slot-b"}}}})
 	snapshot := func(at time.Time, routed ...string) serving.SchedulerSnapshot {
 		weights := map[string]int32{}
@@ -755,18 +755,18 @@ func TestSchedulerControllerAnnotatesUnroutedAndHeldInstances(t *testing.T) {
 		}}
 	}
 	s := snapshot(t0, "a")
-	c.annotateHistory(&s, window)
+	c.AnnotateHistory(&s, window)
 	a, b := s.Instances[0], s.Instances[1]
 	if a.UnroutedSince != nil || b.UnroutedSince == nil || !b.UnroutedSince.Equal(t0) || b.HeldUntil == nil || !b.HeldUntil.Equal(t0.Add(window)) {
 		t.Fatalf("first capture: a %+v b %+v", a, b)
 	}
 	s = snapshot(t0.Add(window), "a")
-	c.annotateHistory(&s, window)
+	c.AnnotateHistory(&s, window)
 	if b = s.Instances[1]; !b.UnroutedSince.Equal(t0) || b.HeldUntil != nil {
 		t.Fatalf("after the window: b %+v", b)
 	}
 	s = snapshot(t0.Add(2*window), "b")
-	c.annotateHistory(&s, window)
+	c.AnnotateHistory(&s, window)
 	if s.Instances[1].UnroutedSince != nil || s.Instances[0].UnroutedSince == nil || !s.Instances[0].UnroutedSince.Equal(t0.Add(2*window)) {
 		t.Fatalf("routing change: %+v", s.Instances)
 	}
@@ -796,10 +796,10 @@ func TestSchedulerRouteIgnoresUnusedCommonLowering(t *testing.T) {
 		serving.Action{ID: "raise", Kind: servingstate.OperationPower, Node: used, DependsOn: []string{"used-lowering"}},
 		serving.Action{ID: "prepare", Kind: servingstate.OperationPrepare, Node: used, Instance: "slot", DependsOn: []string{"raise"}},
 		serving.Action{ID: "route", Kind: servingstate.OperationRoute, DependsOn: []string{"prepare"}})
-	controller := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}}
+	controller := &SchedulerController{reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{}}}
 	var raise, prepare, route serving.Action
 	for _, a := range target.Actions {
-		controller.runs[a.ID] = &actionRun{action: a}
+		controller.runs[a.ID] = &servingstate.ActionRun{action: a}
 		switch {
 		case a.Kind == servingstate.OperationPower && !a.Fixed && a.Node == used:
 			raise = a
@@ -812,25 +812,25 @@ func TestSchedulerRouteIgnoresUnusedCommonLowering(t *testing.T) {
 	if raise.ID == "" || prepare.ID == "" || route.ID == "" || controller.runs["idle-lowering"] == nil {
 		t.Fatalf("missing continuing power/prepare/route actions: %+v", target.Actions)
 	}
-	if controller.dependenciesReady(raise, target, controller.runtime) || controller.dependenciesReady(prepare, target, controller.runtime) || controller.dependenciesReady(route, target, controller.runtime) {
+	if controller.DependenciesReady(raise, target, controller.runtime) || controller.DependenciesReady(prepare, target, controller.runtime) || controller.DependenciesReady(route, target, controller.runtime) {
 		t.Fatal("used Node's unfinished lowering/raise/prepare chain was bypassed")
 	}
 	controller.runs["used-lowering"].action.Status = servingstate.NativeOperationComplete
-	if !controller.dependenciesReady(raise, target, controller.runtime) || controller.dependenciesReady(prepare, target, controller.runtime) || controller.dependenciesReady(route, target, controller.runtime) {
+	if !controller.DependenciesReady(raise, target, controller.runtime) || controller.DependenciesReady(prepare, target, controller.runtime) || controller.DependenciesReady(route, target, controller.runtime) {
 		t.Fatal("lowering must unlock only the used Node's raise")
 	}
 	controller.runs[raise.ID].action.Status = servingstate.NativeOperationComplete
-	if !controller.dependenciesReady(prepare, target, controller.runtime) || controller.dependenciesReady(route, target, controller.runtime) {
+	if !controller.DependenciesReady(prepare, target, controller.runtime) || controller.DependenciesReady(route, target, controller.runtime) {
 		t.Fatal("raise must unlock preparation, not routing")
 	}
 	controller.runs[prepare.ID].action.Status = servingstate.NativeOperationComplete
-	if !controller.dependenciesReady(route, target, controller.runtime) || controller.runs["idle-lowering"].action.Status != servingstate.NativeOperationRunning {
+	if !controller.DependenciesReady(route, target, controller.runtime) || controller.runs["idle-lowering"].action.Status != servingstate.NativeOperationRunning {
 		t.Fatal("unused lowering blocked a prepared target's route or stopped running")
 	}
 }
 
 func TestSchedulerCapturePreservesTerminalLedgerWithoutReadFailureAC45(t *testing.T) {
-	controller := schedulerCaptureClockController(t, func(observer *Observer) {
+	controller := schedulerCaptureClockController(t, func(observer *servingstate.Observer) {
 		for _, state := range observer.runtime.Instances() {
 			if err := observer.runtime.ConfirmInstanceStopped(state.ID); err != nil {
 				t.Error(err)

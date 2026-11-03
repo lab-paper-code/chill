@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
@@ -101,7 +100,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 					}
 					follow, stop := context.WithCancel(c.observer.ctx)
 					c.observer.mu.Lock()
-					c.observer.sources[string(pod.UID)] = &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: servingstate.FirstfloorStatus(pod).ContainerID, follow: follow, cancel: stop}
+					c.observer.sources[string(pod.UID)] = &servingstate.NativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: servingstate.FirstfloorStatus(pod).ContainerID, follow: follow, cancel: stop}
 					c.observer.mu.Unlock()
 					created <- pod.DeepCopy()
 					return nil
@@ -142,7 +141,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 				c.config.DispatchOccupancy = append(c.config.DispatchOccupancy, serving.DispatchOccupancy{Node: spec.Instance.Node, PowerMode: profile.Condition.PowerMode, RuntimeImage: profile.Condition.RuntimeImage, Model: profile.Condition.LogicalModel, Source: "AC-39 measured fixture"})
 				ref := evidencestore.ObjectIdentity{Store: "raw", Key: "baseline-" + profile.ID, Size: 1}
 				c.config.Baselines = append(c.config.Baselines, serving.NodeBaseline{ID: ref.Key, Node: spec.Instance.Node, PowerMode: "fixed", Watts: 10, Meter: "wall-" + profile.NodeName, Scope: "node-exclusive-wall", Reference: ref, MeasuredAt: time.Now()})
-				c.config.Meters = append(c.config.Meters, servingops.MeterDeclaration{ID: "wall-" + profile.NodeName, Node: spec.Instance.Node, Scope: "node-exclusive-wall", Source: profile.MetricSource})
+				c.config.Meters = append(c.config.Meters, servingstate.MeterDeclaration{ID: "wall-" + profile.NodeName, Node: spec.Instance.Node, Scope: "node-exclusive-wall", Source: profile.MetricSource})
 				c.config.Costs = append(c.config.Costs, serving.OperationCost{ID: "prepare-" + profile.ID, Node: spec.Instance.Node, Kind: servingstate.OperationPrepare, From: "unloaded", To: serving.SchedulerInstanceState(spec.Instance), PowerMode: "fixed", Trials: []serving.OperationTrial{{Duration: time.Millisecond, Joules: 0.01}}, Meter: "wall-" + profile.NodeName, Scope: "node-exclusive-wall", EnergyScope: "whole-wall", Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "prepare-" + profile.ID, Size: 1}})
 			}
 			// Build real capacity rows from the fixture's measured durations/occupancy.
@@ -284,7 +283,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 			}
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			if c.runs["w1-power"].action.Status != servingstate.NativeOperationRunning || c.runs[transitionRunKind+"/slow-w1"].result.Operation.Target.ID != frozen.ID {
+			if c.runs["w1-power"].action.Status != servingstate.NativeOperationRunning || c.runs[servingstate.TransitionRunKind+"/slow-w1"].result.Operation.Target.ID != frozen.ID {
 				t.Fatal("independent native execution completed or replaced W1")
 			}
 			if c.runs["w1-prepare"] != nil {
@@ -354,7 +353,7 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 		ref := evidencestore.ObjectIdentity{Store: "raw", Key: "reserve-baseline-" + instance.Profile.ID, Size: 1}
 		meter := "reserve-wall-" + instance.Node.Name
 		c.config.Baselines = append(c.config.Baselines, serving.NodeBaseline{ID: ref.Key, Node: instance.Node, PowerMode: "fixed", Watts: 5, Meter: meter, Scope: "node-exclusive-wall", Reference: ref, MeasuredAt: time.Now()})
-		c.config.Meters = append(c.config.Meters, servingops.MeterDeclaration{ID: meter, Node: instance.Node, Scope: "node-exclusive-wall", Source: instance.Profile.MetricSource})
+		c.config.Meters = append(c.config.Meters, servingstate.MeterDeclaration{ID: meter, Node: instance.Node, Scope: "node-exclusive-wall", Source: instance.Profile.MetricSource})
 		c.config.Costs = append(c.config.Costs, serving.OperationCost{ID: "reserve-remove-" + instance.Profile.ID, Node: instance.Node, Kind: servingstate.OperationRemove, From: serving.SchedulerInstanceState(*instance), To: "unloaded", PowerMode: "fixed", Trials: []serving.OperationTrial{{Duration: 100 * time.Millisecond, Joules: 1}}, Meter: meter, Scope: "node-exclusive-wall", EnergyScope: "whole-wall", Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "reserve-remove-" + instance.Profile.ID, Size: 1}})
 	}
 	c.runtime.EnableSchedulerRouting()
@@ -403,7 +402,7 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 	waitReservationTest(t, ctx, func() bool {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		return slices.ContainsFunc(c.actionsLocked(time.Now()), func(action serving.Action) bool {
+		return slices.ContainsFunc(c.ActionsLocked(time.Now()), func(action serving.Action) bool {
 			return action.Kind == servingstate.OperationRoute && action.Status == servingstate.NativeOperationComplete
 		})
 	})
@@ -467,7 +466,7 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !slices.ContainsFunc(c.reservationsLocked(), func(reservation serving.SchedulerReservation) bool {
+	if !slices.ContainsFunc(c.ReservationsLocked(), func(reservation serving.SchedulerReservation) bool {
 		return reservation.Target != nil && reservation.Target.ID == decision.Target.ID
 	}) {
 		t.Fatal("transition ownership ended before reserve request completed")

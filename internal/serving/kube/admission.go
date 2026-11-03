@@ -113,24 +113,24 @@ func (c *SchedulerController) measurementRoots(ctx context.Context, namespaces [
 // starts the hand-back of a Node whose measurement ended or vanished. Holding
 // tickMu orders it against Tick: neither acts on a Node the other holds.
 func (c *SchedulerController) Admit(ctx context.Context) error {
-	c.tickMu.Lock()
-	defer c.tickMu.Unlock()
-	c.mu.Lock()
+	c.LockTick()
+	defer c.UnlockTick()
+	c.LockState()
 	config := c.config
-	c.mu.Unlock()
+	c.UnlockState()
 	observedAt := time.Now()
 	nodes, err := c.kube.CoreV1().Nodes().List(ctx, meta.ListOptions{})
 	if err != nil {
 		return err
 	}
-	pods, err := c.kube.CoreV1().Pods(c.observer.config.Namespace).List(ctx, meta.ListOptions{
+	pods, err := c.kube.CoreV1().Pods(c.observer.Namespace()).List(ctx, meta.ListOptions{
 		LabelSelector: "app.kubernetes.io/component=" + servingstate.ServingInstanceComponent,
 	})
 	if err != nil {
 		return err
 	}
-	c.releaseObservedScopes(nodes.Items, pods.Items, nil, observedAt)
-	busy := c.reservedNodes()
+	c.ReleaseObservedScopes(nodes.Items, pods.Items, nil, observedAt)
+	busy := c.ReservedNodes()
 	roots, err := c.measurementRoots(ctx, config.MeasurementNamespaces)
 	if err != nil {
 		return err
@@ -168,7 +168,7 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 			errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.RefusedAdmission(refusedNodeMissing, root.node)))
 			continue
 		}
-		if c.authorize(c.measurementRootOperation(root, node, byName, config)) != nil {
+		if c.Authorize(c.measurementRootOperation(root, node, byName, config)) != nil {
 			claimed[node.Name] = true
 			continue
 		}
@@ -195,16 +195,12 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 			}
 		}
 		claimed[node.Name] = true
-		if !c.reserveMeasurementLease(c.measurementRootOperation(root, node, byName, config)) {
+		if !c.ReserveMeasurementLease(c.measurementRootOperation(root, node, byName, config)) {
 			continue
 		}
 		if err := c.setMeasurementTaint(ctx, node, string(root.object.GetUID())); err != nil {
 			errs = append(errs, err)
-			c.mu.Lock()
-			lease := c.runs[measurementLeaseKind+"/"+string(root.object.GetUID())]
-			lease.action.Status = servingstate.NativeOperationFailed
-			lease.result.EndedAt, lease.result.Error = time.Now(), err.Error()
-			c.mu.Unlock()
+			c.FailMeasurementLease(string(root.object.GetUID()), err)
 			continue
 		}
 		if transition != nil {
@@ -269,7 +265,7 @@ func (c *SchedulerController) continueHeldNodes(ctx context.Context, nodes []cor
 	for i := range nodes {
 		node := &nodes[i]
 		holder, tainted := profilingrun.MeasurementHolder(node)
-		if !tainted || c.nodeExecuting(node) {
+		if !tainted || c.NodeExecuting(node) {
 			continue
 		}
 		root := byUID[holder]
@@ -285,7 +281,7 @@ func (c *SchedulerController) continueHeldNodes(ctx context.Context, nodes []cor
 				for i := range nodes {
 					byName[nodes[i].Name] = &nodes[i]
 				}
-				c.reserveMeasurementLease(c.measurementRootOperation(*root, node, byName, config))
+				c.ReserveMeasurementLease(c.measurementRootOperation(*root, node, byName, config))
 				continue
 			}
 			if _, transition := root.object.(*edge.PowerModeTransitionCost); !transition && !chillServerRun(root.object) {
@@ -305,18 +301,6 @@ func (c *SchedulerController) continueHeldNodes(ctx context.Context, nodes []cor
 	return errs
 }
 
-// nodeBusy reports a running run on the Node; Tick, Admit and hand-back then
-// leave the Node to that run.
-func (c *reservationState) nodeBusy(node *core.Node) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, r := range c.runs {
-		if r.reserved && slices.Contains(r.scope.Nodes, serving.NodeReference{Name: node.Name, UID: string(node.UID)}) {
-			return true
-		}
-	}
-	return false
-}
 
 // powerModePending reports a Node whose actuation agent applies a requested
 // mode before its deadline (request time plus the mode's
@@ -326,7 +310,7 @@ func powerModePending(node *core.Node, classes []edge.DeviceClass, config Schedu
 	if node.Labels[chillmeta.PowerModeState] != chillmeta.PowerModePending {
 		return false
 	}
-	maxDuration, ok := nodePowerTargets(node, classes, config.PowerPolicies)[node.Labels[chillmeta.PowerMode]]
+	maxDuration, ok := servingstate.NodePowerTargets(node, classes, config.PowerPolicies)[node.Labels[chillmeta.PowerMode]]
 	deadline, requested := chillmeta.PowerModeDeadline(node, maxDuration)
 	return !ok || !requested || now.Before(deadline)
 }
@@ -394,7 +378,7 @@ func (c *SchedulerController) startNodeRun(operation servingstate.Operation, con
 	result := servingstate.OperationResult{Operation: operation, StartedAt: started.UTC(), Status: servingstate.NativeOperationRunning}
 	runCtx, cancel := context.WithCancel(c.ctx)
 	initial := result
-	run := c.startAdmittedRun(&operation, &initial, cancel, started)
+	run := c.StartAdmittedRun(&operation, &initial, cancel, started)
 	if run == nil {
 		cancel()
 		result.Status, result.Error = servingstate.NativeOperationFailed, "OperationConflict: resources are reserved"
@@ -420,7 +404,7 @@ func (c *SchedulerController) startNodeRun(operation servingstate.Operation, con
 			}
 			result.Error = err.Error()
 		}
-		c.recordPreparation(run, result.Preparation)
+		c.RecordPreparation(run, result.Preparation)
 		if config.OnAction != nil {
 			if recordErr := config.OnAction(result); recordErr != nil {
 				result.Error = errors.Join(err, fmt.Errorf("record operation outcome: %w", recordErr)).Error()
@@ -429,7 +413,7 @@ func (c *SchedulerController) startNodeRun(operation servingstate.Operation, con
 				}
 			}
 		}
-		c.completeAdmittedRun(run, &result, err, operation.Kind)
+		c.CompleteAdmittedRun(run, &result, err, operation.Kind)
 	}()
 	return done, &result
 }
@@ -443,9 +427,9 @@ func (c *SchedulerController) startNodeRun(operation servingstate.Operation, con
 // interrupted is set when the measurement object vanished: it is recorded as
 // Interrupted.
 func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeReference, holder string, root *measurementRoot, interrupted bool, result *servingstate.OperationResult) error {
-	c.mu.Lock()
+	c.LockState()
 	config := c.config
-	c.mu.Unlock()
+	c.UnlockState()
 	if err := c.operations.Wait(ctx, func() (bool, error) {
 		current, err := c.kube.CoreV1().Nodes().Get(ctx, node.Name, meta.GetOptions{})
 		if err != nil {
@@ -465,7 +449,7 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 	if err := errors.Join(c.deleteLoadJobs(ctx, node, config.LoadGenerator), c.operations.ClearNode(ctx, node)); err != nil {
 		return err
 	}
-	runners, err := c.kube.CoreV1().Services(c.observer.config.Namespace).List(ctx, meta.ListOptions{LabelSelector: runnerNodeLabel + "=" + node.UID})
+	runners, err := c.kube.CoreV1().Services(c.observer.Namespace()).List(ctx, meta.ListOptions{LabelSelector: runnerNodeLabel + "=" + node.UID})
 	if err != nil {
 		return err
 	}
@@ -483,9 +467,9 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 		return errors.New("physical Node identity changed")
 	}
 	if value, tainted := profilingrun.MeasurementHolder(current); !tainted || value != holder {
-		c.mu.Lock()
-		c.releaseOwnerLocked(holder)
-		c.mu.Unlock()
+		c.LockState()
+		c.ReleaseOwnerLocked(holder)
+		c.UnlockState()
 		return nil
 	}
 	if err = c.lowerMeasuredNode(ctx, current, holder, result); err != nil {
@@ -499,9 +483,9 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 		return err
 	}
 	result.Progress = append(result.Progress, "taint removed")
-	c.mu.Lock()
-	c.releaseOwnerLocked(holder)
-	c.mu.Unlock()
+	c.LockState()
+	c.ReleaseOwnerLocked(holder)
+	c.UnlockState()
 	return nil
 }
 
@@ -510,16 +494,16 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 // known mode. A Node without a requestable lowest mode (a Fixed actuator, no
 // unloaded baseline) skips the step.
 func (c *SchedulerController) lowerMeasuredNode(ctx context.Context, node *core.Node, holder string, result *servingstate.OperationResult) error {
-	c.mu.Lock()
+	c.LockState()
 	config := c.config
-	c.mu.Unlock()
+	c.UnlockState()
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 	var classes edge.DeviceClassList
 	if err := c.store.client.List(ctx, &classes); err != nil {
 		return err
 	}
 	lowest := serving.SchedulerLowestMode(config.Baselines, ref)
-	maxDuration, ok := nodePowerTargets(node, classes.Items, config.PowerPolicies)[lowest]
+	maxDuration, ok := servingstate.NodePowerTargets(node, classes.Items, config.PowerPolicies)[lowest]
 	if lowest == "" || !ok {
 		result.Progress = append(result.Progress, "no requestable lowest mode")
 		return nil
@@ -533,7 +517,7 @@ func (c *SchedulerController) lowerMeasuredNode(ctx context.Context, node *core.
 
 func (c *SchedulerController) measurementRootOperation(root measurementRoot, node *core.Node, nodes map[string]*core.Node, config SchedulerControllerConfig) servingstate.Operation {
 	holder := string(root.object.GetUID())
-	operation := servingstate.Operation{ID: measurementLeaseKind + "/" + holder, Kind: measurementLeaseKind, Holder: holder, Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}}
+	operation := servingstate.Operation{ID: servingstate.MeasurementLeaseKind + "/" + holder, Kind: servingstate.MeasurementLeaseKind, Holder: holder, Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}}
 	if occupancy, ok := root.object.(*edge.DispatchOccupancyMeasurement); ok {
 		for _, definition := range c.runtime.SchedulerInputs(time.Now).Workloads {
 			if definition.Name == occupancy.Spec.Workload {
@@ -547,13 +531,3 @@ func (c *SchedulerController) measurementRootOperation(root measurementRoot, nod
 	return operation
 }
 
-func (c *reservationState) reserveMeasurementLease(operation servingstate.Operation) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if run := c.runs[operation.ID]; run != nil && run.reserved {
-		return true
-	}
-	now := time.Now()
-	run := &actionRun{owner: operation.Holder, action: serving.Action{ID: operation.ID, Kind: measurementLeaseKind, Node: operation.Node, Status: servingstate.NativeOperationRunning}, result: &servingstate.OperationResult{Operation: operation, StartedAt: now, Status: servingstate.NativeOperationRunning}, started: now}
-	return c.reserveRun(operation.ID, run, operation)
-}

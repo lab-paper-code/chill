@@ -29,20 +29,12 @@ const (
 	MeterUndeclared     = "MeterUndeclared"
 )
 
-// CostIssue is one measurement that contributes no cost, or, with code
-// SequenceIncomplete, a record of an operation sequence that stopped early;
-// that record keeps its own verdict.
-type CostIssue struct {
-	Source string `json:"source"`
-	Code   string `json:"code"`
-	Reason string `json:"reason"`
-}
 
 // CostView is the cost evidence derived from completed measurements.
 type CostView struct {
 	Costs     []serving.OperationCost
 	Baselines []serving.NodeBaseline
-	Issues    []CostIssue
+	Issues    []servingstate.CostIssue
 	// DispatchOccupancy is the latest accepted occupancy record per Node,
 	// power mode, runtime image and model.
 	DispatchOccupancy []serving.DispatchOccupancy
@@ -68,7 +60,7 @@ type CostEvidence struct {
 }
 
 type operationEvidence struct {
-	meter    servingops.MeterDeclaration
+	meter    servingstate.MeterDeclaration
 	cost     *serving.OperationCost
 	baseline *serving.NodeBaseline
 	profile  *serving.Profile // retained immutable preparation body, including old catalog versions
@@ -96,8 +88,8 @@ func NewCostEvidence(store *Store, objects costObjects, maxBytes int64) (*CostEv
 // Refresh lists operation measurements under the fixed prefix and Complete
 // PowerModeTransitionCost objects in namespaces. A listing failure fails the
 // refresh; one failed record or measurement becomes its own CostIssue.
-func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, meters []servingops.MeterDeclaration, profiles []serving.Profile) (CostView, error) {
-	view := CostView{Issues: []CostIssue{}}
+func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, meters []servingstate.MeterDeclaration, profiles []serving.Profile) (CostView, error) {
+	view := CostView{Issues: []servingstate.CostIssue{}}
 	identities, err := e.objects.List(ctx, servingops.OperationMeasurementPrefix)
 	if err != nil {
 		return CostView{}, err
@@ -110,7 +102,7 @@ func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, meters 
 	for _, identity := range identities {
 		listed[identity] = true
 		if id, _, ok := strings.Cut(path.Base(identity.Key), "."); ok && incomplete[id] {
-			view.Issues = append(view.Issues, CostIssue{Source: identity.Key, Code: sequenceIncompleteCode, Reason: "sequence " + id + " stopped before its last request"})
+			view.Issues = append(view.Issues, servingstate.CostIssue{Source: identity.Key, Code: sequenceIncompleteCode, Reason: "sequence " + id + " stopped before its last request"})
 		}
 		view.Sources = append(view.Sources, fmt.Sprintf("%s/%s/%d", identity.Store, identity.Key, identity.Size))
 		evidence, cached := e.measurements[identity]
@@ -118,19 +110,19 @@ func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, meters 
 			var readErr error
 			evidence, readErr = e.readOperationEvidence(ctx, identity)
 			if readErr != nil {
-				view.Issues = append(view.Issues, CostIssue{Source: identity.Key, Code: CostEvidenceInvalid, Reason: readErr.Error()})
+				view.Issues = append(view.Issues, servingstate.CostIssue{Source: identity.Key, Code: CostEvidenceInvalid, Reason: readErr.Error()})
 				continue
 			}
 			e.measurements[identity] = evidence
 		}
 		switch {
 		case evidence.invalid != "":
-			view.Issues = append(view.Issues, CostIssue{Source: identity.Key, Code: measurementInvalidCode, Reason: evidence.invalid})
+			view.Issues = append(view.Issues, servingstate.CostIssue{Source: identity.Key, Code: measurementInvalidCode, Reason: evidence.invalid})
 		case evidence.skip:
 		case evidence.err != nil:
-			view.Issues = append(view.Issues, CostIssue{Source: identity.Key, Code: CostEvidenceInvalid, Reason: evidence.err.Error()})
-		case !slices.ContainsFunc(meters, func(m servingops.MeterDeclaration) bool { return reflect.DeepEqual(m, evidence.meter) }):
-			view.Issues = append(view.Issues, CostIssue{Source: identity.Key, Code: MeterUndeclared, Reason: "record meter " + evidence.meter.ID + " differs from every configured meter"})
+			view.Issues = append(view.Issues, servingstate.CostIssue{Source: identity.Key, Code: CostEvidenceInvalid, Reason: evidence.err.Error()})
+		case !slices.ContainsFunc(meters, func(m servingstate.MeterDeclaration) bool { return reflect.DeepEqual(m, evidence.meter) }):
+			view.Issues = append(view.Issues, servingstate.CostIssue{Source: identity.Key, Code: MeterUndeclared, Reason: "record meter " + evidence.meter.ID + " differs from every configured meter"})
 		case evidence.baseline != nil:
 			view.Baselines = append(view.Baselines, *evidence.baseline)
 		default:
@@ -182,7 +174,7 @@ func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, meters 
 	return view, nil
 }
 
-func (e *CostEvidence) refreshPower(ctx context.Context, namespaces []string, meters []servingops.MeterDeclaration, profiles []serving.Profile, view *CostView) error {
+func (e *CostEvidence) refreshPower(ctx context.Context, namespaces []string, meters []servingstate.MeterDeclaration, profiles []serving.Profile, view *CostView) error {
 	listed := map[string]bool{}
 	for _, namespace := range namespaces {
 		measurements := &edge.PowerModeTransitionCostList{}
@@ -198,7 +190,7 @@ func (e *CostEvidence) refreshPower(ctx context.Context, namespaces []string, me
 			}
 			name := measurement.Namespace + "/" + measurement.Name
 			if reason, invalid := measurement.Annotations[profilingrun.InvalidAnnotation]; invalid {
-				view.Issues = append(view.Issues, CostIssue{Source: name, Code: measurementInvalidCode, Reason: reason})
+				view.Issues = append(view.Issues, servingstate.CostIssue{Source: name, Code: measurementInvalidCode, Reason: reason})
 				continue
 			}
 			identity := name + "/" + string(measurement.UID) + "/" + result.Store + "/" + result.Key
@@ -208,16 +200,16 @@ func (e *CostEvidence) refreshPower(ctx context.Context, namespaces []string, me
 			if !cached {
 				var err error
 				if evidence, err = e.loadPowerCost(ctx, measurement, profiles); err != nil {
-					view.Issues = append(view.Issues, CostIssue{Source: name, Code: CostEvidenceInvalid, Reason: err.Error()})
+					view.Issues = append(view.Issues, servingstate.CostIssue{Source: name, Code: CostEvidenceInvalid, Reason: err.Error()})
 					continue
 				}
 				e.power[identity] = evidence
 			}
-			i := slices.IndexFunc(meters, func(m servingops.MeterDeclaration) bool {
+			i := slices.IndexFunc(meters, func(m servingstate.MeterDeclaration) bool {
 				return m.Node == evidence.node && reflect.DeepEqual(m.Source, evidence.source)
 			})
 			if i < 0 {
-				view.Issues = append(view.Issues, CostIssue{Source: name, Code: MeterUndeclared, Reason: "no configured meter has the measured Node and power source"})
+				view.Issues = append(view.Issues, servingstate.CostIssue{Source: name, Code: MeterUndeclared, Reason: "no configured meter has the measured Node and power source"})
 				continue
 			}
 			for _, cost := range evidence.costs {
@@ -254,7 +246,7 @@ func (e *CostEvidence) refreshOccupancy(ctx context.Context, view *CostView) err
 				readErr = decodeCostJSON(raw, record)
 			}
 			if readErr != nil {
-				view.Issues = append(view.Issues, CostIssue{Source: identity.Key, Code: CostEvidenceInvalid, Reason: readErr.Error()})
+				view.Issues = append(view.Issues, servingstate.CostIssue{Source: identity.Key, Code: CostEvidenceInvalid, Reason: readErr.Error()})
 				continue
 			}
 			e.occupancy[identity] = record

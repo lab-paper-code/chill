@@ -59,7 +59,7 @@ func (c *SchedulerController) admitNodeLocked(ctx context.Context, ref serving.N
 	if err != nil {
 		return nil, err
 	}
-	if c.nodeBusy(node) {
+	if c.NodeBusy(node) {
 		return nil, servingstate.Refused("OperationConflict", "Node resources are reserved")
 	}
 	return node, nil
@@ -72,9 +72,9 @@ func (c *SchedulerController) admitNodeStateLocked(ctx context.Context, ref serv
 	if err != nil || string(node.UID) != ref.UID {
 		return nil, servingstate.Refused(refusedNodeMissing, fmt.Sprintf("Node %s/%s is not present", ref.Name, ref.UID))
 	}
-	c.mu.Lock()
+	c.LockState()
 	config := c.config
-	c.mu.Unlock()
+	c.UnlockState()
 	var classes edge.DeviceClassList
 	if err = c.store.client.List(ctx, &classes); err != nil {
 		return nil, err
@@ -90,7 +90,7 @@ func (c *SchedulerController) admitNodeStateLocked(ctx context.Context, ref serv
 // profile of a prepare.
 func (c *SchedulerController) measureOperation(ctx context.Context, config SchedulerControllerConfig, request servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error) {
 	record := servingops.OperationMeasurement{SchemaVersion: servingops.OperationMeasurementSchema, Request: request, Verdict: servingops.MeasurementInsufficient}
-	i := slices.IndexFunc(config.Meters, func(m servingops.MeterDeclaration) bool { return m.Node == request.Operation.Node })
+	i := slices.IndexFunc(config.Meters, func(m servingstate.MeterDeclaration) bool { return m.Node == request.Operation.Node })
 	if i < 0 {
 		return record, evidencestore.Receipt{}, servingstate.Refused(MeterUndeclared, "no wall meter is configured for Node "+request.Operation.Node.Name)
 	}
@@ -176,10 +176,10 @@ func (c *SchedulerController) recordRestartedSequence(ctx context.Context, confi
 // ExecuteManual reserves admitted resources before executing outside tickMu.
 // Physical failures retain the OperationResult envelope and partial evidence.
 func (c *SchedulerController) ExecuteManual(ctx context.Context, request servingstate.ManualOperation) (servingstate.OperationResult, error) {
-	c.tickMu.Lock()
-	c.mu.Lock()
-	config, snapshot := c.config, c.snapshotLocked()
-	c.mu.Unlock()
+	c.LockTick()
+	c.LockState()
+	config, snapshot := c.config, c.SnapshotLocked()
+	c.UnlockState()
 	var operation servingstate.Operation
 	var err error
 	if request.Kind == servingstate.OperationReset {
@@ -198,7 +198,7 @@ func (c *SchedulerController) ExecuteManual(ctx context.Context, request serving
 		}
 	}
 	if err != nil {
-		c.tickMu.Unlock()
+		c.UnlockTick()
 		return servingstate.OperationResult{}, err
 	}
 	plan := manualResetPlan{}
@@ -211,7 +211,7 @@ func (c *SchedulerController) ExecuteManual(ctx context.Context, request serving
 			_, err = c.admitNodeStateLocked(ctx, node)
 		}
 		if err != nil {
-			c.tickMu.Unlock()
+			c.UnlockTick()
 			return servingstate.OperationResult{}, err
 		}
 		operation.Nodes = slices.Clone(plan.nodes)
@@ -229,7 +229,7 @@ func (c *SchedulerController) ExecuteManual(ctx context.Context, request serving
 		}
 		return c.executeManualOperation(workCtx, operation, config, plan, result)
 	})
-	c.tickMu.Unlock()
+	c.UnlockTick()
 	select {
 	case <-done:
 		if outcome.Error == "OperationConflict: resources are reserved" {
@@ -275,7 +275,7 @@ func (c *SchedulerController) manualOperationLocked(ctx context.Context, request
 	if slices.Contains(config.Settings.AutonomousWorkloads, request.WorkloadUID) {
 		return servingstate.Operation{}, servingstate.Refused("OperationConflict", "the Workload is under autonomous control")
 	}
-	if err := c.authorize(servingstate.Operation{Node: request.Node, WorkloadUID: request.WorkloadUID, Instance: request.Instance}); err != nil {
+	if err := c.Authorize(servingstate.Operation{Node: request.Node, WorkloadUID: request.WorkloadUID, Instance: request.Instance}); err != nil {
 		return servingstate.Operation{}, err
 	}
 	node, err := c.admitNodeLocked(ctx, request.Node)
@@ -345,7 +345,7 @@ func (c *SchedulerController) manualPreparationLocked(ctx context.Context, reque
 	if err != nil {
 		return servingstate.PrepareSpec{}, err
 	}
-	if err = ValidatePreparationCapacity(c.observer.config.Namespace, node, pods, snapshot.Nodes[index], spec.Instance); err != nil {
+	if err = ValidatePreparationCapacity(c.observer.Namespace(), node, pods, snapshot.Nodes[index], spec.Instance); err != nil {
 		return servingstate.PrepareSpec{}, servingstate.Refused("OperationConflict", err.Error())
 	}
 	return spec, nil

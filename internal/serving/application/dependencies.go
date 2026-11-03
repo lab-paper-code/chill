@@ -1,6 +1,7 @@
 package application
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"time"
 
 	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
@@ -37,19 +38,19 @@ type Options struct {
 type Live struct {
 	Decision    func(serving.SchedulerDecision, serving.SchedulerSnapshot)
 	Action      func(observation.SchedulerActionObservation, time.Time)
-	PowerScope  func([]servingops.MeterDeclaration, bool)
+	PowerScope  func([]servingstate.MeterDeclaration, bool)
 	MeterSource func(metricobserver.Source, string) metricobserver.Source
 }
 
 type Dependencies struct {
-	Cluster    *servingkube.ClusterState
+	Cluster    *servingstate.ClusterState
 	Operations *servingops.Operations
 	Store      *servingkube.Store
 	Kube       kubernetes.Interface
 	// SettingsKube preserves the HTTP mutation client's budget independently of control refreshes.
 	SettingsKube          kubernetes.Interface
 	Execution             *serving.Runtime
-	Observer              *servingkube.Observer
+	Observer              *servingstate.Observer
 	Objects               *stores3.Store
 	ObservationLog        *observation.ObservationLog
 	Options               Options

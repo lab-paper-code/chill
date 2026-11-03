@@ -1,29 +1,25 @@
-package kube
+package state
 
 import (
-	"math"
-	"reflect"
-	"slices"
-	"strconv"
-	"strings"
-	"time"
-
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
-
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
-	"github.com/lab-paper-code/chill/internal/metricobserver"
-	"github.com/lab-paper-code/chill/internal/nodeactuator"
-	"github.com/lab-paper-code/chill/internal/serving"
+	metricobserver "github.com/lab-paper-code/chill/internal/metricobserver"
+	nodeactuator "github.com/lab-paper-code/chill/internal/nodeactuator"
+	serving "github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
+	math "math"
+	reflect "reflect"
+	slices "slices"
+	strconv "strconv"
+	strings "strings"
+	time "time"
 )
 
-// nodePowerTargets returns, by mode, the maximum actuation duration of each
+// NodePowerTargets returns, by mode, the maximum actuation duration of each
 // mode the Node can be switched into: the non-Fixed modes of its one
 // DeviceClass that have a configured actuation policy.
-func nodePowerTargets(n *core.Node, classes []edge.DeviceClass, policies []nodeactuator.ActuationPolicySpec) map[string]time.Duration {
-	class := servingstate.NodeClass(n, classes)
+func NodePowerTargets(n *core.Node, classes []edge.DeviceClass, policies []nodeactuator.ActuationPolicySpec) map[string]time.Duration {
+	class := NodeClass(n, classes)
 	if class == nil {
 		return nil
 	}
@@ -39,10 +35,10 @@ func nodePowerTargets(n *core.Node, classes []edge.DeviceClass, policies []nodea
 	return targets
 }
 
-// captureNodeInventory retains GPU identity and quantity checks. CPU online
+// CaptureNodeInventory retains GPU identity and quantity checks. CPU online
 // observations belong to the node agent, not placement admission.
-func captureNodeInventory(sn *serving.SchedulerNode, n *core.Node, profiles []serving.Profile) {
-	sn.GPUUUIDs = measuredGPUs(profiles, sn.Node.UID)
+func CaptureNodeInventory(sn *serving.SchedulerNode, n *core.Node, profiles []serving.Profile) {
+	sn.GPUUUIDs = MeasuredGPUs(profiles, sn.Node.UID)
 	gpuQuantity := n.Status.Allocatable["nvidia.com/gpu"]
 	if int64(len(sn.GPUUUIDs)) > gpuQuantity.Value() ||
 		sn.Reserved.GPUUUID != "" && !slices.Contains(sn.GPUUUIDs, sn.Reserved.GPUUUID) {
@@ -50,9 +46,9 @@ func captureNodeInventory(sn *serving.SchedulerNode, n *core.Node, profiles []se
 	}
 }
 
-// measuredGPUs is the GPU inventory of one Node: the GPUs its verified
+// MeasuredGPUs is the GPU inventory of one Node: the GPUs its verified
 // profiles were measured on.
-func measuredGPUs(profiles []serving.Profile, nodeUID string) []string {
+func MeasuredGPUs(profiles []serving.Profile, nodeUID string) []string {
 	var gpus []string
 	for _, p := range profiles {
 		if p.Condition.NodeUID == nodeUID && p.RuntimeMetadata != nil && p.RuntimeMetadata.GPUUUID != "" &&
@@ -64,19 +60,19 @@ func measuredGPUs(profiles []serving.Profile, nodeUID string) []string {
 	return gpus
 }
 
-func bindProfileMeters(s *serving.SchedulerSnapshot, meters []servingops.MeterDeclaration) {
+func BindProfileMeters(s *serving.SchedulerSnapshot, meters []MeterDeclaration) {
 	for index := range s.Instances {
-		bindProfileMeter(&s.Instances[index], meters)
+		BindProfileMeter(&s.Instances[index], meters)
 	}
 	for index := range s.Options {
-		bindProfileMeter(&s.Options[index].Instance, meters)
+		BindProfileMeter(&s.Options[index].Instance, meters)
 	}
 }
 
-// captureNodePods records CHILL serving instances and the non-serving budget.
+// CaptureNodePods records CHILL serving instances and the non-serving budget.
 // A Pod CHILL did not place leaves the Node in the POOL; when its GPU or CPU use
 // cannot be admitted the Node gets PlacementBudgetUnavailable.
-func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n *core.Node, pods *core.PodList, physical map[string]serving.InstanceState, profileByID map[string]*serving.Profile) {
+func CaptureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n *core.Node, pods *core.PodList, physical map[string]serving.InstanceState, profileByID map[string]*serving.Profile) {
 	var nonServingMemory uint64
 	servingUIDs := map[string]bool{}
 	for _, state := range physical {
@@ -115,11 +111,11 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 			}
 			instance.PodName = pod.Name
 			for _, container := range pod.Spec.Containers {
-				if container.Name == servingstate.FirstfloorContainerName {
+				if container.Name == FirstfloorContainerName {
 					instance.Allocation.MemoryBytes = uint64(container.Resources.Limits.Memory().Value())
 				}
 			}
-			if weight, err := strconv.Atoi(pod.Annotations[servingstate.ServingWeightAnnotation]); err == nil {
+			if weight, err := strconv.Atoi(pod.Annotations[ServingWeightAnnotation]); err == nil {
 				instance.Weight = int32(weight)
 			}
 		}
@@ -135,7 +131,7 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 		if p.Spec.NodeName != n.Name || servingUIDs[string(p.UID)] || p.Status.Phase == core.PodSucceeded || p.Status.Phase == core.PodFailed {
 			continue
 		}
-		memory, gpu := podBudget(p)
+		memory, gpu := PodBudget(p)
 		if gpu {
 			sn.Reasons = appendReason(sn.Reasons, serving.NodePlacementBudgetUnavailable)
 		}
@@ -157,13 +153,13 @@ func appendReason(reasons []string, reason string) []string {
 	return append(reasons, reason)
 }
 
-func bindProfileMeter(instance *serving.SchedulerInstance, meters []servingops.MeterDeclaration) {
+func BindProfileMeter(instance *serving.SchedulerInstance, meters []MeterDeclaration) {
 	if instance.Profile == nil {
 		return
 	}
 	for _, meter := range meters {
-		if meter.Node == instance.Node && meter.Scope == servingstate.MeasurementWallScope &&
-			meter.Source.NodeName == instance.Profile.MetricSource.NodeName && sameWallSeries(meter.Source, instance.Profile.MetricSource) {
+		if meter.Node == instance.Node && meter.Scope == MeasurementWallScope &&
+			meter.Source.NodeName == instance.Profile.MetricSource.NodeName && SameWallSeries(meter.Source, instance.Profile.MetricSource) {
 			instance.IdleMeter = meter.ID
 			instance.IdleScope = meter.Scope
 			return
@@ -171,11 +167,11 @@ func bindProfileMeter(instance *serving.SchedulerInstance, meters []servingops.M
 	}
 }
 
-func sameWallSeries(a, b metricobserver.SourceIdentity) bool {
+func SameWallSeries(a, b metricobserver.SourceIdentity) bool {
 	return a.Kind == b.Kind && a.Endpoint == b.Endpoint && a.Metric == b.Metric && reflect.DeepEqual(a.MetricLabels, b.MetricLabels)
 }
 
-func schedulerPhysicalState(id string, physical []serving.InstanceState) *serving.InstanceState {
+func SchedulerPhysicalState(id string, physical []serving.InstanceState) *serving.InstanceState {
 	for index := range physical {
 		if physical[index].ID == id {
 			return &physical[index]
@@ -197,7 +193,7 @@ func schedulerTargetReady(wanted serving.SchedulerInstance, snapshot serving.Sch
 	if wanted.Terminated || wanted.Profile == nil {
 		return false
 	}
-	state := schedulerPhysicalState(wanted.ID, physical)
+	state := SchedulerPhysicalState(wanted.ID, physical)
 	if state == nil || !state.Ready || state.Stopped || state.Terminated || state.Native == nil || !state.Native.Ready {
 		return false
 	}
@@ -224,7 +220,7 @@ func schedulerPolicyAcknowledged(wanted serving.SchedulerInstance, actual native
 		native.EffectiveDeadlinePolicy(actual.Policy.DeadlinePolicy) == native.EffectiveDeadlinePolicy(wanted.Profile.Condition.Firstfloor.DeadlinePolicy)
 }
 
-func podBudget(pod *core.Pod) (int64, bool) {
+func PodBudget(pod *core.Pod) (int64, bool) {
 	var memory, sideMemory, initMemory int64
 	gpu := false
 	for _, container := range pod.Spec.Containers {

@@ -34,7 +34,7 @@ const (
 func TestCommonReservationConflictAndReleaseAC38(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c := &SchedulerController{ctx: ctx, reservationState: &reservationState{runs: map[string]*actionRun{}}}
+	c := &SchedulerController{ctx: ctx, reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{}}}
 	n1 := serving.NodeReference{Name: "one", UID: "one-uid"}
 	n2 := serving.NodeReference{Name: "two", UID: "two-uid"}
 	release := make(chan struct{})
@@ -69,7 +69,7 @@ func TestTerminatedRunRetainsReservationUntilPhysicalReturnAC38(t *testing.T) {
 		t.Run(termination, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			c := &SchedulerController{ctx: ctx, reservationState: &reservationState{runs: map[string]*actionRun{}}}
+			c := &SchedulerController{ctx: ctx, reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{}}}
 			node := serving.NodeReference{Name: "one", UID: "one-uid"}
 			done, result := c.startNodeRun(servingstate.Operation{ID: "remote", Kind: servingstate.OperationPrepare, Node: node, PodUID: "pod"}, SchedulerControllerConfig{}, func(ctx context.Context, _ *servingstate.OperationResult) error {
 				if termination == timeoutOutcome {
@@ -90,7 +90,7 @@ func TestTerminatedRunRetainsReservationUntilPhysicalReturnAC38(t *testing.T) {
 			next := servingstate.Operation{ID: "next", Kind: servingstate.OperationPower, Node: node}
 			assertHeld := func() {
 				t.Helper()
-				if err := c.authorize(next); err == nil {
+				if err := c.Authorize(next); err == nil {
 					t.Fatal("unconfirmed remote effect released reservation")
 				}
 			}
@@ -98,16 +98,16 @@ func TestTerminatedRunRetainsReservationUntilPhysicalReturnAC38(t *testing.T) {
 			observed := result.EndedAt.Add(time.Second)
 			settled := core.Node{ObjectMeta: meta.ObjectMeta{Name: node.Name, UID: "one-uid"}}
 			pod := core.Pod{ObjectMeta: meta.ObjectMeta{UID: "pod"}, Spec: core.PodSpec{NodeName: node.Name}}
-			c.releaseObservedScopes([]core.Node{settled}, []core.Pod{pod}, nil, observed)
+			c.ReleaseObservedScopes([]core.Node{settled}, []core.Pod{pod}, nil, observed)
 			assertHeld()
 			pending := settled.DeepCopy()
 			pending.Labels = map[string]string{chillmeta.PowerModeState: chillmeta.PowerModePending}
-			c.releaseObservedScopes([]core.Node{*pending}, nil, nil, observed)
+			c.ReleaseObservedScopes([]core.Node{*pending}, nil, nil, observed)
 			assertHeld()
 			// A fresh observation after reset/cleanup proves both Pod absence
 			// and settled power; execution termination alone never does.
-			c.releaseObservedScopes([]core.Node{settled}, nil, nil, observed)
-			if err := c.authorize(next); err != nil {
+			c.ReleaseObservedScopes([]core.Node{settled}, nil, nil, observed)
+			if err := c.Authorize(next); err != nil {
 				t.Fatalf("physical-return proof did not release reservation: %v", err)
 			}
 			c.wg.Wait()
@@ -126,7 +126,7 @@ func TestFailedManualRoutingReleasesOnlyFreshKnownEffectsAC38(t *testing.T) {
 			wanted := serving.SchedulerInstance{ID: id, Node: ref, Profile: &profile, WorkloadUID: "workload", MaxBatch: 2}
 			target := serving.SchedulerCandidate{ID: "new-policy", Instances: []serving.SchedulerInstance{wanted}}
 			previous := native.Metadata{ProfileID: profile.ID, DecisionID: "old-policy", Policy: native.Policy{ProfileID: profile.ID, DecisionID: "old-policy", MaxBatchSize: 1}}
-			c := &SchedulerController{ctx: ctx, reservationState: &reservationState{runs: map[string]*actionRun{}}}
+			c := &SchedulerController{ctx: ctx, reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{}}}
 			c.state.Snapshot.Instances = []serving.SchedulerInstance{{ID: id, PodUID: string(pod.UID), Node: ref, WorkloadUID: "workload"}}
 			done, result := c.startNodeRun(servingstate.Operation{ID: "manual-route:test", Kind: servingstate.OperationRoute, WorkloadUID: "workload", Target: &target}, SchedulerControllerConfig{}, func(_ context.Context, result *servingstate.OperationResult) error {
 				result.Before.Native = map[string]native.State{id: {Ready: true, Metadata: previous}}
@@ -135,7 +135,7 @@ func TestFailedManualRoutingReleasesOnlyFreshKnownEffectsAC38(t *testing.T) {
 			})
 			<-done
 			next := servingstate.Operation{WorkloadUID: "workload"}
-			if err := c.authorize(next); err == nil {
+			if err := c.Authorize(next); err == nil {
 				t.Fatal("failed execution alone released reservation")
 			}
 			observed := result.EndedAt.Add(time.Second)
@@ -161,8 +161,8 @@ func TestFailedManualRoutingReleasesOnlyFreshKnownEffectsAC38(t *testing.T) {
 				pod.UID = "manual-route-replacement"
 				pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: "workload"}}
 			}
-			c.releaseObservedScopes([]core.Node{*node}, []core.Pod{*pod}, []serving.InstanceState{state}, observed)
-			released := c.authorize(next) == nil
+			c.ReleaseObservedScopes([]core.Node{*node}, []core.Pod{*pod}, []serving.InstanceState{state}, observed)
+			released := c.Authorize(next) == nil
 			wantReleased := evidence == "declaration" || evidence == previousEvidence
 			if released != wantReleased {
 				t.Fatalf("evidence %s: released=%t, want %t", evidence, released, wantReleased)
@@ -196,29 +196,29 @@ func TestPartialAutonomousOwnerAdoptsOnlyFreshKnownEffectsAC38(t *testing.T) {
 				if kind == servingstate.OperationPrepare {
 					operation.Prepare = &servingstate.PrepareSpec{Instance: wanted, Config: native.Config{Policy: policy}, Owner: &serving.WorkloadReference{UID: "workload"}}
 				}
-				child := &actionRun{owner: target.ID, action: action, reserved: true,
+				child := &servingstate.ActionRun{owner: target.ID, action: action, reserved: true,
 					result: &servingstate.OperationResult{Operation: operation, Status: servingstate.NativeOperationPartial, EndedAt: ended, Error: timeoutOutcome,
 						Before: servingstate.OperationState{Native: map[string]native.State{id: {Ready: true, Metadata: previous}}},
 						Actual: servingstate.OperationState{Native: map[string]native.State{id: {Metadata: previous}}}},
 				}
-				parent := &actionRun{owner: target.ID, reserved: true, action: serving.Action{ID: "parent", Kind: transitionRunKind, Status: servingstate.NativeOperationRunning},
-					result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: transitionRunKind, Target: &target, WorkloadUIDs: []string{"workload"}}, Status: servingstate.NativeOperationRunning}}
+				parent := &servingstate.ActionRun{owner: target.ID, reserved: true, action: serving.Action{ID: "parent", Kind: servingstate.TransitionRunKind, Status: servingstate.NativeOperationRunning},
+					result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.TransitionRunKind, Target: &target, WorkloadUIDs: []string{"workload"}}, Status: servingstate.NativeOperationRunning}}
 				child.proofParent = parent
-				c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{action.ID: child, "parent": parent}}}
+				c := &SchedulerController{reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{action.ID: child, "parent": parent}}}
 				if kind == servingstate.OperationRoute {
 					c.state.Snapshot.Instances = []serving.SchedulerInstance{{ID: id, PodUID: string(pod.UID), Node: ref, WorkloadUID: "workload"}}
 				}
 				// A late prepare's Pod was absent when the target acquired its scope.
-				child.scope, parent.scope = c.operationScope(operation), c.operationScope(parent.result.Operation)
+				child.scope, parent.scope = c.OperationScope(operation), c.OperationScope(parent.result.Operation)
 				if kind == servingstate.OperationPrepare {
 					child.result.Preparation = &servingstate.PreparationEvidence{PodUID: string(pod.UID), NodeUID: ref.UID, DecisionID: policy.DecisionID, Created: true}
 					preparing := wanted
 					preparing.ID, preparing.TargetID, preparing.OwnerWorkloadUID = id, wanted.ID, wanted.WorkloadUID
 					child.action.Status = servingstate.NativeOperationRunning
-					c.reconcileSnapshot(serving.SchedulerSnapshot{Instances: []serving.SchedulerInstance{preparing}}, ended.Add(-time.Second), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+					c.ReconcileSnapshot(serving.SchedulerSnapshot{Instances: []serving.SchedulerInstance{preparing}}, ended.Add(-time.Second), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 					if evidence == restartedEvidence {
 						preparing.ID += restartedContainerSuffix
-						c.reconcileSnapshot(serving.SchedulerSnapshot{Instances: []serving.SchedulerInstance{preparing}}, ended.Add(-time.Second), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+						c.ReconcileSnapshot(serving.SchedulerSnapshot{Instances: []serving.SchedulerInstance{preparing}}, ended.Add(-time.Second), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 						if child.prepareIdentity != id {
 							t.Fatal("a later container replaced the frozen preparation identity")
 						}
@@ -232,8 +232,8 @@ func TestPartialAutonomousOwnerAdoptsOnlyFreshKnownEffectsAC38(t *testing.T) {
 					}
 				}
 				c.state.Results = []servingstate.OperationResult{*child.result}
-				snapshot, _ := c.reconcileSnapshot(c.state.Snapshot, ended.Add(time.Second), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
-				if len(snapshot.Reservations) != 1 || c.authorize(servingstate.Operation{WorkloadUID: "workload"}) == nil || parent.result.Status != servingstate.NativeOperationFailed {
+				snapshot, _ := c.ReconcileSnapshot(c.state.Snapshot, ended.Add(time.Second), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+				if len(snapshot.Reservations) != 1 || c.Authorize(servingstate.Operation{WorkloadUID: "workload"}) == nil || parent.result.Status != servingstate.NativeOperationFailed {
 					t.Fatal("partial receipt did not retain the failed owner's reservation")
 				}
 				observed := ended.Add(2 * time.Second)
@@ -275,17 +275,17 @@ func TestPartialAutonomousOwnerAdoptsOnlyFreshKnownEffectsAC38(t *testing.T) {
 					operation.WorkloadUIDs = []string{"other"}
 					child.result.Operation = operation
 				}
-				c.releaseObservedScopes([]core.Node{*node}, []core.Pod{*pod}, []serving.InstanceState{state}, observed)
-				snapshot, lost := c.reconcileSnapshot(c.state.Snapshot, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+				c.ReleaseObservedScopes([]core.Node{*node}, []core.Pod{*pod}, []serving.InstanceState{state}, observed)
+				snapshot, lost := c.ReconcileSnapshot(c.state.Snapshot, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 				assertPartialReservationReceipt(t, c, child, parent, snapshot, lost, evidence)
 			})
 		}
 	}
 }
 
-func assertPartialReservationReceipt(t *testing.T, c *SchedulerController, child, parent *actionRun, snapshot serving.SchedulerSnapshot, lost []servingstate.OperationResult, evidence string) {
+func assertPartialReservationReceipt(t *testing.T, c *SchedulerController, child, parent *servingstate.ActionRun, snapshot serving.SchedulerSnapshot, lost []servingstate.OperationResult, evidence string) {
 	t.Helper()
-	released := c.authorize(servingstate.Operation{WorkloadUID: "workload"}) == nil
+	released := c.Authorize(servingstate.Operation{WorkloadUID: "workload"}) == nil
 	wantReleased := evidence == "declaration" || evidence == previousEvidence
 	if released != wantReleased || (len(snapshot.Reservations) == 0) != wantReleased {
 		t.Fatalf("%s: released=%t, want %t; reservations=%+v", evidence, released, wantReleased, snapshot.Reservations)
@@ -306,19 +306,19 @@ func TestPartialOwnerKeepsUnconfirmedWorkloadAndPendingPowerAC38(t *testing.T) {
 	other := wanted
 	other.ID, other.WorkloadUID = servingstate.PhysicalID(otherPodUID, servingstate.FirstfloorStatus(pod).ContainerID), "second"
 	target := &serving.SchedulerCandidate{ID: policy.DecisionID, Instances: []serving.SchedulerInstance{wanted, other}}
-	scope := resourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{"first", "second"}, Pods: []string{string(pod.UID), otherPodUID}, Instances: []string{id, other.ID}}
-	child := &actionRun{owner: target.ID, reserved: true, scope: scope, action: serving.Action{ID: "route", Kind: servingstate.OperationRoute, Status: servingstate.NativeOperationPartial},
+	scope := servingstate.ResourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{"first", "second"}, Pods: []string{string(pod.UID), otherPodUID}, Instances: []string{id, other.ID}}
+	child := &servingstate.ActionRun{owner: target.ID, reserved: true, scope: scope, action: serving.Action{ID: "route", Kind: servingstate.OperationRoute, Status: servingstate.NativeOperationPartial},
 		result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.OperationRoute, WorkloadUIDs: scope.Workloads, Target: target}, Status: servingstate.NativeOperationPartial, EndedAt: ended}}
 	target.Actions = []serving.Action{child.action}
-	parent := &actionRun{owner: target.ID, reserved: true, scope: scope, action: serving.Action{Kind: transitionRunKind, Status: servingstate.NativeOperationFailed},
-		result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: transitionRunKind, Target: target}, Status: servingstate.NativeOperationFailed, EndedAt: ended}}
+	parent := &servingstate.ActionRun{owner: target.ID, reserved: true, scope: scope, action: serving.Action{Kind: servingstate.TransitionRunKind, Status: servingstate.NativeOperationFailed},
+		result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.TransitionRunKind, Target: target}, Status: servingstate.NativeOperationFailed, EndedAt: ended}}
 	child.proofParent = parent
 	powerRef := serving.NodeReference{Name: "pending-node", UID: "pending-node-uid"}
 	parent.scope.Nodes = append([]serving.NodeReference{ref}, powerRef)
-	power := &actionRun{owner: target.ID, reserved: true, scope: resourceScope{Nodes: []serving.NodeReference{powerRef}}, action: serving.Action{Kind: servingstate.OperationPower, Status: servingstate.NativeOperationPartial},
+	power := &servingstate.ActionRun{owner: target.ID, reserved: true, scope: servingstate.ResourceScope{Nodes: []serving.NodeReference{powerRef}}, action: serving.Action{Kind: servingstate.OperationPower, Status: servingstate.NativeOperationPartial},
 		result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.OperationPower}, Status: servingstate.NativeOperationPartial, EndedAt: ended}}
 	power.proofParent = parent
-	c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{"parent": parent, "route": child, "power": power}}}
+	c := &SchedulerController{reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{"parent": parent, "route": child, "power": power}}}
 	pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: "first"}}
 	otherPod := pod.DeepCopy()
 	otherPod.UID, otherPod.OwnerReferences[0].UID = otherPodUID, "second"
@@ -331,8 +331,8 @@ func TestPartialOwnerKeepsUnconfirmedWorkloadAndPendingPowerAC38(t *testing.T) {
 	otherState.Native.Metadata.Policy.MaxBatchSize++
 	pending := core.Node{ObjectMeta: meta.ObjectMeta{Name: powerRef.Name, UID: "pending-node-uid", Labels: map[string]string{chillmeta.PowerModeState: chillmeta.PowerModePending}}}
 	observe := func() {
-		c.releaseObservedScopes([]core.Node{*node, pending}, []core.Pod{*pod, *otherPod}, []serving.InstanceState{state, otherState}, observed)
-		c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+		c.ReleaseObservedScopes([]core.Node{*node, pending}, []core.Pod{*pod, *otherPod}, []serving.InstanceState{state, otherState}, observed)
+		c.ReconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 	}
 	observe()
 	if !child.reserved || !parent.reserved || !power.reserved {
@@ -358,11 +358,11 @@ func TestTerminalPreparationsShareOnlyFrozenSiblingReceiptsAC38(t *testing.T) {
 			ended := time.Now().UTC()
 			observed := ended.Add(3 * time.Second)
 			target := &serving.SchedulerCandidate{ID: "frozen-transition"}
-			c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}}
+			c := &SchedulerController{reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{}}}
 			var nodes []core.Node
 			var pods []core.Pod
 			var physical []serving.InstanceState
-			var children []*actionRun
+			var children []*servingstate.ActionRun
 			for i, uid := range []types.UID{"one", "two", "three"} {
 				pod, node, profile, _ := observerSourceFixture()
 				node.Name, node.UID = string(uid), uid
@@ -376,8 +376,8 @@ func TestTerminalPreparationsShareOnlyFrozenSiblingReceiptsAC38(t *testing.T) {
 				if i == 2 {
 					action.Status = servingstate.NativeOperationPartial
 				}
-				child := &actionRun{owner: target.ID, reserved: true, action: action, prepareIdentity: id,
-					scope: resourceScope{Workloads: []string{"workload"}, Pods: []string{string(uid)}, Instances: []string{id}},
+				child := &servingstate.ActionRun{owner: target.ID, reserved: true, action: action, prepareIdentity: id,
+					scope: servingstate.ResourceScope{Workloads: []string{"workload"}, Pods: []string{string(uid)}, Instances: []string{id}},
 					result: &servingstate.OperationResult{Operation: servingstate.Operation{ID: action.ID, Kind: servingstate.OperationPrepare, Node: ref, Instance: wanted.ID,
 						WorkloadUIDs: []string{"workload"}, Target: target,
 						Prepare: &servingstate.PrepareSpec{Instance: wanted, Config: native.Config{Policy: policy}, Owner: &serving.WorkloadReference{UID: "workload"}}},
@@ -394,7 +394,7 @@ func TestTerminalPreparationsShareOnlyFrozenSiblingReceiptsAC38(t *testing.T) {
 					Ready: true, ObservedAt: observed, Native: &native.State{Ready: true,
 						Metadata: native.Metadata{ProfileID: profile.ID, DecisionID: target.ID, Policy: policy}}})
 			}
-			scope := resourceScope{Workloads: []string{"workload"}}
+			scope := servingstate.ResourceScope{Workloads: []string{"workload"}}
 			for _, node := range nodes {
 				scope.Nodes = append(scope.Nodes, serving.NodeReference{Name: node.Name, UID: string(node.UID)})
 			}
@@ -402,19 +402,19 @@ func TestTerminalPreparationsShareOnlyFrozenSiblingReceiptsAC38(t *testing.T) {
 				child.scope.Nodes = scope.Nodes
 				c.state.Results = append(c.state.Results, *child.result)
 			}
-			parent := &actionRun{owner: target.ID, reserved: true, scope: scope,
-				action: serving.Action{ID: "parent", Kind: transitionRunKind, Status: servingstate.NativeOperationFailed},
-				result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: transitionRunKind, Target: target},
+			parent := &servingstate.ActionRun{owner: target.ID, reserved: true, scope: scope,
+				action: serving.Action{ID: "parent", Kind: servingstate.TransitionRunKind, Status: servingstate.NativeOperationFailed},
+				result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.TransitionRunKind, Target: target},
 					Status: servingstate.NativeOperationFailed, EndedAt: ended.Add(time.Second), Error: "child failed"}}
 			c.runs["parent"] = parent
 			for _, child := range children {
 				child.proofParent = parent
 			}
 			mutateTerminalPreparationEvidence(evidence, nodes, pods, physical, children, parent)
-			c.releaseObservedScopes(nodes, pods, physical, observed)
-			snapshot, lost := c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+			c.ReleaseObservedScopes(nodes, pods, physical, observed)
+			snapshot, lost := c.ReconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 			wantReleased := evidence == "all-known"
-			if (c.authorize(servingstate.Operation{WorkloadUID: "workload"}) == nil) != wantReleased ||
+			if (c.Authorize(servingstate.Operation{WorkloadUID: "workload"}) == nil) != wantReleased ||
 				(len(snapshot.Reservations) == 0) != wantReleased {
 				t.Fatalf("%s: reservations=%+v, wantReleased=%t", evidence, snapshot.Reservations, wantReleased)
 			}
@@ -432,7 +432,7 @@ func TestTerminalPreparationsShareOnlyFrozenSiblingReceiptsAC38(t *testing.T) {
 	}
 }
 
-func mutateTerminalPreparationEvidence(evidence string, nodes []core.Node, pods []core.Pod, physical []serving.InstanceState, children []*actionRun, parent *actionRun) {
+func mutateTerminalPreparationEvidence(evidence string, nodes []core.Node, pods []core.Pod, physical []serving.InstanceState, children []*servingstate.ActionRun, parent *servingstate.ActionRun) {
 	switch evidence {
 	case unknownPodEvidence:
 		pods[1].UID = unknownPodUID
@@ -484,23 +484,23 @@ func TestFailedOwnerAdoptsRegisteredRouteReceiptAC38(t *testing.T) {
 			routeAction := serving.Action{ID: "handoff", Kind: servingstate.OperationRoute, Status: servingstate.NativeOperationComplete}
 			removeAction := serving.Action{ID: "cleanup", Kind: servingstate.OperationRemove, Node: ref, Instance: "retiring", Status: servingstate.NativeOperationFailed}
 			target := &serving.SchedulerCandidate{ID: "original", Instances: []serving.SchedulerInstance{wanted}, Actions: []serving.Action{routeAction, removeAction}}
-			scope := resourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{"workload"}, Pods: []string{string(pod.UID)}, Instances: []string{id}}
-			handoff := &actionRun{owner: target.ID, action: routeAction,
+			scope := servingstate.ResourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{"workload"}, Pods: []string{string(pod.UID)}, Instances: []string{id}}
+			handoff := &servingstate.ActionRun{owner: target.ID, action: routeAction,
 				result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.OperationRoute, WorkloadUID: "workload", Target: target}, Status: servingstate.NativeOperationComplete, EndedAt: ended}}
-			cleanupScope := resourceScope{Nodes: []serving.NodeReference{{Name: "retiring-node", UID: "retiring-node-uid"}}, Workloads: []string{"workload"}, Pods: []string{"retiring-pod"}}
-			cleanup := &actionRun{owner: target.ID, reserved: true, scope: cleanupScope, action: removeAction,
+			cleanupScope := servingstate.ResourceScope{Nodes: []serving.NodeReference{{Name: "retiring-node", UID: "retiring-node-uid"}}, Workloads: []string{"workload"}, Pods: []string{"retiring-pod"}}
+			cleanup := &servingstate.ActionRun{owner: target.ID, reserved: true, scope: cleanupScope, action: removeAction,
 				result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.OperationRemove}, Status: servingstate.NativeOperationFailed, EndedAt: ended.Add(time.Second), Error: timeoutOutcome}}
 			refreshTarget := &serving.SchedulerCandidate{ID: "cleanup-refresh", Instances: []serving.SchedulerInstance{wanted}}
-			refresh := &actionRun{owner: target.ID, scope: scope, action: serving.Action{ID: "refresh", Kind: servingstate.OperationRoute, Status: servingstate.NativeOperationComplete},
+			refresh := &servingstate.ActionRun{owner: target.ID, scope: scope, action: serving.Action{ID: "refresh", Kind: servingstate.OperationRoute, Status: servingstate.NativeOperationComplete},
 				result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.OperationRoute, WorkloadUID: "workload", Target: refreshTarget},
 					Status: servingstate.NativeOperationComplete, EndedAt: ended}}
-			parent := &actionRun{owner: target.ID, reserved: true, scope: scope,
-				routeReceipts: map[string]*actionRun{refresh.action.ID: refresh},
-				action:        serving.Action{Kind: transitionRunKind, Status: servingstate.NativeOperationFailed},
-				result:        &servingstate.OperationResult{Operation: servingstate.Operation{Kind: transitionRunKind, Target: target}, Status: servingstate.NativeOperationFailed, EndedAt: ended.Add(time.Second), Error: "cleanup failed"}}
+			parent := &servingstate.ActionRun{owner: target.ID, reserved: true, scope: scope,
+				routeReceipts: map[string]*servingstate.ActionRun{refresh.action.ID: refresh},
+				action:        serving.Action{Kind: servingstate.TransitionRunKind, Status: servingstate.NativeOperationFailed},
+				result:        &servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.TransitionRunKind, Target: target}, Status: servingstate.NativeOperationFailed, EndedAt: ended.Add(time.Second), Error: "cleanup failed"}}
 			handoff.proofParent, cleanup.proofParent, refresh.proofParent = parent, parent, parent
 			parent.scope.Nodes = append([]serving.NodeReference{ref}, cleanupScope.Nodes...)
-			c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{"parent": parent, routeAction.ID: handoff, removeAction.ID: cleanup, "refresh": refresh}}}
+			c := &SchedulerController{reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{"parent": parent, routeAction.ID: handoff, removeAction.ID: cleanup, "refresh": refresh}}}
 			state := serving.InstanceState{ID: id, PodUID: string(pod.UID), Node: ref, Ready: true, ObservedAt: observed,
 				Native: &native.State{Ready: true, Metadata: native.Metadata{ProfileID: profile.ID, DecisionID: refreshTarget.ID,
 					Policy: native.Policy{ProfileID: profile.ID, DecisionID: refreshTarget.ID, MaxBatchSize: wanted.MaxBatch}}}}
@@ -518,16 +518,16 @@ func TestFailedOwnerAdoptsRegisteredRouteReceiptAC38(t *testing.T) {
 			retiring.UID = "retiring-pod"
 			retiring.Spec.NodeName = "retiring-node"
 			retiringNode := core.Node{ObjectMeta: meta.ObjectMeta{Name: "retiring-node", UID: "retiring-node-uid"}}
-			c.releaseObservedScopes([]core.Node{*node, retiringNode}, []core.Pod{*pod, *retiring}, []serving.InstanceState{state}, observed)
-			c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+			c.ReleaseObservedScopes([]core.Node{*node, retiringNode}, []core.Pod{*pod, *retiring}, []serving.InstanceState{state}, observed)
+			c.ReconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 			if !parent.reserved || !cleanup.reserved {
 				t.Fatal("refresh ACK released an unconfirmed cleanup responsibility")
 			}
 			// Retirement is now observed absent; only the registered refresh can
 			// prove the survivor's current policy, not the original handoff.
-			c.releaseObservedScopes([]core.Node{*node, retiringNode}, []core.Pod{*pod}, []serving.InstanceState{state}, observed)
-			c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
-			if (c.authorize(servingstate.Operation{WorkloadUID: "workload"}) == nil) != (evidence == "registered") {
+			c.ReleaseObservedScopes([]core.Node{*node, retiringNode}, []core.Pod{*pod}, []serving.InstanceState{state}, observed)
+			c.ReconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+			if (c.Authorize(servingstate.Operation{WorkloadUID: "workload"}) == nil) != (evidence == "registered") {
 				t.Fatalf("%s: unexpected cleanup reservation return", evidence)
 			}
 			if parent.result.Status != servingstate.NativeOperationFailed || parent.result.Error != "cleanup failed" ||
@@ -552,29 +552,29 @@ func TestCanceledPrepareAdoptsRegisteredReadySubsetReceiptAC38(t *testing.T) {
 			ended := time.Now().UTC()
 			observed := ended.Add(3 * time.Second)
 			wanted := serving.SchedulerInstance{ID: id, Node: ref, Profile: &profile, WorkloadUID: "workload", MaxBatch: 2}
-			scope := resourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{"workload"}, Pods: []string{string(pod.UID)}, Instances: []string{id}}
-			prepare := &actionRun{owner: "original", reserved: true, scope: scope,
+			scope := servingstate.ResourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{"workload"}, Pods: []string{string(pod.UID)}, Instances: []string{id}}
+			prepare := &servingstate.ActionRun{owner: "original", reserved: true, scope: scope,
 				action: serving.Action{ID: "prepare", Kind: servingstate.OperationPrepare, Instance: "pending", Status: servingstate.NativeOperationPartial},
 				result: &servingstate.OperationResult{Status: servingstate.NativeOperationPartial, EndedAt: ended, Error: context.Canceled.Error(),
 					Operation: servingstate.Operation{Kind: servingstate.OperationPrepare, Prepare: &servingstate.PrepareSpec{Instance: wanted}}}}
 			target := &serving.SchedulerCandidate{ID: "original", Actions: []serving.Action{prepare.action}}
-			parent := &actionRun{owner: target.ID, reserved: true, scope: scope,
-				action: serving.Action{Kind: transitionRunKind, Status: servingstate.NativeOperationFailed},
-				result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: transitionRunKind, Target: target}, Status: servingstate.NativeOperationFailed, EndedAt: ended}}
+			parent := &servingstate.ActionRun{owner: target.ID, reserved: true, scope: scope,
+				action: serving.Action{Kind: servingstate.TransitionRunKind, Status: servingstate.NativeOperationFailed},
+				result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.TransitionRunKind, Target: target}, Status: servingstate.NativeOperationFailed, EndedAt: ended}}
 			prepare.proofParent = parent
 			subset := &serving.SchedulerCandidate{ID: "original-ready-subset", Instances: []serving.SchedulerInstance{wanted},
 				Routing: map[string]map[string]int32{"workload": {id: 1000}}}
 			operation := servingstate.Operation{Kind: servingstate.OperationRoute, Target: subset, WorkloadUIDs: []string{"workload"}}
-			route := &actionRun{owner: target.ID, scope: scope,
-				action: serving.Action{ID: subset.ID, Kind: servingstate.OperationRoute, From: readySubsetRoute, Status: servingstate.NativeOperationComplete},
+			route := &servingstate.ActionRun{owner: target.ID, scope: scope,
+				action: serving.Action{ID: subset.ID, Kind: servingstate.OperationRoute, From: servingstate.ReadySubsetRoute, Status: servingstate.NativeOperationComplete},
 				result: &servingstate.OperationResult{Operation: operation, Status: servingstate.NativeOperationComplete, EndedAt: ended}}
-			c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{transitionRunKind + "/" + target.ID: parent, prepare.action.ID: prepare}}}
+			c := &SchedulerController{reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{servingstate.TransitionRunKind + "/" + target.ID: parent, prepare.action.ID: prepare}}}
 			if evidence == "dynamic-route" {
 				route.action.From = ""
 			}
 			if evidence == "unregistered" {
 				c.runs[route.action.ID] = route
-			} else if !c.reserveRun(route.action.ID, route, operation) {
+			} else if !c.ReserveRun(route.action.ID, route, operation) {
 				t.Fatal("same-owner route was not admitted")
 			}
 			state := serving.InstanceState{ID: id, PodUID: string(pod.UID), Node: ref, Ready: true, ObservedAt: observed,
@@ -611,14 +611,14 @@ func TestCanceledPrepareAdoptsRegisteredReadySubsetReceiptAC38(t *testing.T) {
 				next := &serving.SchedulerCandidate{ID: "next-subset", Instances: []serving.SchedulerInstance{other},
 					Routing: map[string]map[string]int32{"workload": {other.ID: 1000}}}
 				nextOperation := servingstate.Operation{Kind: servingstate.OperationRoute, Target: next, WorkloadUIDs: []string{"workload"}}
-				nextRun := &actionRun{owner: parent.owner, scope: scope,
-					action: serving.Action{ID: next.ID, Kind: servingstate.OperationRoute, From: readySubsetRoute, Status: servingstate.NativeOperationComplete},
+				nextRun := &servingstate.ActionRun{owner: parent.owner, scope: scope,
+					action: serving.Action{ID: next.ID, Kind: servingstate.OperationRoute, From: servingstate.ReadySubsetRoute, Status: servingstate.NativeOperationComplete},
 					result: &servingstate.OperationResult{Operation: nextOperation, Status: servingstate.NativeOperationComplete, EndedAt: ended,
 						Before: servingstate.OperationState{Native: map[string]native.State{id: *state.Native}}}}
 				if evidence == supersededFailure {
 					nextRun.action.Status, nextRun.result.Status = servingstate.NativeOperationFailed, servingstate.NativeOperationFailed
 				}
-				if !c.reserveRun(next.ID, nextRun, nextOperation) {
+				if !c.ReserveRun(next.ID, nextRun, nextOperation) {
 					t.Fatal("successive subset was not admitted")
 				}
 				// Receipt retention must not depend on the action-view window.
@@ -627,18 +627,18 @@ func TestCanceledPrepareAdoptsRegisteredReadySubsetReceiptAC38(t *testing.T) {
 				parent.reserved = false // Other children can still own unconfirmed effects.
 				observed = ended.Add(3 * time.Minute)
 				state.ObservedAt = observed
-				c.reconcileSnapshot(serving.SchedulerSnapshot{}, ended.Add(2*time.Minute), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
-				if c.runs[transitionRunKind+"/"+target.ID] == nil {
+				c.ReconcileSnapshot(serving.SchedulerSnapshot{}, ended.Add(2*time.Minute), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+				if c.runs[servingstate.TransitionRunKind+"/"+target.ID] == nil {
 					t.Fatal("action-view expiry erased a still-owned transition baseline")
 				}
 			}
-			c.releaseObservedScopes([]core.Node{*node}, []core.Pod{*pod}, []serving.InstanceState{state}, observed)
-			c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+			c.ReleaseObservedScopes([]core.Node{*node}, []core.Pod{*pod}, []serving.InstanceState{state}, observed)
+			c.ReconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 			wantReleased := evidence == "registered" || evidence == "dynamic-route" || evidence == "previous-existing" || evidence == "superseded" || evidence == supersededFailure || evidence == parentAfterWindow
-			if released := c.authorize(servingstate.Operation{WorkloadUID: "workload"}) == nil; released != wantReleased {
+			if released := c.Authorize(servingstate.Operation{WorkloadUID: "workload"}) == nil; released != wantReleased {
 				t.Fatalf("%s: reservation released=%t", evidence, released)
 			}
-			if evidence == parentAfterWindow && c.runs[transitionRunKind+"/"+target.ID] != nil {
+			if evidence == parentAfterWindow && c.runs[servingstate.TransitionRunKind+"/"+target.ID] != nil {
 				t.Fatal("confirmed owner kept its expired baseline after responsibility returned")
 			}
 			if prepare.result.Status != servingstate.NativeOperationPartial || prepare.result.Error != context.Canceled.Error() || parent.result.Status != servingstate.NativeOperationFailed {

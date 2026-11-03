@@ -28,7 +28,7 @@ func TestBridgeStopRequiresCurrentNativeACKAC45(t *testing.T) {
 			source.ID, source.Weight = "old-source", 0
 			stage.Instances = append(stage.Instances, source)
 			ack := serving.Action{ID: "bridge-ack", Kind: servingstate.OperationRoute, From: "handoff-bridge", Status: servingstate.NativeOperationComplete, RouteTarget: &stage}
-			controller.runs[ack.ID] = &actionRun{action: ack, result: &servingstate.OperationResult{Operation: servingstate.Operation{Target: &stage}, Status: servingstate.NativeOperationComplete}}
+			controller.runs[ack.ID] = &servingstate.ActionRun{action: ack, result: &servingstate.OperationResult{Operation: servingstate.Operation{Target: &stage}, Status: servingstate.NativeOperationComplete}}
 			stop := serving.Action{ID: "stop-original-physical", Kind: servingstate.OperationStop, Instance: source.ID, DependsOn: []string{ack.ID}}
 			// The final goal is deliberately not ready: the stop depends on the
 			// frozen intermediate proof, never on a substituted final target.
@@ -49,7 +49,7 @@ func TestBridgeStopRequiresCurrentNativeACKAC45(t *testing.T) {
 			case "wrong owner UID":
 				controller.runs[ack.ID].result.Operation.WorkloadUIDs = []string{"not-this-owner"}
 			}
-			if got := controller.dependenciesReady(stop, target, controller.runtime); got != (proof == servingstate.NativeOperationComplete || proof == independentRouteChanged) {
+			if got := controller.DependenciesReady(stop, target, controller.runtime); got != (proof == servingstate.NativeOperationComplete || proof == independentRouteChanged) {
 				t.Fatalf("bridge ACK proof %s allowed stop=%t", proof, got)
 			}
 		})
@@ -64,12 +64,12 @@ func TestRequiredBridgeFailureFailsOwnerSCH26AC38(t *testing.T) {
 			bridge := serving.Action{ID: "required-bridge", Kind: servingstate.OperationRoute, RouteTarget: &stage, Status: status}
 			goal.Actions = []serving.Action{bridge, {ID: "blocked-stop", Kind: servingstate.OperationStop, DependsOn: []string{bridge.ID}}}
 			installTestTransition(c, &goal)
-			parent := c.runs[transitionRunKind+"/"+goal.ID]
-			c.runs[bridge.ID] = &actionRun{action: bridge, owner: goal.ID,
+			parent := c.runs[servingstate.TransitionRunKind+"/"+goal.ID]
+			c.runs[bridge.ID] = &servingstate.ActionRun{action: bridge, owner: goal.ID,
 				result: &servingstate.OperationResult{Operation: servingstate.Operation{Target: &stage}, Status: status}}
 			// The bridge's successful effect can be superseded by the final
 			// route; an execution failure must still terminate its owner.
-			c.reconcileOwnersLocked(serving.SchedulerSnapshot{}, time.Now(), false, c.runtime)
+			c.ReconcileOwnersLocked(serving.SchedulerSnapshot{}, time.Now(), false, c.runtime)
 			want := servingstate.NativeOperationFailed
 			if status == servingstate.NativeOperationComplete {
 				want = servingstate.NativeOperationRunning
@@ -105,7 +105,7 @@ func TestSkippedRequiredBridgeConsumesReadySubsetACKSCH51(t *testing.T) {
 			stop := serving.Action{ID: "stop-blocker", Kind: servingstate.OperationStop, Instance: source.ID, DependsOn: []string{bridge.ID}}
 			prepare := serving.Action{ID: "prepare-w1", Kind: servingstate.OperationPrepare, Instance: future.ID, DependsOn: []string{stop.ID}}
 			goal.Actions = []serving.Action{bridge, stop, prepare}
-			c.runs["prepare-bridge"] = &actionRun{action: serving.Action{Status: servingstate.NativeOperationComplete}}
+			c.runs["prepare-bridge"] = &servingstate.ActionRun{action: serving.Action{Status: servingstate.NativeOperationComplete}}
 			if !receipt {
 				delete(c.runs, "acknowledged-route")
 			}
@@ -216,7 +216,7 @@ func TestSkippedBridgeChainPreservesTerminalUIDSCH51(t *testing.T) {
 			}
 			installTestTransition(c, &goal)
 			// The owner also controls W2, whose handoff has already completed.
-			c.runs[transitionRunKind+"/"+goal.ID].result.Operation.WorkloadUIDs = []string{"w1", w2.WorkloadUID}
+			c.runs[servingstate.TransitionRunKind+"/"+goal.ID].result.Operation.WorkloadUIDs = []string{"w1", w2.WorkloadUID}
 			c.mu.Lock()
 			c.launchTargetLocked(goal, SchedulerControllerConfig{})
 			c.mu.Unlock()
@@ -252,8 +252,8 @@ func TestRunningBridgeCannotConsumeUnrelatedCompletedACKS2(t *testing.T) {
 			installTestTransition(c, &goal)
 			running := bridge
 			running.Status = status
-			c.runs[bridge.ID] = &actionRun{action: running, owner: goal.ID}
-			if c.dependenciesReady(stop, goal, c.runtime) || c.dependenciesReady(final, goal, c.runtime) {
+			c.runs[bridge.ID] = &servingstate.ActionRun{action: running, owner: goal.ID}
+			if c.DependenciesReady(stop, goal, c.runtime) || c.DependenciesReady(final, goal, c.runtime) {
 				t.Fatal("stop/final route accepted an incomplete bridge despite its existing frozen effect")
 			}
 			c.mu.Lock()
@@ -310,13 +310,13 @@ func testReadySubsetACKAndSkippedBridgeProgress(t *testing.T, pendingSibling boo
 	if pendingSibling {
 		// Keep an independent real-plan duty running across the later route ACK.
 		power.Status = servingstate.NativeOperationRunning
-		c.runs[power.ID] = &actionRun{action: power, owner: goal.ID,
+		c.runs[power.ID] = &servingstate.ActionRun{action: power, owner: goal.ID,
 			result: &servingstate.OperationResult{Operation: servingstate.Operation{ID: power.ID, Kind: servingstate.OperationPower, Node: power.Node, Target: &goal}, Status: servingstate.NativeOperationRunning}}
 	}
 	// Native B is Ready before the controller receives its prepare result.
 	pending := prepare
 	pending.Status = servingstate.NativeOperationRunning
-	c.runs[prepare.ID] = &actionRun{action: pending, owner: goal.ID,
+	c.runs[prepare.ID] = &servingstate.ActionRun{action: pending, owner: goal.ID,
 		result: &servingstate.OperationResult{Operation: servingstate.Operation{ID: prepare.ID, Kind: servingstate.OperationPrepare, Target: &goal}, Status: starting}}
 	prepared.Store(true)
 	snapshot, err = c.capture(ctx, time.Now(), c.config)
@@ -328,9 +328,9 @@ func testReadySubsetACKAndSkippedBridgeProgress(t *testing.T, pendingSibling boo
 	c.launchTargetLocked(goal, c.config)
 	c.mu.Unlock()
 	c.wg.Wait()
-	var subset *actionRun
+	var subset *servingstate.ActionRun
 	for _, run := range c.runs {
-		if run.action.From == readySubsetRoute {
+		if run.action.From == servingstate.ReadySubsetRoute {
 			subset = run
 		}
 	}
@@ -369,7 +369,7 @@ func testReadySubsetACKAndSkippedBridgeProgress(t *testing.T, pendingSibling boo
 	c.launchTargetLocked(goal, c.config)
 	c.mu.Unlock()
 	c.wg.Wait()
-	parent := c.runs[transitionRunKind+"/"+goal.ID]
+	parent := c.runs[servingstate.TransitionRunKind+"/"+goal.ID]
 	if c.runs[bridge.ID] != nil {
 		t.Fatal("ACK-covered bridge manufactured a route run")
 	}
@@ -404,7 +404,7 @@ func testReadySubsetACKAndSkippedBridgeProgress(t *testing.T, pendingSibling boo
 	if parent.action.Status != wantStatus || parent.reserved != pendingSibling {
 		t.Fatalf("owner status=%s reserved=%t, want status=%s reserved=%t", parent.action.Status, parent.reserved, wantStatus, pendingSibling)
 	}
-	for _, reservation := range c.reservationsLocked() {
+	for _, reservation := range c.ReservationsLocked() {
 		if strings.Contains(reservation.Reason, bridge.ID+":") {
 			t.Fatalf("consumed bridge reported missing proof: %s", reservation.Reason)
 		}
@@ -430,12 +430,12 @@ func TestSkippedBridgeDoesNotRetireOwnerBeforeStopS3(t *testing.T) {
 	stop := serving.Action{ID: "required-w2-stop", Kind: servingstate.OperationStop, Instance: source.ID, DependsOn: []string{bridge.ID}}
 	goal.Actions = []serving.Action{bridge, stop}
 	installTestTransition(c, &goal)
-	parent := c.runs[transitionRunKind+"/"+goal.ID]
-	c.reconcileOwnersLocked(c.state.Snapshot, time.Now(), false, c.runtime)
+	parent := c.runs[servingstate.TransitionRunKind+"/"+goal.ID]
+	c.ReconcileOwnersLocked(c.state.Snapshot, time.Now(), false, c.runtime)
 	if parent.action.Status != servingstate.NativeOperationRunning || !parent.reserved || c.runs[stop.ID] != nil {
 		t.Fatalf("unstarted stop lost its live owner: %+v", parent)
 	}
-	if !c.dependenciesReady(stop, goal, c.runtime) {
+	if !c.DependenciesReady(stop, goal, c.runtime) {
 		t.Fatal("source UID's existing ACK did not authorize the frozen stop")
 	}
 }

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -145,8 +146,8 @@ func settingsServiceForTest(
 			t.Error(err)
 		}
 	})
-	cluster := servingkube.NewClusterState(store, kube, "serving")
-	observer, err := servingkube.NewObserver(cluster, store, kube, execution, &sdk.Client{}, servingkube.ObserverConfig{Namespace: "serving"})
+	cluster := servingstate.NewClusterState(store, kube, "serving")
+	observer, err := servingstate.NewObserver(cluster, store, kube, execution, &sdk.Client{}, servingstate.ObserverConfig{Namespace: "serving"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -498,11 +499,11 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 	})
 	service, execution, _ := settingsServiceForTest(t, kube, observationLog, settings, false, false)
 	controller := service.Controller
-	meters := []servingops.MeterDeclaration{{ID: "accepted-meter", Node: serving.NodeReference{Name: "accepted-node", UID: "accepted-uid"}, Scope: "node-exclusive-wall"}}
+	meters := []servingstate.MeterDeclaration{{ID: "accepted-meter", Node: serving.NodeReference{Name: "accepted-node", UID: "accepted-uid"}, Scope: "node-exclusive-wall"}}
 	handler := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, runtime: execution, observationLog: observationLog, config: HandlerConfig{
 		Scheduler: controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler", SchedulerConfigKey: "scheduler.json",
 		SchedulerLock: &service.Lock, MaxRequestBytes: 1 << 20, ChangeSchedulerSettings: service.ChangeSchedulerSettings,
-		SchedulerMeters: func() []servingops.MeterDeclaration { return meters },
+		SchedulerMeters: func() []servingstate.MeterDeclaration { return meters },
 		RequestTimeout:  73125 * time.Millisecond,
 	}}
 	put := func(extra string) *httptest.ResponseRecorder {
@@ -540,7 +541,7 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 	var shown struct {
 		StaticRouting    map[string]map[string]int     `json:"staticRouting"`
 		PowerObservation map[string]map[string]float64 `json:"powerObservation"`
-		Meters           []servingops.MeterDeclaration `json:"meters"`
+		Meters           []servingstate.MeterDeclaration `json:"meters"`
 		RequestTimeout   time.Duration                 `json:"requestTimeout"`
 	}
 	if err := json.Unmarshal(got.Body.Bytes(), &shown); err != nil || got.Code != http.StatusOK || !reflect.DeepEqual(shown.StaticRouting, declared) {
@@ -611,7 +612,7 @@ func TestPoolsShowMeasurementNodeAndWorkloadActivePool(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	handler := &Handler{runtime: execution, observer: &servingkube.Observer{}, config: HandlerConfig{Scheduler: controller}}
+	handler := &Handler{runtime: execution, observer: &servingstate.Observer{}, config: HandlerConfig{Scheduler: controller}}
 	view, err := handler.poolView("")
 	if err != nil {
 		t.Fatal(err)

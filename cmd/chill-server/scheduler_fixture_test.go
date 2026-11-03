@@ -1,6 +1,7 @@
 package main
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"context"
 	"encoding/json"
 	"errors"
@@ -122,9 +123,9 @@ func schedulerTestDependencies(t *testing.T, config application.SchedulerConfigu
 		},
 		Data: map[string]string{"scheduler.json": string(raw), "unrelated": "operator value"},
 	})
-	cluster := servingkube.NewClusterState(store, kube, "serving")
-	observer, err := servingkube.NewObserver(cluster, store, kube, execution, &sdk.Client{},
-		servingkube.ObserverConfig{Namespace: "serving"})
+	cluster := servingstate.NewClusterState(store, kube, "serving")
+	observer, err := servingstate.NewObserver(cluster, store, kube, execution, &sdk.Client{},
+		servingstate.ObserverConfig{Namespace: "serving"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -278,7 +278,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	}).Build()
 	currentPolicy := native.Policy{DecisionID: "manual-static-routing:current", ProfileID: profile.ID, MaxBatchSize: 1, MaxBatchWaitMS: 17}
 	actualRuntime := *profile.RuntimeMetadata
-	actualRuntime.ModelFiles = deliveredModelFiles(profile.Condition.Artifact.Files)
+	actualRuntime.ModelFiles = servingstate.DeliveredModelFiles(profile.Condition.Artifact.Files)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Native state reports the mounted policy, never the Pod annotation.
 		_ = json.NewEncoder(w).Encode(native.State{At: time.Now().UTC(), Ready: true, Metadata: native.Metadata{
@@ -352,7 +352,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	}
 	t.Run("OperationCostPinsPreparedPhysicalIdentity", func(t *testing.T) {
 		operations.Native = manager.observer.native
-		controller := &SchedulerController{reservationState: &reservationState{}, store: manager.store}
+		controller := &SchedulerController{reservationState: &servingstate.ReservationState{}, store: manager.store}
 		idle := int32(1)
 		m := opcostRoot("physical-cost", time.Now(),
 			edge.OperationCostStep{Name: "prepare", Kind: edge.OperationCostStepPrepare, BatchEnergyOptimization: "beo"},
@@ -372,7 +372,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 					t.Fatal(err)
 				}
 				record.Result = result
-				actual := schedulerPhysicalState(spec.Instance.ID, result.Actual.Instances)
+				actual := servingstate.SchedulerPhysicalState(spec.Instance.ID, result.Actual.Instances)
 				if actual == nil || actual.ID != physical {
 					t.Fatalf("prepare did not observe physical executor: %+v", result.Actual.Instances)
 				}

@@ -1,13 +1,13 @@
 package main
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"context"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -327,7 +327,7 @@ func (p *livePublisher) request(event serving.RequestEvent) {
 		p.metrics.Finished(event.WorkloadUID, event.At, event.Outcome == "completed", measured, slo)
 	}
 }
-func (p *livePublisher) powerScope(meters []servingops.MeterDeclaration, enabled bool) {
+func (p *livePublisher) powerScope(meters []servingstate.MeterDeclaration, enabled bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.meters = nil

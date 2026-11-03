@@ -1,6 +1,7 @@
 package measurement_test
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"context"
 	"encoding/json"
 	"errors"
@@ -58,7 +59,7 @@ func TestOccupancyLocalHTTPSDryRunThenCreate(t *testing.T) {
 		SubmitOccupancy: service.SubmitOccupancy, DeleteOccupancy: service.DeleteOccupancy,
 	}
 	handler, err := httpapi.NewHandler(&management.Manager{}, &serving.Runtime{},
-		&servingkube.Authorizer{Client: kube}, log, &servingkube.Observer{}, config)
+		&servingkube.Authorizer{Client: kube}, log, &servingstate.Observer{}, config)
 	if err != nil {
 		t.Fatal(err)
 	}

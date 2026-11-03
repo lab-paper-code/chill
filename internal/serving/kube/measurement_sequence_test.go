@@ -373,7 +373,7 @@ func TestManualPrepareAppliesMeasuredMaxBatch(t *testing.T) {
 				}}}
 			snapshot := serving.SchedulerSnapshot{}
 			sn := serving.SchedulerNode{Node: template.Instance.Node}
-			captureNodePods(&snapshot, &sn, node, &core.PodList{Items: []core.Pod{*pod}},
+			servingstate.CaptureNodePods(&snapshot, &sn, node, &core.PodList{Items: []core.Pod{*pod}},
 				map[string]serving.InstanceState{physical.ID: physical}, map[string]*serving.Profile{profile.ID: profile})
 			if len(snapshot.Instances) != 1 || snapshot.Instances[0].ID != physical.ID || snapshot.Instances[0].MaxBatch != cap {
 				t.Fatalf("physical policy maxBatch was not reflected in snapshot: %+v", snapshot.Instances)

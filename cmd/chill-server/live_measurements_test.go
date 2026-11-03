@@ -1,6 +1,7 @@
 package main
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -151,7 +152,7 @@ func testMeasurementMutationEventsMatchHistoryAndReplay(t *testing.T, occupancy 
 	}
 	handler, err := httpapi.NewHandler(
 		&management.Manager{}, &serving.Runtime{}, &servingkube.Authorizer{Client: client},
-		log, &servingkube.Observer{}, config,
+		log, &servingstate.Observer{}, config,
 	)
 	if err != nil {
 		t.Fatal(err)

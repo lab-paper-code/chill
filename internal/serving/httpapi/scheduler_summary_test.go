@@ -10,13 +10,12 @@ import (
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	"github.com/lab-paper-code/chill/internal/serving"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 )
 
 func TestSchedulerSummaryWhitelist(t *testing.T) {
 	at := time.Date(2026, 10, 25, 1, 2, 3, 4, time.UTC)
 	seconds := 2.5
-	state := servingkube.SchedulerControllerState{
+	state := servingstate.SchedulerControllerState{
 		Snapshot: serving.SchedulerSnapshot{At: at, Instances: []serving.SchedulerInstance{{ID: "i", OwnerWorkloadUID: "owner", WorkloadUID: "allocated", ProfileID: "profile", Ready: true, Stopped: true, PodName: "serving-pod", PodUID: "pod-uid", Routable: map[string]bool{"allocated": false}, Reasons: []string{"PolicyAckPending"}}}},
 		Decision: serving.SchedulerDecision{At: at, Status: "Selected", Target: &serving.SchedulerCandidate{ID: "target"}},
 		Actions:  []serving.Action{{ID: "running", Kind: "prepare", Status: "running", Elapsed: time.Second, ExpectedSeconds: &seconds, ExpectedSource: &serving.ActionExpectedSource{CostID: "cost", Statistic: "mean", TrialCount: 2}}, {ID: "old", Status: "complete"}},
@@ -58,7 +57,7 @@ func TestSchedulerSummaryWhitelist(t *testing.T) {
 }
 
 func TestSchedulerSummaryCountsOnlyExecutingChanges(t *testing.T) {
-	state := servingkube.SchedulerControllerState{Actions: []serving.Action{
+	state := servingstate.SchedulerControllerState{Actions: []serving.Action{
 		{ID: "plan", Status: "planned"}, {ID: "start", Status: "starting"},
 		{ID: "run", Status: "running"}, {ID: "done", Status: "complete"},
 		{ID: "error", Status: "failed"}, {ID: "cancel", Status: "cancel"},
@@ -93,7 +92,7 @@ func TestSchedulerSummaryViewValidation(t *testing.T) {
 
 func TestSchedulerSummaryPoolReturnFacts(t *testing.T) {
 	at := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
-	state := servingkube.SchedulerControllerState{
+	state := servingstate.SchedulerControllerState{
 		Snapshot: serving.SchedulerSnapshot{
 			Reservations: []serving.SchedulerReservation{{}, {}},
 			Outstanding:  []serving.SchedulerRequest{{}},
@@ -112,7 +111,7 @@ func TestSchedulerSummaryPoolReturnFacts(t *testing.T) {
 }
 
 func TestSchedulerSummaryLargeState(t *testing.T) {
-	state := servingkube.SchedulerControllerState{
+	state := servingstate.SchedulerControllerState{
 		Snapshot: serving.SchedulerSnapshot{
 			At: time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC),
 			Options: []serving.SchedulerOption{{Instance: serving.SchedulerInstance{

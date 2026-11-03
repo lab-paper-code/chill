@@ -1,21 +1,18 @@
-package kube
+package state
 
 import (
-	"slices"
-
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
-
-	"github.com/lab-paper-code/chill/internal/serving"
+	serving "github.com/lab-paper-code/chill/internal/serving"
+	slices "slices"
 )
 
-func (c *reservationState) actionEffectPresent(snapshot serving.SchedulerSnapshot, run *actionRun, runtime *serving.Runtime) bool {
-	if run.result == nil || run.result.Status != servingstate.NativeOperationComplete {
+func (c *ReservationState) ActionEffectPresent(snapshot serving.SchedulerSnapshot, run *ActionRun, runtime *serving.Runtime) bool {
+	if run.result == nil || run.result.Status != NativeOperationComplete {
 		return false
 	}
 	a := run.action
 	physical := runtime.Instances()
 	switch a.Kind {
-	case servingstate.OperationPrepare:
+	case OperationPrepare:
 		p := run.result.Operation.Prepare
 		if p == nil || p.Instance.Profile == nil {
 			return false
@@ -25,63 +22,63 @@ func (c *reservationState) actionEffectPresent(snapshot serving.SchedulerSnapsho
 				return true
 			}
 		}
-	case servingstate.OperationRemove:
+	case OperationRemove:
 		for _, i := range physical {
 			if i.ID == a.Instance {
 				return false
 			}
 		}
 		return true
-	case servingstate.OperationStop:
+	case OperationStop:
 		for _, i := range physical {
 			if i.ID == a.Instance {
 				return i.Stopped
 			}
 		}
 		return true
-	case servingstate.OperationDrain:
+	case OperationDrain:
 		for _, r := range snapshot.Outstanding {
 			if r.Instance == a.Instance {
 				return false
 			}
 		}
 		return true
-	case servingstate.OperationPower:
+	case OperationPower:
 		for _, n := range snapshot.Nodes {
 			if n.Node == a.Node {
 				return n.PowerMode == a.To
 			}
 		}
-	case servingstate.OperationRoute:
-		return c.routingTargetPresent(controlledTarget(run.result.Operation), snapshot, physical, true, runtime)
+	case OperationRoute:
+		return c.RoutingTargetPresent(ControlledTarget(run.result.Operation), snapshot, physical, true, runtime)
 	}
 	return false
 }
 
 // A failed observation is neither an effect proof nor a counterexample. Keep
 // the completed receipt and its ownership until the same source is observable.
-func (c *reservationState) actionEffectUnknown(snapshot serving.SchedulerSnapshot, run *actionRun, runtime *serving.Runtime) bool {
+func (c *ReservationState) actionEffectUnknown(snapshot serving.SchedulerSnapshot, run *ActionRun, runtime *serving.Runtime) bool {
 	if run.result == nil {
 		return false
 	}
-	if run.action.Kind == servingstate.OperationPower {
+	if run.action.Kind == OperationPower {
 		return slices.ContainsFunc(snapshot.Nodes, func(node serving.SchedulerNode) bool {
 			return node.Node == run.action.Node && node.PowerMode == ""
 		})
 	}
 	physical := runtime.Instances()
-	if run.action.Kind == servingstate.OperationPrepare {
+	if run.action.Kind == OperationPrepare {
 		return slices.ContainsFunc(physical, func(instance serving.InstanceState) bool {
 			return (instance.ID == run.action.Instance || instance.TargetID == run.action.Instance) &&
 				instance.Node == run.action.Node && !instance.Stopped && !instance.Ready
 		})
 	}
-	if run.action.Kind == servingstate.OperationRoute && run.result.Operation.Target != nil {
+	if run.action.Kind == OperationRoute && run.result.Operation.Target != nil {
 		for _, wanted := range run.result.Operation.Target.Instances {
 			if !run.result.Operation.ControlsWorkload(wanted.WorkloadUID) {
 				continue
 			}
-			if state := schedulerPhysicalState(wanted.ID, physical); state != nil && !state.Stopped &&
+			if state := SchedulerPhysicalState(wanted.ID, physical); state != nil && !state.Stopped &&
 				(!state.Ready || state.Reason == "PolicyAckPending") {
 				return true
 			}
@@ -90,7 +87,7 @@ func (c *reservationState) actionEffectUnknown(snapshot serving.SchedulerSnapsho
 	return false
 }
 
-func (c *reservationState) routingTargetPresent(target *serving.SchedulerCandidate, snapshot serving.SchedulerSnapshot, physical []serving.InstanceState, requirePolicy bool, runtime *serving.Runtime) bool {
+func (c *ReservationState) RoutingTargetPresent(target *serving.SchedulerCandidate, snapshot serving.SchedulerSnapshot, physical []serving.InstanceState, requirePolicy bool, runtime *serving.Runtime) bool {
 	if target == nil {
 		return false
 	}
@@ -102,7 +99,7 @@ func (c *reservationState) routingTargetPresent(target *serving.SchedulerCandida
 		}
 		for id, weight := range weights {
 			positive = positive || weight > 0
-			state := schedulerPhysicalState(id, physical)
+			state := SchedulerPhysicalState(id, physical)
 			if state == nil {
 				return false
 			}

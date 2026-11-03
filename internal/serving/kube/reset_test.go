@@ -365,9 +365,9 @@ func TestResetInheritsOnlyTerminalContainedReservationsAC38(t *testing.T) {
 			}
 			ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 			oldID := "manual-route:retained-reset"
-			old := &actionRun{owner: oldID, reserved: true,
+			old := &servingstate.ActionRun{owner: oldID, reserved: true,
 				action: serving.Action{Kind: servingstate.OperationRoute, Status: servingstate.NativeOperationFailed},
-				scope: resourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{h.selectedUID}, Pods: []string{string(h.owned.UID)},
+				scope: servingstate.ResourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{h.selectedUID}, Pods: []string{string(h.owned.UID)},
 					Instances: []string{servingstate.PhysicalID(h.owned.UID, servingstate.FirstfloorStatus(h.owned).ContainerID)}},
 				result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.OperationRoute, WorkloadUID: h.selectedUID}, EndedAt: time.Now().Add(-time.Second), Status: servingstate.NativeOperationFailed}}
 			switch owner {
@@ -376,15 +376,15 @@ func TestResetInheritsOnlyTerminalContainedReservationsAC38(t *testing.T) {
 			case servingstate.NativeOperationRunning, servingstate.NativeOperationCancel:
 				old.action.Status = owner
 			case "measurement":
-				old.action.Kind = measurementLeaseKind
+				old.action.Kind = servingstate.MeasurementLeaseKind
 			case "outside-workload":
 				old.scope.Workloads = append(old.scope.Workloads, h.foreignUID)
 			case "outside-node":
 				old.scope.Nodes = append(old.scope.Nodes, serving.NodeReference{Name: "outside-reset", UID: "outside-reset-uid"})
 			case "active-sibling":
-				h.controller.runs["active-reset-sibling"] = &actionRun{owner: oldID, action: serving.Action{Status: servingstate.NativeOperationRunning}}
+				h.controller.runs["active-reset-sibling"] = &servingstate.ActionRun{owner: oldID, action: serving.Action{Status: servingstate.NativeOperationRunning}}
 			case transitionDirty:
-				old.action.Kind = transitionRunKind
+				old.action.Kind = servingstate.TransitionRunKind
 				id := old.scope.Instances[0]
 				old.result.Operation.Target = &serving.SchedulerCandidate{ID: oldID}
 				old.result.Before.Instances = []serving.InstanceState{{ID: id, PodUID: string(h.owned.UID), Node: ref}}
@@ -406,7 +406,7 @@ func TestResetInheritsOnlyTerminalContainedReservationsAC38(t *testing.T) {
 					t.Error("reset laundered inherited dirty responsibility")
 				}
 				h.controller.mu.Unlock()
-				if !transferred || h.controller.authorize(servingstate.Operation{WorkloadUID: h.selectedUID}) == nil {
+				if !transferred || h.controller.Authorize(servingstate.Operation{WorkloadUID: h.selectedUID}) == nil {
 					t.Error("reset did not atomically inherit and retain the complete reservation")
 				}
 				if owner == preEffectRefusal {
@@ -435,12 +435,12 @@ func TestResetInheritsOnlyTerminalContainedReservationsAC38(t *testing.T) {
 				t.Fatalf("terminal reservation blocked reset: %+v err=%v", result, err)
 			}
 			if owner == preEffectRefusal {
-				if result.Status != servingstate.NativeOperationFailed || h.controller.authorize(servingstate.Operation{WorkloadUID: h.selectedUID}) == nil || h.updates != 0 {
+				if result.Status != servingstate.NativeOperationFailed || h.controller.Authorize(servingstate.Operation{WorkloadUID: h.selectedUID}) == nil || h.updates != 0 {
 					t.Fatalf("pre-effect reset refusal lost inherited responsibility: %+v", result)
 				}
 				return
 			}
-			if result.Status != servingstate.NativeOperationComplete || h.controller.authorize(servingstate.Operation{WorkloadUID: h.selectedUID}) != nil {
+			if result.Status != servingstate.NativeOperationComplete || h.controller.Authorize(servingstate.Operation{WorkloadUID: h.selectedUID}) != nil {
 				t.Fatalf("completed reset did not return inherited reservation: %+v", result)
 			}
 			if _, err := h.kube.CoreV1().Pods(h.owned.Namespace).Get(ctx, h.owned.Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
@@ -549,7 +549,7 @@ func TestResetPreEffectRejectionReturnsOrRetainsReservationAC38(t *testing.T) {
 				t.Fatalf("first reset: %+v %v", first, err)
 			}
 			assertResetSteps(t, first, "disable-autonomy")
-			held := h.controller.authorize(servingstate.Operation{WorkloadUID: h.selectedUID}) != nil
+			held := h.controller.Authorize(servingstate.Operation{WorkloadUID: h.selectedUID}) != nil
 			if held != uncertain {
 				t.Fatalf("pre-effect certainty=%t: reservation held=%t", !uncertain, held)
 			}
@@ -742,15 +742,15 @@ func TestResetRejectsSnapshotOnlyPendingReservationNodeAC38(t *testing.T) {
 	}
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 	oldID := "manual-route:pending-outside-reset"
-	old := &actionRun{owner: oldID, reserved: true,
+	old := &servingstate.ActionRun{owner: oldID, reserved: true,
 		action: serving.Action{Kind: servingstate.OperationRoute, Status: servingstate.NativeOperationFailed},
-		scope:  resourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{h.selectedUID}},
+		scope:  servingstate.ResourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{h.selectedUID}},
 		result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.OperationRoute, WorkloadUID: h.selectedUID}, EndedAt: time.Now().Add(-time.Second)}}
 	operation := servingstate.Operation{ID: "manual-reset:pending-outside-plan", Kind: servingstate.OperationReset, WorkloadUIDs: []string{h.selectedUID}}
 	h.controller.mu.Lock()
 	h.controller.runs[oldID] = old
 	h.controller.state.Snapshot.Instances = []serving.SchedulerInstance{{ID: "stale-pending-instance", Node: ref, WorkloadUID: h.selectedUID}}
-	expanded := h.controller.operationScope(operation)
+	expanded := h.controller.OperationScope(operation)
 	h.controller.mu.Unlock()
 	if !slices.Contains(expanded.Nodes, ref) {
 		t.Fatal("fixture did not expand conflict scope from the previous snapshot")
@@ -761,7 +761,7 @@ func TestResetRejectsSnapshotOnlyPendingReservationNodeAC38(t *testing.T) {
 		t.Fatalf("planning inherited a Node outside admission: plan=%+v err=%v held=%t", plan, err, old.reserved)
 	}
 	h.controller.mu.Lock()
-	acquired := h.controller.reserveRun(operation.ID, &actionRun{action: serving.Action{Status: servingstate.NativeOperationRunning}}, operation)
+	acquired := h.controller.ReserveRun(operation.ID, &servingstate.ActionRun{action: serving.Action{Status: servingstate.NativeOperationRunning}}, operation)
 	held := old.reserved
 	h.controller.mu.Unlock()
 	if acquired || !held {
@@ -772,7 +772,7 @@ func TestResetRejectsSnapshotOnlyPendingReservationNodeAC38(t *testing.T) {
 func TestManualRoutingBarrierIsNotAnAutonomousGoalEffect(t *testing.T) {
 	for _, kind := range []string{servingstate.OperationRoute, servingstate.OperationUnroute, servingstate.OperationRelease, servingstate.OperationReset} {
 		t.Run(kind, func(t *testing.T) {
-			controller := &SchedulerController{ctx: context.Background(), reservationState: &reservationState{runs: map[string]*actionRun{}}}
+			controller := &SchedulerController{ctx: context.Background(), reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{}}}
 			release := make(chan struct{})
 			operation := servingstate.Operation{ID: "manual-" + kind, Kind: kind}
 			done, result := controller.startNodeRun(operation, SchedulerControllerConfig{}, func(context.Context, *servingstate.OperationResult) error {
@@ -782,7 +782,7 @@ func TestManualRoutingBarrierIsNotAnAutonomousGoalEffect(t *testing.T) {
 			goal := &serving.SchedulerCandidate{Actions: []serving.Action{controller.runs[operation.ID].action}}
 			close(release)
 			<-done
-			lost, failed := controller.failTargetLocked(serving.SchedulerSnapshot{}, goal, time.Now(), controller.runtime)
+			lost, failed := controller.FailTargetLocked(serving.SchedulerSnapshot{}, goal, time.Now(), controller.runtime)
 			if failed || len(lost) != 0 || result.Status != servingstate.NativeOperationComplete {
 				t.Fatalf("planner relabeled a completed manual operation: lost=%+v failed=%v result=%+v", lost, failed, result)
 			}
@@ -990,7 +990,7 @@ func TestResetCleansAllDuplicateSlotExecutorsAC36(t *testing.T) {
 	id := servingstate.PhysicalID(other.UID, servingstate.FirstfloorStatus(other).ContainerID)
 	follow, stop := context.WithCancel(controller.observer.ctx)
 	defer stop()
-	controller.observer.sources[string(other.UID)] = &nativeSource{pod: types.NamespacedName{Namespace: other.Namespace, Name: other.Name},
+	controller.observer.sources[string(other.UID)] = &servingstate.NativeSource{pod: types.NamespacedName{Namespace: other.Namespace, Name: other.Name},
 		uid: other.UID, containerID: servingstate.FirstfloorStatus(other).ContainerID, follow: follow, cancel: stop}
 	controller.config.StaticRouting = true
 	controller.config.ConfigurationName, controller.config.ConfigurationKey = "duplicate-reset-config", "scheduler.json"
@@ -1080,8 +1080,8 @@ func TestResetRemovesInitFailedPodByUIDAC37(t *testing.T) {
 				t.Fatal(err)
 			}
 			h.controller.observer.mu.Lock()
-			h.controller.observer.restoreSources([]core.Pod{*pod})
-			if err := h.controller.observer.publishLedger(nil); err != nil {
+			h.controller.observer.RestoreSources([]core.Pod{*pod})
+			if err := h.controller.observer.PublishLedger(nil); err != nil {
 				t.Fatal(err)
 			}
 			h.controller.observer.mu.Unlock()

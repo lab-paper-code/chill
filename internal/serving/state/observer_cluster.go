@@ -1,23 +1,25 @@
-package kube
+package state
 
 import (
-	"reflect"
-	"time"
-
 	observationstore "github.com/lab-paper-code/chill/internal/serving/observation"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/watch"
+	types "k8s.io/apimachinery/pkg/types"
+	watch "k8s.io/apimachinery/pkg/watch"
+	reflect "reflect"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
+	time "time"
 )
 
 const (
-	clusterEventChanged = "changed"
-	clusterEventDeleted = "deleted"
+	ClusterEventChanged = "changed"
 )
 
-func (o *Observer) clusterWatchNamespace() string {
+const (
+	ClusterEventDeleted = "deleted"
+)
+
+func (o *Observer) ClusterWatchNamespace() string {
 	if o.config.OnCluster != nil {
 		return metav1.NamespaceAll
 	}
@@ -75,15 +77,15 @@ func clusterPod(p *corev1.Pod) observationstore.ClusterPod {
 	return row
 }
 
-// observeClusterList is an observed baseline, never a synthetic creation or deletion.
+// ObserveClusterList is an observed baseline, never a synthetic creation or deletion.
 // The observer source lock serializes this snapshot with watch notifications.
-func (o *Observer) observeClusterList(pods []corev1.Pod) {
+func (o *Observer) ObserveClusterList(pods []corev1.Pod) {
 	for i := range pods {
-		o.observeClusterPod(&pods[i], "")
+		o.ObserveClusterPod(&pods[i], "")
 	}
 }
 
-func (o *Observer) observeClusterPod(p *corev1.Pod, event string) {
+func (o *Observer) ObserveClusterPod(p *corev1.Pod, event string) {
 	if o.config.OnCluster == nil || p.UID == "" {
 		return
 	}
@@ -95,19 +97,19 @@ func (o *Observer) observeClusterPod(p *corev1.Pod, event string) {
 	kind := "observed"
 	switch event {
 	case string(watch.Deleted):
-		kind = clusterEventDeleted
+		kind = ClusterEventDeleted
 	case string(watch.Added):
 		if !seen {
 			kind = "created"
 		} else {
-			kind = clusterEventChanged
+			kind = ClusterEventChanged
 		}
 	default:
 		if seen {
-			kind = clusterEventChanged
+			kind = ClusterEventChanged
 		}
 	}
-	if kind != clusterEventDeleted && seen && reflect.DeepEqual(previous, row) {
+	if kind != ClusterEventDeleted && seen && reflect.DeepEqual(previous, row) {
 		return
 	}
 	observation := observationstore.ClusterObservation{Kind: "pod", At: time.Now().UTC(), Event: kind, Pod: &row}
@@ -118,7 +120,7 @@ func (o *Observer) observeClusterPod(p *corev1.Pod, event string) {
 	if o.clusterPods == nil {
 		o.clusterPods = map[types.UID]observationstore.ClusterPod{}
 	}
-	if kind == clusterEventDeleted {
+	if kind == ClusterEventDeleted {
 		delete(o.clusterPods, p.UID)
 	} else {
 		o.clusterPods[p.UID] = row
@@ -140,7 +142,7 @@ func (o *Observer) recordIssueLocked(source string, at time.Time) {
 	if recorded {
 		row.PreviousReason = previous.Reason
 		if active {
-			row.Event = clusterEventChanged
+			row.Event = ClusterEventChanged
 		} else {
 			row.Event = "resolved"
 			row.Reason = previous.Reason

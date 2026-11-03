@@ -542,12 +542,12 @@ func TestRouteRejectsImmutableProfileAndDeadlinePolicyBeforePersistence(t *testi
 	if err := operations.Store.Client().Get(ctx, key, original); err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{profileInitContainerName, "deadline policy"} {
+	for _, field := range []string{servingstate.ProfileInitContainerName, "deadline policy"} {
 		t.Run(field, func(t *testing.T) {
 			profile := *target.Instances[0].Profile
 			firstfloor := *profile.Condition.Firstfloor
 			profile.Condition.Firstfloor = &firstfloor
-			if field == profileInitContainerName {
+			if field == servingstate.ProfileInitContainerName {
 				profile.ID = "different-profile"
 			} else {
 				firstfloor.DeadlinePolicy = "drop"
@@ -556,7 +556,7 @@ func TestRouteRejectsImmutableProfileAndDeadlinePolicyBeforePersistence(t *testi
 			wanted.Instances = slices.Clone(target.Instances)
 			wanted.Instances[0].Profile = &profile
 			wantError := "immutable " + field
-			if field == profileInitContainerName {
+			if field == servingstate.ProfileInitContainerName {
 				wantError = "lacks matching actual readiness"
 			}
 			result, err := operations.Execute(ctx, servingstate.Operation{ID: wanted.ID, Kind: servingstate.OperationRoute, Target: &wanted})

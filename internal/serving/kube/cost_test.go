@@ -48,7 +48,7 @@ func (o *costTestObjects) Open(_ context.Context, identity evidencestore.ObjectI
 	return io.NopCloser(bytes.NewReader(o.objects[identity.Key])), nil
 }
 
-var costTestMeter = servingops.MeterDeclaration{ID: "wall", Node: serving.NodeReference{Name: "node", UID: "uid"}, Scope: servingstate.MeasurementWallScope,
+var costTestMeter = servingstate.MeterDeclaration{ID: "wall", Node: serving.NodeReference{Name: "node", UID: "uid"}, Scope: servingstate.MeasurementWallScope,
 	Source: metricobserver.SourceIdentity{Kind: "edge-metrics", NodeName: "node", Endpoint: "http://node", Metric: "watts"}}
 
 func costTestRecord(t *testing.T, id, mode string, end time.Time) (string, []byte) {
@@ -99,7 +99,7 @@ func TestCostEvidenceDerivesLatestAcceptedCostPerCondition(t *testing.T) {
 	}
 	ctx := context.Background()
 	for range 2 {
-		view, err := evidence.Refresh(ctx, []string{"measurements"}, []servingops.MeterDeclaration{costTestMeter}, nil)
+		view, err := evidence.Refresh(ctx, []string{"measurements"}, []servingstate.MeterDeclaration{costTestMeter}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -123,7 +123,7 @@ func TestCostEvidenceDerivesLatestAcceptedCostPerCondition(t *testing.T) {
 	}
 	other := costTestMeter
 	other.ID = "other"
-	view, err := evidence.Refresh(ctx, nil, []servingops.MeterDeclaration{other}, nil)
+	view, err := evidence.Refresh(ctx, nil, []servingstate.MeterDeclaration{other}, nil)
 	undeclared := 0
 	for _, issue := range view.Issues {
 		if issue.Code == MeterUndeclared {
@@ -134,7 +134,7 @@ func TestCostEvidenceDerivesLatestAcceptedCostPerCondition(t *testing.T) {
 		t.Fatalf("records with an unconfigured meter contributed: %+v %v", view, err)
 	}
 	objects.listErr = errors.New("list denied")
-	if _, err = evidence.Refresh(ctx, nil, []servingops.MeterDeclaration{costTestMeter}, nil); err == nil {
+	if _, err = evidence.Refresh(ctx, nil, []servingstate.MeterDeclaration{costTestMeter}, nil); err == nil {
 		t.Fatal("listing failure produced a partial cost view")
 	}
 }
@@ -157,7 +157,7 @@ func TestCostEvidenceIgnoresNonAcceptedAttempts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		view, err := evidence.Refresh(context.Background(), nil, []servingops.MeterDeclaration{costTestMeter}, nil)
+		view, err := evidence.Refresh(context.Background(), nil, []servingstate.MeterDeclaration{costTestMeter}, nil)
 		wantCosts := 0
 		if withAccepted {
 			wantCosts = 1
@@ -209,7 +209,7 @@ func TestCostEvidenceProjectsUncertainAcceptedEnergyWithoutPrecisionRejection(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, err := evidence.Refresh(context.Background(), nil, []servingops.MeterDeclaration{costTestMeter}, nil)
+	view, err := evidence.Refresh(context.Background(), nil, []servingstate.MeterDeclaration{costTestMeter}, nil)
 	if err != nil || len(view.Issues) != 0 || len(view.Costs) != 1 || len(view.Baselines) != 1 {
 		t.Fatalf("physically valid high-B records were rejected: %+v %v", view, err)
 	}
@@ -259,7 +259,7 @@ func TestCostEvidencePowerCostNeedsConfiguredMeterAndKeepsLoadedStatesApart(t *t
 	if err != nil || len(view.Costs) != 0 || len(view.Issues) != 2 || view.Issues[0].Code != MeterUndeclared || view.Issues[1].Code != MeterUndeclared {
 		t.Fatalf("power cost without a configured meter contributed: %+v %v", view, err)
 	}
-	view, err = evidence.Refresh(context.Background(), []string{"measurements"}, []servingops.MeterDeclaration{costTestMeter}, nil)
+	view, err = evidence.Refresh(context.Background(), []string{"measurements"}, []servingstate.MeterDeclaration{costTestMeter}, nil)
 	empty := slices.IndexFunc(view.Costs, func(c serving.OperationCost) bool { return c.ID == "raise" })
 	if err != nil || len(view.Costs) != 2 || view.Costs[0].Meter != costTestMeter.ID || empty < 0 || view.Costs[empty].From != record.Result.Before.PowerMode || view.Costs[empty].To != record.Result.Actual.PowerMode || len(view.Costs[empty].BeforeState) != 0 {
 		t.Fatalf("configured meter not bound or empty-Node power record missing: %+v %v", view, err)

@@ -28,7 +28,7 @@ func (c *SchedulerController) manualRoutingOperationLocked(ctx context.Context, 
 	if slices.Contains(config.Settings.AutonomousWorkloads, request.WorkloadUID) {
 		return servingstate.Operation{}, servingstate.Refused("OperationConflict", "the Workload is under autonomous control")
 	}
-	if err := c.authorize(servingstate.Operation{WorkloadUID: request.WorkloadUID}); err != nil {
+	if err := c.Authorize(servingstate.Operation{WorkloadUID: request.WorkloadUID}); err != nil {
 		return servingstate.Operation{}, err
 	}
 	weights := map[string]int{}
@@ -71,7 +71,7 @@ func (c *SchedulerController) manualRoutingOperationLocked(ctx context.Context, 
 		if err = c.operations.ValidateRoutingPolicies(ctx, target, request.WorkloadUID); err != nil {
 			return servingstate.Operation{}, servingstate.Refused("OperationConflict", err.Error())
 		}
-		operation.Target = controlledTarget(servingstate.Operation{Target: &target, WorkloadUID: request.WorkloadUID})
+		operation.Target = servingstate.ControlledTarget(servingstate.Operation{Target: &target, WorkloadUID: request.WorkloadUID})
 	}
 	return operation, nil
 }
@@ -146,9 +146,9 @@ func (c *SchedulerController) persistManualConfiguration(ctx context.Context, op
 			err = &configurationNotApplied{err}
 		}
 	}()
-	c.mu.Lock()
+	c.LockState()
 	config := c.config
-	c.mu.Unlock()
+	c.UnlockState()
 	if config.ConfigurationName == "" || config.ConfigurationKey == "" {
 		return errors.New("manual operation requires the scheduler ConfigMap name and key")
 	}
@@ -237,13 +237,13 @@ func (c *SchedulerController) persistManualConfiguration(ctx context.Context, op
 	}
 	operation.SourceConfigRV = committed.ResourceVersion
 	operation.StaticRouting = routing
-	c.mu.Lock()
+	c.LockState()
 	if operation.Kind == servingstate.OperationReset {
 		c.config.Settings.AutonomousWorkloads = slices.DeleteFunc(slices.Clone(c.config.Settings.AutonomousWorkloads),
 			func(uid string) bool { return slices.Contains(operation.WorkloadUIDs, uid) })
 	}
 	c.config.StaticRouting = len(routing) > 0
-	c.mu.Unlock()
+	c.UnlockState()
 	return nil
 }
 

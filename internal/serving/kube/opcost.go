@@ -72,11 +72,11 @@ func measurementProfile(namespace, name, node string, in admissionInputs) (profi
 // operationCostRefusal judges an operation-cost measurement before its grant.
 // profiles maps each named BatchEnergyOptimization to its catalog profile ID.
 func (c *SchedulerController) operationCostRefusal(m *edge.OperationCostMeasurement, node *core.Node, in admissionInputs) (profiles map[string]string, reason, detail string, wait bool) {
-	if !slices.ContainsFunc(in.config.Meters, func(meter servingops.MeterDeclaration) bool { return meter.Node.UID == string(node.UID) }) {
+	if !slices.ContainsFunc(in.config.Meters, func(meter servingstate.MeterDeclaration) bool { return meter.Node.UID == string(node.UID) }) {
 		return nil, MeterUndeclared, node.Name, false
 	}
 	profiles = map[string]string{}
-	targets := nodePowerTargets(node, in.classes, in.config.PowerPolicies)
+	targets := servingstate.NodePowerTargets(node, in.classes, in.config.PowerPolicies)
 	for _, step := range m.Spec.Steps {
 		if step.Kind == edge.OperationCostStepPower {
 			if _, ok := targets[step.PowerMode]; !ok {
@@ -117,7 +117,7 @@ func (c *SchedulerController) failMeasurement(ctx context.Context, object client
 // startOperationCost registers the run of a granted operation-cost measurement.
 func (c *SchedulerController) startOperationCost(node *core.Node, m *edge.OperationCostMeasurement, profiles map[string]string, in admissionInputs) {
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-	targets := nodePowerTargets(node, in.classes, in.config.PowerPolicies)
+	targets := servingstate.NodePowerTargets(node, in.classes, in.config.PowerPolicies)
 	root := &measurementRoot{object: m, node: node.Name}
 	operation := servingstate.Operation{ID: operationCostKind + ":" + node.Name + ":" + string(m.UID), Kind: operationCostKind, Node: ref, Holder: string(m.UID)}
 	c.startNodeRun(operation, in.config, func(ctx context.Context, result *servingstate.OperationResult) error {
@@ -191,7 +191,7 @@ func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.Oper
 			break
 		}
 		if step.Kind == edge.OperationCostStepPrepare {
-			if actual := schedulerPhysicalState(request.Operation.Prepare.Instance.ID, record.Result.Actual.Instances); actual != nil {
+			if actual := servingstate.SchedulerPhysicalState(request.Operation.Prepare.Instance.ID, record.Result.Actual.Instances); actual != nil {
 				prepared[profiles[step.BatchEnergyOptimization]] = actual.ID
 			}
 		}

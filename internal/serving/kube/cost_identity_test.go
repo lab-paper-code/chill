@@ -40,7 +40,7 @@ func TestCostEvidenceRetainsHistoricalMeasurementCells(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, err := e.Refresh(context.Background(), nil, []servingops.MeterDeclaration{costTestMeter}, nil)
+	view, err := e.Refresh(context.Background(), nil, []servingstate.MeterDeclaration{costTestMeter}, nil)
 	if err != nil || len(view.Costs) != 1 || view.Costs[0].StateIdentities["profile"] != serving.MeasurementProfileIdentity(&profile) {
 		t.Fatalf("historical prepare identity lost: %+v %v", view, err)
 	}

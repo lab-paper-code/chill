@@ -75,7 +75,7 @@ func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.Sch
 	if err := manager.runtime.ApplySchedulerTarget(oldTarget); err != nil {
 		t.Fatal(err)
 	}
-	controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), runtime: manager.runtime, observationLog: manager.observationLog, reservationState: &reservationState{runs: map[string]*actionRun{
+	controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), runtime: manager.runtime, observationLog: manager.observationLog, reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{
 		"acknowledged-route": {
 			action: serving.Action{ID: "acknowledged-route", Kind: servingstate.OperationRoute, Status: servingstate.NativeOperationComplete},
 			result: &servingstate.OperationResult{Operation: servingstate.Operation{Target: &oldTarget}, Status: servingstate.NativeOperationComplete},
@@ -91,10 +91,10 @@ func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.Sch
 
 func TestAcknowledgedExistingHandoffDoesNotStarveCleanupOnPolicyRefresh(t *testing.T) {
 	controller, target, _ := acknowledgedHandoffFixture(t)
-	if !controller.dependenciesReady(target.Actions[0], target, controller.runtime) {
+	if !controller.DependenciesReady(target.Actions[0], target, controller.runtime) {
 		t.Fatal("a refreshed policy route must still schedule its own route application")
 	}
-	if !controller.dependenciesReady(target.Actions[1], target, controller.runtime) {
+	if !controller.DependenciesReady(target.Actions[1], target, controller.runtime) {
 		t.Fatal("an acknowledged ready/profile/allocation-matched actual handoff should allow old-source stop independently of a refreshed policy route")
 	}
 }
@@ -124,7 +124,7 @@ func TestHandoffCleanupRequiresExistingAcknowledgedReadyEffectNotJustGatewayMap(
 			if err := controller.runtime.InstallInstances([]serving.ReadyInstance{physical}); err != nil {
 				t.Fatal(err)
 			}
-			if controller.dependenciesReady(target.Actions[1], target, controller.runtime) {
+			if controller.DependenciesReady(target.Actions[1], target, controller.runtime) {
 				t.Fatalf("cleanup bypassed missing %s safeguard merely because a gateway route/old record existed", missing)
 			}
 		})
@@ -165,7 +165,7 @@ func TestUnboundRuntimeAndSchedulerCaptureRetainVerifiedOwnerAndSlotFacts(t *tes
 	pod.Annotations[servingstate.ServingSlotAnnotation] = state.TargetID
 	snapshot := serving.SchedulerSnapshot{}
 	sn := serving.SchedulerNode{Node: state.Node, Ready: true}
-	captureNodePods(&snapshot, &sn, node, &core.PodList{Items: []core.Pod{*pod}},
+	servingstate.CaptureNodePods(&snapshot, &sn, node, &core.PodList{Items: []core.Pod{*pod}},
 		map[string]serving.InstanceState{id: state}, map[string]*serving.Profile{profile.ID: &profile})
 	if len(snapshot.Instances) != 1 || snapshot.Instances[0].WorkloadUID != "" ||
 		snapshot.Instances[0].OwnerWorkloadUID != uid || snapshot.Instances[0].TargetID != state.TargetID {
@@ -175,7 +175,7 @@ func TestUnboundRuntimeAndSchedulerCaptureRetainVerifiedOwnerAndSlotFacts(t *tes
 
 func TestRunningGlobalRouteSerializesDifferentTargetAndKeepsFrozenActualContext(t *testing.T) {
 	controller, target, _ := acknowledgedHandoffFixture(t)
-	var existing *actionRun
+	var existing *servingstate.ActionRun
 	for _, run := range controller.runs {
 		existing = run
 	}
@@ -183,7 +183,7 @@ func TestRunningGlobalRouteSerializesDifferentTargetAndKeepsFrozenActualContext(
 	existing.started = time.Now()
 	frozen := existing.result.Operation.Target
 	frozen.Actions = []serving.Action{existing.action}
-	existing.scope, existing.reserved, existing.owner = controller.operationScope(existing.result.Operation), true, frozen.ID
+	existing.scope, existing.reserved, existing.owner = controller.OperationScope(existing.result.Operation), true, frozen.ID
 	target.Actions[0].To = "different-route-effect"
 	installTestTransition(controller, frozen)
 	controller.launch(serving.SchedulerCandidate{ID: "keep", Keep: true}, SchedulerControllerConfig{})
@@ -194,7 +194,7 @@ func TestRunningGlobalRouteSerializesDifferentTargetAndKeepsFrozenActualContext(
 	if _, launched := controller.runs[target.Actions[0].ID]; launched {
 		t.Fatal("a different global route overwrote the policy path before the existing native ACK")
 	}
-	snapshot, _ := controller.reconcileSnapshot(controller.state.Snapshot, time.Now(), time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
+	snapshot, _ := controller.ReconcileSnapshot(controller.state.Snapshot, time.Now(), time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
 	if len(snapshot.Reservations) == 0 || snapshot.Reservations[0].Target != frozen {
 		t.Fatalf("running owner lost its frozen target: %+v", snapshot.Reservations)
 	}
@@ -245,7 +245,7 @@ func TestIndependentPreparationRecordsFrozenTargetBeforeCompletionDuringGlobalRo
 }
 
 func TestFailedGoalCleanupRetainsRunningRouteFrozenTargetAndAgedPrerequisite(t *testing.T) {
-	for _, from := range []string{"", readySubsetRoute} {
+	for _, from := range []string{"", servingstate.ReadySubsetRoute} {
 		t.Run("from="+from, func(t *testing.T) {
 			assertFailedGoalRetainsRunningRoute(t, from)
 		})
@@ -277,7 +277,7 @@ func assertFailedGoalRetainsRunningRoute(t *testing.T, from string) {
 	failedGoal.Actions = []serving.Action{failed}
 	frozen.Actions[1].Status = "planned"
 	failedGoal.Actions[0].Status = "planned"
-	controller.runs = map[string]*actionRun{
+	controller.runs = map[string]*servingstate.ActionRun{
 		removed.ID: {
 			action: removed, started: now.Add(-3 * time.Minute),
 			result: &servingstate.OperationResult{
@@ -302,7 +302,7 @@ func assertFailedGoalRetainsRunningRoute(t *testing.T, from string) {
 		},
 	}
 	installTestTransition(controller, &failedGoal)
-	snapshot, _ := controller.reconcileSnapshot(controller.state.Snapshot, now, time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
+	snapshot, _ := controller.ReconcileSnapshot(controller.state.Snapshot, now, time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
 	if fixtureTarget(controller) != nil || controller.runs[routing.ID].result.Operation.Target != frozen {
 		t.Fatalf("failed owner erased another run's frozen target: %+v", snapshot.Reservations)
 	}
@@ -312,8 +312,8 @@ func assertFailedGoalRetainsRunningRoute(t *testing.T, from string) {
 	if !slices.ContainsFunc(snapshot.Actions, func(a serving.Action) bool { return a.ID == routing.ID }) {
 		t.Fatal("running route disappeared from planning prerequisites")
 	}
-	scope := controller.operationScope(servingstate.Operation{Kind: servingstate.OperationStop, Instance: frozen.Instances[0].ID})
-	if !scope.overlaps(controller.operationScope(controller.runs[routing.ID].result.Operation)) {
+	scope := controller.OperationScope(servingstate.Operation{Kind: servingstate.OperationStop, Instance: frozen.Instances[0].ID})
+	if !scope.Overlaps(controller.OperationScope(controller.runs[routing.ID].result.Operation)) {
 		t.Fatal("stop does not overlap its route reservation")
 	}
 }
@@ -341,13 +341,13 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 	config := SchedulerControllerConfig{Preparations: map[string]servingstate.PrepareSpec{wanted.Profile.ID: {}}}
 	operation := scheduledOperation(action, &goal, config, nil, nil)
 	canceled := false
-	run := &actionRun{action: action, result: &servingstate.OperationResult{Operation: operation, Status: servingstate.NativeOperationRunning},
+	run := &servingstate.ActionRun{action: action, result: &servingstate.OperationResult{Operation: operation, Status: servingstate.NativeOperationRunning},
 		cancel: func() { canceled = true }, started: time.Now()}
-	controller.runs = map[string]*actionRun{action.ID: run}
+	controller.runs = map[string]*servingstate.ActionRun{action.ID: run}
 	installTestTransition(controller, &goal)
 	observed := acknowledged.Instances[0]
 	observed.TargetID = slot
-	snapshot, _ := controller.reconcileSnapshot(serving.SchedulerSnapshot{
+	snapshot, _ := controller.ReconcileSnapshot(serving.SchedulerSnapshot{
 		At: time.Now().UTC(), Instances: []serving.SchedulerInstance{observed},
 	}, time.Now().UTC(), time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
 	// The planner continues a running goal as keep with the goal's instances,
@@ -384,7 +384,7 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 	close(publish)
 	<-published
 	controller.wg.Wait()
-	if !controller.actionEffectPresent(snapshot, run, controller.runtime) {
+	if !controller.ActionEffectPresent(snapshot, run, controller.runtime) {
 		t.Fatal("completed receipt lacks its existing consumer-visible Ready physical effect")
 	}
 	starts := 0
@@ -406,7 +406,7 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 		t.Fatalf("stale target replayed/canceled or overwrote the completed receipt: starts=%d canceled=%v results=%+v",
 			starts, canceled, controller.State().Results)
 	}
-	if !controller.actionEffectPresent(snapshot, run, controller.runtime) {
+	if !controller.ActionEffectPresent(snapshot, run, controller.runtime) {
 		t.Fatal("stale continuation changed the completed physical effect")
 	}
 	if err := controller.runtime.ConfirmInstanceStopped(physical.State.ID); err != nil {
@@ -459,7 +459,7 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 func requireLostEffectFailsGoal(t *testing.T, controller *SchedulerController, id string) {
 	t.Helper()
 	now := time.Now().UTC()
-	snapshot, lost := controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, now, time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
+	snapshot, lost := controller.ReconcileSnapshot(serving.SchedulerSnapshot{At: now}, now, time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
 	if fixtureTarget(controller) != nil || controller.runs[id].action.Status != servingstate.NativeOperationFailed ||
 		len(lost) != 1 || lost[0].Operation.ID != id || lost[0].Status != servingstate.NativeOperationFailed ||
 		!slices.ContainsFunc(snapshot.Actions, func(a serving.Action) bool { return a.ID == id && a.Status == servingstate.NativeOperationFailed }) {
@@ -467,8 +467,8 @@ func requireLostEffectFailsGoal(t *testing.T, controller *SchedulerController, i
 	}
 	// Execution failure alone retains ownership. An authoritative empty LIST
 	// after retirement supplies the missing physical-return proof.
-	controller.releaseObservedScopes(nil, nil, nil, now.Add(time.Minute))
-	controller.reconcileSnapshot(serving.SchedulerSnapshot{}, now.Add(2*time.Minute), time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
+	controller.ReleaseObservedScopes(nil, nil, nil, now.Add(time.Minute))
+	controller.ReconcileSnapshot(serving.SchedulerSnapshot{}, now.Add(2*time.Minute), time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
 	if controller.runs[id] != nil {
 		t.Fatal("failed action outlived the observation window")
 	}
@@ -486,7 +486,7 @@ func TestPrepareTimeoutFailsGoal(t *testing.T) {
 	sibling := serving.Action{ID: "prepare-genesis3-q1", Kind: servingstate.OperationPrepare, Node: serving.NodeReference{Name: "genesis3", UID: "genesis3-uid"},
 		Instance: "other", Status: servingstate.NativeOperationRunning}
 	goal := serving.SchedulerCandidate{ID: "plan-dc6ebf670833", Actions: []serving.Action{prepare, sibling}}
-	controller := &SchedulerController{ctx: ctx, reservationState: &reservationState{runs: map[string]*actionRun{sibling.ID: {action: sibling, started: time.Now(),
+	controller := &SchedulerController{ctx: ctx, reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{sibling.ID: {action: sibling, started: time.Now(),
 		result: &servingstate.OperationResult{Operation: servingstate.Operation{ID: sibling.ID, Kind: sibling.Kind, Target: &goal}, Status: servingstate.NativeOperationRunning}}}}}
 	baseline := serving.SchedulerInstance{ID: "baseline-pod/containerd://baseline", PodUID: "baseline-pod", Node: prepare.Node, Ready: true}
 	controller.state.Snapshot.Instances = []serving.SchedulerInstance{baseline}
@@ -499,7 +499,7 @@ func TestPrepareTimeoutFailsGoal(t *testing.T) {
 	}}
 	controller.launch(goal, config)
 	controller.wg.Wait()
-	parent := controller.runs[transitionRunKind+"/"+goal.ID]
+	parent := controller.runs[servingstate.TransitionRunKind+"/"+goal.ID]
 	if len(parent.result.Before.Instances) != 1 || parent.result.Before.Instances[0].ID != baseline.ID ||
 		parent.result.Before.Instances[0].PodUID != baseline.PodUID || parent.result.Before.Instances[0].Node != baseline.Node {
 		t.Fatal("parent authorization did not freeze the exact preexisting executor")
@@ -514,7 +514,7 @@ func TestPrepareTimeoutFailsGoal(t *testing.T) {
 	}
 	now := time.Now()
 	for range 2 {
-		snapshot, _ := controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, now, time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
+		snapshot, _ := controller.ReconcileSnapshot(serving.SchedulerSnapshot{At: now}, now, time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
 		if fixtureTarget(controller) != nil {
 			t.Fatalf("owner kept executing after prepare timeout: reservations %v", snapshot.Reservations)
 		}
@@ -599,7 +599,7 @@ func TestReadySubsetPreservesE53ServingSnapshotSCH20AC38(t *testing.T) {
 					t.Fatal(err)
 				}
 				controller.state.Snapshot.Instances = append(controller.state.Snapshot.Instances, newNano)
-				controller.runs["prepare-nano"] = &actionRun{action: serving.Action{Status: servingstate.NativeOperationComplete}}
+				controller.runs["prepare-nano"] = &servingstate.ActionRun{action: serving.Action{Status: servingstate.NativeOperationComplete}}
 				want = target.Routing
 			}
 			actions, partial := controller.intermediateActions(target)
@@ -612,7 +612,7 @@ func TestReadySubsetPreservesE53ServingSnapshotSCH20AC38(t *testing.T) {
 				}
 			}
 			if state == "ready" {
-				if partial != nil || !controller.dependenciesReady(actions[1], target, controller.runtime) {
+				if partial != nil || !controller.DependenciesReady(actions[1], target, controller.runtime) {
 					t.Fatal("final route did not become eligible after preparation")
 				}
 				if err := controller.runtime.ApplySchedulerTarget(target); err != nil {
@@ -694,10 +694,10 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			if scenario == "unsupported" {
 				rows = rows[:1]
 			}
-			if c.dependenciesReady(target.Actions[1], target, c.runtime) {
+			if c.DependenciesReady(target.Actions[1], target, c.runtime) {
 				t.Fatal("late nano unexpectedly allowed final handoff")
 			}
-			partial := c.readySubset(target, rows, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+			partial := c.ReadySubset(target, rows, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 			if scenario != "admitted" {
 				if partial != nil {
 					t.Fatalf("unsafe expansion: %+v", partial)
@@ -714,7 +714,7 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			if err := c.runtime.ApplySchedulerTarget(*partial); err != nil {
 				t.Fatal(err)
 			}
-			if !c.routingTargetPresent(partial, *snapshot, c.runtime.Instances(), true, c.runtime) {
+			if !c.RoutingTargetPresent(partial, *snapshot, c.runtime.Instances(), true, c.runtime) {
 				t.Fatal("expanded route lacks exact native ACK")
 			}
 		})
@@ -745,7 +745,7 @@ func TestReadySubsetBootstrapRoutesBeforeIndependentPreparationsAndPowerFinish(t
 		target.Instances = append(target.Instances, wanted)
 		target.Routing[uid][id] = 200
 	}
-	controller.ctx, controller.runs = ctx, map[string]*actionRun{}
+	controller.ctx, controller.runs = ctx, map[string]*servingstate.ActionRun{}
 	controller.state.Snapshot.Instances = []serving.SchedulerInstance{a, b}
 	controller.state.Snapshot.Workloads = controller.runtime.SchedulerInputs(time.Now).Workloads
 	controller.state.Snapshot.Routing = map[string]map[string]int32{uid: {}}
@@ -760,11 +760,11 @@ func TestReadySubsetBootstrapRoutesBeforeIndependentPreparationsAndPowerFinish(t
 			action.Status = servingstate.NativeOperationComplete
 		}
 		target.Actions = append(target.Actions, action)
-		controller.runs[action.ID] = &actionRun{action: action}
+		controller.runs[action.ID] = &servingstate.ActionRun{action: action}
 	}
 	power := serving.Action{ID: slowPowerActionID, Kind: servingstate.OperationPower, Node: target.Instances[4].Node, Status: servingstate.NativeOperationRunning}
 	target.Actions = append(target.Actions, power)
-	controller.runs[power.ID] = &actionRun{action: power}
+	controller.runs[power.ID] = &servingstate.ActionRun{action: power}
 	deps := []string{}
 	for _, action := range target.Actions {
 		deps = append(deps, action.ID)
@@ -793,7 +793,7 @@ func TestReadySubsetBootstrapRoutesBeforeIndependentPreparationsAndPowerFinish(t
 		if routing[uid][a.ID] != 500 || routing[uid][b.ID] != 500 || len(routing[uid]) != 2 {
 			t.Fatalf("Ready destination did not receive the normalized intermediate route: %v", routing)
 		}
-		if fixtureTarget(controller).ID != target.ID || len(fixtureTarget(controller).Instances) != 5 || slices.ContainsFunc(controller.actionsLocked(time.Now()), func(a serving.Action) bool {
+		if fixtureTarget(controller).ID != target.ID || len(fixtureTarget(controller).Instances) != 5 || slices.ContainsFunc(controller.ActionsLocked(time.Now()), func(a serving.Action) bool {
 			return a.Kind == servingstate.OperationRoute && a.Status == servingstate.NativeOperationRunning
 		}) {
 			t.Fatal("intermediate route replaced the frozen full goal")
@@ -862,7 +862,7 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State)) (
 		// client-go's empty fake Pod log does not falsely terminate the executor.
 		follow, cancel := context.WithCancel(manager.observer.ctx)
 		status := servingstate.FirstfloorStatus(p)
-		manager.observer.sources[string(p.UID)] = &nativeSource{
+		manager.observer.sources[string(p.UID)] = &servingstate.NativeSource{
 			pod: types.NamespacedName{Namespace: p.Namespace, Name: p.Name}, uid: p.UID,
 			containerID: status.ContainerID, follow: follow, cancel: cancel,
 		}
@@ -933,7 +933,7 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State)) (
 		}
 		p := profiles[index]
 		actual := *p.RuntimeMetadata
-		actual.ModelFiles = deliveredModelFiles(p.Condition.Artifact.Files)
+		actual.ModelFiles = servingstate.DeliveredModelFiles(p.Condition.Artifact.Files)
 		state := native.State{At: time.Now().UTC(), Ready: index == 0 || prepared.Load(), Metadata: native.Metadata{
 			Model: cfg.Model, Mode: "serving", ProfileID: p.ID, AppliedAt: time.Now().UTC(),
 			Runtime: actual, MaxQueueRequests: 4, MaxBatchSize: 1, ModelInstanceCount: 1,
@@ -964,7 +964,7 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State)) (
 		t.Fatal(err)
 	}
 	controller := &SchedulerController{ctx: ctx, store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer,
-		operations: operations, observationLog: manager.observationLog, capacity: serving.NewCapacityTable(1, nil, nil), reservationState: &reservationState{runs: map[string]*actionRun{}}, config: SchedulerControllerConfig{Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
+		operations: operations, observationLog: manager.observationLog, capacity: serving.NewCapacityTable(1, nil, nil), reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{}}, config: SchedulerControllerConfig{Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 			MaxObservationAge: time.Minute, MaxReplicas: 3, MaxInstances: 3, CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 			CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
 			AutonomousWorkloads: []string{d.UID}})}}
@@ -1021,7 +1021,7 @@ func TestTickRoutesNewlyPreparedInstanceWhilePowerStillRuns(t *testing.T) {
 			result.Operation.Prepare = &servingstate.PrepareSpec{Instance: b}
 			result.EndedAt = time.Now()
 		}
-		controller.runs[action.ID] = &actionRun{action: action, result: result, started: time.Now()}
+		controller.runs[action.ID] = &servingstate.ActionRun{action: action, result: result, started: time.Now()}
 	}
 	var recorded []servingstate.OperationResult
 	controller.config.OnAction = func(result servingstate.OperationResult) error {
@@ -1157,7 +1157,7 @@ func assertPendingPhysicalCapture(t *testing.T, controller *SchedulerController,
 			t.Fatalf("ACK pending became source unavailable: %+v", node)
 		}
 	}
-	physical := schedulerPhysicalState(a.ID, controller.runtime.Instances())
+	physical := servingstate.SchedulerPhysicalState(a.ID, controller.runtime.Instances())
 	if physical == nil || physical.Native == nil || physical.Native.Metadata.DecisionID != "" ||
 		physical.Native.At.Before(original.Native.At) || !physical.Ready || physical.Reason != policyAckPendingReason {
 		t.Fatalf("actual previous ACK/state was replaced or dropped: %+v", physical)
@@ -1256,7 +1256,7 @@ func pendingPowerController(t *testing.T, ctx context.Context) (*SchedulerContro
 	if !slices.Contains(a.Reasons, policyAckPendingReason) || len(snapshot.Instances[1].Reasons) != 0 {
 		t.Fatalf("fixture lacks distinct pending/normal observations: %+v", snapshot.Instances)
 	}
-	physical := schedulerPhysicalState(a.ID, controller.runtime.Instances())
+	physical := servingstate.SchedulerPhysicalState(a.ID, controller.runtime.Instances())
 	if physical == nil || physical.Native == nil || len(physical.Native.Requests) != 2 {
 		t.Fatalf("ACK pending erased native queued/running requests: %+v", physical)
 	}
@@ -1308,7 +1308,7 @@ func TestPendingNativeRequestsBlockActualPowerUntilStopAndDrainAC35(t *testing.T
 			}
 		}
 	}
-	if controller.dependenciesReady(power, target, controller.runtime) {
+	if controller.DependenciesReady(power, target, controller.runtime) {
 		t.Fatal("power dependencies released before both drains")
 	}
 	if err := controller.operations.ChangePower(ctx, a.Node, "", lowMode, time.Second); err == nil || powerWrites.Load() != 0 {
@@ -1330,9 +1330,9 @@ func TestPendingNativeRequestsBlockActualPowerUntilStopAndDrainAC35(t *testing.T
 		if err != nil || result.Status != servingstate.NativeOperationComplete {
 			t.Fatalf("actual drain failed: %+v %v", result, err)
 		}
-		controller.runs[id] = &actionRun{action: serving.Action{ID: id, Kind: servingstate.OperationDrain, Status: servingstate.NativeOperationComplete}}
+		controller.runs[id] = &servingstate.ActionRun{action: serving.Action{ID: id, Kind: servingstate.OperationDrain, Status: servingstate.NativeOperationComplete}}
 	}
-	if !controller.dependenciesReady(power, target, controller.runtime) {
+	if !controller.DependenciesReady(power, target, controller.runtime) {
 		t.Fatal("empty native sources and both actual drains did not release power")
 	}
 	if err := controller.operations.ChangePower(ctx, a.Node, "", lowMode, time.Second); err != nil || powerWrites.Load() != 1 {
@@ -1353,12 +1353,12 @@ func TestPhysicalLookupAndPolicyPreferExactExecutorAC36(t *testing.T) {
 	physical := controller.runtime.Instances()
 	physical[0].TargetID = b.ID
 	for _, order := range [][]serving.InstanceState{physical, {physical[1], physical[0]}} {
-		if actual := schedulerPhysicalState(b.ID, order); actual == nil || actual.ID != b.ID {
+		if actual := servingstate.SchedulerPhysicalState(b.ID, order); actual == nil || actual.ID != b.ID {
 			t.Fatalf("list order/alias shadowed exact executor: %+v", actual)
 		}
 	}
 	physical[0].TargetID, physical[1].TargetID = "ambiguous", "ambiguous"
-	if schedulerPhysicalState("ambiguous", physical) != nil {
+	if servingstate.SchedulerPhysicalState("ambiguous", physical) != nil {
 		t.Fatal("genuinely ambiguous logical alias was selected")
 	}
 	updateSlot := func(name, slot string) {
@@ -1405,16 +1405,16 @@ func TestInstanceUnavailableBlocksContinuedNodeActions(t *testing.T) {
 	controller.state.Snapshot.Instances[0].Ready = false
 	for _, kind := range []string{servingstate.OperationPrepare, servingstate.OperationPower, servingstate.OperationRemove} {
 		action := serving.Action{Kind: kind, Node: node}
-		if controller.dependenciesReady(action, target, controller.runtime) {
+		if controller.DependenciesReady(action, target, controller.runtime) {
 			t.Fatalf("retained %s released on unknown Node", kind)
 		}
 		action.Node.UID = "healthy-other-uid"
-		if !controller.dependenciesReady(action, target, controller.runtime) {
+		if !controller.DependenciesReady(action, target, controller.runtime) {
 			t.Fatalf("unknown Node blocked independent healthy %s", kind)
 		}
 	}
 	route := serving.Action{Kind: servingstate.OperationRoute, Reason: serving.NodeInstanceUnavailable + ":" + node.Name + ":" + node.UID}
-	if controller.dependenciesReady(route, target, controller.runtime) {
+	if controller.DependenciesReady(route, target, controller.runtime) {
 		t.Fatal("blocked route executed after its missing prepare/power was suppressed")
 	}
 }
@@ -1432,7 +1432,7 @@ func TestTickRetainsFailedNativeInventoryAC37(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := before.Instances[0]
-	last := schedulerPhysicalState(a.ID, controller.runtime.Instances())
+	last := servingstate.SchedulerPhysicalState(a.ID, controller.runtime.Instances())
 	if last == nil || last.Native == nil || !last.Ready {
 		t.Fatal("fixture lacks a successful physical observation")
 	}
@@ -1448,7 +1448,7 @@ func TestTickRetainsFailedNativeInventoryAC37(t *testing.T) {
 		if _, err := controller.Tick(ctx, time.Now()); err != nil {
 			t.Fatal(err)
 		}
-		state := schedulerPhysicalState(a.ID, controller.runtime.Instances())
+		state := servingstate.SchedulerPhysicalState(a.ID, controller.runtime.Instances())
 		if state == nil || state.Ready || state.PodUID != last.PodUID || state.OwnerWorkloadUID != last.OwnerWorkloadUID ||
 			!state.ObservedAt.Equal(last.ObservedAt) || !reflect.DeepEqual(state.Allocation, last.Allocation) ||
 			state.Native.Metadata.DecisionID != last.Native.Metadata.DecisionID || !state.AttemptedAt.After(last.AttemptedAt) {
@@ -1499,13 +1499,13 @@ func TestPolicyOnlyTargetOwnsUIDAndAppliesNativePolicyAC38(t *testing.T) {
 				instance.MaxWait = 2 * time.Millisecond
 			}
 			target := serving.SchedulerCandidate{ID: "policy-only-" + field, Instances: []serving.SchedulerInstance{instance}, Routing: snapshot.Routing}
-			uids := changedWorkloads(target, snapshot)
+			uids := servingstate.ChangedWorkloads(target, snapshot)
 			if !slices.Equal(uids, []string{instance.WorkloadUID}) {
 				t.Fatalf("policy-only target lost ownership: %v", uids)
 			}
 			operation := servingstate.Operation{ID: target.ID, Kind: servingstate.OperationRoute, Target: &target, WorkloadUIDs: uids}
 			result := servingstate.OperationResult{Operation: operation}
-			if err := c.operations.ApplyTarget(ctx, *controlledTarget(operation), &result); err != nil {
+			if err := c.operations.ApplyTarget(ctx, *servingstate.ControlledTarget(operation), &result); err != nil {
 				t.Fatal(err)
 			}
 			actual := c.runtime.Instances()
@@ -1572,7 +1572,7 @@ func TestTwoTempoPreservesServingRouteOnPreparationClock(t *testing.T) {
 	controller, target, source := acknowledgedHandoffFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	controller.ctx, controller.runs = ctx, map[string]*actionRun{}
+	controller.ctx, controller.runs = ctx, map[string]*servingstate.ActionRun{}
 	controller.config.Settings.ScaleDownStabilization = 300 * time.Second
 	target.ID = "two-tempo-preparation-clock"
 	uid := target.Instances[0].WorkloadUID
@@ -1588,12 +1588,12 @@ func TestTwoTempoPreservesServingRouteOnPreparationClock(t *testing.T) {
 		target.Routing[uid][id] = 250
 		action := serving.Action{ID: "prepare-" + id, Kind: servingstate.OperationPrepare, Node: instance.Node, Instance: id, Status: servingstate.NativeOperationRunning}
 		target.Actions = append(target.Actions, action)
-		controller.runs[action.ID] = &actionRun{action: action}
+		controller.runs[action.ID] = &servingstate.ActionRun{action: action}
 		deps = append(deps, action.ID)
 	}
 	power := serving.Action{ID: slowPowerActionID, Kind: servingstate.OperationPower, Node: serving.NodeReference{Name: "jetsono", UID: "jetsono-uid"}, Status: servingstate.NativeOperationRunning}
 	target.Actions = append(target.Actions, power)
-	controller.runs[power.ID] = &actionRun{action: power}
+	controller.runs[power.ID] = &servingstate.ActionRun{action: power}
 	deps = append(deps, power.ID)
 	target.Actions = append(target.Actions, serving.Action{ID: finalRouteActionID, Kind: servingstate.OperationRoute, DependsOn: deps})
 	ready := []serving.ReadyInstance{source}
@@ -1685,14 +1685,14 @@ func TestReadySubsetMixedUIDPreservesNotReadyDeclarationE56(t *testing.T) {
 	target.Instances = []serving.SchedulerInstance{first, second}
 	target.Routing = map[string]map[string]int32{first.WorkloadUID: {first.ID: 1000}, second.WorkloadUID: {second.ID: 1000}}
 	target.Actions = nil
-	partial := c.readySubset(target, nil, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+	partial := c.ReadySubset(target, nil, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 	if partial == nil {
 		t.Fatal("independent Ready UID made no progress")
 	}
 	if _, present := partial.Routing[first.WorkloadUID]; present {
 		t.Fatal("NotReady UID was frozen as a withdrawal")
 	}
-	scope := changedWorkloads(*partial, c.state.Snapshot)
+	scope := servingstate.ChangedWorkloads(*partial, c.state.Snapshot)
 	if !reflect.DeepEqual(scope, []string{second.WorkloadUID}) {
 		t.Fatalf("partial scope includes unchanged/NotReady UID: %v", scope)
 	}
@@ -1708,7 +1708,7 @@ func TestReadySubsetMixedUIDPreservesNotReadyDeclarationE56(t *testing.T) {
 	if route[first.WorkloadUID][first.ID] != 1 || route[second.WorkloadUID][second.ID] != 1000 {
 		t.Fatalf("partial commit overwrote recovered declaration: %v", route)
 	}
-	if c.routingTargetPresent(&serving.SchedulerCandidate{Routing: map[string]map[string]int32{definition.UID: {}}}, c.state.Snapshot, c.runtime.Instances(), true, c.runtime) {
+	if c.RoutingTargetPresent(&serving.SchedulerCandidate{Routing: map[string]map[string]int32{definition.UID: {}}}, c.state.Snapshot, c.runtime.Instances(), true, c.runtime) {
 		t.Fatal("empty route was promoted to a serving ACK")
 	}
 }

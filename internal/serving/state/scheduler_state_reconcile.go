@@ -1,19 +1,16 @@
-package kube
+package state
 
 import (
-	"slices"
-	"strings"
-	"time"
-
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
-
-	"github.com/lab-paper-code/chill/internal/serving"
+	serving "github.com/lab-paper-code/chill/internal/serving"
+	slices "slices"
+	strings "strings"
+	time "time"
 )
 
-// annotateHistory sets each captured instance's UnroutedSince and HeldUntil
+// AnnotateHistory sets each captured instance's UnroutedSince and HeldUntil
 // from the controller's records and drops records of instances that left.
 // A restart starts the records again, so an instance waits one more window.
-func (c *reservationState) annotateHistory(s *serving.SchedulerSnapshot, window time.Duration) {
+func (c *ReservationState) AnnotateHistory(s *serving.SchedulerSnapshot, window time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.unrouted == nil {
@@ -63,7 +60,7 @@ func (c *reservationState) annotateHistory(s *serving.SchedulerSnapshot, window 
 	for key, until := range c.overloaded {
 		preparing := false
 		for _, r := range c.runs {
-			preparing = preparing || r.action.Kind == servingstate.OperationPrepare && r.action.Instance == key
+			preparing = preparing || r.action.Kind == OperationPrepare && r.action.Instance == key
 		}
 		if until.IsZero() && !preparing {
 			delete(c.overloaded, key)
@@ -71,9 +68,9 @@ func (c *reservationState) annotateHistory(s *serving.SchedulerSnapshot, window 
 	}
 }
 
-// markOverloadPrepares records the slots a decision prepares while keep is in
+// MarkOverloadPrepares records the slots a decision prepares while keep is in
 // Overload; once Ready they are held for one observation window.
-func (c *reservationState) markOverloadPrepares(decision serving.SchedulerDecision) {
+func (c *ReservationState) MarkOverloadPrepares(decision serving.SchedulerDecision) {
 	if decision.Target == nil || decision.Keep.Status != serving.SchedulerStatusOverload {
 		return
 	}
@@ -81,17 +78,17 @@ func (c *reservationState) markOverloadPrepares(decision serving.SchedulerDecisi
 		c.unrouted, c.overloaded = map[string]time.Time{}, map[string]time.Time{}
 	}
 	for _, a := range decision.Target.Actions {
-		if _, marked := c.overloaded[a.Instance]; a.Kind == servingstate.OperationPrepare && !marked {
+		if _, marked := c.overloaded[a.Instance]; a.Kind == OperationPrepare && !marked {
 			c.overloaded[a.Instance] = time.Time{}
 		}
 	}
 }
 
-// reconcileSnapshot preserves each owner's frozen DAG and reservation independently.
-func (c *reservationState) reconcileSnapshot(snapshot serving.SchedulerSnapshot, now time.Time, observationWindow time.Duration, configuration func() serving.SchedulerSettings, runtime *serving.Runtime) (serving.SchedulerSnapshot, []servingstate.OperationResult) {
+// ReconcileSnapshot preserves each owner's frozen DAG and reservation independently.
+func (c *ReservationState) ReconcileSnapshot(snapshot serving.SchedulerSnapshot, now time.Time, observationWindow time.Duration, configuration func() serving.SchedulerSettings, runtime *serving.Runtime) (serving.SchedulerSnapshot, []OperationResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	var lost []servingstate.OperationResult
+	var lost []OperationResult
 	settings := configuration()
 	gap := !c.replacementObservedAt.IsZero() && (now.Before(c.replacementObservedAt) || now.Sub(c.replacementObservedAt) > settings.MaxObservationAge+settings.ControlInterval)
 	if gap {
@@ -105,21 +102,21 @@ func (c *reservationState) reconcileSnapshot(snapshot serving.SchedulerSnapshot,
 				i.Profile.ID == r.ProfileID && i.Ready && !i.Stopped
 		})
 	})
-	c.freezePreparingExecutorsLocked(snapshot)
-	lost = c.reconcileOwnersLocked(snapshot, now, gap, runtime)
+	c.FreezePreparingExecutorsLocked(snapshot)
+	lost = c.ReconcileOwnersLocked(snapshot, now, gap, runtime)
 	cutoff := now.Add(-observationWindow)
 	c.retireRunsLocked(cutoff)
-	snapshot.Actions = c.actionsLocked(now)
-	snapshot.Reservations = c.reservationsLocked()
+	snapshot.Actions = c.ActionsLocked(now)
+	snapshot.Reservations = c.ReservationsLocked()
 	snapshot.Replacements = slices.Clone(c.replacements)
 	return snapshot, lost
 }
 
-func (c *reservationState) freezePreparingExecutorsLocked(snapshot serving.SchedulerSnapshot) {
+func (c *ReservationState) FreezePreparingExecutorsLocked(snapshot serving.SchedulerSnapshot) {
 	// API-confirmed RestartPolicyNever Pod identity permits one late container
 	// binding even after failure. Slot/name discovery is not creation evidence.
 	for _, run := range c.runs {
-		if (run.action.Kind != servingstate.OperationPrepare && run.action.Kind != servingstate.OperationResize) || run.prepareIdentity != "" || run.result == nil || run.result.Operation.Prepare == nil {
+		if (run.action.Kind != OperationPrepare && run.action.Kind != OperationResize) || run.prepareIdentity != "" || run.result == nil || run.result.Operation.Prepare == nil {
 			continue
 		}
 		wanted := run.result.Operation.Prepare.Instance
@@ -151,31 +148,31 @@ func (c *reservationState) freezePreparingExecutorsLocked(snapshot serving.Sched
 	}
 }
 
-func (c *reservationState) reconcileOwnersLocked(snapshot serving.SchedulerSnapshot, now time.Time, gap bool, runtime *serving.Runtime) []servingstate.OperationResult {
-	var lost []servingstate.OperationResult
+func (c *ReservationState) ReconcileOwnersLocked(snapshot serving.SchedulerSnapshot, now time.Time, gap bool, runtime *serving.Runtime) []OperationResult {
+	var lost []OperationResult
 	for _, parent := range c.runs {
-		if parent.action.Kind != transitionRunKind || parent.result == nil {
+		if parent.action.Kind != TransitionRunKind || parent.result == nil {
 			continue
 		}
-		if parent.action.Status != servingstate.NativeOperationRunning {
+		if parent.action.Status != NativeOperationRunning {
 			// Adopt only the fresh physical-return/known-effect proof. Keep the
 			// failure receipt and each child's still-unconfirmed responsibility.
-			if parent.action.Status != servingstate.NativeOperationCancel && parent.returnObserved {
+			if parent.action.Status != NativeOperationCancel && parent.returnObserved {
 				parent.reserved = false
 			}
 			continue
 		}
 		target := parent.result.Operation.Target
-		failedEffects, failed := c.failTargetLocked(snapshot, target, now, runtime)
+		failedEffects, failed := c.FailTargetLocked(snapshot, target, now, runtime)
 		lost = append(lost, failedEffects...)
 		if failed {
-			parent.action.Status = servingstate.NativeOperationFailed
-			parent.result.Status, parent.result.EndedAt = servingstate.NativeOperationFailed, now
+			parent.action.Status = NativeOperationFailed
+			parent.result.Status, parent.result.EndedAt = NativeOperationFailed, now
 			continue
 		}
 		if c.ownerDAGCompleteLocked(parent) {
-			parent.action.Status = servingstate.NativeOperationComplete
-			parent.result.Status, parent.result.EndedAt = servingstate.NativeOperationComplete, now
+			parent.action.Status = NativeOperationComplete
+			parent.result.Status, parent.result.EndedAt = NativeOperationComplete, now
 			if !gap {
 				for _, r := range parent.replacements {
 					if slices.ContainsFunc(snapshot.Instances, func(i serving.SchedulerInstance) bool {
@@ -190,32 +187,32 @@ func (c *reservationState) reconcileOwnersLocked(snapshot serving.SchedulerSnaps
 					}
 				}
 			}
-			c.releaseOwnerLocked(parent.owner)
+			c.ReleaseOwnerLocked(parent.owner)
 		}
 	}
 	return lost
 }
 
-// failTargetLocked checks only this owner's DAG; terminal receipts beat stale plans.
-func (c *reservationState) failTargetLocked(snapshot serving.SchedulerSnapshot, goal *serving.SchedulerCandidate, now time.Time, runtime *serving.Runtime) ([]servingstate.OperationResult, bool) {
-	var lost []servingstate.OperationResult
+// FailTargetLocked checks only this owner's DAG; terminal receipts beat stale plans.
+func (c *ReservationState) FailTargetLocked(snapshot serving.SchedulerSnapshot, goal *serving.SchedulerCandidate, now time.Time, runtime *serving.Runtime) ([]OperationResult, bool) {
+	var lost []OperationResult
 	failed := false
 	for _, desired := range goal.Actions {
-		if desired.From == readySubsetRoute || desired.From == externalActionSource {
+		if desired.From == ReadySubsetRoute || desired.From == externalActionSource {
 			continue
 		}
 		run := c.runs[desired.ID]
-		if run == nil || run.action.Status == servingstate.NativeOperationRunning || run.action.Status == servingstate.NativeOperationCancel || run.result == nil {
+		if run == nil || run.action.Status == NativeOperationRunning || run.action.Status == NativeOperationCancel || run.result == nil {
 			continue
 		}
 		// Fixed lowering is undone by the goal's own raise of the same Node.
-		if desired.RouteTarget == nil && !desired.Fixed && run.result.Status == servingstate.NativeOperationComplete && !c.actionEffectPresent(snapshot, run, runtime) && !c.actionEffectUnknown(snapshot, run, runtime) {
+		if desired.RouteTarget == nil && !desired.Fixed && run.result.Status == NativeOperationComplete && !c.ActionEffectPresent(snapshot, run, runtime) && !c.actionEffectUnknown(snapshot, run, runtime) {
 			result := *run.result
-			result.Status, result.Error, result.EndedAt = servingstate.NativeOperationFailed, "completed effect lost", now
-			run.result, run.action.Status, run.action.Reason = &result, servingstate.NativeOperationFailed, result.Error
+			result.Status, result.Error, result.EndedAt = NativeOperationFailed, "completed effect lost", now
+			run.result, run.action.Status, run.action.Reason = &result, NativeOperationFailed, result.Error
 			lost = append(lost, result)
 		}
-		failed = failed || run.result.Status != servingstate.NativeOperationComplete
+		failed = failed || run.result.Status != NativeOperationComplete
 	}
 	return lost, failed
 }

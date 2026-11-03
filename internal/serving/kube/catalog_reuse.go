@@ -208,7 +208,7 @@ func reuseRelativeDifference(source, target float64) (float64, error) {
 func reusedProfile(source, target serving.Profile, check serving.ProfileReuseCheck) serving.Profile {
 	profile := target
 	profile.Batches = nil
-	profile = cloneCatalogProfile(profile)
+	profile = servingstate.CloneCatalogProfile(profile)
 	// Annotations can change; never overwrite an immutable startup bundle
 	// when the pinned source or confirmation policy changes.
 	policy := fmt.Sprintf("%s\x00%g\x00%g\x00%d", check.SourceProfileID, check.MaximumRelativeDifference, check.MinimumMeasurementSeconds, check.MinimumTrials)

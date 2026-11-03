@@ -86,7 +86,7 @@ func TestLateProbeCannotResurrectRemovedExecutor(t *testing.T) {
 			if err := operations.RemoveInstance(ctx, serving.NodeReference{Name: node.Name, UID: string(node.UID)}, id); err != nil {
 				t.Fatal(err)
 			}
-			var next *nativeSource
+			var next *servingstate.NativeSource
 			if replacement {
 				fresh := pod.DeepCopy()
 				fresh.UID, fresh.ResourceVersion, fresh.DeletionTimestamp = "late-probe-replacement-uid", "", nil
@@ -99,7 +99,7 @@ func TestLateProbeCannotResurrectRemovedExecutor(t *testing.T) {
 					t.Fatal(err)
 				}
 				o.mu.Lock()
-				o.restoreSources([]core.Pod{*fresh})
+				o.RestoreSources([]core.Pod{*fresh})
 				next = o.sources[string(fresh.UID)]
 				next.instance.State.Reason = "replacement-not-probed"
 				o.mu.Unlock()
@@ -160,10 +160,10 @@ func TestDeletionReservesLiveOwnedResourcesOutsideSnapshot(t *testing.T) {
 	uid := types.UID("workload-uid")
 	pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: uid}}
 	o := newTestObserver(t, pod)
-	cluster := NewClusterState(o.store, kubefake.NewSimpleClientset(node), o.config.Namespace)
+	cluster := servingstate.NewClusterState(o.store, kubefake.NewSimpleClientset(node), o.config.Namespace)
 	c := &cluster.reservation
 	c.mu.Lock()
-	held := c.reserveRun("physical-only", &actionRun{action: serving.Action{Status: servingstate.NativeOperationRunning}}, servingstate.Operation{PodUID: string(pod.UID)})
+	held := c.ReserveRun("physical-only", &servingstate.ActionRun{action: serving.Action{Status: servingstate.NativeOperationRunning}}, servingstate.Operation{PodUID: string(pod.UID)})
 	c.mu.Unlock()
 	if !held {
 		t.Fatal("failed to reserve Pod")
@@ -183,7 +183,7 @@ func TestDeletionReservesLiveOwnedResourcesOutsideSnapshot(t *testing.T) {
 		{Instance: servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)},
 		{Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}},
 	} {
-		if err := c.authorize(operation); err == nil {
+		if err := c.Authorize(operation); err == nil {
 			t.Fatalf("deletion did not reserve %+v", operation)
 		}
 	}
@@ -192,7 +192,7 @@ func TestDeletionReservesLiveOwnedResourcesOutsideSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	cluster.ReleaseDeletion(uid)
-	if err := c.authorize(servingstate.Operation{PodUID: string(pod.UID)}); err != nil {
+	if err := c.Authorize(servingstate.Operation{PodUID: string(pod.UID)}); err != nil {
 		t.Fatal(err)
 	}
 }

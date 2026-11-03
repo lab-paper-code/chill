@@ -1,13 +1,13 @@
 package httpapi
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"encoding/json"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/serving"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
@@ -20,7 +20,7 @@ func TestSchedulerCurrentProjectionBoundsRawProfileSamples(t *testing.T) {
 		Batch: 1, DurationNanos: samples, EnergyPerInputJoules: 0, EnergyBelowResolution: true, MemoryBytes: 8192,
 	}}}
 	instance := serving.SchedulerInstance{ID: "physical", Profile: profile}
-	state := servingkube.SchedulerControllerState{Snapshot: serving.SchedulerSnapshot{
+	state := servingstate.SchedulerControllerState{Snapshot: serving.SchedulerSnapshot{
 		Instances: []serving.SchedulerInstance{instance}, Options: []serving.SchedulerOption{{Instance: instance}},
 	}, Decision: serving.SchedulerDecision{Keep: serving.SchedulerCandidate{ID: "keep", Instances: []serving.SchedulerInstance{instance}}}}
 	evidence := newSchedulerReadEvidence()
@@ -69,7 +69,7 @@ func TestSchedulerCurrentProjectionBoundsUnusedPopulations(t *testing.T) {
 	definition := &serving.Definition{Name: "service", UID: "workload", Model: serving.Model{Name: strings.Repeat("model", 512)}}
 	profile := &serving.Profile{ID: "in-use"}
 	instance := serving.SchedulerInstance{ID: "physical", WorkloadUID: definition.UID, Ready: true, Profile: profile}
-	state := servingkube.SchedulerControllerState{Snapshot: serving.SchedulerSnapshot{
+	state := servingstate.SchedulerControllerState{Snapshot: serving.SchedulerSnapshot{
 		Instances: []serving.SchedulerInstance{instance}, Workloads: []*serving.Definition{definition},
 		Outstanding: []serving.SchedulerRequest{{ID: "pending", Definition: definition, Phase: "pending"}},
 		Arrivals:    make([]serving.SchedulerArrival, 2_000),

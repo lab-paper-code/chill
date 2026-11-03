@@ -63,7 +63,7 @@ func observerServiceFixture(pod *corev1.Pod) *corev1.Service {
 
 func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 	pod, node, profile, class := observerSourceFixture()
-	spec, err := sourceSpec(pod, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage)
+	spec, err := servingstate.SourceSpec(pod, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,13 +72,13 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 	}
 	routed := pod.DeepCopy()
 	routed.Annotations[servingstate.ServingRoutingAnnotation] = `{"tight":2}`
-	if spec, err = sourceSpec(routed, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage); err != nil || !maps.Equal(spec.Routing, map[string]int32{"tight": 2}) {
+	if spec, err = servingstate.SourceSpec(routed, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage); err != nil || !maps.Equal(spec.Routing, map[string]int32{"tight": 2}) {
 		t.Fatalf("applied routing not restored: %+v %v", spec.Routing, err)
 	}
 	opaque := pod.DeepCopy()
 	opaque.Status.ContainerStatuses[0].ImageID = "opaque-runtime-image"
 	opaque.Status.InitContainerStatuses[0].ImageID = "opaque-artifact-image"
-	if _, err = sourceSpec(opaque, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage); err != nil {
+	if _, err = servingstate.SourceSpec(opaque, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage); err != nil {
 		t.Fatal("actual ImageID was incorrectly used as a digest admission gate", err)
 	}
 	cases := []struct {
@@ -128,14 +128,14 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			p, n, pr, c := observerSourceFixture()
 			tc.change(p, n, &pr)
-			if _, e := sourceSpec(p, n, &pr, []edgev1alpha1.DeviceClass{c}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage); e == nil {
+			if _, e := servingstate.SourceSpec(p, n, &pr, []edgev1alpha1.DeviceClass{c}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage); e == nil {
 				t.Fatal("unconfirmed source became eligible")
 			}
 		})
 	}
 	restarted := pod.DeepCopy()
 	restarted.Status.ContainerStatuses[0].ContainerID = "containerd://replacement"
-	replacement, err := sourceSpec(restarted, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage)
+	replacement, err := servingstate.SourceSpec(restarted, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestObserverPowerUsesActualReadBack(t *testing.T) {
 	other := edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edgev1alpha1.JetsonNVPModelTarget{ID: 0}}
 	class.Spec.PowerModes = []edgev1alpha1.PowerMode{{Name: "mode", Actuator: target}, {Name: "other", Actuator: other}}
 	node.Labels[chillmeta.PowerMode] = "mode"
-	if err := confirmedPower(node, &class, "mode"); err == nil {
+	if err := servingstate.ConfirmedPower(node, &class, "mode"); err == nil {
 		t.Fatal("desired mode was treated as actual power")
 	}
 	raw, err := json.Marshal(target)
@@ -158,19 +158,19 @@ func TestObserverPowerUsesActualReadBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	node.Annotations[chillmeta.PowerActuator] = string(raw)
-	if err := confirmedPower(node, &class, "mode"); err != nil {
+	if err := servingstate.ConfirmedPower(node, &class, "mode"); err != nil {
 		t.Fatal(err)
 	}
 	node.Labels[chillmeta.PowerModeState] = chillmeta.PowerModePending
-	if err := confirmedPower(node, &class, "mode"); err == nil {
+	if err := servingstate.ConfirmedPower(node, &class, "mode"); err == nil {
 		t.Fatal("read-back hid a switch in progress")
 	}
 	delete(node.Labels, chillmeta.PowerModeState)
 	node.Annotations[chillmeta.PowerActuator] = nvpModel0
-	if err := confirmedPower(node, &class, "mode"); err == nil {
+	if err := servingstate.ConfirmedPower(node, &class, "mode"); err == nil {
 		t.Fatal("read-back of another mode confirmed this one")
 	}
-	if err := confirmedPower(node, &class, "other"); err != nil {
+	if err := servingstate.ConfirmedPower(node, &class, "other"); err != nil {
 		t.Fatalf("read-back not mapped to its DeviceClass mode: %v", err)
 	}
 }
@@ -190,8 +190,8 @@ func testExecutionFacts() *corev1.ConfigMap {
 		Data: map[string]string{"execution-facts.yaml": string(document)}}
 }
 
-func testObserverConfig(store *Store) ObserverConfig {
-	return ObserverConfig{Namespace: "chill-system", RuntimeImage: func(ctx context.Context, profile *serving.Profile) (string, error) {
+func testObserverConfig(store *Store) servingstate.ObserverConfig {
+	return servingstate.ObserverConfig{Namespace: "chill-system", RuntimeImage: func(ctx context.Context, profile *serving.Profile) (string, error) {
 		c := profile.Condition
 		return profilerkube.ResolveRuntimeImage(ctx, store.client, profilerkube.CandidateResolverOptions{
 			Namespace: "chill-system", ConfigMapName: "execution-facts", ConfigMapKey: "execution-facts.yaml",
@@ -199,7 +199,7 @@ func testObserverConfig(store *Store) ObserverConfig {
 	}}
 }
 
-func newTestObserver(t *testing.T, objects ...client.Object) *Observer {
+func newTestObserver(t *testing.T, objects ...client.Object) *servingstate.Observer {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, appsv1.AddToScheme, edgev1alpha1.AddToScheme} {
@@ -211,8 +211,8 @@ func newTestObserver(t *testing.T, objects ...client.Object) *Observer {
 	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&corev1.Pod{}).WithObjects(objects...).Build()}
 	manager, _ := newManagerHarness(t)
 	kube := kubefake.NewSimpleClientset()
-	cluster := NewClusterState(store, kube, testObserverConfig(store).Namespace)
-	observer, err := NewObserver(cluster, store, kube, manager.runtime, &firstfloor.Client{}, testObserverConfig(store))
+	cluster := servingstate.NewClusterState(store, kube, testObserverConfig(store).Namespace)
+	observer, err := servingstate.NewObserver(cluster, store, kube, manager.runtime, &firstfloor.Client{}, testObserverConfig(store))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,19 +223,19 @@ func newTestObserver(t *testing.T, objects ...client.Object) *Observer {
 func TestObserverTerminationRequiresExactContainerEvidence(t *testing.T) {
 	pod, _, _, _ := observerSourceFixture()
 	observer := newTestObserver(t)
-	observer.sources[string(pod.UID)] = &nativeSource{uid: pod.UID, containerID: "containerd://old"}
+	observer.sources[string(pod.UID)] = &servingstate.NativeSource{uid: pod.UID, containerID: "containerd://old"}
 	pod.Status.ContainerStatuses[0].Ready = false
-	observer.observeTermination(pod)
+	observer.ObserveTermination(pod)
 	if observer.sources[string(pod.UID)].stopped {
 		t.Fatal("readiness loss became stop proof")
 	}
 	pod.Status.ContainerStatuses[0].LastTerminationState.Terminated = &corev1.ContainerStateTerminated{ContainerID: "containerd://unrelated"}
-	observer.observeTermination(pod)
+	observer.ObserveTermination(pod)
 	if observer.sources[string(pod.UID)].stopped {
 		t.Fatal("different container stopped retained executor")
 	}
 	pod.Status.ContainerStatuses[0].LastTerminationState.Terminated.ContainerID = "containerd://old"
-	observer.observeTermination(pod)
+	observer.ObserveTermination(pod)
 	if !observer.sources[string(pod.UID)].stopped {
 		t.Fatal("native previous-container termination was lost")
 	}
@@ -246,7 +246,7 @@ func TestObserverWatchInvalidationSurvivesLedgerPublicationAC37(t *testing.T) {
 		t.Run(condition, func(t *testing.T) {
 			pod, _, _, _ := observerSourceFixture()
 			observer := newTestObserver(t)
-			observer.restoreSources([]corev1.Pod{*pod})
+			observer.RestoreSources([]corev1.Pod{*pod})
 			source := observer.sources[string(pod.UID)]
 			source.instance.State.Ready = true
 			switch condition {
@@ -262,11 +262,11 @@ func TestObserverWatchInvalidationSurvivesLedgerPublicationAC37(t *testing.T) {
 			w.Modify(pod)
 			w.Stop()
 			observer.wg.Add(1)
-			observer.watchPods(w)
+			observer.WatchPods(w)
 			if source.instance.State.Ready || source.stopped {
 				t.Fatal("watch must close dispatch eligibility without inventing termination")
 			}
-			if err := observer.publishLedger(nil); err != nil {
+			if err := observer.PublishLedger(nil); err != nil {
 				t.Fatal(err)
 			}
 			for _, instance := range observer.runtime.Instances() {
@@ -409,7 +409,7 @@ func TestObserverCleanupHoldsTerminationAndPreservesSharedResources(t *testing.T
 	if err = observer.store.client.Get(ctx, client.ObjectKeyFromObject(config), &corev1.ConfigMap{}); err != nil {
 		t.Fatal("hypothetical owned configuration was swept", err)
 	}
-	observer.sources["lost"] = &nativeSource{ownerUID: uid}
+	observer.sources["lost"] = &servingstate.NativeSource{ownerUID: uid}
 	if done, err = observer.CleanupWorkload(ctx, uid); err == nil || done {
 		t.Fatal("disappearance without stop proof completed cleanup")
 	}
@@ -428,11 +428,11 @@ func TestObserverOwnershipIncludesUnlabelledControllersAndDirectReplicaSets(t *t
 		t.Fatalf("unlabelled ownership lost: %v %+v", err, owned)
 	}
 	all := map[types.UID]client.Object{rs.UID: rs, deployment.UID: deployment}
-	if owner, err := resourceWorkloadOwner(pod, all); err != nil || owner != string(uid) {
+	if owner, err := servingstate.ResourceWorkloadOwner(pod, all); err != nil || owner != string(uid) {
 		t.Fatalf("dedicated executor became shared: %q %v", owner, err)
 	}
 	delete(all, deployment.UID)
-	if _, err := resourceWorkloadOwner(pod, all); err == nil {
+	if _, err := servingstate.ResourceWorkloadOwner(pod, all); err == nil {
 		t.Fatal("missing owner became shared capacity")
 	}
 	pod.OwnerReferences[0].BlockOwnerDeletion = nil
@@ -489,9 +489,9 @@ func TestObserverRefreshRetainsUnlabelledParentSource(t *testing.T) {
 	status := &pod.Status.ContainerStatuses[0]
 	status.State = corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ContainerID: status.ContainerID}}
 	observer := newTestObserver(t)
-	observer.sources[string(pod.UID)] = &nativeSource{uid: pod.UID, containerID: status.ContainerID}
+	observer.sources[string(pod.UID)] = &servingstate.NativeSource{uid: pod.UID, containerID: status.ContainerID}
 	resources := map[types.UID]client.Object{replicaSet.UID: replicaSet, deployment.UID: deployment}
-	if _, publish, probed := observer.probeSource(context.Background(), pod, nil, nil, nil, resources, nil, nil); publish || probed != nil {
+	if _, publish, probed := observer.ProbeSource(context.Background(), pod, nil, nil, nil, resources, nil, nil); publish || probed != nil {
 		t.Fatal("unlabelled retained source became eligible")
 	}
 	if source := observer.sources[string(pod.UID)]; source.ownerUID != uid || !source.stopped {
@@ -504,7 +504,7 @@ func TestObserverFilteredRefreshPreservesExactRetainedTermination(t *testing.T) 
 		for _, proof := range []string{"exact", "replacement Pod", "other container"} {
 			t.Run(fmt.Sprintf("watching=%v/%s", watching, proof), func(t *testing.T) {
 				pod, _, _, _ := observerSourceFixture()
-				source := &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: pod.Status.ContainerStatuses[0].ContainerID, podState: pod.DeepCopy()}
+				source := &servingstate.NativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: pod.Status.ContainerStatuses[0].ContainerID, podState: pod.DeepCopy()}
 				pod.Labels = nil
 				pod.Status.Phase = corev1.PodSucceeded
 				status := &pod.Status.ContainerStatuses[0]
@@ -561,17 +561,17 @@ func TestObserverTerminalFactIsPerContainerAC45(t *testing.T) {
 	pod.Status.Phase = corev1.PodFailed
 	pod.Status.ContainerStatuses[0].State = corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ContainerID: current}}
 	observer := newTestObserver(t)
-	source := &nativeSource{uid: pod.UID, containerID: current, podState: pod,
+	source := &servingstate.NativeSource{uid: pod.UID, containerID: current, podState: pod,
 		terminated: map[string]bool{previous: false},
 		previous: map[string]serving.ReadyInstance{
 			previous: {State: serving.InstanceState{ID: servingstate.PhysicalID(pod.UID, previous)}},
 		}}
 	observer.sources[string(pod.UID)] = source
-	observer.observeTermination(pod)
+	observer.ObserveTermination(pod)
 	if source.stopped {
 		t.Fatal("one container's termination proved the entire Pod stopped")
 	}
-	if err := observer.publishLedger(nil); err != nil {
+	if err := observer.PublishLedger(nil); err != nil {
 		t.Fatal(err)
 	}
 	seen := map[string]bool{}
@@ -590,7 +590,7 @@ func TestObserverRefreshDoesNotWaitForBlockedLogStream(t *testing.T) {
 	pod, _, _, _ := observerSourceFixture()
 	containerID := pod.Status.ContainerStatuses[0].ContainerID
 	observer := newTestObserver(t)
-	observer.sources[string(pod.UID)] = &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: containerID}
+	observer.sources[string(pod.UID)] = &servingstate.NativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: containerID}
 	kube := kubefake.NewSimpleClientset(pod)
 	opened := make(chan *corev1.PodLogOptions, 1)
 	// A kubelet that never answers the log request until the observer closes.
@@ -627,7 +627,7 @@ func TestObserverRefreshDoesNotWaitForBlockedLogStream(t *testing.T) {
 	if !following {
 		t.Fatal("pending log follow lost")
 	}
-	if options.SinceTime == nil || !options.SinceTime.Time.Equal(processStart) || !options.Follow {
+	if options.SinceTime == nil || !options.SinceTime.Time.Equal(servingstate.ProcessStart) || !options.Follow {
 		t.Fatalf("restarted log follow replays earlier container output: %+v", options)
 	}
 }
@@ -664,9 +664,9 @@ func TestObserverScannerSkipsProgressForUnknownRequests(t *testing.T) {
 	stream := io.NopCloser(strings.NewReader(strings.Join(lines, "\n") + "\n"))
 	observer := manager.observer
 	observer.mu.Lock()
-	observer.sources[strings.SplitN(id, "/", 2)[0]] = &nativeSource{}
+	observer.sources[strings.SplitN(id, "/", 2)[0]] = &servingstate.NativeSource{}
 	observer.mu.Unlock()
-	if err := observer.scanLogs(id, stream); err != nil {
+	if err := observer.ScanLogs(id, stream); err != nil {
 		t.Fatal(err)
 	}
 	result, err := manager.observationLog.Query(context.Background(), definition.UID, now.Add(-time.Second), now.Add(time.Second), nil, nil, 0, "")
@@ -710,7 +710,7 @@ func TestObserverRejectedProgressIdentifiesPhysicalRequest(t *testing.T) {
 	observer := newTestObserver(t)
 	id := "pod-uid/containerd://actual"
 	stream := io.NopCloser(strings.NewReader(`CHILL_PROGRESS {"requestID":"request-1","phase":"fake"}` + "\n"))
-	if err := observer.scanLogs(id, stream); err != nil {
+	if err := observer.ScanLogs(id, stream); err != nil {
 		t.Fatal(err)
 	}
 	issues := observer.Issues()
@@ -732,7 +732,7 @@ func TestObserverScannerProgressDoesNotWaitForRefresh(t *testing.T) {
 	stream := io.NopCloser(strings.NewReader(`CHILL_PROGRESS {"requestID":"request-1","phase":"fake"}` + "\n"))
 	scanned := make(chan error, 1)
 	observer.mu.Lock()
-	go func() { scanned <- observer.scanLogs("pod-uid/containerd://actual", stream) }()
+	go func() { scanned <- observer.ScanLogs("pod-uid/containerd://actual", stream) }()
 	var err error
 	select {
 	case err = <-scanned:
@@ -790,13 +790,13 @@ func TestObserverUsesDesiredImageNotHistoricalProfile(t *testing.T) {
 	pod, node, profile, class := observerSourceFixture()
 	desired := pod.Spec.Containers[0].Image
 	profile.Condition.RuntimeImage = "registry/native@sha256:" + strings.Repeat("b", 64)
-	if _, err := sourceSpec(pod, node, &profile, []edgev1alpha1.DeviceClass{class}, "", desired); err != nil {
+	if _, err := servingstate.SourceSpec(pod, node, &profile, []edgev1alpha1.DeviceClass{class}, "", desired); err != nil {
 		t.Fatal("historical image blocked current declaration", err)
 	}
 	for _, name := range []string{"worker", "materializer", "Node", "GPU allocation"} {
 		t.Run(name, func(t *testing.T) {
 			p, n := pod.DeepCopy(), node.DeepCopy()
-			pr := cloneCatalogProfile(profile)
+			pr := servingstate.CloneCatalogProfile(profile)
 			switch name {
 			case "worker":
 				p.Spec.Containers[0].Image = profile.Condition.RuntimeImage
@@ -807,7 +807,7 @@ func TestObserverUsesDesiredImageNotHistoricalProfile(t *testing.T) {
 			case "GPU allocation":
 				pr.RuntimeMetadata.GPUUUID = "GPU-measured"
 			}
-			if _, err := sourceSpec(p, n, &pr, []edgev1alpha1.DeviceClass{class}, "", desired); err == nil {
+			if _, err := servingstate.SourceSpec(p, n, &pr, []edgev1alpha1.DeviceClass{class}, "", desired); err == nil {
 				t.Fatal("desired image or physical safety mismatch accepted")
 			}
 		})

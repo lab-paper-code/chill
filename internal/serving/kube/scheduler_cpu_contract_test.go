@@ -38,7 +38,7 @@ func TestNativePodReadbackUsesMemoryAndGPUWithoutCPUAllocation(t *testing.T) {
 	profile.RuntimeMetadata.IntraOpThreads, profile.RuntimeMetadata.InterOpThreads = 0, 0
 	profile.RuntimeMetadata.CPUAffinity = []int{7}
 	container := &pod.Spec.Containers[0]
-	if err := validateSourceResources(container, node, &profile); err != nil {
+	if err := servingstate.ValidateSourceResources(container, node, &profile); err != nil {
 		t.Fatal(err)
 	}
 	at := time.Unix(100, 0)
@@ -46,13 +46,13 @@ func TestNativePodReadbackUsesMemoryAndGPUWithoutCPUAllocation(t *testing.T) {
 	id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
 	state := serving.InstanceState{ID: id, Node: sn.Node, Profile: profile.ID, Ready: true, ObservedAt: at, Native: &native.State{Ready: true, Metadata: native.Metadata{ProfileID: profile.ID, Runtime: *profile.RuntimeMetadata, MaxQueueRequests: 4, MaxBatchSize: 1, Policy: native.Policy{MaxBatchSize: 1}}}}
 	snapshot := serving.SchedulerSnapshot{At: at, ObservationEnd: at}
-	captureNodePods(&snapshot, &sn, node, &core.PodList{Items: []core.Pod{*pod}}, map[string]serving.InstanceState{id: state}, map[string]*serving.Profile{profile.ID: &profile})
+	servingstate.CaptureNodePods(&snapshot, &sn, node, &core.PodList{Items: []core.Pod{*pod}}, map[string]serving.InstanceState{id: state}, map[string]*serving.Profile{profile.ID: &profile})
 	if len(snapshot.Instances) != 1 || len(sn.NonServing) != 0 || snapshot.Instances[0].Allocation.MemoryBytes != 1024 {
 		t.Fatalf("native physical ownership/memory lost: %+v", snapshot)
 	}
 	for _, resources := range []*core.ResourceList{&container.Resources.Requests, &container.Resources.Limits} {
 		(*resources)[core.ResourceCPU] = resource.MustParse("0")
-		if err := validateSourceResources(container, node, &profile); err == nil {
+		if err := servingstate.ValidateSourceResources(container, node, &profile); err == nil {
 			t.Fatal("admission-injected CPU field accepted")
 		}
 		delete(*resources, core.ResourceCPU)

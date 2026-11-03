@@ -18,7 +18,6 @@ import (
 )
 
 const (
-	runnerKind = "measurement-runner"
 	// runnerNodeLabel marks the runner Service of a measured Node; hand-back deletes it.
 	runnerNodeLabel = "chill.dacs.io/measurement-runner"
 
@@ -36,7 +35,7 @@ func (c *SchedulerController) runnerPreparation(transition *edge.PowerModeTransi
 	if transition.Spec.ServingContainer != servingstate.FirstfloorContainerName {
 		return servingstate.PrepareSpec{}, refusedRunnerContainerUnsupported
 	}
-	if transition.Namespace != c.observer.config.Namespace {
+	if transition.Namespace != c.observer.Namespace() {
 		return servingstate.PrepareSpec{}, refusedRunnerNamespace
 	}
 	var best *serving.Profile
@@ -60,7 +59,7 @@ func (c *SchedulerController) runnerPreparation(transition *edge.PowerModeTransi
 			break
 		}
 	}
-	if class == nil || confirmedPower(node, class, transition.Spec.Modes[0].PowerMode) != nil {
+	if class == nil || servingstate.ConfirmedPower(node, class, transition.Spec.Modes[0].PowerMode) != nil {
 		return servingstate.PrepareSpec{}, refusedRunnerSourceStateMismatch
 	}
 	spec := config.Preparations[best.ID]
@@ -75,7 +74,7 @@ func (c *SchedulerController) runnerPreparation(transition *edge.PowerModeTransi
 // and hands the Node back in the same run.
 func (c *SchedulerController) startRunner(node *core.Node, transition *edge.PowerModeTransitionCost, spec servingstate.PrepareSpec, config SchedulerControllerConfig) {
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-	operation := servingstate.Operation{ID: runnerKind + ":" + node.Name + ":" + string(transition.UID), Kind: runnerKind, Node: ref, Prepare: &spec, Holder: string(transition.UID)}
+	operation := servingstate.Operation{ID: servingstate.RunnerKind + ":" + node.Name + ":" + string(transition.UID), Kind: servingstate.RunnerKind, Node: ref, Prepare: &spec, Holder: string(transition.UID)}
 	c.startNodeRun(operation, config, func(ctx context.Context, result *servingstate.OperationResult) error {
 		err := c.prepareRunner(ctx, transition, ref, spec)
 		if err == nil {
@@ -92,7 +91,7 @@ func (c *SchedulerController) prepareRunner(ctx context.Context, transition *edg
 	if _, err := c.measurement.Execute(ctx, servingstate.Operation{ID: spec.Name, Kind: servingstate.OperationPrepare, Node: node, Prepare: &spec}); err != nil {
 		return err
 	}
-	pod, err := c.kube.CoreV1().Pods(c.observer.config.Namespace).Get(ctx, spec.Name, meta.GetOptions{})
+	pod, err := c.kube.CoreV1().Pods(c.observer.Namespace()).Get(ctx, spec.Name, meta.GetOptions{})
 	if err != nil {
 		return err
 	}

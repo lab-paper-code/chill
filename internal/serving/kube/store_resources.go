@@ -1,6 +1,7 @@
 package kube
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"context"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -42,7 +43,7 @@ func (s *Store) OwnedResources(ctx context.Context, uid types.UID, namespace str
 	}
 	result := []client.Object{}
 	for _, object := range all {
-		owner, err := resourceWorkloadOwner(object, all)
+		owner, err := servingstate.ResourceWorkloadOwner(object, all)
 		if err != nil && owner == string(uid) {
 			return nil, err
 		}

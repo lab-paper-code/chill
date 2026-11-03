@@ -1,6 +1,7 @@
 package kube
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -8,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"math"
 	"reflect"
 	"slices"
@@ -312,7 +312,7 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	}
 	if admitted, found := c.current[source]; found &&
 		admitted.uid == campaign.UID && admitted.version == campaign.ResourceVersion {
-		return cloneCatalogProfile(admitted.profile), nil, nil
+		return servingstate.CloneCatalogProfile(admitted.profile), nil, nil
 	}
 	// A new native identity/version must pass the full evidence boundary.
 	// Never retain the old success if that new admission fails.
@@ -511,7 +511,7 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: "firstfloor requires exact measured batch 1 and initialized measured sizes within selected maxBatchSize"}}, nil
 	}
 	c.current[source] = catalogProfile{
-		uid: campaign.UID, version: campaign.ResourceVersion, profile: cloneCatalogProfile(profile), facts: cloneMeasurementFacts(facts),
+		uid: campaign.UID, version: campaign.ResourceVersion, profile: servingstate.CloneCatalogProfile(profile), facts: cloneMeasurementFacts(facts),
 	}
 	return profile, issues, nil
 }
@@ -524,48 +524,6 @@ func sharedRuntimeFacts(facts firstfloor.RuntimeMetadata) firstfloor.RuntimeMeta
 	return facts
 }
 
-// Only mutable ownership is copied; source facts are not decoded or validated
-// again. Callers cannot mutate the admitted entry through returned slices/maps.
-func cloneCatalogProfile(profile serving.Profile) serving.Profile {
-	profile.Evidence = slices.Clone(profile.Evidence)
-	profile.Batches = slices.Clone(profile.Batches)
-	for i := range profile.Batches {
-		profile.Batches[i].DurationNanos = slices.Clone(profile.Batches[i].DurationNanos)
-	}
-	profile.Condition = profilederivation.CloneCurvePlanSpec(profile.Condition)
-	if profile.RuntimeMetadata != nil {
-		metadata := *profile.RuntimeMetadata
-		metadata.ModelFiles = slices.Clone(metadata.ModelFiles)
-		metadata.Inputs = slices.Clone(metadata.Inputs)
-		metadata.Outputs = slices.Clone(metadata.Outputs)
-		metadata.Providers = slices.Clone(metadata.Providers)
-		metadata.AvailableProviders = slices.Clone(metadata.AvailableProviders)
-		metadata.CPUAffinity = slices.Clone(metadata.CPUAffinity)
-		metadata.InitializedBatches = slices.Clone(metadata.InitializedBatches)
-		metadata.RKNN = slices.Clone(metadata.RKNN)
-		profile.RuntimeMetadata = &metadata
-	}
-	if profile.Reuse != nil {
-		check := *profile.Reuse
-		check.Batches = slices.Clone(check.Batches)
-		if check.IdlePowerRelativeDifference != nil {
-			value := *check.IdlePowerRelativeDifference
-			check.IdlePowerRelativeDifference = &value
-		}
-		if check.Record != nil {
-			reference := *check.Record
-			check.Record = &reference
-		}
-		profile.Reuse = &check
-	}
-	profile.RuntimeDelivery = slices.Clone(profile.RuntimeDelivery)
-	profile.MetricSource.MetricLabels = maps.Clone(profile.MetricSource.MetricLabels)
-	if profile.MetricSource.ThermalMetrics != nil {
-		thermal := *profile.MetricSource.ThermalMetrics
-		profile.MetricSource.ThermalMetrics = &thermal
-	}
-	return profile
-}
 
 type catalogBatch struct {
 	profile         serving.BatchProfile

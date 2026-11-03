@@ -38,7 +38,7 @@ func reuseProfilesFixture(t *testing.T) (serving.Profile, serving.Profile) {
 	source.RuntimeMetadata.GPUUUID = "GPU-source"
 	source.Condition.RuntimeAccess = &profilederivation.CurveRuntimeAccessContract{GPUUUID: "GPU-source", Resources: map[string]string{"nvidia.com/gpu": "1"}}
 	source.RuntimeDelivery = json.RawMessage(`{"gpuUUID":"GPU-source"}`)
-	target := cloneCatalogProfile(source)
+	target := servingstate.CloneCatalogProfile(source)
 	target.ID = "chill-system/confirmation/confirmation-uid"
 	target.NodeName, target.Condition.NodeUID = "genesis3", "genesis3-uid"
 	target.Condition.Name = "confirmation-plan"
@@ -208,7 +208,7 @@ func TestProfileReuseToleranceIsConfiguredAndInclusive(t *testing.T) {
 func TestProfileReuseRequiresCurrentDirectSource(t *testing.T) {
 	source, target := reuseProfilesFixture(t)
 	request := `{"sourceProfileID":"` + source.ID + `","maximumRelativeDifference":0.05}`
-	newer := cloneCatalogProfile(source)
+	newer := servingstate.CloneCatalogProfile(source)
 	newer.ID += "-newer"
 	newer.MeasuredAt = source.MeasuredAt.Add(time.Hour)
 	for _, profiles := range [][]serving.Profile{{target}, {source, newer, target}} {
@@ -281,7 +281,7 @@ func TestProfileReuseConnectsTargetPlannerOptionAndGPUInventory(t *testing.T) {
 		snapshot.Options[0].Instance.Node.UID != target.Condition.NodeUID || len(snapshot.Options[0].CompatibleUIDs) != 1 {
 		t.Fatalf("accepted target row did not reach planner: %+v %v", snapshot.Options, err)
 	}
-	if gpus := measuredGPUs(view.Profiles, target.Condition.NodeUID); !reflect.DeepEqual(gpus, []string{reuseTargetGPU}) {
+	if gpus := servingstate.MeasuredGPUs(view.Profiles, target.Condition.NodeUID); !reflect.DeepEqual(gpus, []string{reuseTargetGPU}) {
 		t.Fatalf("source GPU polluted target inventory: %v", gpus)
 	}
 }

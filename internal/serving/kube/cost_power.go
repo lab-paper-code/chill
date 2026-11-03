@@ -227,7 +227,7 @@ func validatePowerNativeProfiles(profiles []serving.Profile, node *transitioncos
 		}
 		actual := sharedRuntimeFacts(instance.State.Metadata.Runtime)
 		expected := sharedRuntimeFacts(*profile.RuntimeMetadata)
-		expected.ModelFiles = deliveredModelFiles(profile.Condition.Artifact.Files)
+		expected.ModelFiles = servingstate.DeliveredModelFiles(profile.Condition.Artifact.Files)
 		if !reflect.DeepEqual(actual, expected) {
 			return errors.New("power actual native runtime/provider/device differs from verified profile")
 		}

@@ -18,8 +18,8 @@ func TestActionDurationSurvivesExecutionProjection(t *testing.T) {
 		t.Fatalf("operation lost frozen estimate: %+v", operation)
 	}
 	start := time.Unix(100, 0)
-	controller := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{action.ID: {action: action, started: start}}}}
-	projected := controller.actionsLocked(start.Add(4 * time.Second))
+	controller := &SchedulerController{reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{action.ID: {action: action, started: start}}}}
+	projected := controller.ActionsLocked(start.Add(4 * time.Second))
 	if len(projected) != 1 || projected[0].ExpectedSeconds != action.ExpectedSeconds || projected[0].ExpectedSource != source || projected[0].Elapsed != 4*time.Second {
 		t.Fatalf("projection mixed measured elapsed and expected duration: %+v", projected)
 	}

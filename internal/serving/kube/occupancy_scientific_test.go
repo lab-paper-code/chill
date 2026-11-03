@@ -188,7 +188,7 @@ func TestBurstWarmupOriginJoinsLateNativeReceiptCohort(t *testing.T) {
 	if err := log.RecordNativeSupplement(progress("earliest", 2, firstStart)); err != nil {
 		t.Fatal(err)
 	}
-	controller := &SchedulerController{reservationState: &reservationState{}, observationLog: log}
+	controller := &SchedulerController{reservationState: &servingstate.ReservationState{}, observationLog: log}
 	record, err := controller.collectOccupancy(ctx, m, testNode, occupancyPlan{profile: profile, workload: workload},
 		started, collected, &servingstate.OperationState{})
 	if err != nil {

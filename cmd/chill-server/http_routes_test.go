@@ -1,6 +1,7 @@
 package main
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -198,7 +199,7 @@ func TestDashboardGatewayCannotReplaceChillServerAuthorization(t *testing.T) {
 	}))
 	authorizer := &servingkube.Authorizer{}
 	native, err := httpapi.NewHandler(&management.Manager{}, &serving.Runtime{}, authorizer,
-		&observation.ObservationLog{}, &servingkube.Observer{}, httpapi.HandlerConfig{
+		&observation.ObservationLog{}, &servingstate.Observer{}, httpapi.HandlerConfig{
 			RequestTimeout: time.Second, OperationTimeout: time.Second, MaxRequestBytes: 1024, MaxQueryEvents: 10,
 		})
 	if err != nil {

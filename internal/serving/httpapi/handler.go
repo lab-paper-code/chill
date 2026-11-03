@@ -2,6 +2,7 @@
 package httpapi
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 
 	"github.com/lab-paper-code/chill/internal/serving/application"
 
@@ -49,7 +49,7 @@ type HandlerConfig struct {
 	SchedulerConfigMap, SchedulerConfigKey, SchedulerNamespace string
 	SchedulerLock                                              *sync.Mutex
 	ChangeSchedulerSettings                                    func(context.Context, application.SettingsInput, string, bool, string, string) (observation.SchedulerSettingsChange, string, error)
-	SchedulerMeters                                            func() []servingops.MeterDeclaration
+	SchedulerMeters                                            func() []servingstate.MeterDeclaration
 	ReceiveResources                                           func(context.Context, observation.ResourceBatch) ([]observation.ResourceTarget, error)
 
 	ReadCatalog           func(context.Context) (servingkube.CatalogRead, error)
@@ -86,12 +86,12 @@ type Handler struct {
 	runtime        *serving.Runtime
 	authorizer     *servingkube.Authorizer
 	observationLog *observation.ObservationLog
-	observer       *servingkube.Observer
+	observer       *servingstate.Observer
 	config         HandlerConfig
 	mux            *http.ServeMux
 }
 
-func NewHandler(manager *management.Manager, runtime *serving.Runtime, authorizer *servingkube.Authorizer, observationLog *observation.ObservationLog, observer *servingkube.Observer, config HandlerConfig) (*Handler, error) {
+func NewHandler(manager *management.Manager, runtime *serving.Runtime, authorizer *servingkube.Authorizer, observationLog *observation.ObservationLog, observer *servingstate.Observer, config HandlerConfig) (*Handler, error) {
 	if manager == nil || runtime == nil || authorizer == nil || observationLog == nil || observer == nil || config.MaxRequestBytes <= 0 || config.RequestTimeout <= 0 || config.OperationTimeout <= 0 || config.MaxQueryEvents <= 0 {
 		return nil, errors.New("concrete management/runtime/auth/observation dependencies and positive HTTP bounds are required")
 	}
@@ -472,7 +472,7 @@ func (h *Handler) poolView(id string) (any, error) {
 	if id == "" {
 		return struct {
 			serving.PoolsState
-			Issues []servingkube.ObserverIssue `json:"issues"`
+			Issues []servingstate.ObserverIssue `json:"issues"`
 		}{pools, h.observer.Issues()}, nil
 	}
 	for _, pool := range pools.Workloads {

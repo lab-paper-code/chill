@@ -45,15 +45,15 @@ func TestFailedPrepareCompensatesOnlyOwnUnclaimedPodAC38(t *testing.T) {
 			if len(cleanup.result.DrainNative[actual.ID].Requests) != 0 {
 				t.Fatal("retirement bypassed native drain")
 			}
-			if c.authorize(servingstate.Operation{WorkloadUID: uid}) == nil {
+			if c.Authorize(servingstate.Operation{WorkloadUID: uid}) == nil {
 				t.Fatal("cleanup completion released owner before fresh physical-return proof")
 			}
 			fresh, err := c.capture(ctx, time.Now(), c.config)
 			if err != nil {
 				t.Fatal(err)
 			}
-			fresh, _ = c.reconcileSnapshot(fresh, fresh.At, c.config.Settings.ObservationWindow, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
-			if len(fresh.Reservations) != 0 || c.authorize(servingstate.Operation{WorkloadUID: uid}) != nil {
+			fresh, _ = c.ReconcileSnapshot(fresh, fresh.At, c.config.Settings.ObservationWindow, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+			if len(fresh.Reservations) != 0 || c.Authorize(servingstate.Operation{WorkloadUID: uid}) != nil {
 				t.Fatalf("retired Pod did not return reservation: %+v", fresh.Reservations)
 			}
 			if child.result.Status != status || child.result.Error != failure || parent.result.Status != servingstate.NativeOperationFailed {
@@ -76,14 +76,14 @@ func TestFailedPrepareCompensatesOnlyOwnUnclaimedPodAC38(t *testing.T) {
 // preparation. Historical evidence must not bypass R4b retirement/absence.
 func TestUnacknowledgedPrepareCannotBorrowPreviousRoutePolicyAC38(t *testing.T) {
 	c, api, child, parent := failedPrepareCompensationFixture(t, "canceled")
-	actual := *schedulerPhysicalState(c.state.Snapshot.Instances[1].ID, c.runtime.Instances())
+	actual := *servingstate.SchedulerPhysicalState(c.state.Snapshot.Instances[1].ID, c.runtime.Instances())
 	wanted := child.result.Operation.Prepare.Instance
 	target := &serving.SchedulerCandidate{ID: parent.owner + "-ready-unacknowledged",
 		Instances: []serving.SchedulerInstance{wanted},
 		Routing:   map[string]map[string]int32{wanted.WorkloadUID: {actual.ID: 1000}}}
 	operation := servingstate.Operation{Kind: servingstate.OperationRoute, Target: target, WorkloadUIDs: []string{wanted.WorkloadUID}}
-	route := &actionRun{owner: parent.owner, scope: child.scope,
-		action: serving.Action{ID: target.ID, Kind: servingstate.OperationRoute, From: readySubsetRoute, Status: servingstate.NativeOperationComplete},
+	route := &servingstate.ActionRun{owner: parent.owner, scope: child.scope,
+		action: serving.Action{ID: target.ID, Kind: servingstate.OperationRoute, From: servingstate.ReadySubsetRoute, Status: servingstate.NativeOperationComplete},
 		result: &servingstate.OperationResult{Operation: operation, Status: servingstate.NativeOperationComplete, EndedAt: child.result.EndedAt,
 			Before: servingstate.OperationState{Native: map[string]native.State{actual.ID: *actual.Native}}}}
 	for _, state := range c.runtime.Instances() {
@@ -94,15 +94,15 @@ func TestUnacknowledgedPrepareCannotBorrowPreviousRoutePolicyAC38(t *testing.T) 
 			parent.result.Before.Instances = append(parent.result.Before.Instances, serving.InstanceState{ID: state.ID, PodUID: state.PodUID, Node: state.Node})
 		}
 	}
-	if !c.reserveRun(route.action.ID, route, operation) {
+	if !c.ReserveRun(route.action.ID, route, operation) {
 		t.Fatal("subset was not authorized under the parent")
 	}
 	fresh, err := c.capture(c.ctx, time.Now(), c.config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fresh, _ = c.reconcileSnapshot(fresh, fresh.At, c.config.Settings.ObservationWindow, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
-	if !parent.reserved || !child.reserved || c.authorize(servingstate.Operation{WorkloadUID: wanted.WorkloadUID}) == nil {
+	fresh, _ = c.ReconcileSnapshot(fresh, fresh.At, c.config.Settings.ObservationWindow, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+	if !parent.reserved || !child.reserved || c.Authorize(servingstate.Operation{WorkloadUID: wanted.WorkloadUID}) == nil {
 		t.Fatal("a sibling's previous policy released an unacknowledged new source")
 	}
 	c.state.Snapshot = fresh
@@ -115,8 +115,8 @@ func TestUnacknowledgedPrepareCannotBorrowPreviousRoutePolicyAC38(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	fresh, _ = c.reconcileSnapshot(fresh, fresh.At, c.config.Settings.ObservationWindow, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
-	if len(fresh.Reservations) != 0 || c.authorize(servingstate.Operation{WorkloadUID: wanted.WorkloadUID}) != nil {
+	fresh, _ = c.ReconcileSnapshot(fresh, fresh.At, c.config.Settings.ObservationWindow, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+	if len(fresh.Reservations) != 0 || c.Authorize(servingstate.Operation{WorkloadUID: wanted.WorkloadUID}) != nil {
 		t.Fatal("fresh Pod absence did not return the compensated reservation")
 	}
 	if child.result.Status != servingstate.NativeOperationPartial || child.result.Error != context.Canceled.Error() || parent.result.Status != servingstate.NativeOperationFailed {
@@ -124,7 +124,7 @@ func TestUnacknowledgedPrepareCannotBorrowPreviousRoutePolicyAC38(t *testing.T) 
 	}
 }
 
-func failedPrepareCompensationFixture(t *testing.T, evidence string) (*SchedulerController, *resetAPI, *actionRun, *actionRun) {
+func failedPrepareCompensationFixture(t *testing.T, evidence string) (*SchedulerController, *resetAPI, *servingstate.ActionRun, *servingstate.ActionRun) {
 	t.Helper()
 	c, prepared := tickReadySubsetController(t, func(index int, state *native.State) {
 		if evidence == "policy-ack" && index == 1 {
@@ -164,18 +164,18 @@ func failedPrepareCompensationFixture(t *testing.T, evidence string) (*Scheduler
 	wanted.ID, wanted.PodUID, wanted.WorkloadUID, wanted.MaxBatch = failedPreparationSlot, "", uid, 16
 	action := serving.Action{ID: "failed-prepare", Kind: servingstate.OperationPrepare, Node: actual.Node, Instance: wanted.ID, Status: servingstate.NativeOperationFailed}
 	target := serving.SchedulerCandidate{ID: "failed-owner", Instances: []serving.SchedulerInstance{wanted}, Actions: []serving.Action{action}}
-	scope := resourceScope{Nodes: []serving.NodeReference{actual.Node}, Workloads: []string{uid}, Pods: []string{actual.PodUID}, Instances: []string{actual.ID}}
-	child := &actionRun{owner: target.ID, action: action, reserved: true, scope: scope, prepareIdentity: actual.ID,
+	scope := servingstate.ResourceScope{Nodes: []serving.NodeReference{actual.Node}, Workloads: []string{uid}, Pods: []string{actual.PodUID}, Instances: []string{actual.ID}}
+	child := &servingstate.ActionRun{owner: target.ID, action: action, reserved: true, scope: scope, prepareIdentity: actual.ID,
 		result: &servingstate.OperationResult{Status: servingstate.NativeOperationFailed, Error: serving.ActionDeadlineExceeded, EndedAt: ended,
 			Preparation: &servingstate.PreparationEvidence{PodUID: actual.PodUID, NodeUID: actual.Node.UID, DecisionID: target.ID, Created: true},
 			Operation: servingstate.Operation{ID: action.ID, Kind: servingstate.OperationPrepare, Node: actual.Node, WorkloadUIDs: []string{uid}, Prepare: &servingstate.PrepareSpec{
 				Instance: wanted, Owner: &serving.WorkloadReference{UID: uid}, Config: native.Config{Policy: native.Policy{DecisionID: target.ID}},
 			}}}}
-	parent := &actionRun{owner: target.ID, reserved: true, scope: scope,
-		action: serving.Action{ID: transitionRunKind + "/" + target.ID, Kind: transitionRunKind, Status: servingstate.NativeOperationFailed},
-		result: &servingstate.OperationResult{Status: servingstate.NativeOperationFailed, EndedAt: ended, Operation: servingstate.Operation{Kind: transitionRunKind, Target: &target}}}
+	parent := &servingstate.ActionRun{owner: target.ID, reserved: true, scope: scope,
+		action: serving.Action{ID: servingstate.TransitionRunKind + "/" + target.ID, Kind: servingstate.TransitionRunKind, Status: servingstate.NativeOperationFailed},
+		result: &servingstate.OperationResult{Status: servingstate.NativeOperationFailed, EndedAt: ended, Operation: servingstate.Operation{Kind: servingstate.TransitionRunKind, Target: &target}}}
 	child.proofParent = parent
-	c.runs = map[string]*actionRun{parent.action.ID: parent, action.ID: child}
+	c.runs = map[string]*servingstate.ActionRun{parent.action.ID: parent, action.ID: child}
 	switch evidence {
 	case "canceled":
 		child.action.Status, child.result.Status = servingstate.NativeOperationPartial, servingstate.NativeOperationPartial
@@ -189,7 +189,7 @@ func failedPrepareCompensationFixture(t *testing.T, evidence string) (*Scheduler
 	case pendingPowerEvidence:
 		c.state.Snapshot.Nodes[1].PowerMode = ""
 	case activeSiblingEvidence:
-		c.runs["active"] = &actionRun{owner: target.ID, action: serving.Action{Status: servingstate.NativeOperationCancel}}
+		c.runs["active"] = &servingstate.ActionRun{owner: target.ID, action: serving.Action{Status: servingstate.NativeOperationCancel}}
 	case "preexisting":
 		child.result.Before.Instances = []serving.InstanceState{{ID: actual.ID, PodUID: actual.PodUID}}
 	}

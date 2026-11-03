@@ -115,7 +115,7 @@ func TestOccupancyPreparationTimeoutHandsBackPendingPod(t *testing.T) {
 	if h.holder() != string(measurement.UID) {
 		t.Fatal("hand-back released taint before terminal status")
 	}
-	if err := c.authorize(servingstate.Operation{Node: testNode}); err == nil {
+	if err := c.Authorize(servingstate.Operation{Node: testNode}); err == nil {
 		t.Fatal("hand-back released reservation before terminal status")
 	}
 	c.observer.mu.Lock()
@@ -150,7 +150,7 @@ func TestOccupancyPreparationTimeoutHandsBackPendingPod(t *testing.T) {
 	if err != nil || len(pods.Items) != 0 {
 		t.Fatalf("native Pods remain: %v, %v", pods, err)
 	}
-	if err := c.authorize(servingstate.Operation{Node: testNode, WorkloadUID: string(workload.UID)}); err != nil {
+	if err := c.Authorize(servingstate.Operation{Node: testNode, WorkloadUID: string(workload.UID)}); err != nil {
 		t.Fatal("hand-back retained reservation", err)
 	}
 	c.observer.mu.Lock()

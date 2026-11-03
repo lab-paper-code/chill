@@ -78,50 +78,22 @@ func (c *SchedulerController) planManualResetLocked(ctx context.Context, operati
 		}
 	}
 	operation.Nodes = plan.nodes
-	c.mu.Lock()
-	_, err = c.resetReservationOwnersLocked(c.operationScope(operation), operation.Nodes)
-	c.mu.Unlock()
+	c.LockState()
+	_, err = c.ResetReservationOwnersLocked(c.OperationScope(operation), operation.Nodes)
+	c.UnlockState()
 	if err != nil {
 		return plan, err
 	}
 	return plan, nil
 }
 
-// Called both while planning and under mu at acquisition: no ownership changes
-// until every conflicting owner's runs have passed the same containment check.
-func (c *reservationState) resetReservationOwnersLocked(scope resourceScope, admittedNodes []serving.NodeReference) ([]string, error) {
-	var owners []string
-	for _, run := range c.runs {
-		if run.reserved && scope.overlaps(run.scope) && !slices.Contains(owners, run.owner) {
-			owners = append(owners, run.owner)
-		}
-	}
-	for _, run := range c.runs {
-		if !slices.Contains(owners, run.owner) {
-			continue
-		}
-		if run.action.Status == servingstate.NativeOperationRunning || run.action.Status == servingstate.NativeOperationCancel {
-			return nil, servingstate.Refused("OperationConflict", "resources are reserved by active owner "+run.owner)
-		}
-		if !run.reserved {
-			continue
-		}
-		if run.action.Kind == measurementLeaseKind || run.result == nil || run.result.EndedAt.IsZero() || run.result.Operation.Holder != "" ||
-			len(run.scope.Workloads) == 0 ||
-			slices.ContainsFunc(run.scope.Workloads, func(uid string) bool { return !slices.Contains(scope.Workloads, uid) }) ||
-			slices.ContainsFunc(run.scope.Nodes, func(node serving.NodeReference) bool { return !slices.Contains(admittedNodes, node) }) {
-			return nil, servingstate.Refused("OperationConflict", "reset cannot inherit reservation outside its cleanup scope: "+run.owner)
-		}
-	}
-	return owners, nil
-}
 
 // Removal can succeed before release or power return fails. Rediscover empty
 // candidate Nodes from current state rather than losing them with their Pods.
 func (c *SchedulerController) resetPendingPowerNodes(ctx context.Context, uids []string) ([]serving.NodeReference, error) {
-	c.mu.Lock()
+	c.LockState()
 	config := c.config
-	c.mu.Unlock()
+	c.UnlockState()
 	snapshot, err := c.capture(ctx, time.Now(), config)
 	if err != nil {
 		return nil, err
@@ -327,9 +299,9 @@ func (c *SchedulerController) executeManualReset(ctx context.Context, operation 
 
 func (c *SchedulerController) resetRouting(ctx context.Context, root servingstate.Operation, kind string, result *servingstate.OperationResult) error {
 	for _, uid := range root.WorkloadUIDs {
-		c.mu.Lock()
+		c.LockState()
 		config := c.config
-		c.mu.Unlock()
+		c.UnlockState()
 		if kind == servingstate.OperationUnroute {
 			declared, active, err := c.resetRoutingPresent(ctx, uid, config)
 			if err != nil {
@@ -430,7 +402,7 @@ func (c *SchedulerController) resetLowerNodes(ctx context.Context, nodes []servi
 			result.Progress = append(result.Progress, node.Name+": lowest mode already Ready")
 			continue
 		}
-		duration, supported := nodePowerTargets(node, classes.Items, config.PowerPolicies)[lowest]
+		duration, supported := servingstate.NodePowerTargets(node, classes.Items, config.PowerPolicies)[lowest]
 		if !supported {
 			return fmt.Errorf("Node %s has no actuation policy for lowest mode %s", node.Name, lowest)
 		}

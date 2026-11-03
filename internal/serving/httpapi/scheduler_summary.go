@@ -1,10 +1,10 @@
 package httpapi
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 )
 
 // Summary deliberately does not embed scheduler inputs or evidence bodies.
@@ -66,7 +66,7 @@ type schedulerSummaryAction struct {
 	ExpectedSource  *serving.ActionExpectedSource `json:"expectedSource"`
 }
 
-func summarizeScheduler(state *servingkube.SchedulerControllerState) schedulerSummary {
+func summarizeScheduler(state *servingstate.SchedulerControllerState) schedulerSummary {
 	result := schedulerSummary{
 		At:        state.Snapshot.At,
 		Nodes:     make([]schedulerSummaryNode, 0, len(state.Snapshot.Nodes)),

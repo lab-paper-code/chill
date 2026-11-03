@@ -46,12 +46,12 @@ func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
 				Actions: []serving.Action{{ID: "first-route", Kind: servingstate.OperationRoute}, {ID: "second-route", Kind: servingstate.OperationRoute, DependsOn: []string{"first-route"}}}}
 			c.runtime.EnableSchedulerRouting()
 			installTestTransition(c, &goal)
-			parent := c.runs[transitionRunKind+"/"+goal.ID]
+			parent := c.runs[servingstate.TransitionRunKind+"/"+goal.ID]
 			parent.admittedControls = c.config.Settings.Controls
 			c.state.Snapshot = snapshot
 			armed.Store(true)
 			c.mu.Lock()
-			c.continueTransitionsLocked(c.config.Settings, true, func(target serving.SchedulerCandidate) {
+			c.ContinueTransitionsLocked(c.config.Settings, true, func(target serving.SchedulerCandidate) {
 				c.launchTargetLocked(target, c.config)
 			})
 			c.mu.Unlock()
@@ -125,7 +125,7 @@ func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
 	}
 }
 
-func requireCompletedContinuationAction(t *testing.T, run *actionRun, message string) {
+func requireCompletedContinuationAction(t *testing.T, run *servingstate.ActionRun, message string) {
 	t.Helper()
 	if run == nil || run.action.Status != servingstate.NativeOperationComplete {
 		t.Fatalf("%s: %+v", message, run)

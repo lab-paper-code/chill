@@ -1,6 +1,7 @@
 package application
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -282,8 +283,8 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 		ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "scheduler", ResourceVersion: "new"},
 		Data:       map[string]string{"scheduler.json": string(raw)},
 	})
-	cluster := servingkube.NewClusterState(store, kube, "serving")
-	observer, err := servingkube.NewObserver(cluster, store, kube, execution, &sdk.Client{}, servingkube.ObserverConfig{Namespace: "serving"})
+	cluster := servingstate.NewClusterState(store, kube, "serving")
+	observer, err := servingstate.NewObserver(cluster, store, kube, execution, &sdk.Client{}, servingstate.ObserverConfig{Namespace: "serving"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -500,8 +501,8 @@ func schedulerTestService(t *testing.T, config SchedulerConfiguration) *Schedule
 		},
 		Data: map[string]string{"scheduler.json": string(raw), "unrelated": "operator value"},
 	})
-	cluster := servingkube.NewClusterState(store, kube, "serving")
-	observer, err := servingkube.NewObserver(cluster, store, kube, execution, &sdk.Client{}, servingkube.ObserverConfig{Namespace: "serving"})
+	cluster := servingstate.NewClusterState(store, kube, "serving")
+	observer, err := servingstate.NewObserver(cluster, store, kube, execution, &sdk.Client{}, servingstate.ObserverConfig{Namespace: "serving"})
 	if err != nil {
 		t.Fatal(err)
 	}

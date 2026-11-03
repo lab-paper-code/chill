@@ -1,13 +1,13 @@
 package httpapi
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"net/http"
 	"reflect"
 	"strconv"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
@@ -131,7 +131,7 @@ func (e *schedulerReadEvidence) snapshot(snapshot *serving.SchedulerSnapshot) *s
 }
 
 type schedulerReadState struct {
-	*servingkube.SchedulerControllerState
+	*servingstate.SchedulerControllerState
 	Snapshot *schedulerReadSnapshot `json:"snapshot"`
 	Decision *schedulerReadDecision `json:"decision"`
 }
@@ -150,7 +150,7 @@ type schedulerReadBatch struct {
 	DurationSampleCount int       `json:"durationSampleCount"`
 }
 
-func (e *schedulerReadEvidence) state(state *servingkube.SchedulerControllerState) schedulerReadState {
+func (e *schedulerReadEvidence) state(state *servingstate.SchedulerControllerState) schedulerReadState {
 	// The current dashboard reads neither the arrival log nor catalog options.
 	// Keep their counts, without registering profiles reachable only from options.
 	snapshot := state.Snapshot

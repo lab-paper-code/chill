@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"bytes"
 	"encoding/json"
 	"net/http"
@@ -9,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 
 	"github.com/lab-paper-code/chill/internal/serving/application"
 
@@ -64,7 +64,7 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		default:
 			sendJSON(w, http.StatusOK, struct {
 				Settings serving.SchedulerSettings            `json:"settings"`
-				State    servingkube.SchedulerControllerState `json:"state"`
+				State    servingstate.SchedulerControllerState `json:"state"`
 			}{h.config.Scheduler.Settings(), h.config.Scheduler.State()})
 		}
 		return
@@ -263,7 +263,7 @@ func (h *Handler) schedulerSettingsRead(w http.ResponseWriter, r *http.Request) 
 		sendError(w, err)
 		return
 	}
-	meters := []servingops.MeterDeclaration{}
+	meters := []servingstate.MeterDeclaration{}
 	if h.config.SchedulerMeters != nil {
 		meters = append(meters, h.config.SchedulerMeters()...)
 	}
@@ -272,7 +272,7 @@ func (h *Handler) schedulerSettingsRead(w http.ResponseWriter, r *http.Request) 
 		serving.SchedulerSettings
 		StaticRouting    json.RawMessage               `json:"staticRouting,omitempty"`
 		PowerObservation json.RawMessage               `json:"powerObservation,omitempty"` // Stored operating-power policy; read-only.
-		Meters           []servingops.MeterDeclaration `json:"meters"`
+		Meters           []servingstate.MeterDeclaration `json:"meters"`
 		RequestTimeout   time.Duration                 `json:"requestTimeout"` // Runtime --request-timeout, in nanoseconds; read-only.
 	}{settings, config["staticRouting"], config["powerObservation"], meters, h.config.RequestTimeout})
 }

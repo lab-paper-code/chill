@@ -32,7 +32,7 @@ const observerTestRuntime = "test-runtime"
 // observerAPI serves S ready native instances on one Node and counts the
 // Kubernetes reads one observer refresh makes through the shared clientset.
 type observerAPI struct {
-	observer     *Observer
+	observer     *servingstate.Observer
 	mu           sync.Mutex
 	reads        map[string]int
 	failing      string // suffix of "path?query" whose reads fail
@@ -105,7 +105,7 @@ func newObserverAPI(t *testing.T, instances int) *observerAPI {
 				}
 			}
 			actual := *profile.RuntimeMetadata
-			actual.ModelFiles = deliveredModelFiles(profile.Condition.Artifact.Files)
+			actual.ModelFiles = servingstate.DeliveredModelFiles(profile.Condition.Artifact.Files)
 			response = native.State{At: time.Now().UTC(), Ready: true, Metadata: native.Metadata{
 				Model: "chill_model", Mode: "serving", ProfileID: profile.ID, AppliedAt: time.Now().UTC(),
 				Runtime: actual, MaxQueueRequests: 4, MaxBatchSize: 1, ModelInstanceCount: 1,
@@ -307,7 +307,7 @@ func TestObserverRefreshBoundsNativeProbe(t *testing.T) {
 	if err := api.observer.Refresh(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if took := time.Since(started); took > nativeProbeTimeout+time.Second || api.ready() != 0 {
+	if took := time.Since(started); took > servingstate.NativeProbeTimeout+time.Second || api.ready() != 0 {
 		t.Fatalf("hung probe held the refresh %v, ready %d", took, api.ready())
 	}
 }

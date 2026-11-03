@@ -34,17 +34,10 @@ const OperationMeasurementSchema = "chill.dacs.io/serving-operation-measurement.
 
 const MeasurementInsufficient = "Insufficient"
 
-// MeterDeclaration is explicit evidence scope, never inferred from an URL.
-type MeterDeclaration struct {
-	ID     string                        `json:"id"`
-	Node   serving.NodeReference         `json:"node"`
-	Scope  string                        `json:"scope"`
-	Source metricobserver.SourceIdentity `json:"source"`
-}
 
 type MeasurementRequest struct {
 	Operation       servingstate.Operation      `json:"operation"`
-	Meter           MeterDeclaration            `json:"meter"`
+	Meter           servingstate.MeterDeclaration            `json:"meter"`
 	Sampling        metricobserver.Request      `json:"sampling"`
 	Coverage        powerwindow.Policy          `json:"coverage"`
 	Timing          *edge.MeasurementTimingSpec `json:"timing"`

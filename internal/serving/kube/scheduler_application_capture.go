@@ -31,14 +31,14 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	}
 	// Observer state is read before the Node list: another refresh holding the
 	// observer lock would otherwise age every Node.
-	profiles, profileByID := c.observer.schedulerProfiles()
+	profiles, profileByID := c.observer.SchedulerProfiles()
 	// Request start is a conservative lower bound; slow live I/O still ages it.
 	nodesObservedAt := time.Now().UTC()
 	nodes, err := c.kube.CoreV1().Nodes().List(ctx, meta.ListOptions{})
 	if err != nil {
 		return s, err
 	}
-	pods, err := c.kube.CoreV1().Pods("").List(ctx, meta.ListOptions{FieldSelector: nonTerminalPodSelector})
+	pods, err := c.kube.CoreV1().Pods("").List(ctx, meta.ListOptions{FieldSelector: servingstate.NonTerminalPodSelector})
 	if err != nil {
 		return s, err
 	}
@@ -71,10 +71,10 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		if slices.Contains(config.Settings.ExcludedNodes, n.Name) {
 			sn.Reasons = append(sn.Reasons, serving.NodeExcluded)
 		}
-		captureNodeInventory(&sn, n, profiles)
+		servingstate.CaptureNodeInventory(&sn, n, profiles)
 		sn.PowerMode = servingstate.ReadBackMode(n, servingstate.NodeClass(n, classes.Items))
 		lowest := serving.SchedulerLowestMode(config.Baselines, sn.Node)
-		targets := nodePowerTargets(n, classes.Items, config.PowerPolicies)
+		targets := servingstate.NodePowerTargets(n, classes.Items, config.PowerPolicies)
 		if _, ok := targets[lowest]; sn.PowerMode == "" || len(targets) == 0 || lowest != "" && lowest != sn.PowerMode && !ok {
 			sn.Reasons = append(sn.Reasons, serving.NodePowerModeUnavailable)
 			if sn.PowerMode == "" {
@@ -86,15 +86,15 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		for mode, maxDuration := range targets {
 			power[sn.Node.UID+"/"+mode] = maxDuration
 		}
-		captureNodePods(&s, &sn, n, pods, physical, profileByID)
+		servingstate.CaptureNodePods(&s, &sn, n, pods, physical, profileByID)
 		s.Nodes = append(s.Nodes, sn)
 	}
 	slices.SortFunc(s.Instances, func(a, b serving.SchedulerInstance) int {
 		return strings.Compare(a.ID+a.PodUID, b.ID+b.PodUID)
 	})
-	c.mu.Lock()
+	c.LockState()
 	c.powerTargets = power
-	c.mu.Unlock()
+	c.UnlockState()
 	current := c.runtime.SchedulerInputs(time.Now)
 	s.At, s.Workloads, s.Outstanding = current.At, current.Workloads, current.Outstanding
 	s.Routing, s.RoutingCredits = current.Routing, current.RoutingCredits
@@ -117,7 +117,7 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 			s.Options = append(s.Options, serving.SchedulerOption{Instance: instance, CompatibleUIDs: compatible})
 		}
 	}
-	bindProfileMeters(&s, config.Meters)
-	c.releaseObservedScopes(nodes.Items, pods.Items, physicalStates, now)
+	servingstate.BindProfileMeters(&s, config.Meters)
+	c.ReleaseObservedScopes(nodes.Items, pods.Items, physicalStates, now)
 	return s, nil
 }

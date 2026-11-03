@@ -1,16 +1,13 @@
-package kube
+package state
 
 import (
-	"maps"
-	"slices"
-
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
-
-	"github.com/lab-paper-code/chill/internal/serving"
+	serving "github.com/lab-paper-code/chill/internal/serving"
+	maps "maps"
+	slices "slices"
 )
 
 // Scope is frozen when the operation is registered, not recomputed at completion.
-func changedWorkloads(target serving.SchedulerCandidate, snapshot serving.SchedulerSnapshot) []string {
+func ChangedWorkloads(target serving.SchedulerCandidate, snapshot serving.SchedulerSnapshot) []string {
 	changed := []string{}
 	for uid, weights := range target.Routing {
 		resolved := make(map[string]int32, len(weights))
@@ -52,7 +49,7 @@ func changedWorkloads(target serving.SchedulerCandidate, snapshot serving.Schedu
 	return changed
 }
 
-func controlledTarget(operation servingstate.Operation) *serving.SchedulerCandidate {
+func ControlledTarget(operation Operation) *serving.SchedulerCandidate {
 	if operation.Target == nil {
 		return nil
 	}
@@ -72,29 +69,29 @@ func controlledTarget(operation servingstate.Operation) *serving.SchedulerCandid
 	return &target
 }
 
-func (c *reservationState) targetWorkloadsLocked(target serving.SchedulerCandidate) []string {
-	if parent := c.runs[transitionRunKind+"/"+target.ID]; parent != nil {
+func (c *ReservationState) targetWorkloadsLocked(target serving.SchedulerCandidate) []string {
+	if parent := c.runs[TransitionRunKind+"/"+target.ID]; parent != nil {
 		return parent.result.Operation.WorkloadUIDs
 	}
-	return changedWorkloads(target, c.state.Snapshot)
+	return ChangedWorkloads(target, c.state.Snapshot)
 }
 
-func (c *reservationState) routeOperationScopeLocked(parent, selected serving.SchedulerCandidate, intermediate bool) ([]string, bool) {
+func (c *ReservationState) RouteOperationScopeLocked(parent, selected serving.SchedulerCandidate, intermediate bool) ([]string, bool) {
 	scope := c.targetWorkloadsLocked(parent)
 	if intermediate {
-		scope = slices.DeleteFunc(changedWorkloads(selected, c.state.Snapshot), func(uid string) bool {
+		scope = slices.DeleteFunc(ChangedWorkloads(selected, c.state.Snapshot), func(uid string) bool {
 			return scope != nil && !slices.Contains(scope, uid)
 		})
 	}
 	return scope, scope != nil && len(scope) == 0
 }
 
-func (c *reservationState) omittedRouteCompleteLocked(action serving.Action, target serving.SchedulerCandidate) bool {
-	if action.Kind != servingstate.OperationRoute || c.runs[action.ID] != nil {
+func (c *ReservationState) OmittedRouteCompleteLocked(action serving.Action, target serving.SchedulerCandidate) bool {
+	if action.Kind != OperationRoute || c.runs[action.ID] != nil {
 		return false
 	}
 	if action.RouteTarget == nil {
-		if _, empty := c.routeOperationScopeLocked(target, target, false); empty {
+		if _, empty := c.RouteOperationScopeLocked(target, target, false); empty {
 			return true
 		}
 	}
@@ -102,23 +99,23 @@ func (c *reservationState) omittedRouteCompleteLocked(action serving.Action, tar
 	// a later stage supersedes its routing or policy.
 	return slices.ContainsFunc(target.Actions, func(dependent serving.Action) bool {
 		consumer := c.runs[dependent.ID]
-		return consumer != nil && consumer.action.Status == servingstate.NativeOperationComplete && slices.Contains(dependent.DependsOn, action.ID)
+		return consumer != nil && consumer.action.Status == NativeOperationComplete && slices.Contains(dependent.DependsOn, action.ID)
 	})
 }
 
-func (c *reservationState) ownerDAGCompleteLocked(parent *actionRun) bool {
+func (c *ReservationState) ownerDAGCompleteLocked(parent *ActionRun) bool {
 	for _, child := range c.runs {
 		if child != parent && child.owner == parent.owner &&
-			(child.action.Status == servingstate.NativeOperationRunning || child.action.Status == servingstate.NativeOperationCancel) {
+			(child.action.Status == NativeOperationRunning || child.action.Status == NativeOperationCancel) {
 			return false
 		}
 	}
 	target := parent.result.Operation.Target
 	for _, action := range target.Actions {
-		if action.Status == servingstate.NativeOperationCancel || c.omittedRouteCompleteLocked(action, *target) {
+		if action.Status == NativeOperationCancel || c.OmittedRouteCompleteLocked(action, *target) {
 			continue
 		}
-		if run := c.runs[action.ID]; run == nil || run.action.Status != servingstate.NativeOperationComplete {
+		if run := c.runs[action.ID]; run == nil || run.action.Status != NativeOperationComplete {
 			return false
 		}
 	}
@@ -127,15 +124,15 @@ func (c *reservationState) ownerDAGCompleteLocked(parent *actionRun) bool {
 
 // Routes inside one owner form a chain; a partial ACK never races its final
 // route. Preparations of that owner's other Nodes still proceed independently.
-func (c *reservationState) orderRouteChild(action serving.Action, owner string) serving.Action {
-	if action.Kind != servingstate.OperationRoute {
+func (c *ReservationState) OrderRouteChild(action serving.Action, owner string) serving.Action {
+	if action.Kind != OperationRoute {
 		return action
 	}
-	if run := c.runs[action.ID]; run != nil && run.action.Status == servingstate.NativeOperationComplete {
+	if run := c.runs[action.ID]; run != nil && run.action.Status == NativeOperationComplete {
 		return action
 	}
 	for _, run := range c.runs {
-		if run.owner == owner && run.action.Kind == servingstate.OperationRoute && run.action.Status == servingstate.NativeOperationRunning && run.action.ID != action.ID {
+		if run.owner == owner && run.action.Kind == OperationRoute && run.action.Status == NativeOperationRunning && run.action.ID != action.ID {
 			action.DependsOn = append(slices.Clone(action.DependsOn), run.action.ID)
 		}
 	}

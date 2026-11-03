@@ -26,8 +26,8 @@ func TestUntouchedAdmissionBaselineAC38(t *testing.T) {
 			state := serving.InstanceState{ID: id, PodUID: string(pod.UID), Node: ref, Ready: true, ObservedAt: ended.Add(time.Second), Native: &native.State{Ready: true}}
 			baseline := serving.InstanceState{ID: id, PodUID: string(pod.UID), Node: ref}
 			target := &serving.SchedulerCandidate{ID: "owner"}
-			parent := &actionRun{owner: target.ID, reserved: true, action: serving.Action{ID: "transition/owner", Kind: transitionRunKind, Status: servingstate.NativeOperationFailed}, scope: resourceScope{Nodes: []serving.NodeReference{ref}, Pods: []string{string(pod.UID)}, Instances: []string{id}}, result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: transitionRunKind, Target: target}, Before: servingstate.OperationState{Instances: []serving.InstanceState{baseline}}, EndedAt: ended}}
-			c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{parent.action.ID: parent}}}
+			parent := &servingstate.ActionRun{owner: target.ID, reserved: true, action: serving.Action{ID: "transition/owner", Kind: servingstate.TransitionRunKind, Status: servingstate.NativeOperationFailed}, scope: servingstate.ResourceScope{Nodes: []serving.NodeReference{ref}, Pods: []string{string(pod.UID)}, Instances: []string{id}}, result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.TransitionRunKind, Target: target}, Before: servingstate.OperationState{Instances: []serving.InstanceState{baseline}}, EndedAt: ended}}
+			c := &SchedulerController{reservationState: &servingstate.ReservationState{runs: map[string]*servingstate.ActionRun{parent.action.ID: parent}}}
 			c.state.Snapshot.Instances = []serving.SchedulerInstance{{ID: id, PodUID: string(pod.UID), Node: ref}}
 			switch evidence {
 			case "local-prepare", "route-cancel", "stop-cancel", "power-cancel", "unknown":
@@ -47,9 +47,9 @@ func TestUntouchedAdmissionBaselineAC38(t *testing.T) {
 				action := serving.Action{ID: "effect", Kind: kind, Node: effectNode, Status: servingstate.NativeOperationRunning}
 				target.Actions = []serving.Action{action}
 				op := servingstate.Operation{Kind: kind, Node: effectNode, Target: target, Nodes: []serving.NodeReference{ref}}
-				run := &actionRun{owner: parent.owner, proofParent: parent, action: action, result: &servingstate.OperationResult{Operation: op, EndedAt: ended}}
+				run := &servingstate.ActionRun{owner: parent.owner, proofParent: parent, action: action, result: &servingstate.OperationResult{Operation: op, EndedAt: ended}}
 				parent.returnObserved = true
-				if !c.reserveRun(action.ID, run, op) {
+				if !c.ReserveRun(action.ID, run, op) {
 					t.Fatal("authorization failed")
 				}
 				if parent.returnObserved {
@@ -81,11 +81,11 @@ func TestUntouchedAdmissionBaselineAC38(t *testing.T) {
 				if evidence == "cancel-sibling" {
 					status = servingstate.NativeOperationCancel
 				}
-				c.runs["sibling"] = &actionRun{owner: parent.owner, action: serving.Action{Status: status}}
+				c.runs["sibling"] = &servingstate.ActionRun{owner: parent.owner, action: serving.Action{Status: status}}
 			case "gc":
 				parent.reserved = false
-				c.runs["held"] = &actionRun{owner: parent.owner, reserved: true}
-				if !c.runReferencedLocked(parent.action.ID) {
+				c.runs["held"] = &servingstate.ActionRun{owner: parent.owner, reserved: true}
+				if !c.RunReferencedLocked(parent.action.ID) {
 					t.Fatal("baseline collected while owner responsibility remained")
 				}
 				parent.reserved = true
@@ -94,7 +94,7 @@ func TestUntouchedAdmissionBaselineAC38(t *testing.T) {
 			if evidence == "absent-sibling" {
 				pods = nil
 			}
-			c.releaseObservedScopes([]core.Node{*node}, pods, []serving.InstanceState{state}, ended.Add(2*time.Second))
+			c.ReleaseObservedScopes([]core.Node{*node}, pods, []serving.InstanceState{state}, ended.Add(2*time.Second))
 			want := evidence == "untouched" || evidence == "local-prepare" || evidence == "gc"
 			if parent.returnObserved != want {
 				t.Fatalf("returnObserved=%t, want %t", parent.returnObserved, want)
@@ -102,7 +102,7 @@ func TestUntouchedAdmissionBaselineAC38(t *testing.T) {
 			if evidence == "gc" {
 				parent.reserved = false
 				c.runs["held"].reserved = false
-				if c.runReferencedLocked(parent.action.ID) {
+				if c.RunReferencedLocked(parent.action.ID) {
 					t.Fatal("returned owner still retained its baseline")
 				}
 			}
@@ -152,7 +152,7 @@ func TestPartialPrepareLateACKMultiNodeReturnsAC38(t *testing.T) {
 			child.result.Before.Native = map[string]native.State{id: *s.Native}
 		}
 		parent.result.Before.Instances = append(parent.result.Before.Instances, s)
-		for _, run := range []*actionRun{parent, child} {
+		for _, run := range []*servingstate.ActionRun{parent, child} {
 			run.scope.Nodes = append(run.scope.Nodes, ref)
 			run.scope.Pods = append(run.scope.Pods, string(p.UID))
 			run.scope.Instances = append(run.scope.Instances, id)
@@ -161,7 +161,7 @@ func TestPartialPrepareLateACKMultiNodeReturnsAC38(t *testing.T) {
 		nodes = append(nodes, *n)
 		physical = append(physical, s)
 	}
-	if !c.reserveRun(child.action.ID, child, child.result.Operation) {
+	if !c.ReserveRun(child.action.ID, child, child.result.Operation) {
 		t.Fatal("Node-local prepare authorization failed")
 	}
 	c.launch(serving.SchedulerCandidate{}, c.config)
@@ -187,8 +187,8 @@ func TestPartialPrepareLateACKMultiNodeReturnsAC38(t *testing.T) {
 	parent.reserved = true
 	child.reserved = true
 	parent.returnObserved = false
-	c.releaseObservedScopes(nodes, pods, physical, time.Now())
-	fresh, _ = c.reconcileSnapshot(fresh, time.Now(), c.config.Settings.ObservationWindow, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+	c.ReleaseObservedScopes(nodes, pods, physical, time.Now())
+	fresh, _ = c.ReconcileSnapshot(fresh, time.Now(), c.config.Settings.ObservationWindow, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 	if parent.reserved || child.reserved || len(fresh.Reservations) != 0 || api.deleteCalls != 0 {
 		t.Fatal("eligible fresh tick did not return the owner without compensation")
 	}

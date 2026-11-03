@@ -23,11 +23,7 @@ import (
 
 const controlPlaneLabel = "node-role.kubernetes.io/control-plane"
 
-// Intermediate routes are observed operations, not prerequisites of the frozen
-// goal: later ready subsets supersede their routing effects.
-const readySubsetRoute = "ready-subset"
 
-const externalActionSource = "external-operation"
 
 type SchedulerControllerConfig struct {
 	Settings          serving.SchedulerSettings
@@ -37,7 +33,7 @@ type SchedulerControllerConfig struct {
 	Preparations      map[string]servingstate.PrepareSpec
 	Costs             []serving.OperationCost
 	Baselines         []serving.NodeBaseline
-	CostIssues        []CostIssue
+	CostIssues        []servingstate.CostIssue
 	// DispatchOccupancy holds legacy evidence for controllers without a cache.
 	DispatchOccupancy []serving.DispatchOccupancy
 	// DispatchOccupancySnapshot reads an immutable, already-resolved selection;
@@ -48,7 +44,7 @@ type SchedulerControllerConfig struct {
 	LoadGenerator LoadGeneratorConfig
 	// GatewayRequestTimeout is the actual HTTP handler lifetime cap.
 	GatewayRequestTimeout time.Duration
-	Meters                []servingops.MeterDeclaration
+	Meters                []servingstate.MeterDeclaration
 	// PowerPolicies are the configured actuation policies; a non-Fixed
 	// DeviceClass mode with a policy is a mode ChillServer can request.
 	PowerPolicies []nodeactuator.ActuationPolicySpec
@@ -64,21 +60,13 @@ type SchedulerControllerConfig struct {
 	OnAction      func(servingstate.OperationResult) error
 }
 
-type SchedulerControllerState struct {
-	Snapshot serving.SchedulerSnapshot      `json:"snapshot"`
-	Decision serving.SchedulerDecision      `json:"decision"`
-	Actions  []serving.Action               `json:"actions"`
-	Results  []servingstate.OperationResult `json:"results"`
-	// CostIssues are the measurements the configured costs omit.
-	CostIssues []CostIssue `json:"costIssues"`
-}
 
 type SchedulerController struct {
-	*reservationState
+	*servingstate.ReservationState
 	store      *Store
 	kube       kubernetes.Interface
 	runtime    *serving.Runtime
-	observer   *Observer
+	observer   *servingstate.Observer
 	operations *servingops.Operations
 	// measurement acts only on measurement POOL Nodes: operation measurements and hand-back.
 	measurement        *servingops.Operations
@@ -100,7 +88,7 @@ type SchedulerController struct {
 
 // NewSchedulerController configures control without taking ownership of routing.
 // The composition root freezes routing after restoring the actual baseline.
-func NewSchedulerController(cluster *ClusterState, store *Store, kube kubernetes.Interface, runtime *serving.Runtime, observer *Observer, operations *servingops.Operations, observationLog *observation.ObservationLog, config SchedulerControllerConfig) (*SchedulerController, error) {
+func NewSchedulerController(cluster *servingstate.ClusterState, store *Store, kube kubernetes.Interface, runtime *serving.Runtime, observer *servingstate.Observer, operations *servingops.Operations, observationLog *observation.ObservationLog, config SchedulerControllerConfig) (*SchedulerController, error) {
 	if cluster == nil || store == nil || kube == nil || runtime == nil || observer == nil || operations == nil || observationLog == nil {
 		return nil, errors.New("scheduler requires actual Kubernetes, runtime, observer, operation and observation log owners")
 	}
@@ -110,7 +98,7 @@ func NewSchedulerController(cluster *ClusterState, store *Store, kube kubernetes
 	ctx, cancel := context.WithCancel(context.Background())
 	measurement := *operations
 	measurement.Config.Measurement = true
-	c := &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, measurement: &measurement, observationLog: observationLog, config: config, reservationState: &cluster.reservation, ctx: ctx, cancel: cancel}
+	c := &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, measurement: &measurement, observationLog: observationLog, config: config, ReservationState: cluster.Reservations(), ctx: ctx, cancel: cancel}
 	c.completions = make(chan struct{}, 1)
 	c.measureStep = c.measureOperation
 	c.capacity = serving.NewCapacityTable(goruntime.GOMAXPROCS(0), func(row serving.CapacityRow) error {
@@ -120,8 +108,8 @@ func NewSchedulerController(cluster *ClusterState, store *Store, kube kubernetes
 }
 
 func (c *SchedulerController) Settings() serving.SchedulerSettings {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.LockState()
+	defer c.UnlockState()
 	return c.config.Settings
 }
 
@@ -129,14 +117,14 @@ func (c *SchedulerController) SetConfiguration(config SchedulerControllerConfig)
 	if err := validateSchedulerConfiguration(config); err != nil {
 		return err
 	}
-	c.tickMu.Lock()
-	defer c.tickMu.Unlock()
-	c.mu.Lock()
+	c.LockTick()
+	defer c.UnlockTick()
+	c.LockState()
 	before := len(c.config.Settings.AutonomousWorkloads) > 0
 	previousStatic := c.config.StaticRouting
 	c.config = config
 	c.bootstrapStartedAt = time.Time{}
-	c.mu.Unlock()
+	c.UnlockState()
 	after := len(config.Settings.AutonomousWorkloads) > 0
 	c.setRoutingControl(before, after)
 	if previousStatic && !config.StaticRouting && !after && !before {
@@ -152,10 +140,10 @@ func (c *SchedulerController) setRoutingControl(before, after bool) {
 	if after {
 		c.runtime.EnableSchedulerRouting()
 	} else {
-		c.cancelCancelableRuns()
-		c.mu.Lock()
+		c.CancelCancelableRuns()
+		c.LockState()
 		static := c.config.StaticRouting
-		c.mu.Unlock()
+		c.UnlockState()
 		if !static {
 			c.runtime.DisableSchedulerRouting()
 		}
@@ -176,7 +164,7 @@ func validateSchedulerConfiguration(config SchedulerControllerConfig) error {
 		}
 		meters[m.ID] = m.Node
 		for _, other := range config.Meters {
-			if other.Node != m.Node && sameWallSeries(other.Source, m.Source) {
+			if other.Node != m.Node && servingstate.SameWallSeries(other.Source, m.Source) {
 				return errors.New("one wall series declared for multiple physical Nodes")
 			}
 		}
@@ -202,10 +190,10 @@ func validateSchedulerConfiguration(config SchedulerControllerConfig) error {
 	return nil
 }
 
-func (c *SchedulerController) State() SchedulerControllerState {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	result := c.stateViewLocked()
+func (c *SchedulerController) State() servingstate.SchedulerControllerState {
+	c.LockState()
+	defer c.UnlockState()
+	result := c.StateViewLocked()
 	result.CostIssues = c.config.CostIssues
 	return result
 }
@@ -215,33 +203,16 @@ func (c *SchedulerController) Close() { c.cancel(); c.capacity.Wait(); c.wg.Wait
 // Capacity returns the capacity rows the autonomous Workloads need.
 func (c *SchedulerController) Capacity() []serving.CapacityRow { return c.capacity.Rows() }
 
-func (c *reservationState) actionsLocked(now time.Time) []serving.Action {
-	result := make([]serving.Action, 0, len(c.runs))
-	for _, r := range c.runs {
-		if r.action.Kind == transitionRunKind || r.action.Kind == measurementLeaseKind || r.action.Kind == workloadDeletionKind {
-			continue
-		}
-		a := r.action
-		if a.Status == servingstate.NativeOperationRunning {
-			a.Elapsed = now.Sub(r.started)
-		}
-		result = append(result, a)
-	}
-	slices.SortFunc(result, func(a, b serving.Action) int {
-		return strings.Compare(a.ID, b.ID)
-	})
-	return result
-}
 
 func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.SchedulerDecision, error) {
-	c.tickMu.Lock()
-	defer c.tickMu.Unlock()
+	c.LockTick()
+	defer c.UnlockTick()
 	if err := ctx.Err(); err != nil {
 		return serving.SchedulerDecision{}, err
 	}
-	c.mu.Lock()
+	c.LockState()
 	config := c.config
-	c.mu.Unlock()
+	c.UnlockState()
 	started := time.Now()
 	snapshot, err := c.captureReconciled(ctx, now, config, false)
 	if err != nil {
@@ -262,13 +233,13 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 		return serving.SchedulerDecision{}, err
 	}
 	decision.EvaluationElapsed = time.Since(started)
-	c.mu.Lock()
+	c.LockState()
 	if err := ctx.Err(); err != nil {
-		c.mu.Unlock()
+		c.UnlockState()
 		return serving.SchedulerDecision{}, err
 	}
-	c.publishDecisionLocked(&snapshot, &decision)
-	c.mu.Unlock()
+	c.PublishDecisionLocked(&snapshot, &decision)
+	c.UnlockState()
 	if err := ctx.Err(); err != nil {
 		return serving.SchedulerDecision{}, err
 	}
@@ -307,7 +278,7 @@ func (c *SchedulerController) captureReconciled(ctx context.Context, now time.Ti
 			return snapshot, fmt.Errorf("continuation observation unavailable: %s", strings.Join(reasons, ", "))
 		}
 	}
-	snapshot, lost := c.reconcileSnapshot(snapshot, snapshot.At, config.Settings.ObservationWindow, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+	snapshot, lost := c.ReconcileSnapshot(snapshot, snapshot.At, config.Settings.ObservationWindow, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 	for _, result := range lost {
 		if config.OnAction != nil {
 			if err := config.OnAction(result); err != nil {
@@ -315,6 +286,6 @@ func (c *SchedulerController) captureReconciled(ctx context.Context, now time.Ti
 			}
 		}
 	}
-	c.annotateHistory(&snapshot, config.Settings.ObservationWindow)
+	c.AnnotateHistory(&snapshot, config.Settings.ObservationWindow)
 	return snapshot, nil
 }

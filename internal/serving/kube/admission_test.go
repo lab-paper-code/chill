@@ -172,7 +172,7 @@ func (h *admissionHarness) admit() {
 		h.controller.mu.Lock()
 		running := false
 		for _, run := range h.controller.runs {
-			running = running || run.action.Kind != measurementLeaseKind && run.action.Status == servingstate.NativeOperationRunning
+			running = running || run.action.Kind != servingstate.MeasurementLeaseKind && run.action.Status == servingstate.NativeOperationRunning
 		}
 		h.controller.mu.Unlock()
 		if !running {
