@@ -108,7 +108,9 @@ func TestSkippedRequiredBridgeConsumesReadySubsetACKSCH51(t *testing.T) {
 			}
 			installTestTransition(c, &goal)
 			config := SchedulerControllerConfig{OnAction: func(OperationResult) error { return context.Canceled }}
+			c.mu.Lock()
 			c.launchTargetLocked(goal, config)
+			c.mu.Unlock()
 			c.wg.Wait()
 			if c.runs[bridge.ID] != nil {
 				t.Fatal("unchanged bridge manufactured a route run")
@@ -121,7 +123,9 @@ func TestSkippedRequiredBridgeConsumesReadySubsetACKSCH51(t *testing.T) {
 			}
 			if receipt {
 				c.runs[stop.ID].action.Status = nativeOperationComplete
+				c.mu.Lock()
 				c.launchTargetLocked(goal, config)
+				c.mu.Unlock()
 				c.wg.Wait()
 				if c.runs[prepare.ID] == nil {
 					t.Fatal("W1 prepare did not follow the acknowledged W2 handoff and stop")
@@ -159,7 +163,9 @@ func TestSkippedBridgeChainConsumesExistingACKSCH51(t *testing.T) {
 				delete(c.runs, "acknowledged-route")
 			}
 			installTestTransition(c, &goal)
+			c.mu.Lock()
 			c.launchTargetLocked(goal, SchedulerControllerConfig{OnAction: func(OperationResult) error { return context.Canceled }})
+			c.mu.Unlock()
 			c.wg.Wait()
 			if c.runs[first.ID] != nil {
 				t.Fatal("unchanged first bridge manufactured a route run")
@@ -208,7 +214,9 @@ func TestSkippedBridgeChainPreservesTerminalUIDSCH51(t *testing.T) {
 			installTestTransition(c, &goal)
 			// The owner also controls W2, whose handoff has already completed.
 			c.runs[transitionRunKind+"/"+goal.ID].result.Operation.WorkloadUIDs = []string{"w1", w2.WorkloadUID}
+			c.mu.Lock()
 			c.launchTargetLocked(goal, SchedulerControllerConfig{})
+			c.mu.Unlock()
 			c.wg.Wait()
 			if c.runs[first.ID] != nil {
 				t.Fatal("unchanged first bridge manufactured a route run")
@@ -245,7 +253,9 @@ func TestRunningBridgeCannotConsumeUnrelatedCompletedACKS2(t *testing.T) {
 			if c.dependenciesReady(stop, goal) || c.dependenciesReady(final, goal) {
 				t.Fatal("stop/final route accepted an incomplete bridge despite its existing frozen effect")
 			}
+			c.mu.Lock()
 			c.launchTargetLocked(goal, SchedulerControllerConfig{OnAction: func(OperationResult) error { return context.Canceled }})
+			c.mu.Unlock()
 			c.wg.Wait()
 			if c.runs[stop.ID] != nil || c.runs[final.ID] != nil {
 				t.Fatal("incomplete bridge consumed an unrelated completed ACK and released its stop/final route")
@@ -311,7 +321,9 @@ func testReadySubsetACKAndSkippedBridgeProgress(t *testing.T, pendingSibling boo
 		t.Fatal(err)
 	}
 	c.state.Snapshot = snapshot
+	c.mu.Lock()
 	c.launchTargetLocked(goal, c.config)
+	c.mu.Unlock()
 	c.wg.Wait()
 	var subset *actionRun
 	for _, run := range c.runs {
@@ -333,7 +345,9 @@ func testReadySubsetACKAndSkippedBridgeProgress(t *testing.T, pendingSibling boo
 				t.Fatal(err)
 			}
 			c.state.Snapshot = snapshot
+			c.mu.Lock()
 			c.launchTargetLocked(goal, c.config)
+			c.mu.Unlock()
 			c.wg.Wait()
 			if c.runs[stop.ID] != nil {
 				t.Fatalf("stop ran after subset ACK with prepare %s", status)
@@ -348,7 +362,9 @@ func testReadySubsetACKAndSkippedBridgeProgress(t *testing.T, pendingSibling boo
 		t.Fatal(err)
 	}
 	c.state.Snapshot = snapshot
+	c.mu.Lock()
 	c.launchTargetLocked(goal, c.config)
+	c.mu.Unlock()
 	c.wg.Wait()
 	parent := c.runs[transitionRunKind+"/"+goal.ID]
 	if c.runs[bridge.ID] != nil {
@@ -362,7 +378,9 @@ func testReadySubsetACKAndSkippedBridgeProgress(t *testing.T, pendingSibling boo
 		t.Fatal(err)
 	}
 	c.state.Snapshot = snapshot
+	c.mu.Lock()
 	c.launchTargetLocked(goal, c.config)
+	c.mu.Unlock()
 	c.wg.Wait()
 	if run := c.runs[next.ID]; run == nil || run.action.Status != nativeOperationComplete {
 		t.Fatalf("next bridge did not complete after omitted bridge and stop: %+v", run)
