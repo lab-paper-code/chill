@@ -2,10 +2,11 @@
 
 import * as React from "react"
 import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useSearchParams } from "next/navigation"
-import { useSession } from "@/lib/client"
+import { usePathname, useSearchParams } from "next/navigation"
+import { ApiError, relay, useSession } from "@/lib/client"
 import { applyLiveMessage, connectLive, initialLiveState, parseLiveMessage, type LiveConnection, type LiveState } from "@/lib/live"
 import { fixtureMessages } from "@/lib/live-fixture"
+import { seedRecentLiveEvents } from "@/lib/live-history"
 
 type LiveContextValue = {state:LiveState;status:string;reconnect:()=>void}
 const LiveContext=React.createContext<LiveContextValue|null>(null)
@@ -14,6 +15,7 @@ export function LiveProvider({children}:{children:React.ReactNode}) {
   const {token,epoch,config,signals}=useSession()
   const queryClient=useQueryClient()
   const search=useSearchParams()
+  const operating=usePathname()==="/"
   const requested=search.get("fixture")
   const scene=config.liveFixture && requested && ["empty","first","expand","shrink"].includes(requested) ? requested : null
   const liveKey=React.useMemo(()=>["chill-live",epoch,scene] as const,[epoch,scene])
@@ -27,7 +29,7 @@ export function LiveProvider({children}:{children:React.ReactNode}) {
     if (!token) return
     const abort=new AbortController()
     signals.add(abort)
-    const update=(change:(state:LiveState)=>LiveState)=>{queryClient.setQueryData<LiveState>(liveKey,state=>change(state ?? initialLiveState()));if(queryClient.getQueryData<LiveState>(liveKey)?.status==="unauthorized")window.dispatchEvent(new Event("chill-unauthorized"))}
+    const update=(change:(state:LiveState)=>LiveState)=>{if(abort.signal.aborted)return;queryClient.setQueryData<LiveState>(liveKey,state=>change(state ?? initialLiveState()));if(queryClient.getQueryData<LiveState>(liveKey)?.status==="unauthorized")window.dispatchEvent(new Event("chill-unauthorized"))}
     const read=()=>queryClient.getQueryData<LiveState>(liveKey) ?? initialLiveState()
     let connection:LiveConnection
     if (scene) {
@@ -55,8 +57,28 @@ export function LiveProvider({children}:{children:React.ReactNode}) {
     }
   },[scene,token,epoch,signals,queryClient,liveKey])
 
+  React.useEffect(()=>{
+    if(!token || scene || !operating)return
+    const abort=new AbortController()
+    signals.add(abort)
+    const update=(change:(state:LiveState)=>LiveState)=>{
+      if(!abort.signal.aborted)queryClient.setQueryData<LiveState>(liveKey,state=>abort.signal.aborted ? state : change(state ?? initialLiveState()))
+    }
+    void seedRecentLiveEvents(async(path,signal)=>(await relay(path,token,signal)).data,update,abort.signal).catch(error=>{
+      if(abort.signal.aborted)return
+      if(error instanceof ApiError && error.status===401){window.dispatchEvent(new Event("chill-unauthorized"));return}
+      update(state=>["unauthorized","forbidden"].includes(state.status) ? state : {...state,eventArchiveError:"최근 사건 기록 조회 실패"})
+    })
+    return ()=>{abort.abort();signals.delete(abort)}
+  },[operating,scene,token,epoch,signals,queryClient,liveKey])
+
   const value=React.useMemo(()=>({state,status:state.status,reconnect}),[state,reconnect])
-  return <LiveContext.Provider value={value}>{children}</LiveContext.Provider>
+  const retentionGap=!!(state.resumeHistory?.gaps.length || state.eventArchive?.coverage.gaps?.length)
+  return <LiveContext.Provider value={value}>
+    {operating && (retentionGap || state.eventArchive?.partial) && <div role="status" className="notice">{[retentionGap?"보존 공백":null,state.eventArchive?.partial?"최근 사건 일부만 표시":null].filter(Boolean).join(" · ")}</div>}
+    {operating && state.eventArchiveError && <div role="status" className="notice">{state.eventArchiveError}</div>}
+    {children}
+  </LiveContext.Provider>
 }
 
 export function useLive():LiveContextValue {

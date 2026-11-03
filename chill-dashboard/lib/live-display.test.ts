@@ -8,7 +8,7 @@ import { createRequire } from "node:module"
 import { createElement, type ComponentType, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
-import { compareAt, initialLiveState, type LiveState } from "./live.ts"
+import { compareAt, eventKey, initialLiveState, type LiveState } from "./live.ts"
 import * as displayHelpers from "./live-display.ts"
 import { decisionRange } from "./experiments.ts"
 
@@ -339,7 +339,7 @@ test("operations board keeps independent axes, idle summary, service placement a
     "@/lib/client":{useSession:()=>({epoch:1,config:{liveFixture:false}}),useChillQuery:(path:string)=>path.startsWith("v1/observations/events")?{data:{events:archived}}:path.startsWith("v1/observations/scheduler?")&&recordedDecision?{data:{events:[{at,decision:recordedDecision}]}}:{}},
     "@/lib/use-live":{useLive:()=>({state,status:"fixture",reconnect:()=>{}})},
     "@/lib/live-display":displayHelpers,"@/lib/experiments":{decisionRange},
-    "@/lib/live":{compareAt},
+    "@/lib/live":{compareAt,eventKey},
     "@/components/status-cell":status,
     "@/lib/status":{STATUS_AXES:{serviceImpact:"서비스 영향",performance:"성능 판정",observation:"관측 상태"}},
     "@/components/ui/sheet":{Sheet:({open,children}:{open:boolean;children:ReactNode})=>open?createElement("div",{"data-sheet":true},children):null,SheetContent:wrap,SheetHeader:wrap,SheetTitle:wrap},
@@ -348,6 +348,7 @@ test("operations board keeps independent axes, idle summary, service placement a
     "@/lib/scheduler":{stringifySchedulerJSON:JSON.stringify},"@/lib/source-export":{safeSource:(value:unknown)=>value},
     "./scheduler":{judgmentLabels:{Keep:"구성 유지",Feasible:"실행 가능"},actionKinds:{power:"전력모드 변경"},actionStatuses:{},actionNodeName:(node:{name:string})=>node.name,SchedulerEvidence:({kind}:{kind:string})=>createElement("section",{"data-evidence":kind},kind)},
     "./live-board.css":{},
+    "./power-series":{LivePowerTrend:()=>null},
   }
   const board=compile("../features/live-board.tsx",modules)
   const render=()=>renderToStaticMarkup(createElement(board.LiveBoardPage,{}))

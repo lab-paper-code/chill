@@ -1,4 +1,4 @@
-import { compareAt, isLiveActionActive, type LiveAction, type LiveEvent, type LiveInstance, type LiveMetric, type LiveMetrics, type LiveSnapshot, type LiveState, type LiveWorkload } from "./live.ts"
+import { compareAt, eventKey, isLiveActionActive, type LiveAction, type LiveEvent, type LiveInstance, type LiveMetric, type LiveMetrics, type LiveSnapshot, type LiveState, type LiveWorkload } from "./live.ts"
 import { STATUS_AXES, type StatusValue } from "./status.ts"
 import type { SchedulerCandidate } from "./read-types.ts"
 
@@ -275,10 +275,10 @@ export function liveReason(reason:string|null|undefined):string {
 
 export function incidentFlow(events:LiveEvent[],gaps:LiveState["gaps"],now:number,keep=false,metrics:LiveMetrics[]=[]) {
   const incidents=[
-    ...groupIncidentEvents(events.filter(event=>Date.parse(event.at)<=now&&(keep||event.kind!=="decision"||event.decision.state!=="Keep"))).map(row=>({kind:"event" as const,at:row.event.at,key:`event:${row.event.seq}`,...row})),
+    ...groupIncidentEvents(events.filter(event=>Date.parse(event.at)<=now&&(keep||event.kind!=="decision"||event.decision.state!=="Keep"))).map(row=>({kind:"event" as const,at:row.event.at,key:`event:${eventKey(row.event)}`,...row})),
     ...gapEpisodes(gaps,now,metrics).filter(gap=>gap.lost||!gap.recovered||gap.seconds>=5).map(gap=>({kind:"gap" as const,at:gap.from,key:`gap:${gap.scope}:${gap.from}:${gap.reason}`,gap})),
   ]
-  return incidents.sort((a,b)=>compareAt(b.at,a.at)||(b.kind==="event"?b.event.seq:0)-(a.kind==="event"?a.event.seq:0)).slice(0,30)
+  return incidents.sort((a,b)=>compareAt(b.at,a.at)||(b.kind==="event"?b.event.seq??0:0)-(a.kind==="event"?a.event.seq??0:0)).slice(0,30)
 }
 /** The badge counts only incidents present in the same rendered list. */
 export function incidentSummary(events:LiveEvent[],gaps:LiveState["gaps"],now:number,metrics:LiveMetrics[]=[]) {
