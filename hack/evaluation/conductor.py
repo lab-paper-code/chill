@@ -561,6 +561,8 @@ class CPO:
         try:
             return telemetry.poll(deadline) if telemetry else []
         except Exception as error:
+            if isinstance(error, urllib.error.HTTPError) and error.code in (401, 403):
+                raise
             phase.setdefault('diagnosticErrors', []).append({'at': now(), 'error': str(error)})
             return []
 
@@ -917,6 +919,10 @@ def judge(binding, folder):
             stop = base + round(part['seconds'] * 1e9)
             planned = sum(base <= offset < stop for offset in trace['offsetsNS'])
             latencies = []
+            part_rows = [row for row in rows if base <= row['scheduledOffsetNs'] < stop]
+            part_issued = analysis.issued_calls(part_rows)
+            part_supported = any(row.get('requestID') in indexed['finals'] for row in usable
+                                 if base <= row['scheduledOffsetNs'] < stop)
             for row in usable:
                 if base <= row['scheduledOffsetNs'] < stop:
                     latency = analysis.request_timing(row, indexed['finals'].get(row.get('requestID')), None, start)['sloLatencyNS']
@@ -926,7 +932,8 @@ def judge(binding, folder):
             rank = math.ceil(planned * workload['slo']['percentile'] / 100)
             substages.append({'id': part['id'], 'durationSeconds': part['seconds'], 'rate': part['rates'][name], 'offered': planned,
                               'completedLatencyNS': analysis.stats(latencies), 'deadlineSuccess': successes, 'requiredSuccessfulRank': rank,
-                              'D1': 'NOT_OFFERED' if not planned else 'FAIL' if successes < rank else 'OBSERVED_THRESHOLD_MET'})
+                              'D1': 'NOT_OFFERED' if not planned else 'INVALID_NO_LOAD' if not part_issued else
+                                    'NOT_EVALUATED' if not part_supported else 'FAIL' if successes < rank else 'OBSERVED_THRESHOLD_MET'})
             base = stop
         results[name] = {'offered': offered, 'clientRows': len(rows), 'outcomes': dict(outcomes), 'completedLatencyNS': analysis.stats(completed),
                          'gatewayCompletedLatencyNS': analysis.stats(completed), 'actualLatencyNS': analysis.stats(actual), 'scheduledLatencyNS': analysis.stats(scheduled),
@@ -976,7 +983,8 @@ def summarize(binding, root, *, evaluation=None):
     stages = evaluation['stages'] if evaluation else []
     results = evaluation.get('results', {}) if evaluation else {}
     measurements = [value.get('measurement', {}).get('verdict', 'NOT_EVALUATED') for value in results.values()]
-    status = 'FAIL' if 'FAIL' in measurements else 'MEASURED_DESCRIPTIVE' if stages else 'NOT_EVALUATED'
+    slo_statuses = measurements + [stage['kpis'].get('components', {}).get('slo', {}).get('status') for stage in stages]
+    status = 'FAIL' if 'FAIL' in slo_statuses else 'MEASURED_DESCRIPTIVE' if 'PASS' in slo_statuses else 'NOT_EVALUATED'
     result = {'schema': 'e5-summary.v4', 'failurePolicy': 'v2', 'stages': stages, 'status': status, 'results': results,
               'completeness': 'PARTIAL' if 'NOT_EVALUATED' in measurements or len(stages) < len(results) or any(
                   stage['kpis'].get('power', {}).get('complete') is False or stage['kpis']['status']=='PARTIAL' for stage in stages) else 'OBSERVED',

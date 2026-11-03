@@ -417,6 +417,9 @@ CPU/throttle telemetry is best-effort, not a GO/drain dependency. On a finite
 drain watchdog or early EOF, stop exact owned writers and collect partial facts.
 Wrong Workload/Node UID, unsafe mutation, credentials/path scope and evidence
 overwrite remain hard boundaries. Generation/source/provenance labels are facts.
+An all-no-load/unavailable collection of stages stays NOT_EVALUATED, never PASS.
+Substage SLO labels use the same no-send/no-final availability boundaries.
+Diagnostic HTTP 401/403 remains a fatal authorization failure, not missing data.
 
 `evaluation.py` executes prepare/factor/stage/judge/cleanup-jobs/finish/publish
 from the controller's immutable spec/execution/config ConfigMap. Public settings

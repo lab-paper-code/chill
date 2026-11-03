@@ -90,10 +90,14 @@ def request_timing(row, final, received_ns, start_ns):
             'entranceDelayMeaning': 'Gateway receivedAt minus client sentAtUnixNS; cross-host clock offset/uncertainty retained, including negative values; not one-way network latency'}
 
 
+def issued_calls(client):
+    return [row for row in client if row.get('issued') is not False and row.get('error') != 'UnsentAtWindowEnd'
+            and (row.get('issued') is True or type(row.get('sentMonotonicNS')) is int or row.get('requestID'))]
+
+
 def issuance_fidelity(client, offsets, start_ns, duration_ns, stats, quality=None):
     """Timing thresholds label observations; only zero evidenced sends invalidate load."""
-    issued = [row for row in client if row.get('issued') is not False and row.get('error') != 'UnsentAtWindowEnd'
-              and (row.get('issued') is True or type(row.get('sentMonotonicNS')) is int or row.get('requestID'))]
+    issued = issued_calls(client)
     # v2 physical boundary: at least one actual infer-call/send or returned request
     # is needed to claim an offered-load experiment. No arbitrary lateness cliff.
     no_load = bool(offsets) and not issued

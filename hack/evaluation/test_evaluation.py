@@ -113,6 +113,29 @@ def power_window():
 
 
 class EvaluationTests(unittest.TestCase):
+    def test_all_no_load_stages_cannot_become_summary_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stages = [{'id': 'one', 'kpis': {'status': 'PARTIAL', 'components': {'slo': {'status': 'INVALID_NO_LOAD'}}}},
+                      {'id': 'two', 'kpis': {'status': 'PARTIAL', 'components': {'slo': {'status': 'NOT_EVALUATED'}}}}]
+            results = {stage['id']: {'measurement': {'verdict': 'NOT_EVALUATED'}} for stage in stages}
+            for records in (results, {}):
+                summary = conductor.summarize(None, Path(directory), evaluation={'stages': stages, 'results': records})
+                self.assertEqual(summary['status'], 'NOT_EVALUATED')
+                self.assertEqual(evaluation.verdict(summary)['verdict'], 'NOT_EVALUATED')
+
+    def test_diagnostic_authorization_failures_remain_fatal(self):
+        controller = object.__new__(conductor.CPO)
+        for code in (401, 403):
+            with self.subTest(code=code):
+                error = urllib.error.HTTPError('https://api.invalid', code, 'Denied', {}, None)
+                def poll(deadline):
+                    raise error
+                phase = {}
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    controller.sample_resources(SimpleNamespace(poll=poll), 1, phase)
+                self.assertEqual(caught.exception.code, code)
+                self.assertNotIn('diagnosticErrors', phase)
+
     def test_slo_fidelity_energy_injection_and_provenance_are_independent(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -187,6 +210,8 @@ class EvaluationTests(unittest.TestCase):
                 self.assertEqual(no_load['components']['slo']['status'], 'INVALID_NO_LOAD')
                 self.assertEqual(evaluation.verdict(no_load)['verdict'], 'NOT_EVALUATED')
                 self.assertEqual(no_load['power']['energyStatus'], 'MEASURED')
+                for name in names:
+                    self.assertEqual(no_load['requests'][name]['substages'][0]['D1'], 'INVALID_NO_LOAD')
                 clients[NAME][0]['workloadUID'] = 'wrong-workload'
                 (root / (NAME + '-client.jsonl')).write_text(json.dumps(clients[NAME][0])+'\n')
                 with self.assertRaisesRegex(ValueError, 'Workload UID'):
@@ -924,6 +949,7 @@ class EvaluationTests(unittest.TestCase):
                 duplicated = conductor.judge(root / 'binding.json', root)
             self.assertEqual(duplicated['status'], 'PARTIAL')
             self.assertIsNone(duplicated['requests'][NAME]['definitionID'])
+            self.assertEqual(duplicated['requests'][NAME]['substages'][0]['D1'], 'NOT_EVALUATED')
 
     def test_missing_stage_is_not_published_as_valid_subset(self):
         with tempfile.TemporaryDirectory() as directory:
