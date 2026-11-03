@@ -16,8 +16,6 @@ import (
 type dispatchOccupancyProjection struct {
 	httpapi.MeasurementProjection
 	queryapi.DispatchOccupancyProgress
-	record *queryapi.OccupancyRecordFacts
-	burst  *queryapi.OccupancyRecordFacts
 }
 type dispatchOccupancyProjectionList struct {
 	Items []dispatchOccupancyProjection `json:"items"`
@@ -48,7 +46,6 @@ func dispatchOccupancyHTTPProjection(
 	envelope.Assessment = projection.Assessment
 	return dispatchOccupancyProjection{
 		MeasurementProjection: envelope, DispatchOccupancyProgress: projection.DispatchOccupancyProgress,
-		record: projection.Record, burst: projection.Burst,
 	}
 }
 

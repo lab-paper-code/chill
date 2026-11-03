@@ -9,6 +9,7 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/queryapi"
+	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -97,11 +98,14 @@ func TestW8LegacyMissingScalarIsNull(t *testing.T) {
 	service := &measurementService{
 		objects: &operationProjectionStore{payload: raw}, opts: options{maxEvidenceBytes: 1 << 20},
 	}
-	result, err := service.projectDispatchOccupancy(context.Background(), cr)
+	projection, err := querykube.ProjectDispatchOccupancy(
+		context.Background(), service.objects, service.opts.maxEvidenceBytes, cr, decodeOccupancyEvidence,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.D != nil || result.record != nil {
+	result := dispatchOccupancyHTTPProjection(cr, projection)
+	if result.D != nil || projection.Record != nil {
 		t.Fatalf("missing scalar became stored zero: %+v", result)
 	}
 }

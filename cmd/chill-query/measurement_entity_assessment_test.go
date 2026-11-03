@@ -13,6 +13,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/queryapi"
+	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
@@ -338,11 +339,14 @@ func assertOccupancyRejectedEvidence(
 	if err != nil {
 		t.Fatal(err)
 	}
-	mismatched, err := service.projectDispatchOccupancy(context.Background(), cr)
+	projection, err := querykube.ProjectDispatchOccupancy(
+		context.Background(), service.objects, service.opts.maxEvidenceBytes, cr, decodeOccupancyEvidence,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mismatched.record != nil || mismatched.MeasurementWindow != nil ||
+	mismatched := dispatchOccupancyHTTPProjection(cr, projection)
+	if projection.Record != nil || mismatched.MeasurementWindow != nil ||
 		mismatched.Evidence == nil ||
 		mismatched.D == nil || *mismatched.D.PerRequestNanos != d {
 		t.Fatal("foreign evidence became verified or hid recorded status/reference")

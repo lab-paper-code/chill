@@ -57,7 +57,7 @@ func TestOccupancyServingEvidenceBoundaryPreservesValues(t *testing.T) {
 			t.Fatal(err)
 		}
 		got := dispatchOccupancyHTTPProjection(cr, projection)
-		assertLegacyOccupancyFacts(t, got, record, d)
+		assertLegacyOccupancyFacts(t, projection, record, d)
 		wire, err := json.Marshal(got)
 		if err != nil {
 			t.Fatal(err)
@@ -111,7 +111,8 @@ func TestOccupancyServingEvidenceBoundaryPreservesValues(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := dispatchOccupancyHTTPProjection(cr, projection)
-			if got.burst == nil || got.D != nil || !reflect.DeepEqual(got.Estimate, queryOccupancyEstimate(estimate)) {
+			if projection.Burst == nil || got.D != nil ||
+				!reflect.DeepEqual(got.Estimate, queryOccupancyEstimate(estimate)) {
 				t.Fatalf("nil/zero burst evidence changed: %+v", got)
 			}
 			wantJSON, err := json.Marshal(estimate)
@@ -231,16 +232,16 @@ func TestOccupancySourceDecoderPreservesFullServingWireValidation(t *testing.T) 
 }
 
 func assertLegacyOccupancyFacts(
-	t *testing.T, got dispatchOccupancyProjection, record servingkube.DispatchOccupancyRecord, d int64,
+	t *testing.T, got queryapi.OccupancyEvidenceProjection, record servingkube.DispatchOccupancyRecord, d int64,
 ) {
 	t.Helper()
-	if got.record == nil ||
-		got.record.Node != (queryapi.MeasurementIdentity{Name: record.Node.Name, UID: record.Node.UID}) ||
-		got.record.Model != record.Model ||
-		got.record.PowerMode != record.PowerMode ||
-		got.record.ProfileID != record.ProfileID ||
-		got.record.Verdict != record.Verdict {
-		t.Fatalf("serving identity/facts changed: %+v", got.record)
+	if got.Record == nil ||
+		got.Record.Node != (queryapi.MeasurementIdentity{Name: record.Node.Name, UID: record.Node.UID}) ||
+		got.Record.Model != record.Model ||
+		got.Record.PowerMode != record.PowerMode ||
+		got.Record.ProfileID != record.ProfileID ||
+		got.Record.Verdict != record.Verdict {
+		t.Fatalf("serving identity/facts changed: %+v", got.Record)
 	}
 	if got.D == nil || got.D.PerRequestNanos == nil || *got.D.PerRequestNanos != d || got.D.Throughput == nil ||
 		*got.D.Throughput != 1.25 ||
