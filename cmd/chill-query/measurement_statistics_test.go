@@ -403,6 +403,38 @@ func TestMeasurementStatisticsReaderReasonsHTTP(t *testing.T) {
 	}
 }
 
+func TestMeasurementStatisticsSameNameDifferentUIDHTTP(t *testing.T) {
+	cr, record, objects, reader, loader := statisticsFixture(t)
+	spec := record.Spec()
+	originalUID := spec.CompletedTrials[0].Run.UID
+	spec.CompletedTrials[1] = spec.CompletedTrials[0]
+	spec.CompletedTrials[1].Run.UID += "-replacement"
+	var err error
+	record, err = campaign.NewResultRecord(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Spec().CompletedTrials[0].Run.UID != originalUID {
+		t.Fatal("regression requires the valid Run reference before the same-name replacement")
+	}
+	response := statisticsHTTPResponse(t, cr, record, objects, reader, loader)
+	var body queryapi.BatchEnergyOptimizationResultError
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	wantReason := fmt.Sprintf(
+		"read BatchEnergyOptimization %s/%s statistics: completed Run identity or campaign ownership mismatch",
+		cr.Namespace, cr.Name,
+	)
+	if response.Code != http.StatusBadGateway || body.Code != statisticsResultUnavailableCode ||
+		body.EvidenceError.Code != body.Code || body.EvidenceError.Status != response.Code ||
+		body.Reason != wantReason || body.Campaign.UID != string(cr.UID) ||
+		body.Result != nil || body.Statistics != nil || body.MeasurementFacts != nil {
+		t.Fatalf("replacement Run response changed: status=%d body=%s; want reason %q",
+			response.Code, response.Body.String(), wantReason)
+	}
+}
+
 func TestMeasurementStatisticsReportingPolicyHTTP(t *testing.T) {
 	for _, tc := range []string{
 		"original status", "different status schema", "missing Run", "missing raw", "missing credentials", "not recorded",
