@@ -253,6 +253,8 @@ func validateRun(campaign *edgev1alpha1.BatchEnergyOptimization, run *edgev1alph
 	mode := batchenergyoptimization.WorkloadModeActive
 	if run.Spec.Measurement.WorkloadMode == "idle-model-loaded" {
 		mode = batchenergyoptimization.WorkloadModeIdle
+	} else if run.Spec.Measurement.WorkloadMode != "saturated-serial-fixed-batch" {
+		return ErrUnsupportedWorkloadMode
 	}
 	if mode != reference.Measurement.WorkloadMode {
 		return errors.New("Run workload mode contradicts completed trial reference")
@@ -285,9 +287,6 @@ func validateRunProtocol(campaign *edgev1alpha1.BatchEnergyOptimization, run *ed
 		}
 	} else {
 		protocol := campaign.Spec.ActiveProtocol
-		if measurement.WorkloadMode != "saturated-serial-fixed-batch" {
-			return ErrUnsupportedWorkloadMode
-		}
 		if measurement.SettlingDurationSeconds != nil ||
 			measurement.WarmupIterations != protocol.WarmupIterations || measurement.DurationSeconds != protocol.DurationSeconds ||
 			ptr.Deref(measurement.DurationToleranceSeconds, .5) != ptr.Deref(protocol.DurationToleranceSeconds, .5) ||

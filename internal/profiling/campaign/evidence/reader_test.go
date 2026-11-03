@@ -121,6 +121,24 @@ func TestRunErrorCausesSurviveTrialWrapping(t *testing.T) {
 	}
 }
 
+func TestUnsupportedWorkloadModePrecedesReferenceModeMismatch(t *testing.T) {
+	cr, run, ref := completedRunFixture()
+	ref.Measurement.WorkloadMode = campaign.WorkloadModeIdle
+	run.Spec.Measurement.WorkloadMode = "unsupported"
+	if err := validateRun(cr, run, ref); !errors.Is(err, ErrUnsupportedWorkloadMode) {
+		t.Fatalf("idle reference masked unsupported Run mode: %v", err)
+	}
+	run.Status.Conditions = nil
+	run.Status.Evidence = nil
+	if err := validateRun(cr, run, ref); !errors.Is(err, ErrUnsupportedWorkloadMode) {
+		t.Fatalf("completion or evidence masked unsupported Run mode: %v", err)
+	}
+	run.Spec.Measurement.WorkloadMode = "saturated-serial-fixed-batch"
+	if err := validateRun(cr, run, ref); err == nil || err.Error() != "Run workload mode contradicts completed trial reference" {
+		t.Fatalf("supported mode mismatch lost its diagnostic: %v", err)
+	}
+}
+
 func TestRunCompletionPrecedesEvidenceAndProtocol(t *testing.T) {
 	cr, run, ref := completedRunFixture()
 	run.Spec.Measurement.DurationSeconds++
