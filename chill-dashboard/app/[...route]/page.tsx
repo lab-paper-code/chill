@@ -4,8 +4,8 @@ import { ServicesPage, ServicePage, ResourceEditor, ModelPage, ModelSectionPage,
 import { InferencePage } from "@/features/inference"
 import { MeasurementCheckPage, MeasurementDetail } from "@/features/read-pages"
 import { MeasurementRunsPage } from "@/features/measurement-runs"
-import { ExperimentsPage } from "@/features/experiments"
-import { EvaluationsPage } from "@/features/evaluation-request"
+import { ExperimentsPage, PublishedExperimentsPage } from "@/features/experiments"
+import { EvaluationsPage, EvaluationRunPage } from "@/features/evaluation-request"
 import { EvaluationAuthorPage } from "@/features/evaluation-author"
 import { LoadScenarioPage, LoadScenarioAuthorPage } from "@/features/load-scenario-author"
 import { DevicesPage } from "@/features/resources"
@@ -56,10 +56,11 @@ export default async function Page({params,searchParams}:{params:Promise<{route:
   else if (head === "measurements" && route.length === 4 && route[1] === "power-mode-transition-costs") page = <UnsupportedTransitionMeasurement />
   else if (head === "records" && route.length === 1) page = <RecordsPage />
   else if (head === "settings" && route.length === 1) page = <SettingsPage />
-  else if (head === "experiments" && route.length === 1) page = <EvaluationsPage />
+  else if (head === "experiments" && route.length === 1) page = search.view === "published" ? <PublishedExperimentsPage /> : <EvaluationsPage />
   else if (head === "experiments" && name === "results" && route.length === 2) page = <ExperimentsPage />
+  else if (head === "experiments" && name === "runs" && route.length === 3) page = <EvaluationRunPage key={key} name={sub} />
   else if (head === "experiments" && name === "new" && route.length === 2) page = <EvaluationAuthorPage />
-  else if (head === "experiments" && sub === "edit" && route.length === 3) page = <EvaluationAuthorPage name={name} />
+  else if (head === "experiments" && name === "runs" && route[3] === "edit" && route.length === 4) page = <EvaluationAuthorPage key={key} name={sub} />
   else if (head === "experiments" && name === "load-scenarios" && route.length === 2) page = <LoadScenarioPage />
   else if (head === "experiments" && name === "load-scenarios" && sub === "new" && route.length === 3) page = <LoadScenarioAuthorPage />
   else if (head === "experiments" && name === "load-scenarios" && route[3] === "edit" && route.length === 4) page = <LoadScenarioAuthorPage name={sub} />

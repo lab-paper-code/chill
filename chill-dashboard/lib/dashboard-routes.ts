@@ -39,8 +39,26 @@ export function dashboardDestination(pathname:string,search:URLSearchParams):str
     return `/records?${next}`
   }
   if(pathname==="/changes")destination=search.get("scope")==="scheduler"?"/records?filter=settings&scope=scheduler":"/records?scope=management"
-  if(pathname==="/experiments"&&["a","al","as","b","bs"].some(key=>search.has(key)))destination="/experiments/results"
-  if(pathname.startsWith("/experiments/")&&pathname.split("/").length===3&&!["results","new","load-scenarios"].includes(pathname.split("/")[2])) {
+  if(pathname==="/experiments"||pathname==="/evaluations") {
+    const next=new URLSearchParams(search),name=next.get("name")
+    if(next.get("view")!=="published"&&["a","al","as","b","bs"].some(key=>next.has(key))) {
+      if(next.get("a"))return `/experiments/results?${next}`
+      next.set("view","published");if(!next.has("offset"))next.set("offset","0")
+      return `/experiments?${next}`
+    }
+    if(name&&next.get("view")!=="published") {
+      next.delete("name")
+      return `/experiments/runs/${encodeURIComponent(name)}${next.size?`?${next}`:""}`
+    }
+  }
+  if(pathname==="/experiments/results"&&!search.get("a")) {
+    const next=new URLSearchParams(search)
+    next.set("view","published");if(!next.has("offset"))next.set("offset","0")
+    return `/experiments?${next}`
+  }
+  const edit=pathname.match(/^\/experiments\/([^/]+)\/edit$/)
+  if(edit&&decodeURIComponent(edit[1])!=="runs")return `/experiments/runs/${encodeURIComponent(decodeURIComponent(edit[1]))}/edit${search.size?`?${search}`:""}`
+  if(pathname.startsWith("/experiments/")&&pathname.split("/").length===3&&!["results","runs","new","load-scenarios"].includes(pathname.split("/")[2])) {
     const next=new URLSearchParams(search);next.set("a",decodeURIComponent(pathname.split("/")[2]));return `/experiments/results?${next}`
   }
   if(pathname.startsWith("/pools/")&&pathname.split("/").length===3) {

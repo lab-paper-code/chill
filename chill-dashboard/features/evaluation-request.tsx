@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { useSearchParams } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
 import { ApiError, useChillMutation, useChillQuery } from "@/lib/client"
 import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
@@ -14,6 +14,7 @@ import { EvaluationActive } from "@/features/evaluation-active"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { QueryGate, SourceJSON } from "@/components/read-region"
 import { Screen } from "@/components/screen"
 
@@ -21,8 +22,14 @@ type Run = {name:string;uid:string;spec:EvaluationSpec;phase:string;conditions?:
 type Created = {name:string;uid:string}
 const encode=(value:unknown)=>stringifySchedulerJSON(value)
 const phases:Record<string,string>={Pending:"시작 전",Running:"실행 중",Finishing:"정리 중",Done:"종료",Blocked:"정리 실패"}
+const modes:Record<string,string>={autonomous:"CHILL 자동 운영",fixed:"고정 구성","controls-disabled":"제어요소 끔"}
 const conditionLabels:Record<string,string>={PoolAcquired:"풀 점유",ExecutionComplete:"실행 완료",MeasurementPassed:"측정 판정",CleanupComplete:"정리 완료",Published:"게시"}
-const conditionReasons:Record<string,string>={Returned:"반환 관측",IdentityMismatch:"실행 대상 식별자 불일치",NOT_EVALUATED:"미평가",NoControlEffects:"복구할 제어 변경 없음",PublicationFailed:"결과 게시 실패"}
+const conditionReasons:Record<string,string>={Returned:"반환 관측",IdentityMismatch:"실행 대상 식별자 불일치",NOT_EVALUATED:"미평가",NoControlEffects:"복구할 제어 변경 없음",PublicationFailed:"결과 게시 실패",SLOFailed:"SLO 미충족"}
+function runHref(run:Created,search?:URLSearchParams) {
+  const next=new URLSearchParams(search)
+  next.delete("name");next.delete("uid");next.set("uid",run.uid)
+  return `/experiments/runs/${encodeURIComponent(run.name)}?${next}`
+}
 function Failure({error}:{error:ApiError|null}) {
   if(!error)return null
   const value=error.data as {code?:string;message?:string}|null
@@ -43,7 +50,7 @@ export function EvaluationSubmit({name,spec,disabled=false,existing,onSubmitted,
   const lookup=useChillQuery<Run>(`v1/evaluations/${encodeURIComponent((unknown?attempt?.name:name)||"_")}`,{enabled:false,decoder:parseSchedulerJSON})
   const changes=evaluationDigestChanges(spec,answer?.liveTarget)
   const unsupported=answer?.liveTarget!==undefined&&!Array.isArray(answer.liveTarget)
-  const confirmed=unknown&&attempt&&lookup.data?.name===attempt.name&&evaluationSameSpec(lookup.data.spec,attempt.spec)&&(!existing||lookup.data.uid!==existing.uid)
+  const confirmed=unknown&&attempt&&lookup.data?.name===attempt.name&&!!lookup.data.uid&&evaluationSameSpec(lookup.data.spec,attempt.spec)&&(!existing||lookup.data.uid!==existing.uid)
   const busy=pre.isPending||send.isPending
   function reconcile(read:{data?:Run;error:ApiError|null},requested:{name:string;spec:EvaluationSpec}) {
     if(!existing)return
@@ -88,9 +95,9 @@ export function EvaluationSubmit({name,spec,disabled=false,existing,onSubmitted,
     {pre.data&&checkedBody===body&&!answer&&<strong role="alert">점검 응답 형식 오류</strong>}
     <Failure error={pre.error}/><Failure error={send.error}/>
     {replacement&&<strong role="status">{replacement==="deleted"?"삭제됨·재생성 필요":replacement==="unchanged"?"미변경":replacement==="blocked"?"중지 후 다시 실행":"결과 미확인"}</strong>}
-    {(unknown||created)&&<div role="status" className="flex flex-wrap items-center gap-3 text-sm"><strong>{created?existing?"수정 접수":"실행 접수":confirmed?"실행 확인":"결과 미확인"}</strong>{(created||confirmed)&&<Link className="underline" href={`/experiments?${new URLSearchParams({name:created?.name??attempt?.name??name})}`}>실험 상태</Link>}{unknown&&<Button variant="outline" onClick={()=>void refresh()} disabled={lookup.isFetching}>다시 조회</Button>}</div>}
+    {(unknown||created)&&<div role="status" className="flex flex-wrap items-center gap-3 text-sm"><strong>{created?existing?"수정 접수":"실행 접수":confirmed?"실행 확인":"결과 미확인"}</strong>{(created||confirmed)&&<Link className="underline" href={runHref(created??{name:lookup.data!.name,uid:lookup.data!.uid})}>실험 상태</Link>}{unknown&&<Button variant="outline" onClick={()=>void refresh()} disabled={lookup.isFetching}>다시 조회</Button>}</div>}
     <EvaluationPermission denied={pre.error?.status===403||send.error?.status===403}/>
-    <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={disabled||busy||unknown||!!created} onClick={verify}>{pre.isPending?"점검 중":"사전 점검"}</Button><Button disabled={disabled||busy||!!created||unsupported||!evaluationCanSubmit(answer,checkedBody,body,unknown)} onClick={()=>void submit()}>{send.isPending?"제출 중":replacement==="deleted"?"재생성 제출":existing?"수정 제출":"실행 제출"}</Button></div>
+    <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={disabled||busy||unknown||!!created} onClick={verify}>{pre.isPending?"점검 중":"사전 점검"}</Button><Button disabled={disabled||busy||!!created||unsupported||!evaluationCanSubmit(answer,checkedBody,body,unknown)} onClick={()=>void submit()}>{send.isPending?"제출 중":replacement==="deleted"?"재생성 제출":existing?"수정 제출":"실험 시작"}</Button></div>
   </div>
 }
 
@@ -120,7 +127,7 @@ export function EvaluationCleanup({run}:{run:Experiment}) {
 
 function BlockedCleanup({run}:{run:Run}) {
   const publication=useChillQuery<Experiment>(experimentPath(run.publicationID??""),{enabled:!!run.publicationID,decoder:decodeExperiment})
-  return <details className="mt-2"><summary>풀 묶임</summary>{publication.error&&<Failure error={publication.error}/>}<CleanupPanel cleanup={publication.data?.outcome?.cleanup??{status:"Failed"}} identity={{name:run.name,uid:run.uid}}/></details>
+  return <div className="space-y-2"><h3 className="text-sm font-semibold">풀 묶임</h3>{publication.error&&<Failure error={publication.error}/>}<CleanupPanel cleanup={publication.data?.outcome?.cleanup??{status:"Failed"}} identity={{name:run.name,uid:run.uid}}/></div>
 }
 
 function RunActions({run,refresh}:{run:Run;refresh:()=>Promise<unknown>}) {
@@ -131,26 +138,47 @@ function RunActions({run,refresh}:{run:Run;refresh:()=>Promise<unknown>}) {
     try {await evaluationOperation(()=>send.mutateAsync({path:`v1/evaluations/${encodeURIComponent(run.name)}?${new URLSearchParams({uid:run.uid})}`,method:"DELETE"}),refresh);await refresh()}
     catch(error){if(error instanceof ApiError&&(error.unknownOutcome||error.status===0))setUnknown(true)}
   }
-  return <div className="space-y-2"><div className="flex flex-wrap gap-2">{actions.edit&&<Button variant="outline" asChild><Link href={`/experiments/${encodeURIComponent(run.name)}/edit?${new URLSearchParams({uid:run.uid})}`}>수정</Link></Button>}<EvaluationLaunch sourceName={run.name} label="다시 실행"/><Button variant="outline" onClick={()=>setStop(true)}>{actions.remove}</Button><Dialog open={stop} onOpenChange={setStop}><DialogContent aria-describedby={undefined}><DialogHeader><DialogTitle>{run.name} · {actions.remove} 확인</DialogTitle></DialogHeader><span className="break-all text-sm">UID {run.uid}</span><Failure error={send.error}/>{(unknown||send.isSuccess)&&<strong role="status">{unknown?"결과 미확인":`${actions.remove} 접수`}</strong>}<Button disabled={!run.uid||send.isPending||unknown||send.isSuccess} onClick={()=>void remove()}>확인</Button>{unknown&&<Button variant="outline" onClick={()=>void refresh()}>다시 조회</Button>}</DialogContent></Dialog></div>{actions.release&&<BlockedCleanup run={run}/>}</div>
+  return <div className="flex flex-wrap gap-2">{actions.edit&&<Button variant="outline" asChild><Link href={`/experiments/runs/${encodeURIComponent(run.name)}/edit?${new URLSearchParams({uid:run.uid})}`}>수정</Link></Button>}<EvaluationLaunch sourceName={run.name} label="다시 실행"/><Button variant="outline" onClick={()=>setStop(true)}>{actions.remove}</Button><Dialog open={stop} onOpenChange={setStop}><DialogContent aria-describedby={undefined}><DialogHeader><DialogTitle>{run.name} · {actions.remove} 확인</DialogTitle></DialogHeader><span className="break-all text-sm">UID {run.uid}</span><Failure error={send.error}/>{(unknown||send.isSuccess)&&<strong role="status">{unknown?"결과 미확인":`${actions.remove} 접수`}</strong>}<Button disabled={!run.uid||send.isPending||unknown||send.isSuccess} onClick={()=>void remove()}>확인</Button>{unknown&&<Button variant="outline" onClick={()=>void refresh()}>다시 조회</Button>}</DialogContent></Dialog></div>
 }
 
 export function EvaluationsPage() {
-  const params=useSearchParams(),name=params.get("name")??""
-  const [now,setNow]=React.useState(0)
-  React.useEffect(()=>{const timer=window.setInterval(()=>setNow(Date.now()),1000);return ()=>window.clearInterval(timer)},[])
   const list=useChillQuery<{items:Run[]}>("v1/evaluations",{poll:true,decoder:parseSchedulerJSON})
-  const detail=useChillQuery<Run>(`v1/evaluations/${encodeURIComponent(name||"_")}`,{enabled:!!name,poll:true,decoder:parseSchedulerJSON})
-  const replaced=!!name&&!!params.get("uid")&&!!detail.data&&detail.data.uid!==params.get("uid")
-  const rows=name?(detail.data?[detail.data]:[]):list.data?.items??[]
-  async function refresh(){await Promise.allSettled([list.refetch(),...(name?[detail.refetch()]:[])])}
-  return <Screen width="data" title="실험" actionPlacement="header" action={<div className="flex flex-wrap gap-2"><Button variant="outline" asChild><Link href="/experiments/results">결과</Link></Button><Button variant="outline" asChild><Link href="/experiments/load-scenarios">부하 설정</Link></Button><EvaluationLaunch/>{name&&<Button variant="outline" asChild><Link href="/experiments">목록</Link></Button>}</div>}>
-    <QueryGate query={name?detail:list}><section className="min-w-0 overflow-x-auto" aria-label="실험 실행 목록"><table className="w-full text-left text-sm max-md:[&>thead]:sr-only max-md:[&>tbody>tr]:grid max-md:[&>tbody>tr>td]:flex max-md:[&>tbody>tr>td]:justify-between max-md:[&>tbody>tr>td]:gap-3 max-md:[&>tbody>tr>td]:before:content-[attr(data-label)]"><thead><tr>{["이름","실행 상태","단계","시작 (KST)","종료 (KST)","풀 상태","결과"].map(label=><th key={label} className="p-2">{label}</th>)}</tr></thead><tbody>{rows.map(run=><tr key={run.uid} className="border-t">
-      <th className="break-all p-2 font-normal">{replaced?run.name:<Link className="underline" href={`/experiments?${new URLSearchParams({name:run.name,uid:run.uid})}`}>{run.name}</Link>}</th><td data-label="실행 상태">{phases[run.phase]??"미확인"}</td><td data-label="단계">{typeof run.currentStage==="string"||typeof run.currentStage==="number"?String(run.currentStage):"미기록"}</td><td data-label="시작 (KST)">{run.startedAt?formatMeasurementTime(run.startedAt):"미기록"}</td><td data-label="종료 (KST)">{run.finishedAt?formatMeasurementTime(run.finishedAt):"미기록"}</td><td data-label="풀 상태">{run.conditions?.find(c=>c.type==="PoolAcquired")?.status==="True"?"점유 중":run.conditions?.find(c=>c.type==="PoolAcquired")?.status==="False"?"반환 관측":"미확인"}</td><td data-label="결과">{run.publicationID?<Link className="underline" href={`/experiments/results?${new URLSearchParams({a:run.publicationID})}`}>결과</Link>:"미게시"}</td>
-    </tr>)}{!rows.length&&<tr><td colSpan={7}>항목 없음</td></tr>}</tbody></table></section>
-    {name&&detail.data&&<section className="space-y-3" aria-label="선택 실행">
-      {replaced?<div className="space-y-2"><strong role="status">교체됨</strong><Link className="underline" href={`/experiments?${new URLSearchParams({name:detail.data.name,uid:detail.data.uid})}`}>현재 실행 선택</Link></div>:<section aria-label="선택 실행 작업"><RunActions key={detail.data.uid} run={detail.data} refresh={refresh}/></section>}
-      <table className="w-full text-left text-sm"><thead><tr><th>조건</th><th>상태</th><th>사유</th></tr></thead><tbody>{detail.data.conditions?.map((condition,index)=><tr key={`${condition.type}/${index}`} className="border-t"><th className="py-2 font-normal">{conditionLabels[condition.type]??"기타 조건"}</th><td>{condition.status==="True"?"충족":condition.status==="False"?"미충족":"미확인"}</td><td>{condition.reason?conditionReasons[condition.reason]??"원문 확인":"미기록"}</td></tr>)}</tbody></table>
-      {!replaced&&<EvaluationActive key={detail.data.uid} name={name} uid={params.get("uid")||detail.data.uid} now={now}/>}<SourceJSON inline title="상태 원문" value={detail.data.conditions}/><SourceJSON inline title="현재 단계 원본" value={detail.data.currentStage}/><SourceJSON inline title="실험 정의 원본" value={detail.data.spec}/>
-    </section>}</QueryGate>
+  const rows=list.data?.items??[]
+  return <Screen width="data" title="실험" actionPlacement="header" action={<div className="flex flex-wrap items-center gap-2"><nav aria-label="실험 목록 보기" className="flex gap-2"><Button variant="secondary" asChild><Link href="/experiments" aria-current="page">실행</Link></Button><Button variant="outline" asChild><Link href="/experiments?view=published&offset=0">게시 결과</Link></Button></nav><Button variant="outline" asChild><Link href="/experiments/load-scenarios">부하 설정</Link></Button><EvaluationLaunch/></div>}>
+    <QueryGate query={list}><section className="min-w-0 overflow-x-auto" aria-label="실험 실행 목록"><table className="w-full text-left text-sm max-md:[&>thead]:sr-only max-md:[&>tbody>tr]:grid max-md:[&>tbody>tr>td]:flex max-md:[&>tbody>tr>td]:justify-between max-md:[&>tbody>tr>td]:gap-3 max-md:[&>tbody>tr>td]:before:content-[attr(data-label)]"><thead><tr>{["이름","실행 상태","단계","시작 (KST)","종료 (KST)","풀 상태","결과"].map(label=><th key={label} className="p-2">{label}</th>)}</tr></thead><tbody>{rows.map(run=><tr key={run.uid} className="border-t">
+      <th scope="row" className="break-all p-2 font-normal"><Link className="inline-flex min-h-11 items-center underline" href={runHref(run)}>{run.name}</Link></th><td data-label="실행 상태">{phases[run.phase]??"미확인"}</td><td data-label="단계">{typeof run.currentStage==="string"||typeof run.currentStage==="number"?String(run.currentStage):"미기록"}</td><td data-label="시작 (KST)">{run.startedAt?formatMeasurementTime(run.startedAt):"미기록"}</td><td data-label="종료 (KST)">{run.finishedAt?formatMeasurementTime(run.finishedAt):"미기록"}</td><td data-label="풀 상태">{run.conditions?.find(c=>c.type==="PoolAcquired")?.status==="True"?"점유 중":run.conditions?.find(c=>c.type==="PoolAcquired")?.status==="False"?"반환 관측":"미확인"}</td><td data-label="결과">{run.publicationID?<Link className="inline-flex min-h-11 items-center underline" href={`/experiments/results?${new URLSearchParams({a:run.publicationID})}`}>게시 결과</Link>:"미게시"}</td>
+    </tr>)}{!rows.length&&<tr><td colSpan={7}>항목 없음</td></tr>}</tbody></table></section></QueryGate>
+  </Screen>
+}
+
+export function EvaluationRunPage({name}:{name:string}) {
+  const params=useSearchParams(),router=useRouter(),uid=params.get("uid")
+  const [now,setNow]=React.useState(0),[help,setHelp]=React.useState(false)
+  const detail=useChillQuery<Run>(`v1/evaluations/${encodeURIComponent(name)}`,{poll:true,decoder:parseSchedulerJSON})
+  const run=detail.data?.name===name&&!detail.error?detail.data:undefined
+  const replaced=!!uid&&!!run&&run.uid!==uid
+  const currentHref=run?runHref(run,new URLSearchParams(params)):""
+  React.useEffect(()=>{if(run&&!uid)router.replace(currentHref,{scroll:false})},[run,uid,currentHref,router])
+  React.useEffect(()=>{const timer=window.setInterval(()=>setNow(Date.now()),1000);return ()=>window.clearInterval(timer)},[])
+  const resultParams=new URLSearchParams(params)
+  for(const key of ["name","uid","view"])resultParams.delete(key)
+  if(run?.publicationID)resultParams.set("a",run.publicationID)
+  const stages=Array.isArray(run?.spec.stages)?run.spec.stages:[]
+  return <Screen width="data" title={name} back={["/experiments","실험"]} actionPlacement="header" action={run&&!replaced?<RunActions key={run.uid} run={run} refresh={detail.refetch}/>:undefined}>
+    {detail.error?.status===404?<strong role="status">실행 없음</strong>:<QueryGate query={detail}>{run&&(replaced?<div className="space-y-2"><strong role="status">실행 교체됨</strong><Link className="inline-flex min-h-11 items-center underline" href={currentHref}>현재 실행 선택</Link></div>:<>
+      <section aria-label="실행 상태" className="space-y-3">
+        <div className="flex flex-wrap items-center gap-3"><nav aria-label="실험 상세" className="flex gap-2"><Button variant="secondary" asChild><Link href={currentHref} aria-current="page">진행</Link></Button>{run.publicationID?<Button variant="outline" asChild><Link href={`/experiments/results?${resultParams}`}>결과</Link></Button>:<span aria-disabled={true} className="inline-flex min-h-11 items-center px-3 text-sm text-muted-foreground">결과 · 미게시</span>}</nav><TooltipProvider><Tooltip open={help} onOpenChange={setHelp}><TooltipTrigger asChild><Button variant="ghost" className="min-h-11" onClick={()=>setHelp(value=>!value)}>도움말</Button></TooltipTrigger><TooltipContent className="max-w-sm">진행은 현재 실행, 결과는 게시 시점의 기록입니다. 중지 접수와 풀 반환은 별개이며 결과 미확인 작업은 다시 보내지 않고 조회합니다.</TooltipContent></Tooltip></TooltipProvider></div>
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">{[["실행 상태",phases[run.phase]??"미확인"],["현재 단계",typeof run.currentStage==="string"||typeof run.currentStage==="number"?String(run.currentStage):"미기록"],["시작 (KST)",run.startedAt?formatMeasurementTime(run.startedAt):"미기록"],["종료 (KST)",run.finishedAt?formatMeasurementTime(run.finishedAt):"미기록"]].map(([label,value])=><div key={label}><dt className="text-muted-foreground">{label}</dt><dd className="break-all">{value}</dd></div>)}</dl>
+      </section>
+      <section aria-label="단계 진행·주입" className="space-y-3">
+        <div className="max-h-56 overflow-auto"><table className="w-full text-left text-sm"><thead><tr><th>순서</th><th>단계</th><th>정책</th><th>현재 단계</th></tr></thead><tbody>{stages.map((value,index)=>{const stage=value&&typeof value==="object"?value as Record<string,unknown>:{},id=typeof stage.id==="string"?stage.id:"미기록";return <tr key={index} className="border-t"><td className="py-2">{index+1}</td><th className="break-all font-normal">{id}</th><td>{modes[String(stage.mode)]??"미기록"}</td><td>{id===run.currentStage?"현재":"—"}</td></tr>})}{!stages.length&&<tr><td colSpan={4}>단계 미기록</td></tr>}</tbody></table></div>
+        <EvaluationActive key={run.uid} name={name} uid={uid||run.uid} now={now} controls={false}/>
+      </section>
+      <section aria-label="실행 조건·풀 상태" className="space-y-3">
+        <table className="w-full text-left text-sm"><thead><tr><th>조건</th><th>상태</th><th>사유</th></tr></thead><tbody>{run.conditions?.map((condition,index)=><tr key={`${condition.type}/${index}`} className="border-t"><th className="py-2 font-normal">{conditionLabels[condition.type]??"기타 조건"}</th><td>{condition.type==="PoolAcquired"?(condition.status==="True"?"점유 중":condition.status==="False"?"반환 관측":"미확인"):condition.status==="True"?"충족":condition.status==="False"?"미충족":"미확인"}</td><td>{condition.reason?conditionReasons[condition.reason]??"원문 확인":"미기록"}</td></tr>)}</tbody></table>
+        {evaluationActions(run.phase).release&&<BlockedCleanup key={run.uid} run={run}/>}
+        <details><summary className="min-h-11 cursor-pointer py-3 text-sm">정의·상태 원문</summary><SourceJSON inline title="상태 원문" value={run.conditions}/><SourceJSON inline title="현재 단계 원문" value={run.currentStage}/><SourceJSON inline title="실험 정의 원문" value={run.spec}/></details>
+      </section>
+    </>)}</QueryGate>}
   </Screen>
 }

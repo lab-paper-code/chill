@@ -6,7 +6,7 @@ test("legacy routes preserve duplicate filters, exact windows and selections at 
   const original=new URLSearchParams("from=2026-10-31T01%3A02%3A03.123456789Z&to=2026-10-31T02%3A02%3A03Z&uid=u%2Fid&filter=failed&filter=late&namespace=ns&a=publication&as=stage&b=baseline&bs=baseline-stage")
   for(const route of dashboardRedirects) {
     const result=new URL(dashboardDestination(route.source,original)!,"https://dashboard.invalid")
-    const expected=new URL(route.destination,"https://dashboard.invalid")
+    const expected=new URL(route.source==="/evaluations"?"/experiments/results":route.destination,"https://dashboard.invalid")
     assert.equal(result.pathname,expected.pathname,route.source)
     for(const key of new Set(original.keys()))if(!expected.searchParams.has(key))assert.deepEqual(result.searchParams.getAll(key),original.getAll(key),`${route.source}: ${key}`)
     for(const [key,value] of expected.searchParams)assert.equal(result.searchParams.get(key),value)
@@ -56,4 +56,50 @@ test("legacy pool details retain service scope and selected node or reservation"
   assert.equal(reservations.searchParams.get("open"),"reservations")
   assert.equal(reservations.searchParams.get("workload"),"service/uid")
   assert.equal(reservations.searchParams.get("at"),"original")
+})
+
+test("experiment legacy addresses reach their final destination without redirect loops",()=>{
+  const cases:[string,string,string|null][]=[
+    ["/experiments","",null],
+    ["/experiments","view=published&offset=5",null],
+    ["/experiments","name=run%2Fone&uid=old&service=w&filter=a&filter=b","/experiments/runs/run%2Fone?uid=old&service=w&filter=a&filter=b"],
+    ["/experiments","name=run","/experiments/runs/run"],
+    ["/evaluations","name=run&uid=old","/experiments/runs/run?uid=old"],
+    ["/evaluations","","/experiments"],
+    ["/experiments/results","","/experiments?view=published&offset=0"],
+    ["/experiments/results","offset=5&service=w","/experiments?offset=5&service=w&view=published"],
+    ["/experiments/results","a=p&al=l&as=s&b=r&bs=t&service=w",null],
+    ["/experiments","a=p&al=l&as=s&b=r&bs=t&service=w","/experiments/results?a=p&al=l&as=s&b=r&bs=t&service=w"],
+    ["/experiments/pub%2Fone","offset=5&as=s","/experiments/results?offset=5&as=s&a=pub%2Fone"],
+    ["/experiments/runs","",null],
+    ["/experiments/runs/run","uid=old",null],
+    ["/experiments/new","copy=run",null],
+    ["/experiments/new","publication=pub",null],
+    ["/experiments/run/edit","uid=old","/experiments/runs/run/edit?uid=old"],
+    ["/experiments/run%2Fone/edit","uid=old&service=w","/experiments/runs/run%2Fone/edit?uid=old&service=w"],
+    ["/experiments/runs/run/edit","uid=old",null],
+    ["/experiments/runs/runs/edit","uid=old",null],
+    // The new execution namespace wins over the old editor for a run named "runs".
+    ["/experiments/runs/edit","uid=old",null],
+    ["/experiments/results","name=run&service=w","/experiments?name=run&service=w&view=published&offset=0"],
+    ["/evaluations/load-scenarios","name=load&uid=old","/experiments/load-scenarios?name=load&uid=old"],
+    ["/experiments/load-scenarios","name=load&uid=old",null],
+    ["/experiments/load-scenarios/new","copy=load",null],
+    ["/experiments/load-scenarios/load/edit","uid=old",null],
+  ]
+  for(const [path,search,expected] of cases) {
+    const destination=dashboardDestination(path,new URLSearchParams(search))
+    assert.equal(destination,expected,`${path}?${search}`)
+    if(destination) {
+      const final=new URL(destination,"https://dashboard.invalid")
+      assert.equal(dashboardDestination(final.pathname,final.searchParams),null,`redirect loop: ${destination}`)
+    }
+  }
+  for(const query of ["as=stage&service=w","a=&as=stage&offset=5"]) {
+    const destination=dashboardDestination("/experiments",new URLSearchParams(query))!
+    const final=new URL(destination,"https://dashboard.invalid")
+    assert.equal(final.pathname,"/experiments")
+    assert.equal(final.searchParams.get("view"),"published")
+    assert.equal(dashboardDestination(final.pathname,final.searchParams),null)
+  }
 })
