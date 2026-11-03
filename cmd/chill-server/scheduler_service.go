@@ -42,6 +42,7 @@ type schedulerConfiguration struct {
 	// Meters are derived from the Profiler metric sources, never configured.
 	Meters           []servingkube.MeterDeclaration `json:"-"`
 	PowerObservation *powerObservationConfig        `json:"powerObservation,omitempty"`
+	DispatchOccupancy *dispatchOccupancyPolicy `json:"dispatchOccupancy,omitempty"`
 	StaticRouting    map[string]map[string]int      `json:"staticRouting,omitempty"`
 	// StaticRoutingValidatedAt names the settings change that wrote StaticRouting.
 	StaticRoutingValidatedAt *time.Time `json:"staticRoutingValidatedAt,omitempty"`
@@ -134,6 +135,11 @@ func decodeSchedulerConfiguration(raw string, maxBytes int64) (schedulerConfigur
 	}
 	if err := config.validatePower(); err != nil {
 		return config, err
+	}
+	if config.DispatchOccupancy != nil {
+		if err := config.DispatchOccupancy.validate(); err != nil {
+			return config, err
+		}
 	}
 	return config, nil
 }
