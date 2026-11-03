@@ -203,7 +203,6 @@ test("execution child detail separates list, navigation and one control surface"
   assert.ok(!tree.some(item=>item.props["aria-label"]==="실험 실행 목록"))
   assert.ok(tree.some(item=>item.type==="a"&&item.props["aria-current"]==="page"&&item.props.children==="진행"))
   assert.ok(tree.some(item=>item.props["aria-disabled"]===true&&item.props.children==="결과 · 미게시"))
-  assert.equal(tree.find(item=>item.type==="active")?.props.controls,false)
   assert.equal(tree.find(item=>item.type==="active")?.props.uid,"old")
   run={...run,publicationID:"actual/publication"}
   tree=elements(runner.render(EvaluationRunPage,{name:run.name}))
@@ -255,17 +254,21 @@ test("single execution control preserves UID, denied responses and uncertain out
   }
 })
 
-test("read-only active progress hides duplicate stop controls without affecting operations consumers",()=>{
-  const runner=hookRunner(),run={name:"run",uid:"uid",stageIndex:1,stagesTotal:1,stage:{id:"base",injections:[{id:"kill",action:"delete-serving-pod",offsetSeconds:0}]}}
+test("active progress queries only active evaluations and never creates a mutation",()=>{
+  const runner=hookRunner(),calls:string[]=[]
+  let mutations=0
+  const run={name:"run",uid:"uid",stageIndex:1,stagesTotal:1,stage:{id:"base",injections:[{id:"kill",action:"delete-serving-pod",offsetSeconds:0}]}}
   const {EvaluationActive}=loadUI("../features/evaluation-active.tsx",{
     react:runner.react,"@/lib/evaluation-active":activeHelpers,"@/lib/status":{STATUS_AXES},
-    "@/lib/client":{useChillQuery:(path:string)=>({data:{items:path.endsWith("/active")?[run]:[{name:"run",uid:"uid",phase:"Running"}]}}),useChillMutation:()=>({})},
+    "@/lib/client":{useChillQuery:(path:string)=>{calls.push(path);return {data:{items:[run,{...run,uid:"replacement"},{...run,name:"other"}]}}},useChillMutation:()=>{mutations++;return {}}},
   })
-  const readonly=elements(runner.render(EvaluationActive,{now:0,name:"run",uid:"uid",controls:false}))
-  assert.ok(readonly.some(item=>item.type==="table"))
-  assert.ok(!readonly.some(item=>item.props.children==="실험 중지"||item.type==="dialog"))
-  const operational=elements(runner.render(EvaluationActive,{now:0}))
-  assert.ok(operational.some(item=>item.props.children==="실험 중지"))
+  const tree=elements(runner.render(EvaluationActive,{now:0,name:"run",uid:"uid"}))
+  assert.deepEqual(calls,["v1/evaluations/active"])
+  assert.equal(mutations,0)
+  assert.ok(tree.some(item=>item.type==="table"))
+  assert.equal(tree.filter(item=>item.type==="details").length,1,"progress must match both selected name and UID")
+  assert.ok(tree.some(item=>item.type==="details"&&item.props.open===true))
+  assert.ok(!tree.some(item=>item.type==="button"||item.type==="dialog"))
 })
 
 test("execution acceptance links to the actual response UID and never submits after draft changes",async()=>{

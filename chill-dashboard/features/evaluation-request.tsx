@@ -171,7 +171,7 @@ export function EvaluationRunPage({name}:{name:string}) {
       </section>
       <section aria-label="단계 진행·주입" className="space-y-3">
         <div className="max-h-56 overflow-auto"><table className="w-full text-left text-sm"><thead><tr><th>순서</th><th>단계</th><th>운영 설정</th><th>현재 단계</th></tr></thead><tbody>{stages.map((value,index)=>{const stage=value&&typeof value==="object"?value as Record<string,unknown>:{},id=typeof stage.id==="string"?stage.id:"미기록",patch=stage.settingsPatch??run.spec.settingsPatch;return <tr key={index} className="border-t"><td className="py-2">{index+1}</td><th className="break-all font-normal">{id}</th><td>{patch&&typeof patch==="object"&&Object.keys(patch).length?"변경":"변경 없음"}</td><td>{id===run.currentStage?"현재":"—"}</td></tr>})}{!stages.length&&<tr><td colSpan={4}>단계 미기록</td></tr>}</tbody></table></div>
-        <EvaluationActive key={run.uid} name={name} uid={uid||run.uid} now={now} controls={false}/>
+        <EvaluationActive key={run.uid} name={name} uid={uid||run.uid} now={now}/>
       </section>
       <section aria-label="실행 조건·풀 상태" className="space-y-3">
         <table className="w-full text-left text-sm"><thead><tr><th>조건</th><th>상태</th><th>사유</th></tr></thead><tbody>{run.conditions?.map((condition,index)=><tr key={`${condition.type}/${index}`} className="border-t"><th className="py-2 font-normal">{conditionLabels[condition.type]??"기타 조건"}</th><td>{condition.type==="PoolAcquired"?(condition.status==="True"?"점유 중":condition.status==="False"?"반환 관측":"미확인"):condition.status==="True"?"충족":condition.status==="False"?"미충족":"미확인"}</td><td>{condition.reason?conditionReasons[condition.reason]??"원문 확인":"미기록"}</td></tr>)}</tbody></table>
