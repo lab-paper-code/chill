@@ -2,6 +2,7 @@ import importlib.util
 from io import BytesIO
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -28,8 +29,8 @@ def infer_frame(batch_id, values):
     return encode({"type": "infer", "batch_id": batch_id, "tensors": [tensor]}, payload)
 
 
-def serve(batches, max_new_tokens=0, preprocessor=FIXTURE, tail=b"", warmup_batch=None):
-    init = encode({"type": "init", "inputs": ["input"], "outputs": ["output"], "batch_sizes": [1, 2],
+def serve(batches, max_new_tokens=0, preprocessor=FIXTURE, tail=b"", warmup_batch=None, initialized=(1, 2)):
+    init = encode({"type": "init", "inputs": ["input"], "outputs": ["output"], "batch_sizes": list(initialized),
                    "max_new_tokens": max_new_tokens})
     source = BytesIO(init + b"".join(infer_frame(i + 1, values) for i, values in enumerate(batches)) + tail)
     destination = BytesIO()
@@ -51,16 +52,29 @@ def serve(batches, max_new_tokens=0, preprocessor=FIXTURE, tail=b"", warmup_batc
 
 
 class RunnerContractTest(unittest.TestCase):
-    def test_profiling_warms_only_selected_batch_and_serving_warms_all(self):
-        for selected, expected in ((None, [1, 2]), (1, [1]), (2, [2])):
+    def test_warms_only_requested_batches_without_changing_capabilities(self):
+        for selected, expected in ((None, [1, 2, 3, 4]), ([1], [1]), ([2], [2]), ([1, 4], [1, 4])):
             with self.subTest(selected=selected), mock.patch.object(runner, "execute", wraps=runner.execute) as execute:
-                frames, error = serve([], warmup_batch=selected)
+                frames, error = serve([], warmup_batch=selected, initialized=[1, 2, 3, 4])
                 self.assertIsNone(error)
                 self.assertEqual([len(call.args[2]) for call in execute.call_args_list], expected)
-                self.assertEqual(frames[0][0]["metadata"]["initializedBatches"], [1, 2])
-        frames, error = serve([], warmup_batch=3)
+                self.assertEqual(frames[0][0]["metadata"]["initializedBatches"], [1, 2, 3, 4])
+        frames, error = serve([], warmup_batch=[1, 3])
         self.assertIsInstance(error, ValueError)
         self.assertIn("warmup batch", str(error))
+
+    def test_repeatable_warmup_flag_checks_every_requested_batch(self):
+        init = encode({"type": "init", "inputs": ["input"], "outputs": ["output"], "batch_sizes": [1, 2],
+                       "max_new_tokens": 0})
+        for first, success in ((2, True), (3, False)):
+            with self.subTest(first=first):
+                result = subprocess.run(
+                    [sys.executable, str(HERE / "runner.py"), "--echo", "--preprocessor", str(FIXTURE),
+                     "--warmup-iterations", "1", "--warmup-batch", str(first), "--warmup-batch", "1"],
+                    input=init, capture_output=True, check=False)
+                self.assertEqual(result.returncode == 0, success, result.stderr)
+                header, _ = runner.read_frame(BytesIO(result.stdout))
+                self.assertEqual(header["type"], "ready" if success else "error")
 
     def test_item_failure_ends_only_its_request(self):
         frames, error = serve([[b"tile+tile", b"fail:bad jpeg"]])

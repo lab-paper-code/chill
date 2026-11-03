@@ -224,6 +224,20 @@ func (p *Profile) NativeBundle() firstfloor.ProfileBundle {
 	return bundle
 }
 
+// WarmupBatches keeps initialized capabilities separate from the final serving policy.
+func (p *Profile) WarmupBatches(policy firstfloor.Policy) []int {
+	var batches []int
+	for _, batch := range p.Batches {
+		k := batch.Batch
+		if slices.Contains(p.RuntimeMetadata.InitializedBatches, k) &&
+			(policy.MaxBatchSize == 0 || k <= policy.MaxBatchSize) &&
+			(policy.FixedBatchSize == 0 || k == policy.FixedBatchSize) {
+			batches = append(batches, k)
+		}
+	}
+	return batches
+}
+
 type NodeReference struct {
 	Name string `json:"name"`
 	UID  string `json:"uid"`

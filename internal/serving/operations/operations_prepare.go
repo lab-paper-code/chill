@@ -139,6 +139,12 @@ func (o *Operations) PrepareObserved(ctx context.Context, pod *core.Pod) (bool, 
 }
 
 func (o *Operations) EnsurePreparationConfig(ctx context.Context, spec servingstate.PrepareSpec, delivery []byte) (string, error) {
+	// Policy overrides are final here (scheduled, manual and fixed-size prepares).
+	// Clone before appending: preparation templates share their command storage.
+	spec.Config.RunnerCommand = slices.Clone(spec.Config.RunnerCommand)
+	for _, k := range spec.Instance.Profile.WarmupBatches(spec.Config.Policy) {
+		spec.Config.RunnerCommand = append(spec.Config.RunnerCommand, "--warmup-batch", strconv.Itoa(k))
+	}
 	raw, err := json.Marshal(spec.Config)
 	if err != nil {
 		return "", err
