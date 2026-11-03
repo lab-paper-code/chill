@@ -484,7 +484,9 @@ class Harness:
         if self.execution.get('prepareCompleted') is False:
             self.reason='NoControlEffects'
             return
-        self.controller().finish()
+        controller=self.controller()
+        try: controller.finish()
+        finally: self.residuals=controller.residuals if hasattr(controller,'residuals') else []
     def publish(self):
         tables=module('evaluation_tables',HERE/'tables.py');stages=[];results={};artifacts=[];procedures={};actual_specs={};stage_outcomes=[]
         prepare_failed=self.execution.get('prepareCompleted') is False
