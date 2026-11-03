@@ -17,9 +17,11 @@ import { statusLabel } from "@/lib/labels"
 import { Facts } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { resolveWorkloadIdentities, type IdentityWorkload } from "@/lib/workload-identity"
-import { liveReason } from "@/lib/live-display"
+import { liveReason, candidatePlans, candidateEvaluation } from "@/lib/live-display"
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts"
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 
-export const judgmentLabels:Record<string,string>={Pending:"판단 대기",Keep:"현재 구성 유지",Feasible:"목표 충족",Overload:"예상 부하가 목표 초과",InfeasibleLifetime:"요청 유효기간 충족 어려움",InfeasibleResources:"자원 조건 충족 어려움",InfeasibleTransition:"변경 조건 충족 어려움",ExecutionError:"실행 오류 확인"}
+export const judgmentLabels:Record<string,string>={Pending:"판단 대기",Keep:"현재 구성 유지",Feasible:"실행 가능",Overload:"예상 부하가 목표 초과",InfeasibleLifetime:"요청 유효기간 충족 어려움",InfeasibleResources:"자원 조건 충족 어려움",InfeasibleTransition:"변경 조건 충족 어려움",ExecutionError:"실행 오류 확인"}
 export const judgmentTones:Record<string,Tone>={Keep:"ok",Feasible:"ok",Pending:"idle",Overload:"warn",InfeasibleLifetime:"warn",InfeasibleResources:"warn",InfeasibleTransition:"warn",ExecutionError:"fail"}
 export const actionKinds:Record<string,string>={prepare:"실행 준비",route:"요청 분배 변경",unroute:"요청 분배 해제",release:"자원 예약 해제",reset:"서비스 초기화",stop:"요청 접수 중지",drain:"기존 요청 마무리",remove:"인스턴스 제거",power:"전력모드 변경",resize:"인스턴스 교체","measurement-handback":"측정 장치 반환","manual-static-routing":"설정한 요청 분배 적용"}
 // internal/serving/kube/static_routing.go: a configuration-sourced route has no single node (empty NodeRef).
@@ -43,7 +45,9 @@ function ObservationLink({uid,definition,from,to,children}:{uid:string;definitio
 }
 function ServiceName({uid,snapshot}:{uid:string;snapshot:SchedulerSnapshot}) {return <span>{resolveWorkloadIdentities([],[],snapshot.workloads,[uid]).get(uid)!} <small className="break-all">({uid})</small></span>}
 function SLOs({candidate,decision,snapshot}:{candidate:SchedulerCandidate;decision:SchedulerDecision;snapshot:SchedulerSnapshot}) {
-  return <><p>예상 에너지 {energy(candidate.expectedJoules)}. 예상 지연은 반복 비교 결과이며 실측과 구분합니다.</p>{candidate.expectedJoules==null&&<Lines values={candidate.reasons}/>}<div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th>서비스</th><th>예상 지연</th><th>목표</th><th>표본 수</th><th>목표 초과 비율</th><th>예상 결과</th></tr></thead><tbody>{candidate.slo?.map((row,index)=><tr key={index}><td><ObservationLink uid={row.uid} definition={row.definition} from={decision.search.windowStart} to={decision.search.windowEnd}><ServiceName uid={row.uid} snapshot={snapshot}/></ObservationLink><small className="block break-all">{row.definition}</small></td><td>{row.expectedNanos==null?"계산값 없음":`${Number(row.expectedNanos) / 1e6} ms`} ({row.percentile}% 기준)</td><td>{ms(row.targetNanos)}</td><td>{row.samples}</td><td>{row.normalizedExceedance}</td><td>{Object.entries(row.predictedOutcomes??{}).map(([key,value])=>`${key}: ${value}`).join(", ")||"제공 없음"}</td></tr>)}</tbody></table></div>{!candidate.slo?.length&&<p>서비스별 예상값 제공 없음</p>}</>
+  return <><Facts items={[["예상 에너지",energy(candidate.expectedJoules)],["성능 평가",candidateEvaluation(candidate)]]}/>{candidate.expectedJoules==null&&<Lines values={candidate.reasons}/>}
+    {!!candidate.slo?.length&&<div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th>서비스</th><th>예상 지연</th><th>목표</th><th>표본 수</th><th>목표 초과 비율</th><th>예상 결과</th></tr></thead><tbody>{candidate.slo.map((row,index)=><tr key={index}><td><ObservationLink uid={row.uid} definition={row.definition} from={decision.search.windowStart} to={decision.search.windowEnd}><ServiceName uid={row.uid} snapshot={snapshot}/></ObservationLink><small className="block break-all">{row.definition}</small></td><td>{row.expectedNanos==null?"계산값 없음":`${Number(row.expectedNanos) / 1e6} ms`} ({row.percentile}% 기준)</td><td>{ms(row.targetNanos)}</td><td>{row.samples}</td><td>{row.normalizedExceedance}</td><td>{Object.entries(row.predictedOutcomes??{}).map(([key,value])=>`${key}: ${value}`).join(", ")||"제공 없음"}</td></tr>)}</tbody></table></div>}
+  </>
 }
 function Configuration({nodes,instances,routing,snapshot}:{nodes?:SchedulerNode[]|null;instances?:SchedulerInstance[]|null;routing:SchedulerCandidate["routing"];snapshot:SchedulerSnapshot}) {
   return <><h3>노드</h3>{nodes?.length?nodes.map(node=><section key={node.node.uid} className="space-y-2 rounded border p-3"><h4>{node.node.name}{node.measurement&&" / 측정 중"}</h4><p className="break-all">노드 UID {node.node.uid}</p><p>준비 {node.ready?"완료":"확인 대기"} / 전력모드 {node.powerMode||"제공 없음"} / 관측 {time(node.observedAt)}</p>{!!node.reasons?.length&&<Lines values={node.reasons}/>}<p>전체 GPU {node.gpuUUIDs?.join(", ")||"없음"}, 메모리 {String(node.memoryBytes)} bytes</p><p>예약: <Allocation value={node.reserved}/></p><h5>서비스 외 할당</h5>{node.nonServing?.map((allocation,index)=><p key={index}><Allocation value={allocation}/></p>)}{!node.nonServing?.length&&<p>제공된 할당 없음</p>}</section>):<p>제공된 노드 없음</p>}
@@ -81,7 +85,7 @@ function CurrentEvidence({kind}:{kind:"candidates"|"estimates"}) {
   const view=selection?.view??query.data
   const uid=params.get("uid")??params.get("workload")??(params.get("open")?.startsWith("service:")?params.get("open")!.slice(8):"")
   const decision=view?.state.decision,snapshot=view?.state.snapshot
-  const candidates=decision&&observed(decision.at)?[decision.keep,...(decision.target?[decision.target]:[])].filter((candidate,index,all)=>candidate.id&&all.findIndex(row=>row.id===candidate.id)===index):[]
+  const candidates=decision&&observed(decision.at)?candidatePlans(decision.keep,decision.target).filter(candidate=>candidate.id):[]
   const services=(snapshot?.workloads??[]).filter((row):row is SchedulerDefinition=>!!row&&(!uid||row.uid===uid))
   return <section className="space-y-4"><h3>{kind==="candidates"?"구성·후보 근거":"응답 목표 예상"}</h3><QueryGate query={query}>{view&&decision&&snapshot&&<>
     <Facts items={[["판단 시각",time(decision.at)],["구성 관측",time(snapshot.at)],["입력 시작",time(decision.search.windowStart)],["입력 종료",time(decision.search.windowEnd)]]}/>
@@ -154,6 +158,7 @@ export function PowerInterval({from,to}:{from:string;to:string}) {
   if(nodes.length>1)for(const reason of nodes[0].reasons??[])if(nodes.every(row=>row.reasons?.includes(reason)))commonReasons.add(reason)
   return <QueryGate query={query}>{data&&<div className="space-y-4">
     <Facts items={[["집계 시작",time(data.from)],["집계 종료",time(data.to)],["전력 범위","노드 벽전력"],["집계",data.complete?"계측 집계 완료":"관측 공백 있음"],["전체 실행 그룹 J",measuredEnergy(data.wholePoolJoules)],["전체 평균 W",watts(data.wholePoolMeanWatts)],["활성 실행 그룹 J",measuredEnergy(data.activePoolJoules)],["활성 평균 W",watts(data.activePoolMeanWatts)],["원본 시각 없는 장치 개",(data.nodes??[]).filter(row=>row.sourceTimestampAbsent).length]]}/>
+    <section aria-label="노드별 평균 전력" className="space-y-2"><h3>노드별 평균 전력 (W)</h3>{nodes.some(row=>row.meanWatts!=null)?<ChartContainer config={{watts:{label:"평균 전력 (W)",color:"var(--chart-2)"}}} className="aspect-auto h-[280px] w-full"><BarChart accessibilityLayer data={nodes.map(row=>({node:row.node.name||row.node.uid,watts:row.meanWatts}))}><CartesianGrid vertical={false}/><XAxis dataKey="node" tickLine={false}/><YAxis unit="W"/><ChartTooltip content={<ChartTooltipContent/>}/><Bar dataKey="watts" fill="var(--color-watts)" isAnimationActive={false}/></BarChart></ChartContainer>:<p>전력 관측 없음</p>}</section>
     {data.nodes?.some(row=>row.sourceTimestampAbsent)&&<StatusBadge tone="warn">수집 시각 기준 · 신선도 미확인</StatusBadge>}
     {commonReasons.size>0&&<div role="status"><h3>측정 공백과 집계 사유</h3><Lines values={Array.from(commonReasons)}/></div>}{data.gapUntil&&<p role="status">{gapNotice(data.gapUntil)}</p>}
     <DataTable data={data.nodes??[]} columns={[

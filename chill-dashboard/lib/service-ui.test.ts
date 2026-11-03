@@ -6,6 +6,7 @@ import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as domain from "./domain.ts"
 import * as labels from "./labels.ts"
 import * as scheduler from "./scheduler.ts"
+import * as liveDisplay from "./live-display.ts"
 import type { WorkloadView } from "./domain.ts"
 
 type Element = { type: unknown; props: Record<string, unknown> }
@@ -32,6 +33,8 @@ function harness(query="", responses: Record<string, unknown>={}) {
     "next/navigation": { useSearchParams: () => new URLSearchParams(query), useRouter: () => ({replace:(path:string)=>replacements.push(path)}) },
     "@tanstack/react-query": { useQueryClient: () => ({}) },
     "@/lib/domain": domain, "@/lib/labels": labels, "@/lib/scheduler": scheduler,
+    "@/lib/live-display":liveDisplay,
+    "@/lib/use-live":{useLive:()=>responses.live??{state:{snapshot:null}}},
     "@/lib/client": { useSession: () => ({config:{inferTimeoutMs:129000,maxRequestBytes:8388608,pageSize:25}}), useChillQuery: (path: string) => { paths.push(path); return responses[path] ?? { data: path === "v1/workloads?view=summary" ? [idle] : path.endsWith("/idle") ? idle : undefined, error: null } }, useChillMutation: () => ({ isPending: false }) },
     "@/components/status-cell": { StatusCell: "status-cell" },
     "@/components/data-table": { DataTable: "data-table" },
@@ -159,6 +162,17 @@ test("service readiness preserves distinct reasons without repeating the same pr
   const table=elements(h.management.ServicesPage({})).find(node=>node.type==="data-table")!
   const ready=(table.props.columns as {key:string;value:(view:WorkloadView)=>Element}[]).find(column=>column.key==="ready")!
   assert.equal(ready.value(idle).type,h.hub.ServiceReadiness)
+})
+
+test("disabled unplaced preparation uses the same status in the service list and detail",()=>{
+  const workload={uid:"service-uid",autonomous:false,readiness:{ready:false,reason:"Preparing"}}
+  const h=harness("",{live:{state:{snapshot:{workloads:[workload],instances:[]}}}})
+  const view={...idle,readiness:"Preparing",reason:"Preparing"}
+  const table=elements(h.management.ServicesPage({})).find(element=>element.type==="data-table")!
+  const column=(table.props.columns as {key:string;value:(view:WorkloadView)=>Element}[]).find(row=>row.key==="ready")!
+  const listCell=column.value(view)
+  assert.equal(h.hub.ServiceReadiness(listCell.props).props.label,"미배치 · 자동제어 꺼짐")
+  assert.equal(h.hub.ServiceReadiness({view}).props.label,"미배치 · 자동제어 꺼짐")
 })
 
 test("service empty reset clears search, state and page while preserving sort and page size",()=>{

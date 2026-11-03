@@ -319,6 +319,7 @@ test("operations board keeps independent axes, idle summary, service placement a
   const require=createRequire(import.meta.url)
   let query=new URLSearchParams(),experiment="활성 없음"
   let archived:LiveState["events"]=[]
+  let recordedDecision:Record<string,unknown>|undefined
   const compile=(path:string,modules:Record<string,unknown>)=>{
     const exports:Record<string,ComponentType<Record<string,unknown>>>={}
     const source=readFileSync(new URL(path,import.meta.url),"utf8")
@@ -335,7 +336,7 @@ test("operations board keeps independent axes, idle summary, service placement a
   const modules:Record<string,unknown>={
     "next/link":{default:({children,...props}:Record<string,unknown>)=>createElement("a",props,children as string)},
     "next/navigation":{usePathname:()=>"/",useSearchParams:()=>query,useRouter:()=>({push:(url:string)=>{query=new URL(url,"http://local").searchParams},replace:(url:string)=>{query=new URL(url,"http://local").searchParams}})},
-    "@/lib/client":{useSession:()=>({epoch:1,config:{liveFixture:false}}),useChillQuery:(path:string)=>path.startsWith("v1/observations/events")?{data:{events:archived}}:{}},
+    "@/lib/client":{useSession:()=>({epoch:1,config:{liveFixture:false}}),useChillQuery:(path:string)=>path.startsWith("v1/observations/events")?{data:{events:archived}}:path.startsWith("v1/observations/scheduler?")&&recordedDecision?{data:{events:[{at,decision:recordedDecision}]}}:{}},
     "@/lib/use-live":{useLive:()=>({state,status:"fixture",reconnect:()=>{}})},
     "@/lib/live-display":displayHelpers,"@/lib/experiments":{decisionRange},
     "@/lib/live":{compareAt},
@@ -345,7 +346,7 @@ test("operations board keeps independent axes, idle summary, service placement a
     "./evaluation-active":{EvaluationStatusCell:()=>createElement(status.StatusCell,{axis:"실험 상태",label:experiment,tone:"info"})},
     "@/lib/evaluation-active":{evaluationInjectionMatch:()=>false},
     "@/lib/scheduler":{stringifySchedulerJSON:JSON.stringify},"@/lib/source-export":{safeSource:(value:unknown)=>value},
-    "./scheduler":{judgmentLabels:{Keep:"구성 유지"},actionKinds:{power:"전력모드 변경"},actionStatuses:{},actionNodeName:(node:{name:string})=>node.name,SchedulerEvidence:({kind}:{kind:string})=>createElement("section",{"data-evidence":kind},kind)},
+    "./scheduler":{judgmentLabels:{Keep:"구성 유지",Feasible:"실행 가능"},actionKinds:{power:"전력모드 변경"},actionStatuses:{},actionNodeName:(node:{name:string})=>node.name,SchedulerEvidence:({kind}:{kind:string})=>createElement("section",{"data-evidence":kind},kind)},
     "./live-board.css":{},
   }
   const board=compile("../features/live-board.tsx",modules)
@@ -359,6 +360,16 @@ test("operations board keeps independent axes, idle summary, service placement a
   assert.match(idle,/새로고침 시 실시간 복귀/)
   assert.match(idle,/서비스별 위치/)
   assert.doesNotMatch(idle,/live-node-power|data-sheet/)
+  const keep={id:"keep",keep:true,status:"Feasible",expectedJoules:0,slo:[],nodes:[],instances:[]}
+  recordedDecision={at,status:"Keep",workloads:[],keep,target:structuredClone(keep),search:{windowStart:at,windowEnd:at,received:0,accepted:0,computeInputs:0,examined:0}}
+  query=new URLSearchParams({at})
+  const candidateEvidence=render()
+  assert.match(candidateEvidence,/실행 가능/)
+  assert.match(candidateEvidence,/평가 대상 없음/)
+  assert.match(candidateEvidence,/변경 없음/)
+  assert.equal((candidateEvidence.match(/<h3>유지안<\/h3>/g)??[]).length,1)
+  assert.doesNotMatch(candidateEvidence,/목표 충족/)
+  recordedDecision=undefined
   query=new URLSearchParams({services:"확인 필요"})
   assert.match(render(),/해당 서비스 없음/)
   assert.doesNotMatch(render(),/유휴 서비스 집계/)

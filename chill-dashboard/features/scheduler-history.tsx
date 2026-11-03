@@ -10,7 +10,7 @@ import type { WorkloadSummary } from "@/lib/domain"
 import { parseSchedulerJSON, nanosToMilliseconds } from "@/lib/scheduler"
 import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerComparisonParams, schedulerHistoryNodeMatches, schedulerHistoryKindMatches, groupHistoryKeeps, type SchedulerRecordRef } from "@/lib/scheduler-history"
 import { gapNotice, utcDateTime } from "@/lib/date-time"
-import { displayTime, liveReason } from "@/lib/live-display"
+import { displayTime, liveReason, candidatePlans } from "@/lib/live-display"
 import { SnapshotDetails, CandidateDetails, judgmentLabels, actionKinds, actionStatuses, actionNodeName } from "@/features/scheduler"
 import { SettingChanges } from "@/features/scheduler-settings"
 import { QueryGate, SourceJSON, SourceExport } from "@/components/read-region"
@@ -87,7 +87,7 @@ function RecordDetails({row}:{row:SchedulerHistoryRow}){
     {decision&&<>
       <h3 className="font-semibold" title={decision.status}>판단: {judgmentLabels[decision.status]??"판단 미확인"}</h3>
       <Facts items={[["판단 시각 KST",when(decision.at)],["자동제어 서비스",`${decision.settings.autonomousWorkloads?.length??0}개`],["입력 관측 KST",`${when(decision.search.windowStart)} ~ ${when(decision.search.windowEnd)}`],["에너지 비교 기간",decision.capacity?`${nanosToMilliseconds(decision.capacity.periodNanos)} ms`:"기록 없음"],["사유",decision.reasons?.length?decision.reasons.map(reason=><span key={reason} title={reason}>{liveReason(reason)} </span>):"미제공"]]}/>
-      {view?<><details><summary>유지안 근거</summary><CandidateDetails candidate={decision.keep} view={view}/></details>{decision.target&&<details><summary>선택 목표 근거</summary><CandidateDetails candidate={decision.target} view={view}/></details>}</>:<p>같은 기록에 실제 구성이 없어요. 후보 원본은 아래 원본에서 확인해요.</p>}
+      {view?<>{candidatePlans(decision.keep,decision.target).map(candidate=><details key={candidate.id}><summary>{candidate.keep?"유지안 근거":"선택 목표 근거"}</summary><CandidateDetails candidate={candidate} view={view}/></details>)}</>:<p>같은 기록에 실제 구성이 없어요. 후보 원본은 아래 원본에서 확인해요.</p>}
     </>}
     {snapshot&&<details><summary>기록의 실제 구성</summary><SnapshotDetails snapshot={snapshot}/></details>}
     {event.settings&&<>

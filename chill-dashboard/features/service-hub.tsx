@@ -13,6 +13,8 @@ import { Facts, RowDialog, Rows } from "@/components/screen"
 import { DataTable } from "@/components/data-table"
 import { StatusCell } from "@/components/status-cell"
 import { statusLabel } from "@/lib/labels"
+import { useLive } from "@/lib/use-live"
+import { workloadReadiness } from "@/lib/live-display"
 
 export function serviceListReturn(value: string | null) {
   if (!value || !value.startsWith("/") || value.startsWith("//") || /[\\\u0000-\u001f\u007f]/.test(value)) return "/workloads"
@@ -43,7 +45,12 @@ export function ServiceAdmission({ view }: { view: Pick<WorkloadView, "admission
   return <StatusCell axis="접수 허용" label={view.admission ? "허용" : "차단"} tone={view.admission ? "ok" : "warn"} />
 }
 
-export function ServiceReadiness({ view }: { view: Pick<WorkloadView, "reason" | "readiness"> }) {
+export function ServiceReadiness({ view }: { view: Pick<WorkloadView, "desired" | "reason" | "readiness"> }) {
+  const {state}=useLive(),workload=state.snapshot?.workloads.find(row=>row.uid===view.desired.metadata.uid)
+  if(workload&&view.readiness==="Preparing") {
+    const label=workloadReadiness(workload,state.snapshot!.instances)
+    if(label==="미배치 · 자동제어 꺼짐")return <StatusCell axis="배치" label={label} tone="idle"/>
+  }
   const reason = view.reason && statusLabel(view.reason)
   return <><StatusBadge value={view.readiness} />{reason && reason !== statusLabel(view.readiness) && <span className="block text-xs">{reason}</span>}</>
 }
