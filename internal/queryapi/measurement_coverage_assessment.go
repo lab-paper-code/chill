@@ -3,6 +3,7 @@ package queryapi
 const (
 	measurementExecutionFailed = "Failed"
 	measurementCheckFailed     = "fail"
+	measurementCheckPassed     = "pass"
 )
 
 // MeasurementAssessment is a read projection, never a stored execution verdict.
@@ -198,7 +199,7 @@ func assessAcceptedMeasurement(out *MeasurementAssessment, in MeasurementAssessm
 	}
 	met := true
 	for _, check := range in.Checks {
-		if check.Result != "pass" {
+		if check.Result != measurementCheckPassed {
 			met = false
 		}
 		if check.Result == measurementCheckFailed {

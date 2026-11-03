@@ -9,6 +9,7 @@ import (
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/queryapi"
+	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -48,7 +49,8 @@ func TestPreflightEnrichmentUsesExactCatalogAndCurrentSourceSpec(t *testing.T) {
 			}
 			active := strings.HasPrefix(mode, "active ")
 			if active {
-				request.Generation, request.Status.ObservedGeneration, request.Status.Phase = 1, 1, measurementPhaseMeasuring
+				request.Generation, request.Status.ObservedGeneration = 1, 1
+				request.Status.Phase = string(api.MeasurementPhaseMeasuring)
 				if mode == "active stale" {
 					request.Status.ObservedGeneration = 0
 				}
@@ -75,8 +77,13 @@ func TestPreflightEnrichmentUsesExactCatalogAndCurrentSourceSpec(t *testing.T) {
 				service.objects = &operationProjectionStore{payload: raw}
 			}
 			snapshot.VariantID = queryapi.MeasurementVariantID(plan.Shared())
+			enrichment := &querykube.MeasurementPreflightService{
+				Reader: service.client, Objects: service.objects,
+				Catalog:   queryCatalogSource(service.catalog),
+				Authorize: service.namespace, StoreName: service.opts.storeName, MaxEvidenceBytes: service.opts.maxEvidenceBytes,
+			}
 			view, err = queryapi.BuildBatchEnergyOptimizationPreflight(
-				service.completePreflight(context.Background(), snapshot),
+				enrichment.Complete(context.Background(), snapshot),
 			)
 			if err != nil {
 				t.Fatal(err)

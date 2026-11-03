@@ -29,9 +29,9 @@ Dashboard·CLI는 같은 권한·검증·비동기 결과 의미를 사용하되
 
 ## Go 구현 소유권 (2026-11-04)
 
-- `internal/queryapi`는 serving 타입과 무관한 cell·variant 생성, 요청/run 소유 UID 연결, 측정 시각, summary·checklist compaction을 소유한다. 입력은 기존 query DTO·native CR·source 실패 map이며 serving DTO를 복제하지 않는다.
-- 기존 `internal/queryapi/kube`는 native BEO 목록 조회·빈 목록 초기화·정렬을 소유한다. composition root의 namespace 권한 판정 callback을 먼저 실행하므로 기존 금지 오류와 HTTP 의미를 유지한다.
-- 기존 `internal/queryapi/readapi`는 measurement query 해석·pagination envelope·JSON encoding을 소유한다. 기존 목록용 `Page` DTO를 공유하며 옛 함수·re-export는 남기지 않는다.
-- **경계상 cmd 어댑터로 유지:** serving catalog-read·profile/operation/occupancy record 변환과 판정, serving 의존 coverage snapshot·cache/병렬 refresh·셀/variant source 연결, typed preflight/result adapter·route 등록, campaign statistics. `internal/queryapi`와 하위 패키지는 `internal/serving`을 import하지 않으며 `.go-arch-lint.yml`의 기존 의존 방향을 그대로 유지한다.
-- coverage의 30초 refresh·5분 stale 허용, namespace 공유 cache/lock·deadline·실패 보존, query key·pagination·summary 크기 제한·HTTP 계약은 이동 전 의미를 유지한다. 순수 helper의 회귀는 구현 소유 패키지로 이동하고 serving 경계·HTTP·동시성 회귀는 composition root에 유지한다.
+- `internal/queryapi`는 Query 소유 catalog/profile/occupancy 입력으로 coverage cell·variant·현재 측정 선택·summary·checklist compaction을 조립한다. 요청/profile/operation/occupancy evidence의 판정도 순수 함수로 소유하며 저장된 UID·동결 조건·signed 수치·nil/0 의미를 바꾸지 않는다.
+- 기존 `internal/queryapi/kube`는 namespace coverage cache·병렬 source refresh·실패 보존·native measurement 조회·bounded evidence 읽기와 preflight/result selection use case를 소유한다. `CatalogSource.Read`는 coverage에 필요한 Query 소유 읽기 타입만 반환한다. namespace 권한 callback, 30초 fresh·5분 stale, 단일 namespace refresh의 락·deadline·실패 보존 순서는 이전과 같다.
+- 기존 `internal/queryapi/readapi`는 measurement query 해석·pagination envelope·JSON encoding을 소유한다. 목록용 `Page` DTO를 공유하며 옛 함수·re-export·미사용 pagination 상수는 남기지 않는다.
+- `cmd/chill-query`는 구성·조립·namespace/HTTP 오류 및 serving 응답의 어댑터만 소유한다. serving catalog 클라이언트의 필요한 필드를 `CoverageCatalogRead`로 변환하고, profile/operation/occupancy HTTP envelope를 기존 계약으로 변환한다. occupancy source decoder 포트는 원 serving record를 한 번 완전히 디코딩한 뒤 판정에 필요한 필드만 반환하므로 사용하지 않는 필드의 잘못된 타입도 이전처럼 거부한다. serving 타입 전체를 복제하지 않으며 `internal/queryapi/**`는 serving을 import하지 않는다. `.go-arch-lint.yml` 의존 방향도 그대로다.
+- campaign statistics evidence 조회인 `cmd/chill-query/measurement_statistics.go`는 별도 campaign evidence Reader 계약 cutover인 #4에 속하므로 이번 이동에서 제외한다. query key·pagination·응답 크기·HTTP 계약은 유지하며 cache/판정 회귀는 내부 소유 패키지, serving 변환의 JSON·값 동일성 회귀는 composition root에서 검증한다.
 

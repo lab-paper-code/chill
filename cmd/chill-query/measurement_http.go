@@ -11,7 +11,6 @@ import (
 
 	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
 
-	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/queryapi"
 	"github.com/lab-paper-code/chill/internal/queryapi/readapi"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -23,8 +22,6 @@ import (
 const (
 	measurementSummaryView = "summary"
 	measurementViewQuery   = "view"
-	measurementLimitQuery  = "limit"
-	measurementOffsetQuery = "offset"
 )
 
 func (o *measurementService) register(mux *http.ServeMux) {
@@ -35,7 +32,11 @@ func (o *measurementService) register(mux *http.ServeMux) {
 			return
 		}
 		view := adoptedCatalogView(read)
-		view.DisplayStatus = func(p serving.Profile) string { a, _ := assessCatalogProfile(view, p); return a.DisplayStatus }
+		queryView := queryCoverageCatalog(view)
+		view.DisplayStatus = func(p serving.Profile) string {
+			a, _ := queryapi.AssessCatalogProfile(queryView, queryCoverageProfile(p))
+			return a.DisplayStatus
+		}
 		values, err := url.ParseQuery(r.URL.RawQuery)
 		sharePaths := false
 		if err == nil {
@@ -80,11 +81,15 @@ func (o *measurementService) register(mux *http.ServeMux) {
 				httpapi.SendQueryError(w, &serving.Error{Code: "InvalidCoverageQuery", Message: "유효한 query가 필요합니다"})
 				return
 			}
-			payload, err := o.coverage(r.Context(), r.PathValue("namespace"), query, sharePaths)
+			payload, err := o.coverage.Coverage(r.Context(), r.PathValue("namespace"),
+				queryapi.CoverageQuery{Batches: query.Batches, Node: query.Node, Summary: query.Summary}, sharePaths)
 			if err != nil {
-				var domain *serving.Error
-				if errors.As(err, &domain) && domain.Code == "CoverageWarming" {
-					w.Header().Set("Retry-After", "2")
+				var domain *queryapi.MeasurementError
+				if errors.As(err, &domain) {
+					if domain.Code == "CoverageWarming" {
+						w.Header().Set("Retry-After", "2")
+					}
+					err = &serving.Error{Code: domain.Code, Message: domain.Message}
 				}
 				httpapi.SendQueryError(w, err)
 				return
@@ -105,7 +110,10 @@ func (o *measurementService) register(mux *http.ServeMux) {
 				page, err = readapi.MeasurementListPage(values)
 			}
 			if err != nil {
-				httpapi.SendQueryError(w, &serving.Error{Code: "InvalidQuery", Message: "invalid measurement list query"})
+				httpapi.SendQueryError(
+					w,
+					&serving.Error{Code: "InvalidQuery", Message: "invalid measurement list query"},
+				)
 				return
 			}
 			list, err := querykube.ListMeasurementRequests(r.Context(), o.client, r.PathValue("namespace"), o.namespace)
@@ -122,7 +130,9 @@ func (o *measurementService) register(mux *http.ServeMux) {
 				}
 				list.Items = list.Items[start:end]
 			}
-			assessments, err := o.assessList(r.Context(), list)
+			assessments, err := querykube.AssessMeasurementRequests(
+				r.Context(), o.client, queryCatalogSource(o.catalog), list,
+			)
 			if err != nil {
 				httpapi.SendQueryError(w, err)
 				return
@@ -232,57 +242,4 @@ func newServingCatalogReader(opts options) (func(context.Context) (servingkube.C
 		err = json.Unmarshal(raw, &value)
 		return value, err
 	}, nil
-}
-
-// A typed adapter completes preflight before readapi encodes the response.
-type measurementPreflightReader struct {
-	read func(context.Context, *api.BatchEnergyOptimization) (
-		queryapi.BatchEnergyOptimizationPreflightSnapshot, error,
-	)
-	measurements *measurementService
-}
-
-func (p measurementPreflightReader) Read(
-	ctx context.Context,
-	campaign *api.BatchEnergyOptimization,
-) (queryapi.BatchEnergyOptimizationPreflightSnapshot, error) {
-	snapshot, err := p.read(ctx, campaign)
-	if err != nil {
-		return snapshot, err
-	}
-	return p.measurements.completePreflight(ctx, snapshot), nil
-}
-
-// Result selection comes from the accepted catalog, never a condition-matched cell.
-type measurementResultReader struct {
-	read         func(context.Context, string, string) (queryapi.BatchEnergyOptimizationResultSnapshot, error)
-	measurements *measurementService
-}
-
-func (p measurementResultReader) Read(
-	ctx context.Context, namespace, name string,
-) (queryapi.BatchEnergyOptimizationResultSnapshot, error) {
-	snapshot, err := p.read(ctx, namespace, name)
-	if err != nil || p.measurements.catalog == nil {
-		return snapshot, err
-	}
-	read, err := p.measurements.catalog(ctx)
-	if err != nil || read.Accepted == nil || read.Accepted.CurrentMeasurements == nil {
-		return snapshot, nil
-	}
-	used := false
-	id := queryapi.CoverageRequestID(snapshot.Campaign)
-	view := adoptedCatalogView(read)
-	for _, profile := range view.Profiles {
-		profileID := profile.ID
-		if profile.Reuse != nil {
-			profileID = profile.Reuse.ConfirmationProfileID
-		}
-		if profileID == id && measurementProfileCurrent(view, profile) {
-			used = true
-			break
-		}
-	}
-	snapshot.SchedulerUsed = &used
-	return snapshot, nil
 }

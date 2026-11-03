@@ -1,4 +1,4 @@
-package main
+package queryapi
 
 import (
 	"fmt"
@@ -7,8 +7,6 @@ import (
 	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/queryapi"
-	"github.com/lab-paper-code/chill/internal/serving"
 )
 
 const (
@@ -20,8 +18,8 @@ const (
 
 // Occupancy is indexed by physical node, frozen profile and batch; a newer
 // failed attempt never hides an accepted value for the same current tuple.
-func (p *coverageProjection) addOccupancy(cell *queryapi.MeasurementCoverageCell) {
-	cell.Occupancy = []queryapi.MeasurementOccupancy{}
+func (p *coverageProjection) addOccupancy(cell *MeasurementCoverageCell) {
+	cell.Occupancy = []MeasurementOccupancy{}
 	current := map[string]bool{}
 	for _, variant := range cell.Variants {
 		for _, id := range variant.ProfileIDs {
@@ -30,7 +28,7 @@ func (p *coverageProjection) addOccupancy(cell *queryapi.MeasurementCoverageCell
 	}
 	nodes := p.occupancyNodes(cell)
 	key := occupancyEntryKey
-	entries := map[string]queryapi.MeasurementOccupancy{}
+	entries := map[string]MeasurementOccupancy{}
 	selectedAt := map[string]time.Time{}
 	for _, task := range p.occupancy {
 		node, exists := nodes[task.Spec.Node]
@@ -38,18 +36,18 @@ func (p *coverageProjection) addOccupancy(cell *queryapi.MeasurementCoverageCell
 			continue
 		}
 		matched := p.occupancyRequestMatches(task, cell)
-		result, projected := p.base.occupancyResults[string(task.UID)]
+		result, projected := p.base.OccupancyResults[string(task.UID)]
 		if !projected {
-			result.DispatchOccupancyProgress = occupancyProgress(task)
+			result.DispatchOccupancyProgress = OccupancyProgress(task)
 		}
-		if record := result.record; record != nil {
+		if record := result.Record; record != nil {
 			// Evidence identity is authoritative, including replaced physical nodes.
-			node = queryapi.MeasurementIdentity{Name: record.Node.Name, UID: record.Node.UID}
+			node = MeasurementIdentity{Name: record.Node.Name, UID: record.Node.UID}
 			matched = matched || record.Model == cell.Model.Name &&
 				record.PowerMode == cell.PowerMode && current[record.ProfileID]
 		}
-		if record := result.burst; record != nil {
-			node = queryapi.MeasurementIdentity{Name: record.Node.Name, UID: record.Node.UID}
+		if record := result.Burst; record != nil {
+			node = MeasurementIdentity{Name: record.Node.Name, UID: record.Node.UID}
 			matched = record.Model == cell.Model.Name && record.PowerMode == cell.PowerMode &&
 				(matched || current[record.ProfileID]) &&
 				(record.Estimate == nil || record.Estimate.ExecutionPath == cell.ExecutionPath)
@@ -58,9 +56,9 @@ func (p *coverageProjection) addOccupancy(cell *queryapi.MeasurementCoverageCell
 			continue
 		}
 		id := key(node, result.ProfileID, result.Batch)
-		entry := queryapi.MeasurementOccupancy{
+		entry := MeasurementOccupancy{
 			Node: node, ProfileID: result.ProfileID, Batch: result.Batch, State: "none",
-			Request: &queryapi.MeasurementIdentity{Name: task.Name, UID: string(task.UID)},
+			Request: &MeasurementIdentity{Name: task.Name, UID: string(task.UID)},
 			Phase:   result.Phase, Reason: result.Reason, D: result.D, Evidence: result.Evidence,
 		}
 		setCoverageOccupancyState(&entry, task.Status.Phase, result, current, nodes)
@@ -104,13 +102,13 @@ func (p *coverageProjection) addOccupancy(cell *queryapi.MeasurementCoverageCell
 	}
 }
 
-func (p *coverageProjection) occupancyAdopted(entry *queryapi.MeasurementOccupancy,
-	cell *queryapi.MeasurementCoverageCell, nodes map[string]queryapi.MeasurementIdentity, current map[string]bool,
+func (p *coverageProjection) occupancyAdopted(entry *MeasurementOccupancy,
+	cell *MeasurementCoverageCell, nodes map[string]MeasurementIdentity, current map[string]bool,
 ) *bool {
-	if p.base.acceptedOccupancy == nil || p.base.failures[coverageCatalogSource] != nil {
+	if p.base.AcceptedOccupancy == nil || p.base.Failures[CoverageCatalogSource] != nil {
 		return nil
 	}
-	for _, selected := range p.base.acceptedOccupancy {
+	for _, selected := range p.base.AcceptedOccupancy {
 		if selected.Provenance == nil && selected.Batch == entry.Batch &&
 			selected.Node.Name == entry.Node.Name && selected.Node.UID == entry.Node.UID &&
 			selected.ProfileID == entry.ProfileID &&
@@ -125,9 +123,9 @@ func (p *coverageProjection) occupancyAdopted(entry *queryapi.MeasurementOccupan
 }
 
 func (p *coverageProjection) occupancyRequestMatches(
-	task api.DispatchOccupancyMeasurement, cell *queryapi.MeasurementCoverageCell,
+	task api.DispatchOccupancyMeasurement, cell *MeasurementCoverageCell,
 ) bool {
-	for _, beo := range p.base.requests.Items {
+	for _, beo := range p.base.Requests.Items {
 		c := beo.Spec.State.Candidate
 		if beo.Name == task.Spec.BatchEnergyOptimization &&
 			c.ModelSpec == cell.Model.Name && c.DeviceClass == cell.DeviceClass.Name &&
@@ -139,8 +137,8 @@ func (p *coverageProjection) occupancyRequestMatches(
 }
 
 func setCoverageOccupancyState(
-	entry *queryapi.MeasurementOccupancy, phase api.MeasurementPhase, result dispatchOccupancyProjection,
-	current map[string]bool, nodes map[string]queryapi.MeasurementIdentity,
+	entry *MeasurementOccupancy, phase api.MeasurementPhase, result OccupancyEvidenceProjection,
+	current map[string]bool, nodes map[string]MeasurementIdentity,
 ) {
 	switch phase {
 	case "", api.MeasurementPhaseMeasuring:
@@ -150,11 +148,11 @@ func setCoverageOccupancyState(
 	case api.MeasurementPhaseComplete:
 		entry.State, entry.Reason = occupancyStateFailed, occupancyEvidenceInvalid
 	}
-	if result.record != nil && result.record.Verdict == measurementVerdictAccepted && current[result.ProfileID] &&
+	if result.Record != nil && result.Record.Verdict == MeasurementVerdictAccepted && current[result.ProfileID] &&
 		nodes[entry.Node.Name].UID == entry.Node.UID {
 		entry.State, entry.Reason = occupancyStatePresent, result.Reason
 	}
-	if result.burst != nil && result.burst.Verdict == measurementVerdictObserved && current[result.ProfileID] &&
+	if result.Burst != nil && result.Burst.Verdict == MeasurementVerdictObserved && current[result.ProfileID] &&
 		nodes[entry.Node.Name].UID == entry.Node.UID {
 		entry.State, entry.Reason = occupancyStatePresent, result.Reason
 	}
@@ -177,76 +175,76 @@ func occupancyPriority(state string) int {
 }
 
 func occupancyTupleMatches(
-	node serving.NodeReference, model, powerMode, executionPath, profileID string,
-	cell *queryapi.MeasurementCoverageCell, nodes map[string]queryapi.MeasurementIdentity, current map[string]bool,
+	node MeasurementIdentity, model, powerMode, executionPath, profileID string,
+	cell *MeasurementCoverageCell, nodes map[string]MeasurementIdentity, current map[string]bool,
 ) bool {
 	return node.UID != "" && nodes[node.Name].UID == node.UID && current[profileID] &&
 		model == cell.Model.Name && powerMode == cell.PowerMode && executionPath == cell.ExecutionPath
 }
 
-func occupancyEntryKey(node queryapi.MeasurementIdentity, profile string, batch int) string {
+func occupancyEntryKey(node MeasurementIdentity, profile string, batch int) string {
 	return fmt.Sprintf("%s/%s/%s/%d", node.Name, node.UID, profile, batch)
 }
 
 func (p *coverageProjection) addCatalogOccupancy(
-	cell *queryapi.MeasurementCoverageCell, nodes map[string]queryapi.MeasurementIdentity,
-	current map[string]bool, entries map[string]queryapi.MeasurementOccupancy,
+	cell *MeasurementCoverageCell, nodes map[string]MeasurementIdentity,
+	current map[string]bool, entries map[string]MeasurementOccupancy,
 ) {
-	if p.base.failures[coverageCatalogSource] != nil {
+	if p.base.Failures[CoverageCatalogSource] != nil {
 		return
 	}
-	for i := range p.base.observedOccupancy {
-		observed := &p.base.observedOccupancy[i]
-		if !occupancyTupleMatches(serving.NodeReference(observed.Node),
+	for i := range p.base.ObservedOccupancy {
+		observed := &p.base.ObservedOccupancy[i]
+		if !occupancyTupleMatches(observed.Node,
 			observed.Model, observed.PowerMode, observed.ExecutionPath,
 			observed.Profile.ProfileID, cell, nodes, current) {
 			continue
 		}
-		node := queryapi.MeasurementIdentity{Name: observed.Node.Name, UID: observed.Node.UID}
+		node := MeasurementIdentity{Name: observed.Node.Name, UID: observed.Node.UID}
 		id := occupancyEntryKey(node, observed.Profile.ProfileID, observed.Batch)
 		entry, exists := entries[id]
 		if !exists {
-			entry = queryapi.MeasurementOccupancy{
+			entry = MeasurementOccupancy{
 				Node: node, ProfileID: observed.Profile.ProfileID, Batch: observed.Batch, State: "none",
 			}
 		}
 		entry.ObservedD = observed
 		entries[id] = entry
 	}
-	for i := range p.base.acceptedOccupancy {
-		selected := &p.base.acceptedOccupancy[i]
+	for i := range p.base.AcceptedOccupancy {
+		selected := &p.base.AcceptedOccupancy[i]
 		if selected.Provenance == nil || !occupancyTupleMatches(selected.Node, selected.Model, selected.PowerMode,
 			selected.ExecutionPath, selected.ProfileID, cell, nodes, current) {
 			continue
 		}
-		node := queryapi.MeasurementIdentity{Name: selected.Node.Name, UID: selected.Node.UID}
+		node := MeasurementIdentity{Name: selected.Node.Name, UID: selected.Node.UID}
 		id := occupancyEntryKey(node, selected.ProfileID, selected.Batch)
 		entry, exists := entries[id]
 		if !exists {
-			entry = queryapi.MeasurementOccupancy{
+			entry = MeasurementOccupancy{
 				Node: node, ProfileID: selected.ProfileID, Batch: selected.Batch, State: "none",
 			}
 		}
 		provenance := selected.Provenance
-		entry.SchedulerD = &queryapi.SchedulerOccupancy{
+		entry.SchedulerD = &SchedulerOccupancy{
 			Source: provenance.Source, Value: provenance.Value, Pairs: provenance.Pairs,
-			Window: (*queryapi.OccupancyMeasurementWindow)(provenance.Window), UpdatedAt: provenance.UpdatedAt,
+			Window: provenance.Window, UpdatedAt: provenance.UpdatedAt,
 		}
 		entries[id] = entry
 	}
 }
 
 func (p *coverageProjection) occupancyNodes(
-	cell *queryapi.MeasurementCoverageCell,
-) map[string]queryapi.MeasurementIdentity {
-	nodes := map[string]queryapi.MeasurementIdentity{}
-	for _, class := range p.base.inventory.Classes {
+	cell *MeasurementCoverageCell,
+) map[string]MeasurementIdentity {
+	nodes := map[string]MeasurementIdentity{}
+	for _, class := range p.base.Inventory.Classes {
 		if class.Name != cell.DeviceClass.Name {
 			continue
 		}
 		for _, node := range class.Nodes {
 			if p.query.Node == "" || p.query.Node == node.Name {
-				nodes[node.Name] = queryapi.MeasurementIdentity{Name: node.Name, UID: node.UID}
+				nodes[node.Name] = MeasurementIdentity{Name: node.Name, UID: node.UID}
 			}
 		}
 	}

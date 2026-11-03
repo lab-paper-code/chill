@@ -1,4 +1,4 @@
-package main
+package queryapi
 
 import (
 	"encoding/json"
@@ -10,9 +10,6 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
-	"github.com/lab-paper-code/chill/internal/queryapi"
-	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -29,7 +26,7 @@ const (
 
 func TestMeasurementCoverageCampaignFitsResponseBudget(t *testing.T) {
 	base := coverageSizeBase()
-	got := buildMeasurementCoverage(base, coverageSizeNamespace, httpapi.MeasurementCoverageQuery{})
+	got := BuildMeasurementCoverage(base, coverageSizeNamespace, CoverageQuery{})
 	raw, err := json.Marshal(got)
 	if err != nil {
 		t.Fatal(err)
@@ -58,50 +55,55 @@ func TestMeasurementCoverageCampaignFitsResponseBudget(t *testing.T) {
 	}
 	// Eighty retained profiles cover four cells. Each cell exposes only its
 	// current measurement's three batches; all requests and facts survive.
-	if rows != 12 || len(seen) != 12 || history != 90 || len(base.catalog.MeasurementFacts) != 80 {
-		t.Fatalf("current conditions or retained history changed: rows=%d unique=%d history=%d", rows, len(seen), history)
+	if rows != 12 || len(seen) != 12 || history != 90 || len(base.Catalog.MeasurementFacts) != 80 {
+		t.Fatalf(
+			"current conditions or retained history changed: rows=%d unique=%d history=%d",
+			rows,
+			len(seen),
+			history,
+		)
 	}
 }
 
-func coverageSizeBase() *measurementCoverageBase {
-	base := &measurementCoverageBase{
-		checked: map[string]time.Time{}, failures: map[string]error{},
-		catalog: httpapi.ProfilesView{},
+func coverageSizeBase() *CoverageBase {
+	base := &CoverageBase{
+		Checked: map[string]time.Time{}, Failures: map[string]error{},
+		Catalog: CoverageCatalog{},
 	}
-	base.catalog.MeasurementFacts = map[string]serving.MeasurementFacts{}
+	base.Catalog.MeasurementFacts = map[string]profilederivation.MeasurementFacts{}
 	for _, kind := range []string{"inventory", "compatibility", "catalog", "BEO", "Run"} {
-		base.checked[kind] = time.Now().UTC()
+		base.Checked[kind] = time.Now().UTC()
 	}
-	base.inventory.Classes = []queryapi.InventoryClassView{{
+	base.Inventory.Classes = []InventoryClassView{{
 		Name: coverageSizeClass, UID: "class-2df925e8-7142-45cd-8427-9f89c1155a80",
-		PowerModes: []queryapi.InventoryPowerModeView{{Name: "performance"}, {Name: "powersave"}},
-		Nodes:      []queryapi.InventoryNodeView{{Name: coverageSizeNode, UID: coverageSizeNodeUID}},
+		PowerModes: []InventoryPowerModeView{{Name: "performance"}, {Name: "powersave"}},
+		Nodes:      []InventoryNodeView{{Name: coverageSizeNode, UID: coverageSizeNodeUID}},
 	}}
 	for _, model := range []string{"resnet50", "mobilenet-v3"} {
-		base.inventory.Models = append(base.inventory.Models, queryapi.InventoryModelView{
+		base.Inventory.Models = append(base.Inventory.Models, InventoryModelView{
 			Name: model, UID: model + "-spec-uid",
 			Spec: api.ModelSpecSpec{ExecutionPaths: []api.ModelExecutionPath{{Name: coverageSizePath}}},
 		})
-		base.compatibility.Rows = append(base.compatibility.Rows, queryapi.ModelCompatibilityView{
-			Selection: queryapi.ModelCompatibilitySelection{
+		base.Compatibility.Rows = append(base.Compatibility.Rows, ModelCompatibilityView{
+			Selection: ModelCompatibilitySelection{
 				ModelSpec: model, DeviceClass: coverageSizeClass, ExecutionPath: coverageSizePath, Node: coverageSizeNode,
 			},
-			Verdict: queryapi.MeasurementSupportCompatible,
-			Inputs: queryapi.ModelCompatibilityInputs{
-				Node: queryapi.ModelCompatibilityObjectInput{Name: coverageSizeNode, UID: coverageSizeNodeUID},
+			Verdict: MeasurementSupportCompatible,
+			Inputs: ModelCompatibilityInputs{
+				Node: ModelCompatibilityObjectInput{Name: coverageSizeNode, UID: coverageSizeNodeUID},
 			},
 		})
 	}
 	for index := range 90 {
 		task := coverageSizeRequest(index)
-		base.requests.Items = append(base.requests.Items, task)
+		base.Requests.Items = append(base.Requests.Items, task)
 		if index < 80 {
 			coverageSizeAddProfile(base, task, index)
 		}
 	}
 	for index := range 1200 {
-		task := base.requests.Items[index%90]
-		base.runs.Items = append(base.runs.Items, api.ProfilingRun{
+		task := base.Requests.Items[index%90]
+		base.Runs.Items = append(base.Runs.Items, api.ProfilingRun{
 			ObjectMeta: meta.ObjectMeta{
 				Namespace: task.Namespace, Name: fmt.Sprintf("%s-trial-%04d", task.Name, index),
 				UID: types.UID(fmt.Sprintf("b3b3258c-4f21-4f94-9c5f-%012d", index)), Generation: 1,
@@ -135,10 +137,10 @@ func coverageSizeRequest(index int) api.BatchEnergyOptimization {
 	}
 }
 
-func coverageSizeAddProfile(base *measurementCoverageBase, task api.BatchEnergyOptimization, index int) {
+func coverageSizeAddProfile(base *CoverageBase, task api.BatchEnergyOptimization, index int) {
 	condition := coverageSizeCondition(task, index/2)
-	id := queryapi.CoverageRequestID(task)
-	facts := serving.MeasurementFacts{
+	id := CoverageRequestID(task)
+	facts := profilederivation.MeasurementFacts{
 		Request: profilederivation.MeasurementRequestReference{
 			Namespace: task.Namespace, Name: task.Name, UID: string(task.UID),
 		},
@@ -148,15 +150,15 @@ func coverageSizeAddProfile(base *measurementCoverageBase, task api.BatchEnergyO
 		Condition:   condition,
 		PointPolicy: profilederivation.PointPolicy{Version: "point-policy.v2", MinimumTrials: 3, ConfidenceLevel: .95},
 	}
-	profile := serving.Profile{
+	profile := CoverageProfile{
 		ID: id, Condition: condition, NodeName: coverageSizeNode, MeasuredAt: time.Unix(int64(index+1), 0),
 	}
 	for _, batch := range []int{1, 4, 8} {
 		facts.Batches = append(facts.Batches, coverageSizeBatch(task, condition, batch))
-		profile.Batches = append(profile.Batches, serving.BatchProfile{Batch: batch})
+		profile.Batches = append(profile.Batches, batch)
 	}
-	base.catalog.Profiles = append(base.catalog.Profiles, profile)
-	base.catalog.MeasurementFacts[id] = facts
+	base.Catalog.Profiles = append(base.Catalog.Profiles, profile)
+	base.Catalog.MeasurementFacts[id] = facts
 }
 
 func coverageSizeCondition(task api.BatchEnergyOptimization, group int) profilederivation.CurvePlanSpec {
@@ -213,7 +215,7 @@ func coverageSizeBatch(
 			facts.Sources = append(facts.Sources, profilederivation.RawEvidenceIdentity{
 				Store: "campaign-evidence",
 				Key: fmt.Sprintf("%s/profilingruns/%s/%s/records/power-window-workload-result.json",
-					queryapi.CoverageRequestID(task), trialID, task.UID), Size: 16384,
+					CoverageRequestID(task), trialID, task.UID), Size: 16384,
 			})
 		}
 	}
@@ -251,7 +253,7 @@ type coverageSizeCheckKey struct {
 }
 
 func coverageSizeAssertVariant(
-	t *testing.T, base *measurementCoverageBase, variant queryapi.MeasurementCoverageVariant, seen map[string]bool,
+	t *testing.T, base *CoverageBase, variant MeasurementCoverageVariant, seen map[string]bool,
 ) {
 	t.Helper()
 	expected := map[coverageSizeCheckKey][]string{}
@@ -260,8 +262,8 @@ func coverageSizeAssertVariant(
 			check := coverageDatasetCheck(base, condition)
 			ids := []string{}
 			for _, row := range variant.ResultRows {
-				if row.RowKind != queryapi.ResultRowSourceReference &&
-					queryapi.CoverageContains(variant.BatchProgress.Target, row.Batch) {
+				if row.RowKind != ResultRowSourceReference &&
+					CoverageContains(variant.BatchProgress.Target, row.Batch) {
 					ids = append(ids, row.ID)
 				}
 			}
@@ -273,7 +275,7 @@ func coverageSizeAssertVariant(
 			t.Fatalf("duplicate row %s", row.ID)
 		}
 		seen[row.ID] = true
-		facts := base.catalog.MeasurementFacts[row.ProfileID]
+		facts := base.Catalog.MeasurementFacts[row.ProfileID]
 		if !reflect.DeepEqual(variant.Condition, facts.Condition) ||
 			!reflect.DeepEqual(row.Condition, facts.Condition) {
 			t.Fatalf("row %s frozen conditions changed", row.ID)
@@ -282,7 +284,7 @@ func coverageSizeAssertVariant(
 			if batch.Batch != row.Batch {
 				continue
 			}
-			original := queryapi.AssessMeasurementBatch(batch, facts.PointPolicy.MinimumTrials, false, true)
+			original := AssessMeasurementBatch(batch, facts.PointPolicy.MinimumTrials, false, true)
 			coverageSizeAssertRow(t, row, batch, original)
 			for _, check := range original.Checklist.Checks {
 				key := coverageSizeCheckKey{check.Code, check.Result, check.Message}
@@ -310,16 +312,16 @@ func coverageSizeAssertVariant(
 }
 
 func coverageSizeAssertRow(
-	t *testing.T, row queryapi.ResultRow, batch profilederivation.MeasurementBatchFacts,
-	original queryapi.MeasurementAssessment,
+	t *testing.T, row ResultRow, batch profilederivation.MeasurementBatchFacts,
+	original MeasurementAssessment,
 ) {
 	t.Helper()
 	wantAssessment := original
-	wantAssessment.Checklist.Checks = []queryapi.MeasurementCheck{}
+	wantAssessment.Checklist.Checks = []MeasurementCheck{}
 	if !reflect.DeepEqual(row.Assessment, wantAssessment) {
 		t.Fatalf("row %s assessment summary changed: got=%+v want=%+v", row.ID, row.Assessment, wantAssessment)
 	}
-	if row.Assessment.Status != queryapi.MeasurementCriteriaMet ||
+	if row.Assessment.Status != MeasurementCriteriaMet ||
 		row.P95Milliseconds == nil || *row.P95Milliseconds != 0 ||
 		row.TotalJoulesPerItem == nil || *row.TotalJoulesPerItem != 0 ||
 		row.IdleWatts == nil || *row.IdleWatts != 0 ||
@@ -336,8 +338,8 @@ func coverageSizeAssertRow(
 }
 
 func TestMeasurementCoverageChecklistKeepsRequestedBatchProvenance(t *testing.T) {
-	response := buildMeasurementCoverage(
-		coverageSizeBase(), coverageSizeNamespace, httpapi.MeasurementCoverageQuery{Batches: []int{4}},
+	response := BuildMeasurementCoverage(
+		coverageSizeBase(), coverageSizeNamespace, CoverageQuery{Batches: []int{4}},
 	)
 	rows := 0
 	for _, cell := range response.Cells {

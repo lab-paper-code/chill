@@ -284,8 +284,10 @@ func TestR18RequestResultJoinsOnlyExactAcceptedSelection(t *testing.T) {
 				}, tc.catalogErr
 			}}
 			readAt := time.Unix(42, 0).UTC()
-			reader := measurementResultReader{
-				read: func(_ context.Context, namespace, name string) (queryapi.BatchEnergyOptimizationResultSnapshot, error) {
+			reader := querykube.MeasurementResultReader{
+				ReadSource: func(
+					_ context.Context, namespace, name string,
+				) (queryapi.BatchEnergyOptimizationResultSnapshot, error) {
 					if namespace != request.Namespace || name != request.Name {
 						t.Fatalf("request identity changed: %s/%s", namespace, name)
 					}
@@ -296,7 +298,7 @@ func TestR18RequestResultJoinsOnlyExactAcceptedSelection(t *testing.T) {
 						},
 					}, nil
 				},
-				measurements: service,
+				Catalog: queryCatalogSource(service.catalog),
 			}
 			handler, err := readapi.NewHandler(nilPassportReader{}, reader, unusedPreflightReader{})
 			if err != nil {
@@ -304,7 +306,9 @@ func TestR18RequestResultJoinsOnlyExactAcceptedSelection(t *testing.T) {
 			}
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, httptest.NewRequest(
-				http.MethodGet, "/api/v1/namespaces/"+request.Namespace+"/batch-energy-optimizations/"+request.Name+"/result", nil,
+				http.MethodGet,
+				"/api/v1/namespaces/"+request.Namespace+"/batch-energy-optimizations/"+request.Name+"/result",
+				nil,
 			))
 			var result queryapi.BatchEnergyOptimizationResult
 			if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {

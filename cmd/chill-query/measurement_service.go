@@ -3,20 +3,17 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"io"
 
 	"slices"
-	"sort"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/queryapi"
+	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"golang.org/x/sync/errgroup"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -26,10 +23,8 @@ type measurementService struct {
 	objects evidencestore.LocationReader
 	opts    options
 
-	catalog       func(context.Context) (servingkube.CatalogRead, error)
-	inventory     func(context.Context) (queryapi.InventoryView, error)
-	compatibility func(context.Context) (queryapi.ModelCompatibilityMatrixView, error)
-	coverageCache measurementCoverageCache
+	catalog  func(context.Context) (servingkube.CatalogRead, error)
+	coverage *querykube.CoverageService
 }
 
 func (o *measurementService) namespace(namespace string) error {
@@ -50,14 +45,10 @@ func (o *measurementService) listOperationCosts(
 	ctx context.Context, namespace string,
 ) (httpapi.MeasurementProjectionList, error) {
 	result := httpapi.MeasurementProjectionList{Items: []httpapi.MeasurementProjection{}}
-	if err := o.namespace(namespace); err != nil {
+	list, err := querykube.ListOperationCostMeasurements(ctx, o.client, namespace, o.namespace)
+	if err != nil {
 		return result, err
 	}
-	var list api.OperationCostMeasurementList
-	if err := o.client.List(ctx, &list, client.InNamespace(namespace)); err != nil {
-		return result, err
-	}
-	sort.Slice(list.Items, func(i, j int) bool { return list.Items[i].Name < list.Items[j].Name })
 	result.Items = make([]httpapi.MeasurementProjection, len(list.Items))
 	group, readCtx := errgroup.WithContext(ctx)
 	group.SetLimit(8)
@@ -79,11 +70,8 @@ func (o *measurementService) listOperationCosts(
 func (o *measurementService) getOperationCost(
 	ctx context.Context, namespace, name string,
 ) (httpapi.MeasurementProjection, error) {
-	if err := o.namespace(namespace); err != nil {
-		return httpapi.MeasurementProjection{}, err
-	}
-	var cr api.OperationCostMeasurement
-	if err := o.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &cr); err != nil {
+	cr, err := querykube.GetOperationCostMeasurement(ctx, o.client, namespace, name, o.namespace)
+	if err != nil {
 		return httpapi.MeasurementProjection{}, err
 	}
 	return o.projectOperationCost(ctx, cr)
@@ -104,7 +92,7 @@ func (o *measurementService) projectOperationCost(
 		return httpapi.MeasurementProjection{}, err
 	}
 	projection := httpapi.ProjectOperationCostMeasurement(cr, o.opts.storeName, steps)
-	projection.Assessment, err = json.Marshal(assessOperationCost(cr, steps))
+	projection.Assessment, err = json.Marshal(queryapi.AssessOperationCost(cr, queryOperationSteps(steps)))
 	return projection, err
 }
 
@@ -112,14 +100,10 @@ func (o *measurementService) listDispatchOccupancies(
 	ctx context.Context, namespace string,
 ) (dispatchOccupancyProjectionList, error) {
 	result := dispatchOccupancyProjectionList{Items: []dispatchOccupancyProjection{}}
-	if err := o.namespace(namespace); err != nil {
+	list, err := querykube.ListDispatchOccupancyMeasurements(ctx, o.client, namespace, o.namespace)
+	if err != nil {
 		return result, err
 	}
-	var list api.DispatchOccupancyMeasurementList
-	if err := o.client.List(ctx, &list, client.InNamespace(namespace)); err != nil {
-		return result, err
-	}
-	sort.Slice(list.Items, func(i, j int) bool { return list.Items[i].Name < list.Items[j].Name })
 	for _, cr := range list.Items {
 		projection, err := o.projectDispatchOccupancy(ctx, cr)
 		if err != nil {
@@ -133,30 +117,11 @@ func (o *measurementService) listDispatchOccupancies(
 func (o *measurementService) getDispatchOccupancy(
 	ctx context.Context, namespace, name string,
 ) (dispatchOccupancyProjection, error) {
-	if err := o.namespace(namespace); err != nil {
-		return dispatchOccupancyProjection{}, err
-	}
-	var cr api.DispatchOccupancyMeasurement
-	if err := o.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &cr); err != nil {
+	cr, err := querykube.GetDispatchOccupancyMeasurement(ctx, o.client, namespace, name, o.namespace)
+	if err != nil {
 		return dispatchOccupancyProjection{}, err
 	}
 	return o.projectDispatchOccupancy(ctx, cr)
-}
-
-func (o *measurementService) readEvidence(ctx context.Context, location evidencestore.ObjectLocation) ([]byte, error) {
-	stream, err := o.objects.OpenLocation(ctx, location)
-	if err != nil {
-		return nil, err
-	}
-	raw, readErr := io.ReadAll(io.LimitReader(stream, o.opts.maxEvidenceBytes+1))
-	closeErr := stream.Close()
-	if errors.Join(readErr, closeErr) != nil {
-		return nil, errors.Join(readErr, closeErr)
-	}
-	if int64(len(raw)) > o.opts.maxEvidenceBytes {
-		return nil, errors.New("measurement evidence exceeds read bound")
-	}
-	return raw, nil
 }
 
 func catalogView(read servingkube.CatalogSnapshot) httpapi.ProfilesView {
@@ -176,4 +141,18 @@ func catalogView(read servingkube.CatalogSnapshot) httpapi.ProfilesView {
 		out.Preparations[id] = spec
 	}
 	return out
+}
+
+func queryOperationSteps(steps []servingkube.OperationStepProjection) []queryapi.OperationStepEvidence {
+	if steps == nil {
+		return nil
+	}
+	facts := make([]queryapi.OperationStepEvidence, len(steps))
+	for i, step := range steps {
+		facts[i] = queryapi.OperationStepEvidence{
+			OperationID: step.OperationID, DurationNanos: step.DurationNanos,
+			WallJoules: step.WallJoules, Reason: step.Reason,
+		}
+	}
+	return facts
 }

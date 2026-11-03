@@ -223,15 +223,31 @@ func buildHandler(
 			namespace: opts.namespace,
 			tempDir:   opts.tempDir,
 		},
-		inventory: func(ctx context.Context) (queryapi.InventoryView, error) {
+	}
+	measurements.coverage = &querykube.CoverageService{
+		Reader: reader, Objects: measurements.objects,
+		Catalog:         queryCatalogSource(catalog),
+		Decoder:         decodeOccupancyEvidence,
+		Authorize:       measurements.namespace,
+		RequestTimeout:  opts.requestTimeout,
+		MaxRequestBytes: opts.maxRequestBytes, MaxEvidenceBytes: opts.maxEvidenceBytes,
+		Inventory: func(ctx context.Context) (queryapi.InventoryView, error) {
 			snapshot, err := inventory.Read(ctx)
 			return queryapi.BuildInventory(snapshot), err
 		},
-		compatibility: newModelCompatibilityMatrixQuery(reader, opts),
+		Compatibility: newModelCompatibilityMatrixQuery(reader, opts),
 	}
-	handler, err := readapi.NewHandler(passports,
-		measurementResultReader{results.Read, measurements},
-		measurementPreflightReader{preflights.Read, measurements})
+	handler, err := readapi.NewHandler(
+		passports,
+		querykube.MeasurementResultReader{ReadSource: results.Read, Catalog: queryCatalogSource(catalog)},
+		querykube.MeasurementPreflightReader{
+			ReadSource: preflights.Read,
+			Enrichment: &querykube.MeasurementPreflightService{
+				Reader: reader, Objects: measurements.objects, Catalog: queryCatalogSource(catalog),
+				Authorize: measurements.namespace, StoreName: opts.storeName, MaxEvidenceBytes: opts.maxEvidenceBytes,
+			},
+		},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("construct Query API HTTP handler: %w", err)
 	}
