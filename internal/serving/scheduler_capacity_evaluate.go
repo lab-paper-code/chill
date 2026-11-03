@@ -221,14 +221,15 @@ func capacityWeights(rate float64, items []capacityItem) ([]int32, []float64, bo
 // capacityResult is one plan set evaluated exactly: per-Workload judgments,
 // weights and the analytic energy over [0, T].
 type capacityResult struct {
-	choice   []int
-	route    float64
-	keep     bool
-	key      string
-	joules   float64
-	worst    float64
-	excesses []float64 // per-Workload worst exceedances, descending
-	feasible bool
+	choice             []int
+	route              float64
+	keep               bool
+	key                string
+	joules             float64
+	period, keepJoules float64
+	worst              float64
+	excesses           []float64 // per-Workload worst exceedances, descending
+	feasible           bool
 	// final marks a plan set whose final (steady-state) judgment holds for
 	// every Workload, route weights within κ included.
 	final bool
@@ -274,8 +275,23 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 }
 
 func (p *capacityPlanner) evaluateAtRoute(choice []int, r float64, bridge *schedulerBridgeSchedule) capacityResult {
-	t := p.period
-	res := capacityResult{choice: choice, route: r, keep: true, bridge: bridge}
+	post := 0.0
+	for n, j := range choice {
+		if plan := p.plans[n][j]; !plan.keep {
+			post = max(post, plan.postMax)
+		}
+	}
+	window := r + post + p.period
+	res := p.evaluateAtWindow(choice, r, bridge, window)
+	res.keepJoules = p.keepWatts * window
+	if res.keep {
+		res.keepJoules = res.joules
+	}
+	return res
+}
+
+func (p *capacityPlanner) evaluateAtWindow(choice []int, r float64, bridge *schedulerBridgeSchedule, t float64) capacityResult {
+	res := capacityResult{choice: choice, route: r, keep: true, bridge: bridge, period: t}
 	keys := make([]string, len(choice))
 	items, retained := make([][]capacityItem, len(p.ws)), make([][]capacityItem, len(p.ws))
 	for n, j := range choice {
@@ -356,7 +372,7 @@ func (p *capacityPlanner) evaluateAtRoute(choice []int, r float64, bridge *sched
 			}
 		}
 		if bridge != nil {
-			res.joules += p.bridgeRequestJoules(bridge, ws, mean, r)
+			res.joules += p.bridgeRequestJoules(bridge, ws, mean, r, t)
 		} else {
 			res.joules += initial*r + max(0, ws.rate-kret)*r*mean + (served*mean+max(0, ws.rate-served)*mean)*(t-r)
 		}
@@ -365,7 +381,7 @@ func (p *capacityPlanner) evaluateAtRoute(choice []int, r float64, bridge *sched
 		res.rows = append(res.rows, rows)
 		res.sums = append(res.sums, [2]float64{knew, kret})
 	}
-	reason, reserves := p.transitionConstraints(choice, r)
+	reason, reserves := p.transitionConstraints(choice)
 	res.exclusion, res.reserves = cmp.Or(res.exclusion, reason), reserves
 	slices.SortFunc(res.excesses, func(a, b float64) int { return cmp.Compare(b, a) })
 	res.key = strings.Join(keys, "|")
@@ -413,8 +429,8 @@ func (a capacityResult) better(b *capacityResult) bool {
 			return order < 0
 		}
 	}
-	if a.joules != b.joules {
-		return a.joules < b.joules
+	if a.joules-a.keepJoules != b.joules-b.keepJoules {
+		return a.joules-a.keepJoules < b.joules-b.keepJoules
 	}
 	if a.keep != b.keep {
 		return a.keep

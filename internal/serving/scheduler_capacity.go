@@ -12,14 +12,13 @@ import (
 
 // Decision statuses and reasons of the capacity planner (analytic-planner §3, §4).
 const (
-	schedulerStatusKeep               = "Keep"
-	schedulerRouteWeightExceeds       = "RouteWeightExceedsCapacity"
-	schedulerNoPlanMeetsSLO           = "NoPlanMeetsSLO"
-	schedulerPlanMissingOperationCost = "MissingOperationCost"
-	schedulerPlanInfeasibleResources  = "InfeasibleResources"
-	schedulerPlanFixedWorkload        = "FixedWorkload"
-	schedulerPlanPreparationFailed    = "PreparationFailed"
-	schedulerPlanHeld                 = "HeldAfterOverload"
+	schedulerStatusKeep              = "Keep"
+	schedulerRouteWeightExceeds      = "RouteWeightExceedsCapacity"
+	schedulerNoPlanMeetsSLO          = "NoPlanMeetsSLO"
+	schedulerPlanInfeasibleResources = "InfeasibleResources"
+	schedulerPlanFixedWorkload       = "FixedWorkload"
+	schedulerPlanPreparationFailed   = "PreparationFailed"
+	schedulerPlanHeld                = "HeldAfterOverload"
 	// schedulerPartialObservation waits for one control interval of complete
 	// arrival observation after the process starts; until one observation
 	// window is observed it names the node plans that remove or replace.
@@ -97,15 +96,17 @@ type SchedulerPlanSearch struct {
 // that point need not be the selected endpoint. Final means final-capacity
 // feasible, not the last step or the chosen end. Errors return no decision.
 type SchedulerPlanSearchStep struct {
-	Start        string          `json:"start"`
-	K            int             `json:"k"`
-	ChangedNodes []NodeReference `json:"changedNodes,omitempty"`
-	Joules       float64         `json:"joules"`
-	Feasible     bool            `json:"feasible"`
-	Final        bool            `json:"final"`
-	Evaluated    int             `json:"evaluated"`
-	Duration     time.Duration   `json:"durationNanos"`
-	BudgetCut    bool            `json:"budgetCut,omitempty"`
+	Start            string          `json:"start"`
+	K                int             `json:"k"`
+	ChangedNodes     []NodeReference `json:"changedNodes,omitempty"`
+	Joules           float64         `json:"joules"`
+	Feasible         bool            `json:"feasible"`
+	Final            bool            `json:"final"`
+	ComparisonWindow time.Duration   `json:"comparisonWindowNanos,omitempty"`
+	KeepJoules       float64         `json:"keepJoules,omitempty"`
+	Evaluated        int             `json:"evaluated"`
+	Duration         time.Duration   `json:"durationNanos"`
+	BudgetCut        bool            `json:"budgetCut,omitempty"`
 }
 
 // SchedulerCapacityWorkload is one controlled Workload of the chosen plan set.
@@ -138,15 +139,17 @@ type SchedulerNodePlan struct {
 	Eligible bool          `json:"eligible"`
 	Reason   string        `json:"reason,omitempty"`
 	// RequiresBridge is a conditional candidate, never permission to stop first.
-	RequiresBridge          []string           `json:"requiresBridge,omitempty"`
-	RequiresRecovery        []string           `json:"requiresRecovery,omitempty"`
-	Tempo                   string             `json:"tempo,omitempty"`
-	Kappa                   map[string]float64 `json:"kappa,omitempty"`
-	KappaRetained           map[string]float64 `json:"kappaRetained,omitempty"`
-	Pre                     time.Duration      `json:"preNanos"`
-	Post                    time.Duration      `json:"postNanos"`
-	Joules                  float64            `json:"joules"`
-	EnergyUncertaintyJoules float64            `json:"energyUncertaintyJoules,omitempty"`
+	RequiresBridge          []string                       `json:"requiresBridge,omitempty"`
+	RequiresRecovery        []string                       `json:"requiresRecovery,omitempty"`
+	Tempo                   string                         `json:"tempo,omitempty"`
+	Kappa                   map[string]float64             `json:"kappa,omitempty"`
+	KappaRetained           map[string]float64             `json:"kappaRetained,omitempty"`
+	Pre                     time.Duration                  `json:"preNanos"`
+	Post                    time.Duration                  `json:"postNanos"`
+	Joules                  float64                        `json:"joules"`
+	EnergyUncertaintyJoules float64                        `json:"energyUncertaintyJoules,omitempty"`
+	ActionCosts             []SchedulerActionCost          `json:"actionCosts,omitempty"`
+	IdleCosts               map[string]IdlePowerProvenance `json:"idleCosts,omitempty"`
 }
 
 // EvaluateScheduler plans with capacity sums: node plans, the transient and
@@ -161,6 +164,11 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	settings.AutonomousWorkloads = slices.Clone(settings.AutonomousWorkloads)
 	settings.ExcludedNodes = slices.Clone(settings.ExcludedNodes)
 	settings.MinimumDemand = maps.Clone(settings.MinimumDemand)
+	settings.DefaultOperationCost = maps.Clone(settings.DefaultOperationCost)
+	if settings.DefaultIdlePower != nil {
+		idle := *settings.DefaultIdlePower
+		settings.DefaultIdlePower = &idle
+	}
 	snapshot = schedulerCanonical(snapshot)
 	if settings.ScaleDownStabilization > 0 && snapshot.ScaleDown == nil {
 		snapshot.ScaleDown = map[string]SchedulerDownState{}
@@ -327,20 +335,21 @@ func schedulerCanonical(s SchedulerSnapshot) SchedulerSnapshot {
 }
 
 type capacityPlanner struct {
-	ctx      context.Context
-	settings SchedulerSettings
-	snapshot SchedulerSnapshot
-	keep     SchedulerCandidate
-	rows     map[string]CapacityRow
-	options  []SchedulerOption
-	ws       []capacityWorkload
-	index    map[string]int
-	plans    [][]*capacityPlan // per Node; plans[n][0] is keep
-	compared []bool
-	period   float64
-	examined int
-	searched SchedulerPlanSearch
-	variants map[string]SchedulerOption // capacity variants by profile ID and batch limit
+	ctx       context.Context
+	settings  SchedulerSettings
+	snapshot  SchedulerSnapshot
+	keep      SchedulerCandidate
+	rows      map[string]CapacityRow
+	options   []SchedulerOption
+	ws        []capacityWorkload
+	index     map[string]int
+	plans     [][]*capacityPlan // per Node; plans[n][0] is keep
+	compared  []bool
+	period    float64
+	keepWatts float64 // keep energy is linear in the common comparison window
+	examined  int
+	searched  SchedulerPlanSearch
+	variants  map[string]SchedulerOption // capacity variants by profile ID and batch limit
 	// partial marks a window observed for less than its length since the
 	// process started: arrivals there still reflect the restart, so plans
 	// only add instances and keep every route.

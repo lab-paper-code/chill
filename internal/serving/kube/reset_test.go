@@ -203,10 +203,10 @@ func newResetHarness(t *testing.T) *resetHarness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings := serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
+	settings := withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 		MaxObservationAge: time.Second, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1,
 		CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
-		CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, AutonomousWorkloads: []string{selected.Applied.UID, foreign.Applied.UID}}
+		CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, AutonomousWorkloads: []string{selected.Applied.UID, foreign.Applied.UID}})
 	document, err := json.Marshal(map[string]any{"settings": settings, "staticRouting": map[string]map[string]int{foreign.Applied.UID: {}}, "reserved": map[string]any{"node": map[string]any{"cpus": []int{3}}}})
 	if err != nil {
 		t.Fatal(err)

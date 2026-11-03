@@ -1,76 +1,92 @@
 package serving
 
-import (
-	"fmt"
-	"reflect"
-	"sort"
-)
+func (s *schedulerReplayState) defaultOperation(a *schedulerReplayAction, reason string) *OperationCost {
+	value := s.settings.DefaultOperationCost[a.action.Kind]
+	a.action.CostID = ""
+	a.action.CostProvenance = &OperationCostProvenance{Source: operationSourceDefault, Value: &value}
+	s.out.assumptions = appendUnique(s.out.assumptions, "configured default whole-wall operation cost: "+reason)
+	return actionDefaultCost(a.action)
+}
 
 func schedulerValidHalfWidth(value float64) bool {
 	return schedulerFinite(value) && value >= 0
 }
 
-func schedulerBaseline(baselines []NodeBaseline, node SchedulerNode, instances []SchedulerInstance, options []SchedulerOption) (float64, string, []string, []string, string) {
-	state := []string{}
-	for _, i := range instances {
-		state = append(state, schedulerState(i))
-	}
-	sort.Strings(state)
-	var matched, unloaded *NodeBaseline
+func selectIdleMeasurements(baselines []NodeBaseline, node SchedulerNode, state []string, identities, classes map[string]string) (unloaded, selected *NodeBaseline, selectedRank int) {
+	selectedRank = 3
 	for j := range baselines {
 		b := &baselines[j]
-		if b.Node != node.Node || b.PowerMode != node.PowerMode || b.Scope != schedulerNodeWallScope || b.Meter == "" || !schedulerFinite(b.Watts) || b.Watts < 0 || !schedulerValidHalfWidth(b.WattsUncertainty) || b.ID == "" || b.Reference.Validate() != nil {
+		if b.Scope != schedulerNodeWallScope || b.Meter == "" || !schedulerFinite(b.Watts) || b.Watts < 0 || !schedulerValidHalfWidth(b.WattsUncertainty) || b.ID == "" || b.Reference.Validate() != nil {
 			continue
 		}
-		bs := append([]string(nil), b.State...)
-		sort.Strings(bs)
-		if fmt.Sprint(bs) == fmt.Sprint(state) && (matched == nil || b.MeasuredAt.After(matched.MeasuredAt)) {
-			matched = b
+		class := b.DeviceClass
+		if class == "" {
+			class = classes[b.Node.UID]
 		}
-		if len(bs) == 0 && (unloaded == nil || b.MeasuredAt.After(unloaded.MeasuredAt)) {
+		rank := measurementRank(b.Node.UID, class, node.Node.UID, classes[node.Node.UID],
+			b.PowerMode == node.PowerMode && measurementEqualState(b.State, state, identities))
+		if rank < 3 && (selected == nil || measurementPreferred(rank, b.MeasuredAt, b.ID, selectedRank, selected.MeasuredAt, selected.ID)) {
+			selected, selectedRank = b, rank
+		}
+		if b.Node.UID == node.Node.UID && b.PowerMode == node.PowerMode && len(b.State) == 0 &&
+			(unloaded == nil || measurementPreferred(0, b.MeasuredAt, b.ID, 0, unloaded.MeasuredAt, unloaded.ID)) {
 			unloaded = b
 		}
 	}
-	if matched != nil {
-		return matched.Watts, matched.Meter, []string{matched.ID}, nil, ""
+	return unloaded, selected, selectedRank
+}
+
+func schedulerBaseline(settings SchedulerSettings, baselines []NodeBaseline, node SchedulerNode, instances []SchedulerInstance, options []SchedulerOption) (float64, string, IdlePowerProvenance, []string) {
+	identities := schedulerMeasurementIdentities(SchedulerSnapshot{Baselines: baselines, Instances: instances, Options: options}, nil)
+	state := make([]string, 0, len(instances))
+	for _, i := range instances {
+		state = append(state, schedulerState(i))
 	}
-	if unloaded == nil {
-		return 0, "", nil, nil, "MissingUnloadedNodeBaseline:" + node.Node.UID + ":" + node.PowerMode
+	classes := measurementDeviceClasses(SchedulerSnapshot{Instances: instances, Options: options}, nil)
+	unloaded, selected, rank := selectIdleMeasurements(baselines, node, state, identities, classes)
+	if selected != nil && rank == 0 {
+		provenance := IdlePowerProvenance{Source: operationSourceExact, Watts: selected.Watts, References: []string{selected.ID}}
+		return selected.Watts, selected.Meter, provenance, nil
 	}
+	if unloaded != nil {
+		if provenance, ok := reconstructIdlePower(unloaded, instances, node.PowerMode, options); ok {
+			return provenance.Watts, unloaded.Meter, provenance,
+				[]string{"derived unloaded baseline plus measured per-instance idle increments; coexistence interaction unmeasured"}
+		}
+	}
+	if selected != nil {
+		scope := selected.Meter
+		if rank == 2 {
+			scope = "estimate:" + node.Node.UID + ":" + selected.Meter
+		}
+		provenance := IdlePowerProvenance{Source: measurementSource(rank), Watts: selected.Watts, References: []string{selected.ID}}
+		return selected.Watts, scope, provenance,
+			[]string{"nearest idle measurement transferred to target cell; not an exact target measurement"}
+	}
+	fallback := settings.DefaultIdlePower
+	watts := fallback.NodeWatts + float64(len(instances))*fallback.PerInstanceWatts
+	provenance := IdlePowerProvenance{Source: operationSourceDefault, Watts: watts}
+	return watts, "default:" + node.Node.UID, provenance,
+		[]string{"configured idle-power estimate replaces absent or incompatible baseline measurement; not measured"}
+}
+
+func reconstructIdlePower(unloaded *NodeBaseline, instances []SchedulerInstance, mode string, options []SchedulerOption) (IdlePowerProvenance, bool) {
 	watts := unloaded.Watts
 	sources := []string{unloaded.ID}
 	for _, i := range instances {
-		effective, ok := schedulerIdleAtMode(i, node.PowerMode, options)
-		if !ok {
-			return 0, "", nil, nil, "MissingRetainedRunnerTargetPowerProfile:" + i.ID
-		}
+		effective, ok := schedulerIdleAtMode(i, mode, options)
 		p := effective.Profile
-		if p == nil || !schedulerFinite(p.IdleBaselineWatts) || p.IdleBaselineWatts < 0 || len(p.Evidence) == 0 {
-			return 0, "", nil, nil, "MissingExactIdleSubtraction:" + i.ID
-		}
-		if effective.IdleMeter != unloaded.Meter || effective.IdleScope != schedulerNodeWallScope {
-			return 0, "", nil, nil, "IdleMeterScopeMismatch:" + i.ID
+		if !ok || p == nil || !schedulerFinite(p.IdleBaselineWatts) || p.IdleBaselineWatts < 0 ||
+			len(p.Evidence) == 0 || effective.IdleMeter != unloaded.Meter || effective.IdleScope != schedulerNodeWallScope {
+			return IdlePowerProvenance{}, false
 		}
 		watts += p.IdleBaselineWatts - unloaded.Watts
 		sources = appendUnique(sources, p.ID)
 	}
 	if !schedulerFinite(watts) || watts < 0 {
-		return 0, "", nil, nil, "DerivedNodeBaselineOutsidePhysicalRange:" + node.Node.UID
+		return IdlePowerProvenance{}, false
 	}
-	return watts, unloaded.Meter, sources, []string{"derived unloaded node baseline + (profile estimator's exact loaded idle - unloaded) once per physical instance; coexistence interference unmeasured; retained immutable bundles at a changed host mode use only matching measured mode/resource/model idle evidence"}, ""
-}
-
-// schedulerEqualState compares loaded-state multisets under schedulerCostState.
-func schedulerEqualState(a, b []string) bool {
-	norm := func(states []string) []string {
-		out := make([]string, len(states))
-		for k, s := range states {
-			out[k] = schedulerCostState(s)
-		}
-		sort.Strings(out)
-		return out
-	}
-	return reflect.DeepEqual(norm(a), norm(b))
+	return IdlePowerProvenance{Source: operationSourceExact, Watts: watts, References: sources, Reconstructed: true}, true
 }
 
 func schedulerIdleAtMode(i SchedulerInstance, mode string, options []SchedulerOption) (SchedulerInstance, bool) {
@@ -80,16 +96,20 @@ func schedulerIdleAtMode(i SchedulerInstance, mode string, options []SchedulerOp
 	if i.Profile.Condition.PowerMode == mode {
 		return i, true
 	}
-	p := i.Profile.Condition
-	for _, o := range options {
-		j := o.Instance
-		if j.Profile == nil || j.Node != i.Node || !reflect.DeepEqual(i.Allocation, j.Allocation) {
+	cell := MeasurementProfileIdentity(i.Profile)
+	var selected *SchedulerInstance
+	for index := range options {
+		j := &options[index].Instance
+		if j.Profile == nil || j.Node.UID != i.Node.UID || j.Profile.Condition.PowerMode != mode || MeasurementProfileIdentity(j.Profile) != cell {
 			continue
 		}
-		q := j.Profile.Condition
-		if q.PowerMode == mode && p.RuntimeFamily == q.RuntimeFamily && p.Backend == q.Backend && reflect.DeepEqual(p.Artifact, q.Artifact) && reflect.DeepEqual(p.Preprocessor, q.Preprocessor) && reflect.DeepEqual(p.ActiveProtocol.Dataset, q.ActiveProtocol.Dataset) && reflect.DeepEqual(p.Firstfloor, q.Firstfloor) && reflect.DeepEqual(p.RuntimeAccess, q.RuntimeAccess) && reflect.DeepEqual(p.PlannedBatchSizes, q.PlannedBatchSizes) {
-			return j, true
+		if selected == nil || j.Profile.MeasuredAt.After(selected.Profile.MeasuredAt) ||
+			j.Profile.MeasuredAt.Equal(selected.Profile.MeasuredAt) && j.Profile.ID < selected.Profile.ID {
+			selected = j
 		}
+	}
+	if selected != nil {
+		return *selected, true
 	}
 	return i, false
 }

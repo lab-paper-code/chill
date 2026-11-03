@@ -38,14 +38,14 @@ type schedulerBaselineBound struct {
 	watts     float64 // signed coefficient of the exact baseline reconstruction
 }
 
-func schedulerBaselineUncertainty(baselines []NodeBaseline, sources []string, instances int) schedulerBaselineBound {
-	if len(sources) == 0 {
+func schedulerBaselineUncertainty(baselines []NodeBaseline, provenance IdlePowerProvenance, instances int) schedulerBaselineBound {
+	if len(provenance.References) == 0 {
 		return schedulerBaselineBound{}
 	}
 	for _, b := range baselines {
-		if b.ID == sources[0] {
+		if b.ID == provenance.References[0] {
 			coefficient := 1.0
-			if len(b.State) == 0 {
+			if provenance.Reconstructed {
 				// unloaded + sum(loaded idle - unloaded), not n independent errors
 				coefficient -= float64(instances)
 			}
@@ -76,7 +76,7 @@ func (plan *capacityPlan) addBounds(bounds schedulerEnergyBounds, r, t, sign flo
 // of the operations before the route (those the route depends on) and after
 // it. It returns the instances stopped before the route and those removed
 // before it.
-func (p *capacityPlanner) chain(n int, plan *capacityPlan) (map[string]bool, map[string]bool, string) {
+func (p *capacityPlanner) chain(n int, plan *capacityPlan) (map[string]bool, map[string]bool) {
 	node := p.snapshot.Nodes[n].Node
 	c := SchedulerCandidate{Nodes: slices.Clone(p.keep.Nodes), Routing: p.keep.Routing}
 	c.Nodes[n].PowerMode = plan.mode
@@ -86,7 +86,7 @@ func (p *capacityPlanner) chain(n int, plan *capacityPlan) (map[string]bool, map
 		}
 	}
 	c.Instances = append(c.Instances, plan.instances...)
-	actions := schedulerPlan(p.snapshot, c)
+	actions := schedulerPlan(p.settings, p.snapshot, c)
 	byID := map[string]Action{}
 	route := ""
 	for _, a := range actions {
@@ -122,11 +122,13 @@ func (p *capacityPlanner) chain(n int, plan *capacityPlan) (map[string]bool, map
 			continue
 		}
 		cost := schedulerCost(p.snapshot.Costs, a.CostID)
-		mean, longest, joules, ok := capacityOperationCost(cost)
-		if !ok {
-			return nil, nil, schedulerPlanMissingOperationCost
+		mean, longest, joules := actionOperationCost(p.settings, p.snapshot.Costs, a)
+		plan.record.ActionCosts = append(plan.record.ActionCosts, SchedulerActionCost{Action: a.ID, Kind: a.Kind, Provenance: a.CostProvenance})
+		var trials []OperationTrial
+		if cost != nil {
+			trials = cost.Trials
 		}
-		for trial, measured := range cost.Trials {
+		for trial, measured := range trials {
 			if measured.EnergyUncertaintyJoules != 0 {
 				if plan.operationBounds == nil {
 					plan.operationBounds = schedulerEnergyBounds{}
@@ -144,7 +146,7 @@ func (p *capacityPlanner) chain(n int, plan *capacityPlan) (map[string]bool, map
 	plan.record.Pre, plan.record.Post = time.Duration(plan.preMax*1e9), time.Duration(plan.postMax*1e9)
 	plan.record.Joules = plan.preJ + plan.postJ
 	plan.record.EnergyUncertaintyJoules = plan.operationBounds.halfWidth()
-	return stopped, removed, ""
+	return stopped, removed
 }
 
 // capacityOperationCost is a cost's mean and longest trial seconds and mean
@@ -182,6 +184,9 @@ const ActionDeadlineExceeded = "ActionDeadlineExceeded"
 // window.
 func ActionDeadline(window time.Duration, costs []OperationCost, a Action) time.Duration {
 	longest := time.Duration(0)
+	if cost := actionDefaultCost(a); cost != nil {
+		longest = cost.Trials[0].Duration
+	}
 	if cost := schedulerCost(costs, a.CostID); cost != nil {
 		for _, t := range cost.Trials {
 			longest = max(longest, t.Duration)
@@ -210,7 +215,7 @@ func (p *capacityPlanner) payback(best capacityResult) capacityResult {
 		bound, withinUncertainty := 0.0, false
 		if emptySaving {
 			bound = p.gainBound(kept, best)
-			withinUncertainty = kept.joules-best.joules <= bound
+			withinUncertainty = (kept.joules-kept.keepJoules)-(best.joules-best.keepJoules) <= bound
 			paid = paid && !withinUncertainty
 		}
 		if !emptySaving && !kept.feasible || !p.admits(&kept) || paid && !dwelling {
@@ -266,7 +271,8 @@ func (p *capacityPlanner) minimumGain(best capacityResult) capacityResult {
 	if !best.feasible || best.keep {
 		return best
 	}
-	keep := p.evaluate(make([]int, len(p.plans)), 0)
+	keep := p.evaluateAtWindow(make([]int, len(p.plans)), 0, nil, best.period)
+	keep.keepJoules = keep.joules
 	if !keep.feasible {
 		return best
 	}
@@ -283,8 +289,8 @@ func (p *capacityPlanner) gainBound(keep, best capacityResult) float64 {
 	bounds := schedulerEnergyBounds{}
 	for n, j := range best.choice {
 		if p.compared[n] {
-			p.plans[n][keep.choice[n]].addBounds(bounds, keep.route, p.period, 1)
-			p.plans[n][j].addBounds(bounds, best.route, p.period, -1)
+			p.plans[n][keep.choice[n]].addBounds(bounds, keep.route, best.period, 1)
+			p.plans[n][j].addBounds(bounds, best.route, best.period, -1)
 			if best.bridge != nil && !p.plans[n][j].keep {
 				plan, delay := p.plans[n][j], best.bridge.delays[n]
 				for _, weighted := range []struct {
@@ -319,7 +325,11 @@ func (p *capacityPlanner) leastLoadJoules(choice []int, r float64) float64 {
 	for w := range p.ws {
 		rates[w], p.ws[w].rate = p.ws[w].rate, p.ws[w].minRate
 	}
-	joules := p.evaluate(choice, r).joules
+	oldKeepWatts := p.keepWatts
+	p.keepWatts = p.evaluateAtWindow(make([]int, len(p.plans)), 0, nil, 1).joules
+	result := p.evaluate(choice, r)
+	joules := result.joules - result.keepJoules
+	p.keepWatts = oldKeepWatts
 	for w := range p.ws {
 		p.ws[w].rate = rates[w]
 	}

@@ -63,6 +63,9 @@ export type SchedulerSettings = {
   capacityWindowNanos:WireInteger; capacityWindows:WireInteger; capacityPassingWindows:WireInteger; capacityMinimumRequests:WireInteger
   capacityGridSteps:WireInteger; capacityBisectionWidth:number; capacityTailSamples:WireInteger
   planSearchWorkers:WireInteger
+  defaultOperationCost:Record<"prepare"|"remove"|"power",{seconds:number;joules:number}>
+  defaultIdlePower:{nodeWatts:number;perInstanceWatts:number}
+  defaultDispatchOccupancyNanos:WireInteger
   autonomousWorkloads:string[]|null
   minimumDemand?:Record<string,number>
   // Nodes the planner never changes (reason ExcludedNode).
