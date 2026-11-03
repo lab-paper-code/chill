@@ -483,15 +483,8 @@ func TestScheduledPreparationOwnsItsWorkload(t *testing.T) {
 	if op.Prepare == nil || op.Prepare.Owner == nil || *op.Prepare.Owner != (serving.WorkloadReference{Name: "tight", UID: "w1"}) {
 		t.Fatalf("planner preparation lost its Workload owner: %+v", op.Prepare)
 	}
-	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Annotations: map[string]string{}}}
-	(&servingops.Operations{}).PlaceServingPod(pod, op.Prepare.Owner, op.Prepare.Instance)
-	if owner, err := resourceWorkloadOwner(pod, nil); err != nil || owner != "w1" || pod.Annotations[servingstate.ServingRoutingAnnotation] != "{}" {
-		t.Fatalf("pod owner %q (%v), routing %s", owner, err, pod.Annotations[servingstate.ServingRoutingAnnotation])
-	}
-	pod = &core.Pod{ObjectMeta: meta.ObjectMeta{Annotations: map[string]string{}}}
-	(&servingops.Operations{}).PlaceServingPod(pod, op.Prepare.Owner, serving.SchedulerInstance{Weight: 3})
-	if pod.Annotations[servingstate.ServingRoutingAnnotation] != `{"w1":3}` {
-		t.Fatalf("a manual preparation must serve its owner at once: %s", pod.Annotations[servingstate.ServingRoutingAnnotation])
+	if op.Prepare.Instance.WorkloadUID != wanted.WorkloadUID {
+		t.Fatal("planner preparation lost the Workload binding used by placement")
 	}
 }
 

@@ -107,12 +107,7 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 	c.freezePreparingExecutorsLocked(snapshot)
 	lost = c.reconcileOwnersLocked(snapshot, now, gap)
 	cutoff := now.Add(-observationWindow)
-	c.state.Results = slices.DeleteFunc(c.state.Results, func(r servingstate.OperationResult) bool { return r.EndedAt.Before(cutoff) })
-	for id, run := range c.runs {
-		if !run.reserved && run.action.Status != servingstate.NativeOperationRunning && run.action.Status != servingstate.NativeOperationCancel && run.result != nil && run.result.EndedAt.Before(cutoff) && !c.runReferencedLocked(id) {
-			delete(c.runs, id)
-		}
-	}
+	c.retireRunsLocked(cutoff)
 	snapshot.Actions = c.actionsLocked(now)
 	snapshot.Reservations = c.reservationsLocked()
 	snapshot.Replacements = slices.Clone(c.replacements)

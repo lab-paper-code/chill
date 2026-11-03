@@ -175,7 +175,7 @@ func (o *Operations) Measure(ctx context.Context, request MeasurementRequest, so
 func (record *OperationMeasurement) Judge(operationErr, observeErr error) error {
 	generic := record.Request.Operation.Kind != servingstate.OperationIdle
 	if operationErr == nil && generic {
-		operationErr = OperationZeroInference(record.Result)
+		operationErr = operationZeroInference(record.Result)
 	}
 	if record.Result.StartedAt.IsZero() {
 		record.Verdict = MeasurementInsufficient
@@ -448,7 +448,7 @@ func MeasurementCost(record OperationMeasurement, reference evidencestore.Object
 	if record.Request.Operation.Kind == servingstate.OperationIdle {
 		return serving.OperationCost{}, errors.New("idle baselines use their distinct cost contract")
 	}
-	if err := OperationZeroInference(record.Result); err != nil {
+	if err := operationZeroInference(record.Result); err != nil {
 		return serving.OperationCost{}, err
 	}
 	if record.Request.Operation.Kind != servingstate.OperationPower && (record.Result.Before.PowerMode == "" || record.Result.Before.PowerMode != record.Result.Actual.PowerMode) {
@@ -518,7 +518,7 @@ func OperationCostKeys(result servingstate.OperationResult) (string, string, err
 	return "", "", errors.New("cost requires exactly one proven primitive state effect; resize uses measured prepare/remove composition")
 }
 
-func OperationZeroInference(result servingstate.OperationResult) error {
+func operationZeroInference(result servingstate.OperationResult) error {
 	if len(result.Before.Reasons) > 0 || len(result.Actual.Reasons) > 0 {
 		return errors.New("operation native observations incomplete")
 	}

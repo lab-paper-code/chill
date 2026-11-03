@@ -32,61 +32,19 @@ func slotName(slot string) string {
 }
 
 func (c *SchedulerController) launch(target serving.SchedulerCandidate, config SchedulerControllerConfig) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.launchFailedPreparationCleanupLocked(config)
-	c.launchRunningParentsLocked(config, false)
-	if len(target.Actions) == 0 {
-		return
-	}
-	id := transitionRunKind + "/" + target.ID
-	if c.runs[id] != nil {
-		return
-	}
-	if !slices.ContainsFunc(target.Actions, func(action serving.Action) bool {
+	c.startTransition(&target, config.Settings.Controls, func() {
+		c.launchFailedPreparationCleanupLocked(config)
+		c.launchRunningParentsLocked(config, false)
+	}, func(action serving.Action) bool {
 		if action.Kind == servingstate.OperationRoute {
 			_, empty := c.routeOperationScopeLocked(target, *cmp.Or(action.RouteTarget, &target), action.RouteTarget != nil)
 			return !empty
 		}
 		return action.Kind == servingstate.OperationPrepare || action.Kind == servingstate.OperationPower || action.Kind == servingstate.OperationResize ||
 			c.dependenciesReady(action, target)
-	}) {
-		return
-	}
-	operation := servingstate.Operation{ID: id, Kind: transitionRunKind, Target: &target, WorkloadUIDs: changedWorkloads(target, c.state.Snapshot)}
-	for _, action := range target.Actions {
-		if action.Node.UID != "" {
-			operation.Nodes = append(operation.Nodes, action.Node)
-		}
-	}
-	started := time.Now()
-	before := servingstate.OperationState{At: started.UTC(), Instances: make([]serving.InstanceState, 0, len(c.state.Snapshot.Instances))}
-	for _, instance := range c.state.Snapshot.Instances {
-		before.Instances = append(before.Instances, serving.InstanceState{ID: instance.ID, PodUID: instance.PodUID, Node: instance.Node})
-	}
-	parent := &actionRun{owner: target.ID, action: serving.Action{ID: id, Kind: transitionRunKind, Status: servingstate.NativeOperationRunning}, result: &servingstate.OperationResult{Operation: operation, Before: before, Status: servingstate.NativeOperationRunning, StartedAt: started}, started: started}
-	parent.admittedControls = config.Settings.Controls
-	// Freeze only physical same-Node/Workload replacements, not route-only
-	// policy changes or added capacity. Completion is observed in reconcileSnapshot.
-	for _, next := range target.Instances {
-		if next.Profile == nil {
-			continue
-		}
-		for _, old := range c.state.Snapshot.Instances {
-			if old.Node == next.Node && old.WorkloadUID == next.WorkloadUID && old.Profile != nil &&
-				old.Profile.ID != next.Profile.ID && slices.ContainsFunc(target.Actions, func(a serving.Action) bool {
-				return a.Kind == servingstate.OperationRemove && a.Instance == old.ID
-			}) {
-				parent.replacements = append(parent.replacements, serving.SchedulerReplacement{
-					NodeUID: next.Node.UID, WorkloadUID: next.WorkloadUID, ProfileID: next.Profile.ID,
-				})
-			}
-		}
-	}
-	if !c.reserveRun(id, parent, operation) {
-		return
-	}
-	c.launchTargetLocked(target, config)
+	}, func() {
+		c.launchTargetLocked(target, config)
+	})
 }
 
 func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandidate, config SchedulerControllerConfig) {
@@ -105,10 +63,7 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 				continue
 			}
 			if action.Status == servingstate.NativeOperationCancel {
-				if r := c.runs[action.ID]; r != nil && r.action.Cancelable && r.cancel != nil {
-					r.cancel()
-					r.action.Status = servingstate.NativeOperationCancel
-				}
+				c.cancelRunLocked(action.ID)
 				continue
 			}
 			if action.Status == servingstate.NativeOperationComplete || action.Status == servingstate.NativeOperationFailed || c.omittedRouteCompleteLocked(action, target) {
@@ -172,22 +127,7 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 						}
 					}
 				}
-				c.mu.Lock()
-				run.result = &result
-				if !effectStarted {
-					run.reserved = false
-				}
-				run.action.Status = servingstate.NativeOperationComplete
-				if err != nil {
-					run.action.Status = result.Status
-					run.action.Reason = err.Error()
-					if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-						run.action.Status, run.action.Reason = servingstate.NativeOperationFailed, serving.ActionDeadlineExceeded+": "+run.action.Reason
-					}
-				}
-				run.action.Elapsed = result.EndedAt.Sub(result.StartedAt)
-				c.state.Results = append(c.state.Results, result)
-				c.mu.Unlock()
+				c.completeRun(run, &result, effectStarted, err, runCtx)
 				select {
 				case c.completions <- struct{}{}:
 				default:

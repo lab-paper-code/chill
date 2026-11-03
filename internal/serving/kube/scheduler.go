@@ -157,13 +157,7 @@ func (c *SchedulerController) setRoutingControl(before, after bool) {
 	if after {
 		c.runtime.EnableSchedulerRouting()
 	} else {
-		c.mu.Lock()
-		for _, run := range c.runs {
-			if run.action.Status == servingstate.NativeOperationRunning && run.action.Cancelable && run.cancel != nil {
-				run.cancel()
-			}
-		}
-		c.mu.Unlock()
+		c.cancelCancelableRuns()
 		c.mu.Lock()
 		static := c.config.StaticRouting
 		c.mu.Unlock()

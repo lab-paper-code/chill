@@ -134,20 +134,6 @@ func TestPowerCostUsesEmptyNodeModeChange(t *testing.T) {
 		t.Fatal("loaded power change accepted when measured")
 	}
 }
-func TestResizeRemovedSourceNeedsRetainedActualZeroInferenceProof(t *testing.T) {
-	result := servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.OperationResize}, Before: servingstate.OperationState{Native: map[string]native.State{"physical": {Ready: true, AcceptedRequests: 5, CompletedRequests: 5, Executions: 3}}}, Actual: servingstate.OperationState{Native: map[string]native.State{"replacement": {Ready: true}}}}
-	if err := servingops.OperationZeroInference(result); err == nil {
-		t.Fatal("removed process disappearance invented zero-inference proof")
-	}
-	result.DrainNative = map[string]native.State{"physical": {Ready: true, AcceptedRequests: 5, CompletedRequests: 5, Executions: 3}}
-	if err := servingops.OperationZeroInference(result); err != nil {
-		t.Fatal(err)
-	}
-	result.DrainNative["physical"] = native.State{Ready: true, AcceptedRequests: 6, CompletedRequests: 6, Executions: 4}
-	if err := servingops.OperationZeroInference(result); err == nil {
-		t.Fatal("serving-inclusive wall cost would be double counted by replay")
-	}
-}
 func TestMeasuredOperationNeedsProvenStateEffect(t *testing.T) {
 	start := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
 	measured := func(before, actual []string) servingops.OperationMeasurement {

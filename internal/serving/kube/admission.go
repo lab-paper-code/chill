@@ -411,16 +411,13 @@ func (c *SchedulerController) startNodeRun(operation servingstate.Operation, con
 	if operation.Holder != "" {
 		run.owner = operation.Holder
 	}
-	c.mu.Lock()
-	if !c.reserveRun(operation.ID, run, operation) {
-		c.mu.Unlock()
+	if !c.startRun(run, operation) {
 		cancel()
 		result.Status, result.Error = servingstate.NativeOperationFailed, "OperationConflict: resources are reserved"
 		result.EndedAt = time.Now().UTC()
 		close(done)
 		return done, &result
 	}
-	c.mu.Unlock()
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
@@ -450,18 +447,7 @@ func (c *SchedulerController) startNodeRun(operation servingstate.Operation, con
 				}
 			}
 		}
-		c.mu.Lock()
-		run.result = &result
-		run.action.Status, run.action.Reason = result.Status, result.Error
-		if err == nil && result.Status == servingstate.NativeOperationComplete || result.EffectsNotStarted && !run.inheritedReservation {
-			run.reserved = false
-			if operation.Kind != runnerKind {
-				c.releaseOwnerLocked(run.owner)
-			}
-		}
-		run.action.Elapsed = result.EndedAt.Sub(result.StartedAt)
-		c.state.Results = append(c.state.Results, result)
-		c.mu.Unlock()
+		c.completeAdmittedRun(run, &result, err, operation.Kind)
 	}()
 	return done, &result
 }
