@@ -97,6 +97,8 @@ Settings 적용은 운영자와 같은 GET/PUT `/api/v1/scheduler/settings`·인
 
 Run 목록·단건의 `liveTarget`은 생성 시 저장한 `edge.dacs.io/evaluation-live-target` annotation 배열 `{component,resource,liveImageIDs,ready}`만 투영한다. annotation이 없거나 decode에 실패하면 `null`이며 현재 fleet을 조회해 채우지 않는다. 게시 목록의 `facts.stages[].settingsPatchKeys`는 동결된 patch의 정렬된 leaf 경로(예: `["controls.power","minimumDemand.x"]`)다. stage patch가 있으면 Run patch 전체를 대체하며, 없거나 `null`이면 Run patch를 상속한다. 선언 patch가 없으면 `[]`, 기록된 patch가 object로 해독되지 않으면 `null`이다. 정의 자체가 없는 과거 게시의 facts는 계속 생성하지 않는다. 기존 `facts.control`, `facts.stages[].control`·`mode`는 노출하지 않는다.
 
+서버는 scheduler controller 초기화 전에 평가 route를 조립한다. 평가 settings 조회는 요청 시점의 현재 controller를 service lock 아래 읽으며 초기화 전에는 `503 CoverageWarming`을 반환한다. 준비 전 nil controller의 메서드 값을 동결하거나 기본 설정을 만들어 validation에 쓰지 않는다.
+
 
 
 ### 3.1 `outcome` 형태 (게시 요약의 선택 필드, 서버 비해석 object)
