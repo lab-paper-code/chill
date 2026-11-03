@@ -27,8 +27,6 @@ Scheduler history keeps default/ascending unfiltered reads bounded, including ex
 
 실험 게시 디코딩·타입은 `lib/experiments.ts`, 비교·차트 projection은 `lib/experiment-comparison.ts`, 정밀 scheduler 근거 구간·활동은 `lib/scheduler-history.ts`, 실험 선택 URL·History 변경은 `lib/dashboard-routes.ts`가 소유한다. 호출부는 소유 모듈을 직접 import하며 게시 identity·나노초 경계·null/0·표시 정밀도·URL 매개변수 계약은 그대로 유지한다.
 
-2026-11-04 책임 분리 통합 검증: Node 24.14.0 offline frozen install은 479개 재사용·다운로드 0이며 tsc·eslint·기본 Next build가 통과했다. 운영 summary를 포함한 전체 테스트는 `origin/main` 기준 `d533ca3e`의 572/572에서 이동 후 572/572로 유지했다. 로컬 production + 운영 GET만 사용한 1440×900 브라우저에서 서비스 목록·상세, 카탈로그 편집 열기·저장 없이 이탈, 운영 설정, 게시 결과·구간 Sheet, 실험 작성의 단계 패치(ms→ns)를 관찰했다. 해당 관찰의 콘솔 error·pageerror·HTTP 오류·API 실패·쓰기 요청은 0이며, 차트 초기 크기 경고 3건과 화면 전환 시 취소된 Next prefetch는 별도 기록했다. 스크린샷은 운영 산출물 `intent/sep-refactor/w1-*.png`에 보관한다. 이후 토큰 회전으로 브라우저를 종료했으며 smoke의 최종 수용 확인은 새 토큰 재검증 대기다.
-
 ### 표시용 읽기 projection
 
 - 서비스 목록은 `GET /api/v1/workloads?view=summary`를 사용한다. `supportedInputs`는 path·artifact·profiles `{id}`만 전송하며 프로파일 수는 `profiles.length`로 계산한다. 원 조건·근거는 무쿼리 목록/단건 조회에 남는다.
