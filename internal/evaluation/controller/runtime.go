@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"time"
 
@@ -40,6 +41,7 @@ const (
 
 var pending = ctrl.Result{RequeueAfter: time.Second}
 var errExecutionLost = errors.New(api.EvaluationReasonExecutionLost)
+var conditionReason = regexp.MustCompile(`^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$`)
 
 // ObjectStore uses independent bounded reads, never Job exit status as evidence.
 type ObjectStore interface {
@@ -74,8 +76,12 @@ func uidName(uid types.UID) string {
 	return "eval-" + strings.ToLower(strings.ReplaceAll(string(uid), "-", ""))
 }
 func condition(conditions *[]metav1.Condition, generation int64, kind string, status metav1.ConditionStatus, reason, message string) {
-	if reason == "" {
-		reason = complete
+	if len(reason) > 1024 || !conditionReason.MatchString(reason) {
+		message = reason + ": " + message
+		reason = api.EvaluationReasonProcedureFailed
+	}
+	if len(message) > 32768 {
+		message = strings.ToValidUTF8(message[:32768], "")
 	}
 	meta.SetStatusCondition(conditions, metav1.Condition{Type: kind, Status: status, Reason: reason, Message: message, ObservedGeneration: generation})
 }
@@ -124,8 +130,9 @@ type stepResult struct {
 	StageID       string    `json:"stageID,omitempty"`
 	Step          string    `json:"step"`
 	Execution     struct {
-		Status string `json:"status"`
-		Reason string `json:"reason"`
+		Status  string `json:"status"`
+		Reason  string `json:"reason"`
+		Message string `json:"message,omitempty"`
 	} `json:"execution"`
 	Measurement *struct {
 		Verdict api.MeasurementVerdict `json:"verdict"`

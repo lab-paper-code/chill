@@ -555,6 +555,7 @@ class Harness:
     def execute(self,step):
         self.step=step;self.outputs={};self.measurement=None;self.residuals=[];self.reason='ProcedureComplete';started=now();status='Complete';reason='ProcedureComplete';artifacts=[]
         before={path:(path.stat().st_mtime_ns,path.stat().st_size) for path in self.root.rglob('*') if path.is_file()}
+        message=''
         try:
             save(self.root/'execution-spec.json',self.spec)
             save(self.root/'execution.json',self.execution)
@@ -562,9 +563,11 @@ class Harness:
             getattr(self,step.replace('-','_'))()
             reason=self.reason
         except Exception as error:
-            status='Failed';reason=str(error).split(':',1)[0] if ':' in str(error) else 'ProcedureFailed'
+            status='Failed';candidate=str(error).split(':',1)[0]
+            reason=candidate if len(candidate)<=1024 and re.fullmatch(r'[A-Z][a-zA-Z0-9]*',candidate) else 'ProcedureFailed'
             if isinstance(error,(FileNotFoundError,KeyError)): reason='MissingInput'
             elif isinstance(error,json.JSONDecodeError): reason='FrozenInputInvalid'
+            message=str(error)[:32768]
             save(self.root/(step+'-error.json'),{'at':now(),'reason':reason,'error':str(error)})
             print(step+' failed: '+reason+': '+str(error),flush=True)
         try:
@@ -575,6 +578,7 @@ class Harness:
                 if self.scope=='run' and relative.startswith('stages/'): continue
                 artifacts.append(self.upload(path,self.prefix+'/'+step+'/artifacts/'+relative))
             record=result_record(self.execution,step,started,status,reason,self.measurement,artifacts,self.outputs)
+            if message: record['execution']['message']=message
             if self.residuals: record['residuals']=self.residuals
             path=self.run/'results'/self.scope/(step+'.json');save(path,record)
             self.upload(path,self.prefix+'/'+step+'/result.json')

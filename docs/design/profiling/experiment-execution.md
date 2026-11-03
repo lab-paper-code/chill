@@ -63,6 +63,22 @@ Helm binds the evaluation action account through distinct
 `<release>-evaluation-evidence-collector` binding remains attached only to its
 same-named collector account; both collector bindings reference `<release>-evidence-collector`.
 
+Harness exceptions use bounded CamelCase reason tokens (`ProcedureFailed` for
+unstructured errors) and retain the original error in `execution.message` and
+the error artifact. At the controller's shared condition boundary, reasons
+outside `^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$` or longer than 1024 bytes
+become `ProcedureFailed`; their original text is prefixed to the condition
+message, bounded to 32768 bytes without splitting UTF-8.
+
+For an already-stuck prepare whose status patch was rejected, no operator
+release is needed if the recorded Job/Pod identities and result remain:
+`RunReconciler.reconcileRun` calls `advance` again while prepare has no
+`finishedAt`; `advance` re-reads the immutable `run/prepare/result.json`.
+After the normalized failure is patched, subsequent reconciles skip child
+creation and execute finish. A successful no-control-effects finish clears
+`occupyingRunUID` and sets `PoolAcquired=False/Returned`; cleanup failure
+deliberately retains ownership and requires the existing operator release flow.
+
 | 객체 | spec 필드 | 내용·기존 입력 대응 |
 |---|---|---|
 | LoadScenario | `workloads[]` | Workload 이름·UID·generation의 유일 정본. SLO는 그 generation의 적용 정의에서 얻음 |
