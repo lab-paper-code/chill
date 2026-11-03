@@ -2,14 +2,17 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestActiveEvaluationProjection(t *testing.T) {
@@ -77,5 +80,61 @@ func TestActiveEvaluationProjection(t *testing.T) {
 	}
 	if projected.Injections[1].Outcome != "" {
 		t.Fatal("pending injection has outcome")
+	}
+}
+
+func TestEvaluationListBatchesStageReads(t *testing.T) {
+	for _, count := range []int{1, 20} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			if err := api.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			var objects []client.Object
+			for i := range count {
+				run := &api.EvaluationRun{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("run-%02d", i), Namespace: "ns"}}
+				for _, id := range []string{"z", "a"} {
+					stage := &api.EvaluationStage{
+						ObjectMeta: metav1.ObjectMeta{Name: run.Name + "-" + id, Namespace: "ns"},
+						Spec:       api.EvaluationStageSpec{StageID: id},
+					}
+					stage.UID = types.UID(stage.Name)
+					run.Status.ChildRefs = append(run.Status.ChildRefs, api.EvaluationChildReference{
+						StageID: id, EvaluationObjectReference: api.EvaluationObjectReference{Name: stage.Name, UID: stage.UID},
+					})
+					objects = append(objects, stage)
+				}
+				objects = append(objects, run)
+			}
+			stageLists, stageGets := 0, 0
+			native := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).WithInterceptorFuncs(interceptor.Funcs{
+				List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+					if _, ok := list.(*api.EvaluationStageList); ok {
+						stageLists++
+					}
+					return c.List(ctx, list, opts...)
+				},
+				Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if _, ok := obj.(*api.EvaluationStage); ok {
+						stageGets++
+					}
+					return c.Get(ctx, key, obj, opts...)
+				},
+			}).Build()
+			service := New(native, native, "ns", nil)
+			result, err := service.List(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result) != count || stageLists != 1 || stageGets != 0 {
+				t.Fatalf("runs=%d stageLists=%d stageGets=%d", len(result), stageLists, stageGets)
+			}
+			for _, run := range result {
+				if len(run.Stages) != 2 || run.Stages[0].ID != "z" || run.Stages[1].ID != "a" ||
+					run.Stages[0].UID != run.Name+"-z" || run.Stages[1].UID != run.Name+"-a" {
+					t.Fatalf("run %s stages=%+v", run.Name, run.Stages)
+				}
+			}
+		})
 	}
 }

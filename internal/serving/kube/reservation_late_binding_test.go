@@ -75,7 +75,7 @@ func TestCreatedUIDLateBindingReturnsAC38(t *testing.T) {
 			observed := time.Now()
 			physical := serving.InstanceState{ID: actual.ID, PodUID: actual.PodUID, TargetID: wanted.ID, Node: ref, Ready: true, ObservedAt: observed, Native: &native.State{Ready: true, Metadata: native.Metadata{ProfileID: profile.ID, DecisionID: target.ID, Policy: native.Policy{ProfileID: profile.ID, DecisionID: target.ID, MaxBatchSize: 2}}}}
 			c.releaseObservedScopes([]core.Node{*node}, []core.Pod{*pod}, []serving.InstanceState{physical}, observed)
-			c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute)
+			c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 			if parent.reserved || child.reserved {
 				t.Fatal("late exact ACK did not return ownership")
 			}

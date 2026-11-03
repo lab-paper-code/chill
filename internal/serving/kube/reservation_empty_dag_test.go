@@ -44,7 +44,7 @@ func TestEmptyRouteAdmissionReplansWithoutOwnershipAC38(t *testing.T) {
 	c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}, runtime: &serving.Runtime{}}
 	for range 2 {
 		c.launch(target, SchedulerControllerConfig{})
-		c.reconcileSnapshot(c.state.Snapshot, time.Now(), time.Minute)
+		c.reconcileSnapshot(c.state.Snapshot, time.Now(), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 		if len(c.runs) != 0 || len(c.reservationsLocked()) != 0 {
 			t.Fatal("empty declaration left a parent, child, or reservation")
 		}
@@ -111,7 +111,7 @@ func TestEmptyRouteNotReadyAndRetirementAC38(t *testing.T) {
 		}
 		target.Actions = append(target.Actions, serving.Action{ID: "retire", Kind: servingstate.OperationStop, DependsOn: []string{"noop"}})
 		c.launch(target, SchedulerControllerConfig{})
-		c.reconcileSnapshot(c.state.Snapshot, time.Now(), time.Minute)
+		c.reconcileSnapshot(c.state.Snapshot, time.Now(), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 		if len(c.runs) != 0 || len(c.reservationsLocked()) != 0 {
 			t.Fatalf("ready=%d: unproved retirement acquired ownership", ready)
 		}

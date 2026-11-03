@@ -178,7 +178,7 @@ func (c *SchedulerController) recordRestartedSequence(ctx context.Context, confi
 func (c *SchedulerController) ExecuteManual(ctx context.Context, request servingstate.ManualOperation) (servingstate.OperationResult, error) {
 	c.tickMu.Lock()
 	c.mu.Lock()
-	config, snapshot := c.config, c.state.Snapshot
+	config, snapshot := c.config, c.snapshotLocked()
 	c.mu.Unlock()
 	var operation servingstate.Operation
 	var err error

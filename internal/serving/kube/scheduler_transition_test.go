@@ -91,10 +91,10 @@ func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.Sch
 
 func TestAcknowledgedExistingHandoffDoesNotStarveCleanupOnPolicyRefresh(t *testing.T) {
 	controller, target, _ := acknowledgedHandoffFixture(t)
-	if !controller.dependenciesReady(target.Actions[0], target) {
+	if !controller.dependenciesReady(target.Actions[0], target, controller.runtime) {
 		t.Fatal("a refreshed policy route must still schedule its own route application")
 	}
-	if !controller.dependenciesReady(target.Actions[1], target) {
+	if !controller.dependenciesReady(target.Actions[1], target, controller.runtime) {
 		t.Fatal("an acknowledged ready/profile/allocation-matched actual handoff should allow old-source stop independently of a refreshed policy route")
 	}
 }
@@ -124,7 +124,7 @@ func TestHandoffCleanupRequiresExistingAcknowledgedReadyEffectNotJustGatewayMap(
 			if err := controller.runtime.InstallInstances([]serving.ReadyInstance{physical}); err != nil {
 				t.Fatal(err)
 			}
-			if controller.dependenciesReady(target.Actions[1], target) {
+			if controller.dependenciesReady(target.Actions[1], target, controller.runtime) {
 				t.Fatalf("cleanup bypassed missing %s safeguard merely because a gateway route/old record existed", missing)
 			}
 		})
@@ -194,7 +194,7 @@ func TestRunningGlobalRouteSerializesDifferentTargetAndKeepsFrozenActualContext(
 	if _, launched := controller.runs[target.Actions[0].ID]; launched {
 		t.Fatal("a different global route overwrote the policy path before the existing native ACK")
 	}
-	snapshot, _ := controller.reconcileSnapshot(controller.state.Snapshot, time.Now(), time.Minute)
+	snapshot, _ := controller.reconcileSnapshot(controller.state.Snapshot, time.Now(), time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
 	if len(snapshot.Reservations) == 0 || snapshot.Reservations[0].Target != frozen {
 		t.Fatalf("running owner lost its frozen target: %+v", snapshot.Reservations)
 	}
@@ -302,7 +302,7 @@ func assertFailedGoalRetainsRunningRoute(t *testing.T, from string) {
 		},
 	}
 	installTestTransition(controller, &failedGoal)
-	snapshot, _ := controller.reconcileSnapshot(controller.state.Snapshot, now, time.Minute)
+	snapshot, _ := controller.reconcileSnapshot(controller.state.Snapshot, now, time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
 	if fixtureTarget(controller) != nil || controller.runs[routing.ID].result.Operation.Target != frozen {
 		t.Fatalf("failed owner erased another run's frozen target: %+v", snapshot.Reservations)
 	}
@@ -349,7 +349,7 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 	observed.TargetID = slot
 	snapshot, _ := controller.reconcileSnapshot(serving.SchedulerSnapshot{
 		At: time.Now().UTC(), Instances: []serving.SchedulerInstance{observed},
-	}, time.Now().UTC(), time.Minute)
+	}, time.Now().UTC(), time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
 	// The planner continues a running goal as keep with the goal's instances,
 	// each resolved to its captured physical identity.
 	continued := goal
@@ -384,7 +384,7 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 	close(publish)
 	<-published
 	controller.wg.Wait()
-	if !controller.actionEffectPresent(snapshot, run) {
+	if !controller.actionEffectPresent(snapshot, run, controller.runtime) {
 		t.Fatal("completed receipt lacks its existing consumer-visible Ready physical effect")
 	}
 	starts := 0
@@ -406,7 +406,7 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 		t.Fatalf("stale target replayed/canceled or overwrote the completed receipt: starts=%d canceled=%v results=%+v",
 			starts, canceled, controller.State().Results)
 	}
-	if !controller.actionEffectPresent(snapshot, run) {
+	if !controller.actionEffectPresent(snapshot, run, controller.runtime) {
 		t.Fatal("stale continuation changed the completed physical effect")
 	}
 	if err := controller.runtime.ConfirmInstanceStopped(physical.State.ID); err != nil {
@@ -459,7 +459,7 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 func requireLostEffectFailsGoal(t *testing.T, controller *SchedulerController, id string) {
 	t.Helper()
 	now := time.Now().UTC()
-	snapshot, lost := controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, now, time.Minute)
+	snapshot, lost := controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, now, time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
 	if fixtureTarget(controller) != nil || controller.runs[id].action.Status != servingstate.NativeOperationFailed ||
 		len(lost) != 1 || lost[0].Operation.ID != id || lost[0].Status != servingstate.NativeOperationFailed ||
 		!slices.ContainsFunc(snapshot.Actions, func(a serving.Action) bool { return a.ID == id && a.Status == servingstate.NativeOperationFailed }) {
@@ -468,7 +468,7 @@ func requireLostEffectFailsGoal(t *testing.T, controller *SchedulerController, i
 	// Execution failure alone retains ownership. An authoritative empty LIST
 	// after retirement supplies the missing physical-return proof.
 	controller.releaseObservedScopes(nil, nil, nil, now.Add(time.Minute))
-	controller.reconcileSnapshot(serving.SchedulerSnapshot{}, now.Add(2*time.Minute), time.Minute)
+	controller.reconcileSnapshot(serving.SchedulerSnapshot{}, now.Add(2*time.Minute), time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
 	if controller.runs[id] != nil {
 		t.Fatal("failed action outlived the observation window")
 	}
@@ -514,7 +514,7 @@ func TestPrepareTimeoutFailsGoal(t *testing.T) {
 	}
 	now := time.Now()
 	for range 2 {
-		snapshot, _ := controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, now, time.Minute)
+		snapshot, _ := controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, now, time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
 		if fixtureTarget(controller) != nil {
 			t.Fatalf("owner kept executing after prepare timeout: reservations %v", snapshot.Reservations)
 		}
@@ -612,7 +612,7 @@ func TestReadySubsetPreservesE53ServingSnapshotSCH20AC38(t *testing.T) {
 				}
 			}
 			if state == "ready" {
-				if partial != nil || !controller.dependenciesReady(actions[1], target) {
+				if partial != nil || !controller.dependenciesReady(actions[1], target, controller.runtime) {
 					t.Fatal("final route did not become eligible after preparation")
 				}
 				if err := controller.runtime.ApplySchedulerTarget(target); err != nil {
@@ -694,10 +694,10 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			if scenario == "unsupported" {
 				rows = rows[:1]
 			}
-			if c.dependenciesReady(target.Actions[1], target) {
+			if c.dependenciesReady(target.Actions[1], target, c.runtime) {
 				t.Fatal("late nano unexpectedly allowed final handoff")
 			}
-			partial := c.readySubset(target, rows)
+			partial := c.readySubset(target, rows, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 			if scenario != "admitted" {
 				if partial != nil {
 					t.Fatalf("unsafe expansion: %+v", partial)
@@ -714,7 +714,7 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			if err := c.runtime.ApplySchedulerTarget(*partial); err != nil {
 				t.Fatal(err)
 			}
-			if !c.routingTargetPresent(partial, *snapshot, c.runtime.Instances(), true) {
+			if !c.routingTargetPresent(partial, *snapshot, c.runtime.Instances(), true, c.runtime) {
 				t.Fatal("expanded route lacks exact native ACK")
 			}
 		})
@@ -1308,7 +1308,7 @@ func TestPendingNativeRequestsBlockActualPowerUntilStopAndDrainAC35(t *testing.T
 			}
 		}
 	}
-	if controller.dependenciesReady(power, target) {
+	if controller.dependenciesReady(power, target, controller.runtime) {
 		t.Fatal("power dependencies released before both drains")
 	}
 	if err := controller.operations.ChangePower(ctx, a.Node, "", lowMode, time.Second); err == nil || powerWrites.Load() != 0 {
@@ -1332,7 +1332,7 @@ func TestPendingNativeRequestsBlockActualPowerUntilStopAndDrainAC35(t *testing.T
 		}
 		controller.runs[id] = &actionRun{action: serving.Action{ID: id, Kind: servingstate.OperationDrain, Status: servingstate.NativeOperationComplete}}
 	}
-	if !controller.dependenciesReady(power, target) {
+	if !controller.dependenciesReady(power, target, controller.runtime) {
 		t.Fatal("empty native sources and both actual drains did not release power")
 	}
 	if err := controller.operations.ChangePower(ctx, a.Node, "", lowMode, time.Second); err != nil || powerWrites.Load() != 1 {
@@ -1405,16 +1405,16 @@ func TestInstanceUnavailableBlocksContinuedNodeActions(t *testing.T) {
 	controller.state.Snapshot.Instances[0].Ready = false
 	for _, kind := range []string{servingstate.OperationPrepare, servingstate.OperationPower, servingstate.OperationRemove} {
 		action := serving.Action{Kind: kind, Node: node}
-		if controller.dependenciesReady(action, target) {
+		if controller.dependenciesReady(action, target, controller.runtime) {
 			t.Fatalf("retained %s released on unknown Node", kind)
 		}
 		action.Node.UID = "healthy-other-uid"
-		if !controller.dependenciesReady(action, target) {
+		if !controller.dependenciesReady(action, target, controller.runtime) {
 			t.Fatalf("unknown Node blocked independent healthy %s", kind)
 		}
 	}
 	route := serving.Action{Kind: servingstate.OperationRoute, Reason: serving.NodeInstanceUnavailable + ":" + node.Name + ":" + node.UID}
-	if controller.dependenciesReady(route, target) {
+	if controller.dependenciesReady(route, target, controller.runtime) {
 		t.Fatal("blocked route executed after its missing prepare/power was suppressed")
 	}
 }
@@ -1685,7 +1685,7 @@ func TestReadySubsetMixedUIDPreservesNotReadyDeclarationE56(t *testing.T) {
 	target.Instances = []serving.SchedulerInstance{first, second}
 	target.Routing = map[string]map[string]int32{first.WorkloadUID: {first.ID: 1000}, second.WorkloadUID: {second.ID: 1000}}
 	target.Actions = nil
-	partial := c.readySubset(target, nil)
+	partial := c.readySubset(target, nil, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 	if partial == nil {
 		t.Fatal("independent Ready UID made no progress")
 	}
@@ -1708,7 +1708,7 @@ func TestReadySubsetMixedUIDPreservesNotReadyDeclarationE56(t *testing.T) {
 	if route[first.WorkloadUID][first.ID] != 1 || route[second.WorkloadUID][second.ID] != 1000 {
 		t.Fatalf("partial commit overwrote recovered declaration: %v", route)
 	}
-	if c.routingTargetPresent(&serving.SchedulerCandidate{Routing: map[string]map[string]int32{definition.UID: {}}}, c.state.Snapshot, c.runtime.Instances(), true) {
+	if c.routingTargetPresent(&serving.SchedulerCandidate{Routing: map[string]map[string]int32{definition.UID: {}}}, c.state.Snapshot, c.runtime.Instances(), true, c.runtime) {
 		t.Fatal("empty route was promoted to a serving ACK")
 	}
 }

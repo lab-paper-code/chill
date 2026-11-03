@@ -18,22 +18,22 @@ func TestReplacementCompletionHistoryIndependentOfDemandWindow(t *testing.T) {
 	parent := &actionRun{owner: target.ID, action: serving.Action{Kind: transitionRunKind, Status: servingstate.NativeOperationRunning}, result: &servingstate.OperationResult{Operation: servingstate.Operation{Target: &target}}, replacements: []serving.SchedulerReplacement{replacement}}
 	c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{"parent": parent}}, config: SchedulerControllerConfig{Settings: serving.SchedulerSettings{ControlInterval: 10 * time.Second, MaxObservationAge: time.Minute}}}
 	snapshot := serving.SchedulerSnapshot{Instances: target.Instances, ScaleDown: map[string]serving.SchedulerDownState{"w": {Allowed: true}}}
-	got, _ := c.reconcileSnapshot(snapshot, now, time.Second)
+	got, _ := c.reconcileSnapshot(snapshot, now, time.Second, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 	if len(got.Replacements) != 1 || !got.Replacements[0].CompletedAt.Equal(now) || !got.ScaleDown["w"].Allowed {
 		t.Fatalf("completed replacement/demand state lost: %+v", got)
 	}
 	// Action receipts expire with the arrival window, but replacement history does not.
-	got, _ = c.reconcileSnapshot(snapshot, now.Add(17*time.Second), time.Second)
+	got, _ = c.reconcileSnapshot(snapshot, now.Add(17*time.Second), time.Second, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 	if len(got.Replacements) != 1 || !got.Replacements[0].CompletedAt.Equal(now) {
 		t.Fatalf("history reset by demand window: %+v", got.Replacements)
 	}
-	got, _ = c.reconcileSnapshot(snapshot, now.Add(2*time.Minute), time.Second)
+	got, _ = c.reconcileSnapshot(snapshot, now.Add(2*time.Minute), time.Second, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 	if len(got.Replacements) != 0 {
 		t.Fatal("observation gap retained replacement history")
 	}
 	c.replacements = []serving.SchedulerReplacement{replacement}
 	snapshot.Instances[0].Node.UID = "new-node-uid"
-	got, _ = c.reconcileSnapshot(snapshot, now.Add(2*time.Minute+time.Second), time.Second)
+	got, _ = c.reconcileSnapshot(snapshot, now.Add(2*time.Minute+time.Second), time.Second, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 	if len(got.Replacements) != 0 {
 		t.Fatal("node UID change retained replacement history")
 	}
