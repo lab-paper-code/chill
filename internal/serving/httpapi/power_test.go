@@ -32,6 +32,10 @@ func TestOperatingPowerRequiresReviewedReadAndExplicitInterval(t *testing.T) {
 		{"bucket-invalid", http.StatusBadRequest}, {"bucket-zero", http.StatusBadRequest},
 		{"bucket-too-small", http.StatusBadRequest}, {"bucket-too-large", http.StatusBadRequest},
 		{"bucket-over-range", http.StatusBadRequest}, {"bucket-over-count", http.StatusBadRequest},
+		{"columns-valid", http.StatusOK}, {"columns-no-bucket", http.StatusBadRequest},
+		{"columns-unknown", http.StatusBadRequest}, {"columns-empty", http.StatusBadRequest},
+		{"columns-repeated", http.StatusBadRequest}, {"bucket-repeated", http.StatusBadRequest},
+		{"unknown-query", http.StatusBadRequest},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			client := fake.NewSimpleClientset()
@@ -101,6 +105,10 @@ func TestOperatingPowerRequiresReviewedReadAndExplicitInterval(t *testing.T) {
 				}
 				return
 			}
+			if scenario.name == "columns-valid" {
+				assertPowerColumnsResponse(t, response.Body.Bytes(), from, to)
+				return
+			}
 			if scenario.name == "bucket-valid" {
 				assertPowerSeriesResponse(t, response.Body.Bytes(), from, to)
 				return
@@ -127,8 +135,36 @@ func assertPowerSeriesResponse(t *testing.T, raw []byte, from, to time.Time) {
 	}
 }
 
+func assertPowerColumnsResponse(t *testing.T, raw []byte, from, to time.Time) {
+	t.Helper()
+	var got serving.OperatingPowerColumns
+	if err := json.Unmarshal(raw, &got); err != nil || got.Format != powerColumnsFormat ||
+		!got.From.Equal(from) || !got.To.Equal(to) || got.BucketNanos != time.Second ||
+		len(got.Nodes.Node) == 0 || *got.Nodes.ObservedSamples[0][0] != 1 {
+		t.Fatalf("columns response=%s err=%v", raw, err)
+	}
+}
+
 func applyPowerQueryScenario(query url.Values, scenario string, from time.Time) {
 	switch scenario {
+	case "columns-valid":
+		query.Set("bucket", "1s")
+		query.Set("format", "columns")
+	case "columns-no-bucket":
+		query.Set("format", "columns")
+	case "columns-unknown":
+		query.Set("bucket", "1s")
+		query.Set("format", "rows")
+	case "columns-empty":
+		query.Set("bucket", "1s")
+		query.Set("format", "")
+	case "columns-repeated":
+		query.Set("bucket", "1s")
+		query["format"] = []string{"columns", "columns"}
+	case "bucket-repeated":
+		query["bucket"] = []string{"1s", "5s"}
+	case "unknown-query":
+		query.Set("other", "value")
 	case "missing-from":
 		query.Del("from")
 	case "missing-to":

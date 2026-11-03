@@ -7,12 +7,24 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
+const powerColumnsFormat = "columns"
+
 func (h *Handler) operatingPower(w http.ResponseWriter, r *http.Request) {
 	if err := h.authorize(r); err != nil {
 		sendError(w, err)
 		return
 	}
 	query := r.URL.Query()
+	for key, values := range query {
+		if len(values) != 1 || (key != "from" && key != "to" && key != "bucket" && key != "format") {
+			sendError(w, &serving.Error{Code: "InvalidQuery", Message: "unknown or repeated power query"})
+			return
+		}
+	}
+	if query.Has("format") && (query.Get("format") != powerColumnsFormat || !query.Has("bucket")) {
+		sendError(w, &serving.Error{Code: "InvalidQuery", Message: "format=columns requires bucket"})
+		return
+	}
 	from, fromErr := time.Parse(time.RFC3339Nano, query.Get("from"))
 	to, toErr := time.Parse(time.RFC3339Nano, query.Get("to"))
 	if fromErr != nil || toErr != nil || from.IsZero() || !from.Before(to) {
@@ -36,6 +48,10 @@ func (h *Handler) operatingPower(w http.ResponseWriter, r *http.Request) {
 		result, err := h.config.OperatingPowerSeries(r.Context(), from, to, bucket, h.config.MaxQueryEvents)
 		if err != nil {
 			sendError(w, err)
+			return
+		}
+		if query.Get("format") == powerColumnsFormat {
+			sendJSON(w, http.StatusOK, result.Columns())
 			return
 		}
 		sendJSON(w, http.StatusOK, result)
