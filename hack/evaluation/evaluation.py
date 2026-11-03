@@ -299,60 +299,68 @@ class Harness:
         return identities
 
     def owns_environment_pod(self, pod, targets, owner_objects):
-        """Use frozen release/Run identities and real owner UIDs, never Pod names."""
+        """Resolve controller UIDs; labels on the Pod itself never prove ownership."""
         namespace = pod['metadata']['namespace']
         run_namespace = self.execution['namespace']
-        roots = {(target['resource']['namespace'], target['uid']) for target in targets}
-        roots.update((run_namespace, uid) for uid in
-                     [self.execution['runUID'], self.execution.get('stageUID'),
-                      *(child['uid'] for child in self.execution.get('childRefs', []))] if uid)
-        root_refs = {(target['resource']['namespace'], target['resource']['apiVersion'], target['resource']['kind'], target['uid'])
-                     for target in targets}
-        root_refs.add((run_namespace, 'edge.dacs.io/v1alpha1', 'EvaluationRun', self.execution['runUID']))
-        root_refs.update((run_namespace, 'edge.dacs.io/v1alpha1', 'EvaluationStage', uid) for uid in
-                         [self.execution.get('stageUID'), *(child['uid'] for child in self.execution.get('childRefs', []))] if uid)
-        release_labels = {(ns, target['releaseInstance']) for target in targets if target['releaseInstance']
-                          for ns in (run_namespace, target['resource']['namespace'])}
-        # Mirror Pods and DaemonSet-owned Pods are node infrastructure, not
-        # competing experiments; they are expected on every participating node.
+        stage_uids = {uid for uid in [self.execution.get('stageUID'),
+                                     *(child['uid'] for child in self.execution.get('childRefs', []))] if uid}
+        roots = {(target['resource']['namespace'], target['resource']['kind'], target['uid'])
+                 for target in targets if target['resource']['kind'] != 'Pod'}
+        release_labels = {(target['resource']['namespace'], target['releaseInstance'])
+                          for target in targets if target['releaseInstance']}
+        # Mirror Pods and DaemonSet-owned Pods are persistent node infrastructure,
+        # not competing experiments, independent of their namespace or labels.
         if 'kubernetes.io/config.mirror' in pod['metadata'].get('annotations', {}):
-            return True
+            return True, []
         controller_versions = {'ReplicaSet': 'apps/v1', 'Deployment': 'apps/v1', 'StatefulSet': 'apps/v1',
                                'Job': 'batch/v1', 'CronJob': 'batch/v1'}
         owner_namespaces = {run_namespace, *(target['resource']['namespace'] for target in targets)}
-        pending, seen = [pod], set()
+        pending, seen, issues = [(pod, 'Pod')], set(), []
         while pending:
-            obj = pending.pop()
+            obj, kind = pending.pop()
             meta = obj['metadata']
-            if namespace == run_namespace and meta.get('labels', {}).get('edge.dacs.io/evaluation-run-uid') == self.execution['runUID']:
-                return True
-            if (namespace, meta['uid']) in roots or (namespace, meta.get('labels', {}).get('app.kubernetes.io/instance')) in release_labels:
-                return True
             refs = meta.get('ownerReferences', [])
+            if kind == 'Job' and namespace == run_namespace and any(
+                    ref['apiVersion'] == 'edge.dacs.io/v1alpha1' and ref.get('controller') is True and
+                    ((ref['kind'] == 'EvaluationRun' and ref['uid'] == self.execution['runUID']) or
+                     (ref['kind'] == 'EvaluationStage' and ref['uid'] in stage_uids)) for ref in refs):
+                # Reaching this live Job required matching its actual UID to the
+                # Pod's owner chain; Run labels alone cannot mint an owned Job.
+                return True, []
+            if kind != 'Pod' and ((namespace, kind, meta['uid']) in roots or
+                                 (namespace, meta.get('labels', {}).get('app.kubernetes.io/instance')) in release_labels):
+                return True, []
             if any(ref['kind'] == 'DaemonSet' and ref['apiVersion'] == 'apps/v1' for ref in refs):
-                return True
-            # Match the controller's structural Workload-owner predicate
-            # (a08fda9d); resolve the referenced CR to verify its actual UID.
+                return True, []
+            # Match the controller's unique Workload-owner predicate (a08fda9d),
+            # then resolve the referenced cluster-scoped CR's actual UID.
             workloads = [ref for ref in refs if ref['kind'] == 'Workload' and ref['apiVersion'] == 'edge.dacs.io/v1alpha1']
             for ref in refs:
-                if (namespace, ref['apiVersion'], ref['kind'], ref['uid']) in root_refs:
-                    return True
                 workload = len(workloads) == 1 and ref == workloads[0]
                 if not workload and (namespace not in owner_namespaces or controller_versions.get(ref['kind']) != ref['apiVersion']):
                     continue
                 key = (namespace, ref['apiVersion'], ref['kind'], ref['name'], ref['uid'])
+                identity = {key: ref[key] for key in ('kind', 'name', 'uid')}
                 if key in seen:
+                    issues.append({'owner': identity, 'failure': 'RepeatedOwnerReference'})
                     continue
                 seen.add(key)
                 if key not in owner_objects:
-                    owner_objects[key] = kubectl(namespace, 'get', ref['kind'], ref['name'])
+                    try:
+                        owner_objects[key] = kubectl(namespace, 'get', ref['kind'], ref['name'])
+                    except (RuntimeError, subprocess.TimeoutExpired, OSError) as error:
+                        message = str(error)
+                        failure = ('NotFound' if re.search(r'NotFound|not found|\b404\b', message, re.I) else
+                                   'Forbidden' if re.search(r'Forbidden|\b403\b', message, re.I) else type(error).__name__)
+                        return False, [{'owner': identity, 'failure': failure, 'message': message}]
                 owner = owner_objects[key]
                 if owner['metadata']['uid'] != ref['uid']:
+                    issues.append({'owner': identity, 'failure': 'UIDMismatch'})
                     continue
                 if workload:
-                    return True
-                pending.append(owner)
-        return False
+                    return True, []
+                pending.append((owner, ref['kind']))
+        return False, issues or [{'failure': 'NoRecognizedOwner'}]
 
     def check_fleet(self, spec):
         nodes = list(spec['powerMeasurement']['nodes'])
@@ -377,8 +385,11 @@ class Harness:
             for pod in pods:
                 if pod.get('spec', {}).get('nodeName') != name or pod.get('status', {}).get('phase') not in ('Running', 'Pending'):
                     continue
-                if not self.owns_environment_pod(pod, targets, owner_objects):
-                    raise RuntimeError('TargetUnavailable: external Pod on participating Node ' + name + ': ' + pod['metadata']['name'])
+                owned, issues = self.owns_environment_pod(pod, targets, owner_objects)
+                if not owned:
+                    identity = pod['metadata']['namespace'] + '/' + pod['metadata']['name']
+                    raise RuntimeError('TargetUnavailable: external Pod on participating Node ' + name + ': ' +
+                                       identity + '; ownership unknown: ' + json.dumps(issues, sort_keys=True))
     def open_snapshot(self):
         path=self.inputs/'snapshot.json'
         reference=self.execution.get('inputSnapshotRef') or self.spec.get('inputSnapshotRef')

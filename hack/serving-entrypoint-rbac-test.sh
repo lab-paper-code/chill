@@ -12,7 +12,7 @@ trap 'rm -f "${rendered}"' EXIT
 
 check() {
 	"${helm}" template chill "${repo_root}/charts/chill" --namespace chill-system "$@" >"${rendered}"
-	python3 - "${rendered}" <<'PY'
+	python3 - "${rendered}" "${EVALUATION_OWNER_NAMESPACES:-chill-system}" <<'PY'
 import sys, yaml
 documents = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
 identities = [(d["kind"], d["metadata"].get("namespace", ""), d["metadata"]["name"]) for d in documents]
@@ -59,6 +59,15 @@ if config:
     } | {
         ("*", "edge.dacs.io", resource, "get", ()) for resource in ("workloads", "datasets", "preprocessors")
     }
+    owner_namespaces = set(sys.argv[2].split(",")) - {"chill-system"}
+    owner_roles = [d for d in documents if d["kind"] == "Role"
+                   and d["metadata"]["name"] == "chill-evaluation-owners"]
+    assert {d["metadata"]["namespace"] for d in owner_roles} == owner_namespaces, "owner reader namespaces differ"
+    expected.update((namespace, group, resource, "get", ())
+                    for namespace in owner_namespaces
+                    for group, kinds in (("apps", ("deployments", "replicasets", "statefulsets")),
+                                         ("batch", ("jobs", "cronjobs")))
+                    for resource in kinds)
     settings_binding = next((d for d in documents if d["kind"] == "RoleBinding"
                              and d["metadata"]["name"] == "chill-evaluation-settings-writer"), None)
     if settings_binding:
@@ -173,4 +182,8 @@ check -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
 	--set 'servingEntrypoint.profileNamespaces={chill-system,measurements}'
 check -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
 	--set evaluation.enabled=true
+EVALUATION_OWNER_NAMESPACES=chill-system,serving-target,measurements \
+	check "${serving[@]}" --set evaluation.enabled=true \
+	--set servingEntrypoint.namespace=serving-target \
+	--set 'servingEntrypoint.profileNamespaces={measurements,chill-system}'
 echo "serving entrypoint RBAC: pass"

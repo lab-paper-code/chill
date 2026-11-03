@@ -606,7 +606,7 @@ class EvaluationTests(unittest.TestCase):
                 'loadGenerator': {'nodeName': 'generator-node'}}
         nodes = {'meter-node': 'meter-uid', 'generator-node': 'generator-uid'}
         def ref(kind, name, uid, version='apps/v1'):
-            return {'apiVersion': version, 'kind': kind, 'name': name, 'uid': uid}
+            return {'apiVersion': version, 'kind': kind, 'name': name, 'uid': uid, 'controller': True}
         def pod(name, *, node='meter-node', phase='Running', namespace='evaluation-ns', labels=None, owners=None, annotations=None):
             return {'apiVersion': 'v1', 'kind': 'Pod',
                     'metadata': {'name': name, 'uid': name + '-uid', 'namespace': namespace, 'labels': labels or {},
@@ -619,8 +619,10 @@ class EvaluationTests(unittest.TestCase):
             ('ReplicaSet', 'chill-rs'): {'metadata': {'uid': 'chill-rs-uid', 'ownerReferences': [ref('Deployment', 'server', 'target-uid')]}},
             ('ReplicaSet', 'foreign-rs'): {'metadata': {'uid': 'foreign-rs-uid', 'ownerReferences': [ref('Deployment', 'tenant', 'foreign-deployment-uid')]}},
             ('Deployment', 'tenant'): {'metadata': {'uid': 'foreign-deployment-uid'}},
+            ('Deployment', 'server'): {'metadata': {'uid': 'target-uid'}},
             ('Job', 'eval-label-job'): {'metadata': {'uid': 'eval-label-job-uid', 'labels': {'edge.dacs.io/evaluation-run-uid': 'run-uid'}}},
             ('Job', 'eval-job'): {'metadata': {'uid': 'eval-job-uid', 'ownerReferences': [ref('EvaluationStage', 'stage', 'stage-uid', 'edge.dacs.io/v1alpha1')]}},
+            ('Job', 'prepare-job'): {'metadata': {'uid': 'prepare-job-uid', 'ownerReferences': [ref('EvaluationRun', 'run', 'run-uid', 'edge.dacs.io/v1alpha1')]}},
             ('Job', 'release-job'): {'metadata': {'uid': 'release-job-uid', 'ownerReferences': [ref('CronJob', 'release-cron', 'cron-uid', 'batch/v1')]}},
             ('CronJob', 'release-cron'): {'metadata': {'uid': 'cron-uid', 'labels': {'app.kubernetes.io/instance': 'frozen-release'}}},
             ('StatefulSet', 'release-stateful'): {'metadata': {'uid': 'stateful-uid', 'labels': {'app.kubernetes.io/instance': 'frozen-release'}}},
@@ -633,15 +635,17 @@ class EvaluationTests(unittest.TestCase):
             (pod('nvidia-cuda-validator-f4l98', node='generator-node', phase='Succeeded', namespace='gpu-operator'), False),
             (pod('device-plugin', node='generator-node', owners=[ref('DaemonSet', 'plugins', 'ds-uid')], namespace='gpu-operator'), False),
             (pod('static-pod', phase='Pending', namespace='node-infra', annotations={'kubernetes.io/config.mirror': 'mirror-hash'}), False),
-            (pod('vib-release-owned', labels={'app.kubernetes.io/instance': 'frozen-release'}), False),
+            (pod('vib-release-label-only', labels={'app.kubernetes.io/instance': 'frozen-release'}), True),
             (pod('bff-release-owner-chain', owners=[ref('ReplicaSet', 'chill-rs', 'chill-rs-uid')]), False),
-            (pod('evaluation-label-owned', labels={'edge.dacs.io/evaluation-run-uid': 'run-uid'}), False),
+            (pod('evaluation-label-only', labels={'edge.dacs.io/evaluation-run-uid': 'run-uid'}), True),
             (pod('evaluation-job-owned', owners=[ref('Job', 'eval-job', 'eval-job-uid', 'batch/v1')]), False),
-            (pod('evaluation-job-label-owned', owners=[ref('Job', 'eval-label-job', 'eval-label-job-uid', 'batch/v1')]), False),
+            (pod('evaluation-prepare-owned', owners=[ref('Job', 'prepare-job', 'prepare-job-uid', 'batch/v1')]), False),
+            (pod('evaluation-job-stale-uid', owners=[ref('Job', 'eval-job', 'stale-job-uid', 'batch/v1')]), True),
+            (pod('evaluation-job-label-only', owners=[ref('Job', 'eval-label-job', 'eval-label-job-uid', 'batch/v1')]), True),
             (pod('release-cron-owned', owners=[ref('Job', 'release-job', 'release-job-uid', 'batch/v1')]), False),
             (pod('release-stateful-owned', owners=[ref('StatefulSet', 'release-stateful', 'stateful-uid')]), False),
             (pod('workload-owned', phase='Pending', namespace='model-serving', owners=[ref('Workload', 'service', 'workload-uid', 'edge.dacs.io/v1alpha1')]), False),
-            (pod('evaluation-ref-owned', owners=[ref('EvaluationRun', 'run', 'run-uid', 'edge.dacs.io/v1alpha1')]), False),
+            (pod('evaluation-ref-without-job', owners=[ref('EvaluationRun', 'run', 'run-uid', 'edge.dacs.io/v1alpha1')]), True),
             (pod('vib-external-deployment', owners=[ref('ReplicaSet', 'foreign-rs', 'foreign-rs-uid')]), True),
             (pod('arbitrary-external', phase='Pending', node='generator-node', namespace='tenant'), True),
             (pod('other-release', labels={'app.kubernetes.io/instance': 'different-release'}), True),
@@ -678,6 +682,83 @@ class EvaluationTests(unittest.TestCase):
                     else:
                         harness.check_fleet(spec)
                         self.assertEqual(set(queries), {'spec.nodeName=' + node for node in nodes})
+
+    def test_unknown_owner_errors_produce_recorded_prepare_rejection(self):
+        for failure, stderr in [('NotFound', 'Error from server (NotFound): replica set not found'),
+                                ('Forbidden', 'Error from server (Forbidden): replica set access denied')]:
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                harness = object.__new__(evaluation.Harness)
+                harness.run = harness.root = Path(directory) / 'run'
+                harness.scope, harness.prefix = 'run', 'experiments/run-uid/run'
+                harness.spec = {}
+                harness.execution = {'namespace': 'evaluation-ns', 'runUID': 'run-uid'}
+                harness.target_identities = [{'uid': 'target-uid', 'resource': {'namespace': 'target-ns', 'kind': 'Deployment'},
+                                              'releaseInstance': 'frozen-release'}]
+                spec = {'powerMeasurement': {'nodes': [{'name': 'node', 'uid': 'node-uid'}]},
+                        'loadGenerator': {'nodeName': 'node'}}
+                pod = {'metadata': {'namespace': 'target-ns', 'name': 'tenant-pod', 'uid': 'pod-uid',
+                                    'ownerReferences': [{'apiVersion': 'apps/v1', 'kind': 'ReplicaSet',
+                                                         'name': 'unreadable-owner', 'uid': 'owner-uid'}]},
+                       'spec': {'nodeName': 'node'}, 'status': {'phase': 'Running'}}
+                def k(namespace, verb, kind, *args):
+                    if kind == 'node':
+                        return {'metadata': {'name': 'node', 'uid': 'node-uid'},
+                                'status': {'conditions': [{'type': 'Ready', 'status': 'True'}]}}
+                    if kind == 'pods':
+                        return {'items': [pod]}
+                    self.assertEqual((namespace, kind, args), ('target-ns', 'ReplicaSet', ('unreadable-owner',)))
+                    raise RuntimeError('TargetUnavailable: ' + stderr)
+                harness.prepare = lambda: harness.check_fleet(spec)
+                harness.upload = lambda path, key: {'store': 'test', 'key': key, 'size': path.stat().st_size}
+                with patch.object(evaluation, 'kubectl', side_effect=k), patch('builtins.print'):
+                    self.assertEqual(harness.execute('prepare'), 1)
+                result = json.loads((harness.run / 'results/run/prepare.json').read_text())
+                self.assertEqual(result['execution']['status'], 'Failed')
+                self.assertEqual(result['execution']['reason'], 'TargetUnavailable')
+                for detail in ('target-ns/tenant-pod', 'ReplicaSet', 'unreadable-owner', 'owner-uid', failure):
+                    self.assertIn(detail, result['execution']['message'])
+                error = json.loads((harness.run / 'prepare-error.json').read_text())
+                self.assertIn(failure, error['error'])
+
+    def test_cyclic_owner_chain_is_bounded_and_rejected(self):
+        harness = object.__new__(evaluation.Harness)
+        harness.execution = {'namespace': 'evaluation-ns', 'runUID': 'run-uid'}
+        def ref(name):
+            return {'apiVersion': 'apps/v1', 'kind': 'ReplicaSet', 'name': name, 'uid': name + '-uid'}
+        pod = {'metadata': {'namespace': 'evaluation-ns', 'name': 'pod', 'uid': 'pod-uid', 'ownerReferences': [ref('first')]}}
+        objects = {'first': {'metadata': {'uid': 'first-uid', 'ownerReferences': [ref('second')]}},
+                   'second': {'metadata': {'uid': 'second-uid', 'ownerReferences': [ref('first')]}}}
+        with patch.object(evaluation, 'kubectl', side_effect=lambda namespace, verb, kind, name: objects[name]) as k:
+            owned, issues = harness.owns_environment_pod(pod, [], {})
+        self.assertFalse(owned)
+        self.assertEqual(k.call_count, 2)
+        self.assertEqual(issues[0]['failure'], 'RepeatedOwnerReference')
+
+    def test_release_ancestor_reads_follow_declared_target_namespace(self):
+        harness = object.__new__(evaluation.Harness)
+        harness.execution = {'namespace': 'evaluation-ns', 'runUID': 'run-uid'}
+        targets = [{'uid': 'target-uid', 'resource': {'namespace': 'target-ns', 'kind': 'Deployment'},
+                    'releaseInstance': 'frozen-release'}]
+        def ref(kind, name, uid, version='apps/v1'):
+            return {'apiVersion': version, 'kind': kind, 'name': name, 'uid': uid}
+        objects = {
+            ('ReplicaSet', 'replicas'): {'metadata': {'uid': 'rs-uid', 'ownerReferences': [ref('Deployment', 'server', 'target-uid')]}},
+            ('Deployment', 'server'): {'metadata': {'uid': 'target-uid'}},
+            ('Job', 'job'): {'metadata': {'uid': 'job-uid', 'ownerReferences': [ref('CronJob', 'cron', 'cron-uid', 'batch/v1')]}},
+            ('CronJob', 'cron'): {'metadata': {'uid': 'cron-uid', 'labels': {'app.kubernetes.io/instance': 'frozen-release'}}},
+            ('StatefulSet', 'stateful'): {'metadata': {'uid': 'stateful-uid', 'labels': {'app.kubernetes.io/instance': 'frozen-release'}}},
+        }
+        for owner in [ref('ReplicaSet', 'replicas', 'rs-uid'), ref('Job', 'job', 'job-uid', 'batch/v1'),
+                      ref('StatefulSet', 'stateful', 'stateful-uid')]:
+            with self.subTest(kind=owner['kind']):
+                pod = {'metadata': {'namespace': 'target-ns', 'name': 'pod', 'uid': 'pod-uid', 'ownerReferences': [owner]}}
+                def k(namespace, verb, kind, name):
+                    self.assertEqual(namespace, 'target-ns')
+                    return objects[(kind, name)]
+                with patch.object(evaluation, 'kubectl', side_effect=k):
+                    owned, issues = harness.owns_environment_pod(pod, targets, {})
+                self.assertTrue(owned)
+                self.assertEqual(issues, [])
 
     def test_target_without_selector_never_scans_namespace_pods(self):
         harness = object.__new__(evaluation.Harness)

@@ -427,11 +427,13 @@ Each cross-namespace Pod query has an explicit `spec.nodeName` field selector;
 unrelated nodes and Succeeded/Failed Pods cannot block the Run.
 
 Only Pods without structural CHILL/current-Run ownership block execution.
-Current-Run labels and ownerReference UID chains identify evaluator resources.
-CHILL release identity comes from the declared target resources' actual
-`app.kubernetes.io/instance` values, frozen in the existing target snapshot at
-prepare, with namespace scope from the Run/target declarations. Read-only
-ReplicaSet/Deployment/StatefulSet/Job/CronJob owner lookup verifies UIDs.
+The evaluator owner chain must reach a live Job UID whose controller reference
+matches this Run or one of its frozen Stage UIDs. Pod labels never establish
+ownership. CHILL release ownership must reach a controller ancestor matching a
+frozen target UID or release instance; the Pod's own release label is ignored.
+The declared target resources' `app.kubernetes.io/instance` values are frozen in
+the existing target snapshot at prepare, scoped to their declared namespaces.
+Read-only ReplicaSet/Deployment/StatefulSet/Job/CronJob lookup verifies UIDs.
 CHILL serving Pods use the controller's unique `edge.dacs.io/v1alpha1` Workload
 ownerReference rule, with the referenced Workload's actual UID checked.
 DaemonSet-owned Pods and Pods carrying `kubernetes.io/config.mirror` are exempt:
@@ -439,6 +441,11 @@ node networking, proxies and device plugins are persistent infrastructure.
 No Pod-name pattern, fleet-label signature, namespace allowlist or historical
 date classifies tenants. No new CR field is needed; release identities are
 frozen observations, not deployment-name defaults.
+Ancestor reads have get-only RBAC in the configured serving/profile namespaces;
+Job mutation rights remain confined to the evaluator's release namespace.
+An unreadable owner (including 404/403) fails closed as ownership unknown.
+The ordinary preparation result records the Pod namespace/name, unresolved
+owner kind/name/UID and failure type; owner cycles also terminate and reject.
 
 Other preparation/stage scope checks follow explicit identities too: target
 Pods require the declared resource's nonempty Kubernetes selector (including
