@@ -222,6 +222,11 @@ func (o *SchedulerService) measuredPreparation(
 			},
 		},
 	}
+	// The policy can grow within this immutable measured domain without replacing
+	// the runner. Warm all measured K, never additional initialized capabilities.
+	for _, batch := range p.Batches {
+		spec.Config.RunnerCommand = append(spec.Config.RunnerCommand, "--warmup-batch", strconv.Itoa(batch.Batch))
+	}
 	if runtime.GPUUUID != "" {
 		spec.Config.RunnerCommand = append(spec.Config.RunnerCommand, "--gpu-uuid", runtime.GPUUUID)
 	}

@@ -129,6 +129,31 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 	if _, err = service.measuredPreparation(context.Background(), profile, 2); err == nil {
 		t.Fatal("missing measured memory accepted")
 	}
+	for _, allowed := range [][]int{{1}, {1, 2}, {1, 4}} {
+		t.Run(fmt.Sprint(allowed), func(t *testing.T) {
+			profile := measuredAdoptionProfile()
+			profile.Batches = profile.Batches[:len(allowed)]
+			var want []string
+			for i, k := range allowed {
+				profile.Batches[i].Batch = k
+				want = append(want, fmt.Sprint(k))
+			}
+			spec, err := service.measuredPreparation(context.Background(), profile, 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var warmed []string
+			for i, arg := range spec.Config.RunnerCommand {
+				if arg == "--warmup-batch" {
+					warmed = append(warmed, spec.Config.RunnerCommand[i+1])
+				}
+			}
+			if !reflect.DeepEqual(warmed, want) ||
+				!reflect.DeepEqual(spec.Config.BatchSizes, []int{1, 2, 4}) {
+				t.Fatalf("warmup %v, want measured %v; initialized %v", warmed, want, spec.Config.BatchSizes)
+			}
+		})
+	}
 }
 
 // The queued request bytes firstfloor admits fit in the Pod memory above the

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -365,16 +364,6 @@ func TestManualPrepareAppliesMeasuredMaxBatch(t *testing.T) {
 			if err := json.Unmarshal([]byte(cm.Data["config.json"]), &applied); err != nil || applied.Policy.MaxBatchSize != cap {
 				t.Fatalf("persisted maxBatch = %d, want %d: %v", applied.Policy.MaxBatchSize, cap, err)
 			}
-			wantCommand := []string{"runner"}
-			for _, k := range []int{1, 2, 4} {
-				if k <= cap {
-					wantCommand = append(wantCommand, "--warmup-batch", fmt.Sprint(k))
-				}
-			}
-			if !reflect.DeepEqual(applied.RunnerCommand, wantCommand) ||
-				!reflect.DeepEqual(applied.BatchSizes, []int{1, 2, 3, 4}) {
-				t.Fatalf("warmup must follow the final policy, not initialized capabilities: %+v", applied)
-			}
 			pod, node, _, _ := observerSourceFixture()
 			profile := operation.Prepare.Instance.Profile
 			physical := serving.InstanceState{ID: "pod-uid/containerd://running", PodUID: string(pod.UID),
@@ -393,31 +382,6 @@ func TestManualPrepareAppliesMeasuredMaxBatch(t *testing.T) {
 				t.Fatal("manual cap changed the planner preparation template")
 			}
 		})
-	}
-}
-
-func TestManualFixedPrepareWarmsOnlyFixedBatch(t *testing.T) {
-	h, template := manualBatchPreparation(t)
-	request := manualPrepare()
-	request.FixedBatchSize = 2
-	operation, err := h.controller.manualOperationLocked(context.Background(), request, h.controller.config, h.controller.state.Snapshot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := h.controller.operations.PrepareInstance(context.Background(), *operation.Prepare); err == nil || !strings.Contains(err.Error(), "stop after Pod creation") {
-		t.Fatalf("preparation did not persist its native config: %v", err)
-	}
-	cm := &core.ConfigMap{}
-	if err := h.controller.store.client.Get(context.Background(), client.ObjectKey{Namespace: "chill-system", Name: template.Name}, cm); err != nil {
-		t.Fatal(err)
-	}
-	var applied native.Config
-	if err := json.Unmarshal([]byte(cm.Data["config.json"]), &applied); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(applied.RunnerCommand, []string{"runner", "--warmup-batch", "2"}) ||
-		!reflect.DeepEqual(applied.BatchSizes, []int{1, 2, 3, 4}) {
-		t.Fatalf("fixed policy warmed unused batches or lost capabilities: %+v", applied)
 	}
 }
 
