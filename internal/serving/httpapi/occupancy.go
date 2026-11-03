@@ -27,23 +27,36 @@ type OccupancyMutationResult struct {
 	DeletedEvidence []MeasurementEvidenceLocation     `json:"deletedEvidence,omitempty"`
 }
 
-func (h *Handler) submitOccupancy(w http.ResponseWriter, r *http.Request) (OccupancyMutationResult, *serving.SchedulerActionObservation, error) {
+func (h *Handler) submitOccupancy(
+	w http.ResponseWriter,
+	r *http.Request,
+) (OccupancyMutationResult, *serving.SchedulerActionObservation, error) {
 	var intent OccupancyIntent
 	if err := h.decode(w, r, &intent); err != nil {
 		return OccupancyMutationResult{}, nil, err
 	}
 	dryRun := r.URL.Query().Get("dryRun")
 	if r.URL.Query().Has("dryRun") && (len(r.URL.Query()["dryRun"]) != 1 || dryRun != meta.DryRunAll) {
-		return OccupancyMutationResult{}, nil, &serving.Error{Code: "InvalidQuery", Message: "dryRun must be All when supplied", Field: "dryRun"}
+		return OccupancyMutationResult{}, nil, &serving.Error{
+			Code:    "InvalidQuery",
+			Message: "dryRun must be All when supplied",
+			Field:   "dryRun",
+		}
 	}
 	if (intent.Name != "" && (len(validation.IsDNS1123Subdomain(intent.Name)) != 0 || len(intent.Name) > 200)) ||
 		len(validation.IsDNS1123Subdomain(intent.Node)) != 0 ||
 		len(validation.IsDNS1123Subdomain(intent.BatchEnergyOptimization)) != 0 ||
 		len(validation.IsDNS1123Subdomain(intent.Workload)) != 0 || intent.Batch < 1 {
-		return OccupancyMutationResult{}, nil, &serving.Error{Code: "InvalidBody", Message: "valid node, BEO, Workload and positive batch are required"}
+		return OccupancyMutationResult{}, nil, &serving.Error{
+			Code:    "InvalidBody",
+			Message: "valid node, BEO, Workload and positive batch are required",
+		}
 	}
 	if h.config.BuildOccupancy == nil || h.config.SubmitOccupancy == nil {
-		return OccupancyMutationResult{}, nil, &serving.Error{Code: "OccupancyPolicyUnavailable", Message: "occupancy service is unavailable"}
+		return OccupancyMutationResult{}, nil, &serving.Error{
+			Code:    "OccupancyPolicyUnavailable",
+			Message: "occupancy service is unavailable",
+		}
 	}
 	task, err := h.config.BuildOccupancy(r.Context(), r.PathValue("namespace"), intent)
 	if err != nil {
@@ -57,14 +70,20 @@ func (h *Handler) submitOccupancy(w http.ResponseWriter, r *http.Request) (Occup
 	return value, audit, err
 }
 
-func (h *Handler) deleteOccupancy(r *http.Request) (OccupancyMutationResult, *serving.SchedulerActionObservation, error) {
+func (h *Handler) deleteOccupancy(
+	r *http.Request,
+) (OccupancyMutationResult, *serving.SchedulerActionObservation, error) {
 	version, err := precondition(r)
 	if err != nil {
 		return OccupancyMutationResult{}, nil, err
 	}
 	uid := r.URL.Query().Get("uid")
 	if len(r.URL.Query()["uid"]) != 1 || strings.TrimSpace(uid) == "" || strings.ContainsAny(uid, " \t\r\n") {
-		return OccupancyMutationResult{}, nil, &serving.Error{Code: "InvalidQuery", Message: "queried native UID is required", Field: "uid"}
+		return OccupancyMutationResult{}, nil, &serving.Error{
+			Code:    "InvalidQuery",
+			Message: "queried native UID is required",
+			Field:   "uid",
+		}
 	}
 	if h.config.DeleteOccupancy == nil {
 		return OccupancyMutationResult{}, nil, measurementUnavailable()

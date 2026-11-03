@@ -102,7 +102,11 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 		Occupancy: []servingkube.OccupancySelection{{
 			Node:      serving.NodeReference{Name: "node", UID: "node-uid"},
 			PowerMode: "fixed", Model: "model", ProfileID: "accepted-only", Batch: 2,
-			Evidence: evidencestore.ObjectIdentity{Store: "evidence", Key: servingkube.DispatchOccupancyPrefix + "node-uid/dom-uid.json", Size: 100},
+			Evidence: evidencestore.ObjectIdentity{
+				Store: "evidence",
+				Key:   servingkube.DispatchOccupancyPrefix + "node-uid/dom-uid.json",
+				Size:  100,
+			},
 		}},
 	}
 	service.profiles.Store(adopted)

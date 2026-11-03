@@ -28,6 +28,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+const (
+	measurementRequestAccepted          = "Accepted"
+	measurementRequestNotSubmitted      = "NOT_SUBMITTED"
+	measurementRequestDeletionRequested = "DeletionRequested"
+)
+
 // The measurement service removes only source-proven, unreferenced measurement
 // evidence before requesting native deletion. Native GC/finalizers stay native.
 type queryBearerContextKey struct{}
@@ -137,10 +143,10 @@ func (o *measurementService) submit(
 		return result, err
 	}
 	options := &client.CreateOptions{}
-	result.Request = "Accepted"
+	result.Request = measurementRequestAccepted
 	if dryRun {
 		options.DryRun = []string{meta.DryRunAll}
-		result.Request = "NOT_SUBMITTED"
+		result.Request = measurementRequestNotSubmitted
 	}
 	if err := o.client.Create(ctx, &task, options); err != nil {
 		return httpapi.MeasurementMutationResult{}, err
@@ -229,6 +235,6 @@ func (o *measurementService) delete(
 				"the native object may remain or have changed; query its identity before retrying",
 		}
 	}
-	result.Request = "DeletionRequested"
+	result.Request = measurementRequestDeletionRequested
 	return result, nil
 }

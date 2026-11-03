@@ -15,6 +15,11 @@ import (
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	occupancyModelTest            = "model"
+	occupancyForeignSelectionTest = "foreign-selection"
+)
+
 type occupancyFixture struct {
 	intent       httpapi.OccupancyIntent
 	policy       dispatchOccupancyPolicy
@@ -28,17 +33,42 @@ type occupancyFixture struct {
 }
 
 func syntheticOccupancyFixture() occupancyFixture {
-	f := occupancyFixture{intent: httpapi.OccupancyIntent{Node: "node", BatchEnergyOptimization: "beo", Workload: "workload", Batch: 2}, policy: syntheticOccupancyPolicy(),
-		cm:      &core.ConfigMap{ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "scheduler", UID: "config-uid", ResourceVersion: "9"}},
-		profile: &serving.Profile{ID: "allowed/beo/beo-uid", NodeName: "node", Batches: []serving.BatchProfile{{Batch: 2, DurationNanos: []float64{10e6, 20e6, 30e6}}}},
-		node:    &core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}},
-		workload: &api.Workload{ObjectMeta: meta.ObjectMeta{Name: "workload", UID: "workload-uid", Generation: 3}, Spec: api.WorkloadSpec{
-			ModelRef: api.CatalogReference{Name: "model"}, PreprocessorRef: api.CatalogReference{Name: "preprocessor"}, DatasetRef: &api.CatalogReference{Name: "dataset"},
-			SLO: api.WorkloadSLO{Percentile: 99, TargetLatency: meta.Duration{Duration: 1500 * time.Millisecond}}}},
-		preprocessor: &api.Preprocessor{ObjectMeta: meta.ObjectMeta{Name: "preprocessor", UID: "preprocessor-uid", Generation: 1}, Spec: api.PreprocessorSpec{
-			Input: api.RawInputContract{Fields: []api.RawField{{Name: "text", Format: "UTF8", MaxBytes: 1020}}}}}, timeout: 2 * time.Second}
+	f := occupancyFixture{
+		intent: httpapi.OccupancyIntent{Node: "node", BatchEnergyOptimization: "beo", Workload: "workload", Batch: 2},
+		policy: syntheticOccupancyPolicy(),
+		cm: &core.ConfigMap{
+			ObjectMeta: meta.ObjectMeta{
+				Namespace:       "serving",
+				Name:            "scheduler",
+				UID:             "config-uid",
+				ResourceVersion: "9",
+			},
+		},
+		profile: &serving.Profile{
+			ID:       "allowed/beo/beo-uid",
+			NodeName: "node",
+			Batches:  []serving.BatchProfile{{Batch: 2, DurationNanos: []float64{10e6, 20e6, 30e6}}},
+		},
+		node: &core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}},
+		workload: &api.Workload{
+			ObjectMeta: meta.ObjectMeta{Name: "workload", UID: "workload-uid", Generation: 3},
+			Spec: api.WorkloadSpec{
+				ModelRef: api.CatalogReference{
+					Name: occupancyModelTest,
+				}, PreprocessorRef: api.CatalogReference{Name: "preprocessor"}, DatasetRef: &api.CatalogReference{Name: "dataset"},
+				SLO: api.WorkloadSLO{Percentile: 99, TargetLatency: meta.Duration{Duration: 1500 * time.Millisecond}}},
+		},
+		preprocessor: &api.Preprocessor{
+			ObjectMeta: meta.ObjectMeta{Name: "preprocessor", UID: "preprocessor-uid", Generation: 1},
+			Spec: api.PreprocessorSpec{
+				Input: api.RawInputContract{
+					Fields: []api.RawField{{Name: "text", Format: "UTF8", MaxBytes: 1020}},
+				}},
+		},
+		timeout: 2 * time.Second,
+	}
 	f.profile.Condition.NodeUID = "node-uid"
-	f.profile.Condition.LogicalModel = "model"
+	f.profile.Condition.LogicalModel = occupancyModelTest
 	f.profile.Condition.RuntimeImage = "runtime@sha256:synthetic"
 	f.profile.Condition.Preprocessor.Name = "preprocessor"
 	f.profile.Condition.Preprocessor.Inputs = []string{"text"}
@@ -48,7 +78,19 @@ func syntheticOccupancyFixture() occupancyFixture {
 }
 
 func (f occupancyFixture) build() (*api.DispatchOccupancyMeasurement, error) {
-	return deriveOccupancy("allowed", f.intent, f.policy, f.cm, "scheduler.json", f.profile, f.node, f.workload, f.preprocessor, f.preparation, f.timeout)
+	return deriveOccupancy(
+		"allowed",
+		f.intent,
+		f.policy,
+		f.cm,
+		"scheduler.json",
+		f.profile,
+		f.node,
+		f.workload,
+		f.preprocessor,
+		f.preparation,
+		f.timeout,
+	)
 }
 
 func requireOccupancyError(t *testing.T, err error, code string) {
@@ -72,7 +114,8 @@ func TestOccupancyDerivationFreezesProtocolAndCompleteElapsedBudget(t *testing.T
 		t.Fatalf("incorrect supply: %+v", task.Spec)
 	}
 	s := task.Spec
-	budget := s.PreparationSeconds + s.JobSetupSeconds + s.CollectionSeconds + s.WarmupSeconds + s.DurationSeconds + s.RequestLifetimeSeconds + (s.DeliveryMarginMillis+999)/1000 + s.DrainSeconds
+	budget := s.PreparationSeconds + s.JobSetupSeconds + s.CollectionSeconds + s.WarmupSeconds +
+		s.DurationSeconds + s.RequestLifetimeSeconds + (s.DeliveryMarginMillis+999)/1000 + s.DrainSeconds
 	if budget != s.PlannedElapsedSeconds {
 		t.Fatalf("budget %d != E %d", budget, s.PlannedElapsedSeconds)
 	}
@@ -83,7 +126,9 @@ func TestOccupancyDerivationFreezesProtocolAndCompleteElapsedBudget(t *testing.T
 	if err := json.Unmarshal([]byte(s.Conditions.InputsJSON), &inputs); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(inputs.DispatchOccupancy, f.policy) || inputs.Configuration.UID != "config-uid" || inputs.Configuration.ResourceVersion != "9" || inputs.Configuration.Key != "scheduler.json" {
+	if !reflect.DeepEqual(inputs.DispatchOccupancy, f.policy) || inputs.Configuration.UID != "config-uid" ||
+		inputs.Configuration.ResourceVersion != "9" ||
+		inputs.Configuration.Key != "scheduler.json" {
 		t.Fatal("policy/provenance not frozen")
 	}
 	again, err := f.build()
@@ -116,13 +161,17 @@ func TestOccupancyDerivationFreezesProtocolAndCompleteElapsedBudget(t *testing.T
 
 func TestOccupancyDerivationRefusesLifetimeIdentityAndSupply(t *testing.T) {
 	for name, change := range map[string]func(*occupancyFixture){
-		"SLO ceil":           func(f *occupancyFixture) { f.workload.Spec.SLO.TargetLatency.Duration = 2001 * time.Millisecond },
+		"SLO ceil": func(f *occupancyFixture) {
+			f.workload.Spec.SLO.TargetLatency.Duration = 2001 * time.Millisecond
+		},
 		"actual gateway cap": func(f *occupancyFixture) { f.timeout = 1999 * time.Millisecond },
 		"Workload request lifetime": func(f *occupancyFixture) {
 			f.workload.Spec.RequestLifetime = &meta.Duration{Duration: 1500 * time.Millisecond}
 		},
-		"node replacement":           func(f *occupancyFixture) { f.node.UID = "replacement" },
-		"wrong model":                func(f *occupancyFixture) { f.workload.Spec.ModelRef.Name = "other" },
+		"node replacement": func(f *occupancyFixture) { f.node.UID = "replacement" },
+		"wrong model": func(f *occupancyFixture) {
+			f.workload.Spec.ModelRef.Name = occupancyForeignSelectionTest
+		},
 		"unbounded raw field":        func(f *occupancyFixture) { f.preprocessor.Spec.Input.Fields[0].MaxBytes = 0 },
 		"missing batch":              func(f *occupancyFixture) { f.intent.Batch = 3 },
 		"infeasible saturation":      func(f *occupancyFixture) { f.policy.RefillSeconds = 10 },

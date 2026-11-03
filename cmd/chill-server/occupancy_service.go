@@ -20,14 +20,18 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func (o *measurementService) submitOccupancy(ctx context.Context, task api.DispatchOccupancyMeasurement, dryRun bool) (httpapi.OccupancyMutationResult, error) {
+func (o *measurementService) submitOccupancy(
+	ctx context.Context,
+	task api.DispatchOccupancyMeasurement,
+	dryRun bool,
+) (httpapi.OccupancyMutationResult, error) {
 	if err := o.namespace(task.Namespace); err != nil {
 		return httpapi.OccupancyMutationResult{}, err
 	}
-	result := httpapi.OccupancyMutationResult{Task: &task, Request: "Accepted"}
+	result := httpapi.OccupancyMutationResult{Task: &task, Request: measurementRequestAccepted}
 	if dryRun {
 		// The final validated frozen object is returned without even a native create.
-		result.Request = "NOT_SUBMITTED"
+		result.Request = measurementRequestNotSubmitted
 		return result, nil
 	}
 	if err := o.client.Create(ctx, &task); err != nil {
@@ -36,13 +40,19 @@ func (o *measurementService) submitOccupancy(ctx context.Context, task api.Dispa
 	return result, nil
 }
 
-func (o *measurementService) deleteOccupancy(ctx context.Context, namespace, name, uid, version string) (httpapi.OccupancyMutationResult, error) {
+func (o *measurementService) deleteOccupancy(
+	ctx context.Context,
+	namespace, name, uid, version string,
+) (httpapi.OccupancyMutationResult, error) {
 	result := httpapi.OccupancyMutationResult{}
 	if err := o.namespace(namespace); err != nil {
 		return result, err
 	}
 	if uid == "" || version == "" {
-		return result, &serving.Error{Code: "ResourceVersionRequired", Message: "native UID and resourceVersion are required"}
+		return result, &serving.Error{
+			Code:    "ResourceVersionRequired",
+			Message: "native UID and resourceVersion are required",
+		}
 	}
 	if o.scheduler != nil {
 		o.scheduler.lock.Lock()
@@ -54,7 +64,11 @@ func (o *measurementService) deleteOccupancy(ctx context.Context, namespace, nam
 	}
 	result.Task = task
 	if string(task.UID) != uid || task.ResourceVersion != version {
-		return result, apierrors.NewConflict(schema.GroupResource{Group: api.GroupVersion.Group, Resource: "dispatchoccupancymeasurements"}, name, errors.New("native UID or resourceVersion changed"))
+		return result, apierrors.NewConflict(
+			schema.GroupResource{Group: api.GroupVersion.Group, Resource: "dispatchoccupancymeasurements"},
+			name,
+			errors.New("native UID or resourceVersion changed"),
+		)
 	}
 	if task.Status.Phase == api.MeasurementPhaseMeasuring {
 		return result, measurementInUse("a Measuring occupancy measurement cannot be deleted")
@@ -68,16 +82,27 @@ func (o *measurementService) deleteOccupancy(ctx context.Context, namespace, nam
 	}
 	if location != nil {
 		if err := o.objects.Delete(ctx, *location); err != nil && !errors.Is(err, evidencestore.ErrNotFound) {
-			return result, &serving.Error{Code: "MeasurementEvidenceDeletionIncomplete", Message: "owned occupancy evidence cleanup failed; native measurement retained"}
+			return result, &serving.Error{
+				Code:    "MeasurementEvidenceDeletionIncomplete",
+				Message: "owned occupancy evidence cleanup failed; native measurement retained",
+			}
 		}
 		result.DeletedEvidence = []httpapi.MeasurementEvidenceLocation{{Store: location.Store, Key: location.Key}}
 	}
 	result.EvidenceDeleted = true
 	policy := meta.DeletePropagationBackground
-	if err := o.client.Delete(ctx, task, &client.DeleteOptions{Preconditions: &meta.Preconditions{UID: &task.UID, ResourceVersion: &task.ResourceVersion}, PropagationPolicy: &policy}); err != nil {
-		return result, &serving.Error{Code: "MeasurementDeletionIncomplete", Message: "owned occupancy evidence cleaned but native deletion was not confirmed; query UID/resourceVersion before retrying"}
+	deletion := &client.DeleteOptions{
+		Preconditions:     &meta.Preconditions{UID: &task.UID, ResourceVersion: &task.ResourceVersion},
+		PropagationPolicy: &policy,
 	}
-	result.Request = "DeletionRequested"
+	if err := o.client.Delete(ctx, task, deletion); err != nil {
+		return result, &serving.Error{
+			Code: "MeasurementDeletionIncomplete",
+			Message: "owned occupancy evidence cleaned but native deletion was not confirmed; " +
+				"query UID/resourceVersion before retrying",
+		}
+	}
+	result.Request = measurementRequestDeletionRequested
 	return result, nil
 }
 
@@ -114,9 +139,15 @@ func (o *measurementService) occupancyLoadStopped(ctx context.Context, task *api
 	return nil
 }
 
-func (o *measurementService) occupancyOwnedEvidence(ctx context.Context, task *api.DispatchOccupancyMeasurement) (*evidencestore.ObjectLocation, error) {
+func (o *measurementService) occupancyOwnedEvidence(
+	ctx context.Context,
+	task *api.DispatchOccupancyMeasurement,
+) (*evidencestore.ObjectLocation, error) {
 	if o.objects == nil || o.opts.storeName == "" || o.opts.maxEvidenceBytes < 1 {
-		return nil, &serving.Error{Code: "MeasurementEvidenceUnavailable", Message: "bounded occupancy Evidence Store access is required for deletion"}
+		return nil, &serving.Error{
+			Code:    "MeasurementEvidenceUnavailable",
+			Message: "bounded occupancy Evidence Store access is required for deletion",
+		}
 	}
 	if task.UID == "" || strings.ContainsAny(string(task.UID), "/\\") {
 		return nil, measurementInUse("invalid occupancy UID for owned evidence")
@@ -139,8 +170,11 @@ func (o *measurementService) occupancyOwnedEvidence(ctx context.Context, task *a
 	if frozen.Node.Name != task.Spec.Node || frozen.Node.UID == "" || strings.ContainsAny(frozen.Node.UID, "/\\") {
 		return nil, measurementInUse("invalid frozen occupancy Node identity")
 	}
-	location := o.measurementLocation(servingkube.DispatchOccupancyPrefix + frozen.Node.UID + "/" + string(task.UID) + ".json")
-	if ref := task.Status.Result; ref != nil && (ref.Store != location.Store || ref.Key != location.Key || ref.SchemaVersion != servingkube.DispatchOccupancySchema) {
+	location := o.measurementLocation(
+		servingkube.DispatchOccupancyPrefix + frozen.Node.UID + "/" + string(task.UID) + ".json",
+	)
+	if ref := task.Status.Result; ref != nil &&
+		(ref.Store != location.Store || ref.Key != location.Key || ref.SchemaVersion != servingkube.DispatchOccupancySchema) {
 		return nil, measurementInUse("occupancy result is outside its producer-owned evidence location")
 	}
 	raw, err := o.readDeletionEvidence(ctx, location, true)
@@ -151,9 +185,7 @@ func (o *measurementService) occupancyOwnedEvidence(ctx context.Context, task *a
 		return nil, nil
 	}
 	var record servingkube.DispatchOccupancyRecord
-	if json.Unmarshal(raw, &record) != nil || record.SchemaVersion != servingkube.DispatchOccupancySchema || record.Node != frozen.Node ||
-		record.Conditions.Node != task.Spec.Node || record.Conditions.BatchEnergyOptimization != task.Spec.BatchEnergyOptimization ||
-		record.Conditions.Workload != task.Spec.Workload || record.Conditions.Batch != task.Spec.Batch || record.ProfileID != task.Spec.Conditions.ProfileID {
+	if json.Unmarshal(raw, &record) != nil || !occupancyRecordOwned(&record, frozen.Node, &task.Spec) {
 		return nil, measurementInUse("occupancy evidence does not describe this native measurement")
 	}
 	// Foreign DOM references must not grant deletion authority over shared evidence.
@@ -170,4 +202,14 @@ func (o *measurementService) occupancyOwnedEvidence(ctx context.Context, task *a
 		}
 	}
 	return &location, nil
+}
+
+func occupancyRecordOwned(record *servingkube.DispatchOccupancyRecord,
+	node serving.NodeReference, spec *api.DispatchOccupancyMeasurementSpec,
+) bool {
+	return record.SchemaVersion == servingkube.DispatchOccupancySchema && record.Node == node &&
+		record.Conditions.Node == spec.Node &&
+		record.Conditions.BatchEnergyOptimization == spec.BatchEnergyOptimization &&
+		record.Conditions.Workload == spec.Workload && record.Conditions.Batch == spec.Batch &&
+		record.ProfileID == spec.Conditions.ProfileID
 }

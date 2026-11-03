@@ -10,11 +10,26 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
+const catalogOccupancyPath = "cpu"
+
 func TestCatalogOccupancyProjectsOnlyExistingSchedulerSelection(t *testing.T) {
 	profile := serving.Profile{ID: "current"}
-	profile.Condition.Artifact.ExecutionPath = "cpu"
-	identity := evidencestore.ObjectIdentity{Store: "evidence", Key: DispatchOccupancyPrefix + "node/current.json", Size: 1234}
-	record := &DispatchOccupancyRecord{Node: serving.NodeReference{Name: "node", UID: "node-uid"}, PowerMode: "fixed", Model: "model", RuntimeImage: "image", ProfileID: "current", Batch: 2, PerRequestNanos: -5, Verdict: measurementAccepted}
+	profile.Condition.Artifact.ExecutionPath = catalogOccupancyPath
+	identity := evidencestore.ObjectIdentity{
+		Store: "evidence",
+		Key:   DispatchOccupancyPrefix + "node/current.json",
+		Size:  1234,
+	}
+	record := &DispatchOccupancyRecord{
+		Node:            serving.NodeReference{Name: "node", UID: "node-uid"},
+		PowerMode:       "fixed",
+		Model:           "model",
+		RuntimeImage:    "image",
+		ProfileID:       "current",
+		Batch:           2,
+		PerRequestNanos: -5,
+		Verdict:         measurementAccepted,
+	}
 	stale := *record
 	stale.ProfileID = "retired"
 	insufficient := *record
@@ -25,12 +40,30 @@ func TestCatalogOccupancyProjectsOnlyExistingSchedulerSelection(t *testing.T) {
 		{Store: "evidence", Key: DispatchOccupancyPrefix + "node/insufficient.json", Size: 13}: &insufficient,
 	}}
 	// This is the clamped row refreshOccupancy actually passes to the scheduler.
-	selected := []serving.DispatchOccupancy{{Node: record.Node, PowerMode: record.PowerMode, Model: record.Model, RuntimeImage: record.RuntimeImage, PerRequest: time.Duration(0), Source: identity.Key}}
+	selected := []serving.DispatchOccupancy{
+		{
+			Node:         record.Node,
+			PowerMode:    record.PowerMode,
+			Model:        record.Model,
+			RuntimeImage: record.RuntimeImage,
+			PerRequest:   time.Duration(0),
+			Source:       identity.Key,
+		},
+	}
 	rows, err := evidence.OccupancySelections(selected, []serving.Profile{profile})
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("selection projection: %+v %v", rows, err)
 	}
-	expected := OccupancySelection{Node: record.Node, PowerMode: "fixed", Model: "model", RuntimeImage: "image", ExecutionPath: "cpu", ProfileID: "current", Batch: 2, Evidence: identity}
+	expected := OccupancySelection{
+		Node:          record.Node,
+		PowerMode:     "fixed",
+		Model:         "model",
+		RuntimeImage:  "image",
+		ExecutionPath: catalogOccupancyPath,
+		ProfileID:     "current",
+		Batch:         2,
+		Evidence:      identity,
+	}
 	if !reflect.DeepEqual(rows[0], expected) {
 		t.Fatalf("lost selected tuple/evidence: %+v", rows[0])
 	}

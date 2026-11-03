@@ -24,6 +24,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
+const (
+	occupancyQueuedTest  = "queued"
+	occupancyDeletedTest = "deleted"
+)
+
 func occupancyTestService(t *testing.T) (*measurementService, occupancyFixture, *int) {
 	t.Helper()
 	f := syntheticOccupancyFixture()
@@ -43,18 +48,36 @@ func occupancyTestService(t *testing.T) (*measurementService, occupancyFixture, 
 	f.cm.Data = map[string]string{"scheduler.json": string(raw)}
 	beo := &api.BatchEnergyOptimization{ObjectMeta: meta.ObjectMeta{Name: "beo", Namespace: "allowed", UID: "beo-uid"}}
 	beo.Spec.State.TargetNode = "node"
-	beo.Status.Phase = "Complete"
+	beo.Status.Phase = string(api.MeasurementPhaseComplete)
 	creates := new(int)
 	native := fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(beo, f.workload, f.preprocessor).
-		WithInterceptorFuncs(interceptor.Funcs{Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+		WithInterceptorFuncs(interceptor.Funcs{Create: func(
+			ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption,
+		) error {
 			*creates++
 			return c.Create(ctx, obj, opts...)
-		}}).Build()
+		}}).
+		Build()
 	scheduler := &schedulerService{gatewayRequestTimeout: 2 * time.Second}
-	scheduler.profiles.Store(&httpapi.ProfilesView{ConfigVersion: f.cm.ResourceVersion, CatalogView: servingkube.CatalogView{Profiles: []serving.Profile{*f.profile}},
-		Preparations: map[string]servingkube.PrepareSpec{f.profile.ID: f.preparation}})
-	service := &measurementService{client: native, kube: kubefake.NewSimpleClientset(f.cm, f.node), scheduler: scheduler,
-		opts: options{servingNamespace: "serving", profileNamespaces: []string{"allowed"}, schedulerConfigMap: "scheduler", schedulerConfigKey: "scheduler.json", maxRequestBytes: 1 << 20}}
+	scheduler.profiles.Store(
+		&httpapi.ProfilesView{
+			ConfigVersion: f.cm.ResourceVersion,
+			CatalogView:   servingkube.CatalogView{Profiles: []serving.Profile{*f.profile}},
+			Preparations:  map[string]servingkube.PrepareSpec{f.profile.ID: f.preparation},
+		},
+	)
+	service := &measurementService{
+		client:    native,
+		kube:      kubefake.NewSimpleClientset(f.cm, f.node),
+		scheduler: scheduler,
+		opts: options{
+			servingNamespace:   "serving",
+			profileNamespaces:  []string{"allowed"},
+			schedulerConfigMap: "scheduler",
+			schedulerConfigKey: "scheduler.json",
+			maxRequestBytes:    1 << 20,
+		},
+	}
 	return service, f, creates
 }
 
@@ -65,11 +88,13 @@ func TestOccupancyServiceDryRunSameFrozenObjectWithoutCreate(t *testing.T) {
 		t.Fatal(err)
 	}
 	dry, err := service.submitOccupancy(context.Background(), *task, true)
-	if err != nil || *creates != 0 || dry.Request != "NOT_SUBMITTED" || !reflect.DeepEqual(dry.Task, task) {
+	if err != nil || *creates != 0 || dry.Request != measurementRequestNotSubmitted ||
+		!reflect.DeepEqual(dry.Task, task) {
 		t.Fatal("dry run mutated or changed the frozen object", err)
 	}
 	real, err := service.submitOccupancy(context.Background(), *task, false)
-	if err != nil || *creates != 1 || real.Request != "Accepted" || !reflect.DeepEqual(real.Task.Spec, dry.Task.Spec) {
+	if err != nil || *creates != 1 || real.Request != measurementRequestAccepted ||
+		!reflect.DeepEqual(real.Task.Spec, dry.Task.Spec) {
 		t.Fatal("create changed frozen protocol", err)
 	}
 	stored := &api.DispatchOccupancyMeasurement{}
@@ -86,18 +111,24 @@ func TestOccupancyServiceDryRunSameFrozenObjectWithoutCreate(t *testing.T) {
 }
 
 func TestOccupancyServicePolicyFailsClosed(t *testing.T) {
-	for _, mode := range []string{"missing block", "invalid block", "unknown field", "unaccepted revision", "missing ConfigMap", "missing scheduler"} {
+	for _, mode := range []string{
+		"missing block", "invalid block", "unknown field", "unaccepted revision", "missing ConfigMap", "missing scheduler",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			service, f, _ := occupancyTestService(t)
 			switch mode {
 			case "missing scheduler":
 				service.scheduler = nil
 			case "missing ConfigMap":
-				if err := service.kube.CoreV1().ConfigMaps("serving").Delete(context.Background(), "scheduler", meta.DeleteOptions{}); err != nil {
+				err := service.kube.CoreV1().ConfigMaps("serving").Delete(
+					context.Background(), "scheduler", meta.DeleteOptions{})
+				if err != nil {
 					t.Fatal(err)
 				}
 			default:
-				cm, err := service.kube.CoreV1().ConfigMaps("serving").Get(context.Background(), "scheduler", meta.GetOptions{})
+				cm, err := service.kube.CoreV1().
+					ConfigMaps("serving").
+					Get(context.Background(), "scheduler", meta.GetOptions{})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -117,7 +148,9 @@ func TestOccupancyServicePolicyFailsClosed(t *testing.T) {
 				}
 				raw, _ := json.Marshal(wire)
 				cm.Data["scheduler.json"] = string(raw)
-				if _, err = service.kube.CoreV1().ConfigMaps("serving").Update(context.Background(), cm, meta.UpdateOptions{}); err != nil {
+				_, err = service.kube.CoreV1().ConfigMaps("serving").Update(
+					context.Background(), cm, meta.UpdateOptions{})
+				if err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -128,7 +161,10 @@ func TestOccupancyServicePolicyFailsClosed(t *testing.T) {
 }
 
 func TestOccupancyDeleteFencesAndOnlyRemovesOwnedEvidence(t *testing.T) {
-	for _, mode := range []string{"deleted", "Measuring", "wrong UID", "wrong version", "foreign location", "foreign record", "shared evidence", "active load", "evidence failure", "native failure", "queued"} {
+	for _, mode := range []string{
+		occupancyDeletedTest, "Measuring", "wrong UID", "wrong version", "foreign location", "foreign record",
+		"shared evidence", "active load", "evidence failure", "native failure", occupancyQueuedTest,
+	} {
 		t.Run(mode, func(t *testing.T) {
 			f := syntheticOccupancyFixture()
 			task, err := f.build()
@@ -139,8 +175,17 @@ func TestOccupancyDeleteFencesAndOnlyRemovesOwnedEvidence(t *testing.T) {
 			task.ResourceVersion = "7"
 			task.Status.Phase = api.MeasurementPhaseComplete
 			own := servingkube.DispatchOccupancyPrefix + "node-uid/dom-uid.json"
-			task.Status.Result = &api.ProfilingRunEvidenceReference{Store: "evidence", Key: own, SchemaVersion: servingkube.DispatchOccupancySchema}
-			record := servingkube.DispatchOccupancyRecord{SchemaVersion: servingkube.DispatchOccupancySchema, Node: serving.NodeReference{Name: "node", UID: "node-uid"}, ProfileID: f.profile.ID, Conditions: task.Spec}
+			task.Status.Result = &api.ProfilingRunEvidenceReference{
+				Store:         "evidence",
+				Key:           own,
+				SchemaVersion: servingkube.DispatchOccupancySchema,
+			}
+			record := servingkube.DispatchOccupancyRecord{
+				SchemaVersion: servingkube.DispatchOccupancySchema,
+				Node:          serving.NodeReference{Name: "node", UID: "node-uid"},
+				ProfileID:     f.profile.ID,
+				Conditions:    task.Spec,
+			}
 			uid, version := string(task.UID), task.ResourceVersion
 			switch mode {
 			case "Measuring":
@@ -152,15 +197,15 @@ func TestOccupancyDeleteFencesAndOnlyRemovesOwnedEvidence(t *testing.T) {
 			case "foreign location":
 				task.Status.Result.Key = "batch-energy-optimizations/foreign/result.json"
 			case "foreign record":
-				record.Conditions.Workload = "other"
-			case "queued":
+				record.Conditions.Workload = occupancyForeignSelectionTest
+			case occupancyQueuedTest:
 				task.Status.Phase = ""
 				task.Status.Result = nil
 			}
 			raw, _ := json.Marshal(record)
 			foreign := "serving/dispatch-occupancy/node-uid/foreign.json"
 			storage := deletionStore(t, map[string][]byte{own: raw, foreign: []byte(`{"unrelated":true}`)})
-			if mode == "queued" {
+			if mode == occupancyQueuedTest {
 				storage.mu.Lock()
 				delete(storage.objects, own)
 				storage.mu.Unlock()
@@ -171,36 +216,56 @@ func TestOccupancyDeleteFencesAndOnlyRemovesOwnedEvidence(t *testing.T) {
 			builder := fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(task)
 			if mode == "shared evidence" {
 				other := task.DeepCopy()
-				other.Name = "other"
+				other.Name = occupancyForeignSelectionTest
 				other.UID = "other-uid"
 				builder = builder.WithObjects(other)
 			}
 			deletes := 0
-			native := builder.WithInterceptorFuncs(interceptor.Funcs{Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+			native := builder.WithInterceptorFuncs(interceptor.Funcs{Delete: func(
+				ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption,
+			) error {
 				deletes++
 				options := &client.DeleteOptions{}
 				for _, opt := range opts {
 					opt.ApplyToDelete(options)
 				}
-				if options.Preconditions == nil || *options.Preconditions.UID != task.UID || *options.Preconditions.ResourceVersion != "7" {
+				if options.Preconditions == nil || *options.Preconditions.UID != task.UID ||
+					*options.Preconditions.ResourceVersion != "7" {
 					t.Fatal("native preconditions missing")
 				}
 				if mode == "native failure" {
 					return errors.New("delete unavailable")
 				}
 				return c.Delete(ctx, obj, opts...)
-			}}).Build()
+			}}).
+				Build()
 			kube := kubefake.NewSimpleClientset(f.node)
 			if mode == "active load" {
 				sum := sha256.Sum256([]byte(task.UID))
-				job := &batch.Job{ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "occupancy-" + hex.EncodeToString(sum[:10])}, Status: batch.JobStatus{Active: 1}}
+				job := &batch.Job{
+					ObjectMeta: meta.ObjectMeta{
+						Namespace: "serving",
+						Name:      "occupancy-" + hex.EncodeToString(sum[:10]),
+					},
+					Status: batch.JobStatus{Active: 1},
+				}
 				if _, err := kube.BatchV1().Jobs("serving").Create(context.Background(), job, meta.CreateOptions{}); err != nil {
 					t.Fatal(err)
 				}
 			}
-			service := &measurementService{client: native, kube: kube, objects: storage.store, opts: options{servingNamespace: "serving", profileNamespaces: []string{"allowed"}, storeName: "evidence", maxEvidenceBytes: 1 << 20}}
+			service := &measurementService{
+				client:  native,
+				kube:    kube,
+				objects: storage.store,
+				opts: options{
+					servingNamespace:  "serving",
+					profileNamespaces: []string{"allowed"},
+					storeName:         "evidence",
+					maxEvidenceBytes:  1 << 20,
+				},
+			}
 			result, err := service.deleteOccupancy(context.Background(), "allowed", task.Name, uid, version)
-			success := mode == "deleted" || mode == "queued"
+			success := mode == occupancyDeletedTest || mode == occupancyQueuedTest
 			if (err == nil) != success {
 				t.Fatalf("delete success=%v got %v", success, err)
 			}
@@ -208,10 +273,11 @@ func TestOccupancyDeleteFencesAndOnlyRemovesOwnedEvidence(t *testing.T) {
 				t.Fatal("foreign evidence removed")
 			}
 			if success {
-				if deletes != 1 || result.Request != "DeletionRequested" || !result.EvidenceDeleted {
+				if deletes != 1 || result.Request != measurementRequestDeletionRequested || !result.EvidenceDeleted {
 					t.Fatal("missing native delete receipt")
 				}
-				if err := native.Get(context.Background(), client.ObjectKeyFromObject(task), &api.DispatchOccupancyMeasurement{}); !apierrors.IsNotFound(err) {
+				err := native.Get(context.Background(), client.ObjectKeyFromObject(task), &api.DispatchOccupancyMeasurement{})
+				if !apierrors.IsNotFound(err) {
 					t.Fatal("native retained", err)
 				}
 			} else if mode == "native failure" {

@@ -50,7 +50,9 @@ func (p dispatchOccupancyPolicy) validate() error {
 	// Reject a policy whose irreducible segments cannot fit even before profile timing.
 	extension := int64(p.RequestLifetimeSeconds) + (int64(p.DeliveryMarginMillis)+999)/1000
 	minimum := int64(p.PreparationSeconds) + int64(p.JobSetupSeconds) + int64(p.CollectionSeconds) + extension +
-		int64(p.RequestLifetimeSeconds) + int64(math.Ceil(p.WindowFloorSeconds)) + int64(math.Ceil(p.LoadPreparationFloorSeconds))
+		int64(
+			p.RequestLifetimeSeconds,
+		) + int64(math.Ceil(p.WindowFloorSeconds)) + int64(math.Ceil(p.LoadPreparationFloorSeconds))
 	if minimum > int64(math.Floor(p.PlannedElapsedCapSeconds)) {
 		return errors.New("dispatchOccupancy elapsed cap cannot hold its configured segments and supply extension")
 	}

@@ -30,7 +30,11 @@ func occupancyPolicyUnavailable(reason string) error {
 
 // buildOccupancy reads one fresh configuration and the scheduler's accepted profile
 // under its mutation lock. A broken/missing policy never reuses an earlier policy.
-func (o *measurementService) buildOccupancy(ctx context.Context, namespace string, intent httpapi.OccupancyIntent) (*api.DispatchOccupancyMeasurement, error) {
+func (o *measurementService) buildOccupancy(
+	ctx context.Context,
+	namespace string,
+	intent httpapi.OccupancyIntent,
+) (*api.DispatchOccupancyMeasurement, error) {
 	if err := o.namespace(namespace); err != nil {
 		return nil, err
 	}
@@ -40,7 +44,9 @@ func (o *measurementService) buildOccupancy(ctx context.Context, namespace strin
 	s := o.scheduler
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	cm, err := o.kube.CoreV1().ConfigMaps(o.opts.servingNamespace).Get(ctx, o.opts.schedulerConfigMap, meta.GetOptions{})
+	cm, err := o.kube.CoreV1().
+		ConfigMaps(o.opts.servingNamespace).
+		Get(ctx, o.opts.schedulerConfigMap, meta.GetOptions{})
 	if err != nil {
 		return nil, occupancyPolicyUnavailable("scheduler ConfigMap is unavailable")
 	}
@@ -56,10 +62,12 @@ func (o *measurementService) buildOccupancy(ctx context.Context, namespace strin
 		return nil, occupancyPolicyUnavailable("scheduler has not accepted this configuration revision")
 	}
 	beo := &api.BatchEnergyOptimization{}
-	if err = o.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: intent.BatchEnergyOptimization}, beo); err != nil {
+	beoKey := client.ObjectKey{Namespace: namespace, Name: intent.BatchEnergyOptimization}
+	if err = o.client.Get(ctx, beoKey, beo); err != nil {
 		return nil, err
 	}
-	if beo.Status.Phase != "Complete" || beo.DeletionTimestamp != nil || beo.Spec.State.TargetNode != intent.Node {
+	if beo.Status.Phase != string(api.MeasurementPhaseComplete) || beo.DeletionTimestamp != nil ||
+		beo.Spec.State.TargetNode != intent.Node {
 		return nil, occupancyInfeasible("BEO must be Complete on the selected Node")
 	}
 	id := namespace + "/" + beo.Name + "/" + string(beo.UID)
@@ -86,28 +94,30 @@ func (o *measurementService) buildOccupancy(ctx context.Context, namespace strin
 	if err = o.client.Get(ctx, client.ObjectKey{Name: workload.Spec.PreprocessorRef.Name}, preprocessor); err != nil {
 		return nil, err
 	}
-	return deriveOccupancy(namespace, intent, *config.DispatchOccupancy, cm, o.opts.schedulerConfigKey, profile, node, workload, preprocessor, preparation, s.gatewayRequestTimeout)
+	return deriveOccupancy(
+		namespace,
+		intent,
+		*config.DispatchOccupancy,
+		cm,
+		o.opts.schedulerConfigKey,
+		profile,
+		node,
+		workload,
+		preprocessor,
+		preparation,
+		s.gatewayRequestTimeout,
+	)
 }
 
 func deriveOccupancy(namespace string, intent httpapi.OccupancyIntent, policy dispatchOccupancyPolicy,
 	cm *core.ConfigMap, key string, profile *serving.Profile, node *core.Node, workload *api.Workload,
 	preprocessor *api.Preprocessor, preparation servingkube.PrepareSpec, gatewayTimeout time.Duration,
 ) (*api.DispatchOccupancyMeasurement, error) {
-	if node.UID == "" || string(node.UID) != profile.Condition.NodeUID || profile.NodeName != node.Name || intent.Node != node.Name {
-		return nil, occupancyInfeasible("current Node UID differs from the measured profile")
-	}
-	if workload.UID == "" || workload.Spec.DatasetRef == nil || workload.Spec.ModelRef.Name != profile.Condition.LogicalModel ||
-		workload.Spec.PreprocessorRef.Name != profile.Condition.Preprocessor.Name || preprocessor.Name != workload.Spec.PreprocessorRef.Name {
-		return nil, occupancyInfeasible("Workload model, preprocessor and dataset must resolve the selected profile")
-	}
-	if workload.Spec.RequestLifetime != nil {
-		gatewayTimeout = min(gatewayTimeout, workload.Spec.RequestLifetime.Duration)
+	requestBytes, err := occupancyTargetInputs(intent, policy, profile, node, workload, preprocessor, gatewayTimeout)
+	if err != nil {
+		return nil, err
 	}
 	lifetime := float64(policy.RequestLifetimeSeconds)
-	if workload.Spec.SLO.TargetLatency.Duration <= 0 || lifetime < math.Ceil(workload.Spec.SLO.TargetLatency.Duration.Seconds()) ||
-		gatewayTimeout <= 0 || time.Duration(policy.RequestLifetimeSeconds)*time.Second > gatewayTimeout {
-		return nil, occupancyInfeasible("request lifetime must cover ceil(Workload SLO) and not exceed the actual gateway request timeout")
-	}
 	var population []float64
 	for _, batch := range profile.Batches {
 		if batch.Batch == int(intent.Batch) {
@@ -130,21 +140,11 @@ func deriveOccupancy(namespace string, intent httpapi.OccupancyIntent, policy di
 	if intent.Batch < 1 || math.IsInf(mean, 0) {
 		return nil, occupancyInfeasible("invalid batch population")
 	}
-	// firstfloor stores each decoded raw field with a four-byte length prefix.
-	var requestBytes int64
-	if len(preprocessor.Spec.Input.Fields) == 0 || len(preprocessor.Spec.Input.Fields) != len(profile.Condition.Preprocessor.Inputs) {
-		return nil, occupancyInfeasible("current raw input contract differs from the profile")
-	}
-	for i, field := range preprocessor.Spec.Input.Fields {
-		if field.MaxBytes < 1 || field.Name != profile.Condition.Preprocessor.Inputs[i] {
-			return nil, occupancyInfeasible("bounded matching raw input fields required")
-		}
-		requestBytes += int64(field.MaxBytes) + 4
-	}
 	// These are the existing native supplySizing contract caps, not scientific defaults.
 	const workerCap = 64
 	const queueBytesCap = 64 << 20
-	if preparation.Config.MaxQueueBytes < queueBytesCap || preparation.Config.MaxQueueRequests < 1 || requestBytes > queueBytesCap {
+	if preparation.Config.MaxQueueBytes < queueBytesCap || preparation.Config.MaxQueueRequests < 1 ||
+		requestBytes > queueBytesCap {
 		return nil, occupancyInfeasible("native queue cannot support the existing 64/64MiB supply contract")
 	}
 	margin := float64(policy.DeliveryMarginMillis) / 1000
@@ -181,7 +181,15 @@ func deriveOccupancy(namespace string, intent httpapi.OccupancyIntent, policy di
 		saturationBound = "worker-cap"
 	}
 	if estimatedIdle > policy.MaximumIdleFraction {
-		return nil, occupancyInfeasible(fmt.Sprintf("safe supply %.0f workers cannot saturate: estimated idle %.6g exceeds %.6g (refill bound %.6gs)", workers, estimatedIdle, policy.MaximumIdleFraction, policy.RefillSeconds))
+		return nil, occupancyInfeasible(
+			fmt.Sprintf(
+				"safe supply %.0f workers cannot saturate: estimated idle %.6g exceeds %.6g (refill bound %.6gs)",
+				workers,
+				estimatedIdle,
+				policy.MaximumIdleFraction,
+				policy.RefillSeconds,
+			),
+		)
 	}
 	warmup := math.Ceil(math.Max(policy.LoadPreparationFloorSeconds, (q+1)*tail+policy.RefillSeconds))
 	duration := math.Ceil(math.Max(policy.WindowFloorSeconds, policy.TimeMargin*float64(policy.MinimumBatches)*mean))
@@ -191,31 +199,72 @@ func deriveOccupancy(namespace string, intent httpapi.OccupancyIntent, policy di
 	known := float64(policy.PreparationSeconds) + warmup + duration + float64(extension) + drain
 	elapsed := known + float64(policy.JobSetupSeconds) + float64(policy.CollectionSeconds)
 	if math.IsInf(elapsed, 0) || elapsed > math.Floor(policy.PlannedElapsedCapSeconds) || elapsed > math.MaxInt32 {
-		return nil, occupancyInfeasible("elapsed cap cannot hold preparation, warmup, duration, supply extension, drain and job/collection allowances")
+		return nil, occupancyInfeasible(
+			"elapsed cap cannot hold preparation, warmup, duration, supply extension, drain and job/collection allowances",
+		)
 	}
 	spec := api.DispatchOccupancyMeasurementSpec{
-		Node: intent.Node, BatchEnergyOptimization: intent.BatchEnergyOptimization, Workload: intent.Workload, Batch: intent.Batch,
+		Node: intent.Node, BatchEnergyOptimization: intent.BatchEnergyOptimization,
+		Workload: intent.Workload, Batch: intent.Batch,
 		SupplyMode: policy.SupplyMode, Seed: policy.Seed, MinimumBatches: policy.MinimumBatches,
 		MaximumIdleFraction: strconv.FormatFloat(policy.MaximumIdleFraction, 'f', -1, 64), Workers: int32(workers),
 		RequestLifetimeSeconds: policy.RequestLifetimeSeconds, DeliveryMarginMillis: policy.DeliveryMarginMillis,
-		PreparationSeconds: policy.PreparationSeconds, JobSetupSeconds: policy.JobSetupSeconds, CollectionSeconds: policy.CollectionSeconds,
-		WarmupSeconds: int32(warmup), DurationSeconds: int32(duration), DrainSeconds: int32(drain), PlannedElapsedSeconds: int32(elapsed),
-		Conditions: api.DispatchOccupancyConditions{ProfileID: profile.ID, WaitingBatches: int32(q), MinimumCycles: policy.MinimumBatches - 1,
-			MaximumIdleNanosPerRequest: int64(math.Floor(policy.IdleDErrorSecondsPerRequest * 1e9))},
+		PreparationSeconds: policy.PreparationSeconds,
+		JobSetupSeconds:    policy.JobSetupSeconds, CollectionSeconds: policy.CollectionSeconds,
+		WarmupSeconds: int32(warmup), DurationSeconds: int32(duration),
+		DrainSeconds: int32(drain), PlannedElapsedSeconds: int32(elapsed),
+		Conditions: api.DispatchOccupancyConditions{
+			ProfileID:                  profile.ID,
+			WaitingBatches:             int32(q),
+			MinimumCycles:              policy.MinimumBatches - 1,
+			MaximumIdleNanosPerRequest: int64(math.Floor(policy.IdleDErrorSecondsPerRequest * 1e9)),
+		},
 	}
 	inputs := map[string]any{
 		"dispatchOccupancy": policy,
-		"configuration":     map[string]any{"namespace": cm.Namespace, "name": cm.Name, "uid": cm.UID, "resourceVersion": cm.ResourceVersion, "key": key},
-		"node":              serving.NodeReference{Name: node.Name, UID: string(node.UID)},
-		"coefficients":      policy,
-		"profile": map[string]any{"profileID": profile.ID, "runtimeImage": profile.Condition.RuntimeImage, "reference": profile.Reference, "evidence": profile.Evidence,
-			"batch": intent.Batch, "durationNanos": population, "meanBatchSeconds": mean, "maxObservedSeconds": tail,
+		"configuration": map[string]any{
+			"namespace":       cm.Namespace,
+			"name":            cm.Name,
+			"uid":             cm.UID,
+			"resourceVersion": cm.ResourceVersion,
+			"key":             key,
+		},
+		"node":         serving.NodeReference{Name: node.Name, UID: string(node.UID)},
+		"coefficients": policy,
+		"profile": map[string]any{
+			"profileID":          profile.ID,
+			"runtimeImage":       profile.Condition.RuntimeImage,
+			"reference":          profile.Reference,
+			"evidence":           profile.Evidence,
+			"batch":              intent.Batch,
+			"durationNanos":      population,
+			"meanBatchSeconds":   mean,
+			"maxObservedSeconds": tail,
 			"workload": map[string]any{"name": workload.Name, "uid": workload.UID, "generation": workload.Generation,
-				"slo": map[string]any{"percentile": workload.Spec.SLO.Percentile, "targetLatencyNanos": workload.Spec.SLO.TargetLatency.Duration.Nanoseconds()}},
-			"preprocessor": map[string]any{"name": preprocessor.Name, "uid": preprocessor.UID, "generation": preprocessor.Generation, "input": preprocessor.Spec.Input}},
-		"computed": map[string]any{"tailBatchSeconds": tail, "fastBatchSeconds": fast, "prefixSeconds": margin, "refillSeconds": policy.RefillSeconds,
-			"framedDecodedRequestUpperBytes": requestBytes, "queueRequestCap": preparation.Config.MaxQueueRequests, "queueBytesCap": queueBytesCap,
-			"qUpper": preparation.Config.MaxQueueRequests / int(intent.Batch), "estimatedIdleFraction": estimatedIdle, "supplyExtensionSeconds": extension,
+				"slo": map[string]any{
+					"percentile":         workload.Spec.SLO.Percentile,
+					"targetLatencyNanos": workload.Spec.SLO.TargetLatency.Duration.Nanoseconds(),
+				}},
+			"preprocessor": map[string]any{
+				"name":       preprocessor.Name,
+				"uid":        preprocessor.UID,
+				"generation": preprocessor.Generation,
+				"input":      preprocessor.Spec.Input,
+			},
+		},
+		"computed": map[string]any{
+			"tailBatchSeconds":               tail,
+			"fastBatchSeconds":               fast,
+			"prefixSeconds":                  margin,
+			"refillSeconds":                  policy.RefillSeconds,
+			"framedDecodedRequestUpperBytes": requestBytes,
+			"queueRequestCap":                preparation.Config.MaxQueueRequests,
+			"queueBytesCap":                  queueBytesCap,
+			"qUpper": preparation.Config.MaxQueueRequests / int(
+				intent.Batch,
+			),
+			"estimatedIdleFraction":  estimatedIdle,
+			"supplyExtensionSeconds": extension,
 			"saturationSizing": map[string]any{
 				"requiredWorkers": requiredWorkers, "workerCap": workerCap, "byteCapWorkers": byteWorkers,
 				"lifetimeCapWorkers": lifetimeWorkers, "selectedWorkers": workers, "limitingBound": saturationBound,
@@ -223,9 +272,18 @@ func deriveOccupancy(namespace string, intent httpapi.OccupancyIntent, policy di
 				"residualIdleSeconds": residual, "estimatedIdleFraction": estimatedIdle,
 				"maximumIdleFraction": policy.MaximumIdleFraction,
 			},
-			"supplySizing": map[string]any{"batch": intent.Batch, "profileMaxBatchSeconds": tail, "serviceTimeSource": "profile.maxObservedSeconds",
-				"requestLifetimeSeconds": policy.RequestLifetimeSeconds, "marginSeconds": margin, "workerCap": workerCap, "queueBytesCap": queueBytesCap,
-				"framedDecodedRequestUpperBytes": requestBytes, "limitingBound": bound}},
+			"supplySizing": map[string]any{
+				"batch":                          intent.Batch,
+				"profileMaxBatchSeconds":         tail,
+				"serviceTimeSource":              "profile.maxObservedSeconds",
+				"requestLifetimeSeconds":         policy.RequestLifetimeSeconds,
+				"marginSeconds":                  margin,
+				"workerCap":                      workerCap,
+				"queueBytesCap":                  queueBytesCap,
+				"framedDecodedRequestUpperBytes": requestBytes,
+				"limitingBound":                  bound,
+			},
+		},
 	}
 	raw, err := json.Marshal(inputs)
 	if err != nil {
@@ -241,9 +299,55 @@ func deriveOccupancy(namespace string, intent httpapi.OccupancyIntent, policy di
 		frozen, _ := json.Marshal(spec)
 		hash := sha256.Sum256(frozen)
 		nodePart := strings.TrimRight(intent.Node[:min(len(intent.Node), 40)], "-.")
-		beoPart := strings.TrimRight(intent.BatchEnergyOptimization[:min(len(intent.BatchEnergyOptimization), 40)], "-.")
+		beoPart := strings.TrimRight(
+			intent.BatchEnergyOptimization[:min(len(intent.BatchEnergyOptimization), 40)],
+			"-.",
+		)
 		name = fmt.Sprintf("occ-%s-%s-b%d-%x", nodePart, beoPart, intent.Batch, hash[:5])
 	}
-	return &api.DispatchOccupancyMeasurement{TypeMeta: meta.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "DispatchOccupancyMeasurement"},
-		ObjectMeta: meta.ObjectMeta{Namespace: namespace, Name: name}, Spec: spec}, nil
+	return &api.DispatchOccupancyMeasurement{
+		TypeMeta:   meta.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "DispatchOccupancyMeasurement"},
+		ObjectMeta: meta.ObjectMeta{Namespace: namespace, Name: name},
+		Spec:       spec,
+	}, nil
+}
+
+// occupancyTargetInputs validates current native identities and the request byte bound.
+func occupancyTargetInputs(intent httpapi.OccupancyIntent, policy dispatchOccupancyPolicy,
+	profile *serving.Profile, node *core.Node, workload *api.Workload,
+	preprocessor *api.Preprocessor, gatewayTimeout time.Duration,
+) (int64, error) {
+	if node.UID == "" || string(node.UID) != profile.Condition.NodeUID ||
+		profile.NodeName != node.Name || intent.Node != node.Name {
+		return 0, occupancyInfeasible("current Node UID differs from the measured profile")
+	}
+	if workload.UID == "" || workload.Spec.DatasetRef == nil ||
+		workload.Spec.ModelRef.Name != profile.Condition.LogicalModel ||
+		workload.Spec.PreprocessorRef.Name != profile.Condition.Preprocessor.Name ||
+		preprocessor.Name != workload.Spec.PreprocessorRef.Name {
+		return 0, occupancyInfeasible("Workload model, preprocessor and dataset must resolve the selected profile")
+	}
+	if workload.Spec.RequestLifetime != nil {
+		gatewayTimeout = min(gatewayTimeout, workload.Spec.RequestLifetime.Duration)
+	}
+	lifetime := float64(policy.RequestLifetimeSeconds)
+	if workload.Spec.SLO.TargetLatency.Duration <= 0 ||
+		lifetime < math.Ceil(workload.Spec.SLO.TargetLatency.Duration.Seconds()) ||
+		gatewayTimeout <= 0 || time.Duration(policy.RequestLifetimeSeconds)*time.Second > gatewayTimeout {
+		return 0, occupancyInfeasible("request lifetime must cover ceil(Workload SLO) " +
+			"and not exceed the actual gateway request timeout")
+	}
+	// firstfloor stores each decoded raw field with a four-byte length prefix.
+	var requestBytes int64
+	if len(preprocessor.Spec.Input.Fields) == 0 ||
+		len(preprocessor.Spec.Input.Fields) != len(profile.Condition.Preprocessor.Inputs) {
+		return 0, occupancyInfeasible("current raw input contract differs from the profile")
+	}
+	for i, field := range preprocessor.Spec.Input.Fields {
+		if field.MaxBytes < 1 || field.Name != profile.Condition.Preprocessor.Inputs[i] {
+			return 0, occupancyInfeasible("bounded matching raw input fields required")
+		}
+		requestBytes += int64(field.MaxBytes) + 4
+	}
+	return requestBytes, nil
 }

@@ -22,10 +22,18 @@ import (
 )
 
 const occupancyTestBody = `{"node":"node","batchEnergyOptimization":"beo","workload":"workload","batch":2}`
+const occupancyActorTest = "actor-uid"
 
 func occupancyHandler(t *testing.T, deny string) (*Handler, *[]authorization.ResourceAttributes) {
 	t.Helper()
-	log, err := serving.NewObservationLog(serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
+	log, err := serving.NewObservationLog(
+		serving.ObservationLogConfig{
+			Directory: t.TempDir(),
+			Store:     "evidence",
+			Retention: time.Hour,
+			Writer:    settingsArchive{directory: t.TempDir()},
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,12 +44,17 @@ func occupancyHandler(t *testing.T, deny string) (*Handler, *[]authorization.Res
 	})
 	kube := fake.NewSimpleClientset()
 	kube.PrependReactor("create", "tokenreviews", func(ktesting.Action) (bool, runtime.Object, error) {
-		return true, &authentication.TokenReview{Status: authentication.TokenReviewStatus{Authenticated: true, User: authentication.UserInfo{Username: "operator", UID: "actor-uid"}}}, nil
+		return true, &authentication.TokenReview{
+			Status: authentication.TokenReviewStatus{
+				Authenticated: true,
+				User:          authentication.UserInfo{Username: "operator", UID: occupancyActorTest},
+			},
+		}, nil
 	})
 	reviews := new([]authorization.ResourceAttributes)
 	kube.PrependReactor("create", "subjectaccessreviews", func(action ktesting.Action) (bool, runtime.Object, error) {
 		review := action.(ktesting.CreateAction).GetObject().(*authorization.SubjectAccessReview)
-		if review.Spec.User != "operator" || review.Spec.UID != "actor-uid" {
+		if review.Spec.User != "operator" || review.Spec.UID != occupancyActorTest {
 			t.Fatal("caller replaced")
 		}
 		allowed := deny != "path"
@@ -49,15 +62,25 @@ func occupancyHandler(t *testing.T, deny string) (*Handler, *[]authorization.Res
 			*reviews = append(*reviews, *attrs)
 			allowed = attrs.Verb != deny
 		}
-		return true, &authorization.SubjectAccessReview{Status: authorization.SubjectAccessReviewStatus{Allowed: allowed}}, nil
+		return true, &authorization.SubjectAccessReview{
+			Status: authorization.SubjectAccessReviewStatus{Allowed: allowed},
+		}, nil
 	})
-	return &Handler{observationLog: log, authorizer: &servingkube.Authorizer{Client: kube}, config: HandlerConfig{MaxRequestBytes: 1024}}, reviews
+	return &Handler{
+		observationLog: log,
+		authorizer:     &servingkube.Authorizer{Client: kube},
+		config:         HandlerConfig{MaxRequestBytes: 1024},
+	}, reviews
 }
 
 func occupancyRequest(method, suffix, body string) *http.Request {
-	r := httptest.NewRequest(method, "/api/v1/namespaces/allowed/dispatch-occupancy-measurements"+suffix, strings.NewReader(body))
+	r := httptest.NewRequest(
+		method,
+		"/api/v1/namespaces/allowed/dispatch-occupancy-measurements"+suffix,
+		strings.NewReader(body),
+	)
 	r.Header.Set("Authorization", "Bearer caller-token")
-	r.SetPathValue("namespace", "allowed")
+	r.SetPathValue("namespace", measurementTestNamespace)
 	if method == http.MethodDelete {
 		r.SetPathValue("name", "task")
 		r.Header.Set("If-Match", `"7"`)
@@ -107,16 +130,32 @@ func TestOccupancyHTTPAuditBeforeEffectLiveAfterCommit(t *testing.T) {
 			h, reviews := occupancyHandler(t, "")
 			start := time.Now().Add(-time.Second)
 			observations := func() []serving.SchedulerObservation {
-				page, _, _, _, err := h.observationLog.SchedulerObservationPage(context.Background(), start, time.Now().Add(time.Second), 10, 0, serving.SchedulerObservationSelection{})
+				page, _, _, _, err := h.observationLog.SchedulerObservationPage(
+					context.Background(),
+					start,
+					time.Now().Add(time.Second),
+					10,
+					0,
+					serving.SchedulerObservationSelection{},
+				)
 				if err != nil {
 					t.Fatal(err)
 				}
 				return page
 			}
 			liveCalls, effects := 0, 0
-			task := api.DispatchOccupancyMeasurement{TypeMeta: meta.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "DispatchOccupancyMeasurement"}, ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "task"}, Spec: api.DispatchOccupancyMeasurementSpec{Node: "node", Batch: 2, Workers: 17, Conditions: api.DispatchOccupancyConditions{InputsJSON: `{"configuration":{"uid":"config"}}`}}}
+			task := api.DispatchOccupancyMeasurement{
+				TypeMeta:   meta.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "DispatchOccupancyMeasurement"},
+				ObjectMeta: meta.ObjectMeta{Namespace: measurementTestNamespace, Name: "task"},
+				Spec: api.DispatchOccupancyMeasurementSpec{
+					Node:       "node",
+					Batch:      2,
+					Workers:    17,
+					Conditions: api.DispatchOccupancyConditions{InputsJSON: `{"configuration":{"uid":"config"}}`},
+				},
+			}
 			h.config.BuildOccupancy = func(_ context.Context, ns string, intent OccupancyIntent) (*api.DispatchOccupancyMeasurement, error) {
-				if ns != "allowed" || intent.Node != "node" || intent.Batch != 2 {
+				if ns != measurementTestNamespace || intent.Node != "node" || intent.Batch != 2 {
 					t.Fatal("lost intent")
 				}
 				return &task, nil
@@ -150,7 +189,7 @@ func TestOccupancyHTTPAuditBeforeEffectLiveAfterCommit(t *testing.T) {
 			}
 			h.config.DeleteOccupancy = func(_ context.Context, ns, name, uid, version string) (OccupancyMutationResult, error) {
 				effect()
-				if ns != "allowed" || name != "task" || uid != "dom-uid" || version != "7" {
+				if ns != measurementTestNamespace || name != "task" || uid != "dom-uid" || version != "7" {
 					t.Fatal("delete fence lost")
 				}
 				return OccupancyMutationResult{Task: &task, Request: "DeletionRequested", EvidenceDeleted: true}, nil
@@ -171,33 +210,38 @@ func TestOccupancyHTTPAuditBeforeEffectLiveAfterCommit(t *testing.T) {
 			if w.Code != status || liveCalls != 2 || effects != 1 {
 				t.Fatalf("status=%d body=%s live=%d effect=%d", w.Code, w.Body.String(), liveCalls, effects)
 			}
-			if len(*reviews) != 1 || (*reviews)[0].Resource != "dispatchoccupancymeasurements" || (*reviews)[0].Namespace != "allowed" {
-				t.Fatal("incorrect resource SAR", *reviews)
-			}
-			expectedVerb := "create"
-			expectedName := ""
-			if method == http.MethodDelete {
-				expectedVerb = "delete"
-				expectedName = "task"
-			}
-			if (*reviews)[0].Verb != expectedVerb || (*reviews)[0].Name != expectedName {
-				t.Fatal("incorrect named SAR", *reviews)
-			}
-			page := observations()
-			var expected struct {
-				ActorUsername, ActorUID string
-				RequestedSpec           api.DispatchOccupancyMeasurementSpec
-			}
-			if err := json.Unmarshal(page[0].Action.Expected, &expected); err != nil {
-				t.Fatal(err)
-			}
-			if expected.ActorUsername != "operator" || expected.ActorUID != "actor-uid" {
-				t.Fatal("audit lost verified actor")
-			}
-			if method == http.MethodPost && !reflect.DeepEqual(expected.RequestedSpec, task.Spec) {
-				t.Fatal("audit lost frozen protocol")
-			}
+			assertOccupancyAudit(t, *reviews, observations(), method, task.Spec)
 		}
+	}
+}
+
+func assertOccupancyAudit(t *testing.T, reviews []authorization.ResourceAttributes,
+	page []serving.SchedulerObservation, method string, spec api.DispatchOccupancyMeasurementSpec,
+) {
+	t.Helper()
+	if len(reviews) != 1 || reviews[0].Resource != "dispatchoccupancymeasurements" ||
+		reviews[0].Namespace != measurementTestNamespace {
+		t.Fatal("incorrect resource SAR", reviews)
+	}
+	expectedVerb, expectedName := "create", ""
+	if method == http.MethodDelete {
+		expectedVerb, expectedName = "delete", "task"
+	}
+	if reviews[0].Verb != expectedVerb || reviews[0].Name != expectedName {
+		t.Fatal("incorrect named SAR", reviews)
+	}
+	var expected struct {
+		ActorUsername, ActorUID string
+		RequestedSpec           api.DispatchOccupancyMeasurementSpec
+	}
+	if err := json.Unmarshal(page[0].Action.Expected, &expected); err != nil {
+		t.Fatal(err)
+	}
+	if expected.ActorUsername != "operator" || expected.ActorUID != occupancyActorTest {
+		t.Fatal("audit lost verified actor")
+	}
+	if method == http.MethodPost && !reflect.DeepEqual(expected.RequestedSpec, spec) {
+		t.Fatal("audit lost frozen protocol")
 	}
 }
 
