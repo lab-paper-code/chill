@@ -98,3 +98,39 @@ func TestEvaluationViewProjectsOnlyRecordedLiveTarget(t *testing.T) {
 		})
 	}
 }
+
+func TestEvaluationCollectionEnvelopesKeepEmptyArrays(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := api.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	native := fake.NewClientBuilder().WithScheme(scheme).Build()
+	var config HandlerConfig
+	ConfigureEvaluations(&config, evaluation.New(native, native, "ns", nil))
+	ConfigureLoadScenarios(&config, evaluation.NewLoadService(native, "ns", nil))
+	ctx := context.Background()
+	for name, list := range map[string]func() (any, error){
+		"active":      func() (any, error) { return config.ListActiveEvaluations(ctx) },
+		"evaluations": func() (any, error) { return config.ListEvaluations(ctx) },
+		"loads":       func() (any, error) { return config.ListLoadScenarios(ctx) },
+		"inputs":      func() (any, error) { return config.ListEvaluationInputs(ctx) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			value, err := list()
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(body, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if string(fields["items"]) != "[]" {
+				t.Fatalf("empty collection changed: %s", body)
+			}
+		})
+	}
+}

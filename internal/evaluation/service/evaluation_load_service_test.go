@@ -89,10 +89,10 @@ func TestEvaluationInputsOnlyDeclaredTraces(t *testing.T) {
 	load := &api.LoadScenario{ObjectMeta: metav1.ObjectMeta{Name: "load", Namespace: "ns"}, Spec: loadRequest().Spec}
 	s := loadService(t, load)
 	result, err := s.Inputs(context.Background())
-	if err != nil || len(result.Items) != 1 {
+	if err != nil || len(result) != 1 {
 		t.Fatalf("inputs=%+v error=%v", result, err)
 	}
-	if got := result.Items[0]; got.Set != "load" || got.Name != "load / work" ||
+	if got := result[0]; got.Set != "load" || got.Name != "load / work" ||
 		got.Store != "s" || got.Key != "trace" || got.Size != 1 || got.Kind != "trace" {
 		t.Fatalf("input metadata=%+v", got)
 	}

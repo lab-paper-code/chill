@@ -51,12 +51,6 @@ type EvaluationView struct {
 	PublicationID string
 	LiveTarget    []EvaluationLiveTarget
 }
-type EvaluationList struct {
-	Items []EvaluationView
-}
-type ActiveEvaluationList struct {
-	Items []ActiveEvaluation
-}
 type ActiveEvaluation struct {
 	Name        string
 	UID         string
@@ -91,9 +85,6 @@ type LoadScenarioView struct {
 	InUse     []string
 	CreatedAt metav1.Time
 }
-type LoadScenarioList struct {
-	Items []LoadScenarioView
-}
 type LiveWorkload struct {
 	UID        string
 	Generation int64
@@ -109,9 +100,6 @@ type EvaluationInput struct {
 	Kind  string
 	Set   string
 	Name  string
-}
-type EvaluationInputList struct {
-	Items []EvaluationInput
 }
 
 type PublicationDefinition struct {

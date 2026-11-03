@@ -10,8 +10,8 @@ import (
 func ConfigureEvaluations(config *HandlerConfig, s *evaluation.Service) {
 	config.ListActiveEvaluations = func(ctx context.Context) (ActiveEvaluationList, error) {
 		value, err := s.ListActive(ctx)
-		result := ActiveEvaluationList{Items: make([]ActiveEvaluation, len(value.Items))}
-		for i, item := range value.Items {
+		result := ActiveEvaluationList{Items: make([]ActiveEvaluation, len(value))}
+		for i, item := range value {
 			projected := ActiveEvaluation{Name: item.Name, UID: item.UID, StartedAt: item.StartedAt, StageIndex: item.StageIndex, StagesTotal: item.StagesTotal}
 			if item.Stage != nil {
 				stage := item.Stage
@@ -26,8 +26,8 @@ func ConfigureEvaluations(config *HandlerConfig, s *evaluation.Service) {
 	}
 	config.ListEvaluations = func(ctx context.Context) (EvaluationList, error) {
 		value, err := s.List(ctx)
-		result := EvaluationList{Items: make([]EvaluationView, len(value.Items))}
-		for i, item := range value.Items {
+		result := EvaluationList{Items: make([]EvaluationView, len(value))}
+		for i, item := range value {
 			result.Items[i] = evaluationViewDTO(item)
 		}
 		return result, err
@@ -86,8 +86,8 @@ func evaluationViewDTO(value evaluation.EvaluationView) EvaluationView {
 func ConfigureLoadScenarios(config *HandlerConfig, s *evaluation.LoadService) {
 	config.ListLoadScenarios = func(ctx context.Context) (LoadScenarioList, error) {
 		value, err := s.List(ctx)
-		result := LoadScenarioList{Items: make([]LoadScenarioView, len(value.Items))}
-		for i, item := range value.Items {
+		result := LoadScenarioList{Items: make([]LoadScenarioView, len(value))}
+		for i, item := range value {
 			result.Items[i] = LoadScenarioView(item)
 		}
 		return result, err
@@ -121,8 +121,8 @@ func ConfigureLoadScenarios(config *HandlerConfig, s *evaluation.LoadService) {
 	}
 	config.ListEvaluationInputs = func(ctx context.Context) (EvaluationInputList, error) {
 		value, err := s.Inputs(ctx)
-		result := EvaluationInputList{Items: make([]EvaluationInput, len(value.Items))}
-		for i, item := range value.Items {
+		result := EvaluationInputList{Items: make([]EvaluationInput, len(value))}
+		for i, item := range value {
 			result.Items[i] = EvaluationInput(item)
 		}
 		return result, err

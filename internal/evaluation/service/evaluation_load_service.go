@@ -52,8 +52,8 @@ func (s *LoadService) view(ctx context.Context, obj *api.LoadScenario) (LoadScen
 		Name: obj.Name, UID: string(obj.UID), Spec: obj.Spec, InUse: names, CreatedAt: obj.CreationTimestamp,
 	}, err
 }
-func (s *LoadService) List(ctx context.Context) (LoadScenarioList, error) {
-	result := LoadScenarioList{Items: []LoadScenarioView{}}
+func (s *LoadService) List(ctx context.Context) ([]LoadScenarioView, error) {
+	var result []LoadScenarioView
 	var objects api.LoadScenarioList
 	if err := s.client.List(ctx, &objects, client.InNamespace(s.namespace)); err != nil {
 		return result, err
@@ -63,9 +63,9 @@ func (s *LoadService) List(ctx context.Context) (LoadScenarioList, error) {
 		if err != nil {
 			return result, err
 		}
-		result.Items = append(result.Items, v)
+		result = append(result, v)
 	}
-	sort.Slice(result.Items, func(i, j int) bool { return result.Items[i].Name < result.Items[j].Name })
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result, nil
 }
 func (s *LoadService) Get(ctx context.Context, name string) (LoadScenarioView, error) {
@@ -215,8 +215,8 @@ func (s *LoadService) Replace(
 	}
 	return identity, nil
 }
-func (s *LoadService) Inputs(ctx context.Context) (EvaluationInputList, error) {
-	result := EvaluationInputList{Items: []EvaluationInput{}}
+func (s *LoadService) Inputs(ctx context.Context) ([]EvaluationInput, error) {
+	var result []EvaluationInput
 	var scenarios api.LoadScenarioList
 	if err := s.client.List(ctx, &scenarios, client.InNamespace(s.namespace)); err != nil {
 		return result, err
@@ -228,13 +228,13 @@ func (s *LoadService) Inputs(ctx context.Context) (EvaluationInputList, error) {
 				continue
 			}
 			seen[ref] = true
-			result.Items = append(result.Items, EvaluationInput{
+			result = append(result, EvaluationInput{
 				Store: ref.Store, Key: ref.Key, Size: ref.Size, Kind: "trace",
 				Set: scenario.Name, Name: scenario.Name + " / " + workload,
 			})
 		}
 	}
-	sort.Slice(result.Items, func(i, j int) bool { return result.Items[i].Key < result.Items[j].Key })
+	sort.Slice(result, func(i, j int) bool { return result[i].Key < result[j].Key })
 	return result, nil
 }
 

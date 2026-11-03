@@ -53,14 +53,14 @@ func evaluationView(run *api.EvaluationRun) EvaluationView {
 	}
 	return value
 }
-func (s *Service) List(ctx context.Context) (EvaluationList, error) {
-	result := EvaluationList{Items: []EvaluationView{}}
+func (s *Service) List(ctx context.Context) ([]EvaluationView, error) {
+	var result []EvaluationView
 	var runs api.EvaluationRunList
 	if err := s.reader.List(ctx, &runs, client.InNamespace(s.namespace)); err != nil {
 		return result, err
 	}
 	for i := range runs.Items {
-		result.Items = append(result.Items, evaluationView(&runs.Items[i]))
+		result = append(result, evaluationView(&runs.Items[i]))
 	}
 	return result, nil
 }

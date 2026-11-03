@@ -107,6 +107,8 @@ import evidence. Component permissions live in `.go-arch-lint.yml`.
 Evaluation application services do not depend on `evaluation/controller` or HTTP
 DTOs. The controller remains the authoritative pool-acquisition and asynchronous
 execution owner; `serving/httpapi` converts application results to HTTP DTOs.
+Collection operations return slices; JSON list envelopes and empty-array
+normalization belong only to the HTTP transport.
 The ChillServer composition root injects the live scheduler settings callback
 (including its existing lock) and publication definitions. Application preflight
 continues to validate settings patches with `serving.ValidateSchedulerSettingsPatch`;

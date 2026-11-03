@@ -17,8 +17,8 @@ type Service struct {
 	settings  func() (serving.SchedulerSettings, error)
 }
 
-func (s *Service) ListActive(ctx context.Context) (ActiveEvaluationList, error) {
-	result := ActiveEvaluationList{Items: []ActiveEvaluation{}}
+func (s *Service) ListActive(ctx context.Context) ([]ActiveEvaluation, error) {
+	var result []ActiveEvaluation
 	var runs api.EvaluationRunList
 	if err := s.reader.List(ctx, &runs); err != nil {
 		return result, err
@@ -85,7 +85,7 @@ func (s *Service) ListActive(ctx context.Context) (ActiveEvaluationList, error) 
 			item.Stage = projected
 			break
 		}
-		result.Items = append(result.Items, item)
+		result = append(result, item)
 	}
 	return result, nil
 }
