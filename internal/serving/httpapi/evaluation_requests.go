@@ -60,16 +60,17 @@ type EvaluationProcedure struct {
 	MeasurementVerdict api.MeasurementVerdict `json:"measurementVerdict,omitempty"`
 }
 type EvaluationStage struct {
-	ID                 string                 `json:"id"`
-	Name               string                 `json:"name"`
-	UID                string                 `json:"uid"`
-	Conditions         []metav1.Condition     `json:"conditions"`
-	MeasurementVerdict api.MeasurementVerdict `json:"measurementVerdict,omitempty"`
-	CurrentProcedure   string                 `json:"currentProcedure,omitempty"`
-	Procedures         []EvaluationProcedure  `json:"procedures"`
-	StartedAt          *metav1.Time           `json:"startedAt"`
-	FinishedAt         *metav1.Time           `json:"finishedAt"`
-	GoAt               *metav1.Time           `json:"goAt"`
+	ID                 string                       `json:"id"`
+	Name               string                       `json:"name"`
+	UID                string                       `json:"uid"`
+	Conditions         []metav1.Condition           `json:"conditions"`
+	MeasurementVerdict api.MeasurementVerdict       `json:"measurementVerdict,omitempty"`
+	CurrentProcedure   string                       `json:"currentProcedure,omitempty"`
+	Procedures         []EvaluationProcedure        `json:"procedures"`
+	StartedAt          *metav1.Time                 `json:"startedAt"`
+	FinishedAt         *metav1.Time                 `json:"finishedAt"`
+	GoAt               *metav1.Time                 `json:"goAt"`
+	ProvisionalD1      *api.EvaluationProvisionalD1 `json:"provisionalD1,omitempty"`
 }
 type EvaluationList struct {
 	Items []EvaluationView `json:"items"`

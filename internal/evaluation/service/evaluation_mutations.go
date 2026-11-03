@@ -74,6 +74,7 @@ func (s *Service) evaluationView(
 			Conditions: stage.Status.Conditions, MeasurementVerdict: stage.Status.MeasurementVerdict,
 			CurrentProcedure: stage.Status.CurrentProcedure, Procedures: evaluationProcedures(stage.Status.Procedures),
 			StartedAt: stage.Status.StartedAt, FinishedAt: stage.Status.FinishedAt, GoAt: stage.Status.GoAt,
+			ProvisionalD1: stage.Status.ProvisionalD1,
 		})
 	}
 	return value, nil

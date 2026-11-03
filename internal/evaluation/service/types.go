@@ -72,6 +72,7 @@ type EvaluationStage struct {
 	StartedAt          *metav1.Time
 	FinishedAt         *metav1.Time
 	GoAt               *metav1.Time
+	ProvisionalD1      *api.EvaluationProvisionalD1
 }
 type ActiveEvaluation struct {
 	Name        string
