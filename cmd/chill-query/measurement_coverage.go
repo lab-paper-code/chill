@@ -13,11 +13,17 @@ import (
 	"github.com/lab-paper-code/chill/internal/queryapi"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
+	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+const (
+	coverageCatalogSource  = "catalog"
+	coverageFreshnessStale = "stale"
+)
+
 var measurementCoverageSourceKinds = [...]string{
-	"inventory", "compatibility", "catalog", "BEO", "Run", "DOM", "input-contract",
+	"inventory", "compatibility", coverageCatalogSource, "BEO", "Run", "DOM", "input-contract",
 }
 
 type measurementCoverageCache struct {
@@ -33,18 +39,19 @@ type measurementCoverageEntry struct {
 	refreshed   chan struct{}
 }
 type measurementCoverageBase struct {
-	inventory        queryapi.InventoryView
-	compatibility    queryapi.ModelCompatibilityMatrixView
-	requests         api.BatchEnergyOptimizationList
-	runs             api.ProfilingRunList
-	occupancies      api.DispatchOccupancyMeasurementList
-	occupancyResults map[string]dispatchOccupancyProjection
-	catalog          httpapi.ProfilesView
-	datasets         api.DatasetList
-	preprocessors    api.PreprocessorList
-	adopted          map[string]bool
-	checked          map[string]time.Time
-	failures         map[string]error
+	inventory         queryapi.InventoryView
+	compatibility     queryapi.ModelCompatibilityMatrixView
+	requests          api.BatchEnergyOptimizationList
+	runs              api.ProfilingRunList
+	occupancies       api.DispatchOccupancyMeasurementList
+	occupancyResults  map[string]dispatchOccupancyProjection
+	catalog           httpapi.ProfilesView
+	datasets          api.DatasetList
+	preprocessors     api.PreprocessorList
+	adopted           map[string]bool
+	acceptedOccupancy []servingkube.OccupancySelection // nil is unavailable; a non-nil empty list confirms no selection.
+	checked           map[string]time.Time
+	failures          map[string]error
 }
 
 func (o *measurementService) coverage(
@@ -227,6 +234,9 @@ func (o *measurementService) readCoverage(
 		results <- sourceResult{"input-contract", err, time.Now().UTC()}
 	}()
 	go func() {
+		// Reporting may retain stale facts, but adoption needs this refresh's
+		// confirmed selection, never the previous successful read.
+		next.acceptedOccupancy = nil
 		read, err := o.catalog(ctx)
 		value := catalogView(read.CatalogSnapshot)
 		at := read.SourceCheckedAt
@@ -244,8 +254,11 @@ func (o *measurementService) readCoverage(
 			if value.SourceError != "" {
 				err = errors.New(value.SourceError)
 			}
+			if err == nil && read.Accepted != nil {
+				next.acceptedOccupancy = read.Accepted.Occupancy
+			}
 		}
-		results <- sourceResult{"catalog", err, at}
+		results <- sourceResult{coverageCatalogSource, err, at}
 	}()
 
 	var failures []error
@@ -254,7 +267,7 @@ func (o *measurementService) readCoverage(
 		if result.err != nil {
 			next.failures[result.kind] = result.err
 			failures = append(failures, result.err)
-			if result.kind == "catalog" && !result.at.IsZero() {
+			if result.kind == coverageCatalogSource && !result.at.IsZero() {
 				next.checked[result.kind] = result.at
 			}
 		} else {

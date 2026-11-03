@@ -906,9 +906,18 @@ Measuring에 생성 시각/예상 duration으로 가짜 측정창이나 퍼센�
 
 **커버리지 projection.** 무쿼리 GET과 `view=summary`의 모든 셀에
 `occupancy: [{node:{name,uid},profileID,batch,state,request:{name,uid}|null,
-phase,reason,d,evidence,adopted}]`를 추가한다. `d/evidence`는 위와 같은 형식이며
-adopted는 스케줄러가 실제 선택한 occupancy tuple/evidence ref의 catalog-read 계약이
-연결되기 전까지 **항상 null**이다. profile의 schedulerUsed로 d 채택을 추측하지 않는다.
+phase,reason,d,evidence,adopted}]`를 추가한다. `d/evidence`는 위와 같은 형식이다.
+`adopted`는 인증된 private `CatalogRead.accepted.occupancy[]`의 실제 스케줄러 선택만 사용한다.
+Node 이름·물리 UID × profileID × batch와 evidence의 store/key가 모두 일치하고,
+선택의 model/powerMode/executionPath가 현재 셀과 일치하면 true, 선택 목록은 제공됐지만
+일치 항목이 없으면 false다. `runtimeImage`와 evidence size는 채택 유효성 키가 아니다.
+profile의 schedulerUsed나 DOM phase/Accepted verdict만으로 d 채택을 추측하지 않는다.
+accepted 또는 occupancy 필드가 누락/null이면 null이며, 명시적 `occupancy:[]`는 false다.
+private JSON 읽기와 coverage base는 이 부재/null 대 빈 배열 구분을 보존한다.
+catalog 읽기 실패·sourceError·확인 시각 부재도 null이며 이전 성공 선택을 현재 채택으로 재사용하지 않는다.
+catalog의 sourceCheckedAt/sourceError는 기존 source freshness에 함께 반영한다.
+성공한 무변경 refresh도 확인 시각을 전진시키며 실패는 마지막 성공 확인 시각과 보존 보고 자료를
+유지하되 coverage를 stale, catalog source를 incomplete/error로 표시한다.
 
 - 단위는 Node UID × profileID × batch다. 같은 Node/batch에서 현재 profile의 present > measuring > failed > none 순으로 선택·정렬하며 같은 상태는 createdAt 최신이 우선한다. 과거 profile tuple 원자료도 별도 항목으로 유지한다.
 - `present`: 현재 셀의 `currentMeasurement`에 속한 profileID이고, 현재 물리 Node UID의
@@ -969,3 +978,19 @@ Next 링크 prefetch의 `net::ERR_ABORTED`만 관측했다. 스크린샷은 외�
 DOM POST·DELETE는 실행하지 않았다. 서버·Query 배포 후 dry-run의 정책 동결·불가능 조건·권한,
 실제 제출→Job→evidence→진행/종료 polling, 셀 d 상태·우선순위·이전 profile 보존,
 UID/If-Match 삭제·Measuring 409와 삭제 후 자체 evidence 정리를 실서버에서 수용해야 한다.
+
+**서버 통합 후 재검증(2026-11-03).** `ea6899ef` 위로 충돌 없이 rebase했다. 생산 조립
+`server.go`의 Build/Submit/DeleteOccupancy 주입, 공통 게이트웨이의 native handler 전달,
+`httpapi/handler.go`의 DOM POST/DELETE 등록이 연결돼 있다. Query/Server/HTTP/Kube focused
+테스트와 `make lint`, `make arch-check`(67/67), `make test`가 통과했다. 대시보드는
+Node 24.14.0 tsc/eslint/운영 summary 포함 500개 테스트/기본 build가 통과했다.
+동결 `inputsJSON.computed.saturationSizing`의 workers·제한 요인·예상 idle은 읽기 전용으로
+표시하며, DELETE는 UID와 따옴표 있는 `If-Match:"<resourceVersion>"`을 전송한다.
+
+`TestOccupancyLocalHTTPSDryRunThenCreate`는 실제 로컬 TLS handler→builder→service에서
+200 NOT_SUBMITTED→202 Accepted, 생성 전 dry-run 무효과와 동결 spec 동일성을 확인했다.
+`TestOccupancyDeleteFencesAndOnlyRemovesOwnedEvidence`는 UID/RV·Measuring 거절·자체 evidence
+정리를 확인했다. 이 테스트의 Kubernetes·evidence는 인메모리 fixture이며 실제 부하 Job 실행이 아니다.
+운영 쓰기는 수행하지 않았다. 기존 로컬 dashboard-e2e 클러스터에는 DOM CRD와 BEO가 없음을
+읽기 전용으로 확인했으며 해당 클러스터를 변경하지 않았다. 실제 Job→evidence→진행의
+클러스터 E2E는 이 전제와 runtime·측정 입력을 준비한 뒤 수행해야 한다.

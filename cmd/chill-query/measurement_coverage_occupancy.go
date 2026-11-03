@@ -8,6 +8,7 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/queryapi"
+	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 )
 
 const (
@@ -102,8 +103,27 @@ func (p *coverageProjection) addOccupancy(cell *queryapi.MeasurementCoverageCell
 		return strings.Compare(a, b)
 	})
 	for _, id := range ids {
-		cell.Occupancy = append(cell.Occupancy, entries[id])
+		entry := entries[id]
+		entry.Adopted = p.occupancyAdopted(&entry, cell)
+		cell.Occupancy = append(cell.Occupancy, entry)
 	}
+}
+
+func (p *coverageProjection) occupancyAdopted(
+	entry *queryapi.MeasurementOccupancy, cell *queryapi.MeasurementCoverageCell,
+) *bool {
+	if p.base.acceptedOccupancy == nil || p.base.failures[coverageCatalogSource] != nil {
+		return nil
+	}
+	adopted := entry.Evidence != nil && slices.ContainsFunc(p.base.acceptedOccupancy,
+		func(selected servingkube.OccupancySelection) bool {
+			return selected.Node.Name == entry.Node.Name && selected.Node.UID == entry.Node.UID &&
+				selected.ProfileID == entry.ProfileID && selected.Batch == entry.Batch &&
+				selected.Model == cell.Model.Name && selected.PowerMode == cell.PowerMode &&
+				selected.ExecutionPath == cell.ExecutionPath &&
+				selected.Evidence.Store == entry.Evidence.Store && selected.Evidence.Key == entry.Evidence.Key
+		})
+	return &adopted
 }
 
 func (p *coverageProjection) occupancyRequestMatches(

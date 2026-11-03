@@ -99,7 +99,7 @@ func (p *coverageProjection) initialize() {
 		},
 	}
 	if time.Since(p.base.oldest()) > 30*time.Second || len(p.base.failures) > 0 {
-		p.out.Freshness = "stale"
+		p.out.Freshness = coverageFreshnessStale
 	}
 }
 
@@ -114,7 +114,7 @@ func (p *coverageProjection) addSources() {
 				p.base.inventory.ModelSpecsResourceVersion, p.base.inventory.DeviceClassesResourceVersion,
 				p.base.inventory.NodesResourceVersion,
 			}
-		case "catalog":
+		case coverageCatalogSource:
 			source.ResourceVersions = []string{p.base.catalog.Revision}
 		case "input-contract":
 			source.ResourceVersions = []string{p.base.datasets.ResourceVersion, p.base.preprocessors.ResourceVersion}
