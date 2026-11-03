@@ -374,7 +374,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 				}
 				failure := action.PreparationFailure
 				if failure != nil && failure.Matches(node, i) {
-					if plan.record.PreparationFailure == nil || len(failure.PreviousPodUIDs) > len(plan.record.PreparationFailure.PreviousPodUIDs) ||
+					if plan.record.PreparationFailure == nil || failure.RepeatCount > plan.record.PreparationFailure.RepeatCount ||
 						failure.Classification == PreparationDeterministic || failure.Classification == PreparationPromoted {
 						plan.record.PreparationFailure = failure
 					}

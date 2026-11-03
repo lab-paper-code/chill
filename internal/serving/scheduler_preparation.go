@@ -2,7 +2,6 @@ package serving
 
 import (
 	"slices"
-	"strings"
 	"time"
 )
 
@@ -25,13 +24,14 @@ type PreparationFailureObservation struct {
 type PreparationFailure struct {
 	ProfileID          string              `json:"profileID"`
 	RuntimeImage       string              `json:"runtimeImage,omitempty"`
-	WarmupArguments    []string            `json:"warmupArguments,omitempty"`
+	RunnerCommand      []string            `json:"runnerCommand,omitempty"`
 	Allocation         SchedulerAllocation `json:"allocation"`
 	ProfileMemoryBytes uint64              `json:"profileMemoryBytes"`
 	NodeMemoryBytes    uint64              `json:"nodeMemoryBytes"`
 	PodUID             string              `json:"podUID"`
 	PreparationFailureObservation
-	PreviousPodUIDs []string `json:"previousPodUIDs,omitempty"`
+	RepeatCount    uint64 `json:"repeatCount,omitempty"`
+	PreviousPodUID string `json:"previousPodUID,omitempty"`
 }
 
 func NewPreparationFailure(i SchedulerInstance, nodeMemory uint64, podUID string, observation PreparationFailureObservation) *PreparationFailure {
@@ -40,7 +40,7 @@ func NewPreparationFailure(i SchedulerInstance, nodeMemory uint64, podUID string
 	}
 	return &PreparationFailure{ProfileID: i.Profile.ID, RuntimeImage: i.RuntimeImage, Allocation: i.Allocation,
 		ProfileMemoryBytes: preparationProfileMemory(i.Profile), NodeMemoryBytes: nodeMemory,
-		PodUID: podUID, PreparationFailureObservation: observation, WarmupArguments: i.WarmupArguments}
+		PodUID: podUID, PreparationFailureObservation: observation, RunnerCommand: i.RunnerCommand}
 }
 
 func preparationProfileMemory(profile *Profile) uint64 {
@@ -53,14 +53,14 @@ func preparationProfileMemory(profile *Profile) uint64 {
 
 // Matches compares Node name/UID (through node/instance/action), profile ID,
 // allocation bytes/GPU UUID, measured profile peak memory, Node allocatable
-// memory, actual execution image and rendered runner warmup arguments.
+// memory, actual execution image and complete rendered RunnerCommand argv.
 // NodeReady transitions release unknown/promoted environmental evidence, not
 // a proven physical OOM. Time, cleanup and a power round-trip are not new inputs.
 func (f *PreparationFailure) Matches(node SchedulerNode, i SchedulerInstance) bool {
 	return f != nil && i.Profile != nil && i.Node == node.Node && f.ProfileID == i.Profile.ID &&
 		f.Allocation == i.Allocation && f.ProfileMemoryBytes == preparationProfileMemory(i.Profile) &&
 		f.NodeMemoryBytes == node.MemoryBytes && f.RuntimeImage == i.RuntimeImage &&
-		slices.Equal(f.WarmupArguments, i.WarmupArguments) &&
+		slices.Equal(f.RunnerCommand, i.RunnerCommand) &&
 		(f.Classification == PreparationDeterministic || f.NodeReadyTransition.Equal(node.ReadyTransition))
 }
 
@@ -100,7 +100,7 @@ func PreparationFailureReproduces(current, previous Action) bool {
 		current.Node != previous.Node || f.Classification == PreparationDeterministic ||
 		f.ReasonKey != old.ReasonKey || f.ProfileID != old.ProfileID || f.Allocation != old.Allocation ||
 		f.ProfileMemoryBytes != old.ProfileMemoryBytes || f.NodeMemoryBytes != old.NodeMemoryBytes ||
-		f.RuntimeImage != old.RuntimeImage || !slices.Equal(f.WarmupArguments, old.WarmupArguments) ||
+		f.RuntimeImage != old.RuntimeImage || !slices.Equal(f.RunnerCommand, old.RunnerCommand) ||
 		!f.NodeReadyTransition.Equal(old.NodeReadyTransition) {
 		return false
 	}
@@ -109,38 +109,15 @@ func PreparationFailureReproduces(current, previous Action) bool {
 		f.Classification == PreparationPromoted && old.Classification == PreparationUnknownTransient
 }
 
+// Keep only the immediately preceding independent attempt and a repetition
+// count: retryable environmental failures must not accumulate an unbounded list.
 func ObserveRepeatedPreparationFailure(current *Action, previous Action) {
 	if !PreparationFailureReproduces(*current, previous) {
 		return
 	}
 	f, old := current.PreparationFailure, previous.PreparationFailure
-	f.PreviousPodUIDs = append(slices.Clone(old.PreviousPodUIDs), old.PodUID)
+	f.RepeatCount, f.PreviousPodUID = old.RepeatCount+1, old.PodUID
 	if f.Classification == PreparationUnknownTransient {
 		f.Classification = PreparationPromoted
 	}
-}
-
-// The newest fact carries the complete observed UID list. Superseded execution
-// receipts can therefore keep their ordinary observation-window lifetime.
-func PreparationFailureSupersedes(current, previous Action) bool {
-	return PreparationFailureReproduces(current, previous) &&
-		slices.Contains(current.PreparationFailure.PreviousPodUIDs, previous.PreparationFailure.PodUID)
-}
-
-// RunnerWarmupArguments reads the rendered startup data; it does not infer a
-// warmup policy from profiles or depend on the code that constructs the command.
-func RunnerWarmupArguments(command []string) []string {
-	var arguments []string
-	for index := 0; index < len(command); index++ {
-		if strings.HasPrefix(command[index], "--warmup-batch=") {
-			arguments = append(arguments, command[index])
-		} else if command[index] == "--warmup-batch" {
-			arguments = append(arguments, command[index])
-			if index+1 < len(command) {
-				index++
-				arguments = append(arguments, command[index])
-			}
-		}
-	}
-	return arguments
 }

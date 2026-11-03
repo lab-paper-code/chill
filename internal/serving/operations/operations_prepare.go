@@ -96,7 +96,7 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec servingstate.Prep
 		pod = existing
 	}
 	evidence = &servingstate.PreparationEvidence{PodUID: string(pod.UID), NodeUID: node.UID, DecisionID: decisionID,
-		Created: created, RuntimeImage: desiredImage, WarmupArguments: serving.RunnerWarmupArguments(spec.Config.RunnerCommand)}
+		Created: created, RuntimeImage: desiredImage, RunnerCommand: spec.Config.RunnerCommand}
 	defer func() {
 		if err == nil || errors.Is(err, context.Canceled) {
 			return

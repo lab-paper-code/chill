@@ -140,8 +140,9 @@ export function relayPlan(method: string, segments: string[], search: string, co
   if (query === "uid" && !params.get("uid")) throw new RelayFailure("DashboardQueryInvalid", 400)
   if (query === "compatibility" && allowed.some(key => !params.get(key))) throw new RelayFailure("DashboardQueryInvalid", 400)
   if (query === "event" && params.has("at")) {
-    if (params.size!==1) throw new RelayFailure("DashboardQueryInvalid",400)
+    if ([...params.keys()].some(key=>key!=="at"&&key!=="cursor")) throw new RelayFailure("DashboardQueryInvalid",400)
     queryTimestampNanos(params.get("at") ?? "")
+    if (params.has("cursor")) queryTimestampNanos(params.get("cursor") ?? "")
   } else if (query === "event") {
     const from=queryTimestampNanos(params.get("from")??""),to=queryTimestampNanos(params.get("to")??"")
     if (to<=from||to-from>86400000000000n) throw new RelayFailure("DashboardQueryInvalid",400)

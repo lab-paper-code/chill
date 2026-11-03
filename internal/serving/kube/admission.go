@@ -130,16 +130,7 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 		return err
 	}
 	c.releaseObservedScopes(nodes.Items, pods.Items, nil, observedAt)
-	c.mu.Lock()
-	busy := map[string]bool{}
-	for _, run := range c.runs {
-		if run.reserved {
-			for _, node := range run.scope.Nodes {
-				busy[node.UID] = true
-			}
-		}
-	}
-	c.mu.Unlock()
+	busy := c.reservedNodes()
 	roots, err := c.measurementRoots(ctx, config.MeasurementNamespaces)
 	if err != nil {
 		return err
@@ -204,7 +195,7 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 			}
 		}
 		claimed[node.Name] = true
-		if !c.reserveMeasurementRoot(root, node, byName, config) {
+		if !c.reserveMeasurementLease(c.measurementRootOperation(root, node, byName, config)) {
 			continue
 		}
 		if err := c.setMeasurementTaint(ctx, node, string(root.object.GetUID())); err != nil {
@@ -294,7 +285,7 @@ func (c *SchedulerController) continueHeldNodes(ctx context.Context, nodes []cor
 				for i := range nodes {
 					byName[nodes[i].Name] = &nodes[i]
 				}
-				c.reserveMeasurementRoot(*root, node, byName, config)
+				c.reserveMeasurementLease(c.measurementRootOperation(*root, node, byName, config))
 				continue
 			}
 			if _, transition := root.object.(*edge.PowerModeTransitionCost); !transition && !chillServerRun(root.object) {
@@ -316,7 +307,7 @@ func (c *SchedulerController) continueHeldNodes(ctx context.Context, nodes []cor
 
 // nodeBusy reports a running run on the Node; Tick, Admit and hand-back then
 // leave the Node to that run.
-func (c *SchedulerController) nodeBusy(node *core.Node) bool {
+func (c *reservationState) nodeBusy(node *core.Node) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, r := range c.runs {
@@ -403,16 +394,8 @@ func (c *SchedulerController) startNodeRun(operation servingstate.Operation, con
 	result := servingstate.OperationResult{Operation: operation, StartedAt: started.UTC(), Status: servingstate.NativeOperationRunning}
 	runCtx, cancel := context.WithCancel(c.ctx)
 	initial := result
-	kind := operation.Kind
-	switch kind {
-	case servingstate.OperationUnroute, servingstate.OperationRelease, servingstate.OperationReset:
-		kind = servingstate.OperationRoute
-	}
-	run := &actionRun{action: serving.Action{ID: operation.ID, Kind: kind, Node: operation.Node, From: externalActionSource, Status: servingstate.NativeOperationRunning}, result: &initial, cancel: cancel, started: started}
-	if operation.Holder != "" {
-		run.owner = operation.Holder
-	}
-	if !c.startRun(run, operation) {
+	run := c.startAdmittedRun(&operation, &initial, cancel, started)
+	if run == nil {
 		cancel()
 		result.Status, result.Error = servingstate.NativeOperationFailed, "OperationConflict: resources are reserved"
 		result.EndedAt = time.Now().UTC()
@@ -437,9 +420,7 @@ func (c *SchedulerController) startNodeRun(operation servingstate.Operation, con
 			}
 			result.Error = err.Error()
 		}
-		c.mu.Lock()
-		c.recordPreparationLocked(run, result.Preparation)
-		c.mu.Unlock()
+		c.recordPreparation(run, result.Preparation)
 		if config.OnAction != nil {
 			if recordErr := config.OnAction(result); recordErr != nil {
 				result.Error = errors.Join(err, fmt.Errorf("record operation outcome: %w", recordErr)).Error()
@@ -566,8 +547,7 @@ func (c *SchedulerController) measurementRootOperation(root measurementRoot, nod
 	return operation
 }
 
-func (c *SchedulerController) reserveMeasurementRoot(root measurementRoot, node *core.Node, nodes map[string]*core.Node, config SchedulerControllerConfig) bool {
-	operation := c.measurementRootOperation(root, node, nodes, config)
+func (c *reservationState) reserveMeasurementLease(operation servingstate.Operation) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if run := c.runs[operation.ID]; run != nil && run.reserved {

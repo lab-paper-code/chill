@@ -782,7 +782,7 @@ func TestManualRoutingBarrierIsNotAnAutonomousGoalEffect(t *testing.T) {
 			goal := &serving.SchedulerCandidate{Actions: []serving.Action{controller.runs[operation.ID].action}}
 			close(release)
 			<-done
-			lost, failed := controller.failTargetLocked(serving.SchedulerSnapshot{}, goal, time.Now())
+			lost, failed := controller.failTargetLocked(serving.SchedulerSnapshot{}, goal, time.Now(), controller.runtime)
 			if failed || len(lost) != 0 || result.Status != servingstate.NativeOperationComplete {
 				t.Fatalf("planner relabeled a completed manual operation: lost=%+v failed=%v result=%+v", lost, failed, result)
 			}

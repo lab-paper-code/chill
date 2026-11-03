@@ -567,7 +567,7 @@ func TestPreparedSlotCompletionExpiresWhenActualInstanceRemoved(t *testing.T) {
 	profile := &serving.Profile{ID: "profile"}
 	node := serving.NodeReference{Name: "node", UID: "node-uid"}
 	run := &actionRun{action: serving.Action{Kind: "prepare", Instance: "slot", Node: node}, result: &servingstate.OperationResult{Status: "complete", Operation: servingstate.Operation{Prepare: &servingstate.PrepareSpec{Instance: serving.SchedulerInstance{ID: "slot", Node: node, Profile: profile}}}}}
-	if controller.actionEffectPresent(serving.SchedulerSnapshot{}, run) {
+	if controller.actionEffectPresent(serving.SchedulerSnapshot{}, run, controller.runtime) {
 		t.Fatal("history treated as current prepared effect")
 	}
 	instance := serving.ReadyInstance{State: serving.InstanceState{ID: "pod/container", TargetID: "slot", Node: node, Profile: profile.ID, Ready: true, Native: &native.State{Ready: true}}, Profile: profile, Capacity: 1, Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
@@ -577,19 +577,19 @@ func TestPreparedSlotCompletionExpiresWhenActualInstanceRemoved(t *testing.T) {
 	if err := observer.runtime.InstallInstances([]serving.ReadyInstance{instance}); err != nil {
 		t.Fatal(err)
 	}
-	if !controller.actionEffectPresent(serving.SchedulerSnapshot{}, run) {
+	if !controller.actionEffectPresent(serving.SchedulerSnapshot{}, run, controller.runtime) {
 		t.Fatal("actual prepared slot not recognized")
 	}
 	if err := observer.runtime.ConfirmInstanceStopped(instance.State.ID); err != nil {
 		t.Fatal(err)
 	}
-	if controller.actionEffectPresent(serving.SchedulerSnapshot{}, run) {
+	if controller.actionEffectPresent(serving.SchedulerSnapshot{}, run, controller.runtime) {
 		t.Fatal("terminal executor retained a successful prepare effect")
 	}
 	if err := observer.runtime.RetirePod("pod"); err != nil {
 		t.Fatal(err)
 	}
-	if controller.actionEffectPresent(serving.SchedulerSnapshot{}, run) {
+	if controller.actionEffectPresent(serving.SchedulerSnapshot{}, run, controller.runtime) {
 		t.Fatal("removed deterministic slot falsely reused old completion")
 	}
 }
@@ -812,19 +812,19 @@ func TestSchedulerRouteIgnoresUnusedCommonLowering(t *testing.T) {
 	if raise.ID == "" || prepare.ID == "" || route.ID == "" || controller.runs["idle-lowering"] == nil {
 		t.Fatalf("missing continuing power/prepare/route actions: %+v", target.Actions)
 	}
-	if controller.dependenciesReady(raise, target) || controller.dependenciesReady(prepare, target) || controller.dependenciesReady(route, target) {
+	if controller.dependenciesReady(raise, target, controller.runtime) || controller.dependenciesReady(prepare, target, controller.runtime) || controller.dependenciesReady(route, target, controller.runtime) {
 		t.Fatal("used Node's unfinished lowering/raise/prepare chain was bypassed")
 	}
 	controller.runs["used-lowering"].action.Status = servingstate.NativeOperationComplete
-	if !controller.dependenciesReady(raise, target) || controller.dependenciesReady(prepare, target) || controller.dependenciesReady(route, target) {
+	if !controller.dependenciesReady(raise, target, controller.runtime) || controller.dependenciesReady(prepare, target, controller.runtime) || controller.dependenciesReady(route, target, controller.runtime) {
 		t.Fatal("lowering must unlock only the used Node's raise")
 	}
 	controller.runs[raise.ID].action.Status = servingstate.NativeOperationComplete
-	if !controller.dependenciesReady(prepare, target) || controller.dependenciesReady(route, target) {
+	if !controller.dependenciesReady(prepare, target, controller.runtime) || controller.dependenciesReady(route, target, controller.runtime) {
 		t.Fatal("raise must unlock preparation, not routing")
 	}
 	controller.runs[prepare.ID].action.Status = servingstate.NativeOperationComplete
-	if !controller.dependenciesReady(route, target) || controller.runs["idle-lowering"].action.Status != servingstate.NativeOperationRunning {
+	if !controller.dependenciesReady(route, target, controller.runtime) || controller.runs["idle-lowering"].action.Status != servingstate.NativeOperationRunning {
 		t.Fatal("unused lowering blocked a prepared target's route or stopped running")
 	}
 }

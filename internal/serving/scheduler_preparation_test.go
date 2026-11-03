@@ -1,13 +1,15 @@
 package serving
 
 import (
+	"encoding/json"
+	"fmt"
 	"slices"
 	"testing"
 )
 
 func TestFailedPreparationExcludesOnlyUnchangedPlacement(t *testing.T) {
 	const unchanged = "unchanged"
-	for _, change := range []string{unchanged, "allocation", "profile-memory", "node-memory", "runtime-image", "warmup-arguments"} {
+	for _, change := range []string{unchanged, "allocation", "profile-memory", "node-memory", "runtime-image", "warmup-arguments", "runner-command", "runner-flag", "runner-iterations"} {
 		t.Run(change, func(t *testing.T) {
 			settings, snapshot := schedulerFixture()
 			failedNode := poolsAddNode(&snapshot, "failed-node", map[string]float64{"fixed": 10})
@@ -15,6 +17,7 @@ func TestFailedPreparationExcludesOnlyUnchangedPlacement(t *testing.T) {
 			failed := poolsInstance(snapshot.Instances[0], "failed", failedNode, "fixed", "w1")
 			other := poolsInstance(snapshot.Instances[0], "other", otherNode, "fixed", "w1")
 			failed.RuntimeImage = "runtime-before"
+			failed.RunnerCommand = []string{"runner", "--warmup-iterations", "1"}
 			snapshot.Options = append(snapshot.Options, poolsOption(failed), poolsOption(other))
 			capacityLoad(settings, &snapshot, snapshot.Workloads[0], 150)
 			nodeIndex := slices.IndexFunc(snapshot.Nodes, func(n SchedulerNode) bool { return n.Node == failedNode })
@@ -37,7 +40,13 @@ func TestFailedPreparationExcludesOnlyUnchangedPlacement(t *testing.T) {
 			case "runtime-image":
 				failed.RuntimeImage = "runtime-after"
 			case "warmup-arguments":
-				failed.WarmupArguments = RunnerWarmupArguments([]string{"runner", "--warmup-iterations", "1", "--warmup-batch", "1"})
+				failed.RunnerCommand = []string{"runner", "--warmup-iterations", "1", "--warmup-batch", "1"}
+			case "runner-command":
+				failed.RunnerCommand = []string{"other-runner", "--warmup-iterations", "1"}
+			case "runner-flag":
+				failed.RunnerCommand = []string{"runner", "--warmup-batch", "1"}
+			case "runner-iterations":
+				failed.RunnerCommand = []string{"runner", "--warmup-iterations", "2"}
 			}
 			snapshot.Options[len(snapshot.Options)-2] = poolsOption(failed)
 			rows := capacityRowsForTest(settings, snapshot, nil)
@@ -102,7 +111,7 @@ func TestRetryablePreparationReproductionPromotesOnlySameInputs(t *testing.T) {
 			}
 			if !slices.ContainsFunc(poolsPlans(reproduced, node), func(p SchedulerNodePlan) bool {
 				return p.Eligible != excluded && p.PreparationFailure != nil && p.PreparationFailure.Classification == wantClass &&
-					slices.Contains(p.PreparationFailure.PreviousPodUIDs, first.PreparationFailure.PodUID)
+					p.PreparationFailure.PreviousPodUID == first.PreparationFailure.PodUID && p.PreparationFailure.RepeatCount == 1
 			}) {
 				t.Fatal("known transient stopped retrying, or unknown reproduction lost its promoted constraint/UID evidence")
 			}
@@ -114,11 +123,53 @@ func TestRetryablePreparationReproductionPromotesOnlySameInputs(t *testing.T) {
 				}
 				snapshot.Nodes[len(snapshot.Nodes)-1].ReadyTransition = observed.NodeReadyTransition
 			}
-			snapshot.Options[len(snapshot.Options)-1].Instance.WarmupArguments = RunnerWarmupArguments([]string{"runner", "--warmup-batch=1"})
+			snapshot.Options[len(snapshot.Options)-1].Instance.RunnerCommand = []string{"runner", "--warmup-batch=1"}
 			changed := capacityDecideForTest(t, settings, snapshot, rows)
 			if !slices.ContainsFunc(poolsPlans(changed, node), func(p SchedulerNodePlan) bool { return p.Eligible }) {
 				t.Fatal("changed startup input did not release a promoted constraint")
 			}
 		})
+	}
+}
+
+func TestTransientPreparationRepetitionEvidenceStaysBounded(t *testing.T) {
+	settings, snapshot := schedulerFixture()
+	node := poolsAddNode(&snapshot, "retry-node", map[string]float64{"fixed": 10})
+	wanted := poolsInstance(snapshot.Instances[0], "retry", node, "fixed", "w1")
+	snapshot.Options = append(snapshot.Options, poolsOption(wanted))
+	capacityLoad(settings, &snapshot, snapshot.Workloads[0], 150)
+	observed := PreparationFailureObservation{Classification: PreparationTransient, ReasonKey: "delivery:ErrImagePull", Reason: "image pull network timeout"}
+	previous := Action{ID: "attempt-0000", Kind: schedulerActionPrepare, Node: node, Status: schedulerActionFailed,
+		PreparationFailure: NewPreparationFailure(wanted, snapshot.Nodes[len(snapshot.Nodes)-1].MemoryBytes, "pod-0000", observed)}
+	const repetitions = 1000
+	var sizeBound int
+	for repetition := 1; repetition <= repetitions; repetition++ {
+		current := previous
+		current.ID = fmt.Sprintf("attempt-%04d", repetition)
+		current.PreparationFailure = NewPreparationFailure(wanted, snapshot.Nodes[len(snapshot.Nodes)-1].MemoryBytes, fmt.Sprintf("pod-%04d", repetition), observed)
+		ObserveRepeatedPreparationFailure(&current, previous)
+		fact := current.PreparationFailure
+		if fact.Classification != PreparationTransient || fact.RepeatCount != uint64(repetition) || fact.PreviousPodUID != previous.PreparationFailure.PodUID {
+			t.Fatalf("retry count or immediately preceding UID lost: %+v", fact)
+		}
+		encoded, err := json.Marshal(fact)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if repetition == 1 {
+			// Only the bounded uint64 counter's decimal width may grow.
+			sizeBound = len(encoded) + len(fmt.Sprint(^uint64(0))) - 1
+		}
+		if len(encoded) > sizeBound {
+			t.Fatalf("retry evidence grew with history: %d > %d", len(encoded), sizeBound)
+		}
+		previous = current
+	}
+	snapshot.Actions = []Action{previous}
+	decision := capacityDecideForTest(t, settings, snapshot, capacityRowsForTest(settings, snapshot, nil))
+	if !slices.ContainsFunc(poolsPlans(decision, node), func(p SchedulerNodePlan) bool {
+		return p.Eligible && p.PreparationFailure != nil && p.PreparationFailure.RepeatCount == repetitions
+	}) {
+		t.Fatal("repeated known transient stopped retrying or lost its bounded decision evidence")
 	}
 }

@@ -85,11 +85,12 @@ func TestPrepareFailureSurvivesObservationWindow(t *testing.T) {
 			run := &actionRun{action: serving.Action{ID: result.Operation.ID, Kind: servingstate.OperationPrepare,
 				Node: wanted.Node, To: serving.SchedulerInstanceState(wanted)}}
 			c.runs[result.Operation.ID] = run
-			c.state.Snapshot = snapshot
+			c.publishSnapshotLocked(&snapshot)
 			c.completeRun(run, &result, true, startErr, ctx)
 			snapshot.Options = []serving.SchedulerOption{{Instance: wanted, CompatibleUIDs: []string{wanted.WorkloadUID}}}
 			later := at.Add(10 * c.config.Settings.ObservationWindow)
-			next, _ := c.reconcileSnapshot(snapshot, later, c.config.Settings.ObservationWindow)
+			settings := func() serving.SchedulerSettings { return c.config.Settings }
+			next, _ := c.reconcileSnapshot(snapshot, later, c.config.Settings.ObservationWindow, settings, c.runtime)
 			if !slices.ContainsFunc(next.Actions, func(a serving.Action) bool { return a.ID == result.Operation.ID }) {
 				t.Fatal("failed start expired although placement evidence did not change")
 			}
@@ -112,10 +113,10 @@ func TestPrepareFailureSurvivesObservationWindow(t *testing.T) {
 				retry := &actionRun{action: serving.Action{ID: repeated.Operation.ID, Kind: servingstate.OperationPrepare, Node: wanted.Node}}
 				c.runs[repeated.Operation.ID] = retry
 				c.completeRun(retry, &repeated, true, startErr, ctx)
-				next, _ = c.reconcileSnapshot(snapshot, later, c.config.Settings.ObservationWindow)
+				next, _ = c.reconcileSnapshot(snapshot, later, c.config.Settings.ObservationWindow, settings, c.runtime)
 				if !slices.ContainsFunc(next.Actions, func(a serving.Action) bool {
 					return a.ID == repeated.Operation.ID && a.PreparationFailure.Classification == serving.PreparationPromoted &&
-						slices.Contains(a.PreparationFailure.PreviousPodUIDs, wanted.PodUID)
+						a.PreparationFailure.PreviousPodUID == wanted.PodUID && a.PreparationFailure.RepeatCount == 1
 				}) {
 					t.Fatal("same-input independent failure was not promoted in the scheduler API facts")
 				}
@@ -133,7 +134,7 @@ func TestPrepareFailureSurvivesObservationWindow(t *testing.T) {
 				profile.Batches[i].MemoryBytes++
 			}
 			snapshot.Options[0].Instance.Profile = &profile
-			next, _ = c.reconcileSnapshot(snapshot, later.Add(c.config.Settings.ObservationWindow), c.config.Settings.ObservationWindow)
+			next, _ = c.reconcileSnapshot(snapshot, later.Add(c.config.Settings.ObservationWindow), c.config.Settings.ObservationWindow, settings, c.runtime)
 			if slices.ContainsFunc(next.Actions, func(a serving.Action) bool { return a.ID == result.Operation.ID }) {
 				t.Fatal("changed memory input retained obsolete start failure")
 			}

@@ -395,7 +395,9 @@ func knownEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.Inst
 // SCH-AC-38 / P2 §3 R4: compensate only a failed owner's own, unclaimed
 // preparation. remove already performs stop/drain/source retirement; its
 // completion is not a return proof until releaseObservedScopes sees Pod absence.
-func (c *SchedulerController) launchFailedPreparationCleanupLocked(config SchedulerControllerConfig) {
+func (c *reservationState) compensatePreparationsLocked(
+	runtime *serving.Runtime, dispatch func(serving.SchedulerCandidate),
+) {
 	for _, parent := range c.runs {
 		if parent.action.Kind != transitionRunKind || parent.action.Status != servingstate.NativeOperationFailed || !parent.reserved || parent.result == nil {
 			continue
@@ -411,7 +413,7 @@ func (c *SchedulerController) launchFailedPreparationCleanupLocked(config Schedu
 		if active {
 			continue
 		}
-		physical := c.runtime.Instances()
+		physical := runtime.Instances()
 		for _, child := range c.runs {
 			if child.owner != parent.owner || !child.reserved || child.action.Kind != servingstate.OperationPrepare || child.result == nil ||
 				(child.action.Status != servingstate.NativeOperationFailed && child.action.Status != servingstate.NativeOperationPartial) || child.result.Operation.Prepare == nil {
@@ -421,9 +423,9 @@ func (c *SchedulerController) launchFailedPreparationCleanupLocked(config Schedu
 				if !c.failedPreparationUnclaimed(parent, child, actual) {
 					continue
 				}
-				c.launchTargetLocked(serving.SchedulerCandidate{ID: parent.owner, Actions: []serving.Action{{
+				dispatch(serving.SchedulerCandidate{ID: parent.owner, Actions: []serving.Action{{
 					ID: child.action.ID + "/compensate/" + actual.ID, Kind: servingstate.OperationRemove, Node: actual.Node, Instance: actual.ID,
-				}}}, config)
+				}}})
 			}
 		}
 	}

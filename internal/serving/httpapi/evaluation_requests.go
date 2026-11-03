@@ -38,16 +38,38 @@ type EvaluationReleaseRequest struct {
 	Reason string `json:"reason"`
 }
 type EvaluationView struct {
-	Name          string                 `json:"name"`
-	UID           string                 `json:"uid"`
-	Spec          api.EvaluationRunSpec  `json:"spec"`
-	Conditions    []metav1.Condition     `json:"conditions"`
-	CurrentStage  string                 `json:"currentStage,omitempty"`
-	StartedAt     *metav1.Time           `json:"startedAt,omitempty"`
-	FinishedAt    *metav1.Time           `json:"finishedAt,omitempty"`
-	Phase         string                 `json:"phase"`
-	PublicationID string                 `json:"publicationID,omitempty"`
-	LiveTarget    []EvaluationLiveTarget `json:"liveTarget"`
+	Name             string                 `json:"name"`
+	UID              string                 `json:"uid"`
+	Spec             api.EvaluationRunSpec  `json:"spec"`
+	Conditions       []metav1.Condition     `json:"conditions"`
+	CurrentStage     string                 `json:"currentStage,omitempty"`
+	CurrentProcedure string                 `json:"currentProcedure,omitempty"`
+	Procedures       []EvaluationProcedure  `json:"procedures"`
+	Stages           []EvaluationStage      `json:"stages"`
+	StartedAt        *metav1.Time           `json:"startedAt,omitempty"`
+	FinishedAt       *metav1.Time           `json:"finishedAt,omitempty"`
+	Phase            string                 `json:"phase"`
+	PublicationID    string                 `json:"publicationID,omitempty"`
+	LiveTarget       []EvaluationLiveTarget `json:"liveTarget"`
+}
+type EvaluationProcedure struct {
+	Step               string                 `json:"step"`
+	StartedAt          *metav1.Time           `json:"startedAt"`
+	FinishedAt         *metav1.Time           `json:"finishedAt"`
+	Reason             string                 `json:"reason,omitempty"`
+	MeasurementVerdict api.MeasurementVerdict `json:"measurementVerdict,omitempty"`
+}
+type EvaluationStage struct {
+	ID                 string                 `json:"id"`
+	Name               string                 `json:"name"`
+	UID                string                 `json:"uid"`
+	Conditions         []metav1.Condition     `json:"conditions"`
+	MeasurementVerdict api.MeasurementVerdict `json:"measurementVerdict,omitempty"`
+	CurrentProcedure   string                 `json:"currentProcedure,omitempty"`
+	Procedures         []EvaluationProcedure  `json:"procedures"`
+	StartedAt          *metav1.Time           `json:"startedAt"`
+	FinishedAt         *metav1.Time           `json:"finishedAt"`
+	GoAt               *metav1.Time           `json:"goAt"`
 }
 type EvaluationList struct {
 	Items []EvaluationView `json:"items"`

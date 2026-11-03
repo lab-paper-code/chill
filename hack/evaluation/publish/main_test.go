@@ -20,9 +20,10 @@ import (
 )
 
 type publicationMemoryStore struct {
-	keys   []string
-	stored map[string]bool
-	fail   string
+	keys     []string
+	stored   map[string]bool
+	fail     string
+	existing map[string]evidencestore.ObjectIdentity
 }
 
 func (s *publicationMemoryStore) PutImmutable(_ context.Context, object evidencestore.ObjectIdentity, body io.Reader) (evidencestore.Receipt, error) {
@@ -45,6 +46,17 @@ func (s *publicationMemoryStore) PutImmutable(_ context.Context, object evidence
 	}
 	s.stored[object.Key] = true
 	return evidencestore.Receipt{SchemaVersion: evidencestore.ReceiptSchemaVersion, Object: object, Outcome: evidencestore.CreateOutcomeCreated}, nil
+}
+
+func (s *publicationMemoryStore) Stat(ctx context.Context, location evidencestore.ObjectLocation) (evidencestore.ObjectIdentity, error) {
+	if err := ctx.Err(); err != nil {
+		return evidencestore.ObjectIdentity{}, err
+	}
+	object, ok := s.existing[location.Key]
+	if !ok || object.Store != location.Store {
+		return evidencestore.ObjectIdentity{}, evidencestore.ErrNotFound
+	}
+	return object, nil
 }
 
 func publicationFixture(t *testing.T) publicationManifest {
@@ -80,13 +92,56 @@ func writePublicationFixture(t *testing.T, name string, value any) {
 func TestPublishRawBeforeSummaryAndRefuseSameID(t *testing.T) {
 	manifest := publicationFixture(t)
 	store := &publicationMemoryStore{}
-	receipt, err := publish(context.Background(), store, "evidence", manifest)
+	receipt, err := publish(context.Background(), store, store, "evidence", manifest)
 	if err != nil || receipt.Outcome != evidencestore.CreateOutcomeCreated || len(store.keys) != 2 ||
 		store.keys[0] != manifest.Objects[0].Key || store.keys[1] != manifest.Summary.Key {
 		t.Fatalf("publication ordering/receipt: %+v %v keys=%v", receipt, err, store.keys)
 	}
-	if _, err := publish(context.Background(), store, "evidence", manifest); !errors.Is(err, evidencestore.ErrPrecondition) {
+	if _, err := publish(context.Background(), store, store, "evidence", manifest); !errors.Is(err, evidencestore.ErrPrecondition) {
 		t.Fatalf("existing summary was accepted as new: %v", err)
+	}
+}
+
+func TestPublishLinksExistingFrozenSourceWithoutReupload(t *testing.T) {
+	for _, name := range []string{"verified", "missing", "size mismatch", "other Run", "other store"} {
+		t.Run(name, func(t *testing.T) {
+			manifest := publicationFixture(t)
+			source := evidencestore.ObjectIdentity{Store: "evidence", Key: "experiments/run-1/run/prepare/input-snapshot.json", Size: 17}
+			observed := source
+			store := &publicationMemoryStore{existing: map[string]evidencestore.ObjectIdentity{source.Key: observed}}
+			switch name {
+			case "missing":
+				delete(store.existing, source.Key)
+			case "size mismatch":
+				observed.Size++
+				store.existing[source.Key] = observed
+			case "other Run":
+				source.Key = "experiments/other/run/prepare/input-snapshot.json"
+				store.existing[source.Key] = source
+			case "other store":
+				source.Store = "foreign"
+			}
+			var summary httpapi.ExperimentSummary
+			if err := readPublicationJSON(manifest.Summary.LocalPath, &summary); err != nil {
+				t.Fatal(err)
+			}
+			summary.Sources = append(summary.Sources, httpapi.ExperimentSource{Store: source.Store, Key: source.Key})
+			writePublicationFixture(t, manifest.Summary.LocalPath, summary)
+			manifest.ExistingSources = []evidencestore.ObjectIdentity{source}
+			_, err := publish(context.Background(), store, store, "evidence", manifest)
+			if name == "verified" {
+				if err != nil || len(store.keys) != 2 || store.keys[1] != manifest.Summary.Key {
+					t.Fatalf("verified frozen source publication: err=%v writes=%v", err, store.keys)
+				}
+				for _, key := range store.keys {
+					if key == source.Key {
+						t.Fatal("frozen source was re-uploaded")
+					}
+				}
+			} else if err == nil || len(store.keys) != 0 {
+				t.Fatalf("unverified source must fail before publication: err=%v writes=%v", err, store.keys)
+			}
+		})
 	}
 }
 
@@ -102,7 +157,7 @@ func TestPublishPartialFailureRequiresNewID(t *testing.T) {
 	}
 	manifest.Objects = append(manifest.Objects, second)
 	store := &publicationMemoryStore{fail: second.Key}
-	if _, err := publish(context.Background(), store, "evidence", manifest); !errors.Is(err, evidencestore.ErrTransport) {
+	if _, err := publish(context.Background(), store, store, "evidence", manifest); !errors.Is(err, evidencestore.ErrTransport) {
 		t.Fatalf("expected partial publication failure: %v", err)
 	}
 	if !store.stored[manifest.Objects[0].Key] || store.stored[manifest.Summary.Key] {
@@ -114,7 +169,7 @@ func TestPublishPartialFailureRequiresNewID(t *testing.T) {
 	}
 	store.fail = ""
 	store.keys = nil
-	if _, err := publish(context.Background(), store, "evidence", manifest); !errors.Is(err, evidencestore.ErrPrecondition) {
+	if _, err := publish(context.Background(), store, store, "evidence", manifest); !errors.Is(err, evidencestore.ErrPrecondition) {
 		t.Fatalf("republication must require a new experiment ID: %v", err)
 	}
 	if len(store.keys) != 1 || store.keys[0] != manifest.Objects[0].Key || store.stored[manifest.Summary.Key] {
@@ -146,7 +201,7 @@ func TestPublishNeverCompletesWithoutRawEvidence(t *testing.T) {
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
 			}
-			if _, err := publish(ctx, store, "evidence", manifest); err == nil {
+			if _, err := publish(ctx, store, store, "evidence", manifest); err == nil {
 				t.Fatal("incomplete publication accepted")
 			}
 			if store.stored[manifest.Summary.Key] {
@@ -221,7 +276,7 @@ func TestPublishOptionalOutcomeBoundary(t *testing.T) {
 			summary.Outcome = tc.definition
 			writePublicationFixture(t, manifest.Summary.LocalPath, summary)
 			store := &publicationMemoryStore{}
-			receipt, err := publish(context.Background(), store, "evidence", manifest)
+			receipt, err := publish(context.Background(), store, store, "evidence", manifest)
 			if tc.valid {
 				if err != nil || receipt.Outcome != evidencestore.CreateOutcomeCreated ||
 					len(store.keys) != 2 || store.keys[1] != manifest.Summary.Key {

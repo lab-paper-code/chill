@@ -63,7 +63,7 @@ func (o *SchedulerService) preparation(
 	if err != nil {
 		return spec, err
 	}
-	spec.Instance.WarmupArguments = serving.RunnerWarmupArguments(spec.Config.RunnerCommand)
+	spec.Instance.RunnerCommand = spec.Config.RunnerCommand
 	raw, err := json.Marshal(profile.NativeBundle())
 	if err != nil {
 		return spec, err

@@ -137,6 +137,26 @@ digest 채택은 없고 실제 target readiness로 검사한다. POST 접수는 
 한국어 항목명으로 키 경로를 표시하고 미등록 경로는 원문으로 보존한다. 목록의 변경값을
 추측하거나 모든 게시의 단건을 추가 조회하지 않는다.
 
+Evaluation list/detail GETs additionally project the Run's recorded `currentProcedure`
+and `procedures[]` (`step,startedAt,finishedAt,reason,measurementVerdict`), plus
+`stages[]` (`id,name,uid,conditions,measurementVerdict,currentProcedure,procedures,startedAt,finishedAt,goAt`).
+The evaluation service reads child EvaluationStages through its existing reader,
+in recorded `childRefs` order, matching name and UID; unreferenced, deleted, or
+replaced children are not projected. Procedure order is preserved as recorded.
+Collection reads list child Stages once for the namespace and index them by name,
+checking the referenced UID, rather than issuing a GET for every Run's child.
+Single-Run reads fetch only its referenced children.
+Absent procedure histories, conditions, and timestamps remain null; absent
+`currentProcedure`, `reason`, and `measurementVerdict` are omitted. The CRDs do
+not record procedure `status` or stage `phase`, so those fields are not exposed.
+Recorded procedure/stage `measurementVerdict` and stage `conditions` are
+projected under their CRD field names, never derived from times or conditions.
+The existing Run-level `phase` projection is unchanged. No RBAC expansion is
+needed: `serving_entrypoint_rbac.yaml` already grants EvaluationStage get/list,
+and `dashboard_reader_rbac.yaml` grants get/list/watch in the evaluation-enabled
+profile namespaces alongside EvaluationRun reads. This view does not mutate CRDs
+or add progress judgment.
+
 #### 실험 게시물 페이지·적용 SLO 출처
 
 `GET /api/v1/experiments?offset=0&limit=5`는 기존 항목(facts 포함)을 유지한
@@ -157,6 +177,14 @@ identitySource `{store,key}`가 모두 있어야 단계 적용 SLO를 연결한�
 `GET /api/v1/observations/events?from=<RFC3339Nano>&to=<RFC3339Nano>&limit=100`
 는 `[from,to)`의 보존 사건을 `{events,from,to,coverage,nextCursor?}`로 반환한다.
 기존 정확 시점 `?at=<RFC3339Nano>`는 유지하며 범위 인자와 혼용하지 않는다.
+정확 시점 조회도 `coverage={from,to,sources,gaps}`와 `nextCursor?`를 반환한다.
+이 coverage는 event-time이 아닌 이번 호출이 읽은 append-time 구간이다.
+빈 정확 시점 페이지는 기존 배열 계약대로 `events:[]`이며 오류가 아니다. `nextCursor`가 있으면
+동일 `at`와 `cursor=<nextCursor>`로 계속 읽는다. 찾은 페이지에도 continuation을
+유지하므로 같은 시점의 다른 사실·3시간 지연 append를 복구할 수 있다.
+정확 시점 cursor는 다음 append-hour RFC3339Nano이며 아래 범위 cursor와 혼용할 수 없다.
+기본 1시간의 호출 예산은 `servingEntrypoint.observationStorage.eventLookupHours`
+(`--observation-event-lookup-hours`)로 정한다. [비용 근거와 상세 계약](observability-split.md#exact-event-recovery).
 범위는 양수·최대 24시간, `limit`은 기본 100·최대 500이며 서버 `MaxQueryEvents`가
 더 작으면 그 값이 상한이다. 잘못된 인자·범위·cursor는 `400 InvalidQuery`다.
 `coverage={from,to,sources,gaps}`의 출처·공백과 원래 timestamp를 보존한다.

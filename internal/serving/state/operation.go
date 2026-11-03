@@ -117,13 +117,13 @@ type OperationStep struct {
 // PreparationEvidence survives a canceled final Capture. Spec remains the
 // authority for slot, owner and policy; these are the API-confirmed identities.
 type PreparationEvidence struct {
-	PodUID          string                                 `json:"podUID"`
-	NodeUID         string                                 `json:"nodeUID"`
-	DecisionID      string                                 `json:"decisionID"`
-	Created         bool                                   `json:"created"`
-	RuntimeImage    string                                 `json:"runtimeImage,omitempty"`
-	WarmupArguments []string                               `json:"warmupArguments,omitempty"`
-	Failure         *serving.PreparationFailureObservation `json:"failure,omitempty"`
+	PodUID        string                                 `json:"podUID"`
+	NodeUID       string                                 `json:"nodeUID"`
+	DecisionID    string                                 `json:"decisionID"`
+	Created       bool                                   `json:"created"`
+	RuntimeImage  string                                 `json:"runtimeImage,omitempty"`
+	RunnerCommand []string                               `json:"runnerCommand,omitempty"`
+	Failure       *serving.PreparationFailureObservation `json:"failure,omitempty"`
 }
 
 type OperationResult struct {
@@ -179,6 +179,6 @@ func (r OperationResult) PreparationFailure(snapshot serving.SchedulerSnapshot) 
 	wanted := r.Operation.Prepare.Instance
 	wanted.Allocation.MemoryBytes = r.Operation.Prepare.MemoryBytes
 	wanted.RuntimeImage = r.Preparation.RuntimeImage
-	wanted.WarmupArguments = r.Preparation.WarmupArguments
+	wanted.RunnerCommand = r.Preparation.RunnerCommand
 	return serving.NewPreparationFailure(wanted, r.Before.NodeMemoryBytes, r.Preparation.PodUID, observed)
 }

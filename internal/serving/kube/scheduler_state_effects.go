@@ -8,12 +8,12 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
-func (c *SchedulerController) actionEffectPresent(snapshot serving.SchedulerSnapshot, run *actionRun) bool {
+func (c *reservationState) actionEffectPresent(snapshot serving.SchedulerSnapshot, run *actionRun, runtime *serving.Runtime) bool {
 	if run.result == nil || run.result.Status != servingstate.NativeOperationComplete {
 		return false
 	}
 	a := run.action
-	physical := c.runtime.Instances()
+	physical := runtime.Instances()
 	switch a.Kind {
 	case servingstate.OperationPrepare:
 		p := run.result.Operation.Prepare
@@ -53,14 +53,14 @@ func (c *SchedulerController) actionEffectPresent(snapshot serving.SchedulerSnap
 			}
 		}
 	case servingstate.OperationRoute:
-		return c.routingTargetPresent(controlledTarget(run.result.Operation), snapshot, physical, true)
+		return c.routingTargetPresent(controlledTarget(run.result.Operation), snapshot, physical, true, runtime)
 	}
 	return false
 }
 
 // A failed observation is neither an effect proof nor a counterexample. Keep
 // the completed receipt and its ownership until the same source is observable.
-func (c *SchedulerController) actionEffectUnknown(snapshot serving.SchedulerSnapshot, run *actionRun) bool {
+func (c *reservationState) actionEffectUnknown(snapshot serving.SchedulerSnapshot, run *actionRun, runtime *serving.Runtime) bool {
 	if run.result == nil {
 		return false
 	}
@@ -69,7 +69,7 @@ func (c *SchedulerController) actionEffectUnknown(snapshot serving.SchedulerSnap
 			return node.Node == run.action.Node && node.PowerMode == ""
 		})
 	}
-	physical := c.runtime.Instances()
+	physical := runtime.Instances()
 	if run.action.Kind == servingstate.OperationPrepare {
 		return slices.ContainsFunc(physical, func(instance serving.InstanceState) bool {
 			return (instance.ID == run.action.Instance || instance.TargetID == run.action.Instance) &&
@@ -90,11 +90,11 @@ func (c *SchedulerController) actionEffectUnknown(snapshot serving.SchedulerSnap
 	return false
 }
 
-func (c *SchedulerController) routingTargetPresent(target *serving.SchedulerCandidate, snapshot serving.SchedulerSnapshot, physical []serving.InstanceState, requirePolicy bool) bool {
+func (c *reservationState) routingTargetPresent(target *serving.SchedulerCandidate, snapshot serving.SchedulerSnapshot, physical []serving.InstanceState, requirePolicy bool, runtime *serving.Runtime) bool {
 	if target == nil {
 		return false
 	}
-	actual, _ := c.runtime.SchedulerRouting()
+	actual, _ := runtime.SchedulerRouting()
 	positive := false
 	for uid, weights := range target.Routing {
 		if len(actual[uid]) != len(weights) {
