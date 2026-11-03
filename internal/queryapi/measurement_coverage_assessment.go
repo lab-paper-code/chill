@@ -58,6 +58,7 @@ type MeasurementAssessmentInput struct {
 	ExecutionCurrent bool
 	Accepted         bool
 	Available        bool
+	Observed         bool
 	Reused           bool
 	SchedulerUsed    *bool
 	Support          string
@@ -162,6 +163,10 @@ func assessMeasurementChildren(out *MeasurementAssessment, children []Measuremen
 
 func assessSingleMeasurement(out *MeasurementAssessment, in MeasurementAssessmentInput) {
 	if len(in.Problems) > 0 {
+		return
+	}
+	if in.Observed && in.Available {
+		out.Status = MeasurementComplete
 		return
 	}
 	if in.Accepted {

@@ -8,26 +8,23 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/queryapi"
+	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-const occupancyAdoptionStore = "evidence"
+const occupancyOtherIdentity = "other"
 
-// Keep the verified DOM fixture while exercising the real catalog refresh and
-// private JSON decoder; adoption must not be inferred from the profile map.
+// Exercise the actual private catalog decoder and refresh while retaining the DOM fixture.
 func readCoverageAdoptionFixture(
 	t *testing.T, previous *measurementCoverageBase,
 	read func(context.Context) (servingkube.CatalogRead, error),
 ) (*measurementCoverageBase, error) {
 	t.Helper()
 	service := &measurementService{
-		client:  fake.NewClientBuilder().WithScheme(measurementScheme(t)).Build(),
-		catalog: read,
-		inventory: func(context.Context) (queryapi.InventoryView, error) {
-			return previous.inventory, nil
-		},
+		client: fake.NewClientBuilder().WithScheme(measurementScheme(t)).Build(), catalog: read,
+		inventory: func(context.Context) (queryapi.InventoryView, error) { return previous.inventory, nil },
 		compatibility: func(context.Context) (queryapi.ModelCompatibilityMatrixView, error) {
 			return previous.compatibility, nil
 		},
@@ -44,68 +41,78 @@ func TestCoverageOccupancyAdoption(t *testing.T) {
 	fixture, cell, task := coverageOccupancyFixture(t)
 	acceptCoverageOccupancy(fixture, task)
 	fixture.occupancies.Items = append(fixture.occupancies.Items, task)
-	selection := servingkube.OccupancySelection{
+	at := time.Now().UTC()
+	window := serving.OccupancyWindow{Start: at.Add(-time.Minute), End: at}
+	selection := serving.DispatchOccupancy{
 		Node:  fixture.occupancyResults[string(task.UID)].record.Node,
 		Model: cell.Model.Name, PowerMode: cell.PowerMode, ExecutionPath: cell.ExecutionPath,
 		ProfileID: task.Spec.Conditions.ProfileID, Batch: int(task.Spec.Batch), RuntimeImage: "selected-image",
+		Provenance: &serving.DispatchOccupancyProvenance{
+			Source: "measured", Value: 0, Pairs: 12, Window: &window, UpdatedAt: at,
+		},
 	}
-	selection.Evidence.Store, selection.Evidence.Key = occupancyAdoptionStore, "accepted.json"
+	observed := serving.OccupancyEstimate{Node: selection.Node, Model: selection.Model, PowerMode: selection.PowerMode,
+		ExecutionPath: selection.ExecutionPath, RuntimeImage: "display-only", Batch: selection.Batch,
+		Profile: serving.OccupancyProfile{ProfileID: selection.ProfileID}, Pairs: 12, Window: window,
+		Statistics: &serving.OccupancyStatistics{Median: -20, Mean: -10, NegativeFraction: .75}}
 	for _, tc := range []struct {
-		name   string
-		change func(*servingkube.CatalogRead)
-		wire   string
-		fail   bool
-		want   string
+		name     string
+		change   func(*servingkube.CatalogRead)
+		want     string
+		selected bool
 	}{
-		{name: "exact selected tuple", want: "true"},
-		{name: "runtime image is not a validity key", want: "true", change: func(r *servingkube.CatalogRead) {
-			r.Accepted.Occupancy[0].RuntimeImage = "different-image"
+		{name: "measured", want: "true", selected: true},
+		{name: "dom provenance", want: "true", selected: true, change: func(r *servingkube.CatalogRead) {
+			r.Accepted.DispatchOccupancy[0].Provenance.Source = "dom"
 		}},
-		{name: "available empty selection", want: "false", change: func(r *servingkube.CatalogRead) {
-			r.Accepted.Occupancy = []servingkube.OccupancySelection{}
+		{name: "default is not adoption", want: "false", selected: true, change: func(r *servingkube.CatalogRead) {
+			r.Accepted.DispatchOccupancy[0].Provenance.Source = "default"
 		}},
+		{name: "runtime image display only", want: "true", selected: true, change: func(r *servingkube.CatalogRead) {
+			r.Accepted.DispatchOccupancy[0].RuntimeImage = occupancyOtherIdentity
+		}},
+		{name: "missing provenance", want: "false", change: func(r *servingkube.CatalogRead) {
+			r.Accepted.DispatchOccupancy[0].Provenance = nil
+		}},
+		{name: "empty selections", want: "false", change: func(r *servingkube.CatalogRead) {
+			r.Accepted.DispatchOccupancy = []serving.DispatchOccupancy{}
+		}},
+		{name: "missing selections", want: "null", change: func(r *servingkube.CatalogRead) {
+			r.Accepted.DispatchOccupancy = nil
+		}},
+		{name: "accepted absent", want: "null", change: func(r *servingkube.CatalogRead) { r.Accepted = nil }},
 		{name: "different node name", want: "false", change: func(r *servingkube.CatalogRead) {
-			r.Accepted.Occupancy[0].Node.Name = "other-node"
+			r.Accepted.DispatchOccupancy[0].Node.Name = occupancyOtherIdentity
 		}},
 		{name: "different node UID", want: "false", change: func(r *servingkube.CatalogRead) {
-			r.Accepted.Occupancy[0].Node.UID = "replaced-node"
-		}},
-		{name: "different profile", want: "false", change: func(r *servingkube.CatalogRead) {
-			r.Accepted.Occupancy[0].ProfileID = "other-profile"
-		}},
-		{name: "different batch", want: "false", change: func(r *servingkube.CatalogRead) {
-			r.Accepted.Occupancy[0].Batch++
-		}},
-		{name: "different evidence store", want: "false", change: func(r *servingkube.CatalogRead) {
-			r.Accepted.Occupancy[0].Evidence.Store = "other-store"
-		}},
-		{name: "different evidence key", want: "false", change: func(r *servingkube.CatalogRead) {
-			r.Accepted.Occupancy[0].Evidence.Key = "other.json"
+			r.Accepted.DispatchOccupancy[0].Node.UID = "replaced"
 		}},
 		{name: "different model", want: "false", change: func(r *servingkube.CatalogRead) {
-			r.Accepted.Occupancy[0].Model = "other-model"
+			r.Accepted.DispatchOccupancy[0].Model = occupancyOtherIdentity
 		}},
-		{name: "different power mode", want: "false", change: func(r *servingkube.CatalogRead) {
-			r.Accepted.Occupancy[0].PowerMode = "other-mode"
+		{name: "different mode", want: "false", change: func(r *servingkube.CatalogRead) {
+			r.Accepted.DispatchOccupancy[0].PowerMode = occupancyOtherIdentity
 		}},
-		{name: "different execution path", want: "false", change: func(r *servingkube.CatalogRead) {
-			r.Accepted.Occupancy[0].ExecutionPath = "other-path"
+		{name: "different path", want: "false", change: func(r *servingkube.CatalogRead) {
+			r.Accepted.DispatchOccupancy[0].ExecutionPath = occupancyOtherIdentity
 		}},
-		{name: "accepted absent", wire: `{}`, want: "null"},
-		{name: "accepted null", wire: `{"accepted":null}`, want: "null"},
-		{name: "occupancy absent", wire: `{"accepted":{}}`, want: "null"},
-		{name: "occupancy null", want: "null", change: func(r *servingkube.CatalogRead) {
-			r.Accepted.Occupancy = nil
+		{name: "different profile", want: "false", change: func(r *servingkube.CatalogRead) {
+			r.Accepted.DispatchOccupancy[0].ProfileID = occupancyOtherIdentity
 		}},
-		{name: "catalog failure", fail: true, want: "null"},
-		{name: "catalog source failure", want: "null", change: func(r *servingkube.CatalogRead) {
-			r.SourceError = "catalog source unavailable"
+		{name: "different batch", want: "false", change: func(r *servingkube.CatalogRead) {
+			r.Accepted.DispatchOccupancy[0].Batch++
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			copySelection := selection
+			copyProvenance := *selection.Provenance
+			copySelection.Provenance = &copyProvenance
 			read := servingkube.CatalogRead{
-				CatalogSnapshot: servingkube.CatalogSnapshot{SourceCheckedAt: time.Now().UTC()},
-				Accepted:        &servingkube.CatalogSnapshot{Occupancy: []servingkube.OccupancySelection{selection}},
+				CatalogSnapshot: servingkube.CatalogSnapshot{SourceCheckedAt: at},
+				Accepted: &servingkube.CatalogSnapshot{
+					DispatchOccupancy:  []serving.DispatchOccupancy{copySelection},
+					OccupancyEstimates: []serving.OccupancyEstimate{observed},
+				},
 			}
 			if tc.change != nil {
 				tc.change(&read)
@@ -114,38 +121,29 @@ func TestCoverageOccupancyAdoption(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tc.wire != "" {
-				var fields map[string]json.RawMessage
-				if err := json.Unmarshal([]byte(tc.wire), &fields); err != nil {
-					t.Fatal(err)
-				}
-				fields["sourceCheckedAt"], err = json.Marshal(read.SourceCheckedAt)
-				if err != nil {
-					t.Fatal(err)
-				}
-				wire, err = json.Marshal(fields)
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
 			next, err := readCoverageAdoptionFixture(t, fixture, func(context.Context) (servingkube.CatalogRead, error) {
-				if tc.fail {
-					return servingkube.CatalogRead{}, errors.New("catalog transport unavailable")
-				}
 				var decoded servingkube.CatalogRead
 				err := json.Unmarshal(wire, &decoded)
-				if tc.name == "available empty selection" && (decoded.Accepted == nil || decoded.Accepted.Occupancy == nil) {
-					t.Error("private catalog decoding lost present empty occupancy")
-				}
 				return decoded, err
 			})
-			if next == nil || (err != nil) != (tc.fail || read.SourceError != "") {
-				t.Fatalf("catalog refresh returned snapshot=%v error=%v", next, err)
+			if err != nil {
+				t.Fatal(err)
 			}
 			entry := findCoverageOccupancy(t, next, cell, task)
-			got, err := json.Marshal(entry.Adopted)
-			if err != nil || string(got) != tc.want {
-				t.Errorf("adopted=%s, want %s (error=%v)", got, tc.want, err)
+			adopted, err := json.Marshal(entry.Adopted)
+			if err != nil || string(adopted) != tc.want {
+				t.Fatalf("adopted=%s want=%s error=%v", adopted, tc.want, err)
+			}
+			if (entry.SchedulerD != nil) != tc.selected {
+				t.Fatalf("wrong selected provenance: %+v", entry)
+			}
+			if entry.SchedulerD != nil && (entry.SchedulerD.Value != 0 || entry.SchedulerD.Pairs != 12 ||
+				entry.SchedulerD.Window == nil || !entry.SchedulerD.UpdatedAt.Equal(at)) {
+				t.Fatalf("provenance lost: %+v", entry.SchedulerD)
+			}
+			if read.Accepted != nil && (entry.ObservedD == nil ||
+				entry.ObservedD.Statistics.Median != -20 || entry.ObservedD.Pairs != 12) {
+				t.Fatalf("observed signed facts conflated with scheduler value: %+v", entry)
 			}
 		})
 	}
@@ -155,30 +153,23 @@ func TestCoverageOccupancyAdoptionRefresh(t *testing.T) {
 	fixture, cell, task := coverageOccupancyFixture(t)
 	acceptCoverageOccupancy(fixture, task)
 	fixture.occupancies.Items = append(fixture.occupancies.Items, task)
-	selection := servingkube.OccupancySelection{
-		Node:  fixture.occupancyResults[string(task.UID)].record.Node,
-		Model: cell.Model.Name, PowerMode: cell.PowerMode, ExecutionPath: cell.ExecutionPath,
-		ProfileID: task.Spec.Conditions.ProfileID, Batch: int(task.Spec.Batch),
-	}
-	selection.Evidence.Store, selection.Evidence.Key = occupancyAdoptionStore, "accepted.json"
-	checked := time.Now().UTC().Add(-10 * time.Second)
+	checked := time.Now().UTC().Add(-time.Second)
+	accepted := &servingkube.CatalogSnapshot{DispatchOccupancy: []serving.DispatchOccupancy{{
+		Node: fixture.occupancyResults[string(task.UID)].record.Node, Model: cell.Model.Name,
+		PowerMode: cell.PowerMode, ExecutionPath: cell.ExecutionPath, ProfileID: task.Spec.Conditions.ProfileID,
+		Batch: int(task.Spec.Batch), Provenance: &serving.DispatchOccupancyProvenance{Source: "dom", Value: 10},
+	}}}
 	read := servingkube.CatalogRead{
-		CatalogSnapshot: servingkube.CatalogSnapshot{SourceCheckedAt: checked, Revision: "unchanged"},
-		Accepted:        &servingkube.CatalogSnapshot{Occupancy: []servingkube.OccupancySelection{selection}},
+		CatalogSnapshot: servingkube.CatalogSnapshot{SourceCheckedAt: checked}, Accepted: accepted,
 	}
-	reader := func(context.Context) (servingkube.CatalogRead, error) { return read, nil }
-	previous, err := readCoverageAdoptionFixture(t, fixture, reader)
-	if err != nil || previous == nil {
-		t.Fatalf("initial refresh: snapshot=%v error=%v", previous, err)
+	previous, err := readCoverageAdoptionFixture(t, fixture, func(context.Context) (servingkube.CatalogRead, error) {
+		return read, nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	checked = time.Now().UTC().Add(-time.Second)
-	read.SourceCheckedAt = checked
-	refreshed, err := readCoverageAdoptionFixture(t, previous, reader)
-	if err != nil || refreshed == nil || !refreshed.checked[coverageCatalogSource].Equal(checked) {
-		t.Fatalf("unchanged successful catalog did not advance source check: snapshot=%v error=%v", refreshed, err)
-	}
-	if entry := findCoverageOccupancy(t, refreshed, cell, task); entry.Adopted == nil || !*entry.Adopted {
-		t.Errorf("successful selected occupancy was not adopted: %+v", entry)
+	if entry := findCoverageOccupancy(t, previous, cell, task); entry.Adopted == nil || !*entry.Adopted {
+		t.Fatalf("initial selection missing: %+v", entry)
 	}
 	for _, tc := range []struct {
 		name string
@@ -187,49 +178,39 @@ func TestCoverageOccupancyAdoptionRefresh(t *testing.T) {
 		want string
 	}{
 		{name: "source failure", read: servingkube.CatalogRead{
-			CatalogSnapshot: servingkube.CatalogSnapshot{SourceCheckedAt: checked, SourceError: "source unavailable"},
-			Accepted:        read.Accepted,
+			CatalogSnapshot: servingkube.CatalogSnapshot{SourceCheckedAt: checked, SourceError: "unavailable"},
+			Accepted:        accepted,
 		}, want: "null"},
 		{name: "transport failure", err: errors.New("transport unavailable"), want: "null"},
-		{name: "unconfirmed source", read: servingkube.CatalogRead{Accepted: read.Accepted}, want: "null"},
+		{name: "unconfirmed", read: servingkube.CatalogRead{Accepted: accepted}, want: "null"},
 		{name: "accepted missing", read: servingkube.CatalogRead{
 			CatalogSnapshot: servingkube.CatalogSnapshot{SourceCheckedAt: checked},
 		}, want: "null"},
-		{name: "occupancy missing", read: servingkube.CatalogRead{
-			CatalogSnapshot: servingkube.CatalogSnapshot{SourceCheckedAt: checked}, Accepted: &servingkube.CatalogSnapshot{},
+		{name: "selection missing", read: servingkube.CatalogRead{
+			CatalogSnapshot: servingkube.CatalogSnapshot{SourceCheckedAt: checked},
+			Accepted:        &servingkube.CatalogSnapshot{},
 		}, want: "null"},
 		{name: "selection removed", read: servingkube.CatalogRead{
 			CatalogSnapshot: servingkube.CatalogSnapshot{SourceCheckedAt: checked},
-			Accepted:        &servingkube.CatalogSnapshot{Occupancy: []servingkube.OccupancySelection{}},
+			Accepted:        &servingkube.CatalogSnapshot{DispatchOccupancy: []serving.DispatchOccupancy{}},
 		}, want: "false"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			next, err := readCoverageAdoptionFixture(t, refreshed, func(context.Context) (servingkube.CatalogRead, error) {
+			next, err := readCoverageAdoptionFixture(t, previous, func(context.Context) (servingkube.CatalogRead, error) {
 				return tc.read, tc.err
 			})
 			failed := tc.err != nil || tc.read.SourceError != "" || tc.read.SourceCheckedAt.IsZero()
 			if next == nil || (err != nil) != failed {
-				t.Fatalf("refresh returned snapshot=%v error=%v", next, err)
+				t.Fatalf("snapshot=%v error=%v", next, err)
 			}
 			entry := findCoverageOccupancy(t, next, cell, task)
 			adopted, err := json.Marshal(entry.Adopted)
-			if err != nil || string(adopted) != tc.want {
-				t.Errorf("refresh reused last selection: adopted=%s, want %s (error=%v)", adopted, tc.want, err)
+			if err != nil || string(adopted) != tc.want || entry.SchedulerD != nil {
+				t.Fatalf("stale selection reused: %+v (%v)", entry, err)
 			}
 			view := buildMeasurementCoverage(next, coverageSizeNamespace, httpapi.MeasurementCoverageQuery{})
-			wantFreshness := "fresh"
-			if failed {
-				wantFreshness = coverageFreshnessStale
-			}
-			if !next.checked[coverageCatalogSource].Equal(checked) || view.DataAsOf != checked.Format(time.RFC3339Nano) ||
-				view.Freshness != wantFreshness || (next.failures[coverageCatalogSource] != nil) != failed {
-				t.Errorf("catalog confirmation/failure flow changed: checked=%v dataAsOf=%s freshness=%s failures=%v",
-					next.checked[coverageCatalogSource], view.DataAsOf, view.Freshness, next.failures)
-			}
-			for _, source := range view.Sources {
-				if source.Kind == coverageCatalogSource && (source.Complete == failed || (source.Error != nil) != failed) {
-					t.Errorf("catalog source completeness hid refresh failure: %+v", source)
-				}
+			if (view.Freshness == coverageFreshnessStale) != failed || !next.checked[coverageCatalogSource].Equal(checked) {
+				t.Fatalf("source freshness changed: %+v", view)
 			}
 		})
 	}

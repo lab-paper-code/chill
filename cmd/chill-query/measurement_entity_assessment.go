@@ -219,6 +219,9 @@ func (o *measurementService) projectDispatchOccupancy(
 		MeasurementProjection:     httpapi.ProjectDispatchOccupancyMeasurement(cr),
 		DispatchOccupancyProgress: occupancyProgress(cr),
 	}
+	if cr.Spec.MinimumPairs > 0 {
+		projection.Conditions = cr.Spec
+	}
 	input := queryapi.MeasurementAssessmentInput{
 		Execution:        &queryapi.MeasurementExecution{Phase: string(cr.Status.Phase), Generation: cr.Generation},
 		ExecutionCurrent: true, Attempted: true,
@@ -253,6 +256,14 @@ func (o *measurementService) projectDispatchOccupancy(
 			projection.Assessment, err = json.Marshal(queryapi.AssessMeasurement(input))
 			return projection, err
 		}
+		var header struct {
+			SchemaVersion   string `json:"schemaVersion"`
+			PerRequestNanos *int64 `json:"perRequestNanos"`
+		}
+		if json.Unmarshal(raw, &header) == nil && (header.SchemaVersion == servingkube.BurstOccupancySchema ||
+			strings.HasPrefix(ref.Key, servingkube.BurstOccupancyPrefix)) {
+			return projectBurstOccupancy(cr, projection, input, raw)
+		}
 		var record servingkube.DispatchOccupancyRecord
 		if err := json.Unmarshal(raw, &record); err != nil {
 			input.Problems = append(input.Problems, queryapi.MeasurementReason{
@@ -261,12 +272,16 @@ func (o *measurementService) projectDispatchOccupancy(
 			projection.Assessment, err = json.Marshal(queryapi.AssessMeasurement(input))
 			return projection, err
 		}
+		if header.PerRequestNanos == nil {
+			projection.D = nil
+		}
 		input.Available = true
 		input.Facts = append(input.Facts, "Retained occupancy: "+ref.Store+"/"+ref.Key)
-		matches := occupancyRecordMatches(cr, record)
+		matches := header.PerRequestNanos != nil && occupancyRecordMatches(cr, record)
 		input.Accepted = matches && record.Verdict == measurementVerdictAccepted
 		if matches {
 			projection.record = &record
+			projection.SchemaVersion, projection.Verdict = record.SchemaVersion, record.Verdict
 			projection.ProfileID = record.ProfileID
 			projection.D = &queryapi.OccupancyValue{
 				PerRequestNanos: &record.PerRequestNanos, Throughput: finiteOccupancyValue(record.Throughput),
@@ -296,18 +311,19 @@ func (o *measurementService) projectDispatchOccupancy(
 				Code: reason, Message: reason, SourceIDs: []string{ref.Key},
 			})
 		}
-		input.Facts = append(input.Facts,
-			fmt.Sprintf("Stored signed d: %d ns/request; planner consumes max(d,0)", record.PerRequestNanos),
-			fmt.Sprintf("Stored physical cycles: %d; idle identified: %t", record.Cycles, record.IdleIdentified),
-		)
+		if header.PerRequestNanos != nil {
+			input.Facts = append(input.Facts,
+				fmt.Sprintf("Stored signed d: %d ns/request; planner consumes max(d,0)", record.PerRequestNanos),
+				fmt.Sprintf("Stored physical cycles: %d; idle identified: %t", record.Cycles, record.IdleIdentified),
+			)
+		}
 		if record.PrecisionTargetMet != nil {
 			input.Facts = append(input.Facts,
 				fmt.Sprintf("Stored reporting precision target met: %t", *record.PrecisionTargetMet),
 			)
 		}
 	}
-	value, parseErr := strconv.ParseFloat(cr.Status.Throughput, 64)
-	if cr.Status.Throughput != "" && (parseErr != nil || math.IsNaN(value) || math.IsInf(value, 0)) {
+	if invalidOccupancyThroughput(cr.Status.Throughput) {
 		input.Problems = append(input.Problems, queryapi.MeasurementReason{
 			Code: "OccupancyThroughputInvalid", Message: "Recorded throughput is not finite",
 			SourceIDs: []string{string(cr.UID)},
@@ -316,6 +332,11 @@ func (o *measurementService) projectDispatchOccupancy(
 	var err error
 	projection.Assessment, err = json.Marshal(queryapi.AssessMeasurement(input))
 	return projection, err
+}
+
+func invalidOccupancyThroughput(throughput string) bool {
+	value, err := strconv.ParseFloat(throughput, 64)
+	return throughput != "" && (err != nil || math.IsNaN(value) || math.IsInf(value, 0))
 }
 
 func occupancyRecordMatches(cr api.DispatchOccupancyMeasurement, record servingkube.DispatchOccupancyRecord) bool {
