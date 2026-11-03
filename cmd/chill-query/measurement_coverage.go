@@ -13,7 +13,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/queryapi"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -49,7 +48,8 @@ type measurementCoverageBase struct {
 	datasets          api.DatasetList
 	preprocessors     api.PreprocessorList
 	adopted           map[string]bool
-	acceptedOccupancy []servingkube.OccupancySelection // nil is unavailable; a non-nil empty list confirms no selection.
+	acceptedOccupancy []serving.DispatchOccupancy // nil is unavailable; empty confirms no selection.
+	observedOccupancy []queryapi.OccupancyEstimate
 	checked           map[string]time.Time
 	failures          map[string]error
 }
@@ -237,6 +237,7 @@ func (o *measurementService) readCoverage(
 		// Reporting may retain stale facts, but adoption needs this refresh's
 		// confirmed selection, never the previous successful read.
 		next.acceptedOccupancy = nil
+		next.observedOccupancy = nil
 		read, err := o.catalog(ctx)
 		value := catalogView(read.CatalogSnapshot)
 		at := read.SourceCheckedAt
@@ -255,7 +256,13 @@ func (o *measurementService) readCoverage(
 				err = errors.New(value.SourceError)
 			}
 			if err == nil && read.Accepted != nil {
-				next.acceptedOccupancy = read.Accepted.Occupancy
+				next.acceptedOccupancy = read.Accepted.DispatchOccupancy
+				if read.Accepted.OccupancyEstimates != nil {
+					next.observedOccupancy = make([]queryapi.OccupancyEstimate, len(read.Accepted.OccupancyEstimates))
+					for i := range read.Accepted.OccupancyEstimates {
+						next.observedOccupancy[i] = *queryOccupancyEstimate(&read.Accepted.OccupancyEstimates[i])
+					}
+				}
 			}
 		}
 		results <- sourceResult{coverageCatalogSource, err, at}

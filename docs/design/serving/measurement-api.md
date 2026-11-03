@@ -5,7 +5,7 @@
 ## 1. 측정 원칙
 
 - operation 비용은 준비, 유휴, 해제와 빈 노드 전력모드 변경을 순서 있는 요청 하나로 측정한다. 동작별 불변 기록은 요청과 실제 physical identity를 가리킨다.
-- 디스패치 점유 d는 고정 배치 인스턴스 하나의 물리 실행 간격이다. Node UID·전력모드·runtime image·모델이 같은 조건끼리 사용한다.
+- 디스패치 점유 d는 인접한 고정 배치의 native 실행 시작 간격에서 profile 평균 실행시간을 뺀 signed ns/request다. 관측·채택 연결 키는 Node UID·모델·전력모드·실행 경로·배치·profileID이며 runtime image는 기록·표시만 한다.
 - 같은 노드는 요청 순서대로, 다른 노드는 병렬 측정한다. admission이 CPU·가용 자원·profile을 확인하고 거절 사유를 기록한다.
 - 대표 한 건의 조건 생성→실행→원시 기록→계획기 선택→실물 반환을 확인한 뒤 대량 실행한다. profile/runtime/측정 계약 변경에는 영향받는 d·비용·baseline 목록을 남긴다.
 
@@ -277,6 +277,48 @@ minute drift do not establish universal stationarity or scheduler admission.
 - `serving.DispatchOccupancy` keeps the evidence record key in `source` and adds `provenance{source:measured|dom|default,pairs,window,updatedAt,value}`; `value` is operational ns/request, `round(max(median,0))` for measured B. Raw signed statistics remain untouched. κ input and recorded decisions retain the selected exact-cell tuple and provenance; record→read→capacity preserves resolved sources rather than relabeling defaults as DOM.
 - `/api/v1/catalog-read` exposes the actual selected list in `accepted.dispatchOccupancy` and signed pooled-cell facts in `accepted.occupancyEstimates`. Pair samples pool across workload UIDs, never medians-of-medians; eligibility still requires unchanged workload/config across adjacent physical batches. Metadata-only refreshes reuse numerical κ; value changes invalidate it. Throughput and replay add actual batch size × d once. 상세 용량 소비는 [계획기](analytic-planner.md)를 따른다.
 
+### 4.0 Query·Dashboard의 관측/채택 분리
+
+`GET /api/v1/observations/occupancy?from=<RFC3339>&to=<RFC3339>`는
+`{window:{start,end},rows:[...]}`를 반환한다. 기간은 현재
+`dispatchOccupancy.aggregationWindowSeconds` 이하이며 초과는
+`400 InvalidQuery`다. 웹은 400의 선택적 정수 `maximumWindowSeconds`를 상한으로
+기억하고 없으면 서버 사유만 표시한다(정상 응답 형태는 동일). 각 행은 `node:{name,uid}`, `workloadUID`, `model`,
+`powerMode`, `executionPath`, `runtimeImage`, `batch`,
+`profile:{profileID,reference,evidence,meanNanos}`, `window`와 `pairs`,
+`batches`, `completeBatches`, `requests`, `completeRequests`, `rawRows`,
+`completeRawRows`, `enrichedCompleteRawRows`, `finalRows`, `completeFinalRows`를
+보존한다. `statistics`는 signed ns/request의
+`median,p25,p75,iqr,p10,p90,mean,negativeFraction`이며 표본이 없으면 `null`이다.
+API와 웹은 합격/불합격·포화 판정을 추가하지 않는다.
+
+커버리지는 실제 스케줄러가 선택한 d와 관측 d(B)를 별도로 연결한다.
+스케줄러 d의 유일한 채택 근거는
+`accepted.dispatchOccupancy[].provenance`의 `source`, `value`, `pairs`,
+`window`, `updatedAt`이다. 출처는 `measured`/`dom`/`default`이며 기본값도
+명시된 실제 선택 사실이다. legacy `accepted.occupancy`만으로 채택 여부나 값을
+추정하지 않는다. `accepted.occupancyEstimates`의 signed 통계·pairs는 관측 사실이고
+선택값으로 바꾸지 않는다. 카탈로그 필드 누락/조회 오류와, 일치하는 선택 행의
+provenance 누락은 `adopted:null`이다. 확인된 빈 선택 목록·일치 선택 없음 또는
+명시된 default 출처만 `false`이며 measured/DOM 출처는 `true`다.
+
+Query의 DOM reader는 경로와 schema를 함께 구분한다. legacy v1alpha1은
+기존 scalar를 읽고 새 v1alpha2는 `estimate`와 `Observed`/`Insufficient`를 읽는다.
+새 evidence에 scalar가 없다는 이유로 mismatch/0을 만들지 않으며 `d:null`을
+유지한다. 정상 Observed의 scalar 부재는 오류 사유가 아니며 웹 사유는
+`해당 없음`이다. Failed·Insufficient의 원인과 evidence 읽기/검증 오류는 통계와
+별도로 상세에 표시한다. 새 burst에는 saturation/idle/saturationSizing 근거가
+없으므로 해당 projection은 `null`이고 진행 화면에도 포화 판정·유휴 비율을
+표시하지 않는다.
+웹의 셀 상세는 스케줄러 d와 관측 d(B)를 분리하고, 선택 기간의 집계 행은
+Node UID·모델·전력모드·실행 경로·배치·profileID로 연결한다. 이미지가 다르다는
+이유로 행을 숨기지 않는다.
+Query API의 estimate/window/profile/statistics는 `internal/queryapi` 소유 read 타입이다.
+`cmd/chill-query` 구성 루트 한 곳에서 Serving 값을 변환하며 Query 패키지는
+Serving 구현을 import하지 않는다. 모든 수치·null·근거 참조·ns 시각의 JSON 형태를
+변환 회귀로 보존하고 기존 architecture 의존 경계를 완화하지 않는다.
+
+
 ### 4.1 observer와 coherent replacement
 
 `Observer.ObserveUntil(ctx,Request,end,onFirstSample)`는 실제 producer end 뒤 final read까지 수집한다. Duration은 유한 watchdog, 표본 예산은 `floor(watchdog/interval)+3`이다. standalone `--end-wait-timeout`은 `RunConfig.Metrics.DurationSeconds`, `--max-result-bytes`는 frozen policy `MaxMetricResultBytes`다.
@@ -306,17 +348,17 @@ ChillServer는 두 kind 목록/status patch, release namespace Job create/get/li
 ## 7. 저장 계약 (ADR 0019)
 
 [ADR 0019](../../adr/0019-durable-stored-contract-compatibility.md)의 단일 형태를 reader가 엄격히 소비한다. Timing 없는 미기록 B를 관측한 0으로 투영하지 않으며 원 raw·값·판정은 외부 과학 증거로 보존한다.
-이번 direct-d 작업은 기존 scheduler reader/accepted d를 바꾸지 않는다. 신규 burst는
-별도 prefix/schema의 `Observed` 사실이며 구 reader의 목록에 들어가지 않는다.
+direct-d는 rolling 측정값을 실제 scheduler 선택에 연결하되, 신규 burst 원본과
+legacy scalar 원본의 저장 계약을 합치지 않는다. 신규 burst는 별도 prefix/schema의
+`Observed` 사실이며 구 reader의 목록에 들어가지 않는다.
 기존 `serving/dispatch-occupancy/` 객체·CR·타입은 **지금 삭제하지 않는다**.
-향후 scheduler의 B 채택을 별도 승인할 때 reader 전환과 구 근거 삭제를 한 번에 수행한다.
 
 | 대상 | 불변 저장/소비 계약 |
 |---|---|
 | operation/순서 기록 | 실제 timing·B/S/G·보고 비율·operation identity·단계별 출처 |
 | legacy `serving/dispatch-occupancy/<Node UID>/<CR UID>.json` | 현재 scheduler가 소비하는 기존 Accepted scalar 계약을 그대로 보존 |
-| burst `serving/dispatch-occupancy-observations/<Node UID>/<CR UID>.json` | estimator 결과·minimumPairs가 포함된 동결 조건·실제 native/drain/격리 근거, Observed 또는 Insufficient; scheduler 소비 없음 |
-| d/판단 | 기존 d source를 보존. 새 B 통계는 signed 사실이며 scheduler의 d를 덮어쓰지 않음 |
+| burst `serving/dispatch-occupancy-observations/<Node UID>/<CR UID>.json` | estimator 결과·minimumPairs가 포함된 동결 조건·실제 native/drain/격리 근거, Observed 또는 Insufficient; burst 원본 자체는 scheduler 채택 증명이 아님 |
+| d/판단 | 실제 선택 provenance와 source를 보존. signed B 통계와 operational 선택값을 구분하며 선택은 measured > DOM > default |
 | scheduler 설정 | 선택 `SchedulerSettings`/`minimumDemand`를 `decision.settings`, `decision.search.bounds`, scheduler 관측 기록에 동결. 캠페인 binding의 scheduler 입력 참조/settings 캡처를 결과에 연결 |
 
 ### 7.1 최소 수요와 재현 설정

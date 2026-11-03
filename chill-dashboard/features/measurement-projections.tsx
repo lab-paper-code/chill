@@ -22,7 +22,7 @@ import { MeasurementNavigation, measurementStates } from "@/components/measureme
 import { AssessmentDetails, ResultRows } from "@/features/measurement-plans"
 import { MeasurementFilters } from "@/features/measurement-coverage"
 import { SchedulerProfilesPage } from "@/features/scheduler-profiles"
-import { occupancyDisplayReason, occupancyElapsed, occupancyMilliseconds, occupancyNumber, occupancyPhase, occupancyRunning, occupancyRequestHref } from "@/lib/dispatch-occupancy"
+import { occupancyDirect, occupancyDisplayReason, occupancyElapsed, occupancyMilliseconds, occupancyStatistic, occupancyNumber, occupancyPhase, occupancyRunning, occupancyRequestHref } from "@/lib/dispatch-occupancy"
 
 const resultKinds = [["throughput","처리 성능"],["operation-cost","변경 비용"],["dispatch-occupancy","분배 처리시간"]] as const
 const projectionTitles = {"operation-cost-measurements":"변경 비용","dispatch-occupancy-measurements":"분배 처리시간"}
@@ -80,8 +80,9 @@ function ProjectionResults({kind,namespace}:{kind:ProjectionMeasurementKind;name
     {key:"node",label:"장치",value:item=>item.node,sortValue:item=>item.node},
     {key:"workload",label:"서비스",value:item=>item.conditions.workload,sortValue:item=>item.conditions.workload},
     {key:"batch",label:"배치",unit:"건",numeric:true,value:item=>item.batch??item.conditions.batch},
-    {key:"d",label:"점유시간",unit:"ms/요청",numeric:true,value:item=><OccupancyValue value={occupancyMilliseconds(item.d?.perRequestNanos)} unverified={item.assessment?.displayStatus==="problem"||item.phase==="Failed"||item.phase==="Insufficient"}/>,sortValue:item=>item.d?.perRequestNanos??undefined},
-    {key:"x",label:"완료 처리량",unit:"req/s",numeric:true,value:item=><OccupancyValue value={occupancyNumber(item.d?.throughput)} unverified={item.assessment?.displayStatus==="problem"||item.phase==="Failed"||item.phase==="Insufficient"}/>,sortValue:item=>item.d?.throughput??undefined},
+    {key:"d",label:"점유시간 중앙값",unit:"ms/요청",numeric:true,value:item=>occupancyDirect(item)?<span className="tabular-nums">{occupancyStatistic(item.estimate?.statistics?.median)}</span>:<OccupancyValue value={occupancyMilliseconds(item.d?.perRequestNanos)} unverified={item.assessment?.displayStatus==="problem"||item.phase==="Failed"||item.phase==="Insufficient"}/>,sortValue:item=>occupancyDirect(item)?item.estimate?.statistics?.median??undefined:item.d?.perRequestNanos??undefined},
+    {key:"pairs",label:"쌍",unit:"개",numeric:true,value:item=>item.estimate?.pairs??"미제공"},
+    {key:"x",label:"완료 처리량 (구형)",unit:"req/s",numeric:true,value:item=>occupancyDirect(item)?"해당 없음":<OccupancyValue value={occupancyNumber(item.d?.throughput)} unverified={item.assessment?.displayStatus==="problem"||item.phase==="Failed"||item.phase==="Insufficient"}/>,sortValue:item=>occupancyDirect(item)?undefined:item.d?.throughput??undefined},
     {key:"phase",label:"측정",value:item=><ProjectionStatus data={item}/>},
     {key:"elapsed",label:"경과",value:item=>occupancyElapsed(item)},
     {key:"reason",label:"사유",value:item=>occupancyDisplayReason(item)==="—"?"해당 없음":occupancyDisplayReason(item)},
@@ -142,8 +143,7 @@ function ProjectionResult({data}:{data:MeasurementProjection}) {
   return <>
     <ProjectionStatus data={data}/>
     {data.kind==="OperationCostMeasurement"?<OperationResult data={data}/>:<OccupancyResult data={data}/>}
-    {!!data.resultRows?.length&&<ResultRows rows={data.resultRows} filename={`chill-${data.metadata.name}.csv`}/>}
-    <details><summary className="min-h-11 cursor-pointer py-2">판정 근거</summary><AssessmentDetails assessment={data.assessment} rows={data.resultRows}/></details>
+    {(data.kind!=="DispatchOccupancyMeasurement"||!occupancyDirect(data))&&<>{!!data.resultRows?.length&&<ResultRows rows={data.resultRows} filename={`chill-${data.metadata.name}.csv`}/>}<details><summary className="min-h-11 cursor-pointer py-2">판정 근거</summary><AssessmentDetails assessment={data.assessment} rows={data.resultRows}/></details></>}
     <Facts items={[["측정",data.metadata.name],["저장 영역",data.metadata.namespace],["장치",data.node],["등록 시각",formatMeasurementTime(data.metadata.creationTimestamp)]]}/>
     <details><summary className="min-h-11 cursor-pointer py-2">원본·근거 위치</summary>
       <Facts items={[["UID",data.metadata.uid],["resourceVersion",data.metadata.resourceVersion],["apiVersion",data.references.cr.apiVersion],["kind",data.references.cr.kind],["참조 저장 영역 / 이름",`${data.references.cr.namespace} / ${data.references.cr.name}`],["참조 UID",data.references.cr.uid]]}/>
@@ -206,6 +206,10 @@ function OperationResult({data}:{data:OperationCostMeasurement}) {
 }
 function OccupancyResult({data}:{data:DispatchOccupancyMeasurement}) {
   const c=data.conditions,s=data.status,result=data.d,phase=data.phase,unverified=data.assessment?.displayStatus==="problem"||phase==="Failed"||phase==="Insufficient"
+  if(occupancyDirect(data)) {
+    const estimate=data.estimate,statistics=estimate?.statistics
+    return <div className="grid gap-3"><h3 className="font-semibold">짧은 버스트 · 관측 d(B)</h3><p className="text-sm text-muted-foreground">signed ns/request 관측 사실 · ms/요청으로 표시</p><table aria-label="분배 처리시간 결과" className="w-full text-left text-sm [&_th]:p-2 [&_td]:p-2"><thead><tr><th>중앙값 (ms/요청)</th><th>IQR (ms/요청)</th><th>p10 / p90 (ms/요청)</th><th>음수 비율 (%)</th><th>쌍 (개)</th></tr></thead><tbody><tr><td>{occupancyStatistic(statistics?.median)}</td><td>{occupancyStatistic(statistics?.iqr)}</td><td>{occupancyStatistic(statistics?.p10)} / {occupancyStatistic(statistics?.p90)}</td><td>{occupancyNumber(statistics?.negativeFraction,true)}</td><td>{estimate?.pairs??"미제공"}</td></tr></tbody></table><Facts items={[["사유",occupancyDisplayReason(data)],["최소 쌍 (개)",data.minimumPairs??"미제공"],["배치 / 완료 배치 (개)",estimate?`${estimate.batches} / ${estimate.completeBatches}`:"미제공"],["요청 / 완료 요청 (건)",estimate?`${estimate.requests} / ${estimate.completeRequests}`:"미제공"],["경과",occupancyElapsed(data)],["시작",estimate?.window.start??"미기록"],["종료",estimate?.window.end??"미기록"],["프로파일 ID",data.profileID??"미기록"],["런타임 이미지 (표시 전용)",estimate?.runtimeImage||"미제공"]]}/></div>
+  }
   return <>
     <table aria-label="분배 처리시간 결과" className="w-full table-fixed text-left text-sm [&_th]:p-2 [&_th]:[overflow-wrap:anywhere] [&_td]:p-2 [&_td]:[overflow-wrap:anywhere]">{unverified&&<caption className="pb-2 text-left text-sm text-muted-foreground"><TriangleAlert className="mr-1 inline size-4" aria-hidden="true"/>미검증 원자료 · 채택값 아님</caption>}<thead><tr><th className="text-right">d (ms/요청)</th><th className="text-right">완료 처리량 (req/s)</th><th className="text-right">유휴 비율 (%)</th><th>판정</th></tr></thead><tbody><tr><td className="text-right tabular-nums"><OccupancyValue value={occupancyMilliseconds(result?.perRequestNanos)} unverified={unverified}/></td><td className="text-right tabular-nums">{occupancyNumber(result?.throughput)}</td><td className="text-right tabular-nums">{occupancyNumber(result?.idleFraction,true)}</td><td>{result?.verdict?measurementReasonSummary(result.verdict):"미제공"}</td></tr></tbody></table>
     <Facts items={[["사유",occupancyDisplayReason(data)],["경과",occupancyElapsed(data)],["시작",data.measurementWindow?formatMeasurementTime(data.measurementWindow.start):"미기록"],["종료",data.measurementWindow?formatMeasurementTime(data.measurementWindow.end):"미기록"],["결과 전력모드",s.powerMode||"미기록"]]}/>

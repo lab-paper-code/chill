@@ -3,6 +3,17 @@ import test from "node:test"
 import { serverConfig, publicConfig } from "./server-config.ts"
 import { boundedBody, relay, relayPlan } from "./relay.ts"
 
+test("W8 aggregate occupancy relay permits only GET with an exact bounded time range",()=>{
+  const config=serverConfig({CHILL_BASE_URL:"https://chill.example",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"chill"})
+  const route=["v1","observations","occupancy"],range="?from=2026-11-01T00:00:00Z&to=2026-11-01T00:01:00Z"
+  const plan=relayPlan("GET",route,range,config)
+  assert.equal(plan.kind,"query")
+  assert.equal(new URL(plan.path,"https://local").searchParams.size,2)
+  assert.equal(plan.bodyAllowed,false)
+  assert.throws(()=>relayPlan("POST",route,range,config),/DashboardMethodNotAllowed/)
+  for(const query of ["","?from=bad&to=bad","?from=2026-11-01T00:00:00Z&to=2026-11-01T00:00:00Z",range+"&limit=1",range+"&node=node",range+"&from=2026-11-01T00:00:00Z"])assert.throws(()=>relayPlan("GET",route,query,config),/DashboardQueryInvalid/)
+})
+
 test("power buckets alone accept bounded numeric Go durations and aligned bucket counts",()=>{
   const config=serverConfig({CHILL_BASE_URL:"https://chill.example",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"chill"})
   const range="from=2026-11-01T00:00:00.500Z&to=2026-11-01T00:15:00.500Z"

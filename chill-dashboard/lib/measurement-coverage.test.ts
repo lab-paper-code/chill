@@ -250,7 +250,7 @@ function renderCoverage(query="",extraCells:MeasurementCoverageCell[]=[],freshne
     "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
     "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams(query)},
     "@tanstack/react-query":{useQuery:({queryKey,refetchInterval}:{queryKey:string[];refetchInterval?:(query:{state:{data?:{cells:MeasurementCoverageCell[]};error:{status:number}|null}})=>number|false})=>{if(refetchInterval)inspectInterval?.(refetchInterval);return {data:queryKey[1]==="coverage-inventory"?inventory:queryKey[1]==="model-compatibility"?[]:queryKey[1]==="coverage-profile-times"?{profiles:[]}:data,error:null,isFetching,refetch:()=>{}}}},
-    "@/lib/client":{useSession:()=>({config:{namespace:"ns",pollIntervalMs:5000}}),useChillQuery:()=>({data:{runs:[]},error:null}),isCoverageWarming:()=>false},
+    "@/lib/client":{useSession:()=>({config:{namespace:"ns",pollIntervalMs:5000}}),useChillQuery:(path:string)=>({data:path.startsWith("v1/observations/occupancy")?undefined:{runs:[]},error:null,isPending:path.startsWith("v1/observations/occupancy")}),isCoverageWarming:()=>false},
     "@/lib/measurement-coverage":coverageHelpers,
     "@/lib/measurement-assessment":assessmentHelpers,
     "@/lib/measurements":measurementHelpers,
@@ -267,6 +267,26 @@ function renderCoverage(query="",extraCells:MeasurementCoverageCell[]=[],freshne
   runInNewContext(compiled,{exports,require:(name:string)=>name in modules?modules[name]:require(name),URLSearchParams})
   return renderToStaticMarkup(createElement(exports.MeasurementCoveragePage as ComponentType))
 }
+
+test("W8 scheduler provenance and observed statistics are separate facts, never legacy adoption",()=>{
+  const window={start:"2026-11-03T00:00:00Z",end:"2026-11-03T00:01:00Z"}
+  const statistics={median:-1000000,p25:-2000000,p75:0,iqr:2000000,p10:-3000000,p90:1000000,mean:-500000,negativeFraction:0.75}
+  const base={node:{name:"node",uid:"node-uid"},profileID:"profile",batch:4,state:"present" as const,request:null,phase:null,reason:"",d:null,evidence:null,adopted:true}
+  const occupancy=[{...base,schedulerD:{source:"measured" as const,value:3000000,pairs:12,window,updatedAt:"2026-11-03T00:02:00Z"},observedD:{statistics,pairs:20,window}},...(["dom","default"] as const).map((source,index)=>({...base,batch:16+index,schedulerD:{source,value:0,pairs:0,window:null,updatedAt:"2026-11-03T00:02:00Z"},observedD:null})),{...base,batch:8,schedulerD:null,observedD:null}]
+  const html=renderCoverage("cell=w8-cell",[{...cell,id:"w8-cell",occupancy}])
+  const detail=html.slice(html.indexOf('aria-label="d · 분배 점유시간"')).split("</section>")[0]
+  assert.match(detail,/스케줄러 d/)
+  assert.match(detail,/관측 d\(B\)/)
+  assert.match(detail,/측정/)
+  assert.match(detail,/DOM/)
+  assert.match(detail,/기본값/)
+  assert.match(detail,/3\.00/)
+  assert.match(detail,/-1\.00/)
+  assert.match(detail,/IQR/)
+  assert.match(detail,/p10/)
+  assert.match(detail,/75\.00/)
+  assert.doesNotMatch(detail,/채택|Accepted|NotSaturated/)
+})
 
 test("current measurement identity and time come only from the server even for failed or partial cells",()=>{
   const current={id:"latest-measurement",model:model.name,deviceClass:cls.name,executionPath:"cpu",powerMode:"MAXN",measuredAt:"2026-11-03T01:02:03Z"}
@@ -414,7 +434,7 @@ test("R18 quality summary separates 48 measured policy-unset cells from five wit
   assert.equal(coverageQuality(measured).reasons[0].label,"전력 기록 정책 미설정")
 })
 
-test("coverage occupancy is a Node/batch table with explicit unknown adoption and targeted retries",()=>{
+test("coverage occupancy keeps legacy records separate from scheduler provenance and targeted retries",()=>{
   const base={node:{name:"node",uid:"node-uid"},profileID:"ns/beo/beo-uid",request:{name:"occ",uid:"occ-uid"},phase:null,reason:"",d:null,evidence:null,adopted:null}
   const occupancy:NonNullable<MeasurementCoverageCell["occupancy"]>=[
     {...base,batch:1,state:"none",request:null},
@@ -427,9 +447,9 @@ test("coverage occupancy is a Node/batch table with explicit unknown adoption an
   const detail=html.slice(html.indexOf('aria-label="d · 분배 점유시간"')).split("</section>")[0]
   assert.match(detail,/Node/)
   assert.match(detail,/d \(ms\/요청\)/)
-  assert.match(detail,/1\.00/)
+  assert.doesNotMatch(detail,/1\.00/)
   assert.match(detail,/부하 미포화/)
-  assert.equal(detail.split("채택 미확인").length-1,4)
+  assert.doesNotMatch(detail,/채택/)
   const links=[...detail.matchAll(/href="([^"]+)"[^>]*>d 요청<\/a>/g)].map(match=>new URL(match[1].replaceAll("&amp;","&"),"https://dashboard.invalid")).filter(link=>link.searchParams.has("batch"))
   assert.equal(links.length,2)
   assert.deepEqual(links.map(link=>link.searchParams.get("batch")),["1","4"])

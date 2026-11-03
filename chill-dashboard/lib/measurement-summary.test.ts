@@ -26,6 +26,44 @@ test("expanded node budget includes repeated body references and unused dictiona
   assert.throws(()=>restoreMeasurementSummary({readProjection,items:[]}),/확장 한도/)
 })
 
+test("summary decoder accepts exactly 2M logical nodes and rejects one node over",()=>{
+  const readProjection={version:"measurement-summary.v1",shapes:[],values:[Array(999).fill(0)]}
+  // Root + items (1 + 1,999 × 1,000) + tail (1 + 997) = 2,000,000.
+  const body={readProjection,items:Array(1999).fill("~0"),tail:Array(997).fill(0)}
+  const restored=parseMeasurementJSON(JSON.stringify(body)) as {items:number[][];tail:number[]}
+  assert.equal(restored.items.length,1999)
+  assert.equal(restored.items[0].length,999)
+  assert.equal(restored.items[0],restored.items[1998],"shared storage still counts every logical reference")
+  assert.equal(restored.tail.length,997)
+  assert.throws(()=>parseMeasurementJSON(JSON.stringify({...body,tail:[...body.tail,0]})),/확장 한도/)
+})
+
+test("summary decoder accepts expanded depth 64 and rejects depth 65",()=>{
+  const values:unknown[]=[0]
+  for(let i=0;i<62;i++)values.push([`~${i}`])
+  const readProjection={version:"measurement-summary.v1",shapes:[],values}
+  const restored=parseMeasurementJSON(JSON.stringify({readProjection,observedD:"~62"})) as {observedD:unknown}
+  let leaf=restored.observedD,arrays=0
+  while(Array.isArray(leaf)){arrays++;leaf=leaf[0]}
+  assert.equal(arrays,62)
+  assert.equal(leaf,0)
+  values.push(["~62"])
+  assert.throws(()=>parseMeasurementJSON(JSON.stringify({readProjection,observedD:"~63"})),/확장 한도/)
+})
+
+test("v2 combined joined strings accept 8Mi UTF16 units and reject one unit over",()=>{
+  // Each path has 2,047 UTF16 units plus one joining slash, including surrogate pairs.
+  const values:unknown[]=["\u{1D11E}".repeat(1023)+"x","","x",...Array.from({length:4096},()=>({$s:["~0","~1"]}))]
+  const readProjection={version:"measurement-summary.v2",shapes:[],values}
+  const body={readProjection,evidence:`~${values.length-1}`}
+  const restored=parseMeasurementJSON(JSON.stringify(body)) as {evidence:string}
+  assert.equal(restored.evidence.length,2048)
+  assert.ok(restored.evidence.endsWith("x/"))
+  // Even an unused joined dictionary entry contributes to the combined allocation cap.
+  values.push({$s:["~2"]})
+  assert.throws(()=>parseMeasurementJSON(JSON.stringify(body)),/확장 한도/)
+})
+
 // Same opt-in captured-GET convention as the Go projection round-trip test.
 test("captured operational summaries pass expansion limits",{skip:!process.env.CHILL_MEASUREMENT_SUMMARY_DIR},()=>{
   const dir=process.env.CHILL_MEASUREMENT_SUMMARY_DIR!
