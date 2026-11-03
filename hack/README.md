@@ -425,6 +425,18 @@ Diagnostic HTTP 401/403 remains a fatal authorization failure, not missing data.
 from the controller's immutable spec/execution/config ConfigMap. Public settings
 comparisons use GET/PUT `/api/v1/scheduler/settings`: GET ETag, merge the declared
 settingsPatch, PUT with If-Match, and readback. Apply conflicts never retry.
+
+Python responsibility owners: `settings_patch.py` owns optimistic patch/revert;
+`judgment.py` owns judge/summary/publication measurement interpretation;
+`request_analysis.py` owns the unchanged request timing/fidelity analysis
+formerly under `d2/analyze_before.py`. `evidence_io.py` owns strict binding JSON
+and atomic file helpers without depending on producer execution. `conductor.py`
+retains producer lifecycle. `input_snapshot.py` owns adapter preparation/config
+and environment snapshots; `publication.py` owns evidence assembly/publication;
+`evaluation.Harness` dispatches the existing steps. These are direct imports,
+not re-export compatibility paths; stored contracts, source keys, cleanup and
+exit codes remain unchanged. Existing recursive Docker COPY includes the new
+modules; this extraction does not rebuild or activate a harness image.
 Revert restores only paths still equal to our applied values; external changes
 are recorded and skipped. One 409 revert conflict permits one fresh GET and
 re-evaluation; a second blocks Returned. Each PUT records If-Match, status and
@@ -541,6 +553,12 @@ unstaged lane modes are removed; approved holds, terminal checks and Node handba
 still gate each lane. The
 `meter-cadence/analyze.py` helper takes `--input-dir` for retained telemetry
 and `--output-dir` for its external tables.
+
+Current planning/collection is implemented in `hack/measure/coverage_plan.py`;
+`gen.py` remains the CLI dispatcher and retains the approved historical
+34-profile reconstruction and SciPy dependency. Its coverage self-checks live
+in the existing `hack/measure/smoke/test_coverage.py`; the command below
+continues to execute them. The historical rerun obligation above is unchanged.
 
 `hack/measure/gen.py --coverage --output-dir /tmp/coverage-plan-out --preflight`
 reads live coverage/catalog/inventory and retains the inputs and frozen

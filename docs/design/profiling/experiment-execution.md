@@ -155,13 +155,13 @@ Job NotFound는 정확한 UID·조회 사실을 보존한다. 다른 UID를 삭�
 
 | 절차 / 내보낼 Job | Job 안의 공개 API / Kubernetes 리소스 | 기존 함수와 파일:줄 | 실패 시 동작 |
 |---|---|---|---|
-| 준비 / 하네스 사전 검사 | Deployment/Pod·Node readiness, Workload/Dataset 공개 정의, 토큰 수명 | `Harness.prepare`, `Harness.check_target`, `Harness.check_fleet`, `auth.check` | 외부 신원·입력·용량·토큰 오류면 부하 미시작; 배포·내부 상태 변경 없음 |
-| 설정 적용 / `factor` | GET/PUT `/api/v1/scheduler/settings`, ETag/If-Match, GET readback | `factor_apply` (`hack/evaluation/conductor.py`) | 현재 settings에 RFC7396 settingsPatch 병합; If-Match·응답 ETag·상태·요청/응답·readback·appliedAt 보존; 적용 409 재시도 없음 |
+| 준비 / 하네스 사전 검사 | Deployment/Pod·Node readiness, Workload/Dataset 공개 정의, 토큰 수명 | `input_snapshot.prepare`, `input_snapshot.check_target`, `input_snapshot.check_fleet`, `auth.check` | 외부 신원·입력·용량·토큰 오류면 부하 미시작; 배포·내부 상태 변경 없음 |
+| 설정 적용 / `factor` | GET/PUT `/api/v1/scheduler/settings`, ETag/If-Match, GET readback | `settings_patch.factor_apply` | 현재 settings에 RFC7396 settingsPatch 병합; If-Match·응답 ETag·상태·요청/응답·readback·appliedAt 보존; 적용 409 재시도 없음 |
 | 부하 / `stage` | workload별 Job/Pod 생성·logs·pods/exec GO | `CPO.job`, `CPO.run`, `ProducerResources` | Dataset carrier의 evaluation을 `/evaluation`에 복사, 실제 payload ID/order/bytes·arrival Ready 확인; 모든 Pod에 동결 nodeName 전달 |
 | drain / 같은 `stage` | producer 요청 종료 로그·정확한 Pod/container counter·Job 종료 | `CPO.run` | 요청 drain과 evaluator 자원 반환을 구별; CHILL instances/routes 조건 없음 |
 | 수집 / 같은 `stage` | GET `/api/v1/observations/raw`의 requests/resources, GET `/api/v1/observations/power?from=…&to=…` | `archive.collect` | 실제 raw byte bounds 및 선언 node+meter/source identity 검증; 내부 scheduler stream 필수 조건 없음 |
-| 판정 / `judge` | 저장된 client/request raw·meter 결과·동결 SLO | `conductor.judge`, `archive.meter_energy` | 전체 offered 분모·generator lateness·SLO·meter coverage 유지; SLO FAIL은 유효 결과 |
-| 단계 정리 / `cleanup-jobs` | 정확한 소유 Job UID 삭제와 같은 소유 Pod 종료 확인, settings GET/PUT/readback | `CPO.cleanup_jobs`, `factor_revert` | 적용값과 같은 patch 경로만 원복, 외부 변경 경로는 기록 후 생략. 원복 409만 새 GET으로 1회 재판단하며 두 번째 409는 Returned 차단 |
+| 판정 / `judge` | 저장된 client/request raw·meter 결과·동결 SLO | `judgment.judge`, `archive.meter_energy` | 전체 offered 분모·generator lateness·SLO·meter coverage 유지; SLO FAIL은 유효 결과 |
+| 단계 정리 / `cleanup-jobs` | 정확한 소유 Job UID 삭제와 같은 소유 Pod 종료 확인, settings GET/PUT/readback | `CPO.cleanup_jobs`, `settings_patch.factor_revert` | 적용값과 같은 patch 경로만 원복, 외부 변경 경로는 기록 후 생략. 원복 409만 새 GET으로 1회 재판단하며 두 번째 409는 Returned 차단 |
 | 실험 끝 / `finish` | 평가 소유 Job/Pod·writer 정리와 아직 원복하지 못한 patch 경로 확인 | `CPO.finish` | 자율 제어 instances/routes를 reset하거나 과거 settings 전체를 복원하지 않음 |
 
 CHILL target의 image/source/profile은 관측 이력일 뿐 exact-match gate가 아니다. evaluator 자신의 harness/load-generator image/source와 Job/Pod UID·명령 신원은 유지한다. 공개 settingsPatch는 GET ETag를 If-Match에 넣어 현재 설정의 명시 경로만 바꾸고 readback으로 확인한다. 원복은 새 GET에서 아직 우리 적용값과 같은 경로만 복원하고, 외부 운영자가 바꾼 경로는 사유와 함께 생략한다. 원복 409는 한 번만 새 GET으로 재판단하며 두 번째 충돌은 원 응답을 보존하고 Returned를 막는다. arrays/scalars는 leaf이고 null은 RFC7396 삭제다.
@@ -174,7 +174,7 @@ controller와 Job의 단계 증거는 `experiments/<UID>/stages/<stageID>/...`�
 자원 대상 계약은 **서버 namespace + `edge.dacs.io/workload-role=load-generator`**다. 이름·값은 서버 `resources.go`와 Python `conductor.py`의 계약 상수로 한 곳씩 선언하며 producer Pod template이 붙인다. resourceReceiver만 기존 대상과 OR하고 cluster observer의 선택은 바꾸지 않는다. 다른 실험 도구도 같은 일반 라벨을 쓸 수 있고 서버는 evaluation 라벨을 알지 않는다.
 판정도 API resources adapter만 사용하며 local client cgroup 병합·SSH sampler·Secret·호스트 계정·sudo crictl 요구를 제거한다. 종료 counter 증거를 저장한 후 기존 start marker를 제거한다. 마지막 collect의 기존 raw 수집을 재사용하며 별도 종료 수집 경로는 만들지 않는다. 저장 resources 형식은 ADR 0019에 따라 그대로다.
 최종 단발 표·게시 Job은 기록된 판정·정리 결과만 표현한다. 정리 실패도 세 축을 구분해 게시하며 후속 측정/복구를 시작하지 않는다.
-`conductor.summarize`와 `tables.render`가 저장된 black-box 판정의 표와 게시 KPI를 조립한다. 별도 로컬 deployment/calibration/restoration executor는 사용하지 않는다.
+`judgment.summarize`와 `tables.render`가 저장된 black-box 판정의 표와 게시 KPI를 조립하고, `publication.publish`가 불변 증거를 조립·게시한다. `evaluation.Harness`는 절차 dispatcher와 conductor adapter다. `evidence_io`는 기존 strict JSON·binding I/O를 소유하며 adapter의 `input_snapshot.load`와 JSON 비유한값 처리 차이를 유지한다. binding의 기존 네 source 키와 `phase.sourceObservations.imageSourceSHA` 계약은 그대로이고 새 모듈도 기존 harness 디렉터리 전체 COPY에 포함된다. 별도 로컬 deployment/calibration/restoration executor는 사용하지 않는다.
 
 ### 5.1 하네스 Job 계약
 
