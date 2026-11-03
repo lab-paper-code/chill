@@ -53,7 +53,7 @@ test("R19 dry-run is a neutral precheck, not a failure, configuration change or 
   let html=view.board()
   assert.match(html,/측정 사전 검사/)
   assert.match(html,/사전 검사 · 미제출/)
-  assert.match(html,/data-label="보관 중 실패 건">0</)
+  assert.match(html,/보관 중 실패 0건/)
   assert.equal(display.deviceAlerts(null,[precheck]).length,0)
   view.select(new URLSearchParams({open:`event:${JSON.stringify(["action",at,"dry-run",""])}`}))
   html=view.board()
@@ -61,7 +61,7 @@ test("R19 dry-run is a neutral precheck, not a failure, configuration change or 
   assert.match(html,/<th scope="row">종류<\/th><td>측정 요청<\/td>/)
   view.state.events=[realFailure]
   view.select(new URLSearchParams())
-  assert.match(view.board(),/data-label="보관 중 실패 건">1</)
+  assert.match(view.board(),/보관 중 실패 1건/)
   assert.equal(display.deviceAlerts(null,[realFailure]).length,1)
   const knownPrecheck={...precheck,action:{...precheck.action,node:{uid:"n",name:"장치"}}}
   assert.equal(display.deviceAlerts(null,[realFailure,knownPrecheck]).length,1,"prechecks cannot clear an earlier real error")
@@ -87,7 +87,7 @@ test("R19 decision count names its session scope and retention stays inside the 
   view.state.resumeHistory={reason:"checkpoint-unmatched",replayed:false,requested:{afterSeq:0,throughSeq:999},retained:{events:null,power:null},gaps:[{fromSeq:1,toSeq:999,scope:"events",reason:"NoRetainedFrames"}]}
   view.state.eventArchive={from:at,to:at,partial:true,coverage:{from:null,to:null,sources:[],gaps:[{from:"2026-11-03T03:10:00Z",to:"2026-11-03T03:11:00Z",stream:"cluster",reason:"BeforeRetention"}]}}
   const html=view.board(),header=html.slice(html.indexOf('<header class="live-heading"'),html.indexOf('</header>'))
-  assert.match(html,/최근 5분 · 현재 접속 수신 판단/)
+  assert.match(html,/최근 5분 접속 수신 판단/)
   assert.match(header,/보존 공백/)
   assert.match(header,/12:10:00 KST.*12:11:00 KST/)
   assert.match(header,/최근 사건 일부만 표시/)
@@ -135,13 +135,13 @@ test("R19 new contracts: committed measurement WS frames reach neutral, success 
   let html=view.board()
   assert.match(html,/측정 사전 검사/)
   assert.match(html,/사전 검사 · 미제출/)
-  assert.match(html,/data-label="보관 중 실패 건">0</)
+  assert.match(html,/보관 중 실패 0건/)
   assert.equal(display.deviceAlerts(null,view.state.events).length,0)
   const error=live.parseLiveMessage({...realFailure,seq:3,action:{...realFailure.action,status:"NOT_SUBMITTED",result:{status:"NOT_SUBMITTED",error:"PreflightRejected"}}})
   assert.ok(error)
   Object.assign(view.state,live.applyLiveMessage(view.state,error,now))
   html=view.board()
-  assert.match(html,/data-label="보관 중 실패 건">1</)
+  assert.match(html,/보관 중 실패 1건/)
   const success=live.parseLiveMessage({...precheck,seq:4,action:{...precheck.action,id:"submitted",status:"complete",phase:"completed",result:{status:"complete"}}})
   assert.ok(success)
   Object.assign(view.state,live.applyLiveMessage(view.state,success,now))

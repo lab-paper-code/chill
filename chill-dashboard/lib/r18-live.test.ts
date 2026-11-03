@@ -41,6 +41,19 @@ test("device alerts prefer detailed power observation and transition reasons wit
     ["observation","전력모드 관측 불가"],["transition","전력 전환 근거 없음"],["excluded","제외 노드"],
   ])
 })
+test("device alerts retain exclusion and node reasons when an operation also fails",()=>{
+  const node={uid:"n",name:"장치",powerMode:"fixed",ready:false,measurement:false,observedAt:at,reasons:["ExcludedNode","InstanceUnavailable","PlacementBudgetUnavailable","PowerModeUnavailable"]}
+  const failure:LiveEvent={type:"event",kind:"action",at,action:{id:"remove",kind:"remove",node:{uid:"n",name:"장치"},workloadUID:"w",status:"failed",startedAt:at,expectedSeconds:null,expectedSource:null,phase:"failed",result:{status:"failed",error:"context deadline exceeded"}}}
+  assert.equal(display.deviceAlerts({...snapshot,nodes:[node]},[failure])[0].reason,"제외 노드 / 인스턴스 상태 확인 불가 / 배치 자원 예산 확인 불가 / context deadline exceeded")
+  assert.equal(display.liveReason("NodeUnavailable:n"),"노드 사용 불가")
+  assert.equal(display.liveReason("IneligibleInstance:pod/container"),"IneligibleInstance:pod/container")
+})
+test("observed unconfirmed and idle-removal compounds deduplicate labels without hiding unknown codes",()=>{
+  const reason="UnconfirmedInstance:pod/containerd://executor:NotReady; ReservedScope:w; IdleInstanceRemoved:idle-a; IdleInstanceRemoved:idle-b"
+  assert.equal(display.liveReason(reason),"인스턴스 미확인; 변경 자원 예약 중; 유휴 인스턴스 제거")
+  assert.equal(display.incidentDiagnosis(reason).reason,display.liveReason(reason))
+  assert.equal(display.liveReason("UnconfirmedInstance:pod/containerd://executor; NewReason:actual-detail; NewReason:actual-detail"),"인스턴스 미확인; NewReason:actual-detail")
+})
 test("R18 five-minute decision totals count only retained distinct server judgments",()=>{
   const events:LiveEvent[]=Array.from({length:31},(_,i)=>({type:"event",kind:"decision",seq:i+1,at:new Date(now-300000+i*10000).toISOString(),decision:{at:new Date(now-300000+i*10000).toISOString(),state:"Keep",reason:"",explanation:""}}))
   const summary=display.decisionActivity([...events,events[30]],now)
