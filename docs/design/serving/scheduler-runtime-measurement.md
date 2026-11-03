@@ -152,13 +152,13 @@ beyond the bounded tail is incomplete, never a guessed execution.
 The bounded read-only API and historical-policy limitation are documented in
 [observation API](observability-split.md). The diagnostic endpoint remains a
 fresh read; scheduler admission uses one separate asynchronous rolling cache.
-The public maximum cannot exceed the configured rolling window (sample120s);
-requests above the public cap fail with400 before scanning. Long historical
-analysis uses raw-export data and an offline reducer, not a long serving-process GET.
+The public query and rolling scan share `aggregationWindowSeconds` (sample120s);
+requests above that cap fail with400 before scanning. Long historical analysis
+uses raw-export data and an offline reducer, not a long serving-process GET.
 That cache pools actual pair samples across workload UIDs within each exact
 Node UID/model/mode/execution-path/batch/profile cell, never medians-of-medians.
 Configured minimumPairs qualifies measured median before legacy Accepted DOM,
-then configured scalar/exact-batch default. Only operational d is clamped and
+then configured scalar default. Only operational d is clamped and
 rounded; signed estimate facts remain unchanged. Tick reads the published cache
 without scanning. One worker enforces scan timeout, selected-ID bound and
 scan+reduction duty cooldown; failures publish DOM/default, not partial facts.

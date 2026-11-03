@@ -76,11 +76,9 @@ GOMEMLIMIT3072MiB/limit4Gi 유지(rev96 확인). 관측 heap최대880MiB와 soft
 returns `{window:{start,end},rows:[OccupancyEstimate...]}` without caching.
 Exactly one `from` and `to` are required, with `from < to`; unknown or duplicate
 parameters and windows exceeding the accepted scheduler configuration's
-`dispatchOccupancy.maximumObservationWindowSeconds` return `400 InvalidQuery`.
-The sample maximum is 120 seconds, equal to the rolling aggregation window.
-Configuration rejects a public maximum greater than `aggregationWindowSeconds`;
-smaller caps remain valid subject to the configured burst duration. Any query
-above the configured cap returns `400 InvalidQuery` before scanning. Longer
+`dispatchOccupancy.aggregationWindowSeconds` return `400 InvalidQuery`.
+The same setting bounds both the public query and rolling aggregation; the
+sample is120 seconds. Queries above this cap fail before scanning. Longer
 historical analysis must export raw observations and reduce them offline, not
 run a long-window estimator in the serving process. Authentication and nonresource SAR are the
 same as raw GET, with `/chill/api/v1/observations/occupancy` granted to dashboard

@@ -49,10 +49,8 @@ type SchedulerSettings struct {
 	CapacityGridSteps       int           `json:"capacityGridSteps"`
 	CapacityBisectionWidth  float64       `json:"capacityBisectionWidth"`
 	CapacityTailSamples     int           `json:"capacityTailSamples"`
-	// Dispatch occupancy defaults are configured ns/request, not batch totals.
-	// An exact MaxBatch entry overrides the scalar when no measured/DOM d exists.
-	DefaultDispatchOccupancyNanos        int64         `json:"defaultDispatchOccupancyNanos"`
-	DefaultDispatchOccupancyNanosByBatch map[int]int64 `json:"defaultDispatchOccupancyNanosByBatch,omitempty"`
+	// Dispatch occupancy defaults to configured ns/request when no measured/DOM d exists.
+	DefaultDispatchOccupancyNanos int64 `json:"defaultDispatchOccupancyNanos"`
 	// PlanSearchWorkers bounds the goroutines that evaluate plan sets at once;
 	// the search itself ends within half of ControlInterval.
 	PlanSearchWorkers int               `json:"planSearchWorkers"`
@@ -173,11 +171,7 @@ func ResolveDispatchOccupancy(settings SchedulerSettings, occupancy []DispatchOc
 			provenance = *selected.Provenance
 		}
 	} else {
-		value := settings.DefaultDispatchOccupancyNanos
-		if batchValue, ok := settings.DefaultDispatchOccupancyNanosByBatch[i.MaxBatch]; ok {
-			value = batchValue
-		}
-		o.PerRequest = time.Duration(value)
+		o.PerRequest = time.Duration(settings.DefaultDispatchOccupancyNanos)
 		o.RuntimeImage = c.RuntimeImage
 	}
 	o.Node, o.PowerMode, o.Model = i.Node, c.PowerMode, c.LogicalModel
@@ -594,11 +588,6 @@ func (s SchedulerSettings) Validate() error {
 }
 
 func (s SchedulerSettings) validateCapacityNumerics() error {
-	for batch, value := range s.DefaultDispatchOccupancyNanosByBatch {
-		if batch < 1 || value < 0 {
-			return fmt.Errorf("defaultDispatchOccupancyNanosByBatch needs positive batch sizes and nonnegative values")
-		}
-	}
 	if s.CapacityGridSteps < 1 || s.CapacityTailSamples < 1 || !schedulerFinite(s.CapacityBisectionWidth) ||
 		s.CapacityBisectionWidth <= 0 || s.CapacityBisectionWidth > 1 {
 		return fmt.Errorf("capacityGridSteps and capacityTailSamples must be positive; capacityBisectionWidth must be finite in (0,1]")

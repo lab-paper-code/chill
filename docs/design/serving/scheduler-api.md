@@ -29,7 +29,7 @@ HTTPS ChillServer는 `--serving-scheduler-configmap=<name>`과
 | wall meter | 구성 필드가 없다. Profiler facts `metricSources`(schema `v1alpha6`)의 항목마다 `{id: meterID, node: 그 이름의 live Node와 UID, scope: node-exclusive-wall, source: 전력 부분}`을 만든다. Node가 없는 항목은 meter가 없다 |
 | 전력 요청 | 별도 구성 필드 없음. DeviceClass의 비Fixed actuator·Profiler actuation policy가 요청 가능 모드를 정한다. 동작 시작에 Node mode label과 requested-at을 같은 optimistic patch로 쓰고 policy 기한 내 success·독립readback을 확인한다([현행 Node 전력 계약](../platform/node-agent.md#3-노드-전력모드-node-label과-generation)). NodeActuation은 제거됨 |
 | `powerObservation` | sampler의 `Interval/Duration/RequestTimeout`와 적분 coverage의 `MaximumBoundaryDistance/MinimumCoverage/MaximumGap`. 기록 필요량은 observer가 도출하며 별도 기록 개수 설정은 없다 |
-| `dispatchOccupancy` | Explicit rolling B aggregation/default policy plus native DOM creation policy. Accepted defaults are frozen into `settings.defaultDispatchOccupancyNanos` and optional batch overrides. The entire block is required for DOM POST; absent/invalid/unaccepted configuration returns `503 OccupancyPolicyUnavailable`. See [configuration and derivation](configuration-hardcoding.md#native-dispatch-occupancy-policy-w2). |
+| `dispatchOccupancy` | Explicit rolling B aggregation plus native DOM creation policy. The sole fallback is scalar `settings.defaultDispatchOccupancyNanos`, shared by every batch. The entire block is required for DOM POST; absent/invalid/unaccepted configuration returns `503 OccupancyPolicyUnavailable`. See [configuration and derivation](configuration-hardcoding.md#native-dispatch-occupancy-policy-w2). |
 
 profile 후보, profile ID별 `PrepareSpec`, 원자 동작 비용과 power mode 비용은 조건마다 최신
 완료 측정에서 도출하며 구성 필드가 없다. 측정 기록의 store key는
@@ -110,8 +110,8 @@ capture and decisions, with one exact Node/profile/path/batch entry and
 `perRequestNanos` plus `provenance:{source,pairs,window?,updatedAt,value}`.
 Selection priority is qualified rolling B (`source:"measured"`), retained accepted
 DOM (`"dom"`), then configured per-request fallback (`"default"`). No missing-d
-gate blocks capacity calculation. Configured exact batch overrides replace the
-scalar fallback. The first read can show DOM/default while aggregation runs;
+gate blocks capacity calculation. The scalar fallback applies to every batch.
+The first read can show DOM/default while aggregation runs;
 request-count limit, scan failure or timeout cannot promote partial facts.
 `accepted.occupancyEstimates[]` retains the current completed rolling reduction's
 signed diagnostics, including cells below minimumPairs; operational negative

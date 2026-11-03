@@ -19,11 +19,8 @@ func TestValidateSchedulerSettingsPatch(t *testing.T) {
 		{"public numeric setting", `{"maxReplicas":3}`, false},
 		{"public map", `{"minimumDemand":{"work-uid":2}}`, false},
 		{"dispatch default", `{"defaultDispatchOccupancyNanos":2000000}`, false},
-		{"dispatch batch override including zero", `{"defaultDispatchOccupancyNanosByBatch":{"1":0,"4":500000}}`, false},
+		{"zero dispatch default", `{"defaultDispatchOccupancyNanos":0}`, false},
 		{"negative dispatch default", `{"defaultDispatchOccupancyNanos":-1}`, true},
-		{"negative dispatch override", `{"defaultDispatchOccupancyNanosByBatch":{"4":-1}}`, true},
-		{"zero dispatch batch", `{"defaultDispatchOccupancyNanosByBatch":{"0":0}}`, true},
-		{"negative dispatch batch", `{"defaultDispatchOccupancyNanosByBatch":{"-1":0}}`, true},
 		{"unknown", `{"mystery":true}`, true},
 		{"unknown null", `{"mystery":null}`, true},
 		{"unknown nested", `{"controls":{"mystery":true}}`, true},
@@ -102,7 +99,6 @@ func TestDispatchOccupancySettingsDecodeIsAdditiveWithoutPolicyDefaults(t *testi
 		t.Fatal(err)
 	}
 	delete(fields, "defaultDispatchOccupancyNanos")
-	delete(fields, "defaultDispatchOccupancyNanosByBatch")
 	legacy, err := json.Marshal(fields)
 	if err != nil {
 		t.Fatal(err)
@@ -112,11 +108,11 @@ func TestDispatchOccupancySettingsDecodeIsAdditiveWithoutPolicyDefaults(t *testi
 		t.Fatal(err)
 	}
 	settings, err := input.Settings()
-	if err != nil || settings.DefaultDispatchOccupancyNanos != 0 || len(settings.DefaultDispatchOccupancyNanosByBatch) != 0 {
+	if err != nil || settings.DefaultDispatchOccupancyNanos != 0 {
 		t.Fatalf("additive decode introduced compiled policy defaults: %+v %v", settings, err)
 	}
-	settings, err = ValidateSchedulerSettingsPatch(current, []byte(`{"defaultDispatchOccupancyNanos":2000000,"defaultDispatchOccupancyNanosByBatch":{"1":0,"4":500000}}`))
-	if err != nil || settings.DefaultDispatchOccupancyNanos != 2000000 || !reflect.DeepEqual(settings.DefaultDispatchOccupancyNanosByBatch, map[int]int64{1: 0, 4: 500000}) {
+	settings, err = ValidateSchedulerSettingsPatch(current, []byte(`{"defaultDispatchOccupancyNanos":2000000}`))
+	if err != nil || settings.DefaultDispatchOccupancyNanos != 2000000 {
 		t.Fatalf("configured values not preserved: %+v %v", settings, err)
 	}
 }

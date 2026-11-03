@@ -252,10 +252,10 @@ func TestCapacityRowWithoutOccupancyUsesConfiguredDefault(t *testing.T) {
 	if d == nil || d.PerRequest != time.Millisecond || d.Provenance.Source != "default" || d.Provenance.Value != int64(time.Millisecond) {
 		t.Fatalf("missing default provenance: %+v", d)
 	}
-	s.DefaultDispatchOccupancyNanosByBatch = map[int]int64{1: 0}
-	overridden := capacityBuildForTest(t, s, snap)
-	if overridden.Mu != 1000 || overridden.Kappa == nil || *overridden.Kappa != capacityFixtureKappa || overridden.Key == row.Key {
-		t.Fatalf("zero batch override not used exactly once per request: %+v", overridden)
+	s.DefaultDispatchOccupancyNanos = 0
+	zero := capacityBuildForTest(t, s, snap)
+	if zero.Mu != 1000 || zero.Kappa == nil || *zero.Kappa != capacityFixtureKappa || zero.Key == row.Key {
+		t.Fatalf("zero scalar default not used exactly once per request: %+v", zero)
 	}
 }
 
@@ -326,11 +326,11 @@ func TestResolveDispatchOccupancyExactMeasuredAndLegacyDOM(t *testing.T) {
 	}
 	// A recorded resolved default retains its source/value on readback, even
 	// when a caller supplies unrelated current settings.
-	s.DefaultDispatchOccupancyNanosByBatch = map[int]int64{8: 0}
+	s.DefaultDispatchOccupancyNanos = 0
 	projected := ResolveDispatchOccupancy(s, nil, other)
-	s.DefaultDispatchOccupancyNanosByBatch[8] = 123
+	s.DefaultDispatchOccupancyNanos = 123
 	if got := ResolveDispatchOccupancy(s, []DispatchOccupancy{*projected}, other); got.PerRequest != 0 ||
-		got.Provenance.Source != occupancySourceDefault || got.Provenance == projected.Provenance {
+		got.Provenance.Source != occupancySourceDefault || got.Provenance.Value != 0 || got.Provenance == projected.Provenance {
 		t.Fatalf("recorded default provenance/value lost or aliased: %+v", got)
 	}
 	// Clamp operational d only; never rewrite the incoming signed measurement.
@@ -794,8 +794,7 @@ func TestCapacityKeyAndTableReuseIgnoreProvenanceRefresh(t *testing.T) {
 
 func TestConfiguredDispatchOccupancyMultipliesBatchOnceInThroughputAndReplay(t *testing.T) {
 	settings, snapshot := capacityFixture()
-	settings.DefaultDispatchOccupancyNanos = int64(time.Millisecond)
-	settings.DefaultDispatchOccupancyNanosByBatch = map[int]int64{4: 500000}
+	settings.DefaultDispatchOccupancyNanos = 500000
 	snapshot.DispatchOccupancy = nil
 	snapshot.Instances[0].MaxBatch = 4
 	snapshot.Instances[0].Profile.Batches = []BatchProfile{{Batch: 4, DurationNanos: []float64{4e6}}}
@@ -811,7 +810,7 @@ func TestConfiguredDispatchOccupancyMultipliesBatchOnceInThroughputAndReplay(t *
 	if !state.chooseBatches(context.Background()) || len(instance.batch) != 4 || instance.finish != 100+4e6+4*500000 {
 		t.Fatalf("replay must add B*d once, not a batch total or B²*d: %+v", instance)
 	}
-	mu := capacityThroughput(instance.config.Profile, 4, 500000)
+	mu := capacityThroughput(instance.config.Profile, 4, time.Duration(settings.DefaultDispatchOccupancyNanos))
 	if math.Abs(mu-4e9/(4e6+4*500000)) > 1e-9 {
 		t.Fatalf("throughput used different batch multiplier: %g", mu)
 	}

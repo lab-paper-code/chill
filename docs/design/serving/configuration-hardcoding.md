@@ -86,10 +86,10 @@ The chart references an **external** ConfigMap: changing unrelated Helm values
 does not install this block. Operators must update that actual configuration.
 Omission disables rolling aggregation and makes DOM POST fail closed with
 `503 OccupancyPolicyUnavailable`. With or without that block, the sole default
-authority is explicit `settings.defaultDispatchOccupancyNanos` (zero permitted),
-plus optional `settings.defaultDispatchOccupancyNanosByBatch`. Public settings
-GET/PUT and canonical PATCH validation use these same fields. The aggregation
-block cannot override them; duplicate `defaultPerRequestNanos` knobs are rejected.
+authority is explicit scalar `settings.defaultDispatchOccupancyNanos` (zero
+permitted). Public settings GET/PUT and canonical PATCH validation use this
+same field. The aggregation block cannot override it; duplicate
+`defaultPerRequestNanos` knobs are rejected.
 Invalid blocks are rejected, and POST reads the current ConfigMap rather than
 falling back to a previously accepted policy. The accepted profile snapshot
 must have that same ConfigMap resourceVersion.
@@ -100,7 +100,7 @@ exist. The sample is illustrative, not a calibrated guarantee.
 
 | Field | Bounds / meaning |
 |---|---|
-| `aggregationWindowSeconds` | int32 ≥1; rolling scan window, sample120; also bounds the public query maximum |
+| `aggregationWindowSeconds` | int32 ≥burstSeconds; shared rolling scan and public query window cap, sample120 |
 | `refreshIntervalSeconds` | int32 ≥1; sample60 |
 | `scanTimeoutSeconds` | int32 ≥1 and ≤refreshIntervalSeconds/2; sample30 |
 | `maximumRequests` | required positive selected-RequestID cap when the block exists; no runtime default; sample250000, exceeded cap rejects the whole refresh |
@@ -108,7 +108,6 @@ exist. The sample is illustrative, not a calibrated guarantee.
 | `burstSeconds` | explicit int32 ≥1, frozen as native `durationSeconds` |
 | `workers` | explicit int32 in [batch,64], never silently clamped |
 | `minimumPairs` | explicit int32 ≥1, a reported population requirement, not a confidence claim |
-| `maximumObservationWindowSeconds` | int32 ≥burstSeconds and ≤aggregationWindowSeconds; public read-only query cap, sample120; longer analysis uses offline raw export |
 | `requestLifetimeSeconds` | int32 ≥1; covers ceil(SLO) and configured outstanding batches, within actual gateway/Workload cap |
 | `deliveryMarginMillis` | int32 >0; rounded up independently for elapsed supply extension |
 | `preparationSeconds` | int32 ≥1 |
@@ -137,10 +136,10 @@ remain separate from the nonnegative operational value.
 
 The sample `settings.defaultDispatchOccupancyNanos=2000000` is a conservative heuristic relative
 to the one known cell's roughly0.2ms B median and0.27ms DOM, not a guarantee
-across cells or demand. Optional `settings.defaultDispatchOccupancyNanosByBatch` overrides remain
-per request, not per batch. A120s window at the observed roughly805 requests/s
-contains about97k requests; cap250000 leaves roughly2.6× headroom for that
-reference workload, not universal demand coverage or a byte-allocation bound.
+across cells or demand. The scalar applies per request to every batch; only
+measured B supplies batch-specific values. A120s window at the observed
+roughly805 requests/s contains about97k requests; cap250000 leaves roughly2.6×
+headroom for that reference workload, not universal demand coverage or a byte-allocation bound.
 Timeout30s/refresh60s and one non-overlapping worker bound nominal scan duty to
 50% of one core's wall-time budget. After every attempt the worker also idles
 at least its entire scan+exact-reduction elapsed time, including a reduction

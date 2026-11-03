@@ -11,8 +11,7 @@ import (
 
 func syntheticOccupancyPolicy() dispatchOccupancyPolicy {
 	return dispatchOccupancyPolicy{WarmupSeconds: 5, BurstSeconds: 15, Workers: 8, MinimumPairs: 100,
-		MaximumObservationWindowSeconds: 120,
-		AggregationWindowSeconds:        120, RefreshIntervalSeconds: 60, ScanTimeoutSeconds: 30,
+		AggregationWindowSeconds: 120, RefreshIntervalSeconds: 60, ScanTimeoutSeconds: 30,
 		MaximumRequests:        250000,
 		RequestLifetimeSeconds: 2, DeliveryMarginMillis: 10, PreparationSeconds: 1,
 		JobSetupSeconds: 1, CollectionSeconds: 1,
@@ -32,11 +31,8 @@ func TestDispatchOccupancyPolicyStrictConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	block := wire["dispatchOccupancy"].(map[string]any)
-	wire["settings"].(map[string]any)["defaultDispatchOccupancyNanosByBatch"] = map[string]any{"2": float64(3000000)}
-	raw, _ = json.Marshal(wire)
 	configured, err := decodeSchedulerConfiguration(string(raw), 1<<20)
-	if err != nil || configured.Settings.DefaultDispatchOccupancyNanos != 2000000 ||
-		configured.Settings.DefaultDispatchOccupancyNanosByBatch[2] != 3000000 {
+	if err != nil || configured.Settings.DefaultDispatchOccupancyNanos != 2000000 {
 		t.Fatal("authoritative settings defaults were not retained", err)
 	}
 	for _, field := range []string{
@@ -84,7 +80,6 @@ func TestDispatchOccupancyPolicyStrictConfiguration(t *testing.T) {
 	}
 	for _, change := range []func(*dispatchOccupancyPolicy){
 		func(p *dispatchOccupancyPolicy) { p.AggregationWindowSeconds = 0 },
-		func(p *dispatchOccupancyPolicy) { p.MaximumObservationWindowSeconds = p.AggregationWindowSeconds + 1 },
 		func(p *dispatchOccupancyPolicy) { p.RefreshIntervalSeconds = 0 },
 		func(p *dispatchOccupancyPolicy) { p.ScanTimeoutSeconds = 0 },
 		func(p *dispatchOccupancyPolicy) { p.ScanTimeoutSeconds = p.RefreshIntervalSeconds/2 + 1 },
@@ -94,8 +89,7 @@ func TestDispatchOccupancyPolicyStrictConfiguration(t *testing.T) {
 		func(p *dispatchOccupancyPolicy) { p.Workers = 0 },
 		func(p *dispatchOccupancyPolicy) { p.Workers = 65 },
 		func(p *dispatchOccupancyPolicy) { p.MinimumPairs = 0 },
-		func(p *dispatchOccupancyPolicy) { p.MaximumObservationWindowSeconds = 0 },
-		func(p *dispatchOccupancyPolicy) { p.MaximumObservationWindowSeconds = p.BurstSeconds - 1 },
+		func(p *dispatchOccupancyPolicy) { p.AggregationWindowSeconds = p.BurstSeconds - 1 },
 		func(p *dispatchOccupancyPolicy) { p.RequestLifetimeSeconds = 0 },
 		func(p *dispatchOccupancyPolicy) { p.DeliveryMarginMillis = 0 },
 		func(p *dispatchOccupancyPolicy) { p.PreparationSeconds = 0 },
@@ -114,11 +108,6 @@ func TestDispatchOccupancyPolicyStrictConfiguration(t *testing.T) {
 	}
 	if err := syntheticOccupancyPolicy().validate(); err != nil {
 		t.Fatal(err)
-	}
-	shorterPublic := syntheticOccupancyPolicy()
-	shorterPublic.MaximumObservationWindowSeconds = 60
-	if err := shorterPublic.validate(); err != nil {
-		t.Fatal("public query cap below rolling window rejected", err)
 	}
 }
 
@@ -166,8 +155,16 @@ func TestOccupancyPolicyZeroInputsAreExplicitNotGoFallbacks(t *testing.T) {
 }
 
 func TestSchedulerSettingsPUTAndPATCHControlOccupancyDefaults(t *testing.T) {
-	for _, method := range []string{"PUT", "PATCH"} {
-		t.Run(method, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, method string
+		scalar       int64
+	}{
+		{"PUT/scalar", "PUT", 5000000},
+		{"PUT/zero", "PUT", 0},
+		{"PATCH/scalar", "PATCH", 5000000},
+		{"PATCH/zero", "PATCH", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			raw, err := os.ReadFile("../../config/samples/serving-scheduler.json")
 			if err != nil {
 				t.Fatal(err)
@@ -184,14 +181,15 @@ func TestSchedulerSettingsPUTAndPATCHControlOccupancyDefaults(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			scalar, batch := int64(0), int64(3000000)
-			if method == "PATCH" {
-				scalar, batch = 5000000, 0
-				current, err = serving.ValidateSchedulerSettingsPatch(current,
-					[]byte(`{"defaultDispatchOccupancyNanos":5000000,"defaultDispatchOccupancyNanosByBatch":{"2":0}}`))
+			scalar := tc.scalar
+			if tc.method == "PATCH" {
+				patch, marshalErr := json.Marshal(map[string]int64{"defaultDispatchOccupancyNanos": scalar})
+				if marshalErr != nil {
+					t.Fatal(marshalErr)
+				}
+				current, err = serving.ValidateSchedulerSettingsPatch(current, patch)
 			} else {
 				input.DefaultDispatchOccupancyNanos = scalar
-				input.DefaultDispatchOccupancyNanosByBatch = map[int]int64{2: batch}
 				current, err = input.Settings() // public PUT uses this exact decode boundary
 			}
 			if err != nil {
@@ -214,9 +212,6 @@ func TestSchedulerSettingsPUTAndPATCHControlOccupancyDefaults(t *testing.T) {
 			cache.configure(accepted)
 			for _, selected := range cache.selected() {
 				expected := scalar
-				if selected.Batch == 2 {
-					expected = batch
-				}
 				if int64(selected.PerRequest) != expected || selected.Provenance.Value != expected ||
 					selected.Provenance.Source != "default" {
 					t.Fatalf("public settings overwritten by aggregation block: %+v want %d", selected, expected)

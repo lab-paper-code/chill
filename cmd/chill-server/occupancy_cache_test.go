@@ -17,8 +17,7 @@ const rollingDOMTest = "dom"
 
 func rollingOccupancyFixture() *rollingOccupancyInput {
 	policy := syntheticOccupancyPolicy()
-	settings := serving.SchedulerSettings{DefaultDispatchOccupancyNanos: 2000000,
-		DefaultDispatchOccupancyNanosByBatch: map[int]int64{2: 3000000}}
+	settings := serving.SchedulerSettings{DefaultDispatchOccupancyNanos: 2000000}
 	profile := serving.Profile{ID: "profile", NodeName: "node", Batches: []serving.BatchProfile{{Batch: 1}, {Batch: 2}}}
 	profile.Condition.NodeUID = "node-uid"
 	profile.Condition.LogicalModel = occupancyModelTest
@@ -56,7 +55,7 @@ func TestRollingOccupancyDefaultDOMMeasuredAndSignedFacts(t *testing.T) {
 	cache.configure(input)
 	initial := cache.selected()
 	if len(initial) != 4 || initial[0].Provenance.Source != rollingDOMTest || initial[1].Batch != 2 ||
-		initial[2].Provenance.Source != "default" || initial[2].PerRequest != 2000000 || initial[3].PerRequest != 3000000 {
+		initial[2].Provenance.Source != "default" || initial[2].PerRequest != 2000000 || initial[3].PerRequest != 2000000 {
 		t.Fatalf("first computation did not use accepted DOM/configured defaults: %+v", initial)
 	}
 	now := time.Now().UTC()
