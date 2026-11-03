@@ -71,7 +71,7 @@ func TestCoverageOccupancyAdoption(t *testing.T) {
 		{name: "runtime image display only", want: "true", selected: true, change: func(r *servingkube.CatalogRead) {
 			r.Accepted.DispatchOccupancy[0].RuntimeImage = occupancyOtherIdentity
 		}},
-		{name: "missing provenance", want: "false", change: func(r *servingkube.CatalogRead) {
+		{name: "missing provenance", want: "null", change: func(r *servingkube.CatalogRead) {
 			r.Accepted.DispatchOccupancy[0].Provenance = nil
 		}},
 		{name: "empty selections", want: "false", change: func(r *servingkube.CatalogRead) {

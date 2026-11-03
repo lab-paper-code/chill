@@ -99,14 +99,25 @@ func (p *coverageProjection) addOccupancy(cell *queryapi.MeasurementCoverageCell
 	})
 	for _, id := range ids {
 		entry := entries[id]
-		entry.Adopted = p.occupancyAdopted(&entry)
+		entry.Adopted = p.occupancyAdopted(&entry, cell, nodes, current)
 		cell.Occupancy = append(cell.Occupancy, entry)
 	}
 }
 
-func (p *coverageProjection) occupancyAdopted(entry *queryapi.MeasurementOccupancy) *bool {
+func (p *coverageProjection) occupancyAdopted(entry *queryapi.MeasurementOccupancy,
+	cell *queryapi.MeasurementCoverageCell, nodes map[string]queryapi.MeasurementIdentity, current map[string]bool,
+) *bool {
 	if p.base.acceptedOccupancy == nil || p.base.failures[coverageCatalogSource] != nil {
 		return nil
+	}
+	for _, selected := range p.base.acceptedOccupancy {
+		if selected.Provenance == nil && selected.Batch == entry.Batch &&
+			selected.Node.Name == entry.Node.Name && selected.Node.UID == entry.Node.UID &&
+			selected.ProfileID == entry.ProfileID &&
+			occupancyTupleMatches(selected.Node, selected.Model, selected.PowerMode,
+				selected.ExecutionPath, selected.ProfileID, cell, nodes, current) {
+			return nil
+		}
 	}
 	adopted := entry.SchedulerD != nil &&
 		(entry.SchedulerD.Source == "measured" || entry.SchedulerD.Source == "dom")

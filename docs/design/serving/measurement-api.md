@@ -298,13 +298,18 @@ API와 웹은 합격/불합격·포화 판정을 추가하지 않는다.
 `window`, `updatedAt`이다. 출처는 `measured`/`dom`/`default`이며 기본값도
 명시된 실제 선택 사실이다. legacy `accepted.occupancy`만으로 채택 여부나 값을
 추정하지 않는다. `accepted.occupancyEstimates`의 signed 통계·pairs는 관측 사실이고
-선택값으로 바꾸지 않는다. 카탈로그 필드 누락/조회 오류는 미확인이다.
+선택값으로 바꾸지 않는다. 카탈로그 필드 누락/조회 오류와, 일치하는 선택 행의
+provenance 누락은 `adopted:null`이다. 확인된 빈 선택 목록·일치 선택 없음 또는
+명시된 default 출처만 `false`이며 measured/DOM 출처는 `true`다.
 
 Query의 DOM reader는 경로와 schema를 함께 구분한다. legacy v1alpha1은
 기존 scalar를 읽고 새 v1alpha2는 `estimate`와 `Observed`/`Insufficient`를 읽는다.
 새 evidence에 scalar가 없다는 이유로 mismatch/0을 만들지 않으며 `d:null`을
-유지한다. 새 burst에는 saturation/idle/saturationSizing 근거가 없으므로 해당
-projection은 `null`이고 진행 화면에도 포화 판정·유휴 비율을 표시하지 않는다.
+유지한다. 정상 Observed의 scalar 부재는 오류 사유가 아니며 웹 사유는
+`해당 없음`이다. Failed·Insufficient의 원인과 evidence 읽기/검증 오류는 통계와
+별도로 상세에 표시한다. 새 burst에는 saturation/idle/saturationSizing 근거가
+없으므로 해당 projection은 `null`이고 진행 화면에도 포화 판정·유휴 비율을
+표시하지 않는다.
 웹의 셀 상세는 스케줄러 d와 관측 d(B)를 분리하고, 선택 기간의 집계 행은
 Node UID·모델·전력모드·실행 경로·배치·profileID로 연결한다. 이미지가 다르다는
 이유로 행을 숨기지 않는다.
