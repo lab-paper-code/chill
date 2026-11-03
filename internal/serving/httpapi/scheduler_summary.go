@@ -48,11 +48,12 @@ type schedulerSummaryInstance struct {
 	PodUID           string                `json:"podUID"`
 }
 type schedulerSummaryDecision struct {
-	ID       string    `json:"id"`
-	At       time.Time `json:"at"`
-	Status   string    `json:"status"`
-	Reasons  []string  `json:"reasons"`
-	TargetID string    `json:"targetID"`
+	ID        string                           `json:"id"`
+	At        time.Time                        `json:"at"`
+	Status    string                           `json:"status"`
+	Reasons   []string                         `json:"reasons"`
+	TargetID  string                           `json:"targetID"`
+	Workloads []serving.SchedulerWorkloadState `json:"workloads"`
 }
 type schedulerSummaryAction struct {
 	ID              string                        `json:"id"`
@@ -72,7 +73,7 @@ func summarizeScheduler(state *servingkube.SchedulerControllerState) schedulerSu
 		Nodes:     make([]schedulerSummaryNode, 0, len(state.Snapshot.Nodes)),
 		Instances: make([]schedulerSummaryInstance, 0, len(state.Snapshot.Instances)),
 		Routing:   state.Snapshot.Routing,
-		Decision:  schedulerSummaryDecision{At: state.Decision.At, Status: state.Decision.Status, Reasons: state.Decision.Reasons},
+		Decision:  schedulerSummaryDecision{At: state.Decision.At, Status: state.Decision.Status, Reasons: state.Decision.Reasons, Workloads: state.Decision.Workloads},
 		Actions:   make([]schedulerSummaryAction, 0),
 	}
 	result.PoolReturn.ReservationCount = len(state.Snapshot.Reservations)
