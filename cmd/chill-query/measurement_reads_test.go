@@ -234,9 +234,18 @@ func TestR18RequestResultJoinsOnlyExactAcceptedSelection(t *testing.T) {
 		want       *bool
 	}{
 		{name: "selected request", currentIDs: []string{id}, want: &selected},
-		{name: "same condition different request", currentIDs: []string{request.Namespace + "/other/other-uid"}, want: &unselected},
-		{name: "same name different UID", currentIDs: []string{request.Namespace + "/" + request.Name + "/other-uid"}, want: &unselected},
-		{name: "different namespace", currentIDs: []string{"other/" + request.Name + "/" + string(request.UID)}, want: &unselected},
+		{
+			name: "same condition different request", currentIDs: []string{request.Namespace + "/other/other-uid"},
+			want: &unselected,
+		},
+		{
+			name: "same name different UID", currentIDs: []string{request.Namespace + "/" + request.Name + "/other-uid"},
+			want: &unselected,
+		},
+		{
+			name: "different namespace", currentIDs: []string{"other/" + request.Name + "/" + string(request.UID)},
+			want: &unselected,
+		},
 		{name: "reuse profile is not confirmation identity", currentIDs: []string{id + "/reuse-target"}, want: &unselected},
 		{name: "known empty selection", currentIDs: []string{}, want: &unselected},
 		{name: "selection facts missing"},

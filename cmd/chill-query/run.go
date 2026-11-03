@@ -229,7 +229,9 @@ func buildHandler(
 		},
 		compatibility: newModelCompatibilityMatrixQuery(reader, opts),
 	}
-	handler, err := readapi.NewHandler(passports, measurementResultReader{results.Read, measurements}, measurementPreflightReader{preflights.Read, measurements})
+	handler, err := readapi.NewHandler(passports,
+		measurementResultReader{results.Read, measurements},
+		measurementPreflightReader{preflights.Read, measurements})
 	if err != nil {
 		return nil, fmt.Errorf("construct Query API HTTP handler: %w", err)
 	}
