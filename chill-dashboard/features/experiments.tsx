@@ -97,6 +97,7 @@ function ExperimentCharts({run,runs,service,rows,selected,onSelect}:{run:Experim
   const labels={observedRate:paired?"후보 발행":"발행",rightObservedRate:"기준 발행",rate:paired?"후보 계획 평균":"계획 평균",rightRate:"기준 계획 평균",leftP95:paired?"후보 p95":"p95",rightP95:"기준 p95",leftSLO:paired?"후보 적용 SLO":"적용 SLO",rightSLO:"기준 적용 SLO",leftEnergy:paired?"후보 풀 전체":"풀 전체",rightEnergy:"기준 풀 전체"}
   const maxPlanRate=Math.max(1,...data.flatMap(item=>[...item.plans,...item.rightPlans].map(part=>part.rate??0)))
   const columns={gridTemplateColumns:`repeat(${Math.max(1,rows.length)},minmax(0,1fr))`}
+  const hasSubstages=rows.some(row=>[row.stage,...(row.other?[row.other]:[])].some(stage=>experimentRows(stage).some(item=>(!service||item.name===service)&&!!item.substages?.length)))
   return <section aria-label="공유 구간 차트" className="min-w-0 overflow-x-auto rounded-lg border p-2">
     <div className="space-y-1" style={{minWidth:rows.length>4?rows.length*160:undefined}}>
       {lanes.map((lane,laneIndex)=>{
@@ -114,7 +115,7 @@ function ExperimentCharts({run,runs,service,rows,selected,onSelect}:{run:Experim
             </ComposedChart></ResponsiveContainer></div>
           }
           {laneIndex===0&&data.some(item=>item.plans.length>1||item.rightPlans.length>1)&&<div className="grid gap-1 pl-16 pr-2" style={columns} aria-label="계획 하위 구간">
-            <span className="col-span-full text-xs text-muted-foreground">계획 오프셋 · 구간 실측 미제공</span>
+            <span className="col-span-full text-xs text-muted-foreground">{hasSubstages?"계획 오프셋 · 차트 실측은 단계 집계":"계획 오프셋 · 구간 실측 미제공"}</span>
             {data.map((item,index)=><div key={item.key} className="min-w-0">{[item.plans,item.rightPlans].map((parts,side)=>parts.length>1&&<div key={side} className="flex gap-1">{parts.map(part=><button key={part.id} className="relative min-h-11 min-w-0 flex-1 break-words rounded border border-dashed px-1 text-left text-xs focus-visible:outline-2 focus-visible:outline-primary" style={{flexGrow:part.to-part.from}} onClick={()=>onSelect(rows[index])}>
               <span aria-hidden="true" className="absolute inset-y-0 left-0 bg-muted-foreground/15" style={{width:`${100*(part.rate??0)/maxPlanRate}%`}}/>
               <span className="relative">{paired?(side?"기준 계획 ":"후보 계획 "):"계획 "}{part.id} +{part.from}–{part.to}s<br/>{part.rate===null?"요청률 미제공":`${number(part.rate,"req/s")} req/s`}</span>
@@ -162,7 +163,8 @@ function PublicationRunLink({run}:{run:Experiment}) {
   if(query.error)return <span className="text-xs">{query.error.status===404?"실행 없음":<Button variant="outline" onClick={()=>void query.refetch()}>실행 조회 실패 · 다시 조회</Button>}</span>
   if(!query.data)return <span className="text-xs text-muted-foreground">실행 조회 중</span>
   if(query.data.uid!==identity.uid)return <span className="text-xs text-muted-foreground">실행 교체됨</span>
-  return <Button variant="outline" asChild><Link href={`/experiments/runs/${encodeURIComponent(identity.name)}?${new URLSearchParams({uid:identity.uid,...(params.get("offset")?{offset:params.get("offset")!}:{}),...(params.get("service")?{service:params.get("service")!}:{})})}`}>진행</Link></Button>
+  const selection=new URLSearchParams(params.toString());selection.set("uid",identity.uid)
+  return <Button variant="outline" asChild><Link href={`/experiments/runs/${encodeURIComponent(identity.name)}?${selection}`}>진행</Link></Button>
 }
 
 export function ExperimentsPage() {

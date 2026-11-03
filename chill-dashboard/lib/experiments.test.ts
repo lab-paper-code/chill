@@ -542,13 +542,15 @@ test("S1-4: archive judgment lookup pins nanosecond decision.at plus identity, n
   assert.match(plan.path,/365665918Z/);assert.match(plan.path,/365665919Z/)
 })
 
-test("S1-5: rendered unbound serving-manager caller grants include experiment and both measurement reads, never raw",()=>{
+test("S1-5: rendered unbound serving-manager grants measurement reads and occupancy writes, never raw",()=>{
   const rendered=execFileSync("helm",["template","s1-fixture","../charts/chill","--set","servingEntrypoint.enabled=true","--set","servingEntrypoint.tls.secretName=fixture-tls","--set","evidenceStore.connection.bucket=fixture","--set","evidenceStore.connection.region=local"],{encoding:"utf8",maxBuffer:16*1024*1024})
   const roles=rendered.split(/\n---\n/).filter(doc=>/name: s1-fixture-chill-serving-manager\s/.test(doc))
   assert.ok(roles.length>=2)
   const manager=roles.join("\n")
   for(const path of ["/chill/api/v1/experiments","/chill/api/v1/experiments/*","operation-cost-measurements","dispatch-occupancy-measurements"])assert.ok(manager.includes(path),path)
-  assert.match(manager,/resources: \[operationcostmeasurements, dispatchoccupancymeasurements\]\s+verbs: \[get, list\]/)
+  const grants=Array.from(manager.matchAll(/resources:\s*\[([^\]]+)\]\s+verbs:\s*\[([^\]]+)\]/g),match=>({resources:match[1].split(",").map(value=>value.trim()),verbs:match[2].split(",").map(value=>value.trim())}))
+  for(const resource of ["operationcostmeasurements","dispatchoccupancymeasurements"])for(const verb of ["get","list"])assert.ok(grants.some(grant=>grant.resources.includes(resource)&&grant.verbs.includes(verb)),`${verb} ${resource}`)
+  for(const verb of ["create","delete"])assert.ok(grants.some(grant=>grant.resources.includes("dispatchoccupancymeasurements")&&grant.verbs.includes(verb)),`${verb} dispatchoccupancymeasurements`)
   assert.doesNotMatch(manager,/observations\/raw/)
   const config=serverConfig({CHILL_BASE_URL:"https://fixture.invalid",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"fixture"})
   for(const path of ["v1/experiments","v1/experiments/control-213-full-sample","v1/namespaces/research/operation-cost-measurements","v1/namespaces/research/dispatch-occupancy-measurements"]){
@@ -1104,4 +1106,41 @@ test("R18 review: interval Sheet renders each stage policy and service SLO only 
   assert.match(markup,new RegExp(measurementHelpers.formatMeasurementNumber(50,"ms")))
   assert.match(markup,/적용 SLO p95/)
   assert.match(markup,/서비스 식별자·정의/)
+})
+
+function reviewExperimentUI(params:URLSearchParams,identity:{name:string;uid:string}) {
+  const require=createRequire(import.meta.url),exports:Record<string,ComponentType<Record<string,unknown>>>={}
+  const compiled=transpileModule(readFileSync(new URL("../features/experiments.tsx",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const modules:Record<string,unknown>={
+    "@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,
+    "@/lib/client":{useChillQuery:()=>({data:identity})},"next/navigation":{useSearchParams:()=>params},
+    "next/link":{__esModule:true,default:({children,href}:{children:ReactNode;href:string})=>createElement("a",{href},children)},
+    "@/components/ui/button":{Button:({children}:{children:ReactNode})=>createElement("span",{},children)},
+    recharts:{ResponsiveContainer:()=>null},
+  }
+  new Function("require","exports",`${compiled}\nexports.PublicationRunLink=PublicationRunLink;exports.ExperimentCharts=ExperimentCharts;`)((name:string)=>name in modules?modules[name]:name.startsWith("@/")?{}:require(name),exports)
+  return exports
+}
+
+test("P2 results: progress round trip preserves every result selection parameter",()=>{
+  const run=definedRun([{...stage,id:"chosen"}]),params=new URLSearchParams({a:run.id,al:"other",as:"chosen",b:"baseline",bs:"base",sheet:"closed",eventSide:"baseline",offset:"5",service:"camera",uid:"obsolete"})
+  const identity=run.definition!.run,ui=reviewExperimentUI(params,identity)
+  const markup=renderToStaticMarkup(createElement(ui.PublicationRunLink,{run}))
+  const href=markup.match(/href="([^"]+)"/)![1].replaceAll("&amp;","&"),url=new URL(href,"https://dashboard.invalid")
+  assert.equal(url.pathname,`/experiments/runs/${identity.name}`)
+  assert.equal(url.searchParams.get("uid"),identity.uid)
+  for(const [key,value] of params)if(key!=="uid")assert.equal(url.searchParams.get(key),value,key)
+})
+
+test("P2 results: recorded substages do not imply missing interval measurements",()=>{
+  const base=withDefinition(definedRun([{...stage,id:"candidate",kpis:{wholePoolJoules:100,requests:{camera:{offered:600,completedLatencyNS:{p95:20000000}}}}}]),definition=>{
+    definition.loadScenarios[0].spec.parts=[{id:"half",durationSeconds:10,rates:{camera:5}},{id:"high",durationSeconds:10,rates:{camera:10}}]
+  })
+  const ui=reviewExperimentUI(new URLSearchParams(),base.definition!.run)
+  const render=(run:Experiment)=>renderToStaticMarkup(createElement(ui.ExperimentCharts,{run,runs:[run],service:"camera",rows:experimentHeatmap(run),selected:undefined,onSelect:()=>{}}))
+  assert.match(render(base),/계획 오프셋 · 구간 실측 미제공/)
+  const observed={...base,stages:base.stages.map(item=>({...item,kpis:{...item.kpis,requests:{camera:{offered:600,completedLatencyNS:{p95:20000000},substages:[{id:"half",offered:200,completedLatencyNS:{p95:10000000}}]}}}}))}
+  const markup=render(observed)
+  assert.match(markup,/계획 오프셋 · 차트 실측은 단계 집계/)
+  assert.doesNotMatch(markup,/구간 실측 미제공/)
 })
