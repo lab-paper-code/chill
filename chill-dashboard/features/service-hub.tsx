@@ -5,7 +5,7 @@ import Link from "next/link"
 import type { UseQueryResult } from "@tanstack/react-query"
 import type { ApiError } from "@/lib/client"
 import { useChillQuery } from "@/lib/client"
-import type { ObservationResult, PoolsView, SchedulerView } from "@/lib/read-types"
+import type { ObservationResult, PoolsView, SchedulerSettings, SchedulerView } from "@/lib/read-types"
 import { resourceHref, type WorkloadView } from "@/lib/domain"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/read-region"
@@ -13,8 +13,6 @@ import { Facts, RowDialog, Rows } from "@/components/screen"
 import { DataTable } from "@/components/data-table"
 import { StatusCell } from "@/components/status-cell"
 import { statusLabel } from "@/lib/labels"
-import { useLive } from "@/lib/use-live"
-import { workloadReadiness } from "@/lib/live-display"
 
 export function serviceListReturn(value: string | null) {
   if (!value || !value.startsWith("/") || value.startsWith("//") || /[\\\u0000-\u001f\u007f]/.test(value)) return "/workloads"
@@ -46,11 +44,12 @@ export function ServiceAdmission({ view }: { view: Pick<WorkloadView, "admission
 }
 
 export function ServiceReadiness({ view }: { view: Pick<WorkloadView, "desired" | "reason" | "readiness"> }) {
-  const {state}=useLive(),workload=state.snapshot?.workloads.find(row=>row.uid===view.desired.metadata.uid)
-  if(workload&&view.readiness==="Preparing") {
-    const label=workloadReadiness(workload,state.snapshot!.instances)
-    if(label==="미배치 · 자동제어 꺼짐")return <StatusCell axis="배치" label={label} tone="idle"/>
-  }
+  const settings=useChillQuery<SchedulerSettings>("v1/scheduler/settings",{enabled:view.readiness==="Preparing"})
+  const pools=useChillQuery<PoolsView>("v1/pools",{enabled:view.readiness==="Preparing"})
+  const pool=pools.data?.workloads?.find(row=>row.workload.uid===view.desired.metadata.uid)
+  if(view.readiness==="Preparing"&&!settings.error&&settings.data&&!pools.error&&!pools.data?.issues?.length&&
+    !settings.data.autonomousWorkloads?.includes(view.desired.metadata.uid)&&Array.isArray(pool?.instances)&&!pool.instances.some(row=>!row.stopped))
+    return <StatusCell axis="배치" label="미배치 · 자동제어 꺼짐" tone="idle"/>
   const reason = view.reason && statusLabel(view.reason)
   return <><StatusBadge value={view.readiness} />{reason && reason !== statusLabel(view.readiness) && <span className="block text-xs">{reason}</span>}</>
 }

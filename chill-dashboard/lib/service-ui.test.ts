@@ -165,14 +165,27 @@ test("service readiness preserves distinct reasons without repeating the same pr
 })
 
 test("disabled unplaced preparation uses the same status in the service list and detail",()=>{
-  const workload={uid:"service-uid",autonomous:false,readiness:{ready:false,reason:"Preparing"}}
-  const h=harness("",{live:{state:{snapshot:{workloads:[workload],instances:[]}}}})
+  const h=harness("",{"v1/scheduler/settings":{data:{autonomousWorkloads:[]}},"v1/pools":{data:{workloads:[{workload:{uid:"service-uid"},instances:[]}],issues:[]}}})
   const view={...idle,readiness:"Preparing",reason:"Preparing"}
   const table=elements(h.management.ServicesPage({})).find(element=>element.type==="data-table")!
   const column=(table.props.columns as {key:string;value:(view:WorkloadView)=>Element}[]).find(row=>row.key==="ready")!
   const listCell=column.value(view)
   assert.equal(h.hub.ServiceReadiness(listCell.props).props.label,"미배치 · 자동제어 꺼짐")
   assert.equal(h.hub.ServiceReadiness({view}).props.label,"미배치 · 자동제어 꺼짐")
+})
+
+test("management readiness never substitutes stale live control or placement for REST facts",()=>{
+  const workload={uid:"service-uid",autonomous:false,readiness:{ready:false,reason:"Preparing"}}
+  const view={...idle,readiness:"Preparing",reason:"Preparing"}
+  const live={status:"disconnected",state:{status:"disconnected",lastReceivedAt:1,snapshot:{workloads:[workload],instances:[]}}}
+  for(const rest of [
+    {"v1/scheduler/settings":{data:{autonomousWorkloads:["service-uid"]}},"v1/pools":{data:{workloads:[{workload:{uid:"service-uid"},instances:[]}],issues:[]}}},
+    {"v1/scheduler/settings":{error:{status:503}},"v1/pools":{data:{workloads:[{workload:{uid:"service-uid"},instances:[]}],issues:[]}}},
+    {"v1/scheduler/settings":{data:{autonomousWorkloads:[]}},"v1/pools":{data:{workloads:[{workload:{uid:"service-uid"},instances:null}],issues:[]}}},
+  ]) {
+    const h=harness("",{...rest,live})
+    assert.notEqual(h.hub.ServiceReadiness({view}).props.label,"미배치 · 자동제어 꺼짐")
+  }
 })
 
 test("service empty reset clears search, state and page while preserving sort and page size",()=>{

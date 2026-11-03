@@ -132,14 +132,14 @@ test("changing a preprocessor clears only inherited datasets, preserving deliber
   assert.equal(requestInputs("model","onnx","image-pre","vqa",context,{dataset:false}).dataset,"vqa")
 })
 
-function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0,bodies:unknown[]=[],compatibility:Parameters<typeof coverageHelpers.serverCompatibility>[1]=[],mutations:Record<string,unknown>[]=[] ) {
+function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0,bodies:unknown[]=[],compatibility:Parameters<typeof coverageHelpers.serverCompatibility>[1]=[],mutations:Record<string,unknown>[]=[] ,patch?:Record<string,unknown>) {
   const source=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
-  const compiled=transpileModule(`${source}\nexport { Funnel };`,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const compiled=transpileModule(`${source}\nexport { Funnel, fillDefaults };`,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
   const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
   let mutationIndex=0
   const modules:Record<string,unknown>={
-    "react":{...require("react"),useState:(initial:unknown)=>{const state=require("react").useState(initial);return initial===""?[error,state[1]]:initial===0?[stage,state[1]]:state}},
+    "react":{...require("react"),useState:(initial:unknown)=>{const state=require("react").useState(initial);if(patch&&state[0]&&typeof state[0]==="object"&&"workload" in state[0])return [(exports.fillDefaults as (draft:unknown,context:unknown)=>unknown)({...state[0],...patch},props.context),state[1]];return initial===""?[error,state[1]]:initial===0?[stage,state[1]]:state}},
     "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
     "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams(query)},
     "@/lib/client":{useChillMutation:()=>mutations[mutationIndex++]??({isPending:false}),isCoverageWarming:()=>false},
@@ -223,6 +223,19 @@ test("preflight success and admission transport failure identify their own check
   assert.match(html,/HTTP 200/)
   assert.match(html,/형식 검사 통과/)
   assert.doesNotMatch(html,/HTTP 0|연결 상태를 확인/)
+})
+
+test("editing a copied name or batch preserves the original protocol instead of a newer same-target request",()=>{
+  const original={...plan,spec:{...plan.spec,pointPolicy:{confidenceLevel:"0.9"},activeProtocol:{...plan.spec.activeProtocol,durationToleranceSeconds:0.5}}}
+  const newer={...original,metadata:{...original.metadata,name:"newer",uid:"newer",creationTimestamp:"2026-11-02"},spec:{...original.spec,pointPolicy:{confidenceLevel:"0.99"},activeProtocol:{...original.spec.activeProtocol,durationSeconds:99,durationToleranceSeconds:1}}}
+  const context={models:[],workloads:[],classes:[],profiles:[],plans:[original,newer],preprocessors:[{metadata:{name:"pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:condition.model,artifact:"onnx"}}]}}],datasets:[{metadata:{name:"data"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512}]}}]}
+  for(const patch of [{name:"copy-edited"},{batchSizes:[4]},{trials:5}]) {
+    const bodies:unknown[]=[]
+    renderRequest({context,from:"source"},"from=source","",1,bodies,[],[],patch)
+    const body=JSON.parse(JSON.stringify(bodies.at(-1)))
+    assert.deepEqual(body.spec.activeProtocol,original.spec.activeProtocol)
+    assert.deepEqual(body.spec.pointPolicy,original.spec.pointPolicy)
+  }
 })
 
 test("required batches stay outside collapsed conditions and validation appears once",()=>{

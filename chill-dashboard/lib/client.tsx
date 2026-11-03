@@ -212,12 +212,20 @@ export function useWorkloadDefinitions(uids:readonly string[],range:{from:string
 }
 export type ChillMutationInput = {path:string;method:"POST"|"PUT"|"DELETE";body?:unknown;version?:string;timeout?:string}
 export function useChillMutation() {
-  const {token,signals} = useSession()
-  return useMutation<RelayResponse,ApiError,ChillMutationInput>({retry:warmingRetry,retryDelay:warmingDelay,mutationFn:async input => {
-    if (!token) throw new ApiError(401,"인증 필요",null)
-    const controller = new AbortController()
+  const {token,epoch,signals} = useSession()
+  const [scope]=React.useState(()=>({token,epoch,controller:new AbortController()}))
+  const session=React.useRef({token,epoch})
+  session.current={token,epoch}
+  React.useEffect(()=>{
+    if(scope.controller.signal.aborted)scope.controller=new AbortController()
+    const controller=scope.controller
     signals.add(controller)
-    try { return await relay(input.path,token,controller.signal,input.method,input.body,input.version,input.timeout) }
-    finally {signals.delete(controller)}
+    return ()=>{controller.abort();signals.delete(controller)}
+  },[scope,signals])
+  const active=()=>!scope.controller.signal.aborted&&scope.token===session.current.token&&scope.epoch===session.current.epoch
+  return useMutation<RelayResponse,ApiError,ChillMutationInput>({retry:(attempt,error)=>active()&&warmingRetry(attempt,error),retryDelay:warmingDelay,mutationFn:async input => {
+    if(!active())throw new ApiError(0,"요청 취소됨",null)
+    if (!token) throw new ApiError(401,"인증 필요",null)
+    return relay(input.path,token,scope.controller.signal,input.method,input.body,input.version,input.timeout)
   }})
 }
