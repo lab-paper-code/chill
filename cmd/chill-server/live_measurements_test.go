@@ -54,7 +54,12 @@ func readMeasurementLiveFrame(t *testing.T, ctx context.Context, conn *websocket
 
 func assertMeasurementLiveHistory(t *testing.T, handler http.Handler, event measurementLiveFrame) {
 	t.Helper()
-	path := "/api/v1/observations/events?at=" + event.At.Format(time.RFC3339Nano)
+	if event.Action.Status == liveMeasurementNotSubmitted &&
+		(event.Action.Phase != "completed" || event.Action.Result.Status != liveMeasurementNotSubmitted) {
+		t.Fatalf("preflight was projected as a failure: %+v", event.Action)
+	}
+	path := "/api/v1/observations/events?from=" + event.At.Format(time.RFC3339Nano) +
+		"&to=" + event.At.Add(time.Nanosecond).Format(time.RFC3339Nano) + "&limit=100"
 	request := httptest.NewRequest(http.MethodGet, path, nil)
 	request.Header.Set("Authorization", "Bearer test")
 	response := httptest.NewRecorder()

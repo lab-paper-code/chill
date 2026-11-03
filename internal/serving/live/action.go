@@ -35,7 +35,7 @@ func ProjectAction(action serving.SchedulerActionObservation) (*ActionEvent, err
 		completed := action.CompletedAt.UTC().Format(time.RFC3339Nano)
 		projected.CompletedAt = &completed
 		projected.Phase = "completed"
-		if action.Phase != "complete" {
+		if action.Phase != "complete" && (action.Phase != "NOT_SUBMITTED" || action.Error != "") {
 			projected.Phase = "failed"
 		}
 		projected.Result = &ActionResult{Status: action.Phase, Error: action.Error}
