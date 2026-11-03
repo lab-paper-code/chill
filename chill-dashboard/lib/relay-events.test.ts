@@ -25,7 +25,7 @@ test("exact event recovery accepts a nanosecond append cursor but rejects range 
   const path=["v1","observations","events"],at="2026-11-01T01:16:44.827689578Z",cursor="2026-11-01T03:00:00.000000001Z"
   const search=`?${new URLSearchParams({at,cursor})}`
   assert.equal(relayPlan("GET",path,search,config).path,`/api/v1/observations/events${search}`)
-  for(const params of [{at,cursor:"bad"},{at,cursor:"2026-02-30T00:00:00Z"},{at,cursor,from:at,to:cursor},{at,cursor,limit:"1"}]){
+  for(const params of [{at,cursor:"bad"},{at,cursor:"2026-02-30T00:00:00Z"},{at,cursor,from:at,to:cursor},{at,cursor,limit:"1"}] as Record<string,string>[]){
     assert.throws(()=>relayPlan("GET",path,`?${new URLSearchParams(params)}`,config),error=>error instanceof Error&&"status" in error&&error.status===400)
   }
 })
