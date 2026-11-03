@@ -1,6 +1,7 @@
 export type EvaluationSpec = Record<string, unknown>
 export type EvaluationCheck = {id:string;passed:boolean;reason?:string}
-export type EvaluationPreflight = {checks:EvaluationCheck[];liveTarget?:unknown}
+export type EvaluationLiveTarget = {component:string;resource:{apiVersion:string;kind:string;namespace:string;name:string};liveImageIDs:string[];ready:boolean}
+export type EvaluationPreflight = {checks:EvaluationCheck[];liveTarget?:EvaluationLiveTarget[]}
 const record=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==="object"&&!Array.isArray(value)
 
 export function evaluationSameSpec(left:unknown,right:unknown):boolean {
@@ -16,6 +17,11 @@ export function evaluationActions(phase:string):{edit:boolean;remove:"삭제"|"�
 
 export function evaluationPreflight(value:unknown):EvaluationPreflight|null {
   if(!record(value)||!Array.isArray(value.checks)||!value.checks.length||!value.checks.every(check=>record(check)&&typeof check.id==="string"&&typeof check.passed==="boolean"&&(check.reason===undefined||typeof check.reason==="string")))return null
+  if(value.liveTarget!==undefined&&(!Array.isArray(value.liveTarget)||!value.liveTarget.every(target=>{
+    if(!record(target)||!record(target.resource))return false
+    const resource=target.resource
+    return typeof target.component==="string"&&["apiVersion","kind","namespace","name"].every(key=>typeof resource[key]==="string")&&Array.isArray(target.liveImageIDs)&&target.liveImageIDs.every(image=>typeof image==="string")&&typeof target.ready==="boolean"
+  })))return null
   return value as EvaluationPreflight
 }
 

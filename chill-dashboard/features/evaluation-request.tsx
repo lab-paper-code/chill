@@ -22,7 +22,6 @@ type Run = {name:string;uid:string;spec:EvaluationSpec;phase:string;conditions?:
 type Created = {name:string;uid:string}
 const encode=(value:unknown)=>stringifySchedulerJSON(value)
 const phases:Record<string,string>={Pending:"시작 전",Running:"실행 중",Finishing:"정리 중",Done:"종료",Blocked:"정리 실패"}
-const modes:Record<string,string>={autonomous:"CHILL 자동 운영",fixed:"고정 구성","controls-disabled":"제어요소 끔"}
 const conditionLabels:Record<string,string>={PoolAcquired:"풀 점유",ExecutionComplete:"실행 완료",MeasurementPassed:"측정 판정",CleanupComplete:"정리 완료",Published:"게시"}
 const conditionReasons:Record<string,string>={Returned:"반환 관측",IdentityMismatch:"실행 대상 식별자 불일치",NOT_EVALUATED:"미평가",NoControlEffects:"복구할 제어 변경 없음",PublicationFailed:"결과 게시 실패",SLOFailed:"SLO 미충족"}
 function runHref(run:Created,search?:URLSearchParams) {
@@ -47,7 +46,6 @@ export function EvaluationSubmit({name,spec,disabled=false,existing,onSubmitted}
   const [attempt,setAttempt]=React.useState<{name:string;spec:EvaluationSpec}|null>(null)
   const body=encode({name,spec}),answer=checkedBody===body?evaluationPreflight(pre.data?.data):null
   const lookup=useChillQuery<Run>(`v1/evaluations/${encodeURIComponent((unknown?attempt?.name:name)||"_")}`,{enabled:false,decoder:parseSchedulerJSON})
-  const unsupported=answer?.liveTarget!==undefined&&!Array.isArray(answer.liveTarget)
   const confirmed=unknown&&attempt&&lookup.data?.name===attempt.name&&!!lookup.data.uid&&evaluationSameSpec(lookup.data.spec,attempt.spec)&&(!existing||lookup.data.uid!==existing.uid)
   const busy=pre.isPending||send.isPending
   function reconcile(read:{data?:Run;error:ApiError|null},requested:{name:string;spec:EvaluationSpec}) {
@@ -71,7 +69,7 @@ export function EvaluationSubmit({name,spec,disabled=false,existing,onSubmitted}
     pre.mutate({path:"v1/evaluations/preflight",method:"POST",body})
   }
   async function submit() {
-    if(disabled||busy||!evaluationCanSubmit(answer,checkedBody,body,unknown)||unsupported||created)return
+    if(disabled||busy||!evaluationCanSubmit(answer,checkedBody,body,unknown)||created)return
     setAttempt({name,spec:structuredClone(spec)})
     try {
       const input=existing&&replacement!=="deleted"?{path:`v1/evaluations/${encodeURIComponent(existing.name)}?${new URLSearchParams({uid:existing.uid})}`,method:"PUT" as const,body:encode({spec})}:{path:"v1/evaluations",method:"POST" as const,body}
@@ -88,13 +86,13 @@ export function EvaluationSubmit({name,spec,disabled=false,existing,onSubmitted}
   }
   return <div className="space-y-3">
     {answer&&<table className="w-full text-left text-sm"><thead><tr><th>검사</th><th>상태</th><th>사유</th></tr></thead><tbody>{answer.checks.map((check,index)=><tr key={`${check.id}/${index}`} className="border-t"><th className="py-2 font-normal">{check.id}</th><td>{check.passed?"통과":"실패"}</td><td>{check.reason??"미기록"}</td></tr>)}</tbody></table>}
-    {unsupported&&<><strong role="alert">대상 형식 미확인</strong><SourceJSON inline title="현재 대상" value={answer?.liveTarget}/></>}
+    {!!answer?.liveTarget?.length&&<div className="overflow-x-auto"><table aria-label="현재 외부 대상" className="w-full text-left text-sm"><thead><tr><th>구성요소</th><th>자원</th><th>현재 이미지 ID</th><th>준비</th></tr></thead><tbody>{answer.liveTarget.map((target,index)=><tr key={`${target.component}/${index}`} className="border-t"><th className="py-2 font-normal">{target.component}</th><td title={`${target.resource.apiVersion} · ${target.resource.namespace}`}>{target.resource.kind}/{target.resource.name}</td><td className="break-all">{target.liveImageIDs.length?target.liveImageIDs.join(", "):"미제공"}</td><td>{target.ready?"준비됨":"준비 대기"}</td></tr>)}</tbody></table></div>}
     {pre.data&&checkedBody===body&&!answer&&<strong role="alert">점검 응답 형식 오류</strong>}
     <Failure error={pre.error}/><Failure error={send.error}/>
     {replacement&&<strong role="status">{replacement==="deleted"?"삭제됨·재생성 필요":replacement==="unchanged"?"미변경":replacement==="blocked"?"중지 후 다시 실행":"결과 미확인"}</strong>}
     {(unknown||created)&&<div role="status" className="flex flex-wrap items-center gap-3 text-sm"><strong>{created?existing?"수정 접수":"실행 접수":confirmed?"실행 확인":"결과 미확인"}</strong>{(created||confirmed)&&<Link className="underline" href={runHref(created??{name:lookup.data!.name,uid:lookup.data!.uid})}>실험 상태</Link>}{unknown&&<Button variant="outline" onClick={()=>void refresh()} disabled={lookup.isFetching}>다시 조회</Button>}</div>}
     <EvaluationPermission denied={pre.error?.status===403||send.error?.status===403}/>
-    <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={disabled||busy||unknown||!!created} onClick={verify}>{pre.isPending?"점검 중":"사전 점검"}</Button><Button disabled={disabled||busy||!!created||unsupported||!evaluationCanSubmit(answer,checkedBody,body,unknown)} onClick={()=>void submit()}>{send.isPending?"제출 중":replacement==="deleted"?"재생성 제출":existing?"수정 제출":"실험 시작"}</Button></div>
+    <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={disabled||busy||unknown||!!created} onClick={verify}>{pre.isPending?"점검 중":"사전 점검"}</Button><Button disabled={disabled||busy||!!created||!evaluationCanSubmit(answer,checkedBody,body,unknown)} onClick={()=>void submit()}>{send.isPending?"제출 중":replacement==="deleted"?"재생성 제출":existing?"수정 제출":"실험 시작"}</Button></div>
   </div>
 }
 
@@ -168,7 +166,7 @@ export function EvaluationRunPage({name}:{name:string}) {
         <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">{[["실행 상태",phases[run.phase]??"미확인"],["현재 단계",typeof run.currentStage==="string"||typeof run.currentStage==="number"?String(run.currentStage):"미기록"],["시작 (KST)",run.startedAt?formatMeasurementTime(run.startedAt):"미기록"],["종료 (KST)",run.finishedAt?formatMeasurementTime(run.finishedAt):"미기록"]].map(([label,value])=><div key={label}><dt className="text-muted-foreground">{label}</dt><dd className="break-all">{value}</dd></div>)}</dl>
       </section>
       <section aria-label="단계 진행·주입" className="space-y-3">
-        <div className="max-h-56 overflow-auto"><table className="w-full text-left text-sm"><thead><tr><th>순서</th><th>단계</th><th>정책</th><th>현재 단계</th></tr></thead><tbody>{stages.map((value,index)=>{const stage=value&&typeof value==="object"?value as Record<string,unknown>:{},id=typeof stage.id==="string"?stage.id:"미기록";return <tr key={index} className="border-t"><td className="py-2">{index+1}</td><th className="break-all font-normal">{id}</th><td>{modes[String(stage.mode)]??"미기록"}</td><td>{id===run.currentStage?"현재":"—"}</td></tr>})}{!stages.length&&<tr><td colSpan={4}>단계 미기록</td></tr>}</tbody></table></div>
+        <div className="max-h-56 overflow-auto"><table className="w-full text-left text-sm"><thead><tr><th>순서</th><th>단계</th><th>운영 설정</th><th>현재 단계</th></tr></thead><tbody>{stages.map((value,index)=>{const stage=value&&typeof value==="object"?value as Record<string,unknown>:{},id=typeof stage.id==="string"?stage.id:"미기록";return <tr key={index} className="border-t"><td className="py-2">{index+1}</td><th className="break-all font-normal">{id}</th><td>{stage.settingsPatch?"단계 변경":run.spec.settingsPatch?"실험 변경":"기본"}</td><td>{id===run.currentStage?"현재":"—"}</td></tr>})}{!stages.length&&<tr><td colSpan={4}>단계 미기록</td></tr>}</tbody></table></div>
         <EvaluationActive key={run.uid} name={name} uid={uid||run.uid} now={now} controls={false}/>
       </section>
       <section aria-label="실행 조건·풀 상태" className="space-y-3">

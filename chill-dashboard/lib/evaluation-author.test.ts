@@ -3,11 +3,11 @@ import test from "node:test"
 import { adoptWorkloads, canCreateLoad, canDeleteLoad, copyAuthorDraft, evaluationReplacement, object, parseSpec, patchSpec, renameLoadWorkload, removeLoadWorkload, specJSON, specValue, workloadChanges } from "./evaluation-author.ts"
 
 test("JSON → form → JSON preserves unknown fields and exact integer evidence",()=>{
-  const spec=parseSpec('{"question":"before","future":{"count":9007199254740993},"stages":[{"id":"candidate","mode":"fixed","loadScenarioRef":{"name":"load","uid":"pinned","future":true},"future":{"enabled":false}}]}')
-  const changed=patchSpec(spec,["stages",0,"mode"],"autonomous")
+  const spec=parseSpec('{"question":"before","future":{"count":9007199254740993},"stages":[{"id":"candidate","row":"before","loadScenarioRef":{"name":"load","uid":"pinned","future":true},"future":{"enabled":false}}]}')
+  const changed=patchSpec(spec,["stages",0,"row"],"after")
   const roundtrip=parseSpec(specJSON(changed))
-  assert.equal(specValue(roundtrip,["stages",0,"mode"]),"autonomous")
-  assert.equal(specValue(spec,["stages",0,"mode"]),"fixed")
+  assert.equal(specValue(roundtrip,["stages",0,"row"]),"after")
+  assert.equal(specValue(spec,["stages",0,"row"]),"before")
   assert.equal(specValue(roundtrip,["future","count"]),9007199254740993n)
   assert.deepEqual(specValue(roundtrip,["stages",0,"loadScenarioRef"]),{name:"load",uid:"pinned",future:true})
   assert.deepEqual(specValue(roundtrip,["stages",0,"future"]),{enabled:false})
@@ -50,12 +50,14 @@ test("inUse blocks deletion and failed or stale preflight never enables create",
 })
 
 test("Workload rename migrates form maps without losing extension fields",()=>{
-  const original={workloads:[{name:"old",uid:"uid",generation:1}],arrivalDistribution:{old:"poisson"},traceRefs:{old:{store:"s",key:"trace",size:1}},parts:[{id:"p",durationSeconds:2,rates:{old:3},future:"retained"}]}
+  const original={workloads:[{name:"old",uid:"uid",generation:1}],arrivalDistribution:{old:"poisson"},seeds:{old:"18446744073709551615"},datasetRefs:{old:{name:"dataset",uid:"dataset-uid"}},traceRefs:{old:{store:"s",key:"trace",size:1}},parts:[{id:"p",durationSeconds:2,rates:{old:3},future:"retained"}]}
   const renamed=renameLoadWorkload(original,0,"new")
   assert.equal(specValue(renamed,["parts",0,"rates","new"]),3)
   assert.equal(specValue(renamed,["parts",0,"rates","old"]),undefined)
   assert.equal(specValue(renamed,["arrivalDistribution","new"]),"poisson")
   assert.deepEqual(specValue(renamed,["traceRefs","new"]),original.traceRefs.old)
+  assert.deepEqual(renamed.seeds,{new:"18446744073709551615"})
+  assert.deepEqual(renamed.datasetRefs,{new:original.datasetRefs.old})
   assert.equal(specValue(renamed,["parts",0,"future"]),"retained")
   assert.equal(original.workloads[0].name,"old")
 })
@@ -77,16 +79,24 @@ test("form map keys cannot mutate object prototypes",()=>{
 })
 
 test("removing a Workload clears only its declared load maps",()=>{
-  const spec={workloads:[{name:"a"},{name:"b"}],arrivalDistribution:{a:"poisson",b:"poisson"},traceRefs:{a:{key:"a"},b:{key:"b"}},parts:[{rates:{a:1,b:2},future:true}],future:{a:"keep"}}
+  const spec={workloads:[{name:"a"},{name:"b"}],arrivalDistribution:{a:"poisson",b:"poisson"},seeds:{a:"1",b:"2"},datasetRefs:{a:{name:"a",uid:"a"},b:{name:"b",uid:"b"}},traceRefs:{a:{key:"a"},b:{key:"b"}},parts:[{rates:{a:1,b:2},future:true}],future:{a:"keep"}}
   const next=removeLoadWorkload(spec,0)
-  assert.deepEqual(next,{workloads:[{name:"b"}],arrivalDistribution:{b:"poisson"},traceRefs:{b:{key:"b"}},parts:[{rates:{b:2},future:true}],future:{a:"keep"}})
+  assert.deepEqual(next,{workloads:[{name:"b"}],arrivalDistribution:{b:"poisson"},seeds:{b:"2"},datasetRefs:{b:{name:"b",uid:"b"}},traceRefs:{b:{key:"b"}},parts:[{rates:{b:2},future:true}],future:{a:"keep"}})
   assert.equal(spec.workloads.length,2)
 })
 
 test("colliding Workload rename is rejected atomically before a later valid rename",()=>{
-  const spec={workloads:[{name:"a",uid:"a"},{name:"b",uid:"b"}],arrivalDistribution:{a:"poisson-a",b:"poisson-b"},traceRefs:{a:{key:"a"},b:{key:"b"}},parts:[{rates:{a:1,b:2}},{alpha:{a:3,b:4}}]}
+  const spec={workloads:[{name:"a",uid:"a"},{name:"b",uid:"b"}],arrivalDistribution:{a:"poisson-a",b:"poisson-b"},traceRefs:{a:{key:"a"},b:{key:"b"}},parts:[{rates:{a:1,b:2}},{rates:{a:3,b:4}}]}
   const rejected=renameLoadWorkload(spec,0,"b")
   assert.deepEqual(rejected,spec)
   const renamed=renameLoadWorkload(rejected,0,"c")
-  assert.deepEqual(renamed,{workloads:[{name:"c",uid:"a"},{name:"b",uid:"b"}],arrivalDistribution:{c:"poisson-a",b:"poisson-b"},traceRefs:{c:{key:"a"},b:{key:"b"}},parts:[{rates:{c:1,b:2}},{alpha:{c:3,b:4}}]})
+  assert.deepEqual(renamed,{workloads:[{name:"c",uid:"a"},{name:"b",uid:"b"}],arrivalDistribution:{c:"poisson-a",b:"poisson-b"},traceRefs:{c:{key:"a"},b:{key:"b"}},parts:[{rates:{c:1,b:2}},{rates:{c:3,b:4}}]})
+})
+
+test("rename rejects occupied seed and dataset map keys without partially updating the draft",()=>{
+  for(const map of ["seeds","datasetRefs"]) {
+    const spec={workloads:[{name:"old",uid:"uid"}],parts:[{rates:{old:5}}],[map]:{old:"pinned",taken:"occupied"}}
+    assert.equal(renameLoadWorkload(spec,0,"taken"),spec)
+    assert.equal(specValue(spec,["parts",0,"rates","old"]),5)
+  }
 })

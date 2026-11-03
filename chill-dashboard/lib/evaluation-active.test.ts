@@ -4,7 +4,7 @@ import type { LiveEvent } from "./live.ts"
 import { evaluationPoolBlocked, evaluationInjectionMatch, evaluationRemaining, evaluationStopPath, type ActiveEvaluation } from "./evaluation-active.ts"
 
 const at="2026-11-01T00:00:00Z",now=Date.parse(at)
-const run:ActiveEvaluation={name:"evaluation",uid:"uid-1",stageIndex:1,stagesTotal:3,stage:{id:"base",mode:"autonomous",plannedSeconds:300,injections:[{id:"kill",action:"delete-serving-pod",offsetSeconds:120,nodeName:"node-1",podName:"serving-1"}]}}
+const run:ActiveEvaluation={name:"evaluation",uid:"uid-1",stageIndex:1,stagesTotal:3,stage:{id:"base",plannedSeconds:300,injections:[{id:"kill",action:"delete-serving-pod",offsetSeconds:120,nodeName:"node-1",podName:"serving-1"}]}}
 const cluster=(pod:{uid:string;name?:string;node?:string}):LiveEvent=>({seq:1,at,type:"event",kind:"cluster",cluster:{kind:"pod",at,event:"deleted",pod}})
 
 test("remaining duration uses load goAt, not stage start, and waits before goAt exists",()=>{

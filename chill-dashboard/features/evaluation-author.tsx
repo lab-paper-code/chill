@@ -15,6 +15,7 @@ import { EvaluationPermission, EvaluationSubmit } from "@/features/evaluation-re
 import { object, records, specValue, patchSpec, parseSpec, specJSON, copyAuthorDraft, type Spec, type LoadScenario, type EvidenceInput } from "@/lib/evaluation-author"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { decodeExperimentPage, type ExperimentPage } from "@/lib/experiments"
+import { editableSettingKeys, settingFields, settingTargets } from "@/lib/scheduler-settings"
 
 
 export function useUnsavedAuthor(dirty:boolean) {
@@ -45,11 +46,10 @@ export function AuthorJSON({label,value,onChange,onValidityChange,disabled=false
   }}/></label>{error&&<><span role="alert" className="text-destructive">{error}</span><Button type="button" variant="outline" onClick={()=>{setDraft(null);setError("");onValidityChange?.(true)}}>JSON 변경 취소</Button></>}</div>
 }
 export function EvidencePicker({label,value,onChange}:{label:string;value:unknown;onChange:(value:Spec|undefined)=>void}) {
-  const defaultKind=label.includes("난수")?"seed":label.includes("번들")?"payload":"other"
-  const [kind,setKind]=useState(defaultKind),[set,setSet]=useState(""),[offsets,setOffsets]=useState([0]),[chosen,setChosen]=useState<EvidenceInput|null>(null),setList=useId()
+  const [set,setSet]=useState(""),[offsets,setOffsets]=useState([0]),[chosen,setChosen]=useState<EvidenceInput|null>(null),setList=useId()
   const {config}=useSession()
   const params=new URLSearchParams({limit:String(Math.min(25,config.maxPageSize)),offset:String(offsets.at(-1)??0)})
-  if(kind)params.set("kind",kind)
+  params.set("kind","trace")
   if(set)params.set("set",set)
   const query=useChillQuery<{items:EvidenceInput[];page:{offset:number;limit:number;total:number;nextOffset?:number}}>(`v1/evaluations/inputs?${params}`,{decoder:parseSchedulerJSON})
   const items=query.data?.items??[],current=object(value)
@@ -57,8 +57,7 @@ export function EvidencePicker({label,value,onChange}:{label:string;value:unknow
   const selected=current.key?identity(current):"",next=query.data?.page.nextOffset
   const selectedItem=items.find(item=>identity(item)===selected)??(chosen&&identity(chosen)===selected?chosen:current)
   return <div className="grid min-w-0 gap-2 sm:grid-cols-2">
-    <AuthorSelect label="입력 종류" value={kind} onChange={value=>{setKind(value);setOffsets([0])}}>{Object.entries({seed:"난수",payload:"입력 번들",other:"기타"}).map(([key,name])=><option key={key} value={key}>{name}</option>)}</AuthorSelect>
-    <label className="grid min-w-0 gap-1 text-sm">입력 묶음<Input list={setList} value={set} onChange={event=>{setSet(event.target.value);setOffsets([0])}}/><datalist id={setList}>{[...new Set(items.map(item=>item.set).filter(Boolean))].map(value=><option key={value} value={value}/>)}</datalist></label>
+    <label className="grid min-w-0 gap-1 text-sm">부하 설정 이름<Input list={setList} value={set} onChange={event=>{setSet(event.target.value);setOffsets([0])}}/><datalist id={setList}>{[...new Set(items.map(item=>item.set).filter(Boolean))].map(value=><option key={value} value={value}/>)}</datalist></label>
     <div className="min-w-0 sm:col-span-2"><AuthorSelect label={label} value={selected} onChange={key=>{const item=items.find(item=>identity(item)===key);setChosen(item??null);onChange(item?{...current,store:item.store,key:item.key,size:item.size}:undefined)}}>
       <option value="">미선택</option>{selected&&!items.some(item=>identity(item)===selected)&&<option value={selected}>{String(selectedItem.name||current.key)}</option>}
       {[...new Set(items.map(item=>item.set??""))].map(group=><optgroup key={group} label={group||"묶음 미기록"}>{items.filter(item=>(item.set??"")===group).map(item=><option key={identity(item)} value={identity(item)}>{item.name||item.key}</option>)}</optgroup>)}
@@ -82,6 +81,20 @@ export function HistoricalComparison({spec,path,onChange}:{spec:Spec;path:(strin
     <QueryGate query={page}>{null}</QueryGate>
     {publicationID&&<>{selected.error?.status===404?<span role="status">대상 게시 없음</span>:<QueryGate query={selected}>{null}</QueryGate>}<AuthorSelect label="과거 단계" value={stageID} onChange={value=>onChange(patchSpec(spec,[...path,"stageID"],value))}><option value="">미선택</option>{stageID&&!stages.some(stage=>stage.id===stageID)&&<option value={stageID}>{stageID} · 저장된 참조</option>}{stages.map(stage=><option key={stage.id} value={stage.id}>{stage.id}</option>)}</AuthorSelect></>}
   </div>
+}
+export function SettingsPatchEditor({spec,path,onChange,onValidityChange}:{spec:Spec;path:(string|number)[];onChange:(spec:Spec)=>void;onValidityChange:(valid:boolean)=>void}) {
+  const patch=object(specValue(spec,path)),[key,setKey]=useState(""),[text,setText]=useState(""),[error,setError]=useState(""),[pending,setPending]=useState(false),[rawInvalid,setRawInvalid]=useState(false)
+  const labels=new Map<string,string>([...settingFields,...settingTargets].map(field=>[field.key,field.label]))
+  return <fieldset className="grid min-w-0 gap-3 rounded-md border p-3"><legend className="text-sm">운영 설정 패치</legend>
+    <TooltipProvider><Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost">패치 도움말</Button></TooltipTrigger><TooltipContent className="max-w-sm">JSON 객체를 그대로 전달해요. 항목과 단위는 운영 설정과 같고 서버 사전점검으로 검증해요. 단계 패치는 전체 실험 패치를 대체해요. 미설정과 빈 객체는 구분돼요.</TooltipContent></Tooltip></TooltipProvider>
+    <AuthorSelect label="설정 항목" value={key} disabled={pending||rawInvalid} onChange={value=>{setKey(value);setText(Object.hasOwn(patch,value)?specJSON(patch[value]):"")}}><option value="">항목 선택</option>{editableSettingKeys.map(value=><option key={value} value={value}>{labels.get(value)??(value==="controls"?"제어 항목":value)}</option>)}</AuthorSelect>
+    {key&&<><label className="grid gap-1 text-sm">항목 값 (JSON)<textarea disabled={rawInvalid} className="min-h-24 w-full rounded-md border bg-background p-3 font-mono text-xs" value={text} aria-invalid={!!error} onChange={event=>{setText(event.target.value);setPending(true);setError("");onValidityChange(false)}}/></label>
+      <Button type="button" variant="outline" disabled={rawInvalid} onClick={()=>{try {const value=parseSchedulerJSON(text);onChange(patchSpec(spec,path,patchSpec(patch,[key],value)));setPending(false);setError("");onValidityChange(true)} catch {setError("JSON 값 형식 확인");onValidityChange(false)}}}>항목 반영</Button>
+      <Button type="button" variant="outline" disabled={rawInvalid} onClick={()=>{onChange(patchSpec(spec,path,patchSpec(patch,[key],undefined)));setKey("");setText("");setPending(false);setError("");onValidityChange(true)}}>항목 제거</Button></>}
+    {error&&<span role="alert" className="text-destructive">{error}</span>}
+    <AuthorJSON label="설정 패치 원문" value={patch} disabled={pending} onChange={value=>{onChange(patchSpec(spec,path,value));setKey("");setText("")}} onValidityChange={valid=>{setRawInvalid(!valid);onValidityChange(valid)}}/>
+    <Button type="button" variant="outline" disabled={rawInvalid} onClick={()=>{onChange(patchSpec(spec,path,undefined));setKey("");setText("");setPending(false);setError("");onValidityChange(true)}}>패치 미설정</Button>
+  </fieldset>
 }
 function ComparisonSide({label,spec,path,onChange,stages}:{label:string;spec:Spec;path:(string|number)[];onChange:(spec:Spec)=>void;stages:Spec[]}) {
   const ref=object(specValue(spec,path)),historical=ref.historical!==undefined
@@ -107,10 +120,11 @@ export function EvaluationSpecEditor({spec,onChange,onValidityChange}:{spec:Spec
         <div className="grid gap-3 sm:grid-cols-2"><AuthorField label="단계 ID" spec={spec} path={[...p,"id"]} onChange={onChange}/><AuthorField label="행 이름" spec={spec} path={[...p,"row"]} onChange={onChange}/></div>
         <AuthorSelect label="부하 설정" value={String(ref.uid??"")} onChange={uid=>{const selected=loads.data?.items.find(x=>x.uid===uid);if(selected)onChange(patchSpec(spec,[...p,"loadScenarioRef"],{...ref,name:selected.name,uid:selected.uid}))}}><option value="">미선택</option>{ref.uid&&!loads.data?.items.some(x=>x.uid===ref.uid)?<option value={String(ref.uid)}>{String(ref.name)} · 저장된 참조</option>:null}{loads.data?.items.map(item=><option key={item.uid} value={item.uid}>{item.name}</option>)}</AuthorSelect>
         <Button type="button" variant="outline" disabled={invalid.length>0} onClick={()=>{const session=Symbol();activeLoad.current=session;setNewLoad({stage:index,session})}}>새 부하</Button>
+        <SettingsPatchEditor spec={spec} path={[...p,"settingsPatch"]} onChange={onChange} onValidityChange={valid=>reportValidity(`patch-${index}`,valid)}/>
         <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={invalid.length>0||index===0} onClick={()=>{const next=[...stages];[next[index-1],next[index]]=[next[index],next[index-1]];setSelectedStage(index-1);onChange(patchSpec(spec,["stages"],next))}}>앞으로 이동</Button><Button type="button" variant="outline" disabled={invalid.length>0} onClick={()=>onChange(patchSpec(spec,["stages"],stages.filter((_,i)=>i!==index)))}>단계 삭제</Button></div>
       </div>}</section>})}<Button type="button" variant="outline" disabled={invalid.length>0} onClick={()=>{setSelectedStage(stages.length);onChange(patchSpec(spec,["stages"],[...stages,{id:"",row:""}]))}}>단계 추가</Button></div>}
       {tab==="comparisons"&&<div className="grid gap-4">{comparisons.map((comparison,index)=><fieldset key={index} className="grid gap-3 rounded-md border p-3"><legend className="text-sm">비교 {index+1}</legend><div className="grid gap-4 sm:grid-cols-2"><ComparisonSide label="후보" spec={spec} path={["comparisons",index,"left"]} stages={stages} onChange={onChange}/><ComparisonSide label="기준" spec={spec} path={["comparisons",index,"right"]} stages={stages} onChange={onChange}/></div><AuthorField label="비교 사유" spec={spec} path={["comparisons",index,"reason"]} onChange={onChange}/><Button type="button" variant="outline" onClick={()=>onChange(patchSpec(spec,["comparisons"],comparisons.filter((_,i)=>i!==index)))}>비교 삭제</Button></fieldset>)}<Button type="button" variant="outline" onClick={()=>onChange(patchSpec(spec,["comparisons"],[...comparisons,{left:{stageID:""},right:{stageID:""},reason:""}]))}>비교 추가</Button></div>}
-      {tab==="criteria"&&<table className="w-full text-left text-sm"><caption className="sr-only">측정 기준</caption><thead><tr><th>항목</th><th>단위</th><th>값</th></tr></thead><tbody>{[["generatorQuality","latenessToleranceNanos","발행 지연 허용","ns"],["generatorQuality","maxExceedingFraction","지연 초과 비율","비율"],["energyCoverage","maxGapFraction","전력 결손 비율","비율"],["energyCoverage","maxSingleGapSeconds","단일 전력 공백","s"]].map(([section,key,label,unit])=><tr key={key}><th className="font-normal">{label}</th><td>{unit}</td><td className="py-1"><AuthorField label={label} compact spec={spec} path={["judgment",section,key]} numeric onChange={onChange}/></td></tr>)}</tbody></table>}
+      {tab==="criteria"&&<div className="grid gap-4"><AuthorField label="부하 발생 장비" spec={spec} path={["loadGenerator","nodeName"]} onChange={onChange}/><SettingsPatchEditor spec={spec} path={["settingsPatch"]} onChange={onChange} onValidityChange={valid=>reportValidity("patch-global",valid)}/><table className="w-full text-left text-sm"><caption className="sr-only">측정 기준</caption><thead><tr><th>항목</th><th>단위</th><th>값</th></tr></thead><tbody>{[["generatorQuality","latenessToleranceNanos","발행 지연 허용","ns"],["generatorQuality","maxExceedingFraction","지연 초과 비율","비율"],["energyCoverage","maxGapFraction","전력 결손 비율","비율"],["energyCoverage","maxSingleGapSeconds","단일 전력 공백","s"]].map(([section,key,label,unit])=><tr key={key}><th className="font-normal">{label}</th><td>{unit}</td><td className="py-1"><AuthorField label={label} compact spec={spec} path={["judgment",section,key]} numeric onChange={onChange}/></td></tr>)}</tbody></table></div>}
     </>}
     <Sheet open={newLoad!==null} onOpenChange={open=>{if(!open){activeLoad.current=null;setNewLoad(null)}}}><SheetContent className="w-full overflow-y-auto sm:max-w-3xl" aria-describedby={undefined}><SheetHeader><SheetTitle>새 부하</SheetTitle></SheetHeader>{newLoad!==null&&<div className="p-4"><LoadEditor editing={false} onSaved={()=>loads.refetch()} onConfirmed={value=>{if(activeLoad.current!==newLoad.session)return;const path=["stages",newLoad.stage,"loadScenarioRef"],current=draft.current;current.onChange(patchSpec(current.spec,path,{...object(specValue(current.spec,path)),...value}));activeLoad.current=null;setNewLoad(null)}}/></div>}</SheetContent></Sheet>
   </div>
@@ -127,7 +141,7 @@ export function EvaluationAuthor({initialSpec,initialName,existing,onSubmitted}:
     const result=await template.refetch()
     if(!result.error&&result.data){setSpec(copyAuthorDraft(result.data).spec);setSources(result.data.sources);setSourcePublication(result.data.sourcePublication);setOrigin("");setReady(true);setValid(true);setVersion(v=>v+1)}
   }
-  const labels:Record<string,string>={question:"질문",target:"대상 구성요소",harness:"실행기",loadGenerator:"부하 발생기",powerMeasurement:"전력 측정",control:"제어",judgment:"판정 기준",evidenceStore:"증거 저장소",stages:"단계",comparisons:"비교"}
+  const labels:Record<string,string>={question:"질문",target:"대상 구성요소",harness:"실행기",loadGenerator:"부하 발생기",powerMeasurement:"전력 측정",settingsPatch:"운영 설정 패치",judgment:"판정 기준",evidenceStore:"증거 저장소",stages:"단계",comparisons:"비교"}
   return <div className="grid min-w-0 gap-5">
     {!ready&&<EvaluationPermission/>}
     <div className="flex justify-end"><AuthorHelp/></div>

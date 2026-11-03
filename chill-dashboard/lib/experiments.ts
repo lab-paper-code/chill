@@ -104,10 +104,6 @@ export function experimentRows(stage:ExperimentStage):ExperimentRow[] {
 export type ExperimentSubstage = Published & {alpha:number|null}
 export type ExperimentRow = {name:string;uid:unknown;definition:unknown;identitySource:unknown;missingReasons:Published;substages:ExperimentSubstage[]|null;metrics:PublishedMetric[];source:string;original:Published}
 export const finite = (value:unknown):number|null => typeof value==="number"&&Number.isFinite(value)&&value>=0?value:null
-export function alphaText(stage:ExperimentStage,run:Experiment):string {
-  const spec=definitionStage(run,stage),scenario=run.definition?.loadScenarios.find(s=>s.uid===spec?.loadScenarioRef.uid)
-  return scenario?scenario.spec.parts.map(part=>`${part.id}: ${part.alpha?Object.entries(part.alpha).map(([name,value])=>`${name} α ${value}`).join(", "):"직접 요청률 · α 없음"}`).join(" / "):"미기록"
-}
 export function ratio(value:unknown,numerator:unknown,denominator:unknown):number|null {
   if(denominator===0)return null
   const provided=finite(value)
@@ -231,13 +227,18 @@ export function definitionStage(run:Experiment,stage:Pick<ExperimentStage,"id">)
 }
 export const experimentControlLabels={placement:"배치",resources:"자원",replicas:"복제본",routing:"라우팅",batching:"배칭",power:"전력",membership:"구성원"}
 export function definitionPolicy(stage:Pick<ExperimentStage,"id">,run:Experiment):string {
-  const matches=run.facts?.stages?.filter(item=>item.id===stage.id)
-  const spec=run.facts?(matches?.length===1?matches[0]:undefined):definitionStage(run,stage)
+  if(!run.facts){
+    const spec=definitionStage(run,stage)
+    if(!spec)return "미기록"
+    return spec.settingsPatch!==undefined||run.definition?.spec.settingsPatch!==undefined?"운영 설정 변경":"CHILL 자율 운영"
+  }
+  const matches=run.facts.stages?.filter(item=>item.id===stage.id)
+  const spec=matches?.length===1?matches[0]:undefined
   if(!spec)return "미기록"
   if(spec.mode==="autonomous")return "자동 운영"
   if(spec.mode==="fixed")return "고정 구성"
   if(spec.mode!=="controls-disabled")return "미기록"
-  const control=spec.control??run.facts?.control??run.definition?.spec.control
+  const control=spec.control??run.facts.control
   if(!control)return "미기록"
   const controls=object(control.controls)
   const disabled=Object.entries(experimentControlLabels).filter(([key])=>controls[key]===false).map(([,label])=>label)
@@ -307,20 +308,6 @@ export function serviceDelta(a:ExperimentRow|undefined,b:ExperimentRow|undefined
 }
 
 
-export function campaignTradeoffs(run:Experiment,runs:Experiment[]=[run]) {
-  const comparisons=definitionComparisons(run,runs).map(pair=>({...pair,
-    energyDelta:finite(pair.chill.kpis.wholePoolJoules)!==null&&finite(pair.control.kpis.wholePoolJoules)!==null?Number(pair.chill.kpis.wholePoolJoules)-Number(pair.control.kpis.wholePoolJoules):null,
-    services:comparisonRows(pair.chill,pair.control).map(row=>{
-      const a=row.a.length===1?row.a[0]:undefined,b=row.b.length===1?row.b[0]:undefined
-      const am=a?resultMetric(a,"success"):null,bm=b?resultMetric(b,"success"):null
-      const av=finite(am?.value),bv=finite(bm?.value),ap=a?finite(resultMetric(a,"p95").value):null,bp=b?finite(resultMetric(b,"p95").value):null
-      return {name:row.name,a,b,successDelta:am?.key===bm?.key&&av!==null&&bv!==null?(av-bv)*100:null,p95Ratio:ap!==null&&bp!==null&&bp>0?ap/bp:null,p95Delta:ap!==null&&bp!==null?ap-bp:null}
-    }),
-  }))
-  const worstSuccess=Math.min(0,...comparisons.flatMap(row=>row.services.map(service=>service.successDelta??0)))
-  const worstP95=Math.max(0,...comparisons.flatMap(row=>row.services.map(service=>service.p95Delta??0)))
-  return comparisons.map(row=>({...row,services:row.services.map(service=>({...service,worstSuccess:worstSuccess<0&&service.successDelta===worstSuccess,worstP95:worstP95>0&&service.p95Delta===worstP95}))}))
-}
 
 export function campaignScoreboard(run:Experiment,runs:Experiment[]=[run]) {
   const comparisons=definitionComparisons(run,runs),compared=new Set(comparisons.flatMap(pair=>[pair.chill,pair.control]))
@@ -344,7 +331,6 @@ export function durationMismatch(a:ExperimentStage,b:ExperimentStage):boolean {
 
 export type ExperimentHeatmapRow = {
   key:string;id:string;stage:ExperimentStage;other:ExperimentStage|null;leftRun:Experiment;rightRun:Experiment;durationDifferent:boolean;reason:string;energyPercent:number|null
-  services:{name:string;a:ExperimentRow|undefined;b:ExperimentRow|undefined;successDelta:number|null;p95Ratio:number|null;p95Delta:number|null;worstSuccess:boolean;worstP95:boolean}[]
 }
 export function experimentIntervalSelection(run:Experiment,row:ExperimentHeatmapRow):Record<string,string> {
   return {a:run.id,al:row.leftRun.id,as:row.stage.id,b:row.other?row.rightRun.id:"",bs:row.other?.id??""}
@@ -352,14 +338,13 @@ export function experimentIntervalSelection(run:Experiment,row:ExperimentHeatmap
 
 // One row per policy comparison; unmatched publications retain their own frozen stage.
 export function experimentHeatmap(run:Experiment,runs:Experiment[]=[run]):ExperimentHeatmapRow[] {
-  const comparisons=campaignTradeoffs(run,runs),used=new Set(comparisons.flatMap(row=>[row.chill,row.control]))
+  const comparisons=definitionComparisons(run,runs),used=new Set(comparisons.flatMap(row=>[row.chill,row.control]))
   const stages=[...comparisons.map(row=>({stage:row.chill,other:row.control,comparison:row,leftRun:row.leftRun,rightRun:row.rightRun})),...run.stages.filter(stage=>!used.has(stage)).map(stage=>({stage,other:null,comparison:null,leftRun:run,rightRun:run}))]
   return stages.sort((a,b)=>Date.parse(a.stage.from)-Date.parse(b.stage.from)).map(({stage,other,comparison,leftRun,rightRun},index)=>{
     const base=other?finite(other.kpis.wholePoolJoules):null,energy=finite(stage.kpis.wholePoolJoules)
     return {key:`${stage.id}/${index}`,id:stage.id,stage,other,leftRun,rightRun,durationDifferent:!!other&&durationMismatch(stage,other),
       reason:comparison?.reason??definitionComparisonReason(run,runs),
-      energyPercent:base!==null&&base>0&&energy!==null?100*(energy-base)/base:null,
-      services:comparison?.services??[]}
+      energyPercent:base!==null&&base>0&&energy!==null?100*(energy-base)/base:null}
   })
 }
 
@@ -371,7 +356,7 @@ export function experimentChartData(run:Experiment,service:string,runs:Experimen
       let offset=0
       return parts.map(part=>{
         const from=offset;offset+=part.durationSeconds
-        return {id:part.id,from,to:offset,rate:part.rates?(service?part.rates[service]??null:Object.values(part.rates).reduce((sum,value)=>sum+value,0)):null,alpha:part.alpha}
+        return {id:part.id,from,to:offset,rate:service?part.rates[service]??null:Object.values(part.rates).reduce((sum,value)=>sum+value,0)}
       })
     }
     return {id:row.id,key:row.key,interval:stageLabel(row.stage,row.leftRun),rate:stageRate(row.stage,row.leftRun,service),rightRate:row.other?stageRate(row.other,row.rightRun,service):null,

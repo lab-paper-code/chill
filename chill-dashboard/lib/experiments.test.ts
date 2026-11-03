@@ -2,8 +2,8 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { readFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
-import { commitExperimentSelection, comparisonDirection, experimentSelection, frozenP95SLO, serviceDelta, alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, stageSeconds, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
-import { campaignScoreboard, campaignTradeoffs, stageHistoryLink, stageActivity, stageLabel, definitionPolicy, definitionStage, definitionComparisons, definitionComparisonReason, decodeExperiment, decodeExperiments, historicalPublicationIDs, experimentOutcome, injectionRows, type ExperimentHeatmapRow } from "./experiments.ts"
+import { commitExperimentSelection, comparisonDirection, experimentSelection, frozenP95SLO, serviceDelta, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, stageSeconds, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
+import { campaignScoreboard, stageHistoryLink, stageActivity, stageLabel, definitionPolicy, definitionStage, definitionComparisons, definitionComparisonReason, decodeExperiment, decodeExperiments, historicalPublicationIDs, experimentOutcome, injectionRows, type ExperimentHeatmapRow } from "./experiments.ts"
 import { publishedVerdict, selectedExperimentStage, experimentPath, stageEvidencePath, experimentHeatmap, experimentChartData, durationMismatch } from "./experiments.ts"
 import { comparisonValidity } from "./experiments.ts"
 import { createRequire } from "node:module"
@@ -89,7 +89,6 @@ const recorded=JSON.parse(readFileSync(new URL("./fixtures/experiment-213.json",
 const demo=JSON.parse(readFileSync(new URL("./fixtures/experiment-demo.json",import.meta.url),"utf8")) as Experiment
 const stage=recorded.publication.stages[0]
 
-const controls={placement:true,resources:true,replicas:true,routing:true,batching:true,power:true,membership:true}
 const evidenceRef={store:"evaluation-archive",key:"frozen/start-state.json",size:128}
 const image={image:`registry.invalid/evaluation@sha256:${"a".repeat(64)}`,sourceSHA:"0123456789abcdef"}
 type DeclaredPair = [left:string,right:string,row?:string]
@@ -102,21 +101,20 @@ function definitionFixture(stages:ExperimentStage[],pairs:DeclaredPair[]=[]) {
     run:{name:"evaluation-fixture",uid:"evaluation-fixture-uid"},
     spec:{
       question:"같은 부하에서 선언한 제어 구성의 성공률·지연·에너지는 어떻게 다른가?",
-      target:{components:[{name:"scheduler",resource:{apiVersion:"apps/v1",kind:"Deployment",namespace:"research",name:"chill-scheduler"},...image}]},
+      target:{components:[{name:"scheduler",resource:{apiVersion:"apps/v1",kind:"Deployment",namespace:"research",name:"chill-scheduler"}}]},
       harness:{...image},
-      loadGenerator:{...image,resources:{requests:{memory:"256Mi"},limits:{memory:"256Mi"}},shards:{camera:1},barrier:{maxStartSkewNanos:1000000,minimumReadySamples:1}},
+      loadGenerator:{...image,nodeName:"generator-1",resources:{requests:{memory:"256Mi"},limits:{memory:"256Mi"}},shards:{camera:1},barrier:{maxStartSkewNanos:1000000,minimumReadySamples:1}},
       powerMeasurement:{meters:[{id:"meter-1",sourceIdentity:"lab-meter-1"}],nodes:[{name:"worker-1",uid:"worker-1-uid"}],series:"power_watts",sampling:{intervalNanos:1000000000}},
-      control:{scaleDownHeadroomFraction:.1,minimumDemand:{camera:0},controls:{...controls}},
       judgment:{generatorQuality:{latenessToleranceNanos:1000000,maxExceedingFraction:.01},energyCoverage:{maxGapFraction:.01,maxSingleGapSeconds:30}},
       evidenceStore:"evaluation-archive",
       stages:[...new Map(stages.map(stage=>[stage.id,stage])).values()].map(stage=>{
         const pair=pairs.find(pair=>pair[0]===stage.id||pair[1]===stage.id)
-        return {id:stage.id,row:pair?.[2]??pair?.[0]??stage.id,mode:pair?.[1]===stage.id?"fixed":"autonomous",
-          loadScenarioRef:{name:"camera-load",uid:"camera-load-uid"},startState:{evidenceRef:{...evidenceRef}}}
+        return {id:stage.id,row:pair?.[2]??pair?.[0]??stage.id,
+          loadScenarioRef:{name:"camera-load",uid:"camera-load-uid"}}
       }),
       comparisons:pairs.map(([left,right])=>({left:{stageID:left},right:{stageID:right},reason:`${left}와 ${right}의 선언된 비교`})),
     },
-    loadScenarios:[{name:"camera-load",uid:"camera-load-uid",spec:{workloads:[workload],parts:[{id:"steady",durationSeconds:60,rates:{camera:10}}],arrivalDistribution:{camera:"poisson"},seedRef:{...evidenceRef,key:"frozen/seed.json"},payloadManifestRef:{...evidenceRef,key:"frozen/payload.json"}}}],
+    loadScenarios:[{name:"camera-load",uid:"camera-load-uid",spec:{workloads:[workload],parts:[{id:"steady",durationSeconds:60,rates:{camera:10}}],arrivalDistribution:{camera:"poisson"},seeds:{camera:"0"},datasetRefs:{camera:{name:"evaluation-images",uid:"dataset-uid"}}}}],
     workloads:[{...workload,slo:{percentile:95,targetLatencyNanos:50000000},model:{uid:"model",generation:2},preprocessor:{uid:"preprocessor",generation:3},dataset:"evaluation-images"}],
   }
 }
@@ -195,7 +193,6 @@ test("past publications and malformed definition envelopes remain 미기록 inst
     assert.equal(run.definition,undefined)
     assert.equal(definitionPolicy(run.stages[0],run),"미기록")
     assert.equal(stageLabel(run.stages[0],run),`${run.stages[0].id} / 미기록`)
-    assert.equal(alphaText(run.stages[0],run),"미기록")
     assert.equal(definitionComparisonReason(run),"미기록")
     assert.deepEqual(definitionComparisons(run),[])
     assert.ok(experimentRows(run.stages[0]).every(row=>frozenP95SLO(row,run)===null))
@@ -221,9 +218,7 @@ test("definition boundary rejects malformed required downstream fields before an
     ["run name",d=>{delete object(d.run).name}],
     ["spec",d=>{object(d).spec=null}],
     ["question",d=>{d.spec.question=""}],
-    ["default controls",d=>{delete object(d.spec.control).controls}],
-    ...Object.keys(controls).map(key=>[`control ${key}`,(d:EvaluationDefinition)=>{delete object(d.spec.control.controls)[key]}] as [string,(definition:EvaluationDefinition)=>void]),
-    ["boolean switch",d=>{object(d.spec.control.controls).power="false"}],
+    ["global settings patch",d=>{object(d.spec).settingsPatch=[]}],
     ["load generator",d=>{d.spec.loadGenerator={}}],
     ["generator image",d=>{delete d.spec.loadGenerator.image}],
     ["generator source",d=>{delete d.spec.loadGenerator.sourceSHA}],
@@ -234,11 +229,10 @@ test("definition boundary rejects malformed required downstream fields before an
     ["stage ID",d=>{d.spec.stages[0].id=""}],
     ["duplicate stage IDs",d=>{d.spec.stages.push({...d.spec.stages[0]})}],
     ["row",d=>{delete object(d.spec.stages[0]).row}],
-    ["mode",d=>{object(d.spec.stages[0]).mode="automatic"}],
     ["scenario UID",d=>{d.spec.stages[0].loadScenarioRef.uid=""}],
     ["scenario name",d=>{d.spec.stages[0].loadScenarioRef.name=""}],
     ["unresolved scenario UID",d=>{d.spec.stages[0].loadScenarioRef.uid="missing-load"}],
-    ["replacement controls",d=>{object(d.spec.stages[0]).control={controls:{power:false}}}],
+    ["stage settings patch",d=>{object(d.spec.stages[0]).settingsPatch=[]}],
     ["comparison list",d=>{object(d.spec).comparisons={}}],
     ["comparison reason",d=>{d.spec.comparisons![0].reason=""}],
     ["comparison stage",d=>{d.spec.comparisons![0].left={stageID:"unknown"}}],
@@ -252,8 +246,7 @@ test("definition boundary rejects malformed required downstream fields before an
     ["parts",d=>{d.loadScenarios[0].spec.parts=[]}],
     ["part ID",d=>{d.loadScenarios[0].spec.parts[0].id=""}],
     ["part duration",d=>{d.loadScenarios[0].spec.parts[0].durationSeconds=0}],
-    ["missing load",d=>{delete d.loadScenarios[0].spec.parts[0].rates}],
-    ["rates and alpha",d=>{d.loadScenarios[0].spec.parts[0].alpha={camera:1}}],
+    ["missing load",d=>{delete object(d.loadScenarios[0].spec.parts[0]).rates}],
     ["empty rates",d=>{d.loadScenarios[0].spec.parts[0].rates={}}],
     ["negative rates",d=>{d.loadScenarios[0].spec.parts[0].rates={camera:-1}}],
     ["nonnumeric rates",d=>{object(d.loadScenarios[0].spec.parts[0]).rates={camera:"10"}}],
@@ -279,20 +272,15 @@ test("definition boundary rejects malformed required downstream fields before an
   }
 })
 
-test("declared modes and complete replacement controls override suggestive stage names",()=>{
+test("settings patches label recorded changes without inferring policy from stage names",()=>{
   const run=withDefinition(definedRun([{...stage,id:"full-e5-1"},{...stage,id:"static-e5-1"},{...stage,id:"switches"}]),d=>{
-    d.spec.stages[0].mode="fixed"
-    d.spec.stages[1].mode="autonomous"
-    d.spec.stages[2].mode="controls-disabled"
-    d.spec.control.controls={...controls,power:false,membership:false}
+    d.spec.stages[2].settingsPatch={controls:{power:false}}
   })
-  assert.equal(definitionPolicy(run.stages[0],run),"고정 구성")
-  assert.equal(definitionPolicy(run.stages[1],run),"자동 운영")
-  assert.equal(definitionPolicy(run.stages[2],run),"제어요소 끔 · 전력, 구성원")
-  const replaced=withDefinition(run,d=>{d.spec.stages[2].control={controls:{...controls,routing:false,batching:false}}})
-  assert.equal(definitionPolicy(replaced.stages[2],replaced),"제어요소 끔 · 라우팅, 배칭")
-  const allOff=withDefinition(run,d=>{d.spec.stages[2].control={controls:{placement:false,resources:false,replicas:false,routing:false,batching:false,power:false,membership:false}}})
-  assert.equal(definitionPolicy(allOff.stages[2],allOff),"제어요소 끔 · 배치, 자원, 복제본, 라우팅, 배칭, 전력, 구성원")
+  assert.equal(definitionPolicy(run.stages[0],run),"CHILL 자율 운영")
+  assert.equal(definitionPolicy(run.stages[1],run),"CHILL 자율 운영")
+  assert.equal(definitionPolicy(run.stages[2],run),"운영 설정 변경")
+  const global=withDefinition(run,d=>{d.spec.settingsPatch={controls:{routing:false}}})
+  assert.equal(definitionPolicy(global.stages[0],global),"운영 설정 변경")
 })
 
 test("row rename and declaration reordering preserve id-only stage and comparison joins",()=>{
@@ -303,7 +291,7 @@ test("row rename and declaration reordering preserve id-only stage and compariso
     d.spec.stages.reverse()
   })
   assert.equal(definitionStage(renamed,renamed.stages[0])?.row,"접미사 없는 새 표시 이름")
-  assert.equal(stageLabel(renamed.stages[0],renamed),"candidate / 접미사 없는 새 표시 이름 / 자동 운영")
+  assert.equal(stageLabel(renamed.stages[0],renamed),"candidate / 접미사 없는 새 표시 이름 / CHILL 자율 운영")
   assert.deepEqual(definitionComparisons(renamed).map(pair=>[pair.chill.id,pair.control.id]),[["candidate","baseline"]])
   assert.equal(definitionStage(renamed,{...renamed.stages[0],id:"접미사 없는 새 표시 이름"}),undefined)
   assert.equal(definitionPolicy({...renamed.stages[0],id:"unlisted"},renamed),"미기록")
@@ -312,15 +300,6 @@ test("row rename and declaration reordering preserve id-only stage and compariso
   assert.equal(definitionComparisonReason(noComparison),"비교 없음")
 })
 
-test("declared ordered rates and alpha include zero without using offered counts, durations or relative rank",()=>{
-  const run=withDefinition(definedRun([{...stage,id:"candidate",kpis:{requests:{camera:{offered:999999}}}}]),d=>{
-    const scenario=d.loadScenarios[0]
-    object(scenario.spec).rateBasisRef={...evidenceRef,key:"frozen/rates.json"}
-    object(scenario.spec).kappaRef={...evidenceRef,key:"frozen/kappa.json"}
-    scenario.spec.parts=[{id:"idle",durationSeconds:10,rates:{camera:0}},{id:"steady",durationSeconds:30,rates:{camera:12.5}},{id:"ramp",durationSeconds:20,alpha:{camera:.7}},{id:"zero-alpha",durationSeconds:10,alpha:{camera:0}}]
-  })
-  assert.equal(alphaText(run.stages[0],run),"idle: 직접 요청률 · α 없음 / steady: 직접 요청률 · α 없음 / ramp: camera α 0.7 / zero-alpha: camera α 0")
-})
 
 test("target rate is duration-weighted declared direct rates, never observed offered divided by time",()=>{
   const run=withDefinition(definedRun([{...stage,id:"candidate",kpis:{requests:{camera:{offered:999999}}}}]),d=>{
@@ -331,8 +310,8 @@ test("target rate is duration-weighted declared direct rates, never observed off
   })
   assert.equal(stageRate(run.stages[0],run),12)
   assert.equal(stageRate({...run.stages[0],to:"invalid",kpis:{}},run),12)
-  const alpha=withDefinition(run,d=>{d.loadScenarios[0].spec.parts=[{id:"alpha",durationSeconds:10,alpha:{camera:.5}}]})
-  assert.equal(stageRate(alpha.stages[0],alpha),null)
+  const zero=withDefinition(run,d=>{d.loadScenarios[0].spec.parts=[{id:"idle",durationSeconds:10,rates:{camera:0}}]})
+  assert.equal(stageRate(zero.stages[0],zero),0)
   assert.equal(stageRate(run.stages[0],recorded.publication),null)
 })
 
@@ -360,7 +339,7 @@ test("historical comparisons join publication ID and stage ID and carry both def
   })
   const run=withDefinition(definedRun([make("candidate",90,20)]),d=>{
     d.run.name="same-display-name"
-    d.spec.stages[0].mode="fixed"
+    d.spec.stages[0].settingsPatch={controls:{power:false}}
     d.spec.comparisons=[{left:{stageID:"candidate"},right:{historical:{publicationID:historical.id,stageID:"baseline"}},reason:"고정 구성과 과거 자율 운영의 선언된 비교"}]
   })
   const decoy={...historical,id:"different-run-uid"}
@@ -373,7 +352,6 @@ test("historical comparisons join publication ID and stage ID and carry both def
   assert.deepEqual(historicalPublicationIDs(run),[historical.id])
   assert.deepEqual(historicalPublicationIDs(recorded.publication),[])
   assert.deepEqual(definitionComparisons(run,runs),[pair])
-  assert.equal(campaignTradeoffs(run,runs)[0].energyDelta,-10)
   assert.equal(campaignScoreboard(run,runs).coverageCounts.unpaired,0)
   const heatmap=experimentHeatmap(run,runs)[0]
   assert.equal(heatmap.leftRun,run)
@@ -382,9 +360,9 @@ test("historical comparisons join publication ID and stage ID and carry both def
   assert.equal(heatmap.energyPercent,-10)
   const chart=experimentChartData(run,"camera",runs)[0]
   assert.deepEqual([chart.leftP95,chart.rightP95,chart.leftSLO,chart.rightSLO],[20,10,50,80])
-  assert.match(chart.leftLabel,/고정 구성/)
+  assert.match(chart.leftLabel,/운영 설정 변경/)
   assert.equal(typeof chart.rightLabel,"string")
-  assert.match(chart.rightLabel!,/자동 운영/)
+  assert.match(chart.rightLabel!,/CHILL 자율 운영/)
   for(const unavailable of [[run],[run,decoy],[run,{...historical,stages:[]}],[run,historical,historical]]) {
     assert.deepEqual(definitionComparisons(run,unavailable),[])
     assert.deepEqual(definitionComparisons(run,unavailable),[])
@@ -397,7 +375,7 @@ test("historical comparisons join publication ID and stage ID and carry both def
     const comparison=d.spec.comparisons![0]
     ;[comparison.left,comparison.right]=[comparison.right,comparison.left]
   })
-  assert.equal(campaignTradeoffs(reverse,[reverse,historical])[0].energyDelta,10)
+  assert.equal(experimentHeatmap(reverse,[reverse,historical])[0].energyPercent,100*10/90)
   assert.deepEqual(experimentChartData(reverse,"camera",[reverse,historical]).find(row=>row.id==="baseline")?.leftSLO,80)
 })
 
@@ -757,7 +735,6 @@ test("heatmap retains all stages without fabricated missing service values",()=>
   const row=experimentHeatmap({...recorded.publication,stages:[missing]})[0]
   assert.equal(row.other,null)
   assert.equal(row.energyPercent,null)
-  assert.deepEqual(row.services,[])
   assert.equal(experimentChartData({...recorded.publication,stages:[missing]},"camera")[0].leftP95,null)
 })
 
@@ -769,18 +746,17 @@ test("coverage includes every recorded paired stage",()=>{
 })
 
 
-test("declared mismatched stage names retain numeric gains, losses and worst service quality",()=>{
+test("declared mismatched stage names retain selected values and numeric energy changes",()=>{
   const make=(id:string,energy:number,success:number,p95:number,offered:number):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",kpis:{wholePoolJoules:energy,requests:{camera:{offered,deadlineSuccessFraction:success,successDenominator:offered,completedLatencyNS:{p95:p95*1e6}}}}})
   const run=definedRun([make("low",90,.99,10,600),make("low-reference",100,1,9,600),make("high",90,.847,1655,6120),make("different-row-name",100,.892,282,7000)],[["low","low-reference"],["high","different-row-name"]])
   const comparison=definitionComparisons(run).find(pair=>pair.chill.id==="high")!
   assert.equal(comparison.basis,"정의 비교")
   assert.equal(comparison.control.id,"different-row-name")
-  const row=campaignTradeoffs(run).find(row=>row.chill.id==="high")!
-  assert.equal(row.energyDelta,-10)
-  assert.ok(Math.abs(row.services[0].successDelta!-(-4.5))<1e-10)
-  assert.equal(row.services[0].p95Ratio,1655/282)
-  assert.equal(row.services[0].worstSuccess,true)
-  assert.equal(row.services[0].worstP95,true)
+  const row=experimentHeatmap(run).find(row=>row.stage.id==="high")!
+  assert.equal(row.stage,comparison.chill)
+  assert.equal(row.other,comparison.control)
+  assert.equal(row.energyPercent,-10)
+  assert.match(serviceDelta(experimentRows(row.stage)[0],experimentRows(row.other!)[0]),/-4.5/)
 })
 
 test("R7: stage record links retain the exact range and activity counts never claim a partial page is complete",()=>{
@@ -820,7 +796,6 @@ test("declared comparison order is retained while heatmap intervals follow recor
   const make=(id:string,minute:number):ExperimentStage=>({...stage,id,from:`2026-10-30T00:0${minute}:00Z`,to:`2026-10-30T00:0${minute+1}:00Z`})
   const run=definedRun([make("later",4),make("later-reference",5),make("early",0),make("early-reference",1)],[["later","later-reference"],["early","early-reference"]])
   assert.deepEqual(definitionComparisons(run).map(pair=>pair.chill.id),["later","early"])
-  assert.deepEqual(campaignTradeoffs(run).map(pair=>pair.chill.id),["later","early"])
   assert.deepEqual(experimentHeatmap(run).map(row=>row.stage.id),["early","later"])
   assert.equal(run.stages[0].id,"later")
 })
@@ -940,10 +915,10 @@ test("R13: coverage separates matched definitions and rules from limited compari
 test("IA: measured quality differences remain facts, never threshold-based SLO conclusions",()=>{
   const make=(id:string,success:number,p95:number):ExperimentStage=>({...stage,id,kpis:{wholePoolJoules:100,measurementRules:{window:10},requests:{camera:{uid:"camera",definitionID:"same",offered:10,deadlineSuccessFraction:success,completedLatencyNS:{p95:p95*1e6}}}}})
   const run=definedRun([make("candidate",.9,10),make("baseline",.8,20)],[["candidate","baseline"]])
-  const score=campaignScoreboard(run),pair=campaignTradeoffs(run)[0]
+  const score=campaignScoreboard(run),pair=definitionComparisons(run)[0]
   assert.equal(Object.hasOwn(score,"conclusion"),false)
-  assert.ok(Math.abs(pair.services[0].successDelta!-10)<1e-10)
-  assert.equal(pair.services[0].p95Ratio,.5)
+  assert.match(serviceDelta(experimentRows(pair.chill)[0],experimentRows(pair.control)[0]),/10/)
+  assert.match(serviceDelta(experimentRows(pair.chill)[0],experimentRows(pair.control)[0]),/×0.50/)
 })
 
 test("R14: comparison limits count each affected pair by its recorded cause",()=>{
@@ -1054,7 +1029,7 @@ test("R18: solo measured values, SLO verdict and frozen metadata render real obj
   new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiments"?experimentHelpers:name==="@/lib/measurements"?measurementHelpers:name==="@/lib/client"?{useChillQueries:()=>[{data:run,isPending:false}]}:name==="@/components/ui/button"?{Button:(props:Record<string,unknown>)=>createElement("button",props)}:name==="next/link"?{__esModule:true,default:(props:Record<string,unknown>)=>createElement("a",props)}:require(name),exports)
   const listed={...run,definition:undefined,comparisons:[]}
   const markup=renderToStaticMarkup(createElement(exports.ExperimentResultRow,{run,runs:[run],pending:false,error:false}))
-  assert.match(markup,/자동 운영/)
+  assert.match(markup,/CHILL 자율 운영/)
   assert.doesNotMatch(markup,/단계별 원값|54,777|<table/)
   assert.match(markup,/SLO 미충족/)
   assert.doesNotMatch(markup,/측정 실패|53\.075340806062236|에너지 Δ/)
@@ -1108,7 +1083,7 @@ test("R18 review: interval Sheet renders each stage policy and service SLO only 
   const run=definedRun([{...stage,id:"candidate",kpis:{requests:{camera:{workloadUID:"camera",definitionID:"camera/1/model/2/preprocessor/3",identitySource:evidenceRef,offered:100,deadlineSuccessFraction:1,completedLatencyNS:{p95:1000000}}}}}])
   const Drawer=features.IntervalDrawer as ComponentType<{run:Experiment;runs:Experiment[];row:ExperimentHeatmapRow;service:string;onClose:()=>void;restoreFocus:()=>void}>
   const markup=renderToStaticMarkup(createElement(Drawer,{run,runs:[run],row:experimentHeatmap(run)[0],service:"",onClose:()=>{},restoreFocus:()=>{}}))
-  assert.equal((markup.match(/자동 운영/g)??[]).length,1)
+  assert.equal((markup.match(/CHILL 자율 운영/g)??[]).length,1)
   assert.match(markup,new RegExp(measurementHelpers.formatMeasurementNumber(50,"ms")))
   assert.match(markup,/적용 SLO p95/)
   assert.match(markup,/서비스 식별자·정의/)

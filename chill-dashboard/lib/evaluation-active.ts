@@ -1,7 +1,7 @@
 import type { LiveEvent } from "./live"
 
 export type ActiveInjection = {id:string;action:string;offsetSeconds:number;outcome?:string;nodeName?:string;podName?:string}
-export type ActiveEvaluation = {name:string;uid:string;startedAt?:string;stageIndex:number;stagesTotal:number;stage?:{id:string;mode:string;startedAt?:string;goAt?:string;plannedSeconds:number;injections:ActiveInjection[]}}
+export type ActiveEvaluation = {name:string;uid:string;startedAt?:string;stageIndex:number;stagesTotal:number;stage?:{id:string;startedAt?:string;goAt?:string;plannedSeconds:number;injections:ActiveInjection[]}}
 export type ActiveEvaluations = {items:ActiveEvaluation[]}
 export type EvaluationPhaseSummary = {name:string;uid:string;phase:string}
 export function evaluationPoolBlocked(uid:string,runs:readonly EvaluationPhaseSummary[]):boolean {

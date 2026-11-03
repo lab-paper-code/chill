@@ -51,7 +51,7 @@ export const canCreateLoad=evaluationCanSubmit
 export function renameLoadWorkload(spec:Spec,index:number,name:string):Spec {
   const workloads=records(spec.workloads),before=String(workloads[index]?.name??"")
   if(before===name)return spec
-  const paths:(string|number)[][]=[["arrivalDistribution"],["traceRefs"],...records(spec.parts).flatMap((_,i)=>[["parts",i,"rates"],["parts",i,"alpha"]])]
+  const paths:(string|number)[][]=[["arrivalDistribution"],["traceRefs"],["seeds"],["datasetRefs"],...records(spec.parts).map((_,i)=>["parts",i,"rates"])]
   if(workloads.some((workload,i)=>i!==index&&workload.name===name)||paths.some(path=>Object.hasOwn(object(specValue(spec,path)),name)))return spec
   let next=patchSpec(spec,["workloads",index,"name"],name)
   for(const path of paths) {
@@ -66,7 +66,7 @@ export function renameLoadWorkload(spec:Spec,index:number,name:string):Spec {
 export function removeLoadWorkload(spec:Spec,index:number):Spec {
   const name=String(records(spec.workloads)[index]?.name??"")
   let next=patchSpec(spec,["workloads"],records(spec.workloads).filter((_,i)=>i!==index))
-  const paths:(string|number)[][]=[["arrivalDistribution"],["traceRefs"],...records(spec.parts).flatMap((_,i)=>[["parts",i,"rates"],["parts",i,"alpha"]])]
+  const paths:(string|number)[][]=[["arrivalDistribution"],["traceRefs"],["seeds"],["datasetRefs"],...records(spec.parts).map((_,i)=>["parts",i,"rates"])]
   for(const path of paths)if(Object.hasOwn(object(specValue(next,path)),name))next=patchSpec(next,[...path,name],undefined)
   return next
 }

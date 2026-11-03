@@ -71,7 +71,7 @@ test("manual evaluation replacement re-read unlocks deleted and unchanged drafts
 
 test("active evaluation injection table translates wire action names",()=>{
   const container=({children}:{children?:React.ReactNode})=>React.createElement("div",null,children)
-  const active={items:[{name:"run",uid:"uid",stageIndex:1,stagesTotal:1,stage:{id:"base",mode:"autonomous",plannedSeconds:60,injections:[{id:"kill",action:"delete-serving-pod",offsetSeconds:0},{id:"cordon",action:"cordon-delete",offsetSeconds:0},{id:"restore",action:"uncordon",offsetSeconds:10}]}}]}
+  const active={items:[{name:"run",uid:"uid",stageIndex:1,stagesTotal:1,stage:{id:"base",plannedSeconds:60,injections:[{id:"kill",action:"delete-serving-pod",offsetSeconds:0},{id:"cordon",action:"cordon-delete",offsetSeconds:0},{id:"restore",action:"uncordon",offsetSeconds:10}]}}]}
   const modules:Record<string,unknown>={
     "@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/evaluations/active"?active:{items:[]}}),useChillMutation:()=>({})},
     "@/lib/evaluation-active":activeHelpers,
@@ -256,7 +256,7 @@ test("single execution control preserves UID, denied responses and uncertain out
 })
 
 test("read-only active progress hides duplicate stop controls without affecting operations consumers",()=>{
-  const runner=hookRunner(),run={name:"run",uid:"uid",stageIndex:1,stagesTotal:1,stage:{id:"base",mode:"fixed",injections:[{id:"kill",action:"delete-serving-pod",offsetSeconds:0}]}}
+  const runner=hookRunner(),run={name:"run",uid:"uid",stageIndex:1,stagesTotal:1,stage:{id:"base",injections:[{id:"kill",action:"delete-serving-pod",offsetSeconds:0}]}}
   const {EvaluationActive}=loadUI("../features/evaluation-active.tsx",{
     react:runner.react,"@/lib/evaluation-active":activeHelpers,"@/lib/status":{STATUS_AXES},
     "@/lib/client":{useChillQuery:(path:string)=>({data:{items:path.endsWith("/active")?[run]:[{name:"run",uid:"uid",phase:"Running"}]}}),useChillMutation:()=>({})},
@@ -351,4 +351,31 @@ test("pending execution editing uses the collision-free canonical route",()=>{
   const tree=elements(runner.render(action.type as (props:Record<string,unknown>)=>unknown,action.props))
   assert.ok(tree.some(item=>item.type==="a"&&item.props.href==="/experiments/runs/runs/edit?uid=old"))
   assert.ok(tree.some(item=>item.type==="button"&&item.props.children==="삭제"))
+})
+
+test("blackbox preflight displays observed ready targets without changing copied inputs",async()=>{
+  const runner=hookRunner(),writes:unknown[]=[]
+  let mutationIndex=0
+  const spec={question:"external load",target:{components:[{name:"chill",resource:{apiVersion:"apps/v1",kind:"Deployment",namespace:"research",name:"chill"}}]}}
+  const original=structuredClone(spec)
+  const pre={data:undefined as unknown,isPending:false,error:null,mutate:()=>{pre.data={data:{checks:[{id:"target/chill",passed:true}],liveTarget:[{component:"chill",resource:spec.target.components[0].resource,liveImageIDs:["runtime@sha256:changed"],ready:true}]}}}}
+  const send={isPending:false,error:null,mutateAsync:async(input:unknown)=>{writes.push(input);return {data:{name:"run",uid:"new"}}}}
+  const {EvaluationSubmit}=loadUI("../features/evaluation-request.tsx",{
+    react:runner.react,"@/lib/client":{ApiError,useChillMutation:()=>mutationIndex++===0?pre:send,useChillQuery:()=>({refetch:async()=>({})})},
+  })
+  const render=()=>{mutationIndex=0;return elements(runner.render(EvaluationSubmit,{name:"run",spec}))}
+  let tree=render()
+  ;(tree.find(item=>item.props.children==="사전 점검")!.props.onClick as ()=>void)()
+  tree=render()
+  const text=tree.flatMap(item=>item.props.children).filter(value=>typeof value==="string").join(" ")
+  assert.match(text,/runtime@sha256:changed/)
+  assert.match(text,/준비됨/)
+  assert.equal(tree.find(item=>item.props.children==="실험 시작")?.props.disabled,false)
+  assert.equal(tree.some(item=>item.type==="input"),false)
+  ;(tree.find(item=>item.props.children==="실험 시작")!.props.onClick as ()=>void)()
+  await setImmediate()
+  const submitted=writes[0]
+  assert.ok(submitted&&typeof submitted==="object"&&"body" in submitted&&typeof submitted.body==="string")
+  assert.deepEqual(spec,original)
+  assert.deepEqual(JSON.parse(submitted.body),{name:"run",spec})
 })

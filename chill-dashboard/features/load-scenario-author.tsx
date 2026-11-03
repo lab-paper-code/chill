@@ -32,10 +32,11 @@ function PartsPreview({spec}:{spec:Spec}) {
     })}</div></div>
   })}</div>
 }
-function LoadSpecEditor({spec,onChange,onValidityChange}:{spec:Spec;onChange:(spec:Spec)=>void;onValidityChange:(valid:boolean)=>void}) {
+export function LoadSpecEditor({spec,onChange,onValidityChange}:{spec:Spec;onChange:(spec:Spec)=>void;onValidityChange:(valid:boolean)=>void}) {
   const [tab,setTab]=useState("parts"),[invalid,setInvalid]=useState(false),parts=records(spec.parts),workloads=records(spec.workloads)
   const [selectedPart,setSelectedPart]=useState(0)
   const registered=useChillQuery<{desired:{metadata:{name:string;uid:string;generation?:number}}}[]>("v1/workloads?view=summary"),services=registered.data?.map(item=>item.desired.metadata)??[]
+  const datasets=useChillQuery<{items:{metadata:{name:string;uid:string}}[]}>("v1/datasets",{enabled:tab==="inputs"}),choices=datasets.data?.items??[]
   return <div className="grid min-w-0 gap-4"><div className="flex flex-wrap gap-2" role="group" aria-label="부하 편집 항목">{[["parts","구간"],["workloads","서비스·도착 분포"],["inputs","입력 객체"],["json","JSON"]].map(([key,label])=><Button key={key} type="button" disabled={invalid&&key!==tab} aria-pressed={tab===key} variant={tab===key?"default":"outline"} onClick={()=>setTab(key)}>{label}</Button>)}</div>
     {tab==="json"&&<AuthorJSON label="부하 정의 원문" value={spec} onChange={onChange} onValidityChange={valid=>{setInvalid(!valid);onValidityChange(valid)}}/>}
     {tab==="parts"&&<><PartsPreview spec={spec}/>{parts.map((part,index)=>{
@@ -51,7 +52,11 @@ function LoadSpecEditor({spec,onChange,onValidityChange}:{spec:Spec;onChange:(sp
       <Button type="button" variant="outline" onClick={()=>onChange(removeLoadWorkload(spec,index))}>서비스 삭제</Button>
       <EvidencePicker label={`${String(w.name)} 요청 시각 입력`} value={object(spec.traceRefs)[String(w.name)]} onChange={value=>onChange(patchSpec(spec,["traceRefs",String(w.name)],value))}/>
     </fieldset>)}<Button type="button" variant="outline" onClick={()=>onChange(patchSpec(spec,["workloads"],[...workloads,{name:"",uid:""}]))}>서비스 추가</Button></>}
-    {tab==="inputs"&&[["seedRef","난수"],["payloadManifestRef","입력 번들"]].map(([key,label])=><EvidencePicker key={key} label={label} value={spec[key]} onChange={value=>onChange(patchSpec(spec,[key],value))}/>)}
+    {tab==="inputs"&&<><QueryGate query={datasets}>{null}</QueryGate>{workloads.map((w,index)=>{const name=String(w.name??""),ref=object(object(spec.datasetRefs)[name]);return <fieldset key={index} className="grid min-w-0 gap-3 rounded border p-3"><legend className="text-sm">{name||"서비스 미선택"}</legend>
+      <AuthorField label={`${name} 난수 (uint64)`} spec={spec} path={["seeds",name]} onChange={onChange}/>
+      <AuthorSelect label={`${name} 데이터셋`} value={String(ref.uid??"")} onChange={uid=>{const item=choices.find(item=>item.metadata.uid===uid);onChange(patchSpec(spec,["datasetRefs",name],item?{...ref,name:item.metadata.name,uid:item.metadata.uid}:undefined))}}><option value="">미선택</option>{!!ref.uid&&!choices.some(item=>item.metadata.uid===ref.uid)&&<option value={String(ref.uid)}>{String(ref.name)} · 저장된 참조</option>}{choices.map(item=><option key={item.metadata.uid} value={item.metadata.uid}>{item.metadata.name}</option>)}</AuthorSelect>
+      <AuthorField label={`${name} 데이터셋 이름`} spec={spec} path={["datasetRefs",name,"name"]} onChange={onChange}/><AuthorField label={`${name} 데이터셋 UID`} spec={spec} path={["datasetRefs",name,"uid"]} onChange={onChange}/>
+    </fieldset>})}</>}
   </div>
 }
 export function LoadEditor({source,editing,onSaved,onConfirmed}:{source?:LoadScenario;editing:boolean;onSaved:()=>Promise<unknown>;onConfirmed?:(value:{name:string;uid:string})=>void}) {
