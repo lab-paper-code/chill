@@ -435,3 +435,13 @@ test("operations board keeps independent axes, idle summary, service placement a
   assert.match(disconnected,/서비스 영향<\/span><strong>미확인/)
   assert.match(disconnected,/성능 판정<\/span><strong>판정 불가/)
 })
+
+test("completed DOM admission and deletion actions display completion without rewriting response status",()=>{
+  for(const [kind,status] of [["occupancy-post","Accepted"],["occupancy-delete","DeletionRequested"]]) {
+    const action={id:kind,kind,node:{name:"node",uid:"node-uid"},workloadUID:"",status,startedAt:at,completedAt:at,expectedSeconds:null,expectedSource:null,phase:"completed" as const,result:{status}}
+    assert.equal(displayHelpers.actionEventResult(action),"완료")
+    assert.equal(displayHelpers.isActionFailure(action),false)
+    assert.equal(displayHelpers.isMeasurementPrecheck(action),false)
+    assert.equal(action.result.status,status)
+  }
+})

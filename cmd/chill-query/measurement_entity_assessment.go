@@ -214,8 +214,11 @@ func assessOperationCost(
 
 func (o *measurementService) projectDispatchOccupancy(
 	ctx context.Context, cr api.DispatchOccupancyMeasurement,
-) (httpapi.MeasurementProjection, error) {
-	projection := httpapi.ProjectDispatchOccupancyMeasurement(cr)
+) (dispatchOccupancyProjection, error) {
+	projection := dispatchOccupancyProjection{
+		MeasurementProjection:     httpapi.ProjectDispatchOccupancyMeasurement(cr),
+		DispatchOccupancyProgress: occupancyProgress(cr),
+	}
 	input := queryapi.MeasurementAssessmentInput{
 		Execution:        &queryapi.MeasurementExecution{Phase: string(cr.Status.Phase), Generation: cr.Generation},
 		ExecutionCurrent: true, Attempted: true,
@@ -260,12 +263,21 @@ func (o *measurementService) projectDispatchOccupancy(
 		}
 		input.Available = true
 		input.Facts = append(input.Facts, "Retained occupancy: "+ref.Store+"/"+ref.Key)
-		matches := record.SchemaVersion == servingkube.DispatchOccupancySchema &&
-			record.Node.Name == cr.Spec.Node && record.Node.UID != "" &&
-			ref.Key == servingkube.DispatchOccupancyPrefix+record.Node.UID+"/"+string(cr.UID)+".json" &&
-			reflect.DeepEqual(record.Conditions, cr.Spec) && record.Batch == int(cr.Spec.Batch) &&
-			cr.Status.PerRequestNanos != nil && record.PerRequestNanos == *cr.Status.PerRequestNanos
+		matches := occupancyRecordMatches(cr, record)
 		input.Accepted = matches && record.Verdict == measurementVerdictAccepted
+		if matches {
+			projection.record = &record
+			projection.ProfileID = record.ProfileID
+			projection.D = &queryapi.OccupancyValue{
+				PerRequestNanos: &record.PerRequestNanos, Throughput: finiteOccupancyValue(record.Throughput),
+				IdleFraction: finiteOccupancyValue(record.IdleFraction), Verdict: record.Verdict,
+			}
+			if !record.Window.Start.IsZero() && !record.Window.End.IsZero() {
+				projection.MeasurementWindow = &queryapi.OccupancyMeasurementWindow{
+					Start: record.Window.Start, End: record.Window.End,
+				}
+			}
+		}
 		if !matches {
 			input.Problems = append(input.Problems, queryapi.MeasurementReason{
 				Code: "OccupancyEvidenceMismatch", Message: "Stored occupancy does not match this request and status",
@@ -304,6 +316,15 @@ func (o *measurementService) projectDispatchOccupancy(
 	var err error
 	projection.Assessment, err = json.Marshal(queryapi.AssessMeasurement(input))
 	return projection, err
+}
+
+func occupancyRecordMatches(cr api.DispatchOccupancyMeasurement, record servingkube.DispatchOccupancyRecord) bool {
+	return record.SchemaVersion == servingkube.DispatchOccupancySchema &&
+		record.Node.Name == cr.Spec.Node && record.Node.UID != "" &&
+		cr.Status.Result.Key == servingkube.DispatchOccupancyPrefix+record.Node.UID+"/"+string(cr.UID)+".json" &&
+		reflect.DeepEqual(record.Conditions, cr.Spec) && record.Batch == int(cr.Spec.Batch) &&
+		(cr.Spec.Conditions.ProfileID == "" || record.ProfileID == cr.Spec.Conditions.ProfileID) &&
+		cr.Status.PerRequestNanos != nil && record.PerRequestNanos == *cr.Status.PerRequestNanos
 }
 
 type profileProjection struct {

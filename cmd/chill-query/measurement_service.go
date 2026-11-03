@@ -126,8 +126,8 @@ func (o *measurementService) projectOperationCost(
 
 func (o *measurementService) listDispatchOccupancies(
 	ctx context.Context, namespace string,
-) (httpapi.MeasurementProjectionList, error) {
-	result := httpapi.MeasurementProjectionList{Items: []httpapi.MeasurementProjection{}}
+) (dispatchOccupancyProjectionList, error) {
+	result := dispatchOccupancyProjectionList{Items: []dispatchOccupancyProjection{}}
 	if err := o.namespace(namespace); err != nil {
 		return result, err
 	}
@@ -139,7 +139,7 @@ func (o *measurementService) listDispatchOccupancies(
 	for _, cr := range list.Items {
 		projection, err := o.projectDispatchOccupancy(ctx, cr)
 		if err != nil {
-			return httpapi.MeasurementProjectionList{}, err
+			return dispatchOccupancyProjectionList{}, err
 		}
 		result.Items = append(result.Items, projection)
 	}
@@ -148,13 +148,13 @@ func (o *measurementService) listDispatchOccupancies(
 
 func (o *measurementService) getDispatchOccupancy(
 	ctx context.Context, namespace, name string,
-) (httpapi.MeasurementProjection, error) {
+) (dispatchOccupancyProjection, error) {
 	if err := o.namespace(namespace); err != nil {
-		return httpapi.MeasurementProjection{}, err
+		return dispatchOccupancyProjection{}, err
 	}
 	var cr api.DispatchOccupancyMeasurement
 	if err := o.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &cr); err != nil {
-		return httpapi.MeasurementProjection{}, err
+		return dispatchOccupancyProjection{}, err
 	}
 	return o.projectDispatchOccupancy(ctx, cr)
 }

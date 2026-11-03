@@ -149,3 +149,59 @@ func TestMeasurementSummaryOperationalPayloads(t *testing.T) {
 		})
 	}
 }
+
+func TestOccupancySummaryRetainsSignedTuplesWithinDecoderBudget(t *testing.T) {
+	d := int64(-9223372036854775807)
+	throughput, idle := 52.24, 0.012
+	cells := make([]MeasurementCoverageCell, 390)
+	for i := range cells {
+		cells[i].ID = fmt.Sprintf("cell-%d", i)
+		cells[i].Occupancy = []MeasurementOccupancy{}
+	}
+	// The retained operating snapshot has 150 DOM requests across 390 cells.
+	// Even if every request has a different physical tuple, do not fan out
+	// inventory nodes and profile batches into invented unmeasured entries.
+	for request := range 150 {
+		cell, node, batch := request%len(cells), request%3, request%6
+		cells[cell].Occupancy = append(cells[cell].Occupancy, MeasurementOccupancy{
+			Node:      MeasurementIdentity{Name: fmt.Sprintf("node-%d", node), UID: fmt.Sprintf("physical-node-uid-%d", node)},
+			ProfileID: fmt.Sprintf("profile-%d", cell), Batch: batch + 1, State: "present",
+			Request:  &MeasurementIdentity{Name: fmt.Sprintf("occ-%d", request), UID: fmt.Sprintf("request-uid-%d", request)},
+			D:        &OccupancyValue{PerRequestNanos: &d, Throughput: &throughput, IdleFraction: &idle, Verdict: "Accepted"},
+			Evidence: &OccupancyEvidence{Store: "evidence", Key: fmt.Sprintf("serving/dispatch-occupancy/node-%d/request-%d.json", node, request), Size: 12345},
+		})
+	}
+	raw, err := json.Marshal(map[string]any{"cells": cells})
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary := assertSummaryRoundTrip(t, raw, false)
+	restored := restoreSummary(t, summary)
+	var count func(any) (int, int)
+	count = func(value any) (int, int) {
+		nodes, depth := 1, 1
+		child := func(entry any) {
+			n, d := count(entry)
+			nodes += n
+			if d+1 > depth {
+				depth = d + 1
+			}
+		}
+		switch item := value.(type) {
+		case map[string]any:
+			for _, entry := range item {
+				child(entry)
+			}
+		case []any:
+			for _, entry := range item {
+				child(entry)
+			}
+		}
+		return nodes, depth
+	}
+	nodes, depth := count(restored)
+	if nodes+230362 > 2_000_000 || depth > 64 || len(summary) > 256<<10 {
+		t.Fatalf("occupancy exceeds response/decoder budget: bytes=%d nodes=%d depth=%d", len(summary), nodes, depth)
+	}
+	t.Logf("390 cells, 150 recorded DOM tuples: raw=%d summary=%d expanded nodes=%d depth=%d", len(raw), len(summary), nodes, depth)
+}

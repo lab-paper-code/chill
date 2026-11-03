@@ -181,7 +181,7 @@ func TestPreflightNamedDetailsRequireGetSAR(t *testing.T) {
 		{http.MethodGet, "dispatch-occupancy-measurements/preflight",
 			"dispatchoccupancymeasurements", "get", resourceNamedPreflight},
 		{http.MethodGet, "batch-energy-optimizations/preflight", "batchenergyoptimizations", "get", resourceNamedPreflight},
-		{http.MethodPost, "batch-energy-optimizations/preflight", "batchenergyoptimizations", "list", ""},
+		{http.MethodPost, "batch-energy-optimizations/preflight", "batchenergyoptimizations", queryListVerb, ""},
 	} {
 		t.Run(route.method+"/"+route.path, func(t *testing.T) {
 			authorizer := queryTestAuthorizer(t)
@@ -225,7 +225,7 @@ func TestListOnlyCallerCannotReadPreflightNamedDetails(t *testing.T) {
 			authorizer.Client.(*kubefake.Clientset).PrependReactor("create", "subjectaccessreviews",
 				func(action ktesting.Action) (bool, runtime.Object, error) {
 					spec := action.(ktesting.CreateAction).GetObject().(*authz.SubjectAccessReview).Spec
-					allowed := spec.ResourceAttributes == nil || spec.ResourceAttributes.Verb == "list"
+					allowed := spec.ResourceAttributes == nil || spec.ResourceAttributes.Verb == queryListVerb
 					return true, &authz.SubjectAccessReview{
 						Status: authz.SubjectAccessReviewStatus{Allowed: allowed},
 					}, nil
@@ -241,5 +241,34 @@ func TestListOnlyCallerCannotReadPreflightNamedDetails(t *testing.T) {
 				t.Fatalf("list-only caller read named detail: status=%d backend calls=%d", response.Code, calls)
 			}
 		})
+	}
+}
+
+func TestCoverageRequiresOccupancyListGrant(t *testing.T) {
+	authorizer := queryTestAuthorizer(t)
+	seen := false
+	authorizer.Client.(*kubefake.Clientset).PrependReactor("create", "subjectaccessreviews",
+		func(action ktesting.Action) (bool, runtime.Object, error) {
+			attrs := action.(ktesting.CreateAction).GetObject().(*authz.SubjectAccessReview).Spec.ResourceAttributes
+			denied := attrs != nil && attrs.Resource == "dispatchoccupancymeasurements"
+			if denied {
+				seen = true
+				if attrs.Verb != queryListVerb || attrs.Namespace != queryAllowedNamespace || attrs.Name != "" {
+					t.Fatalf("invalid occupancy grant: %+v", attrs)
+				}
+			}
+			return true, &authz.SubjectAccessReview{Status: authz.SubjectAccessReviewStatus{Allowed: !denied}}, nil
+		})
+	calls := 0
+	handler := authenticatedQueryHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }),
+		authorizer, options{servingNamespace: queryAllowedNamespace, requestTimeout: time.Second})
+	for _, suffix := range []string{"", "?view=summary"} {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/allowed/measurement-coverage"+suffix, nil)
+		request.Header.Set("Authorization", "Bearer allowed")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusForbidden || calls != 0 || !seen {
+			t.Fatalf("DOM list permission bypassed: status=%d calls=%d seen=%t", response.Code, calls, seen)
+		}
 	}
 }

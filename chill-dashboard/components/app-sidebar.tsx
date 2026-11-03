@@ -4,7 +4,7 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { BrainCircuit, FlaskConical, History, Layers, Ruler, SlidersHorizontal } from "lucide-react"
-import { Sidebar, SidebarContent, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
+import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
 import { BrandMark } from "@/components/brand"
 
 // Every screen belongs to exactly one section by its longest path prefix.
@@ -28,11 +28,15 @@ export function AppSidebar({...props}:React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname()
   const current = sectionOf(pathname)
   const {setOpenMobile} = useSidebar()
+  function menuItem(item:typeof navigation[number]) {
+    const active=item===current
+    return <SidebarMenuItem key={item.url} className={item.url==="/settings"?"mt-6 border-t pt-3":undefined}><SidebarMenuButton asChild isActive={active} className="h-11 gap-3 text-base data-[active=true]:bg-card data-[active=true]:font-semibold data-[active=true]:text-primary data-[active=true]:shadow-[inset_3px_0_0_var(--primary)] dark:data-[active=true]:bg-sidebar-accent"><Link href={item.url} aria-current={active?"page":undefined} onClick={()=>setOpenMobile(false)}><item.icon/><span>{item.title}</span></Link></SidebarMenuButton></SidebarMenuItem>
+  }
   return <Sidebar collapsible="offcanvas" {...props}>
     <SidebarHeader className="px-3 pt-4"><Link href="/" onClick={() => setOpenMobile(false)} className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-lg font-bold tracking-tight"><BrandMark className="size-6 text-primary" />CHILL</Link></SidebarHeader>
-    <SidebarContent className="px-2 pt-2"><nav aria-label="메뉴"><SidebarMenu className="gap-1">{navigation.map(item => {
-      const active = item === current
-      return <SidebarMenuItem key={item.url} className={item.url==="/settings"?"mt-6 border-t pt-3":undefined}><SidebarMenuButton asChild isActive={active} className="h-11 gap-3 text-base data-[active=true]:bg-card data-[active=true]:font-semibold data-[active=true]:text-primary data-[active=true]:shadow-[inset_3px_0_0_var(--primary)] dark:data-[active=true]:bg-sidebar-accent"><Link href={item.url} aria-current={active ? "page" : undefined} onClick={() => setOpenMobile(false)}><item.icon /><span>{item.title}</span></Link></SidebarMenuButton></SidebarMenuItem>
-    })}</SidebarMenu></nav></SidebarContent>
+    <SidebarContent className="px-2 pt-2"><nav aria-label="메뉴">
+      <SidebarGroup className="p-0" aria-label="운영 영역"><SidebarGroupLabel>운영 영역</SidebarGroupLabel><SidebarMenu className="gap-1">{navigation.slice(0,3).map(item=>menuItem(item))}</SidebarMenu></SidebarGroup>
+      <SidebarMenu className="mt-4 gap-1">{navigation.slice(3).map(item=>menuItem(item))}</SidebarMenu>
+    </nav></SidebarContent>
   </Sidebar>
 }

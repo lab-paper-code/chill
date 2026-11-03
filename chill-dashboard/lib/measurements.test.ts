@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { runFailure, runStatusObject, exactRun, safeMeasurementReturn, significant, evidenceLocations, isProjectionMeasurementKind, measurementHref, measurementListHref, measurementPath, measurementReason, measurementUIDMismatch, occupancyDuration, occupancySupply, occupancyThroughput, occupancyReason, operationDuration, operationWallEnergy, operationSteps } from "./measurements.ts"
+import { runFailure, runStatusObject, exactRun, safeMeasurementReturn, significant, evidenceLocations, isProjectionMeasurementKind, measurementHref, measurementListHref, measurementPath, measurementReason, measurementUIDMismatch, occupancyDuration, occupancyThroughput, occupancyReason, operationDuration, operationWallEnergy, operationSteps } from "./measurements.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
 import { parseSchedulerJSON } from "./scheduler.ts"
@@ -68,6 +68,7 @@ const operation:OperationCostMeasurement = {
 }
 const occupancy:DispatchOccupancyMeasurement = {
   kind:"DispatchOccupancyMeasurement",metadata,node:"node-1",references:{...references,cr:{...references.cr,kind:"DispatchOccupancyMeasurement"},evidence:[]},
+  phase:"Complete",d:null,
   conditions:{workload:"demo",batchEnergyOptimization:"beo",batch:4,warmupSeconds:2,durationSeconds:10,workers:8},status:{phase:"Complete"},
 }
 
@@ -81,7 +82,13 @@ test("measurement routes accept only the two projection kinds and keep UI querie
       for (const search of ["?namespace=other","?uid=uid-1","?workload=uid","?row=key","?limit=10","?offset=0","?q=sample"]) {
         assert.throws(() => relayPlan("GET",path.split("/"),search,config),/DashboardQueryInvalid/)
       }
-      for (const method of ["POST","PUT","DELETE"]) assert.throws(() => relayPlan(method,path.split("/"),"",config),/DashboardMethodNotAllowed/)
+      for (const method of ["POST","PUT","DELETE"]) {
+        if(kind==="dispatch-occupancy-measurements"&&!name&&method==="POST") {
+          assert.equal(relayPlan(method,path.split("/"),"",config).kind,"mutation")
+        } else if(kind==="dispatch-occupancy-measurements"&&name&&method==="DELETE") {
+          assert.equal(relayPlan(method,path.split("/"),"?uid=uid-1",config).kind,"mutation")
+        } else assert.throws(() => relayPlan(method,path.split("/"),"",config),/DashboardMethodNotAllowed/)
+      }
     }
     const list=new URL(measurementListHref(kind,"a b"),"http://local"),detail=new URL(measurementHref(kind,{namespace:"a b",name:"a:b",uid:"u&1"}),"http://local")
     assert.equal(list.pathname,"/measurements/results")
@@ -154,17 +161,13 @@ test("operation totals require the complete plan, accepted energy, and nonnegati
   assert.deepEqual(operationTotals({...complete,status:{steps:[...complete.status.steps!,complete.status.steps![0]]}}),{durationNanos:null,wallJoules:null})
 })
 
-test("occupancy preserves missing and zero d, string throughput, unspecified supply and logical location identity", () => {
+test("occupancy preserves missing and zero d, string throughput and logical location identity", () => {
   assert.equal(occupancyDuration(occupancy.status.perRequestNanos),"—")
   assert.equal(occupancyDuration(0),"0.00")
   assert.equal(occupancyDuration(3807875n),"3.81")
   assert.equal(occupancyThroughput("0.0000012300"),"0.00000123")
   assert.equal(occupancyThroughput("0"),"0")
   for (const value of [undefined,""]) assert.equal(occupancyThroughput(value),"—")
-  assert.equal(occupancySupply(occupancy.conditions.supplyMode),"기록되지 않았어요")
-  assert.equal(occupancySupply("closed-loop"),"고정 동시 요청")
-  assert.equal(occupancySupply("poisson"),"포아송 공급")
-  assert.equal(occupancySupply("new-mode"),"new-mode")
   assert.deepEqual(evidenceLocations([{store:"a",key:"k"},{store:"b",key:"k"},{store:"a",key:"k"}],{store:"b",key:"k"}),[{store:"a",key:"k"},{store:"b",key:"k"}])
   assert.deepEqual(evidenceLocations([]),[])
 })

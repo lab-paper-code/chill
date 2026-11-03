@@ -13,6 +13,7 @@ import * as coverageHelpers from "./measurement-coverage.ts"
 import * as assessment from "./measurement-assessment.ts"
 import * as measurements from "./measurements.ts"
 import * as requestHelpers from "./measurement-request.ts"
+import * as occupancy from "./dispatch-occupancy.ts"
 
 const require=createRequire(import.meta.url)
 const container=({children}:{children?:React.ReactNode})=>React.createElement("div",null,children)
@@ -97,10 +98,12 @@ test("paged request defaults and coverage timestamps render second-page summary 
       "@/lib/client":{...pagedClient,useSession:()=>({token:"test",config:{namespace:"ns"}}),useChillQuery:(path:string)=>({data:path.startsWith("v1/workloads")?[]:{items:[]},error:null}),useChillMutation:()=>({isPending:false})},
       "@/lib/measurement-summary":summary,"@/lib/measurement-coverage":coverageHelpers,"@/lib/measurement-assessment":assessment,
       "@/lib/measurements":measurements,"@/lib/measurement-request":requestHelpers,
+      "@/lib/dispatch-occupancy":occupancy,
       "@/components/read-region":region,"@/components/screen":{Screen:container},
       "@/components/measurement-navigation":{MeasurementNavigation:()=>null,MeasurementEvidenceChecks:()=>null},
       "@/components/ui/button":{Button:container},"@/components/ui/input":{Input:()=>null},
       "@/features/measurement-coverage":{useCoverageInventory:()=>({data:{classes:[],models:[]}}),useMeasurementCoverage:()=>({}),useModelCompatibility:()=>({})},
+      "@/features/dispatch-occupancy-request":{MeasurementKindSelector:()=>null},
     }
     let element:React.ReactElement
     if(kind==="request") {

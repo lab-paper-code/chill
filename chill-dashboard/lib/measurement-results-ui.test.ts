@@ -10,6 +10,7 @@ import * as scheduler from "./scheduler.ts"
 import * as status from "./status.ts"
 import * as coverage from "./measurement-coverage.ts"
 import * as requests from "./measurement-request.ts"
+import * as occupancyHelpers from "./dispatch-occupancy.ts"
 import type { MeasurementAssessment, OperationCostMeasurement, ResultRow } from "./read-types.ts"
 
 type Element={type:unknown;props:Record<string,unknown>}
@@ -44,7 +45,8 @@ function harness(search:string,respond:(path:string)=>unknown) {
     "lucide-react":{TriangleAlert:()=>null},
     "next/link":{default:"a"},
     "next/navigation":{useSearchParams:()=>params,useRouter:()=>({push:(value:string)=>pushes.push(value),replace:(value:string)=>replacements.push(value)})},
-    "@/lib/client":{useSession:()=>({config:{namespace:"system"}}),useChillQuery:(path:string)=>{paths.push(path);return {data:respond(path),error:null,isPending:false,isFetching:false,dataUpdatedAt:1,refetch:()=>{refreshes.push(path)}}}},
+    "@/lib/client":{useSession:()=>({config:{namespace:"system"}}),useChillMutation:()=>({isPending:false,error:null}),useChillQuery:(path:string)=>{paths.push(path);return {data:respond(path),error:null,isPending:false,isFetching:false,dataUpdatedAt:1,refetch:()=>{refreshes.push(path)}}}},
+    "@/lib/dispatch-occupancy":occupancyHelpers,
     "@/lib/measurements":measurements,"@/lib/operation-cost":costs,"@/lib/measurement-assessment":assessment,"@/lib/scheduler":scheduler,"@/lib/status":status,
     "@/components/status-cell":{StatusCell:"status-cell"},
     "@/components/screen":{Screen:"main",Facts:"facts"},
@@ -52,6 +54,7 @@ function harness(search:string,respond:(path:string)=>unknown) {
     "@/components/data-table":{DataTable:"data-table",useServerTable:()=>({query:new URLSearchParams({limit:"25",offset:"0"}),pagination:{pageIndex:0,pageSize:25},sorting:[]})},
     "@/components/ui/button":{Button:"button"},"@/components/ui/input":{Input:"input"},
     "@/components/ui/sheet":{Sheet:"sheet",SheetContent:"sheet-content",SheetHeader:"sheet-header",SheetTitle:"sheet-title",SheetDescription:"sheet-description"},
+    "@/components/ui/dialog":{Dialog:"dialog",DialogContent:"dialog-content",DialogHeader:"dialog-header",DialogTitle:"dialog-title",DialogDescription:"dialog-description"},
     "@/components/measurement-navigation":{MeasurementNavigation:"measurement-nav",measurementStates:{usable:"측정 충족",problem:"문제",unknown:"미확인"}},
     "@/features/measurement-plans":{AssessmentDetails:"assessment-details",ResultRows:"result-rows"},
     "@/features/measurement-coverage":{MeasurementFilters:"measurement-filters"},
@@ -161,7 +164,7 @@ test("throughput renders actual batch values with current use separate from inde
 
 test("selected occupancy keeps valid zero distinct from absence and places originals after core values",()=>{
   for(const recorded of [true,false]) {
-    const occupancy={...measurement,kind:"DispatchOccupancyMeasurement",conditions:{workload:"service",batchEnergyOptimization:"request",batch:1,warmupSeconds:1,durationSeconds:10,workers:1},status:recorded?{perRequestNanos:0n,throughput:"0"}:{}}
+    const occupancy={...measurement,kind:"DispatchOccupancyMeasurement",conditions:{workload:"service",batchEnergyOptimization:"request",batch:1,warmupSeconds:1,durationSeconds:10,workers:1},phase:"Complete",d:recorded?{perRequestNanos:0n,throughput:0,idleFraction:null,verdict:"Accepted"}:null,status:{perRequestNanos:9999n,throughput:"9999"}}
     const h=harness("kind=dispatch-occupancy&namespace=ns&measurement=cost&uid=original",path=>path.endsWith("/cost")?occupancy:{items:[occupancy]})
     const tree=projection(h)
     const content=elements(tree).find(element=>typeof element.type==="function"&&element.props.data===occupancy)!
@@ -173,6 +176,7 @@ test("selected occupancy keeps valid zero distinct from absence and places origi
     const cells=elements(values).filter(element=>element.type==="td")
     assert.equal(text(cells[0]),recorded?"0.00":"미제공")
     assert.equal(text(cells[1]),recorded?"0":"미제공")
+    assert.doesNotMatch(text(values),/공급 방식/)
     assert.ok(children.indexOf(core)<children.findIndex(element=>element.type==="source-json"))
     assert.ok(children.filter(element=>element.type==="source-json").every(element=>element.props.inline===true))
     assert.equal(elements(tree).filter(element=>element.type==="sheet").length,1)
@@ -206,7 +210,7 @@ test("pending run evidence is not presented as a connection failure",()=>{
 })
 
 test("failed occupancy values remain visible only as unverified raw data",()=>{
-  const failed={...measurement,kind:"DispatchOccupancyMeasurement",assessment:{...accepted,displayStatus:"problem"},conditions:{workload:"service"},status:{phase:"Failed",perRequestNanos:1880000,throughput:"87.1",reason:"evidence missing"}}
+  const failed={...measurement,kind:"DispatchOccupancyMeasurement",assessment:{...accepted,displayStatus:"problem"},conditions:{workload:"service"},phase:"Failed",d:{perRequestNanos:1880000,throughput:87.1,idleFraction:null,verdict:""},status:{phase:"Failed",perRequestNanos:1880000,throughput:"87.1",reason:"evidence missing"}}
   const h=harness("kind=dispatch-occupancy&namespace=ns",path=>path.endsWith("dispatch-occupancy-measurements")?{items:[failed]}:undefined)
   const tree=projection(h),table=elements(tree).find(element=>element.type==="data-table")!
   const columns=table.props.columns as Column[]
@@ -351,4 +355,19 @@ test("R18 request status retains its own catalog identity instead of same-target
   const tree=load("../features/measurement-plans.tsx",h.modules).MeasurementPlanDetails({namespace:"ns",name:"request"})
   const status=elements(tree).find(element=>element.type==="measurement-status")!
   assert.equal(status.props.assessment,own)
+})
+
+test("a removed pending occupancy detail stops polling without stopping the collection",()=>{
+  const running={...measurement,kind:"DispatchOccupancyMeasurement",conditions:{workload:"service"},phase:null,d:null,status:{}}
+  const h=harness("kind=dispatch-occupancy&namespace=ns&measurement=cost&uid=original",()=>undefined)
+  const predicates:((data:unknown,error?:{status:number}|null)=>boolean)[]=[]
+  h.modules["@/lib/client"].useChillQuery=(path:string,options?:{poll?:(data:unknown,error?:{status:number}|null)=>boolean})=>{
+    if(options?.poll)predicates.push(options.poll)
+    return {data:path.endsWith("/cost")?running:{items:[running]},error:null,isPending:false,isFetching:false,dataUpdatedAt:1,refetch:()=>{}}
+  }
+  projection(h)
+  assert.equal(predicates[0]({items:[running]}),true)
+  assert.equal(predicates[1](running),true)
+  assert.equal(predicates[1](running,{status:404}),false)
+  assert.equal(predicates[1](running,{status:503}),true)
 })

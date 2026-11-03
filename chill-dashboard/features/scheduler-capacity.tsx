@@ -7,6 +7,7 @@ import { useChillQuery, useSession, type ApiError } from "@/lib/client"
 import type { SchedulerSettings, WireInteger } from "@/lib/read-types"
 import { capacityComparison, capacityFields, capacityPercentile, capacityPolling, capacityRate, capacityReason, capacityRows, capacityStatus, selectedCapacityRow, type CapacityJudgment, type CapacityRow, type CapacityView } from "@/lib/capacity"
 import { nanosToMilliseconds, parseSchedulerJSON } from "@/lib/scheduler"
+import { occupancyRequestHref } from "@/lib/dispatch-occupancy"
 import { DataTable } from "@/components/data-table"
 import { QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/read-region"
 import { Facts } from "@/components/screen"
@@ -26,10 +27,11 @@ function Judgments({title,rows,passing,empty}:{title:string;rows?:CapacityJudgme
 
 function CapacityDetails({row,settings,capacityAt}:{row:CapacityRow;settings:{data?:SchedulerSettings;error:ApiError|null;isPending:boolean;isFetching:boolean;dataUpdatedAt:number;refetch:()=>unknown};capacityAt:number}) {
   const input=row.input,allocation=input.allocation,d=input.dispatchOccupancy
+  const {config}=useSession()
   return <div className="min-w-0 space-y-6 [&_dd]:break-all">
     <section className="space-y-3"><h3 className="font-semibold">결과</h3><StatusBadge tone={row.status==="Built"?"ok":row.status==="CapacityRejected"?"warn":"idle"}>{capacityStatus(row.status)}</StatusBadge><p>{capacityReason(row.reason)}</p>{row.previous&&<p>이전 계산 결과 · 다시 계산 중</p>}
       <Facts items={[["행 key",row.key],["처리량 상한",row.status==="CapacityPending"&&row.mu===0?"값 없음":`${row.mu} req/s`],["처리 용량",capacityRate(row.kappa)],["가장 짧은 배치 실행",value(row.minimumServiceNanos,"ns")],["계산 시각",at(row.builtAt)],["계산 경과",nanos(row.elapsedNanos)],["용량 조회 시각",checked(capacityAt)]]}/>
-      {row.reason==="MissingDispatchOccupancy"&&<Link href="/measurements/results?kind=dispatch-occupancy">분배 처리시간 측정</Link>}
+      {row.reason==="MissingDispatchOccupancy"&&<Link href={occupancyRequestHref(input.profileID.split("/")[0]||config.namespace,{profileID:input.profileID,node:input.node.name,nodeUID:input.node.uid,powerMode:input.powerMode,workloadUID:input.workloadUID,batch:String(input.maxBatch)})}>d 측정 요청</Link>}
     </section>
     <section className="space-y-3"><h3 className="font-semibold">입력</h3>
       <Facts items={[["워크로드 UID",input.workloadUID],["SLO 백분위",`p${input.slo.percentile}`],["SLO 목표",nanos(input.slo.targetLatencyNanos)],["Node 이름 / UID",`${input.node.name} / ${input.node.uid}`],["전력모드",input.powerMode],["프로파일 ID",input.profileID],["GPU UUID",allocation.gpuUUID??"값 없음"],["메모리",value(allocation.memoryBytes,"bytes")],["최대 배치",value(input.maxBatch,"건/batch")],...capacityFields.map(field=>[field.label,field.key==="capacityWindowNanos"?`${input[field.key]} ns (${Number(input[field.key])/1e9} s)`:value(input[field.key],field.unit)] as [string,string])]}/>

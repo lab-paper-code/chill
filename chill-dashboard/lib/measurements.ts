@@ -96,7 +96,7 @@ export function operationWallEnergy(value?:unknown,maximumFractionDigits?:number
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? `${maximumFractionDigits===undefined?significant(value):value.toLocaleString("ko-KR",{maximumFractionDigits})} J` : "품질 경고·사용 확인 필요"
 }
 export const occupancyThroughput = (value?:string) => !value || !/^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value) || !Number.isFinite(Number(value)) || Number(value) < 0 ? "—" : significant(Number(value))
-export function occupancyReason(data:DispatchOccupancyMeasurement) {
+export function occupancyReason(data:Pick<DispatchOccupancyMeasurement,"status"|"assessment">) {
   const {perRequestNanos:d,throughput:x,reason}=data.status
   if((typeof d==="number"||typeof d==="bigint")&&d<0)return "점유시간 음수"
   if(d!==undefined&&occupancyDuration(d)==="—")return "점유시간 오류"
@@ -149,7 +149,6 @@ export function safeMeasurementReturn(value:string|null, fallback="/measurements
   } catch { return fallback }
 }
 export const exactRun = (rows:ProfilingRun[],namespace:string,name:string,uid:string|null) => rows.find(run=>run.namespace===namespace&&run.name===name&&(!uid||run.uid===uid))
-export const occupancySupply = (value?:string) => value === "closed-loop" ? "고정 동시 요청" : value === "poisson" ? "포아송 공급" : value || "기록되지 않았어요"
 export function evidenceLocations(evidence:MeasurementEvidenceLocation[], result?:MeasurementEvidenceLocation) {
   return [...evidence,...(result ? [result] : [])].filter((location,index,all) => all.findIndex(other => other.store === location.store && other.key === location.key) === index)
 }

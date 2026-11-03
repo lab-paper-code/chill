@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 const coverageStates=coverageMeasurementStates
 import { executionPathLabel, measurementReasonSummary, formatMeasurementNumber as number, formatMeasurementTime } from "@/lib/measurements"
+import { coverageOccupancyRequestHref, occupancyStates, occupancySummary, occupancyMilliseconds, occupancyReasonLabel, occupancyResultHref, occupancyRequestHref } from "@/lib/dispatch-occupancy"
 import "./measurement-coverage.css"
 async function readPage<T>(path:string,token:string,signal:AbortSignal):Promise<T> {
   const response=await relay(path,token,signal)
@@ -70,11 +71,11 @@ export function MeasurementFilters({axes,states=true,dates=false,editable=false}
 }
 
 export function useMeasurementCoverage(namespace:string,enabled=true) {
-  const {token}=useSession(),params=useSearchParams()
+  const {token,config}=useSession(),params=useSearchParams()
   const query=new URLSearchParams({view:"summary"})
   for(const key of ["batches","node"]) {const value=params.get(key);if(value)query.set(key,value)}
   const path=`v1/namespaces/${encodeURIComponent(namespace)}/measurement-coverage${query.size?`?${query}`:""}`
-  const result=useQuery<MeasurementCoverageResponse,ApiError>({queryKey:["chill",path],enabled,retry:warmingRetry,retryDelay:warmingDelay,refetchOnMount:"always",queryFn:({signal})=>readPage<MeasurementCoverageResponse>(path,token,signal)})
+  const result=useQuery<MeasurementCoverageResponse,ApiError>({queryKey:["chill",path],enabled,retry:warmingRetry,retryDelay:warmingDelay,refetchOnMount:"always",refetchInterval:query=>query.state.error&&[401,403].includes(query.state.error.status)?false:query.state.data?.cells.some(cell=>cell.occupancy?.some(row=>row.state==="measuring"))?config.pollIntervalMs:false,queryFn:({signal})=>readPage<MeasurementCoverageResponse>(path,token,signal)})
   return {...result,data:result.error?undefined:result.data}
 }
 export function CoverageError({error,retry}:{error:ApiError|null;retry:()=>void}) {
@@ -182,9 +183,10 @@ function CoverageCell({cell,inventory,selected,select}:{cell:MeasurementCoverage
   const progress=coverageProgress(cell)
   const state=coverageMeasurementStatus(cell,inventory),label=state==="unknown"&&cell.support.verdict==="Unknown"?"지원 여부 미확인":coverageStates[state]
   const measured=progress?.measured.filter(batch=>progress.target.includes(batch)).length??0
-  return <button data-coverage-cell={cell.id} className={`coverage-cell ${cell.support.verdict!=="Compatible"?"coverage-cell-unconfirmed":""}`} aria-pressed={selected} aria-controls="coverage-selected-condition" aria-label={`${deviceLabel(cell.deviceClass.name)} ${cell.powerMode} ${executionPathLabel(cell.executionPath)} ${label}`} onClick={event=>select(cell,event.currentTarget)}>
+  return <button data-coverage-cell={cell.id} className={`coverage-cell ${cell.support.verdict!=="Compatible"?"coverage-cell-unconfirmed":""}`} aria-pressed={selected} aria-controls="coverage-selected-condition" aria-label={`${deviceLabel(cell.deviceClass.name)} ${cell.powerMode} ${executionPathLabel(cell.executionPath)} ${label} · ${occupancySummary(cell.occupancy)}`} onClick={event=>select(cell,event.currentTarget)}>
     <span>{label}</span>
     {progress&&progress.target.length>0&&<span className="coverage-mini-progress" aria-label="측정 배치 / 목표 배치"><progress max={progress.target.length} value={measured}/><span>{measured}/{progress.target.length}</span></span>}
+    <small className="text-xs text-muted-foreground">{occupancySummary(cell.occupancy)}</small>
   </button>
 }
 export function CoverageActions({data,namespace}:{data:MeasurementCoverageResponse;namespace:string}) {
@@ -234,6 +236,7 @@ function CoverageDetail({cell,namespace,close,visible}:{cell:MeasurementCoverage
     <p className="font-semibold break-words">{cell.model.name}</p><table className="coverage-results"><tbody><tr><th scope="row">전력모드</th><td>{cell.powerMode}</td></tr><tr><th scope="row">실행 경로</th><td>{executionPathLabel(cell.executionPath)}</td></tr><tr><th scope="row">실측 전력 범위 (W)</th><td>{watts.length?`${number(Math.min(...watts),"W")}–${number(Math.max(...watts),"W")}`:"미확인"}</td></tr></tbody></table>
     <table className="coverage-results"><thead><tr><th>측정 상태</th><th>현재 사용</th><th>품질 판정</th><th>제한 사유</th></tr></thead><tbody><tr><td>{coverageStates[coverageMeasurementStatus(cell)]}</td><td>{measurementSchedulerUsed(assessment)===true?"사용 중":measurementSchedulerUsed(assessment)===false?"미사용":"미확인"}</td><td>{measurementQuality([assessment]).label}</td><td>{coverageQuality(cell).reasons.map(reason=>reason.label).join(" / ")||"해당 없음"}</td></tr></tbody></table>
     <table className="coverage-results" aria-label="현재 측정"><tbody><tr><th scope="row">현재 측정 ID</th><td className="break-all">{cell.currentMeasurement?.id??"없음"}</td></tr><tr><th scope="row">현재 측정 시각 KST</th><td>{cell.currentMeasurement?<time dateTime={cell.currentMeasurement.measuredAt}>{formatMeasurementTime(cell.currentMeasurement.measuredAt)}</time>:"미제공"}</td></tr></tbody></table>
+    <section aria-label="d · 분배 점유시간"><h3>d · 분배 점유시간</h3>{cell.occupancy?.length?<table className="coverage-results"><thead><tr><th scope="col">Node</th><th scope="col">배치 (건)</th><th scope="col">상태</th><th scope="col">d (ms/요청)</th><th scope="col">사유</th><th scope="col">채택</th><th scope="col">조치</th></tr></thead><tbody>{cell.occupancy.map(row=><tr key={`${row.node.uid}/${row.profileID}/${row.batch}`}><th scope="row">{row.node.name}</th><td>{row.batch}</td><td>{occupancyStates[row.state]}</td><td className="tabular-nums">{occupancyMilliseconds(row.d?.perRequestNanos)}</td><td>{occupancyReasonLabel(row.reason)}</td><td>{row.adopted==null?"채택 미확인":row.adopted?"채택":"미채택"}</td><td>{(row.state==="none"||row.state==="failed")?<Link className="inline-flex min-h-11 items-center underline" href={coverageOccupancyRequestHref(cell,row,namespace)}>d 요청</Link>:row.request?<Link className="inline-flex min-h-11 items-center underline" href={occupancyResultHref(namespace,row.request.name,row.request.uid)}>진행·결과</Link>:"해당 없음"}</td></tr>)}</tbody></table>:<p>없음</p>}<Link className="inline-flex min-h-11 items-center underline" href={occupancyRequestHref(namespace,{model:cell.model.name,deviceClass:cell.deviceClass.name,path:cell.executionPath,powerMode:cell.powerMode,measurementID:cell.currentMeasurement?.id})}>d 요청</Link></section>
     {!!cell.support.diagnostics?.length&&<section aria-label="실행 선언 진단"><h3>실행 선언 진단</h3><ul className="list-inside list-disc text-sm">{cell.support.diagnostics.map((diagnostic,index)=><li key={index}>{diagnostic}</li>)}</ul></section>}
     {running&&<section aria-label="진행 회차"><h3>진행 회차</h3><table className="coverage-results"><thead><tr><th>확인된 완료 / 조회 회차 (회)</th><th>예정 회차 (회)</th><th>현재 단계</th></tr></thead><tbody><tr><td>{runs.error?"조회 실패":variant?.runIds.length?`${completeRuns}/${currentRuns.length}`:"미제공"}</td><td>미제공</td><td>{stageLabel}</td></tr></tbody></table></section>}
     <section><h3>배치별 결과</h3>{rows.length>0?<table className="coverage-results"><thead><tr><th>배치 (건)</th><th>p95 (ms)</th><th>총 (J/건)</th><th>추가 (J/건)</th><th>반복 실행/유휴 (회)</th><th>오차 (%)</th><th>제공된 기준</th></tr></thead><tbody>{rows.map(row=><tr key={row.id}><th scope="row">{row.batch}</th><td>{row.p95Milliseconds===null?"미기록":number(row.p95Milliseconds,"ms")}</td><td>{row.totalJoulesPerItem===null?"미기록":number(row.totalJoulesPerItem,"J/건")}</td><td>{row.incrementalJoulesPerItem===null?"미기록":number(row.incrementalJoulesPerItem,"J/건")}</td><td>{row.activeTrialCount??"미기록"} / {row.idleTrialCount??"미기록"}</td><td>{row.confidence&&row.incrementalJoulesPerItem!==null&&row.incrementalJoulesPerItem!==0?number(row.confidence.halfWidth/Math.abs(row.incrementalJoulesPerItem)*100,"%"):"미제공"}</td><td>미제공</td></tr>)}</tbody></table>:<p>배치 결과: {coverageMeasurementStatus(cell)==="unmeasured"?"미측정":"미기록"}</p>}</section>

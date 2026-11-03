@@ -15,6 +15,7 @@ import * as coverageHelpers from "./measurement-coverage.ts"
 import * as assessmentHelpers from "./measurement-assessment.ts"
 import * as measurementHelpers from "./measurements.ts"
 import * as measurementSummary from "./measurement-summary.ts"
+import * as occupancyHelpers from "./dispatch-occupancy.ts"
 
 test("power mode labels identify measured watts rather than inventing a declared limit",()=>{
   assert.equal(powerModeLabel("MODE-1",[10,12]),"MODE-1 · 실측 10.0–12.0 W")
@@ -238,7 +239,7 @@ test("scope counts use the same measurement state as visible cells, with unsuppo
 })
 
 
-function renderCoverage(query="",extraCells:MeasurementCoverageCell[]=[],freshness:"fresh"|"stale"="fresh",isFetching=false) {
+function renderCoverage(query="",extraCells:MeasurementCoverageCell[]=[],freshness:"fresh"|"stale"="fresh",isFetching=false,inspectInterval?:(interval:(query:{state:{data?:{cells:MeasurementCoverageCell[]};error:{status:number}|null}})=>number|false)=>void) {
   const source=readFileSync(new URL("../features/measurement-coverage.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
@@ -248,11 +249,12 @@ function renderCoverage(query="",extraCells:MeasurementCoverageCell[]=[],freshne
   const modules:Record<string,unknown>={
     "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
     "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams(query)},
-    "@tanstack/react-query":{useQuery:({queryKey}:{queryKey:string[]})=>({data:queryKey[1]==="coverage-inventory"?inventory:queryKey[1]==="model-compatibility"?[]:queryKey[1]==="coverage-profile-times"?{profiles:[]}:data,error:null,isFetching,refetch:()=>{}})},
-    "@/lib/client":{useSession:()=>({config:{namespace:"ns"}}),useChillQuery:()=>({data:{runs:[]},error:null}),isCoverageWarming:()=>false},
+    "@tanstack/react-query":{useQuery:({queryKey,refetchInterval}:{queryKey:string[];refetchInterval?:(query:{state:{data?:{cells:MeasurementCoverageCell[]};error:{status:number}|null}})=>number|false})=>{if(refetchInterval)inspectInterval?.(refetchInterval);return {data:queryKey[1]==="coverage-inventory"?inventory:queryKey[1]==="model-compatibility"?[]:queryKey[1]==="coverage-profile-times"?{profiles:[]}:data,error:null,isFetching,refetch:()=>{}}}},
+    "@/lib/client":{useSession:()=>({config:{namespace:"ns",pollIntervalMs:5000}}),useChillQuery:()=>({data:{runs:[]},error:null}),isCoverageWarming:()=>false},
     "@/lib/measurement-coverage":coverageHelpers,
     "@/lib/measurement-assessment":assessmentHelpers,
     "@/lib/measurements":measurementHelpers,
+    "@/lib/dispatch-occupancy":occupancyHelpers,
     "@/lib/scheduler":{},
     "@/lib/measurement-summary":measurementSummary,
     "@/components/measurement-navigation":{MeasurementNavigation:()=>null,MeasurementEvidenceChecks:()=>null},
@@ -410,4 +412,86 @@ test("R18 quality summary separates 48 measured policy-unset cells from five wit
   assert.equal(counts.noEvidenceCells,5)
   assert.equal(counts.policyUnsetCells,48)
   assert.equal(coverageQuality(measured).reasons[0].label,"전력 기록 정책 미설정")
+})
+
+test("coverage occupancy is a Node/batch table with explicit unknown adoption and targeted retries",()=>{
+  const base={node:{name:"node",uid:"node-uid"},profileID:"ns/beo/beo-uid",request:{name:"occ",uid:"occ-uid"},phase:null,reason:"",d:null,evidence:null,adopted:null}
+  const occupancy:NonNullable<MeasurementCoverageCell["occupancy"]>=[
+    {...base,batch:1,state:"none",request:null},
+    {...base,batch:2,state:"measuring",phase:"Measuring"},
+    {...base,batch:4,state:"failed",phase:"Insufficient",reason:"NotSaturated"},
+    {...base,batch:8,state:"present",phase:"Complete",d:{perRequestNanos:1000000,throughput:100,idleFraction:0.01,verdict:"Accepted"}},
+  ]
+  const html=renderCoverage("cell=d-cell",[{...cell,id:"d-cell",executionPath:"d-cpu",occupancy}])
+  assert.match(html,/d 없음 1 \/ 측정 중 1 \/ 실패 1 \/ 있음 1/)
+  const detail=html.slice(html.indexOf('aria-label="d · 분배 점유시간"')).split("</section>")[0]
+  assert.match(detail,/Node/)
+  assert.match(detail,/d \(ms\/요청\)/)
+  assert.match(detail,/1\.00/)
+  assert.match(detail,/부하 미포화/)
+  assert.equal(detail.split("채택 미확인").length-1,4)
+  const links=[...detail.matchAll(/href="([^"]+)"[^>]*>d 요청<\/a>/g)].map(match=>new URL(match[1].replaceAll("&amp;","&"),"https://dashboard.invalid")).filter(link=>link.searchParams.has("batch"))
+  assert.equal(links.length,2)
+  assert.deepEqual(links.map(link=>link.searchParams.get("batch")),["1","4"])
+  for(const link of links) {
+    assert.equal(link.pathname,"/measurements/requests/new")
+    assert.equal(link.searchParams.get("kind"),"dispatch-occupancy")
+    assert.equal(link.searchParams.get("nodeUID"),"node-uid")
+    assert.equal(link.searchParams.get("model"),model.name)
+    assert.equal(link.searchParams.get("powerMode"),"MAXN")
+    assert.equal(link.searchParams.get("path"),"d-cpu")
+  }
+})
+
+const occupancyBase={node:{name:"beo-target",uid:"target-uid"},profileID:"ns/beo/beo-uid",request:null,phase:null,reason:"",d:null,evidence:null,adopted:null}
+const currentMeasurement={id:"ns/current-beo/current-uid",model:model.name,deviceClass:cls.name,executionPath:"cpu",powerMode:"MAXN",measuredAt:"2026-11-03T01:02:03Z"}
+
+function cellOccupancyLinks(selected:MeasurementCoverageCell) {
+  const html=renderCoverage(`cell=${selected.id}`,[selected])
+  const section=html.slice(html.indexOf('aria-label="d · 분배 점유시간"')).split("</section>")[0]
+  return [...section.matchAll(/href="([^"]+)"[^>]*>d 요청<\/a>/g)].map(match=>new URL(match[1].replaceAll("&amp;","&"),"https://dashboard.invalid"))
+}
+
+test("coverage regression: partial, present, measuring and empty occupancy retain one cell-level d request",()=>{
+  const partial:NonNullable<MeasurementCoverageCell["occupancy"]>=[{...occupancyBase,batch:1,state:"present"}]
+  for(const occupancy of [partial,undefined,[],[{...occupancyBase,batch:1,state:"measuring" as const}],[...partial,{...occupancyBase,batch:2,state:"none" as const}]]) {
+    const selected={...cell,id:"request-cell",executionPath:"request-cpu",currentMeasurement,occupancy}
+    const links=cellOccupancyLinks(selected).filter(link=>!link.searchParams.has("batch"))
+    assert.equal(links.length,1,"every occupancy state must expose exactly one cell-level request")
+    assert.equal(links[0].searchParams.get("model"),model.name)
+    assert.equal(links[0].searchParams.get("deviceClass"),cls.name)
+    assert.equal(links[0].searchParams.get("path"),"request-cpu")
+    assert.equal(links[0].searchParams.get("powerMode"),"MAXN")
+    assert.equal(links[0].searchParams.get("measurementID"),currentMeasurement.id)
+    assert.equal(links[0].searchParams.has("profileID"),false)
+  }
+})
+
+test("coverage regression: cell-level d request omits mismatched representative Node identity",()=>{
+  const selected={...cell,id:"node-mismatch",currentMeasurement,support:{...cell.support,node:{name:"representative-not-beo-target",uid:"representative-uid"}}}
+  const links=cellOccupancyLinks(selected)
+  assert.equal(links.length,1)
+  assert.equal(links[0].searchParams.has("node"),false)
+  assert.equal(links[0].searchParams.has("nodeUID"),false)
+})
+
+for(const status of [401,403])test(`coverage regression: HTTP ${status} stops cached measuring occupancy polling`,()=>{
+  let inspected=false
+  renderCoverage("",[],"fresh",false,interval=>{
+    inspected=true
+    const data={cells:[{...cell,occupancy:[{...occupancyBase,batch:1,state:"measuring" as const}]}]}
+    assert.equal(interval({state:{data,error:null}}),5000)
+    assert.equal(interval({state:{data,error:{status}}}),false)
+    assert.equal(interval({state:{data:{cells:[cell]},error:null}}),false)
+  })
+  assert.equal(inspected,true)
+})
+
+test("coverage regression: cell accessible name includes occupancy summary",()=>{
+  const selected={...cell,id:"accessible-d",executionPath:"accessible-cpu",occupancy:[{...occupancyBase,batch:1,state:"measuring" as const}]}
+  const html=renderCoverage("",[selected])
+  const button=html.match(/<button[^>]*data-coverage-cell="accessible-d"[^>]*>/)?.[0]
+  assert.ok(button)
+  const name=button.match(/aria-label="([^"]*)"/)?.[1]
+  assert.ok(name?.includes(occupancyHelpers.occupancySummary(selected.occupancy)))
 })

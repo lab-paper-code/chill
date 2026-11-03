@@ -38,6 +38,28 @@ Scheduler history keeps default/ascending unfiltered reads bounded, including ex
 - 측정 요청 목록은 실행 실패 사유가 있어도 `CatalogUnavailable`을 별도의 `카탈로그 상태: 카탈로그 조회 불가`로 표시한다. 카탈로그 조회 실패를 요청 실행 실패로 바꾸거나 숨기지 않는다.
 - 2026-11-02 운영 GET을 로컬 production projection에 적용한 UTF-8 본문 크기: workloads **17,227,584 → 422,048 B**(29개), 커버리지 **9,218,406 → 1,893,956 B**, 측정 요청 **11,941,797 → 1,677,154 B**, 프로파일 `limit=50&offset=100&sort=model&order=asc` **8,550,682 → 921,387 B**. 배포 후 수치가 아니라 같은 운영 원문에 대한 로컬 projection 결과다.
 
+### d · 분배 점유시간
+
+측정은 서비스와 함께 사이드바의 **운영 영역**에 속한다. `/measurements/requests/new?kind=dispatch-occupancy`에서 셀에 대응하는 BEO·워크로드·Node·배치만 선택한다. `POST /api/v1/namespaces/{ns}/dispatch-occupancy-measurements?dryRun=All` 응답의 완성된 `task.spec`를 읽기 전용 표로 보여 주며, 프로토콜 필드를 요청 본문에 넣지 않는다. 검사 입력 identity가 바뀌면 제출을 막는다. `NOT_SUBMITTED`는 미제출, `OccupancyInfeasible`은 측정 조건 불충족, `OccupancyPolicyUnavailable`은 측정 정책 사용 불가다. 응답 미수신은 자동 재제출하지 않고 동일 이름의 접수 기록을 조회한다.
+
+읽기 전용 프로토콜 표는 동결된 `task.spec.conditions.inputsJSON` 문자열을 `parseSchedulerJSON`으로 정밀 파싱한 `computed.saturationSizing`을 표시한다. 선택/필요 송신자, 송신자·바이트·수명 한도와 제한 요인, 가득 찬 대기 배치, 재충전·잔여 유휴 시간, 예상/최대 유휴 비율을 그대로 읽으며 큰 정수도 손실 없이 유지한다. 누락·null·읽을 수 없는 입력은 `미제공`이고 현재 정책으로 재산정하지 않는다. 출처 메타데이터는 기존 정책·입력 근거 원본 disclosure에 남고 입력·제출 계약은 바뀌지 않는다.
+
+커버리지 셀의 `occupancy[]`는 Node UID·profileID·배치별 없음/측정 중/실패/있음을 표시하고 없음·실패에서 해당 조건의 d 요청으로 이동한다. `adopted:null`은 채택 미확인으로 유지한다. `/measurements/results?kind=dispatch-occupancy`의 목록·Sheet는 phase·사유·evidence 측정 구간·경과와 signed d(ms/요청)·처리량·유휴 비율·판정을 표시하며 대기/측정 중에 주기 갱신한다. 삭제는 영구 삭제 확인 후 UID 쿼리와 `If-Match: resourceVersion`을 전달한다. Measuring은 비활성이고 409는 최신 상태 조회로 연결한다. 실행 중단/취소 API는 없다.
+
+`occupancy[]`는 실제 DOM tuple만 포함한다. 빈 배열은 d 없음이며 Node×배치 항목을 브라우저에서 만들지 않는다. `ProfileSuperseded`는 원자료가 있는 이전 프로파일, `EvidenceInvalid`는 Complete 근거 검증 실패다. 같은 tuple은 서버의 present > measuring > failed > none 및 동률 생성 시각 최신 선택을 그대로 표시한다.
+
+채택 tri-state는 서버의 실제 선택 카탈로그와 연결된다. Node UID·profileID·배치·evidence store/key와 현재 셀의 모델·전력모드·실행 경로 identity가 일치하면 `true`(채택), 조회 가능한 카탈로그의 빈 선택은 `false`(미채택), 필드 누락·카탈로그 오류는 `null`(채택 미확인)이다. runtimeImage는 유효성 키가 아니며 카탈로그 checkedAt/error는 기존 freshness에 반영한다.
+
+셀별 d 요청은 부분 커버리지에서도 항상 제공하며 호환성 대표 Node를 넘기지 않는다. 요청 화면은 BEO의 실제 `targetNode`로 Node를 제한한다. 선택적 요청 이름도 검사 identity에 포함되므로 같은 조건의 재측정은 새 이름으로 검사해 과거 실패를 보존한다. profile 의존 조회가 실패해도 종류 선택은 가능하지만 진행 중·결과 미확인 요청에서는 전환을 막는다.
+
+DOM `phase`·`d`는 필수 nullable projection이며 구 `status`를 복원하는 fallback은 없다. 삭제된 단건의 404, 권한 오류 401/403, 종료 상태에서는 해당 polling을 중단한다. 서버 DOM API 변경(`392388ff`) 위로 rebase되어 실제 POST·DELETE 계약과 통합된 상태이며, 운영 서버·Query 미배포 상태 및 운영 생성·삭제 E2E 미수행과는 구별한다.
+
+`dispatchOccupancy` 정책 설정에는 `supplyMode`가 없다. 새 dry-run은 native `spec.supplyMode`가 실제 `closed-loop`일 때만 “공급 방식 (서버 고정)” 사실로 표시하며 응답에 없으면 `미제공`이다. 결과 조건 표의 일반 공급 방식 표시와 helper는 제거했고 원본 응답은 그대로 보존한다. 접수/삭제의 API 결과 `Accepted`·`DeletionRequested`는 유지되며 live action의 `phase:"completed"`는 해당 mutation 완료로 표시한다. DOM 측정 자체의 `Complete`와 혼동하지 않는다.
+
+`392388ff` 재통합 게이트: focused `go test ./internal/queryapi/... ./cmd/chill-query/...`, `make lint`, Node 24.14.0 tsc/eslint/운영 summary 포함 테스트 **502/502**, 기본 Next build 통과. closed-loop 미응답·다른 값에서 고정 사실을 만들어 내지 않는 회귀와 DOM 접수/삭제 action `completed`→완료 표시 회귀를 포함한다.
+
+2026-11-03 서버 통합 검증: Node 24.14.0 offline frozen 의존성(479개 재사용·다운로드 0)을 유지하며 typecheck·eslint·운영 summary 포함 테스트 500개·기본 build가 통과했다. ea6899ef 위 rebase 후 Go focused Query/Server/HTTP/Kube 테스트, make lint·arch-check·test도 통과했다. 로컬 TLS 서버 테스트는 실제 handler·builder·service의 dry-run 200 NOT_SUBMITTED→생성 202 Accepted와 동결 spec 동일성을 검사했다(인메모리 Kubernetes fixture이며 실제 Job E2E 아님). 로컬 production + 운영 GET의 요청·결과·커버리지 렌더는 1440×900으로 확인했다. 운영 Query에는 최상위 phase/d가 아직 없어 대기·미제공으로 보이므로 Query와 대시보드는 동시 cutover한다. 운영 POST·DELETE는 실행하지 않았다. 로컬 클러스터는 DOM CRD·BEO가 없어 실제 Job 진행 E2E를 수행하지 않았으며 배포 후 수용 범위는 [측정 API §13.8](../docs/design/serving/measurement-api.md#138-네이티브-d-요청진행셀-커버리지-2026-11-03)에 남긴다.
+
 ### CPU 공유 실행·전력 표본 계약
 
 측정 요청·프로파일 조건은 CPU 예약량·상한·코어 고정을 받거나 재생성하지 않는다. 요청 작성·복사·조건 그룹과 필터에서도 이 축을 제거한다. 스케줄러 설정의 CPU 수 상한과 할당의 CPU·스레드 표시는 없으며 GPU·메모리 계약만 사용한다. 평가 정의의 부하 발생기 자원 입력은 요청·한도 메모리만 제공한다. 과거 게시·관측 fixture 원문은 변경하지 않는다.

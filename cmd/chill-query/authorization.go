@@ -12,6 +12,8 @@ import (
 	authorizationv1 "k8s.io/api/authorization/v1"
 )
 
+const queryListVerb = "list"
+
 // Every query entry, including direct Service traffic, verifies the caller.
 // Neither network location nor forwarded identity headers confer permission.
 func authenticatedQueryHandler(next http.Handler, authorizer *servingkube.Authorizer, opts options) http.Handler {
@@ -61,10 +63,10 @@ func authorizeQueryRead(
 		return err
 	}
 	resources := []string{}
-	verb, name := "list", ""
+	verb, name := queryListVerb, ""
 	switch parts[5] {
 	case "measurement-coverage":
-		resources = []string{"batchenergyoptimizations", "profilingruns"}
+		resources = []string{"batchenergyoptimizations", "profilingruns", "dispatchoccupancymeasurements"}
 	case "batch-energy-optimizations":
 		resources = []string{"batchenergyoptimizations"}
 	case "profiling-runs":

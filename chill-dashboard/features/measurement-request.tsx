@@ -18,6 +18,7 @@ import { deviceLabel, resolveMeasurementPrefill, serverCompatibility, staticComp
 import { useCoverageInventory, useModelCompatibility, useMeasurementCoverage } from "@/features/measurement-coverage"
 import { MeasurementNavigation } from "@/components/measurement-navigation"
 import { executionPathLabel, measurementRequestName } from "@/lib/measurements"
+import { MeasurementKindSelector } from "@/features/dispatch-occupancy-request"
 
 const back: [string, string] = ["/measurements/requests", "측정 요청"]
 const steps = ["workload", "device", "run", "size", "advanced", "name", "review"] as const
@@ -208,9 +209,9 @@ export function MeasurementRequestPage() {
     const pinned=requestCopyQuery(new URLSearchParams(params),copy.source)
     if(pinned!==params.toString())router.replace(`/measurements/requests/new?${pinned}`,{scroll:false})
   },[copy?.source,namespace,params,router])
-  if(params.get("variantId")&&!coverage.data&&!coverage.error)return <Screen title="측정 요청"><p role="status">선택 조건 조회 중</p></Screen>
-  if (!plans.data || !models.data || !workloads.data || !inventory.data || !preprocessors.data || !datasets.data || profiles.isPending || profiles.error) return <Screen back={back} title="측정 요청">
-    <MeasurementNavigation active="requests" namespace={namespace}/>
+  if(params.get("variantId")&&!coverage.data&&!coverage.error)return <Screen back={back} title="측정 요청"><MeasurementNavigation active="requests" namespace={namespace}/><MeasurementKindSelector kind="profile"/><p role="status">선택 조건 조회 중</p></Screen>
+  if (!plans.data || !models.data || !workloads.data || !inventory.data || !preprocessors.data || !datasets.data || !profiles.data) return <Screen back={back} title="측정 요청">
+    <MeasurementNavigation active="requests" namespace={namespace}/><MeasurementKindSelector kind="profile"/>
     <QueryGate query={plans}><QueryGate query={models}><QueryGate query={workloads}><QueryGate query={inventory}><QueryGate query={preprocessors}><QueryGate query={datasets}><QueryGate query={profiles}>{null}</QueryGate></QueryGate></QueryGate></QueryGate></QueryGate></QueryGate></QueryGate>
   </Screen>
   const prefill = resolveMeasurementPrefill(new URLSearchParams(params), namespace, inventory.data)
@@ -300,6 +301,7 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
   }
   return <Screen width="data" title="측정 요청" back={back}>
     <MeasurementNavigation active="requests" namespace={namespace}/>
+    <MeasurementKindSelector kind="profile" disabled={unknown||pending||send.isPending}/>
     <nav aria-label="요청 단계"><ol className="flex flex-wrap gap-3">{["대상","조건","검사·제출"].map((label,index)=><li key={label}><Button variant={stage===index?"default":"outline"} aria-current={stage===index?"step":undefined} disabled={index>stage||unknown||pending||send.isPending} onClick={()=>setStage(index)}>{label}</Button></li>)}</ol></nav>
     {unknown&&<section role="alert" className="notice space-y-3"><h2>접수 결과 미확인</h2><p>{v.name}: 자동 재제출·이름 변경 차단</p><Button disabled={checking} onClick={()=>void refetchPlans().then(result=>{setChecked(!result.error);if(result.error)setError("목록 조회 실패: 다시 확인하세요.")})}>같은 이름의 접수 기록 조회</Button>{found?<Link className="underline" href={requestHref(namespace,found.metadata.name,found.metadata.uid)}>접수된 요청 열기</Link>:checked&&<p>목록 미확인 · 자동 재제출 차단</p>}</section>}
     {variantId&&!selected&&<p role="status" className="notice">조건 미확인 · 부족 배치 자동 제외 안 됨</p>}

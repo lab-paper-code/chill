@@ -327,3 +327,20 @@ test("R19 new contracts: relay permits only bounded experiment pages and columna
   assert.match(relayPlan("GET",power,range+"&bucket=5s&format=columns",config).path,/format=columns/)
   for(const suffix of ["&format=columns","&bucket=5s&format=rows","&bucket=5s&format=columns&format=columns"])assert.throws(()=>relayPlan("GET",power,range+suffix,config),/DashboardQueryInvalid/)
 })
+
+test("occupancy mutations reject uncontracted queries and keep dry-run read lifetime",()=>{
+  const config=serverConfig({CHILL_BASE_URL:"https://chill.example",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"chill"})
+  const list=["v1","namespaces","research","dispatch-occupancy-measurements"],detail=[...list,"occ-one"]
+  for(const search of ["?dryRun=","?dryRun=true","?dryRun=All&dryRun=All","?uid=one","?workers=4","?dryRun=All&duration=30"])assert.throws(()=>relayPlan("POST",list,search,config),/DashboardQueryInvalid/)
+  for(const search of ["","?uid=","?uid=one&uid=two","?uid=one&dryRun=All"])assert.throws(()=>relayPlan("DELETE",detail,search,config),/DashboardQueryInvalid/)
+  for(const method of ["PUT","PATCH"])assert.throws(()=>relayPlan(method,detail,"?uid=one",config),/DashboardMethodNotAllowed/)
+  assert.throws(()=>relayPlan("DELETE",list,"?uid=one",config),/DashboardMethodNotAllowed/)
+  assert.throws(()=>relayPlan("POST",detail,"",config),/DashboardMethodNotAllowed/)
+  assert.throws(()=>relayPlan("GET",detail,"?uid=one",config),/DashboardQueryInvalid/)
+  assert.equal(relayPlan("POST",list,"?dryRun=All",config).kind,"query")
+  assert.equal(relayPlan("POST",list,"?dryRun=All",config).timeoutMs,config.queryTimeoutMs)
+  assert.equal(relayPlan("POST",list,"",config).kind,"mutation")
+  assert.equal(relayPlan("DELETE",detail,"?uid=one",config).path,"/api/v1/namespaces/research/dispatch-occupancy-measurements/occ-one?uid=one")
+  assert.equal(relayPlan("DELETE",detail,"?uid=one",config).bodyAllowed,false)
+  assert.equal(relayPlan("GET",list,"",config).kind,"query")
+})

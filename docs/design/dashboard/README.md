@@ -157,7 +157,8 @@ Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.
 | `GET, POST /namespaces/{namespace}/batch-energy-optimizations`, `DELETE .../{name}` | 측정 목록, `dryRun=All` 검증과 접수, `uid`와 `If-Match`의 영구 삭제 | 측정 목록, 요청과 삭제에 재사용한다. |
 | `GET /scheduler`, `GET /scheduler/settings`, `GET /scheduler/state`, `PUT /scheduler/settings` | 현재 설정, 실제 snapshot과 판단, 동작과 결과, 전체 설정 적용 및 행위자 관측 기록 | 고정 BFF 경로에 연결한다. 버전 조건과 dry-run 계약은 ChillServer 조회 대기다. |
 | `GET, POST /scheduler/profiles`, `DELETE /scheduler/profiles/{namespace}/{name}` | 채택 프로파일과 조건, 채택 결과와 `configVersion` | 측정 결과 처리 성능의 현재 사용·채택·해제에 재사용한다. |
-| `GET /namespaces/{namespace}/operation-cost-measurements[/{name}]`, 같은 형태의 `dispatch-occupancy-measurements` | `{items:MeasurementProjection[]}` 또는 단건 안전한 projection. 원본 spec 전체가 아니다. | relay GET 허용됨. 두 측정 화면으로 연결한다. |
+| `GET /namespaces/{namespace}/operation-cost-measurements[/{name}]`, 같은 형태의 `dispatch-occupancy-measurements` | `{items:MeasurementProjection[]}` 또는 단건 안전한 읽기 projection. DOM은 최상위 진행·결과 필드를 포함한다. 원본 spec 전체가 아니다. | 두 결과 화면에 연결한다. 아래 DOM 쓰기 계약과 읽기 projection을 구별한다. |
+| `POST /namespaces/{namespace}/dispatch-occupancy-measurements[?dryRun=All]`, `DELETE .../{name}?uid=…` | 대상·선택적 이름만 제출, dry-run의 완성 `task.spec`, UID·`If-Match` 영구 삭제, Measuring 409 | 요청·검사·진행·삭제 UI는 서버 DOM API 변경(`ea6899ef`) 위로 rebase되어 통합됐다. 운영 서버·Query 미배포 및 운영 생성·삭제 E2E 미수행과 구별하며 실행 중단/취소는 아니다. 상세는 [측정 API §13.8](../serving/measurement-api.md#138-네이티브-d-요청진행셀-커버리지-2026-11-03). |
 | `GET /scheduler/capacity` | `{rows:CapacityRow[]}`. 자동제어 워크로드가 필요로 하는 행과 입력, κ 및 탐색 판정 | relay GET 허용됨, query 없음. 용량 근거 화면과 현재 settings 대조에 연결한다. |
 | `GET /observations/load` | 명시적 구간의 수신, 접수, 배정과 완료 사건 수 및 사건률 | from/to를 필수로 전달한다. 완료는 수신 cohort와 별개의 사건 집계다. |
 | `GET /observations/scheduler` | 판단, snapshot, 설정 변경, action과 전력 관측의 보관 중인 append-order 페이지 | from/to, bounded limit와 cursor를 사용한다. 응답은 페이지 항목과 nextCursor로 구성된다. relay는 이 경로와 `GET /scheduler`, `/scheduler/state`, `/scheduler/profiles`를 ChillServer `view=compact`로 읽고, 화면 파싱 전에 공유된 `profile`과 `completionMeasurement` `$ref`를 응답 dictionary로 복원해 full 응답과 같은 값을 쓴다. 응답 상한은 그대로다. |
@@ -174,6 +175,10 @@ Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.
 디코더는 dictionary 항목별 논리적 노드 수·깊이를 메모하고 각 항목과 최종 응답의 상한을 2,000,000노드·깊이 64로 제한한다. 반복 참조는 매번 합산하며 인라인 과도한 중첩도 재귀 진입 전에 거부한다. 저장된 운영 GET 8개를 Go projection에 적용한 최대 확장 크기는 커버리지 230,362노드/깊이 11, 측정 요청 180,000/9, 프로파일 149,331/11이다.
 
 2026-11-02 운영 원문을 로컬 projection에 적용한 크기(B): workloads 17,227,584→422,048(29개), 커버리지 9,218,406→1,893,956, 측정 요청 11,941,797→1,677,154, 프로파일 `limit=50&offset=100&sort=model&order=asc` 8,550,682→921,387. 각 표시 응답은 2,000,000 B 미만이다. `internal/queryapi` 회귀는 운영 GET fixture 디렉터리 `CHILL_MEASUREMENT_FIXTURE_DIR`를 제공하면 이 상한과 모든 유지 필드의 round-trip을 함께 검사한다.
+
+DOM 읽기 전용 프로토콜 표는 동결된 `task.spec.conditions.inputsJSON` 문자열을 기존 정밀 정수 파서 `parseSchedulerJSON`으로 읽은 `computed.saturationSizing`을 사용한다. 선택/필요 송신자, 송신자·바이트·수명 상한, 제한 요인, 가득 찬 대기 배치, 재충전·잔여 유휴 시간, 예상/최대 유휴 비율을 서버 원값으로 표시한다. 큰 정수는 정확히 유지하고 누락·null·해석 불가 값은 `미제공`이며 현재 정책으로 추정하지 않는다. 출처 메타데이터는 기존 원본 disclosure에만 남고 프로토콜 입력이나 mutation 본문은 추가하지 않는다.
+
+DOM `occupancy[].adopted`는 실제 scheduler 선택 카탈로그에 연결된 tri-state다. Node UID·profileID·배치와 evidence store/key, 현재 셀의 모델·전력모드·실행 경로 identity가 일치하면 `true`=채택, 조회 가능한 선택 목록에 없으면(빈 목록 포함) `false`=미채택, 필드 누락 또는 카탈로그 오류이면 `null`=채택 미확인이다. runtimeImage는 유효성 키가 아니며 catalog checkedAt/error는 기존 freshness에 반영한다. 코드 rebase 통합은 운영 배포·운영 mutation 검증을 뜻하지 않는다.
 
 ### 연결 예정 API (서버 책임)
 
@@ -197,16 +202,18 @@ System/Inventory/Run 목록은 limit 1..200, offset 0..1,000,000·bounded q; Run
 
 ## 5. 측정 projection과 용량 필드 계약
 
-[측정 projection](../../../internal/serving/httpapi/measurement_projections.go)과
+[측정 공통 projection](../../../internal/serving/httpapi/measurement_projections.go),
+[DOM 진행 필드](../../../internal/queryapi/dispatch_occupancy.go),
+[DOM evidence projection](../../../cmd/chill-query/measurement_entity_assessment.go),
 `internal/serving/capacity.go`, `httpapi/profiles.go:schedulerCapacity`가 wire 필드의 권위다.
 두 측정 목록은 `{items:MeasurementProjection[]}`, 단건은 projection 자체, 용량은 `{rows:CapacityRow[]}`.
-모두 GET·body/API query 없음; UI namespace/uid/workload/row query를 upstream에 전달하지 않는다.
+이 문단의 읽기 projection은 GET·body/API query 없음이다. UI namespace/uid/workload/row query를 upstream에 전달하지 않는다. DOM POST/DELETE는 위 별도 쓰기 계약을 사용한다.
 측정 uid 불일치는 다른 객체로 차단, uid 없는 이름 참조는 현재 객체다. namespace별 응답만 클라이언트 정렬/페이지 처리한다.
 
 | 공통 표시 | 정확한 소스 필드 | 표시 규칙 |
 |---|---|---|
-| 목록 identity·대상·상태·시각 | `metadata.name`, `metadata.namespace`, `metadata.uid`, `node`, `status.phase`, `metadata.creationTimestamp` | 이름/Node, 상태 문장·기호, KST 시각(UTC tooltip). UID는 상세 원본 identity에 표시 |
-| 상세 결론·사유 | `kind`, `status.phase`, `status.reason` | 한국어 요약을 주표기하고 제공된 reason 원문을 펼침 안에 보존. 임의 원인을 확정하지 않음 |
+| 목록 identity·대상·상태·시각 | `metadata.name`, `metadata.namespace`, `metadata.uid`, `node`; DOM `phase`, `createdAt`, 변경 비용 `status.phase`, `metadata.creationTimestamp` | 이름/Node, 상태 문장·기호, KST 시각(UTC tooltip). DOM `phase:null`은 대기이며 구 status로 복원하지 않는다. UID는 상세 원본 identity에 표시 |
+| 상세 결론·사유 | `kind`; DOM `phase`, `reason`, `assessment`, 변경 비용 `status.phase`, `status.reason` | 한국어 요약을 주표기하고 제공된 reason 원문을 펼침 안에 보존. 임의 원인을 확정하지 않음 |
 | CR 출처 | `metadata.resourceVersion`; `references.cr.{apiVersion,kind,namespace,name,uid}` | “원본 CR 식별자”. 전체 CR 수신 주장·Kubernetes 직접 링크 없음 |
 | 근거 위치 | `references.evidence[].{store,key}` | 논리 위치 복사/JSON 내보내기. raw HTTP URL·Passport 경로 생성 없음 |
 
@@ -220,12 +227,23 @@ System/Inventory/Run 목록은 limit 1..200, offset 0..1,000,000·bounded q; Run
 | 표시 | 소스 필드 | 단위·누락 규칙 |
 |---|---|---|
 | 워크로드·측정 프로파일 참조 | `conditions.workload`, `conditions.batchEnergyOptimization` | 각각 기존 workload 상세, 같은 ns BEO 상세 연결. UID 없는 참조는 현재 이름 기준임을 명시 |
-| 배치·공급 방식·동시 송신자 | `conditions.batch`, `.supplyMode`, `.workers` | 건/batch, closed-loop=고정 동시 요청, poisson=포아송 공급, 미제공=“기록되지 않았어요”; workers=명 |
+| 배치·동시 송신자 | `conditions.batch`, `.workers` | 건/batch, workers=명. 공급 방식은 운영 정책 설정 축이 아니며 결과 조건 표에는 반복 표시하지 않는다 |
 | 예열·측정 구간 | `conditions.warmupSeconds`, `.durationSeconds` | s, 예열은 측정 시작에서 제외 |
 | 결과 전력모드 | `status.powerMode` | 없으면 “결과 없음” |
-| 요청당 분배 점유시간 d | `status.perRequestNanos` | 기존 nanosToMilliseconds 변환 후 3자리 유효숫자 ms/request 주표기. 정확 ns는 원본/내보내기만. 누락과 0 구별 |
-| 지속 완료 처리량 X | `status.throughput` | 수치 검증 후 3자리 유효숫자 + req/s. 원 문자열은 원본 보존. 누락/빈 문자열=“결과 없음”. d나 κ 재계산 없음 |
-| 결과 위치 | `status.result.{store,key}`, `references.evidence[]` | 논리 위치 그대로, 중복은 한 번 표시; 빈 evidence=“아직 저장된 근거 위치가 없어요” |
+| 요청당 분배 점유시간 d | `d.perRequestNanos` | signed 정밀 정수를 표시할 때만 ms/request로 변환한다. `d:null`과 측정된 0을 구별하고 `status`로 복원하거나 음수를 clamp하지 않는다. 정확 ns는 원본/내보내기에 보존 |
+| 지속 완료 처리량 X·유휴 비율·판정 | `d.throughput`, `d.idleFraction`, `d.verdict` | req/s, %, 서버 판정. nullable 수치는 미제공이며 브라우저에서 d나 κ를 재계산하지 않는다 |
+| 측정창·경과 | `measurementWindow.{start,end}`, `createdAt`, `phase` | 검증된 evidence의 실제 측정창만 시작·종료로 쓴다. 대기/측정 중 경과는 생성 시각부터 표시할 수 있으나 예정 측정창·진행률은 만들지 않는다 |
+| 결과 위치 | `evidence.{store,key,size}`, `references.evidence[]` | 논리 위치 그대로 보존. d/측정창 검증 실패를 원본 native ref 손실로 바꾸지 않는다 |
+
+DOM 목록·단건은 `phase:null/Measuring` 동안 보이는 탭에서만 제한 polling한다. 종료 phase와 401/403에서 중단하며 삭제된 단건의 404도 중단한다. 삭제는 확인 후 UID query와 `If-Match:resourceVersion`을 보내고 Measuring은 비활성화한다. 409는 최신 상태 조회, 응답 미수신은 결과 미확인으로 재삭제를 차단한다.
+
+커버리지의 `cells[].occupancy[]`는 실제 Node UID × profileID × batch DOM tuple만 포함한다. 각 항목의 `state`, `request`, `phase`, `reason`, `d`, `evidence`, `adopted`를 그대로 표시하며 빈 배열에서 가짜 tuple을 만들지 않는다. 상태 우선순위는 present > measuring > failed > none, 동률은 생성 시각 최신이다. 이전 profile은 `none/ProfileSuperseded`, Complete의 근거 검증 실패는 `failed/EvidenceInvalid`, 채택 미확인은 `adopted:null`이다. 셀의 d 요약은 접근 가능한 이름에도 포함한다.
+
+셀은 occupancy 유무와 무관하게 조건을 보존한 d 요청 링크를 제공한다. 호환성 대표 `support.node`를 측정 Node로 추측하지 않으며 요청 화면이 해석한 BEO의 `spec.state.targetNode`를 사용한다. 요청 이름은 선택적이고 검사 identity에 포함된다. 같은 조건 재측정은 새 이름으로 생성해 이전 실패 기록을 보존한다. 측정 종류 선택은 profile 의존 조회 오류와 독립적으로 접근 가능하되 변경 진행·결과 미확인 중에는 전환하지 않는다.
+
+서버 통합 검증(2026-11-03): 실패-먼저 회귀 후 Node 24.14.0 typecheck/eslint/운영 summary 포함 테스트 500개/기본 build가 통과했다. ea6899ef 위 rebase는 충돌 없었고 Go focused Query/Server/HTTP/Kube 테스트, make lint·arch-check·test를 재실행해 통과했다. 로컬 TLS의 실제 handler·builder·service 경로에서 dry-run 200 NOT_SUBMITTED→생성 202 Accepted·동결 spec 동일성과 삭제 fence/Measuring 거절 테스트가 통과했다(인메모리 Kubernetes fixture이며 실제 Job E2E 아님). 로컬 production+운영 GET의 1440×900 렌더에서는 대표 Node를 생략한 조건 링크가 BEO 대상 genesis3로 해석됐고 API 200·콘솔 오류/가로 넘침 없음(Next prefetch abort만 관측)을 확인했다. 운영 Query는 phase/d 미배포라 결과 대기·미제공이며 새 진행값 검증이 아니다. 운영 mutation은 없었고 로컬 클러스터에는 DOM CRD·BEO가 없어 실제 Job 진행 E2E는 남는다. 서버·Query·대시보드는 함께 cutover한다.
+
+서버 리뷰 수정 `392388ff` 반영 후 `dispatchOccupancy.supplyMode` 정책 설정은 없으며 native spec의 closed-loop 고정만 유지한다. 요청 프로토콜 표는 실제 `spec.supplyMode:"closed-loop"` 응답이 있을 때만 고정 사실을 표시하고 누락 시 추정하지 않는다. 접수/삭제 API의 `Accepted`·`DeletionRequested`와 live action `phase:"completed"`는 서로 다른 축이다. 후자는 작업 접수/삭제 처리 완료이며 DOM 측정의 `phase:"Complete"`를 뜻하지 않는다.
 
 | 구역 | 정확한 필드 | 표시 단위·의미 |
 |---|---|---|
@@ -240,7 +258,7 @@ System/Inventory/Run 목록은 limit 1..200, offset 0..1,000,000·bounded q; Run
 | 해석 | 보존 규칙 |
 |---|---|
 | 동작 비용 | power/prepare/idle/remove의 계획·기록 단계 수일 뿐 채택률 아님. name으로 연결하되 미매칭도 보존, evidence는 key 일치만 연결. Accepted만 채택, Complete로 재판정 금지. projection에 시간/J/모드 쌍/반복 사유 없음. |
-| d | ns 정밀 정수 보존, 주표기 ms/request 소수 둘째 자리·원본 ns 병기. 누락≠0, X는 문자열 req/s 원값. d·κ 브라우저 재계산 금지. 공급 방식 미지정과 결과 없음 구분. |
+| d | ns 정밀 정수 보존, 주표기 ms/request 소수 둘째 자리·원본 ns 병기. 누락≠0, X는 문자열 req/s 원값. d·κ 브라우저 재계산 금지. 공급 방식 원자료는 원본 응답에 보존 |
 | κ | 현재 자동제어 계산 대상이며 역사/실제 유입/SLO 실측 아님. key 고정, 삭제된 key 최신 fallback 금지. grid/bisection 응답 순서 보존; requests=창당 수, passed=합격 창 수, percentileMS=-1은 미충족/지연값 없음. 조기 종료·빈 탐색 정상. |
 | settings 대조 | 행 input과 별도 settings 최상위 completionMarginMS/capacityWindowNanos/capacityWindows/capacityPassingWindows/capacityMinimumRequests/capacityGridSteps/capacityBisectionWidth/capacityTailSamples를 정밀 비교. 행 값/현재 값/같음·다름 및 두 조회 시각; draft는 적용값 아님. settings 실패가 행을 지우지 않음. |
 | 상태·출처 | status.reason 원문 보존(없는 message 추정 금지). CapacityPending의 누락 κ는 0 아님, Built κ=0은 실제0, previous는 재계산 중 이전 결과. Measuring/Pending/previous만 보이는 동안 갱신, terminal/미확인은 수동. export는 projection·identity·필터·조회 시각이며 전체 CR/raw Evidence 아님. |
