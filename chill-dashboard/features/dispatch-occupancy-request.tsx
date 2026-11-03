@@ -23,6 +23,10 @@ export function MeasurementKindSelector({kind,disabled=false}:{kind:"profile"|"d
 
 export function OccupancyProtocol({task}:{task:OccupancyTask}) {
   const spec=task.spec
+  if(spec.minimumPairs!==undefined&&spec.minimumPairs>0) {
+    const fields:[string,unknown][]=[["측정 방식","짧은 버스트"],["배치 (건)",spec.batch],["공급 방식 (서버 고정)",spec.supplyMode],["최소 쌍 (개)",spec.minimumPairs],["예열 (s · 측정 제외)",spec.warmupSeconds],["측정 구간 (s)",spec.durationSeconds],["동시 송신자 (명)",spec.workers],["요청 수명 (s)",spec.requestLifetimeSeconds],["드레인 (s)",spec.drainSeconds],["프로파일 ID",spec.conditions?.profileID]]
+    return <section className="grid gap-3" aria-label="서버 측정 프로토콜"><h2 className="font-semibold">서버 측정 프로토콜 · 읽기 전용</h2><table className="w-full table-fixed text-left text-sm [&_th]:p-2 [&_td]:p-2 [&_td]:break-all"><thead><tr><th>항목</th><th>서버 값</th></tr></thead><tbody>{fields.map(([label,value])=><tr key={label} className="border-b"><th scope="row" className="font-normal">{label}</th><td>{value==null?"미제공":String(value)}</td></tr>)}</tbody></table><details><summary className="min-h-11 cursor-pointer py-2">정책·입력 근거 원본</summary><SourceJSON inline value={task}/></details></section>
+  }
   let sizing:Record<string,unknown>|undefined
   try {
     const inputs=typeof spec.conditions?.inputsJSON==="string"?parseSchedulerJSON(spec.conditions.inputsJSON):null

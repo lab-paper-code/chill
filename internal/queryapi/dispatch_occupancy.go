@@ -1,6 +1,10 @@
 package queryapi
 
-import "time"
+import (
+	"time"
+
+	"github.com/lab-paper-code/chill/internal/serving"
+)
 
 // DispatchOccupancyProgress adds progress without changing the retained result envelope.
 // Node remains the existing envelope's node field.
@@ -17,6 +21,12 @@ type DispatchOccupancyProgress struct {
 	MeasurementWindow       *OccupancyMeasurementWindow `json:"measurementWindow"`
 	D                       *OccupancyValue             `json:"d"`
 	Evidence                *OccupancyEvidence          `json:"evidence"`
+	SchemaVersion           string                      `json:"schemaVersion"`
+	Estimate                *serving.OccupancyEstimate  `json:"estimate"`
+	Verdict                 string                      `json:"verdict"`
+	MinimumPairs            int                         `json:"minimumPairs"`
+	Saturation              *bool                       `json:"saturation"`
+	IdleFraction            *float64                    `json:"idleFraction"`
 }
 
 type OccupancyMeasurementWindow struct {
@@ -35,14 +45,24 @@ type OccupancyEvidence struct {
 	Size  int64  `json:"size"`
 }
 type MeasurementOccupancy struct {
-	Node      MeasurementIdentity  `json:"node"`
-	ProfileID string               `json:"profileID"`
-	Batch     int                  `json:"batch"`
-	State     string               `json:"state"`
-	Request   *MeasurementIdentity `json:"request"`
-	Phase     *string              `json:"phase"`
-	Reason    string               `json:"reason"`
-	D         *OccupancyValue      `json:"d"`
-	Evidence  *OccupancyEvidence   `json:"evidence"`
-	Adopted   *bool                `json:"adopted"`
+	Node       MeasurementIdentity        `json:"node"`
+	ProfileID  string                     `json:"profileID"`
+	Batch      int                        `json:"batch"`
+	State      string                     `json:"state"`
+	Request    *MeasurementIdentity       `json:"request"`
+	Phase      *string                    `json:"phase"`
+	Reason     string                     `json:"reason"`
+	D          *OccupancyValue            `json:"d"`
+	Evidence   *OccupancyEvidence         `json:"evidence"`
+	Adopted    *bool                      `json:"adopted"`
+	SchedulerD *SchedulerOccupancy        `json:"schedulerD"`
+	ObservedD  *serving.OccupancyEstimate `json:"observedD"`
+}
+
+type SchedulerOccupancy struct {
+	Source    string                   `json:"source"`
+	Value     int64                    `json:"value"`
+	Pairs     int                      `json:"pairs"`
+	Window    *serving.OccupancyWindow `json:"window"`
+	UpdatedAt time.Time                `json:"updatedAt"`
 }
