@@ -8,77 +8,61 @@ import (
 )
 
 // dispatchOccupancyPolicy is selected explicitly from the scheduler ConfigMap.
-// These are planning inputs, not evidence that the generator achieved saturation.
+// MinimumPairs is a sampling floor, not a claim of achieved precision.
 type dispatchOccupancyPolicy struct {
-	MinimumBatches              int32   `json:"minimumBatches"`
-	MaximumIdleFraction         float64 `json:"maximumIdleFraction"`
-	RequestLifetimeSeconds      int32   `json:"requestLifetimeSeconds"`
-	DeliveryMarginMillis        int32   `json:"deliveryMarginMillis"`
-	PreparationSeconds          int32   `json:"preparationSeconds"`
-	JobSetupSeconds             int32   `json:"jobSetupSeconds"`
-	CollectionSeconds           int32   `json:"collectionSeconds"`
-	WindowFloorSeconds          float64 `json:"windowFloorSeconds"`
-	LoadPreparationFloorSeconds float64 `json:"loadPreparationFloorSeconds"`
-	PlannedElapsedCapSeconds    float64 `json:"plannedElapsedCapSeconds"`
-	TimeMargin                  float64 `json:"timeMargin"`
-	RelativeXPlanningPrecision  float64 `json:"relativeXPlanningPrecision"`
-	PlanningConfidence          float64 `json:"planningConfidence"`
-	MaximumIdleBaseFraction     float64 `json:"maximumIdleBaseFraction"`
-	IdleDErrorSecondsPerRequest float64 `json:"idleDErrorSecondsPerRequest"`
-	// RefillSeconds bounds generator completion-to-replacement delivery, including jitter.
-	RefillSeconds float64 `json:"refillSeconds"`
-	Seed          uint64  `json:"seed"`
+	WarmupSeconds                   int32   `json:"warmupSeconds"`
+	BurstSeconds                    int32   `json:"burstSeconds"`
+	Workers                         int32   `json:"workers"`
+	MinimumPairs                    int32   `json:"minimumPairs"`
+	MaximumObservationWindowSeconds int32   `json:"maximumObservationWindowSeconds"`
+	RequestLifetimeSeconds          int32   `json:"requestLifetimeSeconds"`
+	DeliveryMarginMillis            int32   `json:"deliveryMarginMillis"`
+	PreparationSeconds              int32   `json:"preparationSeconds"`
+	JobSetupSeconds                 int32   `json:"jobSetupSeconds"`
+	CollectionSeconds               int32   `json:"collectionSeconds"`
+	PlannedElapsedCapSeconds        float64 `json:"plannedElapsedCapSeconds"`
+	Seed                            uint64  `json:"seed"`
 }
 
-// Preserve omission separately from zero for the four zero-valued policy inputs.
+// Preserve omission separately from zero for inputs that permit zero.
 func (p *dispatchOccupancyPolicy) UnmarshalJSON(raw []byte) error {
 	type policy dispatchOccupancyPolicy
 	var wire struct {
 		policy
-		MaximumIdleFraction *float64 `json:"maximumIdleFraction"`
-		JobSetupSeconds     *int32   `json:"jobSetupSeconds"`
-		CollectionSeconds   *int32   `json:"collectionSeconds"`
-		Seed                *uint64  `json:"seed"`
+		WarmupSeconds     *int32  `json:"warmupSeconds"`
+		JobSetupSeconds   *int32  `json:"jobSetupSeconds"`
+		CollectionSeconds *int32  `json:"collectionSeconds"`
+		Seed              *uint64 `json:"seed"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&wire); err != nil {
 		return err
 	}
-	if wire.MaximumIdleFraction == nil || wire.JobSetupSeconds == nil ||
+	if wire.WarmupSeconds == nil || wire.JobSetupSeconds == nil ||
 		wire.CollectionSeconds == nil || wire.Seed == nil {
-		return errors.New("dispatchOccupancy requires explicit idle, job setup, collection and seed values; " +
+		return errors.New("dispatchOccupancy requires explicit warmup, job setup, collection and seed values; " +
 			"zero is allowed")
 	}
 	*p = dispatchOccupancyPolicy(wire.policy)
-	p.MaximumIdleFraction = *wire.MaximumIdleFraction
+	p.WarmupSeconds = *wire.WarmupSeconds
 	p.JobSetupSeconds, p.CollectionSeconds, p.Seed = *wire.JobSetupSeconds, *wire.CollectionSeconds, *wire.Seed
 	return nil
 }
 
 func (p dispatchOccupancyPolicy) validate() error {
-	for _, v := range []float64{p.WindowFloorSeconds, p.LoadPreparationFloorSeconds, p.PlannedElapsedCapSeconds,
-		p.TimeMargin, p.RelativeXPlanningPrecision, p.PlanningConfidence, p.MaximumIdleBaseFraction,
-		p.IdleDErrorSecondsPerRequest, p.RefillSeconds} {
-		if math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 {
-			return errors.New("dispatchOccupancy requires explicit finite positive planning coefficients")
-		}
+	if p.WarmupSeconds < 0 || p.BurstSeconds < 1 || p.Workers < 1 || p.Workers > 64 ||
+		p.MinimumPairs < 1 || p.MaximumObservationWindowSeconds < p.BurstSeconds ||
+		p.RequestLifetimeSeconds < 1 || p.DeliveryMarginMillis < 1 || p.PreparationSeconds < 1 ||
+		p.JobSetupSeconds < 0 || p.CollectionSeconds < 0 ||
+		math.IsNaN(p.PlannedElapsedCapSeconds) || math.IsInf(p.PlannedElapsedCapSeconds, 0) ||
+		p.PlannedElapsedCapSeconds <= 0 || p.PlannedElapsedCapSeconds > math.MaxInt32 {
+		return errors.New("invalid dispatchOccupancy burst, sampling, observation window, supply or timing bounds")
 	}
-	if p.MinimumBatches < 2 || p.RequestLifetimeSeconds < 1 ||
-		p.DeliveryMarginMillis < 1 || p.PreparationSeconds < 1 || p.JobSetupSeconds < 0 || p.CollectionSeconds < 0 ||
-		math.IsNaN(p.MaximumIdleFraction) || math.IsInf(p.MaximumIdleFraction, 0) || p.MaximumIdleFraction < 0 ||
-		p.MaximumIdleFraction > p.MaximumIdleBaseFraction || p.MaximumIdleBaseFraction > 1 ||
-		p.RelativeXPlanningPrecision >= 1 || p.PlanningConfidence >= 1 ||
-		p.PlannedElapsedCapSeconds > math.MaxInt32 || p.WindowFloorSeconds > math.MaxInt32 ||
-		p.LoadPreparationFloorSeconds > math.MaxInt32 || p.IdleDErrorSecondsPerRequest*1e9 < 1 ||
-		p.IdleDErrorSecondsPerRequest*1e9 >= float64(math.MaxInt64) {
-		return errors.New("invalid dispatchOccupancy supply, population, timing, precision or idle bounds")
-	}
-	// Reject a policy whose irreducible segments cannot fit even before profile timing.
+	// Reject an impossible cap before profile-dependent queue and drain timing.
 	extension := int64(p.RequestLifetimeSeconds) + (int64(p.DeliveryMarginMillis)+999)/1000
-	minimum := int64(p.PreparationSeconds) + int64(p.JobSetupSeconds) + int64(p.CollectionSeconds) + extension +
-		int64(p.RequestLifetimeSeconds) + int64(math.Ceil(p.WindowFloorSeconds)) +
-		int64(math.Ceil(p.LoadPreparationFloorSeconds))
+	minimum := int64(p.PreparationSeconds) + int64(p.JobSetupSeconds) + int64(p.CollectionSeconds) +
+		int64(p.WarmupSeconds) + int64(p.BurstSeconds) + 2*extension
 	if minimum > int64(math.Floor(p.PlannedElapsedCapSeconds)) {
 		return errors.New("dispatchOccupancy elapsed cap cannot hold its configured segments and supply extension")
 	}

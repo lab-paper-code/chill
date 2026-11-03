@@ -253,6 +253,7 @@ func TestSchedulerRawPageDecodesOnlySelectedPayloads(t *testing.T) {
 	}
 	// Stored records keep only the profile ID of each instance.
 	stored := snapshot
+	stored.DispatchOccupancy = schedulerSelectedOccupancy(selected.Decision.Settings, snapshot)
 	stored.Instances = slices.Clone(snapshot.Instances)
 	for i := range stored.Instances {
 		stored.Instances[i].ProfileID, stored.Instances[i].Profile = stored.Instances[i].Profile.ID, nil

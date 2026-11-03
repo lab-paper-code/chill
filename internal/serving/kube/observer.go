@@ -173,6 +173,12 @@ func (o *Observer) schedulerProfiles() ([]serving.Profile, map[string]*serving.P
 	defer o.mu.Unlock()
 	return slices.Clone(o.profiles), maps.Clone(o.profileByID)
 }
+
+// OccupancyProfiles returns the same immutable identities used by scheduler capture.
+func (o *Observer) OccupancyProfiles() map[string]*serving.Profile {
+	_, profiles := o.schedulerProfiles()
+	return profiles
+}
 func (o *Observer) Issues() []ObserverIssue {
 	o.issueMu.Lock()
 	defer o.issueMu.Unlock()

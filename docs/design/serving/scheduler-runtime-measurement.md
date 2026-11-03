@@ -93,3 +93,83 @@ Serving runtime과 artifact/preprocessor/profile init container는 CPU request/l
 ## Immutable worker bundle
 
 worker init은 `/opt/chill/bin/serving-entrypoint --materialize-profile`, 기존 store flags와 `--profile-object-key/size/output`으로 bounded immutable bundle을 원자 제공한다. runtime image는 [firstfloor image recipe](../../../build/docker/firstfloor.Dockerfile)를 쓴다.
+
+## Direct native-pair occupancy facts
+
+`serving.OccupancyEstimator` reduces the rows from `ScanOccupancyRows`; it does
+not add work to the request writer or change scheduler κ/d. The accepted
+scheduler `profileByID` map is the sole profile source. Each output stratum
+retains Node name/UID, Workload UID, logical model, power mode, execution path,
+runtime image, batch size, profile ID, immutable reference/evidence identities,
+and the exact `Profile.MeanNanos(batch)` runner-exchange mean subtracted.
+Backend-only or per-request loaded service is not a replacement baseline.
+
+The reducer first joins assigned/final/late-native rows by RequestID. Conflicting
+nonempty identities/timestamps and duplicate finals invalidate execution rather
+than silently replacing evidence. Physical batches are keyed by instance and
+BatchID; every declared member must be present, successful, execution-complete,
+and have identical configuration/start/finish identities. Each member must have
+direct worker queued/running/finished timestamps in order. Reconstructed legacy
+stage offsets and gateway timestamps never enter this arithmetic.
+
+For adjacent physical IDs on one unchanged instance, both starts must be in
+the requested half-open worker window. Frozen native metadata must prove the
+same profile/decision and fixed batch size, zero batch wait, and policy
+application before the previous start. Missing historical metadata yields no
+eligible pair, not a guessed policy. Require
+`max(next.NativeQueuedAt) <= previous.NativeFinishedAt <= next.NativeRunningAt`.
+Incomplete batches remain sequence markers; gaps, restarts, overlaps and
+configuration changes cannot be bridged. The signed residual is exactly:
+
+```
+d_i = (next.NativeRunningAt - previous.NativeRunningAt
+       - acceptedProfile.MeanNanos(previous.BatchSize)) / previous.BatchSize
+```
+
+Per-cell `statistics` reports signed mean, median, p25/p75, IQR, p10/p90 and
+negativeFraction in ns/request. Quantiles sort the actual sample and select
+`roundToEven((n-1)*p)`, matching the validation reducer's Python `round`; there
+is no interpolation, approximate sketch or negative censoring. A fixed-batch
+stratum's arithmetic mean is throughput-equivalent; different batch strata are
+not silently pooled. Zero eligible pairs returns `statistics: null`, not zero.
+Pair counts and complete/total physical batches and joined requests accompany
+raw-row, direct-complete-raw-row, enriched-complete-raw-row, final-row and
+direct-complete-final-row denominators. In-memory open snapshots can supplement
+a request but are not additional raw rows/finals.
+
+The scan captures only `[from-tail,to+tail]` file segments/archive hours, where
+`tail = MaximumInferenceRequestTimeout + --drain-timeout` (the existing actual
+inference lifetime cap plus configured physical-drain allowance). Its first
+streaming pass selects only RequestIDs with an in-window receipt or direct native
+start; its second visits just those IDs, preserving raw/final/enriched counters.
+Read-side selection markers are not raw rows. The estimator also rejects
+unselected out-of-window rows and filters joined requests before creating cells.
+Known native starts determine execution-window membership; only requests with an
+in-window receipt may contribute unknown-running completeness facts. Neither
+whole later history nor unrelated RequestIDs are retained. Minute segments and
+compressed archive hours remain the physical read granularity. Missing evidence
+beyond the bounded tail is incomplete, never a guessed execution.
+The bounded read-only API and historical-policy limitation are documented in
+[observation API](observability-split.md). There is no result cache.
+
+The short-burst DOM writes observational evidence under its separate new
+prefix/schema with `Observed` (status `Complete`) or `Insufficient`. The
+legacy accepted DOM prefix, record type and `CostEvidence` reader remain active
+and unchanged for the scheduler's existing d. No burst estimate enters that
+reader or automatically replaces an accepted scalar. Future scheduler adoption
+and deletion of legacy evidence require a separate explicit cutover.
+
+Initial, pre-review single-pass validation on the permitted 2026-11-03
+09:00–10:00 export (793,637,858 bytes, 837,023 raw rows, 348,224 joined requests)
+measured its streaming scan plus
+RequestID join at **10.062 s**, and full reduction including exact sorting at
+**11.319 s**, with `GOMAXPROCS=2`, `-p 1`, nice 19. It yielded 339,321 eligible
+pairs and 100% joined-native/batch completeness. The 2,000-request throwaway
+slice matched the independent `compute.py` summary (1,998 pairs, mean
+188,577.192734531 ns/request, median 219,827.749791588 ns/request). No raw data
+or throwaway comparison test is committed. Those timings describe the earlier
+implementation, not the current bounded two-pass selection/read or a serving-path
+latency promise. Current regressions prove that 10,000 unrelated rows plus later
+invalid segments retain only the one selected RequestID, with all requested
+denominators preserved; no cache is introduced.
+

@@ -4,16 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"strconv"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// DispatchOccupancyMeasurementSpec declares one saturation measurement of the
-// time a request occupies an instance outside its batch execution, for the
-// Node, power mode, runtime image and model of one measured option.
+// DispatchOccupancyMeasurementSpec declares a configured closed-loop burst.
+// Pair counts do not imply statistical precision or stationarity.
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="DispatchOccupancyMeasurement spec is immutable"
-// +kubebuilder:validation:XValidation:rule="(has(self.supplyMode) && self.supplyMode == 'closed-loop') || (has(self.rateFactor) && double(self.rateFactor) > 1 && double(self.rateFactor) <= 1.7976931348623157e308)",message="open-loop rateFactor must be finite and greater than one"
 type DispatchOccupancyMeasurementSpec struct {
 	// Node names the Kubernetes Node measured.
 	// +kubebuilder:validation:MinLength=1
@@ -34,11 +31,14 @@ type DispatchOccupancyMeasurementSpec struct {
 	// Batch is the fixed batch size B of the measured instance.
 	// +kubebuilder:validation:Minimum=1
 	Batch int32 `json:"batch"`
-
-	// RateFactor applies only to legacy open-loop measurements.
+	// RateFactor and legacy thresholds decode retained v1alpha1 evidence only.
+	// New measurements neither populate nor consult these fields.
 	// +optional
-	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
 	RateFactor string `json:"rateFactor,omitempty"`
+	// +optional
+	MinimumBatches int32 `json:"minimumBatches,omitempty"`
+	// +optional
+	MaximumIdleFraction string `json:"maximumIdleFraction,omitempty"`
 
 	// WarmupSeconds are excluded from the start of the window.
 	// +kubebuilder:validation:Minimum=0
@@ -47,15 +47,10 @@ type DispatchOccupancyMeasurementSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	DurationSeconds int32 `json:"durationSeconds"`
 
-	// MinimumBatches is the least number of batches the window must hold.
-	// +kubebuilder:validation:Minimum=2
-	MinimumBatches int32 `json:"minimumBatches"`
-
-	// MaximumIdleFraction bounds identified supply idle as a fraction of the window.
-	// This configurable policy is range checked in [0,1]; the approved planning
-	// input is 0.05. Measured d remains conservative, without idle subtraction.
-	// +kubebuilder:validation:Pattern=`^(0(\.[0-9]+)?|1(\.0+)?)$`
-	MaximumIdleFraction string `json:"maximumIdleFraction"`
+	// MinimumPairs is the configured minimum number of eligible native pairs.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MinimumPairs int32 `json:"minimumPairs,omitempty"`
 
 	// Workers is the number of concurrent load generator senders.
 	// +kubebuilder:validation:Minimum=1
@@ -96,154 +91,72 @@ type DispatchOccupancyMeasurementSpec struct {
 	Conditions DispatchOccupancyConditions `json:"conditions,omitempty"`
 }
 
-// DispatchOccupancyConditions records the approved empirical planning inputs.
-// InputsJSON is an object containing the original profile populations and
-// source identities, not a claim of achieved precision or saturation. Optional
-// computed.supplySizing freezes the batch, observed maximum batch service time
-// and its profile source, request lifetime, delivery margin, worker/byte caps and limiting bound.
+// DispatchOccupancyConditions freezes configuration and accepted profile identities.
 type DispatchOccupancyConditions struct {
-	ProfileID                  string `json:"profileID,omitempty"`
-	InputsJSON                 string `json:"inputsJSON,omitempty"`
-	WaitingBatches             int32  `json:"waitingBatches,omitempty"`
-	MaximumIdleNanosPerRequest int64  `json:"maximumIdleNanosPerRequest,omitempty"`
-	MinimumCycles              int32  `json:"minimumCycles,omitempty"`
+	ProfileID      string `json:"profileID,omitempty"`
+	InputsJSON     string `json:"inputsJSON,omitempty"`
+	WaitingBatches int32  `json:"waitingBatches,omitempty"`
+	// Legacy v1alpha1 evidence fields, unused by burst creation.
+	// +optional
+	MaximumIdleNanosPerRequest int64 `json:"maximumIdleNanosPerRequest,omitempty"`
+	// +optional
+	MinimumCycles int32 `json:"minimumCycles,omitempty"`
 }
 
-// OccupancyPlanningFloors projects the configured floors retained in the
-// immutable derivation JSON. These are planning inputs, not CRD defaults.
-type OccupancyPlanningFloors struct {
-	WindowFloorSeconds          float64 `json:"windowFloorSeconds"`
-	LoadPreparationFloorSeconds float64 `json:"loadPreparationFloorSeconds"`
-	PlannedElapsedCapSeconds    float64 `json:"plannedElapsedCapSeconds"`
-}
-
-// ValidateConditions checks the frozen measurement contract at admission.
+// ValidateConditions checks the immutable burst and its resource/time budget.
 func (s DispatchOccupancyMeasurementSpec) ValidateConditions() error {
-	idle, err := strconv.ParseFloat(s.MaximumIdleFraction, 64)
-	if err != nil || math.IsNaN(idle) || math.IsInf(idle, 0) || idle < 0 || idle > 1 ||
-		s.Batch < 1 || s.Workers < 1 || s.Workers > 4096 || s.MinimumBatches < 2 || s.DurationSeconds < 1 || s.WarmupSeconds < 0 {
-		return fmt.Errorf("invalid occupancy window, population or idle bound")
-	}
-	if s.SupplyMode != "closed-loop" {
-		factor, err := strconv.ParseFloat(s.RateFactor, 64)
-		if s.SupplyMode != "" && s.SupplyMode != "poisson" || err != nil || math.IsNaN(factor) || math.IsInf(factor, 0) || factor <= 1 {
-			return fmt.Errorf("invalid open-loop supply")
-		}
-		return nil
+	if s.Batch < 1 || s.Workers < s.Batch || s.Workers > 64 || s.MinimumPairs < 1 ||
+		s.DurationSeconds < 1 || s.WarmupSeconds < 0 || s.SupplyMode != "closed-loop" {
+		return fmt.Errorf("invalid occupancy burst, workers or minimum pairs")
 	}
 	c := s.Conditions
-	if c.InputsJSON == "" || c.ProfileID == "" ||
-		c.WaitingBatches < 0 || c.MinimumCycles != s.MinimumBatches-1 || c.MaximumIdleNanosPerRequest <= 0 {
+	if c.ProfileID == "" || c.InputsJSON == "" || c.WaitingBatches < 0 {
 		return fmt.Errorf("invalid frozen occupancy conditions")
 	}
-	return s.validateSupplyBounds()
-}
-
-type occupancySupplySizing struct {
-	Batch                          int32   `json:"batch"`
-	ProfileMaxBatchSeconds         float64 `json:"profileMaxBatchSeconds"`
-	ServiceTimeSource              string  `json:"serviceTimeSource"`
-	RequestLifetimeSeconds         float64 `json:"requestLifetimeSeconds"`
-	MarginSeconds                  float64 `json:"marginSeconds"`
-	WorkerCap                      int32   `json:"workerCap"`
-	QueueBytesCap                  int64   `json:"queueBytesCap"`
-	FramedDecodedRequestUpperBytes int64   `json:"framedDecodedRequestUpperBytes"`
-	LimitingBound                  string  `json:"limitingBound"`
-}
-
-func (sizing occupancySupplySizing) workers(s DispatchOccupancyMeasurementSpec, profileBatch int32, profileMax float64, queueBytes, requestBytes int64) (float64, error) {
-	if sizing.Batch != s.Batch || profileBatch != s.Batch ||
-		sizing.ProfileMaxBatchSeconds <= 0 || math.IsNaN(sizing.ProfileMaxBatchSeconds) || math.IsInf(sizing.ProfileMaxBatchSeconds, 0) ||
-		sizing.ProfileMaxBatchSeconds != profileMax || sizing.ServiceTimeSource != "profile.maxObservedSeconds" ||
-		sizing.RequestLifetimeSeconds != float64(s.RequestLifetimeSeconds) ||
-		sizing.MarginSeconds != float64(s.DeliveryMarginMillis)/1000 || sizing.WorkerCap != 64 ||
-		sizing.QueueBytesCap != 67108864 || sizing.QueueBytesCap != queueBytes ||
-		sizing.FramedDecodedRequestUpperBytes <= 0 || sizing.FramedDecodedRequestUpperBytes != requestBytes {
-		return 0, fmt.Errorf("invalid frozen supply sizing inputs")
-	}
-	workers, bound := float64(sizing.WorkerCap), "queue-cap"
-	if bytesWorkers := float64(sizing.QueueBytesCap / sizing.FramedDecodedRequestUpperBytes); bytesWorkers < workers {
-		workers, bound = bytesWorkers, "bytes-cap"
-	}
-	if lifetimeWorkers := math.Floor((sizing.RequestLifetimeSeconds - sizing.MarginSeconds) / (float64(s.Batch) * sizing.ProfileMaxBatchSeconds)); lifetimeWorkers < workers {
-		workers, bound = lifetimeWorkers, "lifetime"
-	}
-	if workers < float64(s.Batch) || sizing.LimitingBound != bound {
-		return 0, fmt.Errorf("infeasible supply or inconsistent frozen limiting bound")
-	}
-	if float64(s.Workers) != workers {
-		return 0, fmt.Errorf("fixed outstanding supply disagrees with frozen supply sizing formula")
-	}
-	return workers, nil
-}
-
-func (s DispatchOccupancyMeasurementSpec) validateSupplyBounds() error {
-	c := s.Conditions
-	var formula struct {
-		Coefficients OccupancyPlanningFloors `json:"coefficients"`
-		Profile      struct {
-			Batch              int32   `json:"batch"`
-			MaxObservedSeconds float64 `json:"maxObservedSeconds"`
-		} `json:"profile"`
+	var inputs struct {
+		Coefficients struct {
+			WarmupSeconds            int32   `json:"warmupSeconds"`
+			BurstSeconds             int32   `json:"burstSeconds"`
+			Workers                  int32   `json:"workers"`
+			MinimumPairs             int32   `json:"minimumPairs"`
+			PlannedElapsedCapSeconds float64 `json:"plannedElapsedCapSeconds"`
+		} `json:"coefficients"`
 		Computed struct {
-			TailBatchSeconds               float64                `json:"tailBatchSeconds"`
-			FastBatchSeconds               float64                `json:"fastBatchSeconds"`
-			PrefixSeconds                  float64                `json:"prefixSeconds"`
-			RefillSeconds                  float64                `json:"refillSeconds"`
-			FramedDecodedRequestUpperBytes int64                  `json:"framedDecodedRequestUpperBytes"`
-			QueueRequestCap                int64                  `json:"queueRequestCap"`
-			QueueBytesCap                  int64                  `json:"queueBytesCap"`
-			QUpper                         int64                  `json:"qUpper"`
-			SupplySizing                   *occupancySupplySizing `json:"supplySizing"`
+			TailBatchSeconds               float64 `json:"tailBatchSeconds"`
+			FramedDecodedRequestUpperBytes int64   `json:"framedDecodedRequestUpperBytes"`
+			QueueRequestCap                int64   `json:"queueRequestCap"`
+			QueueBytesCap                  int64   `json:"queueBytesCap"`
 		} `json:"computed"`
 	}
-	if err := json.Unmarshal([]byte(c.InputsJSON), &formula); err != nil {
-		return fmt.Errorf("invalid frozen numeric inputs: %w", err)
+	if err := json.Unmarshal([]byte(c.InputsJSON), &inputs); err != nil {
+		return fmt.Errorf("invalid frozen inputs: %w", err)
 	}
-	f := formula.Computed
-	floors := formula.Coefficients
-	for _, value := range []float64{floors.WindowFloorSeconds, floors.LoadPreparationFloorSeconds, floors.PlannedElapsedCapSeconds} {
-		if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-			return fmt.Errorf("invalid frozen planning floors")
-		}
+	p, f := inputs.Coefficients, inputs.Computed
+	if p.WarmupSeconds != s.WarmupSeconds || p.BurstSeconds != s.DurationSeconds ||
+		p.Workers != s.Workers || p.MinimumPairs != s.MinimumPairs ||
+		p.PlannedElapsedCapSeconds <= 0 || math.IsNaN(p.PlannedElapsedCapSeconds) || math.IsInf(p.PlannedElapsedCapSeconds, 0) ||
+		f.TailBatchSeconds <= 0 || math.IsNaN(f.TailBatchSeconds) || math.IsInf(f.TailBatchSeconds, 0) {
+		return fmt.Errorf("burst disagrees with frozen configuration")
 	}
-	for _, value := range []float64{f.TailBatchSeconds, f.FastBatchSeconds, f.PrefixSeconds, f.RefillSeconds} {
-		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
-			return fmt.Errorf("invalid frozen supply timing")
-		}
-	}
-	q := int64(c.WaitingBatches)
+	q := int64(math.Ceil(float64(s.Workers)/float64(s.Batch))) - 1
 	waiting := int64(s.Batch) * q
-	expectedQ := math.Max(1, math.Ceil(f.RefillSeconds/f.FastBatchSeconds))
-	lifetimeInvalid := (float64(q)+2)*f.TailBatchSeconds+f.PrefixSeconds >= float64(s.RequestLifetimeSeconds)
-	if sizing := f.SupplySizing; sizing != nil {
-		workers, err := sizing.workers(s, formula.Profile.Batch, formula.Profile.MaxObservedSeconds, f.QueueBytesCap, f.FramedDecodedRequestUpperBytes)
-		if err != nil {
-			return err
-		}
-		expectedQ = math.Ceil(workers/float64(s.Batch)) - 1
-		lifetimeInvalid = workers*float64(s.Batch)*sizing.ProfileMaxBatchSeconds+sizing.MarginSeconds > sizing.RequestLifetimeSeconds
-	} else if c.WaitingBatches < 1 || int64(s.Workers) != int64(s.Batch)*(1+q) {
-		return fmt.Errorf("invalid legacy frozen occupancy supply")
-	}
-	if f.TailBatchSeconds <= 0 || f.FastBatchSeconds <= 0 || f.FramedDecodedRequestUpperBytes <= 0 ||
-		f.QueueRequestCap < waiting || f.QueueBytesCap/f.FramedDecodedRequestUpperBytes < waiting ||
-		q > f.QUpper || float64(q) != expectedQ ||
-		lifetimeInvalid ||
-		float64(s.WarmupSeconds) < math.Ceil(math.Max(floors.LoadPreparationFloorSeconds, (float64(q)+1)*f.TailBatchSeconds+f.RefillSeconds)) ||
+	if int64(c.WaitingBatches) != q || f.FramedDecodedRequestUpperBytes <= 0 ||
+		f.QueueRequestCap < waiting || f.QueueBytesCap <= 0 || f.QueueBytesCap > 64<<20 ||
+		f.QueueBytesCap/f.FramedDecodedRequestUpperBytes < int64(s.Workers) ||
+		(float64(q)+1)*f.TailBatchSeconds+float64(s.DeliveryMarginMillis)/1000 > float64(s.RequestLifetimeSeconds) ||
 		float64(s.DrainSeconds) < math.Ceil(float64(s.RequestLifetimeSeconds)+f.TailBatchSeconds+float64(s.DeliveryMarginMillis)/1000) {
-		return fmt.Errorf("fixed outstanding supply violates frozen count, bytes, lifetime or drain bounds")
+		return fmt.Errorf("configured workers exceed queue, lifetime or drain budget")
 	}
-	return s.validateElapsedBudget(floors)
+	return s.validateElapsedBudget(p.PlannedElapsedCapSeconds)
 }
 
-func (s DispatchOccupancyMeasurementSpec) validateElapsedBudget(floors OccupancyPlanningFloors) error {
-	supplyExtension := int64(s.RequestLifetimeSeconds) + (int64(s.DeliveryMarginMillis)+999)/1000
-	budget := int64(s.PreparationSeconds) + int64(s.JobSetupSeconds) + int64(s.CollectionSeconds) + int64(s.WarmupSeconds) + int64(s.DurationSeconds) + supplyExtension + int64(s.DrainSeconds)
-	if s.RequestLifetimeSeconds < 1 || s.DeliveryMarginMillis <= 0 || s.DrainSeconds < s.RequestLifetimeSeconds ||
-		s.PreparationSeconds < 1 || s.JobSetupSeconds < 0 || s.CollectionSeconds < 0 ||
-		float64(s.WarmupSeconds) < math.Ceil(floors.LoadPreparationFloorSeconds) || float64(s.DurationSeconds) < math.Ceil(floors.WindowFloorSeconds) ||
-		s.PlannedElapsedSeconds < 1 || float64(s.PlannedElapsedSeconds) > floors.PlannedElapsedCapSeconds || budget > int64(s.PlannedElapsedSeconds) {
+func (s DispatchOccupancyMeasurementSpec) validateElapsedBudget(capSeconds float64) error {
+	extension := int64(s.RequestLifetimeSeconds) + (int64(s.DeliveryMarginMillis)+999)/1000
+	budget := int64(s.PreparationSeconds) + int64(s.JobSetupSeconds) + int64(s.CollectionSeconds) +
+		int64(s.WarmupSeconds) + int64(s.DurationSeconds) + extension + int64(s.DrainSeconds)
+	if s.RequestLifetimeSeconds < 1 || s.DeliveryMarginMillis <= 0 || s.PreparationSeconds < 1 ||
+		s.JobSetupSeconds < 0 || s.CollectionSeconds < 0 || s.PlannedElapsedSeconds < 1 ||
+		float64(s.PlannedElapsedSeconds) > capSeconds || budget > int64(s.PlannedElapsedSeconds) {
 		return fmt.Errorf("invalid occupancy lifetime or elapsed budget")
 	}
 	return nil

@@ -79,6 +79,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
 		Directory: opts.observationDirectory, Store: opts.storeName,
 		Writer: objects, Definitions: opts.definitions, Outcomes: opts.outcomes,
+		OccupancyTail:  httpapi.MaximumInferenceRequestTimeout + opts.drainTimeout,
 		Diagnostics:    recorder,
 		Retention:      opts.observationRetention,
 		OnRequestEvent: publisher.request,
@@ -179,6 +180,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	}
 
 	handlerConfig.ReadCatalog = scheduler.readCatalog
+	handlerConfig.OccupancyObservations = scheduler.occupancyObservations
 	handlerConfig.SubmitMeasurement = measurements.submit
 	handlerConfig.DeleteMeasurement = measurements.delete
 	handlerConfig.BuildOccupancy = measurements.buildOccupancy

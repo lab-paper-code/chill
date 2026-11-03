@@ -15,7 +15,8 @@ const manualOperationsPath = "/api/v1/scheduler/operations"
 func longOperation(r *http.Request) bool {
 	return r.Method == http.MethodPost && r.URL.Path == manualOperationsPath ||
 		r.Method == http.MethodGet && (r.URL.Path == "/api/v1/observations/scheduler" ||
-			r.URL.Path == rawObservationsPath || strings.HasPrefix(r.URL.Path, rawObservationsPath+"/"))
+			r.URL.Path == occupancyObservationsPath || r.URL.Path == rawObservationsPath ||
+			strings.HasPrefix(r.URL.Path, rawObservationsPath+"/"))
 }
 
 // operations runs a manual operation for a caller allowed to change the

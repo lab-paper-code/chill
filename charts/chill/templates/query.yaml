@@ -280,6 +280,8 @@ metadata:
 rules:
   - nonResourceURLs: ["/chill/api/v1/scheduler/catalog-read"]
     verbs: ["get"]
+  - nonResourceURLs: ["/chill/api/v1/observations/occupancy"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

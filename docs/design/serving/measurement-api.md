@@ -180,54 +180,90 @@ started/completed/failed를 유지하며, 오류 없는 NOT_SUBMITTED는 complet
 
 ## 3. DispatchOccupancyMeasurement (`occupancy`)
 
-2장과 같은 group·Namespaced·status subresource·spec 불변·`spec.node` 규칙이다. printer column: Phase, Node, Mode, PerRequest(`.status.perRequestNanos`), Reason, Age.
+Native routes, CRD names, namespace/SAR, immutable spec and measurement
+admission remain unchanged. **New creation now records a configured short
+closed-loop burst, not a six-minute saturation verdict.** Legacy accepted DOM
+records and their scheduler consumer remain a separate retained contract.
 
-| 필드 | 형식 |
+| Native field | Meaning |
 |---|---|
-| `spec.batchEnergyOptimization` | option의 BEO. mode/runtime image/model은 profile의 `condition.powerMode`, `runtimeImage`, `logicalModel` |
-| `spec.workload` | 요청 경로를 줄 Workload 이름. 그 Dataset의 `evaluation` 부분집합을 전송 |
-| `spec.batch` | 고정 B(≥1), 인스턴스를 `fixedBatchSize:B`로 준비(`SCH-35`) |
-| `spec.supplyMode` | d는 고정 outstanding `closed-loop`, evaluation은 `poisson`. `workers=K`, 대기 batch q와 계산 입력을 conditions에 고정 |
-| `spec.warmupSeconds`, `durationSeconds`, `minimumBatches`, `maximumIdleFraction` | profile 유도 W_load·본창 T·표본 N·식별된 idle 허용 비율. idle 비율은 [0,1] 설정값, 승인값 0.05(고정값 검증 아님). 동결 `maximumIdleBaseFraction` 승인 상한도 0.05이며 profile로 더 엄격하게 역산하지 않음 |
-| closed-loop 시간 하한/상한 | `conditions.inputsJSON.coefficients`의 `loadPreparationFloorSeconds`, `windowFloorSeconds`, `plannedElapsedCapSeconds`를 한 번 동결·소비. 승인값 60/360/3600 s, preparation 예산은 별도. legacy Poisson duration 60 s는 독립 구조 계약 |
-| `spec.requestLifetimeSeconds`, `deliveryMarginMillis`, `drainSeconds`, `preparationSeconds`, `jobSetupSeconds`, `collectionSeconds`, `plannedElapsedSeconds` | profile·SLO·실제 준비·batch tail·전달·수집 예산에서 계산. L≥SLO, gateway cap≥L, native count/decoded bytes 공동 조건. d/evaluation socket은 L+delivery보다 엄격히 큼(최소 +1 ms) |
-| `spec.conditions` | `profileID`, `inputsJSON`, `waitingBatches`, `maximumIdleNanosPerRequest`, `minimumCycles`: 정확한 profile·모든 입력·승인 계수·q·idle 1 ms/요청·필수 cycle 및 하한/cap 설정 원천을 불변 고정 |
-| `status` | `phase`(2장과 같은 넷), `reason`, `powerMode`, `perRequestNanos`, `throughput`(십진 문자열 req/s), `result`(`ProfilingRunEvidenceReference`) |
+| `batchEnergyOptimization`, `node`, `workload`, `batch` | exact accepted profile, current Node UID and Workload/Dataset evaluation inputs; fixed B |
+| `supplyMode`, `workers` | closed-loop outstanding K, explicitly configured, never auto-sized to hide idle |
+| `warmupSeconds`, `durationSeconds`, `minimumPairs` | configured warmup, burstSeconds and valid-pair count requirement |
+| lifetime/delivery/preparation/setup/collection/drain/plannedElapsed | explicit policy allowances and profile-tail-derived safety budget; exact formulas and sample bases in [configuration](configuration-hardcoding.md#native-dispatch-occupancy-policy-w2) |
+| `conditions` | profileID, waitingBatches, immutable inputsJSON with policy/configuration/source identities |
+| status | phase/reason/powerMode/result; legacy scalar d/throughput are not populated by bursts |
 
-**실행.** 한 노드 run의 모든 동작은 measurement `Operations`(taint toleration)다. 필요하면 CR owner NodeActuation으로 profile mode에 `ChangePower`하되 비용 기록 없이 그 뒤 witness를 시작한다. preparation Owner는 Workload이며 fixed B로 준비하고 Pod에 해당 Workload UID routing annotation을 준다.
-계산된 공급·수명·warmup·본창·drain·수집 예산으로 load Job을 실행한다. 전용 JSONL d scanner가 native batch 원장을 compact 집계하며 전체 cohort 배열/전체 Query 없이 조건·모든 과학 판정 사유를 기록하고 반환한다. 공유 observation reader는 조회 bounds를 UTC hour key로 정규화하여 Local/UTC 차이로 coverage 공백/`ObservationRetentionGap`을 만들지 않는다.
+**Execution boundary.** Prepare the accepted instance with fixedBatchSize=B,
+maxBatchWaitMS=0 and Workload ownership/routing. The existing load Job uses
+the configured load Node, Dataset evaluation input, common TLS gateway,
+projected token and CA. Supply lasts W+D+L+delivery, its deadline includes
+setup/drain/collection, and the watchdog includes preparation too. All segments
+must fit the frozen cap; no padding, silent clamping, retry or auto-extension.
+Cleanup uses the existing load label and Background deletion. Physical drain
+captures native metadata keyed by physical instance. W6 slots, global generator
+locks, request persistence and evaluation Poisson behavior are not modified.
 
-**load Job.** release namespace `occupancy-<UID hash>`, label `chill.dacs.io/measurement-load:<Node UID>`, `backoffLimit:0`과 유한 예산을 사용한다.
-- closed-loop 공급은 `warmupSeconds+durationSeconds+L+deliveryMarginMillis/1000`이다. generator 시작→첫 물리 batch 전달 지연 때문에 창 끝 공급이 끊기지 않게 한다. Job deadline은 공급 시간을 초로 올림한 뒤 setup·drain·collection을 더한다.
-- 전체 elapsed는 `preparation+setup+warmup+duration+ceil(L+deliveryMarginMillis/1000)+drain+collection`이며 `plannedElapsedSeconds` 이하, 동결 cap(승인 3600 s) 이하다. generator는 `supplyExtensionSeconds=ceil(L+deliveryMarginMillis/1000)`를 known 합과 새 `conditions.inputsJSON.computed`에 예약하고 미관측 setup/collection 잔여에서 차감해 합을 3600 s로 맞춘다.
-- 기존 record/terminal CR/동결 입력, 물리 batch 기준 warmup·본창, Poisson 공급 시간은 바꾸지 않는다. HTTP 만료 후 native 미완료 근거는 unknown이다. 반환은 label의 Job을 Background 삭제해 부하 Pod를 정리한다.
-- `nodeName`은 ChillServer Pod의 노드(downward API `spec.nodeName`, env `NODE_NAME`)다. scheduler/NoSchedule taint를 거치지 않으며 gateway 노드에 두어 다른 측정 노드 전력에 부하를 섞지 않는다.
-- init `dataset`은 Dataset image의 `sh -ec 'cp -R "$1"/. /data/' -- <path>/evaluation`이다. Workload/Dataset 원시 입력을 실제 FQDN·CA·projected token·기존 release ServiceAccount의 공통 TLS gateway로 보낸다. d는 closed-loop K와 L header/socket 여유, evaluation은 Poisson이다.
-- ServiceAccount `<fullname>-load-generator`, image는 `load-generator/`를 담은 `build/docker/load-generator.Dockerfile`, base Python 3.12다. live 인증서에 Subject/Authority Key Identifier가 없어 3.13+ 기본 strict 검증이 거절할 수 있다 `[추론]`.
+**Shared estimator versus protocol.** `serving.OccupancyEstimator` is the same
+factual reducer used by read-only observation queries. The DOM controller first
+joins sparse rows by RequestID, then selects the earliest direct native start
+among requests received in this Job's half-open receipt cohort. A late native
+supplement with no receipt timestamp inherits cohort membership from its joined
+HTTP row; unrelated earlier requests cannot establish the warmup origin.
+Configured warmup advances that start into an exact half-open D-second worker-native
+window. It streams selected rows through `ScanOccupancyRows` into `Add`;
+`Results` supplies the exact cell's `estimate`.
+The accepted profile pointer supplies the **mean full Go runner-exchange service**
+at previous batch size—not BackendMS, stage sums or serving ServiceMS.
 
-**물리 측정량.** `d=연속 native batch 시작 span/(physical cycles×B)−profileMean/B`의 signed 전체 값을 보존한다. batch는 Node·Pod UID·container ID·BatchID·member로 연결한다. readiness는 B개 member queued 시각의 최댓값, actor 대기는 `runningNanos−queuedNanos`다.
-직접 native timestamp/legacy offset의 원천과 HTTP 결과/실제 실행을 구분하고 HTTP 실패 후 실행 batch도 포함한다. compute gap 전체를 idle로 차감하지 않는다.
+For adjacent batches i,j on one unchanged physical instance:
 
-**조건 생성과 동결.** 상대 계획 정밀도 1%, 양측 95%, 공통 여유 1.25, idle 기여 1 ms/요청을 실측 profile의 batch별 분산·trial 경계·준비 aggregate·Workload SLO에 적용해 N·L·창을 계산한다. N은 physical batch 수, cycle은 N−1이며 같은 batch member를 독립 표본으로 중복 계산하지 않는다.
-- `K=min(64,floor(queueBytesCap/framedDecodedRequestUpperBytes),floor((L−margin)/(B×mu_tail)))`를 한 번 정한다. B는 profile batch, `mu_tail`은 같은 B의 profile 최대 관측 batch 실행초, L은 기존 수명초, margin은 `deliveryMarginMillis/1000` reserve다.
-- `queueBytesCap=67108864`; `framedDecodedRequestUpperBytes`는 framing 포함 요청별 decoded bytes 상한이다. K는 worker/outstanding 요청 수이며 B 배수로 올림하지 않는다. `q=ceil(K/B)−1`이다.
-- `conditions.inputsJSON.computed.supplySizing`에 `{batch,profileMaxBatchSeconds,serviceTimeSource:"profile.maxObservedSeconds",requestLifetimeSeconds,marginSeconds,workerCap:64,queueBytesCap:67108864,framedDecodedRequestUpperBytes,limitingBound}`를 동결한다. generator/API/controller가 K·q를 정확히 재계산한다. 최대 관측값이 없거나 양의 유한값이 아니면 거절하며 mean×2 fallback은 없다.
-- `limitingBound`는 `queue-cap`, `bytes-cap`, `lifetime` 중 최솟값을 정한 항목이며 동률은 이 순서다. 공급 sizing용 왕복/외부 시간 측정이나 별도 출처 입력은 쓰지 않는다. L은 기존 계산 그대로이며 K를 늘리려고 확장하지 않는다.
-- 기존 q/batch-tail/prefix 수명 검사·native waiting count/decoded bytes 공동 조건·SLO·gateway cap을 유지한다. 큰 K를 생성 후 bytes 초과 거절하지 않고 세 cap의 최솟값을 생성한다. 공급은 K<B일 때만 불가능하며, 다른 실행 조건/전체 cap 불만족도 실행 전에 보고하고 L/예산을 늘리지 않는다.
-- 계수·하한/상한은 한 설정 원천에서 읽고 generator/API/admission/controller가 같은 동결 조건을 소비한다. 준비 시간과 부하 warmup의 의미·예산은 별도 기록한다.
+```
+signed d_i = (nativeRunningAt_j - nativeRunningAt_i - Profile.MeanNanos(B_i))/B_i
+```
 
-**수명·유휴 상한.** admission은 L을 실제 `HandlerConfig.RequestTimeout`과 대조해 초과 CR을 실행 전에 거절한다. caller는 L/delivery를 명시하고 `socketTimeoutMillis>=L*1000+deliveryMarginMillis+1`로 설정한다. gateway가 원래 L/sender 경과를 전달하고 native는 `L−senderElapsed−completionMargin`을 쓰며 m은 한 번 차감한다(evaluation Poisson도 동일).
-유한 physical drain·전체 3600 s 예산(`e8e018e2`)·공급 연장 예약을 유지한다. 예산 불충족을 보고하며 연장 축소/cap 초과 실행은 하지 않는다. Accepted/동결 입력은 불변이고 묵시적 재실행은 없다. 새 K는 Accepted10의 K와 같은 불변량이 아니며 비교는 실제 근거로 한다.
-식별된 idle 비율은 설정 `maximumIdleFraction` 이하여야 한다. 승인 0.05는 계획 여유 25%(1.25−1)의 1/5이며 signed d를 바꾸지 않는다. 초과는 producer/요청 경로 한계로 보고하고 K·L·margin·cap 튜닝/자동 재측정으로 통과시키지 않는다.
+Both starts must be inside the window. Full unique membership, direct
+Q/S/F timestamps, successful complete execution, consecutive BatchIDs, unchanged
+profile/decision/definition and worker-clock ordering are required. Every next
+member must already be queued (`max(Q_j)<=F_i<=S_j`). Drain metadata must prove
+fixedBatchSize=B, maxBatchWaitMS=0 and matching profile/decision applied before
+the previous start. Missing batches/invalid evidence never get bridged.
+Sparse native supplements join by RequestID rather than becoming extra requests.
+Gateway receipt timestamps select cohorts, never sub-ms worker ordering.
 
-**판정·통계.** physical finished→다음 ready의 보수 idle 상한, 창 끝단·hole·누락 native를 함께 평가하며 필요한 원근거가 없으면 unknown과 모든 사유를 남긴다.
-- `idleIdentified=true`는 physical batch 연속성과 실행 근거 완전성을 요구한다. false의 `idleUpperNanos`는 알려진 pair 부분 합일 뿐 통과 근거가 아니다. unknown·hole·누락 native·불완전 실행은 탈락한다.
-- `idleNanosPerRequest`는 같은 physical cycle/endpoints를 쓰며 1 ms/요청 상한을 유지한다. 식별된 idle에만 nanos `dRange=[perRequestNanos−idleNanosPerRequest,perRequestNanos]`, κ 상대 오차 상한 `kappaErrorBound=idleFraction`을 기록하고 미식별이면 생략한다.
-- d에서 idle을 빼지 않는다. 원 d가 커지고 κ가 작아지는 보수 방향이며 범위/상한은 95% CI나 전체 모델 오차 보장이 아니다. `cycleMeanNanos`, `cycleSDNanos`, `cycleRelativeHalfWidth`, `precisionTargetMet`는 stationary-iid t 근사의 보고 정보다.
-- N/창은 시작 전 고정한다. 실제 CI로 새 거절 gate/N 자동 변경을 만들지 않는다. minimum N·물리 완전성·unknown·idle 상한을 판정하고 모든 해당 이유를 `reasons[]`에 보존한다.
-- RequestRow `nativeQueuedAt`, `nativeRunningAt`, `nativeFinishedAt`, `nativeExecutionComplete`, `nativeOutcome`, `nativeError`는 직접 actor 근거다. native `queueMS`는 ingress 포함 지표다. HTTP 완료 후 native는 `kind:native` 보충 raw로 남겨 HTTP 완료/member를 중복 계수하지 않는다. scanner가 누락 identity/physical batch를 compact 집계한다.
-- 통과는 `Complete`이며 음수 d도 보존한다. minimum batches·idle·물리 근거·unknown·witness의 모든 사유는 `Insufficient`/record에 남긴다. 거절·prepare/remove·Job·watchdog·재시작 실패는 `Failed`다.
-- 초기 Measuring patch와 부하 시작 전 실패 terminal status는 취소 run과 분리한 최대 30 s publication context로 저장한다. handback은 parent context를 쓰며 status 저장 예산으로 측정창을 확대하지 않는다.
+The evidence `estimate` reports node/workloadUID/model/powerMode/executionPath/
+runtimeImage/batch, profile ID/reference/evidence/actual mean, window, raw-row,
+request and batch completeness counts, eligible pair count and signed
+mean/median/p25/p75/IQR/p10/p90/negativeFraction (ns/request). Exact sorted-index
+quantiles use round-to-even `round((n-1)*p)`. Zero pairs has `statistics:null`.
+Negative samples remain negative; no operational clamping or precision guarantee
+is added. Loaded runner slowdown relative to the profile remains in d.
+
+**Assessment belongs to the burst protocol, not the estimator.** Pair count
+below configured minimum is `Insufficient/TooFewPairs`; retain all statistics.
+Otherwise verdict is `Observed`, native phase Complete—not `Accepted`. Load,
+retention, physical-drain or isolation failures retain their operational reasons
+and observed data. There is no idle-identification requirement, NotSaturated
+verdict, estimated-idle planning gate or achieved-CI gate.
+
+**Stored boundary.** `BurstOccupancyRecord` uses schema
+`chill.dacs.io/dispatch-occupancy-measurement.v1alpha2` and separate prefix
+`serving/dispatch-occupancy-observations/<NodeUID>/<CRUID>.json`.
+It contains `estimate`, frozen conditions, load/drain/isolation and factual
+verdict. It does not contain a fallback scalar d. Existing
+`DispatchOccupancyRecord` v1alpha1 under `serving/dispatch-occupancy/` remains
+unchanged for `CostEvidence`; new observations cannot silently reach κ/replay.
+Legacy optional spec fields remain solely for decoding old accepted objects.
+Old accepted objects and CRs are **not deleted now**. Future deletion candidates
+are detectable by the old prefix/result schema and old CR specs without
+`minimumPairs`; inventory their exact keys/UIDs before a separately approved
+scheduler admission cutover.
+
+The burst sample is an experimental protocol, not proof that100pairs/15seconds
+is sufficient for every cell. The retrospective fixed-batch PLC result supports
+the algebra and joined-native feasibility; its negative fraction, large IQR and
+minute drift do not establish universal stationarity or scheduler admission.
+
 
 **근거 지위.** mobilenet CPU 8개/GPU 2개는 새 규칙 미재인증 legacy이며 실제 대체 Accepted 전까지 소비한다. U2 CPU 8개/GPU 전체 5개/PLC 12개의 새 규칙 측정은 D2 뒤 25개 범위다. D01 Insufficient와 `rasp5-944` 진단은 보존한다. U3 D04/D09 새 immutable record가 실제 consumer source를 대체하며 옛 Smol CPU 2개 raw/status는 보존한다.
 **Smol 해석.** D04/D09/D14/D23/D33의 profile 포함 95% 근사구간은 0 아래이며 evaluation의 알려진 systematic profile-versus-serving bias다. profile/NodeUID/model/B1/mode/runtime 일치와 harness/warmup/timing envelope/시간 분리는 관측 사실이다. 실효 thread/affinity·입력/전처리 경계·열/주파수/throttling·clock의 원인별 기여는 미확정 가설이다. signed raw·원 Accepted·`max(d,0)`을 유지하고 bias 보정/d 추정정책 대안은 M5 후보다. 수치·원시는 [bias JSON](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/smol-systematic-bias-20261024.json), [해석 근거](/home/genesis1/.cache/chill-assets/ops/pools-deploy/audit-20261024/smol-systematic-bias-20261024.txt)를 따른다.
@@ -235,9 +271,9 @@ started/completed/failed를 유지하며, 오류 없는 NOT_SUBMITTED는 complet
 ## 4. 계획기의 d 수집
 
 - `CostEvidence.Refresh`는 `serving/dispatch-occupancy/`를 prefix 목록/불변 identity cache로 읽는다. `Accepted`이면서 기록의 `profileID`가 현재 catalog의 검증된 공유 실행 profile인 근거만 (Node UID, mode, runtime image, model)별 최신 `measuredAt` 선택에 참여한다. 과거 quota/thread 제어 profile의 d는 tuple이 같아도 새 κ 입력이 되지 않는다. 동률은 key 순(`latestBy` 규칙)이며 원 기록은 보존한다.
-- `serving.DispatchOccupancy{node{name,uid},powerMode,runtimeImage,model,perRequestNanos,source}`에서 source는 record key, `perRequestNanos=max(d,0)`(사용자 결정 A7)이다. 음수 d는 원 record/key로 조회한다.
-- controller 설정을 거쳐 snapshot `dispatchOccupancy`에 싣고 `dispatchOccupancy(i)`는 option의 Node UID/profile mode/runtime/model **모두** 일치하는 항목만 찾는다. `NewCapacityInput`과 replay가 이를 쓰며 행 key에 항목이 포함되어 source 변경 시 재계산한다.
-- 미측정 mode option은 `MissingDispatchOccupancy`다. 같은 Node/mode/runtime/model option은 d를 공유한다. 상세 용량 소비는 [계획기](analytic-planner.md)를 따른다.
+- `serving.DispatchOccupancy` retains the DOM record key in `source`, with `perRequestNanos=max(d,0)`; signed facts remain in the original record. Selection adds `provenance{source:dom|default,value}` to the capacity input.
+- Legacy accepted DOM keeps Node UID/profile power-mode/model matching across profiles and batches; runtime image is history, not a matching/key constraint. Matching DOM always has priority.
+- Without matching DOM, configured `settings.defaultDispatchOccupancyNanos` supplies ns/request and the row is computed rather than rejected. Source/provenance-only changes reuse numerical capacity; value changes invalidate it. New Observed burst evidence remains separate and is not adopted by this fallback change. 상세 용량 소비는 [계획기](analytic-planner.md)를 따른다.
 
 ### 4.1 observer와 coherent replacement
 
@@ -268,12 +304,17 @@ ChillServer는 두 kind 목록/status patch, release namespace Job create/get/li
 ## 7. 저장 계약 (ADR 0019)
 
 [ADR 0019](../../adr/0019-durable-stored-contract-compatibility.md)의 단일 형태를 reader가 엄격히 소비한다. Timing 없는 미기록 B를 관측한 0으로 투영하지 않으며 원 raw·값·판정은 외부 과학 증거로 보존한다.
+이번 direct-d 작업은 기존 scheduler reader/accepted d를 바꾸지 않는다. 신규 burst는
+별도 prefix/schema의 `Observed` 사실이며 구 reader의 목록에 들어가지 않는다.
+기존 `serving/dispatch-occupancy/` 객체·CR·타입은 **지금 삭제하지 않는다**.
+향후 scheduler의 B 채택을 별도 승인할 때 reader 전환과 구 근거 삭제를 한 번에 수행한다.
 
 | 대상 | 불변 저장/소비 계약 |
 |---|---|
 | operation/순서 기록 | 실제 timing·B/S/G·보고 비율·operation identity·단계별 출처 |
-| `serving/dispatch-occupancy/<Node UID>/<CR UID>.json` | 전체 공급·시간·계수·identity 조건, native 원천·모든 과학 판정 사유를 PutImmutable |
-| d/판단 | 수동 d 목록 없이 snapshot이 record를 참조. 행의 Node UID·mode·runtime/model·d source·실제 비교 T 보존 |
+| legacy `serving/dispatch-occupancy/<Node UID>/<CR UID>.json` | 현재 scheduler가 소비하는 기존 Accepted scalar 계약을 그대로 보존 |
+| burst `serving/dispatch-occupancy-observations/<Node UID>/<CR UID>.json` | estimator 결과·minimumPairs가 포함된 동결 조건·실제 native/drain/격리 근거, Observed 또는 Insufficient; scheduler 소비 없음 |
+| d/판단 | 기존 d source를 보존. 새 B 통계는 signed 사실이며 scheduler의 d를 덮어쓰지 않음 |
 | scheduler 설정 | 선택 `SchedulerSettings`/`minimumDemand`를 `decision.settings`, `decision.search.bounds`, scheduler 관측 기록에 동결. 캠페인 binding의 scheduler 입력 참조/settings 캡처를 결과에 연결 |
 
 ### 7.1 최소 수요와 재현 설정
@@ -289,7 +330,9 @@ G2 승인 범위는 ranking baseline 9개의 idle/reach-power 2 roots·18 steps,
 
 ## 8. 캠페인 manifest
 
-generator가 실측 profile/SLO·승인 계수로 d의 N/K/L·준비·본창·setup·drain·collection을 계산하고 `conditions.inputsJSON`에 입력 ID·원시 위치·계산값을 동결한다. M5에서는 계산 책임을 측정 controller로 옮기고 CR 조건 필드를 명시적 재정의에 사용한다. 계수/판정 변경은 승인 범위로 관리한다.
+신규 DOM API는 서버가 선택한 `dispatchOccupancy`의 burst/workers/minimumPairs·예산을 동결하고
+실측 accepted profile/SLO·native queue/lifetime 범위를 대조한다. 기존 외부 campaign generator의
+legacy N/K/L·idle/precision 유도 형식을 신규 burst에 적용하지 않는다.
 `remove`는 해당 profile의 Accepted prepare에서 관측한 정확한 Pod UID/container ID를 쓴다. idle/power에도 identity를 유지하고 `measured-*`는 논리 슬롯이다. 교체/physical source 누락은 atomic exact-identity 검증 실패이며 immutable record를 보존한다.
 `Refused`/`Insufficient`/`Failed`면 해당 노드 레인을 멈춰 부분 근거·자연 반환을 보존한다. 재측정은 원인·승인 범위 확인 후 새 이름 요청으로 한다.
 
@@ -302,7 +345,7 @@ generator가 실측 profile/SLO·승인 계수로 d의 N/K/L·준비·본창·se
 | API/admission/격리 | 필드 조합·spec 불변·profile/Node/CPU·실제 gateway cap 사전 거절·노드 순서·taint/서빙 격리 |
 | operation/민감도 | 실제 identity/effect·부분 실패/sequence/반환·상수 S=0/offset 불변/내부 극값·원 gap 합집합/cap·실제 support/bracket·undefined 비율·10% 초과 Accepted |
 | minimumGain | nominal 불변·signed 상쇄/사슬 합성·이득=B keep/>B 전환·keep infeasible 회복·exact baseline의 무관한 profile CI 제외 |
-| d/소비 | 물리 member/연속성·HTTP 실패 후 실행/late native·끝단/누락 unknown·idle 비율/1 ms 경계·식별 시 nanos dRange/κ 상한/미식별 생략·모든 사유·signed/max0·최신 Accepted identity/source 교체/반환 |
+| d/소비 | 새 B: RequestID join·물리 full membership·동일 configuration·연속/backlogged native pair·정확 분위수·signed 음수 보존·minimumPairs 사실. 기존 scheduler: legacy Accepted scalar·signed/max0·identity/source 선택을 유지 |
 | lifetime/observer | L≥SLO/cap≥L/socket>L+delivery·sender/m 단일 차감·producer end 뒤 final read·동결 event/result byte·authoritative NotFound/transport 구분 |
 
 ## 10. 캠페인 범위와 증거
@@ -1093,8 +1136,10 @@ UID/If-Match 삭제·Measuring 409와 삭제 후 자체 evidence 정리를 실�
 `httpapi/handler.go`의 DOM POST/DELETE 등록이 연결돼 있다. Query/Server/HTTP/Kube focused
 테스트와 `make lint`, `make arch-check`(67/67), `make test`가 통과했다. 대시보드는
 Node 24.14.0 tsc/eslint/운영 summary 포함 500개 테스트/기본 build가 통과했다.
-동결 `inputsJSON.computed.saturationSizing`의 workers·제한 요인·예상 idle은 읽기 전용으로
-표시하며, DELETE는 UID와 따옴표 있는 `If-Match:"<resourceVersion>"`을 전송한다.
+이 검증 당시 legacy UI는 `inputsJSON.computed.saturationSizing`의 workers·제한 요인·예상 idle을
+읽기 전용으로 표시했다. 신규 burst evidence에는 saturationSizing/예상 idle이 없으며
+설정된 workers와 minimumPairs 및 실제 pair 통계를 사용한다(§7의 분리된 stored 계약).
+DELETE는 계속 UID와 따옴표 있는 `If-Match:"<resourceVersion>"`을 전송한다.
 
 `TestOccupancyLocalHTTPSDryRunThenCreate`는 실제 로컬 TLS handler→builder→service에서
 200 NOT_SUBMITTED→202 Accepted, 생성 전 dry-run 무효과와 동결 spec 동일성을 확인했다.

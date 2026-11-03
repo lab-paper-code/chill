@@ -71,6 +71,32 @@ GOMEMLIMIT3072MiB/limit4Gi 유지(rev96 확인). 관측 heap최대880MiB와 soft
 | SchedulerObservationPage | scheduler[from,to], 기존 limit에서 종료 |
 파일 이름을 색인으로 envelope 먼저 decode하고 필요한 본문만 읽으며 참조는 해당 시간 catalog로 푼다. archive 이후 실제 없는 범위만 gapUntil/coverage gaps이고 power complete=false를 유지한다. SchedulerHistoryWindow는 현재 없고 도착 경로는 LoadWindow의 Arrivals다. Tick60s는1~2분 파일·5req/s<1MB(이전3.3~6.7MB); 메모리는 선택 요청 수 비례, 기본2h/5req/s는36k행≈47MB다.
 
+#### Direct dispatch occupancy
+`GET /api/v1/observations/occupancy?from=<RFC3339Nano>&to=<RFC3339Nano>`
+returns `{window:{start,end},rows:[OccupancyEstimate...]}` without caching.
+Exactly one `from` and `to` are required, with `from < to`; unknown or duplicate
+parameters and windows exceeding the accepted scheduler configuration's
+`dispatchOccupancy.maximumObservationWindowSeconds` return `400 InvalidQuery`.
+The sample maximum is 3600 seconds. Authentication and nonresource SAR are the
+same as raw GET, with `/chill/api/v1/observations/occupancy` granted to dashboard
+and query service accounts.
+The bounded scan uses `--operation-timeout`, like historical raw/scheduler reads,
+not the short management `--request-timeout`; client cancellation still aborts it.
+
+One all-cell `ScanOccupancyRows` invocation joins late native evidence. Rows
+retain node, workload UID, model, power mode, execution path, runtime image,
+batch and exact scheduler-published profile identity/reference/evidence/mean.
+Counts distinguish raw rows, requests, complete requests, batches, complete
+batches and eligible backlogged adjacent pairs. Signed statistics (median,
+p25/p75/IQR, p10/p90, mean and negative fraction) are ns/request; no pairs means
+`statistics:null`, not zero. Empty results are `rows:[]`.
+Both native starts must be inside the half-open window. Only full successful
+adjacent physical batches under unchanged fixed-batch/no-wait native metadata
+applied before the previous start qualify. Current runtime native metadata is
+used conservatively: absent historical policy evidence does not authorize a
+pair. This diagnostic response has no admission verdict and does not replace
+stored DOM evidence.
+
 Node meter-only facts (period, bucket, and matching columns): `meterJoules` (number|null) and `meterComplete` use the existing trapezoidal integration and recorded meter coverage policy, independently of scheduler membership and stream completeness. `sourceIdentity` is the actual source recorded with the samples, never a replacement from current configuration; unavailable source identity is left empty and reported in reasons. Mixed/unavailable sources, truncated selected records, and buckets without actual observations yield `meterJoules=null` and `meterComplete=false`, with reasons. `gapSeconds` counts uncovered boundary time plus clipped intervals exceeding the recorded maximum gap; `gapFraction` is that duration divided by the requested window (0..1). Without samples or a recorded policy the entire window is uncovered. `maximumSampleGapSeconds` retains its existing meaning. Existing `joules`, `complete`, and whole/active pool totals are unchanged; no CR input is added.
 
 #### 전력 bucket 이력 (R18)

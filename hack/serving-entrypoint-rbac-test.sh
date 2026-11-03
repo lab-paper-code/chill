@@ -117,8 +117,18 @@ for kind in ("preprocessors", "datasets"):
         sys.exit("query inputs require get/list, never writes: " + kind)
 catalog = next(d for d in documents if d.get("kind") == "ClusterRole"
                and d["metadata"]["name"] == "chill-query-catalog-reader")
-if catalog["rules"] != [{"nonResourceURLs": ["/chill/api/v1/scheduler/catalog-read"], "verbs": ["get"]}]:
-    sys.exit("query catalog grant is not the exact owner GET")
+if catalog["rules"] != [
+    {"nonResourceURLs": ["/chill/api/v1/scheduler/catalog-read"], "verbs": ["get"]},
+    {"nonResourceURLs": ["/chill/api/v1/observations/occupancy"], "verbs": ["get"]},
+]:
+    sys.exit("query owner read grants differ")
+# Prove the rendered owner-read binding, not external bootstrap roles such as
+# system:auth-delegator (which Helm intentionally does not render).
+assert any(d["kind"] == "ClusterRoleBinding" and
+           d["roleRef"]["kind"] == "ClusterRole" and
+           d["roleRef"]["name"] == catalog["metadata"]["name"] and
+           {"kind": "ServiceAccount", "name": "chill-query", "namespace": "chill-system"} in d.get("subjects", [])
+           for d in documents), "query SA lacks occupancy GET binding"
 
 serving = [r for r in roles if r["metadata"]["name"] == "chill-serving-entrypoint"]
 if not serving or not grants(serving[0], "services", "list"):
@@ -152,6 +162,8 @@ def caller_path_grants(path, verb):
                any(url == path or url.endswith("*") and path.startswith(url[:-1])
                    for url in rule.get("nonResourceURLs", []))
                for rule in manager.get("rules", []))
+assert caller_path_grants("/chill/api/v1/observations/occupancy", "get"), "dashboard lacks occupancy GET"
+assert not caller_path_grants("/chill/api/v1/observations/occupancy", "post"), "dashboard acquired occupancy write"
 
 def caller_resource_grants(role, resource, verb, name=""):
     return any("edge.dacs.io" in rule.get("apiGroups", []) and

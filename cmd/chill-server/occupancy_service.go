@@ -170,11 +170,13 @@ func (o *measurementService) occupancyOwnedEvidence(
 	if frozen.Node.Name != task.Spec.Node || frozen.Node.UID == "" || strings.ContainsAny(frozen.Node.UID, "/\\") {
 		return nil, measurementInUse("invalid frozen occupancy Node identity")
 	}
-	location := o.measurementLocation(
-		servingkube.DispatchOccupancyPrefix + frozen.Node.UID + "/" + string(task.UID) + ".json",
-	)
+	prefix, schemaVersion := servingkube.DispatchOccupancyPrefix, servingkube.DispatchOccupancySchema
+	if task.Spec.MinimumPairs > 0 {
+		prefix, schemaVersion = servingkube.BurstOccupancyPrefix, servingkube.BurstOccupancySchema
+	}
+	location := o.measurementLocation(prefix + frozen.Node.UID + "/" + string(task.UID) + ".json")
 	if ref := task.Status.Result; ref != nil &&
-		(ref.Store != location.Store || ref.Key != location.Key || ref.SchemaVersion != servingkube.DispatchOccupancySchema) {
+		(ref.Store != location.Store || ref.Key != location.Key || ref.SchemaVersion != schemaVersion) {
 		return nil, measurementInUse("occupancy result is outside its producer-owned evidence location")
 	}
 	raw, err := o.readDeletionEvidence(ctx, location, true)
@@ -184,8 +186,7 @@ func (o *measurementService) occupancyOwnedEvidence(
 	if raw == nil {
 		return nil, nil
 	}
-	var record servingkube.DispatchOccupancyRecord
-	if json.Unmarshal(raw, &record) != nil || !occupancyRecordOwned(&record, frozen.Node, &task.Spec) {
+	if !occupancyEvidenceMatches(raw, schemaVersion, frozen.Node, task) {
 		return nil, measurementInUse("occupancy evidence does not describe this native measurement")
 	}
 	// Foreign DOM references must not grant deletion authority over shared evidence.
@@ -204,12 +205,22 @@ func (o *measurementService) occupancyOwnedEvidence(
 	return &location, nil
 }
 
-func occupancyRecordOwned(record *servingkube.DispatchOccupancyRecord,
-	node serving.NodeReference, spec *api.DispatchOccupancyMeasurementSpec,
+func occupancyEvidenceMatches(
+	raw []byte,
+	schemaVersion string,
+	node serving.NodeReference,
+	task *api.DispatchOccupancyMeasurement,
 ) bool {
-	return record.SchemaVersion == servingkube.DispatchOccupancySchema && record.Node == node &&
-		record.Conditions.Node == spec.Node &&
-		record.Conditions.BatchEnergyOptimization == spec.BatchEnergyOptimization &&
-		record.Conditions.Workload == spec.Workload && record.Conditions.Batch == spec.Batch &&
-		record.ProfileID == spec.Conditions.ProfileID
+	// Only the ownership header is shared by legacy accepted and burst evidence.
+	var record struct {
+		SchemaVersion string                               `json:"schemaVersion"`
+		Node          serving.NodeReference                `json:"node"`
+		ProfileID     string                               `json:"profileID"`
+		Conditions    api.DispatchOccupancyMeasurementSpec `json:"conditions"`
+	}
+	return json.Unmarshal(raw, &record) == nil && record.SchemaVersion == schemaVersion && record.Node == node &&
+		record.Conditions.Node == task.Spec.Node &&
+		record.Conditions.BatchEnergyOptimization == task.Spec.BatchEnergyOptimization &&
+		record.Conditions.Workload == task.Spec.Workload && record.Conditions.Batch == task.Spec.Batch &&
+		record.ProfileID == task.Spec.Conditions.ProfileID
 }

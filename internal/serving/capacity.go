@@ -20,7 +20,6 @@ const (
 	CapacityPending           = "CapacityPending"
 	CapacityRejected          = "CapacityRejected"
 	CapacityNonMonotone       = "NonMonotone"
-	CapacityNoOccupancy       = "MissingDispatchOccupancy"
 	CapacityRowBuiltEvent     = "capacity-row-built"
 	CapacityServiceExceedsSLO = "BatchServiceExceedsSLO"
 )
@@ -42,8 +41,7 @@ type CapacityInput struct {
 	GridSteps          int                 `json:"capacityGridSteps"`
 	BisectionWidth     float64             `json:"capacityBisectionWidth"`
 	TailSamples        int                 `json:"capacityTailSamples"`
-	// DispatchOccupancy is the measurement for the option's Node, power mode
-	// and model; RuntimeImage is retained only as measurement history.
+	// DispatchOccupancy carries selected DOM or configured default d and provenance.
 	DispatchOccupancy *DispatchOccupancy `json:"dispatchOccupancy,omitempty"`
 }
 
@@ -94,14 +92,14 @@ func CapacityVariants(o SchedulerOption) []SchedulerOption {
 }
 
 // NewCapacityInput keys option variant o for Workload w under settings and the
-// measured dispatch occupancy.
+// selected DOM or configured default dispatch occupancy.
 func NewCapacityInput(settings SchedulerSettings, occupancy []DispatchOccupancy, o SchedulerOption, w *Definition) CapacityInput {
 	i := o.Instance
 	return CapacityInput{
 		WorkloadUID: w.UID, SLO: w.SLO, Node: i.Node, PowerMode: i.Profile.Condition.PowerMode, ProfileID: i.Profile.ID,
 		Allocation: i.Allocation, MaxBatch: i.MaxBatch, CompletionMarginMS: settings.CompletionMarginMS,
 		Window: settings.CapacityWindow, Windows: settings.CapacityWindows, PassingWindows: settings.CapacityPassingWindows,
-		MinimumRequests: settings.CapacityMinimumRequests, DispatchOccupancy: dispatchOccupancy(occupancy, o.Instance),
+		MinimumRequests: settings.CapacityMinimumRequests, DispatchOccupancy: dispatchOccupancy(settings, occupancy, o.Instance),
 		GridSteps: settings.CapacityGridSteps, BisectionWidth: settings.CapacityBisectionWidth, TailSamples: settings.CapacityTailSamples,
 	}
 }
@@ -112,6 +110,7 @@ func (in CapacityInput) Key() string {
 	if in.DispatchOccupancy != nil {
 		occupancy := *in.DispatchOccupancy
 		occupancy.RuntimeImage = ""
+		occupancy.Source, occupancy.Provenance = "", nil
 		in.DispatchOccupancy = &occupancy
 	}
 	data, _ := json.Marshal(in)
@@ -141,7 +140,6 @@ type capacityBuilder struct {
 
 // BuildCapacityRow computes the measured option's capacity, independent of
 // current placement inventory. at anchors the simulated arrival windows.
-// Missing dispatch occupancy is an intrinsic rejected result.
 func BuildCapacityRow(ctx context.Context, settings SchedulerSettings, occupancy []DispatchOccupancy, o SchedulerOption, w *Definition, at time.Time) (CapacityRow, error) {
 	if err := ctx.Err(); err != nil {
 		return CapacityRow{}, err
@@ -149,10 +147,6 @@ func BuildCapacityRow(ctx context.Context, settings SchedulerSettings, occupancy
 	began := time.Now()
 	in := NewCapacityInput(settings, occupancy, o, w)
 	row := CapacityRow{Key: in.Key(), Input: in}
-	if in.DispatchOccupancy == nil {
-		row.Status, row.Reason, row.BuiltAt = CapacityRejected, CapacityNoOccupancy, time.Now().UTC()
-		return row, nil
-	}
 	row.Mu = capacityThroughput(o.Instance.Profile, o.Instance.MaxBatch, in.DispatchOccupancy.PerRequest)
 	// A mean is not a lower bound: replay may choose any observed sample of
 	// any batch up to MaxBatch. Only skip when even the fastest cannot fit.
@@ -535,6 +529,7 @@ func (t *CapacityTable) Rows() []CapacityRow {
 		if !built {
 			row = CapacityRow{Key: key, Input: in, Status: CapacityPending}
 		}
+		row.Input = in // Preserve current source when the same numerical κ is reused.
 		out = append(out, row)
 	}
 	return out

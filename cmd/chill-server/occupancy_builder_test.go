@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"reflect"
 	"testing"
 	"time"
@@ -110,8 +111,10 @@ func TestOccupancyDerivationFreezesProtocolAndCompleteElapsedBudget(t *testing.T
 	if err := task.Spec.ValidateConditions(); err != nil {
 		t.Fatal(err)
 	}
-	if task.Spec.Workers != 33 || task.Spec.Conditions.WaitingBatches != 16 || task.Spec.Conditions.MinimumCycles != 3 {
-		t.Fatalf("incorrect supply: %+v", task.Spec)
+	if task.Spec.Workers != f.policy.Workers || task.Spec.Conditions.WaitingBatches != 3 ||
+		task.Spec.MinimumPairs != f.policy.MinimumPairs || task.Spec.WarmupSeconds != f.policy.WarmupSeconds ||
+		task.Spec.DurationSeconds != f.policy.BurstSeconds {
+		t.Fatalf("configured burst was changed: %+v", task.Spec)
 	}
 	s := task.Spec
 	budget := s.PreparationSeconds + s.JobSetupSeconds + s.CollectionSeconds + s.WarmupSeconds +
@@ -121,12 +124,15 @@ func TestOccupancyDerivationFreezesProtocolAndCompleteElapsedBudget(t *testing.T
 	}
 	var inputs struct {
 		DispatchOccupancy dispatchOccupancyPolicy                                     `json:"dispatchOccupancy"`
+		Coefficients      dispatchOccupancyPolicy                                     `json:"coefficients"`
 		Configuration     struct{ Namespace, Name, UID, ResourceVersion, Key string } `json:"configuration"`
 	}
 	if err := json.Unmarshal([]byte(s.Conditions.InputsJSON), &inputs); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(inputs.DispatchOccupancy, f.policy) || inputs.Configuration.UID != "config-uid" ||
+	if !reflect.DeepEqual(inputs.DispatchOccupancy, f.policy) || !reflect.DeepEqual(inputs.Coefficients, f.policy) ||
+		inputs.Configuration.Namespace != f.cm.Namespace || inputs.Configuration.Name != f.cm.Name ||
+		inputs.Configuration.UID != "config-uid" ||
 		inputs.Configuration.ResourceVersion != "9" ||
 		inputs.Configuration.Key != "scheduler.json" {
 		t.Fatal("policy/provenance not frozen")
@@ -146,7 +152,7 @@ func TestOccupancyDerivationFreezesProtocolAndCompleteElapsedBudget(t *testing.T
 	f.policy.PlannedElapsedCapSeconds--
 	_, err = f.build()
 	requireOccupancyError(t, err, "OccupancyInfeasible")
-	// Also exercise the unchanged stored-contract elapsed validator, not just builder arithmetic.
+	// Also exercise the stored-contract elapsed validator, not just builder arithmetic.
 	var frozen map[string]any
 	if err = json.Unmarshal([]byte(atCap.Spec.Conditions.InputsJSON), &frozen); err != nil {
 		t.Fatal(err)
@@ -172,19 +178,31 @@ func TestOccupancyDerivationRefusesLifetimeIdentityAndSupply(t *testing.T) {
 		"wrong model": func(f *occupancyFixture) {
 			f.workload.Spec.ModelRef.Name = occupancyForeignSelectionTest
 		},
-		"unbounded raw field":        func(f *occupancyFixture) { f.preprocessor.Spec.Input.Fields[0].MaxBytes = 0 },
-		"missing batch":              func(f *occupancyFixture) { f.intent.Batch = 3 },
-		"infeasible saturation":      func(f *occupancyFixture) { f.policy.RefillSeconds = 10 },
-		"lifetime cannot hold batch": func(f *occupancyFixture) { f.profile.Batches[0].DurationNanos = []float64{1e9} },
-		"byte supply cap":            func(f *occupancyFixture) { f.preprocessor.Spec.Input.Fields[0].MaxBytes = 32 << 20 },
-		"byte cap cannot saturate": func(f *occupancyFixture) {
-			f.preprocessor.Spec.Input.Fields[0].MaxBytes = (16 << 20) - 4
+		"unbounded raw field":       func(f *occupancyFixture) { f.preprocessor.Spec.Input.Fields[0].MaxBytes = 0 },
+		"missing batch":             func(f *occupancyFixture) { f.intent.Batch = 3 },
+		"workers cannot hold batch": func(f *occupancyFixture) { f.policy.Workers = 1 },
+		"worker cap":                func(f *occupancyFixture) { f.policy.Workers = 65 },
+		"lifetime cannot hold queued batches": func(f *occupancyFixture) {
+			f.profile.Batches[0].DurationNanos = []float64{1e9}
 		},
-		"worker cap cannot saturate": func(f *occupancyFixture) {
-			f.profile.Batches[0].DurationNanos = []float64{1e6}
-			f.policy.RefillSeconds = 1
+		"byte supply cap": func(f *occupancyFixture) {
+			f.preprocessor.Spec.Input.Fields[0].MaxBytes = 32 << 20
 		},
-		"queue bound": func(f *occupancyFixture) { f.preparation.Config.MaxQueueRequests = 1 },
+		"native byte cap": func(f *occupancyFixture) { f.preparation.Config.MaxQueueBytes = 8191 },
+		"queue count cap": func(f *occupancyFixture) { f.preparation.Config.MaxQueueRequests = 5 },
+		"zero service":    func(f *occupancyFixture) { f.profile.Batches[0].DurationNanos = []float64{0} },
+		"negative service": func(f *occupancyFixture) {
+			f.profile.Batches[0].DurationNanos = []float64{-1}
+		},
+		"nonfinite service": func(f *occupancyFixture) {
+			f.profile.Batches[0].DurationNanos = []float64{math.Inf(1)}
+		},
+		"nan service": func(f *occupancyFixture) {
+			f.profile.Batches[0].DurationNanos = []float64{math.NaN()}
+		},
+		"elapsed overflow": func(f *occupancyFixture) {
+			f.policy.CollectionSeconds = math.MaxInt32
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := syntheticOccupancyFixture()
@@ -200,43 +218,60 @@ func TestOccupancyDerivationRefusesLifetimeIdentityAndSupply(t *testing.T) {
 	}
 }
 
-func TestOccupancyFreezesSaturationLimitingBound(t *testing.T) {
-	for _, tc := range []struct {
-		bound        string
-		requestBytes int32
-		population   []float64
-		workers      int32
-	}{
-		{"worker-cap", 1024, []float64{1e6}, 64},
-		{"bytes-cap", 4 << 20, []float64{10e6, 20e6, 30e6}, 16},
-		{"lifetime", 1024, []float64{10e6, 20e6, 30e6}, 33},
-	} {
-		t.Run(tc.bound, func(t *testing.T) {
-			f := syntheticOccupancyFixture()
-			f.preprocessor.Spec.Input.Fields[0].MaxBytes = tc.requestBytes - 4
-			f.profile.Batches[0].DurationNanos = tc.population
-			task, err := f.build()
-			if err != nil {
-				t.Fatal(err)
-			}
-			var inputs struct {
-				Computed struct {
-					Saturation struct {
-						LimitingBound         string  `json:"limitingBound"`
-						SelectedWorkers       float64 `json:"selectedWorkers"`
-						RequiredWorkers       float64 `json:"requiredWorkers"`
-						EstimatedIdleFraction float64 `json:"estimatedIdleFraction"`
-					} `json:"saturationSizing"`
-				} `json:"computed"`
-			}
-			if err := json.Unmarshal([]byte(task.Spec.Conditions.InputsJSON), &inputs); err != nil {
-				t.Fatal(err)
-			}
-			s := inputs.Computed.Saturation
-			if task.Spec.Workers != tc.workers || s.SelectedWorkers != float64(tc.workers) ||
-				s.LimitingBound != tc.bound || s.RequiredWorkers <= 0 || s.EstimatedIdleFraction > f.policy.MaximumIdleFraction {
-				t.Fatalf("lost saturation derivation in returned task: %+v", s)
-			}
-		})
+func TestOccupancyBurstDoesNotDeriveWorkersWarmupOrDurationFromService(t *testing.T) {
+	for _, population := range [][]float64{{1e6}, {10e6, 20e6, 30e6}, {300e6}} {
+		f := syntheticOccupancyFixture()
+		f.profile.Batches[0].DurationNanos = population
+		f.preparation.Config.MaxQueueBytes = 8 * 1024
+		f.preparation.Config.MaxQueueRequests = 6
+		task, err := f.build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := task.Spec
+		if s.Workers != 8 || s.WarmupSeconds != 5 || s.DurationSeconds != 15 || s.MinimumPairs != 100 {
+			t.Fatalf("profile timing changed configured burst: %+v", s)
+		}
+		var inputs struct {
+			Computed struct {
+				TailBatchSeconds               float64 `json:"tailBatchSeconds"`
+				MinimumRequestLifetimeSeconds  float64 `json:"minimumRequestLifetimeSeconds"`
+				FramedDecodedRequestUpperBytes int64   `json:"framedDecodedRequestUpperBytes"`
+				QueueRequestCap                int64   `json:"queueRequestCap"`
+				QueueBytesCap                  int64   `json:"queueBytesCap"`
+			} `json:"computed"`
+		}
+		if err := json.Unmarshal([]byte(s.Conditions.InputsJSON), &inputs); err != nil {
+			t.Fatal(err)
+		}
+		c := inputs.Computed
+		if c.TailBatchSeconds != population[len(population)-1]/1e9 ||
+			c.MinimumRequestLifetimeSeconds != 2 || c.FramedDecodedRequestUpperBytes != 1024 ||
+			c.QueueRequestCap != 6 || c.QueueBytesCap != 8192 {
+			t.Fatalf("lost native supply derivation: %+v", c)
+		}
 	}
+	f := syntheticOccupancyFixture()
+	f.policy.MinimumPairs = 1000000
+	task, err := f.build()
+	if err != nil || task.Spec.MinimumPairs != f.policy.MinimumPairs || task.Spec.DurationSeconds != 15 {
+		t.Fatal("sampling floor must not imply a duration or precision guarantee", err)
+	}
+}
+
+func TestOccupancyBurstLifetimeIncludesPartialQueuedBatchAndMargin(t *testing.T) {
+	f := syntheticOccupancyFixture()
+	f.workload.Spec.SLO.TargetLatency.Duration = time.Second
+	f.policy.Workers = 9
+	f.profile.Batches[0].DurationNanos = []float64{398e6}
+	task, err := f.build()
+	if err != nil {
+		t.Fatal("exact lifetime boundary rejected", err)
+	}
+	if task.Spec.Conditions.WaitingBatches != 4 {
+		t.Fatal("partial outstanding batch was rounded down")
+	}
+	f.profile.Batches[0].DurationNanos = []float64{399e6}
+	_, err = f.build()
+	requireOccupancyError(t, err, "OccupancyInfeasible")
 }

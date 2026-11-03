@@ -3,8 +3,6 @@ package kube
 import (
 	"context"
 	"encoding/json"
-	"math"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,85 +18,25 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-// occupancyRows are the final rows of a B=1 instance whose batches start
-// every gap after a warmup of slower batches.
-func occupancyRows(n int, gap time.Duration) []serving.RequestRow {
-	at := time.Unix(1000, 0)
-	rows := make([]serving.RequestRow, 0, n)
-	start := at
-	for id := uint64(1); id <= uint64(n); id++ {
-		step := gap
-		if id <= 10 {
-			step = 2 * gap // warmup
-		}
-		start = start.Add(step)
-		received := start.Add(-gap)
-		running, queued, executed := int64(gap), int64(time.Millisecond), int64(gap)+int64(27790*time.Microsecond)
-		ready, finished := received.Add(time.Duration(queued)), received.Add(time.Duration(executed))
-		runningAt := start
-		rows = append(rows, serving.RequestRow{Kind: "final", RequestID: strconv.FormatUint(id, 10), Instance: "pod/container",
-			Outcome: "completed", BatchID: id, BatchSize: 1, ExecutionComplete: true, ReceivedAt: received,
-			RunningNanos: &running, QueuedNanos: &queued, ExecutedNanos: &executed,
-			NativeQueuedAt: &ready, NativeRunningAt: &runningAt, NativeFinishedAt: &finished, NativeExecutionComplete: true, NativeOutcome: "completed"})
-	}
-	return rows
-}
-
-func TestMeasureOccupancyReproducesRasp5(t *testing.T) {
-	gap := time.Duration(math.Round(1e9 / 26.88))
-	rows := occupancyRows(400, gap)
-	// Warmup covers the ten slower batches.
-	measure := func(rows []serving.RequestRow, warmup, duration time.Duration) DispatchOccupancyRecord {
-		w := DispatchOccupancyRecord{Batch: 1, ProfileMeanNanos: 27.79e6}
-		measureOccupancy(&w, rows, warmup, duration)
-		return w
-	}
-	w := measure(rows, 20*gap+gap/2, 300*gap)
-	if math.Abs(w.Throughput-26.88) > 0.01 || math.Abs(float64(w.PerRequestNanos)/1e6-9.41) > 0.01 {
-		t.Fatalf("X %.3f d %d ns", w.Throughput, w.PerRequestNanos)
-	}
-	if w.Batches < 290 || w.IdleFraction != 0 {
-		t.Fatalf("window %+v", w)
-	}
-	// Requests that arrive after the batch ended leave the instance idle.
-	for i := range rows {
-		late := int64(32790 * time.Microsecond)
-		rows[i].QueuedNanos = &late
-		at := rows[i].ReceivedAt.Add(time.Duration(late))
-		rows[i].NativeQueuedAt = &at
-	}
-	// Each batch then waits 5 ms after it ends for its next request.
-	if w = measure(rows, 20*gap, 300*gap); math.Abs(w.IdleFraction-300*5e6/(300*float64(gap))) > 1e-4 {
-		t.Fatalf("idle fraction %v", w.IdleFraction)
-	}
-	if w = measure(rows[:3], 0, time.Minute); w.Batches != 3 {
-		t.Fatalf("short window %+v", w)
-	}
-}
-
-// A 140 s ChillServer stall inside the window (d9 rasp5) is one idle pair
-// among thousands, but 140 s of the 360 s window: the time fraction catches it.
-func TestMeasureOccupancyCountsIdleTime(t *testing.T) {
-	gap := time.Duration(math.Round(1e9 / 29.2))
-	rows := occupancyRows(12000, gap)
-	for i := range rows {
-		if rows[i].BatchID > 5000 {
-			rows[i].ReceivedAt = rows[i].ReceivedAt.Add(140 * time.Second)
-			q, r, f := rows[i].NativeQueuedAt.Add(140*time.Second), rows[i].NativeRunningAt.Add(140*time.Second), rows[i].NativeFinishedAt.Add(140*time.Second)
-			rows[i].NativeQueuedAt, rows[i].NativeRunningAt, rows[i].NativeFinishedAt = &q, &r, &f
-		}
-	}
-	w := DispatchOccupancyRecord{Batch: 1, ProfileMeanNanos: 27.79e6}
-	measureOccupancy(&w, rows, time.Minute, 6*time.Minute)
-	if want := (140*time.Second - 27790*time.Microsecond + time.Millisecond).Seconds() / 360; math.Abs(w.IdleFraction-want) > 1e-6 {
-		t.Fatalf("idle fraction %v, want %v (batches %d)", w.IdleFraction, want, w.Batches)
-	}
-}
-
 func occupancyRoot(name string, created time.Time, b int32) *edge.DispatchOccupancyMeasurement {
+	profile := measuredCPUPreparationFixture().Instance.Profile
+	profile.ID = "chill-system/beo/beo-uid"
+	return occupancyRootWithInputs(name, created, b, profile, &edge.Workload{ObjectMeta: meta.ObjectMeta{Name: "plc"}})
+}
+
+func occupancyRootWithInputs(name string, created time.Time, b int32, profile *serving.Profile, workload *edge.Workload) *edge.DispatchOccupancyMeasurement {
+	inputs, _ := json.Marshal(map[string]any{
+		"coefficients": map[string]any{"warmupSeconds": 1, "burstSeconds": 2, "workers": b, "minimumPairs": 1, "plannedElapsedCapSeconds": 60},
+		"computed":     map[string]any{"tailBatchSeconds": .03, "framedDecodedRequestUpperBytes": 32, "queueRequestCap": 256, "queueBytesCap": 64 << 20},
+		"profile": map[string]any{"profileID": profile.ID, "runtimeImage": profile.Condition.RuntimeImage,
+			"workload": map[string]any{"name": workload.Name, "uid": workload.UID, "generation": workload.Generation,
+				"slo": map[string]any{"percentile": workload.Spec.SLO.Percentile, "targetLatencyNanos": workload.Spec.SLO.TargetLatency.Duration.Nanoseconds()}}},
+	})
 	return &edge.DispatchOccupancyMeasurement{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: name, CreationTimestamp: meta.NewTime(created)},
-		Spec: edge.DispatchOccupancyMeasurementSpec{Node: "node", BatchEnergyOptimization: "beo", Workload: "plc", Batch: b, RateFactor: "1.2",
-			WarmupSeconds: 60, DurationSeconds: 360, MinimumBatches: 120, MaximumIdleFraction: "0.01", Workers: 128}}
+		Spec: edge.DispatchOccupancyMeasurementSpec{Node: "node", BatchEnergyOptimization: "beo", Workload: "plc", Batch: b,
+			WarmupSeconds: 1, DurationSeconds: 2, MinimumPairs: 1, Workers: b, SupplyMode: occupancyClosedLoop,
+			RequestLifetimeSeconds: 2, DeliveryMarginMillis: 10, DrainSeconds: 3, PreparationSeconds: 1,
+			PlannedElapsedSeconds: 12, Conditions: edge.DispatchOccupancyConditions{ProfileID: profile.ID, InputsJSON: string(inputs)}}}
 }
 
 // occupancyHarness adds the Workload "plc" with its Dataset and Preprocessor,
@@ -114,6 +52,7 @@ func occupancyHarness(t *testing.T) *opcostHarness {
 		&edge.Preprocessor{ObjectMeta: meta.ObjectMeta{Name: "pre"}, Spec: edge.PreprocessorSpec{Input: edge.RawInputContract{Fields: []edge.RawField{{Name: "image"}}}}},
 		&edge.Workload{ObjectMeta: meta.ObjectMeta{Name: "plc"}, Spec: edge.WorkloadSpec{ModelRef: edge.CatalogReference{Name: "m"}, PreprocessorRef: edge.CatalogReference{Name: "pre"}, DatasetRef: &edge.CatalogReference{Name: "vqa"}}})
 	o.controller.mu.Lock()
+	o.controller.config.GatewayRequestTimeout = 2 * time.Second
 	o.controller.config.LoadGenerator = LoadGeneratorConfig{Image: "load:1", ServiceAccount: "chill-load-generator", Namespace: "chill-system",
 		Endpoint: "https://chill-serving-entrypoint.chill-system.svc:8080", CASecret: "serving-tls", NodeName: "gw"}
 	o.controller.mu.Unlock()
@@ -287,9 +226,12 @@ func TestCostEvidenceExcludesControlledOccupancyFromSharedCapacity(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := serving.NewCapacityInput(serving.SchedulerSettings{}, view.DispatchOccupancy, option, workload)
-	if input.DispatchOccupancy != nil {
-		t.Fatalf("controlled occupancy reached shared capacity input: %+v", input.DispatchOccupancy)
+	settings := serving.SchedulerSettings{DefaultDispatchOccupancyNanos: int64(time.Millisecond)}
+	input := serving.NewCapacityInput(settings, view.DispatchOccupancy, option, workload)
+	if len(view.DispatchOccupancy) != 0 || input.DispatchOccupancy == nil ||
+		input.DispatchOccupancy.Source != "" || input.DispatchOccupancy.Provenance.Source != "default" ||
+		input.DispatchOccupancy.PerRequest != time.Millisecond {
+		t.Fatalf("controlled occupancy did not use configured fallback: %+v", input.DispatchOccupancy)
 	}
 	// Filter eligibility before latest selection, including on cache hits:
 	// even a newer controlled record must not hide the shared measurement.
@@ -323,7 +265,7 @@ func TestOccupancyJudgesWorkloadServingByListedPods(t *testing.T) {
 	o.setNode(func(n *core.Node) {
 		n.Annotations[chillmeta.PowerActuator] = nvpModel0
 	})
-	m := occupancyRoot("occ", time.Now(), 1)
+	m := occupancyRootWithInputs("occ", time.Now(), 1, &profiles[0], &w)
 	o.create(m)
 	if err := o.controller.Admit(context.Background()); err != nil {
 		t.Fatal(err)
@@ -339,7 +281,7 @@ func TestOccupancyJudgesWorkloadServingByListedPods(t *testing.T) {
 	if _, err := o.kube.CoreV1().Pods("chill-system").Create(context.Background(), pod, meta.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	next := occupancyRoot("occ-2", time.Now().Add(time.Second), 1)
+	next := occupancyRootWithInputs("occ-2", time.Now().Add(time.Second), 1, &profiles[0], &w)
 	o.create(next)
 	o.admit()
 	if got := o.admission(next); got != "Refused: WorkloadServing chill-system/serving-plc" {

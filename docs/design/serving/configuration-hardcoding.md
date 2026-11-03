@@ -72,7 +72,7 @@ Node sample/batch cadence와 transitionObserver.activeDeadlineOverheadSeconds=18
 | 기존 BEO.spec.trialsPerBatch | 정수 ≥2 | 현재 실험3 유지; 필수 입력이며 현재 default marker가 있다는 뜻 아님. 새 minimumRuns 없음 |
 | 독립 idle.spec.pointPolicy.minimumRuns | 정수 ≥2 | 기존 필드 재사용, 현재3 유지 |
 | 전이.spec.acceptedCountTarget | 정수 ≥2, ≤attemptLimit | 현재 목표5 유지, 방향별 적용 |
-| occupancy.spec.durationSeconds/rateFactor | 길이 양수; legacy open-loop rate finite >1 | Native API derives closed-loop duration and supply from the explicit `dispatchOccupancy` block below; legacy stored open-loop validation is unchanged |
+| occupancy.spec.durationSeconds/minimumPairs | New native bursts freeze configured duration and pair-count facts; retained legacy open-loop fields are decode-only |
 | occupancy.spec.seed | uint64 | Native API freezes the configured seed into Conditions and the generator arguments; no compiled scientific default |
 
 하한2는 BEO/idle minimum·attempt limit, 전이 target/attempt limit, baseline 자유도1·결과 재로딩·serving까지 연결하며 attemptLimit≥minimum/target이다. 비영분산active2/idle2도 기존 통계로 처리하고 정책목표3/5와 수학적 양의자유도를 구분한다. durationTolerance는 Run 준비에서 생략.5초/명시0을 정규화하고 동결RunConfig·curve identity·Python 요청에 남긴다. occupancy seed는 Conditions·생성기 인자가 같으며 PCG 두 번째 word는 고정 seed이지 stream selector가 아니다. 양측CI/2·n−1은 설정화하지 않는다. 과거 raw fixture 보존·현재 helper 입력과 구분, 단일decoder를 유지한다. CRD/chart 사본과 배포 구CLI 제거는 함께 이행한다.
@@ -89,108 +89,80 @@ Omission does not disable unrelated scheduling, but DOM POST fails closed with
 the current ConfigMap rather than falling back to a previously accepted policy.
 The accepted profile snapshot must have that same ConfigMap resourceVersion.
 
-Native DOM creation always uses closed-loop supply. `supplyMode` is not a policy
-setting; including it in configuration is an unknown-field error. Legacy native
-Poisson measurement validation is unchanged.
+Native DOM creation uses a short **configured closed-loop burst**, not a
+saturation test. No Go scientific defaults or hidden duration/worker derivation
+exist. The sample is illustrative, not a calibrated guarantee.
 
 | Field | Bounds / meaning |
 |---|---|
-| `minimumBatches` | int32 ≥2; minimumCycles = minimumBatches−1 |
-| `maximumIdleFraction` | finite [0, maximumIdleBaseFraction], never loosened to conceal a failed saturation measurement |
-| `requestLifetimeSeconds` | int32 ≥1; ≥ceil(Workload SLO seconds), ≤actual inference cap and Workload requestLifetime when set |
-| `deliveryMarginMillis` | int32 >0; delivery margin is rounded up separately in the elapsed extension |
+| `warmupSeconds` | explicit int32 ≥0, excluded from native measurement window |
+| `burstSeconds` | explicit int32 ≥1, frozen as native `durationSeconds` |
+| `workers` | explicit int32 in [batch,64], never silently clamped |
+| `minimumPairs` | explicit int32 ≥1, a reported population requirement, not a confidence claim |
+| `maximumObservationWindowSeconds` | int32 ≥1; read-only estimator query maximum, sample3600 |
+| `requestLifetimeSeconds` | int32 ≥1; covers ceil(SLO) and configured outstanding batches, within actual gateway/Workload cap |
+| `deliveryMarginMillis` | int32 >0; rounded up independently for elapsed supply extension |
 | `preparationSeconds` | int32 ≥1 |
-| `jobSetupSeconds`, `collectionSeconds` | int32 ≥0, explicit finite allowances rather than automatic cap padding |
-| `windowFloorSeconds`, `loadPreparationFloorSeconds`, `plannedElapsedCapSeconds` | finite >0, ≤int32 max; complete elapsed sum must fit floor(cap) |
-| `timeMargin` | finite >0, used with measured mean batch time for duration |
-| `relativeXPlanningPrecision`, `planningConfidence` | finite (0,1); retained for the existing achieved-precision judge |
-| `maximumIdleBaseFraction` | finite (0,1] |
-| `idleDErrorSecondsPerRequest` | finite >0; floor(seconds×1e9) must fit a positive int64 |
-| `refillSeconds` | finite >0; configured bound on generator completion-to-replacement delivery including jitter, not an observed saturation claim |
-| `seed` | uint64, passed to the existing generator |
+| `jobSetupSeconds`, `collectionSeconds` | explicit int32 ≥0 |
+| `plannedElapsedCapSeconds` | finite positive ≤int32 maximum; all segments must fit |
+| `seed` | explicit uint64, including zero |
 
-Protocol defaults live only in this configuration, not Go. The sample is an
-illustrative policy satisfying the validation inequalities, **not** a
-calibration copied from host campaign files or a guarantee for every profile.
-`refillSeconds` is the additional consumed planner coefficient: faster profile
-populations need more outstanding supply to hide the same refill/jitter bound.
-It must be selected from generator measurements for the intended deployment.
-Zero is permitted for idle fraction, job setup, collection and seed, but those
-four keys must still be explicitly present and non-null. Omission is not a Go
-zero-value fallback for a measurement policy.
+Sample `warmupSeconds=5`, `burstSeconds=15`, `workers=8`, `minimumPairs=100`
+are explicit experimental choices, not a universal precision/stationarity
+policy. `requestLifetimeSeconds=8` covers only Workloads whose effective lifetime
+cap permits8s and whose SLO and profile-tail budget fit. Margin25ms exercises
+ceil(25/1000)=1s in the extension; it is not a measured transport guarantee.
+P2s/J10s/C10s and cap120s are configured allowances, not padded elapsed time.
+No host campaign YAML/JSON or prior DOM value supplies these settings.
 
-The sample's specific lifetime/delivery/refill choices have these limited bases:
-
-| Sample value | Derivation / limit, not a measured default |
-|---|---|
-| `requestLifetimeSeconds: 8` | Explicit illustrative integer in [1,129], usable only for Workloads with ceil(SLO) ≤8 and effective requestLifetime ≥8. Its available supply time is 8−0.025=7.975s; the profile's B×t_max and byte bound decide K. This is not taken from a host DOM. |
-| `deliveryMarginMillis: 25` | Positive fractional-second example exercising the required rounding: ceil(25/1000)=1, so supplyExtension is 9s rather than 8s. Drain is ceil(8+t_max+0.025). It is not a measured transport guarantee. |
-| `refillSeconds: 0.02` | Finite positive example bound consumed by the saturation inequality; not an assertion that all actual generator returns finish within20ms. At idle target .01 it requires queued service to hide at least `0.02−(.01/.99)*t_fast`; otherwise refuse. Calibrate this configured bound before physical use. |
-
-The other sample allowances are explicit finite inputs: floorW1s/floorD5s,
-P2s/J10s/C10s, cap120s. The server checks the complete per-profile E instead
-of assuming those allowances fit. No host YAML/JSON or prior failed DOM is an
-input, default source or regression fixture.
-
-For batch B, measured raw service population in seconds has minimum t_fast,
-maximum t_max and mean t_mean. R_bytes = Σ(maxBytes(field)+4), matching
-firstfloor's uint32 length-framed **decoded** inputs, not JSON/base64 wire bytes.
-With lifetime L, margin m=M/1000, native worker cap64 and byte cap64MiB unchanged:
+For fixed batch B, K=configured workers, L=configured request lifetime,
+m=deliveryMarginMillis/1000, t_max=maximum accepted profile service seconds,
+and R_bytes=Σ(maxBytes(field)+4) for decoded length-framed fields:
 
 ```
-K = min(64, floor(64MiB/R_bytes), floor((L-m)/(B*t_max)))
-require K >= B
+Q_bytes = min(native maxQueueBytes, 64MiB)
+require B <= K <= 64 and K*R_bytes <= Q_bytes
 q = ceil(K/B)-1
-require B*q <= native maxQueueRequests and B*q*R_bytes <= native maxQueueBytes
-fullQueuedBatches = floor((K-B)/B)
-I = max(0, refillSeconds-fullQueuedBatches*t_fast)
-require I/(t_fast+I) <= maximumIdleFraction
-W = ceil(max(loadPreparationFloorSeconds, (q+1)*t_max+refillSeconds))
-D = ceil(max(windowFloorSeconds, timeMargin*minimumBatches*t_mean))
+require B*q <= native maxQueueRequests and B*q*R_bytes <= Q_bytes
+require L >= ceil(SLO seconds) and L >= ceil((q+1)*t_max+m)
+require L <= effective gateway/Workload lifetime cap
+W = configured warmupSeconds
+D = configured burstSeconds
 R = ceil(L+t_max+m)
-S = L+ceil(M/1000)
-E = preparationSeconds+W+D+S+R+jobSetupSeconds+collectionSeconds
+S = L+ceil(deliveryMarginMillis/1000)
+E = preparationSeconds+jobSetupSeconds+collectionSeconds+W+D+S+R
 require E <= floor(plannedElapsedCapSeconds)
 ```
 
-S is reserved **before** allocating the configured job/collection allowances.
-No scientific window, idle criterion or population is weakened to fit a cap.
-If the safe K cannot saturate within these bounds, POST returns
-`400 OccupancyInfeasible` with a reason, not a clamped insufficient worker count.
-The estimate hides configured refill using complete queued batches at the
-fastest observed service time; it is conservative relative to the observed
-population, not proof against unobserved runtime/generator jitter. Physical idle
-and execution evidence still decide Complete versus Insufficient.
+Failure returns `400 OccupancyInfeasible`; it never decreases configured workers,
+duration, minimumPairs or allowances to fit. `maximumIdleFraction`,
+`estimatedIdleFraction`, refill bounds, idle-error gates and precision planning
+coefficients no longer participate in creation or assessment.
 
-The actual infer/header limit is the handler's shared 129s cap, **not** the
-management request timeout, operation timeout or shutdown drain timeout.
-Workload requestLifetime can reduce that effective limit. Policy L is checked
-against the effective bound as well as ceil(SLO).
+The exact block, ConfigMap identity/resourceVersion/key, Node UID, accepted
+profile pointer identity/reference/evidence/raw population and Workload/SLO
+identity are frozen in `Conditions.InputsJSON`. Computed facts include tail,
+decoded request bytes, queue caps, minimum lifetime and supply extension.
+`ValidateConditions` checks this object once at creation; dry-run and create
+share that same object. Native admission rejects changed accepted identities.
 
-The block, coefficients, ConfigMap `{namespace,name,uid,resourceVersion,key}`,
-Node UID, profile identity/source/raw population and Workload identity/SLO are
-frozen in the existing `Conditions.InputsJSON`. `computed.saturationSizing`
-includes `requiredWorkers`, each worker/byte/lifetime cap, `selectedWorkers`,
-`limitingBound` (`worker-cap`, `bytes-cap`, `lifetime`), full queued batches,
-residual idle seconds, estimated idle fraction and its configured limit. These
-are visible in the POST response's native task, including dry-run. Computed
-`supplySizing` retains the existing 64/64MiB semantics and validator vocabulary
-(`queue-cap` means worker-cap there). `ValidateConditions` (which calls
-`validateElapsedBudget`) runs once on the final native object at creation;
-dry-run and real create use that object. No DOM CRD, record schema/prefix or
-evaluation stored contract changes.
+The actor runs fixedBatchSize=B with maxBatchWaitMS=0. After drain, its frozen
+native metadata proves policy/profile/decision/AppliedAt for the shared
+`serving.OccupancyEstimator`; receipt scans only gather rows, worker-native
+starts bound the actual half-open burst window. Too few valid pairs yields
+`Insufficient/TooFewPairs` **with statistics retained**, including signed values.
+Zero pairs has null statistics, never a numeric fallback.
 
-`UnknownRequestExecution` is independent of the saturation estimate:
-`occupancyAccumulator` cannot associate a captured request with a native batch
-ID or cannot find an actor start for its batch. Late native evidence is already
-joined by request ID before this judgment. More workers cannot establish
-missing physical execution; timeouts/rejections/incomplete native delivery can
-instead increase unknown requests. Keep this exclusion and inspect raw request
-and native rows rather than treating it as zero idle or suppressing the reason.
-DOM also reserves the configured load-generator Node, so current admission
-serializes DOM globally; W2 does not change that reservation rule.
+Evidence is a new factual `v1alpha2` record under
+`serving/dispatch-occupancy-observations/`, verdict `Observed` (native phase
+Complete) or `Insufficient`. It is **not** `Accepted` scheduler d. Existing
+`serving/dispatch-occupancy/` v1alpha1 accepted objects and `CostEvidence` remain
+unchanged and are not deleted. Legacy fields exist solely to decode that
+separate retained contract. Any future scheduler admission/deletion is a
+separate explicit cutover; there is no dual reader for the new contract.
 
-
+The configured load-generator Node reservation, W6 slots/locks, request writer
+and evaluation arrival protocol are unchanged.
 
 ## 6. 하네스: bind에서 한 번 선택
 

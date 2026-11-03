@@ -20,6 +20,7 @@ rules:
       - /chill/api/v1/model-compatibility
       - /chill/api/v1/model-compatibility-matrix
       - /chill/api/v1/scheduler/profiles
+      - /chill/api/v1/observations/occupancy
       {{- range $profileNamespaces }}
       - {{ printf "/chill/api/v1/namespaces/%s/profiling-runs" . | quote }}
       - {{ printf "/chill/api/v1/namespaces/%s/profiling-runs/*" . | quote }}

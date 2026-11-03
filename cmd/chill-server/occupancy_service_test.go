@@ -25,8 +25,9 @@ import (
 )
 
 const (
-	occupancyQueuedTest  = "queued"
-	occupancyDeletedTest = "deleted"
+	occupancyQueuedTest        = "queued"
+	occupancyDeletedTest       = "deleted"
+	occupancyLegacyDeletedTest = "legacy deleted"
 )
 
 func occupancyTestService(t *testing.T) (*measurementService, occupancyFixture, *int) {
@@ -141,11 +142,11 @@ func TestOccupancyServicePolicyFailsClosed(t *testing.T) {
 				case "missing block":
 					delete(wire, "dispatchOccupancy")
 				case "invalid block":
-					wire["dispatchOccupancy"].(map[string]any)["minimumBatches"] = 1
+					wire["dispatchOccupancy"].(map[string]any)["minimumPairs"] = 0
 				case "missing allowance":
 					delete(wire["dispatchOccupancy"].(map[string]any), "collectionSeconds")
 				case "unknown field":
-					wire["dispatchOccupancy"].(map[string]any)["workers"] = 6
+					wire["dispatchOccupancy"].(map[string]any)["refillSeconds"] = .02
 				case "unaccepted revision":
 					cm.ResourceVersion = "new"
 				}
@@ -166,7 +167,8 @@ func TestOccupancyServicePolicyFailsClosed(t *testing.T) {
 func TestOccupancyDeleteFencesAndOnlyRemovesOwnedEvidence(t *testing.T) {
 	for _, mode := range []string{
 		occupancyDeletedTest, "Measuring", "wrong UID", "wrong version", "foreign location", "foreign record",
-		"shared evidence", "active load", "evidence failure", "native failure", occupancyQueuedTest,
+		"shared evidence", "active load", "evidence failure", "native failure",
+		occupancyQueuedTest, occupancyLegacyDeletedTest,
 	} {
 		t.Run(mode, func(t *testing.T) {
 			f := syntheticOccupancyFixture()
@@ -177,14 +179,19 @@ func TestOccupancyDeleteFencesAndOnlyRemovesOwnedEvidence(t *testing.T) {
 			task.UID = "dom-uid"
 			task.ResourceVersion = "7"
 			task.Status.Phase = api.MeasurementPhaseComplete
-			own := servingkube.DispatchOccupancyPrefix + "node-uid/dom-uid.json"
+			prefix, schemaVersion := servingkube.BurstOccupancyPrefix, servingkube.BurstOccupancySchema
+			if mode == occupancyLegacyDeletedTest {
+				task.Spec.MinimumPairs = 0
+				prefix, schemaVersion = servingkube.DispatchOccupancyPrefix, servingkube.DispatchOccupancySchema
+			}
+			own := prefix + "node-uid/dom-uid.json"
 			task.Status.Result = &api.ProfilingRunEvidenceReference{
 				Store:         "evidence",
 				Key:           own,
-				SchemaVersion: servingkube.DispatchOccupancySchema,
+				SchemaVersion: schemaVersion,
 			}
-			record := servingkube.DispatchOccupancyRecord{
-				SchemaVersion: servingkube.DispatchOccupancySchema,
+			record := servingkube.BurstOccupancyRecord{
+				SchemaVersion: schemaVersion,
 				Node:          serving.NodeReference{Name: "node", UID: "node-uid"},
 				ProfileID:     f.profile.ID,
 				Conditions:    task.Spec,
@@ -206,7 +213,12 @@ func TestOccupancyDeleteFencesAndOnlyRemovesOwnedEvidence(t *testing.T) {
 				task.Status.Result = nil
 			}
 			raw, _ := json.Marshal(record)
-			foreign := "serving/dispatch-occupancy/node-uid/foreign.json"
+			if mode == occupancyLegacyDeletedTest {
+				raw, _ = json.Marshal(servingkube.DispatchOccupancyRecord{
+					SchemaVersion: schemaVersion, Node: record.Node, ProfileID: record.ProfileID, Conditions: task.Spec,
+				})
+			}
+			foreign := prefix + "node-uid/foreign.json"
 			storage := deletionStore(t, map[string][]byte{own: raw, foreign: []byte(`{"unrelated":true}`)})
 			if mode == occupancyQueuedTest {
 				storage.mu.Lock()
@@ -216,32 +228,8 @@ func TestOccupancyDeleteFencesAndOnlyRemovesOwnedEvidence(t *testing.T) {
 			if mode == "evidence failure" {
 				storage.failKey = own
 			}
-			builder := fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(task)
-			if mode == "shared evidence" {
-				other := task.DeepCopy()
-				other.Name = occupancyForeignSelectionTest
-				other.UID = "other-uid"
-				builder = builder.WithObjects(other)
-			}
 			deletes := 0
-			native := builder.WithInterceptorFuncs(interceptor.Funcs{Delete: func(
-				ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption,
-			) error {
-				deletes++
-				options := &client.DeleteOptions{}
-				for _, opt := range opts {
-					opt.ApplyToDelete(options)
-				}
-				if options.Preconditions == nil || *options.Preconditions.UID != task.UID ||
-					*options.Preconditions.ResourceVersion != "7" {
-					t.Fatal("native preconditions missing")
-				}
-				if mode == "native failure" {
-					return errors.New("delete unavailable")
-				}
-				return c.Delete(ctx, obj, opts...)
-			}}).
-				Build()
+			native := occupancyDeletionClient(t, task, mode, &deletes)
 			kube := kubefake.NewSimpleClientset(f.node)
 			if mode == "active load" {
 				sum := sha256.Sum256([]byte(task.UID))
@@ -268,7 +256,7 @@ func TestOccupancyDeleteFencesAndOnlyRemovesOwnedEvidence(t *testing.T) {
 				},
 			}
 			result, err := service.deleteOccupancy(context.Background(), "allowed", task.Name, uid, version)
-			success := mode == occupancyDeletedTest || mode == occupancyQueuedTest
+			success := mode == occupancyDeletedTest || mode == occupancyQueuedTest || mode == occupancyLegacyDeletedTest
 			if (err == nil) != success {
 				t.Fatalf("delete success=%v got %v", success, err)
 			}
@@ -290,4 +278,38 @@ func TestOccupancyDeleteFencesAndOnlyRemovesOwnedEvidence(t *testing.T) {
 			}
 		})
 	}
+}
+
+func occupancyDeletionClient(
+	t *testing.T,
+	task *api.DispatchOccupancyMeasurement,
+	mode string,
+	deletes *int,
+) client.Client {
+	t.Helper()
+	builder := fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(task)
+	if mode == "shared evidence" {
+		other := task.DeepCopy()
+		other.Name = occupancyForeignSelectionTest
+		other.UID = "other-uid"
+		builder = builder.WithObjects(other)
+	}
+	return builder.WithInterceptorFuncs(interceptor.Funcs{Delete: func(
+		ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption,
+	) error {
+		*deletes++
+		options := &client.DeleteOptions{}
+		for _, opt := range opts {
+			opt.ApplyToDelete(options)
+		}
+		if options.Preconditions == nil || *options.Preconditions.UID != task.UID ||
+			*options.Preconditions.ResourceVersion != "7" {
+			t.Fatal("native preconditions missing")
+		}
+		if mode == "native failure" {
+			return errors.New("delete unavailable")
+		}
+		return c.Delete(ctx, obj, opts...)
+	}}).
+		Build()
 }

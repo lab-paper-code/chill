@@ -7,92 +7,81 @@ import (
 	"time"
 )
 
-// ScanOccupancyRows visits final physical evidence without Query's per-request
-// map, cohort samples or response slice. Only unresolved assignments and the
-// caller's physical-batch summary remain resident. Raw rows stay in the log.
-// Supplemental late native evidence follows the final rows; it is not another
-// HTTP completion or batch member.
+const (
+	requestRowOpen              = "occupancy-open"
+	requestRowOccupancySelected = "occupancy-selected"
+)
+
+// ScanOccupancyRows reads only the requested interval and its configured native
+// delivery tail. A first streaming pass selects receipt/native-window RequestIDs;
+// a second visits their raw rows, including earlier assignments and late native
+// supplements. Selection markers are read-side state, not persisted raw rows.
 func (l *ObservationLog) ScanOccupancyRows(ctx context.Context, uid, node string, from, to time.Time, visit func(RequestRow)) (*time.Time, error) {
-	if uid == "" || node == "" || !from.Before(to) {
+	if !from.Before(to) {
 		return nil, failure("InvalidQuery", "invalid occupancy observation interval")
 	}
-	read, err := l.prepare(ctx, map[string][2]time.Time{observationRequestStream: {from, {}}})
+	tail := l.config.OccupancyTail
+	read, err := l.prepare(ctx, map[string][2]time.Time{observationRequestStream: {from.Add(-tail), to.Add(tail)}})
 	if err != nil {
 		return nil, err
 	}
 	defer read.close()
-	type assignment struct {
-		instance string
-		received time.Time
-		node     *NodeReference
-	}
-	pending := map[string]assignment{}
-	instances := map[string]bool{}
 	keep := func(r *RequestRow) bool {
-		return r.WorkloadUID == uid && observationInInterval(r.ReceivedAt, from, to) && (r.Node == nil || r.Node.UID == node)
+		return (uid == "" || r.WorkloadUID == uid) && (node == "" || r.Node == nil || r.Node.UID == node)
 	}
-	err = l.scanStream(read, observationRequestStream, func(raw []byte) error {
-		var envelope requestEnvelope
-		if err := json.Unmarshal(raw, &envelope); err != nil {
+	selected := map[string]bool{}
+	selectRow := func(r *RequestRow) {
+		if keep(r) && occupancyRowInWindow(r, from, to) {
+			selected[r.RequestID] = true
+		}
+	}
+	if err := l.scanStream(read, observationRequestStream, func(raw []byte) error {
+		var row RequestRow
+		if err := json.Unmarshal(raw, &row); err != nil {
 			return err
 		}
-		if envelope.Kind == RequestRowNative || envelope.WorkloadUID != uid || !observationInInterval(envelope.ReceivedAt, from, to) {
-			return nil
-		}
-		var r RequestRow
-		if err := json.Unmarshal(raw, &r); err != nil {
-			return err
-		}
-		if !keep(&r) {
-			return nil
-		}
-		instances[r.Instance] = true
-		if r.Kind == requestRowFinal {
-			delete(pending, r.RequestID)
-			visit(r)
-		} else {
-			pending[r.RequestID] = assignment{r.Instance, r.ReceivedAt, r.Node}
-		}
+		selectRow(&row)
 		return nil
-	})
-	if err != nil {
+	}); err != nil {
 		return nil, err
 	}
-	for id, r := range read.open {
-		if keep(r) {
-			copied := *r
-			copied.Kind = requestRowAssigned
-			delete(pending, id)
-			visit(copied)
-			instances[r.Instance] = true
-		}
+	for _, row := range read.open {
+		selectRow(row)
 	}
-	for id, r := range pending {
-		visit(RequestRow{Kind: requestRowAssigned, RequestID: id, WorkloadUID: uid, Instance: r.instance, ReceivedAt: r.received, Node: r.node})
+	for id := range selected {
+		visit(RequestRow{Kind: requestRowOccupancySelected, RequestID: id})
 	}
-	// Native events may arrive after their HTTP row, including across minutes.
 	for _, file := range read.files[observationRequestStream] {
 		if _, err := file.file.Seek(0, io.SeekStart); err != nil {
 			return nil, err
 		}
 	}
-	err = l.scanStream(read, observationRequestStream, func(raw []byte) error {
-		var envelope requestEnvelope
-		if err := json.Unmarshal(raw, &envelope); err != nil {
+	if err := l.scanStream(read, observationRequestStream, func(raw []byte) error {
+		var row RequestRow
+		if err := json.Unmarshal(raw, &row); err != nil {
 			return err
 		}
-		if envelope.Kind != RequestRowNative || envelope.WorkloadUID != uid {
-			return nil
-		}
-		var r RequestRow
-		if err := json.Unmarshal(raw, &r); err != nil {
-			return err
-		}
-		if instances[r.Instance] {
-			visit(r)
+		if selected[row.RequestID] && keep(&row) {
+			visit(row)
 		}
 		return nil
-	})
+	}); err != nil {
+		return nil, err
+	}
+	for id, row := range read.open {
+		if selected[id] && keep(row) {
+			copied := *row
+			copied.Kind = requestRowOpen
+			visit(copied)
+		}
+	}
 	coverage := read.coverage(map[string][2]time.Time{observationRequestStream: {from, to}})
-	return coverage.gapUntil(from), err
+	return coverage.gapUntil(from), nil
+}
+
+func occupancyRowInWindow(row *RequestRow, from, to time.Time) bool {
+	if row.NativeRunningAt != nil && observationInInterval(*row.NativeRunningAt, from, to) {
+		return true
+	}
+	return !row.ReceivedAt.IsZero() && observationInInterval(row.ReceivedAt, from, to)
 }
