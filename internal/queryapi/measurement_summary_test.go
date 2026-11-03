@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"github.com/lab-paper-code/chill/internal/serving"
 )
 
 func restoreSummary(t *testing.T, raw []byte) map[string]any {
@@ -210,7 +209,7 @@ func TestOccupancySummaryRetainsSignedTuplesWithinDecoderBudget(t *testing.T) {
 	// inventory nodes and profile batches into invented unmeasured entries.
 	for request := range 150 {
 		cell, node, batch := request%len(cells), request%3, request%6
-		window := serving.OccupancyWindow{
+		window := OccupancyMeasurementWindow{
 			Start: time.Date(2026, 11, 3, 0, 0, 0, 1, time.UTC),
 			End:   time.Date(2026, 11, 3, 0, 1, 0, 2, time.UTC),
 		}
@@ -224,16 +223,16 @@ func TestOccupancySummaryRetainsSignedTuplesWithinDecoderBudget(t *testing.T) {
 			D:          &OccupancyValue{PerRequestNanos: &d, Throughput: &throughput, IdleFraction: &idle, Verdict: "Accepted"},
 			Evidence:   &OccupancyEvidence{Store: "evidence", Key: fmt.Sprintf("serving/dispatch-occupancy/node-%d/request-%d.json", node, request), Size: 12345},
 			SchedulerD: &SchedulerOccupancy{Source: "measured", Value: 0, Pairs: 12, Window: &window, UpdatedAt: window.End},
-			ObservedD: &serving.OccupancyEstimate{
-				Node:  serving.NodeReference{Name: fmt.Sprintf("node-%d", node), UID: fmt.Sprintf("physical-node-uid-%d", node)},
+			ObservedD: &OccupancyEstimate{
+				Node:  MeasurementIdentity{Name: fmt.Sprintf("node-%d", node), UID: fmt.Sprintf("physical-node-uid-%d", node)},
 				Model: "model", PowerMode: "fixed", ExecutionPath: "cpu", RuntimeImage: "registry/runtime:retained",
 				WorkloadUID: fmt.Sprintf("workload-%d", request), Batch: batch + 1,
-				Profile: serving.OccupancyProfile{ProfileID: profile, Reference: identity,
+				Profile: OccupancyProfile{ProfileID: profile, Reference: identity,
 					Evidence: []evidencestore.ObjectIdentity{identity, {Store: "evidence",
 						Key: fmt.Sprintf("measurements/node-%d/request-%d/raw.json", node, request), Size: 54321}}, MeanNanos: 123.5},
 				Pairs: 12, Batches: 24, CompleteBatches: 24, Requests: 96, CompleteRequests: 96,
 				RawRows: 288, CompleteRawRows: 288, EnrichedCompleteRawRows: 288, FinalRows: 96, CompleteFinalRows: 96,
-				Statistics: &serving.OccupancyStatistics{Median: -20.5, P25: -30, P75: 10,
+				Statistics: &OccupancyStatistics{Median: -20.5, P25: -30, P75: 10,
 					IQR: 40, P10: -50, P90: 20, Mean: -10.25, NegativeFraction: .75}, Window: window,
 			},
 		})
