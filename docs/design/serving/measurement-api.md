@@ -63,6 +63,7 @@ columns 요청에 구 서버의 buckets 응답이나 다른 형식이 오면 `�
   `readFailures`, `maximumSampleGapSeconds`, `reasons`, `coverage`, 선택적 `gapUntil`을 가진다.
   `coverage`는 `{from,to,sources,gaps}`이며 source·gap의 원래 시간과 stream을 보존한다.
   노드 행은 `node{name,uid}`, `meter`, `scope`, `joules`, `meanWatts`, `samples`,
+  `meterJoules`, `meterComplete`, `gapSeconds`, `gapFraction`, `sourceIdentity`,
   `readFailures`, `maximumSampleGapSeconds`, `sourceTimestampAbsent`, `reasons`와
   bucket 전용 `observedSamples`, 선택적 `firstObservedAt`, `lastObservedAt`을 가진다.
 - `samples`는 적분 경계를 지지하는 창 밖 표본을 포함할 수 있다.
@@ -73,6 +74,11 @@ columns 요청에 구 서버의 buckets 응답이나 다른 형식이 오면 `�
   사유는 `no observed samples in bucket`이다. 관측 0 W/J는 숫자 0으로 유지한다.
 - 기간 요약과 bucket은 같은 meter·coverage·사다리꼴 적분·물리 membership 규칙을 쓴다.
   불완전 여부·실패 횟수와 실제 숫자는 각각 보존하며 `null`을 0으로 치환하지 않는다.
+  `meterJoules`는 물리 계측 범위의 별도 값이며 풀 membership의 joules와 같다고 가정하지 않는다.
+  보존 잘림·source 혼합·source identity 결손·빈 bucket이면 `meterComplete=false`와
+  해당 null/사유를 보존한다. 대시보드는 서버의 gap 초·비율·최대 간격·source identity를
+  노드별 표에 표시하고 전체/활성 풀 수치와 합성하거나 null을 0으로 바꾸지 않는다.
+
 
 대시보드 운영/장치 추세는 진입 때 최근 15분·5초 평균을 한 번 조회하고,
 실시간 1초 구간을 이어 붙인다. 실시간 구간과 겹치는 이력 구간은 제외하며,
@@ -88,6 +94,29 @@ columns 요청에 구 서버의 buckets 응답이나 다른 형식이 오면 `�
 운영의 최근 15분 seed와 별도 기간 요약의 의미는 바꾸지 않는다.
 relay는 power endpoint에만 숫자형 Go duration(`s`, `m`, `h`; 소수 허용)의 `bucket`을
 허용하고 같은 폭·UTC 정렬 개수·범위 제한을 적용한다. load endpoint에는 허용하지 않는다.
+
+#### W1 외부 블랙박스 평가 cutover
+
+EvaluationRun/LoadScenario와 대시보드는 W1 배포 묶음에서 같이 전환한다. 옛 객체는
+삭제하며 alpha·κ/d 참조·seed/payload evidence를 새 스키마로 변환하지 않는다.
+평가는 워크로드·절대 req/s·도착 분포·기간·seed·Dataset/trace를 선언하고 외부 결과를 읽는다.
+LoadScenario는 `parts[].rates`, 워크로드별 `seeds`(uint64 십진 문자열),
+`datasetRefs:{workload:{name,uid}}`, 선택적 `traceRefs`만 사용한다.
+요청 시각 입력 API는 `kind=trace`만 허용하고 `set`은 LoadScenario 이름이다.
+
+EvaluationRun 단계는 `id,row,loadScenarioRef`와 선택적 불투명 `settingsPatch`로 작성한다.
+mode·startState·control이나 CHILL 이미지 대조 입력은 없고, `loadGenerator.nodeName`은 필수다.
+전역·단계 settingsPatch는 공개 운영 설정과 같은 항목 목록으로 선택하며 서버의
+공개 설정 patch 검증 경계가 실제 필드·값을 검증한다. 새 단계에 복원 상태나 내부 모드를
+자동 주입하지 않는다.
+
+preflight의 `liveTarget[]`는 `{component,resource,liveImageIDs,ready}`다. `specImage`·`match`와
+digest 채택은 없고 실제 target readiness로 검사한다. POST 접수는 현재 관측을
+`edge.dacs.io/evaluation-live-target` annotation에 남긴다. 이 annotation은 현재
+EvaluationView DTO에 투영되지 않으므로 대시보드는 preflight 관측만 표시한다.
+복사 요청의 대상 이미지 변경은 입력 채택이나 JSON 수정을 요구하지 않는다.
+활성 단계 응답에도 mode는 없다. 불변 게시의 기존 원문·명시적 비교·정밀 정수는 그대로
+보존하며 현재 CHILL 상태로 과거 결과를 보충하지 않는다.
 
 #### 실험 게시물 페이지·적용 SLO 출처
 

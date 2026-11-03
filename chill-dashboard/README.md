@@ -171,7 +171,7 @@ PUT 본문 계약은 변경하지 않는다. `internal/serving/scheduler.go:17-5
 별도 개요·링크 허브·측정 6탭은 폐지한다. 요청 실패와 기존 사용 결과, 현재 사용과 품질, 실행 종료와 측정 통과·정리는 독립이다.
 작성·수정은 전용 페이지이며 필수값·출처·변경 요약·점검을 보이고 입력 변경은 점검을 무효화한다. 목록은 breadcrumb 없이, 상세는 상위 맥락 하나다.
 실험 작성은 한 단계를 선택해 편집하고 과거 비교 대상을 게시 페이지와 선택 단건 조회로 찾는다. `새 부하`는 기존 `LoadEditor`를 의존 Sheet에서 열며 작성 중인 실험을 유지하고 저장 응답의 새 UID를 해당 단계에 선택한다. 원문 편집은 유지한다. `실험 시작`은 기존 사전 점검 후 생성 POST로 실행을 접수하고 실제 응답의 `/experiments/runs/[name]?uid=…`로 이동한다. 서버 초안 저장이나 별도 시작 API를 추가하지 않는다.
-실험·부하 작성의 증거 입력은 `GET /api/v1/evaluations/inputs`에 `kind`·`set` 서버 필터와 명시적 `limit=25`·`offset`을 보내고 `page.nextOffset`으로 이동한다. 입력 묶음은 현재 페이지 후보 선택 또는 직접 입력하며 필터 변경은 첫 페이지로 돌아간다. 옵션은 서버 `name`(없으면 `key`)과 묶음 그룹을 표시하고, 페이지 밖의 선택도 `store/key` 기준으로 보존한다. relay는 `kind`·`set`·`offset`·`limit` 단일값과 기존 숫자·길이 제한만 검사하며 값의 정본은 서버다. 무쿼리 전체 반환 계약은 유지한다. 측정 결과 저장 영역은 HTML `v` 플래그 호환 DNS-1123 label 패턴과 최대 길이로 검증한다.
+실험·부하 작성의 요청 시각 입력은 `GET /api/v1/evaluations/inputs?kind=trace`만 조회하며 `set`은 부하 시나리오 이름이다. 명시적 `limit=25`·`offset`과 `page.nextOffset`으로 이동한다. 옵션은 서버 `name`(없으면 `key`)과 묶음 그룹을 표시하고 페이지 밖의 선택도 `store/key` 기준으로 보존한다. seed는 evidence 조회가 아니라 워크로드별 uint64 십진 문자열이며 payload는 Dataset 이름·UID 참조다. 무쿼리 전체 반환 계약은 유지한다. 측정 결과 저장 영역은 HTML `v` 플래그 호환 DNS-1123 label 패턴과 최대 길이로 검증한다.
 연관 이동은 KPI를 복제하지 않고 대상·기간·필터·선택·namespace·UID를 보존한다. 외부 return URL은 허용하지 않는다.
 
 redirect: `/scheduler`, `/operations/flow` → `/`; `/resources`, `/pools` → `/operations/devices`; `/scheduler/profiles` → `/measurements/results` 처리 성능; `/evaluations` → `/experiments`; `/evaluations/load-scenarios` → `/experiments/load-scenarios`.
@@ -228,9 +228,9 @@ row per UID, no server change). Each request's model comes only from its exact
 `definitionID`; a changed current model never rewrites historical request details.
 `/configuration` edits every ChillServer-supported setting from the current baseline.
 Duration fields use exact ns conversion from ms, memory and seed retain integer
-strings, and advanced search fields remain available. Review re-reads settings,
-preserves the draft on concurrent changes and names whole-object last-write
-semantics. Runtime application is separate from physical transitions. Permission
+strings, and advanced search fields remain available. GET retains the server ETag;
+PUT requires that baseline in If-Match. A 412 preserves the draft and requires
+explicit adoption of the new baseline. Runtime application is separate from physical transitions. Permission
 failure retains input; response loss requires current settings and bounded
 history lookup before explicit resubmission.
 `/transitions` separates current actions/results from bounded historical records.
@@ -264,7 +264,7 @@ Different measurementRules retain numbers and display “측정 규칙 다름”
 R18: 목록은 선택적 `facts`의 이름·정책·SLO·부하 출처를 직접 표시하고 없으면 미기록이다. 목록 항목별 상세 hydration은 하지 않으며 명시적 과거 비교 대상이 목록에 없을 때만 그 publication을 조회한다. 비교 상대가 없으면 차이 대신 측정 원값을 먼저 표시하며, 계획 부하는 구간×서비스 표(소수 둘째 자리)와 하위 구간별 막대로 표시한다. 단계 전체 p95·발행률을 하위 구간의 실측값으로 복제하지 않는다. `SLOFailed`는 `SLO 미충족`이고 수집 실패와 구분한다. 과거 게시에 실제 없는 정의는 추정하지 않는다.
 현재 reader는 [DB-FR-66](../docs/spec/dashboard/SRS.md)에 따라 게시 단건의 `definition.spec.comparisons`와 목록의 `comparisons`로 비교 관계를 읽고 단계 ID·서비스 UID·publicationID로 연결한다. suffix·요청률 유사성 fallback은 사용하지 않는다. 정의 없는 과거 게시는 비교 미기록, 실제 대상 부재는 대상 게시 없음, 권한/서버/timeout은 대상 조회 실패로 구분한다. 정책·적용 SLO는 기록된 identity가 일치하는 정의·실행 결과에서만 읽는다. 게시 상세는 비교 맥락 → 공유 선택 요청률·서비스 p95·풀 전체 에너지 차트 → 선택 단계 원값/차이 표 순서다. 비교가 없으면 단독값만 표시하며 빈 Δ 열은 없다. 하위 계획 구간에 단계 전체 실측을 복제하거나 서비스별 에너지를 만들지 않는다.
 실행은 `/experiments/runs/[name]?uid=…`, 부하 설정은 `/experiments/load-scenarios`다. 작성·수정은 각각 `/experiments/new`, `/experiments/runs/[name]/edit?uid=…`, `/experiments/load-scenarios/new`, `/experiments/load-scenarios/[name]/edit` 전용 페이지다. 원본은 `copy` 또는 `publication`, 수정 UID는 `uid` query로 복원한다. 구 `/experiments/[name]/edit?uid=…`는 새 실행 편집 URL로 리다이렉트한다. `/experiments/runs/[name]`은 항상 실행 상세이므로 이름이 정확히 `runs`인 실행의 편집은 새 `/experiments/runs/runs/edit?uid=…` 경로를 사용한다. 실행/게시 목록은 상세를 중첩하지 않고 행에서 이동한다. 구간 Sheet는 단계·후보/기준·실제 기간과 원값 → 같은 기간 사건 → 접힌 비교 조건·규칙·정의 출처·원문 순서다. `a/al/as/b/bs/service`가 차트·구간 버튼·표·Sheet의 공통 선택이며 새로고침과 기록 복귀에도 유지된다. 사건 주체는 기본 후보이고 기준 선택은 `eventSide=baseline`에 보존한다. Sheet가 닫혀 있어도 비교쌍 선택은 URL에 저장한다. 구간 열기는 history push, 내부 서비스·사건 주체 변경과 닫기는 replace다. 닫기는 identity를 유지하고 `sheet=closed`로 개폐만 표시하며, 다시 열면 표식을 제거한다. 기존 표식 없는 구간 딥링크는 Sheet를 열고 닫은 뒤에도 같은 선택 수치·게시·서비스·offset·복귀 문맥을 유지한다. 작성 중 새 부하 Sheet를 닫으면 그 세션의 지연 저장 완료는 부모 초안을 바꾸지 못한다. 예전 `/experiments?name=…&uid=…`와 `/evaluations` 선택 URL은 같은 실행의 canonical 상세로 이동하고, 게시 없는 `/experiments/results`는 게시 목록으로 이동한다.
-평가 경계: `운영 / CHILL 자율 제어`는 상시 자율 운영이고 `실험 / 외부 평가`는 서빙 파이프라인을 블랙박스로 평가한다. 구조화 작성 폼은 부하·절대 요청률(req/s)·도착 분포·기간·seed·payload와 측정 기준만 편집한다. κ/d/rateBasis/alpha·시작 상태 복원·스냅샷·이미지/profile 대조·제어·장애 주입 입력은 두지 않는다. 서버 스키마 또는 기존 정의의 해당 필드는 JSON 원문에 보존하며 폼 편집으로 삭제하지 않는다. 배치·전력·인스턴스 변화와 사건은 결과의 `관찰`로만 읽는다.
+평가 경계: `운영 / CHILL 자율 제어`는 상시 자율 운영이고 `실험 / 외부 평가`는 서빙 파이프라인을 블랙박스로 평가한다. W1 서버와 함께 절대 요청률·기간·도착 분포·워크로드별 seeds/datasetRefs/traceRefs로 cutover하며 옛 객체는 삭제한다(이주 없음). κ/d/rateBasis/alpha·시작 상태 복원·스냅샷·이미지/profile 대조·내부 제어·장애 주입 입력은 없다. 전역·단계 운영 설정 변경은 운영 설정 화면과 같은 `lib/scheduler-settings.ts` 항목 목록을 쓰는 불투명 `settingsPatch`이고 부하 발생기 `nodeName`을 지정한다. 사전점검은 liveTarget의 resource·실제 이미지 ID·ready를 관측하며 digest 채택 없이 현재 준비 상태로 접수한다. 배치·전력·인스턴스 변화와 사건은 결과의 `관찰`로만 읽는다.
 Evidence lookup uses the exact nanosecond `decision.at` interval through the
 processed scheduler observations API, then selects the recorded judgment identity;
 it never falls back to the latest state. No-record and timeout states are distinct.
