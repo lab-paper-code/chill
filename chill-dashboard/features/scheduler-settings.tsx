@@ -79,6 +79,7 @@ function FieldHelp({help}:{help:string}) {
 }
 
 type ServiceChoice={uid:string;name:string}
+type SettingsSnapshot={settings:SchedulerSettings;etag:string|null}
 function ServiceSettingsEdit({editKey,label,help,initial,version=null,services,loadError,disabled,changed,save}:{editKey:"autonomousWorkloads"|"minimumDemand";label:string;help:string;initial:SchedulerSettings;version?:string|null;services:ServiceChoice[];loadError?:string;disabled:boolean;changed:boolean;save:(value:string[]|Record<string,number>,source:SchedulerSettings,version:string|null)=>void}) {
   const params=useSearchParams(),router=useRouter(),open=params.get("edit")===editKey
   const [draft,setDraft]=React.useState<{settings:SchedulerSettings;version:string|null;selected:string[];demand:Record<string,string>}|null>(null),[error,setError]=React.useState("")
@@ -202,10 +203,13 @@ function RoutingEdit({initial,snapshot,disabled,apply}:{initial?:Routing;snapsho
 export function SchedulerSettingsPage() {
   const params=useSearchParams(),router=useRouter()
   const section=params.get("section"),category:Field["group"]|"controls"|"targets"=section==="cycle"||section==="limit"||section==="controls"||section==="capacity"||section==="advanced"?section:"targets"
-  const etag=React.useRef<string|null>(null),[readVersion,setReadVersion]=React.useState<string|null>(null)
-  const [baselineVersion,setBaselineVersion]=React.useState<string|null>(null),latestVersion=React.useRef<string|null>(null)
-  const versioned=readVersion!==null
-  const settings=useChillQuery<SchedulerSettings>("v1/scheduler/settings",{decoder:parseSchedulerJSON,poll:true,onResponse:response=>{etag.current=response.etag??null;setReadVersion(response.etag??null)}})
+  const [read,setRead]=React.useState<SettingsSnapshot|null>(null),readRef=React.useRef<SettingsSnapshot|null>(null)
+  const settings=useChillQuery<SchedulerSettings>("v1/scheduler/settings",{decoder:parseSchedulerJSON,poll:true,onResponse:(response,data)=>{
+    const next={settings:data,etag:response.etag??null};readRef.current=next;setRead(next)
+  }})
+  const snapshot=read??(settings.data?{settings:settings.data,etag:null}:null)
+  const currentSettings=settings.data===undefined?undefined:snapshot?.settings
+  const versioned=snapshot?.etag!=null
   const state=useChillQuery<SchedulerControllerState>("v1/scheduler/state",{decoder:parseSchedulerJSON})
   const pools=useChillQuery<PoolsView>("v1/pools",{enabled:params.get("edit")==="excludedNodes"})
   const workloads=useChillQuery<{desired:{metadata:ServiceChoice}}[]>("v1/workloads?view=summary")
@@ -218,9 +222,9 @@ export function SchedulerSettingsPage() {
     ...(pools.data?.measurement??[]).map(item=>item.node.name),
     ...(pools.data?.workloads??[]).flatMap(pool=>(pool.nodes??[]).map(node=>node.name)),
   ])]
-  const [baseline,setBaseline]=React.useState<SchedulerSettings|null>(null),[draft,setDraft]=React.useState<SchedulerSettings|null>(null)
+  const [baseline,setBaseline]=React.useState<SettingsSnapshot|null>(null),[draft,setDraft]=React.useState<SchedulerSettings|null>(null)
   const [reviewOpen,setReviewOpen]=React.useState(false),[checkError,setCheckError]=React.useState("")
-  const [review,setReview]=React.useState<SchedulerSettings|null>(null),[latest,setLatest]=React.useState<SchedulerSettings|null>(null)
+  const [review,setReview]=React.useState<SchedulerSettings|null>(null),[latest,setLatest]=React.useState<SettingsSnapshot|null>(null)
   const [reviewing,setReviewing]=React.useState(false),[result,setResult]=React.useState<SchedulerSettingsChange|null>(null)
   const [responseError,setResponseError]=React.useState<string|null>(null)
   const [routingResults,setRoutingResults]=React.useState<OperationResult[]|null>(null),[routingError,setRoutingError]=React.useState(""),[routingPending,setRoutingPending]=React.useState(false)
@@ -235,17 +239,17 @@ export function SchedulerSettingsPage() {
   const recovered=recoveryStarted>0&&settings.dataUpdatedAt>=recoveryStarted&&!settings.isFetching&&history.isSuccess&&!history.isFetching
   const blocked=routingPending||mutation.isPending||reviewing||(unknown&&!recovered)||!precise||[401,403].includes(settings.error?.status??0)
   const serverError=mutation.error?.data&&typeof mutation.error.data==="object"?mutation.error.data as {field?:string;message?:string;code?:string}:undefined
-  const count=baseline&&draft?changedRows(baseline,draft).length:0
-  const shown=count?draft:settings.data
+  const count=baseline&&draft?changedRows(baseline.settings,draft).length:0
+  const shown=count?draft:currentSettings
   // Explicit routing operations open in the same detail view as the transitions list.
   const routing=state.data?.results?.filter(item=>["route","unroute","release"].includes(item.operation.kind)).reduce<OperationResult|undefined>((latest,item)=>!latest||Date.parse(item.startedAt)>Date.parse(latest.startedAt)?item:latest,undefined)
   const back:[string,string]=["/settings","설정"]
 
   // Edits accumulate on the draft; the first edit pins the baseline used for the concurrency check.
-  function edit(change:(base:SchedulerSettings)=>SchedulerSettings,source=settings.data!,version=etag.current) {
+  function edit(change:(base:SchedulerSettings)=>SchedulerSettings,source=snapshot!.settings,version=snapshot!.etag) {
     const next=change(count?draft!:source)
     if(next.capacityPassingWindows!==undefined&&next.capacityWindows!==undefined&&BigInt(next.capacityPassingWindows)>BigInt(next.capacityWindows))throw new Error("용량 충족 창 수는 용량 계산 창 수 이하여야 해요.")
-    if(!count){setBaseline(source);setBaselineVersion(version)}
+    if(!count)setBaseline({settings:source,etag:version})
     setDraft(next)
   }
   async function inspect(conflict=false) {
@@ -254,15 +258,20 @@ export function SchedulerSettingsPage() {
     try {
       const [current]=await Promise.all([settings.refetch(),state.refetch()])
       if(current.error||!current.data){setCheckError("현재 설정을 불러오지 못했어요. 바꾼 값은 그대로 있어요.");return}
-      if(conflict||baselineVersion!==etag.current||!settingsEqual(baseline,current.data)){latestVersion.current=etag.current;setLatest(current.data);return}
+      const refreshed=readRef.current??{settings:current.data,etag:null}
+      if(conflict||baseline.etag!==refreshed.etag||!settingsEqual(baseline.settings,refreshed.settings)){setLatest(refreshed);return}
       setReview(draft)
     } finally {setReviewing(false)}
   }
   async function submit(selected:SchedulerSettings,version:string|null) {
     saving.current=true;setSubmittedAt(new Date().toISOString());setRecoveryStarted(0);setHistoryWindow(null);setResult(null);setResponseError(null)
+    const previousRead=readRef.current
     try {
       const applied=await putSchedulerSettings(mutation.mutateAsync,client,selected,version)
-      etag.current=applied.etag;setReadVersion(applied.etag)
+      if(readRef.current===previousRead){
+        const appliedSnapshot={settings:applied.change.after??selected,etag:applied.etag}
+        readRef.current=appliedSnapshot;setRead(appliedSnapshot)
+      }
       setResult(applied.change)
       setBaseline(null);setDraft(null)
     } catch(error) {
@@ -277,9 +286,10 @@ export function SchedulerSettingsPage() {
     try {
       const current=await settings.refetch()
       if(current.error||!current.data){setCheckError("현재 설정을 불러오지 못했어요. 작성값은 유지돼요.");return}
-      if(baselineVersion!==etag.current||!settingsEqual(baseline,current.data)){latestVersion.current=etag.current;setLatest(current.data);setReview(null);return}
+      const refreshed=readRef.current??{settings:current.data,etag:null}
+      if(baseline.etag!==refreshed.etag||!settingsEqual(baseline.settings,refreshed.settings)){setLatest(refreshed);setReview(null);return}
       const selected=review;setReview(null);setReviewOpen(false)
-      await submit(selected,baselineVersion)
+      await submit(selected,baseline.etag)
     } finally {setReviewing(false)}
   }
   async function applyRouting(before:Routing,after:Routing,reason:string) {
@@ -339,19 +349,19 @@ export function SchedulerSettingsPage() {
     </Screen>
     const events=(history.data?.events??[]).filter(event=>event.settings)
     return <Screen back={back} title="적용 결과 미확인"
-      action={recovered&&settings.data
-        ?<Button onClick={()=>{setBaseline(settings.data!);setLatest(null);setResponseError(null);mutation.reset();setHistoryWindow(null)}}>조회한 현재 값으로 다시 검토하기</Button>
+      action={recovered&&currentSettings
+        ?<Button onClick={()=>{setBaseline(snapshot!);setLatest(null);setResponseError(null);mutation.reset();setHistoryWindow(null)}}>조회한 현재 값으로 다시 검토하기</Button>
         :<Button onClick={()=>void recover()} disabled={settings.isFetching||history.isFetching}>현재 설정과 최근 변경 기록 확인하기</Button>}>
       <Facts items={[["원인",message??"응답 미수신"],["작성값","유지"],["자동 재제출","차단"]]}/>
       {historyWindow&&<QueryGate query={history}>{events.length?<Facts items={events.map(event=>[time(event.at),`${event.settings!.actorUsername} · ${event.settings!.appliedAt?"적용됨":event.settings!.error??"적용 전 확인만 됐어요"}`] as [string,string])}/>:<Empty title="이 구간에 운영 설정 변경 기록이 없어요"/>}</QueryGate>}
       {historyWindow&&<Rows>
         <Row href={`/records?scope=scheduler&filter=settings&${new URLSearchParams(historyWindow)}`} label="구간 변경 기록" hint={history.data?.nextCursor?"추가 기록 있음":undefined}/>
-        {recovered&&settings.data&&<RowDialog label="현재 값과 바꾼 값 비교" title="현재 값과 바꾼 값" description="방금 조회한 현재 설정과 바꾼 값을 비교해요."><SettingChanges before={settings.data} after={draft??settings.data}/></RowDialog>}
+        {recovered&&currentSettings&&<RowDialog label="현재 값과 바꾼 값 비교" title="현재 값과 바꾼 값" description="방금 조회한 현재 설정과 바꾼 값을 비교해요."><SettingChanges before={currentSettings} after={draft??currentSettings}/></RowDialog>}
       </Rows>}
     </Screen>
   }
 
-  const editField=(field:Field)=>shown&&<EditRow key={field.key} editKey={field.key} label={field.label} help={field.help} changed={!!count&&String(baseline![field.key])!==String(shown[field.key])}
+  const editField=(field:Field)=>shown&&<EditRow key={field.key} editKey={field.key} label={field.label} help={field.help} changed={!!count&&String(baseline!.settings[field.key])!==String(shown[field.key])}
     initial={field.key.endsWith("Nanos")?nanosToMilliseconds(shown[field.key]):String(shown[field.key])} unit={field.key.endsWith("Nanos")?"ms":field.key==="servingMemoryBytes"?"bytes":field.unit}
     range={field.key==="bootstrapCapacityWaitNanos"?"0 ~ 3600000 ms":field.key==="scaleDownStabilizationNanos"||field.key==="replacementDwellNanos"?"0 이상의 밀리초, 소수점 아래 6자리까지":field.key==="capacityBisectionWidth"?"0 초과 1 이하 유한한 수":field.key==="transitionReserveFraction"||field.key==="scaleDownHeadroomFraction"?"0 ~ 1 사이 유한한 수":field.key.endsWith("Nanos")?"0보다 큰 밀리초, 소수점 아래 6자리까지":field.key==="completionMarginMS"?"0 이상의 밀리초":field.key==="servingMemoryBytes"?"0 ~ 18446744073709551615 사이 바이트 수":"1 이상의 정수"}
     save={value=>{
@@ -373,11 +383,11 @@ export function SchedulerSettingsPage() {
       <section aria-label="현재값·정의 표">{category==="targets"?<table className="w-full text-left text-sm"><thead><tr><th className="p-3">항목</th><th className="p-3">{count?"작성값":"현재값"}</th><th className="p-3">작업</th></tr></thead><tbody>{settingTargets.map(target=><tr key={target.key} className="border-t">
         <th scope="row" className="p-3 font-normal">{target.label}</th>
         <td className="p-3">{target.key==="autonomousWorkloads"?(shown.autonomousWorkloads?.map(uid=>serviceNames[uid]??uid).join(", ")||"없음"):target.key==="excludedNodes"?excludedNodes(shown):services.length||Object.keys(shown.minimumDemand??{}).length?<table aria-label="서비스별 최소 수요" className="text-left text-sm"><thead><tr><th className="pr-4 font-normal">서비스</th><th className="text-right font-normal">req/s</th></tr></thead><tbody>{[...new Set([...services.map(service=>service.uid),...Object.keys(shown.minimumDemand??{})])].map(uid=><tr key={uid}><th scope="row" className="pr-4 font-normal">{serviceNames[uid]??uid}</th><td className="text-right tabular-nums">{shown.minimumDemand?.[uid]??"미설정"}</td></tr>)}</tbody></table>:"미설정"}</td>
-        <td className="p-3">{target.key==="excludedNodes"?<EditRow editKey={target.key} label={target.label} help={target.help} changed={!!count&&String(baseline!.excludedNodes??[])!==String(shown.excludedNodes??[])} initial={shown.excludedNodes??[]} nodeNames={knownNodeNames} save={value=>edit(base=>({...base,excludedNodes:value as string[]}))} disabled={blocked}/>:<ServiceSettingsEdit editKey={target.key} label={target.label} help={target.help} initial={shown} version={count?baselineVersion:readVersion} services={services} loadError={workloads.error?"서비스 목록 조회 실패":!workloads.data?"서비스 목록 조회 중":undefined} changed={!!count&&stringifySchedulerJSON(baseline![target.key])!==stringifySchedulerJSON(shown[target.key])} disabled={blocked} save={(value,source,version)=>edit(base=>({...base,[target.key]:value}),source,version)}/>}</td>
+        <td className="p-3">{target.key==="excludedNodes"?<EditRow editKey={target.key} label={target.label} help={target.help} changed={!!count&&String(baseline!.settings.excludedNodes??[])!==String(shown.excludedNodes??[])} initial={shown.excludedNodes??[]} nodeNames={knownNodeNames} save={value=>edit(base=>({...base,excludedNodes:value as string[]}))} disabled={blocked}/>:<ServiceSettingsEdit editKey={target.key} label={target.label} help={target.help} initial={shown} version={count?baseline!.etag:snapshot!.etag} services={services} loadError={workloads.error?"서비스 목록 조회 실패":!workloads.data?"서비스 목록 조회 중":undefined} changed={!!count&&stringifySchedulerJSON(baseline!.settings[target.key])!==stringifySchedulerJSON(shown[target.key])} disabled={blocked} save={(value,source,version)=>edit(base=>({...base,[target.key]:value}),source,version)}/>}</td>
       </tr>)}</tbody></table>:category==="controls"?<DataTable data={controls} columns={[
         {key:"name",label:"항목",value:control=>control.label},
         {key:"value",label:"현재값",value:control=>onOff(shown.controls[control.key])},
-        {key:"edit",label:"작업",value:control=><EditRow editKey={`controls.${control.key}`} label={control.label} help={`운영 판단에서 ${control.label}도 함께 조정해요.`} changed={!!count&&baseline!.controls[control.key]!==shown.controls[control.key]} initial={shown.controls[control.key]} save={value=>edit(base=>({...base,controls:{...base.controls,[control.key]:value as boolean}}))} disabled={blocked}/>},
+        {key:"edit",label:"작업",value:control=><EditRow editKey={`controls.${control.key}`} label={control.label} help={`운영 판단에서 ${control.label}도 함께 조정해요.`} changed={!!count&&baseline!.settings.controls[control.key]!==shown.controls[control.key]} initial={shown.controls[control.key]} save={value=>edit(base=>({...base,controls:{...base.controls,[control.key]:value as boolean}}))} disabled={blocked}/>},
       ]}/>:<DataTable data={fields.filter(field=>field.group===category)} columns={[
         {key:"name",label:"항목",value:field=>field.label},
         {key:"value",label:count?"작성값":"현재값",value:field=>plain(field,shown[field.key])},
@@ -389,9 +399,9 @@ export function SchedulerSettingsPage() {
         {state.error?<Row href="/records?filter=action" label="설정한 요청 분배" value={<span role="status" className="break-words">조회 실패 · HTTP {state.error.status} · {routingFailureCode} · {routingFailureReason}</span>}/>:routing
           ?<Row href={`/records?${new URLSearchParams({filter:"action",id:routing.operation.id,view:"current",stage:"result",node:routing.operation.node.uid,startedAt:routing.startedAt})}`} label="설정한 요청 분배"/>
           :<Row href="/records?filter=action" label="설정한 요청 분배" value={state.data?"기록 없음":state.error?"조회 실패":"조회 중"}/>}
-        <RoutingEdit initial={settings.data?.staticRouting} snapshot={state.data?.snapshot} disabled={blocked||count>0} apply={(before,after,reason)=>void applyRouting(before,after,reason)}/>
+        <RoutingEdit initial={currentSettings?.staticRouting} snapshot={state.data?.snapshot} disabled={blocked||count>0} apply={(before,after,reason)=>void applyRouting(before,after,reason)}/>
         <Row href="/" label="운영 현황"/>
-        {settings.data&&<RowDialog label="원본 자료 보기" title="현재 운영 설정 원본"><pre className="source-json">{stringifySchedulerJSON(safeSource(settings.data),2)}</pre><SourceExport value={settings.data} filename="chill-scheduler-settings.json"/></RowDialog>}
+        {currentSettings&&<RowDialog label="원본 자료 보기" title="현재 운영 설정 원본"><pre className="source-json">{stringifySchedulerJSON(safeSource(currentSettings),2)}</pre><SourceExport value={currentSettings} filename="chill-scheduler-settings.json"/></RowDialog>}
       </Rows></details>
     </>}</QueryGate>
     <Dialog open={reviewOpen} onOpenChange={open=>{if(!open){setReviewOpen(false);setReview(null)}}}><DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-xl" onCloseAutoFocus={event=>{event.preventDefault();reviewLauncher.current?.focus()}}>
@@ -399,13 +409,13 @@ export function SchedulerSettingsPage() {
       {!versioned&&<FieldHelp help="서버는 버전 조건부 저장을 지원하지 않아 동시 변경을 완전히 막을 수 없어요."/>}
       {reviewing&&<p role="status">현재 설정을 다시 확인하고 있어요.</p>}
       {checkError&&<p role="alert">{checkError}</p>}
-      {latest&&draft&&<><SettingChanges before={latest} after={draft} names={serviceNames}/><Button onClick={()=>{setBaseline(latest);setBaselineVersion(latestVersion.current);setLatest(null);setReviewOpen(false)}}>최신 값을 기준으로 다시 검토하기</Button></>}
+      {latest&&draft&&<><SettingChanges before={latest.settings} after={draft} names={serviceNames}/><Button onClick={()=>{setBaseline(latest);setLatest(null);setReviewOpen(false)}}>최신 값을 기준으로 다시 검토하기</Button></>}
       {review&&baseline&&<>
-        <SettingChanges before={baseline} after={review} names={serviceNames}/>
+        <SettingChanges before={baseline.settings} after={review} names={serviceNames}/>
         <h3>마지막으로 확인한 노드</h3>
         {state.isSuccess?(state.data?.snapshot.nodes?.length?<p>{state.data.snapshot.nodes.map(node=>node.node.name).join(", ")}</p>:<p>확인된 노드가 없어요.</p>):<p>노드 목록을 불러오지 못했어요.</p>}
         <p className="text-sm text-muted-foreground">마지막 구성 관측의 노드 · 영향 예측 아님</p>
-        <SourceJSON inline title="변경 원본" value={{before:baseline,after:review}}/>
+        <SourceJSON inline title="변경 원본" value={{before:baseline.settings,after:review}}/>
         <Button onClick={()=>void save()} disabled={blocked}>설정 적용하기</Button>
       </>}
     </DialogContent></Dialog>

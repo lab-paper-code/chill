@@ -461,9 +461,9 @@ test("minimum demand values are visible in the current table without opening an 
 
 test("an edited service Sheet cannot adopt a newer GET baseline or ETag behind the operator",async()=>{
   const runner=hooks(),original={controls:{},minimumDemand:{known:.3}},sent:unknown[]=[]
-  let current:typeof original&{minimumDemand:Record<string,number>}=original,tag='"7"',publish:((response:{etag:string})=>void)|undefined
-  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({mutateAsync:async(input:unknown)=>{sent.push(input)}}),useChillQuery:(path:string,options?:{onResponse?:(response:{etag:string})=>void})=>{
-    if(path==="v1/scheduler/settings"){publish=options?.onResponse;publish?.({etag:tag});return {data:current,refetch:async()=>{publish?.({etag:tag});return {data:current}}}}
+  let current:typeof original&{minimumDemand:Record<string,number>}=original,tag='"7"',publish:((response:{etag:string},data:unknown)=>void)|undefined
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({mutateAsync:async(input:unknown)=>{sent.push(input)}}),useChillQuery:(path:string,options?:{onResponse?:(response:{etag:string},data:unknown)=>void})=>{
+    if(path==="v1/scheduler/settings"){publish=options?.onResponse;publish?.({etag:tag},current);return {data:current,refetch:async()=>{publish?.({etag:tag},current);return {data:current}}}}
     return {refetch:async()=>({})}
   }}})
   runner.render(SchedulerSettingsPage)
@@ -471,7 +471,7 @@ test("an edited service Sheet cannot adopt a newer GET baseline or ETag behind t
   const Component=editor.type as (props:Record<string,unknown>)=>unknown
   let form=elements(runner.render(Component,editor.props))
   ;(form.find(node=>node.type==="input")!.props.onChange as (event:unknown)=>void)({target:{value:".75"}})
-  current={...original,minimumDemand:{known:.3,other:40}};tag='"8"';publish?.({etag:tag})
+  current={...original,minimumDemand:{known:.3,other:40}};tag='"8"';publish?.({etag:tag},current)
   tree=elements(runner.render(SchedulerSettingsPage));editor=tree.find(node=>node.props.editKey==="minimumDemand")!
   form=elements(runner.render(Component,editor.props))
   ;(form.find(node=>node.type==="form")!.props.onSubmit as (event:unknown)=>void)({preventDefault(){}})
@@ -494,10 +494,11 @@ test("versioned settings use their baseline ETag, refresh on 409 and require exp
       if(status!==200){mutation.error=new ApiError();throw mutation.error}
       return {body:'{"appliedAt":"2026-11-03T00:00:00Z"}',etag:tag}
     }}
-    const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{ApiError,useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>mutation,useChillQuery:(path:string,options?:{onResponse?:(response:{etag:string|null})=>void})=>{
-      if(path==="v1/scheduler/settings"){if(!reads){reads++;options?.onResponse?.({etag:tag})}return {data:initial,refetch:async()=>{reads++;options?.onResponse?.({etag:tag});return {data:initial}}}}
+    const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{ApiError,useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>mutation,useChillQuery:(path:string,options?:{onResponse?:(response:{etag:string|null},data:unknown)=>void})=>{
+      if(path==="v1/scheduler/settings"){if(!reads){reads++;options?.onResponse?.({etag:tag},initial)}return {data:initial,refetch:async()=>{reads++;options?.onResponse?.({etag:tag},initial);return {data:initial}}}}
       return {refetch:async()=>({})}
     }}})
+    runner.render(SchedulerSettingsPage)
     let tree=elements(runner.render(SchedulerSettingsPage))
     ;(tree.find(node=>node.props.editKey==="excludedNodes")!.props.save as (value:string[])=>void)(["meter"])
     tree=elements(runner.render(SchedulerSettingsPage))
@@ -534,10 +535,11 @@ test("versioned settings use their baseline ETag, refresh on 409 and require exp
 test("a ConfigMap-only ETag change blocks an otherwise identical settings body",async()=>{
   const runner=hooks(),settings={controls:{},excludedNodes:[]},sent:unknown[]=[]
   let tag='"7"'
-  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({mutateAsync:async(input:unknown)=>{sent.push(input)}}),useChillQuery:(path:string,options?:{onResponse?:(response:{etag:string})=>void})=>{
-    if(path==="v1/scheduler/settings"){options?.onResponse?.({etag:tag});return {data:settings,refetch:async()=>{options?.onResponse?.({etag:tag});return {data:settings}}}}
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({mutateAsync:async(input:unknown)=>{sent.push(input)}}),useChillQuery:(path:string,options?:{onResponse?:(response:{etag:string},data:unknown)=>void})=>{
+    if(path==="v1/scheduler/settings"){options?.onResponse?.({etag:tag},settings);return {data:settings,refetch:async()=>{options?.onResponse?.({etag:tag},settings);return {data:settings}}}}
     return {refetch:async()=>({})}
   }}})
+  runner.render(SchedulerSettingsPage)
   let tree=elements(runner.render(SchedulerSettingsPage))
   ;(tree.find(node=>node.props.editKey==="excludedNodes")!.props.save as (value:string[])=>void)(["meter"])
   tag='"8"'
@@ -547,4 +549,62 @@ test("a ConfigMap-only ETag change blocks an otherwise identical settings body",
   tree=elements(runner.render(SchedulerSettingsPage))
   assert.equal(sent.length,0)
   assert.ok(tree.some(node=>node.type==="button"&&node.props.children==="최신 값을 기준으로 다시 검토하기"))
+})
+
+test("a newer GET after successful PUT remains the settings and ETag baseline for the next edit",async()=>{
+  const runner=hooks(),initial={controls:{},excludedNodes:[]},sent:{version?:string}[]=[]
+  let current:Record<string,unknown>=initial,tag='"7"',published=false,publish:((response:{etag:string},data:unknown)=>void)|undefined
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{current={controls:{},excludedNodes:["meter"],minimumDemand:{service:9}};tag='"9"';publish?.({etag:tag},current)}})},"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({mutateAsync:async(input:{version?:string})=>{sent.push(input);return {body:'{"appliedAt":"2026-11-03T00:00:00Z","after":{"controls":{},"excludedNodes":["meter"]}}',etag:'"8"'}}}),useChillQuery:(path:string,options?:{onResponse?:(response:{etag:string},data:unknown)=>void})=>{
+    if(path==="v1/scheduler/settings"){publish=options?.onResponse;if(!published){published=true;publish?.({etag:tag},current)}return {data:current,refetch:async()=>{publish?.({etag:tag},current);return {data:current}}}}
+    return {refetch:async()=>({})}
+  }}})
+  runner.render(SchedulerSettingsPage)
+  let tree=elements(runner.render(SchedulerSettingsPage))
+  ;(tree.find(node=>node.props.editKey==="excludedNodes")!.props.save as (value:string[])=>void)(["meter"])
+  tree=elements(runner.render(SchedulerSettingsPage))
+  ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)();await settle()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  ;(tree.find(node=>node.type==="button"&&node.props.children==="설정 적용하기")!.props.onClick as ()=>void)();await settle()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  assert.equal(tree.find(node=>node.props.editKey==="minimumDemand")!.props.version,'"9"')
+  ;(tree.find(node=>node.props.editKey==="excludedNodes")!.props.save as (value:string[])=>void)(["meter","other"])
+  tree=elements(runner.render(SchedulerSettingsPage))
+  ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)();await settle()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  assert.ok(tree.some(node=>node.type==="button"&&node.props.children==="설정 적용하기"))
+  assert.ok(!tree.some(node=>node.type==="button"&&node.props.children==="최신 값을 기준으로 다시 검토하기"))
+  assert.deepEqual(sent,[{path:"v1/scheduler/settings",method:"PUT",body:'{"controls":{},"excludedNodes":["meter"]}',version:'"7"'}])
+})
+
+test("unknown-outcome recovery adopts the fetched settings and ETag together for the next review",async()=>{
+  const runner=hooks(),sent:unknown[]=[]
+  let current:Record<string,unknown>={controls:{},excludedNodes:[]},tag='"7"',published=false,updatedAt=0
+  class ApiError extends Error {status=504;unknownOutcome=true}
+  const mutation:{error?:ApiError;reset:()=>void;mutateAsync:(input:unknown)=>Promise<never>}={reset:()=>{delete mutation.error},mutateAsync:async input=>{sent.push(input);mutation.error=new ApiError();throw mutation.error}}
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{ApiError,useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>mutation,useChillQuery:(path:string,options?:{onResponse?:(response:{etag:string},data:unknown)=>void})=>{
+    if(path==="v1/scheduler/settings"){if(!published){published=true;options?.onResponse?.({etag:tag},current)}return {data:current,dataUpdatedAt:updatedAt,isFetching:false,refetch:async()=>{updatedAt=Date.now()+1000;options?.onResponse?.({etag:tag},current);return {data:current}}}}
+    return {data:path.startsWith("v1/observations/scheduler")?{events:[]}:undefined,isSuccess:true,isFetching:false,refetch:async()=>({})}
+  }}})
+  runner.render(SchedulerSettingsPage)
+  let tree=elements(runner.render(SchedulerSettingsPage))
+  ;(tree.find(node=>node.props.editKey==="excludedNodes")!.props.save as (value:string[])=>void)(["meter"])
+  tree=elements(runner.render(SchedulerSettingsPage))
+  ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)();await settle()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  ;(tree.find(node=>node.type==="button"&&node.props.children==="설정 적용하기")!.props.onClick as ()=>void)();await settle()
+  current={controls:{},excludedNodes:["meter"],minimumDemand:{service:9}};tag='"9"'
+  tree=elements(runner.render(SchedulerSettingsPage))
+  ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)();await settle()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  const adopt=tree.find(node=>node.type==="main")!.props.action as Tree
+  assert.equal(adopt.props.children,"조회한 현재 값으로 다시 검토하기")
+  ;(adopt.props.onClick as ()=>void)()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)();await settle()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  assert.ok(tree.some(node=>node.type==="button"&&node.props.children==="설정 적용하기"))
+  assert.ok(!tree.some(node=>node.type==="button"&&node.props.children==="최신 값을 기준으로 다시 검토하기"))
+  assert.equal(sent.length,1,"recovery never retries the unknown PUT")
 })
