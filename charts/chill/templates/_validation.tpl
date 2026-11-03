@@ -66,6 +66,9 @@
 {{- if or (gt (len .Values.dashboard.callerServiceAccount) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" .Values.dashboard.callerServiceAccount)) -}}
 {{- fail "dashboard.callerServiceAccount must be a ServiceAccount name in the release namespace" -}}
 {{- end -}}
+{{- if and .Values.dashboard.reader.enabled (eq .Values.dashboard.callerServiceAccount (printf "%s-dashboard-reader" (include "chill.fullname" .))) -}}
+{{- fail "dashboard.callerServiceAccount must not use the enabled dashboard reader identity" -}}
+{{- end -}}
 {{- end -}}
 {{- if not (kindIs "bool" .Values.dashboard.reader.enabled) -}}
 {{- fail "dashboard.reader.enabled must be a boolean" -}}

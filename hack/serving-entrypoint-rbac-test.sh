@@ -261,4 +261,6 @@ reject_dashboard dashboard.reader.enabled "${serving[@]}" --set-string dashboard
 reject_dashboard dashboard.callerServiceAccount --set dashboard.callerServiceAccount=chill-dashboard-user
 reject_dashboard dashboard.callerServiceAccount "${serving[@]}" --set dashboard.callerServiceAccount=true
 reject_dashboard dashboard.callerServiceAccount "${serving[@]}" --set dashboard.callerServiceAccount=other-namespace/chill-dashboard-user
+reject_dashboard dashboard.callerServiceAccount "${serving[@]}" --set dashboard.reader.enabled=true \
+	--set dashboard.callerServiceAccount=chill-dashboard-reader
 echo "serving entrypoint RBAC: pass"
