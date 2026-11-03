@@ -176,6 +176,30 @@ controller와 Job의 단계 증거는 `experiments/<UID>/stages/<stageID>/...`�
 - action SA는 projected token을 사용하며 `expirationSeconds=activeDeadlineSeconds+60`이다(최소 token 수명 600초에 맞춰 deadline 최소 540초). 하네스는 회전된 token을 요청마다 다시 읽으며 최초 읽은 문자열을 재사용하지 않는다.
 - store key: `experiments/<runUID>/preparation/...`, `/stages/<stageID>/<step>/...`, `/finish/...`. 단계 GO는 `/stages/<stageID>/go.json`, 주입 응답은 `/stages/<stageID>/injections/<id>/result.json`이다. **child UID는 경로에 넣지 않고 result에 기록**한다. 가변 파일은 절차별 snapshot key, 작은 result는 마지막 쓰기이며 충돌은 실패다. 최종 bridge는 `serving/experiments.v1alpha1/<runUID>/{execution.json,evidence-index.json,summary.json}`만 쓰며 summary가 마지막이다.
 
+### 5.2 게시 목록의 사실 요약
+
+`GET /api/v1/experiments`는 응답 크기를 줄이려고 각 항목의 `definition` 본문을 생략한다.
+삭제는 저장소 삭제가 아닌 요청별 투영이며, `GET /api/v1/experiments/{id}`는 게시 당시의 전체
+`definition`을 그대로 반환한다. evaluation publisher가 이미 `summary.json.definition`에
+이름·spec·LoadScenario·Workload/SLO를 동결하므로 새 저장 형식이나 ADR 0019 버전 변경은 없다.
+
+목록은 본문을 생략하기 전에 선택적 `facts`를 추가한다. 새 쿼리 파라미터는 없다.
+`facts.name`/`question`은 `definition.run.name`/`spec.question`,
+`control`은 공통 제어 설정 원문, `stages[]`는 기록된 `id,row,mode,control,loadScenarioRef`다.
+stage의 `control` 부재는 원래와 같이 공통 `control` 상속이며 임의로 값을 채우지 않는다.
+`sloSources[]`는 동결 Workload의 `name,uid,generation,slo`,
+`loadSources[]`는 동결 LoadScenario의 `name,uid`다.
+부하 계획 전체·주입 계획·기타 큰 정의는 상세에 남긴다. SLO 수치·generation은 정밀도를
+낮추지 않으며, 실제 관측 KPI·판정·`comparisons`·기존 필드는 변경하지 않는다.
+
+```json
+{"facts":{"name":"run-name","control":{"controls":{"power":false}},"stages":[{"id":"baseline","mode":"fixed","loadScenarioRef":{"name":"load","uid":"load-uid"}}],"sloSources":[{"name":"service","uid":"workload-uid","generation":1,"slo":{"percentile":95,"targetLatencyNanos":1000000000}}],"loadSources":[{"name":"load","uid":"load-uid"}]}}
+```
+
+저장된 정의에 실제 요약 사실이 없으면 `facts`를 생략한다. 과거 이름/ID로 정책을 추정하거나
+현재 Workload·설정을 읽어서 과거 결손을 보충하지 않는다. 소비자는 선택 필드로 읽어야 하며,
+기존 상세 hydrate 경로는 계속 유효하다.
+
 ## 6. 상호 배제와 재시작
 
 **전제: profiler leader election을 켠다.** 바이너리 `--leader-elect` 기본은 false지만 Helm `profiler.leaderElection`은 true다.

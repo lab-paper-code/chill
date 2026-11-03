@@ -27,12 +27,28 @@ func (s *experimentService) list(ctx context.Context) (httpapi.ExperimentList, e
 	for i := range result.Items {
 		summary := &result.Items[i]
 		var definition struct {
+			Run struct {
+				Name string `json:"name"`
+			} `json:"run"`
 			Spec struct {
-				Comparisons json.RawMessage `json:"comparisons"`
+				Question    string                         `json:"question"`
+				Control     json.RawMessage                `json:"control"`
+				Stages      []httpapi.ExperimentPolicyFact `json:"stages"`
+				Comparisons json.RawMessage                `json:"comparisons"`
 			} `json:"spec"`
+			Workloads     []httpapi.ExperimentSLOSource  `json:"workloads"`
+			LoadScenarios []httpapi.ExperimentLoadSource `json:"loadScenarios"`
 		}
-		// Comparisons are projected verbatim, not interpreted or recalculated.
-		_ = json.Unmarshal(summary.Definition, &definition)
+		// Project the immutable publication, never today's settings or objects.
+		if json.Unmarshal(summary.Definition, &definition) == nil {
+			if definition.Run.Name != "" || definition.Spec.Question != "" || len(definition.Spec.Control) != 0 ||
+				len(definition.Spec.Stages) != 0 || len(definition.Workloads) != 0 || len(definition.LoadScenarios) != 0 {
+				summary.Facts = &httpapi.ExperimentFacts{
+					Name: definition.Run.Name, Question: definition.Spec.Question, Control: definition.Spec.Control,
+					Stages: definition.Spec.Stages, SLOSources: definition.Workloads, LoadSources: definition.LoadScenarios,
+				}
+			}
+		}
 		summary.Comparisons = definition.Spec.Comparisons
 		summary.Definition = nil
 	}

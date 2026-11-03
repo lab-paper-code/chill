@@ -28,7 +28,39 @@ type ExperimentSummary struct {
 	Sources       []ExperimentSource `json:"sources"`
 	Definition    json.RawMessage    `json:"definition,omitempty"`
 	Comparisons   json.RawMessage    `json:"comparisons,omitempty"`
+	Facts         *ExperimentFacts   `json:"facts,omitempty"` // List-only projection; never published to the store.
 	Outcome       json.RawMessage    `json:"outcome,omitempty"`
+}
+
+// ExperimentFacts projects only recorded definition fields before list responses
+// omit the full definition. Missing facts stay absent, not inferred from live state.
+type ExperimentFacts struct {
+	Name        string                 `json:"name,omitempty"`
+	Question    string                 `json:"question,omitempty"`
+	Control     json.RawMessage        `json:"control,omitempty"`
+	Stages      []ExperimentPolicyFact `json:"stages,omitempty"`
+	SLOSources  []ExperimentSLOSource  `json:"sloSources,omitempty"`
+	LoadSources []ExperimentLoadSource `json:"loadSources,omitempty"`
+}
+
+type ExperimentPolicyFact struct {
+	ID              string          `json:"id"`
+	Row             string          `json:"row,omitempty"`
+	Mode            string          `json:"mode,omitempty"`
+	Control         json.RawMessage `json:"control,omitempty"`
+	LoadScenarioRef json.RawMessage `json:"loadScenarioRef,omitempty"`
+}
+
+type ExperimentSLOSource struct {
+	Name       string          `json:"name"`
+	UID        string          `json:"uid"`
+	Generation json.RawMessage `json:"generation,omitempty"`
+	SLO        json.RawMessage `json:"slo,omitempty"`
+}
+
+type ExperimentLoadSource struct {
+	Name string `json:"name"`
+	UID  string `json:"uid"`
 }
 
 type ExperimentStage struct {
