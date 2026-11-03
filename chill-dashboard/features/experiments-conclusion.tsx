@@ -4,7 +4,8 @@ import Link from "next/link"
 import { useQuery } from "@tanstack/react-query"
 import { ApiError, decodeResponse, relay, useChillQueries, useSession, warmingRetry, warmingDelay } from "@/lib/client"
 import { Button } from "@/components/ui/button"
-import { campaignScoreboard, comparisonValidity, decodeExperiment, decodeExperimentPage, definitionComparisonReason, definitionComparisons, definitionPolicy, experimentOutcome, experimentPath, historicalPublicationIDs, injectionRows, experimentRows, object, publishedText, recordedComparisons, settingsPatchEntries, settingsPatchKeyLabel, stageLoadParts, type Experiment, type ExperimentFacts as RecordedFacts, type ExperimentPage, type ExperimentStage, type Published } from "@/lib/experiments"
+import { decodeExperiment, decodeExperimentPage, experimentOutcome, experimentPath, historicalPublicationIDs, injectionRows, object, publishedText, recordedComparisons, type Experiment, type ExperimentFacts as RecordedFacts, type ExperimentPage, type ExperimentStage, type Published } from "@/lib/experiments"
+import { campaignScoreboard, comparisonValidity, definitionComparisonReason, definitionComparisons, definitionPolicy, experimentRows, settingsPatchEntries, settingsPatchKeyLabel, stageLoadParts } from "@/lib/experiment-comparison"
 import { formatMeasurementDuration, formatMeasurementNumber, formatMeasurementTime } from "@/lib/measurements"
 
 export function usePublishedExperimentFacts(id:string,enabled=true) {

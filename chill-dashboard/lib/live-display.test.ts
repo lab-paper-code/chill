@@ -10,7 +10,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import { compareAt, eventKey, initialLiveState, type LiveState } from "./live.ts"
 import * as displayHelpers from "./live-display.ts"
-import { decisionRange } from "./experiments.ts"
+import * as schedulerHistoryHelpers from "./scheduler-history.ts"
 
 test("repeated failures group by target action result and reason before the row limit",()=>{
   const failed=(seq:number,node="n",error="mode failed")=>({type:"event" as const,kind:"action" as const,seq,at:new Date(now+seq*1000).toISOString(),action:{id:`attempt-${seq}`,kind:"measurement-handback",node:{uid:node,name:node},workloadUID:"",status:"failed",startedAt:at,phase:"failed" as const,expectedSeconds:null,expectedSource:null,result:{status:"failed",error}}})
@@ -324,7 +324,8 @@ test("operations board keeps independent axes, idle summary, service placement a
     "next/navigation":{usePathname:()=>"/",useSearchParams:()=>query,useRouter:()=>({push:(url:string)=>{query=new URL(url,"http://local").searchParams},replace:(url:string)=>{query=new URL(url,"http://local").searchParams}})},
     "@/lib/client":{useSession:()=>({epoch:1,config:{liveFixture:false}}),useChillQuery:(path:string)=>path.startsWith("v1/observations/events")?{data:{events:archived}}:path.startsWith("v1/observations/scheduler?")&&recordedDecision?{data:{events:[{at,decision:recordedDecision}]}}:{}},
     "@/lib/use-live":{useLive:()=>({state,status:"fixture",reconnect:()=>{}})},
-    "@/lib/live-display":displayHelpers,"@/lib/experiments":{decisionRange},
+    "@/lib/live-display":displayHelpers,
+    "@/lib/scheduler-history":schedulerHistoryHelpers,
     "@/lib/live":{compareAt,eventKey},
     "@/components/status-cell":status,
     "@/lib/status":{STATUS_AXES:{serviceImpact:"서비스 영향",performance:"성능 판정",observation:"관측 상태"}},

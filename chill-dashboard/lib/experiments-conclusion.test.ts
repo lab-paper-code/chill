@@ -1,3 +1,5 @@
+import * as comparisonHelpers from "./experiment-comparison.ts"
+import * as routeHelpers from "./dashboard-routes.ts"
 import assert from "node:assert/strict"
 import test from "node:test"
 import { readFileSync } from "node:fs"
@@ -12,7 +14,7 @@ import type { Experiment, ExperimentStage } from "./experiments.ts"
 const require=createRequire(import.meta.url)
 const compiled=transpileModule(readFileSync(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
 const components:Record<string,ComponentType<{run:Experiment;runs?:Experiment[];pending?:boolean;error?:boolean;stage?:ExperimentStage}>>={}
-const modules:Record<string,unknown>={"@/lib/client":{},"@/components/ui/button":{},"@/lib/experiments":experiments,"@/lib/measurements":measurements,"lucide-react":{TriangleAlert:()=>null}}
+const modules:Record<string,unknown>={"@/lib/client":{},"@/components/ui/button":{},"@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":experiments,"@/lib/measurements":measurements,"lucide-react":{TriangleAlert:()=>null}}
 new Function("require","exports",compiled)((name:string)=>modules[name]??require(name),components)
 const stage=(id:string)=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",kpis:{}})
 const run:Experiment={schemaVersion:"serving-experiment.v1alpha1",id:"comparison",from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",status:"FAIL",sources:[],stages:[stage("candidate"),stage("baseline"),stage("unpaired")],comparisons:[{left:{stageID:"candidate"},right:{stageID:"baseline"},reason:"조건 확인"}]}
@@ -72,7 +74,7 @@ test("R19: frozen workload definitions remain visible without inventing KPI iden
   assert.match(html,/정의 출처 SLO/)
   assert.match(html,/frozen-camera/)
   assert.match(html,/1,000/)
-  assert.equal(experiments.frozenP95SLO(experiments.experimentRows(publication.stages[0])[0],publication),null)
+  assert.equal(comparisonHelpers.frozenP95SLO(comparisonHelpers.experimentRows(publication.stages[0])[0],publication),null)
 })
 
 test("R19: projected list load references are not mislabeled as missing publication data",()=>{
@@ -91,7 +93,7 @@ test("R19 review: definition sources retain p90 and p99 without applying them as
   assert.match(source,/>90<\/td><td[^>]*>1,000<\/td>/)
   assert.match(source,/>99<\/td><td[^>]*>7,034<\/td>/)
   assert.doesNotMatch(source,/미기록|SLO p95/)
-  assert.equal(experiments.frozenP95SLO(experiments.experimentRows(publication.stages[0])[0],publication),null)
+  assert.equal(comparisonHelpers.frozenP95SLO(comparisonHelpers.experimentRows(publication.stages[0])[0],publication),null)
 })
 
 test("control323: selected stage metadata exposes recorded setting changes, empty and absent facts",()=>{
