@@ -7,7 +7,6 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as live from "./live.ts"
 import * as display from "./live-display.ts"
-import { decisionRange } from "./experiments.ts"
 import * as history from "./scheduler-history.ts"
 
 const at="2026-11-03T03:12:21.898101405Z",now=Date.parse(at)
@@ -25,7 +24,7 @@ function harness(events:live.LiveEvent[]=[]) {
     "next/navigation":{usePathname:()=>"/",useSearchParams:()=>params,useRouter:()=>({replace:()=>{},push:()=>{}})},
     "@/lib/client":{useSession:()=>({epoch:1,config:{liveFixture:false}}),useChillQuery:(path:string)=>path.startsWith("v1/observations/events")?{data:{events:archived}}:{}},
     "@/lib/use-live":{useLive:()=>({state,status:"fixture",reconnect:()=>{}})},
-    "@/lib/live":live,"@/lib/live-display":display,"@/lib/experiments":{decisionRange},
+    "@/lib/live":live,"@/lib/live-display":display,
     "@/lib/scheduler":{stringifySchedulerJSON:JSON.stringify},"@/lib/source-export":{safeSource:(value:unknown)=>value},
     "@/lib/scheduler-history":history,
     "./scheduler":{actionKinds:{},actionStatuses:{},actionNodeName:(node:{name:string})=>node.name||"전체 노드",judgmentLabels:{Keep:"유지"},SchedulerEvidence:()=>null},

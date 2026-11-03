@@ -103,3 +103,46 @@ test("experiment legacy addresses reach their final destination without redirect
     assert.equal(dashboardDestination(final.pathname,final.searchParams),null)
   }
 })
+
+import { commitExperimentSelection, experimentSelection } from "./dashboard-routes.ts"
+
+test("IA: closing a shared interval keeps its identity independently from the Sheet",()=>{
+  const params=experimentSelection("?a=run&al=historical&as=full-steady-mixed&b=run&bs=static-baseline-steady-mixed",{sheet:"closed"})
+  assert.equal(params.get("as"),"full-steady-mixed")
+  assert.equal(params.get("bs"),"static-baseline-steady-mixed")
+  assert.equal(params.get("sheet"),"closed")
+})
+
+test("IA: opening a shared interval pushes once, service changes replace and closing preserves list context",()=>{
+  const location=new URL("https://dashboard.invalid/experiments/results?a=publication&offset=5&service=camera&returnTo=%2Fexperiments%3Fview%3Dpublished")
+  const calls:string[]=[],history={state:{__NA:true},replaceState(data:unknown,_unused:string,url?:string|URL|null){assert.equal(data,null,"Next must observe external history updates");calls.push("replace");location.href=new URL(String(url),location).href},pushState(data:unknown,_unused:string,url?:string|URL|null){assert.equal(data,null,"Next must observe external history updates");calls.push("push");location.href=new URL(String(url),location).href},back(){calls.push("back")}}
+  commitExperimentSelection(location,history,{al:"publication",as:"stage"},"push")
+  commitExperimentSelection(location,history,{service:"other"})
+  assert.deepEqual(calls,["push","replace"])
+  assert.equal(location.searchParams.get("offset"),"5")
+  assert.equal(location.searchParams.get("returnTo"),"/experiments?view=published")
+  commitExperimentSelection(location,history,{sheet:"closed"})
+  assert.deepEqual(calls,["push","replace","replace"])
+  const direct={replaceState(_data:unknown,_unused:string,url?:string|URL|null){location.href=new URL(String(url),location).href}}
+  commitExperimentSelection(location,direct,{sheet:"closed"})
+  assert.equal(location.searchParams.get("as"),"stage")
+  assert.equal(location.searchParams.get("service"),"other")
+  assert.equal(location.searchParams.get("offset"),"5")
+})
+
+test("R3: rapid A/B selections preserve the preceding URL selection and clear only dependent stages",()=>{
+  const location=new URL("https://dashboard.invalid/experiments?a=old&al=historical&as=old-stage&b=old-b&bs=keep&at=stale")
+  const history={replaceState(_data:unknown,_unused:string,url?:string|URL|null){location.href=new URL(String(url),location).href}}
+  commitExperimentSelection(location,history,{a:"new"})
+  commitExperimentSelection(location,history,{b:"new-b"})
+  const selected=location.searchParams
+  assert.equal(location.pathname,"/experiments/results")
+  assert.equal(selected.get("a"),"new")
+  assert.equal(selected.get("b"),"new-b")
+  assert.equal(selected.has("as"),false)
+  assert.equal(selected.has("al"),false)
+  assert.equal(selected.has("bs"),false)
+  assert.equal(selected.has("at"),false)
+  assert.equal(experimentSelection("a=one&as=chosen&b=two&bs=keep",{as:"next"}).get("bs"),"keep")
+})
+

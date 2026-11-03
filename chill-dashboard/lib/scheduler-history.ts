@@ -1,4 +1,5 @@
-import type { SchedulerObservation, SchedulerObservationSummary } from "./read-types.ts"
+import type { SchedulerObservation, SchedulerObservationPage, SchedulerObservationSummary } from "./read-types.ts"
+import { object, type ExperimentStage } from "./experiments.ts"
 
 export type SchedulerRecordRef = {from:string;to:string;offset:string;kind:string;at:string;id:string;node?:string;startedAt?:string}
 
@@ -90,3 +91,28 @@ export function powerPolicyFacts(event:Pick<SchedulerObservation,"powerSampling"
     ] as [string,string][]:[["에너지 범위 정책","미제공"]] as [string,string][]),
   ]
 }
+// Preserve RFC3339 nanoseconds: Date's millisecond truncation would omit same-time judgments.
+export function decisionRange(at:string):{from:string;to:string}|null {
+  const match=/^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,9}))?(Z|[+-]\d\d:\d\d)$/.exec(at)
+  if(!match)return null
+  const local=new Date(`${match[1]}Z`),whole=new Date(`${match[1]}${match[3]}`)
+  if(!Number.isFinite(local.getTime())||local.toISOString().slice(0,19)!==match[1]||!Number.isFinite(whole.getTime()))return null
+  const fraction=(match[2]??"").padEnd(9,"0"),next=Number(fraction)+1,second=whole.toISOString().slice(0,19)
+  return {from:`${second}.${fraction}Z`,to:next===1e9?new Date(whole.getTime()+1000).toISOString().replace(".000Z",".000000000Z"):`${second}.${String(next).padStart(9,"0")}Z`}
+}
+export function decisionIdentity(event:SchedulerObservation):string {
+  const d=event.decision
+  return d?JSON.stringify([d.at,d.status,d.keep?.id,d.target?.id??null]):""
+}
+export function evidenceError(error:{status:number;data:unknown}):string {
+  const code=object(error.data).code
+  return error.status===504||code==="RequestTimeout"||code==="DashboardRelayTimeout"?"조회 시간 초과":"근거 조회 실패"
+}
+export function stageHistoryLink(stage:ExperimentStage):string {
+  return `/records?${new URLSearchParams({from:stage.from,to:stage.to,limit:"100",filter:"decision-action",order:"asc"})}`
+}
+export function stageActivity(page:SchedulerObservationPage) {
+  const events=page.events??[],decisions=events.filter(event=>event.decision),actions=events.filter(event=>event.action)
+  return {decisions:decisions.length,actions:actions.length,partial:!!page.nextCursor||!!page.gapUntil,statuses:[...new Set(decisions.map(event=>event.decision!.status))],kinds:[...new Set(actions.map(event=>event.action!.kind))]}
+}
+export const stageEvidencePath=(stage:ExperimentStage)=>`v1/observations/scheduler?${new URLSearchParams({from:stage.from,to:stage.to,limit:"100"})}`
