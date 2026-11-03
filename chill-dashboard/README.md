@@ -221,6 +221,7 @@ the browser used an isolated ChillServer-contract fixture and performed no live 
 장치 확인에서 제외하며, 제외 노드와 `PlacementInventoryMissing`은 사유를 유지한다.
 진행·사건은 최근 5분 실제 수신 판단 수·유지 수·마지막 시각과 관측된 파드 준비 전이를 표시한다.
 운영 재진입 시 `observations/events?from&to&limit=100`으로 최근 15분을 최대 5페이지·500건까지 읽고 실제 사건 identity로 실시간 사건과 합친다. archive에 WebSocket 순번을 생성하지 않는다. 미조회 페이지는 일부 표시, coverage·snapshot.history의 보존 공백은 `보존 공백` 상태어로 유지하며 손실 건수를 추정하지 않는다.
+정확한 사건 조회(`observations/events?at`)는 append 시간 범위별 부분 응답의 `nextCursor`를 지원한다. 사건이 아직 없으면 읽은 범위·기록 공백과 `더 찾기`를 표시하고 사용자 조작으로만 다음 범위를 읽는다. 찾았더라도 cursor가 남으면 `이후 기록 미확인`을 표시한다. at cursor는 RFC3339Nano이며 range 조회의 from/to·limit와 혼용하지 않는다. coverage 없는 기존 응답과 조회 시간 초과는 기존 상태를 유지한다.
 전력 추세는 `observations/power?from&to&bucket=5s`의 최근 15분·실제 5초 구간 평균을 실시간 1초 관측에 연결한다. null은 선을 끊고 실제 0은 0으로 유지하며 5초 평균을 1초 표본으로 복제하지 않는다.
 기록 전력 탭은 bucket 시간축과 기간 에너지·평균 W/노드별 요약을 분리한다. 시계열 범위는 최대 1시간·900구간이며 더 긴 기간의 요약과 원자료는 유지한다.
 현재 페이지의 원자료 표·페이지 이동은 접는다. 페이지 J를 전체 구간 에너지로 합산하지 않는다.
