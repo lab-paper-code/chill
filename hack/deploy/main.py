@@ -225,7 +225,8 @@ def archive(run, sha, destination):
     destination.mkdir()
     tar = destination.with_suffix('.tar')
     run.run(['git', '-C', ROOT, 'archive', '--format=tar', '--output=' + str(tar), sha], 'archive.log')
-    run.run(['tar', '-xf', tar, '-C', destination], 'extract.log')
+    # -p: the private evidence umask must not strip image file modes for non-root UIDs.
+    run.run(['tar', '-xpf', tar, '-C', destination], 'extract.log')
 
 
 def image_ready(pods, expected):

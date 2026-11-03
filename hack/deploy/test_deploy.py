@@ -388,6 +388,19 @@ class DeploymentCLI(unittest.TestCase):
                 receipt = runner_module.crd_retention(original, b'', ['NO-LIVE-KUBECTL'], live, self.out)
                 self.assertEqual(receipt['kept'], ['measurements.example.test'])
 
+    def test_source_archive_keeps_modes_under_private_umask(self):
+        import main as runner_module
+        self.out.mkdir()
+        runner = runner_module.Runner(self.out, ROOT)
+        previous = os.umask(0o077)
+        try:
+            runner_module.archive(runner, 'HEAD', self.out / 'source')
+        finally:
+            os.umask(previous)
+            runner.log.close()
+        # Images run as UID 65532 and must read the copied Python harness.
+        self.assertTrue((self.out / 'source/hack/evaluation/evaluation.py').stat().st_mode & 0o004)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
