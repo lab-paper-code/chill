@@ -34,17 +34,18 @@ function PartsPreview({spec}:{spec:Spec}) {
 }
 function LoadSpecEditor({spec,onChange,onValidityChange}:{spec:Spec;onChange:(spec:Spec)=>void;onValidityChange:(valid:boolean)=>void}) {
   const [tab,setTab]=useState("parts"),[invalid,setInvalid]=useState(false),parts=records(spec.parts),workloads=records(spec.workloads)
+  const [selectedPart,setSelectedPart]=useState(0)
   const registered=useChillQuery<{desired:{metadata:{name:string;uid:string;generation?:number}}}[]>("v1/workloads?view=summary"),services=registered.data?.map(item=>item.desired.metadata)??[]
   return <div className="grid min-w-0 gap-4"><div className="flex flex-wrap gap-2" role="group" aria-label="부하 편집 항목">{[["parts","구간"],["workloads","서비스·도착 분포"],["inputs","입력 객체"],["json","JSON"]].map(([key,label])=><Button key={key} type="button" disabled={invalid&&key!==tab} aria-pressed={tab===key} variant={tab===key?"default":"outline"} onClick={()=>setTab(key)}>{label}</Button>)}</div>
     {tab==="json"&&<AuthorJSON label="부하 정의 원문" value={spec} onChange={onChange} onValidityChange={valid=>{setInvalid(!valid);onValidityChange(valid)}}/>}
     {tab==="parts"&&<><PartsPreview spec={spec}/>{parts.map((part,index)=>{
       const mode=part.alpha!==undefined?"alpha":"rates"
-      return <fieldset key={index} className="grid min-w-0 gap-3 rounded border p-3"><legend className="px-1 text-sm">구간 {index+1}</legend>
+      return <section key={index} className="grid min-w-0 gap-3 rounded border p-3"><Button type="button" variant="ghost" className="min-h-11 justify-start" aria-expanded={index===Math.min(selectedPart,parts.length-1)} onClick={()=>setSelectedPart(index)}>{String(part.id||`구간 ${index+1}`)} · {String(part.durationSeconds??"미기록")} s</Button>{index===Math.min(selectedPart,parts.length-1)&&<>
         <div className="grid min-w-0 gap-3 md:grid-cols-3"><AuthorField label="구간 이름" spec={spec} path={["parts",index,"id"]} onChange={onChange}/><AuthorField label="길이 (s)" spec={spec} path={["parts",index,"durationSeconds"]} numeric onChange={onChange}/><AuthorSelect label="부하 단위" value={mode} onChange={value=>{const next={...part,[value]:structuredClone(object(part[mode]))};delete next[value==="alpha"?"rates":"alpha"];onChange(patchSpec(spec,["parts",index],next))}}><option value="rates">요청/s</option><option value="alpha">α</option></AuthorSelect></div>
         <div className="grid min-w-0 gap-3 md:grid-cols-3">{workloads.map((w,i)=><AuthorField key={i} label={`${String(w.name)} (${mode==="rates"?"요청/s":"α"})`} spec={spec} path={["parts",index,mode,String(w.name)]} numeric onChange={onChange}/>)}</div>
         <Button type="button" variant="outline" onClick={()=>onChange(patchSpec(spec,["parts"],parts.filter((_,i)=>i!==index)))}>구간 삭제</Button>
-      </fieldset>
-    })}<Button type="button" variant="outline" onClick={()=>onChange(patchSpec(spec,["parts"],[...parts,{id:"",rates:{}}]))}>구간 추가</Button></>}
+      </>}</section>
+    })}<Button type="button" variant="outline" onClick={()=>{setSelectedPart(parts.length);onChange(patchSpec(spec,["parts"],[...parts,{id:"",rates:{}}]))}}>구간 추가</Button></>}
     {tab==="workloads"&&<><QueryGate query={registered}>{null}</QueryGate>{workloads.map((w,index)=><fieldset key={index} className="grid min-w-0 gap-3 rounded border p-3"><legend className="px-1 text-sm">서비스 {index+1}</legend>
       <AuthorSelect label="서비스" value={String(w.uid??"")} onChange={uid=>{const selected=services.find(item=>item.uid===uid);if(!selected)return;let next=renameLoadWorkload(spec,index,selected.name);if(records(next.workloads)[index]?.name!==selected.name)return;next=patchSpec(next,["workloads",index,"uid"],uid);onChange(patchSpec(next,["workloads",index,"generation"],selected.generation))}}><option value="">미선택</option>{!!w.uid&&!services.some(item=>item.uid===w.uid)&&<option value={String(w.uid)}>{String(w.name)} · 저장된 정의</option>}{services.map(item=><option key={item.uid} value={item.uid}>{item.name}</option>)}</AuthorSelect>
       <AuthorField label="도착 분포" spec={spec} path={["arrivalDistribution",String(w.name)]} onChange={onChange}/>
@@ -54,7 +55,7 @@ function LoadSpecEditor({spec,onChange,onValidityChange}:{spec:Spec;onChange:(sp
     {tab==="inputs"&&[["seedRef","난수"],["payloadManifestRef","입력 번들"],["rateBasisRef","요청률 기준"],["kappaRef","분배 계수"]].map(([key,label])=><EvidencePicker key={key} label={label} value={spec[key]} onChange={value=>onChange(patchSpec(spec,[key],value))}/>)}
   </div>
 }
-function LoadEditor({source,editing,onSaved,onConfirmed}:{source?:LoadScenario;editing:boolean;onSaved:()=>Promise<unknown>;onConfirmed?:(value:{name:string;uid:string})=>void}) {
+export function LoadEditor({source,editing,onSaved,onConfirmed}:{source?:LoadScenario;editing:boolean;onSaved:()=>Promise<unknown>;onConfirmed?:(value:{name:string;uid:string})=>void}) {
   const draft=source?copyAuthorDraft(source):{name:"",spec:{workloads:[],parts:[],arrivalDistribution:{}}},[name,setName]=useState(editing?source?.name??"":draft.name),[spec,setSpec]=useState<Spec>(draft.spec),[valid,setValid]=useState(true)
   const [answer,setAnswer]=useState<EvaluationPreflight|null>(null),[checked,setChecked]=useState(""),[live,setLive]=useState<unknown>(null),[selected,setSelected]=useState<string[]>([]),[message,setMessage]=useState(""),[unknown,setUnknown]=useState(false),[uid,setUID]=useState(editing?source?.uid??"":"")
   const [replacementLost,setReplacementLost]=useState(false),[inUse,setInUse]=useState<string[]>(source?.inUse??[])
@@ -96,7 +97,7 @@ function LoadEditor({source,editing,onSaved,onConfirmed}:{source?:LoadScenario;e
     }
   }
   return <div className="grid min-w-0 gap-4"><label className="grid min-w-0 gap-1 text-sm">부하 설정 이름<Input value={name} disabled={editing||unknown} onChange={event=>setName(event.target.value)}/></label>{!editing&&name===source?.name&&<span role="alert">새 이름 필요</span>}
-    {inUse.length>0&&<div className="flex flex-wrap gap-2" role="status"><span>{editing?"사용 중":"원본 사용 중"}</span>{inUse.map(run=><Link key={run} className="break-all rounded-full border px-2 py-1 text-xs" href={`/experiments?name=${encodeURIComponent(run)}`}>{run}</Link>)}</div>}
+    {inUse.length>0&&<div className="flex flex-wrap gap-2" role="status"><span>{editing?"사용 중":"원본 사용 중"}</span>{inUse.map(run=><Link key={run} className="break-all rounded-full border px-2 py-1 text-xs" href={`/experiments/runs/${encodeURIComponent(run)}`}>{run}</Link>)}</div>}
     <fieldset className="min-w-0" disabled={unknown||mutation.isPending}><LoadSpecEditor spec={spec} onChange={setSpec} onValidityChange={setValid}/></fieldset>
     {changes.length>0&&<div className="grid gap-3 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr><th>반영</th><th>Workload</th><th>정의 UID</th><th>현재 UID</th><th>정의 세대</th><th>현재 세대</th></tr></thead><tbody>{changes.map(change=><tr key={change.name}><td><input type="checkbox" aria-label={`${change.name} 현재 식별자 반영`} checked={selected.includes(change.name)} onChange={event=>setSelected(event.target.checked?[...selected,change.name]:selected.filter(x=>x!==change.name))}/></td><th>{change.name}</th><td>{String(change.before.uid)}</td><td>{String(change.after.uid)}</td><td>{String(change.before.generation)}</td><td>{String(change.after.generation)}</td></tr>)}</tbody></table><Button type="button" variant="outline" disabled={!selected.length} onClick={()=>{setSpec(adoptWorkloads(spec,changes,selected));setAnswer(null);setLive(null);setSelected([])}}>선택한 현재 식별자 반영</Button></div>}
     {answer&&<table className="w-full text-left text-sm"><thead><tr><th>검사</th><th>상태</th><th>사유</th></tr></thead><tbody>{answer.checks.map(check=><tr key={check.id}><th>{check.id}</th><td>{check.passed?"통과":"실패"}</td><td>{check.reason??"미기록"}</td></tr>)}</tbody></table>}
@@ -137,16 +138,16 @@ export function LoadScenarioPage() {
       }
     }
   }
-  return <Screen title="부하 설정" width="data" actionPlacement="header" action={<Button asChild><Link href="/experiments/load-scenarios/new">새 부하 설정</Link></Button>}>
-    <nav className="flex flex-wrap items-center gap-4 text-sm"><Link href="/experiments">실행</Link><Link href="/experiments/results">결과</Link><AuthorHelp/><Input aria-label="부하 설정 검색" value={search} onChange={event=>setSearch(event.target.value)} className="max-w-60"/></nav>
+  return <Screen title="부하 설정" width="data" back={["/experiments","실험"]} actionPlacement="header" action={<Button asChild><Link href="/experiments/load-scenarios/new">새 부하 설정</Link></Button>}>
+    <div className="flex flex-wrap items-center justify-between gap-4"><Input aria-label="부하 설정 검색" value={search} onChange={event=>setSearch(event.target.value)} className="max-w-60"/><AuthorHelp/></div>
     <section className="grid gap-3" aria-label="부하 설정 목록">
       <QueryGate query={query}>{null}</QueryGate>
-      <div className="overflow-x-auto"><table className="w-full text-left text-sm">
-        <thead><tr><th>이름</th><th>UID</th><th>사용 중 실험</th><th>생성 시각</th><th>조작</th></tr></thead>
+      <div className="min-w-0 overflow-x-auto"><table className="w-full text-left text-sm max-md:[&>thead]:sr-only max-md:[&>tbody>tr]:grid max-md:[&>tbody>tr]:grid-cols-2 max-md:[&>tbody>tr>th]:col-span-2 max-md:[&>tbody>tr>td]:flex max-md:[&>tbody>tr>td]:flex-col max-md:[&>tbody>tr>td]:py-2 max-md:[&>tbody>tr>td]:before:text-xs max-md:[&>tbody>tr>td]:before:text-muted-foreground max-md:[&>tbody>tr>td]:before:content-[attr(data-label)]">
+        <thead><tr><th>이름</th><th>계획 구간 (개)</th><th>사용 중 실행</th><th>생성 시각</th><th>조작</th></tr></thead>
         <tbody>{query.data?.items.filter(item=>item.name.includes(search)).map(item=><tr key={item.uid} className="border-b">
-          <th className="py-3"><Link className="underline" href={`/experiments/load-scenarios?${new URLSearchParams({name:item.name,uid:item.uid})}`}>{item.name}</Link></th><td className="break-all">{item.uid}</td>
-          <td>{Array.isArray(item.inUse)?item.inUse.length?<div className="flex flex-wrap gap-1">{item.inUse.map(run=><Link className="rounded-full border px-2 py-1 text-xs" href={`/experiments?name=${encodeURIComponent(run)}`} key={run}>{run}</Link>)}</div>:"없음":"미기록"}</td>
-          <td>{item.createdAt?formatMeasurementTime(item.createdAt):"미기록"}</td><td><div className="flex flex-wrap gap-2">
+          <th className="break-all py-3"><Link className="underline" href={`/experiments/load-scenarios?${new URLSearchParams({name:item.name,uid:item.uid})}`}>{item.name}</Link></th><td data-label="계획 구간 (개)">{Array.isArray(item.spec?.parts)?item.spec.parts.length:"미기록"}</td>
+          <td data-label="사용 중 실행">{Array.isArray(item.inUse)?item.inUse.length:"미기록"}</td>
+          <td data-label="생성 시각">{item.createdAt?formatMeasurementTime(item.createdAt):"미기록"}</td><td data-label="조작"><div className="flex flex-wrap gap-2">
             <Button variant="outline" asChild><Link href={`/experiments/load-scenarios/new?${new URLSearchParams({copy:item.name})}`}>복사</Link></Button>
             <Button variant="outline" disabled={!canDeleteLoad(item)} asChild><Link aria-disabled={!canDeleteLoad(item)} tabIndex={canDeleteLoad(item)?0:-1} className={!canDeleteLoad(item)?"pointer-events-none":""} href={`/experiments/load-scenarios/${encodeURIComponent(item.name)}/edit?${new URLSearchParams({uid:item.uid})}`}>수정</Link></Button>
             <Button variant="outline" disabled={!canDeleteLoad(item)||!!uncertain} onClick={()=>{setRemove(item);setConfirmation("")}}>삭제</Button>
@@ -157,9 +158,9 @@ export function LoadScenarioPage() {
       {message&&<output className="break-all text-sm" role="status">{message}</output>}
       {uncertain&&<Button variant="outline" onClick={()=>void checkDeletion()}>삭제 결과 다시 조회</Button>}
     </section>
-    <Sheet open={!!view} onOpenChange={open=>{if(!open)window.history.replaceState(null,"","/experiments/load-scenarios")}}><SheetContent className="overflow-y-auto sm:max-w-3xl" aria-describedby={undefined}>
+    <Sheet open={!!view} onOpenChange={open=>{if(!open)window.history.replaceState(null,"","/experiments/load-scenarios")}}><SheetContent className="w-full overflow-y-auto sm:max-w-3xl" aria-describedby={undefined}>
       <SheetHeader><SheetTitle>{view}</SheetTitle></SheetHeader>
-      <QueryGate query={definition}>{definition.data&&<div className="space-y-4 p-4"><PartsPreview spec={definition.data.spec}/><table className="w-full text-sm"><thead><tr><th>사용 중 실행</th></tr></thead><tbody>{definition.data.inUse?.map(run=><tr key={run}><td><Link href={`/experiments?name=${encodeURIComponent(run)}`}>{run}</Link></td></tr>)}</tbody></table><details><summary>정의 원본</summary><pre className="overflow-x-auto text-xs">{specJSON(definition.data.spec)}</pre></details></div>}</QueryGate>
+      <QueryGate query={definition}>{definition.data&&<div className="space-y-4 p-4">{params.get("uid")&&params.get("uid")!==definition.data.uid?<div className="grid gap-2"><strong role="alert">설정 교체 확인</strong><Link className="underline" href={`/experiments/load-scenarios?${new URLSearchParams({name:definition.data.name,uid:definition.data.uid})}`}>현재 설정 선택</Link></div>:<><PartsPreview spec={definition.data.spec}/><dl className="text-sm"><dt>UID</dt><dd className="break-all">{definition.data.uid}</dd></dl><table className="w-full text-sm"><thead><tr><th>사용 중 실행</th></tr></thead><tbody>{definition.data.inUse?.map(run=><tr key={run}><td><Link href={`/experiments/runs/${encodeURIComponent(run)}`}>{run}</Link></td></tr>)}</tbody></table><details><summary className="min-h-11 cursor-pointer">정의 원본</summary><pre className="overflow-x-auto text-xs">{specJSON(definition.data.spec)}</pre></details></>}</div>}</QueryGate>
     </SheetContent></Sheet>
     <Dialog open={!!remove} onOpenChange={open=>{if(!open)setRemove(null)}}><DialogContent>
       <DialogHeader><DialogTitle>부하 설정 삭제</DialogTitle><DialogDescription className="sr-only">이름을 확인한 후 UID 조건부 삭제</DialogDescription></DialogHeader>

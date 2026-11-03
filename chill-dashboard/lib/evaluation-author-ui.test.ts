@@ -66,28 +66,32 @@ test("R19: publication copy selector pages without losing its selected publicati
   assert.equal(calls.filter(path=>path==="v1/experiments").length,0)
 })
 
-test("R19: experiment results request pages and navigate without catalog hydration",()=>{
+test("IA: published results request URL pages without catalog hydration",()=>{
   const runner=hookRunner(),calls:string[]=[]
+  let params=new URLSearchParams("view=published&offset=0")
   const run={schemaVersion:"serving-experiment.v1alpha1",id:"first",from:"2026-11-03T00:00:00Z",to:"2026-11-03T00:01:00Z",status:"FAIL",stages:[],sources:[]}
-  const modules={...primitives,"lucide-react":icons,react:runner.react,"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:(path:string,options?:{enabled?:boolean})=>{
-    if(options?.enabled!==false)calls.push(path)
-    const offset=new URLSearchParams(path.split("?")[1]).get("offset")
-    return {data:path.startsWith("v1/experiments?")?{items:[{...run,id:offset==="5"?"second":"first"}],page:{offset:Number(offset),limit:5,total:6,...(offset==="0"?{nextOffset:5}:{})}}:undefined}
-  }},"@/features/experiments-conclusion":{useHistoricalExperiments:(selected:unknown[])=>({runs:selected,pending:false}),ExperimentResultRow:"result"}}
-  const {ExperimentsPage}=load("../features/experiments.tsx",modules)
-  let tree=elements(runner.render(ExperimentsPage))
-  assert.ok(calls.includes("v1/experiments?offset=0&limit=5"))
-  assert.equal(tree.find(item=>item.type==="button"&&item.props.children==="이전")?.props.disabled,true)
-  ;(tree.find(item=>item.type==="button"&&item.props.children==="다음")!.props.onClick as ()=>void)()
-  tree=elements(runner.render(ExperimentsPage))
-  assert.ok(calls.includes("v1/experiments?offset=5&limit=5"))
-  assert.equal(experimentHelpers.object(tree.find(item=>item.type==="result")?.props.run).id,"second")
-  assert.equal(tree.find(item=>item.type==="button"&&item.props.children==="다음")?.props.disabled,true)
-  ;(tree.find(item=>item.type==="button"&&item.props.children==="이전")!.props.onClick as ()=>void)()
-  tree=elements(runner.render(ExperimentsPage))
-  assert.equal(experimentHelpers.object(tree.find(item=>item.type==="result")?.props.run).id,"first")
-  assert.equal(calls.filter(path=>path==="v1/experiments").length,0)
-  assert.ok(calls.every(path=>path.includes("?")||path==="v1/experiments/_"))
+    const modules={...primitives,"lucide-react":icons,react:{...runner.react,useEffect:()=>{}},"next/navigation":{useSearchParams:()=>params},"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:(path:string,options?:{enabled?:boolean})=>{
+      if(options?.enabled!==false)calls.push(path)
+      const offset=new URLSearchParams(path.split("?")[1]).get("offset")
+      return {data:path.startsWith("v1/experiments?")?{items:[{...run,id:offset==="5"?"second":"first"}],page:{offset:Number(offset),limit:5,total:6,...(offset==="0"?{nextOffset:5}:{})}}:undefined}
+    }},"@/features/experiments-conclusion":{ExperimentResultRow:"result"}}
+    const {PublishedExperimentsPage}=load("../features/experiments.tsx",modules)
+    let tree=elements(runner.render(PublishedExperimentsPage))
+    assert.ok(calls.includes("v1/experiments?offset=0&limit=5"))
+    assert.equal(tree.find(item=>item.type==="button"&&item.props.children==="이전")?.props.disabled,true)
+    const next=tree.find(item=>item.type==="a"&&item.props.children==="다음")!
+    assert.equal(next.props.href,"/experiments?view=published&offset=5")
+    params=new URLSearchParams(String(next.props.href).split("?")[1])
+    tree=elements(runner.render(PublishedExperimentsPage))
+    assert.ok(calls.includes("v1/experiments?offset=5&limit=5"))
+    assert.equal(experimentHelpers.object(tree.find(item=>item.type==="result")?.props.run).id,"second")
+    assert.equal(tree.find(item=>item.type==="button"&&item.props.children==="다음")?.props.disabled,true)
+    const previous=tree.find(item=>item.type==="a"&&item.props.children==="이전")!
+    assert.equal(previous.props.href,"/experiments?view=published&offset=0")
+    params=new URLSearchParams(String(previous.props.href).split("?")[1])
+    tree=elements(runner.render(PublishedExperimentsPage))
+    assert.equal(experimentHelpers.object(tree.find(item=>item.type==="result")?.props.run).id,"first")
+    assert.ok(calls.every(path=>path.startsWith("v1/experiments?")),"list must not hydrate publication details")
 })
 test("R19: old-server full catalogs stay full and do not invent pagination",()=>{
   const data=experimentHelpers.decodeExperimentPage(JSON.stringify({items:[{id:"first"},{id:"second"}]}))
@@ -146,7 +150,7 @@ test("invalid stage control JSON prevents stage removal and reordering until rep
   ;(control.props.onValidityChange as (valid:boolean)=>void)(false)
   tree=runner.render(EvaluationSpecEditor,props)
   const destructive=elements(tree).filter(element=>element.type==="button"&&["단계 삭제","앞으로 이동"].includes(String(element.props.children)))
-  assert.equal(destructive.length,4)
+  assert.equal(destructive.length,2)
   assert.ok(destructive.every(element=>element.props.disabled===true))
   assert.equal(validity.at(-1),false)
   const invalidControl=elements(tree).find(element=>Array.isArray(element.props.path)&&element.props.path.join("/")==="stages/0/control"&&typeof element.props.onValidityChange==="function")!
@@ -182,7 +186,7 @@ test("dedicated author pages restore copy and edit identity from bookmarked URLs
     assert.equal(author.props.initialSpec,spec)
     assert.equal(author.props.existing,undefined)
     ;(author.props.onSubmitted as (value:{name:string;uid:string})=>void)({name:"original",uid:"confirmed-new"})
-    assert.equal(navigation,"/experiments?name=original&uid=confirmed-new")
+    assert.equal(navigation,"/experiments/runs/original?uid=confirmed-new")
   }
   params=new URLSearchParams("uid=old")
   let tree=elements(runner.render(EvaluationAuthorPage,{name:"original"}))
@@ -199,14 +203,14 @@ test("dedicated author pages restore copy and edit identity from bookmarked URLs
 test("selected run replacement blocks actions until the current UID is explicitly adopted",()=>{
   const runner=hookRunner(),params=new URLSearchParams("name=run&uid=old")
   const run={name:"run",uid:"new",phase:"Running",spec:{},conditions:[{type:"PoolAcquired",status:"True"}]}
-  const modules={...primitives,react:{...runner.react,useEffect:()=>{}},"next/navigation":{useSearchParams:()=>params},"@/lib/client":{useChillQuery:()=>({data:run})}}
-  const {EvaluationsPage}=load("../features/evaluation-request.tsx",modules)
-  const tree=elements(runner.render(EvaluationsPage))
-  assert.ok(tree.some(element=>element.props.children==="교체됨"))
+  const modules={...primitives,react:{...runner.react,useEffect:()=>{}},"next/navigation":{useSearchParams:()=>params,useRouter:()=>({replace:()=>{}})},"@/lib/client":{useChillQuery:()=>({data:run})}}
+  const {EvaluationRunPage}=load("../features/evaluation-request.tsx",modules)
+  const tree=elements(runner.render(EvaluationRunPage,{name:"run"}))
+  assert.ok(tree.some(element=>element.props.children==="실행 교체됨"))
   assert.ok(!tree.some(element=>element.props.run===run),"replacement must not expose run mutations or release")
   assert.ok(!tree.some(element=>element.props.name==="run"&&"now" in element.props),"replacement must not expose active-run stop")
   const adopt=tree.find(element=>element.type==="a"&&element.props.children==="현재 실행 선택")!
-  assert.equal(adopt.props.href,"/experiments?name=run&uid=new")
+  assert.equal(adopt.props.href,"/experiments/runs/run?uid=new")
 })
 
 test("pool occupancy is observed independently from the cleanup failure phase",()=>{
@@ -238,9 +242,9 @@ test("active stop uses the selected UID when active and detail queries disagree"
 test("selected detail passes the URL UID to the independent active query",()=>{
   const runner=hookRunner(),params=new URLSearchParams("name=run&uid=old")
   const run={name:"run",uid:"old",phase:"Running",spec:{}}
-  const modules={...primitives,react:{...runner.react,useEffect:()=>{}},"next/navigation":{useSearchParams:()=>params},"@/lib/client":{useChillQuery:()=>({data:run})}}
-  const {EvaluationsPage}=load("../features/evaluation-request.tsx",modules)
-  const active=elements(runner.render(EvaluationsPage)).find(element=>element.props.name==="run"&&"now" in element.props)!
+  const modules={...primitives,react:{...runner.react,useEffect:()=>{}},"next/navigation":{useSearchParams:()=>params,useRouter:()=>({replace:()=>{}})},"@/lib/client":{useChillQuery:()=>({data:run})}}
+  const {EvaluationRunPage}=load("../features/evaluation-request.tsx",modules)
+  const active=elements(runner.render(EvaluationRunPage,{name:"run"})).find(element=>element.props.name==="run"&&"now" in element.props)!
   assert.equal(active.props.uid,"old")
 })
 
@@ -272,7 +276,7 @@ test("R17: list rows do not expose rerun or removal until a run is selected",()=
   const {EvaluationsPage}=load("../features/evaluation-request.tsx",modules)
   const tree=elements(runner.render(EvaluationsPage))
   assert.ok(!tree.some(element=>element.props.run===run))
-  assert.ok(tree.some(element=>element.type==="a"&&element.props.href==="/experiments?name=run&uid=uid"))
+  assert.ok(tree.some(element=>element.type==="a"&&element.props.href==="/experiments/runs/run?uid=uid"))
 })
 
 test("R17: load parts expose every service rate as labeled fields without a wide table",()=>{
@@ -286,7 +290,7 @@ test("R17: load parts expose every service rate as labeled fields without a wide
   const partRunner=hookRunner()
   modules.react.useState=partRunner.react.useState
   const form=elements(partRunner.render(specEditor.type as (props:Record<string,unknown>)=>unknown,specEditor.props))
-  assert.ok(form.some(element=>element.type==="fieldset"))
+  assert.ok(form.some(element=>element.type==="section"))
   assert.ok(form.some(element=>element.props.label==="camera (요청/s)"))
   assert.ok(form.some(element=>element.props.label==="plc (요청/s)"))
   assert.ok(!form.some(element=>element.type==="table"))
@@ -320,15 +324,20 @@ test("R17b: result detail keeps outcome independent and labels every mobile comp
   const runner=hookRunner(),params=new URLSearchParams("a=publication")
   const stage=(id:string)=>({id,from:"2026-11-01T00:00:00Z",to:"2026-11-01T00:01:00Z",kpis:{wholePoolJoules:60,requests:{camera:{offered:600,deadlineSuccessFraction:.9,completedLatencyNS:{p95:1000000}}}}})
   let run:Record<string,unknown>={id:"publication",stages:[],outcome:{execution:{status:"Failed"},measurement:{verdict:"NOT_EVALUATED"},cleanup:{status:"Complete"}}}
-  const modules={...primitives,react:{...runner.react,useMemo:(fn:()=>unknown)=>fn(),useRef:()=>({current:null})},"lucide-react":{TriangleAlert:"svg"},recharts:{},"next/navigation":{useSearchParams:()=>params},"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:()=>({data:run})},"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/features/experiments-conclusion":{ExperimentOutcome:"outcome",useHistoricalExperiments:()=>({runs:[run],pending:false,error:null})}}
+  const modules={...primitives,react:{...runner.react,useEffect:()=>{},useMemo:(fn:()=>unknown)=>fn(),useRef:()=>({current:null})},"lucide-react":{TriangleAlert:"svg"},recharts:{},"next/navigation":{useSearchParams:()=>params},"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:()=>({data:run})},"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/features/experiments-conclusion":{ExperimentOutcome:"outcome",useHistoricalExperiments:()=>({runs:[run],pending:false,error:null})}}
   const {ExperimentsPage}=load("../features/experiments.tsx",modules)
-  assert.ok(elements(runner.render(ExperimentsPage)).some(element=>element.type==="outcome"))
+  const emptyPage=elements(runner.render(ExperimentsPage)),emptyDetail=emptyPage.find(element=>element.props.run===run&&typeof element.type==="function")!
+  assert.ok(elements(runner.render(emptyDetail.type as (props:Record<string,unknown>)=>unknown,emptyDetail.props)).some(element=>element.type==="outcome"))
   run={...run,stages:[stage("candidate"),stage("baseline")],comparisons:[{left:{stageID:"candidate"},right:{stageID:"baseline"},reason:"저장된 비교"}]}
   const page=elements(runner.render(ExperimentsPage))
   const detail=page.find(element=>element.props.run===run&&typeof element.type==="function")!
   const tree=elements(runner.render(detail.type as (props:Record<string,unknown>)=>unknown,detail.props))
-  const labels=tree.filter(element=>element.type==="td").map(element=>element.props["data-label"])
-  for(const label of ["비교 상태","부하","에너지 Δ (%)","camera 성공률 Δ (%p)","camera p95 배율"])assert.ok(labels.includes(label),label)
+  const sections=tree.filter(element=>element.type==="section").map(element=>element.props["aria-label"])
+  assert.deepEqual(sections.slice(0,3),["비교 맥락","차트와 구간 선택","선택 단계 수치"])
+  const values=tree.find(element=>element.props.row&&element.props.onSelect&&typeof element.type==="function")!
+  const cells=elements(runner.render(values.type as (props:Record<string,unknown>)=>unknown,values.props))
+  const labels=cells.filter(element=>element.type==="td").map(element=>element.props["data-label"])
+  for(const label of ["후보 원값","기준 원값","차이"])assert.ok(labels.includes(label),label)
 })
 
 test("R17b: template missing inputs stay visible while copied question text is folded as original",async()=>{
@@ -386,4 +395,105 @@ test("evidence picker filters and pages on the server and preserves off-page sel
   maxPageSize=10
   runner.render(EvidencePicker,props)
   assert.equal(new URLSearchParams(paths.at(-1)!.split("?")[1]).get("limit"),"10")
+})
+
+test("IA: only the selected stage is edited and dependent load creation preserves the draft",async()=>{
+  const runner=hookRunner(),changes:author.Spec[]=[]
+  const modules={...primitives,react:runner.react,"@/lib/client":{useChillQuery:()=>({data:{items:[]},refetch:async()=>({})})},"@/features/load-scenario-author":{LoadEditor:"load-editor"}}
+  const {EvaluationSpecEditor}=load("../features/evaluation-author.tsx",modules)
+  const spec={question:"unsaved",future:9007199254740993n,stages:[{id:"a",loadScenarioRef:{future:true}},{id:"b"}]}
+  const props={spec,onChange:(value:author.Spec)=>changes.push(value)}
+  let tree=elements(runner.render(EvaluationSpecEditor,props))
+  assert.equal(tree.filter(item=>item.props.label==="단계 ID").length,1)
+  ;(tree.find(item=>item.type==="button"&&item.props.children==="새 부하")!.props.onClick as ()=>void)()
+  tree=elements(runner.render(EvaluationSpecEditor,props))
+  const editor=tree.find(item=>item.type==="load-editor")!
+  await (editor.props.onConfirmed as (value:{name:string;uid:string})=>Promise<void>)({name:"created",uid:"actual-new"})
+  assert.deepEqual(author.specValue(changes.at(-1)!,["stages",0,"loadScenarioRef"]),{future:true,name:"created",uid:"actual-new"})
+  assert.equal(changes.at(-1)!.question,"unsaved")
+  assert.equal(changes.at(-1)!.future,9007199254740993n)
+  assert.deepEqual(author.specValue(changes.at(-1)!,["stages",1]),{id:"b"})
+})
+
+test("IA: historical references query pages and the selected detail without hiding missing references",()=>{
+  const runner=hookRunner(),paths:string[]=[],changes:author.Spec[]=[]
+  let missing=false
+  const modules={...primitives,react:runner.react,"@/lib/experiments":experimentHelpers,"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:(path:string)=>{
+    paths.push(path)
+    return path.includes("?")?{data:{items:[{id:"visible"}],page:{nextOffset:5}}}:missing?{error:{status:404}}:{data:{stages:[{id:"saved-stage"},{id:"other"}]}}
+  }}}
+  const {HistoricalComparison}=load("../features/evaluation-author.tsx",modules)
+  const props={spec:{comparisons:[{left:{historical:{publicationID:"off-page",stageID:"saved-stage"}}}]},path:["comparisons",0,"left","historical"],onChange:(value:author.Spec)=>changes.push(value)}
+  let tree=elements(runner.render(HistoricalComparison,props))
+  assert.ok(paths.includes("v1/experiments/off-page"))
+  assert.ok(tree.some(item=>item.type==="option"&&item.props.value==="off-page"))
+  ;(tree.find(item=>item.type==="button"&&item.props.children==="다음")!.props.onClick as ()=>void)()
+  missing=true
+  tree=elements(runner.render(HistoricalComparison,props))
+  assert.ok(paths.includes("v1/experiments?offset=5&limit=5"))
+  assert.ok(tree.some(item=>item.type==="option"&&item.props.value==="saved-stage"))
+  assert.ok(tree.some(item=>item.props.children==="대상 게시 없음"))
+  assert.equal(changes.length,0)
+})
+
+test("IA: shared LoadEditor returns the saved UID and rejects stale preflight after an edit",async()=>{
+  const runner=hookRunner(),writes:string[]=[],confirmed:unknown[]=[]
+  const modules={...primitives,react:runner.react,"@/lib/client":{useChillQuery:()=>({}),useChillMutation:()=>({isPending:false,mutateAsync:async(input:{path:string;method:string})=>{
+    writes.push(input.path)
+    return {data:input.path.endsWith("/preflight")?{checks:[{id:"server",passed:true}]}:{uid:"actual-uid"}}
+  }})},"@/features/evaluation-author":{useUnsavedAuthor:()=>{}}}
+  const {LoadEditor}=load("../features/load-scenario-author.tsx",modules)
+  const props={editing:false,onSaved:async()=>{},onConfirmed:(value:unknown)=>confirmed.push(value)}
+  let tree=elements(runner.render(LoadEditor,props))
+  ;(tree.find(item=>item.type==="input")!.props.onChange as (event:unknown)=>void)({target:{value:"created"}})
+  tree=elements(runner.render(LoadEditor,props))
+  ;(tree.find(item=>item.type==="button"&&item.props.children==="사전점검")!.props.onClick as ()=>void)()
+  await setImmediate()
+  tree=elements(runner.render(LoadEditor,props))
+  assert.equal(tree.find(item=>item.type==="button"&&item.props.children==="생성")!.props.disabled,false)
+  const specEditor=tree.find(item=>item.props.spec&&typeof item.props.onValidityChange==="function")!
+  ;(specEditor.props.onChange as (value:author.Spec)=>void)({parts:[{id:"changed"}]})
+  tree=elements(runner.render(LoadEditor,props))
+  const stale=tree.find(item=>item.type==="button"&&item.props.children==="생성")!
+  assert.equal(stale.props.disabled,true)
+  ;(stale.props.onClick as ()=>void)()
+  await setImmediate()
+  assert.deepEqual(writes,["v1/evaluations/load-scenarios/preflight"])
+  ;(tree.find(item=>item.type==="button"&&item.props.children==="사전점검")!.props.onClick as ()=>void)()
+  await setImmediate()
+  tree=elements(runner.render(LoadEditor,props))
+  ;(tree.find(item=>item.type==="button"&&item.props.children==="생성")!.props.onClick as ()=>void)()
+  await setImmediate()
+  assert.deepEqual(confirmed,[{name:"created",uid:"actual-uid"}])
+})
+
+test("IA: experiment definition changes cannot reuse an earlier successful preflight",()=>{
+  const runner=hookRunner(),writes:unknown[]=[]
+  let mutationIndex=0
+  const pre:{data?:{data:unknown};isPending:boolean;mutate:()=>void}={isPending:false,mutate:()=>{pre.data={data:{checks:[{id:"server",passed:true}],liveTarget:[]}}}}
+  const send={isPending:false,mutateAsync:async(value:unknown)=>{writes.push(value);return {data:{name:"run",uid:"new"}}}}
+  const modules={...primitives,react:runner.react,"@/lib/client":{useChillQuery:()=>({}),useChillMutation:()=>mutationIndex++===0?pre:send}}
+  const {EvaluationSubmit}=load("../features/evaluation-request.tsx",modules)
+  const props={name:"run",spec:{question:"before"},onSpecChange:()=>{}}
+  let tree=elements(runner.render(EvaluationSubmit,props))
+  ;(tree.find(item=>item.type==="button"&&item.props.children==="사전 점검")!.props.onClick as ()=>void)()
+  mutationIndex=0
+  tree=elements(runner.render(EvaluationSubmit,props))
+  assert.equal(tree.find(item=>item.type==="button"&&item.props.children==="실험 시작")!.props.disabled,false)
+  mutationIndex=0
+  tree=elements(runner.render(EvaluationSubmit,{...props,spec:{question:"after"}}))
+  const start=tree.find(item=>item.type==="button"&&item.props.children==="실험 시작")!
+  assert.equal(start.props.disabled,true)
+  ;(start.props.onClick as ()=>void)()
+  assert.equal(writes.length,0)
+})
+
+test("IA: a bookmarked replaced load UID requires explicit current identity selection",()=>{
+  const runner=hookRunner(),item={name:"load",uid:"current",spec:{parts:[{id:"p"}]},inUse:[]}
+  const modules={...primitives,react:runner.react,"next/navigation":{useSearchParams:()=>new URLSearchParams("name=load&uid=old")},"@/lib/client":{useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path==="v1/evaluations/load-scenarios"?{items:[item]}:item})}}
+  const {LoadScenarioPage}=load("../features/load-scenario-author.tsx",modules)
+  const tree=elements(runner.render(LoadScenarioPage))
+  assert.ok(tree.some(element=>element.props.children==="설정 교체 확인"))
+  assert.equal(tree.find(element=>element.type==="a"&&element.props.children==="현재 설정 선택")?.props.href,"/experiments/load-scenarios?name=load&uid=current")
+  assert.ok(!tree.some(element=>element.props.spec===item.spec),"an old UID must not silently display its replacement definition")
 })
