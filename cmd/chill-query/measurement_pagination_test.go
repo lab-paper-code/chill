@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -14,7 +15,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func TestMeasurementListPagesPreserveAllNativeRequests(t *testing.T) {
+func measurementPaginationHandler(t *testing.T) *http.ServeMux {
+	t.Helper()
 	objects := make([]client.Object, 61)
 	for i := range objects {
 		objects[i] = &api.BatchEnergyOptimization{ObjectMeta: meta.ObjectMeta{
@@ -27,6 +29,11 @@ func TestMeasurementListPagesPreserveAllNativeRequests(t *testing.T) {
 	}
 	mux := http.NewServeMux()
 	service.register(mux)
+	return mux
+}
+
+func TestMeasurementListPagesPreserveAllNativeRequests(t *testing.T) {
+	mux := measurementPaginationHandler(t)
 	const path = "/api/v1/namespaces/allowed/batch-energy-optimizations"
 	for _, offset := range []int{0, 25, 50, 61, 100} {
 		response := httptest.NewRecorder()
@@ -69,5 +76,45 @@ func TestMeasurementListPagesPreserveAllNativeRequests(t *testing.T) {
 	var native api.BatchEnergyOptimizationList
 	if err := json.Unmarshal(response.Body.Bytes(), &native); err != nil || len(native.Items) != 61 {
 		t.Fatal("unpaged native read changed")
+	}
+}
+
+func TestMeasurementSummaryWithoutExplicitPaginationPreservesAllRequests(t *testing.T) {
+	mux := measurementPaginationHandler(t)
+	const path = "/api/v1/namespaces/allowed/batch-energy-optimizations"
+	for _, version := range []string{"v1", "v2"} {
+		response := httptest.NewRecorder()
+		query := "?view=summary"
+		if version == "v2" {
+			query += "&summary=v2"
+		}
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path+query, nil))
+		var root map[string]json.RawMessage
+		if err := json.Unmarshal(response.Body.Bytes(), &root); err != nil || response.Code != http.StatusOK {
+			t.Fatalf("summary %s: %d %s", version, response.Code, response.Body.String())
+		}
+		if _, paged := root["page"]; paged {
+			t.Fatal("implicit summary pagination truncates old consumers")
+		}
+		var projection struct {
+			Version string            `json:"version"`
+			Values  []json.RawMessage `json:"values"`
+		}
+		if err := json.Unmarshal(root["readProjection"], &projection); err != nil ||
+			projection.Version != "measurement-summary."+version {
+			t.Fatalf("wrong negotiated version: %+v", projection)
+		}
+		var reference string
+		if err := json.Unmarshal(root["items"], &reference); err != nil {
+			t.Fatal(err)
+		}
+		index, err := strconv.Atoi(reference[1:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var items []json.RawMessage
+		if err := json.Unmarshal(projection.Values[index], &items); err != nil || len(items) != 61 {
+			t.Fatal("unpaged summary lost later requests")
+		}
 	}
 }

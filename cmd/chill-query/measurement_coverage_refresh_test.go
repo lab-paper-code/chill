@@ -46,7 +46,7 @@ func TestCoverageExpiredSnapshotWaitsForActiveRefresh(t *testing.T) {
 			go func() {
 				payload, err := service.coverage(
 					coverageWaitContext{Context: ctx, waiting: waiting}, coverageSizeNamespace,
-					httpapi.MeasurementCoverageQuery{Batches: []int{1, 4}},
+					httpapi.MeasurementCoverageQuery{Batches: []int{1, 4}}, false,
 				)
 				if err == nil {
 					var view struct {
@@ -94,7 +94,9 @@ func TestCoverageWithinStaleWindowReturnsWhileRefreshing(t *testing.T) {
 			namespaces: map[string]*measurementCoverageEntry{coverageSizeNamespace: entry},
 		},
 	}
-	payload, err := service.coverage(context.Background(), coverageSizeNamespace, httpapi.MeasurementCoverageQuery{})
+	payload, err := service.coverage(
+		context.Background(), coverageSizeNamespace, httpapi.MeasurementCoverageQuery{}, false,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

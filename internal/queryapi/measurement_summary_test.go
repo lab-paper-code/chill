@@ -21,7 +21,7 @@ func restoreSummary(t *testing.T, raw []byte) map[string]any {
 		t.Fatal(err)
 	}
 	projection := root["readProjection"].(map[string]any)
-	if projection["version"] != "measurement-summary.v1" {
+	if projection["version"] != measurementSummaryV1 && projection["version"] != measurementSummaryV2 {
 		t.Fatalf("unknown projection: %v", projection["version"])
 	}
 	values := []any{}
@@ -36,7 +36,8 @@ func restoreSummary(t *testing.T, raw []byte) map[string]any {
 		}
 		switch item := value.(type) {
 		case map[string]any:
-			if parts, encoded := item["$s"].([]any); encoded && len(item) == 1 {
+			if parts, encoded := item["$s"].([]any); encoded && len(item) == 1 &&
+				projection["version"] == measurementSummaryV2 {
 				text := make([]string, len(parts))
 				for i, part := range parts {
 					text[i] = restore(part).(string)
@@ -82,7 +83,7 @@ func restoreSummary(t *testing.T, raw []byte) map[string]any {
 
 func assertSummaryRoundTrip(t *testing.T, raw []byte, omitPreparations bool) []byte {
 	t.Helper()
-	summary, err := MeasurementSummaryJSON(json.RawMessage(raw), omitPreparations)
+	summary, err := MeasurementSummaryJSON(json.RawMessage(raw), omitPreparations, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,13 +165,13 @@ func TestMeasurementSummaryOperationalPayloads(t *testing.T) {
 			if err := json.Unmarshal(root["items"], &items); err != nil {
 				t.Fatal(err)
 			}
-			for offset := 0; offset < len(items); offset += 25 {
-				end := min(offset+25, len(items))
+			for offset := 0; offset < len(items); offset += 50 {
+				end := min(offset+50, len(items))
 				root["items"], err = json.Marshal(items[offset:end])
 				if err != nil {
 					t.Fatal(err)
 				}
-				info := map[string]int{"offset": offset, "limit": 25, "total": len(items)}
+				info := map[string]int{"offset": offset, "limit": 50, "total": len(items)}
 				if end < len(items) {
 					info["nextOffset"] = end
 				}
@@ -262,4 +263,34 @@ func TestMeasurementSummarySharesPathComponents(t *testing.T) {
 		t.Fatalf("path components not shared: %d -> %d", len(raw), len(summary))
 	}
 	assertSummaryRoundTrip(t, []byte(`{"literal":{"$s":["~0","literal"]},"slashes":"//literal/~123/"}`), false)
+}
+
+func TestMeasurementSummaryV2IsOptIn(t *testing.T) {
+	path := "namespace/measurement-request/retained-uid"
+	payload := map[string]any{"path": path, "literal": map[string]any{"$s": []any{"a", "b"}}}
+	for _, sharePaths := range []bool{false, true} {
+		summary, err := MeasurementSummaryJSON(payload, false, sharePaths)
+		if err != nil {
+			t.Fatal(err)
+		}
+		restored := restoreSummary(t, summary)
+		if !reflect.DeepEqual(restored, payload) {
+			t.Fatalf("negotiated encoding changed values: %+v", restored)
+		}
+		var root struct {
+			Projection struct {
+				Version string `json:"version"`
+			} `json:"readProjection"`
+		}
+		if err := json.Unmarshal(summary, &root); err != nil {
+			t.Fatal(err)
+		}
+		want := "measurement-summary.v1"
+		if sharePaths {
+			want = "measurement-summary.v2"
+		}
+		if root.Projection.Version != want {
+			t.Fatalf("wrong projection: %s", root.Projection.Version)
+		}
+	}
 }

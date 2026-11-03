@@ -344,3 +344,19 @@ test("occupancy mutations reject uncontracted queries and keep dry-run read life
   assert.equal(relayPlan("DELETE",detail,"?uid=one",config).bodyAllowed,false)
   assert.equal(relayPlan("GET",list,"",config).kind,"query")
 })
+
+test("control323 review: real relay accepts bounded BEO pages and only negotiated measurement v2",()=>{
+  const config=serverConfig({CHILL_BASE_URL:"https://chill.example",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"chill",CHILL_MAX_PAGE_SIZE:"200"})
+  const beo="v1/namespaces/research/batch-energy-optimizations".split("/")
+  for(const search of ["?view=summary&limit=50&offset=0","?view=summary&summary=v2&limit=50&offset=1000000"]) {
+    assert.equal(relayPlan("GET",beo,search,config).path,`/api/${beo.join("/")}${search}`)
+  }
+  for(const suffix of ["limit=0","limit=51","offset=-1","offset=1000001","limit=2&limit=3","offset=0&offset=1","summary=v1","summary=v2&summary=v2"]) {
+    assert.throws(()=>relayPlan("GET",beo,`?view=summary&${suffix}`,config),/DashboardQueryInvalid/)
+  }
+  for(const route of [beo,"v1/namespaces/research/measurement-coverage".split("/"),"v1/scheduler/profiles".split("/")]) {
+    assert.equal(new URL(relayPlan("GET",route,"?view=summary&summary=v2",config).path,"https://local.invalid").searchParams.get("summary"),"v2")
+    assert.throws(()=>relayPlan("GET",route,"?summary=v2",config),/DashboardQueryInvalid/)
+  }
+  assert.throws(()=>relayPlan("GET",["v1","workloads"],"?view=summary&summary=v2",config),/DashboardQueryInvalid/)
+})

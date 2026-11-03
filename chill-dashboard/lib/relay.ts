@@ -42,7 +42,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   if (!segments.length || segments.some(part => part.length > 253 || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(part))) throw new RelayFailure("DashboardRouteNotAllowed", 404)
   const route = segments.join("/")
   let methods: string[] = []
-  let query: "none" | "summary" | "page" | "experimentPage" | "inputs" | "profiles" | "runs" | "observations" | "event" | "load" | "power" | "schedulerHistory" | "dryRun" | "uid" | "compatibility" | "coverage" | "preflight" = "none"
+  let query: "none" | "summary" | "measurementPlans" | "page" | "experimentPage" | "inputs" | "profiles" | "runs" | "observations" | "event" | "load" | "power" | "schedulerHistory" | "dryRun" | "uid" | "compatibility" | "coverage" | "preflight" = "none"
   let kind: RelayPlan["kind"] = "query"
   if (/^v1\/(models|workloads|preprocessors|datasets)$/.test(route)) { methods = ["GET", "POST"]; if(route==="v1/workloads"&&method==="GET")query="summary" }
   else if (/^v1\/(models|workloads|preprocessors|datasets)\/[^/]+$/.test(route)) methods = ["GET", "PUT", "DELETE"]
@@ -77,7 +77,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
   else if (/^v1\/namespaces\/[^/]+\/profiling-runs$/.test(route)) { methods = ["GET"]; query = "runs" }
   else if (/^v1\/namespaces\/[^/]+\/profiling-runs\/[^/]+\/evidence-passport$/.test(route) || /^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/[^/]+\/result$/.test(route)) methods = ["GET"]
   else if (/^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/preflight$/.test(route)) { methods = ["POST"]; query = "preflight" }
-  else if (/^v1\/namespaces\/[^/]+\/batch-energy-optimizations$/.test(route)) { methods = ["GET", "POST"]; query = method === "POST" ? "dryRun" : "summary" }
+  else if (/^v1\/namespaces\/[^/]+\/batch-energy-optimizations$/.test(route)) { methods = ["GET", "POST"]; query = method === "POST" ? "dryRun" : "measurementPlans" }
   else if (/^v1\/namespaces\/[^/]+\/batch-energy-optimizations\/[^/]+$/.test(route)) { methods = ["DELETE"]; query = "uid" }
   if (!methods.length) throw new RelayFailure("DashboardRouteNotAllowed", 404)
   if (!methods.includes(method)) throw new RelayFailure("DashboardMethodNotAllowed", 405)
@@ -90,7 +90,9 @@ export function relayPlan(method: string, segments: string[], search: string, co
   // History lists default to summaries; selected records explicitly request compact evidence.
   const compact = method === "GET" && (query === "schedulerHistory" || route === "v1/scheduler" || route === "v1/scheduler/state")
   const allowed = compact ? ["view"] : []
-  if (query === "summary" || query === "coverage" || query === "profiles") allowed.push("view")
+  if (query === "summary" || query === "measurementPlans" || query === "coverage" || query === "profiles") allowed.push("view")
+  if (query === "measurementPlans" || query === "coverage" || query === "profiles") allowed.push("summary")
+  if (query === "measurementPlans") allowed.push("limit","offset")
   if (query === "coverage") allowed.push("batches","node")
   if (query === "inputs") allowed.push("kind","set","offset","limit")
   if (query === "experimentPage") allowed.push("offset","limit")
@@ -115,7 +117,7 @@ export function relayPlan(method: string, segments: string[], search: string, co
         powerBucket=(BigInt(whole||"0")*1000000000n+BigInt(fraction.padEnd(9,"0")))*(match[2]==="h"?3600n:match[2]==="m"?60n:1n)
         if (powerBucket<1000000000n||powerBucket>3600000000000n) throw new RelayFailure("DashboardQueryInvalid",400)
       } else if (["limit", "offset", "cursor"].includes(key)) {
-        const max = key === "limit" ? (query === "event" ? 500 : query === "profiles" || query === "inputs" || query === "experimentPage" ? 50 : config.maxPageSize) : key === "offset" ? 1000000 : Number.MAX_SAFE_INTEGER
+        const max = key === "limit" ? (query === "event" ? 500 : query === "measurementPlans" || query === "profiles" || query === "inputs" || query === "experimentPage" ? 50 : config.maxPageSize) : key === "offset" ? 1000000 : Number.MAX_SAFE_INTEGER
         if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) > max || (key === "limit" && Number(value) < 1)) throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (key === "sort") {
         const keys = query === "profiles" ? ["model","deviceClass","node","powerMode","path","created","status"] : ["name","created","model","powerMode","status"]
@@ -131,8 +133,10 @@ export function relayPlan(method: string, segments: string[], search: string, co
         if (!/^[1-9]\d*(,[1-9]\d*)*$/.test(value) || batches.some((n,i)=>!Number.isSafeInteger(n)||(i>0&&n<=batches[i-1]))) throw new RelayFailure("DashboardQueryInvalid",400)
       } else if (key === "condition") {
         if (Buffer.byteLength(value) > 128 || !/^[^=]+=(True|False|Unknown)$/.test(value)) throw new RelayFailure("DashboardQueryInvalid", 400)
+      } else if (key === "summary") {
+        if(value!=="v2"||params.get("view")!=="summary")throw new RelayFailure("DashboardQueryInvalid",400)
       } else if (key === "view") {
-        const summary=route==="v1/scheduler/state"||query==="schedulerHistory"||query==="summary"||query==="coverage"||query==="profiles"
+        const summary=route==="v1/scheduler/state"||query==="schedulerHistory"||query==="summary"||query==="measurementPlans"||query==="coverage"||query==="profiles"
         if (!(value==="summary"&&summary) && !(value==="compact"&&compact)) throw new RelayFailure("DashboardQueryInvalid", 400)
       } else if (key === "dryRun") {
         if (value !== "All") throw new RelayFailure("DashboardQueryInvalid", 400)

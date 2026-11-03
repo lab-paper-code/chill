@@ -81,11 +81,17 @@ test("full precision reads remain unchanged without a summary envelope",()=>{
 })
 
 test("path component references restore exact strings and cannot reference joined strings or objects",()=>{
-  const readProjection={version:"measurement-summary.v1",shapes:[],values:["","근거","~123",{$s:["~0","~1","~2","~0"]}]}
+  const readProjection={version:"measurement-summary.v2",shapes:[],values:["","근거","~123",{$s:["~0","~1","~2","~0"]}]}
   const result=restoreMeasurementSummary({readProjection,path:"~3"}) as {path:string}
   assert.equal(result.path,"/근거/~123/")
   for(const parts of [["~4"],["~3"],[0],["literal"]]) {
     assert.throws(()=>restoreMeasurementSummary({readProjection:{...readProjection,values:[...readProjection.values,{$s:parts}]},path:"~4"}),/문자열 참조 미확인/)
   }
-  assert.throws(()=>restoreMeasurementSummary({readProjection:{version:"measurement-summary.v1",shapes:[],values:["x".repeat(1024),{$s:Array(8193).fill("~0")}]},path:"~1"}),/확장 한도/)
+  assert.throws(()=>restoreMeasurementSummary({readProjection:{version:"measurement-summary.v2",shapes:[],values:["x".repeat(1024),{$s:Array(8193).fill("~0")}]},path:"~1"}),/확장 한도/)
+})
+
+test("control323 review: v1 literal dollar-s stays an object while negotiated v2 restores paths",()=>{
+  const root={readProjection:{version:"measurement-summary.v1",shapes:[],values:["a","b",{$s:["~0","~1"]}]},path:"~2"}
+  assert.deepEqual(restoreMeasurementSummary(root),{path:{$s:["a","b"]}})
+  assert.deepEqual(restoreMeasurementSummary({...root,readProjection:{...root.readProjection,version:"measurement-summary.v2"}}),{path:"a/b"})
 })

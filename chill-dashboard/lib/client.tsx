@@ -167,6 +167,16 @@ export async function relay(path:string,token:string,signal:AbortSignal,method="
   let data:unknown = text
   try {data = text ? JSON.parse(text) : null} catch { /* native response may be plain text */ }
   if (!response.ok) {
+    if(method==="GET"&&response.status===400&&data&&typeof data==="object"&&"code" in data&&["InvalidQuery","InvalidCoverageQuery"].includes(String(data.code))) {
+      const legacy=new URL(path,"https://dashboard.invalid/")
+      if(legacy.searchParams.get("summary")==="v2") {
+        legacy.searchParams.delete("summary")
+        if(/^\/v1\/namespaces\/[^/]+\/batch-energy-optimizations$/.test(legacy.pathname)) {
+          legacy.searchParams.delete("limit");legacy.searchParams.delete("offset")
+        }
+        return relay(`${legacy.pathname.slice(1)}?${legacy.searchParams}`,token,signal)
+      }
+    }
     const unknown = method !== "GET" && !!(data && typeof data === "object" && "unknownOutcome" in data && data.unknownOutcome)
     const retryAfter=response.headers.get("Retry-After"),seconds=retryAfter===null?2:Number(retryAfter)
     throw new ApiError(response.status,text,data,unknown,response.headers.get("X-Chill-Request-ID"),response.headers.get("X-Chill-Workload-UID"),response.headers.get("X-Chill-Relay-Timing"),browserRTT,Number.isFinite(seconds)?seconds:2)

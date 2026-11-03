@@ -154,7 +154,7 @@ func TestCoverageFreshNamespaceSharedByFiveCallers(t *testing.T) {
 			_, err := service.coverage(
 				context.Background(),
 				"allowed",
-				httpapi.MeasurementCoverageQuery{Batches: []int{1, 2}},
+				httpapi.MeasurementCoverageQuery{Batches: []int{1, 2}}, false,
 			)
 			results <- err
 		}()

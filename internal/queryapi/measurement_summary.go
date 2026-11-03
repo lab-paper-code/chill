@@ -7,10 +7,15 @@ import (
 	"strings"
 )
 
+const (
+	measurementSummaryV1 = "measurement-summary.v1"
+	measurementSummaryV2 = "measurement-summary.v2"
+)
+
 // MeasurementSummaryJSON shares repeated display evidence within one response.
 // Values are emitted before their references, so readers can restore them in one
 // pass. RawMessage keeps retained integer evidence exact (including uint64).
-func MeasurementSummaryJSON(payload any, omitPreparations bool) (json.RawMessage, error) {
+func MeasurementSummaryJSON(payload any, omitPreparations, sharePaths bool) (json.RawMessage, error) {
 	root, err := measurementSummaryRoot(payload, omitPreparations)
 	if err != nil {
 		return nil, err
@@ -40,7 +45,7 @@ func MeasurementSummaryJSON(payload any, omitPreparations bool) (json.RawMessage
 				return nil, err
 			}
 			reserved = measurementSummaryReference(text)
-			if len(value) >= 24 && strings.Contains(text, "/") {
+			if sharePaths && len(value) >= 24 && strings.Contains(text, "/") {
 				return measurementSummaryPath(text, intern)
 			}
 		}
@@ -66,9 +71,7 @@ func MeasurementSummaryJSON(payload any, omitPreparations bool) (json.RawMessage
 			if shapeErr != nil {
 				return nil, shapeErr
 			}
-			_, reservedObject := object["$o"]
-			_, reservedString := object["$s"]
-			if field != "$root" && (len(shapeJSON) > 32 || reservedObject || reservedString) {
+			if field != "$root" && (len(shapeJSON) > 32 || measurementSummaryReserved(object, sharePaths)) {
 				index, exists := shapeIndices[string(shapeJSON)]
 				if !exists {
 					index = len(shapes)
@@ -116,26 +119,36 @@ func MeasurementSummaryJSON(payload any, omitPreparations bool) (json.RawMessage
 	if err != nil {
 		return nil, err
 	}
-	return measurementSummaryEnvelope(encoded, values, shapes)
+	return measurementSummaryEnvelope(encoded, values, shapes, sharePaths)
 }
 
 func measurementSummaryEnvelope(
-	encoded json.RawMessage, values []json.RawMessage, shapes [][]string,
+	encoded json.RawMessage, values []json.RawMessage, shapes [][]string, sharePaths bool,
 ) (json.RawMessage, error) {
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(encoded, &root); err != nil {
 		return nil, err
 	}
+	version := measurementSummaryV1
+	if sharePaths {
+		version = measurementSummaryV2
+	}
 	projection, err := json.Marshal(struct {
 		Version string            `json:"version"`
 		Values  []json.RawMessage `json:"values"`
 		Shapes  [][]string        `json:"shapes"`
-	}{"measurement-summary.v1", values, shapes})
+	}{version, values, shapes})
 	if err != nil {
 		return nil, err
 	}
 	root["readProjection"] = projection
 	return json.Marshal(root)
+}
+
+func measurementSummaryReserved(object map[string]json.RawMessage, sharePaths bool) bool {
+	_, objectOperator := object["$o"]
+	_, stringOperator := object["$s"]
+	return objectOperator || sharePaths && stringOperator
 }
 
 func measurementSummaryPath(

@@ -195,7 +195,7 @@ export function MeasurementRequestPage() {
     const all:NonNullable<ProfilesView["profiles"]>=[]
     let offset=0
     for(;;) {
-      const response=await relay(`v1/scheduler/profiles?${new URLSearchParams({view:"summary",limit:"50",offset:String(offset)})}`,token,signal)
+      const response=await relay(`v1/scheduler/profiles?${new URLSearchParams({view:"summary",summary:"v2",limit:"50",offset:String(offset)})}`,token,signal)
       const page=decodeResponse(response.body,parseMeasurementJSON) as ProfilesView
       all.push(...page.profiles??[])
       if(page.page?.nextOffset===undefined)return {...page,profiles:all}
@@ -219,10 +219,10 @@ export function MeasurementRequestPage() {
   if(copy?.error)prefill.errors.push(copy.error)
   const context: Context = { models: models.data.items, workloads: workloads.data, classes: inventory.data.classes, plans: plans.data.items ?? [], preprocessors:preprocessors.data?.items??[], datasets:datasets.data?.items??[], profiles:profiles.data?.profiles??[], prefill:prefill.active }
   const selected=coverage.data?.cells.flatMap(cell=>cell.variants).find(variant=>variant.id===params.get("variantId"))
-  return <Funnel key={params.toString()} namespace={namespace} from={from} context={context} prefill={prefill} selected={selected} refetchPlans={plans.refetch} checking={plans.isFetching} />
+  return <Funnel key={params.toString()} namespace={namespace} from={from} context={context} prefill={prefill} selected={selected} refetchPlans={plans.refetch} checking={plans.isFetching} plansError={plans.error}/>
 }
 
-function Funnel({ namespace, from, context, prefill, selected, refetchPlans, checking }: { namespace: string; from: string | null; context: Context; prefill:MeasurementPrefill; selected?:MeasurementVariant; refetchPlans: () => Promise<{ error: ApiError | null }>; checking: boolean }) {
+function Funnel({ namespace, from, context, prefill, selected, refetchPlans, checking, plansError }: { namespace: string; from: string | null; context: Context; prefill:MeasurementPrefill; selected?:MeasurementVariant; refetchPlans: () => Promise<{ error: ApiError | null }>; checking: boolean; plansError?:ApiError|null }) {
   const router = useRouter(), params=useSearchParams()
   const dry = useChillMutation(), pre = useChillMutation(), send = useChillMutation()
   const variantId=params.get("variantId")??""
@@ -302,6 +302,7 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
   return <Screen width="data" title="측정 요청" back={back}>
     <MeasurementNavigation active="requests" namespace={namespace}/>
     <MeasurementKindSelector kind="profile" disabled={unknown||pending||send.isPending}/>
+    {plansError&&<p role="alert">측정 요청 목록 갱신 실패 (HTTP {plansError.status}) · 직전 성공 자료</p>}
     <nav aria-label="요청 단계"><ol className="flex flex-wrap gap-3">{["대상","조건","검사·제출"].map((label,index)=><li key={label}><Button variant={stage===index?"default":"outline"} aria-current={stage===index?"step":undefined} disabled={index>stage||unknown||pending||send.isPending} onClick={()=>setStage(index)}>{label}</Button></li>)}</ol></nav>
     {unknown&&<section role="alert" className="notice space-y-3"><h2>접수 결과 미확인</h2><p>{v.name}: 자동 재제출·이름 변경 차단</p><Button disabled={checking} onClick={()=>void refetchPlans().then(result=>{setChecked(!result.error);if(result.error)setError("목록 조회 실패: 다시 확인하세요.")})}>같은 이름의 접수 기록 조회</Button>{found?<Link className="underline" href={requestHref(namespace,found.metadata.name,found.metadata.uid)}>접수된 요청 열기</Link>:checked&&<p>목록 미확인 · 자동 재제출 차단</p>}</section>}
     {variantId&&!selected&&<p role="status" className="notice">조건 미확인 · 부족 배치 자동 제외 안 됨</p>}

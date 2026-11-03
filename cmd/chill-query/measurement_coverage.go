@@ -55,7 +55,7 @@ type measurementCoverageBase struct {
 }
 
 func (o *measurementService) coverage(
-	ctx context.Context, namespace string, query httpapi.MeasurementCoverageQuery,
+	ctx context.Context, namespace string, query httpapi.MeasurementCoverageQuery, sharePaths bool,
 ) (json.RawMessage, error) {
 	if err := o.namespace(namespace); err != nil {
 		return nil, err
@@ -132,7 +132,7 @@ func (o *measurementService) coverage(
 	var payload json.RawMessage
 	var err error
 	if query.Summary {
-		payload, err = queryapi.MeasurementSummaryJSON(response, false)
+		payload, err = queryapi.MeasurementSummaryJSON(response, false, sharePaths)
 	} else {
 		payload, err = json.Marshal(response)
 	}

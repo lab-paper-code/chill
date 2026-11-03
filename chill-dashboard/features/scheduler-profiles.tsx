@@ -31,6 +31,7 @@ export function SchedulerProfilesPage() {
   const params=useSearchParams(),router=useRouter(),tableState=useServerTable(),trigger=React.useRef<HTMLAnchorElement|null>(null)
   const search=new URLSearchParams(tableState.query)
   search.set("view","summary")
+  search.set("summary","v2")
   for(const key of ["q","model","deviceClass","node","powerMode","path","status"]) {const value=params.get(key);if(value)search.set(key,value)}
   const query=useChillQuery<ProfilesView>(`v1/scheduler/profiles?${search}`,{decoder:parseMeasurementJSON})
   const detail=useChillQuery<ProfilesView>(`v1/scheduler/profiles?${new URLSearchParams({profile:params.get("profile")??"",limit:"1"})}`,{enabled:!!params.get("profile"),decoder:parseSchedulerJSON})

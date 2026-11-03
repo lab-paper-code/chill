@@ -36,6 +36,10 @@ func (o *measurementService) register(mux *http.ServeMux) {
 		view := adoptedCatalogView(read)
 		view.DisplayStatus = func(p serving.Profile) string { a, _ := assessCatalogProfile(view, p); return a.DisplayStatus }
 		values, err := url.ParseQuery(r.URL.RawQuery)
+		sharePaths := false
+		if err == nil {
+			sharePaths, err = measurementSummaryVersion(values)
+		}
 		if err == nil {
 			view, err = httpapi.PageProfiles(view, values)
 		}
@@ -49,7 +53,7 @@ func (o *measurementService) register(mux *http.ServeMux) {
 			return
 		}
 		if values.Get(measurementViewQuery) == measurementSummaryView {
-			summary, err := queryapi.MeasurementSummaryJSON(payload, true)
+			summary, err := queryapi.MeasurementSummaryJSON(payload, true, sharePaths)
 			if err != nil {
 				httpapi.SendQueryError(w, err)
 				return
@@ -63,6 +67,10 @@ func (o *measurementService) register(mux *http.ServeMux) {
 		"GET /api/v1/namespaces/{namespace}/measurement-coverage",
 		func(w http.ResponseWriter, r *http.Request) {
 			values, err := url.ParseQuery(r.URL.RawQuery)
+			sharePaths := false
+			if err == nil {
+				sharePaths, err = measurementSummaryVersion(values)
+			}
 			var query httpapi.MeasurementCoverageQuery
 			if err == nil {
 				query, err = httpapi.ParseMeasurementCoverageQuery(values)
@@ -71,7 +79,7 @@ func (o *measurementService) register(mux *http.ServeMux) {
 				httpapi.SendQueryError(w, &serving.Error{Code: "InvalidCoverageQuery", Message: "유효한 query가 필요합니다"})
 				return
 			}
-			payload, err := o.coverage(r.Context(), r.PathValue("namespace"), query)
+			payload, err := o.coverage(r.Context(), r.PathValue("namespace"), query, sharePaths)
 			if err != nil {
 				var domain *serving.Error
 				if errors.As(err, &domain) && domain.Code == "CoverageWarming" {
@@ -87,6 +95,10 @@ func (o *measurementService) register(mux *http.ServeMux) {
 		"GET /api/v1/namespaces/{namespace}/batch-energy-optimizations",
 		func(w http.ResponseWriter, r *http.Request) {
 			values, err := url.ParseQuery(r.URL.RawQuery)
+			sharePaths := false
+			if err == nil {
+				sharePaths, err = measurementSummaryVersion(values)
+			}
 			var page *httpapi.ProfilePage
 			if err == nil {
 				page, err = measurementListPage(values)
@@ -116,7 +128,7 @@ func (o *measurementService) register(mux *http.ServeMux) {
 			}
 			payload := projectMeasurementList(list, assessments, page)
 			if values.Get(measurementViewQuery) == measurementSummaryView {
-				summary, err := queryapi.MeasurementSummaryJSON(payload, false)
+				summary, err := queryapi.MeasurementSummaryJSON(payload, false, sharePaths)
 				if err != nil {
 					httpapi.SendQueryError(w, err)
 					return
@@ -332,8 +344,20 @@ func measurementListPage(values url.Values) (*httpapi.ProfilePage, error) {
 			return nil, errors.New("unknown measurement list query")
 		}
 	}
-	if len(values) == 0 {
+	if !values.Has(measurementLimitQuery) && !values.Has(measurementOffsetQuery) {
 		return nil, nil
 	}
 	return page, nil
+}
+
+func measurementSummaryVersion(values url.Values) (bool, error) {
+	if !values.Has("summary") {
+		return false, nil
+	}
+	if len(values["summary"]) != 1 || values.Get("summary") != "v2" ||
+		len(values[measurementViewQuery]) != 1 || values.Get(measurementViewQuery) != measurementSummaryView {
+		return false, errors.New("summary=v2 requires view=summary")
+	}
+	values.Del("summary")
+	return true, nil
 }

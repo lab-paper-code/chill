@@ -28,14 +28,15 @@ export function useMeasurementPlans(namespace:string,enabled=true) {
     const items:NonNullable<MeasurementPlanList["items"]>=[]
     let offset=0
     for(;;) {
-      const page=await readPage<MeasurementPlanList>(`${path}?${new URLSearchParams({view:"summary",limit:"25",offset:String(offset)})}`,token,signal)
+      const page=await readPage<MeasurementPlanList>(`${path}?${new URLSearchParams({view:"summary",summary:"v2",limit:"50",offset:String(offset)})}`,token,signal)
+      if(!page.page)return page
       items.push(...page.items??[])
       if(page.page?.nextOffset===undefined)return {...page,items}
       if(page.page.nextOffset<=offset)throw new ApiError(0,"측정 요청 페이지가 전진하지 않아요",null)
       offset=page.page.nextOffset
     }
   }})
-  return {...query,data:query.error?undefined:query.data}
+  return {...query,data:query.error&&[401,403].includes(query.error.status)?undefined:query.data}
 }
 export function useCoverageInventory() {
   const {token,config}=useSession()
@@ -88,7 +89,7 @@ export function MeasurementFilters({axes,states=true,dates=false,editable=false}
 
 export function useMeasurementCoverage(namespace:string,enabled=true) {
   const {token,config}=useSession(),params=useSearchParams()
-  const query=new URLSearchParams({view:"summary"})
+  const query=new URLSearchParams({view:"summary",summary:"v2"})
   for(const key of ["batches","node"]) {const value=params.get(key);if(value)query.set(key,value)}
   const path=`v1/namespaces/${encodeURIComponent(namespace)}/measurement-coverage${query.size?`?${query}`:""}`
   const result=useQuery<MeasurementCoverageResponse,ApiError>({queryKey:["chill",path],enabled,retry:warmingRetry,retryDelay:warmingDelay,refetchOnMount:"always",refetchInterval:query=>query.state.error&&[401,403].includes(query.state.error.status)?false:query.state.data?.cells.some(cell=>cell.occupancy?.some(row=>row.state==="measuring"))?config.pollIntervalMs:false,queryFn:({signal})=>readPage<MeasurementCoverageResponse>(path,token,signal)})

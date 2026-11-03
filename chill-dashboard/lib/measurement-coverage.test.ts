@@ -510,7 +510,7 @@ test("control323: BEO paging retains later copy sources, rejects stalled/error p
         paths.push(path)
         const offset=new URL(path,"https://local.invalid").searchParams.get("offset")
         if(offset!=="0"&&["denied","aborted"].includes(outcome))throw error
-        return {body:JSON.stringify({items:[offset==="0"?plan:{...plan,metadata:{...plan.metadata,name:"later-copy-source"}}],page:{nextOffset:offset==="0"?25:outcome==="stalled"?25:undefined}})}
+        return {body:JSON.stringify({items:[offset==="0"?plan:{...plan,metadata:{...plan.metadata,name:"later-copy-source"}}],page:{nextOffset:offset==="0"?50:outcome==="stalled"?50:undefined}})}
       }},
       "@/lib/measurement-summary":measurementSummary,
     }
@@ -520,8 +520,8 @@ test("control323: BEO paging retains later copy sources, rejects stalled/error p
     if(outcome==="complete")assert.deepEqual((await queryFn({signal})).items.map(item=>item.metadata.name),["195","later-copy-source"])
     else await assert.rejects(queryFn({signal}),outcome==="stalled"?/페이지가 전진하지/:error)
     assert.equal(paths.length,2)
-    for(const path of paths)assert.equal(new URL(path,"https://local.invalid").searchParams.get("limit"),"25")
+    for(const path of paths)assert.equal(new URL(path,"https://local.invalid").searchParams.get("limit"),"50")
     state.error=error
-    assert.equal(exports.useMeasurementPlans("ns").data,undefined,"cached whole-list data must not hide a failed refresh")
+    assert.equal(exports.useMeasurementPlans("ns").data,state.data,"failed refresh retains the last complete list")
   }
 })

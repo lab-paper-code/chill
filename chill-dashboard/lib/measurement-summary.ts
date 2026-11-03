@@ -10,7 +10,7 @@ type Restored={value:unknown;nodes:number;depth:number}
 export function restoreMeasurementSummary(value:unknown):unknown {
   if(!value||typeof value!=="object"||Array.isArray(value)||!("readProjection" in value))return value
   const projection=value.readProjection as {version?:unknown;values?:unknown[];shapes?:string[][]}|null
-  if(projection?.version!=="measurement-summary.v1"||!Array.isArray(projection.values)||!Array.isArray(projection.shapes))throw new Error("측정 요약 형식 미지원")
+  if(!["measurement-summary.v1","measurement-summary.v2"].includes(String(projection?.version))||!Array.isArray(projection?.values)||!Array.isArray(projection?.shapes))throw new Error("측정 요약 형식 미지원")
   const shapes=projection.shapes
   const restored:Restored[]=[]
   let joinedStringUnits=0
@@ -32,7 +32,7 @@ export function restoreMeasurementSummary(value:unknown):unknown {
     }
     let value:unknown
     if(Array.isArray(item))value=item.map(child)
-    else if("$s" in item&&Object.keys(item).length===1) {
+    else if(projection?.version==="measurement-summary.v2"&&"$s" in item&&Object.keys(item).length===1) {
       if(!Array.isArray(item.$s))throw new Error("측정 문자열 참조 미확인")
       value=item.$s.map((ref,partIndex)=>{
         if(typeof ref!=="string"||!/^~\d+$/.test(ref))throw new Error("측정 문자열 참조 미확인")

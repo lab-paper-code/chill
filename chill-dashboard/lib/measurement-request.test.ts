@@ -562,3 +562,30 @@ test("P2 profile kind transition remains blocked during all mutations and unknow
   }
   assert.match(renderRequest({},"","",0,[],[],[],undefined,true),/<select aria-label="측정 종류" disabled="">/)
 })
+
+test("control323 review: failed list refresh keeps the same Funnel, pinned draft name and unknown-submit block",()=>{
+  const require=createRequire(import.meta.url)
+  const code=transpileModule(readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const plans={data:{items:[plan]},error:null as {status:number}|null,isFetching:false,refetch:async()=>({error:null})}
+  const modules:Record<string,unknown>={
+    react:{...require("react"),useEffect:()=>{}},
+    "next/navigation":{useSearchParams:()=>new URLSearchParams("namespace=ns"),useRouter:()=>({})},
+    "@tanstack/react-query":{useQuery:()=>({data:{profiles:[]}})},
+    "@/lib/client":{useSession:()=>({token:"fixture",config:{namespace:"ns"}}),useChillQuery:(path:string)=>({data:path.startsWith("v1/workloads")?[]:{items:[]}})},
+    "@/lib/measurement-request":requestHelpers,"@/lib/measurement-coverage":coverageHelpers,
+    "@/features/measurement-coverage":{useMeasurementPlans:()=>plans,useCoverageInventory:()=>({data:{classes:[],models:[]}}),useMeasurementCoverage:()=>({})},
+  }
+  const exports={} as {MeasurementRequestPage:()=>{type:unknown;key:unknown;props:{plansError:unknown}}}
+  new Function("require","exports",code)((name:string)=>modules[name]??(name.startsWith("@/")?{}:require(name)),exports)
+  const before=exports.MeasurementRequestPage()
+  plans.error={status:503}
+  const after=exports.MeasurementRequestPage()
+  assert.equal(after.type,before.type,"refresh errors must not replace Funnel with a loading/error Screen")
+  assert.equal(after.key,before.key,"React must retain the existing draft and unknown-submit state")
+  assert.equal(after.props.plansError,plans.error)
+  const context={models:[],workloads:[],classes:[],profiles:[],plans:[plan],preprocessors:[],datasets:[]}
+  const html=renderRequest({context,from:"source",plansError:plans.error},"from=source","",2,[],[],[],{name:"fixed-unknown-name"},true)
+  assert.match(html,/측정 요청 목록 갱신 실패 \(HTTP 503\)/)
+  assert.match(html,/fixed-unknown-name: 자동 재제출·이름 변경 차단/)
+  assert.match(html,/<button[^>]*disabled=""[^>]*>측정 요청<\/button>/)
+})
