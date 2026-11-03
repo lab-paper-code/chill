@@ -2,6 +2,7 @@
 
 단일 HTTPS `cmd/chill-server`가 TokenReview/SAR·CRUD·추론과 불변 snapshot/접수 gate/bounded Workload 큐/physical drain·관측을 소유한다. CHILL은 physical instance를 고르고 EdgeMesh는 그 목적지로 전달한다. 노드당 서빙인스턴스1개·인스턴스당 Workload1개이며 실제 실행·측정 근거가 없으면 Ready 추론대상이 아니다.
 원시 JPEG/UTF8 입력은 runner의 전처리 module이 모델 입력으로 바꾼다. firstfloor actor·persistent ORT CPU/CUDA·RKNNLite와 동일경로 profiling을 사용한다. 로컬smoke·qualified hardware/live evidence는 서로 다른 확인수준이다.
+Observer readiness probes reject responses returned after their probe context is cancelled or expires, even when the native client reports success.
 
 Cold start는 TLS·인증·HTTP 구성을 완료한 뒤 listener를 먼저 열고 첫 scheduler refresh와 Workload 복원을 백그라운드에서 수행한다. 그동안 `/api/v1` 아래의 조회·변경·추론·live 요청은 모두 `503 CoverageWarming` (`Retry-After: 2`, 기존 JSON 오류 형식)이며, 완전한 handler snapshot만 한 번 게시한다. dashboard와 `/healthz`는 먼저 응답한다. readinessProbe는 `/healthz`로 listener 도달 가능성만 검사하고 warm-up 완료를 뜻하지 않는다. `/readyz`는 기존 observation log 건강 상태만 유지한다. accept는 deadline 안에서 API의 503을 기다린다. 초기화 실패는 서버를 종료하며 부분 상태로 요청이나 scheduler Tick/Workload Advance를 실행하지 않는다. κ 용량표의 비동기 계산·`CapacityPending` 계약은 바뀌지 않는다.
 
