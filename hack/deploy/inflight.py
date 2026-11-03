@@ -76,20 +76,24 @@ def _save(path, data):
 
 
 def check(kube, run, out, label):
-    """Collect all namespaces once, retain private evidence, and refuse blockers."""
+    """Retain complete all-namespace evidence without copying command output."""
     if not label or Path(label).name != label or label in ('.', '..'):
         raise ValueError('inflight evidence label must be a nonempty filename component')
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True, mode=0o700)
     evidence = Path(tempfile.mkdtemp(prefix=label + '-', dir=str(out)))
     raw_objects = run(list(kube) + ['get', RESOURCES, '--all-namespaces', '-o', 'json'],
-                      evidence.name + '-objects')
-    _save(evidence / 'objects.json', raw_objects)
+                      evidence.name + '-objects', read_output=False)
+    os.link(raw_objects, evidence / 'objects.json')
+    (evidence / 'objects.json').chmod(0o600)
     raw_jobs = run(list(kube) + ['get', 'jobs', '--all-namespaces', '-o', 'json'],
-                   evidence.name + '-jobs')
-    _save(evidence / 'jobs.json', raw_jobs)
-    objects = json.loads(raw_objects)['items']
-    jobs = json.loads(raw_jobs)['items']
+                   evidence.name + '-jobs', read_output=False)
+    os.link(raw_jobs, evidence / 'jobs.json')
+    (evidence / 'jobs.json').chmod(0o600)
+    with (evidence / 'objects.json').open(encoding='utf-8') as stream:
+        objects = json.load(stream)['items']
+    with (evidence / 'jobs.json').open(encoding='utf-8') as stream:
+        jobs = json.load(stream)['items']
     blocked = blockers(objects, jobs)
     _save(evidence / 'blockers.json', (json.dumps(blocked, ensure_ascii=False, indent=2) + '\n').encode())
     report = {'checked': dict(Counter(obj['kind'] for obj in objects)),

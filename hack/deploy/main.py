@@ -10,7 +10,6 @@ from pathlib import Path
 import re
 import shlex
 import shutil
-import signal
 import subprocess
 import sys
 import time
@@ -19,9 +18,12 @@ import tempfile
 import yaml
 import acceptance
 import images
+import image_reuse
 import configuration
 import inspection
+import watch
 import inflight
+import inventory
 
 ROOT = Path(__file__).resolve().parents[2]
 PHASES = ('preflight', 'stage', 'quiesce', 'migrate', 'configure', 'accept')
@@ -32,7 +34,7 @@ FIELDS = {'source', 'context', 'kubeconfig', 'namespace', 'release', 'registry',
           'helm', 'kubectl', 'lock', 'generatedValues', 'maxDiskUsedPercent',
           'queryService', 'dashboardCheck', 'runtimeDeclarations', 'runtimeInspectionSeconds', 'publicationOnly',
           'baselineDirectory', 'expectedProfileCount', 'stagedDiffApproved', 'checkConfiguration', 'schedulerConfigMapFile', 'waitFor',
-          'inspectionCells', 'inspectionRequests'}
+          'inspectionCells', 'inspectionRequests', 'reusePublication'}
 
 
 def dump(path, value):
@@ -78,7 +80,9 @@ def load(path, source):
     generated = recipe.setdefault('generatedValues', [])
     if not isinstance(generated, list) or any(not isinstance(x, str) or not x or Path(x).is_absolute() or '..' in Path(x).parts for x in generated):
         raise ValueError('generatedValues must name evidence-relative files')
-    for field in ('kubeconfig', 'apiEnvironment', 'chartDiffApproved', 'stagedDiffApproved', 'baselineDirectory', 'inspectionCells', 'inspectionRequests'):
+    if 'reusePublication' in recipe and (not isinstance(recipe['reusePublication'], str) or not recipe['reusePublication']):
+        raise ValueError('reusePublication must name an existing publication receipt')
+    for field in ('kubeconfig', 'apiEnvironment', 'chartDiffApproved', 'stagedDiffApproved', 'baselineDirectory', 'inspectionCells', 'inspectionRequests', 'reusePublication'):
         if field in recipe:
             recipe[field] = str(Path(recipe[field]).expanduser().resolve())
     recipe['values'] = [str(Path(x).expanduser().resolve()) if Path(x).is_absolute() else x for x in values]
@@ -140,6 +144,18 @@ def load(path, source):
     return recipe
 
 
+def plan_images(recipe, source, out):
+    preflight = bool(recipe['commands'].get('preflight'))
+    planned = image_reuse.apply(images.plan(recipe, recipe['source'], source, out),
+                                recipe['source'], ROOT, source,
+                                None if preflight else recipe.get('reusePublication'))
+    if preflight:
+        for item in planned:
+            if item['action'] == 'build':
+                item['reason'] = 'custom preflight commands may modify archived build inputs'
+    return planned
+
+
 class Runner:
     def __init__(self, out, cwd, environment=None):
         self.out, self.cwd, self.environment = out, cwd, environment
@@ -148,7 +164,7 @@ class Runner:
         self.stage = 'archive'
         self.timings = []
 
-    def run(self, argv, name, timeout=120, cwd=None, env=None):
+    def run(self, argv, name, timeout=120, cwd=None, env=None, read_output=True):
         self.number += 1
         argv = list(map(str, argv))
         stdout = self.out / ('%03d-' % self.number + name)
@@ -157,32 +173,13 @@ class Runner:
         started = time.monotonic()
         record = {'number': self.number, 'stage': self.stage, 'name': name, 'startedUTC': dt.datetime.now(dt.timezone.utc).isoformat(), 'timeoutSeconds': timeout, 'exitCode': None}
         try:
-            # Preserve full build progress and large inventories on disk.
-            with stdout.open('wb') as output, stderr.open('wb') as errors:
-                process = subprocess.Popen(argv, cwd=cwd or self.cwd, env=env or self.environment, stdout=output, stderr=errors, start_new_session=True)
-                try:
-                    record['exitCode'] = process.wait(timeout=timeout)
-                except BaseException:
-                    try:
-                        os.killpg(process.pid, signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        pass
-                    finally:
-                        # A wrapper can exit while its worker still ignores TERM.
-                        try:
-                            os.killpg(process.pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                        process.wait()
-                    raise
+            record['exitCode'] = watch.command(
+                argv, stdout, stderr, cwd=cwd or self.cwd, env=env or self.environment,
+                timeout=timeout, label=stdout.name, stream=stdout.suffix in {'.log', '.txt'})
             self.log.write('exit=%d evidence=%s\n' % (record['exitCode'], stdout.name))
             if record['exitCode']:
                 raise RuntimeError('command failed (%d): %s' % (record['exitCode'], stdout))
-            return stdout.read_bytes()
+            return stdout.read_bytes() if read_output else stdout
         finally:
             record['elapsedSeconds'] = time.monotonic() - started
             record['stdoutBytes'] = stdout.stat().st_size if stdout.exists() else 0
@@ -224,9 +221,9 @@ def crd_retention(original, desired, kube, run, out):
 def archive(run, sha, destination):
     destination.mkdir()
     tar = destination.with_suffix('.tar')
-    run.run(['git', '-C', ROOT, 'archive', '--format=tar', '--output=' + str(tar), sha], 'archive.log')
+    run.run(['git', '-c', 'core.attributesFile=/dev/null', '-C', ROOT, 'archive', '--format=tar', '--output=' + str(tar), sha], 'archive.log', read_output=False)
     # -p: the private evidence umask must not strip image file modes for non-root UIDs.
-    run.run(['tar', '-xpf', tar, '-C', destination], 'extract.log')
+    run.run(['tar', '-xpf', tar, '-C', destination], 'extract.log', read_output=False)
 
 
 def image_ready(pods, expected):
@@ -253,7 +250,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
     src = out / 'source'
     env = dict(os.environ, KUBECONFIG=recipe['kubeconfig'], CHILL_DEPLOY_CONTEXT=recipe['context'],
                CHILL_DEPLOY_NAMESPACE=recipe['namespace'], CHILL_DEPLOY_RELEASE=recipe['release'],
-               CHILL_DEPLOY_EVIDENCE=str(out), CHILL_EXPERIMENT_CONFIG=recipe['apiEnvironment'])
+               CHILL_DEPLOY_EVIDENCE=str(out), CHILL_EXPERIMENT_CONFIG=recipe['apiEnvironment'], GIT_ATTR_NOSYSTEM='1')
     run = Runner(out, ROOT, env)
     kube = [recipe.get('kubectl', 'kubectl'), '--kubeconfig', recipe['kubeconfig'], '--context', recipe['context'], '-n', recipe['namespace']]
     helm = [recipe.get('helm', 'helm'), '--kubeconfig', recipe['kubeconfig'], '--kube-context', recipe['context'], '-n', recipe['namespace']]
@@ -263,17 +260,22 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
     observed_cluster = False
     started = phase_started = time.monotonic()
     phases = []
+    print('DEPLOY mode=%s source=%s evidence=%s' % (state['mode'], recipe['source'], out), flush=True)
+    print('PHASE archive BEGIN', flush=True)
 
     def stage(name):
         nonlocal phase_started
         instant = time.monotonic()
+        print('PHASE %s DONE elapsed=%.1fs total=%.1fs' %
+              (state['stage'], instant - phase_started, instant - started), flush=True)
         phases.append({'stage': state['stage'], 'elapsedSeconds': instant - phase_started})
         phase_started = instant
         run.stage = name
         state['stage'] = name
         state['updatedUTC'] = dt.datetime.now(dt.timezone.utc).isoformat()
         dump(out / 'state.json', state)
-        print(name, flush=True)
+        print('PHASE %s %s total=%.1fs' %
+              (name, 'DONE' if name == 'complete' else 'BEGIN', instant - started), flush=True)
 
     def disk():
         usage = shutil.disk_usage(out)
@@ -297,7 +299,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
                 argv = [x.replace(key, value) for x in argv]
             if any(re.search(r'\{(?:evidence|source|namespace|release|tool:)[^}]*\}', x) for x in argv):
                 raise ValueError('unresolved deployment command placeholder')
-            run.run(argv, phase + '-%d.log' % index, timeout=step['seconds'], cwd=sources[step.get('source', 'deployment')])
+            run.run(argv, phase + '-%d.log' % index, timeout=step['seconds'], cwd=sources[step.get('source', 'deployment')], read_output=False)
 
     def check_configuration(manifest):
         if not recipe.get('checkConfiguration'):
@@ -326,6 +328,13 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             archive(run, sha, directory)
             sources[name] = directory
         run.cwd = src
+        stage('plan-images')
+        planned = plan_images(recipe, src, out)
+        dump(out / 'image-plan.json', planned)
+        state['images'] = [{'role': item['role'], 'action': item['action'], 'reason': item['reason']}
+                           for item in planned]
+        for item in state['images']:
+            print('IMAGE {role}: {action} — {reason}'.format(**item), flush=True)
         stage('preflight')
         revision()
         state['inflightPreflight'] = inflight.check(kube, run.run, out, 'inflight-preflight')
@@ -341,14 +350,15 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             acceptance.preflight(config, budget, out)
             commands('preflight')
         stage('backup')
-        run.run(helm + ['history', recipe['release'], '-o', 'json'], 'helm-history.json')
+        run.run(helm + ['history', recipe['release'], '-o', 'json'], 'helm-history.json', read_output=False)
         live_values = run.run(helm + ['get', 'values', recipe['release'], '-o', 'json'], 'live-values.json')
         (out / 'live-values.json').write_bytes(live_values)
         live = run.run(helm + ['get', 'manifest', recipe['release']], 'live-manifest.yaml')
         hooks = run.run(helm + ['get', 'hooks', recipe['release']], 'live-hooks.yaml')
         if not inspect:
-            for resource, name in [('crd', 'crds.yaml'), ('configmaps', 'configmaps.json'), ('deployments,daemonsets,services,serviceaccounts,roles,rolebindings', 'resources.json')]:
-                run.run(kube + ['get', resource, '-o', 'json'], name)
+            state['crdBackup'] = inventory.capture_crds(live, hooks, recipe['namespace'], kube, run.run)
+            for resource, name in [('configmaps', 'configmaps.json'), ('deployments,daemonsets,services,serviceaccounts,roles,rolebindings', 'resources.json')]:
+                run.run(kube + ['get', resource, '-o', 'json'], name, read_output=False)
         flags = [] if recipe.get('replaceValues') else ['-f', str(out / 'live-values.json')]
         for index, value in enumerate(recipe['values']):
             path = Path(value) if Path(value).is_absolute() else src / value
@@ -385,6 +395,9 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             for name in ('profiles.json', 'coverage.json'):
                 (frozen_out / name).write_bytes((Path(frozen) / name).read_bytes())
         if inspect:
+            for item in planned:
+                if item['action'] == 'reuse':
+                    images.verify(item, item['reuse']['sourceSHA'], item['reuse']['receipt']['digest'], run.run)
             check_configuration(out / 'render-before.yaml')
             if recipe.get('inspectionCells'):
                 if not frozen:
@@ -395,6 +408,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
                 print('COVERAGE PROJECTION: ' + json.dumps({key: state['coverageProjection'][key] for key in ('profileRecordsInput', 'countsByDisplayStatus', 'selectedCells', 'currentFailedMeasurements')}))
             state['crdRetention'] = crd_retention(live, before, kube, run.run, out)
             state.setdefault('chartApproved', True)
+            stage('complete')
             dump(out / 'state.json', state)
             print('INSPECTED (no image publication/cluster writes; local Go helpers may compile): ' + str(out))
             return
@@ -402,19 +416,20 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             baseline = acceptance.capture(config, recipe['namespace'], out / 'before')
         current_before = current if frozen else baseline
         stage('publish-images')
-        planned = images.plan(recipe, recipe['source'], src, out)
-        builders = sorted({item['builder'] for item in planned if 'prebuilt' not in item})
+        builders = sorted({item['builder'] for item in planned if item['action'] == 'build'})
         for builder in builders:
-            run.run(['docker', 'buildx', 'du', '--builder', builder], 'build-cache-' + builder + '-before.txt')
+            run.run(['docker', 'buildx', 'du', '--builder', builder], 'build-cache-' + builder + '-before.txt', read_output=False)
         def build_run(argv, name, timeout=120):
             disk()
-            result = run.run(argv, name, timeout=recipe['buildSeconds'] if 'buildx' in list(map(str, argv)) else timeout)
+            is_build = 'buildx' in list(map(str, argv))
+            result = run.run(argv, name, timeout=recipe['buildSeconds'] if is_build else timeout,
+                             read_output=not is_build)
             if 'buildx' in list(map(str, argv)):
                 disk()
             return result
         publication = images.build(planned, recipe['source'], src, out, build_run)
         for builder in builders:
-            run.run(['docker', 'buildx', 'du', '--builder', builder], 'build-cache-' + builder + '-after.txt')
+            run.run(['docker', 'buildx', 'du', '--builder', builder], 'build-cache-' + builder + '-after.txt', read_output=False)
         dump(out / 'publication.json', publication)
         overlay = images.overlay(publication)
         stage('stage')
@@ -447,7 +462,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         check_configuration(out / 'render-final.yaml')
         stage('crd-retention')
         state['crdRetention'] = crd_retention(live, after, kube, run.run, out)
-        run.run(kube + ['apply', '--dry-run=server', '-f', out / 'render-final.yaml'], 'server-dry-run.log')
+        run.run(kube + ['apply', '--dry-run=server', '-f', out / 'render-final.yaml'], 'server-dry-run.log', read_output=False)
         revision()
         acceptance.preflight(config, 120 + recipe['readinessSeconds'] + upgrade_process_seconds + 60 * (len(recipe['apiChecks']) + 2) + sum(x['seconds'] for p in ('quiesce', 'migrate', 'configure', 'accept') for x in recipe['commands'].get(p, [])), out)
         for phase in ('quiesce', 'migrate'):
@@ -458,14 +473,14 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         revision()
         state['inflightPreUpgrade'] = inflight.check(kube, run.run, out, 'inflight-pre-upgrade')
         stage('upgrade')
-        run.run(helm + ['upgrade', recipe['release'], chart, '--reset-values', *final_flags, '--wait', '--timeout', str(recipe['upgradeSeconds']) + 's'], 'upgrade.log', timeout=upgrade_process_seconds)
+        run.run(helm + ['upgrade', recipe['release'], chart, '--reset-values', *final_flags, '--wait', '--timeout', str(recipe['upgradeSeconds']) + 's'], 'upgrade.log', timeout=upgrade_process_seconds, read_output=False)
         stage('readiness')
         deadline = time.monotonic() + recipe['readinessSeconds']
         for resource in recipe['waitFor']:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise RuntimeError('controller rollout readiness deadline exceeded')
-            run.run(kube + ['rollout', 'status', resource, '--timeout=' + str(remaining) + 's'], 'rollout-' + resource.replace('/', '-') + '.log', timeout=remaining)
+            run.run(kube + ['rollout', 'status', resource, '--timeout=' + str(remaining) + 's'], 'rollout-' + resource.replace('/', '-') + '.log', timeout=remaining, read_output=False)
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -498,14 +513,17 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         if recipe.get('dashboardCheck'):
             acceptance.check_dashboard(config, out / 'dashboard')
         commands('accept')
-        run.run(helm + ['get', 'values', recipe['release'], '-o', 'json'], 'post-values.json')
+        run.run(helm + ['get', 'values', recipe['release'], '-o', 'json'], 'post-values.json', read_output=False)
         stage('complete')
         state['ready'] = True
         dump(out / 'state.json', state)
-        print('READY: ' + str(out))
+        print('DEPLOY COMPLETE elapsed=%.1fs' % (time.monotonic() - started), flush=True)
+        print('READY: ' + str(out), flush=True)
     except BaseException as error:
         state.update(error=str(error), ready=False, disposition='STOP; retain evidence, fix and deploy a reviewed roll-forward; no automatic retry/restore/rollback')
         dump(out / 'failure.json', state)
+        print('DEPLOY STOP phase=%s elapsed=%.1fs type=%s evidence=%s' %
+              (state['stage'], time.monotonic() - started, type(error).__name__, out), flush=True)
         if observed_cluster:
             collectors = [(helm + ['history', recipe['release'], '-o', 'json'], 'failure-history.json'),
                           (kube + ['get', 'pods,deployments,daemonsets', '-o', 'json'], 'failure-resources.json')]
@@ -514,7 +532,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
                     collectors.append((kube + ['logs', 'deployment/' + recipe['release'] + '-' + component, '--all-containers', '--tail=100', '--timestamps', *(['--previous'] if previous else [])], 'failure-' + component + ('-previous' if previous else '') + '.log'))
             for argv, name in collectors:
                 try:
-                    run.run(argv, name, timeout=20)
+                    run.run(argv, name, timeout=20, read_output=False)
                 except BaseException:
                     pass
         raise
@@ -545,11 +563,11 @@ def main():
             with tempfile.TemporaryDirectory(prefix='chill-deploy-plan-') as temporary:
                 directory = Path(temporary)
                 tar = directory / 'source.tar'
-                subprocess.run(['git', 'archive', '--format=tar', '--output=' + str(tar), recipe['source']], cwd=ROOT, check=True)
+                subprocess.run(['git', '-c', 'core.attributesFile=/dev/null', 'archive', '--format=tar', '--output=' + str(tar), recipe['source']], cwd=ROOT, env=dict(os.environ, GIT_ATTR_NOSYSTEM='1'), check=True)
                 src = directory / 'source'
                 src.mkdir()
                 subprocess.run(['tar', '-xf', tar, '-C', src], check=True)
-                planned = images.plan(recipe, recipe['source'], src, Path('/PLAN'))
+                planned = plan_images(recipe, src, Path('/PLAN'))
                 projection = None
                 if recipe.get('inspectionCells'):
                     if not recipe.get('inspectionRequests') or not recipe.get('baselineDirectory'):
@@ -565,7 +583,8 @@ def main():
         deploy(recipe, args.evidence.expanduser().resolve(), args.inspect, args.chart_diff_approved, args.staged_diff_approved)
         return 0
     except (Exception, KeyboardInterrupt) as error:
-        print('STOP: ' + str(error), file=sys.stderr)
+        message = type(error).__name__ if isinstance(error, (subprocess.TimeoutExpired, subprocess.CalledProcessError)) else str(error)
+        print('STOP: ' + message, file=sys.stderr)
         return 1
 
 

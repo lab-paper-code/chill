@@ -167,8 +167,8 @@ Base source-chart approval does not approve staged configuration changes;
 dynamic probe output is validated by the built-in path, not an arbitrary
 override.
 
-`images` is an explicit selection, never automatic change detection. The
-source role catalog has all 16 roles:
+`images` explicitly selects roles to deploy; selected roles may reuse unchanged
+image inputs as described below. The source role catalog has all 16 roles:
 `server`, `profiler`, `dashboard`, `node-agent`, `operator`, `query`,
 `metric-observer`, `workload-observer`, `load-generator`, `evaluation-harness`,
 `firstfloor`, `firstfloor-cuda`, `firstfloor-l4t-r32`, `firstfloor-l4t-r35`,
@@ -183,6 +183,62 @@ Prebuilt receipts must carry matching `sourceSHA` and role provenance:
 `platformReceipts`. Execution verifies registry manifests/platform configs and
 OCI source revision before using digest-pinned images; it does not rebuild
 prebuilt inputs. Credentials do not belong in recipes, argv, or build args.
+
+To build only changed inputs, set recipe
+`"reusePublication": "/absolute/private/prior-deployment/publication.json"`.
+This is the existing publication evidence, not a new cache database. Missing
+roles build normally; omit the field to rebuild the selection. Explicit
+`prebuilt` entries retain their same-source contract and take precedence.
+The planner reads each role's original OCI revision from platform receipts
+and uses Git diff against the requested source for its Dockerfile, local
+COPY/ADD inputs, and Dockerignore files. Effective arguments, platforms and
+the pinned harness power source must also match. Unknown/dynamic input forms
+or unavailable Git commits rebuild conservatively with a visible reason.
+Configured custom preflight commands also disable inferred reuse: they can
+modify archived inputs before a build. Tracked `.gitattributes` in either
+revision, or repository-local `info/attributes`, conservatively rebuild
+because archive export transforms can change effective input bytes. Archive
+commands ignore global/system attributes without changing external Git
+configuration; Git comparisons explicitly disable textconv.
+Dockerignore exclusions are not optimized: a broad `COPY internal/` watches
+all of `internal/`, even packages not linked into that image. This does not
+detect updates to floating external base images/packages; omit reuse when
+intentionally refreshing those.
+
+Dry-run lists `action` (`build`, `reuse`, `prebuilt`), `reason`, and
+`inputPaths` without network access; reuse is an offline candidate at this
+point. Inspect rechecks candidate registry digests/platforms/OCI revisions,
+and execute repeats the same checks before publication. `image-plan.json`
+freezes the decisions and prior receipts. Publication `sourceSHA` identifies
+the deployment source; each role's `sourceSHA` identifies its actual image
+source, which can remain older. Reused images keep their original digest and
+labels; runtime probes and declaration activation are **not** skipped.
+Use a previous record that actually contains the roles being considered;
+the runner never scans unrelated evidence directories or invents a latest tag.
+
+Inspect and execute automatically print a CLI watch stream: phase BEGIN/DONE
+with phase/total elapsed time, image decisions, command start/exit, and
+five-second heartbeats during silent waits. Human `.log`/`.txt` output is
+teed live with command/channel labels; large JSON/YAML captures stay on disk.
+Coverage attempts show pending/ready and remaining readiness time. Final
+COMPLETE/STOP includes elapsed time and evidence location; READY is still a
+separate machine-readable line. This works without a TTY or ANSI redraw and
+does not print command argv/environment. All original stdout/stderr evidence
+and command timings remain available. Ctrl-C in the executing CLI interrupts
+that deployment and cleans up its current local process group; it is not
+equivalent to Ctrl-C in a separate `tail -F` log viewer.
+
+Large backup responses are scoped to the deployment, not hidden by increasing
+limits. CRD backup fetches the complete live schemas for names declared in this
+release's captured manifest/hooks, rather than every CRD on the cluster;
+removed-CRD `keep` checks are unchanged. In-flight loss guards still read every
+CHILL root and owned Job across **all namespaces**, with full raw responses.
+Their command evidence and nested evidence paths now share one file via
+hardlinks, and file-returning commands avoid a redundant `read_bytes` buffer.
+This reduces local copies/disk writes; it does **not** reduce the Jobs/CR wire
+payload or truncate measured evidence. Full profiles needed for numeric
+before/after comparison remain full, while authentication uses its bounded
+summary request.
 
 Authenticated API checks and operational readiness are deployment gates;
 profile IDs/counts, numeric batch values, usable coverage and measurement

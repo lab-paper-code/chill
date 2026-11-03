@@ -34,7 +34,7 @@ class Registry:
         for platform in spec["platforms"]:
             os_name, architecture = (config_platform or platform).split("/")
             config = encoded({"os": os_name, "architecture": architecture,
-                              "config": {"Labels": {images.REVISION_LABEL: revision}}})
+                              "config": {"Labels": {images.REVISION_LABEL: revision} if revision is not None else {}}})
             config_digest = digest(config)
             self.documents["blobs/" + config_digest] = config
             manifest = encoded({"schemaVersion": 2, "config": {"digest": config_digest}, "layers": []})
@@ -93,6 +93,8 @@ class ImageTests(unittest.TestCase):
         self.assertEqual(set(entry["platforms"]), set(images.MULTI))
         self.assertEqual(len(entry["platformDigests"]), 2)
         self.assertEqual(entry["platformReceipts"][1]["variant"], "v8")
+        self.assertEqual(entry["sourceSHA"], SHA)
+        self.assertEqual(entry["action"], "build")
         self.assertTrue(entry["image"].endswith("@" + registry.digest))
         argv = registry.calls[0][0]
         self.assertIn("registry.insecure=true", argv[argv.index("--output") + 1])
@@ -114,7 +116,8 @@ class ImageTests(unittest.TestCase):
 
     def test_registry_rejects_wrong_digest_revision_and_platform(self):
         spec = self.plan()[0]
-        for kwargs in ({"revision": "b" * 40}, {"config_platform": "linux/arm64"}, {"advertised": "linux/arm64"}):
+        for kwargs in ({"revision": "b" * 40}, {"revision": None}, {"revision": ""},
+                       {"config_platform": "linux/arm64"}, {"advertised": "linux/arm64"}):
             with self.subTest(kwargs=kwargs):
                 registry = Registry(spec, **kwargs)
                 with self.assertRaises(ValueError):
@@ -145,6 +148,7 @@ class ImageTests(unittest.TestCase):
         spec = self.plan(["firstfloor-cuda"])[0]
         registry = Registry(spec)
         entry = images.verify(spec, SHA, registry.digest, registry)
+        del entry["sourceSHA"]  # Existing explicit prebuilt evidence remains valid.
         receipt = self.out / "prebuilt.json"
         receipt.write_text(json.dumps({"sourceSHA": SHA, "roles": {"firstfloor-cuda": entry}}))
         plans = self.plan([{"role": "firstfloor-cuda", "prebuilt": str(receipt)}])
@@ -152,8 +156,68 @@ class ImageTests(unittest.TestCase):
         registry.calls.clear()
         publication = images.build(plans, SHA, SOURCE, self.out, registry)
         self.assertEqual(publication["runtimeBuilds"], 0)
-        self.assertEqual(publication["roles"]["firstfloor-cuda"], entry)
+        self.assertEqual(publication["roles"]["firstfloor-cuda"], dict(entry, sourceSHA=SHA, action="prebuilt"))
         self.assertTrue(registry.calls)
+        self.assertTrue(all(argv[0] == "curl" for argv, _, _ in registry.calls))
+
+    def test_reuse_reverifies_old_origins_without_docker_or_power_archive(self):
+        for role in ("node-agent", "firstfloor", "evaluation-harness"):
+            with self.subTest(role=role):
+                spec = self.plan([role])[0]
+                registry = Registry(spec)
+                previous = images.verify(spec, SHA, registry.digest, registry)
+                del previous["sourceSHA"]  # Existing publications predate per-role origins.
+                frozen = images.receipt_entry(previous, role, SHA, spec)
+                spec.update({"reuse": {"sourceSHA": SHA, "receipt": frozen},
+                             "action": "reuse", "reason": "tracked image inputs unchanged",
+                             "inputPaths": [spec["dockerfile"]]})
+                previous["digest"] = "invalid after freeze"
+                for _ in range(2):
+                    registry.calls.clear()
+                    publication = images.build([spec], "b" * 40, SOURCE, self.out, registry)
+                    entry = publication["roles"][role]
+                    self.assertEqual(publication["sourceSHA"], "b" * 40)
+                    self.assertEqual(publication["runtimeBuilds"], 0)
+                    self.assertEqual(entry["sourceSHA"], SHA)
+                    self.assertEqual(entry["action"], "reuse")
+                    self.assertEqual(entry["reason"], spec["reason"])
+                    self.assertEqual(entry["buildArgs"], spec["buildArgs"])
+                    self.assertEqual(entry["image"], frozen["image"])
+                    self.assertEqual(images.receipt_entry(entry, role, SHA, spec), entry)
+                    self.assertTrue(registry.calls)
+                    self.assertTrue(all(argv[0] == "curl" for argv, _, _ in registry.calls))
+                    if role == "evaluation-harness":
+                        self.assertEqual(entry["buildArgs"]["SOURCE_SHA"], SHA)
+                        self.assertEqual(entry["powerSourceSHA"], images.POWER_SOURCE_SHA)
+
+    def test_reuse_rejects_changed_registry_tag_and_corrupt_receipts(self):
+        spec = self.plan(["node-agent"])[0]
+        registry = Registry(spec)
+        previous = images.verify(spec, SHA, registry.digest, registry)
+        spec["reuse"] = {"sourceSHA": SHA, "receipt": previous}
+        for kwargs in ({"revision": "b" * 40}, {"revision": None},
+                       {"config_platform": "linux/amd64"}, {"advertised": "linux/amd64"}):
+            with self.subTest(kwargs=kwargs):
+                changed = Registry(spec, **kwargs)
+                with self.assertRaises(ValueError):
+                    images.build([spec], "b" * 40, SOURCE, self.out, changed)
+                self.assertTrue(all(argv[0] == "curl" for argv, _, _ in changed.calls))
+        previous["platformDigests"] = ["sha256:" + "0" * 64]
+        registry.calls.clear()
+        with self.assertRaisesRegex(ValueError, "platform digest mismatch"):
+            images.build([spec], "b" * 40, SOURCE, self.out, registry)
+        self.assertTrue(all(argv[0] == "curl" for argv, _, _ in registry.calls))
+
+    def test_reuse_rejects_self_consistent_registry_with_wrong_oci_revision(self):
+        spec = self.plan()[0]
+        registry = Registry(spec, revision="b" * 40)
+        previous = images.verify(spec, "b" * 40, registry.digest, registry)
+        previous["sourceSHA"] = SHA
+        previous["platformReceipts"][0]["revision"] = SHA
+        spec["reuse"] = {"sourceSHA": SHA, "receipt": images.receipt_entry(previous, "server", SHA, spec)}
+        registry.calls.clear()
+        with self.assertRaisesRegex(ValueError, "OCI revision mismatch"):
+            images.build([spec], "c" * 40, SOURCE, self.out, registry)
         self.assertTrue(all(argv[0] == "curl" for argv, _, _ in registry.calls))
 
     def test_prebuilt_wrong_provenance_is_rejected(self):

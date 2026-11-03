@@ -100,25 +100,48 @@ class InflightTests(unittest.TestCase):
 
     def test_check_persists_evidence_before_refusing_and_uses_unique_labels(self):
         kube = ['kubectl', '--kubeconfig', '/private/config', '--context', 'selected', '--namespace', 'chill']
-        objects = [obj('ProfilingRun')]
-        jobs = [job('ForeignController', {'active': 1})]
+        objects = [obj('ProfilingRun'), *[
+            obj('DispatchOccupancyMeasurement', {'phase': phase, 'retainedEvidence': '原始'})
+            for phase in ('Complete', 'Insufficient', 'Failed')]]
+        jobs = [job('ForeignController', {'active': 1}), job('EvaluationStage', {})]
         calls = []
-        def run(argv, name, timeout=120, cwd=None, env=None):
-            calls.append((argv, name))
-            return json.dumps({'items': jobs if argv[len(kube) + 1] == 'jobs' else objects}).encode()
+        def run(argv, name, timeout=120, cwd=None, env=None, read_output=True):
+            self.assertFalse(read_output)
+            payload = json.dumps({'metadata': {'resourceVersion': 'retained'},
+                                  'items': jobs if argv[len(kube) + 1] == 'jobs' else objects},
+                                 ensure_ascii=False, indent=2).encode() + b'\n'
+            path = Path(out) / name
+            path.write_bytes(payload)
+            path.chmod(0o600)
+            calls.append((argv, path, payload))
+            return path
         with tempfile.TemporaryDirectory() as out:
-            with self.assertRaises(RuntimeError):
+            with self.assertRaisesRegex(RuntimeError, 'ADR 0019'):
                 inflight.check(kube, run, out, 'before-cutover')
-            evidence, = Path(out).iterdir()
+            evidence, = (path for path in Path(out).iterdir() if path.is_dir())
+            self.assertEqual(evidence.stat().st_mode & 0o777, 0o700)
             blocked = json.loads((evidence / 'blockers.json').read_bytes())
-            self.assertEqual([(row['kind'], row['name']) for row in blocked], [('ProfilingRun', 'measurement')])
+            self.assertEqual([(row['kind'], row['namespace'], row['name']) for row in blocked],
+                             [('ProfilingRun', 'other-namespace', 'measurement'),
+                              ('Job', 'other-namespace', 'worker')])
             for path in evidence.iterdir():
                 self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-            objects.clear()
+            for (_, original, payload), filename in zip(calls, ('objects.json', 'jobs.json')):
+                retained = evidence / filename
+                self.assertEqual(original.read_bytes(), payload)
+                self.assertEqual(retained.read_bytes(), payload)
+                self.assertTrue(original.samefile(retained))
+            objects.pop(0)
+            jobs.pop()
             report = inflight.check(kube, run, out, 'before-cutover')
             self.assertEqual(report['blockers'], [])
+            self.assertEqual(report['checked'], {'DispatchOccupancyMeasurement': 3})
             self.assertNotEqual(report['evidenceDirectory'], str(evidence))
-            self.assertEqual(len(list(Path(out).iterdir())), 2)
+            self.assertEqual(sum(path.is_dir() for path in Path(out).iterdir()), 2)
+            self.assertEqual((evidence / 'objects.json').read_bytes(), calls[0][2])
+            expected = [list(kube) + ['get', resource, '--all-namespaces', '-o', 'json']
+                        for resource in (inflight.RESOURCES, 'jobs')] * 2
+            self.assertEqual([argv for argv, _, _ in calls], expected)
 
 
 if __name__ == '__main__':

@@ -109,6 +109,11 @@ def _prebuilt(path, role, sha, spec):
     if not isinstance(receipt, dict) or receipt.get("sourceSHA") != sha:
         raise ValueError("prebuilt sourceSHA mismatch: " + role)
     entry = receipt.get("roles", {}).get(role) if "roles" in receipt else receipt
+    return receipt_entry(entry, role, sha, spec)
+
+
+def receipt_entry(entry, role, sha, spec):
+    """Validate and freeze one role's existing registry publication evidence."""
     if not isinstance(entry, dict):
         raise ValueError("missing prebuilt role: " + role)
     _reference(entry.get("image"), spec["repository"])
@@ -261,18 +266,20 @@ def verify(spec, source_sha, digest, run):
         raise ValueError("registry platform set mismatch: " + role)
     entry = {key: copy.deepcopy(spec[key]) for key in ("dockerfile", "buildArgs", "platforms")}
     entry.update({"image": _reference(spec["image"], spec["repository"]) + "@" + digest, "digest": digest,
+                  "sourceSHA": source_sha,
                   "platformDigests": [r["digest"] for r in receipts], "platformReceipts": receipts,
                   "deploymentMapping": spec["deploymentMapping"]})
     if role == "evaluation-harness":
         entry["powerSourceSHA"] = POWER_SOURCE_SHA
-    if "prebuilt" in spec and set(spec["prebuilt"]["platformDigests"]) != set(entry["platformDigests"]):
-        raise ValueError("prebuilt registry platform digest mismatch: " + role)
+    previous = spec.get("prebuilt") if "prebuilt" in spec else spec.get("reuse", {}).get("receipt")
+    if previous is not None and set(previous["platformDigests"]) != set(entry["platformDigests"]):
+        raise ValueError("previous registry platform digest mismatch: " + role)
     return entry
 
 
 def _power_context(spec, out, run):
     context = Path(out).resolve() / "power-source"
-    raw = run(["git", "-C", spec["sourceRepository"], "archive", "--format=tar", POWER_SOURCE_SHA], "power-source.tar", timeout=120)
+    raw = run(["git", "-c", "core.attributesFile=/dev/null", "-C", spec["sourceRepository"], "archive", "--format=tar", POWER_SOURCE_SHA], "power-source.tar", timeout=120)
     context.mkdir()
     with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
         # Only the power build's Go inputs are needed, not unrelated repository assets.
@@ -286,13 +293,18 @@ def _power_context(spec, out, run):
 
 
 def build(plans, source_sha, source, out, run):
-    """Publish selected builds (or verify prebuilt receipts), never prune caches."""
+    """Publish selected builds or reverify existing receipts, never prune caches."""
     source = Path(source).resolve()
     publication = {"sourceSHA": source_sha, "roles": {}, "runtimeBuilds": 0}
     for spec in plans:
         role = spec["role"]
+        # The publication's execution source does not relabel reused OCI images.
+        revision = source_sha
         if "prebuilt" in spec:
             digest = spec["prebuilt"]["digest"]
+        elif "reuse" in spec:
+            revision = spec["reuse"]["sourceSHA"]
+            digest = spec["reuse"]["receipt"]["digest"]
         else:
             argv = ["docker", "buildx", "build", "--builder", spec["builder"], "--platform", ",".join(spec["platforms"]),
                     "--label", REVISION_LABEL + "=" + source_sha, "--metadata-file", spec["metadataFile"],
@@ -309,7 +321,12 @@ def build(plans, source_sha, source, out, run):
             digest = _digest(json.loads(Path(spec["metadataFile"]).read_text())["containerimage.digest"])
             if role.startswith("firstfloor"):
                 publication["runtimeBuilds"] += 1
-        publication["roles"][role] = verify(spec, source_sha, digest, run)
+        entry = verify(spec, revision, digest, run)
+        entry["action"] = "prebuilt" if "prebuilt" in spec else ("reuse" if "reuse" in spec else "build")
+        for key in ("reason", "inputPaths"):
+            if key in spec:
+                entry[key] = copy.deepcopy(spec[key])
+        publication["roles"][role] = entry
         # Keep successful receipts even when a subsequent image fails.
         (Path(out) / "publication.json").write_text(json.dumps(publication, indent=2) + "\n")
     (Path(out) / "overlay.json").write_text(json.dumps(overlay(publication), indent=2) + "\n")

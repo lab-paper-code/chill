@@ -22,7 +22,7 @@ def publication_fixture():
     roles = {}
     for index, (role, platform) in enumerate(runtime.RUNTIME_IMAGES.values()):
         entry = roles.setdefault(role, {"image": "registry.test:5000/chill/chill-" + role + ":source@sha256:" + "f" * 64,
-                                        "platformReceipts": [], "platformDigests": []})
+                                        "sourceSHA": SHA, "platformReceipts": [], "platformDigests": []})
         child = "sha256:" + str(index + 1) * 64
         entry["platformReceipts"].append({"platform": platform, "digest": child, "revision": SHA})
         entry["platformDigests"].append(child)
@@ -76,6 +76,31 @@ class RuntimeStageTests(unittest.TestCase):
         self.out = Path(self.temp.name)
         self.publication = publication_fixture()
         self.kube = ["/usr/bin/kubectl", "--kubeconfig", "/tmp/explicit config", "--context", "fixture-context", "-n", "fixture-namespace"]
+
+    def test_mixed_role_origins_probe_the_same_exact_platform_digests(self):
+        expected = {}
+        for index, (role, entry) in enumerate(self.publication["roles"].items()):
+            entry["sourceSHA"] = format(index + 1, "040x")
+            for receipt in entry["platformReceipts"]:
+                receipt["revision"] = entry["sourceSHA"]
+        self.publication["sourceSHA"] = "b" * 40
+        for variable, (role, platform) in runtime.RUNTIME_IMAGES.items():
+            entry = self.publication["roles"][role]
+            receipt = next(r for r in entry["platformReceipts"] if r["platform"] == platform)
+            expected[variable] = entry["image"].split("@", 1)[0].rsplit(":", 1)[0] + "@" + receipt["digest"]
+        raw = inspection_fixture(self.publication)
+        probes = []
+
+        def run(argv, name, timeout=120, env=None):
+            if "nodes" in argv:
+                return json.dumps(nodes_fixture()).encode()
+            probes.append(argv)
+            self.assertEqual({key: env[key] for key in expected}, expected)
+            return raw
+
+        result = runtime.stage(self.publication, SOURCE, self.out, self.kube, run)
+        self.assertEqual(len(probes), 1)
+        self.assertEqual(result.read_bytes(), raw)
 
 
     def test_rejects_foreign_output_image_without_freezing_values(self):
@@ -137,10 +162,17 @@ class RuntimeStageTests(unittest.TestCase):
         self.assertEqual(len(observed), 1)
 
     def test_requires_all_six_roles_and_correct_receipt_revision(self):
-        for broken in ("missing", "revision"):
+        for broken in ("missing", "revision", "missing-source", "invalid-source", "empty-source"):
             publication = copy.deepcopy(self.publication)
             if broken == "missing":
                 del publication["roles"]["firstfloor-rknn"]
+            elif broken == "missing-source":
+                del publication["roles"]["firstfloor"]["sourceSHA"]
+            elif broken == "invalid-source":
+                publication["roles"]["firstfloor"]["sourceSHA"] = "not-a-commit"
+            elif broken == "empty-source":
+                publication["roles"]["firstfloor"]["sourceSHA"] = None
+                publication["roles"]["firstfloor"]["platformReceipts"][0]["revision"] = None
             else:
                 publication["roles"]["firstfloor"]["platformReceipts"][0]["revision"] = "b" * 40
             with self.subTest(broken=broken), self.assertRaises(ValueError):
