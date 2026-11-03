@@ -320,6 +320,8 @@ func TestSchedulerTickCanceledAfterDecisionCannotCommitHistoryOrLaunchOldONTarge
 }
 
 func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
+	const fixedOnlyName = "fixed-only"
+	const fixedPendingName = "fixed-pending"
 	controller := schedulerEmptyPoolController(t)
 	ctx := context.Background()
 	_, base, _, _ := observerSourceFixture()
@@ -335,8 +337,8 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 	if err := controller.store.client.Update(ctx, class); err != nil {
 		t.Fatal(err)
 	}
-	fixedOnly := &edge.DeviceClass{ObjectMeta: meta.ObjectMeta{Name: "fixed-only"}, Spec: edge.DeviceClassSpec{
-		NodeSelector: map[string]string{"hardware": "fixed-only"}, Architecture: "amd64",
+	fixedOnly := &edge.DeviceClass{ObjectMeta: meta.ObjectMeta{Name: fixedOnlyName}, Spec: edge.DeviceClassSpec{
+		NodeSelector: map[string]string{"hardware": fixedOnlyName}, Architecture: "amd64",
 		PowerModes: []edge.PowerMode{{Name: "fixed", Actuator: edge.PowerModeActuator{Kind: edge.PowerModeActuatorFixed}}}}}
 	if err := controller.store.client.Create(ctx, fixedOnly); err != nil {
 		t.Fatal(err)
@@ -349,15 +351,16 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 		measurement bool
 		gpus        []string
 	}{
-		base.Name:      {},
-		"bare":         {},
-		"garbled":      {},
-		"reserved-out": {reasons: []string{serving.NodePlacementInventoryMissing}},
-		"unpowered":    {reasons: []string{serving.NodePowerModeUnavailable}},
-		"fixed-only":   {reasons: []string{serving.NodePowerModeUnavailable}},
-		"measured":     {measurement: true},
-		"gpu":          {gpus: []string{"GPU-a"}},
-		"gpu-over":     {reasons: []string{serving.NodePlacementInventoryMissing}, gpus: []string{"GPU-b", "GPU-c"}},
+		base.Name:        {},
+		"bare":           {},
+		"garbled":        {},
+		"reserved-out":   {reasons: []string{serving.NodePlacementInventoryMissing}},
+		"unpowered":      {reasons: []string{serving.NodePowerModeUnavailable, serving.NodePowerModeObservationUnavailable}},
+		fixedOnlyName:    {reasons: []string{serving.NodePowerModeUnavailable, serving.NodePowerTransitionUnavailable}},
+		fixedPendingName: {reasons: []string{serving.NodePowerModeUnavailable, serving.NodePowerModeObservationUnavailable}},
+		"measured":       {measurement: true},
+		"gpu":            {gpus: []string{"GPU-a"}},
+		"gpu-over":       {reasons: []string{serving.NodePlacementInventoryMissing}, gpus: []string{"GPU-b", "GPU-c"}},
 	}
 	// GPU inventory is the GPUs the Node's own profiles were measured on.
 	measuredOn := func(id, nodeUID, gpu string) serving.Profile {
@@ -367,7 +370,7 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 		measuredOn("a", "gpu-uid", "GPU-a"), measuredOn("a2", "gpu-uid", "GPU-a"), measuredOn("cpu", "gpu-uid", ""),
 		measuredOn("b", "gpu-over-uid", "GPU-c"), measuredOn("c", "gpu-over-uid", "GPU-b"),
 	})
-	for _, name := range []string{"control-plane", "bare", "garbled", "reserved-out", "unpowered", "fixed-only", "measured", "gpu", "gpu-over"} {
+	for _, name := range []string{"control-plane", "bare", "garbled", "reserved-out", "unpowered", fixedOnlyName, fixedPendingName, "measured", "gpu", "gpu-over"} {
 		node := base.DeepCopy()
 		node.Name, node.UID = name, types.UID(name+"-uid")
 		switch name {
@@ -379,8 +382,11 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 			node.Annotations[chillmeta.OnlineCPUs] = "0-"
 		case "unpowered":
 			node.Labels["hardware"] = "none"
-		case "fixed-only":
-			node.Labels["hardware"] = "fixed-only"
+		case fixedOnlyName, fixedPendingName:
+			node.Labels["hardware"] = fixedOnlyName
+			if name == fixedPendingName {
+				node.Labels[chillmeta.PowerModeState] = chillmeta.PowerModePending
+			}
 		case "measured":
 			node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Effect: core.TaintEffectNoSchedule}}
 		case "gpu", "gpu-over":
@@ -401,6 +407,10 @@ func TestSchedulerCaptureClassifiesEntirePool(t *testing.T) {
 		expected, ok := want[node.Node.Name]
 		if !ok || !node.Ready || !slices.Equal(node.Reasons, expected.reasons) || node.Measurement != expected.measurement || !slices.Equal(node.GPUUUIDs, expected.gpus) {
 			t.Fatalf("%s: ready=%v reasons=%v measurement=%v gpus=%v", node.Node.Name, node.Ready, node.Reasons, node.Measurement, node.GPUUUIDs)
+		}
+		if node.Node.Name == fixedOnlyName && node.PowerMode != fixedOnly.Spec.PowerModes[0].Name ||
+			node.Node.Name == fixedPendingName && node.PowerMode != "" {
+			t.Fatalf("fixed-mode observation changed: %+v", node)
 		}
 	}
 	if d, ok := controller.powerTargets["gpu-uid/eco"]; !ok || d != 30*time.Second || len(controller.powerTargets) != 7 {

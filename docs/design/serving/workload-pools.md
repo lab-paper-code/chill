@@ -41,9 +41,24 @@ serving Pod는 nodeName을 써 kube-scheduler 검사를 우회하므로 capture�
 | PlacementInventoryMissing | 측정 GPU>allocatable 또는 GPU 예약이 inventory 밖 / 배치만 제외, 전력·에너지는 유지. online CPU 부재는 해당하지 않음 |
 | PlacementBudgetUnavailable | 외부 Pod GPU 소유 불명 또는 memory 산술 overflow / 해당 Node만 배치 제외 |
 | PowerModeUnavailable | 현재 모드 불명, 요청 가능 모드 없음(DeviceClass 비고정+actuation policy), 또는 lowest가 요청 불가 / 현재 유지 |
+| PowerModeObservationUnavailable | `PowerModeUnavailable`의 추가 세부 사유: `readBackMode` 결과가 빈 값. fixed 장치도 pending·클래스 모호/부재 등으로 현재 모드 불명일 수 있음 |
+| PowerTransitionUnavailable | `PowerModeUnavailable`의 추가 세부 사유: 현재 모드는 확인됐으나 요청 가능한 target/policy가 없거나 lowest target을 요청할 근거가 없음. fixed-only 장치의 정상적인 전환 비적용도 포함하며 모드 관측 실패가 아님 |
 | InstanceUnavailable | native/profile 조회 불가 / 해당 Node 배치·내림·전력 제외, 다른 Node 계획 계속 |
 
 외부 요청은 NonServing 예산, Ready는 Kubernetes NodeReady다. 외부 Pod Node도 가용 전력 집계에 포함한다.
+기존 `PowerModeUnavailable`은 두 경우 모두 유지하므로 scheduler의 배치·전력 선택 조건은
+변경하지 않는다. 새 코드는 사유를 추가할 뿐이며 비용 판정의 `MissingOperationCost`와도 별개다.
+`GET /api/v1/scheduler/state`의 `snapshot.nodes[].reasons`(및 같은 Node를 투영하는 live/pools 응답)에
+나타나고 새 쿼리 파라미터는 없다. 예: 관측 실패는
+`["PowerModeUnavailable","PowerModeObservationUnavailable"]`, 관측된 fixed 전환 비적용은
+`["PowerModeUnavailable","PowerTransitionUnavailable"]`다.
+Query(`cmd/chill-query`, `internal/queryapi`)에는 기존 코드의 직접 소비자가 없다.
+Dashboard의 `labels.ts`, `live-display.ts`, `features/resources.tsx`는 기존 코드를 문장/준비 표시로
+사용하므로 기존 동작은 유지되고, 세부 구분을 원하면 새 코드를 우선 표시해야 한다.
+과거 관측/fixture 사유는 다시 쓰지 않는다. evaluation `d2/bind_before.py`는 기존의
+같은 관측 모드 예외를 `PowerTransitionUnavailable`에도 적용하므로 fixed-layout 자격 판단도
+유지한다. `PowerModeObservationUnavailable`은 이 예외에 포함하지 않는다.
+
 lowest는 unloaded `NodeBaseline`(State empty)의 최소 Watts, 동률 이름순이다. DeviceClass.powerModes에는 순서/전력이 없다.
 Controls.Power가 켜지면 keep 포함 모든 DAG는 판단 시점 가용 Node를 시각0부터 lowest에 둔 공통 상태로 계산한다. 현재 모드와 다르면 첫 power를 `Action.Fixed=true`로 넣고 공통 시간/에너지는 비교에서 소거한다. target 없으면 keep Fixed만 실행하며 빈 Node 내림 비용 측정은 불필요하다. 빈 Node 공통 절전은 다른 Node route와 독립이나 사용할 Node는 Fixed→power→prepare 순서/실제 Ready·소유권·policy ACK·기존 요청 인계 후 분배한다. 소비·전환 결과는 전체 실측에 포함한다.
 재편입은 lowest→profile mode의 빈 BeforeState power 비용+동일 mode prepare 비용을 비교한다. 재부팅 장비 jetsono도 측정 POOL serving-operation으로 측정하고 annotation 적용/독립 read-back+settlingDurationSeconds(E1 60s) 전체를 잰다. jetsonx 적용≈1.5s도63.5s 창 Accepted이며 settling 에너지를 포함한다. 비용 없으면 `MissingOperationCost`다.

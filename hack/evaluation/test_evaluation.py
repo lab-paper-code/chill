@@ -35,6 +35,24 @@ class AdapterTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.environment_dir.cleanup()
+    def test_fixed_layout_retains_observed_mode_transition_exception(self):
+        ref={'name':'node','uid':'node-uid'}
+        instance=dict(id='instance',node=ref,allocation={'memoryBytes':10},
+                      maxBatch=1,capacity=1,weight=1,maxWaitNanos=0)
+        profile=dict(id='profile',condition=dict(nodeUID='node-uid',powerMode='fixed',
+            runtimeFamily='firstfloor',runtimeImage='runtime@sha256:test',backend='cpu',
+            firstfloor=dict(maxBatchSize=1,maxQueueSize=1,deadlinePolicy='edf'),logicalModel='model'),
+            batches=[dict(batch=1,durationNanos=[1],memoryBytes=1,energyPerInputJoules=0)],
+            evidence=['measured'],runtimeMetadata=dict(runtime='cpu',initializedBatches=[1],synthetic=False))
+        node=dict(node=ref,ready=True,powerMode='fixed',memoryBytes=10,
+                  reserved={'memoryBytes':0},reasons=['PowerModeUnavailable','PowerTransitionUnavailable'])
+        self.assertEqual(self.bind.eligibility(instance,profile,node,None,{'servingMemoryBytes':0},1),[])
+        node['powerMode']='unknown'
+        self.assertIn('NodeReason:PowerTransitionUnavailable',
+                      self.bind.eligibility(instance,profile,node,None,{'servingMemoryBytes':0},1))
+        node.update(powerMode='fixed',reasons=['PowerModeUnavailable','PowerModeObservationUnavailable'])
+        self.assertIn('NodeReason:PowerModeObservationUnavailable',
+                      self.bind.eligibility(instance,profile,node,None,{'servingMemoryBytes':0},1))
     def test_producer_raw_closed_minutes_and_timebox(self):
         import io
         import email.message

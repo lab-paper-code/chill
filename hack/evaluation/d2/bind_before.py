@@ -120,7 +120,7 @@ def eligibility(instance, profile, node, kube, settings, batch):
         # Preserve it in binding provenance; do not claim current autonomy works.
         if reason == 'ExcludedNode' and node['node']['name'] in NAMES:
             continue
-        if reason != 'PowerModeUnavailable' or condition['powerMode'] != node['powerMode']:
+        if reason not in ('PowerModeUnavailable', 'PowerTransitionUnavailable') or condition['powerMode'] != node['powerMode']:
             reasons.append('NodeReason:' + reason)
     if condition['runtimeFamily'] != 'firstfloor' or condition['backend'] != runtime['runtime']:
         reasons.append('NativeRuntimeMismatch')

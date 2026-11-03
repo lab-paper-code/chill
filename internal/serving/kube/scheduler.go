@@ -630,6 +630,11 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		targets := nodePowerTargets(n, classes.Items, config.PowerPolicies)
 		if _, ok := targets[lowest]; sn.PowerMode == "" || len(targets) == 0 || lowest != "" && lowest != sn.PowerMode && !ok {
 			sn.Reasons = append(sn.Reasons, serving.NodePowerModeUnavailable)
+			if sn.PowerMode == "" {
+				sn.Reasons = append(sn.Reasons, serving.NodePowerModeObservationUnavailable)
+			} else {
+				sn.Reasons = append(sn.Reasons, serving.NodePowerTransitionUnavailable)
+			}
 		}
 		for mode, maxDuration := range targets {
 			power[sn.Node.UID+"/"+mode] = maxDuration
