@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"time"
@@ -77,6 +78,31 @@ type ExperimentSource struct {
 
 type ExperimentList struct {
 	Items []ExperimentSummary `json:"items"`
+	Page  *ProfilePage        `json:"page,omitempty"`
+}
+
+// pageExperiments preserves whole-list callers unless paging is explicit.
+func pageExperiments(list ExperimentList, values url.Values) (ExperimentList, error) {
+	for key := range values {
+		if key != profileLimitQuery && key != profileOffsetQuery {
+			return ExperimentList{}, &serving.Error{Code: "InvalidQuery", Message: "unknown experiment query"}
+		}
+	}
+	limit, offset, err := parseProfileQuery(values)
+	if err != nil {
+		return ExperimentList{}, err
+	}
+	if !values.Has(profileLimitQuery) && !values.Has(profileOffsetQuery) {
+		return list, nil
+	}
+	start := min(offset, len(list.Items))
+	end := min(start+limit, len(list.Items))
+	list.Page = &ProfilePage{Offset: offset, Limit: limit, Total: len(list.Items)}
+	if end < len(list.Items) {
+		list.Page.NextOffset = &end
+	}
+	list.Items = list.Items[start:end]
+	return list, nil
 }
 
 // ValidExperimentID permits only one unescaped, non-traversing object-key element.
@@ -152,7 +178,14 @@ func (h *Handler) experiments(w http.ResponseWriter, r *http.Request) {
 	var value any
 	var err error
 	if id == "" && h.config.ListExperiments != nil {
-		value, err = h.config.ListExperiments(r.Context())
+		var list ExperimentList
+		// Validate before the immutable store is read.
+		if _, err = pageExperiments(ExperimentList{}, r.URL.Query()); err == nil {
+			list, err = h.config.ListExperiments(r.Context())
+			if err == nil {
+				value, err = pageExperiments(list, r.URL.Query())
+			}
+		}
 	} else if id != "" && h.config.GetExperiment != nil {
 		value, err = h.config.GetExperiment(r.Context(), id)
 	} else {
