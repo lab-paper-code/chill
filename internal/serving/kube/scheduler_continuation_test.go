@@ -51,7 +51,9 @@ func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
 			c.state.Snapshot = snapshot
 			armed.Store(true)
 			c.mu.Lock()
-			c.launchRunningParentsLocked(c.config, true)
+			c.continueTransitionsLocked(c.config.Settings, true, func(target serving.SchedulerCandidate) {
+				c.launchTargetLocked(target, c.config)
+			})
 			c.mu.Unlock()
 			if scenario == "late-ack" {
 				select {

@@ -13,7 +13,7 @@ import (
 // annotateHistory sets each captured instance's UnroutedSince and HeldUntil
 // from the controller's records and drops records of instances that left.
 // A restart starts the records again, so an instance waits one more window.
-func (c *SchedulerController) annotateHistory(s *serving.SchedulerSnapshot, window time.Duration) {
+func (c *reservationState) annotateHistory(s *serving.SchedulerSnapshot, window time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.unrouted == nil {
@@ -73,7 +73,7 @@ func (c *SchedulerController) annotateHistory(s *serving.SchedulerSnapshot, wind
 
 // markOverloadPrepares records the slots a decision prepares while keep is in
 // Overload; once Ready they are held for one observation window.
-func (c *SchedulerController) markOverloadPrepares(decision serving.SchedulerDecision) {
+func (c *reservationState) markOverloadPrepares(decision serving.SchedulerDecision) {
 	if decision.Target == nil || decision.Keep.Status != serving.SchedulerStatusOverload {
 		return
 	}
@@ -88,11 +88,11 @@ func (c *SchedulerController) markOverloadPrepares(decision serving.SchedulerDec
 }
 
 // reconcileSnapshot preserves each owner's frozen DAG and reservation independently.
-func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapshot, now time.Time, observationWindow time.Duration) (serving.SchedulerSnapshot, []servingstate.OperationResult) {
+func (c *reservationState) reconcileSnapshot(snapshot serving.SchedulerSnapshot, now time.Time, observationWindow time.Duration, configuration func() serving.SchedulerSettings, runtime *serving.Runtime) (serving.SchedulerSnapshot, []servingstate.OperationResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var lost []servingstate.OperationResult
-	settings := c.config.Settings
+	settings := configuration()
 	gap := !c.replacementObservedAt.IsZero() && (now.Before(c.replacementObservedAt) || now.Sub(c.replacementObservedAt) > settings.MaxObservationAge+settings.ControlInterval)
 	if gap {
 		c.replacements = nil
@@ -106,7 +106,7 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 		})
 	})
 	c.freezePreparingExecutorsLocked(snapshot)
-	lost = c.reconcileOwnersLocked(snapshot, now, gap)
+	lost = c.reconcileOwnersLocked(snapshot, now, gap, runtime)
 	cutoff := now.Add(-observationWindow)
 	c.retireRunsLocked(cutoff)
 	snapshot.Actions = c.actionsLocked(now)
@@ -115,7 +115,7 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 	return snapshot, lost
 }
 
-func (c *SchedulerController) freezePreparingExecutorsLocked(snapshot serving.SchedulerSnapshot) {
+func (c *reservationState) freezePreparingExecutorsLocked(snapshot serving.SchedulerSnapshot) {
 	// API-confirmed RestartPolicyNever Pod identity permits one late container
 	// binding even after failure. Slot/name discovery is not creation evidence.
 	for _, run := range c.runs {
@@ -151,7 +151,7 @@ func (c *SchedulerController) freezePreparingExecutorsLocked(snapshot serving.Sc
 	}
 }
 
-func (c *SchedulerController) reconcileOwnersLocked(snapshot serving.SchedulerSnapshot, now time.Time, gap bool) []servingstate.OperationResult {
+func (c *reservationState) reconcileOwnersLocked(snapshot serving.SchedulerSnapshot, now time.Time, gap bool, runtime *serving.Runtime) []servingstate.OperationResult {
 	var lost []servingstate.OperationResult
 	for _, parent := range c.runs {
 		if parent.action.Kind != transitionRunKind || parent.result == nil {
@@ -166,7 +166,7 @@ func (c *SchedulerController) reconcileOwnersLocked(snapshot serving.SchedulerSn
 			continue
 		}
 		target := parent.result.Operation.Target
-		failedEffects, failed := c.failTargetLocked(snapshot, target, now)
+		failedEffects, failed := c.failTargetLocked(snapshot, target, now, runtime)
 		lost = append(lost, failedEffects...)
 		if failed {
 			parent.action.Status = servingstate.NativeOperationFailed
@@ -197,7 +197,7 @@ func (c *SchedulerController) reconcileOwnersLocked(snapshot serving.SchedulerSn
 }
 
 // failTargetLocked checks only this owner's DAG; terminal receipts beat stale plans.
-func (c *SchedulerController) failTargetLocked(snapshot serving.SchedulerSnapshot, goal *serving.SchedulerCandidate, now time.Time) ([]servingstate.OperationResult, bool) {
+func (c *reservationState) failTargetLocked(snapshot serving.SchedulerSnapshot, goal *serving.SchedulerCandidate, now time.Time, runtime *serving.Runtime) ([]servingstate.OperationResult, bool) {
 	var lost []servingstate.OperationResult
 	failed := false
 	for _, desired := range goal.Actions {
@@ -209,7 +209,7 @@ func (c *SchedulerController) failTargetLocked(snapshot serving.SchedulerSnapsho
 			continue
 		}
 		// Fixed lowering is undone by the goal's own raise of the same Node.
-		if desired.RouteTarget == nil && !desired.Fixed && run.result.Status == servingstate.NativeOperationComplete && !c.actionEffectPresent(snapshot, run) && !c.actionEffectUnknown(snapshot, run) {
+		if desired.RouteTarget == nil && !desired.Fixed && run.result.Status == servingstate.NativeOperationComplete && !c.actionEffectPresent(snapshot, run, runtime) && !c.actionEffectUnknown(snapshot, run, runtime) {
 			result := *run.result
 			result.Status, result.Error, result.EndedAt = servingstate.NativeOperationFailed, "completed effect lost", now
 			run.result, run.action.Status, run.action.Reason = &result, servingstate.NativeOperationFailed, result.Error

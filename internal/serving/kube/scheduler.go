@@ -81,27 +81,21 @@ type SchedulerController struct {
 	observer   *Observer
 	operations *servingops.Operations
 	// measurement acts only on measurement POOL Nodes: operation measurements and hand-back.
-	measurement           *servingops.Operations
-	observationLog        *observation.ObservationLog
-	capacity              *serving.CapacityTable
-	config                SchedulerControllerConfig
-	bootstrapStartedAt    time.Time
-	tempo                 serving.SchedulerTempo
-	replacements          []serving.SchedulerReplacement
-	replacementObservedAt time.Time
-	ctx                   context.Context
-	cancel                context.CancelFunc
-	wg                    sync.WaitGroup
-	completions           chan struct{}
+	measurement        *servingops.Operations
+	observationLog     *observation.ObservationLog
+	capacity           *serving.CapacityTable
+	config             SchedulerControllerConfig
+	bootstrapStartedAt time.Time
+	tempo              serving.SchedulerTempo
+	ctx                context.Context
+	cancel             context.CancelFunc
+	wg                 sync.WaitGroup
+	completions        chan struct{}
 	// powerTargets holds, by "<Node UID>/<mode>", the maximum actuation
 	// duration of each mode the last capture found requestable.
 	powerTargets map[string]time.Duration
 	// measureStep measures one step of an operation-cost measurement.
 	measureStep func(context.Context, SchedulerControllerConfig, servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error)
-	// unrouted holds when each captured instance last lost every route weight.
-	// overloaded holds the slots prepared while keep was in Overload: zero
-	// until the instance is Ready, then the end of its hold.
-	unrouted, overloaded map[string]time.Time
 }
 
 // NewSchedulerController configures control without taking ownership of routing.
@@ -211,10 +205,7 @@ func validateSchedulerConfiguration(config SchedulerControllerConfig) error {
 func (c *SchedulerController) State() SchedulerControllerState {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	result := c.state
-	result.Actions = c.actionsLocked(time.Now())
-	result.Snapshot.Reservations = c.reservationsLocked()
-	result.Results = append([]servingstate.OperationResult(nil), c.state.Results...)
+	result := c.stateViewLocked()
 	result.CostIssues = c.config.CostIssues
 	return result
 }
@@ -224,7 +215,7 @@ func (c *SchedulerController) Close() { c.cancel(); c.capacity.Wait(); c.wg.Wait
 // Capacity returns the capacity rows the autonomous Workloads need.
 func (c *SchedulerController) Capacity() []serving.CapacityRow { return c.capacity.Rows() }
 
-func (c *SchedulerController) actionsLocked(now time.Time) []serving.Action {
+func (c *reservationState) actionsLocked(now time.Time) []serving.Action {
 	result := make([]serving.Action, 0, len(c.runs))
 	for _, r := range c.runs {
 		if r.action.Kind == transitionRunKind || r.action.Kind == measurementLeaseKind || r.action.Kind == workloadDeletionKind {
@@ -276,9 +267,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 		c.mu.Unlock()
 		return serving.SchedulerDecision{}, err
 	}
-	c.state.Snapshot = snapshot
-	c.state.Decision = decision
-	c.markOverloadPrepares(decision)
+	c.publishDecisionLocked(&snapshot, &decision)
 	c.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return serving.SchedulerDecision{}, err
@@ -318,7 +307,7 @@ func (c *SchedulerController) captureReconciled(ctx context.Context, now time.Ti
 			return snapshot, fmt.Errorf("continuation observation unavailable: %s", strings.Join(reasons, ", "))
 		}
 	}
-	snapshot, lost := c.reconcileSnapshot(snapshot, snapshot.At, config.Settings.ObservationWindow)
+	snapshot, lost := c.reconcileSnapshot(snapshot, snapshot.At, config.Settings.ObservationWindow, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 	for _, result := range lost {
 		if config.OnAction != nil {
 			if err := config.OnAction(result); err != nil {
