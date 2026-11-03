@@ -3,13 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"math"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/queryapi"

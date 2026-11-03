@@ -3,12 +3,13 @@ package kube
 import (
 	"context"
 	"errors"
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"

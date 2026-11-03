@@ -1,8 +1,9 @@
 package state
 
 import (
-	serving "github.com/lab-paper-code/chill/internal/serving"
 	slices "slices"
+
+	serving "github.com/lab-paper-code/chill/internal/serving"
 )
 
 func PositiveWorkloadScope(target serving.SchedulerCandidate, allowed []string) []string {

@@ -2,11 +2,12 @@ package kube
 
 import (
 	"context"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"

@@ -1,10 +1,11 @@
 package state
 
 import (
+	reflect "reflect"
+
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	core "k8s.io/api/core/v1"
-	reflect "reflect"
 )
 
 // NodeClass returns the one DeviceClass of the Node, or nil when none or

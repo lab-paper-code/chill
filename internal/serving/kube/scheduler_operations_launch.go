@@ -8,9 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"slices"
 	"time"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"

@@ -3,10 +3,11 @@ package kube
 import (
 	"context"
 	"fmt"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"slices"
 	"testing"
 	"time"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	"github.com/lab-paper-code/chill/internal/serving"
 )

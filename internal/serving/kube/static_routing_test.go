@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"maps"
 	"testing"
 	"time"
+
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"

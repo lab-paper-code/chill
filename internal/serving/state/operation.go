@@ -1,13 +1,14 @@
 package state
 
 import (
+	"slices"
+	"time"
+
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
-	"slices"
-	"time"
 )
 
 const (

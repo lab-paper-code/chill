@@ -2,10 +2,11 @@ package kube
 
 import (
 	"context"
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"testing"
 	"time"
+
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"

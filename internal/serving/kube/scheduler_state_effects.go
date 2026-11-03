@@ -1,8 +1,9 @@
 package kube
 
 import (
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"slices"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	"github.com/lab-paper-code/chill/internal/serving"
 )

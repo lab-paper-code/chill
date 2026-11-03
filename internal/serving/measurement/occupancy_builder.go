@@ -5,11 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"math"
 	"slices"
 	"strings"
 	"time"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"

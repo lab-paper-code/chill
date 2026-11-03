@@ -9,7 +9,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"net/http"
 	"net/url"
@@ -18,6 +17,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	"k8s.io/client-go/rest"
 )

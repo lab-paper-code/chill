@@ -3,12 +3,13 @@ package kube
 import (
 	"context"
 	"encoding/json"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"math"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"

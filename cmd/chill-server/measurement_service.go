@@ -1,8 +1,9 @@
 package main
 
 import (
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"net/http"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	"github.com/lab-paper-code/chill/internal/serving/application"
 

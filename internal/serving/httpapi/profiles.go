@@ -2,12 +2,13 @@ package httpapi
 
 import (
 	"cmp"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"

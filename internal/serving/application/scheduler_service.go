@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"math"
 	"net/http"
@@ -16,6 +14,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	"github.com/lab-paper-code/chill/internal/serving/measurement"
 

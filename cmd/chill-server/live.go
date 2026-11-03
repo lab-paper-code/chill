@@ -2,11 +2,12 @@ package main
 
 import (
 	"context"
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/serving"

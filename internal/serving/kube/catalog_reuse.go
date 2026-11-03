@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"math"
 	"reflect"
 	"slices"
 	"strings"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"

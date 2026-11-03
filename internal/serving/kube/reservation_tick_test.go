@@ -3,8 +3,6 @@ package kube
 import (
 	"context"
 	"encoding/json"
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +11,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"

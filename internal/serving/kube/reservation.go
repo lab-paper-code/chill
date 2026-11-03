@@ -3,11 +3,12 @@ package kube
 import (
 	"cmp"
 	"context"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"reflect"
 	"slices"
 	"strings"
 	"time"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/serving"

@@ -7,14 +7,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"math"
 	"path"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"

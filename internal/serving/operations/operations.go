@@ -4,6 +4,11 @@ import (
 	context "context"
 	errors "errors"
 	fmt "fmt"
+	reflect "reflect"
+	slices "slices"
+	strings "strings"
+	time "time"
+
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	metricobserver "github.com/lab-paper-code/chill/internal/metricobserver"
@@ -16,10 +21,6 @@ import (
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kubernetes "k8s.io/client-go/kubernetes"
-	reflect "reflect"
-	slices "slices"
-	strings "strings"
-	time "time"
 )
 
 // OperationConfig.Measurement selects measurement operations: they prepare only

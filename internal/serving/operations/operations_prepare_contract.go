@@ -4,6 +4,11 @@ import (
 	json "encoding/json"
 	errors "errors"
 	fmt "fmt"
+	maps "maps"
+	reflect "reflect"
+	slices "slices"
+	strings "strings"
+
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	serving "github.com/lab-paper-code/chill/internal/serving"
@@ -12,10 +17,6 @@ import (
 	resource "k8s.io/apimachinery/pkg/api/resource"
 	intstr "k8s.io/apimachinery/pkg/util/intstr"
 	ptr "k8s.io/utils/ptr"
-	maps "maps"
-	reflect "reflect"
-	slices "slices"
-	strings "strings"
 )
 
 func SamePreparedPod(actual, desired *core.Pod) bool {

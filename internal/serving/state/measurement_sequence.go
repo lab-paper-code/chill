@@ -3,9 +3,10 @@ package state
 import (
 	bytes "bytes"
 	json "encoding/json"
-	serving "github.com/lab-paper-code/chill/internal/serving"
 	slices "slices"
 	strings "strings"
+
+	serving "github.com/lab-paper-code/chill/internal/serving"
 )
 
 // ManualOperation prepares or removes one instance of a Workload outside

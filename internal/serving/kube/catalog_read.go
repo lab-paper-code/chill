@@ -2,9 +2,10 @@ package kube
 
 import (
 	"fmt"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"slices"
 	"time"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/firstfloor"

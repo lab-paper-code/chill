@@ -3,8 +3,9 @@ package kube
 import (
 	"errors"
 	"fmt"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"strings"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"

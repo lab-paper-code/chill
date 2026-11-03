@@ -4,6 +4,10 @@ import (
 	context "context"
 	errors "errors"
 	fmt "fmt"
+	slices "slices"
+	strings "strings"
+	time "time"
+
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -16,9 +20,6 @@ import (
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
 	client "sigs.k8s.io/controller-runtime/pkg/client"
-	slices "slices"
-	strings "strings"
-	time "time"
 )
 
 func (o *Operations) RemoveInstance(ctx context.Context, node serving.NodeReference, id string) error {

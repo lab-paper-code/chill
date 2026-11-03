@@ -6,6 +6,13 @@ import (
 	json "encoding/json"
 	errors "errors"
 	fmt "fmt"
+	math "math"
+	big "math/big"
+	reflect "reflect"
+	slices "slices"
+	strings "strings"
+	time "time"
+
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	evidencestore "github.com/lab-paper-code/chill/internal/evidencestore"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
@@ -13,12 +20,6 @@ import (
 	powerwindow "github.com/lab-paper-code/chill/internal/profiling/powerwindow"
 	serving "github.com/lab-paper-code/chill/internal/serving"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
-	math "math"
-	big "math/big"
-	reflect "reflect"
-	slices "slices"
-	strings "strings"
-	time "time"
 )
 
 // OperationMeasurementPrefix holds every serving-operation measurement record.

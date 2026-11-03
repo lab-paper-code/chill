@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +13,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"

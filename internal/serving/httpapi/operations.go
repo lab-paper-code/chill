@@ -2,9 +2,10 @@ package httpapi
 
 import (
 	"encoding/json"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"net/http"
 	"strings"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"

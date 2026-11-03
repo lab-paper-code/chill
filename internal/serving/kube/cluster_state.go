@@ -2,9 +2,10 @@ package kube
 
 import (
 	"context"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"sync"
 	"time"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	"k8s.io/client-go/kubernetes"

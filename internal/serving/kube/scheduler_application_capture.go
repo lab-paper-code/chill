@@ -2,10 +2,11 @@ package kube
 
 import (
 	"context"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"slices"
 	"strings"
 	"time"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"

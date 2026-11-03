@@ -11,7 +11,6 @@ package kube
 import (
 	"context"
 	"encoding/json"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +20,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"

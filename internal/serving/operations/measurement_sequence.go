@@ -4,6 +4,8 @@ import (
 	context "context"
 	errors "errors"
 	fmt "fmt"
+	time "time"
+
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -11,7 +13,6 @@ import (
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
-	time "time"
 )
 
 // PowerModeStart reads the Node at a measurement window's start and its

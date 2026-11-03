@@ -2,9 +2,10 @@ package main
 
 import (
 	"context"
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	"runtime/debug"
 	"time"
+
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 
 	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
@@ -17,7 +18,8 @@ import (
 )
 
 func newSchedulerService(
-	ctx context.Context, cluster *servingkube.ClusterState, store *servingkube.Store, kube, settingsKube kubernetes.Interface,
+	ctx context.Context, cluster *servingkube.ClusterState, store *servingkube.Store,
+	kube, settingsKube kubernetes.Interface,
 	execution *serving.Runtime, observer *servingkube.Observer, objects *stores3.Store,
 	observationLog *observation.ObservationLog, opts options,
 	gatewayRequestTimeout time.Duration, publisher *livePublisher,
@@ -25,13 +27,14 @@ func newSchedulerService(
 	if opts.schedulerConfigMap == "" {
 		return nil, nil
 	}
-	operations, err := servingops.NewOperations(cluster, store, kube, execution, observer, &sdk.Client{}, servingops.OperationConfig{
-		Namespace:    opts.servingNamespace,
-		PollInterval: opts.sourceInterval,
-		MetricLimits: metricobserver.Limits{
-			MaxResultBytes: opts.maxEvidenceBytes, MemoryBudgetBytes: debug.SetMemoryLimit(-1),
-		},
-	})
+	operations, err := servingops.NewOperations(
+		cluster, store, kube, execution, observer, &sdk.Client{}, servingops.OperationConfig{
+			Namespace:    opts.servingNamespace,
+			PollInterval: opts.sourceInterval,
+			MetricLimits: metricobserver.Limits{
+				MaxResultBytes: opts.maxEvidenceBytes, MemoryBudgetBytes: debug.SetMemoryLimit(-1),
+			},
+		})
 	if err != nil {
 		return nil, err
 	}

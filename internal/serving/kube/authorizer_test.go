@@ -3,8 +3,9 @@ package kube
 import (
 	"context"
 	"errors"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"testing"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"

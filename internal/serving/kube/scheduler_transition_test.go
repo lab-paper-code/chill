@@ -3,8 +3,6 @@ package kube
 import (
 	"context"
 	"encoding/json"
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,6 +12,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"

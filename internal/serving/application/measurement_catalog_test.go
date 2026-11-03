@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"

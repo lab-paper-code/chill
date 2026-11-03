@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
-
 	"slices"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -14,6 +12,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"golang.org/x/sync/errgroup"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"

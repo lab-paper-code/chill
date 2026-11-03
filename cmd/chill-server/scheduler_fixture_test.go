@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
@@ -122,7 +123,8 @@ func schedulerTestDependencies(t *testing.T, config application.SchedulerConfigu
 		Data: map[string]string{"scheduler.json": string(raw), "unrelated": "operator value"},
 	})
 	cluster := servingkube.NewClusterState(store, kube, "serving")
-	observer, err := servingkube.NewObserver(cluster, store, kube, execution, &sdk.Client{}, servingkube.ObserverConfig{Namespace: "serving"})
+	observer, err := servingkube.NewObserver(cluster, store, kube, execution, &sdk.Client{},
+		servingkube.ObserverConfig{Namespace: "serving"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +133,8 @@ func schedulerTestDependencies(t *testing.T, config application.SchedulerConfigu
 			t.Error(err)
 		}
 	})
-	operations, err := servingops.NewOperations(cluster, store, kube, execution, observer, &sdk.Client{}, servingops.OperationConfig{Namespace: "serving", PollInterval: time.Second})
+	operations, err := servingops.NewOperations(cluster, store, kube, execution, observer, &sdk.Client{},
+		servingops.OperationConfig{Namespace: "serving", PollInterval: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +143,8 @@ func schedulerTestDependencies(t *testing.T, config application.SchedulerConfigu
 	if err != nil {
 		t.Fatal(err)
 	}
-	return application.Dependencies{Cluster: cluster, Kube: kube, Store: store, Execution: execution, Observer: observer, Objects: objects,
+	return application.Dependencies{
+		Cluster: cluster, Kube: kube, Store: store, Execution: execution, Observer: observer, Objects: objects,
 		Catalog: catalog, Operations: operations, ObservationLog: observationLog,
 		Options: application.Options{ServingNamespace: "serving", SchedulerConfigMap: "scheduler",
 			SchedulerConfigKey: "scheduler.json",

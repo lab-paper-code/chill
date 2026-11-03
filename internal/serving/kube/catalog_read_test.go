@@ -2,10 +2,11 @@ package kube
 
 import (
 	"encoding/json"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"reflect"
 	"testing"
 	"time"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/serving"

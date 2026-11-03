@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	goruntime "runtime"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"

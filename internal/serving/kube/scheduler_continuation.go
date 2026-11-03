@@ -2,10 +2,11 @@ package kube
 
 import (
 	"context"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"slices"
 	"strings"
 	"time"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 )
 
 // Completions coalesces action outcomes; receiving is not proof of success.

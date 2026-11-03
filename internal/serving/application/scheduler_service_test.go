@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"

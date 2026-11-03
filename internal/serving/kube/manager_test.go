@@ -5,8 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"image"
 	"image/jpeg"
 	"io"
@@ -17,6 +15,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
@@ -37,6 +38,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+const completedWorkloadPhase = "Completed"
 
 // The fake native client does not allocate registration UIDs or generations.
 // Supply only those API-server semantics, not lifecycle/runtime behavior.
@@ -369,7 +372,7 @@ func TestManagerSLOUpdatePreservesAcceptedSnapshot(t *testing.T) {
 	if err != nil || accepted {
 		t.Fatalf("SLO-only update = %v, %v", accepted, err)
 	}
-	if dispatched["first"].Definition.SLO.TargetLatency != time.Second || first.Applied.SLO.TargetLatency != 2*time.Second || first.Operation.Phase != "Completed" || first.Operation.AppliedAt == nil {
+	if dispatched["first"].Definition.SLO.TargetLatency != time.Second || first.Applied.SLO.TargetLatency != 2*time.Second || first.Operation.Phase != completedWorkloadPhase || first.Operation.AppliedAt == nil {
 		t.Fatal("SLO replacement changed the accepted snapshot or was not actually completed")
 	}
 	finish <- struct{}{}
@@ -444,7 +447,7 @@ func TestManagerSharedModelBarrier(t *testing.T) {
 	}
 	for _, name := range []string{"first", "second"} {
 		view, err := m.GetWorkload(ctx, name)
-		if err != nil || view.Applied.Model.Generation != model.Generation || view.Operation.Phase != "Completed" || view.Reason != "MissingEvidence" {
+		if err != nil || view.Applied.Model.Generation != model.Generation || view.Operation.Phase != completedWorkloadPhase || view.Reason != "MissingEvidence" {
 			t.Fatalf("new shared definition %s = %+v, %v", name, view, err)
 		}
 		if view.Operation.ActorUsername != "model-editor" || view.Operation.ActorUID != "model-editor-uid" {
@@ -516,7 +519,7 @@ func TestManagerInterruptedOperationIsTerminalUntilExplicitPut(t *testing.T) {
 		t.Fatal(err)
 	}
 	view, err = restarted.GetWorkload(ctx, "service")
-	if err != nil || view.Operation.Phase != "Completed" || view.Applied.Model.Generation != model.Generation {
+	if err != nil || view.Operation.Phase != completedWorkloadPhase || view.Applied.Model.Generation != model.Generation {
 		t.Fatalf("explicit replacement did not apply: %+v %v", view, err)
 	}
 }
@@ -685,7 +688,7 @@ func TestManagerPreprocessorUpdateBarrier(t *testing.T) {
 		t.Fatal(err)
 	}
 	view, err = m.GetWorkload(ctx, "first")
-	if err != nil || view.Operation.Phase != "Completed" || view.Applied.Preprocessor.Generation != pre.Generation || view.Applied.Model.Paths[0].Preprocessor.Path != "/artifact/changed" {
+	if err != nil || view.Operation.Phase != completedWorkloadPhase || view.Applied.Preprocessor.Generation != pre.Generation || view.Applied.Model.Paths[0].Preprocessor.Path != "/artifact/changed" {
 		t.Fatalf("new preprocessor definition = %+v, %v", view, err)
 	}
 	if dispatched["first"].Definition.Preprocessor.Generation == pre.Generation {
@@ -694,7 +697,7 @@ func TestManagerPreprocessorUpdateBarrier(t *testing.T) {
 	if _, err := m.UpdateDataset(ctx, "data", dataset.ResourceVersion, larger); err != nil {
 		t.Fatalf("dataset update after the new preprocessor applied = %v", err)
 	}
-	if view, err = m.GetWorkload(ctx, "first"); err != nil || view.Operation.Phase != "Completed" || view.Operation.Kind != "PreprocessorUpdate" {
+	if view, err = m.GetWorkload(ctx, "first"); err != nil || view.Operation.Phase != completedWorkloadPhase || view.Operation.Kind != "PreprocessorUpdate" {
 		t.Fatalf("dataset update started an operation: %+v, %v", view.Operation, err)
 	}
 }

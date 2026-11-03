@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"maps"
 	"path"
@@ -17,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/deviceclass"

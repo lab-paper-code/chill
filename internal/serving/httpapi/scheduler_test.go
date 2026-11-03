@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +16,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"

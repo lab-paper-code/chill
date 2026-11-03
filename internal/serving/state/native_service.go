@@ -4,6 +4,8 @@ import (
 	context "context"
 	json "encoding/json"
 	errors "errors"
+	net "net"
+
 	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -12,7 +14,6 @@ import (
 	intstr "k8s.io/apimachinery/pkg/util/intstr"
 	kubernetes "k8s.io/client-go/kubernetes"
 	ptr "k8s.io/utils/ptr"
-	net "net"
 	client "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
