@@ -713,7 +713,11 @@ func (p *schedulerPlanState) retireOld(c SchedulerCandidate, route string) {
 			}
 		}
 		if !exists && p.stops[i.ID] == "" {
-			st := p.add(schedulerActionStop, i.Node, i.ID, "", "", []string{route})
+			var deps []string
+			if schedulerInstanceRouted(p.snap.Routing, i.ID) {
+				deps = []string{route}
+			}
+			st := p.add(schedulerActionStop, i.Node, i.ID, "", "", deps)
 			dr := p.add(schedulerActionDrain, i.Node, i.ID, "", "", []string{st})
 			p.add(schedulerActionRemove, i.Node, i.ID, schedulerState(i), "unloaded", []string{dr})
 		}

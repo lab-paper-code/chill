@@ -136,12 +136,16 @@ func (b *schedulerBridgeCompiler) initialize() (string, string) {
 	}
 	visit(final)
 	for _, a := range b.out.actions {
-		if !b.before[a.ID] || a.Kind != schedulerActionStop {
+		if a.Kind != schedulerActionStop {
+			continue
+		}
+		routed := schedulerInstanceRouted(p.snapshot.Routing, a.Instance)
+		if !b.before[a.ID] && routed {
 			continue
 		}
 		b.retiring[a.Instance] = true
 		source := b.out.instances[a.Instance]
-		if source.Stopped || !schedulerInstanceRouted(p.keep.Routing, a.Instance) {
+		if source.Stopped || !routed {
 			continue
 		}
 		uid := source.WorkloadUID
