@@ -682,6 +682,10 @@ func TestDecisionRecordIncludesSelectedDOMAndDefaultOccupancy(t *testing.T) {
 			if d.Provenance == nil || d.Provenance.Source != source || d.Provenance.Value != expected || int64(d.PerRequest) != expected {
 				t.Fatalf("recorded decision lost selected source/value: %+v", d)
 			}
+			replayed := NewCapacityInput(settings, page[0].Snapshot.DispatchOccupancy, snapshot.Options[0], snapshot.Workloads[0]).DispatchOccupancy
+			if replayed.Provenance.Source != source || replayed.Provenance.Value != expected {
+				t.Fatalf("recorded source was relabeled on replay: %+v", replayed)
+			}
 			if source == occupancySourceDOM && snapshot.DispatchOccupancy[0].Provenance != nil || source == occupancySourceDefault && snapshot.DispatchOccupancy != nil {
 				t.Fatal("decision recording mutated incoming evidence")
 			}
