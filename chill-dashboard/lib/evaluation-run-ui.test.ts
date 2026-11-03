@@ -19,6 +19,7 @@ function renderRun(run:Record<string,unknown>,publication?:Record<string,unknown
   const clock={...React,useState:(initial:unknown)=>React.useState(initial===0?Date.parse("2026-11-03T00:02:30Z"):initial)}
   const query=(path:string)=>queries[path]??{data:path==="v1/evaluations/active"?{items:entries}:path.startsWith("v1/experiments/")?publication:path==="v1/evaluations/load-scenarios"?{items:loads}:run}
   const modules={react:clock,"next/link":{default:"a"},"next/navigation":{useSearchParams:()=>new URLSearchParams("uid=selected"),useRouter:()=>({replace:()=>{}})},"@tanstack/react-query":{useQueryClient:()=>({})},"@/lib/client":{useChillQuery:query},"@/lib/evaluation-request":request,"@/lib/evaluation-author":author,"@/lib/evaluation-active":active,"@/lib/scheduler-settings":settings,"@/lib/labels":labels,"@/lib/scheduler":scheduler,"@/lib/experiments":experiments,"@/lib/experiment-comparison":comparison,"@/lib/measurements":measurements,"@/components/screen":{Screen:({children}:{children:React.ReactNode})=>React.createElement("main",null,children)},"@/components/read-region":{QueryGate:"div",SourceJSON:"pre"},"@/components/ui/button":{Button:"button"},"@/components/ui/tooltip":{TooltipProvider:"div",Tooltip:"div",TooltipTrigger:"span",TooltipContent:"aside"},"@/features/evaluation-active":{EvaluationActiveDetails:()=>null}}
+  Object.assign(modules,{"@/features/experiments-conclusion":load("../features/experiments-conclusion.tsx",{"@/lib/client":{},"@/lib/experiments":experiments,"@/lib/experiment-comparison":comparison,"@/lib/measurements":measurements})})
   const {EvaluationRunPage}=load("../features/evaluation-request.tsx",modules)
   return renderToStaticMarkup(React.createElement(EvaluationRunPage as React.ComponentType<{name:string}>,{name:"arbitrary-run"}))
 }
@@ -261,4 +262,48 @@ test("additional recorded stage condition types preserve their state reason and 
   assert.match(text(html),/StageCleanupComplete.*미완료.*ChildCleanupFailure/)
   assert.match(text(html),/FutureCondition.*미확인.*FutureReason/)
   for(const condition of conditions)assert.ok(html.includes(`dateTime="${condition.lastTransitionTime}"`))
+})
+
+test("active request projection renders provisional counts, server reachability and generator quality without a verdict",()=>{
+  const provisionalD1={asOf:"2026-11-03T00:02:30Z",closedThrough:"2026-11-03T00:02:00Z",provisional:true,workloads:{camera:{offered:20,deadlineSuccess:8,requiredSuccessfulRank:19,outcomes:{completed:9,timeout:2,error:1,"unfinished-or-no-final":8},unfinishedOrUnsent:11,slo:{percentile:95,targetLatencyNanos:125000000},reachable:false,substages:[{id:"gentle",offered:20,deadlineSuccess:8,requiredSuccessfulRank:19}]}},generatorQuality:{camera:{issued:12,unissued:8,issuanceFraction:0.6,status:"PARTIAL",generatorQuality:{status:"OBSERVED",thresholdLabel:"EXCEEDS_REPORTED_THRESHOLD",policy:{latenessToleranceNS:5000000},exceeding:2,denominator:12}}}}
+  const run={...baseRun,phase:"Running",finishedAt:undefined,stages:[{id:"trial",finishedAt:null,provisionalD1}]}
+  const html=renderRun(run),screen=text(html)
+  assert.match(screen,/실행 중 · 잠정/)
+  assert.match(screen,/asOf.*집계 마감/)
+  assert.match(screen,/성공 \/ 필요.*현재 요청/)
+  assert.match(screen,/8 \/ 19.*20/)
+  assert.match(screen,/결과 대기·미발행 포함 11/)
+  assert.match(screen,/도달 불가/)
+  assert.match(screen,/부분 발행/)
+  assert.match(screen,/gentle.*8 \/ 19/)
+  assert.match(screen,/허용 지연 초과/)
+  const table=html.match(/<table[^>]*aria-label="서비스별 결과"[\s\S]*?<\/table>/)?.[0]??""
+  assert.match(text(table),/진행 중/)
+  assert.doesNotMatch(table,/FAIL|PASS|통과|실패/)
+  assert.equal([...table.matchAll(/width:([\d.]+)%/g)].reduce((total,match)=>total+Number(match[1]),0),100,"overlapping pending aggregate must not double-count outcome segments")
+  const reachable=structuredClone(run)
+  reachable.stages[0].provisionalD1.workloads.camera.reachable=true
+  assert.match(text(renderRun(reachable)),/도달 가능/)
+})
+
+test("provisional projection is omitted when absent or inactive, and query failure stays explicit",()=>{
+  const running={...baseRun,phase:"Running",finishedAt:undefined}
+  for(const run of [running,{...running,stages:[{id:"trial",provisionalD1:null}]},{...running,stages:[{id:"other",provisionalD1:{workloads:{camera:{offered:1}}}}]}]) {
+    assert.doesNotMatch(renderRun(run),/실행 중 · 잠정|서비스별 결과/)
+  }
+  const html=renderRun(running,undefined,[scenario],[],{"v1/evaluations/arbitrary-run":{error:{status:500}}})
+  assert.match(text(html),/조회 실패/)
+  assert.doesNotMatch(html,/서비스별 결과/)
+})
+
+test("partial provisional records keep unreported values missing rather than making zero or a verdict",()=>{
+  const projection={asOf:"2026-11-03T00:02:30Z",closedThrough:"2026-11-03T00:02:00Z",provisional:true,workloads:{camera:{offered:0,substages:[]}},generatorQuality:{}}
+  const run={...baseRun,phase:"Running",finishedAt:undefined,stages:[{id:"trial",provisionalD1:projection}]}
+  const html=renderRun(run)
+  const table=html.match(/<table[^>]*aria-label="서비스별 결과"[\s\S]*?<\/table>/)?.[0]??""
+  assert.match(text(table),/미기록 \/ 미기록/)
+  assert.match(text(table),/결과 대기·미발행 포함 미기록/)
+  assert.doesNotMatch(table,/도달 가능|도달 불가|width:/)
+  assert.doesNotMatch(renderRun({...run,finishedAt:baseRun.finishedAt}),/실행 중 · 잠정/)
+  assert.doesNotMatch(renderRun({...run,phase:"Done"}),/실행 중 · 잠정/)
 })

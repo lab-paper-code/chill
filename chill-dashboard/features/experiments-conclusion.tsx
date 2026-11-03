@@ -86,27 +86,34 @@ function ExperimentEnergy({stage}:{stage:ExperimentStage}) {
   </section>
 }
 
-export function ExperimentStageResults({run,stage,service="",onSelect}:{run:Experiment;stage:ExperimentStage;service?:string;onSelect?:(service:string)=>void}) {
-  const results=experimentServiceResults(stage,run).filter(({row})=>!service||row.name===service)
+type StageResultsProps = {run:Experiment;stage:ExperimentStage;provisional?:never}|{provisional:Published;run?:never;stage?:never}
+export function ExperimentStageResults({run,stage,provisional,service="",onSelect}:StageResultsProps&{service?:string;onSelect?:(service:string)=>void}) {
+  const results=(provisional?experimentRows({kpis:{requests:provisional.workloads}}).map(row=>({
+    row,verdict:undefined,declaredSLO:null,appliedSLO:null,success:row.original.deadlineSuccess,offered:row.original.offered,
+    fraction:ratio(undefined,row.original.deadlineSuccess,row.original.offered),p95:null,p50:null,
+    outcomes:object(row.original.outcomes),
+    fidelity:object(object(provisional.generatorQuality)[row.name]),
+  })):experimentServiceResults(stage,run)).filter(({row})=>!service||row.name===service)
   const parts=[...new Set(results.flatMap(({row})=>row.substages?.flatMap(part=>typeof part.id==="string"?[part.id]:[])??[]))]
   const outcomes=[["completed","완료","bg-ok"],["timeout","시간 초과","bg-heat"],["error","오류","bg-destructive"],["unfinished-or-no-final","미완료","bg-muted-foreground"]] as const
-  const sloText=(slo:typeof results[number]["declaredSLO"])=>slo?`p${slo.percentile} · ${resultNumber(Number(slo.targetLatencyNanos)/1e6,"ms")} ms`:"미기록"
+  const sloText=(slo:unknown)=>{const value=object(slo);return Object.keys(value).length?`p${resultNumber(value.percentile)} · ${resultNumber(finite(value.targetLatencyNanos)===null?null:Number(value.targetLatencyNanos)/1e6,"ms")} ms`:"미기록"}
   return <div className="min-w-0 space-y-4">
+    {provisional&&<header className="space-y-1"><h2 className="font-semibold">실행 중 · 잠정</h2><p className="text-sm tabular-nums">asOf {resultTime(provisional.asOf)} · 집계 마감 {resultTime(provisional.closedThrough)} (KST)</p><p className="text-xs text-muted-foreground">현재 요청은 집계 마감까지의 예정 도착입니다. 결과 대기·미발행 포함은 진행 중 요청을 포함하며 이후 성공으로 바뀔 수 있습니다. 요청 배출 전에는 판정하지 않습니다.</p></header>}
     <div className="overflow-x-auto">
       <table aria-label="서비스별 결과" className="w-full text-left text-sm tabular-nums">
-        <thead><tr>{["서비스","D1 판정","선언 SLO","성공 / 요청","완료 지연 p95 / p50 (ms)","발행 요청 결과","부하 발행률"].map(label=><th scope="col" key={label} className="whitespace-nowrap p-2 font-medium">{label}</th>)}</tr></thead>
+        <thead><tr>{["서비스","D1 판정",provisional?"적용 SLO":"선언 SLO",provisional?"성공 / 필요":"성공 / 요청",provisional?"현재 요청 · 도달 상태":"완료 지연 p95 / p50 (ms)",provisional?"요청 결과":"발행 요청 결과","부하 발행률"].map(label=><th scope="col" key={label} className="whitespace-nowrap p-2 font-medium">{label}</th>)}</tr></thead>
         <tbody>{results.map(({row,verdict,declaredSLO,appliedSLO,success,offered,fraction,p95,p50,outcomes:counts,fidelity})=>{
-          const total=finite(fidelity.issued)??finite(row.original.clientRows)
+          const total=provisional?finite(offered):finite(fidelity.issued)??finite(row.original.clientRows)
           return <tr key={row.source} className="border-t align-top">
             <th scope="row" className="max-w-52 break-words p-2 font-medium">{onSelect?<button className="min-h-11 max-w-52 whitespace-normal break-words text-left underline focus-visible:outline-2 focus-visible:outline-primary" onClick={()=>onSelect(row.name)}>{row.name} 결과 자세히</button>:row.name}</th>
-            <td className={`whitespace-nowrap p-2 font-medium ${verdict==="FAIL"?"text-destructive":""}`}>{resultWord(verdict)}</td>
-            <td className="whitespace-nowrap p-2">{sloText(declaredSLO)}<span className="block text-xs text-muted-foreground">{appliedSLO?`적용 확인: ${sloText(appliedSLO)}`:"적용 미확인"}</span></td>
-            <td className="min-w-32 whitespace-nowrap p-2"><span>{resultNumber(success)} / {resultNumber(offered)}</span><div className="text-xs text-muted-foreground">{resultPercent(fraction)}</div></td>
-            <td className="whitespace-nowrap p-2">{resultNumber(p95,"ms")} / {resultNumber(p50,"ms")}<span className="block text-xs text-muted-foreground">p95 표본 {resultNumber(row.metrics.find(metric=>metric.key.endsWith(".p95"))?.denominator)}</span></td>
+            <td className={`whitespace-nowrap p-2 font-medium ${!provisional&&verdict==="FAIL"?"text-destructive":""}`}>{provisional?"진행 중":resultWord(verdict)}</td>
+            <td className="whitespace-nowrap p-2">{provisional?sloText(row.original.slo):<>{declaredSLO?sloText(declaredSLO):"미기록"}<span className="block text-xs text-muted-foreground">{appliedSLO?`적용 확인: ${sloText(appliedSLO)}`:"적용 미확인"}</span></>}</td>
+            <td className="min-w-32 whitespace-nowrap p-2"><span>{resultNumber(success)} / {resultNumber(provisional?row.original.requiredSuccessfulRank:offered)}</span><div className="text-xs text-muted-foreground">{resultPercent(fraction)}</div></td>
+            <td className="whitespace-nowrap p-2">{provisional?<>{resultNumber(offered)}<span className={`block text-xs ${row.original.reachable===false?"text-destructive":"text-muted-foreground"}`}>{row.original.reachable===true?"도달 가능":row.original.reachable===false?"도달 불가":"미기록"}</span></>:<>{resultNumber(p95,"ms")} / {resultNumber(p50,"ms")}<span className="block text-xs text-muted-foreground">p95 표본 {resultNumber(row.metrics.find(metric=>metric.key.endsWith(".p95"))?.denominator)}</span></>}</td>
             <td className="min-w-64 p-2">
               <div aria-hidden="true" className="mb-1 flex h-3 overflow-hidden rounded-sm bg-muted">{outcomes.map(([key,,color])=>{const count=finite(counts[key]);return count!==null&&total!==null&&total>0?<span key={key} className={color} style={{width:`${count/total*100}%`}}/>:null})}</div>
               <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">{outcomes.map(([key,label,color])=><span key={key} className="whitespace-nowrap"><i aria-hidden="true" className={`mr-1 inline-block size-2 ${color}`}/>{label} {resultNumber(counts[key])}</span>)}</div>
-              <div className="mt-1 text-xs text-muted-foreground">미발행 {resultNumber(fidelity.unissued)}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{provisional?<>결과 대기·미발행 포함 {resultNumber(row.original.unfinishedOrUnsent)}<span className="block">위 결과 분류와 겹치는 집계 · 미발행 {resultNumber(fidelity.unissued)}</span></>:<>미발행 {resultNumber(fidelity.unissued)}</>}</div>
             </td>
             <td className="whitespace-nowrap p-2">{resultPercent(finite(fidelity.issuanceFraction))}<span className="block text-xs text-muted-foreground">{resultWord(fidelity.status)}</span></td>
           </tr>
@@ -117,11 +124,11 @@ export function ExperimentStageResults({run,stage,service="",onSelect}:{run:Expe
       <h3 className="text-sm font-semibold">구간별 성공률</h3>
       {parts.length?<div className="overflow-x-auto"><table aria-label="구간별 성공률" className="w-full text-left text-sm tabular-nums">
         <thead><tr><th scope="col" className="p-2 font-medium">서비스</th>{parts.map(id=><th scope="col" className="min-w-36 p-2 font-medium" key={id}>{id}</th>)}</tr></thead>
-        <tbody>{results.map(({row})=><tr key={row.source} className="border-t"><th scope="row" className="max-w-52 break-words p-2 font-normal">{row.name}</th>{parts.map(id=>{const part=row.substages?.find(part=>part.id===id);return <td key={id} className="p-2"><ResultFraction value={ratio(undefined,part?.deadlineSuccess,part?.offered)}/><span className="text-xs text-muted-foreground">{resultNumber(part?.deadlineSuccess)} / {resultNumber(part?.offered)}</span></td>})}</tr>)}</tbody>
+        <tbody>{results.map(({row})=><tr key={row.source} className="border-t"><th scope="row" className="max-w-52 break-words p-2 font-normal">{row.name}</th>{parts.map(id=>{const part=row.substages?.find(part=>part.id===id);return <td key={id} className="p-2"><ResultFraction value={ratio(undefined,part?.deadlineSuccess,part?.offered)}/><span className="text-xs text-muted-foreground">{resultNumber(part?.deadlineSuccess)} / {resultNumber(provisional?part?.requiredSuccessfulRank:part?.offered)}{provisional&&<> · 현재 요청 {resultNumber(part?.offered)}</>}</span></td>})}</tr>)}</tbody>
       </table></div>:<p className="text-sm text-muted-foreground">구간별 실측 미기록</p>}
     </section>
-    <ExperimentEnergy stage={stage}/>
-    {results.some(({fidelity})=>Object.keys(object(fidelity.generatorQuality)).length>0)&&<details className="text-xs"><summary className="min-h-11 cursor-pointer">생성기 발행 품질</summary><table aria-label="발행 지연 품질" className="w-full text-left tabular-nums"><thead><tr>{["서비스","허용 지연 (ms)","초과 / 발행","게시 품질"].map(label=><th scope="col" className="p-2" key={label}>{label}</th>)}</tr></thead><tbody>{results.map(({row,fidelity})=>{const quality=object(fidelity.generatorQuality),tolerance=finite(object(quality.policy).latenessToleranceNS);return <tr key={row.source} className="border-t"><th scope="row" className="break-words p-2 font-normal">{row.name}</th><td className="p-2">{resultNumber(tolerance===null?null:tolerance/1e6)}</td><td className="p-2">{resultNumber(quality.exceeding)} / {resultNumber(quality.denominator)}</td><td className="p-2">{resultWord(quality.thresholdLabel)}</td></tr>})}</tbody></table></details>}
+    {stage&&<ExperimentEnergy stage={stage}/>}
+    {results.some(({fidelity})=>Object.keys(object(fidelity.generatorQuality)).length>0)&&<details className="text-xs"><summary className="min-h-11 cursor-pointer">생성기 발행 품질</summary><table aria-label="발행 지연 품질" className="w-full text-left tabular-nums"><thead><tr>{["서비스","허용 지연 (ms)","초과 / 발행",provisional?"잠정 품질":"게시 품질"].map(label=><th scope="col" className="p-2" key={label}>{label}</th>)}</tr></thead><tbody>{results.map(({row,fidelity})=>{const quality=object(fidelity.generatorQuality),tolerance=finite(object(quality.policy).latenessToleranceNS);return <tr key={row.source} className="border-t"><th scope="row" className="break-words p-2 font-normal">{row.name}</th><td className="p-2">{resultNumber(tolerance===null?null:tolerance/1e6)}</td><td className="p-2">{resultNumber(quality.exceeding)} / {resultNumber(quality.denominator)}</td><td className="p-2">{resultWord(quality.thresholdLabel)}</td></tr>})}</tbody></table></details>}
   </div>
 }
 

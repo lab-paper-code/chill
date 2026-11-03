@@ -7,11 +7,12 @@ import { useQueryClient } from "@tanstack/react-query"
 import { ApiError, useChillMutation, useChillQuery } from "@/lib/client"
 import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import { evaluationActions, evaluationCanSubmit, evaluationOperation, evaluationPreflight, evaluationReleaseBody, evaluationSameSpec, type EvaluationSpec, type EvaluationLiveTarget } from "@/lib/evaluation-request"
-import { decodeExperiment, experimentPath, finite, type Experiment, type OutcomeAxis } from "@/lib/experiments"
+import { decodeExperiment, experimentPath, finite, type Experiment, type OutcomeAxis, type Published } from "@/lib/experiments"
 import { experimentRows } from "@/lib/experiment-comparison"
 import { evaluationReplacement, object, records, type LoadScenario } from "@/lib/evaluation-author"
 import { formatMeasurementTime } from "@/lib/measurements"
 import { EvaluationActiveDetails } from "@/features/evaluation-active"
+import { ExperimentStageResults } from "@/features/experiments-conclusion"
 import type { ActiveEvaluations } from "@/lib/evaluation-active"
 import { settingFields, settingControls, settingTargets } from "@/lib/scheduler-settings"
 import { Button } from "@/components/ui/button"
@@ -23,7 +24,7 @@ import { Screen } from "@/components/screen"
 
 type RunCondition = {type:string;status:string;reason?:string;message?:string;lastTransitionTime?:string}
 type RunProcedure = {step:string;startedAt:string|null;finishedAt:string|null;reason?:string;measurementVerdict?:string}
-type RunStage = {id:string;name:string;uid:string;currentProcedure?:string;conditions:RunCondition[]|null;measurementVerdict?:string;procedures:RunProcedure[]|null;startedAt:string|null;finishedAt:string|null;goAt:string|null}
+type RunStage = {id:string;name:string;uid:string;currentProcedure?:string;conditions:RunCondition[]|null;measurementVerdict?:string;procedures:RunProcedure[]|null;startedAt:string|null;finishedAt:string|null;goAt:string|null;provisionalD1?:Published|null}
 type Run = {name:string;uid:string;spec:EvaluationSpec;liveTarget?:EvaluationLiveTarget[]|null;phase:string;conditions?:RunCondition[];currentStage?:unknown;currentProcedure?:string;procedures?:RunProcedure[]|null;stages?:RunStage[]|null;startedAt?:string;finishedAt?:string;publicationID?:string}
 type Created = {name:string;uid:string}
 const encode=(value:unknown)=>stringifySchedulerJSON(value)
@@ -229,6 +230,7 @@ export function EvaluationRunPage({name}:{name:string}) {
   const verdictLabels:Record<string,string>={FAIL:published?.outcome?.measurement?.reason==="SLOFailed"?"SLO 미충족":"측정 실패",PASS:"SLO 충족",OBSERVED_THRESHOLD_MET:"SLO 충족",NOT_EVALUATED:"미평가"}
   const resultLabel=published?`게시 판정 ${published.status}${verdict?` · ${verdictLabels[verdict]??verdict}`:""}`:run?.publicationID?`결과 ${publication.error?"조회 실패":publication.isPending?"조회 중":"미기록"}`:"결과 미게시"
   const finished=!!run?.finishedAt||run?.phase==="Done"
+  const provisional=finished?undefined:run?.stages?.find(stage=>stage.id===run.currentStage&&!stage.finishedAt)?.provisionalD1
   const elapsed=run?.startedAt&&(run.finishedAt||!finished&&now)?Math.max(0,Math.floor(((run.finishedAt?Date.parse(run.finishedAt):now)-Date.parse(run.startedAt))/1000)):null
   const currentHref=run?runHref(run,new URLSearchParams(params)):""
   React.useEffect(()=>{if(run&&!uid)router.replace(currentHref,{scroll:false})},[run,uid,currentHref,router])
@@ -237,17 +239,19 @@ export function EvaluationRunPage({name}:{name:string}) {
   for(const key of ["name","uid","view"])resultParams.delete(key)
   if(run?.publicationID)resultParams.set("a",run.publicationID)
   return <Screen width="data" title={name} back={["/experiments","실험"]} actionPlacement="header" action={run&&!replaced?<RunActions key={run.uid} run={run} refresh={detail.refetch}/>:undefined}>
+    {detail.error&&detail.error.status!==404&&<p role="status">실행 조회 실패</p>}
     {detail.error?.status===404?<strong role="status">실행 없음</strong>:<QueryGate query={detail}>{run&&(replaced?<div className="space-y-2"><strong role="status">실행 교체됨</strong><Link className="inline-flex min-h-11 items-center underline" href={currentHref}>현재 실행 선택</Link></div>:<>
       <section aria-label="실험 요약" className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className={`text-lg font-semibold ${verdict==="FAIL"?"text-destructive":""}`}>{phases[run.phase]??"미확인"} · {resultLabel}{failedServices.length>0&&` · 실패 서비스 ${failedServices.join(", ")}`}</h2>
-          <div className="flex items-center gap-2">{run.publicationID?<Button variant="outline" asChild><Link href={`/experiments/results?${resultParams}`}>결과 보기</Link></Button>:<span className="text-sm text-muted-foreground">게시 후 결과 제공</span>}<TooltipProvider><Tooltip open={help} onOpenChange={setHelp}><TooltipTrigger asChild><Button variant="ghost" className="min-h-11" onClick={()=>setHelp(value=>!value)}>도움말</Button></TooltipTrigger><TooltipContent className="max-w-sm">등록 질문은 작성자의 설명이며 부하 표가 실제 참조 계획입니다. 실행 단계와 부하 구간은 다릅니다. 조건은 각 항목의 최신 상태로 전체 이력이 아니며 시각은 마지막 변경입니다. 풀 반환 시각으로 확보 시각을 알 수 없습니다. 부하 진행률·남은 시간은 GO 시각 기준 계획값이고 판정·정리 시간은 포함하지 않습니다. 실행 중 offered 기준 D1는 제공되지 않습니다. 결과는 게시 당시 기록입니다. 중지 접수와 풀 반환은 별개이며 결과 미확인 작업은 다시 보내지 않고 조회합니다.</TooltipContent></Tooltip></TooltipProvider></div>
+          <div className="flex items-center gap-2">{run.publicationID?<Button variant="outline" asChild><Link href={`/experiments/results?${resultParams}`}>결과 보기</Link></Button>:<span className="text-sm text-muted-foreground">게시 후 결과 제공</span>}<TooltipProvider><Tooltip open={help} onOpenChange={setHelp}><TooltipTrigger asChild><Button variant="ghost" className="min-h-11" onClick={()=>setHelp(value=>!value)}>도움말</Button></TooltipTrigger><TooltipContent className="max-w-sm">등록 질문은 작성자의 설명이며 부하 표가 실제 참조 계획입니다. 실행 단계와 부하 구간은 다릅니다. 조건은 각 항목의 최신 상태로 전체 이력이 아니며 시각은 마지막 변경입니다. 풀 반환 시각으로 확보 시각을 알 수 없습니다. 부하 진행률·남은 시간은 GO 시각 기준 계획값이고 판정·정리 시간은 포함하지 않습니다. 실행 중 요청 집계는 잠정이며 결과 대기 요청은 이후 성공으로 바뀔 수 있습니다. 최종 판정은 요청 배출 후 게시됩니다. 중지 접수와 풀 반환은 별개이며 결과 미확인 작업은 다시 보내지 않고 조회합니다.</TooltipContent></Tooltip></TooltipProvider></div>
         </div>
         <p className="break-words text-sm"><span className="text-muted-foreground">등록 질문 </span>{definitionNotice??(typeof planSpec?.question==="string"?planSpec.question:"미기록")}</p>
         <p className="flex flex-wrap gap-x-5 gap-y-1 text-sm tabular-nums"><strong>워크로드 {completePlan?`${workloads.length}개`:stagesNotice??loadNotice??"미기록"}</strong><span>실행 단계 {stagesNotice??`${stages.length}개`}</span><span>부하 구간 {completePlan?`${parts.length}개`:stagesNotice??loadNotice??"미기록"}</span><span>부하 계획 {plannedSeconds===null?stagesNotice??loadNotice??"미기록":`${plannedSeconds.toLocaleString("ko-KR")}초`}</span><span>{finished?"전체 실행":"실행 경과"} {elapsed!==null&&Number.isFinite(elapsed)?`${elapsed.toLocaleString("ko-KR")}초`:"미기록"}</span></p>
         {!run.finishedAt&&run.phase!=="Done"&&<EvaluationActiveDetails key={run.uid} active={active} name={name} uid={uid||run.uid} now={now}/>}
         <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">{[["시작 (KST)",run.startedAt],["종료 (KST)",run.finishedAt]].map(([label,value])=><div key={label} className="flex gap-2"><dt>{label}</dt><dd>{value?formatMeasurementTime(value):"미기록"}</dd></div>)}</dl>
       </section>
+      {provisional&&<section aria-label="실행 중 잠정 서비스 결과"><ExperimentStageResults provisional={provisional}/></section>}
       <section aria-label="진행 단계" className="space-y-2">
         <h2 className="font-semibold">진행 단계 <span className="text-xs font-normal text-muted-foreground">{Array.isArray(run.procedures)?"기록된 절차 순서 · 시작·종료 (KST)":"조건별 최신 상태 · 마지막 변경 (KST)"}</span></h2>
         <div className="space-y-3">

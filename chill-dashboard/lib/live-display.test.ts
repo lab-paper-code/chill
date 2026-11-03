@@ -316,6 +316,7 @@ test("operations board keeps service SLO and scoped autonomy visible before devi
   let query=new URLSearchParams(),experiment="활성 없음"
   let archived:LiveState["events"]=[]
   let recordedDecision:Record<string,unknown>|undefined
+  let summaryFixtureResponse:Record<string,unknown>|undefined
   let summaryHasScopes=false,fullSchedulerReads=0
   let summaryRead:"pending"|"ready"|"error"="ready",compactPending=false
   const compile=(path:string,modules:Record<string,unknown>)=>{
@@ -334,7 +335,7 @@ test("operations board keeps service SLO and scoped autonomy visible before devi
   const modules:Record<string,unknown>={
     "next/link":{default:({children,...props}:Record<string,unknown>)=>createElement("a",props,children as string)},
     "next/navigation":{usePathname:()=>"/",useSearchParams:()=>query,useRouter:()=>({push:(url:string)=>{query=new URL(url,"http://local").searchParams},replace:(url:string)=>{query=new URL(url,"http://local").searchParams}})},
-    "@/lib/client":{useSession:()=>({epoch:1,config:{liveFixture:false}}),useChillQuery:(path:string,options?:{enabled?:boolean})=>{if(options?.enabled===false)return {};if(path==="v1/scheduler/state?view=summary")return summaryRead==="pending"?{}:summaryRead==="error"?{error:new Error("summary unavailable")}:{data:{decision:summaryHasScopes?(recordedDecision??{at,workloads:[]}):{at}}};if(path==="v1/scheduler"){fullSchedulerReads++;return {data:!compactPending&&recordedDecision?{state:{decision:recordedDecision}}:undefined}}return path.startsWith("v1/observations/events")?{data:{events:archived}}:path.startsWith("v1/observations/scheduler?")&&recordedDecision?{data:{events:[{at,decision:recordedDecision}]}}:{}}},
+    "@/lib/client":{useSession:()=>({epoch:1,config:{liveFixture:false}}),useChillQuery:(path:string,options?:{enabled?:boolean})=>{if(options?.enabled===false)return {};if(path==="v1/scheduler/state?view=summary")return summaryRead==="pending"?{}:summaryRead==="error"?{error:new Error("summary unavailable")}:{data:summaryFixtureResponse??{decision:summaryHasScopes?(recordedDecision??{at,workloads:[]}):{at}}};if(path==="v1/scheduler"){fullSchedulerReads++;return {data:!compactPending&&recordedDecision?{state:{decision:recordedDecision}}:undefined}}return path.startsWith("v1/observations/events")?{data:{events:archived}}:path.startsWith("v1/observations/scheduler?")&&recordedDecision?{data:{events:[{at,decision:recordedDecision}]}}:{}}},
     "@/lib/use-live":{useLive:()=>({state,status:"fixture",reconnect:()=>{}})},
     "@/lib/live-display":displayHelpers,
     "@/lib/scheduler-history":schedulerHistoryHelpers,
@@ -426,9 +427,13 @@ test("operations board keeps service SLO and scoped autonomy visible before devi
   assert.ok(firstScreen.indexOf('class="live-service-table"')<firstScreen.indexOf('class="live-alerts"'))
   assert.ok(fullSchedulerReads>0,"legacy summary without scopes uses the existing compact read")
   summaryHasScopes=true;fullSchedulerReads=0
+  // scheduler_summary.go wire shape: decision is direct, never state.decision.
+  summaryFixtureResponse=JSON.parse(readFileSync(new URL("./fixtures/scheduler-summary-workloads.json",import.meta.url),"utf8"))
   const summaryOnly=render()
   assert.match(summaryOnly,/data-state="Controlled"/);assert.match(summaryOnly,/data-state="Fixed"/)
   assert.equal(fullSchedulerReads,0,"new summary must not download full scheduler evidence")
+  assert.match(summaryOnly,/MeasurementEvidenceMissing|측정.*근거/)
+  summaryFixtureResponse=undefined
   const withScopes=recordedDecision;recordedDecision={at,workloads:null}
   assert.match(render(),/자율 상태 미기록/);assert.equal(fullSchedulerReads,0,"an explicit null scope is not a legacy response")
   recordedDecision=withScopes;summaryHasScopes=false

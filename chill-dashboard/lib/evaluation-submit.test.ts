@@ -46,6 +46,7 @@ test("manual evaluation replacement re-read unlocks deleted and unchanged drafts
       "@/lib/experiments":experiments,"@/lib/experiment-comparison":comparison,"@/features/evaluation-author":{},"@/features/evaluation-active":{},"@/lib/measurements":measurementHelpers,"@/components/ui/button":{Button},
       "@/components/read-region":{},"@/components/screen":{},"@/components/ui/input":{},"@/components/ui/dialog":{},
       "@/components/ui/tooltip":{},
+      "@/features/experiments-conclusion":{},
       "next/link":{default:({children,href}:{children:React.ReactNode;href:string})=>React.createElement("a",{href},children)},"next/navigation":{},
     }
     const source=readFileSync(new URL("../features/evaluation-request.tsx",import.meta.url),"utf8")
@@ -130,6 +131,7 @@ test("return observation requires matching UID and explicit pool release, not re
     "@/components/ui/button":{Button:container},"@/components/ui/input":{Input:container},
     "@/components/ui/dialog":{Dialog:container,DialogContent:container,DialogHeader:container,DialogTitle:container},
     "@/components/ui/tooltip":{},
+    "@/features/experiments-conclusion":{},
     "@/components/read-region":{},"@/components/screen":{},
   }
   const source=readFileSync(new URL("../features/evaluation-request.tsx",import.meta.url),"utf8")

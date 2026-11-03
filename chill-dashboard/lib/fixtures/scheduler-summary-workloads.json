@@ -1,0 +1,20 @@
+{
+  "at": "2026-11-03T19:48:06.654158545Z",
+  "nodes": [],
+  "instances": [],
+  "routing": {},
+  "decision": {
+    "id": "",
+    "at": "2026-11-03T19:48:06.654158545Z",
+    "status": "Keep",
+    "reasons": ["MeasurementEvidenceMissing"],
+    "targetID": "",
+    "workloads": [
+      {"uid": "3e085c39-161a-4ee0-b716-f25db0aa154f", "state": "Controlled"},
+      {"uid": "5668e113-92c0-4d71-9f79-f67ffe45f340", "state": "Controlled"},
+      {"uid": "5833a580-f4e7-473a-97ad-7129db6834c2", "state": "Fixed", "reason": "MeasurementEvidenceMissing"}
+    ]
+  },
+  "actions": [],
+  "poolReturn": {"reservationCount": 0, "outstandingCount": 0, "activeActionCount": 0, "latestResultEndedAt": "0001-01-01T00:00:00Z"}
+}

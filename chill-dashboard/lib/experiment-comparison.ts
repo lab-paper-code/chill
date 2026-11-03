@@ -4,7 +4,7 @@ import { stringifySchedulerJSON } from "./scheduler.ts"
 import { formatMeasurementNumber } from "./measurements.ts"
 import { settingControls, settingFields, settingTargets } from "./scheduler-settings.ts"
 // Exactly the two publisher shapes. No current registration or live terminal buckets enter these rows.
-export function experimentRows(stage:ExperimentStage):ExperimentRow[] {
+export function experimentRows(stage:Pick<ExperimentStage,"kpis">):ExperimentRow[] {
   const k=stage.kpis
   return (["workloads","requests"] as const).flatMap(shape=>Object.entries(object(k[shape])).map(([name,value])=>{
     const row=object(value),missing=object(row.missingReasons),base=`kpis.${shape}.${name}`
