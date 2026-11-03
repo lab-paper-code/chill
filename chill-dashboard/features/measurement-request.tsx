@@ -15,7 +15,7 @@ import type { InventoryClass, InventoryNode, MeasurementMutation, MeasurementPla
 import { datasetGap, requestNumber, requestBatches, requestDefaults, requestInputs, requestTargetBatches, requestConditionChanges, requestPreflightReason, requestRejectionGuidance, requestCheckCurrent, requestCopySource, requestCopyQuery, requestHref, type RequestRejectionGuidance } from "@/lib/measurement-request"
 import { parseMeasurementJSON } from "@/lib/measurement-summary"
 import { deviceLabel, resolveMeasurementPrefill, serverCompatibility, staticCompatibility, type MeasurementPrefill } from "@/lib/measurement-coverage"
-import { useCoverageInventory, useModelCompatibility, useMeasurementCoverage, useMeasurementPlans } from "@/features/measurement-coverage"
+import { useCoverageInventory, useModelCompatibility, useMeasurementCoverage, useMeasurementPlans } from "@/hooks/use-measurement-data"
 import { MeasurementNavigation } from "@/components/measurement-navigation"
 import { executionPathLabel, measurementRequestName } from "@/lib/measurements"
 import { MeasurementKindSelector } from "@/features/dispatch-occupancy-request"

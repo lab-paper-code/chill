@@ -27,6 +27,8 @@ Scheduler history keeps default/ascending unfiltered reads bounded, including ex
 
 실험 게시 디코딩·타입은 `lib/experiments.ts`, 비교·차트 projection은 `lib/experiment-comparison.ts`, 정밀 scheduler 근거 구간·활동은 `lib/scheduler-history.ts`, 실험 선택 URL·History 변경은 `lib/dashboard-routes.ts`가 소유한다. 호출부는 소유 모듈을 직접 import하며 게시 identity·나노초 경계·null/0·표시 정밀도·URL 매개변수 계약은 그대로 유지한다.
 
+커버리지·inventory·모델 호환성·BEO 전체 페이지·커버리지 상세 프로파일/회차 조회는 `hooks/use-measurement-data.ts`, 공통 URL 필터 UI는 `components/measurement-filters.tsx`가 소유한다. 각 화면은 소유 모듈을 직접 import한다. query key·페이지 전진/취소·권한 오류 처리·UID 비교·summary 정밀 디코딩과 필터 URL 갱신 규칙은 기존 계약을 유지한다.
+
 ### 표시용 읽기 projection
 
 - 서비스 목록은 `GET /api/v1/workloads?view=summary`를 사용한다. `supportedInputs`는 path·artifact·profiles `{id}`만 전송하며 프로파일 수는 `profiles.length`로 계산한다. 원 조건·근거는 무쿼리 목록/단건 조회에 남는다.

@@ -37,7 +37,7 @@ for(const mode of ["old-query","new-query","downgrade-mid-page"] as const)test(`
   const client=load<typeof Client>("./client.tsx",{"@/lib/scheduler":scheduler,"@/lib/measurement-summary":summary},fetch)
   let queryFn:({signal}:{signal:AbortSignal})=>Promise<MeasurementPlanList>=async()=>({items:[]})
   const state={data:undefined,error:null}
-  const feature=load<{useMeasurementPlans:(namespace:string)=>unknown}>("../features/measurement-coverage.tsx",{
+  const feature=load<{useMeasurementPlans:(namespace:string)=>unknown}>("../hooks/use-measurement-data.ts",{
     "@/lib/client":{...client,useSession:()=>({token:"fixture"})},"@/lib/measurement-summary":summary,
     "@tanstack/react-query":{useQuery:(options:{queryFn:typeof queryFn})=>{queryFn=options.queryFn;return state}},
   })

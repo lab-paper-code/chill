@@ -9,7 +9,7 @@ import type { CampaignResult, MeasurementAssessment, MeasurementFailure, Measure
 import { executionPathLabel, formatMeasurementNumber as number, measurementCheckText, measurementReasonSummary, resultRowsCSV, safeMeasurementReturn } from "@/lib/measurements"
 import { assessmentReasons } from "@/lib/measurement-assessment"
 import { requestExecutionStatus, requestFailureFacts, requestHref, requestRunHref, requestUsedResults } from "@/lib/measurement-request"
-import { useMeasurementCoverage, useMeasurementPlans } from "@/features/measurement-coverage"
+import { useMeasurementCoverage, useMeasurementPlans } from "@/hooks/use-measurement-data"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
 import { Facts, Rows } from "@/components/screen"

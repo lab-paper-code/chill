@@ -16,7 +16,7 @@ const require=createRequire(import.meta.url)
 function load<T extends object>(file:string,modules:Record<string,unknown>,suffix="") {
   const exports={} as T
   const source=readFileSync(new URL(file,import.meta.url),"utf8")+suffix
-  new Function("require","exports",transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText)((name:string)=>modules[name]??(name.startsWith("@/")||name.endsWith(".css")?{}:require(name)),exports)
+  new Function("require","exports",transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText)((name:string)=>name==="@/hooks/use-measurement-data"?load("../hooks/use-measurement-data.ts",modules):modules[name]??(name.startsWith("@/")||name.endsWith(".css")?{}:require(name)),exports)
   return exports
 }
 const clientModule=load<typeof import("./client.tsx")>("./client.tsx",{"next/navigation":{},"lucide-react":icons})

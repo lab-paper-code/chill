@@ -48,7 +48,7 @@ function harness(search="namespace=ns&profileID=ns%2Fbeo%2Fbeo-uid&node=node&nod
     "next/navigation":{useSearchParams:()=>params,useRouter:()=>({replace:(url:string)=>replacements.push(url),push:(url:string)=>replacements.push(url)})},"next/link":{default:"a"},
     "lucide-react":{TriangleAlert:"triangle-alert"},
     "@/lib/client":{decodeResponse:(body:string,decoder:(body:string)=>unknown)=>decoder(body),useSession:()=>({config:{namespace:"ns"}}),useChillQuery:(path:string)=>({data:responses[path],isPending:false,isFetching:false,error:null}),useChillMutation:()=>mutations[mutationIndex++]},
-    "@/features/measurement-coverage":{useMeasurementPlans:()=>({data:responses["v1/namespaces/ns/batch-energy-optimizations?view=summary"],isPending:false,isFetching:false,error:null}),useMeasurementCoverage:()=>({data:{cells:[{currentMeasurement:{id:"ns/beo/beo-uid"}}]},isPending:false}),useCoverageInventory:()=>({isPending:false,data:{classes:[{name:"class",nodes:[{name:"node",uid:"node-uid",resourceVersion:"1",ready:"True",schedulingDisabled:false}]}]}})},
+    "@/hooks/use-measurement-data":{useMeasurementPlans:()=>({data:responses["v1/namespaces/ns/batch-energy-optimizations?view=summary"],isPending:false,isFetching:false,error:null}),useMeasurementCoverage:()=>({data:{cells:[{currentMeasurement:{id:"ns/beo/beo-uid"}}]},isPending:false}),useCoverageInventory:()=>({isPending:false,data:{classes:[{name:"class",nodes:[{name:"node",uid:"node-uid",resourceVersion:"1",ready:"True",schedulingDisabled:false}]}]}})},
     "@/lib/dispatch-occupancy":occupancy,"@/lib/measurements":measurements,"@/lib/scheduler":scheduler,"@/lib/measurement-summary":summary,
     "@/components/read-region":{QueryGate:"gate",SourceJSON:"source-json"},"@/components/screen":{Screen:"main",Facts:"facts"},
     "@/components/measurement-navigation":{MeasurementNavigation:"measurement-nav"},"@/components/ui/button":{Button:"button"},"@/components/ui/input":{Input:"input"},
@@ -167,7 +167,7 @@ test("occupancy result polling stops on terminal phases and shows projected valu
   Object.assign(h.modules,{
     "@/lib/client":{useChillQuery:(path:string,options:{poll:(data:unknown)=>boolean})=>{polls.push(options.poll);return {data:path.endsWith("/occ-generated")?projected:{items:[projected]},dataUpdatedAt:Date.parse("2026-11-03T00:02:00Z"),error:null,refetch:()=>{}}}},
     "@/components/status-cell":{StatusCell:"status-cell"},
-    "@/features/measurement-coverage":{MeasurementFilters:"filters"},
+    "@/components/measurement-filters":{MeasurementFilters:"filters"},
     "@/components/data-table":{DataTable:"data-table"},
     "@/components/ui/sheet":{Sheet:"sheet",SheetContent:"sheet-content",SheetHeader:"sheet-header",SheetTitle:"sheet-title",SheetDescription:"sheet-description"},
   })
@@ -193,7 +193,7 @@ test("occupancy result polling stops on terminal phases and shows projected valu
 test("reused profile IDs resolve through server cell lineage, never by treating profileID as a BEO identity",()=>{
   const profileID="ns/beo/beo-uid/reuse-node-other"
   const h=harness(`namespace=ns&profileID=${encodeURIComponent(profileID)}&node=node&nodeUID=node-uid&workloadUID=workload-uid&batch=4`)
-  const coverage=h.modules["@/features/measurement-coverage"] as {useMeasurementCoverage:()=>unknown}
+  const coverage=h.modules["@/hooks/use-measurement-data"] as {useMeasurementCoverage:()=>unknown}
   coverage.useMeasurementCoverage=()=>({data:{cells:[{currentMeasurement:{id:"ns/beo/beo-uid"},variants:[{profileIds:[profileID]}]}]},isPending:false})
   click(h.render(),"검사")
   assert.deepEqual(h.calls[0][0].input.body,{node:"node",batchEnergyOptimization:"beo",workload:"workload",batch:4})
@@ -306,7 +306,7 @@ test("P2 review normal Observed reasons use the estimate, never the absent or st
   const h=harness()
   Object.assign(h.modules,{
     "@/lib/client":{useChillQuery:(_path:string,options:{enabled?:boolean})=>({data:options.enabled===false?undefined:{items:[]},dataUpdatedAt:Date.parse("2026-11-03T00:00:00Z"),error:null,refetch(){}})},
-    "@/features/measurement-coverage":{MeasurementFilters:"filters"},
+    "@/components/measurement-filters":{MeasurementFilters:"filters"},
     "@/components/data-table":{DataTable:"data-table"},
   })
   const feature=load("../features/measurement-projections.tsx",h.modules,["ProjectionResults"])
@@ -417,7 +417,7 @@ test("P2 d resolves only the BEO target in a multi-node class and rejects pinned
   const inventory={useCoverageInventory:()=>({isPending:false,data:{classes:[{name:"class",nodes:[{name:"representative",uid:"representative-uid",ready:"True"},{name:"node",uid:"node-uid",ready:"True",resourceVersion:"1"}]}]}})}
   for(const suffix of ["","&node=representative&nodeUID=representative-uid","&node=node&nodeUID=old-uid","&nodeUID=old-uid"]) {
     const h=harness(`namespace=ns&measurementID=ns%2Fbeo%2Fbeo-uid&workloadUID=workload-uid&batch=4${suffix}`)
-    Object.assign(h.modules["@/features/measurement-coverage"] as object,inventory)
+    Object.assign(h.modules["@/hooks/use-measurement-data"] as object,inventory)
     const tree=h.render(),label=nodes(tree).find(node=>node.type==="label"&&text(node).startsWith("Node"))!
     const select=nodes(label).find(node=>node.type==="select")!
     assert.equal(select.props.value,"node")

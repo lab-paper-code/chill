@@ -11,7 +11,8 @@ import { DataTable } from "@/components/data-table"
 import { Button } from "@/components/ui/button"
 import { StatusCell } from "@/components/status-cell"
 import { MeasurementNavigation, MeasurementStatus } from "@/components/measurement-navigation"
-import { MeasurementFilters, useMeasurementPlans } from "@/features/measurement-coverage"
+import { MeasurementFilters } from "@/components/measurement-filters"
+import { useMeasurementPlans } from "@/hooks/use-measurement-data"
 import { FirstMeasurementError, MeasurementPlanSheet } from "@/features/measurement-plans"
 
 export function MeasurementRequestsPage({name,namespace:routeNamespace}:{name?:string;namespace?:string}={}) {
