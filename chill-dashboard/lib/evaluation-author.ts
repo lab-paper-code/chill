@@ -30,8 +30,21 @@ export function parseSpec(text:string):Spec {
   return parsed as Spec
 }
 export const specJSON=(spec:unknown)=>stringifySchedulerJSON(spec,2)
-export function copyAuthorDraft(source:{name?:string;uid?:string;spec:Spec}):{name:string;spec:Spec} {
-  return {name:"",spec:structuredClone(source.spec)}
+// Copy-only cutover: remove named retired schema fields, never filter extensions.
+export function copyAuthorDraft(source:{name?:string;uid?:string;spec:Spec},kind:"evaluation"|"load"):{name:string;spec:Spec;removedFields:string[]} {
+  const spec=structuredClone(source.spec),removedFields:string[]=[]
+  function remove(node:Spec,keys:string[],prefix="") {
+    for(const key of keys)if(Object.hasOwn(node,key)){delete node[key];removedFields.push(`${prefix}${key}`)}
+  }
+  if(kind==="evaluation") {
+    remove(spec,["control"])
+    records(spec.stages).forEach((stage,index)=>remove(stage,["mode","startState","control"],`stages[${index}].`))
+    records(object(spec.target).components).forEach((component,index)=>remove(component,["image","sourceSHA"],`target.components[${index}].`))
+  } else {
+    remove(spec,["alpha","kappaRef","rateBasisRef","seedRef","payloadManifestRef"])
+    records(spec.parts).forEach((part,index)=>remove(part,["alpha"],`parts[${index}].`))
+  }
+  return {name:"",spec,removedFields}
 }
 export function workloadChanges(spec:Spec,live:unknown):WorkloadChange[] {
   const current=object(live)

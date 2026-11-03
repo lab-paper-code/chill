@@ -228,18 +228,14 @@ test("pool occupancy is observed independently from the cleanup failure phase",(
   }
 })
 
-test("active stop uses the selected UID when active and detail queries disagree",()=>{
+test("active progress preserves selected UID isolation without exposing duplicate stop controls",()=>{
   const runner=hookRunner(),active={name:"run",uid:"new",stageIndex:1,stagesTotal:1}
-  const writes:unknown[]=[]
-  const modules={...primitives,react:runner.react,"@/lib/evaluation-active":activeHelpers,"@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/evaluations/active"?{items:[active]}:{items:[]}}),useChillMutation:()=>({reset:()=>{},mutate:(input:unknown)=>writes.push(input)})}}
+  const modules={...primitives,react:runner.react,"@/lib/evaluation-active":activeHelpers,"@/lib/client":{useChillQuery:()=>({data:{items:[active]}})}}
   const {EvaluationActive}=load("../features/evaluation-active.tsx",modules)
   let tree=elements(runner.render(EvaluationActive,{name:"run",uid:"old",now:0}))
   assert.ok(!tree.some(element=>element.type==="details"),"same-name active replacement must not display under the old selection")
   tree=elements(runner.render(EvaluationActive,{name:"run",uid:"new",now:0}))
-  ;(tree.find(element=>element.type==="button"&&element.props.children==="실험 중지")!.props.onClick as ()=>void)()
-  tree=elements(runner.render(EvaluationActive,{name:"run",uid:"old",now:0}))
-  ;(tree.find(element=>element.type==="button"&&element.props.children==="중지 요청")!.props.onClick as ()=>void)()
-  assert.equal(writes.length,0,"a pending stop cannot cross a changed selected UID")
+  assert.ok(!tree.some(element=>element.type==="button"&&["실험 중지","중지 요청"].includes(String(element.props.children))))
 })
 
 test("selected detail passes the URL UID to the independent active query",()=>{
@@ -574,6 +570,7 @@ test("cutover load inputs serialize max uint64 seed as a string and pinned datas
   const roundtrip=author.parseSpec(author.specJSON(props.spec))
   assert.deepEqual(roundtrip.seeds,{camera:"18446744073709551615"})
   assert.deepEqual(roundtrip.datasetRefs,{camera:{name:"images",uid:"dataset-uid"}})
+  assert.ok(!tree.some(item=>item.props.label==="camera 데이터셋 이름"||item.props.label==="camera 데이터셋 UID"))
   assert.deepEqual(roundtrip.traceRefs,props.spec.traceRefs)
   assert.equal(roundtrip.future,true)
   assert.deepEqual(Object.keys(roundtrip).sort(),["arrivalDistribution","datasetRefs","future","parts","seeds","traceRefs","workloads"])
@@ -588,9 +585,9 @@ test("settings patch choices exactly reuse operating settings and retain opaque 
   assert.deepEqual(elements(picker).filter(item=>item.type==="option"&&item.props.value).map(item=>item.props.value),settings.editableSettingKeys)
   ;(picker.props.onChange as (key:string)=>void)("observationWindowNanos")
   tree=elements(runner.render(SettingsPatchEditor,props))
-  ;(tree.find(item=>item.type==="textarea")!.props.onChange as (event:unknown)=>void)({target:{value:"9007199254740993"}})
+  ;(tree.find(item=>item.type==="textarea")!.props.onChange as (event:unknown)=>void)({target:{value:"9007199254.740993"}})
   tree=elements(runner.render(SettingsPatchEditor,props))
-  assert.equal(tree.find(item=>item.props.label==="설정 패치 원문")?.props.disabled,true)
+  assert.equal(tree.find(item=>item.props.label==="설정 패치 원문 (ns)")?.props.disabled,true)
   assert.equal(validity.at(-1),false)
   ;(tree.find(item=>item.props.children==="항목 반영")!.props.onClick as ()=>void)()
   assert.deepEqual(props.spec.settingsPatch,{future:{exact:9007199254740993n},observationWindowNanos:9007199254740993n})
@@ -627,4 +624,135 @@ test("cutover load preflight and creation send the same complete external load c
   await setImmediate()
   assert.deepEqual(writes.map(item=>[item.path,item.method]),[["v1/evaluations/load-scenarios/preflight","POST"],["v1/evaluations/load-scenarios","POST"]])
   for(const write of writes)assert.deepEqual(author.parseSpec(write.body),{name:"new-load",spec})
+})
+
+test("P2 author: deleting the selected stage cannot apply its buffered patch to the next stage",()=>{
+  const parent=hookRunner()
+  const modules={...primitives,react:{...parent.react},"@/lib/client":{useChillQuery:()=>({data:{items:[]}})}}
+  const {EvaluationSpecEditor,SettingsPatchEditor}=load("../features/evaluation-author.tsx",modules)
+  const props={spec:{stages:[{id:"a",settingsPatch:{maxReplicas:4}},{id:"b",settingsPatch:{maxReplicas:9}}]} as author.Spec,onChange:(value:author.Spec)=>{props.spec=value}}
+  let child=hookRunner(),identity:unknown
+  function renderPatch(tree:Tree[]) {
+    const section=tree.find(item=>item.type==="section"&&elements(item).some(item=>item.type===SettingsPatchEditor))!
+    const patch=elements(section).find(item=>item.type===SettingsPatchEditor)!
+    const key=`${(section as Tree&{key?:string}).key}/${(patch as Tree&{key?:string}).key}`
+    if(identity!==key){child=hookRunner();identity=key}
+    modules.react.useState=child.react.useState
+    const rendered=elements(child.render(SettingsPatchEditor,patch.props))
+    modules.react.useState=parent.react.useState
+    return rendered
+  }
+  let tree=elements(parent.render(EvaluationSpecEditor,props)),patch=renderPatch(tree)
+  ;(patch.find(item=>item.props.label==="설정 항목")!.props.onChange as (key:string)=>void)("maxReplicas")
+  patch=renderPatch(tree)
+  assert.ok(patch.some(item=>item.props.children==="항목 반영"))
+  ;(tree.find(item=>item.props.children==="단계 삭제")!.props.onClick as ()=>void)()
+  tree=elements(parent.render(EvaluationSpecEditor,props));patch=renderPatch(tree)
+  const apply=patch.find(item=>item.props.children==="항목 반영")
+  if(apply)(apply.props.onClick as ()=>void)()
+  assert.deepEqual(author.specValue(props.spec,["stages",0]),{id:"b",settingsPatch:{maxReplicas:9}})
+  assert.equal(patch.find(item=>item.props.label==="설정 항목")?.props.value,"")
+})
+
+test("P2 author: inherited null or omitted stage patches differ from explicit empty replacement after last-key removal",()=>{
+  for(const value of [undefined,null,{}, {maxReplicas:2}]) {
+    const runner=hookRunner(),props={spec:{settingsPatch:{maxReplicas:8},stages:[{id:"a",...(value===undefined?{}:{settingsPatch:value})}]} as author.Spec,path:["stages",0,"settingsPatch"],onChange:(value:author.Spec)=>{props.spec=value},onValidityChange:()=>{}}
+    const {SettingsPatchEditor}=load("../features/evaluation-author.tsx",{...primitives,react:runner.react})
+    let tree=elements(runner.render(SettingsPatchEditor,props))
+    assert.ok(tree.some(item=>item.props.children===(value==null?"전체 실험 설정 상속":"단계 패치로 전체 대체")))
+    if(value&&Object.hasOwn(value,"maxReplicas")) {
+      ;(tree.find(item=>item.props.label==="설정 항목")!.props.onChange as (key:string)=>void)("maxReplicas")
+      tree=elements(runner.render(SettingsPatchEditor,props))
+      ;(tree.find(item=>item.props.children==="항목 제거")!.props.onClick as ()=>void)()
+      tree=elements(runner.render(SettingsPatchEditor,props))
+      assert.deepEqual(author.specValue(props.spec,props.path),{})
+      assert.ok(tree.some(item=>item.props.children==="단계 패치로 전체 대체"))
+    }
+    ;(tree.find(item=>item.props.children==="전체 실험 설정 상속")?.props.onClick as (()=>void)|undefined)?.()
+    tree=elements(runner.render(SettingsPatchEditor,props))
+    const unset=tree.find(item=>item.type==="button"&&item.props.children==="패치 미설정")
+    if(unset)(unset.props.onClick as ()=>void)()
+    assert.equal(author.specValue(props.spec,props.path),undefined)
+    tree=elements(runner.render(SettingsPatchEditor,props))
+    ;(tree.find(item=>item.type==="button"&&item.props.children==="빈 단계 패치로 전체 대체")!.props.onClick as ()=>void)()
+    assert.deepEqual(author.specValue(props.spec,props.path),{})
+  }
+})
+
+test("P2 author: patch durations use exact operating milliseconds and do not add a second help tooltip",()=>{
+  for(const field of settings.settingFields.filter(field=>field.key.endsWith("Nanos"))) {
+    const runner=hookRunner(),props={spec:{settingsPatch:{[field.key]:9007199254740993n}} as author.Spec,path:["settingsPatch"],onChange:(value:author.Spec)=>{props.spec=value},onValidityChange:()=>{}}
+    const {SettingsPatchEditor}=load("../features/evaluation-author.tsx",{...primitives,react:runner.react})
+    let tree=elements(runner.render(SettingsPatchEditor,props))
+    assert.ok(!tree.some(item=>item.props.children==="패치 도움말"))
+    ;(tree.find(item=>item.props.label==="설정 항목")!.props.onChange as (key:string)=>void)(field.key)
+    tree=elements(runner.render(SettingsPatchEditor,props))
+    assert.ok(tree.some(item=>item.type==="label"&&elements(item).some(item=>item.type==="textarea")&&JSON.stringify(item.props.children).includes("ms")))
+    assert.equal(tree.find(item=>item.type==="textarea")?.props.value,"9007199254.740993")
+    ;(tree.find(item=>item.type==="textarea")!.props.onChange as (event:unknown)=>void)({target:{value:"1000.000001"}})
+    tree=elements(runner.render(SettingsPatchEditor,props))
+    ;(tree.find(item=>item.props.children==="항목 반영")!.props.onClick as ()=>void)()
+    assert.equal(author.specValue(props.spec,["settingsPatch",field.key]),1000000001n)
+  }
+})
+
+test("P2 author: copied legacy run preflight excludes deleted fields and visibly lists exclusions while edit preserves them",()=>{
+  const legacy={question:"legacy",control:{old:true},target:{components:[{name:"server",image:"old",sourceSHA:"sha",resource:{name:"server"},future:true}]},harness:{image:"retained",sourceSHA:"retained"},stages:[{id:"a",mode:"fixed",startState:{old:true},control:{old:true},settingsPatch:{controls:{power:false}},future:true}],future:9007199254740993n}
+  for(const [fromPublication,existing] of [[false,undefined],[false,{name:"old",uid:"old-uid"}],[true,undefined]] as const) {
+    const runner=hookRunner(),writes:{body:string}[]=[]
+    const {EvaluationAuthor}=load("../features/evaluation-author.tsx",{...primitives,react:{...runner.react,useEffect:()=>{}},"@/features/evaluation-request":{EvaluationSubmit:"submit"},"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:(path:string)=>({data:path.startsWith("v1/experiments?")?{items:[]}:path==="v1/experiments/publication"?{definition:{run:{name:"old"},spec:legacy}}:undefined})}})
+    const props={...(fromPublication?{}:{initialSpec:legacy,initialName:"old"}),existing}
+    let tree=elements(runner.render(EvaluationAuthor,props))
+    if(fromPublication) {
+      ;(tree.find(item=>item.props.label==="게시에서 복사")!.props.onChange as (value:string)=>void)("publication")
+      tree=elements(runner.render(EvaluationAuthor,props))
+      ;(tree.find(item=>item.props.children==="게시 복사")!.props.onClick as ()=>void)()
+      tree=elements(runner.render(EvaluationAuthor,props))
+    }
+    if(!existing) {
+      ;(tree.find(item=>item.type==="input")!.props.onChange as (event:unknown)=>void)({target:{value:"copy"}})
+      tree=elements(runner.render(EvaluationAuthor,props))
+    }
+    const submit=tree.find(item=>item.type==="submit")!
+    const submitRunner=hookRunner()
+    const {EvaluationSubmit}=load("../features/evaluation-request.tsx",{...primitives,react:submitRunner.react,"@/lib/client":{useChillQuery:()=>({}),useChillMutation:()=>({isPending:false,mutate:(value:{body:string})=>writes.push(value)})}})
+    tree=elements(submitRunner.render(EvaluationSubmit,submit.props))
+    ;(tree.find(item=>item.props.children==="사전 점검")!.props.onClick as ()=>void)()
+    assert.equal(writes.length,1,"actual enabled EvaluationSubmit preflight must send exactly one request")
+    const body=author.parseSpec(writes[0].body),spec=author.object(body.spec)
+    assert.equal(Object.hasOwn(spec,"control"),!!existing)
+    assert.equal(Object.hasOwn(author.object(author.specValue(spec,["stages",0])),"mode"),!!existing)
+    assert.equal(Object.hasOwn(author.object(author.specValue(spec,["stages",0])),"startState"),!!existing)
+    assert.equal(Object.hasOwn(author.object(author.specValue(spec,["stages",0])),"control"),!!existing)
+    assert.equal(Object.hasOwn(author.object(author.specValue(spec,["target","components",0])),"image"),!!existing)
+    assert.equal(Object.hasOwn(author.object(author.specValue(spec,["target","components",0])),"sourceSHA"),!!existing)
+    assert.deepEqual(spec.harness,legacy.harness)
+    assert.equal(spec.future,9007199254740993n)
+    const parentTree=elements(runner.render(EvaluationAuthor,props))
+    assert.equal(parentTree.some(item=>item.props.children==="복사에서 제외됨"),!existing)
+    if(!existing)for(const path of ["control","stages[0].mode","stages[0].startState","stages[0].control","target.components[0].image","target.components[0].sourceSHA"])assert.ok(parentTree.some(item=>item.props.children===path),path)
+  }
+  assert.ok(Object.hasOwn(legacy,"control"))
+})
+
+test("P2 author: copied legacy scenario preflight strips only obsolete load fields and preserves exact seeds",async()=>{
+  const legacy={workloads:[{name:"camera",uid:"w",generation:1}],parts:[{id:"p",durationSeconds:1,rates:{camera:1},alpha:{camera:1},future:true}],alpha:{camera:1},kappaRef:{key:"old"},rateBasisRef:{key:"old"},seedRef:{key:"old"},payloadManifestRef:{key:"old"},seeds:{camera:"18446744073709551615"},datasetRefs:{camera:{name:"images",uid:"dataset"}},future:9007199254740993n}
+  for(const editing of [false,true]) {
+    const runner=hookRunner(),writes:{body:string}[]=[]
+    const {LoadEditor}=load("../features/load-scenario-author.tsx",{...primitives,react:runner.react,"@/features/evaluation-author":{useUnsavedAuthor:()=>{}},"@/lib/client":{useChillQuery:()=>({}),useChillMutation:()=>({isPending:false,mutateAsync:async(input:{body:string})=>{writes.push(input);return {data:{checks:[{id:"spec",passed:true}]}}}})}})
+    const props={source:{name:"old",uid:"uid",spec:legacy,inUse:[]},editing,onSaved:async()=>{}}
+    let tree=elements(runner.render(LoadEditor,props))
+    if(!editing){(tree.find(item=>item.type==="input")!.props.onChange as (event:unknown)=>void)({target:{value:"copy"}});tree=elements(runner.render(LoadEditor,props))}
+    assert.equal(tree.some(item=>item.props.children==="복사에서 제외됨"),!editing)
+    ;(tree.find(item=>item.props.children==="사전점검")!.props.onClick as ()=>void)()
+    await setImmediate()
+    const spec=author.object(author.parseSpec(writes[0].body).spec)
+    for(const key of ["alpha","kappaRef","rateBasisRef","seedRef","payloadManifestRef"])assert.equal(Object.hasOwn(spec,key),editing,key)
+    assert.equal(Object.hasOwn(author.object(author.specValue(spec,["parts",0])),"alpha"),editing)
+    assert.deepEqual(spec.seeds,{camera:"18446744073709551615"})
+    assert.equal(spec.future,9007199254740993n)
+    assert.equal(author.specValue(spec,["parts",0,"future"]),true)
+    if(!editing)for(const path of ["parts[0].alpha","alpha","kappaRef","rateBasisRef","seedRef","payloadManifestRef"])assert.ok(tree.some(item=>item.props.children===path),path)
+  }
+  assert.ok(Object.hasOwn(legacy,"seedRef"))
 })

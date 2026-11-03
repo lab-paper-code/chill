@@ -17,7 +17,7 @@ test("JSON → form → JSON preserves unknown fields and exact integer evidence
 
 test("copy resets run identity, leaves pinned referenced UIDs and source untouched",()=>{
   const source={name:"old-run",uid:"run-uid",spec:{stages:[{loadScenarioRef:{name:"load",uid:"load-uid"}}],future:{v:1}}}
-  const draft=copyAuthorDraft(source)
+  const draft=copyAuthorDraft(source,"evaluation")
   assert.equal(draft.name,"")
   assert.equal("uid" in draft,false)
   assert.equal(specValue(draft.spec,["stages",0,"loadScenarioRef","uid"]),"load-uid")
@@ -99,4 +99,15 @@ test("rename rejects occupied seed and dataset map keys without partially updati
     assert.equal(renameLoadWorkload(spec,0,"taken"),spec)
     assert.equal(specValue(spec,["parts",0,"rates","old"]),5)
   }
+})
+
+test("P2 author: copy reports only known deleted field paths without filtering supported extensions",()=>{
+  const source={spec:{control:null,stages:[{id:"a",mode:"fixed",control:{old:true},startState:{old:true},settingsPatch:{controls:{power:false}},future:{control:"keep"}}],target:{components:[{image:"old",sourceSHA:"old",future:"keep"}]},harness:{image:"keep",sourceSHA:"keep"},future:{control:"keep"},exact:18446744073709551615n}}
+  const copy=copyAuthorDraft(source,"evaluation")
+  assert.deepEqual(copy.removedFields,["control","stages[0].mode","stages[0].startState","stages[0].control","target.components[0].image","target.components[0].sourceSHA"])
+  assert.deepEqual(specValue(copy.spec,["stages",0,"settingsPatch"]),{controls:{power:false}})
+  assert.deepEqual(copy.spec.future,{control:"keep"})
+  assert.deepEqual(copy.spec.harness,{image:"keep",sourceSHA:"keep"})
+  assert.equal(copy.spec.exact,18446744073709551615n)
+  assert.equal(source.spec.control,null)
 })

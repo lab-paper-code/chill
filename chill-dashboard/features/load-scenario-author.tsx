@@ -55,12 +55,12 @@ export function LoadSpecEditor({spec,onChange,onValidityChange}:{spec:Spec;onCha
     {tab==="inputs"&&<><QueryGate query={datasets}>{null}</QueryGate>{workloads.map((w,index)=>{const name=String(w.name??""),ref=object(object(spec.datasetRefs)[name]);return <fieldset key={index} className="grid min-w-0 gap-3 rounded border p-3"><legend className="text-sm">{name||"서비스 미선택"}</legend>
       <AuthorField label={`${name} 난수 (uint64)`} spec={spec} path={["seeds",name]} onChange={onChange}/>
       <AuthorSelect label={`${name} 데이터셋`} value={String(ref.uid??"")} onChange={uid=>{const item=choices.find(item=>item.metadata.uid===uid);onChange(patchSpec(spec,["datasetRefs",name],item?{...ref,name:item.metadata.name,uid:item.metadata.uid}:undefined))}}><option value="">미선택</option>{!!ref.uid&&!choices.some(item=>item.metadata.uid===ref.uid)&&<option value={String(ref.uid)}>{String(ref.name)} · 저장된 참조</option>}{choices.map(item=><option key={item.metadata.uid} value={item.metadata.uid}>{item.metadata.name}</option>)}</AuthorSelect>
-      <AuthorField label={`${name} 데이터셋 이름`} spec={spec} path={["datasetRefs",name,"name"]} onChange={onChange}/><AuthorField label={`${name} 데이터셋 UID`} spec={spec} path={["datasetRefs",name,"uid"]} onChange={onChange}/>
     </fieldset>})}</>}
   </div>
 }
 export function LoadEditor({source,editing,onSaved,onConfirmed}:{source?:LoadScenario;editing:boolean;onSaved:()=>Promise<unknown>;onConfirmed?:(value:{name:string;uid:string})=>void}) {
-  const draft=source?copyAuthorDraft(source):{name:"",spec:{workloads:[],parts:[],arrivalDistribution:{}}},[name,setName]=useState(editing?source?.name??"":draft.name),[spec,setSpec]=useState<Spec>(draft.spec),[valid,setValid]=useState(true)
+  const [draft]=useState(()=>source?editing?{name:source.name,spec:structuredClone(source.spec),removedFields:[] as string[]}:copyAuthorDraft(source,"load"):{name:"",spec:{workloads:[],parts:[],arrivalDistribution:{}},removedFields:[] as string[]})
+  const [name,setName]=useState(draft.name),[spec,setSpec]=useState<Spec>(draft.spec),[valid,setValid]=useState(true)
   const [answer,setAnswer]=useState<EvaluationPreflight|null>(null),[checked,setChecked]=useState(""),[live,setLive]=useState<unknown>(null),[selected,setSelected]=useState<string[]>([]),[message,setMessage]=useState(""),[unknown,setUnknown]=useState(false),[uid,setUID]=useState(editing?source?.uid??"":"")
   const [replacementLost,setReplacementLost]=useState(false),[inUse,setInUse]=useState<string[]>(source?.inUse??[])
   const mutation=useChillMutation(),detail=useChillQuery<LoadScenario>(`${base}/${encodeURIComponent(name)}`,{enabled:false,decoder:parseSchedulerJSON}),body=specJSON({name,spec}),changes=workloadChanges(spec,live)
@@ -101,6 +101,7 @@ export function LoadEditor({source,editing,onSaved,onConfirmed}:{source?:LoadSce
     }
   }
   return <div className="grid min-w-0 gap-4"><label className="grid min-w-0 gap-1 text-sm">부하 설정 이름<Input value={name} disabled={editing||unknown} onChange={event=>setName(event.target.value)}/></label>{!editing&&name===source?.name&&<span role="alert">새 이름 필요</span>}
+    {draft.removedFields.length>0&&<section aria-label="복사에서 제외된 필드" className="grid gap-1 text-sm"><h3>복사에서 제외됨</h3><ul className="list-inside list-disc break-all">{draft.removedFields.map(path=><li key={path}>{path}</li>)}</ul></section>}
     {inUse.length>0&&<div className="flex flex-wrap gap-2" role="status"><span>{editing?"사용 중":"원본 사용 중"}</span>{inUse.map(run=><Link key={run} className="break-all rounded-full border px-2 py-1 text-xs" href={`/experiments/runs/${encodeURIComponent(run)}`}>{run}</Link>)}</div>}
     <fieldset className="min-w-0" disabled={unknown||mutation.isPending}><LoadSpecEditor spec={spec} onChange={setSpec} onValidityChange={setValid}/></fieldset>
     {changes.length>0&&<div className="grid gap-3 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr><th>반영</th><th>Workload</th><th>정의 UID</th><th>현재 UID</th><th>정의 세대</th><th>현재 세대</th></tr></thead><tbody>{changes.map(change=><tr key={change.name}><td><input type="checkbox" aria-label={`${change.name} 현재 식별자 반영`} checked={selected.includes(change.name)} onChange={event=>setSelected(event.target.checked?[...selected,change.name]:selected.filter(x=>x!==change.name))}/></td><th>{change.name}</th><td>{String(change.before.uid)}</td><td>{String(change.after.uid)}</td><td>{String(change.before.generation)}</td><td>{String(change.after.generation)}</td></tr>)}</tbody></table><Button type="button" variant="outline" disabled={!selected.length} onClick={()=>{setSpec(adoptWorkloads(spec,changes,selected));setAnswer(null);setLive(null);setSelected([])}}>선택한 현재 식별자 반영</Button></div>}
@@ -181,6 +182,7 @@ export function LoadScenarioAuthorPage({name}:{name?:string}) {
   const saved=()=>cache.invalidateQueries({queryKey:["chill",base]})
   const confirmed=(value:{name:string;uid:string})=>router.replace(`/experiments/load-scenarios?${new URLSearchParams(value)}`)
   return <Screen title={name?"부하 설정 수정":"새 부하 설정"} width="data" back={["/experiments/load-scenarios","부하 설정"]}>
+    <div className="flex justify-end"><AuthorHelp/></div>
     {source?<QueryGate query={query}>{query.data&&(identityChanged?<strong role="alert">설정 교체 확인</strong>:<LoadEditor key={query.data.uid} source={query.data} editing={!!name} onSaved={saved} onConfirmed={confirmed}/>)}</QueryGate>:<LoadEditor editing={false} onSaved={saved} onConfirmed={confirmed}/>}
   </Screen>
 }
