@@ -1,4 +1,4 @@
-"""Local acceptance regression checks; only the slow-drip test uses loopback."""
+"""Local acceptance regression checks; transport tests use loopback only."""
 import copy
 from decimal import Decimal
 import http.server
@@ -7,6 +7,9 @@ import io
 import json
 import os
 from pathlib import Path
+import socket
+import ssl
+import subprocess
 import tempfile
 import threading
 import time
@@ -286,6 +289,154 @@ class AcceptanceChecks(unittest.TestCase):
         self.assertFalse(worker.is_alive())
         self.assertEqual(len(errors), 1)
         self.assertIn('main thread', errors[0])
+
+
+    def test_tls_listener_startup_warming_and_fail_closed_readiness(self):
+        # Bind without listen: the first real HTTPS GET must receive ECONNREFUSED.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cert, key = root / 'cert.pem', root / 'key.pem'
+            subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+                            '-keyout', str(key), '-out', str(cert), '-days', '1',
+                            '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost'],
+                           check=True, capture_output=True)
+            token = root / 'token'
+            token.write_text('local-test-token')
+            routes = []
+            responses = []
+            class Handler(http.server.BaseHTTPRequestHandler):
+                def log_message(self, *args):
+                    pass
+                def do_GET(self):
+                    routes.append(self.path)
+                    status, body = responses.pop(0)
+                    if status is None:
+                        self.close_connection = True
+                        return
+                    data = body if isinstance(body, bytes) else json.dumps(body, default=str).encode()
+                    self.send_response(status)
+                    self.end_headers()
+                    self.wfile.write(data)
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(cert, key)
+            class Server(http.server.HTTPServer):
+                drop_handshake = False
+                wrong_protocol = False
+                def get_request(self):
+                    peer, address = super().get_request()
+                    if self.drop_handshake or self.wrong_protocol:
+                        peer.settimeout(2)
+                        peer.recv(65536)  # Consume ClientHello so closure is EOF, not unread-data RST.
+                        if self.wrong_protocol:
+                            peer.sendall(b'HTTP/1.1 400 Bad Request\r\n\r\n')
+                        self.drop_handshake = self.wrong_protocol = False
+                        peer.shutdown(socket.SHUT_RDWR)
+                        peer.close()
+                        raise ConnectionResetError('local fixture closed handshake')
+                    return context.wrap_socket(peer, server_side=True), address
+            server = Server(('127.0.0.1', 0), Handler, bind_and_activate=False)
+            server.server_bind()
+            config = {'apiBase': 'https://localhost:%d' % server.server_port,
+                      'caFile': str(cert), 'tokenFile': str(token)}
+            expected = snapshot()
+            for row in expected['profiles']['profiles']:
+                row['batches'] = [{'batch': 1, 'energyPerInputJoules': 3, 'meanWallWatts': 5}]
+            healthy = [(200, expected['coverage']), (200, expected['profiles'])]
+            clock = [0]
+            worker = threading.Thread(target=server.serve_forever)
+            def advance(seconds):
+                clock[0] += seconds
+                if not worker.is_alive():
+                    server.server_activate()
+                    worker.start()
+            responses[:] = [(503, {'code': 'CoverageWarming'}), *healthy]
+            try:
+                def elapse(seconds):
+                    clock[0] += seconds
+                with patch.object(acceptance.time, 'monotonic', side_effect=lambda: clock[0]), patch.object(
+                        acceptance.time, 'sleep', side_effect=elapse):
+                    with self.assertRaises(RuntimeError):
+                        acceptance.wait_capture(config, 'review', root / 'unreachable', deadline=3)
+                self.assertEqual(clock[0], 3)
+                clock[0] = 0
+                with patch.object(acceptance.time, 'monotonic', side_effect=lambda: clock[0]), patch.object(
+                        acceptance.time, 'sleep', side_effect=advance):
+                    result = acceptance.wait_capture(config, 'review', root / 'startup', deadline=30)
+                self.assertTrue(acceptance.compare(expected, result)['passed'])
+                self.assertEqual((root / 'startup/attempt-000/coverage.http-status').read_text().strip(),
+                                 'transport-error')
+                transport = json.loads((root / 'startup/attempt-000/coverage.transport-error.json').read_text())
+                self.assertTrue(transport['readinessPending'])
+                self.assertEqual((root / 'startup/attempt-001/coverage.http-status').read_text().strip(), '503')
+                self.assertEqual((root / 'startup/attempt-002/profiles.http-status').read_text().strip(), '200')
+                self.assertEqual(sum(route.endswith('/profiles') for route in routes), 1)
+
+                # A TCP peer can disappear during TLS, before any HTTP status exists.
+                server.drop_handshake = True
+                responses[:] = healthy
+                with patch.object(acceptance.time, 'sleep'):
+                    result = acceptance.wait_capture(config, 'review', root / 'tls-eof', time.monotonic() + 30)
+                self.assertTrue(acceptance.compare(expected, result)['passed'])
+                transport = json.loads((root / 'tls-eof/attempt-000/coverage.transport-error.json').read_text())
+                self.assertEqual(transport['type'], ssl.SSLEOFError.__name__)
+                self.assertTrue(transport['readinessPending'])
+
+                server.wrong_protocol = True
+                with patch.object(acceptance.time, 'sleep') as sleep:
+                    with self.assertRaises(ValueError) as error:
+                        acceptance.wait_capture(config, 'review', root / 'tls-protocol', time.monotonic() + 30)
+                    self.assertNotIsInstance(error.exception, acceptance.ReadinessPending)
+                    sleep.assert_not_called()
+
+                # A profile connection loss after healthy coverage also waits, without
+                # ever downloading profiles while the coverage route is warming.
+                routes.clear()
+                responses[:] = [(200, expected['coverage']), (None, None), *healthy]
+                with patch.object(acceptance.time, 'sleep'):
+                    result = acceptance.wait_capture(config, 'review', root / 'profiles', time.monotonic() + 30)
+                self.assertTrue(acceptance.compare(expected, result)['passed'])
+                self.assertEqual(len(routes), 4)
+                self.assertTrue(json.loads(
+                    (root / 'profiles/attempt-000/profiles.transport-error.json').read_text())['readinessPending'])
+
+                # Every non-startup failure must stop after its first request.
+                invalid = copy.deepcopy(expected['coverage'])
+                invalid['sources'] = [{'complete': 'invalid'}]
+                failures = [(401, {}), (403, {}), (503, {'code': 'CoverageUnavailable'}),
+                            (503, b'not json'), (200, b'not json'),
+                            (200, invalid)]
+                for index, response in enumerate(failures):
+                    responses[:] = [response, (200, expected['profiles'])]
+                    with patch.object(acceptance.time, 'sleep') as sleep:
+                        with self.assertRaises(ValueError) as error:
+                            acceptance.wait_capture(config, 'review', root / ('failure-%d' % index),
+                                                    time.monotonic() + 30)
+                        self.assertNotIsInstance(error.exception, acceptance.ReadinessPending)
+                        sleep.assert_not_called()
+
+                # A real hostname/certificate verification failure is never readiness.
+                untrusted = dict(config, apiBase=config['apiBase'].replace('localhost', '127.0.0.1'))
+                with patch.object(acceptance.time, 'sleep') as sleep:
+                    with self.assertRaises(ValueError) as error:
+                        acceptance.wait_capture(untrusted, 'review', root / 'tls', time.monotonic() + 30)
+                    self.assertNotIsInstance(error.exception, acceptance.ReadinessPending)
+                    sleep.assert_not_called()
+                self.assertFalse(json.loads(
+                    (root / 'tls/attempt-000/coverage.transport-error.json').read_text())['readinessPending'])
+
+                clock[0] = 0
+                responses[:] = [(503, {'code': 'CoverageWarming'})]
+                with patch.object(acceptance.time, 'monotonic', side_effect=lambda: clock[0]), patch.object(
+                        acceptance.time, 'sleep', side_effect=advance):
+                    with self.assertRaises(RuntimeError):
+                        acceptance.wait_capture(config, 'review', root / 'deadline', deadline=3)
+                self.assertEqual(clock[0], 3)
+                self.assertEqual((root / 'deadline/attempt-000/coverage.http-status').read_text().strip(), '503')
+            finally:
+                if worker.is_alive():
+                    server.shutdown()
+                    worker.join(timeout=2)
+                server.server_close()
 
     def test_slow_drip_body_hits_elapsed_deadline(self):
         stop = threading.Event()

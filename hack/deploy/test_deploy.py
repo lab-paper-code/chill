@@ -120,6 +120,13 @@ class DeploymentCLI(unittest.TestCase):
                 if self.path == '/':
                     self.send_response(200); self.send_header('Content-Type', 'text/html'); self.end_headers(); self.wfile.write(b'<!doctype html><html><body>CHILL</body></html>'); return
                 if self.path.endswith('measurement-coverage'):
+                    state = json.loads((cls.directory / 'state.json').read_text())
+                    if state.get('upgraded') and state.get('warmingOnce') and not state.get('warmed'):
+                        state['warmed'] = True
+                        (cls.directory / 'state.json').write_text(json.dumps(state))
+                        self.send_response(503); self.end_headers()
+                        self.wfile.write(b'{"code":"CoverageWarming"}')
+                        return
                     unknown = json.loads((cls.directory / 'state.json').read_text()).get('unknownCoverage', False)
                     body = {'summary': {'countsByDisplayStatus': {'usable': None if unknown else 2}}, 'sources': [{'complete': not unknown}]}
                 elif self.path == '/api/v1/scheduler/profiles':
@@ -204,6 +211,16 @@ class DeploymentCLI(unittest.TestCase):
         previous = len(self.calls())
         self.cli('--execute', '--evidence', str(self.out), expected=1)
         self.assertEqual(len(self.calls()), previous)
+
+    def test_cli_waits_for_warming_and_records_ready(self):
+        self.state(warmingOnce=True)
+        self.recipe['readinessSeconds'] = 15
+        self.cli('--execute', '--evidence', str(self.out))
+        self.assertTrue(json.loads((self.out / 'state.json').read_text())['ready'])
+        self.assertEqual((self.out / 'after/attempt-000/coverage.http-status').read_text().strip(), '503')
+        self.assertFalse((self.out / 'after/attempt-000/profiles.json').exists())
+        self.assertEqual((self.out / 'after/attempt-001/profiles.http-status').read_text().strip(), '200')
+        self.assertEqual(sum(path.endswith('/profiles') for path, _ in self.requests), 2)
 
     def test_inspect_drift_is_read_only_and_requires_exact_approval(self):
         self.state(chartDrift=True)

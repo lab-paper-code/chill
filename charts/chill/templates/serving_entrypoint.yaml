@@ -198,6 +198,10 @@ spec:
             - name: https
               containerPort: {{ .Values.servingEntrypoint.port }}
               protocol: TCP
+          readinessProbe:
+            httpGet: {path: /healthz, port: https, scheme: HTTPS}
+            initialDelaySeconds: 2
+            periodSeconds: 5
           resources:
 {{- toYaml .Values.servingEntrypoint.resources | nindent 12 }}
           securityContext:

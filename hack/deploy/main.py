@@ -477,22 +477,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             time.sleep(min(5, max(0, deadline - time.monotonic())))
         stage('accept')
         accept_out = out / 'after'
-        attempt = 0
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise RuntimeError('API readiness/coverage warming deadline exceeded')
-            capture_out = accept_out / ('attempt-%03d' % attempt)
-            try:
-                snapshot = acceptance.capture(config, recipe['namespace'], capture_out, timeout=min(60, remaining / 2))
-                break
-            except ValueError:
-                status = capture_out / 'coverage.http-status'
-                body = capture_out / 'coverage.json'
-                if not status.exists() or status.read_text().strip() != '503' or not body.exists() or json.loads(body.read_text()).get('code') != 'CoverageWarming':
-                    raise
-                attempt += 1
-                time.sleep(min(5, max(0, deadline - time.monotonic())))
+        snapshot = acceptance.wait_capture(config, recipe['namespace'], accept_out, deadline)
         report = acceptance.compare(baseline, snapshot, recipe['allowedLostProfileIDs'], accept_out, recipe.get('expectedCoverageUsable'))
         report['checks']['expectedProfileCount'] = 'expectedProfileCount' not in recipe or report.get('after') == recipe['expectedProfileCount']
         report['passed'] = report['passed'] and report['checks']['expectedProfileCount']

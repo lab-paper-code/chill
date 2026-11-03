@@ -1,5 +1,6 @@
 """Authenticated HTTPS evidence and fail-closed upgrade acceptance."""
 from contextlib import contextmanager
+import errno
 import math
 import threading
 import importlib.util
@@ -75,6 +76,10 @@ def preflight(config, required_seconds, out, timeout=10):
     return record
 
 
+class ReadinessPending(ValueError):
+    """Only startup transport failures and explicit coverage warming may wait."""
+
+
 def request_json(config, route, out, timeout=60, max_bytes=None):
     """GET one authenticated route; retain raw body/status, forbid redirects."""
     origin = _origin(config['apiBase'])
@@ -93,6 +98,13 @@ def request_json(config, route, out, timeout=60, max_bytes=None):
             context=ssl.create_default_context(cafile=str(config['caFile']))))
     status, headers, body = _fetch(request, opener, out, timeout, max_bytes)
     if status != 200:
+        if status == 503:
+            try:
+                error = json.loads(body)
+            except (ValueError, UnicodeError):
+                error = None
+            if isinstance(error, dict) and error.get('code') == 'CoverageWarming':
+                raise ReadinessPending('API coverage is warming')
         raise ValueError('Authenticated API requires HTTP 200; received %s' % status)
     try:
         return json.loads(body, parse_float=Decimal, parse_constant=_invalid_constant)
@@ -147,9 +159,20 @@ def _fetch(request, opener, out, timeout, max_bytes=8388608):
                 status = response.status
                 headers = response.headers
                 body = response.read() if max_bytes is None else response.read(max_bytes)
-    except (OSError, urllib.error.URLError):
+    except (OSError, urllib.error.URLError) as error:
+        reason = error.reason if isinstance(error, urllib.error.URLError) else error
+        pending = (isinstance(reason, ssl.SSLEOFError) or
+                   not isinstance(reason, ssl.SSLError) and
+                   (isinstance(reason, (ConnectionError, TimeoutError)) or
+                    isinstance(reason, OSError) and reason.errno in
+                    (errno.ECONNREFUSED, errno.ECONNRESET, errno.ECONNABORTED,
+                     errno.ETIMEDOUT, errno.EHOSTUNREACH, errno.ENETUNREACH)))
         _save(out.with_suffix('.http-status'), b'transport-error\n')
-        raise ValueError('HTTP request failed; inspect status evidence') from None
+        _report(out.with_suffix('.transport-error.json'), {
+            'type': type(reason).__name__, 'errno': getattr(reason, 'errno', None),
+            'readinessPending': pending})
+        failure = ReadinessPending if pending else ValueError
+        raise failure('HTTP request failed; inspect transport evidence') from error
     _save(out.with_suffix('.http-status'), (str(status) + '\n').encode())
     _save(out, body)
     if max_bytes is not None and len(body) >= max_bytes:
@@ -366,6 +389,23 @@ def capture(config, namespace, out, timeout=60):
         'valid': True, 'coverageSourcesComplete': _sources_complete(snapshot),
         'coverageSources': snapshot['coverage'].get('sources', [])})
     return snapshot
+
+
+def wait_capture(config, namespace, out, deadline):
+    """Wait only for startup, sharing the rollout's monotonic readiness deadline."""
+    attempt = 0
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError('API readiness/coverage warming deadline exceeded')
+        try:
+            # Include setup and validation in the shared elapsed budget, not just sockets.
+            with _elapsed_deadline(min(120, remaining)):
+                return capture(config, namespace, Path(out) / ('attempt-%03d' % attempt),
+                               timeout=min(60, remaining / 2))
+        except ReadinessPending:
+            attempt += 1
+            time.sleep(min(5, max(0, deadline - time.monotonic())))
 
 
 def load_baseline(directory):
