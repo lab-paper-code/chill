@@ -183,6 +183,8 @@ issuanceFidelity는 실제producer start/send로 발행순 정렬하여 시작/�
 ### 16.3 별도 writer 개선의 설계 경계(미구현)
 위 근거로 U6에서 observation_log.go는 바꾸지 않는다. 별도 배정 시 immutable snapshot/closing을 requestMu아래 확보→밖에서marshal→writer mutex아래 closed/현재row·참조재확인→catalog/request를같은commit-time hour에 append한다. JSON완료순 아닌기존append순, assigned성공전 native시작금지다. final실패는closing유지/Flush재시도, phase갱신시pointer비교로최신row삭제금지다. Runtime/Flush경쟁·close/hour/catalog-first를보존하며 Flush의기존mutex경로를helper임시unlock만으로고치지 않는다. 모든caller와diagnostic mark를함께이행하고 약50줄초과/순서변경은별도설계·회귀검사다. 비동기장부/generic queue는없다.
 
+Scheduler capture는 Observer가 catalog publication 때 `cloneCatalogProfile`로 깊은 복사하여 동결한 immutable Profile 포인터를 재사용한다. `Profiles()` 결과의 nested 필드를 수정해도 기존 canonical body는 바뀌지 않는다. 동일 ID·동일 body의 재publication도 포인터를 유지하고 실제 profile 변경은 새 포인터를 발행한다. `referenceLocked`의 기존 same-pointer fast path만 활용하며 persisted JSON, catalog-first/append 순서, durability와 writer lock 범위는 바꾸지 않는다.
+
 <a id="17-e5-증거-api-2026-10-30"></a>
 
 ## 17. evaluation 증거 API (2026-10-30)

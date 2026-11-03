@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"path"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -91,16 +93,17 @@ func (s *nativeSource) stopFollow() {
 // ponytail: one source lock serializes refresh/cleanup for this single owner;
 // split locks only if observed cluster size makes refresh contention material.
 type Observer struct {
-	mu        sync.Mutex
-	refreshMu sync.Mutex
-	store     *Store
-	kube      kubernetes.Interface
-	runtime   *serving.Runtime
-	native    *firstfloor.Client
-	config    ObserverConfig
-	profiles  []serving.Profile
-	sources   map[string]*nativeSource
-	scheduler *SchedulerController
+	mu          sync.Mutex
+	refreshMu   sync.Mutex
+	store       *Store
+	kube        kubernetes.Interface
+	runtime     *serving.Runtime
+	native      *firstfloor.Client
+	config      ObserverConfig
+	profiles    []serving.Profile
+	profileByID map[string]*serving.Profile
+	sources     map[string]*nativeSource
+	scheduler   *SchedulerController
 	// issueMu guards issues, so log followers record progress and its issues
 	// while a refresh holds mu.
 	issueMu           sync.Mutex
@@ -133,12 +136,42 @@ func (o *Observer) SetProfiles(profiles []serving.Profile) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.profiles = slices.Clone(profiles)
+	previous := o.profileByID
+	o.profileByID = make(map[string]*serving.Profile, len(o.profiles))
+	for i := range o.profiles {
+		profile := &o.profiles[i]
+		canonical := previous[profile.ID]
+		if canonical == nil || !reflect.DeepEqual(canonical, profile) {
+			frozen := cloneCatalogProfile(*profile)
+			// Catalog cloning defaults preparation settings; evidence keeps the
+			// original policy and nil/empty slice shapes exactly as published.
+			if profile.Condition.Firstfloor != nil {
+				frozen.Condition.Firstfloor.DeadlinePolicy = profile.Condition.Firstfloor.DeadlinePolicy
+			}
+			if len(profile.Condition.PlannedBatchSizes) == 0 {
+				frozen.Condition.PlannedBatchSizes = profile.Condition.PlannedBatchSizes
+			}
+			if access := profile.Condition.RuntimeAccess; access != nil && len(access.SupplementalGroups) == 0 {
+				frozen.Condition.RuntimeAccess.SupplementalGroups = access.SupplementalGroups
+			}
+			canonical = &frozen
+		}
+		o.profileByID[profile.ID] = canonical
+	}
 	o.runtime.SetProfiles(o.profiles)
 }
 func (o *Observer) Profiles() []serving.Profile {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return slices.Clone(o.profiles)
+}
+
+// schedulerProfiles captures the catalog and its canonical immutable references
+// together. SetProfiles replaces a reference only when that profile changes.
+func (o *Observer) schedulerProfiles() ([]serving.Profile, map[string]*serving.Profile) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return slices.Clone(o.profiles), maps.Clone(o.profileByID)
 }
 func (o *Observer) Issues() []ObserverIssue {
 	o.issueMu.Lock()
