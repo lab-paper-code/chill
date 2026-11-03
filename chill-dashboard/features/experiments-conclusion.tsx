@@ -3,16 +3,17 @@
 import Link from "next/link"
 import { ApiError, useChillQueries } from "@/lib/client"
 import { Button } from "@/components/ui/button"
-import { campaignScoreboard, decodeExperiment, definitionComparisonReason, experimentDifference, experimentOutcome, experimentPath, historicalPublicationIDs, injectionRows, experimentRows, observedStageRate, resultMetric, stageSeconds, type Experiment, type ExperimentStage } from "@/lib/experiments"
+import { campaignScoreboard, decodeExperiment, definitionComparisonReason, definitionComparisons, definitionPolicy, experimentDifference, experimentOutcome, experimentPath, historicalPublicationIDs, injectionRows, experimentRows, frozenP95SLO, object, observedStageRate, publishedText, resultMetric, stageLoadParts, stageSeconds, type Experiment, type ExperimentStage } from "@/lib/experiments"
 import { formatMeasurementNumber, formatMeasurementTime } from "@/lib/measurements"
 
-// The list already carries comparison endpoints and KPIs; only omitted historical publications need a GET.
+// Lists omit frozen definitions; hydrate from the same immutable publication used by detail.
 export function useHistoricalExperiments(publications:Experiment[],catalog:Experiment[]=publications,enabled=true) {
-  const ids=[...new Set(publications.flatMap(historicalPublicationIDs))].filter(id=>!catalog.some(run=>run.id===id)&&!publications.some(run=>run.id===id))
+  const ids=[...new Set([...publications.filter(run=>!run.definition).map(run=>run.id),...publications.flatMap(historicalPublicationIDs).filter(id=>!catalog.some(run=>run.id===id)&&!publications.some(run=>run.id===id))])]
   const queries=useChillQueries<Experiment>(ids.map(experimentPath),{enabled,decoder:decodeExperiment})
   const fetched=queries.flatMap((query,index)=>query.data?.id===ids[index]?[query.data]:[])
   const failed=queries.filter(query=>query.error&&!(query.error instanceof ApiError&&query.error.status===404))
-  return {runs:[...publications,...catalog.filter(run=>!publications.some(item=>item.id===run.id)),...fetched],pending:ids.length>0&&(!enabled||queries.some(query=>query.isPending)),error:failed[0]?.error??null,refetch:()=>{for(const query of failed)void query.refetch()}}
+  const known=[...publications,...catalog.filter(run=>!publications.some(item=>item.id===run.id))]
+  return {runs:[...known.map(run=>fetched.find(item=>item.id===run.id)??run),...fetched.filter(run=>!known.some(item=>item.id===run.id))],pending:ids.length>0&&(!enabled||queries.some(query=>query.isPending)),error:failed[0]?.error??null,refetch:()=>{for(const query of failed)void query.refetch()}}
 }
 
 export function HistoricalExperimentError({refetch}:{refetch:()=>void}) {
@@ -21,10 +22,11 @@ export function HistoricalExperimentError({refetch}:{refetch:()=>void}) {
 
 const outcomeWords:Record<string,string>={Complete:"완료",Failed:"실패",PASS:"통과",FAIL:"실패",INVALID:"무효",NOT_EVALUATED:"미평가",Executed:"실행",Cancelled:"취소",Invalid:"무효"}
 const outcomeReasons:Record<string,string>={IdentityMismatch:"실행 대상 식별자 불일치",NoControlEffects:"복구할 제어 변경 없음",ProcedureComplete:"절차 완료",CleanupFailed:"정리 실패",ExecutionLost:"실행 기록 확인 불가",RemoteEffectUnknown:"원격 변경 결과 미확인"}
+const outcomeLabel=(axis:{value:string;reason:string})=>axis.reason==="SLOFailed"?"SLO 미충족":outcomeWords[axis.value]??"미기록"
 
 export function ExperimentOutcome({run,stage}:{run:Experiment;stage?:ExperimentStage}) {
   const outcome=experimentOutcome(run,stage)
-  return <dl aria-label={stage?"단계 판정 3축":"실험 판정 3축"} className="flex flex-wrap gap-x-4 gap-y-1 text-sm">{([["execution","실행"],["measurement","측정"],["cleanup","정리"]] as const).map(([axis,label])=><div key={axis} className="flex items-start gap-2"><dt className="text-muted-foreground">{label}</dt><dd className={["Failed","FAIL","INVALID"].includes(outcome[axis].value)?"font-medium text-destructive":""}>{outcomeWords[outcome[axis].value]??"미기록"}{outcome[axis].reason&&outcome[axis].reason!=="미기록"&&<div className="text-xs font-normal text-muted-foreground">{outcomeReasons[outcome[axis].reason]??"원문 확인"}</div>}</dd></div>)}</dl>
+  return <dl aria-label={stage?"단계 판정 3축":"실험 판정 3축"} className="flex flex-wrap gap-x-4 gap-y-1 text-sm">{([["execution","실행"],["measurement","측정"],["cleanup","정리"]] as const).map(([axis,label])=><div key={axis} className="flex items-start gap-2"><dt className="text-muted-foreground">{label}</dt><dd className={["Failed","FAIL","INVALID"].includes(outcome[axis].value)?"font-medium text-destructive":""}>{outcomeLabel(outcome[axis])}{outcome[axis].reason&&outcome[axis].reason!=="미기록"&&outcome[axis].reason!=="SLOFailed"&&<div className="text-xs font-normal text-muted-foreground">{outcomeReasons[outcome[axis].reason]??"원문 확인"}</div>}</dd></div>)}</dl>
 }
 
 export function ExperimentInjections({run,stage}:{run:Experiment;stage:ExperimentStage}) {
@@ -66,11 +68,22 @@ export function ExperimentComparisonLegend() {
   return <span className="text-xs text-muted-foreground" title="일치: 게시 정의의 부하 시나리오 UID·부하 생성기와 서비스 식별자·정의, 측정 규칙, 표시 구간 길이가 같음. 참고: 조건이 다르거나 미기록. 제한 원인은 중복될 수 있어요.">Δ 왼쪽−오른쪽 / p95 왼쪽÷오른쪽</span>
 }
 
+export function ExperimentMetadata({run,stage}:{run:Experiment;stage:ExperimentStage}) {
+  const parts=stageLoadParts(stage,run),rules=object(stage.kpis.measurementRules)
+  const number=(value:number)=>value.toLocaleString("ko-KR",{maximumFractionDigits:2})
+  return <div className="min-w-0 space-y-2 text-xs">
+    <dl className="flex flex-wrap gap-x-4 gap-y-1"><div><dt className="text-muted-foreground">정책</dt><dd>{definitionPolicy(stage,run)}</dd></div><div><dt className="text-muted-foreground">측정 규칙</dt><dd>{Object.keys(rules).length?Object.entries(rules).map(([key,value])=><div key={key} className="break-all">{key}: {publishedText(value)}</div>):"미기록"}</dd></div></dl>
+    <table aria-label="계획 부하" className="w-full text-left tabular-nums"><thead><tr>{["구간","서비스","길이 (s)","요청률 (req/s)","α"].map(label=><th key={label} className="p-1 font-normal">{label}</th>)}</tr></thead><tbody>{parts.length?parts.flatMap(part=>Object.entries(part.rates??part.alpha??{}).map(([name,value])=><tr key={`${part.id}/${name}`} className="border-t"><th className="p-1 font-normal">{part.id}</th><td className="break-all p-1">{name}</td><td className="p-1">{number(part.durationSeconds)}</td><td className="p-1">{part.rates?number(value):"미기록"}</td><td className="p-1">{part.alpha?number(value):"미기록"}</td></tr>)):<tr><td colSpan={5}>미기록</td></tr>}</tbody></table>
+    <table aria-label="서비스 정의·SLO" className="w-full text-left tabular-nums"><thead><tr>{["서비스","식별자","정의","SLO p95 (ms)"].map(label=><th key={label} className="p-1 font-normal">{label}</th>)}</tr></thead><tbody>{experimentRows(stage).map(row=><tr key={row.source} className="border-t"><th className="break-all p-1 font-normal">{row.name}</th><td className="break-all p-1">{publishedText(row.uid)||"미기록"}</td><td className="break-all p-1">{publishedText(row.definition)||"미기록"}</td><td className="p-1">{frozenP95SLO(row,run)===null?"미기록":number(frozenP95SLO(row,run)!)}</td></tr>)}</tbody></table>
+  </div>
+}
+
 export function ExperimentAbsoluteValues({run,service="",onSelect}:{run:Experiment;service?:string;onSelect?:(stage:ExperimentStage,service:string)=>void}) {
   const number=(value:unknown,unit="")=>typeof value==="number"&&Number.isFinite(value)?unit==="req/s"?value>0&&value<.01?"0.01 미만":value.toLocaleString("ko-KR",{minimumFractionDigits:2,maximumFractionDigits:2}):formatMeasurementNumber(value,unit):"미제공"
   return <div className="min-w-0 space-y-2" aria-label="단계별 원값">{[...run.stages].sort((a,b)=>Date.parse(a.from)-Date.parse(b.from)).map((stage,index)=><details key={`${stage.id}/${index}`} open={index===0} className="min-w-0 rounded border p-2">
     <summary className="min-h-10 cursor-pointer break-all text-sm font-medium">{stage.id}</summary>
     <table className="mb-2 w-full text-left text-xs tabular-nums max-md:[&>tbody>tr]:grid max-md:[&>tbody>tr]:grid-cols-2"><tbody><tr><th className="font-normal text-muted-foreground">길이 (s)</th><td>{number(stageSeconds(stage),"s")}</td><th className="font-normal text-muted-foreground">에너지 (J)</th><td>{number(stage.kpis.wholePoolJoules,"J")}</td></tr><tr><th className="font-normal text-muted-foreground">시작 (KST)</th><td>{formatMeasurementTime(stage.from)}</td><th className="font-normal text-muted-foreground">종료 (KST)</th><td>{formatMeasurementTime(stage.to)}</td></tr></tbody></table>
+    <ExperimentMetadata run={run} stage={stage}/>
     <table className="w-full text-sm tabular-nums max-md:[&>thead]:sr-only max-md:[&>tbody>tr]:grid max-md:[&>tbody>tr]:grid-cols-2 max-md:[&>tbody>tr>th]:col-span-2 max-md:[&>tbody>tr>td]:flex max-md:[&>tbody>tr>td]:flex-col max-md:[&>tbody>tr>td]:text-left max-md:[&>tbody>tr>td]:before:text-xs max-md:[&>tbody>tr>td]:before:text-muted-foreground max-md:[&>tbody>tr>td]:before:content-[attr(data-label)]">
       <thead><tr>{["서비스","발행 요청률 (요청/s)","기한 내 성공률 (%)","성공 응답 p95 (ms)"].map(label=><th key={label} className="p-2 text-right first:text-left">{label}</th>)}</tr></thead>
       <tbody>{experimentRows(stage).filter(row=>!service||row.name===service).map(row=><tr key={row.source} className="border-t"><th className="max-w-64 break-words p-2 text-left font-normal">{onSelect?<button type="button" className="min-h-10 text-left underline" onClick={()=>onSelect(stage,row.name)}>{row.name}</button>:<Link prefetch={false} className="inline-flex min-h-10 items-center underline" href={`/experiments/results?${new URLSearchParams({a:run.id,al:run.id,as:stage.id,service:row.name})}`}>{row.name}</Link>}</th><td data-label="발행 요청률 (요청/s)" className="p-2 text-right">{number(observedStageRate(stage,row.name),"req/s")}</td><td data-label="기한 내 성공률 (%)" className="p-2 text-right">{number(typeof resultMetric(row,"success").value==="number"?Number(resultMetric(row,"success").value)*100:null,"%")}</td><td data-label="성공 응답 p95 (ms)" className="p-2 text-right">{number(resultMetric(row,"p95").value,"ms")}</td></tr>)}</tbody>
@@ -83,12 +96,13 @@ export function ExperimentResultRow({run,runs,pending,error}:{run:Experiment;run
   const state=error?"조회 실패":pending?"조회 중":!run.definition&&run.comparisons===undefined?"미기록":c.matched?"일치":c.limited?"참고":score.conclusion==="대상 게시 없음"?"대상 없음":"비교 없음"
   const metrics=score.reference?score.referenceSummary:score.summary
   const outcome=experimentOutcome(run)
+  if(!definitionComparisons(run,runs).length&&run.definition)return <tr className="border-t"><th scope="row" className="max-w-64 break-all p-3 text-left align-top font-medium"><Link prefetch={false} className="underline" href={`/experiments/results?${new URLSearchParams({a:run.id})}`}>{run.definition.run.name}</Link><div className="mt-2">{state}</div><ExperimentOutcome run={run}/></th><td colSpan={11} className="min-w-0 p-3"><ExperimentAbsoluteValues run={run}/></td></tr>
   if(!run.definition&&run.comparisons===undefined)return <tr className="border-t"><th scope="row" className="max-w-64 break-all p-3 text-left align-top font-medium"><Link prefetch={false} className="underline" href={`/experiments/results?${new URLSearchParams({a:run.id})}`}>{run.id}</Link><div className="mt-2 text-xs font-normal text-muted-foreground">비교・정책・같은 부하 미기록</div>{run.outcome&&<div className="mt-3 font-normal"><ExperimentOutcome run={run}/></div>}</th><td colSpan={11} className="min-w-0 p-3"><ExperimentAbsoluteValues run={run}/></td></tr>
   return <tr className="border-t">
     <th scope="row" className="p-3 text-left font-medium">{state}</th>
     <td data-label="실험" className="max-w-64 break-all p-3"><Link prefetch={false} className="underline" href={`/experiments/results?${new URLSearchParams({a:run.id})}`}>{run.definition?.run.name??run.id}</Link></td>
     {[c.matched,c.limited,c.unpaired].map((count,index)=><td key={index} data-label={["일치 (개)","참고 (개)","대응 없음 (개)"][index]} className="p-3 text-right tabular-nums">{pending||error?"미확인":state==="미기록"?"미기록":count}</td>)}
-    {(["execution","measurement","cleanup"] as const).map((axis,index)=><td key={axis} data-label={["실행","측정","정리"][index]} className="p-3">{outcomeWords[outcome[axis].value]??"미기록"}{outcome[axis].reason&&<div className="text-xs text-muted-foreground">{outcome[axis].reason}</div>}</td>)}
+    {(["execution","measurement","cleanup"] as const).map((axis,index)=><td key={axis} data-label={["실행","측정","정리"][index]} className="p-3">{outcomeLabel(outcome[axis])}{outcome[axis].reason&&outcome[axis].reason!=="SLOFailed"&&<div className="text-xs text-muted-foreground">{outcome[axis].reason}</div>}</td>)}
     {[{value:metrics.energyPercent,base:0,higher:false},{value:metrics.successDelta,base:0,higher:true},{value:metrics.p95Ratio,base:1,higher:false}].map((metric,index)=><td key={index} data-label={["에너지 Δ (%)","최악 성공률 Δ (%p)","최악 p95 (배)"][index]} className="p-3 text-right tabular-nums">{error||pending?"미확인":metric.value===null?"미기록":experimentDifference(metric.value,metric.base,metric.higher).text}</td>)}
     <td data-label="제한 사유" className="max-w-80 break-words p-3">{pending||error?"미확인":definitionComparisonReason(run,runs)}{c.limited>0&&<ExperimentLimits run={run} runs={runs}/>}</td>
   </tr>

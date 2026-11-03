@@ -376,13 +376,16 @@ export function experimentDifference(value:number|null,baseline=0,higherIsBetter
 }
 
 export function experimentChartData(run:Experiment,service:string,runs:Experiment[]=[run]) {
-  return experimentHeatmap(run,runs).map((row,index)=>{
+  return experimentHeatmap(run,runs).flatMap((row,index)=>{
     const own=experimentRows(row.stage).filter(item=>item.name===service),other=row.other?experimentRows(row.other).filter(item=>item.name===service):[]
-    return {id:row.id,interval:index+1,rate:stageRate(row.stage,row.leftRun,service),observedRate:observedStageRate(row.stage,service),leftLabel:stageLabel(row.stage,row.leftRun),rightLabel:row.other?stageLabel(row.other,row.rightRun):"비교 없음",
+    const parts=stageLoadParts(row.stage,row.leftRun)
+    const base={id:row.id,interval:index+1 as number|string,rate:stageRate(row.stage,row.leftRun,service),observedRate:observedStageRate(row.stage,service),leftLabel:stageLabel(row.stage,row.leftRun),rightLabel:row.other?stageLabel(row.other,row.rightRun):"비교 없음",
       leftP95:own.length===1?resultMetric(own[0],"p95").value:null,
       rightP95:other.length===1?resultMetric(other[0],"p95").value:null,
       leftSLO:own.length===1?frozenP95SLO(own[0],row.leftRun):null,
       rightSLO:other.length===1?frozenP95SLO(other[0],row.rightRun):null}
+    if(parts.length<2)return [base]
+    return parts.map(part=>({...base,interval:`${row.id} / ${part.id}`,rate:part.rates?(service?part.rates[service]??null:Object.values(part.rates).reduce((sum,value)=>sum+value,0)):null,observedRate:null,leftP95:null,rightP95:null}))
   })
 }
 
@@ -406,7 +409,11 @@ export function publishedVerdict(stage:ExperimentStage):string {
   return status==="FAIL"?"요청 목표 미달":status.includes("NOT_READY")?"판정 근거 부족":status.includes("NOT_EVALUATED")?"아직 판정하지 않음":status.includes("DESCRIPTIVE")?"게시된 관측 결과":status
 }
 
+export function stageLoadParts(stage:ExperimentStage,run:Experiment) {
+  const spec=definitionStage(run,stage)
+  return run.definition?.loadScenarios.find(s=>s.uid===spec?.loadScenarioRef.uid)?.spec.parts??[]
+}
 export function stageLoadLabel(stage:ExperimentStage,run:Experiment):string {
-  const spec=definitionStage(run,stage),scenario=run.definition?.loadScenarios.find(s=>s.uid===spec?.loadScenarioRef.uid)
-  return scenario?scenario.spec.parts.map(part=>`${part.id}: ${Object.entries(part.rates??part.alpha??{}).map(([name,value])=>`${name} ${part.rates?`${value} req/s`:`α ${value}`}`).join(", ")}`).join(" / "):"미기록"
+  const parts=stageLoadParts(stage,run)
+  return parts.length?parts.map(part=>`${part.id}: ${Object.entries(part.rates??part.alpha??{}).map(([name,value])=>`${name} ${part.rates?`${value.toLocaleString("ko-KR",{maximumFractionDigits:2})} req/s`:`α ${value}`}`).join(", ")}`).join(" / "):"미기록"
 }

@@ -1025,8 +1025,50 @@ test("R17b: planned and issued chart rates share the selected service and durati
   const run=withDefinition(definedRun([{...stage,id:"candidate"}]),definition=>{
     definition.loadScenarios[0].spec.parts=[{id:"early",durationSeconds:10,rates:{camera:2,plc:30}},{id:"late",durationSeconds:30,rates:{camera:6,plc:10}}]
   })
-  assert.equal(experimentChartData(run,"camera")[0].rate,5)
-  assert.equal(experimentChartData(run,"plc")[0].rate,15)
-  assert.equal(experimentChartData(run,"")[0].rate,20)
-  assert.equal(experimentChartData(run,"absent")[0].rate,null)
+  const average=(service:string)=>experimentChartData(run,service).reduce((sum,row,index)=>sum+(row.rate??0)*[10,30][index],0)/40
+  assert.equal(average("camera"),5)
+  assert.equal(average("plc"),15)
+  assert.equal(average(""),20)
+  assert.ok(experimentChartData(run,"absent").every(row=>row.rate===null))
+})
+
+test("R18: frozen load parts produce separate chart bars without repeating stage measurements",()=>{
+  const run=withDefinition(definedRun([{...stage,id:"candidate"}]),d=>{
+    d.loadScenarios[0].spec.parts=[{id:"half",durationSeconds:180,rates:{camera:53.075340806062236}},{id:"high",durationSeconds:300,rates:{camera:106.15068161212447}}]
+  })
+  const chart=experimentChartData(run,"camera")
+  assert.equal(chart.length,2)
+  assert.deepEqual(chart.map(row=>row.interval),["candidate / half","candidate / high"])
+  assert.deepEqual(chart.map(row=>row.rate),[53.075340806062236,106.15068161212447])
+  assert.ok(chart.every(row=>row.leftP95===null&&row.observedRate===null))
+})
+
+test("R18: list hydration, solo measured values, SLO verdict and frozen metadata render real objects",()=>{
+  const run=definedRun([{...stage,id:"candidate",kpis:{wholePoolJoules:54776.5,measurementRules:{harnessCommit:"abc123"},requests:{camera:{workloadUID:"camera",offered:100,successNumerator:25,successDenominator:100,completedLatencyNS:{p95:1986480000,samples:25}}}}}])
+  run.outcome={execution:{status:"Complete"},measurement:{verdict:"FAIL",reason:"SLOFailed"}}
+  run.definition!.loadScenarios[0].spec.parts=[{id:"half",durationSeconds:180,rates:{camera:53.075340806062236}},{id:"high",durationSeconds:300,rates:{camera:106.15068161212447}}]
+  const source=readFileSync(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8")
+  const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  type RenderProps={run:Experiment;stage?:ExperimentStage;runs?:Experiment[];pending?:boolean;error?:boolean}
+  const require=createRequire(import.meta.url),exports={} as {useHistoricalExperiments:(runs:Experiment[])=>{runs:Experiment[]};ExperimentResultRow:ComponentType<RenderProps>;ExperimentMetadata:ComponentType<RenderProps>}
+  new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiments"?experimentHelpers:name==="@/lib/measurements"?measurementHelpers:name==="@/lib/client"?{useChillQueries:()=>[{data:run,isPending:false}]}:name==="@/components/ui/button"?{Button:(props:Record<string,unknown>)=>createElement("button",props)}:name==="next/link"?{__esModule:true,default:(props:Record<string,unknown>)=>createElement("a",props)}:require(name),exports)
+  const listed={...run,definition:undefined,comparisons:[]}
+  const hydrated=exports.useHistoricalExperiments([listed]).runs[0]
+  assert.deepEqual(hydrated.definition,run.definition)
+  const markup=renderToStaticMarkup(createElement(exports.ExperimentResultRow,{run:hydrated,runs:[hydrated],pending:false,error:false}))
+  assert.match(markup,/자동 운영/)
+  assert.match(markup,/단계별 원값/)
+  assert.match(markup,/54,777/)
+  assert.match(markup,/SLO 미충족/)
+  assert.doesNotMatch(markup,/측정 실패|53\.075340806062236|에너지 Δ/)
+  const metadata=renderToStaticMarkup(createElement(exports.ExperimentMetadata,{run,stage:run.stages[0]}))
+  assert.match(metadata,/half/)
+  assert.match(metadata,/high/)
+  assert.match(metadata,/53\.08/)
+  assert.match(metadata,/harnessCommit/)
+  assert.match(metadata,/abc123/)
+  assert.match(metadata,/50/)
+  const historic=renderToStaticMarkup(createElement(exports.ExperimentMetadata,{run:listed,stage:listed.stages[0]}))
+  assert.match(historic,/미기록/)
+  assert.doesNotMatch(historic,/자동 운영|53\.08/)
 })
