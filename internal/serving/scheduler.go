@@ -124,7 +124,12 @@ func dispatchOccupancy(settings SchedulerSettings, measured []DispatchOccupancy,
 		if o.Node.UID == i.Node.UID && o.PowerMode == i.Profile.Condition.PowerMode &&
 			o.Model == i.Profile.Condition.LogicalModel {
 			o.PerRequest = max(o.PerRequest, 0)
-			o.Provenance = &DispatchOccupancyProvenance{Source: occupancySourceDOM, Value: int64(o.PerRequest)}
+			if o.Provenance == nil {
+				o.Provenance = &DispatchOccupancyProvenance{Source: occupancySourceDOM, Value: int64(o.PerRequest)}
+			} else {
+				provenance := *o.Provenance
+				o.Provenance = &provenance
+			}
 			return &o
 		}
 	}
