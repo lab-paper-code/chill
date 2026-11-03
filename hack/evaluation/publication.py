@@ -24,6 +24,8 @@ def publish(context):
     prepare_failed=context.execution.get('prepareCompleted') is False
     run_spec=context.spec if prepare_failed else context.snapshot['runSpec']
     templates=[] if prepare_failed else run_spec['stages']
+    snapshot_source = None if prepare_failed else context.execution.get('inputSnapshotRef') or context.spec.get('inputSnapshotRef')
+    existing_sources = [snapshot_source] if snapshot_source else []
     not_started={'status':'Failed','reason':'NotStarted'}
     def execution_outcome(values):
         executions=[value.get('execution',not_started) for value in values]
@@ -73,7 +75,7 @@ def publish(context):
             definitions={'workloads':context.snapshot['scenarios'][template['loadScenarioRef']['uid']]['workloads']}
             phase_source=next(({key:ref[key] for key in ('store','key')} for ref in artifacts if ref['key'].endswith('/stage/artifacts/measured/phase.json') and '/stages/'+sid+'/' in ref['key']),None)
             judgment_rules.publication_stage_metadata(bound,phase,definitions,
-                context.execution.get('inputSnapshotRef') or context.spec.get('inputSnapshotRef'),
+                snapshot_source,
                 phase_source,scope/'measured',context.run,requests)
             power=judgment.get('power') or {}
             kpis={'failurePolicy':'v2','status':judgment['status'],'components':judgment['components'],'requests':requests,
@@ -156,9 +158,10 @@ def publish(context):
         except FileNotFoundError: continue
         collect_residuals(input_snapshot.load(path))
     outcome['cleanup']={**outcome['cleanup'],'residuals':residuals}
-    summary={'schemaVersion':'serving-experiment.v1alpha1','id':context.execution['runUID'],'from':start,'to':end,'status':measurement,'stages':stages,'sources':[{key:obj[key] for key in ('store','key')} for obj in objects],'definition':definition,'outcome':outcome}
+    sources = [{key:obj[key] for key in ('store','key')} for obj in objects + existing_sources]
+    summary={'schemaVersion':'serving-experiment.v1alpha1','id':context.execution['runUID'],'from':start,'to':end,'status':measurement,'stages':stages,'sources':sources,'definition':definition,'outcome':outcome}
     summary_path=context.run/'publication-summary.json';input_snapshot.save(summary_path,summary)
-    manifest=context.run/'publication-manifest.json';input_snapshot.save(manifest,{'objects':objects,'summary':{'store':context.store.name,'key':prefix+'summary.json','localPath':str(summary_path)}})
+    manifest=context.run/'publication-manifest.json';input_snapshot.save(manifest,{'objects':objects,'existingSources':existing_sources,'summary':{'store':context.store.name,'key':prefix+'summary.json','localPath':str(summary_path)}})
     (context.run/'tables.txt').write_text(tables.render(context.run,REPO,evaluation=aggregated))
     private={'logicalStore':context.store.name,'bucket':os.environ['CHILL_EVIDENCE_BUCKET'],'endpoint':os.environ['CHILL_EVIDENCE_ENDPOINT'],'region':os.environ['CHILL_EVIDENCE_REGION'],'accessKeyID':os.environ['AWS_ACCESS_KEY_ID'],'secretAccessKey':os.environ['AWS_SECRET_ACCESS_KEY'],'tempDir':str(context.run.parent.parent/'.evidence-tmp')}
     Path(private['tempDir']).mkdir(mode=0o700,parents=True,exist_ok=True)

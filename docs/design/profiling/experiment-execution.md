@@ -219,6 +219,9 @@ raw provenance 오류는 지표를 전역 무효화하지 않고, 모호한 requ
 bridge/reader의 외곽 unknown-field 거절은 유지하고, 원래 JSON 객체로 보존하는 KPI·definition
 내부에는 새 strict 스키마를 만들지 않는다. 이미 게시된 과거 null은 수정·재게시하지 않는다.
 
+게시 `sources[]`에는 실제 `identitySource`에 사용한 동결 input-snapshot의 기존 store/key 참조도 포함한다. Python `publication`은 이 참조를 그대로 조립하고, `hack/evaluation/publish`는 manifest의 선택적 `existingSources`를 기존 Statter로 한 번 확인한다(같은 Run/store·존재·크기). snapshot 재업로드나 digest 재계산은 하지 않는다.
+기존 sources 규칙과 같이 참조가 없거나 크기가 다르면 신규 게시 객체를 쓰기 전에 게시를 실패시킨다. 출처를 조용히 지우거나 적용 SLO 검증을 우회하지 않는다. sources 배열의 항목 추가이므로 `serving-experiment.v1alpha1` 및 E5 summary 버전은 유지하며 과거 게시물은 변경하지 않는다.
+
 ## 6. 상호 배제와 재시작
 
 **전제: profiler leader election을 켠다.** 바이너리 `--leader-elect` 기본은 false지만 Helm `profiler.leaderElection`은 true다.

@@ -39,8 +39,9 @@ type publicationObject struct {
 }
 
 type publicationManifest struct {
-	Objects []publicationObject `json:"objects"`
-	Summary publicationObject   `json:"summary"`
+	Objects         []publicationObject            `json:"objects"`
+	Summary         publicationObject              `json:"summary"`
+	ExistingSources []evidencestore.ObjectIdentity `json:"existingSources,omitempty"`
 }
 
 func main() {
@@ -74,7 +75,7 @@ func run(ctx context.Context, configPath, manifestPath string, output io.Writer)
 	if err != nil {
 		return err
 	}
-	receipt, err := publish(ctx, store, config.LogicalStore, manifest)
+	receipt, err := publish(ctx, store, store, config.LogicalStore, manifest)
 	if err != nil {
 		return err
 	}
@@ -103,7 +104,7 @@ func readPublicationJSON(name string, value any) (err error) {
 	return nil
 }
 
-func publish(ctx context.Context, writer evidencestore.ImmutableWriter, store string, manifest publicationManifest) (evidencestore.Receipt, error) {
+func publish(ctx context.Context, writer evidencestore.ImmutableWriter, statter evidencestore.Statter, store string, manifest publicationManifest) (evidencestore.Receipt, error) {
 	// Definition and outcome are opaque objects validated at the shared boundary;
 	// upload the original summary bytes so both are preserved without rewriting.
 	var summary httpapi.ExperimentSummary
@@ -125,9 +126,19 @@ func publish(ctx context.Context, writer evidencestore.ImmutableWriter, store st
 		}
 		seen[object.Key] = true
 	}
+	// Frozen Run evidence already exists outside the publication prefix. Verify
+	// its reference once here; never re-upload it or recompute a content digest.
+	for _, source := range summary.Sources {
+		if _, known := seen[source.Key]; !known {
+			seen[source.Key] = false // referenced, but not verified yet
+		}
+	}
+	if err := verifyExistingSources(ctx, statter, store, summary.ID, manifest.ExistingSources, seen); err != nil {
+		return evidencestore.Receipt{}, err
+	}
 	for _, source := range summary.Sources {
 		if source.Key == manifest.Summary.Key || !seen[source.Key] {
-			return evidencestore.Receipt{}, errors.New("summary sources must identify raw evidence published by this manifest")
+			return evidencestore.Receipt{}, errors.New("summary sources must identify published or verified existing evidence")
 		}
 	}
 	// Validate every local file before any upload; a missing raw artifact cannot
@@ -154,6 +165,28 @@ func publish(ctx context.Context, writer evidencestore.ImmutableWriter, store st
 		return evidencestore.Receipt{}, fmt.Errorf("%w: experiment id already published; corrections require a new id", evidencestore.ErrPrecondition)
 	}
 	return receipt, nil
+}
+
+func verifyExistingSources(ctx context.Context, statter evidencestore.Statter, store, runID string, sources []evidencestore.ObjectIdentity, seen map[string]bool) error {
+	for _, source := range sources {
+		verified, referenced := seen[source.Key]
+		if source.Store != store || !strings.HasPrefix(source.Key, "experiments/"+runID+"/") ||
+			!referenced || verified {
+			return errors.New("existing publication source must identify this Run's referenced evidence")
+		}
+		if err := source.Validate(); err != nil {
+			return err
+		}
+		observed, err := statter.Stat(ctx, source.Location())
+		if err != nil {
+			return fmt.Errorf("verify existing publication source %s: %w", source.Key, err)
+		}
+		if observed != source {
+			return fmt.Errorf("%w: existing publication source %s", evidencestore.ErrContentMismatch, source.Key)
+		}
+		seen[source.Key] = true
+	}
+	return nil
 }
 
 func publicationIdentity(object publicationObject) (evidencestore.ObjectIdentity, error) {
