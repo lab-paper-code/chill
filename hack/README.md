@@ -421,37 +421,31 @@ select the existing record fields. Actual record order/IDs/bytes/hash are Ready
 evidence, not host inputs. Every generator Pod uses the frozen
 `loadGenerator.nodeName` verbatim. Memory and shard/barrier declarations remain.
 
-Prepare, factor and stage monitoring check only Running/Pending Pods on the
-Run's participating nodes: `powerMeasurement.nodes` plus `loadGenerator.nodeName`.
-Each cross-namespace Pod query has an explicit `spec.nodeName` field selector;
-unrelated nodes and Succeeded/Failed Pods cannot block the Run.
+At prepare start, freeze the participating nodes' Running/Pending Pod facts in
+`environment-start.json` and `snapshot.environmentStart`: namespace, name, UID,
+assigned node, phase and ownerReference summary. Participating nodes are exactly
+`powerMeasurement.nodes` plus `loadGenerator.nodeName`. Existing system, tenant
+and ownerless Pods are environmental evidence, not a preparation rejection.
 
-Only Pods without structural CHILL/current-Run ownership block execution.
-The evaluator owner chain must reach a live Job UID whose controller reference
-matches this Run or one of its frozen Stage UIDs. Pod labels never establish
-ownership. CHILL release ownership must reach a controller ancestor matching a
-frozen target UID or release instance; the Pod's own release label is ignored.
-A directly declared Pod target is recognized by its frozen namespace/UID,
-without requiring a controller owner; reusing its name or labels is not enough.
-The declared target resources' `app.kubernetes.io/instance` values are frozen in
-the existing target snapshot at prepare, scoped to their declared namespaces.
-Read-only ReplicaSet/Deployment/StatefulSet/Job/CronJob lookup verifies UIDs.
-CHILL serving Pods use the controller's unique `edge.dacs.io/v1alpha1` Workload
-ownerReference rule, with the referenced Workload's actual UID checked.
-DaemonSet-owned Pods and Pods carrying `kubernetes.io/config.mirror` are exempt:
-node networking, proxies and device plugins are persistent infrastructure.
-No Pod-name pattern, fleet-label signature, namespace allowlist or historical
-date classifies tenants. No new CR field is needed; release identities are
-frozen observations, not deployment-name defaults.
-Ancestor reads have get-only RBAC in the configured serving/profile namespaces;
-Job mutation rights remain confined to the evaluator's release namespace.
-An unreadable owner (including 404/403) fails closed as ownership unknown.
-The ordinary preparation result records the Pod namespace/name, unresolved
-owner kind/name/UID and failure type; owner cycles also terminate and reject.
+At the existing prepare/factor/stage monitoring boundaries, stop only for new
+active Pod UIDs absent from that baseline and not exempt below. Write every
+offending Pod to `environment-intrusions.json` before STOP. Each cross-namespace
+Pod query uses `spec.nodeName`; terminal Pods and nonparticipating nodes are
+ignored. Pod names, ages, release labels and namespace allowlists play no role.
 
-Other preparation/stage scope checks follow explicit identities too: target
-Pods require the declared resource's nonempty Kubernetes selector (including
-matchExpressions), and an unrelated load-generator Job is not a readiness gate.
+New evaluator Pods are exempt only when their direct Job owner UID matches a
+live Job controlled by this Run or its known Stage UIDs. No ancestor walk or
+release-identity classifier is used. New serving Pods for the current scenario's
+frozen Workload UIDs are normal target autoscaling: use the controller's unique
+`edge.dacs.io/v1alpha1` Workload ownerReference predicate (a08fda9d). DaemonSet
+and static/mirror Pods are also exempt as persistent node infrastructure.
+No ReplicaSet/StatefulSet/CronJob ancestor-read grants are needed.
+
+The separate nonterminal load-generator Job exclusion remains in force:
+DOM and E5 share the generator node, so an already-running foreign generator is
+structural generator contention even when its Pod was present at Run start.
+Target readiness still uses the explicitly declared resource's nonempty
+Kubernetes selector, including matchExpressions, never a namespace-wide guess.
 
 `hack/measure/` remains separate measurement tooling. Keep operational
 credentials and evidence outside the checkout; never copy token contents into

@@ -1,7 +1,4 @@
 {{- if .Values.evaluation.enabled }}
-{{- $root := . }}
-{{- $servingNamespace := default .Release.Namespace .Values.servingEntrypoint.namespace }}
-{{- $ownerNamespaces := concat (list .Release.Namespace $servingNamespace) (default (list $servingNamespace) .Values.servingEntrypoint.profileNamespaces) | uniq | sortAlpha }}
 {{- range $name := list .Values.evaluation.config.actionServiceAccount .Values.evaluation.config.publishServiceAccount }}
 ---
 apiVersion: v1
@@ -23,10 +20,6 @@ rules:
   - apiGroups: [batch]
     resources: [jobs]
     verbs: [create, get, list, delete]
-  # Read controller ancestors by UID for structural Pod ownership checks.
-  - apiGroups: [batch]
-    resources: [cronjobs]
-    verbs: [get]
   - apiGroups: [""]
     resources: [pods, pods/log]
     verbs: [get]
@@ -37,7 +30,7 @@ rules:
     resources: [loadscenarios]
     verbs: [get]
   - apiGroups: [apps]
-    resources: [deployments, replicasets, statefulsets]
+    resources: [deployments]
     verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -53,37 +46,6 @@ subjects:
   - kind: ServiceAccount
     name: {{ .Values.evaluation.config.actionServiceAccount }}
     namespace: {{ .Release.Namespace }}
-{{- range $namespace := $ownerNamespaces }}
-{{- if ne $namespace $root.Release.Namespace }}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: {{ include "chill.fullname" $root }}-evaluation-owners
-  namespace: {{ $namespace }}
-rules:
-  - apiGroups: [apps]
-    resources: [deployments, replicasets, statefulsets]
-    verbs: [get]
-  - apiGroups: [batch]
-    resources: [jobs, cronjobs]
-    verbs: [get]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: {{ include "chill.fullname" $root }}-evaluation-owners
-  namespace: {{ $namespace }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: {{ include "chill.fullname" $root }}-evaluation-owners
-subjects:
-  - kind: ServiceAccount
-    name: {{ $root.Values.evaluation.config.actionServiceAccount }}
-    namespace: {{ $root.Release.Namespace }}
-{{- end }}
-{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
