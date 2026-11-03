@@ -30,6 +30,7 @@ func TestOperatingPowerColumnsRoundTripAndSize(t *testing.T) {
 			w.Nodes[j] = OperatingNodePower{Node: serving.NodeReference{Name: fmt.Sprintf("physical-node-%d", j), UID: fmt.Sprintf("1d8b2d96-a51a-40c1-b020-%012d", j)}, Meter: "shellyplugsg3-e4b063ddacc0", Scope: "node-exclusive-wall", Joules: &joules, MeanWatts: &watts, Samples: 9, MaximumSampleGapSeconds: 0.761647874, SourceTimestampAbsent: true, ObservedSamples: &samples, FirstObservedAt: &first, LastObservedAt: &last, Reasons: []string{}}
 			w.Nodes[j].MeterJoules, w.Nodes[j].MeterComplete = &joules, true
 			w.Nodes[j].GapSeconds, w.Nodes[j].GapFraction = .25, .05
+			w.Nodes[j].GapCount = i + j
 			w.Nodes[j].SourceIdentity = operatingTestSource
 		}
 		w.WholePoolJoules, w.WholePoolMeanWatts = w.Nodes[0].Joules, w.Nodes[0].MeanWatts

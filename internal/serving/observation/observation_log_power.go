@@ -30,6 +30,7 @@ type OperatingNodePower struct {
 	Scope                   string                        `json:"scope"`
 	MeterJoules             *float64                      `json:"meterJoules"`
 	MeterComplete           bool                          `json:"meterComplete"`
+	GapCount                int                           `json:"gapCount"`
 	GapSeconds              float64                       `json:"gapSeconds"`
 	GapFraction             float64                       `json:"gapFraction"`
 	SourceIdentity          metricobserver.SourceIdentity `json:"sourceIdentity"`
@@ -559,7 +560,11 @@ func integrateOperatingNode(node *OperatingNodePower, raw *operatingPowerHistory
 	sort.Slice(points, func(a, b int) bool { return points[a].ObservedAt.Before(points[b].ObservedAt) })
 	node.Samples = len(points)
 	for index := 1; index < len(points); index++ {
-		node.MaximumSampleGapSeconds = max(node.MaximumSampleGapSeconds, points[index].ObservedAt.Sub(points[index-1].ObservedAt).Seconds())
+		duration := points[index].ObservedAt.Sub(points[index-1].ObservedAt)
+		node.MaximumSampleGapSeconds = max(node.MaximumSampleGapSeconds, duration.Seconds())
+		if raw.hasPolicy && duration > raw.policy.MaximumGap {
+			node.GapCount++
+		}
 	}
 	node.GapSeconds = operatingMeterGap(points, from, to, raw.policy, raw.hasPolicy)
 	node.GapFraction = node.GapSeconds / to.Sub(from).Seconds()
@@ -576,6 +581,10 @@ func integrateOperatingNode(node *OperatingNodePower, raw *operatingPowerHistory
 	if raw.hasPolicy && len(node.Reasons) == 0 {
 		node.MeterJoules = &joules
 		node.MeterComplete = true
+	}
+	if node.MeterJoules != nil && node.MaximumSampleGapSeconds > raw.policy.MaximumGap.Seconds() {
+		node.MeterComplete = false
+		node.Reasons = append(node.Reasons, "maximum sample gap exceeds policy")
 	}
 	// Global incomplete history also invalidates individual reported totals.
 	if !rawComplete {
@@ -605,12 +614,19 @@ func operatingMeterGap(points []powerwindow.Sample, from, to time.Time, policy p
 }
 
 func integrateOperatingSamples(points []powerwindow.Sample, from, to time.Time, policy powerwindow.Policy) ([]powerwindow.Sample, float64, error) {
+	// Serving reports the measured trapezoid estimate separately from coverage.
+	// Keep the shared profiling acceptance policy unchanged. A local copy permits
+	// every source interval, while boundary/coverage/value checks still apply.
+	policy.MaximumGap = max(policy.MaximumGap, to.Sub(from))
+	if len(points) >= 2 {
+		policy.MaximumGap = max(policy.MaximumGap, points[len(points)-1].ObservedAt.Sub(points[0].ObservedAt))
+	}
 	if len(points) >= 2 && (points[0].ObservedAt.Before(from) || points[len(points)-1].ObservedAt.After(to)) {
 		if operatingBoundaryDistance(points, from) > policy.MaximumBoundaryDistance || operatingBoundaryDistance(points, to) > policy.MaximumBoundaryDistance {
 			return points, 0, errors.New("sample boundary distance exceeds policy")
 		}
-		// Check the original source gap/values before clipping. Interpolation
-		// must not hide a gap disallowed by the recorded coverage policy.
+		// Validate original source values before clipping; interpolation must not
+		// conceal invalid observations.
 		_, err := powerwindow.Integrate(powerwindow.Window{Start: points[0].ObservedAt, End: points[len(points)-1].ObservedAt, Samples: points}, policy)
 		if err != nil {
 			return points, 0, err

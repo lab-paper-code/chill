@@ -39,6 +39,7 @@ type OperatingPowerNodeColumns struct {
 	Scope                   [][]string                        `json:"scope"`
 	MeterJoules             [][]*float64                      `json:"meterJoules"`
 	MeterComplete           [][]bool                          `json:"meterComplete"`
+	GapCount                [][]int                           `json:"gapCount"`
 	GapSeconds              [][]float64                       `json:"gapSeconds"`
 	GapFraction             [][]float64                       `json:"gapFraction"`
 	SourceIdentity          [][]metricobserver.SourceIdentity `json:"sourceIdentity"`
@@ -78,6 +79,7 @@ func (s OperatingPowerSeries) Columns() OperatingPowerColumns {
 	n.Scope = make([][]string, count)
 	n.MeterJoules = make([][]*float64, count)
 	n.MeterComplete = make([][]bool, count)
+	n.GapCount = make([][]int, count)
 	n.GapSeconds = make([][]float64, count)
 	n.GapFraction = make([][]float64, count)
 	n.SourceIdentity = make([][]metricobserver.SourceIdentity, count)
@@ -105,6 +107,7 @@ func (s OperatingPowerSeries) Columns() OperatingPowerColumns {
 		n.Scope[i] = make([]string, length)
 		n.MeterJoules[i] = make([]*float64, length)
 		n.MeterComplete[i] = make([]bool, length)
+		n.GapCount[i] = make([]int, length)
 		n.GapSeconds[i] = make([]float64, length)
 		n.GapFraction[i] = make([]float64, length)
 		n.SourceIdentity[i] = make([]metricobserver.SourceIdentity, length)
@@ -121,6 +124,7 @@ func (s OperatingPowerSeries) Columns() OperatingPowerColumns {
 		for j, node := range b.Nodes {
 			n.Node[i][j], n.Meter[i][j], n.Scope[i][j] = node.Node, node.Meter, node.Scope
 			n.MeterJoules[i][j], n.MeterComplete[i][j] = node.MeterJoules, node.MeterComplete
+			n.GapCount[i][j] = node.GapCount
 			n.GapSeconds[i][j], n.GapFraction[i][j], n.SourceIdentity[i][j] = node.GapSeconds, node.GapFraction, node.SourceIdentity
 			n.Joules[i][j], n.MeanWatts[i][j], n.Samples[i][j] = node.Joules, node.MeanWatts, node.Samples
 			n.ReadFailures[i][j], n.MaximumSampleGapSeconds[i][j] = node.ReadFailures, node.MaximumSampleGapSeconds

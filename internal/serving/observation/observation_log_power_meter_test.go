@@ -31,12 +31,38 @@ func TestOperatingMeterFactsIndependentOfScheduler(t *testing.T) {
 			t.Fatalf("legacy incomplete history changed: %+v", node)
 		}
 		if gap {
-			if node.MeterComplete || node.MeterJoules != nil || node.GapSeconds != 10 || node.GapFraction != 1 || node.MaximumSampleGapSeconds != 10 {
+			if node.MeterComplete || node.MeterJoules == nil || *node.MeterJoules != 200 || node.GapCount != 1 || node.GapSeconds != 10 || node.GapFraction != 1 || node.MaximumSampleGapSeconds != 10 {
 				t.Fatalf("missing gap facts: %+v", node)
 			}
 		} else if !node.MeterComplete || node.MeterJoules == nil || *node.MeterJoules != 200 || node.GapSeconds != 0 || node.GapFraction != 0 || !reflect.DeepEqual(node.SourceIdentity, meter.Source) {
 			t.Fatalf("scheduler-free inactive meter lost: %+v", node)
 		}
+	}
+}
+
+func TestOperatingMeterGapUsesOriginalBracketingTrapezoid(t *testing.T) {
+	from := observationTestHour
+	to := from.Add(10 * time.Second)
+	points := []powerwindow.Sample{{ObservedAt: from, Watts: 0}, {ObservedAt: to, Watts: 100}}
+	policy := powerwindow.Policy{MaximumBoundaryDistance: 5 * time.Second, MinimumCoverage: 1, MaximumGap: time.Second}
+	if _, err := powerwindow.Integrate(powerwindow.Window{Start: from, End: to, Samples: points}, policy); err == nil {
+		t.Fatal("profiling must still reject the original gap")
+	}
+	start, end := from.Add(4*time.Second), from.Add(6*time.Second)
+	meter := OperatingPowerMeter{Node: serving.NodeReference{Name: "ramp", UID: "ramp"}, Meter: "wall", Scope: "node-exclusive-wall", Source: operatingTestSource}
+	power := metricobserver.Result{Source: operatingTestSource, StartedAt: from, EndedAt: to, Samples: []metricobserver.Sample{{ObservedAt: from, Watts: 0}, {ObservedAt: to, Watts: 100}}}
+	result, err := ReduceOperatingPower(start, end, []OperatingPowerMeter{meter}, 10, func(yield func(*SchedulerObservation) error) error {
+		return yield(&SchedulerObservation{Node: &meter.Node, Meter: meter.Meter, PowerScope: meter.Scope, Power: &power, PowerCoverage: &policy})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := result.Nodes[0]
+	if node.MeterJoules == nil || *node.MeterJoules != 100 || node.MeterComplete || node.GapCount != 1 || node.GapSeconds != 2 || node.GapFraction != 1 || node.MaximumSampleGapSeconds != 10 || node.Samples != 2 {
+		t.Fatalf("original gap or trapezoid lost during clipping: %+v", node)
+	}
+	if policy.MaximumGap != time.Second {
+		t.Fatal("serving changed the recorded policy")
 	}
 }
 

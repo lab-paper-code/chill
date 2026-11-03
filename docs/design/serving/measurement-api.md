@@ -74,7 +74,7 @@ columns 요청에 구 서버의 buckets 응답이나 다른 형식이 오면 `�
   `readFailures`, `maximumSampleGapSeconds`, `reasons`, `coverage`, 선택적 `gapUntil`을 가진다.
   `coverage`는 `{from,to,sources,gaps}`이며 source·gap의 원래 시간과 stream을 보존한다.
   노드 행은 `node{name,uid}`, `meter`, `scope`, `joules`, `meanWatts`, `samples`,
-  `meterJoules`, `meterComplete`, `gapSeconds`, `gapFraction`, `sourceIdentity`,
+  `meterJoules`, `meterComplete`, `gapCount`, `gapSeconds`, `gapFraction`, `sourceIdentity`,
   `readFailures`, `maximumSampleGapSeconds`, `sourceTimestampAbsent`, `reasons`와
   bucket 전용 `observedSamples`, 선택적 `firstObservedAt`, `lastObservedAt`을 가진다.
 - `samples`는 적분 경계를 지지하는 창 밖 표본을 포함할 수 있다.
@@ -89,6 +89,9 @@ columns 요청에 구 서버의 buckets 응답이나 다른 형식이 오면 `�
   보존 잘림·source 혼합·source identity 결손·빈 bucket이면 `meterComplete=false`와
   해당 null/사유를 보존한다. 대시보드는 서버의 gap 초·비율·최대 간격·source identity를
   노드별 표에 표시하고 전체/활성 풀 수치와 합성하거나 null을 0으로 바꾸지 않는다.
+  A sample gap beyond the recorded policy keeps the trapezoidal `meterJoules`
+  estimate and reports `meterComplete=false`, its reason, and `gapCount`.
+  This serving-only coverage diagnostic does not change profiling acceptance.
 
 
 대시보드 운영/장치 추세는 진입 때 최근 15분·5초 평균을 한 번 조회하고,
