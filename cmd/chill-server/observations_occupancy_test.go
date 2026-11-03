@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 )
 
 func TestOccupancyObservationConfiguredWindow(t *testing.T) {
@@ -19,9 +19,8 @@ func TestOccupancyObservationConfiguredWindow(t *testing.T) {
 	from := time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)
 	for _, duration := range []time.Duration{120*time.Second + time.Nanosecond, time.Hour} {
 		_, err := service.occupancyObservations(context.Background(), from, from.Add(duration))
-		var domain *serving.Error
-		if !errors.As(err, &domain) || domain.Code != "InvalidQuery" ||
-			domain.Message != "occupancy window exceeds dispatchOccupancy.aggregationWindowSeconds" {
+		var limit *httpapi.OccupancyWindowError
+		if !errors.As(err, &limit) || limit.MaximumWindowSeconds != 120 {
 			t.Fatal("configured observation window was not enforced before scanning", err)
 		}
 	}
