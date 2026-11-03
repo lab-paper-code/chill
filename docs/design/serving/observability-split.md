@@ -109,7 +109,7 @@ retained는 실제 ring의 event/metrics 프레임 각각 첫·마지막 sequenc
 
 측정 POST/DELETE의 `validated`와 실제 종결 audit는 `SchedulerRecord`의 durable commit 성공 뒤 `HandlerConfig.OnMutationAction`으로 기존 live action publisher에 전달한다. evaluation mutation도 같은 audit 저장 경로를 사용한다. 저장 실패에는 callback/WS 발행이 없으며 최종 audit 저장 실패의 기존 오류 응답을 유지한다. decision의 commit-before-publish 순서와 같은 방식이며 새 event bus/outbox/설정은 없다.
 
-`live.ProjectAction`은 committed `SchedulerActionObservation` 한 행을 라이브와 `/api/v1/observations/events` 양쪽에서 동일하게 투영한다. 원본 phase/status·시작/종료 시각·오류·Node/Workload identity·예상 시간 출처를 유지한다. live snapshot의 최근 action 100개, 기존 sequence·bounded replay·ring/큐 상한을 그대로 사용하며 REST 이력을 라이브에서 재구성하지 않는다.
+`httpapi.ProjectAction`은 committed `SchedulerActionObservation` 한 행을 라이브와 `/api/v1/observations/events` 양쪽에서 동일하게 투영한다. projector는 serving core/kube와 live DTO를 함께 읽을 수 있는 HTTP adapter에 두며, 독립 `serving-live` 패키지는 core/kube를 import하지 않는다. 원본 phase/status·시작/종료 시각·오류·Node/Workload identity·예상 시간 출처를 유지한다. live snapshot의 최근 action 100개, 기존 sequence·bounded replay·ring/큐 상한을 그대로 사용하며 REST 이력을 라이브에서 재구성하지 않는다.
 
 오류 없는 `NOT_SUBMITTED`는 `phase=completed` + `status=NOT_SUBMITTED`(`result.status`도 동일)로 표현하는 **중립 종결**이며, 성공 여부는 원본 `status`로 판정한다. 실행 성공이나 제출 완료를 뜻하지 않는다. 실제 error가 있는 `NOT_SUBMITTED`는 failed이고 complete·partial·failed·기타 terminal 상태의 기존 투영은 바꾸지 않는다. 새 phase/키 없이 동일 projector를 쓰므로 과거 committed 이력과 라이브/재접속 replay도 같은 의미다. 소비자는 phase만 보고 성공으로 세지 말고 status로 사전 검사를 구분한다.
 

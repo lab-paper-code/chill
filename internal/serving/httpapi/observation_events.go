@@ -56,7 +56,7 @@ func (h *Handler) observationEvents(w http.ResponseWriter, r *http.Request) {
 	for _, record := range records {
 		event := observationEvent{Type: "event", At: record.At}
 		if action := record.Action; action != nil {
-			projected, err := live.ProjectAction(*action)
+			projected, err := ProjectAction(*action)
 			if err != nil {
 				sendError(w, err)
 				return
