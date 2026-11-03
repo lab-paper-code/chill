@@ -84,6 +84,36 @@ type SchedulerPlanSearch struct {
 	BudgetCut         bool                                  `json:"budgetCut,omitempty"`
 	Excluded          map[string]int                        `json:"excluded,omitempty"`
 	ReserveRejections map[string]SchedulerTransitionReserve `json:"reserveRejections,omitempty"`
+	Steps             []SchedulerPlanSearchStep             `json:"steps,omitempty"`
+	TrailingEvaluated int                                   `json:"trailingEvaluated,omitempty"`
+	TerminationReason string                                `json:"terminationReason,omitempty"`
+}
+
+// SchedulerPlanSearchStep records each start's origin (k = 0) and accepted moves
+// in decision-time order. Both origins precede k = 2 then k = 3; neighborhoods
+// without accepted moves have no entry. Compare choices within the same Start.
+// ChangedNodes is relative to that start's previous choice. Better means feasible,
+// final, descending exceedances, then joules/keep/key: joules only cannot increase
+// between feasible points, and may increase when recovering feasibility.
+// Evaluated counts the accepting sweep; origins are 0 because the existing
+// aggregate excludes initial evaluations. Across both starts, sum(Evaluated) +
+// TrailingEvaluated = search.Evaluated; trailing counts every unaccepted sweep,
+// including k = 2 local optima, not just the final sweep. Duration is measured
+// on this goroutine around the initial evaluation or accepting sweep; their
+// sum is <= search.Duration (unaccepted sweeps and bookkeeping are not steps).
+// BudgetCut marks only the last recorded point when the search budget expires;
+// that point need not be the selected endpoint. Final means final-capacity
+// feasible, not the last step or the chosen end. Errors return no decision.
+type SchedulerPlanSearchStep struct {
+	Start        string          `json:"start"`
+	K            int             `json:"k"`
+	ChangedNodes []NodeReference `json:"changedNodes,omitempty"`
+	Joules       float64         `json:"joules"`
+	Feasible     bool            `json:"feasible"`
+	Final        bool            `json:"final"`
+	Evaluated    int             `json:"evaluated"`
+	Duration     time.Duration   `json:"durationNanos"`
+	BudgetCut    bool            `json:"budgetCut,omitempty"`
 }
 
 // SchedulerCapacityWorkload is one controlled Workload of the chosen plan set.
@@ -1656,20 +1686,41 @@ func (p *capacityPlanner) search(deadline time.Time) (capacityResult, error) {
 		starts = append(starts, empty)
 	}
 	ends := make([]capacityResult, len(starts))
+	startNames := [2]string{"keep", "empty"}
 	for s, choice := range starts {
+		stepStart := time.Now()
 		ends[s] = p.evaluate(slices.Clone(choice), p.routeOf(choice))
+		p.searched.Steps = append(p.searched.Steps, SchedulerPlanSearchStep{
+			Start: startNames[s], Joules: ends[s].joules,
+			Feasible: ends[s].feasible, Final: ends[s].final, Duration: time.Since(stepStart),
+		})
 	}
 	for k := 2; k <= 3 && !p.searched.BudgetCut; k++ {
 		p.searched.Neighborhood = k
 		for s := range starts {
 			for !p.searched.BudgetCut {
+				evaluated := p.searched.Evaluated
+				stepStart := time.Now()
 				step, err := p.sweep(ends[s].choice, k, deadline)
 				if err != nil {
 					return capacityResult{}, err
 				}
 				if step == nil || !step.better(&ends[s]) {
+					p.searched.TrailingEvaluated += p.searched.Evaluated - evaluated
 					break
 				}
+				record := SchedulerPlanSearchStep{
+					Start: startNames[s], K: k, Joules: step.joules,
+					ChangedNodes: make([]NodeReference, 0, k),
+					Feasible:     step.feasible, Final: step.final, Evaluated: p.searched.Evaluated - evaluated,
+					Duration: time.Since(stepStart),
+				}
+				for n, j := range step.choice {
+					if j != ends[s].choice[n] {
+						record.ChangedNodes = append(record.ChangedNodes, p.snapshot.Nodes[n].Node)
+					}
+				}
+				p.searched.Steps = append(p.searched.Steps, record)
 				ends[s] = *step
 			}
 		}
@@ -1679,6 +1730,11 @@ func (p *capacityPlanner) search(deadline time.Time) (capacityResult, error) {
 		if p.bounded(end.choice) && p.admits(&end) && end.better(&best) {
 			best = end
 		}
+	}
+	p.searched.TerminationReason = "noImprovement"
+	if p.searched.BudgetCut {
+		p.searched.TerminationReason = "budgetCut"
+		p.searched.Steps[len(p.searched.Steps)-1].BudgetCut = true
 	}
 	p.searched.Duration = time.Since(start)
 	return best, nil

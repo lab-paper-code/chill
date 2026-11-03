@@ -2,6 +2,7 @@ package serving
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"math"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
+
+const capacitySearchStartKeep = "keep"
 
 // capacityRowsForTest returns a built row with κ = kappa(variant) (100 when
 // kappa is nil) for every option variant and autonomous Workload, as
@@ -764,7 +767,47 @@ func capacitySearchForTest(t testing.TB, p *capacityPlanner) capacityResult {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertCapacitySearchSteps(t, p.searched)
 	return best
+}
+
+func assertCapacitySearchSteps(t testing.TB, search SchedulerPlanSearch) {
+	t.Helper()
+	evaluated, duration, k := search.TrailingEvaluated, time.Duration(0), 0
+	last := map[string]SchedulerPlanSearchStep{}
+	for i, step := range search.Steps {
+		evaluated += step.Evaluated
+		duration += step.Duration
+		if step.K < k || step.Duration < 0 || step.BudgetCut != (search.BudgetCut && i == len(search.Steps)-1) {
+			t.Fatalf("step order, time or cut flag: %+v", search)
+		}
+		k = step.K
+		if previous, ok := last[step.Start]; ok {
+			if step.K < 2 || step.K > 3 || len(step.ChangedNodes) == 0 || len(step.ChangedNodes) > step.K || step.Evaluated == 0 {
+				t.Fatalf("invalid accepted move: %+v after %+v", step, previous)
+			}
+			// This is the recorded projection of better's priority order:
+			// feasible cannot regress; while infeasible, final cannot regress.
+			// Exceedances precede energy, so only feasible points promise J↓.
+			if previous.Feasible && !step.Feasible || !previous.Feasible && !step.Feasible && previous.Final && !step.Final ||
+				previous.Feasible && step.Feasible && step.Joules > previous.Joules {
+				t.Fatalf("accepted point worsened: %+v after %+v", step, previous)
+			}
+		} else if step.K != 0 || step.Evaluated != 0 || len(step.ChangedNodes) != 0 {
+			t.Fatalf("missing origin (excluded from aggregate evaluation count): %+v", step)
+		}
+		last[step.Start] = step
+	}
+	if len(last) == 0 || evaluated != search.Evaluated || duration > search.Duration {
+		t.Fatalf("step accounting: evaluated=%d duration=%s search=%+v", evaluated, duration, search)
+	}
+	wantReason := "noImprovement"
+	if search.BudgetCut {
+		wantReason = "budgetCut"
+	}
+	if search.TerminationReason != wantReason {
+		t.Fatalf("termination: got %q want %q", search.TerminationReason, wantReason)
+	}
 }
 
 // capacityRandomPlanner builds a planner over synthetic node plans.
@@ -884,6 +927,26 @@ func TestCapacitySearchThreeNodesFindsWhatTwoMiss(t *testing.T) {
 	if s := p.searched; s.Neighborhood != 3 || s.BudgetCut || s.Evaluated == 0 || s.Duration <= 0 {
 		t.Fatalf("search record: %+v", s)
 	}
+	steps := p.searched.Steps
+	if len(steps) != 2 || steps[0].Start != capacitySearchStartKeep || steps[0].K != 0 ||
+		steps[0].Evaluated != 0 || len(steps[0].ChangedNodes) != 0 ||
+		steps[1].Start != capacitySearchStartKeep || steps[1].K != 3 || steps[1].Evaluated != 7 {
+		t.Fatalf("origin then accepted k=3 move only: %+v", steps)
+	}
+	wantNodes := []NodeReference{{UID: "n0"}, {UID: "n1"}, {UID: "n2"}}
+	if !slices.Equal(steps[1].ChangedNodes, wantNodes) {
+		t.Fatalf("changed Nodes: %+v", steps[1].ChangedNodes)
+	}
+	if steps[0].Joules != keep.joules || steps[1].Joules != best.joules ||
+		steps[1].Joules >= steps[0].Joules || !steps[0].Feasible || !steps[1].Feasible ||
+		!steps[0].Final || !steps[1].Final {
+		t.Fatalf("feasible trajectory must improve energy: %+v", steps)
+	}
+	record, err := json.Marshal(p.searched)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("recorded search: %s", record)
 }
 
 // capacityTwinSwap saves gain J over T=60s and carries a deterministic
@@ -1133,6 +1196,44 @@ func TestCapacitySearchBudgetCutIsRecorded(t *testing.T) {
 	if s := p.searched; !s.BudgetCut || s.Neighborhood != 2 {
 		t.Fatalf("search record: %+v", s)
 	}
+	if steps := p.searched.Steps; len(steps) != 1 || steps[0].K != 0 || steps[0].Start != capacitySearchStartKeep || len(steps[0].ChangedNodes) != 0 {
+		t.Fatalf("spent budget must retain just the origin: %+v", steps)
+	}
+	assertCapacitySearchSteps(t, p.searched)
+}
+
+// Delay the main-goroutine context check after the first sweep, so the next
+// sweep deterministically exhausts its budget after one move was accepted.
+type capacitySearchDeadlineContext struct {
+	context.Context
+	deadline time.Time
+	checks   int
+}
+
+func (c *capacitySearchDeadlineContext) Err() error {
+	c.checks++
+	if c.checks == 2 {
+		time.Sleep(max(0, time.Until(c.deadline)) + time.Millisecond)
+	}
+	return nil
+}
+
+func TestCapacitySearchBudgetCutRetainsAcceptedSteps(t *testing.T) {
+	p := capacityTwinSwap(100, 0)
+	p.settings.PlanSearchWorkers = 1
+	deadline := time.Now().Add(time.Second)
+	p.ctx = &capacitySearchDeadlineContext{Context: context.Background(), deadline: deadline}
+	best, err := p.search(deadline)
+	if err != nil || best.keep || !p.searched.BudgetCut {
+		t.Fatalf("expected accepted move followed by budget cut: %+v %v %+v", best, err, p.searched)
+	}
+	steps := p.searched.Steps
+	if len(steps) != 2 || steps[0].K != 0 || steps[1].K != 2 ||
+		steps[1].Joules != best.joules || steps[1].Evaluated != 1 ||
+		!slices.Equal(steps[1].ChangedNodes, []NodeReference{{UID: "n0"}}) {
+		t.Fatalf("budget cut lost the accepted prefix: %+v", steps)
+	}
+	assertCapacitySearchSteps(t, p.searched)
 }
 
 // §9 6 search: the decision records the search scope with the capacity judgment.
@@ -1141,6 +1242,53 @@ func TestCapacityDecisionRecordsSearch(t *testing.T) {
 	d := capacityDecideForTest(t, s, snap, rows)
 	if d.Capacity == nil || d.Capacity.Search == nil || d.Capacity.Search.Neighborhood != 3 || d.Capacity.Search.Evaluated == 0 || d.Capacity.Search.BudgetCut {
 		t.Fatalf("decision search record: %+v", d.Capacity)
+	}
+	if len(d.Capacity.Search.Steps) == 0 {
+		t.Fatal("decision lost live search steps")
+	}
+}
+
+func TestCapacitySearchStepRecordSize(t *testing.T) {
+	// Existing evaluation fixture: eight fleet Nodes, three Workloads, and
+	// two power modes on the Jetson stand-ins, at the real five-second budget.
+	p := e5Planner(map[int]float64{0: 60, 1: 40, 2: 1.2}, evaluationScaled(1, 2), e5Start, nil)
+	if _, err := p.search(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	assertCapacitySearchSteps(t, p.searched)
+	starts := map[string]bool{}
+	for _, step := range p.searched.Steps {
+		starts[step.Start] = true
+	}
+	if len(starts) != 2 {
+		t.Fatalf("expected keep and empty trajectories: %+v", starts)
+	}
+	withSteps, err := json.Marshal(p.searched)
+	if err != nil {
+		t.Fatal(err)
+	}
+	without := p.searched
+	without.Steps = nil
+	without.TrailingEvaluated = 0
+	without.TerminationReason = ""
+	withoutSteps, err := json.Marshal(without)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(withoutSteps), `"steps"`) {
+		t.Fatal("absent steps must preserve the old optional JSON shape")
+	}
+	t.Logf("fleet decision: nodes=%d workloads=%d steps=%d searchBytes=%d bytesAdded=%d budgetCut=%t",
+		len(p.plans), len(p.ws), len(p.searched.Steps), len(withSteps), len(withSteps)-len(withoutSteps), p.searched.BudgetCut)
+}
+
+func TestCapacitySearchStepsPreserveFeasibilityBeforeEnergy(t *testing.T) {
+	p := capacityTwinSwap(-100, 0)
+	p.plans[0][0].items[0][0].kappa = 0
+	best := capacitySearchForTest(t, p)
+	steps := p.searched.Steps
+	if len(steps) != 2 || steps[0].Feasible || !steps[1].Feasible || steps[1].Joules <= steps[0].Joules || !best.feasible {
+		t.Fatalf("recovery must record the real higher-energy point: %+v", steps)
 	}
 }
 
@@ -1628,6 +1776,9 @@ func TestCapacityDecisionIgnoresInputOrder(t *testing.T) {
 	poolsAddNode(&snap, "idle", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
 	want := capacityDecideForTest(t, s, snap, rows)
 	want.Capacity.Search.Duration = 0 // the search time is measured, not decided
+	for i := range want.Capacity.Search.Steps {
+		want.Capacity.Search.Steps[i].Duration = 0
+	}
 	for seed := range 10 {
 		rng := rand.New(rand.NewPCG(uint64(seed), 3))
 		shuffled := snap
@@ -1646,6 +1797,9 @@ func TestCapacityDecisionIgnoresInputOrder(t *testing.T) {
 		rng.Shuffle(len(shuffledRows), func(i, j int) { shuffledRows[i], shuffledRows[j] = shuffledRows[j], shuffledRows[i] })
 		got := capacityDecideForTest(t, s, shuffled, shuffledRows)
 		got.Capacity.Search.Duration = 0
+		for i := range got.Capacity.Search.Steps {
+			got.Capacity.Search.Steps[i].Duration = 0
+		}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("seed %d: shuffled input changed the decision:\n%+v\n%+v", seed, got.Target, want.Target)
 		}
