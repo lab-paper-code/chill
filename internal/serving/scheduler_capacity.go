@@ -20,14 +20,13 @@ import (
 
 // Decision statuses and reasons of the capacity planner (analytic-planner §3, §4).
 const (
-	schedulerStatusKeep               = "Keep"
-	schedulerRouteWeightExceeds       = "RouteWeightExceedsCapacity"
-	schedulerNoPlanMeetsSLO           = "NoPlanMeetsSLO"
-	schedulerPlanMissingOperationCost = "MissingOperationCost"
-	schedulerPlanInfeasibleResources  = "InfeasibleResources"
-	schedulerPlanFixedWorkload        = "FixedWorkload"
-	schedulerPlanPreparationFailed    = "PreparationFailed"
-	schedulerPlanHeld                 = "HeldAfterOverload"
+	schedulerStatusKeep              = "Keep"
+	schedulerRouteWeightExceeds      = "RouteWeightExceedsCapacity"
+	schedulerNoPlanMeetsSLO          = "NoPlanMeetsSLO"
+	schedulerPlanInfeasibleResources = "InfeasibleResources"
+	schedulerPlanFixedWorkload       = "FixedWorkload"
+	schedulerPlanPreparationFailed   = "PreparationFailed"
+	schedulerPlanHeld                = "HeldAfterOverload"
 	// schedulerPartialObservation waits for one control interval of complete
 	// arrival observation after the process starts; until one observation
 	// window is observed it names the node plans that remove or replace.
@@ -105,15 +104,17 @@ type SchedulerPlanSearch struct {
 // that point need not be the selected endpoint. Final means final-capacity
 // feasible, not the last step or the chosen end. Errors return no decision.
 type SchedulerPlanSearchStep struct {
-	Start        string          `json:"start"`
-	K            int             `json:"k"`
-	ChangedNodes []NodeReference `json:"changedNodes,omitempty"`
-	Joules       float64         `json:"joules"`
-	Feasible     bool            `json:"feasible"`
-	Final        bool            `json:"final"`
-	Evaluated    int             `json:"evaluated"`
-	Duration     time.Duration   `json:"durationNanos"`
-	BudgetCut    bool            `json:"budgetCut,omitempty"`
+	Start            string          `json:"start"`
+	K                int             `json:"k"`
+	ChangedNodes     []NodeReference `json:"changedNodes,omitempty"`
+	Joules           float64         `json:"joules"`
+	Feasible         bool            `json:"feasible"`
+	Final            bool            `json:"final"`
+	ComparisonWindow time.Duration   `json:"comparisonWindowNanos,omitempty"`
+	KeepJoules       float64         `json:"keepJoules,omitempty"`
+	Evaluated        int             `json:"evaluated"`
+	Duration         time.Duration   `json:"durationNanos"`
+	BudgetCut        bool            `json:"budgetCut,omitempty"`
 }
 
 // SchedulerCapacityWorkload is one controlled Workload of the chosen plan set.
@@ -146,15 +147,17 @@ type SchedulerNodePlan struct {
 	Eligible bool          `json:"eligible"`
 	Reason   string        `json:"reason,omitempty"`
 	// RequiresBridge is a conditional candidate, never permission to stop first.
-	RequiresBridge          []string           `json:"requiresBridge,omitempty"`
-	RequiresRecovery        []string           `json:"requiresRecovery,omitempty"`
-	Tempo                   string             `json:"tempo,omitempty"`
-	Kappa                   map[string]float64 `json:"kappa,omitempty"`
-	KappaRetained           map[string]float64 `json:"kappaRetained,omitempty"`
-	Pre                     time.Duration      `json:"preNanos"`
-	Post                    time.Duration      `json:"postNanos"`
-	Joules                  float64            `json:"joules"`
-	EnergyUncertaintyJoules float64            `json:"energyUncertaintyJoules,omitempty"`
+	RequiresBridge          []string                       `json:"requiresBridge,omitempty"`
+	RequiresRecovery        []string                       `json:"requiresRecovery,omitempty"`
+	Tempo                   string                         `json:"tempo,omitempty"`
+	Kappa                   map[string]float64             `json:"kappa,omitempty"`
+	KappaRetained           map[string]float64             `json:"kappaRetained,omitempty"`
+	Pre                     time.Duration                  `json:"preNanos"`
+	Post                    time.Duration                  `json:"postNanos"`
+	Joules                  float64                        `json:"joules"`
+	EnergyUncertaintyJoules float64                        `json:"energyUncertaintyJoules,omitempty"`
+	ActionCosts             []SchedulerActionCost          `json:"actionCosts,omitempty"`
+	IdleCosts               map[string]IdlePowerProvenance `json:"idleCosts,omitempty"`
 }
 
 // EvaluateScheduler plans with capacity sums: node plans, the transient and
@@ -163,6 +166,7 @@ type SchedulerNodePlan struct {
 // CapacityTable.Rows returns.
 func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, capacity []CapacityRow) (decision SchedulerDecision, err error) {
 	started := time.Now()
+	settings = schedulerOperationSettings(settings)
 	if err := ctx.Err(); err != nil {
 		return SchedulerDecision{}, err
 	}
@@ -439,20 +443,21 @@ func (plan *capacityPlan) addBounds(bounds schedulerEnergyBounds, r, t, sign flo
 }
 
 type capacityPlanner struct {
-	ctx      context.Context
-	settings SchedulerSettings
-	snapshot SchedulerSnapshot
-	keep     SchedulerCandidate
-	rows     map[string]CapacityRow
-	options  []SchedulerOption
-	ws       []capacityWorkload
-	index    map[string]int
-	plans    [][]*capacityPlan // per Node; plans[n][0] is keep
-	compared []bool
-	period   float64
-	examined int
-	searched SchedulerPlanSearch
-	variants map[string]SchedulerOption // capacity variants by profile ID and batch limit
+	ctx       context.Context
+	settings  SchedulerSettings
+	snapshot  SchedulerSnapshot
+	keep      SchedulerCandidate
+	rows      map[string]CapacityRow
+	options   []SchedulerOption
+	ws        []capacityWorkload
+	index     map[string]int
+	plans     [][]*capacityPlan // per Node; plans[n][0] is keep
+	compared  []bool
+	period    float64
+	keepWatts float64 // keep energy is linear in the common comparison window
+	examined  int
+	searched  SchedulerPlanSearch
+	variants  map[string]SchedulerOption // capacity variants by profile ID and batch limit
 	// partial marks a window observed for less than its length since the
 	// process started: arrivals there still reflect the restart, so plans
 	// only add instances and keep every route.
@@ -585,15 +590,15 @@ func (p *capacityPlanner) build() error {
 		p.plans[n] = p.nodePlans(n, common)
 		for _, plan := range p.plans[n][1:] {
 			if plan.record.Eligible {
-				if plan.preMax+plan.postMax > p.period {
-					plan.record.Eligible, plan.record.Reason = false, schedulerTransitionHorizon
-					continue
+				if plan.preMax+plan.postMax > p.settings.ComparisonPeriod.Seconds() {
+					plan.record.Reason = schedulerTransitionHorizon
 				}
 				p.compared[n] = true
 			}
 		}
 		p.examined += len(p.plans[n])
 	}
+	p.keepWatts = p.evaluateAtWindow(make([]int, len(p.plans)), 0, nil, 1).joules
 	return nil
 }
 
@@ -656,9 +661,10 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 	keep := &capacityPlan{mode: m0, keep: true, instances: current, record: SchedulerNodePlan{Node: node.Node, Key: "keep", Eligible: true}}
 	p.annotate(keep, nil)
 	p.sum(keep)
-	before, _, beforeSources, _, beforeReason := schedulerBaseline(p.snapshot.Baselines, common[n], current, p.snapshot.Options)
+	before, _, beforeSources, _ := schedulerBaseline(p.settings, p.snapshot.Baselines, common[n], current, p.snapshot.Options)
 	keep.before = before
 	keep.beforeBound = schedulerBaselineUncertainty(p.snapshot.Baselines, beforeSources, len(current))
+	keep.record.IdleCosts = map[string]IdlePowerProvenance{"before": idleEstimateProvenance(before, beforeSources)}
 	plans := []*capacityPlan{keep}
 	reason := ""
 	switch {
@@ -682,8 +688,6 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 	case slices.ContainsFunc(current, p.fixed):
 		// Disabled Workloads keep their SLO: their Node takes no plan action.
 		reason = schedulerPlanFixedWorkload
-	case beforeReason != "":
-		reason = beforeReason
 	}
 	groups, names := map[string][]capacityChoice{}, []string{}
 	for _, o := range p.options {
@@ -721,6 +725,11 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 	walk = func(j int, chosen []capacityChoice) {
 		if j == len(names) {
 			if plan := p.plan(n, m0, current, chosen); plan != nil && (plan.record.Key != currentKey || plan.mode != m0 || hasTerminal) {
+				plan.before, plan.beforeBound = keep.before, keep.beforeBound
+				if plan.record.IdleCosts == nil {
+					plan.record.IdleCosts = map[string]IdlePowerProvenance{}
+				}
+				plan.record.IdleCosts["before"] = keep.record.IdleCosts["before"]
 				plans = append(plans, plan)
 			}
 			return
@@ -854,11 +863,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 			return plan
 		}
 	}
-	stopped, removedPre, reason := p.chain(n, plan)
-	if reason != "" {
-		plan.record.Reason = reason
-		return plan
-	}
+	stopped, removedPre := p.chain(n, plan)
 	// A same-mode routed blocker remains a veto unless a globally compiled
 	// Ready/ACK handoff can precede its stop. Power outages keep their existing
 	// κ_ret accounting and are never treated as bridge supply.
@@ -921,15 +926,14 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 			mid = append(mid, i)
 		}
 	}
-	var midReason, afterReason string
 	var midSources, afterSources []string
-	plan.mid, _, midSources, _, midReason = schedulerBaseline(p.snapshot.Baselines, at, mid, p.snapshot.Options)
-	plan.after, _, afterSources, _, afterReason = schedulerBaseline(p.snapshot.Baselines, at, plan.instances, p.snapshot.Options)
+	plan.mid, _, midSources, _ = schedulerBaseline(p.settings, p.snapshot.Baselines, at, mid, p.snapshot.Options)
+	plan.after, _, afterSources, _ = schedulerBaseline(p.settings, p.snapshot.Baselines, at, plan.instances, p.snapshot.Options)
 	plan.midBound = schedulerBaselineUncertainty(p.snapshot.Baselines, midSources, len(mid))
 	plan.afterBound = schedulerBaselineUncertainty(p.snapshot.Baselines, afterSources, len(plan.instances))
-	if reason := cmp.Or(midReason, afterReason); reason != "" {
-		plan.record.Reason = reason
-		return plan
+	plan.record.IdleCosts = map[string]IdlePowerProvenance{
+		"mid":   idleEstimateProvenance(plan.mid, midSources),
+		"after": idleEstimateProvenance(plan.after, afterSources),
 	}
 	plan.record.Eligible = true
 	return plan
@@ -943,6 +947,17 @@ func (p *capacityPlanner) currentKappa(i SchedulerInstance) (float64, string) {
 		return 0, ""
 	}
 	v, ok := p.variants[fmt.Sprint(i.Profile.ID, "/", i.MaxBatch)]
+	if !ok {
+		cell, mode := MeasurementProfileIdentity(i.Profile), schedulerNodeMode(p.snapshot.Nodes, i.Node)
+		for _, option := range p.options {
+			j := option.Instance
+			if j.Profile != nil && j.Node.UID == i.Node.UID && j.MaxBatch == i.MaxBatch &&
+				j.Profile.Condition.PowerMode == mode && MeasurementProfileIdentity(j.Profile) == cell {
+				v, ok = option, true
+				break
+			}
+		}
+	}
 	if !ok {
 		return 0, ""
 	}
@@ -1024,7 +1039,7 @@ func (p *capacityPlanner) bounded(choice []int) bool {
 // of the operations before the route (those the route depends on) and after
 // it. It returns the instances stopped before the route and those removed
 // before it.
-func (p *capacityPlanner) chain(n int, plan *capacityPlan) (map[string]bool, map[string]bool, string) {
+func (p *capacityPlanner) chain(n int, plan *capacityPlan) (map[string]bool, map[string]bool) {
 	node := p.snapshot.Nodes[n].Node
 	c := SchedulerCandidate{Nodes: slices.Clone(p.keep.Nodes), Routing: p.keep.Routing}
 	c.Nodes[n].PowerMode = plan.mode
@@ -1034,7 +1049,7 @@ func (p *capacityPlanner) chain(n int, plan *capacityPlan) (map[string]bool, map
 		}
 	}
 	c.Instances = append(c.Instances, plan.instances...)
-	actions := schedulerPlan(p.snapshot, c)
+	actions := schedulerPlan(p.settings, p.snapshot, c)
 	byID := map[string]Action{}
 	route := ""
 	for _, a := range actions {
@@ -1070,11 +1085,13 @@ func (p *capacityPlanner) chain(n int, plan *capacityPlan) (map[string]bool, map
 			continue
 		}
 		cost := schedulerCost(p.snapshot.Costs, a.CostID)
-		mean, longest, joules, ok := capacityOperationCost(cost)
-		if !ok {
-			return nil, nil, schedulerPlanMissingOperationCost
+		mean, longest, joules := actionOperationCost(p.settings, p.snapshot.Costs, a)
+		plan.record.ActionCosts = append(plan.record.ActionCosts, SchedulerActionCost{Action: a.ID, Kind: a.Kind, Provenance: a.CostProvenance})
+		var trials []OperationTrial
+		if cost != nil {
+			trials = cost.Trials
 		}
-		for trial, measured := range cost.Trials {
+		for trial, measured := range trials {
 			if measured.EnergyUncertaintyJoules != 0 {
 				if plan.operationBounds == nil {
 					plan.operationBounds = schedulerEnergyBounds{}
@@ -1092,7 +1109,7 @@ func (p *capacityPlanner) chain(n int, plan *capacityPlan) (map[string]bool, map
 	plan.record.Pre, plan.record.Post = time.Duration(plan.preMax*1e9), time.Duration(plan.postMax*1e9)
 	plan.record.Joules = plan.preJ + plan.postJ
 	plan.record.EnergyUncertaintyJoules = plan.operationBounds.halfWidth()
-	return stopped, removed, ""
+	return stopped, removed
 }
 
 // capacityOperationCost is a cost's mean and longest trial seconds and mean
@@ -1130,6 +1147,9 @@ const ActionDeadlineExceeded = "ActionDeadlineExceeded"
 // window.
 func ActionDeadline(window time.Duration, costs []OperationCost, a Action) time.Duration {
 	longest := time.Duration(0)
+	if cost := actionDefaultCost(a); cost != nil {
+		longest = cost.Trials[0].Duration
+	}
 	if cost := schedulerCost(costs, a.CostID); cost != nil {
 		for _, t := range cost.Trials {
 			longest = max(longest, t.Duration)
@@ -1331,14 +1351,15 @@ func capacityWeights(rate float64, items []capacityItem) ([]int32, []float64, bo
 // capacityResult is one plan set evaluated exactly: per-Workload judgments,
 // weights and the analytic energy over [0, T].
 type capacityResult struct {
-	choice   []int
-	route    float64
-	keep     bool
-	key      string
-	joules   float64
-	worst    float64
-	excesses []float64 // per-Workload worst exceedances, descending
-	feasible bool
+	choice             []int
+	route              float64
+	keep               bool
+	key                string
+	joules             float64
+	period, keepJoules float64
+	worst              float64
+	excesses           []float64 // per-Workload worst exceedances, descending
+	feasible           bool
 	// final marks a plan set whose final (steady-state) judgment holds for
 	// every Workload, route weights within κ included.
 	final bool
@@ -1384,8 +1405,23 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 }
 
 func (p *capacityPlanner) evaluateAtRoute(choice []int, r float64, bridge *schedulerBridgeSchedule) capacityResult {
-	t := p.period
-	res := capacityResult{choice: choice, route: r, keep: true, bridge: bridge}
+	post := 0.0
+	for n, j := range choice {
+		if plan := p.plans[n][j]; !plan.keep {
+			post = max(post, plan.postMax)
+		}
+	}
+	window := r + post + p.period
+	res := p.evaluateAtWindow(choice, r, bridge, window)
+	res.keepJoules = p.keepWatts * window
+	if res.keep {
+		res.keepJoules = res.joules
+	}
+	return res
+}
+
+func (p *capacityPlanner) evaluateAtWindow(choice []int, r float64, bridge *schedulerBridgeSchedule, t float64) capacityResult {
+	res := capacityResult{choice: choice, route: r, keep: true, bridge: bridge, period: t}
 	keys := make([]string, len(choice))
 	items, retained := make([][]capacityItem, len(p.ws)), make([][]capacityItem, len(p.ws))
 	for n, j := range choice {
@@ -1466,7 +1502,7 @@ func (p *capacityPlanner) evaluateAtRoute(choice []int, r float64, bridge *sched
 			}
 		}
 		if bridge != nil {
-			res.joules += p.bridgeRequestJoules(bridge, ws, mean, r)
+			res.joules += p.bridgeRequestJoules(bridge, ws, mean, r, t)
 		} else {
 			res.joules += initial*r + max(0, ws.rate-kret)*r*mean + (served*mean+max(0, ws.rate-served)*mean)*(t-r)
 		}
@@ -1475,7 +1511,7 @@ func (p *capacityPlanner) evaluateAtRoute(choice []int, r float64, bridge *sched
 		res.rows = append(res.rows, rows)
 		res.sums = append(res.sums, [2]float64{knew, kret})
 	}
-	reason, reserves := p.transitionConstraints(choice, r)
+	reason, reserves := p.transitionConstraints(choice)
 	res.exclusion, res.reserves = cmp.Or(res.exclusion, reason), reserves
 	slices.SortFunc(res.excesses, func(a, b float64) int { return cmp.Compare(b, a) })
 	res.key = strings.Join(keys, "|")
@@ -1523,8 +1559,8 @@ func (a capacityResult) better(b *capacityResult) bool {
 			return order < 0
 		}
 	}
-	if a.joules != b.joules {
-		return a.joules < b.joules
+	if a.joules-a.keepJoules != b.joules-b.keepJoules {
+		return a.joules-a.keepJoules < b.joules-b.keepJoules
 	}
 	if a.keep != b.keep {
 		return a.keep
@@ -1552,7 +1588,7 @@ func (p *capacityPlanner) payback(best capacityResult) capacityResult {
 		bound, withinUncertainty := 0.0, false
 		if emptySaving {
 			bound = p.gainBound(kept, best)
-			withinUncertainty = kept.joules-best.joules <= bound
+			withinUncertainty = (kept.joules-kept.keepJoules)-(best.joules-best.keepJoules) <= bound
 			paid = paid && !withinUncertainty
 		}
 		if !emptySaving && !kept.feasible || !p.admits(&kept) || paid && !dwelling {
@@ -1608,7 +1644,8 @@ func (p *capacityPlanner) minimumGain(best capacityResult) capacityResult {
 	if !best.feasible || best.keep {
 		return best
 	}
-	keep := p.evaluate(make([]int, len(p.plans)), 0)
+	keep := p.evaluateAtWindow(make([]int, len(p.plans)), 0, nil, best.period)
+	keep.keepJoules = keep.joules
 	if !keep.feasible {
 		return best
 	}
@@ -1625,8 +1662,8 @@ func (p *capacityPlanner) gainBound(keep, best capacityResult) float64 {
 	bounds := schedulerEnergyBounds{}
 	for n, j := range best.choice {
 		if p.compared[n] {
-			p.plans[n][keep.choice[n]].addBounds(bounds, keep.route, p.period, 1)
-			p.plans[n][j].addBounds(bounds, best.route, p.period, -1)
+			p.plans[n][keep.choice[n]].addBounds(bounds, keep.route, best.period, 1)
+			p.plans[n][j].addBounds(bounds, best.route, best.period, -1)
 			if best.bridge != nil && !p.plans[n][j].keep {
 				plan, delay := p.plans[n][j], best.bridge.delays[n]
 				for _, weighted := range []struct {
@@ -1661,7 +1698,11 @@ func (p *capacityPlanner) leastLoadJoules(choice []int, r float64) float64 {
 	for w := range p.ws {
 		rates[w], p.ws[w].rate = p.ws[w].rate, p.ws[w].minRate
 	}
-	joules := p.evaluate(choice, r).joules
+	oldKeepWatts := p.keepWatts
+	p.keepWatts = p.evaluateAtWindow(make([]int, len(p.plans)), 0, nil, 1).joules
+	result := p.evaluate(choice, r)
+	joules := result.joules - result.keepJoules
+	p.keepWatts = oldKeepWatts
 	for w := range p.ws {
 		p.ws[w].rate = rates[w]
 	}
@@ -1692,6 +1733,7 @@ func (p *capacityPlanner) search(deadline time.Time) (capacityResult, error) {
 		ends[s] = p.evaluate(slices.Clone(choice), p.routeOf(choice))
 		p.searched.Steps = append(p.searched.Steps, SchedulerPlanSearchStep{
 			Start: startNames[s], Joules: ends[s].joules,
+			ComparisonWindow: time.Duration(ends[s].period * 1e9), KeepJoules: ends[s].keepJoules,
 			Feasible: ends[s].feasible, Final: ends[s].final, Duration: time.Since(stepStart),
 		})
 	}
@@ -1711,6 +1753,7 @@ func (p *capacityPlanner) search(deadline time.Time) (capacityResult, error) {
 				}
 				record := SchedulerPlanSearchStep{
 					Start: startNames[s], K: k, Joules: step.joules,
+					ComparisonWindow: time.Duration(step.period * 1e9), KeepJoules: step.keepJoules,
 					ChangedNodes: make([]NodeReference, 0, k),
 					Feasible:     step.feasible, Final: step.final, Evaluated: p.searched.Evaluated - evaluated,
 					Duration: time.Since(stepStart),
@@ -1838,7 +1881,7 @@ func (p *capacityPlanner) admits(res *capacityResult) bool {
 // target, or a target whose actions come from schedulerPlan.
 func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult) SchedulerDecision {
 	keepChoice := make([]int, len(p.plans))
-	keepResult := p.evaluate(keepChoice, 0)
+	keepResult := p.evaluateAtWindow(keepChoice, 0, nil, best.period)
 	keep := &decision.Keep
 	keep.ExpectedJoules, keep.WorstExceedance, keep.Status = &keepResult.joules, capacityWorst(keepResult.worst), schedulerStatusFeasible
 	if !keepResult.feasible {
@@ -1851,7 +1894,7 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 		}
 	}
 	search := p.searched
-	record := &SchedulerCapacity{Period: time.Duration(p.period * 1e9), Route: time.Duration(best.route * 1e9), Search: &search, GainUncertaintyJoules: best.gainUncertainty}
+	record := &SchedulerCapacity{Period: time.Duration(best.period * 1e9), Route: time.Duration(best.route * 1e9), Search: &search, GainUncertaintyJoules: best.gainUncertainty}
 	record.TransitionReserves = best.reserves
 	for n, plans := range p.plans {
 		for _, plan := range plans {
@@ -1934,7 +1977,7 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	}
 	sum := sha256.Sum256([]byte(best.key + fmt.Sprint(target.Routing)))
 	target.ID = "plan-" + hex.EncodeToString(sum[:6])
-	target.Actions = best.bridge.actionsFor(p.snapshot, target)
+	target.Actions = best.bridge.actionsFor(p.settings, p.snapshot, target)
 	if best.bridge != nil {
 		record.BridgeStages = best.bridge.stages
 	}

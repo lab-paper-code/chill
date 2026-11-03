@@ -1055,9 +1055,9 @@ func TestCapacityMinimumGainExactBaselineIgnoresProfileCI(t *testing.T) {
 		snap.Instances[1].Profile.IdleBaselineWatts = 1 + float64(trial)*1e6
 		p := capacityPlannerForTest(t, s, snap, rows)
 		n := slices.IndexFunc(p.snapshot.Nodes, func(n SchedulerNode) bool { return n.Node == node })
-		watts, _, sources, _, reason := schedulerBaseline(p.snapshot.Baselines, p.snapshot.Nodes[n], []SchedulerInstance{snap.Instances[1]}, p.snapshot.Options)
-		if reason != "" || watts != loaded.Watts || !slices.Contains(sources, loaded.ID) {
-			t.Fatalf("fixture did not select exact loaded evidence: %g %v %s", watts, sources, reason)
+		watts, _, sources, _ := schedulerBaseline(SchedulerSettings{}, p.snapshot.Baselines, p.snapshot.Nodes[n], []SchedulerInstance{snap.Instances[1]}, p.snapshot.Options)
+		if watts != loaded.Watts || !slices.Contains(sources, loaded.ID) {
+			t.Fatalf("fixture did not select exact loaded evidence: %g %v", watts, sources)
 		}
 		choice := make([]int, len(p.plans))
 		choice[n] = slices.IndexFunc(p.plans[n], func(plan *capacityPlan) bool {
@@ -1113,10 +1113,10 @@ func TestCapacityBaselineUncertaintyPreservesSignedReconstruction(t *testing.T) 
 	snap.Instances[0].Profile.IdleBaselineWatts = 8 // negative loaded-minus-unloaded delta
 	instances := []SchedulerInstance{}
 	for count := 0; count <= 2; count++ {
-		watts, _, sources, _, reason := schedulerBaseline(snap.Baselines, snap.Nodes[0], instances, snap.Options)
+		watts, _, sources, _ := schedulerBaseline(SchedulerSettings{}, snap.Baselines, snap.Nodes[0], instances, snap.Options)
 		bound := schedulerBaselineUncertainty(snap.Baselines, sources, count)
-		if reason != "" || watts != 10-2*float64(count) || bound.watts != 2*(1-float64(count)) {
-			t.Fatalf("%d instances: nominal %g bound %+v reason %s", count, watts, bound, reason)
+		if watts != 10-2*float64(count) || bound.watts != 2*(1-float64(count)) {
+			t.Fatalf("%d instances: nominal %g bound %+v", count, watts, bound)
 		}
 		instances = append(instances, snap.Instances[0])
 	}
@@ -1124,9 +1124,9 @@ func TestCapacityBaselineUncertaintyPreservesSignedReconstruction(t *testing.T) 
 	loaded.ID, loaded.State, loaded.Watts, loaded.WattsUncertainty = "loaded", []string{schedulerState(snap.Instances[0])}, 8, 3
 	loaded.Reference.Key = "loaded-idle"
 	snap.Baselines = append(snap.Baselines, loaded)
-	_, _, sources, _, reason := schedulerBaseline(snap.Baselines, snap.Nodes[0], snap.Instances, snap.Options)
-	if got := schedulerBaselineUncertainty(snap.Baselines, sources, 1); reason != "" || got.watts != 3 || got.reference != loaded.Reference {
-		t.Fatalf("exact loaded-state evidence must replace, not add unloaded uncertainty: %+v %s", got, reason)
+	_, _, sources, _ := schedulerBaseline(SchedulerSettings{}, snap.Baselines, snap.Nodes[0], snap.Instances, snap.Options)
+	if got := schedulerBaselineUncertainty(snap.Baselines, sources, 1); got.watts != 3 || got.reference != loaded.Reference {
+		t.Fatalf("exact loaded-state evidence must replace, not add unloaded uncertainty: %+v", got)
 	}
 	// Signed operation delta adds the SAME stored baseline back exactly once.
 	base := 10.0
@@ -1497,10 +1497,10 @@ func TestCapacityPrepareCostIgnoresQueueMemory(t *testing.T) {
 	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, n2, "unloaded", schedulerState(measured), "fixed")}
 	capacityLoad(s, &snap, snap.Workloads[0], 150)
 	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
-	if d.Target == nil || !poolsOn(*d.Target, n2) || slices.ContainsFunc(poolsPlans(d, n2), func(p SchedulerNodePlan) bool { return p.Reason == schedulerPlanMissingOperationCost }) {
+	if d.Target == nil || !poolsOn(*d.Target, n2) {
 		t.Fatalf("prepare cost missed on memory: %+v plans %+v", d.Target, poolsPlans(d, n2))
 	}
-	if !schedulerEqualState([]string{schedulerState(planned)}, []string{schedulerState(measured)}) {
+	if !measurementEqualState([]string{schedulerState(planned)}, []string{schedulerState(measured)}, map[string]string{planned.Profile.ID: MeasurementProfileIdentity(planned.Profile)}) {
 		t.Fatal("replay loaded-state witness compares memory")
 	}
 }
@@ -1712,12 +1712,17 @@ func TestCapacityRecordsExcludedPlans(t *testing.T) {
 	}
 	d := capacityDecideForTest(t, s, snap, rows)
 	for node, reason := range map[NodeReference]string{
-		noCost.Node: schedulerPlanMissingOperationCost, pending.Node: CapacityPending, rejected.Node: CapacityRejected,
+		pending.Node: CapacityPending, rejected.Node: CapacityRejected,
 		offline: schedulerPlanInfeasibleResources, fixed: schedulerPlanFixedWorkload, inventory: NodePlacementInventoryMissing,
 	} {
 		if !slices.ContainsFunc(poolsPlans(d, node), func(p SchedulerNodePlan) bool { return !p.Eligible && p.Reason == reason }) {
 			t.Fatalf("%s: no plan excluded with %s: %+v", node.UID, reason, poolsPlans(d, node))
 		}
+	}
+	if !slices.ContainsFunc(poolsPlans(d, noCost.Node), func(p SchedulerNodePlan) bool {
+		return p.Eligible && len(p.ActionCosts) > 0 && p.ActionCosts[0].Provenance != nil
+	}) {
+		t.Fatal("unmeasured operation excluded a physically usable plan")
 	}
 }
 
@@ -1762,9 +1767,7 @@ func TestCapacityTargetAndIdleDAGProjectOnlyPowerMode(t *testing.T) {
 	n = slices.IndexFunc(planner.snapshot.Nodes, func(node SchedulerNode) bool { return node.Node == expanded })
 	choice := capacityChoiceForTest(t, planner, map[string]string{"genesis3": "profile@genesis3-fixed/b1/w1"})
 	best := planner.evaluate(choice, 0)
-	if _, _, reason := planner.chain(n, planner.plans[n][choice[n]]); reason != "" {
-		t.Fatalf("chain failed without CPU inventory: %s", reason)
-	}
+	planner.chain(n, planner.plans[n][choice[n]])
 	if reason, _ := planner.idleTransition(best, nil); reason != "" {
 		t.Fatalf("idle DAG failed without CPU inventory: %s", reason)
 	}

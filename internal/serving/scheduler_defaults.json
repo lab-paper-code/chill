@@ -1,0 +1,8 @@
+{
+  "defaultOperationCost": {
+    "prepare": {"seconds": 852, "joules": 36371},
+    "remove": {"seconds": 13, "joules": 1014},
+    "power": {"seconds": 166, "joules": 2229}
+  },
+  "defaultIdlePower": {"nodeWatts": 54, "perInstanceWatts": 8}
+}

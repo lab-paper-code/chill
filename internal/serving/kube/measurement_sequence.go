@@ -417,7 +417,7 @@ func (c *SchedulerController) manualOperationLocked(ctx context.Context, request
 			}
 		}
 	}
-	action = serving.EstimateAction(snapshot, action)
+	action = serving.EstimateAction(config.Settings, snapshot, action)
 	operation.ExpectedSeconds, operation.ExpectedSource = action.ExpectedSeconds, action.ExpectedSource
 	return operation, nil
 }

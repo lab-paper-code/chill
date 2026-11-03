@@ -189,9 +189,9 @@ func TestSchedulerComparedNodesLimitEnergyAndBaselineNeeds(t *testing.T) {
 		t.Fatalf("a Node without baseline outside ComparedNodes stopped the decision: %+v", d)
 	}
 	if !slices.ContainsFunc(poolsPlans(d, eco), func(p SchedulerNodePlan) bool {
-		return strings.HasPrefix(p.Reason, "MissingUnloadedNodeBaseline:n5:"+schedulerTestEcoMode)
+		return p.Eligible && len(p.IdleCosts) != 0
 	}) {
-		t.Fatalf("eco plan without its mode's baseline was not excluded: %+v", poolsPlans(d, eco))
+		t.Fatalf("eco plan omitted measured/default idle estimates: %+v", poolsPlans(d, eco))
 	}
 }
 
@@ -338,8 +338,8 @@ func TestSchedulerAvailableNodeSavingAndReentry(t *testing.T) {
 		t.Fatalf("re-entry did not use the empty-Node raise and the target-mode prepare: %+v", plans)
 	}
 	snap.Costs = []OperationCost{loaded, prepare}
-	if !slices.ContainsFunc(poolsPlans(capacityDecideForTest(t, s, snap, rows), reentry), func(p SchedulerNodePlan) bool { return p.Reason == schedulerPlanMissingOperationCost }) {
-		t.Fatal("re-entry without the empty-Node raise cost was not excluded")
+	if !slices.ContainsFunc(poolsPlans(capacityDecideForTest(t, s, snap, rows), reentry), func(p SchedulerNodePlan) bool { return p.Eligible && len(p.ActionCosts) > 0 }) {
+		t.Fatal("re-entry without an exact raise measurement lost its estimated plan")
 	}
 }
 
