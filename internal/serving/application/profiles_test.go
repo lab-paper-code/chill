@@ -1,4 +1,4 @@
-package main
+package application
 
 import (
 	"context"
@@ -83,12 +83,12 @@ func TestPositiveProfileKeepsExistingBundleAndBatchJSON(t *testing.T) {
 	}
 }
 func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *testing.T) {
-	service := &schedulerService{
+	service := &SchedulerService{
 		kube: fake.NewSimpleClientset(&core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}}),
-		opts: options{
-			storeName: "store", storeEndpoint: "http://store", storeBucket: "bucket", storeRegion: "region",
-			storeCredentialsSecret: "actual-secret", requestTimeout: time.Second, operationTimeout: time.Hour,
-			maxEvidenceBytes: 64 << 20, maxRequestBytes: 8 << 20,
+		opts: Options{
+			StoreName: "store", StoreEndpoint: "http://store", StoreBucket: "bucket", StoreRegion: "region",
+			StoreCredentialsSecret: "actual-secret", RequestTimeout: time.Second, OperationTimeout: time.Hour,
+			MaxEvidenceBytes: 64 << 20, MaxRequestBytes: 8 << 20,
 		},
 	}
 	profile := measuredAdoptionProfile()
@@ -131,12 +131,12 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 // The queued request bytes firstfloor admits fit in the Pod memory above the
 // measured peak: the limit adds servingMemoryBytes, half of which is the queue.
 func TestMeasuredPreparationReservesQueueMemoryAboveMeasuredPeak(t *testing.T) {
-	service := &schedulerService{
+	service := &SchedulerService{
 		kube: fake.NewSimpleClientset(&core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}}),
-		opts: options{
-			storeName: "store", storeEndpoint: "http://store", storeBucket: "bucket", storeRegion: "region",
-			storeCredentialsSecret: "actual-secret", requestTimeout: time.Second, operationTimeout: time.Hour,
-			maxEvidenceBytes: 64 << 20, maxRequestBytes: 8 << 20,
+		opts: Options{
+			StoreName: "store", StoreEndpoint: "http://store", StoreBucket: "bucket", StoreRegion: "region",
+			StoreCredentialsSecret: "actual-secret", RequestTimeout: time.Second, OperationTimeout: time.Hour,
+			MaxEvidenceBytes: 64 << 20, MaxRequestBytes: 8 << 20,
 		},
 	}
 	spec, err := service.measuredPreparation(context.Background(), measuredAdoptionProfile(), 128<<20)
@@ -166,12 +166,12 @@ func TestMeasuredPreparationUsesSharedCPUWithoutAllocation(t *testing.T) {
 			},
 		},
 	}
-	service := &schedulerService{
+	service := &SchedulerService{
 		kube: fake.NewSimpleClientset(node),
-		opts: options{
-			storeName: "store", storeEndpoint: "http://store", storeBucket: "bucket", storeRegion: "region",
-			storeCredentialsSecret: "actual-secret", requestTimeout: time.Second, operationTimeout: time.Hour,
-			maxEvidenceBytes: 64 << 20, maxRequestBytes: 8 << 20,
+		opts: Options{
+			StoreName: "store", StoreEndpoint: "http://store", StoreBucket: "bucket", StoreRegion: "region",
+			StoreCredentialsSecret: "actual-secret", RequestTimeout: time.Second, OperationTimeout: time.Hour,
+			MaxEvidenceBytes: 64 << 20, MaxRequestBytes: 8 << 20,
 		},
 	}
 	for _, threads := range []int{0, 2, 8} {
@@ -217,7 +217,7 @@ func TestGeneratedPreparationRejectsUnrepresentableMeasuredRuntimeAccess(t *test
 		profile := measuredAdoptionProfile()
 		profile.Condition.RuntimeAccess = &access
 		// No clients: reject before any external lookup or configuration write.
-		spec, err := (&schedulerService{}).measuredPreparation(context.Background(), profile, 0)
+		spec, err := (&SchedulerService{}).measuredPreparation(context.Background(), profile, 0)
 		if err == nil || !strings.Contains(err.Error(), "cannot reproduce measured runtimeAccess") {
 			t.Fatalf("measured delivery access silently dropped: spec=%+v err=%v", spec, err)
 		}
@@ -269,7 +269,7 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 		CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
 	}
 	// The native store is unreachable, so listing completed measurements fails.
-	rejected := schedulerConfiguration{Settings: settings}
+	rejected := SchedulerConfiguration{Settings: settings}
 	raw, err := json.Marshal(rejected)
 	if err != nil {
 		t.Fatal(err)
@@ -330,17 +330,17 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 	if err != nil || !before.Admission || before.Reason != "Ready" {
 		t.Fatalf("baseline route: %+v %v", before, err)
 	}
-	accepted := &schedulerConfiguration{
+	accepted := &SchedulerConfiguration{
 		Settings: settings, StaticRouting: map[string]map[string]int{definition.UID: {"physical": 1}},
 	}
-	service := &schedulerService{
+	service := &SchedulerService{
 		kube: kube, observer: observer, objects: objects, catalog: catalog, resourceVersion: acceptedVersion,
 		sources: profile.ID,
-		opts: options{servingNamespace: "serving", schedulerConfigMap: "scheduler",
-			schedulerConfigKey: "scheduler.json", maxRequestBytes: 1 << 20, maxEvidenceBytes: 1024},
+		opts: Options{ServingNamespace: "serving", SchedulerConfigMap: "scheduler",
+			SchedulerConfigKey: "scheduler.json", MaxRequestBytes: 1 << 20, MaxEvidenceBytes: 1024},
 	}
 	service.configuration.Store(accepted)
-	if err := service.refresh(ctx); err == nil {
+	if err := service.Refresh(ctx); err == nil {
 		t.Fatal("refresh succeeded without listing completed measurements")
 	}
 	after, err := execution.State(definition.Name)
@@ -431,8 +431,8 @@ func TestSchedulerStartupOnPreservesRestoredReadyWorkloadRouting(t *testing.T) {
 	}
 }
 
-func schedulerTestConfiguration() schedulerConfiguration {
-	return schedulerConfiguration{
+func schedulerTestConfiguration() SchedulerConfiguration {
+	return SchedulerConfiguration{
 		Settings: serving.SchedulerSettings{
 			ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 			MaxObservationAge: time.Second, MaxReplicas: 1,
@@ -444,7 +444,7 @@ func schedulerTestConfiguration() schedulerConfiguration {
 	}
 }
 
-func schedulerTestService(t *testing.T, config schedulerConfiguration) *schedulerService {
+func schedulerTestService(t *testing.T, config SchedulerConfiguration) *SchedulerService {
 	t.Helper()
 	ctx := context.Background()
 	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
@@ -520,12 +520,12 @@ func schedulerTestService(t *testing.T, config schedulerConfiguration) *schedule
 		t.Fatal(err)
 	}
 	t.Cleanup(controller.Close)
-	service := &schedulerService{
+	service := &SchedulerService{
 		kube: kube, store: store, execution: execution, observer: observer, objects: objects,
-		catalog: catalog, operations: operations, controller: controller, observationLog: observationLog,
+		catalog: catalog, operations: operations, Controller: controller, observationLog: observationLog,
 		resourceVersion: "1",
-		opts: options{servingNamespace: "serving", schedulerConfigMap: "scheduler", schedulerConfigKey: "scheduler.json",
-			profileNamespaces: []string{"measurements"}, maxRequestBytes: 1 << 20, maxEvidenceBytes: 1024},
+		opts: Options{ServingNamespace: "serving", SchedulerConfigMap: "scheduler", SchedulerConfigKey: "scheduler.json",
+			ProfileNamespaces: []string{"measurements"}, MaxRequestBytes: 1 << 20, MaxEvidenceBytes: 1024},
 	}
 	service.configuration.Store(&config)
 	return service

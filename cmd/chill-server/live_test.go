@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/serving/application"
+
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/live"
@@ -29,21 +31,23 @@ func TestLiveOnlyPublishesRecordedDecisionAndActionIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := &schedulerService{observationLog: log, live: p}
+	service := application.NewSchedulerService(context.Background(), application.Dependencies{
+		ObservationLog: log, Live: &application.Live{Decision: p.decision, Action: p.action},
+	})
 	at := time.Now().UTC()
 	d := serving.SchedulerDecision{At: at, Status: "Ready"}
-	if err := service.recordDecision(d, serving.SchedulerSnapshot{At: at}); err != nil {
+	if err := service.RecordDecision(d, serving.SchedulerSnapshot{At: at}); err != nil {
 		t.Fatal(err)
 	}
 	result := servingkube.OperationResult{
 		Operation: servingkube.Operation{ID: "same", Kind: "prepare", Node: serving.NodeReference{UID: "node"}},
 		StartedAt: at, Status: "running",
 	}
-	if err := service.recordAction(result); err != nil {
+	if err := service.RecordAction(result); err != nil {
 		t.Fatal(err)
 	}
 	result.StartedAt = at.Add(time.Second)
-	if err := service.recordAction(result); err != nil {
+	if err := service.RecordAction(result); err != nil {
 		t.Fatal(err)
 	}
 	sub, err := p.hub.Subscribe(0, "")
@@ -70,7 +74,7 @@ func TestLiveOnlyPublishesRecordedDecisionAndActionIdentity(t *testing.T) {
 	if err := log.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.recordDecision(
+	if err := service.RecordDecision(
 		serving.SchedulerDecision{At: at.Add(time.Minute)}, serving.SchedulerSnapshot{},
 	); err == nil {
 		t.Fatal("closed observation store accepted a decision")

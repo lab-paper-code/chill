@@ -1,4 +1,4 @@
-package main
+package application
 
 import (
 	"context"
@@ -25,8 +25,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
 	"github.com/lab-paper-code/chill/internal/serving"
-	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -38,7 +36,7 @@ type powerObservationConfig struct {
 	Coverage powerwindow.Policy     `json:"coverage"`
 }
 
-type schedulerConfiguration struct {
+type SchedulerConfiguration struct {
 	Settings serving.SchedulerSettings              `json:"settings"`
 	Reserved map[string]serving.SchedulerAllocation `json:"reserved"`
 	// Meters are derived from the Profiler metric sources, never configured.
@@ -50,25 +48,26 @@ type schedulerConfiguration struct {
 	StaticRoutingValidatedAt *time.Time `json:"staticRoutingValidatedAt,omitempty"`
 }
 
-type schedulerService struct {
-	lock                     sync.Mutex
-	controller               *servingkube.SchedulerController
+type SchedulerService struct {
+	Lock                     sync.Mutex
+	Controller               *servingkube.SchedulerController
 	operations               *servingkube.Operations
 	store                    *servingkube.Store
 	kube                     kubernetes.Interface
+	settingsKube             kubernetes.Interface
 	execution                *serving.Runtime
 	observer                 *servingkube.Observer
 	objects                  *stores3.Store
 	observationLog           *serving.ObservationLog
-	live                     *livePublisher
-	opts                     options
-	gatewayRequestTimeout    time.Duration
+	live                     *Live
+	opts                     Options
+	GatewayRequestTimeout    time.Duration
 	catalog                  *servingkube.Catalog
 	costs                    *servingkube.CostEvidence
 	resourceVersion, sources string
-	configuration            atomic.Pointer[schedulerConfiguration]
-	profiles                 atomic.Pointer[httpapi.ProfilesView]
-	catalogRead              atomic.Pointer[httpapi.ProfilesView]
+	configuration            atomic.Pointer[SchedulerConfiguration]
+	Profiles                 atomic.Pointer[ProfilesView]
+	catalogRead              atomic.Pointer[ProfilesView]
 	occupancy                rollingOccupancyCache
 	ctx                      context.Context
 	cancel                   context.CancelFunc
@@ -77,64 +76,40 @@ type schedulerService struct {
 	powerWG                  sync.WaitGroup
 }
 
-func newSchedulerService(ctx context.Context, store *servingkube.Store, kube kubernetes.Interface,
-	execution *serving.Runtime, observer *servingkube.Observer, objects *stores3.Store,
-	observationLog *serving.ObservationLog, opts options, gatewayRequestTimeout time.Duration, publisher *livePublisher,
-) (*schedulerService, error) {
-	if opts.schedulerConfigMap == "" {
-		return nil, nil
-	}
-	operations, err := servingkube.NewOperations(store, kube, execution, observer, &sdk.Client{},
-		servingkube.OperationConfig{
-			Namespace:    opts.servingNamespace,
-			PollInterval: opts.sourceInterval,
-			MetricLimits: metricobserver.Limits{
-				MaxResultBytes: opts.maxEvidenceBytes, MemoryBudgetBytes: debug.SetMemoryLimit(-1),
-			},
-		})
-	if err != nil {
-		return nil, err
-	}
+func NewSchedulerService(ctx context.Context, dependencies Dependencies) *SchedulerService {
 	serviceCtx, cancel := context.WithCancel(ctx)
-	service := &schedulerService{
-		operations: operations, store: store, kube: kube, execution: execution, observer: observer,
-		objects: objects, observationLog: observationLog, opts: opts, ctx: serviceCtx, cancel: cancel,
-		gatewayRequestTimeout: gatewayRequestTimeout,
-		live:                  publisher,
+	return &SchedulerService{
+		operations: dependencies.Operations, store: dependencies.Store, kube: dependencies.Kube,
+		settingsKube: dependencies.SettingsKube,
+		execution:    dependencies.Execution, observer: dependencies.Observer, objects: dependencies.Objects,
+		observationLog: dependencies.ObservationLog, opts: dependencies.Options, ctx: serviceCtx, cancel: cancel,
+		GatewayRequestTimeout: dependencies.GatewayRequestTimeout, live: dependencies.Live,
+		catalog: dependencies.Catalog, costs: dependencies.Costs,
 	}
-	service.catalog, err = servingkube.NewCatalog(store, objects, opts.maxEvidenceBytes)
-	if err == nil {
-		service.costs, err = servingkube.NewCostEvidence(store, objects, opts.maxEvidenceBytes)
-	}
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-	return service, nil
 }
 
-func decodeSchedulerConfiguration(raw string, maxBytes int64) (schedulerConfiguration, error) {
+func DecodeSchedulerConfiguration(raw string, maxBytes int64) (SchedulerConfiguration, error) {
 	// The wire settings field shadows the embedded one, so an omitted margin stays distinguishable from zero.
 	var wire struct {
-		schedulerConfiguration
+		SchedulerConfiguration
 		Settings struct {
 			serving.SchedulerSettingsInput
 			DefaultDispatchOccupancyNanos *int64 `json:"defaultDispatchOccupancyNanos"`
 		} `json:"settings"`
 	}
 	if int64(len(raw)) > maxBytes {
-		return schedulerConfiguration{}, errors.New("scheduler configuration exceeds body bound")
+		return SchedulerConfiguration{}, errors.New("scheduler configuration exceeds body bound")
 	}
 	decoder := json.NewDecoder(strings.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&wire); err != nil {
-		return schedulerConfiguration{}, err
+		return SchedulerConfiguration{}, err
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return schedulerConfiguration{}, errors.New("one scheduler configuration object required")
+		return SchedulerConfiguration{}, errors.New("one scheduler configuration object required")
 	}
-	config := wire.schedulerConfiguration
+	config := wire.SchedulerConfiguration
 	if wire.Settings.DefaultDispatchOccupancyNanos == nil {
 		return config, errors.New("settings.defaultDispatchOccupancyNanos required")
 	}
@@ -154,7 +129,7 @@ func decodeSchedulerConfiguration(raw string, maxBytes int64) (schedulerConfigur
 	return config, nil
 }
 
-func (config schedulerConfiguration) validatePower() error {
+func (config SchedulerConfiguration) validatePower() error {
 	if config.PowerObservation != nil {
 		if err := config.PowerObservation.Sampling.Validate(); err != nil {
 			return err
@@ -183,20 +158,20 @@ func metricSource(identity metricobserver.SourceIdentity) (metricobserver.Source
 	return edgemetrics.NewPowerSeries(identity, meterClient)
 }
 
-func (o *schedulerService) refresh(ctx context.Context) (err error) {
-	o.lock.Lock()
-	defer o.lock.Unlock()
+func (o *SchedulerService) Refresh(ctx context.Context) (err error) {
+	o.Lock.Lock()
+	defer o.Lock.Unlock()
 	return o.refreshLocked(ctx)
 }
 
 // refreshLocked publishes the complete accepted configuration while the service
 // excludes Tick and operator mutations.
-func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
-	cm, err := o.kube.CoreV1().ConfigMaps(o.opts.servingNamespace).Get(ctx, o.opts.schedulerConfigMap, meta.GetOptions{})
+func (o *SchedulerService) refreshLocked(ctx context.Context) (err error) {
+	cm, err := o.kube.CoreV1().ConfigMaps(o.opts.ServingNamespace).Get(ctx, o.opts.SchedulerConfigMap, meta.GetOptions{})
 	if err != nil {
 		return err
 	}
-	config, err := decodeSchedulerConfiguration(cm.Data[o.opts.schedulerConfigKey], o.opts.maxRequestBytes)
+	config, err := DecodeSchedulerConfiguration(cm.Data[o.opts.SchedulerConfigKey], o.opts.MaxRequestBytes)
 	if err != nil {
 		return err
 	}
@@ -205,7 +180,7 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 		return err
 	}
 	if config.PowerObservation != nil {
-		limits := metricobserver.Limits{MaxResultBytes: o.opts.maxEvidenceBytes, MemoryBudgetBytes: debug.SetMemoryLimit(-1)}
+		limits := metricobserver.Limits{MaxResultBytes: o.opts.MaxEvidenceBytes, MemoryBudgetBytes: debug.SetMemoryLimit(-1)}
 		for _, meter := range config.Meters {
 			if _, err := metricobserver.RequiredCapacity(
 				config.PowerObservation.Sampling, meter.Source, limits, false,
@@ -214,9 +189,9 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 			}
 		}
 	}
-	namespaces := o.opts.profileNamespaces
+	namespaces := o.opts.ProfileNamespaces
 	if len(namespaces) == 0 {
-		namespaces = []string{o.opts.servingNamespace}
+		namespaces = []string{o.opts.ServingNamespace}
 	}
 	view, err := o.catalog.Refresh(ctx, namespaces)
 	if err != nil {
@@ -227,7 +202,7 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	}
 	// Coverage consumes verified measurement facts independently of operation
 	// costs and scheduler preparation/adoption. No raw evidence is read here.
-	o.catalogRead.Store(&httpapi.ProfilesView{ConfigVersion: cm.ResourceVersion, CatalogView: view})
+	o.catalogRead.Store(&ProfilesView{ConfigVersion: cm.ResourceVersion, CatalogView: view})
 	costs, err := o.costs.Refresh(ctx, namespaces, config.Meters, view.Profiles)
 	if err != nil {
 		return err
@@ -263,29 +238,29 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	}
 	slices.Sort(sources)
 	signature := strings.Join(sources, "\x00")
-	if o.controller != nil && cm.ResourceVersion == o.resourceVersion && signature == o.sources {
+	if o.Controller != nil && cm.ResourceVersion == o.resourceVersion && signature == o.sources {
 		return nil
 	}
 	preparations, issues := o.preparations(ctx, config, view.CurrentProfiles())
 	view.Insufficiencies = append(view.Insufficiencies, issues...)
 	controllerConfig := servingkube.SchedulerControllerConfig{
 		Settings:          config.Settings,
-		ConfigurationName: o.opts.schedulerConfigMap, ConfigurationKey: o.opts.schedulerConfigKey,
+		ConfigurationName: o.opts.SchedulerConfigMap, ConfigurationKey: o.opts.SchedulerConfigKey,
 		Reserved: config.Reserved, Preparations: preparations, Costs: costs.Costs, Baselines: costs.Baselines,
 		CostIssues: costs.Issues, DispatchOccupancy: costs.DispatchOccupancy, CatalogIssues: view.Insufficiencies,
 		DispatchOccupancySnapshot: o.occupancy.selected,
-		LoadGenerator:             o.opts.loadGenerator,
-		GatewayRequestTimeout:     o.gatewayRequestTimeout,
+		LoadGenerator:             o.opts.LoadGenerator,
+		GatewayRequestTimeout:     o.GatewayRequestTimeout,
 		Meters:                    config.Meters, PowerPolicies: policies,
 		StaticRouting: len(config.StaticRouting) > 0, MeasurementNamespaces: namespaces,
-		Evidence: o.objects, EvidenceStore: o.opts.storeName, MeterSource: metricSource,
-		OnDecision: o.recordDecision, OnAction: o.recordAction,
+		Evidence: o.objects, EvidenceStore: o.opts.StoreName, MeterSource: metricSource,
+		OnDecision: o.RecordDecision, OnAction: o.RecordAction,
 	}
-	if o.controller == nil {
-		o.controller, err = servingkube.NewSchedulerController(o.store, o.kube, o.execution,
+	if o.Controller == nil {
+		o.Controller, err = servingkube.NewSchedulerController(o.store, o.kube, o.execution,
 			o.observer, o.operations, o.observationLog, controllerConfig)
 	} else {
-		err = o.controller.SetConfiguration(controllerConfig)
+		err = o.Controller.SetConfiguration(controllerConfig)
 	}
 	if err != nil {
 		return err
@@ -294,7 +269,7 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	o.observer.SetProfiles(view.Profiles)
 	o.execution.SetCompletionMargin(config.Settings.CompletionMarginMS)
 	o.configuration.Store(&config)
-	published := httpapi.ProfilesView{
+	published := ProfilesView{
 		ConfigVersion: cm.ResourceVersion, CatalogView: view,
 		Preparations: make(map[string]servingkube.PrepareSpec, len(preparations)),
 		Occupancy:    occupancy,
@@ -303,7 +278,7 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 		spec.Instance.Profile = nil // the profile body is in Profiles
 		published.Preparations[id] = spec
 	}
-	o.profiles.Store(&published)
+	o.Profiles.Store(&published)
 	o.occupancy.configure(&rollingOccupancyInput{
 		configuration: &config, catalog: &published, profiles: o.observer.OccupancyProfiles(),
 		legacy: costs.DispatchOccupancy,
@@ -314,10 +289,10 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	return nil
 }
 
-func (o *schedulerService) measurementCatalogView(_ context.Context) (httpapi.ProfilesView, error) {
+func (o *SchedulerService) measurementCatalogView(_ context.Context) (ProfilesView, error) {
 	published := o.catalogRead.Load()
 	if published == nil {
-		return httpapi.ProfilesView{}, &serving.Error{
+		return ProfilesView{}, &serving.Error{
 			Code: "CoverageWarming", Message: "measurement catalog is not available",
 		}
 	}
@@ -338,21 +313,21 @@ func (o *schedulerService) measurementCatalogView(_ context.Context) (httpapi.Pr
 // meters from the Profiler facts. Without the Profiler there are none: no Node
 // takes power requests and no meter is declared. A meter binds to the live
 // Node of its name; a source whose Node is absent declares no meter.
-func (o *schedulerService) profilerFacts(
-	ctx context.Context, config *schedulerConfiguration,
+func (o *SchedulerService) profilerFacts(
+	ctx context.Context, config *SchedulerConfiguration,
 ) ([]nodeactuator.ActuationPolicySpec, string, error) {
-	if o.opts.factsConfigMap == "" {
+	if o.opts.FactsConfigMap == "" {
 		return nil, "", nil
 	}
-	cm, err := o.kube.CoreV1().ConfigMaps(o.opts.factsNamespace).Get(ctx, o.opts.factsConfigMap, meta.GetOptions{})
+	cm, err := o.kube.CoreV1().ConfigMaps(o.opts.FactsNamespace).Get(ctx, o.opts.FactsConfigMap, meta.GetOptions{})
 	if err != nil {
 		return nil, "", err
 	}
-	policies, err := profiler.DecodeActuationPolicyCatalog([]byte(cm.Data[o.opts.actuationPoliciesKey]))
+	policies, err := profiler.DecodeActuationPolicyCatalog([]byte(cm.Data[o.opts.ActuationPoliciesKey]))
 	if err != nil {
 		return nil, "", err
 	}
-	sources, err := profilerkube.DecodeMetricSources([]byte(cm.Data[o.opts.metricSourcesKey]))
+	sources, err := profilerkube.DecodeMetricSources([]byte(cm.Data[o.opts.MetricSourcesKey]))
 	if err != nil {
 		return nil, "", err
 	}
@@ -378,7 +353,7 @@ func (o *schedulerService) profilerFacts(
 }
 
 // schedulerMeters projects only the complete configuration accepted by refresh.
-func (o *schedulerService) schedulerMeters() []servingkube.MeterDeclaration {
+func (o *SchedulerService) SchedulerMeters() []servingkube.MeterDeclaration {
 	config := o.configuration.Load()
 	if config == nil {
 		return nil
@@ -386,19 +361,19 @@ func (o *schedulerService) schedulerMeters() []servingkube.MeterDeclaration {
 	return config.Meters
 }
 
-func (o *schedulerService) operatingPower(
+func (o *SchedulerService) OperatingPower(
 	ctx context.Context, from, to time.Time, limit int,
 ) (serving.OperatingPowerWindow, error) {
 	return o.observationLog.OperatingPower(ctx, from, to, o.operatingPowerMeters(), limit)
 }
 
-func (o *schedulerService) operatingPowerSeries(
+func (o *SchedulerService) OperatingPowerSeries(
 	ctx context.Context, from, to time.Time, bucket time.Duration, limit int,
 ) (serving.OperatingPowerSeries, error) {
 	return o.observationLog.OperatingPowerSeries(ctx, from, to, bucket, o.operatingPowerMeters(), limit)
 }
 
-func (o *schedulerService) operatingPowerMeters() []serving.OperatingPowerMeter {
+func (o *SchedulerService) operatingPowerMeters() []serving.OperatingPowerMeter {
 	// Capture one accepted configuration without waiting behind refresh or Tick.
 	config := o.configuration.Load()
 	meters := make([]serving.OperatingPowerMeter, len(config.Meters))
@@ -410,7 +385,7 @@ func (o *schedulerService) operatingPowerMeters() []serving.OperatingPowerMeter 
 	return meters
 }
 
-func (o *schedulerService) recordDecision(
+func (o *SchedulerService) RecordDecision(
 	decision serving.SchedulerDecision, snapshot serving.SchedulerSnapshot,
 ) error {
 	if err := o.observationLog.SchedulerRecord(serving.SchedulerObservation{
@@ -419,11 +394,11 @@ func (o *schedulerService) recordDecision(
 		return err
 	}
 	if o.live != nil {
-		o.live.decision(decision, snapshot)
+		o.live.Decision(decision, snapshot)
 	}
 	return nil
 }
-func (o *schedulerService) recordAction(result servingkube.OperationResult) error {
+func (o *SchedulerService) RecordAction(result servingkube.OperationResult) error {
 	expected, err := json.Marshal(result.Operation)
 	if err != nil {
 		return err
@@ -448,24 +423,24 @@ func (o *schedulerService) recordAction(result servingkube.OperationResult) erro
 		return err
 	}
 	if o.live != nil {
-		o.live.action(event, recordedAt)
+		o.live.Action(event, recordedAt)
 	}
 	return nil
 }
 
-func (o *schedulerService) restartPower(config schedulerConfiguration) {
+func (o *SchedulerService) restartPower(config SchedulerConfiguration) {
 	if o.powerCancel != nil {
 		o.powerCancel()
 		o.powerWG.Wait()
 	}
 	if o.live != nil {
-		o.live.powerScope(config.Meters, config.PowerObservation != nil)
+		o.live.PowerScope(config.Meters, config.PowerObservation != nil)
 	}
 	if config.PowerObservation == nil {
 		return
 	}
 	ctx, cancel := context.WithCancel(o.ctx)
-	limits := metricobserver.Limits{MaxResultBytes: o.opts.maxEvidenceBytes, MemoryBudgetBytes: debug.SetMemoryLimit(-1)}
+	limits := metricobserver.Limits{MaxResultBytes: o.opts.MaxEvidenceBytes, MemoryBudgetBytes: debug.SetMemoryLimit(-1)}
 	o.powerCancel = cancel
 	for _, meter := range config.Meters {
 		o.powerWG.Add(1)
@@ -477,7 +452,7 @@ func (o *schedulerService) restartPower(config schedulerConfiguration) {
 				return
 			}
 			if o.live != nil {
-				source = livePowerSource{Source: source, metrics: o.live.metrics, nodeUID: meter.Node.UID}
+				source = o.live.MeterSource(source, meter.Node.UID)
 			}
 			if _, err := metricobserver.RequiredCapacity(
 				config.PowerObservation.Sampling, source.Identity(), limits, false,
@@ -519,7 +494,7 @@ func (o *schedulerService) restartPower(config schedulerConfiguration) {
 	}
 }
 
-func (o *schedulerService) Start() {
+func (o *SchedulerService) Start() {
 	if o == nil {
 		return
 	}
@@ -532,23 +507,23 @@ func (o *schedulerService) Start() {
 	go func() {
 		defer o.wg.Done()
 		for o.ctx.Err() == nil {
-			callCtx, cancel := context.WithTimeout(o.ctx, o.opts.requestTimeout)
+			callCtx, cancel := context.WithTimeout(o.ctx, o.opts.RequestTimeout)
 			started := time.Now()
-			if err := o.refresh(callCtx); err != nil {
+			if err := o.Refresh(callCtx); err != nil {
 				ctrl.Log.Error(err, "refresh scheduler operator configuration")
 			} else {
-				o.lock.Lock()
-				if err := o.controller.Admit(callCtx); err != nil {
+				o.Lock.Lock()
+				if err := o.Controller.Admit(callCtx); err != nil {
 					ctrl.Log.Error(err, "admit measurements")
 				}
-				_, err := o.controller.Tick(callCtx, time.Now().UTC())
-				o.lock.Unlock()
+				_, err := o.Controller.Tick(callCtx, time.Now().UTC())
+				o.Lock.Unlock()
 				if err != nil {
 					ctrl.Log.Error(err, "evaluate and record scheduler control interval")
 				}
 			}
 			cancel()
-			timer := time.NewTimer(max(time.Until(started.Add(o.controller.Settings().ControlInterval)), 0))
+			timer := time.NewTimer(max(time.Until(started.Add(o.Controller.Settings().ControlInterval)), 0))
 			waiting := true
 			for waiting {
 				// Give the periodic deadline priority over a burst of completions.
@@ -564,11 +539,11 @@ func (o *schedulerService) Start() {
 					return
 				case <-timer.C:
 					waiting = false
-				case <-o.controller.Completions():
-					callCtx, cancel := context.WithTimeout(o.ctx, o.opts.requestTimeout)
-					o.lock.Lock()
-					err := o.controller.Continue(callCtx, time.Now().UTC())
-					o.lock.Unlock()
+				case <-o.Controller.Completions():
+					callCtx, cancel := context.WithTimeout(o.ctx, o.opts.RequestTimeout)
+					o.Lock.Lock()
+					err := o.Controller.Continue(callCtx, time.Now().UTC())
+					o.Lock.Unlock()
 					cancel()
 					if err != nil {
 						ctrl.Log.Error(err, "continue authorized scheduler transition")
@@ -578,7 +553,7 @@ func (o *schedulerService) Start() {
 		}
 	}()
 }
-func (o *schedulerService) Close() {
+func (o *SchedulerService) Close() {
 	if o == nil {
 		return
 	}
@@ -588,7 +563,7 @@ func (o *schedulerService) Close() {
 		o.powerCancel()
 	}
 	o.powerWG.Wait()
-	if o.controller != nil {
-		o.controller.Close()
+	if o.Controller != nil {
+		o.Controller.Close()
 	}
 }

@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
-	"sync"
 	"testing"
 
 	core "k8s.io/api/core/v1"
@@ -19,7 +18,8 @@ func TestSettingsPutPreservesDispatchOccupancyBlock(t *testing.T) {
 	h, _ := occupancyHandler(t, "")
 	h.config.MaxRequestBytes = 1 << 20
 	before := schedulerSettingsForTest()
-	controller, execution := settingsControllerForTest(t, h.authorizer.Client, h.observationLog, before)
+	service, execution, _ := settingsServiceForTest(t, h.authorizer.Client, h.observationLog, before, false, false)
+	controller := service.Controller
 	raw, err := os.ReadFile("../../../config/samples/serving-scheduler.json")
 	if err != nil {
 		t.Fatal(err)
@@ -50,10 +50,8 @@ func TestSettingsPutPreservesDispatchOccupancyBlock(t *testing.T) {
 	h.config.SchedulerNamespace = "serving"
 	h.config.SchedulerConfigMap = "scheduler"
 	h.config.SchedulerConfigKey = "scheduler.json"
-	h.config.SchedulerLock = &sync.Mutex{}
-	h.config.RefreshScheduler = func(ctx context.Context) error {
-		return refreshSettingsForTest(ctx, h.authorizer.Client, controller, h.observationLog, false, false)
-	}
+	h.config.SchedulerLock = &service.Lock
+	h.config.ChangeSchedulerSettings = service.ChangeSchedulerSettings
 	after := before
 	after.MaxInstances++
 	body, err := json.Marshal(after)

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/serving/application"
+
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	evaluation "github.com/lab-paper-code/chill/internal/evaluation/service"
 	"github.com/lab-paper-code/chill/internal/kubeconfig"
@@ -160,28 +162,28 @@ func run(ctx context.Context, opts options) (retErr error) {
 			maxThermal: opts.resourceMaxThermal, maxErrors: opts.resourceMaxErrors,
 		}).receive,
 	}
-	scheduler, err := newSchedulerService(
-		ctx, store, kube, execution, observer, objects, observationLog, opts,
-		httpapi.MaximumInferenceRequestTimeout, publisher,
-	)
-	if err != nil {
-		return fmt.Errorf("initialize scheduler service: %w", err)
-	}
-	defer scheduler.Close()
 	// HTTP-boundary calls (reviews, settings ConfigMap) take their own client
 	// budget so ingress and control calls never queue behind each other.
 	reviews, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return err
 	}
+	scheduler, err := newSchedulerService(
+		ctx, store, kube, reviews, execution, observer, objects, observationLog, opts,
+		httpapi.MaximumInferenceRequestTimeout, publisher,
+	)
+	if err != nil {
+		return fmt.Errorf("initialize scheduler service: %w", err)
+	}
+	defer scheduler.Close()
 	authorizer := &servingkube.Authorizer{Client: reviews}
 	measurements, err := newMeasurementService(store.Client(), kube, scheduler, objects, opts)
 	if err != nil {
 		return err
 	}
 
-	handlerConfig.ReadCatalog = scheduler.readCatalog
-	handlerConfig.OccupancyObservations = scheduler.occupancyObservations
+	handlerConfig.ReadCatalog = scheduler.ReadCatalog
+	handlerConfig.OccupancyObservations = scheduler.OccupancyObservations
 	handlerConfig.SubmitMeasurement = measurements.Submit
 	handlerConfig.DeleteMeasurement = measurements.Delete
 	handlerConfig.BuildOccupancy = measurements.BuildOccupancy
@@ -255,12 +257,12 @@ func removeStagedObservationArchives() {
 
 func initializeServing(ctx context.Context, opts *options,
 	observer *servingkube.Observer, manager *servingkube.Manager, execution *serving.Runtime,
-	publisher *livePublisher, scheduler *schedulerService,
+	publisher *livePublisher, scheduler *application.SchedulerService,
 	handlerConfig *httpapi.HandlerConfig,
 ) error {
 	if scheduler != nil {
 		refreshCtx, cancel := context.WithTimeout(ctx, opts.operationTimeout)
-		err := scheduler.refresh(refreshCtx)
+		err := scheduler.Refresh(refreshCtx)
 		cancel()
 		if err != nil {
 			return fmt.Errorf("initialize scheduler service: %w", err)
@@ -283,19 +285,19 @@ func initializeServing(ctx context.Context, opts *options,
 		publisher.workload(view, false)
 	}
 	publisher.startRuntime(ctx, execution)
-	if scheduler != nil && len(scheduler.controller.Settings().AutonomousWorkloads) > 0 {
+	if scheduler != nil && len(scheduler.Controller.Settings().AutonomousWorkloads) > 0 {
 		execution.EnableSchedulerRouting()
 	}
 	if scheduler != nil {
-		handlerConfig.Scheduler = scheduler.controller
+		handlerConfig.Scheduler = scheduler.Controller
 		handlerConfig.SchedulerConfigMap = opts.schedulerConfigMap
 		handlerConfig.SchedulerConfigKey = opts.schedulerConfigKey
 		handlerConfig.SchedulerNamespace = opts.servingNamespace
-		handlerConfig.SchedulerLock = &scheduler.lock
-		handlerConfig.RefreshScheduler = scheduler.refreshLocked
-		handlerConfig.SchedulerMeters = scheduler.schedulerMeters
-		handlerConfig.OperatingPower = scheduler.operatingPower
-		handlerConfig.OperatingPowerSeries = scheduler.operatingPowerSeries
+		handlerConfig.SchedulerLock = &scheduler.Lock
+		handlerConfig.ChangeSchedulerSettings = scheduler.ChangeSchedulerSettings
+		handlerConfig.SchedulerMeters = scheduler.SchedulerMeters
+		handlerConfig.OperatingPower = scheduler.OperatingPower
+		handlerConfig.OperatingPowerSeries = scheduler.OperatingPowerSeries
 
 	}
 	return nil
@@ -303,7 +305,7 @@ func initializeServing(ctx context.Context, opts *options,
 
 func serve(ctx context.Context, opts options, chillServer *initializingHandler, execution *serving.Runtime,
 	observer *servingkube.Observer, manager *servingkube.Manager,
-	observationLog *serving.ObservationLog, scheduler *schedulerService, diagnostics *diagnosticSession,
+	observationLog *serving.ObservationLog, scheduler *application.SchedulerService, diagnostics *diagnosticSession,
 	initialize func(context.Context) (http.Handler, error),
 ) error {
 	certificate, err := tls.LoadX509KeyPair(opts.tlsCert, opts.tlsKey)
@@ -385,7 +387,7 @@ loop:
 			}
 			callCtx, cancel := context.WithTimeout(ctx, opts.requestTimeout)
 			if scheduler != nil {
-				if err := scheduler.refresh(callCtx); err != nil {
+				if err := scheduler.Refresh(callCtx); err != nil {
 					ctrl.Log.Error(err, "refresh selected profiling evidence")
 				}
 			}

@@ -1,4 +1,4 @@
-package main
+package application
 
 import (
 	"context"
@@ -58,16 +58,16 @@ func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) 
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := `{"settings":` + string(rawSettings) + `,` + tc.fields + `}`
-			_, err := decodeSchedulerConfiguration(raw, 1<<20)
+			_, err := DecodeSchedulerConfiguration(raw, 1<<20)
 			if (err == nil) != tc.valid {
 				t.Fatalf("configuration valid=%t error=%v", tc.valid, err)
 			}
 		})
 	}
-	if _, err = decodeSchedulerConfiguration(`{"settings":`+string(rawSettings)+`} {}`, 1<<20); err == nil {
+	if _, err = DecodeSchedulerConfiguration(`{"settings":`+string(rawSettings)+`} {}`, 1<<20); err == nil {
 		t.Fatal("trailing configuration accepted")
 	}
-	if _, err = decodeSchedulerConfiguration(`{"settings":`+string(rawSettings)+`}`, 1); err == nil {
+	if _, err = DecodeSchedulerConfiguration(`{"settings":`+string(rawSettings)+`}`, 1); err == nil {
 		t.Fatal("over-limit configuration accepted")
 	}
 	var omitted map[string]json.RawMessage
@@ -79,7 +79,7 @@ func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = decodeSchedulerConfiguration(`{"settings":`+string(withoutMargin)+`}`, 1<<20); err == nil ||
+	if _, err = DecodeSchedulerConfiguration(`{"settings":`+string(withoutMargin)+`}`, 1<<20); err == nil ||
 		!strings.Contains(err.Error(), "completionMarginMS required") {
 		t.Fatalf("omitted completionMarginMS accepted: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = decodeSchedulerConfiguration(`{"settings":`+string(raw)+`}`, 1<<20); err == nil {
+		if _, err = DecodeSchedulerConfiguration(`{"settings":`+string(raw)+`}`, 1<<20); err == nil {
 			t.Fatalf("settings without %s accepted", field)
 		}
 	}
@@ -110,7 +110,7 @@ func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = decodeSchedulerConfiguration(`{"settings":`+string(raw)+`}`, 1<<20); err == nil {
+	if _, err = DecodeSchedulerConfiguration(`{"settings":`+string(raw)+`}`, 1<<20); err == nil {
 		t.Fatal("settings with dispatchOccupancy accepted")
 	}
 }
@@ -122,7 +122,7 @@ func TestStaticRoutingRemainsReadableWithoutPhysicalApplication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := decodeSchedulerConfiguration(string(raw), 1<<20)
+	decoded, err := DecodeSchedulerConfiguration(string(raw), 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestStaticRoutingRemainsReadableWithoutPhysicalApplication(t *testing.T) {
 			t.Fatal("stored declaration lost")
 		}
 		routing, _ := service.execution.SchedulerRouting()
-		if len(routing) != 0 || len(service.controller.State().Results) != 0 {
+		if len(routing) != 0 || len(service.Controller.State().Results) != 0 {
 			t.Fatal("stored declaration fabricated physical routing or an operation")
 		}
 	}
@@ -184,7 +184,7 @@ func TestOperatingPowerReadsAcceptedConfigurationWhileServiceIsBusy(t *testing.T
 		t.Fatal(err)
 	}
 	policy := powerwindow.Policy{MaximumBoundaryDistance: time.Second, MaximumGap: time.Second, MinimumCoverage: 1}
-	configurations := make([]*schedulerConfiguration, 0, 2)
+	configurations := make([]*SchedulerConfiguration, 0, 2)
 	for index, name := range []string{"first", "replacement"} {
 		node := serving.NodeReference{Name: name, UID: name + "-uid"}
 		source := metricobserver.SourceIdentity{
@@ -200,12 +200,12 @@ func TestOperatingPowerReadsAcceptedConfigurationWhileServiceIsBusy(t *testing.T
 		}); err != nil {
 			t.Fatal(err)
 		}
-		configurations = append(configurations, &schedulerConfiguration{Meters: []servingkube.MeterDeclaration{meter}})
+		configurations = append(configurations, &SchedulerConfiguration{Meters: []servingkube.MeterDeclaration{meter}})
 	}
-	service := &schedulerService{observationLog: observationLog}
+	service := &SchedulerService{observationLog: observationLog}
 	// Model a refresh or control Tick holding the owner lock throughout this read.
-	service.lock.Lock()
-	defer service.lock.Unlock()
+	service.Lock.Lock()
+	defer service.Lock.Unlock()
 	for index, config := range configurations {
 		service.configuration.Store(config)
 		type response struct {
@@ -214,7 +214,7 @@ func TestOperatingPowerReadsAcceptedConfigurationWhileServiceIsBusy(t *testing.T
 		}
 		done := make(chan response, 1)
 		go func() {
-			result, err := service.operatingPower(context.Background(), from, to, 10)
+			result, err := service.OperatingPower(context.Background(), from, to, 10)
 			done <- response{result: result, err: err}
 		}()
 		select {
@@ -236,22 +236,22 @@ func TestRejectedSchedulerRefreshPreservesPublishedConfiguration(t *testing.T) {
 		ObjectMeta: meta.ObjectMeta{Namespace: "scheduler", Name: "configuration", ResourceVersion: "replacement"},
 		Data:       map[string]string{"configuration": "{"},
 	})
-	service := &schedulerService{
+	service := &SchedulerService{
 		kube: client, observer: &servingkube.Observer{}, resourceVersion: "accepted",
-		opts: options{
-			servingNamespace: "scheduler", schedulerConfigMap: "configuration",
-			schedulerConfigKey: "configuration", maxRequestBytes: 1024,
+		opts: Options{
+			ServingNamespace: "scheduler", SchedulerConfigMap: "configuration",
+			SchedulerConfigKey: "configuration", MaxRequestBytes: 1024,
 		},
 	}
-	accepted := &schedulerConfiguration{Meters: []servingkube.MeterDeclaration{{ID: "accepted-meter"}}}
+	accepted := &SchedulerConfiguration{Meters: []servingkube.MeterDeclaration{{ID: "accepted-meter"}}}
 	service.configuration.Store(accepted)
-	if err := service.refresh(context.Background()); err == nil {
+	if err := service.Refresh(context.Background()); err == nil {
 		t.Fatal("malformed replacement configuration was accepted")
 	}
 	if service.configuration.Load() != accepted || service.resourceVersion != "accepted" {
 		t.Fatal("rejected refresh changed the published configuration")
 	}
-	if got := service.schedulerMeters(); len(got) != 1 || got[0].ID != "accepted-meter" {
+	if got := service.SchedulerMeters(); len(got) != 1 || got[0].ID != "accepted-meter" {
 		t.Fatalf("settings projected a rejected meter declaration: %+v", got)
 	}
 }
@@ -272,15 +272,15 @@ func TestSchedulerPowerUsesExistingEvidenceEnvelopeBeforeSourceReads(t *testing.
 			t.Fatal(err)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		service := &schedulerService{ctx: ctx, observationLog: log, opts: options{maxEvidenceBytes: 1}}
+		service := &SchedulerService{ctx: ctx, observationLog: log, opts: Options{MaxEvidenceBytes: 1}}
 		if accepted {
-			service.opts.maxEvidenceBytes = 64 << 20
+			service.opts.MaxEvidenceBytes = 64 << 20
 		}
 		source := metricobserver.SourceIdentity{
 			Kind: "edge-metrics", NodeName: "node", Endpoint: server.URL, Metric: "wall_watts",
 			MetricLabels: map[string]string{"hostname": "node", "device_type": "fixture"}}
 		start := time.Now().UTC()
-		service.restartPower(schedulerConfiguration{
+		service.restartPower(SchedulerConfiguration{
 			Meters: []servingkube.MeterDeclaration{{
 				ID: "meter", Node: serving.NodeReference{Name: "node", UID: "uid"},
 				Scope: "node-exclusive-wall", Source: source,

@@ -75,6 +75,7 @@ components:
   profiler-worker: { in: internal/profiling/profiler/worker }
   serving-core: { in: internal/serving }
   serving-httpapi: { in: internal/serving/httpapi }
+  serving-application: { in: internal/serving/application }
   serving-live: { in: internal/serving/live }
   serving-kube: { in: internal/serving/kube }
   serving-measurement: { in: internal/serving/measurement }
@@ -327,6 +328,22 @@ deps:
       - workload-core
       - model-compat
 
+  serving-application:
+    mayDependOn:
+      - serving-core
+      - serving-measurement
+      - serving-kube
+      - evidence-core
+      - evidence-kube
+      - evidence-s3
+      - firstfloor
+      - metric-core
+      - metric-edgemetrics
+      - node-actuator-core
+      - power-window
+      - profiler-app
+      - profiler-kube
+
   serving-httpapi:
     mayDependOn:
       - serving-core
@@ -335,6 +352,7 @@ deps:
       - serving-live
       - evaluation-service
       - serving-measurement
+      - serving-application
 
   serving-live:
     anyVendorDeps: true

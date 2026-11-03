@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/serving/application"
+
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
@@ -20,15 +22,6 @@ type OccupancyObservations struct {
 // OccupancyObservationReader applies the accepted configuration's window bound
 // and estimates all cells from one ScanOccupancyRows invocation.
 type OccupancyObservationReader func(context.Context, time.Time, time.Time) ([]serving.OccupancyEstimate, error)
-
-// OccupancyWindowError reports the accepted policy's query limit.
-type OccupancyWindowError struct {
-	MaximumWindowSeconds int32
-}
-
-func (*OccupancyWindowError) Error() string {
-	return "occupancy window exceeds dispatchOccupancy.aggregationWindowSeconds"
-}
 
 func (h *Handler) occupancyObservations(w http.ResponseWriter, r *http.Request) {
 	if err := h.authorize(r); err != nil {
@@ -52,7 +45,7 @@ func (h *Handler) occupancyObservations(w http.ResponseWriter, r *http.Request) 
 	}
 	rows, err := h.config.OccupancyObservations(r.Context(), from, to)
 	if err != nil {
-		var limit *OccupancyWindowError
+		var limit *application.OccupancyWindowError
 		if errors.As(err, &limit) {
 			sendJSON(w, http.StatusBadRequest, struct {
 				serving.Error

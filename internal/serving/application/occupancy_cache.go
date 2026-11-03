@@ -1,4 +1,4 @@
-package main
+package application
 
 import (
 	"context"
@@ -8,15 +8,14 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 // Inputs and published slices are immutable after acceptance. The sole worker
 // owns scanning/reduction; scheduler capture reads one atomic snapshot only.
 type rollingOccupancyInput struct {
-	configuration *schedulerConfiguration
-	catalog       *httpapi.ProfilesView
+	configuration *SchedulerConfiguration
+	catalog       *ProfilesView
 	profiles      map[string]*serving.Profile
 	legacy        []serving.DispatchOccupancy
 }
@@ -176,17 +175,17 @@ func (c *rollingOccupancyCache) run(ctx context.Context, aggregate occupancyAggr
 	}
 }
 
-func (o *schedulerService) aggregateOccupancy(
+func (o *SchedulerService) aggregateOccupancy(
 	ctx context.Context, input *rollingOccupancyInput, from, to time.Time,
 ) ([]serving.OccupancyEstimate, error) {
-	o.lock.Lock()
+	o.Lock.Lock()
 	if o.configuration.Load() != input.configuration {
-		o.lock.Unlock()
+		o.Lock.Unlock()
 		return nil, context.Canceled
 	}
 	profiles := input.profiles // exact accepted canonical profileByID references
 	policies := o.execution.OccupancyPolicies()
-	o.lock.Unlock()
+	o.Lock.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

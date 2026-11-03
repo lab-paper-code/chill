@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/serving/application"
+
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 )
@@ -34,14 +36,16 @@ func TestRecordedActionUsesSameDurableAndLiveTimestamp(t *testing.T) {
 	if _, err := subscription.Next(ctx); err != nil {
 		t.Fatal(err)
 	}
-	service := &schedulerService{observationLog: log, live: publisher}
+	service := application.NewSchedulerService(context.Background(), application.Dependencies{
+		ObservationLog: log, Live: &application.Live{Decision: publisher.decision, Action: publisher.action},
+	})
 	result := servingkube.OperationResult{
 		Operation: servingkube.Operation{
 			ID: "operation", Kind: "power", Node: serving.NodeReference{UID: "node"},
 		},
 		StartedAt: time.Now().UTC(), Status: "running",
 	}
-	if err := service.recordAction(result); err != nil {
+	if err := service.RecordAction(result); err != nil {
 		t.Fatal(err)
 	}
 	deadline, stop := context.WithTimeout(ctx, time.Second)
