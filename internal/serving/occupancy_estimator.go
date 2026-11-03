@@ -65,6 +65,7 @@ type occupancyRequest struct {
 	id                                                          uint64
 	size                                                        int
 	queued, running, finished                                   time.Time
+	received                                                    time.Time
 	finals, completeFinals, rows, completeRows                  int
 	execution, nativeExecution, success, nativeSuccess, invalid bool
 }
@@ -104,17 +105,40 @@ func directComplete(r *occupancyRequest) bool {
 	return r.id != 0 && r.size > 0 && !r.queued.IsZero() && !r.running.IsZero() && !r.finished.IsZero()
 }
 
+// retainRequest admits only the selected cohort. The scanner's private marker
+// lets earlier assignment rows retain their raw denominators without admitting
+// unrelated history; direct Add callers must supply an in-window anchor.
+func (e *OccupancyEstimator) retainRequest(row *RequestRow) *occupancyRequest {
+	if row.RequestID == "" {
+		return nil
+	}
+	r := e.requests[row.RequestID]
+	if row.Kind == requestRowOccupancySelected {
+		if r == nil {
+			e.requests[row.RequestID] = &occupancyRequest{}
+		}
+		return nil
+	}
+	if r == nil && !occupancyRowInWindow(row, e.window.Start, e.window.End) {
+		return nil
+	}
+	if r == nil {
+		r = &occupancyRequest{}
+		e.requests[row.RequestID] = r
+	}
+	if !row.ReceivedAt.IsZero() {
+		r.received = row.ReceivedAt
+	}
+	return r
+}
+
 // Add joins sparse late supplements before counting physical members. Repeated
 // finals and conflicting identities/timestamps invalidate, rather than repair,
 // the request. Assigned rows are denominators, never completed executions.
 func (e *OccupancyEstimator) Add(row RequestRow) {
-	if row.RequestID == "" {
-		return
-	}
-	r := e.requests[row.RequestID]
+	r := e.retainRequest(&row)
 	if r == nil {
-		r = &occupancyRequest{}
-		e.requests[row.RequestID] = r
+		return
 	}
 	if row.Kind != requestRowOpen {
 		r.rows++
@@ -191,6 +215,28 @@ func (e *OccupancyEstimator) Add(row RequestRow) {
 
 func (e *OccupancyEstimator) inside(t time.Time) bool {
 	return !t.Before(e.window.Start) && t.Before(e.window.End)
+}
+
+// FirstRunningAt selects the warmup origin after native supplements have joined
+// their final receipt cohort. Supplement receipt timestamps may be absent.
+func (e *OccupancyEstimator) FirstRunningAt(receivedFrom, receivedTo time.Time) time.Time {
+	var first time.Time
+	for _, r := range e.requests {
+		if r.finals == 0 || r.running.IsZero() || !observationInInterval(r.received, receivedFrom, receivedTo) {
+			continue
+		}
+		if first.IsZero() || r.running.Before(first) {
+			first = r.running
+		}
+	}
+	return first
+}
+
+func (e *OccupancyEstimator) requestInWindow(r *occupancyRequest) bool {
+	if !r.running.IsZero() {
+		return e.inside(r.running)
+	}
+	return !r.received.IsZero() && e.inside(r.received)
 }
 
 func sameDirectConfiguration(a, b *occupancyRequest) bool {
@@ -276,20 +322,21 @@ func (e *OccupancyEstimator) cell(r *occupancyRequest, cells map[directCellKey]*
 func (e *OccupancyEstimator) physicalBatches(cells map[directCellKey]*OccupancyEstimate) map[directBatchKey]*directBatch {
 	batches := map[directBatchKey]*directBatch{}
 	for _, r := range e.requests {
+		if !e.requestInWindow(r) {
+			continue
+		}
 		out := e.cell(r, cells)
 		if out == nil {
 			continue
 		}
-		if e.inside(r.running) || r.running.IsZero() {
-			out.Requests++
-			out.RawRows += r.rows
-			out.CompleteRawRows += r.completeRows
-			out.FinalRows += r.finals
-			out.CompleteFinalRows += r.completeFinals
-			if directComplete(r) {
-				out.CompleteRequests++
-				out.EnrichedCompleteRawRows += r.rows
-			}
+		out.Requests++
+		out.RawRows += r.rows
+		out.CompleteRawRows += r.completeRows
+		out.FinalRows += r.finals
+		out.CompleteFinalRows += r.completeFinals
+		if directComplete(r) {
+			out.CompleteRequests++
+			out.EnrichedCompleteRawRows += r.rows
 		}
 		key := directBatchKey{r.instance, r.id}
 		b := batches[key]

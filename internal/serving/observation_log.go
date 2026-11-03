@@ -44,7 +44,9 @@ type ObservationLogConfig struct {
 	Definitions []string
 	Outcomes    []string
 	Retention   time.Duration
-	Diagnostics *Diagnostics
+	// OccupancyTail bounds receipt lookback and late native supplement delivery.
+	OccupancyTail time.Duration
+	Diagnostics   *Diagnostics
 	// OnRequestEvent runs after successful event reflection and assignment storage.
 	// It must return promptly and must not reenter the log.
 	OnRequestEvent func(RequestEvent)
@@ -293,6 +295,9 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 	}
 	if config.Retention <= 0 {
 		return nil, errors.New("observation retention must be positive")
+	}
+	if config.OccupancyTail < 0 {
+		return nil, errors.New("occupancy supplement tail must not be negative")
 	}
 	l := &ObservationLog{
 		config: config, root: filepath.Join(config.Directory, observationVersion), started: time.Now().UTC(),

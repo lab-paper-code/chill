@@ -1,6 +1,7 @@
 package kube
 
 import (
+	"context"
 	"encoding/json"
 	"slices"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
+	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const timeoutOutcome = "timeout"
@@ -121,5 +123,79 @@ func TestBurstFrozenProfileIdentity(t *testing.T) {
 	w.Generation++
 	if validateOccupancyProfile(m.Spec, p, w, prep) == nil {
 		t.Fatal("accepted stale workload")
+	}
+}
+
+func TestBurstWarmupOriginJoinsLateNativeReceiptCohort(t *testing.T) {
+	ctx := context.Background()
+	log, err := serving.NewObservationLog(serving.ObservationLogConfig{
+		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: managerArchive{t.TempDir()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := log.Close(ctx); err != nil {
+			t.Error(err)
+		}
+	})
+	now := time.Now().UTC()
+	started, collected := now.Add(-10*time.Second), now.Add(time.Second)
+	profile := measuredCPUPreparationFixture().Instance.Profile
+	workload := &edge.Workload{ObjectMeta: meta.ObjectMeta{Name: "plc", UID: "warmup-workload"}}
+	m := occupancyRootWithInputs("warmup", started, 1, profile, workload)
+	firstStart := started.Add(100 * time.Millisecond)
+	progress := func(id string, batch uint64, at time.Time) serving.RequestEvent {
+		return serving.RequestEvent{RequestID: id, WorkloadUID: string(workload.UID), Kind: "backend_running",
+			At: now, NativeInstance: "warmup-instance",
+			NativeProgress: &serving.BackendProgress{RequestID: id, WorkloadUID: string(workload.UID),
+				Phase: "running", At: at, BatchID: batch, BatchSize: 1, ProfileID: profile.ID}}
+	}
+	for index, request := range []struct {
+		id                string
+		received, running time.Time
+		late              bool
+	}{
+		// An earlier native start from outside this Job must not set its origin.
+		{"previous-job", started.Add(-time.Second), started.Add(50 * time.Millisecond), false},
+		{"earliest", started.Add(10 * time.Millisecond), firstStart, true},
+		{"later", started.Add(20 * time.Millisecond), started.Add(700 * time.Millisecond), false},
+	} {
+		events := []serving.RequestEvent{
+			{RequestID: request.id, WorkloadUID: string(workload.UID), Kind: "received", At: request.received, ReceivedAt: request.received},
+			{RequestID: request.id, WorkloadUID: string(workload.UID), Kind: "assigned", At: request.received,
+				Assignment: &serving.Assignment{Node: testNode, Instance: "warmup-instance", Profile: profile.ID, DispatchedAt: request.received}},
+		}
+		if !request.late {
+			events = append(events, progress(request.id, uint64(index+1), request.running))
+		}
+		events = append(events, serving.RequestEvent{RequestID: request.id, Kind: "response_finished",
+			At: now, Outcome: timeoutOutcome})
+		for _, event := range events {
+			if err := log.RequestEvent(event); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := log.RequestClosed(request.id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The earliest final lacks running; its later supplement has ReceivedAt zero.
+	if err := log.RecordNativeSupplement(progress("earliest", 2, firstStart)); err != nil {
+		t.Fatal(err)
+	}
+	controller := &SchedulerController{observationLog: log}
+	record, err := controller.collectOccupancy(ctx, m, testNode, occupancyPlan{profile: profile, workload: workload},
+		started, collected, &OperationState{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantStart := firstStart.Add(time.Duration(m.Spec.WarmupSeconds) * time.Second)
+	wantEnd := wantStart.Add(time.Duration(m.Spec.DurationSeconds) * time.Second)
+	if record.Estimate == nil || !record.Estimate.Window.Start.Equal(wantStart) || !record.Estimate.Window.End.Equal(wantEnd) {
+		t.Fatalf("warmup origin did not join late native evidence: estimate=%+v want=[%s,%s)", record.Estimate, wantStart, wantEnd)
+	}
+	if slices.Contains(record.Reasons, "MissingPhysicalEvidence") {
+		t.Fatalf("joined native origin reported missing: %v", record.Reasons)
 	}
 }

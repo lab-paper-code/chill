@@ -206,9 +206,13 @@ locks, request persistence and evaluation Poisson behavior are not modified.
 
 **Shared estimator versus protocol.** `serving.OccupancyEstimator` is the same
 factual reducer used by read-only observation queries. The DOM controller first
-finds the first direct native start, adds configured warmup and uses an exact
-half-open D-second worker-native window. It streams receipt-cohort rows through
-`ScanOccupancyRows` into `Add`; `Results` supplies the exact cell's `estimate`.
+joins sparse rows by RequestID, then selects the earliest direct native start
+among requests received in this Job's half-open receipt cohort. A late native
+supplement with no receipt timestamp inherits cohort membership from its joined
+HTTP row; unrelated earlier requests cannot establish the warmup origin.
+Configured warmup advances that start into an exact half-open D-second worker-native
+window. It streams selected rows through `ScanOccupancyRows` into `Add`;
+`Results` supplies the exact cell's `estimate`.
 The accepted profile pointer supplies the **mean full Go runner-exchange service**
 at previous batch size—not BackendMS, stage sums or serving ServiceMS.
 

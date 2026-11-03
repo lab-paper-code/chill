@@ -23,7 +23,8 @@ func directFixture(batch int) (*Profile, map[string]firstfloor.Metadata, time.Ti
 
 func directRow(at time.Time, id uint64, batch, member int, start, finish time.Duration) RequestRow {
 	q, s, f := at, at.Add(start), at.Add(finish)
-	return RequestRow{Kind: requestRowFinal, RequestID: fmt.Sprintf("%d/%d", id, member), Node: &NodeReference{Name: "node", UID: "node-uid"}, Instance: "instance", WorkloadUID: "workload", ProfileID: "profile", DecisionID: "decision", DefinitionID: "definition", BatchID: id, BatchSize: batch, Outcome: outcomeCompleted, ExecutionComplete: true, NativeOutcome: outcomeCompleted, NativeExecutionComplete: true, NativeQueuedAt: &q, NativeRunningAt: &s, NativeFinishedAt: &f}
+	// Receipt anchors incomplete-request facts; worker timestamps anchor execution.
+	return RequestRow{Kind: requestRowFinal, RequestID: fmt.Sprintf("%d/%d", id, member), ReceivedAt: at, Node: &NodeReference{Name: "node", UID: "node-uid"}, Instance: "instance", WorkloadUID: "workload", ProfileID: "profile", DecisionID: "decision", DefinitionID: "definition", BatchID: id, BatchSize: batch, Outcome: outcomeCompleted, ExecutionComplete: true, NativeOutcome: outcomeCompleted, NativeExecutionComplete: true, NativeQueuedAt: &q, NativeRunningAt: &s, NativeFinishedAt: &f}
 }
 
 func TestOccupancyEstimatorPairEligibilityAndLateJoin(t *testing.T) {
@@ -133,6 +134,7 @@ func TestOccupancyEstimatorExactQuantilesCompletenessAndWorkerWindow(t *testing.
 		assigned.NativeExecutionComplete = false
 		assigned.ExecutionComplete = false
 		assigned.Outcome = ""
+		e.Add(RequestRow{Kind: requestRowOccupancySelected, RequestID: r.RequestID})
 		e.Add(assigned)
 		e.Add(r)
 		start += cycle
@@ -170,5 +172,37 @@ func TestOccupancyEstimatorConflictsAndDuplicateFinals(t *testing.T) {
 		if got := e.Results()[0]; got.Pairs != 0 || got.CompleteBatches != 1 {
 			t.Fatalf("invalid join accepted: %+v", got)
 		}
+	}
+}
+
+func TestOccupancyEstimatorRejectsOutsidePopulation(t *testing.T) {
+	p, policies, at := directFixture(1)
+	e := NewOccupancyEstimator(map[string]*Profile{p.ID: p}, policies, at, at.Add(time.Second))
+	for i := range 10000 {
+		row := directRow(at.Add(-time.Hour), uint64(i+1), 1, 0, 0, 20)
+		e.Add(row)
+		row.NativeRunningAt = nil
+		e.Add(row)
+	}
+	if len(e.requests) != 0 || len(e.Results()) != 0 {
+		t.Fatalf("outside traffic retained requests=%d cells=%d", len(e.requests), len(e.Results()))
+	}
+	// Even explicitly selected receipt-cohort rows with a later-known native
+	// start outside the execution window must not create a cell/denominator.
+	row := directRow(at.Add(-time.Hour), 20000, 1, 0, 0, 20)
+	e.Add(RequestRow{Kind: requestRowOccupancySelected, RequestID: row.RequestID})
+	e.Add(row)
+	if len(e.Results()) != 0 {
+		t.Fatal("outside native start created an empty cell")
+	}
+	// A genuinely in-window receipt with unknown native running remains an
+	// incomplete request fact, without admitting any execution pair.
+	row = directRow(at, 20001, 1, 0, 0, 20)
+	row.NativeRunningAt = nil
+	e.Add(row)
+	got := e.Results()
+	if len(got) != 1 || got[0].Requests != 1 || got[0].FinalRows != 1 ||
+		got[0].RawRows != 1 || got[0].CompleteRequests != 0 || got[0].Statistics != nil {
+		t.Fatalf("in-window incomplete population=%+v", got)
 	}
 }

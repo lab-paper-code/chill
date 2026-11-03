@@ -1,14 +1,18 @@
 package serving
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
 
 func TestScanOccupancyRowsKeepsErrorsOpenAndLateNative(t *testing.T) {
 	const timedOut = "timeout"
-	l, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	l, clock := clockedObservationLog(t, ObservationLogConfig{OccupancyTail: 3 * time.Minute}, observationTestHour)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runtime, err := NewRuntime(ctx, RuntimeConfig{QueueLimit: 1, ObservationLog: l})
@@ -176,9 +180,72 @@ func TestScanOccupancyRowsAcceptsLocalNowBounds(t *testing.T) {
 					t.Fatalf("unexpected occupancy row: %+v", row)
 				}
 			})
-			if err != nil || gap != nil || rows != 2 {
+			if err != nil || gap != nil || rows != 3 {
 				t.Fatalf("local now lost occupancy coverage: rows=%d gap=%v err=%v", rows, gap, err)
 			}
 		})
+	}
+}
+
+func TestScanOccupancyRowsBoundsRetainedPopulationAndTail(t *testing.T) {
+	p, policies, from := directFixture(1)
+	log, clock := clockedObservationLog(t, ObservationLogConfig{OccupancyTail: 2 * time.Second}, from)
+	clock.set(from.Add(48 * time.Hour))
+	var rows bytes.Buffer
+	encoder := json.NewEncoder(&rows)
+	first := directRow(from, 1, 1, 0, 0, 20)
+	first.NativeRunningAt = nil
+	if err := encoder.Encode(first); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 10000 {
+		outside := directRow(from.Add(-time.Hour), uint64(i+2), 1, 0, 0, 20)
+		if err := encoder.Encode(outside); err != nil {
+			t.Fatal(err)
+		}
+	}
+	supplement := directRow(from, 1, 1, 0, 0, 20)
+	supplement.Kind, supplement.ReceivedAt = RequestRowNative, time.Time{}
+	if err := encoder.Encode(supplement); err != nil {
+		t.Fatal(err)
+	}
+	name := log.segment(observationRequestStream, from)
+	if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(name, rows.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// An unrelated later hour is deliberately unreadable JSON. The one-second
+	// query must neither visit nor decode it, even though the log is two days old.
+	future := log.segment(observationRequestStream, from.Add(24*time.Hour))
+	if err := os.MkdirAll(filepath.Dir(future), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(future, []byte("not JSON\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// The configured two-second tail must also exclude a later minute.
+	late := log.segment(observationRequestStream, from.Add(2*time.Minute))
+	if err := os.WriteFile(late, []byte("not JSON\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	estimator := NewOccupancyEstimator(map[string]*Profile{p.ID: p}, policies, from, from.Add(time.Second))
+	visited := 0
+	_, err := log.ScanOccupancyRows(context.Background(), "", "", from, from.Add(time.Second), func(row RequestRow) {
+		visited++
+		estimator.Add(row)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if visited != 3 || len(estimator.requests) != 1 {
+		t.Fatalf("outside rows retained: visited=%d requests=%d", visited, len(estimator.requests))
+	}
+	result := estimator.Results()
+	if len(result) != 1 || result[0].RawRows != 2 || result[0].FinalRows != 1 ||
+		result[0].CompleteFinalRows != 0 || result[0].CompleteRequests != 1 ||
+		result[0].EnrichedCompleteRawRows != 2 {
+		t.Fatalf("joined denominators=%+v", result)
 	}
 }

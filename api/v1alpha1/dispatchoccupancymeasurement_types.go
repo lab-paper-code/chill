@@ -103,13 +103,6 @@ type DispatchOccupancyConditions struct {
 	MinimumCycles int32 `json:"minimumCycles,omitempty"`
 }
 
-// OccupancyPlanningFloors is retained only for legacy v1alpha1 evidence decoding.
-type OccupancyPlanningFloors struct {
-	WindowFloorSeconds          float64 `json:"windowFloorSeconds"`
-	LoadPreparationFloorSeconds float64 `json:"loadPreparationFloorSeconds"`
-	PlannedElapsedCapSeconds    float64 `json:"plannedElapsedCapSeconds"`
-}
-
 // ValidateConditions checks the immutable burst and its resource/time budget.
 func (s DispatchOccupancyMeasurementSpec) ValidateConditions() error {
 	if s.Batch < 1 || s.Workers < s.Batch || s.Workers > 64 || s.MinimumPairs < 1 ||

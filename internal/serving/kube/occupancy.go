@@ -403,20 +403,13 @@ func (c *SchedulerController) runOccupancy(ctx context.Context, m *edge.Dispatch
 
 func (c *SchedulerController) collectOccupancy(ctx context.Context, m *edge.DispatchOccupancyMeasurement, ref serving.NodeReference, plan occupancyPlan, started, collected time.Time, drainState *OperationState) (BurstOccupancyRecord, error) {
 	profile, b := plan.profile, int(m.Spec.Batch)
-	var firstStart time.Time
-	gap, scanErr := c.observationLog.ScanOccupancyRows(ctx, string(plan.workload.UID), ref.UID, started, collected, func(row serving.RequestRow) {
-		// The scanner includes the whole first receipt hour for boundary recovery;
-		// only this Job's receipt cohort may establish its native warmup origin.
-		if row.ReceivedAt.Before(started) || !row.ReceivedAt.Before(collected) {
-			return
-		}
-		if at := row.NativeRunningAt; at != nil && !at.IsZero() && (firstStart.IsZero() || at.Before(firstStart)) {
-			firstStart = *at
-		}
-	})
+	origin := serving.NewOccupancyEstimator(nil, nil, started, collected)
+	gap, scanErr := c.observationLog.ScanOccupancyRows(ctx, string(plan.workload.UID), ref.UID, started, collected, origin.Add)
 	if scanErr != nil {
 		return BurstOccupancyRecord{}, scanErr
 	}
+	// Join late native supplements before selecting this Job's receipt cohort.
+	firstStart := origin.FirstRunningAt(started, collected)
 	record := BurstOccupancyRecord{SchemaVersion: BurstOccupancySchema, Node: ref, PowerMode: profile.Condition.PowerMode,
 		RuntimeImage: profile.Condition.RuntimeImage, Model: profile.Condition.LogicalModel, ProfileID: profile.ID, Batch: b,
 		Conditions: m.Spec, MeasuredAt: time.Now().UTC()}

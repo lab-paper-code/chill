@@ -137,12 +137,18 @@ raw-row, direct-complete-raw-row, enriched-complete-raw-row, final-row and
 direct-complete-final-row denominators. In-memory open snapshots can supplement
 a request but are not additional raw rows/finals.
 
-The scan reads the first receipt hour in full and subsequent retained files to
-join late supplements; native starts, not receipt timestamps, determine the
-reported window. This conservatively cannot recover a request assigned before
-the earliest retained/read receipt hour. Unknown native starts remain incomplete
-request facts and cannot qualify a pair. This is an observed backlogged subset,
-not a claim of complete wall-window saturation, stationarity or precision.
+The scan captures only `[from-tail,to+tail]` file segments/archive hours, where
+`tail = MaximumInferenceRequestTimeout + --drain-timeout` (the existing actual
+inference lifetime cap plus configured physical-drain allowance). Its first
+streaming pass selects only RequestIDs with an in-window receipt or direct native
+start; its second visits just those IDs, preserving raw/final/enriched counters.
+Read-side selection markers are not raw rows. The estimator also rejects
+unselected out-of-window rows and filters joined requests before creating cells.
+Known native starts determine execution-window membership; only requests with an
+in-window receipt may contribute unknown-running completeness facts. Neither
+whole later history nor unrelated RequestIDs are retained. Minute segments and
+compressed archive hours remain the physical read granularity. Missing evidence
+beyond the bounded tail is incomplete, never a guessed execution.
 The bounded read-only API and historical-policy limitation are documented in
 [observation API](observability-split.md). There is no result cache.
 
@@ -153,13 +159,17 @@ and unchanged for the scheduler's existing d. No burst estimate enters that
 reader or automatically replaces an accepted scalar. Future scheduler adoption
 and deletion of legacy evidence require a separate explicit cutover.
 
-Validation on the permitted 2026-11-03 09:00–10:00 export (793,637,858 bytes,
-837,023 raw rows, 348,224 joined requests) measured a single streaming scan plus
+Initial, pre-review single-pass validation on the permitted 2026-11-03
+09:00–10:00 export (793,637,858 bytes, 837,023 raw rows, 348,224 joined requests)
+measured its streaming scan plus
 RequestID join at **10.062 s**, and full reduction including exact sorting at
 **11.319 s**, with `GOMAXPROCS=2`, `-p 1`, nice 19. It yielded 339,321 eligible
 pairs and 100% joined-native/batch completeness. The 2,000-request throwaway
 slice matched the independent `compute.py` summary (1,998 pairs, mean
 188,577.192734531 ns/request, median 219,827.749791588 ns/request). No raw data
-or throwaway comparison test is committed. This is an offline hour-wide read,
-not a serving-path latency promise; no cache is introduced.
+or throwaway comparison test is committed. Those timings describe the earlier
+implementation, not the current bounded two-pass selection/read or a serving-path
+latency promise. Current regressions prove that 10,000 unrelated rows plus later
+invalid segments retain only the one selected RequestID, with all requested
+denominators preserved; no cache is introduced.
 
