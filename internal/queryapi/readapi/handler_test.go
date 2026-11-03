@@ -93,6 +93,58 @@ func TestHandlerServesCampaignResultWithoutStoreCredentials(t *testing.T) {
 	}
 }
 
+func TestR18RequestResultPreservesCurrentSelectionScope(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		used bool
+	}{
+		{"selected request", true},
+		{"same condition different request", false},
+		{"same name different UID", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := campaignResultSnapshot(t)
+			snapshot.SchedulerUsed = &tc.used
+			snapshot.MeasurementFacts = &profilederivation.MeasurementFacts{
+				Batches: []profilederivation.MeasurementBatchFacts{{Batch: 1}},
+			}
+			snapshot.Campaign.Annotations = map[string]string{
+				"chill.dacs.io/profile-reuse": `{"sourceProfileID":"other/source/source-uid"}`,
+			}
+			reader := &recordingCampaignResultReader{snapshot: snapshot}
+			handler, err := NewHandler(&recordingPassportReader{}, reader, &recordingPreflightReader{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(
+				http.MethodGet, "/api/v1/namespaces/"+testNamespace+"/batch-energy-optimizations/campaign/result", nil,
+			))
+			var result queryapi.BatchEnergyOptimizationResult
+			if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			used := result.Assessment.Scope.SchedulerUsed
+			if response.Code != http.StatusOK || used == nil || *used != tc.used {
+				t.Fatalf("request selection lost: status=%d scope=%+v want=%v", response.Code, result.Assessment.Scope, tc.used)
+			}
+			for _, row := range result.ResultRows {
+				rowUsed := row.Assessment.Scope.SchedulerUsed
+				if row.RowKind == queryapi.ResultRowSourceReference {
+					if rowUsed != nil {
+						t.Fatal("source reference inherited confirmation selection")
+					}
+				} else if rowUsed == nil || *rowUsed != tc.used {
+					t.Fatalf("confirmation selection lost: %+v", row.Assessment.Scope)
+				}
+			}
+			if !result.ReadAt.Equal(snapshot.ReadAt) {
+				t.Fatal("selection join changed the request snapshot time")
+			}
+		})
+	}
+}
+
 func TestHandlerServesResolvingBatchEnergyOptimizationPreflight(t *testing.T) {
 	t.Parallel()
 	reader := &recordingPreflightReader{snapshot: resolvingPreflightSnapshot(t)}

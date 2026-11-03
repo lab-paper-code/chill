@@ -9,13 +9,16 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/queryapi"
 	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
 	"github.com/lab-paper-code/chill/internal/queryapi/readapi"
+	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -216,4 +219,98 @@ func TestMeasurementResultFailureRetainsNativeRequestWithoutInventingEvidence(t 
 			)
 		})
 	}
+}
+
+func TestR18RequestResultJoinsOnlyExactAcceptedSelection(t *testing.T) {
+	request, record, _, _, _ := statisticsFixture(t)
+	request.Status.Phase = "Complete"
+	id := coverageRequestID(*request)
+	selected, unselected := true, false
+	for _, tc := range []struct {
+		name       string
+		currentIDs []string
+		noAccepted bool
+		catalogErr error
+		want       *bool
+	}{
+		{name: "selected request", currentIDs: []string{id}, want: &selected},
+		{name: "same condition different request", currentIDs: []string{request.Namespace + "/other/other-uid"}, want: &unselected},
+		{name: "same name different UID", currentIDs: []string{request.Namespace + "/" + request.Name + "/other-uid"}, want: &unselected},
+		{name: "different namespace", currentIDs: []string{"other/" + request.Name + "/" + string(request.UID)}, want: &unselected},
+		{name: "reuse profile is not confirmation identity", currentIDs: []string{id + "/reuse-target"}, want: &unselected},
+		{name: "known empty selection", currentIDs: []string{}, want: &unselected},
+		{name: "selection facts missing"},
+		{name: "accepted catalog missing", currentIDs: []string{id}, noAccepted: true},
+		{name: "catalog unavailable", catalogErr: errors.New("owner unavailable")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := []profilederivation.MeasurementSelection(nil)
+			if tc.currentIDs != nil {
+				current = make([]profilederivation.MeasurementSelection, 0, len(tc.currentIDs))
+				for _, currentID := range tc.currentIDs {
+					current = append(current, profilederivation.MeasurementSelection{
+						ID: currentID, Model: request.Spec.State.Candidate.ModelSpec,
+						DeviceClass:   request.Spec.State.Candidate.DeviceClass,
+						ExecutionPath: request.Spec.State.Candidate.ExecutionPath,
+						PowerMode:     request.Spec.State.Candidate.PowerMode,
+					})
+				}
+			}
+			accepted := &servingkube.CatalogSnapshot{CurrentMeasurements: current}
+			if tc.noAccepted {
+				accepted = nil
+			}
+			service := &measurementService{catalog: func(context.Context) (servingkube.CatalogRead, error) {
+				return servingkube.CatalogRead{
+					// Current reporting must not replace the accepted selection.
+					CatalogSnapshot: servingkube.CatalogSnapshot{
+						CurrentMeasurements: []profilederivation.MeasurementSelection{{ID: id}},
+					},
+					Accepted: accepted,
+				}, tc.catalogErr
+			}}
+			readAt := time.Unix(42, 0).UTC()
+			reader := measurementResultReader{
+				read: func(_ context.Context, namespace, name string) (queryapi.BatchEnergyOptimizationResultSnapshot, error) {
+					if namespace != request.Namespace || name != request.Name {
+						t.Fatalf("request identity changed: %s/%s", namespace, name)
+					}
+					return queryapi.BatchEnergyOptimizationResultSnapshot{
+						ReadAt: readAt, Campaign: *request, Result: record,
+						MeasurementFacts: &profilederivation.MeasurementFacts{
+							Batches: []profilederivation.MeasurementBatchFacts{{Batch: 1}},
+						},
+					}, nil
+				},
+				measurements: service,
+			}
+			handler, err := readapi.NewHandler(nilPassportReader{}, reader, unusedPreflightReader{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(
+				http.MethodGet, "/api/v1/namespaces/"+request.Namespace+"/batch-energy-optimizations/"+request.Name+"/result", nil,
+			))
+			var result queryapi.BatchEnergyOptimizationResult
+			if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != http.StatusOK || !result.ReadAt.Equal(readAt) || len(result.ResultRows) != 1 {
+				t.Fatalf("result/source time changed: status=%d result=%+v", response.Code, result)
+			}
+			for _, scope := range []queryapi.MeasurementScope{result.Assessment.Scope, result.ResultRows[0].Assessment.Scope} {
+				if (scope.SchedulerUsed == nil) != (tc.want == nil) ||
+					tc.want != nil && *scope.SchedulerUsed != *tc.want {
+					t.Fatalf("selection=%v scope=%+v want=%v", tc.currentIDs, scope, tc.want)
+				}
+			}
+		})
+	}
+}
+
+type nilPassportReader struct{}
+
+func (nilPassportReader) Read(context.Context, string, string) (queryapi.EvidencePassportSnapshot, error) {
+	return queryapi.EvidencePassportSnapshot{}, errors.New("unexpected passport")
 }
