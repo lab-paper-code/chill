@@ -355,7 +355,7 @@ class EvaluationTests(unittest.TestCase):
                 window = power_window()
                 window['to'] = tail_end
                 return window
-            with patch.dict(os.environ, CHILL_EXPERIMENT_CONFIG=str(env)), patch.object(archive.time, 'time_ns', return_value=archive._time_ns(tail_end)+180000000000), patch.object(archive, '_raw_get', side_effect=RuntimeError('raw index unavailable')):
+            with patch.dict(os.environ, CHILL_EXPERIMENT_CONFIG=str(env)), patch.object(archive.time, 'time_ns', return_value=evidence_io.timestamp_ns(tail_end)+180000000000), patch.object(archive, '_raw_get', side_effect=RuntimeError('raw index unavailable')):
                 archive.collect(folder, phase, config['collection'], SimpleNamespace(api=api), 5)
             self.assertEqual(len(calls), 2)
             self.assertEqual(evidence_io.load(folder / 'power.json')['energyStatus'], 'UNAVAILABLE')
@@ -792,6 +792,7 @@ class EvaluationTests(unittest.TestCase):
             controller.a = SimpleNamespace(stage='e5-test')
             controller.monitor = lambda *args: 0
             controller.go_callback = lambda value: None
+            controller.provisional_callback = None
             ready = {'evaluationEvent': 'ready', 'at': START, 'barrierSeconds': 10000000000,
                      'offered': 1, 'arrivalSHA256': controller.b['schedule'][0]['traces'][NAME]['arrivalSHA256'],
                      'payload': [{'recordID': 'one', 'fields': {'input': {'bytes': 1, 'sha256': 'a' * 64}}}],
@@ -1000,6 +1001,16 @@ class EvaluationTests(unittest.TestCase):
             self.assertEqual(publication.verdict(judgment)['verdict'], 'FAIL')
             self.assertEqual(judgment['requests'][NAME]['substages'][0]['offered'], 2)
             self.assertEqual(judgment['requests'][NAME]['definitionID'], 'definition')
+            drained = judgment
+            cutoff = '2026-11-03T00:00:31Z'
+            live = judgment_rules.provisional_requests(config, phase, {NAME: rows}, indexed, cutoff, cutoff)
+            for key, value in live['workloads'][NAME].items():
+                expected = drained['requests'][NAME][key]
+                if key == 'substages':
+                    expected = [{k: v for k, v in part.items() if k != 'D1'} for part in expected]
+                self.assertEqual(value, expected)
+            self.assertNotIn('D1', live['workloads'][NAME])
+            self.assertEqual(live['generatorQuality'], drained['components']['loadFidelity'])
             rows[1]['requestID'] = 'r0'
             (root / (NAME + '-client.jsonl')).write_text(''.join(json.dumps(row) + '\n' for row in rows))
             with patch.object(evidence_io, 'module', side_effect=modules):
@@ -1007,6 +1018,119 @@ class EvaluationTests(unittest.TestCase):
             self.assertEqual(duplicated['status'], 'PARTIAL')
             self.assertIsNone(duplicated['requests'][NAME]['definitionID'])
             self.assertEqual(duplicated['requests'][NAME]['substages'][0]['D1'], 'NOT_EVALUATED')
+
+    def test_provisional_scheduled_boundaries_as_of_missing_results_and_conflicts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, _, _, _, config = fixture(Path(directory))
+        config['workloads'] = [config['workloads'][0]]
+        workload = config['workloads'][0]
+        workload['slo'] = {'percentile': 100, 'targetLatencyNanos': 10}
+        stage = {'seconds': 2, 'parts': [{'id': 'first', 'seconds': 1, 'rates': {NAME: 1}},
+                                       {'id': 'second', 'seconds': 1, 'rates': {NAME: 1}}],
+                 'traces': {NAME: {'offsetsNS': [0, 1000000000], 'offered': 2}}}
+        phase = {'stage': stage, 'starts': {NAME: {'at': START, 'monotonicNS': 100}}}
+        rows = [{'requestIndex': i, 'scheduledOffsetNs': offset, 'requestID': 'r' + str(i),
+                 'sentMonotonicNS': 3000000100, 'issued': True} for i, offset in enumerate([0, 1000000000])]
+        indexed = {workload['uid']: {'errors': [], 'identities': [], 'summary': {},
+                    'finals': {'r0': {'outcome': 'completed', 'executionComplete': True, 'elapsedNanos': 1},
+                               'r1': {'outcome': 'error', 'elapsedNanos': 1}}}}
+        def reduce(events, cutoff=END):
+            return judgment_rules.provisional_requests(config, phase, {NAME: events}, indexed, cutoff, cutoff)
+        early = reduce(rows, '2026-11-02T23:59:59.999999999Z')
+        self.assertEqual(early['workloads'][NAME]['offered'], 0)
+        self.assertEqual(early['workloads'][NAME]['unfinishedOrUnsent'], 0)
+        self.assertEqual(early['generatorQuality'][NAME]['issued'], 0)
+        closed = reduce([], START)
+        self.assertEqual(closed['workloads'][NAME]['offered'], 1)
+        self.assertEqual(closed['workloads'][NAME]['unfinishedOrUnsent'], 1)
+        self.assertEqual(closed['generatorQuality'][NAME]['unissued'], 1)
+        self.assertTrue(closed['workloads'][NAME]['reachable'])
+        first = reduce(rows, '2026-11-03T00:00:00.999999999Z')
+        self.assertEqual(first['workloads'][NAME]['offered'], 1)
+        self.assertEqual(first['workloads'][NAME]['deadlineSuccess'], 1)
+        self.assertEqual(first['generatorQuality'][NAME]['issued'], 1)
+        self.assertEqual([part['offered'] for part in first['workloads'][NAME]['substages']], [1, 0])
+        live = reduce(rows, '2026-11-03T00:00:01Z')
+        self.assertEqual(live['workloads'][NAME]['offered'], 2)
+        self.assertEqual(live['generatorQuality'][NAME]['sendsAfterWindow'], 2)
+        self.assertFalse(live['workloads'][NAME]['reachable'])
+        indexed[workload['uid']]['summary'] = {'finalConflicts': [{'requestID': 'r0'}]}
+        self.assertEqual(reduce(rows)['workloads'][NAME]['deadlineSuccess'], 0)
+        indexed[workload['uid']]['summary'] = {}
+        rows[1]['requestID'] = 'r0'
+        self.assertEqual(reduce(rows)['workloads'][NAME]['deadlineSuccess'], 0)
+        stage['traces'][NAME] = {'offsetsNS': [], 'offered': 0}
+        zero = reduce([])
+        self.assertEqual(zero['workloads'][NAME]['offered'], 0)
+        self.assertTrue(zero['workloads'][NAME]['reachable'])
+        self.assertEqual(zero['generatorQuality'][NAME]['status'], 'NOT_OFFERED')
+
+    def test_generator_index_diagnostics_do_not_discard_http_finals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, _, _, _, config = fixture(Path(directory))
+        config['workloads'] = [config['workloads'][0]]
+        workload = config['workloads'][0]
+        workload['slo'] = {'percentile': 100, 'targetLatencyNanos': 10}
+        stage = {'seconds': 2, 'parts': [{'id': 'all', 'seconds': 2, 'rates': {NAME: 1}}],
+                 'traces': {NAME: {'offsetsNS': [0, 1000000000], 'offered': 2}}}
+        phase = {'stage': stage, 'starts': {NAME: {'monotonicNS': 100}}}
+        indexed = {workload['uid']: {'errors': [], 'identities': [], 'summary': {},
+                    'finals': {'r' + str(i): {'outcome': 'completed', 'executionComplete': True, 'elapsedNanos': 1}
+                               for i in range(2)}}}
+        for anomaly in ('missing', 'duplicate', 'schedule'):
+            rows = [{'requestIndex': i, 'requestID': 'r' + str(i), 'scheduledOffsetNs': offset,
+                     'sentMonotonicNS': 100 + offset, 'issued': True} for i, offset in enumerate([0, 1000000000])]
+            if anomaly == 'missing':
+                rows[0].pop('requestIndex')
+            elif anomaly == 'duplicate':
+                rows[1]['requestIndex'] = 0
+            else:
+                rows[1]['scheduledOffsetNs'] += 1
+            result = judgment_rules.reduce_requests(config, phase, {NAME: rows}, indexed)[NAME]
+            self.assertEqual((result['offered'], result['deadlineSuccess'], result['requiredSuccessfulRank']), (2, 2, 2))
+            self.assertEqual(result['completedLatencyNS']['samples'], 2)
+            self.assertEqual(result['D1'], 'OBSERVED_THRESHOLD_MET')
+            self.assertEqual(result['issuanceFidelity']['issued'], 2)
+            self.assertGreater(result['issuanceFidelity']['invalidScheduleRows'], 0)
+
+    def test_provisional_second_poll_updates_and_partial_capture_preserves_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, _, _, _, config = fixture(root)
+            config['timeboxes']['flushSeconds'] = 0
+            published = []
+            poller = conductor.ProvisionalD1(None, config, root, published.append)
+            cutoff = [END]
+            def capture(target, *args):
+                target.mkdir(parents=True)
+                return cutoff[0]
+            poller.archive = SimpleNamespace(collect_requests_snapshot=capture)
+            index = {w['uid']: {'errors': [], 'identities': [], 'summary': {}, 'finals': {}} for w in config['workloads']}
+            poller.raw = SimpleNamespace(iter_request_indexes=lambda *args, **kwargs: index)
+            stage = {'seconds': 1, 'parts': [{'id': 'p', 'seconds': 1, 'rates': {w['name']: 0 for w in config['workloads']}}],
+                     'traces': {w['name']: {'offsetsNS': [], 'offered': 0} for w in config['workloads']}}
+            phase = {'stage': stage, 'startUTC': START, 'endUTC': END, 'starts': {}}
+            poller.poll(phase)
+            self.assertEqual(published[-1]['closedThrough'], END)
+            poller.minute = None
+            cutoff[0] = '2026-11-03T00:01:00Z'
+            poller.poll(phase)
+            updated = evidence_io.load(root / 'provisional-d1.json')
+            self.assertEqual(updated['closedThrough'], cutoff[0])
+            self.assertEqual(published[-1], updated)
+            self.assertEqual(len(published), 2)
+            poller.minute = None
+            cutoff[0] = '2026-11-03T00:02:00Z'
+            for value in index.values():
+                value['errors'] = [{'error': 'partial capture'}]
+            poller.poll(phase)
+            self.assertEqual(evidence_io.load(root / 'provisional-d1.json'), updated)
+            self.assertEqual(len(published), 2)
+            poller.minute = None
+            cutoff[0] = START
+            poller.poll(phase)
+            self.assertEqual(evidence_io.load(root / 'provisional-d1.json'), updated)
+            self.assertEqual(len(published), 2)
 
     def test_missing_stage_is_not_published_as_valid_subset(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1255,7 +1379,7 @@ class EvaluationTests(unittest.TestCase):
                 self.assertEqual(summary['outcome']['execution'], {'status': 'Failed', 'reason': 'FrozenInputInvalid'})
                 self.assertEqual(summary['outcome']['cleanup']['residuals'],
                                  [{'kind': 'Node', 'name': 'node', 'reason': 'ResidualState'}])
-                self.assertLess(raw._time(summary['from']), raw._time(summary['to']))
+                self.assertLess(evidence_io.timestamp_ns(summary['from']), evidence_io.timestamp_ns(summary['to']))
                 self.assertEqual(summary['definition']['spec'], context.spec)
                 self.assertEqual([source['key'] for source in summary['sources']],
                                  ['serving/experiments.v1alpha1/run/execution.json',

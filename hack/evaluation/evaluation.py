@@ -15,6 +15,7 @@ import time
 from types import SimpleNamespace, MethodType
 
 import input_snapshot
+import evidence_io
 import judgment
 import publication
 
@@ -77,11 +78,18 @@ class Harness:
         if 'stageID' not in self.execution: config['evaluation'].pop('stageFolder',None)
         path=self.root/'binding.json';input_snapshot.save(path,binding)
         args=SimpleNamespace(binding=path,out=self.root,stage=self.spec.get('row',binding['schedule'][0]['id']))
-        return self.harness_module.CPO(args,go_callback=self.go)
+        return self.harness_module.CPO(args,go_callback=self.go,provisional_callback=self.provisional)
     def go(self,value):
         value.update({key:self.execution[key] for key in ('runUID','stageUID','stageID')})
         path=self.root/'measured/go.json';input_snapshot.save(path,value)
         ref=self.upload(path,self.prefix+'/go.json');print('EVALUATION_GO '+ref['store']+'/'+ref['key']+' '+str(ref['size']),flush=True)
+    def provisional(self, value):
+        if not self.execution.get('stageName'):
+            return
+        patch = [{'op': 'test', 'path': '/metadata/uid', 'value': self.execution['stageUID']},
+                 {'op': 'add', 'path': '/status/provisionalD1', 'value': value}]
+        input_snapshot.kubectl(self.execution['namespace'], 'patch', 'evaluationstage', self.execution['stageName'],
+                               '--subresource=status', '--type=json', '-p', json.dumps(patch))
     def factor(self):
         input_snapshot.check_fleet(self, self.spec)
         self.controller().factor()
@@ -105,8 +113,7 @@ class Harness:
         controller.monitor = MethodType(monitor, controller)
         controller.run()
         phase = input_snapshot.load(self.root / 'measured/phase.json')
-        parser = input_snapshot.module('evaluation_start_times', HERE / 'raw.py')._time
-        starts = [parser(value['at']) for value in phase['starts'].values()]
+        starts = [evidence_io.timestamp_ns(value['at']) for value in phase['starts'].values()]
         skew = max(starts) - min(starts) if starts else 0
         input_snapshot.save(self.root / 'measured/generator-barrier.json',
              {'startSkewNanos': skew, 'maximumStartSkewNanos': self.spec['loadGenerator']['barrier']['maxStartSkewNanos'],

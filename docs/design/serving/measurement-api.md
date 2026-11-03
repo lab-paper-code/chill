@@ -140,6 +140,8 @@ digest 채택은 없고 실제 target readiness로 검사한다. POST 접수는 
 Evaluation list/detail GETs additionally project the Run's recorded `currentProcedure`
 and `procedures[]` (`step,startedAt,finishedAt,reason,measurementVerdict`), plus
 `stages[]` (`id,name,uid,conditions,measurementVerdict,currentProcedure,procedures,startedAt,finishedAt,goAt`).
+Optional `stages[].provisionalD1` passes through the latest typed Stage status snapshot unchanged; it is closed-minute progress, not a pre-drain D1 verdict.
+Its offered denominator includes frozen requests whose producer start + scheduled offset is at or before `closedThrough`; `unfinishedOrUnsent` is an `asOf` observation including in-flight or missing-result requests, not settled losses. Final D1 uses HTTP-receipt-origin elapsed time, so later results/finals may increase deadline successes.
 The evaluation service reads child EvaluationStages through its existing reader,
 in recorded `childRefs` order, matching name and UID; unreferenced, deleted, or
 replaced children are not projected. Procedure order is preserved as recorded.

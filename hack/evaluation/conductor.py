@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import selectors
 import ssl
+import shutil
 import subprocess
 import sys
 import time
@@ -199,8 +200,56 @@ class ProducerResources:
 
 
 
+class ProvisionalD1:
+    """Own only the latest successful closed-minute input and projection."""
+    def __init__(self, io, config, folder, publish):
+        self.io, self.config, self.folder, self.publish = io, config, folder, publish
+        self.last_attempt, self.minute, self.inputs = 0, None, None
+        self.closed_through = None
+        self.archive = evidence_io.module('evaluation_live_archive', HERE / 'archive.py')
+        self.raw = evidence_io.module('evaluation_live_raw', HERE / 'raw.py')
+        self.judgment = evidence_io.module('evaluation_live_judgment', HERE / 'judgment.py')
+
+    def poll(self, phase):
+        now = time.monotonic()
+        if now - self.last_attempt < self.config['timeboxes']['flushSeconds']:
+            return
+        self.last_attempt = now
+        minute = time.time_ns() // 60_000_000_000
+        if minute == self.minute:
+            return
+        target = self.folder / 'provisional-inputs' / str(time.time_ns())
+        try:
+            cutoff = self.archive.collect_requests_snapshot(target, phase, self.io, self.config['timeboxes']['apiSeconds'])
+            if self.closed_through and evidence_io.timestamp_ns(cutoff) <= evidence_io.timestamp_ns(self.closed_through):
+                raise ValueError('Stale closed-minute request snapshot')
+            clients = {}
+            for workload in self.config['workloads']:
+                path = self.folder / (workload['name'] + '-client.jsonl')
+                rows = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+                clients[workload['name']] = [row for row in rows if 'scheduledOffsetNs' in row]
+            ids = {w['uid']: [r['requestID'] for r in clients[w['name']] if isinstance(r.get('requestID'), str) and r['requestID']]
+                   for w in self.config['workloads']}
+            indexes = self.raw.iter_request_indexes(target, list(ids), phase['startUTC'], cutoff, actual_response_ids=ids)
+            if any(value['errors'] for value in indexes.values()):
+                raise ValueError('Partial raw request snapshot')
+            value = self.judgment.provisional_requests(self.config, phase, clients, indexes, evidence_io.now(), cutoff)
+            if self.publish:
+                self.publish(value)
+            evidence_io.save(self.folder / 'provisional-d1.json', value)
+        except Exception as error:
+            evidence_io.save(self.folder / 'provisional-d1-error.json', {'at': evidence_io.now(), 'error': str(error)})
+            if target.exists():
+                shutil.rmtree(target)
+            return
+        if self.inputs:
+            shutil.rmtree(self.inputs)
+        self.inputs, self.minute = target, minute
+        self.closed_through = cutoff
+
+
 class CPO:
-    def __init__(self, args, *, go_callback=None):
+    def __init__(self, args, *, go_callback=None, provisional_callback=None):
         self.a, self.out = args, Path(args.out)
         self.b = evidence_io.load_binding(args.binding)
         self.c = self.b['config']
@@ -209,6 +258,7 @@ class CPO:
         self.io = Client(self.c)
         self.api = self.io.api
         self.go_callback = go_callback
+        self.provisional_callback = provisional_callback
         self.residuals = []
 
     def disk_boundary(self, *args):
@@ -345,7 +395,6 @@ class CPO:
 
     def run(self):
         stage = next(row for row in self.b['schedule'] if row['id'] == self.a.stage)
-        parse_ns = evidence_io.module('evaluation_run_time', HERE / 'raw.py')._time
         folder = Path(self.c['evaluation']['stageFolder'])
         if folder.exists():
             raise RuntimeError('FrozenInputInvalid: no implicit stage overwrite/retry')
@@ -400,6 +449,7 @@ class CPO:
                 buffers[name] = b''
                 selector.register(process.stdout, selectors.EVENT_READ, (name, output))
             telemetry = ProducerResources(self.io, pods, self.tb['apiSeconds'], folder / 'producer-resources.json') if pods else None
+            provisional = ProvisionalD1(self.io, self.c, folder, self.provisional_callback)
             released = not jobs
             if released:
                 phase['startUTC'] = phase['goUTC'] = evidence_io.now()
@@ -450,7 +500,7 @@ class CPO:
                     for name, pod in pods.items():
                         current = self.io.k(['get', 'pod', pod['metadata']['name'], '-o', 'json'])
                         self.assert_pod(current, pod)
-                        if time.time_ns() >= parse_ns(ready[name]['at']) + round(ready[name]['barrierSeconds'] * 1e9):
+                        if time.time_ns() >= evidence_io.timestamp_ns(ready[name]['at']) + round(ready[name]['barrierSeconds'] * 1e9):
                             raise RuntimeError('BarrierTimeout: Ready expired')
                     phase['goUTC'] = evidence_io.now()
                     for pod in pods.values():
@@ -462,8 +512,8 @@ class CPO:
                     self.record_go(folder, jobs, pods, phase['goUTC'])
                     deadline = time.monotonic() + stage['seconds'] + self.tb['drainSeconds'] + self.tb['collectSeconds']
                 if jobs and len(phase['starts']) == len(jobs):
-                    phase['startUTC'] = min(phase['starts'].values(), key=lambda row: parse_ns(row['at']))['at']
-                    end_ns = max(parse_ns(row['at']) for row in phase['starts'].values()) + round(stage['seconds'] * 1e9)
+                    phase['startUTC'] = min(phase['starts'].values(), key=lambda row: evidence_io.timestamp_ns(row['at']))['at']
+                    end_ns = max(evidence_io.timestamp_ns(row['at']) for row in phase['starts'].values()) + round(stage['seconds'] * 1e9)
                     seconds, nanos = divmod(end_ns, 1000000000)
                     phase['endUTC'] = dt.datetime.fromtimestamp(seconds, dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S') + f'.{nanos:09d}+00:00'
                     counters = self.sample_resources(telemetry, deadline, phase)
@@ -472,6 +522,8 @@ class CPO:
                         if matching:
                             evidence_io.save(folder / (name + '-client-end-counter.json'), matching[-1])
                 evidence_io.save(folder / 'phase.json', phase)
+                if released and (not jobs or len(phase['starts']) == len(jobs)):
+                    provisional.poll(phase)
                 if released and not jobs and time.monotonic() >= deadline:
                     break
                 if jobs and not selector.get_map() and all(p.poll() is not None for p, _, _ in streams):
@@ -498,7 +550,7 @@ class CPO:
             if not phase['drain']['complete']:
                 cutoff = evidence_io.now()
                 phase['plannedEndUTC'] = phase['endUTC']
-                if phase['endUTC'] and parse_ns(phase['endUTC']) > parse_ns(cutoff):
+                if phase['endUTC'] and evidence_io.timestamp_ns(phase['endUTC']) > evidence_io.timestamp_ns(cutoff):
                     phase['endUTC'] = cutoff
                 # Stop only exact recorded evaluator Job UIDs; cleanup failure
                 # stays a safety hold, but does not destroy collected facts.

@@ -108,6 +108,15 @@ func TestEvaluationViewRecordsProcedureHistory(t *testing.T) {
 		Spec:       api.EvaluationStageSpec{StageID: "first"},
 		Status: api.EvaluationStageStatus{
 			CurrentProcedure: "stage", StartedAt: &start, GoAt: &start,
+			ProvisionalD1: &api.EvaluationProvisionalD1{
+				AsOf: "2026-11-04T01:00:59.123456789Z", ClosedThrough: "2026-11-04T01:00:00Z", Provisional: true,
+				Workloads: map[string]api.EvaluationProvisionalRequests{
+					"workload": {Offered: 2, DeadlineSuccess: 1, RequiredSuccessfulRank: 2, Outcomes: map[string]int64{"completed": 1},
+						UnfinishedOrUnsent: 1, SLO: api.EvaluationRequestSLO{Percentile: 95, TargetLatencyNanos: 1},
+						Reachable: true, Substages: []api.EvaluationProvisionalSubstage{}},
+				},
+				GeneratorQuality: map[string]api.EvaluationIssuanceFidelity{},
+			},
 			Procedures: []api.EvaluationProcedure{
 				{Step: "factor", StartedAt: &start, FinishedAt: &finish, Reason: "RecordedReason", MeasurementVerdict: api.MeasurementPASS},
 				{Step: "stage", StartedAt: &finish},
@@ -149,6 +158,9 @@ func TestEvaluationViewRecordsProcedureHistory(t *testing.T) {
 				{"id":"first","name":"z-stage","uid":"first-uid","currentProcedure":"stage",
 				 "conditions":[{"type":"ExecutionComplete","status":"True","lastTransitionTime":"2026-11-04T01:01:00Z","reason":"ExecutionRecorded","message":"Recorded evidence"}],
 				 "measurementVerdict":"PASS",
+				 "provisionalD1":{"asOf":"2026-11-04T01:00:59.123456789Z","closedThrough":"2026-11-04T01:00:00Z","provisional":true,
+					"workloads":{"workload":{"offered":2,"deadlineSuccess":1,"requiredSuccessfulRank":2,"outcomes":{"completed":1},
+						"unfinishedOrUnsent":1,"slo":{"percentile":95,"targetLatencyNanos":1},"reachable":true,"substages":[]}},"generatorQuality":{}},
 				 "procedures":[
 					{"step":"factor","startedAt":"2026-11-04T01:00:00Z","finishedAt":"2026-11-04T01:01:00Z","reason":"RecordedReason","measurementVerdict":"PASS"},
 					{"step":"stage","startedAt":"2026-11-04T01:01:00Z","finishedAt":null}

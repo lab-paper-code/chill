@@ -16,21 +16,11 @@ from pathlib import Path
 import re
 import sys
 
+import evidence_io
+
 _PRIVATE = 'PRIVATE_OPERATIONAL_ONLY'
 _REQUEST_CACHE = None
-_STAMP = re.compile(r'^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,9}))?(Z|[+-]\d\d:\d\d)$')
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
-
-
-def _time(value):
-    """Parse source RFC3339Nano without rounding cohort boundaries to floats."""
-    match = _STAMP.fullmatch(value) if isinstance(value, str) else None
-    if not match:
-        raise ValueError('missing/invalid RFC3339Nano timestamp')
-    base, fraction, zone = match.groups()
-    instant = datetime.fromisoformat(base + ('+00:00' if zone == 'Z' else zone))
-    delta = instant.astimezone(timezone.utc) - _EPOCH
-    return (delta.days * 86400 + delta.seconds) * 1000000000 + int((fraction or '').ljust(9, '0'))
 
 
 def _root(folder, approved_root=None):
@@ -194,9 +184,9 @@ def _population(index, start, end, errors):
     try:
         if not isinstance(population, dict):
             raise ValueError('missing requestPopulation provenance')
-        captured_start = _time(population.get('startUTC'))
-        captured_end = _time(population.get('endUTC'))
-        drained = _time(population.get('drainedUTC'))
+        captured_start = evidence_io.timestamp_ns(population.get('startUTC'))
+        captured_end = evidence_io.timestamp_ns(population.get('endUTC'))
+        drained = evidence_io.timestamp_ns(population.get('drainedUTC'))
         if not captured_start <= start < end <= captured_end or drained < captured_end:
             raise ValueError('requested interval is not contained in the collected receivedAt population/drain')
         # Stored hour is append time, not receipt time: include every hour through drain.
@@ -218,7 +208,7 @@ def _population(index, start, end, errors):
 def _request_indexes(folder, uids, startUTC, endUTC, actual_response_ids=None, *, approved_root=None):
     global _REQUEST_CACHE
     root = _root(folder, approved_root)
-    start, end = _time(startUTC), _time(endUTC)
+    start, end = evidence_io.timestamp_ns(startUTC), evidence_io.timestamp_ns(endUTC)
     if start >= end:
         raise ValueError('request interval must be nonempty [startUTC,endUTC)')
     wanted = None if uids is None else frozenset(uids)
@@ -252,7 +242,7 @@ def _request_indexes(folder, uids, startUTC, endUTC, actual_response_ids=None, *
             continue
         if kind != 'native':
             try:
-                received = _time(row.get('receivedAt'))
+                received = evidence_io.timestamp_ns(row.get('receivedAt'))
                 if actual_response_ids is None and not start <= received < end:
                     continue
                 if actual_response_ids is not None:

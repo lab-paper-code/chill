@@ -1,4 +1,5 @@
 """Offline request judgment, experiment summaries and publication measurements."""
+from bisect import bisect_right
 from collections import Counter
 import json
 import math
@@ -9,35 +10,22 @@ import evidence_io
 HERE = Path(__file__).resolve().parent
 
 
-def judge(binding, folder):
-    bound = evidence_io.load_binding(binding)
-    config = bound['config']
-    phase = evidence_io.load(folder / 'phase.json')
+def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
+    """Pure request judgment shared by provisional and drained publication."""
     stage = phase['stage']
-    raw = evidence_io.module('evaluation_raw', HERE / 'raw.py')
     analysis = evidence_io.module('evaluation_analysis', HERE / 'request_analysis.py')
-    clients = {}
-    unknown = []
     results = {}
-    for workload in config['workloads']:
-        name = workload['name']
-        path = folder / (name + '-client.jsonl')
-        rows = []
-        if path.exists():
-            for index, line in enumerate(path.read_text().splitlines(), 1):
-                try:
-                    row = json.loads(line)
-                    if 'scheduledOffsetNs' in row:
-                        rows.append(row)
-                except (ValueError, TypeError):
-                    unknown.append(name + ': malformed client JSONL line ' + str(index))
-        clients[name] = rows
-    indexes = raw.iter_request_indexes(folder, [w['uid'] for w in config['workloads']], phase['startUTC'], phase['endUTC'],
-                                      actual_response_ids={w['uid']: [r['requestID'] for r in clients[w['name']] if isinstance(r.get('requestID'), str) and r['requestID']] for w in config['workloads']})
     for workload in config['workloads']:
         name = workload['name']
         trace = stage['traces'][name]
         rows = clients[name]
+        if closed_through is not None:
+            count = 0
+            if trace['offsetsNS']:
+                horizon = evidence_io.timestamp_ns(closed_through) - evidence_io.timestamp_ns(phase['starts'][name]['at'])
+                count = bisect_right(trace['offsetsNS'], horizon)
+            trace = {**trace, 'offsetsNS': trace['offsetsNS'][:count], 'offered': count}
+            rows = [row for row in rows if type(row.get('requestIndex')) is int and 0 <= row['requestIndex'] < count]
         indexed = indexes[workload['uid']]
         returned_ids = [row['requestID'] for row in rows if isinstance(row.get('requestID'), str) and row['requestID']]
         counts = Counter(returned_ids)
@@ -92,6 +80,7 @@ def judge(binding, folder):
                          'latencyScope': 'CHILL HTTP receipt to final elapsedNanos; client RTT and scheduled latency are references only',
                          'deadlineSuccess': hits, 'deadlineSuccessFraction': hits / offered if offered else None, 'requiredSuccessfulRank': required,
                          'unfinishedOrUnsent': max(0, offered - len(completed)), 'issuanceFidelity': quality,
+                         'reachable': hits + max(0, offered - sum(row.get('requestID') in indexed['finals'] for row in usable)) >= required,
                          'D1': 'NOT_OFFERED' if not offered else 'INVALID_NO_LOAD' if qstatus == 'INVALID_NO_LOAD' else
                                'NOT_EVALUATED' if not supported else 'FAIL' if hits < required else 'OBSERVED_THRESHOLD_MET',
                          'slo': workload['slo'], 'workload': {key: workload[key] for key in ('name', 'uid', 'generation')},
@@ -103,6 +92,43 @@ def judge(binding, folder):
                          'rawEvidenceErrorCount': len(indexed['errors']), 'quarantinedRequestCount': len(quarantined),
                          'unkeyedRawRowCount': len(indexed['summary'].get('unkeyedRows', [])),
                          'identityMissingReason': None if identity_known else 'Actual returned request IDs lack one complete frozen-UID definition identity'}
+    return results
+
+
+def provisional_requests(config, phase, clients, indexes, as_of, closed_through):
+    """Bounded projection of the same request reducer; never publish a verdict."""
+    results = reduce_requests(config, phase, clients, indexes, closed_through=closed_through)
+    keys = ('offered', 'deadlineSuccess', 'requiredSuccessfulRank', 'outcomes', 'unfinishedOrUnsent', 'slo', 'reachable')
+    return {'asOf': as_of, 'closedThrough': closed_through, 'provisional': True,
+            'workloads': {name: {**{key: row[key] for key in keys},
+                                'substages': [{key: value for key, value in part.items() if key != 'D1'} for part in row['substages']]}
+                          for name, row in results.items()},
+            'generatorQuality': {name: row['issuanceFidelity'] for name, row in results.items()}}
+
+
+def judge(binding, folder):
+    bound = evidence_io.load_binding(binding)
+    config = bound['config']
+    phase = evidence_io.load(folder / 'phase.json')
+    raw = evidence_io.module('evaluation_raw', HERE / 'raw.py')
+    clients = {}
+    unknown = []
+    for workload in config['workloads']:
+        name = workload['name']
+        path = folder / (name + '-client.jsonl')
+        rows = []
+        if path.exists():
+            for index, line in enumerate(path.read_text().splitlines(), 1):
+                try:
+                    row = json.loads(line)
+                    if 'scheduledOffsetNs' in row:
+                        rows.append(row)
+                except (ValueError, TypeError):
+                    unknown.append(name + ': malformed client JSONL line ' + str(index))
+        clients[name] = rows
+    indexes = raw.iter_request_indexes(folder, [w['uid'] for w in config['workloads']], phase['startUTC'], phase['endUTC'],
+                                      actual_response_ids={w['uid']: [r['requestID'] for r in clients[w['name']] if isinstance(r.get('requestID'), str) and r['requestID']] for w in config['workloads']})
+    results = reduce_requests(config, phase, clients, indexes)
     power = evidence_io.load(folder / 'power.json')
     tail_power = evidence_io.load(folder / 'power-drain-inclusive.json')
     failures = None

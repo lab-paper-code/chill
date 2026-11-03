@@ -94,6 +94,7 @@ func evaluationViewDTO(value evaluation.EvaluationView) EvaluationView {
 				Conditions: stage.Conditions, MeasurementVerdict: stage.MeasurementVerdict,
 				CurrentProcedure: stage.CurrentProcedure, Procedures: evaluationProceduresDTO(stage.Procedures),
 				StartedAt: stage.StartedAt, FinishedAt: stage.FinishedAt, GoAt: stage.GoAt,
+				ProvisionalD1: stage.ProvisionalD1,
 			}
 		}
 	}

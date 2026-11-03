@@ -3,7 +3,6 @@
 import datetime as dt
 import gzip
 import hashlib
-import importlib.util
 import json
 import math
 import os
@@ -12,17 +11,11 @@ import time
 import urllib.parse
 import urllib.request
 
-HERE = Path(__file__).resolve().parent
+import evidence_io
+
 RAW_PATH = '/api/v1/observations/raw'
 STREAMS = ('requests', 'resources')
 PRIVATE = 'PRIVATE_OPERATIONAL_ONLY'
-
-
-def _time_ns(value):
-    spec = importlib.util.spec_from_file_location('archive_time', HERE / 'raw.py')
-    raw = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(raw)
-    return raw._time(value)
 
 
 def _save(path, value):
@@ -106,7 +99,7 @@ def energy_policy(collection):
 
 def meter_energy(window, measurement, policy, start, end):
     """No top-level completeness or ownership-dependent node fields are consumed."""
-    if _time_ns(window['from']) != _time_ns(start) or _time_ns(window['to']) != _time_ns(end):
+    if evidence_io.timestamp_ns(window['from']) != evidence_io.timestamp_ns(start) or evidence_io.timestamp_ns(window['to']) != evidence_io.timestamp_ns(end):
         raise ValueError('IdentityMismatch: power result interval')
     meters = {meter['id']: meter for meter in measurement['meters']}
     wanted = {(node['name'], node['uid']) for node in measurement['nodes']}
@@ -146,6 +139,26 @@ def meter_energy(window, measurement, policy, start, end):
                                'maximumNodeGapFraction': max((node.get('gapFraction') or 0 for node in selected), default=0)}, 'reasons': reasons}
 
 
+def _collect_streams(folder, io, hours, streams, index, deadline):
+    """One inventory/download path for final and provisional raw inputs."""
+    for value in hours:
+        with _raw_get(io, RAW_PATH + '?hour=' + value, deadline) as response:
+            inventory = json.load(response)
+        if inventory.get('hour') != value or inventory.get('status') not in ('open', 'closed-local', 'archived'):
+            raise ValueError('Invalid exact-hour raw API inventory')
+        kinds = {entry['kind']: entry for entry in inventory['kinds']}
+        for stream in streams:
+            entry = kinds[stream]
+            if type(entry.get('available')) is not bool:
+                raise ValueError('Invalid raw availability')
+            if not entry['available']:
+                index['absentStreams'].append({'visibility': PRIVATE, 'hour': value, 'stream': stream, 'origin': 'api', 'reason': 'source-hour-has-no-stream-segments'})
+                continue
+            target = folder / 'obs' / value / (stream + '.jsonl.gz')
+            source = _download(folder, io, RAW_PATH + '/' + value + '/' + stream, target, deadline)
+            index['sources'].append({**source, 'hour': value, 'stream': stream})
+
+
 def collect(folder, phase, collection, io, timeout_seconds):
     folder = Path(folder).resolve()
     approved = Path(json.loads(Path(os.environ['CHILL_EXPERIMENT_CONFIG']).read_text())['paths']['campaign']).resolve()
@@ -159,7 +172,7 @@ def collect(folder, phase, collection, io, timeout_seconds):
     if type(maximum) not in (int, float) or not math.isfinite(maximum) or maximum <= 0:
         raise ValueError('Positive finite collection duration bound required')
     deadline = time.monotonic() + min(timeout_seconds, maximum)
-    first, end, drained = (_time_ns(phase[key]) for key in ('startUTC', 'endUTC', 'drainedUTC'))
+    first, end, drained = (evidence_io.timestamp_ns(phase[key]) for key in ('startUTC', 'endUTC', 'drainedUTC'))
     if not first < end <= drained:
         raise ValueError('Actual start < end <= drained interval required')
     index = {'visibility': PRIVATE, 'complete': False, 'sources': [], 'errors': [], 'absentStreams': [],
@@ -176,22 +189,7 @@ def collect(folder, phase, collection, io, timeout_seconds):
         hour = lambda stamp: dt.datetime.fromtimestamp(stamp / 1e9, dt.timezone.utc).replace(minute=0, second=0, microsecond=0)
         hours = _hours(hour(first), hour(drained))
         index['requestedHours'] = hours
-        for value in hours:
-            with _raw_get(io, RAW_PATH + '?hour=' + value, deadline) as response:
-                inventory = json.load(response)
-            if inventory.get('hour') != value or inventory.get('status') not in ('open', 'closed-local', 'archived'):
-                raise ValueError('Invalid exact-hour raw API inventory')
-            kinds = {entry['kind']: entry for entry in inventory['kinds']}
-            for stream in STREAMS:
-                entry = kinds[stream]
-                if type(entry.get('available')) is not bool:
-                    raise ValueError('Invalid raw availability')
-                if not entry['available']:
-                    index['absentStreams'].append({'visibility': PRIVATE, 'hour': value, 'stream': stream, 'origin': 'api', 'reason': 'source-hour-has-no-stream-segments'})
-                    continue
-                target = folder / 'obs' / value / (stream + '.jsonl.gz')
-                source = _download(folder, io, RAW_PATH + '/' + value + '/' + stream, target, deadline)
-                index['sources'].append({**source, 'hour': value, 'stream': stream})
+        _collect_streams(folder, io, hours, STREAMS, index, deadline)
         index['complete'] = True
     except Exception as error:
         manifest['errors'].append(str(error))
@@ -218,3 +216,27 @@ def collect(folder, phase, collection, io, timeout_seconds):
         manifest['status'] = 'CAPTURED_NOT_EVALUATED'
     _save(folder / 'archive-collection.json', manifest)
     return manifest
+
+
+def collect_requests_snapshot(folder, phase, io, timeout_seconds):
+    """Capture closed-minute requests separately from immutable final evidence."""
+    folder = Path(folder).resolve()
+    deadline = time.monotonic() + timeout_seconds
+    current = io.api('GET', RAW_PATH + '?hour=' + dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H'),
+                     timeout=_remaining(deadline))
+    closed = evidence_io.timestamp_ns(current['at']) // 60_000_000_000 * 60_000_000_000
+    cutoff = dt.datetime.fromtimestamp(closed / 1e9, dt.timezone.utc).isoformat()
+    if closed <= evidence_io.timestamp_ns(phase['startUTC']):
+        raise ValueError('No closed stage minute available')
+    hour = lambda stamp: dt.datetime.fromtimestamp(stamp / 1e9, dt.timezone.utc).replace(minute=0, second=0, microsecond=0)
+    hours = _hours(hour(evidence_io.timestamp_ns(phase['startUTC'])), hour(closed))
+    index = {'visibility': PRIVATE, 'complete': True, 'sources': [], 'errors': [], 'absentStreams': [],
+             'requestPopulation': {'startUTC': phase['startUTC'], 'endUTC': cutoff, 'drainedUTC': cutoff},
+             'requestedHours': hours, 'supportingHours': []}
+    _collect_streams(folder, io, hours, ('requests',), index, deadline)
+    # A minute rollover could mix cutoffs between inventory and download.
+    final = io.api('GET', RAW_PATH + '?hour=' + hour(closed).strftime('%Y%m%dT%H'), timeout=_remaining(deadline))
+    if evidence_io.timestamp_ns(final['at']) // 60_000_000_000 * 60_000_000_000 != closed:
+        raise ValueError('Closed-minute snapshot changed during capture')
+    _save(folder / 'raw-source-index.json', index)
+    return cutoff
