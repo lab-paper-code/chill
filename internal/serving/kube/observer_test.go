@@ -208,7 +208,9 @@ func newTestObserver(t *testing.T, objects ...client.Object) *Observer {
 	objects = append(objects, testExecutionFacts())
 	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&corev1.Pod{}).WithObjects(objects...).Build()}
 	manager, _ := newManagerHarness(t)
-	observer, err := NewObserver(store, kubefake.NewSimpleClientset(), manager.runtime, &firstfloor.Client{}, testObserverConfig(store))
+	kube := kubefake.NewSimpleClientset()
+	cluster := NewClusterState(store, kube, testObserverConfig(store).Namespace)
+	observer, err := NewObserver(cluster, store, kube, manager.runtime, &firstfloor.Client{}, testObserverConfig(store))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +421,7 @@ func TestObserverOwnershipIncludesUnlabelledControllersAndDirectReplicaSets(t *t
 	pod.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(rs, appsv1.SchemeGroupVersion.WithKind("ReplicaSet"))}
 	direct := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "direct", Namespace: pod.Namespace, UID: "direct-uid", OwnerReferences: workloadRef}}
 	observer := newTestObserver(t, pod, deployment, rs, direct)
-	owned, err := observer.ownedResources(context.Background(), uid)
+	owned, err := observer.store.OwnedResources(context.Background(), uid, observer.config.Namespace)
 	if err != nil || len(owned) != 4 {
 		t.Fatalf("unlabelled ownership lost: %v %+v", err, owned)
 	}
@@ -767,7 +769,7 @@ func TestObserverCleanupFollowsActualDeploymentOwnerChain(t *testing.T) {
 	replicaSet := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "native-rs", Namespace: pod.Namespace, UID: "replicaset-uid", Labels: pod.Labels, OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(deployment, appsv1.SchemeGroupVersion.WithKind("Deployment"))}}}
 	pod.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(replicaSet, appsv1.SchemeGroupVersion.WithKind("ReplicaSet"))}
 	observer := newTestObserver(t, deployment, replicaSet, pod)
-	objects, err := observer.ownedResources(context.Background(), "workload-uid")
+	objects, err := observer.store.OwnedResources(context.Background(), "workload-uid", observer.config.Namespace)
 	if err != nil {
 		t.Fatal(err)
 	}

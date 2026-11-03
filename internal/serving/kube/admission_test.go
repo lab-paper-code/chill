@@ -116,12 +116,12 @@ func newAdmissionController(t *testing.T, kube kubernetes.Interface) (*Scheduler
 	manager.observer.kube = kube
 	nodes := &nodeAPI{Client: manager.store.client, kube: kube}
 	manager.store.client = nodes
-	operations, err := NewOperations(manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
+	operations, err := NewOperations(manager.reservations.(*ClusterState), manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
 		OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller, err := NewSchedulerController(manager.store, kube, manager.runtime, manager.observer, operations, manager.observationLog,
+	controller, err := NewSchedulerController(manager.reservations.(*ClusterState), manager.store, kube, manager.runtime, manager.observer, operations, manager.observationLog,
 		SchedulerControllerConfig{
 			Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 				MaxObservationAge: time.Second, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1,

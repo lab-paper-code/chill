@@ -30,7 +30,7 @@ func TestCreatedUIDLateBindingReturnsAC38(t *testing.T) {
 			child := &actionRun{owner: target.ID, action: action, reserved: true, scope: resourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{"workload"}}, result: &OperationResult{Status: nativeOperationPartial, Error: context.Canceled.Error(), EndedAt: ended, Preparation: evidence, Operation: Operation{Kind: operationPrepare, Node: ref, WorkloadUIDs: []string{"workload"}, Prepare: &PrepareSpec{Instance: wanted, Owner: &serving.WorkloadReference{UID: "workload"}, Config: native.Config{Policy: native.Policy{DecisionID: target.ID}}}}}}
 			parent := &actionRun{owner: target.ID, reserved: true, returnObserved: true, scope: child.scope, action: serving.Action{ID: transitionRunKind + "/" + target.ID, Kind: transitionRunKind, Status: nativeOperationFailed}, result: &OperationResult{Status: nativeOperationFailed, EndedAt: ended, Operation: Operation{Target: &target, WorkloadUIDs: []string{"workload"}}}}
 			child.proofParent = parent
-			c := &SchedulerController{reservationState: reservationState{runs: map[string]*actionRun{parent.action.ID: parent, action.ID: child}}}
+			c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{parent.action.ID: parent, action.ID: child}}}
 			actual := wanted
 			actual.PodUID = string(pod.UID)
 			actual.ID = physicalID(pod.UID, firstfloorStatus(pod).ContainerID)

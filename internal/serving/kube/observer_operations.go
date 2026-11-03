@@ -9,12 +9,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-func (o *Observer) markRemoving(id string) {
-	o.mu.Lock()
-	o.removingInstances[id] = true
-	o.mu.Unlock()
-}
-
 func (o *Observer) restoreRemovalSource(pod *core.Pod, id, containerID string) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -77,19 +71,4 @@ func (o *Observer) publishPreparedSource(pod *core.Pod, node serving.NodeReferen
 	err := o.publishLedger(nil)
 	o.mu.Unlock()
 	return err
-}
-
-func (o *Observer) clearRoutedRemovals(operation Operation, weights map[string]map[string]int32) {
-	o.mu.Lock()
-	for uid, route := range weights {
-		if !operation.controlsWorkload(uid) {
-			continue
-		}
-		for id, weight := range route {
-			if weight > 0 {
-				delete(o.removingInstances, id)
-			}
-		}
-	}
-	o.mu.Unlock()
 }

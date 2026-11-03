@@ -25,7 +25,7 @@ func TestUntouchedAdmissionBaselineAC38(t *testing.T) {
 			baseline := serving.InstanceState{ID: id, PodUID: string(pod.UID), Node: ref}
 			target := &serving.SchedulerCandidate{ID: "owner"}
 			parent := &actionRun{owner: target.ID, reserved: true, action: serving.Action{ID: "transition/owner", Kind: transitionRunKind, Status: nativeOperationFailed}, scope: resourceScope{Nodes: []serving.NodeReference{ref}, Pods: []string{string(pod.UID)}, Instances: []string{id}}, result: &OperationResult{Operation: Operation{Kind: transitionRunKind, Target: target}, Before: OperationState{Instances: []serving.InstanceState{baseline}}, EndedAt: ended}}
-			c := &SchedulerController{reservationState: reservationState{runs: map[string]*actionRun{parent.action.ID: parent}}}
+			c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{parent.action.ID: parent}}}
 			c.state.Snapshot.Instances = []serving.SchedulerInstance{{ID: id, PodUID: string(pod.UID), Node: ref}}
 			switch evidence {
 			case "local-prepare", "route-cancel", "stop-cancel", "power-cancel", "unknown":

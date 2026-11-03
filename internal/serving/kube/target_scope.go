@@ -70,14 +70,14 @@ func controlledTarget(operation Operation) *serving.SchedulerCandidate {
 	return &target
 }
 
-func (c *SchedulerController) targetWorkloadsLocked(target serving.SchedulerCandidate) []string {
+func (c *reservationState) targetWorkloadsLocked(target serving.SchedulerCandidate) []string {
 	if parent := c.runs[transitionRunKind+"/"+target.ID]; parent != nil {
 		return parent.result.Operation.WorkloadUIDs
 	}
 	return changedWorkloads(target, c.state.Snapshot)
 }
 
-func (c *SchedulerController) routeOperationScopeLocked(parent, selected serving.SchedulerCandidate, intermediate bool) ([]string, bool) {
+func (c *reservationState) routeOperationScopeLocked(parent, selected serving.SchedulerCandidate, intermediate bool) ([]string, bool) {
 	scope := c.targetWorkloadsLocked(parent)
 	if intermediate {
 		scope = slices.DeleteFunc(changedWorkloads(selected, c.state.Snapshot), func(uid string) bool {
@@ -87,7 +87,7 @@ func (c *SchedulerController) routeOperationScopeLocked(parent, selected serving
 	return scope, scope != nil && len(scope) == 0
 }
 
-func (c *SchedulerController) omittedRouteCompleteLocked(action serving.Action, target serving.SchedulerCandidate) bool {
+func (c *reservationState) omittedRouteCompleteLocked(action serving.Action, target serving.SchedulerCandidate) bool {
 	if action.Kind != operationRoute || c.runs[action.ID] != nil {
 		return false
 	}
@@ -104,7 +104,7 @@ func (c *SchedulerController) omittedRouteCompleteLocked(action serving.Action, 
 	})
 }
 
-func (c *SchedulerController) ownerDAGCompleteLocked(parent *actionRun) bool {
+func (c *reservationState) ownerDAGCompleteLocked(parent *actionRun) bool {
 	for _, child := range c.runs {
 		if child != parent && child.owner == parent.owner &&
 			(child.action.Status == nativeOperationRunning || child.action.Status == nativeOperationCancel) {
@@ -141,7 +141,7 @@ func positiveWorkloadScope(target serving.SchedulerCandidate, allowed []string) 
 
 // Routes inside one owner form a chain; a partial ACK never races its final
 // route. Preparations of that owner's other Nodes still proceed independently.
-func (c *SchedulerController) orderRouteChild(action serving.Action, owner string) serving.Action {
+func (c *reservationState) orderRouteChild(action serving.Action, owner string) serving.Action {
 	if action.Kind != operationRoute {
 		return action
 	}

@@ -115,7 +115,7 @@ func schedulerCaptureClockController(t *testing.T, onLiveNodes func(*Observer)) 
 		t.Fatal(err)
 	}
 	manager.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
-	return &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, observationLog: manager.observationLog, reservationState: reservationState{runs: map[string]*actionRun{}}, config: SchedulerControllerConfig{
+	return &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, observationLog: manager.observationLog, reservationState: &reservationState{runs: map[string]*actionRun{}}, config: SchedulerControllerConfig{
 		Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxObservationAge: maxAge, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100}),
 	}}
 }
@@ -236,12 +236,12 @@ func schedulerEmptyPoolController(t *testing.T) *SchedulerController {
 	}
 	kube := kubefake.NewSimpleClientset(node)
 	manager.observer.kube = kube
-	operations, err := NewOperations(manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
+	operations, err := NewOperations(manager.reservations.(*ClusterState), manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
 		OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller, err := NewSchedulerController(manager.store, kube, manager.runtime, manager.observer, operations, manager.observationLog,
+	controller, err := NewSchedulerController(manager.reservations.(*ClusterState), manager.store, kube, manager.runtime, manager.observer, operations, manager.observationLog,
 		SchedulerControllerConfig{
 			Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxObservationAge: time.Second,
 				CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
@@ -494,7 +494,7 @@ func TestScheduledPreparationOwnsItsWorkload(t *testing.T) {
 
 func TestSchedulerLaunchReservesFixedAndNonFixedDAGs(t *testing.T) {
 	for _, fixed := range []bool{true, false} {
-		controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), reservationState: reservationState{runs: map[string]*actionRun{}}}
+		controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), reservationState: &reservationState{runs: map[string]*actionRun{}}}
 		// Completed actions are skipped, so launch starts no operation.
 		controller.launch(serving.SchedulerCandidate{ID: "keep", Keep: true, Actions: []serving.Action{
 			{ID: "lower", Kind: operationPower, Fixed: fixed, Status: nativeOperationComplete},
@@ -566,7 +566,7 @@ func TestRemoveRejectsPhysicalInstanceOnDifferentNodeBeforeMutation(t *testing.T
 func TestPreparedSlotCompletionExpiresWhenActualInstanceRemoved(t *testing.T) {
 	manager, _ := newManagerHarness(t)
 	observer := manager.observer
-	controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), runtime: observer.runtime}
+	controller := &SchedulerController{reservationState: &reservationState{}, capacity: serving.NewCapacityTable(1, nil, nil), runtime: observer.runtime}
 	profile := &serving.Profile{ID: "profile"}
 	node := serving.NodeReference{Name: "node", UID: "node-uid"}
 	run := &actionRun{action: serving.Action{Kind: "prepare", Instance: "slot", Node: node}, result: &OperationResult{Status: "complete", Operation: Operation{Prepare: &PrepareSpec{Instance: serving.SchedulerInstance{ID: "slot", Node: node, Profile: profile}}}}}
@@ -742,7 +742,7 @@ func TestBindProfileMeterUsesWallQuantityIdentity(t *testing.T) {
 // The controller records when each instance lost its route weight and holds
 // an instance prepared while keep was in Overload for one window after Ready.
 func TestSchedulerControllerAnnotatesUnroutedAndHeldInstances(t *testing.T) {
-	c := &SchedulerController{reservationState: reservationState{runs: map[string]*actionRun{}}}
+	c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}}
 	t0, window := time.Unix(1000, 0).UTC(), time.Minute
 	c.markOverloadPrepares(serving.SchedulerDecision{Keep: serving.SchedulerCandidate{Status: serving.SchedulerStatusOverload},
 		Target: &serving.SchedulerCandidate{Actions: []serving.Action{{Kind: operationPrepare, Instance: "slot-b"}}}})
@@ -797,7 +797,7 @@ func TestSchedulerRouteIgnoresUnusedCommonLowering(t *testing.T) {
 		serving.Action{ID: "raise", Kind: operationPower, Node: used, DependsOn: []string{"used-lowering"}},
 		serving.Action{ID: "prepare", Kind: operationPrepare, Node: used, Instance: "slot", DependsOn: []string{"raise"}},
 		serving.Action{ID: "route", Kind: operationRoute, DependsOn: []string{"prepare"}})
-	controller := &SchedulerController{reservationState: reservationState{runs: map[string]*actionRun{}}}
+	controller := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}}
 	var raise, prepare, route serving.Action
 	for _, a := range target.Actions {
 		controller.runs[a.ID] = &actionRun{action: a}

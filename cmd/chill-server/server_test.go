@@ -248,7 +248,7 @@ func TestEvaluationAssemblyResolvesLateSchedulerController(t *testing.T) {
 		}
 	}
 	controller, err := servingkube.NewSchedulerController(
-		owners.Store, owners.Kube, owners.Execution, owners.Observer,
+		owners.Cluster, owners.Store, owners.Kube, owners.Execution, owners.Observer,
 		owners.Operations, owners.ObservationLog,
 		servingkube.SchedulerControllerConfig{Settings: schedulerTestConfiguration().Settings})
 	if err != nil {

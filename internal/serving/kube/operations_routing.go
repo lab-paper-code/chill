@@ -83,7 +83,7 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 		return applyErr
 	}
 	weights, _ := o.runtime.SchedulerRouting()
-	o.observer.clearRoutedRemovals(result.Operation, weights)
+	o.cluster.ClearRoutedRemovals(result.Operation, weights)
 	// Explicit manual declarations must not overwrite the Pod defaults release restores.
 	if result.Operation.WorkloadUID == "" {
 		if err := o.persistRouting(ctx, "", result.Operation.WorkloadUIDs); err != nil {

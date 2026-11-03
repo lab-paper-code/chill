@@ -156,7 +156,7 @@ func routeAcknowledgmentFixture(t *testing.T) (*Operations, serving.SchedulerCan
 		t.Fatal(err)
 	}
 	manager.runtime.EnableSchedulerRouting()
-	operations, err := NewOperations(manager.store, kube, manager.runtime, manager.observer, nativeClient, OperationConfig{Namespace: fixture.Namespace, PollInterval: time.Millisecond})
+	operations, err := NewOperations(manager.reservations.(*ClusterState), manager.store, kube, manager.runtime, manager.observer, nativeClient, OperationConfig{Namespace: fixture.Namespace, PollInterval: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}

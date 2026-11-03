@@ -72,7 +72,7 @@ func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.Sch
 	if err := manager.runtime.ApplySchedulerTarget(oldTarget); err != nil {
 		t.Fatal(err)
 	}
-	controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), runtime: manager.runtime, observationLog: manager.observationLog, reservationState: reservationState{runs: map[string]*actionRun{
+	controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), runtime: manager.runtime, observationLog: manager.observationLog, reservationState: &reservationState{runs: map[string]*actionRun{
 		"acknowledged-route": {
 			action: serving.Action{ID: "acknowledged-route", Kind: operationRoute, Status: nativeOperationComplete},
 			result: &OperationResult{Operation: Operation{Target: &oldTarget}, Status: nativeOperationComplete},
@@ -483,7 +483,7 @@ func TestPrepareTimeoutFailsGoal(t *testing.T) {
 	sibling := serving.Action{ID: "prepare-genesis3-q1", Kind: operationPrepare, Node: serving.NodeReference{Name: "genesis3", UID: "genesis3-uid"},
 		Instance: "other", Status: nativeOperationRunning}
 	goal := serving.SchedulerCandidate{ID: "plan-dc6ebf670833", Actions: []serving.Action{prepare, sibling}}
-	controller := &SchedulerController{ctx: ctx, reservationState: reservationState{runs: map[string]*actionRun{sibling.ID: {action: sibling, started: time.Now(),
+	controller := &SchedulerController{ctx: ctx, reservationState: &reservationState{runs: map[string]*actionRun{sibling.ID: {action: sibling, started: time.Now(),
 		result: &OperationResult{Operation: Operation{ID: sibling.ID, Kind: sibling.Kind, Target: &goal}, Status: nativeOperationRunning}}}}}
 	baseline := serving.SchedulerInstance{ID: "baseline-pod/containerd://baseline", PodUID: "baseline-pod", Node: prepare.Node, Ready: true}
 	controller.state.Snapshot.Instances = []serving.SchedulerInstance{baseline}
@@ -953,13 +953,13 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State)) (
 	manager.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
 	manager.observer.kube = kube
 	manager.observer.SetProfiles(profiles)
-	operations, err := NewOperations(manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
+	operations, err := NewOperations(manager.reservations.(*ClusterState), manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
 		OperationConfig{Namespace: pod.Namespace, PollInterval: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
 	controller := &SchedulerController{ctx: ctx, store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer,
-		operations: operations, observationLog: manager.observationLog, capacity: serving.NewCapacityTable(1, nil, nil), reservationState: reservationState{runs: map[string]*actionRun{}}, config: SchedulerControllerConfig{Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
+		operations: operations, observationLog: manager.observationLog, capacity: serving.NewCapacityTable(1, nil, nil), reservationState: &reservationState{runs: map[string]*actionRun{}}, config: SchedulerControllerConfig{Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 			MaxObservationAge: time.Minute, MaxReplicas: 3, MaxInstances: 3, CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 			CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
 			AutonomousWorkloads: []string{d.UID}})}}

@@ -35,7 +35,7 @@ func (s resourceScope) overlaps(other resourceScope) bool {
 		slices.ContainsFunc(s.Instances, func(id string) bool { return slices.Contains(other.Instances, id) })
 }
 
-func (c *SchedulerController) operationScope(operation Operation) resourceScope {
+func (c *reservationState) operationScope(operation Operation) resourceScope {
 	scope := resourceScope{Workloads: slices.Clone(operation.WorkloadUIDs), Nodes: slices.Clone(operation.Nodes)}
 	if operation.WorkloadUID != "" {
 		scope.Workloads = append(scope.Workloads, operation.WorkloadUID)
@@ -95,7 +95,7 @@ func (c *SchedulerController) operationScope(operation Operation) resourceScope 
 
 // Callers hold mu. No partial acquisition; reset may inherit only terminal owners
 // whose entire responsibility lies inside its admitted cleanup scope.
-func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Operation) bool {
+func (c *reservationState) reserveRun(id string, run *actionRun, operation Operation) bool {
 	if existing := c.runs[id]; existing != nil && (existing.action.Status == nativeOperationRunning || existing.action.Status == nativeOperationCancel) {
 		return false
 	}
@@ -153,7 +153,7 @@ func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Op
 
 // recordPreparationLocked precedes all terminal publication paths. The result
 // evidence and scope share the owner's mutex and lifetime, not Capture's.
-func (c *SchedulerController) recordPreparationLocked(run *actionRun, evidence *PreparationEvidence) {
+func (c *reservationState) recordPreparationLocked(run *actionRun, evidence *PreparationEvidence) {
 	if evidence == nil || evidence.PodUID == "" {
 		return
 	}
@@ -165,7 +165,7 @@ func (c *SchedulerController) recordPreparationLocked(run *actionRun, evidence *
 	}
 }
 
-func (c *SchedulerController) registerMayTouchLocked(run *actionRun, operation Operation, scope resourceScope) {
+func (c *reservationState) registerMayTouchLocked(run *actionRun, operation Operation, scope resourceScope) {
 	if operation.Kind == transitionRunKind {
 		return
 	}
@@ -199,7 +199,7 @@ func operationMayTouch(operation Operation, scope resourceScope, state serving.I
 	}
 }
 
-func (c *SchedulerController) returnProofParent(run *actionRun) *actionRun {
+func (c *reservationState) returnProofParent(run *actionRun) *actionRun {
 	if run.action.Kind == transitionRunKind {
 		return run
 	}
@@ -208,7 +208,7 @@ func (c *SchedulerController) returnProofParent(run *actionRun) *actionRun {
 
 // This check also runs when there are no Pods: absence is not permission to
 // release while an authorized sibling can still publish a remote write.
-func (c *SchedulerController) ownerReturnTerminal(run *actionRun) bool {
+func (c *reservationState) ownerReturnTerminal(run *actionRun) bool {
 	if parent := c.returnProofParent(run); parent != nil &&
 		(parent.action.Status == nativeOperationRunning || parent.action.Status == nativeOperationCancel) {
 		return false
@@ -221,7 +221,7 @@ func (c *SchedulerController) ownerReturnTerminal(run *actionRun) bool {
 	return true
 }
 
-func (c *SchedulerController) authorize(operation Operation) error {
+func (c *reservationState) authorize(operation Operation) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	scope := c.operationScope(operation)
@@ -236,7 +236,7 @@ func (c *SchedulerController) authorize(operation Operation) error {
 // Fresh observation proves physical return or an exact executor's known effect.
 // Terminal transitions consume this proof in reconcileSnapshot without changing
 // failed receipts. A taint remains owned by the admission lifecycle.
-func (c *SchedulerController) releaseObservedScopes(nodes []core.Node, pods []core.Pod, physical []serving.InstanceState, observedAt time.Time) {
+func (c *reservationState) releaseObservedScopes(nodes []core.Node, pods []core.Pod, physical []serving.InstanceState, observedAt time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, run := range c.runs {
@@ -276,7 +276,7 @@ func (c *SchedulerController) releaseObservedScopes(nodes []core.Node, pods []co
 
 // Terminal owner members share receipts through their authorization-time parent
 // link, never an owner's name alone. Its baseline bounds previous-policy proof.
-func (c *SchedulerController) knownOwnerEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.InstanceState) bool {
+func (c *reservationState) knownOwnerEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.InstanceState) bool {
 	parent := c.returnProofParent(run)
 	if parent == nil {
 		return knownEffectConfirmed(run, pod, physical, run.result.EndedAt, true)
@@ -427,7 +427,7 @@ func (c *SchedulerController) launchFailedPreparationCleanupLocked(config Schedu
 	}
 }
 
-func (c *SchedulerController) failedPreparationUnclaimed(parent, child *actionRun, actual serving.InstanceState) bool {
+func (c *reservationState) failedPreparationUnclaimed(parent, child *actionRun, actual serving.InstanceState) bool {
 	if !actual.Ready || actual.Stopped || actual.Native == nil || !actual.Native.Ready ||
 		!child.result.EndedAt.Before(actual.ObservedAt) || !parent.result.EndedAt.Before(actual.ObservedAt) ||
 		!failedPreparationIdentityMatches(child, actual) || !preparationCreatedSource(child, actual) {
@@ -480,7 +480,7 @@ func preparationCreatedSource(child *actionRun, actual serving.InstanceState) bo
 	return true
 }
 
-func (c *SchedulerController) preparationSourceUnclaimed(actual serving.InstanceState) bool {
+func (c *reservationState) preparationSourceUnclaimed(actual serving.InstanceState) bool {
 	if len(actual.Workloads) != 0 {
 		return false
 	}
@@ -502,7 +502,7 @@ func (c *SchedulerController) preparationSourceUnclaimed(actual serving.Instance
 	return true
 }
 
-func (c *SchedulerController) releaseOwnerLocked(owner string) {
+func (c *reservationState) releaseOwnerLocked(owner string) {
 	for _, run := range c.runs {
 		if run.owner == owner {
 			run.reserved = false
@@ -514,7 +514,7 @@ func (c *SchedulerController) releaseOwnerLocked(owner string) {
 	}
 }
 
-func (c *SchedulerController) reservationsLocked() []serving.SchedulerReservation {
+func (c *reservationState) reservationsLocked() []serving.SchedulerReservation {
 	byOwner := map[string]*serving.SchedulerReservation{}
 	reasons := map[string][]string{}
 	for _, run := range c.runs {
@@ -566,7 +566,7 @@ func (c *SchedulerController) reservationsLocked() []serving.SchedulerReservatio
 	return reservations
 }
 
-func (c *SchedulerController) runReferencedLocked(id string) bool {
+func (c *reservationState) runReferencedLocked(id string) bool {
 	parent := c.runs[id]
 	for _, run := range c.runs {
 		if !run.reserved && run.action.Status != nativeOperationRunning && run.action.Status != nativeOperationCancel {
@@ -587,7 +587,7 @@ func (c *SchedulerController) runReferencedLocked(id string) bool {
 	return false
 }
 
-func (c *SchedulerController) nodeExecuting(node *core.Node) bool {
+func (c *reservationState) nodeExecuting(node *core.Node) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, run := range c.runs {
@@ -600,7 +600,8 @@ func (c *SchedulerController) nodeExecuting(node *core.Node) bool {
 
 // reserveDeletion shares the operation ledger from acceptance through confirmed
 // native deletion. Live owned Pods supplement snapshots after reset/removal.
-func (c *SchedulerController) reserveDeletion(ctx context.Context, uid types.UID) error {
+func (s *ClusterState) ReserveDeletion(ctx context.Context, uid types.UID) error {
+	c := &s.reservation
 	c.tickMu.Lock()
 	defer c.tickMu.Unlock()
 	id := workloadDeletionKind + "/" + string(uid)
@@ -609,11 +610,11 @@ func (c *SchedulerController) reserveDeletion(ctx context.Context, uid types.UID
 	if run := c.runs[id]; run != nil && run.reserved {
 		return nil
 	}
-	objects, err := c.observer.ownedResources(ctx, uid)
+	objects, err := s.store.OwnedResources(ctx, uid, s.namespace)
 	if err != nil {
 		return err
 	}
-	nodes, err := c.kube.CoreV1().Nodes().List(ctx, meta.ListOptions{})
+	nodes, err := s.kube.CoreV1().Nodes().List(ctx, meta.ListOptions{})
 	if err != nil {
 		return err
 	}
@@ -642,8 +643,8 @@ func (c *SchedulerController) reserveDeletion(ctx context.Context, uid types.UID
 	return nil
 }
 
-func (c *SchedulerController) releaseDeletion(uid types.UID) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.runs, workloadDeletionKind+"/"+string(uid))
+func (s *ClusterState) ReleaseDeletion(uid types.UID) {
+	s.reservation.mu.Lock()
+	defer s.reservation.mu.Unlock()
+	delete(s.reservation.runs, workloadDeletionKind+"/"+string(uid))
 }

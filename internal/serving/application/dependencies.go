@@ -39,6 +39,7 @@ type Live struct {
 }
 
 type Dependencies struct {
+	Cluster    *servingkube.ClusterState
 	Operations *servingkube.Operations
 	Store      *servingkube.Store
 	Kube       kubernetes.Interface

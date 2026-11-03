@@ -32,7 +32,7 @@ func manualConfigurationFixture(t *testing.T) (*SchedulerController, *kubefake.C
 	kube := kubefake.NewSimpleClientset(&core.ConfigMap{ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "scheduler", ResourceVersion: "42"}, Data: map[string]string{
 		"other-key": "untouched", "scheduler.json": string(raw),
 	}})
-	return &SchedulerController{kube: kube, operations: &Operations{config: OperationConfig{Namespace: "serving"}}, config: SchedulerControllerConfig{Settings: settings, ConfigurationName: "scheduler", ConfigurationKey: "scheduler.json"}}, kube
+	return &SchedulerController{reservationState: &reservationState{}, kube: kube, operations: &Operations{config: OperationConfig{Namespace: "serving"}}, config: SchedulerControllerConfig{Settings: settings, ConfigurationName: "scheduler", ConfigurationKey: "scheduler.json"}}, kube
 }
 
 func TestManualRoutingPersistencePreservesOtherUIDsAndConfiguration(t *testing.T) {
@@ -120,7 +120,7 @@ func TestManualRoutingAdmissionRefusesBeforeMutation(t *testing.T) {
 		{name: "missing target", request: ManualOperation{Kind: operationRoute, WorkloadUID: "w", Reason: "reason", Weights: map[string]int32{"missing": 1}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			controller := &SchedulerController{reservationState: reservationState{runs: map[string]*actionRun{}}}
+			controller := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}}
 			config := SchedulerControllerConfig{}
 			if test.autonomous {
 				config.Settings.AutonomousWorkloads = []string{"w"}

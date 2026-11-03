@@ -279,8 +279,8 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 		ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "scheduler", ResourceVersion: "new"},
 		Data:       map[string]string{"scheduler.json": string(raw)},
 	})
-	observer, err := servingkube.NewObserver(store, kube, execution, &sdk.Client{},
-		servingkube.ObserverConfig{Namespace: "serving"})
+	cluster := servingkube.NewClusterState(store, kube, "serving")
+	observer, err := servingkube.NewObserver(cluster, store, kube, execution, &sdk.Client{}, servingkube.ObserverConfig{Namespace: "serving"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +335,8 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 		Settings: settings, StaticRouting: map[string]map[string]int{definition.UID: {"physical": 1}},
 	}
 	service := &SchedulerService{
-		kube: kube, observer: observer, objects: objects, catalog: catalog, resourceVersion: acceptedVersion,
+		cluster: cluster,
+		kube:    kube, observer: observer, objects: objects, catalog: catalog, resourceVersion: acceptedVersion,
 		sources: profile.ID,
 		opts: Options{ServingNamespace: "serving", SchedulerConfigMap: "scheduler",
 			SchedulerConfigKey: "scheduler.json", MaxRequestBytes: 1 << 20, MaxEvidenceBytes: 1024},
@@ -496,8 +497,8 @@ func schedulerTestService(t *testing.T, config SchedulerConfiguration) *Schedule
 		},
 		Data: map[string]string{"scheduler.json": string(raw), "unrelated": "operator value"},
 	})
-	observer, err := servingkube.NewObserver(store, kube, execution, &sdk.Client{},
-		servingkube.ObserverConfig{Namespace: "serving"})
+	cluster := servingkube.NewClusterState(store, kube, "serving")
+	observer, err := servingkube.NewObserver(cluster, store, kube, execution, &sdk.Client{}, servingkube.ObserverConfig{Namespace: "serving"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -506,8 +507,7 @@ func schedulerTestService(t *testing.T, config SchedulerConfiguration) *Schedule
 			t.Error(err)
 		}
 	})
-	operations, err := servingkube.NewOperations(store, kube, execution, observer, &sdk.Client{},
-		servingkube.OperationConfig{Namespace: "serving", PollInterval: time.Second})
+	operations, err := servingkube.NewOperations(cluster, store, kube, execution, observer, &sdk.Client{}, servingkube.OperationConfig{Namespace: "serving", PollInterval: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -516,14 +516,14 @@ func schedulerTestService(t *testing.T, config SchedulerConfiguration) *Schedule
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller, err := servingkube.NewSchedulerController(store, kube, execution, observer, operations, observationLog,
-		servingkube.SchedulerControllerConfig{Settings: config.Settings})
+	controller, err := servingkube.NewSchedulerController(cluster, store, kube, execution, observer, operations, observationLog, servingkube.SchedulerControllerConfig{Settings: config.Settings})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(controller.Close)
 	service := &SchedulerService{
-		kube: kube, store: store, execution: execution, observer: observer, objects: objects,
+		cluster: cluster,
+		kube:    kube, store: store, execution: execution, observer: observer, objects: objects,
 		catalog: catalog, operations: operations, Controller: controller, observationLog: observationLog,
 		resourceVersion: "1",
 		opts: Options{ServingNamespace: "serving", SchedulerConfigMap: "scheduler", SchedulerConfigKey: "scheduler.json",

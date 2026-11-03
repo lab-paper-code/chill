@@ -14,7 +14,7 @@ import (
 func TestClusterPodAndIssueTransitions(t *testing.T) {
 	var rows []serving.ClusterObservation
 	fail := false
-	o := &Observer{issues: map[string]ObserverIssue{}, config: ObserverConfig{
+	o := &Observer{observerState: &observerState{}, issues: map[string]ObserverIssue{}, config: ObserverConfig{
 		SelectClusterPod: func(p *corev1.Pod) bool { return p.Labels["selected"] == "yes" },
 		OnCluster: func(row serving.ClusterObservation) error {
 			if fail {
@@ -69,7 +69,7 @@ func TestClusterPodAndIssueTransitions(t *testing.T) {
 }
 
 func TestClusterWatchIncludesSeparateControlNamespace(t *testing.T) {
-	o := &Observer{config: ObserverConfig{Namespace: "serving"}}
+	o := &Observer{observerState: &observerState{}, config: ObserverConfig{Namespace: "serving"}}
 	if o.clusterWatchNamespace() != "serving" {
 		t.Fatal("native watch lost namespace scope")
 	}

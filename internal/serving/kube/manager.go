@@ -37,6 +37,11 @@ type ManagerConfig struct {
 	OnWorkload func(WorkloadView, bool)
 }
 
+type deletionReserver interface {
+	ReserveDeletion(context.Context, types.UID) error
+	ReleaseDeletion(types.UID)
+}
+
 // Manager is the only definition writer. It observes drain without holding this
 // lock across a wait; Advance performs one finite observation/application pass.
 // ponytail: one management lock and native list scans suit research-scale edits.
@@ -47,6 +52,7 @@ type Manager struct {
 	runtime        *serving.Runtime
 	observationLog *serving.ObservationLog
 	observer       *Observer
+	reservations   deletionReserver
 	config         ManagerConfig
 	initialized    bool
 	// A failed status write must not let a subsequent poll resume the operation.
@@ -57,11 +63,11 @@ type Manager struct {
 	deletionChecks map[types.UID]*api.Workload
 }
 
-func NewManager(store *Store, runtime *serving.Runtime, observationLog *serving.ObservationLog, observer *Observer, config ManagerConfig) (*Manager, error) {
-	if store == nil || store.client == nil || runtime == nil || observationLog == nil || observer == nil || config.DrainTimeout <= 0 {
+func NewManager(reservations *ClusterState, store *Store, runtime *serving.Runtime, observationLog *serving.ObservationLog, observer *Observer, config ManagerConfig) (*Manager, error) {
+	if reservations == nil || store == nil || store.client == nil || runtime == nil || observationLog == nil || observer == nil || config.DrainTimeout <= 0 {
 		return nil, errors.New("native store, runtime, observation log, observer and positive drain timeout are required")
 	}
-	return &Manager{store: store, runtime: runtime, observationLog: observationLog, observer: observer, config: config,
+	return &Manager{reservations: reservations, store: store, runtime: runtime, observationLog: observationLog, observer: observer, config: config,
 		failed: map[types.UID]api.WorkloadStatus{}, deletionChecks: map[types.UID]*api.Workload{}}, nil
 }
 
@@ -551,16 +557,12 @@ func (m *Manager) DeleteWorkload(ctx context.Context, name, resourceVersion stri
 	if err := m.checkOperation(w); err != nil {
 		return m.view(w), err
 	}
-	if m.observer.scheduler != nil {
-		if err := m.observer.scheduler.reserveDeletion(ctx, w.UID); err != nil {
-			return m.view(w), err
-		}
+	if err := m.reservations.ReserveDeletion(ctx, w.UID); err != nil {
+		return m.view(w), err
 	}
 	before := m.applied(w)
 	if err := m.stop(w, "Deleting"); err != nil {
-		if m.observer.scheduler != nil {
-			m.observer.scheduler.releaseDeletion(w.UID)
-		}
+		m.reservations.ReleaseDeletion(w.UID)
 		return m.view(w), err
 	}
 	if err := m.store.DeleteWorkload(ctx, w); err != nil {
@@ -653,8 +655,8 @@ func (m *Manager) apply(ctx context.Context, w *api.Workload, d *serving.Definit
 
 func (m *Manager) advanceWorkload(ctx context.Context, w *api.Workload) error {
 	op := m.status(w).Operation
-	if op.Kind == operationDelete && m.observer.scheduler != nil {
-		if err := m.observer.scheduler.reserveDeletion(ctx, w.UID); err != nil {
+	if op.Kind == operationDelete {
+		if err := m.reservations.ReserveDeletion(ctx, w.UID); err != nil {
 			return err
 		}
 	}
@@ -717,9 +719,7 @@ func (m *Manager) confirmDeletion(ctx context.Context, w *api.Workload) error {
 	if err := m.runtime.Forget(string(w.UID)); err != nil {
 		return err
 	}
-	if m.observer.scheduler != nil {
-		m.observer.scheduler.releaseDeletion(w.UID)
-	}
+	m.reservations.ReleaseDeletion(w.UID)
 	delete(m.deletionChecks, w.UID)
 	delete(m.failed, w.UID)
 	return m.record(ctx, w, operationCompleted, before, nil, nil, time.Now().UTC(), nil)

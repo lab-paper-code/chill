@@ -51,6 +51,7 @@ type SchedulerConfiguration struct {
 type SchedulerService struct {
 	Lock                     sync.Mutex
 	Controller               *servingkube.SchedulerController
+	cluster                  *servingkube.ClusterState
 	operations               *servingkube.Operations
 	store                    *servingkube.Store
 	kube                     kubernetes.Interface
@@ -79,6 +80,7 @@ type SchedulerService struct {
 func NewSchedulerService(ctx context.Context, dependencies Dependencies) *SchedulerService {
 	serviceCtx, cancel := context.WithCancel(ctx)
 	return &SchedulerService{
+		cluster:    dependencies.Cluster,
 		operations: dependencies.Operations, store: dependencies.Store, kube: dependencies.Kube,
 		settingsKube: dependencies.SettingsKube,
 		execution:    dependencies.Execution, observer: dependencies.Observer, objects: dependencies.Objects,
@@ -257,7 +259,7 @@ func (o *SchedulerService) refreshLocked(ctx context.Context) (err error) {
 		OnDecision: o.RecordDecision, OnAction: o.RecordAction,
 	}
 	if o.Controller == nil {
-		o.Controller, err = servingkube.NewSchedulerController(o.store, o.kube, o.execution,
+		o.Controller, err = servingkube.NewSchedulerController(o.cluster, o.store, o.kube, o.execution,
 			o.observer, o.operations, o.observationLog, controllerConfig)
 	} else {
 		err = o.Controller.SetConfiguration(controllerConfig)

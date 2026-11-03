@@ -26,7 +26,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
@@ -93,7 +92,8 @@ func (s *nativeSource) stopFollow() {
 // ponytail: one source lock serializes refresh/cleanup for this single owner;
 // split locks only if observed cluster size makes refresh contention material.
 type Observer struct {
-	observerState
+	*observerState
+	cluster     *ClusterState
 	refreshMu   sync.Mutex
 	store       *Store
 	kube        kubernetes.Interface
@@ -103,7 +103,6 @@ type Observer struct {
 	profiles    []serving.Profile
 	profileByID map[string]*serving.Profile
 	sources     map[string]*nativeSource
-	scheduler   *SchedulerController
 	// issueMu guards issues, so log followers record progress and its issues
 	// while a refresh holds mu.
 	issueMu        sync.Mutex
@@ -120,15 +119,15 @@ type Observer struct {
 	clusterPods map[types.UID]serving.ClusterPod
 }
 
-func NewObserver(store *Store, kube kubernetes.Interface, runtime *serving.Runtime, native *firstfloor.Client, config ObserverConfig) (*Observer, error) {
-	if store == nil || store.client == nil || kube == nil || runtime == nil || native == nil || config.Namespace == "" {
+func NewObserver(cluster *ClusterState, store *Store, kube kubernetes.Interface, runtime *serving.Runtime, native *firstfloor.Client, config ObserverConfig) (*Observer, error) {
+	if cluster == nil || store == nil || store.client == nil || kube == nil || runtime == nil || native == nil || config.Namespace == "" {
 		return nil, errors.New("observer requires direct store, Kubernetes/native clients, runtime and selected namespace")
 	}
 	if config.OnCluster != nil && config.SelectClusterPod == nil {
 		return nil, errors.New("cluster observations require a CHILL Pod selector")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Observer{store: store, kube: kube, runtime: runtime, native: native, config: config, sources: map[string]*nativeSource{}, issues: map[string]ObserverIssue{}, movingNodes: map[string]bool{}, observerState: observerState{removingInstances: map[string]bool{}}, ctx: ctx, cancel: cancel}, nil
+	return &Observer{cluster: cluster, store: store, kube: kube, runtime: runtime, native: native, config: config, sources: map[string]*nativeSource{}, issues: map[string]ObserverIssue{}, movingNodes: map[string]bool{}, observerState: &cluster.observation, ctx: ctx, cancel: cancel}, nil
 }
 
 func (o *Observer) SetProfiles(profiles []serving.Profile) {
@@ -272,7 +271,7 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 		}
 		pods.Items = selected
 	}
-	resources, err := o.sourceResources(ctx, pods.Items)
+	resources, err := o.store.SourceResources(ctx, pods.Items, o.config.Namespace)
 	if err != nil {
 		return o.refreshFailure(err)
 	}
@@ -1028,7 +1027,7 @@ func (o *Observer) CleanupWorkload(ctx context.Context, uid types.UID) (bool, er
 	if !o.runtime.Drained(string(uid)) {
 		return false, nil
 	}
-	objects, err := o.ownedResources(ctx, uid)
+	objects, err := o.store.OwnedResources(ctx, uid, o.config.Namespace)
 	if err != nil {
 		return false, err
 	}
@@ -1151,26 +1150,6 @@ func podTerminated(pod *corev1.Pod) bool {
 	}
 	return true
 }
-func (o *Observer) sourceResources(ctx context.Context, pods []corev1.Pod) (map[types.UID]client.Object, error) {
-	all := make(map[types.UID]client.Object, len(pods))
-	for i := range pods {
-		all[pods[i].UID] = &pods[i]
-	}
-	for _, list := range []client.ObjectList{&appsv1.DeploymentList{}, &appsv1.ReplicaSetList{}} {
-		if err := o.store.client.List(ctx, list, client.InNamespace(o.config.Namespace)); err != nil {
-			return nil, err
-		}
-		items, err := meta.ExtractList(list)
-		if err != nil {
-			return nil, err
-		}
-		for _, item := range items {
-			object := item.(client.Object)
-			all[object.GetUID()] = object
-		}
-	}
-	return all, nil
-}
 
 func resourceWorkloadOwner(object client.Object, all map[types.UID]client.Object) (string, error) {
 	// The implemented source chain is Pod -> ReplicaSet -> Deployment -> Workload.
@@ -1199,27 +1178,6 @@ func resourceWorkloadOwner(object client.Object, all map[types.UID]client.Object
 	return "", errors.New("serving source ownership exceeds the implemented chain")
 }
 
-func (o *Observer) ownedResources(ctx context.Context, uid types.UID) ([]client.Object, error) {
-	var pods corev1.PodList
-	if err := o.store.client.List(ctx, &pods, client.InNamespace(o.config.Namespace)); err != nil {
-		return nil, err
-	}
-	all, err := o.sourceResources(ctx, pods.Items)
-	if err != nil {
-		return nil, err
-	}
-	result := []client.Object{}
-	for _, object := range all {
-		owner, err := resourceWorkloadOwner(object, all)
-		if err != nil && owner == string(uid) {
-			return nil, err
-		}
-		if err == nil && owner == string(uid) {
-			result = append(result, object)
-		}
-	}
-	return result, nil
-}
 func (o *Observer) Close() error {
 	o.mu.Lock()
 	if !o.closed {

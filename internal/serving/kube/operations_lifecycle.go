@@ -31,7 +31,7 @@ func (o *Operations) StopInstance(ctx context.Context, id string) error {
 	if err := o.wait(ctx, func() (bool, error) { return o.runtime.StopSchedulerInstance(id) }); err != nil {
 		return err
 	}
-	o.observer.markRemoving(id)
+	o.cluster.MarkRemoving(id)
 	return o.persistRouting(ctx, id, nil)
 }
 

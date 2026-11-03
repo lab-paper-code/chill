@@ -77,7 +77,7 @@ func TestLateProbeCannotResurrectRemovedExecutor(t *testing.T) {
 				err := c.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: action.(ktesting.GetAction).GetName()}, current)
 				return true, current, err
 			})
-			operations := &Operations{store: o.store, kube: kube, runtime: o.runtime, observer: o, native: o.native,
+			operations := &Operations{cluster: o.cluster, store: o.store, kube: kube, runtime: o.runtime, observer: o, native: o.native,
 				config: OperationConfig{Namespace: pod.Namespace, PollInterval: time.Millisecond}}
 			id := physicalID(pod.UID, status.ContainerID)
 			if err := operations.RemoveInstance(ctx, serving.NodeReference{Name: node.Name, UID: string(node.UID)}, id); err != nil {
@@ -136,8 +136,7 @@ func TestClearNodeCannotStripUnobservedRunningSourceFinalizer(t *testing.T) {
 	pod.Finalizers = []string{sourceFinalizer}
 	o := newTestObserver(t, pod)
 	kube := kubefake.NewSimpleClientset(node, pod, observerServiceFixture(pod))
-	operations := &Operations{store: o.store, kube: kube, runtime: o.runtime, observer: o,
-		config: OperationConfig{Namespace: pod.Namespace, PollInterval: time.Millisecond}}
+	operations := &Operations{cluster: o.cluster, store: o.store, kube: kube, runtime: o.runtime, observer: o, config: OperationConfig{Namespace: pod.Namespace, PollInterval: time.Millisecond}}
 	if err := operations.clearNode(ctx, serving.NodeReference{Name: node.Name, UID: string(node.UID)}); err == nil {
 		t.Fatal("unobserved running executor was cleared without termination proof")
 	}
@@ -158,20 +157,21 @@ func TestDeletionReservesLiveOwnedResourcesOutsideSnapshot(t *testing.T) {
 	uid := types.UID("workload-uid")
 	pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: uid}}
 	o := newTestObserver(t, pod)
-	c := &SchedulerController{store: o.store, observer: o, kube: kubefake.NewSimpleClientset(node), reservationState: reservationState{runs: map[string]*actionRun{}}}
+	cluster := NewClusterState(o.store, kubefake.NewSimpleClientset(node), o.config.Namespace)
+	c := &cluster.reservation
 	c.mu.Lock()
 	held := c.reserveRun("physical-only", &actionRun{action: serving.Action{Status: nativeOperationRunning}}, Operation{PodUID: string(pod.UID)})
 	c.mu.Unlock()
 	if !held {
 		t.Fatal("failed to reserve Pod")
 	}
-	if err := c.reserveDeletion(ctx, uid); err == nil {
+	if err := cluster.ReserveDeletion(ctx, uid); err == nil {
 		t.Fatal("deletion ignored live Pod absent from snapshot")
 	}
 	c.mu.Lock()
 	delete(c.runs, "physical-only")
 	c.mu.Unlock()
-	if err := c.reserveDeletion(ctx, uid); err != nil {
+	if err := cluster.ReserveDeletion(ctx, uid); err != nil {
 		t.Fatal(err)
 	}
 	for _, operation := range []Operation{
@@ -185,10 +185,10 @@ func TestDeletionReservesLiveOwnedResourcesOutsideSnapshot(t *testing.T) {
 		}
 	}
 	// Scope remains idempotently owned while cleanup is still pending.
-	if err := c.reserveDeletion(ctx, uid); err != nil {
+	if err := cluster.ReserveDeletion(ctx, uid); err != nil {
 		t.Fatal(err)
 	}
-	c.releaseDeletion(uid)
+	cluster.ReleaseDeletion(uid)
 	if err := c.authorize(Operation{PodUID: string(pod.UID)}); err != nil {
 		t.Fatal(err)
 	}

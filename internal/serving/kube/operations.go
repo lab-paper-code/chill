@@ -162,6 +162,7 @@ type OperationConfig struct {
 var ErrNodeInMeasurement = errors.New("NodeInMeasurement: Node carries the " + profilingrun.MeasurementTaintKey + " taint")
 
 type Operations struct {
+	cluster  *ClusterState
 	store    *Store
 	kube     kubernetes.Interface
 	runtime  *serving.Runtime
@@ -170,11 +171,11 @@ type Operations struct {
 	config   OperationConfig
 }
 
-func NewOperations(store *Store, kube kubernetes.Interface, runtime *serving.Runtime, observer *Observer, native *sdk.Client, config OperationConfig) (*Operations, error) {
-	if store == nil || kube == nil || runtime == nil || observer == nil || native == nil || config.Namespace == "" || config.PollInterval <= 0 {
+func NewOperations(cluster *ClusterState, store *Store, kube kubernetes.Interface, runtime *serving.Runtime, observer *Observer, native *sdk.Client, config OperationConfig) (*Operations, error) {
+	if cluster == nil || store == nil || kube == nil || runtime == nil || observer == nil || native == nil || config.Namespace == "" || config.PollInterval <= 0 {
 		return nil, errors.New("atomic operations require store, clients, runtime, observer, namespace and positive poll interval")
 	}
-	return &Operations{store: store, kube: kube, runtime: runtime, observer: observer, native: native, config: config}, nil
+	return &Operations{cluster: cluster, store: store, kube: kube, runtime: runtime, observer: observer, native: native, config: config}, nil
 }
 
 func (o *Operations) wait(ctx context.Context, step func() (bool, error)) error {

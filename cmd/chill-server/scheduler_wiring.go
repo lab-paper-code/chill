@@ -15,21 +15,20 @@ import (
 )
 
 func newSchedulerService(
-	ctx context.Context, store *servingkube.Store, kube, settingsKube kubernetes.Interface,
+	ctx context.Context, cluster *servingkube.ClusterState, store *servingkube.Store, kube, settingsKube kubernetes.Interface,
 	execution *serving.Runtime, observer *servingkube.Observer, objects *stores3.Store,
 	observationLog *serving.ObservationLog, opts options, gatewayRequestTimeout time.Duration, publisher *livePublisher,
 ) (*application.SchedulerService, error) {
 	if opts.schedulerConfigMap == "" {
 		return nil, nil
 	}
-	operations, err := servingkube.NewOperations(store, kube, execution, observer, &sdk.Client{},
-		servingkube.OperationConfig{
-			Namespace:    opts.servingNamespace,
-			PollInterval: opts.sourceInterval,
-			MetricLimits: metricobserver.Limits{
-				MaxResultBytes: opts.maxEvidenceBytes, MemoryBudgetBytes: debug.SetMemoryLimit(-1),
-			},
-		})
+	operations, err := servingkube.NewOperations(cluster, store, kube, execution, observer, &sdk.Client{}, servingkube.OperationConfig{
+		Namespace:    opts.servingNamespace,
+		PollInterval: opts.sourceInterval,
+		MetricLimits: metricobserver.Limits{
+			MaxResultBytes: opts.maxEvidenceBytes, MemoryBudgetBytes: debug.SetMemoryLimit(-1),
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -49,6 +48,7 @@ func newSchedulerService(
 			}}
 	}
 	return application.NewSchedulerService(ctx, application.Dependencies{
+		Cluster:    cluster,
 		Operations: operations, Store: store, Kube: kube, SettingsKube: settingsKube,
 		Execution: execution, Observer: observer, Objects: objects,
 		ObservationLog: observationLog, GatewayRequestTimeout: gatewayRequestTimeout, Live: live,

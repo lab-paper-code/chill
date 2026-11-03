@@ -113,11 +113,13 @@ func newManagerHarness(t *testing.T) (*Manager, serving.ObservationLogConfig) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer, err := NewObserver(store, kubefake.NewSimpleClientset(), rt, &firstfloor.Client{HTTPClient: &http.Client{Timeout: time.Second}}, testObserverConfig(store))
+	kube := kubefake.NewSimpleClientset()
+	cluster := NewClusterState(store, kube, testObserverConfig(store).Namespace)
+	observer, err := NewObserver(cluster, store, kube, rt, &firstfloor.Client{HTTPClient: &http.Client{Timeout: time.Second}}, testObserverConfig(store))
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager, err := NewManager(store, rt, observationLog, observer, ManagerConfig{DrainTimeout: time.Hour})
+	manager, err := NewManager(cluster, store, rt, observationLog, observer, ManagerConfig{DrainTimeout: time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -463,11 +465,13 @@ func TestManagerInterruptedOperationIsTerminalUntilExplicitPut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer, err := NewObserver(m.store, kubefake.NewSimpleClientset(), rt, &firstfloor.Client{HTTPClient: &http.Client{Timeout: time.Second}}, testObserverConfig(m.store))
+	kube := kubefake.NewSimpleClientset()
+	cluster := NewClusterState(m.store, kube, testObserverConfig(m.store).Namespace)
+	observer, err := NewObserver(cluster, m.store, kube, rt, &firstfloor.Client{HTTPClient: &http.Client{Timeout: time.Second}}, testObserverConfig(m.store))
 	if err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := NewManager(m.store, rt, observationLog, observer, ManagerConfig{DrainTimeout: time.Hour})
+	restarted, err := NewManager(cluster, m.store, rt, observationLog, observer, ManagerConfig{DrainTimeout: time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -713,8 +717,7 @@ func TestManagerDeleteAfterPhysicalRemovalHoldsReservationUntil404(t *testing.T)
 		err := c.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: action.(ktesting.GetAction).GetName()}, current)
 		return true, current, err
 	})
-	operations := &Operations{store: m.store, kube: kube, runtime: m.runtime, observer: o,
-		config: OperationConfig{Namespace: pod.Namespace, PollInterval: time.Millisecond}}
+	operations := &Operations{cluster: o.cluster, store: m.store, kube: kube, runtime: m.runtime, observer: o, config: OperationConfig{Namespace: pod.Namespace, PollInterval: time.Millisecond}}
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 	if err := operations.RemoveInstance(ctx, ref, physicalID(pod.UID, status.ContainerID)); err != nil {
 		t.Fatal(err)
@@ -722,8 +725,7 @@ func TestManagerDeleteAfterPhysicalRemovalHoldsReservationUntil404(t *testing.T)
 	if len(o.sources) != 0 || len(m.runtime.Instances()) != 0 {
 		t.Fatal("completed remove retained physical executor")
 	}
-	controller := &SchedulerController{store: m.store, kube: kube, runtime: m.runtime, observer: o, reservationState: reservationState{runs: map[string]*actionRun{}}}
-	o.scheduler = controller
+	controller := &m.reservations.(*ClusterState).reservation
 	// A prior operation on this Workload conflicts even after all Pods vanished.
 	controller.mu.Lock()
 	held := controller.reserveRun("held", &actionRun{action: serving.Action{Status: nativeOperationRunning}}, Operation{WorkloadUID: string(w.Desired.UID)})

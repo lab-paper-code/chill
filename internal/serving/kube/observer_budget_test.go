@@ -437,7 +437,7 @@ func TestOperationsCaptureListsOnlyTheNodePods(t *testing.T) {
 	manager, _ := newManagerHarness(t)
 	node := &core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}}
 	kube := kubefake.NewSimpleClientset(node)
-	operations := &Operations{store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, config: OperationConfig{Namespace: "chill-system"}}
+	operations := &Operations{cluster: manager.observer.cluster, store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, config: OperationConfig{Namespace: "chill-system"}}
 	_, _ = operations.Capture(context.Background(), serving.NodeReference{Name: node.Name, UID: string(node.UID)})
 	for _, action := range kube.Actions() {
 		if list, ok := action.(ktesting.ListAction); ok && action.GetResource().Resource == string(core.ResourcePods) {

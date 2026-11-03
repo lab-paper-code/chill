@@ -142,8 +142,8 @@ func settingsServiceForTest(
 			t.Error(err)
 		}
 	})
-	observer, err := servingkube.NewObserver(store, kube, execution, &sdk.Client{},
-		servingkube.ObserverConfig{Namespace: "serving"})
+	cluster := servingkube.NewClusterState(store, kube, "serving")
+	observer, err := servingkube.NewObserver(cluster, store, kube, execution, &sdk.Client{}, servingkube.ObserverConfig{Namespace: "serving"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,13 +152,11 @@ func settingsServiceForTest(
 			t.Error(err)
 		}
 	})
-	operations, err := servingkube.NewOperations(store, kube, execution, observer, &sdk.Client{},
-		servingkube.OperationConfig{Namespace: "serving", PollInterval: time.Second})
+	operations, err := servingkube.NewOperations(cluster, store, kube, execution, observer, &sdk.Client{}, servingkube.OperationConfig{Namespace: "serving", PollInterval: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller, err := servingkube.NewSchedulerController(store, kube, execution, observer, operations, observationLog,
-		servingkube.SchedulerControllerConfig{Settings: settings})
+	controller, err := servingkube.NewSchedulerController(cluster, store, kube, execution, observer, operations, observationLog, servingkube.SchedulerControllerConfig{Settings: settings})
 	if err != nil {
 		t.Fatal(err)
 	}

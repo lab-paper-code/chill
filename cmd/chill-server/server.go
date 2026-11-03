@@ -129,7 +129,8 @@ func run(ctx context.Context, opts options) (retErr error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns, transport.MaxIdleConnsPerHost, transport.IdleConnTimeout = 0, 256, 30*time.Second
 	native := &firstfloor.Client{HTTPClient: &http.Client{Transport: transport}, Diagnostics: recorder}
-	observer, err := servingkube.NewObserver(store, kube, execution, native, servingkube.ObserverConfig{
+	cluster := servingkube.NewClusterState(store, kube, opts.servingNamespace)
+	observer, err := servingkube.NewObserver(cluster, store, kube, execution, native, servingkube.ObserverConfig{
 		Namespace: opts.servingNamespace,
 		RuntimeImage: func(ctx context.Context, profile *serving.Profile) (string, error) {
 			c := profile.Condition
@@ -144,7 +145,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, observer.Close()) }()
-	manager, err := servingkube.NewManager(store, execution, observationLog, observer,
+	manager, err := servingkube.NewManager(cluster, store, execution, observationLog, observer,
 		servingkube.ManagerConfig{DrainTimeout: opts.drainTimeout, OnWorkload: publisher.workload})
 	if err != nil {
 		return err
@@ -169,7 +170,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 		return err
 	}
 	scheduler, err := newSchedulerService(
-		ctx, store, kube, reviews, execution, observer, objects, observationLog, opts,
+		ctx, cluster, store, kube, reviews, execution, observer, objects, observationLog, opts,
 		httpapi.MaximumInferenceRequestTimeout, publisher,
 	)
 	if err != nil {

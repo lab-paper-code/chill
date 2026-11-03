@@ -121,8 +121,7 @@ func TestPreparePollsReuseRecentObserverRefresh(t *testing.T) {
 	})
 	manager.observer.kube = kube
 	t.Cleanup(func() { _ = manager.observer.Close() })
-	operations := &Operations{store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer,
-		config: OperationConfig{Namespace: pod.Namespace, PollInterval: time.Minute}}
+	operations := &Operations{cluster: manager.observer.cluster, store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, config: OperationConfig{Namespace: pod.Namespace, PollInterval: time.Minute}}
 	if err := manager.observer.Refresh(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -294,8 +293,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	manager.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{
 		Proxy: http.ProxyURL(proxy),
 	}}
-	operations := &Operations{store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer,
-		config: OperationConfig{Namespace: fixture.Namespace, PollInterval: time.Millisecond}}
+	operations := &Operations{cluster: manager.observer.cluster, store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, config: OperationConfig{Namespace: fixture.Namespace, PollInterval: time.Millisecond}}
 	spec := PrepareSpec{Name: fixture.Name, MemoryBytes: 1024,
 		Instance: serving.SchedulerInstance{ID: "slot", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile, Weight: 1,
 			Allocation: serving.SchedulerAllocation{MemoryBytes: 1024}},
@@ -351,7 +349,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	}
 	t.Run("OperationCostPinsPreparedPhysicalIdentity", func(t *testing.T) {
 		operations.native = manager.observer.native
-		controller := &SchedulerController{store: manager.store}
+		controller := &SchedulerController{reservationState: &reservationState{}, store: manager.store}
 		idle := int32(1)
 		m := opcostRoot("physical-cost", time.Now(),
 			edge.OperationCostStep{Name: "prepare", Kind: edge.OperationCostStepPrepare, BatchEnergyOptimization: "beo"},
@@ -694,7 +692,7 @@ func TestMeasuredPowerChangeOnEmptyMeasurementNode(t *testing.T) {
 	// The fake agent settles every requested mode at once.
 	manager.store.client = &nodeAPI{Client: fake.NewClientBuilder().WithScheme(manager.store.client.Scheme()).WithObjects(testExecutionFacts(), &class).Build(), kube: kube, agent: settleAgent(&class)}
 	manager.observer.kube = kube
-	operations, err := NewOperations(manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
+	operations, err := NewOperations(manager.reservations.(*ClusterState), manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
 		OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond, Measurement: true})
 	if err != nil {
 		t.Fatal(err)

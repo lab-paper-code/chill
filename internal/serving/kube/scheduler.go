@@ -70,7 +70,7 @@ type SchedulerControllerState struct {
 }
 
 type SchedulerController struct {
-	reservationState
+	*reservationState
 	store      *Store
 	kube       kubernetes.Interface
 	runtime    *serving.Runtime
@@ -102,8 +102,8 @@ type SchedulerController struct {
 
 // NewSchedulerController configures control without taking ownership of routing.
 // The composition root freezes routing after restoring the actual baseline.
-func NewSchedulerController(store *Store, kube kubernetes.Interface, runtime *serving.Runtime, observer *Observer, operations *Operations, observationLog *serving.ObservationLog, config SchedulerControllerConfig) (*SchedulerController, error) {
-	if store == nil || kube == nil || runtime == nil || observer == nil || operations == nil || observationLog == nil {
+func NewSchedulerController(cluster *ClusterState, store *Store, kube kubernetes.Interface, runtime *serving.Runtime, observer *Observer, operations *Operations, observationLog *serving.ObservationLog, config SchedulerControllerConfig) (*SchedulerController, error) {
+	if cluster == nil || store == nil || kube == nil || runtime == nil || observer == nil || operations == nil || observationLog == nil {
 		return nil, errors.New("scheduler requires actual Kubernetes, runtime, observer, operation and observation log owners")
 	}
 	if err := validateSchedulerConfiguration(config); err != nil {
@@ -112,9 +112,8 @@ func NewSchedulerController(store *Store, kube kubernetes.Interface, runtime *se
 	ctx, cancel := context.WithCancel(context.Background())
 	measurement := *operations
 	measurement.config.Measurement = true
-	c := &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, measurement: &measurement, observationLog: observationLog, config: config, reservationState: reservationState{runs: map[string]*actionRun{}}, ctx: ctx, cancel: cancel}
+	c := &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, measurement: &measurement, observationLog: observationLog, config: config, reservationState: &cluster.reservation, ctx: ctx, cancel: cancel}
 	c.completions = make(chan struct{}, 1)
-	observer.scheduler = c
 	c.measureStep = c.measureOperation
 	c.capacity = serving.NewCapacityTable(goruntime.GOMAXPROCS(0), func(row serving.CapacityRow) error {
 		return observationLog.ManagementEvent(serving.ManagementEvent{WorkloadUID: row.Input.WorkloadUID, Kind: serving.CapacityRowBuiltEvent, Phase: row.Status, At: row.BuiltAt, Capacity: &row})
