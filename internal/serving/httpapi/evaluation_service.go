@@ -79,7 +79,36 @@ func evaluationTargetsDTO(values []evaluation.EvaluationLiveTarget) []Evaluation
 	return result
 }
 func evaluationViewDTO(value evaluation.EvaluationView) EvaluationView {
-	return EvaluationView{Name: value.Name, UID: value.UID, Spec: value.Spec, Conditions: value.Conditions, CurrentStage: value.CurrentStage, StartedAt: value.StartedAt, FinishedAt: value.FinishedAt, Phase: value.Phase, PublicationID: value.PublicationID, LiveTarget: evaluationTargetsDTO(value.LiveTarget)}
+	result := EvaluationView{
+		Name: value.Name, UID: value.UID, Spec: value.Spec, Conditions: value.Conditions,
+		CurrentStage: value.CurrentStage, CurrentProcedure: value.CurrentProcedure,
+		Procedures: evaluationProceduresDTO(value.Procedures),
+		StartedAt:  value.StartedAt, FinishedAt: value.FinishedAt, Phase: value.Phase,
+		PublicationID: value.PublicationID, LiveTarget: evaluationTargetsDTO(value.LiveTarget),
+	}
+	if value.Stages != nil {
+		result.Stages = make([]EvaluationStage, len(value.Stages))
+		for i, stage := range value.Stages {
+			result.Stages[i] = EvaluationStage{
+				ID: stage.ID, Name: stage.Name, UID: stage.UID,
+				Conditions: stage.Conditions, MeasurementVerdict: stage.MeasurementVerdict,
+				CurrentProcedure: stage.CurrentProcedure, Procedures: evaluationProceduresDTO(stage.Procedures),
+				StartedAt: stage.StartedAt, FinishedAt: stage.FinishedAt, GoAt: stage.GoAt,
+			}
+		}
+	}
+	return result
+}
+
+func evaluationProceduresDTO(values []evaluation.EvaluationProcedure) []EvaluationProcedure {
+	if values == nil {
+		return nil
+	}
+	result := make([]EvaluationProcedure, len(values))
+	for i, value := range values {
+		result[i] = EvaluationProcedure(value)
+	}
+	return result
 }
 
 // ConfigureLoadScenarios keeps HTTP request and response shapes outside the application.

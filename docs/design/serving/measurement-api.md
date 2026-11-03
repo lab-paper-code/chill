@@ -137,6 +137,26 @@ digest 채택은 없고 실제 target readiness로 검사한다. POST 접수는 
 한국어 항목명으로 키 경로를 표시하고 미등록 경로는 원문으로 보존한다. 목록의 변경값을
 추측하거나 모든 게시의 단건을 추가 조회하지 않는다.
 
+Evaluation list/detail GETs additionally project the Run's recorded `currentProcedure`
+and `procedures[]` (`step,startedAt,finishedAt,reason,measurementVerdict`), plus
+`stages[]` (`id,name,uid,conditions,measurementVerdict,currentProcedure,procedures,startedAt,finishedAt,goAt`).
+The evaluation service reads child EvaluationStages through its existing reader,
+in recorded `childRefs` order, matching name and UID; unreferenced, deleted, or
+replaced children are not projected. Procedure order is preserved as recorded.
+Collection reads list child Stages once for the namespace and index them by name,
+checking the referenced UID, rather than issuing a GET for every Run's child.
+Single-Run reads fetch only its referenced children.
+Absent procedure histories, conditions, and timestamps remain null; absent
+`currentProcedure`, `reason`, and `measurementVerdict` are omitted. The CRDs do
+not record procedure `status` or stage `phase`, so those fields are not exposed.
+Recorded procedure/stage `measurementVerdict` and stage `conditions` are
+projected under their CRD field names, never derived from times or conditions.
+The existing Run-level `phase` projection is unchanged. No RBAC expansion is
+needed: `serving_entrypoint_rbac.yaml` already grants EvaluationStage get/list,
+and `dashboard_reader_rbac.yaml` grants get/list/watch in the evaluation-enabled
+profile namespaces alongside EvaluationRun reads. This view does not mutate CRDs
+or add progress judgment.
+
 #### 실험 게시물 페이지·적용 SLO 출처
 
 `GET /api/v1/experiments?offset=0&limit=5`는 기존 항목(facts 포함)을 유지한
