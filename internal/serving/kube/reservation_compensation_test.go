@@ -144,7 +144,7 @@ func failedPrepareCompensationFixture(t *testing.T, evidence string) (*Scheduler
 		t.Fatal(err)
 	}
 	before := pod.DeepCopy()
-	pod.Annotations[ServingSlotAnnotation] = failedPreparationSlot
+	pod.Annotations[servingstate.ServingSlotAnnotation] = failedPreparationSlot
 	if err := api.Patch(ctx, pod, client.MergeFrom(before)); err != nil {
 		t.Fatal(err)
 	}

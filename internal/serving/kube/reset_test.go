@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"reflect"
 	"slices"
@@ -39,7 +40,7 @@ func TestDecodeManualOperationStrictKindFields(t *testing.T) {
 		`{"kind":"reset","workloadUIDs":["w"],"reason":"reset"}`,
 		`{"kind":"reset","scope":"all-non-autonomous","reason":"reset"}`,
 	} {
-		if _, err := DecodeManualOperation(json.RawMessage(raw)); err != nil {
+		if _, err := servingstate.DecodeManualOperation(json.RawMessage(raw)); err != nil {
 			t.Errorf("valid request refused: %s: %v", raw, err)
 		}
 	}
@@ -71,7 +72,7 @@ func TestDecodeManualOperationStrictKindFields(t *testing.T) {
 		{"trailing JSON", `{"kind":"reset","reason":"test"} {}`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := DecodeManualOperation(json.RawMessage(tc.raw))
+			_, err := servingstate.DecodeManualOperation(json.RawMessage(tc.raw))
 			var domain *serving.Error
 			if !errors.As(err, &domain) || domain.Code != "InvalidBody" || tc.field != "" && domain.Field != tc.field {
 				t.Fatalf("request did not fail structurally: %s: %v", tc.raw, err)
@@ -139,7 +140,7 @@ func (c *resetAPI) Delete(ctx context.Context, obj client.Object, opts ...client
 		if err := c.Client.Get(ctx, client.ObjectKeyFromObject(pod), current); err != nil {
 			return err
 		}
-		status := firstfloorStatus(current)
+		status := servingstate.FirstfloorStatus(current)
 		status.Ready = false
 		status.State = core.ContainerState{Terminated: &core.ContainerStateTerminated{ContainerID: status.ContainerID, ExitCode: 0}}
 		current.Status.Phase = core.PodSucceeded
@@ -180,12 +181,12 @@ func newResetHarness(t *testing.T) *resetHarness {
 	owned, node, _, class := observerSourceFixture()
 	owned.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", Name: "selected", UID: types.UID(selected.Applied.UID)}}
 	owned.Status.Phase = core.PodSucceeded
-	status := firstfloorStatus(owned)
+	status := servingstate.FirstfloorStatus(owned)
 	status.Ready = false
 	status.State = core.ContainerState{Terminated: &core.ContainerStateTerminated{ContainerID: status.ContainerID, ExitCode: 0}}
 	other := owned.DeepCopy()
 	other.Name, other.UID = "foreign-instance", "foreign-pod-uid"
-	other.Labels[instancePodUIDLabel] = string(other.UID)
+	other.Labels[servingstate.InstancePodUIDLabel] = string(other.UID)
 	other.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", Name: "foreign", UID: types.UID(foreign.Applied.UID)}}
 	other.Spec.NodeName = "foreign-node"
 	otherNode := node.DeepCopy()
@@ -199,8 +200,8 @@ func newResetHarness(t *testing.T) *resetHarness {
 	kube := kubefake.NewSimpleClientset(node, otherNode, owned.DeepCopy(), other.DeepCopy(), observerServiceFixture(owned), observerServiceFixture(other))
 	api := &resetAPI{Client: &nodeAPI{Client: manager.store.client, kube: kube}, kube: kube}
 	manager.store.client, manager.observer.kube = api, kube
-	operations, err := NewOperations(manager.reservations, manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
-		OperationConfig{Namespace: owned.Namespace, PollInterval: time.Millisecond})
+	operations, err := servingops.NewOperations(manager.reservations, manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
+		servingops.OperationConfig{Namespace: owned.Namespace, PollInterval: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,8 +237,8 @@ func newResetHarness(t *testing.T) *resetHarness {
 	return h
 }
 
-func (h *resetHarness) request() ManualOperation {
-	return ManualOperation{Kind: servingstate.OperationReset, WorkloadUIDs: []string{h.selectedUID}, Reason: "finish measured trial", ActorUsername: "operator", ActorUID: "operator-uid"}
+func (h *resetHarness) request() servingstate.ManualOperation {
+	return servingstate.ManualOperation{Kind: servingstate.OperationReset, WorkloadUIDs: []string{h.selectedUID}, Reason: "finish measured trial", ActorUsername: "operator", ActorUID: "operator-uid"}
 }
 
 func (h *resetHarness) configuration(t *testing.T) (*core.ConfigMap, map[string]json.RawMessage) {
@@ -297,7 +298,7 @@ func TestResetTwiceCleansOnlyOwnedPhysicalInstancesAC33(t *testing.T) {
 		},
 		func() error { return h.api.Get(ctx, client.ObjectKeyFromObject(h.owned), &core.Pod{}) },
 		func() error {
-			_, err := h.kube.CoreV1().Services(h.owned.Namespace).Get(ctx, instanceService(h.owned).Name, meta.GetOptions{})
+			_, err := h.kube.CoreV1().Services(h.owned.Namespace).Get(ctx, servingstate.InstanceService(h.owned).Name, meta.GetOptions{})
 			return err
 		},
 		func() error { return h.api.Get(ctx, client.ObjectKeyFromObject(h.owned), &core.ConfigMap{}) },
@@ -310,7 +311,7 @@ func TestResetTwiceCleansOnlyOwnedPhysicalInstancesAC33(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(foreign.OwnerReferences, h.foreign.OwnerReferences) {
 		t.Fatalf("foreign ownership changed: %+v %v", foreign, err)
 	}
-	if _, err := h.kube.CoreV1().Services(h.foreign.Namespace).Get(ctx, instanceService(h.foreign).Name, meta.GetOptions{}); err != nil {
+	if _, err := h.kube.CoreV1().Services(h.foreign.Namespace).Get(ctx, servingstate.InstanceService(h.foreign).Name, meta.GetOptions{}); err != nil {
 		t.Fatal("reset removed foreign executor Service", err)
 	}
 	cm, document := h.configuration(t)
@@ -366,7 +367,7 @@ func TestResetInheritsOnlyTerminalContainedReservationsAC38(t *testing.T) {
 			old := &actionRun{owner: oldID, reserved: true,
 				action: serving.Action{Kind: servingstate.OperationRoute, Status: servingstate.NativeOperationFailed},
 				scope: resourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{h.selectedUID}, Pods: []string{string(h.owned.UID)},
-					Instances: []string{physicalID(h.owned.UID, firstfloorStatus(h.owned).ContainerID)}},
+					Instances: []string{servingstate.PhysicalID(h.owned.UID, servingstate.FirstfloorStatus(h.owned).ContainerID)}},
 				result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.OperationRoute, WorkloadUID: h.selectedUID}, EndedAt: time.Now().Add(-time.Second), Status: servingstate.NativeOperationFailed}}
 			switch owner {
 			case servingstate.NativeOperationPartial:
@@ -627,7 +628,7 @@ func TestResetRetriesPowerReturnAfterPodsDisappearAC33(t *testing.T) {
 				t.Fatalf("retry did not verify actual lowest mode: %+v err=%v", completed, err)
 			}
 			node, err := h.kube.CoreV1().Nodes().Get(ctx, testNode.Name, meta.GetOptions{})
-			if err != nil || readBackMode(node, class) != lowMode || !slices.ContainsFunc(node.Status.Conditions, func(condition core.NodeCondition) bool {
+			if err != nil || servingstate.ReadBackMode(node, class) != lowMode || !slices.ContainsFunc(node.Status.Conditions, func(condition core.NodeCondition) bool {
 				return condition.Type == core.NodeReady && condition.Status == core.ConditionTrue
 			}) {
 				t.Fatalf("completed reset lacks lowest-mode Ready readback: %+v err=%v", node, err)
@@ -827,19 +828,19 @@ func TestResetScopeResolvesCurrentNonAutonomousWorkloads(t *testing.T) {
 func TestResetRefusesInvalidScopeBeforeAnyMutation(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
-		alter func(*ManualOperation)
+		alter func(*servingstate.ManualOperation)
 	}{
-		{"missing scope", func(r *ManualOperation) { r.WorkloadUIDs = nil }},
-		{"empty list", func(r *ManualOperation) { r.WorkloadUIDs = []string{} }},
-		{"both selectors", func(r *ManualOperation) { r.Scope = nonAutonomousResetScope }},
-		{"unknown scope", func(r *ManualOperation) { r.WorkloadUIDs = nil; r.Scope = "all" }},
-		{"unknown UID", func(r *ManualOperation) { r.WorkloadUIDs = []string{"absent"} }},
-		{"empty UID", func(r *ManualOperation) { r.WorkloadUIDs = []string{""} }},
-		{"duplicate UID", func(r *ManualOperation) { r.WorkloadUIDs = append(r.WorkloadUIDs, r.WorkloadUIDs[0]) }},
-		{"missing reason", func(r *ManualOperation) { r.Reason = " \t" }},
-		{"single UID field", func(r *ManualOperation) { r.WorkloadUID = r.WorkloadUIDs[0] }},
-		{"node field", func(r *ManualOperation) { r.Node = testNode }},
-		{"weights field", func(r *ManualOperation) { r.Weights = map[string]int32{"p/c": 1} }},
+		{"missing scope", func(r *servingstate.ManualOperation) { r.WorkloadUIDs = nil }},
+		{"empty list", func(r *servingstate.ManualOperation) { r.WorkloadUIDs = []string{} }},
+		{"both selectors", func(r *servingstate.ManualOperation) { r.Scope = nonAutonomousResetScope }},
+		{"unknown scope", func(r *servingstate.ManualOperation) { r.WorkloadUIDs = nil; r.Scope = "all" }},
+		{"unknown UID", func(r *servingstate.ManualOperation) { r.WorkloadUIDs = []string{"absent"} }},
+		{"empty UID", func(r *servingstate.ManualOperation) { r.WorkloadUIDs = []string{""} }},
+		{"duplicate UID", func(r *servingstate.ManualOperation) { r.WorkloadUIDs = append(r.WorkloadUIDs, r.WorkloadUIDs[0]) }},
+		{"missing reason", func(r *servingstate.ManualOperation) { r.Reason = " \t" }},
+		{"single UID field", func(r *servingstate.ManualOperation) { r.WorkloadUID = r.WorkloadUIDs[0] }},
+		{"node field", func(r *servingstate.ManualOperation) { r.Node = testNode }},
+		{"weights field", func(r *servingstate.ManualOperation) { r.Weights = map[string]int32{"p/c": 1} }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newResetHarness(t)
@@ -908,7 +909,7 @@ func TestResetDoesNotTreatForeignBindingAsOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := current.DeepCopy()
-	current.Annotations[ServingRoutingAnnotation] = `{"` + h.selectedUID + `":1}`
+	current.Annotations[servingstate.ServingRoutingAnnotation] = `{"` + h.selectedUID + `":1}`
 	if err := h.api.Patch(context.Background(), current, client.MergeFrom(before)); err != nil {
 		t.Fatal(err)
 	}
@@ -952,9 +953,9 @@ func TestResetCleansAllDuplicateSlotExecutorsAC36(t *testing.T) {
 			t.Fatal(err)
 		}
 		before := pod.DeepCopy()
-		pod.Annotations[ServingSlotAnnotation] = "shared-slot"
+		pod.Annotations[servingstate.ServingSlotAnnotation] = "shared-slot"
 		if name == "b" {
-			pod.Annotations[ServingSlotAnnotation] = physicalID(pods[0].UID, firstfloorStatus(pods[0]).ContainerID)
+			pod.Annotations[servingstate.ServingSlotAnnotation] = servingstate.PhysicalID(pods[0].UID, servingstate.FirstfloorStatus(pods[0]).ContainerID)
 		}
 		if err := api.Patch(ctx, pod, client.MergeFrom(before)); err != nil {
 			t.Fatal(err)
@@ -963,9 +964,9 @@ func TestResetCleansAllDuplicateSlotExecutorsAC36(t *testing.T) {
 	}
 	other := pods[0].DeepCopy()
 	other.Name, other.UID, other.ResourceVersion = "c", "foreign-pod", ""
-	other.Labels[instancePodUIDLabel] = string(other.UID)
+	other.Labels[servingstate.InstancePodUIDLabel] = string(other.UID)
 	other.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", Name: foreign.Name, UID: workload.UID}}
-	other.Annotations[ServingRoutingAnnotation] = `{"` + foreign.UID + `":1000}`
+	other.Annotations[servingstate.ServingRoutingAnnotation] = `{"` + foreign.UID + `":1000}`
 	if err := api.Create(ctx, other); err != nil {
 		t.Fatal(err)
 	}
@@ -985,11 +986,11 @@ func TestResetCleansAllDuplicateSlotExecutorsAC36(t *testing.T) {
 	if err := api.Create(ctx, cm); err != nil {
 		t.Fatal(err)
 	}
-	id := physicalID(other.UID, firstfloorStatus(other).ContainerID)
+	id := servingstate.PhysicalID(other.UID, servingstate.FirstfloorStatus(other).ContainerID)
 	follow, stop := context.WithCancel(controller.observer.ctx)
 	defer stop()
 	controller.observer.sources[string(other.UID)] = &nativeSource{pod: types.NamespacedName{Namespace: other.Namespace, Name: other.Name},
-		uid: other.UID, containerID: firstfloorStatus(other).ContainerID, follow: follow, cancel: stop}
+		uid: other.UID, containerID: servingstate.FirstfloorStatus(other).ContainerID, follow: follow, cancel: stop}
 	controller.config.StaticRouting = true
 	controller.config.ConfigurationName, controller.config.ConfigurationKey = "duplicate-reset-config", "scheduler.json"
 	controller.config.Settings.AutonomousWorkloads = []string{selected.UID, foreign.UID}
@@ -1009,13 +1010,13 @@ func TestResetCleansAllDuplicateSlotExecutorsAC36(t *testing.T) {
 		t.Fatalf("duplicate physical sources not visible: %+v %v", snapshot.Instances, err)
 	}
 	controller.state.Snapshot = snapshot
-	aID := physicalID(pods[0].UID, firstfloorStatus(pods[0]).ContainerID)
+	aID := servingstate.PhysicalID(pods[0].UID, servingstate.FirstfloorStatus(pods[0]).ContainerID)
 	actual, _ := controller.runtime.SchedulerRouting()
 	if actual[selected.UID][aID] != 1000 || actual[foreign.UID][id] != 1000 {
 		t.Fatalf("fixture did not actually route A and foreign C: %v", actual)
 	}
 	foreignBefore := other.DeepCopy()
-	request := ManualOperation{Kind: servingstate.OperationReset, WorkloadUIDs: []string{selected.UID}, Reason: "clean duplicate slot"}
+	request := servingstate.ManualOperation{Kind: servingstate.OperationReset, WorkloadUIDs: []string{selected.UID}, Reason: "clean duplicate slot"}
 	first, err := controller.ExecuteManual(ctx, request)
 	assertResetComplete(t, first, err)
 	if len(first.DrainNative) != 2 {
@@ -1027,7 +1028,7 @@ func TestResetCleansAllDuplicateSlotExecutorsAC36(t *testing.T) {
 				t.Fatalf("owned resource remains (%T): %v", object, err)
 			}
 		}
-		if _, err := kube.CoreV1().Services(pod.Namespace).Get(ctx, instanceService(pod).Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+		if _, err := kube.CoreV1().Services(pod.Namespace).Get(ctx, servingstate.InstanceService(pod).Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
 			t.Fatalf("duplicate executor Service survives reset: %v", err)
 		}
 	}
@@ -1063,7 +1064,7 @@ func TestResetRemovesInitFailedPodByUIDAC37(t *testing.T) {
 			if err := h.api.Get(ctx, client.ObjectKeyFromObject(h.owned), pod); err != nil {
 				t.Fatal(err)
 			}
-			pod.Status.ContainerStatuses = []core.ContainerStatus{{Name: firstfloorContainerName,
+			pod.Status.ContainerStatuses = []core.ContainerStatus{{Name: servingstate.FirstfloorContainerName,
 				State: core.ContainerState{Waiting: &core.ContainerStateWaiting{Reason: "PodInitializing"}}}}
 			pod.Status.InitContainerStatuses = []core.ContainerStatus{{Name: "artifact",
 				State: core.ContainerState{Terminated: &core.ContainerStateTerminated{ExitCode: 1}}}}

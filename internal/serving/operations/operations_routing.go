@@ -1,21 +1,20 @@
-package kube
+package operations
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
-	"reflect"
-	"time"
-
+	context "context"
+	json "encoding/json"
+	errors "errors"
+	fmt "fmt"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
-	"github.com/lab-paper-code/chill/internal/serving"
+	serving "github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	types "k8s.io/apimachinery/pkg/types"
+	reflect "reflect"
+	client "sigs.k8s.io/controller-runtime/pkg/client"
+	time "time"
 )
 
 func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCandidate, result *servingstate.OperationResult) error {
@@ -26,15 +25,15 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 	if uids != nil && len(uids) == 0 {
 		return nil
 	}
-	validate := o.runtime.ValidateSchedulerWorkloadsTarget
+	validate := o.Runtime.ValidateSchedulerWorkloadsTarget
 	if result.Operation.Kind == servingstate.OperationUnroute {
-		validate = o.runtime.ValidateSchedulerUnrouteTarget
+		validate = o.Runtime.ValidateSchedulerUnrouteTarget
 	}
 	if err := validate(target, uids); err != nil {
 		return err
 	}
 	if result.Operation.Kind != servingstate.OperationUnroute {
-		uids = positiveWorkloadScope(target, uids)
+		uids = servingstate.PositiveWorkloadScope(target, uids)
 		if len(uids) == 0 {
 			return nil
 		}
@@ -42,11 +41,11 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 			result.Operation.WorkloadUIDs = uids
 		}
 	}
-	result.Before.Routing, _ = o.runtime.SchedulerRouting()
+	result.Before.Routing, _ = o.Runtime.SchedulerRouting()
 	if result.Before.Native == nil {
 		result.Before.Native = map[string]native.State{}
 	}
-	for _, instance := range o.runtime.Instances() {
+	for _, instance := range o.Runtime.Instances() {
 		if instance.Native != nil {
 			if _, observed := result.Before.Native[instance.ID]; !observed {
 				result.Before.Native[instance.ID] = *instance.Native
@@ -55,7 +54,7 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 	}
 	defer func() {
 		result.Actual.At = time.Now().UTC()
-		result.Actual.Routing, _ = o.runtime.SchedulerRouting()
+		result.Actual.Routing, _ = o.Runtime.SchedulerRouting()
 	}()
 	for _, instance := range target.Instances {
 		if !result.Operation.ControlsWorkload(instance.WorkloadUID) || target.Routing[instance.WorkloadUID][instance.ID] <= 0 {
@@ -67,27 +66,27 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 		policy := native.Policy{DecisionID: target.ID, ProfileID: instance.Profile.ID,
 			DeadlinePolicy: native.EffectiveDeadlinePolicy(instance.Profile.Condition.Firstfloor.DeadlinePolicy),
 			MaxBatchSize:   instance.MaxBatch, MaxBatchWaitMS: float64(instance.MaxWait) / float64(time.Millisecond), FixedBatchSize: instance.FixedBatchSize}
-		if err := o.applyPolicy(ctx, instance.ID, policy, result); err != nil {
+		if err := o.ApplyPolicy(ctx, instance.ID, policy, result); err != nil {
 			return fmt.Errorf("apply policy to %s: %w", instance.ID, err)
 		}
 	}
-	if err := o.observer.Refresh(ctx); err != nil {
+	if err := o.Observer.Refresh(ctx); err != nil {
 		return err
 	}
 	var applyErr error
 	if result.Operation.Kind == servingstate.OperationUnroute {
-		applyErr = o.runtime.ApplySchedulerUnrouteTarget(target, uids)
+		applyErr = o.Runtime.ApplySchedulerUnrouteTarget(target, uids)
 	} else {
-		applyErr = o.runtime.ApplySchedulerWorkloadsTarget(target, uids)
+		applyErr = o.Runtime.ApplySchedulerWorkloadsTarget(target, uids)
 	}
 	if applyErr != nil {
 		return applyErr
 	}
-	weights, _ := o.runtime.SchedulerRouting()
-	o.cluster.ClearRoutedRemovals(result.Operation, weights)
+	weights, _ := o.Runtime.SchedulerRouting()
+	o.Cluster.ClearRoutedRemovals(result.Operation, weights)
 	// Explicit manual declarations must not overwrite the Pod defaults release restores.
 	if result.Operation.WorkloadUID == "" {
-		if err := o.persistRouting(ctx, "", result.Operation.WorkloadUIDs); err != nil {
+		if err := o.PersistRouting(ctx, "", result.Operation.WorkloadUIDs); err != nil {
 			return err
 		}
 	}
@@ -95,31 +94,31 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 	return nil
 }
 
-// persistRouting records declared routes on the selected instance, or all known
+// PersistRouting records declared routes on the selected instance, or all known
 // instances when only is empty. A non-nil UID scope preserves every other Pod seed.
-func (o *Operations) persistRouting(ctx context.Context, only string, uids []string) error {
+func (o *Operations) PersistRouting(ctx context.Context, only string, uids []string) error {
 	if uids != nil && len(uids) == 0 {
 		return nil
 	}
-	pods, err := o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, meta.ListOptions{})
+	pods, err := o.Kube.CoreV1().Pods(o.Config.Namespace).List(ctx, meta.ListOptions{})
 	if err != nil {
 		return err
 	}
-	declared := o.runtime.InstanceRouting()
+	declared := o.Runtime.InstanceRouting()
 	for i := range pods.Items {
 		pod := &pods.Items[i]
-		status := firstfloorStatus(pod)
+		status := servingstate.FirstfloorStatus(pod)
 		if status == nil {
 			continue
 		}
-		id := physicalID(pod.UID, status.ContainerID)
+		id := servingstate.PhysicalID(pod.UID, status.ContainerID)
 		routing, known := declared[id]
 		if (only != "" && id != only) || (only == "" && !known) {
 			continue
 		}
 		if uids != nil {
 			var seeds map[string]int32
-			if raw := pod.Annotations[ServingRoutingAnnotation]; raw != "" {
+			if raw := pod.Annotations[servingstate.ServingRoutingAnnotation]; raw != "" {
 				if err := json.Unmarshal([]byte(raw), &seeds); err != nil {
 					return err
 				}
@@ -153,31 +152,31 @@ func (o *Operations) persistRouting(ctx context.Context, only string, uids []str
 		if err != nil {
 			return err
 		}
-		if pod.Annotations[ServingRoutingAnnotation] == string(raw) {
+		if pod.Annotations[servingstate.ServingRoutingAnnotation] == string(raw) {
 			continue
 		}
 		previous := pod.DeepCopy()
 		if pod.Annotations == nil {
 			pod.Annotations = map[string]string{}
 		}
-		pod.Annotations[ServingRoutingAnnotation] = string(raw)
-		if err = o.store.client.Patch(ctx, pod, client.MergeFromWithOptions(previous, client.MergeFromWithOptimisticLock{})); err != nil {
+		pod.Annotations[servingstate.ServingRoutingAnnotation] = string(raw)
+		if err = o.Store.Client().Patch(ctx, pod, client.MergeFromWithOptions(previous, client.MergeFromWithOptimisticLock{})); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (o *Operations) applyPolicy(ctx context.Context, instanceID string, policy native.Policy, result *servingstate.OperationResult) error {
-	pods, err := o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, meta.ListOptions{})
+func (o *Operations) ApplyPolicy(ctx context.Context, instanceID string, policy native.Policy, result *servingstate.OperationResult) error {
+	pods, err := o.Kube.CoreV1().Pods(o.Config.Namespace).List(ctx, meta.ListOptions{})
 	if err != nil {
 		return err
 	}
 	var selected *core.Pod
 	for i := range pods.Items {
 		p := &pods.Items[i]
-		status := firstfloorStatus(p)
-		if status != nil && physicalID(p.UID, status.ContainerID) == instanceID {
+		status := servingstate.FirstfloorStatus(p)
+		if status != nil && servingstate.PhysicalID(p.UID, status.ContainerID) == instanceID {
 			selected = p
 			break
 		}
@@ -185,7 +184,7 @@ func (o *Operations) applyPolicy(ctx context.Context, instanceID string, policy 
 	if selected == nil {
 		for i := range pods.Items {
 			p := &pods.Items[i]
-			if p.Annotations[ServingSlotAnnotation] != instanceID {
+			if p.Annotations[servingstate.ServingSlotAnnotation] != instanceID {
 				continue
 			}
 			if selected != nil {
@@ -198,7 +197,7 @@ func (o *Operations) applyPolicy(ctx context.Context, instanceID string, policy 
 		return errors.New("actual policy target unavailable")
 	}
 	cm := &core.ConfigMap{}
-	if err = o.store.client.Get(ctx, types.NamespacedName{Namespace: selected.Namespace, Name: selected.Name}, cm); err != nil {
+	if err = o.Store.Client().Get(ctx, types.NamespacedName{Namespace: selected.Namespace, Name: selected.Name}, cm); err != nil {
 		return err
 	}
 	var config native.Config
@@ -219,33 +218,33 @@ func (o *Operations) applyPolicy(ctx context.Context, instanceID string, policy 
 	}
 	before := cm.DeepCopy()
 	cm.Data["config.json"] = string(raw)
-	if err = o.store.client.Patch(ctx, cm, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
+	if err = o.Store.Client().Patch(ctx, cm, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
 		return err
 	}
 	if policyChanged {
 		result.Progress = append(result.Progress, instanceID+": desired policy configuration persisted")
 	}
 	previous := selected.DeepCopy()
-	selected.Annotations[ServingPolicyAnnotation] = policy.DecisionID
-	if err = o.store.client.Patch(ctx, selected, client.MergeFromWithOptions(previous, client.MergeFromWithOptimisticLock{})); err != nil {
+	selected.Annotations[servingstate.ServingPolicyAnnotation] = policy.DecisionID
+	if err = o.Store.Client().Patch(ctx, selected, client.MergeFromWithOptions(previous, client.MergeFromWithOptimisticLock{})); err != nil {
 		return err
 	}
-	if previous.Annotations[ServingPolicyAnnotation] != policy.DecisionID {
+	if previous.Annotations[servingstate.ServingPolicyAnnotation] != policy.DecisionID {
 		result.Progress = append(result.Progress, instanceID+": desired policy annotation persisted")
 	}
-	return o.wait(ctx, func() (bool, error) {
-		current, e := o.kube.CoreV1().Pods(selected.Namespace).Get(ctx, selected.Name, meta.GetOptions{})
+	return o.Wait(ctx, func() (bool, error) {
+		current, e := o.Kube.CoreV1().Pods(selected.Namespace).Get(ctx, selected.Name, meta.GetOptions{})
 		if e != nil {
 			return false, e
 		}
-		if !sameRunningContainer(selected, current) {
+		if !servingstate.SameRunningContainer(selected, current) {
 			return false, errors.New("policy target physical executor changed")
 		}
-		endpoint, e := nativeInstanceEndpoint(ctx, o.kube, current)
+		endpoint, e := servingstate.NativeInstanceEndpoint(ctx, o.Kube, current)
 		if e != nil {
 			return false, e
 		}
-		state, e := o.native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: config.Model})
+		state, e := o.Native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: config.Model})
 		if e != nil {
 			return false, e
 		}
@@ -259,7 +258,7 @@ func (o *Operations) applyPolicy(ctx context.Context, instanceID string, policy 
 		if result.Actual.Native == nil {
 			result.Actual.Native = map[string]native.State{}
 		}
-		result.Actual.Native[physicalID(current.UID, firstfloorStatus(current).ContainerID)] = state
+		result.Actual.Native[servingstate.PhysicalID(current.UID, servingstate.FirstfloorStatus(current).ContainerID)] = state
 		result.Progress = append(result.Progress, instanceID+": native policy acknowledged")
 		return true, nil
 	})

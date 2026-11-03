@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"strings"
@@ -137,7 +138,7 @@ func operationProjectionService(t *testing.T) (*measurementService, *operationPr
 		Kind: "prepare",
 		Node: serving.NodeReference{Name: "node", UID: "node-uid"},
 	}
-	key := servingkube.OperationMeasurementKey(operation)
+	key := servingops.OperationMeasurementKey(operation)
 	cr := &api.OperationCostMeasurement{
 		ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "cost", UID: "cost-uid"},
 		Spec: api.OperationCostMeasurementSpec{Node: "node", Steps: []api.OperationCostStep{
@@ -153,10 +154,10 @@ func operationProjectionService(t *testing.T) (*measurementService, *operationPr
 		},
 	}
 	start := time.Date(2026, 10, 30, 12, 0, 0, 123, time.UTC)
-	record := servingkube.OperationMeasurement{
-		SchemaVersion: servingkube.OperationMeasurementSchema,
+	record := servingops.OperationMeasurement{
+		SchemaVersion: servingops.OperationMeasurementSchema,
 		Verdict:       string(api.MeasurementPhaseFailed), Reason: "original-step-reason",
-		Request: servingkube.MeasurementRequest{Operation: operation, Store: "evidence"},
+		Request: servingops.MeasurementRequest{Operation: operation, Store: "evidence"},
 		Result: servingstate.OperationResult{
 			Operation: operation,
 			StartedAt: start,
@@ -280,7 +281,7 @@ func TestMeasurementOperationProjectionParallelReadsPreserveOrder(t *testing.T) 
 	if err := service.client.Get(ctx, types.NamespacedName{Namespace: "allowed", Name: "cost"}, &source); err != nil {
 		t.Fatal(err)
 	}
-	var record servingkube.OperationMeasurement
+	var record servingops.OperationMeasurement
 	if err := json.Unmarshal(storage.payload, &record); err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +297,7 @@ func TestMeasurementOperationProjectionParallelReadsPreserveOrder(t *testing.T) 
 		operation := record.Request.Operation
 		operation.ID = cr.Name + ".0.prepare"
 		record.Request.Operation, record.Result.Operation = operation, operation
-		key := servingkube.OperationMeasurementKey(operation)
+		key := servingops.OperationMeasurementKey(operation)
 		cr.Status.Steps[0].Key = key
 		payload, err := json.Marshal(record)
 		if err != nil {

@@ -121,7 +121,7 @@ func TestFailedManualRoutingReleasesOnlyFreshKnownEffectsAC38(t *testing.T) {
 			defer cancel()
 			pod, node, profile, _ := observerSourceFixture()
 			ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-			id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+			id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
 			wanted := serving.SchedulerInstance{ID: id, Node: ref, Profile: &profile, WorkloadUID: "workload", MaxBatch: 2}
 			target := serving.SchedulerCandidate{ID: "new-policy", Instances: []serving.SchedulerInstance{wanted}}
 			previous := native.Metadata{ProfileID: profile.ID, DecisionID: "old-policy", Policy: native.Policy{ProfileID: profile.ID, DecisionID: "old-policy", MaxBatchSize: 1}}
@@ -181,7 +181,7 @@ func TestPartialAutonomousOwnerAdoptsOnlyFreshKnownEffectsAC38(t *testing.T) {
 				pod, node, profile, _ := observerSourceFixture()
 				pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: "workload"}}
 				ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-				id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+				id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
 				ended := time.Now().UTC()
 				wanted := serving.SchedulerInstance{ID: id, PodUID: string(pod.UID), Node: ref, Profile: &profile, WorkloadUID: "workload", MaxBatch: 2}
 				if kind == servingstate.OperationPrepare {
@@ -298,12 +298,12 @@ func assertPartialReservationReceipt(t *testing.T, c *SchedulerController, child
 func TestPartialOwnerKeepsUnconfirmedWorkloadAndPendingPowerAC38(t *testing.T) {
 	pod, node, profile, _ := observerSourceFixture()
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-	id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+	id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
 	ended := time.Now().UTC()
 	policy := native.Policy{ProfileID: profile.ID, DecisionID: "partial", MaxBatchSize: 2}
 	wanted := serving.SchedulerInstance{ID: id, Node: ref, Profile: &profile, WorkloadUID: "first", MaxBatch: 2}
 	other := wanted
-	other.ID, other.WorkloadUID = physicalID(otherPodUID, firstfloorStatus(pod).ContainerID), "second"
+	other.ID, other.WorkloadUID = servingstate.PhysicalID(otherPodUID, servingstate.FirstfloorStatus(pod).ContainerID), "second"
 	target := &serving.SchedulerCandidate{ID: policy.DecisionID, Instances: []serving.SchedulerInstance{wanted, other}}
 	scope := resourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{"first", "second"}, Pods: []string{string(pod.UID), otherPodUID}, Instances: []string{id, other.ID}}
 	child := &actionRun{owner: target.ID, reserved: true, scope: scope, action: serving.Action{ID: "route", Kind: servingstate.OperationRoute, Status: servingstate.NativeOperationPartial},
@@ -368,7 +368,7 @@ func TestTerminalPreparationsShareOnlyFrozenSiblingReceiptsAC38(t *testing.T) {
 				pod.UID, pod.Spec.NodeName = uid, node.Name
 				pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: "workload"}}
 				ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-				id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+				id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
 				wanted := serving.SchedulerInstance{ID: "slot-" + string(uid), Node: ref, Profile: &profile, WorkloadUID: "workload", MaxBatch: 2}
 				policy := native.Policy{ProfileID: profile.ID, DecisionID: target.ID, MaxBatchSize: wanted.MaxBatch}
 				action := serving.Action{ID: "prepare-" + string(uid), Kind: servingstate.OperationPrepare, Node: ref, Instance: wanted.ID, Status: servingstate.NativeOperationComplete}
@@ -476,7 +476,7 @@ func TestFailedOwnerAdoptsRegisteredRouteReceiptAC38(t *testing.T) {
 			pod, node, profile, _ := observerSourceFixture()
 			pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: "workload"}}
 			ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-			id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+			id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
 			ended := time.Now().UTC()
 			observed := ended.Add(3 * time.Second)
 			wanted := serving.SchedulerInstance{ID: id, Node: ref, Profile: &profile, WorkloadUID: "workload", MaxBatch: 2}
@@ -547,7 +547,7 @@ func TestCanceledPrepareAdoptsRegisteredReadySubsetReceiptAC38(t *testing.T) {
 			pod, node, profile, _ := observerSourceFixture()
 			pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: "workload"}}
 			ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-			id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+			id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
 			ended := time.Now().UTC()
 			observed := ended.Add(3 * time.Second)
 			wanted := serving.SchedulerInstance{ID: id, Node: ref, Profile: &profile, WorkloadUID: "workload", MaxBatch: 2}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"math"
 	"net/http"
@@ -238,8 +239,8 @@ func schedulerEmptyPoolController(t *testing.T) *SchedulerController {
 	}
 	kube := kubefake.NewSimpleClientset(node)
 	manager.observer.kube = kube
-	operations, err := NewOperations(manager.reservations, manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
-		OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond})
+	operations, err := servingops.NewOperations(manager.reservations, manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
+		servingops.OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -483,14 +484,14 @@ func TestScheduledPreparationOwnsItsWorkload(t *testing.T) {
 		t.Fatalf("planner preparation lost its Workload owner: %+v", op.Prepare)
 	}
 	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Annotations: map[string]string{}}}
-	(&Operations{}).placeServingPod(pod, op.Prepare.Owner, op.Prepare.Instance)
-	if owner, err := resourceWorkloadOwner(pod, nil); err != nil || owner != "w1" || pod.Annotations[ServingRoutingAnnotation] != "{}" {
-		t.Fatalf("pod owner %q (%v), routing %s", owner, err, pod.Annotations[ServingRoutingAnnotation])
+	(&servingops.Operations{}).PlaceServingPod(pod, op.Prepare.Owner, op.Prepare.Instance)
+	if owner, err := resourceWorkloadOwner(pod, nil); err != nil || owner != "w1" || pod.Annotations[servingstate.ServingRoutingAnnotation] != "{}" {
+		t.Fatalf("pod owner %q (%v), routing %s", owner, err, pod.Annotations[servingstate.ServingRoutingAnnotation])
 	}
 	pod = &core.Pod{ObjectMeta: meta.ObjectMeta{Annotations: map[string]string{}}}
-	(&Operations{}).placeServingPod(pod, op.Prepare.Owner, serving.SchedulerInstance{Weight: 3})
-	if pod.Annotations[ServingRoutingAnnotation] != `{"w1":3}` {
-		t.Fatalf("a manual preparation must serve its owner at once: %s", pod.Annotations[ServingRoutingAnnotation])
+	(&servingops.Operations{}).PlaceServingPod(pod, op.Prepare.Owner, serving.SchedulerInstance{Weight: 3})
+	if pod.Annotations[servingstate.ServingRoutingAnnotation] != `{"w1":3}` {
+		t.Fatalf("a manual preparation must serve its owner at once: %s", pod.Annotations[servingstate.ServingRoutingAnnotation])
 	}
 }
 
@@ -511,7 +512,7 @@ func TestPreparedPodRequiresMeasuredGPUEnvironment(t *testing.T) {
 	desired := &core.Pod{Spec: core.PodSpec{Containers: []core.Container{{
 		Name: "firstfloor", Env: []core.EnvVar{{Name: "CUDA_VISIBLE_DEVICES", Value: "GPU-measured"}},
 	}}}}
-	if !samePreparedPod(desired.DeepCopy(), desired) {
+	if !servingops.SamePreparedPod(desired.DeepCopy(), desired) {
 		t.Fatal("matching measured GPU environment was rejected")
 	}
 	for _, env := range [][]core.EnvVar{
@@ -519,7 +520,7 @@ func TestPreparedPodRequiresMeasuredGPUEnvironment(t *testing.T) {
 	} {
 		actual := desired.DeepCopy()
 		actual.Spec.Containers[0].Env = env
-		if samePreparedPod(actual, desired) {
+		if servingops.SamePreparedPod(actual, desired) {
 			t.Fatal("preparation reused without the measured GPU environment")
 		}
 	}
@@ -560,7 +561,7 @@ func TestRemoveRejectsPhysicalInstanceOnDifferentNodeBeforeMutation(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	operations := &Operations{kube: kube, runtime: observer.runtime, config: OperationConfig{Namespace: observer.config.Namespace}}
+	operations := &servingops.Operations{Kube: kube, Runtime: observer.runtime, Config: servingops.OperationConfig{Namespace: observer.config.Namespace}}
 	if err = operations.RemoveInstance(context.Background(), serving.NodeReference{Name: "a", UID: "node-a"}, "pod-b/containerd://b"); err == nil || mutated {
 		t.Fatal("cross-node physical removal was not rejected before mutation", err, mutated)
 	}
@@ -637,7 +638,7 @@ func TestCaptureNodePodsAggregatesNonServingBudget(t *testing.T) {
 				pods.Items = append(pods.Items, core.Pod{Spec: core.PodSpec{NodeName: node.Name, Containers: []core.Container{{Resources: core.ResourceRequirements{Requests: requests}}}}})
 			}
 			// An actual native instance is not part of the non-serving sum.
-			pods.Items = append(pods.Items, core.Pod{ObjectMeta: meta.ObjectMeta{UID: "native-pod", Labels: map[string]string{"app.kubernetes.io/component": servingstate.ServingInstanceComponent}}, Spec: core.PodSpec{NodeName: node.Name, Containers: []core.Container{{Name: firstfloorContainerName, Resources: core.ResourceRequirements{Requests: core.ResourceList{core.ResourceCPU: resource.MustParse("2"), core.ResourceMemory: resource.MustParse("500")}}}}}, Status: core.PodStatus{ContainerStatuses: []core.ContainerStatus{{Name: firstfloorContainerName, ContainerID: "container"}}}})
+			pods.Items = append(pods.Items, core.Pod{ObjectMeta: meta.ObjectMeta{UID: "native-pod", Labels: map[string]string{"app.kubernetes.io/component": servingstate.ServingInstanceComponent}}, Spec: core.PodSpec{NodeName: node.Name, Containers: []core.Container{{Name: servingstate.FirstfloorContainerName, Resources: core.ResourceRequirements{Requests: core.ResourceList{core.ResourceCPU: resource.MustParse("2"), core.ResourceMemory: resource.MustParse("500")}}}}}, Status: core.PodStatus{ContainerStatuses: []core.ContainerStatus{{Name: servingstate.FirstfloorContainerName, ContainerID: "container"}}}})
 			physical := map[string]serving.InstanceState{"native-pod/container": {ID: "native-pod/container", Node: sn.Node, Profile: "profile", Native: &native.State{}}}
 			snapshot := serving.SchedulerSnapshot{At: at}
 			captureNodePods(&snapshot, &sn, node, pods, physical, map[string]*serving.Profile{"profile": {ID: "profile"}})
@@ -706,17 +707,19 @@ func TestBindProfileMeterUsesWallQuantityIdentity(t *testing.T) {
 	}
 	for _, test := range []struct {
 		name   string
-		mutate func(*MeterDeclaration)
+		mutate func(*servingops.MeterDeclaration)
 		binds  bool
 	}{
 		{name: "same wall series without thermal metadata", binds: true},
-		{name: "different power endpoint", mutate: func(m *MeterDeclaration) { m.Source.Endpoint = "http://other/metrics" }},
-		{name: "different power labels", mutate: func(m *MeterDeclaration) { m.Source.MetricLabels = map[string]string{"hostname": "another-host"} }},
-		{name: "different power metric", mutate: func(m *MeterDeclaration) { m.Source.Metric = "device_watts" }},
-		{name: "different source kind", mutate: func(m *MeterDeclaration) { m.Source.Kind = "another-power-source" }},
-		{name: "different source node", mutate: func(m *MeterDeclaration) { m.Source.NodeName = "another-node" }},
-		{name: "different physical node", mutate: func(m *MeterDeclaration) { m.Node.UID = "unrelated-node-uid" }},
-		{name: "different scope", mutate: func(m *MeterDeclaration) { m.Scope = "device" }},
+		{name: "different power endpoint", mutate: func(m *servingops.MeterDeclaration) { m.Source.Endpoint = "http://other/metrics" }},
+		{name: "different power labels", mutate: func(m *servingops.MeterDeclaration) {
+			m.Source.MetricLabels = map[string]string{"hostname": "another-host"}
+		}},
+		{name: "different power metric", mutate: func(m *servingops.MeterDeclaration) { m.Source.Metric = "device_watts" }},
+		{name: "different source kind", mutate: func(m *servingops.MeterDeclaration) { m.Source.Kind = "another-power-source" }},
+		{name: "different source node", mutate: func(m *servingops.MeterDeclaration) { m.Source.NodeName = "another-node" }},
+		{name: "different physical node", mutate: func(m *servingops.MeterDeclaration) { m.Node.UID = "unrelated-node-uid" }},
+		{name: "different scope", mutate: func(m *servingops.MeterDeclaration) { m.Scope = "device" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			profileSource := source
@@ -725,11 +728,11 @@ func TestBindProfileMeterUsesWallQuantityIdentity(t *testing.T) {
 			instance := serving.SchedulerInstance{
 				Node: node, Profile: &serving.Profile{MetricSource: profileSource},
 			}
-			meter := MeterDeclaration{ID: "wall-meter", Node: node, Scope: servingstate.MeasurementWallScope, Source: source}
+			meter := servingops.MeterDeclaration{ID: "wall-meter", Node: node, Scope: servingstate.MeasurementWallScope, Source: source}
 			if test.mutate != nil {
 				test.mutate(&meter)
 			}
-			bindProfileMeter(&instance, []MeterDeclaration{meter})
+			bindProfileMeter(&instance, []servingops.MeterDeclaration{meter})
 			if got := instance.IdleMeter == meter.ID && instance.IdleScope == servingstate.MeasurementWallScope; got != test.binds {
 				t.Fatalf("wall quantity binding = %v, want %v: %+v", got, test.binds, instance)
 			}

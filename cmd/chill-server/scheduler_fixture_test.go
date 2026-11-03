@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -130,7 +131,7 @@ func schedulerTestDependencies(t *testing.T, config application.SchedulerConfigu
 			t.Error(err)
 		}
 	})
-	operations, err := servingkube.NewOperations(cluster, store, kube, execution, observer, &sdk.Client{}, servingkube.OperationConfig{Namespace: "serving", PollInterval: time.Second})
+	operations, err := servingops.NewOperations(cluster, store, kube, execution, observer, &sdk.Client{}, servingops.OperationConfig{Namespace: "serving", PollInterval: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}

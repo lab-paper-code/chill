@@ -1,26 +1,25 @@
-package kube
+package operations
 
 import (
-	"context"
-	"errors"
-	"fmt"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
-	"reflect"
-	"slices"
-	"strings"
-	"time"
-
+	context "context"
+	errors "errors"
+	fmt "fmt"
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
-	"github.com/lab-paper-code/chill/internal/metricobserver"
+	metricobserver "github.com/lab-paper-code/chill/internal/metricobserver"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
-	"github.com/lab-paper-code/chill/internal/serving"
+	serving "github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
-	"github.com/lab-paper-code/chill/internal/workloadobserver"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+	workloadobserver "github.com/lab-paper-code/chill/internal/workloadobserver"
 	workloadkube "github.com/lab-paper-code/chill/internal/workloadobserver/kube"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
+	kubernetes "k8s.io/client-go/kubernetes"
+	reflect "reflect"
+	slices "slices"
+	strings "strings"
+	time "time"
 )
 
 // OperationConfig.Measurement selects measurement operations: they prepare only
@@ -37,23 +36,23 @@ type OperationConfig struct {
 var ErrNodeInMeasurement = errors.New("NodeInMeasurement: Node carries the " + profilingrun.MeasurementTaintKey + " taint")
 
 type Operations struct {
-	cluster  *ClusterState
-	store    *Store
-	kube     kubernetes.Interface
-	runtime  *serving.Runtime
-	observer *Observer
-	native   *sdk.Client
-	config   OperationConfig
+	Cluster  removalState
+	Store    objectStore
+	Kube     kubernetes.Interface
+	Runtime  *serving.Runtime
+	Observer sourceObserver
+	Native   *sdk.Client
+	Config   OperationConfig
 }
 
-func NewOperations(cluster *ClusterState, store *Store, kube kubernetes.Interface, runtime *serving.Runtime, observer *Observer, native *sdk.Client, config OperationConfig) (*Operations, error) {
-	if cluster == nil || store == nil || kube == nil || runtime == nil || observer == nil || native == nil || config.Namespace == "" || config.PollInterval <= 0 {
+func NewOperations(cluster removalState, store objectStore, kube kubernetes.Interface, runtime *serving.Runtime, observer sourceObserver, native *sdk.Client, config OperationConfig) (*Operations, error) {
+	if nilDependency(cluster) || nilDependency(store) || kube == nil || runtime == nil || nilDependency(observer) || native == nil || config.Namespace == "" || config.PollInterval <= 0 {
 		return nil, errors.New("atomic operations require store, clients, runtime, observer, namespace and positive poll interval")
 	}
-	return &Operations{cluster: cluster, store: store, kube: kube, runtime: runtime, observer: observer, native: native, config: config}, nil
+	return &Operations{Cluster: cluster, Store: store, Kube: kube, Runtime: runtime, Observer: observer, Native: native, Config: config}, nil
 }
 
-func (o *Operations) wait(ctx context.Context, step func() (bool, error)) error {
+func (o *Operations) Wait(ctx context.Context, step func() (bool, error)) error {
 	for {
 		done, err := step()
 		if err != nil {
@@ -62,7 +61,7 @@ func (o *Operations) wait(ctx context.Context, step func() (bool, error)) error 
 		if done {
 			return nil
 		}
-		timer := time.NewTimer(o.config.PollInterval)
+		timer := time.NewTimer(o.Config.PollInterval)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -74,7 +73,7 @@ func (o *Operations) wait(ctx context.Context, step func() (bool, error)) error 
 
 func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (servingstate.OperationState, error) {
 	s := servingstate.OperationState{At: time.Now().UTC(), Node: node, Native: map[string]native.State{}}
-	current, err := o.kube.CoreV1().Nodes().Get(ctx, node.Name, meta.GetOptions{})
+	current, err := o.Kube.CoreV1().Nodes().Get(ctx, node.Name, meta.GetOptions{})
 	if err != nil {
 		return s, err
 	}
@@ -82,16 +81,16 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (s
 		return s, errors.New("physical Node identity changed")
 	}
 	var classes edge.DeviceClassList
-	if err = o.store.client.List(ctx, &classes); err != nil {
+	if err = o.Store.Client().List(ctx, &classes); err != nil {
 		return s, err
 	}
-	s.PowerMode = readBackMode(current, nodeClass(current, classes.Items))
-	for _, i := range o.runtime.Instances() {
+	s.PowerMode = servingstate.ReadBackMode(current, servingstate.NodeClass(current, classes.Items))
+	for _, i := range o.Runtime.Instances() {
 		if i.Node.UID == node.UID {
 			s.Instances = append(s.Instances, i)
 		}
 	}
-	pods, err := o.kube.CoreV1().Pods("").List(ctx, meta.ListOptions{FieldSelector: "spec.nodeName=" + node.Name})
+	pods, err := o.Kube.CoreV1().Pods("").List(ctx, meta.ListOptions{FieldSelector: "spec.nodeName=" + node.Name})
 	if err != nil {
 		return s, err
 	}
@@ -108,18 +107,18 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (s
 		if p.Labels["app.kubernetes.io/component"] != servingstate.ServingInstanceComponent {
 			continue
 		}
-		status := firstfloorStatus(p)
+		status := servingstate.FirstfloorStatus(p)
 		if status == nil || status.State.Running == nil || status.ContainerID == "" {
 			s.Reasons = append(s.Reasons, p.Name+": native identity unavailable")
 			continue
 		}
-		id := physicalID(p.UID, status.ContainerID)
-		endpoint, e := nativeInstanceEndpoint(ctx, o.kube, p)
+		id := servingstate.PhysicalID(p.UID, status.ContainerID)
+		endpoint, e := servingstate.NativeInstanceEndpoint(ctx, o.Kube, p)
 		if e != nil {
 			s.Reasons = append(s.Reasons, p.Name+": "+e.Error())
 			continue
 		}
-		state, e := o.native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: "chill_model"})
+		state, e := o.Native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: "chill_model"})
 		if e != nil {
 			s.Reasons = append(s.Reasons, p.Name+": "+e.Error())
 			continue
@@ -136,7 +135,7 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (s
 func (o *Operations) Execute(ctx context.Context, operation servingstate.Operation) (servingstate.OperationResult, error) {
 	result := servingstate.OperationResult{Operation: operation, StartedAt: time.Now().UTC(), Status: servingstate.NativeOperationRunning}
 	before := servingstate.OperationState{At: result.StartedAt}
-	err := o.validateOperationBinding(ctx, operation)
+	err := o.ValidateOperationBinding(ctx, operation)
 	if err == nil && !servingstate.IsRoutingOperation(operation.Kind) {
 		before, err = o.Capture(ctx, operation.Node)
 	}
@@ -158,7 +157,7 @@ func (o *Operations) Execute(ctx context.Context, operation servingstate.Operati
 			}
 		}
 		if result.Before.Routing != nil {
-			actual.Routing, _ = o.runtime.SchedulerRouting()
+			actual.Routing, _ = o.Runtime.SchedulerRouting()
 		}
 	}
 	result.Actual = actual
@@ -203,15 +202,15 @@ func (o *Operations) executeOperation(ctx context.Context, operation servingstat
 			err = o.ApplyTarget(ctx, *operation.Target, result)
 		}
 	case servingstate.OperationRelease:
-		result.Before.Routing, _ = o.runtime.SchedulerRouting()
-		result.Before.Instances = o.runtime.Instances()
-		err = o.observer.Refresh(ctx)
+		result.Before.Routing, _ = o.Runtime.SchedulerRouting()
+		result.Before.Instances = o.Runtime.Instances()
+		err = o.Observer.Refresh(ctx)
 		if err == nil {
-			err = o.runtime.ReleaseSchedulerRouting(operation.WorkloadUID)
+			err = o.Runtime.ReleaseSchedulerRouting(operation.WorkloadUID)
 		}
 		result.Actual.At = time.Now().UTC()
-		result.Actual.Routing, _ = o.runtime.SchedulerRouting()
-		result.Actual.Instances = o.runtime.Instances()
+		result.Actual.Routing, _ = o.Runtime.SchedulerRouting()
+		result.Actual.Instances = o.Runtime.Instances()
 	case servingstate.OperationStop:
 		err = o.StopInstance(ctx, operation.Instance)
 	case servingstate.OperationDrain:
@@ -237,24 +236,24 @@ func (o *Operations) executeOperation(ctx context.Context, operation servingstat
 	return err
 }
 
-func (o *Operations) validateOperationBinding(ctx context.Context, operation servingstate.Operation) error {
+func (o *Operations) ValidateOperationBinding(ctx context.Context, operation servingstate.Operation) error {
 	if servingstate.IsRoutingOperation(operation.Kind) {
 		return nil
 	}
 	if operation.Kind == servingstate.OperationRemove && operation.WorkloadUID != "" {
-		current := o.runtime.SchedulerInputs(time.Now)
+		current := o.Runtime.SchedulerInputs(time.Now)
 		for _, route := range current.Routing {
 			if route[operation.Instance] > 0 {
-				return refused("OperationConflict", "current routing still owns the removal target")
+				return servingstate.Refused("OperationConflict", "current routing still owns the removal target")
 			}
 		}
 		for _, request := range current.Outstanding {
 			if request.Instance == operation.Instance {
-				return refused("OperationConflict", "current outstanding request still owns the removal target")
+				return servingstate.Refused("OperationConflict", "current outstanding request still owns the removal target")
 			}
 		}
 	}
-	actual, err := o.kube.CoreV1().Nodes().Get(ctx, operation.Node.Name, meta.GetOptions{})
+	actual, err := o.Kube.CoreV1().Nodes().Get(ctx, operation.Node.Name, meta.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -293,7 +292,7 @@ func (o *Operations) validatePhysicalInstanceBinding(ctx context.Context, operat
 	} else if !ok || containerID == "" || operation.PodUID != "" && operation.PodUID != uid {
 		return errors.New("exact operation Pod/executor identity required")
 	}
-	pods, err := o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, meta.ListOptions{})
+	pods, err := o.Kube.CoreV1().Pods(o.Config.Namespace).List(ctx, meta.ListOptions{})
 	if err != nil {
 		return err
 	}
@@ -301,13 +300,13 @@ func (o *Operations) validatePhysicalInstanceBinding(ctx context.Context, operat
 		if string(pod.UID) != uid {
 			continue
 		}
-		status := firstfloorStatus(&pod)
+		status := servingstate.FirstfloorStatus(&pod)
 		if pod.Spec.NodeName != actual.Name || pod.Labels["app.kubernetes.io/component"] != servingstate.ServingInstanceComponent ||
 			operation.Instance != "" && (status == nil || status.ContainerID != containerID) ||
-			operation.Instance == "" && !podTerminated(&pod) && !podAwaitingExecutor(&pod) {
+			operation.Instance == "" && !servingstate.PodTerminated(&pod) && !servingstate.PodAwaitingExecutor(&pod) {
 			return errors.New("operation instance belongs to different physical Node/source")
 		}
-		for _, i := range o.runtime.Instances() {
+		for _, i := range o.Runtime.Instances() {
 			if i.ID == operation.Instance && i.Node != operation.Node {
 				return errors.New("operation physical instance Node observation changed")
 			}

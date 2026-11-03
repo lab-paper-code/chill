@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	"runtime/debug"
 	"time"
 
@@ -24,7 +25,7 @@ func newSchedulerService(
 	if opts.schedulerConfigMap == "" {
 		return nil, nil
 	}
-	operations, err := servingkube.NewOperations(cluster, store, kube, execution, observer, &sdk.Client{}, servingkube.OperationConfig{
+	operations, err := servingops.NewOperations(cluster, store, kube, execution, observer, &sdk.Client{}, servingops.OperationConfig{
 		Namespace:    opts.servingNamespace,
 		PollInterval: opts.sourceInterval,
 		MetricLimits: metricobserver.Limits{

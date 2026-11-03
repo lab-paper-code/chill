@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"strings"
@@ -183,8 +184,8 @@ func sequenceHarness(t *testing.T) (*admissionHarness, *writeLog, *memEvidence) 
 
 var testNode = serving.NodeReference{Name: "node", UID: "node-uid"}
 
-func manualPrepare() ManualOperation {
-	return ManualOperation{Kind: servingstate.OperationPrepare, WorkloadUID: "w-uid", ProfileID: measuredCPUPreparationFixture().Instance.Profile.ID, Node: testNode, Reason: "exercise manual preparation"}
+func manualPrepare() servingstate.ManualOperation {
+	return servingstate.ManualOperation{Kind: servingstate.OperationPrepare, WorkloadUID: "w-uid", ProfileID: measuredCPUPreparationFixture().Instance.Profile.ID, Node: testNode, Reason: "exercise manual preparation"}
 }
 
 func errorCode(err error) string {
@@ -209,7 +210,7 @@ func TestOrderPowerChangeThenAdmission(t *testing.T) {
 	if h.holder() == "" {
 		t.Fatal("not granted")
 	}
-	if err := h.controller.operations.ChangePower(context.Background(), testNode, "", lowMode, time.Minute); !errors.Is(err, ErrNodeInMeasurement) {
+	if err := h.controller.operations.ChangePower(context.Background(), testNode, "", lowMode, time.Minute); !errors.Is(err, servingops.ErrNodeInMeasurement) {
 		t.Fatalf("serving power change on a measured Node: %v", err)
 	}
 	if _, err := h.controller.ExecuteManual(context.Background(), manualPrepare()); errorCode(err) != testOperationConflict {
@@ -259,7 +260,7 @@ func TestOrderMeasurementEndThenPowerChange(t *testing.T) {
 	if h.holder() == "" {
 		t.Fatal("hand-back did not wait for the power change in flight")
 	}
-	if _, err := h.controller.operations.admittedNode(context.Background(), testNode); !errors.Is(err, ErrNodeInMeasurement) {
+	if _, err := h.controller.operations.AdmittedNode(context.Background(), testNode); !errors.Is(err, servingops.ErrNodeInMeasurement) {
 		t.Fatalf("serving power change admitted before the taint was removed: %v", err)
 	}
 	h.setNode(func(n *core.Node) { n.Labels[chillmeta.PowerModeState] = chillmeta.PowerModeSuccess })
@@ -267,7 +268,7 @@ func TestOrderMeasurementEndThenPowerChange(t *testing.T) {
 	if h.holder() != "" {
 		t.Fatal("taint kept after the power change settled")
 	}
-	if _, err := h.controller.operations.admittedNode(context.Background(), testNode); err != nil {
+	if _, err := h.controller.operations.AdmittedNode(context.Background(), testNode); err != nil {
 		t.Fatalf("serving power change refused after hand-back: %v", err)
 	}
 }
@@ -281,13 +282,13 @@ func TestManualOperationGuards(t *testing.T) {
 	h.controller.config.Settings.AutonomousWorkloads = []string{"auto"}
 	h.controller.mu.Unlock()
 	for name, tc := range map[string]struct {
-		request ManualOperation
+		request servingstate.ManualOperation
 		code    string
 	}{
-		"shared":     {ManualOperation{Kind: servingstate.OperationRemove, WorkloadUID: "w-uid", Node: testNode, Instance: "p/c", Reason: "refuse foreign owner"}, testOperationConflict},
-		"routed":     {ManualOperation{Kind: servingstate.OperationRemove, WorkloadUID: "w-uid", Node: testNode, Instance: "q/c", Reason: "refuse routed removal"}, testOperationConflict},
-		"autonomous": {ManualOperation{Kind: servingstate.OperationRemove, WorkloadUID: "auto", Node: testNode, Instance: "q/c", Reason: "refuse autonomous workload"}, testOperationConflict},
-		"unknown":    {ManualOperation{Kind: servingstate.OperationPrepare, WorkloadUID: "w-uid", ProfileID: "missing", Node: testNode, Reason: "refuse unknown profile"}, "InvalidInput"},
+		"shared":     {servingstate.ManualOperation{Kind: servingstate.OperationRemove, WorkloadUID: "w-uid", Node: testNode, Instance: "p/c", Reason: "refuse foreign owner"}, testOperationConflict},
+		"routed":     {servingstate.ManualOperation{Kind: servingstate.OperationRemove, WorkloadUID: "w-uid", Node: testNode, Instance: "q/c", Reason: "refuse routed removal"}, testOperationConflict},
+		"autonomous": {servingstate.ManualOperation{Kind: servingstate.OperationRemove, WorkloadUID: "auto", Node: testNode, Instance: "q/c", Reason: "refuse autonomous workload"}, testOperationConflict},
+		"unknown":    {servingstate.ManualOperation{Kind: servingstate.OperationPrepare, WorkloadUID: "w-uid", ProfileID: "missing", Node: testNode, Reason: "refuse unknown profile"}, "InvalidInput"},
 	} {
 		if _, err := h.controller.manualOperationLocked(context.Background(), tc.request, h.controller.config, h.controller.state.Snapshot); errorCode(err) != tc.code {
 			t.Fatalf("%s refused for wrong reason: got %v, want %s", name, err, tc.code)
@@ -338,7 +339,7 @@ func TestManualPrepareAppliesMeasuredMaxBatch(t *testing.T) {
 	for _, cap := range []int{1, 2, 4} {
 		t.Run(fmt.Sprint(cap), func(t *testing.T) {
 			h, template := manualBatchPreparation(t)
-			request, err := DecodeManualOperation(json.RawMessage(fmt.Sprintf(
+			request, err := servingstate.DecodeManualOperation(json.RawMessage(fmt.Sprintf(
 				`{"kind":"prepare","workloadUID":"w-uid","profileID":%q,"node":{"name":"node","uid":"node-uid"},"maxBatch":%d,"reason":"restore comparison state"}`,
 				template.Instance.Profile.ID, cap)))
 			if err != nil {

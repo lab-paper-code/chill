@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"maps"
 	"testing"
@@ -33,7 +34,7 @@ func manualConfigurationFixture(t *testing.T) (*SchedulerController, *kubefake.C
 	kube := kubefake.NewSimpleClientset(&core.ConfigMap{ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "scheduler", ResourceVersion: "42"}, Data: map[string]string{
 		"other-key": "untouched", "scheduler.json": string(raw),
 	}})
-	return &SchedulerController{reservationState: &reservationState{}, kube: kube, operations: &Operations{config: OperationConfig{Namespace: "serving"}}, config: SchedulerControllerConfig{Settings: settings, ConfigurationName: "scheduler", ConfigurationKey: "scheduler.json"}}, kube
+	return &SchedulerController{reservationState: &reservationState{}, kube: kube, operations: &servingops.Operations{Config: servingops.OperationConfig{Namespace: "serving"}}, config: SchedulerControllerConfig{Settings: settings, ConfigurationName: "scheduler", ConfigurationKey: "scheduler.json"}}, kube
 }
 
 func TestManualRoutingPersistencePreservesOtherUIDsAndConfiguration(t *testing.T) {
@@ -106,19 +107,19 @@ func TestManualRoutingPersistenceConflictDoesNotRetryOrAccept(t *testing.T) {
 func TestManualRoutingAdmissionRefusesBeforeMutation(t *testing.T) {
 	for _, test := range []struct {
 		name       string
-		request    ManualOperation
+		request    servingstate.ManualOperation
 		autonomous bool
 		running    bool
 	}{
-		{name: "missing reason", request: ManualOperation{Kind: servingstate.OperationUnroute, WorkloadUID: "w"}},
-		{name: "stale UID", request: ManualOperation{Kind: servingstate.OperationUnroute, WorkloadUID: "stale", Reason: "reason"}},
-		{name: "autonomous", request: ManualOperation{Kind: servingstate.OperationUnroute, WorkloadUID: "w", Reason: "reason"}, autonomous: true},
-		{name: "reserved workload", request: ManualOperation{Kind: servingstate.OperationRelease, WorkloadUID: "w", Reason: "reason"}, running: true},
-		{name: "zero route", request: ManualOperation{Kind: servingstate.OperationRoute, WorkloadUID: "w", Reason: "reason", Weights: map[string]int32{"physical": 0}}},
-		{name: "negative route", request: ManualOperation{Kind: servingstate.OperationRoute, WorkloadUID: "w", Reason: "reason", Weights: map[string]int32{"physical": -1}}},
-		{name: "unroute weights", request: ManualOperation{Kind: servingstate.OperationUnroute, WorkloadUID: "w", Reason: "reason", Weights: map[string]int32{}}},
-		{name: "release weights", request: ManualOperation{Kind: servingstate.OperationRelease, WorkloadUID: "w", Reason: "reason", Weights: map[string]int32{}}},
-		{name: "missing target", request: ManualOperation{Kind: servingstate.OperationRoute, WorkloadUID: "w", Reason: "reason", Weights: map[string]int32{"missing": 1}}},
+		{name: "missing reason", request: servingstate.ManualOperation{Kind: servingstate.OperationUnroute, WorkloadUID: "w"}},
+		{name: "stale UID", request: servingstate.ManualOperation{Kind: servingstate.OperationUnroute, WorkloadUID: "stale", Reason: "reason"}},
+		{name: "autonomous", request: servingstate.ManualOperation{Kind: servingstate.OperationUnroute, WorkloadUID: "w", Reason: "reason"}, autonomous: true},
+		{name: "reserved workload", request: servingstate.ManualOperation{Kind: servingstate.OperationRelease, WorkloadUID: "w", Reason: "reason"}, running: true},
+		{name: "zero route", request: servingstate.ManualOperation{Kind: servingstate.OperationRoute, WorkloadUID: "w", Reason: "reason", Weights: map[string]int32{"physical": 0}}},
+		{name: "negative route", request: servingstate.ManualOperation{Kind: servingstate.OperationRoute, WorkloadUID: "w", Reason: "reason", Weights: map[string]int32{"physical": -1}}},
+		{name: "unroute weights", request: servingstate.ManualOperation{Kind: servingstate.OperationUnroute, WorkloadUID: "w", Reason: "reason", Weights: map[string]int32{}}},
+		{name: "release weights", request: servingstate.ManualOperation{Kind: servingstate.OperationRelease, WorkloadUID: "w", Reason: "reason", Weights: map[string]int32{}}},
+		{name: "missing target", request: servingstate.ManualOperation{Kind: servingstate.OperationRoute, WorkloadUID: "w", Reason: "reason", Weights: map[string]int32{"missing": 1}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			controller := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}}
@@ -141,7 +142,7 @@ func TestManualRoutingDeclarationIsNotPhysicalSuccess(t *testing.T) {
 	controller, kube := manualConfigurationFixture(t)
 	manager, _ := newManagerHarness(t)
 	controller.runtime = manager.runtime
-	controller.operations.runtime = manager.runtime
+	controller.operations.Runtime = manager.runtime
 	operation := servingstate.Operation{
 		Kind: servingstate.OperationRoute, WorkloadUID: "w", Reason: "operator choice",
 		Target: &serving.SchedulerCandidate{
@@ -191,8 +192,8 @@ func manualAdmissionController(t *testing.T) *SchedulerController {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := kube.CoreV1().ConfigMaps(controller.operations.config.Namespace).Create(context.Background(), &core.ConfigMap{
-		ObjectMeta: meta.ObjectMeta{Name: controller.config.ConfigurationName, Namespace: controller.operations.config.Namespace},
+	if _, err := kube.CoreV1().ConfigMaps(controller.operations.Config.Namespace).Create(context.Background(), &core.ConfigMap{
+		ObjectMeta: meta.ObjectMeta{Name: controller.config.ConfigurationName, Namespace: controller.operations.Config.Namespace},
 		Data:       map[string]string{controller.config.ConfigurationKey: string(raw)},
 	}, meta.CreateOptions{}); err != nil {
 		t.Fatal(err)
@@ -213,14 +214,14 @@ func TestManualUnrouteACKAllowsRemoveBeforeNextTick(t *testing.T) {
 	if snapshot.Routing[uid][instance.ID] <= 0 {
 		t.Fatal("last Tick must observe a routed instance")
 	}
-	unroute, err := controller.ExecuteManual(ctx, ManualOperation{Kind: servingstate.OperationUnroute, WorkloadUID: uid, Reason: "withdraw before removal"})
+	unroute, err := controller.ExecuteManual(ctx, servingstate.ManualOperation{Kind: servingstate.OperationUnroute, WorkloadUID: uid, Reason: "withdraw before removal"})
 	if err != nil || unroute.Status != servingstate.NativeOperationComplete || len(unroute.Actual.Routing[uid]) != 0 {
 		t.Fatalf("unroute did not ACK: %+v err=%v", unroute, err)
 	}
 	if controller.State().Snapshot.Routing[uid][instance.ID] <= 0 {
 		t.Fatal("test must retain the pre-ACK Tick snapshot")
 	}
-	remove, err := controller.ExecuteManual(ctx, ManualOperation{Kind: servingstate.OperationRemove, WorkloadUID: uid, Node: instance.Node, Instance: instance.ID, Reason: "remove after unroute ACK"})
+	remove, err := controller.ExecuteManual(ctx, servingstate.ManualOperation{Kind: servingstate.OperationRemove, WorkloadUID: uid, Node: instance.Node, Instance: instance.ID, Reason: "remove after unroute ACK"})
 	if err != nil || remove.Status != servingstate.NativeOperationComplete {
 		t.Fatalf("ACKed unroute still required another Tick before remove: %+v err=%v", remove, err)
 	}
@@ -236,7 +237,7 @@ func TestManualRouteACKPreservesOtherWorkloadBeforeNextTick(t *testing.T) {
 	if err := controller.runtime.Publish(&second); err != nil {
 		t.Fatal(err)
 	}
-	pod, err := controller.kube.CoreV1().Pods(controller.operations.config.Namespace).Get(ctx, "b", meta.GetOptions{})
+	pod, err := controller.kube.CoreV1().Pods(controller.operations.Config.Namespace).Get(ctx, "b", meta.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +253,7 @@ func TestManualRouteACKPreservesOtherWorkloadBeforeNextTick(t *testing.T) {
 	}
 	snapshot := controller.State().Snapshot
 	a, b := snapshot.Instances[0], snapshot.Instances[1]
-	for _, request := range []ManualOperation{
+	for _, request := range []servingstate.ManualOperation{
 		{Kind: servingstate.OperationRoute, WorkloadUID: first.UID, Weights: map[string]int32{a.ID: 17}, Reason: "route first Workload"},
 		{Kind: servingstate.OperationRoute, WorkloadUID: second.UID, Weights: map[string]int32{b.ID: 23}, Reason: "route second Workload after first ACK"},
 	} {

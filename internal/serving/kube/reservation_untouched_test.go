@@ -20,7 +20,7 @@ func TestUntouchedAdmissionBaselineAC38(t *testing.T) {
 		t.Run(evidence, func(t *testing.T) {
 			pod, node, _, _ := observerSourceFixture()
 			ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-			id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+			id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
 			ended := time.Now().Add(-time.Minute)
 			state := serving.InstanceState{ID: id, PodUID: string(pod.UID), Node: ref, Ready: true, ObservedAt: ended.Add(time.Second), Native: &native.State{Ready: true}}
 			baseline := serving.InstanceState{ID: id, PodUID: string(pod.UID), Node: ref}
@@ -145,7 +145,7 @@ func TestPartialPrepareLateACKMultiNodeReturnsAC38(t *testing.T) {
 			}
 		}
 		ref := serving.NodeReference{Name: n.Name, UID: string(n.UID)}
-		id := physicalID(p.UID, firstfloorStatus(p).ContainerID)
+		id := servingstate.PhysicalID(p.UID, servingstate.FirstfloorStatus(p).ContainerID)
 		s := serving.InstanceState{ID: id, PodUID: string(p.UID), Node: ref, Ready: true, ObservedAt: ended.Add(time.Second), Native: &native.State{Ready: true}}
 		if suffix == "nano-old" {
 			child.result.Before.Native = map[string]native.State{id: *s.Native}

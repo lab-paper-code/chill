@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	"slices"
 	"strings"
 	"sync"
@@ -10,7 +11,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/live"
 	"github.com/lab-paper-code/chill/internal/serving/management"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
@@ -326,7 +326,7 @@ func (p *livePublisher) request(event serving.RequestEvent) {
 		p.metrics.Finished(event.WorkloadUID, event.At, event.Outcome == "completed", measured, slo)
 	}
 }
-func (p *livePublisher) powerScope(meters []servingkube.MeterDeclaration, enabled bool) {
+func (p *livePublisher) powerScope(meters []servingops.MeterDeclaration, enabled bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.meters = nil

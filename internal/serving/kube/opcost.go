@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"slices"
 	"strings"
@@ -70,7 +71,7 @@ func measurementProfile(namespace, name, node string, in admissionInputs) (profi
 // operationCostRefusal judges an operation-cost measurement before its grant.
 // profiles maps each named BatchEnergyOptimization to its catalog profile ID.
 func (c *SchedulerController) operationCostRefusal(m *edge.OperationCostMeasurement, node *core.Node, in admissionInputs) (profiles map[string]string, reason, detail string, wait bool) {
-	if !slices.ContainsFunc(in.config.Meters, func(meter MeterDeclaration) bool { return meter.Node.UID == string(node.UID) }) {
+	if !slices.ContainsFunc(in.config.Meters, func(meter servingops.MeterDeclaration) bool { return meter.Node.UID == string(node.UID) }) {
 		return nil, MeterUndeclared, node.Name, false
 	}
 	profiles = map[string]string{}
@@ -131,7 +132,7 @@ func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.Oper
 		return err
 	}
 	observation := m.Spec.Observation
-	allowance, err := measurementTimingAllowance(observation.Timing)
+	allowance, err := servingops.MeasurementTimingAllowance(observation.Timing)
 	if err != nil {
 		return errors.Join(err, c.failMeasurement(ctx, m, firstLine(err.Error())))
 	}
@@ -145,7 +146,7 @@ func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.Oper
 		return errors.Join(err, c.failMeasurement(ctx, m, err.Error()))
 	}
 	watchdog := duration + 2*allowance + 2*interval + timeout
-	base := MeasurementRequest{
+	base := servingops.MeasurementRequest{
 		Timing: observation.Timing, OperationBudget: duration,
 		Sampling: metricobserver.Request{Interval: interval, Duration: watchdog,
 			RequestTimeout: timeout},

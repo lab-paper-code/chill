@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"math"
@@ -42,7 +43,7 @@ type SchedulerConfiguration struct {
 	Settings serving.SchedulerSettings              `json:"settings"`
 	Reserved map[string]serving.SchedulerAllocation `json:"reserved"`
 	// Meters are derived from the Profiler metric sources, never configured.
-	Meters            []servingkube.MeterDeclaration       `json:"-"`
+	Meters            []servingops.MeterDeclaration        `json:"-"`
 	PowerObservation  *powerObservationConfig              `json:"powerObservation,omitempty"`
 	DispatchOccupancy *measurement.DispatchOccupancyPolicy `json:"dispatchOccupancy,omitempty"`
 	StaticRouting     map[string]map[string]int            `json:"staticRouting,omitempty"`
@@ -54,7 +55,7 @@ type SchedulerService struct {
 	Lock                     sync.Mutex
 	Controller               *servingkube.SchedulerController
 	cluster                  *servingkube.ClusterState
-	operations               *servingkube.Operations
+	operations               *servingops.Operations
 	store                    *servingkube.Store
 	kube                     kubernetes.Interface
 	settingsKube             kubernetes.Interface
@@ -342,7 +343,7 @@ func (o *SchedulerService) profilerFacts(
 	}
 	for _, s := range sources {
 		if uid := uids[s.Node]; uid != "" {
-			config.Meters = append(config.Meters, servingkube.MeterDeclaration{
+			config.Meters = append(config.Meters, servingops.MeterDeclaration{
 				ID: s.MeterID, Node: serving.NodeReference{Name: s.Node, UID: uid}, Scope: "node-exclusive-wall",
 				Source: metricobserver.SourceIdentity{
 					Kind: s.Kind, NodeName: s.Node, Endpoint: s.Endpoint, Metric: s.PowerMetric, MetricLabels: s.MetricLabels,
@@ -354,7 +355,7 @@ func (o *SchedulerService) profilerFacts(
 }
 
 // schedulerMeters projects only the complete configuration accepted by refresh.
-func (o *SchedulerService) SchedulerMeters() []servingkube.MeterDeclaration {
+func (o *SchedulerService) SchedulerMeters() []servingops.MeterDeclaration {
 	config := o.configuration.Load()
 	if config == nil {
 		return nil
@@ -445,7 +446,7 @@ func (o *SchedulerService) restartPower(config SchedulerConfiguration) {
 	o.powerCancel = cancel
 	for _, meter := range config.Meters {
 		o.powerWG.Add(1)
-		go func(meter servingkube.MeterDeclaration) {
+		go func(meter servingops.MeterDeclaration) {
 			defer o.powerWG.Done()
 			source, err := metricSource(meter.Source)
 			if err != nil {

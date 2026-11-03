@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"image"
 	"image/jpeg"
@@ -708,7 +709,7 @@ func TestManagerDeleteAfterPhysicalRemovalHoldsReservationUntil404(t *testing.T)
 	}
 	pod, node, _, _ := observerSourceFixture()
 	pod.OwnerReferences = []meta.OwnerReference{{APIVersion: api.GroupVersion.String(), Kind: "Workload", Name: w.Desired.Name, UID: w.Desired.UID}}
-	pod.Finalizers = []string{sourceFinalizer}
+	pod.Finalizers = []string{servingstate.SourceFinalizer}
 	c := m.store.client.(*managerAPI).Client
 	if err := c.Create(ctx, pod); err != nil {
 		t.Fatal(err)
@@ -734,9 +735,9 @@ func TestManagerDeleteAfterPhysicalRemovalHoldsReservationUntil404(t *testing.T)
 		err := c.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: action.(ktesting.GetAction).GetName()}, current)
 		return true, current, err
 	})
-	operations := &Operations{cluster: o.cluster, store: m.store, kube: kube, runtime: m.runtime, observer: o, config: OperationConfig{Namespace: pod.Namespace, PollInterval: time.Millisecond}}
+	operations := &servingops.Operations{Cluster: o.cluster, Store: m.store, Kube: kube, Runtime: m.runtime, Observer: o, Config: servingops.OperationConfig{Namespace: pod.Namespace, PollInterval: time.Millisecond}}
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-	if err := operations.RemoveInstance(ctx, ref, physicalID(pod.UID, status.ContainerID)); err != nil {
+	if err := operations.RemoveInstance(ctx, ref, servingstate.PhysicalID(pod.UID, status.ContainerID)); err != nil {
 		t.Fatal(err)
 	}
 	if len(o.sources) != 0 || len(m.runtime.Instances()) != 0 {

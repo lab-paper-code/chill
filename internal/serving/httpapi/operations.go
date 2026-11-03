@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"net/http"
 	"strings"
 
@@ -41,7 +42,7 @@ func (h *Handler) operations(w http.ResponseWriter, r *http.Request) {
 		sendError(w, err)
 		return
 	}
-	request, err := servingkube.DecodeManualOperation(raw)
+	request, err := servingstate.DecodeManualOperation(raw)
 	if err != nil {
 		sendError(w, err)
 		return

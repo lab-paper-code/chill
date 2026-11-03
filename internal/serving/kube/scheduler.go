@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	goruntime "runtime"
 	"slices"
@@ -46,7 +47,7 @@ type SchedulerControllerConfig struct {
 	LoadGenerator LoadGeneratorConfig
 	// GatewayRequestTimeout is the actual HTTP handler lifetime cap.
 	GatewayRequestTimeout time.Duration
-	Meters                []MeterDeclaration
+	Meters                []servingops.MeterDeclaration
 	// PowerPolicies are the configured actuation policies; a non-Fixed
 	// DeviceClass mode with a policy is a mode ChillServer can request.
 	PowerPolicies []nodeactuator.ActuationPolicySpec
@@ -77,9 +78,9 @@ type SchedulerController struct {
 	kube       kubernetes.Interface
 	runtime    *serving.Runtime
 	observer   *Observer
-	operations *Operations
+	operations *servingops.Operations
 	// measurement acts only on measurement POOL Nodes: operation measurements and hand-back.
-	measurement           *Operations
+	measurement           *servingops.Operations
 	observationLog        *observation.ObservationLog
 	capacity              *serving.CapacityTable
 	config                SchedulerControllerConfig
@@ -95,7 +96,7 @@ type SchedulerController struct {
 	// duration of each mode the last capture found requestable.
 	powerTargets map[string]time.Duration
 	// measureStep measures one step of an operation-cost measurement.
-	measureStep func(context.Context, SchedulerControllerConfig, MeasurementRequest) (OperationMeasurement, evidencestore.Receipt, error)
+	measureStep func(context.Context, SchedulerControllerConfig, servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error)
 	// unrouted holds when each captured instance last lost every route weight.
 	// overloaded holds the slots prepared while keep was in Overload: zero
 	// until the instance is Ready, then the end of its hold.
@@ -104,7 +105,7 @@ type SchedulerController struct {
 
 // NewSchedulerController configures control without taking ownership of routing.
 // The composition root freezes routing after restoring the actual baseline.
-func NewSchedulerController(cluster *ClusterState, store *Store, kube kubernetes.Interface, runtime *serving.Runtime, observer *Observer, operations *Operations, observationLog *observation.ObservationLog, config SchedulerControllerConfig) (*SchedulerController, error) {
+func NewSchedulerController(cluster *ClusterState, store *Store, kube kubernetes.Interface, runtime *serving.Runtime, observer *Observer, operations *servingops.Operations, observationLog *observation.ObservationLog, config SchedulerControllerConfig) (*SchedulerController, error) {
 	if cluster == nil || store == nil || kube == nil || runtime == nil || observer == nil || operations == nil || observationLog == nil {
 		return nil, errors.New("scheduler requires actual Kubernetes, runtime, observer, operation and observation log owners")
 	}
@@ -113,7 +114,7 @@ func NewSchedulerController(cluster *ClusterState, store *Store, kube kubernetes
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	measurement := *operations
-	measurement.config.Measurement = true
+	measurement.Config.Measurement = true
 	c := &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, measurement: &measurement, observationLog: observationLog, config: config, reservationState: &cluster.reservation, ctx: ctx, cancel: cancel}
 	c.completions = make(chan struct{}, 1)
 	c.measureStep = c.measureOperation

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"slices"
@@ -46,7 +47,7 @@ func (o *costTestObjects) Open(_ context.Context, identity evidencestore.ObjectI
 	return io.NopCloser(bytes.NewReader(o.objects[identity.Key])), nil
 }
 
-var costTestMeter = MeterDeclaration{ID: "wall", Node: serving.NodeReference{Name: "node", UID: "uid"}, Scope: servingstate.MeasurementWallScope,
+var costTestMeter = servingops.MeterDeclaration{ID: "wall", Node: serving.NodeReference{Name: "node", UID: "uid"}, Scope: servingstate.MeasurementWallScope,
 	Source: metricobserver.SourceIdentity{Kind: "edge-metrics", NodeName: "node", Endpoint: "http://node", Metric: "watts"}}
 
 func costTestRecord(t *testing.T, id, mode string, end time.Time) (string, []byte) {
@@ -54,9 +55,9 @@ func costTestRecord(t *testing.T, id, mode string, end time.Time) (string, []byt
 	start := end.Add(-time.Second)
 	joules := 20.0
 	operation := servingstate.Operation{ID: id, Kind: servingstate.OperationPrepare, Node: costTestMeter.Node}
-	record := OperationMeasurement{
-		SchemaVersion: OperationMeasurementSchema, Verdict: measurementInsufficient,
-		Request: MeasurementRequest{Operation: operation, Meter: costTestMeter, Store: "store",
+	record := servingops.OperationMeasurement{
+		SchemaVersion: servingops.OperationMeasurementSchema, Verdict: servingops.MeasurementInsufficient,
+		Request: servingops.MeasurementRequest{Operation: operation, Meter: costTestMeter, Store: "store",
 			Sampling:        metricobserver.Request{Interval: time.Second, Duration: 5*time.Second + time.Millisecond, RequestTimeout: time.Millisecond},
 			Timing:          &edgev1alpha1.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "synthetic empirical fixture"},
 			OperationBudget: time.Second, Coverage: powerwindow.Policy{MaximumGap: time.Second}},
@@ -65,14 +66,14 @@ func costTestRecord(t *testing.T, id, mode string, end time.Time) (string, []byt
 		Power: metricobserver.Result{Source: costTestMeter.Source,
 			Samples: []metricobserver.Sample{{ObservedAt: start.Add(-time.Second), Watts: 20}, {ObservedAt: start, Watts: 20}, {ObservedAt: end, Watts: 20}, {ObservedAt: end.Add(time.Second), Watts: 20}}},
 	}
-	if err := record.judge(nil, nil); err != nil || record.Verdict != servingstate.MeasurementAccepted || record.WallJoules == nil || *record.WallJoules != joules {
+	if err := record.Judge(nil, nil); err != nil || record.Verdict != servingstate.MeasurementAccepted || record.WallJoules == nil || *record.WallJoules != joules {
 		t.Fatalf("invalid current-contract cost fixture: %+v, %v", record, err)
 	}
 	raw, err := json.Marshal(record)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return OperationMeasurementKey(operation), raw
+	return servingops.OperationMeasurementKey(operation), raw
 }
 
 func TestCostEvidenceDerivesLatestAcceptedCostPerCondition(t *testing.T) {
@@ -89,7 +90,7 @@ func TestCostEvidenceDerivesLatestAcceptedCostPerCondition(t *testing.T) {
 		key, raw := costTestRecord(t, r.id, r.mode, r.end)
 		objects.objects[key] = raw
 	}
-	invalid := OperationMeasurementPrefix + "uid/invalid.json"
+	invalid := servingops.OperationMeasurementPrefix + "uid/invalid.json"
 	objects.objects[invalid] = []byte(`{"verdict":"Accepted"}`)
 	evidence, err := NewCostEvidence(&Store{client: fake.NewClientBuilder().WithScheme(scheme).Build()}, objects, 1<<20)
 	if err != nil {
@@ -97,7 +98,7 @@ func TestCostEvidenceDerivesLatestAcceptedCostPerCondition(t *testing.T) {
 	}
 	ctx := context.Background()
 	for range 2 {
-		view, err := evidence.Refresh(ctx, []string{"measurements"}, []MeterDeclaration{costTestMeter}, nil)
+		view, err := evidence.Refresh(ctx, []string{"measurements"}, []servingops.MeterDeclaration{costTestMeter}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -121,7 +122,7 @@ func TestCostEvidenceDerivesLatestAcceptedCostPerCondition(t *testing.T) {
 	}
 	other := costTestMeter
 	other.ID = "other"
-	view, err := evidence.Refresh(ctx, nil, []MeterDeclaration{other}, nil)
+	view, err := evidence.Refresh(ctx, nil, []servingops.MeterDeclaration{other}, nil)
 	undeclared := 0
 	for _, issue := range view.Issues {
 		if issue.Code == MeterUndeclared {
@@ -132,7 +133,7 @@ func TestCostEvidenceDerivesLatestAcceptedCostPerCondition(t *testing.T) {
 		t.Fatalf("records with an unconfigured meter contributed: %+v %v", view, err)
 	}
 	objects.listErr = errors.New("list denied")
-	if _, err = evidence.Refresh(ctx, nil, []MeterDeclaration{costTestMeter}, nil); err == nil {
+	if _, err = evidence.Refresh(ctx, nil, []servingops.MeterDeclaration{costTestMeter}, nil); err == nil {
 		t.Fatal("listing failure produced a partial cost view")
 	}
 }
@@ -155,7 +156,7 @@ func TestCostEvidenceIgnoresNonAcceptedAttempts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		view, err := evidence.Refresh(context.Background(), nil, []MeterDeclaration{costTestMeter}, nil)
+		view, err := evidence.Refresh(context.Background(), nil, []servingops.MeterDeclaration{costTestMeter}, nil)
 		wantCosts := 0
 		if withAccepted {
 			wantCosts = 1
@@ -171,7 +172,7 @@ func TestCostEvidenceProjectsUncertainAcceptedEnergyWithoutPrecisionRejection(t 
 	objects := &costTestObjects{objects: map[string][]byte{}, opens: map[string]int{}}
 	for _, kind := range []string{servingstate.OperationPrepare, servingstate.OperationIdle} {
 		_, raw := costTestRecord(t, kind, "fixed", at)
-		var record OperationMeasurement
+		var record servingops.OperationMeasurement
 		if err := json.Unmarshal(raw, &record); err != nil {
 			t.Fatal(err)
 		}
@@ -201,13 +202,13 @@ func TestCostEvidenceProjectsUncertainAcceptedEnergyWithoutPrecisionRejection(t 
 		if err != nil {
 			t.Fatal(err)
 		}
-		objects.objects[OperationMeasurementKey(record.Request.Operation)] = raw
+		objects.objects[servingops.OperationMeasurementKey(record.Request.Operation)] = raw
 	}
 	evidence, err := NewCostEvidence(&Store{client: fake.NewClientBuilder().Build()}, objects, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, err := evidence.Refresh(context.Background(), nil, []MeterDeclaration{costTestMeter}, nil)
+	view, err := evidence.Refresh(context.Background(), nil, []servingops.MeterDeclaration{costTestMeter}, nil)
 	if err != nil || len(view.Issues) != 0 || len(view.Costs) != 1 || len(view.Baselines) != 1 {
 		t.Fatalf("physically valid high-B records were rejected: %+v %v", view, err)
 	}
@@ -244,7 +245,7 @@ func TestCostEvidencePowerCostNeedsConfiguredMeterAndKeepsLoadedStatesApart(t *t
 	}
 	// A serving-operation power record on the empty Node is the empty-state condition of the same pair.
 	key, raw := costTestRecord(t, "raise", "fixed", at)
-	var record OperationMeasurement
+	var record servingops.OperationMeasurement
 	if err = json.Unmarshal(raw, &record); err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +258,7 @@ func TestCostEvidencePowerCostNeedsConfiguredMeterAndKeepsLoadedStatesApart(t *t
 	if err != nil || len(view.Costs) != 0 || len(view.Issues) != 2 || view.Issues[0].Code != MeterUndeclared || view.Issues[1].Code != MeterUndeclared {
 		t.Fatalf("power cost without a configured meter contributed: %+v %v", view, err)
 	}
-	view, err = evidence.Refresh(context.Background(), []string{"measurements"}, []MeterDeclaration{costTestMeter}, nil)
+	view, err = evidence.Refresh(context.Background(), []string{"measurements"}, []servingops.MeterDeclaration{costTestMeter}, nil)
 	empty := slices.IndexFunc(view.Costs, func(c serving.OperationCost) bool { return c.ID == "raise" })
 	if err != nil || len(view.Costs) != 2 || view.Costs[0].Meter != costTestMeter.ID || empty < 0 || view.Costs[empty].From != record.Result.Before.PowerMode || view.Costs[empty].To != record.Result.Actual.PowerMode || len(view.Costs[empty].BeforeState) != 0 {
 		t.Fatalf("configured meter not bound or empty-Node power record missing: %+v %v", view, err)

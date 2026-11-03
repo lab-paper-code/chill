@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"testing"
@@ -48,10 +49,10 @@ func (b *projectionBody) Close() error {
 	return b.owner.closeErr
 }
 
-func projectionRecord(t *testing.T) (edge.OperationCostMeasurement, OperationMeasurement) {
+func projectionRecord(t *testing.T) (edge.OperationCostMeasurement, servingops.OperationMeasurement) {
 	t.Helper()
 	key, raw := costTestRecord(t, "cr-uid.0.prepare", "fixed", time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC))
-	var record OperationMeasurement
+	var record servingops.OperationMeasurement
 	if err := json.Unmarshal(raw, &record); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ func projectionRecord(t *testing.T) (edge.OperationCostMeasurement, OperationMea
 	return cr, record
 }
 
-func projectionPayload(t *testing.T, record OperationMeasurement) []byte {
+func projectionPayload(t *testing.T, record servingops.OperationMeasurement) []byte {
 	t.Helper()
 	raw, err := json.Marshal(record)
 	if err != nil {
@@ -95,14 +96,14 @@ func TestLoadOperationCostStepsActualHistoryAndIdle(t *testing.T) {
 				record.Power.Samples = nil
 				wantJ = false
 			case "insufficient":
-				record.Verdict, record.Reason = measurementInsufficient, "power window insufficient"
+				record.Verdict, record.Reason = servingops.MeasurementInsufficient, "power window insufficient"
 				record.Power.Samples = nil
 				wantJ = false
 			case "isolation":
-				_ = record.applyIsolation(MeasurementIsolation{Node: record.Request.Operation.Node}, errors.New("isolation unconfirmed"))
+				_ = record.ApplyIsolation(servingops.MeasurementIsolation{Node: record.Request.Operation.Node}, errors.New("isolation unconfirmed"))
 				wantJ = false
 			case "not-invoked":
-				record.Verdict, record.Reason, record.Result = measurementInsufficient, "no first sample", servingstate.OperationResult{}
+				record.Verdict, record.Reason, record.Result = servingops.MeasurementInsufficient, "no first sample", servingstate.OperationResult{}
 				wantJ = false
 			case "idle":
 				cr.Spec.Steps[0].Kind = edge.OperationCostStepIdle
@@ -229,7 +230,7 @@ func TestLoadOperationCostStepsPropagatesIOAndCancellation(t *testing.T) {
 
 func TestOperationProjectionRetainsOnlyRecordedDirectionAndModel(t *testing.T) {
 	cr, record := projectionRecord(t)
-	record.Verdict, cr.Status.Steps[0].Verdict = measurementInsufficient, measurementInsufficient
+	record.Verdict, cr.Status.Steps[0].Verdict = servingops.MeasurementInsufficient, servingops.MeasurementInsufficient
 	record.Result.Before.PowerMode, record.Result.Actual.PowerMode = "MAXN", "MODE_15W"
 	record.Request.Operation.Prepare = &servingstate.PrepareSpec{Instance: serving.SchedulerInstance{Profile: &serving.Profile{}}}
 	record.Request.Operation.Prepare.Instance.Profile.Condition.LogicalModel = "frozen-model"

@@ -59,6 +59,7 @@ components=(
   serving-kube
   serving-management
   serving-state
+  serving-operations
   serving-measurement
   firstfloor
   serving-firstfloor
@@ -120,6 +121,7 @@ component_for() {
     internal/serving/kube) echo serving-kube ;;
     internal/serving/management) echo serving-management ;;
     internal/serving/state) echo serving-state ;;
+    internal/serving/operations) echo serving-operations ;;
     internal/serving/measurement) echo serving-measurement ;;
     internal/firstfloor) echo firstfloor ;;
     internal/serving/firstfloor) echo serving-firstfloor ;;

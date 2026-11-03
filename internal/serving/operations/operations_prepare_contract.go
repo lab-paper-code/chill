@@ -1,29 +1,28 @@
-package kube
+package operations
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
-	"maps"
-	"reflect"
-	"slices"
-	"strings"
-
+	json "encoding/json"
+	errors "errors"
+	fmt "fmt"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
-	"github.com/lab-paper-code/chill/internal/serving"
+	serving "github.com/lab-paper-code/chill/internal/serving"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	core "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/utils/ptr"
+	resource "k8s.io/apimachinery/pkg/api/resource"
+	intstr "k8s.io/apimachinery/pkg/util/intstr"
+	ptr "k8s.io/utils/ptr"
+	maps "maps"
+	reflect "reflect"
+	slices "slices"
+	strings "strings"
 )
 
-func samePreparedPod(actual, desired *core.Pod) bool {
-	if actual.Spec.RestartPolicy != desired.Spec.RestartPolicy || workloadOwner(actual.OwnerReferences) != workloadOwner(desired.OwnerReferences) {
+func SamePreparedPod(actual, desired *core.Pod) bool {
+	if actual.Spec.RestartPolicy != desired.Spec.RestartPolicy || servingstate.WorkloadOwner(actual.OwnerReferences) != servingstate.WorkloadOwner(desired.OwnerReferences) {
 		return false
 	}
-	if actual.Annotations[ServingProfileAnnotation] != desired.Annotations[ServingProfileAnnotation] || actual.Annotations[ServingSlotAnnotation] != desired.Annotations[ServingSlotAnnotation] || actual.Spec.NodeName != desired.Spec.NodeName || len(actual.Spec.Containers) != 1 || !samePreparedContainer(actual.Spec.Containers[0], desired.Spec.Containers[0]) || actual.Spec.Containers[0].TerminationMessagePolicy != desired.Spec.Containers[0].TerminationMessagePolicy || len(actual.Spec.InitContainers) != len(desired.Spec.InitContainers) ||
+	if actual.Annotations[servingstate.ServingProfileAnnotation] != desired.Annotations[servingstate.ServingProfileAnnotation] || actual.Annotations[servingstate.ServingSlotAnnotation] != desired.Annotations[servingstate.ServingSlotAnnotation] || actual.Spec.NodeName != desired.Spec.NodeName || len(actual.Spec.Containers) != 1 || !samePreparedContainer(actual.Spec.Containers[0], desired.Spec.Containers[0]) || actual.Spec.Containers[0].TerminationMessagePolicy != desired.Spec.Containers[0].TerminationMessagePolicy || len(actual.Spec.InitContainers) != len(desired.Spec.InitContainers) ||
 		!slices.EqualFunc(actual.Spec.Volumes, desired.Spec.Volumes, samePreparedVolume) || !slices.Equal(supplementalGroups(actual), supplementalGroups(desired)) {
 		return false
 	}

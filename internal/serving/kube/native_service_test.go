@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"net/http"
 	"net/http/httptest"
@@ -42,38 +43,38 @@ func TestNativeInstanceServiceLifetimeAndUniqueDestination(t *testing.T) {
 	first, _, _, _ := observerSourceFixture()
 	second := first.DeepCopy()
 	second.Name, second.UID = "second-slot", "second-pod-uid"
-	second.Labels[instancePodUIDLabel] = string(second.UID)
+	second.Labels[servingstate.InstancePodUIDLabel] = string(second.UID)
 	second.Status.ContainerStatuses[0].ContainerID = "containerd://second"
 	kube := kubefake.NewSimpleClientset(first, second)
 	kube.PrependReactor("create", "services", func(action ktesting.Action) (bool, runtime.Object, error) {
 		service := action.(ktesting.CreateAction).GetObject().(*core.Service)
 		service.UID, service.ResourceVersion = types.UID(service.Name), "1"
 		service.Spec.ClusterIP = "10.96.0.10"
-		if service.Name == instanceService(second).Name {
+		if service.Name == servingstate.InstanceService(second).Name {
 			service.Spec.ClusterIP = "10.96.0.11"
 		}
 		return false, nil, nil
 	})
-	operations := &Operations{kube: kube}
+	operations := &servingops.Operations{Kube: kube}
 	for _, pod := range []*core.Pod{first, second} {
-		if err := operations.ensureInstanceService(ctx, pod); err != nil {
+		if err := operations.EnsureInstanceService(ctx, pod); err != nil {
 			t.Fatal(err)
 		}
-		if err := operations.ensureInstanceService(ctx, pod); err != nil {
+		if err := operations.EnsureInstanceService(ctx, pod); err != nil {
 			t.Fatal("matching existing transport was not reusable", err)
 		}
 	}
-	firstEndpoint, err := nativeInstanceEndpoint(ctx, kube, first)
+	firstEndpoint, err := servingstate.NativeInstanceEndpoint(ctx, kube, first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondEndpoint, err := nativeInstanceEndpoint(ctx, kube, second)
+	secondEndpoint, err := servingstate.NativeInstanceEndpoint(ctx, kube, second)
 	if err != nil || firstEndpoint != "http://10.96.0.10:8080" || secondEndpoint != "http://10.96.0.11:8080" {
 		t.Fatal("slots on the same Node did not retain distinct destinations", firstEndpoint, secondEndpoint, err)
 	}
 	restartable := first.DeepCopy()
 	restartable.Spec.RestartPolicy = core.RestartPolicyAlways
-	if _, err = nativeInstanceEndpoint(ctx, kube, restartable); err == nil {
+	if _, err = servingstate.NativeInstanceEndpoint(ctx, kube, restartable); err == nil {
 		t.Fatal("restartable Pod could alias a replacement executor")
 	}
 	duplicate := first.DeepCopy()
@@ -81,7 +82,7 @@ func TestNativeInstanceServiceLifetimeAndUniqueDestination(t *testing.T) {
 	if _, err = kube.CoreV1().Pods(first.Namespace).Create(ctx, duplicate, meta.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = nativeInstanceEndpoint(ctx, kube, first); err == nil {
+	if _, err = servingstate.NativeInstanceEndpoint(ctx, kube, first); err == nil {
 		t.Fatal("a selector matching multiple Pods was accepted")
 	}
 	if err = kube.CoreV1().Pods(first.Namespace).Delete(ctx, duplicate.Name, meta.DeleteOptions{}); err != nil {
@@ -89,16 +90,16 @@ func TestNativeInstanceServiceLifetimeAndUniqueDestination(t *testing.T) {
 	}
 	replacement := first.DeepCopy()
 	replacement.Status.ContainerStatuses[0].ContainerID = "containerd://replacement"
-	if _, err = nativeInstanceEndpoint(ctx, kube, replacement); err == nil {
+	if _, err = servingstate.NativeInstanceEndpoint(ctx, kube, replacement); err == nil {
 		t.Fatal("the Service aliased a different container identity")
 	}
-	if err = deleteInstanceService(ctx, kube, first); err != nil {
+	if err = servingstate.DeleteInstanceService(ctx, kube, first); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = kube.CoreV1().Services(first.Namespace).Get(ctx, instanceService(first).Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+	if _, err = kube.CoreV1().Services(first.Namespace).Get(ctx, servingstate.InstanceService(first).Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Fatal("removed instance retained its Service", err)
 	}
-	if _, err = nativeInstanceEndpoint(ctx, kube, second); err != nil {
+	if _, err = servingstate.NativeInstanceEndpoint(ctx, kube, second); err != nil {
 		t.Fatal("removing one slot removed another slot's transport", err)
 	}
 }
@@ -122,13 +123,13 @@ func TestPreparePollsReuseRecentObserverRefresh(t *testing.T) {
 	})
 	manager.observer.kube = kube
 	t.Cleanup(func() { _ = manager.observer.Close() })
-	operations := &Operations{cluster: manager.observer.cluster, store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, config: OperationConfig{Namespace: pod.Namespace, PollInterval: time.Minute}}
+	operations := &servingops.Operations{Cluster: manager.observer.cluster, Store: manager.store, Kube: kube, Runtime: manager.runtime, Observer: manager.observer, Config: servingops.OperationConfig{Namespace: pod.Namespace, PollInterval: time.Minute}}
 	if err := manager.observer.Refresh(ctx); err != nil {
 		t.Fatal(err)
 	}
 	lists = 0
 	for range 4 {
-		if _, err := operations.prepareObserved(ctx, pod); err != nil {
+		if _, err := operations.PrepareObserved(ctx, pod); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -150,7 +151,7 @@ func TestNativeInstanceServiceRejectsMismatchedExistingResources(t *testing.T) {
 		{"shared selector", func(service *core.Service) {
 			service.Spec.Selector = map[string]string{"app.kubernetes.io/component": servingstate.ServingInstanceComponent}
 		}, true},
-		{"missing proxy label", func(service *core.Service) { delete(service.Labels, edgeMeshServiceProxyLabel) }, true},
+		{"missing proxy label", func(service *core.Service) { delete(service.Labels, servingstate.EdgeMeshServiceProxyLabel) }, true},
 		{"another target port", func(service *core.Service) { service.Spec.Ports[0].TargetPort = intstr.FromInt32(9090) }, true},
 		{"not-ready destinations", func(service *core.Service) { service.Spec.PublishNotReadyAddresses = true }, true},
 	}
@@ -160,14 +161,14 @@ func TestNativeInstanceServiceRejectsMismatchedExistingResources(t *testing.T) {
 			service := observerServiceFixture(pod)
 			tc.change(service)
 			kube := kubefake.NewSimpleClientset(pod, service)
-			operations := &Operations{kube: kube}
-			if err := operations.ensureInstanceService(ctx, pod); err == nil {
+			operations := &servingops.Operations{Kube: kube}
+			if err := operations.EnsureInstanceService(ctx, pod); err == nil {
 				t.Fatal("mismatched existing Service was adopted")
 			}
-			if _, err := nativeInstanceEndpoint(ctx, kube, pod); err == nil {
+			if _, err := servingstate.NativeInstanceEndpoint(ctx, kube, pod); err == nil {
 				t.Fatal("mismatched existing Service became a native destination")
 			}
-			deleteErr := deleteInstanceService(ctx, kube, pod)
+			deleteErr := servingstate.DeleteInstanceService(ctx, kube, pod)
 			actual, err := kube.CoreV1().Services(pod.Namespace).Get(ctx, service.Name, meta.GetOptions{})
 			if tc.owned {
 				if deleteErr != nil || !apierrors.IsNotFound(err) {
@@ -189,7 +190,7 @@ func TestNativeInstanceServiceRejectsMismatchedExistingResources(t *testing.T) {
 		}
 		return true, nil, apierrors.NewAlreadyExists(core.Resource("services"), wrong.Name)
 	})
-	if err := (&Operations{kube: kube}).ensureInstanceService(ctx, pod); err == nil {
+	if err := (&servingops.Operations{Kube: kube}).EnsureInstanceService(ctx, pod); err == nil {
 		t.Fatal("AlreadyExists race adopted another Pod's Service")
 	}
 	actualWinner, err := kube.CoreV1().Services(pod.Namespace).Get(ctx, wrong.Name, meta.GetOptions{})
@@ -197,8 +198,8 @@ func TestNativeInstanceServiceRejectsMismatchedExistingResources(t *testing.T) {
 		t.Fatal("AlreadyExists race changed its winner", err)
 	}
 	// A stale UID label must not be rewritten into the current identity.
-	pod.Labels[instancePodUIDLabel] = "old-pod"
-	if err := (&Operations{kube: kube}).ensureInstanceService(ctx, pod); err == nil {
+	pod.Labels[servingstate.InstancePodUIDLabel] = "old-pod"
+	if err := (&servingops.Operations{Kube: kube}).EnsureInstanceService(ctx, pod); err == nil {
 		t.Fatal("mismatched Pod identity label was accepted")
 	}
 }
@@ -218,16 +219,16 @@ func TestExistingPreparationMatchesQuantityValues(t *testing.T) {
 	if err = json.Unmarshal(raw, actual); err != nil {
 		t.Fatal(err)
 	}
-	if !samePreparedPod(actual, desired) {
+	if !servingops.SamePreparedPod(actual, desired) {
 		t.Fatal("unchanged API-decoded allocation rejected as a different preparation")
 	}
 	actual.Spec.Containers[0].Resources.Limits[core.ResourceMemory] = resource.MustParse("278Mi")
-	if samePreparedPod(actual, desired) {
+	if servingops.SamePreparedPod(actual, desired) {
 		t.Fatal("different main memory allocation was reused")
 	}
 	actual.Spec.Containers[0].Resources.Limits[core.ResourceMemory] = resource.MustParse("279Mi")
 	actual.Spec.InitContainers[0].Resources.Limits[core.ResourceCPU] = resource.MustParse("2")
-	if samePreparedPod(actual, desired) {
+	if servingops.SamePreparedPod(actual, desired) {
 		t.Fatal("different init CPU allocation was reused")
 	}
 }
@@ -253,7 +254,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 		Create: func(ctx context.Context, c client.WithWatch, object client.Object, opts ...client.CreateOption) error {
 			if pod, ok := object.(*core.Pod); ok {
 				pod.UID = fixture.UID
-				pod.Labels[instancePodUIDLabel] = string(pod.UID)
+				pod.Labels[servingstate.InstancePodUIDLabel] = string(pod.UID)
 				pod.Status = fixture.Status
 			}
 			if err := c.Create(ctx, object, opts...); err != nil {
@@ -294,7 +295,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	manager.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{
 		Proxy: http.ProxyURL(proxy),
 	}}
-	operations := &Operations{cluster: manager.observer.cluster, store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, config: OperationConfig{Namespace: fixture.Namespace, PollInterval: time.Millisecond}}
+	operations := &servingops.Operations{Cluster: manager.observer.cluster, Store: manager.store, Kube: kube, Runtime: manager.runtime, Observer: manager.observer, Config: servingops.OperationConfig{Namespace: fixture.Namespace, PollInterval: time.Millisecond}}
 	spec := servingstate.PrepareSpec{Name: fixture.Name, MemoryBytes: 1024,
 		Instance: serving.SchedulerInstance{ID: "slot", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile, Weight: 1,
 			Allocation: serving.SchedulerAllocation{MemoryBytes: 1024}},
@@ -305,7 +306,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	}
 	persisted := spec
 	persisted.Config.Policy = currentPolicy
-	if _, err := operations.ensurePreparationConfig(ctx, persisted, nil); err != nil {
+	if _, err := operations.EnsurePreparationConfig(ctx, persisted, nil); err != nil {
 		t.Fatal(err)
 	}
 	// Recreate after routing has changed the retained ConfigMap's mutable policy.
@@ -318,7 +319,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 		t.Fatal(err)
 	}
 	assertPreparedPodResources(t, pod, spec.MemoryBytes)
-	pod.Annotations[ServingPolicyAnnotation] = "bootstrap"
+	pod.Annotations[servingstate.ServingPolicyAnnotation] = "bootstrap"
 	if err := manager.store.client.Update(ctx, pod); err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +329,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 	if err := manager.observer.Refresh(ctx); err != nil {
 		t.Fatal(err)
 	}
-	id := physicalID(fixture.UID, firstfloorStatus(fixture).ContainerID)
+	id := servingstate.PhysicalID(fixture.UID, servingstate.FirstfloorStatus(fixture).ContainerID)
 	assertCurrentPolicyObservation(t, manager.runtime.Instances(), id, policyAckPendingReason, currentPolicy)
 	if _, err := operations.PrepareInstance(ctx, spec); err != nil {
 		t.Fatal("idempotent prepare did not repair a previous partial acknowledgment", err)
@@ -349,7 +350,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 		t.Fatal("preparation reset the current mutable policy", config.Policy)
 	}
 	t.Run("OperationCostPinsPreparedPhysicalIdentity", func(t *testing.T) {
-		operations.native = manager.observer.native
+		operations.Native = manager.observer.native
 		controller := &SchedulerController{reservationState: &reservationState{}, store: manager.store}
 		idle := int32(1)
 		m := opcostRoot("physical-cost", time.Now(),
@@ -359,10 +360,10 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 		if err := manager.store.client.Create(ctx, m); err != nil {
 			t.Fatal(err)
 		}
-		physical := physicalID(fixture.UID, firstfloorStatus(fixture).ContainerID)
+		physical := servingstate.PhysicalID(fixture.UID, servingstate.FirstfloorStatus(fixture).ContainerID)
 		var removed string
-		controller.measureStep = func(ctx context.Context, _ SchedulerControllerConfig, request MeasurementRequest) (OperationMeasurement, evidencestore.Receipt, error) {
-			record := OperationMeasurement{Verdict: servingstate.MeasurementAccepted}
+		controller.measureStep = func(ctx context.Context, _ SchedulerControllerConfig, request servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error) {
+			record := servingops.OperationMeasurement{Verdict: servingstate.MeasurementAccepted}
 			switch request.Operation.Kind {
 			case servingstate.OperationPrepare:
 				result, err := operations.Execute(ctx, request.Operation)
@@ -378,7 +379,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 				removed = request.Operation.Instance
 				// Exercise the production boundary against the prepared Pod, not a
 				// synthetic result or an alias-tolerant removal substitute.
-				if err := operations.validateOperationBinding(ctx, request.Operation); err != nil {
+				if err := operations.ValidateOperationBinding(ctx, request.Operation); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -429,7 +430,7 @@ func TestCUDAPreparationReproducesMeasuredSupplementalGroups(t *testing.T) {
 		return true, nil, errors.New("stop after Pod creation")
 	})
 	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node.DeepCopy()).Build()}
-	operations := &Operations{store: store, kube: kube, observer: newTestObserver(t), config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
+	operations := &servingops.Operations{Store: store, Kube: kube, Observer: newTestObserver(t), Config: servingops.OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
 	spec := servingstate.PrepareSpec{
 		Name: "measured-rknn",
 		Instance: serving.SchedulerInstance{
@@ -477,7 +478,7 @@ func TestPreparationSeedsRoutingBeforeRoute(t *testing.T) {
 		return true, nil, errors.New("stop after Pod creation")
 	})
 	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node.DeepCopy()).Build()}
-	operations := &Operations{store: store, kube: kube, observer: newTestObserver(t), config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
+	operations := &servingops.Operations{Store: store, Kube: kube, Observer: newTestObserver(t), Config: servingops.OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
 	for _, owner := range []*serving.WorkloadReference{nil, {Name: "owner", UID: "owner-uid"}} {
 		name, want := "scheduler-prepared", `{}`
 		if owner != nil {
@@ -498,7 +499,7 @@ func TestPreparationSeedsRoutingBeforeRoute(t *testing.T) {
 		if err := store.client.Get(ctx, types.NamespacedName{Namespace: "chill-system", Name: name}, pod); err != nil {
 			t.Fatal(err)
 		}
-		if got := pod.Annotations[ServingRoutingAnnotation]; got != want {
+		if got := pod.Annotations[servingstate.ServingRoutingAnnotation]; got != want {
 			t.Fatalf("%s Pod routing %q, want %q", name, got, want)
 		}
 	}
@@ -535,7 +536,7 @@ func TestRKNNPreparationProjectsMeasuredHostAccess(t *testing.T) {
 		return true, nil, errors.New("stop after Pod creation")
 	})
 	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node.DeepCopy()).Build()}
-	operations := &Operations{store: store, kube: kube, observer: newTestObserver(t), config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
+	operations := &servingops.Operations{Store: store, Kube: kube, Observer: newTestObserver(t), Config: servingops.OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
 	spec := servingstate.PrepareSpec{
 		Name: "measured-rknn",
 		Instance: serving.SchedulerInstance{
@@ -641,18 +642,18 @@ func TestMeasurementPoolAdmitsOnlyMatchingOperations(t *testing.T) {
 				return true, nil, errors.New("stop after Pod creation")
 			})
 			store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node.DeepCopy()).Build()}
-			operations := &Operations{store: store, kube: kube, observer: newTestObserver(t), config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond, Measurement: tc.measurement}}
+			operations := &servingops.Operations{Store: store, Kube: kube, Observer: newTestObserver(t), Config: servingops.OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond, Measurement: tc.measurement}}
 			spec := measuredCPUPreparationFixture()
 			evidence, err := operations.PrepareInstance(ctx, spec)
 			pod := &core.Pod{}
 			getErr := store.client.Get(ctx, types.NamespacedName{Namespace: "chill-system", Name: spec.Name}, pod)
 			if !tc.admitted {
-				if err == nil || errors.Is(err, ErrNodeInMeasurement) == tc.measurement || !apierrors.IsNotFound(getErr) {
+				if err == nil || errors.Is(err, servingops.ErrNodeInMeasurement) == tc.measurement || !apierrors.IsNotFound(getErr) {
 					t.Fatalf("prepare admitted or created a Pod: err=%v get=%v", err, getErr)
 				}
 				if !tc.measurement {
 					// observer nil: reaching any effect past admission panics.
-					if err = (&Operations{store: store}).ChangePower(ctx, spec.Instance.Node, "", lowMode, time.Minute); !errors.Is(err, ErrNodeInMeasurement) {
+					if err = (&servingops.Operations{Store: store}).ChangePower(ctx, spec.Instance.Node, "", lowMode, time.Minute); !errors.Is(err, servingops.ErrNodeInMeasurement) {
 						t.Fatalf("power change on measurement Node: %v", err)
 					}
 				}
@@ -693,8 +694,8 @@ func TestMeasuredPowerChangeOnEmptyMeasurementNode(t *testing.T) {
 	// The fake agent settles every requested mode at once.
 	manager.store.client = &nodeAPI{Client: fake.NewClientBuilder().WithScheme(manager.store.client.Scheme()).WithObjects(testExecutionFacts(), &class).Build(), kube: kube, agent: settleAgent(&class)}
 	manager.observer.kube = kube
-	operations, err := NewOperations(manager.reservations, manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
-		OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond, Measurement: true})
+	operations, err := servingops.NewOperations(manager.reservations, manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
+		servingops.OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond, Measurement: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -702,7 +703,7 @@ func TestMeasuredPowerChangeOnEmptyMeasurementNode(t *testing.T) {
 	if err != nil || result.Status != servingstate.NativeOperationComplete {
 		t.Fatalf("measured power change on the measurement Node: %v %+v", err, result)
 	}
-	from, to, err := operationCostKeys(result)
+	from, to, err := servingops.OperationCostKeys(result)
 	if err != nil || from != "eco" || to != "boost" || len(result.Before.States) != 0 {
 		t.Fatalf("empty-Node transition keys %q->%q %v %+v", from, to, err, result.Before)
 	}

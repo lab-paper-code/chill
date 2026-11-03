@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -183,7 +184,7 @@ func TestMeasurementDeleteFencesIdentityAndNativeFinalizerLifecycle(t *testing.T
 			if mode == "physical source" {
 				pod := &core.Pod{ObjectMeta: meta.ObjectMeta{
 					Name: "starting", Annotations: map[string]string{
-						servingkube.ServingProfileAnnotation: "allowed/task/native-uid",
+						servingstate.ServingProfileAnnotation: "allowed/task/native-uid",
 					},
 				}}
 				if _, err := kube.CoreV1().Pods("serving").Create(ctx, pod, meta.CreateOptions{}); err != nil {

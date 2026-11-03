@@ -81,6 +81,7 @@ components:
   serving-kube: { in: internal/serving/kube }
   serving-management: { in: internal/serving/management }
   serving-state: { in: internal/serving/state }
+  serving-operations: { in: internal/serving/operations }
   serving-measurement: { in: internal/serving/measurement }
   firstfloor: { in: internal/firstfloor }
   serving-firstfloor: { in: internal/serving/firstfloor }
@@ -336,6 +337,7 @@ deps:
     mayDependOn:
       - serving-core
       - serving-state
+      - serving-operations
       - serving-observation
       - serving-measurement
       - serving-kube
@@ -354,6 +356,7 @@ deps:
     mayDependOn:
       - serving-core
       - serving-state
+      - serving-operations
       - serving-observation
       - api
       - serving-kube
@@ -408,14 +411,32 @@ deps:
       - serving-core
       - evidence-core
       - profile-derivation
+      - serving-observation
 
   serving-state:
     mayDependOn:
       - serving-core
+      - api
+      - platform-core
       - evidence-core
       - evidence-kube
       - firstfloor
       - workload-core
+
+  serving-operations:
+    mayDependOn:
+      - api
+      - platform-core
+      - evidence-core
+      - firstfloor
+      - metric-core
+      - power-window
+      - profiling-run
+      - serving-core
+      - serving-firstfloor
+      - serving-state
+      - workload-core
+      - workload-kube
 
   serving-kube:
     mayDependOn:
@@ -432,6 +453,7 @@ deps:
       - profiling-run
       - serving-core
       - serving-state
+      - serving-operations
       - serving-observation
       - serving-management
       - serving-firstfloor

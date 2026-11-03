@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func TestCostEvidenceRetainsHistoricalMeasurementCells(t *testing.T) {
 	profile.Condition.Backend = "ort-cpu"
 	profile.Condition.Artifact.ExecutionPath = catalogOccupancyPath
 	key, raw := costTestRecord(t, servingstate.OperationPrepare, identityTestMode, time.Now().UTC())
-	var record OperationMeasurement
+	var record servingops.OperationMeasurement
 	if err := json.Unmarshal(raw, &record); err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +39,7 @@ func TestCostEvidenceRetainsHistoricalMeasurementCells(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, err := e.Refresh(context.Background(), nil, []MeterDeclaration{costTestMeter}, nil)
+	view, err := e.Refresh(context.Background(), nil, []servingops.MeterDeclaration{costTestMeter}, nil)
 	if err != nil || len(view.Costs) != 1 || view.Costs[0].StateIdentities["profile"] != serving.MeasurementProfileIdentity(&profile) {
 		t.Fatalf("historical prepare identity lost: %+v %v", view, err)
 	}

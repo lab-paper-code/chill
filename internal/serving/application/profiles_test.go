@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -508,7 +509,7 @@ func schedulerTestService(t *testing.T, config SchedulerConfiguration) *Schedule
 			t.Error(err)
 		}
 	})
-	operations, err := servingkube.NewOperations(cluster, store, kube, execution, observer, &sdk.Client{}, servingkube.OperationConfig{Namespace: "serving", PollInterval: time.Second})
+	operations, err := servingops.NewOperations(cluster, store, kube, execution, observer, &sdk.Client{}, servingops.OperationConfig{Namespace: "serving", PollInterval: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}

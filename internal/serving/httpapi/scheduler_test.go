@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -153,7 +154,7 @@ func settingsServiceForTest(
 			t.Error(err)
 		}
 	})
-	operations, err := servingkube.NewOperations(cluster, store, kube, execution, observer, &sdk.Client{}, servingkube.OperationConfig{Namespace: "serving", PollInterval: time.Second})
+	operations, err := servingops.NewOperations(cluster, store, kube, execution, observer, &sdk.Client{}, servingops.OperationConfig{Namespace: "serving", PollInterval: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,11 +497,11 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 	})
 	service, execution, _ := settingsServiceForTest(t, kube, observationLog, settings, false, false)
 	controller := service.Controller
-	meters := []servingkube.MeterDeclaration{{ID: "accepted-meter", Node: serving.NodeReference{Name: "accepted-node", UID: "accepted-uid"}, Scope: "node-exclusive-wall"}}
+	meters := []servingops.MeterDeclaration{{ID: "accepted-meter", Node: serving.NodeReference{Name: "accepted-node", UID: "accepted-uid"}, Scope: "node-exclusive-wall"}}
 	handler := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, runtime: execution, observationLog: observationLog, config: HandlerConfig{
 		Scheduler: controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler", SchedulerConfigKey: "scheduler.json",
 		SchedulerLock: &service.Lock, MaxRequestBytes: 1 << 20, ChangeSchedulerSettings: service.ChangeSchedulerSettings,
-		SchedulerMeters: func() []servingkube.MeterDeclaration { return meters },
+		SchedulerMeters: func() []servingops.MeterDeclaration { return meters },
 		RequestTimeout:  73125 * time.Millisecond,
 	}}
 	put := func(extra string) *httptest.ResponseRecorder {
@@ -536,10 +537,10 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 	got := httptest.NewRecorder()
 	handler.scheduler(got, request)
 	var shown struct {
-		StaticRouting    map[string]map[string]int      `json:"staticRouting"`
-		PowerObservation map[string]map[string]float64  `json:"powerObservation"`
-		Meters           []servingkube.MeterDeclaration `json:"meters"`
-		RequestTimeout   time.Duration                  `json:"requestTimeout"`
+		StaticRouting    map[string]map[string]int     `json:"staticRouting"`
+		PowerObservation map[string]map[string]float64 `json:"powerObservation"`
+		Meters           []servingops.MeterDeclaration `json:"meters"`
+		RequestTimeout   time.Duration                 `json:"requestTimeout"`
 	}
 	if err := json.Unmarshal(got.Body.Bytes(), &shown); err != nil || got.Code != http.StatusOK || !reflect.DeepEqual(shown.StaticRouting, declared) {
 		t.Fatalf("GET settings lost the stored declaration: status=%d body=%s", got.Code, got.Body)

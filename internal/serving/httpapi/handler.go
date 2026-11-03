@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	"io"
 	"net/http"
 	"strconv"
@@ -47,7 +48,7 @@ type HandlerConfig struct {
 	SchedulerConfigMap, SchedulerConfigKey, SchedulerNamespace string
 	SchedulerLock                                              *sync.Mutex
 	ChangeSchedulerSettings                                    func(context.Context, application.SettingsInput, string, bool, string, string) (observation.SchedulerSettingsChange, string, error)
-	SchedulerMeters                                            func() []servingkube.MeterDeclaration
+	SchedulerMeters                                            func() []servingops.MeterDeclaration
 	ReceiveResources                                           func(context.Context, observation.ResourceBatch) ([]observation.ResourceTarget, error)
 
 	ReadCatalog           func(context.Context) (servingkube.CatalogRead, error)

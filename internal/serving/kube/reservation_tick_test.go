@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"math"
 	"net/http"
@@ -89,7 +90,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 						return cl.Create(ctx, o, opts...)
 					}
 					pod.UID = types.UID("new-independent-pod")
-					pod.Labels[instancePodUIDLabel] = string(pod.UID)
+					pod.Labels[servingstate.InstancePodUIDLabel] = string(pod.UID)
 					pod.Status = old.Status
 					if err := cl.Create(ctx, o, opts...); err != nil {
 						return err
@@ -99,7 +100,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 					}
 					follow, stop := context.WithCancel(c.observer.ctx)
 					c.observer.mu.Lock()
-					c.observer.sources[string(pod.UID)] = &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: firstfloorStatus(pod).ContainerID, follow: follow, cancel: stop}
+					c.observer.sources[string(pod.UID)] = &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: servingstate.FirstfloorStatus(pod).ContainerID, follow: follow, cancel: stop}
 					c.observer.mu.Unlock()
 					created <- pod.DeepCopy()
 					return nil
@@ -140,7 +141,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 				c.config.DispatchOccupancy = append(c.config.DispatchOccupancy, serving.DispatchOccupancy{Node: spec.Instance.Node, PowerMode: profile.Condition.PowerMode, RuntimeImage: profile.Condition.RuntimeImage, Model: profile.Condition.LogicalModel, Source: "AC-39 measured fixture"})
 				ref := evidencestore.ObjectIdentity{Store: "raw", Key: "baseline-" + profile.ID, Size: 1}
 				c.config.Baselines = append(c.config.Baselines, serving.NodeBaseline{ID: ref.Key, Node: spec.Instance.Node, PowerMode: "fixed", Watts: 10, Meter: "wall-" + profile.NodeName, Scope: "node-exclusive-wall", Reference: ref, MeasuredAt: time.Now()})
-				c.config.Meters = append(c.config.Meters, MeterDeclaration{ID: "wall-" + profile.NodeName, Node: spec.Instance.Node, Scope: "node-exclusive-wall", Source: profile.MetricSource})
+				c.config.Meters = append(c.config.Meters, servingops.MeterDeclaration{ID: "wall-" + profile.NodeName, Node: spec.Instance.Node, Scope: "node-exclusive-wall", Source: profile.MetricSource})
 				c.config.Costs = append(c.config.Costs, serving.OperationCost{ID: "prepare-" + profile.ID, Node: spec.Instance.Node, Kind: servingstate.OperationPrepare, From: "unloaded", To: serving.SchedulerInstanceState(spec.Instance), PowerMode: "fixed", Trials: []serving.OperationTrial{{Duration: time.Millisecond, Joules: 0.01}}, Meter: "wall-" + profile.NodeName, Scope: "node-exclusive-wall", EnergyScope: "whole-wall", Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "prepare-" + profile.ID, Size: 1}})
 			}
 			// Build real capacity rows from the fixture's measured durations/occupancy.
@@ -187,8 +188,8 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 				pending.Name, pending.UID, pending.ResourceVersion = "preparing-w1", "preparing-w1-uid", ""
 				pending.Spec.NodeName = slow.Name
 				pending.Status = core.PodStatus{Phase: core.PodPending}
-				pending.Labels[instancePodUIDLabel] = string(pending.UID)
-				pending.Annotations[ServingSlotAnnotation] = waiting.ID
+				pending.Labels[servingstate.InstancePodUIDLabel] = string(pending.UID)
+				pending.Annotations[servingstate.ServingSlotAnnotation] = waiting.ID
 				pending.OwnerReferences = []meta.OwnerReference{{APIVersion: object.APIVersion, Kind: "Workload", Name: object.Name, UID: object.UID}}
 				if _, err = c.kube.CoreV1().Pods(pending.Namespace).Create(ctx, pending, meta.CreateOptions{}); err != nil {
 					t.Fatal(err)
@@ -232,7 +233,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 			if _, err = c.Tick(ctx, time.Now()); err != nil {
 				t.Fatal(err)
 			}
-			physical := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+			physical := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
 			waitReservationTest(t, ctx, func() bool { route, _ := c.runtime.SchedulerRouting(); return route[w2.UID][physical] > 0 })
 			executed := make(chan native.Request, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -352,7 +353,7 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 		ref := evidencestore.ObjectIdentity{Store: "raw", Key: "reserve-baseline-" + instance.Profile.ID, Size: 1}
 		meter := "reserve-wall-" + instance.Node.Name
 		c.config.Baselines = append(c.config.Baselines, serving.NodeBaseline{ID: ref.Key, Node: instance.Node, PowerMode: "fixed", Watts: 5, Meter: meter, Scope: "node-exclusive-wall", Reference: ref, MeasuredAt: time.Now()})
-		c.config.Meters = append(c.config.Meters, MeterDeclaration{ID: meter, Node: instance.Node, Scope: "node-exclusive-wall", Source: instance.Profile.MetricSource})
+		c.config.Meters = append(c.config.Meters, servingops.MeterDeclaration{ID: meter, Node: instance.Node, Scope: "node-exclusive-wall", Source: instance.Profile.MetricSource})
 		c.config.Costs = append(c.config.Costs, serving.OperationCost{ID: "reserve-remove-" + instance.Profile.ID, Node: instance.Node, Kind: servingstate.OperationRemove, From: serving.SchedulerInstanceState(*instance), To: "unloaded", PowerMode: "fixed", Trials: []serving.OperationTrial{{Duration: 100 * time.Millisecond, Joules: 1}}, Meter: meter, Scope: "node-exclusive-wall", EnergyScope: "whole-wall", Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "reserve-remove-" + instance.Profile.ID, Size: 1}})
 	}
 	c.runtime.EnableSchedulerRouting()

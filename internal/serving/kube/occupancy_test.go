@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"strings"
 	"testing"
@@ -175,7 +176,7 @@ func TestCostEvidenceReadsLatestAcceptedOccupancy(t *testing.T) {
 	}
 	put("old", "max", servingstate.MeasurementAccepted, 9_000_000, at)
 	newest := put("new", "max", servingstate.MeasurementAccepted, 9_410_000, at.Add(time.Hour))
-	put("later-insufficient", "max", measurementInsufficient, 1, at.Add(2*time.Hour))
+	put("later-insufficient", "max", servingops.MeasurementInsufficient, 1, at.Add(2*time.Hour))
 	negative := put("low", "low", servingstate.MeasurementAccepted, -5, at)
 	evidence, err := NewCostEvidence(&Store{client: fake.NewClientBuilder().Build()}, objects, 1<<20)
 	if err != nil {
@@ -276,7 +277,7 @@ func TestOccupancyJudgesWorkloadServingByListedPods(t *testing.T) {
 
 	pod := servingPod("serving-plc")
 	pod.Spec.NodeName = "gw"
-	pod.Annotations = map[string]string{ServingRoutingAnnotation: `{"` + string(w.UID) + `":1}`}
+	pod.Annotations = map[string]string{servingstate.ServingRoutingAnnotation: `{"` + string(w.UID) + `":1}`}
 	if _, err := o.kube.CoreV1().Pods("chill-system").Create(context.Background(), pod, meta.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}

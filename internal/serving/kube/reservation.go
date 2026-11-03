@@ -228,7 +228,7 @@ func (c *reservationState) authorize(operation servingstate.Operation) error {
 	scope := c.operationScope(operation)
 	for _, run := range c.runs {
 		if run.reserved && scope.overlaps(run.scope) {
-			return refused("OperationConflict", "resources are reserved by "+run.owner)
+			return servingstate.Refused("OperationConflict", "resources are reserved by "+run.owner)
 		}
 	}
 	return nil
@@ -262,7 +262,7 @@ func (c *reservationState) releaseObservedScopes(nodes []core.Node, pods []core.
 				}
 			}
 			for _, pod := range pods {
-				if pod.Spec.NodeName == ref.Name && (slices.Contains(run.scope.Pods, string(pod.UID)) || slices.Contains(run.scope.Workloads, workloadOwner(pod.OwnerReferences))) && !c.knownOwnerEffectConfirmed(run, &pod, physical) {
+				if pod.Spec.NodeName == ref.Name && (slices.Contains(run.scope.Pods, string(pod.UID)) || slices.Contains(run.scope.Workloads, servingstate.WorkloadOwner(pod.OwnerReferences))) && !c.knownOwnerEffectConfirmed(run, &pod, physical) {
 					returned = false
 				}
 			}
@@ -321,11 +321,11 @@ func (c *reservationState) knownOwnerEffectConfirmed(run *actionRun, pod *core.P
 // Return policy-receipt exemption separately from admission identity: a dirty
 // executor may still use an authorized receipt's unchanged previous policy.
 func untouchedExecutorProof(parent *actionRun, pod *core.Pod, physical []serving.InstanceState, after time.Time) (preexisting, untouched bool) {
-	status := firstfloorStatus(pod)
+	status := servingstate.FirstfloorStatus(pod)
 	if status == nil {
 		return false, false
 	}
-	id := physicalID(pod.UID, status.ContainerID)
+	id := servingstate.PhysicalID(pod.UID, status.ContainerID)
 	current := schedulerPhysicalState(id, physical)
 	if current == nil {
 		return false, false
@@ -333,7 +333,7 @@ func untouchedExecutorProof(parent *actionRun, pod *core.Pod, physical []serving
 	preexisting = slices.ContainsFunc(parent.result.Before.Instances, func(state serving.InstanceState) bool {
 		return state.ID == id && state.PodUID == string(pod.UID) && state.Node == current.Node
 	})
-	untouched = preexisting && !parent.mayTouch[id] && sameRunningContainer(pod, pod) &&
+	untouched = preexisting && !parent.mayTouch[id] && servingstate.SameRunningContainer(pod, pod) &&
 		current.Node.Name == pod.Spec.NodeName && current.Ready && !current.Stopped &&
 		current.Native != nil && current.Native.Ready && after.Before(current.ObservedAt)
 	return preexisting, untouched
@@ -341,14 +341,14 @@ func untouchedExecutorProof(parent *actionRun, pod *core.Pod, physical []serving
 
 //nolint:gocyclo // Keep exact-executor and known-policy proof together at the reservation release boundary.
 func knownEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.InstanceState, after time.Time, allowPrevious bool) bool {
-	if run.result == nil || run.action.Status == servingstate.NativeOperationRunning || run.action.Status == servingstate.NativeOperationCancel || !sameRunningContainer(pod, pod) {
+	if run.result == nil || run.action.Status == servingstate.NativeOperationRunning || run.action.Status == servingstate.NativeOperationCancel || !servingstate.SameRunningContainer(pod, pod) {
 		return false
 	}
 	operation := run.result.Operation
 	if !servingstate.IsRoutingOperation(operation.Kind) && operation.Kind != servingstate.OperationPrepare && operation.Kind != servingstate.OperationResize {
 		return false
 	}
-	id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+	id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
 	_, beforeKnown := run.result.Before.Native[id]
 	_, actualKnown := run.result.Actual.Native[id]
 	identityKnown := slices.Contains(run.scope.Pods, string(pod.UID)) && slices.Contains(run.scope.Instances, id)
@@ -365,7 +365,7 @@ func knownEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.Inst
 		decision := operation.Prepare.Config.Policy.DecisionID
 		if wanted.Profile != nil && state.TargetID == wanted.ID && wanted.Node == state.Node &&
 			operation.ControlsWorkload(wanted.WorkloadUID) && operation.Prepare.Owner != nil &&
-			operation.Prepare.Owner.UID == wanted.WorkloadUID && workloadOwner(pod.OwnerReferences) == wanted.WorkloadUID &&
+			operation.Prepare.Owner.UID == wanted.WorkloadUID && servingstate.WorkloadOwner(pod.OwnerReferences) == wanted.WorkloadUID &&
 			actual.ProfileID == wanted.Profile.ID && decision != "" && actual.DecisionID == decision &&
 			actual.Policy.DecisionID == decision && schedulerPolicyAcknowledged(wanted, actual) {
 			return true
@@ -633,13 +633,13 @@ func (s *ClusterState) ReserveDeletion(ctx context.Context, uid types.UID) error
 	for _, object := range objects {
 		if pod, ok := object.(*core.Pod); ok {
 			run.scope.Pods = append(run.scope.Pods, string(pod.UID))
-			if status := firstfloorStatus(pod); status != nil && status.ContainerID != "" {
-				run.scope.Instances = append(run.scope.Instances, physicalID(pod.UID, status.ContainerID))
+			if status := servingstate.FirstfloorStatus(pod); status != nil && status.ContainerID != "" {
+				run.scope.Instances = append(run.scope.Instances, servingstate.PhysicalID(pod.UID, status.ContainerID))
 			}
 		}
 	}
 	if !c.reserveRun(id, run, operation) {
-		return refused("OperationConflict", "Workload deletion resources are reserved")
+		return servingstate.Refused("OperationConflict", "Workload deletion resources are reserved")
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"strings"
@@ -59,7 +60,7 @@ func LoadOperationCostSteps(ctx context.Context, cr edge.OperationCostMeasuremen
 		if int64(len(raw)) > maxBytes {
 			return nil, errors.New("operation evidence exceeds bound")
 		}
-		var record OperationMeasurement
+		var record servingops.OperationMeasurement
 		if err := decodeCostJSON(raw, &record); err != nil {
 			return nil, fmt.Errorf("decode operation evidence: %w", err)
 		}
@@ -72,14 +73,14 @@ func LoadOperationCostSteps(ctx context.Context, cr edge.OperationCostMeasuremen
 	return steps, nil
 }
 
-func projectOperationStep(cr edge.OperationCostMeasurement, index int, store string, record OperationMeasurement) (OperationStepProjection, error) {
+func projectOperationStep(cr edge.OperationCostMeasurement, index int, store string, record servingops.OperationMeasurement) (OperationStepProjection, error) {
 	step, saved := cr.Spec.Steps[index], cr.Status.Steps[index]
 	operation := record.Request.Operation
 	id := fmt.Sprintf("%s.%d.%s", cr.UID, index, step.Name)
 	if cr.UID == "" || strings.ContainsAny(string(cr.UID)+step.Name+operation.Node.UID, "/\\") ||
-		record.SchemaVersion != OperationMeasurementSchema || operation.ID != id || operation.Kind != string(step.Kind) ||
+		record.SchemaVersion != servingops.OperationMeasurementSchema || operation.ID != id || operation.Kind != string(step.Kind) ||
 		operation.Node.Name != cr.Spec.Node || operation.Node.Name == "" || operation.Node.UID == "" ||
-		record.Request.Store != store || saved.Key != OperationMeasurementKey(operation) || saved.Verdict != record.Verdict {
+		record.Request.Store != store || saved.Key != servingops.OperationMeasurementKey(operation) || saved.Verdict != record.Verdict {
 		return OperationStepProjection{}, errors.New("operation evidence CR/step/kind/Node/key identity mismatch")
 	}
 	switch step.Kind {
@@ -109,7 +110,7 @@ func projectOperationStep(cr edge.OperationCostMeasurement, index int, store str
 		if err != nil {
 			return OperationStepProjection{}, err
 		}
-	case string(edge.MeasurementPhaseFailed), measurementInsufficient:
+	case string(edge.MeasurementPhaseFailed), servingops.MeasurementInsufficient:
 		// Failed/insufficient records need not have accepted power, isolation or
 		// complete state effects. Their actual interval remains useful history.
 	default:
@@ -122,7 +123,7 @@ func emptyOperationResult(result *servingstate.OperationResult) bool {
 	return result.Operation.ID == "" && result.Operation.Kind == "" && result.Operation.Node.Name == "" && result.Operation.Node.UID == "" && result.StartedAt.IsZero() && result.EndedAt.IsZero() && result.Status == ""
 }
 
-func acceptedOperationStepEnergy(record OperationMeasurement, ref evidencestore.ObjectIdentity) (*float64, error) {
+func acceptedOperationStepEnergy(record servingops.OperationMeasurement, ref evidencestore.ObjectIdentity) (*float64, error) {
 	if record.Result.StartedAt.IsZero() {
 		return nil, errors.New("accepted operation lacks actual result")
 	}
@@ -133,7 +134,7 @@ func acceptedOperationStepEnergy(record OperationMeasurement, ref evidencestore.
 		if _, err := idleMeasurementBaseline(record, ref); err != nil {
 			return nil, err
 		}
-	} else if _, err := measurementCost(record, ref); err != nil {
+	} else if _, err := servingops.MeasurementCost(record, ref); err != nil {
 		return nil, err
 	}
 	return record.WallJoules, nil

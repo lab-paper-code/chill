@@ -1,6 +1,7 @@
 package kube
 
 import (
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"math"
 	"reflect"
@@ -21,7 +22,7 @@ import (
 // mode the Node can be switched into: the non-Fixed modes of its one
 // DeviceClass that have a configured actuation policy.
 func nodePowerTargets(n *core.Node, classes []edge.DeviceClass, policies []nodeactuator.ActuationPolicySpec) map[string]time.Duration {
-	class := nodeClass(n, classes)
+	class := servingstate.NodeClass(n, classes)
 	if class == nil {
 		return nil
 	}
@@ -62,7 +63,7 @@ func measuredGPUs(profiles []serving.Profile, nodeUID string) []string {
 	return gpus
 }
 
-func bindProfileMeters(s *serving.SchedulerSnapshot, meters []MeterDeclaration) {
+func bindProfileMeters(s *serving.SchedulerSnapshot, meters []servingops.MeterDeclaration) {
 	for index := range s.Instances {
 		bindProfileMeter(&s.Instances[index], meters)
 	}
@@ -113,11 +114,11 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 			}
 			instance.PodName = pod.Name
 			for _, container := range pod.Spec.Containers {
-				if container.Name == firstfloorContainerName {
+				if container.Name == servingstate.FirstfloorContainerName {
 					instance.Allocation.MemoryBytes = uint64(container.Resources.Limits.Memory().Value())
 				}
 			}
-			if weight, err := strconv.Atoi(pod.Annotations[ServingWeightAnnotation]); err == nil {
+			if weight, err := strconv.Atoi(pod.Annotations[servingstate.ServingWeightAnnotation]); err == nil {
 				instance.Weight = int32(weight)
 			}
 		}
@@ -155,7 +156,7 @@ func appendReason(reasons []string, reason string) []string {
 	return append(reasons, reason)
 }
 
-func bindProfileMeter(instance *serving.SchedulerInstance, meters []MeterDeclaration) {
+func bindProfileMeter(instance *serving.SchedulerInstance, meters []servingops.MeterDeclaration) {
 	if instance.Profile == nil {
 		return
 	}

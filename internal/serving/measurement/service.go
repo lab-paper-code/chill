@@ -201,7 +201,7 @@ func (o *Service) Delete(
 	}
 	prefix := namespace + "/" + name + "/"
 	for _, pod := range pods.Items {
-		if strings.HasPrefix(pod.Annotations[servingkube.ServingProfileAnnotation], prefix) &&
+		if strings.HasPrefix(pod.Annotations[servingstate.ServingProfileAnnotation], prefix) &&
 			pod.Status.Phase != core.PodSucceeded && pod.Status.Phase != core.PodFailed {
 			return result, measurementInUse("a physical serving Pod still references the measurement")
 		}

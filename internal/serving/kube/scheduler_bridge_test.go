@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"strings"
 	"testing"
@@ -183,7 +184,7 @@ func TestSkippedBridgeChainPreservesTerminalUIDSCH51(t *testing.T) {
 		t.Run(map[bool]string{true: "acknowledged", false: "no-ack"}[receipt], func(t *testing.T) {
 			c, goal, _ := acknowledgedHandoffFixture(t)
 			c.ctx = context.Background()
-			c.operations = &Operations{runtime: c.runtime}
+			c.operations = &servingops.Operations{Runtime: c.runtime}
 			stage := *c.runs["acknowledged-route"].result.Operation.Target
 			stage.ID = "w2-handoff"
 			w2 := stage.Instances[0]

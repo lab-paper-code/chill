@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -261,16 +262,16 @@ func (h *Handler) schedulerSettingsRead(w http.ResponseWriter, r *http.Request) 
 		sendError(w, err)
 		return
 	}
-	meters := []servingkube.MeterDeclaration{}
+	meters := []servingops.MeterDeclaration{}
 	if h.config.SchedulerMeters != nil {
 		meters = append(meters, h.config.SchedulerMeters()...)
 	}
 	w.Header().Set("ETag", strconv.Quote(cm.ResourceVersion))
 	sendJSON(w, http.StatusOK, struct {
 		serving.SchedulerSettings
-		StaticRouting    json.RawMessage                `json:"staticRouting,omitempty"`
-		PowerObservation json.RawMessage                `json:"powerObservation,omitempty"` // Stored operating-power policy; read-only.
-		Meters           []servingkube.MeterDeclaration `json:"meters"`
-		RequestTimeout   time.Duration                  `json:"requestTimeout"` // Runtime --request-timeout, in nanoseconds; read-only.
+		StaticRouting    json.RawMessage               `json:"staticRouting,omitempty"`
+		PowerObservation json.RawMessage               `json:"powerObservation,omitempty"` // Stored operating-power policy; read-only.
+		Meters           []servingops.MeterDeclaration `json:"meters"`
+		RequestTimeout   time.Duration                 `json:"requestTimeout"` // Runtime --request-timeout, in nanoseconds; read-only.
 	}{settings, config["staticRouting"], config["powerObservation"], meters, h.config.RequestTimeout})
 }

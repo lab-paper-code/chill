@@ -124,22 +124,6 @@ func (c *reservationState) ownerDAGCompleteLocked(parent *actionRun) bool {
 	return true
 }
 
-func positiveWorkloadScope(target serving.SchedulerCandidate, allowed []string) []string {
-	active := []string{}
-	for uid, weights := range target.Routing {
-		if allowed != nil && !slices.Contains(allowed, uid) {
-			continue
-		}
-		for _, weight := range weights {
-			if weight > 0 {
-				active = append(active, uid)
-				break
-			}
-		}
-	}
-	return active
-}
-
 // Routes inside one owner form a chain; a partial ACK never races its final
 // route. Preparations of that owner's other Nodes still proceed independently.
 func (c *reservationState) orderRouteChild(action serving.Action, owner string) serving.Action {

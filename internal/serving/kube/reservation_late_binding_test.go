@@ -34,7 +34,7 @@ func TestCreatedUIDLateBindingReturnsAC38(t *testing.T) {
 			c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{parent.action.ID: parent, action.ID: child}}}
 			actual := wanted
 			actual.PodUID = string(pod.UID)
-			actual.ID = physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+			actual.ID = servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
 			actual.TargetID, actual.OwnerWorkloadUID = wanted.ID, wanted.WorkloadUID
 			switch mode {
 			case "other-uid":

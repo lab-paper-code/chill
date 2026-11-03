@@ -28,7 +28,7 @@ type pendingPreparationAPI struct {
 func (c *pendingPreparationAPI) Create(ctx context.Context, object client.Object, opts ...client.CreateOption) error {
 	if pod, ok := object.(*core.Pod); ok {
 		pod.Status.Phase = core.PodPending
-		pod.Status.ContainerStatuses = []core.ContainerStatus{{Name: firstfloorContainerName, State: core.ContainerState{Waiting: &core.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}}
+		pod.Status.ContainerStatuses = []core.ContainerStatus{{Name: servingstate.FirstfloorContainerName, State: core.ContainerState{Waiting: &core.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}}
 	}
 	if err := c.Client.Create(ctx, object, opts...); err != nil {
 		return err
@@ -47,7 +47,7 @@ func (c *pendingPreparationAPI) Patch(ctx context.Context, object client.Object,
 		current := &core.Pod{}
 		err := c.Client.Get(ctx, client.ObjectKeyFromObject(pod), current)
 		if apierrors.IsNotFound(err) {
-			return eIfNotFound(c.kube.Tracker().Delete(core.SchemeGroupVersion.WithResource("pods"), pod.Namespace, pod.Name))
+			return servingstate.IgnoreNotFound(c.kube.Tracker().Delete(core.SchemeGroupVersion.WithResource("pods"), pod.Namespace, pod.Name))
 		}
 		if err != nil {
 			return err
@@ -108,7 +108,7 @@ func TestOccupancyPreparationTimeoutHandsBackPendingPod(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	if deleting.DeletionTimestamp == nil || len(deleting.Finalizers) != 1 || deleting.Finalizers[0] != sourceFinalizer || podTerminated(deleting) || !podAwaitingExecutor(deleting) {
+	if deleting.DeletionTimestamp == nil || len(deleting.Finalizers) != 1 || deleting.Finalizers[0] != servingstate.SourceFinalizer || servingstate.PodTerminated(deleting) || !servingstate.PodAwaitingExecutor(deleting) {
 		t.Fatalf("pending deletion did not retain termination proof: %+v", deleting)
 	}
 	if h.holder() != string(measurement.UID) {

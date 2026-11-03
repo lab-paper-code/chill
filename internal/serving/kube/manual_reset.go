@@ -27,13 +27,13 @@ type manualResetPlan struct {
 	instances []serving.SchedulerInstance
 }
 
-func (c *SchedulerController) manualResetOperationLocked(request ManualOperation, config SchedulerControllerConfig, snapshot serving.SchedulerSnapshot) (servingstate.Operation, error) {
+func (c *SchedulerController) manualResetOperationLocked(request servingstate.ManualOperation, config SchedulerControllerConfig, snapshot serving.SchedulerSnapshot) (servingstate.Operation, error) {
 	if strings.TrimSpace(request.Reason) == "" || request.WorkloadUID != "" || request.Node != (serving.NodeReference{}) || request.ProfileID != "" || request.Instance != "" || request.FixedBatchSize != 0 || request.MaxBatch != nil || request.Weights != nil {
-		return servingstate.Operation{}, refused("InvalidInput", "reset requires a reason and only workloadUIDs or scope")
+		return servingstate.Operation{}, servingstate.Refused("InvalidInput", "reset requires a reason and only workloadUIDs or scope")
 	}
 	if (request.WorkloadUIDs != nil) == (request.Scope != "") || request.WorkloadUIDs != nil && len(request.WorkloadUIDs) == 0 ||
 		request.Scope != "" && request.Scope != nonAutonomousResetScope {
-		return servingstate.Operation{}, refused("InvalidInput", "reset requires workloadUIDs or scope all-non-autonomous, exclusively")
+		return servingstate.Operation{}, servingstate.Refused("InvalidInput", "reset requires workloadUIDs or scope all-non-autonomous, exclusively")
 	}
 	uids := make([]string, len(request.WorkloadUIDs))
 	copy(uids, request.WorkloadUIDs)
@@ -47,7 +47,7 @@ func (c *SchedulerController) manualResetOperationLocked(request ManualOperation
 	slices.Sort(uids)
 	for index, uid := range uids {
 		if uid == "" || index > 0 && uid == uids[index-1] || !slices.ContainsFunc(snapshot.Workloads, func(d *serving.Definition) bool { return d != nil && d.UID == uid }) {
-			return servingstate.Operation{}, refused("InvalidInput", "reset UIDs must be unique current Workload UIDs")
+			return servingstate.Operation{}, servingstate.Refused("InvalidInput", "reset UIDs must be unique current Workload UIDs")
 		}
 	}
 	return servingstate.Operation{ID: "manual-reset:" + string(uuid.NewUUID()), Kind: servingstate.OperationReset, WorkloadUIDs: uids, Reason: request.Reason, ActorUsername: request.ActorUsername, ActorUID: request.ActorUID}, nil
@@ -100,7 +100,7 @@ func (c *reservationState) resetReservationOwnersLocked(scope resourceScope, adm
 			continue
 		}
 		if run.action.Status == servingstate.NativeOperationRunning || run.action.Status == servingstate.NativeOperationCancel {
-			return nil, refused("OperationConflict", "resources are reserved by active owner "+run.owner)
+			return nil, servingstate.Refused("OperationConflict", "resources are reserved by active owner "+run.owner)
 		}
 		if !run.reserved {
 			continue
@@ -109,7 +109,7 @@ func (c *reservationState) resetReservationOwnersLocked(scope resourceScope, adm
 			len(run.scope.Workloads) == 0 ||
 			slices.ContainsFunc(run.scope.Workloads, func(uid string) bool { return !slices.Contains(scope.Workloads, uid) }) ||
 			slices.ContainsFunc(run.scope.Nodes, func(node serving.NodeReference) bool { return !slices.Contains(admittedNodes, node) }) {
-			return nil, refused("OperationConflict", "reset cannot inherit reservation outside its cleanup scope: "+run.owner)
+			return nil, servingstate.Refused("OperationConflict", "reset cannot inherit reservation outside its cleanup scope: "+run.owner)
 		}
 	}
 	return owners, nil
@@ -152,7 +152,7 @@ func (c *SchedulerController) resetPendingPowerNodes(ctx context.Context, uids [
 }
 
 func (c *SchedulerController) resetOwnedTargets(ctx context.Context, uids []string) ([]serving.SchedulerInstance, error) {
-	pods, err := c.kube.CoreV1().Pods(c.operations.config.Namespace).List(ctx, meta.ListOptions{})
+	pods, err := c.kube.CoreV1().Pods(c.operations.Config.Namespace).List(ctx, meta.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -162,27 +162,27 @@ func (c *SchedulerController) resetOwnedTargets(ctx context.Context, uids []stri
 		if pod.Labels["app.kubernetes.io/component"] != servingstate.ServingInstanceComponent {
 			continue
 		}
-		owner := workloadOwner(pod.OwnerReferences)
+		owner := servingstate.WorkloadOwner(pod.OwnerReferences)
 		seeds := map[string]int32{}
-		if raw := pod.Annotations[ServingRoutingAnnotation]; raw != "" {
+		if raw := pod.Annotations[servingstate.ServingRoutingAnnotation]; raw != "" {
 			if err := json.Unmarshal([]byte(raw), &seeds); err != nil {
 				return nil, err
 			}
 		}
 		for uid, weight := range seeds {
 			if weight > 0 && owner != "" && uid != owner && (slices.Contains(uids, uid) || slices.Contains(uids, owner)) {
-				return nil, refused("OperationConflict", "reset Pod routing conflicts with Workload ownership")
+				return nil, servingstate.Refused("OperationConflict", "reset Pod routing conflicts with Workload ownership")
 			}
 		}
 		if !slices.Contains(uids, owner) {
 			continue
 		}
-		status := firstfloorStatus(&pod)
+		status := servingstate.FirstfloorStatus(&pod)
 		id := ""
 		if status != nil && status.ContainerID != "" {
-			id = physicalID(pod.UID, status.ContainerID)
-		} else if !podTerminated(&pod) {
-			return nil, refused("OperationConflict", "owned Pod executor termination is unconfirmed")
+			id = servingstate.PhysicalID(pod.UID, status.ContainerID)
+		} else if !servingstate.PodTerminated(&pod) {
+			return nil, servingstate.Refused("OperationConflict", "owned Pod executor termination is unconfirmed")
 		}
 		for _, instance := range physical {
 			if instance.ID != id {
@@ -190,7 +190,7 @@ func (c *SchedulerController) resetOwnedTargets(ctx context.Context, uids []stri
 			}
 			if instance.OwnerWorkloadUID != "" && instance.OwnerWorkloadUID != owner ||
 				slices.ContainsFunc(instance.Workloads, func(workload serving.WorkloadReference) bool { return workload.UID != owner }) {
-				return nil, refused("OperationConflict", "owned reset instance is bound to another Workload")
+				return nil, servingstate.Refused("OperationConflict", "owned reset instance is bound to another Workload")
 			}
 		}
 		node, err := c.kube.CoreV1().Nodes().Get(ctx, pod.Spec.NodeName, meta.GetOptions{})
@@ -238,7 +238,7 @@ func (c *SchedulerController) executeManualReset(ctx context.Context, operation 
 		}},
 		{"unroute", func() error { return c.resetRouting(ctx, operation, servingstate.OperationUnroute, result) }},
 		{"drain", func() error {
-			return c.operations.wait(ctx, func() (bool, error) {
+			return c.operations.Wait(ctx, func() (bool, error) {
 				for _, request := range c.runtime.SchedulerInputs(time.Now).Outstanding {
 					if request.Definition != nil && slices.Contains(operation.WorkloadUIDs, request.Definition.UID) {
 						return false, nil
@@ -263,7 +263,7 @@ func (c *SchedulerController) executeManualReset(ctx context.Context, operation 
 			}
 			for _, instance := range owned {
 				if !slices.Contains(plan.nodes, instance.Node) {
-					return refused("OperationConflict", "reset ownership moved outside the admitted Nodes")
+					return servingstate.Refused("OperationConflict", "reset ownership moved outside the admitted Nodes")
 				}
 				outcome, err := c.operations.Execute(ctx, servingstate.Operation{ID: operation.ID + "/remove/" + instance.PodUID, Kind: servingstate.OperationRemove, Node: instance.Node, PodUID: instance.PodUID, Instance: instance.ID})
 				if result.DrainNative == nil {
@@ -360,7 +360,7 @@ func (c *SchedulerController) resetRouting(ctx context.Context, root servingstat
 }
 
 func (c *SchedulerController) resetRoutingPresent(ctx context.Context, uid string, config SchedulerControllerConfig) (bool, bool, error) {
-	cm, err := c.kube.CoreV1().ConfigMaps(c.operations.config.Namespace).Get(ctx, config.ConfigurationName, meta.GetOptions{})
+	cm, err := c.kube.CoreV1().ConfigMaps(c.operations.Config.Namespace).Get(ctx, config.ConfigurationName, meta.GetOptions{})
 	if err != nil {
 		return false, false, err
 	}
@@ -409,13 +409,13 @@ func (c *SchedulerController) resetLowerNodes(ctx context.Context, nodes []servi
 			result.Progress = append(result.Progress, node.Name+": power skipped; another serving Pod remains")
 			continue
 		}
-		class := nodeClass(node, classes.Items)
+		class := servingstate.NodeClass(node, classes.Items)
 		// A Fixed-only class has no lower mode to request, so its readiness cannot affect the reset outcome.
 		if class != nil && !slices.ContainsFunc(class.Spec.PowerModes, func(mode edge.PowerMode) bool { return mode.Actuator.Kind != edge.PowerModeActuatorFixed }) {
 			result.Progress = append(result.Progress, node.Name+": power skipped; fixed-only device class")
 			continue
 		}
-		mode := readBackMode(node, class)
+		mode := servingstate.ReadBackMode(node, class)
 		if class == nil || mode == "" || !slices.ContainsFunc(node.Status.Conditions, func(condition core.NodeCondition) bool {
 			return condition.Type == core.NodeReady && condition.Status == core.ConditionTrue
 		}) {
@@ -438,7 +438,7 @@ func (c *SchedulerController) resetLowerNodes(ctx context.Context, nodes []servi
 		if err != nil {
 			return err
 		}
-		if err := c.operations.wait(ctx, func() (bool, error) {
+		if err := c.operations.Wait(ctx, func() (bool, error) {
 			actual, err := c.kube.CoreV1().Nodes().Get(ctx, ref.Name, meta.GetOptions{})
 			if err != nil {
 				return false, err
@@ -449,7 +449,7 @@ func (c *SchedulerController) resetLowerNodes(ctx context.Context, nodes []servi
 			ready := slices.ContainsFunc(actual.Status.Conditions, func(condition core.NodeCondition) bool {
 				return condition.Type == core.NodeReady && condition.Status == core.ConditionTrue
 			})
-			return ready && readBackMode(actual, class) == lowest, nil
+			return ready && servingstate.ReadBackMode(actual, class) == lowest, nil
 		}); err != nil {
 			return err
 		}

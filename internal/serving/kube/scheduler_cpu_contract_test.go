@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"testing"
 	"time"
@@ -41,7 +42,7 @@ func TestNativePodReadbackUsesMemoryAndGPUWithoutCPUAllocation(t *testing.T) {
 	}
 	at := time.Unix(100, 0)
 	sn := serving.SchedulerNode{Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, MemoryBytes: 1 << 30, Ready: true, PowerMode: "fixed", ObservedAt: at}
-	id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+	id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
 	state := serving.InstanceState{ID: id, Node: sn.Node, Profile: profile.ID, Ready: true, ObservedAt: at, Native: &native.State{Ready: true, Metadata: native.Metadata{ProfileID: profile.ID, Runtime: *profile.RuntimeMetadata, MaxQueueRequests: 4, MaxBatchSize: 1, Policy: native.Policy{MaxBatchSize: 1}}}}
 	snapshot := serving.SchedulerSnapshot{At: at, ObservationEnd: at}
 	captureNodePods(&snapshot, &sn, node, &core.PodList{Items: []core.Pod{*pod}}, map[string]serving.InstanceState{id: state}, map[string]*serving.Profile{profile.ID: &profile})
@@ -58,7 +59,7 @@ func TestNativePodReadbackUsesMemoryAndGPUWithoutCPUAllocation(t *testing.T) {
 }
 
 func TestPreparationSharedCPURetainsMemoryAndDeviceAdmission(t *testing.T) {
-	if err := ValidatePreparation(measuredCPUPreparationFixture()); err != nil {
+	if err := servingops.ValidatePreparation(measuredCPUPreparationFixture()); err != nil {
 		t.Fatal("runtime automatic threads rejected", err)
 	}
 	for _, change := range []func(*servingstate.PrepareSpec){
@@ -69,7 +70,7 @@ func TestPreparationSharedCPURetainsMemoryAndDeviceAdmission(t *testing.T) {
 		spec := measuredCPUPreparationFixture()
 		change(&spec)
 		kube := kubefake.NewSimpleClientset()
-		operations := &Operations{kube: kube}
+		operations := &servingops.Operations{Kube: kube}
 		if _, err := operations.PrepareInstance(context.Background(), spec); err == nil {
 			t.Fatal("unsafe preparation admitted")
 		}

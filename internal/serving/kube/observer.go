@@ -38,14 +38,6 @@ import (
 )
 
 const (
-	ServingProfileAnnotation = "edge.dacs.io/serving-profile"
-	ServingWeightAnnotation  = "edge.dacs.io/serving-weight"
-	// ServingRoutingAnnotation holds the last applied weight per Workload UID.
-	ServingRoutingAnnotation = "edge.dacs.io/serving-routing"
-	ServingPolicyAnnotation  = "edge.dacs.io/serving-policy"
-	ServingSlotAnnotation    = "edge.dacs.io/serving-slot"
-	sourceFinalizer          = "edge.dacs.io/serving-source-termination"
-	firstfloorContainerName  = "firstfloor"
 	profileInitContainerName = "profile"
 	nonTerminalPodSelector   = "status.phase!=Succeeded,status.phase!=Failed"
 )
@@ -203,17 +195,6 @@ func (o *Observer) issue(source string, err error) {
 	}
 	o.recordIssueLocked(source, now)
 }
-func physicalID(podUID types.UID, containerID string) string {
-	return string(podUID) + "/" + containerID
-}
-func firstfloorStatus(pod *corev1.Pod) *corev1.ContainerStatus {
-	for i := range pod.Status.ContainerStatuses {
-		if pod.Status.ContainerStatuses[i].Name == firstfloorContainerName {
-			return &pod.Status.ContainerStatuses[i]
-		}
-	}
-	return nil
-}
 
 // Refresh publishes the Pod ledger independently of current native readiness.
 func (o *Observer) Refresh(ctx context.Context) error {
@@ -330,11 +311,11 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 		probes.Add(1)
 		go func() {
 			defer probes.Done()
-			instance, publish, probe := o.probeSource(ctx, pod, byName[pod.Spec.NodeName], profiles[pod.Annotations[ServingProfileAnnotation]], classes.Items, resources, servicesByName, servicesErr)
+			instance, publish, probe := o.probeSource(ctx, pod, byName[pod.Spec.NodeName], profiles[pod.Annotations[servingstate.ServingProfileAnnotation]], classes.Items, resources, servicesByName, servicesErr)
 			var latest *corev1.PodList
 			var latestErr error
 			if probe != nil {
-				latest, latestErr = o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, metav1.ListOptions{LabelSelector: instancePodUIDLabel + "=" + string(pod.UID)})
+				latest, latestErr = o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, metav1.ListOptions{LabelSelector: servingstate.InstancePodUIDLabel + "=" + string(pod.UID)})
 			}
 			o.mu.Lock()
 			defer o.mu.Unlock()
@@ -419,7 +400,7 @@ func (o *Observer) restoreSources(pods []corev1.Pod) {
 				source.terminated[source.containerID] = source.stopped
 			}
 		}
-		if status := firstfloorStatus(pod); status != nil && status.ContainerID != "" {
+		if status := servingstate.FirstfloorStatus(pod); status != nil && status.ContainerID != "" {
 			if source.containerID != "" && source.containerID != status.ContainerID {
 				if source.previous == nil {
 					source.previous = map[string]serving.ReadyInstance{}
@@ -433,7 +414,7 @@ func (o *Observer) restoreSources(pods []corev1.Pod) {
 			}
 			source.containerID = status.ContainerID
 		}
-		if owner := workloadOwner(pod.OwnerReferences); owner != "" {
+		if owner := servingstate.WorkloadOwner(pod.OwnerReferences); owner != "" {
 			source.ownerUID = types.UID(owner)
 		}
 		o.observeTermination(pod)
@@ -446,7 +427,7 @@ func (o *Observer) publishLedger(probed []serving.ReadyInstance) error {
 	for _, instance := range probed {
 		uid, _, _ := strings.Cut(instance.State.ID, "/")
 		source := o.sources[uid]
-		if source == nil || source.deleted || source.stopped || instance.State.ID != physicalID(source.uid, source.containerID) {
+		if source == nil || source.deleted || source.stopped || instance.State.ID != servingstate.PhysicalID(source.uid, source.containerID) {
 			continue
 		}
 		instance.State.PodUID = uid
@@ -461,16 +442,16 @@ func (o *Observer) publishLedger(probed []serving.ReadyInstance) error {
 		pod := source.podState
 		instance := source.instance
 		instance.State.PodUID = string(source.uid)
-		instance.State.TargetID = pod.Annotations[ServingSlotAnnotation]
+		instance.State.TargetID = pod.Annotations[servingstate.ServingSlotAnnotation]
 		instance.OwnerWorkloadUID = string(source.ownerUID)
 		instance.State.OwnerWorkloadUID = string(source.ownerUID)
 		instance.State.Terminated = source.terminated[source.containerID] || source.containerID == "" && source.stopped
 		instance.State.Stopped = source.stopped || instance.State.Terminated
 		instance.State.Ready = instance.State.Ready && !instance.State.Terminated
 		if source.containerID != "" {
-			instance.State.ID = physicalID(source.uid, source.containerID)
+			instance.State.ID = servingstate.PhysicalID(source.uid, source.containerID)
 		}
-		instance.State.Profile = pod.Annotations[ServingProfileAnnotation]
+		instance.State.Profile = pod.Annotations[servingstate.ServingProfileAnnotation]
 		if instance.State.Node.UID == "" {
 			instance.State.Node.Name = pod.Spec.NodeName
 		}
@@ -486,7 +467,7 @@ func (o *Observer) publishLedger(probed []serving.ReadyInstance) error {
 			}
 		}
 		for _, container := range pod.Spec.Containers {
-			if container.Name == firstfloorContainerName {
+			if container.Name == servingstate.FirstfloorContainerName {
 				instance.State.Allocation.MemoryBytes = uint64(container.Resources.Limits.Memory().Value())
 			}
 		}
@@ -518,8 +499,8 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 	if source := o.sources[string(pod.UID)]; source != nil && ownershipErr == nil {
 		source.ownerUID = types.UID(owner)
 	}
-	if status := firstfloorStatus(pod); status != nil && status.State.Running != nil && status.ContainerID != "" {
-		id := physicalID(pod.UID, status.ContainerID)
+	if status := servingstate.FirstfloorStatus(pod); status != nil && status.State.Running != nil && status.ContainerID != "" {
+		id := servingstate.PhysicalID(pod.UID, status.ContainerID)
 		if retained := o.sources[string(pod.UID)]; retained != nil && !retained.stopped {
 			o.issue("logs/"+id, o.startLogs(pod, owner))
 		}
@@ -528,7 +509,7 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 		instance, publish := o.sourceUnavailable(pod, errors.New("Pod is not labelled as a serving instance"))
 		return instance, publish, nil
 	}
-	desiredImage, err := o.currentRuntimeImage(ctx, profile)
+	desiredImage, err := o.CurrentRuntimeImage(ctx, profile)
 	var spec firstfloor.Spec
 	if err == nil {
 		spec, err = sourceSpec(pod, node, profile, classes, "", desiredImage)
@@ -541,8 +522,8 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 	}
 	var service *corev1.Service
 	if err == nil {
-		if service, err = listedInstanceService(pod, services, servicesErr); err == nil {
-			spec.Endpoint, err = instanceServiceEndpoint(service)
+		if service, err = servingstate.ListedInstanceService(pod, services, servicesErr); err == nil {
+			spec.Endpoint, err = servingstate.InstanceServiceEndpoint(service)
 		}
 	}
 	if err == nil {
@@ -555,7 +536,7 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 		cancel()
 		o.mu.Lock()
 		source := o.sources[string(pod.UID)]
-		if source == nil || source.stopped || source.deleted || physicalID(source.uid, source.containerID) != spec.InstanceID {
+		if source == nil || source.stopped || source.deleted || servingstate.PhysicalID(source.uid, source.containerID) != spec.InstanceID {
 			return serving.ReadyInstance{}, false, nil
 		}
 		if probeErr == nil || instance.State.Native != nil {
@@ -572,11 +553,11 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 					source.instance.State.Ready = false
 					source.instance.State.Reason = reason
 					source.instance.State.AttemptedAt = time.Now().UTC()
-					o.runtime.DisableInstance(physicalID(source.uid, source.containerID), reason)
+					o.runtime.DisableInstance(servingstate.PhysicalID(source.uid, source.containerID), reason)
 				}
 			}
 			instance.OwnerWorkloadUID = owner
-			instance.State.TargetID = pod.Annotations[ServingSlotAnnotation]
+			instance.State.TargetID = pod.Annotations[servingstate.ServingSlotAnnotation]
 			instance.State.Stopped = o.removingInstances[spec.InstanceID]
 			return serving.ReadyInstance{}, false, &probedSource{pod: pod, service: service, owner: owner, instance: instance}
 		}
@@ -590,7 +571,7 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 // the probe shows the same running executor as the only one its Service selects.
 func (o *Observer) verifySource(p probedSource, latest *corev1.PodList, latestErr error) (serving.ReadyInstance, bool) {
 	source := o.sources[string(p.pod.UID)]
-	status := firstfloorStatus(p.pod)
+	status := servingstate.FirstfloorStatus(p.pod)
 	if source == nil || source.stopped || source.deleted || status == nil || source.containerID != status.ContainerID {
 		return serving.ReadyInstance{}, false
 	}
@@ -600,7 +581,7 @@ func (o *Observer) verifySource(p probedSource, latest *corev1.PodList, latestEr
 	var current *corev1.Pod
 	selected := 0
 	for i := range latest.Items {
-		if latest.Items[i].Labels[instancePodUIDLabel] == string(p.pod.UID) {
+		if latest.Items[i].Labels[servingstate.InstancePodUIDLabel] == string(p.pod.UID) {
 			selected++
 			current = &latest.Items[i]
 		}
@@ -608,12 +589,12 @@ func (o *Observer) verifySource(p probedSource, latest *corev1.PodList, latestEr
 	var err error
 	// A restart between snapshot and HTTP readiness must not alias executors.
 	switch {
-	case selected != 1 || current.Name != p.pod.Name || current.Spec.NodeName != p.pod.Spec.NodeName || !sameNativeContainer(p.pod, current):
+	case selected != 1 || current.Name != p.pod.Name || current.Spec.NodeName != p.pod.Spec.NodeName || !servingstate.SameNativeContainer(p.pod, current):
 		err = errors.New("native Service does not select only the current physical executor")
-	case !sameRunningContainer(p.pod, current):
+	case !servingstate.SameRunningContainer(p.pod, current):
 		err = errors.New("native container changed during probe")
 	default:
-		err = validateInstanceService(current, p.service)
+		err = servingstate.ValidateInstanceService(current, p.service)
 	}
 	if err == nil {
 		err = o.startLogs(current, p.owner)
@@ -645,30 +626,8 @@ func (o *Observer) refreshFailure(err error) error {
 	_ = o.publishLedger(nil)
 	return err
 }
-func sameNativeContainer(before, after *corev1.Pod) bool {
-	a, b := firstfloorStatus(before), firstfloorStatus(after)
-	return before.UID == after.UID && a != nil && b != nil && a.ContainerID != "" && a.ContainerID == b.ContainerID && b.State.Running != nil
-}
-func sameRunningContainer(before, after *corev1.Pod) bool {
-	b := firstfloorStatus(after)
-	return sameNativeContainer(before, after) && b.Ready && after.DeletionTimestamp == nil && podReady(after)
-}
-func podReady(pod *corev1.Pod) bool {
-	for _, c := range pod.Status.Conditions {
-		if c.Type == corev1.PodReady {
-			return c.Status == corev1.ConditionTrue
-		}
-	}
-	return false
-}
-func workloadOwner(owners []metav1.OwnerReference) string {
-	if len(owners) == 1 && owners[0].APIVersion == edgev1alpha1.GroupVersion.String() && owners[0].Kind == "Workload" {
-		return string(owners[0].UID)
-	}
-	return ""
-}
 
-func (o *Observer) currentRuntimeImage(ctx context.Context, profile *serving.Profile) (string, error) {
+func (o *Observer) CurrentRuntimeImage(ctx context.Context, profile *serving.Profile) (string, error) {
 	if profile == nil || o.config.RuntimeImage == nil {
 		return "", errors.New("selected catalog profile and current execution declaration resolver required")
 	}
@@ -681,11 +640,11 @@ func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, cl
 		return empty, err
 	}
 	condition := &profile.Condition
-	weight, e := strconv.ParseInt(pod.Annotations[ServingWeightAnnotation], 10, 32)
+	weight, e := strconv.ParseInt(pod.Annotations[servingstate.ServingWeightAnnotation], 10, 32)
 	if e != nil || weight < 1 {
 		return empty, errors.New("explicit positive serving weight required")
 	}
-	raw, routed := pod.Annotations[ServingRoutingAnnotation]
+	raw, routed := pod.Annotations[servingstate.ServingRoutingAnnotation]
 	if !routed {
 		return empty, errors.New("applied serving routing annotation required")
 	}
@@ -703,19 +662,19 @@ func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, cl
 	if err := validateSourceResources(runtime, node, profile); err != nil {
 		return empty, err
 	}
-	status := firstfloorStatus(pod)
+	status := servingstate.FirstfloorStatus(pod)
 	expected := *profile.RuntimeMetadata
 	// Delivery changes only the verified artifact's mount location, not the
 	// measured runtime, model bytes, provider, device or execution allocation.
 	expected.ModelFiles = deliveredModelFiles(condition.Artifact.Files)
-	return firstfloor.Spec{Endpoint: endpoint, ModelName: "chill_model", InstanceID: physicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: profile, Weight: int32(weight), Routing: routing, Capacity: int(condition.Firstfloor.MaxQueueSize), ExpectedRuntime: &expected, DecisionID: pod.Annotations[ServingPolicyAnnotation]}, nil
+	return firstfloor.Spec{Endpoint: endpoint, ModelName: "chill_model", InstanceID: servingstate.PhysicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: profile, Weight: int32(weight), Routing: routing, Capacity: int(condition.Firstfloor.MaxQueueSize), ExpectedRuntime: &expected, DecisionID: pod.Annotations[servingstate.ServingPolicyAnnotation]}, nil
 }
 
 func validateSourcePlacement(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass) error {
 	if pod.UID == "" || node == nil || node.UID == "" || node.DeletionTimestamp != nil {
 		return errors.New("current Node UID unavailable")
 	}
-	if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning || !podReady(pod) {
+	if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning || !servingstate.PodReady(pod) {
 		return errors.New("Pod is not currently ready")
 	}
 	nodeReady := false
@@ -773,8 +732,8 @@ func validateSourceContainers(pod *corev1.Pod, condition *profilederivation.Curv
 		}
 	}
 	runtime, artifact, preprocessor, bundle := pod.Spec.Containers[0], pod.Spec.InitContainers[0], pod.Spec.InitContainers[1], pod.Spec.InitContainers[2]
-	status := firstfloorStatus(pod)
-	if runtime.Name != firstfloorContainerName || artifact.Name != "artifact" || preprocessor.Name != "preprocessor" || bundle.Name != profileInitContainerName || status == nil || status.State.Running == nil || !status.Ready || status.ContainerID == "" || !observedImage(runtime.Image, status.ImageID, desiredImage) {
+	status := servingstate.FirstfloorStatus(pod)
+	if runtime.Name != servingstate.FirstfloorContainerName || artifact.Name != "artifact" || preprocessor.Name != "preprocessor" || bundle.Name != profileInitContainerName || status == nil || status.State.Running == nil || !status.Ready || status.ContainerID == "" || !observedImage(runtime.Image, status.ImageID, desiredImage) {
 		return errors.New("actual immutable native runtime image/container unavailable")
 	}
 	if !initCompleted(pod, artifact, condition.Artifact.Image) {
@@ -856,15 +815,15 @@ func confirmedPower(node *corev1.Node, class *edgev1alpha1.DeviceClass, name str
 	if _, err := deviceclass.FindPowerMode(class.Spec.PowerModes, name); err != nil {
 		return err
 	}
-	if readBackMode(node, class) != name {
+	if servingstate.ReadBackMode(node, class) != name {
 		return errors.New("Node read-back power mode differs from measured condition")
 	}
 	return nil
 }
 
 func (o *Observer) observeTermination(pod *corev1.Pod) {
-	status := firstfloorStatus(pod)
-	if source := o.sources[string(pod.UID)]; source != nil && source.containerID == "" && podTerminated(pod) {
+	status := servingstate.FirstfloorStatus(pod)
+	if source := o.sources[string(pod.UID)]; source != nil && source.containerID == "" && servingstate.PodTerminated(pod) {
 		source.stopped = true
 	}
 	if status == nil {
@@ -874,7 +833,7 @@ func (o *Observer) observeTermination(pod *corev1.Pod) {
 		if terminal == nil || terminal.ContainerID == "" {
 			continue
 		}
-		id := physicalID(pod.UID, terminal.ContainerID)
+		id := servingstate.PhysicalID(pod.UID, terminal.ContainerID)
 		if source := o.sources[string(pod.UID)]; source != nil {
 			if source.terminated == nil {
 				source.terminated = map[string]bool{}
@@ -928,11 +887,11 @@ func (o *Observer) watchPods(w watch.Interface) {
 				}
 				o.restoreSources([]corev1.Pod{*pod})
 				if source := o.sources[string(pod.UID)]; source != nil {
-					status := firstfloorStatus(pod)
+					status := servingstate.FirstfloorStatus(pod)
 					changed := event.Type == watch.Deleted || status == nil || status.ContainerID != source.containerID || status.State.Running == nil
-					if changed || pod.DeletionTimestamp != nil || !status.Ready || !podReady(pod) {
+					if changed || pod.DeletionTimestamp != nil || !status.Ready || !servingstate.PodReady(pod) {
 						source.instance.State.Ready = false
-						o.runtime.DisableInstance(physicalID(source.uid, source.containerID), "native Pod readiness/identity unavailable")
+						o.runtime.DisableInstance(servingstate.PhysicalID(source.uid, source.containerID), "native Pod readiness/identity unavailable")
 					}
 					if changed {
 						source.stopFollow()
@@ -954,19 +913,19 @@ func (o *Observer) watchPods(w watch.Interface) {
 // keeps progress written while the stream opens, and exchange results complete
 // requests without it.
 func (o *Observer) startLogs(pod *corev1.Pod, owner string) error {
-	status := firstfloorStatus(pod)
+	status := servingstate.FirstfloorStatus(pod)
 	source := o.sources[string(pod.UID)]
 	if source == nil || source.stopped || source.deleted || status == nil || status.ContainerID == "" || source.containerID != status.ContainerID {
 		return errors.New("physical executor is no longer current")
 	}
-	id := physicalID(pod.UID, status.ContainerID)
+	id := servingstate.PhysicalID(pod.UID, status.ContainerID)
 	if owner != "" {
 		source.ownerUID = types.UID(owner)
 	}
 	if source.cancel != nil {
 		return nil
 	}
-	options := &corev1.PodLogOptions{Container: firstfloorContainerName, Follow: true, Timestamps: true}
+	options := &corev1.PodLogOptions{Container: servingstate.FirstfloorContainerName, Follow: true, Timestamps: true}
 	if since := o.runtime.ProgressSince(id, processStart); !since.IsZero() {
 		options.SinceTime = &metav1.Time{Time: since}
 	}
@@ -980,7 +939,7 @@ func (o *Observer) followLogs(ctx context.Context, id string, pod *corev1.Pod, o
 	stream, err := o.kube.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, options).Stream(ctx)
 	if err != nil {
 		err = fmt.Errorf("native progress source unavailable: %w", err)
-	} else if latest, getErr := o.kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{}); getErr != nil || !sameNativeContainer(pod, latest) {
+	} else if latest, getErr := o.kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{}); getErr != nil || !servingstate.SameNativeContainer(pod, latest) {
 		err = errors.Join(errors.New("native container changed while opening exact progress source"), getErr, stream.Close())
 	} else if err = o.scanLogs(id, stream); err == nil {
 		err = errors.New("native progress stream ended")
@@ -1044,30 +1003,30 @@ func (o *Observer) CleanupWorkload(ctx context.Context, uid types.UID) (bool, er
 			continue
 		}
 		o.observeTermination(pod)
-		if !slices.Contains(pod.Finalizers, sourceFinalizer) {
-			if pod.DeletionTimestamp != nil && !podTerminated(pod) {
+		if !slices.Contains(pod.Finalizers, servingstate.SourceFinalizer) {
+			if pod.DeletionTimestamp != nil && !servingstate.PodTerminated(pod) {
 				return false, fmt.Errorf("Pod %s termination unconfirmed before deletion", pod.Name)
 			}
 			if pod.DeletionTimestamp == nil {
-				if err = patchSourceFinalizer(ctx, o.store.client, pod, true); err != nil {
+				if err = servingstate.PatchSourceFinalizer(ctx, o.store.client, pod, true); err != nil {
 					return false, err
 				}
 			}
 		}
 	}
 	for _, object := range objects {
-		if pod, ok := object.(*corev1.Pod); ok && podTerminated(pod) && slices.Contains(pod.Finalizers, sourceFinalizer) {
-			if err = deleteInstanceService(ctx, o.kube, pod); err != nil {
+		if pod, ok := object.(*corev1.Pod); ok && servingstate.PodTerminated(pod) && slices.Contains(pod.Finalizers, servingstate.SourceFinalizer) {
+			if err = servingstate.DeleteInstanceService(ctx, o.kube, pod); err != nil {
 				return false, err
 			}
-			if err = patchSourceFinalizer(ctx, o.store.client, pod, false); err != nil {
+			if err = servingstate.PatchSourceFinalizer(ctx, o.store.client, pod, false); err != nil {
 				return false, err
 			}
 		}
-		if replicaSet, ok := object.(*appsv1.ReplicaSet); ok && workloadOwner(replicaSet.OwnerReferences) == "" {
+		if replicaSet, ok := object.(*appsv1.ReplicaSet); ok && servingstate.WorkloadOwner(replicaSet.OwnerReferences) == "" {
 			continue // Deployment foreground GC owns its actual RS chain.
 		}
-		if pod, ok := object.(*corev1.Pod); ok && workloadOwner(pod.OwnerReferences) == "" {
+		if pod, ok := object.(*corev1.Pod); ok && servingstate.WorkloadOwner(pod.OwnerReferences) == "" {
 			continue
 		}
 		if object.GetDeletionTimestamp() == nil {
@@ -1129,30 +1088,6 @@ func (o *Observer) bindCleanupSources(uid types.UID, objects []client.Object) er
 	return nil
 }
 
-// podAwaitingExecutor permits requesting deletion, never declaring termination.
-// The retained finalizer still requires podTerminated before retirement.
-func podAwaitingExecutor(pod *corev1.Pod) bool {
-	status := firstfloorStatus(pod)
-	return (pod.Status.Phase == "" || pod.Status.Phase == corev1.PodPending) &&
-		(status == nil || status.ContainerID == "" && status.State.Running == nil &&
-			status.State.Terminated == nil && status.LastTerminationState.Terminated == nil)
-}
-func podTerminated(pod *corev1.Pod) bool {
-	if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
-		return false
-	}
-	// A failed init may leave main containers waiting without ever creating an
-	// executor. A nonempty running/unknown container identity is never stopped.
-	for _, statuses := range [][]corev1.ContainerStatus{pod.Status.ContainerStatuses, pod.Status.InitContainerStatuses} {
-		for _, status := range statuses {
-			if status.State.Running != nil || status.State.Terminated == nil && (status.ContainerID != "" || status.State.Waiting == nil) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
 func resourceWorkloadOwner(object client.Object, all map[types.UID]client.Object) (string, error) {
 	// The implemented source chain is Pod -> ReplicaSet -> Deployment -> Workload.
 	// ponytail: foreground GC requires blocking links; nonblocking chains need explicit child cleanup.
@@ -1162,7 +1097,7 @@ func resourceWorkloadOwner(object client.Object, all map[types.UID]client.Object
 		if len(refs) == 0 {
 			return "", nil
 		}
-		if owner := workloadOwner(refs); owner != "" {
+		if owner := servingstate.WorkloadOwner(refs); owner != "" {
 			if !blocking {
 				return owner, errors.New("nonblocking serving controller ownership cannot prove foreground cleanup")
 			}

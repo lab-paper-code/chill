@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"slices"
 	"strconv"
@@ -68,7 +69,7 @@ func (o *SchedulerService) preparation(
 	spec.Bundle = evidencestore.ObjectIdentity{
 		Store: o.opts.StoreName, Key: "serving/profiles/" + profile.ID + "/bundle.json", Size: int64(len(raw)),
 	}
-	if err = servingkube.ValidatePreparation(spec); err != nil {
+	if err = servingops.ValidatePreparation(spec); err != nil {
 		return spec, err
 	}
 	_, err = o.objects.PutImmutable(ctx, spec.Bundle, bytes.NewReader(raw))

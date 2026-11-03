@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"fmt"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"strings"
 	"sync"
@@ -27,7 +28,7 @@ type opcostHarness struct {
 	*admissionHarness
 	evidence *memEvidence
 	mu       sync.Mutex
-	measured []MeasurementRequest
+	measured []servingops.MeasurementRequest
 	verdicts map[string]string
 }
 
@@ -46,13 +47,13 @@ func newOpcostHarness(t *testing.T) *opcostHarness {
 	h.controller.observer.SetProfiles([]serving.Profile{profile})
 	h.controller.mu.Lock()
 	h.controller.config.Preparations = map[string]servingstate.PrepareSpec{profile.ID: spec}
-	h.controller.config.Meters = []MeterDeclaration{{ID: "wall", Node: testNode, Scope: servingstate.MeasurementWallScope}}
+	h.controller.config.Meters = []servingops.MeterDeclaration{{ID: "wall", Node: testNode, Scope: servingstate.MeasurementWallScope}}
 	for _, m := range class.Spec.PowerModes {
 		h.controller.config.PowerPolicies = append(h.controller.config.PowerPolicies, nodeactuator.ActuationPolicySpec{Name: m.Name, DeviceClass: class.Name,
 			PowerMode: m.Name, ActuatorKind: string(m.Actuator.Kind), SettlingDurationSeconds: 1, MaxActuationDurationSeconds: 60})
 	}
 	h.controller.mu.Unlock()
-	h.controller.measureStep = func(ctx context.Context, _ SchedulerControllerConfig, request MeasurementRequest) (OperationMeasurement, evidencestore.Receipt, error) {
+	h.controller.measureStep = func(ctx context.Context, _ SchedulerControllerConfig, request servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error) {
 		o.mu.Lock()
 		o.measured = append(o.measured, request)
 		verdict := o.verdicts[request.Operation.ID[strings.LastIndex(request.Operation.ID, ".")+1:]]
@@ -60,8 +61,8 @@ func newOpcostHarness(t *testing.T) *opcostHarness {
 		if verdict == "" {
 			verdict = servingstate.MeasurementAccepted
 		}
-		key := OperationMeasurementKey(request.Operation)
-		record := OperationMeasurement{Verdict: verdict, Reason: "coverage"}
+		key := servingops.OperationMeasurementKey(request.Operation)
+		record := servingops.OperationMeasurement{Verdict: verdict, Reason: "coverage"}
 		if request.Operation.Prepare != nil {
 			record.Result.Actual.Instances = []serving.InstanceState{{ID: "pod-uid/containerd://prepared", TargetID: request.Operation.Prepare.Instance.ID}}
 		}
@@ -109,7 +110,7 @@ func TestOperationCostRunsDeclaredStepsInOrder(t *testing.T) {
 		t.Fatalf("status %+v holder %q results %+v", status, o.holder(), o.controller.State().Results)
 	}
 	for i, step := range status.Steps {
-		want := fmt.Sprintf("%snode-uid/%s.%d.%s.json", OperationMeasurementPrefix, m.UID, i, lane()[i].Name)
+		want := fmt.Sprintf("%snode-uid/%s.%d.%s.json", servingops.OperationMeasurementPrefix, m.UID, i, lane()[i].Name)
 		if step.Key != want || step.Verdict != servingstate.MeasurementAccepted {
 			t.Fatalf("step %d %+v, want key %s", i, step, want)
 		}
@@ -128,7 +129,7 @@ func TestOperationCostRunsDeclaredStepsInOrder(t *testing.T) {
 
 func TestOperationCostStopsAtInsufficientStep(t *testing.T) {
 	o := newOpcostHarness(t)
-	o.verdicts["prepare"] = measurementInsufficient
+	o.verdicts["prepare"] = servingops.MeasurementInsufficient
 	m := opcostRoot("cost", time.Now(), lane()...)
 	o.create(m)
 	o.admit()
@@ -151,7 +152,7 @@ func TestOperationCostRestartFailsTheCutMeasurement(t *testing.T) {
 	if err := o.controller.patchMeasurementStatus(context.Background(), done, func() { done.Status.Phase = edge.MeasurementPhaseComplete }); err != nil {
 		t.Fatal(err)
 	}
-	saved := OperationMeasurementPrefix + "node-uid/" + string(m.UID) + ".0.up.json"
+	saved := servingops.OperationMeasurementPrefix + "node-uid/" + string(m.UID) + ".0.up.json"
 	o.evidence.objects[saved] = []byte("{}")
 	for _, holder := range []string{string(m.UID), string(done.UID)} {
 		node, err := o.kube.CoreV1().Nodes().Get(context.Background(), "node", meta.GetOptions{})
@@ -236,7 +237,7 @@ func TestOperationCostWaitsForTheCatalog(t *testing.T) {
 func TestOperationCostContinuesAcceptedHighUncertaintySteps(t *testing.T) {
 	o := newOpcostHarness(t)
 	measure := o.controller.measureStep
-	o.controller.measureStep = func(ctx context.Context, config SchedulerControllerConfig, request MeasurementRequest) (OperationMeasurement, evidencestore.Receipt, error) {
+	o.controller.measureStep = func(ctx context.Context, config SchedulerControllerConfig, request servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error) {
 		record, receipt, err := measure(ctx, config, request)
 		nominal, uncertainty := 1.0, 100.0
 		record.WallJoules, record.EnergyUncertaintyJoules = &nominal, &uncertainty
@@ -267,7 +268,7 @@ func TestOperationCostMissingTimingFailsBeforePhysicalSteps(t *testing.T) {
 func TestOperationCostStopsOnActualOperationFailure(t *testing.T) {
 	o := newOpcostHarness(t)
 	measure := o.controller.measureStep
-	o.controller.measureStep = func(ctx context.Context, config SchedulerControllerConfig, request MeasurementRequest) (OperationMeasurement, evidencestore.Receipt, error) {
+	o.controller.measureStep = func(ctx context.Context, config SchedulerControllerConfig, request servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error) {
 		record, receipt, err := measure(ctx, config, request)
 		if request.Operation.Kind == servingstate.OperationPrepare {
 			record.Verdict = string(edge.MeasurementPhaseFailed)

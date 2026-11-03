@@ -32,7 +32,7 @@ const (
 // newest prepared profile measured on the Node with its ModelSpec, execution
 // path and first mode. A reason refuses the measurement.
 func (c *SchedulerController) runnerPreparation(transition *edge.PowerModeTransitionCost, node *core.Node, classes []edge.DeviceClass, config SchedulerControllerConfig) (servingstate.PrepareSpec, string) {
-	if transition.Spec.ServingContainer != firstfloorContainerName {
+	if transition.Spec.ServingContainer != servingstate.FirstfloorContainerName {
 		return servingstate.PrepareSpec{}, refusedRunnerContainerUnsupported
 	}
 	if transition.Namespace != c.observer.config.Namespace {
@@ -99,7 +99,7 @@ func (c *SchedulerController) prepareRunner(ctx context.Context, transition *edg
 		ObjectMeta: meta.ObjectMeta{Namespace: transition.Namespace, Name: transition.Spec.ServingService, Labels: map[string]string{runnerNodeLabel: node.UID}},
 		Spec: core.ServiceSpec{
 			Type:     core.ServiceTypeClusterIP,
-			Selector: map[string]string{instancePodUIDLabel: string(pod.UID)},
+			Selector: map[string]string{servingstate.InstancePodUIDLabel: string(pod.UID)},
 			Ports:    []core.ServicePort{{Name: "http", Protocol: core.ProtocolTCP, Port: 8080, TargetPort: intstr.FromString("http")}},
 		},
 	}

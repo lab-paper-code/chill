@@ -20,7 +20,7 @@ const listVerb = "list"
 func transitionRoot() *edge.PowerModeTransitionCost {
 	o := &edge.PowerModeTransitionCost{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: "transition", UID: types.UID("transition-uid"), CreationTimestamp: meta.Now()}}
 	o.Spec.TargetNode, o.Spec.ModelSpec, o.Spec.ExecutionPath = "node", "measured-model", "cpu"
-	o.Spec.ServingContainer, o.Spec.ServingService = firstfloorContainerName, "runner"
+	o.Spec.ServingContainer, o.Spec.ServingService = servingstate.FirstfloorContainerName, "runner"
 	o.Spec.Modes = []edge.PowerModeTransitionCostModeSpec{{PowerMode: "fixed"}, {PowerMode: "eco"}}
 	return o
 }

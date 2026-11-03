@@ -27,7 +27,6 @@ const (
 
 	refusedNodeMissing  = "NodeMissing"
 	refusedNodeServing  = "NodeServing"
-	powerChangedReason  = "PowerChangedDuringMeasurement"
 	campaignFailedPhase = "Failed"
 	// measurementInvalidCode reports a measurement the evidence readers count and do not use.
 	measurementInvalidCode = "MeasurementInvalid"
@@ -479,7 +478,7 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 	c.mu.Lock()
 	config := c.config
 	c.mu.Unlock()
-	if err := c.operations.wait(ctx, func() (bool, error) {
+	if err := c.operations.Wait(ctx, func() (bool, error) {
 		current, err := c.kube.CoreV1().Nodes().Get(ctx, node.Name, meta.GetOptions{})
 		if err != nil {
 			return false, err
@@ -495,7 +494,7 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 	if root == nil && interrupted {
 		result.Progress = append(result.Progress, "Interrupted "+holder)
 	}
-	if err := errors.Join(c.deleteLoadJobs(ctx, node, config.LoadGenerator), c.operations.clearNode(ctx, node)); err != nil {
+	if err := errors.Join(c.deleteLoadJobs(ctx, node, config.LoadGenerator), c.operations.ClearNode(ctx, node)); err != nil {
 		return err
 	}
 	runners, err := c.kube.CoreV1().Services(c.observer.config.Namespace).List(ctx, meta.ListOptions{LabelSelector: runnerNodeLabel + "=" + node.UID})
@@ -503,7 +502,7 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 		return err
 	}
 	for _, service := range runners.Items {
-		if err = eIfNotFound(c.kube.CoreV1().Services(service.Namespace).Delete(ctx, service.Name, meta.DeleteOptions{})); err != nil {
+		if err = servingstate.IgnoreNotFound(c.kube.CoreV1().Services(service.Namespace).Delete(ctx, service.Name, meta.DeleteOptions{})); err != nil {
 			return err
 		}
 	}
@@ -561,40 +560,6 @@ func (c *SchedulerController) lowerMeasuredNode(ctx context.Context, node *core.
 		return err
 	}
 	result.Progress = append(result.Progress, "lowest mode "+lowest+" read back")
-	return nil
-}
-
-// clearNode removes every CHILL serving Pod on the Node: through the native
-// removal when the runtime observes the instance, otherwise by deleting the Pod.
-func (o *Operations) clearNode(ctx context.Context, node serving.NodeReference) error {
-	pods, err := o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, meta.ListOptions{
-		LabelSelector: "app.kubernetes.io/component=" + servingstate.ServingInstanceComponent,
-	})
-	if err != nil {
-		return err
-	}
-	observed := map[string]bool{}
-	for _, i := range o.runtime.Instances() {
-		observed[i.ID] = true
-	}
-	for i := range pods.Items {
-		pod := &pods.Items[i]
-		if pod.Spec.NodeName != node.Name {
-			continue
-		}
-		if status := firstfloorStatus(pod); status != nil && observed[physicalID(pod.UID, status.ContainerID)] {
-			if err = o.RemoveInstance(ctx, node, physicalID(pod.UID, status.ContainerID)); err != nil {
-				return err
-			}
-			continue
-		}
-		// Unobserved executors still need the same retained termination proof.
-		// A preparation without an executor may request DELETE, but still waits
-		// for terminal Pod status before releasing its source finalizer.
-		if err = o.removeInstance(ctx, node, string(pod.UID), "", nil); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 

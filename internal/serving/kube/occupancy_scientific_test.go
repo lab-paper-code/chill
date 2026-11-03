@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"slices"
 	"strconv"
@@ -30,7 +31,7 @@ func TestBurstPairThresholdRetainsStatistics(t *testing.T) {
 			t.Fatal("threshold changed observed statistics")
 		}
 		if pairs < 4 {
-			if record.Verdict != measurementInsufficient || record.Reason != "TooFewPairs" {
+			if record.Verdict != servingops.MeasurementInsufficient || record.Reason != "TooFewPairs" {
 				t.Fatalf("missing pair verdict: %+v", record)
 			}
 		} else if record.Verdict != "Observed" {
@@ -57,7 +58,7 @@ func TestBurstOperationalFailuresRetainEstimate(t *testing.T) {
 	occupancyReason(&record, "PhysicalDrainUnconfirmed")
 	occupancyReason(&record, "PhysicalDrainUnconfirmed")
 	judgeOccupancy(&record, edge.DispatchOccupancyMeasurementSpec{MinimumPairs: 4})
-	if record.Verdict != measurementInsufficient || len(record.Reasons) != 1 || record.Estimate.Statistics.Mean != 42 {
+	if record.Verdict != servingops.MeasurementInsufficient || len(record.Reasons) != 1 || record.Estimate.Statistics.Mean != 42 {
 		t.Fatalf("lost evidence: %+v", record)
 	}
 }

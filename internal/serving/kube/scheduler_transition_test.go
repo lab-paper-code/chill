@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"net/http"
 	"net/http/httptest"
@@ -153,14 +154,14 @@ func TestUnboundRuntimeAndSchedulerCaptureRetainVerifiedOwnerAndSlotFacts(t *tes
 		t.Fatalf("drained routing bindings discarded or invented ownership/slot provenance: %+v", unbound)
 	}
 	pod, node, profile, _ := observerSourceFixture()
-	status := firstfloorStatus(pod)
-	id := physicalID(pod.UID, status.ContainerID)
+	status := servingstate.FirstfloorStatus(pod)
+	id := servingstate.PhysicalID(pod.UID, status.ContainerID)
 	state := serving.InstanceState{
 		ID: id, TargetID: unbound.TargetID, OwnerWorkloadUID: unbound.OwnerWorkloadUID,
 		Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: profile.ID, Ready: true,
 		Native: &native.State{Ready: true, Metadata: native.Metadata{ProfileID: profile.ID, Runtime: *profile.RuntimeMetadata}},
 	}
-	pod.Annotations[ServingSlotAnnotation] = state.TargetID
+	pod.Annotations[servingstate.ServingSlotAnnotation] = state.TargetID
 	snapshot := serving.SchedulerSnapshot{}
 	sn := serving.SchedulerNode{Node: state.Node, Ready: true}
 	captureNodePods(&snapshot, &sn, node, &core.PodList{Items: []core.Pod{*pod}},
@@ -852,21 +853,21 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State)) (
 		n.Name, n.UID = name, types.UID(name+"-node")
 		p.Name, p.UID, p.Spec.NodeName = name, types.UID(name+"-pod"), name
 		p.ResourceVersion = "1"
-		p.Labels[instancePodUIDLabel] = string(p.UID)
+		p.Labels[servingstate.InstancePodUIDLabel] = string(p.UID)
 		source.ID, source.NodeName, source.Condition.NodeUID = name+"-profile", name, string(n.UID)
-		p.Annotations[ServingProfileAnnotation] = source.ID
+		p.Annotations[servingstate.ServingProfileAnnotation] = source.ID
 		p.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", Name: workload.Name, UID: workload.UID}}
 		// Progress transport is outside this test. Retain a subscribed source so
 		// client-go's empty fake Pod log does not falsely terminate the executor.
 		follow, cancel := context.WithCancel(manager.observer.ctx)
-		status := firstfloorStatus(p)
+		status := servingstate.FirstfloorStatus(p)
 		manager.observer.sources[string(p.UID)] = &nativeSource{
 			pod: types.NamespacedName{Namespace: p.Namespace, Name: p.Name}, uid: p.UID,
 			containerID: status.ContainerID, follow: follow, cancel: cancel,
 		}
 		if index == 0 {
 			raw, _ := json.Marshal(map[string]int32{d.UID: 1000})
-			p.Annotations[ServingRoutingAnnotation] = string(raw)
+			p.Annotations[servingstate.ServingRoutingAnnotation] = string(raw)
 		}
 		profiles = append(profiles, source)
 		service := observerServiceFixture(p)
@@ -956,8 +957,8 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State)) (
 	manager.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
 	manager.observer.kube = kube
 	manager.observer.SetProfiles(profiles)
-	operations, err := NewOperations(manager.reservations, manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
-		OperationConfig{Namespace: pod.Namespace, PollInterval: time.Millisecond})
+	operations, err := servingops.NewOperations(manager.reservations, manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
+		servingops.OperationConfig{Namespace: pod.Namespace, PollInterval: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1077,7 +1078,7 @@ func TestPolicyAckPendingPreservesPhysicalOccupancyAcrossTicksAC34(t *testing.T)
 		t.Fatal(err)
 	}
 	before := pod.DeepCopy()
-	pod.Annotations[ServingSlotAnnotation] = "logical-slot-a"
+	pod.Annotations[servingstate.ServingSlotAnnotation] = "logical-slot-a"
 	if err := controller.store.client.Patch(ctx, pod, client.MergeFrom(before)); err != nil {
 		t.Fatal(err)
 	}
@@ -1191,7 +1192,7 @@ func TestPolicyAckPendingDoesNotMaskNativeReadOrMetadataFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 			before := pod.DeepCopy()
-			pod.Annotations[ServingPolicyAnnotation] = "unacknowledged"
+			pod.Annotations[servingstate.ServingPolicyAnnotation] = "unacknowledged"
 			if err := controller.store.client.Patch(ctx, pod, client.MergeFrom(before)); err != nil {
 				t.Fatal(err)
 			}
@@ -1240,7 +1241,7 @@ func pendingPowerController(t *testing.T, ctx context.Context) (*SchedulerContro
 		before := pod.DeepCopy()
 		pod.Spec.NodeName = "a"
 		if name == "a" {
-			pod.Annotations[ServingPolicyAnnotation] = "desired-but-not-acknowledged"
+			pod.Annotations[servingstate.ServingPolicyAnnotation] = "desired-but-not-acknowledged"
 		}
 		if err := controller.store.client.Patch(ctx, pod, client.MergeFrom(before)); err != nil {
 			t.Fatal(err)
@@ -1366,7 +1367,7 @@ func TestPhysicalLookupAndPolicyPreferExactExecutorAC36(t *testing.T) {
 			t.Fatal(err)
 		}
 		before := pod.DeepCopy()
-		pod.Annotations[ServingSlotAnnotation] = slot
+		pod.Annotations[servingstate.ServingSlotAnnotation] = slot
 		if err := controller.store.client.Patch(ctx, pod, client.MergeFrom(before)); err != nil {
 			t.Fatal(err)
 		}
@@ -1374,7 +1375,7 @@ func TestPhysicalLookupAndPolicyPreferExactExecutorAC36(t *testing.T) {
 	updateSlot("a", b.ID)
 	policy := native.Policy{DecisionID: "exact-b-policy", ProfileID: b.Profile.ID, MaxBatchSize: b.MaxBatch, DeadlinePolicy: "keep"}
 	result := servingstate.OperationResult{}
-	if err := controller.operations.applyPolicy(ctx, b.ID, policy, &result); err != nil {
+	if err := controller.operations.ApplyPolicy(ctx, b.ID, policy, &result); err != nil {
 		t.Fatal("earlier alias Pod shadowed exact policy target", err)
 	}
 	if _, ok := result.Actual.Native[b.ID]; !ok {
@@ -1390,7 +1391,7 @@ func TestPhysicalLookupAndPolicyPreferExactExecutorAC36(t *testing.T) {
 	}
 	updateSlot("a", "ambiguous")
 	updateSlot("b", "ambiguous")
-	if err := controller.operations.applyPolicy(ctx, "ambiguous", policy, &servingstate.OperationResult{}); err == nil || !strings.Contains(err.Error(), "multiple") {
+	if err := controller.operations.ApplyPolicy(ctx, "ambiguous", policy, &servingstate.OperationResult{}); err == nil || !strings.Contains(err.Error(), "multiple") {
 		t.Fatalf("ambiguous policy alias silently chose the first Pod: %v", err)
 	}
 }
@@ -1536,8 +1537,8 @@ func TestCapturePreservesEveryExecutorlessPodUIDAC37(t *testing.T) {
 			pod.Status.Phase = core.PodFailed
 			pod.Status.InitContainerStatuses = []core.ContainerStatus{{Name: "artifact", State: core.ContainerState{Terminated: &core.ContainerStateTerminated{ExitCode: 1}}}}
 		}
-		pod.Labels[instancePodUIDLabel] = string(pod.UID)
-		pod.Annotations[ServingSlotAnnotation] = name + "-slot"
+		pod.Labels[servingstate.InstancePodUIDLabel] = string(pod.UID)
+		pod.Annotations[servingstate.ServingSlotAnnotation] = name + "-slot"
 		if _, err := c.kube.CoreV1().Pods(pod.Namespace).Create(ctx, pod, meta.CreateOptions{}); err != nil {
 			t.Fatal(err)
 		}

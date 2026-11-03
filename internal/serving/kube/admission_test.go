@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"slices"
 	"strings"
@@ -117,8 +118,8 @@ func newAdmissionController(t *testing.T, kube kubernetes.Interface) (*Scheduler
 	manager.observer.kube = kube
 	nodes := &nodeAPI{Client: manager.store.client, kube: kube}
 	manager.store.client = nodes
-	operations, err := NewOperations(manager.reservations, manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
-		OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond})
+	operations, err := servingops.NewOperations(manager.reservations, manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
+		servingops.OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}

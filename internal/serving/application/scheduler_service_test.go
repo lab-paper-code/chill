@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -203,7 +204,7 @@ func TestOperatingPowerReadsAcceptedConfigurationWhileServiceIsBusy(t *testing.T
 		source := metricobserver.SourceIdentity{
 			Kind: "edge-metrics", Endpoint: "http://meter/" + name, Metric: "wall_watts", NodeName: name,
 		}
-		meter := servingkube.MeterDeclaration{Node: node, ID: name + "-wall", Scope: "node-exclusive-wall", Source: source}
+		meter := servingops.MeterDeclaration{Node: node, ID: name + "-wall", Scope: "node-exclusive-wall", Source: source}
 		watts := float64((index + 1) * 10)
 		power := metricobserver.Result{Source: source, StartedAt: from, EndedAt: to,
 			Samples: []metricobserver.Sample{{ObservedAt: from, Watts: watts}, {ObservedAt: to, Watts: watts}},
@@ -213,7 +214,7 @@ func TestOperatingPowerReadsAcceptedConfigurationWhileServiceIsBusy(t *testing.T
 		}); err != nil {
 			t.Fatal(err)
 		}
-		configurations = append(configurations, &SchedulerConfiguration{Meters: []servingkube.MeterDeclaration{meter}})
+		configurations = append(configurations, &SchedulerConfiguration{Meters: []servingops.MeterDeclaration{meter}})
 	}
 	service := &SchedulerService{observationLog: observationLog}
 	// Model a refresh or control Tick holding the owner lock throughout this read.
@@ -256,7 +257,7 @@ func TestRejectedSchedulerRefreshPreservesPublishedConfiguration(t *testing.T) {
 			SchedulerConfigKey: "configuration", MaxRequestBytes: 1024,
 		},
 	}
-	accepted := &SchedulerConfiguration{Meters: []servingkube.MeterDeclaration{{ID: "accepted-meter"}}}
+	accepted := &SchedulerConfiguration{Meters: []servingops.MeterDeclaration{{ID: "accepted-meter"}}}
 	service.configuration.Store(accepted)
 	if err := service.Refresh(context.Background()); err == nil {
 		t.Fatal("malformed replacement configuration was accepted")
@@ -294,7 +295,7 @@ func TestSchedulerPowerUsesExistingEvidenceEnvelopeBeforeSourceReads(t *testing.
 			MetricLabels: map[string]string{"hostname": "node", "device_type": "fixture"}}
 		start := time.Now().UTC()
 		service.restartPower(SchedulerConfiguration{
-			Meters: []servingkube.MeterDeclaration{{
+			Meters: []servingops.MeterDeclaration{{
 				ID: "meter", Node: serving.NodeReference{Name: "node", UID: "uid"},
 				Scope: "node-exclusive-wall", Source: source,
 			}},
