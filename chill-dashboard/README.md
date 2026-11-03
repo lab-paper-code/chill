@@ -168,10 +168,9 @@ the browser used an isolated ChillServer-contract fixture and performed no live 
 `미배치 · 자동제어 꺼짐`을 공유한다. 고정(`fixed`) 장치의 `PowerModeUnavailable`은
 장치 확인에서 제외하며, 제외 노드와 `PlacementInventoryMissing`은 사유를 유지한다.
 진행·사건은 최근 5분 실제 수신 판단 수·유지 수·마지막 시각과 관측된 파드 준비 전이를 표시한다.
-새 문서 진입 시 과거 사건·1초 전력 bucket을 채우는 API 계약은 아직 없다.
-`observations/events`는 정확한 `at` 단건 조회이며, 전력 구간 API는 집계만 제공하므로
-이를 과거 실시간 bucket으로 변환하지 않는다.
-기록 전력 탭은 서버의 전체 기간 에너지·평균 W와 노드별 평균 W 차트·표가 기본이며
+운영 재진입 시 `observations/events?from&to&limit=100`으로 최근 15분을 최대 5페이지·500건까지 읽고 실제 사건 identity로 실시간 사건과 합친다. archive에 WebSocket 순번을 생성하지 않는다. 미조회 페이지는 일부 표시, coverage·snapshot.history의 보존 공백은 `보존 공백` 상태어로 유지하며 손실 건수를 추정하지 않는다.
+전력 추세는 `observations/power?from&to&bucket=5s`의 최근 15분·실제 5초 구간 평균을 실시간 1초 관측에 연결한다. null은 선을 끊고 실제 0은 0으로 유지하며 5초 평균을 1초 표본으로 복제하지 않는다.
+기록 전력 탭은 bucket 시간축과 기간 에너지·평균 W/노드별 요약을 분리한다. 시계열 범위는 최대 1시간·900구간이며 더 긴 기간의 요약과 원자료는 유지한다.
 현재 페이지의 원자료 표·페이지 이동은 접는다. 페이지 J를 전체 구간 에너지로 합산하지 않는다.
 Automatic application and evaluated judgment are separate; keep/target J and SLO are
 predictions, not measurements. Load preserves the submitted window in the page URL
@@ -220,7 +219,7 @@ UID/definition rows align across runs. Offered counts, server receipt cohorts an
 live terminal buckets are explicitly distinct. Shared POOL energy is not summed
 across rows; published gap bounds render as `value ± bound J`, with energyCoverage.
 Different measurementRules retain numbers and display “측정 규칙 다름”.
-R18: 목록에서 생략된 동결 정의는 동일 publication 단건 조회로 보충해 상세와 같은 이름·정책·부하·SLO를 표시한다. 비교 상대가 없으면 차이 대신 측정 원값을 먼저 표시하며, 계획 부하는 구간×서비스 표(소수 둘째 자리)와 하위 구간별 막대로 표시한다. 단계 전체 p95·발행률을 하위 구간의 실측값으로 복제하지 않는다. `SLOFailed`는 `SLO 미충족`이고 수집 실패와 구분한다. 과거 게시에 실제 없는 정의는 추정하지 않는다.
+R18: 목록은 선택적 `facts`의 이름·정책·SLO·부하 출처를 직접 표시하고 없으면 미기록이다. 목록 항목별 상세 hydration은 하지 않으며 명시적 과거 비교 대상이 목록에 없을 때만 그 publication을 조회한다. 비교 상대가 없으면 차이 대신 측정 원값을 먼저 표시하며, 계획 부하는 구간×서비스 표(소수 둘째 자리)와 하위 구간별 막대로 표시한다. 단계 전체 p95·발행률을 하위 구간의 실측값으로 복제하지 않는다. `SLOFailed`는 `SLO 미충족`이고 수집 실패와 구분한다. 과거 게시에 실제 없는 정의는 추정하지 않는다.
 현재 reader는 [DB-FR-66](../docs/spec/dashboard/SRS.md)에 따라 게시 단건의 `definition.spec.comparisons`와 목록의 `comparisons`로 비교 관계를 읽고 단계 ID·서비스 UID·publicationID로 연결한다. suffix·요청률 유사성 fallback은 사용하지 않는다. 정의 없는 과거 게시는 비교 미기록, 실제 대상 부재는 대상 게시 없음, 권한/서버/timeout은 대상 조회 실패로 구분한다. 정책·SLO는 기록된 정의·실행 결과에서만 읽는다. 비교 상태·제한·일치/참고/대응 없음 건수는 차이보다 먼저 표시하며 참고 비교는 동일 조건 성과 집계와 분리한다. 상세는 조건 → 원값 → 사건 → 원본이다.
 실행은 `/experiments`, 부하 설정은 `/experiments/load-scenarios`다. 작성·수정은 각각 `/experiments/new`, `/experiments/[name]/edit`, `/experiments/load-scenarios/new`, `/experiments/load-scenarios/[name]/edit` 전용 페이지다. 원본은 `copy` 또는 `publication`, 수정 UID는 `uid` query로 복원한다. 목록 시각은 KST이며 결과 표는 비교 상태·구간 수·실행/측정/정리·차이·제한을 한 행에 제공한다. 구간 Sheet의 사건은 조건·원값 뒤에 배치한다.
 Evidence lookup uses the exact nanosecond `decision.at` interval through the
@@ -262,9 +261,10 @@ Node power is from metrics, never node state. Pre-assignment `pending` and nativ
 post-assignment `waiting` stay separate. Completing an action never releases a
 reservation; the next reservation projection is authoritative.
 
-The last ten minutes contain only received one-second buckets, capped at 600
-buckets and 1000 events. Pre-connection, resync and measurement gaps are not
-interpolated or zero-filled. The fixture selector exercises empty → first
+The request metric reducer keeps received one-second buckets for ten minutes, capped at 600,
+and retains at most 1000 live events. Power charts independently merge bounded 15-minute
+archive intervals with actual live intervals. No pre-connection, resync or measurement gap
+is interpolated or zero-filled. The fixture selector exercises empty → first
 configuration → expansion → residual execution during shrink; all are synthetic
 검사용 scenes, not a product recording replay or evaluation measurements.
 Current SLO is shown as an explicit reference, not drawn backward through old

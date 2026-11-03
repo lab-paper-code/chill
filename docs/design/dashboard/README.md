@@ -45,7 +45,7 @@
 | type | 공통 필드 외 payload | 발행 |
 |---|---|---|
 | `hello` | `protocol:"chill-live/1"`, `serverAt`, `retainFrom`(재개 가능한 최소 seq, 빈 버퍼면 head+1) | 상류 인증 성공 후 한 번 |
-| `snapshot` | `workloads`, `nodes`, `instances`, `routing`, `decision`, `actions`, `reservations` 전체 | 최초 접속, 재동기화 |
+| `snapshot` | `workloads`, `nodes`, `instances`, `routing`, `decision`, `actions`, `reservations` 전체, 선택적 `history` 보존 메타데이터 | 최초 접속, 재동기화 |
 | `delta` | snapshot 키의 부분집합; `removed?:{instances?:[id],actions?:[actionKey]}` | 상태 변화 |
 | `event` | `kind:"decision"`와 `decision`, `kind:"action"`와 `action`, 또는 `kind:"cluster"`와 `cluster` | 판단, 작업 시작·종결, 기록된 Pod·observer issue 사건 |
 | `metrics` | `bucketAt`(UTC 초 시작), `workloads:{uid:Metric}`, `nodes:{uid:{watts:number|null,observedAt:string|null}}`, `pool:{wholeWatts:number|null,activeWatts:number|null}`, `gaps?:[{from,to,scope,reason}]` | 매초, 같은 버킷 수정 시 전체 대체 |
@@ -101,6 +101,17 @@ runtime workload readiness의 읽기 시각만 바뀐 것은 상태 변화로 �
 | 전력 | 초 도착 실제 표본 노드별 산술평균, 이전 W 복사 금지. 전체/활성 범위 UID 중복 없이 합산, 필수 표본/소속 모르면 null. J는 coverage 검증 REST 적분, 브라우저 W 합산 금지. |
 | producer | cmd/chill-server 조립, internal/serving/live hub; OnDecision은 동일 capture, OnAction은 원본 결과, RequestEvent 반영 성공 뒤 집계, 기존 power Source adapter 사용. callback은 메모리만 갱신, socket/REST/S3 대기·새 수집 루프·서버 REST polling 없음. |
 | client | 탭 QueryClient의 chill-live reducer: checkpoint/snapshot/metricsByBucket/events/gaps/lastReceivedAt/lastObservedAt. 최근600초·1000사건과 시작 baseline/bounded delta; 상한 유실 명시. 화면 일시정지는 선택 snapshot·시각을 고정하고 수신 계속, live 복귀 최신 baseline. 숨긴 탭의 의도된 수신 중지는 별도 `paused-hidden` 상태이며 다시 보이면 재연결한다. |
+
+snapshot의 `history`는 `reason:fresh|checkpoint-unmatched`, `replayed:false`,
+`requested:{afterSeq,throughSeq,at?}`, `retained:{events,power}`와 `gaps`를 보존한다.
+retained 범위는 nullable `{fromSeq,toSeq}`(양끝 포함), gap 사유는 `NoRetainedFrames`다.
+보존 공백은 상태어 **보존 공백**으로만 표시하고 sequence 차이를 손실 건수·시간으로
+환산하지 않는다. 이 메타데이터가 있으면 구 재연결 시각 차이로 센서 공백을 만들지 않는다.
+운영 재진입은 `/observations/events?from&to&limit=100`으로 최근 15분을 최대
+5페이지·500건 seed한다. 동일 from/to와 불투명 cursor를 사용하고 archive/실시간 사건을
+실제 identity로 중복 제거한다. archive에는 실시간 순번을 만들지 않으며 coverage 출처·공백과
+미조회 페이지 여부를 유지한다. 전력은 별도의 최대 1시간·900구간 bucket 계약을 사용한다.
+
 
 ### 3.1 운영 판독표
 
