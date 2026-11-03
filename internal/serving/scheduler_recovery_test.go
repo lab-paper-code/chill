@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// SCH-26/50, AC-45: an exact terminal observation cannot become stale live
-// capacity. Logical admission-stop alone is not physical termination proof.
+// SCH-26/50, AC-45: non-serving occupancy cannot become stale live capacity.
+// Neither a logical stop nor termination releases its physical resource budget.
 func TestCapacityTerminalLedgerAllowsIndependentRecoveryAC45(t *testing.T) {
 	for _, terminal := range []bool{false, true} {
 		t.Run(map[bool]string{false: "logical-stop", true: "confirmed-termination"}[terminal], func(t *testing.T) {
@@ -33,14 +33,8 @@ func TestCapacityTerminalLedgerAllowsIndependentRecoveryAC45(t *testing.T) {
 			snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, node, "unloaded", schedulerState(replacement), "fixed")}
 			rows := capacityRowsForTest(s, snap, nil)
 			decision := capacityDecideForTest(t, s, snap, rows)
-			if !terminal {
-				if decision.Status != schedulerStatusPending || !slices.Contains(decision.Reasons, "UnknownOrStaleInstance:"+old.ID) {
-					t.Fatalf("unconfirmed stopped executor bypassed freshness: %+v", decision)
-				}
-				return
-			}
 			if decision.Target == nil || decision.Target.Keep || decision.Status == schedulerStatusPending {
-				t.Fatalf("terminal ledger blocked independent replacement: status=%s reasons=%v", decision.Status, decision.Reasons)
+				t.Fatalf("non-serving ledger blocked independent replacement: status=%s reasons=%v", decision.Status, decision.Reasons)
 			}
 			if decision.Target.Routing["w1"][old.ID] > 0 || !slices.ContainsFunc(decision.Target.Actions, func(a Action) bool {
 				return a.Kind == schedulerActionPrepare && a.Node == node
