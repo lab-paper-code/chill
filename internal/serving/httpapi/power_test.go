@@ -28,6 +28,10 @@ func TestOperatingPowerRequiresReviewedReadAndExplicitInterval(t *testing.T) {
 		{"missing-token", http.StatusUnauthorized}, {"denied", http.StatusForbidden},
 		{"missing-from", http.StatusBadRequest}, {"missing-to", http.StatusBadRequest},
 		{"reversed", http.StatusBadRequest}, {"measured-zero", http.StatusOK},
+		{"bucket-valid", http.StatusOK}, {"bucket-empty", http.StatusBadRequest},
+		{"bucket-invalid", http.StatusBadRequest}, {"bucket-zero", http.StatusBadRequest},
+		{"bucket-too-small", http.StatusBadRequest}, {"bucket-too-large", http.StatusBadRequest},
+		{"bucket-over-range", http.StatusBadRequest}, {"bucket-over-count", http.StatusBadRequest},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			client := fake.NewSimpleClientset()
@@ -68,20 +72,20 @@ func TestOperatingPowerRequiresReviewedReadAndExplicitInterval(t *testing.T) {
 				t.Fatal(err)
 			}
 			calls := 0
-			handler := &Handler{authorizer: &servingkube.Authorizer{Client: client}, config: HandlerConfig{MaxQueryEvents: 10, OperatingPower: func(ctx context.Context, from, to time.Time, limit int) (serving.OperatingPowerWindow, error) {
-				calls++
-				return observationLog.OperatingPower(ctx, from, to, []serving.OperatingPowerMeter{{Node: node, Meter: "wall", Scope: "node-exclusive-wall", Source: source}}, limit)
-			}}}
+			meters := []serving.OperatingPowerMeter{{Node: node, Meter: "wall", Scope: "node-exclusive-wall", Source: source}}
+			handler := &Handler{authorizer: &servingkube.Authorizer{Client: client}, config: HandlerConfig{
+				MaxQueryEvents: 10,
+				OperatingPower: func(ctx context.Context, from, to time.Time, limit int) (serving.OperatingPowerWindow, error) {
+					calls++
+					return observationLog.OperatingPower(ctx, from, to, meters, limit)
+				},
+				OperatingPowerSeries: func(ctx context.Context, from, to time.Time, bucket time.Duration, limit int) (serving.OperatingPowerSeries, error) {
+					calls++
+					return observationLog.OperatingPowerSeries(ctx, from, to, bucket, meters, limit)
+				},
+			}}
 			query := url.Values{"from": {from.Format(time.RFC3339Nano)}, "to": {to.Format(time.RFC3339Nano)}}
-			if scenario.name == "missing-from" {
-				query.Del("from")
-			}
-			if scenario.name == "missing-to" {
-				query.Del("to")
-			}
-			if scenario.name == "reversed" {
-				query.Set("to", from.Add(-time.Second).Format(time.RFC3339Nano))
-			}
+			applyPowerQueryScenario(query, scenario.name, from)
 			request := httptest.NewRequest(http.MethodGet, "/api/v1/observations/power?"+query.Encode(), nil)
 			if scenario.name != "missing-token" {
 				request.Header.Set("Authorization", "Bearer caller-token")
@@ -97,6 +101,10 @@ func TestOperatingPowerRequiresReviewedReadAndExplicitInterval(t *testing.T) {
 				}
 				return
 			}
+			if scenario.name == "bucket-valid" {
+				assertPowerSeriesResponse(t, response.Body.Bytes(), from, to)
+				return
+			}
 			var got serving.OperatingPowerWindow
 			if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
 				t.Fatal(err)
@@ -105,5 +113,45 @@ func TestOperatingPowerRequiresReviewedReadAndExplicitInterval(t *testing.T) {
 				t.Fatalf("measured zero changed to missing or different interval: %+v", got)
 			}
 		})
+	}
+}
+
+func assertPowerSeriesResponse(t *testing.T, raw []byte, from, to time.Time) {
+	t.Helper()
+	var got serving.OperatingPowerSeries
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.From.Equal(from) || !got.To.Equal(to) || got.BucketNanos != time.Second || len(got.Buckets) == 0 || got.Buckets[0].Nodes[0].ObservedSamples == nil || *got.Buckets[0].Nodes[0].ObservedSamples != 1 {
+		t.Fatalf("bucket query lost real timestamp/sample contract: %+v", got)
+	}
+}
+
+func applyPowerQueryScenario(query url.Values, scenario string, from time.Time) {
+	switch scenario {
+	case "missing-from":
+		query.Del("from")
+	case "missing-to":
+		query.Del("to")
+	case "reversed":
+		query.Set("to", from.Add(-time.Second).Format(time.RFC3339Nano))
+	case "bucket-valid":
+		query.Set("bucket", "1s")
+	case "bucket-empty":
+		query.Set("bucket", "")
+	case "bucket-invalid":
+		query.Set("bucket", "invalid")
+	case "bucket-zero":
+		query.Set("bucket", "0s")
+	case "bucket-too-small":
+		query.Set("bucket", "1ms")
+	case "bucket-too-large":
+		query.Set("bucket", "2h")
+	case "bucket-over-range":
+		query.Set("bucket", "1h")
+		query.Set("to", from.Add(time.Hour+time.Second).Format(time.RFC3339Nano))
+	case "bucket-over-count":
+		query.Set("bucket", "1s")
+		query.Set("to", from.Add(901*time.Second).Format(time.RFC3339Nano))
 	}
 }

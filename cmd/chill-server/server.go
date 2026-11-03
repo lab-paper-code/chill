@@ -306,6 +306,7 @@ func initializeServing(ctx context.Context, opts *options,
 		handlerConfig.RefreshScheduler = scheduler.refreshLocked
 		handlerConfig.SchedulerMeters = scheduler.schedulerMeters
 		handlerConfig.OperatingPower = scheduler.operatingPower
+		handlerConfig.OperatingPowerSeries = scheduler.operatingPowerSeries
 
 	}
 	return nil

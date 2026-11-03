@@ -31,6 +31,9 @@ type OperatingNodePower struct {
 	ReadFailures            int           `json:"readFailures"`
 	MaximumSampleGapSeconds float64       `json:"maximumSampleGapSeconds"`
 	SourceTimestampAbsent   bool          `json:"sourceTimestampAbsent"`
+	ObservedSamples         *int          `json:"observedSamples,omitempty"`
+	FirstObservedAt         *time.Time    `json:"firstObservedAt,omitempty"`
+	LastObservedAt          *time.Time    `json:"lastObservedAt,omitempty"`
 	Reasons                 []string      `json:"reasons"`
 }
 
@@ -127,15 +130,27 @@ func (l *ObservationLog) OperatingPower(ctx context.Context, from, to time.Time,
 	if from.IsZero() || !from.Before(to) || limit <= 0 {
 		return ReduceOperatingPower(from, to, meters, limit, nil)
 	}
+	var result OperatingPowerWindow
+	coverage, err := l.readOperatingPower(ctx, from, to, func(records func(func(*SchedulerObservation) error) error) error {
+		var err error
+		result, err = ReduceOperatingPower(from, to, meters, limit, records)
+		return err
+	})
+	applyOperatingCoverage(&result, coverage)
+	return result, err
+}
+
+// readOperatingPower pins one committed local/archive view for the whole query.
+func (l *ObservationLog) readOperatingPower(ctx context.Context, from, to time.Time, consume func(func(func(*SchedulerObservation) error) error) error) (ObservationCoverage, error) {
 	start, end := from.Add(-time.Minute), to.Add(time.Minute)
 	read, err := l.prepare(ctx, map[string][2]time.Time{observationSchedulerStream: {{}, end}})
 	if err != nil {
-		return OperatingPowerWindow{}, err
+		return ObservationCoverage{}, err
 	}
 	defer read.close()
 	baseline := false
 	coverageFrom := start
-	result, err := ReduceOperatingPower(from, to, meters, limit, func(yield func(*SchedulerObservation) error) error {
+	err = consume(func(yield func(*SchedulerObservation) error) error {
 		var scanner observationScanner
 		visit := func(raw []byte) error {
 			if err := ctx.Err(); err != nil {
@@ -173,19 +188,22 @@ func (l *ObservationLog) OperatingPower(ctx context.Context, from, to time.Time,
 		}
 		return l.scanOlderPowerSources(read, start, &coverageFrom, &baseline, &scanner, visit)
 	})
-	result.Coverage = read.coverage(map[string][2]time.Time{observationSchedulerStream: {coverageFrom, end}})
-	result.GapUntil = result.Coverage.gapUntil(from)
+	return read.coverage(map[string][2]time.Time{observationSchedulerStream: {coverageFrom, end}}), err
+}
+
+func applyOperatingCoverage(result *OperatingPowerWindow, coverage ObservationCoverage) {
+	result.Coverage = coverage
+	result.GapUntil = coverage.gapUntil(result.From)
 	// Coverage includes the wider boundary/baseline search. Missing history
 	// outside the requested interval is not missing energy: the reducer checks
 	// the actual boundary samples and membership needed by [from,to].
 	for _, gap := range result.Coverage.Gaps {
-		if gap.From.Before(to) && gap.To.After(from) {
+		if gap.From.Before(result.To) && gap.To.After(result.From) {
 			result.Complete = false
 			result.Reasons = append(result.Reasons, "scheduler stream unavailable in observation coverage")
 			break
 		}
 	}
-	return result, err
 }
 
 func (l *ObservationLog) scanOlderPowerSources(read *observationRead, start time.Time, coverageFrom *time.Time, baseline *bool, scanner *observationScanner, visit func([]byte) error) error {
@@ -236,58 +254,77 @@ func ReduceOperatingPower(from, to time.Time, meters []OperatingPowerMeter, limi
 	if from.IsZero() || !from.Before(to) || limit <= 0 {
 		return result, failure("InvalidQuery", "positive explicit power interval and observation bound are required")
 	}
-	byUID, history := configuredOperatingMeters(&result, meters)
-	var snapshots []SchedulerSnapshot
-	var baseline *SchedulerSnapshot
-	matched := 0
-	err := records(func(event *SchedulerObservation) error {
-		selected := false
-		if snapshot := event.Snapshot; snapshot != nil && !snapshot.At.IsZero() {
-			if !snapshot.At.After(from) {
-				if baseline == nil || !snapshot.At.Before(baseline.At) {
-					baseline = snapshot
-				}
-			} else if snapshot.At.Before(to) {
-				selected = true
-				if matched < limit {
-					snapshots = append(snapshots, *snapshot)
-				}
-			}
-		}
-		power := event.Power
-		if power != nil {
-			if event.Node == nil {
-				return nil
-			}
-			index, expected := byUID[event.Node.UID]
-			if !expected || !matchesOperatingMeter(history[index].meter, event) {
-				return nil
-			}
-			// Only configured physical series may compete for boundary support.
-			retainOperatingNeighbors(&history[index], event, from, to, limit)
-			if !power.StartedAt.After(to) && !power.EndedAt.Before(from) {
-				selected = true
-				if matched < limit {
-					mergeOperatingPower(&result.Nodes[index], &history[index], event, from, to)
-				}
-			}
-		}
-		if selected {
-			matched++
-		}
-		return nil
-	})
-	if err != nil {
-		return result, err
+	reducer := newOperatingPowerReducer(from, to, meters, limit)
+	if err := records(reducer.add); err != nil {
+		return reducer.result, err
 	}
-	matched = mergeOperatingNeighbors(&result, history, matched, limit)
-	if matched > limit {
-		result.Reasons = append(result.Reasons, "selected raw observation count exceeds query bound")
+	return reducer.finish(), nil
+}
+
+type operatingPowerReducer struct {
+	result    OperatingPowerWindow
+	byUID     map[string]int
+	history   []operatingPowerHistory
+	snapshots []SchedulerSnapshot
+	baseline  *SchedulerSnapshot
+	matched   int
+	limit     int
+}
+
+func newOperatingPowerReducer(from, to time.Time, meters []OperatingPowerMeter, limit int) *operatingPowerReducer {
+	r := &operatingPowerReducer{result: OperatingPowerWindow{From: from, To: to, Scope: "whole-pool-wall", Nodes: []OperatingNodePower{}, Reasons: []string{}}, limit: limit}
+	r.byUID, r.history = configuredOperatingMeters(&r.result, meters)
+	return r
+}
+
+func (r *operatingPowerReducer) add(event *SchedulerObservation) error {
+	from, to, limit := r.result.From, r.result.To, r.limit
+	selected := false
+	if snapshot := event.Snapshot; snapshot != nil && !snapshot.At.IsZero() {
+		if !snapshot.At.After(from) {
+			if r.baseline == nil || !snapshot.At.Before(r.baseline.At) {
+				r.baseline = snapshot
+			}
+		} else if snapshot.At.Before(to) {
+			selected = true
+			if r.matched < limit {
+				r.snapshots = append(r.snapshots, *snapshot)
+			}
+		}
 	}
-	rawComplete := len(result.Reasons) == 0
-	snapshots, activeValid := operatingMembership(&result, baseline, snapshots, byUID, rawComplete)
-	sumOperatingPower(&result, history, snapshots, rawComplete, activeValid)
-	return result, nil
+	power := event.Power
+	if power != nil {
+		if event.Node == nil {
+			return nil
+		}
+		index, expected := r.byUID[event.Node.UID]
+		if !expected || !matchesOperatingMeter(r.history[index].meter, event) {
+			return nil
+		}
+		// Only configured physical series may compete for boundary support.
+		retainOperatingNeighbors(&r.history[index], event, from, to, limit)
+		if !power.StartedAt.After(to) && !power.EndedAt.Before(from) {
+			selected = true
+			if r.matched < limit {
+				mergeOperatingPower(&r.result.Nodes[index], &r.history[index], event, from, to)
+			}
+		}
+	}
+	if selected {
+		r.matched++
+	}
+	return nil
+}
+
+func (r *operatingPowerReducer) finish() OperatingPowerWindow {
+	r.matched = mergeOperatingNeighbors(&r.result, r.history, r.matched, r.limit)
+	if r.matched > r.limit {
+		r.result.Reasons = append(r.result.Reasons, "selected raw observation count exceeds query bound")
+	}
+	rawComplete := len(r.result.Reasons) == 0
+	snapshots, activeValid := operatingMembership(&r.result, r.baseline, r.snapshots, r.byUID, rawComplete)
+	sumOperatingPower(&r.result, r.history, snapshots, rawComplete, activeValid)
+	return r.result
 }
 
 func configuredOperatingMeters(result *OperatingPowerWindow, meters []OperatingPowerMeter) (map[string]int, []operatingPowerHistory) {

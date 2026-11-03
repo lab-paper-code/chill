@@ -19,6 +19,28 @@ func (h *Handler) operatingPower(w http.ResponseWriter, r *http.Request) {
 		sendError(w, &serving.Error{Code: "InvalidQuery", Message: "explicit positive RFC3339 from/to power interval is required"})
 		return
 	}
+	if query.Has("bucket") {
+		bucket, err := time.ParseDuration(query.Get("bucket"))
+		if err != nil {
+			sendError(w, &serving.Error{Code: "InvalidQuery", Message: "bucket must be a Go duration between 1s and 1h"})
+			return
+		}
+		if _, err := serving.PowerBucketCount(from, to, bucket); err != nil {
+			sendError(w, err)
+			return
+		}
+		if h.config.OperatingPowerSeries == nil {
+			sendError(w, &serving.Error{Code: "SchedulerUnavailable", Message: "scheduler meter configuration is not enabled"})
+			return
+		}
+		result, err := h.config.OperatingPowerSeries(r.Context(), from, to, bucket, h.config.MaxQueryEvents)
+		if err != nil {
+			sendError(w, err)
+			return
+		}
+		sendJSON(w, http.StatusOK, result)
+		return
+	}
 	if h.config.OperatingPower == nil {
 		sendError(w, &serving.Error{Code: "SchedulerUnavailable", Message: "scheduler meter configuration is not enabled"})
 		return

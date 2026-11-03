@@ -70,6 +70,12 @@ GOMEMLIMIT3072MiB/limit4Gi 유지(rev96 확인). 관측 heap최대880MiB와 soft
 | OperatingPower | scheduler[from−1분,to+1분], 기준 snapshot은 from부터 거꾸로 첫 snapshot 분까지; maximumBoundaryDistance≤1분, meter catalog coverage 사용 |
 | SchedulerObservationPage | scheduler[from,to], 기존 limit에서 종료 |
 파일 이름을 색인으로 envelope 먼저 decode하고 필요한 본문만 읽으며 참조는 해당 시간 catalog로 푼다. archive 이후 실제 없는 범위만 gapUntil/coverage gaps이고 power complete=false를 유지한다. SchedulerHistoryWindow는 현재 없고 도착 경로는 LoadWindow의 Arrivals다. Tick60s는1~2분 파일·5req/s<1MB(이전3.3~6.7MB); 메모리는 선택 요청 수 비례, 기본2h/5req/s는36k행≈47MB다.
+
+#### 전력 bucket 이력 (R18)
+`GET /api/v1/observations/power?from=<RFC3339Nano>&to=<RFC3339Nano>&bucket=5s`는 `{from,to,bucketNanos:5000000000,buckets:[OperatingPowerWindow...]}`를 반환한다. `bucket` 미지정 시 기존 기간 집계 응답·상한·단위·의미는 변경하지 않는다. bucket 조회만 범위 최대1h, bucket 1s–1h, 최대900개이며 초과/빈 duration/잘못된 값은400 InvalidQuery다. 전체 조회의 기존 raw observation 상한 초과도400이며 새 설정은 없다.
+경계는 UTC에서 `time.Time.Truncate(bucket)`로 정렬하고 첫/끝 bucket은 요청 from/to로 자른다. 각 bucket은 기존 whole/active POOL 및 Node의 J·평균W, meter/node identity, coverage·실패·이유를 유지한다. 한 번 확보한 committed local/archive 원자료를 기존 적분/멤버십 reducer로 계산하며, 기간 평균을 반복하거나 메모리 live history를 사용하지 않는다.
+Node의 기존 `samples`는 적분에 사용한 실제 경계 지원 표본도 포함한다. bucket에서만 추가하는 `observedSamples`는 해당 `[from,to)` 안의 중복 제거한 실제 표본 수이고 `firstObservedAt`/`lastObservedAt`은 그 실제 UTC 시각이다(표본 없으면 시각 필드 생략). 경계 표본은 다음 bucket에만 센다. bucket 안 표본이 없는 Node의 J/W는null이고 해당 POOL 합계도null/complete=false이며0·이웃 평균으로 채우지 않는다. 실측0은0이다. 경계 interpolation은 기존 recorded coverage policy만 따르며, 빈 bucket이 없고 동일 coverage가 충족된 구간은 bucket J의 합이 기간 집계 J와 일치한다(평균W는 시간 가중).
+
 ### 6.2 투명한 로컬·archive 읽기 (`SCH-42`)
 ObservationArchive=기존 evidencestore.Reader+Lister와 CapacityRecords의 readArchivedStream gzip scanner를 재사용한다. 같은 v1alpha5 prefix/네 stream, cmd/chill-server의 objects를 쓰며 새 저장 형식·TSDB·옛 reader는 없다.
 capture가 mu 아래 로컬 시간/fd/크기를 확보→잠금 밖 List로 필요한 UTC 시간 선택→오름차순 scan한다. **시간 디렉터리 단위 로컬 우선**, 없는 시간만 archive+그 catalog를 읽고 로컬 stream 부재를 archive로 보충하지 않는다. fd 확보 뒤 삭제도 중복/누락을 만들지 않는다. requestID final>open>assigned로 archive assigned/늦은 로컬 final을 병합하고 scheduler/management/power는 같은 시간을 두 소스로 더하지 않는다. page는 합친 시간순 append에 offset/limit, errObservationStop은 archive에서도 정상 종료다.

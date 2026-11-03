@@ -363,6 +363,16 @@ func (o *schedulerService) schedulerMeters() []servingkube.MeterDeclaration {
 func (o *schedulerService) operatingPower(
 	ctx context.Context, from, to time.Time, limit int,
 ) (serving.OperatingPowerWindow, error) {
+	return o.observationLog.OperatingPower(ctx, from, to, o.operatingPowerMeters(), limit)
+}
+
+func (o *schedulerService) operatingPowerSeries(
+	ctx context.Context, from, to time.Time, bucket time.Duration, limit int,
+) (serving.OperatingPowerSeries, error) {
+	return o.observationLog.OperatingPowerSeries(ctx, from, to, bucket, o.operatingPowerMeters(), limit)
+}
+
+func (o *schedulerService) operatingPowerMeters() []serving.OperatingPowerMeter {
 	// Capture one accepted configuration without waiting behind refresh or Tick.
 	config := o.configuration.Load()
 	meters := make([]serving.OperatingPowerMeter, len(config.Meters))
@@ -371,7 +381,7 @@ func (o *schedulerService) operatingPower(
 			Node: meter.Node, Meter: meter.ID, Scope: meter.Scope, Source: meter.Source,
 		}
 	}
-	return o.observationLog.OperatingPower(ctx, from, to, meters, limit)
+	return meters
 }
 
 func (o *schedulerService) recordDecision(
