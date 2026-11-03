@@ -10,6 +10,7 @@ import * as coverage from "./measurement-coverage.ts"
 import * as assessment from "./measurement-assessment.ts"
 import * as measurements from "./measurements.ts"
 import * as summary from "./measurement-summary.ts"
+import * as occupancy from "./dispatch-occupancy.ts"
 
 const require=createRequire(import.meta.url)
 function load<T extends object>(file:string,modules:Record<string,unknown>,suffix="") {
@@ -27,7 +28,7 @@ test("R18 opened coverage profile timestamps recover from CoverageWarming 503 to
   const previous=globalThis.fetch
   globalThis.fetch=async()=>++calls===1?Response.json({code:"CoverageWarming"},{status:503,headers:{"Retry-After":"2"}}):Response.json({profiles:[{id:"profile",measuredAt:"2026-11-03T00:00:00Z"}]})
   const modules={react:{useRef:()=>({current:null}),useEffect:()=>{}},"next/navigation":{useSearchParams:()=>new URLSearchParams()},"@tanstack/react-query":{useQuery:(value:ProfileOptions)=>{options=value;return {data:null,error:null,isPending:true}}},"@/lib/client":{...clientModule,useSession:()=>({token:"token"}),useChillQuery:()=>({data:null})},"@/lib/measurement-coverage":coverage,"@/lib/measurement-assessment":assessment,"@/lib/measurements":measurements,"@/components/ui/button":{Button:"button"},"next/link":{default:"a"}}
-  Object.assign(modules,{"@/lib/measurement-summary":summary})
+  Object.assign(modules,{"@/lib/measurement-summary":summary,"@/lib/dispatch-occupancy":occupancy})
   const feature=load<{CoverageDetail:(props:unknown)=>ReactNode}>("../features/measurement-coverage.tsx",modules,"\nexport { CoverageDetail };\n")
   const verdict={scope:{schedulerUsed:false},checklist:{checks:[]},reasons:[],evidence:{available:true,accepted:true}}
   const cell={id:"cell",model:{name:"model"},deviceClass:{name:"class"},executionPath:"cpu",powerMode:"fixed",support:{node:{name:"node"},reasons:[]},assessment:verdict,failureSummary:[],variants:[{id:"variant",condition:{},assessment:verdict,resultRows:[{id:"row",profileId:"profile",batch:1,assessment:verdict}],runIds:[]}],history:{},batchProgress:null}

@@ -18,6 +18,7 @@ import { deviceLabel, resolveMeasurementPrefill, serverCompatibility, staticComp
 import { useCoverageInventory, useModelCompatibility, useMeasurementCoverage } from "@/features/measurement-coverage"
 import { MeasurementNavigation } from "@/components/measurement-navigation"
 import { executionPathLabel, measurementRequestName } from "@/lib/measurements"
+import { MeasurementKindSelector } from "@/features/dispatch-occupancy-request"
 
 const back: [string, string] = ["/measurements/requests", "측정 요청"]
 const steps = ["workload", "device", "run", "size", "advanced", "name", "review"] as const
@@ -300,6 +301,7 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
   }
   return <Screen width="data" title="측정 요청" back={back}>
     <MeasurementNavigation active="requests" namespace={namespace}/>
+    <MeasurementKindSelector kind="profile" disabled={unknown||pending||send.isPending}/>
     <nav aria-label="요청 단계"><ol className="flex flex-wrap gap-3">{["대상","조건","검사·제출"].map((label,index)=><li key={label}><Button variant={stage===index?"default":"outline"} aria-current={stage===index?"step":undefined} disabled={index>stage||unknown||pending||send.isPending} onClick={()=>setStage(index)}>{label}</Button></li>)}</ol></nav>
     {unknown&&<section role="alert" className="notice space-y-3"><h2>접수 결과 미확인</h2><p>{v.name}: 자동 재제출·이름 변경 차단</p><Button disabled={checking} onClick={()=>void refetchPlans().then(result=>{setChecked(!result.error);if(result.error)setError("목록 조회 실패: 다시 확인하세요.")})}>같은 이름의 접수 기록 조회</Button>{found?<Link className="underline" href={requestHref(namespace,found.metadata.name,found.metadata.uid)}>접수된 요청 열기</Link>:checked&&<p>목록 미확인 · 자동 재제출 차단</p>}</section>}
     {variantId&&!selected&&<p role="status" className="notice">조건 미확인 · 부족 배치 자동 제외 안 됨</p>}

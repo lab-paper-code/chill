@@ -4,9 +4,9 @@ import * as React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { TriangleAlert } from "lucide-react"
-import { useChillQuery, useSession } from "@/lib/client"
+import { useChillMutation, useChillQuery, useSession } from "@/lib/client"
 import type { DispatchOccupancyMeasurement, MeasurementEvidenceLocation, MeasurementProjection, MeasurementProjectionList, OperationCostMeasurement } from "@/lib/read-types"
-import { formatMeasurementTime, evidenceLocations, measurementPath, measurementUIDMismatch, measurementReasonSummary, occupancyDuration, occupancyThroughput, occupancyReason, occupancySupply, operationTotals, operationSteps, type OperationStep, type ProjectionMeasurementKind } from "@/lib/measurements"
+import { formatMeasurementTime, evidenceLocations, measurementPath, measurementUIDMismatch, measurementReasonSummary, occupancySupply, operationTotals, operationSteps, type OperationStep, type ProjectionMeasurementKind } from "@/lib/measurements"
 import { operationStageLabel, operationStageLabels, largestOperationStages, operationDirection, operationModel, operationTransitionCosts, operationCostTime, operationCostEnergy, operationCostOutliers, operationCostSummary, type OperationCostRow, type OperationCostKind, type OperationCostSummary } from "@/lib/operation-cost"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { normalizeStatusLabel } from "@/lib/status"
@@ -17,10 +17,12 @@ import { DataTable, type DataColumn } from "@/components/data-table"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { MeasurementNavigation, measurementStates } from "@/components/measurement-navigation"
 import { AssessmentDetails, ResultRows } from "@/features/measurement-plans"
 import { MeasurementFilters } from "@/features/measurement-coverage"
 import { SchedulerProfilesPage } from "@/features/scheduler-profiles"
+import { occupancyDisplayReason, occupancyElapsed, occupancyMetrics, occupancyMilliseconds, occupancyNumber, occupancyPhase, occupancyPhaseValue, occupancyRunning, occupancyRequestHref } from "@/lib/dispatch-occupancy"
 
 const resultKinds = [["throughput","처리 성능"],["operation-cost","변경 비용"],["dispatch-occupancy","분배 처리시간"]] as const
 const projectionTitles = {"operation-cost-measurements":"변경 비용","dispatch-occupancy-measurements":"분배 처리시간"}
@@ -57,9 +59,10 @@ function NamespaceForm({namespace}:{namespace:string}) {
 
 function ProjectionResults({kind,namespace}:{kind:ProjectionMeasurementKind;namespace:string}) {
   const params=useSearchParams(),router=useRouter(),trigger=React.useRef<HTMLAnchorElement|null>(null)
-  const query=useChillQuery<MeasurementProjectionList>(measurementPath(kind,namespace),{decoder:parseSchedulerJSON})
+  const path=measurementPath(kind,namespace)
+  const query=useChillQuery<MeasurementProjectionList>(path,{decoder:parseSchedulerJSON,poll:data=>kind==="dispatch-occupancy-measurements"&&!!data?.items?.some(item=>item.kind==="DispatchOccupancyMeasurement"&&occupancyRunning(item))})
   const name=params.get("measurement"),expectedUID=params.get("uid")
-  const detail=useChillQuery<MeasurementProjection>(measurementPath(kind,namespace,name??""),{enabled:!!name,decoder:parseSchedulerJSON})
+  const detail=useChillQuery<MeasurementProjection>(measurementPath(kind,namespace,name??""),{enabled:!!name,decoder:parseSchedulerJSON,poll:data=>data?.kind==="DispatchOccupancyMeasurement"&&occupancyRunning(data)})
   const all=query.data?.items??[]
   const axes=[{key:"node",label:"장치",values:all.map(item=>item.node)},...(kind==="operation-cost-measurements"?[{key:"model",label:"모델",values:all.flatMap(item=>item.kind==="OperationCostMeasurement"?operationSteps(item).flatMap(step=>step.results.flatMap(result=>result.model?[result.model]:[])):[])}]:[{key:"workload",label:"서비스",values:all.flatMap(item=>item.kind==="DispatchOccupancyMeasurement"?[item.conditions.workload]:[])}])]
   const items=all.filter(item=>(!params.get("q")||item.metadata.name.toLocaleLowerCase().includes(params.get("q")!.toLocaleLowerCase()))&&(!params.get("status")||item.assessment?.displayStatus===params.get("status"))&&(!params.get("node")||item.node===params.get("node"))&&(!params.get("model")||kind!=="operation-cost-measurements"||(item.kind==="OperationCostMeasurement"&&operationSteps(item).some(step=>step.results.some(result=>result.model===params.get("model")))))&&(!params.get("workload")||(item.kind==="DispatchOccupancyMeasurement"&&item.conditions.workload===params.get("workload"))))
@@ -76,13 +79,16 @@ function ProjectionResults({kind,namespace}:{kind:ProjectionMeasurementKind;name
     {key:"name",label:"측정",value:item=>select(item,item.metadata.name),sortValue:item=>item.metadata.name},
     {key:"node",label:"장치",value:item=>item.node,sortValue:item=>item.node},
     {key:"workload",label:"서비스",value:item=>item.conditions.workload,sortValue:item=>item.conditions.workload},
-    {key:"d",label:"점유시간",unit:"ms/요청",numeric:true,value:item=><OccupancyValue value={occupancyDuration(item.status.perRequestNanos)} unverified={item.assessment?.displayStatus==="problem"||item.status.phase==="Failed"}/>,sortValue:item=>occupancyDuration(item.status.perRequestNanos)==="—"?undefined:item.status.perRequestNanos},
-    {key:"x",label:"완료 처리량",unit:"req/s",numeric:true,value:item=><OccupancyValue value={occupancyThroughput(item.status.throughput)} unverified={item.assessment?.displayStatus==="problem"||item.status.phase==="Failed"}/>,sortValue:item=>occupancyThroughput(item.status.throughput)==="—"?undefined:Number(item.status.throughput)},
+    {key:"batch",label:"배치",unit:"건",numeric:true,value:item=>item.batch??item.conditions.batch},
+    {key:"d",label:"점유시간",unit:"ms/요청",numeric:true,value:item=><OccupancyValue value={occupancyMilliseconds(occupancyMetrics(item)?.perRequestNanos)} unverified={item.assessment?.displayStatus==="problem"||occupancyPhaseValue(item)==="Failed"||occupancyPhaseValue(item)==="Insufficient"}/>,sortValue:item=>occupancyMetrics(item)?.perRequestNanos??undefined},
+    {key:"x",label:"완료 처리량",unit:"req/s",numeric:true,value:item=><OccupancyValue value={occupancyNumber(occupancyMetrics(item)?.throughput)} unverified={item.assessment?.displayStatus==="problem"||occupancyPhaseValue(item)==="Failed"||occupancyPhaseValue(item)==="Insufficient"}/>,sortValue:item=>occupancyMetrics(item)?.throughput??undefined},
     {key:"phase",label:"측정",value:item=><ProjectionStatus data={item}/>},
-    {key:"reason",label:"사유",value:item=>occupancyReason(item)==="—"?"해당 없음":occupancyReason(item)},
+    {key:"elapsed",label:"경과",value:item=>occupancyElapsed(item)},
+    {key:"reason",label:"사유",value:item=>occupancyDisplayReason(item)==="—"?"해당 없음":occupancyDisplayReason(item)},
   ]
   return <>
     <MeasurementFilters axes={axes}/>
+    {kind==="dispatch-occupancy-measurements"&&<Button className="justify-self-start" asChild><Link href={occupancyRequestHref(namespace)}>d 측정 요청</Link></Button>}
     <QueryGate query={query}>{kind==="operation-cost-measurements"?<OperationCostTable items={items.filter((item):item is OperationCostMeasurement=>item.kind==="OperationCostMeasurement")} select={select}/>:<DataTable urlState key={`${namespace}/${params}`} searchable={false} data={items.filter((item):item is DispatchOccupancyMeasurement=>item.kind==="DispatchOccupancyMeasurement")} columns={columns}/>}</QueryGate>
     <Button className="justify-self-start" variant="outline" disabled={query.isFetching} onClick={()=>void query.refetch()}>갱신</Button>
     {!!query.data&&<Facts items={[["조회 시각",formatMeasurementTime(query.dataUpdatedAt)]]}/>}
@@ -92,6 +98,7 @@ function ProjectionResults({kind,namespace}:{kind:ProjectionMeasurementKind;name
         <div className="grid min-w-0 gap-5 px-4 pb-6">
           <QueryGate query={detail}>{selected&&(other?<Facts items={[["요청 UID",expectedUID],["현재 UID",selected.metadata.uid]]}/>:<ProjectionResult data={selected}/>)}</QueryGate>
           <Button className="justify-self-start" variant="outline" disabled={detail.isFetching} onClick={()=>void detail.refetch()}>갱신</Button>
+          {selected?.kind==="DispatchOccupancyMeasurement"&&!!detail.data&&!detail.error&&!other&&<DeleteOccupancy key={`${selected.metadata.uid}/${selected.metadata.resourceVersion}`} data={selected} refresh={()=>{void detail.refetch();void query.refetch()}} onDeleted={()=>{void query.refetch();const next=new URLSearchParams(params.toString());next.delete("measurement");next.delete("uid");router.replace(`/measurements/results?${next}`,{scroll:false})}}/>}
         </div>
       </SheetContent>
     </Sheet>
@@ -119,6 +126,10 @@ function CostMarkers({summary,operation,explainInsufficient}:{summary:OperationC
   return <>{Object.entries(markers).filter(([,multiple])=>multiple!==undefined).map(([metric,multiple])=><span key={metric} className="text-xs text-destructive">{metric==="duration"?"시간":"에너지"} <CostOutlier multiple={multiple}/></span>)}{operation==="power"&&!!summary.powerMultiple&&<span className="text-xs text-destructive">전력 전환 <CostOutlier multiple={summary.powerMultiple}/></span>}{(!operation||summary[operation].insufficient)&&<span className="text-xs text-muted-foreground">{explainInsufficient?"판정 불가 · 비교 표본 부족":"표본 부족"}</span>}</>
 }
 function ProjectionStatus({data}:{data:MeasurementProjection}) {
+  if(data.kind==="DispatchOccupancyMeasurement") {
+    const phase=occupancyPhaseValue(data)
+    return <StatusCell axis="측정" label={occupancyPhase(phase)} tone={phase==="Failed"||phase==="Insufficient"?"fail":phase==="Complete"?"ok":phase==="Measuring"?"info":"idle"}/>
+  }
   const status=data.assessment?.displayStatus??"unknown"
   return <StatusCell axis="측정" label={normalizeStatusLabel(measurementStates[status])} tone={status==="problem"?"fail":status==="usable"?"ok":status==="running"?"info":"idle"}/>
 }
@@ -194,11 +205,22 @@ function OperationResult({data}:{data:OperationCostMeasurement}) {
   </>
 }
 function OccupancyResult({data}:{data:DispatchOccupancyMeasurement}) {
-  const c=data.conditions,s=data.status,unverified=data.assessment?.displayStatus==="problem"||s.phase==="Failed"
+  const c=data.conditions,s=data.status,result=occupancyMetrics(data),phase=occupancyPhaseValue(data),unverified=data.assessment?.displayStatus==="problem"||phase==="Failed"||phase==="Insufficient"
   return <>
-    <table aria-label="분배 처리시간 결과" className="w-full table-fixed text-left text-sm [&_th]:p-2 [&_th]:[overflow-wrap:anywhere] [&_td]:p-2 [&_td]:[overflow-wrap:anywhere]">{unverified&&<caption className="pb-2 text-left text-sm text-muted-foreground"><TriangleAlert className="mr-1 inline size-4" aria-hidden="true"/>미검증 원자료 · 채택값 아님</caption>}<thead><tr><th className="text-right">점유시간 (ms/요청)</th><th className="text-right">완료 처리량 (req/s)</th><th>결과 전력모드</th><th>사유</th></tr></thead><tbody><tr><td className="text-right tabular-nums"><OccupancyValue value={occupancyDuration(s.perRequestNanos)} unverified={unverified}/></td><td className="text-right tabular-nums"><OccupancyValue value={occupancyThroughput(s.throughput)} unverified={unverified}/></td><td>{s.powerMode||"미기록"}</td><td>{occupancyReason(data)==="—"?"해당 없음":occupancyReason(data)}</td></tr></tbody></table>
-    <details><summary className="min-h-11 cursor-pointer py-2">측정 조건</summary><Facts items={[["서비스",<Link key="workload" className="break-all underline underline-offset-4" href={`/workloads/${encodeURIComponent(c.workload)}`}>{c.workload}</Link>],["측정 프로파일 참조",<BEOReference key="beo" namespace={data.metadata.namespace} name={c.batchEnergyOptimization}/>],["장치",data.node],["배치 (건)",c.batch],["공급 방식",occupancySupply(c.supplyMode)],["동시 송신자 (명)",c.workers],["예열 (s · 측정 제외)",c.warmupSeconds],["측정 구간 (s)",c.durationSeconds],["참조 UID","미기록"]]}/></details>
+    <table aria-label="분배 처리시간 결과" className="w-full table-fixed text-left text-sm [&_th]:p-2 [&_th]:[overflow-wrap:anywhere] [&_td]:p-2 [&_td]:[overflow-wrap:anywhere]">{unverified&&<caption className="pb-2 text-left text-sm text-muted-foreground"><TriangleAlert className="mr-1 inline size-4" aria-hidden="true"/>미검증 원자료 · 채택값 아님</caption>}<thead><tr><th className="text-right">d (ms/요청)</th><th className="text-right">완료 처리량 (req/s)</th><th className="text-right">유휴 비율 (%)</th><th>판정</th></tr></thead><tbody><tr><td className="text-right tabular-nums"><OccupancyValue value={occupancyMilliseconds(result?.perRequestNanos)} unverified={unverified}/></td><td className="text-right tabular-nums">{occupancyNumber(result?.throughput)}</td><td className="text-right tabular-nums">{occupancyNumber(result?.idleFraction,true)}</td><td>{result?.verdict?measurementReasonSummary(result.verdict):"미제공"}</td></tr></tbody></table>
+    <Facts items={[["사유",occupancyDisplayReason(data)],["경과",occupancyElapsed(data)],["시작",data.measurementWindow?formatMeasurementTime(data.measurementWindow.start):"미기록"],["종료",data.measurementWindow?formatMeasurementTime(data.measurementWindow.end):"미기록"],["결과 전력모드",s.powerMode||"미기록"]]}/>
+    <details><summary className="min-h-11 cursor-pointer py-2">측정 조건</summary><Facts items={[["서비스",<Link key="workload" className="break-all underline underline-offset-4" href={`/workloads/${encodeURIComponent(c.workload)}`}>{c.workload}</Link>],["측정 프로파일 참조",<BEOReference key="beo" namespace={data.metadata.namespace} name={c.batchEnergyOptimization}/>],["프로파일 ID",data.profileID||"미기록"],["장치",data.node],["배치 (건)",c.batch],["공급 방식",occupancySupply(c.supplyMode)],["동시 송신자 (명)",c.workers],["예열 (s · 측정 제외)",c.warmupSeconds],["측정 구간 (s)",c.durationSeconds],["참조 UID","미기록"]]}/></details>
   </>
+}
+function DeleteOccupancy({data,refresh,onDeleted}:{data:DispatchOccupancyMeasurement;refresh:()=>void;onDeleted:()=>void}) {
+  const mutation=useChillMutation(),[open,setOpen]=React.useState(false),[understood,setUnderstood]=React.useState(false),[unknown,setUnknown]=React.useState(false)
+  const blocked=occupancyPhaseValue(data)==="Measuring",identity=data.metadata
+  const error=mutation.error
+  function remove() {
+    if(blocked||!understood||unknown||!identity.uid||!identity.resourceVersion)return
+    mutation.mutate({path:`${measurementPath("dispatch-occupancy-measurements",identity.namespace,identity.name)}?${new URLSearchParams({uid:identity.uid})}`,method:"DELETE",version:identity.resourceVersion},{onSuccess:()=>{setOpen(false);onDeleted()},onError:failure=>{setOpen(false);if(failure.unknownOutcome||failure.status===0)setUnknown(true)}})
+  }
+  return <section className="grid gap-3" aria-label="측정 삭제"><Button className="justify-self-start" variant="destructive" disabled={blocked||mutation.isPending||unknown||!identity.uid||!identity.resourceVersion} onClick={()=>setOpen(true)}>{blocked?"측정 중":"삭제"}</Button>{error&&<div role="alert"><p>{unknown?"삭제 결과 미확인 · 재삭제 차단":error.status===409?"삭제 충돌 · 측정 상태가 변경되었거나 측정 중입니다. 최신 상태를 조회하세요.":"삭제 실패"}</p><Button variant="outline" onClick={refresh}>최신 상태 조회</Button><SourceJSON value={error.data??error.body} title="삭제 사유 원문"/></div>}<Dialog open={open} onOpenChange={setOpen}><DialogContent><DialogHeader><DialogTitle>측정을 영구히 삭제할까요?</DialogTitle><DialogDescription>이 측정 기록과 자체 근거 파일을 삭제합니다. 되돌릴 수 없습니다.</DialogDescription></DialogHeader><Facts items={[["측정",identity.name],["UID",identity.uid]]}/><label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={understood} disabled={mutation.isPending||unknown} onChange={event=>setUnderstood(event.target.checked)}/>근거 파일까지 영구 삭제됨을 확인했습니다.</label><Button variant="destructive" disabled={!understood||blocked||mutation.isPending||unknown} onClick={remove}>{mutation.isPending?"삭제 중":"삭제"}</Button></DialogContent></Dialog></section>
 }
 function Locations({locations}:{locations:MeasurementEvidenceLocation[]}) {
   return locations.length?<ul className="grid gap-3">{locations.map((location,index)=><li key={index}><Facts items={[["저장소",location.store],["키",location.key]]}/></li>)}</ul>:<p>미제공</p>

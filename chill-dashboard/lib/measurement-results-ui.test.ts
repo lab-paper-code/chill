@@ -10,6 +10,7 @@ import * as scheduler from "./scheduler.ts"
 import * as status from "./status.ts"
 import * as coverage from "./measurement-coverage.ts"
 import * as requests from "./measurement-request.ts"
+import * as occupancyHelpers from "./dispatch-occupancy.ts"
 import type { MeasurementAssessment, OperationCostMeasurement, ResultRow } from "./read-types.ts"
 
 type Element={type:unknown;props:Record<string,unknown>}
@@ -44,7 +45,8 @@ function harness(search:string,respond:(path:string)=>unknown) {
     "lucide-react":{TriangleAlert:()=>null},
     "next/link":{default:"a"},
     "next/navigation":{useSearchParams:()=>params,useRouter:()=>({push:(value:string)=>pushes.push(value),replace:(value:string)=>replacements.push(value)})},
-    "@/lib/client":{useSession:()=>({config:{namespace:"system"}}),useChillQuery:(path:string)=>{paths.push(path);return {data:respond(path),error:null,isPending:false,isFetching:false,dataUpdatedAt:1,refetch:()=>{refreshes.push(path)}}}},
+    "@/lib/client":{useSession:()=>({config:{namespace:"system"}}),useChillMutation:()=>({isPending:false,error:null}),useChillQuery:(path:string)=>{paths.push(path);return {data:respond(path),error:null,isPending:false,isFetching:false,dataUpdatedAt:1,refetch:()=>{refreshes.push(path)}}}},
+    "@/lib/dispatch-occupancy":occupancyHelpers,
     "@/lib/measurements":measurements,"@/lib/operation-cost":costs,"@/lib/measurement-assessment":assessment,"@/lib/scheduler":scheduler,"@/lib/status":status,
     "@/components/status-cell":{StatusCell:"status-cell"},
     "@/components/screen":{Screen:"main",Facts:"facts"},
@@ -52,6 +54,7 @@ function harness(search:string,respond:(path:string)=>unknown) {
     "@/components/data-table":{DataTable:"data-table",useServerTable:()=>({query:new URLSearchParams({limit:"25",offset:"0"}),pagination:{pageIndex:0,pageSize:25},sorting:[]})},
     "@/components/ui/button":{Button:"button"},"@/components/ui/input":{Input:"input"},
     "@/components/ui/sheet":{Sheet:"sheet",SheetContent:"sheet-content",SheetHeader:"sheet-header",SheetTitle:"sheet-title",SheetDescription:"sheet-description"},
+    "@/components/ui/dialog":{Dialog:"dialog",DialogContent:"dialog-content",DialogHeader:"dialog-header",DialogTitle:"dialog-title",DialogDescription:"dialog-description"},
     "@/components/measurement-navigation":{MeasurementNavigation:"measurement-nav",measurementStates:{usable:"측정 충족",problem:"문제",unknown:"미확인"}},
     "@/features/measurement-plans":{AssessmentDetails:"assessment-details",ResultRows:"result-rows"},
     "@/features/measurement-coverage":{MeasurementFilters:"measurement-filters"},

@@ -50,3 +50,18 @@ test("shared QueryGate renders initialization as a status rather than an HTTP er
   assert.match(html,/role="status"[^>]*>초기화 중/)
   assert.doesNotMatch(html,/role="alert"|HTTP 503|오류/)
 })
+
+test("data-dependent polling stops for terminal measurements, hidden tabs and denied reads",()=>{
+  let visible=true
+  let interval:(query:{state:{data?:{phase:string};error?:{status:number}}})=>number|false=()=>false
+  const client={} as typeof Client
+  const dependencies:Record<string,unknown>={...modules,react:{...require("react"),useContext:()=>({token:"token",config:{pollIntervalMs:5000}}),useSyncExternalStore:()=>visible},"@tanstack/react-query":{useQuery:(options:{refetchInterval:typeof interval})=>{interval=options.refetchInterval;return {data:undefined,error:null}}}}
+  new Function("require","exports",transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText)((name:string)=>dependencies[name]??require(name),client)
+  client.useChillQuery<{phase:string}>("v1/measurements",{poll:data=>data?.phase==="Measuring"})
+  assert.equal(interval?.({state:{data:{phase:"Complete"}}}),false)
+  assert.equal(interval?.({state:{data:{phase:"Measuring"},error:{status:403}}}),false)
+  assert.equal(interval?.({state:{data:{phase:"Measuring"}}}),5000)
+  visible=false
+  client.useChillQuery<{phase:string}>("v1/measurements",{poll:data=>data?.phase==="Measuring"})
+  assert.equal(interval?.({state:{data:{phase:"Measuring"}}}),false)
+})

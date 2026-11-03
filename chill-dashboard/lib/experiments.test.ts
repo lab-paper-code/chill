@@ -547,7 +547,8 @@ test("S1-5: rendered unbound serving-manager caller grants include experiment an
   const config=serverConfig({CHILL_BASE_URL:"https://fixture.invalid",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"fixture"})
   for(const path of ["v1/experiments","v1/experiments/control-213-full-sample","v1/namespaces/research/operation-cost-measurements","v1/namespaces/research/dispatch-occupancy-measurements"]){
     assert.equal(relayPlan("GET",path.split("/"),"",config).kind,"query")
-    assert.throws(()=>relayPlan("POST",path.split("/"),"",config),/DashboardMethodNotAllowed/)
+    if(path.endsWith("/dispatch-occupancy-measurements"))assert.equal(relayPlan("POST",path.split("/"),"",config).kind,"mutation")
+    else assert.throws(()=>relayPlan("POST",path.split("/"),"",config),/DashboardMethodNotAllowed/)
   }
 })
 

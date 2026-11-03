@@ -154,6 +154,7 @@ function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0
     "@/lib/measurement-coverage":coverageHelpers,
     "@/features/measurement-coverage":{useModelCompatibility:()=>({data:compatibility})},
     "@/components/measurement-navigation":{MeasurementNavigation:()=>null},
+    "@/features/dispatch-occupancy-request":{MeasurementKindSelector:()=>null},
     "@/lib/measurements":measurementHelpers,
   }
   runInNewContext(compiled,{exports,require:(name:string)=>name in modules?modules[name]:require(name),URLSearchParams})

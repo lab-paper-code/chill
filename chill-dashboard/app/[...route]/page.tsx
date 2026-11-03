@@ -12,6 +12,7 @@ import { DevicesPage } from "@/features/resources"
 import { MeasurementCoveragePage } from "@/features/measurement-coverage"
 import { MeasurementRequestsPage } from "@/features/measurement-requests"
 import { MeasurementRequestPage } from "@/features/measurement-request"
+import { DispatchOccupancyRequestPage } from "@/features/dispatch-occupancy-request"
 import { MeasurementResultsPage, UnsupportedTransitionMeasurement } from "@/features/measurement-projections"
 import { dashboardDestination } from "@/lib/dashboard-routes"
 import { RecordsPage } from "@/features/records"
@@ -48,7 +49,7 @@ export default async function Page({params,searchParams}:{params:Promise<{route:
   else if (head === "measurements" && route.length === 1) page = <MeasurementCoveragePage />
   else if (head === "measurements" && name === "requests" && route.length === 2) page = typeof search.run === "string" ? <MeasurementDetail namespace={typeof search.namespace === "string" ? search.namespace : undefined} name={search.run} /> : search.view === "runs" ? <MeasurementRunsPage /> : <MeasurementRequestsPage />
   else if (head === "measurements" && name === "results" && route.length === 2) page = <MeasurementResultsPage />
-  else if (head === "measurements" && name === "requests" && sub === "new" && route.length === 3) page = <MeasurementRequestPage />
+  else if (head === "measurements" && name === "requests" && sub === "new" && route.length === 3) page = search.kind === "dispatch-occupancy" ? <DispatchOccupancyRequestPage key={query.toString()} /> : <MeasurementRequestPage />
   else if (head === "measurements" && name === "requests" && sub === "check" && route.length === 3) page = <MeasurementCheckPage />
   else if (head === "measurements" && name === "requests" && route.length === 3) page = <MeasurementRequestsPage name={sub} />
   else if (head === "measurements" && name === "requests" && route[3] === "runs" && route.length === 5) page = <MeasurementDetail namespace={typeof search.namespace === "string" ? search.namespace : undefined} name={route[4]} />
