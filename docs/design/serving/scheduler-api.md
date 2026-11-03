@@ -79,6 +79,22 @@ DELETE's SAR is the URL name. Query collection/item reads retain list/get SAR.
 Coverage additionally requires list DOM permission. Live acceptance means
 admission, never completed or scientifically accepted measurement evidence.
 
+The dashboard caller's `<fullname>-serving-manager` requires **both** rendered
+RBAC layers in every allowed profile namespace:
+
+| Request | ClusterRole nonResource SAR | Namespaced Role resource SAR (`edge.dacs.io`) |
+|---|---|---|
+| BEO / DOM POST | `post /chill/api/v1/namespaces/<ns>/{batch-energy-optimizations,dispatch-occupancy-measurements}` | `create {batchenergyoptimizations,dispatchoccupancymeasurements}`, collection-scoped |
+| BEO / DOM DELETE | `delete /chill/api/v1/namespaces/<ns>/{batch-energy-optimizations,dispatch-occupancy-measurements}/*` | named `delete` of the corresponding native resource |
+
+Their native `get/list` grants remain for reads. DELETE itself requires only
+the caller's named delete SAR; native UID/RV lookup and evidence cleanup use
+ChillServer's owner identity, not an extra caller get SAR. Owner-SA permissions
+do not replace caller permissions. BEO preflight retains its exact POST grant.
+`hack/serving-entrypoint-rbac-test.sh` checks both mutation SARs for BEO and DOM
+against rendered serving-manager roles in default, Profiler, and additional-
+namespace profiles.
+
 The private `/api/v1/scheduler/catalog-read` adds **`accepted.occupancy[]`**:
 `{node:{name,uid},powerMode,model,runtimeImage,executionPath,profileID,batch,
 evidence:{store,key,size}}`. Each entry joins the exact occupancy row selected by

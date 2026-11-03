@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Renders the chart and checks the ChillServer grants measurement admission uses:
 # Service list in the serving namespace (hand-back finds runner Services) and
-# patch of the measurements ChillServer runs and their status.
+# patch of the measurements ChillServer runs and their status. Also check the
+# dashboard caller's serving-manager grants against the measurement handler SARs.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -54,6 +55,45 @@ if not profiles:
 for kind in ("operationcostmeasurements", "dispatchoccupancymeasurements"):
     if not all(grants(r, kind, "patch") and grants(r, kind + "/status", "patch") for r in profiles):
         sys.exit("a profile namespace Role lacks " + kind + " and status patch")
+
+# measurements.go requires create (collection) / delete (named) as the caller.
+# authorizer.go separately checks the lowercase HTTP verb and /chill-prefixed path.
+# Check both rendered grants; owner-SA rights never substitute for caller rights.
+manager = next(d for d in documents if d.get("kind") == "ClusterRole"
+               and d["metadata"]["name"] == "chill-serving-manager")
+callers = [d for d in documents if d.get("kind") == "Role"
+           and d["metadata"]["name"] == "chill-serving-manager"]
+assert {r["metadata"]["namespace"] for r in callers} == {r["metadata"]["namespace"] for r in profiles}, \
+    "serving-manager caller Roles do not cover every allowed profile namespace"
+
+def caller_path_grants(path, verb):
+    return any(verb in rule.get("verbs", []) and
+               any(url == path or url.endswith("*") and path.startswith(url[:-1])
+                   for url in rule.get("nonResourceURLs", []))
+               for rule in manager.get("rules", []))
+
+def caller_resource_grants(role, resource, verb, name=""):
+    return any("edge.dacs.io" in rule.get("apiGroups", []) and
+               resource in rule.get("resources", []) and verb in rule.get("verbs", []) and
+               (not rule.get("resourceNames") or name in rule["resourceNames"])
+               for rule in role.get("rules", []))
+
+for role in callers:
+    namespace = role["metadata"]["namespace"]
+    prefix = "/chill/api/v1/namespaces/" + namespace + "/"
+    for collection, resource in (("batch-energy-optimizations", "batchenergyoptimizations"),
+                                 ("dispatch-occupancy-measurements", "dispatchoccupancymeasurements")):
+        for http_verb, resource_verb, name in (("post", "create", ""), ("delete", "delete", "native-task")):
+            path = prefix + collection + ("/" + name if name else "")
+            assert caller_path_grants(path, http_verb), \
+                "dashboard serving-manager lacks nonResource SAR: " + http_verb + " " + path
+            assert caller_resource_grants(role, resource, resource_verb, name), \
+                "dashboard serving-manager lacks resource SAR: " + namespace + " " + resource_verb + " " + resource
+        for verb in ("get", "list"):
+            assert caller_resource_grants(role, resource, verb), \
+                "dashboard serving-manager lost native read grant: " + namespace + " " + verb + " " + resource
+    assert caller_path_grants(prefix + "batch-energy-optimizations/preflight", "post"), \
+        "dashboard serving-manager lost BEO preflight POST"
 PY
 }
 
