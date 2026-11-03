@@ -263,4 +263,12 @@ reject_dashboard dashboard.callerServiceAccount "${serving[@]}" --set dashboard.
 reject_dashboard dashboard.callerServiceAccount "${serving[@]}" --set dashboard.callerServiceAccount=other-namespace/chill-dashboard-user
 reject_dashboard dashboard.callerServiceAccount "${serving[@]}" --set dashboard.reader.enabled=true \
 	--set dashboard.callerServiceAccount=chill-dashboard-reader
+reject_dashboard dashboard.reader.enabled "${serving[@]}" --set dashboard.reader.enabled=true \
+	--set query.serviceAccount.create=false --set query.serviceAccount.name=chill-dashboard-reader
+for key in operator.serviceAccount.name profiler.serviceAccount.name \
+	profiler.workloadObserver.serviceAccount.name profiler.transitionObserver.serviceAccount.name \
+	uninstallCleanup.serviceAccount.name evaluation.config.actionServiceAccount evaluation.config.publishServiceAccount; do
+	reject_dashboard dashboard.reader.enabled "${serving[@]}" --set dashboard.reader.enabled=true \
+		--set "${key}=chill-dashboard-reader"
+done
 echo "serving entrypoint RBAC: pass"
