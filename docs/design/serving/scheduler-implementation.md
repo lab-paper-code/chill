@@ -22,6 +22,7 @@ firstfloor Go 큐·배처·persistent Python IPC runner는 `internal/firstfloor`
 | `internal/serving/firstfloor` | HTTP/metadata/progress typed 경계, native/client span; request/UID/definition/physical instance 상관 |
 | `internal/serving/kube` | 실제 자원 snapshot·catalog·Pod/policy/power 원자 동작·DAG; API 뒤 실제 readiness/drain/삭제/Node 상태 |
 | `internal/serving/application` | scheduler configuration acceptance, power observation admission, catalog/cost refresh, runtime preparations and profile-reuse retention; settings-change transaction under the existing shared mutation lock |
+| `internal/serving/management` | Pure workload spec-to-domain projection and model declaration validation; lifecycle effects remain in kube until the shared reservation boundary can move without a cycle |
 | 기존 Profiling owner | 같은 firstfloor fixed-batch·idle·raw evidence·curve; 원래 Run/Job/Node/container/image/actuation와 trial binding |
 | 기존 NodeActuator | 유일한 host power writer; 독립 read-back·settling·Ready/Failed |
 | 기존 metric/evidence owner | Node wall-power·sample/failure·적분·immutable raw; 조건·구간·coverage가 확인된 watts/joules |

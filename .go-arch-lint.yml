@@ -78,6 +78,7 @@ components:
   serving-application: { in: internal/serving/application }
   serving-live: { in: internal/serving/live }
   serving-kube: { in: internal/serving/kube }
+  serving-management: { in: internal/serving/management }
   serving-measurement: { in: internal/serving/measurement }
   firstfloor: { in: internal/firstfloor }
   serving-firstfloor: { in: internal/serving/firstfloor }
@@ -385,6 +386,12 @@ deps:
       - serving-core
       - firstfloor
 
+  serving-management:
+    mayDependOn:
+      - api
+      - model-catalog
+      - serving-core
+
   serving-kube:
     mayDependOn:
       - api
@@ -399,6 +406,7 @@ deps:
       - profiler-projection
       - profiling-run
       - serving-core
+      - serving-management
       - serving-firstfloor
       - firstfloor
       - evidence-kube
