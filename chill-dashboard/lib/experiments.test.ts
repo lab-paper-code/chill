@@ -8,7 +8,7 @@ import { publishedVerdict, selectedExperimentStage, experimentPath, stageEvidenc
 import { comparisonValidity } from "./experiments.ts"
 import { experimentDifference } from "./experiments.ts"
 import { createRequire } from "node:module"
-import { createElement, type ComponentType } from "react"
+import { createElement, type ComponentType, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as experimentHelpers from "./experiments.ts"
@@ -23,7 +23,8 @@ test("R18: list facts render without per-item detail requests and absent facts s
   const source=readFileSync(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports={} as {useHistoricalExperiments:(runs:Experiment[])=>unknown;ExperimentFacts:ComponentType<{run:Experiment}>;ExperimentResultRow:ComponentType<{run:Experiment;runs:Experiment[];pending:boolean;error:boolean}>},paths:string[][]=[]
-  new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiments"?experimentHelpers:name==="@/lib/measurements"?measurementHelpers:name==="@/lib/client"?{useChillQueries:(ids:string[])=>{paths.push(ids);return []}}:require(name),exports)
+  const modules:Record<string,unknown>={"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/lib/client":{useChillQueries:(ids:string[])=>{paths.push(ids);return []}},"@/components/ui/button":{Button:({children}:{children?:ReactNode})=>createElement("button",{},children)},"next/link":{__esModule:true,default:({children}:{children?:ReactNode})=>createElement("a",{},children)}}
+  new Function("require","exports",compiled)((name:string)=>modules[name]??require(name),exports)
   exports.useHistoricalExperiments([run])
   assert.deepEqual(paths,[[]])
   exports.useHistoricalExperiments([{...run,facts:undefined}])
@@ -1066,7 +1067,7 @@ test("R18: frozen load parts produce separate chart bars without repeating stage
   assert.ok(chart.every(row=>row.leftP95===null&&row.observedRate===null))
 })
 
-test("R18: list hydration, solo measured values, SLO verdict and frozen metadata render real objects",()=>{
+test("R18: solo measured values, SLO verdict and frozen metadata render real objects",()=>{
   const run=definedRun([{...stage,id:"candidate",kpis:{wholePoolJoules:54776.5,measurementRules:{harnessRepositoryCommit:"abc123"},requests:{camera:{workloadUID:"camera",offered:100,successNumerator:25,successDenominator:100,completedLatencyNS:{p95:1986480000,samples:25}}}}}])
   run.outcome={execution:{status:"Complete"},measurement:{verdict:"FAIL",reason:"SLOFailed"}}
   run.definition!.loadScenarios[0].spec.parts=[{id:"half",durationSeconds:180,rates:{camera:53.075340806062236}},{id:"high",durationSeconds:300,rates:{camera:106.15068161212447}}]
@@ -1076,9 +1077,7 @@ test("R18: list hydration, solo measured values, SLO verdict and frozen metadata
   const require=createRequire(import.meta.url),exports={} as {useHistoricalExperiments:(runs:Experiment[])=>{runs:Experiment[]};ExperimentResultRow:ComponentType<RenderProps>;ExperimentMetadata:ComponentType<RenderProps>}
   new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiments"?experimentHelpers:name==="@/lib/measurements"?measurementHelpers:name==="@/lib/client"?{useChillQueries:()=>[{data:run,isPending:false}]}:name==="@/components/ui/button"?{Button:(props:Record<string,unknown>)=>createElement("button",props)}:name==="next/link"?{__esModule:true,default:(props:Record<string,unknown>)=>createElement("a",props)}:require(name),exports)
   const listed={...run,definition:undefined,comparisons:[]}
-  const hydrated=exports.useHistoricalExperiments([listed]).runs[0]
-  assert.deepEqual(hydrated.definition,run.definition)
-  const markup=renderToStaticMarkup(createElement(exports.ExperimentResultRow,{run:hydrated,runs:[hydrated],pending:false,error:false}))
+  const markup=renderToStaticMarkup(createElement(exports.ExperimentResultRow,{run,runs:[run],pending:false,error:false}))
   assert.match(markup,/자동 운영/)
   assert.match(markup,/단계별 원값/)
   assert.match(markup,/54,777/)
