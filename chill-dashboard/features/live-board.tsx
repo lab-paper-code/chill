@@ -5,7 +5,7 @@ import Link from "next/link"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useSession } from "@/lib/client"
 import { useLive } from "@/lib/use-live"
-import type { LiveAction, LiveEvent, LiveMetrics, LiveSnapshot, LiveState, LiveWorkload } from "@/lib/live"
+import type { LiveAction, LiveEvent, LiveMetrics, LiveSnapshot, LiveState, LiveWorkload, RecordedLivePage } from "@/lib/live"
 import { eventKey } from "@/lib/live"
 import type { SchedulerCandidate, SchedulerDecision, SchedulerObservationPage } from "@/lib/read-types"
 import { decisionRange, evidenceError } from "@/lib/scheduler-history"
@@ -154,15 +154,19 @@ function Evidence({at,state,zone,cursor,visited=[]}:{at:string;state:LiveState;z
   </>
 }
 function IncidentDetails({identity,state,zone}:{identity:string;state:LiveState;zone:Zone}) {
+  const [search,setSearch]=React.useState<{identity:string;cursor?:string}>({identity})
+  const cursor=search.identity===identity?search.cursor:undefined
   let at:string|undefined
   try{const ref=JSON.parse(identity);if(Array.isArray(ref)&&ref.length===4&&typeof ref[1]==="string"&&Number.isFinite(Date.parse(ref[1])))at=ref[1]}catch{}
   const local=state.events.find(row=>eventIdentity(row)===identity||String(row.seq)===identity)
-  const query=useChillQuery<{events:IncidentEvent[]}>(`v1/observations/events?${new URLSearchParams({at:at??""})}`,{enabled:!local&&!!at})
+  const query=useChillQuery<{events:IncidentEvent[];nextCursor?:string;coverage?:RecordedLivePage["coverage"]}>(`v1/observations/events?${new URLSearchParams({at:at??"",...(cursor?{cursor}:{})})}`,{enabled:!local&&!!at})
   const event=local??query.data?.events.find(row=>eventIdentity(row)===identity)
-  if(!event)return <><p role={query.error?"alert":"status"}>{query.error?evidenceError(query.error):at&&!query.data?"사건 조회 중":"보관 범위 밖 사건"}</p><Facts items={[["선택 사건 시각",at?displayTime(at,zone):"미제공"],["서버 사건 보관 범위","미제공"],["현재 탭 보관 시작",displayTime(state.events[0]?.at,zone)],["현재 탭 보관 종료",displayTime(state.events.at(-1)?.at,zone)]]}/><Link href={historyHref(undefined,at,undefined,identity)}>{at?"같은 기간 기록":"최근 기록 검색"}</Link></>
+  const next=query.data?.nextCursor,coverage=query.data?.coverage
+  const progress=!local&&<>{coverage&&<p role="status">{!event&&next?"찾는 중 · ":""}읽은 범위 {displayTime(coverage.from??undefined,zone)} ~ {displayTime(coverage.to??undefined,zone)}</p>}{coverage?.gaps?.map((gap,index)=><p key={index} role="status">기록 공백 {displayTime(gap.from,zone)} ~ {displayTime(gap.to,zone)} · {liveReason(gap.reason)}</p>)}{next&&(event?<p role="status">이후 기록 미확인</p>:<button type="button" disabled={next===cursor} onClick={()=>setSearch({identity,cursor:next})}>더 찾기</button>)}</>
+  if(!event)return <><p role={query.error?"alert":"status"}>{query.error?evidenceError(query.error):next?"찾는 중":at&&!query.data?"사건 조회 중":"보관 범위 밖 사건"}</p>{progress}<Facts items={[["선택 사건 시각",at?displayTime(at,zone):"미제공"],["서버 사건 보관 범위","미제공"],["현재 탭 보관 시작",displayTime(state.events[0]?.at,zone)],["현재 탭 보관 종료",displayTime(state.events.at(-1)?.at,zone)]]}/><Link href={historyHref(undefined,at,undefined,identity)}>{at?"같은 기간 기록":"최근 기록 검색"}</Link></>
   const action=event.kind==="action"?event.action:null,cluster=event.kind==="cluster"?event.cluster:null
   const diagnosis=incidentDiagnosis(action?.result?.error??cluster?.reason)
-  return <><Facts items={[["시각 KST",displayTime(event.at,zone)],["종류",action?action.kind.startsWith("measurement-")?"측정 요청":"구성 변경":cluster?"클러스터":"구성 판단"],["대상",action?action.node.uid?actionNodeName(action.node):"측정 요청":cluster?.pod?.name??cluster?.source??"전체 서비스"],...(action?[["동작",actionLabel(action)],["결과",actionEventResult(action)]] as [string,React.ReactNode][]:[]),["사유",diagnosis.reason],...(diagnosis.mode?[["목표 전력모드",diagnosis.mode]] as [string,React.ReactNode][]:[]),...(!action||!isMeasurementPrecheck(action)?[["확인 항목",diagnosis.check]] as [string,React.ReactNode][]:[])]}/>{action?.node.uid&&<Link href={`/operations/devices?node=${encodeURIComponent(action.node.uid)}`}>해당 장치 확인</Link>}<Link href={historyHref(action?.workloadUID,event.at,action?.node.uid,identity)}>해당 시점 기록</Link><Source value={event}/></>
+  return <>{progress}<Facts items={[["시각 KST",displayTime(event.at,zone)],["종류",action?action.kind.startsWith("measurement-")?"측정 요청":"구성 변경":cluster?"클러스터":"구성 판단"],["대상",action?action.node.uid?actionNodeName(action.node):"측정 요청":cluster?.pod?.name??cluster?.source??"전체 서비스"],...(action?[["동작",actionLabel(action)],["결과",actionEventResult(action)]] as [string,React.ReactNode][]:[]),["사유",diagnosis.reason],...(diagnosis.mode?[["목표 전력모드",diagnosis.mode]] as [string,React.ReactNode][]:[]),...(!action||!isMeasurementPrecheck(action)?[["확인 항목",diagnosis.check]] as [string,React.ReactNode][]:[])]}/>{action?.node.uid&&<Link href={`/operations/devices?node=${encodeURIComponent(action.node.uid)}`}>해당 장치 확인</Link>}<Link href={historyHref(action?.workloadUID,event.at,action?.node.uid,identity)}>해당 시점 기록</Link><Source value={event}/></>
 }
 export function IncidentRecord({identity}:{identity:string}) {
   const {state}=useLive()

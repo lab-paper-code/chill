@@ -197,6 +197,7 @@ POOL 전환은 신규 인스턴스 실제 준비/연결 후 route 편입, 제외
 | maxRequest8388608/maxEvidence67108864/maxQueryEvents1000 | body/evidence/raw page 상한 |
 | observationDefinitions/Outcomes `[]` | 반복 `--observation-definition,--observation-outcome` 기본 필터 |
 | storage size1Gi/class null/directory `/data`/retention2h | 유지 private RWO PVC; null default class, 빈 문자열 no class; `--observation-directory,--observation-retention`. cutover는 새 경로, 이전 raw 보존 |
+| storage eventLookupHours1 | `--observation-event-lookup-hours`; 정확 시점 사건 조회의 호출당 append-hour 예산. nextCursor로 지연 append까지 이어 읽는다. [근거](observability-split.md#exact-event-recovery) |
 | kubeAPI apiServer/tokenFile/caFile | 명시 `--kube-api-server,--kube-token-file,--kube-ca-file`; 기본 in-cluster |
 | kubeAPI qps200/burst400 | 항상 `--kube-api-qps,--kube-api-burst`, 시작 때 양수/유한 float32 검증 |
 | grace150s | drainTimeout+HTTP 종료 여유보다 커야 함 |

@@ -38,9 +38,13 @@ func TestObservationEventsRecoverSimultaneousCommittedFacts(t *testing.T) {
 			At   time.Time `json:"at"`
 			live.Event
 		} `json:"events"`
+		Coverage serving.ObservationCoverage `json:"coverage"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || response.Code != http.StatusOK || len(page.Events) != 2 {
 		t.Fatalf("exact committed recovery: status=%d body=%s err=%v", response.Code, response.Body, err)
+	}
+	if page.Coverage.From == nil || !page.Coverage.From.Equal(at.Truncate(time.Hour)) || page.Coverage.To == nil || page.Coverage.To.Before(at) {
+		t.Fatalf("found event has no append coverage: %+v", page.Coverage)
 	}
 	for _, event := range page.Events {
 		if event.Type != "event" || !event.At.Equal(at) {
@@ -53,7 +57,7 @@ func TestObservationEventsRecoverSimultaneousCommittedFacts(t *testing.T) {
 			t.Fatalf("cluster identity lost: %+v", event.Cluster)
 		}
 	}
-	for _, query := range []string{"", "?at=bad", "?at=2026-01-01T00:00:00Z&at=2026-01-01T00:00:00Z", "?at=2026-01-01T00:00:00Z&limit=1"} {
+	for _, query := range []string{"", "?at=bad", "?at=2026-01-01T00:00:00Z&at=2026-01-01T00:00:00Z", "?at=2026-01-01T00:00:00Z&limit=1", "?at=2026-01-01T00:00:00Z&cursor=bad", "?at=2026-01-01T00:00:00Z&cursor=e30", "?at=2026-01-01T00:00:00Z&cursor=2026-01-01T00:01:00Z"} {
 		if response := rawHTTPRequest(h, "/api/v1/observations/events"+query); response.Code != http.StatusBadRequest {
 			t.Fatalf("invalid exact query accepted: %s -> %d", query, response.Code)
 		}
@@ -63,7 +67,7 @@ func TestObservationEventsRecoverSimultaneousCommittedFacts(t *testing.T) {
 	if response := rawHTTPRequest(denied, "/api/v1/observations/events?at="+url.QueryEscape(at.Format(time.RFC3339Nano))); response.Code != http.StatusForbidden {
 		t.Fatalf("event read bypassed authorization: %d", response.Code)
 	}
-	if _, err := h.observationLog.EventObservations(context.Background(), at, 1); err == nil {
+	if _, _, _, err := h.observationLog.EventObservations(context.Background(), at, 1, ""); err == nil {
 		t.Fatal("event bound silently dropped simultaneous facts")
 	}
 }
@@ -159,5 +163,34 @@ func TestObservationEventRangeQueryBounds(t *testing.T) {
 		if response := rawHTTPRequest(h, "/api/v1/observations/events?"+query.Encode()); response.Code != http.StatusOK {
 			t.Fatalf("valid bounded range rejected %v: %d %s", query, response.Code, response.Body)
 		}
+	}
+}
+
+func TestObservationEventsEmptyPageContinuesAppendHours(t *testing.T) {
+	h := rawHTTPHandler(t, &rawHTTPArchive{}, true)
+	h.mux.HandleFunc("GET /api/v1/observations/events", h.observationEvents)
+	at := time.Now().UTC().Truncate(time.Hour).Add(-2*time.Hour + time.Second)
+	query := url.Values{"at": {at.Format(time.RFC3339Nano)}}
+	for page := range 2 {
+		response := rawHTTPRequest(h, "/api/v1/observations/events?"+query.Encode())
+		var result struct {
+			Events   json.RawMessage             `json:"events"`
+			Next     string                      `json:"nextCursor"`
+			Coverage serving.ObservationCoverage `json:"coverage"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || response.Code != http.StatusOK {
+			t.Fatalf("empty exact page: status=%d body=%s err=%v", response.Code, response.Body, err)
+		}
+		from := at.Truncate(time.Hour).Add(time.Duration(page) * time.Hour)
+		to := from.Add(time.Hour)
+		if string(result.Events) != "[]" || result.Next != to.Format(time.RFC3339Nano) || result.Coverage.From == nil || !result.Coverage.From.Equal(from) || result.Coverage.To == nil || !result.Coverage.To.Equal(to) || len(result.Coverage.Gaps) != 2 {
+			t.Fatalf("empty exact continuation contract: %s", response.Body)
+		}
+		query.Set("cursor", result.Next)
+	}
+	// Range event cursors cannot be interpreted as append-hour continuations.
+	rangeQuery := url.Values{"from": {at.Format(time.RFC3339Nano)}, "to": {at.Add(time.Minute).Format(time.RFC3339Nano)}, "cursor": {query.Get("cursor")}}
+	if response := rawHTTPRequest(h, "/api/v1/observations/events?"+rangeQuery.Encode()); response.Code != http.StatusBadRequest {
+		t.Fatalf("exact cursor accepted by range query: %d %s", response.Code, response.Body)
 	}
 }

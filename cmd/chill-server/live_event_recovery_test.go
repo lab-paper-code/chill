@@ -67,7 +67,7 @@ func TestRecordedActionUsesSameDurableAndLiveTimestamp(t *testing.T) {
 		if event.Type != "event" {
 			continue
 		}
-		records, err := log.EventObservations(ctx, event.At, 10)
+		records, _, _, err := log.EventObservations(ctx, event.At, 10, "")
 		if err != nil || len(records) != 1 || records[0].Action == nil || records[0].Action.ID != result.Operation.ID {
 			t.Fatalf("published event has no exact durable identity: %+v err=%v", records, err)
 		}
