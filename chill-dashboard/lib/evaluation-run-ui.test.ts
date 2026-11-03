@@ -143,7 +143,7 @@ test("absent or null procedure histories retain old-server conditions without in
   assert.match(text(renderRun({...baseRun,procedures:[],stages:[]})),/절차 기록 없음/)
 })
 
-test("missing procedure times remain missing and only the unpublished current procedure runs to now",()=>{
+test("missing procedure times remain missing and only an unfinished owner's current procedure runs to now",()=>{
   const procedures=[
     {step:"prepare",startedAt:"2026-11-03T00:00:00Z",finishedAt:null},
     {step:"stage",startedAt:"2026-11-03T00:02:00Z",finishedAt:null},
@@ -158,7 +158,7 @@ test("missing procedure times remain missing and only the unpublished current pr
   assert.match(history.find(row=>row.startsWith("측정 판정"))??"",/시작 미기록.*미기록/)
   assert.doesNotMatch(history.find(row=>row.startsWith("측정 판정"))??"",/초|1970/)
   assert.doesNotMatch(text(renderRun(run)),/1970/)
-  for(const finished of [{...run,publicationID:"publication"}]) {
+  for(const finished of [{...run,finishedAt:baseRun.finishedAt},{...run,phase:"Done"}]) {
     const row=rows(renderRun(finished)).find(row=>row.startsWith("부하 실행"))??""
     assert.match(row,/종료 미기록.*미기록/)
     assert.doesNotMatch(row,/현재 절차|진행 중|30초/)
@@ -185,6 +185,18 @@ test("publish remains current after run cleanup ends until a publication is reco
   const published=rows(renderRun({...run,publicationID:"publication"})).find(row=>text(row).startsWith("게시"))??""
   assert.match(text(published),/종료 미기록.*미기록/)
   assert.doesNotMatch(published,/aria-current|현재 절차|진행 중|30초/)
+})
+
+test("prepare runs only while the run is unfinished, including preparation failure",()=>{
+  const run={...baseRun,phase:"Running",finishedAt:undefined,currentProcedure:"prepare",procedures:[{step:"prepare",startedAt:"2026-11-03T00:02:00Z",finishedAt:null}]}
+  const ongoing=(renderRun(run).match(/<tr\b[^>]*>[\s\S]*?<\/tr>/g)??[]).find(row=>text(row).startsWith("준비"))??""
+  assert.match(ongoing,/aria-current="step"/)
+  assert.match(text(ongoing),/현재 절차.*진행 중.*30초/)
+  for(const stopped of [{...run,finishedAt:baseRun.finishedAt,runFailure:{reason:"PreparationFailed"}},{...run,phase:"Done"}]) {
+    const row=(renderRun(stopped).match(/<tr\b[^>]*>[\s\S]*?<\/tr>/g)??[]).find(row=>text(row).startsWith("준비"))??""
+    assert.match(text(row),/종료 미기록.*미기록/)
+    assert.doesNotMatch(row,/aria-current|현재 절차|진행 중|30초/)
+  }
 })
 
 test("procedure histories retain latest run and child conditions with unknown reasons and transition times",()=>{

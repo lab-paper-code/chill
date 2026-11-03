@@ -33,9 +33,9 @@ const conditionReasons:Record<string,string>={Returned:"반환 완료",IdentityM
 const arrivalLabels:Record<string,string>={poisson:"푸아송 분포",constant:"일정 간격",uniform:"균등 분포",trace:"기록 재생"}
 const procedureLabels:Record<string,string>={prepare:"준비",factor:"조건 적용",stage:"부하 실행",judge:"측정 판정","cleanup-jobs":"작업 정리",finish:"정리",publish:"게시"}
 
-function ProcedureTimeline({title,procedures,current,finished=false,publicationID,now}:{title:string;procedures:RunProcedure[]|null|undefined;current?:string;finished?:boolean;publicationID?:string;now:number}) {
+function ProcedureTimeline({title,procedures,current,finished,publishing=false,now}:{title:string;procedures:RunProcedure[]|null|undefined;current?:string;finished:boolean;publishing?:boolean;now:number}) {
   return <div className="overflow-x-auto"><table className="w-full text-left text-sm tabular-nums"><caption className="py-2 text-left font-medium">{title}</caption><thead><tr>{["절차","시작 (KST)","종료 (KST)","소요","사유","측정 판정"].map(label=><th key={label} className="whitespace-nowrap p-2">{label}</th>)}</tr></thead><tbody>{procedures?.map((procedure,index)=>{
-    const isCurrent=!finished&&!publicationID&&procedure.finishedAt===null&&procedure.step===current
+    const isCurrent=procedure.finishedAt===null&&procedure.step===current&&(!finished||procedure.step==="publish"&&publishing)
     const start=procedure.startedAt?Date.parse(procedure.startedAt):NaN,end=procedure.finishedAt?Date.parse(procedure.finishedAt):isCurrent?now:NaN
     const seconds=Number.isFinite(start)&&Number.isFinite(end)&&end>=start&&end>0?Math.floor((end-start)/1000):null
     return <tr key={index} aria-current={isCurrent?"step":undefined} className={isCurrent?"border-t bg-primary/10 font-medium":"border-t"}><th className="p-2 font-normal">{procedureLabels[procedure.step]??procedure.step}{isCurrent&&<span className="block text-xs">현재 절차</span>}</th><td className="whitespace-nowrap p-2">{procedure.startedAt?formatMeasurementTime(procedure.startedAt):"시작 미기록"}</td><td className="whitespace-nowrap p-2">{procedure.finishedAt?formatMeasurementTime(procedure.finishedAt):isCurrent?"진행 중":"종료 미기록"}</td><td className="whitespace-nowrap p-2">{seconds===null?"미기록":`${seconds.toLocaleString("ko-KR")}초`}</td><td className="p-2">{procedure.reason?conditionReasons[procedure.reason]??procedure.reason:"미기록"}</td><td className="p-2">{procedure.measurementVerdict??"미기록"}</td></tr>
@@ -251,9 +251,9 @@ export function EvaluationRunPage({name}:{name:string}) {
       <section aria-label="진행 단계" className="space-y-2">
         <h2 className="font-semibold">진행 단계 <span className="text-xs font-normal text-muted-foreground">{Array.isArray(run.procedures)?"기록된 절차 순서 · 시작·종료 (KST)":"조건별 최신 상태 · 마지막 변경 (KST)"}</span></h2>
         <div className="space-y-3">
-          {Array.isArray(run.procedures)&&<ProcedureTimeline title="실행 절차" procedures={run.procedures} current={run.currentProcedure} publicationID={run.publicationID} now={now}/>}
+          {Array.isArray(run.procedures)&&<ProcedureTimeline title="실행 절차" procedures={run.procedures} current={run.currentProcedure} finished={!!run.finishedAt||run.phase==="Done"} publishing={!run.publicationID} now={now}/>}
           {run.stages?.map(stage=><section key={stage.uid} className="space-y-1 rounded border p-3">
-            <ProcedureTimeline title={`실행 단계 ${stage.id}`} procedures={stage.procedures} current={stage.currentProcedure} finished={!!stage.finishedAt} publicationID={run.publicationID} now={now}/>
+            <ProcedureTimeline title={`실행 단계 ${stage.id}`} procedures={stage.procedures} current={stage.currentProcedure} finished={!!stage.finishedAt||!!run.finishedAt||run.phase==="Done"} now={now}/>
             <LatestConditions conditions={stage.conditions}/>
             {stage.measurementVerdict&&<p className="text-sm">단계 측정 판정 {stage.measurementVerdict}</p>}
           </section>)}
