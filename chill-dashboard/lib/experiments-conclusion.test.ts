@@ -169,3 +169,19 @@ test("missing publication outcomes and zero offered remain unrecorded, never a p
   assert.doesNotMatch(html,/0\.00%|통과|완료 0|오류 0|미완료 0|미발행 0/)
   assert.match(html,/완료 미기록/)
 })
+
+test("review: declared and identity-linked applied SLO retain sub-ms precision",()=>{
+  const source={store:"archive",key:"snapshot"}
+  const measured={...stage("candidate"),kpis:{requests:{camera:{workloadUID:"camera",definitionID:"camera/1/model/1/preprocessor/1",identitySource:source}}}}
+  const publication={...run,stages:[measured],sources:[source],definition:{workloads:[{name:"camera",uid:"camera",generation:1,model:{uid:"model",generation:1},preprocessor:{uid:"preprocessor",generation:1},slo:{percentile:95,targetLatencyNanos:400000}}],spec:{stages:[]},loadScenarios:[]}} as unknown as Experiment
+  const html=renderToStaticMarkup(createElement(components.ExperimentStageResults,{run:publication,stage:measured}))
+  assert.match(html,/p95 · 0\.40 ms/)
+  assert.match(html,/적용 확인: p95 · 0\.40 ms/)
+  assert.doesNotMatch(html,/p95 · 0 ms/)
+})
+
+test("review: solo published pool mean power remains visible",()=>{
+  const measured={...stage("candidate"),kpis:{wholePoolJoules:6000,wholePoolMeanWatts:123.4}}
+  const html=renderToStaticMarkup(createElement(components.ExperimentStageResults,{run:{...run,comparisons:[],stages:[measured]},stage:measured}))
+  assert.match(html,/풀 평균 전력 123\.4 W/)
+})

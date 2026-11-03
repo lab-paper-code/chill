@@ -15,6 +15,7 @@ import { STATUS_AXES } from "./status.ts"
 import * as routes from "./dashboard-routes.ts"
 import * as experiments from "./experiments.ts"
 import * as comparison from "./experiment-comparison.ts"
+import * as settings from "./scheduler-settings.ts"
 import type { EvaluationSubmit } from "../features/evaluation-request.tsx"
 
 const require=createRequire(import.meta.url)
@@ -41,6 +42,7 @@ test("manual evaluation replacement re-read unlocks deleted and unchanged drafts
       "@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{}})},
       "@/lib/client":{ApiError,useChillMutation:()=>mutationIndex++===0?pre:send,useChillQuery:()=>lookup},
       "@/lib/evaluation-request":requestHelpers,"@/lib/evaluation-author":authorHelpers,"@/lib/scheduler":scheduler,
+      "@/lib/evaluation-active":activeHelpers,"@/lib/scheduler-settings":settings,
       "@/lib/experiments":experiments,"@/lib/experiment-comparison":comparison,"@/features/evaluation-author":{},"@/features/evaluation-active":{},"@/lib/measurements":measurementHelpers,"@/components/ui/button":{Button},
       "@/components/read-region":{},"@/components/screen":{},"@/components/ui/input":{},"@/components/ui/dialog":{},
       "@/components/ui/tooltip":{},
@@ -120,6 +122,7 @@ test("return observation requires matching UID and explicit pool release, not re
     "@tanstack/react-query":{useQueryClient:()=>({})},
     "@/lib/client":{useChillQuery:()=>({data:observed}),useChillMutation:()=>({isSuccess:true})},
     "@/lib/evaluation-request":requestHelpers,"@/lib/evaluation-author":authorHelpers,"@/lib/scheduler":scheduler,
+    "@/lib/evaluation-active":activeHelpers,"@/lib/scheduler-settings":settings,
     "@/lib/experiments":experiments,"@/lib/experiment-comparison":comparison,"@/lib/measurements":measurementHelpers,"@/features/evaluation-active":{},
     "@/components/ui/button":{Button:container},"@/components/ui/input":{Input:container},
     "@/components/ui/dialog":{Dialog:container,DialogContent:container,DialogHeader:container,DialogTitle:container},
@@ -167,7 +170,8 @@ function hookRunner() {
 function loadUI(path:string,modules:Record<string,unknown>={}) {
   const defaults:Record<string,unknown>={
     "@/lib/evaluation-request":requestHelpers,"@/lib/evaluation-author":authorHelpers,"@/lib/scheduler":scheduler,
-    "@/lib/experiments":experiments,"@/lib/experiment-comparison":comparison,"@/lib/measurements":measurementHelpers,"@/features/evaluation-active":{EvaluationActive:"active"},
+    "@/lib/evaluation-active":activeHelpers,"@/lib/scheduler-settings":settings,
+    "@/lib/experiments":experiments,"@/lib/experiment-comparison":comparison,"@/lib/measurements":measurementHelpers,"@/features/evaluation-active":{EvaluationActiveDetails:"active"},
     "@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{}})},
     "@/components/screen":{Screen:"main"},"@/components/read-region":{QueryGate:"gate",SourceJSON:"source"},
     "@/components/ui/button":{Button:"button"},"@/components/ui/input":{Input:"input"},
@@ -201,7 +205,7 @@ test("execution child detail separates list, navigation and one control surface"
     "@/lib/client":{useChillQuery:(path:string,options?:{enabled?:boolean})=>{if(options?.enabled===false)return {};calls.push(path);return {data:run,refetch:async()=>{}}}},
   })
   let tree=elements(runner.render(EvaluationRunPage,{name:run.name}))
-  assert.deepEqual(calls,["v1/evaluations/run%2Fone","v1/evaluations/load-scenarios"])
+  assert.deepEqual(calls,["v1/evaluations/run%2Fone","v1/evaluations/load-scenarios","v1/evaluations/active"])
   assert.ok(!tree.some(item=>item.props["aria-label"]==="실험 실행 목록"))
   assert.ok(tree.some(item=>item.type==="section"&&item.props["aria-label"]==="실험 요약"))
   assert.ok(tree.some(item=>item.type==="span"&&item.props.children==="게시 후 결과 제공"))
@@ -260,11 +264,12 @@ test("active progress queries only active evaluations and never creates a mutati
   const runner=hookRunner(),calls:string[]=[]
   let mutations=0
   const run={name:"run",uid:"uid",stageIndex:1,stagesTotal:1,stage:{id:"base",injections:[{id:"kill",action:"delete-serving-pod",offsetSeconds:0}]}}
-  const {EvaluationActive}=loadUI("../features/evaluation-active.tsx",{
+  const {EvaluationActive,EvaluationActiveDetails}=loadUI("../features/evaluation-active.tsx",{
     react:runner.react,"@/lib/evaluation-active":activeHelpers,"@/lib/status":{STATUS_AXES},
     "@/lib/client":{useChillQuery:(path:string)=>{calls.push(path);return {data:{items:[run,{...run,uid:"replacement"},{...run,name:"other"}]}}},useChillMutation:()=>{mutations++;return {}}},
   })
-  const tree=elements(runner.render(EvaluationActive,{now:0,name:"run",uid:"uid"}))
+  const wrapper=runner.render(EvaluationActive,{now:0,name:"run",uid:"uid"}) as React.ReactElement<Record<string,unknown>>
+  const tree=elements(runner.render(EvaluationActiveDetails,wrapper.props))
   assert.deepEqual(calls,["v1/evaluations/active"])
   assert.equal(mutations,0)
   assert.ok(tree.some(item=>item.type==="table"))

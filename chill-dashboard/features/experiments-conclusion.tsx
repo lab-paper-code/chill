@@ -71,6 +71,7 @@ function ExperimentEnergy({stage}:{stage:ExperimentStage}) {
   const drainPower=object(stage.kpis.powerDrainInclusive)
   return <section aria-label="에너지·배출" className="space-y-1 border-y py-3 text-sm">
     <p><strong>에너지 {publishedText(power.energyStatus??energy.offered)||"미기록"}</strong>{joules!==null&&` · ${resultNumber(joules)} J`}{affected>0?` · ${affected}/${nodes.length} 노드 계측 출처 또는 공백 기준 미충족`:reasons.length?` · ${reasons[0]}${reasons.length>1?` 외 ${reasons.length-1}개`:""}`:""}{gap!==null&&` · 최대 공백 ${gap.toLocaleString("ko-KR",{minimumFractionDigits:1,maximumFractionDigits:1})} s`}</p>
+    <p>풀 평균 전력 {resultNumber(power.wholePoolMeanWatts??stage.kpis.wholePoolMeanWatts,"W")} W</p>
     <p className={drain.complete===false?"text-destructive":"text-muted-foreground"}>요청 배출 {drain.complete===true?"완료":drain.complete===false?"미완료":"미기록"}{drainReasons.length?` · ${drainReasons.map(reason=>reason==="ProducerEOFWithoutCompleteDrain"?"생성기 종료 후 요청 배출 미완료":reason).join(", ")}`:""}</p>
     <details className="text-xs"><summary className="min-h-11 cursor-pointer">에너지 계측 근거·배출 포함 범위</summary>
       <div className="space-y-2 pb-2">
@@ -88,7 +89,7 @@ export function ExperimentStageResults({run,stage,service="",onSelect}:{run:Expe
   const results=experimentServiceResults(stage,run).filter(({row})=>!service||row.name===service)
   const parts=[...new Set(results.flatMap(({row})=>row.substages?.flatMap(part=>typeof part.id==="string"?[part.id]:[])??[]))]
   const outcomes=[["completed","완료","bg-ok"],["timeout","시간 초과","bg-heat"],["error","오류","bg-destructive"],["unfinished-or-no-final","미완료","bg-muted-foreground"]] as const
-  const sloText=(slo:typeof results[number]["declaredSLO"])=>slo?`p${slo.percentile} · ${resultNumber(Number(slo.targetLatencyNanos)/1e6)} ms`:"미기록"
+  const sloText=(slo:typeof results[number]["declaredSLO"])=>slo?`p${slo.percentile} · ${resultNumber(Number(slo.targetLatencyNanos)/1e6,"ms")} ms`:"미기록"
   return <div className="min-w-0 space-y-4">
     <div className="overflow-x-auto">
       <table aria-label="서비스별 결과" className="w-full text-left text-sm tabular-nums">
@@ -100,7 +101,7 @@ export function ExperimentStageResults({run,stage,service="",onSelect}:{run:Expe
             <td className={`whitespace-nowrap p-2 font-medium ${verdict==="FAIL"?"text-destructive":""}`}>{resultWord(verdict)}</td>
             <td className="whitespace-nowrap p-2">{sloText(declaredSLO)}<span className="block text-xs text-muted-foreground">{appliedSLO?`적용 확인: ${sloText(appliedSLO)}`:"적용 미확인"}</span></td>
             <td className="min-w-32 whitespace-nowrap p-2"><span>{resultNumber(success)} / {resultNumber(offered)}</span><div className="text-xs text-muted-foreground">{resultPercent(fraction)}</div></td>
-            <td className="whitespace-nowrap p-2">{resultNumber(p95,"ms")} / {resultNumber(p50,"ms")}</td>
+            <td className="whitespace-nowrap p-2">{resultNumber(p95,"ms")} / {resultNumber(p50,"ms")}<span className="block text-xs text-muted-foreground">p95 표본 {resultNumber(row.metrics.find(metric=>metric.key.endsWith(".p95"))?.denominator)}</span></td>
             <td className="min-w-64 p-2">
               <div aria-hidden="true" className="mb-1 flex h-3 overflow-hidden rounded-sm bg-muted">{outcomes.map(([key,,color])=>{const count=finite(counts[key]);return count!==null&&total!==null&&total>0?<span key={key} className={color} style={{width:`${count/total*100}%`}}/>:null})}</div>
               <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">{outcomes.map(([key,label,color])=><span key={key} className="whitespace-nowrap"><i aria-hidden="true" className={`mr-1 inline-block size-2 ${color}`}/>{label} {resultNumber(counts[key])}</span>)}</div>
